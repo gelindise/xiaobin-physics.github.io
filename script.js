@@ -1,6 +1,6 @@
 // 替换成你自己的 jsonbin Master Key
 const MASTER_KEY = "$2a$10$aoMsUPUiqH2cyOLgVOpWvOuZKxPX1cP9GL/cQ90700po1xfJreQhG"; 
-const BIN_ID = "你的Bin ID"; // 下面教你创建Bin ID
+const BIN_ID = "69da7308aaba882197ea6d21"; // 下面教你创建Bin ID
 
 // 从云端加载用户数据
 async function loadUsers() {
@@ -151,5 +151,5 @@ window.onload = async function() {
     document.getElementById("userInfo").innerText = "欢迎，" + u;
   }
   // 首次使用请取消下面的注释，执行一次创建Bin
-   initBin();
+  // initBin();
 };
