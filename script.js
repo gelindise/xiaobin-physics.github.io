@@ -1,155 +1,194 @@
-// 替换成你自己的 jsonbin Master Key
-const MASTER_KEY = "$2a$10$aoMsUPUiqH2cyOLgVOpWvOuZKxPX1cP9GL/cQ90700po1xfJreQhG"; 
-const BIN_ID = "69da7308aaba882197ea6d21"; // 下面教你创建Bin ID
+// 基础配置（如果不用云端同步，注释下面2行即可）
+// const MASTER_KEY = "你的Master Key"; // 不用云端就注释
+// const BIN_ID = "你的Bin ID"; // 不用云端就注释
 
-// 从云端加载用户数据
-async function loadUsers() {
-  try {
-    const res = await fetch(`https://api.jsonbin.io/v3/b/${BIN_ID}/latest`, {
-      headers: { "X-Master-Key": MASTER_KEY }
-    });
-    const data = await res.json();
-    return data.record || {};
-  } catch (e) {
-    // 云端加载失败，用本地数据兜底
-    return JSON.parse(localStorage.getItem("users") || "{}");
-  }
+// ========== 本地存储版本（优先用这个，稳定无依赖） ==========
+// 加载用户数据（本地存储，百分百稳定）
+function loadUsers() {
+  return JSON.parse(localStorage.getItem("users") || "{}");
 }
 
-// 保存用户数据到云端
-async function saveUsers(users) {
+// 保存用户数据（本地存储）
+function saveUsers(users) {
   localStorage.setItem("users", JSON.stringify(users));
-  try {
-    await fetch(`https://api.jsonbin.io/v3/b/${BIN_ID}`, {
-      method: "PUT",
-      headers: {
-        "X-Master-Key": MASTER_KEY,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify(users)
-    });
-  } catch (e) {
-    console.log("云端保存失败，仅保存在本地");
-  }
 }
 
-// 初始化Bin（首次使用创建）
-async function initBin() {
-  const users = JSON.parse(localStorage.getItem("users") || "{}");
-  await fetch("https://api.jsonbin.io/v3/b", {
-    method: "POST",
-    headers: {
-      "X-Master-Key": MASTER_KEY,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify(users)
-  }).then(res => res.json()).then(data => {
-    console.log("Bin创建成功，ID：", data.metadata.id);
-    // 把返回的ID填到上面的BIN_ID里
-  });
-}
-
-// 注册
-async function userRegister() {
-  let user = document.getElementById("regUser").value;
-  let pwd = document.getElementById("regPwd").value;
-  let email = document.getElementById("regEmail").value;
+// 注册（修复逻辑，确保数据存对）
+function userRegister() {
+  let user = document.getElementById("regUser").value.trim(); // 去掉空格
+  let pwd = document.getElementById("regPwd").value.trim();
+  let email = document.getElementById("regEmail").value.trim();
+  
+  // 校验输入
   if (!user || !pwd) {
-    document.getElementById("regTip").innerText = "用户名和密码不能为空";
+    document.getElementById("regTip").innerText = "⚠️ 用户名和密码不能为空";
+    document.getElementById("regTip").style.color = "red";
     return;
   }
-  let users = await loadUsers();
+  
+  let users = loadUsers();
+  
+  // 检查用户名是否重复
   if (users[user]) {
-    document.getElementById("regTip").innerText = "用户名已存在";
+    document.getElementById("regTip").innerText = "⚠️ 用户名已存在";
+    document.getElementById("regTip").style.color = "red";
     return;
   }
+  
+  // 保存用户信息（格式标准化）
   users[user] = {
     pwd: pwd,
-    email: email,
+    email: email || "未填写",
     vip: "普通用户",
     expire: ""
   };
-  await saveUsers(users);
-  document.getElementById("regTip").innerText = "注册成功！请登录";
+  
+  saveUsers(users);
+  
+  // 注册成功提示
+  document.getElementById("regTip").innerText = "✅ 注册成功！请登录";
+  document.getElementById("regTip").style.color = "green";
+  
+  // 清空输入框
+  document.getElementById("regUser").value = "";
+  document.getElementById("regPwd").value = "";
+  document.getElementById("regEmail").value = "";
 }
 
-// 登录
-async function userLogin() {
-  let user = document.getElementById("loginUser").value;
-  let pwd = document.getElementById("loginPwd").value;
-  let users = await loadUsers();
-  if (!users[user] || users[user].pwd !== pwd) {
-    document.getElementById("loginTip").innerText = "用户名或密码错误";
+// 登录（修复逻辑，确保能读到数据）
+function userLogin() {
+  let user = document.getElementById("loginUser").value.trim();
+  let pwd = document.getElementById("loginPwd").value.trim();
+  
+  // 校验输入
+  if (!user || !pwd) {
+    document.getElementById("loginTip").innerText = "⚠️ 用户名和密码不能为空";
+    document.getElementById("loginTip").style.color = "red";
     return;
   }
+  
+  let users = loadUsers();
+  
+  // 检查用户是否存在 + 密码是否正确
+  if (!users[user]) {
+    document.getElementById("loginTip").innerText = "⚠️ 用户名不存在";
+    document.getElementById("loginTip").style.color = "red";
+    return;
+  }
+  if (users[user].pwd !== pwd) {
+    document.getElementById("loginTip").innerText = "⚠️ 密码错误";
+    document.getElementById("loginTip").style.color = "red";
+    return;
+  }
+  
+  // 登录成功：保存当前用户 + 跳转
   localStorage.setItem("currentUser", user);
-  location.href = "experiments.html";
+  document.getElementById("loginTip").innerText = "✅ 登录成功！正在跳转";
+  document.getElementById("loginTip").style.color = "green";
+  
+  // 跳转到实验列表（适配你的网站路径）
+  setTimeout(() => {
+    location.href = "/xiaobin-physics.github.io/experiments.html";
+  }, 1000);
 }
 
 // 获取当前用户
-async function getCurrentUser() {
+function getCurrentUser() {
   let name = localStorage.getItem("currentUser");
   if (!name) return null;
-  let users = await loadUsers();
+  let users = loadUsers();
   return users[name] || null;
 }
 
-// 检查VIP
-async function checkVip(lab) {
-  let user = await getCurrentUser();
+// 检查VIP权限（适配路径）
+function checkVip(lab) {
+  let user = getCurrentUser();
   if (!user) {
     alert("请先登录！");
-    location.href = "login.html";
+    location.href = "/xiaobin-physics.github.io/login.html";
     return;
   }
   if (user.vip === "普通用户") {
     alert("此实验为VIP专享，请开通VIP后观看");
-    location.href = "vip.html";
+    location.href = "/xiaobin-physics.github.io/vip.html";
     return;
   }
+  // 跳转实验页面（适配路径）
   window.open("/xiaobin-physics.github.io/" + lab, "_blank");
 }
 
-// 打开免费实验
+// 打开免费实验（适配路径）
 function openLab(lab) {
   window.open("/xiaobin-physics.github.io/" + lab, "_blank");
 }
 
-// 购买VIP
-async function buyVip(type) {
+// 购买VIP（适配路径）
+function buyVip(type) {
   let user = localStorage.getItem("currentUser");
   if (!user) {
     alert("请先登录");
-    location.href = "login.html";
+    location.href = "/xiaobin-physics.github.io/login.html";
     return;
   }
   document.getElementById("orderRemark").innerText = user + " - " + type;
   document.getElementById("payInfo").style.display = "block";
 }
 
-// 管理员设置VIP
-async function setUserVip() {
-  let user = document.getElementById("adminUser").value;
+// 管理员设置VIP（修复逻辑）
+function setUserVip() {
+  let user = document.getElementById("adminUser").value.trim();
   let type = document.getElementById("vipType").value;
-  let users = await loadUsers();
-  if (!users[user]) {
-    document.getElementById("adminTip").innerText = "用户不存在";
+  
+  if (!user) {
+    document.getElementById("adminTip").innerText = "⚠️ 请输入要开通的用户名";
+    document.getElementById("adminTip").style.color = "red";
     return;
   }
+  
+  let users = loadUsers();
+  
+  if (!users[user]) {
+    document.getElementById("adminTip").innerText = "⚠️ 用户不存在";
+    document.getElementById("adminTip").style.color = "red";
+    return;
+  }
+  
+  // 更新VIP信息
   users[user].vip = type;
   if (type === "月度VIP") users[user].expire = "30天";
   if (type === "年度VIP") users[user].expire = "365天";
   if (type === "终身VIP") users[user].expire = "永久";
-  await saveUsers(users);
-  document.getElementById("adminTip").innerText = "VIP开通成功！";
+  
+  saveUsers(users);
+  
+  document.getElementById("adminTip").innerText = "✅ VIP开通成功！";
+  document.getElementById("adminTip").style.color = "green";
+  
+  // 清空输入框
+  document.getElementById("adminUser").value = "";
 }
 
-// 实验页面显示用户名
-window.onload = async function() {
+// 页面加载时显示用户名
+window.onload = function() {
   let u = localStorage.getItem("currentUser");
   if (u && document.getElementById("userInfo")) {
     document.getElementById("userInfo").innerText = "欢迎，" + u;
+    // 把登录/注册按钮换成退出
+    let nav = document.querySelector(".nav");
+    if (nav) {
+      nav.innerHTML = `
+        <a href="/xiaobin-physics.github.io/index.html">首页</a>
+        <a href="/xiaobin-physics.github.io/experiments.html">实验列表</a>
+        <a href="/xiaobin-physics.github.io/vip.html">开通VIP</a>
+        <a href="javascript:logout()">退出登录</a>
+      `;
+    }
   }
-  // 首次使用请取消下面的注释，执行一次创建Bin
-  // initBin();
 };
+
+// 新增退出登录功能
+function logout() {
+  localStorage.removeItem("currentUser");
+  alert("已退出登录！");
+  location.href = "/xiaobin-physics.github.io/index.html";
+}
