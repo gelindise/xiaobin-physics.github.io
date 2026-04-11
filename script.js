@@ -1,5 +1,5 @@
 // 替换成你自己的 jsonbin Master Key
-const MASTER_KEY = "你的Master Key"; 
+const MASTER_KEY = "$2a$10$aoMsUPUiqH2cyOLgVOpWvOuZKxPX1cP9GL/cQ90700po1xfJreQhG"; 
 const BIN_ID = "你的Bin ID"; // 下面教你创建Bin ID
 
 // 从云端加载用户数据
