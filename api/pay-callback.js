@@ -1,23 +1,23 @@
-// PayJS 支付回调通知
+// 虎皮椒支付回调通知
 const { createHash } = require('crypto');
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
-const PAYJS_KEY = process.env.PAYJS_KEY;
+const XUNHU_APPSECRET = process.env.XUNHU_APPSECRET;
 
 function md5(str) {
   return createHash('md5').update(str).digest('hex');
 }
 
-function verifySign(params, key) {
-  const sorted = Object.keys(params).sort();
-  const str = sorted.map(k => `${k}=${params[k]}`).join('&') + `&key=${key}`;
+function verifySign(params, appsecret) {
+  const keys = Object.keys(params).sort();
+  // 排除 sign 字段本身
+  const str = keys.filter(k => k !== 'sign').map(k => `${k}=${params[k]}`).join('&') + `&appsecret=${appsecret}`;
   const expected = md5(str).toUpperCase();
   return expected === params.sign;
 }
 
 module.exports = async (req, res) => {
-  // PayJS 发送 POST 请求，body 是 URL-encoded 格式
   let body = '';
   for await (const chunk of req) body += chunk;
   const params = Object.fromEntries(new URLSearchParams(body));
@@ -25,18 +25,18 @@ module.exports = async (req, res) => {
   console.log('[pay-callback] received:', JSON.stringify(params));
 
   // 验证签名
-  if (!verifySign(params, PAYJS_KEY)) {
+  if (!verifySign(params, XUNHU_APPSECRET)) {
     console.error('[pay-callback] sign verification failed');
-    return res.status(200).send('sign fail');
-  }
-
-  if (params.return_code !== '1') {
-    console.error('[pay-callback] payjs return_code not 1:', params.return_code);
     return res.status(200).send('fail');
   }
 
+  // 只处理支付成功
+  if (params.trade_status !== 'completed') {
+    console.log('[pay-callback] trade_status:', params.trade_status, '-> ignored');
+    return res.status(200).send('success');
+  }
+
   const outTradeNo = params.out_trade_no;
-  const payjsOrderId = params.payjs_order_id;
   let attach = {};
   try { attach = JSON.parse(params.attach || '{}'); } catch (e) {}
 
@@ -64,7 +64,8 @@ module.exports = async (req, res) => {
     }
 
     // 更新订单状态
-    const updateOrderRes = await fetch(`${SUPABASE_URL}/rest/v1/orders?out_trade_no=eq.${outTradeNo}`, {
+    const orderKey = `out_trade_no=eq.${outTradeNo}`;
+    await fetch(`${SUPABASE_URL}/rest/v1/orders?${orderKey}`, {
       method: 'PATCH',
       headers: {
         'Content-Type': 'application/json',
@@ -73,17 +74,13 @@ module.exports = async (req, res) => {
       },
       body: JSON.stringify({
         status: 'paid',
-        payjs_order_id: payjsOrderId,
         paid_at: now.toISOString(),
       }),
     });
 
-    if (!updateOrderRes.ok) {
-      console.error('[pay-callback] update order failed:', await updateOrderRes.text());
-    }
-
     // 更新用户的 VIP 权限
-    const updateUserRes = await fetch(`${SUPABASE_URL}/rest/v1/users?username=eq.${username}`, {
+    const userKey = `username=eq.${username}`;
+    const userRes = await fetch(`${SUPABASE_URL}/rest/v1/users?${userKey}`, {
       method: 'PATCH',
       headers: {
         'Content-Type': 'application/json',
@@ -93,8 +90,8 @@ module.exports = async (req, res) => {
       body: JSON.stringify({ vip: vipType, expire: expireDate }),
     });
 
-    if (!updateUserRes.ok) {
-      console.error('[pay-callback] update user failed:', await updateUserRes.text());
+    if (!userRes.ok) {
+      console.error('[pay-callback] update user failed:', await userRes.text());
       return res.status(200).send('fail');
     }
 
