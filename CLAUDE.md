@@ -26,19 +26,36 @@ Each experiment HTML follows the same structure:
 
 ## VIP / Auth System
 
-- Users stored in `localStorage`, synced with Tencent Docs API (`docs.qq.com/dop-api/v2/docs/...`)
+- **Supabase** (`supabase.js`): All user data (users table) and payment orders (orders table) stored in Supabase
+- **Serverless API** (`api/`): Vercel cloud functions for PayJS payment processing
+  - `api/create-order.js`: Create PayJS payment order, return QR code
+  - `api/check-order.js`: Poll order payment status
+  - `api/pay-callback.js`: PayJS webhook receiver, auto-updates VIP on payment
+- **Client-side** (`script.js`): Login/register via Supabase REST API, localStorage as offline cache
 - Experiments marked as `lock` class with `checkVip()` gate for VIP-only content
 - Free experiments use `openLab()` directly
 
+## Payment Flow
+
+User clicks VIP → `/api/create-order` → PayJS QR code → user scans with WeChat → PayJS calls `/api/pay-callback` → Supabase VIP updated → page polls `/api/check-order` → redirects to experiments.
+
+## Deploy
+
+- **Static site**: Push to `main` → GitHub Pages auto-deploys (or Vercel for combined hosting)
+- **API functions**: Connect repo to **Vercel** (`vercel.json` at root), set environment variables:
+  - `PAYJS_MCHID` - PayJS merchant ID
+  - `PAYJS_KEY` - PayJS merchant key
+  - `SUPABASE_URL` - Supabase project URL
+  - `SUPABASE_SERVICE_KEY` - Supabase service_role key (for server-side admin ops)
+- **Supabase tables**: `users` (auth/VIP) and `orders` (payment records)
+
 ## Dev Commands
 
-This is a static site — no build, test, or lint commands. To preview locally, open any `.html` file directly in a browser or serve with:
+This is a static site — no build, test, or lint commands. To preview locally:
 
 ```bash
 python3 -m http.server 8000
 ```
-
-Deploy by pushing to the `main` branch — GitHub Pages auto-deploys.
 
 ## Commit Convention
 
