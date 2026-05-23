@@ -1,120 +1,236 @@
-// ========== 核心配置（只改这1行！） ==========
-// 替换成你的腾讯文档在线表格链接
-const TABLE_URL = "https://docs.qq.com/sheet/DR1FhWkxmYmJjd2Zm?tab=BB08J2"; 
+// ========== 核心配置 ==========
+// Supabase 在 supabase.js 中配置：SUPABASE_URL / SUPABASE_ANON_KEY / SB 工具对象
 
-// ========== 工具函数：读取在线表格数据 ==========
+// ========== 获取所有用户（对象格式兼容旧代码） ==========
 async function getUsersFromTable() {
   try {
-    // 把腾讯文档链接转成JSON接口
-    const tableId = TABLE_URL.split("/sheet/")[1].split("?")[0];
-    const apiUrl = `https://docs.qq.com/dop-api/v2/docs/${tableId}/sheets/0/rows?max_rows=1000&output_format=json`;
-    
-    const res = await fetch(apiUrl);
-    const data = await res.json();
-    
-    // 解析表格数据成用户对象
+    const data = await SB.getUsers();
     let users = {};
-    const rows = data.data.rows || [];
-    
-    // 跳过表头行，从第二行开始解析
-    for (let i = 1; i < rows.length; i++) {
-      const row = rows[i];
-      const user = row[0]?.text || ""; // 用户名
-      const pwd = row[1]?.text || "";  // 密码
-      const vip = row[2]?.text || "普通用户"; // VIP类型
-      const expire = row[3]?.text || ""; // 有效期
-      const email = row[4]?.text || ""; // 邮箱
-      
-      if (user) {
-        users[user] = { pwd, vip, expire, email };
-      }
+    for (const row of data) {
+      users[row.username] = {
+        pwd: row.password,
+        vip: row.vip || "普通用户",
+        expire: row.expire || "",
+        email: row.email || "",
+        authCode: row.authCode || "",
+      };
     }
-    
-    // 本地缓存一份，提升速度
+    // 写一份到 localStorage 作为离线缓存
     localStorage.setItem("users", JSON.stringify(users));
     return users;
   } catch (e) {
-    // 网络异常时用本地缓存兜底
-    console.log("在线表格加载失败，使用本地缓存");
+    console.warn("[系统] Supabase 读取失败:", e.message);
+    // 降级到本地缓存
     return JSON.parse(localStorage.getItem("users") || "{}");
   }
 }
 
-// ========== 注册功能（注册后手动同步到表格） ==========
+// ========== 注册功能 ==========
 async function userRegister() {
-  let user = document.getElementById("regUser").value.trim();
-  let pwd = document.getElementById("regPwd").value.trim();
-  let email = document.getElementById("regEmail").value.trim();
-  
+  const user = document.getElementById("regUser").value.trim();
+  const pwd = document.getElementById("regPwd").value.trim();
+  const email = document.getElementById("regEmail").value.trim();
+  const tip = document.getElementById("regTip");
+
   if (!user || !pwd) {
-    document.getElementById("regTip").innerText = "⚠️ 用户名和密码不能为空";
-    document.getElementById("regTip").style.color = "red";
+    if (tip) { tip.className = "auth-tip error"; tip.textContent = "⚠️ 请输入用户名和密码"; }
     return;
   }
-  
-  let users = await getUsersFromTable();
-  
-  if (users[user]) {
-    document.getElementById("regTip").innerText = "⚠️ 用户名已存在";
-    document.getElementById("regTip").style.color = "red";
+
+  if (user.length < 2) {
+    if (tip) { tip.className = "auth-tip error"; tip.textContent = "⚠️ 用户名至少需要2个字符"; }
     return;
   }
-  
-  // 本地保存注册信息
-  users[user] = {
-    pwd: pwd,
-    email: email || "未填写",
-    vip: "普通用户",
-    expire: ""
-  };
-  localStorage.setItem("users", JSON.stringify(users));
-  
-  // 注册成功提示（关键：告诉你手动更表格）
-  document.getElementById("regTip").innerText = `✅ 注册成功！请把【${user} | ${pwd} | 普通用户 | 无 | ${email}】添加到在线表格`;
-  document.getElementById("regTip").style.color = "green";
-  
-  // 清空输入框
+
+  if (pwd.length < 4) {
+    if (tip) { tip.className = "auth-tip error"; tip.textContent = "⚠️ 密码至少需要4个字符"; }
+    return;
+  }
+
+  // 检查用户名是否已存在
+  try {
+    const existing = await SB.getUser(user);
+    if (existing && existing.length > 0) {
+      if (tip) { tip.className = "auth-tip error"; tip.textContent = "⚠️ 用户名已存在，请换一个"; }
+      return;
+    }
+  } catch (e) {
+    console.warn("[注册] 查询失败，尝试本地兜底:", e.message);
+    const cached = JSON.parse(localStorage.getItem("users") || "{}");
+    if (cached[user]) {
+      if (tip) { tip.className = "auth-tip error"; tip.textContent = "⚠️ 用户名已存在，请换一个"; }
+      return;
+    }
+  }
+
+  // 写入 Supabase
+  try {
+    await SB.createUser({
+      username: user,
+      password: pwd,
+      email: email || "",
+      vip: "普通用户",
+      expire: "",
+    });
+  } catch (e) {
+    console.error("[注册] Supabase 写入失败:", e.message);
+    // 按 Supabase 唯一约束错误提示
+    if (e.message?.includes("duplicate") || e.message?.includes("23505")) {
+      if (tip) { tip.className = "auth-tip error"; tip.textContent = "⚠️ 用户名已存在，请换一个"; }
+    } else {
+      if (tip) { tip.className = "auth-tip error"; tip.textContent = "❌ 注册失败，请稍后重试"; }
+    }
+    return;
+  }
+
+  // 同步到 localStorage 缓存
+  const cached = JSON.parse(localStorage.getItem("users") || "{}");
+  cached[user] = { pwd, email: email || "", vip: "普通用户", expire: "" };
+  localStorage.setItem("users", JSON.stringify(cached));
+
+  if (tip) {
+    tip.className = "auth-tip success";
+    tip.innerHTML = "✅ 注册成功！账号已激活，<a href='login.html' style='color:var(--secondary);font-weight:600;'>立即登录</a>";
+  }
+
   document.getElementById("regUser").value = "";
   document.getElementById("regPwd").value = "";
-  document.getElementById("regEmail").value = "";
 }
 
-// ========== 登录功能（跨电脑可用） ==========
+// ========== 登录功能 ==========
 async function userLogin() {
-  let user = document.getElementById("loginUser").value.trim();
-  let pwd = document.getElementById("loginPwd").value.trim();
-  
+  const user = document.getElementById("loginUser").value.trim();
+  const pwd = document.getElementById("loginPwd").value.trim();
+  const tip = document.getElementById("loginTip");
+
   if (!user || !pwd) {
-    document.getElementById("loginTip").innerText = "⚠️ 用户名和密码不能为空";
-    document.getElementById("loginTip").style.color = "red";
+    if (tip) { tip.className = "auth-tip error"; tip.textContent = "⚠️ 请输入用户名和密码"; }
     return;
   }
-  
-  // 读取在线表格的用户数据
-  let users = await getUsersFromTable();
-  
-  if (!users[user]) {
-    document.getElementById("loginTip").innerText = "⚠️ 用户名不存在（请检查在线表格）";
-    document.getElementById("loginTip").style.color = "red";
+
+  // 从 Supabase 查询用户
+  let userData = null;
+  try {
+    const result = await SB.getUser(user);
+    if (result && result.length > 0) {
+      userData = result[0];
+    }
+  } catch (e) {
+    console.warn("[登录] Supabase 查询失败:", e.message);
+    // 降级：尝试本地缓存
+    const cached = JSON.parse(localStorage.getItem("users") || "{}");
+    if (cached[user]) {
+      userData = { username: user, password: cached[user].pwd, vip: cached[user].vip, expire: cached[user].expire };
+    }
+  }
+
+  if (!userData) {
+    if (tip) { tip.className = "auth-tip error"; tip.textContent = "❌ 用户不存在，请检查用户名或先注册"; }
     return;
   }
-  if (users[user].pwd !== pwd) {
-    document.getElementById("loginTip").innerText = "⚠️ 密码错误";
-    document.getElementById("loginTip").style.color = "red";
+
+  if (userData.password !== pwd) {
+    if (tip) { tip.className = "auth-tip error"; tip.textContent = "❌ 密码错误，请重试"; }
     return;
   }
-  
-  // 登录成功
+
   localStorage.setItem("currentUser", user);
-  document.getElementById("loginTip").innerText = "✅ 登录成功！正在跳转";
-  document.getElementById("loginTip").style.color = "green";
-  
-  setTimeout(() => {
-    location.href = "/xiaobin-physics.github.io/experiments.html";
-  }, 1000);
+  location.href = "experiments.html";
 }
 
-// ========== 获取当前用户 ==========
+// ========== 支付验证逻辑 ==========
+async function simulatePaySuccess(user, type, code) {
+  const tip = document.getElementById('payTip');
+  console.log(`[支付] 开始验证。用户: ${user}, 套餐: ${type}, 码: ${code}`);
+
+  // 验证激活码
+  let userData = null;
+  try {
+    const result = await SB.getUser(user);
+    if (result && result.length > 0) userData = result[0];
+  } catch (e) {
+    console.warn("[支付] Supabase 查询失败:", e.message);
+  }
+
+  if (!userData) {
+    alert(`❌ 未找到用户 [${user}]，请确认已注册`);
+    return false;
+  }
+
+  const tableCode = (userData.authCode || "").toString().trim();
+  const inputCode = code.toString().trim();
+
+  console.log(`[验证] 云端码: "${tableCode}", 输入码: "${inputCode}"`);
+
+  if (!tableCode || tableCode !== inputCode) {
+    alert(`❌ 激活失败！\n\n您的用户名: ${user}\n您输入的码: ${inputCode}\n系统记录码: ${tableCode || "(空)"}\n\n请确认已支付且管理员已填写正确的激活码。`);
+    return false;
+  }
+
+  // 计算到期日期
+  let expireDate = "";
+  const now = new Date();
+  if (type === "月度VIP") {
+    now.setDate(now.getDate() + 30);
+    expireDate = now.toISOString().split('T')[0];
+  } else if (type === "年度VIP") {
+    now.setDate(now.getDate() + 365);
+    expireDate = now.toISOString().split('T')[0];
+  } else {
+    expireDate = "永久";
+  }
+
+  // 更新 Supabase
+  try {
+    await SB.updateUser(user, { vip: type, expire: expireDate });
+  } catch (e) {
+    console.error("[支付] 更新失败:", e.message);
+    alert("❌ 激活更新失败，请重试");
+    return false;
+  }
+
+  // 同步本地缓存
+  const cached = JSON.parse(localStorage.getItem("users") || "{}");
+  if (cached[user]) {
+    cached[user].vip = type;
+    cached[user].expire = expireDate;
+    localStorage.setItem("users", JSON.stringify(cached));
+  }
+  localStorage.setItem("currentUser", user);
+
+  return true;
+}
+
+// ========== 头像生成 ==========
+function generateAvatar(name, size = 40) {
+  const c = document.createElement('canvas');
+  c.width = size; c.height = size;
+  const ctx = c.getContext('2d');
+
+  const colors = [
+    ['#3b82f6','#1d4ed8'], ['#8b5cf6','#6d28d9'], ['#06b6d4','#0891b2'],
+    ['#22c55e','#16a34a'], ['#f59e0b','#d97706'], ['#ef4444','#dc2626'],
+    ['#ec4899','#db2777'], ['#14b8a6','#0d9488'],
+  ];
+
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
+  const [bg, bgDark] = colors[Math.abs(hash) % colors.length];
+
+  const grad = ctx.createLinearGradient(0, 0, size, size);
+  grad.addColorStop(0, bg); grad.addColorStop(1, bgDark);
+  ctx.beginPath(); ctx.arc(size/2, size/2, size/2, 0, Math.PI * 2);
+  ctx.fillStyle = grad; ctx.fill();
+
+  ctx.fillStyle = 'white';
+  ctx.font = `bold ${size * 0.46}px -apple-system,sans-serif`;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(name.charAt(0).toUpperCase(), size/2, size/2 + 1);
+
+  return c.toDataURL();
+}
+
+// ========== 辅助功能 ==========
 async function getCurrentUser() {
   let name = localStorage.getItem("currentUser");
   if (!name) return null;
@@ -122,91 +238,102 @@ async function getCurrentUser() {
   return users[name] || null;
 }
 
-// ========== 检查VIP权限 ==========
 async function checkVip(lab) {
   let user = await getCurrentUser();
-  if (!user) {
-    alert("请先登录！");
-    location.href = "/xiaobin-physics.github.io/login.html";
-    return;
-  }
-  if (user.vip === "普通用户") {
-    alert("此实验为VIP专享，请开通VIP后联系管理员");
-    location.href = "/xiaobin-physics.github.io/vip.html";
-    return;
-  }
-  window.open("/xiaobin-physics.github.io/" + lab, "_blank");
+  if (!user) { alert("请先登录！"); location.href = "login.html"; return; }
+  const now = new Date();
+  const isVip = user.vip && user.vip !== "普通用户";
+  const isExpired = isVip && user.expire !== "永久" && now > new Date(user.expire);
+  if (!isVip || isExpired) { alert("⚠️ VIP 权限不足或已过期，请开通"); location.href = "vip.html"; return; }
+  window.open(lab, "_blank");
 }
 
-// ========== 开通VIP（手动更新表格） ==========
-async function setUserVip() {
-  let user = document.getElementById("adminUser").value.trim();
-  let type = document.getElementById("vipType").value;
-  
-  if (!user) {
-    document.getElementById("adminTip").innerText = "⚠️ 请输入用户名";
-    document.getElementById("adminTip").style.color = "red";
-    return;
-  }
-  
-  let users = await getUsersFromTable();
-  
-  if (!users[user]) {
-    document.getElementById("adminTip").innerText = "⚠️ 用户不存在";
-    document.getElementById("adminTip").style.color = "red";
-    return;
-  }
-  
-  // 提示手动更新表格
-  const expire = type === "月度VIP" ? "30天" : type === "年度VIP" ? "365天" : "永久";
-  document.getElementById("adminTip").innerText = `✅ 请把表格中【${user}】的VIP类型改为【${type}】，有效期改为【${expire}】`;
-  document.getElementById("adminTip").style.color = "green";
-  
-  // 本地更新，立即可用
-  users[user].vip = type;
-  users[user].expire = expire;
-  localStorage.setItem("users", JSON.stringify(users));
-  
-  document.getElementById("adminUser").value = "";
+function showGrade(btn, gradeId) {
+  document.querySelectorAll('.grade-content').forEach(c => c.classList.remove('active'));
+  document.getElementById(gradeId).classList.add('active');
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  document.querySelectorAll('.chapter').forEach(ch => ch.classList.remove('active'));
 }
 
-// ========== 辅助功能 ==========
-function openLab(lab) {
-  window.open("/xiaobin-physics.github.io/" + lab, "_blank");
+function toggleChapter(header) {
+  const chapter = header.parentElement;
+  const isActive = chapter.classList.contains('active');
+  document.querySelectorAll('.chapter').forEach(ch => ch.classList.remove('active'));
+  if (!isActive) chapter.classList.add('active');
 }
+
+function toggleSection(header) {
+  const section = header.parentElement;
+  const isActive = section.classList.contains('active');
+  section.parentElement.querySelectorAll('.section-item').forEach(s => s.classList.remove('active'));
+  if (!isActive) section.classList.add('active');
+}
+
+function openLab(lab) { window.open(lab, "_blank"); }
 
 function buyVip(type) {
   let user = localStorage.getItem("currentUser");
-  if (!user) {
-    alert("请先登录");
-    location.href = "/xiaobin-physics.github.io/login.html";
-    return;
+  if (!user) { alert("请先登录"); location.href = "login.html"; return; }
+  location.href = `pay.html?type=${encodeURIComponent(type)}&user=${encodeURIComponent(user)}`;
+}
+
+function logout() { localStorage.removeItem("currentUser"); location.href = "index.html"; }
+
+async function toggleProfile() {
+  const uName = localStorage.getItem("currentUser");
+  const users = await getUsersFromTable();
+  const user = users[uName];
+  if (!user) return;
+  let modal = document.getElementById('profileModal');
+  if (!modal) {
+    modal = document.createElement('div'); modal.id = 'profileModal'; modal.className = 'profile-modal';
+    modal.onclick = (e) => { if(e.target === modal) modal.style.display = 'none'; };
+    document.body.appendChild(modal);
   }
-  document.getElementById("orderRemark").innerText = user + " - " + type;
-  document.getElementById("payInfo").style.display = "block";
+  const isVip = user.vip && user.vip !== "普通用户";
+  const isExpired = isVip && user.expire !== "永久" && new Date() > new Date(user.expire);
+  const avatarDataUrl = generateAvatar(uName, 80);
+  modal.innerHTML = `<div class="profile-card"><div class="profile-avatar" style="background:none;box-shadow:none;"><img src="${avatarDataUrl}" style="width:80px;height:80px;border-radius:50%;box-shadow:0 0 20px rgba(59,130,246,0.4);"></div><h2>${uName}</h2><p style="color:${isExpired?'#ef4444':(isVip?'#fbbf24':'#94a3b8')};font-weight:bold;">${isExpired?'VIP已到期':(isVip?user.vip:'普通用户')}</p><div class="profile-info-row"><span>账号类型</span><span>${isVip?'VIP会员':'普通会员'}</span></div><div class="profile-info-row"><span>到期时间</span><span>${user.expire||'无'}</span></div><button class="btn" style="margin-top:2.5rem;width:100%;" onclick="document.getElementById('profileModal').style.display='none'">关闭</button></div>`;
+  modal.style.display = 'flex';
 }
 
-function logout() {
-  localStorage.removeItem("currentUser");
-  alert("已退出登录！");
-  location.href = "/xiaobin-physics.github.io/index.html";
-}
-
-// ========== 页面加载 ==========
 window.onload = async function() {
-  let u = localStorage.getItem("currentUser");
-  if (u && document.getElementById("userInfo")) {
-    document.getElementById("userInfo").innerText = "欢迎，" + u;
+  initParticles();
+  const users = await getUsersFromTable();
+  const uName = localStorage.getItem("currentUser");
+  const user = uName ? users[uName] : null;
+  if (user) {
     let nav = document.querySelector(".nav");
     if (nav) {
-      nav.innerHTML = `
-        <a href="/xiaobin-physics.github.io/index.html">首页</a>
-        <a href="/xiaobin-physics.github.io/experiments.html">实验列表</a>
-        <a href="/xiaobin-physics.github.io/vip.html">开通VIP</a>
-        <a href="javascript:logout()">退出登录</a>
-      `;
+      const isVip = user.vip && user.vip !== "普通用户";
+      const isExpired = isVip && user.expire !== "永久" && new Date() > new Date(user.expire);
+      let vipBadge = isVip ? (isExpired ? `<span style="background:#ef4444;color:white;padding:2px 8px;border-radius:4px;font-size:0.7rem;margin-right:8px;">VIP已到期</span>` : `<span style="background:linear-gradient(135deg,#fbbf24,#d97706);color:white;padding:2px 8px;border-radius:4px;font-size:0.7rem;font-weight:bold;margin-right:8px;box-shadow:0 0 10px rgba(251,191,36,0.5);">💎 VIP</span>`) : `<span style="background:#475569;color:white;padding:2px 8px;border-radius:4px;font-size:0.7rem;margin-right:8px;">普通用户</span>`;
+      const avatarDataUrl = generateAvatar(uName);
+      nav.innerHTML = `<a href="index.html">首页</a><a href="experiments.html">实验列表</a><a href="vip.html">开通VIP</a><div style="display:inline-flex;align-items:center;margin-left:2rem;padding:0.25rem 1rem 0.25rem 0.25rem;background:rgba(255,255,255,0.05);border-radius:50px;border:1px solid var(--glass-border);cursor:pointer;" onclick="toggleProfile()"><img src="${avatarDataUrl}" style="width:30px;height:30px;border-radius:50%;margin-right:8px;flex-shrink:0;box-shadow:0 0 8px rgba(59,130,246,0.3);">${vipBadge}<div style="display:flex;flex-direction:column;line-height:1.2;"><span style="color:var(--text-main);font-size:0.9rem;font-weight:600;">${uName}</span></div><a href="javascript:logout()" style="color:var(--accent);margin-left:1.2rem;font-size:0.8rem;text-decoration:none;opacity:0.7;" onclick="event.stopPropagation()">[退出]</a></div>`;
+      if (isVip && !isExpired) {
+        document.querySelectorAll('.card.lock').forEach(card => {
+          card.classList.remove('lock');
+          const tag = card.querySelector('.tag.vip');
+          if (tag) { tag.innerText = "已解锁"; tag.style.background = "rgba(34, 197, 94, 0.2)"; tag.style.color = "#4ade80"; }
+        });
+      }
     }
   }
-  // 提前加载用户数据
-  await getUsersFromTable();
 };
+
+function initParticles() {
+  const canvas = document.createElement('canvas'); canvas.id = 'particle-canvas'; canvas.style.position = 'fixed'; canvas.style.top = '0'; canvas.style.left = '0'; canvas.style.width = '100%'; canvas.style.height = '100%'; canvas.style.zIndex = '-2'; canvas.style.pointerEvents = 'none'; document.body.appendChild(canvas);
+  const ctx = canvas.getContext('2d'); let particles = [];
+  function resize() { canvas.width = window.innerWidth; canvas.height = window.innerHeight; }
+  window.addEventListener('resize', resize); resize();
+  class Particle {
+    constructor() { this.reset(); }
+    reset() { this.x = Math.random() * canvas.width; this.y = Math.random() * canvas.height; this.vx = (Math.random() - 0.5) * 0.5; this.vy = (Math.random() - 0.5) * 0.5; this.size = Math.random() * 2; this.alpha = Math.random() * 0.5; }
+    update() { this.x += this.vx; this.y += this.vy; if (this.x < 0 || this.x > canvas.width || this.y < 0 || this.y > canvas.height) this.reset(); }
+    draw() { ctx.fillStyle = `rgba(59, 130, 246, ${this.alpha})`; ctx.beginPath(); ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2); ctx.fill(); }
+  }
+  for (let i = 0; i < 100; i++) particles.push(new Particle());
+  function animate() { ctx.clearRect(0, 0, canvas.width, canvas.height); particles.forEach(p => { p.update(); p.draw(); }); requestAnimationFrame(animate); }
+  animate();
+}
