@@ -65,6 +65,27 @@
     .back-link:hover { color:var(--primary); }
     .inline-flex { display:flex; gap:0.5rem; }
     .inline-flex .auth-btn { flex:1; }
+
+    /* 登录遮罩 */
+    .admin-overlay {
+      position:fixed; inset:0; z-index:9999;
+      display:flex; align-items:center; justify-content:center;
+      background:var(--bg-dark); backdrop-filter:blur(10px);
+    }
+    .admin-overlay .auth-card { animation:cardIn 0.4s ease-out; }
+    .admin-overlay.hidden { display:none; }
+    .admin-lock-icon {
+      width:64px; height:64px; margin:0 auto 1rem;
+      background:linear-gradient(135deg,#ef4444,#f59e0b); border-radius:50%;
+      display:flex; align-items:center; justify-content:center; font-size:1.8rem;
+      box-shadow:0 8px 24px rgba(239,68,68,0.3);
+    }
+    .admin-footer { display:flex; justify-content:space-between; align-items:center; margin-top:0.5rem; font-size:0.75rem; }
+    .admin-footer a { color:var(--text-muted); cursor:pointer; text-decoration:none; }
+    .admin-footer a:hover { color:var(--primary); }
+    .pwd-hint { text-align:center; font-size:0.8rem; margin-top:0.5rem; min-height:1.5rem; }
+    .pwd-hint.error { color:#ef4444; }
+    .pwd-hint.success { color:#4ade80; }
   </style>
 </head>
 <body>
@@ -162,13 +183,111 @@
         <div class="admin-tip" id="queryTip" style="text-align:left;font-size:0.8rem;"></div>
       </div>
 
+      <div class="admin-footer">
+        <a onclick="changeAdminPwd()">🔑 修改密码</a>
+        <a onclick="adminLogout()">🚪 退出登录</a>
+      </div>
       <a href="index.html" class="back-link">← 返回首页</a>
+    </div>
+  </div>
+
+  <!-- 管理员登录遮罩 -->
+  <div class="admin-overlay" id="adminOverlay">
+    <div class="auth-card" style="text-align:center;position:relative;">
+      <div class="admin-lock-icon">🔒</div>
+      <h2 style="font-size:1.3rem;margin-bottom:0.5rem;">管理员验证</h2>
+      <p style="color:var(--text-muted);font-size:0.85rem;margin-bottom:1.5rem;">请输入后台管理密码</p>
+      <input type="password" id="adminPwd" placeholder="输入密码"
+        style="width:100%;padding:0.85rem 1rem;background:rgba(0,0,0,0.3);border:1px solid var(--glass-border);border-radius:12px;color:var(--text-main);font-size:0.9rem;outline:none;box-sizing:border-box;"
+        onkeydown="if(event.key==='Enter')adminLogin()">
+      <button class="auth-btn" onclick="adminLogin()" style="margin-top:0.75rem;">验证身份</button>
+      <div class="pwd-hint" id="adminPwdHint"></div>
     </div>
   </div>
 
   <script src="supabase.js"></script>
   <script src="script.js"></script>
   <script>
+    // ========== 管理员密码（默认 admin123，可在后台底部修改） ==========
+    const ADMIN_PWD_KEY = 'admin_pwd_hash';
+    const AUTH_SESSION_KEY = 'admin_authed';
+
+    function getAdminPwd() {
+      return localStorage.getItem(ADMIN_PWD_KEY) || 'admin123';
+    }
+
+    function setAdminPwd(newPwd) {
+      localStorage.setItem(ADMIN_PWD_KEY, newPwd);
+    }
+
+    function checkAdminAuth() {
+      return sessionStorage.getItem(AUTH_SESSION_KEY) === 'true';
+    }
+
+    function adminLogin() {
+      const input = document.getElementById('adminPwd').value;
+      const hint = document.getElementById('adminPwdHint');
+      if (!input) {
+        hint.className = 'pwd-hint error';
+        hint.textContent = '⚠️ 请输入密码';
+        return;
+      }
+
+      // 如果当前是修改密码模式，直接设置为新密码
+      if (window._changingPwd) {
+        setAdminPwd(input);
+        window._changingPwd = false;
+        hint.className = 'pwd-hint success';
+        hint.textContent = '✅ 密码已修改';
+        sessionStorage.setItem(AUTH_SESSION_KEY, 'true');
+        setTimeout(() => {
+          document.getElementById('adminOverlay').classList.add('hidden');
+          hint.textContent = '';
+        }, 800);
+        return;
+      }
+
+      if (input === getAdminPwd()) {
+        sessionStorage.setItem(AUTH_SESSION_KEY, 'true');
+        document.getElementById('adminOverlay').classList.add('hidden');
+        hint.className = 'pwd-hint';
+        hint.textContent = '';
+        document.getElementById('adminPwd').value = '';
+      } else {
+        hint.className = 'pwd-hint error';
+        hint.textContent = '❌ 密码错误';
+      }
+    }
+
+    function adminLogout() {
+      sessionStorage.removeItem(AUTH_SESSION_KEY);
+      location.reload();
+    }
+
+    function changeAdminPwd() {
+      const overlay = document.getElementById('adminOverlay');
+      overlay.classList.remove('hidden');
+      const input = document.getElementById('adminPwd');
+      input.value = '';
+      input.placeholder = '输入新密码';
+      input.focus();
+      sessionStorage.removeItem(AUTH_SESSION_KEY);
+      window._changingPwd = true;
+      const hint = document.getElementById('adminPwdHint');
+      hint.className = 'pwd-hint';
+      hint.innerHTML = '💡 输入新密码后点"验证身份"即可修改';
+    }
+
+    // 页面加载时检查登录状态
+    document.addEventListener('DOMContentLoaded', () => {
+      if (!checkAdminAuth()) {
+        document.getElementById('adminOverlay').classList.remove('hidden');
+        document.getElementById('adminPwd').focus();
+      } else {
+        document.getElementById('adminOverlay').classList.add('hidden');
+      }
+    });
+
     function switchTab(btn, id) {
       document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
       document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
