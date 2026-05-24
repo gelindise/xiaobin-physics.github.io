@@ -348,6 +348,10 @@ window.onload = async function() {
           if (tag) { tag.innerText = "已解锁"; tag.style.background = "rgba(34, 197, 94, 0.2)"; tag.style.color = "#4ade80"; }
         });
       }
+      // 更新在线状态（静默，不阻塞页面）
+      if (uName) {
+        SB.updateUser(uName, { last_seen: new Date().toISOString() }).catch(() => {});
+      }
     }
   }
 };
