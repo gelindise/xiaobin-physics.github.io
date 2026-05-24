@@ -51,4 +51,29 @@ const SB = {
       extraHeaders: { Prefer: 'return=representation' },
     });
   },
+
+  // ========== 激活码 ==========
+  getActivationCode(code) {
+    return SB.query('activation_codes', { select: '*', filter: { col: 'code', val: `eq.${code}` } });
+  },
+
+  getAllActivationCodes(filterStatus) {
+    const opts = { select: '*', order: 'created_at.desc' };
+    if (filterStatus && filterStatus !== 'all') {
+      opts.filter = { col: 'status', val: `eq.${filterStatus}` };
+    }
+    return SB.query('activation_codes', opts);
+  },
+
+  createActivationCodes(codes) {
+    return SB.query('activation_codes', { method: 'POST', body: codes });
+  },
+
+  updateActivationCode(id, data) {
+    return SB.query('activation_codes', {
+      method: 'PATCH',
+      filter: { col: 'id', val: `eq.${id}` },
+      body: data,
+    });
+  },
 };

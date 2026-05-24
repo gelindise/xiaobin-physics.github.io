@@ -140,62 +140,92 @@ async function userLogin() {
 
 // ========== 支付验证逻辑 ==========
 async function simulatePaySuccess(user, type, code) {
-  const tip = document.getElementById('payTip');
-  console.log(`[支付] 开始验证。用户: ${user}, 套餐: ${type}, 码: ${code}`);
+  console.log(`[激活] 开始验证。用户: ${user}, 套餐: ${type}, 码: ${code}`);
 
-  // 验证激活码
+  // 规范化：去空格、转大写、去分隔符（支持带 - 或不带 - 输入）
+  const cleanCode = code.toString().trim().toUpperCase().replace(/[\s-]/g, '');
+
+  // 方案一：通过 activation_codes 表验证（推荐）
+  let codeRecord = null;
+  try {
+    const result = await SB.getActivationCode(cleanCode);
+    if (result && result.length > 0) codeRecord = result[0];
+  } catch (e) {
+    console.warn("[激活] activation_codes 表不可用:", e.message);
+  }
+
+  if (codeRecord) {
+    // 有激活码记录
+    if (codeRecord.status !== 'unused') {
+      alert('❌ 此激活码已被使用（' + (codeRecord.used_by || '?') + '）');
+      return false;
+    }
+    if (codeRecord.vip_type !== type) {
+      alert('❌ 此激活码是"' + codeRecord.vip_type + '"专用，与您选择的"' + type + '"不匹配');
+      return false;
+    }
+
+    // 计算到期日期
+    let expireDate = "";
+    const now = new Date();
+    if (type === "月度VIP") { now.setDate(now.getDate() + 30); expireDate = now.toISOString().split('T')[0]; }
+    else if (type === "年度VIP") { now.setDate(now.getDate() + 365); expireDate = now.toISOString().split('T')[0]; }
+    else { expireDate = "永久"; }
+
+    // 先更新用户 VIP
+    await SB.updateUser(user, { vip: type, expire: expireDate });
+    // 再标记激活码已用
+    await SB.updateActivationCode(codeRecord.id, { status: 'used', used_by: user, used_at: new Date().toISOString() });
+
+    // 同步本地缓存
+    const cached = JSON.parse(localStorage.getItem("users") || "{}");
+    if (cached[user]) { cached[user].vip = type; cached[user].expire = expireDate; localStorage.setItem("users", JSON.stringify(cached)); }
+    localStorage.setItem("currentUser", user);
+
+    console.log(`[激活] SUCCESS: ${user} → ${type} (${expireDate}) 码: ${code}`);
+    return true;
+  }
+
+  // 方案二：回退到旧版 per-user authCode（兼容旧数据）
+  console.log("[激活] activation_codes 未匹配，尝试旧版 authCode...");
   let userData = null;
   try {
     const result = await SB.getUser(user);
     if (result && result.length > 0) userData = result[0];
   } catch (e) {
-    console.warn("[支付] Supabase 查询失败:", e.message);
+    console.warn("[激活] Supabase 查询失败:", e.message);
   }
 
   if (!userData) {
-    alert(`❌ 未找到用户 [${user}]，请确认已注册`);
+    alert('❌ 未找到用户 [' + user + ']，请确认已注册');
     return false;
   }
 
   const tableCode = (userData.authCode || "").toString().trim();
-  const inputCode = code.toString().trim();
-
-  console.log(`[验证] 云端码: "${tableCode}", 输入码: "${inputCode}"`);
+  const inputCode = cleanCode;
 
   if (!tableCode || tableCode !== inputCode) {
-    alert(`❌ 激活失败！\n\n您的用户名: ${user}\n您输入的码: ${inputCode}\n系统记录码: ${tableCode || "(空)"}\n\n请确认已支付且管理员已填写正确的激活码。`);
+    alert('❌ 激活失败！您输入的激活码无效。\n\n提示：\n1. 请确认已付款\n2. 请检查激活码是否输入正确（注意大小写）\n3. 联系管理员获取有效激活码');
     return false;
   }
 
   // 计算到期日期
   let expireDate = "";
   const now = new Date();
-  if (type === "月度VIP") {
-    now.setDate(now.getDate() + 30);
-    expireDate = now.toISOString().split('T')[0];
-  } else if (type === "年度VIP") {
-    now.setDate(now.getDate() + 365);
-    expireDate = now.toISOString().split('T')[0];
-  } else {
-    expireDate = "永久";
-  }
+  if (type === "月度VIP") { now.setDate(now.getDate() + 30); expireDate = now.toISOString().split('T')[0]; }
+  else if (type === "年度VIP") { now.setDate(now.getDate() + 365); expireDate = now.toISOString().split('T')[0]; }
+  else { expireDate = "永久"; }
 
-  // 更新 Supabase
   try {
     await SB.updateUser(user, { vip: type, expire: expireDate });
   } catch (e) {
-    console.error("[支付] 更新失败:", e.message);
-    alert("❌ 激活更新失败，请重试");
+    console.error("[激活] 更新失败:", e.message);
+    alert('❌ 激活更新失败，请重试');
     return false;
   }
 
-  // 同步本地缓存
   const cached = JSON.parse(localStorage.getItem("users") || "{}");
-  if (cached[user]) {
-    cached[user].vip = type;
-    cached[user].expire = expireDate;
-    localStorage.setItem("users", JSON.stringify(cached));
-  }
+  if (cached[user]) { cached[user].vip = type; cached[user].expire = expireDate; localStorage.setItem("users", JSON.stringify(cached)); }
   localStorage.setItem("currentUser", user);
 
   return true;

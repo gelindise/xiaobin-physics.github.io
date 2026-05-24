@@ -79,6 +79,7 @@
       <div class="tabs">
         <button class="tab-btn active" onclick="switchTab(this,'tabVip')">🎫 VIP 授权</button>
         <button class="tab-btn" onclick="switchTab(this,'tabCode')">🔑 激活码</button>
+        <button class="tab-btn" onclick="switchTab(this,'tabBatch')">📦 批量生成</button>
         <button class="tab-btn" onclick="switchTab(this,'tabInfo')">📋 用户查询</button>
       </div>
 
@@ -115,6 +116,40 @@
           <button class="auth-btn green" onclick="clearAuthCode()">清除激活码</button>
         </div>
         <div class="admin-tip" id="codeTip"></div>
+      </div>
+
+      <!-- 批量生成激活码 -->
+      <div class="tab-content" id="tabBatch">
+        <div class="input-group">
+          <span class="input-icon">💎</span>
+          <select id="batchVipType">
+            <option value="月度VIP">月度VIP (30天)</option>
+            <option value="年度VIP">年度VIP (365天)</option>
+            <option value="终身VIP">终身VIP (永久)</option>
+          </select>
+        </div>
+        <div class="input-group">
+          <span class="input-icon">🔢</span>
+          <input type="number" id="batchQty" value="5" min="1" max="50" placeholder="生成数量">
+        </div>
+        <button class="auth-btn" onclick="generateCodes()">🎲 批量生成激活码</button>
+        <div id="batchResult" style="display:none;margin-top:1rem;">
+          <textarea id="codeOutput" readonly style="width:100%;padding:0.6rem;border-radius:8px;background:rgba(0,0,0,0.3);border:1px solid var(--glass-border);color:var(--secondary);font-size:0.85rem;font-family:monospace;resize:none;height:80px;"></textarea>
+          <button class="auth-btn green" onclick="copyCodes()" style="margin-top:0.3rem;padding:0.4rem;font-size:0.8rem;">📋 复制激活码</button>
+        </div>
+
+        <hr style="border-color:var(--glass-border);margin:1.5rem 0;">
+
+        <div style="display:flex;gap:0.5rem;margin-bottom:0.5rem;">
+          <select id="codeFilter" style="flex:1;padding:0.6rem;border-radius:10px;background:rgba(0,0,0,0.3);border:1px solid var(--glass-border);color:var(--text-main);">
+            <option value="all">全部状态</option>
+            <option value="unused">未使用</option>
+            <option value="used">已使用</option>
+          </select>
+          <button class="auth-btn blue" onclick="loadCodes()" style="width:auto;padding:0.6rem 1rem;">刷新</button>
+        </div>
+        <div id="codeList" style="max-height:250px;overflow-y:auto;font-size:0.8rem;border:1px solid var(--glass-border);border-radius:8px;padding:0.5rem;"></div>
+        <div class="admin-tip" id="batchTip"></div>
       </div>
 
       <!-- 用户查询 -->
@@ -217,6 +252,111 @@
         tip.className = 'admin-tip error'; tip.textContent = '❌ ' + e.message;
       }
     }
+
+    // ========== 批量激活码管理 ==========
+    const CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // 无 O/0/I/1
+    function genCode() {
+      let c = '';
+      for (let i = 0; i < 9; i++) c += CHARS[Math.floor(Math.random() * CHARS.length)];
+      return c; // 纯 9 位，数据库只存字母数字
+    }
+    function formatCode(code) {
+      return code.substring(0,3) + '-' + code.substring(3,6) + '-' + code.substring(6,9);
+    }
+
+    async function generateCodes() {
+      const type = document.getElementById('batchVipType').value;
+      const qty = parseInt(document.getElementById('batchQty').value) || 5;
+      const tip = document.getElementById('batchTip');
+      const result = document.getElementById('batchResult');
+
+      tip.className = 'admin-tip'; tip.textContent = '⏳ 正在生成...';
+
+      try {
+        // 获取已存在的所有激活码
+        const existing = await SB.getAllActivationCodes();
+        const existingSet = new Set((existing || []).map(r => r.code));
+
+        // 生成不重复的激活码
+        const codes = [];
+        let attempts = 0;
+        while (codes.length < qty && attempts < qty * 30) {
+          const code = genCode();
+          if (!existingSet.has(code) && !codes.find(c => c.code === code)) {
+            codes.push({ code, vip_type: type });
+          }
+          attempts++;
+        }
+
+        if (codes.length === 0) {
+          tip.className = 'admin-tip error';
+          tip.textContent = '❌ 无法生成足够的唯一激活码，请重试';
+          return;
+        }
+
+        await SB.createActivationCodes(codes);
+
+        // 显示结果
+        const output = document.getElementById('codeOutput');
+        output.value = codes.map(c => formatCode(c.code)).join('\n');
+        result.style.display = 'block';
+        tip.className = 'admin-tip success';
+        tip.textContent = '✅ 已生成 ' + codes.length + ' 个 ' + type + ' 激活码';
+
+        loadCodes();
+      } catch (e) {
+        tip.className = 'admin-tip error';
+        tip.textContent = '❌ 生成失败：' + e.message;
+        if (e.message.includes('relation') && e.message.includes('activation_codes')) {
+          tip.innerHTML = '❌ activation_codes 表不存在，请先在 Supabase SQL Editor 中执行建表脚本 → <code>api/activation_codes.sql</code>';
+        }
+      }
+    }
+
+    function copyCodes() {
+      const output = document.getElementById('codeOutput');
+      output.select();
+      navigator.clipboard.writeText(output.value).then(() => {
+        const tip = document.getElementById('batchTip');
+        tip.className = 'admin-tip success';
+        tip.textContent = '✅ 已复制 ' + output.value.split('\n').length + ' 个激活码到剪贴板';
+      }).catch(() => {
+        document.execCommand('copy');
+      });
+    }
+
+    async function loadCodes() {
+      const filter = document.getElementById('codeFilter').value;
+      const list = document.getElementById('codeList');
+      try {
+        const codes = await SB.getAllActivationCodes(filter);
+        if (!codes || codes.length === 0) {
+          list.innerHTML = '<div style="text-align:center;color:var(--text-muted);padding:1rem;">暂无激活码</div>';
+          return;
+        }
+        let html = '';
+        for (const c of codes) {
+          const used = c.status === 'used';
+          html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:0.4rem 0.3rem;border-bottom:1px solid var(--glass-border);">' +
+            '<span style="font-family:monospace;font-weight:600;color:' + (used ? 'var(--text-muted)' : 'var(--secondary)') + ';">' + formatCode(c.code) + '</span>' +
+            '<span style="font-size:0.75rem;color:var(--text-muted);">' +
+              c.vip_type + ' · ' +
+              (used ? ('<span style="color:#ef4444;">已用</span> by ' + (c.used_by||'?')) : '<span style="color:#4ade80;">可用</span>') +
+              ' · ' + new Date(c.created_at).toLocaleDateString() +
+            '</span></div>';
+        }
+        list.innerHTML = html;
+      } catch (e) {
+        list.innerHTML = '<div style="text-align:center;color:#ef4444;padding:1rem;">❌ 加载失败：' + e.message + '</div>';
+      }
+    }
+
+    // 切到批量标签页时自动加载码列表
+    const origSwitch = switchTab;
+    switchTab = function(btn, id) {
+      origSwitch(btn, id);
+      if (id === 'tabBatch') loadCodes();
+    };
   </script>
 </body>
 </html>
