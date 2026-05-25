@@ -6,7 +6,7 @@ const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
 const XUNHU_APPID = process.env.XUNHU_APPID;
 const XUNHU_APPSECRET = process.env.XUNHU_APPSECRET;
 
-const PRICES = { '月度VIP': '10.00', '年度VIP': '50.00', '终身VIP': '98.00' };
+const PRICES = { '月度VIP': '9.90', '年度VIP': '99.00', '终身VIP': '199.00' };
 
 function md5(str) {
   return createHash('md5').update(str).digest('hex');
