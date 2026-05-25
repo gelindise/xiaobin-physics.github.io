@@ -31,9 +31,15 @@ async function userRegister() {
   const pwd = document.getElementById("regPwd").value.trim();
   const email = document.getElementById("regEmail").value.trim();
   const tip = document.getElementById("regTip");
+  const pwd2 = document.getElementById("regPwd2")?.value.trim();
 
   if (!user || !pwd) {
     if (tip) { tip.className = "auth-tip error"; tip.textContent = "⚠️ 请输入用户名和密码"; }
+    return;
+  }
+
+  if (pwd !== pwd2) {
+    if (tip) { tip.className = "auth-tip error"; tip.textContent = "⚠️ 两次输入的密码不一致"; }
     return;
   }
 
