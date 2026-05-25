@@ -31,7 +31,8 @@ async function userRegister() {
   const pwd = document.getElementById("regPwd").value.trim();
   const email = document.getElementById("regEmail").value.trim();
   const tip = document.getElementById("regTip");
-  const pwd2 = document.getElementById("regPwd2")?.value.trim();
+  const pwd2El = document.getElementById("regPwd2");
+  const pwd2 = pwd2El ? pwd2El.value.trim() : "";
 
   if (!user || !pwd) {
     if (tip) { tip.className = "auth-tip error"; tip.textContent = "⚠️ 请输入用户名和密码"; }
