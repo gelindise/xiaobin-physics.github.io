@@ -20,7 +20,7 @@
       border-radius: 12px;
       box-shadow: 0 2px 12px rgba(0,0,0,0.1);
     }
-    #myP5Canvas { touch-action: pinch-zoom; }
+    #myP5Canvas { touch-action: pinch-zoom; display: block; margin: 0 auto; }
     .sim-wrapper {
       max-width: 1100px;
       margin: 60px auto 0;
@@ -51,7 +51,6 @@
       cursor: pointer;
       accent-color: #3b82f6;
     }
-    /* 单选按钮样式 */
     .flexItem .radio-group {
       display: inline-flex;
       align-items: center;
@@ -120,33 +119,26 @@
     }
 
     // ========== 主模拟代码 ==========
-    let radioA, labelA, rangeA, checkA, chalkA;
+    let radioA, checkA, chalkA;
     let barImage, earthImage;
-    let language = 3;
     let needleX = [], needleY = [], needleZ = [];
-    let vectorX = [], vectorY = [], vectorZ = [];
-    // 预计算旋转角度（避免draw中重复计算）
-    let rotAngles = [];
-    let rotZAngles = [];
-    let rotYAngles = [];
-    let rotXAngles = [];
-    let isNorthPole = [];
+    let rotZAngles = [], rotYAngles = [];
     let rotX = -0.3, rotY = 0;
 
     function preload() {
-      var imagePrefix = "images/";
-      barImage = loadImage(imagePrefix + "bar_magnet_texture.png");
-      earthImage = loadImage(imagePrefix + "earth_movements_map.png");
+      barImage = loadImage("images/bar_magnet_texture.png");
+      earthImage = loadImage("images/earth_movements_map.png");
     }
 
     function setup() {
       let container = select("#myContainer");
-      let w = int(min(container.width, (window.innerHeight - 160) / 1));
-      let h = int(1 * w);
+      let w = int(min(container.width, window.innerHeight - 160));
+      let h = w;
       setAttributes("antialias", true);
       myCanvas = createCanvas(w, h, WEBGL);
       myCanvas.parent("myContainer");
       myCanvas.id("myP5Canvas");
+      pixelDensity(1);
 
       // 单选按钮
       radioA = createRadio("radioA");
@@ -159,25 +151,29 @@
       chalkA = select("#chalkA");
       chalkA.html("自动旋转");
 
-      // 生成小磁针位置
+      // 磁极位置（条形磁铁的两个磁极）
       let poleX = [0, 0], poleY = [-200, 200], poleZ = [0, 0];
       let poleSign = [-1, 1];
 
-      // 随机散布的小磁针
-      for (let i = 0; i < 1000; i++) {
-        let p = getPosition(20);
-        needleX.push(p.x);
-        needleY.push(p.y);
-        needleZ.push(p.z);
-      }
-      for (let i = 0; i < 40; i++) {
-        let p = getPosition(5);
-        needleX.push(p.x);
-        needleY.push(p.y + (i < 20 ? 200 : -200));
-        needleZ.push(p.z);
+      // 生成小磁针位置：500个散布 + 40个靠近磁极
+      for (let i = 0; i < 540; i++) {
+        let x, y, z;
+        if (i < 500) {
+          x = random(-500, 500);
+          y = random(-500, 500);
+          z = random(-500, 500);
+        } else {
+          x = random(-80, 80);
+          y = random(-80, 80) + (i < 520 ? 200 : -200);
+          z = random(-80, 80);
+        }
+        if (mag(x, z) > 480) continue;
+        needleX.push(x);
+        needleY.push(y);
+        needleZ.push(z);
       }
 
-      // 计算每个小磁针的磁场方向及旋转角度
+      // 预计算磁场方向
       for (let i = 0; i < needleX.length; i++) {
         let vx = 0, vy = 0, vz = 0;
         for (let j = 0; j < poleX.length; j++) {
@@ -191,115 +187,96 @@
           vy += f * dy;
           vz += f * dz;
         }
-        // 归一化到固定长度
         let m = sqrt(vx*vx + vy*vy + vz*vz);
-        if (m < 0.001) { m = 1; vx = 0; vy = 0; vz = 1; }
-        vectorX[i] = vx / m * 13;
-        vectorY[i] = vy / m * 13;
-        vectorZ[i] = vz / m * 13;
-        // 预计算旋转：将盒子的Z轴转向磁场方向
-        let tx = vectorX[i], ty = vectorY[i], tz = vectorZ[i];
-        let tm = sqrt(tx*tx + ty*ty + tz*tz);
-        if (tm < 0.001) { rotYAngles[i] = 0; rotZAngles[i] = 0; continue; }
-        rotZAngles[i] = atan2(ty, tx);
-        rotYAngles[i] = acos(constrain(tz / tm, -1, 1));
+        if (m < 0.001) { vx = 0; vy = 0; vz = 1; m = 1; }
+        vx /= m; vy /= m; vz /= m;
+        // 计算旋转角：将Z轴转向磁场方向
+        rotZAngles[i] = atan2(vy, vx);
+        rotYAngles[i] = acos(constrain(vz, -1, 1));
       }
     }
 
     function windowResized() {
       let container = select("#myContainer");
-      let w = int(min(container.width, (window.innerHeight - 160) / 1));
-      let h = int(1 * w);
+      let w = int(min(container.width, window.innerHeight - 160));
+      let h = w;
       resizeCanvas(w, h);
     }
 
-    function getPosition(minDist) {
-      let x, y, z;
-      for (let attempt = 0; attempt < 500; attempt++) {
-        if (minDist > 10) {
-          x = random(-500, 500);
-          y = random(-500, 500);
-          z = random(-500, 500);
-        } else {
-          x = random(-100, 100);
-          y = random(-100, 100);
-          z = random(-100, 100);
-        }
-        if (mag(x, z) > 500) continue;
-        let tooClose = false;
-        for (let i = 0; i < needleX.length; i++) {
-          if (dist(x, y, z, needleX[i], needleY[i], needleZ[i]) < minDist) {
-            tooClose = true;
-            break;
-          }
-        }
-        if (!tooClose) break;
-      }
-      return createVector(x, y, z);
-    }
-
     function draw() {
-      if (touches.length > 1) return;
-
+      // 清屏
       if (radioA.value() == "bar") {
-        background(233, 255, 233);
+        background(230, 250, 230);
       } else {
-        background(222);
+        background(30, 30, 50);
       }
 
-      noStroke();
-
+      // 自动旋转
       if (checkA.checked()) rotY += 0.005;
 
+      // 全局场景变换
       push();
       scale(width / 1000);
       rotateX(rotX);
       rotateY(rotY);
 
+      // ==== 绘制磁源 ====
+      noStroke();
       if (radioA.value() == "bar") {
-        // 条形磁铁
+        // 条形磁铁：沿X轴
+        // N极（红色）
         push();
-        rotateZ(-HALF_PI);
+        fill(255, 30, 30);
         translate(-100, 0, 0);
-        fill(255, 0, 0);   // N极（红）
-        box(200, 50, 24);
-        translate(200, 0, 0);
-        fill(0, 0, 255);   // S极（蓝）
-        box(200, 50, 24);
-        // 纹理包裹
-        translate(-100, 0, 13);
-        texture(barImage);
-        plane(400, 50);
-        translate(0, 0, -26);
-        texture(barImage);
-        plane(400, 50);
+        box(180, 46, 22);
+        pop();
+        // S极（蓝色）
+        push();
+        fill(30, 30, 255);
+        translate(100, 0, 0);
+        box(180, 46, 22);
+        pop();
+        // 中间分隔
+        push();
+        fill(180, 180, 180);
+        translate(0, 0, 0);
+        box(12, 46, 22);
         pop();
       }
 
       if (radioA.value() == "earth") {
         // 地球
         push();
-        texture(earthImage);
-        sphere(200);
+        fill(60, 120, 220);
+        sphere(180);
         pop();
+        // 地球上的纹理叠加
+        if (earthImage && earthImage.width > 0) {
+          push();
+          fill(255);
+          texture(earthImage);
+          sphere(185);
+          pop();
+        }
       }
 
-      // 绘制小磁针（N极红色，S极蓝色）
-      noStroke();
+      // ==== 绘制小磁针 ====
       for (let i = 0; i < needleX.length; i++) {
         push();
         translate(needleX[i], needleY[i], needleZ[i]);
         rotateZ(rotZAngles[i] || 0);
         rotateY(rotYAngles[i] || 0);
-        // N极朝外（红色），S极朝内（蓝色）
-        fill(255, 80, 80);
-        translate(0, 0, 5);
-        box(2.5, 2.5, 10);
-        fill(80, 80, 255);
-        translate(0, 0, -10);
-        box(2.5, 2.5, 10);
+        // N极（红色）指向磁场方向
+        fill(255, 40, 40);
+        translate(0, 0, 8);
+        box(5, 5, 16);
+        // S极（蓝色）背向磁场方向
+        fill(40, 40, 255);
+        translate(0, 0, -16);
+        box(5, 5, 16);
         pop();
       }
+
       pop();
     }
 
@@ -307,7 +284,7 @@
     let pmx, pmy, dragged = false;
 
     function touchStarted() {
-      if (contain(mouseX, mouseY, 0, 0, width, height)) {
+      if (mouseX >= 0 && mouseX <= width && mouseY >= 0 && mouseY <= height) {
         pmx = 1000 * mouseX / width;
         pmy = 1000 * mouseY / width;
         dragged = true;
@@ -326,10 +303,6 @@
     }
 
     function touchEnded() { dragged = false; }
-
-    function contain(x, y, x1, y1, w1, h1) {
-      return x > x1 && x < x1 + w1 && y > y1 && y < y1 + h1;
-    }
 
     function mousePressed() { touchStarted(); }
     function mouseDragged() { return touchMoved(); }
