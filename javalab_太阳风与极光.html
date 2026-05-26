@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=10">
+  <title>物理虚拟实验 - 太阳风与极光</title>
+  <link rel="stylesheet" href="style.css">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+      overflow-x: hidden;
+      background: #0a0a1a;
+    }
+    #myContainer { text-align: center; position: relative; }
+    #divFull {
+      background-color: #000;
+      position: relative;
+      font-size: 18px;
+      border-radius: 12px;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.5);
+    }
+    #myP5Canvas { touch-action: pinch-zoom; }
+    .sim-wrapper {
+      max-width: 1100px;
+      margin: 60px auto 0;
+      padding: 10px;
+    }
+    .flexContainer {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      align-items: center;
+      gap: 16px;
+      padding: 12px 16px;
+      background: rgba(15,23,42,0.8);
+      border-radius: 10px;
+      margin-top: 8px;
+      backdrop-filter: blur(10px);
+      border: 1px solid rgba(255,255,255,0.1);
+    }
+    .flexContainer * { color: #e2e8f0 !important; }
+    .flexItem { display: inline-flex; align-items: center; gap: 6px; }
+    .flexItem label {
+      font-size: 14px;
+      font-weight: 600;
+      color: #e2e8f0;
+      white-space: nowrap;
+    }
+    .flexItem input[type="range"] {
+      width: 140px;
+      height: 6px;
+      -webkit-appearance: none;
+      background: linear-gradient(90deg, #f59e0b, #ef4444);
+      border-radius: 3px;
+      outline: none;
+    }
+    .flexItem input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      background: #fff;
+      border: 2px solid #f59e0b;
+      cursor: pointer;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+    }
+    .flexItem input[type="checkbox"] {
+      width: 18px;
+      height: 18px;
+      cursor: pointer;
+      accent-color: #3b82f6;
+    }
+    .flexItem .value-display {
+      font-size: 14px;
+      font-weight: 600;
+      color: #e2e8f0;
+      min-width: 24px;
+    }
+    @media (max-width: 768px) {
+      .flexItem input[type="range"] { width: 100px; }
+    }
+  </style>
+</head>
+<body>
+  <header class="header">
+    <div class="logo">物理虚拟实验</div>
+    <nav class="nav">
+      <a href="index.html">首页</a>
+      <a href="experiments.html">实验列表</a>
+      <a href="vip.html">开通VIP</a>
+    </nav>
+  </header>
+
+  <div class="sim-wrapper">
+    <div id="divFull">
+      <div id="myContainer"></div>
+      <div class="flexContainer">
+        <div class="flexItem">
+          <label>日冕物质抛射：</label>
+          <input type="range" id="rangeA" min="0" max="10" value="1" step="1">
+          <span class="value-display" id="rangeValue">1</span>
+        </div>
+        <div class="flexItem">
+          <input type="checkbox" id="checkA" checked>
+          <label for="checkA" id="chalkA" style="font-weight:600;cursor:pointer;">地磁场</label>
+        </div>
+        <div class="flexItem">
+          <input type="checkbox" id="checkB">
+          <label for="checkB" id="chalkB" style="font-weight:600;cursor:pointer;">地球内部磁铁</label>
+        </div>
+        <div class="flexItem">
+          <a href="javascript:doFullScreen();" style="box-shadow:none;">
+            <svg width="32" height="32" viewBox="0 0 40 40" style="vertical-align:middle;">
+              <path d="M5,15 L5,5 L15,5 M35,25 L35,35 L25,35 M25,5 L35,5 L35,15 M15,35 L5,35 L5,25" fill="none" stroke="#94a3b8" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </a>
+        </div>
+      </div>
+    </div>
+    <p style="text-align:center;font-size:14px;color:#64748b;margin-top:8px;">太阳发射带电粒子（太阳风），在地球磁场作用下产生极光</p>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/0.9.0/p5.min.js"></script>
+  <script>
+    // ========== 工具函数 ==========
+    function doFullScreen() {
+      const el = document.getElementById('divFull');
+      if (el.requestFullscreen) el.requestFullscreen();
+      else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+      else if (el.msRequestFullscreen) el.msRequestFullscreen();
+    }
+    function contain(x, y, x1, y1, w1, h1) {
+      return x > x1 && x < x1 + w1 && y > y1 && y < y1 + h1;
+    }
+    function drawButtonDrag() {
+      push();
+      const r = 30, gap = 4;
+      let cx = width / 1000 * 40, cy = height - 45;
+      if (window.devicePixelRatio) { cx = 40; cy = (height / (width / 1000)) - 45; }
+      noStroke();
+      for (let i = 0; i < 4; i++) {
+        let x = cx + i * (r + gap) - 1.5 * (r + gap);
+        fill(0, 0, 0, 30);
+        ellipse(x, cy - 2, r, r);
+        fill(180);
+        ellipse(x, cy - 4, r - 2, r - 2);
+        fill(240);
+        ellipse(x, cy - 4, r - 8, r - 8);
+        fill(100);
+        noStroke();
+        ellipse(x, cy - 4, 4, 4);
+      }
+      pop();
+    }
+
+    // ========== 主模拟代码 ==========
+    let labelA, rangeA, checkA, chalkA, checkB, chalkB;
+    let sunImage, language = 3;
+    let earthImage = [];
+    let sunX = 150, sunY = 250, earthX = 850, earthY = 250;
+    let sunSpots = [], particles = [], auroras = [];
+
+    function preload() {
+      var imagePrefix = "images/";
+      sunImage = loadImage(imagePrefix + "solar_wind_sun.png");
+      earthImage[0] = loadImage(imagePrefix + "solar_wind_earth_0.png");
+      earthImage[1] = loadImage(imagePrefix + "solar_wind_earth_1.png");
+    }
+
+    function setup() {
+      frameRate(30);
+      let container = select("#myContainer");
+      let w = int(min(container.width, (window.innerHeight - 160) / 0.5));
+      let h = int(0.5 * w);
+      myCanvas = createCanvas(w, h);
+      myCanvas.parent("myContainer");
+      myCanvas.id("myP5Canvas");
+      labelA = select("#labelA");
+      rangeA = select("#rangeA");
+      checkA = select("#checkA");
+      chalkA = select("#chalkA");
+      checkB = select("#checkB");
+      chalkB = select("#chalkB");
+
+      updateRangeDisplay();
+      rangeA.input(updateRangeDisplay);
+    }
+
+    function updateRangeDisplay() {
+      document.getElementById('rangeValue').textContent = rangeA.value();
+    }
+
+    function windowResized() {
+      let container = select("#myContainer");
+      let w = int(min(container.width, (window.innerHeight - 160) / 0.5));
+      let h = int(0.5 * w);
+      resizeCanvas(w, h);
+    }
+
+    function draw() {
+      push();
+      scale(width / 1000);
+      background(0, 32);
+      strokeWeight(1);
+      textSize(30);
+      textAlign(LEFT, TOP);
+
+      // 产生日冕物质抛射（太阳黑子/耀斑）
+      if (random() < 0.02 * rangeA.value()) {
+        sunSpots.push({ theta: random(TWO_PI), life: 10 });
+      }
+
+      noStroke();
+
+      // 绘制极光
+      for (let i = auroras.length - 1; i >= 0; i--) {
+        fill(auroras[i].c);
+        ellipse(auroras[i].x, auroras[i].y, 20, 20);
+        ellipse(auroras[i].x, auroras[i].y, 15, 15);
+        ellipse(auroras[i].x, auroras[i].y, 10, 10);
+        ellipse(auroras[i].x, auroras[i].y, 5, 5);
+        auroras[i].life--;
+        if (auroras[i].life <= 0) auroras.splice(i, 1);
+      }
+
+      // 绘制背景图像（太阳、地球）
+      image(sunImage, 0, 0, 1000, 500);
+
+      // 地球显示模式
+      if (!checkB.checked()) {
+        image(checkA.checked() ? earthImage[1] : earthImage[0], 0, 0, 1000, 500);
+      } else {
+        // 用简单的条形磁铁表示地球
+        if (checkA.checked()) {
+          stroke(255);
+          fill(0, 0, 255);
+          rect(earthX - 20, earthY - 50, 40, 50);
+          fill(255, 0, 0);
+          rect(earthX - 20, earthY, 40, 50);
+        }
+      }
+
+      // 从太阳发射粒子
+      for (let i = sunSpots.length - 1; i >= 0; i--) {
+        if (random() < 0.5) {
+          let a = randomGaussian(sunSpots[i].theta, 0.05);
+          let px = sunX + 100 * cos(a);
+          let py = sunY + 100 * sin(a);
+          let vx = 10 * cos(a);
+          let vy = 10 * sin(a);
+          particles.push({ x: px, y: py, vx: vx, vy: vy });
+          sunSpots[i].life--;
+          if (sunSpots[i].life <= 0) sunSpots.splice(i, 1);
+        }
+      }
+
+      // 持续发射粒子（背景太阳风）
+      if (random() < 0.1) {
+        let a = random(TWO_PI);
+        let px = sunX + 100 * cos(a);
+        let py = sunY + 100 * sin(a);
+        let vx = 10 * cos(a);
+        let vy = 10 * sin(a);
+        particles.push({ x: px, y: py, vx: vx, vy: vy });
+      }
+
+      // 地球磁极位置（模拟磁场对带电粒子的影响）
+      let px = [-50, 30, -50, 30, -50, 30, -50, 30];
+      let py = [-3, -15, -1, -5, 1, 5, 3, 15];
+      let charge = [20, -20, 20, -20, -20, 20, -20, 20];
+
+      fill(255);
+      noFill();
+      stroke(0);
+
+      // 更新粒子位置和速度
+      for (let loop = 0; loop < 2; loop++) {
+        for (let i = particles.length - 1; i >= 0; i--) {
+          let vx = particles[i].vx;
+          let vy = particles[i].vy;
+
+          // 磁场力（洛伦兹力模拟）
+          for (let j = 0; j < px.length; j++) {
+            let d = dist(particles[i].x, particles[i].y, earthX + px[j], earthY + py[j]);
+            let f = 500 / (d * d * d);
+            vx += (checkA.checked() ? 10 : 0) * charge[j] * f * (earthY + py[j] - particles[i].y) / d;
+            vy += (checkA.checked() ? 10 : 0) * charge[j] * f * (particles[i].x - (earthX + px[j])) / d;
+          }
+
+          // 归一化速度
+          let angle = atan2(vy, vx);
+          particles[i].vx = 3 * cos(angle);
+          particles[i].vy = 3 * sin(angle);
+
+          // 更新位置
+          particles[i].x += particles[i].vx;
+          particles[i].y += particles[i].vy;
+
+          // 绘制粒子
+          noStroke();
+          fill(255);
+          ellipse(particles[i].x, particles[i].y, 5, 5);
+
+          // 粒子到达地球附近 → 产生极光
+          let auroraColors = [
+            color(0, 255, 0, 32), color(0, 255, 0, 32), color(0, 255, 0, 32),
+            color(0, 255, 0, 32), color(0, 255, 0, 32), color(0, 255, 0, 32),
+            color(255, 0, 0, 32), color(255, 0, 0, 32), color(255, 0, 0, 32),
+            color(0, 0, 255, 32), color(255, 0, 255, 32)
+          ];
+
+          if ((checkA.checked() || !checkB.checked()) && dist(particles[i].x, particles[i].y, earthX, earthY) < 50) {
+            if (checkA.checked()) {
+              auroras.push({
+                x: particles[i].x, y: particles[i].y,
+                life: random(20, 40),
+                c: auroraColors[int(random(auroraColors.length))]
+              });
+            }
+            particles.splice(i, 1);
+          } else if (!contain(particles[i].x, particles[i].y, 0, 0, 1000, 500)) {
+            particles.splice(i, 1);
+          }
+        }
+      }
+
+      pop();
+    }
+  </script>
+</body>
+</html>
