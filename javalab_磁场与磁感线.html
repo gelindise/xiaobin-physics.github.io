@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=10">
+  <title>物理虚拟实验 - 磁场与磁感线</title>
+  <link rel="stylesheet" href="style.css">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+      overflow-x: hidden;
+      background: #f0f0f0;
+    }
+    #myContainer { text-align: center; position: relative; }
+    #divFull {
+      background-color: white;
+      position: relative;
+      font-size: 18px;
+      border-radius: 12px;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.1);
+    }
+    #myP5Canvas { touch-action: pinch-zoom; }
+    .sim-wrapper {
+      max-width: 1100px;
+      margin: 60px auto 0;
+      padding: 10px;
+    }
+    .flexContainer {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      align-items: center;
+      gap: 16px;
+      padding: 12px 16px;
+      background: #f8f9fa;
+      border-radius: 10px;
+      margin-top: 8px;
+    }
+    .flexContainer * { color: #000 !important; }
+    .flexItem { display: inline-flex; align-items: center; gap: 6px; }
+    .flexItem label {
+      font-size: 15px;
+      font-weight: 600;
+      color: #000;
+      white-space: nowrap;
+    }
+    .flexItem input[type="checkbox"] {
+      width: 18px;
+      height: 18px;
+      cursor: pointer;
+      accent-color: #3b82f6;
+    }
+    /* 单选按钮样式 */
+    .flexItem .radio-group {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .flexItem .radio-group label {
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      padding: 4px 12px;
+      border-radius: 8px;
+      border: 1px solid #ddd;
+      background: #fff;
+      transition: all 0.2s;
+    }
+    .flexItem .radio-group input[type="radio"] { display: none; }
+    .flexItem .radio-group input[type="radio"]:checked + label {
+      background: #3b82f6;
+      color: #fff !important;
+      border-color: #3b82f6;
+    }
+  </style>
+</head>
+<body>
+  <header class="header">
+    <div class="logo">物理虚拟实验</div>
+    <nav class="nav">
+      <a href="index.html">首页</a>
+      <a href="experiments.html">实验列表</a>
+      <a href="vip.html">开通VIP</a>
+    </nav>
+  </header>
+
+  <div class="sim-wrapper">
+    <div id="divFull">
+      <div id="myContainer"></div>
+      <div class="flexContainer">
+        <div class="flexItem">
+          <span id="radioA"></span>
+        </div>
+        <div class="flexItem">
+          <input type="checkbox" id="checkA" checked>
+          <label for="checkA" id="chalkA" style="font-weight:600;color:#000;cursor:pointer;">自动旋转</label>
+        </div>
+        <div class="flexItem">
+          <a href="javascript:doFullScreen();" style="box-shadow:none;">
+            <svg width="32" height="32" viewBox="0 0 40 40" style="vertical-align:middle;">
+              <path d="M5,15 L5,5 L15,5 M35,25 L35,35 L25,35 M25,5 L35,5 L35,15 M15,35 L5,35 L5,25" fill="none" stroke="#555" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </a>
+        </div>
+      </div>
+    </div>
+    <p style="text-align:center;font-size:14px;color:#999;margin-top:8px;">拖动旋转视角 · 红色=N极方向 蓝色=S极方向</p>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/0.9.0/p5.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/0.9.0/addons/p5.dom.min.js"></script>
+  <script>
+    // ========== 工具函数 ==========
+    function doFullScreen() {
+      const el = document.getElementById('divFull');
+      if (el.requestFullscreen) el.requestFullscreen();
+      else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+      else if (el.msRequestFullscreen) el.msRequestFullscreen();
+    }
+
+    // ========== 主模拟代码 ==========
+    let radioA, labelA, rangeA, checkA, chalkA;
+    let barImage, earthImage;
+    let needlesNorth, needlesSouth;
+    let language = 3;
+    let needleX = [], needleY = [], needleZ = [];
+    let vectorX = [], vectorY = [], vectorZ = [];
+    let rotX = -0.3, rotY = 0;
+
+    function preload() {
+      var imagePrefix = "images/";
+      barImage = loadImage(imagePrefix + "bar_magnet_texture.png");
+      earthImage = loadImage(imagePrefix + "earth_movements_map.png");
+    }
+
+    function setup() {
+      let container = select("#myContainer");
+      let w = int(min(container.width, (window.innerHeight - 160) / 1));
+      let h = int(1 * w);
+      setAttributes("antialias", true);
+      myCanvas = createCanvas(w, h, WEBGL);
+      myCanvas.parent("myContainer");
+      myCanvas.id("myP5Canvas");
+
+      // 单选按钮
+      radioA = createRadio("radioA");
+      radioA.option("bar", "条形磁铁");
+      radioA.option("earth", "地球");
+      radioA.parent("radioA");
+      radioA.selected("bar");
+
+      checkA = select("#checkA");
+      chalkA = select("#chalkA");
+      chalkA.html("自动旋转");
+
+      // 生成小磁针位置
+      let poleX = [0, 0], poleY = [-200, 200], poleZ = [0, 0];
+      let poleSign = [-1, 1];
+
+      // 随机散布的小磁针
+      for (let i = 0; i < 1000; i++) {
+        let p = getPosition(20);
+        needleX.push(p.x);
+        needleY.push(p.y);
+        needleZ.push(p.z);
+      }
+      for (let i = 0; i < 40; i++) {
+        let p = getPosition(5);
+        needleX.push(p.x);
+        needleY.push(p.y + (i < 20 ? 200 : -200));
+        needleZ.push(p.z);
+      }
+
+      // 计算每个小磁针的磁场方向
+      for (let i = 0; i < needleX.length; i++) {
+        vectorX[i] = 0; vectorY[i] = 0; vectorZ[i] = 0;
+        for (let j = 0; j < poleX.length; j++) {
+          let d = dist(needleX[i], needleY[i], needleZ[i], poleX[j], poleY[j], poleZ[j]);
+          vectorX[i] += poleSign[j] / (d * d) * ((needleX[i] - poleX[j]) / abs(d));
+          vectorY[i] += poleSign[j] / (d * d) * ((needleY[i] - poleY[j]) / abs(d));
+          vectorZ[i] += poleSign[j] / (d * d) * ((needleZ[i] - poleZ[j]) / abs(d));
+        }
+        let m = dist(0, 0, 0, vectorX[i], vectorY[i], vectorZ[i]);
+        vectorX[i] = vectorX[i] / m * 13;
+        vectorY[i] = vectorY[i] / m * 13;
+        vectorZ[i] = vectorZ[i] / m * 13;
+      }
+
+      // 构建几何体（N极红色，S极蓝色）
+      needlesNorth = buildGeometry(() => {
+        for (let i = 0; i < needleX.length; i++) {
+          push();
+          translate(needleX[i], needleY[i], needleZ[i]);
+          rotateZ(atan2(vectorY[i], vectorX[i]));
+          rotateY(acos(vectorZ[i] / sqrt(vectorX[i] * vectorX[i] + vectorY[i] * vectorY[i] + vectorZ[i] * vectorZ[i])));
+          translate(0, 0, 5);
+          box(1, 1, 10);
+          pop();
+        }
+      });
+      needlesSouth = buildGeometry(() => {
+        for (let i = 0; i < needleX.length; i++) {
+          push();
+          translate(needleX[i], needleY[i], needleZ[i]);
+          rotateZ(atan2(vectorY[i], vectorX[i]));
+          rotateY(acos(vectorZ[i] / sqrt(vectorX[i] * vectorX[i] + vectorY[i] * vectorY[i] + vectorZ[i] * vectorZ[i])));
+          translate(0, 0, -5);
+          box(1, 1, 10);
+          pop();
+        }
+      });
+    }
+
+    function windowResized() {
+      let container = select("#myContainer");
+      let w = int(min(container.width, (window.innerHeight - 160) / 1));
+      let h = int(1 * w);
+      resizeCanvas(w, h);
+    }
+
+    function getPosition(minDist) {
+      let x, y, z;
+      for (let attempt = 0; attempt < 500; attempt++) {
+        if (minDist > 10) {
+          x = random(-500, 500);
+          y = random(-500, 500);
+          z = random(-500, 500);
+        } else {
+          x = random(-100, 100);
+          y = random(-100, 100);
+          z = random(-100, 100);
+        }
+        if (mag(x, z) > 500) continue;
+        let tooClose = false;
+        for (let i = 0; i < needleX.length; i++) {
+          if (dist(x, y, z, needleX[i], needleY[i], needleZ[i]) < minDist) {
+            tooClose = true;
+            break;
+          }
+        }
+        if (!tooClose) break;
+      }
+      return createVector(x, y, z);
+    }
+
+    function draw() {
+      if (touches.length > 1) return;
+
+      if (radioA.value() == "bar") {
+        background(233, 255, 233);
+      } else {
+        background(222);
+      }
+
+      noStroke();
+
+      if (checkA.checked()) rotY += 0.005;
+
+      push();
+      scale(width / 1000);
+      rotateX(rotX);
+      rotateY(rotY);
+
+      if (radioA.value() == "bar") {
+        // 条形磁铁
+        push();
+        rotateZ(-HALF_PI);
+        translate(-100, 0, 0);
+        fill(255, 0, 0);   // N极（红）
+        box(200, 50, 24);
+        translate(200, 0, 0);
+        fill(0, 0, 255);   // S极（蓝）
+        box(200, 50, 24);
+        // 纹理包裹
+        translate(-100, 0, 13);
+        texture(barImage);
+        plane(400, 50);
+        translate(0, 0, -26);
+        texture(barImage);
+        plane(400, 50);
+        pop();
+      }
+
+      if (radioA.value() == "earth") {
+        // 地球
+        push();
+        texture(earthImage);
+        sphere(200);
+        pop();
+      }
+
+      // 绘制小磁针（N极红色，S极蓝色）
+      strokeWeight(1);
+      stroke(255, 0, 0);
+      model(needlesNorth);
+      stroke(0, 0, 255);
+      model(needlesSouth);
+      pop();
+    }
+
+    // ========== 视角拖拽 ==========
+    let pmx, pmy, dragged = false;
+
+    function touchStarted() {
+      if (contain(mouseX, mouseY, 0, 0, width, height)) {
+        pmx = 1000 * mouseX / width;
+        pmy = 1000 * mouseY / width;
+        dragged = true;
+      }
+    }
+
+    function touchMoved() {
+      if (dragged) {
+        rotX += 0.002 * (pmy - 1000 * mouseY / width);
+        rotX = constrain(rotX, -HALF_PI, HALF_PI);
+        rotY += 0.002 * (1000 * mouseX / width - pmx);
+        pmx = 1000 * mouseX / width;
+        pmy = 1000 * mouseY / width;
+        return false;
+      }
+    }
+
+    function touchEnded() { dragged = false; }
+
+    function contain(x, y, x1, y1, w1, h1) {
+      return x > x1 && x < x1 + w1 && y > y1 && y < y1 + h1;
+    }
+
+    function mousePressed() { touchStarted(); }
+    function mouseDragged() { return touchMoved(); }
+    function mouseReleased() { touchEnded(); }
+  </script>
+</body>
+</html>
