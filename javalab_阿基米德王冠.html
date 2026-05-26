@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=10">
+  <title>物理虚拟实验 - 阿基米德与王冠</title>
+  <link rel="stylesheet" href="style.css">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+      overflow-x: hidden;
+      background: #f0f0f0;
+    }
+    #myContainer { text-align: center; position: relative; }
+    #divFull {
+      background-color: white;
+      position: relative;
+      font-size: 18px;
+      border-radius: 12px;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.1);
+    }
+    #myP5Canvas { touch-action: pinch-zoom; }
+    .sim-wrapper {
+      max-width: 1100px;
+      margin: 60px auto 0;
+      padding: 10px;
+    }
+    .flexContainer {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 16px;
+      background: #f8f9fa;
+      border-radius: 10px;
+      margin-top: 8px;
+    }
+    .flexContainer * { color: #000 !important; }
+    .flexItem { display: inline-flex; align-items: center; gap: 6px; }
+    .flexItem label {
+      font-size: 15px;
+      font-weight: 600;
+      color: #000;
+      white-space: nowrap;
+    }
+    .flexItem input[type="range"] {
+      width: 180px;
+      height: 6px;
+      -webkit-appearance: none;
+      background: linear-gradient(90deg, #c0c0c0, #ffd700);
+      border-radius: 3px;
+      outline: none;
+    }
+    .flexItem input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      background: #fff;
+      border: 2px solid #3b82f6;
+      cursor: pointer;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+    }
+    .flexItem .value-display {
+      font-size: 15px;
+      font-weight: 700;
+      color: #000;
+      min-width: 50px;
+    }
+    @media (max-width: 768px) {
+      .flexItem input[type="range"] { width: 120px; }
+    }
+  </style>
+</head>
+<body>
+  <header class="header">
+    <div class="logo">物理虚拟实验</div>
+    <nav class="nav">
+      <a href="index.html">首页</a>
+      <a href="experiments.html">实验列表</a>
+      <a href="vip.html">开通VIP</a>
+    </nav>
+  </header>
+
+  <div class="sim-wrapper">
+    <div id="divFull">
+      <div id="myContainer"></div>
+      <div class="flexContainer">
+        <div class="flexItem" style="margin: -20px 20px;">
+          <label>成分比例：</label>
+          <div>
+            <div style="float:left;"><span id="labelA" style="font-weight:600;color:#000;"></span></div>
+            <div style="float:right;"><span id="labelB" style="font-weight:600;color:#000;"></span></div>
+          </div>
+          <input type="range" id="rangeA" min="0" max="100" value="50">
+          <span class="value-display" id="rangeValue">50%</span>
+        </div>
+        <div class="flexItem">
+          <a href="javascript:doFullScreen();" style="box-shadow:none;">
+            <svg width="32" height="32" viewBox="0 0 40 40" style="vertical-align:middle;">
+              <path d="M5,15 L5,5 L15,5 M35,25 L35,35 L25,35 M25,5 L35,5 L35,15 M15,35 L5,35 L5,25" fill="none" stroke="#555" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </a>
+        </div>
+      </div>
+    </div>
+    <p style="text-align:center;font-size:14px;color:#999;margin-top:8px;">拖动天平两端可以上下移动 · 滑动滑块改变金冠含金量</p>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/0.9.0/p5.min.js"></script>
+  <script>
+    // ========== 工具函数 ==========
+    function doFullScreen() {
+      const el = document.getElementById('divFull');
+      if (el.requestFullscreen) el.requestFullscreen();
+      else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+      else if (el.msRequestFullscreen) el.msRequestFullscreen();
+    }
+    function contain(x, y, x1, y1, w1, h1) {
+      return x > x1 && x < x1 + w1 && y > y1 && y < y1 + h1;
+    }
+    function drawButtonDrag() {
+      push();
+      const r = 30, gap = 4;
+      let cx = width / 1000 * 40, cy = height - 45;
+      if (window.devicePixelRatio) { cx = 40; cy = (height / (width / 1000)) - 45; }
+      noStroke();
+      for (let i = 0; i < 4; i++) {
+        let x = cx + i * (r + gap) - 1.5 * (r + gap);
+        fill(0, 0, 0, 30);
+        ellipse(x, cy - 2, r, r);
+        fill(180);
+        ellipse(x, cy - 4, r - 2, r - 2);
+        fill(240);
+        ellipse(x, cy - 4, r - 8, r - 8);
+        fill(100);
+        noStroke();
+        ellipse(x, cy - 4, 4, 4);
+      }
+      pop();
+    }
+    function dottedLine(x1, y1, x2, y2) {
+      const d = dist(x1, y1, x2, y2);
+      const step = 10;
+      for (let t = 0; t < d; t += step * 2) {
+        const x = lerp(x1, x2, t / d);
+        const y = lerp(y1, y2, t / d);
+        const x2_ = lerp(x1, x2, min(1, (t + step) / d));
+        const y2_ = lerp(y1, y2, min(1, (t + step) / d));
+        line(x, y, x2_, y2_);
+      }
+    }
+
+    // ========== 主模拟代码 ==========
+    var language = 3;
+    var labelA, labelB, rangeA;
+    let handImage;
+    var imgWreath, imgWreathSilver, imgNugget;
+    var waterY = 600, balanceY = 100, balanceT = 0;
+
+    function preload() {
+      var imagePrefix = "images/";
+      imgWreath = loadImage(imagePrefix + "archimedes_principle_gold_wreath.png");
+      imgWreathSilver = loadImage(imagePrefix + "archimedes_principle_silver_wreath.png");
+      imgNugget = loadImage(imagePrefix + "archimedes_principle_gold_nugget.png");
+      handImage = loadImage(imagePrefix + "archimedes_principle_hand_0.png");
+    }
+
+    function setup() {
+      frameRate(50);
+      let o = select("#myContainer");
+      var a = 1;
+      var w = int(min(o.width, (window.innerHeight - 160) / a));
+      var h = int(w * a);
+      myCanvas = createCanvas(w, h);
+      myCanvas.parent("myContainer");
+      myCanvas.id("myP5Canvas");
+      labelA = select("#labelA");
+      labelB = select("#labelB");
+      labelA.html("银");
+      labelB.html("金");
+      rangeA = select("#rangeA");
+
+      // 显示初始值
+      updateRangeDisplay();
+      rangeA.input(updateRangeDisplay);
+    }
+
+    function updateRangeDisplay() {
+      const val = rangeA.value();
+      document.getElementById('rangeValue').textContent = val + '%';
+    }
+
+    function windowResized() {
+      let o = select("#myContainer");
+      var a = 1;
+      var w = int(min(o.width, (window.innerHeight - 160) / a));
+      var h = int(w * a);
+      resizeCanvas(w, h);
+    }
+
+    function draw() {
+      push();
+      scale(width / 1000);
+      background(233, 255, 255);
+      strokeWeight(2);
+      textSize(36);
+      var gold = rangeA.value();
+      var silver = 100 - gold;
+
+      // 水平虚线
+      stroke(191, 191, 255);
+      strokeWeight(0.5);
+      for (var i = waterY - 31; i > 0; i -= 31) {
+        dottedLine(0, i, 1000, i);
+      }
+
+      var balanceX = 500;
+      var balanceL = 300;
+      var balanceX0 = balanceX - balanceL * cos(balanceT);
+      var balanceY0 = balanceY - balanceL * sin(balanceT);
+      var balanceX1 = balanceX + balanceL * cos(balanceT);
+      var balanceY1 = balanceY + balanceL * sin(balanceT);
+      var terminalY0 = balanceY0 + 200;
+      var terminalY1 = balanceY1 + 200;
+      var objectY0 = terminalY0 + 120;
+      var objectY1 = terminalY1 + 50;
+
+      // 金冠（左侧）
+      var wreathH = 240;
+      var wreathW = 240 * imgWreath.width / imgWreath.height;
+      image(imgWreath, balanceX0 - wreathW * 0.52, terminalY0, wreathW, wreathH);
+      tint(255, map(rangeA.value(), 0, 100, 255, 0));
+      image(imgWreathSilver, balanceX0 - wreathW * 0.52, terminalY0, wreathW, wreathH);
+      noTint();
+
+      // 文字标注 - 金冠成分
+      fill(0);
+      noStroke();
+      textAlign(LEFT, CENTER);
+      if (gold == 0) {
+        text("纯银", 5, 220);
+      } else if (gold == 100) {
+        text("纯金", 5, 220);
+      } else {
+        text("银 " + silver + "%\n金 " + gold + "%", 5, 220);
+      }
+
+      textAlign(RIGHT, CENTER);
+      text("纯金", 995, 220);
+
+      // 金块（右侧）
+      var nuggetH = 100;
+      var nuggetW = 100 * imgNugget.width / imgNugget.height;
+      image(imgNugget, balanceX1 - nuggetW / 2, terminalY1, nuggetW, nuggetH);
+
+      // 天平横梁
+      stroke(90, 64, 0);
+      strokeWeight(20);
+      line(balanceX0, balanceY0, balanceX1, balanceY1);
+      // 支点
+      ellipse(balanceX, balanceY, 12, 12);
+      noStroke();
+      fill(255);
+      ellipse(balanceX, balanceY, 16, 16);
+      ellipse(balanceX0, balanceY0, 5, 5);
+      ellipse(balanceX1, balanceY1, 5, 5);
+      fill(90, 64, 0);
+      ellipse(balanceX, balanceY, 13, 13);
+
+      // 手
+      image(handImage, balanceX - 300, balanceY - 200 - 300, 600, 600);
+
+      // 竖直拉线
+      stroke(68, 114, 196);
+      stroke(90, 64, 0);
+      strokeWeight(12);
+      { push(); strokeCap(SQUARE); line(balanceX, balanceY - 140, balanceX, balanceY); pop(); }
+
+      stroke(128);
+      strokeWeight(3);
+      line(balanceX0, balanceY0, balanceX0, terminalY0);
+      line(balanceX1, balanceY1, balanceX1, terminalY1);
+
+      // 水面
+      noStroke();
+      fill(64, 64, 255, 128);
+      rect(0, waterY, 1000, 1000);
+      fill(0);
+      textAlign(CENTER, BOTTOM);
+      text("空气", 500, (waterY - 10));
+      textAlign(CENTER, TOP);
+      text("水", 500, (waterY + 10));
+
+      // 阿基米德浮力计算
+      var immerse0 = map(waterY, terminalY0 + wreathH, terminalY0, -0.1, 1.01);
+      var immerse1 = map(waterY, terminalY1 + nuggetH, terminalY1, 0, 1);
+      immerse0 = constrain(immerse0, 0, 1);
+      immerse1 = constrain(immerse1, 0, 1);
+
+      // 浮力 = 浸入体积 / 密度（金冠密度随含金量变化，纯金19.3，纯银10.49）
+      var force0 = 1 - immerse0 / map(rangeA.value(), 0, 100, 10.49, 19.3);
+      var force1 = 1 - immerse1 / 19.3;
+      balanceT += (force1 - force0);
+      balanceT *= 0.87;
+
+      pop();
+      drawButtonDrag();
+    }
+
+    // ========== 鼠标/触摸拖拽 ==========
+    var dragged = false, offsetY;
+
+    function touchStarted() {
+      if (!contain(mouseX, mouseY, 0, 0, width, height)) return;
+      if (touches.length > 1) return;
+      let x = mouseX * 1000 / width;
+      let y = mouseY * 1000 / width;
+      dragged = true;
+      offsetY = y - balanceY;
+    }
+
+    function touchMoved() {
+      if (touches.length > 1) return;
+      if (dragged) {
+        let x = mouseX * 1000 / width;
+        let y = mouseY * 1000 / width;
+        balanceY = y - offsetY;
+        balanceY = constrain(balanceY, 100, waterY - 100);
+        return false;
+      }
+    }
+
+    function touchEnded() { dragged = false; }
+
+    // 鼠标事件兼容
+    function mousePressed() { return touchStarted(); }
+    function mouseDragged() { return touchMoved(); }
+    function mouseReleased() { touchEnded(); }
+  </script>
+</body>
+</html>
