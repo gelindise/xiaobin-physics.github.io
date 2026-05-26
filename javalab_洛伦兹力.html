@@ -1,0 +1,455 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=10">
+  <title>物理虚拟实验 - 洛伦兹力</title>
+  <link rel="stylesheet" href="style.css">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+      overflow-x: hidden;
+      background: #f0f0f0;
+    }
+    #myContainer { text-align: center; position: relative; }
+    #divFull {
+      background-color: white;
+      position: relative;
+      font-size: 18px;
+      border-radius: 12px;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.1);
+    }
+    #myP5Canvas { touch-action: pinch-zoom; }
+    .sim-wrapper {
+      max-width: 1100px;
+      margin: 60px auto 0;
+      padding: 10px;
+    }
+    .flexContainer {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 16px;
+      background: #f8f9fa;
+      border-radius: 10px;
+      margin-top: 8px;
+    }
+    .flexContainer * { color: #000 !important; }
+    .flexItem { display: inline-flex; align-items: center; gap: 6px; }
+    .flexItem label {
+      font-size: 14px;
+      font-weight: 600;
+      color: #000;
+      white-space: nowrap;
+    }
+    .flexItem button {
+      padding: 6px 14px;
+      border-radius: 8px;
+      border: 1px solid #3b82f6;
+      background: #3b82f6;
+      color: #fff !important;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .flexItem button:hover { background: #2563eb; }
+    .flexItem input[type="checkbox"] {
+      width: 18px;
+      height: 18px;
+      cursor: pointer;
+      accent-color: #3b82f6;
+    }
+    .flexItem .radio-group { display: inline-flex; align-items: center; gap: 4px; }
+    .flexItem .radio-group label {
+      font-size: 13px; font-weight: 500; cursor: pointer;
+      padding: 4px 10px; border-radius: 8px;
+      border: 1px solid #ddd; background: #fff;
+      transition: all 0.2s;
+    }
+    .flexItem .radio-group input[type="radio"] { display: none; }
+    .flexItem .radio-group input[type="radio"]:checked + label {
+      background: #3b82f6; color: #fff !important; border-color: #3b82f6;
+    }
+    @media (max-width: 768px) {
+      .flexContainer { gap: 8px; }
+    }
+  </style>
+</head>
+<body>
+  <header class="header">
+    <div class="logo">物理虚拟实验</div>
+    <nav class="nav">
+      <a href="index.html">首页</a>
+      <a href="experiments.html">实验列表</a>
+      <a href="vip.html">开通VIP</a>
+    </nav>
+  </header>
+
+  <div class="sim-wrapper">
+    <div id="divFull">
+      <div id="myContainer"></div>
+      <div class="flexContainer">
+        <div class="flexItem"><span id="radioA"></span></div>
+        <div class="flexItem"><button id="buttonMagnet">切换磁极</button></div>
+        <div class="flexItem"><span id="radioC"></span></div>
+        <div class="flexItem"><input type="checkbox" id="checkA"><label id="chalkA" for="checkA" style="font-weight:600;cursor:pointer;">运行</label></div>
+        <div class="flexItem"><input type="checkbox" id="checkB"><label id="chalkB" for="checkB" style="font-weight:600;cursor:pointer;">金属棒</label></div>
+        <div class="flexItem"><input type="checkbox" id="checkC" checked><label id="chalkC" for="checkC" style="font-weight:600;cursor:pointer;">力</label></div>
+        <div class="flexItem">
+          <a href="javascript:doFullScreen();" style="box-shadow:none;">
+            <svg width="32" height="32" viewBox="0 0 40 40" style="vertical-align:middle;">
+              <path d="M5,15 L5,5 L15,5 M35,25 L35,35 L25,35 M25,5 L35,5 L35,15 M15,35 L5,35 L5,25" fill="none" stroke="#555" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </a>
+        </div>
+      </div>
+    </div>
+    <p style="text-align:center;font-size:14px;color:#999;margin-top:8px;">通电导体在磁场中受到力的作用 —— 洛伦兹力（左手定则）</p>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/0.9.0/p5.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/0.9.0/addons/p5.dom.min.js"></script>
+  <script>
+    // ========== 工具函数 ==========
+    function doFullScreen() {
+      const el = document.getElementById('divFull');
+      if (el.requestFullscreen) el.requestFullscreen();
+      else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+      else if (el.msRequestFullscreen) el.msRequestFullscreen();
+    }
+    function contain(x, y, x1, y1, w1, h1) {
+      return x > x1 && x < x1 + w1 && y > y1 && y < y1 + h1;
+    }
+    function drawButtonDrag() {
+      push();
+      const r = 30, gap = 4;
+      let cx = width / 900 * 40, cy = height - 45;
+      if (window.devicePixelRatio) { cx = 40; cy = (height / (width / 900)) - 45; }
+      noStroke();
+      for (let i = 0; i < 4; i++) {
+        let x = cx + i * (r + gap) - 1.5 * (r + gap);
+        fill(0, 0, 0, 30);
+        ellipse(x, cy - 2, r, r);
+        fill(180);
+        ellipse(x, cy - 4, r - 2, r - 2);
+        fill(240);
+        ellipse(x, cy - 4, r - 8, r - 8);
+        fill(100);
+        noStroke();
+        ellipse(x, cy - 4, 4, 4);
+      }
+      pop();
+    }
+    function drawArrow_head(x, y, cx, cy, head) {
+      line(x, y, x + cx, y + cy);
+      let leng = sqrt(cx * cx + cy * cy);
+      let bolt = min(leng / 2.0, head);
+      let x1 = 0.921 * cx * bolt / leng - 0.389 * cy * bolt / leng;
+      let y1 = 0.389 * cx * bolt / leng + 0.921 * cy * bolt / leng;
+      let x2 = 0.921 * cx * bolt / leng + 0.389 * cy * bolt / leng;
+      let y2 = -0.389 * cx * bolt / leng + 0.921 * cy * bolt / leng;
+      line(x + cx, y + cy, x + cx - x1, y + cy - y1);
+      line(x + cx, y + cy, x + cx - x2, y + cy - y2);
+    }
+
+    // ========== 主模拟代码 ==========
+    let language = 3;
+    let radioA, radioC;
+    let checkA, chalkA, checkB, chalkB, checkC, chalkC;
+    let buttonMagnet;
+    let pole = "ns";
+    let img_circuit_0, img_circuit_1;
+    let img_magnet_NS_0, img_magnet_NS_1;
+    let img_magnet_SN_0, img_magnet_SN_1;
+    let img_magnet_NS, img_magnet_SN;
+    let xMin = 510, xMax = 510 + 270, yMin = 104, yMax = 316;
+    let xRod, yRod, aRod, vRod;
+
+    function preload() {
+      var imagePrefix = "images/";
+      img_circuit_0 = loadImage(imagePrefix + "lorentzs_force_circuit_0.png");
+      img_circuit_1 = loadImage(imagePrefix + "lorentzs_force_circuit_1.png");
+      img_magnet_NS_0 = loadImage(imagePrefix + "lorentzs_force_magnet_ns_0.png");
+      img_magnet_NS_1 = loadImage(imagePrefix + "lorentzs_force_magnet_ns_1.png");
+      img_magnet_SN_0 = loadImage(imagePrefix + "lorentzs_force_magnet_sn_0.png");
+      img_magnet_SN_1 = loadImage(imagePrefix + "lorentzs_force_magnet_sn_1.png");
+      img_magnet_NS = loadImage(imagePrefix + "lorentzs_force_magnet_ns.png");
+      img_magnet_SN = loadImage(imagePrefix + "lorentzs_force_magnet_sn.png");
+    }
+
+    function setup() {
+      frameRate(20);
+      let container = select("#myContainer");
+      let a = 0.46;
+      let w = int(min(container.width, (window.innerHeight - 160) / a));
+      let h = int(w * a);
+      myCanvas = createCanvas(w, h);
+      myCanvas.parent("myContainer");
+      myCanvas.id("myP5Canvas");
+
+      radioA = createRadio("radioA");
+      radioA.option("e", "仅电流");
+      radioA.option("m", "仅磁铁");
+      radioA.option("em", "电流+磁铁");
+      radioA.parent("radioA");
+      radioA.value("em");
+
+      buttonMagnet = select("#buttonMagnet");
+      buttonMagnet.mouseClicked(() => {
+        pole = (pole == "ns") ? "sn" : "ns";
+        setup2();
+      });
+
+      radioC = createRadio("radioC");
+      radioC.option("line", "磁感线");
+      radioC.option("vector", "磁场矢量");
+      radioC.parent("radioC");
+      radioC.value("line");
+
+      checkA = select("#checkA");
+      chalkA = select("#chalkA");
+      checkB = select("#checkB");
+      chalkB = select("#chalkB");
+      checkC = select("#checkC");
+      chalkC = select("#chalkC");
+
+      xRod = (xMin + xMax) / 2;
+      yRod = (yMin + yMax) / 2;
+      setup2();
+    }
+
+    function windowResized() {
+      let container = select("#myContainer");
+      let a = 0.46;
+      let w = int(min(container.width, (window.innerHeight - 160) / a));
+      let h = int(w * a);
+      resizeCanvas(w, h);
+    }
+
+    function setup2() {
+      aRod = (pole == "ns") ? 1 : -1;
+      vRod = 0;
+    }
+
+    function draw() {
+      if (touches.length > 1) return;
+      background(240);
+      strokeWeight(1);
+      textSize(20);
+      push();
+      scale(width / 900);
+
+      // 磁铁部分（底层）
+      if (radioA.value() != "e") {
+        image((pole == "ns") ? img_magnet_NS_0 : img_magnet_SN_0, 0, 45, 340, 221);
+      }
+
+      // 电路部分
+      if (radioA.value() != "m") {
+        image(img_circuit_0, 0, 45, 340, 221);
+        image(img_circuit_1, map(xRod, xMin, xMax, -30, 20), 45, 340, 221);
+      }
+
+      // 磁铁部分（上层）
+      if (radioA.value() != "e") {
+        image((pole == "ns") ? img_magnet_NS_1 : img_magnet_SN_1, 0, 45, 340, 221);
+      }
+
+      // 磁场显示
+      if (radioC.value() == "line") drawMagneticLine();
+      if (radioC.value() == "vector") drawMagneticVector();
+
+      // 导轨间磁场区域
+      if (radioA.value() != "e") {
+        image((pole == "ns") ? img_magnet_NS : img_magnet_SN, 500 - 118, 49, 410, 333);
+      }
+
+      // 洛伦兹力驱动金属棒运动
+      if (radioA.value() == "em") {
+        if (checkA.checked()) {
+          if (aRod != 0) {
+            vRod += aRod;
+            xRod += vRod;
+            xRod = constrain(xRod, xMin - 60, xMax + 60);
+          }
+        }
+      }
+
+      // 金属棒
+      if (radioA.value() != "m") {
+        fill(191);
+        stroke(0);
+        ellipse(xRod, yRod, 26, 26);
+        fill(0);
+        ellipse(xRod, yRod, 4, 4);
+      }
+
+      // 金属棒标签和指示
+      if (checkB.checked()) {
+        if (radioA.value() != "m") {
+          fill(128);
+          noStroke();
+          textAlign(CENTER, TOP);
+          text("金属棒", 350, 360);
+          noFill();
+          stroke(128);
+          drawArrow_head(350, 350, -130 + map(xRod, xMin, xMax, -30, 20), -100, 10);
+          let d = dist(350, 350, xRod, yRod) - 30;
+          let t = atan2(yRod - 350, xRod - 350);
+          let dx = d * cos(t);
+          let dy = d * sin(t);
+          drawArrow_head(350, 350, dx, dy, 10);
+        }
+      }
+
+      // 力箭头（洛伦兹力方向）
+      noFill();
+      stroke(255, 0, 255);
+      if (checkC.checked()) {
+        if (radioA.value() == "em") {
+          push();
+          strokeWeight(4);
+          if (pole == "ns") drawArrow_head(xRod, yRod, 50, 0, 20);
+          if (pole == "sn") drawArrow_head(xRod, yRod, -50, 0, 20);
+          pop();
+        }
+      }
+
+      pop();
+      drawButtonDrag();
+    }
+
+    // 绘制磁感线（圆形）
+    function drawMagneticLine() {
+      let maxLine = 10;
+      let current = 60;
+      let h0 = (radioA.value() == "e") ? 0 : 1;
+      noFill();
+      stroke(0, 191, 0);
+
+      if (radioA.value() == "e") {
+        for (let c = 0; c < maxLine / 2; c++) {
+          let d = 36 + 15 * c * c;
+          ellipse(xRod, yRod, d, d);
+        }
+      } else {
+        for (let c = 0; c < maxLine; c++) {
+          let x1 = map(c, 0, maxLine - 1, xMin, xMax);
+          let y1 = yMin;
+          beginShape();
+          while (y1 <= (yMin + yMax) / 2) {
+            let r = dist(x1, y1, xRod, yRod);
+            let hi = current / r;
+            let hx = 0, hy = 0;
+            if (radioA.value() == "em") {
+              hx = ((pole == "ns") ? 1 : -1) * hi * (y1 - yRod) / r;
+              hy = ((pole == "ns") ? -1 : 1) * hi * (x1 - xRod) / r + h0;
+            } else {
+              hy = h0;
+            }
+            x1 += hx;
+            y1 += hy;
+            vertex(x1, y1);
+          }
+          endShape();
+
+          x1 = map(c, 0, maxLine - 1, xMin, xMax);
+          y1 = yMax;
+          beginShape();
+          while (y1 >= (yMin + yMax) / 2) {
+            let r = dist(x1, y1, xRod, yRod);
+            let hi = current / r;
+            let hx = 0, hy = 0;
+            if (radioA.value() == "em") {
+              hx = ((pole == "ns") ? -1 : 1) * hi * (y1 - yRod) / r;
+              hy = ((pole == "ns") ? 1 : -1) * hi * (x1 - xRod) / r - h0;
+            } else {
+              hy = -h0;
+            }
+            x1 += hx;
+            y1 += hy;
+            vertex(x1, y1);
+          }
+          endShape();
+        }
+      }
+    }
+
+    // 绘制磁场矢量
+    function drawMagneticVector() {
+      let maxLine = 10;
+      let current = (radioA.value() != "m") ? 60 : 0;
+      let h0 = (radioA.value() == "e") ? 0 : 1;
+      if (pole != "ns") h0 *= -1;
+      noFill();
+
+      for (let x = xMin; x <= xMax; x += 30) {
+        for (let y = 120; y <= 300; y += 30) {
+          if (radioA.value() != "m")
+            if (dist(x, y, xRod, yRod) < 20) continue;
+          let x1 = 0, y1 = 0;
+          let r = dist(x, y, xRod, yRod);
+          let h1 = current / r;
+          let hex = 6 * h1 * (y - yRod) / r;
+          let hey = 6 * h1 * (xRod - x) / r;
+          let hmx = 0;
+          let hmy = 6 * h0;
+          x1 += hmx + hex;
+          y1 += hmy + hey;
+          let cx = x1;
+          let cy = y1;
+
+          stroke(0, 191, 191);
+          if (radioA.value() == "em") stroke(128, 255, 255);
+          if (radioA.value() == "e" || radioA.value() == "em")
+            drawArrow_head(x - cx, y - cy, 2 * hex, 2 * hey, 10);
+
+          stroke(64, 64, 255);
+          if (radioA.value() == "em") stroke(191, 191, 255);
+          if (radioA.value() == "m" || radioA.value() == "em")
+            drawArrow_head(x - cx, y - cy, 2 * hmx, 2 * hmy, 10);
+
+          stroke(0, 128, 128);
+          if (radioA.value() == "em")
+            drawArrow_head(x - cx, y - cy, 2 * cx, 2 * cy, 10);
+        }
+      }
+    }
+
+    // ========== 鼠标/触摸拖拽 ==========
+    let dragged = false, offsetX;
+
+    function touchStarted() {
+      if (!contain(mouseX, mouseY, 0, 0, width, height)) return;
+      aRod = 0;
+      vRod = 0;
+      dragged = true;
+      offsetX = mouseX * 900 / width - xRod;
+    }
+
+    function touchMoved() {
+      if (touches.length > 1) return;
+      if (dragged) {
+        aRod = 0;
+        vRod = 0;
+        xRod = mouseX * 900 / width - offsetX;
+        xRod = constrain(xRod, xMin - 60, xMax + 60);
+        if (abs(mouseX - pmouseX) > abs(mouseY - pmouseY)) return false;
+      }
+    }
+
+    function touchEnded() {
+      setup2();
+      dragged = false;
+    }
+
+    function mousePressed() { touchStarted(); }
+    function mouseDragged() { return touchMoved(); }
+    function mouseReleased() { touchEnded(); }
+  </script>
+</body>
+</html>
