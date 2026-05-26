@@ -122,10 +122,15 @@
     // ========== 主模拟代码 ==========
     let radioA, labelA, rangeA, checkA, chalkA;
     let barImage, earthImage;
-    let needlesNorth, needlesSouth;
     let language = 3;
     let needleX = [], needleY = [], needleZ = [];
     let vectorX = [], vectorY = [], vectorZ = [];
+    // 预计算旋转角度（避免draw中重复计算）
+    let rotAngles = [];
+    let rotZAngles = [];
+    let rotYAngles = [];
+    let rotXAngles = [];
+    let isNorthPole = [];
     let rotX = -0.3, rotY = 0;
 
     function preload() {
@@ -172,62 +177,33 @@
         needleZ.push(p.z);
       }
 
-      // 计算每个小磁针的磁场方向
+      // 计算每个小磁针的磁场方向及旋转角度
       for (let i = 0; i < needleX.length; i++) {
-        vectorX[i] = 0; vectorY[i] = 0; vectorZ[i] = 0;
+        let vx = 0, vy = 0, vz = 0;
         for (let j = 0; j < poleX.length; j++) {
-          let d = dist(needleX[i], needleY[i], needleZ[i], poleX[j], poleY[j], poleZ[j]);
-          vectorX[i] += poleSign[j] / (d * d) * ((needleX[i] - poleX[j]) / abs(d));
-          vectorY[i] += poleSign[j] / (d * d) * ((needleY[i] - poleY[j]) / abs(d));
-          vectorZ[i] += poleSign[j] / (d * d) * ((needleZ[i] - poleZ[j]) / abs(d));
+          let dx = needleX[i] - poleX[j];
+          let dy = needleY[i] - poleY[j];
+          let dz = needleZ[i] - poleZ[j];
+          let d = sqrt(dx*dx + dy*dy + dz*dz);
+          if (d < 0.001) continue;
+          let f = poleSign[j] / (d * d * d);
+          vx += f * dx;
+          vy += f * dy;
+          vz += f * dz;
         }
-        let m = dist(0, 0, 0, vectorX[i], vectorY[i], vectorZ[i]);
-        vectorX[i] = vectorX[i] / m * 13;
-        vectorY[i] = vectorY[i] / m * 13;
-        vectorZ[i] = vectorZ[i] / m * 13;
+        // 归一化到固定长度
+        let m = sqrt(vx*vx + vy*vy + vz*vz);
+        if (m < 0.001) { m = 1; vx = 0; vy = 0; vz = 1; }
+        vectorX[i] = vx / m * 13;
+        vectorY[i] = vy / m * 13;
+        vectorZ[i] = vz / m * 13;
+        // 预计算旋转：将盒子的Z轴转向磁场方向
+        let tx = vectorX[i], ty = vectorY[i], tz = vectorZ[i];
+        let tm = sqrt(tx*tx + ty*ty + tz*tz);
+        if (tm < 0.001) { rotYAngles[i] = 0; rotZAngles[i] = 0; continue; }
+        rotZAngles[i] = atan2(ty, tx);
+        rotYAngles[i] = acos(constrain(tz / tm, -1, 1));
       }
-
-      // 构建几何体（N极红色，S极蓝色）
-      needlesNorth = buildGeometry(() => {
-        fill(255, 80, 80);
-        noStroke();
-        for (let i = 0; i < needleX.length; i++) {
-          push();
-          let vx = constrain(vectorZ[i], -13, 13);
-          let vy = constrain(vectorX[i], -13, 13);
-          let vz = constrain(vectorY[i], -13, 13);
-          let mag = sqrt(vx*vx + vy*vy + vz*vz);
-          if (mag < 0.01) { pop(); continue; }
-          let angleY = acos(constrain(vz / mag, -1, 1));
-          let angleZ = atan2(vy, vx);
-          translate(needleX[i], needleY[i], needleZ[i]);
-          rotateZ(angleZ);
-          rotateY(angleY);
-          translate(0, 0, 6);
-          box(2, 2, 12);
-          pop();
-        }
-      });
-      needlesSouth = buildGeometry(() => {
-        fill(80, 80, 255);
-        noStroke();
-        for (let i = 0; i < needleX.length; i++) {
-          push();
-          let vx = constrain(vectorZ[i], -13, 13);
-          let vy = constrain(vectorX[i], -13, 13);
-          let vz = constrain(vectorY[i], -13, 13);
-          let mag = sqrt(vx*vx + vy*vy + vz*vz);
-          if (mag < 0.01) { pop(); continue; }
-          let angleY = acos(constrain(vz / mag, -1, 1));
-          let angleZ = atan2(vy, vx);
-          translate(needleX[i], needleY[i], needleZ[i]);
-          rotateZ(angleZ);
-          rotateY(angleY);
-          translate(0, 0, -6);
-          box(2, 2, 12);
-          pop();
-        }
-      });
     }
 
     function windowResized() {
@@ -310,10 +286,20 @@
 
       // 绘制小磁针（N极红色，S极蓝色）
       noStroke();
-      fill(255, 80, 80);
-      model(needlesNorth);
-      fill(80, 80, 255);
-      model(needlesSouth);
+      for (let i = 0; i < needleX.length; i++) {
+        push();
+        translate(needleX[i], needleY[i], needleZ[i]);
+        rotateZ(rotZAngles[i] || 0);
+        rotateY(rotYAngles[i] || 0);
+        // N极朝外（红色），S极朝内（蓝色）
+        fill(255, 80, 80);
+        translate(0, 0, 5);
+        box(2.5, 2.5, 10);
+        fill(80, 80, 255);
+        translate(0, 0, -10);
+        box(2.5, 2.5, 10);
+        pop();
+      }
       pop();
     }
 
