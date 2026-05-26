@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=10">
+  <title>物理虚拟实验 - 测速雷达原理</title>
+  <link rel="stylesheet" href="style.css">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+      overflow-x: hidden;
+      background: #f0f0f0;
+    }
+    #myContainer { text-align: center; position: relative; }
+    #divFull {
+      background-color: white;
+      position: relative;
+      font-size: 18px;
+      border-radius: 12px;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.1);
+    }
+    #myP5Canvas { touch-action: pinch-zoom; }
+    .sim-wrapper {
+      max-width: 1100px;
+      margin: 60px auto 0;
+      padding: 10px;
+    }
+    .flexContainer {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      align-items: center;
+      gap: 16px;
+      padding: 12px 16px;
+      background: #f8f9fa;
+      border-radius: 10px;
+      margin-top: 8px;
+    }
+    .flexContainer * { color: #000 !important; }
+    .flexItem { display: inline-flex; align-items: center; gap: 6px; }
+    .flexItem label {
+      font-size: 15px;
+      font-weight: 600;
+      color: #000;
+      white-space: nowrap;
+    }
+    .flexItem input[type="range"] {
+      width: 160px;
+      height: 6px;
+      -webkit-appearance: none;
+      background: linear-gradient(90deg, #3b82f6, #8b5cf6);
+      border-radius: 3px;
+      outline: none;
+    }
+    .flexItem input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      background: #fff;
+      border: 2px solid #3b82f6;
+      cursor: pointer;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+    }
+    .flexItem input[type="checkbox"] {
+      width: 18px;
+      height: 18px;
+      cursor: pointer;
+      accent-color: #3b82f6;
+    }
+    .flexItem .value-display {
+      font-size: 14px;
+      font-weight: 600;
+      color: #000;
+      min-width: 36px;
+    }
+    @media (max-width: 768px) {
+      .flexItem input[type="range"] { width: 100px; }
+    }
+  </style>
+</head>
+<body>
+  <header class="header">
+    <div class="logo">物理虚拟实验</div>
+    <nav class="nav">
+      <a href="index.html">首页</a>
+      <a href="experiments.html">实验列表</a>
+      <a href="vip.html">开通VIP</a>
+    </nav>
+  </header>
+
+  <div class="sim-wrapper">
+    <div id="divFull">
+      <div id="myContainer"></div>
+      <div class="flexContainer">
+        <div class="flexItem">
+          <label>播放速度：</label>
+          <input type="range" id="rangeA" min="10" max="60" value="30">
+          <span class="value-display" id="rangeValue">30</span>
+        </div>
+        <div class="flexItem">
+          <input type="checkbox" id="checkA" checked>
+          <label for="checkA" id="chalkA" style="font-weight:600;color:#000;cursor:pointer;">运行</label>
+        </div>
+        <div class="flexItem">
+          <a href="javascript:doFullScreen();" style="box-shadow:none;">
+            <svg width="32" height="32" viewBox="0 0 40 40" style="vertical-align:middle;">
+              <path d="M5,15 L5,5 L15,5 M35,25 L35,35 L25,35 M25,5 L35,5 L35,15 M15,35 L5,35 L5,25" fill="none" stroke="#555" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </a>
+        </div>
+      </div>
+    </div>
+    <p style="text-align:center;font-size:14px;color:#999;margin-top:8px;">拖动小球左右移动 · 观察多普勒效应引起的波长变化</p>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/0.9.0/p5.min.js"></script>
+  <script>
+    // ========== 工具函数 ==========
+    function doFullScreen() {
+      const el = document.getElementById('divFull');
+      if (el.requestFullscreen) el.requestFullscreen();
+      else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+      else if (el.msRequestFullscreen) el.msRequestFullscreen();
+    }
+    function contain(x, y, x1, y1, w1, h1) {
+      return x > x1 && x < x1 + w1 && y > y1 && y < y1 + h1;
+    }
+    function drawButtonDrag() {
+      push();
+      const r = 30, gap = 4;
+      let cx = width / 1000 * 40, cy = height - 45;
+      if (window.devicePixelRatio) { cx = 40; cy = (height / (width / 1000)) - 45; }
+      noStroke();
+      for (let i = 0; i < 4; i++) {
+        let x = cx + i * (r + gap) - 1.5 * (r + gap);
+        fill(0, 0, 0, 30);
+        ellipse(x, cy - 2, r, r);
+        fill(180);
+        ellipse(x, cy - 4, r - 2, r - 2);
+        fill(240);
+        ellipse(x, cy - 4, r - 8, r - 8);
+        fill(100);
+        noStroke();
+        ellipse(x, cy - 4, 4, 4);
+      }
+      pop();
+    }
+    function cosineInterpolate(a, b, x) {
+      let t = map(x, 0, 1, -HALF_PI, HALF_PI);
+      t = map(sin(t), -1, 1, 0, 1);
+      return lerp(a, b, t);
+    }
+    function getRedColor(nano) {
+      if (400 <= nano && nano < 420) return cosineInterpolate(64, 84, map(nano, 400, 420, 0, 1));
+      if (420 <= nano && nano < 510) return cosineInterpolate(84, 0, map(nano, 420, 510, 0, 1));
+      if (510 <= nano && nano < 580) return cosineInterpolate(0, 255, map(nano, 510, 580, 0, 1));
+      if (580 <= nano && nano < 700) return cosineInterpolate(255, 64, map(nano, 580, 700, 0, 1));
+      return 64;
+    }
+    function getGreenColor(nano) {
+      if (400 <= nano && nano < 440) return cosineInterpolate(64, 44, map(nano, 400, 440, 0, 1));
+      if (440 <= nano && nano < 550) return cosineInterpolate(44, 192, map(nano, 440, 550, 0, 1));
+      if (550 <= nano && nano < 640) return cosineInterpolate(192, 54, map(nano, 550, 640, 0, 1));
+      if (640 <= nano && nano < 700) return cosineInterpolate(54, 64, map(nano, 640, 700, 0, 1));
+      return 64;
+    }
+    function getBlueColor(nano) {
+      if (400 <= nano && nano < 450) return cosineInterpolate(64, 212, map(nano, 400, 450, 0, 1));
+      if (450 <= nano && nano < 550) return cosineInterpolate(212, 52, map(nano, 450, 550, 0, 1));
+      if (550 <= nano && nano < 650) return cosineInterpolate(52, 64, map(nano, 550, 650, 0, 1));
+      if (650 <= nano && nano < 700) return 64;
+      return 64;
+    }
+    function getLightColor(nano) {
+      return color(getRedColor(nano), getGreenColor(nano), getBlueColor(nano));
+    }
+    function draw2DArrow2(x, y, cx, cy, thick) {
+      var lArrow = sqrt(cx * cx + cy * cy);
+      var oxArrow = [0, lArrow - 2 * thick, lArrow - 2 * thick, lArrow, lArrow - 2 * thick, lArrow - 2 * thick, 0];
+      var oyArrow = [thick, thick, 2 * thick, 0, -2 * thick, -thick, -thick];
+      push();
+      translate(x, y);
+      rotate(atan2(cy, cx));
+      beginShape();
+      for (var i = 0; i < oxArrow.length; i++) vertex(max(oxArrow[i], 0), oyArrow[i]);
+      endShape(CLOSE);
+      pop();
+    }
+
+    // ========== 主模拟代码 ==========
+    let language = 3;
+    let labelA, rangeA, checkA, chalkA;
+    let gunImage, ballImage;
+    let genTime = 0;
+    let gunX = 900, gunY = 200;
+    let phase = 0;
+    let ballVx = 0;
+    let ballX1 = 450, ballX2 = 450, ballY = 200;
+    let waves = [];
+    let farMsg = ["球\n远离"];
+    let stopMsg = ["静止"];
+    let closeMsg = ["球\n靠近"];
+    let speedT = 0;
+    let wavelengthV2 = 0, wavelengthT2 = 0;
+    let infoDisplay = true;
+
+    function preload() {
+      var imagePrefix = "images/";
+      gunImage = loadImage(imagePrefix + "speedgun_speedgun.png");
+      ballImage = loadImage(imagePrefix + "speedgun_ball.png");
+    }
+
+    function setup() {
+      frameRate(60);
+      let o = select("#myContainer");
+      let a = 0.4;
+      let w = int(min(o.width, (window.innerHeight - 160) / a));
+      let h = int(w * a);
+      myCanvas = createCanvas(w, h);
+      myCanvas.parent("myContainer");
+      myCanvas.id("myP5Canvas");
+      labelA = select("#labelA");
+      rangeA = select("#rangeA");
+      rangeA.input(setup2);
+      setup2();
+      checkA = select("#checkA");
+      chalkA = select("#chalkA");
+
+      // 显示初始值
+      updateRangeDisplay();
+      rangeA.input(updateRangeDisplay);
+    }
+
+    function updateRangeDisplay() {
+      document.getElementById('rangeValue').textContent = rangeA.value();
+    }
+
+    function windowResized() {
+      let o = select("#myContainer");
+      let a = 0.4;
+      let w = int(min(o.width, (window.innerHeight - 160) / a));
+      let h = int(w * a);
+      resizeCanvas(w, h);
+    }
+
+    function setup2() {
+      frameRate(rangeA.value());
+    }
+
+    function draw() {
+      push();
+      scale(width / 1000);
+      background(211, 233, 255);
+      textSize(26);
+      textAlign(CENTER, BOTTOM);
+      imageMode(CENTER);
+      strokeWeight(1);
+      stroke(0, 10);
+      for (let i = 50; i < 1000; i += 50) line(i, 0, i, 400);
+      for (let i = 50; i < 400; i += 50) line(0, i, 1000, i);
+      strokeWeight(2);
+
+      // 绘制小球
+      image(ballImage, ballX1 - 20, ballY, 50, 50);
+
+      let stdWaveVelo = 5;
+      let stdBallVelo = 2;
+
+      if (genTime > 0) if (waves.length <= 0) genTime = -20;
+
+      // 产生新波
+      if (checkA.checked()) {
+        genTime++;
+        if (genTime > 0) if (genTime < 40) {
+          phase += 0.6;
+          waves.push({ ox: gunX, oy: gunY, x: gunX, y: gunY + 20 * sin(phase), v: -stdWaveVelo });
+        }
+      }
+
+      let divide = 40;
+      for (let n = 0; n < divide; n++) {
+        // 更新小球位置
+        if (checkA.checked()) {
+          if (ballX2 < ballX1) { ballV = -stdBallVelo / divide; ballX1 = max(ballX1 - stdBallVelo / divide, ballX2); }
+          if (ballX1 < ballX2) { ballV = stdBallVelo / divide; ballX1 = min(ballX1 + stdBallVelo / divide, ballX2); }
+        }
+        // 更新波的位置
+        for (let i = 0; i < waves.length; i++) {
+          if (checkA.checked()) waves[i].x += waves[i].v / divide;
+          if (waves[i].x < ballX1) {
+            waves[i].ox = ballX1;
+            waves[i].x = ballX1 + (ballX1 - waves[i].x);
+            waves[i].v = abs(waves[i].v);
+          }
+        }
+      }
+
+      // 绘制波
+      noFill();
+      let step = 1;
+      for (let i = waves.length - 1; i >= step; i -= step) {
+        stroke(getLightColor(550));
+        if (abs(waves[i].x - waves[i - step].x) < stdWaveVelo) stroke(getLightColor(450));
+        if (abs(waves[i].x - waves[i - step].x) > stdWaveVelo) stroke(getLightColor(650));
+        if (waves[i].v * waves[i - step].v > 0)
+          if (abs(waves[i].x - waves[i - step].x) < 20) {
+            strokeWeight(2);
+            line(waves[i].x, waves[i].y, waves[i - step].x, waves[i - step].y);
+            strokeWeight(1);
+            if ((waves[i].y - gunY) * (waves[i - step].y - gunY) < 0) {
+              let r = abs(waves[i].x - waves[i].ox);
+              stroke(128, map(r, 0, 1000, 64, 8));
+              ellipse(waves[i].ox, waves[i].oy, 2 * r, 2 * r);
+            }
+          }
+      }
+
+      // 多普勒效应信息显示
+      noStroke();
+      textAlign(CENTER, BOTTOM);
+      for (let i = 0; i < waves.length - 1; i++) {
+        if (abs(waves[i].x - waves[i + 1].x) < 20)
+          if (waves[i].v > 0)
+            if (waves[i + 1].v > 0)
+              if (waves[i + 1].x <= 900)
+                if (900 <= waves[i].x) {
+                  if (abs(waves[i].x - waves[i + 1].x) > stdWaveVelo) {
+                    fill(getLightColor(650));
+                    text(farMsg[language], 900, 150);
+                  } else if (abs(waves[i].x - waves[i + 1].x) < stdWaveVelo) {
+                    fill(getLightColor(450));
+                    text(closeMsg[language], 900, 150);
+                  } else {
+                    fill(getLightColor(550));
+                    text(stopMsg[language], 900, 150);
+                  }
+                }
+      }
+
+      // 移除超出范围的波
+      for (let i = 0; i < waves.length; i++)
+        if (!contain(waves[i].x, waves[i].y, 0, 0, 910, 1000)) { waves.splice(i, 1); }
+
+      // 箭头指示
+      fill(128, 64);
+      noStroke();
+      draw2DArrow2(ballX1, ballY, ballX2 - ballX1, 0, 4);
+
+      // 测速雷达
+      image(gunImage, gunX, gunY, 300, 300);
+
+      // 提示文字
+      if (infoDisplay) {
+        fill(0);
+        noStroke();
+        textAlign(CENTER, CENTER);
+        text("拖动小球移动", 450, 75);
+      }
+      pop();
+      drawButtonDrag();
+    }
+
+    // ========== 鼠标/触摸拖拽 ==========
+    var dragged = false;
+
+    function touchStarted() {
+      if (!contain(mouseX, mouseY, 0, 0, width, height)) return;
+      if (touches.length > 1) return;
+      dragged = true;
+      infoDisplay = false;
+      touchMoved();
+      return false;
+    }
+
+    function touchMoved() {
+      if (touches.length > 1) return;
+      if (dragged) {
+        ballX2 = mouseX * 1000 / width;
+        ballX2 = constrain(ballX2, 100, 800);
+        return false;
+      }
+    }
+
+    function touchEnded() { dragged = false; }
+
+    function mousePressed() { return touchStarted(); }
+    function mouseDragged() { return touchMoved(); }
+    function mouseReleased() { touchEnded(); }
+  </script>
+</body>
+</html>
