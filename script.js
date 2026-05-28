@@ -19,6 +19,10 @@ async function proxyApi(action, body = {}) {
 
 // ========== 获取所有用户（对象格式兼容旧代码） ==========
 async function getUsersFromTable() {
+  // 先立即返回本地缓存
+  const cached = JSON.parse(localStorage.getItem("users") || "{}");
+
+  // 异步尝试从服务器同步（不阻塞页面）
   try {
     const data = await proxyApi('getUsers');
     const users = data.users || [];
@@ -36,62 +40,67 @@ async function getUsersFromTable() {
     return map;
   } catch (e) {
     console.warn("[系统] 服务端查询失败:", e.message);
-    return JSON.parse(localStorage.getItem("users") || "{}");
+    return cached;
   }
 }
 
 // ========== 注册功能 ==========
 async function userRegister() {
-  const user = document.getElementById("regUser").value.trim();
-  const pwd = document.getElementById("regPwd").value.trim();
-  const email = document.getElementById("regEmail").value.trim();
   const tip = document.getElementById("regTip");
-  const pwd2El = document.getElementById("regPwd2");
-  const pwd2 = pwd2El ? pwd2El.value.trim() : "";
+  try {
+    const user = document.getElementById("regUser").value.trim();
+    const pwd = document.getElementById("regPwd").value.trim();
+    const email = document.getElementById("regEmail").value.trim();
+    const pwd2El = document.getElementById("regPwd2");
+    const pwd2 = pwd2El ? pwd2El.value.trim() : "";
 
-  if (!user || !pwd) {
-    if (tip) { tip.className = "auth-tip error"; tip.textContent = "⚠️ 请输入用户名和密码"; }
-    return;
+    if (!user || !pwd) {
+      if (tip) { tip.className = "auth-tip error"; tip.textContent = "⚠️ 请输入用户名和密码"; }
+      return;
+    }
+
+    if (pwd !== pwd2) {
+      if (tip) { tip.className = "auth-tip error"; tip.textContent = "⚠️ 两次输入的密码不一致"; }
+      return;
+    }
+
+    if (user.length < 2) {
+      if (tip) { tip.className = "auth-tip error"; tip.textContent = "⚠️ 用户名至少需要2个字符"; }
+      return;
+    }
+
+    if (pwd.length < 4) {
+      if (tip) { tip.className = "auth-tip error"; tip.textContent = "⚠️ 密码至少需要4个字符"; }
+      return;
+    }
+
+    // 检查用户名是否已存在（本地优先）
+    const cached = JSON.parse(localStorage.getItem("users") || "{}");
+    if (cached[user]) {
+      if (tip) { tip.className = "auth-tip error"; tip.textContent = "⚠️ 用户名已存在，请换一个"; }
+      return;
+    }
+
+    // 保存到 localStorage
+    cached[user] = { pwd, email: email || "", vip: "普通用户", expire: "" };
+    localStorage.setItem("users", JSON.stringify(cached));
+
+    // 异步尝试同步到 Supabase（不阻塞注册）
+    proxyApi('createUser', { username: user, password: pwd, email: email || '' }).catch(e => {
+      console.warn("[注册] Supabase 同步失败（不影响本地注册）:", e.message);
+    });
+
+    if (tip) {
+      tip.className = "auth-tip success";
+      tip.innerHTML = "✅ 注册成功！账号已激活，<a href='login.html' style='color:var(--secondary);font-weight:600;'>立即登录</a>";
+    }
+
+    document.getElementById("regUser").value = "";
+    document.getElementById("regPwd").value = "";
+  } catch (e) {
+    console.error("[注册] 异常:", e);
+    if (tip) { tip.className = "auth-tip error"; tip.textContent = "❌ 注册异常: " + e.message; }
   }
-
-  if (pwd !== pwd2) {
-    if (tip) { tip.className = "auth-tip error"; tip.textContent = "⚠️ 两次输入的密码不一致"; }
-    return;
-  }
-
-  if (user.length < 2) {
-    if (tip) { tip.className = "auth-tip error"; tip.textContent = "⚠️ 用户名至少需要2个字符"; }
-    return;
-  }
-
-  if (pwd.length < 4) {
-    if (tip) { tip.className = "auth-tip error"; tip.textContent = "⚠️ 密码至少需要4个字符"; }
-    return;
-  }
-
-  // 检查用户名是否已存在（本地优先）
-  const cached = JSON.parse(localStorage.getItem("users") || "{}");
-  if (cached[user]) {
-    if (tip) { tip.className = "auth-tip error"; tip.textContent = "⚠️ 用户名已存在，请换一个"; }
-    return;
-  }
-
-  // 保存到 localStorage
-  cached[user] = { pwd, email: email || "", vip: "普通用户", expire: "" };
-  localStorage.setItem("users", JSON.stringify(cached));
-
-  // 异步尝试同步到 Supabase（不阻塞注册）
-  proxyApi('createUser', { username: user, password: pwd, email: email || '' }).catch(e => {
-    console.warn("[注册] Supabase 同步失败（不影响本地注册）:", e.message);
-  });
-
-  if (tip) {
-    tip.className = "auth-tip success";
-    tip.innerHTML = "✅ 注册成功！账号已激活，<a href='login.html' style='color:var(--secondary);font-weight:600;'>立即登录</a>";
-  }
-
-  document.getElementById("regUser").value = "";
-  document.getElementById("regPwd").value = "";
 }
 
 // ========== 登录功能 ==========
