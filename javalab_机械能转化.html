@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=10">
+  <title>物理虚拟实验 - 机械能转化</title>
+  <link rel="stylesheet" href="style.css">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+      overflow-x: hidden;
+      background: #f0f0f0;
+    }
+    #myContainer { text-align: center; position: relative; }
+    #divFull {
+      background-color: white;
+      position: relative;
+      font-size: 18px;
+      border-radius: 12px;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.1);
+    }
+    #myP5Canvas { touch-action: pinch-zoom; }
+    .sim-wrapper {
+      max-width: 1100px;
+      margin: 60px auto 0;
+      padding: 10px;
+    }
+    .flexContainer {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 16px;
+      background: #f8f9fa;
+      border-radius: 10px;
+      margin-top: 8px;
+    }
+    .flexContainer * { color: #000 !important; }
+    .flexItem { display: inline-flex; align-items: center; gap: 6px; }
+    .flexItem label {
+      font-size: 14px;
+      font-weight: 600;
+      color: #000;
+      white-space: nowrap;
+    }
+    .flexItem button {
+      padding: 6px 14px;
+      border-radius: 8px;
+      border: 1px solid #3b82f6;
+      background: #3b82f6;
+      color: #fff !important;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .flexItem button:hover { background: #2563eb; }
+    .flexItem input[type="range"] {
+      width: 140px; height: 6px;
+      -webkit-appearance: none;
+      background: linear-gradient(90deg, #3b82f6, #8b5cf6);
+      border-radius: 3px; outline: none;
+    }
+    .flexItem input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 20px; height: 20px; border-radius: 50%;
+      background: #fff; border: 2px solid #3b82f6;
+      cursor: pointer; box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+    }
+    #myDataSheet {
+      position: absolute; right: 0; top: 0;
+      overflow-y: auto; width: 220px;
+      font-size: 13px;
+      background: rgba(255,255,255,0.92);
+      border-left: 1px solid #ddd;
+      padding: 8px;
+    }
+    #myDataSheet table { width: 100%; border-collapse: collapse; }
+    #myDataSheet td, #myDataSheet th {
+      border: 1px solid #ccc;
+      padding: 3px 5px;
+      text-align: center;
+      font-size: 12px;
+      color: #000 !important;
+    }
+    #myDataSheet th { background: #f0f0f0; font-weight: 600; color: #000 !important; }
+  </style>
+</head>
+<body>
+  <header class="header">
+    <div class="logo">物理虚拟实验</div>
+    <nav class="nav">
+      <a href="index.html">首页</a>
+      <a href="experiments.html">实验列表</a>
+      <a href="vip.html">开通VIP</a>
+    </nav>
+  </header>
+
+  <div class="sim-wrapper">
+    <div id="divFull" style="overflow:hidden;position:relative;">
+      <div id="myContainer"></div>
+      <div id="myDataSheet"></div>
+      <div class="flexContainer">
+        <div class="flexItem">
+          <label id="labelA">炮弹质量 1 kg</label>
+          <input type="range" id="rangeA" min="1" max="100" value="1">
+        </div>
+        <div class="flexItem">
+          <label id="labelB">初速度 10 m/s</label>
+          <input type="range" id="rangeB" min="1" max="20" value="10">
+        </div>
+        <div class="flexItem"><button id="buttonRun">发射</button></div>
+        <div class="flexItem"><button id="buttonData">下载数据</button></div>
+        <div class="flexItem">
+          <a href="javascript:doFullScreen();" style="box-shadow:none;">
+            <svg width="32" height="32" viewBox="0 0 40 40" style="vertical-align:middle;">
+              <path d="M5,15 L5,5 L15,5 M35,25 L35,35 L25,35 M25,5 L35,5 L35,15 M15,35 L5,35 L5,25" fill="none" stroke="#555" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </a>
+        </div>
+      </div>
+    </div>
+    <p style="text-align:center;font-size:14px;color:#999;margin-top:8px;">竖直上抛运动 · 动能与重力势能相互转化 · 调整质量和初速度观察变化</p>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/0.9.0/p5.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/0.9.0/addons/p5.dom.min.js"></script>
+  <script>
+    // ========== 工具函数 ==========
+    function doFullScreen() {
+      const el = document.getElementById('divFull');
+      if (el.requestFullscreen) el.requestFullscreen();
+      else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+      else if (el.msRequestFullscreen) el.msRequestFullscreen();
+    }
+
+    // ========== 主模拟代码 ==========
+    let language = 3; // 0=韩语, 1=日语, 2=英语, 3=中文
+    let labelA, rangeA, labelB, rangeB, buttonRun, buttonData;
+    let cannonImage, myDataSheet;
+    let logData = [];
+    let timming, v1, h1, touchSummit;
+
+    function preload() {
+      cannonImage = loadImage("images/energy_conversion_cannon.png");
+    }
+
+    function setup() {
+      frameRate(100);
+      let container = select("#myContainer");
+      let a = 1;
+      let w = int(min(container.width, (window.innerHeight - 160) / a));
+      let h = int(w * a);
+      if (w < 100) w = 800;
+      if (h < 100) h = 800;
+      myCanvas = createCanvas(w, h);
+      myCanvas.parent("myContainer");
+      myCanvas.id("myP5Canvas");
+
+      myDataSheet = select("#myDataSheet");
+
+      labelA = select("#labelA");
+      rangeA = select("#rangeA");
+      rangeA.input(setup2);
+
+      labelB = select("#labelB");
+      rangeB = select("#rangeB");
+      rangeB.input(setup2);
+
+      buttonRun = select("#buttonRun");
+      buttonRun.mouseClicked(doButtonRun);
+
+      buttonData = select("#buttonData");
+      buttonData.mouseClicked(doButtonData);
+
+      setup2();
+      reSizing();
+    }
+
+    function windowResized() {
+      let container = select("#myContainer");
+      let a = 1;
+      let w = int(min(container.width, (window.innerHeight - 160) / a));
+      let h = int(w * a);
+      if (w < 100) w = 800;
+      resizeCanvas(w, h);
+      reSizing();
+    }
+
+    function reSizing() {
+      myDataSheet.style("height", height + "px");
+    }
+
+    function setup2() {
+      labelA.html("炮弹质量 " + rangeA.value() + " kg");
+      labelB.html("初速度 " + rangeB.value() + " m/s");
+      timming = -1;
+      touchSummit = false;
+    }
+
+    function doButtonRun() {
+      timming = 0;
+      v1 = rangeB.value();
+      h1 = 0;
+      logData = [[0, rangeB.value(), 0]];
+      myDataSheet.html("", false);
+    }
+
+    function doButtonData() {
+      let table = new p5.Table();
+      table.addColumn("Time(s)");
+      table.addColumn("Velocity(m/s)");
+      table.addColumn("Height(m)");
+      for (let i = 0; i < logData.length; i += 10) {
+        let newRow = table.addRow();
+        newRow.setNum("Time(s)", logData[i][0]);
+        newRow.setNum("Velocity(m/s)", logData[i][1]);
+        newRow.setNum("Height(m)", logData[i][2]);
+      }
+      saveTable(table, "javalab-" + rangeA.value() + "kg-" + rangeB.value() + "m/s-"
+        + nf(month(), 2) + "-" + nf(day(), 2) + "-" + nf(hour(), 2) + "-" + nf(minute(), 2) + ".csv");
+    }
+
+    function draw() {
+      if (touches.length > 1) return;
+      background(255);
+      strokeWeight(2);
+      textSize(30);
+      textAlign(LEFT, TOP);
+      push();
+      scale(width / 1000);
+      translate(250, 850);
+
+      // 刻度线
+      stroke(0);
+      for (let i = 0; i < 900; i += 10) line(-80, -i, -50, -i);
+      for (let i = 0; i < 900; i += 100) line(-110, -i, -50, -i);
+
+      // 刻度标签
+      fill(0);
+      noStroke();
+      textSize(40);
+      textAlign(RIGHT, CENTER);
+      for (let i = 0; i < 9; i++) text(i + " m", -120, -i * 100);
+
+      // 物理模拟
+      let v0 = rangeB.value();
+      let v2 = v1;
+      if (timming >= 0) {
+        timming += 0.01;
+        v1 = v0 - 9.8 * timming;
+        h1 = v0 * timming - 0.5 * 9.8 * timming * timming;
+        if (h1 > -1) {
+          logData.push([timming, v1, h1]);
+          doDataSheet();
+        }
+      }
+
+      // 小球
+      fill(0);
+      ellipse(0, -h1 * 100, 32, 32);
+
+      // 大炮
+      image(cannonImage, -62, 0, 120, 150);
+
+      // 当前高度/速度/时间显示
+      if (h1 > 0) {
+        stroke(0);
+        line(50, -h1 * 100, 100, -h1 * 100);
+        fill(0);
+        noStroke();
+        textAlign(LEFT, CENTER);
+        text(round(h1 * 1000) / 1000 + " m, "
+          + round(v1 * 1000) / 1000 + " m/s, "
+          + round(timming * 100) / 100 + " s",
+          120, -min(h1, 7.75) * 100);
+      }
+
+      // 最高点标记
+      if (v1 * v2 < 0) touchSummit = true;
+      if (touchSummit) {
+        let t2 = v0 / 9.8;
+        let h2 = v0 * t2 - 0.5 * 9.8 * t2 * t2;
+        stroke(255, 0, 0);
+        line(50, -h2 * 100, 100, -h2 * 100);
+        fill(255, 0, 0);
+        noStroke();
+        textAlign(LEFT, CENTER);
+        text("最高点 " + round(h2 * 10000) / 10000 + " m, "
+          + round(t2 * 10000) / 10000 + " s",
+          120, -min(h2, 8.15) * 100);
+      }
+
+      pop();
+    }
+
+    function doDataSheet() {
+      let htmlText = "<table><tbody><tr><th>Time (s)</th><th>Velocity (m/s)</th><th>Height (m)</th></tr>";
+      for (let i = 0; i < logData.length; i += 10) {
+        htmlText += "<tr><td>" + round(logData[i][0] * 100) / 100
+          + "</td><td>" + round(logData[i][1] * 1000) / 1000
+          + "</td><td>" + round(logData[i][2] * 1000) / 1000
+          + "</td></tr>";
+      }
+      htmlText += "</tbody></table>";
+      myDataSheet.html(htmlText, false);
+    }
+  </script>
+</body>
+</html>
