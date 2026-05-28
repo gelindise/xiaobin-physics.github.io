@@ -1,0 +1,618 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=10">
+  <title>磁铁与电磁铁 - 物理虚拟实验</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/0.9.0/p5.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/0.9.0/addons/p5.dom.min.js"></script>
+  <style>
+    #myP5Canvas { touch-action: pinch-zoom; display: block; margin: 0 auto; border-radius: 12px; }
+    .canvas-wrap { background: #0f172a; border-radius: 12px; padding: 4px; width: 100%; box-sizing: border-box; }
+    .controls-bar { display: flex; align-items: center; justify-content: space-between; padding: 8px 16px; gap: 12px; flex-wrap: wrap; }
+    .controls-bar .hint { color: #94a3b8; font-size: 14px; }
+    .controls-bar .rst-btn { background: #334155; color: #e2e8f0; border: 1px solid #475569; padding: 6px 20px; border-radius: 6px; cursor: pointer; font-size: 14px; }
+    .controls-bar .rst-btn:hover { background: #475569; }
+    input[type="range"] { accent-color: #3b82f6; }
+    .ctrl-group { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+    .ctrl-group label { color: #cbd5e1; font-size: 13px; cursor: pointer; user-select: none; display: flex; align-items: center; gap: 4px; }
+    .ctrl-group input[type="checkbox"] { accent-color: #3b82f6; width: 16px; height: 16px; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <header class="header">
+    <div class="logo">物理虚拟实验</div>
+    <nav class="nav">
+      <a href="index.html">首页</a>
+      <a href="experiments.html">实验列表</a>
+    </nav>
+  </header>
+
+  <div class="section">
+    <h2>磁铁与电磁铁</h2>
+    <p style="color:#94a3b8;margin:0 0 16px 0;">比较条形磁铁与电磁铁的磁场分布，观察通电线圈中的电子流动。</p>
+  </div>
+
+  <div class="main-card">
+    <div class="canvas-wrap">
+      <div id="myContainer"></div>
+    </div>
+    <div class="controls-bar">
+      <span id="labelB" class="hint">拖拽移动，点击旋转</span>
+      <div class="ctrl-group">
+        <label><input type="checkbox" id="checkA"><span id="chalkA">指南针矩阵</span></label>
+        <label><input type="checkbox" id="checkB" checked><span id="chalkB">磁感线</span></label>
+        <button id="buttonRst" class="rst-btn">重置</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="formula-bar">
+    <div class="formula-item">
+      <span class="label">磁铁</span>
+      <span class="value">原子尺度电子运动产生磁场</span>
+    </div>
+    <div class="formula-item">
+      <span class="label">电磁铁</span>
+      <span class="value">通电线圈产生磁场</span>
+    </div>
+    <div class="formula-item">
+      <span class="label">共同原理</span>
+      <span class="value">电荷运动产生磁场</span>
+    </div>
+  </div>
+
+  <div class="experiment-info">
+    <div class="info-card">
+      <h3>实验说明</h3>
+      <ul>
+        <li>从左侧面板<strong>拖拽</strong>磁铁或电磁铁到实验区域</li>
+        <li><strong>点击</strong>已放置的磁铁显示角度滑块</li>
+        <li>勾选"指南针矩阵"显示空间各点磁场方向</li>
+        <li>勾选"磁感线"显示磁场分布（带方向箭头）</li>
+        <li>电磁铁(无电流)不产生磁场，有电流时产生磁场</li>
+      </ul>
+    </div>
+    <div class="info-card">
+      <h3>实验原理</h3>
+      <p>磁铁和电磁铁产生磁场的本质相同——都是电荷运动产生磁场。磁铁中电子的自旋和轨道运动产生磁场；电磁铁中电流通过线圈产生磁场。通电螺线管（线圈）的磁场分布与条形磁铁相似。</p>
+    </div>
+  </div>
+
+  <script>
+  let language = 3;
+  let checkA, chalkA, checkB, chalkB, labelB, rangeB, buttonRst, deleteImage;
+  let buttons = [
+    {x:0, y:0, w:120, h:80, type:"bar", rot:0},
+    {x:0, y:80, w:120, h:80, type:"coil0", rot:0},
+    {x:0, y:160, w:120, h:80, type:"coil1", rot:0},
+    {x:0, y:240, w:120, h:80, type:"coil2", rot:0},
+    {x:0, y:320, w:120, h:80, type:"compass", rot:0}
+  ];
+  let magnets = [];
+  let needCalc = true;
+  let poleX = [], poleY = [], poleVx = [], poleVy = [], poleIsN = [];
+  let forceLineX = [], forceLineY = [];
+  let touched = false, touchedX = 0, touchedY = 0;
+  let partClicked = -1;
+  let dragged = -1, offsetX, offsetY;
+  let fixedCompass = [];
+  let magnetNames = ["条形磁铁", "电磁铁(无电流)", "电磁铁(慢速)", "电磁铁(快速)", "指南针"];
+
+  let flows = [
+    {x1:[30,27.3,26,24.7,23.3,22,20.7,14,12.7,11.3,10,8.7,7.3,0.7,-0.7,-2,-3.3,-4.7,-6,-12.7,-14,-15.3,-16.7,-18,-19.3,-26,-27.3,-28.7,-30],y1:[25,-26.2,-26.2,-20,-10,0,6.2,-26.2,-26.2,-20,-10,0,6.2,-26.2,-26.2,-20,-10,0,6.2,-26.2,-26.2,-20,-10,0,6.2,-26.2,-26.2,-20,-10],x2:[30,26,24.7,23.3,22,20.7,19.3,12.7,11.3,10,8.7,7.3,6,-0.7,-2,-3.3,-4.7,-6,-7.3,-14,-15.3,-16.7,-18,-19.3,-20.7,-27.3,-28.7,-30,-30],y2:[5,-26.2,-20,-10,0,6.2,6.2,-26.2,-20,-10,0,6.2,6.2,-26.2,-20,-10,0,6.2,6.2,-26.2,-20,-10,0,6.2,6.2,-26.2,-20,-10,25],tag:"coil0",speed:0,node:[],nodes:0,nodeLength:0,path1:[],path2:[]},
+    {x1:[20,30,27.3,26,24.7,23.3,22,20.7,14,12.7,11.3,10,8.7,7.3,0.7,-0.7,-2,-3.3,-4.7,-6,-12.7,-14,-15.3,-16.7,-18,-19.3,-26,-27.3,-28.7,-30,-30],y1:[25,25,-26.2,-26.2,-20,-10,0,6.2,-26.2,-26.2,-20,-10,0,6.2,-26.2,-26.2,-20,-10,0,6.2,-26.2,-26.2,-20,-10,0,6.2,-26.2,-26.2,-20,-10,25],x2:[30,30,26,24.7,23.3,22,20.7,19.3,12.7,11.3,10,8.7,7.3,6,-0.7,-2,-3.3,-4.7,-6,-7.3,-14,-15.3,-16.7,-18,-19.3,-20.7,-27.3,-28.7,-30,-30,-20],y2:[25,5,-26.2,-20,-10,0,6.2,6.2,-26.2,-20,-10,0,6.2,6.2,-26.2,-20,-10,0,6.2,6.2,-26.2,-20,-10,0,6.2,6.2,-26.2,-20,-10,25,25],tag:"coil1",speed:0.4,node:[],nodes:0,nodeLength:0,path1:[],path2:[]},
+    {x1:[20,30,28.7,28.1,27.5,26.8,26.2,25.6,22.4,21.8,21.2,20.5,19.9,19.3,16.1,15.5,14.8,14.2,13.6,12.9,9.8,9.2,8.5,7.9,7.3,6.6,3.5,2.8,2.2,1.6,0.9,0.3,-2.8,-3.5,-4.1,-4.7,-5.4,-6,-9.2,-9.8,-10.4,-11.1,-11.7,-12.3,-15.5,-16.1,-16.7,-17.4,-18,-18.6,-21.8,-22.4,-23.1,-23.7,-24.3,-24.9,-28.1,-28.7,-29.4,-30,-30],y1:[25,25,-26.2,-26.2,-20,-10,0,6.2,-26.2,-26.2,-20,-10,0,6.2,-26.2,-26.2,-20,-10,0,6.2,-26.2,-26.2,-20,-10,0,6.2,-26.2,-26.2,-20,-10,0,6.2,-26.2,-26.2,-20,-10,0,6.2,-26.2,-26.2,-20,-10,0,6.2,-26.2,-26.2,-20,-10,0,6.2,-26.2,-26.2,-20,-10,0,6.2,-26.2,-26.2,-20,-10,25],x2:[30,30,28.1,27.5,26.8,26.2,25.6,24.9,21.8,21.2,20.5,19.9,19.3,18.6,15.5,14.8,14.2,13.6,12.9,12.3,9.2,8.5,7.9,7.3,6.6,6,2.8,2.2,1.6,0.9,0.3,-0.3,-3.5,-4.1,-4.7,-5.4,-6,-6.6,-9.8,-10.4,-11.1,-11.7,-12.3,-12.9,-16.1,-16.7,-17.4,-18,-18.6,-19.3,-22.4,-23.1,-23.7,-24.3,-24.9,-25.6,-28.7,-29.4,-30,-30,-20],y2:[25,5,-26.2,-20,-10,0,6.2,6.2,-26.2,-20,-10,0,6.2,6.2,-26.2,-20,-10,0,6.2,6.2,-26.2,-20,-10,0,6.2,6.2,-26.2,-20,-10,0,6.2,6.2,-26.2,-20,-10,0,6.2,6.2,-26.2,-20,-10,0,6.2,6.2,-26.2,-20,-10,0,6.2,6.2,-26.2,-20,-10,0,6.2,6.2,-26.2,-20,-10,25,25],tag:"coil2",speed:0.4,node:[],nodes:0,nodeLength:0,path1:[],path2:[]}
+  ];
+
+  function get_x(x, y, rx, ry, rz, deg) {
+    return x * cos(radians(deg)) + y * sin(radians(deg));
+  }
+  function get_y(x, y, rx, ry, rz, deg) {
+    return -x * sin(radians(deg)) + y * cos(radians(deg));
+  }
+  function contain(x, y, rx, ry, rw, rh) {
+    return x >= rx && x <= rx + rw && y >= ry && y <= ry + rh;
+  }
+
+  function preload() {
+    deleteImage = loadImage("delete_icon.png");
+  }
+
+  function setup() {
+    frameRate(20);
+    let o = select("#myContainer");
+    let a = 0.5;
+    let w = int(min(o.width, (window.innerHeight - 160) / a));
+    let h = int(w * a);
+    myCanvas = createCanvas(w, h);
+    myCanvas.parent("myContainer");
+    myCanvas.id("myP5Canvas");
+
+    for (let i = 0; i < buttons.length; i++)
+      magnets.push({x: buttons[i].x + buttons[i].w / 2, y: buttons[i].y + buttons[i].h / 2, type: buttons[i].type, rot: buttons[i].rot});
+
+    for (let i = 160; i < 1080; i += 66)
+      for (let j = 0; j < 9; j++)
+        fixedCompass.push({x: i - (j % 2 == 0 ? 0 : 33), y: 30 + j * 55, rot: 0});
+
+    checkA = select("#checkA");
+    chalkA = select("#chalkA");
+    chalkA.html("指南针矩阵");
+    checkA.changed(() => { needCalc = true; });
+
+    checkB = select("#checkB");
+    chalkB = select("#chalkB");
+    chalkB.html("磁感线");
+    checkB.changed(() => { needCalc = true; });
+
+    rangeB = createSlider(0, 360, 0, 10);
+    rangeB.parent("myContainer");
+    rangeB.style("width", "300px");
+    rangeB.input(() => { if (partClicked >= 0) magnets[partClicked].rot = rangeB.value(); needCalc = true; });
+
+    labelB = select("#labelB");
+    labelB.html("拖拽移动，点击旋转");
+
+    buttonRst = select("#buttonRst");
+    buttonRst.mouseClicked(() => { magnets.splice(buttons.length); needCalc = true; });
+    buttonRst.html("重置");
+
+    setup2();
+    for (let i = 0; i < flows.length; i++)
+      for (let j = 0; j < flows[i].nodes; j++)
+        flows[i].node[j] = map(j, 0, flows[i].nodes, 0, flows[i].nodeLength);
+  }
+
+  function setup2() {
+    for (let i = 0; i < flows.length; i++) {
+      for (let j = 0; j < flows[i].x1.length; j++) {
+        flows[i].path1[j] = (j == 0) ? 0 : flows[i].path2[j - 1];
+        flows[i].path2[j] = flows[i].path1[j] + dist(flows[i].x1[j], flows[i].y1[j], flows[i].x2[j], flows[i].y2[j]);
+      }
+      flows[i].nodeLength = flows[i].path2[flows[i].x1.length - 1];
+      flows[i].nodes = round(flows[i].nodeLength / 10);
+    }
+  }
+
+  function windowResized() {
+    let o = select("#myContainer");
+    let a = 0.5;
+    let w = int(min(o.width, (window.innerHeight - 160) / a));
+    let h = int(w * a);
+    resizeCanvas(w, h);
+  }
+
+  function draw() {
+    if (touches.length > 1) return;
+    background(15, 23, 42);
+    strokeWeight(2);
+    textSize(16);
+    textAlign(CENTER, CENTER);
+    imageMode(CENTER);
+
+    push();
+    scale(width / 1000);
+
+    if (needCalc) calcMagneticField();
+
+    // Click-to-rotate detection
+    if (!mouseIsPressed) {
+      if (touched) {
+        if (dist(mouseX, mouseY, touchedX, touchedY) < 2) {
+          let x = mouseX * 1000 / width;
+          let y = mouseY * 1000 / width;
+          for (let i = buttons.length; i < magnets.length; i++) {
+            let d1 = dist(magnets[i].x, magnets[i].y, x, y);
+            if (d1 < 60) {
+              if (magnets[i].type != "compass") {
+                partClicked = i;
+                rangeB.style("display", "inline");
+                rangeB.value(magnets[i].rot);
+                rangeB.position(
+                  constrain(magnets[i].x * width / 1000 + (select("#myContainer").width - width) / 2 - 150, 0, select("#myContainer").width - 300),
+                  magnets[i].y * width / 1000 + 30
+                );
+                break;
+              }
+            }
+          }
+        }
+        touched = false;
+      }
+    } else {
+      if (contain(mouseX, mouseY, 0, 0, width, height)) {
+        if (!touched) { touchedX = mouseX; touchedY = mouseY; }
+        touched = true;
+      }
+    }
+
+    if (partClicked < 0) rangeB.style("display", "none");
+
+    // Draw fixed compass matrix
+    if (checkA.checked()) {
+      for (let i = 0; i < fixedCompass.length; i++)
+        drawCompass(fixedCompass[i].x, fixedCompass[i].y, fixedCompass[i].rot);
+    }
+
+    // Draw field lines
+    noFill();
+    stroke(0, 200, 100);
+    if (checkB.checked()) {
+      for (let c = 0; c < forceLineX.length; c++) {
+        if (forceLineX[c].length < 4) continue;
+        beginShape();
+        for (let i = 0; i < forceLineX[c].length; i++)
+          vertex(forceLineX[c][i], forceLineY[c][i]);
+        endShape();
+        // One arrow per field line at midpoint
+        let midIdx = floor(forceLineX[c].length / 2);
+        if (midIdx > 2 && midIdx < forceLineX[c].length - 2) {
+          let px = forceLineX[c][midIdx];
+          let py = forceLineY[c][midIdx];
+          let nx = forceLineX[c][midIdx + 2];
+          let ny = forceLineY[c][midIdx + 2];
+          let ang = atan2(ny - py, nx - px);
+          push();
+          translate(px, py);
+          rotate(ang);
+          fill(0, 200, 100);
+          noStroke();
+          beginShape();
+          vertex(10, 0);
+          vertex(-5, -6);
+          vertex(-5, 6);
+          endShape(CLOSE);
+          pop();
+        }
+      }
+    }
+
+    // Draw buttons (palette)
+    drawbuttons();
+
+    // Draw magnets
+    for (let i = 0; i < magnets.length; i++) {
+      if (i < buttons.length && dragged >= 0) {
+        if (contain(magnets[dragged].x, magnets[dragged].y, buttons[i].x, buttons[i].y, buttons[i].w, buttons[i].h)) {
+          image(deleteImage, buttons[i].x + buttons[i].w / 2, buttons[i].y + buttons[i].h / 2, 90, 90);
+          continue;
+        }
+      }
+      drawMagnet(i);
+    }
+
+    pop();
+  }
+
+  function drawCompass(x, y, rot) {
+    push();
+    translate(x, y);
+    noStroke();
+    fill(255, 220, 190, 220);
+    ellipse(0, 0, 60, 60);
+    fill(240, 230);
+    ellipse(0, 0, 52, 52);
+    rotate(rot);
+    fill(200, 230);
+    beginShape(); vertex(0, -8); vertex(24, 0); vertex(0, 8); endShape(CLOSE);
+    beginShape(); vertex(0, -8); vertex(-24, 0); vertex(0, 8); endShape(CLOSE);
+    fill(255, 80, 80, 230);
+    beginShape(); vertex(6, -6); vertex(24, 0); vertex(6, 6); endShape(CLOSE);
+    fill(200, 230);
+    ellipse(0, 0, 5, 5);
+    pop();
+  }
+
+  function drawbuttons() {
+    for (let i = 0; i < buttons.length; i++) {
+      stroke(60, 80, 120);
+      fill(30, 50, 80, 200);
+      rect(buttons[i].x + 1, buttons[i].y + 1, buttons[i].w, buttons[i].h, 2);
+
+      let cx = buttons[i].x + buttons[i].w / 2;
+      let cy = buttons[i].y + buttons[i].h / 2;
+      push();
+      translate(cx, cy);
+
+      if (buttons[i].type == "bar") {
+        noStroke();
+        fill(100, 150, 255, 230);
+        rect(-20, -8, 30, 16);
+        fill(255, 100, 100, 230);
+        rect(0, -8, 20, 16);
+        fill(255, 240);
+        textSize(7); text("S", -14, 0); text("N", 14, 0);
+      } else if (buttons[i].type == "coil0") {
+        fill(160, 170, 180, 220);
+        noStroke();
+        rect(-16, -12, 32, 24);
+        stroke(160, 130, 80);
+        strokeWeight(1.2);
+        for (let k = 0; k < 4; k++) {
+          let xx = map(k, 0, 3, -12, 8);
+          line(xx, -10, xx + 4, 10);
+        }
+        noStroke(); fill(180, 200, 230, 220);
+        textSize(6); text("×", 0, 0);
+      } else if (buttons[i].type == "coil1") {
+        fill(160, 170, 180, 220);
+        noStroke();
+        rect(-16, -12, 32, 24);
+        stroke(160, 130, 80);
+        strokeWeight(1.2);
+        for (let k = 0; k < 4; k++) {
+          let xx = map(k, 0, 3, -12, 8);
+          line(xx, -10, xx + 4, 10);
+        }
+        fill(255, 80, 80, 200);
+        noStroke();
+        ellipse(4, 0, 4, 4);
+      } else if (buttons[i].type == "coil2") {
+        fill(160, 170, 180, 220);
+        noStroke();
+        rect(-16, -12, 32, 24);
+        stroke(160, 130, 80);
+        strokeWeight(1.2);
+        for (let k = 0; k < 4; k++) {
+          let xx = map(k, 0, 3, -12, 8);
+          line(xx, -10, xx + 4, 10);
+        }
+        fill(255, 80, 80, 200);
+        noStroke();
+        ellipse(0, -4, 4, 4); ellipse(8, 4, 4, 4);
+      } else if (buttons[i].type == "compass") {
+        noStroke();
+        fill(255, 220, 190, 200);
+        ellipse(0, 0, 26, 26);
+        fill(240, 230);
+        ellipse(0, 0, 22, 22);
+        fill(200, 230);
+        beginShape(); vertex(0, -3); vertex(10, 0); vertex(0, 3); endShape(CLOSE);
+        fill(255, 80, 80, 230);
+        beginShape(); vertex(-2, -2); vertex(10, 0); vertex(-2, 2); endShape(CLOSE);
+      }
+
+      fill(180, 200, 230, 230);
+      textSize(7);
+      noStroke();
+      text(magnetNames[i], 0, buttons[i].h / 2 - 10);
+      pop();
+    }
+  }
+
+  function drawMagnet(idx) {
+    let m = magnets[idx];
+    if (m.type == "bar") {
+      push(); translate(m.x, m.y); rotate(radians(m.rot));
+      noStroke();
+      fill(100, 150, 255, 230); rect(-40, -15, 60, 30);
+      fill(255, 100, 100, 230); rect(0, -15, 40, 30);
+      fill(255, 240); text("S", -30, 0); text("N", 30, 0);
+      pop();
+    } else if (m.type == "coil0" || m.type == "coil1" || m.type == "coil2") {
+      push(); translate(m.x, m.y); rotate(radians(m.rot));
+      // Coil core
+      fill(160, 170, 180, 230); noStroke();
+      rect(-40, -25, 80, 30);
+      // Copper windings
+      stroke(180, 120, 60);
+      strokeWeight(1.5);
+      let index = (m.type == "coil0") ? 0 : (m.type == "coil1" ? 1 : 2);
+      for (let i = 0; i < flows[index].x1.length; i++)
+        line(flows[index].x1[i], flows[index].y1[i], flows[index].x2[i], flows[index].y2[i]);
+      // Electron flow for powered coils
+      if (m.type == "coil1" || m.type == "coil2") {
+        for (let j = 0; j < flows[index].nodes; j++) {
+          flows[index].node[j] += flows[index].speed;
+          if (flows[index].node[j] > flows[index].nodeLength)
+            flows[index].node[j] -= flows[index].nodeLength;
+          if (flows[index].node[j] < 0)
+            flows[index].node[j] += flows[index].nodeLength;
+        }
+        noStroke();
+        for (let j = 0; j < flows[index].nodes; j++)
+          for (let k = 0; k < flows[index].x1.length; k++) {
+            if (flows[index].path1[k] <= flows[index].node[j])
+              if (flows[index].node[j] <= flows[index].path2[k]) {
+                let x = map(flows[index].node[j], flows[index].path1[k], flows[index].path2[k], flows[index].x1[k], flows[index].x2[k]);
+                let y = map(flows[index].node[j], flows[index].path1[k], flows[index].path2[k], flows[index].y1[k], flows[index].y2[k]);
+                fill(255, 80, 80, 200);
+                ellipse(x, y, 5, 5);
+              }
+          }
+        // Battery indicator
+        noStroke();
+        fill(160, 180, 200, 220);
+        rect(15, 20, 4, 10, 0, 2, 2, 0);
+        fill(220, 180, 60, 230);
+        rect(-19, 15, 35, 20, 2);
+        fill(60, 60, 70, 230);
+        rect(-19, 15, 25, 20, 2, 0, 0, 2);
+      }
+      pop();
+    } else if (m.type == "compass") {
+      drawCompass(m.x, m.y, m.rot);
+    }
+  }
+
+  function calcMagneticField() {
+    poleX = []; poleY = []; poleVx = []; poleVy = []; poleIsN = [];
+
+    for (let i = buttons.length; i < magnets.length; i++) {
+      if (magnets[i].type == "compass") continue;
+      let t1 = -magnets[i].rot;
+
+      if (magnets[i].type == "bar" || magnets[i].type == "coil1" || magnets[i].type == "coil2") {
+        let step = 8;
+        if (magnets[i].type == "coil1") step = 6;
+        if (magnets[i].type == "coil2") step = 12;
+        for (let j = 0; j < step; j++) {
+          let y2 = (magnets[i].type == "bar") ? map(j, 0, (step - 1), -14, 14) : map(j, 0, (step - 1), -14, 14) - 10;
+          let t2 = map(j, -1, step, -HALF_PI, HALF_PI);
+          poleX.push(magnets[i].x + get_x(35, y2, 0, 0, 0, t1));
+          poleY.push(magnets[i].y + get_y(35, y2, 0, 0, 0, t1));
+          poleVx.push(get_x(cos(t2), sin(t2), 0, 0, 0, t1));
+          poleVy.push(get_y(cos(t2), sin(t2), 0, 0, 0, t1));
+          poleIsN.push(true);
+        }
+        for (let j = 0; j < step; j++) {
+          let y2 = (magnets[i].type == "bar") ? map(j, 0, (step - 1), 14, -14) : map(j, 0, (step - 1), -14, 14) - 10;
+          let t2 = map(j, -1, step, HALF_PI, 3 * HALF_PI);
+          poleX.push(magnets[i].x + get_x(-35, y2, 0, 0, 0, t1));
+          poleY.push(magnets[i].y + get_y(-35, y2, 0, 0, 0, t1));
+          poleVx.push(get_x(cos(t2), sin(t2), 0, 0, 0, t1));
+          poleVy.push(get_y(cos(t2), sin(t2), 0, 0, 0, t1));
+          poleIsN.push(false);
+        }
+      }
+    }
+
+    // Update fixed compasses
+    if (checkA.checked()) {
+      for (let i = 0; i < fixedCompass.length; i++) {
+        let vecX = 0, vecY = 0;
+        for (let j = 0; j < poleX.length; j++) {
+          let dx = fixedCompass[i].x - poleX[j];
+          let dy = fixedCompass[i].y - poleY[j];
+          let len = dx * dx + dy * dy;
+          if (len < 0.0001) continue;
+          vecX += (poleIsN[j] ? 1 : -1) / len * (dx / sqrt(len)) * 500;
+          vecY += (poleIsN[j] ? 1 : -1) / len * (dy / sqrt(len)) * 500;
+        }
+        fixedCompass[i].rot = atan2(vecY, vecX);
+      }
+    }
+
+    // Update placed compasses
+    for (let i = buttons.length; i < magnets.length; i++) {
+      if (magnets[i].type == "compass") {
+        let vecX = 0, vecY = 0;
+        for (let j = 0; j < poleX.length; j++) {
+          let dx = magnets[i].x - poleX[j];
+          let dy = magnets[i].y - poleY[j];
+          let len = dx * dx + dy * dy;
+          if (len < 0.0001) continue;
+          vecX += (poleIsN[j] ? 1 : -1) / len * (dx / sqrt(len)) * 500;
+          vecY += (poleIsN[j] ? 1 : -1) / len * (dy / sqrt(len)) * 500;
+        }
+        magnets[i].rot = atan2(vecY, vecX);
+      }
+    }
+
+    // Trace field lines
+    let steps = 3000;
+    let connected = [];
+    forceLineX = []; forceLineY = [];
+    for (let c = 0; c < poleX.length; c++) {
+      forceLineX[c] = [];
+      forceLineY[c] = [];
+      connected[c] = 0;
+    }
+
+    if (checkB.checked()) {
+      for (let c = 0; c < poleX.length; c++) {
+        if (connected[c] != 0) continue;
+        forceLineX[c][0] = poleX[c] + poleVx[c];
+        forceLineY[c][0] = poleY[c] + poleVy[c];
+        for (let i = 1; i < steps; i++) {
+          let vecX = 0, vecY = 0;
+          for (let j = 0; j < poleX.length; j++) {
+            let dx = forceLineX[c][i - 1] - poleX[j];
+            let dy = forceLineY[c][i - 1] - poleY[j];
+            if (abs(dx) < 0.001 && abs(dy) < 0.001) continue;
+            let len = dx * dx + dy * dy;
+            vecX += (poleIsN[c] ? 1 : -1) * (poleIsN[j] ? 1 : -1) / len * (dx / sqrt(len)) * 500;
+            vecY += (poleIsN[c] ? 1 : -1) * (poleIsN[j] ? 1 : -1) / len * (dy / sqrt(len)) * 500;
+          }
+          let vecXY = dist(0, 0, vecX, vecY);
+          if (vecXY < 0.0001) break;
+          vecX = vecX / vecXY;
+          vecY = vecY / vecXY;
+          forceLineX[c][i] = forceLineX[c][i - 1] + vecX;
+          forceLineY[c][i] = forceLineY[c][i - 1] + vecY;
+          let escape = false;
+          for (let d = 0; d < poleX.length; d++) {
+            if (c == d) continue;
+            if (dist(forceLineX[c][i], forceLineY[c][i], poleX[d], poleY[d]) < 0.5) {
+              if (connected[d] < 2) {
+                let dx = poleX[d] - forceLineX[c][i];
+                let dy = poleY[d] - forceLineY[c][i];
+                for (let ii = 0; ii < forceLineX[c].length; ii++) {
+                  forceLineX[c][ii] += dx * ii / forceLineX[c].length;
+                  forceLineY[c][ii] += dy * ii / forceLineY[c].length;
+                }
+                connected[c]++;
+                connected[d]++;
+                forceLineX[d] = [];
+                forceLineY[d] = [];
+              }
+              escape = true;
+              break;
+            }
+          }
+          if (escape) break;
+          if (forceLineX[c][i] < -250 || forceLineX[c][i] > 1250 || forceLineY[c][i] < -250 || forceLineY[c][i] > 750) break;
+        }
+      }
+    }
+    needCalc = false;
+  }
+
+  function touchStarted() {
+    if (!contain(mouseX, mouseY, 0, 0, width, height)) return;
+    let x = mouseX * 1000 / width;
+    let y = mouseY * 1000 / width;
+    for (let i = 0; i < buttons.length; i++) {
+      if (contain(x, y, buttons[i].x, buttons[i].y, buttons[i].w, buttons[i].h)) {
+        dragged = magnets.length;
+        magnets.push({x: x, y: y, type: buttons[i].type, rot: (buttons[i].type == "compass") ? random(TWO_PI) : buttons[i].rot});
+        offsetX = x - magnets[dragged].x;
+        offsetY = y - magnets[dragged].y;
+        return;
+      }
+    }
+    let d2 = 999;
+    for (let i = buttons.length; i < magnets.length; i++) {
+      let d1 = dist(x, y, magnets[i].x, magnets[i].y);
+      if (d1 < d2) { d2 = d1; dragged = i; offsetX = x - magnets[dragged].x; offsetY = y - magnets[dragged].y; }
+    }
+  }
+
+  function touchMoved() {
+    if (partClicked >= 0) return;
+    if (touches.length > 1) return;
+    if (dragged >= 0) {
+      partClicked = -1;
+      let x = mouseX * 1000 / width;
+      let y = mouseY * 1000 / width;
+      magnets[dragged].x = x - offsetX;
+      magnets[dragged].y = y - offsetY;
+      magnets[dragged].x = constrain(magnets[dragged].x, 50, 950);
+      magnets[dragged].y = constrain(magnets[dragged].y, 30, 470);
+      needCalc = true;
+      return false;
+    }
+  }
+
+  function touchEnded() {
+    if (dragged >= 0) {
+      for (let i = 0; i < buttons.length; i++) {
+        if (contain(magnets[dragged].x, magnets[dragged].y, buttons[i].x, buttons[i].y, buttons[i].w, buttons[i].h)) {
+          magnets.splice(dragged, 1);
+          dragged = -1;
+          needCalc = true;
+          return;
+        }
+      }
+    }
+    dragged = -1;
+    partClicked = -1;
+  }
+  </script>
+  <script src="supabase.js"></script>
+  <script src="script.js"></script>
+</body>
+</html>
