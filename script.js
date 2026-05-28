@@ -69,39 +69,21 @@ async function userRegister() {
     return;
   }
 
-  // 检查用户名是否已存在
-  try {
-    const data = await proxyApi('getUser', { username: user });
-    if (data.user) {
-      if (tip) { tip.className = "auth-tip error"; tip.textContent = "⚠️ 用户名已存在，请换一个"; }
-      return;
-    }
-  } catch (e) {
-    console.warn("[注册] 查询失败，尝试本地兜底:", e.message);
-    const cached = JSON.parse(localStorage.getItem("users") || "{}");
-    if (cached[user]) {
-      if (tip) { tip.className = "auth-tip error"; tip.textContent = "⚠️ 用户名已存在，请换一个"; }
-      return;
-    }
-  }
-
-  try {
-    await proxyApi('createUser', { username: user, password: pwd, email: email || '' });
-  } catch (e) {
-    console.error("[注册] Supabase 写入失败:", e.message);
-    // 按 Supabase 唯一约束错误提示
-    if (e.message?.includes("duplicate") || e.message?.includes("23505")) {
-      if (tip) { tip.className = "auth-tip error"; tip.textContent = "⚠️ 用户名已存在，请换一个"; }
-    } else {
-      if (tip) { tip.className = "auth-tip error"; tip.textContent = "❌ 注册失败，请稍后重试"; }
-    }
+  // 检查用户名是否已存在（本地优先）
+  const cached = JSON.parse(localStorage.getItem("users") || "{}");
+  if (cached[user]) {
+    if (tip) { tip.className = "auth-tip error"; tip.textContent = "⚠️ 用户名已存在，请换一个"; }
     return;
   }
 
-  // 同步到 localStorage 缓存
-  const cached = JSON.parse(localStorage.getItem("users") || "{}");
+  // 保存到 localStorage
   cached[user] = { pwd, email: email || "", vip: "普通用户", expire: "" };
   localStorage.setItem("users", JSON.stringify(cached));
+
+  // 异步尝试同步到 Supabase（不阻塞注册）
+  proxyApi('createUser', { username: user, password: pwd, email: email || '' }).catch(e => {
+    console.warn("[注册] Supabase 同步失败（不影响本地注册）:", e.message);
+  });
 
   if (tip) {
     tip.className = "auth-tip success";
@@ -123,17 +105,21 @@ async function userLogin() {
     return;
   }
 
-  // 从 Supabase 查询用户
-  let userData = null;
-  try {
-    const data = await proxyApi('getUser', { username: user });
-    if (data.user) userData = data.user;
-  } catch (e) {
-    console.warn("[登录] Supabase 查询失败:", e.message);
-    // 降级：尝试本地缓存
-    const cached = JSON.parse(localStorage.getItem("users") || "{}");
-    if (cached[user]) {
-      userData = { username: user, password: cached[user].pwd, vip: cached[user].vip, expire: cached[user].expire };
+  // 从本地缓存查询用户
+  const cached = JSON.parse(localStorage.getItem("users") || "{}");
+  let userData = cached[user] || null;
+
+  // 本地没有时，尝试从 Supabase 同步
+  if (!userData) {
+    try {
+      const data = await proxyApi('getUser', { username: user });
+      if (data.user) {
+        userData = { pwd: data.user.password, vip: data.user.vip || "普通用户", expire: data.user.expire || "", email: data.user.email || "" };
+        cached[user] = userData;
+        localStorage.setItem("users", JSON.stringify(cached));
+      }
+    } catch (e) {
+      console.warn("[登录] Supabase 查询失败:", e.message);
     }
   }
 
@@ -142,7 +128,7 @@ async function userLogin() {
     return;
   }
 
-  if (userData.password !== pwd) {
+  if (userData.pwd !== pwd) {
     if (tip) { tip.className = "auth-tip error"; tip.textContent = "❌ 密码错误，请重试"; }
     return;
   }
@@ -382,93 +368,3 @@ function initParticles() {
   function animate() { ctx.clearRect(0, 0, canvas.width, canvas.height); particles.forEach(p => { p.update(); p.draw(); }); requestAnimationFrame(animate); }
   animate();
 }
-
-// ========== 微信登录 ==========
-function wechatLogin() {
-  // 判断是否在微信浏览器内
-  const ua = navigator.userAgent.toLowerCase();
-  const isWechat = ua.includes('micromessenger');
-
-  if (!isWechat) {
-    // 不在微信中：显示微信扫码提示
-    const tip = document.getElementById('loginTip');
-    if (tip) {
-      tip.className = 'auth-tip error';
-      tip.innerHTML = '⚠️ 请在微信中打开此页面使用微信登录，或使用账号密码登录';
-    }
-    return;
-  }
-
-  // 微信内：跳转 OAuth 授权
-  const currentOrigin = window.location.origin;
-  fetch(`/api/wechat-auth-url?redirect=${encodeURIComponent(currentOrigin + '/experiments.html')}`)
-    .then(r => r.json())
-    .then(data => {
-      if (data.url) {
-        window.location.href = data.url;
-      } else {
-        throw new Error('获取授权链接失败');
-      }
-    })
-    .catch(e => {
-      const tip = document.getElementById('loginTip');
-      if (tip) {
-        tip.className = 'auth-tip error';
-        tip.textContent = '❌ 微信登录服务暂不可用，请使用账号密码登录';
-      }
-    });
-}
-
-// 检查页面 URL 是否携带 wechat_token（从微信回调回来）
-(function checkWechatCallback() {
-  const params = new URLSearchParams(window.location.search);
-  const token = params.get('wechat_token');
-  const openid = params.get('openid');
-  if (token && openid) {
-    // 清理 URL（去掉参数，防止刷新时重复处理）
-    const cleanUrl = window.location.pathname.replace(/\.html.*/, '.html');
-    window.history.replaceState({}, '', cleanUrl);
-
-    // 根据 token 获取用户信息
-    try {
-      const payload = JSON.parse(atob(token));
-      const wechatUser = payload.nickname || `wx_${openid.slice(-6)}`;
-
-      // 从 Supabase 获取完整的用户数据
-      getUsersFromTable().then(users => {
-        // 查找 openid 对应的用户
-        let matchedUser = null;
-        let matchedName = null;
-        for (const [name, data] of Object.entries(users)) {
-          if (data.openid === openid || data.wechat_nickname === wechatUser) {
-            matchedUser = data;
-            matchedName = name;
-            break;
-          }
-        }
-
-        if (matchedUser && matchedName) {
-          localStorage.setItem('currentUser', matchedName);
-          // 更新缓存
-          const cached = JSON.parse(localStorage.getItem('users') || '{}');
-          cached[matchedName] = matchedUser;
-          localStorage.setItem('users', JSON.stringify(cached));
-        } else {
-          // 新微信用户，构造一个本地记录
-          const username = `wx_${openid.slice(-8)}`;
-          localStorage.setItem('currentUser', username);
-        }
-
-        // 跳转到实验列表
-        if (window.location.pathname.includes('login.html') ||
-            window.location.pathname.includes('callback')) {
-          window.location.href = 'experiments.html';
-        } else {
-          window.location.reload();
-        }
-      });
-    } catch (e) {
-      console.warn('[微信] Token 解析失败:', e.message);
-    }
-  }
-})();
