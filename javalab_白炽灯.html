@@ -1,0 +1,594 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=10">
+  <title>物理虚拟实验 - 白炽灯与电阻发热</title>
+  <link rel="stylesheet" href="style.css">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+      overflow-x: hidden;
+      background: #f0f0f0;
+    }
+    #myContainer { text-align: center; position: relative; }
+    #divFull {
+      background-color: white;
+      position: relative;
+      font-size: 18px;
+      border-radius: 12px;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.1);
+    }
+    #myP5Canvas { touch-action: pinch-zoom; }
+    .sim-wrapper {
+      max-width: 1100px;
+      margin: 60px auto 0;
+      padding: 10px;
+    }
+    .flexContainer {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 16px;
+      background: #f8f9fa;
+      border-radius: 10px;
+      margin-top: 8px;
+    }
+    .flexContainer * { color: #000 !important; }
+    .flexItem { display: inline-flex; align-items: center; gap: 6px; }
+    .flexItem label {
+      font-size: 14px;
+      font-weight: 600;
+      color: #000;
+      white-space: nowrap;
+    }
+    .flexItem button {
+      padding: 6px 14px;
+      border-radius: 8px;
+      border: 1px solid #3b82f6;
+      background: #3b82f6;
+      color: #fff !important;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .flexItem button:hover { background: #2563eb; }
+    .flexItem input[type="checkbox"] {
+      width: 18px; height: 18px; cursor: pointer; accent-color: #3b82f6;
+    }
+    .flexItem input[type="range"] {
+      width: 140px; height: 6px;
+      -webkit-appearance: none;
+      background: linear-gradient(90deg, #f59e0b, #ef4444);
+      border-radius: 3px; outline: none;
+    }
+    .flexItem input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 20px; height: 20px; border-radius: 50%;
+      background: #fff; border: 2px solid #f59e0b;
+      cursor: pointer; box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+    }
+  </style>
+  <script src="protect.js"></script>
+</head>
+<body>
+  <header class="header">
+    <div class="logo">物理虚拟实验</div>
+    <nav class="nav">
+      <a href="index.html">首页</a>
+      <a href="experiments.html">实验列表</a>
+      <a href="vip.html">开通VIP</a>
+    </nav>
+  </header>
+
+  <div class="sim-wrapper">
+    <div id="divFull" style="overflow:hidden;position:relative;">
+      <div id="myContainer"></div>
+      <div class="flexContainer">
+        <div class="flexItem">
+          <input type="checkbox" id="checkA">
+          <label for="checkA" id="chalkA" style="font-weight:600;cursor:pointer;">开关</label>
+        </div>
+        <div class="flexItem">
+          <label id="currentLabel">电流 2.0</label>
+          <input type="range" id="currentSlider" min="5" max="80" value="20">
+        </div>
+        <div class="flexItem">
+          <a href="javascript:doFullScreen();" style="box-shadow:none;">
+            <svg width="32" height="32" viewBox="0 0 40 40" style="vertical-align:middle;">
+              <path d="M5,15 L5,5 L15,5 M35,25 L35,35 L25,35 M25,5 L35,5 L35,15 M15,35 L5,35 L5,25" fill="none" stroke="#555" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </a>
+        </div>
+      </div>
+    </div>
+    <p style="text-align:center;font-size:14px;color:#999;margin-top:8px;">白炽灯原理 · 电流通过灯丝发热至白炽状态 · 调节电流观察亮度与光子变化</p>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/0.9.0/p5.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/0.9.0/addons/p5.dom.min.js"></script>
+  <script>
+    // ========== 工具函数 ==========
+    function doFullScreen() {
+      const el = document.getElementById('divFull');
+      if (el.requestFullscreen) el.requestFullscreen();
+      else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+      else if (el.msRequestFullscreen) el.msRequestFullscreen();
+    }
+
+    function mod(x, y) {
+      if (x < 0) x += y * (ceil(abs(x)/y) + 1);
+      let c = floor(x / y);
+      return x - y * c;
+    }
+
+    function contain(x, y, x1, y1, w1, h1) {
+      return x > x1 && x < x1 + w1 && y > y1 && y < y1 + h1;
+    }
+
+    function cosineInterpolate(a, b, t) {
+      const f = (1 - cos(t * PI)) * 0.5;
+      return a + (b - a) * f;
+    }
+
+    function getRedColor(nano) {
+      if (400 <= nano && nano < 420) return cosineInterpolate(64, 84, map(nano, 400, 420, 0, 1));
+      if (420 <= nano && nano < 510) return cosineInterpolate(84, 0, map(nano, 420, 510, 0, 1));
+      if (510 <= nano && nano < 580) return cosineInterpolate(0, 255, map(nano, 510, 580, 0, 1));
+      if (580 <= nano && nano < 700) return cosineInterpolate(255, 64, map(nano, 580, 700, 0, 1));
+      return 64;
+    }
+
+    function getGreenColor(nano) {
+      if (400 <= nano && nano < 440) return cosineInterpolate(64, 44, map(nano, 400, 440, 0, 1));
+      if (440 <= nano && nano < 550) return cosineInterpolate(44, 192, map(nano, 440, 550, 0, 1));
+      if (550 <= nano && nano < 640) return cosineInterpolate(192, 54, map(nano, 550, 640, 0, 1));
+      if (640 <= nano && nano < 700) return cosineInterpolate(54, 64, map(nano, 640, 700, 0, 1));
+      return 64;
+    }
+
+    function getBlueColor(nano) {
+      if (400 <= nano && nano < 450) return cosineInterpolate(64, 212, map(nano, 400, 450, 0, 1));
+      if (450 <= nano && nano < 550) return cosineInterpolate(212, 52, map(nano, 450, 550, 0, 1));
+      if (550 <= nano && nano < 650) return cosineInterpolate(52, 64, map(nano, 550, 650, 0, 1));
+      if (650 <= nano && nano < 700) return cosineInterpolate(64, 0, map(nano, 650, 700, 0, 1));
+      return 64;
+    }
+
+    function draw2DArrow2(x, y, cx, cy, thick) {
+      const lArrow = sqrt(cx * cx + cy * cy);
+      const oxArrow = [0, lArrow - 2*thick, lArrow - 2*thick, lArrow, lArrow - 2*thick, lArrow - 2*thick, 0];
+      const oyArrow = [thick, thick, 2*thick, 0, -2*thick, -thick, -thick];
+      push();
+      translate(x, y);
+      rotate(atan2(cy, cx));
+      beginShape();
+      for (let i = 0; i < oxArrow.length; i++) vertex(max(oxArrow[i], 0), oyArrow[i]);
+      endShape(CLOSE);
+      pop();
+    }
+
+    function drawButtonDrag() {
+      push();
+      const r = 30, gap = 4;
+      let cx = width / 900 * 40, cy = height - 45;
+      if (window.devicePixelRatio) { cx = 40; cy = (height / (width / 900)) - 45; }
+      noStroke();
+      for (let i = 0; i < 4; i++) {
+        let x = cx + i * (r + gap) - 1.5 * (r + gap);
+        fill(0, 0, 0, 30);
+        ellipse(x, cy - 2, r, r);
+        fill(180);
+        ellipse(x, cy - 4, r - 2, r - 2);
+        fill(240);
+        ellipse(x, cy - 4, r - 8, r - 8);
+        fill(100);
+        noStroke();
+        ellipse(x, cy - 4, 4, 4);
+      }
+      pop();
+    }
+
+    // ========== 主模拟代码 ==========
+    let language = 3; // 3=中文
+    let checkA, chalkA, currentSlider, currentLabel;
+    let onImage, offImage, glowImage;
+    let switchOn = false;
+    let dragY = 140;
+    let initV = 2;
+    let minX = 0, minY = -900, maxX = 1500, maxY = 600;
+    let leadAtomX = [], leadAtomY = [];
+    let filaAtomX = [], filaAtomY = [], filaAtomXo = [], filaAtomYo = [];
+    let leadElecX = [], leadElecY = [], leadElecVx = [], leadElecVy = [];
+    let filaElecX = [], filaElecY = [], filaElecVx = [], filaElecVy = [];
+    let photons = [];
+    let touched = false, touchedX = 0, touchedY = 0;
+
+    function preload() {
+      onImage = loadImage("images/incandescence_on.png");
+      offImage = loadImage("images/incandescence_off.png");
+      glowImage = loadImage("images/faradays_law_glow.png");
+    }
+
+    function setup() {
+      frameRate(60);
+      let container = select("#myContainer");
+      let a = 0.5;
+      let w = int(min(container.width, (window.innerHeight - 160) / a));
+      let h = int(w * a);
+      if (w < 100) w = 800;
+      if (h < 100) h = 400;
+      myCanvas = createCanvas(w, h);
+      myCanvas.parent("myContainer");
+      myCanvas.id("myP5Canvas");
+
+      checkA = select("#checkA");
+      chalkA = select("#chalkA");
+      chalkA.html("开关");
+      checkA.changed(doCheckA);
+
+      currentSlider = select("#currentSlider");
+      currentLabel = select("#currentLabel");
+      currentSlider.input(updateCurrent);
+
+      setup2();
+    }
+
+    function windowResized() {
+      let container = select("#myContainer");
+      let a = 0.5;
+      let w = int(min(container.width, (window.innerHeight - 160) / a));
+      let h = int(w * a);
+      if (w < 100) w = 800;
+      resizeCanvas(w, h);
+    }
+
+    function updateCurrent() {
+      const v = currentSlider.value();
+      initV = map(v, 5, 80, 0.5, 8);
+      currentLabel.html("电流 " + initV.toFixed(1));
+    }
+
+    function getPosition() {
+      for (let n = 0; n < 500; n++) {
+        let x = random(minX + 50, maxX - 50);
+        let y = random(minY + 50, maxY - 50);
+        let tooClose = false;
+        for (let i = 0; i < filaAtomX.length; i++) {
+          if (dist(x, y, filaAtomX[i], filaAtomY[i]) < 73) { tooClose = true; break; }
+        }
+        if (!tooClose) return createVector(x, y);
+      }
+      return createVector(random(minX+50,maxX-50), random(minY+50,maxY-50));
+    }
+
+    function doCheckA() {
+      if (checkA.checked()) {
+        for (let i = 0; i < leadAtomX.length; i++) leadElecVy[i] = abs(leadElecVy[i]);
+        for (let i = 0; i < filaAtomX.length; i++) filaElecVy[i] = abs(filaElecVy[i]);
+      } else {
+        for (let i = 0; i < leadAtomX.length; i++) {
+          let t = random(TWO_PI);
+          leadElecVx[i] = initV * cos(t);
+          leadElecVy[i] = initV * sin(t);
+        }
+        for (let i = 0; i < filaAtomX.length; i++) {
+          let t = random(TWO_PI);
+          filaElecVx[i] = initV * cos(t);
+          filaElecVy[i] = initV * sin(t);
+        }
+      }
+    }
+
+    function setup2() {
+      let offY = 0;
+      for (let x = minX + 50; x < maxX; x += 100) {
+        offY = mod(offY + 50, 100);
+        for (let y = minY; y < maxY; y += 100) {
+          leadAtomX.push(x);
+          leadAtomY.push(y + offY);
+        }
+      }
+      for (let i = 0; i < leadAtomX.length; i++) {
+        leadElecX.push(random(minX, maxX));
+        leadElecY.push(random(minY, maxY));
+        let t = random(TWO_PI);
+        leadElecVx.push(initV * cos(t));
+        leadElecVy.push(initV * sin(t));
+      }
+      for (let i = 0; i < leadAtomX.length; i++) {
+        let p = getPosition();
+        filaAtomX.push(p.x);
+        filaAtomY.push(p.y);
+        filaAtomXo.push(p.x);
+        filaAtomYo.push(p.y);
+      }
+      for (let i = 0; i < leadAtomX.length; i++) {
+        filaElecX.push(random(minX, maxX));
+        filaElecY.push(random(minY, maxY));
+        let t = random(TWO_PI);
+        filaElecVx.push(initV * cos(t));
+        filaElecVy.push(initV * sin(t));
+      }
+    }
+
+    function draw() {
+      if (touches.length > 1) return;
+      background(222, 128);
+      strokeWeight(2);
+      push();
+      scale(width / 1000);
+
+      let filament = (225 <= dragY && dragY <= 275);
+
+      runningFilamentElectrons();
+      runningLeadElectrons();
+      runningFilamentAtoms();
+
+      if (!mouseIsPressed) {
+        if (touched && dist(mouseX, mouseY, touchedX, touchedY) < width * 0.01) {
+          if (dist(mouseX * 1000 / width, mouseY * 1000 / width, 125, 450) < 100) {
+            checkA.checked(checkA.checked() ? false : true);
+            doCheckA();
+          }
+        }
+        touched = false;
+      } else {
+        if (contain(mouseX, mouseY, 0, 0, width, height)) {
+          if (!touched) { touchedX = mouseX; touchedY = mouseY; }
+          touched = true;
+        }
+      }
+
+      if (filament) {
+        for (let i = 0; i < filaAtomX.length; i++) drawPositron(filaAtomX[i], filaAtomY[i]);
+        for (let i = 0; i < filaElecX.length; i++) {
+          noStroke(); fill(0, 0, 255);
+          ellipse(filaElecX[i], filaElecY[i], 8, 8);
+        }
+      } else {
+        for (let i = 0; i < leadAtomX.length; i++) drawPositron(leadAtomX[i], leadAtomY[i]);
+        for (let i = 0; i < leadElecX.length; i++) {
+          noStroke(); fill(0, 0, 255);
+          ellipse(leadElecX[i], leadElecY[i], 8, 8);
+        }
+      }
+
+      // 光子
+      noFill(); strokeWeight(2);
+      for (let i = 0; i < photons.length; i++) {
+        if (filament) {
+          photons[i].cx += 5;
+          stroke(color(getRedColor(photons[i].nano), getGreenColor(photons[i].nano), getBlueColor(photons[i].nano), 255 - photons[i].cx));
+          drawPhoton2(photons[i].x, photons[i].y, photons[i].cx, photons[i].nano, photons[i].t);
+        }
+      }
+      for (let i = photons.length - 1; i >= 0; i--) {
+        if (photons[i].cx > 255) photons.splice(i, 1);
+      }
+
+      if (checkA.checked()) {
+        image(onImage, 0, 0, 1000, 500);
+        tint(255, 128);
+        image(glowImage, 330 - 130, 250 - 130, 260, 260);
+        noTint();
+      } else {
+        image(offImage, 0, 0, 1000, 500);
+      }
+
+      let dragX = filament ? 360 : 210;
+      fill(222);
+      stroke(222);
+      strokeWeight(5);
+      draw2DArrow2(498, dragY, dragX - 498, 0, 6);
+      fill(64, 191, 64);
+      noStroke();
+      textSize(50);
+      textAlign(CENTER, BOTTOM);
+      text(checkA.checked() ? "开" : "关", 125, 420);
+      pop();
+      drawButtonDrag();
+    }
+
+    function drawPhoton2(x, y, cx, nano, t) {
+      push();
+      translate(x, y);
+      rotate(t);
+      noFill();
+      beginShape();
+      let from = cx - 20, to = cx + 20;
+      for (let i = from; i < to; i += 1) {
+        let py = 10 * pow(cos(map(i, from, to, -HALF_PI*2/3, HALF_PI*2/3)), 2) * sin(i * 300000 / (1000 * nano));
+        curveVertex(i, py);
+      }
+      endShape(OPEN);
+      pop();
+    }
+
+    function runningFilamentElectrons() {
+      let tollerence = 20;
+      for (let i = 0; i < filaElecX.length - 1; i++) {
+        for (let j = i + 1; j < filaElecX.length; j++) {
+          let pix = filaElecX[i] + filaElecVx[i];
+          let piy = filaElecY[i] + filaElecVy[i];
+          let pjx = filaElecX[j] + filaElecVx[j];
+          let pjy = filaElecY[j] + filaElecVy[j];
+          if (dist(filaElecX[i], filaElecY[i], filaElecX[j], filaElecY[j]) < tollerence) {
+            if (dist(filaElecX[i], filaElecY[i], filaElecX[j], filaElecY[j]) > dist(pix, piy, pjx, pjy)) {
+              let vix = filaElecVx[i], viy = filaElecVy[i];
+              let vjx = filaElecVx[j], vjy = filaElecVy[j];
+              let vcx = (vix + vjx) / 2, vcy = (viy + vjy) / 2;
+              let vcix = vix - vcx, vciy = viy - vcy;
+              let vcjx = vjx - vcx, vcjy = vjy - vcy;
+              let vci = dist(0, 0, vcix, vciy);
+              let vcj = dist(0, 0, vcjx, vcjy);
+              let aci = atan2(vciy, vcix);
+              let acj = atan2(vcjy, vcjx);
+              let aij = atan2(filaElecY[j] - filaElecY[i], filaElecX[j] - filaElecX[i]);
+              let aji = atan2(filaElecY[i] - filaElecY[j], filaElecX[i] - filaElecX[j]);
+              aci = mod(2 * aij + PI - aci, TWO_PI);
+              acj = mod(2 * aji + PI - acj, TWO_PI);
+              vix = vci * cos(aci); viy = vci * sin(aci);
+              vjx = vcj * cos(acj); vjy = vcj * sin(acj);
+              vix += vcx; viy += vcy;
+              vjx += vcx; vjy += vcy;
+              filaElecVx[i] = vix; filaElecVy[i] = viy;
+              filaElecVx[j] = vjx; filaElecVy[j] = vjy;
+            }
+          }
+        }
+      }
+    }
+
+    function runningLeadElectrons() {
+      let tollerence = 20;
+      for (let i = 0; i < leadElecX.length - 1; i++) {
+        for (let j = i + 1; j < leadElecX.length; j++) {
+          let pix = leadElecX[i] + leadElecVx[i];
+          let piy = leadElecY[i] + leadElecVy[i];
+          let pjx = leadElecX[j] + leadElecVx[j];
+          let pjy = leadElecY[j] + leadElecVy[j];
+          if (dist(leadElecX[i], leadElecY[i], leadElecX[j], leadElecY[j]) < tollerence) {
+            if (dist(leadElecX[i], leadElecY[i], leadElecX[j], leadElecY[j]) > dist(pix, piy, pjx, pjy)) {
+              let vix = leadElecVx[i], viy = leadElecVy[i];
+              let vjx = leadElecVx[j], vjy = leadElecVy[j];
+              let vcx = (vix + vjx) / 2, vcy = (viy + vjy) / 2;
+              let vcix = vix - vcx, vciy = viy - vcy;
+              let vcjx = vjx - vcx, vcjy = vjy - vcy;
+              let vci = dist(0, 0, vcix, vciy);
+              let vcj = dist(0, 0, vcjx, vcjy);
+              let aci = atan2(vciy, vcix);
+              let acj = atan2(vcjy, vcjx);
+              let aij = atan2(leadElecY[j] - leadElecY[i], leadElecX[j] - leadElecX[i]);
+              let aji = atan2(leadElecY[i] - leadElecY[j], leadElecX[i] - leadElecX[j]);
+              aci = mod(2 * aij + PI - aci, TWO_PI);
+              acj = mod(2 * aji + PI - acj, TWO_PI);
+              vix = vci * cos(aci); viy = vci * sin(aci);
+              vjx = vcj * cos(acj); vjy = vcj * sin(acj);
+              vix += vcx; viy += vcy;
+              vjx += vcx; vjy += vcy;
+              leadElecVx[i] = vix; leadElecVy[i] = viy;
+              leadElecVx[j] = vjx; leadElecVy[j] = vjy;
+            }
+          }
+        }
+      }
+    }
+
+    function runningFilamentAtoms() {
+      let accel = 0.07;
+      for (let i = 0; i < filaElecX.length; i++) {
+        let x1 = filaElecX[i], y1 = filaElecY[i];
+        let x2 = filaElecX[i] + filaElecVx[i], y2 = filaElecY[i] + filaElecVy[i] + (checkA.checked() ? accel : 0);
+        for (let j = 0; j < filaAtomX.length; j++) {
+          let d1 = dist(filaAtomX[j], filaAtomY[j], x1, y1);
+          let d2 = dist(filaAtomX[j], filaAtomY[j], x2, y2);
+          if (d2 < 26 && d1 > d2) {
+            let vcx = (1 * filaElecVx[i] + 10 * 0) / (1 + 6);
+            let vcy = (1 * filaElecVy[i] + 10 * 0) / (1 + 6);
+            let vcix = filaElecVx[i] - vcx, vciy = filaElecVy[i] - vcy;
+            let vcjx = 0 - vcx, vcjy = 0 - vcy;
+            let vci = mag(vcix, vciy), vcj = mag(vcjx, vcjy);
+            let aci = atan2(vciy, vcix);
+            let acj = atan2(vcjy, vcjx);
+            let aij = atan2(filaAtomY[j] - filaElecY[i], filaAtomX[j] - filaElecX[i]);
+            let aji = atan2(filaElecY[i] - filaAtomY[j], filaElecX[i] - filaAtomX[j]);
+            aci = mod(2 * aij + PI - aci, TWO_PI);
+            acj = mod(2 * aji + PI - acj, TWO_PI);
+            filaElecVx[i] = max(vci, initV) * cos(aci);
+            filaElecVy[i] = max(vci, initV) * sin(aci);
+            let Vx = vcj * cos(acj), Vy = vcj * sin(acj);
+            filaElecVx[i] += vcx; filaElecVy[i] += vcy;
+            Vx += vcx; Vy += vcy;
+            if (checkA.checked()) { filaAtomX[j] += Vx * 6; filaAtomY[j] += Vy * 6; }
+            else { filaAtomX[j] += Vx; filaAtomY[j] += Vy; }
+            if (225 <= dragY && dragY <= 275) {
+              if (mag(Vx, Vy) > 1 && 500 < filaAtomXo[j] && filaAtomXo[j] < 1000 && 0 < filaAtomYo[j] && filaAtomYo[j] < 500) {
+                photons.push({
+                  x: filaAtomX[j], y: filaAtomY[j], cx: 0,
+                  nano: 1000 / mag(Vx, Vy),
+                  t: atan2(filaAtomY[j] - filaAtomYo[j], filaAtomX[j] - filaAtomXo[j])
+                });
+              }
+            }
+          }
+        }
+        filaElecX[i] += filaElecVx[i];
+        filaElecY[i] += filaElecVy[i];
+        if (checkA.checked()) filaElecVy[i] += accel;
+        if (filaElecX[i] < minX) filaElecVx[i] = +abs(filaElecVx[i]);
+        if (filaElecX[i] > maxX) filaElecVx[i] = -abs(filaElecVx[i]);
+        if (filaElecY[i] < minY) { filaElecX[i] = random(minX, maxX); filaElecY[i] = maxY; }
+        if (filaElecY[i] > maxY) { filaElecX[i] = random(minX, maxX); filaElecY[i] = minY; }
+      }
+      for (let i = 0; i < filaAtomX.length; i++) {
+        filaAtomX[i] = lerp(filaAtomX[i], filaAtomXo[i], 0.1);
+        filaAtomY[i] = lerp(filaAtomY[i], filaAtomYo[i], 0.1);
+      }
+      for (let i = 0; i < leadElecX.length; i++) {
+        leadElecX[i] += leadElecVx[i];
+        leadElecY[i] += leadElecVy[i] + (checkA.checked() ? 0.5 : 0);
+        for (let j = 0; j < leadAtomX.length; j++) {
+          let d = dist(leadAtomX[j], leadAtomY[j], leadElecX[i], leadElecY[i]);
+          if (d < 26) {
+            let x1 = leadElecX[i] - leadElecVx[i], y1 = leadElecY[i] - leadElecVy[i];
+            let x2 = leadElecX[i], y2 = leadElecY[i];
+            let t1 = atan2(y1 - leadAtomY[j], x1 - leadAtomX[j]);
+            let t2 = atan2(y2 - leadAtomY[j], x2 - leadAtomX[j]);
+            x1 = leadAtomX[j] + 26 * cos(t1); y1 = leadAtomY[j] + 26 * sin(t1);
+            x2 = leadAtomX[j] + 26 * cos(t2); y2 = leadAtomY[j] + 26 * sin(t2);
+            let t = atan2(y2 - y1, x2 - x1);
+            let v = mag(leadElecVx[i], leadElecVy[i]);
+            leadElecX[i] = x2; leadElecY[i] = y2;
+            leadElecVx[i] = v * cos(t); leadElecVy[i] = v * sin(t);
+          }
+        }
+        if (leadElecX[i] < minX) leadElecVx[i] = +abs(leadElecVx[i]);
+        if (leadElecX[i] > maxX) leadElecVx[i] = -abs(leadElecVx[i]);
+        if (leadElecY[i] < minY) { leadElecX[i] = random(minX, maxX); leadElecY[i] = maxY; }
+        if (leadElecY[i] > maxY) { leadElecX[i] = random(minX, maxX); leadElecY[i] = minY; }
+      }
+    }
+
+    function drawPositron(x, y) {
+      noStroke();
+      fill(255, 0, 0);
+      ellipse(x, y, 40, 40);
+      stroke(255);
+      line(x - 6, y, x + 6, y);
+      line(x, y - 6, x, y + 6);
+    }
+
+    let dragged = false, offsetY;
+
+    function touchStarted() {
+      if (!contain(mouseX, mouseY, 0, 0, width, height)) return;
+      if (touches.length > 1) return;
+      dragged = true;
+      offsetY = mouseY * 1000 / width - dragY;
+    }
+
+    function touchMoved() {
+      if (touches.length > 1) return;
+      if (dragged) {
+        dragY = mouseY * 1000 / width - offsetY;
+        dragY = constrain(dragY, 50, 450);
+        return false;
+      }
+    }
+
+    function touchEnded() {
+      dragged = false;
+    }
+
+    // 鼠标事件兼容
+    function mousePressed() { return touchStarted(); }
+    function mouseDragged() { return touchMoved(); }
+    function mouseReleased() { touchEnded(); }
+  </script>
+</body>
+</html>
