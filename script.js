@@ -382,3 +382,93 @@ function initParticles() {
   function animate() { ctx.clearRect(0, 0, canvas.width, canvas.height); particles.forEach(p => { p.update(); p.draw(); }); requestAnimationFrame(animate); }
   animate();
 }
+
+// ========== 微信登录 ==========
+function wechatLogin() {
+  // 判断是否在微信浏览器内
+  const ua = navigator.userAgent.toLowerCase();
+  const isWechat = ua.includes('micromessenger');
+
+  if (!isWechat) {
+    // 不在微信中：显示微信扫码提示
+    const tip = document.getElementById('loginTip');
+    if (tip) {
+      tip.className = 'auth-tip error';
+      tip.innerHTML = '⚠️ 请在微信中打开此页面使用微信登录，或使用账号密码登录';
+    }
+    return;
+  }
+
+  // 微信内：跳转 OAuth 授权
+  const currentOrigin = window.location.origin;
+  fetch(`/api/wechat-auth-url?redirect=${encodeURIComponent(currentOrigin + '/experiments.html')}`)
+    .then(r => r.json())
+    .then(data => {
+      if (data.url) {
+        window.location.href = data.url;
+      } else {
+        throw new Error('获取授权链接失败');
+      }
+    })
+    .catch(e => {
+      const tip = document.getElementById('loginTip');
+      if (tip) {
+        tip.className = 'auth-tip error';
+        tip.textContent = '❌ 微信登录服务暂不可用，请使用账号密码登录';
+      }
+    });
+}
+
+// 检查页面 URL 是否携带 wechat_token（从微信回调回来）
+(function checkWechatCallback() {
+  const params = new URLSearchParams(window.location.search);
+  const token = params.get('wechat_token');
+  const openid = params.get('openid');
+  if (token && openid) {
+    // 清理 URL（去掉参数，防止刷新时重复处理）
+    const cleanUrl = window.location.pathname.replace(/\.html.*/, '.html');
+    window.history.replaceState({}, '', cleanUrl);
+
+    // 根据 token 获取用户信息
+    try {
+      const payload = JSON.parse(atob(token));
+      const wechatUser = payload.nickname || `wx_${openid.slice(-6)}`;
+
+      // 从 Supabase 获取完整的用户数据
+      getUsersFromTable().then(users => {
+        // 查找 openid 对应的用户
+        let matchedUser = null;
+        let matchedName = null;
+        for (const [name, data] of Object.entries(users)) {
+          if (data.openid === openid || data.wechat_nickname === wechatUser) {
+            matchedUser = data;
+            matchedName = name;
+            break;
+          }
+        }
+
+        if (matchedUser && matchedName) {
+          localStorage.setItem('currentUser', matchedName);
+          // 更新缓存
+          const cached = JSON.parse(localStorage.getItem('users') || '{}');
+          cached[matchedName] = matchedUser;
+          localStorage.setItem('users', JSON.stringify(cached));
+        } else {
+          // 新微信用户，构造一个本地记录
+          const username = `wx_${openid.slice(-8)}`;
+          localStorage.setItem('currentUser', username);
+        }
+
+        // 跳转到实验列表
+        if (window.location.pathname.includes('login.html') ||
+            window.location.pathname.includes('callback')) {
+          window.location.href = 'experiments.html';
+        } else {
+          window.location.reload();
+        }
+      });
+    } catch (e) {
+      console.warn('[微信] Token 解析失败:', e.message);
+    }
+  }
+})();

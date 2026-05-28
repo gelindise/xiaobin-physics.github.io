@@ -1,0 +1,578 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=10">
+  <title>磁力线 - 物理虚拟实验</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="stylesheet" href="style.css">
+  <style>
+    #myP5Canvas { touch-action: pinch-zoom; display: block; margin: 0 auto; border-radius: 12px; }
+    .canvas-wrap { background: #0f172a; border-radius: 12px; padding: 4px; width: 100%; box-sizing: border-box; }
+    .controls-bar { display: flex; align-items: center; justify-content: space-between; padding: 8px 16px; gap: 12px; flex-wrap: wrap; }
+    .controls-bar .hint { color: #94a3b8; font-size: 14px; }
+    .controls-bar .rst-btn { background: #334155; color: #e2e8f0; border: 1px solid #475569; padding: 6px 20px; border-radius: 6px; cursor: pointer; font-size: 14px; }
+    .controls-bar .rst-btn:hover { background: #475569; }
+    input[type="range"] { accent-color: #3b82f6; }
+  </style>
+</head>
+<body>
+  <header class="header">
+    <div class="logo">物理虚拟实验</div>
+    <nav class="nav">
+      <a href="index.html">首页</a>
+      <a href="experiments.html">实验列表</a>
+    </nav>
+  </header>
+
+  <div class="section">
+    <h2>磁力线</h2>
+    <p style="color:#94a3b8;margin:0 0 16px 0;">观察条形磁铁、蹄形磁铁的磁力线分布，拖拽磁铁到实验区，点击旋转角度。</p>
+  </div>
+
+  <div class="main-card">
+    <div class="canvas-wrap">
+      <div id="myContainer"></div>
+    </div>
+    <div class="controls-bar">
+      <span id="labelA" class="hint">拖拽移动，点击旋转</span>
+      <button id="buttonRst" class="rst-btn">重置</button>
+    </div>
+  </div>
+
+  <div class="formula-bar">
+    <div class="formula-item">
+      <span class="label">磁感线方向</span>
+      <span class="value">从N极出发 → 进入S极</span>
+    </div>
+    <div class="formula-item">
+      <span class="label">同名磁极</span>
+      <span class="value">相互排斥</span>
+    </div>
+    <div class="formula-item">
+      <span class="label">异名磁极</span>
+      <span class="value">相互吸引</span>
+    </div>
+  </div>
+
+  <div class="experiment-info">
+    <div class="info-card">
+      <h3>实验说明</h3>
+      <ul>
+        <li>从左侧面板<strong>拖拽</strong>磁铁到实验区域，松开即可放置</li>
+        <li><strong>点击</strong>已放置的磁铁（非指南针），显示角度滑块可旋转</li>
+        <li>将磁铁<strong>拖回</strong>左侧面板可删除该磁铁</li>
+        <li>指南针自动指向当前位置的磁场方向</li>
+      </ul>
+    </div>
+    <div class="info-card">
+      <h3>实验原理</h3>
+      <p>磁感线是描述磁场分布的假想曲线，其疏密表示磁场的强弱，方向表示磁场的方向。磁感线从N极出发，进入S极。磁铁间同名磁极相互排斥，异名磁极相互吸引。</p>
+    </div>
+  </div>
+
+  <script>
+  let language = 3; // 0=ko, 1=ja, 2=en, 3=zh
+  let labelA, rangeA, buttonRst, deleteImage;
+  let buttons = [
+    {x:0, y:0, w:120, h:80, type:"bar1", rot:0},
+    {x:0, y:80, w:120, h:80, type:"bar2", rot:0},
+    {x:0, y:160, w:120, h:110, type:"horseNS", rot:0},
+    {x:0, y:270, w:120, h:110, type:"horseSN", rot:0},
+    {x:0, y:380, w:120, h:80, type:"compass", rot:4.712385}
+  ];
+  let magnets = [];
+  let needCalc = true;
+  let poleX = [], poleY = [], poleVx = [], poleVy = [], poleIsN = [];
+  let forceLineX = [], forceLineY = [];
+  let touched = false, touchedX = 0, touchedY = 0;
+  let partClicked = -1;
+  let dragged = -1, offsetX, offsetY;
+  let magnetNames = ["条形磁铁(小)", "条形磁铁(大)", "马蹄形(NS)", "马蹄形(SN)", "指南针"];
+
+  function get_x(x, y, rx, ry, rz, deg) {
+    return x * cos(radians(deg)) + y * sin(radians(deg));
+  }
+  function get_y(x, y, rx, ry, rz, deg) {
+    return -x * sin(radians(deg)) + y * cos(radians(deg));
+  }
+
+  function contain(x, y, rx, ry, rw, rh) {
+    return x >= rx && x <= rx + rw && y >= ry && y <= ry + rh;
+  }
+
+  function preload() {
+    deleteImage = loadImage("delete_icon.png");
+  }
+
+  function setup() {
+    frameRate(20);
+    let o = select("#myContainer");
+    let a = 0.5;
+    let w = int(min(o.width, (window.innerHeight - 160) / a));
+    let h = int(w * a);
+    myCanvas = createCanvas(w, h);
+    myCanvas.parent("myContainer");
+    myCanvas.id("myP5Canvas");
+
+    for (let i = 0; i < buttons.length; i++)
+      magnets.push({x: buttons[i].x + buttons[i].w / 2, y: buttons[i].y + buttons[i].h / 2, type: buttons[i].type, rot: buttons[i].rot});
+
+    rangeA = createSlider(0, 360, 0, 10);
+    rangeA.parent("myContainer");
+    rangeA.style("width", "300px");
+    rangeA.input(() => { if (partClicked >= 0) magnets[partClicked].rot = rangeA.value(); needCalc = true; });
+
+    labelA = select("#labelA");
+    if (language == 0) labelA.html("드래그하여 이동, 클릭하여 회전");
+    else if (language == 1) labelA.html("ドラッグして移動、クリックして回転");
+    else if (language == 2) labelA.html("Drag to move, Click to rotate");
+    else labelA.html("拖拽移动，点击旋转");
+
+    buttonRst = select("#buttonRst");
+    buttonRst.mouseClicked(() => {
+      magnets.splice(buttons.length);
+      needCalc = true;
+    });
+    if (language == 0) buttonRst.html("리셋");
+    else if (language == 1) buttonRst.html("リセット");
+    else if (language == 2) buttonRst.html("Reset");
+    else buttonRst.html("重置");
+  }
+
+  function windowResized() {
+    let o = select("#myContainer");
+    let a = 0.5;
+    let w = int(min(o.width, (window.innerHeight - 160) / a));
+    let h = int(w * a);
+    resizeCanvas(w, h);
+  }
+
+  function draw() {
+    if (touches.length > 1) return;
+    background(15, 23, 42);
+    strokeWeight(2);
+    textSize(16);
+    textAlign(CENTER, CENTER);
+    imageMode(CENTER);
+
+    push();
+    scale(width / 1000);
+
+    if (needCalc) calcMagneticField();
+
+    // Handle click-to-rotate detection
+    if (!mouseIsPressed) {
+      if (touched) {
+        if (dist(mouseX, mouseY, touchedX, touchedY) < 2) {
+          let x = mouseX * 1000 / width;
+          let y = mouseY * 1000 / width;
+          for (let i = buttons.length; i < magnets.length; i++) {
+            let d1 = dist(magnets[i].x, magnets[i].y, x, y);
+            if (d1 < 60) {
+              if (magnets[i].type != "compass") {
+                partClicked = i;
+                rangeA.style("display", "inline");
+                rangeA.value(magnets[i].rot);
+                rangeA.position(
+                  constrain(magnets[i].x * width / 1000 + (select("#myContainer").width - width) / 2 - 150, 0, select("#myContainer").width - 300),
+                  magnets[i].y * width / 1000 + 30
+                );
+                break;
+              }
+            }
+          }
+        }
+        touched = false;
+      }
+    } else {
+      if (contain(mouseX, mouseY, 0, 0, width, height)) {
+        if (!touched) { touchedX = mouseX; touchedY = mouseY; }
+        touched = true;
+      }
+    }
+
+    if (partClicked < 0) rangeA.style("display", "none");
+
+    // Draw field lines
+    noFill();
+    stroke(0, 200, 100);
+    for (let c = 0; c < forceLineX.length; c++) {
+      beginShape();
+      for (let i = 0; i < forceLineX[c].length; i++)
+        vertex(forceLineX[c][i], forceLineY[c][i]);
+      endShape();
+    }
+
+    // Draw buttons (palette)
+    drawbuttons();
+
+    // Draw magnets
+    for (let i = 0; i < magnets.length; i++) {
+      // Show delete icon when dragging a magnet over a palette button
+      if (i < buttons.length && dragged >= 0) {
+        if (contain(magnets[dragged].x, magnets[dragged].y, buttons[i].x, buttons[i].y, buttons[i].w, buttons[i].h)) {
+          image(deleteImage, buttons[i].x + buttons[i].w / 2, buttons[i].y + buttons[i].h / 2, 90, 90);
+          continue;
+        }
+      }
+      drawMagnet(i);
+    }
+
+    pop();
+  }
+
+  function drawbuttons() {
+    for (let i = 0; i < buttons.length; i++) {
+      // Button background
+      stroke(60, 80, 120);
+      fill(30, 50, 80, 200);
+      rect(buttons[i].x + 1, buttons[i].y + 1, buttons[i].w, buttons[i].h, 2);
+
+      // Mini preview on button
+      let cx = buttons[i].x + buttons[i].w / 2;
+      let cy = buttons[i].y + buttons[i].h / 2;
+      let s = 0.35;
+
+      push();
+      translate(cx, cy);
+
+      if (buttons[i].type == "bar1") {
+        noStroke();
+        fill(255, 100, 100, 230);
+        rect(-12, -8, 12, 16);
+        fill(100, 150, 255, 230);
+        rect(0, -8, 12, 16);
+        fill(255, 240);
+        textSize(7); text("N", -6, 0); text("S", 6, 0);
+      } else if (buttons[i].type == "bar2") {
+        noStroke();
+        fill(255, 100, 100, 230);
+        rect(-20, -8, 20, 16);
+        fill(100, 150, 255, 230);
+        rect(0, -8, 20, 16);
+        fill(255, 240);
+        textSize(7); text("N", -14, 0); text("S", 14, 0);
+      } else if (buttons[i].type == "horseNS") {
+        noStroke();
+        fill(255, 100, 100, 230);
+        beginShape(); vertex(-16, -6); vertex(16, -6); vertex(16, -16); vertex(12, -16); vertex(12, -10); vertex(-16, -10); endShape(CLOSE);
+        fill(100, 150, 255, 230);
+        beginShape(); vertex(-16, 6); vertex(16, 6); vertex(16, 16); vertex(12, 16); vertex(12, 10); vertex(-16, 10); endShape(CLOSE);
+        fill(255, 240);
+        textSize(7); text("N", 0, -14); text("S", 0, 12);
+      } else if (buttons[i].type == "horseSN") {
+        noStroke();
+        fill(100, 150, 255, 230);
+        beginShape(); vertex(-16, -6); vertex(16, -6); vertex(16, -16); vertex(12, -16); vertex(12, -10); vertex(-16, -10); endShape(CLOSE);
+        fill(255, 100, 100, 230);
+        beginShape(); vertex(-16, 6); vertex(16, 6); vertex(16, 16); vertex(12, 16); vertex(12, 10); vertex(-16, 10); endShape(CLOSE);
+        fill(255, 240);
+        textSize(7); text("S", 0, -14); text("N", 0, 12);
+      } else if (buttons[i].type == "compass") {
+        noStroke();
+        fill(255, 210, 180, 200);
+        ellipse(0, 0, 30, 30);
+        fill(240, 230);
+        ellipse(0, 0, 26, 26);
+        fill(200, 230);
+        beginShape(); vertex(0, -4); vertex(12, 0); vertex(0, 4); endShape(CLOSE);
+        fill(255, 80, 80, 230);
+        beginShape(); vertex(-3, -3); vertex(12, 0); vertex(-3, 3); endShape(CLOSE);
+        fill(180, 230);
+        ellipse(0, 0, 3, 3);
+      }
+
+      // Label below button
+      fill(180, 200, 230, 230);
+      textSize(8);
+      noStroke();
+      text(magnetNames[i], 0, buttons[i].h / 2 - 8);
+      pop();
+    }
+  }
+
+  function drawMagnet(idx) {
+    let m = magnets[idx];
+    if (m.type == "bar1") {
+      push(); translate(m.x, m.y); rotate(radians(m.rot));
+      noStroke();
+      fill(255, 100, 100, 230); rect(-20, -15, 20, 30);
+      fill(100, 150, 255, 230); rect(0, -15, 20, 30);
+      fill(255, 240); text("N", -10, 0); text("S", 10, 0);
+      pop();
+    } else if (m.type == "bar2") {
+      push(); translate(m.x, m.y); rotate(radians(m.rot));
+      noStroke();
+      fill(255, 100, 100, 230); rect(-40, -15, 40, 30);
+      fill(100, 150, 255, 230); rect(0, -15, 40, 30);
+      fill(255, 240); text("N", -30, 0); text("S", 30, 0);
+      pop();
+    } else if (m.type == "horseNS") {
+      push(); translate(m.x, m.y); rotate(radians(m.rot));
+      noStroke();
+      fill(255, 100, 100, 230);
+      rect(-11, -45, 51, 30);
+      beginShape();
+      for (let t = PI; t <= 3 * HALF_PI; t += PI / 20) vertex(30 * cos(t) - 10, 45 * sin(t));
+      for (let t = 3 * HALF_PI; t >= PI; t -= PI / 20) vertex(10 * cos(t) - 10, 15 * sin(t));
+      endShape(CLOSE);
+      fill(100, 150, 255, 230);
+      rect(-11, 15, 51, 30);
+      beginShape();
+      for (let t = HALF_PI; t <= PI; t += PI / 20) vertex(30 * cos(t) - 10, 45 * sin(t));
+      for (let t = PI; t >= HALF_PI; t -= PI / 20) vertex(10 * cos(t) - 10, 15 * sin(t));
+      endShape(CLOSE);
+      fill(255, 240); text("N", 30, -30); text("S", 30, 30);
+      pop();
+    } else if (m.type == "horseSN") {
+      push(); translate(m.x, m.y); rotate(radians(m.rot));
+      noStroke();
+      fill(100, 150, 255, 230);
+      rect(-11, -45, 51, 30);
+      beginShape();
+      for (let t = PI; t <= 3 * HALF_PI; t += PI / 20) vertex(30 * cos(t) - 10, 45 * sin(t));
+      for (let t = 3 * HALF_PI; t >= PI; t -= PI / 20) vertex(10 * cos(t) - 10, 15 * sin(t));
+      endShape(CLOSE);
+      fill(255, 100, 100, 230);
+      rect(-11, 15, 51, 30);
+      beginShape();
+      for (let t = HALF_PI; t <= PI; t += PI / 20) vertex(30 * cos(t) - 10, 45 * sin(t));
+      for (let t = PI; t >= HALF_PI; t -= PI / 20) vertex(10 * cos(t) - 10, 15 * sin(t));
+      endShape(CLOSE);
+      fill(255, 240); text("S", 30, -30); text("N", 30, 30);
+      pop();
+    } else if (m.type == "compass") {
+      push(); translate(m.x, m.y);
+      noStroke();
+      fill(255, 210, 180, 220); ellipse(0, 0, 60, 60);
+      fill(240, 230); ellipse(0, 0, 52, 52);
+      rotate(m.rot);
+      fill(200, 230);
+      beginShape(); vertex(0, -8); vertex(24, 0); vertex(0, 8); endShape(CLOSE);
+      beginShape(); vertex(0, -8); vertex(-24, 0); vertex(0, 8); endShape(CLOSE);
+      fill(255, 80, 80, 230);
+      beginShape(); vertex(6, -6); vertex(24, 0); vertex(6, 6); endShape(CLOSE);
+      fill(200, 230);
+      ellipse(0, 0, 5, 5);
+      pop();
+    }
+  }
+
+  function calcMagneticField() {
+    poleX = []; poleY = []; poleVx = []; poleVy = []; poleIsN = [];
+
+    // Calculate magnetic poles for all placed magnets (excluding compass)
+    for (let i = buttons.length; i < magnets.length; i++) {
+      if (magnets[i].type == "compass") continue;
+      let t1 = -magnets[i].rot;
+
+      if (magnets[i].type == "bar1") {
+        for (let j = 0; j < 8; j++) {
+          let y2 = map(j, 0, 7, 14, -14);
+          let t2 = map(j, -1, 8, HALF_PI, 3 * HALF_PI);
+          poleX.push(magnets[i].x + get_x(-15, y2, 0, 0, 0, t1));
+          poleY.push(magnets[i].y + get_y(-15, y2, 0, 0, 0, t1));
+          poleVx.push(get_x(cos(t2), sin(t2), 0, 0, 0, t1));
+          poleVy.push(get_y(cos(t2), sin(t2), 0, 0, 0, t1));
+          poleIsN.push(true);
+        }
+        for (let j = 0; j < 8; j++) {
+          let y2 = map(j, 0, 7, -14, 14);
+          let t2 = map(j, -1, 8, -HALF_PI, HALF_PI);
+          poleX.push(magnets[i].x + get_x(15, y2, 0, 0, 0, t1));
+          poleY.push(magnets[i].y + get_y(15, y2, 0, 0, 0, t1));
+          poleVx.push(get_x(cos(t2), sin(t2), 0, 0, 0, t1));
+          poleVy.push(get_y(cos(t2), sin(t2), 0, 0, 0, t1));
+          poleIsN.push(false);
+        }
+      }
+
+      if (magnets[i].type == "bar2") {
+        for (let j = 0; j < 8; j++) {
+          let y2 = map(j, 0, 7, 14, -14);
+          let t2 = map(j, -1, 8, HALF_PI, 3 * HALF_PI);
+          poleX.push(magnets[i].x + get_x(-35, y2, 0, 0, 0, t1));
+          poleY.push(magnets[i].y + get_y(-35, y2, 0, 0, 0, t1));
+          poleVx.push(get_x(cos(t2), sin(t2), 0, 0, 0, t1));
+          poleVy.push(get_y(cos(t2), sin(t2), 0, 0, 0, t1));
+          poleIsN.push(true);
+        }
+        for (let j = 0; j < 8; j++) {
+          let y2 = map(j, 0, 7, -14, 14);
+          let t2 = map(j, -1, 8, -HALF_PI, HALF_PI);
+          poleX.push(magnets[i].x + get_x(35, y2, 0, 0, 0, t1));
+          poleY.push(magnets[i].y + get_y(35, y2, 0, 0, 0, t1));
+          poleVx.push(get_x(cos(t2), sin(t2), 0, 0, 0, t1));
+          poleVy.push(get_y(cos(t2), sin(t2), 0, 0, 0, t1));
+          poleIsN.push(false);
+        }
+      }
+
+      if (magnets[i].type == "horseNS") {
+        for (let j = 0; j < 2; j++)
+          for (let k = 0; k < 8; k++) {
+            let t2 = map(k, 0, 7, -HALF_PI, HALF_PI);
+            let x2 = 10 * cos(t2) + 30;
+            let y2 = 10 * sin(t2) + ((j == 0) ? -30 : 30);
+            poleX.push(magnets[i].x + get_x(x2, y2, 0, 0, 0, t1));
+            poleY.push(magnets[i].y + get_y(x2, y2, 0, 0, 0, t1));
+            poleVx.push(get_x(cos(t2), sin(t2), 0, 0, 0, t1));
+            poleVy.push(get_y(cos(t2), sin(t2), 0, 0, 0, t1));
+            poleIsN.push((j == 0) ? true : false);
+          }
+      }
+
+      if (magnets[i].type == "horseSN") {
+        for (let j = 0; j < 2; j++)
+          for (let k = 0; k < 8; k++) {
+            let t2 = map(k, 0, 7, -HALF_PI, HALF_PI);
+            let x2 = 10 * cos(t2) + 30;
+            let y2 = 10 * sin(t2) + ((j == 0) ? -30 : 30);
+            poleX.push(magnets[i].x + get_x(x2, y2, 0, 0, 0, t1));
+            poleY.push(magnets[i].y + get_y(x2, y2, 0, 0, 0, t1));
+            poleVx.push(get_x(cos(t2), sin(t2), 0, 0, 0, t1));
+            poleVy.push(get_y(cos(t2), sin(t2), 0, 0, 0, t1));
+            poleIsN.push((j == 0) ? false : true);
+          }
+      }
+    }
+
+    // Update compass direction based on field
+    for (let i = buttons.length; i < magnets.length; i++) {
+      if (magnets[i].type == "compass") {
+        let vecX = 0, vecY = 0;
+        for (let j = 0; j < poleX.length; j++) {
+          let dx = magnets[i].x - poleX[j];
+          let dy = magnets[i].y - poleY[j];
+          let len = dx * dx + dy * dy;
+          if (len < 0.0001) continue;
+          vecX += (poleIsN[j] ? 1 : -1) / len * (dx / sqrt(len)) * 500;
+          vecY += (poleIsN[j] ? 1 : -1) / len * (dy / sqrt(len)) * 500;
+        }
+        magnets[i].rot = atan2(vecY, vecX);
+      }
+    }
+
+    // Trace field lines
+    let steps = 3000;
+    let connected = [];
+    forceLineX = []; forceLineY = [];
+    for (let c = 0; c < poleX.length; c++) {
+      forceLineX[c] = [];
+      forceLineY[c] = [];
+      connected[c] = 0;
+    }
+
+    for (let c = 0; c < poleX.length; c++) {
+      if (connected[c] != 0) continue;
+      forceLineX[c][0] = poleX[c] + poleVx[c];
+      forceLineY[c][0] = poleY[c] + poleVy[c];
+
+      for (let i = 1; i < steps; i++) {
+        let vecX = 0, vecY = 0;
+        for (let j = 0; j < poleX.length; j++) {
+          let dx = forceLineX[c][i - 1] - poleX[j];
+          let dy = forceLineY[c][i - 1] - poleY[j];
+          if (abs(dx) < 0.001 && abs(dy) < 0.001) continue;
+          let len = dx * dx + dy * dy;
+          vecX += (poleIsN[c] ? 1 : -1) * (poleIsN[j] ? 1 : -1) / len * (dx / sqrt(len)) * 500;
+          vecY += (poleIsN[c] ? 1 : -1) * (poleIsN[j] ? 1 : -1) / len * (dy / sqrt(len)) * 500;
+        }
+        let vecXY = dist(0, 0, vecX, vecY);
+        if (vecXY < 0.0001) break;
+        vecX = vecX / vecXY;
+        vecY = vecY / vecXY;
+        forceLineX[c][i] = forceLineX[c][i - 1] + vecX;
+        forceLineY[c][i] = forceLineY[c][i - 1] + vecY;
+
+        let escape = false;
+        for (let d = 0; d < poleX.length; d++) {
+          if (c == d) continue;
+          if (dist(forceLineX[c][i], forceLineY[c][i], poleX[d], poleY[d]) < 0.5) {
+            if (connected[d] < 2) {
+              let dx = poleX[d] - forceLineX[c][i];
+              let dy = poleY[d] - forceLineY[c][i];
+              for (let ii = 0; ii < forceLineX[c].length; ii++) {
+                forceLineX[c][ii] += dx * ii / forceLineX[c].length;
+                forceLineY[c][ii] += dy * ii / forceLineY[c].length;
+              }
+              connected[c]++;
+              connected[d]++;
+              forceLineX[d] = [];
+              forceLineY[d] = [];
+            }
+            escape = true;
+            break;
+          }
+        }
+        if (escape) break;
+        if (forceLineX[c][i] < -500 || forceLineX[c][i] > 1500 || forceLineY[c][i] < -250 || forceLineY[c][i] > 750) break;
+      }
+    }
+    needCalc = false;
+  }
+
+  function touchStarted() {
+    if (!contain(mouseX, mouseY, 0, 0, width, height)) return;
+    let x = mouseX * 1000 / width;
+    let y = mouseY * 1000 / width;
+
+    // Check if touching a palette button (create new magnet)
+    for (let i = 0; i < buttons.length; i++) {
+      if (contain(x, y, buttons[i].x, buttons[i].y, buttons[i].w, buttons[i].h)) {
+        dragged = magnets.length;
+        magnets.push({
+          x: x, y: y,
+          type: buttons[i].type,
+          rot: (buttons[i].type == "compass") ? random(TWO_PI) : buttons[i].rot
+        });
+        offsetX = x - magnets[dragged].x;
+        offsetY = y - magnets[dragged].y;
+        return;
+      }
+    }
+
+    // Check if touching an existing placed magnet
+    let d2 = 999;
+    for (let i = buttons.length; i < magnets.length; i++) {
+      let d1 = dist(x, y, magnets[i].x, magnets[i].y);
+      if (d1 < d2) { d2 = d1; dragged = i; offsetX = x - magnets[dragged].x; offsetY = y - magnets[dragged].y; }
+    }
+  }
+
+  function touchMoved() {
+    if (partClicked >= 0) return;
+    if (touches.length > 1) return;
+    if (dragged >= 0) {
+      partClicked = -1;
+      let x = mouseX * 1000 / width;
+      let y = mouseY * 1000 / width;
+      magnets[dragged].x = x - offsetX;
+      magnets[dragged].y = y - offsetY;
+      magnets[dragged].x = constrain(magnets[dragged].x, 50, 950);
+      magnets[dragged].y = constrain(magnets[dragged].y, 30, 470);
+      needCalc = true;
+      return false;
+    }
+  }
+
+  function touchEnded() {
+    if (dragged >= 0) {
+      for (let i = 0; i < buttons.length; i++) {
+        if (contain(magnets[dragged].x, magnets[dragged].y, buttons[i].x, buttons[i].y, buttons[i].w, buttons[i].h)) {
+          magnets.splice(dragged, 1);
+          dragged = -1;
+          needCalc = true;
+          return;
+        }
+      }
+    }
+    dragged = -1;
+    partClicked = -1;
+  }
+  </script>
+  <script src="supabase.js"></script>
+  <script src="script.js"></script>
+</body>
+</html>
