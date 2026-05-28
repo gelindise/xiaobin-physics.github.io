@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=10">
+  <title>磁化实验 - 物理虚拟实验</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/0.9.0/p5.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/0.9.0/addons/p5.dom.min.js"></script>
+  <style>
+    #myP5Canvas { touch-action: pinch-zoom; display: block; margin: 0 auto; border-radius: 12px; }
+    .canvas-wrap { background: #0f172a; border-radius: 12px; padding: 4px; width: 100%; box-sizing: border-box; }
+    .controls-bar { display: flex; align-items: center; justify-content: space-between; padding: 8px 16px; gap: 12px; flex-wrap: wrap; }
+    .controls-bar .hint { color: #94a3b8; font-size: 14px; }
+    .controls-bar label { color: #cbd5e1; font-size: 13px; cursor: pointer; user-select: none; display: inline-flex; align-items: center; gap: 4px; margin-right: 8px; }
+    .controls-bar input[type="checkbox"] { accent-color: #3b82f6; width: 16px; height: 16px; cursor: pointer; }
+    .radio-group { display: inline-flex; align-items: center; gap: 4px; }
+    .radio-group label { margin-right: 0; }
+    .radio-group input[type="radio"] { accent-color: #3b82f6; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <header class="header">
+    <div class="logo">物理虚拟实验</div>
+    <nav class="nav">
+      <a href="index.html">首页</a>
+      <a href="experiments.html">实验列表</a>
+    </nav>
+  </header>
+
+  <div class="section">
+    <h2>磁化实验</h2>
+    <p style="color:#94a3b8;margin:0 0 16px 0;">用磁铁摩擦铁钉使其磁化，观察磁畴方向的变化。加热后磁性消失。</p>
+  </div>
+
+  <div class="main-card">
+    <div class="canvas-wrap">
+      <div id="myContainer"></div>
+    </div>
+    <div class="controls-bar">
+      <span class="hint">拖拽磁铁在铁钉上摩擦</span>
+      <div>
+        <span class="radio-group">
+          <label><input type="radio" name="radioA" value="ns" checked>N-S 磁铁</label>
+          <label><input type="radio" name="radioA" value="sn">S-N 磁铁</label>
+        </span>
+        <label><input type="checkbox" id="checkA"><span id="chalkA">加热</span></label>
+      </div>
+    </div>
+  </div>
+
+  <div class="formula-bar">
+    <div class="formula-item">
+      <span class="label">磁化</span>
+      <span class="value">磁畴沿外磁场方向有序排列</span>
+    </div>
+    <div class="formula-item">
+      <span class="label">退磁</span>
+      <span class="value">加热/敲击使磁畴重新随机排列</span>
+    </div>
+  </div>
+
+  <div class="experiment-info">
+    <div class="info-card">
+      <h3>实验说明</h3>
+      <ul>
+        <li><strong>拖拽</strong>上方的磁铁左右摩擦铁钉表面，铁钉将被磁化</li>
+        <li>铁钉内部的小磁畴（红色N-蓝色S）会沿磁场方向排列</li>
+        <li>勾选<strong>"加热"</strong>使铁钉温度升高，磁畴重新随机排列，磁性消失</li>
+        <li>切换 N-S / S-N 可改变磁铁的磁极方向</li>
+      </ul>
+    </div>
+    <div class="info-card">
+      <h3>实验原理</h3>
+      <p>铁磁性物质内部存在许多微小"磁畴"，每个磁畴相当于一个小磁铁。无外磁场时磁畴方向杂乱，整体不显磁性。在外磁场作用下，磁畴方向趋于一致，整体表现出磁性。加热或敲击会使磁畴重新随机排列，从而退磁。</p>
+    </div>
+  </div>
+
+  <script>
+  let language = 3;
+  let checkA, chalkA;
+  let magnetNSImage, magnetSNImage;
+  let heaterImage = [];
+  let minX = 200, maxX = 800, minY = 450, maxY = 550;
+  let domainX = [], domainY = [], domainT = [];
+  let magX = 500, magY = 300;
+  let pmagX = 500, pmagY = 300;
+  let dragged = false;
+  let offsetX, offsetY;
+
+  function getRadioVal() {
+    let els = document.getElementsByName("radioA");
+    for (let i = 0; i < els.length; i++)
+      if (els[i].checked) return els[i].value;
+    return "ns";
+  }
+
+  function diffAngle(a1, a2) {
+    let d = a2 - a1;
+    while (d > PI) d -= TWO_PI;
+    while (d < -PI) d += TWO_PI;
+    return d;
+  }
+
+  function preload() {
+    magnetNSImage = loadImage("magnetization_ns.png");
+    magnetSNImage = loadImage("magnetization_sn.png");
+    heaterImage[0] = loadImage("magnetization_lamp_0.png");
+    heaterImage[1] = loadImage("magnetization_lamp_1.png");
+    heaterImage[2] = loadImage("magnetization_lamp_2.png");
+  }
+
+  function setup() {
+    frameRate(20);
+    let o = select("#myContainer");
+    let a = 1;
+    let w = int(min(o.width, (window.innerHeight - 160) / a));
+    let h = int(w * a);
+    myCanvas = createCanvas(w, h);
+    myCanvas.parent("myContainer");
+    myCanvas.id("myP5Canvas");
+
+    checkA = select("#checkA");
+    chalkA = select("#chalkA");
+    chalkA.html("加热");
+
+    // Generate 20 magnetic domains at random positions within the nail
+    for (let i = 0; i < 20; i++) {
+      for (let n = 0; n < 100; n++) {
+        domainX[i] = random(minX + 20, maxX - 20);
+        domainY[i] = random(minY + 20, maxY - 20);
+        let closed = false;
+        for (let j = 0; j < i; j++) {
+          if (dist(domainX[i], domainY[i], domainX[j], domainY[j]) < 36) {
+            closed = true;
+            break;
+          }
+        }
+        if (!closed) break;
+      }
+      domainT[i] = random(TWO_PI);
+    }
+  }
+
+  function windowResized() {
+    let o = select("#myContainer");
+    let a = 1;
+    let w = int(min(o.width, (window.innerHeight - 160) / a));
+    let h = int(w * a);
+    resizeCanvas(w, h);
+  }
+
+  function draw() {
+    background(15, 23, 42);
+    strokeWeight(2);
+    textSize(40);
+    textAlign(CENTER, CENTER);
+
+    push();
+    scale(width / 1000);
+
+    // Draw heater/lamp
+    if (checkA.checked())
+      image((frameCount % 2 == 0) ? heaterImage[1] : heaterImage[2], 340, maxY, 320, 320 * heaterImage[0].height / heaterImage[0].width);
+    else
+      image(heaterImage[0], 340, maxY, 320, 320 * heaterImage[0].height / heaterImage[0].width);
+
+    // Draw nail surface (light semi-transparent rect to help PNG visibility)
+    noStroke();
+    fill(40, 60, 100, 120);
+    beginShape();
+    vertex(minX, minY);
+    vertex(maxX, minY);
+    vertex(maxX + (maxY - minY) / 2, (maxY + minY) / 2);
+    vertex(maxX, maxY);
+    vertex(minX, maxY);
+    endShape(CLOSE);
+    ellipse(minX, (maxY + minY) / 2, 60, 140);
+
+    // Draw nail base
+    fill(100, 130, 160, 220);
+    beginShape();
+    vertex(minX, minY);
+    vertex(maxX, minY);
+    vertex(maxX + (maxY - minY) / 2, (maxY + minY) / 2);
+    vertex(maxX, maxY);
+    vertex(minX, maxY);
+    endShape(CLOSE);
+    ellipse(minX, (maxY + minY) / 2, 58, 138);
+
+    // Draw magnet
+    let magImg = (getRadioVal() == "ns") ? magnetNSImage : magnetSNImage;
+    image(magImg, magX - 69, magY - 460, 500 * magImg.width / magImg.height, 500);
+
+    // Draw domains
+    noStroke();
+    let unit = 5;
+    for (let i = 0; i < domainX.length; i++) {
+      push();
+      translate(domainX[i], domainY[i]);
+      rotate(domainT[i]);
+      fill(255, 80, 80, 230);
+      rect(-unit * 4, -unit, unit * 4, unit * 2);
+      fill(80, 150, 255, 230);
+      rect(0, -unit, unit * 4, unit * 2);
+      pop();
+    }
+
+    // Save previous magnet position
+    pmagX = magX;
+    pmagY = magY;
+
+    // Update magnet position when dragging
+    if (dragged) {
+      magX = mouseX * 1000 / width - offsetX;
+      magY = mouseY * 1000 / width - offsetY;
+      magX = constrain(magX, 0, 900);
+      magY = constrain(magY, 100, minY);
+    }
+
+    // Magnetization logic: when magnet moves across nail surface
+    if (minX < magX && magX < maxX && (magY + 0.1) >= minY && abs(pmagX - magX) > 5) {
+      for (let i = 0; i < domainX.length; i++) {
+        if (random(1) < 0.2) {
+          let dir = atan2(500 - domainX[i], 2000 - domainY[i]);
+          if (pmagX > magX) dir += PI;  // moving left → reverse field
+          if (getRadioVal() == "sn") dir -= PI;  // reversed magnet
+          domainT[i] += diffAngle(domainT[i], dir) * 0.5;
+        }
+      }
+    }
+
+    // Heating effect: randomize domains
+    if (checkA.checked()) {
+      for (let i = 0; i < domainX.length; i++)
+        if (random(1) < 0.1)
+          domainT[i] += random(-1, 1);
+    }
+
+    // Instruction text
+    fill(200, 220, 240, 230);
+    textAlign(LEFT, TOP);
+    textSize(18);
+    if (checkA.checked())
+      text("加热中… 磁畴重新随机排列，磁性逐渐消失", 20, 20);
+    else
+      text("沿同一方向摩擦磁铁可使铁钉磁化", 20, 20);
+
+    pop();
+  }
+
+  function touchStarted() {
+    if (!contain(mouseX, mouseY, 0, 0, width, height)) return;
+    if (touches.length > 1) return;
+    let x = mouseX * 1000 / width;
+    let y = mouseY * 1000 / width;
+    dragged = true;
+    offsetX = x - magX;
+    offsetY = y - magY;
+  }
+
+  function touchMoved() {
+    if (touches.length > 1) return;
+    if (dragged) return false;
+  }
+
+  function touchEnded() {
+    dragged = false;
+  }
+
+  function contain(x, y, rx, ry, rw, rh) {
+    return x >= rx && x <= rx + rw && y >= ry && y <= ry + rh;
+  }
+  </script>
+  <script src="supabase.js"></script>
+  <script src="script.js"></script>
+</body>
+</html>
