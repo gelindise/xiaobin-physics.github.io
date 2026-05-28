@@ -438,7 +438,6 @@ const sim = {
   fluidKey: 'water',
   volume: 400,         // cm³
   objY: T.top - 30,    // 物体中心Y
-  targetY: T.top - 30, // 目标Y（动画过渡目标）
   velocity: 0,
   submergedRatio: 0,
   displacedVol: 0,
@@ -487,7 +486,7 @@ function calcPhysics(vol, rhoObj, rhoFluid, active) {
   return { weight, buoyancy, displacedVol, submergedRatio, status, netForce: buoyancy - weight };
 }
 
-// 计算物体最终位置
+// 计算物体最终位置（物理正确的中心位置）
 function calcTargetY(rhoObj, rhoFluid, vol) {
   const size = objSize(vol);
   if (!sim.active) return T.top - size/2 - 10;
@@ -495,12 +494,14 @@ function calcTargetY(rhoObj, rhoFluid, vol) {
   const waterY = getWaterY(rhoObj, rhoFluid, vol, true);
 
   if (rhoObj < rhoFluid) {
+    // 漂浮：subRatio 部分在水下，中心在水面下方 (subRatio - 0.5) * size 处
     const subRatio = rhoObj / rhoFluid;
-    const aboveH = (1 - subRatio) * size;
-    return waterY - aboveH/2;
+    return waterY + (subRatio - 0.5) * size;
   } else if (rhoObj === rhoFluid) {
+    // 悬浮：完全浸没，中心在水深一半处
     return T.top + T.h * 0.5;
   } else {
+    // 沉底：停在容器底部
     return T.bottom - size/2 - 3;
   }
 }
@@ -540,22 +541,11 @@ function resetExperiment() {
   sim.active = false;
   sim.animating = false;
   sim.objY = T.top - 30;
-  sim.targetY = T.top - 30;
   sim.submergedRatio = 0;
   sim.displacedVol = 0;
   sim.animProgress = 0;
   sim.splash = 0;
   dropBtn.disabled = false;
-}
-
-// ====== 切换参数时更新目标位置 ======
-function updateTarget() {
-  if (!sim.active || sim.animating) return;
-  const rhoObj = getMat().density;
-  const rhoFluid = getFluid().density;
-  const vol = parseInt(volSlider.value);
-  sim.volume = vol;
-  sim.targetY = calcTargetY(rhoObj, rhoFluid, vol);
 }
 
 // ====== 主更新循环 ======
@@ -580,10 +570,10 @@ function updateSim() {
       }
     }
   } else if (sim.active) {
-    // 在实验状态下，平滑过渡到目标位置（参数改变时使用）
-    const diff = sim.targetY - sim.objY;
-    sim.objY += diff * 0.12;
-    if (Math.abs(diff) < 0.5) sim.objY = sim.targetY;
+    // 直接使用物理计算位置，确保物体稳定
+    const rhoObj = getMat().density;
+    const rhoFluid = getFluid().density;
+    sim.objY = calcTargetY(rhoObj, rhoFluid, sim.volume);
   }
 
   if (sim.splash > 0) {
@@ -992,19 +982,16 @@ resetBtn.addEventListener('click', resetExperiment);
 
 matSel.addEventListener('change', () => {
   sim.matKey = matSel.value;
-  updateTarget();
 });
 
 fluidSel.addEventListener('change', () => {
   sim.fluidKey = fluidSel.value;
-  updateTarget();
 });
 
 volSlider.addEventListener('input', () => {
   const v = parseInt(volSlider.value);
   volDisplay.textContent = v + ' cm³';
   sim.volume = v;
-  updateTarget();
 });
 
 // ====== 主循环 ======
