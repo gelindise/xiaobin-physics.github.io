@@ -1,34 +1,13 @@
 // ========== 核心配置 ==========
 // Supabase 在 supabase.js 中配置：SUPABASE_URL / SUPABASE_ANON_KEY / SB 工具对象
 
-// ========== 服务端代理调用（替代直接 SB 查询） ==========
-async function proxyApi(action, body = {}) {
-  const res = await fetch('/api/proxy-user', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action, ...body }),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: res.statusText }));
-    throw new Error(err.error || `HTTP ${res.status}`);
-  }
-  const data = await res.json();
-  if (!data.success) throw new Error(data.error || '代理请求失败');
-  return data;
-}
-
 // ========== 获取所有用户（对象格式兼容旧代码） ==========
 async function getUsersFromTable() {
-  // 先立即返回本地缓存
-  const cached = JSON.parse(localStorage.getItem("users") || "{}");
-
-  // 异步尝试从服务器同步（不阻塞页面）
   try {
-    const data = await proxyApi('getUsers');
-    const users = data.users || [];
-    let map = {};
-    for (const row of users) {
-      map[row.username] = {
+    const data = await SB.getUsers();
+    let users = {};
+    for (const row of data) {
+      users[row.username] = {
         pwd: row.password,
         vip: row.vip || "普通用户",
         expire: row.expire || "",
@@ -36,71 +15,90 @@ async function getUsersFromTable() {
         authCode: row.authCode || "",
       };
     }
-    localStorage.setItem("users", JSON.stringify(map));
-    return map;
+    localStorage.setItem("users", JSON.stringify(users));
+    return users;
   } catch (e) {
-    console.warn("[系统] 服务端查询失败:", e.message);
-    return cached;
+    console.warn("[系统] Supabase 读取失败:", e.message);
+    return JSON.parse(localStorage.getItem("users") || "{}");
   }
 }
 
 // ========== 注册功能 ==========
 async function userRegister() {
+  const user = document.getElementById("regUser").value.trim();
+  const pwd = document.getElementById("regPwd").value.trim();
+  const email = document.getElementById("regEmail").value.trim();
   const tip = document.getElementById("regTip");
+  const pwd2El = document.getElementById("regPwd2");
+  const pwd2 = pwd2El ? pwd2El.value.trim() : "";
+
+  if (!user || !pwd) {
+    if (tip) { tip.className = "auth-tip error"; tip.textContent = "⚠️ 请输入用户名和密码"; }
+    return;
+  }
+
+  if (pwd !== pwd2) {
+    if (tip) { tip.className = "auth-tip error"; tip.textContent = "⚠️ 两次输入的密码不一致"; }
+    return;
+  }
+
+  if (user.length < 2) {
+    if (tip) { tip.className = "auth-tip error"; tip.textContent = "⚠️ 用户名至少需要2个字符"; }
+    return;
+  }
+
+  if (pwd.length < 4) {
+    if (tip) { tip.className = "auth-tip error"; tip.textContent = "⚠️ 密码至少需要4个字符"; }
+    return;
+  }
+
+  // 检查用户名是否已存在
   try {
-    const user = document.getElementById("regUser").value.trim();
-    const pwd = document.getElementById("regPwd").value.trim();
-    const email = document.getElementById("regEmail").value.trim();
-    const pwd2El = document.getElementById("regPwd2");
-    const pwd2 = pwd2El ? pwd2El.value.trim() : "";
-
-    if (!user || !pwd) {
-      if (tip) { tip.className = "auth-tip error"; tip.textContent = "⚠️ 请输入用户名和密码"; }
+    const existing = await SB.getUser(user);
+    if (existing && existing.length > 0) {
+      if (tip) { tip.className = "auth-tip error"; tip.textContent = "⚠️ 用户名已存在，请换一个"; }
       return;
     }
-
-    if (pwd !== pwd2) {
-      if (tip) { tip.className = "auth-tip error"; tip.textContent = "⚠️ 两次输入的密码不一致"; }
-      return;
-    }
-
-    if (user.length < 2) {
-      if (tip) { tip.className = "auth-tip error"; tip.textContent = "⚠️ 用户名至少需要2个字符"; }
-      return;
-    }
-
-    if (pwd.length < 4) {
-      if (tip) { tip.className = "auth-tip error"; tip.textContent = "⚠️ 密码至少需要4个字符"; }
-      return;
-    }
-
-    // 检查用户名是否已存在（本地优先）
+  } catch (e) {
+    console.warn("[注册] 查询失败，尝试本地兜底:", e.message);
     const cached = JSON.parse(localStorage.getItem("users") || "{}");
     if (cached[user]) {
       if (tip) { tip.className = "auth-tip error"; tip.textContent = "⚠️ 用户名已存在，请换一个"; }
       return;
     }
-
-    // 保存到 localStorage
-    cached[user] = { pwd, email: email || "", vip: "普通用户", expire: "" };
-    localStorage.setItem("users", JSON.stringify(cached));
-
-    // 异步尝试同步到 Supabase（不阻塞注册）
-    proxyApi('createUser', { username: user, password: pwd, email: email || '' }).catch(e => {
-      console.warn("[注册] Supabase 同步失败（不影响本地注册）:", e.message);
-    });
-
-    if (tip) {
-      tip.className = "auth-tip success";
-      tip.innerHTML = "✅ 注册成功！账号已激活，<a href='login.html' style='color:var(--secondary);font-weight:600;'>立即登录</a>";
-    }
-
-    document.getElementById("regUser").value = "";
-    document.getElementById("regPwd").value = "";
-  } catch (e) {
-    console.error("[注册] 异常:", e);
-    if (tip) { tip.className = "auth-tip error"; tip.textContent = "❌ 注册异常: " + e.message; }
   }
+
+  // 写入 Supabase
+  try {
+    await SB.createUser({
+      username: user,
+      password: pwd,
+      email: email || "",
+      vip: "普通用户",
+      expire: "",
+    });
+  } catch (e) {
+    console.error("[注册] Supabase 写入失败:", e.message);
+    if (e.message?.includes("duplicate") || e.message?.includes("23505")) {
+      if (tip) { tip.className = "auth-tip error"; tip.textContent = "⚠️ 用户名已存在，请换一个"; }
+    } else {
+      if (tip) { tip.className = "auth-tip error"; tip.textContent = "❌ 注册失败，请稍后重试"; }
+    }
+    return;
+  }
+
+  // 同步到 localStorage 缓存
+  const cached = JSON.parse(localStorage.getItem("users") || "{}");
+  cached[user] = { pwd, email: email || "", vip: "普通用户", expire: "" };
+  localStorage.setItem("users", JSON.stringify(cached));
+
+  if (tip) {
+    tip.className = "auth-tip success";
+    tip.innerHTML = "✅ 注册成功！账号已激活，<a href='login.html' style='color:var(--secondary);font-weight:600;'>立即登录</a>";
+  }
+
+  document.getElementById("regUser").value = "";
+  document.getElementById("regPwd").value = "";
 }
 
 // ========== 登录功能 ==========
@@ -114,21 +112,19 @@ async function userLogin() {
     return;
   }
 
-  // 从本地缓存查询用户
-  const cached = JSON.parse(localStorage.getItem("users") || "{}");
-  let userData = cached[user] || null;
-
-  // 本地没有时，尝试从 Supabase 同步
-  if (!userData) {
-    try {
-      const data = await proxyApi('getUser', { username: user });
-      if (data.user) {
-        userData = { pwd: data.user.password, vip: data.user.vip || "普通用户", expire: data.user.expire || "", email: data.user.email || "" };
-        cached[user] = userData;
-        localStorage.setItem("users", JSON.stringify(cached));
-      }
-    } catch (e) {
-      console.warn("[登录] Supabase 查询失败:", e.message);
+  // 从 Supabase 查询用户
+  let userData = null;
+  try {
+    const result = await SB.getUser(user);
+    if (result && result.length > 0) {
+      userData = result[0];
+    }
+  } catch (e) {
+    console.warn("[登录] Supabase 查询失败:", e.message);
+    // 降级：尝试本地缓存
+    const cached = JSON.parse(localStorage.getItem("users") || "{}");
+    if (cached[user]) {
+      userData = { password: cached[user].pwd, vip: cached[user].vip, expire: cached[user].expire };
     }
   }
 
@@ -137,7 +133,7 @@ async function userLogin() {
     return;
   }
 
-  if (userData.pwd !== pwd) {
+  if (userData.password !== pwd) {
     if (tip) { tip.className = "auth-tip error"; tip.textContent = "❌ 密码错误，请重试"; }
     return;
   }
@@ -156,8 +152,8 @@ async function simulatePaySuccess(user, type, code) {
   // 方案一：通过 activation_codes 表验证（推荐）
   let codeRecord = null;
   try {
-    const data = await proxyApi('getActivationCode', { code: cleanCode });
-    if (data.codes && data.codes.length > 0) codeRecord = data.codes[0];
+    const data = await SB.getActivationCode(cleanCode);
+    if (data && data.length > 0) codeRecord = data[0];
   } catch (e) {
     console.warn("[激活] activation_codes 表不可用:", e.message);
   }
@@ -180,8 +176,8 @@ async function simulatePaySuccess(user, type, code) {
     else if (type === "年度VIP") { now.setDate(now.getDate() + 365); expireDate = now.toISOString().split('T')[0]; }
     else { expireDate = "永久"; }
 
-    await proxyApi('updateUser', { username: user, data: { vip: type, expire: expireDate } });
-    await proxyApi('updateActivationCode', { id: codeRecord.id, data: { status: 'used', used_by: user, used_at: new Date().toISOString() } });
+    await SB.updateUser(user, { vip: type, expire: expireDate });
+    await SB.updateActivationCode(codeRecord.id, { status: 'used', used_by: user, used_at: new Date().toISOString() });
 
     // 同步本地缓存
     const cached = JSON.parse(localStorage.getItem("users") || "{}");
@@ -196,8 +192,8 @@ async function simulatePaySuccess(user, type, code) {
   console.log("[激活] activation_codes 未匹配，尝试旧版 authCode...");
   let userData = null;
   try {
-    const data = await proxyApi('getUser', { username: user });
-    if (data.user) userData = data.user;
+    const result = await SB.getUser(user);
+    if (result && result.length > 0) userData = result[0];
   } catch (e) {
     console.warn("[激活] Supabase 查询失败:", e.message);
   }
@@ -223,7 +219,7 @@ async function simulatePaySuccess(user, type, code) {
   else { expireDate = "永久"; }
 
   try {
-    await proxyApi('updateUser', { username: user, data: { vip: type, expire: expireDate } });
+    await SB.updateUser(user, { vip: type, expire: expireDate });
   } catch (e) {
     console.error("[激活] 更新失败:", e.message);
     alert('❌ 激活更新失败，请重试');
@@ -356,7 +352,7 @@ window.onload = async function() {
       }
       // 更新在线状态（静默，不阻塞页面）
       if (uName) {
-        proxyApi('updateUser', { username: uName, data: { last_seen: new Date().toISOString() } }).catch(() => {});
+        SB.updateUser(uName, { last_seen: new Date().toISOString() }).catch(() => {});
       }
     }
   }
