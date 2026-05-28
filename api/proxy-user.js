@@ -110,6 +110,31 @@ module.exports = async (req, res) => {
       return res.json({ success: true });
     }
 
+    // ========== 查询激活码 ==========
+    if (action === 'getActivationCode') {
+      const code = req.body?.code;
+      if (!code) return res.status(400).json({ error: '缺少 code' });
+      const url = `${SUPABASE_URL}/rest/v1/activation_codes?code=eq.${encodeURIComponent(code)}&select=*`;
+      const r = await fetch(url, { headers: { ...headers, Prefer: undefined } });
+      if (!r.ok) return res.status(502).json({ error: '查询失败: ' + (await r.text()) });
+      const data = await r.json();
+      return res.json({ success: true, codes: data });
+    }
+
+    // ========== 更新激活码 ==========
+    if (action === 'updateActivationCode') {
+      const { id, data: fields } = req.body;
+      if (!id || !fields) return res.status(400).json({ error: '缺少 id 或 data' });
+      const url = `${SUPABASE_URL}/rest/v1/activation_codes?id=eq.${encodeURIComponent(id)}`;
+      const r = await fetch(url, {
+        method: 'PATCH',
+        headers,
+        body: JSON.stringify(fields),
+      });
+      if (!r.ok) return res.status(502).json({ error: '更新失败: ' + (await r.text()) });
+      return res.json({ success: true });
+    }
+
     return res.status(400).json({ error: `未知 action: ${action}` });
   } catch (e) {
     console.error('[proxy-user] error:', e);

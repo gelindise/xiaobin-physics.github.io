@@ -1,13 +1,30 @@
 // ========== 核心配置 ==========
 // Supabase 在 supabase.js 中配置：SUPABASE_URL / SUPABASE_ANON_KEY / SB 工具对象
 
+// ========== 服务端代理调用（替代直接 SB 查询） ==========
+async function proxyApi(action, body = {}) {
+  const res = await fetch('/api/proxy-user', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action, ...body }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(err.error || `HTTP ${res.status}`);
+  }
+  const data = await res.json();
+  if (!data.success) throw new Error(data.error || '代理请求失败');
+  return data;
+}
+
 // ========== 获取所有用户（对象格式兼容旧代码） ==========
 async function getUsersFromTable() {
   try {
-    const data = await SB.getUsers();
-    let users = {};
-    for (const row of data) {
-      users[row.username] = {
+    const data = await proxyApi('getUsers');
+    const users = data.users || [];
+    let map = {};
+    for (const row of users) {
+      map[row.username] = {
         pwd: row.password,
         vip: row.vip || "普通用户",
         expire: row.expire || "",
@@ -15,12 +32,10 @@ async function getUsersFromTable() {
         authCode: row.authCode || "",
       };
     }
-    // 写一份到 localStorage 作为离线缓存
-    localStorage.setItem("users", JSON.stringify(users));
-    return users;
+    localStorage.setItem("users", JSON.stringify(map));
+    return map;
   } catch (e) {
-    console.warn("[系统] Supabase 读取失败:", e.message);
-    // 降级到本地缓存
+    console.warn("[系统] 服务端查询失败:", e.message);
     return JSON.parse(localStorage.getItem("users") || "{}");
   }
 }
@@ -56,8 +71,8 @@ async function userRegister() {
 
   // 检查用户名是否已存在
   try {
-    const existing = await SB.getUser(user);
-    if (existing && existing.length > 0) {
+    const data = await proxyApi('getUser', { username: user });
+    if (data.user) {
       if (tip) { tip.className = "auth-tip error"; tip.textContent = "⚠️ 用户名已存在，请换一个"; }
       return;
     }
@@ -70,15 +85,8 @@ async function userRegister() {
     }
   }
 
-  // 写入 Supabase
   try {
-    await SB.createUser({
-      username: user,
-      password: pwd,
-      email: email || "",
-      vip: "普通用户",
-      expire: "",
-    });
+    await proxyApi('createUser', { username: user, password: pwd, email: email || '' });
   } catch (e) {
     console.error("[注册] Supabase 写入失败:", e.message);
     // 按 Supabase 唯一约束错误提示
@@ -118,10 +126,8 @@ async function userLogin() {
   // 从 Supabase 查询用户
   let userData = null;
   try {
-    const result = await SB.getUser(user);
-    if (result && result.length > 0) {
-      userData = result[0];
-    }
+    const data = await proxyApi('getUser', { username: user });
+    if (data.user) userData = data.user;
   } catch (e) {
     console.warn("[登录] Supabase 查询失败:", e.message);
     // 降级：尝试本地缓存
@@ -155,8 +161,8 @@ async function simulatePaySuccess(user, type, code) {
   // 方案一：通过 activation_codes 表验证（推荐）
   let codeRecord = null;
   try {
-    const result = await SB.getActivationCode(cleanCode);
-    if (result && result.length > 0) codeRecord = result[0];
+    const data = await proxyApi('getActivationCode', { code: cleanCode });
+    if (data.codes && data.codes.length > 0) codeRecord = data.codes[0];
   } catch (e) {
     console.warn("[激活] activation_codes 表不可用:", e.message);
   }
@@ -179,10 +185,8 @@ async function simulatePaySuccess(user, type, code) {
     else if (type === "年度VIP") { now.setDate(now.getDate() + 365); expireDate = now.toISOString().split('T')[0]; }
     else { expireDate = "永久"; }
 
-    // 先更新用户 VIP
-    await SB.updateUser(user, { vip: type, expire: expireDate });
-    // 再标记激活码已用
-    await SB.updateActivationCode(codeRecord.id, { status: 'used', used_by: user, used_at: new Date().toISOString() });
+    await proxyApi('updateUser', { username: user, data: { vip: type, expire: expireDate } });
+    await proxyApi('updateActivationCode', { id: codeRecord.id, data: { status: 'used', used_by: user, used_at: new Date().toISOString() } });
 
     // 同步本地缓存
     const cached = JSON.parse(localStorage.getItem("users") || "{}");
@@ -197,8 +201,8 @@ async function simulatePaySuccess(user, type, code) {
   console.log("[激活] activation_codes 未匹配，尝试旧版 authCode...");
   let userData = null;
   try {
-    const result = await SB.getUser(user);
-    if (result && result.length > 0) userData = result[0];
+    const data = await proxyApi('getUser', { username: user });
+    if (data.user) userData = data.user;
   } catch (e) {
     console.warn("[激活] Supabase 查询失败:", e.message);
   }
@@ -224,7 +228,7 @@ async function simulatePaySuccess(user, type, code) {
   else { expireDate = "永久"; }
 
   try {
-    await SB.updateUser(user, { vip: type, expire: expireDate });
+    await proxyApi('updateUser', { username: user, data: { vip: type, expire: expireDate } });
   } catch (e) {
     console.error("[激活] 更新失败:", e.message);
     alert('❌ 激活更新失败，请重试');
@@ -357,7 +361,7 @@ window.onload = async function() {
       }
       // 更新在线状态（静默，不阻塞页面）
       if (uName) {
-        SB.updateUser(uName, { last_seen: new Date().toISOString() }).catch(() => {});
+        proxyApi('updateUser', { username: uName, data: { last_seen: new Date().toISOString() } }).catch(() => {});
       }
     }
   }
