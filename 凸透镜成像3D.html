@@ -299,7 +299,7 @@ function calcImage(u, f) {
 // ─── Scene Setup ────────────────────────────
 const container = document.getElementById('container3d');
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x0a0e17);
+scene.background = new THREE.Color(0x2a3458);
 
 const camera = new THREE.PerspectiveCamera(35, container.clientWidth / container.clientHeight, 0.1, 200);
 camera.position.set(10, 14, 32);
@@ -310,7 +310,7 @@ renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.2;
+renderer.toneMappingExposure = 1.6;
 container.appendChild(renderer.domElement);
 
 const controls = new OrbitControls(camera, renderer.domElement);
@@ -322,19 +322,19 @@ controls.maxDistance = 80;
 controls.update();
 
 // ─── Lights ─────────────────────────────────
-const ambientLight = new THREE.AmbientLight(0x404060, 0.5);
+const ambientLight = new THREE.AmbientLight(0x8080c0, 0.8);
 scene.add(ambientLight);
 
-const dirLight = new THREE.DirectionalLight(0xffeedd, 1.8);
+const dirLight = new THREE.DirectionalLight(0xffffff, 2.2);
 dirLight.position.set(10, 20, 15);
 dirLight.castShadow = true;
 scene.add(dirLight);
 
-const fillLight = new THREE.DirectionalLight(0x4488ff, 0.4);
+const fillLight = new THREE.DirectionalLight(0x88bbff, 0.7);
 fillLight.position.set(-10, 5, -10);
 scene.add(fillLight);
 
-const hemiLight = new THREE.HemisphereLight(0x4466ff, 0x224422, 0.6);
+const hemiLight = new THREE.HemisphereLight(0x88bbff, 0x446644, 0.8);
 scene.add(hemiLight);
 
 // ─── Sub-scene grid (reference) ─────────────
@@ -377,31 +377,44 @@ OBJ_GROUP.add(axisLine);
 // Lens group — rotate to be perpendicular to principal axis (facing -X)
 const lensGroup = new THREE.Group();
 lensGroup.position.set(0, 0, 0);
-lensGroup.rotation.y = -Math.PI / 2;
 OBJ_GROUP.add(lensGroup);
 
+// Biconvex lens using LatheGeometry (realistic 3D glass lens)
+const lensProfile = [];
+const LENS_THICK = 1.8; // center thickness
+for (let i = 0; i <= 40; i++) {
+  const t = i / 40;
+  const angle = t * Math.PI;
+  const y = -LENS_RADIUS * Math.cos(angle);
+  // Elliptical profile: thicker at center, thin at edges
+  const x = (LENS_THICK / 2) * Math.sin(angle) + 0.05;
+  lensProfile.push(new THREE.Vector2(x, y));
+}
+const lensGeo = new THREE.LatheGeometry(lensProfile, 48);
+lensGeo.rotateX(Math.PI / 2); // symmetry axis → Z (then group rotation maps Z → world X)
+
 const lensMatBody = new THREE.MeshPhysicalMaterial({
-  color: 0x4488ff,
+  color: 0x66aaff,
   transparent: true,
-  opacity: 0.25,
-  side: THREE.DoubleSide,
-  roughness: 0.0,
+  opacity: 0.35,
+  roughness: 0.05,
   metalness: 0.0,
+  clearcoat: 0.3,
+  clearcoatRoughness: 0.2,
+  side: THREE.DoubleSide,
+  envMapIntensity: 0.6,
   depthWrite: false,
 });
-const lensGeo = new THREE.CircleGeometry(LENS_RADIUS, 48);
 const lensMesh = new THREE.Mesh(lensGeo, lensMatBody);
+lensMesh.castShadow = true;
 lensGroup.add(lensMesh);
 
-const lensMatFrame = new THREE.MeshPhysicalMaterial({
-  color: 0xffaa44,
-  metalness: 0.8,
-  roughness: 0.2,
-  side: THREE.DoubleSide,
-});
-const frameGeo = new THREE.RingGeometry(LENS_RADIUS - 0.25, LENS_RADIUS + 0.15, 48);
-const frameMesh = new THREE.Mesh(frameGeo, lensMatFrame);
-lensGroup.add(frameMesh);
+// Lens edge rim (brass ring)
+const rimGeo = new THREE.TorusGeometry(LENS_RADIUS + 0.05, 0.1, 8, 48);
+rimGeo.rotateX(Math.PI / 2);
+const rimMat = new THREE.MeshStandardMaterial({ color: 0xccaa44, metalness: 0.7, roughness: 0.3 });
+const rimMesh = new THREE.Mesh(rimGeo, rimMat);
+lensGroup.add(rimMesh);
 
 // Lens cover
 const coverMat = new THREE.MeshBasicMaterial({
@@ -510,6 +523,7 @@ function buildCandle(height) {
 // Screen group
 const screenGroup = new THREE.Group();
 screenGroup.position.set(20, 0, 0);
+screenGroup.visible = false;
 OBJ_GROUP.add(screenGroup);
 
 // Screen panel — rotate to face -X (toward lens)
@@ -571,7 +585,7 @@ imgMesh.rotation.y = -Math.PI / 2;
 imgMesh.position.x = -0.03;
 imgMesh.renderOrder = 1;
 imgMesh.visible = false;
-screenGroup.add(imgMesh);
+OBJ_GROUP.add(imgMesh);
 
 // Virtual image plane (shown behind lens for virtual images)
 const vImgMat = new THREE.MeshBasicMaterial({
@@ -586,6 +600,26 @@ const vImgMesh = new THREE.Mesh(vImgGeo, vImgMat);
 vImgMesh.rotation.y = -Math.PI / 2;
 vImgMesh.visible = false;
 OBJ_GROUP.add(vImgMesh);
+
+// Dashed border for virtual image outline
+const vBorderPts = [
+  -1.6, -1, 0,  1.6, -1, 0,
+   1.6, -1, 0,  1.6,  1, 0,
+   1.6,  1, 0, -1.6,  1, 0,
+  -1.6,  1, 0, -1.6, -1, 0,
+];
+const vBorderGeo = new THREE.BufferGeometry();
+vBorderGeo.setAttribute('position', new THREE.Float32BufferAttribute(vBorderPts, 3));
+const vBorderMat = new THREE.LineDashedMaterial({
+  color: 0xff8800,
+  dashSize: 0.12,
+  gapSize: 0.12,
+  transparent: true,
+  opacity: 0.5,
+});
+const vBorder = new THREE.LineSegments(vBorderGeo, vBorderMat);
+vBorder.computeLineDistances();
+vImgMesh.add(vBorder);
 
 // Focal points
 const fpMat = new THREE.MeshBasicMaterial({ color: 0xff3333 });
@@ -807,12 +841,7 @@ function updateScene() {
   emitMarker.position.y = clampedEmit;
   emitGlow.position.y = clampedEmit;
 
-  // Screen position
-  const screenX = Math.max(clampedV, 4);
-  screenGroup.position.x = screenX;
-  screenMesh.visible = (type === 'real');
-  sframe.visible = (type === 'real');
-  sStand.visible = (type === 'real');
+  // Screen is hidden — image displays directly
 
   // Focal points
   fpF.position.x = -f;
@@ -839,7 +868,7 @@ function updateScene() {
     const scaleX = 1 - Math.min(1, 1 / absV) * 0.3;
     const scaleY = Math.max(0.1, clampedImgH / 4);
     imgMesh.scale.set(scaleX * 0.9, scaleY, 1);
-    imgMesh.position.y = -imgH / 2;
+    imgMesh.position.set(clampedV, -imgH / 2, 0);
     imgMesh.material.opacity = bright * (cover === 'none' ? 0.9 : 0.45);
 
     // Draw realistic candle image on canvas texture
