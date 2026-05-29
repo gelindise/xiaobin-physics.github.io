@@ -230,6 +230,11 @@ input[type="range"]::-webkit-slider-thumb {
     <input type="range" id="sliderH" min="1" max="8" step="0.5" value="4">
     <span class="val" id="valH">4</span>
   </div>
+  <div class="ctrl-group">
+    <label>发光点</label>
+    <input type="range" id="sliderEmit" min="0.2" max="8" step="0.1" value="2.5">
+    <span class="val" id="valEmit">2.5</span>
+  </div>
 
   <div class="separator"></div>
 
@@ -369,9 +374,10 @@ const axisLine = new THREE.Line(axisGeo, axisMat);
 axisLine.computeLineDistances();
 OBJ_GROUP.add(axisLine);
 
-// Lens group
+// Lens group — rotate to be perpendicular to principal axis (facing -X)
 const lensGroup = new THREE.Group();
 lensGroup.position.set(0, 0, 0);
+lensGroup.rotation.y = -Math.PI / 2;
 OBJ_GROUP.add(lensGroup);
 
 const lensMatBody = new THREE.MeshPhysicalMaterial({
@@ -425,6 +431,31 @@ const baseGeo = new THREE.BoxGeometry(0.8, 0.15, 0.8);
 const candleBase = new THREE.Mesh(baseGeo, baseMat);
 candleBase.position.y = -0.08;
 candleGroup.add(candleBase);
+
+// Emission point marker (glowing dot on candle)
+const emitMat = new THREE.MeshBasicMaterial({ color: 0xffdd00 });
+const emitGeo = new THREE.SphereGeometry(0.15, 8, 8);
+const emitMarker = new THREE.Mesh(emitGeo, emitMat);
+emitMarker.position.set(0, 2.5, 0); // updated in updateScene
+candleGroup.add(emitMarker);
+
+// Glow sprite for emission point
+const glowCanvas = document.createElement('canvas');
+glowCanvas.width = 64;
+glowCanvas.height = 64;
+const gctx = glowCanvas.getContext('2d');
+const grad = gctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+grad.addColorStop(0, 'rgba(255,220,80,1)');
+grad.addColorStop(0.3, 'rgba(255,180,40,0.6)');
+grad.addColorStop(1, 'rgba(255,100,0,0)');
+gctx.fillStyle = grad;
+gctx.fillRect(0, 0, 64, 64);
+const glowTexture = new THREE.CanvasTexture(glowCanvas);
+const glowMat = new THREE.SpriteMaterial({ map: glowTexture, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false });
+const emitGlow = new THREE.Sprite(glowMat);
+emitGlow.scale.set(1.2, 1.2, 1);
+emitGlow.position.set(0, 2.5, 0);
+candleGroup.add(emitGlow);
 
 const candleMatBody = new THREE.MeshStandardMaterial({ color: 0xdd4444, roughness: 0.7, metalness: 0.1 });
 const candleMatTop = new THREE.MeshStandardMaterial({ color: 0x884422, roughness: 0.8 });
@@ -514,13 +545,25 @@ const sStand = new THREE.Mesh(sStandGeo, sStandMat);
 sStand.position.y = -3.9;
 screenGroup.add(sStand);
 
-// Image plane (projected image)
+// Image plane (projected image) — with canvas texture for realistic rendering
+const imgCanvas = document.createElement('canvas');
+imgCanvas.width = 128;
+imgCanvas.height = 256;
+const imgCtx = imgCanvas.getContext('2d');
+// Draw initial empty
+imgCtx.fillStyle = 'rgba(0,0,0,0)';
+imgCtx.fillRect(0, 0, 128, 256);
+const imgTexture = new THREE.CanvasTexture(imgCanvas);
+imgTexture.minFilter = THREE.LinearFilter;
+imgTexture.magFilter = THREE.LinearFilter;
+
 const imgMat = new THREE.MeshBasicMaterial({
-  color: 0xffaa33,
+  map: imgTexture,
   transparent: true,
   opacity: 0.9,
   side: THREE.DoubleSide,
   depthWrite: false,
+  toneMapped: false,
 });
 const imgGeo = new THREE.PlaneGeometry(3.2, 4);
 const imgMesh = new THREE.Mesh(imgGeo, imgMat);
@@ -654,17 +697,115 @@ function initRays() {
 }
 initRays();
 
+// ─── Canvas drawing for realistic image ──────
+function drawCandleOnCanvas(ctx, w, h, inverted, brightness, objH) {
+  ctx.clearRect(0, 0, w, h);
+  if (brightness < 0.05 || objH < 0.1) return;
+
+  const alpha = Math.min(1, brightness * 1.2);
+  const margin = h * 0.08;
+  const areaH = h - 2 * margin;
+  const bodyR = 0.55;
+  const flameR = 0.45;
+  const bodyH = areaH * bodyR;
+  const flameH = areaH * flameR;
+  const halfW = areaH * 0.09;
+  const cx = w / 2;
+
+  if (inverted) {
+    // Real image: inverted candle — flame at bottom, body at top
+    const bTop = margin;
+    const bBot = bTop + bodyH;
+    const fTop = bBot;
+    const fBot = Math.min(fTop + flameH, h - margin);
+
+    // Body
+    ctx.fillStyle = `rgba(220, 60, 60, ${alpha})`;
+    const rectW = halfW * 2;
+    ctx.fillRect(cx - halfW, bTop, rectW, bBot - bTop);
+
+    // Candle top (slightly wider ring)
+    ctx.fillStyle = `rgba(180, 120, 60, ${alpha})`;
+    ctx.fillRect(cx - halfW * 0.8, bBot - 4, rectW * 0.8, 4);
+
+    // Flame (pointing downward — inverted)
+    const grad = ctx.createRadialGradient(cx, fBot - flameH * 0.3, 0, cx, fBot - flameH * 0.3, flameH * 0.8);
+    grad.addColorStop(0, `rgba(255, 240, 100, ${alpha})`);
+    grad.addColorStop(0.3, `rgba(255, 180, 40, ${alpha * 0.9})`);
+    grad.addColorStop(0.6, `rgba(255, 100, 20, ${alpha * 0.7})`);
+    grad.addColorStop(1, `rgba(200, 50, 0, ${alpha * 0.3})`);
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.moveTo(cx, fBot);
+    ctx.lineTo(cx - halfW * 1.3, fTop);
+    ctx.lineTo(cx + halfW * 1.3, fTop);
+    ctx.closePath();
+    ctx.fill();
+
+    // Flame inner glow
+    ctx.fillStyle = `rgba(255, 255, 200, ${alpha * 0.5})`;
+    ctx.beginPath();
+    ctx.moveTo(cx, fBot - 2);
+    ctx.lineTo(cx - halfW * 0.5, fTop + 4);
+    ctx.lineTo(cx + halfW * 0.5, fTop + 4);
+    ctx.closePath();
+    ctx.fill();
+  } else {
+    // Virtual image: upright candle
+    const fBot = h - margin;
+    const fTop = fBot - flameH;
+    const bBot = fTop;
+    const bTop = bBot - bodyH;
+
+    // Body
+    ctx.fillStyle = `rgba(220, 60, 60, ${alpha * 0.7})`;
+    ctx.fillRect(cx - halfW, bTop, halfW * 2, bBot - bTop);
+
+    // Candle top
+    ctx.fillStyle = `rgba(180, 120, 60, ${alpha * 0.7})`;
+    ctx.fillRect(cx - halfW * 0.8, bBot - 4, halfW * 1.6, 4);
+
+    // Flame (pointing upward)
+    const grad = ctx.createRadialGradient(cx, fTop + flameH * 0.3, 0, cx, fTop + flameH * 0.3, flameH * 0.8);
+    grad.addColorStop(0, `rgba(255, 240, 100, ${alpha * 0.8})`);
+    grad.addColorStop(0.3, `rgba(255, 180, 40, ${alpha * 0.7})`);
+    grad.addColorStop(0.6, `rgba(255, 100, 20, ${alpha * 0.5})`);
+    grad.addColorStop(1, `rgba(200, 50, 0, ${alpha * 0.2})`);
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.moveTo(cx, fTop);
+    ctx.lineTo(cx - halfW * 1.3, fBot);
+    ctx.lineTo(cx + halfW * 1.3, fBot);
+    ctx.closePath();
+    ctx.fill();
+
+    // Flame inner glow
+    ctx.fillStyle = `rgba(255, 255, 200, ${alpha * 0.4})`;
+    ctx.beginPath();
+    ctx.moveTo(cx, fTop + 2);
+    ctx.lineTo(cx - halfW * 0.5, fBot - 4);
+    ctx.lineTo(cx + halfW * 0.5, fBot - 4);
+    ctx.closePath();
+    ctx.fill();
+  }
+}
+
 // ─── Update Function ────────────────────────
-const params = { u: 20, f: 10, candleH: 4, cover: 'none' };
+const params = { u: 20, f: 10, candleH: 4, emissionY: 2.5, cover: 'none' };
 
 function updateScene() {
-  const { u, f, candleH, cover } = params;
+  const { u, f, candleH, emissionY, cover } = params;
   const phys = calcImage(u, f);
   const { v, clampedV, m, imageH, type } = phys;
 
   // Candle
   buildCandle(candleH);
   candleGroup.position.x = -u;
+
+  // Emission point marker — clamp to candle height
+  const clampedEmit = Math.min(emissionY, candleH);
+  emitMarker.position.y = clampedEmit;
+  emitGlow.position.y = clampedEmit;
 
   // Screen position
   const screenX = Math.max(clampedV, 4);
@@ -685,20 +826,25 @@ function updateScene() {
   label2F.position.x = -2 * f;
   label2F2.position.x = 2 * f;
 
-  // Image plane
+  // Image plane — using emission point as object height
   const absV = Math.abs(clampedV);
-  const imgH = Math.abs(imageH) * (candleH / 4);
+  const objHeight = clampedEmit; // object height = emission point Y
+  const imgH = Math.abs(m) * objHeight;
   const clampedImgH = Math.min(imgH, 6);
+  const bright = Math.min(1, 0.5 + 1 / Math.max(absV, 1));
+  const coverDim = (cover !== 'none' && type === 'real') ? 0.45 : 1;
 
   if (type === 'real' && absV > 0.5) {
     imgMesh.visible = true;
     const scaleX = 1 - Math.min(1, 1 / absV) * 0.3;
     const scaleY = Math.max(0.1, clampedImgH / 4);
     imgMesh.scale.set(scaleX * 0.9, scaleY, 1);
-    imgMesh.position.y = -Math.abs(imageH) * candleH / 8;
-    const bright = Math.min(1, 0.5 + 1 / absV);
+    imgMesh.position.y = -imgH / 2;
     imgMesh.material.opacity = bright * (cover === 'none' ? 0.9 : 0.45);
-    imgMesh.material.color.setHSL(0.1, 0.8, 0.5 * bright + 0.2);
+
+    // Draw realistic candle image on canvas texture
+    drawCandleOnCanvas(imgCtx, 128, 256, true, bright * coverDim, objHeight);
+    imgTexture.needsUpdate = true;
   } else {
     imgMesh.visible = false;
   }
@@ -709,7 +855,7 @@ function updateScene() {
     const scaleY = Math.max(0.1, clampedImgH / 3);
     vImgMesh.scale.set(0.5 + scaleY * 0.3, scaleY, 1);
     vImgMesh.position.x = clampedV; // negative (same side as object)
-    vImgMesh.position.y = Math.abs(imageH) * candleH / 8;
+    vImgMesh.position.y = imgH / 2;
     vImgMesh.material.opacity = 0.3;
   } else {
     vImgMesh.visible = false;
@@ -729,13 +875,17 @@ function updateScene() {
   }
 
   // ─── Rays ──────────────────────────────
-  const objTopY = candleH / 2;
+  const objTopY = clampedEmit; // ray origin = emission point
   const hideRays = [];
   if (cover === 'top') hideRays.push(1, 3, 5);
   if (cover === 'bottom') hideRays.push(2, 4, 6);
 
+  // Common image Y for rays (convergence/divergence point)
+  const realImgY = -imgH / 2;   // inverted image center (real)
+  const virtImgY = imgH / 2;    // upright image top (virtual)
+
   if (type === 'real' && clampedV > 1) {
-    const imgY = -Math.abs(imageH) * candleH / 8;
+    const imgY = realImgY;
     const lensYs = [
       0,                            // center (principal ray 2)
       objTopY * 0.7,                // upper (principal ray 1)
@@ -769,7 +919,7 @@ function updateScene() {
       rayExtLines[i].visible = false;
     }
   } else if (type === 'virtual') {
-    const imgY = Math.abs(imageH) * candleH / 8; // virtual image top y (positive, upright)
+    const imgY = virtImgY; // virtual image top y (positive, upright)
     const vX = clampedV; // virtual image x (negative, same side as object)
     const lensYs = [
       0,
@@ -868,9 +1018,11 @@ function updateScene() {
 const sliderU = document.getElementById('sliderU');
 const sliderF = document.getElementById('sliderF');
 const sliderH = document.getElementById('sliderH');
+const sliderEmit = document.getElementById('sliderEmit');
 const valU = document.getElementById('valU');
 const valF = document.getElementById('valF');
 const valH = document.getElementById('valH');
+const valEmit = document.getElementById('valEmit');
 
 sliderU.addEventListener('input', () => {
   params.u = parseFloat(sliderU.value);
@@ -885,6 +1037,14 @@ sliderF.addEventListener('input', () => {
 sliderH.addEventListener('input', () => {
   params.candleH = parseFloat(sliderH.value);
   valH.textContent = params.candleH;
+  // Keep emission slider max in sync
+  sliderEmit.max = params.candleH;
+  updateScene();
+});
+
+sliderEmit.addEventListener('input', () => {
+  params.emissionY = parseFloat(sliderEmit.value);
+  valEmit.textContent = params.emissionY;
   updateScene();
 });
 
@@ -979,6 +1139,7 @@ function animate() {
 }
 
 // ─── Init ───────────────────────────────────
+sliderEmit.max = params.candleH;
 updateScene();
 animate();
 resize();
