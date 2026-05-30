@@ -131,6 +131,18 @@
         <button class="btn-warn" id="btnFriction">有摩擦</button>
       </div>
       <div class="controls-group">
+        <label>高度 <span class="val" id="heightLabel">100</span>%</label>
+        <input type="range" id="heightSlider" min="20" max="100" value="100" step="5">
+      </div>
+      <div class="controls-group">
+        <label>质量 <span class="val" id="massLabel">1.0</span></label>
+        <input type="range" id="massSlider" min="0.2" max="3.0" value="1.0" step="0.1">
+      </div>
+      <div class="controls-group">
+        <label>倾角 <span class="val" id="angleLabel">39</span>°</label>
+        <input type="range" id="angleSlider" min="28" max="50" value="39" step="1">
+      </div>
+      <div class="controls-group">
         <label>速度 <span class="val" id="speedLabel">1.0</span>x</label>
         <input type="range" id="speedSlider" min="0.2" max="2.0" value="1.0" step="0.1">
       </div>
@@ -201,6 +213,7 @@
         <li>小球从斜面顶端释放，沿斜面滚下</li>
         <li>到达水平面后压缩弹簧，然后被弹簧弹回</li>
         <li>整个过程分 <strong>4 个阶段</strong>，按顺序自动进行</li>
+        <li>调节 <strong>高度/质量/倾角</strong> 滑块改变实验条件</li>
         <li>点击 <strong>"有摩擦/无摩擦"</strong> 切换：观察机械能是否守恒</li>
         <li>有摩擦时，部分机械能转化为内能，总机械能减少</li>
       </ul>
@@ -226,31 +239,54 @@
 
   <script>
   // ============================
-  //  CONSTANTS
+  //  CONSTANTS (fixed)
   // ============================
   const G = 650;           // gravity (px/s²)
   const MU = 0.12;         // friction coefficient
   const K = 200;           // spring constant
-  const M = 1;             // mass
   const BALL_R = 14;       // ball visual radius
 
-  // Path geometry
-  const RT = { x: 60, y: 25 };   // ramp top (gentler slope)
-  const RB = { x: 440, y: 330 }; // ramp bottom
-  const HY = 330;                // horizontal y
-  const SX = 610;                // spring contact x
-  const WX = 680;                // wall x
-
-  // Derived path
-  const LR = Math.hypot(RB.x - RT.x, RB.y - RT.y);  // ramp length
-  const LH = SX - RB.x;                        // horizontal length
-  const SIN_T = (RB.y - RT.y) / LR;
-  const COS_T = (RB.x - RT.x) / LR;
-  const H_TOTAL = RB.y - RT.y;
+  // Fixed geometry
+  const RT_X = 60, RT_Y = 25;  // ramp top
+  const HY = 330;               // horizontal y
 
   // Canvas
   const W = 1060;
-  const H = 600;
+  const H = 420;
+
+  // ============================
+  //  DYNAMIC PARAMS (with defaults)
+  // ============================
+  let M = 1.0;              // ball mass
+  let rampAngleDeg = 39;    // ramp incline angle (degrees)
+  let releaseHeightPct = 100; // release height as % of full ramp height
+
+  // Computed geometry (recalculated by recomputeGeometry)
+  let RT = { x: RT_X, y: RT_Y };
+  let RB = { x: 440, y: HY };
+  let SX = 610;
+  let WX = 680;
+  let LR = Math.hypot(RB.x - RT.x, RB.y - RT.y);
+  let LH = SX - RB.x;
+  let SIN_T = (RB.y - RT.y) / LR;
+  let COS_T = (RB.x - RT.x) / LR;
+  let H_TOTAL = RB.y - RT.y;
+
+  function recomputeGeometry(angleDeg) {
+    let angleRad = angleDeg * Math.PI / 180;
+    let dx = (HY - RT_Y) / Math.tan(angleRad);
+    RB.x = RT_X + dx;
+    RB.y = HY;
+    LR = Math.hypot(RB.x - RT.x, RB.y - RT.y);
+    LH = 170; // fixed horizontal length from ramp bottom to spring
+    SX = RB.x + LH;
+    WX = SX + 70;
+    SIN_T = Math.sin(angleRad);
+    COS_T = Math.cos(angleRad);
+    H_TOTAL = HY - RT_Y; // always 305
+    // Update RT position (only y needed)
+    RT.x = RT_X; RT.y = RT_Y;
+  }
 
   // ============================
   //  STATE
@@ -275,8 +311,7 @@
   const TRAIL_N = 80;
 
   // DOM
-  let btnToggle, btnReset, btnFriction, speedSlider, speedLabel;
-  let epVal, epBar, ekVal, ekBar, esVal, esBar, totalVal, frictionStatus;
+  let _dom; // native DOM element cache
 
   // Phase labels
   const PHASE_NAMES = [
@@ -296,54 +331,65 @@
   //  SETUP
   // ============================
   function setup() {
-    let container = select('#canvasContainer');
-    let cw = (container.width || container.elt.offsetWidth || windowWidth - 32);
+    let container = document.getElementById('canvasContainer');
+    let cw = (container ? container.offsetWidth : windowWidth - 32);
     let maxW = min(cw, windowWidth - 32, 1120);
     let aspect = W / H;
     let canvas = createCanvas(maxW, maxW / aspect);
-    canvas.parent('canvasContainer');
-    canvas.id('simCanvas');
+    // Parent the canvas manually (avoids p5.dom dependency)
+    if (container) container.appendChild(canvas.elt);
+    canvas.elt.id = 'simCanvas';
     frameRate(60);
 
-    btnToggle = select('#btnToggle');
-    btnReset = select('#btnReset');
-    btnFriction = select('#btnFriction');
-    speedSlider = select('#speedSlider');
-    speedLabel = select('#speedLabel');
-    epVal = select('#epVal');
-    epBar = select('#epBar');
-    ekVal = select('#ekVal');
-    ekBar = select('#ekBar');
-    esVal = select('#esVal');
-    esBar = select('#esBar');
-    totalVal = select('#totalVal');
-    frictionStatus = select('#frictionStatus');
+    // Cache DOM elements (native)
+    let dom = {};
+    ['btnToggle','btnReset','btnFriction','speedSlider','speedLabel',
+     'epVal','ekVal','esVal','totalVal','frictionStatus',
+     'epBar','ekBar','esBar'].forEach(id => { dom[id] = document.getElementById(id); });
+    _dom = dom;
 
-    speedSlider.input(() => {
-      speedMul = parseFloat(speedSlider.value());
-      speedLabel.html(speedMul);
+    // Native event binding for all controls
+    dom.btnToggle.addEventListener('click', toggle);
+    dom.btnReset.addEventListener('click', resetAll);
+    dom.btnFriction.addEventListener('click', toggleFriction);
+
+    dom.speedSlider.addEventListener('input', function() {
+      speedMul = parseFloat(this.value);
+      dom.speedLabel.textContent = speedMul;
     });
-    btnToggle.mouseClicked(toggle);
-    btnReset.mouseClicked(resetAll);
-    btnFriction.mouseClicked(toggleFriction);
+
+    document.getElementById('heightSlider').addEventListener('input', function() {
+      document.getElementById('heightLabel').textContent = this.value;
+      if (!running) { releaseHeightPct = parseFloat(this.value); resetAll(); }
+    });
+    document.getElementById('massSlider').addEventListener('input', function() {
+      document.getElementById('massLabel').textContent = parseFloat(this.value).toFixed(1);
+      if (!running) { M = parseFloat(this.value); resetAll(); }
+    });
+    document.getElementById('angleSlider').addEventListener('input', function() {
+      document.getElementById('angleLabel').textContent = this.value;
+      if (!running) {
+        rampAngleDeg = parseFloat(this.value);
+        recomputeGeometry(rampAngleDeg);
+        resetAll();
+      }
+    });
 
     resetAll();
   }
 
   function windowResized() {
-    let container = select('#canvasContainer');
-    let cw = (container.width || container.elt.offsetWidth || windowWidth - 32);
+    let container = document.getElementById('canvasContainer');
+    let cw = (container ? container.offsetWidth : windowWidth - 32);
     let maxW = min(cw, windowWidth - 32, 1120);
     let aspect = W / H;
     resizeCanvas(maxW, maxW / aspect);
   }
 
   function toggle() {
-    if (s <= 0 && abs(v) < 0.1) {
-      // Release from top
+    if (!running && abs(v) < 0.1 && getHeight(s) > 0) {
+      // Release ball from current position
       running = true;
-      s = 2;
-      v = 0;      // start from rest — gravity accelerates from 0
       initialTotalEnergy = M * G * getHeight(s);
       maxEnergy = initialTotalEnergy;
       phaseIdx = 0;
@@ -354,35 +400,48 @@
     } else {
       running = true;
     }
-    btnToggle.html(running ? '暂停' : '继续');
-    if (running) btnToggle.addClass('active');
-    else btnToggle.removeClass('active');
+    _dom.btnToggle.textContent = running ? '暂停' : '继续';
+    if (running) _dom.btnToggle.classList.add('active');
+    else _dom.btnToggle.classList.remove('active');
   }
 
   function resetAll() {
     running = false;
-    s = 0; v = 0;
+    // Read current slider values from native DOM
+    releaseHeightPct = parseFloat(document.getElementById('heightSlider').value);
+    M = parseFloat(document.getElementById('massSlider').value);
+    rampAngleDeg = parseFloat(document.getElementById('angleSlider').value);
+    document.getElementById('heightLabel').textContent = releaseHeightPct;
+    document.getElementById('massLabel').textContent = M.toFixed(1);
+    document.getElementById('angleLabel').textContent = rampAngleDeg;
+    // Ensure geometry is current
+    recomputeGeometry(rampAngleDeg);
+    // Position ball at chosen release height
+    let releaseH = H_TOTAL * (releaseHeightPct / 100);
+    let releaseS = LR * (1 - releaseH / H_TOTAL);
+    s = max(0, releaseS);
+    v = 0;
     phaseIdx = -1; phaseTime = 0;
     cycleCount = 0;
     trail = [];
-    initialTotalEnergy = M * G * H_TOTAL;
-    maxEnergy = M * G * H_TOTAL;
+    initialTotalEnergy = M * G * getHeight(s);
+    maxEnergy = initialTotalEnergy;
     bounceHeight = 0;
-    btnToggle.html('释放小球');
-    btnToggle.removeClass('active');
+    _dom.btnToggle.textContent = '释放小球';
+    _dom.btnToggle.classList.remove('active');
     updateDisplay();
     updatePhaseIndicator();
   }
 
   function toggleFriction() {
     frictionOn = !frictionOn;
-    btnFriction.html(frictionOn ? '有摩擦' : '无摩擦');
+    _dom.btnFriction.textContent = frictionOn ? '有摩擦' : '无摩擦';
     if (frictionOn) {
-      btnFriction.removeClass('off');
-      frictionStatus.html('有摩擦 · 机械能不守恒');
+      _dom.btnFriction.classList.remove('off');
+      _dom.frictionStatus.textContent = '有摩擦 · 机械能不守恒';
     } else {
-      btnFriction.addClass('off');
-      frictionStatus.html('无摩擦 · 机械能守恒');
+      _dom.btnFriction.classList.add('off');
+      _dom.frictionStatus.textContent = '无摩擦 · 机械能守恒';
     }
   }
 
@@ -460,8 +519,8 @@
       if (abs(v) < 2) {
         v = 0;
         running = false;
-        btnToggle.html('释放小球');
-        btnToggle.removeClass('active');
+        _dom.btnToggle.textContent = '释放小球';
+        _dom.btnToggle.classList.remove('active');
         bounceHeight = getHeight(max(0, s));
         phaseIdx = 4; // completed
       } else {
@@ -548,14 +607,14 @@
     computeEnergy();
     let maxE = max(maxEnergy, 1);
 
-    epVal.html(round(E_p));
-    ekVal.html(round(E_k));
-    esVal.html(round(E_s));
-    totalVal.html(round(E_total));
+    _dom.epVal.textContent = round(E_p);
+    _dom.ekVal.textContent = round(E_k);
+    _dom.esVal.textContent = round(E_s);
+    _dom.totalVal.textContent = round(E_total);
 
-    document.getElementById('epBar').style.width = constrain(E_p / maxE * 100, 0, 100) + '%';
-    document.getElementById('ekBar').style.width = constrain(E_k / maxE * 100, 0, 100) + '%';
-    document.getElementById('esBar').style.width = constrain(E_s / maxE * 100, 0, 100) + '%';
+    _dom.epBar.style.width = constrain(E_p / maxE * 100, 0, 100) + '%';
+    _dom.ekBar.style.width = constrain(E_k / maxE * 100, 0, 100) + '%';
+    _dom.esBar.style.width = constrain(E_s / maxE * 100, 0, 100) + '%';
   }
 
   function updatePhaseIndicator() {
@@ -594,7 +653,7 @@
     // === Horizontal surface ===
     stroke(60, 90, 130, 120);
     strokeWeight(2);
-    line(RB.x, HY, 780, HY);
+    line(RB.x, HY, WX + 120, HY);
 
     // === Wall ===
     fill(80, 100, 130, 180);
@@ -839,10 +898,12 @@
   //  ENERGY PANEL
   // ============================
   function drawEnergyPanel() {
-    let px = 760;
-    let py = 15;
-    let pw = 280;
-    let ph = 570;
+    // Dynamic position: keep right of spring area, minimum x=760
+    let rightMargin = 15;
+    let px = max(760, WX + 35);
+    let pw = W - px - rightMargin;
+    if (pw < 180) { px = W - 180 - rightMargin; pw = 180; }
+    let ph = H - 40;
     let maxE = max(maxEnergy, 1);
 
     // Panel background
@@ -863,7 +924,7 @@
     let chartW = pw - 36;
     let labelW = 40;   // label width
     let barH = 22;     // bar height
-    let barGap = 36;   // gap between bars
+    let barGap = 28;   // gap between bars
 
     // Bar labels
     let labels = ['重力势能', '动能', '弹性势能'];
