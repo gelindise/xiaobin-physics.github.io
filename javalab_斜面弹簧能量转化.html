@@ -311,7 +311,7 @@
   const TRAIL_N = 80;
 
   // DOM
-  let _dom; // native DOM element cache
+  // (all DOM access via direct document.getElementById)
 
   // Phase labels
   const PHASE_NAMES = [
@@ -331,15 +331,13 @@
   //  SETUP
   // ============================
   function setup() {
-    let container = document.getElementById('canvasContainer');
-    let cw = (container ? container.offsetWidth : windowWidth - 32);
+    let container = select('#canvasContainer');
+    let cw = (container.width || container.elt.offsetWidth || windowWidth - 32);
     let maxW = min(cw, windowWidth - 32, 1120);
     let aspect = W / H;
     let canvas = createCanvas(maxW, maxW / aspect);
-    // p5.Renderer has .elt in 0.9.0 (even with p5.dom loaded),
-    // but we avoid calling .parent() to keep p5.dom dependency minimal
-    if (container && canvas.elt) container.appendChild(canvas.elt);
-    if (canvas.elt) canvas.elt.id = 'simCanvas';
+    canvas.parent('canvasContainer');
+    canvas.id('simCanvas');
     frameRate(60);
 
     // Cache DOM elements (native)
@@ -347,17 +345,17 @@
     ['btnToggle','btnReset','btnFriction','speedSlider','speedLabel',
      'epVal','ekVal','esVal','totalVal','frictionStatus',
      'epBar','ekBar','esBar'].forEach(id => { dom[id] = document.getElementById(id); });
-    _dom = dom;
 
     // Native event binding for all controls
-    dom.btnToggle.addEventListener('click', toggle);
-    dom.btnReset.addEventListener('click', resetAll);
-    dom.btnFriction.addEventListener('click', toggleFriction);
-
-    dom.speedSlider.addEventListener('input', function() {
-      speedMul = parseFloat(this.value);
-      dom.speedLabel.textContent = speedMul;
-    });
+    try {
+      dom.btnToggle.addEventListener('click', toggle);
+      dom.btnReset.addEventListener('click', resetAll);
+      dom.btnFriction.addEventListener('click', toggleFriction);
+      dom.speedSlider.addEventListener('input', function() {
+        speedMul = parseFloat(this.value);
+        if (dom.speedLabel) dom.speedLabel.textContent = speedMul;
+      });
+    } catch(e) { console.error('Event bind error:', e); }
 
     document.getElementById('heightSlider').addEventListener('input', function() {
       document.getElementById('heightLabel').textContent = this.value;
@@ -399,9 +397,12 @@
     } else {
       running = false;
     }
-    _dom.btnToggle.textContent = running ? '暂停' : '继续';
-    if (running) _dom.btnToggle.classList.add('active');
-    else _dom.btnToggle.classList.remove('active');
+    var tb = document.getElementById('btnToggle');
+    if (tb) {
+      tb.textContent = running ? '暂停' : '继续';
+      if (running) tb.classList.add('active');
+      else tb.classList.remove('active');
+    }
   }
 
   function resetAll() {
@@ -426,21 +427,24 @@
     initialTotalEnergy = M * G * getHeight(s);
     maxEnergy = initialTotalEnergy;
     bounceHeight = 0;
-    _dom.btnToggle.textContent = '释放小球';
-    _dom.btnToggle.classList.remove('active');
+    var tb = document.getElementById('btnToggle');
+    if (tb) { tb.textContent = '释放小球'; tb.classList.remove('active'); }
     updateDisplay();
     updatePhaseIndicator();
   }
 
   function toggleFriction() {
     frictionOn = !frictionOn;
-    _dom.btnFriction.textContent = frictionOn ? '有摩擦' : '无摩擦';
+    var fb = document.getElementById('btnFriction');
+    if (fb) fb.textContent = frictionOn ? '有摩擦' : '无摩擦';
     if (frictionOn) {
-      _dom.btnFriction.classList.remove('off');
-      _dom.frictionStatus.textContent = '有摩擦 · 机械能不守恒';
+      if (fb) fb.classList.remove('off');
+      var fs = document.getElementById('frictionStatus');
+      if (fs) fs.textContent = '有摩擦 · 机械能不守恒';
     } else {
-      _dom.btnFriction.classList.add('off');
-      _dom.frictionStatus.textContent = '无摩擦 · 机械能守恒';
+      if (fb) fb.classList.add('off');
+      var fs = document.getElementById('frictionStatus');
+      if (fs) fs.textContent = '无摩擦 · 机械能守恒';
     }
   }
 
@@ -518,8 +522,8 @@
       if (abs(v) < 2) {
         v = 0;
         running = false;
-        _dom.btnToggle.textContent = '释放小球';
-        _dom.btnToggle.classList.remove('active');
+        var tb = document.getElementById('btnToggle');
+        if (tb) { tb.textContent = '释放小球'; tb.classList.remove('active'); }
         bounceHeight = getHeight(max(0, s));
         phaseIdx = 4; // completed
       } else {
@@ -606,14 +610,14 @@
     computeEnergy();
     let maxE = max(maxEnergy, 1);
 
-    _dom.epVal.textContent = round(E_p);
-    _dom.ekVal.textContent = round(E_k);
-    _dom.esVal.textContent = round(E_s);
-    _dom.totalVal.textContent = round(E_total);
-
-    _dom.epBar.style.width = constrain(E_p / maxE * 100, 0, 100) + '%';
-    _dom.ekBar.style.width = constrain(E_k / maxE * 100, 0, 100) + '%';
-    _dom.esBar.style.width = constrain(E_s / maxE * 100, 0, 100) + '%';
+    var g = function(id) { return document.getElementById(id); };
+    if (g('epVal')) g('epVal').textContent = round(E_p);
+    if (g('ekVal')) g('ekVal').textContent = round(E_k);
+    if (g('esVal')) g('esVal').textContent = round(E_s);
+    if (g('totalVal')) g('totalVal').textContent = round(E_total);
+    if (g('epBar')) g('epBar').style.width = constrain(E_p / maxE * 100, 0, 100) + '%';
+    if (g('ekBar')) g('ekBar').style.width = constrain(E_k / maxE * 100, 0, 100) + '%';
+    if (g('esBar')) g('esBar').style.width = constrain(E_s / maxE * 100, 0, 100) + '%';
   }
 
   function updatePhaseIndicator() {
@@ -902,6 +906,7 @@
     let px = max(760, WX + 35);
     let pw = W - px - rightMargin;
     if (pw < 180) { px = W - 180 - rightMargin; pw = 180; }
+    let py = 20;
     let ph = H - 40;
     let maxE = max(maxEnergy, 1);
 
