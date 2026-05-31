@@ -1,0 +1,620 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=10">
+  <title>光的折射 — 岸上看鱼 - 物理虚拟实验</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/0.9.0/p5.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/0.9.0/addons/p5.dom.min.js"></script>
+  <style>
+    #myP5Canvas { touch-action: pinch-zoom; display: block; margin: 0 auto; border-radius: 12px; }
+    .canvas-wrap { border-radius: 12px; padding: 4px; width: 100%; box-sizing: border-box; border: 1px solid #e2e8f0; }
+    .controls-bar { display: flex; align-items: center; justify-content: space-between; padding: 8px 16px; gap: 12px; flex-wrap: wrap; background: #f8fafc; border-radius: 0 0 12px 12px; border-top: 1px solid #e2e8f0; }
+    .controls-bar .hint { color: #64748b; font-size: 14px; }
+    .controls-bar label { color: #334155; font-size: 13px; cursor: pointer; user-select: none; display: inline-flex; align-items: center; gap: 4px; margin-right: 8px; }
+    .controls-bar input[type="checkbox"] { accent-color: #3b82f6; width: 16px; height: 16px; cursor: pointer; }
+    .section { padding: 1.5rem 2rem 0.5rem; }
+    .section h2 { font-size: 1.4rem; }
+  </style>
+</head>
+<body>
+  <header class="header">
+    <div class="logo">物理虚拟实验</div>
+    <nav class="nav">
+      <a href="index.html">首页</a>
+      <a href="experiments.html">实验列表</a>
+    </nav>
+  </header>
+
+  <div class="section">
+    <h2>光的折射 — 岸上看鱼</h2>
+    <p style="color:#94a3b8;margin:0 0 16px 0;">拖拽鱼或眼睛，观察光从水到空气的折射，理解"水中鱼看起来更浅"的原理。</p>
+  </div>
+
+  <div class="main-card">
+    <div class="canvas-wrap">
+      <div id="myContainer"></div>
+    </div>
+    <div class="controls-bar">
+      <span class="hint">拖拽 🐟 鱼 或 👁️ 眼睛，光路实时变化</span>
+      <div>
+        <label><input type="checkbox" id="chkVirtual" checked><span>显示虚像</span></label>
+        <label><input type="checkbox" id="chkAngles" checked><span>显示角度</span></label>
+      </div>
+    </div>
+  </div>
+
+  <div class="formula-bar">
+    <div class="formula-item">
+      <span class="label">折射定律</span>
+      <span class="value">n₁ sin θ₁ = n₂ sin θ₂</span>
+    </div>
+    <div class="formula-item">
+      <span class="label">水 → 空气</span>
+      <span class="value">折射角 &gt; 入射角（偏离法线）</span>
+    </div>
+    <div class="formula-item">
+      <span class="label">虚像位置</span>
+      <span class="value">反向延长线汇聚，比实鱼更浅</span>
+    </div>
+  </div>
+
+  <div class="experiment-info">
+    <div class="info-card">
+      <h3>实验说明</h3>
+      <ul>
+        <li>鱼身上同一点发出多条光线，经水面折射后进入人眼</li>
+        <li>从水（n=1.33）进入空气（n=1.00），<strong>折射角大于入射角</strong></li>
+        <li>折射光线发散，部分进入人眼</li>
+        <li>人眼逆着折射光线看回去，反向延长线汇聚于虚像位置</li>
+        <li>虚像比实际鱼更靠近水面——"鱼看起来更浅"</li>
+        <li>拖拽鱼或眼睛，所有光线实时跟随变化</li>
+      </ul>
+    </div>
+    <div class="info-card">
+      <h3>实验原理</h3>
+      <p>光从水射入空气中时，在水面处发生折射，折射角大于入射角，光线偏离法线。从不同位置出射的折射光线在空气中发散。人眼逆着折射光线的方向看，觉得光线是从反向延长线的交点发出的，所以看到的是鱼的虚像。视深约为实际深度的 3/4。</p>
+    </div>
+  </div>
+
+  <script>
+  let chkVirtual, chkAngles;
+
+  const NW = 1.333, NA = 1.000;
+  const WSR = 0.54;
+  const NUM_RAYS = 21;
+  const SPREAD = 90;   // water surface x spread from optimal (pixels)
+  const PUPIL_R = 38;  // max distance from eye center for ray to "enter" eye
+
+  let fishX, fishY, eyeX, eyeY, waterY;
+
+  const LW = 900;
+  let LH = 520;
+
+  let imgEye;
+
+  // Ray: { wX, thetaW, thetaA, signX, airDX, airDY, extX, extY, hitEye }
+  let rays = [];
+  let virtX, virtY, hasVirt = false;
+
+  function preload() { imgEye = loadImage("law_of_reflection_eyeball.png"); }
+
+  function setup() {
+    frameRate(20);
+    let o = select("#myContainer");
+    let a = LH / LW;
+    let w = int(min(o.width, (window.innerHeight - 160) / a));
+    let h = int(w * a);
+    LH = int(LW * a);
+
+    myCanvas = createCanvas(w, h);
+    myCanvas.parent("myContainer");
+    myCanvas.id("myP5Canvas");
+
+    chkVirtual = select("#chkVirtual");
+    chkAngles = select("#chkAngles");
+
+    waterY = int(LH * WSR);
+    fishX = int(LW * 0.6);
+    fishY = int(waterY + LH * 0.32);
+    eyeX = int(LW * 0.30);
+    eyeY = int(waterY * 0.25);
+  }
+
+  function windowResized() {
+    let o = select("#myContainer");
+    let a = LH / LW;
+    let w = int(min(o.width, (window.innerHeight - 160) / a));
+    let h = int(w * a);
+    resizeCanvas(w, h);
+  }
+
+  function draw() {
+    try {
+      if (touches.length > 1) return;
+      background(255);
+
+      push();
+      scale(width / LW);
+
+      // Clamp positions to safe bounds
+      fishX = constrain(fishX, 10, LW - 10);
+      fishY = constrain(fishY, waterY + 10, LH - 10);
+      eyeX = constrain(eyeX, 10, LW - 10);
+      eyeY = constrain(eyeY, 10, waterY - 10);
+
+      // Skip if any position is invalid
+      if (!isFinite(fishX) || !isFinite(fishY) || !isFinite(eyeX) || !isFinite(eyeY)) {
+        pop(); return;
+      }
+
+      drawRegions();
+      computeRays();
+
+      // Draw backward extensions (dashed, behind everything)
+      drawBackExtensions();
+
+      // Draw rays on top
+      drawRays();
+
+      // Draw fish, virtual fish, eye
+      drawFish(fishX, fishY, 255, 1.0, false);
+      if (hasVirt && chkVirtual.checked()) {
+        drawFish(virtX, virtY, 120, 0.8, true);
+      }
+      drawEye();
+      drawLabels();
+
+      pop();
+    } catch(e) { /* guard against render loop crash */ pop(); }
+  }
+
+  // ==================== Background ====================
+
+  function drawRegions() {
+    noStroke();
+    for (let y = 0; y < waterY; y++) {
+      let t = y / waterY;
+      stroke(lerp(240, 248, t), lerp(248, 250, t), lerp(255, 255, t));
+      line(0, y, LW, y);
+    }
+    for (let y = waterY; y < LH; y++) {
+      let t = (y - waterY) / (LH - waterY);
+      stroke(lerp(200, 180, t), lerp(225, 220, t), lerp(245, 250, t));
+      line(0, y, LW, y);
+    }
+    stroke(40, 130, 200, 200);
+    strokeWeight(2.5);
+    line(0, waterY, LW, waterY);
+    stroke(100, 180, 230, 50);
+    strokeWeight(1);
+    line(0, waterY + 1, LW, waterY + 1);
+  }
+
+  // ==================== Drawing ====================
+
+  function drawFish(x, y, alpha, s, ghost) {
+    push();
+    translate(x, y);
+    scale(s);
+    if (ghost) {
+      noFill();
+      stroke(100, 180, 230, alpha * 0.7);
+      strokeWeight(1.5);
+      drawingContext.setLineDash([4, 4]);
+      ellipse(0, 0, 44, 24);
+      beginShape(); vertex(-16, 0); vertex(-36, -18); vertex(-36, 18); endShape(CLOSE);
+      beginShape(); vertex(2, -11); vertex(8, -20); vertex(14, -13); endShape(CLOSE);
+      drawingContext.setLineDash([]);
+      pop();
+      return;
+    }
+    fill(0, 0, 0, 12); noStroke(); ellipse(2, 3, 44, 24);
+    fill(230, 150, 50, alpha);
+    beginShape(); vertex(-16, 0); vertex(-36, -16); vertex(-34, 0); vertex(-36, 16); endShape(CLOSE);
+    fill(70, 170, 215, alpha); ellipse(0, 0, 44, 22);
+    fill(120, 210, 240, alpha * 0.5); ellipse(2, 3, 32, 10);
+    fill(50, 140, 180, alpha * 0.8);
+    beginShape(); vertex(2, -10); vertex(8, -18); vertex(14, -12); endShape(CLOSE);
+    fill(210, 130, 35, alpha * 0.7);
+    beginShape(); vertex(-18, 0); vertex(-30, -10); vertex(-26, 0); vertex(-30, 10); endShape(CLOSE);
+    fill(255, 255, 255, alpha); circle(13, -3, 7);
+    fill(30, 30, 40, alpha); circle(14, -3, 3.5);
+    noFill(); stroke(50, 50, 70, alpha * 0.5); strokeWeight(0.8);
+    arc(19, 1, 4, 3, -PI * 0.3, PI * 0.3);
+    pop();
+  }
+
+  function drawEye() {
+    push();
+    translate(eyeX, eyeY);
+    let t = atan2(fishY - eyeY, fishX - eyeX);
+    rotate(t);
+    imageMode(CENTER, CENTER);
+    image(imgEye, 0, 0, 68, 68);
+    pop();
+  }
+
+  // ==================== Core Ray Computation ====================
+
+  function computeRays() {
+    try {
+    rays = [];
+    hasVirt = false;
+
+    // Validate positions
+    if (!isFinite(fishX) || !isFinite(fishY) || !isFinite(eyeX) || !isFinite(eyeY)) return;
+
+    let depth = fishY - waterY;
+    let height = waterY - eyeY;
+    if (depth < 5 || height < 5) return;
+
+    // Optimal Snell's law path: fish → W₀ → eye
+    let wOpt = findOptimalW();
+    if (!isFinite(wOpt)) wOpt = (fishX + eyeX) * 0.5;
+
+    // Generate rays: fan water surface positions around wOpt
+    for (let i = 0; i < NUM_RAYS; i++) {
+      let t = (i - (NUM_RAYS - 1) / 2) / ((NUM_RAYS - 1) / 2);
+      let wX = wOpt + t * SPREAD;
+      if (wX < 10 || wX > LW - 10) continue;
+
+      let dwx = wX - fishX;
+      let thetaW = atan2(abs(dwx), depth);
+
+      // Snell's law: NW * sin(θW) = NA * sin(θA)
+      let sinA = NW / NA * sin(thetaW);
+      if (sinA > 0.99) continue;
+      let thetaA = asin(sinA);
+
+      let signX = (wX - fishX) >= 0 ? 1 : -1;
+
+      // === Refracted ray direction in air ===
+      let airDX = sin(thetaA) * signX;
+      let airDY = -cos(thetaA);  // upward in screen coords
+
+      // Guard: airDY must be reasonably non-zero to avoid Inf
+      if (airDY > -0.0001 || airDY < -0.9999) continue;
+
+      // Where does this ray reach the eye's y-level?
+      let tAir = abs((eyeY - waterY) / airDY);
+      if (!isFinite(tAir) || tAir > 10000) continue;
+      let xAtEye = wX + tAir * airDX;
+      let distToEye = abs(xAtEye - eyeX);
+      if (!isFinite(distToEye)) continue;
+
+      // Extend the air ray for drawing (go past eye level)
+      let ext = 500;
+      let extX = wX + airDX * ext;
+      let extY = waterY + airDY * ext;
+
+      // Backward extension direction (into water, opposite to air direction)
+      let backDX = -airDX;
+      let backDY = -airDY;
+
+      rays.push({
+        wX, thetaW, thetaA, signX,
+        airDX, airDY, extX, extY,
+        backDX, backDY,
+        distToEye, xAtEye
+      });
+    }
+
+    // Save full ray set for virtual image computation (before display filtering)
+    let allGenerated = [...rays];
+    if (allGenerated.length < 3) return;
+
+    // === Filter for DISPLAY: only show eye-entering rays ===
+    let eyeRays = rays.filter(r => r.distToEye < PUPIL_R && isFinite(r.distToEye));
+    if (eyeRays.length >= 3) {
+      rays = eyeRays;
+    } else {
+      rays.sort((a, b) => a.distToEye - b.distToEye);
+      rays = rays.slice(0, 3);
+    }
+
+    // Primary ray (for angle display)
+    let primIdx = 0;
+    let bestDist = Infinity;
+    for (let i = 0; i < rays.length; i++) {
+      if (rays[i].distToEye < bestDist) { bestDist = rays[i].distToEye; primIdx = i; }
+    }
+    rays.primIdx = primIdx;
+
+    // ===== Compute virtual image from FULL ray set =====
+    // Virtual image is at intersection of backward extensions of refracted rays
+    // Use extreme left and right rays on the water surface for best convergence
+    allGenerated.sort((a, b) => a.wX - b.wX);
+    let vx = null, vy = null;
+    for (let i = 0; i < allGenerated.length - 1 && vx === null; i++) {
+      for (let j = allGenerated.length - 1; j > i; j--) {
+        let rL = allGenerated[i], rR = allGenerated[j];
+        if (rR.wX - rL.wX < 20) break;
+        if (!isFinite(rL.backDX) || !isFinite(rR.backDX)) continue;
+        let denom = rL.backDX * rR.backDY - rL.backDY * rR.backDX;
+        if (abs(denom) > 0.0001) {
+          let dx = rR.wX - rL.wX;
+          let tL = (dx * rR.backDY) / denom;
+          if (isFinite(tL) && tL > 0) {
+            let cx = rL.wX + tL * rL.backDX;
+            let cy = waterY + tL * rL.backDY;
+            if (isFinite(cx) && isFinite(cy) && cy > waterY + 3 && cy < LH + 10 &&
+                cx > 20 && cx < LW - 20 && (cy - waterY) < (fishY - waterY) * 0.97) {
+              vx = cx; vy = cy; break;
+            }
+          }
+        }
+      }
+    }
+    if (vx !== null) { virtX = vx; virtY = vy; hasVirt = true; }
+    } catch(e) { /* guard computeRays */ }
+  }
+
+  function findOptimalW() {
+    let depth = fishY - waterY;
+    let height = waterY - eyeY;
+    if (depth < 5 || height < 5 || !isFinite(depth) || !isFinite(height)) return (fishX + eyeX) * 0.5;
+
+    let lo = min(fishX, eyeX) - 10;
+    let hi = max(fishX, eyeX) + 10;
+    if (!isFinite(lo) || !isFinite(hi)) return (fishX + eyeX) * 0.5;
+
+    for (let iter = 0; iter < 80; iter++) {
+      let mid = (lo + hi) * 0.5;
+      if (!isFinite(mid)) break;
+      let thetaW = atan2(abs(mid - fishX), depth);
+      let sinA = NW / NA * sin(thetaW);
+      if (sinA > 0.99) {
+        if (mid < fishX) lo = mid; else hi = mid;
+        continue;
+      }
+      let thetaA = asin(sinA);
+      let sign = (mid - fishX) >= 0 ? 1 : -1;
+      let tanA = tan(thetaA);
+      if (!isFinite(tanA)) { if (mid < eyeX) lo = mid; else hi = mid; continue; }
+      let predEX = mid + height * tanA * sign;
+      if (!isFinite(predEX)) { lo = mid; continue; }
+      if (predEX < eyeX) lo = mid; else hi = mid;
+    }
+    return (lo + hi) * 0.5;
+  }
+
+  // ==================== Draw Rays ====================
+
+  function rayCol(wX, alpha) {
+    if (rays.length < 2) return { r: 220, g: 160, b: 60, a: alpha || 200 };
+    let lo = Infinity, hi = -Infinity;
+    for (let r of rays) { if (r.wX < lo) lo = r.wX; if (r.wX > hi) hi = r.wX; }
+    let rng = hi - lo;
+    if (rng < 1) return { r: 220, g: 160, b: 60, a: alpha || 200 };
+    let t = (wX - lo) / rng;
+    let r, g, b;
+    if (t < 0.5) {
+      let u = t / 0.5;
+      r = lerp(200, 240, u); g = lerp(90, 190, u); b = lerp(110, 60, u);
+    } else {
+      let u = (t - 0.5) / 0.5;
+      r = lerp(240, 100, u); g = lerp(190, 200, u); b = lerp(60, 240, u);
+    }
+    return { r: int(r), g: int(g), b: int(b), a: alpha || 200 };
+  }
+
+  function drawRays() {
+    for (let i = 0; i < rays.length; i++) {
+      let r = rays[i];
+      let col = rayCol(r.wX);
+      if (!isFinite(r.wX) || !isFinite(fishX)) continue;
+
+      // === Water ray: fish → water surface (solid) ===
+      stroke(col.r, col.g, col.b, 180);
+      strokeWeight(2.2);
+      line(fishX, fishY, r.wX, waterY);
+
+      // === Refracted ray in air (going in Snell's law direction, diverging) ===
+      if (isFinite(r.extX) && isFinite(r.extY)) {
+        stroke(col.r, col.g, col.b, 200);
+        strokeWeight(2.8);
+        line(r.wX, waterY, r.extX, r.extY);
+
+        // Arrowhead on air segment
+        if (isFinite(r.airDX) && isFinite(r.airDY)) {
+          let ax = r.wX + r.airDX * 70;
+          let ay = waterY + r.airDY * 70;
+          if (isFinite(ax) && isFinite(ay)) {
+            arrowHead(ax, ay, r.airDX * 16, r.airDY * 16, 10, col);
+          }
+        }
+      }
+    }
+  }
+
+  function drawBackExtensions() {
+    if (!hasVirt || !isFinite(virtX) || !isFinite(virtY)) return;
+
+    let virtDepth = virtY - waterY;
+    if (virtDepth < 2) return;
+
+    // Draw each ray's backward extension in its TRUE reversed direction
+    for (let i = 0; i < rays.length; i++) {
+      let r = rays[i];
+      if (!isFinite(r.wX) || !isFinite(r.backDX) || !isFinite(r.backDY)) continue;
+      if (r.backDY < 0.005) continue; // must point into water
+
+      let col = rayCol(r.wX, 120);
+      let dist = abs(i - rays.primIdx);
+      let alpha = lerp(100, 50, min(1, dist * 0.25));
+
+      stroke(col.r, col.g, col.b, alpha);
+      strokeWeight(1.5);
+      drawingContext.setLineDash([5, 5]);
+
+      // Follow true backward direction from water surface to virtual image depth
+      let t = virtDepth / r.backDY;
+      let ex = r.wX + r.backDX * t;
+      let ey = waterY + r.backDY * t;
+      if (isFinite(ex) && isFinite(ey) && ex > 0 && ex < LW) {
+        line(r.wX, waterY, ex, ey);
+      }
+
+      drawingContext.setLineDash([]);
+    }
+
+    // Draw a + marker at the virtual image intersection point
+    stroke(100, 180, 240, 200);
+    strokeWeight(1.8);
+    let ms = 6;
+    line(virtX - ms, virtY, virtX + ms, virtY);
+    line(virtX, virtY - ms, virtX, virtY + ms);
+  }
+
+  function arrowHead(x, y, dx, dy, hs, col) {
+    let len = sqrt(dx*dx + dy*dy);
+    if (len < 2) return;
+    noStroke();
+    fill(col.r, col.g, col.b, col.a);
+    let nx = dx/len, ny = dy/len;
+    let px = -ny, py = nx;
+    let h = min(hs, len * 0.5);
+    beginShape();
+    vertex(x + dx, y + dy);
+    vertex(x + dx - nx*h*0.6 + px*h*0.35, y + dy - ny*h*0.6 + py*h*0.35);
+    vertex(x + dx - nx*h*0.6 - px*h*0.35, y + dy - ny*h*0.6 - py*h*0.35);
+    endShape(CLOSE);
+  }
+
+  // ==================== Labels ====================
+
+  function drawLabels() {
+    noStroke();
+    fill(60, 80, 100, 160);
+    textSize(13);
+    textAlign(LEFT, BOTTOM); text("空气 (n = 1.00)", 16, waterY - 5);
+    textAlign(LEFT, TOP); text("水 (n = 1.33)", 16, waterY + 5);
+
+    if (hasVirt && chkVirtual.checked()) {
+      fill(100, 180, 230, 200);
+      textSize(13);
+      textAlign(CENTER, BOTTOM);
+      text("◉ 鱼的虚像", virtX, virtY - 22);
+
+      // Real-time depth data
+      let realDepth = round((fishY - waterY) * 100 / LH);
+      let virtDepth = round((virtY - waterY) * 100 / LH);
+      fill(100, 180, 230, 150);
+      textSize(11);
+      textAlign(CENTER, TOP);
+      text("视深 " + virtDepth + "%", virtX, virtY + 4);
+    }
+
+    fill(60, 70, 80, 160);
+    textSize(12);
+    textAlign(CENTER, TOP);
+    text("实际的鱼", fishX, fishY + 24);
+
+    // Angle arcs at primary ray
+    if (rays.length > 0 && chkAngles.checked()) {
+      let rp = rays[rays.primIdx];
+      let degW = round(degrees(rp.thetaW) * 10) / 10;
+      let degA = round(degrees(rp.thetaA) * 10) / 10;
+
+      fill(80, 90, 110, 200);
+      textSize(13);
+      textAlign(LEFT, TOP);
+      text("入射角 θ₁ = " + degW + "°    折射角 θ₂ = " + degA + "°", 16, LH - 55);
+      fill(100, 110, 130, 150);
+      textSize(11);
+      text("n水 = 1.33    n空气 = 1.00", 16, LH - 35);
+      if (hasVirt) {
+        let realD = round((fishY - waterY) * 10) / 10;
+        let virtD = round((virtY - waterY) * 10) / 10;
+        text("实深 ≈ " + realD + "    视深 ≈ " + virtD + "    视深/实深 ≈ " + round(virtD/realD*100)+"%", 16, LH - 18);
+      }
+
+      drawAngleArcs(rp);
+    }
+  }
+
+  function drawAngleArcs(rp) {
+    let mx = rp.wX, my = waterY;
+
+    stroke(80, 140, 200, 130);
+    strokeWeight(1);
+    drawingContext.setLineDash([3, 4]);
+    line(mx, my - 55, mx, my + 55);
+    drawingContext.setLineDash([]);
+    noStroke();
+    fill(80, 140, 200, 160);
+    textSize(11);
+    textAlign(CENTER, BOTTOM);
+    text("法线", mx, my - 57);
+
+    let sign = (rp.wX - fishX) >= 0 ? -1 : 1;
+    let arcR = 48;
+
+    noFill();
+    stroke(220, 150, 80, 150);
+    strokeWeight(1.5);
+    let sW = HALF_PI, eW = sW + sign * rp.thetaW;
+    if (rp.thetaW > 0.02) {
+      arc(mx, my, arcR, arcR, min(sW, eW), max(sW, eW));
+      noStroke();
+      fill(220, 150, 80, 200);
+      textSize(12);
+      textAlign(CENTER, CENTER);
+      text("θ₁", mx + cos(sW + sign*rp.thetaW*0.5)*(arcR+14), my + sin(sW + sign*rp.thetaW*0.5)*(arcR+14));
+    }
+
+    if (rp.thetaA > 0.02 && abs(rp.thetaA - rp.thetaW) > 0.01) {
+      noFill();
+      stroke(80, 170, 220, 160);
+      strokeWeight(1.5);
+      let sA = -HALF_PI, eA = sA + sign * rp.thetaA;
+      arc(mx, my, arcR, arcR, min(sA, eA), max(sA, eA));
+      noStroke();
+      fill(80, 170, 220, 210);
+      textSize(12);
+      textAlign(CENTER, CENTER);
+      text("θ₂", mx + cos(sA + sign*rp.thetaA*0.5)*(arcR+14), my + sin(sA + sign*rp.thetaA*0.5)*(arcR+14));
+    }
+  }
+
+  // ==================== Drag ====================
+
+  let dragged = -1, offX, offY;
+
+  function s2l(x, y) { let s = width / LW; return { x: x / s, y: y / s }; }
+
+  function touchStarted() {
+    if (mouseX < 0 || mouseX > width || mouseY < 0 || mouseY > height) return;
+    let p = s2l(mouseX, mouseY);
+    let dF = dist(p.x, p.y, fishX, fishY);
+    let dE = dist(p.x, p.y, eyeX, eyeY);
+    if (dF < dE && dF < 60) { dragged = 1; offX = p.x - fishX; offY = p.y - fishY; }
+    else if (dE < 60) { dragged = 0; offX = p.x - eyeX; offY = p.y - eyeY; }
+  }
+
+  function touchMoved() {
+    if (touches.length > 1) { dragged = -1; return false; }
+    let p = s2l(mouseX, mouseY);
+    if (!isFinite(p.x) || !isFinite(p.y)) return false;
+    if (dragged == 0) {
+      eyeX = constrain(p.x - offX, 10, LW - 10);
+      eyeY = constrain(p.y - offY, 10, waterY - 10);
+      return false;
+    }
+    if (dragged == 1) {
+      fishX = constrain(p.x - offX, 10, LW - 10);
+      fishY = constrain(p.y - offY, waterY + 10, LH - 10);
+      return false;
+    }
+    return false;
+  }
+
+  function touchEnded() { dragged = -1; }
+  </script>
+  <script src="supabase.js"></script>
+  <script src="script.js"></script>
+</body>
+</html>
