@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=10">
+  <title>音叉与声波 - 物理虚拟实验</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/0.9.0/p5.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/0.9.0/addons/p5.dom.min.js"></script>
+  <style>
+    #myP5Canvas { touch-action: pinch-zoom; display: block; margin: 0 auto; border-radius: 12px; }
+    .canvas-wrap { border-radius: 12px; padding: 4px; width: 100%; box-sizing: border-box; border: 1px solid #e2e8f0; }
+    .controls-bar { display: flex; align-items: center; justify-content: space-between; padding: 8px 16px; gap: 16px; flex-wrap: wrap; background: #f8fafc; border-radius: 0 0 12px 12px; border-top: 1px solid #e2e8f0; }
+    .controls-bar .hint { color: #64748b; font-size: 14px; }
+    .controls-bar label { color: #334155; font-size: 13px; cursor: pointer; user-select: none; display: inline-flex; align-items: center; gap: 4px; }
+    .controls-bar input[type="checkbox"] { accent-color: #3b82f6; width: 16px; height: 16px; cursor: pointer; }
+    .controls-bar input[type="range"] { width: 100px; accent-color: #3b82f6; }
+    .section { padding: 1.5rem 2rem 0.5rem; }
+    .section h2 { font-size: 1.4rem; }
+  </style>
+</head>
+<body>
+  <header class="header">
+    <div class="logo">物理虚拟实验</div>
+    <nav class="nav">
+      <a href="index.html">首页</a>
+      <a href="experiments.html">实验列表</a>
+    </nav>
+  </header>
+
+  <div class="section">
+    <h2>音叉与声波</h2>
+    <p style="color:#94a3b8;margin:0 0 16px 0;">观察音叉振动如何在空气中产生疏密波（纵波），理解声音的传播机制。</p>
+  </div>
+
+  <div class="main-card">
+    <div class="canvas-wrap">
+      <div id="myContainer"></div>
+    </div>
+    <div class="controls-bar">
+      <span class="hint">蓝色点 = 空气分子 &nbsp;|&nbsp; 音叉振动 → 推动分子 → 疏密波传播</span>
+      <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
+        <label><span id="labelA">频率</span>
+          <input type="range" id="rangeA" min="0.5" max="3" value="1" step="0.1">
+        </label>
+        <label><input type="checkbox" id="checkA"><span id="chalkA">运行</span></label>
+        <label><input type="checkbox" id="checkB"><span id="chalkB">空气分子的基本振动</span></label>
+      </div>
+    </div>
+  </div>
+
+  <div class="formula-bar">
+    <div class="formula-item">
+      <span class="label">声波类型</span>
+      <span class="value">纵波（疏密波）—— 分子振动方向与传播方向一致</span>
+    </div>
+    <div class="formula-item">
+      <span class="label">音叉特点</span>
+      <span class="value">产生单一频率的纯音</span>
+    </div>
+    <div class="formula-item">
+      <span class="label">波的传播</span>
+      <span class="value">分子间弹性作用 → 疏部和密部交替向前传播</span>
+    </div>
+  </div>
+
+  <div class="experiment-info">
+    <div class="info-card">
+      <h3>实验说明</h3>
+      <ul>
+        <li>每个<strong>蓝色小点</strong>代表一个空气分子</li>
+        <li>勾选<strong>"运行"</strong>使音叉振动，观察声波从音叉向四周传播</li>
+        <li>调节<strong>频率</strong>滑块改变音叉振动快慢</li>
+        <li>勾选<strong>"空气分子的基本振动"</strong>可看到分子在平衡位置附近随机运动（布朗运动模拟）</li>
+        <li><strong>密集区域（密部）</strong>和<strong>稀疏区域（疏部）</strong>交替出现</li>
+        <li>波向外传播，但分子本身只做微小振动，不随波迁移</li>
+      </ul>
+    </div>
+    <div class="info-card">
+      <h3>实验原理</h3>
+      <p>音叉振动时，两个叉股反复靠近和远离。叉股向外运动时压缩附近空气形成<strong>密部</strong>，向内运动时形成<strong>疏部</strong>。空气分子之间通过弹性作用将这种疏密变化依次传递出去，形成<strong>纵波（声波）</strong>。音叉结构简单，产生接近单一频率的纯音，是研究声波特性的理想工具。</p>
+    </div>
+  </div>
+
+  <script>
+  const SPOT_MAX_X = 100;
+  const SPOT_MAX_Y = 50;
+
+  let labelA, rangeA, checkA, chalkA, checkB, chalkB;
+  let timming = 0;
+
+  // Particle grid
+  let spotOX = [];  // resting X
+  let spotOY = [];  // resting Y
+  let spotX = [];   // current X
+  let spotY = [];   // current Y
+  let spotTX = [];  // temp X (for update)
+  let spotTY = [];  // temp Y
+  let spotVX = [];  // velocity X
+  let spotVY = [];  // velocity Y
+  let solidDX = []; // brownian X offset
+  let solidDY = []; // brownian Y offset
+
+  function setup() {
+    frameRate(60);
+    let o = select("#myContainer");
+    let a = 0.5;
+    let w = int(min(o.width, (window.innerHeight - 160) / a));
+    let h = int(w * a);
+    myCanvas = createCanvas(w, h);
+    myCanvas.parent("myContainer");
+    myCanvas.id("myP5Canvas");
+
+    labelA = select("#labelA");
+    labelA.html("频率");
+    rangeA = select("#rangeA");
+    checkA = select("#checkA");
+    chalkA = select("#chalkA");
+    chalkA.html("运行");
+    checkB = select("#checkB");
+    chalkB = select("#chalkB");
+    chalkB.html("空气分子的基本振动");
+
+    initGrid();
+  }
+
+  function windowResized() {
+    let o = select("#myContainer");
+    let a = 0.5;
+    let w = int(min(o.width, (window.innerHeight - 160) / a));
+    let h = int(w * a);
+    resizeCanvas(w, h);
+  }
+
+  function initGrid() {
+    for (let i = 0; i < SPOT_MAX_X; i++) {
+      spotOX[i] = []; spotOY[i] = [];
+      spotX[i] = []; spotY[i] = [];
+      spotTX[i] = []; spotTY[i] = [];
+      spotVX[i] = []; spotVY[i] = [];
+      solidDX[i] = []; solidDY[i] = [];
+      for (let j = 0; j < SPOT_MAX_Y; j++) {
+        spotOX[i][j] = spotX[i][j] = map(i, 0, SPOT_MAX_X, 0, 1000) + 5;
+        spotOY[i][j] = spotY[i][j] = map(j, 0, SPOT_MAX_X, 0, 1000) + 5;
+        spotVX[i][j] = 0;
+        spotVY[i][j] = 0;
+        solidDX[i][j] = 0;
+        solidDY[i][j] = 0;
+      }
+    }
+  }
+
+  function draw() {
+    try {
+      if (touches.length > 1) return;
+      background(255);
+
+      push();
+      scale(width / 1000);
+
+      // Draw particles
+      fill(0, 0, 255);
+      noStroke();
+      rectMode(CENTER);
+      for (let i = 0; i < SPOT_MAX_X; i++) {
+        for (let j = 0; j < SPOT_MAX_Y; j++) {
+          rect(spotX[i][j] + solidDX[i][j], spotY[i][j] + solidDY[i][j], 3, 3);
+        }
+      }
+
+      // Physics update
+      if (checkA.checked()) {
+        updateParticles();
+        timming += 0.04 * rangeA.value();
+      }
+
+      // Draw tuning fork
+      drawTuningFork();
+
+      // Apply prong forces to nearby particles
+      if (checkA.checked()) {
+        for (let y = 0; y < 12; y++) {
+          spotVX[47][33 - y] += sin(timming) * y / 5;
+          spotVX[52][33 - y] -= sin(timming) * y / 5;
+        }
+      }
+
+      pop();
+    } catch(e) { pop(); }
+  }
+
+  function drawTuningFork() {
+    let pokeOX = [480, 500, 520];
+    let pokeOY = [330, 240];
+
+    // Prongs
+    noFill();
+    stroke(160);
+    strokeWeight(12);
+    // Left prong — vibrates
+    line(pokeOX[0], pokeOY[0], pokeOX[0] + sin(timming) * 10, pokeOY[1]);
+    // Right prong — vibrates opposite
+    line(pokeOX[2], pokeOY[0], pokeOX[2] - sin(timming) * 10, pokeOY[1]);
+
+    // Arc connecting prongs at top
+    arc(pokeOX[1], pokeOY[0], 40, 40, 0, PI);
+
+    // Handle
+    line(pokeOX[1], pokeOY[0] + 30, pokeOX[1], 400);
+
+    // Base box (resonance box)
+    noStroke();
+    fill(233, 190, 59);
+    rect(pokeOX[1], 420, 80, 80);
+  }
+
+  function updateParticles() {
+    // Save current + brownian motion
+    for (let i = 0; i < SPOT_MAX_X; i++) {
+      for (let j = 0; j < SPOT_MAX_X; j++) {
+        spotTX[i][j] = spotX[i][j];
+        if (checkB && checkB.checked()) {
+          solidDX[i][j] += random(-2, 2);
+          solidDY[i][j] += random(-2, 2);
+          solidDX[i][j] = constrain(solidDX[i][j], -8, 8);
+          solidDY[i][j] = constrain(solidDY[i][j], -8, 8);
+        } else {
+          solidDX[i][j] = 0;
+          solidDY[i][j] = 0;
+        }
+      }
+    }
+
+    // Spring forces: each particle connected to 4 neighbors
+    for (let i = 0; i < SPOT_MAX_X; i++) {
+      for (let j = 0; j < SPOT_MAX_Y; j++) {
+        let dx = 0;
+        if (j > 0) {
+          dx += (spotOX[i][j] - spotOX[i][j - 1]) - (spotX[i][j] - spotX[i][j - 1]);
+        }
+        if (j < SPOT_MAX_Y - 1) {
+          dx += (spotOX[i][j] - spotOX[i][j + 1]) - (spotX[i][j] - spotX[i][j + 1]);
+        }
+        if (i > 0) {
+          dx += (spotOX[i][j] - spotOX[i - 1][j]) - (spotX[i][j] - spotX[i - 1][j]);
+        }
+        if (i < SPOT_MAX_X - 1) {
+          dx += (spotOX[i][j] - spotOX[i + 1][j]) - (spotX[i][j] - spotX[i + 1][j]);
+        }
+
+        spotVX[i][j] *= 0.97;        // damping
+        spotVX[i][j] += 0.2 * dx;    // spring constant
+        spotTX[i][j] += spotVX[i][j];
+      }
+    }
+
+    // Copy back
+    for (let i = 0; i < SPOT_MAX_X; i++) {
+      for (let j = 0; j < SPOT_MAX_Y; j++) {
+        spotX[i][j] = spotTX[i][j];
+      }
+    }
+  }
+  </script>
+  <script src="supabase.js"></script>
+  <script src="script.js"></script>
+</body>
+</html>
