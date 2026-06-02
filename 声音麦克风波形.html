@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>声音波形实时分析 - 虚拟实验</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="stylesheet" href="style.css">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif; background: var(--bg-darker, #020617); }
+
+    .exp-wrap { max-width: 1000px; margin: 0 auto; padding: 0 16px 40px; }
+    .exp-wrap h2 { color: #e2e8f0; font-size: 24px; margin-bottom: 4px; }
+    .exp-wrap .sub { color: #94a3b8; font-size: 14px; margin-bottom: 20px; }
+
+    .main-card { background: #0f172a; border-radius: 14px; padding: 16px; border: 1px solid #1e293b; margin-bottom: 16px; }
+
+    .btn-row { display: flex; gap: 8px; margin: 12px 0; flex-wrap: wrap; align-items: center; }
+    .btn-row button { padding: 10px 20px; border: 1px solid #334155; border-radius: 8px; background: #1e293b; color: #e2e8f0; font-size: 14px; cursor: pointer; transition: all 0.15s; }
+    .btn-row button:hover { background: #334155; }
+    .btn-row button.active { background: #0ea5e9; border-color: #0ea5e9; }
+    .btn-row button.danger { background: #ef4444; border-color: #ef4444; }
+
+    .param-row { display: flex; align-items: center; gap: 8px; margin-left: 16px; }
+    .param-row label { color: #94a3b8; font-size: 12px; white-space: nowrap; }
+    .param-row input[type=range] { width: 80px; height: 4px; -webkit-appearance: none; background: #334155; border-radius: 2px; outline: none; cursor: pointer; }
+    .param-row input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%; background: #0ea5e9; cursor: pointer; }
+    .param-row .val { color: #38bdf8; font-family: monospace; font-weight: 700; font-size: 12px; width: 36px; text-align: right; }
+
+    .section-label { color: #94a3b8; font-size: 12px; margin: 4px 0 2px 4px; text-transform: uppercase; letter-spacing: 1px; }
+
+    canvas { display: block; border-radius: 8px; background: #000; }
+    #waveCanvas { width: 100%; height: 200px; }
+    #fftCanvas { width: 100%; height: 160px; margin-top: 8px; }
+
+    .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px; }
+    @media (max-width: 800px) { .info-grid { grid-template-columns: 1fr; } }
+
+    .info-card { background: #0f172a; border-radius: 14px; padding: 16px; border: 1px solid #1e293b; }
+    .info-card h3 { color: #e2e8f0; font-size: 16px; margin-bottom: 8px; }
+    .info-card p, .info-card ul { color: #94a3b8; font-size: 13px; line-height: 1.8; }
+    .info-card ul { padding-left: 18px; }
+    .info-card ul li strong { color: #38bdf8; }
+
+    .fullscreen-bar { display: flex; gap: 6px; justify-content: flex-end; }
+    .fullscreen-bar button { padding: 4px 10px; border: 1px solid #334155; border-radius: 4px; background: #1e293b; color: #94a3b8; font-size: 11px; cursor: pointer; }
+    .fullscreen-bar button:hover { color: #e2e8f0; background: #334155; }
+
+    .status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+    .status-dot.on { background: #4ade80; box-shadow: 0 0 6px #4ade80; }
+    .status-dot.off { background: #ef4444; }
+  </style>
+  <script src="protect.js"></script>
+</head>
+<body>
+  <header class="header">
+    <div class="logo">物理虚拟实验平台</div>
+    <nav class="nav">
+      <a href="experiments.html">实验目录</a>
+      <a href="index.html">首页</a>
+    </nav>
+  </header>
+
+  <div class="exp-wrap">
+    <h2>声音波形实时分析</h2>
+    <p class="sub">使用麦克风采集真实声音，观察不同声音的波形与频率谱，理解音调、响度与音色</p>
+
+    <div class="main-card" id="mainCard">
+      <div class="fullscreen-bar">
+        <button onclick="doCanvasFullscreen()">▣ 画布全屏</button>
+        <button onclick="doContainerFullscreen()">▣ 区域全屏</button>
+      </div>
+      <div class="section-label">▸ 波形图（时域 · 示波器）<span id="volIndicator" style="margin-left:8px;color:#64748b;font-size:11px;"></span></div>
+      <canvas id="waveCanvas"></canvas>
+      <div class="section-label" style="margin-top:8px;">▸ 频谱图（频域 · FFT）— 横轴=频率(低→高) 纵轴=强度</div>
+      <canvas id="fftCanvas"></canvas>
+
+      <div class="btn-row">
+        <button id="btnStart" onclick="startMic()">▶ 开始采集</button>
+        <button id="btnStop" class="danger" onclick="stopMic()" style="display:none;">■ 停止</button>
+        <span id="statusText" style="color:#64748b;font-size:12px;margin-left:4px;">
+          <span class="status-dot off"></span>麦克风未激活
+        </span>
+        <div class="param-row">
+          <label>增益</label>
+          <input type="range" min="10" max="300" value="100" oninput="setGain(this.value)">
+          <span class="val" id="gainVal">1.0x</span>
+        </div>
+      </div>
+      <div class="btn-row" style="margin-top:4px;">
+        <button id="btnCapture" onclick="captureSnapshot()" style="display:none;">📸 捕获波形</button>
+        <button id="btnClearCap" onclick="clearCaptures()" style="display:none;">↺ 清除捕获</button>
+        <span id="captureStatus" style="color:#64748b;font-size:11px;margin-left:8px;"></span>
+        <span style="color:#64748b;font-size:11px;margin-left:8px;">提示：发出不同声音后点击捕获，最多3次，对比波形差异</span>
+      </div>
+    </div>
+
+    <div class="info-grid">
+      <div class="info-card">
+        <h3>实验说明</h3>
+        <ul>
+          <li>点击<strong>开始采集</strong>，允许浏览器使用麦克风</li>
+          <li>上方<strong>波形图</strong>显示声音振幅随时间的变化（时域）</li>
+          <li>下方<strong>频谱图</strong>显示不同频率成分的强度（频域）</li>
+          <li>发出声音后点击<strong>捕获波形</strong>，最多可捕获<strong>3次</strong></li>
+          <li><strong style="color:#fbbf24;">● 捕获1</strong>（金）、<strong style="color:#4ade80;">● 捕获2</strong>（绿）、<strong style="color:#ec4899;">● 捕获3</strong>（粉）——不同颜色叠加对比</li>
+          <li>尝试对<strong>不同声音</strong>（说话/拍手/吹口哨）各捕获一次，观察波形差异</li>
+          <li>调节<strong>增益</strong>滑块放大或缩小信号</li>
+        </ul>
+      </div>
+      <div class="info-card">
+        <h3>核心原理</h3>
+        <p><strong>音调（频率）</strong>：决定声音的高低，频谱图中峰值靠左=低频(低沉)，靠右=高频(尖锐)</p>
+        <p style="margin-top:6px;"><strong>响度（振幅）</strong>：决定声音的大小，波形图纵向高度越大=声音越响</p>
+        <p style="margin-top:6px;"><strong>音色（谐波）</strong>：决定声音的品质，不同乐器的频谱峰值分布不同——这是区分钢琴和双簧管的关键</p>
+        <p style="margin-top:6px; color:#f87171;">注意：移动端需关闭静音模式，PC端需授权麦克风权限。声音数据不被存储。</p>
+      </div>
+    </div>
+  </div>
+
+  <script src="supabase.js"></script>
+  <script src="script.js"></script>
+
+  <script src="声音麦克风波形.js"></script>
+</body>
+</html>

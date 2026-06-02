@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LCD 像素显色原理 - 虚拟实验</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="stylesheet" href="style.css">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif; background: var(--bg-darker, #020617); }
+
+    .exp-wrap { max-width: 1000px; margin: 0 auto; padding: 0 16px 40px; }
+    .exp-wrap h2 { color: #e2e8f0; font-size: 24px; margin-bottom: 4px; }
+    .exp-wrap .sub { color: #94a3b8; font-size: 14px; margin-bottom: 20px; }
+
+    .main-card { background: #0f172a; border-radius: 14px; padding: 16px; border: 1px solid #1e293b; margin-bottom: 16px; position: relative; }
+
+    canvas { display: block; border-radius: 8px; background: #000; cursor: grab; touch-action: none; width: 100%; height: auto; }
+    canvas:active { cursor: grabbing; }
+
+    .ctrl-row { display: flex; gap: 12px; margin-top: 12px; flex-wrap: wrap; align-items: center; }
+    .ctrl-row label { color: #94a3b8; font-size: 12px; white-space: nowrap; }
+    .ctrl-row input[type=range] { width: 100px; height: 4px; -webkit-appearance: none; background: #334155; border-radius: 2px; outline: none; cursor: pointer; }
+    .ctrl-row input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%; background: #0ea5e9; cursor: pointer; }
+    .ctrl-row .val { color: #38bdf8; font-family: monospace; font-weight: 700; font-size: 12px; width: 40px; text-align: right; }
+    .ctrl-row select { padding: 6px 10px; border: 1px solid #334155; border-radius: 6px; background: #1e293b; color: #e2e8f0; font-size: 13px; cursor: pointer; }
+    .ctrl-row button { padding: 8px 16px; border: 1px solid #334155; border-radius: 8px; background: #1e293b; color: #e2e8f0; font-size: 13px; cursor: pointer; transition: all 0.15s; }
+    .ctrl-row button:hover { background: #334155; }
+    .ctrl-row button.active { background: #0ea5e9; border-color: #0ea5e9; }
+
+    .rgb-display { display: flex; gap: 12px; align-items: center; margin-left: auto; }
+    .rgb-block { text-align: center; }
+    .rgb-block .swatch { width: 28px; height: 28px; border-radius: 4px; border: 1px solid #334155; margin: 0 auto 2px; }
+    .rgb-block .label { color: #64748b; font-size: 10px; }
+    .rgb-block .value { color: #e2e8f0; font-size: 13px; font-family: monospace; font-weight: 700; }
+
+    .mixed-swatch { width: 40px; height: 40px; border-radius: 6px; border: 2px solid #475569; margin-left: 8px; }
+
+    .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px; }
+    @media (max-width: 800px) { .info-grid { grid-template-columns: 1fr; } }
+
+    .info-card { background: #0f172a; border-radius: 14px; padding: 16px; border: 1px solid #1e293b; }
+    .info-card h3 { color: #e2e8f0; font-size: 16px; margin-bottom: 8px; }
+    .info-card p, .info-card ul { color: #94a3b8; font-size: 13px; line-height: 1.8; }
+    .info-card ul { padding-left: 18px; }
+    .info-card ul li strong { color: #38bdf8; }
+
+    .fullscreen-bar { display: flex; gap: 6px; justify-content: flex-end; margin-bottom: 8px; }
+    .fullscreen-bar button { padding: 4px 10px; border: 1px solid #334155; border-radius: 4px; background: #1e293b; color: #94a3b8; font-size: 11px; cursor: pointer; }
+    .fullscreen-bar button:hover { color: #e2e8f0; background: #334155; }
+
+    .section-label { color: #94a3b8; font-size: 12px; margin: 4px 0 2px 4px; text-transform: uppercase; letter-spacing: 1px; }
+  </style>
+  <script src="protect.js"></script>
+</head>
+<body>
+  <header class="header">
+    <div class="logo">物理虚拟实验平台</div>
+    <nav class="nav">
+      <a href="experiments.html">实验目录</a>
+      <a href="index.html">首页</a>
+    </nav>
+  </header>
+
+  <div class="exp-wrap">
+    <h2>LCD 像素显色原理</h2>
+    <p class="sub">拖动放大镜观察屏幕像素的 RGB 子像素排列，理解加色法混色原理</p>
+
+    <div class="main-card" id="mainCard">
+      <div class="fullscreen-bar">
+        <button onclick="doFullscreen()">▣ 全屏</button>
+      </div>
+      <canvas id="simCanvas"></canvas>
+
+      <div class="ctrl-row">
+        <label>放大倍率</label>
+        <input type="range" id="zoomSlider" min="2" max="12" value="5" oninput="updateZoom(this.value)">
+        <span class="val" id="zoomVal">5x</span>
+
+        <label>采样半径</label>
+        <input type="range" id="radiusSlider" min="2" max="12" value="6" oninput="updateRadius(this.value)">
+        <span class="val" id="radiusVal">6</span>
+
+        <label>演示图案</label>
+        <select id="patternSelect" onchange="changePattern(this.value)">
+          <option value="0">彩色渐变条</option>
+          <option value="1">RGB 三原色</option>
+          <option value="2">彩色文字与图形</option>
+          <option value="3">模拟自然图像</option>
+        </select>
+
+        <button id="btnGrid" onclick="toggleGrid()">网格线: 开</button>
+        <button onclick="resetLoupe()">↺ 复位放大镜</button>
+
+        <div class="rgb-display">
+          <div class="rgb-block"><div class="swatch" id="swatchR" style="background:#ef4444;"></div><div class="label">R</div><div class="value" id="valR">0</div></div>
+          <div class="rgb-block"><div class="swatch" id="swatchG" style="background:#22c55e;"></div><div class="label">G</div><div class="value" id="valG">0</div></div>
+          <div class="rgb-block"><div class="swatch" id="swatchB" style="background:#3b82f6;"></div><div class="label">B</div><div class="value" id="valB">0</div></div>
+          <div class="mixed-swatch" id="swatchMixed"></div>
+        </div>
+      </div>
+      <div class="section-label" style="margin-top:8px;">提示：拖动圆形放大镜到屏幕任意位置，观察 RGB 子像素如何混合出各种颜色</div>
+    </div>
+
+    <div class="info-grid">
+      <div class="info-card">
+        <h3>实验说明</h3>
+        <ul>
+          <li><strong>拖动</strong>圆形放大镜观察屏幕不同区域</li>
+          <li>每个像素由 <strong style="color:#ef4444;">R</strong><strong style="color:#22c55e;">G</strong><strong style="color:#3b82f6;">B</strong> 三个子像素并排组成</li>
+          <li>调节<strong>放大倍率</strong>和<strong>采样半径</strong>改变观察范围</li>
+          <li>切换<strong>演示图案</strong>查看不同颜色组合效果</li>
+          <li>右侧实时显示<strong>放大镜中心点</strong>的 RGB 值和混合色</li>
+        </ul>
+      </div>
+      <div class="info-card">
+        <h3>核心原理 — 加色法混色</h3>
+        <p>LCD 屏幕的每个像素包含红、绿、蓝三个<strong>子像素</strong>，通过控制各子像素的亮度（0-255），混合出人眼感知的各种颜色：</p>
+        <p style="margin-top:6px;"><strong style="color:#ef4444;">R</strong> + <strong style="color:#22c55e;">G</strong> + <strong style="color:#3b82f6;">B</strong> 全亮 = <strong>白色</strong></p>
+        <p><strong style="color:#ef4444;">R</strong> + <strong style="color:#22c55e;">G</strong> = <strong style="color:#eab308;">黄色</strong> &nbsp;|&nbsp; <strong style="color:#ef4444;">R</strong> + <strong style="color:#3b82f6;">B</strong> = <strong style="color:#d946ef;">品红</strong> &nbsp;|&nbsp; <strong style="color:#22c55e;">G</strong> + <strong style="color:#3b82f6;">B</strong> = <strong style="color:#06b6d4;">青色</strong></p>
+        <p style="margin-top:6px; color:#f87171;">人的视网膜有三种视锥细胞，分别对红、绿、蓝光敏感，大脑综合三种信号产生颜色感知。</p>
+      </div>
+    </div>
+  </div>
+
+  <script src="supabase.js"></script>
+  <script src="script.js"></script>
+
+<script src="LCD像素显色.js"></script>
+</body>
+</html>
