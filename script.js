@@ -1,10 +1,3 @@
-// ========== HTTP→HTTPS 自动跳转（getUserMedia等API需要安全上下文） ==========
-(function() {
-  if (location.protocol === 'http:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
-    location.href = location.href.replace(/^http:/, 'https:');
-  }
-})();
-
 // ========== 核心配置 ==========
 // Supabase 在 supabase.js 中配置：SUPABASE_URL / SUPABASE_ANON_KEY / SB 工具对象
 
