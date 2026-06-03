@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=10">
+  <title>相机光学原理 — 光圈与对焦 - 物理虚拟实验</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/0.9.0/p5.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/0.9.0/addons/p5.dom.min.js"></script>
+  <style>
+    #myP5Canvas { touch-action: pinch-zoom; display: block; margin: 0 auto; border-radius: 12px; }
+    .canvas-wrap { border-radius: 12px; padding: 4px; width: 100%; box-sizing: border-box; border: 1px solid #e2e8f0; position: relative; background: #fff; }
+    .controls-bar { display: flex; align-items: center; justify-content: center; padding: 10px 16px; gap: 24px; flex-wrap: wrap; background: #f8fafc; border-radius: 0 0 12px 12px; border-top: 1px solid #e2e8f0; }
+    .ctrl-group { display: flex; align-items: center; gap: 8px; font-size: 14px; color: #334155; }
+    .ctrl-group input[type="range"] { width: 120px; accent-color: #3b82f6; }
+    .ctrl-group input[type="checkbox"] { accent-color: #3b82f6; }
+    .section { padding: 1.5rem 2rem 0.5rem; }
+    .section h2 { font-size: 1.4rem; }
+  </style>
+</head>
+<body>
+  <header class="header">
+    <div class="logo">物理虚拟实验</div>
+    <nav class="nav">
+      <a href="index.html">首页</a>
+      <a href="experiments.html">实验列表</a>
+    </nav>
+  </header>
+
+  <div class="section">
+    <h2>相机光学原理 — 光圈与对焦</h2>
+    <p style="color:#94a3b8;margin:0 0 16px 0;">调节光圈大小和对焦距离，观察光线如何通过凸透镜在 CCD 传感器上成像，理解景深与曝光原理。</p>
+  </div>
+
+  <div class="main-card">
+    <div class="canvas-wrap">
+      <div id="myContainer"></div>
+    </div>
+    <div class="controls-bar">
+      <div class="ctrl-group">
+        <span id="labelA">调节光圈曝光</span>
+        <input type="range" id="rangeA" min="20" max="80" value="80">
+      </div>
+      <div class="ctrl-group">
+        <span id="labelB">调节镜头对焦</span>
+        <input type="range" id="rangeB" min="780" max="870" value="800">
+      </div>
+      <div class="ctrl-group">
+        <input type="checkbox" id="checkA" checked>
+        <label id="chalkA" for="checkA">窗户</label>
+      </div>
+      <div class="ctrl-group">
+        <input type="checkbox" id="checkB" checked>
+        <label id="chalkB" for="checkB">气球</label>
+      </div>
+    </div>
+  </div>
+
+  <div class="formula-bar">
+    <div class="formula-item">
+      <span class="label">透镜公式</span>
+      <span class="value">1/f = 1/u + 1/v</span>
+    </div>
+    <div class="formula-item">
+      <span class="label">光圈</span>
+      <span class="value">大光圈 = 更亮 + 更浅景深</span>
+    </div>
+    <div class="formula-item">
+      <span class="label">小孔成像</span>
+      <span class="value">极小光圈 → 无需透镜自动对焦</span>
+    </div>
+  </div>
+
+  <script src="protect.js"></script>
+  <script>
+    // ===== Javalab helper functions =====
+    var flowLinePhase = 0;
+    function mod(x, y) {
+      if (x < 0) x += y * (Math.ceil(Math.abs(x) / y) + 1);
+      return x - y * Math.floor(x / y);
+    }
+    function isIntersected(x1, y1, x2, y2, x3, y3, x4, y4) {
+      let under = (y4 - y3) * (x2 - x1) - (x4 - x3) * (y2 - y1);
+      if (under == 0) return false;
+      let _t = (x4 - x3) * (y1 - y3) - (y4 - y3) * (x1 - x3);
+      let _s = (x2 - x1) * (y1 - y3) - (y2 - y1) * (x1 - x3);
+      let t = _t / under;
+      let s = _s / under;
+      if (t < 0.0 || t > 1.0 || s < 0.0 || s > 1.0) return false;
+      if (Math.abs(_t) <= 1e-10 && Math.abs(_s) <= 1e-10) return false;
+      return true;
+    }
+    function getCrossX(x1, y1, x2, y2, x3, y3, x4, y4) {
+      let under = (y4 - y3) * (x2 - x1) - (x4 - x3) * (y2 - y1);
+      if (under == 0) return 0;
+      let _t = (x4 - x3) * (y1 - y3) - (y4 - y3) * (x1 - x3);
+      let t = _t / under;
+      return x1 + t * (x2 - x1);
+    }
+    function getCrossY(x1, y1, x2, y2, x3, y3, x4, y4) {
+      let under = (y4 - y3) * (x2 - x1) - (x4 - x3) * (y2 - y1);
+      if (under == 0) return 0;
+      let _t = (x4 - x3) * (y1 - y3) - (y4 - y3) * (x1 - x3);
+      let t = _t / under;
+      return y1 + t * (y2 - y1);
+    }
+    function flowLine_head(x1, y1, x2, y2, head, isStart) {
+      let d = dist(x1, y1, x2, y2);
+      let d0 = head * (isStart ? mod(millis(), 1000) / 1000 : -flowLinePhase);
+      let d1 = head / 2;
+      let d2 = head;
+      for (let t = d0 - d2; t < d; t += d2) {
+        let s1 = t + d1;
+        let s2 = t + d2;
+        if (s2 < 0) continue;
+        if (s1 < 0) s1 = 0;
+        if (s1 > d) break;
+        if (s2 > d) s2 = d;
+        let xx1 = map(s1, 0, d, x1, x2);
+        let yy1 = map(s1, 0, d, y1, y2);
+        let xx2 = map(s2, 0, d, x1, x2);
+        let yy2 = map(s2, 0, d, y1, y2);
+        line(xx1, yy1, xx2, yy2);
+      }
+      flowLinePhase = mod(d - d0, d2) / d2;
+    }
+    // p5.js 0.9.0 compatibility: match() alias
+    if (typeof match === 'undefined') { window.match = function(str, re) { return str.match(re); }; }
+
+    // ===== Main simulation =====
+    let labelA, rangeA, labelB, rangeB, checkA, chalkA, checkB, chalkB;
+    let backImage, windowImage, windowImageSrc, balloonImage, balloonImageSrc;
+    let objX = [117, 117, 500, 500];
+    let objY = [55, 210, 125, 211];
+    let rayT = [[4, 12], [-9, -1], [-4, 13], [-19, -4]];
+    let rayBlur = [];
+    var apertureX = 750;
+    var apertureY = [110, 190];
+    var lensX = 800;
+    var lensY = [100, 200];
+    var filmX = 950;
+    var lensPolygonX = [];
+    var lensPolygonY = [];
+
+    function preload() {
+      backImage = loadImage("javalab_camera_2_back.png");
+      windowImage = loadImage("javalab_camera_2_window.png");
+      windowImageSrc = loadImage("javalab_camera_2_window.png");
+      balloonImage = loadImage("javalab_camera_2_balloon.png");
+      balloonImageSrc = loadImage("javalab_camera_2_balloon.png");
+    }
+
+    function setup() {
+      frameRate(10);
+      let o = select("#myContainer");
+      let a = 0.5;
+      let w = int(min(o.width, (window.innerHeight - 160) / a));
+      let h = int(w * a);
+      myCanvas = createCanvas(w, h);
+      myCanvas.parent("myContainer");
+      myCanvas.id("myP5Canvas");
+
+      labelA = select("#labelA");
+      labelA.html("调节光圈曝光");
+      rangeA = select("#rangeA");
+      rangeA.input(setup2);
+
+      labelB = select("#labelB");
+      labelB.html("调节镜头对焦");
+      rangeB = select("#rangeB");
+      rangeB.input(setup2);
+
+      checkA = select("#checkA");
+      chalkA = select("#chalkA");
+      chalkA.html("窗户");
+      checkB = select("#checkB");
+      chalkB = select("#chalkB");
+      chalkB.html("气球");
+
+      setup2();
+    }
+
+    function windowResized() {
+      let o = select("#myContainer");
+      let a = 0.5;
+      let w = int(min(o.width, (window.innerHeight - 160) / a));
+      let h = int(w * a);
+      resizeCanvas(w, h);
+    }
+
+    function setup2() {
+      let apertureFactor = rangeA.value() / 2;
+      apertureY[0] = 150 - apertureFactor;
+      apertureY[1] = 150 + apertureFactor;
+      apertureFactor = map(rangeA.value(), 20, 80, 0.5, 1);
+      lensX = rangeB.value();
+
+      for (let j = 0; j <= 72; j++) {
+        var t = map(j, 0, 72, 0, TWO_PI);
+        lensPolygonX[j] = lensX + 10 * cos(t);
+        lensPolygonY[j] = (lensY[0] + lensY[1]) / 2 + 50 * sin(t);
+      }
+
+      drawRays(false);
+
+      windowImage.copy(windowImageSrc, 0, 0, windowImageSrc.width, windowImageSrc.height, 0, 0, windowImageSrc.width, windowImageSrc.height);
+      windowImage.filter(BLUR, rayBlur[0] / 2);
+      windowImage.loadPixels();
+      let numPixels = 4 * windowImage.width * windowImage.height;
+      for (let i = 0; i < numPixels; i += 4) {
+        windowImage.pixels[i] = int(apertureFactor * windowImage.pixels[i]);
+        windowImage.pixels[i + 1] = int(apertureFactor * windowImage.pixels[i + 1]);
+        windowImage.pixels[i + 2] = int(apertureFactor * windowImage.pixels[i + 2]);
+      }
+      windowImage.updatePixels();
+
+      balloonImage = createImage(balloonImageSrc.width, balloonImageSrc.height);
+      balloonImage.copy(balloonImageSrc, 0, 0, balloonImageSrc.width, balloonImageSrc.height, 0, 0, balloonImageSrc.width, balloonImageSrc.height);
+      balloonImage.filter(BLUR, rayBlur[2] / 2);
+      balloonImage.loadPixels();
+      numPixels = 4 * balloonImage.width * balloonImage.height;
+      for (let i = 0; i < numPixels; i += 4) {
+        balloonImage.pixels[i] = int(apertureFactor * balloonImage.pixels[i]);
+        balloonImage.pixels[i + 1] = int(apertureFactor * balloonImage.pixels[i + 1]);
+        balloonImage.pixels[i + 2] = int(apertureFactor * balloonImage.pixels[i + 2]);
+      }
+      balloonImage.updatePixels();
+    }
+
+    function draw() {
+      push();
+      scale(width / 1000);
+      background(255);
+      strokeWeight(1);
+      textSize(24);
+      textAlign(LEFT, TOP);
+
+      // 凸透镜（青色）
+      noStroke();
+      fill(128, 255, 255);
+      beginShape();
+      for (let j = 0; j <= 72; j++) {
+        vertex(lensPolygonX[j], lensPolygonY[j]);
+      }
+      endShape();
+
+      // 光圈叶片（黑色）
+      fill(0);
+      noStroke();
+      rect(apertureX - 3, 100, 6, apertureY[0] - 100);
+      rect(apertureX - 3, apertureY[1], 6, 200 - apertureY[1]);
+
+      // 背景图（被摄场景）
+      image(backImage, 0, 0, 1000, 500);
+
+      // 光圈标签
+      fill(191);
+      textAlign(CENTER, CENTER);
+      text("↓", apertureX, 75);
+
+      // CCD 传感器标签
+      textAlign(LEFT, BOTTOM);
+      text("CCD\n传感器", 910, 370);
+
+      // 光圈示意图
+      push();
+      translate(apertureX, 30);
+      let divs = 12;
+      let theta = map(rangeA.value(), 20, 80, 0.2, 0.8);
+      fill(0);
+      noStroke();
+      for (let i = 0; i < divs; i++) {
+        push();
+        rotate(TWO_PI * i / divs);
+        beginShape();
+        vertex(30, 2);
+        for (let t = 0.2; t < TWO_PI / divs; t += 0.1) {
+          vertex(30 * cos(t), 30 * sin(t));
+        }
+        vertex(30 * cos(TWO_PI / divs), 30 * sin(TWO_PI / divs));
+        let x1 = 30 * cos(TWO_PI / divs);
+        let y1 = 30 * sin(TWO_PI / divs);
+        let x2 = x1 + cos(theta + PI + TWO_PI / divs);
+        let y2 = y1 + sin(theta + PI + TWO_PI / divs);
+        let x3 = 30;
+        let y3 = 2;
+        let x4 = x3 + cos(theta + PI);
+        let y4 = y3 + sin(theta + PI);
+        vertex(getCrossX(x1, y1, x2, y2, x3, y3, x4, y4), getCrossY(x1, y1, x2, y2, x3, y3, x4, y4));
+        endShape();
+        pop();
+      }
+      pop();
+
+      drawRays(true);
+      image(windowImage, 580, 260, 320, 240);
+      image(balloonImage, 580, 260, 320, 240);
+      pop();
+    }
+
+    function drawRays(drawing) {
+      for (let n = 0; n < objX.length; n++) {
+        let resultY = [];
+        var ff = 100;
+        let pp = lensX - objX[n];
+        let ii = 1 / (1 / ff - 1 / pp);
+        var x1 = objX[n];
+        var x2 = lensX;
+        var x3 = filmX;
+        var y1 = objY[n];
+        var y2, y3;
+
+        if (n < 2) stroke(128, 128, 0, 128);
+        else stroke(255, 0, 0, 128);
+
+        for (let j = rayT[n][0]; j <= rayT[n][1]; j++) {
+          var t = radians(j);
+          var gotoX = x1 + 900 * cos(t);
+          var gotoY = y1 + 900 * sin(t);
+
+          if (isIntersected(x1, y1, gotoX, gotoY, apertureX, apertureY[0], apertureX, apertureY[1])) {
+            if (isIntersected(x1, y1, gotoX, gotoY, lensX, lensY[0] + 8, lensX, lensY[1] - 8)) {
+              y2 = getCrossY(x1, y1, gotoX, gotoY, lensX, lensY[0], lensX, lensY[1]);
+              let xx = lensX + ii;
+              let cy = (lensY[0] + lensY[1]) / 2;
+              let yy = cy + ii * (cy - y1) / pp;
+              y3 = getCrossY(x2, y2, xx, yy, filmX, lensY[0], filmX, lensY[1]);
+
+              var x12 = x2;
+              var y12 = y2;
+              var x23 = x2;
+              var y23 = y2;
+
+              for (let j = 0; j < 72; j++) {
+                if (isIntersected(x1, y1, x2, y2, lensPolygonX[j], lensPolygonY[j], lensPolygonX[j + 1], lensPolygonY[j + 1])) {
+                  x12 = getCrossX(x1, y1, x2, y2, lensPolygonX[j], lensPolygonY[j], lensPolygonX[j + 1], lensPolygonY[j + 1]);
+                  y12 = getCrossY(x1, y1, x2, y2, lensPolygonX[j], lensPolygonY[j], lensPolygonX[j + 1], lensPolygonY[j + 1]);
+                }
+                if (isIntersected(x2, y2, x3, y3, lensPolygonX[j], lensPolygonY[j], lensPolygonX[j + 1], lensPolygonY[j + 1])) {
+                  x23 = getCrossX(x2, y2, x3, y3, lensPolygonX[j], lensPolygonY[j], lensPolygonX[j + 1], lensPolygonY[j + 1]);
+                  y23 = getCrossY(x2, y2, x3, y3, lensPolygonX[j], lensPolygonY[j], lensPolygonX[j + 1], lensPolygonY[j + 1]);
+                }
+              }
+
+              resultY.push(y3);
+
+              let canDraw = false;
+              if (n == 0) if (checkA.checked()) canDraw = true;
+              if (n == 1) if (checkA.checked()) canDraw = true;
+              if (n == 2) if (checkB.checked()) canDraw = true;
+              if (n == 3) if (checkB.checked()) canDraw = true;
+
+              if (canDraw && drawing) {
+                flowLine_head(x1, y1, x12, y12, 14, true);
+                flowLine_head(x12, y12, x23, y23, 7, false);
+                flowLine_head(x23, y23, x3, y3, 14, false);
+              }
+            }
+          }
+        }
+        rayBlur[n] = max(resultY) - min(resultY);
+      }
+    }
+  </script>
+</body>
+</html>
