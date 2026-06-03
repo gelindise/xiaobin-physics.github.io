@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=10">
+  <title>近视眼与远视眼的矫正 - 物理虚拟实验</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/0.9.0/p5.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/0.9.0/addons/p5.dom.min.js"></script>
+  <style>
+    #myP5Canvas { touch-action: pinch-zoom; display: block; margin: 0 auto; border-radius: 12px; }
+    .canvas-wrap { border-radius: 12px; padding: 4px; width: 100%; box-sizing: border-box; border: 1px solid #e2e8f0; position: relative; background: #fff; }
+    .controls-bar { display: flex; align-items: center; justify-content: center; padding: 10px 16px; gap: 24px; flex-wrap: wrap; background: #f8fafc; border-radius: 0 0 12px 12px; border-top: 1px solid #e2e8f0; }
+    .ctrl-group { display: flex; align-items: center; gap: 8px; font-size: 14px; color: #334155; }
+    .section { padding: 1.5rem 2rem 0.5rem; }
+    .section h2 { font-size: 1.4rem; }
+  </style>
+</head>
+<body>
+  <header class="header">
+    <div class="logo">物理虚拟实验</div>
+    <nav class="nav">
+      <a href="index.html">首页</a>
+      <a href="experiments.html">实验列表</a>
+    </nav>
+  </header>
+
+  <div class="section">
+    <h2>近视眼与远视眼的矫正</h2>
+    <p style="color:#94a3b8;margin:0 0 16px 0;">选择眼睛类型，观察光线通过矫正镜片和晶状体后在视网膜上的成像，理解近视/远视的矫正原理。可拖拽眼镜上下移动。</p>
+  </div>
+
+  <div class="main-card">
+    <div class="canvas-wrap">
+      <div id="myContainer"></div>
+    </div>
+    <div class="controls-bar">
+      <div class="ctrl-group">
+        <span>眼睛类型：</span>
+        <span id="radioA"></span>
+      </div>
+      <div class="ctrl-group">
+        <span>矫正镜片：</span>
+        <span id="radioB"></span>
+      </div>
+    </div>
+  </div>
+
+  <div class="formula-bar">
+    <div class="formula-item">
+      <span class="label">近视眼</span>
+      <span class="value">晶状体过凸 → 像在视网膜前 → 用凹透镜发散矫正</span>
+    </div>
+    <div class="formula-item">
+      <span class="label">远视眼</span>
+      <span class="value">晶状体过扁 → 像在视网膜后 → 用凸透镜会聚矫正</span>
+    </div>
+    <div class="formula-item">
+      <span class="label">透镜公式</span>
+      <span class="value">1/f = 1/u + 1/v</span>
+    </div>
+  </div>
+
+  <script src="protect.js"></script>
+  <script>
+    // ===== Javalab helper functions =====
+    var flowLinePhase = 0;
+    var notClicked = true;
+    function mod(x, y) {
+      if (x < 0) x += y * (Math.ceil(Math.abs(x) / y) + 1);
+      return x - y * Math.floor(x / y);
+    }
+    function contain(x, y, x1, y1, w1, h1) {
+      if (x < x1) return false;
+      if (x > (x1 + w1)) return false;
+      if (y < y1) return false;
+      if (y > (y1 + h1)) return false;
+      return true;
+    }
+    function isIntersected(x1, y1, x2, y2, x3, y3, x4, y4) {
+      let under = (y4 - y3) * (x2 - x1) - (x4 - x3) * (y2 - y1);
+      if (under == 0) return false;
+      let _t = (x4 - x3) * (y1 - y3) - (y4 - y3) * (x1 - x3);
+      let _s = (x2 - x1) * (y1 - y3) - (y2 - y1) * (x1 - x3);
+      let t = _t / under;
+      let s = _s / under;
+      if (t < 0.0 || t > 1.0 || s < 0.0 || s > 1.0) return false;
+      if (Math.abs(_t) <= 1e-10 && Math.abs(_s) <= 1e-10) return false;
+      return true;
+    }
+    function getCrossX(x1, y1, x2, y2, x3, y3, x4, y4) {
+      let under = (y4 - y3) * (x2 - x1) - (x4 - x3) * (y2 - y1);
+      if (under == 0) return 0;
+      let _t = (x4 - x3) * (y1 - y3) - (y4 - y3) * (x1 - x3);
+      let t = _t / under;
+      return x1 + t * (x2 - x1);
+    }
+    function getCrossY(x1, y1, x2, y2, x3, y3, x4, y4) {
+      let under = (y4 - y3) * (x2 - x1) - (x4 - x3) * (y2 - y1);
+      if (under == 0) return 0;
+      let _t = (x4 - x3) * (y1 - y3) - (y4 - y3) * (x1 - x3);
+      let t = _t / under;
+      return y1 + t * (y2 - y1);
+    }
+    function flowLine_head(x1, y1, x2, y2, head, isStart) {
+      let d = dist(x1, y1, x2, y2);
+      let d0 = head * (isStart ? mod(millis(), 1000) / 1000 : -flowLinePhase);
+      let d1 = head / 2;
+      let d2 = head;
+      for (let t = d0 - d2; t < d; t += d2) {
+        let s1 = t + d1;
+        let s2 = t + d2;
+        if (s2 < 0) continue;
+        if (s1 < 0) s1 = 0;
+        if (s1 > d) break;
+        if (s2 > d) s2 = d;
+        let xx1 = map(s1, 0, d, x1, x2);
+        let yy1 = map(s1, 0, d, y1, y2);
+        let xx2 = map(s2, 0, d, x1, x2);
+        let yy2 = map(s2, 0, d, y1, y2);
+        line(xx1, yy1, xx2, yy2);
+      }
+      flowLinePhase = mod(d - d0, d2) / d2;
+    }
+    function flowLine2(x1, y1, x2, y2, isStart) {
+      let d = dist(x1, y1, x2, y2);
+      let d0 = 14 * (isStart ? mod(millis(), 1000) / 1000 : -flowLinePhase);
+      let d1 = 7;
+      let d2 = 14;
+      for (let t = d0 - d2; t < d; t += d2) {
+        let s1 = t + d1;
+        let s2 = t + d2;
+        if (s2 < 0) continue;
+        if (s1 < 0) s1 = 0;
+        if (s1 > d) break;
+        if (s2 > d) s2 = d;
+        let xx1 = map(s1, 0, d, x1, x2);
+        let yy1 = map(s1, 0, d, y1, y2);
+        let xx2 = map(s2, 0, d, x1, x2);
+        let yy2 = map(s2, 0, d, y1, y2);
+        line(xx1, yy1, xx2, yy2);
+      }
+      flowLinePhase = mod(d - d0, d2) / d2;
+    }
+    function drawButtonDrag() {
+      if (mouseIsPressed && contain(mouseX, mouseY, 0, 0, width, height)) notClicked = false;
+      if (millis() > 10000) notClicked = false;
+      var dia = 120;
+      if (notClicked) {
+        push();
+        translate(width / 2, height / 2);
+        noStroke();
+        fill(128, 128);
+        ellipse(0, 0, dia, dia);
+        noFill();
+        stroke(255);
+        strokeWeight(dia * 0.04);
+        drawFingers(0, 0, dia * 0.85);
+        pop();
+      }
+    }
+    function drawFingers(x, y, d) {
+      push();
+      translate(x, y);
+      line(-d * 0.2, d * 0.3, -d * 0.35, d * 0.1);
+      arc(-d * 0.3, d * 0.05, d * 0.1414, d * 0.1414, QUARTER_PI * 3, QUARTER_PI * 7);
+      line(-d * 0.25, d * 0.0, -d * 0.15, d * 0.1);
+      line(-d * 0.15, d * 0.1, -d * 0.15, -d * 0.25);
+      arc(-d * 0.075, -d * 0.25, d * 0.15, d * 0.15, PI, TWO_PI);
+      line(-d * 0.0, -d * 0.25, -d * 0.0, d * 0.0);
+      arc(d * 0.06, -d * 0.1, d * 0.12, d * 0.12, HALF_PI * 3, TWO_PI);
+      line(d * 0.12, -d * 0.1, d * 0.12, d * 0.025);
+      arc(d * 0.18, -d * 0.05, d * 0.12, d * 0.12, HALF_PI * 3, TWO_PI);
+      line(d * 0.24, -d * 0.05, d * 0.24, d * 0.05);
+      arc(d * 0.29, -d * 0.0, d * 0.1, d * 0.1, HALF_PI * 3, TWO_PI);
+      line(d * 0.34, -d * 0.0, d * 0.34, d * 0.075);
+      line(d * 0.34, d * 0.075, d * 0.31, d * 0.3);
+      pop();
+    }
+
+    // ===== Main simulation =====
+    let radioA, radioB, ledImage;
+    let glassX = 520, glassY = 350;
+    let glassIndex = [0.00057, -0.00057];
+    let glassPolygonX = [], glassPolygonY = [];
+    let lensX = 570, lensY = 200, lensW, lensH = 120;
+    let lensIndex = [0.0039 * 1.1, 0.0033, 0.0039];
+    let lensPolygonX = [], lensPolygonY = [];
+
+    function preload() {
+      ledImage = loadImage("javalab_near_sightedness_led.png");
+    }
+
+    function setup() {
+      frameRate(20);
+      let o = select("#myContainer");
+      let a = 0.5;
+      let w = int(min(o.width, (window.innerHeight - 160) / a));
+      let h = int(w * a);
+      myCanvas = createCanvas(w, h);
+      myCanvas.parent("myContainer");
+      myCanvas.id("myP5Canvas");
+
+      radioB = createRadio("radioB");
+      radioB.option("凹透镜（近视矫正）", "0");
+      radioB.option("凸透镜（远视矫正）", "1");
+      radioB.parent("radioB");
+      radioB.value("0");
+      radioB.changed(setup2);
+
+      radioA = createRadio("radioA");
+      radioA.option("近视眼", "0");
+      radioA.option("远视眼", "1");
+      radioA.option("正常眼", "2");
+      radioA.parent("radioA");
+      radioA.value("0");
+      radioA.changed(setup2);
+
+      setup2();
+    }
+
+    function windowResized() {
+      let o = select("#myContainer");
+      let a = 0.5;
+      let w = int(min(o.width, (window.innerHeight - 160) / a));
+      let h = int(w * a);
+      resizeCanvas(w, h);
+      setup2();
+    }
+
+    function setup2() {
+      let lensww = [30, 25, 27];
+      lensW = lensww[radioA.value()];
+      for (let j = 0; j <= 72; j++) {
+        let t = map(j, 0, 72, 0, TWO_PI);
+        if (radioB.value() == "0") {
+          glassPolygonX[j] = glassX + ((cos(t) < 0) ? -12 - 10 * cos(t) : 12 - 10 * cos(t));
+          glassPolygonY[j] = glassY + constrain(90 * sin(t), -80, 80);
+        } else {
+          glassPolygonX[j] = glassX + ((cos(t) < 0) ? 10 * cos(t) + 8 : 10 * cos(t)) - 8;
+          glassPolygonY[j] = glassY + constrain(90 * sin(t), -80, 80);
+        }
+      }
+      for (let j = 0; j <= 72; j++) {
+        let t = map(j, 0, 72, 0, TWO_PI);
+        lensPolygonX[j] = lensX + 0.5 * lensW * cos(t);
+        lensPolygonY[j] = lensY + 0.5 * lensH * sin(t);
+      }
+    }
+
+    function draw() {
+      if (touches.length > 1) return;
+      background(222);
+      strokeWeight(1);
+      textSize(20);
+      imageMode(CENTER);
+      push();
+      scale(width / 900);
+
+      let ballW = [310, 300, 300];
+      let ballH = 300;
+      let ballX = lensX + ballW[int(radioA.value())] / 2 - lensW / 2;
+      let ballY = lensY;
+
+      image(ledImage, 50, lensY, 300, 300);
+
+      // 眼镜镜片（蓝色）
+      noStroke();
+      fill(128, 191, 255);
+      beginShape();
+      for (let j = 0; j < 72; j++) {
+        vertex(glassPolygonX[j], glassPolygonY[j]);
+      }
+      endShape();
+
+      // 眼球（白色）
+      fill(255);
+      noStroke();
+      ellipse(ballX, lensY, ballW[int(radioA.value())], ballH);
+
+      // 晶状体（蓝色）
+      noStroke();
+      fill(128, 191, 255);
+      beginShape();
+      for (let j = 0; j < 72; j += 2) {
+        vertex(lensPolygonX[j], lensPolygonY[j]);
+      }
+      endShape();
+
+      // 背景平行光线（5m处来）
+      stroke(128, 0, 0);
+      strokeWeight(1.5);
+      for (let i = 0; i < 3; i++) {
+        let tt = i * 0.015 - 0.015;
+        let x1 = -2000;
+        let y1 = lensY;
+        let x2 = x1 + 250;
+        let y2 = y1 + (x2 - x1) * sin(tt);
+        flowLine2(x1 + 2050, y1, x2 + 2050, y2, true);
+      }
+
+      // 光线追踪主循环
+      for (let i = 0; i < 3; i++) {
+        let tt = i * 0.015 - 0.015;
+        let x1 = -2000;
+        let y1 = lensY;
+        let x2 = glassX;
+        let y2 = y1 + (x2 - x1) * sin(tt);
+        let x3 = lensX;
+        let y3;
+        let x4 = ballX + ballW[int(radioA.value())] / 2;
+        let y4;
+        let x5 = 900;
+        let y5;
+
+        y1 = map(300, x1, x2, y1, y2);
+        x1 = 300;
+
+        if ((glassY - 80) < y2 && y2 < (glassY + 80)) {
+          tt += glassIndex[int(radioB.value())] * (y2 - glassY);
+        }
+        y3 = y2 + (x3 - x2) * sin(tt);
+        tt += lensIndex[int(radioA.value())] * (lensY - y3);
+        y4 = y3 + (x4 - x3) * sin(tt);
+        y5 = y4 + (x5 - x4) * sin(tt);
+
+        let x122 = x2, y122 = y2;
+        let x223 = x2, y223 = y2;
+        for (let j = 0; j < 72; j++) {
+          if (isIntersected(x1, y1, x2, y2, glassPolygonX[j], glassPolygonY[j], glassPolygonX[j + 1], glassPolygonY[j + 1])) {
+            x122 = getCrossX(x1, y1, x2, y2, glassPolygonX[j], glassPolygonY[j], glassPolygonX[j + 1], glassPolygonY[j + 1]);
+            y122 = getCrossY(x1, y1, x2, y2, glassPolygonX[j], glassPolygonY[j], glassPolygonX[j + 1], glassPolygonY[j + 1]);
+          }
+          if (isIntersected(x2, y2, x3, y3, glassPolygonX[j], glassPolygonY[j], glassPolygonX[j + 1], glassPolygonY[j + 1])) {
+            x223 = getCrossX(x2, y2, x3, y3, glassPolygonX[j], glassPolygonY[j], glassPolygonX[j + 1], glassPolygonY[j + 1]);
+            y223 = getCrossY(x2, y2, x3, y3, glassPolygonX[j], glassPolygonY[j], glassPolygonX[j + 1], glassPolygonY[j + 1]);
+          }
+        }
+
+        let x233 = x3, y233 = y3;
+        let x334 = x3, y334 = y3;
+        for (let j = 0; j < 72; j++) {
+          if (isIntersected(x2, y2, x3, y3, lensPolygonX[j], lensPolygonY[j], lensPolygonX[j + 1], lensPolygonY[j + 1])) {
+            x233 = getCrossX(x2, y2, x3, y3, lensPolygonX[j], lensPolygonY[j], lensPolygonX[j + 1], lensPolygonY[j + 1]);
+            y233 = getCrossY(x2, y2, x3, y3, lensPolygonX[j], lensPolygonY[j], lensPolygonX[j + 1], lensPolygonY[j + 1]);
+          }
+          if (isIntersected(x3, y3, x4, y4, lensPolygonX[j], lensPolygonY[j], lensPolygonX[j + 1], lensPolygonY[j + 1])) {
+            x334 = getCrossX(x3, y3, x4, y4, lensPolygonX[j], lensPolygonY[j], lensPolygonX[j + 1], lensPolygonY[j + 1]);
+            y334 = getCrossY(x3, y3, x4, y4, lensPolygonX[j], lensPolygonY[j], lensPolygonX[j + 1], lensPolygonY[j + 1]);
+          }
+        }
+
+        noFill();
+        flowLine_head(x1, y1, x122, y122, 14, true);
+        flowLine_head(x122, y122, x223, y223, 9.7, false);
+        flowLine_head(x223, y223, x233, y233, 14, false);
+        flowLine_head(x233, y233, x334, y334, 9.7, false);
+        flowLine_head(x334, y334, x4, y4, 14, false);
+        flowLine_head(x4, y4, x5, y5, 14, false);
+      }
+
+      // 5m 标记区域
+      fill(255);
+      noStroke();
+      rect(250, 0, 100, 500);
+      fill(128);
+      textAlign(CENTER, TOP);
+      text("← 5m →", 300, 300);
+
+      // 视网膜区域（眼球后半部分灰色填充）
+      fill(222);
+      noStroke();
+      beginShape();
+      vertex(900, 0);
+      for (let t = -HALF_PI; t < HALF_PI; t += 0.01) {
+        let x = ballX + 0.5 * ballW[int(radioA.value())] * cos(t);
+        let y = lensY + 0.5 * ballH * sin(t);
+        vertex(x, y);
+      }
+      vertex(900, 450);
+      endShape();
+      pop();
+      drawButtonDrag();
+    }
+
+    let dragged = false;
+    let offsetY;
+    function touchStarted() {
+      if (!contain(mouseX, mouseY, 0, 0, width, height)) return;
+      dragged = true;
+      offsetY = mouseY * 900 / width - glassY;
+    }
+    function touchMoved() {
+      if (touches.length > 1) return;
+      if (dragged) {
+        glassY = mouseY * 900 / width - offsetY;
+        glassY = constrain(glassY, 50, 400);
+        setup2();
+        return false;
+      }
+    }
+    function touchEnded() {
+      dragged = false;
+    }
+    function mouseDragged() {
+      if (!contain(mouseX, mouseY, 0, 0, width, height)) return;
+      glassY = mouseY * 900 / width - offsetY;
+      glassY = constrain(glassY, 50, 400);
+      setup2();
+      return false;
+    }
+    function mousePressed() {
+      if (!contain(mouseX, mouseY, 0, 0, width, height)) return;
+      offsetY = mouseY * 900 / width - glassY;
+    }
+  </script>
+</body>
+</html>
