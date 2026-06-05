@@ -71,14 +71,6 @@
 
   <script src="protect.js"></script>
   <script>
-  // === 预计算三角函数表 ===
-  var dsin = [];
-  var dcos = [];
-  for (var i = 0; i < 360; i++) {
-    dsin.push(Math.sin(i * Math.PI / 180));
-    dcos.push(Math.cos(i * Math.PI / 180));
-  }
-
   function mag(x, y) { return Math.sqrt(x * x + y * y); }
 
   function getAngle(x, y) {
@@ -109,8 +101,10 @@
 
   // Energy tracking
   var initReleaseY = 400;
+  var initMechEnergy = 2000;
   var energyBarMax = 2000;
   var bobEk = 0, bobEp = 0, internalEnergy = 0, mechEnergy = 0;
+  var rodLostAcc = 0;
 
   function setup() {
     frameRate(40);
@@ -154,7 +148,9 @@
     }
     pendT = 1.570795;
     initReleaseY = pendOY + pendL * Math.sin(pendT);
-    energyBarMax = 100 * 0.2 * (maxY - initReleaseY);
+    initMechEnergy = 100 * 0.2 * (maxY - initReleaseY);
+    energyBarMax = initMechEnergy;
+    rodLostAcc = 0;
     setup3();
   }
 
@@ -188,8 +184,34 @@
     moles = rangeA.value();
     labelA.html(moles == 0 ? "空气分子：0（机械能守恒）" : "空气分子：" + moles);
 
-    // Pendulum physics (only when not being dragged)
+    // Pendulum physics — angular dynamics (symplectic, conserves energy)
+    var gravityY = 0.2;
     if (!dragged) {
+      // Compute current angle and angular velocity
+      var dx1 = pendX - pendOX;
+      var dy1 = pendY - pendOY;
+      var r1 = sqrt(dx1 * dx1 + dy1 * dy1);
+      if (r1 > 0.001) {
+        // Tangential velocity → angular velocity
+        var vtan = (-pendVx * dy1 + pendVy * dx1) / r1;
+        var omega = vtan / pendL;
+
+        // Angular acceleration: α = (g/L) * cos(θ)
+        var theta = atan2(dy1, dx1);
+        var alpha = (gravityY / pendL) * cos(theta);
+
+        // Semi-implicit Euler (symplectic): update ω first, then θ
+        omega += alpha;
+        theta += omega;
+
+        // Convert back to cartesian on the circle
+        pendX = pendOX + pendL * cos(theta);
+        pendY = pendOY + pendL * sin(theta);
+        pendVx = -omega * pendL * sin(theta);
+        pendVy = omega * pendL * cos(theta);
+      }
+
+      // Collision with air molecules
       moleX[0] = pendX;
       moleY[0] = pendY;
       moleVx[0] = pendVx;
@@ -199,42 +221,35 @@
       pendY = moleY[0];
       pendVx = moleVx[0];
       pendVy = moleVy[0];
+
+      // Re-constrain after collisions; track total mechanical energy lost to rod
+      var mechPre = 0.5 * 100 * (pendVx * pendVx + pendVy * pendVy) + 100 * 0.2 * (maxY - pendY);
+      constrainToRod();
+      var mechPost = 0.5 * 100 * (pendVx * pendVx + pendVy * pendVy) + 100 * 0.2 * (maxY - pendY);
+      var lost = mechPre - mechPost;
+      if (lost > 0) rodLostAcc += lost;
     }
 
-    var gravityY = 0.2;
-    var l = dist(pendOX, pendOY, pendX, pendY);
-    var theta = atan2(pendY - pendOY, pendX - pendOX);
-
-    if (!dragged) {
-      if (l > pendL) {
-        var tensionForce = gravityY * sin(theta) * (l - pendL);
-        var tenX = -tensionForce * cos(theta);
-        var tenY = -tensionForce * sin(theta);
-        pendVx += tenX;
-        pendVy += tenY;
-      }
-      var centri = mag(pendVx, pendVy) * mag(pendVx, pendVy) / l;
-      pendVx += -centri * cos(theta);
-      pendVy += -centri * sin(theta) + gravityY;
-      pendX += pendVx;
-      pendY += pendVy;
-    }
-
-    var rodX = pendOX + pendL * cos(theta);
-    var rodY = pendOY + pendL * sin(theta);
+    // Rod direction for drawing
+    var dx = pendX - pendOX, dy = pendY - pendOY;
+    var l = sqrt(dx * dx + dy * dy);
+    var rodX = pendOX + dx * pendL / (l || 1);
+    var rodY = pendOY + dy * pendL / (l || 1);
 
     // === 计算能量 ===
-    bobEk = 0.5 * 100 * (pendVx * pendVx + pendVy * pendVy);
-    bobEp = 100 * 0.2 * (maxY - pendY);
+    var bobMass = 100;
+    bobEk = 0.5 * bobMass * (pendVx * pendVx + pendVy * pendVy);
+    bobEp = bobMass * 0.2 * (maxY - pendY);
     mechEnergy = bobEk + bobEp;
 
-    // Internal energy = total KE of all air molecules
+    // Internal energy = air molecule KE + energy lost to rod during collisions
     internalEnergy = 0;
     for (var i = 1; i < moles; i++) {
       internalEnergy += 0.5 * moleM[i] * (moleVx[i] * moleVx[i] + moleVy[i] * moleVy[i]);
     }
+    internalEnergy += rodLostAcc;
 
-    // energyBarMax stays fixed at release value — bars shrink as mech energy dissipates
+    var totalEnergy = mechEnergy + internalEnergy;
 
     // === 初始高度的水平虚线 ===
     stroke(0, 150, 0, 180);
@@ -282,106 +297,143 @@
     fill(255, 255, 255, 220);
     stroke(200);
     strokeWeight(0.8);
-    rect(5, 5, 210, 80, 5);
+    rect(5, 5, 215, 73, 5);
     noStroke();
     textAlign(LEFT, TOP);
     textSize(12);
-    text("摆球速度: " + bobSpeed.toFixed(2), 10, 10);
+    // Status line
     if (moles == 0) {
       fill(0, 140, 60);
-      text("机械能守恒（无空气阻力）", 10, 28);
+      text("Ek + Ep = 机械能 (守恒)", 10, 10);
     } else {
       fill(200, 80, 0);
-      text("机械能 → 分子内能（耗散中）", 10, 28);
+      text("Ek + Ep + U = 总能量 (机械能耗散中)", 10, 10);
     }
     fill(0);
+    text("Ek=" + bobEk.toFixed(1) + "  Ep=" + bobEp.toFixed(1) + "  U=" + internalEnergy.toFixed(1), 10, 28);
+    text("Mech = " + mechEnergy.toFixed(1) + "  Total = " + totalEnergy.toFixed(1), 10, 46);
     var avgV = 0;
     for (var i = 1; i < moles; i++) avgV += mag(moleVx[i], moleVy[i]);
     if (moles > 1) avgV /= (moles - 1);
-    text("分子平均速度: " + avgV.toFixed(3), 10, 46);
-    text("机械能: " + mechEnergy.toFixed(1) + "  内能: " + internalEnergy.toFixed(1), 10, 64);
+    text("v=" + bobSpeed.toFixed(2) + "  v_avg=" + avgV.toFixed(3) + "  N=" + moles, 10, 64);
 
     pop();
-    drawButtonDrag();
   }
 
   function drawEnergyBars() {
-    // Background panel
     fill(255, 255, 255, 210);
     stroke(180);
     strokeWeight(0.8);
     var px = 810, py = 60, pw = 180, ph = 390;
     rect(px, py, pw, ph, 6);
 
-    // Title
     noStroke();
     fill(0);
     textAlign(CENTER, TOP);
     textSize(13);
-    text("能量分布", px + pw / 2, py + 8);
+    text("能量分布 (参考=" + initMechEnergy.toFixed(0) + ")", px + pw / 2, py + 8);
 
     var barX = px + 15;
-    var barW = 32;
+    var barW = 34;
     var barBase = py + ph - 25;
-    var barMaxH = 300;
+    var barMaxH = 290;
 
-    // Energy bar helper
     function drawBar(bx, val, label, color, maxVal) {
       var h = constrain(val / maxVal * barMaxH, 0, barMaxH);
-      // Bar
       noStroke();
-      fill(color[0], color[1], color[2], 180);
+      fill(color[0], color[1], color[2], 200);
       rect(bx, barBase - h, barW, h, 3);
-      // Border
-      stroke(150);
+      stroke(130);
       strokeWeight(0.5);
       noFill();
       rect(bx, barBase - h, barW, h, 3);
-      // Value text inside bar
-      if (h > 18) {
+      if (h > 15) {
         noStroke();
         fill(255);
         textAlign(CENTER, CENTER);
-        textSize(11);
-        text(val.toFixed(0), bx + barW / 2, barBase - h / 2);
+        textSize(10);
+        push();
+        translate(bx + barW / 2, barBase - h / 2);
+        rotate(-HALF_PI);
+        text(val.toFixed(0), 0, 0);
+        pop();
       }
-      // Label below
       noStroke();
-      fill(0);
+      fill(color[0], color[1], color[2]);
       textAlign(CENTER, TOP);
       textSize(11);
       text(val.toFixed(0), bx + barW / 2, barBase + 2);
-      textSize(10);
-      fill(color[0], color[1], color[2]);
+      textSize(9);
+      fill(80);
       text(label, bx + barW / 2, barBase + 16);
     }
 
-    var refMax = energyBarMax;
-    drawBar(barX, bobEk, "动能 Ek", [60, 140, 240], refMax);
-    drawBar(barX + barW + 10, bobEp, "势能 Ep", [40, 160, 40], refMax);
-    drawBar(barX + 2 * (barW + 10), mechEnergy, "机械能", [140, 60, 200], refMax);
-    drawBar(barX + 3 * (barW + 10), internalEnergy, "内能U", [230, 100, 30], refMax);
-
-    // Status indicator
-    noStroke();
-    if (moles == 0) {
-      fill(0, 140, 60);
+    // Bar variant: uses val for height, but displays refVal as the number
+    function drawBarRef(bx, val, label, color, maxVal, refVal) {
+      var h = constrain(val / maxVal * barMaxH, 0, barMaxH);
+      var refH = constrain(refVal / maxVal * barMaxH, 0, barMaxH);
+      // Reference line
+      stroke(180);
+      strokeWeight(0.5);
+      drawDashedLine2(bx, barBase - refH, bx + barW, barBase - refH);
+      // Bar
+      noStroke();
+      fill(color[0], color[1], color[2], 200);
+      rect(bx, barBase - h, barW, h, 3);
+      stroke(130);
+      strokeWeight(0.5);
+      noFill();
+      rect(bx, barBase - h, barW, h, 3);
+      if (h > 15) {
+        noStroke();
+        fill(255);
+        textAlign(CENTER, CENTER);
+        textSize(10);
+        push();
+        translate(bx + barW / 2, barBase - h / 2);
+        rotate(-HALF_PI);
+        text(val.toFixed(0), 0, 0);
+        pop();
+      }
+      // Show reference number (fixed, doesn't change)
+      noStroke();
+      fill(color[0], color[1], color[2]);
       textAlign(CENTER, TOP);
-      textSize(12);
-      text("机械能守恒", px + pw / 2, barBase + 33);
-    } else {
-      fill(200, 80, 0);
-      textAlign(CENTER, TOP);
-      textSize(12);
-      text("机械能耗散中", px + pw / 2, barBase + 33);
+      textSize(11);
+      text(refVal.toFixed(0), bx + barW / 2, barBase + 2);
+      textSize(9);
+      fill(80);
+      text(label, bx + barW / 2, barBase + 16);
     }
 
-    // Total energy indicator
-    var totalE = mechEnergy + internalEnergy;
+    var refMax = initMechEnergy;
+    drawBar(barX, bobEk, "动能Ek", [60, 140, 240], refMax);
+    drawBar(barX + barW + 5, bobEp, "势能Ep", [40, 160, 40], refMax);
+    // Mech energy bar: height = current mechEnergy, label = fixed reference
+    drawBarRef(barX + 2*(barW + 5), mechEnergy, "机械能", [140, 60, 200], refMax, initMechEnergy);
+    drawBar(barX + 3*(barW + 5), internalEnergy, "内能U", [230, 100, 30], refMax);
+
+    // Ek + Ep = MechE indicator
+    noStroke();
     fill(100);
     textAlign(CENTER, TOP);
     textSize(10);
-    text("参考: " + refMax.toFixed(0) + "  总能量: " + totalE.toFixed(0), px + pw / 2, barBase + 50);
+    text("Ek+Ep=" + (bobEk+bobEp).toFixed(0), barX + barW/2 + (barW+5), barBase - barMaxH - 15);
+
+    // Status
+    if (moles == 0) {
+      fill(0, 140, 60);
+    } else {
+      fill(200, 80, 0);
+    }
+    textAlign(CENTER, TOP);
+    textSize(11);
+    text(moles == 0 ? "机械能守恒" : "机械能耗散中", px + pw / 2, barBase + 33);
+
+    fill(100);
+    textSize(10);
+    var totalE = mechEnergy + internalEnergy;
+    text("总能量: " + totalE.toFixed(0), px + pw / 2, barBase + 50);
   }
 
   function drawDashedLine2(x1, y1, x2, y2) {
@@ -394,19 +446,46 @@
     }
   }
 
-  function drawButtonDrag() {
-    push();
-    var bx = width - 130, by = height - 45;
-    fill(255, 255, 255, 200);
-    stroke(128);
-    strokeWeight(1.5);
-    rect(bx, by, 120, 32, 6);
-    fill(0);
-    noStroke();
-    textAlign(CENTER, CENTER);
-    textSize(13);
-    text("拖拽摆球", bx + 60, by + 16);
-    pop();
+  function constrainToRod() {
+    var dx = pendX - pendOX;
+    var dy = pendY - pendOY;
+    var dist = sqrt(dx * dx + dy * dy);
+    if (dist < 0.001) return;
+    // Project position onto circle
+    pendX = pendOX + dx * pendL / dist;
+    pendY = pendOY + dy * pendL / dist;
+    // Remove radial velocity (only tangential velocity remains)
+    var nx = dx / dist;
+    var ny = dy / dist;
+    var vr = pendVx * nx + pendVy * ny;
+    pendVx -= vr * nx;
+    pendVy -= vr * ny;
+  }
+
+  // Constrain a molecule to the rod circle — used during collisions to keep bob on track.
+  // Returns mechanical energy lost (transferred to rod / dissipated).
+  function constrainMoleculeRod(idx) {
+    var dx = moleX[idx] - pendOX;
+    var dy = moleY[idx] - pendOY;
+    var dist = sqrt(dx * dx + dy * dy);
+    if (dist < 0.001) return 0;
+    // Mechanical energy before constraint
+    var mechPre = 0.5 * moleM[idx] * (moleVx[idx] * moleVx[idx] + moleVy[idx] * moleVy[idx])
+                + moleM[idx] * 0.2 * (maxY - moleY[idx]);
+    // Project position onto circle
+    moleX[idx] = pendOX + dx * pendL / dist;
+    moleY[idx] = pendOY + dy * pendL / dist;
+    // Remove radial velocity component
+    var nx = dx / dist;
+    var ny = dy / dist;
+    var vr = moleVx[idx] * nx + moleVy[idx] * ny;
+    moleVx[idx] -= vr * nx;
+    moleVy[idx] -= vr * ny;
+    // Mechanical energy after constraint
+    var mechPost = 0.5 * moleM[idx] * (moleVx[idx] * moleVx[idx] + moleVy[idx] * moleVy[idx])
+                 + moleM[idx] * 0.2 * (maxY - moleY[idx]);
+    var lost = mechPre - mechPost;
+    return lost > 0 ? lost : 0;
   }
 
   function running() {
@@ -435,47 +514,54 @@
             var aji = getAngle(moleX[i] - moleX[j], moleY[i] - moleY[j]);
             aci = mod(2 * aij + 180 - aci, 360);
             acj = mod(2 * aji + 180 - acj, 360);
-            moleVx[i] = vci * dcos[Math.floor(aci)];
-            moleVy[i] = vci * dsin[Math.floor(aci)];
-            moleVx[j] = vcj * dcos[Math.floor(acj)];
-            moleVy[j] = vcj * dsin[Math.floor(acj)];
+            var aciRad = aci * Math.PI / 180;
+            var acjRad = acj * Math.PI / 180;
+            moleVx[i] = vci * Math.cos(aciRad);
+            moleVy[i] = vci * Math.sin(aciRad);
+            moleVx[j] = vcj * Math.cos(acjRad);
+            moleVy[j] = vcj * Math.sin(acjRad);
             moleVx[i] += vcx;
             moleVy[i] += vcy;
             moleVx[j] += vcx;
             moleVy[j] += vcy;
+            // Immediately re-constrain bob after each collision to prevent
+            // cascading off-circle errors across multiple collisions per frame.
+            if (i == 0 || j == 0) {
+              rodLostAcc += constrainMoleculeRod(0);
+            }
           }
         }
       }
     }
-    for (var i = 0; i < n; i++) {
-      moleX[i] += moleVx[i];
-      moleY[i] += moleVy[i];
-      if (moleX[i] < minX + moleR[i]) moleVx[i] = abs(moleVx[i]);
-      if (moleX[i] > maxX - moleR[i]) moleVx[i] = -abs(moleVx[i]);
-      if (moleY[i] < minY + moleR[i]) moleVy[i] = abs(moleVy[i]);
-      if (moleY[i] > maxY - moleR[i]) moleVy[i] = -abs(moleVy[i]);
+    // Update air molecule positions only (bob at index 0 is moved by angular dynamics)
+    for (var k = 1; k < n; k++) {
+      moleX[k] += moleVx[k];
+      moleY[k] += moleVy[k];
+      if (moleX[k] < minX + moleR[k]) moleVx[k] = abs(moleVx[k]);
+      if (moleX[k] > maxX - moleR[k]) moleVx[k] = -abs(moleVx[k]);
+      if (moleY[k] < minY + moleR[k]) moleVy[k] = abs(moleVy[k]);
+      if (moleY[k] > maxY - moleR[k]) moleVy[k] = -abs(moleVy[k]);
     }
+    // Ensure bob position stays on rod after collision velocity changes
+    rodLostAcc += constrainMoleculeRod(0);
   }
 
   // === 鼠标/触摸交互 ===
-  function mousePressed() {
-    if (!contain(mouseX, mouseY, 0, 0, width, height)) return;
-    dragged = true;
-    return false;
-  }
-
   function onDragMove() {
     pendT = atan2(mouseY * 1000 / width - pendOY, mouseX * 1000 / width - pendOX);
     pendT = constrain(pendT, 0.05, PI - 0.05);
     setup3();
     initReleaseY = pendY;
-    energyBarMax = max(20 * (maxY - pendY), 500);
+    initMechEnergy = max(20 * (maxY - pendY), 500);
+    energyBarMax = initMechEnergy;
     return false;
   }
 
   function onDragEnd() {
     initReleaseY = pendY;
-    energyBarMax = max(20 * (maxY - pendY), 500);
+    initMechEnergy = max(20 * (maxY - pendY), 500);
+    energyBarMax = initMechEnergy;
+    rodLostAcc = 0;
     dragged = false;
   }
 
