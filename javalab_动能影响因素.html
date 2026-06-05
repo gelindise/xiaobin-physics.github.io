@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=10">
+  <title>探究动能大小的影响因素 - 物理虚拟实验</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/0.9.0/p5.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/0.9.0/addons/p5.dom.min.js"></script>
+  <style>
+    .main-card { max-width: 900px; margin: 0 auto 24px; padding: 0 16px; }
+    .canvas-wrap { border-radius: 12px; padding: 4px; width: 100%; box-sizing: border-box; border: 1px solid #e2e8f0; position: relative; background: #e8f0ff; }
+    .controls-bar { display: flex; align-items: center; justify-content: center; padding: 12px 16px; gap: 18px; flex-wrap: wrap; background: #1a1a2e; border-radius: 0 0 12px 12px; border-top: 1px solid #333; color: #ccc; font-size: 13px; }
+    .controls-bar .ctrl-col { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+    .controls-bar label { color: #ccc; font-size: 12px; white-space: nowrap; }
+    .controls-bar input[type="range"] { width: 90px; accent-color: #8b5cf6; }
+    .controls-bar input[type="checkbox"] { accent-color: #8b5cf6; }
+    .btn { border: 2px solid #555; background: transparent; color: #aaa; padding: 6px 16px; border-radius: 6px; cursor: pointer; font-size: 13px; transition: all 0.2s; }
+    .btn:hover { border-color: #8b5cf6; color: #fff; }
+    .hint-text { color: #888; font-size: 12px; }
+    .section { padding: 1.5rem 2rem 0.5rem; }
+    .section h2 { font-size: 1.4rem; }
+    .formula-bar { max-width: 900px; margin: 0 auto 24px; padding: 0 16px; display: flex; gap: 12px; flex-wrap: wrap; }
+    .formula-item { flex: 1; min-width: 180px; background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 12px 16px; }
+    .formula-item .label { color: #64748b; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; display: block; margin-bottom: 4px; }
+    .formula-item .value { color: #e2e8f0; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <header class="header">
+    <div class="logo">物理虚拟实验</div>
+    <nav class="nav">
+      <a href="index.html">首页</a>
+      <a href="experiments.html">实验列表</a>
+    </nav>
+  </header>
+
+  <div class="section">
+    <h2>探究动能大小的影响因素</h2>
+    <p style="color:#94a3b8;margin:0 0 16px 0;">小车从斜坡滑下撞击木块。改变质量和高度，观察动能如何影响木块滑行距离。</p>
+  </div>
+
+  <div class="main-card">
+    <div class="canvas-wrap">
+      <div id="myContainer"></div>
+    </div>
+    <div class="controls-bar">
+      <div class="ctrl-col">
+        <label id="labelA">小车质量 5 kg</label>
+        <input type="range" id="rangeA" min="1" max="10" value="5">
+      </div>
+      <div class="ctrl-col">
+        <label id="labelC">下滑高度 3 m</label>
+        <input type="range" id="rangeC" min="1" max="8" value="3">
+      </div>
+      <div class="ctrl-col">
+        <label id="labelB">木块阻力 10 N</label>
+        <input type="range" id="rangeB" min="5" max="50" value="10">
+      </div>
+      <div class="ctrl-col">
+        <input type="checkbox" id="checkA" unchecked />
+        <label for="checkA">开始实验</label>
+      </div>
+      <button class="btn" id="buttonRst">重置</button>
+      <span class="hint-text">高度和质量越大，动能越大，木块滑得越远</span>
+    </div>
+  </div>
+
+  <div class="formula-bar">
+    <div class="formula-item">
+      <span class="label">势能 → 动能</span>
+      <span class="value">Ep = mgh → Ek = ½mv² &nbsp;—&nbsp; 忽略斜坡摩擦时 mgh = ½mv²</span>
+    </div>
+    <div class="formula-item">
+      <span class="label">动能影响因素</span>
+      <span class="value">质量 m ↑ → Ek ↑ &nbsp;|&nbsp; 速度 v ↑ → Ek ↑（v²关系）</span>
+    </div>
+    <div class="formula-item">
+      <span class="label">木块滑行距离</span>
+      <span class="value">Ek = F<sub>阻</sub> × s &nbsp;→&nbsp; s = mgh / F<sub>阻</sub></span>
+    </div>
+  </div>
+
+  <script src="protect.js"></script>
+  <script>
+  function contain(x, y, x1, y1, w1, h1) {
+    return !(x < x1 || x > (x1 + w1) || y < y1 || y > (y1 + h1));
+  }
+
+  // ---- state ----
+  var labelA, rangeA, labelB, rangeB, labelC, rangeC, checkA, buttonRst;
+  var rangeAValue = 5, rangeBValue = 10, rangeCValue = 3;
+
+  // Geometry (in internal 900x450 coordinate space, 50px = 1m)
+  var slopeStartX = 100, slopeEndX = 350;
+  var slopeStartY, slopeEndY = 380;
+  var collisionX = 480;
+  var cartX, cartY, cartV;
+  var blockX;
+  var trackMaxX = 900;
+  var trackY = [];
+  var running = false;
+  var finished = false;
+  var traceMax = 300;
+  var traceX = [], traceY = [];
+
+  function setup() {
+    frameRate(40);
+    var o = select("#myContainer");
+    var a = 0.5;
+    var w = int(min(o.width, (window.innerHeight - 160) / a));
+    var h = int(w * a);
+    myCanvas = createCanvas(w, h);
+    myCanvas.parent("myContainer");
+    myCanvas.id("myP5Canvas");
+
+    labelA = select("#labelA");
+    rangeA = select("#rangeA");
+    labelB = select("#labelB");
+    rangeB = select("#rangeB");
+    labelC = select("#labelC");
+    rangeC = select("#rangeC");
+    checkA = select("#checkA");
+    buttonRst = select("#buttonRst");
+    buttonRst.mouseClicked(resetExperiment);
+
+    resetExperiment();
+  }
+
+  function windowResized() {
+    var o = select("#myContainer");
+    var a = 0.5;
+    var w = int(min(o.width, (window.innerHeight - 160) / a));
+    var h = int(w * a);
+    resizeCanvas(w, h);
+  }
+
+  function getY(x) {
+    // Slope region: parabolic, offset so derivative is non-zero at start
+    if (x < slopeEndX) {
+      var offset = 30;
+      var dx = (x - slopeStartX + offset) / (slopeEndX - slopeStartX + offset);
+      dx = constrain(dx, 0, 1);
+      return slopeStartY + (slopeEndY - slopeStartY) * dx * dx;
+    }
+    // Flat region
+    return slopeEndY;
+  }
+
+  function resetExperiment() {
+    slopeStartY = 380 - rangeC.value() * 50;  // height in pixels (50px = 1m)
+    rangeAValue = rangeA.value();
+    rangeBValue = rangeB.value();
+    rangeCValue = rangeC.value();
+
+    labelA.html("小车质量 " + rangeAValue + " kg");
+    labelB.html("木块阻力 " + rangeBValue + " N");
+    labelC.html("下滑高度 " + rangeCValue + " m");
+
+    // Build track
+    for (var i = 0; i <= trackMaxX; i++) {
+      trackY[i] = getY(i);
+    }
+
+    cartX = slopeStartX;
+    cartY = slopeStartY;
+    cartV = 0;
+    blockX = collisionX;
+    running = false;
+    finished = false;
+    checkA.checked(false);
+
+    for (var i = 0; i < traceMax; i++) {
+      traceX[i] = cartX;
+      traceY[i] = cartY;
+    }
+  }
+
+  function draw() {
+    if (touches.length > 1) return;
+
+    // Check for slider changes
+    if (rangeAValue != rangeA.value() || rangeBValue != rangeB.value() || rangeCValue != rangeC.value()) {
+      resetExperiment();
+      return;
+    }
+
+    background(240, 240, 255);
+    strokeWeight(1);
+    textSize(18);
+    push();
+    scale(width / 900);
+
+    // Physics update
+    if (checkA.checked() && !finished) {
+      running = true;
+      var dx = 2;
+      var nextY = trackY[round(cartX) + 1] || trackY[round(cartX)];
+      var prevY = trackY[round(cartX) - 1] || trackY[round(cartX)];
+      var dy = nextY - prevY;
+      var d = sqrt(dy * dy + dx * dx);
+
+      if (cartX < collisionX) {
+        var fallH = cartY - slopeStartY;
+        if (fallH < 0) fallH = 0;
+
+        if (cartX < slopeEndX) {
+          var vPE = sqrt(2 * 9.8 * fallH / 50);
+          cartV = max(vPE, max(dy / d * 2, 0.5));
+          cartX += cartV * 1.5 * dx / d;
+          cartY = getY(cartX);
+        } else if (cartX < collisionX) {
+          cartX += cartV * 1.5;
+          cartY = slopeEndY;
+        }
+
+        if (cartX >= collisionX) {
+          cartX = collisionX;
+          cartY = slopeEndY;
+        }
+      } else {
+        // After collision: push block
+        if (rangeBValue == 0) {
+          blockX = cartX;
+        } else {
+          var pixelH = slopeEndY - slopeStartY;
+          var slip = rangeAValue * 9.8 * pixelH / (5 * rangeBValue);
+          cartX += cartV * 1.5;
+          cartX = constrain(cartX, collisionX, collisionX + slip);
+          blockX = constrain(blockX, cartX, collisionX + slip);
+
+          var x0 = slip;
+          var v0 = sqrt(2 * 9.8 * pixelH / 50);
+          var x = (collisionX + slip) - cartX;
+          if (x0 > 0) cartV = sqrt(v0 * v0 * x / x0);
+          else cartV = 0;
+        }
+      }
+
+      // Update trace
+      for (var i = 1; i < traceMax; i++) {
+        traceX[i - 1] = traceX[i];
+        traceY[i - 1] = traceY[i];
+      }
+      traceX[traceMax - 1] = cartX;
+      traceY[traceMax - 1] = cartY;
+
+      // Check if stopped
+      if (cartV < 0.01 && cartX >= collisionX) {
+        finished = true;
+        running = false;
+      }
+    }
+
+    // Draw grid
+    stroke(220);
+    for (var i = 50; i < 900; i += 50) line(i, 0, i, 450);
+    for (var i = 50; i < 450; i += 50) line(0, i, 900, i);
+    stroke(180, 200, 255);
+    line(collisionX, 0, collisionX, 450);
+
+    // Draw track
+    noStroke();
+    fill(180);
+    beginShape();
+    for (var i = 0; i < trackMaxX; i++) vertex(i, trackY[i]);
+    vertex(trackMaxX, 450);
+    vertex(0, 450);
+    endShape(CLOSE);
+
+    stroke(0);
+    strokeWeight(2);
+    noFill();
+    beginShape();
+    for (var i = 0; i <= slopeEndX; i++) vertex(i, trackY[i]);
+    endShape();
+    // Flat surface line
+    line(slopeEndX, slopeEndY, trackMaxX, slopeEndY);
+
+    // Ruler marks on flat section
+    for (var i = collisionX; i < 900; i += 5) line(i, slopeEndY, i, slopeEndY + 7);
+    for (var i = collisionX; i < 900; i += 25) line(i, slopeEndY, i, slopeEndY + 14);
+    for (var i = collisionX; i < 900; i += 50) line(i, slopeEndY, i, slopeEndY + 21);
+
+    // Distance labels
+    fill(0);
+    noStroke();
+    textAlign(CENTER, TOP);
+    for (var i = collisionX; i < 900; i += 50) {
+      text(((i - collisionX) / 50).toFixed(1) + "m", i, slopeEndY + 25);
+    }
+
+    // Trace
+    if (checkA.checked() || finished) {
+      stroke(0, 150, 200, 80);
+      noFill();
+      beginShape();
+      for (var i = 0; i < traceMax; i++) {
+        vertex(traceX[i], traceY[i]);
+      }
+      endShape();
+    }
+
+    // Draw wooden block
+    var blockW = 20 * pow(rangeBValue / 10, 0.3);
+    var blockH = 18 * pow(rangeBValue / 10, 0.3);
+    fill(210, 160, 60);
+    stroke(0);
+    strokeWeight(1.5);
+    rect(blockX, slopeEndY - blockH, blockW, blockH, 3);
+
+    // Block label
+    fill(0);
+    noStroke();
+    textAlign(LEFT, BOTTOM);
+    text("阻力=" + rangeBValue + "N", blockX + blockW + 5, slopeEndY - blockH / 2);
+
+    // Draw cart
+    drawCart(cartX, cartY, atan2(trackY[round(min(cartX, trackMaxX - 1))] - trackY[round(max(cartX - 19, 0))], 20));
+
+    // Height indicator
+    stroke(0, 100, 200);
+    strokeWeight(1);
+    drawDashedLine(slopeStartX - 40, slopeStartY, slopeStartX + 40, slopeStartY);
+    drawDashedLine(slopeStartX - 40, slopeEndY, slopeStartX, slopeEndY);
+
+    // Height double arrow
+    var arrowX = slopeStartX - 25;
+    var arrowTop = slopeStartY;
+    var arrowBottom = slopeEndY;
+    stroke(0);
+    strokeWeight(1.5);
+    fill(0);
+    // Up arrow
+    line(arrowX, arrowBottom, arrowX, arrowTop);
+    triangle(arrowX, arrowTop, arrowX - 5, arrowTop + 8, arrowX + 5, arrowTop + 8);
+    // Down arrow
+    triangle(arrowX, arrowBottom, arrowX - 5, arrowBottom - 8, arrowX + 5, arrowBottom - 8);
+
+    // Height label
+    noStroke();
+    fill(0);
+    textAlign(RIGHT, CENTER);
+    var hMeters = ((slopeEndY - slopeStartY) / 50).toFixed(1);
+    text(hMeters + " m", slopeStartX - 35, (slopeStartY + slopeEndY) / 2);
+
+    // Block displacement if cart passed collision
+    if (blockX > collisionX + 1) {
+      noFill();
+      stroke(255, 100, 0);
+      strokeWeight(2);
+      var arrEndX = min(collisionX + (blockX - collisionX) * 1.1, 880);
+      line(collisionX, slopeEndY - blockH - 15, arrEndX, slopeEndY - blockH - 15);
+      // Arrowheads
+      triangle(arrEndX, slopeEndY - blockH - 15, arrEndX - 8, slopeEndY - blockH - 20, arrEndX - 8, slopeEndY - blockH - 10);
+
+      fill(255, 100, 0);
+      noStroke();
+      var distCm = ((blockX - collisionX) / 50 * 100).toFixed(0);
+      var distM = ((blockX - collisionX) / 50).toFixed(2);
+      var distLabel = distCm < 100 ? distCm + " cm" : distM + " m";
+      textAlign(CENTER, BOTTOM);
+      text(distLabel, (collisionX + arrEndX) / 2, slopeEndY - blockH - 20);
+    }
+
+    // Energy display when running/finished
+    if (running || finished) {
+      var h = (slopeEndY - slopeStartY) / 50;
+      var pe = rangeAValue * 9.8 * h;
+      var ke = 0.5 * rangeAValue * cartV * cartV;
+      fill(0);
+      noStroke();
+      textAlign(LEFT, TOP);
+      text("势能 Ep = " + pe.toFixed(1) + " J", 10, 10);
+      text("动能 Ek = " + ke.toFixed(1) + " J", 10, 30);
+      text("速度 v = " + (cartV).toFixed(2) + " m/s", 10, 50);
+    }
+
+    pop();
+  }
+
+  function drawCart(x, y, theta) {
+    push();
+    translate(x, y);
+    rotate(theta);
+    translate(-15, 0);
+    // Cart body
+    fill(100, 200, 255);
+    stroke(0);
+    strokeWeight(1);
+    rect(-15, -20, 30, 15, 3);
+    // Wheels
+    noStroke();
+    fill(40);
+    ellipse(-8, -5, 9, 9);
+    ellipse(8, -5, 9, 9);
+    // Mass label
+    fill(0);
+    noStroke();
+    textAlign(RIGHT, BOTTOM);
+    text(rangeAValue + " kg", 8, -28);
+    pop();
+  }
+
+  function drawDashedLine(x1, y1, x2, y2) {
+    var d = dist(x1, y1, x2, y2);
+    var steps = d / 8;
+    for (var i = 0; i < steps; i += 2) {
+      var t1 = i / steps;
+      var t2 = min((i + 1) / steps, 1);
+      line(lerp(x1, x2, t1), lerp(y1, y2, t1), lerp(x1, x2, t2), lerp(y1, y2, t2));
+    }
+  }
+  </script>
+</body>
+</html>
