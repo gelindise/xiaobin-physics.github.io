@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=10">
+  <title>熵 — 单摆的能量去哪了？ - 物理虚拟实验</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/0.9.0/p5.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/0.9.0/addons/p5.dom.min.js"></script>
+  <style>
+    .main-card { max-width: 900px; margin: 0 auto 24px; padding: 0 16px; }
+    .canvas-wrap { border-radius: 12px; padding: 4px; width: 100%; box-sizing: border-box; border: 1px solid #e2e8f0; position: relative; background: #fff; }
+    .controls-bar { display: flex; align-items: center; justify-content: center; padding: 12px 16px; gap: 18px; flex-wrap: wrap; background: #1a1a2e; border-radius: 0 0 12px 12px; border-top: 1px solid #333; color: #ccc; font-size: 13px; }
+    .controls-bar .ctrl-col { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+    .controls-bar label { color: #ccc; font-size: 12px; white-space: nowrap; }
+    .controls-bar input[type="range"] { width: 120px; accent-color: #8b5cf6; }
+    .btn { border: 2px solid #555; background: transparent; color: #aaa; padding: 6px 16px; border-radius: 6px; cursor: pointer; font-size: 13px; transition: all 0.2s; }
+    .btn:hover { border-color: #8b5cf6; color: #fff; }
+    .hint-text { color: #888; font-size: 12px; }
+    .section { padding: 1.5rem 2rem 0.5rem; }
+    .section h2 { font-size: 1.4rem; }
+    .formula-bar { max-width: 900px; margin: 0 auto 24px; padding: 0 16px; display: flex; gap: 12px; flex-wrap: wrap; }
+    .formula-item { flex: 1; min-width: 180px; background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 12px 16px; }
+    .formula-item .label { color: #64748b; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; display: block; margin-bottom: 4px; }
+    .formula-item .value { color: #e2e8f0; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <header class="header">
+    <div class="logo">物理虚拟实验</div>
+    <nav class="nav">
+      <a href="index.html">首页</a>
+      <a href="experiments.html">实验列表</a>
+    </nav>
+  </header>
+
+  <div class="section">
+    <h2>熵 — 单摆的能量去哪了？</h2>
+    <p style="color:#94a3b8;margin:0 0 16px 0;">单摆在空气中摆动时不断与空气分子碰撞，机械能转化为分子热运动动能。拖拽摆球释放，观察机械能如何分散为无规则热运动。</p>
+  </div>
+
+  <div class="main-card">
+    <div class="canvas-wrap">
+      <div id="myContainer"></div>
+    </div>
+    <div class="controls-bar">
+      <div class="ctrl-col">
+        <label id="labelA">空气分子数量</label>
+        <input type="range" id="rangeA" min="1" max="200" value="50">
+      </div>
+      <button class="btn" id="buttonRst">重置</button>
+      <span class="hint-text">拖拽红色摆球到高处释放 | 观察动能如何分散到分子中</span>
+    </div>
+  </div>
+
+  <div class="formula-bar">
+    <div class="formula-item">
+      <span class="label">热力学第二定律</span>
+      <span class="value">孤立系统的熵总是增加，机械能自发转化为内能的过程不可逆</span>
+    </div>
+    <div class="formula-item">
+      <span class="label">不可逆现象</span>
+      <span class="value">有序的宏观动能 → 无序的微观分子热运动，熵增过程不可自发逆转</span>
+    </div>
+    <div class="formula-item">
+      <span class="label">能量守恒</span>
+      <span class="value">总能量守恒，但可用能减少 — 热运动能量难以重新集中为机械能</span>
+    </div>
+  </div>
+
+  <script src="protect.js"></script>
+  <script>
+  // === 预计算三角函数表 ===
+  var dsin = [];
+  var dcos = [];
+  for (var i = 0; i < 360; i++) {
+    dsin.push(Math.sin(i * Math.PI / 180));
+    dcos.push(Math.cos(i * Math.PI / 180));
+  }
+
+  function mag(x, y) { return Math.sqrt(x * x + y * y); }
+
+  function getAngle(x, y) {
+    var deg = Math.atan2(y, x) * 180 / Math.PI;
+    return ((deg % 360) + 360) % 360;
+  }
+
+  function mod(x, y) {
+    if (x < 0) x += y * (Math.ceil(Math.abs(x) / y) + 1);
+    var c = Math.floor(x / y);
+    return x - y * c;
+  }
+
+  function contain(x, y, x1, y1, w1, h1) {
+    if (x < x1 || x > (x1 + w1) || y < y1 || y > (y1 + h1)) return false;
+    return true;
+  }
+
+  function drawButtonDrag() {
+    drawButtonDetail("拖拽");
+  }
+
+  function drawButtonDetail(text) {
+    push();
+    var bx = width - 160, by = height - 60;
+    fill(255, 255, 255, 200);
+    stroke(128);
+    strokeWeight(2);
+    rect(bx, by, 150, 40, 8);
+    fill(0);
+    noStroke();
+    textAlign(CENTER, CENTER);
+    textSize(14);
+    text(text, bx + 75, by + 20);
+    pop();
+  }
+
+  // === 主仿真代码 ===
+  var labelA, rangeA, buttonRst;
+  var minX = 0, maxX = 1000, minY = 0, maxY = 500;
+  var moles = 50;
+  var moleX = [], moleY = [], moleVx = [], moleVy = [], moleR = [], moleM = [];
+  var pendOX = 500, pendOY = 0, pendL = 400;
+  var pendT = 1.570795;
+  var pendX, pendY, pendVx, pendVy;
+  var dragged = false;
+  var pmx, pmy;
+
+  // Track initial release height for the dashed line
+  var initReleaseY = 400;
+
+  function setup() {
+    frameRate(40);
+    var o = select("#myContainer");
+    var a = 0.5;
+    var w = int(min(o.width, (window.innerHeight - 160) / a));
+    var h = int(w * a);
+    myCanvas = createCanvas(w, h);
+    myCanvas.parent("myContainer");
+    myCanvas.id("myP5Canvas");
+
+    labelA = select("#labelA");
+    labelA.html("空气分子数量");
+    rangeA = select("#rangeA");
+    buttonRst = select("#buttonRst");
+    buttonRst.mouseClicked(setup2);
+    buttonRst.html("重置");
+    setup2();
+  }
+
+  function windowResized() {
+    var o = select("#myContainer");
+    var a = 0.5;
+    var w = int(min(o.width, (window.innerHeight - 160) / a));
+    var h = int(w * a);
+    resizeCanvas(w, h);
+  }
+
+  function setup2() {
+    moles = rangeA.value();
+    for (var i = 0; i < 200; i++) {
+      moleX[i] = random(minX, maxX);
+      moleY[i] = random(minY, maxY);
+      var v = (i == 0) ? 0 : 0.2;
+      var t = random(TWO_PI);
+      moleVx[i] = v * cos(t);
+      moleVy[i] = v * sin(t);
+      moleR[i] = (i == 0) ? 30 : 8;
+      moleM[i] = (i == 0) ? 100 : 1;
+    }
+    pendT = 1.570795;
+    initReleaseY = pendOY + pendL * Math.sin(pendT);
+    setup3();
+  }
+
+  function setup3() {
+    pendX = pendOX + pendL * cos(pendT);
+    pendY = pendOY + pendL * sin(pendT);
+    pendVx = 0;
+    pendVy = 0;
+  }
+
+  function draw() {
+    if (touches.length > 1) return;
+    background(255);
+    strokeWeight(1);
+    textSize(20);
+    textAlign(LEFT, TOP);
+    push();
+    scale(width / 1000);
+
+    // Draw pivot support arcs
+    stroke(255, 128, 0);
+    for (var i = 1; i < 18; i++) {
+      var t = map(i, 0, 18, 0, PI);
+      var x1 = pendOX + 40 * cos(t);
+      var y1 = pendOY + 40 * sin(t);
+      var x2 = pendOX + 60 * cos(t);
+      var y2 = pendOY + 60 * sin(t);
+      line(x1, y1, x2, y2);
+    }
+
+    moles = rangeA.value();
+    if (!dragged) {
+      moleX[0] = pendX;
+      moleY[0] = pendY;
+      moleVx[0] = pendVx;
+      moleVy[0] = pendVy;
+      running();
+      pendX = moleX[0];
+      pendY = moleY[0];
+      pendVx = moleVx[0];
+      pendVy = moleVy[0];
+    }
+
+    var gravityY = 0.2;
+    var tensionX = 0, tensionY = 0;
+    var l = dist(pendOX, pendOY, pendX, pendY);
+    var theta = atan2(pendY - pendOY, pendX - pendOX);
+
+    if (!dragged) {
+      if (l > pendL) {
+        var tension = gravityY * sin(theta) * (l - pendL);
+        tensionX = -tension * cos(theta);
+        tensionY = -tension * sin(theta);
+      }
+      var centri = mag(pendVx, pendVy) * mag(pendVx, pendVy) / l;
+      var centriX = -centri * cos(theta);
+      var centriY = -centri * sin(theta);
+      pendVx += tensionX + centriX;
+      pendVy += tensionY + centriY + gravityY;
+      pendX += pendVx;
+      pendY += pendVy;
+    }
+
+    var x = pendOX + pendL * cos(theta);
+    var y = pendOY + pendL * sin(theta);
+
+    // === 初始高度的水平虚线 ===
+    stroke(0, 150, 0);
+    strokeWeight(1.5);
+    drawDashedLine2(0, initReleaseY, 1000, initReleaseY);
+
+    // Label for the dashed line
+    noStroke();
+    fill(0, 120, 0);
+    textAlign(LEFT, BOTTOM);
+    textSize(12);
+    text("初始释放高度", 10, initReleaseY - 4);
+
+    // Draw rod
+    stroke(0);
+    strokeWeight(2);
+    line(pendOX, pendOY, x, y);
+
+    // Draw pendulum bob (big red ball)
+    noStroke();
+    fill(255, 0, 0);
+    ellipse(x, y, 2 * moleR[0], 2 * moleR[0]);
+
+    // === 摆球实时速度显示 ===
+    var bobSpeed = mag(pendVx, pendVy);
+    fill(255, 0, 0);
+    noStroke();
+    textAlign(CENTER, BOTTOM);
+    textSize(13);
+    text("v=" + bobSpeed.toFixed(2), x, y - moleR[0] - 6);
+
+    // Draw air molecules
+    noStroke();
+    for (var i = 1; i < moles; i++) {
+      fill(64, 64, 255);
+      ellipse(moleX[i], moleY[i], moleR[i], moleR[i]);
+    }
+
+    // === 分子平均速度显示 ===
+    var avgSpeed = 0;
+    var count = 0;
+    for (var i = 1; i < moles; i++) {
+      avgSpeed += mag(moleVx[i], moleVy[i]);
+      count++;
+    }
+    avgSpeed = count > 0 ? avgSpeed / count : 0;
+
+    fill(0);
+    noStroke();
+    textAlign(LEFT, TOP);
+    textSize(13);
+    text("摆球速度: " + bobSpeed.toFixed(2) + " px/frame", 10, 10);
+    text("分子平均速度: " + avgSpeed.toFixed(3) + " px/frame", 10, 28);
+    text("空气分子数量: " + moles, 10, 46);
+
+    pop();
+    drawButtonDrag();
+  }
+
+  function drawDashedLine2(x1, y1, x2, y2) {
+    var d = dist(x1, y1, x2, y2);
+    var steps = d / 12;
+    for (var i = 0; i < steps; i += 2) {
+      var t1 = i / steps;
+      var t2 = min((i + 1) / steps, 1);
+      line(lerp(x1, x2, t1), lerp(y1, y2, t1), lerp(x1, x2, t2), lerp(y1, y2, t2));
+    }
+  }
+
+  function running() {
+    var n = moles;
+    for (var i = 0; i < n - 1; i++) {
+      for (var j = i + 1; j < n; j++) {
+        var pix = moleX[i] + moleVx[i];
+        var piy = moleY[i] + moleVy[i];
+        var pjx = moleX[j] + moleVx[j];
+        var pjy = moleY[j] + moleVy[j];
+        if (abs(moleX[i] - moleX[j]) < (moleR[i] + moleR[j]) &&
+            abs(moleY[i] - moleY[j]) < (moleR[i] + moleR[j])) {
+          if (dist(moleX[i], moleY[i], moleX[j], moleY[j]) < (moleR[i] + moleR[j]) &&
+              dist(moleX[i], moleY[i], moleX[j], moleY[j]) > dist(pix, piy, pjx, pjy)) {
+            var vcx = (moleM[i] * moleVx[i] + moleM[j] * moleVx[j]) / (moleM[i] + moleM[j]);
+            var vcy = (moleM[i] * moleVy[i] + moleM[j] * moleVy[j]) / (moleM[i] + moleM[j]);
+            var vcix = moleVx[i] - vcx;
+            var vciy = moleVy[i] - vcy;
+            var vcjx = moleVx[j] - vcx;
+            var vcjy = moleVy[j] - vcy;
+            var vci = mag(vcix, vciy);
+            var vcj = mag(vcjx, vcjy);
+            var aci = getAngle(vcix, vciy);
+            var acj = getAngle(vcjx, vcjy);
+            var aij = getAngle(moleX[j] - moleX[i], moleY[j] - moleY[i]);
+            var aji = getAngle(moleX[i] - moleX[j], moleY[i] - moleY[j]);
+            aci = mod(2 * aij + 180 - aci, 360);
+            acj = mod(2 * aji + 180 - acj, 360);
+            moleVx[i] = vci * dcos[Math.floor(aci)];
+            moleVy[i] = vci * dsin[Math.floor(aci)];
+            moleVx[j] = vcj * dcos[Math.floor(acj)];
+            moleVy[j] = vcj * dsin[Math.floor(acj)];
+            moleVx[i] += vcx;
+            moleVy[i] += vcy;
+            moleVx[j] += vcx;
+            moleVy[j] += vcy;
+          }
+        }
+      }
+    }
+    for (var i = 0; i < n; i++) {
+      moleX[i] += moleVx[i];
+      moleY[i] += moleVy[i];
+      if (moleX[i] < minX + moleR[i]) moleVx[i] = abs(moleVx[i]);
+      if (moleX[i] > maxX - moleR[i]) moleVx[i] = -abs(moleVx[i]);
+      if (moleY[i] < minY + moleR[i]) moleVy[i] = abs(moleVy[i]);
+      if (moleY[i] > maxY - moleR[i]) moleVy[i] = -abs(moleVy[i]);
+    }
+  }
+
+  function touchStarted() {
+    if (!contain(mouseX, mouseY, 0, 0, width, height)) return;
+    if (touches.length > 1) return;
+    dragged = true;
+    return false;
+  }
+
+  function touchMoved() {
+    if (touches.length > 1) return;
+    if (dragged) {
+      pendT = atan2(mouseY * 1000 / width - pendOY, mouseX * 1000 / width - pendOX);
+      pendT = constrain(pendT, 0, PI);
+      initReleaseY = pendOY + pendL * sin(pendT);
+      setup3();
+      return false;
+    }
+  }
+
+  function touchEnded() {
+    if (dragged) {
+      initReleaseY = pendY;
+    }
+    dragged = false;
+  }
+
+  function mouseDragged() {
+    if (dragged) {
+      pendT = atan2(mouseY * 1000 / width - pendOY, mouseX * 1000 / width - pendOX);
+      pendT = constrain(pendT, 0, PI);
+      initReleaseY = pendOY + pendL * sin(pendT);
+      setup3();
+      return false;
+    }
+  }
+
+  function mouseReleased() {
+    if (dragged) {
+      initReleaseY = pendY;
+    }
+    dragged = false;
+  }
+  </script>
+</body>
+</html>
