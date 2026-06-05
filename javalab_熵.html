@@ -47,7 +47,7 @@
     <div class="controls-bar">
       <div class="ctrl-col">
         <label id="labelA">空气分子数量</label>
-        <input type="range" id="rangeA" min="1" max="200" value="40">
+        <input type="range" id="rangeA" min="0" max="200" value="80">
       </div>
       <button class="btn" id="buttonRst">重置</button>
       <span class="hint-text">拖拽红色摆球释放 | 观察能量转化与耗散</span>
@@ -141,10 +141,11 @@
 
   function setup2() {
     moles = rangeA.value();
+    labelA.html(moles == 0 ? "空气分子：0（机械能守恒）" : "空气分子：" + moles);
     for (var i = 0; i < 200; i++) {
       moleX[i] = random(minX, maxX);
       moleY[i] = random(minY, maxY);
-      var v = (i == 0) ? 0 : 0.2;
+      var v = (i == 0) ? 0 : 0.5;
       var t = random(TWO_PI);
       moleVx[i] = v * cos(t);
       moleVy[i] = v * sin(t);
@@ -153,6 +154,7 @@
     }
     pendT = 1.570795;
     initReleaseY = pendOY + pendL * Math.sin(pendT);
+    energyBarMax = 100 * 0.2 * (maxY - initReleaseY);
     setup3();
   }
 
@@ -184,6 +186,7 @@
     }
 
     moles = rangeA.value();
+    labelA.html(moles == 0 ? "空气分子：0（机械能守恒）" : "空气分子：" + moles);
 
     // Pendulum physics (only when not being dragged)
     if (!dragged) {
@@ -231,10 +234,7 @@
       internalEnergy += 0.5 * moleM[i] * (moleVx[i] * moleVx[i] + moleVy[i] * moleVy[i]);
     }
 
-    // Track max for bar scaling
-    var totalE = mechEnergy + internalEnergy;
-    if (totalE > energyBarMax * 1.1) energyBarMax = totalE;
-    if (energyBarMax < 100) energyBarMax = 2000;
+    // energyBarMax stays fixed at release value — bars shrink as mech energy dissipates
 
     // === 初始高度的水平虚线 ===
     stroke(0, 150, 0, 180);
@@ -282,17 +282,23 @@
     fill(255, 255, 255, 220);
     stroke(200);
     strokeWeight(0.8);
-    rect(5, 5, 195, 75, 5);
+    rect(5, 5, 210, 80, 5);
     noStroke();
-    fill(0);
     textAlign(LEFT, TOP);
     textSize(12);
     text("摆球速度: " + bobSpeed.toFixed(2), 10, 10);
-    text("分子平均速度: " + (moles > 1 ? (function(){
-      var s = 0; for (var i = 1; i < moles; i++) s += mag(moleVx[i], moleVy[i]);
-      return (s / (moles - 1)).toFixed(3);
-    })() : "0.000"), 10, 28);
-    text("空气分子: " + moles + " 个", 10, 46);
+    if (moles == 0) {
+      fill(0, 140, 60);
+      text("机械能守恒（无空气阻力）", 10, 28);
+    } else {
+      fill(200, 80, 0);
+      text("机械能 → 分子内能（耗散中）", 10, 28);
+    }
+    fill(0);
+    var avgV = 0;
+    for (var i = 1; i < moles; i++) avgV += mag(moleVx[i], moleVy[i]);
+    if (moles > 1) avgV /= (moles - 1);
+    text("分子平均速度: " + avgV.toFixed(3), 10, 46);
     text("机械能: " + mechEnergy.toFixed(1) + "  内能: " + internalEnergy.toFixed(1), 10, 64);
 
     pop();
@@ -356,13 +362,26 @@
     drawBar(barX + 2 * (barW + 10), mechEnergy, "机械能", [140, 60, 200], refMax);
     drawBar(barX + 3 * (barW + 10), internalEnergy, "内能U", [230, 100, 30], refMax);
 
+    // Status indicator
+    noStroke();
+    if (moles == 0) {
+      fill(0, 140, 60);
+      textAlign(CENTER, TOP);
+      textSize(12);
+      text("机械能守恒", px + pw / 2, barBase + 33);
+    } else {
+      fill(200, 80, 0);
+      textAlign(CENTER, TOP);
+      textSize(12);
+      text("机械能耗散中", px + pw / 2, barBase + 33);
+    }
+
     // Total energy indicator
     var totalE = mechEnergy + internalEnergy;
-    noStroke();
     fill(100);
     textAlign(CENTER, TOP);
     textSize(10);
-    text("参考上限: " + refMax.toFixed(0) + "  总能量: " + totalE.toFixed(0), px + pw / 2, barBase + 32);
+    text("参考: " + refMax.toFixed(0) + "  总能量: " + totalE.toFixed(0), px + pw / 2, barBase + 50);
   }
 
   function drawDashedLine2(x1, y1, x2, y2) {
@@ -445,26 +464,29 @@
     return false;
   }
 
-  function mouseDragged() {
-    if (dragged) {
-      pendT = atan2(mouseY * 1000 / width - pendOY, mouseX * 1000 / width - pendOX);
-      pendT = constrain(pendT, 0.05, PI - 0.05);
-      initReleaseY = pendOY + pendL * sin(pendT);
-      energyBarMax = 100 * 0.2 * (maxY - pendOY - pendL * sin(pendT));
-      if (energyBarMax < 500) energyBarMax = 2000;
-      setup3();
-      return false;
-    }
+  function onDragMove() {
+    pendT = atan2(mouseY * 1000 / width - pendOY, mouseX * 1000 / width - pendOX);
+    pendT = constrain(pendT, 0.05, PI - 0.05);
+    setup3();
+    initReleaseY = pendY;
+    energyBarMax = max(20 * (maxY - pendY), 500);
+    return false;
   }
 
-  function mouseReleased() {
-    if (dragged) {
-      initReleaseY = pendY;
-      energyBarMax = 100 * 0.2 * (maxY - pendOY - pendL * sin(pendT));
-      if (energyBarMax < 500) energyBarMax = 2000;
-    }
+  function onDragEnd() {
+    initReleaseY = pendY;
+    energyBarMax = max(20 * (maxY - pendY), 500);
     dragged = false;
   }
+
+  function mousePressed() {
+    if (!contain(mouseX, mouseY, 0, 0, width, height)) return;
+    dragged = true;
+    return false;
+  }
+
+  function mouseDragged() { if (dragged) return onDragMove(); }
+  function mouseReleased() { if (dragged) onDragEnd(); }
 
   function touchStarted() {
     if (!contain(mouseX, mouseY, 0, 0, width, height)) return;
@@ -473,27 +495,8 @@
     return false;
   }
 
-  function touchMoved() {
-    if (touches.length > 1) return;
-    if (dragged) {
-      pendT = atan2(mouseY * 1000 / width - pendOY, mouseX * 1000 / width - pendOX);
-      pendT = constrain(pendT, 0.05, PI - 0.05);
-      initReleaseY = pendOY + pendL * sin(pendT);
-      energyBarMax = 100 * 0.2 * (maxY - pendOY - pendL * sin(pendT));
-      if (energyBarMax < 500) energyBarMax = 2000;
-      setup3();
-      return false;
-    }
-  }
-
-  function touchEnded() {
-    if (dragged) {
-      initReleaseY = pendY;
-      energyBarMax = 100 * 0.2 * (maxY - pendOY - pendL * sin(pendT));
-      if (energyBarMax < 500) energyBarMax = 2000;
-    }
-    dragged = false;
-  }
+  function touchMoved() { if (touches.length > 1) return; if (dragged) return onDragMove(); }
+  function touchEnded() { if (dragged) onDragEnd(); }
   </script>
 </body>
 </html>
