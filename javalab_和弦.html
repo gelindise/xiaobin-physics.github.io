@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=10">
+  <title>和弦 — 纯律与十二平均律 - 物理虚拟实验</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/0.9.0/p5.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/0.9.0/addons/p5.dom.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/0.9.0/addons/p5.sound.min.js"></script>
+  <style>
+    .main-card { max-width: 900px; margin: 0 auto 24px; padding: 0 16px; }
+    .canvas-wrap { border-radius: 12px; padding: 4px; width: 100%; box-sizing: border-box; border: 1px solid #e2e8f0; position: relative; background: #fff; }
+    .controls-bar { display: flex; align-items: center; justify-content: center; padding: 10px 16px; gap: 20px; flex-wrap: wrap; background: #1a1a2e; border-radius: 0 0 12px 12px; border-top: 1px solid #333; }
+    .controls-bar .hint-text { color: #888; font-size: 12px; }
+    .section { padding: 1.5rem 2rem 0.5rem; }
+    .section h2 { font-size: 1.4rem; }
+    .formula-bar { max-width: 900px; margin: 0 auto 24px; padding: 0 16px; display: flex; gap: 12px; flex-wrap: wrap; }
+    .formula-item { flex: 1; min-width: 180px; background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 12px 16px; }
+    .formula-item .label { color: #64748b; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; display: block; margin-bottom: 4px; }
+    .formula-item .value { color: #e2e8f0; font-size: 13px; }
+    /* Radio button styling */
+    #radioA { display: flex; gap: 16px; }
+    #radioA label { color: #ccc; font-size: 13px; cursor: pointer; display: flex; align-items: center; gap: 6px; }
+    #radioA input[type="radio"] { accent-color: #8b5cf6; }
+  </style>
+</head>
+<body>
+  <header class="header">
+    <div class="logo">物理虚拟实验</div>
+    <nav class="nav">
+      <a href="index.html">首页</a>
+      <a href="experiments.html">实验列表</a>
+    </nav>
+  </header>
+
+  <div class="section">
+    <h2>和弦 — 纯律与十二平均律</h2>
+    <p style="color:#94a3b8;margin:0 0 16px 0;">探索音程的协和与不协和。同时按下多个琴键聆听和弦，观察驻波图形的叠加与拍频现象。</p>
+  </div>
+
+  <div class="main-card">
+    <div class="canvas-wrap">
+      <div id="myContainer"></div>
+    </div>
+    <div class="controls-bar">
+      <div id="radioA"></div>
+      <span class="hint-text">点击琴键演奏 | 可同时按下多个琴键构成和弦</span>
+    </div>
+  </div>
+
+  <div class="formula-bar">
+    <div class="formula-item">
+      <span class="label">纯律频率比</span>
+      <span class="value">大三度 Do:Mi = 4:5 &nbsp;|&nbsp; 纯五度 Do:Sol = 2:3 &nbsp;|&nbsp; 八度 Do:Do' = 1:2</span>
+    </div>
+    <div class="formula-item">
+      <span class="label">十二平均律</span>
+      <span class="value">每个半音 = 2<sup>1/12</sup> ≈ 1.05946，八度均分为12个半音</span>
+    </div>
+    <div class="formula-item">
+      <span class="label">协和与不协和</span>
+      <span class="value">简单整数比 → 驻波节点对齐 → 协和；反之产生拍频 → 不协和</span>
+    </div>
+  </div>
+
+  <script src="protect.js"></script>
+  <script>
+  // ---- hit test ----
+  function contain(x, y, x1, y1, w1, h1) {
+    if (x < x1) return false;
+    if (x > (x1 + w1)) return false;
+    if (y < y1) return false;
+    if (y > (y1 + h1)) return false;
+    return true;
+  }
+
+  // ---- state ----
+  var radioA;
+  var envelope;
+  var noteMax = 38;
+  var notePressed = [];
+  // noteColor: 255 = white piano key, 0 = black piano key
+  var noteColor = [255,0,255,0,255,255,0,255,0,255,0,255,255,0,255,0,255,255,0,255,0,255,0,255,255,0,255,0,255,255,0,255,0,255,0,255,255,0];
+  var noteX = [];
+  var noteY = 0.2;
+  var noteW = [];
+  var noteH = [];
+  var colorNote = ["#000000","#880000","#FF0000","#FF8800","#BBBB00","#88FF00","#008888","#0000FF","#8800FF","#FF00FF","#AA66AA","#888888"];
+  var osc = [];
+  var noteNumber = [48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,74,75,76,77,78,79,80,81,82,83,84,85];
+  var justIntonation = [132,140.5,148.5,158.4,165,176,185.625,198,211.2,220,234.6666665,247.5,264,281,297,316.8,330,352,371.25,396,422.4,440,469.333333,495,528,562,594,633.6,660,704,742.5,792,844.8,880,938.666666,990,1056,1124];
+  var equalTemperament = [130.8127827,138.5913155,146.832384,155.5634919,164.8137785,174.6141157,184.9972114,195.997718,207.6523488,220,233.0818808,246.9416506,261.6255653,277.182631,293.6647679,311.1269837,329.6275569,349.2282314,369.9944227,391.995436,415.3046976,440,466.1637615,493.8833013,523.2511306,554.365262,587.3295358,622.2539674,659.2551138,698.4564629,739.9888454,783.990872,830.6093952,880,932.327523,987.7666025,1046.502261,1108.730524];
+  var sNote = ["C3","","D3","","E3","F3","","G3","","A3","","B3","C4","","D4","","E4","F4","","G4","","A4","","B4","C5","","D5","","E5","F5","","G5","","A5","","B5","C6",""];
+  var graphMax = 200;
+  var graphY = [];
+  var touchB = false;
+
+  function setup() {
+    frameRate(50);
+    var o = select("#myContainer");
+    var a = 0.4;
+    var w = int((o.width > (window.innerHeight - 160) / a) ? (window.innerHeight - 160) / a : o.width);
+    var h = int(w * a);
+    myCanvas = createCanvas(w, h);
+    myCanvas.parent("myContainer");
+    myCanvas.id("myP5Canvas");
+
+    radioA = createRadio("radioA");
+    radioA.option("纯律 (Just Intonation)", "justIntonation");
+    radioA.option("十二平均律 (Equal Temperament)", "equalTemperament");
+    radioA.parent("radioA");
+    radioA.value("justIntonation");
+    radioA.changed(setup2);
+
+    var loc = 0;
+    for (var i = 0; i < noteMax; i++) {
+      notePressed[i] = false;
+      noteX[i] = map(loc, 0, 22, 0.001, 0.999);
+      if (noteColor[i] == 255) {
+        loc++;
+        noteW[i] = 1 / 22;
+        noteH[i] = 0.198;
+      } else {
+        noteX[i] -= 0.016;
+        noteW[i] = 0.032;
+        noteH[i] = 0.12;
+      }
+    }
+
+    for (var i = 0; i < noteMax; i++) {
+      osc[i] = new p5.SinOsc();
+    }
+
+    envelope = new p5.Env();
+    envelope.setADSR(0.001, 1, 0.5, 3);
+    envelope.setRange(0.5, 0);
+    setup2();
+  }
+
+  function setup2() {
+    for (var i = 0; i < noteMax; i++) {
+      osc[i].freq((radioA.value() == "justIntonation") ? justIntonation[i] : equalTemperament[i]);
+    }
+    notePlay();
+    for (var i = 0; i < noteMax; i++) {
+      graphY[i] = [];
+      var baseFreq = (radioA.value() == "justIntonation") ? justIntonation[0] : equalTemperament[0];
+      var freq = (radioA.value() == "justIntonation") ? justIntonation[i] : equalTemperament[i];
+      for (var x = 0; x < graphMax; x++) {
+        graphY[i][x] = -sin(map(x, 0, graphMax - 1, -1.05 * TWO_PI, 1.05 * TWO_PI) * freq / baseFreq);
+      }
+    }
+  }
+
+  function windowResized() {
+    var o = select("#myContainer");
+    var a = 0.4;
+    var w = int((o.width > (window.innerHeight - 160) / a) ? (window.innerHeight - 160) / a : o.width);
+    var h = int(w * a);
+    resizeCanvas(w, h);
+  }
+
+  function buttonAction() {
+    for (var i = 0; i < noteMax; i++) {
+      if (noteColor[i] == 0) {
+        if (contain(mouseX, mouseY, width * noteX[i], width * noteY, width * noteW[i], width * noteH[i])) {
+          notePressed[i] = notePressed[i] ? false : true;
+          if (notePressed[i]) { osc[i].start(); notePlay(); }
+          else osc[i].stop(0.5);
+          return;
+        }
+      }
+    }
+    for (var i = 0; i < noteMax; i++) {
+      if (noteColor[i] == 255) {
+        if (contain(mouseX, mouseY, width * noteX[i], width * noteY, width * noteW[i], width * noteH[i])) {
+          notePressed[i] = notePressed[i] ? false : true;
+          if (notePressed[i]) { osc[i].start(); notePlay(); }
+          else osc[i].stop(0);
+          return;
+        }
+      }
+    }
+  }
+
+  function draw() {
+    if (touches.length > 1) return;
+    if (mouseIsPressed) {
+      if (contain(mouseX, mouseY, 0, 0, width, height)) {
+        if (!touchB) { buttonAction(); }
+        touchB = true;
+      }
+    } else {
+      touchB = false;
+    }
+
+    background(255);
+    strokeWeight(width * 0.001);
+    textSize(width * 0.02);
+    textAlign(CENTER, CENTER);
+
+    // Waveform area background
+    noStroke();
+    fill(242);
+    rect(0, 0, width, width * 0.18);
+    stroke(128);
+    line(0, width * 0.09, width, width * 0.09);
+
+    // Draw waveforms for pressed notes
+    noFill();
+    for (var i = 0; i < noteMax; i++) {
+      if (notePressed[i]) {
+        stroke(colorNote[i % 12]);
+        beginShape();
+        for (var x = 0; x < graphMax; x++) {
+          curveVertex(map(x, 0, graphMax - 1, 0, width),
+            map(graphY[i][x], -1, 1, width * 0.02, width * 0.16));
+        }
+        endShape();
+      }
+    }
+
+    // Draw beat dots (where multiple pressed notes cross zero together)
+    fill(0);
+    noStroke();
+    for (var x = 0; x < graphMax - 1; x++) {
+      var crossCount = 0;
+      for (var i = 0; i < noteMax; i++) {
+        if (notePressed[i]) {
+          if (graphY[i][x] * graphY[i][x + 1] <= 0) crossCount++;
+        }
+      }
+      if (crossCount > 1) {
+        // Find interpolated zero-crossing position
+        var cx = 0, found = false;
+        for (var k = 0; k < noteMax; k++) {
+          if (notePressed[k] && graphY[k][x] * graphY[k][x + 1] <= 0) {
+            cx = map(map(0, graphY[k][x], graphY[k][x + 1], x, x + 1), 0, graphMax - 1, 0, width);
+            found = true;
+            break;
+          }
+        }
+        if (found) {
+          ellipse(cx, map(0, -1, 1, width * 0.02, width * 0.16), width * 0.006, width * 0.006);
+        }
+      }
+    }
+
+    // Draw piano keys (black keys first, then white keys overlay)
+    for (var i = 0; i < noteMax; i++) if (noteColor[i] == 255) noteDraw(i);
+    for (var i = 0; i < noteMax; i++) if (noteColor[i] == 0) noteDraw(i);
+  }
+
+  function noteDraw(i) {
+    if (noteColor[i] == 255) { noFill(); stroke(0); }
+    else { fill(0); stroke(0); }
+    rect(width * noteX[i], width * noteY, width * noteW[i], width * noteH[i], 0, 0, width * 0.005, width * 0.005);
+
+    fill(211);
+    noStroke();
+    text(sNote[i], width * (noteX[i] + 0.5 * noteW[i]), width * (noteY + 0.14));
+
+    if (notePressed[i]) {
+      fill(colorNote[i % 12]);
+      noStroke();
+      if (noteColor[i] == 0) ellipse(width * (noteX[i] + 0.5 * noteW[i]), width * (noteY + 0.09), width * 0.03, width * 0.03);
+      else ellipse(width * (noteX[i] + 0.5 * noteW[i]), width * (noteY + 0.17), width * 0.03, width * 0.03);
+    }
+  }
+
+  function notePlay() {
+    for (var i = 0; i < noteMax; i++) {
+      if (notePressed[i]) { envelope.play(osc[i], 0, 0.1); }
+    }
+  }
+  </script>
+</body>
+</html>
