@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=10">
+  <title>棱镜色散 — 光的折射与光谱 - 物理虚拟实验</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/0.9.0/p5.min.js"></script>
+  <style>
+    .main-card { max-width: 900px; margin: 0 auto 24px; padding: 0 16px; }
+    .canvas-wrap { border-radius: 12px; padding: 4px; width: 100%; box-sizing: border-box; border: 1px solid #e2e8f0; position: relative; background: #000; }
+    .controls-bar { display: flex; align-items: center; justify-content: center; padding: 10px 16px; gap: 24px; flex-wrap: wrap; background: #1a1a2e; border-radius: 0 0 12px 12px; border-top: 1px solid #333; }
+    .ctrl-group { display: flex; align-items: center; gap: 8px; font-size: 14px; color: #ccc; }
+    .ctrl-group input[type="range"] { width: 120px; accent-color: #8b5cf6; }
+    .shape-btn { border: 2px solid #555; background: transparent; color: #ccc; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; transition: all 0.2s; }
+    .shape-btn.active { border-color: #8b5cf6; color: #fff; background: rgba(139,92,246,0.15); }
+    .shape-btn:hover { border-color: #8b5cf6; }
+    .section { padding: 1.5rem 2rem 0.5rem; }
+    .section h2 { font-size: 1.4rem; }
+  </style>
+</head>
+<body>
+  <header class="header">
+    <div class="logo">物理虚拟实验</div>
+    <nav class="nav">
+      <a href="index.html">首页</a>
+      <a href="experiments.html">实验列表</a>
+    </nav>
+  </header>
+
+  <div class="section">
+    <h2>棱镜色散 — 光的折射与光谱</h2>
+    <p style="color:#94a3b8;margin:0 0 16px 0;">白光通过不同形状的透明介质发生色散，分解为七色光谱。选择形状观察折射与色散现象。</p>
+  </div>
+
+  <div class="main-card">
+    <div class="canvas-wrap">
+      <div id="myContainer"></div>
+    </div>
+    <div class="controls-bar">
+      <div class="ctrl-group" id="shapeButtons">
+        <button class="shape-btn active" data-shape="triangle">△ 三角形</button>
+        <button class="shape-btn" data-shape="square">□ 正方形</button>
+        <button class="shape-btn" data-shape="circle">○ 圆形</button>
+      </div>
+      <div class="ctrl-group">
+        <span id="labelA">光束角度</span>
+        <input type="range" id="rangeA" min="-30" max="30" value="0">
+      </div>
+    </div>
+  </div>
+
+  <div class="formula-bar">
+    <div class="formula-item">
+      <span class="label">折射定律（斯涅尔定律）</span>
+      <span class="value">n₁·sin(θ₁) = n₂·sin(θ₂)</span>
+    </div>
+    <div class="formula-item">
+      <span class="label">折射率</span>
+      <span class="value">红光 n≈1.51 &nbsp;→&nbsp; 紫光 n≈1.53</span>
+    </div>
+    <div class="formula-item">
+      <span class="label">色散</span>
+      <span class="value">不同波长的光折射率不同 → 白光分解为光谱</span>
+    </div>
+  </div>
+
+  <script src="protect.js"></script>
+  <script>
+  (function() {
+    var currentShape = "triangle";
+    var shapes = {
+      triangle: {
+        name: "三角形棱镜",
+        vertices: [[500, 130], [370, 380], [630, 380]],
+        entryFace: [0, 1],
+        exitFace: [0, 2]
+      },
+      square: {
+        name: "正方形介质",
+        vertices: [[380, 160], [620, 160], [620, 340], [380, 340]],
+        entryFace: [3, 0],
+        exitFace: [1, 2]
+      },
+      circle: {
+        name: "圆形介质",
+        center: [500, 250],
+        radius: 105
+      }
+    };
+
+    var spectrumColors = [
+      [255, 50, 50],
+      [255, 140, 0],
+      [255, 220, 0],
+      [50, 200, 50],
+      [30, 120, 255],
+      [75, 0, 180],
+      [140, 50, 220]
+    ];
+    var nValues = [1.510, 1.514, 1.518, 1.522, 1.526, 1.529, 1.530];
+    var beamAngle = 0;
+
+    new p5(function(p) {
+      p.setup = function() {
+        var container = document.getElementById("myContainer");
+        var cw = container.offsetWidth || 800;
+        var ch = cw * 0.5;
+        var c = p.createCanvas(cw, ch);
+        c.parent("myContainer");
+        c.id("myP5Canvas");
+        p.frameRate(30);
+
+        document.querySelectorAll('.shape-btn').forEach(function(btn) {
+          btn.addEventListener('click', function() {
+            document.querySelectorAll('.shape-btn').forEach(function(b) { b.classList.remove('active'); });
+            this.classList.add('active');
+            currentShape = this.dataset.shape;
+          });
+        });
+
+        var rangeA = document.getElementById("rangeA");
+        if (rangeA) rangeA.addEventListener('input', function() {
+          beamAngle = parseInt(this.value) * Math.PI / 180;
+        });
+      };
+
+      p.draw = function() {
+        p.background(0);
+        var cw = p.width, ch = p.height;
+        var scale = cw / 1000;
+        p.push();
+        p.scale(scale);
+
+        renderShape();
+        renderRays();
+        renderLabels();
+        renderSpectrumBar();
+
+        p.pop();
+      };
+
+      function renderShape() {
+        var s = shapes[currentShape];
+        p.noStroke();
+
+        if (currentShape === "circle") {
+          var cx = s.center[0], cy = s.center[1], r = s.radius;
+          var grad = p.drawingContext.createRadialGradient(cx-20, cy-20, r*0.2, cx, cy, r);
+          grad.addColorStop(0, 'rgba(200,220,255,0.3)');
+          grad.addColorStop(0.7, 'rgba(150,180,220,0.15)');
+          grad.addColorStop(1, 'rgba(100,140,200,0.05)');
+          p.drawingContext.fillStyle = grad;
+          p.ellipse(cx, cy, r*2, r*2);
+          p.stroke(150, 180, 220, 80);
+          p.strokeWeight(1.5);
+          p.noFill();
+          p.ellipse(cx, cy, r*2, r*2);
+        } else {
+          var v = s.vertices;
+          var grad = p.drawingContext.createLinearGradient(
+            Math.min(v[0][0], v[3] ? v[3][0] : v[2][0]), 0,
+            Math.max(v[1][0], v[2][0]), 0
+          );
+          grad.addColorStop(0, 'rgba(180,200,240,0.2)');
+          grad.addColorStop(0.5, 'rgba(220,230,255,0.3)');
+          grad.addColorStop(1, 'rgba(180,200,240,0.15)');
+          p.drawingContext.fillStyle = grad;
+          p.beginShape();
+          for (var i = 0; i < v.length; i++) {
+            p.vertex(v[i][0], v[i][1]);
+          }
+          p.endShape(p.CLOSE);
+          p.stroke(150, 180, 220, 100);
+          p.strokeWeight(1.5);
+          p.noFill();
+          p.beginShape();
+          for (var i2 = 0; i2 < v.length; i2++) {
+            p.vertex(v[i2][0], v[i2][1]);
+          }
+          p.endShape(p.CLOSE);
+        }
+        p.noStroke();
+      }
+
+      function renderRays() {
+        var n_air = 1.0;
+        var entryPt, exitPt, entryNormal, exitNormal;
+        var s = shapes[currentShape];
+
+        if (currentShape === "triangle") {
+          var v = s.vertices;
+          var top = v[0], bl = v[1], br = v[2];
+          entryPt = [top[0] + (bl[0] - top[0]) * 0.55, top[1] + (bl[1] - top[1]) * 0.55];
+          entryNormal = normalOfLine(bl, top);
+          exitPt = [top[0] + (br[0] - top[0]) * 0.55, top[1] + (br[1] - top[1]) * 0.55];
+          exitNormal = normalOfLine(top, br);
+        } else if (currentShape === "square") {
+          var v2 = s.vertices;
+          var tl = v2[3], tr = v2[0], br2 = v2[1], bl2 = v2[2];
+          entryPt = [tl[0], (tl[1] + bl2[1]) / 2];
+          entryNormal = [-1, 0];
+          exitPt = [tr[0], (tr[1] + br2[1]) / 2];
+          exitNormal = [1, 0];
+        } else if (currentShape === "circle") {
+          var cx = s.center[0], cy = s.center[1], r = s.radius;
+          var cx2 = cx + r + 50;
+          var dx = cx2 - cx, dy = (cy + 10) - cy;
+          var entryAngle = p.atan2(dy, dx);
+          entryPt = [cx + r * p.cos(entryAngle), cy + r * p.sin(entryAngle)];
+          entryNormal = [p.cos(entryAngle), p.sin(entryAngle)];
+          var exitAngle = entryAngle + p.PI - 0.5;
+          exitPt = [cx + r * p.cos(exitAngle), cy + r * p.sin(exitAngle)];
+          exitNormal = [-p.cos(exitAngle), -p.sin(exitAngle)];
+        }
+
+        var srcX = 30;
+        var srcY = entryPt[1] + beamAngle * 300;
+
+        for (var w = 0; w < nValues.length; w++) {
+          var n = nValues[w];
+          var col = spectrumColors[w];
+
+          var dx1 = entryPt[0] - srcX;
+          var dy1 = entryPt[1] - srcY;
+          var theta1 = p.atan2(dy1, dx1);
+          var toNormal1 = signedAngle(entryNormal, theta1);
+          var sinTheta2 = n_air * p.sin(toNormal1) / n;
+          var theta2 = p.asin(p.constrain(sinTheta2, -1, 1));
+          var internalAngle = entryNormalAngle() + (entryNormal[0] > 0 ? theta2 : -theta2);
+          if (entryNormal[0] < 0 && entryNormal[1] < 0) internalAngle = entryNormalAngle() - theta2;
+
+          var internalAngleAbs = p.atan2(exitPt[1] - entryPt[1], exitPt[0] - entryPt[0]);
+          var theta_in = angleBetween(entryNormal, [p.cos(internalAngleAbs), p.sin(internalAngleAbs)]);
+          var sinTheta1_in = n * p.sin(theta_in);
+          if (p.abs(sinTheta1_in) > 1) continue;
+          var theta_out = p.asin(sinTheta1_in);
+
+          var toNormal2 = signedAngle(exitNormal, internalAngleAbs);
+          var sinTheta3 = n * p.sin(toNormal2) / n_air;
+
+          if (p.abs(sinTheta3) > 1) continue;
+          var theta3 = p.asin(p.constrain(sinTheta3, -1, 1));
+          var outAngle = exitNormalAngle() + (exitNormal[0] > 0 ? theta3 : -theta3);
+
+          var endX = exitPt[0] + 500 * p.cos(outAngle);
+          var endY = exitPt[1] + 500 * p.sin(outAngle);
+
+          p.stroke(col[0], col[1], col[2], 180);
+          p.strokeWeight(1.8);
+          // Incident ray
+          p.line(srcX, srcY, entryPt[0], entryPt[1]);
+          // Refracted inside
+          p.stroke(col[0], col[1], col[2], 100);
+          p.line(entryPt[0], entryPt[1], exitPt[0], exitPt[1]);
+          // Exit ray
+          p.stroke(col[0], col[1], col[2], 200);
+          p.line(exitPt[0], exitPt[1], endX, endY);
+        }
+
+        // White incident light
+        p.stroke(255, 255, 255, 220);
+        p.strokeWeight(3.5);
+        p.line(srcX, srcY, entryPt[0], entryPt[1]);
+        p.noStroke();
+
+        // Source glow
+        var whiteGlow = p.drawingContext.createRadialGradient(srcX, srcY, 0, srcX, srcY, 12);
+        whiteGlow.addColorStop(0, 'rgba(255,255,255,0.9)');
+        whiteGlow.addColorStop(1, 'rgba(255,255,255,0)');
+        p.drawingContext.fillStyle = whiteGlow;
+        p.ellipse(srcX, srcY, 24, 24);
+      }
+
+      function renderLabels() {
+        p.textSize(13);
+        p.textAlign(p.LEFT, p.CENTER);
+        p.fill(255);
+        p.noStroke();
+        var srcX = 30;
+        var s = shapes[currentShape];
+        var entryY = 250;
+        if (currentShape === "triangle") {
+          var v = s.vertices;
+          entryY = v[0][1] + (v[1][1] - v[0][1]) * 0.55;
+        } else if (currentShape === "square") {
+          entryY = 250;
+        } else {
+          entryY = 260;
+        }
+        p.text("白光", srcX + 16, entryY + beamAngle * 300 - 16);
+
+        // Refractive index label
+        p.textAlign(p.CENTER, p.TOP);
+        p.fill(180, 180, 200);
+        p.textSize(12);
+        var cxLabel = 500;
+        var cyLabel = currentShape === "circle" ? 370 : 400;
+        p.text("折射率 n ≈ 1.51 ~ 1.53", cxLabel, cyLabel);
+      }
+
+      function renderSpectrumBar() {
+        var barX = 700, barY = 430, barW = 240, barH = 8;
+        var steps = 60;
+        for (var i = 0; i < steps; i++) {
+          var t = i / (steps - 1);
+          var w = Math.floor(t * (nValues.length - 1));
+          var frac = t * (nValues.length - 1) - w;
+          var c1 = spectrumColors[Math.min(w, spectrumColors.length - 1)];
+          var c2 = spectrumColors[Math.min(w + 1, spectrumColors.length - 1)];
+          var r = p.lerp(c1[0], c2[0], frac);
+          var g = p.lerp(c1[1], c2[1], frac);
+          var b = p.lerp(c1[2], c2[2], frac);
+          p.fill(r, g, b);
+          p.noStroke();
+          p.rect(barX + i * (barW / steps), barY, barW / steps + 1, barH);
+        }
+        p.fill(200);
+        p.textSize(11);
+        p.textAlign(p.LEFT, p.TOP);
+        p.text("红", barX - 18, barY);
+        p.textAlign(p.RIGHT, p.TOP);
+        p.text("紫", barX + barW + 18, barY);
+      }
+
+      function normalOfLine(p1, p2) {
+        var dx = p2[0] - p1[0];
+        var dy = p2[1] - p1[1];
+        var len = p.sqrt(dx*dx + dy*dy);
+        return [-dy/len, dx/len];
+      }
+
+      function signedAngle(normal, angle) {
+        var na = p.atan2(normal[1], normal[0]);
+        var diff = angle - na;
+        return p.atan2(p.sin(diff), p.cos(diff));
+      }
+
+      function entryNormalAngle() {
+        var s = shapes[currentShape];
+        var n;
+        if (currentShape === "triangle") {
+          n = normalOfLine(s.vertices[1], s.vertices[0]);
+        } else if (currentShape === "square") {
+          n = [-1, 0];
+        } else {
+          var cx = s.center[0], cy = s.center[1], r = s.radius;
+          n = [p.cos(p.PI + 0.3), p.sin(p.PI + 0.3)];
+        }
+        return p.atan2(n[1], n[0]);
+      }
+
+      function exitNormalAngle() {
+        var s = shapes[currentShape];
+        var n;
+        if (currentShape === "triangle") {
+          n = normalOfLine(s.vertices[0], s.vertices[2]);
+        } else if (currentShape === "square") {
+          n = [1, 0];
+        } else {
+          n = [p.cos(0.5), p.sin(0.5)];
+        }
+        return p.atan2(n[1], n[0]);
+      }
+
+      function angleBetween(normal, dir) {
+        var na = p.atan2(normal[1], normal[0]);
+        var da = p.atan2(dir[1], dir[0]);
+        var d = da - na;
+        return p.atan2(p.sin(d), p.cos(d));
+      }
+
+      p.windowResized = function() {
+        var container = document.getElementById("myContainer");
+        var cw = container.offsetWidth || 800;
+        var ch = cw * 0.5;
+        p.resizeCanvas(cw, ch);
+      };
+    });
+  })();
+  </script>
+</body>
+</html>
