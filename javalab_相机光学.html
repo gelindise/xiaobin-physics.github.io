@@ -15,6 +15,13 @@
     .ctrl-group { display: flex; align-items: center; gap: 8px; font-size: 14px; color: #334155; }
     .ctrl-group input[type="range"] { width: 120px; accent-color: #3b82f6; }
     .ctrl-group input[type="checkbox"] { accent-color: #3b82f6; }
+    .formula-bar { max-width: 1100px; margin: 0 auto 24px; padding: 0 16px; display: flex; gap: 12px; flex-wrap: wrap; }
+    .formula-item { flex: 1; min-width: 180px; background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 14px 16px; }
+    .formula-item .label { color: #64748b; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; display: block; margin-bottom: 4px; }
+    .formula-item .value { color: #e2e8f0; font-size: 14px; font-weight: 500; }
+    .formula-item .value .ok   { color: #22c55e; }
+    .formula-item .value .warn { color: #eab308; }
+    .formula-item .value .bad  { color: #ef4444; }
     .section { padding: 1.5rem 2rem 0.5rem; }
     .section h2 { font-size: 1.4rem; }
   </style>
@@ -47,6 +54,14 @@
         <input type="range" id="rangeB" min="780" max="870" value="800">
       </div>
       <div class="ctrl-group">
+        <span id="labelC">调节焦距</span>
+        <input type="range" id="rangeC" min="50" max="200" value="100" step="1">
+      </div>
+      <div class="ctrl-group">
+        <span id="labelD">调节物距</span>
+        <input type="range" id="rangeD" min="-200" max="200" value="0" step="1">
+      </div>
+      <div class="ctrl-group">
         <input type="checkbox" id="checkA" checked>
         <label id="chalkA" for="checkA">窗户</label>
       </div>
@@ -57,18 +72,18 @@
     </div>
   </div>
 
-  <div class="formula-bar">
+  <div class="formula-bar" id="formulaBar">
     <div class="formula-item">
       <span class="label">透镜公式</span>
-      <span class="value">1/f = 1/u + 1/v</span>
+      <span class="value" id="lensFormulaValue">1/f = 1/u + 1/v</span>
     </div>
     <div class="formula-item">
-      <span class="label">光圈</span>
-      <span class="value">大光圈 = 更亮 + 更浅景深</span>
+      <span class="label">对焦状态</span>
+      <span class="value" id="focusStatusValue">等待调节...</span>
     </div>
     <div class="formula-item">
-      <span class="label">小孔成像</span>
-      <span class="value">极小光圈 → 无需透镜自动对焦</span>
+      <span class="label">弥散斑大小</span>
+      <span class="value" id="blurSizeValue">—</span>
     </div>
   </div>
 
@@ -129,9 +144,12 @@
     if (typeof match === 'undefined') { window.match = function(str, re) { return str.match(re); }; }
 
     // ===== Main simulation =====
-    let labelA, rangeA, labelB, rangeB, checkA, chalkA, checkB, chalkB;
+    let labelA, rangeA, labelB, rangeB, labelC, rangeC, labelD, rangeD, checkA, chalkA, checkB, chalkB;
     let backImage, windowImage, windowImageSrc, balloonImage, balloonImageSrc;
-    let objX = [117, 117, 500, 500];
+    let baseObjX = [117, 117, 500, 500];
+    let objX = [];
+    let focalLength = 100;
+    let objShift = 0;
     let objY = [55, 210, 125, 211];
     let rayT = [[4, 12], [-9, -1], [-4, 13], [-19, -4]];
     let rayBlur = [];
@@ -171,6 +189,16 @@
       rangeB = select("#rangeB");
       rangeB.input(setup2);
 
+      labelC = select("#labelC");
+      labelC.html("调节焦距");
+      rangeC = select("#rangeC");
+      rangeC.input(setup2);
+
+      labelD = select("#labelD");
+      labelD.html("调节物距");
+      rangeD = select("#rangeD");
+      rangeD.input(setup2);
+
       checkA = select("#checkA");
       chalkA = select("#chalkA");
       chalkA.html("窗户");
@@ -190,6 +218,9 @@
     }
 
     function setup2() {
+      focalLength = int(rangeC.value());
+      objShift = int(rangeD.value());
+
       let apertureFactor = rangeA.value() / 2;
       apertureY[0] = 150 - apertureFactor;
       apertureY[1] = 150 + apertureFactor;
@@ -226,6 +257,7 @@
         balloonImage.pixels[i + 2] = int(apertureFactor * balloonImage.pixels[i + 2]);
       }
       balloonImage.updatePixels();
+      updateFormulaDisplay();
     }
 
     function draw() {
@@ -297,14 +329,19 @@
       image(windowImage, 580, 260, 320, 240);
       image(balloonImage, 580, 260, 320, 240);
       pop();
+      updateFormulaDisplay();
     }
 
     function drawRays(drawing) {
+      for (let n = 0; n < baseObjX.length; n++) {
+        objX[n] = baseObjX[n] + objShift;
+      }
       for (let n = 0; n < objX.length; n++) {
         let resultY = [];
-        var ff = 100;
+        var ff = focalLength;
         let pp = lensX - objX[n];
         let ii = 1 / (1 / ff - 1 / pp);
+        if (ii <= 0 || pp <= 0) continue;
         var x1 = objX[n];
         var x2 = lensX;
         var x3 = filmX;
@@ -360,6 +397,45 @@
           }
         }
         rayBlur[n] = max(resultY) - min(resultY);
+      }
+    }
+
+    function updateFormulaDisplay() {
+      let u1 = lensX - (baseObjX[0] + objShift);
+      let u2 = lensX - (baseObjX[2] + objShift);
+      let v = filmX - lensX;
+      let f = focalLength;
+      let invTarget = 1 / f;
+      let invActual1 = u1 > 0 ? 1 / u1 + 1 / v : 0;
+      let invActual2 = u2 > 0 ? 1 / u2 + 1 / v : 0;
+      let delta1 = invTarget - invActual1;
+      let eps = 0.0005;
+
+      select("#lensFormulaValue").html(
+        "f = " + nf(f, 1, 0) + " mm, &nbsp;u₁ = " + nf(u1, 1, 0) + " mm, &nbsp;v = " + nf(v, 1, 0) + " mm"
+      );
+
+      let statusStr;
+      if (abs(delta1) < eps) {
+        statusStr = "<span class='ok'>✓ 合焦</span>";
+      } else if (abs(delta1) < 5 * eps) {
+        statusStr = "<span class='warn'>∼ 轻微离焦</span> Δ=" + nf(delta1, 1, 5);
+      } else if (u1 <= 0) {
+        statusStr = "<span class='bad'>✗ 物体在镜头后方</span>";
+      } else if (1 / f <= 1 / u1) {
+        statusStr = "<span class='warn'>物体在焦距内（虚像）</span>";
+      } else {
+        statusStr = "<span class='bad'>✗ 离焦</span> Δ=" + nf(delta1, 1, 5);
+      }
+      statusStr += " &nbsp;|&nbsp; 1/f=" + nf(invTarget, 1, 5);
+      if (u1 > 0) statusStr += ", 1/u+1/v=" + nf(invActual1, 1, 5);
+      select("#focusStatusValue").html(statusStr);
+
+      if (rayBlur.length >= 4) {
+        select("#blurSizeValue").html(
+          "物体0: " + nf(rayBlur[0], 1, 1) + " px" +
+          " &nbsp;|&nbsp; 物体2: " + nf(rayBlur[2], 1, 1) + " px"
+        );
       }
     }
   </script>
