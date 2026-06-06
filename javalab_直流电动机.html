@@ -7,6 +7,7 @@
   <link rel="icon" type="image/svg+xml" href="favicon.svg">
   <link rel="stylesheet" href="style.css">
   <script src="auth-check.js"></script>
+  <script src="supabase.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/0.9.0/p5.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/0.9.0/addons/p5.dom.min.js"></script>
   <style>
@@ -17,6 +18,30 @@
     .ctrl-group input[type="checkbox"] { accent-color: #3b82f6; }
     .section { padding: 1.5rem 2rem 0.5rem; }
     .section h2 { font-size: 1.4rem; }
+    .quiz-question { font-size: 15px; margin-bottom: 16px; line-height: 1.6; }
+    .quiz-option { display: block; width: 100%; text-align: left; padding: 12px 16px; margin-bottom: 8px; border: 2px solid #333; border-radius: 8px; background: rgba(255,255,255,0.03); color: #ccc; font-size: 14px; cursor: pointer; transition: all 0.2s; }
+    .quiz-option:hover { border-color: #8b5cf6; background: rgba(139,92,246,0.1); }
+    .quiz-option.correct { border-color: #22c55e; background: rgba(34,197,94,0.15); color: #22c55e; }
+    .quiz-option.wrong { border-color: #ef4444; background: rgba(239,68,68,0.15); color: #ef4444; }
+    .quiz-option:disabled { cursor: default; opacity: 0.7; }
+    .quiz-option:disabled.correct { opacity: 1; }
+    .quiz-score { font-size: 48px; font-weight: bold; }
+    .quiz-score.great { color: #22c55e; }
+    .quiz-score.good { color: #f59e0b; }
+    .quiz-score.poor { color: #ef4444; }
+    .quiz-btn-row { display: flex; gap: 10px; justify-content: center; margin-top: 16px; }
+    .review-card { background: rgba(255,255,255,0.03); border: 1px solid #333; border-radius: 10px; padding: 14px 16px; margin-bottom: 12px; text-align: left; }
+    .review-card.wrong { border-color: rgba(239,68,68,0.4); background: rgba(239,68,68,0.06); }
+    .review-card.correct2 { border-color: rgba(34,197,94,0.3); background: rgba(34,197,94,0.04); }
+    .rbadge { font-size: 12px; padding: 2px 8px; border-radius: 10px; margin-right: 8px; }
+    .rbadge.ok { background: rgba(34,197,94,0.2); color: #22c55e; }
+    .rbadge.fail { background: rgba(239,68,68,0.2); color: #ef4444; }
+    .rq { font-size: 14px; margin-bottom: 8px; }
+    .review-user-ans { font-size: 13px; color: #ef4444; margin: 4px 0; }
+    .review-correct-ans { font-size: 13px; color: #22c55e; margin: 4px 0; }
+    .review-explain { background: rgba(139,92,246,0.08); border: 1px solid rgba(139,92,246,0.2); border-radius: 8px; padding: 10px 14px; margin-top: 8px; }
+    .review-explain .rtitle { font-size: 13px; color: #a78bfa; margin-bottom: 4px; }
+    .review-explain .rtext { font-size: 13px; color: #c4b5fd; line-height: 1.6; }
   </style>
 </head>
 <body>
@@ -58,12 +83,40 @@
         <input type="checkbox" id="checkD" checked>
         <label id="chalkD" for="checkD">运行</label>
       </div>
+      <div class="ctrl-group">
+        <input type="checkbox" id="checkPause">
+        <label id="chalkPause" for="checkPause">暂停</label>
+      </div>
+    </div>
+  </div>
+
+  <div style="max-width:900px;margin:0 auto 24px;padding:0 16px;text-align:center;">
+    <button class="btn" id="btnChallenge" style="font-size:16px;padding:10px 32px;border-color:#8b5cf6;color:#c4b5fd;">
+      过关挑战
+    </button>
+    <p style="color:#64748b;font-size:12px;margin-top:8px;">15道单选题 · 每次5道 · 检验你对直流电动机原理的掌握程度</p>
+  </div>
+
+  <div id="quizOverlay" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.8);z-index:1000;overflow-y:auto;">
+    <div style="max-width:700px;margin:40px auto;background:#1a1a2e;border:1px solid #333;border-radius:16px;padding:24px 32px;color:#e2e8f0;">
+      <div id="quizHeader" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+        <span style="font-size:18px;font-weight:bold;" id="quizTitle">第 1 关 (1/3)</span>
+        <div style="display:flex;gap:8px;">
+          <button class="btn" id="btnResetQuiz" style="font-size:12px;border-color:#555;color:#999;">↺ 重置</button>
+          <button class="btn" id="btnCloseQuiz" style="font-size:12px;">✕ 退出</button>
+        </div>
+      </div>
+      <div id="quizProgress" style="height:4px;background:#333;border-radius:2px;margin-bottom:20px;">
+        <div id="quizProgressFill" style="height:100%;background:#8b5cf6;border-radius:2px;width:0%;transition:width 0.3s;"></div>
+      </div>
+      <div id="quizBody"></div>
+      <div id="quizResult" style="display:none;text-align:center;padding:30px 0;"></div>
     </div>
   </div>
 
   <script>
     // ===== 全局变量（与原始代码完全一致） =====
-    var checkA, checkB, checkC, checkT, checkD;
+    var checkA, checkB, checkC, checkT, checkD, checkPause, chalkPause;
     var chalkA, chalkB, chalkC, chalkT, chalkD;
     var img_motor_1, img_motor_2;
     var theta = 1;
@@ -130,6 +183,7 @@
       checkC = select("#checkC"); chalkC = select("#checkC");
       checkT = select("#checkT"); chalkT = select("#checkT");
       checkD = select("#checkD"); chalkD = select("#checkD");
+      checkPause = select("#checkPause"); chalkPause = select("#chalkPause");
     }
 
     function windowResized() {
@@ -149,7 +203,7 @@
       strokeJoin(ROUND);
       translate(0, translateY);
 
-      if (checkD.checked() && !mouseIsPressed) theta += 0.05;
+      if (checkD.checked() && !mouseIsPressed && !checkPause.checked()) theta += 0.05;
       theta = mod(theta, PI);
 
       for (var i = 0; i < 2; i++) {
@@ -418,6 +472,282 @@
     function mouseReleased() {
       dragged = false;
     }
+
+    // ===== 过关挑战答题系统 =====
+    var QUIZ_STORAGE_KEY = "quiz_dc_motor_progress";
+    var EXPERIMENT_KEY = "dc_motor";
+
+    var quizQuestions = [
+      // 第1关：电动机基本原理（5题）
+      { q: "直流电动机的工作原理基于什么物理现象？", opts: ["电磁感应（磁生电）", "通电导体在磁场中受力", "静电感应", "电流的热效应"], ans: 1, explain: "直流电动机利用通电导体在磁场中受到力的作用（安培力）来工作。注意区别于发电机——发电机利用电磁感应（磁生电），电动机利用磁场对电流的作用力。" },
+      { q: "电动机是将什么能转化为什么能的装置？", opts: ["机械能→电能", "电能→机械能", "热能→电能", "电能→热能"], ans: 1, explain: "电动机消耗电能，输出机械能（旋转运动）。发电机则相反——消耗机械能，输出电能。两者能量转化方向相反。" },
+      { q: "通电导体在磁场中受力的方向与什么因素有关？", opts: ["仅与电流方向有关", "仅与磁场方向有关", "与电流方向和磁场方向都有关", "与电流和磁场都无关"], ans: 2, explain: "通电导体在磁场中受力的方向由电流方向和磁场方向共同决定。改变其中一个方向，力的方向就会反转；同时改变两个方向，力的方向不变。" },
+      { q: "判断通电导体在磁场中受力方向应使用什么定则？", opts: ["右手定则（发电机定则）", "左手定则（电动机定则）", "安培定则（右手螺旋定则）", "无需定则，直接判断"], ans: 1, explain: "判断通电导体在磁场中受力方向用左手定则：伸开左手，让磁感线穿入手心，四指指向电流方向，大拇指所指方向即为受力方向。发电机用右手定则，注意区分。" },
+      { q: "通电线圈在磁场中为什么会转动？", opts: ["线圈受热膨胀", "线圈两边电流方向相反，受到的力方向也相反，形成力偶使线圈转动", "磁铁直接吸引线圈铜线", "电流使线圈温度升高而转动"], ans: 1, explain: "矩形线圈在磁场中，对边中的电流方向相反，根据左手定则，两边受到的磁场力方向也相反（一边向上一边向下），这对大小相等、方向相反的力形成力偶，使线圈绕轴转动。" },
+
+      // 第2关：换向器结构与功能（5题）
+      { q: "直流电动机中，换向器最主要的作用是什么？", opts: ["增大通过线圈的电流", "增强磁场的强度", "每转半圈自动改变线圈中的电流方向，使线圈能持续转动", "减小摩擦"], ans: 2, explain: "如果没有换向器，线圈转过平衡位置（与磁感线垂直的位置）后，由于惯性继续转动，但此时受到的力会使线圈反转。换向器在线圈每转半圈时自动切换电流方向，使线圈受到的力始终沿同一旋转方向，从而持续转动。" },
+      { q: "换向器由什么组成？", opts: ["一个完整的铜环", "两个彼此绝缘的半铜环", "四个铜片", "一组弹簧"], ans: 1, explain: "换向器由一个铜环分成两半组成，中间有绝缘缝隙隔开。两个半环分别连接线圈的两端，随线圈一起旋转。电刷则固定不动，紧贴半环表面。" },
+      { q: "如果直流电动机没有换向器（线圈直接接电源），会发生什么？", opts: ["持续匀速旋转", "线圈来回摆动几次后停在平衡位置", "越转越快", "线圈根本不会动"], ans: 1, explain: "没有换向器时，线圈在磁场力作用下转动。转过平衡位置后，磁场力会阻碍线圈继续转动（变为阻力），使线圈减速、反转、来回摆动，最终停在平衡位置（线圈平面与磁感线垂直）。这正是换向器如此重要的原因。" },
+      { q: "换向器是怎样与线圈连接的？", opts: ["换向器固定，通过导线与旋转的线圈连接", "换向器随线圈一起旋转，两个半环分别焊在线圈两端引出线上", "换向器与线圈不直接连接", "换向器通过齿轮与线圈连接"], ans: 1, explain: "换向器固定在转轴上，随线圈同步旋转。线圈的两个引出端分别焊接在换向器的两个半环上。这样当线圈转动时，半环也同步转动，外部固定的电刷交替接触两个半环。" },
+      { q: "电刷在直流电动机中的作用是？", opts: ["产生磁场", "带动转轴旋转", "与换向器接触，将外部电源的电流导入旋转的线圈", "减小线圈电阻"], ans: 2, explain: "电刷通常用石墨制成，固定不动，靠弹性压在换向器表面。外部电源的电流通过电刷→换向器半环→线圈，形成电流通路。电刷不随转子旋转。" },
+
+      // 第3关：综合分析与实际应用（5题）
+      { q: "以下哪个因素不会影响直流电动机的转速？", opts: ["通过线圈的电流大小", "磁铁的磁性强弱", "线圈的漆包线颜色", "线圈的匝数"], ans: 2, explain: "线圈颜色与电磁效应无关。影响电动机转速的因素：①电流越大转速越快②磁场越强转速越快③线圈匝数越多力越大。改变这些参数可以调节电动机性能。" },
+      { q: "增大通过线圈的电流，电动机会发生什么变化？", opts: ["转速变慢", "转速变快", "反转", "立即停止"], ans: 1, explain: "电流增大→通电导线在磁场中受到的力增大→线圈受到的转矩增大→转速变快。但实际电动机中电流过大会导致线圈发热甚至烧毁，因此有额定电流限制。" },
+      { q: "直流电动机与交流发电机在结构上的关键区别是什么？", opts: ["没有任何区别", "电动机用换向器，发电机用滑环", "电动机用滑环，发电机用换向器", "两者都使用换向器"], ans: 1, explain: "直流电动机使用换向器（分成两半的铜环）来保证线圈持续向一个方向转动；交流发电机使用滑环（两个完整圆环）将线圈中的交流电导出。两者功能相反——电动机把电能变机械能，发电机把机械能变电能。" },
+      { q: "实际电动机的线圈绕在什么上面？", opts: ["空心塑料管", "铁芯（硅钢片叠成的转子）", "木棒", "空心纸管"], ans: 1, explain: "实际电动机的线圈缠绕在由硅钢片叠成的铁芯上，构成转子。铁芯的作用是增强磁场、集中磁感线，大幅提高电动机的效率和输出功率。纯空心线圈的电动机力量很弱。" },
+      { q: "要使直流电动机反转，最简单的方法是？", opts: ["同时改变电流方向和磁场方向", "只改变电流方向（对调电源正负极）或只改变磁场方向（对调磁铁NS极）", "增加线圈匝数", "减小电流"], ans: 1, explain: "根据左手定则，改变电流方向或磁场方向中的任意一个，通电导体受力方向就会反转。因此最简单的方法是调换电源正负极（改变电流方向）。注意：同时改变两个方向，受力方向不变，电动机不会反转。" }
+    ];
+
+    var quizRound = 0, quizIndex = 0, quizAnswers = [], quizLocked = false;
+    var quizScores = [0, 0, 0], quizHighestRound = 0;
+    var btnChallenge, btnCloseQuiz, btnResetQuiz, quizOverlay, quizTitle, quizProgressFill, quizBody, quizResult;
+
+    function getUsername() {
+      try { return localStorage.getItem("currentUser"); } catch(e) { return null; }
+    }
+
+    function saveProgress() {
+      var data = { round: quizRound, scores: quizScores, highestRound: quizHighestRound, updatedAt: new Date().toISOString() };
+      try { localStorage.setItem(QUIZ_STORAGE_KEY, JSON.stringify(data)); } catch(e) {}
+      var username = getUsername();
+      if (username) saveQuizToServer(username, data);
+    }
+
+    function saveQuizToServer(username, data) {
+      try {
+        SB.getUser(username).then(function(users) {
+          if (users && users.length > 0) {
+            var user = users[0];
+            var quizData = user.quiz_data;
+            if (typeof quizData === 'string') quizData = JSON.parse(quizData);
+            if (!quizData || typeof quizData !== 'object') quizData = {};
+            quizData[EXPERIMENT_KEY] = data;
+            SB.updateUser(username, { quiz_data: quizData }).catch(function(){});
+          }
+        }).catch(function(){});
+      } catch(e) {}
+    }
+
+    async function loadProgress() {
+      var username = getUsername();
+      if (username) {
+        try {
+          var users = await SB.getUser(username);
+          if (users && users.length > 0) {
+            var user = users[0];
+            var quizData = user.quiz_data;
+            if (typeof quizData === 'string') quizData = JSON.parse(quizData);
+            if (quizData && quizData[EXPERIMENT_KEY]) {
+              var serverData = quizData[EXPERIMENT_KEY];
+              try { localStorage.setItem(QUIZ_STORAGE_KEY, JSON.stringify(serverData)); } catch(e) {}
+              return serverData;
+            }
+          }
+        } catch(e) {}
+      }
+      try { var raw = localStorage.getItem(QUIZ_STORAGE_KEY); if (raw) return JSON.parse(raw); } catch(e) {}
+      return null;
+    }
+
+    function clearProgress() {
+      try { localStorage.removeItem(QUIZ_STORAGE_KEY); } catch(e) {}
+      var username = getUsername();
+      if (username) {
+        try {
+          SB.getUser(username).then(function(users) {
+            if (users && users.length > 0) {
+              var user = users[0];
+              var quizData = user.quiz_data;
+              if (typeof quizData === 'string') quizData = JSON.parse(quizData);
+              if (quizData && typeof quizData === 'object') { delete quizData[EXPERIMENT_KEY]; SB.updateUser(username, { quiz_data: quizData }).catch(function(){}); }
+            }
+          }).catch(function(){});
+        } catch(e) {}
+      }
+    }
+
+    function updateChallengeButton() {
+      loadProgress().then(function(saved) {
+        if (saved && (saved.scores[0] > 0 || saved.round > 0)) {
+          var totalDone = saved.scores[0] + (saved.scores[1] || 0) + (saved.scores[2] || 0);
+          btnChallenge.html("继续挑战 (已得" + totalDone + "/15分)");
+        } else { btnChallenge.html("过关挑战"); }
+      });
+    }
+
+    function getStars(score, total) {
+      if (score === total) return "⭐⭐⭐";
+      if (score >= total - 1) return "⭐⭐";
+      if (score >= Math.ceil(total / 2)) return "⭐";
+      return "";
+    }
+
+    function startQuiz() {
+      loadProgress().then(function(saved) {
+        if (saved && saved.highestRound >= 0 && (saved.scores[0] > 0 || saved.round > 0)) {
+          quizRound = Math.min(saved.round + 1, 2);
+          quizScores = saved.scores.slice();
+          quizHighestRound = saved.highestRound;
+        } else { quizRound = 0; quizScores = [0,0,0]; quizHighestRound = 0; }
+        quizOverlay.style("display", "block");
+        checkPause.checked(true);
+        renderRound();
+      });
+    }
+
+    function closeQuiz() {
+      quizOverlay.style("display", "none");
+      checkPause.checked(false);
+      updateChallengeButton();
+    }
+
+    function resetQuiz() {
+      if (confirm("确定要重置所有挑战进度吗？当前进度将丢失。")) {
+        quizRound = 0; quizScores = [0,0,0]; quizHighestRound = 0;
+        clearProgress(); renderRound();
+      }
+    }
+
+    function renderRound() {
+      quizIndex = 0; quizAnswers = []; quizLocked = false;
+      quizResult.style("display", "none"); quizBody.style("display", "block");
+      quizTitle.html("第 " + (quizRound + 1) + " 关 (题目 " + (quizRound * 5 + 1) + "-" + (quizRound * 5 + 5) + "/15)");
+      quizProgressFill.style("width", (quizRound * (100/3)) + "%");
+      renderQuestion();
+    }
+
+    function renderQuestion() {
+      var q = quizQuestions[quizRound * 5 + quizIndex];
+      var html = '<div class="quiz-question">' + (quizIndex + 1) + ". " + q.q + "</div>";
+      var labels = ["A", "B", "C", "D"];
+      for (var i = 0; i < q.opts.length; i++) {
+        html += '<button class="quiz-option" data-idx="' + i + '" ' + (quizLocked ? "disabled " : "") + '>' + labels[i] + ". " + q.opts[i] + "</button>";
+      }
+      quizBody.html(html);
+      var opts = document.querySelectorAll("#quizBody .quiz-option");
+      for (var j = 0; j < opts.length; j++) {
+        (function(idx) { opts[j].addEventListener("click", function() { selectAnswer(idx); }); })(j);
+      }
+    }
+
+    function selectAnswer(idx) {
+      if (quizLocked) return;
+      quizLocked = true; quizAnswers.push(idx);
+      var q = quizQuestions[quizRound * 5 + quizIndex], correct = q.ans;
+      var opts = document.querySelectorAll("#quizBody .quiz-option");
+      for (var i = 0; i < opts.length; i++) {
+        opts[i].disabled = true;
+        if (i === correct) opts[i].classList.add("correct");
+        if (i === idx && idx !== correct) opts[i].classList.add("wrong");
+      }
+      setTimeout(function() {
+        quizIndex++;
+        if (quizIndex < 5) { quizLocked = false; renderQuestion(); }
+        else showRoundResult();
+      }, 1200);
+    }
+
+    function showRoundResult() {
+      var correctCount = 0;
+      for (var i = 0; i < 5; i++) { if (quizAnswers[i] === quizQuestions[quizRound * 5 + i].ans) correctCount++; }
+      quizScores[quizRound] = correctCount;
+      if (quizRound > quizHighestRound) quizHighestRound = quizRound;
+      saveProgress();
+      quizBody.style("display", "none"); quizResult.style("display", "block");
+      var stars = getStars(correctCount, 5);
+      var scoreClass = correctCount >= 4 ? "great" : (correctCount >= 2 ? "good" : "poor");
+      var comment = correctCount >= 4 ? "太棒了!" : (correctCount >= 2 ? "继续加油!" : "再看看实验吧!");
+      var html = '<div class="quiz-score ' + scoreClass + '">' + correctCount + "/5</div>";
+      if (stars) html += '<p style="font-size:20px;margin:4px 0;">' + stars + "</p>";
+      html += '<p style="font-size:16px;margin:8px 0;color:#94a3b8;">' + comment + "</p>";
+      if (quizRound < 2) {
+        html += '<p style="font-size:13px;color:#64748b;margin-bottom:8px;">已完成第' + (quizRound + 1) + "关，进度已保存</p>";
+        html += '<div class="quiz-btn-row"><button class="btn-primary" id="btnReviewRound" style="font-size:14px;">查看回顾</button></div>';
+        html += '<div class="quiz-btn-row"><button class="btn-primary" id="btnNextRound" style="font-size:14px;padding:8px 24px;">进入下一关</button><button class="btn-reset" id="btnRetryRound" style="font-size:14px;">重新挑战本关</button></div>';
+      } else {
+        var total = quizScores[0] + quizScores[1] + quizScores[2];
+        var totalClass = total >= 12 ? "great" : (total >= 8 ? "good" : "poor");
+        var totalStars = getStars(total, 15);
+        html = '<div class="quiz-score ' + totalClass + '">' + total + "/15</div>";
+        if (totalStars) html += '<p style="font-size:20px;margin:4px 0;">' + totalStars + "</p>";
+        html += '<p style="font-size:14px;color:#94a3b8;margin-bottom:8px;">第1关: ' + quizScores[0] + '/5 &nbsp; 第2关: ' + quizScores[1] + '/5 &nbsp; 第3关: ' + quizScores[2] + "/5</p>";
+        html += '<p style="font-size:16px;margin:8px 0;color:' + (total >= 12 ? "#22c55e" : total >= 8 ? "#f59e0b" : "#ef4444") + ';">' + (total >= 12 ? "恭喜通关！你对直流电动机原理理解透彻！" : total >= 8 ? "还不错，再复习一下错题吧！" : "建议回到实验仔细观察换向器如何让线圈持续转动。") + "</p>";
+        html += '<div class="quiz-btn-row"><button class="btn-primary" id="btnReviewRound" style="font-size:14px;">查看回顾</button></div>';
+        html += '<div class="quiz-btn-row"><button class="btn-primary" id="btnRetryAll" style="font-size:14px;padding:8px 24px;">重新全部挑战</button><button class="btn-reset" id="btnBackExp" style="font-size:14px;">返回实验</button></div>';
+        clearProgress();
+      }
+      quizResult.html(html);
+      bindResultButtons();
+    }
+
+    function bindResultButtons() {
+      setTimeout(function() {
+        var el = function(id) { return document.getElementById(id); };
+        if (el("btnNextRound")) el("btnNextRound").addEventListener("click", function() { quizRound++; renderRound(); });
+        if (el("btnRetryRound")) el("btnRetryRound").addEventListener("click", function() { renderRound(); });
+        if (el("btnRetryAll")) el("btnRetryAll").addEventListener("click", function() { quizRound = 0; quizScores = [0,0,0]; quizHighestRound = 0; clearProgress(); renderRound(); });
+        if (el("btnBackExp")) el("btnBackExp").addEventListener("click", function() { closeQuiz(); });
+        if (el("btnReviewRound")) el("btnReviewRound").addEventListener("click", function() { showReview(); });
+      }, 100);
+    }
+
+    function showReview() {
+      var html = '<p style="font-size:16px;font-weight:bold;margin-bottom:16px;color:#e2e8f0;">第' + (quizRound + 1) + '关 — 答题回顾</p>';
+      var wrongCount = 0, labels = ["A", "B", "C", "D"];
+      for (var i = 0; i < 5; i++) {
+        var q = quizQuestions[quizRound * 5 + i], userAns = quizAnswers[i], isCorrect = userAns === q.ans;
+        if (!isCorrect) wrongCount++;
+        html += '<div class="review-card ' + (isCorrect ? "correct2" : "wrong") + '"><div class="rq">' + (isCorrect ? '<span class="rbadge ok">正确</span>' : '<span class="rbadge fail">错误</span>') + (i + 1) + ". " + q.q + "</div>";
+        if (!isCorrect) {
+          html += '<div class="review-user-ans">你的答案：' + labels[userAns] + ". " + q.opts[userAns] + "</div>";
+          html += '<div class="review-correct-ans">正确答案：' + labels[q.ans] + ". " + q.opts[q.ans] + "</div>";
+          html += '<div class="review-explain"><div class="rtitle">解析</div><div class="rtext">' + q.explain + "</div></div>";
+        } else { html += '<div style="font-size:13px;color:#22c55e;margin-top:2px;">你的答案：' + labels[userAns] + ". " + q.opts[userAns] + " </div>"; }
+        html += "</div>";
+      }
+      html += '<p style="text-align:center;color:' + (wrongCount === 0 ? "#22c55e" : "#f59e0b") + ';font-size:' + (wrongCount === 0 ? "15" : "14") + 'px;margin-top:12px;">' + (wrongCount === 0 ? "全部正确！你对这部分知识点掌握得很好！" : "共错 " + wrongCount + " 题，仔细阅读解析，理解后再继续！") + "</p>";
+      html += '<div class="quiz-btn-row"><button class="btn-reset" id="btnBackResult" style="font-size:14px;">返回结果</button></div>';
+      document.getElementById("quizBody").style.display = "none";
+      document.getElementById("quizResult").style.display = "block";
+      document.getElementById("quizResult").innerHTML = html;
+      setTimeout(function() { var b = document.getElementById("btnBackResult"); if (b) b.addEventListener("click", function() { showRoundResultSkipSave(); }); }, 100);
+    }
+
+    function showRoundResultSkipSave() {
+      var correctCount = quizScores[quizRound];
+      document.getElementById("quizBody").style.display = "none";
+      document.getElementById("quizResult").style.display = "block";
+      var stars = getStars(correctCount, 5), scoreClass = correctCount >= 4 ? "great" : (correctCount >= 2 ? "good" : "poor");
+      var html = '<div class="quiz-score ' + scoreClass + '">' + correctCount + "/5</div>";
+      if (stars) html += '<p style="font-size:20px;margin:4px 0;">' + stars + "</p>";
+      html += '<p style="font-size:16px;margin:8px 0;color:#94a3b8;">' + (correctCount >= 4 ? "太棒了!" : (correctCount >= 2 ? "继续加油!" : "再看看实验吧!")) + "</p>";
+      if (quizRound < 2) {
+        html += '<p style="font-size:13px;color:#64748b;margin-bottom:8px;">已完成第' + (quizRound + 1) + "关，进度已保存</p>";
+        html += '<div class="quiz-btn-row"><button class="btn-primary" id="btnReviewRound" style="font-size:14px;">查看回顾</button></div>';
+        html += '<div class="quiz-btn-row"><button class="btn-primary" id="btnNextRound" style="font-size:14px;padding:8px 24px;">进入下一关</button><button class="btn-reset" id="btnRetryRound" style="font-size:14px;">重新挑战本关</button></div>';
+      } else {
+        var total = quizScores[0] + quizScores[1] + quizScores[2];
+        html = '<div class="quiz-score ' + (total >= 12 ? "great" : total >= 8 ? "good" : "poor") + '">' + total + "/15</div>";
+        html += '<p style="font-size:14px;color:#94a3b8;margin-bottom:8px;">第1关: ' + quizScores[0] + '/5 &nbsp; 第2关: ' + quizScores[1] + '/5 &nbsp; 第3关: ' + quizScores[2] + "/5</p>";
+        html += '<div class="quiz-btn-row"><button class="btn-primary" id="btnReviewRound" style="font-size:14px;">查看回顾</button></div>';
+        html += '<div class="quiz-btn-row"><button class="btn-primary" id="btnRetryAll" style="font-size:14px;padding:8px 24px;">重新全部挑战</button><button class="btn-reset" id="btnBackExp" style="font-size:14px;">返回实验</button></div>';
+      }
+      document.getElementById("quizResult").innerHTML = html;
+      bindResultButtons();
+    }
+
+    function initQuiz() {
+      btnChallenge = select("#btnChallenge"); btnCloseQuiz = select("#btnCloseQuiz"); btnResetQuiz = select("#btnResetQuiz");
+      quizOverlay = select("#quizOverlay"); quizTitle = select("#quizTitle"); quizProgressFill = select("#quizProgressFill");
+      quizBody = select("#quizBody"); quizResult = select("#quizResult");
+      btnChallenge.mouseClicked(startQuiz); btnCloseQuiz.mouseClicked(closeQuiz); btnResetQuiz.mouseClicked(resetQuiz);
+      updateChallengeButton();
+    }
+
+    var _origSetup = setup;
+    setup = function() { _origSetup(); initQuiz(); };
   </script>
 </body>
 </html>
