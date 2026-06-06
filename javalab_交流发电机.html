@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=10">
+  <title>交流发电机原理 - 物理虚拟实验</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="stylesheet" href="style.css">
+  <script src="auth-check.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/0.9.0/p5.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/0.9.0/addons/p5.dom.min.js"></script>
+  <style>
+    #myP5Canvas { touch-action: pinch-zoom; display: block; margin: 0 auto; border-radius: 12px; }
+    .canvas-wrap { border-radius: 12px; padding: 4px; width: 100%; box-sizing: border-box; border: 1px solid #e2e8f0; position: relative; background: #fff; }
+    .controls-bar { display: flex; align-items: center; justify-content: center; padding: 10px 16px; gap: 16px; flex-wrap: wrap; background: #f8fafc; border-radius: 0 0 12px 12px; border-top: 1px solid #e2e8f0; }
+    .ctrl-group { display: flex; align-items: center; gap: 6px; font-size: 14px; color: #334155; }
+    .ctrl-group input[type="checkbox"] { accent-color: #3b82f6; }
+    .ctrl-group input[type="range"] { width: 80px; }
+    .section { padding: 1.5rem 2rem 0.5rem; }
+    .section h2 { font-size: 1.4rem; }
+  </style>
+</head>
+<body>
+  <header class="header">
+    <div class="logo">物理虚拟实验</div>
+    <nav class="nav">
+      <a href="index.html">首页</a>
+      <a href="experiments.html">实验列表</a>
+    </nav>
+  </header>
+
+  <div class="section">
+    <h2>交流发电机原理</h2>
+    <p style="color:#94a3b8;margin:0 0 16px 0;">观察交流发电机如何将机械能转化为电能。旋转线圈在磁场中产生正弦波形的交变电流，可通过灯泡、检流计或示波器观察。</p>
+  </div>
+
+  <div class="main-card">
+    <div class="canvas-wrap">
+      <div id="myContainer"></div>
+    </div>
+    <div class="controls-bar">
+      <div class="ctrl-group">
+        <span id="labelA" style="color:#334155;font-size:13px;">风力强度: 2</span>
+        <input type="range" id="rangeA" min="-8" max="8" value="2">
+      </div>
+      <div class="ctrl-group">
+        <span id="radioA"></span>
+      </div>
+      <div class="ctrl-group">
+        <input type="checkbox" id="checkA">
+        <label id="chalkA" for="checkA">运行</label>
+      </div>
+      <div class="ctrl-group">
+        <input type="checkbox" id="checkB">
+        <label id="chalkB" for="checkB" style="color:#0B0;">显示磁场</label>
+      </div>
+      <div class="ctrl-group">
+        <input type="checkbox" id="checkC">
+        <label id="chalkC" for="checkC" style="color:#f00;">显示电流</label>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    var labelA, rangeA, checkA, chalkA, checkB, chalkB, checkC, chalkC, radioA;
+    var generatorImage = [], glowImage, turbinImage;
+    var ptheta = 1, theta = 0, thetaDiff = 0;
+    var graphY = [];
+    var motorX = 350, motorY = 250;
+    var roterMax = 12;
+    var roterX = [-40, -20, -20, -80, -80, -80, 80, 80, 80, 20, 20, 40];
+    var roterY = [200, 200, 50, 50, 0, -50, -50, 0, 50, 50, 150, 150];
+    var maskMax = 2;
+    var maskX = [-20, -20], maskY = [200, 100];
+    var bridgeX = [200, 150], bridgeY = [400, 450];
+    var vectorX = [], vectorY = [];
+    var vectorOX = [-0.1, 0.1], vectorOY = 0;
+    var pathNode = [[], [], []], pathNodeLength = [], pathNodes = [0, 0, 0];
+    var pathX1 = [[300, 750], [300, 800, 750], [300, 800, 750]];
+    var pathY1 = [[430, 480], [430, 430, 480], [430, 430, 480]];
+    var pathX2 = [[720, 250], [700, 750, 250], [700, 750, 250]];
+    var pathY2 = [[430, 480], [430, 480, 480], [430, 480, 480]];
+    var path1 = [[], [], []], path2 = [[], [], []];
+    var x, y, dragged = false, pmx, pmy;
+
+    function mod(x, y) {
+      if (x < 0) x += y * (ceil(abs(x) / y) + 1);
+      var c = floor(x / y);
+      return x - y * c;
+    }
+    function contain(x, y, x1, y1, w1, h1) {
+      if (x < x1) return false; if (x > (x1 + w1)) return false;
+      if (y < y1) return false; if (y > (y1 + h1)) return false;
+      return true;
+    }
+    function diffAngle(t1, t2) {
+      var tt1 = mod(t1, TWO_PI), tt2 = mod(t2, TWO_PI);
+      if (abs(tt1 - tt2) > PI) {
+        if (tt1 < tt2) tt1 += TWO_PI; else if (tt1 > tt2) tt2 += TWO_PI;
+      }
+      return tt1 - tt2;
+    }
+    function drawArrow2D_thick(x, y, cx, cy, thick) {
+      var lArrow = sqrt(cx * cx + cy * cy);
+      if (lArrow < 1) return;
+      var oxArrow = [0, lArrow - 2 * thick, lArrow - 2 * thick, lArrow, lArrow - 2 * thick, lArrow - 2 * thick, 0];
+      var oyArrow = [thick, thick, 2 * thick, 0, -2 * thick, -thick, -thick];
+      push(); translate(x, y); rotate(atan2(cy, cx));
+      beginShape();
+      for (var i = 0; i < oxArrow.length; i++) vertex(max(oxArrow[i], 0), oyArrow[i]);
+      endShape(CLOSE); pop();
+    }
+    function drawProton(x, y, t) {
+      var cx = 8 * cos(t), cy = 8 * sin(t);
+      noStroke(); fill(255, 0, 0, 191);
+      drawArrow2D_thick(x - cx, y - cy, 2 * cx, 2 * cy, 3);
+    }
+
+    function preload() {
+      generatorImage[0] = loadImage("lee/image/ac_generator_0.png");
+      generatorImage[1] = loadImage("lee/image/ac_generator_1.png");
+      generatorImage[2] = loadImage("lee/image/ac_generator_2.png");
+      generatorImage[3] = loadImage("lee/image/ac_generator_3.png");
+      glowImage = loadImage("lee/image/faradays_law_glow.png");
+      turbinImage = loadImage("lee/image/ac_generator_turbin.png");
+    }
+
+    function setup() {
+      frameRate(20);
+      var o = select("#myContainer");
+      var a = 0.5;
+      var w = int(min(o.width, (window.innerHeight - 200) / a));
+      var h = int(w * a);
+      myCanvas = createCanvas(w, h);
+      myCanvas.parent("myContainer");
+      myCanvas.id("myP5Canvas");
+
+      labelA = select("#labelA");
+      rangeA = select("#rangeA");
+      rangeA.input(setup2);
+      checkA = select("#checkA"); chalkA = select("#chalkA");
+      chalkA.html("运行"); checkA.checked(true);
+      checkB = select("#checkB"); chalkB = select("#chalkB");
+      chalkB.style("color", "#0B0"); chalkB.html("显示磁场");
+      checkC = select("#checkC"); chalkC = select("#chalkC");
+      chalkC.style("color", "#F00"); chalkC.html("显示电流");
+      checkC.checked(true);
+
+      radioA = createRadio("radioA");
+      radioA.option("灯泡 ", "0");
+      radioA.option("检流计 ", "1");
+      radioA.option("示波器 ", "2");
+      radioA.parent("radioA");
+      radioA.value("0");
+
+      for (var i = 0; i < pathNodes.length; i++) pathCalculate(i);
+      setup2();
+    }
+
+    function setup2() {
+      labelA.html("风力强度: " + rangeA.value());
+    }
+
+    function pathCalculate(i) {
+      for (var j = 0; j < pathX1[i].length; j++) {
+        path1[i][j] = (j === 0) ? 0 : path2[i][j - 1];
+        path2[i][j] = path1[i][j] + dist(pathX1[i][j], pathY1[i][j], pathX2[i][j], pathY2[i][j]);
+      }
+      pathNodeLength[i] = path2[i][pathX1[i].length - 1];
+      pathNodes[i] = round(pathNodeLength[i] * 0.03);
+      for (var j = 0; j < pathNodes[i]; j++) {
+        pathNode[i][j] = map(j, 0, pathNodes[i], 0, pathNodeLength[i]);
+      }
+    }
+
+    function windowResized() {
+      var o = select("#myContainer");
+      var a = 0.5;
+      var w = int(min(o.width, (window.innerHeight - 200) / a));
+      var h = int(w * a);
+      resizeCanvas(w, h);
+    }
+
+    function draw() {
+      if (touches.length > 1) return;
+      background(244);
+      textSize(30);
+      textAlign(LEFT, TOP);
+      push();
+      scale(width / 1000);
+      strokeCap(ROUND);
+      strokeJoin(ROUND);
+
+      if (checkA.checked()) {
+        ptheta = theta;
+        if (dragged) { theta += thetaDiff; thetaDiff = 0; }
+        else { theta += map(rangeA.value(), -8, 8, -0.4, 0.4); }
+        theta = mod(theta, TWO_PI);
+      }
+      var emf = -(sin(ptheta) - sin(theta));
+      if (checkA.checked()) graphY.push(emf);
+      if (graphY.length >= 200) graphY.splice(0, 1);
+
+      image(generatorImage[3], 0, 0, 1000, 500);
+
+      push();
+      translate(500, 100);
+      imageMode(CENTER);
+      rotate(theta);
+      image(turbinImage, 0, 0, 600, 600);
+      pop();
+
+      noFill();
+      strokeWeight(3);
+      stroke(160, 80, 0);
+      arc(bridgeX[0], bridgeY[0], 80, 80, 0, PI);
+      strokeWeight(3);
+
+      drawRoter(false);
+
+      vectorX[0] = motorX + roterX[4] * cos(theta) - roterY[4];
+      vectorY[0] = motorY + roterX[4] * sin(theta) + roterY[4];
+      vectorX[1] = motorX + roterX[7] * cos(theta) - roterY[7];
+      vectorY[1] = motorY + roterX[7] * sin(theta) + roterY[7];
+
+      noFill();
+      if (checkB.checked()) drawMagnetic(-emf * 3000);
+
+      if (dragged) {
+        noStroke(); fill(255, 0, 255); ellipse(motorX, motorY, 10, 10);
+      }
+
+      noFill();
+      drawRoter(true);
+
+      if (checkC.checked()) drawVector();
+
+      stroke(244); strokeWeight(10);
+      arc(bridgeX[0], bridgeY[0], 80, 80, PI, TWO_PI);
+      arc(bridgeX[1], bridgeY[1], 80, 80, 4.2, TWO_PI);
+      strokeWeight(3); stroke(160, 80, 0);
+      arc(bridgeX[0], bridgeY[0], 80, 80, PI - 0.1, TWO_PI + 0.1);
+      ellipse(bridgeX[1], bridgeY[1], 80, 80, 0, PI);
+
+      strokeWeight(3); stroke(160, 80, 0);
+      line(
+        motorX + roterX[0] * cos(theta) - roterY[0], motorY + roterX[0] * sin(theta) + roterY[0],
+        motorX + roterX[1] * cos(theta) - roterY[1], motorY + roterX[1] * sin(theta) + roterY[1]
+      );
+      line(
+        motorX + roterX[roterMax - 2] * cos(theta) - roterY[roterMax - 2], motorY + roterX[roterMax - 2] * sin(theta) + roterY[roterMax - 2],
+        motorX + roterX[roterMax - 1] * cos(theta) - roterY[roterMax - 1], motorY + roterX[roterMax - 1] * sin(theta) + roterY[roterMax - 1]
+      );
+
+      if (radioA.value() == "1") {
+        stroke(0); strokeWeight(2);
+        var x1 = 750, y1 = 410;
+        var x2 = x1 + 70 * sin(constrain(emf * 2.67, -1.04, 1.04));
+        var y2 = y1 - 70 * cos(constrain(emf * 2.67, -1.04, 1.04));
+        line(x1, y1, x2, y2);
+        noStroke(); fill(217); ellipse(x1, y1, 40);
+        fill(128); ellipse(x1, y1, 10);
+      }
+
+      image(generatorImage[int(radioA.value())], 0, 0, 1000, 500);
+
+      rectMode(CENTER);
+      var current = 20 * emf;
+      if (checkC.checked()) {
+        var i = int(radioA.value());
+        if (checkA.checked()) {
+          for (var j = 0; j < pathNodes[i]; j++) {
+            pathNode[i][j] += current;
+            if (pathNode[i][j] > pathNodeLength[i]) pathNode[i][j] -= pathNodeLength[i];
+            if (pathNode[i][j] < 0) pathNode[i][j] += pathNodeLength[i];
+          }
+        }
+        fill(0); noStroke();
+        for (var j = 0; j < pathNodes[i]; j++) {
+          for (var k = 0; k < pathX1[i].length; k++) {
+            var p = mod(pathNode[i][j], pathNodeLength[i]);
+            if (path1[i][k] <= pathNode[i][j] && pathNode[i][j] <= path2[i][k]) {
+              var px = map(pathNode[i][j], path1[i][k], path2[i][k], pathX1[i][k], pathX2[i][k]);
+              var py = map(pathNode[i][j], path1[i][k], path2[i][k], pathY1[i][k], pathY2[i][k]);
+              var t = atan2(pathY2[i][k] - pathY1[i][k], pathX2[i][k] - pathX1[i][k]);
+              if (current < 0) t += PI;
+              drawProton(px, py, t);
+            }
+          }
+        }
+      }
+
+      if (radioA.value() == "0") {
+        imageMode(CENTER);
+        tint(255, abs(800 * emf));
+        image(glowImage, 750, 375, 260, 260);
+        noTint();
+        imageMode(CORNER);
+      }
+
+      if (radioA.value() == "2") {
+        beginShape();
+        noFill(); strokeWeight(2); stroke(255, 0, 0);
+        for (var ii = 0; ii < graphY.length; ii++)
+          vertex(650 + ii, 350 - constrain(125 * graphY[ii], -50, 50));
+        endShape();
+      }
+
+      pop();
+    }
+
+    function drawMagnetic(emf) {
+      var minX = motorX - 150, maxX = motorX + 150;
+      var minY = motorY - 50, maxY = motorY + 50;
+      var lineX = [vectorX[0], vectorX[1]], lineY = [vectorY[0], vectorY[1]];
+      var lineMax = 8;
+      var poleX = [], poleY = [], poleIsN = [];
+      for (var j = 0; j < lineMax; j++) {
+        poleX.push(minX - 20); poleY.push(map(j, 0, lineMax - 1, minY - 16, maxY + 16)); poleIsN.push(true);
+      }
+      for (var j = 0; j < lineMax; j++) {
+        poleX.push(maxX + 20); poleY.push(map(j, 0, lineMax - 1, minY - 16, maxY + 16)); poleIsN.push(false);
+      }
+      for (var c = 1; c < lineMax - 1; c++) {
+        var steps = 600;
+        var forward = (sin(theta) * cos(theta)) ? ((c < lineMax / 2) ? true : false) : ((c < lineMax / 2) ? false : true);
+        var current = forward ? -emf * 0.01 : emf * 0.01;
+        var flux = forward ? 30 : -30;
+        var foreX = [], foreY = [];
+        foreX.push(forward ? minX : maxX);
+        foreY.push(poleY[c]);
+        for (var i = 0; i < steps; i++) {
+          var x = foreX[foreX.length - 1], y = foreY[foreX.length - 1];
+          var vecX = 0, vecY = 0;
+          for (var k = 0; k < 2; k++) {
+            var r = dist(x, y, lineX[k], lineY[k]);
+            var hi = ((k === 0) ? -1 : 1) * current / r / r;
+            vecX += hi * (y - lineY[k]) / r; vecY -= hi * (x - lineX[k]) / r;
+          }
+          for (var j = 0; j < poleX.length; j++) {
+            var len = pow(x - poleX[j], 2) + pow(y - poleY[j], 2);
+            vecX += flux * (poleIsN[j] ? 1 : -1) / len * ((x - poleX[j]) / sqrt(len));
+            vecY += flux * (poleIsN[j] ? 1 : -1) / len * ((y - poleY[j]) / sqrt(len));
+          }
+          var h = sqrt(vecX * vecX + vecY * vecY);
+          if (h < 0.001) break;
+          x += vecX / h; y += vecY / h;
+          foreX.push(x); foreY.push(y);
+          if (forward) { if (x > maxX) break; } else { if (x < minX) break; }
+        }
+        var biasY = (foreY[foreX.length - 1] - foreY[0]);
+        for (var ii = 0; ii < foreX.length; ii++) foreY[ii] -= biasY * ii / (foreX.length - 1);
+        strokeWeight(7); stroke(244);
+        beginShape();
+        if (forward) for (var ii = 60; ii < foreX.length; ii++) vertex(foreX[ii], foreY[ii]);
+        else for (var ii = 0; ii < foreX.length - 60; ii++) vertex(foreX[ii], foreY[ii]);
+        endShape();
+        strokeWeight(3); stroke(0, 255, 0);
+        beginShape();
+        for (var ii = 0; ii < foreX.length; ii++) vertex(foreX[ii], foreY[ii]);
+        endShape();
+      }
+    }
+
+    function drawRoter(bFront) {
+      push();
+      noFill(); strokeCap(SQUARE);
+      stroke(233); strokeWeight(7);
+      drawRoter2(bFront);
+      stroke(160, 80, 0); strokeWeight(3);
+      drawRoter2(bFront);
+      pop();
+    }
+
+    function drawRoter2(bFront) {
+      if (bFront) {
+        line(
+          motorX + maskX[0] * cos(theta) - maskY[0], motorY + maskX[0] * sin(theta) + maskY[0],
+          motorX + maskX[1] * cos(theta) - maskY[1], motorY + maskX[1] * sin(theta) + maskY[1]
+        );
+        beginShape();
+        for (var i = 0; i < roterMax; i++) {
+          if (roterY[i] >= 0)
+            vertex(motorX + roterX[i] * cos(theta) - roterY[i], motorY + roterX[i] * sin(theta) + roterY[i]);
+          else { endShape(); beginShape(); }
+        }
+        endShape();
+      } else {
+        beginShape();
+        for (var i = 0; i < roterMax; i++) {
+          if (roterY[i] <= 0)
+            vertex(motorX + roterX[i] * cos(theta) - roterY[i], motorY + roterX[i] * sin(theta) + roterY[i]);
+        }
+        endShape();
+      }
+    }
+
+    function drawVector() {
+      push();
+      noStroke(); fill(255, 0, 0, 128);
+      drawArrow2D_thick(vectorX[0], vectorY[0], 300 * graphY[graphY.length - 1], -300 * graphY[graphY.length - 1], 6);
+      drawArrow2D_thick(vectorX[1], vectorY[1], -300 * graphY[graphY.length - 1], 300 * graphY[graphY.length - 1], 6);
+      pop();
+    }
+
+    function touchStarted() {
+      if (!contain(mouseX, mouseY, 0, 0, width, height)) return;
+      if (touches.length > 1) return;
+      thetaDiff = 0; dragged = true;
+      rangeA.value(0); setup2();
+      pmx = mouseX * 1000 / width; pmy = mouseY * 1000 / height;
+    }
+
+    function touchMoved() {
+      if (touches.length > 1) return;
+      if (dragged) {
+        var mx = mouseX * 1000 / width, my = mouseY * 1000 / height;
+        var t1 = atan2(pmy - motorY, pmx - motorX);
+        var t2 = atan2(my - motorY, mx - motorX);
+        thetaDiff += diffAngle(t1, t2);
+        pmx = mx; pmy = my;
+        return false;
+      }
+    }
+
+    function touchEnded() { dragged = false; }
+
+    function mousePressed() {
+      thetaDiff = 0; dragged = true;
+      rangeA.value(0); setup2();
+      pmx = mouseX * 1000 / width; pmy = mouseY * 1000 / height;
+    }
+
+    function mouseDragged() {
+      if (dragged) {
+        var mx = mouseX * 1000 / width, my = mouseY * 1000 / height;
+        var t1 = atan2(pmy - motorY, pmx - motorX);
+        var t2 = atan2(my - motorY, mx - motorX);
+        thetaDiff += diffAngle(t1, t2);
+        pmx = mx; pmy = my;
+      }
+    }
+
+    function mouseReleased() { dragged = false; }
+  </script>
+</body>
+</html>
