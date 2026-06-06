@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=10">
+  <title>扬声器与麦克风 - 物理虚拟实验</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/0.9.0/p5.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/0.9.0/addons/p5.dom.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/0.9.0/addons/p5.sound.min.js"></script>
+  <style>
+    #myP5Canvas { touch-action: pinch-zoom; display: block; margin: 0 auto; border-radius: 12px; }
+    .canvas-wrap { background: #f8fafc; border-radius: 12px; padding: 4px; width: 100%; box-sizing: border-box; }
+    .controls-bar { display: flex; align-items: center; justify-content: center; padding: 12px 16px; gap: 16px; flex-wrap: wrap; }
+    .controls-bar .hint { color: #64748b; font-size: 14px; }
+    #radioA { display: flex; gap: 16px; flex-wrap: wrap; justify-content: center; }
+    #radioA label { color: #334155; font-size: 14px; cursor: pointer; user-select: none; display: inline-flex; align-items: center; gap: 4px; }
+    #radioA input[type="radio"] { accent-color: #3b82f6; width: 16px; height: 16px; cursor: pointer; }
+  </style>
+  <script src="auth-check.js"></script>
+</head>
+<body>
+  <header class="header">
+    <div class="logo">物理虚拟实验</div>
+    <nav class="nav">
+      <a href="index.html">首页</a>
+      <a href="experiments.html">实验列表</a>
+    </nav>
+  </header>
+
+  <div class="section">
+    <h2>扬声器与麦克风</h2>
+    <p style="color:#94a3b8;margin:0 0 16px 0;">观察扬声器如何将电信号转换为声音振动，以及麦克风如何将声音振动转换为电信号。</p>
+  </div>
+
+  <div class="main-card">
+    <div class="canvas-wrap">
+      <div id="myContainer"></div>
+    </div>
+    <div class="controls-bar">
+      <span id="radioA"></span>
+      <span class="hint">选择模式开始模拟（需允许麦克风权限）</span>
+    </div>
+  </div>
+
+  <div class="formula-bar">
+    <div class="formula-item">
+      <span class="label">扬声器原理</span>
+      <span class="value">通电线圈在磁场中受力振动 → 带动纸盆振动发声</span>
+    </div>
+    <div class="formula-item">
+      <span class="label">麦克风原理</span>
+      <span class="value">声波振动 → 线圈切割磁感线 → 产生感应电流</span>
+    </div>
+  </div>
+
+  <div class="experiment-info">
+    <div class="info-card">
+      <h3>使用说明</h3>
+      <ul>
+        <li><strong>关闭麦克风：</strong>无声音输入，仅显示静态示意图</li>
+        <li><strong>打开麦克风：</strong>通过设备麦克风采集声音，实时显示扬声器振动</li>
+        <li><strong>音乐样本：</strong>使用内置音频样本演示扬声器工作原理</li>
+        <li>红色箭头表示电流方向，蓝色弧线表示声波传播</li>
+        <li>首次使用需在浏览器中允许麦克风访问权限</li>
+      </ul>
+    </div>
+    <div class="info-card">
+      <h3>实验原理</h3>
+      <p>扬声器（喇叭）利用<strong>电动机原理</strong>：变化的电流通过音圈，在永久磁铁的磁场中受到安培力作用，推动纸盆振动发声。麦克风利用<strong>电磁感应原理</strong>：声波振动带动音圈在磁场中运动，切割磁感线产生感应电流，将声音信号转换为电信号。两者在结构上相似，但能量转换方向相反。</p>
+    </div>
+  </div>
+
+  <script src="supabase.js"></script>
+  <script src="protect.js"></script>
+  <script>
+    // ========== javalab.js helper: drawArrow2 ==========
+    function drawArrow2(x, y, cx, cy, head) { drawArrow_head(x, y, cx, cy, head); }
+    function drawArrow_head(x, y, cx, cy, head) {
+      line(x, y, x + cx, y + cy);
+      var leng = Math.sqrt(cx*cx + cy*cy);
+      var bolt = Math.min(leng/2.0, head);
+      var x1 =  0.921 * cx*bolt/leng - 0.389 * cy*bolt/leng;
+      var y1 =  0.389 * cx*bolt/leng + 0.921 * cy*bolt/leng;
+      var x2 =  0.921 * cx*bolt/leng + 0.389 * cy*bolt/leng;
+      var y2 = -0.389 * cx*bolt/leng + 0.921 * cy*bolt/leng;
+      beginShape();
+      vertex(x + cx - x1, y + cy - y1);
+      vertex(x + cx, y + cy);
+      vertex(x + cx - x2, y + cy - y2);
+      endShape();
+    }
+
+    // ========== Experiment ==========
+    var radioA;
+    var img_spaeker_0, img_spaeker_1, img_spaeker_2, img_spaeker_3;
+    var mic;
+    var song;
+    var fft;
+    var spectrum;
+    var spectrumColor = [];
+    var analyzerSong;
+    var rmsIn = 0;
+    var rmsOut = 0;
+    var micPrev = 0;
+    var maxWave = 24;
+    var dWave = [];
+
+    function preload() {
+      img_spaeker_0 = loadImage("javalab_speaker_0.png");
+      img_spaeker_1 = loadImage("javalab_speaker_1.png");
+      img_spaeker_2 = loadImage("javalab_speaker_2.png");
+      img_spaeker_3 = loadImage("javalab_speaker_3.png");
+      song = loadSound("javalab_speaker_music.mp3");
+    }
+
+    function setup() {
+      frameRate(60);
+      var o = select("#myContainer");
+      var a = 0.5;
+      var w = int((o.width > (window.innerHeight - 160) / a) ? (window.innerHeight - 160) / a : o.width);
+      var h = int(w * a);
+      var myCanvas = createCanvas(w, h);
+      myCanvas.parent("myContainer");
+      myCanvas.id("myP5Canvas");
+
+      radioA = createRadio("radioA");
+      radioA.option("关闭麦克风", "mic_off");
+      radioA.option("打开麦克风", "mic_on");
+      radioA.option("音乐样本", "music_sample");
+      radioA.parent("radioA");
+      radioA.value("mic_off");
+      radioA.changed(setup2);
+
+      mic = new p5.AudioIn();
+      fft = new p5.FFT();
+      analyzerSong = new p5.Amplitude();
+      analyzerSong.setInput(song);
+
+      for (var i = 0; i < 5; i++) spectrumColor[i] = lerpColor(color(0,255,0), color(192,192,0), map(i, 0, 5, 0, 1));
+      for (var i = 5; i < 10; i++) spectrumColor[i] = lerpColor(color(192,192,0), color(255,0,0), map(i, 5, 10, 0, 1));
+      for (var i = 10; i < 30; i++) spectrumColor[i] = color(255,0,0);
+
+      for (var i = 0; i < maxWave; i++) dWave[i] = 0;
+      setup2();
+    }
+
+    function windowResized() {
+      var o = select("#myContainer");
+      var a = 0.5;
+      var w = int((o.width > (window.innerHeight - 160) / a) ? (window.innerHeight - 160) / a : o.width);
+      var h = int(w * a);
+      resizeCanvas(w, h);
+    }
+
+    function setup2() {
+      if (radioA.value() == "music_sample") {
+        mic.stop();
+        song.loop();
+        fft.setInput(song);
+      } else {
+        mic.start();
+        song.stop();
+      }
+    }
+
+    function draw() {
+      if (touches.length > 1) return;
+      if (getAudioContext().state !== 'running') getAudioContext().resume();
+
+      background(255);
+      strokeCap(ROUND);
+      strokeJoin(ROUND);
+      push();
+      scale(width / 1000);
+
+      if (radioA.value() == "music_sample") {
+        rmsIn = min(analyzerSong.getLevel() * 40, 20);
+        spectrum = fft.analyze();
+      } else {
+        rmsIn = min(mic.getLevel() * 40, 20);
+        spectrum = null;
+      }
+      rmsIn *= (frameCount % 2 == 0) ? -1 : 1;
+      rmsIn *= random(0, 1);
+      rmsOut = (radioA.value() == "mic_off") ? 0 : rmsIn;
+
+      if (radioA.value() == "music_sample") image(img_spaeker_1, 0, 0, 1000, 500);
+      else image(img_spaeker_0, 0, 0, 1000, 500);
+
+      noFill();
+      strokeWeight(5);
+      stroke(255, 153, 0);
+      if (radioA.value() != "music_sample") {
+        for (var i = 0; i < 2; i++) {
+          beginShape();
+          vertex(150 + rmsIn, 250 + 40 * ((i == 0) ? -1 : 1));
+          quadraticVertex(130 + rmsIn/2, 250 + 70 * ((i == 0) ? -1 : 1), 150, 250 + 100 * ((i == 0) ? -1 : 1));
+          endShape();
+        }
+      }
+      for (var i = 0; i < 2; i++) {
+        beginShape();
+        vertex(750 + rmsOut, 250 + 55 * ((i == 0) ? -1 : 1));
+        quadraticVertex(790 + rmsOut/2, 250 + 140 * ((i == 0) ? -1 : 1), 800, 250 + 200 * ((i == 0) ? -1 : 1));
+        endShape();
+      }
+
+      noFill();
+      stroke(0);
+      strokeWeight(4);
+      if (radioA.value() != "music_sample") {
+        var x1 = 200 + rmsIn;
+        var y1 = 290;
+        var x2 = 260;
+        var y2 = 335;
+        beginShape();
+        vertex(x1, y1);
+        bezierVertex(x1, y2 + 43, x2 - 10, y2 + 43, x2, y2);
+        endShape();
+        var x3 = 700 + rmsOut;
+        var y3 = 305;
+        var x4 = 640;
+        var y4 = y2;
+        beginShape();
+        vertex(x3, y3);
+        bezierVertex(x3, y4 + 43, x4 + 10, y4 + 43, x4, y4);
+        vertex(x2, y2);
+        endShape();
+        fill(0);
+        noStroke();
+        ellipse(x2, y2, 10, 10);
+        ellipse(x4, y4, 10, 10);
+      } else {
+        var x3 = 700 + rmsOut;
+        var y3 = 305;
+        var x4 = 640;
+        var y4 = 335;
+        beginShape();
+        vertex(x3, y3);
+        bezierVertex(x3, y4 + 43, x4 + 10, y4 + 43, x4, y4);
+        endShape();
+        fill(0);
+        noStroke();
+        ellipse(x4, y4, 10, 10);
+      }
+
+      if (radioA.value() != "music_sample") image(img_spaeker_2, rmsIn, 0, 1000, 500);
+      image(img_spaeker_3, rmsOut, 0, 1000, 500);
+
+      noFill();
+      stroke(0);
+      strokeWeight(4);
+      if (radioA.value() != "music_sample") {
+        var x1 = 210 + rmsIn;
+        var y1 = 250;
+        var x2 = 250;
+        var y2 = 320;
+        beginShape();
+        vertex(x1, y1);
+        bezierVertex(x1, y2 + 40, x2 - 10, y2 + 40, x2, y2);
+        vertex(325, y2);
+        if (radioA.value() == "mic_on") vertex(375, y2);
+        else vertex(370, y2 - 20);
+        endShape();
+        var x3 = 690 + rmsOut;
+        var y3 = 250;
+        var x4 = 650;
+        var y4 = y2;
+        beginShape();
+        vertex(x3, y3);
+        bezierVertex(x3, y4 + 40, x4 + 10, y4 + 40, x4, y4);
+        vertex(375, y4);
+        endShape();
+        fill(0);
+        noStroke();
+        ellipse(x2, y2, 10, 10);
+        ellipse(x4, y4, 10, 10);
+        ellipse(325, y2, 10, 10);
+        ellipse(375, y2, 10, 10);
+      } else {
+        var x3 = 690 + rmsOut;
+        var y3 = 250;
+        var x4 = 650;
+        var y4 = 320;
+        beginShape();
+        vertex(x3, y3);
+        bezierVertex(x3, y4 + 40, x4 + 10, y4 + 40, x4, y4);
+        endShape();
+        fill(0);
+        noStroke();
+        ellipse(x4, y4, 10, 10);
+      }
+
+      noFill();
+      strokeWeight(3);
+      stroke(255, 0, 0);
+      if (radioA.value() == "mic_on") drawArrow2(500, 310, 3 * (rmsOut - micPrev), 0, 10);
+      if (radioA.value() == "mic_on") drawArrow2(500, 345, 3 * (micPrev - rmsOut), 0, 10);
+
+      for (var i = maxWave - 1; i > 0; i--) dWave[i] = dWave[i - 1];
+      dWave[0] = (rmsOut - micPrev) / 5;
+      noFill();
+      strokeWeight(1);
+      if (radioA.value() != "mic_off") {
+        for (var i = 0; i < maxWave; i++) {
+          var wx = (i + 6) * 20 + 6 * dWave[i];
+          var wy = wx * 5 / 4;
+          var rg = map(i, 0, maxWave, 128, 0);
+          stroke(0, 0, 255, rg);
+          arc(730, 250, wx, wy, -0.36 * PI, 0.36 * PI);
+        }
+      }
+
+      noStroke();
+      if (spectrum) {
+        push();
+        translate(104, 365);
+        rotate(QUARTER_PI);
+        var dx = 7;
+        var dy = 10;
+        for (var i = 0; i < 16; i++) {
+          var freq = round(map(i + 0.5, 0, 16, 0, spectrum.length * 0.8));
+          var x = map(i, 0, 16, 0, dx * 16);
+          var level = 1 + floor(map(spectrum[freq] * spectrum[freq], 255 * 255, 0, 30, 0));
+          level = constrain(level, 1, 19);
+          for (var j = 0; j < level; j++) {
+            var y = map(j, 0, 16, 0, dy * 16);
+            fill(spectrumColor[j]);
+            rect(x, -y, dx - 2, dy - 2);
+          }
+        }
+        pop();
+      }
+
+      micPrev = rmsOut;
+      pop();
+    }
+  </script>
+</body>
+</html>
