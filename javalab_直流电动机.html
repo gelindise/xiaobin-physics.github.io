@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=10">
+  <title>直流电动机原理 - 物理虚拟实验</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="stylesheet" href="style.css">
+  <script src="auth-check.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/0.9.0/p5.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/0.9.0/addons/p5.dom.min.js"></script>
+  <style>
+    #myP5Canvas { touch-action: pinch-zoom; display: block; margin: 0 auto; border-radius: 12px; }
+    .canvas-wrap { border-radius: 12px; padding: 4px; width: 100%; box-sizing: border-box; border: 1px solid #e2e8f0; position: relative; background: #fff; }
+    .controls-bar { display: flex; align-items: center; justify-content: center; padding: 10px 16px; gap: 20px; flex-wrap: wrap; background: #f8fafc; border-radius: 0 0 12px 12px; border-top: 1px solid #e2e8f0; }
+    .ctrl-group { display: flex; align-items: center; gap: 6px; font-size: 14px; color: #334155; }
+    .ctrl-group input[type="checkbox"] { accent-color: #3b82f6; }
+    .section { padding: 1.5rem 2rem 0.5rem; }
+    .section h2 { font-size: 1.4rem; }
+  </style>
+</head>
+<body>
+  <header class="header">
+    <div class="logo">物理虚拟实验</div>
+    <nav class="nav">
+      <a href="index.html">首页</a>
+      <a href="experiments.html">实验列表</a>
+    </nav>
+  </header>
+
+  <div class="section">
+    <h2>直流电动机原理</h2>
+    <p style="color:#94a3b8;margin:0 0 16px 0;">观察直流电动机中电流、磁场、电磁力和转矩的相互作用。拖动线圈可手动旋转，理解换向器如何实现持续转动。</p>
+  </div>
+
+  <div class="main-card">
+    <div class="canvas-wrap">
+      <div id="myContainer"></div>
+    </div>
+    <div class="controls-bar">
+      <div class="ctrl-group">
+        <input type="checkbox" id="checkA" checked>
+        <label id="chalkA" for="checkA">显示电流方向</label>
+      </div>
+      <div class="ctrl-group">
+        <input type="checkbox" id="checkB" checked>
+        <label id="chalkB" for="checkB" style="color:#0B0;">显示磁场</label>
+      </div>
+      <div class="ctrl-group">
+        <input type="checkbox" id="checkC" checked>
+        <label id="chalkC" for="checkC" style="color:#f00;">显示电磁力</label>
+      </div>
+      <div class="ctrl-group">
+        <input type="checkbox" id="checkT" checked>
+        <label id="chalkT" for="checkT" style="color:#f0f;">显示转矩</label>
+      </div>
+      <div class="ctrl-group">
+        <input type="checkbox" id="checkD" checked>
+        <label id="chalkD" for="checkD">运行</label>
+      </div>
+    </div>
+  </div>
+
+  <script src="auth-check.js"></script>
+  <script src="protect.js"></script>
+  <script>
+    var checkA, checkB, checkC, checkT, checkD;
+    var chalkA, chalkB, chalkC, chalkT, chalkD;
+    var theta = 0.3;
+    var motorX = 500, motorY = 250;
+    var coilW = 160, coilH = 240;
+    var dragged = false;
+    var pmx, pmy;
+    var translateY = 0;
+
+    function preload() {}
+
+    function setup() {
+      frameRate(20);
+      var o = select("#myContainer");
+      var a = 0.5;
+      var w = int(min(o.width, (window.innerHeight - 200) / a));
+      var h = int(w * a);
+      myCanvas = createCanvas(w, h);
+      myCanvas.parent("myContainer");
+      myCanvas.id("myP5Canvas");
+
+      checkA = select("#checkA"); chalkA = select("#chalkA");
+      checkB = select("#checkB"); chalkB = select("#chalkB");
+      checkC = select("#checkC"); chalkC = select("#chalkC");
+      checkT = select("#checkT"); chalkT = select("#chalkT");
+      checkD = select("#checkD"); chalkD = select("#chalkD");
+    }
+
+    function windowResized() {
+      var o = select("#myContainer");
+      var a = 0.5;
+      var w = int(min(o.width, (window.innerHeight - 200) / a));
+      var h = int(w * a);
+      resizeCanvas(w, h);
+    }
+
+    function draw() {
+      background(240);
+      push();
+      scale(width / 1000);
+      textSize(20);
+      strokeCap(ROUND);
+      strokeJoin(ROUND);
+
+      if (checkD.checked() && !dragged) theta += 0.05;
+      theta = theta % TWO_PI;
+      if (theta < 0) theta += TWO_PI;
+
+      // 磁铁
+      drawMagnets();
+      // 磁场线
+      if (checkB.checked()) drawMagneticField();
+      // 线圈后层
+      drawCoilBack();
+      // 力箭头（后层）
+      if (PI * 0.1 < theta && theta < PI * 0.9) drawForceBack();
+      // 线圈前层
+      drawCoilFront();
+      // 力箭头（前层）
+      if (PI * 0.1 < theta && theta < PI * 0.9) drawForceFront();
+      // 换向器和电刷
+      drawCommutator();
+      // 转矩指示
+      if (checkT.checked() && PI * 0.1 < theta && theta < PI * 0.9) drawTorque();
+
+      pop();
+    }
+
+    function drawMagnets() {
+      var mx = motorX - 190, my = motorY - 110;
+      // N极（左，红色）
+      fill(200, 60, 60);
+      noStroke();
+      rect(mx, my, 30, 220, 6);
+      fill(255);
+      textAlign(CENTER, CENTER);
+      textSize(28);
+      text("N", mx + 15, motorY);
+      // S极（右，蓝色）
+      var sx = motorX + 160;
+      fill(60, 80, 200);
+      rect(sx, my, 30, 220, 6);
+      fill(255);
+      text("S", sx + 15, motorY);
+    }
+
+    function drawMagneticField() {
+      var leftX = motorX - 155;
+      var rightX = motorX + 155;
+      var minY = motorY - 100;
+      var maxY = motorY + 100;
+      var lines = 7;
+
+      for (var c = 1; c < lines - 1; c++) {
+        var cy = map(c, 0, lines - 1, minY, maxY);
+        var forward = c < lines / 2;
+        var pts = [];
+        var sx = forward ? leftX : rightX;
+        pts.push({x: sx, y: cy});
+
+        var steps = 400;
+        for (var i = 0; i < steps; i++) {
+          var px = pts[pts.length - 1].x;
+          var py = pts[pts.length - 1].y;
+          var vx = forward ? 1 : -1;
+          var vy = 0;
+          // 线圈电流对磁场的扰动
+          if (PI * 0.1 < theta && theta < PI * 0.9) {
+            var sign = forward ? -1 : 1;
+            var currentEffect = sign * 2.5;
+            for (var s = 0; s < 2; s++) {
+              var cx2 = motorX + (s === 0 ? -coilW / 2 : coilW / 2) * cos(theta);
+              var cy2 = motorY + (s === 0 ? -coilW / 2 : coilW / 2) * sin(theta);
+              var r = dist(px, py, cx2, cy2) + 1;
+              vx += currentEffect * (py - cy2) / r / r * 8;
+              vy -= currentEffect * (px - cx2) / r / r * 8;
+            }
+          }
+          var h = sqrt(vx * vx + vy * vy);
+          if (h < 0.01) break;
+          px += vx / h * 2;
+          py += vy / h * 2;
+          pts.push({x: px, y: py});
+          if (forward && px > rightX) break;
+          if (!forward && px < leftX) break;
+        }
+
+        // 背景宽线
+        strokeWeight(8);
+        stroke(240);
+        noFill();
+        beginShape();
+        for (var j = 0; j < pts.length; j++) vertex(pts[j].x, pts[j].y);
+        endShape();
+        // 前景细线
+        strokeWeight(2.5);
+        stroke(0, 180, 0);
+        beginShape();
+        for (var j = 0; j < pts.length; j++) vertex(pts[j].x, pts[j].y);
+        endShape();
+      }
+
+      // 磁场方向箭头
+      strokeWeight(2);
+      stroke(0, 150, 0);
+      fill(0, 150, 0);
+      var arrowY = motorY;
+      for (var ax = leftX + 30; ax < rightX - 30; ax += 60) {
+        drawArrow(ax, arrowY, 14, 0, 6);
+      }
+    }
+
+    function getCoilCorners() {
+      var hw = coilW / 2, hh = coilH / 2;
+      return [
+        {x: motorX - hw * cos(theta) + hh * sin(theta), y: motorY - hw * sin(theta) - hh * cos(theta)},  // 左上
+        {x: motorX + hw * cos(theta) + hh * sin(theta), y: motorY + hw * sin(theta) - hh * cos(theta)},  // 右上
+        {x: motorX + hw * cos(theta) - hh * sin(theta), y: motorY + hw * sin(theta) + hh * cos(theta)},  // 右下
+        {x: motorX - hw * cos(theta) - hh * sin(theta), y: motorY - hw * sin(theta) + hh * cos(theta)}   // 左下
+      ];
+    }
+
+    function drawCoilBack() {
+      var c = getCoilCorners();
+      // 后层：线圈的上半部分（Y较小的边）
+      var topParts = [];
+      // 顶部横边和左右竖边的上半段
+      stroke(160, 100, 40);
+      strokeWeight(5);
+      noFill();
+      // 简化：画旋转的矩形线圈
+      // 左竖边（后层=上半段：从左上到中间）
+      beginShape();
+      vertex(c[0].x, c[0].y);
+      vertex((c[0].x + c[3].x) / 2, (c[0].y + c[3].y) / 2);
+      endShape();
+      // 右竖边（后层）
+      beginShape();
+      vertex(c[1].x, c[1].y);
+      vertex((c[1].x + c[2].x) / 2, (c[1].y + c[2].y) / 2);
+      endShape();
+      // 顶边
+      line(c[0].x, c[0].y, c[1].x, c[1].y);
+    }
+
+    function drawCoilFront() {
+      var c = getCoilCorners();
+      stroke(160, 100, 40);
+      strokeWeight(5);
+      noFill();
+      // 前层：线圈的下半部分
+      // 底边
+      line(c[3].x, c[3].y, c[2].x, c[2].y);
+      // 左竖边（前层=下半段：从中间到左下）
+      beginShape();
+      vertex((c[0].x + c[3].x) / 2, (c[0].y + c[3].y) / 2);
+      vertex(c[3].x, c[3].y);
+      endShape();
+      // 右竖边（前层）
+      beginShape();
+      vertex((c[1].x + c[2].x) / 2, (c[1].y + c[2].y) / 2);
+      vertex(c[2].x, c[2].y);
+      endShape();
+
+      // 转轴
+      stroke(100);
+      strokeWeight(2);
+      line(motorX, motorY - coilH / 2 - 20, motorX, motorY + coilH / 2 + 60);
+      // 轴心圆
+      fill(80);
+      noStroke();
+      ellipse(motorX, motorY, 8, 8);
+    }
+
+    function drawCommutator() {
+      var commY = motorY + coilH / 2 + 25;
+      var commR = 18;
+      // 换向器（两个半圆，分裂环）
+      noStroke();
+      // 左半环
+      fill(200, 140, 60);
+      arc(motorX, commY, commR * 2, commR * 2, theta + HALF_PI, theta + PI + HALF_PI, PIE);
+      // 右半环
+      fill(220, 180, 100);
+      arc(motorX, commY, commR * 2, commR * 2, theta - HALF_PI, theta + HALF_PI, PIE);
+      // 缝隙
+      stroke(240);
+      strokeWeight(2);
+      line(motorX + commR * cos(theta), commY + commR * sin(theta),
+           motorX - commR * cos(theta), commY - commR * sin(theta));
+
+      // 电刷（两个固定碳刷）
+      var brushW = 12, brushH = 20;
+      noStroke();
+      // 左电刷
+      fill(60);
+      rect(motorX - 20 - brushW, commY - commR, brushW, brushH, 3);
+      // 右电刷
+      fill(60);
+      rect(motorX + 20, commY - commR, brushW, brushH, 3);
+
+      // 电刷引线
+      stroke(60);
+      strokeWeight(2);
+      line(motorX - 20 - brushW / 2, commY - commR + brushH, motorX - 80, commY + 80);
+      line(motorX + 20 + brushW / 2, commY - commR + brushH, motorX + 80, commY + 80);
+
+      // 电池符号在左下
+      drawBattery(motorX - 130, commY + 70);
+      // 导线连接到电刷
+      stroke(60);
+      strokeWeight(2);
+      line(motorX - 130, commY + 55, motorX - 80, commY + 80);
+      line(motorX - 115, commY + 85, motorX + 80, commY + 80);
+    }
+
+    function drawBattery(bx, by) {
+      // 电池
+      stroke(40);
+      strokeWeight(2);
+      noFill();
+      // 长线（正极）
+      line(bx - 12, by - 12, bx + 12, by - 12);
+      // 短线（负极）
+      line(bx - 6, by + 12, bx + 6, by + 12);
+      // 连接
+      line(bx, by - 12, bx, by + 12);
+      // 标签
+      fill(40);
+      noStroke();
+      textSize(11);
+      textAlign(CENTER, CENTER);
+      text("+", bx - 18, by - 12);
+      text("−", bx + 18, by + 12);
+
+      // 电流方向：电刷→换向器→线圈
+      if (checkA.checked()) {
+        var commY = motorY + coilH / 2 + 25;
+        var commR = 18;
+        var onLeft = (theta % TWO_PI) < PI;
+        // 电流从左电刷→左半环→左侧线圈；或左电刷→右半环→右侧线圈
+        stroke(0);
+        strokeWeight(2);
+        fill(0);
+        // 简化：在电刷处显示小箭头
+        var brushLY = commY - commR + 10;
+        drawArrow(motorX - 20 - 6, brushLY, 0, -8, 4);
+        drawArrow(motorX + 20 + 6, brushLY, 0, -8, 4);
+      }
+    }
+
+    function drawForceBack() {
+      drawForces(true);
+    }
+
+    function drawForceFront() {
+      drawForces(false);
+    }
+
+    function drawForces(isBack) {
+      var hw = coilW / 2, hh = coilH / 2;
+      var sides = [
+        {x: motorX - hw * cos(theta), y: motorY - hw * sin(theta), a: theta + PI / 2},  // 左边
+        {x: motorX + hw * cos(theta), y: motorY + hw * sin(theta), a: theta - PI / 2}   // 右边
+      ];
+      // 电流方向（取决于换向器连接）
+      var leftUp = (theta % TWO_PI) < PI;
+      var forceDir = leftUp ? -1 : 1; // 左力向上/下
+
+      for (var i = 0; i < 2; i++) {
+        var isLeft = i === 0;
+        var isFront = (isLeft && theta < PI) || (!isLeft && theta >= PI);
+
+        if (isFront !== isBack) continue;
+
+        // 电流箭头
+        if (checkA.checked()) {
+          stroke(0);
+          strokeWeight(2);
+          fill(0);
+          var curDir = (isLeft === leftUp) ? -1 : 1;
+          drawArrow(sides[i].x, sides[i].y + 30 * curDir, 0, -50 * curDir, 6);
+        }
+
+        // 力箭头
+        if (checkC.checked()) {
+          stroke(220, 30, 30);
+          strokeWeight(2);
+          fill(220, 30, 30);
+          var fDir = (isLeft ? forceDir : -forceDir);
+          drawArrow(sides[i].x, sides[i].y, 70 * fDir, 0, 6);
+        }
+      }
+    }
+
+    function drawTorque() {
+      var hw = coilW / 2, hh = coilH / 2;
+      var tx = motorX, ty = motorY;
+      stroke(200, 0, 200);
+      strokeWeight(3);
+      fill(200, 0, 200);
+      // 旋转弧线
+      noFill();
+      var r = 50;
+      var aStart = -theta - 0.6;
+      var aEnd = -theta + 0.6;
+      arc(tx, ty, r * 2, r * 2, aStart, aEnd);
+      // 箭头
+      var ax = tx + r * cos(aEnd);
+      var ay = ty + r * sin(aEnd);
+      push();
+      translate(ax, ay);
+      rotate(aEnd + HALF_PI);
+      fill(200, 0, 200);
+      triangle(-5, -10, 5, -10, 0, 2);
+      pop();
+      // 标签
+      noStroke();
+      textSize(16);
+      textAlign(LEFT, CENTER);
+      text("转矩", tx + r + 8, ty);
+    }
+
+    function drawArrow(x, y, dx, dy, headSize) {
+      var d = sqrt(dx * dx + dy * dy);
+      if (d < 1) return;
+      line(x, y, x + dx, y + dy);
+      var ux = dx / d, uy = dy / d;
+      var px = x + dx, py = y + dy;
+      triangle(
+        px, py,
+        px - ux * headSize + uy * headSize * 0.5, py - uy * headSize - ux * headSize * 0.5,
+        px - ux * headSize - uy * headSize * 0.5, py - uy * headSize + ux * headSize * 0.5
+      );
+    }
+
+    function touchStarted() {
+      if (touches.length > 1) return;
+      dragged = true;
+      pmx = mouseX * 1000 / width;
+      pmy = mouseY * 1000 / height;
+      return false;
+    }
+
+    function touchMoved() {
+      if (touches.length > 1) return;
+      if (dragged) {
+        var rot1 = atan2(pmy - motorY, pmx - motorX);
+        var rot2 = atan2(mouseY * 1000 / height - motorY, mouseX * 1000 / width - motorX);
+        theta += rot1 - rot2;
+        pmx = mouseX * 1000 / width;
+        pmy = mouseY * 1000 / height;
+        return false;
+      }
+    }
+
+    function touchEnded() {
+      dragged = false;
+    }
+
+    function mousePressed() {
+      dragged = true;
+      pmx = mouseX * 1000 / width;
+      pmy = mouseY * 1000 / height;
+    }
+
+    function mouseDragged() {
+      if (dragged) {
+        var rot1 = atan2(pmy - motorY, pmx - motorX);
+        var rot2 = atan2(mouseY * 1000 / height - motorY, mouseX * 1000 / width - motorX);
+        theta += rot1 - rot2;
+        pmx = mouseX * 1000 / width;
+        pmy = mouseY * 1000 / height;
+      }
+    }
+
+    function mouseReleased() {
+      dragged = false;
+    }
+  </script>
+</body>
+</html>
