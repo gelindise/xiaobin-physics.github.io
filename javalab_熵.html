@@ -95,7 +95,10 @@
     <div style="max-width:700px;margin:40px auto;background:#1a1a2e;border:1px solid #333;border-radius:16px;padding:24px 32px;color:#e2e8f0;">
       <div id="quizHeader" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
         <span style="font-size:18px;font-weight:bold;" id="quizTitle">第 1 关 (1/3)</span>
-        <button class="btn" id="btnCloseQuiz" style="font-size:12px;">✕ 退出</button>
+        <div style="display:flex;gap:8px;">
+          <button class="btn" id="btnResetQuiz" style="font-size:12px;border-color:#555;color:#999;">↺ 重置</button>
+          <button class="btn" id="btnCloseQuiz" style="font-size:12px;">✕ 退出</button>
+        </div>
       </div>
       <div id="quizProgress" style="height:4px;background:#333;border-radius:2px;margin-bottom:20px;">
         <div id="quizProgressFill" style="height:100%;background:#8b5cf6;border-radius:2px;width:0%;transition:width 0.3s;"></div>
@@ -667,11 +670,13 @@
   var quizLocked = false;  // prevent double-click
   var quizScores = [0, 0, 0]; // score per round
 
-  var btnChallenge, btnCloseQuiz, quizOverlay, quizTitle, quizProgressFill, quizBody, quizResult;
+  var btnChallenge, btnCloseQuiz, btnResetQuiz, quizOverlay, quizTitle, quizProgressFill, quizBody, quizResult;
+  var quizHighestRound = 0; // highest round completed (0-indexed, so 2 = all 3 done)
 
   function initQuiz() {
     btnChallenge = select("#btnChallenge");
     btnCloseQuiz = select("#btnCloseQuiz");
+    btnResetQuiz = select("#btnResetQuiz");
     quizOverlay = select("#quizOverlay");
     quizTitle = select("#quizTitle");
     quizProgressFill = select("#quizProgressFill");
@@ -680,15 +685,59 @@
 
     btnChallenge.mouseClicked(startQuiz);
     btnCloseQuiz.mouseClicked(closeQuiz);
+    btnResetQuiz.mouseClicked(resetQuiz);
+
+    // Update challenge button if saved progress exists
+    var saved = loadProgress();
+    if (saved && (saved.scores[0] > 0 || saved.round > 0)) {
+      var totalDone = saved.scores[0] + (saved.scores[1] || 0) + (saved.scores[2] || 0);
+      btnChallenge.html("继续挑战 (已得" + totalDone + "/15分)");
+    }
+  }
+
+  function saveProgress() {
+    var data = { round: quizRound, scores: quizScores, highestRound: quizHighestRound };
+    try { localStorage.setItem("quiz_pendulum_progress", JSON.stringify(data)); } catch(e) {}
+  }
+
+  function loadProgress() {
+    try {
+      var raw = localStorage.getItem("quiz_pendulum_progress");
+      if (raw) return JSON.parse(raw);
+    } catch(e) {}
+    return null;
+  }
+
+  function clearProgress() {
+    try { localStorage.removeItem("quiz_pendulum_progress"); } catch(e) {}
   }
 
   function startQuiz() {
-    quizRound = 0;
-    quizScores = [0, 0, 0];
+    var saved = loadProgress();
+    if (saved && saved.highestRound >= 0 && (saved.scores[0] > 0 || saved.round > 0)) {
+      // Has meaningful progress: resume from next unfinished round
+      quizRound = Math.min(saved.round + 1, 2);
+      quizScores = saved.scores.slice();
+      quizHighestRound = saved.highestRound;
+    } else {
+      quizRound = 0;
+      quizScores = [0, 0, 0];
+      quizHighestRound = 0;
+    }
     quizOverlay.style("display", "block");
     paused = true;
     buttonPause.html("暂停");
     renderRound();
+  }
+
+  function resetQuiz() {
+    if (confirm("确定要重置所有挑战进度吗？当前进度将丢失。")) {
+      quizRound = 0;
+      quizScores = [0, 0, 0];
+      quizHighestRound = 0;
+      clearProgress();
+      renderRound();
+    }
   }
 
   function closeQuiz() {
@@ -704,7 +753,9 @@
     quizResult.style("display", "none");
     quizBody.style("display", "block");
     quizTitle.html("第 " + (quizRound + 1) + " 关 (题目 " + (quizRound * 5 + 1) + "-" + (quizRound * 5 + 5) + "/15)");
-    quizProgressFill.style("width", (quizRound * 33) + "%");
+    // Progress bar: fill based on rounds already completed + current progress
+    var completedPct = quizRound * (100 / 3);
+    quizProgressFill.style("width", completedPct + "%");
     renderQuestion();
   }
 
@@ -756,6 +807,13 @@
     }, 1200);
   }
 
+  function getStars(score, total) {
+    if (score === total) return "⭐⭐⭐";
+    if (score >= total - 1) return "⭐⭐";
+    if (score >= Math.ceil(total / 2)) return "⭐";
+    return "";
+  }
+
   function showRoundResult() {
     var correctCount = 0;
     for (var i = 0; i < 5; i++) {
@@ -763,17 +821,24 @@
       if (quizAnswers[i] === q.ans) correctCount++;
     }
     quizScores[quizRound] = correctCount;
+    if (quizRound > quizHighestRound) quizHighestRound = quizRound;
+
+    // Save progress after each round
+    saveProgress();
 
     quizBody.style("display", "none");
     quizResult.style("display", "block");
 
+    var stars = getStars(correctCount, 5);
     var scoreClass = correctCount >= 4 ? "great" : (correctCount >= 2 ? "good" : "poor");
     var comment = correctCount >= 4 ? "太棒了！" : (correctCount >= 2 ? "继续加油！" : "再看看实验吧！");
 
     var html = '<div class="quiz-score ' + scoreClass + '">' + correctCount + "/5</div>";
+    if (stars) html += '<p style="font-size:20px;margin:4px 0;">' + stars + "</p>";
     html += '<p style="font-size:16px;margin:8px 0;color:#94a3b8;">' + comment + "</p>";
 
     if (quizRound < 2) {
+      html += '<p style="font-size:13px;color:#64748b;margin-bottom:8px;">已完成第' + (quizRound + 1) + "关，进度已保存</p>";
       html += '<div class="quiz-btn-row">';
       html += '<button class="btn" id="btnNextRound" style="font-size:14px;padding:8px 24px;">进入下一关</button>';
       html += '<button class="btn" id="btnRetryRound" style="font-size:14px;">重新挑战本关</button>';
@@ -782,15 +847,18 @@
       // All rounds complete
       var total = quizScores[0] + quizScores[1] + quizScores[2];
       var totalClass = total >= 12 ? "great" : (total >= 8 ? "good" : "poor");
-      var stars = total >= 13 ? "⭐⭐⭐" : (total >= 10 ? "⭐⭐" : "⭐");
+      var totalStars = getStars(total, 15);
       html = '<div class="quiz-score ' + totalClass + '">' + total + "/15</div>";
-      html += '<p style="font-size:20px;margin:8px 0;">' + stars + "</p>";
+      if (totalStars) html += '<p style="font-size:20px;margin:4px 0;">' + totalStars + "</p>";
       html += '<p style="font-size:14px;color:#94a3b8;margin-bottom:8px;">第1关: ' + quizScores[0] + '/5 &nbsp; 第2关: ' + quizScores[1] + '/5 &nbsp; 第3关: ' + quizScores[2] + "/5</p>";
       html += '<p style="font-size:16px;margin:8px 0;color:' + (total >= 12 ? "#22c55e" : total >= 8 ? "#f59e0b" : "#ef4444") + ';">' + (total >= 12 ? "恭喜通关！你对机械能转化理解透彻！" : total >= 8 ? "还不错，再复习一下错题吧！" : "建议回到实验仔细观察能量变化规律。") + "</p>";
       html += '<div class="quiz-btn-row">';
       html += '<button class="btn" id="btnRetryAll" style="font-size:14px;padding:8px 24px;">重新全部挑战</button>';
       html += '<button class="btn" id="btnBackExp" style="font-size:14px;">返回实验</button>';
       html += "</div>";
+
+      // Clear progress after full completion
+      clearProgress();
     }
 
     quizResult.html(html);
@@ -812,6 +880,8 @@
       if (btnRetryAll) btnRetryAll.addEventListener("click", function() {
         quizRound = 0;
         quizScores = [0, 0, 0];
+        quizHighestRound = 0;
+        clearProgress();
         renderRound();
       });
       if (btnBack) btnBack.addEventListener("click", function() {
