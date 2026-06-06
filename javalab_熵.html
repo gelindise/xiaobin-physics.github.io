@@ -109,6 +109,7 @@
   </div>
 
   <script src="protect.js"></script>
+  <script src="supabase.js"></script>
   <script>
   function mag(x, y) { return Math.sqrt(x * x + y * y); }
 
@@ -687,20 +688,57 @@
     btnCloseQuiz.mouseClicked(closeQuiz);
     btnResetQuiz.mouseClicked(resetQuiz);
 
-    // Update challenge button if saved progress exists
-    var saved = loadProgress();
-    if (saved && (saved.scores[0] > 0 || saved.round > 0)) {
-      var totalDone = saved.scores[0] + (saved.scores[1] || 0) + (saved.scores[2] || 0);
-      btnChallenge.html("继续挑战 (已得" + totalDone + "/15分)");
-    }
+    updateChallengeButton();
+  }
+
+  function getUsername() {
+    try { return localStorage.getItem("currentUser"); } catch(e) { return null; }
   }
 
   function saveProgress() {
-    var data = { round: quizRound, scores: quizScores, highestRound: quizHighestRound };
+    var data = { round: quizRound, scores: quizScores, highestRound: quizHighestRound, updatedAt: new Date().toISOString() };
+    // Always save to localStorage as fallback
     try { localStorage.setItem("quiz_pendulum_progress", JSON.stringify(data)); } catch(e) {}
+    // Sync to Supabase if logged in
+    var username = getUsername();
+    if (username) saveQuizToServer(username, data);
   }
 
-  function loadProgress() {
+  function saveQuizToServer(username, data) {
+    try {
+      SB.getUser(username).then(function(users) {
+        if (users && users.length > 0) {
+          var user = users[0];
+          var quizData = user.quiz_data;
+          if (typeof quizData === 'string') quizData = JSON.parse(quizData);
+          if (!quizData || typeof quizData !== 'object') quizData = {};
+          quizData.pendulum = data;
+          SB.updateUser(username, { quiz_data: quizData }).catch(function(){});
+        }
+      }).catch(function(){});
+    } catch(e) {}
+  }
+
+  async function loadProgress() {
+    // Try Supabase first if logged in
+    var username = getUsername();
+    if (username) {
+      try {
+        var users = await SB.getUser(username);
+        if (users && users.length > 0) {
+          var user = users[0];
+          var quizData = user.quiz_data;
+          if (typeof quizData === 'string') quizData = JSON.parse(quizData);
+          if (quizData && quizData.pendulum) {
+            var serverData = quizData.pendulum;
+            // Also sync to localStorage for offline fallback
+            try { localStorage.setItem("quiz_pendulum_progress", JSON.stringify(serverData)); } catch(e) {}
+            return serverData;
+          }
+        }
+      } catch(e) {}
+    }
+    // Fallback to localStorage
     try {
       var raw = localStorage.getItem("quiz_pendulum_progress");
       if (raw) return JSON.parse(raw);
@@ -710,24 +748,41 @@
 
   function clearProgress() {
     try { localStorage.removeItem("quiz_pendulum_progress"); } catch(e) {}
+    var username = getUsername();
+    if (username) {
+      try {
+        SB.getUser(username).then(function(users) {
+          if (users && users.length > 0) {
+            var user = users[0];
+            var quizData = user.quiz_data;
+            if (typeof quizData === 'string') quizData = JSON.parse(quizData);
+            if (quizData && typeof quizData === 'object') {
+              delete quizData.pendulum;
+              SB.updateUser(username, { quiz_data: quizData }).catch(function(){});
+            }
+          }
+        }).catch(function(){});
+      } catch(e) {}
+    }
   }
 
   function startQuiz() {
-    var saved = loadProgress();
-    if (saved && saved.highestRound >= 0 && (saved.scores[0] > 0 || saved.round > 0)) {
-      // Has meaningful progress: resume from next unfinished round
-      quizRound = Math.min(saved.round + 1, 2);
-      quizScores = saved.scores.slice();
-      quizHighestRound = saved.highestRound;
-    } else {
-      quizRound = 0;
-      quizScores = [0, 0, 0];
-      quizHighestRound = 0;
-    }
-    quizOverlay.style("display", "block");
-    paused = true;
-    buttonPause.html("暂停");
-    renderRound();
+    loadProgress().then(function(saved) {
+      if (saved && saved.highestRound >= 0 && (saved.scores[0] > 0 || saved.round > 0)) {
+        // Has meaningful progress: resume from next unfinished round
+        quizRound = Math.min(saved.round + 1, 2);
+        quizScores = saved.scores.slice();
+        quizHighestRound = saved.highestRound;
+      } else {
+        quizRound = 0;
+        quizScores = [0, 0, 0];
+        quizHighestRound = 0;
+      }
+      quizOverlay.style("display", "block");
+      paused = true;
+      buttonPause.html("暂停");
+      renderRound();
+    });
   }
 
   function resetQuiz() {
@@ -740,10 +795,22 @@
     }
   }
 
+  function updateChallengeButton() {
+    loadProgress().then(function(saved) {
+      if (saved && (saved.scores[0] > 0 || saved.round > 0)) {
+        var totalDone = saved.scores[0] + (saved.scores[1] || 0) + (saved.scores[2] || 0);
+        btnChallenge.html("继续挑战 (已得" + totalDone + "/15分)");
+      } else {
+        btnChallenge.html("过关挑战");
+      }
+    });
+  }
+
   function closeQuiz() {
     quizOverlay.style("display", "none");
     paused = false;
     buttonPause.html("暂停");
+    updateChallengeButton();
   }
 
   function renderRound() {
