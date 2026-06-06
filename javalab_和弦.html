@@ -24,6 +24,44 @@
     #radioA { display: flex; gap: 16px; }
     #radioA label { color: #ccc; font-size: 13px; cursor: pointer; display: flex; align-items: center; gap: 6px; }
     #radioA input[type="radio"] { accent-color: #8b5cf6; }
+    /* 过关挑战答题 */
+    .quiz-question { font-size: 15px; margin-bottom: 16px; line-height: 1.6; }
+    .quiz-option { display: block; width: 100%; text-align: left; padding: 12px 16px; margin-bottom: 8px; border: 2px solid #333; border-radius: 8px; background: rgba(255,255,255,0.03); color: #ccc; font-size: 14px; cursor: pointer; transition: all 0.2s; }
+    .quiz-option:hover { border-color: #8b5cf6; background: rgba(139,92,246,0.1); }
+    .quiz-option.correct { border-color: #22c55e; background: rgba(34,197,94,0.15); color: #22c55e; }
+    .quiz-option.wrong { border-color: #ef4444; background: rgba(239,68,68,0.15); color: #ef4444; }
+    .quiz-option:disabled { cursor: default; opacity: 0.7; }
+    .quiz-option:disabled.correct { opacity: 1; }
+    .quiz-score { font-size: 48px; font-weight: bold; }
+    .quiz-score.great { color: #22c55e; }
+    .quiz-score.good { color: #f59e0b; }
+    .quiz-score.poor { color: #ef4444; }
+    .quiz-btn-row { display: flex; gap: 10px; justify-content: center; margin-top: 16px; }
+    .review-card { background: rgba(255,255,255,0.03); border: 1px solid #333; border-radius: 10px; padding: 14px 16px; margin-bottom: 12px; text-align: left; }
+    .review-card.wrong { border-color: rgba(239,68,68,0.4); background: rgba(239,68,68,0.06); }
+    .review-card.correct2 { border-color: rgba(34,197,94,0.3); background: rgba(34,197,94,0.04); }
+    .rbadge { font-size: 12px; padding: 2px 8px; border-radius: 10px; margin-right: 8px; }
+    .rbadge.ok { background: rgba(34,197,94,0.2); color: #22c55e; }
+    .rbadge.fail { background: rgba(239,68,68,0.2); color: #ef4444; }
+    .rq { font-size: 14px; margin-bottom: 8px; }
+    .review-user-ans { font-size: 13px; color: #ef4444; margin: 4px 0; }
+    .review-correct-ans { font-size: 13px; color: #22c55e; margin: 4px 0; }
+    .review-explain { background: rgba(139,92,246,0.08); border: 1px solid rgba(139,92,246,0.2); border-radius: 8px; padding: 10px 14px; margin-top: 8px; }
+    .review-explain .rtitle { font-size: 13px; color: #a78bfa; margin-bottom: 4px; }
+    .review-explain .rtext { font-size: 13px; color: #c4b5fd; line-height: 1.6; }
+    .btn-primary {
+      padding: 8px 24px; border-radius: 8px; border: none;
+      background: linear-gradient(135deg, #3b82f6, #06b6d4); color: #fff;
+      font-size: 14px; font-weight: 700; cursor: pointer; transition: all 0.2s;
+    }
+    .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(59,130,246,0.4); }
+    .btn-primary.active { background: linear-gradient(135deg, #ef4444, #ec4899); }
+    .btn-reset {
+      padding: 8px 18px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.15);
+      background: transparent; color: #94a3b8; font-size: 14px; font-weight: 600;
+      cursor: pointer; transition: all 0.2s;
+    }
+    .btn-reset:hover { background: rgba(255,255,255,0.08); color: #f8fafc; }
   </style>
   <script src="auth-check.js"></script>
 </head>
@@ -47,6 +85,8 @@
     </div>
     <div class="controls-bar">
       <div id="radioA"></div>
+      <label style="color:#ccc;font-size:13px;display:flex;align-items:center;gap:4px;"><input type="checkbox" id="quizPauseCheck" style="accent-color:#8b5cf6;"> 暂停实验</label>
+      <button class="btn-primary" id="btnChallenge" style="font-size:14px;padding:6px 18px;background:linear-gradient(135deg,#8b5cf6,#06b6d4);">过关挑战</button>
       <span class="hint-text">点击琴键演奏 | 可同时按下多个琴键构成和弦</span>
     </div>
   </div>
@@ -164,6 +204,8 @@
   }
 
   function buttonAction() {
+    var _pchk = document.getElementById('quizPauseCheck');
+    if (_pchk && _pchk.checked) return;
     for (var i = 0; i < noteMax; i++) {
       if (noteColor[i] == 0) {
         if (contain(mouseX, mouseY, width * noteX[i], width * noteY, width * noteW[i], width * noteH[i])) {
@@ -276,6 +318,375 @@
       if (notePressed[i]) { envelope.play(osc[i], 0, 0.1); }
     }
   }
+  </script>
+  <script src="supabase.js"></script>
+
+  <!-- 过关挑战答题界面 -->
+  <div id="quizOverlay" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.8);z-index:1000;overflow-y:auto;">
+    <div style="max-width:700px;margin:40px auto;background:#1a1a2e;border:1px solid #333;border-radius:16px;padding:24px 32px;color:#e2e8f0;">
+      <div id="quizHeader" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+        <span style="font-size:18px;font-weight:bold;" id="quizTitle">第 1 关 (1/3)</span>
+        <div style="display:flex;gap:8px;">
+          <button class="btn-reset" id="btnResetQuiz" style="font-size:12px;">&#8634; 重置</button>
+          <button class="btn-reset" id="btnCloseQuiz" style="font-size:12px;">&#10005; 退出</button>
+        </div>
+      </div>
+      <div id="quizProgress" style="height:4px;background:#333;border-radius:2px;margin-bottom:20px;">
+        <div id="quizProgressFill" style="height:100%;background:#8b5cf6;border-radius:2px;width:0%;transition:width 0.3s;"></div>
+      </div>
+      <div id="quizBody"></div>
+      <div id="quizResult" style="display:none;text-align:center;padding:30px 0;"></div>
+    </div>
+  </div>
+
+  <script>
+  // ============================
+  //  QUIZ CHALLENGE — 过关挑战
+  // ============================
+  var QUIZ_STORAGE_KEY = "quiz_chord_progress";
+  var EXPERIMENT_KEY = "chord";
+
+  var quizQuestions = [
+    // ===== 第1关：音程与协和性基础 =====
+    { q: "两个音的频率比为简单整数比（如2:3）时，听起来____。", opts: ["不协和（刺耳）", "协和（悦耳）", "无声", "音高完全一样"], ans: 1, explain: "频率比为简单整数比时，两个音的驻波节点能对齐，叠加后波形规则、拍频消失，听起来就协和悦耳。例如纯五度（2:3）就比增四度（32:45）协和得多。" },
+    { q: "八度的频率比是____。", opts: ["1:2", "2:3", "3:4", "4:5"], ans: 0, explain: "八度是最协和的音程，频率比为1:2。较高音的频率是较低音的正好2倍。八度听起来像是同一个音的"翻版"，因为两者的泛音列高度重叠。" },
+    { q: "纯五度（Do-Sol）的频率比是____。", opts: ["2:3", "3:4", "4:5", "5:6"], ans: 0, explain: "纯五度的频率比是2:3（如Do=264Hz, Sol=396Hz）。它是仅次于八度最协和的音程。大量民歌和经典旋律都以纯五度为骨架。" },
+    { q: "当两个频率相近的音同时响起时，会产生____现象。", opts: ["共振", "拍频", "多普勒效应", "驻波"], ans: 1, explain: "两个频率非常接近的音叠加时，振幅会周期性地增强和减弱，形成"呜—呜—"的周期性音量变化，这就是拍频。拍频频率等于两音频率之差，差值越大拍频越快。" },
+    { q: "大三度（Do-Mi）在纯律中的频率比是____。", opts: ["2:3", "3:4", "4:5", "5:6"], ans: 2, explain: "纯律大三度的频率比是4:5。十二平均律的大三度约为2^(4/12)=1.2599，与4:5=1.25略有偏差，因此纯律大三度听起来更纯净。" },
+    // ===== 第2关：纯律与十二平均律 =====
+    { q: "十二平均律将一个八度均分为____个半音。", opts: ["10", "12", "7", "5"], ans: 1, explain: "十二平均律将八度（频率比2:1）均分为12个半音，每个半音的频率比为2^(1/12)=1.05946。这使得转调变得非常方便，是钢琴等乐器的标准调律法。" },
+    { q: "十二平均律每个半音的频率比约为____。", opts: ["1.05946", "1.12246", "1.18921", "1.5"], ans: 0, explain: "2^(1/12)=1.05946，每个半音比前一个音高约5.946%。因为(1.05946)^12=2，正好凑成一个完整的八度。" },
+    { q: "纯律与十二平均律相比，以下说法正确的是____。", opts: ["纯律转调更方便", "平均律的和弦更纯净", "纯律的某些和弦更协和", "两者没有区别"], ans: 2, explain: "纯律使用简单的整数频率比，大三和弦（4:5:6）听起来非常纯净协和。但纯律不能自由转调，一旦换了调频率比就变了。十二平均律虽然每个和弦有轻微偏差，但可以自由转调。" },
+    { q: "在十二平均律中，纯五度与纯律纯五度（3:2=1.5）相比____。", opts: ["略宽", "完全一样", "略窄", "差很多"], ans: 2, explain: "纯律纯五度=3:2=1.5，平均律纯五度=2^(7/12)=1.4983。平均律的纯五度比纯律略微窄了约0.11%，普通人耳几乎听不出区别。" },
+    { q: "以下哪种音程在纯律和平均律中的差异最大？", opts: ["八度（1:2）", "纯五度（2:3）", "大三度（4:5）", "纯四度（3:4）"], ans: 2, explain: "八度（2:1）在两种律制中完全相同。纯五度（2:3）差异很小（约0.11%）。但大三度（4:5=1.25 vs 平均律2^(4/12)=1.2599）差异明显，平均律的大三度比纯律高约8个音分。" },
+    // ===== 第3关：泛音列与综合应用 =====
+    { q: "一个音除了基频外，还有许多频率为基频整数倍的微弱振动，称为____。", opts: ["泛音", "拍频", "差频", "共振"], ans: 0, explain: "任何实际乐器发出的音都不是单一频率的正弦波，而是由基频和第2、3、4…谐波叠加而成。泛音列决定了乐器的音色。" },
+    { q: "两个乐器弹奏同一个音（基频相同）但音色不同，主要是因为____不同。", opts: ["音量", "音高", "泛音列结构", "频率比"], ans: 2, explain: "音高由基频决定，音量由振幅决定，但音色决定于泛音列的组成——哪些泛音存在及其强度。钢琴和小提琴弹同一个音，泛音结构完全不同，音色天差地别。" },
+    { q: "以下协和程度从高到低排列正确的是____。", opts: ["八度 > 纯五度 > 大三度 > 大二度", "大三度 > 纯五度 > 八度 > 大二度", "大二度 > 八度 > 纯五度 > 大三度", "纯五度 > 八度 > 大二度 > 大三度"], ans: 0, explain: "协和程度取决于频率比的简单程度。八度(1:2)最协和，纯五度(2:3)次之，大三度(4:5)再次，大二度(8:9)较不协和。简单整数比使驻波节点对齐产生协和。" },
+    { q: "在钢琴上同时按下C4和升C4（相距半音），你会听到____。", opts: ["非常协和的声音", "强烈的拍频和不协和感", "单一音高的声音", "只有C4的声音"], ans: 1, explain: "半音（小二度）是频率比最复杂的音程之一。两个频率非常接近的音会产生快速拍频，且泛音互相冲突，听起来非常刺耳不协和，古典音乐常用半音制造紧张感。" },
+    { q: "标准A4=440Hz，其上方纯五度E5在十二平均律中的频率约为____。", opts: ["660.0 Hz", "659.3 Hz", "880.0 Hz", "523.3 Hz"], ans: 1, explain: "纯五度相距7个半音。A4到E5：440=2^(7/12)=440=1.4983=659.3Hz。纯律纯五度应为440=3/2=660.0Hz，平均律略低不到1Hz。" }
+  ];
+
+  var quizRound = 0;
+  var quizIndex = 0;
+  var quizAnswers = [];
+  var quizLocked = false;
+  var quizScores = [0, 0, 0];
+  var quizHighestRound = 0;
+
+  function initQuiz() {
+    document.getElementById("btnChallenge").addEventListener("click", startQuiz);
+    document.getElementById("btnCloseQuiz").addEventListener("click", closeQuiz);
+    document.getElementById("btnResetQuiz").addEventListener("click", resetQuiz);
+    updateChallengeButton();
+  }
+
+  var _origSetupCD = setup;
+  setup = function() {
+    _origSetupCD();
+    initQuiz();
+  };
+
+  function updateChallengeButton() {
+    loadProgress().then(function(saved) {
+      if (saved && (saved.scores[0] > 0 || saved.round > 0)) {
+        var totalDone = saved.scores[0] + (saved.scores[1] || 0) + (saved.scores[2] || 0);
+        document.getElementById("btnChallenge").textContent = "继续挑战 (已得" + totalDone + "/15分)";
+      } else {
+        document.getElementById("btnChallenge").textContent = "过关挑战";
+      }
+    });
+  }
+
+  function getUsername() {
+    try { return localStorage.getItem("currentUser"); } catch(e) { return null; }
+  }
+
+  function saveProgress() {
+    var data = { round: quizRound, scores: quizScores, highestRound: quizHighestRound, updatedAt: new Date().toISOString() };
+    try { localStorage.setItem(QUIZ_STORAGE_KEY, JSON.stringify(data)); } catch(e) {}
+    var username = getUsername();
+    if (username) saveQuizToServer(username, data);
+  }
+
+  function saveQuizToServer(username, data) {
+    try {
+      SB.getUser(username).then(function(users) {
+        if (users && users.length > 0) {
+          var user = users[0];
+          var quizData = user.quiz_data;
+          if (typeof quizData === "string") quizData = JSON.parse(quizData);
+          if (!quizData || typeof quizData !== "object") quizData = {};
+          quizData[EXPERIMENT_KEY] = data;
+          SB.updateUser(username, { quiz_data: quizData }).catch(function(){});
+        }
+      }).catch(function(){});
+    } catch(e) {}
+  }
+
+  async function loadProgress() {
+    var username = getUsername();
+    if (username) {
+      try {
+        var users = await SB.getUser(username);
+        if (users && users.length > 0) {
+          var user = users[0];
+          var quizData = user.quiz_data;
+          if (typeof quizData === "string") quizData = JSON.parse(quizData);
+          if (quizData && quizData[EXPERIMENT_KEY]) {
+            var serverData = quizData[EXPERIMENT_KEY];
+            try { localStorage.setItem(QUIZ_STORAGE_KEY, JSON.stringify(serverData)); } catch(e) {}
+            return serverData;
+          }
+        }
+      } catch(e) {}
+    }
+    try {
+      var raw = localStorage.getItem(QUIZ_STORAGE_KEY);
+      if (raw) return JSON.parse(raw);
+    } catch(e) {}
+    return null;
+  }
+
+  function clearProgress() {
+    try { localStorage.removeItem(QUIZ_STORAGE_KEY); } catch(e) {}
+    var username = getUsername();
+    if (username) {
+      try {
+        SB.getUser(username).then(function(users) {
+          if (users && users.length > 0) {
+            var user = users[0];
+            var quizData = user.quiz_data;
+            if (typeof quizData === "string") quizData = JSON.parse(quizData);
+            if (quizData && typeof quizData === "object") {
+              delete quizData[EXPERIMENT_KEY];
+              SB.updateUser(username, { quiz_data: quizData }).catch(function(){});
+            }
+          }
+        }).catch(function(){});
+      } catch(e) {}
+    }
+  }
+
+  function startQuiz() {
+    loadProgress().then(function(saved) {
+      if (saved && saved.highestRound >= 0 && (saved.scores[0] > 0 || saved.round > 0)) {
+        quizRound = Math.min(saved.round + 1, 2);
+        quizScores = saved.scores.slice();
+        quizHighestRound = saved.highestRound;
+      } else {
+        quizRound = 0; quizScores = [0,0,0]; quizHighestRound = 0;
+      }
+      document.getElementById("quizOverlay").style.display = "block";
+      document.getElementById("quizPauseCheck").checked = true;
+      renderRound();
+    });
+  }
+
+  function closeQuiz() {
+    document.getElementById("quizOverlay").style.display = "none";
+    document.getElementById("quizPauseCheck").checked = false;
+    updateChallengeButton();
+  }
+
+  function resetQuiz() {
+    if (confirm("确定要重置所有挑战进度吗？当前进度将丢失。")) {
+      quizRound = 0; quizScores = [0,0,0]; quizHighestRound = 0;
+      clearProgress();
+      renderRound();
+    }
+  }
+
+  function renderRound() {
+    quizIndex = 0; quizAnswers = []; quizLocked = false;
+    document.getElementById("quizResult").style.display = "none";
+    document.getElementById("quizBody").style.display = "block";
+    document.getElementById("quizTitle").textContent = "第 " + (quizRound + 1) + " 关 (题目 " + (quizRound * 5 + 1) + "-" + (quizRound * 5 + 5) + "/15)";
+    document.getElementById("quizProgressFill").style.width = (quizRound * (100/3)) + "%";
+    renderQuestion();
+  }
+
+  function renderQuestion() {
+    var q = quizQuestions[quizRound * 5 + quizIndex];
+    var html = '<div class="quiz-question">' + (quizIndex + 1) + ". " + q.q + "</div>";
+    var labels = ["A", "B", "C", "D"];
+    for (var i = 0; i < q.opts.length; i++) {
+      html += '<button class="quiz-option" data-idx="' + i + '" ';
+      if (quizLocked) html += 'disabled ';
+      html += '>' + labels[i] + ". " + q.opts[i] + "</button>";
+    }
+    document.getElementById("quizBody").innerHTML = html;
+    var opts = document.querySelectorAll("#quizBody .quiz-option");
+    for (var j = 0; j < opts.length; j++) {
+      (function(idx) {
+        opts[j].addEventListener("click", function() { selectAnswer(idx); });
+      })(j);
+    }
+  }
+
+  function selectAnswer(idx) {
+    if (quizLocked) return;
+    quizLocked = true;
+    quizAnswers.push(idx);
+    var q = quizQuestions[quizRound * 5 + quizIndex];
+    var correct = q.ans;
+    var opts = document.querySelectorAll("#quizBody .quiz-option");
+    for (var i = 0; i < opts.length; i++) {
+      opts[i].disabled = true;
+      if (i === correct) opts[i].classList.add("correct");
+      if (i === idx && idx !== correct) opts[i].classList.add("wrong");
+    }
+    setTimeout(function() {
+      quizIndex++;
+      if (quizIndex < 5) { quizLocked = false; renderQuestion(); }
+      else showRoundResult();
+    }, 1200);
+  }
+
+  function getStars(score, total) {
+    if (score === total) return "⭐⭐⭐";
+    if (score >= total - 1) return "⭐⭐";
+    if (score >= Math.ceil(total / 2)) return "⭐";
+    return "";
+  }
+
+  function showRoundResult() {
+    var correctCount = 0;
+    for (var i = 0; i < 5; i++) {
+      if (quizAnswers[i] === quizQuestions[quizRound * 5 + i].ans) correctCount++;
+    }
+    quizScores[quizRound] = correctCount;
+    if (quizRound > quizHighestRound) quizHighestRound = quizRound;
+    saveProgress();
+
+    document.getElementById("quizBody").style.display = "none";
+    document.getElementById("quizResult").style.display = "block";
+
+    var stars = getStars(correctCount, 5);
+    var scoreClass = correctCount >= 4 ? "great" : (correctCount >= 2 ? "good" : "poor");
+    var comment = correctCount >= 4 ? "太棒了！" : (correctCount >= 2 ? "继续加油！" : "再看看实验吧！");
+
+    var html = '<div class="quiz-score ' + scoreClass + '">' + correctCount + "/5</div>";
+    if (stars) html += '<p style="font-size:20px;margin:4px 0;">' + stars + "</p>";
+    html += '<p style="font-size:16px;margin:8px 0;color:#94a3b8;">' + comment + "</p>";
+
+    if (quizRound < 2) {
+      html += '<p style="font-size:13px;color:#64748b;margin-bottom:8px;">已完成第' + (quizRound + 1) + '关，进度已保存</p>';
+      html += '<div class="quiz-btn-row"><button class="btn-primary" id="btnReviewRound" style="font-size:14px;">&#128203; 查看回顾</button></div>';
+      html += '<div class="quiz-btn-row">';
+      html += '<button class="btn-primary" id="btnNextRound" style="font-size:14px;padding:8px 24px;">进入下一关</button>';
+      html += '<button class="btn-reset" id="btnRetryRound" style="font-size:14px;">重新挑战本关</button>';
+      html += "</div>";
+    } else {
+      var total = quizScores[0] + quizScores[1] + quizScores[2];
+      var totalClass = total >= 12 ? "great" : (total >= 8 ? "good" : "poor");
+      var totalStars = getStars(total, 15);
+      html = '<div class="quiz-score ' + totalClass + '">' + total + '/15</div>';
+      if (totalStars) html += '<p style="font-size:20px;margin:4px 0;">' + totalStars + '</p>';
+      html += '<p style="font-size:14px;color:#94a3b8;margin-bottom:8px;">第1关: ' + quizScores[0] + '/5 &nbsp; 第2关: ' + quizScores[1] + '/5 &nbsp; 第3关: ' + quizScores[2] + '/5</p>';
+      html += '<p style="font-size:16px;margin:8px 0;color:' + (total >= 12 ? '#22c55e' : total >= 8 ? '#f59e0b' : '#ef4444') + ';">' + (total >= 12 ? '恭喜通关！你对和弦知识理解透彻！' : total >= 8 ? '还不错，再复习一下错题吧！' : '建议回到实验仔细聊听不同音程的协和与不协和。') + '</p>';
+      html += '<div class="quiz-btn-row"><button class="btn-primary" id="btnReviewRound" style="font-size:14px;">&#128203; 查看回顾</button></div>';
+      html += '<div class="quiz-btn-row">';
+      html += '<button class="btn-primary" id="btnRetryAll" style="font-size:14px;padding:8px 24px;">重新全部挑战</button>';
+      html += '<button class="btn-reset" id="btnBackExp" style="font-size:14px;">返回实验</button>';
+      html += '</div>';
+    }
+    document.getElementById("quizResult").innerHTML = html;
+    bindResultButtons();
+  }
+
+  function bindResultButtons() {
+    setTimeout(function() {
+      var btnNext = document.getElementById("btnNextRound");
+      var btnRetry = document.getElementById("btnRetryRound");
+      var btnRetryAll = document.getElementById("btnRetryAll");
+      var btnBack = document.getElementById("btnBackExp");
+      var btnReview = document.getElementById("btnReviewRound");
+      if (btnNext) btnNext.addEventListener("click", function() { quizRound++; renderRound(); });
+      if (btnRetry) btnRetry.addEventListener("click", function() { renderRound(); });
+      if (btnRetryAll) btnRetryAll.addEventListener("click", function() {
+        quizRound = 0; quizScores = [0,0,0]; quizHighestRound = 0;
+        clearProgress(); renderRound();
+      });
+      if (btnBack) btnBack.addEventListener("click", function() { closeQuiz(); });
+      if (btnReview) btnReview.addEventListener("click", function() { showReview(); });
+    }, 100);
+  }
+
+  function showReview() {
+    var html = '<p style="font-size:16px;font-weight:bold;margin-bottom:16px;color:#e2e8f0;">第' + (quizRound + 1) + '关 — 答题回顾</p>';
+    var wrongCount = 0;
+    var labels = ["A", "B", "C", "D"];
+    for (var i = 0; i < 5; i++) {
+      var q = quizQuestions[quizRound * 5 + i];
+      var userAns = quizAnswers[i];
+      var isCorrect = userAns === q.ans;
+      if (!isCorrect) wrongCount++;
+      var cardClass = isCorrect ? "correct2" : "wrong";
+      var badgeHtml = isCorrect ? '<span class="rbadge ok">✓ 正确</span>' : '<span class="rbadge fail">✗ 错误</span>';
+      html += '<div class="review-card ' + cardClass + '">';
+      html += '<div class="rq">' + badgeHtml + (i + 1) + ". " + q.q + "</div>";
+      if (!isCorrect) {
+        html += '<div class="review-user-ans">你的答案：' + labels[userAns] + ". " + q.opts[userAns] + "</div>";
+        html += '<div class="review-correct-ans">正确答案：' + labels[q.ans] + ". " + q.opts[q.ans] + "</div>";
+        html += '<div class="review-explain"><div class="rtitle">&#128161; 解析</div><div class="rtext">' + q.explain + "</div></div>";
+      } else {
+        html += '<div style="font-size:13px;color:#22c55e;margin-top:2px;">你的答案：' + labels[userAns] + ". " + q.opts[userAns] + " ✓</div>";
+      }
+      html += "</div>";
+    }
+    if (wrongCount === 0) {
+      html += '<p style="text-align:center;color:#22c55e;font-size:15px;margin-top:12px;">&#127881; 全部正确！你对和弦知识掌握得很好！</p>';
+    } else {
+      html += '<p style="text-align:center;color:#f59e0b;font-size:14px;margin-top:12px;">共错 ' + wrongCount + ' 题，仔细阅读解析，理解后再继续！</p>';
+    }
+    html += '<div class="quiz-btn-row"><button class="btn-reset" id="btnBackResult" style="font-size:14px;">&#8592; 返回结果</button></div>';
+    document.getElementById("quizBody").style.display = "none";
+    document.getElementById("quizResult").style.display = "block";
+    document.getElementById("quizResult").innerHTML = html;
+    setTimeout(function() {
+      var btnBack = document.getElementById("btnBackResult");
+      if (btnBack) btnBack.addEventListener("click", function() { showRoundResultSkipSave(); });
+    }, 100);
+  }
+
+  function showRoundResultSkipSave() {
+    var correctCount = quizScores[quizRound];
+    document.getElementById("quizBody").style.display = "none";
+    document.getElementById("quizResult").style.display = "block";
+    var stars = getStars(correctCount, 5);
+    var scoreClass = correctCount >= 4 ? "great" : (correctCount >= 2 ? "good" : "poor");
+    var comment = correctCount >= 4 ? "太棒了！" : (correctCount >= 2 ? "继续加油！" : "再看看实验吧！");
+    var html = '<div class="quiz-score ' + scoreClass + '">' + correctCount + "/5</div>";
+    if (stars) html += '<p style="font-size:20px;margin:4px 0;">' + stars + "</p>";
+    html += '<p style="font-size:16px;margin:8px 0;color:#94a3b8;">' + comment + "</p>";
+    if (quizRound < 2) {
+      html += '<p style="font-size:13px;color:#64748b;margin-bottom:8px;">已完成第' + (quizRound + 1) + '关，进度已保存</p>';
+      html += '<div class="quiz-btn-row"><button class="btn-primary" id="btnReviewRound" style="font-size:14px;">&#128203; 查看回顾</button></div>';
+      html += '<div class="quiz-btn-row">';
+      html += '<button class="btn-primary" id="btnNextRound" style="font-size:14px;padding:8px 24px;">进入下一关</button>';
+      html += '<button class="btn-reset" id="btnRetryRound" style="font-size:14px;">重新挑战本关</button>';
+      html += "</div>";
+    } else {
+      var total = quizScores[0] + quizScores[1] + quizScores[2];
+      var totalClass = total >= 12 ? "great" : (total >= 8 ? "good" : "poor");
+      var totalStars = getStars(total, 15);
+      html = '<div class="quiz-score ' + totalClass + '">' + total + '/15</div>';
+      if (totalStars) html += '<p style="font-size:20px;margin:4px 0;">' + totalStars + '</p>';
+      html += '<p style="font-size:14px;color:#94a3b8;margin-bottom:8px;">第1关: ' + quizScores[0] + '/5 &nbsp; 第2关: ' + quizScores[1] + '/5 &nbsp; 第3关: ' + quizScores[2] + '/5</p>';
+      html += '<p style="font-size:16px;margin:8px 0;color:' + (total >= 12 ? '#22c55e' : total >= 8 ? '#f59e0b' : '#ef4444') + ';">' + (total >= 12 ? '恭喜通关！你对和弦知识理解透彻！' : total >= 8 ? '还不错，再复习一下错题吧！' : '建议回到实验仔细聊听不同音程的协和与不协和。') + '</p>';
+      html += '<div class="quiz-btn-row"><button class="btn-primary" id="btnReviewRound" style="font-size:14px;">&#128203; 查看回顾</button></div>';
+      html += '<div class="quiz-btn-row">';
+      html += '<button class="btn-primary" id="btnRetryAll" style="font-size:14px;padding:8px 24px;">重新全部挑战</button>';
+      html += '<button class="btn-reset" id="btnBackExp" style="font-size:14px;">返回实验</button>';
+      html += '</div>';
+    }
+    document.getElementById("quizResult").innerHTML = html;
+    bindResultButtons();
+  }
+  // ============================
+  //  END QUIZ
+  // ============================
   </script>
 </body>
 </html>

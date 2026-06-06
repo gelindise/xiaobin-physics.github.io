@@ -24,6 +24,31 @@
     .formula-item .value .bad  { color: #ef4444; }
     .section { padding: 1.5rem 2rem 0.5rem; }
     .section h2 { font-size: 1.4rem; }
+  /* Quiz Challenge Styles */
+  .quiz-question { font-size: 15px; margin-bottom: 16px; line-height: 1.6; }
+  .quiz-option { display: block; width: 100%; text-align: left; padding: 12px 16px; margin-bottom: 8px; border: 2px solid #333; border-radius: 8px; background: rgba(255,255,255,0.03); color: #ccc; font-size: 14px; cursor: pointer; transition: all 0.2s; }
+  .quiz-option:hover { border-color: #8b5cf6; background: rgba(139,92,246,0.1); }
+  .quiz-option.correct { border-color: #22c55e; background: rgba(34,197,94,0.15); color: #22c55e; }
+  .quiz-option.wrong { border-color: #ef4444; background: rgba(239,68,68,0.15); color: #ef4444; }
+  .quiz-option:disabled { cursor: default; opacity: 0.7; }
+  .quiz-option:disabled.correct { opacity: 1; }
+  .quiz-score { font-size: 48px; font-weight: bold; }
+  .quiz-score.great { color: #22c55e; }
+  .quiz-score.good { color: #f59e0b; }
+  .quiz-score.poor { color: #ef4444; }
+  .quiz-btn-row { display: flex; gap: 10px; justify-content: center; margin-top: 16px; }
+  .review-card { background: rgba(255,255,255,0.03); border: 1px solid #333; border-radius: 10px; padding: 14px 16px; margin-bottom: 12px; text-align: left; }
+  .review-card.wrong { border-color: rgba(239,68,68,0.4); background: rgba(239,68,68,0.06); }
+  .review-card.correct2 { border-color: rgba(34,197,94,0.3); background: rgba(34,197,94,0.04); }
+  .rbadge { font-size: 12px; padding: 2px 8px; border-radius: 10px; margin-right: 8px; }
+  .rbadge.ok { background: rgba(34,197,94,0.2); color: #22c55e; }
+  .rbadge.fail { background: rgba(239,68,68,0.2); color: #ef4444; }
+  .rq { font-size: 14px; margin-bottom: 8px; }
+  .review-user-ans { font-size: 13px; color: #ef4444; margin: 4px 0; }
+  .review-correct-ans { font-size: 13px; color: #22c55e; margin: 4px 0; }
+  .review-explain { background: rgba(139,92,246,0.08); border: 1px solid rgba(139,92,246,0.2); border-radius: 8px; padding: 10px 14px; margin-top: 8px; }
+  .review-explain .rtitle { font-size: 13px; color: #a78bfa; margin-bottom: 4px; }
+  .review-explain .rtext { font-size: 13px; color: #c4b5fd; line-height: 1.6; }
   </style>
   <script src="auth-check.js"></script>
 </head>
@@ -66,6 +91,10 @@
         <input type="checkbox" id="checkB" checked>
         <label id="chalkB" for="checkB">气球</label>
       </div>
+      <div class="ctrl-group">
+        <input type="checkbox" id="pauseCheck" checked>
+        <label for="pauseCheck">模拟运行</label>
+      </div>
     </div>
   </div>
 
@@ -82,6 +111,13 @@
       <span class="label">弥散斑大小</span>
       <span class="value" id="blurSizeValue">—</span>
     </div>
+  </div>
+
+  <div style="max-width:900px;margin:0 auto 12px;padding:0 16px;text-align:center;">
+    <button class="btn" id="btnChallenge" style="font-size:16px;padding:10px 32px;border-color:#8b5cf6;color:#c4b5fd;">
+      过关挑战
+    </button>
+    <p style="color:#64748b;font-size:12px;margin-top:8px;">15道单选题 · 每次5道 · 检验你对相机光学原理的掌握程度</p>
   </div>
 
   <script src="protect.js"></script>
@@ -156,6 +192,7 @@
     var filmX = 950;
     var lensPolygonX = [];
     var lensPolygonY = [];
+    var paused = false;
 
     function preload() {
       backImage = loadImage("javalab_camera_2_back.png");
@@ -431,6 +468,438 @@
         );
       }
     }
+
+    // ===== Quiz Challenge System =====
+    var QUIZ_STORAGE_KEY = "quiz_camera_progress";
+    var EXPERIMENT_KEY = "camera";
+
+    var quizRound = 0;
+    var quizIndex = 0;
+    var quizAnswers = [];
+    var quizLocked = false;
+    var quizScores = [0, 0, 0];
+    var quizHighestRound = 0;
+
+    var btnChallenge, btnCloseQuiz, btnResetQuiz, quizOverlay, quizTitle, quizProgressFill, quizBody, quizResult;
+
+    var quizQuestions = [
+      // 第1关：相机基础概念
+      { q: "相机镜头通常由什么类型的光学透镜构成？", opts: ["凹透镜", "凸透镜", "平面镜", "三棱镜"], ans: 1,
+        explain: "相机镜头使用凸透镜（会聚透镜）。凸透镜能将光线会聚，在CCD传感器上形成倒立实像。凹透镜发散光线，不能直接用于成像。" },
+      { q: "相机拍摄时，景物通过镜头在CCD传感器上形成什么像？", opts: ["正立虚像", "正立实像", "倒立实像", "倒立虚像"], ans: 2,
+        explain: "相机成倒立实像。物体在凸透镜2倍焦距以外时，在透镜另一侧1-2倍焦距之间形成倒立缩小的实像。" },
+      { q: "相机的「光圈」主要控制什么？", opts: ["焦距大小", "进光量", "快门速度", "白平衡"], ans: 1,
+        explain: "光圈通过叶片开合控制进光量。光圈越大（F值越小），进光越多；光圈越小，进光越少。景深也随之改变。" },
+      { q: "手动对焦时，转动镜头环主要是调节什么？", opts: ["物距", "像距", "焦距", "光圈"], ans: 1,
+        explain: "手动对焦通过转动镜头组前后移动，改变像距（镜头到CCD的距离），使像恰好落在CCD传感器上。" },
+      { q: "以下哪个不是凸透镜对光线的作用？", opts: ["会聚光线", "使平行光聚焦", "发散光线", "可以成像"], ans: 2,
+        explain: "凸透镜对光线有会聚作用，凹透镜对光线有发散作用。凸透镜使平行光线汇聚到焦点，发散光线是凹透镜的特性。" },
+
+      // 第2关：透镜公式与应用
+      { q: "凸透镜成像的高斯公式是？", opts: ["f = u + v", "1/f = 1/u + 1/v", "f = uv/(u+v)", "u = vf/(f-v)"], ans: 1,
+        explain: "透镜成像公式为 1/f = 1/u + 1/v，其中 f 是焦距，u 是物距，v 是像距。这是计算成像位置的基本公式。" },
+      { q: "用相机拍远处物体时，物体在凸透镜2倍焦距以外，成什么像？", opts: ["正立放大虚像", "倒立缩小实像", "正立等大虚像", "倒立放大实像"], ans: 1,
+        explain: "物距u > 2f时，成倒立缩小的实像（f < v < 2f）。这正是相机拍摄远处景物的原理。" },
+      { q: "当物体靠近相机时（对焦距离变短），要使像依然清晰应该如何调节？", opts: ["缩小光圈", "增大像距", "减小像距", "增大焦距"], ans: 1,
+        explain: "根据透镜公式 1/u + 1/v = 1/f，当物距 u 减小时，像距 v 必须增大才能保持等式成立，所以镜头需要前伸（增大像距）。" },
+      { q: "以下哪个因素会影响照片的景深？", opts: ["像素数量", "光圈大小", "存储卡容量", "白平衡"], ans: 1,
+        explain: "景深与光圈大小直接相关：光圈越小（F值越大），景深越大，前后清晰范围越广；光圈越大（F值越小），景深越浅。" },
+      { q: "光圈缩小时弥散斑（模糊圈）变小的主要原因是？", opts: ["焦距变短", "边缘斜光线被遮挡减少", "像距自动调整", "传感器灵敏度提高"], ans: 1,
+        explain: "小光圈时，透镜边缘的斜光线被光圈叶片遮挡，只有中心较直的光线通过，因此弥散斑直径减小，景深增大。" },
+
+      // 第3关：综合与应用
+      { q: "透镜公式 1/f = 1/u + 1/v 中，f 为负值表示？", opts: ["透镜是凸透镜", "透镜是凹透镜", "像在透镜同侧", "物距为负"], ans: 1,
+        explain: "在薄透镜公式的符号约定中，凸透镜焦距 f 为正，凹透镜焦距 f 为负。f 为负值表示该透镜是凹透镜。" },
+      { q: "实像和虚像的根本区别在于？", opts: ["大小不同", "颜色不同", "能否在光屏上呈现", "正倒不同"], ans: 2,
+        explain: "实像是实际光线会聚形成的，能在光屏（如胶片、CCD）上呈现；虚像是光线反向延长线会聚形成的，不能在光屏上呈现。" },
+      { q: "为什么大光圈拍摄时容易「跑焦」（对焦不准更明显）？", opts: ["进光太多", "景深太浅", "焦距变短", "快门需要更快"], ans: 1,
+        explain: "大光圈景深很浅，焦点前后清晰范围很小。即使微小对焦误差也会导致主体模糊。" },
+      { q: "物距小于焦距时（u < f），凸透镜成什么像？", opts: ["倒立缩小实像", "倒立放大实像", "正立放大虚像", "正立缩小虚像"], ans: 2,
+        explain: "当物距 u < f 时，成的是正立放大的虚像（放大镜原理）。此时不能在光屏上承接，相机无法正常拍摄。" },
+      { q: "在相机自动对焦系统中，判断是否合焦通常依据什么？", opts: ["照片的颜色分布", "被摄物体的亮度", "图像的对比度", "镜头的温度"], ans: 2,
+        explain: "自动对焦系统通过分析图像的反差（对比度）来判断是否合焦。对焦准确时，图像边缘对比度最高，轮廓最清晰。" }
+    ];
+
+    function initQuiz() {
+      btnChallenge = select("#btnChallenge");
+      btnCloseQuiz = select("#btnCloseQuiz");
+      btnResetQuiz = select("#btnResetQuiz");
+      quizOverlay = select("#quizOverlay");
+      quizTitle = select("#quizTitle");
+      quizProgressFill = select("#quizProgressFill");
+      quizBody = select("#quizBody");
+      quizResult = select("#quizResult");
+
+      btnChallenge.mouseClicked(startQuiz);
+      btnCloseQuiz.mouseClicked(closeQuiz);
+      btnResetQuiz.mouseClicked(resetQuiz);
+
+      buttonPause = select("#pauseCheck");
+      updateChallengeButton();
+    }
+
+    var _origSetupCA = setup;
+    setup = function() {
+      _origSetupCA();
+      initQuiz();
+    };
+
+    function startQuiz() {
+      loadProgress().then(function(saved) {
+        if (saved && saved.highestRound >= 0 && (saved.scores[0] > 0 || saved.round > 0)) {
+          quizRound = Math.min(saved.round + 1, 2);
+          quizScores = saved.scores.slice();
+          quizHighestRound = saved.highestRound;
+        } else {
+          quizRound = 0; quizScores = [0,0,0]; quizHighestRound = 0;
+        }
+        quizOverlay.style("display", "block");
+        paused = true;
+        if (buttonPause) buttonPause.checked(false);
+        renderRound();
+      });
+    }
+
+    function closeQuiz() {
+      quizOverlay.style("display", "none");
+      paused = false;
+      if (buttonPause) buttonPause.checked(true);
+      updateChallengeButton();
+    }
+
+    function resetQuiz() {
+      if (confirm("确定要重置所有挑战进度吗？当前进度将丢失。")) {
+        quizRound = 0; quizScores = [0,0,0]; quizHighestRound = 0;
+        clearProgress();
+        renderRound();
+      }
+    }
+
+    function renderRound() {
+      quizIndex = 0; quizAnswers = []; quizLocked = false;
+      quizResult.style("display", "none");
+      quizBody.style("display", "block");
+      quizTitle.html("第 " + (quizRound + 1) + " 关 (题目 " + (quizRound * 5 + 1) + "-" + (quizRound * 5 + 5) + "/15)");
+      quizProgressFill.style("width", (quizRound * (100/3)) + "%");
+      renderQuestion();
+    }
+
+    function renderQuestion() {
+      var q = quizQuestions[quizRound * 5 + quizIndex];
+      var html = '<div class="quiz-question">' + (quizIndex + 1) + ". " + q.q + "</div>";
+      var labels = ["A", "B", "C", "D"];
+      for (var i = 0; i < q.opts.length; i++) {
+        html += '<button class="quiz-option" data-idx="' + i + '" ';
+        if (quizLocked) html += 'disabled ';
+        html += '>' + labels[i] + ". " + q.opts[i] + "</button>";
+      }
+      quizBody.html(html);
+
+      var opts = document.querySelectorAll("#quizBody .quiz-option");
+      for (var j = 0; j < opts.length; j++) {
+        (function(idx) {
+          opts[j].addEventListener("click", function() { selectAnswer(idx); });
+        })(j);
+      }
+    }
+
+    function selectAnswer(idx) {
+      if (quizLocked) return;
+      quizLocked = true;
+      quizAnswers.push(idx);
+      var q = quizQuestions[quizRound * 5 + quizIndex];
+      var correct = q.ans;
+
+      var opts = document.querySelectorAll("#quizBody .quiz-option");
+      for (var i = 0; i < opts.length; i++) {
+        opts[i].disabled = true;
+        if (i === correct) opts[i].classList.add("correct");
+        if (i === idx && idx !== correct) opts[i].classList.add("wrong");
+      }
+
+      setTimeout(function() {
+        quizIndex++;
+        if (quizIndex < 5) { quizLocked = false; renderQuestion(); }
+        else showRoundResult();
+      }, 1200);
+    }
+
+    function getStars(score, total) {
+      if (score === total) return "⭐⭐⭐";
+      if (score >= total - 1) return "⭐⭐";
+      if (score >= Math.ceil(total / 2)) return "⭐";
+      return "";
+    }
+
+    function showRoundResult() {
+      var correctCount = 0;
+      for (var i = 0; i < 5; i++) {
+        if (quizAnswers[i] === quizQuestions[quizRound * 5 + i].ans) correctCount++;
+      }
+      quizScores[quizRound] = correctCount;
+      if (quizRound > quizHighestRound) quizHighestRound = quizRound;
+      saveProgress();
+
+      quizBody.style("display", "none");
+      quizResult.style("display", "block");
+
+      var stars = getStars(correctCount, 5);
+      var scoreClass = correctCount >= 4 ? "great" : (correctCount >= 2 ? "good" : "poor");
+      var comment = correctCount >= 4 ? "太棒了！" : (correctCount >= 2 ? "继续加油！" : "再看看实验吧！");
+
+      var html = '<div class="quiz-score ' + scoreClass + '">' + correctCount + "/5</div>";
+      if (stars) html += '<p style="font-size:20px;margin:4px 0;">' + stars + "</p>";
+      html += '<p style="font-size:16px;margin:8px 0;color:#94a3b8;">' + comment + "</p>";
+
+      if (quizRound < 2) {
+        html += '<p style="font-size:13px;color:#64748b;margin-bottom:8px;">已完成第' + (quizRound + 1) + "关，进度已保存</p>";
+        html += '<div class="quiz-btn-row"><button class="btn-primary" id="btnReviewRound" style="font-size:14px;">📋 查看回顾</button></div>';
+        html += '<div class="quiz-btn-row">';
+        html += '<button class="btn-primary" id="btnNextRound" style="font-size:14px;padding:8px 24px;">进入下一关</button>';
+        html += '<button class="btn-reset" id="btnRetryRound" style="font-size:14px;">重新挑战本关</button>';
+        html += "</div>";
+      } else {
+        var total = quizScores[0] + quizScores[1] + quizScores[2];
+        var totalClass = total >= 12 ? "great" : (total >= 8 ? "good" : "poor");
+        var totalStars = getStars(total, 15);
+        html = '<div class="quiz-score ' + totalClass + '">' + total + "/15</div>";
+        if (totalStars) html += '<p style="font-size:20px;margin:4px 0;">' + totalStars + "</p>";
+        html += '<p style="font-size:14px;color:#94a3b8;margin-bottom:8px;">第1关: ' + quizScores[0] + '/5 &nbsp; 第2关: ' + quizScores[1] + '/5 &nbsp; 第3关: ' + quizScores[2] + "/5</p>";
+        html += '<p style="font-size:16px;margin:8px 0;color:' + (total >= 12 ? "#22c55e" : total >= 8 ? "#f59e0b" : "#ef4444") + ';">' + (total >= 12 ? "恭喜通关！你对相机光学原理理解透彻！" : total >= 8 ? "还不错，再复习一下错题吧！" : "建议回到实验仔细观察凸透镜成像变化规律。") + "</p>";
+        html += '<div class="quiz-btn-row"><button class="btn-primary" id="btnReviewRound" style="font-size:14px;">📋 查看回顾</button></div>';
+        html += '<div class="quiz-btn-row">';
+        html += '<button class="btn-primary" id="btnRetryAll" style="font-size:14px;padding:8px 24px;">重新全部挑战</button>';
+        html += '<button class="btn-reset" id="btnBackExp" style="font-size:14px;">返回实验</button>';
+        html += "</div>";
+        clearProgress();
+      }
+
+      quizResult.html(html);
+      bindResultButtons();
+    }
+
+    function bindResultButtons() {
+      setTimeout(function() {
+        var btnNext = document.getElementById("btnNextRound");
+        var btnRetry = document.getElementById("btnRetryRound");
+        var btnRetryAll = document.getElementById("btnRetryAll");
+        var btnBack = document.getElementById("btnBackExp");
+        var btnReview = document.getElementById("btnReviewRound");
+        if (btnNext) btnNext.addEventListener("click", function() { quizRound++; renderRound(); });
+        if (btnRetry) btnRetry.addEventListener("click", function() { renderRound(); });
+        if (btnRetryAll) btnRetryAll.addEventListener("click", function() {
+          quizRound = 0; quizScores = [0,0,0]; quizHighestRound = 0;
+          clearProgress(); renderRound();
+        });
+        if (btnBack) btnBack.addEventListener("click", function() { closeQuiz(); });
+        if (btnReview) btnReview.addEventListener("click", function() { showReview(); });
+      }, 100);
+    }
+
+    function showReview() {
+      var html = '<p style="font-size:16px;font-weight:bold;margin-bottom:16px;color:#e2e8f0;">第' + (quizRound + 1) + '关 — 答题回顾</p>';
+      var wrongCount = 0;
+      var labels = ["A", "B", "C", "D"];
+      for (var i = 0; i < 5; i++) {
+        var q = quizQuestions[quizRound * 5 + i];
+        var userAns = quizAnswers[i];
+        var isCorrect = userAns === q.ans;
+        if (!isCorrect) wrongCount++;
+        var cardClass = isCorrect ? "correct2" : "wrong";
+        var badgeHtml = isCorrect ? '<span class="rbadge ok">✓ 正确</span>' : '<span class="rbadge fail">✗ 错误</span>';
+        html += '<div class="review-card ' + cardClass + '">';
+        html += '<div class="rq">' + badgeHtml + (i + 1) + ". " + q.q + "</div>";
+        if (!isCorrect) {
+          html += '<div class="review-user-ans">你的答案：' + labels[userAns] + ". " + q.opts[userAns] + "</div>";
+          html += '<div class="review-correct-ans">正确答案：' + labels[q.ans] + ". " + q.opts[q.ans] + "</div>";
+          html += '<div class="review-explain"><div class="rtitle">💡 解析</div><div class="rtext">' + q.explain + "</div></div>";
+        } else {
+          html += '<div style="font-size:13px;color:#22c55e;margin-top:2px;">你的答案：' + labels[userAns] + ". " + q.opts[userAns] + " ✓</div>";
+        }
+        html += "</div>";
+      }
+      if (wrongCount === 0) {
+        html += '<p style="text-align:center;color:#22c55e;font-size:15px;margin-top:12px;">🎉 全部正确！你对这部分知识点掌握得很好！</p>';
+      } else {
+        html += '<p style="text-align:center;color:#f59e0b;font-size:14px;margin-top:12px;">共错 ' + wrongCount + ' 题，仔细阅读解析，理解后再继续！</p>';
+      }
+      html += '<div class="quiz-btn-row"><button class="btn-reset" id="btnBackResult" style="font-size:14px;">← 返回结果</button></div>';
+      document.getElementById("quizBody").style.display = "none";
+      document.getElementById("quizResult").style.display = "block";
+      document.getElementById("quizResult").innerHTML = html;
+      setTimeout(function() {
+        var btnBack = document.getElementById("btnBackResult");
+        if (btnBack) btnBack.addEventListener("click", function() { showRoundResultSkipSave(); });
+      }, 100);
+    }
+
+    function showRoundResultSkipSave() {
+      var correctCount = quizScores[quizRound];
+      document.getElementById("quizBody").style.display = "none";
+      document.getElementById("quizResult").style.display = "block";
+      var stars = getStars(correctCount, 5);
+      var scoreClass = correctCount >= 4 ? "great" : (correctCount >= 2 ? "good" : "poor");
+      var comment = correctCount >= 4 ? "太棒了！" : (correctCount >= 2 ? "继续加油！" : "再看看实验吧！");
+      var html = '<div class="quiz-score ' + scoreClass + '">' + correctCount + "/5</div>";
+      if (stars) html += '<p style="font-size:20px;margin:4px 0;">' + stars + "</p>";
+      html += '<p style="font-size:16px;margin:8px 0;color:#94a3b8;">' + comment + "</p>";
+      if (quizRound < 2) {
+        html += '<p style="font-size:13px;color:#64748b;margin-bottom:8px;">已完成第' + (quizRound + 1) + '关，进度已保存</p>';
+        html += '<div class="quiz-btn-row"><button class="btn-primary" id="btnReviewRound" style="font-size:14px;">📋 查看回顾</button></div>';
+        html += '<div class="quiz-btn-row">';
+        html += '<button class="btn-primary" id="btnNextRound" style="font-size:14px;padding:8px 24px;">进入下一关</button>';
+        html += '<button class="btn-reset" id="btnRetryRound" style="font-size:14px;">重新挑战本关</button>';
+        html += "</div>";
+      } else {
+        var total = quizScores[0] + quizScores[1] + quizScores[2];
+        var totalClass = total >= 12 ? "great" : (total >= 8 ? "good" : "poor");
+        var totalStars = getStars(total, 15);
+        html = '<div class="quiz-score ' + totalClass + '">' + total + "/15</div>";
+        if (totalStars) html += '<p style="font-size:20px;margin:4px 0;">' + totalStars + "</p>";
+        html += '<p style="font-size:14px;color:#94a3b8;margin-bottom:8px;">第1关: ' + quizScores[0] + '/5 第2关: ' + quizScores[1] + '/5 第3关: ' + quizScores[2] + "/5</p>";
+        html += '<p style="font-size:16px;margin:8px 0;color:' + (total >= 12 ? "#22c55e" : total >= 8 ? "#f59e0b" : "#ef4444") + ';">' + (total >= 12 ? "恭喜通关！你对相机光学原理理解透彻！" : total >= 8 ? "还不错，再复习一下错题吧！" : "建议回到实验仔细观察凸透镜成像变化规律。") + "</p>";
+        html += '<div class="quiz-btn-row"><button class="btn-primary" id="btnReviewRound" style="font-size:14px;">📋 查看回顾</button></div>';
+        html += '<div class="quiz-btn-row">';
+        html += '<button class="btn-primary" id="btnRetryAll" style="font-size:14px;padding:8px 24px;">重新全部挑战</button>';
+        html += '<button class="btn-reset" id="btnBackExp" style="font-size:14px;">返回实验</button>';
+        html += "</div>";
+      }
+      document.getElementById("quizResult").innerHTML = html;
+      bindResultButtons();
+    }
+
+    function updateChallengeButton() {
+      loadProgress().then(function(saved) {
+        if (saved && (saved.scores[0] > 0 || saved.round > 0)) {
+          var totalDone = saved.scores[0] + (saved.scores[1] || 0) + (saved.scores[2] || 0);
+          btnChallenge.html("继续挑战 (已得" + totalDone + "/15分)");
+        } else {
+          btnChallenge.html("过关挑战");
+        }
+      });
+    }
+
+    // Inline Supabase (no supabase.js)
+    var SUPABASE_URL_Q = 'https://ruledlbrdqhruotuaxwi.supabase.co';
+    var SUPABASE_ANON_KEY_Q = 'sb_publishable_0eFNMabL5IhHExao6wSE2A_nWbmMEKt';
+
+    function getUsername() {
+      try { return localStorage.getItem("currentUser"); } catch(e) { return null; }
+    }
+
+    function saveProgress() {
+      var data = { round: quizRound, scores: quizScores, highestRound: quizHighestRound, updatedAt: new Date().toISOString() };
+      try { localStorage.setItem(QUIZ_STORAGE_KEY, JSON.stringify(data)); } catch(e) {}
+      var username = getUsername();
+      if (username) saveQuizToServer(username, data);
+    }
+
+    function saveQuizToServer(username, data) {
+      var url = SUPABASE_URL_Q + '/rest/v1/users?username=eq.' + encodeURIComponent(username);
+      var headers = {
+        apikey: SUPABASE_ANON_KEY_Q,
+        Authorization: 'Bearer ' + SUPABASE_ANON_KEY_Q,
+        'Content-Type': 'application/json',
+        Prefer: 'return=representation'
+      };
+      fetch(url, { method: 'GET', headers: headers })
+        .then(function(r) { return r.json(); })
+        .then(function(users) {
+          if (users && users.length > 0) {
+            var user = users[0];
+            var quizData = user.quiz_data;
+            if (typeof quizData === 'string') quizData = JSON.parse(quizData);
+            if (!quizData || typeof quizData !== 'object') quizData = {};
+            quizData[EXPERIMENT_KEY] = data;
+            return fetch(url, { method: 'PATCH', headers: headers, body: JSON.stringify({ quiz_data: quizData }) });
+          }
+        })
+        .catch(function() {});
+    }
+
+    function loadProgress() {
+      var username = getUsername();
+      if (username) {
+        var url = SUPABASE_URL_Q + '/rest/v1/users?username=eq.' + encodeURIComponent(username);
+        var headers = {
+          apikey: SUPABASE_ANON_KEY_Q,
+          Authorization: 'Bearer ' + SUPABASE_ANON_KEY_Q,
+          'Content-Type': 'application/json'
+        };
+        return fetch(url, { method: 'GET', headers: headers })
+          .then(function(r) { return r.json(); })
+          .then(function(users) {
+            if (users && users.length > 0) {
+              var user = users[0];
+              var quizData = user.quiz_data;
+              if (typeof quizData === 'string') quizData = JSON.parse(quizData);
+              if (quizData && quizData[EXPERIMENT_KEY]) {
+                var serverData = quizData[EXPERIMENT_KEY];
+                try { localStorage.setItem(QUIZ_STORAGE_KEY, JSON.stringify(serverData)); } catch(e) {}
+                return serverData;
+              }
+            }
+            return null;
+          })
+          .then(function(result) {
+            if (result) return result;
+            try { var raw = localStorage.getItem(QUIZ_STORAGE_KEY); if (raw) return JSON.parse(raw); } catch(e) {}
+            return null;
+          })
+          .catch(function() {
+            try { var raw = localStorage.getItem(QUIZ_STORAGE_KEY); if (raw) return JSON.parse(raw); } catch(e) {}
+            return null;
+          });
+      }
+      return new Promise(function(resolve) {
+        try { var raw = localStorage.getItem(QUIZ_STORAGE_KEY); if (raw) resolve(JSON.parse(raw)); else resolve(null); } catch(e) { resolve(null); }
+      });
+    }
+
+    function clearProgress() {
+      try { localStorage.removeItem(QUIZ_STORAGE_KEY); } catch(e) {}
+      var username = getUsername();
+      if (username) {
+        var url = SUPABASE_URL_Q + '/rest/v1/users?username=eq.' + encodeURIComponent(username);
+        var headers = {
+          apikey: SUPABASE_ANON_KEY_Q,
+          Authorization: 'Bearer ' + SUPABASE_ANON_KEY_Q,
+          'Content-Type': 'application/json',
+          Prefer: 'return=representation'
+        };
+        fetch(url, { method: 'GET', headers: headers })
+          .then(function(r) { return r.json(); })
+          .then(function(users) {
+            if (users && users.length > 0) {
+              var user = users[0];
+              var quizData = user.quiz_data;
+              if (typeof quizData === 'string') quizData = JSON.parse(quizData);
+              if (quizData && typeof quizData === 'object') {
+                delete quizData[EXPERIMENT_KEY];
+                return fetch(url, { method: 'PATCH', headers: headers, body: JSON.stringify({ quiz_data: quizData }) });
+              }
+            }
+          })
+          .catch(function() {});
+    }
   </script>
+
+<div id="quizOverlay" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.8);z-index:1000;overflow-y:auto;">
+  <div style="max-width:700px;margin:40px auto;background:#1a1a2e;border:1px solid #333;border-radius:16px;padding:24px 32px;color:#e2e8f0;">
+    <div id="quizHeader" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+      <span style="font-size:18px;font-weight:bold;" id="quizTitle">第 1 关 (1/3)</span>
+      <div style="display:flex;gap:8px;">
+        <button class="btn" id="btnResetQuiz" style="font-size:12px;border-color:#555;color:#999;">↺ 重置</button>
+        <button class="btn" id="btnCloseQuiz" style="font-size:12px;">✕ 退出</button>
+      </div>
+    </div>
+    <div id="quizProgress" style="height:4px;background:#333;border-radius:2px;margin-bottom:20px;">
+      <div id="quizProgressFill" style="height:100%;background:#8b5cf6;border-radius:2px;width:0%;transition:width 0.3s;"></div>
+    </div>
+    <div id="quizBody"></div>
+    <div id="quizResult" style="display:none;text-align:center;padding:30px 0;"></div>
+  </div>
+</div>
+
 </body>
 </html>

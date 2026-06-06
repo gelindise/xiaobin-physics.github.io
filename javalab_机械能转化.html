@@ -86,6 +86,31 @@
       color: #000 !important;
     }
     #myDataSheet th { background: #f0f0f0; font-weight: 600; color: #000 !important; }
+    /* === 过关挑战答题系统 === */
+    .quiz-question { font-size: 15px; margin-bottom: 16px; line-height: 1.6; }
+    .quiz-option { display: block; width: 100%; text-align: left; padding: 12px 16px; margin-bottom: 8px; border: 2px solid #333; border-radius: 8px; background: rgba(255,255,255,0.03); color: #ccc; font-size: 14px; cursor: pointer; transition: all 0.2s; }
+    .quiz-option:hover { border-color: #8b5cf6; background: rgba(139,92,246,0.1); }
+    .quiz-option.correct { border-color: #22c55e; background: rgba(34,197,94,0.15); color: #22c55e; }
+    .quiz-option.wrong { border-color: #ef4444; background: rgba(239,68,68,0.15); color: #ef4444; }
+    .quiz-option:disabled { cursor: default; opacity: 0.7; }
+    .quiz-option:disabled.correct { opacity: 1; }
+    .quiz-score { font-size: 48px; font-weight: bold; }
+    .quiz-score.great { color: #22c55e; }
+    .quiz-score.good { color: #f59e0b; }
+    .quiz-score.poor { color: #ef4444; }
+    .quiz-btn-row { display: flex; gap: 10px; justify-content: center; margin-top: 16px; }
+    .review-card { background: rgba(255,255,255,0.03); border: 1px solid #333; border-radius: 10px; padding: 14px 16px; margin-bottom: 12px; text-align: left; }
+    .review-card.wrong { border-color: rgba(239,68,68,0.4); background: rgba(239,68,68,0.06); }
+    .review-card.correct2 { border-color: rgba(34,197,94,0.3); background: rgba(34,197,94,0.04); }
+    .rbadge { font-size: 12px; padding: 2px 8px; border-radius: 10px; margin-right: 8px; }
+    .rbadge.ok { background: rgba(34,197,94,0.2); color: #22c55e; }
+    .rbadge.fail { background: rgba(239,68,68,0.2); color: #ef4444; }
+    .rq { font-size: 14px; margin-bottom: 8px; }
+    .review-user-ans { font-size: 13px; color: #ef4444; margin: 4px 0; }
+    .review-correct-ans { font-size: 13px; color: #22c55e; margin: 4px 0; }
+    .review-explain { background: rgba(139,92,246,0.08); border: 1px solid rgba(139,92,246,0.2); border-radius: 8px; padding: 10px 14px; margin-top: 8px; }
+    .review-explain .rtitle { font-size: 13px; color: #a78bfa; margin-bottom: 4px; }
+    .review-explain .rtext { font-size: 13px; color: #c4b5fd; line-height: 1.6; }
   </style>
   <script src="auth-check.js"></script>
 </head>
@@ -115,6 +140,9 @@
         <div class="flexItem"><button id="buttonRun">发射</button></div>
         <div class="flexItem"><button id="buttonData">下载数据</button></div>
         <div class="flexItem">
+          <label><input type="checkbox" id="checkPause"> 暂停</label>
+        </div>
+        <div class="flexItem">
           <a href="javascript:doFullScreen();" style="box-shadow:none;">
             <svg width="32" height="32" viewBox="0 0 40 40" style="vertical-align:middle;">
               <path d="M5,15 L5,5 L15,5 M35,25 L35,35 L25,35 M25,5 L35,5 L35,15 M15,35 L5,35 L5,25" fill="none" stroke="#555" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
@@ -123,11 +151,18 @@
         </div>
       </div>
     </div>
+    <div style="max-width:900px;margin:0 auto 24px;padding:0 16px;text-align:center;">
+      <button class="btn" id="btnChallenge" style="font-size:16px;padding:10px 32px;border-color:#8b5cf6;color:#c4b5fd;">
+        过关挑战
+      </button>
+      <p style="color:#64748b;font-size:12px;margin-top:8px;">15道单选题 · 每次5道 · 检验你对机械能转化与守恒的掌握程度</p>
+    </div>
     <p style="text-align:center;font-size:14px;color:#999;margin-top:8px;">竖直上抛运动 · 动能与重力势能相互转化 · 调整质量和初速度观察变化</p>
   </div>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/0.9.0/p5.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/0.9.0/addons/p5.dom.min.js"></script>
+  <script src="supabase.js"></script>
   <script>
     // ========== 工具函数 ==========
     function doFullScreen() {
@@ -143,6 +178,7 @@
     let cannonImage, myDataSheet;
     let logData = [];
     let timming, v1, h1, touchSummit;
+    let paused = false;
 
     function preload() {
       cannonImage = loadImage("images/energy_conversion_cannon.png");
@@ -249,7 +285,7 @@
       // 物理模拟
       let v0 = rangeB.value();
       let v2 = v1;
-      if (timming >= 0) {
+      if (timming >= 0 && !paused) {
         timming += 0.01;
         v1 = v0 - 9.8 * timming;
         h1 = v0 * timming - 0.5 * 9.8 * timming * timming;
@@ -308,6 +344,334 @@
       htmlText += "</tbody></table>";
       myDataSheet.html(htmlText, false);
     }
+
+    // ===== 过关挑战答题系统 =====
+    var QUIZ_STORAGE_KEY = "quiz_mech_energy_progress";
+    var EXPERIMENT_KEY = "mech_energy";
+
+    var quizQuestions = [
+      // 第1关：机械能基本概念（5题）
+      { q: "机械能包括什么？", opts: ["动能和热能", "动能和重力势能", "动能和化学能", "势能和电能"], ans: 1, explain: "机械能是动能和势能的总和。势能包括重力势能和弹性势能。机械能 = 动能 + 势能（重力势能 + 弹性势能）。" },
+      { q: "重力势能的大小与什么因素有关？", opts: ["只与质量有关", "只与高度有关", "与质量和高度都有关", "与速度有关"], ans: 2, explain: "重力势能公式为 Ep=mgh，由质量 m、重力加速度 g 和高度 h 共同决定。质量越大、高度越高，重力势能越大。" },
+      { q: "以下哪种情况中物体具有重力势能？", opts: ["水平匀速行驶的汽车", "被举高的铁锤", "正在旋转的电风扇扇叶", "压缩的弹簧"], ans: 1, explain: "被举高的铁锤处于较高的位置，具有重力势能。汽车有动能，弹簧有弹性势能，电风扇扇叶有动能。注意区分不同类型的势能。" },
+      { q: "物体竖直上抛上升到最高点时，下列说法正确的是？", opts: ["动能最大，势能为零", "动能为零，势能最大", "动能和势能都为零", "动能和势能都最大"], ans: 1, explain: "竖直上抛到最高点时，物体速度为零，因此动能为零；高度最大，因此重力势能最大。此时全部动能已转化为重力势能。" },
+      { q: "下列哪个场景中，动能转化为重力势能？", opts: ["自由落体时下落", "竖直上抛时上升", "在水平地面滑行", "匀速下落的降落伞"], ans: 1, explain: "物体竖直上抛上升时，速度越来越小，高度越来越大，动能逐渐转化为重力势能。自由落体则相反，重力势能转化为动能。" },
+
+      // 第2关：机械能守恒定律（5题）
+      { q: "机械能守恒的条件是什么？", opts: ["物体不受任何力", "只有重力或弹力做功", "没有空气阻力", "物体在真空中运动"], ans: 1, explain: "机械能守恒的条件是：只有重力或弹力做功，没有其他外力（如摩擦力、空气阻力）做功。此时物体的动能和势能相互转化，但总和保持不变。" },
+      { q: "一个物体自由下落（忽略空气阻力），机械能如何变化？", opts: ["机械能逐渐增大", "机械能逐渐减小", "机械能保持不变", "机械能先增大后减小"], ans: 2, explain: "自由落体时，只有重力做功，满足机械能守恒条件。下落过程中，重力势能转化为动能，但机械能总量保持不变。" },
+      { q: "竖直上抛运动中（忽略空气阻力），机械能的变化情况是？", opts: ["上升时增大，下降时减小", "上升时减小，下降时增大", "始终不变", "逐渐减小"], ans: 2, explain: "竖直上抛运动中，只有重力做功，机械能守恒。上升时动能转化为势能，下降时势能转化为动能，机械能总量保持恒定。" },
+      { q: "物体从光滑斜面顶端自由滑下，到达底端时的速度与什么有关？", opts: ["只与物体质量有关", "只与斜面高度有关", "与高度和质量都有关", "与斜面坡度有关"], ans: 1, explain: "根据机械能守恒 mgh = ½mv²，化简得 v = sqrt(2gh)，速度只与高度有关，与质量无关。这就是为什么不同质量的小球从同一高度滚下，到达底部速度相同。" },
+      { q: "一小球从高度h处自由释放（无阻力），到达地面时速度是？", opts: ["√(gh)", "√(2gh)", "2√(gh)", "gh"], ans: 1, explain: "由机械能守恒：mgh = ½mv²，解得 v = √(2gh)。例如从5米高处下落，v = √(2×9.8×5) ≈ 9.9m/s。这个结果与质量无关。" },
+
+      // 第3关：综合应用（5题）
+      { q: "过山车在轨道上运动（忽略摩擦），在最高点和最低点相比，能量如何转化？", opts: ["最高点动能最大，最低点势能最大", "最高点势能最大，最低点动能最大", "最高点和最低点动能相同", "机械能不守恒"], ans: 1, explain: "过山车在最高点高度最大，重力势能最大，速度最小，动能最小；在最低点高度最小，势能最小，速度最大，动能最大。机械能守恒的情况下，势能和动能相互转化，总量保持不变。" },
+      { q: "单摆摆动过程中（忽略空气阻力），摆球在哪个位置速度最大？", opts: ["最高点", "最低点", "中间任意位置", "各个位置速度相同"], ans: 1, explain: "单摆在最低点时高度最低（重力势能最小），动能最大，所以速度最大。在最高点时全部动能为重力势能，速度为零。这就是机械能守恒的典型例子。" },
+      { q: "物体从粗糙斜面滑下，下列说法正确的是？", opts: ["机械能守恒，速度只与高度有关", "机械能不守恒，部分机械能转化为内能", "机械能不守恒，部分机械能转化为化学能", "机械能守恒，因为重力做功"], ans: 1, explain: "粗糙斜面有摩擦力，摩擦力做负功，部分机械能转化为内能（摩擦生热），所以机械能不守恒。实际下滑速度比光滑斜面小，因为部分能量转化为内能了。" },
+      { q: "在水力发电站中，能量转化过程是怎样的？", opts: ["电能→动能→势能", "化学能→动能→电能", "势能→动能→电能", "动能→势能→电能"], ans: 2, explain: "水力发电站利用水的重力势能转化为动能（水流下来），水流推动水轮机转动（动能转化为机械能），水轮机带动发电机发电（机械能转化为电能）。核心是利用水的势能转化为电能。" },
+      { q: "在机械能实验中，炮弹质量增大为原来的2倍，初速度不变，最高点的重力势能如何变化？", opts: ["不变", "变为原来的2倍", "变为原来的4倍", "变为原来的一半"], ans: 1, explain: "初速度 v0 不变时，最大高度由 hmax = v0²/(2g) 决定，与质量无关。而重力势能 Ep = mghmax，质量变为2倍，最高点高度不变，所以重力势能变为原来的2倍。" }
+    ];
+
+    var quizRound = 0, quizIndex = 0, quizAnswers = [], quizLocked = false;
+    var quizScores = [0, 0, 0], quizHighestRound = 0;
+    var btnChallenge, btnCloseQuiz, btnResetQuiz, quizOverlay, quizTitle, quizProgressFill, quizBody, quizResult;
+
+    function getUsername() {
+      try { return localStorage.getItem("currentUser"); } catch(e) { return null; }
+    }
+
+    function saveProgress() {
+      var data = { round: quizRound, scores: quizScores, highestRound: quizHighestRound, updatedAt: new Date().toISOString() };
+      try { localStorage.setItem(QUIZ_STORAGE_KEY, JSON.stringify(data)); } catch(e) {}
+      var username = getUsername();
+      if (username) saveQuizToServer(username, data);
+    }
+
+    function saveQuizToServer(username, data) {
+      try {
+        SB.getUser(username).then(function(users) {
+          if (users && users.length > 0) {
+            var user = users[0];
+            var quizData = user.quiz_data;
+            if (typeof quizData === 'string') quizData = JSON.parse(quizData);
+            if (!quizData || typeof quizData !== 'object') quizData = {};
+            quizData[EXPERIMENT_KEY] = data;
+            SB.updateUser(username, { quiz_data: quizData }).catch(function(){});
+          }
+        }).catch(function(){});
+      } catch(e) {}
+    }
+
+    async function loadProgress() {
+      var username = getUsername();
+      if (username) {
+        try {
+          var users = await SB.getUser(username);
+          if (users && users.length > 0) {
+            var user = users[0];
+            var quizData = user.quiz_data;
+            if (typeof quizData === 'string') quizData = JSON.parse(quizData);
+            if (quizData && quizData[EXPERIMENT_KEY]) {
+              var serverData = quizData[EXPERIMENT_KEY];
+              try { localStorage.setItem(QUIZ_STORAGE_KEY, JSON.stringify(serverData)); } catch(e) {}
+              return serverData;
+            }
+          }
+        } catch(e) {}
+      }
+      try { var raw = localStorage.getItem(QUIZ_STORAGE_KEY); if (raw) return JSON.parse(raw); } catch(e) {}
+      return null;
+    }
+
+    function clearProgress() {
+      try { localStorage.removeItem(QUIZ_STORAGE_KEY); } catch(e) {}
+      var username = getUsername();
+      if (username) {
+        try {
+          SB.getUser(username).then(function(users) {
+            if (users && users.length > 0) {
+              var user = users[0];
+              var quizData = user.quiz_data;
+              if (typeof quizData === 'string') quizData = JSON.parse(quizData);
+              if (quizData && typeof quizData === 'object') { delete quizData[EXPERIMENT_KEY]; SB.updateUser(username, { quiz_data: quizData }).catch(function(){}); }
+            }
+          }).catch(function(){});
+        } catch(e) {}
+      }
+    }
+
+    function updateChallengeButton() {
+      loadProgress().then(function(saved) {
+        if (saved && (saved.scores[0] > 0 || saved.round > 0)) {
+          var totalDone = saved.scores[0] + (saved.scores[1] || 0) + (saved.scores[2] || 0);
+          btnChallenge.innerHTML = "继续挑战 (已得" + totalDone + "/15分)";
+        } else { btnChallenge.innerHTML = "过关挑战"; }
+      });
+    }
+
+    function getStars(score, total) {
+      if (score === total) return "⭐⭐⭐";
+      if (score >= total - 1) return "⭐⭐";
+      if (score >= Math.ceil(total / 2)) return "⭐";
+      return "";
+    }
+
+    function startQuiz() {
+      loadProgress().then(function(saved) {
+        if (saved && saved.highestRound >= 0 && (saved.scores[0] > 0 || saved.round > 0)) {
+          quizRound = Math.min(saved.round + 1, 2);
+          quizScores = saved.scores.slice();
+          quizHighestRound = saved.highestRound;
+        } else { quizRound = 0; quizScores = [0,0,0]; quizHighestRound = 0; }
+        quizOverlay.style.display = "block";
+        paused = true;
+        document.getElementById("checkPause").checked = true;
+        renderRound();
+      });
+    }
+
+    function closeQuiz() {
+      quizOverlay.style.display = "none";
+      paused = false;
+      document.getElementById("checkPause").checked = false;
+      updateChallengeButton();
+    }
+
+    function resetQuiz() {
+      if (confirm("确定要重置所有挑战进度吗？当前进度将丢失。")) {
+        quizRound = 0; quizScores = [0,0,0]; quizHighestRound = 0;
+        clearProgress(); renderRound();
+      }
+    }
+
+    function renderRound() {
+      quizIndex = 0; quizAnswers = []; quizLocked = false;
+      quizResult.style.display = "none";
+      quizBody.style.display = "block";
+      quizTitle.innerHTML = "第 " + (quizRound + 1) + " 关 (题目 " + (quizRound * 5 + 1) + "-" + (quizRound * 5 + 5) + "/15)";
+      quizProgressFill.style.width = (quizRound * (100/3)) + "%";
+      renderQuestion();
+    }
+
+    function renderQuestion() {
+      var q = quizQuestions[quizRound * 5 + quizIndex];
+      var html = '<div class="quiz-question">' + (quizIndex + 1) + ". " + q.q + "</div>";
+      var labels = ["A", "B", "C", "D"];
+      for (var i = 0; i < q.opts.length; i++) {
+        html += '<button class="quiz-option" data-idx="' + i + '" ';
+        if (quizLocked) html += 'disabled ';
+        html += '>' + labels[i] + ". " + q.opts[i] + "</button>";
+      }
+      quizBody.innerHTML = html;
+      var opts = document.querySelectorAll("#quizBody .quiz-option");
+      for (var j = 0; j < opts.length; j++) {
+        (function(idx) { opts[j].addEventListener("click", function() { selectAnswer(idx); }); })(j);
+      }
+    }
+
+    function selectAnswer(idx) {
+      if (quizLocked) return;
+      quizLocked = true; quizAnswers.push(idx);
+      var q = quizQuestions[quizRound * 5 + quizIndex];
+      var correct = q.ans;
+      var opts = document.querySelectorAll("#quizBody .quiz-option");
+      for (var i = 0; i < opts.length; i++) {
+        opts[i].disabled = true;
+        if (i === correct) opts[i].classList.add("correct");
+        if (i === idx && idx !== correct) opts[i].classList.add("wrong");
+      }
+      setTimeout(function() {
+        quizIndex++;
+        if (quizIndex < 5) { quizLocked = false; renderQuestion(); }
+        else showRoundResult();
+      }, 1200);
+    }
+
+    function showRoundResult() {
+      var correctCount = 0;
+      for (var i = 0; i < 5; i++) { if (quizAnswers[i] === quizQuestions[quizRound * 5 + i].ans) correctCount++; }
+      quizScores[quizRound] = correctCount;
+      if (quizRound > quizHighestRound) quizHighestRound = quizRound;
+      saveProgress();
+      quizBody.style.display = "none";
+      quizResult.style.display = "block";
+      var stars = getStars(correctCount, 5);
+      var scoreClass = correctCount >= 4 ? "great" : (correctCount >= 2 ? "good" : "poor");
+      var comment = correctCount >= 4 ? "太棒了！" : (correctCount >= 2 ? "继续加油！" : "再看看实验吧！");
+      var html = '<div class="quiz-score ' + scoreClass + '">' + correctCount + "/5</div>";
+      if (stars) html += '<p style="font-size:20px;margin:4px 0;">' + stars + "</p>";
+      html += '<p style="font-size:16px;margin:8px 0;color:#94a3b8;">' + comment + "</p>";
+      if (quizRound < 2) {
+        html += '<p style="font-size:13px;color:#64748b;margin-bottom:8px;">已完成第' + (quizRound + 1) + "关，进度已保存</p>";
+        html += '<div class="quiz-btn-row"><button class="btn-primary" id="btnReviewRound" style="font-size:14px;">查看回顾</button></div>';
+        html += '<div class="quiz-btn-row"><button class="btn-primary" id="btnNextRound" style="font-size:14px;padding:8px 24px;">进入下一关</button><button class="btn-reset" id="btnRetryRound" style="font-size:14px;">重新挑战本关</button></div>';
+      } else {
+        var total = quizScores[0] + quizScores[1] + quizScores[2];
+        var totalClass = total >= 12 ? "great" : (total >= 8 ? "good" : "poor");
+        var totalStars = getStars(total, 15);
+        html = '<div class="quiz-score ' + totalClass + '">' + total + "/15</div>";
+        if (totalStars) html += '<p style="font-size:20px;margin:4px 0;">' + totalStars + "</p>";
+        html += '<p style="font-size:14px;color:#94a3b8;margin-bottom:8px;">第1关: ' + quizScores[0] + '/5 &nbsp; 第2关: ' + quizScores[1] + '/5 &nbsp; 第3关: ' + quizScores[2] + "/5</p>";
+        html += '<p style="font-size:16px;margin:8px 0;color:' + (total >= 12 ? "#22c55e" : total >= 8 ? "#f59e0b" : "#ef4444") + ';">' + (total >= 12 ? "恭喜通关！你对机械能转化理解透彻！" : total >= 8 ? "还不错，再复习一下错题吧！" : "建议回到实验仔细观察炮弹上升和下落过程中速度和高度的变化规律。") + "</p>";
+        html += '<div class="quiz-btn-row"><button class="btn-primary" id="btnReviewRound" style="font-size:14px;">查看回顾</button></div>';
+        html += '<div class="quiz-btn-row"><button class="btn-primary" id="btnRetryAll" style="font-size:14px;padding:8px 24px;">重新全部挑战</button><button class="btn-reset" id="btnBackExp" style="font-size:14px;">返回实验</button></div>';
+        clearProgress();
+      }
+      quizResult.innerHTML = html;
+      bindResultButtons();
+    }
+
+    function bindResultButtons() {
+      setTimeout(function() {
+        var btnNext = document.getElementById("btnNextRound");
+        var btnRetry = document.getElementById("btnRetryRound");
+        var btnRetryAll = document.getElementById("btnRetryAll");
+        var btnBack = document.getElementById("btnBackExp");
+        var btnReview = document.getElementById("btnReviewRound");
+        if (btnNext) btnNext.addEventListener("click", function() { quizRound++; renderRound(); });
+        if (btnRetry) btnRetry.addEventListener("click", function() { renderRound(); });
+        if (btnRetryAll) btnRetryAll.addEventListener("click", function() { quizRound = 0; quizScores = [0,0,0]; quizHighestRound = 0; clearProgress(); renderRound(); });
+        if (btnBack) btnBack.addEventListener("click", function() { closeQuiz(); });
+        if (btnReview) btnReview.addEventListener("click", function() { showReview(); });
+      }, 100);
+    }
+
+    function showReview() {
+      var html = '<p style="font-size:16px;font-weight:bold;margin-bottom:16px;color:#e2e8f0;">第' + (quizRound + 1) + '关 — 答题回顾</p>';
+      var wrongCount = 0;
+      var labels = ["A", "B", "C", "D"];
+      for (var i = 0; i < 5; i++) {
+        var q = quizQuestions[quizRound * 5 + i];
+        var userAns = quizAnswers[i];
+        var isCorrect = userAns === q.ans;
+        if (!isCorrect) wrongCount++;
+        var cardClass = isCorrect ? "correct2" : "wrong";
+        var badgeHtml = isCorrect ? '<span class="rbadge ok">正确</span>' : '<span class="rbadge fail">错误</span>';
+        html += '<div class="review-card ' + cardClass + '"><div class="rq">' + badgeHtml + (i + 1) + ". " + q.q + "</div>";
+        if (!isCorrect) {
+          html += '<div class="review-user-ans">你的答案：' + labels[userAns] + ". " + q.opts[userAns] + "</div>";
+          html += '<div class="review-correct-ans">正确答案：' + labels[q.ans] + ". " + q.opts[q.ans] + "</div>";
+          html += '<div class="review-explain"><div class="rtitle">解析</div><div class="rtext">' + q.explain + "</div></div>";
+        } else {
+          html += '<div style="font-size:13px;color:#22c55e;margin-top:2px;">你的答案：' + labels[userAns] + ". " + q.opts[userAns] + " </div>";
+        }
+        html += "</div>";
+      }
+      if (wrongCount === 0) { html += '<p style="text-align:center;color:#22c55e;font-size:15px;margin-top:12px;">全部正确！你对这部分知识点掌握得很好！</p>'; }
+      else { html += '<p style="text-align:center;color:#f59e0b;font-size:14px;margin-top:12px;">共错 ' + wrongCount + ' 题，仔细阅读解析，理解后再继续！</p>'; }
+      html += '<div class="quiz-btn-row"><button class="btn-reset" id="btnBackResult" style="font-size:14px;">返回结果</button></div>';
+      document.getElementById("quizBody").style.display = "none";
+      document.getElementById("quizResult").style.display = "block";
+      document.getElementById("quizResult").innerHTML = html;
+      setTimeout(function() {
+        var btnBack = document.getElementById("btnBackResult");
+        if (btnBack) btnBack.addEventListener("click", function() { showRoundResultSkipSave(); });
+      }, 100);
+    }
+
+    function showRoundResultSkipSave() {
+      var correctCount = quizScores[quizRound];
+      document.getElementById("quizBody").style.display = "none";
+      document.getElementById("quizResult").style.display = "block";
+      var stars = getStars(correctCount, 5);
+      var scoreClass = correctCount >= 4 ? "great" : (correctCount >= 2 ? "good" : "poor");
+      var comment = correctCount >= 4 ? "太棒了！" : (correctCount >= 2 ? "继续加油！" : "再看看实验吧！");
+      var html = '<div class="quiz-score ' + scoreClass + '">' + correctCount + "/5</div>";
+      if (stars) html += '<p style="font-size:20px;margin:4px 0;">' + stars + "</p>";
+      html += '<p style="font-size:16px;margin:8px 0;color:#94a3b8;">' + comment + "</p>";
+      if (quizRound < 2) {
+        html += '<p style="font-size:13px;color:#64748b;margin-bottom:8px;">已完成第' + (quizRound + 1) + "关，进度已保存</p>";
+        html += '<div class="quiz-btn-row"><button class="btn-primary" id="btnReviewRound" style="font-size:14px;">查看回顾</button></div>';
+        html += '<div class="quiz-btn-row"><button class="btn-primary" id="btnNextRound" style="font-size:14px;padding:8px 24px;">进入下一关</button><button class="btn-reset" id="btnRetryRound" style="font-size:14px;">重新挑战本关</button></div>';
+      } else {
+        var total = quizScores[0] + quizScores[1] + quizScores[2];
+        var totalClass = total >= 12 ? "great" : (total >= 8 ? "good" : "poor");
+        var totalStars = getStars(total, 15);
+        html = '<div class="quiz-score ' + totalClass + '">' + total + "/15</div>";
+        if (totalStars) html += '<p style="font-size:20px;margin:4px 0;">' + totalStars + "</p>";
+        html += '<p style="font-size:14px;color:#94a3b8;margin-bottom:8px;">第1关: ' + quizScores[0] + '/5 &nbsp; 第2关: ' + quizScores[1] + '/5 &nbsp; 第3关: ' + quizScores[2] + "/5</p>";
+        html += '<p style="font-size:16px;margin:8px 0;color:' + (total >= 12 ? "#22c55e" : total >= 8 ? "#f59e0b" : "#ef4444") + ';">' + (total >= 12 ? "恭喜通关！你对机械能转化理解透彻！" : total >= 8 ? "还不错，再复习一下错题吧！" : "建议回到实验仔细观察炮弹上升和下落过程中速度和高度的变化规律。") + "</p>";
+        html += '<div class="quiz-btn-row"><button class="btn-primary" id="btnReviewRound" style="font-size:14px;">查看回顾</button></div>';
+        html += '<div class="quiz-btn-row"><button class="btn-primary" id="btnRetryAll" style="font-size:14px;padding:8px 24px;">重新全部挑战</button><button class="btn-reset" id="btnBackExp" style="font-size:14px;">返回实验</button></div>';
+      }
+      document.getElementById("quizResult").innerHTML = html;
+      bindResultButtons();
+    }
+
+    function initQuiz() {
+      btnChallenge = document.getElementById("btnChallenge");
+      btnCloseQuiz = document.getElementById("btnCloseQuiz");
+      btnResetQuiz = document.getElementById("btnResetQuiz");
+      quizOverlay = document.getElementById("quizOverlay");
+      quizTitle = document.getElementById("quizTitle");
+      quizProgressFill = document.getElementById("quizProgressFill");
+      quizBody = document.getElementById("quizBody");
+      quizResult = document.getElementById("quizResult");
+      btnChallenge.addEventListener("click", startQuiz);
+      btnCloseQuiz.addEventListener("click", closeQuiz);
+      btnResetQuiz.addEventListener("click", resetQuiz);
+      updateChallengeButton();
+    }
+
+    var _origSetupME = setup;
+    setup = function() { _origSetupME(); initQuiz(); };
   </script>
+  <!-- === 过关挑战弹窗 === -->
+  <div id="quizOverlay" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.8);z-index:1000;overflow-y:auto;">
+    <div style="max-width:700px;margin:40px auto;background:#1a1a2e;border:1px solid #333;border-radius:16px;padding:24px 32px;color:#e2e8f0;">
+      <div id="quizHeader" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+        <span style="font-size:18px;font-weight:bold;" id="quizTitle">第 1 关 (1/3)</span>
+        <div style="display:flex;gap:8px;">
+          <button class="btn" id="btnResetQuiz" style="font-size:12px;border-color:#555;color:#999;">↺ 重置</button>
+          <button class="btn" id="btnCloseQuiz" style="font-size:12px;">✕ 退出</button>
+        </div>
+      </div>
+      <div id="quizProgress" style="height:4px;background:#333;border-radius:2px;margin-bottom:20px;">
+        <div id="quizProgressFill" style="height:100%;background:#8b5cf6;border-radius:2px;width:0%;transition:width 0.3s;"></div>
+      </div>
+      <div id="quizBody"></div>
+      <div id="quizResult" style="display:none;text-align:center;padding:30px 0;"></div>
+    </div>
+  </div>
 </body>
 </html>

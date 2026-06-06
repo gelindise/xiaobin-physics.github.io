@@ -15,6 +15,31 @@
     .ctrl-group { display: flex; align-items: center; gap: 8px; font-size: 14px; color: #334155; }
     .section { padding: 1.5rem 2rem 0.5rem; }
     .section h2 { font-size: 1.4rem; }
+  /* Quiz Challenge Styles */
+  .quiz-question { font-size: 15px; margin-bottom: 16px; line-height: 1.6; }
+  .quiz-option { display: block; width: 100%; text-align: left; padding: 12px 16px; margin-bottom: 8px; border: 2px solid #333; border-radius: 8px; background: rgba(255,255,255,0.03); color: #ccc; font-size: 14px; cursor: pointer; transition: all 0.2s; }
+  .quiz-option:hover { border-color: #8b5cf6; background: rgba(139,92,246,0.1); }
+  .quiz-option.correct { border-color: #22c55e; background: rgba(34,197,94,0.15); color: #22c55e; }
+  .quiz-option.wrong { border-color: #ef4444; background: rgba(239,68,68,0.15); color: #ef4444; }
+  .quiz-option:disabled { cursor: default; opacity: 0.7; }
+  .quiz-option:disabled.correct { opacity: 1; }
+  .quiz-score { font-size: 48px; font-weight: bold; }
+  .quiz-score.great { color: #22c55e; }
+  .quiz-score.good { color: #f59e0b; }
+  .quiz-score.poor { color: #ef4444; }
+  .quiz-btn-row { display: flex; gap: 10px; justify-content: center; margin-top: 16px; }
+  .review-card { background: rgba(255,255,255,0.03); border: 1px solid #333; border-radius: 10px; padding: 14px 16px; margin-bottom: 12px; text-align: left; }
+  .review-card.wrong { border-color: rgba(239,68,68,0.4); background: rgba(239,68,68,0.06); }
+  .review-card.correct2 { border-color: rgba(34,197,94,0.3); background: rgba(34,197,94,0.04); }
+  .rbadge { font-size: 12px; padding: 2px 8px; border-radius: 10px; margin-right: 8px; }
+  .rbadge.ok { background: rgba(34,197,94,0.2); color: #22c55e; }
+  .rbadge.fail { background: rgba(239,68,68,0.2); color: #ef4444; }
+  .rq { font-size: 14px; margin-bottom: 8px; }
+  .review-user-ans { font-size: 13px; color: #ef4444; margin: 4px 0; }
+  .review-correct-ans { font-size: 13px; color: #22c55e; margin: 4px 0; }
+  .review-explain { background: rgba(139,92,246,0.08); border: 1px solid rgba(139,92,246,0.2); border-radius: 8px; padding: 10px 14px; margin-top: 8px; }
+  .review-explain .rtitle { font-size: 13px; color: #a78bfa; margin-bottom: 4px; }
+  .review-explain .rtext { font-size: 13px; color: #c4b5fd; line-height: 1.6; }
   </style>
   <script src="auth-check.js"></script>
 </head>
@@ -45,6 +70,10 @@
         <span>矫正镜片：</span>
         <span id="radioB"></span>
       </div>
+      <div class="ctrl-group">
+        <input type="checkbox" id="pauseCheck" checked>
+        <label for="pauseCheck">模拟运行</label>
+      </div>
     </div>
   </div>
 
@@ -61,6 +90,13 @@
       <span class="label">透镜公式</span>
       <span class="value">1/f = 1/u + 1/v</span>
     </div>
+  </div>
+
+  <div style="max-width:900px;margin:0 auto 12px;padding:0 16px;text-align:center;">
+    <button class="btn" id="btnChallenge" style="font-size:16px;padding:10px 32px;border-color:#8b5cf6;color:#c4b5fd;">
+      过关挑战
+    </button>
+    <p style="color:#64748b;font-size:12px;margin-top:8px;">15道单选题 · 每次5道 · 检验你对近视远视矫正原理的掌握程度</p>
   </div>
 
   <script src="protect.js"></script>
@@ -188,6 +224,7 @@
     let lensX = 570, lensY = 200, lensW, lensH = 120;
     let lensIndex = [0.0039 * 1.1, 0.0033, 0.0039];
     let lensPolygonX = [], lensPolygonY = [];
+    var paused = false;
 
     function preload() {
       ledImage = loadImage("javalab_near_sightedness_led.png");
@@ -415,6 +452,439 @@
       if (!contain(mouseX, mouseY, 0, 0, width, height)) return;
       offsetY = mouseY * 900 / width - glassY;
     }
+
+    // ===== Quiz Challenge System =====
+    var QUIZ_STORAGE_KEY = "quiz_vision_progress";
+    var EXPERIMENT_KEY = "vision";
+
+    var quizRound = 0;
+    var quizIndex = 0;
+    var quizAnswers = [];
+    var quizLocked = false;
+    var quizScores = [0, 0, 0];
+    var quizHighestRound = 0;
+
+    var btnChallenge, btnCloseQuiz, btnResetQuiz, quizOverlay, quizTitle, quizProgressFill, quizBody, quizResult;
+
+    var quizQuestions = [
+      // 第1关：眼睛结构与成像
+      { q: "人眼成像原理类似于哪种光学仪器？", opts: ["放大镜", "照相机", "投影仪", "显微镜"], ans: 1,
+        explain: "人眼成像原理与照相机类似。晶状体相当于照相机的镜头（凸透镜），视网膜相当于底片或CCD传感器。" },
+      { q: "正常眼睛观察物体时，清晰的像成在哪个位置？", opts: ["角膜上", "晶状体上", "视网膜上", "玻璃体上"], ans: 2,
+        explain: "正常眼睛通过调节晶状体的曲度，使外界物体的像恰好落在视网膜上。视网膜上有感光细胞，将光信号转换为神经信号。" },
+      { q: "人眼的晶状体相当于什么透镜？", opts: ["凹透镜", "凸透镜", "平面镜", "三棱镜"], ans: 1,
+        explain: "人眼的晶状体相当于凸透镜（会聚透镜）。它能够将光线会聚，在视网膜上形成倒立缩小的实像。" },
+      { q: "睫状肌放松时（看远处），晶状体形状如何变化？", opts: ["变凸", "变扁平", "变厚", "变硬"], ans: 1,
+        explain: "看远处时，睫状肌放松，晶状体被悬韧带拉紧而变得扁平，屈光力减小，使远处物体的像恰好落在视网膜上。" },
+      { q: "看近处物体时，睫状肌和晶状体如何变化？", opts: ["睫状肌放松，晶状体变扁", "睫状肌收缩，晶状体变凸", "睫状肌放松，晶状体变凸", "睫状肌收缩，晶状体变扁"], ans: 1,
+        explain: "看近处物体时，睫状肌收缩，悬韧带松弛，晶状体依靠自身弹性变凸，屈光力增大，使近处物体的像落在视网膜上。" },
+
+      // 第2关：近视与矫正
+      { q: "近视眼的主要成因是？", opts: ["晶状体过扁或眼球前后径过短", "晶状体过凸或眼球前后径过长", "视网膜感光细胞坏死", "角膜变浑浊"], ans: 1,
+        explain: "近视眼的成因是晶状体曲度过大（过凸）或眼球前后径过长，导致光线汇聚在视网膜前方。" },
+      { q: "近视眼看远处物体时，像成在视网膜的哪一侧？", opts: ["视网膜上", "视网膜前方", "视网膜后方", "角膜上"], ans: 1,
+        explain: "近视眼由于晶状体过凸或眼球过长，远处物体发出的平行光线会聚在视网膜前方，因此在视网膜上形成模糊的像。" },
+      { q: "矫正近视眼应该使用什么透镜？", opts: ["凸透镜", "凹透镜", "平面镜", "三棱镜"], ans: 1,
+        explain: "矫正近视眼使用凹透镜（发散透镜）。凹透镜使进入眼睛的光线先适当发散，再经晶状体会聚，使像恰好落在视网膜上。" },
+      { q: "凹透镜对光线有什么作用？", opts: ["会聚作用", "发散作用", "反射作用", "折射但无会聚发散"], ans: 1,
+        explain: "凹透镜对光线有发散作用。平行光线通过凹透镜后会向外发散，因此近视眼镜用凹透镜预先发散光线，使像后移至视网膜上。" },
+      { q: "近视度数-300度（-3.0D）说明镜片的焦距是多少？", opts: ["约33cm", "约-33cm", "约-300cm", "约300cm"], ans: 1,
+        explain: "屈光度D = 100/f（f以cm为单位）。-300度即-3.0D，f = 100/(-3.0) ≈ -33cm。负号表示这是凹透镜，焦距33cm。" },
+
+      // 第3关：远视与综合
+      { q: "远视眼的主要成因是？", opts: ["晶状体过凸或眼球前后径过长", "晶状体过扁或眼球前后径过短", "视网膜脱落", "瞳孔过大"], ans: 1,
+        explain: "远视眼的成因是晶状体曲度过小（过扁）或眼球前后径过短，导致光线汇聚在视网膜后方。" },
+      { q: "远视眼看近处物体时，像成在视网膜的哪一侧？", opts: ["视网膜上", "视网膜前方", "视网膜后方", "玻璃体上"], ans: 2,
+        explain: "远视眼由于晶状体过扁或眼球过短，光线经过晶状体会聚后，像落在视网膜的后方。" },
+      { q: "矫正远视眼应该使用什么透镜？", opts: ["凹透镜", "凸透镜", "平面镜", "柱面镜"], ans: 1,
+        explain: "矫正远视眼使用凸透镜（会聚透镜）。凸透镜使进入眼睛的光线先适当会聚，再经晶状体进一步会聚，使像恰好落在视网膜上。" },
+      { q: "老花眼与远视眼的主要区别是？", opts: ["老花眼是晶状体调节力下降所致", "老花眼是眼球过长所致", "远视眼是角膜问题", "两者完全相同"], ans: 0,
+        explain: "老花眼是因年龄增长导致晶状体弹性下降、睫状肌调节力减弱，看近处时无法充分变凸。远视眼是眼球结构问题（过短）。两者都需凸透镜矫正，但成因不同。" },
+      { q: "验光单上「DS」代表什么含义？", opts: ["散光度数", "球镜度数（近视或远视）", "柱镜度数", "轴向角度"], ans: 1,
+        explain: "DS（Diopter of Sphere）代表球镜度数，即近视或远视的屈光度数。负值表示近视（如-2.0DS），正值表示远视（如+1.5DS）。" }
+    ];
+
+    function initQuiz() {
+      btnChallenge = select("#btnChallenge");
+      btnCloseQuiz = select("#btnCloseQuiz");
+      btnResetQuiz = select("#btnResetQuiz");
+      quizOverlay = select("#quizOverlay");
+      quizTitle = select("#quizTitle");
+      quizProgressFill = select("#quizProgressFill");
+      quizBody = select("#quizBody");
+      quizResult = select("#quizResult");
+
+      btnChallenge.mouseClicked(startQuiz);
+      btnCloseQuiz.mouseClicked(closeQuiz);
+      btnResetQuiz.mouseClicked(resetQuiz);
+
+      buttonPause = select("#pauseCheck");
+      updateChallengeButton();
+    }
+
+    var _origSetupVS = setup;
+    setup = function() {
+      _origSetupVS();
+      initQuiz();
+    };
+
+    function startQuiz() {
+      loadProgress().then(function(saved) {
+        if (saved && saved.highestRound >= 0 && (saved.scores[0] > 0 || saved.round > 0)) {
+          quizRound = Math.min(saved.round + 1, 2);
+          quizScores = saved.scores.slice();
+          quizHighestRound = saved.highestRound;
+        } else {
+          quizRound = 0; quizScores = [0,0,0]; quizHighestRound = 0;
+        }
+        quizOverlay.style("display", "block");
+        paused = true;
+        if (buttonPause) buttonPause.checked(false);
+        renderRound();
+      });
+    }
+
+    function closeQuiz() {
+      quizOverlay.style("display", "none");
+      paused = false;
+      if (buttonPause) buttonPause.checked(true);
+      updateChallengeButton();
+    }
+
+    function resetQuiz() {
+      if (confirm("确定要重置所有挑战进度吗？当前进度将丢失。")) {
+        quizRound = 0; quizScores = [0,0,0]; quizHighestRound = 0;
+        clearProgress();
+        renderRound();
+      }
+    }
+
+    function renderRound() {
+      quizIndex = 0; quizAnswers = []; quizLocked = false;
+      quizResult.style("display", "none");
+      quizBody.style("display", "block");
+      quizTitle.html("第 " + (quizRound + 1) + " 关 (题目 " + (quizRound * 5 + 1) + "-" + (quizRound * 5 + 5) + "/15)");
+      quizProgressFill.style("width", (quizRound * (100/3)) + "%");
+      renderQuestion();
+    }
+
+    function renderQuestion() {
+      var q = quizQuestions[quizRound * 5 + quizIndex];
+      var html = '<div class="quiz-question">' + (quizIndex + 1) + ". " + q.q + "</div>";
+      var labels = ["A", "B", "C", "D"];
+      for (var i = 0; i < q.opts.length; i++) {
+        html += '<button class="quiz-option" data-idx="' + i + '" ';
+        if (quizLocked) html += 'disabled ';
+        html += '>' + labels[i] + ". " + q.opts[i] + "</button>";
+      }
+      quizBody.html(html);
+
+      var opts = document.querySelectorAll("#quizBody .quiz-option");
+      for (var j = 0; j < opts.length; j++) {
+        (function(idx) {
+          opts[j].addEventListener("click", function() { selectAnswer(idx); });
+        })(j);
+      }
+    }
+
+    function selectAnswer(idx) {
+      if (quizLocked) return;
+      quizLocked = true;
+      quizAnswers.push(idx);
+      var q = quizQuestions[quizRound * 5 + quizIndex];
+      var correct = q.ans;
+
+      var opts = document.querySelectorAll("#quizBody .quiz-option");
+      for (var i = 0; i < opts.length; i++) {
+        opts[i].disabled = true;
+        if (i === correct) opts[i].classList.add("correct");
+        if (i === idx && idx !== correct) opts[i].classList.add("wrong");
+      }
+
+      setTimeout(function() {
+        quizIndex++;
+        if (quizIndex < 5) { quizLocked = false; renderQuestion(); }
+        else showRoundResult();
+      }, 1200);
+    }
+
+    function getStars(score, total) {
+      if (score === total) return "⭐⭐⭐";
+      if (score >= total - 1) return "⭐⭐";
+      if (score >= Math.ceil(total / 2)) return "⭐";
+      return "";
+    }
+
+    function showRoundResult() {
+      var correctCount = 0;
+      for (var i = 0; i < 5; i++) {
+        if (quizAnswers[i] === quizQuestions[quizRound * 5 + i].ans) correctCount++;
+      }
+      quizScores[quizRound] = correctCount;
+      if (quizRound > quizHighestRound) quizHighestRound = quizRound;
+      saveProgress();
+
+      quizBody.style("display", "none");
+      quizResult.style("display", "block");
+
+      var stars = getStars(correctCount, 5);
+      var scoreClass = correctCount >= 4 ? "great" : (correctCount >= 2 ? "good" : "poor");
+      var comment = correctCount >= 4 ? "太棒了！" : (correctCount >= 2 ? "继续加油！" : "再看看实验吧！");
+
+      var html = '<div class="quiz-score ' + scoreClass + '">' + correctCount + "/5</div>";
+      if (stars) html += '<p style="font-size:20px;margin:4px 0;">' + stars + "</p>";
+      html += '<p style="font-size:16px;margin:8px 0;color:#94a3b8;">' + comment + "</p>";
+
+      if (quizRound < 2) {
+        html += '<p style="font-size:13px;color:#64748b;margin-bottom:8px;">已完成第' + (quizRound + 1) + "关，进度已保存</p>";
+        html += '<div class="quiz-btn-row"><button class="btn-primary" id="btnReviewRound" style="font-size:14px;">📋 查看回顾</button></div>';
+        html += '<div class="quiz-btn-row">';
+        html += '<button class="btn-primary" id="btnNextRound" style="font-size:14px;padding:8px 24px;">进入下一关</button>';
+        html += '<button class="btn-reset" id="btnRetryRound" style="font-size:14px;">重新挑战本关</button>';
+        html += "</div>";
+      } else {
+        var total = quizScores[0] + quizScores[1] + quizScores[2];
+        var totalClass = total >= 12 ? "great" : (total >= 8 ? "good" : "poor");
+        var totalStars = getStars(total, 15);
+        html = '<div class="quiz-score ' + totalClass + '">' + total + "/15</div>";
+        if (totalStars) html += '<p style="font-size:20px;margin:4px 0;">' + totalStars + "</p>";
+        html += '<p style="font-size:14px;color:#94a3b8;margin-bottom:8px;">第1关: ' + quizScores[0] + '/5 &nbsp; 第2关: ' + quizScores[1] + '/5 &nbsp; 第3关: ' + quizScores[2] + "/5</p>";
+        html += '<p style="font-size:16px;margin:8px 0;color:' + (total >= 12 ? "#22c55e" : total >= 8 ? "#f59e0b" : "#ef4444") + ';">' + (total >= 12 ? "恭喜通关！你对近视远视矫正原理理解透彻！" : total >= 8 ? "还不错，再复习一下错题吧！" : "建议回到实验仔细观察不同镜片对光线的作用。") + "</p>";
+        html += '<div class="quiz-btn-row"><button class="btn-primary" id="btnReviewRound" style="font-size:14px;">📋 查看回顾</button></div>';
+        html += '<div class="quiz-btn-row">';
+        html += '<button class="btn-primary" id="btnRetryAll" style="font-size:14px;padding:8px 24px;">重新全部挑战</button>';
+        html += '<button class="btn-reset" id="btnBackExp" style="font-size:14px;">返回实验</button>';
+        html += "</div>";
+        clearProgress();
+      }
+
+      quizResult.html(html);
+      bindResultButtons();
+    }
+
+    function bindResultButtons() {
+      setTimeout(function() {
+        var btnNext = document.getElementById("btnNextRound");
+        var btnRetry = document.getElementById("btnRetryRound");
+        var btnRetryAll = document.getElementById("btnRetryAll");
+        var btnBack = document.getElementById("btnBackExp");
+        var btnReview = document.getElementById("btnReviewRound");
+        if (btnNext) btnNext.addEventListener("click", function() { quizRound++; renderRound(); });
+        if (btnRetry) btnRetry.addEventListener("click", function() { renderRound(); });
+        if (btnRetryAll) btnRetryAll.addEventListener("click", function() {
+          quizRound = 0; quizScores = [0,0,0]; quizHighestRound = 0;
+          clearProgress(); renderRound();
+        });
+        if (btnBack) btnBack.addEventListener("click", function() { closeQuiz(); });
+        if (btnReview) btnReview.addEventListener("click", function() { showReview(); });
+      }, 100);
+    }
+
+    function showReview() {
+      var html = '<p style="font-size:16px;font-weight:bold;margin-bottom:16px;color:#e2e8f0;">第' + (quizRound + 1) + '关 — 答题回顾</p>';
+      var wrongCount = 0;
+      var labels = ["A", "B", "C", "D"];
+      for (var i = 0; i < 5; i++) {
+        var q = quizQuestions[quizRound * 5 + i];
+        var userAns = quizAnswers[i];
+        var isCorrect = userAns === q.ans;
+        if (!isCorrect) wrongCount++;
+        var cardClass = isCorrect ? "correct2" : "wrong";
+        var badgeHtml = isCorrect ? '<span class="rbadge ok">✓ 正确</span>' : '<span class="rbadge fail">✗ 错误</span>';
+        html += '<div class="review-card ' + cardClass + '">';
+        html += '<div class="rq">' + badgeHtml + (i + 1) + ". " + q.q + "</div>";
+        if (!isCorrect) {
+          html += '<div class="review-user-ans">你的答案：' + labels[userAns] + ". " + q.opts[userAns] + "</div>";
+          html += '<div class="review-correct-ans">正确答案：' + labels[q.ans] + ". " + q.opts[q.ans] + "</div>";
+          html += '<div class="review-explain"><div class="rtitle">💡 解析</div><div class="rtext">' + q.explain + "</div></div>";
+        } else {
+          html += '<div style="font-size:13px;color:#22c55e;margin-top:2px;">你的答案：' + labels[userAns] + ". " + q.opts[userAns] + " ✓</div>";
+        }
+        html += "</div>";
+      }
+      if (wrongCount === 0) {
+        html += '<p style="text-align:center;color:#22c55e;font-size:15px;margin-top:12px;">🎉 全部正确！你对这部分知识点掌握得很好！</p>';
+      } else {
+        html += '<p style="text-align:center;color:#f59e0b;font-size:14px;margin-top:12px;">共错 ' + wrongCount + ' 题，仔细阅读解析，理解后再继续！</p>';
+      }
+      html += '<div class="quiz-btn-row"><button class="btn-reset" id="btnBackResult" style="font-size:14px;">← 返回结果</button></div>';
+      document.getElementById("quizBody").style.display = "none";
+      document.getElementById("quizResult").style.display = "block";
+      document.getElementById("quizResult").innerHTML = html;
+      setTimeout(function() {
+        var btnBack = document.getElementById("btnBackResult");
+        if (btnBack) btnBack.addEventListener("click", function() { showRoundResultSkipSave(); });
+      }, 100);
+    }
+
+    function showRoundResultSkipSave() {
+      var correctCount = quizScores[quizRound];
+      document.getElementById("quizBody").style.display = "none";
+      document.getElementById("quizResult").style.display = "block";
+      var stars = getStars(correctCount, 5);
+      var scoreClass = correctCount >= 4 ? "great" : (correctCount >= 2 ? "good" : "poor");
+      var comment = correctCount >= 4 ? "太棒了！" : (correctCount >= 2 ? "继续加油！" : "再看看实验吧！");
+      var html = '<div class="quiz-score ' + scoreClass + '">' + correctCount + "/5</div>";
+      if (stars) html += '<p style="font-size:20px;margin:4px 0;">' + stars + "</p>";
+      html += '<p style="font-size:16px;margin:8px 0;color:#94a3b8;">' + comment + "</p>";
+      if (quizRound < 2) {
+        html += '<p style="font-size:13px;color:#64748b;margin-bottom:8px;">已完成第' + (quizRound + 1) + '关，进度已保存</p>';
+        html += '<div class="quiz-btn-row"><button class="btn-primary" id="btnReviewRound" style="font-size:14px;">📋 查看回顾</button></div>';
+        html += '<div class="quiz-btn-row">';
+        html += '<button class="btn-primary" id="btnNextRound" style="font-size:14px;padding:8px 24px;">进入下一关</button>';
+        html += '<button class="btn-reset" id="btnRetryRound" style="font-size:14px;">重新挑战本关</button>';
+        html += "</div>";
+      } else {
+        var total = quizScores[0] + quizScores[1] + quizScores[2];
+        var totalClass = total >= 12 ? "great" : (total >= 8 ? "good" : "poor");
+        var totalStars = getStars(total, 15);
+        html = '<div class="quiz-score ' + totalClass + '">' + total + "/15</div>";
+        if (totalStars) html += '<p style="font-size:20px;margin:4px 0;">' + totalStars + "</p>";
+        html += '<p style="font-size:14px;color:#94a3b8;margin-bottom:8px;">第1关: ' + quizScores[0] + '/5 第2关: ' + quizScores[1] + '/5 第3关: ' + quizScores[2] + "/5</p>";
+        html += '<p style="font-size:16px;margin:8px 0;color:' + (total >= 12 ? "#22c55e" : total >= 8 ? "#f59e0b" : "#ef4444") + ';">' + (total >= 12 ? "恭喜通关！你对近视远视矫正原理理解透彻！" : total >= 8 ? "还不错，再复习一下错题吧！" : "建议回到实验仔细观察不同镜片对光线的作用。") + "</p>";
+        html += '<div class="quiz-btn-row"><button class="btn-primary" id="btnReviewRound" style="font-size:14px;">📋 查看回顾</button></div>';
+        html += '<div class="quiz-btn-row">';
+        html += '<button class="btn-primary" id="btnRetryAll" style="font-size:14px;padding:8px 24px;">重新全部挑战</button>';
+        html += '<button class="btn-reset" id="btnBackExp" style="font-size:14px;">返回实验</button>';
+        html += "</div>";
+      }
+      document.getElementById("quizResult").innerHTML = html;
+      bindResultButtons();
+    }
+
+    function updateChallengeButton() {
+      loadProgress().then(function(saved) {
+        if (saved && (saved.scores[0] > 0 || saved.round > 0)) {
+          var totalDone = saved.scores[0] + (saved.scores[1] || 0) + (saved.scores[2] || 0);
+          btnChallenge.html("继续挑战 (已得" + totalDone + "/15分)");
+        } else {
+          btnChallenge.html("过关挑战");
+        }
+      });
+    }
+
+    // Inline Supabase (no supabase.js)
+    var SUPABASE_URL_Q = 'https://ruledlbrdqhruotuaxwi.supabase.co';
+    var SUPABASE_ANON_KEY_Q = 'sb_publishable_0eFNMabL5IhHExao6wSE2A_nWbmMEKt';
+
+    function getUsername() {
+      try { return localStorage.getItem("currentUser"); } catch(e) { return null; }
+    }
+
+    function saveProgress() {
+      var data = { round: quizRound, scores: quizScores, highestRound: quizHighestRound, updatedAt: new Date().toISOString() };
+      try { localStorage.setItem(QUIZ_STORAGE_KEY, JSON.stringify(data)); } catch(e) {}
+      var username = getUsername();
+      if (username) saveQuizToServer(username, data);
+    }
+
+    function saveQuizToServer(username, data) {
+      var url = SUPABASE_URL_Q + '/rest/v1/users?username=eq.' + encodeURIComponent(username);
+      var headers = {
+        apikey: SUPABASE_ANON_KEY_Q,
+        Authorization: 'Bearer ' + SUPABASE_ANON_KEY_Q,
+        'Content-Type': 'application/json',
+        Prefer: 'return=representation'
+      };
+      fetch(url, { method: 'GET', headers: headers })
+        .then(function(r) { return r.json(); })
+        .then(function(users) {
+          if (users && users.length > 0) {
+            var user = users[0];
+            var quizData = user.quiz_data;
+            if (typeof quizData === 'string') quizData = JSON.parse(quizData);
+            if (!quizData || typeof quizData !== 'object') quizData = {};
+            quizData[EXPERIMENT_KEY] = data;
+            return fetch(url, { method: 'PATCH', headers: headers, body: JSON.stringify({ quiz_data: quizData }) });
+          }
+        })
+        .catch(function() {});
+    }
+
+    function loadProgress() {
+      var username = getUsername();
+      if (username) {
+        var url = SUPABASE_URL_Q + '/rest/v1/users?username=eq.' + encodeURIComponent(username);
+        var headers = {
+          apikey: SUPABASE_ANON_KEY_Q,
+          Authorization: 'Bearer ' + SUPABASE_ANON_KEY_Q,
+          'Content-Type': 'application/json'
+        };
+        return fetch(url, { method: 'GET', headers: headers })
+          .then(function(r) { return r.json(); })
+          .then(function(users) {
+            if (users && users.length > 0) {
+              var user = users[0];
+              var quizData = user.quiz_data;
+              if (typeof quizData === 'string') quizData = JSON.parse(quizData);
+              if (quizData && quizData[EXPERIMENT_KEY]) {
+                var serverData = quizData[EXPERIMENT_KEY];
+                try { localStorage.setItem(QUIZ_STORAGE_KEY, JSON.stringify(serverData)); } catch(e) {}
+                return serverData;
+              }
+            }
+            return null;
+          })
+          .then(function(result) {
+            if (result) return result;
+            try { var raw = localStorage.getItem(QUIZ_STORAGE_KEY); if (raw) return JSON.parse(raw); } catch(e) {}
+            return null;
+          })
+          .catch(function() {
+            try { var raw = localStorage.getItem(QUIZ_STORAGE_KEY); if (raw) return JSON.parse(raw); } catch(e) {}
+            return null;
+          });
+      }
+      return new Promise(function(resolve) {
+        try { var raw = localStorage.getItem(QUIZ_STORAGE_KEY); if (raw) resolve(JSON.parse(raw)); else resolve(null); } catch(e) { resolve(null); }
+      });
+    }
+
+    function clearProgress() {
+      try { localStorage.removeItem(QUIZ_STORAGE_KEY); } catch(e) {}
+      var username = getUsername();
+      if (username) {
+        var url = SUPABASE_URL_Q + '/rest/v1/users?username=eq.' + encodeURIComponent(username);
+        var headers = {
+          apikey: SUPABASE_ANON_KEY_Q,
+          Authorization: 'Bearer ' + SUPABASE_ANON_KEY_Q,
+          'Content-Type': 'application/json',
+          Prefer: 'return=representation'
+        };
+        fetch(url, { method: 'GET', headers: headers })
+          .then(function(r) { return r.json(); })
+          .then(function(users) {
+            if (users && users.length > 0) {
+              var user = users[0];
+              var quizData = user.quiz_data;
+              if (typeof quizData === 'string') quizData = JSON.parse(quizData);
+              if (quizData && typeof quizData === 'object') {
+                delete quizData[EXPERIMENT_KEY];
+                return fetch(url, { method: 'PATCH', headers: headers, body: JSON.stringify({ quiz_data: quizData }) });
+              }
+            }
+          })
+          .catch(function() {});
+      }
+    }
   </script>
+
+<div id="quizOverlay" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.8);z-index:1000;overflow-y:auto;">
+  <div style="max-width:700px;margin:40px auto;background:#1a1a2e;border:1px solid #333;border-radius:16px;padding:24px 32px;color:#e2e8f0;">
+    <div id="quizHeader" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+      <span style="font-size:18px;font-weight:bold;" id="quizTitle">第 1 关 (1/3)</span>
+      <div style="display:flex;gap:8px;">
+        <button class="btn" id="btnResetQuiz" style="font-size:12px;border-color:#555;color:#999;">↺ 重置</button>
+        <button class="btn" id="btnCloseQuiz" style="font-size:12px;">✕ 退出</button>
+      </div>
+    </div>
+    <div id="quizProgress" style="height:4px;background:#333;border-radius:2px;margin-bottom:20px;">
+      <div id="quizProgressFill" style="height:100%;background:#8b5cf6;border-radius:2px;width:0%;transition:width 0.3s;"></div>
+    </div>
+    <div id="quizBody"></div>
+    <div id="quizResult" style="display:none;text-align:center;padding:30px 0;"></div>
+  </div>
+</div>
+
 </body>
 </html>
