@@ -32,8 +32,8 @@ async function userRegister() {
   const pwd2El = document.getElementById("regPwd2");
   const pwd2 = pwd2El ? pwd2El.value.trim() : "";
 
-  if (!user || !pwd) {
-    if (tip) { tip.className = "auth-tip error"; tip.textContent = "⚠️ 请输入用户名和密码"; }
+  if (!user || !pwd || !email) {
+    if (tip) { tip.className = "auth-tip error"; tip.textContent = "⚠️ 请填写用户名、密码和邮箱（邮箱用于找回密码）"; }
     return;
   }
 
