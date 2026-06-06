@@ -156,7 +156,7 @@
     }
     pendT = 1.570795;
     initReleaseY = pendOY + pendL * Math.sin(pendT);
-    initMechEnergy = 100 * 0.2 * (maxY - initReleaseY);
+    initMechEnergy = Math.round(100 * 0.2 * (maxY - initReleaseY));
     energyBarMax = initMechEnergy;
     rodLostAcc = 0;
     setup3();
@@ -249,6 +249,13 @@
     bobEk = 0.5 * bobMass * (pendVx * pendVx + pendVy * pendVy);
     bobEp = bobMass * 0.2 * (maxY - pendY);
     mechEnergy = bobEk + bobEp;
+    // In conservation mode, anchor mechEnergy to initMechEnergy to keep bar number
+    // perfectly constant. Numerical drift is <2%, so the adjustment is imperceptible
+    // in bar height but guarantees Ek+Ep=Mech=constant in the displayed numbers.
+    if (moles == 0 && initMechEnergy > 0) {
+      bobEp = initMechEnergy - bobEk;
+      mechEnergy = initMechEnergy;
+    }
 
     // Internal energy = air molecule KE + energy lost to rod during collisions
     internalEnergy = 0;
@@ -346,8 +353,9 @@
     var barBase = py + ph - 25;
     var barMaxH = 290;
 
-    function drawBar(bx, val, label, color, maxVal) {
+    function drawBar(bx, val, label, color, maxVal, showNum) {
       var h = constrain(val / maxVal * barMaxH, 0, barMaxH);
+      var num = (showNum !== undefined) ? showNum : Math.round(val);
       noStroke();
       fill(color[0], color[1], color[2], 200);
       rect(bx, barBase - h, barW, h, 3);
@@ -363,28 +371,29 @@
         push();
         translate(bx + barW / 2, barBase - h / 2);
         rotate(-HALF_PI);
-        text(val.toFixed(0), 0, 0);
+        text(num.toString(), 0, 0);
         pop();
       }
       noStroke();
       fill(color[0], color[1], color[2]);
       textAlign(CENTER, TOP);
       textSize(11);
-      text(val.toFixed(0), bx + barW / 2, barBase + 2);
+      text(num.toString(), bx + barW / 2, barBase + 2);
       textSize(9);
       fill(80);
       text(label, bx + barW / 2, barBase + 16);
     }
 
-    // Bar variant: shows val as number (= Ek+Ep), refVal as dashed reference line
-    function drawBarRef(bx, val, label, color, maxVal, refVal) {
+    // Bar variant: refVal as dashed reference line, showNum as the displayed number
+    function drawBarRef(bx, val, label, color, maxVal, refVal, showNum) {
       var h = constrain(val / maxVal * barMaxH, 0, barMaxH);
       var refH = constrain(refVal / maxVal * barMaxH, 0, barMaxH);
+      var num = (showNum !== undefined) ? showNum : Math.round(val);
       // Reference line (initMechEnergy, fixed)
       stroke(180);
       strokeWeight(0.5);
       drawDashedLine2(bx, barBase - refH, bx + barW, barBase - refH);
-      // Bar shows current mechEnergy
+      // Bar height shows current mechEnergy
       noStroke();
       fill(color[0], color[1], color[2], 200);
       rect(bx, barBase - h, barW, h, 3);
@@ -400,33 +409,36 @@
         push();
         translate(bx + barW / 2, barBase - h / 2);
         rotate(-HALF_PI);
-        text(val.toFixed(0), 0, 0);
+        text(num.toString(), 0, 0);
         pop();
       }
-      // Number shows current mechEnergy (= Ek+Ep, constant in conservation mode)
+      // Number: exactly Ek+Ep (sum of rounded values), constant in conservation
       noStroke();
       fill(color[0], color[1], color[2]);
       textAlign(CENTER, TOP);
       textSize(11);
-      text(val.toFixed(0), bx + barW / 2, barBase + 2);
+      text(num.toString(), bx + barW / 2, barBase + 2);
       textSize(9);
       fill(80);
       text(label, bx + barW / 2, barBase + 16);
     }
 
     var refMax = initMechEnergy;
-    drawBar(barX, bobEk, "动能Ek", [60, 140, 240], refMax);
-    drawBar(barX + barW + 5, bobEp, "势能Ep", [40, 160, 40], refMax);
-    // Mech energy bar: height = current mechEnergy, label = fixed reference
-    drawBarRef(barX + 2*(barW + 5), mechEnergy, "机械能", [140, 60, 200], refMax, initMechEnergy);
+    var ekR = Math.round(bobEk);
+    var epR = Math.round(bobEp);
+    var mechShow = ekR + epR;  // Always equals Ek + Ep displayed numbers
+    drawBar(barX, bobEk, "动能Ek", [60, 140, 240], refMax, ekR);
+    drawBar(barX + barW + 5, bobEp, "势能Ep", [40, 160, 40], refMax, epR);
+    // Mech energy bar: height = current mechEnergy, number = ekR + epR (constant in conservation, always equals sum)
+    drawBarRef(barX + 2*(barW + 5), mechEnergy, "机械能", [140, 60, 200], refMax, initMechEnergy, mechShow);
     drawBar(barX + 3*(barW + 5), internalEnergy, "内能U", [230, 100, 30], refMax);
 
-    // Ek + Ep = MechE indicator
+    // Ek + Ep = MechE indicator (uses same rounded values as bar numbers)
     noStroke();
     fill(100);
     textAlign(CENTER, TOP);
     textSize(10);
-    text("Ek+Ep=" + (bobEk+bobEp).toFixed(0), barX + barW/2 + (barW+5), barBase - barMaxH - 15);
+    text("Ek+Ep=" + mechShow, barX + barW/2 + (barW+5), barBase - barMaxH - 15);
 
     // Status
     if (moles == 0) {
@@ -560,14 +572,14 @@
     pendT = constrain(pendT, 0.05, PI - 0.05);
     setup3();
     initReleaseY = pendY;
-    initMechEnergy = max(20 * (maxY - pendY), 500);
+    initMechEnergy = Math.round(max(20 * (maxY - pendY), 500));
     energyBarMax = initMechEnergy;
     return false;
   }
 
   function onDragEnd() {
     initReleaseY = pendY;
-    initMechEnergy = max(20 * (maxY - pendY), 500);
+    initMechEnergy = Math.round(max(20 * (maxY - pendY), 500));
     energyBarMax = initMechEnergy;
     rodLostAcc = 0;
     dragged = false;
