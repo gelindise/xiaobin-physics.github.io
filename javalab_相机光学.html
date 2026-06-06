@@ -51,6 +51,7 @@
   .review-explain .rtext { font-size: 13px; color: #c4b5fd; line-height: 1.6; }
   </style>
   <script src="auth-check.js"></script>
+  <script src="supabase.js"></script>
 </head>
 <body>
   <header class="header">
@@ -290,6 +291,7 @@
     }
 
     function draw() {
+      if (paused) return;
       push();
       scale(width / 1000);
       background(255);
@@ -671,7 +673,7 @@
         html += '<button class="btn-primary" id="btnRetryAll" style="font-size:14px;padding:8px 24px;">重新全部挑战</button>';
         html += '<button class="btn-reset" id="btnBackExp" style="font-size:14px;">返回实验</button>';
         html += "</div>";
-        clearProgress();
+        saveQuizToServer();
       }
 
       quizResult.html(html);
@@ -779,78 +781,29 @@
       });
     }
 
-    // Inline Supabase (no supabase.js)
-    var SUPABASE_URL_Q = 'https://ruledlbrdqhruotuaxwi.supabase.co';
-    var SUPABASE_ANON_KEY_Q = 'sb_publishable_0eFNMabL5IhHExao6wSE2A_nWbmMEKt';
-
-    function getUsername() {
-      try { return localStorage.getItem("currentUser"); } catch(e) { return null; }
-    }
-
     function saveProgress() {
       var data = { round: quizRound, scores: quizScores, highestRound: quizHighestRound, updatedAt: new Date().toISOString() };
       try { localStorage.setItem(QUIZ_STORAGE_KEY, JSON.stringify(data)); } catch(e) {}
-      var username = getUsername();
-      if (username) saveQuizToServer(username, data);
     }
 
-    function saveQuizToServer(username, data) {
-      var url = SUPABASE_URL_Q + '/rest/v1/users?username=eq.' + encodeURIComponent(username);
-      var headers = {
-        apikey: SUPABASE_ANON_KEY_Q,
-        Authorization: 'Bearer ' + SUPABASE_ANON_KEY_Q,
-        'Content-Type': 'application/json',
-        Prefer: 'return=representation'
-      };
-      fetch(url, { method: 'GET', headers: headers })
-        .then(function(r) { return r.json(); })
-        .then(function(users) {
-          if (users && users.length > 0) {
-            var user = users[0];
-            var quizData = user.quiz_data;
-            if (typeof quizData === 'string') quizData = JSON.parse(quizData);
-            if (!quizData || typeof quizData !== 'object') quizData = {};
-            quizData[EXPERIMENT_KEY] = data;
-            return fetch(url, { method: 'PATCH', headers: headers, body: JSON.stringify({ quiz_data: quizData }) });
-          }
-        })
-        .catch(function() {});
+    function saveQuizToServer() {
+      if (typeof supabase === "undefined" || !supabase) return;
+      try {
+        var userData = localStorage.getItem("user");
+        if (!userData) return;
+        var u = JSON.parse(userData);
+        var total = quizScores[0] + quizScores[1] + quizScores[2];
+        var stars = total >= 12 ? 3 : (total >= 8 ? 2 : (total >= 5 ? 1 : 0));
+        supabase.from("users").select("quiz_data").eq("id", u.id).single().then(function(res) {
+          var quizData = (res.data && res.data.quiz_data) ? res.data.quiz_data : {};
+          if (typeof quizData === "string") quizData = JSON.parse(quizData);
+          quizData[EXPERIMENT_KEY] = { correct: total, total: 15, stars: stars, updated_at: new Date().toISOString() };
+          supabase.from("users").update({ quiz_data: quizData }).eq("id", u.id).then(function(){});
+        });
+      } catch(e) {}
     }
 
     function loadProgress() {
-      var username = getUsername();
-      if (username) {
-        var url = SUPABASE_URL_Q + '/rest/v1/users?username=eq.' + encodeURIComponent(username);
-        var headers = {
-          apikey: SUPABASE_ANON_KEY_Q,
-          Authorization: 'Bearer ' + SUPABASE_ANON_KEY_Q,
-          'Content-Type': 'application/json'
-        };
-        return fetch(url, { method: 'GET', headers: headers })
-          .then(function(r) { return r.json(); })
-          .then(function(users) {
-            if (users && users.length > 0) {
-              var user = users[0];
-              var quizData = user.quiz_data;
-              if (typeof quizData === 'string') quizData = JSON.parse(quizData);
-              if (quizData && quizData[EXPERIMENT_KEY]) {
-                var serverData = quizData[EXPERIMENT_KEY];
-                try { localStorage.setItem(QUIZ_STORAGE_KEY, JSON.stringify(serverData)); } catch(e) {}
-                return serverData;
-              }
-            }
-            return null;
-          })
-          .then(function(result) {
-            if (result) return result;
-            try { var raw = localStorage.getItem(QUIZ_STORAGE_KEY); if (raw) return JSON.parse(raw); } catch(e) {}
-            return null;
-          })
-          .catch(function() {
-            try { var raw = localStorage.getItem(QUIZ_STORAGE_KEY); if (raw) return JSON.parse(raw); } catch(e) {}
-            return null;
-          });
-      }
       return new Promise(function(resolve) {
         try { var raw = localStorage.getItem(QUIZ_STORAGE_KEY); if (raw) resolve(JSON.parse(raw)); else resolve(null); } catch(e) { resolve(null); }
       });
@@ -858,29 +811,6 @@
 
     function clearProgress() {
       try { localStorage.removeItem(QUIZ_STORAGE_KEY); } catch(e) {}
-      var username = getUsername();
-      if (username) {
-        var url = SUPABASE_URL_Q + '/rest/v1/users?username=eq.' + encodeURIComponent(username);
-        var headers = {
-          apikey: SUPABASE_ANON_KEY_Q,
-          Authorization: 'Bearer ' + SUPABASE_ANON_KEY_Q,
-          'Content-Type': 'application/json',
-          Prefer: 'return=representation'
-        };
-        fetch(url, { method: 'GET', headers: headers })
-          .then(function(r) { return r.json(); })
-          .then(function(users) {
-            if (users && users.length > 0) {
-              var user = users[0];
-              var quizData = user.quiz_data;
-              if (typeof quizData === 'string') quizData = JSON.parse(quizData);
-              if (quizData && typeof quizData === 'object') {
-                delete quizData[EXPERIMENT_KEY];
-                return fetch(url, { method: 'PATCH', headers: headers, body: JSON.stringify({ quiz_data: quizData }) });
-              }
-            }
-          })
-          .catch(function() {});
     }
   </script>
 
