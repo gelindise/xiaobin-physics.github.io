@@ -142,6 +142,21 @@ async function userLogin() {
   }
 
   localStorage.setItem("currentUser", user);
+
+  // 生成 session token 并同步到服务端（单设备登录）
+  var sessionToken = "sess_" + Date.now() + "_" + Math.random().toString(36).substring(2, 10);
+  localStorage.setItem("sessionToken", sessionToken);
+  fetch("https://ruledlbrdqhruotuaxwi.supabase.co/rest/v1/users?username=eq." + encodeURIComponent(user), {
+    method: "PATCH",
+    headers: {
+      "apikey": "sb_publishable_0eFNMabL5IhHExao6wSE2A_nWbmMEKt",
+      "Authorization": "Bearer sb_publishable_0eFNMabL5IhHExao6wSE2A_nWbmMEKt",
+      "Content-Type": "application/json",
+      "Prefer": "return=representation"
+    },
+    body: JSON.stringify({ session_token: sessionToken })
+  });
+
   var params = new URLSearchParams(window.location.search);
   var redirect = params.get('redirect');
   location.href = redirect || "experiments.html";
@@ -315,7 +330,23 @@ function buyVip(type) {
   location.href = `pay.html?type=${encodeURIComponent(type)}&user=${encodeURIComponent(user)}`;
 }
 
-function logout() { localStorage.removeItem("currentUser"); location.href = "index.html"; }
+function logout() {
+  var user = localStorage.getItem("currentUser");
+  localStorage.removeItem("currentUser");
+  localStorage.removeItem("sessionToken");
+  if (user) {
+    fetch("https://ruledlbrdqhruotuaxwi.supabase.co/rest/v1/users?username=eq." + encodeURIComponent(user), {
+      method: "PATCH",
+      headers: {
+        "apikey": "sb_publishable_0eFNMabL5IhHExao6wSE2A_nWbmMEKt",
+        "Authorization": "Bearer sb_publishable_0eFNMabL5IhHExao6wSE2A_nWbmMEKt",
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ session_token: null })
+    });
+  }
+  location.href = "index.html";
+}
 
 async function toggleProfile() {
   const uName = localStorage.getItem("currentUser");
@@ -360,6 +391,25 @@ window.onload = async function() {
         SB.updateUser(uName, { last_seen: new Date().toISOString() }).catch(() => {});
       }
     }
+
+    // 单设备登录：每 30 秒校验 session token
+    setInterval(async function() {
+      var curUser = localStorage.getItem("currentUser");
+      var curToken = localStorage.getItem("sessionToken");
+      if (!curUser || !curToken) return;
+      try {
+        var res = await fetch(SUPABASE_URL + "/rest/v1/users?username=eq." + encodeURIComponent(curUser) + "&select=session_token", {
+          headers: { "apikey": SUPABASE_ANON_KEY, "Authorization": "Bearer " + SUPABASE_ANON_KEY }
+        });
+        var data = await res.json();
+        if (data && data[0] && data[0].session_token && data[0].session_token !== curToken) {
+          localStorage.removeItem("currentUser");
+          localStorage.removeItem("sessionToken");
+          alert("您的账号已在其他设备登录，当前设备已下线。");
+          location.href = "login.html?reason=kicked";
+        }
+      } catch(e) {}
+    }, 30000);
   }
 };
 
