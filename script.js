@@ -94,7 +94,10 @@ async function userRegister() {
 
   if (tip) {
     tip.className = "auth-tip success";
-    tip.innerHTML = "✅ 注册成功！账号已激活，<a href='login.html' style='color:var(--secondary);font-weight:600;'>立即登录</a>";
+    var regParams = new URLSearchParams(window.location.search);
+    var regRedirect = regParams.get('redirect');
+    var loginUrl = regRedirect ? "login.html?redirect=" + encodeURIComponent(regRedirect) : "login.html";
+    tip.innerHTML = "✅ 注册成功！账号已激活，<a href='" + loginUrl + "' style='color:var(--secondary);font-weight:600;'>立即登录</a>";
   }
 
   document.getElementById("regUser").value = "";
@@ -139,7 +142,9 @@ async function userLogin() {
   }
 
   localStorage.setItem("currentUser", user);
-  location.href = "experiments.html";
+  var params = new URLSearchParams(window.location.search);
+  var redirect = params.get('redirect');
+  location.href = redirect || "experiments.html";
 }
 
 // ========== 支付验证逻辑 ==========
