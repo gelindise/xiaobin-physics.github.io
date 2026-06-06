@@ -100,6 +100,19 @@
       .controls-group { justify-content: center; }
       .data-grid { grid-template-columns: 1fr 1fr; }
     }
+    /* Quiz styles */
+    .quiz-question { font-size: 15px; margin-bottom: 16px; line-height: 1.6; }
+    .quiz-option { display: block; width: 100%; text-align: left; padding: 12px 16px; margin-bottom: 8px; border: 2px solid #333; border-radius: 8px; background: rgba(255,255,255,0.03); color: #ccc; font-size: 14px; cursor: pointer; transition: all 0.2s; }
+    .quiz-option:hover { border-color: #8b5cf6; background: rgba(139,92,246,0.1); }
+    .quiz-option.correct { border-color: #22c55e; background: rgba(34,197,94,0.15); color: #22c55e; }
+    .quiz-option.wrong { border-color: #ef4444; background: rgba(239,68,68,0.15); color: #ef4444; }
+    .quiz-option:disabled { cursor: default; opacity: 0.7; }
+    .quiz-option:disabled.correct { opacity: 1; }
+    .quiz-score { font-size: 48px; font-weight: bold; }
+    .quiz-score.great { color: #22c55e; }
+    .quiz-score.good { color: #f59e0b; }
+    .quiz-score.poor { color: #ef4444; }
+    .quiz-btn-row { display: flex; gap: 10px; justify-content: center; margin-top: 16px; }
   </style>
 </head>
 <body>
@@ -234,6 +247,31 @@
         <li>有摩擦时，能量去哪了？</li>
         <li>弹簧更硬（k 更大）或更软，对运动有什么影响？</li>
       </ul>
+    </div>
+  </div>
+
+  <div style="max-width:900px;margin:0 auto 24px;padding:0 16px;text-align:center;">
+    <button class="btn-primary" id="btnChallenge" style="background:linear-gradient(135deg, #8b5cf6, #06b6d4);font-size:16px;padding:10px 32px;">
+      过关挑战
+    </button>
+    <p style="color:#64748b;font-size:12px;margin-top:8px;">15道单选题 · 每次5道 · 检验你对斜面弹簧能量转化的掌握程度</p>
+  </div>
+
+  <!-- ====== 答题挑战弹窗 ====== -->
+  <div id="quizOverlay" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.8);z-index:1000;overflow-y:auto;">
+    <div style="max-width:700px;margin:40px auto;background:#1a1a2e;border:1px solid #333;border-radius:16px;padding:24px 32px;color:#e2e8f0;">
+      <div id="quizHeader" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+        <span style="font-size:18px;font-weight:bold;" id="quizTitle">第 1 关 (1/3)</span>
+        <div style="display:flex;gap:8px;">
+          <button class="btn-reset" id="btnResetQuiz" style="font-size:12px;">↺ 重置</button>
+          <button class="btn-reset" id="btnCloseQuiz" style="font-size:12px;">✕ 退出</button>
+        </div>
+      </div>
+      <div id="quizProgress" style="height:4px;background:#333;border-radius:2px;margin-bottom:20px;">
+        <div id="quizProgressFill" style="height:100%;background:#8b5cf6;border-radius:2px;width:0%;transition:width 0.3s;"></div>
+      </div>
+      <div id="quizBody"></div>
+      <div id="quizResult" style="display:none;text-align:center;padding:30px 0;"></div>
     </div>
   </div>
 
@@ -1085,6 +1123,275 @@
   // ============================
   //  END
   // ============================
+
+  // ====== 答题挑战系统 ======
+  var QUIZ_STORAGE_KEY = "quiz_spring_incline_progress";
+  var EXPERIMENT_KEY = "spring_incline";
+
+  var quizQuestions = [
+    // 第1关：斜面与能量形式基础
+    { q: "小球在斜面顶端静止时，具有的主要能量形式是？", opts: ["动能", "重力势能", "弹性势能", "内能"], ans: 1 },
+    { q: "小球沿斜面下滑过程中，重力势能____，动能____。", opts: ["增大，减小", "减小，增大", "增大，增大", "不变，不变"], ans: 1 },
+    { q: "弹簧被压缩时，弹簧中储存的能量叫做？", opts: ["动能", "重力势能", "弹性势能", "化学能"], ans: 2 },
+    { q: "小球运动到水平面即将接触弹簧时，动能达到____。", opts: ["最小", "最大", "为零", "不变"], ans: 1 },
+    { q: "物体由于运动而具有的能量叫做____，由于被举高而具有的能量叫做____。", opts: ["动能，重力势能", "重力势能，动能", "弹性势能，动能", "内能，重力势能"], ans: 0 },
+    // 第2关：机械能守恒与弹簧
+    { q: "在无摩擦的情况下，小球沿斜面下滑再被弹簧弹回，机械能____。", opts: ["逐渐增大", "保持不变", "逐渐减小", "时大时小"], ans: 1 },
+    { q: "弹簧将小球弹回斜面后，小球能上升到的最大高度与初始释放高度相比____。", opts: ["更高", "相同", "更低", "无法确定"], ans: 1 },
+    { q: "小球压缩弹簧到最短时，小球的动能为____，弹性势能最____。", opts: ["最大，大", "零，大", "最大，小", "零，小"], ans: 1 },
+    { q: "弹簧恢复过程中，能量如何转化？", opts: ["动能 → 弹性势能", "重力势能 → 动能", "弹性势能 → 动能", "动能 → 重力势能"], ans: 2 },
+    { q: "在斜面顶端释放质量更大的小球（相同高度），到达底部时的速度____。", opts: ["更大", "更小", "相同", "取决于斜面倾角"], ans: 2 },
+    // 第3关：摩擦与能量耗散
+    { q: "有摩擦时，小球沿斜面下滑过程中机械能会____。", opts: ["增大", "保持不变", "逐渐减小", "先增后减"], ans: 2 },
+    { q: "摩擦使一部分机械能转化为什么形式的能量？", opts: ["化学能", "电能", "内能", "核能"], ans: 2 },
+    { q: "有摩擦时，小球被弹簧弹回后上升的最大高度与初始高度相比____。", opts: ["更高", "相同", "更低", "无法确定"], ans: 2 },
+    { q: "斜面倾角增大时（高度不变），小球到达底部时的速度____。", opts: ["变大", "变小", "不变", "变为零"], ans: 2 },
+    { q: "以下哪种情况机械能守恒？", opts: ["有摩擦的斜面", "小球在空中下落（忽略空气阻力）", "压缩弹簧有发热", "小球在粗糙水平面滚动"], ans: 1 }
+  ];
+
+  var quizRound = 0;
+  var quizIndex = 0;
+  var quizAnswers = [];
+  var quizLocked = false;
+  var quizScores = [0, 0, 0];
+  var quizHighestRound = 0;
+
+  function initQuiz() {
+    document.getElementById("btnChallenge").addEventListener("click", startQuiz);
+    document.getElementById("btnCloseQuiz").addEventListener("click", closeQuiz);
+    document.getElementById("btnResetQuiz").addEventListener("click", resetQuiz);
+    updateChallengeButton();
+  }
+
+  function getUsername() {
+    try { return localStorage.getItem("currentUser"); } catch(e) { return null; }
+  }
+
+  function saveProgress() {
+    var data = { round: quizRound, scores: quizScores, highestRound: quizHighestRound, updatedAt: new Date().toISOString() };
+    try { localStorage.setItem(QUIZ_STORAGE_KEY, JSON.stringify(data)); } catch(e) {}
+    var username = getUsername();
+    if (username) saveQuizToServer(username, data);
+  }
+
+  function saveQuizToServer(username, data) {
+    try {
+      SB.getUser(username).then(function(users) {
+        if (users && users.length > 0) {
+          var user = users[0];
+          var quizData = user.quiz_data;
+          if (typeof quizData === 'string') quizData = JSON.parse(quizData);
+          if (!quizData || typeof quizData !== 'object') quizData = {};
+          quizData[EXPERIMENT_KEY] = data;
+          SB.updateUser(username, { quiz_data: quizData }).catch(function(){});
+        }
+      }).catch(function(){});
+    } catch(e) {}
+  }
+
+  async function loadProgress() {
+    var username = getUsername();
+    if (username) {
+      try {
+        var users = await SB.getUser(username);
+        if (users && users.length > 0) {
+          var user = users[0];
+          var quizData = user.quiz_data;
+          if (typeof quizData === 'string') quizData = JSON.parse(quizData);
+          if (quizData && quizData[EXPERIMENT_KEY]) {
+            var serverData = quizData[EXPERIMENT_KEY];
+            try { localStorage.setItem(QUIZ_STORAGE_KEY, JSON.stringify(serverData)); } catch(e) {}
+            return serverData;
+          }
+        }
+      } catch(e) {}
+    }
+    try {
+      var raw = localStorage.getItem(QUIZ_STORAGE_KEY);
+      if (raw) return JSON.parse(raw);
+    } catch(e) {}
+    return null;
+  }
+
+  function clearProgress() {
+    try { localStorage.removeItem(QUIZ_STORAGE_KEY); } catch(e) {}
+    var username = getUsername();
+    if (username) {
+      try {
+        SB.getUser(username).then(function(users) {
+          if (users && users.length > 0) {
+            var user = users[0];
+            var quizData = user.quiz_data;
+            if (typeof quizData === 'string') quizData = JSON.parse(quizData);
+            if (quizData && typeof quizData === 'object') {
+              delete quizData[EXPERIMENT_KEY];
+              SB.updateUser(username, { quiz_data: quizData }).catch(function(){});
+            }
+          }
+        }).catch(function(){});
+      } catch(e) {}
+    }
+  }
+
+  function startQuiz() {
+    loadProgress().then(function(saved) {
+      if (saved && saved.highestRound >= 0 && (saved.scores[0] > 0 || saved.round > 0)) {
+        quizRound = Math.min(saved.round + 1, 2);
+        quizScores = saved.scores.slice();
+        quizHighestRound = saved.highestRound;
+      } else {
+        quizRound = 0; quizScores = [0,0,0]; quizHighestRound = 0;
+      }
+      document.getElementById("quizOverlay").style.display = "block";
+      running = false;
+      var tb = document.getElementById("btnToggle");
+      if (tb) { tb.textContent = "暂停"; tb.classList.add("active"); }
+      renderRound();
+    });
+  }
+
+  function closeQuiz() {
+    document.getElementById("quizOverlay").style.display = "none";
+    updateChallengeButton();
+  }
+
+  function resetQuiz() {
+    if (confirm("确定要重置所有挑战进度吗？当前进度将丢失。")) {
+      quizRound = 0; quizScores = [0,0,0]; quizHighestRound = 0;
+      clearProgress();
+      renderRound();
+    }
+  }
+
+  function updateChallengeButton() {
+    loadProgress().then(function(saved) {
+      var btn = document.getElementById("btnChallenge");
+      if (!btn) return;
+      if (saved && (saved.scores[0] > 0 || saved.round > 0)) {
+        var totalDone = saved.scores[0] + (saved.scores[1] || 0) + (saved.scores[2] || 0);
+        btn.textContent = "继续挑战 (已得" + totalDone + "/15分)";
+      } else {
+        btn.textContent = "过关挑战";
+      }
+    });
+  }
+
+  function renderRound() {
+    quizIndex = 0; quizAnswers = []; quizLocked = false;
+    document.getElementById("quizResult").style.display = "none";
+    document.getElementById("quizBody").style.display = "block";
+    document.getElementById("quizTitle").textContent = "第 " + (quizRound + 1) + " 关 (题目 " + (quizRound * 5 + 1) + "-" + (quizRound * 5 + 5) + "/15)";
+    document.getElementById("quizProgressFill").style.width = (quizRound * (100/3)) + "%";
+    renderQuestion();
+  }
+
+  function renderQuestion() {
+    var q = quizQuestions[quizRound * 5 + quizIndex];
+    var html = '<div class="quiz-question">' + (quizIndex + 1) + ". " + q.q + "</div>";
+    var labels = ["A", "B", "C", "D"];
+    for (var i = 0; i < q.opts.length; i++) {
+      html += '<button class="quiz-option" data-idx="' + i + '" ';
+      if (quizLocked) html += 'disabled ';
+      html += '>' + labels[i] + ". " + q.opts[i] + "</button>";
+    }
+    document.getElementById("quizBody").innerHTML = html;
+
+    var opts = document.querySelectorAll("#quizBody .quiz-option");
+    for (var j = 0; j < opts.length; j++) {
+      (function(idx) {
+        opts[j].addEventListener("click", function() { selectAnswer(idx); });
+      })(j);
+    }
+  }
+
+  function selectAnswer(idx) {
+    if (quizLocked) return;
+    quizLocked = true;
+    quizAnswers.push(idx);
+    var q = quizQuestions[quizRound * 5 + quizIndex];
+    var correct = q.ans;
+
+    var opts = document.querySelectorAll("#quizBody .quiz-option");
+    for (var i = 0; i < opts.length; i++) {
+      opts[i].disabled = true;
+      if (i === correct) opts[i].classList.add("correct");
+      if (i === idx && idx !== correct) opts[i].classList.add("wrong");
+    }
+
+    setTimeout(function() {
+      quizIndex++;
+      if (quizIndex < 5) { quizLocked = false; renderQuestion(); }
+      else showRoundResult();
+    }, 1200);
+  }
+
+  function getStars(score, total) {
+    if (score === total) return "⭐⭐⭐";
+    if (score >= total - 1) return "⭐⭐";
+    if (score >= Math.ceil(total / 2)) return "⭐";
+    return "";
+  }
+
+  function showRoundResult() {
+    var correctCount = 0;
+    for (var i = 0; i < 5; i++) {
+      if (quizAnswers[i] === quizQuestions[quizRound * 5 + i].ans) correctCount++;
+    }
+    quizScores[quizRound] = correctCount;
+    if (quizRound > quizHighestRound) quizHighestRound = quizRound;
+    saveProgress();
+
+    document.getElementById("quizBody").style.display = "none";
+    document.getElementById("quizResult").style.display = "block";
+
+    var stars = getStars(correctCount, 5);
+    var scoreClass = correctCount >= 4 ? "great" : (correctCount >= 2 ? "good" : "poor");
+    var comment = correctCount >= 4 ? "太棒了！" : (correctCount >= 2 ? "继续加油！" : "再看看实验吧！");
+
+    var html = '<div class="quiz-score ' + scoreClass + '">' + correctCount + "/5</div>";
+    if (stars) html += '<p style="font-size:20px;margin:4px 0;">' + stars + "</p>";
+    html += '<p style="font-size:16px;margin:8px 0;color:#94a3b8;">' + comment + "</p>";
+
+    if (quizRound < 2) {
+      html += '<p style="font-size:13px;color:#64748b;margin-bottom:8px;">已完成第' + (quizRound + 1) + "关，进度已保存</p>";
+      html += '<div class="quiz-btn-row">';
+      html += '<button class="btn-primary" id="btnNextRound" style="font-size:14px;padding:8px 24px;">进入下一关</button>';
+      html += '<button class="btn-reset" id="btnRetryRound" style="font-size:14px;">重新挑战本关</button>';
+      html += "</div>";
+    } else {
+      var total = quizScores[0] + quizScores[1] + quizScores[2];
+      var totalClass = total >= 12 ? "great" : (total >= 8 ? "good" : "poor");
+      var totalStars = getStars(total, 15);
+      html = '<div class="quiz-score ' + totalClass + '">' + total + "/15</div>";
+      if (totalStars) html += '<p style="font-size:20px;margin:4px 0;">' + totalStars + "</p>";
+      html += '<p style="font-size:14px;color:#94a3b8;margin-bottom:8px;">第1关: ' + quizScores[0] + '/5 &nbsp; 第2关: ' + quizScores[1] + '/5 &nbsp; 第3关: ' + quizScores[2] + "/5</p>";
+      html += '<p style="font-size:16px;margin:8px 0;color:' + (total >= 12 ? "#22c55e" : total >= 8 ? "#f59e0b" : "#ef4444") + ';">' + (total >= 12 ? "恭喜通关！你对斜面弹簧能量转化理解透彻！" : total >= 8 ? "还不错，再复习一下错题吧！" : "建议回到实验仔细观察能量转化规律。") + "</p>";
+      html += '<div class="quiz-btn-row">';
+      html += '<button class="btn-primary" id="btnRetryAll" style="font-size:14px;padding:8px 24px;">重新全部挑战</button>';
+      html += '<button class="btn-reset" id="btnBackExp" style="font-size:14px;">返回实验</button>';
+      html += "</div>";
+      clearProgress();
+    }
+
+    document.getElementById("quizResult").innerHTML = html;
+
+    setTimeout(function() {
+      var btnNext = document.getElementById("btnNextRound");
+      var btnRetry = document.getElementById("btnRetryRound");
+      var btnRetryAll = document.getElementById("btnRetryAll");
+      var btnBack = document.getElementById("btnBackExp");
+
+      if (btnNext) btnNext.addEventListener("click", function() { quizRound++; renderRound(); });
+      if (btnRetry) btnRetry.addEventListener("click", function() { renderRound(); });
+      if (btnRetryAll) btnRetryAll.addEventListener("click", function() {
+        quizRound = 0; quizScores = [0,0,0]; quizHighestRound = 0;
+        clearProgress(); renderRound();
+      });
+      if (btnBack) btnBack.addEventListener("click", function() { closeQuiz(); });
+    }, 100);
+  }
+
+  initQuiz();
   </script>
   <script src="supabase.js"></script>
   <script src="script.js"></script>
