@@ -22,8 +22,35 @@
     .formula-item { flex: 1; min-width: 180px; background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 12px 16px; }
     .formula-item .label { color: #64748b; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; display: block; margin-bottom: 4px; }
     .formula-item .value { color: #e2e8f0; font-size: 13px; }
+    /* ---- 过关挑战 样式 ---- */
+    .quiz-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); display: none; justify-content: center; align-items: center; z-index: 9999; }
+    .quiz-overlay.active { display: flex; }
+    .quiz-panel { background: #1e1e2e; border: 1px solid #333; border-radius: 16px; padding: 28px 32px; max-width: 560px; width: 90%; max-height: 85vh; overflow-y: auto; position: relative; color: #e2e8f0; }
+    .quiz-panel h2 { margin: 0 0 8px; font-size: 20px; color: #fff; }
+    .quiz-level { color: #8b5cf6; font-size: 13px; margin-bottom: 16px; }
+    .quiz-progress { height: 6px; background: #333; border-radius: 3px; margin-bottom: 20px; }
+    .quiz-progress-bar { height: 6px; background: linear-gradient(90deg,#8b5cf6,#a78bfa); border-radius: 3px; width: 0%; transition: width 0.3s; }
+    .quiz-question { font-size: 16px; font-weight: 600; margin-bottom: 16px; line-height: 1.6; }
+    .quiz-opts { display: flex; flex-direction: column; gap: 10px; margin-bottom: 16px; }
+    .quiz-opt { background: #2a2a3e; border: 1px solid #3a3a4e; border-radius: 10px; padding: 12px 16px; cursor: pointer; transition: all 0.2s; font-size: 14px; color: #c4c4d0; }
+    .quiz-opt:hover { border-color: #8b5cf6; background: #2e2e42; }
+    .quiz-opt.selected { border-color: #8b5cf6; background: rgba(139,92,246,0.15); color: #c4b5fd; }
+    .quiz-opt.correct { border-color: #22c55e; background: rgba(34,197,94,0.15); color: #86efac; }
+    .quiz-opt.wrong { border-color: #ef4444; background: rgba(239,68,68,0.15); color: #fca5a5; }
+    .quiz-opt.disabled { pointer-events: none; }
+    .quiz-explain { background: #2a2a3e; border-left: 3px solid #8b5cf6; border-radius: 0 8px 8px 0; padding: 12px 16px; margin-bottom: 16px; font-size: 13px; line-height: 1.6; color: #a0a0b0; }
+    .quiz-explain strong { color: #c4b5fd; }
+    .quiz-btn { background: #8b5cf6; border: none; color: #fff; padding: 10px 24px; border-radius: 8px; cursor: pointer; font-size: 14px; transition: all 0.2s; }
+    .quiz-btn:hover { background: #7c3aed; }
+    .quiz-btn:disabled { opacity: 0.4; cursor: default; }
+    .quiz-result { text-align: center; padding: 20px 0; }
+    .quiz-result .score { font-size: 48px; font-weight: 800; color: #8b5cf6; }
+    .quiz-result .stars { font-size: 32px; margin: 8px 0; }
+    .quiz-close { position: absolute; top: 12px; right: 16px; background: none; border: none; color: #666; font-size: 24px; cursor: pointer; }
+    .quiz-close:hover { color: #fff; }
   </style>
   <script src="auth-check.js"></script>
+  <script src="supabase.js"></script>
 </head>
 <body>
   <header class="header">
@@ -47,6 +74,7 @@
       <button class="zoom-btn" id="buttonZoomIn">🔍 放大 (+10×)</button>
       <button class="zoom-btn" id="buttonZoomOut">🔎 缩小 (−10×)</button>
       <span class="hint-text">每次放大/缩小 10 倍 | 观察从宏观到亚原子粒子的尺度变化</span>
+      <label style="color:#aaa;font-size:13px;display:flex;align-items:center;gap:4px;cursor:pointer;user-select:none;"><input type="checkbox" id="checkPause"> 暂停动画</label>
     </div>
   </div>
 
@@ -65,6 +93,24 @@
     </div>
   </div>
 
+  <div style="text-align:center;margin-top:12px;">
+    <button class="zoom-btn" id="quizBtn" style="background:rgba(139,92,246,0.15);border-color:#8b5cf6;color:#c4b5fd;">过关挑战</button>
+    <p style="color:#94a3b8;font-size:12px;margin:6px 0 0;">检验你对原子尺度概念的掌握程度</p>
+  </div>
+
+  <div class="quiz-overlay" id="quizOverlay">
+    <div class="quiz-panel" id="quizPanel">
+      <button class="quiz-close" id="quizClose">&times;</button>
+      <h2 id="quizTitle">过关挑战</h2>
+      <div class="quiz-level" id="quizLevel">第1关</div>
+      <div class="quiz-progress"><div class="quiz-progress-bar" id="quizProgressBar"></div></div>
+      <div class="quiz-question" id="quizQuestion"></div>
+      <div class="quiz-opts" id="quizOpts"></div>
+      <div class="quiz-explain" id="quizExplain" style="display:none;"></div>
+      <button class="quiz-btn" id="quizNextBtn" style="display:none;">下一题</button>
+    </div>
+  </div>
+
   <script src="protect.js"></script>
   <script>
   // ---- state ----
@@ -76,6 +122,7 @@
   var electronT = [];
   var currStep;
   var destStep;
+  var checkPause, chalkPause;
 
   function preload() {
     for (var i = 0; i < 10; i++) {
@@ -130,8 +177,10 @@
   }
 
   function draw() {
-    if (currStep < destStep) currStep++;
-    if (currStep > destStep) currStep--;
+    if (!checkPause.checked()) {
+      if (currStep < destStep) currStep++;
+      if (currStep > destStep) currStep--;
+    }
 
     push();
     translate(width / 2, height / 2);
@@ -182,8 +231,10 @@
     fill(0, 0, 255);
 
     if (currStep == 70) {
-      for (var j = 0; j < electronMax; j++) {
-        electronT[j] += 0.1;
+      if (!checkPause.checked()) {
+        for (var j = 0; j < electronMax; j++) {
+          electronT[j] += 0.1;
+        }
       }
 
       image(img_scale[8], -width / 2, -width / 4, width, width / 2);
@@ -202,6 +253,237 @@
 
     pop();
   }
+  // ---- 过关挑战系统 ----
+  var QUIZ_STORAGE_KEY = "quiz_atom_scale_progress";
+  var EXPERIMENT_KEY = "atom_scale";
+
+  var quizQuestions = [
+    // Level 1: 尺度概念
+    { level: 1, question: "原子的直径大约是多少？", options: ["10⁻¹⁰ 米（0.1纳米）", "10⁻⁶ 米（1微米）", "10⁻³ 米（1毫米）", "10⁻¹⁵ 米"], answer: 0, explain: "原子直径约为10⁻¹⁰米（0.1纳米）。1纳米=10⁻⁹米。做个对比：如果把一个苹果放大到地球那么大，苹果中的原子才大约有原来苹果那么大。这说明了原子有多么微小。" },
+    { level: 1, question: "原子核与整个原子的大小比例大约是多少？", options: ["原子核约为原子的万分之一", "原子核约为原子的一半", "原子核比原子还大", "两者差不多大"], answer: 0, explain: "原子核直径约为10⁻¹⁵米，而原子直径约为10⁻¹⁰米，原子核只有原子的约十万分之一。如果把原子比作一个足球场，原子核只有场中央的一颗豌豆那么大。原子内部绝大部分是空的。" },
+    { level: 1, question: "人类能够用光学显微镜直接看到原子吗？", options: ["能，普通显微镜就行", "不能，原子远小于可见光波长", "能，用放大镜就行", "能，但需要特殊灯光"], answer: 1, explain: "可见光波长约400-700纳米，而原子直径只有约0.1纳米，远小于光波长。根据光学衍射极限，光学显微镜无法分辨比光波长小得多的物体。需要用电子显微镜或扫描隧道显微镜（STM）才能'看到'原子。" },
+    { level: 1, question: "1纳米等于多少米？", options: ["10⁻⁶ 米", "10⁻⁹ 米", "10⁻¹² 米", "10⁻³ 米"], answer: 1, explain: "1纳米(nm) = 10⁻⁹米。纳米科技就是在1-100纳米的尺度上研究和操控物质的技术。DNA双螺旋直径约2纳米，一个水分子直径约0.3纳米。" },
+    { level: 1, question: "以下按尺度从大到小排列正确的是？", options: ["原子 > 细胞 > 分子", "细胞 > 分子 > 原子 > 原子核", "原子 > 分子 > 细胞", "都一样大"], answer: 1, explain: "从大到小：细胞（10⁻⁵米）> 病毒（10⁻⁷米）> 分子（10⁻⁹米）> 原子（10⁻¹⁰米）> 原子核（10⁻¹⁵米）> 质子/中子（10⁻¹⁵米）> 夸克（<10⁻¹⁸米）。每级相差约10-10000倍。" },
+    // Level 2: 原子内部结构
+    { level: 2, question: "原子核由什么组成？", options: ["电子和质子", "质子和中子", "电子和中子", "只有质子"], answer: 1, explain: "原子核由质子和中子组成（统称核子）。质子带正电，中子不带电。它们被强大的核力（强相互作用）束缚在极小的原子核内。氢的常见同位素（氕）的原子核只有一个质子，没有中子。" },
+    { level: 2, question: "电子为什么不会掉进原子核？", options: ["因为电子有固定轨道像行星一样", "因为核力排斥电子", "根据量子力学，电子有最低能级（基态），不能无限接近原子核", "电子速度太慢"], answer: 2, explain: "根据量子力学，电子不能具有任意能量，而是只能处于特定的能级。最低能级（基态）对应着电子最接近原子核的距离（玻尔半径约0.053纳米）。电子不能低于这个能级——这就是为什么电子不会'掉入'原子核。" },
+    { level: 2, question: "原子质量数等于什么？", options: ["质子数", "电子数", "质子数 + 中子数", "中子数"], answer: 2, explain: "质量数(A) = 质子数(Z) + 中子数(N)。例如碳-12：6个质子+6个中子，质量数为12。电子的质量极小（约为质子的1/1836），通常忽略不计，原子的质量几乎全部集中在原子核。" },
+    { level: 2, question: "如果原子核像一颗葡萄（直径约1厘米），那么原子大约有多大的范围？", options: ["像一个足球那么大", "像一个足球场那么大（约100米）", "像一个城市那么大", "像一个西瓜那么大"], answer: 1, explain: "原子核与原子的大小比例约为1:10,000到1:100,000。如果原子核是1厘米的葡萄，按比例原子应该有100-1000米范围——约一个足球场。这生动的说明了原子内部极其空旷。" },
+    { level: 2, question: "质子和中子的质量相比电子如何？", options: ["质子质量约是电子的1836倍，中子与质子质量相近", "三者质量差不多", "电子质量最大", "中子质量远大于质子"], answer: 0, explain: "质子质量≈中子质量≈1.67×10⁻²⁷千克，电子质量≈9.11×10⁻³¹千克。质子/中子的质量约为电子的1836倍。所以原子的质量99.9%以上集中在极小的原子核上。" },
+    // Level 3: 前沿与应用
+    { level: 3, question: "扫描隧道显微镜（STM）能看到原子的原理是什么？", options: ["利用可见光放大", "利用量子隧穿效应——探针与样品间产生隧道电流", "利用声波探测", "利用X射线穿透"], answer: 1, explain: "STM利用量子隧穿效应：极细的探针针尖靠近样品表面（距离<1纳米）时，电子可以'隧穿'通过间隙产生微小的隧道电流。针尖逐行扫描样品表面，记录电流变化就能'绘制'出原子尺度的表面图像。" },
+    { level: 3, question: "纳米技术通常在什么尺度上工作？", options: ["1-100毫米", "1-100微米", "1-100纳米", "1-100皮米"], answer: 2, explain: "纳米技术的定义是在1-100纳米尺度上研究、操控和制造物质。在这个尺度，物质会表现出与宏观尺度不同的特殊性质（量子效应、表面效应等），如纳米金粒子呈红色而非金色。" },
+    { level: 3, question: "为什么不同元素的原子大小不同？", options: ["因为温度不同", "因为电子层数和核电荷数不同", "因为颜色不同", "所有原子大小都一样"], answer: 1, explain: "原子大小取决于两个因素：①电子层数（层数越多→原子越大）②核电荷数（质子越多→对外层电子吸引力越大→原子越小）。同一周期从左到右原子半径减小（核电荷增加），同一族从上到下半径增大（电子层增加）。" },
+    { level: 3, question: "原子核内的质子和中子靠什么力结合在一起？", options: ["万有引力", "电磁力", "强相互作用力（核力）", "摩擦力"], answer: 2, explain: "在极小的原子核内，质子之间的电磁斥力非常大（同性相斥），如果没有更强的力，原子核会立即炸开。强相互作用力（核力）是自然界四种基本力中最强的力，它在极短距离（<10⁻¹⁵米）内将质子和中子紧紧束缚在一起。" },
+    { level: 3, question: "关于原子尺度的说法，哪个是正确的？", options: ["原子内部是实心的，像弹珠一样", "原子内部99.9%以上是空的", "原子核占据了原子大部分体积", "电子填满了原子内部空间"], answer: 1, explain: "原子内部极其空旷。如果把原子放大到可以看见，你会看到一个极小的核（>99.9%的质量集中于此）和远处微小的电子在运动，其余全是空的空间。物质看起来'实心'只是因为我们触摸时受到的是原子间电磁排斥力，而非原子本身的体积。" }
+  ];
+
+  var quizState = { current: 0, level: 1, answers: [], finished: false, stars: 0 };
+
+  function initQuiz() {
+    checkPause = select("#checkPause");
+    loadQuizProgress();
+    select("#quizBtn").mouseClicked(openQuiz);
+    select("#quizClose").mouseClicked(closeQuiz);
+  }
+
+  function loadQuizProgress() {
+    try {
+      var saved = localStorage.getItem(QUIZ_STORAGE_KEY);
+      if (saved) {
+        var data = JSON.parse(saved);
+        if (data.experiment === EXPERIMENT_KEY) {
+          quizState = data.state;
+        }
+      }
+    } catch(e) {}
+  }
+
+  function saveQuizProgress() {
+    try {
+      localStorage.setItem(QUIZ_STORAGE_KEY, JSON.stringify({
+        experiment: EXPERIMENT_KEY,
+        state: quizState,
+        updated: Date.now()
+      }));
+    } catch(e) {}
+  }
+
+  function saveQuizToServer(correct) {
+    if (typeof supabase === "undefined" || !supabase) return;
+    try {
+      var userData = localStorage.getItem("user");
+      if (!userData) return;
+      var u = JSON.parse(userData);
+      supabase.from("users").select("quiz_data").eq("id", u.id).single().then(function(res) {
+        var quizData = (res.data && res.data.quiz_data) ? res.data.quiz_data : {};
+        quizData[EXPERIMENT_KEY] = {
+          correct: correct,
+          total: 15,
+          stars: quizState.stars || 0,
+          updated_at: new Date().toISOString()
+        };
+        supabase.from("users").update({ quiz_data: quizData }).eq("id", u.id).then(function(){});
+      });
+    } catch(e) {}
+
+  function openQuiz() {
+    select("#quizOverlay").addClass("active");
+    renderQuiz();
+  }
+
+  function closeQuiz() {
+    select("#quizOverlay").removeClass("active");
+  }
+
+  function renderQuiz() {
+    if (quizState.finished) {
+      showFinalResult();
+      return;
+    }
+    var qs = getLevelQuestions();
+    if (quizState.current >= qs.length) {
+      finishLevel();
+      return;
+    }
+    var q = qs[quizState.current];
+    select("#quizTitle").html("过关挑战");
+    select("#quizLevel").html("第" + q.level + "关");
+    var pct = (quizState.current / qs.length) * 100;
+    select("#quizProgressBar").style("width", pct + "%");
+    select("#quizQuestion").html((quizState.current + 1) + ". " + q.question);
+    var optsDiv = select("#quizOpts");
+    optsDiv.html("");
+    for (var i = 0; i < q.options.length; i++) {
+      var opt = createDiv(q.options[i]);
+      opt.addClass("quiz-opt");
+      if (quizState.answers[quizState.current] !== undefined) {
+        opt.addClass("disabled");
+        if (i === q.answer) opt.addClass("correct");
+        if (i === quizState.answers[quizState.current]) {
+          opt.addClass("selected");
+          if (i !== q.answer) opt.addClass("wrong");
+        }
+      } else {
+        opt.elt.onclick = (function(idx) { return function() { selectAnswer(idx); }; })(i);
+      }
+      opt.parent(optsDiv);
+    }
+    var explainDiv = select("#quizExplain");
+    if (quizState.answers[quizState.current] !== undefined) {
+      explainDiv.style("display", "block");
+      explainDiv.html("<strong>解析：</strong>" + q.explain);
+    } else {
+      explainDiv.style("display", "none");
+    }
+    var nextBtn = select("#quizNextBtn");
+    if (quizState.answers[quizState.current] !== undefined) {
+      nextBtn.style("display", "inline-block");
+      nextBtn.removeAttribute("disabled");
+      var isLast = quizState.current >= qs.length - 1;
+      nextBtn.html(isLast ? "完成本关" : "下一题");
+      nextBtn.elt.onclick = function() {
+        if (isLast) {
+          finishLevel();
+        } else {
+          quizState.current++;
+          saveQuizProgress();
+          renderQuiz();
+        }
+      };
+    } else {
+      nextBtn.style("display", "none");
+      nextBtn.elt.onclick = null;
+    }
+  }
+
+  function getLevelQuestions() {
+    var result = [];
+    for (var i = 0; i < quizQuestions.length; i++) {
+      if (quizQuestions[i].level === quizState.level) {
+        result.push(quizQuestions[i]);
+      }
+    }
+    return result;
+  }
+
+  function selectAnswer(idx) {
+    var qs = getLevelQuestions();
+    if (quizState.answers[quizState.current] !== undefined) return;
+    quizState.answers[quizState.current] = idx;
+    saveQuizProgress();
+    renderQuiz();
+  }
+
+  function finishLevel() {
+    var qs = getLevelQuestions();
+    var correct = 0;
+    for (var i = 0; i < qs.length; i++) {
+      if (quizState.answers[i] === qs[i].answer) correct++;
+    }
+    var pct = correct / qs.length;
+    var stars = pct >= 0.9 ? 3 : pct >= 0.7 ? 2 : pct >= 0.5 ? 1 : 0;
+    quizState.stars = stars;
+
+    if (stars >= 2 && quizState.level < 3) {
+      quizState.level++;
+      quizState.current = 0;
+      quizState.answers = [];
+      quizState.finished = false;
+      saveQuizProgress();
+      renderQuiz();
+    } else if (stars >= 2 && quizState.level >= 3) {
+      quizState.finished = true;
+      saveQuizProgress();
+      renderQuiz();
+    } else {
+      quizState.current = 0;
+      quizState.answers = [];
+      saveQuizProgress();
+      renderQuiz();
+    }
+  }
+
+  function showFinalResult() {
+    select("#quizTitle").html("挑战完成");
+    select("#quizLevel").html("");
+    select("#quizProgressBar").style("width", "100%");
+    select("#quizQuestion").html("");
+    select("#quizExplain").style("display", "none");
+    select("#quizNextBtn").style("display", "none");
+
+    // Calculate total correct across all answered questions
+    var totalCorrect = 0;
+    for (var i = 0; i < quizQuestions.length; i++) {
+      if (quizState.answers[i] === quizQuestions[i].answer) totalCorrect++;
+    }
+
+    saveQuizToServer(totalCorrect);
+    saveQuizProgress();
+    var starStr = "";
+    for (var i = 0; i < quizState.stars; i++) starStr += "⭐";
+    if (starStr === "") starStr = "继续加油";
+    select("#quizOpts").html(
+      '<div class="quiz-result">' +
+      '<div class="score">' + quizState.stars + '/3</div>' +
+      '<div class="stars">' + starStr + '</div>' +
+      '<p style="color:#94a3b8;">恭喜完成原子的尺度过关挑战！</p>' +
+      '<button class="quiz-btn" onclick="resetQuizAS()">重新挑战</button>' +
+      '</div>'
+    );
+  }
+
+  function resetQuizAS() {
+    quizState = { current: 0, level: 1, answers: [], finished: false, stars: 0 };
+    saveQuizProgress();
+    renderQuiz();
+  }
+
+  var _origSetupAS = setup;
+  setup = function() {
+    _origSetupAS();
+    initQuiz();
+  };
   </script>
 </body>
 </html>

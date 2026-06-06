@@ -16,9 +16,47 @@
     .section { padding: 1.5rem 2rem 0.5rem; }
     .section h2 { font-size: 1.4rem; }
   </style>
+  <!-- 过关挑战答题系统样式 -->
+  <style>
+    .quiz-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); z-index: 9999; justify-content: center; align-items: center; }
+    .quiz-overlay.show { display: flex; }
+    .quiz-box { background: #1e293b; border-radius: 16px; padding: 32px; max-width: 600px; width: 90%; max-height: 80vh; overflow-y: auto; color: #e2e8f0; box-shadow: 0 20px 60px rgba(0,0,0,0.5); border: 1px solid #334155; }
+    .quiz-box h2 { margin: 0 0 8px; font-size: 1.5rem; color: #f8fafc; }
+    .quiz-box .quiz-sub { color: #94a3b8; font-size: 0.9rem; margin-bottom: 20px; }
+    .quiz-box .level-indicator { display: flex; gap: 8px; margin-bottom: 16px; }
+    .quiz-box .level-dot { width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 0.8rem; font-weight: 700; background: #334155; color: #94a3b8; }
+    .quiz-box .level-dot.active { background: #3b82f6; color: #fff; }
+    .quiz-box .level-dot.done { background: #22c55e; color: #fff; }
+    .quiz-box .question-text { font-size: 1.1rem; margin: 16px 0 12px; line-height: 1.5; }
+    .quiz-box .options { display: flex; flex-direction: column; gap: 8px; }
+    .quiz-box .option-btn { padding: 10px 16px; border-radius: 8px; background: #334155; color: #e2e8f0; border: 2px solid transparent; cursor: pointer; text-align: left; font-size: 0.95rem; transition: all 0.2s; }
+    .quiz-box .option-btn:hover { background: #475569; border-color: #3b82f6; }
+    .quiz-box .option-btn.selected { border-color: #3b82f6; background: #1e3a5f; }
+    .quiz-box .option-btn.correct { border-color: #22c55e; background: #14532d; }
+    .quiz-box .option-btn.wrong { border-color: #ef4444; background: #7f1d1d; }
+    .quiz-box .quiz-feedback { margin-top: 12px; padding: 12px; border-radius: 8px; background: #0f172a; font-size: 0.9rem; line-height: 1.5; }
+    .quiz-box .quiz-nav { display: flex; justify-content: space-between; align-items: center; margin-top: 16px; gap: 8px; }
+    .quiz-box .quiz-nav button { padding: 8px 20px; border-radius: 8px; border: none; cursor: pointer; font-size: 0.9rem; font-weight: 600; transition: all 0.2s; }
+    .quiz-box .btn-next { background: #3b82f6; color: #fff; }
+    .quiz-box .btn-next:hover { background: #2563eb; }
+    .quiz-box .btn-next:disabled { opacity: 0.4; cursor: not-allowed; }
+    .quiz-box .btn-close { background: #475569; color: #e2e8f0; }
+    .quiz-box .btn-close:hover { background: #64748b; }
+    .quiz-box .stars { display: flex; gap: 4px; margin: 12px 0; font-size: 1.8rem; }
+    .quiz-box .star { color: #475569; }
+    .quiz-box .star.filled { color: #fbbf24; }
+    .quiz-box .quiz-result { text-align: center; padding: 16px 0; }
+    .quiz-box .quiz-result h3 { font-size: 1.3rem; margin-bottom: 8px; }
+    .quiz-box .btn-restart { background: #3b82f6; color: #fff; padding: 10px 24px; border: none; border-radius: 8px; cursor: pointer; font-size: 1rem; font-weight: 600; margin-top: 12px; }
+    .quiz-box .btn-restart:hover { background: #2563eb; }
+    .quiz-trigger { position: absolute; top: 12px; right: 12px; z-index: 10; padding: 8px 16px; background: #3b82f6; color: #fff; border: none; border-radius: 8px; cursor: pointer; font-size: 0.85rem; font-weight: 600; box-shadow: 0 2px 8px rgba(59,130,246,0.3); transition: all 0.2s; }
+    .quiz-trigger:hover { background: #2563eb; transform: translateY(-1px); }
+    .quiz-trigger.completed { background: #22c55e; }
+  </style>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/0.9.0/p5.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/0.9.0/addons/p5.dom.min.js"></script>
   <script src="auth-check.js"></script>
+  <script src="supabase.js"></script>
 </head>
 <body>
   <header class="header">
@@ -37,12 +75,20 @@
   <div class="main-card">
     <div class="canvas-wrap">
       <div id="myContainer"></div>
+      <button class="quiz-trigger" id="quizTriggerBtn">过关挑战</button>
     </div>
     <div class="controls-bar">
       <div class="ctrl-group">
         <span id="labelA">缩放</span>
         <input type="range" id="rangeA" min="1" max="100" value="50">
       </div>
+      <div class="ctrl-group">
+        <label><input type="checkbox" id="checkPause"> 暂停动画</label>
+      </div>
+    </div>
+    <!-- 过关挑战答题系统 -->
+    <div id="quizOverlay" class="quiz-overlay">
+      <div class="quiz-box"></div>
     </div>
   </div>
 
@@ -82,6 +128,8 @@
     var nx = [], ny = [], nz = [], isNeutron = [];
     var eAngle = [], eShellB = [];
 
+    var checkPause;
+
     var myp5 = new p5(function(p) {
       p.setup = function() {
         var container = document.getElementById("myContainer");
@@ -91,6 +139,7 @@
         c.parent("myContainer");
         c.id("myP5Canvas");
         p.frameRate(30);
+        checkPause = p.select("#checkPause");
         initNucleus(0);
         initElectrons(0);
       };
@@ -193,9 +242,11 @@
             tmp += el.shells[s];
             if (i < tmp) { shell = s + 1; break; }
           }
-          eAngle[i] += (i % 2 === 0 ? 0.05 : -0.05) / shell;
-          if (eAngle[i] > Math.PI * 2) eAngle[i] -= Math.PI * 2;
-          if (eAngle[i] < 0) eAngle[i] += Math.PI * 2;
+          if (!checkPause.checked()) {
+            eAngle[i] += (i % 2 === 0 ? 0.05 : -0.05) / shell;
+            if (eAngle[i] > Math.PI * 2) eAngle[i] -= Math.PI * 2;
+            if (eAngle[i] < 0) eAngle[i] += Math.PI * 2;
+          }
         }
 
         p.pop();
@@ -286,6 +337,365 @@
         eShellB[i] = 0.3 + Math.random() * 0.5;
       }
     }
+  })();
+
+  // ===== 过关挑战答题系统 (native DOM API, no p5) =====
+  (function() {
+    var QUIZ_STORAGE_KEY = "quiz_atom_structure_progress";
+    var EXPERIMENT_KEY = "atom_structure";
+
+    var questions = [
+      // 第1关: 原子结构基础
+      { level: 1, question: "原子由哪两部分组成？", options: ["质子和中子", "原子核和核外电子", "分子和离子", "正电荷和负电荷"], answer: 1, explain: "原子由中心的原子核和绕核运动的核外电子组成。原子核又由质子和中子组成。原子的质量几乎全部集中在原子核上，而核外电子决定了原子的化学性质。" },
+      { level: 1, question: "原子核带什么电荷？", options: ["正电荷", "负电荷", "不带电", "有时正有时负"], answer: 0, explain: "原子核中的质子带正电荷，中子不带电，因此原子核整体带正电荷。核外电子带负电荷。正常情况下，核外电子数=核内质子数，原子整体呈电中性。" },
+      { level: 1, question: "原子核中不带电的粒子是什么？", options: ["质子", "电子", "中子", "光子"], answer: 2, explain: "中子不带电，质量与质子相近。中子的存在增加了原子核的稳定性。同位素就是质子数相同而中子数不同的原子（如氢的三种同位素：氕、氘、氚分别含0、1、2个中子）。" },
+      { level: 1, question: "电子在原子中的运动状态是怎样的？", options: ["像行星绕太阳一样有固定轨道", "在原子核外分层排布，用电子云描述其出现概率", "静止在原子核表面", "随机跳跃，没有规律"], answer: 1, explain: "电子不像行星那样有确定的轨道，而是按能量分层排布在核外（电子壳层）。用电子云来描述电子在空间某处出现的概率——密集处出现概率大，稀疏处概率小。这是量子力学的观点。" },
+      { level: 1, question: "原子中质子的数量叫做什么？", options: ["质量数", "原子序数", "中子数", "分子量"], answer: 1, explain: "质子数=原子序数，决定了元素种类。如氢的原子序数为1（1个质子），氦为2（2个质子）。元素周期表就是按原子序数从小到大排列的。质量数=质子数+中子数。" },
+      // 第2关: 电子排布与元素周期表
+      { level: 2, question: "第一电子层（最内层）最多能容纳几个电子？", options: ["1个", "2个", "8个", "18个"], answer: 1, explain: "第一电子层（K层，n=1）最多容纳2×1²=2个电子。第二层（L层，n=2）最多容纳2×2²=8个电子。第三层（M层，n=3）最多容纳18个。公式为2n²。" },
+      { level: 2, question: "最外层电子数为8的结构（除第一层外）叫做什么？", options: ["半满结构", "八隅体（稳定结构）", "激发态", "基态"], answer: 1, explain: "最外层8个电子（第一层为2个）的稳定结构叫八隅体。惰性气体（氦、氖、氩等）的最外层就是这种结构，所以化学性质极不活泼。其他原子通过得失或共用电子来达到八隅体稳定结构。" },
+      { level: 2, question: "钠原子（原子序数11）的电子排布是怎样的？", options: ["2, 8, 1", "2, 9", "11层各1个", "11个都在第一层"], answer: 0, explain: "钠原子有11个电子，排布为：第一层2个（满）、第二层8个（满）、第三层1个。最外层只有1个电子，所以钠很容易失去这个电子成为Na⁺，化学性质非常活泼。" },
+      { level: 2, question: "元素的化学性质主要取决于什么？", options: ["原子核的大小", "最外层电子数", "中子数", "原子总质量"], answer: 1, explain: "最外层电子（价电子）数决定了元素的化学性质。同一族的元素（如锂、钠、钾）最外层电子数相同（都是1个），化学性质相似。化学反应的本质就是最外层电子的得失或共用。" },
+      { level: 2, question: "下列哪种粒子的质子数与电子数不相等？", options: ["碳原子", "钠离子（Na⁺）", "氧原子", "氖原子"], answer: 1, explain: "Na⁺是钠原子失去1个电子后形成的离子，含11个质子和10个电子，质子数>电子数，带正电。中性原子中质子数=电子数。阴离子（如Cl⁻）则是质子数<电子数。" },
+      // 第3关: 综合与前沿
+      { level: 3, question: "同位素的原子具有相同的什么？", options: ["质子数（同种元素）和中子数", "质子数相同但中子数不同", "中子数相同但质子数不同", "质量数相同"], answer: 1, explain: "同位素是质子数相同（同种元素）而中子数不同的原子。例如碳-12（6质子6中子）和碳-14（6质子8中子）是同位素，化学性质几乎相同但物理性质（如放射性）不同。" },
+      { level: 3, question: "原子的质量主要集中在哪里？", options: ["核外电子", "原子核", "电子云", "原子表面"], answer: 1, explain: "原子核集中了原子99.9%以上的质量，因为质子和中子的质量远大于电子（质子质量约为电子的1836倍）。但原子核的体积只占原子体积的极小部分（约万亿分之一），原子内部大部分是空的。" },
+      { level: 3, question: "电子从高能级跃迁到低能级时会怎样？", options: ["吸收能量", "释放出光子（发光）", "什么都不发生", "分裂成两个电子"], answer: 1, explain: "电子从高能级跳回低能级时释放能量，以光子（光）的形式发出。这就是原子发光（如霓虹灯、焰色反应）的微观机制。不同元素发出不同颜色的光，因为能级差不同，光子的能量（波长）不同。" },
+      { level: 3, question: "以下关于原子的说法，哪个是错误的？", options: ["原子是化学变化中的最小粒子", "原子在化学变化中不可再分", "原子核在任何情况下都不会变化", "原子核在核反应中可以改变"], answer: 2, explain: "A和B正确——在化学变化中原子不可再分（分子分解为原子，原子重新组合）。D正确——在核反应（核裂变、核聚变、放射性衰变）中原子核可以改变。C错误——原子核可以在核反应中变化。" },
+      { level: 3, question: "为什么不同元素会发出不同颜色的光（焰色反应）？", options: ["因为不同元素温度不同", "因为不同元素的电子能级不同，跃迁释放的光子能量不同", "因为不同元素燃烧速度不同", "这是随机的"], answer: 1, explain: "每种元素的原子有独特的电子排布和能级结构。当电子从高能级跃迁到低能级时释放光子，光子的能量=能级差=hc/λ。能级差不同→波长λ不同→颜色不同。如钠发黄光（589nm）、铜发绿光、钾发紫光。这可用于元素鉴定。" }
+    ];
+
+    var currentQuestion = 0;
+    var currentLevel = 1;
+    var levelStars = [0, 0, 0];
+    var answered = [];
+    var selectedOptions = [];
+
+    function loadProgress() {
+      try {
+        var saved = localStorage.getItem(QUIZ_STORAGE_KEY);
+        if (saved) {
+          var data = JSON.parse(saved);
+          if (data.experiment === EXPERIMENT_KEY && data.version === 1) {
+            currentQuestion = data.currentQuestion || 0;
+            currentLevel = data.currentLevel || 1;
+            levelStars = data.levelStars || [0, 0, 0];
+            answered = data.answered || [];
+            selectedOptions = data.selectedOptions || [];
+          }
+        }
+      } catch(e) {}
+    }
+
+    function saveProgress() {
+      try {
+        localStorage.setItem(QUIZ_STORAGE_KEY, JSON.stringify({
+          experiment: EXPERIMENT_KEY,
+          version: 1,
+          currentQuestion: currentQuestion,
+          currentLevel: currentLevel,
+          levelStars: levelStars,
+          answered: answered,
+          selectedOptions: selectedOptions
+        }));
+      } catch(e) {}
+    }
+
+    function saveToSupabase() {
+      if (typeof supabase === "undefined" || !supabase) return;
+      try {
+        var userData = localStorage.getItem("user");
+        if (!userData) return;
+        var u = JSON.parse(userData);
+        var totalCorrect = 0;
+        for (var i = 0; i < answered.length; i++) {
+          if (answered[i] !== undefined && answered[i] === questions[i].answer) totalCorrect++;
+        }
+        var totalStars = (levelStars || [0,0,0]).reduce(function(a,b){return a+b;}, 0);
+        supabase.from("users").select("quiz_data").eq("id", u.id).single().then(function(res) {
+          var quizData = (res.data && res.data.quiz_data) ? res.data.quiz_data : {};
+          quizData[EXPERIMENT_KEY] = {
+            correct: totalCorrect,
+            total: questions.length,
+            stars: totalStars,
+            updated_at: new Date().toISOString()
+          };
+          supabase.from("users").update({ quiz_data: quizData }).eq("id", u.id).then(function(){});
+        });
+      } catch(e) {}
+    }
+
+    function getLevelIndices(level) {
+      var indices = [];
+      for (var i = 0; i < questions.length; i++) {
+        if (questions[i].level === level) indices.push(i);
+      }
+      return indices;
+    }
+
+    function calcLevelStars(level) {
+      var indices = getLevelIndices(level);
+      var correct = 0;
+      for (var i = 0; i < indices.length; i++) {
+        var qi = indices[i];
+        if (answered[qi] && selectedOptions[qi] === questions[qi].answer) correct++;
+      }
+      if (correct >= 5) return 3;
+      if (correct >= 3) return 2;
+      if (correct >= 1) return 1;
+      return 0;
+    }
+
+    function updateAllLevelStars() {
+      for (var l = 1; l <= 3; l++) {
+        levelStars[l - 1] = calcLevelStars(l);
+      }
+    }
+
+    function updateQuizUI() {
+      var overlay = document.getElementById("quizOverlay");
+      if (!overlay) return;
+
+      updateAllLevelStars();
+
+      var lvl = currentLevel;
+      var indices = getLevelIndices(lvl);
+      var withinIdx = indices.indexOf(currentQuestion);
+      if (withinIdx === -1) withinIdx = 0;
+
+      var q = questions[currentQuestion];
+      if (!q) return;
+
+      // Level indicator dots
+      var levelHtml = "";
+      for (var l = 1; l <= 3; l++) {
+        var cls = "level-dot";
+        if (l === lvl) cls += " active";
+        else if (levelStars[l - 1] > 0) cls += " done";
+        levelHtml += '<div class="' + cls + '">' + l + '</div>';
+      }
+      document.getElementById("levelIndicator").innerHTML = levelHtml;
+
+      // Question text
+      document.getElementById("questionText").textContent = "第" + (withinIdx + 1) + "题（共" + indices.length + "题）：" + q.question;
+
+      // Options
+      var optsHtml = "";
+      for (var i = 0; i < q.options.length; i++) {
+        var optCls = "option-btn";
+        var disabled = answered[currentQuestion] ? "disabled" : "";
+        if (selectedOptions[currentQuestion] === i) {
+          optCls += " selected";
+        }
+        if (answered[currentQuestion] && i === q.answer) {
+          optCls += " correct";
+        } else if (answered[currentQuestion] && selectedOptions[currentQuestion] === i && i !== q.answer) {
+          optCls += " wrong";
+        }
+        optsHtml += '<button class="' + optCls + '" data-opt="' + i + '" ' + disabled + '>' + String.fromCharCode(65 + i) + '. ' + q.options[i] + '</button>';
+      }
+      document.getElementById("optionsContainer").innerHTML = optsHtml;
+
+      // Feedback
+      var feedbackEl = document.getElementById("quizFeedback");
+      if (answered[currentQuestion]) {
+        var isCorrect = selectedOptions[currentQuestion] === q.answer;
+        feedbackEl.style.display = "block";
+        feedbackEl.innerHTML = '<div style="color:' + (isCorrect ? '#22c55e' : '#ef4444') + ';font-weight:700;margin-bottom:4px;">' + (isCorrect ? '回答正确！' : '回答错误') + '</div><div style="color:#cbd5e1;">' + q.explain + '</div>';
+      } else {
+        feedbackEl.style.display = "none";
+      }
+
+      // Nav buttons
+      var nextBtn = document.getElementById("btnNext");
+      var prevBtn = document.getElementById("btnPrev");
+      var submitBtn = document.getElementById("btnSubmitLevel");
+
+      var lastInLevel = (withinIdx === indices.length - 1);
+      var allAnsweredInLevel = true;
+      for (var j = 0; j < indices.length; j++) {
+        if (!answered[indices[j]]) { allAnsweredInLevel = false; break; }
+      }
+
+      if (allAnsweredInLevel && lastInLevel) {
+        nextBtn.style.display = "none";
+        submitBtn.style.display = "inline-block";
+      } else {
+        if (answered[currentQuestion] && !lastInLevel) {
+          nextBtn.style.display = "inline-block";
+        } else {
+          nextBtn.style.display = "none";
+        }
+        submitBtn.style.display = "none";
+      }
+
+      prevBtn.style.display = (withinIdx > 0) ? "inline-block" : "none";
+
+      // Attach option click events
+      var optBtns = document.querySelectorAll("#optionsContainer .option-btn:not([disabled])");
+      for (var i = 0; i < optBtns.length; i++) {
+        (function(btn) {
+          btn.addEventListener("click", function() {
+            var optIdx = parseInt(this.getAttribute("data-opt"));
+            if (answered[currentQuestion]) return;
+            selectedOptions[currentQuestion] = optIdx;
+            answered[currentQuestion] = true;
+            updateQuizUI();
+          });
+        })(optBtns[i]);
+      }
+
+      // Update trigger button
+      var triggerBtn = document.getElementById("quizTriggerBtn");
+      if (triggerBtn) {
+        var allDone = true;
+        for (var i = 0; i < questions.length; i++) {
+          if (!answered[i]) { allDone = false; break; }
+        }
+        if (allDone) {
+          triggerBtn.textContent = "已完成";
+          triggerBtn.classList.add("completed");
+        }
+      }
+
+      saveProgress();
+      saveToSupabase();
+    }
+
+    function showLevelResult(level) {
+      var overlay = document.getElementById("quizOverlay");
+      if (!overlay) return;
+
+      var indices = getLevelIndices(level);
+      var correct = 0;
+      for (var i = 0; i < indices.length; i++) {
+        var qi = indices[i];
+        if (answered[qi] && selectedOptions[qi] === questions[qi].answer) correct++;
+      }
+
+      var stars = levelStars[level - 1];
+      var starHtml = "";
+      for (var i = 0; i < 3; i++) {
+        starHtml += '<span class="star' + (i < stars ? " filled" : "") + '">&#9733;</span>';
+      }
+
+      var box = document.querySelector("#quizOverlay .quiz-box");
+      if (!box) return;
+
+      var innerHtml =
+        '<div class="quiz-result">' +
+        '<h3>第' + level + '关完成！</h3>' +
+        '<div class="stars">' + starHtml + '</div>' +
+        '<p>' + correct + '/' + indices.length + ' 正确</p>';
+      if (level < 3) {
+        innerHtml += '<button class="btn-restart" id="btnNextLevel">进入第' + (level + 1) + '关</button>';
+      }
+      if (level === 3) {
+        innerHtml += '<div style="margin-top:12px;"><h3>全部完成！</h3><p>你已完成所有关卡！</p></div>';
+      }
+      innerHtml += '<button class="btn-restart" id="btnCloseResult" style="background:#475569;margin-left:8px;">关闭</button>' +
+        '</div>';
+
+      box.innerHTML = innerHtml;
+
+      var nextLvlBtn = document.getElementById("btnNextLevel");
+      if (nextLvlBtn) {
+        nextLvlBtn.addEventListener("click", function() {
+          if (level < 3) {
+            currentLevel = level + 1;
+            var newIndices = getLevelIndices(currentLevel);
+            if (newIndices.length > 0) currentQuestion = newIndices[0];
+            buildQuizUI();
+          }
+        });
+      }
+
+      document.getElementById("btnCloseResult").addEventListener("click", function() {
+        overlay.classList.remove("show");
+      });
+    }
+
+    function submitLevel() {
+      var lvl = currentLevel;
+      levelStars[lvl - 1] = calcLevelStars(lvl);
+      saveProgress();
+      saveToSupabase();
+      showLevelResult(lvl);
+    }
+
+    function buildQuizUI() {
+      var overlay = document.getElementById("quizOverlay");
+      if (!overlay) return;
+
+      var box = overlay.querySelector(".quiz-box");
+      if (!box) return;
+
+      box.innerHTML =
+        '<h2>过关挑战</h2>' +
+        '<div class="quiz-sub">原子结构 — 共15题 / 3关</div>' +
+        '<div class="level-indicator" id="levelIndicator"></div>' +
+        '<div class="question-text" id="questionText"></div>' +
+        '<div class="options" id="optionsContainer"></div>' +
+        '<div class="quiz-feedback" id="quizFeedback" style="display:none;"></div>' +
+        '<div class="quiz-nav">' +
+          '<button class="btn-close" id="btnPrev" style="display:none;">上一题</button>' +
+          '<div></div>' +
+          '<button class="btn-next" id="btnNext" style="display:none;">下一题</button>' +
+          '<button class="btn-next" id="btnSubmitLevel" style="display:none;">提交本关</button>' +
+        '</div>';
+
+      overlay.classList.add("show");
+
+      // Focus first question of the current level if it's unanswered, else first unanswered in level
+      var indices = getLevelIndices(currentLevel);
+      var found = false;
+      for (var i = 0; i < indices.length; i++) {
+        if (!answered[indices[i]]) {
+          currentQuestion = indices[i];
+          found = true;
+          break;
+        }
+      }
+      if (!found && indices.length > 0) {
+        currentQuestion = indices[indices.length - 1];
+      }
+
+      updateQuizUI();
+
+      // Bind nav events
+      document.getElementById("btnNext").addEventListener("click", function() {
+        var indices = getLevelIndices(currentLevel);
+        var idx = indices.indexOf(currentQuestion);
+        if (idx < indices.length - 1) {
+          currentQuestion = indices[idx + 1];
+          updateQuizUI();
+        }
+      });
+
+      document.getElementById("btnPrev").addEventListener("click", function() {
+        var indices = getLevelIndices(currentLevel);
+        var idx = indices.indexOf(currentQuestion);
+        if (idx > 0) {
+          currentQuestion = indices[idx - 1];
+          updateQuizUI();
+        }
+      });
+
+      document.getElementById("btnSubmitLevel").addEventListener("click", submitLevel);
+    }
+
+    function initQuiz() {
+      loadProgress();
+      buildQuizUI();
+    }
+
+    // Bind trigger button on DOM ready
+    document.addEventListener("DOMContentLoaded", function() {
+      var triggerBtn = document.getElementById("quizTriggerBtn");
+      if (triggerBtn) {
+        triggerBtn.addEventListener("click", initQuiz);
+      }
+    });
   })();
   </script>
 </body>
