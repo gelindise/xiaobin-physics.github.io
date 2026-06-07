@@ -250,15 +250,15 @@ function getPhaseName(p) {
 
 // ==================== Molecule System ====================
 var MOLECULES = [];
-var MOLECULE_COUNT = 280;
-var HBOND_HO_CUTOFF = 20;
+var MOLECULE_COUNT = 220;
+var HBOND_HO_CUTOFF = 28;
 
 function initMolecules() {
   MOLECULES = [];
-  // Fill the entire beaker from near-surface to bottom
-  var cols = 22, rows = 32;
-  var surfY = BEAKER_TOP + 10;       // near beaker top
-  var bottomY = WATER_BASE - 3;       // near beaker bottom
+  // Larger spacing for bigger molecules
+  var cols = 18, rows = 26;
+  var surfY = BEAKER_TOP + 14;
+  var bottomY = WATER_BASE - 5;
   var regionLeft = beakerInnerLeft(surfY);
   var regionRight = beakerInnerRight(surfY);
   var baseDX = (regionRight - regionLeft) / (cols - 0.3);
@@ -529,7 +529,7 @@ ICE_LATTICE.thaw = function() {
 // ==================== H Atom Helper ====================
 function getHAtomPositions(m, frameOff) {
   var rot = m.angle + frameOff;
-  var hDist = 4.5;
+  var hDist = 6;
   return [
     { x: m.x + Math.cos(rot - 0.91) * hDist, y: m.y + Math.sin(rot - 0.91) * hDist },
     { x: m.x + Math.cos(rot + 0.91) * hDist, y: m.y + Math.sin(rot + 0.91) * hDist }
@@ -592,12 +592,13 @@ function updateMolecules(temp, clusters) {
       continue;
     }
 
-    // H-bond restoring forces via pre-computed adjacency
+    // H-bond restoring forces — the ONLY inter-molecular constraint
+    // When bonds break, molecules do independent random motion (no clustering)
     var hbForceX = 0, hbForceY = 0;
     var adj = HBOND_TRACKER.molAdj[i];
-    if (adj) {
-      var eqDist = 11 + tetraBlend * 3;
-      var springK = 0.03 + tetraBlend * 0.05;
+    if (adj && adj.length > 0) {
+      var eqDist = 16 + tetraBlend * 4;  // larger spacing for bigger molecules
+      var springK = 0.02 + tetraBlend * 0.04;
       for (var k = 0; k < adj.length; k++) {
         var partner = MOLECULES[adj[k]];
         var pdx = partner.x - m.x, pdy = partner.y - m.y;
@@ -607,24 +608,8 @@ function updateMolecules(temp, clusters) {
         hbForceY += pdy / pdist * pf;
       }
     }
-    m.vx += hbForceX * 0.4;
-    m.vy += hbForceY * 0.4;
-
-    // Tetrahedral forces within cluster
-    if (m.clusterId >= 0 && clusters[m.clusterId] && clusters[m.clusterId].size >= 3) {
-      var cl = clusters[m.clusterId];
-      var tetDist = 14;
-      for (var mi = 0; mi < cl.members.length; mi++) {
-        var pIdx = cl.members[mi];
-        if (pIdx === i) continue;
-        var pm = MOLECULES[pIdx];
-        var tdx = m.x - pm.x, tdy = m.y - pm.y;
-        var td = Math.sqrt(tdx * tdx + tdy * tdy) + 0.001;
-        var tf = (td - tetDist) * 0.04 * tetraBlend;
-        m.vx -= tdx / td * tf;
-        m.vy -= tdy / td * tf;
-      }
-    }
+    m.vx += hbForceX * 0.35;
+    m.vy += hbForceY * 0.35;
 
     // Thermal noise — pure random walk (Brownian motion), no sinusoidal oscillation
     var noiseScale;
@@ -846,22 +831,22 @@ function drawMolecules(temp) {
       ctx.beginPath(); ctx.arc(m.x, m.y, glowRadius, 0, Math.PI * 2); ctx.fill();
     }
 
-    // Oxygen atom — two-layer circles for depth (no radial gradient)
-    var oRadius = m.isIceLocked ? 5.5 : 6.5;
+    // Oxygen atom — larger for clear H-bond visibility
+    var oRadius = m.isIceLocked ? 7 : 8.5;
     ctx.fillStyle = oColor;
     ctx.beginPath(); ctx.arc(m.x, m.y, oRadius, 0, Math.PI * 2); ctx.fill();
     ctx.fillStyle = oHighlight;
-    ctx.beginPath(); ctx.arc(m.x - 1.5, m.y - 1.5, oRadius * 0.45, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(m.x - 2, m.y - 2, oRadius * 0.4, 0, Math.PI * 2); ctx.fill();
 
-    // Hydrogen atoms — simple white-ish circles
+    // Hydrogen atoms — larger, clearly visible
     var angle = m.angle + frameOff;
-    var hDist = m.isIceLocked ? 4 : 5;
+    var hDist = m.isIceLocked ? 5.5 : 7;
     for (var h = 0; h < 2; h++) {
       var ha = angle + (h === 0 ? -0.91 : 0.91);
       var hx = m.x + Math.cos(ha) * hDist;
       var hy = m.y + Math.sin(ha) * hDist;
       ctx.fillStyle = hColor;
-      ctx.beginPath(); ctx.arc(hx, hy, 2.5, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(hx, hy, 3.5, 0, Math.PI * 2); ctx.fill();
     }
   }
 }
