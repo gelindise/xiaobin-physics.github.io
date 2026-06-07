@@ -206,6 +206,7 @@ var canvas = document.getElementById('simCanvas');
 var ctx = canvas.getContext('2d');
 var W = canvas.width, H = canvas.height;
 var currentTemp = 4, targetTemp = 4;
+var prevTemp = 4;
 var frameCount = 0;
 var animId;
 
@@ -235,16 +236,25 @@ function beakerInnerRight(y) {
   return BEAKER_RIGHT - 6 + t * (beakerRightBot - 6 - (BEAKER_RIGHT - 6));
 }
 
+// ==================== 5-Phase State Machine ====================
+var PHASE = { name: 'phase1', freezeFrame: 0, flashAlpha: 0 };
+function getPhase(temp) {
+  if (temp <= 0) return 5;
+  if (temp < 1) return 3;
+  if (temp < 4) return 2;
+  return 1;
+}
+function getPhaseName(p) {
+  return ['','正常膨胀：热运动主导','反常膨胀：氢键主导→团簇形成','接近冰点：四面体网络扩张','❄ 结冰！晶格锁定','冰：稳定六边形晶格'][p];
+}
+
 // ==================== Molecule System ====================
 var MOLECULES = [];
 var MOLECULE_COUNT = 130;
-
-// H-bond distance: H atom to O atom (specific, not center-to-center)
 var HBOND_HO_CUTOFF = 22;
 
 function initMolecules() {
   MOLECULES = [];
-  // Dense hexagonal grid filling the entire water region
   var cols = 14, rows = 20;
   var regionLeft = beakerInnerLeft(BEAKER_TOP + 20);
   var regionRight = beakerInnerRight(BEAKER_TOP + 20);
@@ -261,104 +271,249 @@ function initMolecules() {
       var il = beakerInnerLeft(cy), ir = beakerInnerRight(cy);
       if (cx < il + 8 || cx > ir - 8) continue;
 
-      // Two interleaved sublattices that separate below 4°C to create voids
-      var sublattice = (row + col) % 2; // 0 or 1
-      var tdx = 0, tdy = 0;
-      if (sublattice === 0) {
-        // Sublattice A shifts up-left at 0°C
-        tdx = -7; tdy = -5;
-      } else {
-        // Sublattice B shifts down-right at 0°C
-        tdx = 7; tdy = 5;
-      }
+      var sublattice = (row + col) % 2;
+      var tdx = sublattice === 0 ? -7 : 7;
+      var tdy = sublattice === 0 ? -5 : 5;
 
       MOLECULES.push({
-        ox: cx, oy: cy,
-        sublattice: sublattice,
+        ox: cx, oy: cy, sublattice: sublattice,
         tdx: tdx, tdy: tdy,
-        ex: cx, ey: cy,
-        x: cx, y: cy,
+        ex: cx, ey: cy, x: cx, y: cy,
         vx: 0, vy: 0,
-        phase: Math.random() * Math.PI * 2
+        phase: Math.random() * Math.PI * 2,
+        angle: Math.random() * Math.PI * 2,
+        angularVel: (Math.random() - 0.5) * 0.1,
+        clusterId: -1,
+        iceTargetX: null, iceTargetY: null,
+        isIceLocked: false
       });
       idx++;
     }
   }
 }
 
-function updateMolecules(temp) {
-  var ratio = waterVolumeRatio(temp);
-  var scaleX = Math.sqrt(ratio);
-  var scaleY = ratio;
-  var centerX = (beakerInnerLeft(300) + beakerInnerRight(300)) / 2;
-  var centerY = (WATER_BASE + BEAKER_TOP + 12) / 2;
-
-  // ---- Thermal amplitude: dramatic quadratic increase above 4°C ----
-  var thermalAmp;
-  if (temp <= 4) {
-    thermalAmp = 1.0 + temp * 0.3;          // 0°C→1.0, 4°C→2.2
-  } else {
-    var dT = temp - 4;
-    thermalAmp = 2.2 + dT * 1.8 + dT * dT * 0.3;  // 8°C→13, 10°C→22, 15°C→54
+// ==================== Spatial Grid ====================
+var SPATIAL_GRID = { cellSize: 35, cells: {} };
+SPATIAL_GRID.rebuild = function() {
+  this.cells = {};
+  for (var i = 0; i < MOLECULES.length; i++) {
+    var m = MOLECULES[i];
+    var cx = Math.floor(m.x / this.cellSize);
+    var cy = Math.floor(m.y / this.cellSize);
+    var key = cx + ',' + cy;
+    if (!this.cells[key]) this.cells[key] = [];
+    this.cells[key].push(i);
   }
+};
+SPATIAL_GRID.getNeighborIndices = function(x, y) {
+  var minCX = Math.floor((x - HBOND_HO_CUTOFF) / this.cellSize);
+  var maxCX = Math.floor((x + HBOND_HO_CUTOFF) / this.cellSize);
+  var minCY = Math.floor((y - HBOND_HO_CUTOFF) / this.cellSize);
+  var maxCY = Math.floor((y + HBOND_HO_CUTOFF) / this.cellSize);
+  var result = [];
+  for (var cx = minCX; cx <= maxCX; cx++) {
+    for (var cy = minCY; cy <= maxCY; cy++) {
+      var cell = this.cells[cx + ',' + cy];
+      if (cell) { for (var k = 0; k < cell.length; k++) result.push(cell[k]); }
+    }
+  }
+  return result;
+};
 
-  // ---- Tetrahedral sublattice separation (0→1 as temp goes from 4→0°C) ----
-  var tetraBlend = temp >= 4 ? 0 : Math.pow(Math.min(1, (4 - temp) / 4), 1.5);
+// ==================== Persistent H-Bond Tracker ====================
+var HBOND_TRACKER = { bonds: {}, bondList: [] };
+HBOND_TRACKER.update = function(temp) {
+  var lifetime, prob;
+  if (temp <= 0) { lifetime = 9999; prob = 1.0; }
+  else if (temp < 4) { lifetime = 2 + (4 - temp) * 8; prob = 0.88 + (4 - temp) * 0.03; }
+  else { lifetime = Math.max(1, 3 - (temp - 4) * 0.3); prob = Math.max(0.04, 0.88 - (temp - 4) * 0.11); }
+
+  var rotSpeed = temp <= 4 ? 0.02 : 0.02 + (temp - 4) * 0.02;
+  var frameOff = frameCount * rotSpeed;
+
+  SPATIAL_GRID.rebuild();
 
   for (var i = 0; i < MOLECULES.length; i++) {
     var m = MOLECULES[i];
+    var hPos = getHAtomPositions(m, frameOff);
+    var neighbors = SPATIAL_GRID.getNeighborIndices(m.x, m.y);
 
-    // Scale close-packed equilibrium
-    var cpx = centerX + (m.ox - centerX) * scaleX;
-    var cpy = centerY + (m.oy - centerY) * scaleY;
+    for (var ni = 0; ni < neighbors.length; ni++) {
+      var j = neighbors[ni];
+      if (j <= i) continue;
+      var mj = MOLECULES[j];
+      var hPosJ = getHAtomPositions(mj, frameOff);
 
-    // Apply sublattice separation (creates tetrahedral void pattern below 4°C)
-    m.ex = cpx + m.tdx * tetraBlend;
-    m.ey = cpy + m.tdy * tetraBlend;
-
-    // Confine to water bounds
-    var wTop = waterTopY(temp);
-    m.ey = Math.max(wTop + 8, Math.min(WATER_BASE - 5, m.ey));
-    var il = beakerInnerLeft(m.ey), ir = beakerInnerRight(m.ey);
-    m.ex = Math.max(il + 6, Math.min(ir - 6, m.ex));
-
-    // Thermal vibration
-    var sinForce = Math.sin(frameCount * 0.08 + m.phase) * 0.8;
-    var cosForce = Math.cos(frameCount * 0.08 + m.phase + 2.5) * 0.8;
-    var randX = (Math.random() - 0.5) * 2.0;
-    var randY = (Math.random() - 0.5) * 2.0;
-    var forceX = (sinForce + randX) * thermalAmp;
-    var forceY = (cosForce + randY) * thermalAmp;
-
-    // Spring: stiffer at low T (structure held by H-bonds)
-    var spring = temp <= 4 ? 0.25 + tetraBlend * 0.15 : 0.08;
-    forceX += (m.ex - m.x) * spring;
-    forceY += (m.ey - m.y) * spring;
-
-    m.vx += forceX * 0.3;
-    m.vy += forceY * 0.3;
-    var damp = temp <= 4 ? 0.75 : Math.max(0.60, 0.75 - (temp - 4) * 0.018);
-    m.vx *= damp;
-    m.vy *= damp;
-    m.x += m.vx;
-    m.y += m.vy;
-
-    // Clamp displacement
-    var maxDisp = thermalAmp * 5 + 2;
-    var dist = Math.sqrt((m.x - m.ex) * (m.x - m.ex) + (m.y - m.ey) * (m.y - m.ey));
-    if (dist > maxDisp) {
-      var ang = Math.atan2(m.y - m.ey, m.x - m.ex);
-      m.x = m.ex + Math.cos(ang) * maxDisp;
-      m.y = m.ey + Math.sin(ang) * maxDisp;
+      for (var hi = 0; hi < 2; hi++) {
+        var dx = hPos[hi].x - mj.x;
+        var dy = hPos[hi].y - mj.y;
+        var dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist < HBOND_HO_CUTOFF) {
+          var key = i + '_' + j + '_' + hi;
+          var hx = hPos[hi].x, hy = hPos[hi].y, tx = mj.x, ty = mj.y;
+          this._processBond(key, hx, hy, tx, ty, dist, lifetime, prob, temp <= 0);
+        }
+      }
+      for (var hj = 0; hj < 2; hj++) {
+        var dx2 = hPosJ[hj].x - m.x;
+        var dy2 = hPosJ[hj].y - m.y;
+        var dist2 = Math.sqrt(dx2 * dx2 + dy2 * dy2);
+        if (dist2 < HBOND_HO_CUTOFF) {
+          var key2 = j + '_' + i + '_' + hj;
+          this._processBond(key2, hPosJ[hj].x, hPosJ[hj].y, m.x, m.y, dist2, lifetime, prob, temp <= 0);
+        }
+      }
     }
   }
+
+  // Age bonds, remove dead ones
+  var bondKeys = Object.keys(this.bonds);
+  this.bondList = [];
+  for (var k = 0; k < bondKeys.length; k++) {
+    var key = bondKeys[k];
+    var b = this.bonds[key];
+    if (b.aliveThisFrame) {
+      b.age++;
+      b.aliveThisFrame = false;
+      if (b.age >= b.lifetime * 0.7) b.stable = true;
+      b.fadeAlpha = Math.min(1, b.fadeAlpha + 0.3);
+    } else {
+      b.fadeAlpha -= 0.15;
+    }
+    if (b.fadeAlpha <= 0) { delete this.bonds[key]; continue; }
+
+    var seed = key.split('_').reduce(function(a,b){return parseInt(a)+parseInt(b)}, 0);
+    var flicker = b.stable ? 1 : 0.3 + (Math.sin(frameCount * 0.3 + seed) + 1) / 2 * 0.7;
+    var alpha = b.fadeAlpha * (temp <= 0 ? 0.7 : flicker * (temp < 4 ? 0.55 : 0.25));
+    this.bondList.push({
+      fromX: b.fromX, fromY: b.fromY,
+      toX: b.toX, toY: b.toY,
+      alpha: alpha, stable: b.stable
+    });
+  }
+};
+HBOND_TRACKER._processBond = function(key, fx, fy, tx, ty, dist, lifetime, prob, isIce) {
+  if (this.bonds[key]) {
+    this.bonds[key].aliveThisFrame = true;
+    this.bonds[key].fromX = fx; this.bonds[key].fromY = fy;
+    this.bonds[key].toX = tx; this.bonds[key].toY = ty;
+    return;
+  }
+  if (Math.random() < prob) {
+    this.bonds[key] = {
+      fromX: fx, fromY: fy, toX: tx, toY: ty,
+      age: 0, lifetime: lifetime, fadeAlpha: 0.6,
+      stable: isIce, aliveThisFrame: true
+    };
+  }
+};
+
+// ==================== Cluster Detection ====================
+function computeClusters(temp) {
+  if (temp > 3.8) {
+    for (var i = 0; i < MOLECULES.length; i++) MOLECULES[i].clusterId = -1;
+    return {};
+  }
+
+  var adj = {};
+  for (var i = 0; i < MOLECULES.length; i++) adj[i] = [];
+
+  var bondKeys = Object.keys(HBOND_TRACKER.bonds);
+  for (var k = 0; k < bondKeys.length; k++) {
+    var b = HBOND_TRACKER.bonds[bondKeys[k]];
+    if (b.fadeAlpha < 0.3 || !b.stable) continue;
+    var parts = bondKeys[k].split('_');
+    var a = parseInt(parts[0]), b2 = parseInt(parts[1]);
+    adj[a].push(b2); adj[b2].push(a);
+  }
+
+  var visited = {};
+  var clusterId = 0;
+  var clusters = {};
+  for (var i = 0; i < MOLECULES.length; i++) {
+    if (visited[i]) continue;
+    var hasBonds = adj[i].length > 0;
+    if (!hasBonds && temp > 0) { MOLECULES[i].clusterId = -1; continue; }
+
+    var queue = [i], component = [];
+    visited[i] = true;
+    while (queue.length > 0) {
+      var cur = queue.shift();
+      component.push(cur);
+      MOLECULES[cur].clusterId = clusterId;
+      for (var ni = 0; ni < adj[cur].length; ni++) {
+        var nb = adj[cur][ni];
+        if (!visited[nb]) { visited[nb] = true; queue.push(nb); }
+      }
+    }
+    if (component.length >= 2) {
+      var cx = 0, cy = 0;
+      for (var ci = 0; ci < component.length; ci++) { cx += MOLECULES[component[ci]].x; cy += MOLECULES[component[ci]].y; }
+      clusters[clusterId] = { size: component.length, cx: cx / component.length, cy: cy / component.length, members: component };
+      clusterId++;
+    } else {
+      MOLECULES[component[0]].clusterId = -1;
+    }
+  }
+  return clusters;
 }
 
-// Compute which molecule pairs have hydrogen bonds (for current frame)
-// ---- H→O Hydrogen bonds (specific atom-to-atom, not center-to-center) ----
-// Each molecule has: O at (x,y), two H atoms at angles [phase+rot, phase+rot±0.91]
+// ==================== Ice Lattice System ====================
+var ICE_LATTICE = { sites: [], frozen: false, freezeStartFrame: 0 };
+ICE_LATTICE.generate = function(wTop) {
+  this.sites = [];
+  var hexSpacing = 16;
+  var sqrt3 = 1.732;
+  var hexHeight = hexSpacing * sqrt3;
+  var left = beakerInnerLeft(wTop + 5);
+  var right = beakerInnerRight(wTop + 5);
+
+  for (var row = 0; row < 30; row++) {
+    for (var col = 0; col < 30; col++) {
+      var ox = (row % 2) * (hexSpacing * 0.75);
+      var x = left + 8 + col * (hexSpacing * 1.5) + ox;
+      if (x > right - 8) continue;
+      var y = wTop - 4 - row * hexHeight;
+      if (y < BEAKER_TOP + 15) break;
+      this.sites.push({ x: x, y: y, occupied: false });
+    }
+  }
+};
+ICE_LATTICE.freeze = function() {
+  if (this.sites.length === 0) return;
+  for (var i = 0; i < MOLECULES.length; i++) {
+    var m = MOLECULES[i];
+    var bestDist = Infinity, bestIdx = -1;
+    for (var s = 0; s < this.sites.length; s++) {
+      if (this.sites[s].occupied) continue;
+      var dx = m.x - this.sites[s].x;
+      var dy = m.y - this.sites[s].y;
+      var d = dx * dx + dy * dy;
+      if (d < bestDist) { bestDist = d; bestIdx = s; }
+    }
+    if (bestIdx >= 0) {
+      m.iceTargetX = this.sites[bestIdx].x;
+      m.iceTargetY = this.sites[bestIdx].y;
+      m.isIceLocked = true;
+      this.sites[bestIdx].occupied = true;
+    }
+  }
+  this.frozen = true;
+  this.freezeStartFrame = frameCount;
+};
+ICE_LATTICE.thaw = function() {
+  for (var i = 0; i < MOLECULES.length; i++) {
+    MOLECULES[i].isIceLocked = false;
+    MOLECULES[i].iceTargetX = null;
+    MOLECULES[i].iceTargetY = null;
+  }
+  this.sites = [];
+  this.frozen = false;
+};
+
+// ==================== H Atom Helper ====================
 function getHAtomPositions(m, frameOff) {
-  var rot = m.phase + frameOff;
+  var rot = m.angle + frameOff;
   var hDist = 4.5;
   return [
     { x: m.x + Math.cos(rot - 0.91) * hDist, y: m.y + Math.sin(rot - 0.91) * hDist },
@@ -366,48 +521,165 @@ function getHAtomPositions(m, frameOff) {
   ];
 }
 
-function getHydrogenBonds(temp) {
-  var bonds = [];
-  // Bond stability vs temperature
-  var bondProb;
-  if (temp <= 0) bondProb = 0.90;
-  else if (temp < 4) bondProb = 0.88;
-  else bondProb = Math.max(0.03, 0.88 - (temp - 4) * 0.11);
+// ==================== Phase-Dependent Motion ====================
+function computeThermalAmp(temp) {
+  if (temp <= 0) return Math.max(0.4, 1.5 + temp * 0.1);
+  if (temp <= 4) return 1.0 + temp * 0.3;
+  var dT = temp - 4;
+  return 2.2 + dT * 2.0 + dT * dT * 0.25;
+}
+function computeDamping(temp) {
+  if (temp <= 0) return 0.84;
+  if (temp <= 4) return 0.68 + (4 - temp) * 0.03;
+  return Math.max(0.45, 0.68 - (temp - 4) * 0.025);
+}
+function computeTetraBlend(temp) {
+  if (temp >= 4) return 0;
+  return Math.pow(Math.min(1, (4 - temp) / 4), 1.2);
+}
 
-  var frameOff = frameCount * (temp <= 4 ? 0.02 : 0.02 + (temp - 4) * 0.015);
+function updateMolecules(temp, clusters) {
+  var ratio = waterVolumeRatio(temp);
+  var scaleX = Math.sqrt(ratio);
+  var scaleY = ratio;
+  var centerX = (beakerInnerLeft(300) + beakerInnerRight(300)) / 2;
+  var centerY = (WATER_BASE + BEAKER_TOP + 12) / 2;
+  var thermalAmp = computeThermalAmp(temp);
+  var damping = computeDamping(temp);
+  var tetraBlend = computeTetraBlend(temp);
+  var wTop = waterTopY(temp);
 
   for (var i = 0; i < MOLECULES.length; i++) {
-    var hAtomsI = getHAtomPositions(MOLECULES[i], frameOff);
-    for (var j = i + 1; j < MOLECULES.length; j++) {
-      var hAtomsJ = getHAtomPositions(MOLECULES[j], frameOff);
+    var m = MOLECULES[i];
 
-      // Check H_i → O_j bonds
-      for (var hi = 0; hi < 2; hi++) {
-        var dx = hAtomsI[hi].x - MOLECULES[j].x;
-        var dy = hAtomsI[hi].y - MOLECULES[j].y;
-        var dist = Math.sqrt(dx * dx + dy * dy);
-        if (dist < HBOND_HO_CUTOFF) {
-          var seed = (i * 277 + j * 163 + hi * 47 + Math.floor(frameCount / 10)) % 100 / 100;
-          if (seed < bondProb) {
-            bonds.push({ fromX: hAtomsI[hi].x, fromY: hAtomsI[hi].y, toX: MOLECULES[j].x, toY: MOLECULES[j].y, dist: dist });
-          }
-        }
-      }
-      // Check H_j → O_i bonds
-      for (var hj = 0; hj < 2; hj++) {
-        var dx2 = hAtomsJ[hj].x - MOLECULES[i].x;
-        var dy2 = hAtomsJ[hj].y - MOLECULES[i].y;
-        var dist2 = Math.sqrt(dx2 * dx2 + dy2 * dy2);
-        if (dist2 < HBOND_HO_CUTOFF) {
-          var seed2 = (j * 277 + i * 163 + hj * 47 + Math.floor(frameCount / 10)) % 100 / 100;
-          if (seed2 < bondProb) {
-            bonds.push({ fromX: hAtomsJ[hj].x, fromY: hAtomsJ[hj].y, toX: MOLECULES[i].x, toY: MOLECULES[i].y, dist: dist2 });
-          }
-        }
+    // Equilibrium position with volume scaling + sublattice separation
+    var cpx = centerX + (m.ox - centerX) * scaleX;
+    var cpy = centerY + (m.oy - centerY) * scaleY;
+    m.ex = cpx + m.tdx * tetraBlend;
+    m.ey = cpy + m.tdy * tetraBlend;
+    m.ey = Math.max(wTop + 8, Math.min(WATER_BASE - 5, m.ey));
+    var il = beakerInnerLeft(m.ey), ir = beakerInnerRight(m.ey);
+    m.ex = Math.max(il + 6, Math.min(ir - 6, m.ex));
+
+    if (m.isIceLocked && m.iceTargetX !== null) {
+      // Phase 4-5: Spring toward ice lattice site
+      var idx = m.iceTargetX - m.x;
+      var idy = m.iceTargetY - m.y;
+      m.vx += idx * 0.12;
+      m.vy += idy * 0.12;
+      m.vx += (Math.random() - 0.5) * thermalAmp * 0.6;
+      m.vy += (Math.random() - 0.5) * thermalAmp * 0.6;
+      m.vx *= 0.82;
+      m.vy *= 0.82;
+      m.x += m.vx;
+      m.y += m.vy;
+      m.angularVel += (Math.random() - 0.5) * 0.005;
+      m.angularVel *= 0.9;
+      m.angle += m.angularVel;
+      continue;
+    }
+
+    // H-bond restoring forces (springs to bonded neighbors)
+    var hbForceX = 0, hbForceY = 0;
+    var bondKeys = Object.keys(HBOND_TRACKER.bonds);
+    for (var k = 0; k < bondKeys.length; k++) {
+      var b = HBOND_TRACKER.bonds[bondKeys[k]];
+      if (b.fadeAlpha < 0.2) continue;
+      var parts = bondKeys[k].split('_');
+      var ai = parseInt(parts[0]), aj = parseInt(parts[1]);
+      if (ai !== i && aj !== i) continue;
+      var partner = (ai === i) ? MOLECULES[aj] : MOLECULES[ai];
+      if (!partner) continue;
+      var pdx = partner.x - m.x, pdy = partner.y - m.y;
+      var pdist = Math.sqrt(pdx * pdx + pdy * pdy) + 0.001;
+      var eqDist = 11 + tetraBlend * 3;
+      var springK = 0.03 + tetraBlend * 0.05;
+      var pf = (pdist - eqDist) * springK;
+      hbForceX += pdx / pdist * pf;
+      hbForceY += pdy / pdist * pf;
+    }
+    m.vx += hbForceX * 0.4;
+    m.vy += hbForceY * 0.4;
+
+    // Tetrahedral forces within cluster
+    if (m.clusterId >= 0 && clusters[m.clusterId] && clusters[m.clusterId].size >= 3) {
+      var cl = clusters[m.clusterId];
+      var tetDist = 14;
+      for (var mi = 0; mi < cl.members.length; mi++) {
+        var pIdx = cl.members[mi];
+        if (pIdx === i) continue;
+        var pm = MOLECULES[pIdx];
+        var tdx = m.x - pm.x, tdy = m.y - pm.y;
+        var td = Math.sqrt(tdx * tdx + tdy * tdy) + 0.001;
+        var tf = (td - tetDist) * 0.04 * tetraBlend;
+        m.vx -= tdx / td * tf;
+        m.vy -= tdy / td * tf;
       }
     }
+
+    // Thermal noise
+    var noiseScale;
+    if (temp >= 4) noiseScale = 1.2;
+    else if (temp >= 1) noiseScale = 0.5 + (temp - 1) / 3 * 0.7;
+    else noiseScale = 0.2 + temp * 0.3;
+
+    m.vx += (Math.sin(frameCount * 0.08 + m.phase) * 0.8 + (Math.random() - 0.5) * 2.0) * thermalAmp * noiseScale * 0.3;
+    m.vy += (Math.cos(frameCount * 0.08 + m.phase + 2.5) * 0.8 + (Math.random() - 0.5) * 2.0) * thermalAmp * noiseScale * 0.3;
+
+    // Spring to equilibrium
+    var spring = temp <= 4 ? 0.25 + tetraBlend * 0.2 : 0.06;
+    m.vx += (m.ex - m.x) * spring;
+    m.vy += (m.ey - m.y) * spring;
+
+    m.vx *= damping;
+    m.vy *= damping;
+    m.x += m.vx;
+    m.y += m.vy;
+
+    // Clamp displacement
+    var maxDisp = thermalAmp * 4 + 3;
+    var dx2 = m.x - m.ex, dy2 = m.y - m.ey;
+    var disp = Math.sqrt(dx2 * dx2 + dy2 * dy2);
+    if (disp > maxDisp) {
+      var ang = Math.atan2(dy2, dx2);
+      m.x = m.ex + Math.cos(ang) * maxDisp;
+      m.y = m.ey + Math.sin(ang) * maxDisp;
+    }
+
+    // Rotation
+    m.angularVel += (Math.random() - 0.5) * thermalAmp * 0.025;
+    m.angularVel *= damping;
+    m.angle += m.angularVel;
   }
-  return bonds;
+}
+
+// ==================== Color Temperature Shift ====================
+function getMoleculeColors(temp) {
+  var oR, oG, oB, hR, hG, hB, glowR, glowG, glowB;
+  if (temp >= 8) {
+    oR = 255; oG = 100; oB = 50;
+    hR = 255; hG = 220; hB = 200;
+    glowR = 251; glowG = 146; glowB = 60;
+  } else if (temp >= 4) {
+    var b1 = (temp - 4) / 4;
+    oR = 240 - b1 * 15; oG = 60 + b1 * 40; oB = 50;
+    hR = 255; hG = 255 - b1 * 35; hB = 255 - b1 * 55;
+    glowR = 251; glowG = 146 + b1 * 20; glowB = 60;
+  } else if (temp > 0) {
+    var b2 = (4 - temp) / 4;
+    oR = 240 - b2 * 60; oG = 60; oB = 50 + b2 * 110;
+    hR = 255 - b2 * 55; hG = 255 - b2 * 35; hB = 255;
+    glowR = 59 + b2 * 60; glowG = 130; glowB = 220 + b2 * 26;
+  } else {
+    oR = 175; oG = 185; oB = 235;
+    hR = 200; hG = 220; hB = 255;
+    glowR = 130; glowG = 180; glowB = 240;
+  }
+  return {
+    oR: oR, oG: oG, oB: oB,
+    hR: hR, hG: hG, hB: hB,
+    glowR: glowR, glowG: glowG, glowB: glowB
+  };
 }
 
 // ==================== Drawing ====================
@@ -436,23 +708,17 @@ function drawBeaker() {
   g.addColorStop(0.7, 'rgba(200,225,240,0.04)'); g.addColorStop(1, 'rgba(160,195,220,0.10)');
   ctx.fillStyle = g; ctx.fill();
   ctx.strokeStyle = 'rgba(180,210,230,0.35)'; ctx.lineWidth = 2.5; ctx.stroke();
-
-  // Rim
   ctx.beginPath(); ctx.moveTo(BEAKER_LEFT - 8, BEAKER_TOP - 2); ctx.lineTo(BEAKER_RIGHT + 8, BEAKER_TOP - 2);
   ctx.strokeStyle = 'rgba(180,210,230,0.4)'; ctx.lineWidth = 4; ctx.stroke();
   ctx.beginPath(); ctx.moveTo(BEAKER_LEFT - 8, BEAKER_TOP + 4); ctx.lineTo(BEAKER_RIGHT + 8, BEAKER_TOP + 4);
   ctx.strokeStyle = 'rgba(180,210,230,0.25)'; ctx.lineWidth = 2; ctx.stroke();
-
-  // Reference line at 4°C water level
   ctx.strokeStyle = 'rgba(34,211,238,0.25)'; ctx.lineWidth = 0.8; ctx.setLineDash([3, 6]);
   ctx.beginPath();
   var rl = beakerInnerLeft(WATER_REF_TOP), rr = beakerInnerRight(WATER_REF_TOP);
   ctx.moveTo(rl, WATER_REF_TOP); ctx.lineTo(rr, WATER_REF_TOP);
   ctx.stroke(); ctx.setLineDash([]);
-
   ctx.fillStyle = 'rgba(34,211,238,0.5)'; ctx.font = '10px sans-serif'; ctx.textAlign = 'right';
   ctx.fillText('4°C', rl - 6, WATER_REF_TOP + 4);
-
   ctx.restore();
 }
 
@@ -460,7 +726,6 @@ function drawWater(temp) {
   var wTop = waterTopY(temp);
   wTop = Math.max(wTop, BEAKER_TOP + 8);
   wTop = Math.min(wTop, WATER_BASE - 5);
-
   ctx.save();
   ctx.beginPath();
   var il = beakerInnerLeft(wTop), ir = beakerInnerRight(wTop);
@@ -470,35 +735,33 @@ function drawWater(temp) {
   ctx.lineTo(ir, wTop);
   ctx.closePath(); ctx.clip();
 
-  var g = ctx.createLinearGradient(0, wTop, 0, WATER_BASE);
+  // Water color shifts with temperature
+  var colors = getMoleculeColors(temp);
+  var wr = Math.round(colors.glowR * 0.3), wg = Math.round(colors.glowG * 0.5), wb = Math.round(colors.glowB * 0.8);
   var a = 0.35 + 0.15 * (1 - waterVolumeRatio(temp) / waterVolumeRatio(15));
-  g.addColorStop(0, 'rgba(96,165,250,' + (a - 0.08) + ')');
-  g.addColorStop(0.5, 'rgba(37,99,235,' + a + ')');
-  g.addColorStop(1, 'rgba(23,37,84,' + (a + 0.1) + ')');
+  var g = ctx.createLinearGradient(0, wTop, 0, WATER_BASE);
+  g.addColorStop(0, 'rgba(' + wr + ',' + wg + ',' + wb + ',' + (a - 0.08) + ')');
+  g.addColorStop(0.5, 'rgba(' + Math.round(wr*0.7) + ',' + Math.round(wg*0.7) + ',' + Math.round(wb*0.9) + ',' + a + ')');
+  g.addColorStop(1, 'rgba(' + Math.round(wr*0.4) + ',' + Math.round(wg*0.4) + ',' + Math.round(wb*0.6) + ',' + (a + 0.1) + ')');
   ctx.fillStyle = g;
   ctx.fillRect(BEAKER_LEFT, wTop - 5, BEAKER_RIGHT - BEAKER_LEFT, WATER_BASE - wTop + 10);
 
-  // Surface
   ctx.beginPath();
   var sl = beakerInnerLeft(wTop), sr = beakerInnerRight(wTop);
   ctx.moveTo(sl, wTop); ctx.quadraticCurveTo((sl + sr) / 2, wTop - 3, sr, wTop);
   ctx.strokeStyle = 'rgba(255,255,255,0.35)'; ctx.lineWidth = 1.5; ctx.stroke();
-
   ctx.restore();
   return wTop;
 }
 
-function drawHydrogenBonds(bonds, temp) {
+function drawHydrogenBonds(temp) {
   ctx.save();
-  ctx.lineWidth = 1;
-  ctx.setLineDash([2, 4]);
-
-  var baseAlpha = temp <= 4 ? 0.50 : Math.max(0.06, 0.50 - (temp - 4) * 0.06);
-
-  for (var b = 0; b < bonds.length; b++) {
-    var bond = bonds[b];
-    var alpha = Math.max(0.08, 1 - bond.dist / HBOND_HO_CUTOFF) * baseAlpha;
-    ctx.strokeStyle = 'rgba(34,211,238,' + alpha + ')';
+  for (var b = 0; b < HBOND_TRACKER.bondList.length; b++) {
+    var bond = HBOND_TRACKER.bondList[b];
+    if (bond.alpha < 0.03) continue;
+    ctx.strokeStyle = 'rgba(34,211,238,' + bond.alpha + ')';
+    ctx.lineWidth = bond.stable ? 1.3 : 0.8;
+    ctx.setLineDash(bond.stable ? [2, 3] : [1, 4]);
     ctx.beginPath();
     ctx.moveTo(bond.fromX, bond.fromY);
     ctx.lineTo(bond.toX, bond.toY);
@@ -508,123 +771,112 @@ function drawHydrogenBonds(bonds, temp) {
   ctx.restore();
 }
 
+function drawVoids(temp, clusters, wTop) {
+  if (temp > 3.5) return;
+  ctx.save();
+  var voidAlpha = Math.min(0.25, (4 - temp) / 4 * 0.25);
+  if (temp <= 0) voidAlpha = 0.3;
+
+  var cKeys = Object.keys(clusters);
+  for (var ci = 0; ci < cKeys.length; ci++) {
+    var cl = clusters[cKeys[ci]];
+    if (cl.size < 3) continue;
+    ctx.strokeStyle = 'rgba(180,220,255,' + voidAlpha + ')';
+    ctx.lineWidth = 0.7;
+    ctx.setLineDash([2, 5]);
+    ctx.beginPath();
+    ctx.arc(cl.cx, cl.cy, cl.size * 1.8 + 6, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  ctx.setLineDash([]);
+
+  // Ice: highlight hexagonal ring centers
+  if (temp <= 0 && ICE_LATTICE.sites.length > 0) {
+    for (var s = 0; s < ICE_LATTICE.sites.length; s += 6) {
+      var site = ICE_LATTICE.sites[s];
+      if (!site.occupied) continue;
+      ctx.fillStyle = 'rgba(180,210,240,0.08)';
+      ctx.beginPath();
+      ctx.arc(site.x, site.y, 14, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+  ctx.restore();
+}
+
 function drawMolecules(temp) {
-  // Thermal glow: dramatic increase with temperature
+  var colors = getMoleculeColors(temp);
+  var thermalAmp = computeThermalAmp(temp);
+
   var glowRadius, glowAlpha;
-  if (temp <= 4) {
-    glowRadius = 2.5 + temp * 0.6;
-    glowAlpha = 0.04 + temp * 0.02;
-  } else {
+  if (temp >= 4) {
     var dT = temp - 4;
     glowRadius = 5.0 + dT * 3.0;
     glowAlpha = 0.12 + dT * 0.05;
+  } else {
+    glowRadius = 2.5 + temp * 0.6;
+    glowAlpha = 0.04 + temp * 0.02;
   }
+  if (temp <= 0) { glowRadius = 1.5; glowAlpha = 0.02; }
 
-  var rotSpeed = temp <= 4 ? 0.02 : 0.02 + (temp - 4) * 0.018;
+  var rotSpeed = temp <= 0 ? 0.003 : (temp <= 4 ? 0.02 : 0.02 + (temp - 4) * 0.02);
   var frameOff = frameCount * rotSpeed;
 
   for (var i = 0; i < MOLECULES.length; i++) {
     var m = MOLECULES[i];
 
-    // Thermal glow (orange = kinetic energy)
-    var grd = ctx.createRadialGradient(m.x, m.y, 3, m.x, m.y, glowRadius);
-    grd.addColorStop(0, 'rgba(251,146,60,' + glowAlpha + ')');
-    grd.addColorStop(0.5, 'rgba(251,146,60,' + (glowAlpha * 0.4) + ')');
-    grd.addColorStop(1, 'rgba(251,146,60,0)');
-    ctx.fillStyle = grd;
-    ctx.beginPath(); ctx.arc(m.x, m.y, glowRadius, 0, Math.PI * 2); ctx.fill();
+    // Thermal glow
+    var oA = Math.min(0.5, glowAlpha);
+    if (oA > 0.005) {
+      var grd = ctx.createRadialGradient(m.x, m.y, 3, m.x, m.y, glowRadius);
+      grd.addColorStop(0, 'rgba(' + colors.glowR + ',' + colors.glowG + ',' + colors.glowB + ',' + oA + ')');
+      grd.addColorStop(0.5, 'rgba(' + colors.glowR + ',' + colors.glowG + ',' + colors.glowB + ',' + (oA * 0.35) + ')');
+      grd.addColorStop(1, 'rgba(' + colors.glowR + ',' + colors.glowG + ',' + colors.glowB + ',0)');
+      ctx.fillStyle = grd;
+      ctx.beginPath(); ctx.arc(m.x, m.y, glowRadius, 0, Math.PI * 2); ctx.fill();
+    }
 
-    // Oxygen atom (RED, matching reference diagram)
-    var sizeJitter = temp > 4 ? (Math.random() - 0.5) * (temp - 4) * 0.4 : 0;
-    var oRadius = 6.5 + sizeJitter;
-    var oGrd = ctx.createRadialGradient(m.x - 2, m.y - 2, 1, m.x, m.y, oRadius);
-    oGrd.addColorStop(0, 'rgba(255,200,180,0.95)');   // highlight
-    oGrd.addColorStop(0.35, 'rgba(240,60,50,0.85)');   // red body
-    oGrd.addColorStop(0.7, 'rgba(200,30,30,0.7)');     // darker red
-    oGrd.addColorStop(1, 'rgba(160,20,20,0.4)');       // edge
+    // Oxygen atom
+    var oRadius = m.isIceLocked ? 5.5 : (6.5 + (temp > 4 ? (Math.random() - 0.5) * (temp - 4) * 0.3 : 0));
+    var oGrd = ctx.createRadialGradient(m.x - 1.5, m.y - 1.5, 1, m.x, m.y, oRadius);
+    oGrd.addColorStop(0, 'rgba(' + Math.min(255, colors.oR + 40) + ',' + Math.min(255, colors.oG + 80) + ',' + Math.min(255, colors.oB + 80) + ',0.95)');
+    oGrd.addColorStop(0.35, 'rgba(' + colors.oR + ',' + colors.oG + ',' + colors.oB + ',0.85)');
+    oGrd.addColorStop(0.7, 'rgba(' + Math.max(0, colors.oR - 40) + ',' + Math.max(0, colors.oG - 30) + ',' + Math.max(0, colors.oB - 20) + ',0.7)');
+    oGrd.addColorStop(1, 'rgba(' + Math.max(0, colors.oR - 80) + ',' + Math.max(0, colors.oG - 40) + ',' + Math.max(0, colors.oB - 30) + ',0.35)');
     ctx.fillStyle = oGrd;
     ctx.beginPath(); ctx.arc(m.x, m.y, oRadius, 0, Math.PI * 2); ctx.fill();
 
-    // Hydrogen atoms (WHITE, matching reference diagram)
-    var angle = m.phase + frameOff;
-    var hDist = 5;
+    // Hydrogen atoms
+    var angle = m.angle + frameOff;
+    var hDist = m.isIceLocked ? 4 : 5;
     for (var h = 0; h < 2; h++) {
       var ha = angle + (h === 0 ? -0.91 : 0.91);
       var hx = m.x + Math.cos(ha) * hDist;
       var hy = m.y + Math.sin(ha) * hDist;
-
-      // White H atom with slight gradient
       var hGrd = ctx.createRadialGradient(hx - 0.5, hy - 0.5, 0.5, hx, hy, 2.5);
-      hGrd.addColorStop(0, 'rgba(255,255,255,0.95)');
-      hGrd.addColorStop(0.6, 'rgba(240,240,245,0.8)');
-      hGrd.addColorStop(1, 'rgba(220,220,230,0.4)');
+      hGrd.addColorStop(0, 'rgba(' + colors.hR + ',' + colors.hG + ',' + colors.hB + ',0.95)');
+      hGrd.addColorStop(0.6, 'rgba(' + Math.round(colors.hR * 0.94) + ',' + Math.round(colors.hG * 0.94) + ',' + Math.round(colors.hB * 0.96) + ',0.8)');
+      hGrd.addColorStop(1, 'rgba(' + Math.round(colors.hR * 0.85) + ',' + Math.round(colors.hG * 0.85) + ',' + Math.round(colors.hB * 0.9) + ',0.35)');
       ctx.fillStyle = hGrd;
       ctx.beginPath(); ctx.arc(hx, hy, 2.5, 0, Math.PI * 2); ctx.fill();
     }
   }
 }
 
-function drawIce(temp, wTop) {
-  if (temp > 0) return;
-  ctx.save();
-  var iceTop = wTop - 22, iceBot = wTop + 4;
-  ctx.beginPath();
-  var cl = beakerInnerLeft(iceTop), cr = beakerInnerRight(iceTop);
-  ctx.moveTo(cl, iceTop);
-  ctx.lineTo(beakerInnerLeft(iceBot + 5), iceBot + 5);
-  ctx.lineTo(beakerInnerRight(iceBot + 5), iceBot + 5);
-  ctx.lineTo(cr, iceTop);
-  ctx.closePath(); ctx.clip();
-
-  var il = beakerInnerLeft(iceTop), ir = beakerInnerRight(iceTop);
-  // Hexagonal ice crystal pattern
-  for (var row = 0; row < 3; row++) {
-    for (var col = 0; col < 12; col++) {
-      var ox = (row % 2) * 14;
-      var ix = il + 5 + col * 28 + ox;
-      var iy = iceTop + 3 + row * 16;
-      if (ix > ir - 5) continue;
-
-      // Ice molecule (more rigid, lighter)
-      var igrd = ctx.createRadialGradient(ix, iy, 1, ix, iy, 5);
-      igrd.addColorStop(0, 'rgba(255,255,255,0.7)');
-      igrd.addColorStop(0.7, 'rgba(200,230,255,0.45)');
-      igrd.addColorStop(1, 'rgba(180,220,250,0.1)');
-      ctx.fillStyle = igrd;
-      ctx.beginPath(); ctx.arc(ix, iy, 5, 0, Math.PI * 2); ctx.fill();
-
-      // Ice H-bonds (stable hexagonal)
-      if (col < 11) {
-        ctx.strokeStyle = 'rgba(200,230,255,0.25)'; ctx.lineWidth = 0.6;
-        ctx.beginPath(); ctx.moveTo(ix, iy); ctx.lineTo(ix + 28, iy); ctx.stroke();
-      }
-    }
-  }
-  ctx.fillStyle = 'rgba(255,255,255,0.5)'; ctx.font = 'bold 11px sans-serif'; ctx.textAlign = 'center';
-  ctx.fillText('冰', (il + ir) / 2, iceTop - 6);
-  ctx.restore();
-}
-
 function drawGraph(temp) {
   ctx.save();
   ctx.fillStyle = 'rgba(255,255,255,0.02)'; ctx.strokeStyle = 'rgba(255,255,255,0.08)'; ctx.lineWidth = 1;
   ctx.beginPath(); ctx.roundRect(GRAPH_LEFT, GRAPH_TOP, GRAPH_WIDTH, GRAPH_HEIGHT, 8); ctx.fill(); ctx.stroke();
-
   ctx.fillStyle = 'rgba(148,163,184,0.7)'; ctx.font = '11px sans-serif'; ctx.textAlign = 'center';
   ctx.fillText('密度——温度 关系曲线', GRAPH_LEFT + GRAPH_WIDTH / 2, GRAPH_TOP - 8);
-
   var margin = { left: 38, right: 12, top: 20, bottom: 28 };
   var pl = GRAPH_LEFT + margin.left, pr = GRAPH_RIGHT - margin.right;
   var pt = GRAPH_TOP + margin.top, pb = GRAPH_BOTTOM - margin.bottom;
   var pw = pr - pl, ph = pb - pt;
-
   ctx.strokeStyle = 'rgba(255,255,255,0.25)'; ctx.lineWidth = 1.2;
   ctx.beginPath(); ctx.moveTo(pl, pt); ctx.lineTo(pl, pb); ctx.lineTo(pr, pb); ctx.stroke();
-
   var minRho = waterDensity(15), maxRho = RHO_0, rhoRange = maxRho - minRho;
   var yMin = minRho - rhoRange * 0.3, yMax = maxRho + rhoRange * 0.15;
-
-  // Y ticks
   for (var r = 0.94; r <= 1.01; r += 0.02) {
     var ry = pb - (r - yMin) / (yMax - yMin) * ph;
     if (ry < pt || ry > pb) continue;
@@ -633,8 +885,6 @@ function drawGraph(temp) {
     ctx.fillStyle = 'rgba(148,163,184,0.5)'; ctx.font = '9px sans-serif'; ctx.textAlign = 'right';
     ctx.fillText(r.toFixed(2), pl - 5, ry + 3);
   }
-
-  // X ticks
   for (var tt = 0; tt <= 14; tt += 2) {
     var tx = pl + (tt - (-2)) / (15 - (-2)) * pw;
     ctx.strokeStyle = 'rgba(255,255,255,0.05)'; ctx.lineWidth = 0.5; ctx.setLineDash([2, 4]);
@@ -642,13 +892,9 @@ function drawGraph(temp) {
     ctx.fillStyle = 'rgba(148,163,184,0.5)'; ctx.font = '9px sans-serif'; ctx.textAlign = 'center';
     ctx.fillText(tt + '°C', tx, pb + 14);
   }
-
-  // 4°C reference
   var x4 = pl + (4 - (-2)) / (15 - (-2)) * pw;
   ctx.strokeStyle = 'rgba(34,211,238,0.2)'; ctx.lineWidth = 1; ctx.setLineDash([3, 5]);
   ctx.beginPath(); ctx.moveTo(x4, pt); ctx.lineTo(x4, pb); ctx.stroke(); ctx.setLineDash([]);
-
-  // Curve
   ctx.beginPath(); var first = true;
   for (var t = -2; t <= 15; t += 0.2) {
     var rho = waterDensity(t);
@@ -659,16 +905,12 @@ function drawGraph(temp) {
   ctx.strokeStyle = '#60a5fa'; ctx.lineWidth = 2.5;
   ctx.shadowColor = 'rgba(96,165,250,0.4)'; ctx.shadowBlur = 6; ctx.stroke();
   ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0;
-
-  // Peak at 4°C
   var p4x = pl + (4 - (-2)) / (15 - (-2)) * pw;
   var p4y = pb - (RHO_0 - yMin) / (yMax - yMin) * ph;
   ctx.fillStyle = '#22d3ee'; ctx.beginPath(); ctx.arc(p4x, p4y, 5, 0, Math.PI * 2); ctx.fill();
   ctx.fillStyle = 'rgba(34,211,238,0.3)'; ctx.beginPath(); ctx.arc(p4x, p4y, 10, 0, Math.PI * 2); ctx.fill();
   ctx.fillStyle = '#22d3ee'; ctx.font = 'bold 10px sans-serif'; ctx.textAlign = 'center';
   ctx.fillText('密度最大', p4x, p4y - 14);
-
-  // Current temp marker
   var cx = pl + (temp - (-2)) / (15 - (-2)) * pw;
   var cRho = waterDensity(temp), cy = pb - (cRho - yMin) / (yMax - yMin) * ph;
   ctx.fillStyle = 'rgba(251,146,60,0.3)'; ctx.beginPath(); ctx.arc(cx, cy, 9, 0, Math.PI * 2); ctx.fill();
@@ -677,49 +919,45 @@ function drawGraph(temp) {
   ctx.fillStyle = '#fb923c'; ctx.font = 'bold 10px sans-serif'; ctx.textAlign = 'left';
   var lx = cx + 12; if (lx > pr - 30) lx = cx - 55;
   ctx.fillText(temp.toFixed(1) + '°C', lx, cy + 4);
-
-  // Zone labels
   ctx.fillStyle = 'rgba(34,211,238,0.5)'; ctx.font = 'italic 10px sans-serif'; ctx.textAlign = 'center';
   ctx.fillText('反常膨胀区', pl + (2 - (-2)) / (15 - (-2)) * pw, pt + ph * 0.25);
   ctx.fillText('正常膨胀区', pl + (8 - (-2)) / (15 - (-2)) * pw, pt + ph * 0.85);
-
   ctx.strokeStyle = 'rgba(34,211,238,0.15)'; ctx.lineWidth = 0.5; ctx.setLineDash([2, 4]);
   ctx.beginPath(); ctx.moveTo(pl, pt + ph * 0.45); ctx.lineTo(pr, pt + ph * 0.45); ctx.stroke();
   ctx.setLineDash([]);
-
   ctx.restore();
 }
 
-function drawLegend(temp) {
-  // Regime indicator at top of beaker area
+function drawLegend(temp, phase) {
   ctx.save();
   var lx = (BEAKER_LEFT + BEAKER_RIGHT) / 2;
   var ly = BEAKER_TOP - 26;
-
   var label, color;
-  if (temp <= 0) {
-    label = '❄ 冰水混合 — 氢键形成晶格结构';
-    color = '#a5f3fc';
-  } else if (temp < 4) {
-    label = '🔍 反常膨胀区 — 氢键主导，降温膨胀';
-    color = '#22d3ee';
-  } else if (Math.abs(temp - 4) < 0.3) {
-    label = '✅ 4°C — 热运动与氢键最佳平衡';
-    color = '#4ade80';
-  } else {
-    label = '🌡 正常膨胀区 — 热运动主导，升温膨胀';
-    color = '#fb923c';
-  }
-
+  if (temp <= 0) { label = '❄ 冰 — 稳定六边形晶格结构'; color = '#a5f3fc'; }
+  else if (temp < 1) { label = '🔮 接近冰点 — 四面体网络扩张'; color = '#67e8f9'; }
+  else if (temp < 4) { label = '🔍 反常膨胀区 — 氢键主导，团簇形成'; color = '#22d3ee'; }
+  else if (Math.abs(temp - 4) < 0.3) { label = '✅ 4°C — 热运动与氢键最佳平衡'; color = '#4ade80'; }
+  else { label = '🌡 正常膨胀区 — 热运动主导，升温膨胀'; color = '#fb923c'; }
   ctx.fillStyle = color;
-  ctx.font = 'bold 11px sans-serif';
-  ctx.textAlign = 'center';
+  ctx.font = 'bold 11px sans-serif'; ctx.textAlign = 'center';
   ctx.fillText(label, lx, ly);
 
-  // Legend indicators
-  var legendY = BEAKER_BOTTOM + 24;
-  ctx.fillStyle = 'rgba(148,163,184,0.5)'; ctx.font = '10px sans-serif'; ctx.textAlign = 'center';
-  ctx.fillText('● 分子  ▬ 氢键  ○ 热运动光晕', lx, legendY);
+  // Phase sub-label
+  var phaseLabel = getPhaseName(phase);
+  if (phaseLabel) {
+    ctx.fillStyle = 'rgba(148,163,184,0.5)'; ctx.font = '9px sans-serif';
+    ctx.fillText(phaseLabel, lx, ly + 14);
+  }
+
+  // Cluster count display
+  if (temp < 4 && temp > 0) {
+    var clusterCount = 0;
+    for (var i = 0; i < MOLECULES.length; i++) { if (MOLECULES[i].clusterId >= 0) clusterCount++; }
+    if (clusterCount > 0) {
+      ctx.fillStyle = 'rgba(34,211,238,0.35)'; ctx.font = '9px sans-serif';
+      ctx.fillText('团簇分子: ' + clusterCount + '/' + MOLECULES.length, lx, ly + 28);
+    }
+  }
 
   ctx.restore();
 }
@@ -732,10 +970,14 @@ function drawScene(temp) {
   drawBeaker();
   var wTop = drawWater(temp);
 
-  // Get hydrogen bonds before drawing molecules
-  var bonds = getHydrogenBonds(temp);
+  // Get clusters for void drawing (before molecular rendering)
+  var clusters = {};
+  if (temp < 4) {
+    var cKeys = Object.keys(window._lastClusters || {});
+    for (var ci = 0; ci < cKeys.length; ci++) { clusters[cKeys[ci]] = window._lastClusters[cKeys[ci]]; }
+  }
 
-  // Clip to water for molecules
+  // Clip to water
   ctx.save();
   ctx.beginPath();
   var cl = beakerInnerLeft(Math.max(wTop, BEAKER_TOP + 8));
@@ -746,14 +988,21 @@ function drawScene(temp) {
   ctx.lineTo(cr, Math.max(wTop, BEAKER_TOP + 8));
   ctx.closePath(); ctx.clip();
 
-  drawHydrogenBonds(bonds, temp);
+  drawVoids(temp, clusters, wTop);
+  drawHydrogenBonds(temp);
   drawMolecules(temp);
   ctx.restore();
 
-  drawIce(temp, wTop);
-  drawLegend(temp);
+  // Freeze flash effect
+  if (PHASE.flashAlpha > 0.01) {
+    ctx.fillStyle = 'rgba(200,230,255,' + PHASE.flashAlpha + ')';
+    ctx.fillRect(BEAKER_LEFT, BEAKER_TOP, BEAKER_RIGHT - BEAKER_LEFT, BEAKER_BOTTOM - BEAKER_TOP);
+  }
 
-  // Temp label inside beaker
+  var phase = getPhase(temp);
+  drawLegend(temp, phase);
+
+  // Temp label
   ctx.save();
   var tl = (beakerInnerLeft((wTop + WATER_BASE) / 2 + 30) + beakerInnerRight((wTop + WATER_BASE) / 2 + 30)) / 2;
   ctx.fillStyle = 'rgba(255,255,255,0.55)'; ctx.font = 'bold 13px sans-serif'; ctx.textAlign = 'center';
@@ -765,41 +1014,29 @@ function drawScene(temp) {
 function updateUI(temp) {
   document.getElementById('tempDisplay').textContent = temp.toFixed(1) + '°C';
   document.getElementById('tempSlider').value = temp;
-
   var rho = waterDensity(temp);
   var volRatio = waterVolumeRatio(temp);
-  var absT = temp + 273;
-
   document.getElementById('densityVal').textContent = rho.toFixed(4);
   document.getElementById('volumeVal').textContent = (volRatio * 100).toFixed(1) + '%';
-
   var volEl = document.getElementById('volumeVal');
   volEl.className = Math.abs(temp - 4) < 0.3 ? 'dv green' : 'dv orange';
   var denEl = document.getElementById('densityVal');
   denEl.className = Math.abs(temp - 4) < 0.3 ? 'dv cyan' : 'dv blue';
 
-  // Thermal motion meter: dramatic increase above 4°C
   var thermalPct;
-  if (temp <= 4) {
-    thermalPct = 8 + temp * 3;  // 0°C→8%, 4°C→20%
-  } else {
-    thermalPct = Math.min(98, 20 + (temp - 4) * 8);  // 10°C→68%, 15°C→98%
-  }
+  if (temp <= 0) thermalPct = 5;
+  else if (temp <= 4) thermalPct = 8 + temp * 3;
+  else thermalPct = Math.min(98, 20 + (temp - 4) * 8);
   document.getElementById('thermalBar').style.width = thermalPct + '%';
-  var thermalLabel = thermalPct < 25 ? '微弱' : (thermalPct < 50 ? '中等' : (thermalPct < 75 ? '较强' : '剧烈'));
+  var thermalLabel = thermalPct < 15 ? '极弱（晶格锁定）' : (thermalPct < 25 ? '微弱' : (thermalPct < 50 ? '中等' : (thermalPct < 75 ? '较强' : '剧烈')));
   document.getElementById('thermalVal').textContent = thermalLabel;
 
-  // Hydrogen bond strength: strong at low T, weakens rapidly above 4°C
   var hbondPct;
-  if (temp <= 0) {
-    hbondPct = 95;
-  } else if (temp < 4) {
-    hbondPct = 88 - (4 - temp) * 3;  // 88%→85%
-  } else {
-    hbondPct = Math.max(5, 85 - (temp - 4) * 9);  // 10°C→31%, 12°C→13%
-  }
+  if (temp <= 0) hbondPct = 98;
+  else if (temp < 4) hbondPct = 85 - (4 - temp) * 3;
+  else hbondPct = Math.max(5, 85 - (temp - 4) * 9);
   document.getElementById('hbondBar').style.width = hbondPct + '%';
-  var hbondLabel = hbondPct > 75 ? '强（形成空旷结构）' : (hbondPct > 40 ? '中等' : (hbondPct > 15 ? '较弱' : '极弱（大量断裂）'));
+  var hbondLabel = hbondPct > 90 ? '极强（完全锁定）' : (hbondPct > 75 ? '强（形成空旷结构）' : (hbondPct > 40 ? '中等（团簇形成）' : (hbondPct > 15 ? '较弱（快速断裂）' : '极弱（大量断裂）')));
   document.getElementById('hbondVal').textContent = hbondLabel;
 
   document.getElementById('formulaCalc').textContent =
@@ -807,17 +1044,18 @@ function updateUI(temp) {
 
   var tip = document.getElementById('tipBox');
   if (Math.abs(temp - 4) < 0.3) {
-    tip.innerHTML = '✅ <span class="highlight">4°C：热运动与氢键达到最佳平衡</span><br>水分子排列最紧密，密度最大。氢键适度约束分子间距，热运动不足以撑开结构。';
+    tip.innerHTML = '✅ <span class="highlight">阶段1：4°C最佳平衡</span><br>分子自由快速运动，氢键短暂闪烁（~皮秒寿命），无稳定团簇。热运动适度打破氢键，分子可紧密堆叠→<strong>密度最大</strong>。';
   } else if (temp <= 0) {
-    tip.innerHTML = '🧊 <span class="highlight">冰水混合（≤0°C）：氢键形成稳定晶格</span><br>水分子被氢键锁定在空旷的四面体结构中，体积膨胀约9%。冰密度小于水，浮于水面。';
+    tip.innerHTML = '🧊 <span class="highlight">阶段5：冰（≤0°C）</span><br>所有分子锁定在六边形晶格中，氢键完全稳定。体积比4°C时膨胀约<strong>9%</strong>。晶格中留下大量规则空隙→冰浮于水面。';
+  } else if (temp < 1) {
+    tip.innerHTML = '🔮 <span class="highlight">阶段3：接近冰点（0~1°C）</span><br>四面体结构主导，分子运动几乎停止。氢键网络贯穿整个液体，<strong>空隙急剧增多</strong>。体积明显膨胀。';
   } else if (temp < 4) {
-    tip.innerHTML = '🔍 <span class="highlight">反常膨胀区（0~4°C）：氢键占优势</span><br>降温时热运动减弱，<strong>氢键作用凸显</strong>，迫使分子趋向四面体排列。结构变<strong>空旷</strong>→体积膨胀→密度减小。';
-  } else if (temp > 4 && temp <= 8) {
-    tip.innerHTML = '🌡 <span class="highlight">正常膨胀区（4~8°C）：热运动逐渐增强</span><br>热运动开始打破部分氢键，分子可更紧密堆叠。但温度继续升高，分子振动加剧，体积开始正常膨胀。';
+    tip.innerHTML = '🔍 <span class="highlight">阶段2：反常膨胀（1~4°C）</span><br>降温→热运动减弱→氢键寿命延长→<strong>小分子团簇形成</strong>。团簇内分子按四面体排列，产生空隙→体积膨胀→密度减小。';
+  } else if (temp <= 8) {
+    tip.innerHTML = '🌡 <span class="highlight">阶段1：正常膨胀（4~8°C）</span><br>热运动逐渐增强，开始打破部分氢键，分子可更紧密堆叠。但温度继续升高，分子振动加剧，体积正常膨胀。';
   } else {
-    tip.innerHTML = '🔥 <span class="highlight">高温区（>8°C）：热运动主导</span><br>氢键大量断裂，热运动强烈使分子间距增大，正常热胀冷缩。注意与4°C时体积的明显差异。';
+    tip.innerHTML = '🔥 <span class="highlight">阶段1：高温区（>8°C）</span><br>氢键大量断裂，热运动剧烈使分子间距增大，正常热胀冷缩。注意与4°C时体积的明显差异。';
   }
-
   document.getElementById('btn0').className = Math.abs(temp) < 0.3 ? 'btn active' : 'btn';
   document.getElementById('btn4').className = Math.abs(temp - 4) < 0.3 ? 'btn active' : 'btn';
   document.getElementById('btn10').className = Math.abs(temp - 10) < 0.3 ? 'btn active' : 'btn';
@@ -830,12 +1068,44 @@ function setTemp(t) { targetTemp = t; document.getElementById('tempSlider').valu
 function animate() {
   var diff = targetTemp - currentTemp;
   if (Math.abs(diff) > 0.01) {
+    prevTemp = currentTemp;
     currentTemp += diff * 0.12;
   } else if (Math.abs(diff) > 0) {
+    prevTemp = currentTemp;
     currentTemp = targetTemp;
   }
 
-  updateMolecules(currentTemp);
+  // Phase transition detection
+  var newPhase = getPhase(currentTemp);
+  var oldPhase = getPhase(prevTemp);
+
+  // Detect crossing freezing point
+  if (oldPhase >= 2 && newPhase === 5 && !ICE_LATTICE.frozen) {
+    // Freeze!
+    var wTop = waterTopY(currentTemp);
+    ICE_LATTICE.generate(wTop);
+    ICE_LATTICE.freeze();
+    PHASE.flashAlpha = 0.6;
+    PHASE.freezeFrame = frameCount;
+  } else if (oldPhase === 5 && newPhase !== 5 && ICE_LATTICE.frozen) {
+    // Thaw!
+    ICE_LATTICE.thaw();
+    PHASE.flashAlpha = 0;
+  }
+
+  // Fade freeze flash
+  if (PHASE.flashAlpha > 0.01 && newPhase === 5) {
+    var framesSince = frameCount - PHASE.freezeFrame;
+    if (framesSince > 20) PHASE.flashAlpha *= 0.85;
+  }
+
+  // Update physics
+  HBOND_TRACKER.update(currentTemp);
+  var clusters = computeClusters(currentTemp);
+  window._lastClusters = clusters;
+  updateMolecules(currentTemp, clusters);
+
+  // Render
   drawScene(currentTemp);
   updateUI(currentTemp);
 
@@ -851,6 +1121,9 @@ document.getElementById('tempSlider').addEventListener('input', function(e) {
 // ==================== Init ====================
 function init() {
   initMolecules();
+  HBOND_TRACKER.update(currentTemp);
+  var clusters = computeClusters(currentTemp);
+  window._lastClusters = clusters;
   drawScene(currentTemp);
   updateUI(currentTemp);
   animate();
