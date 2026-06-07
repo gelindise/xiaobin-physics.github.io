@@ -250,7 +250,7 @@ function getPhaseName(p) {
 
 // ==================== Molecule System ====================
 var MOLECULES = [];
-var MOLECULE_COUNT = 350;
+var MOLECULE_COUNT = 200;
 var HBOND_HO_CUTOFF = 20;
 
 function initMolecules() {
@@ -321,7 +321,7 @@ SPATIAL_GRID.getNeighborIndices = function(x, y) {
 };
 
 // ==================== Persistent H-Bond Tracker ====================
-var HBOND_TRACKER = { bonds: {}, bondList: [] };
+var HBOND_TRACKER = { bonds: {}, bondList: [], molAdj: [] };
 HBOND_TRACKER.update = function(temp) {
   var lifetime, prob;
   if (temp <= 0) { lifetime = 9999; prob = 1.0; }
@@ -388,8 +388,21 @@ HBOND_TRACKER.update = function(temp) {
     this.bondList.push({
       fromX: b.fromX, fromY: b.fromY,
       toX: b.toX, toY: b.toY,
-      alpha: alpha, stable: b.stable
+      alpha: alpha, stable: b.stable,
+      key: key
     });
+  }
+
+  // Build per-molecule adjacency for fast H-bond force lookup
+  this.molAdj = [];
+  for (var i = 0; i < MOLECULES.length; i++) this.molAdj[i] = [];
+  for (var b = 0; b < this.bondList.length; b++) {
+    var bond = this.bondList[b];
+    if (bond.alpha < 0.2) continue;
+    var parts = bond.key.split('_');
+    var ai = parseInt(parts[0]), aj = parseInt(parts[1]);
+    this.molAdj[ai].push(aj);
+    this.molAdj[aj].push(ai);
   }
 };
 HBOND_TRACKER._processBond = function(key, fx, fy, tx, ty, dist, lifetime, prob, isIce) {
@@ -577,24 +590,20 @@ function updateMolecules(temp, clusters) {
       continue;
     }
 
-    // H-bond restoring forces (springs to bonded neighbors)
+    // H-bond restoring forces via pre-computed adjacency
     var hbForceX = 0, hbForceY = 0;
-    var bondKeys = Object.keys(HBOND_TRACKER.bonds);
-    for (var k = 0; k < bondKeys.length; k++) {
-      var b = HBOND_TRACKER.bonds[bondKeys[k]];
-      if (b.fadeAlpha < 0.2) continue;
-      var parts = bondKeys[k].split('_');
-      var ai = parseInt(parts[0]), aj = parseInt(parts[1]);
-      if (ai !== i && aj !== i) continue;
-      var partner = (ai === i) ? MOLECULES[aj] : MOLECULES[ai];
-      if (!partner) continue;
-      var pdx = partner.x - m.x, pdy = partner.y - m.y;
-      var pdist = Math.sqrt(pdx * pdx + pdy * pdy) + 0.001;
+    var adj = HBOND_TRACKER.molAdj[i];
+    if (adj) {
       var eqDist = 11 + tetraBlend * 3;
       var springK = 0.03 + tetraBlend * 0.05;
-      var pf = (pdist - eqDist) * springK;
-      hbForceX += pdx / pdist * pf;
-      hbForceY += pdy / pdist * pf;
+      for (var k = 0; k < adj.length; k++) {
+        var partner = MOLECULES[adj[k]];
+        var pdx = partner.x - m.x, pdy = partner.y - m.y;
+        var pdist = Math.sqrt(pdx * pdx + pdy * pdy) + 0.001;
+        var pf = (pdist - eqDist) * springK;
+        hbForceX += pdx / pdist * pf;
+        hbForceY += pdy / pdist * pf;
+      }
     }
     m.vx += hbForceX * 0.4;
     m.vy += hbForceY * 0.4;
@@ -805,58 +814,51 @@ function drawVoids(temp, clusters, wTop) {
 
 function drawMolecules(temp) {
   var colors = getMoleculeColors(temp);
-  var thermalAmp = computeThermalAmp(temp);
 
   var glowRadius, glowAlpha;
   if (temp >= 4) {
     var dT = temp - 4;
     glowRadius = 5.0 + dT * 3.0;
-    glowAlpha = 0.12 + dT * 0.05;
+    glowAlpha = 0.08 + dT * 0.03;
   } else {
     glowRadius = 2.5 + temp * 0.6;
-    glowAlpha = 0.04 + temp * 0.02;
+    glowAlpha = 0.03 + temp * 0.015;
   }
-  if (temp <= 0) { glowRadius = 1.5; glowAlpha = 0.02; }
+  if (temp <= 0) { glowRadius = 1.5; glowAlpha = 0.015; }
 
   var rotSpeed = temp <= 0 ? 0.003 : (temp <= 4 ? 0.008 : 0.008 + (temp - 4) * 0.004);
   var frameOff = frameCount * rotSpeed;
 
+  // Pre-compute color strings (no per-molecule gradient allocation)
+  var oColor = 'rgba(' + colors.oR + ',' + colors.oG + ',' + colors.oB + ',0.85)';
+  var oHighlight = 'rgba(' + Math.min(255,colors.oR+40) + ',' + Math.min(255,colors.oG+80) + ',' + Math.min(255,colors.oB+80) + ',0.92)';
+  var glowColor = 'rgba(' + colors.glowR + ',' + colors.glowG + ',' + colors.glowB + ',' + glowAlpha + ')';
+  var hColor = 'rgba(' + colors.hR + ',' + colors.hG + ',' + colors.hB + ',0.9)';
+
   for (var i = 0; i < MOLECULES.length; i++) {
     var m = MOLECULES[i];
 
-    // Thermal glow
-    var oA = Math.min(0.5, glowAlpha);
-    if (oA > 0.005) {
-      var grd = ctx.createRadialGradient(m.x, m.y, 3, m.x, m.y, glowRadius);
-      grd.addColorStop(0, 'rgba(' + colors.glowR + ',' + colors.glowG + ',' + colors.glowB + ',' + oA + ')');
-      grd.addColorStop(0.5, 'rgba(' + colors.glowR + ',' + colors.glowG + ',' + colors.glowB + ',' + (oA * 0.35) + ')');
-      grd.addColorStop(1, 'rgba(' + colors.glowR + ',' + colors.glowG + ',' + colors.glowB + ',0)');
-      ctx.fillStyle = grd;
+    // Thermal glow — single translucent circle (no gradient)
+    if (glowAlpha > 0.005) {
+      ctx.fillStyle = glowColor;
       ctx.beginPath(); ctx.arc(m.x, m.y, glowRadius, 0, Math.PI * 2); ctx.fill();
     }
 
-    // Oxygen atom
-    var oRadius = m.isIceLocked ? 5.5 : (6.5 + (temp > 4 ? (Math.random() - 0.5) * (temp - 4) * 0.3 : 0));
-    var oGrd = ctx.createRadialGradient(m.x - 1.5, m.y - 1.5, 1, m.x, m.y, oRadius);
-    oGrd.addColorStop(0, 'rgba(' + Math.min(255, colors.oR + 40) + ',' + Math.min(255, colors.oG + 80) + ',' + Math.min(255, colors.oB + 80) + ',0.95)');
-    oGrd.addColorStop(0.35, 'rgba(' + colors.oR + ',' + colors.oG + ',' + colors.oB + ',0.85)');
-    oGrd.addColorStop(0.7, 'rgba(' + Math.max(0, colors.oR - 40) + ',' + Math.max(0, colors.oG - 30) + ',' + Math.max(0, colors.oB - 20) + ',0.7)');
-    oGrd.addColorStop(1, 'rgba(' + Math.max(0, colors.oR - 80) + ',' + Math.max(0, colors.oG - 40) + ',' + Math.max(0, colors.oB - 30) + ',0.35)');
-    ctx.fillStyle = oGrd;
+    // Oxygen atom — two-layer circles for depth (no radial gradient)
+    var oRadius = m.isIceLocked ? 5.5 : 6.5;
+    ctx.fillStyle = oColor;
     ctx.beginPath(); ctx.arc(m.x, m.y, oRadius, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = oHighlight;
+    ctx.beginPath(); ctx.arc(m.x - 1.5, m.y - 1.5, oRadius * 0.45, 0, Math.PI * 2); ctx.fill();
 
-    // Hydrogen atoms
+    // Hydrogen atoms — simple white-ish circles
     var angle = m.angle + frameOff;
     var hDist = m.isIceLocked ? 4 : 5;
     for (var h = 0; h < 2; h++) {
       var ha = angle + (h === 0 ? -0.91 : 0.91);
       var hx = m.x + Math.cos(ha) * hDist;
       var hy = m.y + Math.sin(ha) * hDist;
-      var hGrd = ctx.createRadialGradient(hx - 0.5, hy - 0.5, 0.5, hx, hy, 2.5);
-      hGrd.addColorStop(0, 'rgba(' + colors.hR + ',' + colors.hG + ',' + colors.hB + ',0.95)');
-      hGrd.addColorStop(0.6, 'rgba(' + Math.round(colors.hR * 0.94) + ',' + Math.round(colors.hG * 0.94) + ',' + Math.round(colors.hB * 0.96) + ',0.8)');
-      hGrd.addColorStop(1, 'rgba(' + Math.round(colors.hR * 0.85) + ',' + Math.round(colors.hG * 0.85) + ',' + Math.round(colors.hB * 0.9) + ',0.35)');
-      ctx.fillStyle = hGrd;
+      ctx.fillStyle = hColor;
       ctx.beginPath(); ctx.arc(hx, hy, 2.5, 0, Math.PI * 2); ctx.fill();
     }
   }
