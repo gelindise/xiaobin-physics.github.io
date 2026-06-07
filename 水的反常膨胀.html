@@ -130,15 +130,15 @@ body::before {
         <div class="ctrl-group">
           <label>水温控制</label>
           <div class="temp-display" id="tempDisplay">4°C</div>
-          <input type="range" id="tempSlider" min="-2" max="15" step="0.5" value="4">
+          <input type="range" id="tempSlider" min="0" max="8" step="0.1" value="4">
           <div style="display:flex;justify-content:space-between;font-size:0.7rem;color:var(--text-muted);margin-top:2px">
-            <span>-2°C</span><span>0°C</span><span>4°C</span><span>10°C</span><span>15°C</span>
+            <span>0°C</span><span>2°C</span><span>4°C</span><span>6°C</span><span>8°C</span>
           </div>
         </div>
         <div class="btn-row">
           <button class="btn" id="btn0" onclick="setTemp(0)">🧊 0°C</button>
           <button class="btn active" id="btn4" onclick="setTemp(4)">💧 4°C</button>
-          <button class="btn" id="btn10" onclick="setTemp(10)">🌡 10°C</button>
+          <button class="btn" id="btn8" onclick="setTemp(8)">🌡 8°C</button>
         </div>
         <div class="meter-row">
           <div class="meter-item">
@@ -182,7 +182,7 @@ body::before {
     <div class="info-card">
       <h3>操作指南</h3>
       <ul>
-        <li>拖动<strong>温度滑块</strong>（-2°C~15°C），观察分子行为变化</li>
+        <li>拖动<strong>温度滑块</strong>（0°C~8°C），观察分子行为变化</li>
         <li><strong>蓝色虚线</strong> = 氢键连接；<strong>分子光晕</strong> = 热运动强度</li>
         <li>观察烧杯内分子<strong>间距</strong>和<strong>氢键密度</strong>随温度的变化</li>
         <li>4°C时分子排列最紧密，氢键与热运动达到平衡</li>
@@ -250,27 +250,29 @@ function getPhaseName(p) {
 
 // ==================== Molecule System ====================
 var MOLECULES = [];
-var MOLECULE_COUNT = 200;
+var MOLECULE_COUNT = 280;
 var HBOND_HO_CUTOFF = 20;
 
 function initMolecules() {
   MOLECULES = [];
-  // Dense grid to fill the entire beaker
-  var cols = 22, rows = 28;
-  var regionLeft = beakerInnerLeft(BEAKER_TOP + 12);
-  var regionRight = beakerInnerRight(BEAKER_TOP + 12);
+  // Fill the entire beaker from near-surface to bottom
+  var cols = 22, rows = 32;
+  var surfY = BEAKER_TOP + 10;       // near beaker top
+  var bottomY = WATER_BASE - 3;       // near beaker bottom
+  var regionLeft = beakerInnerLeft(surfY);
+  var regionRight = beakerInnerRight(surfY);
   var baseDX = (regionRight - regionLeft) / (cols - 0.3);
-  var baseDY = (WATER_BASE - 6 - (BEAKER_TOP + 8)) / rows;
+  var baseDY = (bottomY - surfY) / rows;
 
   var idx = 0;
   for (var row = 0; row < rows; row++) {
     for (var col = 0; col < cols; col++) {
       if (idx >= MOLECULE_COUNT) break;
       var cx = regionLeft + 5 + col * baseDX + (row % 2) * baseDX * 0.5;
-      var cy = BEAKER_TOP + 8 + row * baseDY;
-      if (cy > WATER_BASE - 4) continue;
+      var cy = surfY + row * baseDY;
+      if (cy > bottomY) continue;
       var il = beakerInnerLeft(cy), ir = beakerInnerRight(cy);
-      if (cx < il + 6 || cx > ir - 6) continue;
+      if (cx < il + 5 || cx > ir - 5) continue;
 
       var sublattice = (row + col) % 2;
       var tdx = sublattice === 0 ? -7 : 7;
@@ -746,7 +748,7 @@ function drawWater(temp) {
   // Water color shifts with temperature
   var colors = getMoleculeColors(temp);
   var wr = Math.round(colors.glowR * 0.3), wg = Math.round(colors.glowG * 0.5), wb = Math.round(colors.glowB * 0.8);
-  var a = 0.35 + 0.15 * (1 - waterVolumeRatio(temp) / waterVolumeRatio(15));
+  var a = 0.35 + 0.15 * (1 - waterVolumeRatio(temp) / waterVolumeRatio(8));
   var g = ctx.createLinearGradient(0, wTop, 0, WATER_BASE);
   g.addColorStop(0, 'rgba(' + wr + ',' + wg + ',' + wb + ',' + (a - 0.08) + ')');
   g.addColorStop(0.5, 'rgba(' + Math.round(wr*0.7) + ',' + Math.round(wg*0.7) + ',' + Math.round(wb*0.9) + ',' + a + ')');
@@ -865,6 +867,7 @@ function drawMolecules(temp) {
 }
 
 function drawGraph(temp) {
+  var T_MIN = 0, T_MAX = 8;  // 0-8°C focus range
   ctx.save();
   ctx.fillStyle = 'rgba(255,255,255,0.02)'; ctx.strokeStyle = 'rgba(255,255,255,0.08)'; ctx.lineWidth = 1;
   ctx.beginPath(); ctx.roundRect(GRAPH_LEFT, GRAPH_TOP, GRAPH_WIDTH, GRAPH_HEIGHT, 8); ctx.fill(); ctx.stroke();
@@ -876,43 +879,55 @@ function drawGraph(temp) {
   var pw = pr - pl, ph = pb - pt;
   ctx.strokeStyle = 'rgba(255,255,255,0.25)'; ctx.lineWidth = 1.2;
   ctx.beginPath(); ctx.moveTo(pl, pt); ctx.lineTo(pl, pb); ctx.lineTo(pr, pb); ctx.stroke();
-  var minRho = waterDensity(15), maxRho = RHO_0, rhoRange = maxRho - minRho;
-  var yMin = minRho - rhoRange * 0.3, yMax = maxRho + rhoRange * 0.15;
-  for (var r = 0.94; r <= 1.01; r += 0.02) {
+
+  var rho0 = waterDensity(0), rho8 = waterDensity(8);
+  var edgeRho = Math.min(rho0, rho8);
+  var maxRho = RHO_0, rhoRange = maxRho - edgeRho;
+  var yMin = edgeRho - rhoRange * 0.25, yMax = maxRho + rhoRange * 0.2;
+
+  for (var r = 0.982; r <= 1.002; r += 0.004) {
     var ry = pb - (r - yMin) / (yMax - yMin) * ph;
     if (ry < pt || ry > pb) continue;
     ctx.strokeStyle = 'rgba(255,255,255,0.05)'; ctx.lineWidth = 0.5; ctx.setLineDash([2, 4]);
     ctx.beginPath(); ctx.moveTo(pl + 1, ry); ctx.lineTo(pr, ry); ctx.stroke(); ctx.setLineDash([]);
     ctx.fillStyle = 'rgba(148,163,184,0.5)'; ctx.font = '9px sans-serif'; ctx.textAlign = 'right';
-    ctx.fillText(r.toFixed(2), pl - 5, ry + 3);
+    ctx.fillText(r.toFixed(3), pl - 5, ry + 3);
   }
-  for (var tt = 0; tt <= 14; tt += 2) {
-    var tx = pl + (tt - (-2)) / (15 - (-2)) * pw;
+  for (var tt = 0; tt <= 8; tt += 1) {
+    var tx = pl + (tt - T_MIN) / (T_MAX - T_MIN) * pw;
     ctx.strokeStyle = 'rgba(255,255,255,0.05)'; ctx.lineWidth = 0.5; ctx.setLineDash([2, 4]);
     ctx.beginPath(); ctx.moveTo(tx, pt); ctx.lineTo(tx, pb); ctx.stroke(); ctx.setLineDash([]);
     ctx.fillStyle = 'rgba(148,163,184,0.5)'; ctx.font = '9px sans-serif'; ctx.textAlign = 'center';
     ctx.fillText(tt + '°C', tx, pb + 14);
   }
-  var x4 = pl + (4 - (-2)) / (15 - (-2)) * pw;
+
+  // 4°C reference line
+  var x4 = pl + (4 - T_MIN) / (T_MAX - T_MIN) * pw;
   ctx.strokeStyle = 'rgba(34,211,238,0.2)'; ctx.lineWidth = 1; ctx.setLineDash([3, 5]);
   ctx.beginPath(); ctx.moveTo(x4, pt); ctx.lineTo(x4, pb); ctx.stroke(); ctx.setLineDash([]);
+
+  // Density curve
   ctx.beginPath(); var first = true;
-  for (var t = -2; t <= 15; t += 0.2) {
+  for (var t = T_MIN; t <= T_MAX; t += 0.1) {
     var rho = waterDensity(t);
-    var px = pl + (t - (-2)) / (15 - (-2)) * pw;
+    var px = pl + (t - T_MIN) / (T_MAX - T_MIN) * pw;
     var py = pb - (rho - yMin) / (yMax - yMin) * ph;
     if (first) { ctx.moveTo(px, py); first = false; } else ctx.lineTo(px, py);
   }
   ctx.strokeStyle = '#60a5fa'; ctx.lineWidth = 2.5;
   ctx.shadowColor = 'rgba(96,165,250,0.4)'; ctx.shadowBlur = 6; ctx.stroke();
   ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0;
-  var p4x = pl + (4 - (-2)) / (15 - (-2)) * pw;
+
+  // Peak marker at 4°C
+  var p4x = pl + (4 - T_MIN) / (T_MAX - T_MIN) * pw;
   var p4y = pb - (RHO_0 - yMin) / (yMax - yMin) * ph;
   ctx.fillStyle = '#22d3ee'; ctx.beginPath(); ctx.arc(p4x, p4y, 5, 0, Math.PI * 2); ctx.fill();
   ctx.fillStyle = 'rgba(34,211,238,0.3)'; ctx.beginPath(); ctx.arc(p4x, p4y, 10, 0, Math.PI * 2); ctx.fill();
   ctx.fillStyle = '#22d3ee'; ctx.font = 'bold 10px sans-serif'; ctx.textAlign = 'center';
   ctx.fillText('密度最大', p4x, p4y - 14);
-  var cx = pl + (temp - (-2)) / (15 - (-2)) * pw;
+
+  // Current temp marker
+  var cx = pl + (temp - T_MIN) / (T_MAX - T_MIN) * pw;
   var cRho = waterDensity(temp), cy = pb - (cRho - yMin) / (yMax - yMin) * ph;
   ctx.fillStyle = 'rgba(251,146,60,0.3)'; ctx.beginPath(); ctx.arc(cx, cy, 9, 0, Math.PI * 2); ctx.fill();
   ctx.fillStyle = '#fb923c'; ctx.beginPath(); ctx.arc(cx, cy, 5, 0, Math.PI * 2); ctx.fill();
@@ -920,9 +935,11 @@ function drawGraph(temp) {
   ctx.fillStyle = '#fb923c'; ctx.font = 'bold 10px sans-serif'; ctx.textAlign = 'left';
   var lx = cx + 12; if (lx > pr - 30) lx = cx - 55;
   ctx.fillText(temp.toFixed(1) + '°C', lx, cy + 4);
+
+  // Zone labels
   ctx.fillStyle = 'rgba(34,211,238,0.5)'; ctx.font = 'italic 10px sans-serif'; ctx.textAlign = 'center';
-  ctx.fillText('反常膨胀区', pl + (2 - (-2)) / (15 - (-2)) * pw, pt + ph * 0.25);
-  ctx.fillText('正常膨胀区', pl + (8 - (-2)) / (15 - (-2)) * pw, pt + ph * 0.85);
+  ctx.fillText('反常膨胀区', pl + (2 - T_MIN) / (T_MAX - T_MIN) * pw, pt + ph * 0.25);
+  ctx.fillText('正常膨胀区', pl + (6 - T_MIN) / (T_MAX - T_MIN) * pw, pt + ph * 0.85);
   ctx.strokeStyle = 'rgba(34,211,238,0.15)'; ctx.lineWidth = 0.5; ctx.setLineDash([2, 4]);
   ctx.beginPath(); ctx.moveTo(pl, pt + ph * 0.45); ctx.lineTo(pr, pt + ph * 0.45); ctx.stroke();
   ctx.setLineDash([]);
@@ -1025,19 +1042,19 @@ function updateUI(temp) {
   denEl.className = Math.abs(temp - 4) < 0.3 ? 'dv cyan' : 'dv blue';
 
   var thermalPct;
-  if (temp <= 0) thermalPct = 5;
-  else if (temp <= 4) thermalPct = 8 + temp * 3;
-  else thermalPct = Math.min(98, 20 + (temp - 4) * 8);
+  if (temp <= 0) thermalPct = 4;
+  else if (temp <= 4) thermalPct = 6 + temp * 3.5;
+  else thermalPct = Math.min(95, 20 + (temp - 4) * 18);
   document.getElementById('thermalBar').style.width = thermalPct + '%';
-  var thermalLabel = thermalPct < 15 ? '极弱（晶格锁定）' : (thermalPct < 25 ? '微弱' : (thermalPct < 50 ? '中等' : (thermalPct < 75 ? '较强' : '剧烈')));
+  var thermalLabel = thermalPct < 12 ? '极弱（晶格锁定）' : (thermalPct < 25 ? '微弱' : (thermalPct < 50 ? '中等' : (thermalPct < 75 ? '较强' : '剧烈')));
   document.getElementById('thermalVal').textContent = thermalLabel;
 
   var hbondPct;
   if (temp <= 0) hbondPct = 98;
-  else if (temp < 4) hbondPct = 85 - (4 - temp) * 3;
-  else hbondPct = Math.max(5, 85 - (temp - 4) * 9);
+  else if (temp < 4) hbondPct = 82 - (4 - temp) * 4;
+  else hbondPct = Math.max(6, 82 - (temp - 4) * 18);
   document.getElementById('hbondBar').style.width = hbondPct + '%';
-  var hbondLabel = hbondPct > 90 ? '极强（完全锁定）' : (hbondPct > 75 ? '强（形成空旷结构）' : (hbondPct > 40 ? '中等（团簇形成）' : (hbondPct > 15 ? '较弱（快速断裂）' : '极弱（大量断裂）')));
+  var hbondLabel = hbondPct > 90 ? '极强（完全锁定）' : (hbondPct > 70 ? '强（形成空旷结构）' : (hbondPct > 35 ? '中等（团簇形成）' : (hbondPct > 12 ? '较弱（快速断裂）' : '极弱（大量断裂）')));
   document.getElementById('hbondVal').textContent = hbondLabel;
 
   document.getElementById('formulaCalc').textContent =
@@ -1045,21 +1062,19 @@ function updateUI(temp) {
 
   var tip = document.getElementById('tipBox');
   if (Math.abs(temp - 4) < 0.3) {
-    tip.innerHTML = '✅ <span class="highlight">阶段1：4°C最佳平衡</span><br>分子自由快速运动，氢键短暂闪烁（~皮秒寿命），无稳定团簇。热运动适度打破氢键，分子可紧密堆叠→<strong>密度最大</strong>。';
+    tip.innerHTML = '✅ <span class="highlight">4°C：最佳平衡点</span><br>热运动与氢键达到最佳平衡，分子排列最紧密→<strong>密度最大</strong>。';
   } else if (temp <= 0) {
-    tip.innerHTML = '🧊 <span class="highlight">阶段5：冰（≤0°C）</span><br>所有分子锁定在六边形晶格中，氢键完全稳定。体积比4°C时膨胀约<strong>9%</strong>。晶格中留下大量规则空隙→冰浮于水面。';
+    tip.innerHTML = '🧊 <span class="highlight">0°C：冰</span><br>所有分子锁定在六边形晶格中，氢键完全稳定。体积膨胀→<strong>密度降低</strong>→冰浮于水面。';
   } else if (temp < 1) {
-    tip.innerHTML = '🔮 <span class="highlight">阶段3：接近冰点（0~1°C）</span><br>四面体结构主导，分子运动几乎停止。氢键网络贯穿整个液体，<strong>空隙急剧增多</strong>。体积明显膨胀。';
+    tip.innerHTML = '🔮 <span class="highlight">接近冰点（0~1°C）</span><br>四面体结构主导，分子运动几乎停止。氢键网络贯穿液体，<strong>空隙急剧增多</strong>。';
   } else if (temp < 4) {
-    tip.innerHTML = '🔍 <span class="highlight">阶段2：反常膨胀（1~4°C）</span><br>降温→热运动减弱→氢键寿命延长→<strong>小分子团簇形成</strong>。团簇内分子按四面体排列，产生空隙→体积膨胀→密度减小。';
-  } else if (temp <= 8) {
-    tip.innerHTML = '🌡 <span class="highlight">阶段1：正常膨胀（4~8°C）</span><br>热运动逐渐增强，开始打破部分氢键，分子可更紧密堆叠。但温度继续升高，分子振动加剧，体积正常膨胀。';
+    tip.innerHTML = '🔍 <span class="highlight">反常膨胀区（1~4°C）</span><br>降温→热运动减弱→氢键寿命延长→<strong>分子团簇形成</strong>→四面体排列产生空隙→<strong>降温膨胀</strong>。';
   } else {
-    tip.innerHTML = '🔥 <span class="highlight">阶段1：高温区（>8°C）</span><br>氢键大量断裂，热运动剧烈使分子间距增大，正常热胀冷缩。注意与4°C时体积的明显差异。';
+    tip.innerHTML = '🌡 <span class="highlight">正常膨胀区（4~8°C）</span><br>升温→热运动加剧→氢键被打破→分子自由运动→<strong>正常热胀冷缩</strong>。';
   }
   document.getElementById('btn0').className = Math.abs(temp) < 0.3 ? 'btn active' : 'btn';
   document.getElementById('btn4').className = Math.abs(temp - 4) < 0.3 ? 'btn active' : 'btn';
-  document.getElementById('btn10').className = Math.abs(temp - 10) < 0.3 ? 'btn active' : 'btn';
+  document.getElementById('btn8').className = Math.abs(temp - 8) < 0.3 ? 'btn active' : 'btn';
 }
 
 // ==================== Controls ====================
