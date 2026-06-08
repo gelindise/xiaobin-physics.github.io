@@ -170,12 +170,6 @@ canvas { display:block; margin:0 auto; }
   <div class="card">
     <h2>探究阻力对物体运动的影响</h2>
     <div id="canvasWrap"><canvas id="c"></canvas></div>
-    <div class="data-row" id="dataDisplay">
-      <div class="data-item"><div class="val" id="valSpeed" style="color:var(--orange)">0.0</div><div class="lbl">速度 m/s</div></div>
-      <div class="data-item"><div class="val" id="valDist" style="color:var(--teal)">0.0</div><div class="lbl">水平距离 m</div></div>
-      <div class="data-item"><div class="val" id="valAccel" style="color:var(--purple)">0.00</div><div class="lbl">加速度 m/s²</div></div>
-      <div class="data-item"><div class="val" id="valTime" style="color:var(--text2)">0.00</div><div class="lbl">时间 s</div></div>
-    </div>
     <div class="ctrl-bar">
       <span style="font-size:0.75rem;color:var(--text2);font-weight:600;">表面</span>
       <div class="surface-seg" id="surfaceSeg"></div>
@@ -219,8 +213,7 @@ canvas { display:block; margin:0 auto; }
         <li>选择水平表面材料 → 点击<strong>"开始"</strong>观察小车运动</li>
         <li>切换不同表面对比阻力对运动距离的影响</li>
         <li>使用<strong>慢动作</strong>（2×/4×）仔细观察速度变化</li>
-        <li>右侧面板显示<strong>v-t 图像</strong>、<strong>速度仪表盘</strong>和<strong>受力分析</strong></li>
-        <li>多次实验数据自动记录在对比表格中</li>
+        <li>每次实验自动记录在对比表格中，可同时查看多次结果</li>
       </ul>
       <div class="tip">🔍 观察理想光滑面：小车到达水平面后以恒定速度一直运动下去。</div>
     </div>
@@ -252,8 +245,6 @@ let simTime = 0;
 let phase = 'waiting';       // waiting | running | paused | finished
 let slowMo = 1;              // 慢动作倍率
 let runs = [];               // 已完成的实验记录
-let particles = [];
-let carTrail = [];           // 当前运行的轨迹点
 
 // ---- 派生物理量 ----
 let rampAngle, rampLen, tIncline, v0, trackScale, rampPixelScale;
@@ -299,48 +290,6 @@ const L = {
   // 速度仪表盘 — 左上角小叠加
   gaugeCX: 60, gaugeCY: 58, gaugeR: 28,
 };
-
-// ---- 粒子系统 ----
-function spawnParticles(x, y, count, color) {
-  for (let i = 0; i < count; i++) {
-    particles.push({
-      x, y,
-      vx: (Math.random() - 0.5) * 40,
-      vy: -Math.random() * 60 - 20,
-      life: 0.5 + Math.random() * 0.5,
-      maxLife: 0.5 + Math.random() * 0.5,
-      r: 1 + Math.random() * 2.5,
-      color
-    });
-  }
-  if (particles.length > 200) particles.splice(0, particles.length - 200);
-}
-
-function updateParticles(dt) {
-  for (let i = particles.length - 1; i >= 0; i--) {
-    let p = particles[i];
-    p.x += p.vx * dt;
-    p.y += p.vy * dt;
-    p.vy += 80 * dt; // gravity
-    p.life -= dt;
-    if (p.life <= 0) particles.splice(i, 1);
-  }
-}
-
-function drawParticles(ctx) {
-  for (let p of particles) {
-    let alpha = p.life / p.maxLife;
-    ctx.fillStyle = p.color.replace(')', `, ${alpha})`).replace('rgb', 'rgba');
-    if (p.color.startsWith('#')) {
-      ctx.globalAlpha = alpha;
-      ctx.fillStyle = p.color;
-    }
-    ctx.beginPath();
-    ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
-    ctx.fill();
-  }
-  ctx.globalAlpha = 1;
-}
 
 // ---- 物理计算 ----
 function getCarState() {
@@ -398,14 +347,6 @@ function getCarState() {
       offScreen: flatDist * trackScale > L.trackW + 50
     };
   }
-}
-
-// ---- 轨迹记录 ----
-let vtData = []; // [{t, v}] for current run
-
-function recordVT(t, v) {
-  vtData.push({ t, v });
-  if (vtData.length > 3000) vtData.shift();
 }
 
 // ---- 渲染：背景 ----
@@ -747,125 +688,6 @@ function roundRect(ctx, x, y, w, h, r) {
   ctx.closePath();
 }
 
-// ---- 渲染：v-t 迷你图（右下角叠加） ----
-function drawMiniVT(ctx) {
-  let gx = VW - 230, gy = VH - 82, gw = 218, gh = 72;
-  let ml = 28, mr = 4, mt = 6, mb = 16;
-  let px = gx + ml, py = gy + mt, pw = gw - ml - mr, ph = gh - mt - mb;
-
-  ctx.fillStyle = 'rgba(10,10,18,0.75)';
-  ctx.strokeStyle = 'rgba(255,255,255,0.1)';
-  ctx.lineWidth = 1;
-  roundRect(ctx, gx, gy, gw, gh, 5);
-  ctx.fill();
-  ctx.stroke();
-
-  let vMax = Math.ceil(v0 * 1.15); if (vMax < 1) vMax = 1;
-  let tMax = tIncline + (SURFACES[surfaceIdx].mu === 0 ? tIncline * 2 : v0 / (SURFACES[surfaceIdx].mu * G));
-  for (let r of runs) { let rt = tIncline + (r.mu === 0 ? tIncline * 2 : v0 / (r.mu * G)); if (rt > tMax) tMax = rt; }
-  tMax = Math.max(tMax * 1.1, simTime * 1.05, 1);
-
-  // 轴
-  ctx.strokeStyle = 'rgba(255,255,255,0.25)';
-  ctx.lineWidth = 0.8;
-  ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(px, py + ph); ctx.lineTo(px + pw, py + ph); ctx.stroke();
-
-  // 历史线
-  for (let r of runs) {
-    ctx.strokeStyle = r.color; ctx.globalAlpha = 0.3; ctx.lineWidth = 1;
-    ctx.setLineDash([4, 3]); ctx.beginPath();
-    ctx.moveTo(px, py + ph);
-    ctx.lineTo(px + (tIncline / tMax) * pw, py + ph - (v0 / vMax) * ph);
-    let tS = r.mu === 0 ? tMax : r.stopTime;
-    ctx.lineTo(px + ((tIncline + tS) / tMax) * pw, py + ph - ((r.mu === 0 ? v0 : 0) / vMax) * ph);
-    ctx.stroke(); ctx.setLineDash([]);
-  }
-  ctx.globalAlpha = 1;
-
-  // 当前线
-  if (vtData.length >= 2) {
-    ctx.strokeStyle = SURFACES[surfaceIdx].color; ctx.lineWidth = 1.6;
-    ctx.beginPath();
-    for (let i = 0; i < vtData.length; i++) {
-      let sx = px + (vtData[i].t / tMax) * pw;
-      let sy = py + ph - (vtData[i].v / vMax) * ph;
-      i === 0 ? ctx.moveTo(sx, sy) : ctx.lineTo(sx, sy);
-    }
-    ctx.stroke();
-  }
-  ctx.fillStyle = 'rgba(255,255,255,0.4)'; ctx.font = '8px -apple-system, "PingFang SC", sans-serif';
-  ctx.textAlign = 'left'; ctx.fillText('v-t', gx + 4, gy + 10);
-}
-
-// ---- 渲染：速度仪表盘（左上角小叠加） ----
-function drawGauge(ctx, speed) {
-  let cx = L.gaugeCX, cy = L.gaugeCY, r = L.gaugeR;
-  let vMax = Math.max(v0, 0.5);
-  let bgR = r + 6;
-
-  ctx.fillStyle = 'rgba(10,10,18,0.75)';
-  ctx.strokeStyle = 'rgba(255,255,255,0.1)'; ctx.lineWidth = 1;
-  ctx.beginPath(); ctx.arc(cx, cy, bgR, Math.PI, 0); ctx.closePath(); ctx.fill(); ctx.stroke();
-
-  let zones = [{s:Math.PI,e:Math.PI*1.4,c:'#34C759'},{s:Math.PI*1.4,e:Math.PI*1.7,c:'#FF9500'},{s:Math.PI*1.7,e:0,c:'#FF3B30'}];
-  for (let z of zones) { ctx.strokeStyle = z.c; ctx.lineWidth = 5; ctx.beginPath(); ctx.arc(cx, cy, r, z.s, z.e); ctx.stroke(); }
-
-  for (let k = 0; k <= 10; k++) {
-    let a = Math.PI + Math.PI * k / 10;
-    ctx.strokeStyle = 'rgba(255,255,255,0.3)'; ctx.lineWidth = k % 5 === 0 ? 1.2 : 0.5;
-    ctx.beginPath(); ctx.moveTo(cx + Math.cos(a) * (r - 7), cy + Math.sin(a) * (r - 7));
-    ctx.lineTo(cx + Math.cos(a) * r, cy + Math.sin(a) * r); ctx.stroke();
-  }
-
-  let frac = Math.min(speed / vMax, 1);
-  let na = Math.PI + Math.PI * frac;
-  ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5;
-  ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + Math.cos(na) * (r - 6), cy + Math.sin(na) * (r - 6)); ctx.stroke();
-  ctx.fillStyle = SURFACES[surfaceIdx].color;
-  ctx.beginPath(); ctx.arc(cx + Math.cos(na) * (r - 8), cy + Math.sin(na) * (r - 8), 2.5, 0, Math.PI * 2); ctx.fill();
-  ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(cx, cy, 2.5, 0, Math.PI * 2); ctx.fill();
-  ctx.fillStyle = '#fff'; ctx.font = 'bold 10px -apple-system, "PingFang SC", sans-serif'; ctx.textAlign = 'center';
-  ctx.fillText(speed.toFixed(1), cx, cy + 15);
-}
-
-// ---- 渲染：受力箭头（直接画在小车旁） ----
-function drawForceOnCar(ctx, carState) {
-  if (!carState || carState.onRamp) return;
-  let cx = carState.x, cy = carState.y;
-  let off = 36;
-
-  // 重力 — 向下
-  drawArrow(ctx, cx, cy + off, cx, cy + off + 30, '#FF9500', 'G', 'bottom');
-  // 支持力 — 向上
-  drawArrow(ctx, cx - 10, cy - off, cx - 10, cy - off - 30, '#34C759', 'N', 'top');
-  // 阻力 — 向左（仅在运动中且 μ>0）
-  if (!carState.stopped && SURFACES[surfaceIdx].mu > 0) {
-    drawArrow(ctx, cx + off, cy, cx + off - 30, cy, '#FF3B30', 'f', 'right');
-  }
-  // 速度 — 向右
-  if (carState.v > 0.05) {
-    drawArrow(ctx, cx + off + 10, cy, cx + off + 40, cy, SURFACES[surfaceIdx].color, 'v', 'left');
-  }
-}
-
-function drawArrow(ctx, x1, y1, x2, y2, color, label, side) {
-  let dx = x2 - x1, dy = y2 - y1;
-  let len = Math.sqrt(dx * dx + dy * dy);
-  if (len < 2) return;
-  let ux = dx / len, uy = dy / len;
-  ctx.strokeStyle = color; ctx.lineWidth = 2;
-  ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
-  let as = 6;
-  ctx.fillStyle = color;
-  ctx.beginPath(); ctx.moveTo(x2, y2);
-  ctx.lineTo(x2 - ux * as + uy * as * 0.5, y2 - uy * as - ux * as * 0.5);
-  ctx.lineTo(x2 - ux * as - uy * as * 0.5, y2 - uy * as + ux * as * 0.5);
-  ctx.closePath(); ctx.fill();
-  ctx.fillStyle = color; ctx.font = 'bold 10px -apple-system, "PingFang SC", sans-serif';
-  ctx.textAlign = side === 'left' ? 'right' : side === 'right' ? 'left' : 'center';
-  ctx.fillText(label, side === 'left' ? x2 - 6 : side === 'right' ? x2 + 6 : x2, side === 'top' ? y2 - 4 : side === 'bottom' ? y2 + 12 : y2 + 4);
-}
-
 // ---- 渲染：标题和提示 ----
 function drawHUD(ctx, carState) {
   ctx.fillStyle = '#fff'; ctx.font = 'bold 16px -apple-system, "PingFang SC", sans-serif'; ctx.textAlign = 'center';
@@ -914,25 +736,12 @@ function render() {
     drawCar(ctx, carState.x, carState.y, carState.angle, SURFACES[surfaceIdx].color, carState.stopped);
   }
 
-  // 粒子
-  drawParticles(ctx);
-
-  // 受力箭头（直接画在小车上方）
-  if (carState) drawForceOnCar(ctx, carState);
-
-  // 左上角小速度表
-  if (carState && carState.v > 0) drawGauge(ctx, carState.v);
-  else if (phase === 'waiting') drawGauge(ctx, 0);
-
-  // v-t 小图（右下角）
-  drawMiniVT(ctx);
-
   drawHUD(ctx, carState);
 }
 
 // ---- 动画循环 ----
-let lastTime = 0, lastRecordT = 0;
-let totalDist = 0; // 车轮累计路程
+let lastTime = 0;
+let totalDist = 0;
 
 function loop(ts) {
   requestAnimationFrame(loop);
@@ -947,13 +756,6 @@ function loop(ts) {
     let effectiveDt = dt / slowMo;
     simTime += effectiveDt;
 
-    // 记录 v-t 数据
-    if (simTime - lastRecordT > 1 / 40) {
-      lastRecordT = simTime;
-      let cs = getCarState();
-      recordVT(simTime, cs.v);
-    }
-
     // 更新车轮（累积路程）
     let cs = getCarState();
     let prevDist = totalDist;
@@ -963,14 +765,6 @@ function loop(ts) {
       totalDist = rampLen + cs.flatDist;
     }
     wheelAngle += (totalDist - prevDist) * trackScale / 10;
-
-    // 粒子
-    let dustRate = SURFACES[surfaceIdx].mu * 80;
-    if (dustRate > 0 && cs.v > 0.3 && Math.random() < dustRate * effectiveDt) {
-      let wheelY = cs.y + 13;
-      spawnParticles(cs.x - 10, wheelY, Math.floor(dustRate * effectiveDt * 3) + 1, SURFACES[surfaceIdx].color);
-    }
-    updateParticles(effectiveDt);
 
     // 检查结束
     if (cs.stopped || cs.offScreen) {
@@ -995,8 +789,6 @@ function loop(ts) {
       phase = 'finished';
       updateButtons();
     }
-  } else if (phase === 'finished') {
-    updateParticles(0.016);
   }
 
   // 只在需要时渲染
@@ -1008,31 +800,6 @@ function loop(ts) {
     ctx.restore();
   }
 }
-
-// ---- UI 更新 ----
-function updateDataDisplay(carState) {
-  if (!carState || phase === 'waiting') {
-    document.getElementById('valSpeed').textContent = '0.0';
-    document.getElementById('valDist').textContent = '0.0';
-    document.getElementById('valAccel').textContent = '0.00';
-    document.getElementById('valTime').textContent = '0.00';
-  } else {
-    document.getElementById('valSpeed').textContent = carState.v.toFixed(1);
-    document.getElementById('valDist').textContent = carState.flatDist.toFixed(1);
-    document.getElementById('valAccel').textContent = carState.accel.toFixed(2);
-    document.getElementById('valTime').textContent = simTime.toFixed(2);
-  }
-}
-
-// 定时更新数据显示（在动画循环外）
-setInterval(() => {
-  if (phase === 'running' || phase === 'paused') {
-    let cs = getCarState();
-    updateDataDisplay(cs);
-  } else if (phase === 'waiting') {
-    updateDataDisplay(null);
-  }
-}, 100);
 
 function updateButtons() {
   let btnS = document.getElementById('btnStart');
@@ -1082,26 +849,19 @@ function startSim() {
   if (phase === 'running') return;
   if (phase === 'finished') resetState();
   simTime = 0;
-  vtData = [];
   totalDist = 0;
   wheelAngle = 0;
-  particles = [];
-  lastRecordT = 0;
   phase = 'running';
   lastTime = 0;
   updateButtons();
-  updateDataDisplay(null);
 }
 
 function resetState() {
   simTime = 0;
-  vtData = [];
   totalDist = 0;
   wheelAngle = 0;
-  particles = [];
   phase = 'waiting';
   updateButtons();
-  updateDataDisplay(null);
 }
 
 function resetSim() {
