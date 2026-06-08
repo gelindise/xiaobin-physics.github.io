@@ -56,7 +56,7 @@
       background-clip: text;
     }
     #divFull { background: #fff; border-radius: 12px; overflow: hidden; }
-    #myContainer { text-align: center; }
+    #myContainer { width: 100%; min-height: 500px; text-align: center; }
     #myP5Canvas { display: block; margin: 0 auto; max-width: 100%; touch-action: none; }
     .control-row {
       display: flex; flex-wrap: wrap; justify-content: center; align-items: center;
@@ -171,31 +171,45 @@ var elapsedTime = 0;
 var loopId = null;
 
 // Tank dimensions
-var tankX = 250, tankY = 230, tankW = 300, tankH = 200, tankSlant = 45;
-var fluidLevel = 50;       // distance from tank top to fluid surface
+var tankX, tankY, tankW, tankH, tankSlant, bottleX;
+var fluidLevel = 50;
 var bottleW, bottleH, bottleY;
-var bottleX = 400;
 
 function setup() {
   frameRate(30);
   var o = select("#myContainer");
   var a = 0.62;
-  var w = int(min(o.width, (window.innerHeight - 280) / a));
+  var cw = o.width;
+  if (!cw || cw < 50) cw = min(windowWidth - 40, 900);
+  var w = int(min(cw, (window.innerHeight - 280) / a));
   var h = int(w * a);
   var c = createCanvas(w, h);
   c.parent("myContainer");
   c.id("myP5Canvas");
   updateBottleSize();
   updateLabels();
+  calcLayout();
   textFont("Arial");
+}
+
+function calcLayout() {
+  tankW = width * 0.28;
+  tankH = height * 0.38;
+  tankX = width * 0.05;
+  tankY = height * 0.38;
+  tankSlant = width * 0.05;
+  bottleX = tankX + tankW * 0.5;
 }
 
 function windowResized() {
   var o = select("#myContainer");
+  var cw = o.width;
+  if (!cw || cw < 50) cw = min(windowWidth - 40, 900);
   var a = 0.62;
-  var w = int(min(o.width, (window.innerHeight - 280) / a));
+  var w = int(min(cw, (window.innerHeight - 280) / a));
   var h = int(w * a);
   resizeCanvas(w, h);
+  calcLayout();
 }
 
 function updateBottleSize() {
@@ -253,6 +267,7 @@ function startStop() {
 function resetLab() {
   running = false;
   yPos = 0;
+  fluidLevel = 50;
   dataPoints = [];
   elapsedTime = 0;
   select("#btnStart").html("开始");
@@ -266,8 +281,9 @@ function draw() {
   // Physics update
   if (running) {
     elapsedTime = (millis() - startTime) / 1000;
-    yPos += 0.6;
-    if (yPos > 230) yPos = 230;
+    yPos += 0.4;
+    var maxDescend = tankY + tankH - bottleH + 10;
+    if (yPos > maxDescend) yPos = maxDescend;
     if (elapsedTime > 20) running = false;
 
     // Calculate forces
@@ -302,7 +318,7 @@ function draw() {
     }
   }
 
-  bottleY = yPos + 120;
+  bottleY = tankY - 110 + yPos;
 
   // ===== Draw scene =====
   var cx = width * 0.5;
@@ -360,13 +376,14 @@ function draw() {
   noStroke();
   rect(tankX, flTop, tankW, tankY + tankH - flTop);
 
+  var sensorY = bottleY - 110;
   // String from force sensor to bottle
   stroke(251, 241, 82);
   strokeWeight(2);
-  line(bottleX, yPos + 75, bottleX, bottleY);
+  line(bottleX, sensorY + 52, bottleX, bottleY);
 
   // Force sensor
-  drawForceSensor(bottleX, yPos + 10);
+  drawForceSensor(bottleX, sensorY);
 
   // Bottle
   drawBottle(bottleX, bottleY, bottleW, bottleH);
@@ -386,24 +403,26 @@ function draw() {
   textAlign(CENTER);
   textSize(18);
   fill(150, 0, 0);
-  text(planetNames[planetNum], 140, 60);
+  var labelLX = tankX + 10;
+  var labelRX = width - 100;
+  text(planetNames[planetNum], labelLX, 60);
   textSize(14);
   fill(100);
-  text("重力加速度: " + planetGravity[planetNum] + " m/s²", 140, 85);
+  text("重力加速度: " + planetGravity[planetNum] + " m/s²", labelLX, 85);
 
   fill(0, 0, 150);
   textSize(18);
-  text(fluidNames[fluidNum], width - 100, 60);
+  text(fluidNames[fluidNum], labelRX, 60);
   textSize(14);
   fill(100);
-  text("密度: " + fluidDensity[fluidNum] + " g/mL", width - 100, 85);
+  text("密度: " + fluidDensity[fluidNum] + " g/mL", labelRX, 85);
 
   // Mass and Volume display
   fill(150, 0, 0);
   textSize(14);
-  text("质量: " + actualMass + " g", 140, 115);
+  text("质量: " + actualMass + " g", labelLX, 115);
   fill(0, 0, 150);
-  text("体积: " + actualVolume + " mL", width - 100, 115);
+  text("体积: " + actualVolume + " mL", labelRX, 115);
 
   // Force display
   var gForce = actualMass * planetGravity[planetNum] / 1000;
@@ -514,7 +533,7 @@ function drawBottle(x, y, w, h) {
 }
 
 function drawGraph() {
-  var gx = 40, gy = height * 0.54, gw = width * 0.38, gh = height * 0.4;
+  var gx = width * 0.40, gy = height * 0.54, gw = width * 0.55, gh = height * 0.4;
 
   // Graph border
   fill(255);
@@ -599,14 +618,15 @@ function drawGraph() {
     }
   }
 
-  // Horizontal line for gravity
+  // Horizontal dashed line for gravity reference
   var gForce = actualMass * planetGravity[planetNum] / 1000;
   var gyForce = map(gForce, 0, graphMaxForce, graphY0, graphY0 - graphH);
   stroke(0, 0, 200);
   strokeWeight(1);
-  drawingContext.setLineDash([4, 4]);
-  line(graphX0, gyForce, graphX0 + graphW, gyForce);
-  drawingContext.setLineDash([]);
+  var seg = 5, gap = 4;
+  for (var dx = graphX0; dx < graphX0 + graphW; dx += seg + gap) {
+    line(dx, gyForce, min(dx + seg, graphX0 + graphW), gyForce);
+  }
   fill(0, 0, 200);
   textAlign(LEFT);
   textSize(11);
