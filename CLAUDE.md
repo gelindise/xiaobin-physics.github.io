@@ -12,14 +12,16 @@ A static Chinese physics virtual experiment platform (物理虚拟实验平台) 
 - **Experiment pages** (self-contained `.html` files like `阿基米德原理.html`, `杠杆最小力方向.html`): Each is fully self-contained with inline `<style>` and `<script>`. They use HTML Canvas (`<canvas id="simCanvas">`) for physics simulation with `requestAnimationFrame` render loops
 - **`script.js`**: Shared JS — user auth (Tencent Docs API for user sync), VIP logic, particle background, UI utilities
 - **`style.css`**: Shared styles — dark theme with glass-morphism UI, responsive layout, chapter/section accordion navigation, experiment grid cards
-- **Experiments list hierarchy**: Grade tabs (八年级上册/下册, 九年级) → Chapters (章) → Sections (节) → Experiment cards. Each card links to a specific experiment HTML file
+- **Experiments list hierarchy**: Grade tabs (八年级上册/下册, 九年级) → Chapters (章) → Sections (节) → Experiment cards. Cards use `onclick="openLab('file.html')"` which loads the experiment in a fullscreen iframe overlay on `experiments.html`, so the URL stays as `experiments.html` — no shareable deep links.
+- **iframe overlay** (`#labOverlay` in `experiments.html`): `script.js` provides `openInFrame(url)`, `closeLab()`. `openLab()` and `checkVip()` both delegate to `openInFrame()`. The overlay has a "← 返回实验列表" button.
 
 ## Experiment Page Pattern
 
 Each experiment HTML follows the same structure:
 1. Dark theme CSS variables (`:root`) matching `style.css`
-2. Fixed header with logo + nav
-3. `<div class="main-card">` containing `<canvas id="simCanvas">` + control panel
+2. Access protection guard at the top of `<script>` (referrer + localStorage token check, redirect to `index.html` on fail)
+3. No separate header/nav needed — the iframe overlay provides unified navigation
+4. `<div class="main-card">` containing `<canvas id="simCanvas">` + control panel
 4. Control panel: material/fluid selectors, sliders, buttons, real-time data display
 5. Inline `<script>` with `MATERIALS`/`FLUIDS` config objects, physics calculations, Canvas rendering loop
 6. Formula bar + experiment info cards below the simulation

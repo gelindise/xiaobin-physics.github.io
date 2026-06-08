@@ -297,7 +297,7 @@ async function checkVip(lab) {
   const isVip = user.vip && user.vip !== "普通用户";
   const isExpired = isVip && user.expire !== "永久" && now > new Date(user.expire);
   if (!isVip || isExpired) { alert("⚠️ VIP 权限不足或已过期，请开通"); location.href = "vip.html"; return; }
-  window.open(lab, "_blank");
+  openInFrame(lab);
 }
 
 function showGrade(btn, gradeId) {
@@ -322,7 +322,26 @@ function toggleSection(header) {
   if (!isActive) section.classList.add('active');
 }
 
-function openLab(lab) { window.open(lab, "_blank"); }
+function openInFrame(url) {
+  localStorage.setItem('_tk', Date.now());
+  var overlay = document.getElementById('labOverlay');
+  var frame = document.getElementById('labFrame');
+  if (overlay && frame) {
+    overlay.style.display = 'block';
+    frame.src = url;
+    document.body.style.overflow = 'hidden';
+  } else {
+    window.open(url, '_blank');
+  }
+}
+function closeLab() {
+  var overlay = document.getElementById('labOverlay');
+  var frame = document.getElementById('labFrame');
+  if (overlay) overlay.style.display = 'none';
+  if (frame) frame.src = '';
+  document.body.style.overflow = '';
+}
+function openLab(lab) { openInFrame(lab); }
 
 function buyVip(type) {
   let user = localStorage.getItem("currentUser");
