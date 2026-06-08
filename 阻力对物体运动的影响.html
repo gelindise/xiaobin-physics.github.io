@@ -104,10 +104,12 @@
     <div id="canvasWrap">
       <canvas id="simCanvas"></canvas>
       <div class="control-row">
-        <span class="ctrl-label">初速度</span>
+        <span class="ctrl-label">斜面高度</span>
         <button class="ctrl-btn" id="btnSpeedDown">−</button>
-        <span class="ctrl-label" id="speedLabel">3.0 m/s</span>
+        <span class="ctrl-label" id="speedLabel">0.46m</span>
         <button class="ctrl-btn" id="btnSpeedUp">+</button>
+        <span style="width:0.5rem"></span>
+        <span class="ctrl-label" style="color:#888;">到达底部速度: <span id="v0Label" style="color:#333;">3.0 m/s</span></span>
         <span style="width:0.5rem"></span>
         <button class="ctrl-btn" id="btnStart" style="background:#4caf50;color:#fff;border-color:#4caf50;">开始</button>
         <button class="ctrl-btn" id="btnReset">重置</button>
@@ -165,17 +167,19 @@ var surfaces = [
   { name: "木板", mu: 0.10, color: "#b8956a", trackColor: "#e8dcc8", trolleyColor: "#448844", short: "木板表面" }
 ];
 var g = 9.8;
-var v0 = 3.0;   // initial velocity m/s
+var rampHeight = 0.46;  // m, all three ramps same height → same v0 at bottom
+var v0 = Math.sqrt(2 * g * rampHeight);  // ≈ 3.0 m/s
 
 // ===== 动画状态 =====
 var running = false;
-var t = 0;           // elapsed time
+var t = 0;           // elapsed time since start
 var animId = null;
 var dataSeries = [[], [], []];   // {t, v} for each surface
+// each trolley: phase 0=incline, 1=horizontal; s=distance along path
 var trolleys = [
-  { x: 0, v: 0, stopped: false, stopX: 0 },
-  { x: 0, v: 0, stopped: false, stopX: 0 },
-  { x: 0, v: 0, stopped: false, stopX: 0 }
+  { phase: 0, s: 0, v: 0, x: 0, stopped: false, stopX: 0, inclineDone: false },
+  { phase: 0, s: 0, v: 0, x: 0, stopped: false, stopX: 0, inclineDone: false },
+  { phase: 0, s: 0, v: 0, x: 0, stopped: false, stopX: 0, inclineDone: false }
 ];
 
 // ===== Canvas =====
@@ -186,17 +190,25 @@ var layout = {};
 
 function calcLayout() {
   var L = layout;
-  L.trackLeft = W * 0.08;
+  L.trackLeft = W * 0.14;       // horizontal track starts after ramp
   L.trackRight = W * 0.68;
   L.trackW = L.trackRight - L.trackLeft;
-  L.laneH = H * 0.22;
+  L.laneH = H * 0.19;
   L.laneGap = H * 0.04;
-  L.laneStartY = H * 0.12;
+  L.laneStartY = H * 0.22;
+  // Ramp (identical for all three lanes)
+  L.rampW = W * 0.09;           // horizontal length of ramp
+  L.rampH = H * 0.19;           // visual height of ramp (scaled for display)
+  L.rampX = L.trackLeft - L.rampW;  // left edge of ramp
+  L.rampAngle = Math.atan2(L.rampH, L.rampW);
+  L.rampHyp = Math.sqrt(L.rampW * L.rampW + L.rampH * L.rampH); // hypotenuse (pixels)
+  L.rampScale = L.rampHyp / rampHeight;  // pixels per meter along incline
+  L.flatScale = L.trackW / 5.5;  // pixels per meter on horizontal
+  // Graph
   L.graphX = W * 0.72;
-  L.graphY = H * 0.1;
+  L.graphY = H * 0.08;
   L.graphW = W * 0.24;
-  L.graphH = H * 0.62;
-  L.scale = L.trackW / 5.5;   // pixels per meter (5.5m visible on track)
+  L.graphH = H * 0.7;
 }
 
 function getLaneY(i) {
@@ -205,19 +217,85 @@ function getLaneY(i) {
 
 // ===== 绘制函数 =====
 
+function drawRamp(i) {
+  var L = layout;
+  var y = getLaneY(i);
+  var rx = L.rampX, rw = L.rampW, rh = L.rampH;
+
+  // 斜面（三角形填充）
+  ctx.fillStyle = "#d4c8b8";
+  ctx.beginPath();
+  ctx.moveTo(rx, y + L.laneH);
+  ctx.lineTo(rx + rw, y + L.laneH);
+  ctx.lineTo(rx, y + L.laneH - rh);
+  ctx.closePath();
+  ctx.fill();
+
+  // 斜面边框
+  ctx.strokeStyle = "#999";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(rx, y + L.laneH);
+  ctx.lineTo(rx + rw, y + L.laneH);
+  ctx.lineTo(rx, y + L.laneH - rh);
+  ctx.closePath();
+  ctx.stroke();
+
+  // 斜面纹理（斜线）
+  ctx.strokeStyle = "#c8b898";
+  ctx.lineWidth = 0.5;
+  ctx.globalAlpha = 0.5;
+  for (var d = 8; d < L.rampHyp; d += 8) {
+    var sx = rx + d * Math.cos(L.rampAngle);
+    var sy = y + L.laneH - d * Math.sin(L.rampAngle);
+    ctx.beginPath();
+    ctx.moveTo(sx, sy);
+    ctx.lineTo(sx + 6, sy + 2);
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+
+  // 高度标注（虚线）
+  ctx.strokeStyle = "#666";
+  ctx.lineWidth = 1;
+  ctx.setLineDash([3, 3]);
+  ctx.beginPath();
+  ctx.moveTo(rx - 16, y + L.laneH);
+  ctx.lineTo(rx - 16, y + L.laneH - rh);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // 高度箭头
+  ctx.fillStyle = "#666";
+  ctx.beginPath();
+  ctx.moveTo(rx - 16, y + L.laneH - rh);
+  ctx.lineTo(rx - 20, y + L.laneH - rh + 6);
+  ctx.lineTo(rx - 12, y + L.laneH - rh + 6);
+  ctx.closePath();
+  ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(rx - 16, y + L.laneH);
+  ctx.lineTo(rx - 20, y + L.laneH - 6);
+  ctx.lineTo(rx - 12, y + L.laneH - 6);
+  ctx.closePath();
+  ctx.fill();
+}
+
 function drawTrack(i) {
   var L = layout;
   var y = getLaneY(i);
   var s = surfaces[i];
 
-  // 轨道路面
+  // 斜面
+  drawRamp(i);
+
+  // 水平轨道路面
   ctx.fillStyle = s.trackColor;
   ctx.fillRect(L.trackLeft, y, L.trackW, L.laneH);
 
-  // 表面纹理
+  // 表面纹理（水平部分）
   ctx.globalAlpha = 0.15;
   if (i === 0) {
-    // 毛巾 — 短横线纹理
     for (var tx = L.trackLeft; tx < L.trackRight; tx += 12) {
       for (var ty = y + 5; ty < y + L.laneH; ty += 10) {
         ctx.fillStyle = "#8b4513";
@@ -225,7 +303,6 @@ function drawTrack(i) {
       }
     }
   } else if (i === 1) {
-    // 棉布 — 点状纹理
     for (var cx = L.trackLeft + 4; cx < L.trackRight; cx += 8) {
       for (var cy = y + 5; cy < y + L.laneH; cy += 8) {
         ctx.fillStyle = "#8899aa";
@@ -235,7 +312,6 @@ function drawTrack(i) {
       }
     }
   } else {
-    // 木板 — 水平木纹
     ctx.strokeStyle = "#a08060";
     ctx.lineWidth = 1;
     for (var wy = y + 4; wy < y + L.laneH; wy += 6) {
@@ -252,34 +328,41 @@ function drawTrack(i) {
   ctx.lineWidth = 2;
   ctx.strokeRect(L.trackLeft, y, L.trackW, L.laneH);
 
-  // 起点线
-  var startX = L.trackLeft + 15;
-  ctx.strokeStyle = "#333";
-  ctx.lineWidth = 2;
+  // 斜面底部接合点标记
+  ctx.fillStyle = "#555";
   ctx.beginPath();
-  ctx.moveTo(startX, y);
-  ctx.lineTo(startX, y + L.laneH);
+  ctx.arc(L.trackLeft, y + L.laneH, 4, 0, Math.PI * 2);
+  ctx.fill();
+
+  // 水平部分起点线（斜面底部）
+  ctx.strokeStyle = "#333";
+  ctx.lineWidth = 1.5;
+  ctx.setLineDash([4, 3]);
+  ctx.beginPath();
+  ctx.moveTo(L.trackLeft + 2, y);
+  ctx.lineTo(L.trackLeft + 2, y + L.laneH);
   ctx.stroke();
+  ctx.setLineDash([]);
 
   // 表面标签
   ctx.fillStyle = s.color;
-  ctx.font = "bold 13px 'PingFang SC','Microsoft YaHei',sans-serif";
+  ctx.font = "bold 12px 'PingFang SC','Microsoft YaHei',sans-serif";
   ctx.textAlign = "right";
-  ctx.fillText(s.short + " (μ=" + s.mu + ")", L.trackRight - 8, y + 18);
+  ctx.fillText(s.short + " (μ=" + s.mu + ")", L.trackRight - 8, y + 16);
 
-  // 刻度标记
-  ctx.fillStyle = "#666";
-  ctx.font = "10px 'PingFang SC','Microsoft YaHei',sans-serif";
+  // 水平部分刻度标记（从斜面底部开始算距离）
+  ctx.fillStyle = "#888";
+  ctx.font = "9px 'PingFang SC','Microsoft YaHei',sans-serif";
   ctx.textAlign = "center";
   for (var dm = 0; dm <= 5; dm++) {
-    var mx = startX + dm * (L.trackW - 15) / 5;
-    ctx.strokeStyle = "#bbb";
+    var mx = L.trackLeft + dm * L.trackW / 5;
+    ctx.strokeStyle = "#ccc";
     ctx.lineWidth = 0.5;
     ctx.beginPath();
-    ctx.moveTo(mx, y + L.laneH - 12);
+    ctx.moveTo(mx, y + L.laneH - 10);
     ctx.lineTo(mx, y + L.laneH);
     ctx.stroke();
-    ctx.fillText(dm + "m", mx, y + L.laneH - 2);
+    ctx.fillText(dm + "m", mx, y + L.laneH - 1);
   }
 }
 
@@ -288,59 +371,75 @@ function drawTrolley(i) {
   var y = getLaneY(i);
   var tr = trolleys[i];
   var s = surfaces[i];
-  var cx = L.trackLeft + 15 + tr.x * L.scale;
-  var cy = y + L.laneH / 2;
   var bw = 36, bh = 22;
+  var cx, cy, angle;
 
-  if (tr.stopped && tr.x === 0 && t > 0) return;
+  if (tr.phase === 0 && !tr.inclineDone) {
+    // On incline — position along the hypotenuse
+    var fracS = tr.s / rampHeight;  // 0 at top, 1 at bottom
+    if (fracS > 1) fracS = 1;
+    var d = fracS * L.rampHyp;     // pixels from top
+    cx = L.rampX + d * Math.cos(L.rampAngle);
+    cy = (y + L.laneH) - d * Math.sin(L.rampAngle);
+    angle = -L.rampAngle;          // tilt with slope
+  } else {
+    // On horizontal track
+    cx = L.trackLeft + tr.x * L.flatScale;
+    cy = y + L.laneH / 2;
+    angle = 0;
+  }
 
-  // 车身
+  // 车身（带旋转）
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(angle);
   ctx.fillStyle = s.trolleyColor;
   ctx.strokeStyle = "#222";
   ctx.lineWidth = 1.5;
   ctx.beginPath();
-  ctx.roundRect(cx - bw / 2, cy - bh / 2, bw, bh, 4);
+  ctx.roundRect(-bw / 2, -bh / 2, bw, bh, 4);
   ctx.fill();
   ctx.stroke();
 
   // 车窗
   ctx.fillStyle = "#c8e8ff";
-  ctx.fillRect(cx - bw / 2 + 6, cy - bh / 2 + 4, 10, 8);
-  ctx.fillRect(cx - bw / 2 + 20, cy - bh / 2 + 4, 10, 8);
+  ctx.fillRect(-bw / 2 + 6, -bh / 2 + 4, 10, 8);
+  ctx.fillRect(-bw / 2 + 20, -bh / 2 + 4, 10, 8);
 
   // 车轮
   ctx.fillStyle = "#333";
   ctx.beginPath();
-  ctx.arc(cx - 8, cy + bh / 2 + 2, 5, 0, Math.PI * 2);
+  ctx.arc(-8, bh / 2 + 2, 5, 0, Math.PI * 2);
   ctx.fill();
   ctx.beginPath();
-  ctx.arc(cx + 8, cy + bh / 2 + 2, 5, 0, Math.PI * 2);
+  ctx.arc(8, bh / 2 + 2, 5, 0, Math.PI * 2);
   ctx.fill();
 
-  // 速度标签（上方）
-  if (!tr.stopped || tr.stopX > 0) {
+  ctx.restore();
+
+  // 速度标签（在车上方，不随旋转）
+  if (running || tr.stopped) {
     ctx.fillStyle = s.trolleyColor;
     ctx.font = "bold 11px 'PingFang SC','Microsoft YaHei',sans-serif";
     ctx.textAlign = "center";
-    var vtext = tr.stopped ? "0 m/s" : tr.v.toFixed(2) + " m/s";
-    ctx.fillText("v=" + vtext, cx, cy - bh / 2 - 8);
+    var vtext = (tr.stopped && tr.phase === 1) ? "0 m/s" : tr.v.toFixed(2) + " m/s";
+    ctx.fillText("v=" + vtext, cx, cy - bh / 2 - 12);
   }
 
-  // 停止位置标记
+  // 停止位置标记（水平面上）
   if (tr.stopped && tr.stopX > 0) {
-    var sx = L.trackLeft + 15 + tr.stopX * L.scale;
+    var sx = L.trackLeft + tr.stopX * L.flatScale;
     ctx.fillStyle = s.trolleyColor;
     ctx.font = "bold 11px 'PingFang SC','Microsoft YaHei',sans-serif";
     ctx.textAlign = "center";
-    ctx.fillText("▼ " + tr.stopX.toFixed(2) + "m", sx, cy - bh / 2 - 8);
+    ctx.fillText("▼ " + tr.stopX.toFixed(2) + "m", sx, y + L.laneH / 2 - bh / 2 - 8);
 
-    // 停止位置虚线
     ctx.strokeStyle = s.trolleyColor;
     ctx.lineWidth = 1;
     ctx.setLineDash([3, 3]);
     ctx.globalAlpha = 0.5;
     ctx.beginPath();
-    ctx.moveTo(sx, cy - bh / 2 - 20);
+    ctx.moveTo(sx, y + L.laneH / 2 - bh / 2 - 18);
     ctx.lineTo(sx, y + L.laneH);
     ctx.stroke();
     ctx.globalAlpha = 1;
@@ -479,12 +578,24 @@ function drawDistanceComparison() {
   }
 }
 
+// ===== 斜面物理常量 =====
+var rampSin = 0;  // sin(ramp angle), computed in calcLayout
+var rampAccel = 0;  // a = g * sinθ
+var tRamp = 0;      // time to reach bottom
+
+function updateRampPhysics() {
+  rampSin = Math.sin(layout.rampAngle);
+  rampAccel = g * rampSin;
+  tRamp = Math.sqrt(2 * rampHeight / rampAccel);
+  v0 = Math.sqrt(2 * g * rampHeight);
+}
+
 // ===== 主循环 =====
 var lastTime = 0;
 
 function render(timestamp) {
   if (!lastTime) lastTime = timestamp;
-  var dt = Math.min((timestamp - lastTime) / 1000, 0.05); // cap at 50ms
+  var dt = Math.min((timestamp - lastTime) / 1000, 0.05);
   lastTime = timestamp;
 
   if (running) {
@@ -494,22 +605,45 @@ function render(timestamp) {
     for (var i = 0; i < 3; i++) {
       var tr = trolleys[i];
       if (tr.stopped) continue;
-      var mu = surfaces[i].mu;
-      tr.v = v0 - mu * g * t;
-      if (tr.v <= 0) {
-        tr.v = 0;
-        tr.stopped = true;
-        tr.stopX = v0 * v0 / (2 * mu * g);
-        tr.x = tr.stopX;
-      } else {
-        tr.x = v0 * t - 0.5 * mu * g * t * t;
-        allStopped = false;
+
+      if (tr.phase === 0) {
+        // ===== Incline phase =====
+        if (t >= tRamp) {
+          // Just reached the bottom
+          tr.phase = 1;
+          tr.inclineDone = true;
+          tr.s = rampHeight;
+          tr.v = v0;
+          tr.x = 0;
+        } else {
+          tr.s = 0.5 * rampAccel * t * t;
+          tr.v = rampAccel * t;
+          allStopped = false;
+          continue;
+        }
       }
+
+      // ===== Horizontal phase =====
+      if (tr.phase === 1) {
+        var tFlat = t - tRamp;
+        var mu = surfaces[i].mu;
+        tr.v = v0 - mu * g * tFlat;
+        if (tr.v <= 0) {
+          tr.v = 0;
+          tr.stopped = true;
+          tr.stopX = v0 * v0 / (2 * mu * g);
+          tr.x = tr.stopX;
+        } else {
+          tr.x = v0 * tFlat - 0.5 * mu * g * tFlat * tFlat;
+          allStopped = false;
+        }
+      }
+
       dataSeries[i].push({ t: t, v: tr.v });
       if (dataSeries[i].length > 400) dataSeries[i].shift();
     }
 
-    if (allStopped) {
+    if (allStopped && t > tRamp + 0.5) {
       running = false;
       updateButtons();
     }
@@ -524,7 +658,7 @@ function render(timestamp) {
   ctx.fillStyle = "#333";
   ctx.font = "bold 15px 'PingFang SC','Microsoft YaHei',sans-serif";
   ctx.textAlign = "center";
-  ctx.fillText("同一小车从相同初速度出发，在不同表面上的运动对比", W * 0.35, 28);
+  ctx.fillText("同一小车从斜面同一高度静止释放，在不同水平面上的运动对比", W * 0.35, 26);
 
   for (var i = 0; i < 3; i++) {
     drawTrack(i);
@@ -538,7 +672,7 @@ function render(timestamp) {
     ctx.fillStyle = "#bbb";
     ctx.font = "14px 'PingFang SC','Microsoft YaHei',sans-serif";
     ctx.textAlign = "center";
-    ctx.fillText("点击「开始」同时释放三辆小车", W * 0.38, H * 0.06);
+    ctx.fillText("点击「开始」→ 三辆小车同时从斜面顶端静止释放", W * 0.38, H * 0.04);
   }
 
   animId = requestAnimationFrame(render);
@@ -561,14 +695,15 @@ function updateButtons() {
 }
 
 function updateLabels() {
-  document.getElementById("speedLabel").textContent = v0.toFixed(1) + " m/s";
+  document.getElementById("speedLabel").textContent = rampHeight.toFixed(2) + "m";
+  document.getElementById("v0Label").textContent = v0.toFixed(1) + " m/s";
 }
 
 function startAll() {
   if (running) return;
   t = 0;
   for (var i = 0; i < 3; i++) {
-    trolleys[i] = { x: 0, v: v0, stopped: false, stopX: 0 };
+    trolleys[i] = { phase: 0, s: 0, v: 0, x: 0, stopped: false, stopX: 0, inclineDone: false };
     dataSeries[i] = [];
   }
   running = true;
@@ -579,7 +714,7 @@ function resetAll() {
   running = false;
   t = 0;
   for (var i = 0; i < 3; i++) {
-    trolleys[i] = { x: 0, v: v0, stopped: false, stopX: 0 };
+    trolleys[i] = { phase: 0, s: 0, v: 0, x: 0, stopped: false, stopX: 0, inclineDone: false };
     dataSeries[i] = [];
   }
   updateButtons();
@@ -597,6 +732,7 @@ function resize() {
   canvas.width = W;
   canvas.height = H;
   calcLayout();
+  updateRampPhysics();
 }
 
 // ===== 初始化 =====
@@ -605,12 +741,14 @@ ctx = canvas.getContext("2d");
 
 document.getElementById("btnSpeedDown").addEventListener("click", function() {
   if (running) return;
-  v0 = Math.max(1.0, v0 - 0.5);
+  rampHeight = Math.max(0.15, rampHeight - 0.1);
+  updateRampPhysics();
   updateLabels(); resetAll();
 });
 document.getElementById("btnSpeedUp").addEventListener("click", function() {
   if (running) return;
-  v0 = Math.min(8.0, v0 + 0.5);
+  rampHeight = Math.min(1.0, rampHeight + 0.1);
+  updateRampPhysics();
   updateLabels(); resetAll();
 });
 document.getElementById("btnStart").addEventListener("click", startAll);
@@ -619,9 +757,9 @@ window.addEventListener("resize", resize);
 
 resize();
 calcLayout();
-// 初始化 trolleys
+updateRampPhysics();
 for (var i = 0; i < 3; i++) {
-  trolleys[i] = { x: 0, v: v0, stopped: false, stopX: 0 };
+  trolleys[i] = { phase: 0, s: 0, v: 0, x: 0, stopped: false, stopX: 0, inclineDone: false };
 }
 updateLabels();
 updateButtons();
