@@ -140,6 +140,11 @@ body::before {
           <button class="btn active" id="btn4" onclick="setTemp(4)">💧 4°C</button>
           <button class="btn" id="btn8" onclick="setTemp(8)">🌡 8°C</button>
         </div>
+        <div class="btn-row" style="margin-top:2px">
+          <button class="btn" id="btnPlay" onclick="togglePlay()">▶ 自动演示</button>
+          <button class="btn active" id="btnSpeed1" onclick="setSpeed(1)" style="flex:0.5">1x</button>
+          <button class="btn" id="btnSpeed2" onclick="setSpeed(2)" style="flex:0.5">2x</button>
+        </div>
         <div class="meter-row">
           <div class="meter-item">
             <div class="meter-label">热运动强度</div>
@@ -183,9 +188,10 @@ body::before {
       <h3>操作指南</h3>
       <ul>
         <li>拖动<strong>温度滑块</strong>（0°C~8°C），观察分子行为变化</li>
-        <li><strong>蓝色虚线</strong> = 氢键连接；<strong>分子光晕</strong> = 热运动强度</li>
-        <li>观察烧杯内分子<strong>间距</strong>和<strong>氢键密度</strong>随温度的变化</li>
-        <li>4°C时分子排列最紧密，氢键与热运动达到平衡</li>
+        <li>点击<strong>自动演示</strong>按钮，温度自动循环 0→8→0°C</li>
+        <li><strong>蓝色虚线</strong> = 氢键连接；<strong>浅蓝多边形</strong> = 结构空隙</li>
+        <li>低温时观察<strong>六角环空隙</strong>（标"空隙"的多边形）</li>
+        <li>4°C时分子排列最紧密，空隙消失，密度最大</li>
         <li>T ≤ 0°C时水面出现<strong>浮冰</strong></li>
       </ul>
     </div>
@@ -209,6 +215,10 @@ var currentTemp = 4, targetTemp = 4;
 var prevTemp = 4;
 var frameCount = 0;
 var animId;
+var isPlaying = false;
+var playDir = 1;
+var playSpeed = 1;
+var RING_SPACING = 58;
 
 // ==================== Layout ====================
 var BEAKER_LEFT = 45, BEAKER_RIGHT = 385, BEAKER_TOP = 65, BEAKER_BOTTOM = 450;
@@ -766,24 +776,78 @@ function drawHydrogenBonds(temp) {
   ctx.restore();
 }
 
-function drawVoids(temp, clusters, wTop) {
-  if (temp > 3.5) return;
-  ctx.save();
-  var voidAlpha = Math.min(0.25, (4 - temp) / 4 * 0.25);
-  if (temp <= 0) voidAlpha = 0.3;
-
-  var cKeys = Object.keys(clusters);
-  for (var ci = 0; ci < cKeys.length; ci++) {
-    var cl = clusters[cKeys[ci]];
-    if (cl.size < 3) continue;
-    ctx.strokeStyle = 'rgba(180,220,255,' + voidAlpha + ')';
-    ctx.lineWidth = 0.7;
-    ctx.setLineDash([2, 5]);
-    ctx.beginPath();
-    ctx.arc(cl.cx, cl.cy, cl.size * 1.8 + 6, 0, Math.PI * 2);
-    ctx.stroke();
+function getRingCenters(wTop) {
+  var rowSpacing = RING_SPACING * 0.866;
+  var centers = [];
+  var startY = wTop + 22;
+  var endY = WATER_BASE - 12;
+  var row = 0;
+  for (var y = startY; y < endY; y += rowSpacing) {
+    var offsetX = (row % 2) * RING_SPACING / 2;
+    var innerL = beakerInnerLeft(y) + 10;
+    var innerR = beakerInnerRight(y) - 10;
+    var startX = innerL + 12 + offsetX;
+    for (var x = startX; x < innerR - 8; x += RING_SPACING) {
+      centers.push({x: x, y: y});
+    }
+    row++;
   }
-  ctx.setLineDash([]);
+  return centers;
+}
+
+function drawVoids(temp, clusters, wTop) {
+  if (temp > 5) return;
+  ctx.save();
+
+  var voidAlpha = Math.max(0, (5 - temp) / 5) * 0.22;
+  if (temp <= 0) voidAlpha = 0.28;
+
+  var centers = getRingCenters(wTop);
+
+  for (var ci = 0; ci < centers.length; ci++) {
+    var c = centers[ci];
+
+    // Find 6 nearest molecules to this ring center
+    var nearby = [];
+    for (var i = 0; i < MOLECULES.length; i++) {
+      var dx = MOLECULES[i].x - c.x;
+      var dy = MOLECULES[i].y - c.y;
+      nearby.push({i: i, d: dx * dx + dy * dy});
+    }
+    nearby.sort(function(a, b) { return a.d - b.d; });
+    nearby = nearby.slice(0, 6);
+
+    // Sort by angle around center for polygon
+    nearby.sort(function(a, b) {
+      var ma = MOLECULES[a.i], mb = MOLECULES[b.i];
+      return Math.atan2(ma.y - c.y, ma.x - c.x) - Math.atan2(mb.y - c.y, mb.x - c.x);
+    });
+
+    // Draw void polygon
+    ctx.beginPath();
+    ctx.moveTo(MOLECULES[nearby[0].i].x, MOLECULES[nearby[0].i].y);
+    for (var k = 1; k < nearby.length; k++) {
+      ctx.lineTo(MOLECULES[nearby[k].i].x, MOLECULES[nearby[k].i].y);
+    }
+    ctx.closePath();
+
+    ctx.fillStyle = 'rgba(34,211,238,' + voidAlpha * 0.5 + ')';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(34,211,238,' + voidAlpha + ')';
+    ctx.lineWidth = 0.8;
+    ctx.setLineDash([2, 3]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Label for prominent voids
+    if (voidAlpha > 0.1) {
+      ctx.fillStyle = 'rgba(34,211,238,' + Math.min(1, voidAlpha * 2.5) + ')';
+      ctx.font = 'bold 8px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('空隙', c.x, c.y);
+    }
+  }
 
   // Ice: highlight hexagonal ring centers
   if (temp <= 0 && ICE_LATTICE.sites.length > 0) {
@@ -1064,9 +1128,29 @@ function updateUI(temp) {
 
 // ==================== Controls ====================
 function setTemp(t) { targetTemp = t; document.getElementById('tempSlider').value = t; }
+function togglePlay() {
+  isPlaying = !isPlaying;
+  var btn = document.getElementById('btnPlay');
+  btn.textContent = isPlaying ? '⏸ 暂停' : '▶ 自动演示';
+  if (isPlaying) { btn.classList.add('active'); }
+  else { btn.classList.remove('active'); }
+}
+function setSpeed(s) {
+  playSpeed = s;
+  document.getElementById('btnSpeed1').className = s === 1 ? 'btn active' : 'btn';
+  document.getElementById('btnSpeed2').className = s === 2 ? 'btn active' : 'btn';
+}
 
 // ==================== Animation ====================
 function animate() {
+  // Auto-play: cycle temperature 0→8→0
+  if (isPlaying) {
+    targetTemp += playDir * 0.025 * playSpeed;
+    if (targetTemp >= 8) { targetTemp = 8; playDir = -1; }
+    if (targetTemp <= 0) { targetTemp = 0; playDir = 1; }
+    document.getElementById('tempSlider').value = targetTemp;
+  }
+
   var diff = targetTemp - currentTemp;
   if (Math.abs(diff) > 0.01) {
     prevTemp = currentTemp;
