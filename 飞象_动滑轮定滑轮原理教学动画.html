@@ -161,6 +161,34 @@
           <div class="formula-box">F = ½G （省一半力，费一倍距离）</div>
         </div>
       </div>
+      <!-- 定滑轮 · 水平拉物 -->
+      <div class="exp-card" style="margin-top:16px;">
+        <div class="card-title">
+          <span class="badge blue">定滑轮 · 水平拉物</span>
+          <div class="btn-group">
+            <button onclick="anim('horizontal','play')" title="播放">▶</button>
+            <button onclick="anim('horizontal','pause')" title="暂停">⏸</button>
+            <button onclick="anim('horizontal','reset')" title="复位">↺</button>
+          </div>
+        </div>
+        <div class="desc-box" style="margin-bottom:8px;">定滑轮将竖直向下的拉力转化为水平拉力，<em>拉力大小不变</em>，物体匀速运动时 <em>F = f = μG</em>。</div>
+        <div class="canvas-wrap principle" id="horizontalContainer" style="min-height:340px;"></div>
+        <div class="controls-row">
+          <label>物重 G</label>
+          <input type="range" min="10" max="100" value="50" oninput="setG('horizontal',this.value)">
+          <span class="val" id="horizontalG">50</span><span style="color:#94a3b8;font-size:13px;">N</span>
+          <label style="margin-left:12px;">动摩擦因数 μ</label>
+          <input type="range" min="0.1" max="0.9" step="0.1" value="0.3" oninput="setMu(this.value)">
+          <span class="val" id="muVal">0.3</span>
+        </div>
+        <div class="info-row" style="margin-top:6px;">
+          <div class="info-item">拉力 <strong>F</strong> = <span class="num" id="horizontalF">0</span> N</div>
+          <div class="info-item">摩擦力 <strong>f</strong> = <span class="num" id="horizontalFric">0</span> N</div>
+          <div class="info-item">物体移动 <strong>s<sub>物</sub></strong> = <span class="num" id="horizontalS">0.00</span> m</div>
+          <div class="info-item">绳端移动 <strong>s<sub>绳</sub></strong> = <span class="num" id="horizontalSRope">0.00</span> m</div>
+        </div>
+        <div class="formula-box">F = f = μG，s<sub>绳</sub> = s<sub>物</sub>（定滑轮不省力不省距离，只改变力的方向）</div>
+      </div>
       <div class="experiment-info">
         <div class="info-card">
           <h3>实验说明</h3>
@@ -168,13 +196,14 @@
             <li>点击手柄 <strong>橙色箭头</strong> 并拖拽，观察滑轮运动</li>
             <li><strong>定滑轮</strong>：向下拉绳，物体上升，不省力</li>
             <li><strong>动滑轮</strong>：向上拉绳，物体上升，省一半力</li>
-            <li>使用播放按钮自动演示运动过程</li>
+            <li><strong>定滑轮·水平拉物</strong>：拉力经定滑轮转向，水平拉动物块</li>
           </ul>
         </div>
         <div class="info-card">
           <h3>核心公式</h3>
           <p><strong>定滑轮</strong>：F = G，s = h（不省力不省距离）</p>
           <p><strong>动滑轮</strong>：F = G/2，s = 2h（省一半力费一倍距离）<br>（不计动滑轮重和摩擦）</p>
+          <p><strong>水平拉物</strong>：F = f = μG，s<sub>物</sub> = s<sub>绳</sub>（拉力=摩擦力）</p>
         </div>
       </div>
     </div>
@@ -322,6 +351,7 @@
   const S = {
     fixed: { g: 50, h: 0, playing: false },
     movable: { g: 50, h: 0, playing: false },
+    horizontal: { g: 50, mu: 0.3, h: 0, playing: false },
     assembly: { n: 2, s: 0 },
     mech: { g: 100, gp: 10, n: 2, h: 0 },
     eff: { g: 2.0, gp: 0.2, maxH: 0.2, n: 2, h: 0, friction: 0.1, running: false }
@@ -349,7 +379,16 @@
   function setG(which, val) {
     S[which].g = Number(val);
     document.getElementById(which + 'G').textContent = val;
-    document.getElementById(which + 'F').textContent = which === 'fixed' ? val : Math.round(val / 2);
+    if (which === 'fixed') {
+      document.getElementById(which + 'F').textContent = val;
+    } else if (which === 'movable') {
+      document.getElementById(which + 'F').textContent = Math.round(val / 2);
+    }
+    // horizontal: F is updated in draw loop (depends on friction)
+  }
+  function setMu(val) {
+    S.horizontal.mu = Number(val);
+    document.getElementById('muVal').textContent = val;
   }
   function anim(which, action) {
     if (action === 'play') S[which].playing = true;
@@ -518,7 +557,14 @@
     }
     const c = isDrag ? '#ea580c' : '#f59e0b';
     p.fill(c); p.noStroke();
-    if (dir === 'up') {
+    if (typeof dir === 'number') {
+      // angle: rotate arrow to point in pull direction (away from pulley)
+      p.push();
+      p.rotate(dir - p.HALF_PI);
+      p.triangle(-10, 10, 10, 10, 0, 25);
+      p.rect(-6, 0, 12, 10);
+      p.pop();
+    } else if (dir === 'up') {
       p.triangle(-10, -10, 10, -10, 0, -25);
       p.rect(-6, -10, 12, 10);
     } else {
@@ -534,6 +580,10 @@
   let instances = {};
   const sketchFixed = (p) => {
     let isDragging = false;
+    let handX = 0, handY = 0;
+    let dragOffsetX = 0, dragOffsetY = 0;
+    const INITIAL_ROPE_LEN = 28;
+
     p.setup = () => {
       const el = document.getElementById('fixedContainer');
       p.createCanvas(el.clientWidth || 400, el.clientHeight || 280);
@@ -544,18 +594,25 @@
     };
     p.mousePressed = () => {
       const cx = p.width / 2, cy = 40, r = 24;
-      const hy = cy + 28 + (S.fixed.h / 100) * 140;
-      const hx = cx + r;
-      if (p.dist(p.mouseX, p.mouseY, hx, hy) < 40) {
+      const hp = S.fixed.h / 100;
+      const defX = cx + r;
+      const defY = cy + INITIAL_ROPE_LEN + hp * 140;
+      handX = defX; handY = defY;
+      if (p.dist(p.mouseX, p.mouseY, handX, handY) < 40) {
         isDragging = true;
         S.fixed.playing = false;
+        dragOffsetX = handX - p.mouseX;
+        dragOffsetY = handY - p.mouseY;
         return false;
       }
     };
     p.mouseDragged = () => {
       if (isDragging) {
-        const cy = 40;
-        S.fixed.h = p.constrain(((p.mouseY - (cy + 28)) / 140) * 100, 0, 100);
+        const cx = p.width / 2, cy = 40, r = 24;
+        handX = p.mouseX + dragOffsetX;
+        handY = p.mouseY + dragOffsetY;
+        const ropeLen = p.dist(cx + r, cy, handX, handY);
+        S.fixed.h = p.constrain(((ropeLen - INITIAL_ROPE_LEN) / 140) * 100, 0, 100);
         return false;
       }
     };
@@ -569,18 +626,27 @@
       if (S.fixed.playing) { S.fixed.h = Math.min(S.fixed.h + 0.6, 100); if (S.fixed.h >= 100) S.fixed.playing = false; }
       const cx = p.width / 2, cy = 40, r = 24;
       const hp = S.fixed.h / 100;
-      const handY = cy + 28 + hp * 140;
-      const handX = cx + r;
+      const tangentX = cx + r;
+      const tangentY = cy;
+
+      if (!isDragging) {
+        const targetX = tangentX;
+        const targetY = cy + INITIAL_ROPE_LEN + hp * 140;
+        handX = p.lerp(handX, targetX, 0.2);
+        handY = p.lerp(handY, targetY, 0.2);
+      }
+
       const objY = cy + 36 + (1 - hp) * 140;
 
       drawPulley(p, cx, cy, r, true);
       drawRopeArc(p, cx, cy, r, p.PI, 0);
       drawRopeSeg(p, cx - r, cy, cx - r, objY);
-      drawRopeSeg(p, cx + r, cy, cx + r, handY);
+      drawRopeSeg(p, tangentX, tangentY, handX, handY);
       drawWeight(p, cx - r, objY, S.fixed.g + 'N');
 
       const hover = p.dist(p.mouseX, p.mouseY, handX, handY) < 40;
-      drawHand(p, handX, handY, hover, isDragging, 'down');
+      const angle = Math.atan2(handY - tangentY, handX - tangentX);
+      drawHand(p, handX, handY, hover, isDragging, angle);
 
       // data
       const hM = hp * 0.4;
@@ -899,9 +965,206 @@
       drawHand(p, handPos.x, handPos.y, false, false, n % 2 === 0 ? 'down' : 'up');
     };
   };
+  // ==================== 定滑轮 · 水平拉物 Sketch ====================
+  const sketchHorizontal = (p) => {
+    let isDragging = false;
+    let handX = 0, handY = 0;
+    let dragOffsetX = 0, dragOffsetY = 0;
+
+    p.setup = () => {
+      const el = document.getElementById('horizontalContainer');
+      p.createCanvas(el.clientWidth || 400, el.clientHeight || 340);
+    };
+    p.windowResized = () => {
+      const el = document.getElementById('horizontalContainer');
+      if (el.clientWidth) p.resizeCanvas(el.clientWidth, el.clientHeight || 340);
+    };
+
+    // Shared layout helpers
+    const getLayout = (pw) => {
+      const groundY = 212, tableY = 162;
+      const blockH = 40, blockW = 60, r = 18;
+      const blockStartX = 50;
+      const pulleyX = pw * 0.66;
+      const pulleyY = tableY - blockH / 2 - r; // 抬高滑轮，使下端切线 = 物块中心高度，绳子水平进入
+      const maxD = pulleyX - r - 12 - blockStartX - blockW;
+      const entryX = pulleyX - r;
+      const exitX = pulleyX + r;
+      return { groundY, tableY, blockH, blockW, r, blockStartX, pulleyX, pulleyY, maxD, entryX, exitX };
+    };
+
+    p.mousePressed = () => {
+      const L = getLayout(p.width);
+      const hp = S.horizontal.h / 100;
+      const initLen = 20;
+      handX = L.entryX - initLen - hp * L.maxD;
+      handY = L.pulleyY - L.r;
+      if (p.dist(p.mouseX, p.mouseY, handX, handY) < 35) {
+        isDragging = true;
+        S.horizontal.playing = false;
+        dragOffsetX = handX - p.mouseX;
+        dragOffsetY = handY - p.mouseY;
+        return false;
+      }
+    };
+    p.mouseDragged = () => {
+      if (isDragging) {
+        const L = getLayout(p.width);
+        handX = p.mouseX + dragOffsetX;
+        handY = p.mouseY + dragOffsetY;
+        const ropeLen = p.dist(L.pulleyX, L.pulleyY - L.r, handX, handY);
+        const initLen = 20;
+        S.horizontal.h = p.constrain(((ropeLen - initLen) / L.maxD) * 100, 0, 100);
+        return false;
+      }
+    };
+    p.mouseReleased = () => { isDragging = false; };
+    p.touchStarted = p.mousePressed;
+    p.touchMoved = p.mouseDragged;
+    p.touchEnded = p.mouseReleased;
+
+    p.draw = () => {
+      p.clear();
+      if (S.horizontal.playing) {
+        S.horizontal.h = Math.min(S.horizontal.h + 0.6, 100);
+        if (S.horizontal.h >= 100) S.horizontal.playing = false;
+      }
+      const g = S.horizontal.g, mu = S.horizontal.mu;
+      const hp = S.horizontal.h / 100;
+      const L = getLayout(p.width);
+      const { groundY, tableY, blockH, blockW, r, blockStartX, pulleyX, pulleyY, maxD, entryX, exitX } = L;
+
+      const blockX = blockStartX + hp * maxD;
+      const blockY = tableY - blockH;
+      const blockCX = blockX + blockW / 2;
+      const blockCY = blockY + blockH / 2;
+
+      // Hand (left of pulley top, pulls horizontally left)
+      const initHandLen = 20;
+      if (!isDragging) {
+        handX = p.lerp(handX, entryX - initHandLen - hp * maxD, 0.2);
+        handY = p.lerp(handY, pulleyY - r, 0.2);
+      }
+
+      // ── Ground ──
+      p.noStroke();
+      p.fill('#1e293b');
+      p.rect(0, groundY, p.width, p.height - groundY, 0);
+
+      // ── Table ──
+      p.fill('#334155');
+      p.noStroke();
+      p.rect(15, tableY, p.width - 30, 9, 3);
+      // Table legs
+      p.fill('#1e293b');
+      p.rect(55, tableY + 9, 10, groundY - tableY - 9, 2);
+      p.rect(exitX + 30, tableY + 9, 10, groundY - tableY - 9, 2);
+      // Table apron
+      p.fill('#2d3a4f');
+      p.rect(25, tableY - 3, p.width - 50, 5, 2);
+
+      // ── L-bracket (reference: base plate → post → beam) ──
+      const postX = exitX + 35, postW = 12;
+      const beamY = pulleyY; // axle passes through beam
+
+      // Base plate (on ground)
+      p.fill('#475569');
+      p.noStroke();
+      p.rect(postX - 14, groundY - 6, postW + 28, 8, 2);
+      // Bolts on base plate
+      p.fill('#64748b');
+      p.circle(postX - 6, groundY - 2, 3);
+      p.circle(postX + postW + 6, groundY - 2, 3);
+
+      // Vertical post (from base plate up to beam)
+      p.fill('#475569');
+      p.noStroke();
+      p.rect(postX, beamY, postW, groundY - beamY - 6, 2);
+
+      // Horizontal beam (extends left from post, axle through it)
+      const beamLeft = pulleyX - 18;
+      const beamRight = postX + 16;
+      const beamH = 9;
+      p.fill('#475569');
+      p.noStroke();
+      p.rect(beamLeft, beamY - beamH / 2, beamRight - beamLeft, beamH, 3);
+
+      // Axle bolt at pulley position (on beam)
+      p.fill('#64748b');
+      p.noStroke();
+      p.circle(pulleyX, beamY, 6);
+
+      // ── Pulley (axle passes through beam) ──
+      p.push();
+      p.translate(pulleyX, pulleyY);
+      // Pulley body (behind beam - drawn after beam but visually layered)
+      p.fill('#bae6fd');
+      p.stroke('#0ea5e9');
+      p.strokeWeight(2);
+      p.circle(0, 0, r * 2);
+      p.noFill();
+      p.stroke('#7dd3fc');
+      p.strokeWeight(1);
+      p.circle(0, 0, r * 2 - 6);
+      // Axle center
+      p.fill('#0369a1');
+      p.noStroke();
+      p.circle(0, 0, r * 0.25);
+      p.pop();
+
+      // Axle cap circles (on beam, flanking pulley)
+      p.fill('#64748b');
+      p.noStroke();
+      p.circle(pulleyX, beamY - 1, 5);
+
+      // ── Rope (enter bottom → wrap left → exit top, hand pulls left) ──
+      p.stroke('#64748b');
+      p.strokeWeight(2.5);
+      p.noFill();
+      // Block right edge → pulley bottom tangent
+      p.line(blockX + blockW, blockCY, pulleyX, pulleyY + r);
+      // Arc up right side: bottom → top (clockwise -π/2 → π/2)
+      p.arc(pulleyX, pulleyY, r * 2 - 4, r * 2 - 4, -p.HALF_PI, p.HALF_PI);
+      // Pulley top → hand (horizontal left)
+      p.line(pulleyX, pulleyY - r, handX, handY);
+
+      // ── Block ──
+      p.push();
+      p.fill('#0ea5e9');
+      p.stroke('#0284c7');
+      p.strokeWeight(2);
+      p.rect(blockX, blockY, blockW, blockH, 7);
+      p.fill(255);
+      p.noStroke();
+      p.textAlign(p.CENTER, p.CENTER);
+      p.textSize(12);
+      p.textStyle(p.BOLD);
+      p.text(g + 'N', blockCX, blockCY);
+      // Rope attachment ring
+      p.noFill();
+      p.stroke('#64748b');
+      p.strokeWeight(1.5);
+      p.circle(blockX + blockW, blockCY, 5);
+      p.pop();
+
+      // ── Hand ──
+      const hover = p.dist(p.mouseX, p.mouseY, handX, handY) < 35;
+      const angle = Math.atan2(handY - (pulleyY - r), handX - pulleyX);
+      drawHand(p, handX, handY, hover, isDragging, angle);
+
+      // ── Update display ──
+      const s = hp * 0.5;
+      const fVal = (isDragging || S.horizontal.playing) ? mu * g : 0;
+      document.getElementById('horizontalF').textContent = fVal.toFixed(1);
+      document.getElementById('horizontalFric').textContent = fVal.toFixed(1);
+      document.getElementById('horizontalS').textContent = s.toFixed(2);
+      document.getElementById('horizontalSRope').textContent = s.toFixed(2);
+    };
+  };
   setTimeout(() => {
     instances.principleFixed = new p5(sketchFixed, 'fixedContainer');
     instances.principleMovable = new p5(sketchMovable, 'movableContainer');
+    instances.horizontal = new p5(sketchHorizontal, 'horizontalContainer');
     instances.assembly = new p5(sketchAssembly, 'assemblyContainer');
     instances.mechanics = new p5(sketchMechanics, 'mechanicsContainer');
     instances.efficiency = new p5(sketchEfficiency, 'efficiencyContainer');
