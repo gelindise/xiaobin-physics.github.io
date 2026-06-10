@@ -189,6 +189,34 @@
         </div>
         <div class="formula-box">F = f = μG，s<sub>绳</sub> = s<sub>物</sub>（定滑轮不省力不省距离，只改变力的方向）</div>
       </div>
+      <!-- 动滑轮 · 水平拉物 -->
+      <div class="exp-card" style="margin-top:16px;">
+        <div class="card-title">
+          <span class="badge green">动滑轮 · 水平拉物</span>
+          <div class="btn-group">
+            <button onclick="anim('horizontalMovable','play')" title="播放">▶</button>
+            <button onclick="anim('horizontalMovable','pause')" title="暂停">⏸</button>
+            <button onclick="anim('horizontalMovable','reset')" title="复位">↺</button>
+          </div>
+        </div>
+        <div class="desc-box" style="margin-bottom:8px;">动滑轮随物块移动，<em>省一半力</em>（F = f/2 = μG/2），但手拉动距离为物块位移的<em>2倍</em>。</div>
+        <div class="canvas-wrap principle" id="horizontalMovableContainer" style="min-height:340px;"></div>
+        <div class="controls-row">
+          <label>物重 G</label>
+          <input type="range" min="10" max="100" value="50" oninput="setG('horizontalMovable',this.value)">
+          <span class="val" id="horizontalMovableG">50</span><span style="color:#94a3b8;font-size:13px;">N</span>
+          <label style="margin-left:12px;">动摩擦因数 μ</label>
+          <input type="range" min="0.1" max="0.9" step="0.1" value="0.3" oninput="setMuMovable(this.value)">
+          <span class="val" id="muMovableVal">0.3</span>
+        </div>
+        <div class="info-row" style="margin-top:6px;">
+          <div class="info-item">拉力 <strong>F</strong> = <span class="num" id="horizontalMovableF">0</span> N</div>
+          <div class="info-item">摩擦力 <strong>f</strong> = <span class="num" id="horizontalMovableFric">0</span> N</div>
+          <div class="info-item">物体移动 <strong>s<sub>物</sub></strong> = <span class="num" id="horizontalMovableS">0.00</span> m</div>
+          <div class="info-item">手移动 <strong>s<sub>手</sub></strong> = <span class="num" id="horizontalMovableSHand">0.00</span> m</div>
+        </div>
+        <div class="formula-box">F = f/2 = μG/2，s<sub>手</sub> = 2·s<sub>物</sub>（动滑轮省一半力，费一倍距离）</div>
+      </div>
       <div class="experiment-info">
         <div class="info-card">
           <h3>实验说明</h3>
@@ -197,6 +225,7 @@
             <li><strong>定滑轮</strong>：向下拉绳，物体上升，不省力</li>
             <li><strong>动滑轮</strong>：向上拉绳，物体上升，省一半力</li>
             <li><strong>定滑轮·水平拉物</strong>：拉力经定滑轮转向，水平拉动物块</li>
+            <li><strong>动滑轮·水平拉物</strong>：动滑轮随物块移动，绳固定端在左，手拉左端</li>
           </ul>
         </div>
         <div class="info-card">
@@ -204,6 +233,7 @@
           <p><strong>定滑轮</strong>：F = G，s = h（不省力不省距离）</p>
           <p><strong>动滑轮</strong>：F = G/2，s = 2h（省一半力费一倍距离）<br>（不计动滑轮重和摩擦）</p>
           <p><strong>水平拉物</strong>：F = f = μG，s<sub>物</sub> = s<sub>绳</sub>（拉力=摩擦力）</p>
+          <p><strong>动滑轮水平拉物</strong>：F = f/2 = μG/2，s<sub>手</sub> = 2·s<sub>物</sub>（省一半力费一倍距离）</p>
         </div>
       </div>
     </div>
@@ -352,6 +382,7 @@
     fixed: { g: 50, h: 0, playing: false },
     movable: { g: 50, h: 0, playing: false },
     horizontal: { g: 50, mu: 0.3, h: 0, playing: false },
+    horizontalMovable: { g: 50, mu: 0.3, h: 0, playing: false },
     assembly: { n: 2, s: 0 },
     mech: { g: 100, gp: 10, n: 2, h: 0 },
     eff: { g: 2.0, gp: 0.2, maxH: 0.2, n: 2, h: 0, friction: 0.1, running: false }
@@ -389,6 +420,10 @@
   function setMu(val) {
     S.horizontal.mu = Number(val);
     document.getElementById('muVal').textContent = val;
+  }
+  function setMuMovable(val) {
+    S.horizontalMovable.mu = Number(val);
+    document.getElementById('muMovableVal').textContent = val;
   }
   function anim(which, action) {
     if (action === 'play') S[which].playing = true;
@@ -1161,10 +1196,189 @@
       document.getElementById('horizontalSRope').textContent = s.toFixed(2);
     };
   };
+  // ==================== 动滑轮 · 水平拉物 Sketch ====================
+  const sketchHorizontalMovable = (p) => {
+    let isDragging = false;
+    let handX = 0, handY = 0;
+    let dragOffsetX = 0, dragOffsetY = 0;
+
+    p.setup = () => {
+      const el = document.getElementById('horizontalMovableContainer');
+      p.createCanvas(el.clientWidth || 400, el.clientHeight || 340);
+    };
+    p.windowResized = () => {
+      const el = document.getElementById('horizontalMovableContainer');
+      if (el.clientWidth) p.resizeCanvas(el.clientWidth, el.clientHeight || 340);
+    };
+
+    const getLayout = (pw) => {
+      const groundY = 212, tableY = 162;
+      const blockH = 40, blockW = 60, r = 18;
+      const anchorX = 28;
+      const hookLen = 10;
+      const blockInitX = pw - 40 - blockW;
+      const pulleyInitX = blockInitX - r - hookLen - 6;
+      const pulleyY = tableY - blockH / 2;
+      const anchorY = pulleyY + r;
+      const maxTravel = pw - 40 - blockW - 30;
+      const maxHandTravel = maxTravel * 2;
+      const handInitX = pulleyInitX - 24;
+      const handInitY = pulleyY - r;
+      return { groundY, tableY, blockH, blockW, r, anchorX, anchorY, pulleyInitX, blockInitX, pulleyY, maxTravel, maxHandTravel, handInitX, handInitY, hookLen };
+    };
+
+    p.mousePressed = () => {
+      const L = getLayout(p.width);
+      const hp = S.horizontalMovable.h / 100;
+      handX = L.handInitX - hp * L.maxHandTravel;
+      handY = L.handInitY;
+      if (p.dist(p.mouseX, p.mouseY, handX, handY) < 35) {
+        isDragging = true;
+        S.horizontalMovable.playing = false;
+        dragOffsetX = handX - p.mouseX;
+        dragOffsetY = handY - p.mouseY;
+        return false;
+      }
+    };
+    p.mouseDragged = () => {
+      if (isDragging) {
+        const L = getLayout(p.width);
+        handX = p.mouseX + dragOffsetX;
+        const dx = L.handInitX - handX;
+        S.horizontalMovable.h = p.constrain(dx / L.maxHandTravel * 100, 0, 100);
+        return false;
+      }
+    };
+    p.mouseReleased = () => { isDragging = false; };
+    p.touchStarted = p.mousePressed;
+    p.touchMoved = p.mouseDragged;
+    p.touchEnded = p.mouseReleased;
+
+    p.draw = () => {
+      p.clear();
+      if (S.horizontalMovable.playing) {
+        S.horizontalMovable.h = Math.min(S.horizontalMovable.h + 0.2, 100);
+        if (S.horizontalMovable.h >= 100) S.horizontalMovable.playing = false;
+      }
+      const g = S.horizontalMovable.g, mu = S.horizontalMovable.mu;
+      const hp = S.horizontalMovable.h / 100;
+      const L = getLayout(p.width);
+      const { groundY, tableY, blockH, blockW, r, anchorX, anchorY, pulleyInitX, blockInitX, pulleyY, maxTravel, maxHandTravel, handInitX, handInitY, hookLen } = L;
+
+      const pulleyX = pulleyInitX - hp * maxTravel;
+      const blockX = blockInitX - hp * maxTravel;
+      const blockY = tableY - blockH;
+      const blockCX = blockX + blockW / 2;
+      const blockCY = blockY + blockH / 2;
+
+      if (!isDragging) {
+        handX = p.lerp(handX, handInitX - hp * maxHandTravel, 0.2);
+        handY = p.lerp(handY, handInitY, 0.2);
+      }
+
+      // Ground
+      p.noStroke();
+      p.fill('#1e293b');
+      p.rect(0, groundY, p.width, p.height - groundY, 0);
+
+      // Table surface
+      p.fill('#334155');
+      p.noStroke();
+      p.rect(15, tableY, p.width - 30, 9, 3);
+      // Table legs
+      p.fill('#1e293b');
+      p.rect(55, tableY + 9, 10, groundY - tableY - 9, 2);
+      p.rect(p.width - 100, tableY + 9, 10, groundY - tableY - 9, 2);
+      // Table apron
+      p.fill('#2d3a4f');
+      p.rect(25, tableY - 3, p.width - 50, 5, 2);
+
+      // Anchor post (left side)
+      const postW = 12, postTopY = anchorY - 14;
+      p.fill('#475569');
+      p.noStroke();
+      p.rect(anchorX - postW * 1.5, groundY - 6, postW * 2 + 8, 8, 2);
+      p.rect(anchorX - postW/2, postTopY, postW, groundY - postTopY - 6, 3);
+      // Anchor ring at bottom-rope height
+      p.noFill();
+      p.stroke('#64748b');
+      p.strokeWeight(2.5);
+      p.circle(anchorX, anchorY, 8);
+
+      // Movable pulley
+      p.push();
+      p.translate(pulleyX, pulleyY);
+      p.fill('#bae6fd');
+      p.stroke('#0ea5e9');
+      p.strokeWeight(2);
+      p.circle(0, 0, r * 2);
+      p.noFill();
+      p.stroke('#7dd3fc');
+      p.strokeWeight(1);
+      p.circle(0, 0, r * 2 - 6);
+      p.fill('#0369a1');
+      p.noStroke();
+      p.circle(0, 0, r * 0.3);
+      // Hook on right side
+      p.stroke('#64748b');
+      p.strokeWeight(3);
+      p.line(r, 0, r + hookLen, 0);
+      p.line(r + hookLen, -4, r + hookLen, 4);
+      p.pop();
+
+      // Connecting line: pulley hook → block left edge
+      p.stroke('#64748b');
+      p.strokeWeight(2.5);
+      p.line(pulleyX + r + hookLen, pulleyY, blockX, pulleyY);
+
+      // Rope: anchor → bottom tangent (horizontal) → arc bottom→right→top → top tangent → hand (right side)
+      p.stroke('#64748b');
+      p.strokeWeight(2.5);
+      p.noFill();
+      // Anchor ring → bottom of pulley (horizontal, same Y = anchorY = pulleyY+r)
+      p.line(anchorX, anchorY, pulleyX, pulleyY + r);
+      // Arc around pulley: bottom → right (clockwise 90°)
+      p.arc(pulleyX, pulleyY, r * 2 - 4, r * 2 - 4, p.HALF_PI, 0);
+      // Arc around pulley: right → top (clockwise 90°)
+      p.arc(pulleyX, pulleyY, r * 2 - 4, r * 2 - 4, 0, -p.HALF_PI);
+      // Top of pulley → hand (to the right)
+      p.line(pulleyX, pulleyY - r, handX, handY);
+
+      // Block
+      p.push();
+      p.fill('#0ea5e9');
+      p.stroke('#0284c7');
+      p.strokeWeight(2);
+      p.rect(blockX, blockY, blockW, blockH, 7);
+      p.fill(255);
+      p.noStroke();
+      p.textAlign(p.CENTER, p.CENTER);
+      p.textSize(12);
+      p.textStyle(p.BOLD);
+      p.text(g + 'N', blockCX, blockCY);
+      p.pop();
+
+      // Hand (on right side, pulls right)
+      const hover = p.dist(p.mouseX, p.mouseY, handX, handY) < 35;
+      const angle = Math.atan2(handY - (pulleyY - r), handX - pulleyX);
+      drawHand(p, handX, handY, hover, isDragging, angle);
+
+      // Update display
+      const sBlock = hp * 0.5;
+      const sHand = hp * 1.0;
+      const fVal = (isDragging || S.horizontalMovable.playing) ? mu * g : 0;
+      const fHand = fVal / 2;
+      document.getElementById('horizontalMovableF').textContent = fHand.toFixed(1);
+      document.getElementById('horizontalMovableFric').textContent = fVal.toFixed(1);
+      document.getElementById('horizontalMovableS').textContent = sBlock.toFixed(2);
+      document.getElementById('horizontalMovableSHand').textContent = sHand.toFixed(2);
+    };
+  };
   setTimeout(() => {
     instances.principleFixed = new p5(sketchFixed, 'fixedContainer');
     instances.principleMovable = new p5(sketchMovable, 'movableContainer');
     instances.horizontal = new p5(sketchHorizontal, 'horizontalContainer');
+    instances.horizontalMovable = new p5(sketchHorizontalMovable, 'horizontalMovableContainer');
     instances.assembly = new p5(sketchAssembly, 'assemblyContainer');
     instances.mechanics = new p5(sketchMechanics, 'mechanicsContainer');
     instances.efficiency = new p5(sketchEfficiency, 'efficiencyContainer');
