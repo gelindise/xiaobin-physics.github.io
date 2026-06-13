@@ -229,7 +229,7 @@
         let train = { x: 100, y: 0, speed: 15 };
         let person = { x: 0, y: 0, vx: 0, vy: 0, jumping: false, relX: 200 };
         let bombs = [], trajectories = [], explosions = [], isMoving = false, autoDropTimer = null, autoJumpTimer = null;
-        let acceleration = 0, initialSpeed = 15, speedMode = 'uniform';
+        let acceleration = 0, initialSpeed = 15, speedMode = 'uniform', lastTime = 0;
 
         function resize() {
             width = canvas.width = window.innerWidth - 320;
@@ -255,6 +255,7 @@
 
         function reset() {
             bombs = []; trajectories = []; explosions = []; isMoving = false;
+            lastTime = 0;
             if (autoDropTimer) clearInterval(autoDropTimer);
             if (autoJumpTimer) clearInterval(autoJumpTimer);
             autoDropTimer = null;
@@ -327,6 +328,7 @@
             if (currentScene === 'plane') {
                 if (!isMoving) {
                     isMoving = true;
+                    lastTime = 0;
                     enableSpeedBtns();
                     btnUniform.classList.add('active');
                     acceleration = 0;
@@ -336,6 +338,7 @@
             } else {
                 if (!isMoving) {
                     isMoving = true;
+                    lastTime = 0;
                     const jump = () =&gt; {
                         if (!person.jumping) {
                             // 边界检测：relX 接近 20 说明到了车尾
@@ -374,9 +377,12 @@
         actionBtn.onclick = performAction;
         resetBtn.onclick = reset;
 
-        function update() {
+        function update(ts) {
             if (!isMoving) return;
-            const dt = 0.02;
+            if (!lastTime) lastTime = ts;
+            let dt = (ts - lastTime) / 1000;
+            if (dt &gt; 0.1) dt = 0.1; // cap to prevent large jumps on tab switch
+            lastTime = ts;
 
             if (currentScene === 'plane') {
                 // Apply acceleration to plane speed
@@ -405,10 +411,10 @@
                 bombs.forEach(bomb =&gt; {
                     if (!bomb.active) return;
                     bomb.path.push({x: bomb.x, y: bomb.y});
-                    let ay = G * 0.02;
+                    let ay = G * dt;
                     if (bomb.hasDrag) {
                         const k = 0.04; let ax = -k * bomb.vx; bomb.vx += ax * dt;
-                        ay = (G * 0.02) - (k * bomb.vy);
+                        ay = (G * dt) - (k * bomb.vy);
                     }
                     // Bomb keeps its initial horizontal speed (inertia) — does NOT match plane
                     bomb.x += bomb.vx * dt;
@@ -430,12 +436,12 @@
                     person.x += offset; 
                 }
                 if (person.jumping) {
-                    let ay = G * 0.02;
+                    let ay = G * dt;
                     if (dragToggle.checked) {
                         const k = 0.8; 
                         person.vx += (-k * person.vx) * dt;
                         const dragY = -k * person.vy;
-                        ay = (G * 0.02) + dragY * dt;
+                        ay = (G * dt) + dragY * dt;
                         person.x += (person.vx * dt);
                         
                         // 实时边界检测：限制 relX 不得小于 20（车尾）
@@ -514,7 +520,7 @@
                 ctx.fillStyle = `rgba(255, 86, 0, ${exp.o})`; ctx.fill();
             });
 
-            requestAnimationFrame(() =&gt; { update(); draw(); });
+            requestAnimationFrame((ts) =&gt; { update(ts); draw(); });
         }
 
         planeImg.onload = bombImg.onload = trainImg.onload = personImg.onload = () =&gt; draw();
