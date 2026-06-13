@@ -282,7 +282,139 @@ function generateAvatar(name, size = 40) {
   return c.toDataURL();
 }
 
-// ========== 辅助功能 ==========
+// ========== 搜索功能 ==========
+var _searchDebounce = null;
+
+function initSearch() {
+  var input = document.getElementById('experimentSearch');
+  var clearBtn = document.getElementById('searchClear');
+  var dropdown = document.getElementById('searchDropdown');
+  if (!input) return;
+
+  input.addEventListener('input', function() {
+    var q = this.value.trim();
+    clearBtn.style.display = q ? 'flex' : 'none';
+    clearTimeout(_searchDebounce);
+    _searchDebounce = setTimeout(function() { filterExperiments(q); }, 200);
+  });
+
+  input.addEventListener('focus', function() {
+    if (this.value.trim()) filterExperiments(this.value.trim());
+  });
+
+  clearBtn.addEventListener('click', function() {
+    input.value = '';
+    clearBtn.style.display = 'none';
+    clearTimeout(_searchDebounce);
+    hideSearchDropdown();
+    input.focus();
+  });
+
+  // Click outside to close dropdown
+  document.addEventListener('click', function(e) {
+    if (dropdown && !dropdown.parentElement.contains(e.target)) {
+      hideSearchDropdown();
+    }
+  });
+}
+
+function hideSearchDropdown() {
+  var dropdown = document.getElementById('searchDropdown');
+  if (dropdown) dropdown.style.display = 'none';
+}
+
+function filterExperiments(query) {
+  var q = query.toLowerCase();
+  var dropdown = document.getElementById('searchDropdown');
+  var resultsEl = document.getElementById('searchResults');
+  var countEl = document.getElementById('searchCount');
+  if (!dropdown || !resultsEl) return;
+
+  if (!q) {
+    hideSearchDropdown();
+    return;
+  }
+
+  // Category keyword mapping
+  var catMap = {
+    '力学': '力 运动 牛顿 惯性 压强 浮力 机械能 杠杆 滑轮 摩擦 弹力 重力 弹簧 抛体 碰撞 平衡 阿基米德 密度',
+    '光学': '光 镜 透镜 折射 反射 色散 颜色 小孔 成像 光学',
+    '电学': '电 电路 电流 电压 电阻 欧姆 电荷 静电 焦耳 功率 导线 串联 并联 莱顿',
+    '磁学': '磁 电磁 洛伦兹 法拉第 电动机 发电机 螺线管 奥斯特 磁铁',
+    '声学': '声 音 波 波形 和弦 驻波 傅里叶 麦克风 扬声器 音调 音叉',
+    '热学': '热 内能 物态 扩散 温度 膨胀 分子 物态变化',
+    '原子': '原子 卢瑟福 电子 元素 核 粒子',
+    '浮力': '浮力 阿基米德 浮沉 排开',
+    '电与磁': '磁 电磁 洛伦兹 法拉第 电动机 发电机 螺线管 奥斯特 磁铁 电流 磁场',
+    '功和能': '功 能 动能 势能 机械能 能量 守恒 转化',
+  };
+
+  var searchWords = [q];
+  if (catMap[q]) searchWords = catMap[q].split(' ');
+
+  var results = [];
+  var allCards = document.querySelectorAll('.grade-content .card');
+
+  allCards.forEach(function(card) {
+    var title = (card.querySelector('h4')?.textContent || '').trim();
+    var tag = (card.querySelector('.tag')?.textContent || '').trim();
+    var icon = (card.querySelector('.card-icon')?.textContent || '').trim();
+    var chapter = (card.closest('.chapter')?.querySelector('.chapter-header')?.textContent || '').replace(/[▼▶▸]/g, '').trim();
+    var section = (card.closest('.section-item')?.querySelector('.section-header')?.textContent || '').replace(/[▼▶▸]/g, '').trim();
+    var cardText = (title + ' ' + tag + ' ' + chapter + ' ' + section).toLowerCase();
+
+    var matches = searchWords.some(function(w) { return cardText.indexOf(w) !== -1; });
+    if (!matches) return;
+
+    var onclick = card.getAttribute('onclick') || '';
+    var urlMatch = onclick.match(/['\"]([^'\"]+\.html)['\"]/);
+    var url = urlMatch ? urlMatch[1] : '';
+    var isLocked = card.classList.contains('lock');
+    var isVip = tag.indexOf('VIP') !== -1 || tag.indexOf('vip') !== -1;
+
+    results.push({
+      title: title,
+      icon: icon,
+      chapter: chapter,
+      section: section,
+      url: url,
+      isLocked: isLocked,
+      isVip: isVip,
+      tag: tag
+    });
+  });
+
+  // Build dropdown HTML
+  var html = '';
+  for (var i = 0; i < results.length; i++) {
+    var r = results[i];
+    var escapedUrl = r.url.replace(/'/g, "\\'");
+    var action = r.isLocked ? "checkVip('" + escapedUrl + "')" : "openLab('" + escapedUrl + "')";
+    var iconHtml = r.icon ? '<span class="search-result-icon">' + r.icon + '</span>' : '';
+    var tagClass = r.isVip ? 'vip' : 'free';
+    var tagHtml = r.tag ? '<span class="search-result-tag ' + tagClass + '">' + r.tag + '</span>' : '';
+    var meta = [r.chapter, r.section].filter(Boolean).join(' · ');
+
+    html += '<div class="search-result-item" onclick="' + action + '" data-url="' + escapedUrl + '">' +
+      iconHtml +
+      '<div class="search-result-info">' +
+        '<div class="search-result-title">' + r.title + '</div>' +
+        (meta ? '<div class="search-result-meta">' + meta + '</div>' : '') +
+      '</div>' +
+      tagHtml +
+    '</div>';
+  }
+
+  if (!results.length) {
+    html = '<div class="search-results-empty">未找到匹配的实验，试试其他关键词</div>';
+  }
+
+  resultsEl.innerHTML = html;
+  countEl.textContent = results.length > 0 ? '找到 ' + results.length + ' 个实验' : '无匹配结果';
+  countEl.style.color = results.length > 0 ? 'var(--secondary)' : '#ef4444';
+  dropdown.style.display = 'block';
+}
+
 async function getCurrentUser() {
   let name = localStorage.getItem("currentUser");
   if (!name) return null;
@@ -387,6 +519,7 @@ async function toggleProfile() {
 
 window.onload = async function() {
   initParticles();
+  initSearch();
   const users = await getUsersFromTable();
   const uName = localStorage.getItem("currentUser");
   const user = uName ? users[uName] : null;
