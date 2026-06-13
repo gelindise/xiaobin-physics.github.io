@@ -162,6 +162,22 @@
                 &lt;input type=&quot;range&quot; id=&quot;speed-slider&quot; min=&quot;10&quot; max=&quot;40&quot; value=&quot;15&quot;&gt;
             &lt;/div&gt;
 
+            &lt;div&gt;
+                &lt;div class=&quot;flex justify-between mb-2&quot;&gt;
+                    &lt;span class=&quot;font-medium&quot;&gt;加速度 (a)&lt;/span&gt;
+                    &lt;span id=&quot;accel-val&quot; class=&quot;text-primary font-bold&quot;&gt;0 m/s&amp;sup2;&lt;/span&gt;
+                &lt;/div&gt;
+                &lt;input type=&quot;range&quot; id=&quot;accel-slider&quot; min=&quot;-4&quot; max=&quot;4&quot; value=&quot;0&quot; step=&quot;0.5&quot;&gt;
+            &lt;/div&gt;
+
+            &lt;div class=&quot;grid grid-cols-3 gap-2 mb-2&quot;&gt;
+                &lt;button id=&quot;btn-uniform&quot; class=&quot;scene-btn active py-2 rounded-lg text-xs font-bold border-gray-200 border&quot;&gt;匀速飞行&lt;/button&gt;
+                &lt;button id=&quot;btn-accelerate&quot; class=&quot;scene-btn py-2 rounded-lg text-xs font-bold border-gray-200 border&quot;&gt;加速飞行&lt;/button&gt;
+                &lt;button id=&quot;btn-decelerate&quot; class=&quot;scene-btn py-2 rounded-lg text-xs font-bold border-gray-200 border&quot;&gt;减速飞行&lt;/button&gt;
+            &lt;/div&gt;
+
+            &lt;div id=&quot;speed-indicator&quot; class=&quot;text-center py-2 rounded-lg bg-blue-50 text-sm font-bold&quot; style=&quot;display:none;&quot;&gt;&lt;/div&gt;
+
             &lt;div class=&quot;flex items-center justify-between&quot;&gt;
                 &lt;span class=&quot;font-medium&quot;&gt;空气阻力 (f)&lt;/span&gt;
                 &lt;label class=&quot;toggle-switch&quot;&gt;
@@ -215,8 +231,9 @@
         let width, height, currentScene = 'plane';
         let plane = { x: 100, y: 100, speed: 15 };
         let train = { x: 100, y: 0, speed: 15 };
-        let person = { x: 0, y: 0, vx: 0, vy: 0, jumping: false, relX: 200 }; // relX 记录相对于车头的水平位置
+        let person = { x: 0, y: 0, vx: 0, vy: 0, jumping: false, relX: 200 };
         let bombs = [], trajectories = [], explosions = [], isMoving = false, autoDropTimer = null, autoJumpTimer = null;
+        let acceleration = 0, initialSpeed = 15, speedMode = 'uniform';
 
         function resize() {
             width = canvas.width = window.innerWidth - 320;
@@ -234,11 +251,15 @@
             autoDropTimer = null;
             autoJumpTimer = null;
             plane.x = 100;
+            plane.speed = initialSpeed;
             train.x = 100;
+            train.speed = initialSpeed;
             person.jumping = false;
             person.vy = 0;
             person.vx = 0;
-            person.relX = 250; // 重置到车厢中部
+            person.relX = 250;
+            speedIndicator.style.display = 'none';
+            speedVal.innerText = `${initialSpeed} m/s`;
         }
 
         document.getElementById('btn-scene-plane').onclick = function() {
@@ -247,7 +268,7 @@
             document.getElementById('btn-scene-train').classList.remove('active');
             actionBtn.innerText = '投放炸弹';
             speedLabel.innerText = '飞机速度 (v)';
-            physicsTip.innerHTML = '&lt;strong&gt;物理提示：&lt;/strong&gt;&lt;br&gt;在不计阻力时，炸弹由于&lt;strong&gt;惯性&lt;/strong&gt;保持与飞机相同的水平速度，始终处于飞机正下方。';
+            physicsTip.innerHTML = '&lt;strong&gt;物理提示：&lt;/strong&gt;&lt;br&gt;炸弹由于&lt;strong&gt;惯性&lt;/strong&gt;保持投出时刻的水平速度。&lt;br&gt;匀速时炸弹在飞机正下方；&lt;strong&gt;加速时炸弹落后&lt;/strong&gt;于飞机；&lt;strong&gt;减速时炸弹超前&lt;/strong&gt;于飞机。';
             reset();
         };
 
@@ -261,11 +282,57 @@
             reset();
         };
 
+        const accelSlider = document.getElementById('accel-slider');
+        const accelVal = document.getElementById('accel-val');
+        const speedIndicator = document.getElementById('speed-indicator');
+        const btnUniform = document.getElementById('btn-uniform');
+        const btnAccelerate = document.getElementById('btn-accelerate');
+        const btnDecelerate = document.getElementById('btn-decelerate');
+
         speedSlider.oninput = () =&gt; {
             const val = parseInt(speedSlider.value);
-            plane.speed = train.speed = val;
+            initialSpeed = val;
+            if (!isMoving) { plane.speed = train.speed = val; }
             speedVal.innerText = `${val} m/s`;
         };
+
+        accelSlider.oninput = () =&gt; {
+            acceleration = parseFloat(accelSlider.value);
+            accelVal.innerText = `${acceleration &gt;= 0 ? '+' : ''}${acceleration.toFixed(1)} m/s&amp;sup2;`;
+            // Deselect all mode buttons when manually adjusting slider
+            btnUniform.classList.remove('active');
+            btnAccelerate.classList.remove('active');
+            btnDecelerate.classList.remove('active');
+            speedMode = 'custom';
+        };
+
+        function setSpeedMode(mode) {
+            speedMode = mode;
+            btnUniform.classList.remove('active');
+            btnAccelerate.classList.remove('active');
+            btnDecelerate.classList.remove('active');
+            if (mode === 'uniform') {
+                btnUniform.classList.add('active');
+                acceleration = 0;
+                accelSlider.value = 0;
+                accelVal.innerText = '0 m/s&amp;sup2;';
+            } else if (mode === 'accelerate') {
+                btnAccelerate.classList.add('active');
+                acceleration = 3;
+                accelSlider.value = 3;
+                accelVal.innerText = '+3.0 m/s&amp;sup2;';
+            } else if (mode === 'decelerate') {
+                btnDecelerate.classList.add('active');
+                acceleration = -3;
+                accelSlider.value = -3;
+                accelVal.innerText = '-3.0 m/s&amp;sup2;';
+            }
+            if (!isMoving) { plane.speed = train.speed = initialSpeed; }
+        }
+
+        btnUniform.onclick = () =&gt; setSpeedMode('uniform');
+        btnAccelerate.onclick = () =&gt; setSpeedMode('accelerate');
+        btnDecelerate.onclick = () =&gt; setSpeedMode('decelerate');
 
         function performAction() {
             if (currentScene === 'plane') {
@@ -318,10 +385,27 @@
         function update() {
             if (!isMoving) return;
             const dt = 0.02;
-            
+
             if (currentScene === 'plane') {
-                const dx = (plane.speed * 0.02);
-                plane.x += dx;
+                // Apply acceleration to plane speed
+                plane.speed += acceleration * dt;
+                // Clamp speed to reasonable range
+                if (plane.speed &lt; 1) plane.speed = 1;
+                if (plane.speed &gt; 60) plane.speed = 60;
+
+                // Update speed display
+                speedVal.innerText = `${plane.speed.toFixed(1)} m/s`;
+                if (acceleration !== 0) {
+                    speedIndicator.style.display = 'block';
+                    const dir = acceleration &gt; 0 ? '加速中' : '减速中';
+                    speedIndicator.innerHTML = `${dir} | a=${acceleration.toFixed(1)} m/s&amp;sup2; | v=${plane.speed.toFixed(1)} m/s`;
+                    speedIndicator.style.color = acceleration &gt; 0 ? '#16a34a' : '#dc2626';
+                } else {
+                    speedIndicator.style.display = 'none';
+                }
+
+                const dx = plane.x + (plane.speed * dt);
+                plane.x = dx;
                 if (plane.x &gt; width + 100) {
                     plane.x = -100;
                     bombs = []; trajectories = []; explosions = [];
@@ -329,14 +413,14 @@
                 bombs.forEach(bomb =&gt; {
                     if (!bomb.active) return;
                     bomb.path.push({x: bomb.x, y: bomb.y});
-                    let ay = G * 0.02; // 显著减小重力加速度，使下落变慢
+                    let ay = G * 0.02;
                     if (bomb.hasDrag) {
                         const k = 0.04; let ax = -k * bomb.vx; bomb.vx += ax * dt;
-                        ay = (G * 0.02) - (k * bomb.vy); bomb.x += (bomb.vx * dt);
-                    } else {
-                        bomb.vx = plane.speed; bomb.x += dx;
+                        ay = (G * 0.02) - (k * bomb.vy);
                     }
-                    bomb.vy += ay * dt; bomb.y += bomb.vy * 0.2; // 进一步放慢垂直位移
+                    // Bomb keeps its initial horizontal speed (inertia) — does NOT match plane
+                    bomb.x += bomb.vx * dt;
+                    bomb.vy += ay * dt; bomb.y += bomb.vy * 0.2;
                     if (bomb.y &gt; height - 80) {
                         bomb.active = false;
                         trajectories.push({path: bomb.path, color: bomb.color});
