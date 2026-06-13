@@ -223,13 +223,13 @@
         const trainImg = new Image(); trainImg.src = 'https://musk-online.fbcontent.cn/pub-musk-ai-studio/workflow/file/picture/uQocKRsT82c8FDLoNfUej5.jpg';
         const personImg = new Image(); personImg.src = 'https://musk-online.fbcontent.cn/pub-musk-ai-studio/workflow/file/picture/L3zNyEA3sFoK7bkL5DDB9o.jpg';
 
-        const G = 9.8, FIXED_DT = 1/60;
+        const G = 9.8;
         let width, height, currentScene = 'plane';
         let plane = { x: 100, y: 100, speed: 15 };
         let train = { x: 100, y: 0, speed: 15 };
         let person = { x: 0, y: 0, vx: 0, vy: 0, jumping: false, relX: 200 };
         let bombs = [], trajectories = [], explosions = [], isMoving = false, autoDropTimer = null, autoJumpTimer = null;
-        let acceleration = 0, initialSpeed = 15, speedMode = 'uniform', lastTime = 0, accumulator = 0;
+        let acceleration = 0, initialSpeed = 15, speedMode = 'uniform';
 
         function resize() {
             width = canvas.width = window.innerWidth - 320;
@@ -255,7 +255,6 @@
 
         function reset() {
             bombs = []; trajectories = []; explosions = []; isMoving = false;
-            lastTime = 0; accumulator = 0;
             if (autoDropTimer) clearInterval(autoDropTimer);
             if (autoJumpTimer) clearInterval(autoJumpTimer);
             autoDropTimer = null;
@@ -328,7 +327,6 @@
             if (currentScene === 'plane') {
                 if (!isMoving) {
                     isMoving = true;
-                    lastTime = 0; accumulator = 0;
                     enableSpeedBtns();
                     btnUniform.classList.add('active');
                     acceleration = 0;
@@ -338,7 +336,6 @@
             } else {
                 if (!isMoving) {
                     isMoving = true;
-                    lastTime = 0; accumulator = 0;
                     const jump = () =&gt; {
                         if (!person.jumping) {
                             // 边界检测：relX 接近 20 说明到了车尾
@@ -377,12 +374,18 @@
         actionBtn.onclick = performAction;
         resetBtn.onclick = reset;
 
-        function stepPhysics(dt) {
+        function update() {
+            if (!isMoving) return;
+            const dt = 0.02;
+
             if (currentScene === 'plane') {
+                // Apply acceleration to plane speed
                 plane.speed += acceleration * dt;
+                // Clamp speed to reasonable range
                 if (plane.speed &lt; 1) plane.speed = 1;
                 if (plane.speed &gt; 60) plane.speed = 60;
 
+                // Update speed display
                 speedVal.innerText = `${plane.speed.toFixed(1)} m/s`;
                 if (acceleration !== 0) {
                     speedIndicator.style.display = 'block';
@@ -393,7 +396,8 @@
                     speedIndicator.style.display = 'none';
                 }
 
-                plane.x += plane.speed * dt;
+                const dx = plane.x + (plane.speed * dt);
+                plane.x = dx;
                 if (plane.x &gt; width + 100) {
                     plane.x = -100;
                     bombs = []; trajectories = []; explosions = [];
@@ -401,11 +405,12 @@
                 bombs.forEach(bomb =&gt; {
                     if (!bomb.active) return;
                     bomb.path.push({x: bomb.x, y: bomb.y});
-                    let ay = G * dt;
+                    let ay = G * 0.02;
                     if (bomb.hasDrag) {
                         const k = 0.04; let ax = -k * bomb.vx; bomb.vx += ax * dt;
-                        ay = (G * dt) - (k * bomb.vy);
+                        ay = (G * 0.02) - (k * bomb.vy);
                     }
+                    // Bomb keeps its initial horizontal speed (inertia) — does NOT match plane
                     bomb.x += bomb.vx * dt;
                     bomb.vy += ay * dt; bomb.y += bomb.vy * 0.2;
                     if (bomb.y &gt; height - 80) {
@@ -417,21 +422,23 @@
             } else {
                 const dx = (train.speed * dt);
                 train.x += dx;
+                // 深度优化：当列车重置时，必须同步更新小人的全局坐标，防止其&amp;ldquo;消失&amp;rdquo;
                 if (train.x &gt; width + 200) {
                     const oldTrainX = train.x;
                     train.x = -500;
                     const offset = train.x - oldTrainX;
-                    person.x += offset;
+                    person.x += offset; 
                 }
                 if (person.jumping) {
-                    let ay = G * dt;
+                    let ay = G * 0.02;
                     if (dragToggle.checked) {
-                        const k = 0.8;
+                        const k = 0.8; 
                         person.vx += (-k * person.vx) * dt;
                         const dragY = -k * person.vy;
-                        ay = (G * dt) + dragY * dt;
+                        ay = (G * 0.02) + dragY * dt;
                         person.x += (person.vx * dt);
-
+                        
+                        // 实时边界检测：限制 relX 不得小于 20（车尾）
                         let currentRelX = person.x - train.x;
                         if (currentRelX &lt; 20) {
                             person.x = train.x + 20;
@@ -446,7 +453,7 @@
                         person.y = train.y + 80;
                         person.jumping = false;
                         person.relX = person.x - train.x;
-
+                        
                         if (dragToggle.checked &amp;&amp; person.relX &lt; 40) {
                             if (autoJumpTimer) {
                                 clearInterval(autoJumpTimer);
@@ -459,20 +466,6 @@
 
             explosions.forEach(exp =&gt; { exp.r += 2; exp.o -= 0.03; });
             explosions = explosions.filter(exp =&gt; exp.o &gt; 0);
-        }
-
-        function update(ts) {
-            if (!isMoving) return;
-            if (!lastTime) lastTime = ts;
-            let frameTime = (ts - lastTime) / 1000;
-            if (frameTime &gt; 0.25) frameTime = 0.25;
-            lastTime = ts;
-
-            accumulator += frameTime;
-            while (accumulator &gt;= FIXED_DT) {
-                stepPhysics(FIXED_DT);
-                accumulator -= FIXED_DT;
-            }
         }
 
         function draw() {
@@ -521,7 +514,7 @@
                 ctx.fillStyle = `rgba(255, 86, 0, ${exp.o})`; ctx.fill();
             });
 
-            requestAnimationFrame((ts) =&gt; { update(ts); draw(); });
+            requestAnimationFrame(() =&gt; { update(); draw(); });
         }
 
         planeImg.onload = bombImg.onload = trainImg.onload = personImg.onload = () =&gt; draw();
