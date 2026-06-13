@@ -43,7 +43,10 @@
 
   var page = window.location.pathname.substring(window.location.pathname.lastIndexOf('/') + 1) || 'experiments.html';
 
-  if (VIP_EXPERIMENTS.indexOf(page) >= 0) {
+  // 免费体验专区：URL 参数 ?trial=1 跳过 VIP 校验
+  var isFreeTrial = window.location.search.indexOf('trial=1') !== -1;
+
+  if (!isFreeTrial && VIP_EXPERIMENTS.indexOf(page) >= 0) {
     // 从 localStorage 缓存读取 VIP 状态（同步，快速）
     var users = JSON.parse(localStorage.getItem("users") || "{}");
     var userData = users[user];
