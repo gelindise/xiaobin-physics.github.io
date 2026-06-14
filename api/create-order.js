@@ -1,8 +1,10 @@
 // 面包多 H5 支付 - 创建订单
 const { createHash } = require('crypto');
 
-const MBD_APP_ID = process.env.MBD_APP_ID;
-const MBD_APP_KEY = process.env.MBD_APP_KEY;
+const MBD_DEV_KEY = process.env.MBD_DEVELOPER_KEY;
+// Developer Key 格式: app_id:hash:app_secret，取第一段为 app_id，完整 key 为签名密钥
+const MBD_APP_ID = MBD_DEV_KEY ? MBD_DEV_KEY.split(':')[0] : '';
+const MBD_APP_KEY = MBD_DEV_KEY || '';
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
 

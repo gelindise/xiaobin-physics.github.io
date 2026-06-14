@@ -18,17 +18,19 @@ module.exports = async (req, res) => {
 
   console.log('[pay-callback] received:', JSON.stringify(body));
 
-  // 面包多 webhook 格式: { type: "charge_succeeded", out_trade_no, amount, charge_id, payway, ... }
+  // 面包多 webhook 格式: { type: "charge_succeeded", data: { out_trade_no, amount, charge_id, payway, ... } }
   if (body.type !== 'charge_succeeded') {
     console.log('[pay-callback] ignored type:', body.type);
     return res.json({ code: 'ignored' });
   }
 
-  const outTradeNo = body.out_trade_no;
-  if (!outTradeNo) {
-    console.error('[pay-callback] missing out_trade_no');
+  const webData = body.data;
+  if (!webData || !webData.out_trade_no) {
+    console.error('[pay-callback] missing data.out_trade_no');
     return res.json({ code: 'missing_data' });
   }
+
+  const outTradeNo = webData.out_trade_no;
 
   try {
     // 查询订单
