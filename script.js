@@ -478,7 +478,7 @@ function openLab(lab) { openInFrame(lab); }
 function buyVip(type) {
   let user = localStorage.getItem("currentUser");
   if (!user) { alert("请先登录"); location.href = "login.html"; return; }
-  location.href = `pay.html?type=${encodeURIComponent(type)}&user=${encodeURIComponent(user)}`;
+  location.href = 'vip.html';
 }
 
 function logout() {
