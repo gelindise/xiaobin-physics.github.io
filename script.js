@@ -1,6 +1,22 @@
 // ========== 核心配置 ==========
 // Supabase 在 supabase.js 中配置：SUPABASE_URL / SUPABASE_ANON_KEY / SB 工具对象
 
+// ========== 页面访问追踪 ==========
+(function trackVisit() {
+  try {
+    fetch(`${SUPABASE_URL}/rest/v1/visits`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        apikey: SUPABASE_ANON_KEY,
+        Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+        Prefer: 'return=minimal',
+      },
+      body: JSON.stringify({ path: location.pathname }),
+    }).catch(() => {});
+  } catch (_) {}
+})();
+
 // ========== 获取所有用户（对象格式兼容旧代码） ==========
 async function getUsersFromTable() {
   try {

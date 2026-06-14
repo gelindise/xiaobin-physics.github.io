@@ -88,6 +88,33 @@
     .pwd-hint { text-align:center; font-size:0.8rem; margin-top:0.5rem; min-height:1.5rem; }
     .pwd-hint.error { color:#ef4444; }
     .pwd-hint.success { color:#4ade80; }
+
+    /* 数据看板 */
+    .dashboard {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 0.75rem;
+      margin-bottom: 1.5rem;
+    }
+    .stat-card {
+      background: rgba(255,255,255,0.03);
+      border: 1px solid var(--glass-border);
+      border-radius: 14px;
+      padding: 0.9rem 0.5rem;
+      text-align: center;
+      transition: all 0.3s ease;
+      cursor: default;
+    }
+    .stat-card:hover { border-color: var(--primary); transform: translateY(-2px); }
+    .stat-card.highlight { border-color: rgba(251,191,36,0.2); background: rgba(251,191,36,0.05); }
+    .stat-card .stat-icon { font-size: 1.3rem; margin-bottom: 0.2rem; }
+    .stat-card .stat-value {
+      font-size: 1.5rem; font-weight: 800; color: var(--text-main);
+      font-variant-numeric: tabular-nums;
+    }
+    .stat-card.highlight .stat-value { color: #fbbf24; }
+    .stat-card .stat-label { font-size: 0.72rem; color: var(--text-muted); margin-top: 0.1rem; }
+    @media (max-width: 600px) { .dashboard { grid-template-columns: repeat(2, 1fr); } }
   </style>
 </head>
 <body>
@@ -98,10 +125,28 @@
         <h2>管理员控制台</h2>
       </div>
 
-      <!-- 数据概览 -->
-      <div style="display:flex;gap:1.5rem;justify-content:center;margin-bottom:1.2rem;font-size:0.85rem;">
-        <span style="color:var(--text-muted);">👥 注册会员: <strong style="color:var(--text-main);font-size:1.1rem;" id="totalUsers">--</strong> 人</span>
-        <span style="color:var(--text-muted);">🟢 在线: <strong style="color:#4ade80;font-size:1.1rem;" id="onlineUsers">--</strong> 人</span>
+      <!-- 数据看板 -->
+      <div class="dashboard">
+        <div class="stat-card">
+          <div class="stat-icon">📊</div>
+          <div class="stat-value" id="todayVisits">--</div>
+          <div class="stat-label">今日访问</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon">🆕</div>
+          <div class="stat-value" id="todayNewUsers">--</div>
+          <div class="stat-label">今日新增</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon">💎</div>
+          <div class="stat-value" id="vipCount">--</div>
+          <div class="stat-label">VIP会员</div>
+        </div>
+        <div class="stat-card highlight">
+          <div class="stat-icon">👥</div>
+          <div class="stat-value" id="totalUsers">--</div>
+          <div class="stat-label">总会员</div>
+        </div>
       </div>
 
       <!-- 模式切换 -->
@@ -306,23 +351,45 @@
     // 页面加载时检查登录状态
 
     async function loadStats() {
-      const totalEl = document.getElementById('totalUsers');
-      const onlineEl = document.getElementById('onlineUsers');
+      const todayStr = new Date().toISOString().split('T')[0];
       try {
-        // 获取会员总数
-        const users = await SB.getUsers();
-        totalEl.textContent = users ? users.length : '0';
-        // 获取在线人数（最近 10 分钟活跃）
-        const tenMinAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();
-        const online = await SB.query('users', {
-          select: 'id',
-          filter: { col: 'last_seen', val: 'gte.' + tenMinAgo },
-        });
-        onlineEl.textContent = online ? online.length : '0';
+        // 并行查询所有数据
+        const [users, visitsToday, usersToday] = await Promise.all([
+          SB.getUsers(),
+          SB.query('visits', { select: 'id', filter: { col: 'created_at', val: `gte.${todayStr}T00:00:00` } }),
+          SB.query('users', { select: 'id', filter: { col: 'created_at', val: `gte.${todayStr}T00:00:00` } }),
+        ]);
+
+        // 总会员
+        const total = users ? users.length : 0;
+        document.getElementById('totalUsers').textContent = total;
+
+        // VIP 会员（vip 不是普通用户 且不为空）
+        const vipUsers = users ? users.filter(u => u.vip && u.vip !== '普通用户').length : 0;
+        document.getElementById('vipCount').textContent = vipUsers;
+
+        // 今日访问
+        document.getElementById('todayVisits').textContent = visitsToday ? visitsToday.length : 0;
+
+        // 今日新增
+        document.getElementById('todayNewUsers').textContent = usersToday ? usersToday.length : 0;
       } catch (e) {
         console.warn('[admin] loadStats error:', e.message);
-        totalEl.textContent = '?';
-        onlineEl.textContent = '?';
+        // 首次使用 visits 表可能不存在，回退到基础查询
+        try {
+          const users = await SB.getUsers();
+          const total = users ? users.length : 0;
+          document.getElementById('totalUsers').textContent = total;
+          const vipUsers = users ? users.filter(u => u.vip && u.vip !== '普通用户').length : 0;
+          document.getElementById('vipCount').textContent = vipUsers;
+          document.getElementById('todayVisits').textContent = '?';
+          document.getElementById('todayNewUsers').textContent = '?';
+        } catch (_) {
+          document.getElementById('totalUsers').textContent = '?';
+          document.getElementById('vipCount').textContent = '?';
+          document.getElementById('todayVisits').textContent = '?';
+          document.getElementById('todayNewUsers').textContent = '?';
+        }
       }
     }
     document.addEventListener('DOMContentLoaded', () => {
