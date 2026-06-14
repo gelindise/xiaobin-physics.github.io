@@ -111,12 +111,18 @@
                 &lt;p class=&quot;text-gray-500 text-sm mt-1&quot;&gt;人教版八年级物理 &amp;middot; 连通器应用&lt;/p&gt;
             &lt;/div&gt;
             &lt;div class=&quot;flex items-center gap-2&quot;&gt;
-                &lt;button id=&quot;btn-direction&quot; class=&quot;px-3 py-1.5 text-xs font-bold rounded-lg border border-blue-300 bg-blue-50 text-blue-700 hover:bg-blue-100 transition-colors&quot;&gt;上游→下游&lt;/button&gt;
+                &lt;div class=&quot;flex gap-1&quot;&gt;
+                    &lt;button id=&quot;btn-updown&quot; class=&quot;mode-btn px-3 py-1.5 text-xs font-bold rounded-lg border border-blue-300 bg-blue-500 text-white transition-colors&quot;&gt;上游→下游&lt;/button&gt;
+                    &lt;button id=&quot;btn-downup&quot; class=&quot;mode-btn px-3 py-1.5 text-xs font-bold rounded-lg border border-blue-300 bg-blue-50 text-blue-700 hover:bg-blue-100 transition-colors&quot;&gt;下游→上游&lt;/button&gt;
+                    &lt;button id=&quot;btn-five&quot; class=&quot;mode-btn px-3 py-1.5 text-xs font-bold rounded-lg border border-amber-400 bg-amber-50 text-amber-700 hover:bg-amber-100 transition-colors&quot;&gt;五级船闸&lt;/button&gt;
+                &lt;/div&gt;
                 &lt;div class=&quot;flex gap-1&quot;&gt;
                     &lt;div id=&quot;step1-dot&quot; class=&quot;step-dot w-3 h-3 rounded-full bg-gray-300&quot;&gt;&lt;/div&gt;
                     &lt;div id=&quot;step2-dot&quot; class=&quot;step-dot w-3 h-3 rounded-full bg-gray-300&quot;&gt;&lt;/div&gt;
                     &lt;div id=&quot;step3-dot&quot; class=&quot;step-dot w-3 h-3 rounded-full bg-gray-300&quot;&gt;&lt;/div&gt;
                     &lt;div id=&quot;step4-dot&quot; class=&quot;step-dot w-3 h-3 rounded-full bg-gray-300&quot;&gt;&lt;/div&gt;
+                    &lt;div id=&quot;step5-dot&quot; class=&quot;step-dot extra-dot w-3 h-3 rounded-full bg-gray-300 hidden&quot; style=&quot;display:none;&quot;&gt;&lt;/div&gt;
+                    &lt;div id=&quot;step6-dot&quot; class=&quot;step-dot extra-dot w-3 h-3 rounded-full bg-gray-300 hidden&quot; style=&quot;display:none;&quot;&gt;&lt;/div&gt;
                 &lt;/div&gt;
                 &lt;span id=&quot;step-indicator&quot; class=&quot;text-sm font-medium text-blue-600 ml-2&quot;&gt;准备就绪&lt;/span&gt;
             &lt;/div&gt;
@@ -182,13 +188,19 @@
         const STATE = {
             step: 0, // 0:初始, 1:阀门A开, 2:闸门上开, 3:阀门B开, 4:闸门下开
             isAnimating: false,
-            direction: 'up-to-down', // 'up-to-down' 上游→下游, 'down-to-up' 下游→上游
+            mode: 'up-to-down', // 'up-to-down' 上游→下游, 'down-to-up' 下游→上游, 'five-level' 五级船闸
             waterLevelLock: 0.3, // 0-1, 0是下游水位，1是上游水位
             gateUpY: 0, // 0:关闭, 1:开启
             gateDownY: 0,
             valveA: 0, // 0:关闭, 1:开启
             valveB: 0,
             boatX: 0.1, // 0-1 整个航道进度
+            // 五级船闸专用
+            chamberLevels: [1.0, 0.82, 0.64, 0.46, 0.28],
+            chamberGates: [0, 0, 0, 0, 0, 0],
+            chamberValves: [0, 0, 0, 0, 0, 0],
+            boatChamber: 0, // 0=上游引航道, 1~5=闸室, 6=下游引航道
+            boatX5: 0, // 船只连续水平位置 (canvas像素比例)
         };
 
         // Canvas 配置
@@ -207,6 +219,16 @@
             gateWidth: 0.04, // 闸门宽度
         };
 
+        // 五级船闸布局参数
+        const FIVE = {
+            upstreamW: 0.08,
+            chamberW: 0.14,
+            downstreamX: 0.78,
+            groundY: 0.7,
+            waterUpY: 0.3,
+            waterDownY: 0.58,
+        };
+
         // 初始化
         function init() {
             resize();
@@ -217,7 +239,9 @@
             
             document.getElementById('btn-next').addEventListener('click', nextStep);
             document.getElementById('btn-reset').addEventListener('click', reset);
-            document.getElementById('btn-direction').addEventListener('click', toggleDirection);
+            document.getElementById('btn-updown').addEventListener('click', () => setMode('up-to-down'));
+            document.getElementById('btn-downup').addEventListener('click', () => setMode('down-to-up'));
+            document.getElementById('btn-five').addEventListener('click', () => setMode('five-level'));
 
             draw();
             playAudio(0);
@@ -232,6 +256,7 @@
 
         // 核心绘制函数
         function draw() {
+            if (STATE.mode === 'five-level') { drawFiveLevel(); return; }
             ctx.clearRect(0, 0, width, height);
             
             // 计算关键坐标
@@ -312,7 +337,7 @@
             ctx.fillText('正面视角', x + 10, y + 20);
 
             // 根据方向确定当前视角
-            const isReverse = STATE.direction === 'down-to-up';
+            const isReverse = STATE.mode === 'down-to-up';
             const isUpstreamView = isReverse ? (STATE.step &gt;= 2) : (STATE.step &lt;= 2);
             const gateOpenState = isUpstreamView ? STATE.gateUpY : STATE.gateDownY;
             
@@ -347,17 +372,26 @@
             ctx.fillStyle = 'rgba(79, 195, 247, 0.6)';
             ctx.fillRect(x + 20, frontWaterY, w - 40, viewBottom - frontWaterY);
 
-            // 3. 绘制船 (正面)
-            // 船只大小随距离变化？简化为固定大小
-            // 只有当船在闸室或者正在通过时才显示
-            // 简单处理：始终显示船，位置随水位
+            // 3. 绘制船 (正面) — 船随所在水面变化
+            let boatWorldY;
+            const boatWpx = 80;
+            const boatWorldX = STATE.boatX * (width + boatWpx) - boatWpx; // 与 drawBoat 完全一致
+            const lockLeftX = width * LAYOUT.lockLeft;
+            const lockRightX = width * LAYOUT.lockRight;
+            if (boatWorldX + boatWpx < lockLeftX) {
+                boatWorldY = upWaterY;       // 船在上游
+            } else if (boatWorldX > lockRightX) {
+                boatWorldY = downWaterY;     // 船在下游
+            } else {
+                boatWorldY = lockWaterY;     // 船在闸室
+            }
+            const boatFrontY = mapWaterY(boatWorldY);
             const boatW = w * 0.4;
             const boatH = boatW * 0.6;
             const boatX = x + (w - boatW) / 2;
-            const boatY = frontWaterY - boatH + 5;
-            
+            const boatY = boatFrontY - boatH + 5;
+
             if (boatImg.complete) {
-                // 绘制简易正面船
                 ctx.fillStyle = '#FF7043';
                 ctx.beginPath();
                 ctx.moveTo(boatX, boatY);
@@ -365,40 +399,46 @@
                 ctx.lineTo(boatX + boatW - 10, boatY + boatH);
                 ctx.lineTo(boatX + 10, boatY + boatH);
                 ctx.fill();
-                // 船舱
                 ctx.fillStyle = '#FFF';
                 ctx.fillRect(boatX + 15, boatY - 15, boatW - 30, 15);
             }
 
-            // 4. 绘制人字闸门
-            // 门轴在两侧，向中间闭合
-            // openState 0(关) -&gt; 1(开)
-            // 开启时，门板向两侧缩进（透视效果：宽度变窄，高度不变）
-            
+            // 4. 绘制人字闸门 (半透明，关闭时可透视船只)
             const gateH = viewBottom - viewTop;
-            const maxGateW = (w - 40) / 2 + 2; // 单扇门宽
-            const currentGateW = maxGateW * (1 - gateOpenState * 0.9); // 打开时宽度变小
-            
-            ctx.fillStyle = '#546E7A';
-            ctx.strokeStyle = '#37474F';
-            
-            // 左门
-            ctx.fillRect(x + 20, viewTop, currentGateW, gateH);
-            ctx.strokeRect(x + 20, viewTop, currentGateW, gateH);
-            // 门缝线
+            const innerLeft = x + 20;
+            const innerRight = x + w - 20;
+            const halfSpan = (innerRight - innerLeft) / 2;
+            // 门板宽度：关闭时占满半跨，打开时缩至6px
+            const leafW = halfSpan - gateOpenState * (halfSpan - 6);
+            // 半透明：关闭时透明可见船，打开时近乎实色
+            const alpha = 0.35 + gateOpenState * 0.5;
+
+            ctx.lineWidth = 1.5;
+            // 左扇门
+            ctx.fillStyle = `rgba(55, 71, 79, ${alpha})`;
+            ctx.fillRect(innerLeft, viewTop, leafW, gateH);
+            ctx.strokeStyle = `rgba(38, 50, 56, ${alpha + 0.2})`;
+            ctx.strokeRect(innerLeft, viewTop, leafW, gateH);
             ctx.beginPath();
-            ctx.moveTo(x + 20 + currentGateW - 5, viewTop);
-            ctx.lineTo(x + 20 + currentGateW - 5, viewBottom);
+            ctx.moveTo(innerLeft + leafW, viewTop);
+            ctx.lineTo(innerLeft + leafW, viewBottom);
             ctx.stroke();
 
-            // 右门
-            ctx.fillRect(x + w - 20 - currentGateW, viewTop, currentGateW, gateH);
-            ctx.strokeRect(x + w - 20 - currentGateW, viewTop, currentGateW, gateH);
-            // 门缝线
+            // 右扇门
+            ctx.fillStyle = `rgba(55, 71, 79, ${alpha})`;
+            ctx.fillRect(innerRight - leafW, viewTop, leafW, gateH);
+            ctx.strokeStyle = `rgba(38, 50, 56, ${alpha + 0.2})`;
+            ctx.strokeRect(innerRight - leafW, viewTop, leafW, gateH);
             ctx.beginPath();
-            ctx.moveTo(x + w - 20 - currentGateW + 5, viewTop);
-            ctx.lineTo(x + w - 20 - currentGateW + 5, viewBottom);
+            ctx.moveTo(innerRight - leafW, viewTop);
+            ctx.lineTo(innerRight - leafW, viewBottom);
             ctx.stroke();
+
+            // 门状态标签
+            ctx.fillStyle = gateOpenState > 0.3 ? '#4CAF50' : '#EF5350';
+            ctx.font = 'bold 9px sans-serif';
+            const label = isUpstreamView ? '上游门' : '下游门';
+            ctx.fillText(label + (gateOpenState > 0.3 ? ' 开' : ' 关'), x + w/2 - 16, viewTop - 4);
 
             ctx.restore();
         }
@@ -486,98 +526,321 @@
             ctx.drawImage(boatImg, currentX, boatY, boatW, boatH);
         }
 
+        // ========== 五级船闸绘制 ==========
+        function drawFiveLevel() {
+            ctx.clearRect(0, 0, width, height);
+            const groundY = height * FIVE.groundY;
+            const waterUpY = height * FIVE.waterUpY;
+            const waterDownY = height * FIVE.waterDownY;
+            const upstreamW = width * FIVE.upstreamW;
+            const chamberW = width * FIVE.chamberW;
+            const downstreamX = width * FIVE.downstreamX;
+
+            // 映射水位值 (1=上游高, 0=下游低) 到像素Y
+            const waterY = (level) => waterDownY - (waterDownY - waterUpY) * level;
+
+            // 1. 地形 (混凝土)
+            ctx.fillStyle = '#90A4AE';
+            // 上游底部
+            ctx.fillRect(0, groundY, upstreamW, height - groundY);
+            // 下游底部
+            ctx.fillRect(downstreamX, groundY, width - downstreamX, height - groundY);
+            // 5个闸室地板+侧壁
+            for (let i = 0; i < 5; i++) {
+                const cx = upstreamW + i * chamberW;
+                ctx.fillRect(cx, groundY, chamberW, height - groundY);
+            }
+
+            // 2. 水体渐变
+            const waterGrad = ctx.createLinearGradient(0, 0, 0, height);
+            waterGrad.addColorStop(0, '#4FC3F7');
+            waterGrad.addColorStop(1, '#0288D1');
+            ctx.fillStyle = waterGrad;
+
+            // 上游水
+            ctx.fillRect(0, waterUpY, upstreamW, groundY - waterUpY);
+            // 下游水
+            ctx.fillRect(downstreamX, waterDownY, width - downstreamX, groundY - waterDownY);
+            // 5个闸室水
+            for (let i = 0; i < 5; i++) {
+                const cx = upstreamW + i * chamberW;
+                const wy = waterY(STATE.chamberLevels[i]);
+                ctx.fillRect(cx + 4, wy, chamberW - 8, groundY - wy);
+            }
+
+            // 3. 闸门 (6道，在闸室边界)
+            for (let i = 0; i < 6; i++) {
+                const gx = upstreamW + i * chamberW;
+                const openState = STATE.chamberGates[i];
+                const gateH = groundY - waterUpY + 20;
+                const liftH = openState * gateH * 0.8;
+
+                // 闸门槽
+                ctx.fillStyle = '#455A64';
+                ctx.fillRect(gx - 10, waterUpY - 30, 20, gateH + 30);
+                // 闸门板
+                ctx.fillStyle = '#37474F';
+                const gateTop = waterUpY - 20 - liftH;
+                ctx.fillRect(gx - 8, gateTop + liftH, 16, gateH);
+                ctx.strokeStyle = '#546E7A';
+                ctx.beginPath();
+                ctx.moveTo(gx, gateTop + liftH + 5);
+                ctx.lineTo(gx, gateTop + liftH + gateH - 5);
+                ctx.stroke();
+
+                // 标注 (仅第0道和第5道)
+                if (i === 0) { ctx.fillStyle='#fff'; ctx.font='11px sans-serif'; ctx.fillText('上游闸门', gx-25, waterUpY-40); }
+                if (i === 5) { ctx.fillStyle='#fff'; ctx.font='11px sans-serif'; ctx.fillText('下游闸门', gx-25, waterUpY-40); }
+            }
+
+            // 4. 阀门 (6组，每道闸门处一个)
+            for (let i = 0; i < 6; i++) {
+                const vx = upstreamW + i * chamberW;
+                const pipeY = groundY + 40;
+                ctx.fillStyle = '#546E7A';
+                ctx.fillRect(vx - 25, pipeY, 50, 16);
+                ctx.fillStyle = STATE.chamberValves[i] ? '#4CAF50' : '#F44336';
+                const valveH = STATE.chamberValves[i] ? 35 : 0;
+                ctx.fillRect(vx - 4, pipeY - 28 - valveH, 8, 28);
+                ctx.fillStyle = '#fff';
+                ctx.font = '10px sans-serif';
+                ctx.fillText('阀'+(i+1), vx-8, pipeY+30);
+            }
+
+            // 5. 船只
+            if (boatImg.complete) {
+                const boatW = 70, boatH = 44;
+                const bx = STATE.boatX5 * width - boatW/2;
+                // 根据水平位置判断在哪个区域，决定Y坐标
+                let boatWy;
+                const chambers = [];
+                for (let i = 0; i < 5; i++) {
+                    chambers.push({ left: upstreamW + i * chamberW, right: upstreamW + (i+1) * chamberW, level: STATE.chamberLevels[i] });
+                }
+                if (STATE.boatX5 * width < upstreamW) {
+                    boatWy = waterUpY;
+                } else if (STATE.boatX5 * width > downstreamX) {
+                    boatWy = waterDownY;
+                } else {
+                    // 查找所在闸室
+                    let found = false;
+                    for (const ch of chambers) {
+                        if (STATE.boatX5 * width >= ch.left && STATE.boatX5 * width < ch.right) {
+                            boatWy = waterY(ch.level);
+                            found = true;
+                            break;
+                        }
+                    }
+                    if (!found) boatWy = waterY(0.5);
+                }
+                const by = boatWy - boatH + 12;
+                ctx.drawImage(boatImg, bx, by, boatW, boatH);
+            }
+
+            // 6. 标签
+            ctx.fillStyle = '#37474F';
+            ctx.font = 'bold 11px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('上游', upstreamW/2, groundY + 20);
+            for (let i = 0; i < 5; i++) {
+                const cx = upstreamW + i * chamberW + chamberW/2;
+                ctx.fillText('闸室'+(i+1), cx, groundY + 20);
+            }
+            ctx.fillText('下游', downstreamX + (width-downstreamX)/2, groundY + 20);
+            ctx.textAlign = 'start';
+
+            // 7. 简化正面视图 (右上角)
+            drawFiveLevelFrontView(width*0.78, 12, width*0.2, height*0.3);
+
+            // 8. 实时更新状态面板
+            updateStatusPanel();
+        }
+
+        function drawFiveLevelFrontView(x, y, w, h) {
+            ctx.save();
+            ctx.beginPath(); ctx.roundRect(x, y, w, h, 8); ctx.clip();
+            ctx.fillStyle = '#E3F2FD'; ctx.fillRect(x, y, w, h);
+            ctx.strokeStyle = '#90A4AE'; ctx.lineWidth = 2; ctx.strokeRect(x, y, w, h);
+            ctx.fillStyle = '#546E7A'; ctx.font = 'bold 11px sans-serif';
+            const chamberNum = STATE.boatChamber === 0 ? '上游引航道' : STATE.boatChamber === 6 ? '下游引航道' : '闸室'+STATE.boatChamber;
+            ctx.fillText('正面视角 - ' + chamberNum, x + 8, y + 18);
+
+            const viewBot = y + h - 8, viewTop = y + 28, viewH = viewBot - viewTop;
+
+            // 水位线
+            let level = 0.3;
+            if (STATE.boatChamber >= 1 && STATE.boatChamber <= 5) level = STATE.chamberLevels[STATE.boatChamber-1];
+            else if (STATE.boatChamber === 0) level = 1.0;
+            const frontWaterY = viewTop + (1-level) * viewH;
+
+            // 水体
+            ctx.fillStyle = 'rgba(79,195,247,0.6)';
+            ctx.fillRect(x + 8, frontWaterY, w - 16, viewBot - frontWaterY);
+
+            // 闸室侧壁
+            ctx.fillStyle = '#90A4AE';
+            ctx.fillRect(x + 8, viewTop, 12, viewH);      // 左墙
+            ctx.fillRect(x + w - 20, viewTop, 12, viewH); // 右墙
+
+            // 简化小船 (先画船，在闸室中央)
+            const bW = w * 0.25, bH = bW * 0.5;
+            const bX = x + (w - bW)/2, bY = frontWaterY - bH + 2;
+            ctx.fillStyle = '#FF7043';
+            ctx.beginPath();
+            ctx.moveTo(bX, bY); ctx.lineTo(bX + bW, bY);
+            ctx.lineTo(bX + bW - 6, bY + bH); ctx.lineTo(bX + 6, bY + bH);
+            ctx.fill();
+            ctx.fillStyle = '#FFF';
+            ctx.fillRect(bX + 8, bY - 8, bW - 16, 8);
+
+            // === 闸门 (人字门，半透明覆盖船上) ===
+            let gateIdx = -1;
+            if (STATE.boatChamber === 0) gateIdx = 0;
+            else if (STATE.boatChamber <= 5) gateIdx = STATE.boatChamber;
+            // boatChamber 6: 没有前方闸门
+
+            if (gateIdx >= 0 && gateIdx <= 5) {
+                const gateOpen = STATE.chamberGates[gateIdx];
+                const gateH = viewH;
+                const innerLeft = x + 20;
+                const innerRight = x + w - 20;
+                const halfSpan = (innerRight - innerLeft) / 2;
+                // 门板宽度：关闭时占满半跨，打开时缩至6px
+                const leafW = halfSpan - gateOpen * (halfSpan - 6);
+
+                // 半透明：关闭时透明可见船，打开时近乎实色
+                const alpha = 0.35 + gateOpen * 0.5;
+
+                // 左扇门 (铰链在左墙内侧)
+                ctx.fillStyle = `rgba(55, 71, 79, ${alpha})`;
+                ctx.fillRect(innerLeft, viewTop, leafW, gateH);
+                ctx.strokeStyle = `rgba(38, 50, 56, ${alpha + 0.2})`;
+                ctx.lineWidth = 1.5;
+                ctx.strokeRect(innerLeft, viewTop, leafW, gateH);
+                // 门缝线 (右边缘)
+                ctx.beginPath();
+                ctx.moveTo(innerLeft + leafW, viewTop);
+                ctx.lineTo(innerLeft + leafW, viewBot);
+                ctx.stroke();
+
+                // 右扇门 (铰链在右墙内侧)
+                ctx.fillStyle = `rgba(55, 71, 79, ${alpha})`;
+                ctx.fillRect(innerRight - leafW, viewTop, leafW, gateH);
+                ctx.strokeStyle = `rgba(38, 50, 56, ${alpha + 0.2})`;
+                ctx.strokeRect(innerRight - leafW, viewTop, leafW, gateH);
+                // 门缝线 (左边缘)
+                ctx.beginPath();
+                ctx.moveTo(innerRight - leafW, viewTop);
+                ctx.lineTo(innerRight - leafW, viewBot);
+                ctx.stroke();
+
+                // 门状态标签
+                ctx.fillStyle = gateOpen > 0.3 ? '#4CAF50' : '#EF5350';
+                ctx.font = 'bold 9px sans-serif';
+                const gateLabel = gateIdx === 0 ? '上游门' : gateIdx === 5 ? '下游门' : '门' + gateIdx;
+                ctx.fillText(gateLabel + (gateOpen > 0.3 ? ' 开' : ' 关'), x + w/2 - 16, viewTop - 4);
+            }
+
+            ctx.restore();
+        }
+
         // 动画控制逻辑
         async function nextStep() {
             if (STATE.isAnimating) return;
-            
+
             const btn = document.getElementById('btn-next');
             const currentStep = STATE.step;
-            const isReverse = STATE.direction === 'down-to-up';
+            const isReverse = STATE.mode === 'down-to-up';
+            const isFiveLevel = STATE.mode === 'five-level';
 
             STATE.isAnimating = true;
             btn.disabled = true;
 
             try {
-                switch(currentStep) {
-                    case 0:
-                        if (isReverse) {
-                            updateUI(1, &quot;步骤一：打开下游阀门B&quot;, &quot;闸室与下游构成连通器。水从闸室流向下游，直至水面相平。&quot;);
-                            anime({ targets: STATE, valveB: 1, duration: 500, easing: 'easeInOutQuad' });
-                            playAudio(currentStep + 1);
-                            await anime({ targets: STATE, waterLevelLock: 0, duration: 3000, easing: 'easeInOutQuad', update: draw }).finished;
-                        } else {
-                            updateUI(1, &quot;步骤一：打开上游阀门A&quot;, &quot;闸室与上游构成连通器。根据连通器原理，液面相平，闸室水位上升。&quot;);
-                            anime({ targets: STATE, valveA: 1, duration: 500, easing: 'easeInOutQuad' });
-                            playAudio(currentStep + 1);
-                            await anime({ targets: STATE, waterLevelLock: 1, duration: 3000, easing: 'easeInOutQuad', update: draw }).finished;
-                        }
-                        if (!STATE.isAnimating) return;
-                        STATE.step = 1;
-                        btn.innerHTML = `&lt;span&gt;下一步&lt;/span&gt;&lt;svg class=&quot;w-5 h-5&quot; fill=&quot;none&quot; stroke=&quot;currentColor&quot; viewBox=&quot;0 0 24 24&quot;&gt;&lt;path stroke-linecap=&quot;round&quot; stroke-linejoin=&quot;round&quot; stroke-width=&quot;2&quot; d=&quot;M13 7l5 5m0 0l-5 5m5-5H6&quot;&gt;&lt;/path&gt;&lt;/svg&gt;`;
-                        break;
+                if (isFiveLevel) {
+                    await runFiveLevelStep(currentStep, btn);
+                } else {
+                    switch(currentStep) {
+                        case 0:
+                            if (isReverse) {
+                                updateUI(1, &quot;步骤一：打开下游阀门B&quot;, &quot;闸室与下游构成连通器。水从闸室流向下游，直至水面相平。&quot;);
+                                anime({ targets: STATE, valveB: 1, duration: 500, easing: 'easeInOutQuad' });
+                                playAudio(currentStep + 1);
+                                await anime({ targets: STATE, waterLevelLock: 0, duration: 3000, easing: 'easeInOutQuad', update: draw }).finished;
+                            } else {
+                                updateUI(1, &quot;步骤一：打开上游阀门A&quot;, &quot;闸室与上游构成连通器。根据连通器原理，液面相平，闸室水位上升。&quot;);
+                                anime({ targets: STATE, valveA: 1, duration: 500, easing: 'easeInOutQuad' });
+                                playAudio(currentStep + 1);
+                                await anime({ targets: STATE, waterLevelLock: 1, duration: 3000, easing: 'easeInOutQuad', update: draw }).finished;
+                            }
+                            if (!STATE.isAnimating) return;
+                            STATE.step = 1;
+                            btn.innerHTML = `&lt;span&gt;下一步&lt;/span&gt;&lt;svg class=&quot;w-5 h-5&quot; fill=&quot;none&quot; stroke=&quot;currentColor&quot; viewBox=&quot;0 0 24 24&quot;&gt;&lt;path stroke-linecap=&quot;round&quot; stroke-linejoin=&quot;round&quot; stroke-width=&quot;2&quot; d=&quot;M13 7l5 5m0 0l-5 5m5-5H6&quot;&gt;&lt;/path&gt;&lt;/svg&gt;`;
+                            break;
 
-                    case 1:
-                        if (isReverse) {
-                            updateUI(2, &quot;步骤二：船驶入闸室&quot;, &quot;打开下游闸门，船从下游驶入闸室。随后关闭下游闸门和阀门B，切断与下游的连通。&quot;);
-                            await anime({ targets: STATE, gateDownY: 1, duration: 1000, easing: 'easeInOutQuad', update: draw }).finished;
+                        case 1:
+                            if (isReverse) {
+                                updateUI(2, &quot;步骤二：船驶入闸室&quot;, &quot;打开下游闸门，船从下游驶入闸室。随后关闭下游闸门和阀门B，切断与下游的连通。&quot;);
+                                await anime({ targets: STATE, gateDownY: 1, duration: 1000, easing: 'easeInOutQuad', update: draw }).finished;
+                                if (!STATE.isAnimating) return;
+                                playAudio(currentStep + 1);
+                                await anime({ targets: STATE, boatX: 0.5, duration: 3000, easing: 'linear', update: draw }).finished;
+                                if (!STATE.isAnimating) return;
+                                anime({ targets: STATE, valveB: 0, duration: 500, easing: 'easeInOutQuad' });
+                                await anime({ targets: STATE, gateDownY: 0, duration: 1000, easing: 'easeInOutQuad', update: draw }).finished;
+                            } else {
+                                updateUI(2, &quot;步骤二：船驶入闸室&quot;, &quot;打开上游闸门，船驶入闸室。随后关闭上游闸门和阀门A，切断与上游的连通。&quot;);
+                                await anime({ targets: STATE, gateUpY: 1, duration: 1000, easing: 'easeInOutQuad', update: draw }).finished;
+                                if (!STATE.isAnimating) return;
+                                playAudio(currentStep + 1);
+                                await anime({ targets: STATE, boatX: 0.5, duration: 3000, easing: 'linear', update: draw }).finished;
+                                if (!STATE.isAnimating) return;
+                                anime({ targets: STATE, valveA: 0, duration: 500, easing: 'easeInOutQuad' });
+                                await anime({ targets: STATE, gateUpY: 0, duration: 1000, easing: 'easeInOutQuad', update: draw }).finished;
+                            }
                             if (!STATE.isAnimating) return;
-                            playAudio(currentStep + 1);
-                            await anime({ targets: STATE, boatX: 0.5, duration: 3000, easing: 'linear', update: draw }).finished;
-                            if (!STATE.isAnimating) return;
-                            anime({ targets: STATE, valveB: 0, duration: 500, easing: 'easeInOutQuad' });
-                            await anime({ targets: STATE, gateDownY: 0, duration: 1000, easing: 'easeInOutQuad', update: draw }).finished;
-                        } else {
-                            updateUI(2, &quot;步骤二：船驶入闸室&quot;, &quot;打开上游闸门，船驶入闸室。随后关闭上游闸门和阀门A，切断与上游的连通。&quot;);
-                            await anime({ targets: STATE, gateUpY: 1, duration: 1000, easing: 'easeInOutQuad', update: draw }).finished;
-                            if (!STATE.isAnimating) return;
-                            playAudio(currentStep + 1);
-                            await anime({ targets: STATE, boatX: 0.5, duration: 3000, easing: 'linear', update: draw }).finished;
-                            if (!STATE.isAnimating) return;
-                            anime({ targets: STATE, valveA: 0, duration: 500, easing: 'easeInOutQuad' });
-                            await anime({ targets: STATE, gateUpY: 0, duration: 1000, easing: 'easeInOutQuad', update: draw }).finished;
-                        }
-                        if (!STATE.isAnimating) return;
-                        STATE.step = 2;
-                        break;
+                            STATE.step = 2;
+                            break;
 
-                    case 2:
-                        if (isReverse) {
-                            updateUI(3, &quot;步骤三：打开上游阀门A&quot;, &quot;闸室与上游构成连通器。根据连通器原理，液面相平，闸室水位上升。&quot;);
-                            anime({ targets: STATE, valveA: 1, duration: 500, easing: 'easeInOutQuad' });
-                            playAudio(currentStep + 1);
-                            await anime({ targets: STATE, waterLevelLock: 1, duration: 3000, easing: 'easeInOutQuad', update: draw }).finished;
-                        } else {
-                            updateUI(3, &quot;步骤三：打开下游阀门B&quot;, &quot;闸室与下游构成连通器。水从闸室流向下游，直至水面相平。&quot;);
-                            anime({ targets: STATE, valveB: 1, duration: 500, easing: 'easeInOutQuad' });
-                            playAudio(currentStep + 1);
-                            await anime({ targets: STATE, waterLevelLock: 0, duration: 3000, easing: 'easeInOutQuad', update: draw }).finished;
-                        }
-                        if (!STATE.isAnimating) return;
-                        STATE.step = 3;
-                        break;
+                        case 2:
+                            if (isReverse) {
+                                updateUI(3, &quot;步骤三：打开上游阀门A&quot;, &quot;闸室与上游构成连通器。根据连通器原理，液面相平，闸室水位上升。&quot;);
+                                anime({ targets: STATE, valveA: 1, duration: 500, easing: 'easeInOutQuad' });
+                                playAudio(currentStep + 1);
+                                await anime({ targets: STATE, waterLevelLock: 1, duration: 3000, easing: 'easeInOutQuad', update: draw }).finished;
+                            } else {
+                                updateUI(3, &quot;步骤三：打开下游阀门B&quot;, &quot;闸室与下游构成连通器。水从闸室流向下游，直至水面相平。&quot;);
+                                anime({ targets: STATE, valveB: 1, duration: 500, easing: 'easeInOutQuad' });
+                                playAudio(currentStep + 1);
+                                await anime({ targets: STATE, waterLevelLock: 0, duration: 3000, easing: 'easeInOutQuad', update: draw }).finished;
+                            }
+                            if (!STATE.isAnimating) return;
+                            STATE.step = 3;
+                            break;
 
-                    case 3:
-                        if (isReverse) {
-                            updateUI(4, &quot;步骤四：船驶向上游&quot;, &quot;打开上游闸门，船驶出闸室，进入上游航道。完成通航。&quot;);
-                            await anime({ targets: STATE, gateUpY: 1, duration: 1000, easing: 'easeInOutQuad', update: draw }).finished;
+                        case 3:
+                            if (isReverse) {
+                                updateUI(4, &quot;步骤四：船驶向上游&quot;, &quot;打开上游闸门，船驶出闸室，进入上游航道。完成通航。&quot;);
+                                await anime({ targets: STATE, gateUpY: 1, duration: 1000, easing: 'easeInOutQuad', update: draw }).finished;
+                                if (!STATE.isAnimating) return;
+                                playAudio(currentStep + 1);
+                                await anime({ targets: STATE, boatX: -0.2, duration: 3000, easing: 'linear', update: draw }).finished;
+                            } else {
+                                updateUI(4, &quot;步骤四：船驶向下游&quot;, &quot;打开下游闸门，船驶出闸室。完成通航。&quot;);
+                                await anime({ targets: STATE, gateDownY: 1, duration: 1000, easing: 'easeInOutQuad', update: draw }).finished;
+                                if (!STATE.isAnimating) return;
+                                playAudio(currentStep + 1);
+                                await anime({ targets: STATE, boatX: 1.2, duration: 3000, easing: 'linear', update: draw }).finished;
+                            }
                             if (!STATE.isAnimating) return;
-                            playAudio(currentStep + 1);
-                            await anime({ targets: STATE, boatX: -0.2, duration: 3000, easing: 'linear', update: draw }).finished;
-                        } else {
-                            updateUI(4, &quot;步骤四：船驶向下游&quot;, &quot;打开下游闸门，船驶出闸室。完成通航。&quot;);
-                            await anime({ targets: STATE, gateDownY: 1, duration: 1000, easing: 'easeInOutQuad', update: draw }).finished;
-                            if (!STATE.isAnimating) return;
-                            playAudio(currentStep + 1);
-                            await anime({ targets: STATE, boatX: 1.2, duration: 3000, easing: 'linear', update: draw }).finished;
-                        }
-                        if (!STATE.isAnimating) return;
-                        STATE.step = 4;
-                        btn.innerHTML = `&lt;span&gt;重新开始&lt;/span&gt;&lt;svg class=&quot;w-5 h-5&quot; fill=&quot;none&quot; stroke=&quot;currentColor&quot; viewBox=&quot;0 0 24 24&quot;&gt;&lt;path stroke-linecap=&quot;round&quot; stroke-linejoin=&quot;round&quot; stroke-width=&quot;2&quot; d=&quot;M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15&quot;&gt;&lt;/path&gt;&lt;/svg&gt;`;
-                        break;
-                    
-                    case 4:
-                        reset();
-                        return;
+                            STATE.step = 4;
+                            btn.innerHTML = `&lt;span&gt;重新开始&lt;/span&gt;&lt;svg class=&quot;w-5 h-5&quot; fill=&quot;none&quot; stroke=&quot;currentColor&quot; viewBox=&quot;0 0 24 24&quot;&gt;&lt;path stroke-linecap=&quot;round&quot; stroke-linejoin=&quot;round&quot; stroke-width=&quot;2&quot; d=&quot;M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15&quot;&gt;&lt;/path&gt;&lt;/svg&gt;`;
+                            break;
+
+                        case 4:
+                            reset();
+                            return;
+                    }
                 }
             } catch (e) {
                 console.error(&quot;Animation error:&quot;, e);
@@ -591,26 +854,187 @@
             }
         }
 
-        function updateUI(stepIndex, title, text) {
-            // 更新步骤点
-            document.querySelectorAll('.step-dot').forEach((dot, idx) =&gt; {
+        // 五级船闸分步动画
+        async function runFiveLevelStep(step, btn) {
+            // 各位置中心X坐标 (width比例)
+            const pos = [
+                FIVE.upstreamW / 2,                          // 上游引航道中心
+                FIVE.upstreamW + 0.5 * FIVE.chamberW,        // 闸室1中心
+                FIVE.upstreamW + 1.5 * FIVE.chamberW,        // 闸室2中心
+                FIVE.upstreamW + 2.5 * FIVE.chamberW,        // 闸室3中心
+                FIVE.upstreamW + 3.5 * FIVE.chamberW,        // 闸室4中心
+                FIVE.upstreamW + 4.5 * FIVE.chamberW,        // 闸室5中心
+                FIVE.downstreamX + (1 - FIVE.downstreamX) / 2 // 下游引航道中心
+            ];
+
+            if (step === 0) {
+                // 船从上游进入闸室1
+                updateUI(1);
+                await animateVal(STATE.chamberGates, 0, 1, 800);
+                if (!STATE.isAnimating) return;
+                await animateProp(STATE, 'boatX5', pos[1], 2000);
+                if (!STATE.isAnimating) return;
+                STATE.boatChamber = 1;
+                updateStatusPanel();
+                STATE.chamberGates[0] = 0;
+                draw();
+                btn.innerHTML = `&lt;span&gt;下一步&lt;/span&gt;&lt;svg class=&quot;w-5 h-5&quot; fill=&quot;none&quot; stroke=&quot;currentColor&quot; viewBox=&quot;0 0 24 24&quot;&gt;&lt;path stroke-linecap=&quot;round&quot; stroke-linejoin=&quot;round&quot; stroke-width=&quot;2&quot; d=&quot;M13 7l5 5m0 0l-5 5m5-5H6&quot;&gt;&lt;/path&gt;&lt;/svg&gt;`;
+            } else if (step >= 1 && step <= 4) {
+                // 闸室 step → step+1: 等水位 + 过船
+                const from = step;
+                const to = step + 1;
+                const targetLevel = STATE.chamberLevels[to - 1];
+                updateUI(step + 1);
+                // 开阀门等水位 (valve[step] 连通 chamber[step-1] ↔ chamber[step])
+                STATE.chamberValves[step] = 1;
+                await animateVal(STATE.chamberLevels, step - 1, targetLevel, 2000);
+                if (!STATE.isAnimating) return;
+                STATE.chamberValves[step] = 0;
+                // 开闸门
+                await animateVal(STATE.chamberGates, step, 1, 800);
+                if (!STATE.isAnimating) return;
+                // 船平滑驶入下一闸室
+                await animateProp(STATE, 'boatX5', pos[to], 2000);
+                if (!STATE.isAnimating) return;
+                STATE.boatChamber = to;
+                updateStatusPanel();
+                STATE.chamberGates[step] = 0;
+                draw();
+            } else if (step === 5) {
+                // 闸室5 → 下游
+                updateUI(6);
+                STATE.chamberValves[5] = 1;
+                await animateVal(STATE.chamberLevels, 4, 0, 2000);
+                if (!STATE.isAnimating) return;
+                STATE.chamberValves[5] = 0;
+                await animateVal(STATE.chamberGates, 5, 1, 800);
+                if (!STATE.isAnimating) return;
+                await animateProp(STATE, 'boatX5', pos[6], 2000);
+                if (!STATE.isAnimating) return;
+                STATE.boatChamber = 6;
+                updateStatusPanel();
+                STATE.chamberGates[5] = 0;
+                draw();
+                btn.innerHTML = `&lt;span&gt;重新开始&lt;/span&gt;&lt;svg class=&quot;w-5 h-5&quot; fill=&quot;none&quot; stroke=&quot;currentColor&quot; viewBox=&quot;0 0 24 24&quot;&gt;&lt;path stroke-linecap=&quot;round&quot; stroke-linejoin=&quot;round&quot; stroke-width=&quot;2&quot; d=&quot;M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15&quot;&gt;&lt;/path&gt;&lt;/svg&gt;`;
+                STATE.step = 6;
+                return;
+            } else if (step >= 6) {
+                reset();
+                return;
+            }
+            STATE.step = step + 1;
+        }
+
+        // 对象属性动画
+        function animateProp(obj, prop, target, duration) {
+            const start = obj[prop];
+            const tObj = { t: 0 };
+            return anime({
+                targets: tObj,
+                t: 1,
+                duration: duration,
+                easing: 'linear',
+                update: () => {
+                    obj[prop] = start + (target - start) * tObj.t;
+                    draw();
+                }
+            }).finished;
+        }
+
+        // 安全的数组元素动画
+        function animateVal(arr, idx, target, duration) {
+            const start = arr[idx];
+            const obj = { t: 0 };
+            return anime({
+                targets: obj,
+                t: 1,
+                duration: duration,
+                easing: 'easeInOutQuad',
+                update: () => {
+                    arr[idx] = start + (target - start) * obj.t;
+                    draw();
+                }
+            }).finished;
+        }
+
+        function sleep(ms) {
+            return new Promise(resolve => setTimeout(resolve, ms));
+        }
+
+        function updateUI(stepIndex) {
+            const isFive = STATE.mode === 'five-level';
+            const maxSteps = isFive ? 6 : 4;
+            const visibleDots = document.querySelectorAll(isFive ? '.step-dot' : '.step-dot:not(.extra-dot)');
+            visibleDots.forEach((dot, idx) =&gt; {
                 if (idx &lt; stepIndex) dot.classList.add('active');
                 else dot.classList.remove('active');
             });
-            
-            document.getElementById('step-indicator').innerText = `当前：步骤 ${stepIndex}/4`;
+            document.getElementById('step-indicator').innerText = `当前：步骤 ${stepIndex}/${maxSteps}`;
+        }
+
+        function updateStepDotsVisibility() {
+            const isFive = STATE.mode === 'five-level';
+            document.querySelectorAll('.extra-dot').forEach(d =&gt; {
+                d.style.display = isFive ? '' : 'none';
+            });
         }
 
         function updateStatusPanel() {
             const setStatus = (id, isOpen) =&gt; {
                 const el = document.getElementById(id);
+                if (!el) return;
                 el.innerText = isOpen ? '开启' : '关闭';
                 el.className = `font-mono font-bold ${isOpen ? 'text-green-600' : 'text-red-500'}`;
             };
-            setStatus('status-valve-a', STATE.valveA);
-            setStatus('status-gate-up', STATE.gateUpY &gt; 0.1);
-            setStatus('status-valve-b', STATE.valveB);
-            setStatus('status-gate-down', STATE.gateDownY &gt; 0.1);
+            if (STATE.mode === 'five-level') {
+                // 根据船的位置确定前方阀门和闸门
+                let frontValveIdx, frontGateIdx, posLabel, waterLevel;
+                const HEAD = 113; // 三峡上下游总水头(m)
+                if (STATE.boatChamber === 0) {
+                    posLabel = '上游引航道';
+                    frontGateIdx = 0;
+                    frontValveIdx = 0;
+                    waterLevel = HEAD;
+                } else if (STATE.boatChamber === 6) {
+                    posLabel = '下游引航道';
+                    frontGateIdx = -1;
+                    frontValveIdx = -1;
+                    waterLevel = 0;
+                } else {
+                    posLabel = '闸室' + STATE.boatChamber;
+                    frontGateIdx = STATE.boatChamber;
+                    frontValveIdx = STATE.boatChamber;
+                    waterLevel = Math.round(STATE.chamberLevels[STATE.boatChamber - 1] * HEAD);
+                }
+
+                const parentLabels = document.querySelectorAll('.flex.justify-between span:first-child');
+                if (parentLabels.length >= 4) {
+                    parentLabels[0].textContent = '所在位置:';
+                    parentLabels[1].textContent = frontValveIdx >= 0 ? ('阀门' + (frontValveIdx + 1) + ':') : '前方阀门:';
+                    parentLabels[2].textContent = frontGateIdx >= 0 ? ('闸门' + (frontGateIdx + 1) + ':') : '前方闸门:';
+                    parentLabels[3].textContent = '当前水位:';
+                }
+
+                document.getElementById('status-valve-a').innerText = posLabel;
+                document.getElementById('status-valve-a').className = 'font-mono font-bold text-blue-600';
+                setStatus('status-gate-up', frontValveIdx >= 0 && STATE.chamberValves[frontValveIdx] > 0);
+                setStatus('status-valve-b', frontGateIdx >= 0 && STATE.chamberGates[frontGateIdx] > 0.1);
+                document.getElementById('status-gate-down').innerText = waterLevel + 'm';
+                document.getElementById('status-gate-down').className = 'font-mono font-bold text-blue-600';
+            } else {
+                setStatus('status-valve-a', STATE.valveA);
+                setStatus('status-gate-up', STATE.gateUpY &gt; 0.1);
+                setStatus('status-valve-b', STATE.valveB);
+                setStatus('status-gate-down', STATE.gateDownY &gt; 0.1);
+                // 恢复标签文字
+                const parentLabels = document.querySelectorAll('.flex.justify-between span:first-child');
+                if (parentLabels.length >= 4) {
+                    parentLabels[0].textContent = '上游阀门A:';
+                    parentLabels[1].textContent = '上游闸门:';
+                    parentLabels[2].textContent = '下游阀门B:';
+                    parentLabels[3].textContent = '下游闸门:';
+                }
+            }
         }
 
         function reset() {
@@ -623,37 +1047,59 @@
             STATE.gateDownY = 0;
             STATE.valveA = 0;
             STATE.valveB = 0;
-            if (STATE.direction === 'down-to-up') {
+            if (STATE.mode === 'five-level') {
+                STATE.chamberLevels = [1.0, 0.82, 0.64, 0.46, 0.28];
+                STATE.chamberGates = [0, 0, 0, 0, 0, 0];
+                STATE.chamberValves = [0, 0, 0, 0, 0, 0];
+                STATE.boatChamber = 0;
+                STATE.boatX5 = FIVE.upstreamW / 2;
+            } else if (STATE.mode === 'down-to-up') {
                 STATE.waterLevelLock = 1.0; // 初始高水位（与上游持平）
                 STATE.boatX = 0.9; // 船在下游
             } else {
                 STATE.waterLevelLock = 0.3; // 初始低水位（与下游持平）
                 STATE.boatX = 0.1; // 船在上游
             }
-            
+
             document.getElementById('btn-next').innerHTML = `&lt;span&gt;开始演示&lt;/span&gt;&lt;svg class=&quot;w-5 h-5&quot; fill=&quot;none&quot; stroke=&quot;currentColor&quot; viewBox=&quot;0 0 24 24&quot;&gt;&lt;path stroke-linecap=&quot;round&quot; stroke-linejoin=&quot;round&quot; stroke-width=&quot;2&quot; d=&quot;M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z&quot;&gt;&lt;/path&gt;&lt;path stroke-linecap=&quot;round&quot; stroke-linejoin=&quot;round&quot; stroke-width=&quot;2&quot; d=&quot;M21 12a9 9 0 11-18 0 9 9 0 0118 0z&quot;&gt;&lt;/path&gt;&lt;/svg&gt;`;
             document.getElementById('btn-next').disabled = false;
-            
+
             document.querySelectorAll('.step-dot').forEach(dot =&gt; dot.classList.remove('active'));
-            document.getElementById('step-indicator').innerText = '准备就绪';
-            
+            document.getElementById('step-indicator').innerText = STATE.mode === 'five-level' ? '准备就绪（6步）' : '准备就绪';
+
             // 停止音频
             document.querySelectorAll('audio').forEach(a =&gt; { a.pause(); a.currentTime = 0; });
-            
+
             updateStatusPanel();
             draw();
         }
 
-        function toggleDirection() {
+        function setMode(mode) {
             if (STATE.isAnimating) return;
-            STATE.direction = STATE.direction === 'up-to-down' ? 'down-to-up' : 'up-to-down';
-            const btn = document.getElementById('btn-direction');
-            btn.textContent = STATE.direction === 'up-to-down' ? '上游→下游' : '下游→上游';
+            if (STATE.mode === mode) return;
+            STATE.mode = mode;
+            // 更新按钮高亮
+            document.querySelectorAll('.mode-btn').forEach(b => {
+                b.classList.remove('bg-blue-500', 'text-white');
+                if (b.id === 'btn-five') {
+                    b.className = 'mode-btn px-3 py-1.5 text-xs font-bold rounded-lg border border-amber-400 bg-amber-50 text-amber-700 hover:bg-amber-100 transition-colors';
+                } else {
+                    b.className = 'mode-btn px-3 py-1.5 text-xs font-bold rounded-lg border border-blue-300 bg-blue-50 text-blue-700 hover:bg-blue-100 transition-colors';
+                }
+            });
+            const activeId = mode === 'up-to-down' ? 'btn-updown' : mode === 'down-to-up' ? 'btn-downup' : 'btn-five';
+            const activeBtn = document.getElementById(activeId);
+            if (mode === 'five-level') {
+                activeBtn.className = 'mode-btn px-3 py-1.5 text-xs font-bold rounded-lg border border-amber-400 bg-amber-500 text-white transition-colors';
+            } else {
+                activeBtn.className = 'mode-btn px-3 py-1.5 text-xs font-bold rounded-lg border border-blue-300 bg-blue-500 text-white transition-colors';
+            }
+            updateStepDotsVisibility();
             reset();
         }
 
         function playAudio(index) {
-            if (STATE.direction === 'down-to-up') return; // 反向模式暂不使用音频
+            if (STATE.mode !== 'up-to-down') return; // 仅正向模式使用音频
             // 停止所有音频
             document.querySelectorAll('audio').forEach(a =&gt; { a.pause(); a.currentTime = 0; });
             // 播放当前
