@@ -2,9 +2,10 @@
 const { createHash } = require('crypto');
 
 const MBD_DEV_KEY = process.env.MBD_DEVELOPER_KEY;
-// Developer Key 格式: app_id:hash:app_secret，取第一段为 app_id，完整 key 为签名密钥
+// Developer Key 格式: app_id:hash:app_secret
+// app_id = 第一段，app_key = 第三段（非整个developer key）
 const MBD_APP_ID = MBD_DEV_KEY ? MBD_DEV_KEY.split(':')[0] : '';
-const MBD_APP_KEY = MBD_DEV_KEY || '';
+const MBD_APP_KEY = MBD_DEV_KEY ? MBD_DEV_KEY.split(':')[2] : '';
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
 
@@ -48,6 +49,9 @@ module.exports = async (req, res) => {
     };
     params.sign = sign(params, MBD_APP_KEY);
 
+    console.log('[create-order] app_id:', MBD_APP_ID, 'app_key_len:', MBD_APP_KEY.length);
+    console.log('[create-order] params:', JSON.stringify(params));
+
     const mbdRes = await fetch('https://newapi.mbd.pub/release/wx/prepay', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -65,26 +69,30 @@ module.exports = async (req, res) => {
       return res.status(500).json({ error: '面包多未返回支付链接' });
     }
 
-    // 保存订单到 Supabase
-    const orderRes = await fetch(`${SUPABASE_URL}/rest/v1/orders`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        apikey: SUPABASE_SERVICE_KEY,
-        Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`,
-        Prefer: 'return=representation',
-      },
-      body: JSON.stringify({
-        out_trade_no: outTradeNo,
-        username,
-        vip_type: vipType,
-        amount: amountTotal,
-        status: 'pending',
-      }),
-    });
+    // 保存订单到 Supabase（非阻塞，失败不影响返回支付链接）
+    try {
+      const orderRes = await fetch(`${SUPABASE_URL}/rest/v1/orders`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          apikey: SUPABASE_SERVICE_KEY,
+          Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`,
+          Prefer: 'return=representation',
+        },
+        body: JSON.stringify({
+          out_trade_no: outTradeNo,
+          username,
+          vip_type: vipType,
+          amount: amountTotal,
+          status: 'pending',
+        }),
+      });
 
-    if (!orderRes.ok) {
-      console.error('[create-order] save order failed:', await orderRes.text());
+      if (!orderRes.ok) {
+        console.error('[create-order] save order failed:', await orderRes.text());
+      }
+    } catch (e) {
+      console.error('[create-order] save order error:', e.message);
     }
 
     return res.json({
