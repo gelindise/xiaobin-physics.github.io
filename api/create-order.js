@@ -40,6 +40,7 @@ module.exports = async (req, res) => {
     const amountTotal = Math.round(parseFloat(totalFee) * 100);
 
     const params = {
+      channel: 'h5',
       app_id: MBD_APP_ID,
       amount_total: amountTotal,
       description: `物理虚拟实验 - ${vipType}`,
