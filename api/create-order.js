@@ -18,6 +18,7 @@ function md5(str) {
 function sign(params, appkey) {
   const keys = Object.keys(params).filter(k => params[k] !== '' && params[k] != null).sort();
   const str = keys.map(k => `${k}=${params[k]}`).join('&') + `&key=${appkey}`;
+  console.log('[sign] stringToHash:', str);
   return md5(str);
 }
 
