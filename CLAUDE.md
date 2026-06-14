@@ -29,24 +29,25 @@ Each experiment HTML follows the same structure:
 ## VIP / Auth System
 
 - **Supabase** (`supabase.js`): All user data (users table) and payment orders (orders table) stored in Supabase
-- **Serverless API** (`api/`): Vercel cloud functions for PayJS payment processing
-  - `api/create-order.js`: Create PayJS payment order, return QR code
-  - `api/check-order.js`: Poll order payment status
-  - `api/pay-callback.js`: PayJS webhook receiver, auto-updates VIP on payment
+- **Serverless API** (`api/`): Vercel cloud functions for 面包多 (mbd.pub) payment processing
+  - `api/create-order.js`: Create 面包多 H5 payment order via `POST https://newapi.mbd.pub/release/wx/prepay`, sign with MD5(sorted params + key), return `h5_url`
+  - `api/check-order.js`: Poll Supabase orders table for payment status
+  - `api/pay-callback.js`: 面包多 webhook receiver (JSON POST with `type: "charge_succeeded"`), auto-updates VIP and expire date on payment
+- **Client-side** (`vip.html`): Single-page modal with QR code generated from `h5_url` via qrserver API, wrapped in tappable link for WeChat payment, polls `/api/check-order` for status
 - **Client-side** (`script.js`): Login/register via Supabase REST API, localStorage as offline cache
 - Experiments marked as `lock` class with `checkVip()` gate for VIP-only content
 - Free experiments use `openLab()` directly
 
 ## Payment Flow
 
-User clicks VIP → `/api/create-order` → PayJS QR code → user scans with WeChat → PayJS calls `/api/pay-callback` → Supabase VIP updated → page polls `/api/check-order` → redirects to experiments.
+User clicks VIP plan → modal shows QR code (generated from 面包多 `h5_url`) → user scans with WeChat or taps link → 面包多 calls `/api/pay-callback` webhook → Supabase order set to `paid` + user VIP/expire updated → frontend polling detects `paid` → modal shows success, updates localStorage.
 
 ## Deploy
 
 - **Static site**: Push to `main` → GitHub Pages auto-deploys (or Vercel for combined hosting)
 - **API functions**: Connect repo to **Vercel** (`vercel.json` at root), set environment variables:
-  - `PAYJS_MCHID` - PayJS merchant ID
-  - `PAYJS_KEY` - PayJS merchant key
+  - `MBD_APP_ID` - 面包多 app ID
+  - `MBD_APP_KEY` - 面包多 app key
   - `SUPABASE_URL` - Supabase project URL
   - `SUPABASE_SERVICE_KEY` - Supabase service_role key (for server-side admin ops)
 - **Supabase tables**: `users` (auth/VIP) and `orders` (payment records)

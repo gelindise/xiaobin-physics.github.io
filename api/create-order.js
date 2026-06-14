@@ -1,21 +1,21 @@
-// 创建虎皮椒支付订单，返回二维码
+// 面包多 H5 支付 - 创建订单
 const { createHash } = require('crypto');
 
+const MBD_APP_ID = process.env.MBD_APP_ID;
+const MBD_APP_KEY = process.env.MBD_APP_KEY;
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
-const XUNHU_APPID = process.env.XUNHU_APPID;
-const XUNHU_APPSECRET = process.env.XUNHU_APPSECRET;
 
 const PRICES = { '月度VIP': '9.90', '年度VIP': '99.00', '终身VIP': '199.00' };
 
 function md5(str) {
-  return createHash('md5').update(str).digest('hex');
+  return createHash('md5').update(str, 'utf8').digest('hex');
 }
 
-function sign(params, appsecret) {
-  const keys = Object.keys(params).sort();
-  const str = keys.map(k => `${k}=${params[k]}`).join('&') + `&appsecret=${appsecret}`;
-  return md5(str).toUpperCase();
+function sign(params, appkey) {
+  const keys = Object.keys(params).filter(k => params[k] !== '' && params[k] != null).sort();
+  const str = keys.map(k => `${k}=${params[k]}`).join('&') + `&key=${appkey}`;
+  return md5(str);
 }
 
 module.exports = async (req, res) => {
@@ -34,40 +34,36 @@ module.exports = async (req, res) => {
     const totalFee = PRICES[vipType];
     if (!totalFee) return res.status(400).json({ error: '无效的套餐类型' });
 
-    // 生成订单号
-    const tradeOrderId = `${Date.now()}${Math.random().toString(36).slice(2, 8)}`;
-
-    // 回调地址
-    const baseUrl = req.headers['x-forwarded-proto'] + '://' + req.headers['x-forwarded-host'];
-    const notifyUrl = `${baseUrl}/api/pay-callback`;
-
-    const time = Math.floor(Date.now() / 1000).toString();
+    const outTradeNo = `mbd_${Date.now()}${Math.random().toString(36).slice(2, 8)}`;
+    const amountTotal = Math.round(parseFloat(totalFee) * 100);
 
     const params = {
-      appid: XUNHU_APPID,
-      type: 'WECHAT',
-      trade_order_id: tradeOrderId,
-      total_fee: totalFee,
-      title: `物理虚拟实验 - ${vipType}`,
-      time,
-      notify_url: notifyUrl,
-      attach: JSON.stringify({ username, vipType }),
+      channel: 'h5',
+      app_id: MBD_APP_ID,
+      description: `物理虚拟实验 - ${vipType}`,
+      amount_total: amountTotal,
+      out_trade_no: outTradeNo,
     };
-    params.sign = sign(params, XUNHU_APPSECRET);
+    params.sign = sign(params, MBD_APP_KEY);
 
-    // 调用虎皮椒支付接口
-    const xhRes = await fetch('https://api.xunhupay.com/payment/wechat.html', {
+    const mbdRes = await fetch('https://newapi.mbd.pub/release/wx/prepay', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams(params).toString(),
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
     });
-    const xhData = await xhRes.json();
+    const mbdData = await mbdRes.json();
 
-    if (xhData.errcode !== 0) {
-      return res.status(500).json({ error: '虎皮椒创建订单失败: ' + (xhData.errmsg || '未知错误') });
+    if (mbdData.error) {
+      console.error('[create-order] 面包多 error:', mbdData.error);
+      return res.status(500).json({ error: '面包多创建订单失败: ' + mbdData.error });
     }
 
-    // 订单写入 Supabase
+    if (!mbdData.h5_url) {
+      console.error('[create-order] 面包多 no h5_url:', JSON.stringify(mbdData));
+      return res.status(500).json({ error: '面包多未返回支付链接' });
+    }
+
+    // 保存订单到 Supabase
     const orderRes = await fetch(`${SUPABASE_URL}/rest/v1/orders`, {
       method: 'POST',
       headers: {
@@ -77,22 +73,23 @@ module.exports = async (req, res) => {
         Prefer: 'return=representation',
       },
       body: JSON.stringify({
-        out_trade_no: tradeOrderId,
+        out_trade_no: outTradeNo,
         username,
         vip_type: vipType,
-        amount: Math.round(parseFloat(totalFee) * 100), // 存为分
+        amount: amountTotal,
         status: 'pending',
-        payjs_order_id: xhData.order_id || '',
       }),
     });
 
-    if (!orderRes.ok) throw new Error('保存订单失败: ' + (await orderRes.text()));
+    if (!orderRes.ok) {
+      console.error('[create-order] save order failed:', await orderRes.text());
+    }
 
     return res.json({
       success: true,
-      qrcode: xhData.url_qrcode || xhData.qrcode,
-      out_trade_no: tradeOrderId,
-      amount: Math.round(parseFloat(totalFee) * 100),
+      h5_url: mbdData.h5_url,
+      out_trade_no: outTradeNo,
+      amount: amountTotal,
     });
   } catch (e) {
     console.error('[create-order] error:', e);
