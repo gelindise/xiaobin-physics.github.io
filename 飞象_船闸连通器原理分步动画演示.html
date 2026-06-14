@@ -111,6 +111,7 @@
                 &lt;p class=&quot;text-gray-500 text-sm mt-1&quot;&gt;人教版八年级物理 &amp;middot; 连通器应用&lt;/p&gt;
             &lt;/div&gt;
             &lt;div class=&quot;flex items-center gap-2&quot;&gt;
+                &lt;button id=&quot;btn-direction&quot; class=&quot;px-3 py-1.5 text-xs font-bold rounded-lg border border-blue-300 bg-blue-50 text-blue-700 hover:bg-blue-100 transition-colors&quot;&gt;上游→下游&lt;/button&gt;
                 &lt;div class=&quot;flex gap-1&quot;&gt;
                     &lt;div id=&quot;step1-dot&quot; class=&quot;step-dot w-3 h-3 rounded-full bg-gray-300&quot;&gt;&lt;/div&gt;
                     &lt;div id=&quot;step2-dot&quot; class=&quot;step-dot w-3 h-3 rounded-full bg-gray-300&quot;&gt;&lt;/div&gt;
@@ -181,6 +182,7 @@
         const STATE = {
             step: 0, // 0:初始, 1:阀门A开, 2:闸门上开, 3:阀门B开, 4:闸门下开
             isAnimating: false,
+            direction: 'up-to-down', // 'up-to-down' 上游→下游, 'down-to-up' 下游→上游
             waterLevelLock: 0.3, // 0-1, 0是下游水位，1是上游水位
             gateUpY: 0, // 0:关闭, 1:开启
             gateDownY: 0,
@@ -215,6 +217,7 @@
             
             document.getElementById('btn-next').addEventListener('click', nextStep);
             document.getElementById('btn-reset').addEventListener('click', reset);
+            document.getElementById('btn-direction').addEventListener('click', toggleDirection);
 
             draw();
             playAudio(0);
@@ -308,9 +311,9 @@
             ctx.font = 'bold 12px sans-serif';
             ctx.fillText('正面视角', x + 10, y + 20);
 
-            // 确定当前视角是上游还是下游
-            // Step 0,1,2: 看上游闸门; Step 3,4: 看下游闸门
-            const isUpstreamView = STATE.step &lt;= 2;
+            // 根据方向确定当前视角
+            const isReverse = STATE.direction === 'down-to-up';
+            const isUpstreamView = isReverse ? (STATE.step &gt;= 2) : (STATE.step &lt;= 2);
             const gateOpenState = isUpstreamView ? STATE.gateUpY : STATE.gateDownY;
             
             // 计算相对水位高度 (映射到小视图)
@@ -489,80 +492,84 @@
             
             const btn = document.getElementById('btn-next');
             const currentStep = STATE.step;
-            
+            const isReverse = STATE.direction === 'down-to-up';
+
             STATE.isAnimating = true;
             btn.disabled = true;
 
             try {
                 switch(currentStep) {
-                    case 0: // 初始 -&gt; 步骤1: 打开阀门A，水位上升
-                        updateUI(1, &quot;步骤一：打开上游阀门A&quot;, &quot;闸室与上游构成连通器。根据连通器原理，液面相平，闸室水位上升。&quot;);
-                        // 动画: 打开阀门A
-                        anime({ targets: STATE, valveA: 1, duration: 500, easing: 'easeInOutQuad' });
-                        playAudio(currentStep + 1);
-                        // 动画: 水位上升
-                        await anime({ 
-                            targets: STATE, 
-                            waterLevelLock: 1, 
-                            duration: 3000, 
-                            easing: 'easeInOutQuad', 
-                            update: draw 
-                        }).finished;
-                        
-                        if (!STATE.isAnimating) return; // 检查是否被重置
+                    case 0:
+                        if (isReverse) {
+                            updateUI(1, &quot;步骤一：打开下游阀门B&quot;, &quot;闸室与下游构成连通器。水从闸室流向下游，直至水面相平。&quot;);
+                            anime({ targets: STATE, valveB: 1, duration: 500, easing: 'easeInOutQuad' });
+                            playAudio(currentStep + 1);
+                            await anime({ targets: STATE, waterLevelLock: 0, duration: 3000, easing: 'easeInOutQuad', update: draw }).finished;
+                        } else {
+                            updateUI(1, &quot;步骤一：打开上游阀门A&quot;, &quot;闸室与上游构成连通器。根据连通器原理，液面相平，闸室水位上升。&quot;);
+                            anime({ targets: STATE, valveA: 1, duration: 500, easing: 'easeInOutQuad' });
+                            playAudio(currentStep + 1);
+                            await anime({ targets: STATE, waterLevelLock: 1, duration: 3000, easing: 'easeInOutQuad', update: draw }).finished;
+                        }
+                        if (!STATE.isAnimating) return;
                         STATE.step = 1;
                         btn.innerHTML = `&lt;span&gt;下一步&lt;/span&gt;&lt;svg class=&quot;w-5 h-5&quot; fill=&quot;none&quot; stroke=&quot;currentColor&quot; viewBox=&quot;0 0 24 24&quot;&gt;&lt;path stroke-linecap=&quot;round&quot; stroke-linejoin=&quot;round&quot; stroke-width=&quot;2&quot; d=&quot;M13 7l5 5m0 0l-5 5m5-5H6&quot;&gt;&lt;/path&gt;&lt;/svg&gt;`;
                         break;
 
-                    case 1: // 步骤1 -&gt; 步骤2: 打开上游闸门，船进闸室，关闸
-                        updateUI(2, &quot;步骤二：船驶入闸室&quot;, &quot;打开上游闸门，船驶入闸室。随后关闭上游闸门和阀门A，切断与上游的连通。&quot;);
-                        // 动画: 打开上游闸门
-                        await anime({ targets: STATE, gateUpY: 1, duration: 1000, easing: 'easeInOutQuad', update: draw }).finished;
-                        if (!STATE.isAnimating) return;
-
-                        playAudio(currentStep + 1);
-                        
-                        // 动画: 船移动进闸室
-                        await anime({ targets: STATE, boatX: 0.5, duration: 3000, easing: 'linear', update: draw }).finished;
-                        if (!STATE.isAnimating) return;
-                        
-                        // 动画: 关闭上游闸门和阀门A
-                        anime({ targets: STATE, valveA: 0, duration: 500, easing: 'easeInOutQuad' });
-                        await anime({ targets: STATE, gateUpY: 0, duration: 1000, easing: 'easeInOutQuad', update: draw }).finished;
-                        
+                    case 1:
+                        if (isReverse) {
+                            updateUI(2, &quot;步骤二：船驶入闸室&quot;, &quot;打开下游闸门，船从下游驶入闸室。随后关闭下游闸门和阀门B，切断与下游的连通。&quot;);
+                            await anime({ targets: STATE, gateDownY: 1, duration: 1000, easing: 'easeInOutQuad', update: draw }).finished;
+                            if (!STATE.isAnimating) return;
+                            playAudio(currentStep + 1);
+                            await anime({ targets: STATE, boatX: 0.5, duration: 3000, easing: 'linear', update: draw }).finished;
+                            if (!STATE.isAnimating) return;
+                            anime({ targets: STATE, valveB: 0, duration: 500, easing: 'easeInOutQuad' });
+                            await anime({ targets: STATE, gateDownY: 0, duration: 1000, easing: 'easeInOutQuad', update: draw }).finished;
+                        } else {
+                            updateUI(2, &quot;步骤二：船驶入闸室&quot;, &quot;打开上游闸门，船驶入闸室。随后关闭上游闸门和阀门A，切断与上游的连通。&quot;);
+                            await anime({ targets: STATE, gateUpY: 1, duration: 1000, easing: 'easeInOutQuad', update: draw }).finished;
+                            if (!STATE.isAnimating) return;
+                            playAudio(currentStep + 1);
+                            await anime({ targets: STATE, boatX: 0.5, duration: 3000, easing: 'linear', update: draw }).finished;
+                            if (!STATE.isAnimating) return;
+                            anime({ targets: STATE, valveA: 0, duration: 500, easing: 'easeInOutQuad' });
+                            await anime({ targets: STATE, gateUpY: 0, duration: 1000, easing: 'easeInOutQuad', update: draw }).finished;
+                        }
                         if (!STATE.isAnimating) return;
                         STATE.step = 2;
                         break;
 
-                    case 2: // 步骤2 -&gt; 步骤3: 打开阀门B，水位下降
-                        updateUI(3, &quot;步骤三：打开下游阀门B&quot;, &quot;闸室与下游构成连通器。水从闸室流向下游，直至水面相平。&quot;);
-                        // 动画: 打开阀门B
-                        anime({ targets: STATE, valveB: 1, duration: 500, easing: 'easeInOutQuad' });
-                        playAudio(currentStep + 1);
-                        // 动画: 水位下降
-                        await anime({ 
-                            targets: STATE, 
-                            waterLevelLock: 0, 
-                            duration: 3000, 
-                            easing: 'easeInOutQuad', 
-                            update: draw 
-                        }).finished;
-                        
+                    case 2:
+                        if (isReverse) {
+                            updateUI(3, &quot;步骤三：打开上游阀门A&quot;, &quot;闸室与上游构成连通器。根据连通器原理，液面相平，闸室水位上升。&quot;);
+                            anime({ targets: STATE, valveA: 1, duration: 500, easing: 'easeInOutQuad' });
+                            playAudio(currentStep + 1);
+                            await anime({ targets: STATE, waterLevelLock: 1, duration: 3000, easing: 'easeInOutQuad', update: draw }).finished;
+                        } else {
+                            updateUI(3, &quot;步骤三：打开下游阀门B&quot;, &quot;闸室与下游构成连通器。水从闸室流向下游，直至水面相平。&quot;);
+                            anime({ targets: STATE, valveB: 1, duration: 500, easing: 'easeInOutQuad' });
+                            playAudio(currentStep + 1);
+                            await anime({ targets: STATE, waterLevelLock: 0, duration: 3000, easing: 'easeInOutQuad', update: draw }).finished;
+                        }
                         if (!STATE.isAnimating) return;
                         STATE.step = 3;
                         break;
 
-                    case 3: // 步骤3 -&gt; 步骤4: 打开下游闸门，船出
-                        updateUI(4, &quot;步骤四：船驶向下游&quot;, &quot;打开下游闸门，船驶出闸室。完成通航。&quot;);
-                        // 动画: 打开下游闸门
-                        await anime({ targets: STATE, gateDownY: 1, duration: 1000, easing: 'easeInOutQuad', update: draw }).finished;
-                        if (!STATE.isAnimating) return;
-
-                        playAudio(currentStep + 1);
-                        
-                        // 动画: 船移出
-                        await anime({ targets: STATE, boatX: 1.2, duration: 3000, easing: 'linear', update: draw }).finished;
-                        
+                    case 3:
+                        if (isReverse) {
+                            updateUI(4, &quot;步骤四：船驶向上游&quot;, &quot;打开上游闸门，船驶出闸室，进入上游航道。完成通航。&quot;);
+                            await anime({ targets: STATE, gateUpY: 1, duration: 1000, easing: 'easeInOutQuad', update: draw }).finished;
+                            if (!STATE.isAnimating) return;
+                            playAudio(currentStep + 1);
+                            await anime({ targets: STATE, boatX: -0.2, duration: 3000, easing: 'linear', update: draw }).finished;
+                        } else {
+                            updateUI(4, &quot;步骤四：船驶向下游&quot;, &quot;打开下游闸门，船驶出闸室。完成通航。&quot;);
+                            await anime({ targets: STATE, gateDownY: 1, duration: 1000, easing: 'easeInOutQuad', update: draw }).finished;
+                            if (!STATE.isAnimating) return;
+                            playAudio(currentStep + 1);
+                            await anime({ targets: STATE, boatX: 1.2, duration: 3000, easing: 'linear', update: draw }).finished;
+                        }
                         if (!STATE.isAnimating) return;
                         STATE.step = 4;
                         btn.innerHTML = `&lt;span&gt;重新开始&lt;/span&gt;&lt;svg class=&quot;w-5 h-5&quot; fill=&quot;none&quot; stroke=&quot;currentColor&quot; viewBox=&quot;0 0 24 24&quot;&gt;&lt;path stroke-linecap=&quot;round&quot; stroke-linejoin=&quot;round&quot; stroke-width=&quot;2&quot; d=&quot;M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15&quot;&gt;&lt;/path&gt;&lt;/svg&gt;`;
@@ -609,15 +616,20 @@
         function reset() {
             // 停止所有正在进行的动画
             anime.remove(STATE);
-            
+
             STATE.step = 0;
             STATE.isAnimating = false;
-            STATE.waterLevelLock = 0.3; // 初始低水位
             STATE.gateUpY = 0;
             STATE.gateDownY = 0;
             STATE.valveA = 0;
             STATE.valveB = 0;
-            STATE.boatX = 0.1;
+            if (STATE.direction === 'down-to-up') {
+                STATE.waterLevelLock = 1.0; // 初始高水位（与上游持平）
+                STATE.boatX = 0.9; // 船在下游
+            } else {
+                STATE.waterLevelLock = 0.3; // 初始低水位（与下游持平）
+                STATE.boatX = 0.1; // 船在上游
+            }
             
             document.getElementById('btn-next').innerHTML = `&lt;span&gt;开始演示&lt;/span&gt;&lt;svg class=&quot;w-5 h-5&quot; fill=&quot;none&quot; stroke=&quot;currentColor&quot; viewBox=&quot;0 0 24 24&quot;&gt;&lt;path stroke-linecap=&quot;round&quot; stroke-linejoin=&quot;round&quot; stroke-width=&quot;2&quot; d=&quot;M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z&quot;&gt;&lt;/path&gt;&lt;path stroke-linecap=&quot;round&quot; stroke-linejoin=&quot;round&quot; stroke-width=&quot;2&quot; d=&quot;M21 12a9 9 0 11-18 0 9 9 0 0118 0z&quot;&gt;&lt;/path&gt;&lt;/svg&gt;`;
             document.getElementById('btn-next').disabled = false;
@@ -630,6 +642,14 @@
             
             updateStatusPanel();
             draw();
+        }
+
+        function toggleDirection() {
+            if (STATE.isAnimating) return;
+            STATE.direction = STATE.direction === 'up-to-down' ? 'down-to-up' : 'up-to-down';
+            const btn = document.getElementById('btn-direction');
+            btn.textContent = STATE.direction === 'up-to-down' ? '上游→下游' : '下游→上游';
+            reset();
         }
 
         function playAudio(index) {
