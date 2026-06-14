@@ -50,6 +50,10 @@
         <div class="flex justify-between items-center mt-4 panel-dark p-3">
             <div class="flex gap-6 items-center">
                 <label class="flex items-center gap-2 font-bold cursor-pointer">
+                    <input type="checkbox" id="manometerCheck" checked>
+                    显示压强计
+                </label>
+                <label class="flex items-center gap-2 font-bold cursor-pointer">
                     <input type="radio" name="speedMode" id="slowMode">
                     慢动作
                 </label>
@@ -112,6 +116,7 @@
         const maxParticles = 100;
         let isPaused = false;
         let isSlow = false;
+        let showManometer = true;
         let fluidDensity = 1000;
 
         const totalPressure = 200;
@@ -133,6 +138,7 @@
         const speed2Show = document.getElementById('speed2Show');
         const pressure1Show = document.getElementById('pressure1Show');
         const pressure2Show = document.getElementById('pressure2Show');
+        const manometerCheck = document.getElementById('manometerCheck');
 
         // 事件
         flowSlider.oninput = () => {
@@ -141,6 +147,7 @@
         };
         slowMode.onchange = () => { isSlow = slowMode.checked; };
         normalMode.onchange = () => { isSlow = !normalMode.checked; };
+        manometerCheck.onchange = () => { showManometer = manometerCheck.checked; };
         pauseBtn.onclick = () => {
             isPaused = !isPaused;
             pauseBtn.innerText = isPaused ? '▶' : '❚❚';
@@ -151,6 +158,8 @@
             flowVal.innerText = 5000;
             isPaused = false;
             isSlow = false;
+            showManometer = true;
+            manometerCheck.checked = true;
             normalMode.checked = true;
             slowMode.checked = false;
             pauseBtn.innerText = '❚❚';
@@ -385,6 +394,76 @@
             ctx.textAlign = 'start';
         }
 
+        // 绘制玻璃管压强计
+        function drawManometer(cx, pipeTopY, pressure) {
+            const tubeW = 22;
+            const tubeTop = 16;
+            const tubeLeft = cx - tubeW / 2;
+            const tubeBottom = pipeTopY;
+            const tubeH = tubeBottom - tubeTop;
+            const maxWaterH = 150;
+            const waterH = Math.min(tubeH - 4, maxWaterH * (pressure - gaugeMinP) / (gaugeMaxP - gaugeMinP));
+
+            // 玻璃管外壁
+            ctx.fillStyle = 'rgba(255,255,255,0.08)';
+            ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+            ctx.lineWidth = 2;
+            const r = tubeW / 2;
+            ctx.beginPath();
+            ctx.moveTo(tubeLeft, tubeBottom);
+            ctx.lineTo(tubeLeft, tubeTop + r);
+            ctx.arc(tubeLeft + r, tubeTop + r, r, Math.PI, 0);
+            ctx.lineTo(tubeLeft + tubeW, tubeBottom);
+            ctx.closePath();
+            ctx.fill();
+            ctx.stroke();
+
+            // 玻璃高光
+            ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(tubeLeft + 4, tubeTop + 8);
+            ctx.lineTo(tubeLeft + 4, tubeBottom - 4);
+            ctx.stroke();
+
+            // 水位填充
+            const waterTop = tubeBottom - waterH;
+            ctx.fillStyle = 'rgba(56, 189, 248, 0.7)';
+            ctx.fillRect(tubeLeft + 2, waterTop, tubeW - 4, waterH - 2);
+
+            // 水面波纹
+            ctx.fillStyle = 'rgba(147, 220, 255, 0.6)';
+            ctx.fillRect(tubeLeft + 2, waterTop, tubeW - 4, 3);
+
+            // 刻度标记
+            ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+            ctx.lineWidth = 1;
+            ctx.font = '8px Microsoft YaHei';
+            ctx.fillStyle = '#94a3b8';
+            ctx.textAlign = 'left';
+            for (let i = 0; i <= 4; i++) {
+                const y = tubeBottom - 4 - (i / 4) * maxWaterH;
+                const val = Math.round(gaugeMinP + (i / 4) * (gaugeMaxP - gaugeMinP));
+                ctx.beginPath();
+                ctx.moveTo(tubeLeft - 4, y);
+                ctx.lineTo(tubeLeft, y);
+                ctx.stroke();
+                if (i % 2 === 0) {
+                    ctx.fillText(val, tubeLeft - 36, y + 3);
+                }
+            }
+
+            // 与管道的连接线
+            ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+            ctx.lineWidth = 1;
+            ctx.setLineDash([2, 3]);
+            ctx.beginPath();
+            ctx.moveTo(cx, tubeBottom);
+            ctx.lineTo(cx, pipe.yCenter - getPipeRadius(cx) + 3);
+            ctx.stroke();
+            ctx.setLineDash([]);
+        }
+
         function updateData() {
             const { v_big, v_small, pressure_big, pressure_small } = calcPhysics();
             speed1Show.innerText = v_big.toFixed(1) + ' m/s';
@@ -417,6 +496,15 @@
             }
 
             drawPipe();
+
+            // 玻璃管压强计
+            if (showManometer) {
+                const r1 = pipe.yCenter - pipe.radiusBig;
+                const r2 = pipe.yCenter - pipe.radiusSmall;
+                drawManometer(measureX1 - 50, r1, pressure_big);
+                drawManometer(measureX2 - 50, r2, pressure_small);
+            }
+
             drawMarkers();
             drawParticles();
             updateData();
