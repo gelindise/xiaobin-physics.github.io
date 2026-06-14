@@ -3,6 +3,8 @@ const { createHash } = require('crypto');
 
 const MBD_DEV_KEY = process.env.MBD_DEVELOPER_KEY;
 const MBD_APP_ID = MBD_DEV_KEY ? MBD_DEV_KEY.split(':')[0] : '';
+// 尝试第三段作为 app_key
+const MBD_APP_KEY = MBD_DEV_KEY ? MBD_DEV_KEY.split(':')[2] : '';
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
 
@@ -12,22 +14,10 @@ function md5(str) {
   return createHash('md5').update(str, 'utf8').digest('hex');
 }
 
-function sign(params, appkey) {
+function makeSign(params, appkey) {
   const keys = Object.keys(params).filter(k => params[k] !== '' && params[k] != null).sort();
   const str = keys.map(k => `${k}=${params[k]}`).join('&') + `&key=${appkey}`;
   return { sign: md5(str), debug: str };
-}
-
-// 从 developer key 派生出多种可能的 app_key
-function getKeyCandidates(devKey) {
-  if (!devKey) return [];
-  const parts = devKey.split(':');
-  return [
-    { label: 'last_segment', key: parts[2] || '' },
-    { label: 'full_key', key: devKey },
-    { label: 'middle+last', key: parts.slice(1).join(':') },
-    { label: 'middle_only', key: parts[1] || '' },
-  ];
 }
 
 module.exports = async (req, res) => {
@@ -49,77 +39,60 @@ module.exports = async (req, res) => {
     const outTradeNo = `mbd_${Date.now()}${Math.random().toString(36).slice(2, 8)}`;
     const amountTotal = Math.round(parseFloat(totalFee) * 100);
 
-    const baseParams = {
+    const allResults = [];
+
+    // 尝试1: 标准参数
+    const p1 = {
       channel: 'h5',
       app_id: MBD_APP_ID,
       description: `物理虚拟实验 - ${vipType}`,
       amount_total: amountTotal,
       out_trade_no: outTradeNo,
     };
+    const s1 = makeSign(p1, MBD_APP_KEY);
+    const r1 = await fetch('https://newapi.mbd.pub/release/wx/prepay', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...p1, sign: s1.sign }),
+    }).then(r => r.json());
+    console.log('[try1] standard:', s1.debug, '->', s1.sign, 'result:', JSON.stringify(r1));
+    allResults.push({ label: 'standard', signStr: s1.debug, result: r1 });
+    if (r1.h5_url) return res.json({ success: true, h5_url: r1.h5_url, out_trade_no: outTradeNo, amount: amountTotal });
 
-    // 依次尝试每种 key 候选
-    const candidates = getKeyCandidates(MBD_DEV_KEY);
-    let result = null;
-    let lastError = null;
+    // 尝试2: amount_total作为字符串
+    const p2 = { ...p1, amount_total: String(amountTotal) };
+    const s2 = makeSign(p2, MBD_APP_KEY);
+    const r2 = await fetch('https://newapi.mbd.pub/release/wx/prepay', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...p1, sign: s2.sign }),
+    }).then(r => r.json());
+    console.log('[try2] str amount:', s2.debug, '->', s2.sign, 'result:', JSON.stringify(r2));
+    allResults.push({ label: 'str_amount', signStr: s2.debug, result: r2 });
+    if (r2.h5_url) return res.json({ success: true, h5_url: r2.h5_url, out_trade_no: outTradeNo, amount: amountTotal });
 
-    for (const c of candidates) {
-      const params = { ...baseParams };
-      const { sign: sig, debug } = sign(params, c.key);
-      params.sign = sig;
+    // 尝试3: 简单英文描述
+    const p3 = { ...p1, description: 'VIP' };
+    const s3 = makeSign(p3, MBD_APP_KEY);
+    const r3 = await fetch('https://newapi.mbd.pub/release/wx/prepay', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...p3, sign: s3.sign }),
+    }).then(r => r.json());
+    console.log('[try3] simple desc:', s3.debug, '->', s3.sign, 'result:', JSON.stringify(r3));
+    allResults.push({ label: 'simple_desc', signStr: s3.debug, result: r3 });
+    if (r3.h5_url) return res.json({ success: true, h5_url: r3.h5_url, out_trade_no: outTradeNo, amount: amountTotal });
 
-      console.log(`[create-order] trying ${c.label} key_len=${c.key.length} debug=${debug} sign=${sig}`);
+    // 尝试4: 使用完整developer key作为app_key
+    const s4 = makeSign(p1, MBD_DEV_KEY);
+    const r4 = await fetch('https://newapi.mbd.pub/release/wx/prepay', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...p1, sign: s4.sign }),
+    }).then(r => r.json());
+    console.log('[try4] full key:', s4.debug, '->', s4.sign, 'result:', JSON.stringify(r4));
+    allResults.push({ label: 'full_key', signStr: s4.debug, result: r4 });
+    if (r4.h5_url) return res.json({ success: true, h5_url: r4.h5_url, out_trade_no: outTradeNo, amount: amountTotal });
 
-      const mbdRes = await fetch('https://newapi.mbd.pub/release/wx/prepay', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(params),
-      });
-      const mbdData = await mbdRes.json();
-
-      if (!mbdData.error && mbdData.h5_url) {
-        console.log(`[create-order] SUCCESS with ${c.label}`);
-        result = { ...mbdData, usedKey: c.label };
-        break;
-      }
-      console.log(`[create-order] ${c.label} failed:`, mbdData.error);
-      lastError = mbdData.error;
-    }
-
-    if (!result) {
-      console.error('[create-order] all key candidates failed, last error:', lastError);
-      return res.status(500).json({ error: '面包多创建订单失败: ' + lastError });
-    }
-
-    // 保存订单到 Supabase（非阻塞）
-    try {
-      const orderRes = await fetch(`${SUPABASE_URL}/rest/v1/orders`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          apikey: SUPABASE_SERVICE_KEY,
-          Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`,
-          Prefer: 'return=representation',
-        },
-        body: JSON.stringify({
-          out_trade_no: outTradeNo,
-          username,
-          vip_type: vipType,
-          amount: amountTotal,
-          status: 'pending',
-        }),
-      });
-      if (!orderRes.ok) {
-        console.error('[create-order] save order failed:', await orderRes.text());
-      }
-    } catch (e) {
-      console.error('[create-order] save order error:', e.message);
-    }
-
-    return res.json({
-      success: true,
-      h5_url: result.h5_url,
-      out_trade_no: outTradeNo,
-      amount: amountTotal,
+    return res.status(500).json({
+      error: '所有签名方案均失败',
+      debug: allResults,
     });
   } catch (e) {
     console.error('[create-order] error:', e);
