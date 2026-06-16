@@ -1,0 +1,494 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>欧姆定律 · 交互探究 - 物理虚拟实验</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="stylesheet" href="style.css">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif; background: var(--bg-darker, #020617); }
+
+    .exp-wrap { max-width: 960px; margin: 0 auto; padding: 0 16px 40px; }
+    .exp-wrap h2 { color: #e2e8f0; font-size: 24px; margin-bottom: 4px; }
+    .exp-wrap .sub { color: #94a3b8; font-size: 14px; margin-bottom: 20px; }
+
+    .main-card { background: #0f172a; border-radius: 14px; padding: 12px; border: 1px solid #1e293b; margin-bottom: 12px; }
+    canvas { display: block; border-radius: 8px; background: #0a0e16; width: 100%; height: auto; cursor: default; }
+
+    .ctrl-row { display: flex; gap: 16px; margin-top: 12px; flex-wrap: wrap; align-items: flex-start; }
+    .slider-group { flex: 1; min-width: 200px; }
+    .slider-group label { display: flex; justify-content: space-between; align-items: center; color: #94a3b8; font-size: 13px; margin-bottom: 4px; }
+    .slider-group label .val { font-family: 'SF Mono','Cascadia Code','Consolas',monospace; font-weight: 700; font-size: 16px; }
+    .slider-group label .val.blue { color: #60a5fa; }
+    .slider-group label .val.orange { color: #fbbf24; }
+    .slider-group input[type=range] { width: 100%; height: 8px; -webkit-appearance: none; appearance: none; border-radius: 4px; outline: none; cursor: pointer; }
+    .slider-group input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 22px; height: 22px; border-radius: 50%; cursor: pointer; border: 2px solid #1e293b; }
+    #voltageSlider::-webkit-slider-thumb { background: #3b82f6; }
+    #resistanceSlider::-webkit-slider-thumb { background: #f59e0b; }
+
+    .btn-row { display: flex; gap: 8px; align-items: flex-end; padding-top: 20px; }
+    .btn-row button { padding: 8px 18px; border: 1px solid #334155; border-radius: 8px; background: #1e293b; color: #e2e8f0; font-size: 13px; cursor: pointer; transition: all 0.15s; font-weight: 500; white-space: nowrap; }
+    .btn-row button:hover { background: #334155; }
+    .btn-row button.primary { background: #3b82f6; border-color: #3b82f6; }
+    .btn-row button.primary:hover { background: #2563eb; }
+
+    .data-row { display: flex; gap: 12px; margin-top: 10px; flex-wrap: wrap; }
+    .data-card { flex: 1; min-width: 90px; background: rgba(30,41,59,0.6); border-radius: 10px; padding: 10px 14px; text-align: center; border: 1px solid #1e293b; }
+    .data-card .d-label { color: #64748b; font-size: 11px; text-transform: uppercase; margin-bottom: 2px; }
+    .data-card .d-value { font-family: 'SF Mono','Cascadia Code','Consolas',monospace; font-size: 22px; font-weight: 700; }
+    .data-card .d-unit { color: #64748b; font-size: 11px; }
+    .data-card.volt .d-value { color: #60a5fa; }
+    .data-card.res .d-value { color: #fbbf24; }
+    .data-card.amp .d-value { color: #4ade80; }
+
+    .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 0; }
+    @media (max-width: 800px) { .info-grid { grid-template-columns: 1fr; } }
+    .info-card { background: #0f172a; border-radius: 14px; padding: 16px; border: 1px solid #1e293b; }
+    .info-card h3 { color: #e2e8f0; font-size: 16px; margin-bottom: 8px; }
+    .info-card p, .info-card ul { color: #94a3b8; font-size: 13px; line-height: 1.8; }
+    .info-card ul { padding-left: 18px; }
+    .info-card ul li strong { color: #38bdf8; }
+    .formula-highlight { color: #fbbf24; font-weight: 700; }
+
+    /* 可隐藏导航栏 */
+    .header { position: fixed !important; top: 0; left: 0; right: 0; transition: transform 0.35s cubic-bezier(0.4, 0, 0.2, 1); will-change: transform; }
+    .header.hidden { transform: translateY(-100%); }
+    body { padding-top: 56px; transition: padding-top 0.35s cubic-bezier(0.4, 0, 0.2, 1); }
+    body.header-hidden { padding-top: 0; }
+    @media (max-width: 768px) { body { padding-top: 48px; } }
+  </style>
+  <script src="protect.js"></script>
+  <script src="auth-check.js"></script>
+</head>
+<body>
+  <header class="header">
+    <div class="logo">物理虚拟实验平台</div>
+    <nav class="nav">
+      <a href="experiments.html">实验目录</a>
+      <a href="index.html">首页</a>
+    </nav>
+  </header>
+
+  <div class="exp-wrap">
+    <h2>欧姆定律 · 交互探究</h2>
+    <p class="sub">拖拽滑块调节电压和电阻，观察电流如何变化 — 探究 I = U / R 的规律</p>
+
+    <div class="main-card">
+      <canvas id="simCanvas"></canvas>
+
+      <div class="ctrl-row">
+        <div class="slider-group">
+          <label>电压 U <span class="val blue" id="valU">6.0 V</span></label>
+          <input type="range" id="voltageSlider" min="0" max="12" step="0.1" value="6">
+        </div>
+        <div class="slider-group">
+          <label>电阻 R <span class="val orange" id="valR">12.0 Ω</span></label>
+          <input type="range" id="resistanceSlider" min="1" max="100" step="0.1" value="12">
+        </div>
+        <div class="btn-row">
+          <button class="primary" onclick="resetExperiment()">↺ 重置</button>
+        </div>
+      </div>
+
+      <div class="data-row">
+        <div class="data-card volt"><div class="d-label">电压 U</div><div class="d-value" id="cardU">6.0</div><div class="d-unit">V</div></div>
+        <div class="data-card res"><div class="d-label">电阻 R</div><div class="d-value" id="cardR">12.0</div><div class="d-unit">Ω</div></div>
+        <div class="data-card amp"><div class="d-label">电流 I</div><div class="d-value" id="cardI">0.500</div><div class="d-unit">A &nbsp;(I = U/R)</div></div>
+      </div>
+    </div>
+
+    <div class="info-grid">
+      <div class="info-card">
+        <h3>实验原理</h3>
+        <p><strong>欧姆定律</strong>：导体中的电流，跟导体两端的电压成<span class="formula-highlight">正比</span>，跟导体的电阻成<span class="formula-highlight">反比</span>。</p>
+        <p style="margin-top:8px;font-size:18px;text-align:center;color:#e2e8f0;">I = U / R</p>
+        <p style="margin-top:8px;">调节电压 U 和电阻 R，观察电流 I 如何随之变化。</p>
+      </div>
+      <div class="info-card">
+        <h3>操作指南</h3>
+        <ul>
+          <li>拖拽 <strong>电压滑块</strong> 改变电源电压（0~12V），观察电池节数变化</li>
+          <li>拖拽 <strong>电阻滑块</strong> 改变电路中的电阻（1~100Ω）</li>
+          <li>观察 <strong>电流值</strong> 如何随电压和电阻变化</li>
+          <li>留意右侧公式中字母 <strong>U、I、R</strong> 的大小变化</li>
+          <li>点击 <strong>重置</strong> 恢复默认值（U=6V, R=12Ω）</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <script>
+(function() {
+var canvas = document.getElementById('simCanvas'), ctx = canvas.getContext('2d');
+var W = 920, H = 440;
+var dpr = 1;
+
+// === 物理参数 ===
+var voltage = 6;     // 电压 U (V)
+var resistance = 12; // 电阻 R (Ω)
+var current = 0.5;   // 电流 I (A)
+
+// === 电流动画 ===
+var flowPhase = 0;
+
+// === Canvas 滑块 ===
+var sliderU = { x: 0, y: 0, w: 0, minX: 0, maxX: 0, dragging: false };
+var sliderR = { x: 0, y: 0, w: 0, minX: 0, maxX: 0, dragging: false };
+
+function calcCurrent() {
+  current = resistance > 0 ? voltage / resistance : 0;
+}
+
+function resize() {
+  var card = canvas.parentElement;
+  var w = Math.min(card.clientWidth - 24, 920);
+  dpr = window.devicePixelRatio || 1;
+  canvas.width = w * dpr;
+  canvas.height = Math.round(H * w / W) * dpr;
+  canvas.style.width = w + 'px';
+  canvas.style.height = Math.round(H * w / W) + 'px';
+  ctx.setTransform(1,0,0,1,0,0);
+  ctx.scale(dpr * w / W, dpr * w / W);
+}
+
+// === 绘制函数 ===
+function roundRect(x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x+r, y); ctx.lineTo(x+w-r, y);
+  ctx.quadraticCurveTo(x+w, y, x+w, y+r);
+  ctx.lineTo(x+w, y+h-r); ctx.quadraticCurveTo(x+w, y+h, x+w-r, y+h);
+  ctx.lineTo(x+r, y+h); ctx.quadraticCurveTo(x, y+h, x, y+h-r);
+  ctx.lineTo(x, y+r); ctx.quadraticCurveTo(x, y, x+r, y);
+  ctx.closePath();
+}
+
+function drawResistorSymbol(x, y) {
+  var len = 60, amp = 14;
+  ctx.strokeStyle = '#e2e8f0'; ctx.lineWidth = 3; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(x, y);
+  var segs = 7, segLen = len / segs;
+  for (var i = 0; i < segs; i++) {
+    var sx = x + i * segLen;
+    ctx.lineTo(sx + segLen/2, y + (i%2===0 ? amp : -amp));
+  }
+  ctx.lineTo(x + len, y);
+  ctx.stroke();
+  // Label
+  ctx.fillStyle = '#fbbf24'; ctx.font = 'bold 13px sans-serif'; ctx.textAlign = 'center';
+  ctx.fillText('R = ' + resistance.toFixed(1) + ' Ω', x + len/2, y + amp + 18);
+}
+
+function drawAmmeter(x, y) {
+  var r = 24;
+  ctx.fillStyle = '#1a1f2e'; ctx.strokeStyle = '#4ade80'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI*2); ctx.fill(); ctx.stroke();
+  // Scale arc
+  ctx.strokeStyle = '#475569'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.arc(x, y, r-5, -Math.PI*0.7, Math.PI*0.2); ctx.stroke();
+  // Needle
+  var maxI = Math.max(1, Math.ceil(current * 2) / 2);
+  var angle = -Math.PI*0.7 + Math.min(current/maxI, 1) * Math.PI*0.9;
+  ctx.strokeStyle = '#4ade80'; ctx.lineWidth = 2.5; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x+Math.cos(angle)*(r-10), y+Math.sin(angle)*(r-10)); ctx.stroke();
+  ctx.fillStyle = '#4ade80'; ctx.beginPath(); ctx.arc(x, y, 3, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#e2e8f0'; ctx.font = 'bold 14px sans-serif'; ctx.textAlign = 'center';
+  ctx.fillText('A', x, y+r+16);
+  ctx.fillStyle = '#94a3b8'; ctx.font = '9px sans-serif';
+  ctx.fillText(current.toFixed(3)+'A', x, y+r+28);
+}
+
+function drawWire(x1, y1, x2, y2) {
+  ctx.strokeStyle = '#64748b'; ctx.lineWidth = 2; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+}
+
+// 导线路径（电路矩形环路）
+var circuitPath = []; // Will be computed in drawCircuit
+
+function computeCircuitPath() {
+  var cells = Math.max(1, Math.round(voltage / 1.5));
+  cells = Math.min(cells, 8);
+  var batTopY = 360 - cells * 26 - 3;  // Battery + terminal top
+  var batBotY = 363;                    // Battery - terminal bottom
+  return [
+    {x:100, y:batTopY},    // 0: Battery + terminal
+    {x:100, y:68},         // 1: Upper-left corner
+    {x:530, y:68},         // 2: Upper-right (resistor on this top wire)
+    {x:530, y:320},        // 3: Lower-right (ammeter on this right wire)
+    {x:100, y:320},        // 4: Lower-left (switch on this bottom wire)
+    {x:100, y:batBotY}     // 5: Back to battery - terminal
+  ];
+}
+
+function drawCircuit() {
+  var path = computeCircuitPath();
+
+  // 导线
+  ctx.strokeStyle = '#64748b'; ctx.lineWidth = 2.5; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  ctx.beginPath();
+  ctx.moveTo(path[0].x, path[0].y);
+  for (var i = 1; i < path.length; i++) ctx.lineTo(path[i].x, path[i].y);
+  ctx.stroke();
+
+  // 节点圆点
+  for (var i = 0; i < path.length; i++) {
+    ctx.fillStyle = '#94a3b8';
+    ctx.beginPath(); ctx.arc(path[i].x, path[i].y, 3, 0, Math.PI*2); ctx.fill();
+  }
+
+  circuitPath = path;
+}
+
+function drawBatteryStack() {
+  var cells = Math.max(1, Math.round(voltage / 1.5));
+  cells = Math.min(cells, 8);
+  var cellH = 26;
+  var baseY = 360;
+
+  // Battery box outline
+  var boxH = cells * cellH + 10;
+  ctx.fillStyle = 'rgba(30,35,49,0.9)';
+  ctx.strokeStyle = '#334155'; ctx.lineWidth = 1.5;
+  roundRect(75, baseY - boxH + 5, 50, boxH, 6); ctx.fill();
+  roundRect(75, baseY - boxH + 5, 50, boxH, 6); ctx.stroke();
+
+  // Cells stacked upward
+  for (var i = 0; i < cells; i++) {
+    var cy = baseY - (i+1) * cellH;
+    var grad = ctx.createLinearGradient(82, cy, 82+36, cy);
+    grad.addColorStop(0, '#b0b0b0'); grad.addColorStop(0.25, '#e8e8e8');
+    grad.addColorStop(0.7, '#c8c8c8'); grad.addColorStop(1, '#888');
+    ctx.fillStyle = grad;
+    roundRect(82, cy, 36, cellH-2, 3); ctx.fill();
+    ctx.strokeStyle = '#555'; ctx.lineWidth = 0.8;
+    roundRect(82, cy, 36, cellH-2, 3); ctx.stroke();
+    // + end (top)
+    ctx.fillStyle = '#cc4444';
+    ctx.fillRect(94, cy-1, 12, 5);
+    // - end (bottom)
+    ctx.fillStyle = '#444';
+    ctx.fillRect(94, cy+cellH-5, 12, 3);
+  }
+
+  // + terminal (top)
+  ctx.fillStyle = '#cc4444';
+  ctx.beginPath(); ctx.arc(100, baseY - cells*cellH - 3, 4, 0, Math.PI*2); ctx.fill();
+  ctx.strokeStyle = '#922'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.arc(100, baseY - cells*cellH - 3, 4, 0, Math.PI*2); ctx.stroke();
+
+  // - terminal (bottom)
+  ctx.fillStyle = '#333';
+  ctx.beginPath(); ctx.arc(100, baseY + 3, 4, 0, Math.PI*2); ctx.fill();
+  ctx.strokeStyle = '#111'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.arc(100, baseY + 3, 4, 0, Math.PI*2); ctx.stroke();
+
+  // Voltage label
+  ctx.fillStyle = '#60a5fa'; ctx.font = 'bold 12px sans-serif'; ctx.textAlign = 'center';
+  ctx.fillText(voltage.toFixed(1) + 'V', 100, baseY + 18);
+}
+
+function drawFormulaArea() {
+  var fx = 600, fy = 80;
+
+  // Background card
+  ctx.fillStyle = 'rgba(15,23,42,0.85)';
+  ctx.strokeStyle = '#1e293b'; ctx.lineWidth = 1.5;
+  roundRect(fx-10, fy-10, 290, 320, 12); ctx.fill();
+  roundRect(fx-10, fy-10, 290, 320, 12); ctx.stroke();
+
+  // Title
+  ctx.fillStyle = '#e2e8f0'; ctx.font = 'bold 16px "PingFang SC","Microsoft YaHei",sans-serif'; ctx.textAlign = 'center';
+  ctx.fillText('欧姆定律', fx+135, fy+16);
+
+  // Formula: I = U / R  with dynamic sizing
+  var uSize = 30 + voltage * 3;      // U grows with voltage
+  var iSize = 30 + current * 30;     // I grows with current (more dramatic)
+  var rSize = 30 + resistance * 0.5; // R grows with resistance
+
+  uSize = Math.min(uSize, 66);
+  iSize = Math.min(iSize, 72);
+  rSize = Math.min(rSize, 64);
+
+  var fy1 = fy + 60;
+  // "I" in green
+  ctx.fillStyle = '#4ade80'; ctx.font = 'bold ' + iSize + 'px "PingFang SC","Microsoft YaHei",sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('I', fx+135, fy1);
+
+  // "="
+  ctx.fillStyle = '#e2e8f0'; ctx.font = 'bold 38px "PingFang SC","Microsoft YaHei",sans-serif';
+  ctx.fillText('=', fx+135, fy1 + 50);
+
+  // "U" in blue
+  var fy2 = fy1 + 100;
+  ctx.fillStyle = '#60a5fa'; ctx.font = 'bold ' + uSize + 'px "PingFang SC","Microsoft YaHei",sans-serif';
+  ctx.fillText('U', fx+135, fy2);
+
+  // "/" divider
+  ctx.fillStyle = '#64748b'; ctx.font = 'bold 36px "PingFang SC","Microsoft YaHei",sans-serif';
+  ctx.fillText('——', fx+135, fy2 + 32);
+
+  // "R" in orange
+  var fy3 = fy2 + 72;
+  ctx.fillStyle = '#fbbf24'; ctx.font = 'bold ' + rSize + 'px "PingFang SC","Microsoft YaHei",sans-serif';
+  ctx.fillText('R', fx+135, fy3);
+
+  // Numeric values below
+  var fy4 = fy3 + 40;
+  ctx.fillStyle = '#94a3b8'; ctx.font = '13px "SF Mono","Cascadia Code","Consolas",monospace'; ctx.textAlign = 'center';
+  var iStr = current.toFixed(3) + ' A';
+  var uStr = voltage.toFixed(1) + ' V';
+  var rStr = resistance.toFixed(1) + ' Ω';
+  ctx.fillText(iStr + '  =  ' + uStr + '  /  ' + rStr, fx+135, fy4);
+
+  // Three data boxes
+  var bx = fx+10, by = fy4 + 12, bw = 84, bh = 50, gap = 8;
+
+  // U box
+  ctx.fillStyle = 'rgba(59,130,246,0.1)'; ctx.strokeStyle = 'rgba(59,130,246,0.3)'; ctx.lineWidth = 1;
+  roundRect(bx, by, bw, bh, 8); ctx.fill(); roundRect(bx, by, bw, bh, 8); ctx.stroke();
+  ctx.fillStyle = '#64748b'; ctx.font = '10px sans-serif'; ctx.textAlign = 'center';
+  ctx.fillText('电压', bx+bw/2, by+16);
+  ctx.fillStyle = '#60a5fa'; ctx.font = 'bold 18px "SF Mono","Cascadia Code","Consolas",monospace';
+  ctx.fillText(uStr, bx+bw/2, by+38);
+
+  // R box
+  var bx2 = bx+bw+gap;
+  ctx.fillStyle = 'rgba(245,158,11,0.1)'; ctx.strokeStyle = 'rgba(245,158,11,0.3)';
+  roundRect(bx2, by, bw, bh, 8); ctx.fill(); roundRect(bx2, by, bw, bh, 8); ctx.stroke();
+  ctx.fillStyle = '#64748b'; ctx.font = '10px sans-serif'; ctx.textAlign = 'center';
+  ctx.fillText('电阻', bx2+bw/2, by+16);
+  ctx.fillStyle = '#fbbf24'; ctx.font = 'bold 18px "SF Mono","Cascadia Code","Consolas",monospace';
+  ctx.fillText(rStr, bx2+bw/2, by+38);
+
+  // I box
+  var bx3 = bx2+bw+gap;
+  ctx.fillStyle = 'rgba(74,222,128,0.1)'; ctx.strokeStyle = 'rgba(74,222,128,0.3)';
+  roundRect(bx3, by, bw, bh, 8); ctx.fill(); roundRect(bx3, by, bw, bh, 8); ctx.stroke();
+  ctx.fillStyle = '#64748b'; ctx.font = '10px sans-serif'; ctx.textAlign = 'center';
+  ctx.fillText('电流', bx3+bw/2, by+16);
+  ctx.fillStyle = '#4ade80'; ctx.font = 'bold 18px "SF Mono","Cascadia Code","Consolas",monospace';
+  ctx.fillText(iStr, bx3+bw/2, by+38);
+}
+
+function drawFlowDots() {
+  if (current < 0.001 || circuitPath.length < 2) return;
+  flowPhase += current * 0.06;
+  var speed = Math.max(0.3, current * 3);
+  for (var i = 0; i < circuitPath.length - 1; i++) {
+    var segLen = Math.hypot(circuitPath[i+1].x - circuitPath[i].x, circuitPath[i+1].y - circuitPath[i].y);
+    var dots = Math.max(1, Math.floor(segLen / 25));
+    for (var d = 0; d < dots; d++) {
+      var t = ((flowPhase * speed + d/dots) % 1 + 1) % 1;
+      var dx = circuitPath[i].x + (circuitPath[i+1].x-circuitPath[i].x)*t;
+      var dy = circuitPath[i].y + (circuitPath[i+1].y-circuitPath[i].y)*t;
+      var alpha = 0.5 + 0.5 * Math.sin(t * Math.PI);
+      ctx.fillStyle = 'rgba(56,189,248,'+alpha.toFixed(2)+')';
+      ctx.beginPath(); ctx.arc(dx, dy, 2.5, 0, Math.PI*2); ctx.fill();
+    }
+  }
+}
+
+function drawAll() {
+  ctx.clearRect(0, 0, W, H);
+
+  // 背景网格
+  ctx.strokeStyle = 'rgba(51,65,85,0.1)'; ctx.lineWidth = 0.5;
+  for (var gx = 0; gx < W; gx += 30) { ctx.beginPath(); ctx.moveTo(gx,0); ctx.lineTo(gx,H); ctx.stroke(); }
+  for (var gy = 0; gy < H; gy += 30) { ctx.beginPath(); ctx.moveTo(0,gy); ctx.lineTo(W,gy); ctx.stroke(); }
+
+  // 分隔线
+  ctx.strokeStyle = 'rgba(51,65,85,0.3)'; ctx.lineWidth = 1;
+  ctx.setLineDash([4, 8]);
+  ctx.beginPath(); ctx.moveTo(570, 30); ctx.lineTo(570, 410); ctx.stroke();
+  ctx.setLineDash([]);
+
+  // 电路导线
+  drawCircuit();
+
+  // 电流动画
+  drawFlowDots();
+
+  // 电池组
+  drawBatteryStack();
+
+  // 电阻符号
+  drawResistorSymbol(250, 68);
+
+  // 电流表
+  drawAmmeter(530, 194);
+
+  // 开关（常闭）- on bottom wire
+  var swX = 300, swY = 320;
+  ctx.fillStyle = '#e2e8f0';
+  ctx.beginPath(); ctx.arc(swX-14, swY, 4, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(swX+14, swY, 4, 0, Math.PI*2); ctx.fill();
+  ctx.strokeStyle = '#fbbf24'; ctx.lineWidth = 3; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(swX-14, swY); ctx.lineTo(swX+14, swY); ctx.stroke();
+  ctx.fillStyle = '#94a3b8'; ctx.font = '11px sans-serif'; ctx.textAlign = 'center';
+  ctx.fillText('S (闭合)', swX, swY+20);
+
+  // 公式区域
+  drawFormulaArea();
+}
+
+// === 动画循环 ===
+function animate() {
+  calcCurrent();
+  drawAll();
+  updateUI();
+  requestAnimationFrame(animate);
+}
+
+function updateUI() {
+  document.getElementById('valU').textContent = voltage.toFixed(1) + ' V';
+  document.getElementById('valR').textContent = resistance.toFixed(1) + ' Ω';
+  document.getElementById('cardU').textContent = voltage.toFixed(1);
+  document.getElementById('cardR').textContent = resistance.toFixed(1);
+  document.getElementById('cardI').textContent = current.toFixed(3);
+}
+
+// === 事件处理 ===
+document.getElementById('voltageSlider').addEventListener('input', function() {
+  voltage = parseFloat(this.value);
+});
+document.getElementById('resistanceSlider').addEventListener('input', function() {
+  resistance = parseFloat(this.value);
+});
+
+// 重置
+window.resetExperiment = function() {
+  voltage = 6;
+  resistance = 12;
+  document.getElementById('voltageSlider').value = 6;
+  document.getElementById('resistanceSlider').value = 12;
+};
+
+// === 初始化 ===
+window.addEventListener('resize', function() { resize(); });
+resize();
+calcCurrent();
+updateUI();
+animate();
+})();
+</script>
+
+<script>
+(function() {
+  var header = document.querySelector('.header');
+  var hideTimer = null, HIDE_DELAY = 800;
+  function show() { clearTimeout(hideTimer); header.classList.remove('hidden'); document.body.classList.remove('header-hidden'); }
+  function hide() { hideTimer = setTimeout(function() { header.classList.add('hidden'); document.body.classList.add('header-hidden'); }, HIDE_DELAY); }
+  document.addEventListener('mousemove', function(e) {
+    if (e.clientY <= 60) show();
+    else if (e.clientY > header.offsetHeight + 20 && !header.classList.contains('hidden')) hide();
+  });
+  header.addEventListener('mouseenter', show);
+  header.addEventListener('mouseleave', hide);
+  hideTimer = setTimeout(function() { header.classList.add('hidden'); document.body.classList.add('header-hidden'); }, 2000);
+})();
+</script>
+</body>
+</html>

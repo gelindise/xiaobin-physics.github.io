@@ -188,24 +188,32 @@ var dragStartR = 0;
 var records = [null, null, null];
 var recordCount = 0;
 
-// === 元件坐标 ===
-var BX = 90, BY = 230;        // 电池中心 (纵向)
-var SX = 175, SY = 155;       // 开关中心
-var RX1 = 270, RY = 155;      // 变阻器左端
-var RX2 = 510, RY2 = 155;     // 变阻器右端
-var AX = 590, AY = 155;       // 电流表中心
-var XX = 710, XY1 = 155;      // Rx上端
-var XX2 = 710, XY2 = 285;     // Rx下端
-var VX = 460, VY = 310;       // 电压表中心
-var BAT_W = 50, BAT_H = 55;   // 电池尺寸
+// === 元件坐标 (实物图风格) ===
+var BX = 80, BY = 370;         // 电池盒中心
+var SX = 160, SY = 220;        // 开关中心
+var RX1 = 240, RY = 155;       // 变阻器左端 (陶瓷管左)
+var RX2 = 530, RY2 = 155;      // 变阻器右端 (陶瓷管右)
+var AX = 615, AY = 155;        // 电流表中心
+var XX = 710, XY1 = 150;       // Rx上端
+var XX2 = 710, XY2 = 295;      // Rx下端
+var VX = 460, VY = 330;        // 电压表中心
 
-// 接线节点
-var nodeA = {x: 670, y: 155};  // 电流表右 → Rx上 (节点A)
-var nodeB = {x: 670, y: 285};  // Rx下 → 回路线 (节点B)
-var battTop = {x: BX, y: BY - BAT_H/2};
-var battBot = {x: BX, y: BY + BAT_H/2};
-var cornerTL = {x: 110, y: 100};
-var cornerBL = {x: 110, y: 350};
+// 接线端子
+var battTop = {x: BX, y: BY - 27};    // 电池+
+var battBot = {x: BX, y: BY + 27};    // 电池-
+var swTL = {x: SX - 30, y: SY};       // 开关左触点
+var swTR = {x: SX + 30, y: SY};       // 开关右触点
+var rhTL = {x: RX1 + 12, y: RY + 24};   // 变阻器A端(左下接线柱)
+var rhTR = {x: RX2 - 12, y: RY2 + 24};  // 变阻器B端(右下接线柱)
+var amL = {x: AX - 36, y: AY};        // 电流表-(左侧)
+var amR = {x: AX + 36, y: AY};        // 电流表+(右侧)
+var rxT = {x: XX, y: XY1};            // Rx上端
+var rxB = {x: XX, y: XY2};            // Rx下端
+var vmT = {x: VX, y: VY - 48};        // 电压表+(顶部)
+var vmB = {x: VX, y: VY + 48};        // 电压表-(底部)
+
+// 布线分支节点
+var nodeAM = {x: amR.x, y: amR.y};    // 电流表右-分支点
 
 function calcCircuit() {
   if (!switchOn) { currentI = 0; voltageU = 0; return; }
@@ -215,7 +223,6 @@ function calcCircuit() {
 }
 
 function getReading(v) {
-  // 模拟读数微小波动
   return v + (Math.random() - 0.5) * 0.008;
 }
 
@@ -232,123 +239,380 @@ function resize() {
   ctx.scale(dpr * w / W, dpr * w / W);
 }
 
+// === 辅助绘图函数 ===
+function roundRect(x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  ctx.lineTo(x + r, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
+}
+
+function drawTerminalPost(x, y, color, size) {
+  size = size || 1;
+  ctx.fillStyle = '#8899aa';
+  ctx.fillRect(x - 3*size, y - 5*size, 6*size, 10*size);
+  ctx.fillStyle = color;
+  ctx.beginPath(); ctx.arc(x, y - 5*size, 3.5*size, 0, Math.PI*2); ctx.fill();
+  ctx.strokeStyle = '#333'; ctx.lineWidth = 0.8;
+  ctx.beginPath(); ctx.arc(x, y - 5*size, 3.5*size, 0, Math.PI*2); ctx.stroke();
+}
+
 function drawBattery(x, y) {
-  var hw = 22, hh = 9;
-  // 长线(+)
-  ctx.strokeStyle = '#e2e8f0'; ctx.lineWidth = 3;
-  ctx.beginPath(); ctx.moveTo(x - hw, y - hh - 4); ctx.lineTo(x + hw, y - hh - 4); ctx.stroke();
-  // 短线(-)
-  ctx.lineWidth = 2;
-  ctx.beginPath(); ctx.moveTo(x - hw + 6, y - hh + 10); ctx.lineTo(x + hw - 6, y - hh + 10); ctx.stroke();
-  // 标签
-  ctx.fillStyle = '#94a3b8'; ctx.font = '11px "PingFang SC","Microsoft YaHei",sans-serif';
-  ctx.textAlign = 'center';
-  ctx.fillText('+', x, y - hh - 10);
-  ctx.fillText('−', x, y - hh + 22);
-  ctx.fillText(batteryV + 'V', x + BAT_W/2 + 6, y);
+  var bw = 70, bh = 54;
+  var bx = x - bw/2, by = y - bh/2;
+
+  ctx.fillStyle = 'rgba(0,0,0,0.3)';
+  roundRect(bx+3, by+3, bw, bh, 6); ctx.fill();
+
+  var grad = ctx.createLinearGradient(bx, by, bx, by+bh);
+  grad.addColorStop(0, '#3d3d42');
+  grad.addColorStop(0.35, '#4e4e55');
+  grad.addColorStop(0.65, '#353538');
+  grad.addColorStop(1, '#222228');
+  ctx.fillStyle = grad;
+  roundRect(bx, by, bw, bh, 6); ctx.fill();
+  ctx.strokeStyle = '#5a5a60'; ctx.lineWidth = 1.5;
+  roundRect(bx, by, bw, bh, 6); ctx.stroke();
+
+  ctx.strokeStyle = 'rgba(255,255,255,0.07)'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(bx+24, by+3); ctx.lineTo(bx+24, by+bh-3); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(bx+46, by+3); ctx.lineTo(bx+46, by+bh-3); ctx.stroke();
+
+  for (var c = 0; c < 2; c++) {
+    var cx = bx + 10 + c*24, cy = by + 8;
+    var cgrad = ctx.createLinearGradient(cx, cy, cx+14, cy);
+    cgrad.addColorStop(0, '#ccc'); cgrad.addColorStop(0.3, '#f0f0f0');
+    cgrad.addColorStop(0.7, '#d0d0d0'); cgrad.addColorStop(1, '#999');
+    ctx.fillStyle = cgrad;
+    roundRect(cx, cy, 14, 28, 3); ctx.fill();
+    ctx.strokeStyle = '#888'; ctx.lineWidth = 0.6;
+    roundRect(cx, cy, 14, 28, 3); ctx.stroke();
+    ctx.fillStyle = '#cc4444'; ctx.fillRect(cx+3, cy+3, 8, 4);
+    ctx.fillStyle = '#444'; ctx.fillRect(cx+3, cy+21, 8, 4);
+  }
+
+  ctx.fillStyle = '#ff4444'; ctx.font = 'bold 11px sans-serif'; ctx.textAlign = 'center';
+  ctx.fillText('+', x-14, by-10);
+  ctx.fillStyle = '#888'; ctx.font = 'bold 11px sans-serif';
+  ctx.fillText('−', x+14, by-10);
+
+  drawTerminalPost(x, by, '#d44');
+  drawTerminalPost(x, by+bh, '#333');
+
+  ctx.fillStyle = '#ccc'; ctx.font = 'bold 11px sans-serif';
+  ctx.fillText(batteryV+'V', x, by+bh+14);
 }
 
 function drawSwitch(x, y) {
-  // 两个触点
-  ctx.fillStyle = '#e2e8f0';
-  ctx.beginPath(); ctx.arc(x - 18, y, 4, 0, Math.PI*2); ctx.fill();
-  ctx.beginPath(); ctx.arc(x + 18, y, 4, 0, Math.PI*2); ctx.fill();
-  // 刀片
-  ctx.strokeStyle = '#fbbf24'; ctx.lineWidth = 3; ctx.lineCap = 'round';
-  ctx.beginPath();
-  if (switchOn) {
-    ctx.moveTo(x - 18, y); ctx.lineTo(x + 18, y);
-  } else {
-    ctx.moveTo(x - 18, y); ctx.lineTo(x + 10, y - 16);
-  }
-  ctx.stroke();
-  // 标签
-  ctx.fillStyle = '#94a3b8'; ctx.font = '10px "PingFang SC","Microsoft YaHei",sans-serif'; ctx.textAlign = 'center';
-  ctx.fillText('S', x, y + 18);
-  // 点击区域
-  ctx.strokeStyle = 'rgba(251,191,36,0.2)'; ctx.lineWidth = 1;
-  ctx.beginPath(); ctx.arc(x, y, 24, 0, Math.PI*2); ctx.stroke();
+  var bw = 70, bh = 18;
+  var bgrad = ctx.createLinearGradient(x, y-bh/2, x, y+bh/2);
+  bgrad.addColorStop(0, '#c0c5c8'); bgrad.addColorStop(0.5, '#e0e4e6'); bgrad.addColorStop(1, '#909598');
+  ctx.fillStyle = bgrad;
+  roundRect(x-bw/2, y-bh/2, bw, bh, 4); ctx.fill();
+  ctx.strokeStyle = '#666'; ctx.lineWidth = 1;
+  roundRect(x-bw/2, y-bh/2, bw, bh, 4); ctx.stroke();
+
+  var postR = 5, postH = 12;
+  [{x: swTL.x, cx: swTL.x}, {x: swTR.x, cx: swTR.x}].forEach(function(cp) {
+    var pg = ctx.createLinearGradient(cp.x-3, 0, cp.x+3, 0);
+    pg.addColorStop(0, '#bbb'); pg.addColorStop(0.5, '#eee'); pg.addColorStop(1, '#999');
+    ctx.fillStyle = pg;
+    ctx.fillRect(cp.x-3, y-postH, 6, postH);
+    ctx.fillStyle = '#e8c860';
+    ctx.beginPath(); ctx.arc(cp.x, y-postH, postR, 0, Math.PI*2); ctx.fill();
+    ctx.strokeStyle = '#b8960c'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.arc(cp.x, y-postH, postR, 0, Math.PI*2); ctx.stroke();
+  });
+
+  var pivotX = swTL.x, pivotY = y-postH;
+  var angle = switchOn ? 0 : -0.5;
+
+  ctx.save();
+  ctx.translate(pivotX, pivotY);
+  ctx.rotate(angle);
+
+  var blGrad = ctx.createLinearGradient(0, -2, 0, 2);
+  blGrad.addColorStop(0, '#e0d8b0'); blGrad.addColorStop(0.5, '#f5f0d0'); blGrad.addColorStop(1, '#c0b880');
+  ctx.fillStyle = blGrad;
+  ctx.fillRect(0, -2, 46, 4);
+  ctx.strokeStyle = '#a09050'; ctx.lineWidth = 0.8;
+  ctx.strokeRect(0, -2, 46, 4);
+
+  ctx.fillStyle = '#d44';
+  ctx.beginPath(); ctx.arc(46, 0, 5, 0, Math.PI*2); ctx.fill();
+  ctx.strokeStyle = '#922'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.arc(46, 0, 5, 0, Math.PI*2); ctx.stroke();
+
+  ctx.restore();
+
+  ctx.fillStyle = '#aaa'; ctx.font = '10px sans-serif'; ctx.textAlign = 'center';
+  ctx.fillText('S', x, y+20);
+
+  ctx.strokeStyle = 'rgba(251,191,36,0.12)'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.arc(x, y-4, 30, 0, Math.PI*2); ctx.stroke();
 }
 
 function drawRheostat(x1, y, x2) {
-  var w = x2 - x1;
-  // 矩形框
-  ctx.strokeStyle = '#e2e8f0'; ctx.lineWidth = 2;
-  ctx.strokeRect(x1, y - 14, w, 28);
-  // 锯齿电阻线
-  ctx.strokeStyle = '#64748b'; ctx.lineWidth = 1.5;
-  ctx.beginPath(); ctx.moveTo(x1 + 7, y - 5);
-  for (var i = 0; i < 16; i++) {
-    var px = x1 + 8 + i * (w - 16) / 16;
-    ctx.lineTo(px, y - 5 + (i % 2 === 0 ? 10 : -10));
-  }
-  ctx.stroke();
-  // 滑片/箭头
-  var sx = x1 + (rRheo / rRheoMax) * w;
-  sx = Math.max(x1 + 4, Math.min(x2 - 4, sx));
-  // 箭头三角形
-  ctx.fillStyle = '#fbbf24';
-  ctx.beginPath(); ctx.moveTo(sx, y + 14); ctx.lineTo(sx - 8, y + 24); ctx.lineTo(sx + 8, y + 24); ctx.closePath(); ctx.fill();
-  // 滑片手柄
-  ctx.strokeStyle = '#fbbf24'; ctx.lineWidth = 3; ctx.lineCap = 'round';
-  ctx.beginPath(); ctx.moveTo(sx, y + 14); ctx.lineTo(sx, y - 14); ctx.stroke();
-  // 端点
-  ctx.fillStyle = '#e2e8f0';
-  ctx.beginPath(); ctx.arc(x1, y, 3, 0, Math.PI*2); ctx.fill();
-  ctx.beginPath(); ctx.arc(x2, y, 3, 0, Math.PI*2); ctx.fill();
-  // 标签
-  ctx.fillStyle = '#94a3b8'; ctx.font = '11px "PingFang SC","Microsoft YaHei",sans-serif'; ctx.textAlign = 'center';
-  ctx.fillText('Rₚ = ' + rRheo.toFixed(1) + 'Ω', (x1+x2)/2, y + 38);
-}
+  var w = x2-x1;
+  var tubeR = 13;
+  var rodCY = y - 16;              // Metal rod center Y (top)
+  var tubeCY = y + 2;              // Ceramic tube center Y (middle)
+  var brTop = rodCY - 8;           // Bracket top
+  var brBot = tubeCY + tubeR + 4;  // Bracket bottom
+  var brW = 14;                    // Bracket width
+  var lBrX = x1 + 4;               // Left bracket X start
+  var rBrX = x2 - brW - 4;         // Right bracket X start
+  var termY = brBot + 5;           // Terminal post Y center
 
+  // === End brackets (metal support plates) ===
+  [lBrX, rBrX].forEach(function(bx) {
+    var bgrad = ctx.createLinearGradient(bx, 0, bx+brW, 0);
+    bgrad.addColorStop(0, '#9eaab8'); bgrad.addColorStop(0.3, '#c8d0d8');
+    bgrad.addColorStop(0.6, '#a8b4c0'); bgrad.addColorStop(1, '#7a8694');
+    ctx.fillStyle = bgrad;
+    roundRect(bx, brTop, brW, brBot-brTop, 4); ctx.fill();
+    ctx.strokeStyle = '#6a7684'; ctx.lineWidth = 1.2;
+    roundRect(bx, brTop, brW, brBot-brTop, 4); ctx.stroke();
+
+    // Bracket highlight
+    ctx.fillStyle = 'rgba(255,255,255,0.08)';
+    roundRect(bx+2, brTop+2, brW-4, (brBot-brTop)*0.4, 3); ctx.fill();
+  });
+
+  // === Metal slider rod (top) ===
+  var rodGrad = ctx.createLinearGradient(x1, rodCY-4, x1, rodCY+4);
+  rodGrad.addColorStop(0, '#e8e8e8'); rodGrad.addColorStop(0.3, '#ffffff');
+  rodGrad.addColorStop(0.7, '#d0d0d0'); rodGrad.addColorStop(1, '#a0a0a0');
+  ctx.fillStyle = rodGrad;
+  roundRect(lBrX+brW, rodCY-4, rBrX-lBrX-brW, 8, 4); ctx.fill();
+  ctx.strokeStyle = '#888'; ctx.lineWidth = 1;
+  roundRect(lBrX+brW, rodCY-4, rBrX-lBrX-brW, 8, 4); ctx.stroke();
+
+  // Rod end knobs (slightly wider than brackets)
+  [lBrX+brW/2, rBrX+brW/2].forEach(function(kx) {
+    ctx.fillStyle = '#ddd';
+    ctx.beginPath(); ctx.arc(kx, rodCY, 6, 0, Math.PI*2); ctx.fill();
+    ctx.strokeStyle = '#999'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.arc(kx, rodCY, 6, 0, Math.PI*2); ctx.stroke();
+    // Cross pattern on knob
+    ctx.strokeStyle = '#bbb'; ctx.lineWidth = 0.5;
+    ctx.beginPath(); ctx.moveTo(kx-3, rodCY); ctx.lineTo(kx+3, rodCY); ctx.stroke();
+  });
+
+  // === Ceramic tube (middle, between brackets) ===
+  var tgrad = ctx.createLinearGradient(x1, tubeCY-tubeR, x1, tubeCY+tubeR);
+  tgrad.addColorStop(0, '#f2ede0');
+  tgrad.addColorStop(0.25, '#fffef8');
+  tgrad.addColorStop(0.6, '#ede5d0');
+  tgrad.addColorStop(1, '#d8cfa8');
+  ctx.fillStyle = tgrad;
+  roundRect(lBrX+brW+2, tubeCY-tubeR, rBrX-lBrX-brW-4, tubeR*2, tubeR); ctx.fill();
+  ctx.strokeStyle = '#c0b898'; ctx.lineWidth = 1.3;
+  roundRect(lBrX+brW+2, tubeCY-tubeR, rBrX-lBrX-brW-4, tubeR*2, tubeR); ctx.stroke();
+
+  // Slider position (map to actual track between brackets)
+  var trackStart = lBrX+brW, trackEnd = rBrX, trackW = trackEnd-trackStart;
+  var sx = trackStart+(rRheo/rRheoMax)*trackW;
+  sx = Math.max(trackStart, Math.min(trackEnd, sx));
+
+  // === Wire coils - inactive (slider to B) - brass/gold ===
+  ctx.save();
+  ctx.beginPath(); ctx.rect(sx+2, tubeCY-tubeR+2, rBrX-sx-4, tubeR*2-4); ctx.clip();
+  for (var i = 0; i < w-8; i += 2.2) {
+    var cx = lBrX+brW+4+i;
+    if (cx > sx+2) {
+      var alpha = 1 - Math.abs((cx-(x1+w/2))/(w/2))*0.5;
+      ctx.strokeStyle = 'rgba(190,150,80,'+(0.10+alpha*0.22).toFixed(2)+')';
+      ctx.lineWidth = 0.9;
+      ctx.beginPath(); ctx.moveTo(cx, tubeCY-tubeR+1); ctx.lineTo(cx, tubeCY+tubeR-1); ctx.stroke();
+    }
+  }
+  ctx.restore();
+
+  // === Wire coils - active (A to slider) - RED ===
+  ctx.save();
+  ctx.beginPath(); ctx.rect(lBrX+brW+4, tubeCY-tubeR+2, sx-lBrX-brW-6, tubeR*2-4); ctx.clip();
+  for (var i = 0; i < w-8; i += 2.2) {
+    var cx = lBrX+brW+4+i;
+    if (cx < sx-2) {
+      ctx.strokeStyle = 'rgba(220,45,45,0.72)';
+      ctx.lineWidth = 1.4;
+      ctx.beginPath(); ctx.moveTo(cx, tubeCY-tubeR+1); ctx.lineTo(cx, tubeCY+tubeR-1); ctx.stroke();
+    }
+  }
+  ctx.restore();
+
+  // === Slider contact (U-shaped metal piece) ===
+  // Vertical arms of the U (from rod to below tube)
+  ctx.fillStyle = '#d8dce0';
+  ctx.fillRect(sx-3, rodCY+4, 6, tubeCY+tubeR-rodCY-2);
+  ctx.strokeStyle = '#999'; ctx.lineWidth = 0.8;
+  ctx.strokeRect(sx-3, rodCY+4, 6, tubeCY+tubeR-rodCY-2);
+  // Contact shoe at bottom (wraps around tube)
+  ctx.fillStyle = '#c0c8d0';
+  roundRect(sx-6, tubeCY+tubeR-4, 12, 8, 2); ctx.fill();
+  ctx.strokeStyle = '#888'; ctx.lineWidth = 0.8;
+  roundRect(sx-6, tubeCY+tubeR-4, 12, 8, 2); ctx.stroke();
+
+  // === Slider handle (on top of rod) ===
+  var hTop = rodCY - 8;
+  ctx.fillStyle = '#e8e8e8';
+  roundRect(sx-6, hTop-6, 12, 12, 3); ctx.fill();
+  ctx.strokeStyle = '#999'; ctx.lineWidth = 1.2;
+  roundRect(sx-6, hTop-6, 12, 12, 3); ctx.stroke();
+  // Handle top highlight
+  ctx.fillStyle = 'rgba(255,255,255,0.4)';
+  roundRect(sx-4, hTop-4, 8, 5, 2); ctx.fill();
+  // Grip lines
+  ctx.strokeStyle = '#bbb'; ctx.lineWidth = 0.6;
+  for (var gl = -2; gl <= 2; gl++) {
+    ctx.beginPath(); ctx.moveTo(sx-3, hTop+gl*2); ctx.lineTo(sx+3, hTop+gl*2); ctx.stroke();
+  }
+
+  // === Red binding posts (接线柱) at bracket bottoms ===
+  [{cx: lBrX+brW/2, tx: x1+12}, {cx: rBrX+brW/2, tx: x2-12}].forEach(function(bp) {
+    var tx = bp.tx, ty = termY;
+    // Post body
+    var pgrad = ctx.createLinearGradient(tx-4, 0, tx+4, 0);
+    pgrad.addColorStop(0, '#cc2222'); pgrad.addColorStop(0.4, '#ee4444');
+    pgrad.addColorStop(0.7, '#cc2828'); pgrad.addColorStop(1, '#881515');
+    ctx.fillStyle = pgrad;
+    roundRect(tx-4, ty-5, 8, 14, 3); ctx.fill();
+    ctx.strokeStyle = '#660000'; ctx.lineWidth = 0.8;
+    roundRect(tx-4, ty-5, 8, 14, 3); ctx.stroke();
+    // Top cap (slightly wider)
+    ctx.fillStyle = '#dd4040';
+    roundRect(tx-5, ty-5, 10, 5, 2); ctx.fill();
+    ctx.strokeStyle = '#881111'; ctx.lineWidth = 0.8;
+    roundRect(tx-5, ty-5, 10, 5, 2); ctx.stroke();
+  });
+
+  // === Labels ===
+  ctx.fillStyle = '#ccc'; ctx.font = '10px sans-serif'; ctx.textAlign = 'center';
+  ctx.fillText('A', x1+12, termY+16);
+  ctx.fillText('B', x2-12, termY+16);
+  ctx.fillStyle = '#ffcc66'; ctx.font = 'bold 11px sans-serif';
+  ctx.fillText('Rp='+rRheo.toFixed(1)+'Ω', (x1+x2)/2, termY+16);
+}
 function drawMeter(x, y, label, needleAngle, range, color) {
-  var r = 28;
-  // 表盘
-  ctx.fillStyle = '#1a1f2e'; ctx.strokeStyle = '#334155'; ctx.lineWidth = 2;
-  ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI*2); ctx.fill(); ctx.stroke();
-  // 刻度弧
-  ctx.strokeStyle = '#475569'; ctx.lineWidth = 1;
-  ctx.beginPath(); ctx.arc(x, y, r - 6, -Math.PI*0.75, Math.PI*0.75); ctx.stroke();
-  // 刻度线
-  for (var i = 0; i <= 10; i++) {
-    var a = -Math.PI*0.7 + (i / 10) * Math.PI*1.4;
-    var inner = (i % 5 === 0) ? r - 10 : r - 8;
-    ctx.strokeStyle = i % 5 === 0 ? '#94a3b8' : '#475569'; ctx.lineWidth = i % 5 === 0 ? 1.5 : 0.5;
-    ctx.beginPath(); ctx.moveTo(x + Math.cos(a)*inner, y + Math.sin(a)*inner);
-    ctx.lineTo(x + Math.cos(a)*(r-3), y + Math.sin(a)*(r-3)); ctx.stroke();
+  var cw = 72, ch = 96;
+  var cx = x-cw/2, cy = y-ch/2;
+
+  ctx.fillStyle = 'rgba(0,0,0,0.3)';
+  roundRect(cx+2, cy+2, cw, ch, 7); ctx.fill();
+
+  var caseGrad = ctx.createLinearGradient(cx, cy, cx+cw, cy);
+  caseGrad.addColorStop(0, '#3a3a40'); caseGrad.addColorStop(0.3, '#4e4e56');
+  caseGrad.addColorStop(0.7, '#35353b'); caseGrad.addColorStop(1, '#25252a');
+  ctx.fillStyle = caseGrad;
+  roundRect(cx, cy, cw, ch, 7); ctx.fill();
+  ctx.strokeStyle = '#555'; ctx.lineWidth = 1.5;
+  roundRect(cx, cy, cw, ch, 7); ctx.stroke();
+
+  var bezelR = 27;
+  ctx.fillStyle = '#2a2a30';
+  ctx.beginPath(); ctx.arc(x, y-2, bezelR+3, 0, Math.PI*2); ctx.fill();
+  ctx.strokeStyle = '#555'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.arc(x, y-2, bezelR+3, 0, Math.PI*2); ctx.stroke();
+
+  var dialGrad = ctx.createRadialGradient(x-2, y-6, 2, x, y-2, bezelR);
+  dialGrad.addColorStop(0, '#ffffff'); dialGrad.addColorStop(0.85, '#f5f5f0'); dialGrad.addColorStop(1, '#e8e8e0');
+  ctx.fillStyle = dialGrad;
+  ctx.beginPath(); ctx.arc(x, y-2, bezelR, 0, Math.PI*2); ctx.fill();
+
+  ctx.strokeStyle = '#333'; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.arc(x, y-2, bezelR-5, -Math.PI*0.72, Math.PI*0.72); ctx.stroke();
+
+  for (var i = 0; i <= 20; i++) {
+    var a = -Math.PI*0.7 + (i/20)*Math.PI*1.4;
+    var isMajor = i%5===0, isMid = i%2===0;
+    var inner = isMajor ? bezelR-10 : (isMid ? bezelR-8 : bezelR-6);
+    ctx.strokeStyle = isMajor ? '#222' : '#555';
+    ctx.lineWidth = isMajor ? 1.2 : 0.5;
+    ctx.beginPath();
+    ctx.moveTo(x+Math.cos(a)*inner, y-2+Math.sin(a)*inner);
+    ctx.lineTo(x+Math.cos(a)*(bezelR-2), y-2+Math.sin(a)*(bezelR-2));
+    ctx.stroke();
+    if (isMajor) {
+      var numR = bezelR-14;
+      ctx.fillStyle = '#222'; ctx.font = '7px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      var nv = i/20, numStr;
+      if (range.indexOf('0.6')>=0) numStr = (nv*0.6).toFixed(1);
+      else if (range.indexOf('3A')>=0||range.indexOf('3V')>=0) numStr = (nv*3).toFixed(0);
+      else numStr = (nv*15).toFixed(0);
+      ctx.fillText(numStr, x+Math.cos(a)*numR, y-2+Math.sin(a)*numR);
+    }
   }
-  // 指针
-  var na = -Math.PI*0.7 + Math.min(needleAngle, 1) * Math.PI*1.4;
-  ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.lineCap = 'round';
-  ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + Math.cos(na)*(r-12), y + Math.sin(na)*(r-12)); ctx.stroke();
-  // 中心点
-  ctx.fillStyle = color; ctx.beginPath(); ctx.arc(x, y, 3, 0, Math.PI*2); ctx.fill();
-  // 标签
-  ctx.fillStyle = '#e2e8f0'; ctx.font = 'bold 13px "PingFang SC","Microsoft YaHei",sans-serif'; ctx.textAlign = 'center';
-  ctx.fillText(label, x, y - r - 8);
-  // 量程
-  ctx.fillStyle = '#64748b'; ctx.font = '9px "PingFang SC","Microsoft YaHei",sans-serif';
-  ctx.fillText(range, x, y + r + 12);
+
+  var na = -Math.PI*0.7 + Math.min(needleAngle, 1)*Math.PI*1.4;
+  ctx.strokeStyle = color; ctx.lineWidth = 2.5; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(x-Math.cos(na)*5, y-2-Math.sin(na)*5);
+  ctx.lineTo(x+Math.cos(na)*(bezelR-10), y-2+Math.sin(na)*(bezelR-10));
+  ctx.stroke();
+  ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.moveTo(x, y-2);
+  ctx.lineTo(x-Math.cos(na)*7, y-2-Math.sin(na)*7);
+  ctx.stroke();
+
+  ctx.fillStyle = '#333';
+  ctx.beginPath(); ctx.arc(x, y-2, 3.5, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#555';
+  ctx.beginPath(); ctx.arc(x, y-2, 2, 0, Math.PI*2); ctx.fill();
+
+  ctx.fillStyle = '#fff'; ctx.font = 'bold 16px sans-serif'; ctx.textAlign = 'center';
+  ctx.fillText(label, x, y+22);
+  ctx.fillStyle = '#999'; ctx.font = '9px sans-serif';
+  ctx.fillText(range, x, y+33);
+
+  if (label === 'A') {
+    drawTerminalPost(amL.x, amL.y, '#222', 0.9);
+    drawTerminalPost(amR.x, amR.y, '#cc3333', 0.9);
+  } else {
+    drawTerminalPost(vmT.x, vmT.y, '#cc3333', 0.9);
+    drawTerminalPost(vmB.x, vmB.y, '#222', 0.9);
+  }
 }
 
-function drawResistorSymbol(x, y1, y2) {
-  var mid = (y1 + y2) / 2;
-  var hw = 14;
-  // 锯齿线
-  ctx.strokeStyle = '#e2e8f0'; ctx.lineWidth = 2.5;
-  ctx.beginPath();
-  ctx.moveTo(x, y1 + 8);
-  var steps = 7;
-  var stepH = (y2 - y1 - 16) / steps;
-  for (var i = 0; i < steps; i++) {
-    var py = y1 + 8 + i * stepH;
-    ctx.lineTo(x + (i % 2 === 0 ? hw : -hw), py + stepH/2);
+function drawResistor(x, y1, y2) {
+  var mid = (y1+y2)/2;
+  var bodyH = y2-y1-40, bodyW = 20;
+  var bx = x-bodyW/2, by = y1+20;
+
+  ctx.strokeStyle = '#c0c0c0'; ctx.lineWidth = 2.5; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(x, y1); ctx.lineTo(x, y1+20); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(x, y2); ctx.lineTo(x, y2-20); ctx.stroke();
+
+  ctx.fillStyle = 'rgba(0,0,0,0.2)';
+  roundRect(bx+2, by+2, bodyW, bodyH, 10); ctx.fill();
+
+  var rgrad = ctx.createLinearGradient(bx, by, bx+bodyW, by);
+  rgrad.addColorStop(0, '#d4b896'); rgrad.addColorStop(0.3, '#f0dcc0');
+  rgrad.addColorStop(0.55, '#e8d0b0'); rgrad.addColorStop(0.8, '#c8a878');
+  rgrad.addColorStop(1, '#a08060');
+  ctx.fillStyle = rgrad;
+  roundRect(bx, by, bodyW, bodyH, 10); ctx.fill();
+  ctx.strokeStyle = '#8a7050'; ctx.lineWidth = 1;
+  roundRect(bx, by, bodyW, bodyH, 10); ctx.stroke();
+
+  var bandColors = ['#8B4513', '#000000', '#CD853F', '#FFD700'];
+  var bandPcts = [0.18, 0.38, 0.58, 0.78];
+  for (var b = 0; b < 4; b++) {
+    ctx.fillStyle = bandColors[b];
+    ctx.fillRect(bx+1, by+bodyH*bandPcts[b]-3, bodyW-2, 6);
   }
-  ctx.lineTo(x, y2 - 8);
-  ctx.stroke();
-  // 标签
-  ctx.fillStyle = '#e2e8f0'; ctx.font = 'bold 14px "PingFang SC","Microsoft YaHei",sans-serif'; ctx.textAlign = 'left';
-  ctx.fillText('Rx', x + hw + 8, mid + 5);
+
+  ctx.fillStyle = 'rgba(255,255,255,0.1)';
+  roundRect(bx+3, by+3, bodyW-12, bodyH*0.45, 5); ctx.fill();
+
+  ctx.fillStyle = '#e2e8f0'; ctx.font = 'bold 13px sans-serif'; ctx.textAlign = 'left';
+  ctx.fillText('Rx', x+bodyW/2+12, mid+4);
 }
 
 function drawWire(x1, y1, x2, y2) {
@@ -362,23 +626,23 @@ function drawWirePath(points) {
   ctx.stroke();
 }
 
-// 导线流动动画点 (初始化一次)
+// 导线路径 (实物图布局)
 var wirePaths = (function() {
   return [
-    // 主回路：电池+ → 左上角 → 开关左
-    [{x:BX,y:battTop.y}, {x:BX,y:cornerTL.y}, {x:cornerTL.x,y:cornerTL.y}, {x:SX-18,y:cornerTL.y}, {x:SX-18,y:SY}],
-    // 开关右 → 变阻器左
-    [{x:SX+18,y:SY}, {x:SX+18,y:RY}, {x:RX1,y:RY}],
-    // 变阻器右 → 电流表左
-    [{x:RX2,y:RY}, {x:AX-28,y:RY}, {x:AX-28,y:AY}],
-    // 电流表右 → 节点A → Rx上端
-    [{x:AX+28,y:AY}, {x:nodeA.x,y:AY}, {x:XX,y:XY1}],
-    // 电压表+：节点A → 下拐 → 向左绕过电流表 → 连接到电压表上端
-    [{x:nodeA.x,y:AY}, {x:nodeA.x,y:230}, {x:VX,y:230}, {x:VX,y:VY-28}],
-    // 电压表-：节点B → 向左 → 向下到电压表下端
-    [{x:nodeA.x,y:XY2}, {x:VX,y:XY2}, {x:VX,y:VY+28}],
-    // 主回路返回：Rx下端 → 节点B → 右下角 → 左下角 → 电池-
-    [{x:XX,y:XY2}, {x:nodeA.x,y:XY2}, {x:nodeA.x,y:cornerBL.y}, {x:cornerBL.x,y:cornerBL.y}, {x:cornerBL.x,y:battBot.y}, {x:BX,y:battBot.y}],
+    // 电池+ → 开关左
+    [{x:battTop.x,y:battTop.y}, {x:80,y:110}, {x:130,y:110}, {x:swTL.x,y:swTL.y}],
+    // 开关右 → 变阻器A(接线柱)
+    [{x:swTR.x,y:swTR.y}, {x:swTR.x,y:rhTL.y}, {x:rhTL.x,y:rhTL.y}],
+    // 变阻器B(接线柱) → 电流表-
+    [{x:rhTR.x,y:rhTR.y}, {x:rhTR.x+42,y:rhTR.y}, {x:rhTR.x+42,y:amL.y}, {x:amL.x,y:amL.y}],
+    // 电流表+ → Rx上
+    [{x:amR.x,y:amR.y}, {x:rxT.x,y:rxT.y}],
+    // Rx下 → 电池-
+    [{x:rxB.x,y:rxB.y}, {x:rxB.x,y:400}, {x:battBot.x,y:400}, {x:battBot.x,y:battBot.y}],
+    // 电压表+ : 电流表右分支 → 电压表上
+    [{x:nodeAM.x,y:nodeAM.y}, {x:nodeAM.x,y:240}, {x:vmT.x,y:240}, {x:vmT.x,y:vmT.y}],
+    // 电压表- : Rx下端 → 绕过电压表下方 → 电压表下
+    [{x:rxB.x,y:rxB.y}, {x:rxB.x,y:388}, {x:vmB.x,y:388}, {x:vmB.x,y:vmB.y}],
   ];
 })();
 
@@ -389,12 +653,12 @@ function drawFlowDots() {
   for (var p = 0; p < wirePaths.length; p++) {
     var pts = wirePaths[p];
     for (var i = 0; i < pts.length - 1; i++) {
-      var segLen = Math.hypot(pts[i+1].x - pts[i].x, pts[i+1].y - pts[i].y);
-      var dots = Math.max(1, Math.floor(segLen / 30));
+      var segLen = Math.hypot(pts[i+1].x-pts[i].x, pts[i+1].y-pts[i].y);
+      var dots = Math.max(1, Math.floor(segLen/30));
       for (var d = 0; d < dots; d++) {
-        var t = ((flowPhase * speed + d / dots) % 1 + 1) % 1;
-        var dx = pts[i].x + (pts[i+1].x - pts[i].x) * t;
-        var dy = pts[i].y + (pts[i+1].y - pts[i].y) * t;
+        var t = ((flowPhase*speed + d/dots) % 1 + 1) % 1;
+        var dx = pts[i].x + (pts[i+1].x-pts[i].x)*t;
+        var dy = pts[i].y + (pts[i+1].y-pts[i].y)*t;
         ctx.fillStyle = 'rgba(56,189,248,0.8)';
         ctx.beginPath(); ctx.arc(dx, dy, 2, 0, Math.PI*2); ctx.fill();
       }
@@ -410,14 +674,15 @@ function drawAll() {
   for (var gx = 0; gx < W; gx += 30) { ctx.beginPath(); ctx.moveTo(gx,0); ctx.lineTo(gx,H); ctx.stroke(); }
   for (var gy = 0; gy < H; gy += 30) { ctx.beginPath(); ctx.moveTo(0,gy); ctx.lineTo(W,gy); ctx.stroke(); }
 
-  drawFlowDots();
-
-  // 绘制导线
+  // 导线
   for (var p = 0; p < wirePaths.length; p++) {
     drawWirePath(wirePaths[p]);
   }
 
-  // 绘制元件
+  // 电流动画
+  drawFlowDots();
+
+  // 元件
   drawBattery(BX, BY);
   drawSwitch(SX, SY);
   drawRheostat(RX1, RY, RX2);
@@ -425,39 +690,35 @@ function drawAll() {
   var aFull = currentI > 0.6 ? 3 : 0.6;
   var vRange = voltageU > 3 ? '0~15V' : '0~3V';
   var vFull = voltageU > 3 ? 15 : 3;
-  drawMeter(AX, AY, 'A', switchOn ? Math.min(currentI / aFull, 1) : 0, aRange, '#4ade80');
-  drawResistorSymbol(XX, XY1, XY2);
-  drawMeter(VX, VY, 'V', switchOn ? Math.min(voltageU / vFull, 1) : 0, vRange, '#f87171');
+  drawMeter(AX, AY, 'A', switchOn ? Math.min(currentI/aFull, 1) : 0, aRange, '#4ade80');
+  drawResistor(XX, XY1, XY2);
+  drawMeter(VX, VY, 'V', switchOn ? Math.min(voltageU/vFull, 1) : 0, vRange, '#f87171');
 
-  // 元件引脚连接点
-  var conns = [
-    {x:SX-18,y:SY},{x:SX+18,y:SY},{x:RX1,y:RY},{x:RX2,y:RY},
-    {x:AX-28,y:AY},{x:AX+28,y:AY},{x:XX,y:XY1},{x:XX,y:XY2},
-    {x:nodeA.x,y:AY},{x:nodeA.x,y:XY2},{x:VX,y:VY-28},{x:VX,y:VY+28},
-    {x:BX,y:battTop.y},{x:BX,y:battBot.y}
-  ];
+  // 连接点标记
+  var conns = [battTop, battBot, swTL, swTR, rhTL, rhTR, amL, amR, rxT, rxB, vmT, vmB];
   for (var c = 0; c < conns.length; c++) {
     var cn = conns[c];
     ctx.fillStyle = '#94a3b8';
     ctx.beginPath(); ctx.arc(cn.x, cn.y, 2.5, 0, Math.PI*2); ctx.fill();
   }
 
-  // 电压表连线虚线 (强调并联)
+  // 电压表并联高亮虚线
   if (switchOn) {
-    ctx.setLineDash([4, 4]);
-    ctx.strokeStyle = 'rgba(248,113,113,0.3)'; ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.moveTo(XX, XY1); ctx.lineTo(VX, VY-28); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(XX, XY2); ctx.lineTo(VX, VY+28); ctx.stroke();
+    ctx.setLineDash([3, 3]);
+    ctx.strokeStyle = 'rgba(248,113,113,0.25)'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(rxT.x, rxT.y); ctx.lineTo(vmT.x, vmT.y); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(rxB.x, rxB.y); ctx.lineTo(vmB.x, vmB.y); ctx.stroke();
     ctx.setLineDash([]);
   }
 }
-
 // === 动画循环 ===
 function animate() {
   calcCircuit();
   // 指针平滑过渡
-  var targetI = switchOn ? Math.min(currentI / 0.6, 1) : 0;
-  var targetV = switchOn ? Math.min(voltageU / 3, 1) : 0;
+  var aFull = currentI > 0.6 ? 3 : 0.6;
+  var vFull = voltageU > 3 ? 15 : 3;
+  var targetI = switchOn ? Math.min(currentI / aFull, 1) : 0;
+  var targetV = switchOn ? Math.min(voltageU / vFull, 1) : 0;
   needleI += (targetI - needleI) * 0.15;
   needleV += (targetV - needleV) * 0.15;
 
@@ -485,7 +746,7 @@ function canvasPos(e) {
 canvas.addEventListener('click', function(e) {
   var pos = canvasPos(e);
   var dx = pos.x - SX, dy = pos.y - SY;
-  if (Math.sqrt(dx*dx + dy*dy) < 28) {
+  if (Math.sqrt(dx*dx + dy*dy) < 32) {
     switchOn = !switchOn;
     updateSwitchUI();
   }
@@ -513,7 +774,7 @@ function getRheoHandleX() {
 canvas.addEventListener('mousedown', function(e) {
   var pos = canvasPos(e);
   var hx = getRheoHandleX();
-  if (Math.abs(pos.x - hx) < 14 && pos.y > RY - 14 && pos.y < RY + 30) {
+  if (Math.abs(pos.x - hx) < 16 && pos.y > RY - 36 && pos.y < RY + 8) {
     draggingRheo = true;
     dragStartX = pos.x;
     dragStartR = rRheo;
@@ -531,9 +792,9 @@ canvas.addEventListener('mousemove', function(e) {
     e.preventDefault();
   } else {
     var hx = getRheoHandleX();
-    if (Math.abs(pos.x - hx) < 14 && pos.y > RY - 14 && pos.y < RY + 30) {
+    if (Math.abs(pos.x - hx) < 16 && pos.y > RY - 36 && pos.y < RY + 8) {
       canvas.style.cursor = 'grab';
-    } else if (Math.hypot(pos.x - SX, pos.y - SY) < 28) {
+    } else if (Math.hypot(pos.x - SX, pos.y - SY) < 32) {
       canvas.style.cursor = 'pointer';
     } else {
       canvas.style.cursor = 'default';
@@ -549,7 +810,7 @@ canvas.addEventListener('touchstart', function(e) {
   if (e.touches.length === 1) {
     var pos = canvasPos(e.touches[0]);
     // 先检测开关
-    if (Math.hypot(pos.x - SX, pos.y - SY) < 30) {
+    if (Math.hypot(pos.x - SX, pos.y - SY) < 34) {
       switchOn = !switchOn;
       updateSwitchUI();
       e.preventDefault();
@@ -557,7 +818,7 @@ canvas.addEventListener('touchstart', function(e) {
     }
     // 变阻器拖拽
     var hx = getRheoHandleX();
-    if (Math.abs(pos.x - hx) < 18 && pos.y > RY - 18 && pos.y < RY + 36) {
+    if (Math.abs(pos.x - hx) < 22 && pos.y > RY - 38 && pos.y < RY + 12) {
       draggingRheo = true;
       dragStartX = pos.x;
       dragStartR = rRheo;
