@@ -41,6 +41,7 @@ async function getUsersFromTable() {
 
 // ========== 注册功能 ==========
 async function userRegister() {
+  const btn = document.querySelector('.auth-btn');
   const user = document.getElementById("regUser").value.trim();
   const pwd = document.getElementById("regPwd").value.trim();
   const email = document.getElementById("regEmail").value.trim();
@@ -68,11 +69,20 @@ async function userRegister() {
     return;
   }
 
+  // 显示加载状态
+  if (btn) { btn.textContent = '注册中...'; btn.disabled = true; btn.style.opacity = '0.7'; }
+  if (tip) { tip.className = "auth-tip"; tip.textContent = "⏳ 正在连接服务器..."; }
+
+  function restoreBtn() {
+    if (btn) { btn.textContent = '立即注册'; btn.disabled = false; btn.style.opacity = '1'; }
+  }
+
   // 检查用户名是否已存在
   try {
     const existing = await SB.getUser(user);
     if (existing && existing.length > 0) {
       if (tip) { tip.className = "auth-tip error"; tip.textContent = "⚠️ 用户名已存在，请换一个"; }
+      restoreBtn();
       return;
     }
   } catch (e) {
@@ -80,6 +90,7 @@ async function userRegister() {
     const cached = JSON.parse(localStorage.getItem("users") || "{}");
     if (cached[user]) {
       if (tip) { tip.className = "auth-tip error"; tip.textContent = "⚠️ 用户名已存在，请换一个"; }
+      restoreBtn();
       return;
     }
   }
@@ -100,6 +111,7 @@ async function userRegister() {
     } else {
       if (tip) { tip.className = "auth-tip error"; tip.textContent = "❌ 注册失败，请稍后重试"; }
     }
+    restoreBtn();
     return;
   }
 
@@ -107,6 +119,8 @@ async function userRegister() {
   const cached = JSON.parse(localStorage.getItem("users") || "{}");
   cached[user] = { pwd, email: email || "", vip: "普通用户", expire: "" };
   localStorage.setItem("users", JSON.stringify(cached));
+
+  restoreBtn();
 
   if (tip) {
     tip.className = "auth-tip success";

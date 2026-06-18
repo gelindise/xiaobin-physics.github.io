@@ -20,15 +20,26 @@ const SB = {
     const qs = params.toString();
     if (qs) url += '?' + qs;
 
-    const res = await fetch(url, {
-      method: opts.method || 'GET',
-      headers: { ...SB.headers, ...opts.extraHeaders },
-      body: opts.body ? JSON.stringify(opts.body) : undefined,
-    });
-    if (!res.ok) throw new Error(`Supabase ${res.status}: ${await res.text()}`);
-    if (opts.method === 'DELETE' || (opts.method === 'PATCH' && !opts.extraHeaders?.Prefer?.includes('return=representation'))) return null;
-    const text = await res.text();
-    return text ? JSON.parse(text) : null;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 12000);
+
+    try {
+      const res = await fetch(url, {
+        method: opts.method || 'GET',
+        headers: { ...SB.headers, ...opts.extraHeaders },
+        body: opts.body ? JSON.stringify(opts.body) : undefined,
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+      if (!res.ok) throw new Error(`Supabase ${res.status}: ${await res.text()}`);
+      if (opts.method === 'DELETE' || (opts.method === 'PATCH' && !opts.extraHeaders?.Prefer?.includes('return=representation'))) return null;
+      const text = await res.text();
+      return text ? JSON.parse(text) : null;
+    } catch (e) {
+      clearTimeout(timeout);
+      if (e.name === 'AbortError') throw new Error('请求超时，请检查网络连接后重试');
+      throw e;
+    }
   },
 
   getUsers() {
