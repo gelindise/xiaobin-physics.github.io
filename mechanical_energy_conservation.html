@@ -223,6 +223,7 @@
   // Running state
   var running = false;
   var heatLoss = 0;
+  var springZoom = 0;        // smooth zoom level for spring impact
   var traceX = [], traceY = [], traceMax = 40;
 
   // Energy values
@@ -313,6 +314,7 @@
     cartV = 0;
     springComp = 0;
     heatLoss = 0;
+    springZoom = 0;
     maxEnergy = cartMass * gVal * startH;
     for (var i = 0; i < traceMax; i++) { traceX[i] = cartX; traceY[i] = cartY; }
     document.getElementById('runBtn').textContent = '▶ 释放';
@@ -327,8 +329,14 @@
     keVal = 0.5 * cartMass * vMS * vMS;
     gpeVal = cartMass * gVal * h;
     epeVal = (simMode === 'spring') ? 0.5 * kSpring * springComp * springComp / (meterToWorld * meterToWorld) : 0;
-    // ME = maxEnergy when no friction, ME = maxEnergy - heatLoss when friction
-    meVal = maxEnergy - heatLoss;
+    if (frictionMu < 0.0001) {
+      // 守恒模式：锚定机械能恒定
+      meVal = maxEnergy;
+    } else {
+      // 耗散模式：机械能随摩擦递减
+      meVal = keVal + gpeVal + epeVal;
+    }
+    heatLoss = Math.max(0, maxEnergy - meVal);
   }
 
   function updateDisplay() {
@@ -419,7 +427,8 @@
 
       // ---- Physics update ----
       if (running) {
-        var dt = 0.025; // ~40fps equivalent
+        var springActive = (simMode === 'spring' && springComp > 0.5);
+        var dt = springActive ? 0.006 : 0.025;
         var subSteps = 3;
         for (var s = 0; s < subSteps; s++) {
           var ddt = dt / subSteps;
@@ -451,12 +460,6 @@
           var accel = (fGravity + fFriction + fSpring) / cartMass;
           cartV += accel * meterToWorld * ddt;
 
-          // Friction energy loss
-          var vMS2 = cartV / meterToWorld;
-          if (Math.abs(vMS2) > 0.001) {
-            heatLoss += Math.abs(fFriction * vMS2 * ddt);
-          }
-
           cartX += cartV * ddt;
 
           // Spring interaction (spring starts at midX2, wall at rightX-15)
@@ -480,9 +483,16 @@
           if (cartX < leftX) { cartX = leftX; if (cartV < 0) cartV *= -0.5; }
           if (simMode === 'slope' && cartX > rightX) { cartX = rightX; if (cartV > 0) cartV *= -0.5; }
 
-          // Auto-stop when nearly still (cartV in world_units/s)
+          // Auto-stop when nearly still at starting position or spring
           if (Math.abs(cartV) < 0.05 && springComp < 0.01 &&
               (cartX <= leftX + 1 || (simMode === 'spring' && cartX >= (midX2 + 15) - 1))) {
+            cartV = 0;
+            running = false;
+            document.getElementById('runBtn').textContent = '▶ 释放';
+          }
+          // Auto-stop when friction dissipates all energy at bottom
+          if (frictionMu > 0.001 && Math.abs(cartV) < 0.05 && springComp < 0.01 &&
+              cartY >= bottomY - 1) {
             cartV = 0;
             running = false;
             document.getElementById('runBtn').textContent = '▶ 释放';
@@ -505,8 +515,22 @@
         updateDisplay();
       }
 
+      // Smooth spring zoom
+      var zoomTarget = (simMode === 'spring' && springComp > 0.5) ? 1 : 0;
+      springZoom += (zoomTarget - springZoom) * 0.12;
+
       p.push();
-      p.scale(scaleFactor);
+      if (springZoom > 0.005) {
+        var extraScale = 1 + springZoom * 1.8;
+        var zsf = scaleFactor * extraScale;
+        var cx = cartX;
+        var cy = cartY;
+        p.translate(p.width * 0.5, p.height * 0.5);
+        p.scale(zsf);
+        p.translate(-cx, -cy);
+      } else {
+        p.scale(scaleFactor);
+      }
 
       // ---- Grid ----
       p.stroke(220, 220, 240); p.strokeWeight(0.5);
