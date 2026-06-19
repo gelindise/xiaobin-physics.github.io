@@ -162,6 +162,13 @@
           <label><input type="checkbox" id="checkPause"> 暂停</label>
         </div>
         <div class="flexItem">
+          <label><input type="checkbox" id="checkResistance"> 空气阻力</label>
+        </div>
+        <div class="flexItem" id="dragItem" style="display:none;">
+          <label id="labelDrag">阻力系数 0.5</label>
+          <input type="range" id="rangeDrag" min="1" max="20" value="5">
+        </div>
+        <div class="flexItem">
           <a href="javascript:doFullScreen();" style="box-shadow:none;">
             <svg width="32" height="32" viewBox="0 0 40 40" style="vertical-align:middle;">
               <path d="M5,15 L5,5 L15,5 M35,25 L35,35 L25,35 M25,5 L35,5 L35,15 M15,35 L5,35 L5,25" fill="none" stroke="#555" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
@@ -198,6 +205,11 @@
     let logData = [];
     let timming, v1, h1, touchSummit;
     let paused = false;
+    let airResistance = false;
+    let dragCoeff = 0.5;
+    let resV, resH, resT;
+    let curMass = 1, curInitV = 10;
+    let resistanceStopped = false;
 
     function preload() {
       cannonImage = loadImage("images/energy_conversion_cannon.png");
@@ -231,6 +243,20 @@
       buttonData = select("#buttonData");
       buttonData.mouseClicked(doButtonData);
 
+      let checkResistance = select("#checkResistance");
+      checkResistance.changed(function() {
+        airResistance = this.checked();
+        let dragItem = select("#dragItem");
+        dragItem.style("display", airResistance ? "inline-flex" : "none");
+        setup2();
+      });
+
+      let rangeDrag = select("#rangeDrag");
+      rangeDrag.input(function() {
+        dragCoeff = this.value() / 10;
+        select("#labelDrag").html("阻力系数 " + dragCoeff.toFixed(1));
+      });
+
       setup2();
       reSizing();
     }
@@ -254,13 +280,24 @@
       labelB.html("初速度 " + rangeB.value() + " m/s");
       timming = -1;
       touchSummit = false;
+      resistanceStopped = false;
+      curMass = parseInt(rangeA.value());
+      curInitV = parseInt(rangeB.value());
     }
 
     function doButtonRun() {
+      curMass = parseInt(rangeA.value());
+      curInitV = parseInt(rangeB.value());
       timming = 0;
-      v1 = rangeB.value();
+      v1 = curInitV;
       h1 = 0;
-      logData = [[0, rangeB.value(), 0]];
+      resistanceStopped = false;
+      if (airResistance) {
+        resV = curInitV;
+        resH = 0;
+        resT = 0;
+      }
+      logData = [[0, curInitV, 0]];
       myDataSheet.html("", false);
     }
 
@@ -302,12 +339,30 @@
       for (let i = 0; i < 9; i++) text(i + " m", -120, -i * 100);
 
       // 物理模拟
-      let v0 = rangeB.value();
       let v2 = v1;
-      if (timming >= 0 && !paused) {
-        timming += 0.01;
-        v1 = v0 - 9.8 * timming;
-        h1 = v0 * timming - 0.5 * 9.8 * timming * timming;
+      if (timming >= 0 && !paused && !resistanceStopped) {
+        if (airResistance) {
+          // 欧拉数值积分（空气阻力模式）
+          let dt = 0.01;
+          let dragForce = dragCoeff * resV;  // 线性阻力，始终与速度反向
+          let accel = -9.8 - dragForce / curMass;
+          resV += accel * dt;
+          resH += resV * dt;
+          resT += dt;
+          if (resH <= 0 && resV <= 0) {
+            resH = 0;
+            resV = 0;
+            resistanceStopped = true;
+          }
+          timming = resT;
+          v1 = resV;
+          h1 = resH;
+        } else {
+          // 解析解（无阻力）
+          timming += 0.01;
+          v1 = curInitV - 9.8 * timming;
+          h1 = curInitV * timming - 0.5 * 9.8 * timming * timming;
+        }
         if (h1 > -1) {
           logData.push([timming, v1, h1]);
           doDataSheet();
@@ -335,10 +390,10 @@
       }
 
       // 最高点标记
-      if (v1 * v2 < 0) touchSummit = true;
-      if (touchSummit) {
-        let t2 = v0 / 9.8;
-        let h2 = v0 * t2 - 0.5 * 9.8 * t2 * t2;
+      if (!airResistance && v1 * v2 < 0) touchSummit = true;
+      if (touchSummit && !airResistance) {
+        let t2 = curInitV / 9.8;
+        let h2 = curInitV * t2 - 0.5 * 9.8 * t2 * t2;
         stroke(255, 0, 0);
         line(50, -h2 * 100, 100, -h2 * 100);
         fill(255, 0, 0);
@@ -347,6 +402,66 @@
         text("最高点 " + round(h2 * 10000) / 10000 + " m, "
           + round(t2 * 10000) / 10000 + " s",
           120, -min(h2, 8.15) * 100);
+      }
+
+      // === 能量实时显示 ===
+      if (timming >= 0) {
+        let ke = 0.5 * curMass * v1 * v1;
+        let pe = h1 > 0 ? curMass * 9.8 * h1 : 0;
+        let emech = ke + pe;
+        let maxE = 0.5 * curMass * curInitV * curInitV; // 初始最大机械能
+        let barMaxW = 250;
+        let barH = 22;
+        let barX = 480;
+        let barY = -780;
+        let labelX = 470;
+
+        // 背景面板
+        noStroke();
+        fill(255, 255, 255, 217);
+        rect(barX - 30, barY - 5, barMaxW + 90, 120, 8);
+        stroke(200);
+        noFill();
+        rect(barX - 30, barY - 5, barMaxW + 90, 120, 8);
+
+        // 动能 KE (蓝)
+        let keW = maxE > 0 ? (ke / maxE) * barMaxW : 0;
+        fill(59, 130, 246, 200);
+        noStroke();
+        rect(barX, barY, keW, barH, 3);
+        fill(0);
+        textSize(28);
+        textAlign(RIGHT, CENTER);
+        text("KE", labelX, barY + barH / 2);
+        textAlign(LEFT, CENTER);
+        text(round(ke) + " J", barX + keW + 6, barY + barH / 2);
+
+        // 重力势能 PE (绿)
+        let peW = maxE > 0 ? (pe / maxE) * barMaxW : 0;
+        fill(34, 197, 94, 200);
+        rect(barX, barY + barH + 8, peW, barH, 3);
+        fill(0);
+        textAlign(RIGHT, CENTER);
+        text("PE", labelX, barY + barH + 8 + barH / 2);
+        textAlign(LEFT, CENTER);
+        text(round(pe) + " J", barX + peW + 6, barY + barH + 8 + barH / 2);
+
+        // 机械能 E_mech (橙)
+        let emW = maxE > 0 ? (emech / maxE) * barMaxW : 0;
+        fill(249, 115, 22, 200);
+        rect(barX, barY + (barH + 8) * 2, emW, barH, 3);
+        fill(0);
+        textAlign(RIGHT, CENTER);
+        text("E总", labelX, barY + (barH + 8) * 2 + barH / 2);
+        textAlign(LEFT, CENTER);
+        text(round(emech) + " J", barX + emW + 6, barY + (barH + 8) * 2 + barH / 2);
+
+        // 状态标签
+        fill(airResistance ? "#ef4444" : "#22c55e");
+        textSize(26);
+        textAlign(LEFT, TOP);
+        let statusText = airResistance ? (resistanceStopped ? "机械能=0" : "机械能减少中") : "机械能守恒";
+        text(statusText, barX, barY + (barH + 8) * 3 + 6);
       }
 
       pop();
