@@ -175,6 +175,82 @@ input[type=range]::-webkit-slider-thumb {
 }
 .btn-secondary:hover { background:rgba(255,255,255,0.1); color:var(--text-main) }
 
+.spring-ctrl {
+  background: rgba(6,182,212,0.08);
+  border: 1px solid rgba(6,182,212,0.2);
+  border-radius: 12px;
+  padding: 0.75rem 1rem;
+  display: none;
+}
+.spring-ctrl.visible { display: block; }
+.spring-ctrl .spring-label {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.4rem;
+}
+.spring-ctrl .spring-label span:first-child {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.spring-ctrl .spring-label span:last-child {
+  font-size: 0.85rem;
+  color: var(--secondary);
+  font-weight: 700;
+}
+.spring-ctrl .quick-btns {
+  display: flex;
+  gap: 0.35rem;
+  margin-top: 0.4rem;
+}
+.spring-ctrl .quick-btn {
+  flex: 1;
+  padding: 0.25rem 0;
+  border: 1px solid var(--glass-border);
+  border-radius: 6px;
+  background: var(--glass-bg);
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.spring-ctrl .quick-btn:hover {
+  background: rgba(255,255,255,0.1);
+  color: var(--text-main);
+}
+.graph-box {
+  margin-top: 0.5rem;
+}
+.graph-box canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 8px;
+  background: rgba(0,0,0,0.2);
+}
+.graph-legend {
+  display: flex;
+  gap: 0.75rem;
+  margin-top: 0.3rem;
+  justify-content: center;
+}
+.legend-item {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+.legend-item i {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}
+
 .data-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -345,6 +421,34 @@ input[type=range]::-webkit-slider-thumb {
         <span>1000 cm³</span>
       </div>
     </div>
+    <div class="spring-ctrl" id="springCtrl">
+      <div class="spring-label">
+        <span>浸入深度 · 弹簧测力计</span>
+        <span id="springReading">—</span>
+      </div>
+      <input type="range" id="submersionSlider" min="0" max="200" step="1" value="0">
+      <div class="value-label">
+        <span>0% 刚接触液面</span>
+        <span id="submersionDisplay">0%</span>
+        <span>200% 沉入底部</span>
+      </div>
+      <div class="quick-btns">
+        <button class="quick-btn" data-pct="0">0%</button>
+        <button class="quick-btn" data-pct="25">25%</button>
+        <button class="quick-btn" data-pct="50">50%</button>
+        <button class="quick-btn" data-pct="75">75%</button>
+        <button class="quick-btn" data-pct="100">100%</button>
+        <button class="quick-btn" data-pct="150">150%</button>
+        <button class="quick-btn" data-pct="200">最深</button>
+      </div>
+      <div class="graph-box">
+        <canvas id="graphCanvas" width="300" height="140"></canvas>
+        <div class="graph-legend">
+          <span class="legend-item"><i style="background:#06b6d4"></i> F_B 浮力</span>
+          <span class="legend-item"><i style="background:#22c55e"></i> F_拉 拉力</span>
+        </div>
+      </div>
+    </div>
     <div class="btn-row">
       <button class="btn btn-primary" id="dropBtn">⬇ 放入液体</button>
       <button class="btn btn-secondary" id="resetBtn">↻ 重置</button>
@@ -423,8 +527,24 @@ const FLUIDS = {
 
 // ====== Canvas ======
 const canvas = document.getElementById('simCanvas');
+const dpr = window.devicePixelRatio || 1;
+const W = 600, H = 520;
+canvas.width = W * dpr;
+canvas.height = H * dpr;
+canvas.style.width = W + 'px';
+canvas.style.height = H + 'px';
 const ctx = canvas.getContext('2d');
-const W = canvas.width, H = canvas.height;
+ctx.scale(dpr, dpr);
+
+// ====== Graph Canvas ======
+const graphCanvas = document.getElementById('graphCanvas');
+const GW = 300, GH = 140;
+graphCanvas.width = GW * dpr;
+graphCanvas.height = GH * dpr;
+graphCanvas.style.width = GW + 'px';
+graphCanvas.style.height = GH + 'px';
+const gctx = graphCanvas.getContext('2d');
+gctx.scale(dpr, dpr);
 
 // ====== DOM ======
 const matSel = document.getElementById('materialSelect');
@@ -466,6 +586,8 @@ const sim = {
   splash: 0,          // 水花效果 0~1
   animStartY: 0,
   animEndY: 0,
+  springMode: false,   // 弹簧测力计模式
+  submersionDepth: 0,  // 浸入深度 0~1
 };
 
 // ====== 辅助 ======
@@ -482,6 +604,14 @@ function calcPhysics(vol, rhoObj, rhoFluid, active) {
   const V = vol;
   const m = rhoObj * V / 1000;
   const weight = m * G;
+
+  // 弹簧测力计模式：浸没比例由用户控制（超过1表示继续深入，但浮力不变）
+  if (sim.springMode) {
+    const submergedRatio = Math.min(sim.submersionDepth, 1);
+    const displacedVol = V * submergedRatio;
+    const buoyancy = (rhoFluid * displacedVol / 1000) * G;
+    return { weight, buoyancy, displacedVol, submergedRatio, status: '测力计', netForce: buoyancy - weight };
+  }
 
   let submergedRatio, displacedVol, buoyancy, status;
 
@@ -525,10 +655,33 @@ function calcTargetY(rhoObj, rhoFluid, vol) {
   }
 }
 
+// 弹簧模式下物体位置（depth: 0=接触液面, 1=完全浸没, 2=沉入底部）
+function calcSpringObjY(depth) {
+  const size = objSize(sim.volume);
+  const waterY0 = getWaterYAtSubmersion(0);
+  const waterY1 = getWaterYAtSubmersion(1);
+  const yTouch = waterY0 - size / 2;          // 刚接触液面
+  const yFull = waterY1 + size / 2;            // 刚好完全浸没
+  const yBottom = T.bottom - size / 2 - 3;     // 容器底部
+
+  if (depth <= 1) {
+    return yTouch + (yFull - yTouch) * depth;
+  } else {
+    return yFull + (yBottom - yFull) * (depth - 1);
+  }
+}
+
+// 计算指定浸没比例下的水面高度
+function getWaterYAtSubmersion(subRatio) {
+  const vol = sim.volume;
+  const rise = (vol * subRatio) / 40;
+  return Math.max(T.waterMaxY, T.waterBaseY - rise);
+}
+
 // 水面位置
 function getWaterY(rhoObj, rhoFluid, vol, active) {
   if (!active) return T.waterBaseY;
-  const subRatio = rhoObj < rhoFluid ? rhoObj / rhoFluid : 1;
+  const subRatio = sim.springMode ? Math.min(sim.submersionDepth, 1) : (rhoObj < rhoFluid ? rhoObj / rhoFluid : 1);
   const rise = (vol * subRatio) / 40;
   return Math.max(T.waterMaxY, T.waterBaseY - rise);
 }
@@ -539,9 +692,27 @@ function startExperiment() {
   sim.fluidKey = fluidSel.value;
   sim.volume = parseInt(volSlider.value);
   sim.active = true;
+  sim.springMode = false;
 
   const rhoObj = getMat().density;
   const rhoFluid = getFluid().density;
+
+  // 物体密度 > 液体密度 → 弹簧测力计模式
+  if (rhoObj > rhoFluid) {
+    sim.springMode = true;
+    sim.submersionDepth = 0;
+    sim.animating = false;
+    sim.splash = 0;
+    sim.objY = calcSpringObjY(0);
+    dropBtn.disabled = true;
+    dropBtn.textContent = '🔄 换模式';
+    document.getElementById('springCtrl').classList.add('visible');
+    document.getElementById('submersionSlider').value = 0;
+    document.getElementById('submersionSlider').max = 200;
+    document.getElementById('submersionDisplay').textContent = '0%';
+    return;
+  }
+
   const size = objSize(sim.volume);
 
   // 动画起始位置：容器上方
@@ -553,22 +724,34 @@ function startExperiment() {
   sim.splash = 0;
 
   dropBtn.disabled = true;
+  dropBtn.textContent = '⬇ 放入液体';
 }
 
 // ====== 重置 ======
 function resetExperiment() {
   sim.active = false;
   sim.animating = false;
+  sim.springMode = false;
+  sim.submersionDepth = 0;
   sim.objY = T.top - 30;
   sim.submergedRatio = 0;
   sim.displacedVol = 0;
   sim.animProgress = 0;
   sim.splash = 0;
   dropBtn.disabled = false;
+  dropBtn.textContent = '⬇ 放入液体';
+  document.getElementById('springCtrl').classList.remove('visible');
 }
 
 // ====== 主更新循环 ======
 function updateSim() {
+  if (sim.springMode) {
+    // 弹簧测力计模式：物体位置由浸入深度决定
+    sim.objY = calcSpringObjY(sim.submersionDepth);
+    sim.submergedRatio = Math.min(sim.submersionDepth, 1);
+    sim.displacedVol = sim.volume * sim.submergedRatio;
+    return;
+  }
   if (sim.animating) {
     // 缓入缓出动画
     sim.animProgress += 0.018;
@@ -715,9 +898,9 @@ function drawScene() {
   }
 
   // = 刻度 =
-  ctx.strokeStyle = 'rgba(148,163,184,0.1)';
-  ctx.fillStyle = 'rgba(148,163,184,0.2)';
-  ctx.font = '9px sans-serif';
+  ctx.strokeStyle = 'rgba(148,163,184,0.12)';
+  ctx.fillStyle = 'rgba(148,163,184,0.3)';
+  ctx.font = '10px sans-serif';
   ctx.textAlign = 'right';
   ctx.textBaseline = 'middle';
   for (let h = 0; h <= 300; h += 50) {
@@ -730,14 +913,45 @@ function drawScene() {
     ctx.fillText(h + '', L + 6, y);
   }
   ctx.textAlign = 'left';
-  ctx.fillStyle = 'rgba(148,163,184,0.15)';
-  ctx.font = '8px sans-serif';
+  ctx.fillStyle = 'rgba(148,163,184,0.25)';
+  ctx.font = '9px sans-serif';
   ctx.textBaseline = 'bottom';
   ctx.fillText('cm³', L + 4, B - 4);
 
   // = 物体 =
   const ox = L + (R - L - size) / 2;
   const oy = sim.objY - size / 2;
+
+  // 弹簧测力计模式：绘制弹簧测力计和拉绳
+  if (sim.springMode) {
+    const scaleCX = L + (R - L) / 2;
+    const calc = calcPhysics(vol, rhoObj, rhoFluid, true);
+    const apparentWeight = Math.max(0, calc.weight - calc.buoyancy);
+    const maxBuoyancy = rhoFluid * vol / 1000 * G;
+    const minApparentWeight = Math.max(0, calc.weight - maxBuoyancy);
+
+    // 弹簧测力计位置：绳长恒定55px，尺随物动
+    const FIXED_STRING_LEN = 55;
+    const DEFAULT_HOOK_BOTTOM = 66;
+    const objectTopY = sim.objY - size/2;
+    let targetHookY = objectTopY - FIXED_STRING_LEN;
+    let scaleOffsetY = targetHookY - DEFAULT_HOOK_BOTTOM;
+    // 仅限制弹簧外壳不超出容器底部，不下移超出画布
+    const maxBodyBottom = T.bottom - 5;
+    if (52 + scaleOffsetY > maxBodyBottom) scaleOffsetY = maxBodyBottom - 52;
+    if (scaleOffsetY < -14) scaleOffsetY = -14;
+    const hookBottomY = drawSpringScale(scaleCX, apparentWeight, calc.weight, minApparentWeight, scaleOffsetY);
+
+    // 拉绳：定长55px，不会自动伸长
+    const stringTop = hookBottomY;
+    const stringBot = sim.objY - size/2;
+    ctx.strokeStyle = '#94a3b8';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(scaleCX, stringTop);
+    ctx.lineTo(ox + size/2, stringBot);
+    ctx.stroke();
+  }
 
   // 物体阴影
   ctx.shadowColor = 'rgba(0,0,0,0.25)';
@@ -758,8 +972,8 @@ function drawScene() {
 
   // 材质标签
   if (sim.active) {
-    ctx.fillStyle = 'rgba(255,255,255,0.9)';
-    ctx.font = 'bold 11px sans-serif';
+    ctx.fillStyle = 'rgba(255,255,255,0.95)';
+    ctx.font = 'bold 12px sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(mat.name, ox + size/2, oy + size/2);
@@ -793,61 +1007,117 @@ function drawScene() {
 
     // 标注
     ctx.setLineDash([]);
-    ctx.fillStyle = 'rgba(148,163,184,0.35)';
-    ctx.font = '10px sans-serif';
+    ctx.fillStyle = 'rgba(148,163,184,0.5)';
+    ctx.font = 'bold 11px sans-serif';
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
     ctx.fillText('V排=' + sim.displacedVol.toFixed(0) + 'cm³', hlX + hlW + 8, subY + subH/2);
     ctx.restore();
   }
 
-  // = 力矢量 =
+  // = 力矢量 =（所有力的作用点在物块重心）
   if (active && phys.status !== '等待' && !sim.animating) {
-    const cx = L + (R - L) / 2;
-    const cy = sim.objY + size/2 + 12;
+    const fcX = L + (R - L) / 2;         // 重心 X
+    const fcY = sim.objY;                // 重心 Y
     const maxF = Math.max(phys.weight, phys.buoyancy, 0.1);
     const sc = Math.min(65 / maxF, 95 / maxF);
-    const wLen = Math.max(12, phys.weight * sc);
-    const bLen = Math.max(12, phys.buoyancy * sc);
 
-    // 重力 (红)
-    drawArrow(ctx, cx, cy, cx, cy + wLen, '#ef4444', 2.5);
-    ctx.fillStyle = '#ef4444';
-    ctx.font = 'bold 10px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'top';
-    ctx.fillText('G=' + phys.weight.toFixed(2) + 'N', cx, cy + wLen + 3);
+    if (sim.springMode) {
+      const apparentWeight = Math.max(0, phys.weight - phys.buoyancy);
+      const wLen = Math.max(12, phys.weight * sc);
+      const bLen = Math.max(12, phys.buoyancy * sc);
+      const tLen = Math.max(12, apparentWeight * sc);
 
-    // 浮力 (蓝)
-    const by = sim.objY - size/2;
-    drawArrow(ctx, cx, by, cx, by - bLen, '#06b6d4', 2.5);
-    ctx.fillStyle = '#06b6d4';
-    ctx.textBaseline = 'bottom';
-    ctx.fillText('F_B=' + phys.buoyancy.toFixed(2) + 'N', cx, by - bLen - 3);
-
-    if (phys.status === '沉底') {
-      ctx.fillStyle = 'rgba(255,255,255,0.25)';
-      ctx.font = '9px sans-serif';
+      // 重力 G (红，重心向下)
+      drawArrow(ctx, fcX, fcY, fcX, fcY + wLen, '#ef4444', 2.5);
+      ctx.fillStyle = '#ef4444';
+      ctx.font = 'bold 12px sans-serif';
+      ctx.textAlign = 'center';
       ctx.textBaseline = 'top';
-      ctx.fillText('G > F_B，物体沉底', cx, cy + wLen + 18);
-    } else if (phys.status === '漂浮') {
-      ctx.fillStyle = 'rgba(34,197,94,0.6)';
-      ctx.font = '9px sans-serif';
+      ctx.fillText('G=' + phys.weight.toFixed(2) + 'N', fcX, fcY + wLen + 4);
+
+      // 浮力 F_B (青，重心偏左向上)
+      const bStartX = fcX - 10;
+      drawArrow(ctx, bStartX, fcY, bStartX, fcY - bLen, '#06b6d4', 2.5);
+      ctx.fillStyle = '#06b6d4';
+      ctx.textBaseline = 'bottom';
+      ctx.fillText('F_B=' + phys.buoyancy.toFixed(2) + 'N', bStartX, fcY - bLen - 4);
+
+      // 拉力 F_拉 (绿，重心偏右向上)
+      const tStartX = fcX + 10;
+      drawArrow(ctx, tStartX, fcY, tStartX, fcY - tLen, '#22c55e', 2.5);
+      ctx.fillStyle = '#22c55e';
+      ctx.textBaseline = 'bottom';
+      ctx.fillText('F_拉=' + apparentWeight.toFixed(2) + 'N', tStartX, fcY - tLen - 4);
+
+      // 状态说明
+      ctx.fillStyle = 'rgba(34,197,94,0.7)';
+      ctx.font = '11px sans-serif';
+      ctx.textAlign = 'center';
       ctx.textBaseline = 'top';
-      ctx.fillText('G = F_B，二力平衡', cx, cy + 3);
+      if (sim.submersionDepth > 1) {
+        ctx.fillText('完全浸没 · 浮力不随深度改变', fcX, fcY + wLen + 22);
+      } else {
+        ctx.fillText('G = F_B + F_拉，三力平衡', fcX, fcY + wLen + 22);
+      }
+    } else {
+      const wLen = Math.max(12, phys.weight * sc);
+      const bLen = Math.max(12, phys.buoyancy * sc);
+
+      // 重力 G (红，重心向下)
+      drawArrow(ctx, fcX, fcY, fcX, fcY + wLen, '#ef4444', 2.5);
+      ctx.fillStyle = '#ef4444';
+      ctx.font = 'bold 12px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'top';
+      ctx.fillText('G=' + phys.weight.toFixed(2) + 'N', fcX, fcY + wLen + 4);
+
+      // 浮力 F_B (青，重心向上)
+      drawArrow(ctx, fcX, fcY, fcX, fcY - bLen, '#06b6d4', 2.5);
+      ctx.fillStyle = '#06b6d4';
+      ctx.textBaseline = 'bottom';
+      ctx.fillText('F_B=' + phys.buoyancy.toFixed(2) + 'N', fcX, fcY - bLen - 4);
+
+      // 重心标记点
+      ctx.fillStyle = '#fff';
+      ctx.beginPath();
+      ctx.arc(fcX, fcY, 3, 0, Math.PI * 2);
+      ctx.fill();
+
+      if (phys.status === '沉底') {
+        ctx.fillStyle = 'rgba(255,255,255,0.35)';
+        ctx.font = '11px sans-serif';
+        ctx.textBaseline = 'top';
+        ctx.fillText('G > F_B，物体沉底', fcX, fcY + wLen + 22);
+      } else if (phys.status === '漂浮') {
+        ctx.fillStyle = 'rgba(34,197,94,0.7)';
+        ctx.font = '11px sans-serif';
+        ctx.textBaseline = 'top';
+        ctx.fillText('G = F_B，二力平衡', fcX, fcY + 4);
+      }
     }
   }
 
   // = 顶部状态文字 =
   if (!active) {
-    ctx.fillStyle = 'rgba(148,163,184,0.25)';
-    ctx.font = '12px sans-serif';
+    ctx.fillStyle = 'rgba(148,163,184,0.35)';
+    ctx.font = 'bold 13px sans-serif';
     ctx.textAlign = 'left';
     ctx.textBaseline = 'top';
     ctx.fillText('选择参数后点击「放入液体」', L + 12, Tp + 12);
+  } else if (sim.springMode) {
+    ctx.fillStyle = 'rgba(34,197,94,0.45)';
+    ctx.font = 'bold 12px sans-serif';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    if (sim.submersionDepth > 1) {
+      ctx.fillText('已完全浸没 · 浮力不再随深度变化', L + 12, Tp + 12);
+    } else {
+      ctx.fillText('弹簧测力计模式 · 拖动滑块改变浸入深度', L + 12, Tp + 12);
+    }
   } else if (sim.animating) {
-    ctx.fillStyle = 'rgba(148,163,184,0.35)';
-    ctx.font = '12px sans-serif';
+    ctx.fillStyle = 'rgba(148,163,184,0.45)';
+    ctx.font = 'bold 13px sans-serif';
     ctx.textAlign = 'left';
     ctx.textBaseline = 'top';
     ctx.fillText('物体下落中...', L + 12, Tp + 12);
@@ -910,6 +1180,314 @@ function drawArrow(ctx, x1, y1, x2, y2, color, lw) {
   ctx.restore();
 }
 
+function drawSpringScale(cx, apparentWeight, maxWeight, minWeight, yOff) {
+  const baseY = yOff || 0;
+  const topY = 8 + baseY;
+  const bodyTop = 18 + baseY;
+  const bodyBot = 52 + baseY;
+  const hookY = 58 + baseY;
+  const bodyW = 22;
+
+  // === 手（抓握顶部拉环） ===
+  const handCX = cx;
+  const handCY = topY - 2;
+  const ringCY = topY + 4;
+
+  // 手掌/手背（椭圆形，在拉环上方）
+  ctx.fillStyle = '#e8c8a0';
+  ctx.strokeStyle = '#b8956e';
+  ctx.lineWidth = 1.2;
+  ctx.beginPath();
+  ctx.ellipse(handCX, handCY - 2, 10, 8, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+
+  // 四根手指从手掌下方向下弯曲，包住拉环
+  ctx.fillStyle = '#e8c8a0';
+  ctx.strokeStyle = '#b8956e';
+  ctx.lineWidth = 1.2;
+  const fingerPositions = [-6, -2.5, 1, 4.5];
+  for (let i = 0; i < 4; i++) {
+    const fx = handCX + fingerPositions[i];
+    const fTop = handCY + 2;
+    // 手指向下弯曲绕过拉环
+    ctx.beginPath();
+    ctx.moveTo(fx - 2.2, fTop);
+    ctx.quadraticCurveTo(fx - 2.2, ringCY + 3, fx - 0.5, ringCY + 5);
+    ctx.quadraticCurveTo(fx + 1.5, ringCY + 3, fx + 2.2, fTop);
+    ctx.quadraticCurveTo(fx, fTop - 3, fx - 2.2, fTop);
+    ctx.fill();
+    ctx.stroke();
+  }
+
+  // 拇指（从侧面握住）
+  ctx.fillStyle = '#e8c8a0';
+  ctx.beginPath();
+  ctx.moveTo(handCX - 10, handCY - 4);
+  ctx.quadraticCurveTo(handCX - 14, handCY, handCX - 13, ringCY);
+  ctx.quadraticCurveTo(handCX - 10, ringCY + 4, handCX - 7, ringCY);
+  ctx.quadraticCurveTo(handCX - 5, handCY, handCX - 10, handCY - 4);
+  ctx.fill();
+  ctx.stroke();
+
+  // 手腕/前臂（向上延伸）
+  ctx.fillStyle = '#e8c8a0';
+  ctx.strokeStyle = '#b8956e';
+  ctx.lineWidth = 1.2;
+  ctx.beginPath();
+  ctx.moveTo(handCX - 7, handCY - 8);
+  ctx.lineTo(handCX + 7, handCY - 8);
+  ctx.lineTo(handCX + 5, handCY - 22);
+  ctx.lineTo(handCX - 5, handCY - 22);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+
+  // === 下拉箭头（示意手在往下按） ===
+  if (baseY > 2) {
+    ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([2, 2]);
+    ctx.beginPath();
+    ctx.moveTo(handCX, handCY - 24);
+    ctx.lineTo(handCX, handCY - 34);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = 'rgba(255,255,255,0.35)';
+    ctx.beginPath();
+    ctx.moveTo(handCX, handCY - 30);
+    ctx.lineTo(handCX - 3, handCY - 36);
+    ctx.lineTo(handCX + 3, handCY - 36);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  // === 顶部拉环 ===
+  ctx.strokeStyle = '#64748b';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(cx, topY + 4, 5, Math.PI, 0);
+  ctx.stroke();
+
+  // === 刻度外壳 ===
+  ctx.fillStyle = 'rgba(30,41,59,0.85)';
+  ctx.strokeStyle = '#64748b';
+  ctx.lineWidth = 1.5;
+  roundRect(ctx, cx - bodyW, bodyTop, bodyW * 2, bodyBot - bodyTop, 4);
+  ctx.fill();
+  ctx.stroke();
+
+  // === 刻度线：顶部=minWeight（全浸），底部=maxWeight（空气中） ===
+  const scaleH = bodyBot - bodyTop - 8;
+  const weightRange = maxWeight - minWeight;
+  ctx.fillStyle = '#cbd5e1';
+  ctx.font = '9px sans-serif';
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'middle';
+  for (let i = 0; i <= 5; i++) {
+    const sy = bodyBot - 4 - (i / 5) * scaleH;
+    ctx.beginPath();
+    ctx.moveTo(cx - bodyW + 4, sy);
+    ctx.lineTo(cx - bodyW + 14, sy);
+    ctx.strokeStyle = '#64748b';
+    ctx.lineWidth = 0.5;
+    ctx.stroke();
+    const val = minWeight + (i / 5) * weightRange;
+    ctx.fillText(val.toFixed(1), cx - bodyW + 2, sy);
+  }
+
+  // === 弹簧 ===
+  const ratio = weightRange > 0.001 ? (maxWeight - apparentWeight) / weightRange : 0;
+  const springTop = bodyTop + 8;
+  const springBot = bodyBot - 8;
+  const springLen = springBot - springTop;
+  const coils = 7;
+  const coilW = bodyW - 6;
+  ctx.strokeStyle = '#f59e0b';
+  ctx.lineWidth = 1.2;
+  ctx.beginPath();
+  ctx.moveTo(cx, springTop);
+  for (let i = 0; i < coils; i++) {
+    const t = i / (coils - 1);
+    const y = springTop + t * springLen * (0.15 + ratio * 0.85);
+    const xOff = (i % 2 === 0 ? -1 : 1) * coilW * (0.2 + ratio * 0.8);
+    ctx.lineTo(cx + xOff, y);
+  }
+  ctx.lineTo(cx, springBot);
+  ctx.stroke();
+
+  // === 指针 ===
+  const lastCoilY = springTop + springLen * (0.15 + ratio * 0.85);
+  const ptrY = lastCoilY;
+  ctx.fillStyle = '#ef4444';
+  ctx.beginPath();
+  ctx.moveTo(cx, ptrY);
+  ctx.lineTo(cx + bodyW - 2, ptrY - 4);
+  ctx.lineTo(cx + bodyW - 2, ptrY + 4);
+  ctx.closePath();
+  ctx.fill();
+
+  // === 底部挂钩 ===
+  ctx.strokeStyle = '#64748b';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(cx, hookY, 3, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(cx - 2, hookY + 3);
+  ctx.lineTo(cx, hookY + 8);
+  ctx.lineTo(cx + 2, hookY + 3);
+  ctx.stroke();
+
+  // === 读数标签 ===
+  ctx.fillStyle = '#f8fafc';
+  ctx.font = 'bold 10px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+  ctx.fillText(apparentWeight.toFixed(2) + ' N', cx, hookY + 12);
+
+  return hookY + 8; // 返回挂钩底部Y坐标
+}
+
+function drawGraph() {
+  const PAD_L = 36, PAD_R = 12, PAD_T = 12, PAD_B = 22;
+  const pw = GW - PAD_L - PAD_R;
+  const ph = GH - PAD_T - PAD_B;
+
+  gctx.clearRect(0, 0, GW, GH);
+
+  // 背景
+  gctx.fillStyle = 'rgba(15,23,42,0.6)';
+  gctx.fillRect(PAD_L, PAD_T, pw, ph);
+
+  if (!sim.springMode || !sim.active) return;
+
+  const phys = calcPhysics(sim.volume, getMat().density, getFluid().density, true);
+  const rhoFluid = getFluid().density;
+  const V = sim.volume;
+  const G_weight = phys.weight;
+  const maxBuoyancy = rhoFluid * V / 1000 * G;
+  const minTension = Math.max(0, G_weight - maxBuoyancy);
+  const maxF = Math.max(G_weight, maxBuoyancy) * 1.05;
+
+  // 坐标映射
+  function toX(depthPct) { return PAD_L + (depthPct / 200) * pw; }
+  function toY(f) { return PAD_T + ph - (f / maxF) * ph; }
+
+  // 网格线
+  gctx.strokeStyle = 'rgba(255,255,255,0.06)';
+  gctx.lineWidth = 0.5;
+  for (let i = 0; i <= 4; i++) {
+    const y = PAD_T + (i / 4) * ph;
+    gctx.beginPath();
+    gctx.moveTo(PAD_L, y);
+    gctx.lineTo(PAD_L + pw, y);
+    gctx.stroke();
+    const val = (maxF * (1 - i / 4));
+    gctx.fillStyle = 'rgba(255,255,255,0.3)';
+    gctx.font = '9px sans-serif';
+    gctx.textAlign = 'right';
+    gctx.textBaseline = 'middle';
+    gctx.fillText(val.toFixed(1), PAD_L - 4, y);
+  }
+  for (let d = 0; d <= 200; d += 50) {
+    const x = toX(d);
+    gctx.beginPath();
+    gctx.moveTo(x, PAD_T);
+    gctx.lineTo(x, PAD_T + ph);
+    gctx.stroke();
+    gctx.fillStyle = 'rgba(255,255,255,0.3)';
+    gctx.font = '9px sans-serif';
+    gctx.textAlign = 'center';
+    gctx.textBaseline = 'top';
+    gctx.fillText(d + '%', x, PAD_T + ph + 3);
+  }
+
+  // 轴标签
+  gctx.fillStyle = 'rgba(255,255,255,0.25)';
+  gctx.font = '8px sans-serif';
+  gctx.textAlign = 'center';
+  gctx.textBaseline = 'bottom';
+  gctx.fillText('浸入深度', PAD_L + pw / 2, GH - 1);
+  gctx.save();
+  gctx.translate(6, PAD_T + ph / 2);
+  gctx.rotate(-Math.PI / 2);
+  gctx.textAlign = 'center';
+  gctx.fillText('力 (N)', 0, 0);
+  gctx.restore();
+
+  // 采样点（每1%一个点，画线）
+  const steps = 200;
+  const sampleEvery = 2;
+
+  // F_B 浮力线 (cyan)
+  gctx.strokeStyle = '#06b6d4';
+  gctx.lineWidth = 1.5;
+  gctx.beginPath();
+  let first = true;
+  for (let i = 0; i <= steps; i += sampleEvery) {
+    const depth = i / 100;
+    const subRatio = Math.min(depth, 1);
+    const fb = (rhoFluid * V * subRatio / 1000) * G;
+    const x = toX(i);
+    const y = toY(fb);
+    if (first) { gctx.moveTo(x, y); first = false; }
+    else gctx.lineTo(x, y);
+  }
+  // 100% 以后 F_B 保持水平
+  gctx.lineTo(toX(200), toY(maxBuoyancy));
+  gctx.stroke();
+
+  // F_拉 拉力线 (green)
+  gctx.strokeStyle = '#22c55e';
+  gctx.lineWidth = 1.5;
+  gctx.beginPath();
+  first = true;
+  for (let i = 0; i <= steps; i += sampleEvery) {
+    const depth = i / 100;
+    const subRatio = Math.min(depth, 1);
+    const fb = (rhoFluid * V * subRatio / 1000) * G;
+    const ft = Math.max(0, G_weight - fb);
+    const x = toX(i);
+    const y = toY(ft);
+    if (first) { gctx.moveTo(x, y); first = false; }
+    else gctx.lineTo(x, y);
+  }
+  gctx.lineTo(toX(200), toY(minTension));
+  gctx.stroke();
+
+  // 当前深度标记（竖虚线）
+  const curX = toX(Math.round(sim.submersionDepth * 100));
+  gctx.strokeStyle = 'rgba(255,255,255,0.5)';
+  gctx.lineWidth = 1;
+  gctx.setLineDash([3, 3]);
+  gctx.beginPath();
+  gctx.moveTo(curX, PAD_T);
+  gctx.lineTo(curX, PAD_T + ph);
+  gctx.stroke();
+  gctx.setLineDash([]);
+
+  // 当前值圆点
+  const curSub = Math.min(sim.submersionDepth, 1);
+  const curFb = (rhoFluid * V * curSub / 1000) * G;
+  const curFt = Math.max(0, G_weight - curFb);
+
+  gctx.fillStyle = '#06b6d4';
+  gctx.beginPath();
+  gctx.arc(curX, toY(curFb), 3, 0, Math.PI * 2);
+  gctx.fill();
+
+  gctx.fillStyle = '#22c55e';
+  gctx.beginPath();
+  gctx.arc(curX, toY(curFt), 3, 0, Math.PI * 2);
+  gctx.fill();
+
+  // 框线
+  gctx.strokeStyle = 'rgba(255,255,255,0.1)';
+  gctx.lineWidth = 1;
+  gctx.strokeRect(PAD_L, PAD_T, pw, ph);
+}
+
 function drawDensityBar(x, y, w, rhoObj, rhoFluid) {
   const maxD = 14;
   const ow = clamp(w * rhoObj / maxD, 0, w);
@@ -927,8 +1505,8 @@ function drawDensityBar(x, y, w, rhoObj, rhoFluid) {
   roundRect(ctx, x, y, Math.min(ow, w), 18, 4);
   ctx.fill();
 
-  ctx.fillStyle = 'rgba(255,255,255,0.4)';
-  ctx.font = '7px sans-serif';
+  ctx.fillStyle = 'rgba(255,255,255,0.55)';
+  ctx.font = '9px sans-serif';
   ctx.textAlign = 'left';
   ctx.textBaseline = 'bottom';
   ctx.fillText('ρ物=' + rhoObj.toFixed(1), x + 3, y + 16);
@@ -936,7 +1514,7 @@ function drawDensityBar(x, y, w, rhoObj, rhoFluid) {
   ctx.fillText('ρ液=' + rhoFluid.toFixed(1), x + w - 3, y + 16);
   ctx.textAlign = 'left';
   ctx.textBaseline = 'top';
-  ctx.fillStyle = 'rgba(148,163,184,0.15)';
+  ctx.fillStyle = 'rgba(148,163,184,0.25)';
   ctx.fillText('0', x, y + 20);
   ctx.textAlign = 'right';
   ctx.fillText(maxD + '', x + w, y + 20);
@@ -973,6 +1551,8 @@ function updatePanel() {
 
   if (!sim.active) {
     dataStatus.innerHTML = '<span class="status-badge" style="background:rgba(148,163,184,0.1);color:var(--text-muted);border-color:rgba(148,163,184,0.2)">—</span>';
+  } else if (sim.springMode) {
+    dataStatus.innerHTML = '<span class="status-badge" style="background:rgba(34,197,94,0.12);color:#22c55e;border:1px solid rgba(34,197,94,0.25)">测力计模式</span>';
   } else if (phys.status === '漂浮') {
     dataStatus.innerHTML = '<span class="status-badge float">漂浮</span>';
   } else if (phys.status === '悬浮') {
@@ -984,33 +1564,110 @@ function updatePanel() {
   displacedVisual.textContent = sim.active ? phys.displacedVol.toFixed(0) : '0';
   densityRatio.textContent = sim.active ? (getMat().density / getFluid().density).toFixed(2) : '—';
 
+  // 更新弹簧测力计读数
+  if (sim.springMode) {
+    const apparentWeight = Math.max(0, phys.weight - phys.buoyancy);
+    if (sim.submersionDepth > 1) {
+      document.getElementById('springReading').textContent = '视重: ' + apparentWeight.toFixed(2) + ' N (浮力不变)';
+    } else {
+      document.getElementById('springReading').textContent = '视重: ' + apparentWeight.toFixed(2) + ' N';
+    }
+    document.getElementById('submersionDisplay').textContent = Math.round(sim.submersionDepth * 100) + '%';
+  }
+
   if (sim.active && phys.displacedVol > 0) {
     const pd = getFluid().density;
     const dv = phys.displacedVol.toFixed(0);
     calcDisplay.innerHTML =
       `F<sub>B</sub> = ρ·g·V = ${pd} × 9.8 × ${dv} ÷ 1000 = <span>${phys.buoyancy.toFixed(2)} N</span>`;
+  } else if (sim.springMode) {
+    if (sim.submersionDepth >= 1) {
+      calcDisplay.innerHTML = '物体已完全浸没，<span>浮力不变</span> — F<sub>B</sub> 与浸没深度无关';
+    } else {
+      calcDisplay.innerHTML = '调节浸入深度观察浮力变化 — <span>视重 = G - F<sub>B</sub></span>';
+    }
   } else {
     calcDisplay.textContent = '调节参数后点击「放入液体」观察浮力变化';
   }
 }
 
 // ====== 事件绑定 ======
-dropBtn.addEventListener('click', startExperiment);
+dropBtn.addEventListener('click', () => {
+  if (sim.springMode) {
+    // 弹簧模式下切换到自由沉底模式
+    const startY = sim.objY; // 捕获当前位置后再退出弹簧模式
+    sim.springMode = false;
+    sim.submersionDepth = 0;
+    document.getElementById('springCtrl').classList.remove('visible');
+    const rhoObj = getMat().density;
+    const rhoFluid = getFluid().density;
+    sim.animStartY = startY;
+    sim.animEndY = calcTargetY(rhoObj, rhoFluid, sim.volume);
+    sim.objY = sim.animStartY;
+    sim.animating = true;
+    sim.animProgress = 0;
+    sim.splash = 0;
+    dropBtn.textContent = '⬇ 放入液体';
+  } else {
+    startExperiment();
+  }
+});
 
 resetBtn.addEventListener('click', resetExperiment);
 
 matSel.addEventListener('change', () => {
   sim.matKey = matSel.value;
+  if (sim.springMode && getMat().density <= getFluid().density) {
+    // 物体密度 ≤ 液体密度，退出弹簧模式
+    sim.springMode = false;
+    sim.active = false;
+    sim.objY = T.top - 30;
+    dropBtn.disabled = false;
+    dropBtn.textContent = '⬇ 放入液体';
+    document.getElementById('springCtrl').classList.remove('visible');
+  }
 });
 
 fluidSel.addEventListener('change', () => {
   sim.fluidKey = fluidSel.value;
+  if (sim.springMode && getMat().density <= getFluid().density) {
+    sim.springMode = false;
+    sim.active = false;
+    sim.objY = T.top - 30;
+    dropBtn.disabled = false;
+    dropBtn.textContent = '⬇ 放入液体';
+    document.getElementById('springCtrl').classList.remove('visible');
+  }
 });
 
 volSlider.addEventListener('input', () => {
   const v = parseInt(volSlider.value);
   volDisplay.textContent = v + ' cm³';
   sim.volume = v;
+  // 弹簧模式下实时更新位置
+  if (sim.springMode) {
+    sim.objY = calcSpringObjY(sim.submersionDepth);
+  }
+});
+
+// ====== 弹簧测力计控制 ======
+const submersionSlider = document.getElementById('submersionSlider');
+
+function setSubmersion(pct) {
+  sim.submersionDepth = clamp(pct / 100, 0, 2);
+  submersionSlider.value = Math.round(pct);
+  const displayPct = Math.round(pct);
+  document.getElementById('submersionDisplay').textContent = displayPct + '%';
+}
+
+submersionSlider.addEventListener('input', () => {
+  setSubmersion(parseInt(submersionSlider.value));
+});
+
+document.querySelectorAll('.quick-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    setSubmersion(parseInt(btn.dataset.pct));
+  });
 });
 
 // ====== 主循环 ======
@@ -1018,6 +1675,7 @@ function loop() {
   updateSim();
   drawScene();
   updatePanel();
+  if (sim.springMode) drawGraph();
   requestAnimationFrame(loop);
 }
 
