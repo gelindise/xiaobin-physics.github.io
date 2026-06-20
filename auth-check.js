@@ -13,7 +13,7 @@
     "javalab_浮力实验.html","javalab_阿基米德王冠.html",
     "飞象_动滑轮定滑轮原理教学动画.html","javalab_电流表.html",
     "电阻的微观解释.html","javalab_磁场与磁感线.html",
-    "javalab_太阳风与极光.html","javalab_洛伦兹力.html"
+    "javalab_太阳风与极光.html","javalab_洛伦兹力.html","汽油机四冲程.html"
   ];
 
   var page = window.location.pathname.substring(window.location.pathname.lastIndexOf('/') + 1) || 'experiments.html';
