@@ -451,7 +451,8 @@
             objectType: 'Fe',
             liquidType: 'water',
             hasInteracted: false,
-            maxDepthReached: 0
+            maxDepthReached: 0,
+            visualMaxDisplacement: 160 // 动态校准值
         };
 
         // --- 3. DOM 元素 ---
@@ -472,7 +473,37 @@
             valB: document.getElementById('val-b')
         };
 
-        // --- 4. 核心逻辑：切换步骤 ---
+        // --- 4. 动态校准：系统位置与烧杯对齐 ---
+        function calibratePositions() {
+            var sysGroup = els.systemGroup;
+            var beakerEl = document.querySelector('.beaker-container');
+            if (!sysGroup || !beakerEl) return;
+
+            var beakerRect = beakerEl.getBoundingClientRect();
+            var sysRect = sysGroup.getBoundingClientRect();
+            var section = beakerEl.closest('section');
+            var sectionTop = section.getBoundingClientRect().top;
+
+            // 液面在烧杯 50% 高度处
+            var liquidSurfaceY = beakerRect.bottom - beakerRect.height * 0.5;
+            var currentBlockBottom = sysRect.bottom;
+
+            // 目标：物块底部在液面上方 40px（at slider=0）
+            var targetBlockBottom0 = liquidSurfaceY - 40;
+            // 目标：物块底部在烧杯底部上方 10px（at slider=100）
+            var targetBlockBottom100 = beakerRect.bottom - CONSTANTS.blockHeightPx;
+
+            // 调整系统组 top，使物块初始位置正确
+            var currentTop = sysRect.top - sectionTop;
+            var adjust = targetBlockBottom0 - currentBlockBottom;
+            sysGroup.style.top = (currentTop + adjust) + 'px';
+
+            // 视觉位移 = 物块从初始到终点的像素距离
+            var visualDisp = targetBlockBottom100 - targetBlockBottom0;
+            state.visualMaxDisplacement = Math.round(Math.max(visualDisp, 80));
+        }
+
+        // --- 5. 核心逻辑：切换步骤 ---
         function switchStep(stepId) {
             state.step = stepId;
             state.hasInteracted = false;
@@ -649,12 +680,9 @@
             const G = mass * CONSTANTS.g;
 
             // 2. 计算几何位置
-            // 滑块 0-100 映射到位移 0-160px (确保能触底)
-            const maxDisplacement = 160;
-            const currentDisplacement = (state.sliderValue / 100) * maxDisplacement;
-            
-            // 物体底部当前高度 (相对于容器底部)
-            const currentBlockBottomPx = CONSTANTS.initialBlockBottomPx - currentDisplacement;
+            // 物理模型位移：始终使用 160px 范围计算浸入（独立于视觉校准）
+            const physicsDisplacement = (state.sliderValue / 100) * 160;
+            const currentBlockBottomPx = CONSTANTS.initialBlockBottomPx - physicsDisplacement;
             
             // 3. 计算浸入深度
             // 初始液面高度
@@ -691,8 +719,9 @@
 
             // --- 视觉更新 ---
             
-            // A. 系统位置
-            els.systemGroup.style.transform = 'translateX(-50%) translateY(' + currentDisplacement + 'px)';
+            // A. 系统位置（使用视觉校准位移）
+            var visualDisplacement = (state.sliderValue / 100) * (state.visualMaxDisplacement || 160);
+            els.systemGroup.style.transform = 'translateX(-50%) translateY(' + visualDisplacement + 'px)';
 
             // B. 弹簧伸缩
             const springStretch = F_pull * 0.1; // 缩放系数
@@ -766,8 +795,14 @@
             }
         }
 
-        // 初始化
-        switchStep(1);
+        // 初始化（等待布局稳定后校准）
+        window.addEventListener('resize', function() { calibratePositions(); });
+        requestAnimationFrame(function() {
+            requestAnimationFrame(function() {
+                calibratePositions();
+                switchStep(1);
+            });
+        });
 
     &lt;/script&gt;
 &lt;/body&gt;
