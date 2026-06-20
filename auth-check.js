@@ -9,7 +9,7 @@
     "飞象_牛顿第一定律教学动画.html","飞象_液体压强实验教学动画.html",
     "飞象_船闸连通器原理分步动画演示.html","飞象_生成马德堡半球实验教学动画.html",
     "飞象_飞机升力.html","飞象_生成浮力产生原因教学动画.html",
-    "飞象_探究浮力大小因素教学动画.html","javalab_浮力比较.html",
+    "javalab_浮力比较.html",
     "javalab_浮力实验.html","javalab_阿基米德王冠.html",
     "飞象_动滑轮定滑轮原理教学动画.html","javalab_电流表.html",
     "电阻的微观解释.html","javalab_磁场与磁感线.html",
