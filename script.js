@@ -174,9 +174,10 @@ async function userLogin() {
   localStorage.setItem("currentUser", user);
 
   // 生成 session token 并同步到服务端（单设备登录）
+  // 必须 await 确保 PATCH 完成后再跳转，否则浏览器可能取消请求
   var sessionToken = "sess_" + Date.now() + "_" + Math.random().toString(36).substring(2, 10);
   localStorage.setItem("sessionToken", sessionToken);
-  fetch("https://ruledlbrdqhruotuaxwi.supabase.co/rest/v1/users?username=eq." + encodeURIComponent(user), {
+  await fetch("https://ruledlbrdqhruotuaxwi.supabase.co/rest/v1/users?username=eq." + encodeURIComponent(user), {
     method: "PATCH",
     headers: {
       "apikey": "sb_publishable_0eFNMabL5IhHExao6wSE2A_nWbmMEKt",
@@ -185,7 +186,7 @@ async function userLogin() {
       "Prefer": "return=representation"
     },
     body: JSON.stringify({ session_token: sessionToken })
-  });
+  }).catch(function(err) { console.warn("[登录] session_token 同步失败:", err.message); });
 
   var params = new URLSearchParams(window.location.search);
   var redirect = params.get('redirect');
@@ -511,12 +512,12 @@ function buyVip(type) {
   location.href = 'vip.html';
 }
 
-function logout() {
+async function logout() {
   var user = localStorage.getItem("currentUser");
   localStorage.removeItem("currentUser");
   localStorage.removeItem("sessionToken");
   if (user) {
-    fetch("https://ruledlbrdqhruotuaxwi.supabase.co/rest/v1/users?username=eq." + encodeURIComponent(user), {
+    await fetch("https://ruledlbrdqhruotuaxwi.supabase.co/rest/v1/users?username=eq." + encodeURIComponent(user), {
       method: "PATCH",
       headers: {
         "apikey": "sb_publishable_0eFNMabL5IhHExao6wSE2A_nWbmMEKt",
@@ -524,7 +525,7 @@ function logout() {
         "Content-Type": "application/json"
       },
       body: JSON.stringify({ session_token: null })
-    });
+    }).catch(function(err) { console.warn("[退出] session_token 清除失败:", err.message); });
   }
   location.href = "index.html";
 }
