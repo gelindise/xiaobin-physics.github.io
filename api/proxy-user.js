@@ -199,6 +199,10 @@ module.exports = async (req, res) => {
     if (action === 'updateUser') {
       const { username, data: fields } = req.body;
       if (!username || !fields) return res.status(400).json({ error: '缺少 username 或 data' });
+      // 如果更新密码，服务端哈希
+      if (fields.password) {
+        fields.password = hashPassword(fields.password);
+      }
       var url = SUPABASE_URL + '/rest/v1/users?username=eq.' + encodeURIComponent(username);
       var r = await fetch(url, {
         method: 'PATCH',
@@ -207,7 +211,10 @@ module.exports = async (req, res) => {
       });
       if (!r.ok) return res.status(502).json({ error: '更新失败: ' + (await r.text()) });
       var data = await r.json();
-      return res.json({ success: true, user: Array.isArray(data) ? data[0] : data });
+      // 返回时清除敏感字段
+      var user = Array.isArray(data) ? data[0] : data;
+      if (user) { delete user.password; delete user.session_token; }
+      return res.json({ success: true, user: user || null });
     }
 
     // ========== 更新 VIP（快捷操作） ==========
@@ -261,6 +268,47 @@ module.exports = async (req, res) => {
       });
       if (!r.ok) return res.status(502).json({ error: '更新失败: ' + (await r.text()) });
       return res.json({ success: true });
+    }
+
+    // ========== 获取所有激活码（含筛选） ==========
+    if (action === 'getAllActivationCodes') {
+      var filterStatus = req.body?.filter || 'all';
+      var url = SUPABASE_URL + '/rest/v1/activation_codes?select=*&order=created_at.desc';
+      if (filterStatus !== 'all') url += '&status=eq.' + filterStatus;
+      var r = await fetch(url, { headers: { ...headers, Prefer: undefined } });
+      if (!r.ok) return res.status(502).json({ error: '查询失败: ' + (await r.text()) });
+      var data = await r.json();
+      return res.json({ success: true, codes: data });
+    }
+
+    // ========== 批量创建激活码 ==========
+    if (action === 'createActivationCodes') {
+      var codes = req.body?.codes;
+      if (!codes || !codes.length) return res.status(400).json({ error: '缺少 codes' });
+      var r = await fetch(SUPABASE_URL + '/rest/v1/activation_codes', {
+        method: 'POST', headers,
+        body: JSON.stringify(codes),
+      });
+      if (!r.ok) return res.status(502).json({ error: '创建失败: ' + (await r.text()) });
+      return res.json({ success: true });
+    }
+
+    // ========== 管理员统计数据 ==========
+    if (action === 'getAdminStats') {
+      var todayStr = new Date().toISOString().split('T')[0];
+      var r1 = await fetch(SUPABASE_URL + '/rest/v1/users?select=id', { headers: { ...headers, Prefer: undefined } });
+      if (!r1.ok) return res.status(502).json({ error: '查询失败' });
+      var allUsers = await r1.json();
+      var total = (allUsers || []).length;
+      var vipCount = (allUsers || []).filter(function(u) { return u.vip && u.vip !== '普通用户'; }).length;
+
+      var r2 = await fetch(SUPABASE_URL + '/rest/v1/visits?select=id&created_at=gte.' + todayStr + 'T00:00:00', { headers: { ...headers, Prefer: undefined } });
+      var visitsToday = r2.ok ? (await r2.json()).length : 0;
+
+      var r3 = await fetch(SUPABASE_URL + '/rest/v1/users?select=id&created_at=gte.' + todayStr + 'T00:00:00', { headers: { ...headers, Prefer: undefined } });
+      var newUsersToday = r3.ok ? (await r3.json()).length : 0;
+
+      return res.json({ success: true, stats: { totalUsers: total, vipCount: vipCount, visitsToday: visitsToday, newUsersToday: newUsersToday } });
     }
 
     return res.status(400).json({ error: '未知 action: ' + action });

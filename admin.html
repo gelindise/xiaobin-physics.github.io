@@ -276,6 +276,15 @@
   <script src="supabase.js"></script>
   <script src="script.js"></script>
   <script>
+    // 封装 proxy-user 调用
+    function proxy(action, data) {
+      return fetch('/api/proxy-user', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(Object.assign({ action: action }, data)),
+      }).then(function(r) { return r.json(); });
+    }
+
     // ========== 管理员密码（默认 admin123，可在后台底部修改） ==========
     const ADMIN_PWD_KEY = 'admin_pwd_hash';
     const AUTH_SESSION_KEY = 'admin_authed';
@@ -351,45 +360,19 @@
     // 页面加载时检查登录状态
 
     async function loadStats() {
-      const todayStr = new Date().toISOString().split('T')[0];
       try {
-        // 并行查询所有数据
-        const [users, visitsToday, usersToday] = await Promise.all([
-          SB.getUsers(),
-          SB.query('visits', { select: 'id', filter: { col: 'created_at', val: `gte.${todayStr}T00:00:00` } }),
-          SB.query('users', { select: 'id', filter: { col: 'created_at', val: `gte.${todayStr}T00:00:00` } }),
-        ]);
-
-        // 总会员
-        const total = users ? users.length : 0;
-        document.getElementById('totalUsers').textContent = total;
-
-        // VIP 会员（vip 不是普通用户 且不为空）
-        const vipUsers = users ? users.filter(u => u.vip && u.vip !== '普通用户').length : 0;
-        document.getElementById('vipCount').textContent = vipUsers;
-
-        // 今日访问
-        document.getElementById('todayVisits').textContent = visitsToday ? visitsToday.length : 0;
-
-        // 今日新增
-        document.getElementById('todayNewUsers').textContent = usersToday ? usersToday.length : 0;
+        var result = await proxy('getAdminStats');
+        if (!result.success) throw new Error(result.error);
+        document.getElementById('totalUsers').textContent = result.stats.totalUsers;
+        document.getElementById('vipCount').textContent = result.stats.vipCount;
+        document.getElementById('todayVisits').textContent = result.stats.visitsToday;
+        document.getElementById('todayNewUsers').textContent = result.stats.newUsersToday;
       } catch (e) {
         console.warn('[admin] loadStats error:', e.message);
-        // 首次使用 visits 表可能不存在，回退到基础查询
-        try {
-          const users = await SB.getUsers();
-          const total = users ? users.length : 0;
-          document.getElementById('totalUsers').textContent = total;
-          const vipUsers = users ? users.filter(u => u.vip && u.vip !== '普通用户').length : 0;
-          document.getElementById('vipCount').textContent = vipUsers;
-          document.getElementById('todayVisits').textContent = '?';
-          document.getElementById('todayNewUsers').textContent = '?';
-        } catch (_) {
-          document.getElementById('totalUsers').textContent = '?';
-          document.getElementById('vipCount').textContent = '?';
-          document.getElementById('todayVisits').textContent = '?';
-          document.getElementById('todayNewUsers').textContent = '?';
-        }
+        document.getElementById('totalUsers').textContent = '?';
+        document.getElementById('vipCount').textContent = '?';
+        document.getElementById('todayVisits').textContent = '?';
+        document.getElementById('todayNewUsers').textContent = '?';
       }
     }
     document.addEventListener('DOMContentLoaded', () => {
@@ -423,10 +406,9 @@
       else { expireDate = '永久'; }
 
       try {
-        const r = await SB.getUser(user);
-        if (!r || r.length === 0) { tip.className = 'admin-tip error'; tip.textContent = '❌ 用户不存在'; return; }
-        await SB.updateUser(user, { vip: type, expire: expireDate });
-        const cached = JSON.parse(localStorage.getItem('users')||'{}');
+        var r = await proxy('updateUser', { username: user, data: { vip: type, expire: expireDate } });
+        if (!r.success) { tip.className = 'admin-tip error'; tip.textContent = '❌ ' + (r.error || '更新失败'); return; }
+        var cached = JSON.parse(localStorage.getItem('users')||'{}');
         if (cached[user]) { cached[user].vip = type; cached[user].expire = expireDate; localStorage.setItem('users', JSON.stringify(cached)); }
         tip.className = 'admin-tip success';
         tip.textContent = '✅ ' + user + ' → ' + type + '（' + expireDate + '）';
@@ -441,9 +423,8 @@
       const tip = document.getElementById('codeTip');
       if (!user || !code) { tip.className = 'admin-tip error'; tip.textContent = '⚠️ 请填写用户名和激活码'; return; }
       try {
-        const r = await SB.getUser(user);
-        if (!r || r.length === 0) { tip.className = 'admin-tip error'; tip.textContent = '❌ 用户不存在'; return; }
-        await SB.updateUser(user, { authCode: code });
+        var r = await proxy('updateUser', { username: user, data: { authCode: code } });
+        if (!r.success) { tip.className = 'admin-tip error'; tip.textContent = '❌ ' + (r.error || '设置失败'); return; }
         tip.className = 'admin-tip success';
         tip.textContent = '✅ 已为 ' + user + ' 设置激活码：' + code;
       } catch(e) {
@@ -456,7 +437,7 @@
       const tip = document.getElementById('codeTip');
       if (!user) { tip.className = 'admin-tip error'; tip.textContent = '⚠️ 请输入用户名'; return; }
       try {
-        await SB.updateUser(user, { authCode: '' });
+        await proxy('updateUser', { username: user, data: { authCode: '' } });
         document.getElementById('authCode').value = '';
         tip.className = 'admin-tip success';
         tip.textContent = '✅ 已清除 ' + user + ' 的激活码';
@@ -470,9 +451,9 @@
       const tip = document.getElementById('queryTip');
       if (!user) { tip.className = 'admin-tip error'; tip.textContent = '⚠️ 请输入用户名'; return; }
       try {
-        const r = await SB.getUser(user);
-        if (!r || r.length === 0) { tip.className = 'admin-tip error'; tip.textContent = '❌ 用户不存在'; return; }
-        const d = r[0];
+        var r = await proxy('getUserPublic', { username: user });
+        if (!r.success || !r.user) { tip.className = 'admin-tip error'; tip.textContent = '❌ 用户不存在'; return; }
+        var d = r.user;
         tip.className = 'admin-tip success';
         tip.innerHTML =
           '👤 用户名：' + d.username + '<br>' +
@@ -494,13 +475,12 @@
       if (!newPwd || newPwd.length < 4) { tip.className = 'admin-tip error'; tip.textContent = '⚠️ 新密码至少需要4位'; return; }
       tip.textContent = '⏳ 处理中...';
       try {
-        const r = await SB.getUser(user);
-        if (!r || r.length === 0) { tip.className = 'admin-tip error'; tip.textContent = '❌ 用户不存在'; return; }
-        await SB.updateUser(user, { password: newPwd });
-        const cached = JSON.parse(localStorage.getItem('users')||'{}');
-        if (cached[user]) { cached[user].pwd = newPwd; localStorage.setItem('users', JSON.stringify(cached)); }
+        var r = await proxy('updateUser', { username: user, data: { password: newPwd } });
+        if (!r.success) { tip.className = 'admin-tip error'; tip.textContent = '❌ ' + (r.error || '重置失败'); return; }
+        var cached = JSON.parse(localStorage.getItem('users')||'{}');
+        if (cached[user]) { delete cached[user].pwd; localStorage.setItem('users', JSON.stringify(cached)); }
         tip.className = 'admin-tip success';
-        tip.textContent = '✅ 已重置 ' + user + ' 的密码为：' + newPwd;
+        tip.textContent = '✅ 已重置 ' + user + ' 的密码（服务端哈希存储）';
         document.getElementById('resetNewPwd').value = '';
       } catch(e) {
         tip.className = 'admin-tip error'; tip.textContent = '❌ ' + e.message;
@@ -528,8 +508,9 @@
 
       try {
         // 获取已存在的所有激活码
-        const existing = await SB.getAllActivationCodes();
-        const existingSet = new Set((existing || []).map(r => r.code));
+        var r = await proxy('getAllActivationCodes');
+        var existing = r.success ? r.codes : [];
+        var existingSet = new Set((existing || []).map(function(r) { return r.code; }));
 
         // 生成不重复的激活码
         const codes = [];
@@ -548,7 +529,7 @@
           return;
         }
 
-        await SB.createActivationCodes(codes);
+        await proxy('createActivationCodes', { codes: codes });
 
         // 显示结果
         const output = document.getElementById('codeOutput');
@@ -583,13 +564,13 @@
       const filter = document.getElementById('codeFilter').value;
       const list = document.getElementById('codeList');
       try {
-        const codes = await SB.getAllActivationCodes(filter);
-        if (!codes || codes.length === 0) {
+        const codes = await proxy('getAllActivationCodes', { filter: filter });
+        if (!codes.success || !codes.codes || codes.codes.length === 0) {
           list.innerHTML = '<div style="text-align:center;color:var(--text-muted);padding:1rem;">暂无激活码</div>';
           return;
         }
         let html = '';
-        for (const c of codes) {
+        for (var i = 0; i < codes.codes.length; i++) { var c = codes.codes[i];
           const used = c.status === 'used';
           html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:0.4rem 0.3rem;border-bottom:1px solid var(--glass-border);">' +
             '<span style="font-family:monospace;font-weight:600;color:' + (used ? 'var(--text-muted)' : 'var(--secondary)') + ';">' + formatCode(c.code) + '</span>' +
