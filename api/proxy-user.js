@@ -1,6 +1,37 @@
 // Vercel 无服务器函数 - 用户操作代理（服务端执行，避免客户端直接暴露查询）
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
+const crypto = require('crypto');
+
+// ========== 密码处理 ==========
+function hashPassword(password) {
+  var salt = crypto.randomBytes(16).toString('hex');
+  var hash = crypto.pbkdf2Sync(password, salt, 100000, 64, 'sha512').toString('hex');
+  return salt + ':' + hash;
+}
+
+function verifyPassword(password, stored) {
+  if (!stored || stored.indexOf(':') === -1) {
+    // 旧版明文密码（兼容迁移：登录成功时会自动哈希化）
+    return stored === password;
+  }
+  var parts = stored.split(':');
+  var salt = parts[0];
+  var hash = parts[1];
+  var verifyHash = crypto.pbkdf2Sync(password, salt, 100000, 64, 'sha512').toString('hex');
+  try {
+    return crypto.timingSafeEqual(Buffer.from(hash), Buffer.from(verifyHash));
+  } catch (e) {
+    return false;
+  }
+}
+
+function generateSessionToken() {
+  return 'sess_' + crypto.randomBytes(24).toString('hex');
+}
+
+// 公开字段（不含 password / session_token）
+var PUBLIC_FIELDS = 'username,vip,expire,email,created_at,last_seen';
 
 module.exports = async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -19,66 +50,163 @@ module.exports = async (req, res) => {
       Prefer: 'return=representation',
     };
 
-    // ========== 查询单个用户 ==========
+    // ========== 查询单个用户（含敏感字段，仅管理员使用） ==========
     if (action === 'getUser') {
       const username = req.method === 'GET' ? req.query.username : req.body?.username;
       if (!username) return res.status(400).json({ error: '缺少 username' });
-      const url = `${SUPABASE_URL}/rest/v1/users?username=eq.${encodeURIComponent(username)}&select=*`;
+      const url = SUPABASE_URL + '/rest/v1/users?username=eq.' + encodeURIComponent(username) + '&select=*';
       const r = await fetch(url, { headers: { ...headers, Prefer: undefined } });
       if (!r.ok) return res.status(502).json({ error: '查询失败: ' + (await r.text()) });
       const data = await r.json();
       return res.json({ success: true, user: data[0] || null });
     }
 
-    // ========== 获取所有用户（分页） ==========
+    // ========== 获取所有用户（含敏感字段，仅管理员使用） ==========
     if (action === 'getUsers') {
-      const url = `${SUPABASE_URL}/rest/v1/users?select=*&order=username.asc`;
+      const url = SUPABASE_URL + '/rest/v1/users?select=*&order=username.asc';
       const r = await fetch(url, { headers: { ...headers, Prefer: undefined } });
       if (!r.ok) return res.status(502).json({ error: '查询失败: ' + (await r.text()) });
       const data = await r.json();
       return res.json({ success: true, users: data });
     }
 
-    // ========== 创建用户 ==========
+    // ========== 获取用户公开信息（不含密码/token，前端使用） ==========
+    if (action === 'getUserPublic') {
+      const username = req.body?.username;
+      if (!username) return res.status(400).json({ error: '缺少 username' });
+      const url = SUPABASE_URL + '/rest/v1/users?username=eq.' + encodeURIComponent(username) + '&select=' + PUBLIC_FIELDS;
+      const r = await fetch(url, { headers: { ...headers, Prefer: undefined } });
+      if (!r.ok) return res.status(502).json({ error: '查询失败: ' + (await r.text()) });
+      const data = await r.json();
+      return res.json({ success: true, user: data[0] || null });
+    }
+
+    // ========== 创建用户（服务端密码哈希） ==========
     if (action === 'createUser') {
-      const { username, password, email, vip, expire } = req.body?.data || req.body;
+      const body = req.body?.data || req.body;
+      var username = body.username;
+      var password = body.password;
+      var email = body.email || '';
       if (!username || !password) return res.status(400).json({ error: '缺少 username 或 password' });
-      const url = `${SUPABASE_URL}/rest/v1/users`;
-      const r = await fetch(url, {
+      var url = SUPABASE_URL + '/rest/v1/users';
+      var r = await fetch(url, {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          username,
-          password,
-          email: email || '',
-          vip: vip || '普通用户',
-          expire: expire || '',
+          username: username,
+          password: hashPassword(password),
+          email: email,
+          vip: body.vip || '普通用户',
+          expire: body.expire || '',
           last_seen: new Date().toISOString(),
         }),
       });
       if (!r.ok) {
-        const text = await r.text();
-        if (text.includes('duplicate') || text.includes('23505')) {
+        var text = await r.text();
+        if (text.indexOf('duplicate') !== -1 || text.indexOf('23505') !== -1) {
           return res.status(409).json({ error: '用户名已存在' });
         }
         return res.status(502).json({ error: '创建失败: ' + text });
       }
-      const data = await r.json();
-      return res.json({ success: true, user: Array.isArray(data) ? data[0] : data });
+      var data = await r.json();
+      // 返回不含密码的用户信息
+      var user = Array.isArray(data) ? data[0] : data;
+      if (user) { delete user.password; delete user.session_token; }
+      return res.json({ success: true, user: user });
+    }
+
+    // ========== 登录（服务端验证密码 + 生成 session_token） ==========
+    if (action === 'login') {
+      var username = req.body?.username;
+      var password = req.body?.password;
+      if (!username || !password) return res.status(400).json({ error: '缺少 username 或 password' });
+
+      var url = SUPABASE_URL + '/rest/v1/users?username=eq.' + encodeURIComponent(username) + '&select=*';
+      var r = await fetch(url, { headers: { ...headers, Prefer: undefined } });
+      if (!r.ok) return res.status(502).json({ error: '查询失败: ' + (await r.text()) });
+      var data = await r.json();
+      var userData = data && data[0] ? data[0] : null;
+
+      if (!userData) {
+        return res.status(401).json({ error: '用户不存在' });
+      }
+
+      if (!verifyPassword(password, userData.password)) {
+        return res.status(401).json({ error: '密码错误' });
+      }
+
+      // 兼容迁移：如果旧版明文密码，验证通过后哈希化并更新
+      var storedPwd = userData.password || '';
+      if (storedPwd.indexOf(':') === -1) {
+        console.log('[proxy-user] migrating plaintext password for:', username);
+        var hashed = hashPassword(password);
+        await fetch(SUPABASE_URL + '/rest/v1/users?username=eq.' + encodeURIComponent(username), {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json', apikey: SUPABASE_SERVICE_KEY, Authorization: 'Bearer ' + SUPABASE_SERVICE_KEY },
+          body: JSON.stringify({ password: hashed }),
+        });
+      }
+
+      // 生成并存储 session_token
+      var sessionToken = generateSessionToken();
+      await fetch(SUPABASE_URL + '/rest/v1/users?username=eq.' + encodeURIComponent(username), {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', apikey: SUPABASE_SERVICE_KEY, Authorization: 'Bearer ' + SUPABASE_SERVICE_KEY },
+        body: JSON.stringify({ session_token: sessionToken }),
+      });
+
+      return res.json({
+        success: true,
+        token: sessionToken,
+        user: {
+          username: userData.username,
+          vip: userData.vip || '普通用户',
+          expire: userData.expire || '',
+          email: userData.email || '',
+        },
+      });
+    }
+
+    // ========== 退出登录 ==========
+    if (action === 'logout') {
+      var username = req.body?.username;
+      if (!username) return res.status(400).json({ error: '缺少 username' });
+      await fetch(SUPABASE_URL + '/rest/v1/users?username=eq.' + encodeURIComponent(username), {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', apikey: SUPABASE_SERVICE_KEY, Authorization: 'Bearer ' + SUPABASE_SERVICE_KEY },
+        body: JSON.stringify({ session_token: null }),
+      });
+      return res.json({ success: true });
+    }
+
+    // ========== 校验 session_token（单设备登录） ==========
+    if (action === 'checkSession') {
+      var username = req.body?.username;
+      var token = req.body?.token;
+      if (!username || !token) return res.status(400).json({ error: '缺少 username 或 token' });
+      var url = SUPABASE_URL + '/rest/v1/users?username=eq.' + encodeURIComponent(username) + '&select=session_token';
+      var r = await fetch(url, { headers: { ...headers, Prefer: undefined } });
+      if (!r.ok) return res.status(502).json({ error: '查询失败: ' + (await r.text()) });
+      var data = await r.json();
+      var serverToken = data && data[0] ? data[0].session_token : null;
+      if (serverToken && serverToken !== token) {
+        return res.json({ valid: false, reason: 'kicked' });
+      }
+      return res.json({ valid: true });
     }
 
     // ========== 更新用户 ==========
     if (action === 'updateUser') {
       const { username, data: fields } = req.body;
       if (!username || !fields) return res.status(400).json({ error: '缺少 username 或 data' });
-      const url = `${SUPABASE_URL}/rest/v1/users?username=eq.${encodeURIComponent(username)}`;
-      const r = await fetch(url, {
+      var url = SUPABASE_URL + '/rest/v1/users?username=eq.' + encodeURIComponent(username);
+      var r = await fetch(url, {
         method: 'PATCH',
         headers,
         body: JSON.stringify(fields),
       });
       if (!r.ok) return res.status(502).json({ error: '更新失败: ' + (await r.text()) });
-      const data = await r.json();
+      var data = await r.json();
       return res.json({ success: true, user: Array.isArray(data) ? data[0] : data });
     }
 
@@ -86,14 +214,14 @@ module.exports = async (req, res) => {
     if (action === 'updateVIP') {
       const { username, vip, expire } = req.body;
       if (!username || !vip) return res.status(400).json({ error: '缺少 username 或 vip' });
-      const url = `${SUPABASE_URL}/rest/v1/users?username=eq.${encodeURIComponent(username)}`;
-      const r = await fetch(url, {
+      var url = SUPABASE_URL + '/rest/v1/users?username=eq.' + encodeURIComponent(username);
+      var r = await fetch(url, {
         method: 'PATCH',
         headers,
-        body: JSON.stringify({ vip, expire: expire || '', last_seen: new Date().toISOString() }),
+        body: JSON.stringify({ vip: vip, expire: expire || '', last_seen: new Date().toISOString() }),
       });
       if (!r.ok) return res.status(502).json({ error: 'VIP更新失败: ' + (await r.text()) });
-      const data = await r.json();
+      var data = await r.json();
       return res.json({ success: true, user: Array.isArray(data) ? data[0] : data });
     }
 
@@ -101,8 +229,8 @@ module.exports = async (req, res) => {
     if (action === 'deleteUser') {
       const { username } = req.body;
       if (!username) return res.status(400).json({ error: '缺少 username' });
-      const url = `${SUPABASE_URL}/rest/v1/users?username=eq.${encodeURIComponent(username)}`;
-      const r = await fetch(url, {
+      var url = SUPABASE_URL + '/rest/v1/users?username=eq.' + encodeURIComponent(username);
+      var r = await fetch(url, {
         method: 'DELETE',
         headers: { ...headers, Prefer: undefined },
       });
@@ -114,10 +242,10 @@ module.exports = async (req, res) => {
     if (action === 'getActivationCode') {
       const code = req.body?.code;
       if (!code) return res.status(400).json({ error: '缺少 code' });
-      const url = `${SUPABASE_URL}/rest/v1/activation_codes?code=eq.${encodeURIComponent(code)}&select=*`;
-      const r = await fetch(url, { headers: { ...headers, Prefer: undefined } });
+      var url = SUPABASE_URL + '/rest/v1/activation_codes?code=eq.' + encodeURIComponent(code) + '&select=*';
+      var r = await fetch(url, { headers: { ...headers, Prefer: undefined } });
       if (!r.ok) return res.status(502).json({ error: '查询失败: ' + (await r.text()) });
-      const data = await r.json();
+      var data = await r.json();
       return res.json({ success: true, codes: data });
     }
 
@@ -125,8 +253,8 @@ module.exports = async (req, res) => {
     if (action === 'updateActivationCode') {
       const { id, data: fields } = req.body;
       if (!id || !fields) return res.status(400).json({ error: '缺少 id 或 data' });
-      const url = `${SUPABASE_URL}/rest/v1/activation_codes?id=eq.${encodeURIComponent(id)}`;
-      const r = await fetch(url, {
+      var url = SUPABASE_URL + '/rest/v1/activation_codes?id=eq.' + encodeURIComponent(id);
+      var r = await fetch(url, {
         method: 'PATCH',
         headers,
         body: JSON.stringify(fields),
@@ -135,7 +263,7 @@ module.exports = async (req, res) => {
       return res.json({ success: true });
     }
 
-    return res.status(400).json({ error: `未知 action: ${action}` });
+    return res.status(400).json({ error: '未知 action: ' + action });
   } catch (e) {
     console.error('[proxy-user] error:', e);
     return res.status(500).json({ error: e.message });

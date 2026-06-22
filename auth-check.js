@@ -1,7 +1,4 @@
 (function() {
-  var SUPABASE_URL = "https://ruledlbrdqhruotuaxwi.supabase.co";
-  var SUPABASE_KEY = "sb_publishable_0eFNMabL5IhHExao6wSE2A_nWbmMEKt";
-
   var VIP_EXPERIMENTS = [
     "声音麦克风波形.html","javalab_测速雷达原理.html","小孔成像2.html",
     "phydemo_光路模拟器.html","光的折射规律.html","LCD像素显色.html",
@@ -33,13 +30,15 @@
     return;
   }
 
-  // session token 验证
-  fetch(SUPABASE_URL + "/rest/v1/users?username=eq." + encodeURIComponent(user) + "&select=session_token", {
-    headers: { "apikey": SUPABASE_KEY, "Authorization": "Bearer " + SUPABASE_KEY }
+  // 通过 proxy-user 验证 session + 获取 VIP 信息
+  fetch('/api/proxy-user', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'checkSession', username: user, token: token })
   })
   .then(function(r) { return r.json(); })
-  .then(function(data) {
-    if (data && data[0] && data[0].session_token && data[0].session_token !== token) {
+  .then(function(result) {
+    if (result.valid === false && result.reason === 'kicked') {
       localStorage.removeItem("currentUser");
       localStorage.removeItem("sessionToken");
       window.location.href = "login.html?reason=kicked";
@@ -54,13 +53,15 @@
   if (userData) {
     checkVipAccess(userData.vip, userData.expire);
   } else {
-    fetch(SUPABASE_URL + "/rest/v1/users?username=eq." + encodeURIComponent(user) + "&select=vip,expire", {
-      headers: { "apikey": SUPABASE_KEY, "Authorization": "Bearer " + SUPABASE_KEY }
+    fetch('/api/proxy-user', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'getUserPublic', username: user })
     })
     .then(function(r) { return r.json(); })
-    .then(function(data) {
-      if (data && data[0]) {
-        checkVipAccess(data[0].vip, data[0].expire);
+    .then(function(result) {
+      if (result.success && result.user) {
+        checkVipAccess(result.user.vip, result.user.expire);
       }
     })
     .catch(function() {});

@@ -17,24 +17,28 @@
   } catch (_) {}
 })();
 
-// ========== 获取所有用户（对象格式兼容旧代码） ==========
+// ========== 获取所有用户（仅缓存非敏感信息） ==========
 async function getUsersFromTable() {
   try {
-    const data = await SB.getUsers();
+    var resp = await fetch('/api/proxy-user', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'getUsers' }),
+    });
+    var result = await resp.json();
+    if (!result.success) throw new Error(result.error);
     let users = {};
-    for (const row of data) {
+    for (const row of result.users) {
       users[row.username] = {
-        pwd: row.password,
         vip: row.vip || "普通用户",
         expire: row.expire || "",
         email: row.email || "",
-        authCode: row.authCode || "",
       };
     }
     localStorage.setItem("users", JSON.stringify(users));
     return users;
   } catch (e) {
-    console.warn("[系统] Supabase 读取失败:", e.message);
+    console.warn("[系统] 读取用户失败:", e.message);
     return JSON.parse(localStorage.getItem("users") || "{}");
   }
 }
@@ -69,7 +73,6 @@ async function userRegister() {
     return;
   }
 
-  // 显示加载状态
   if (btn) { btn.textContent = '注册中...'; btn.disabled = true; btn.style.opacity = '0.7'; }
   if (tip) { tip.className = "auth-tip"; tip.textContent = "⏳ 正在连接服务器..."; }
 
@@ -77,65 +80,48 @@ async function userRegister() {
     if (btn) { btn.textContent = '立即注册'; btn.disabled = false; btn.style.opacity = '1'; }
   }
 
-  // 检查用户名是否已存在
   try {
-    const existing = await SB.getUser(user);
-    if (existing && existing.length > 0) {
-      if (tip) { tip.className = "auth-tip error"; tip.textContent = "⚠️ 用户名已存在，请换一个"; }
-      restoreBtn();
-      return;
-    }
-  } catch (e) {
-    console.warn("[注册] 查询失败，尝试本地兜底:", e.message);
-    const cached = JSON.parse(localStorage.getItem("users") || "{}");
-    if (cached[user]) {
-      if (tip) { tip.className = "auth-tip error"; tip.textContent = "⚠️ 用户名已存在，请换一个"; }
-      restoreBtn();
-      return;
-    }
-  }
-
-  // 写入 Supabase
-  try {
-    await SB.createUser({
-      username: user,
-      password: pwd,
-      email: email || "",
-      vip: "普通用户",
-      expire: "",
+    var resp = await fetch('/api/proxy-user', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'createUser', username: user, password: pwd, email: email }),
     });
-  } catch (e) {
-    console.error("[注册] Supabase 写入失败:", e.message);
-    if (e.message?.includes("duplicate") || e.message?.includes("23505")) {
-      if (tip) { tip.className = "auth-tip error"; tip.textContent = "⚠️ 用户名已存在，请换一个"; }
-    } else {
-      if (tip) { tip.className = "auth-tip error"; tip.textContent = "❌ 注册失败，请稍后重试"; }
+    var result = await resp.json();
+
+    if (!result.success) {
+      if (tip) { tip.className = "auth-tip error"; tip.textContent = "⚠️ " + (result.error || '注册失败，请稍后重试'); }
+      restoreBtn();
+      return;
     }
+
+    // 同步到 localStorage 缓存（不含密码）
+    var cached = JSON.parse(localStorage.getItem("users") || "{}");
+    var userInfo = result.user || {};
+    cached[user] = { vip: userInfo.vip || '普通用户', expire: userInfo.expire || '', email: email };
+    localStorage.setItem("users", JSON.stringify(cached));
+
     restoreBtn();
-    return;
+
+    if (tip) {
+      tip.className = "auth-tip success";
+      var regParams = new URLSearchParams(window.location.search);
+      var regRedirect = regParams.get('redirect');
+      var loginUrl = regRedirect ? "login.html?redirect=" + encodeURIComponent(regRedirect) : "login.html";
+      tip.innerHTML = "✅ 注册成功！账号已激活，<a href='" + loginUrl + "' style='color:var(--secondary);font-weight:600;'>立即登录</a>";
+    }
+
+    document.getElementById("regUser").value = "";
+    document.getElementById("regPwd").value = "";
+  } catch (e) {
+    console.error("[注册] 请求失败:", e.message);
+    if (tip) { tip.className = "auth-tip error"; tip.textContent = "❌ 网络错误，请稍后重试"; }
+    restoreBtn();
   }
-
-  // 同步到 localStorage 缓存
-  const cached = JSON.parse(localStorage.getItem("users") || "{}");
-  cached[user] = { pwd, email: email || "", vip: "普通用户", expire: "" };
-  localStorage.setItem("users", JSON.stringify(cached));
-
-  restoreBtn();
-
-  if (tip) {
-    tip.className = "auth-tip success";
-    var regParams = new URLSearchParams(window.location.search);
-    var regRedirect = regParams.get('redirect');
-    var loginUrl = regRedirect ? "login.html?redirect=" + encodeURIComponent(regRedirect) : "login.html";
-    tip.innerHTML = "✅ 注册成功！账号已激活，<a href='" + loginUrl + "' style='color:var(--secondary);font-weight:600;'>立即登录</a>";
-  }
-
-  document.getElementById("regUser").value = "";
-  document.getElementById("regPwd").value = "";
 }
 
 // ========== 登录功能 ==========
 async function userLogin() {
+  const btn = document.querySelector('.auth-btn');
   const user = document.getElementById("loginUser").value.trim();
   const pwd = document.getElementById("loginPwd").value.trim();
   const tip = document.getElementById("loginTip");
@@ -145,68 +131,67 @@ async function userLogin() {
     return;
   }
 
-  // 从 Supabase 查询用户
-  let userData = null;
+  // 禁用按钮，防止重复提交
+  if (btn) { btn.textContent = '登录中...'; btn.disabled = true; btn.style.opacity = '0.7'; }
+  if (tip) { tip.className = "auth-tip"; tip.textContent = "⏳ 验证中..."; }
+
+  function restoreBtn() {
+    if (btn) { btn.textContent = '立即登录'; btn.disabled = false; btn.style.opacity = '1'; }
+  }
+
   try {
-    const result = await SB.getUser(user);
-    if (result && result.length > 0) {
-      userData = result[0];
+    var resp = await fetch('/api/proxy-user', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'login', username: user, password: pwd }),
+    });
+    var result = await resp.json();
+
+    if (!result.success) {
+      if (tip) { tip.className = "auth-tip error"; tip.textContent = "❌ " + (result.error === '用户不存在' ? '用户不存在，请检查用户名或先注册' : '密码错误，请重试'); }
+      restoreBtn();
+      return;
     }
+
+    localStorage.setItem("currentUser", user);
+    localStorage.setItem("sessionToken", result.token);
+
+    // 缓存 VIP 信息到 localStorage（不含密码）
+    if (result.user) {
+      var cached = JSON.parse(localStorage.getItem("users") || "{}");
+      cached[user] = { vip: result.user.vip, expire: result.user.expire, email: result.user.email || '' };
+      localStorage.setItem("users", JSON.stringify(cached));
+    }
+
+    var params = new URLSearchParams(window.location.search);
+    var redirect = params.get('redirect');
+    location.href = redirect || "experiments.html";
   } catch (e) {
-    console.warn("[登录] Supabase 查询失败:", e.message);
-    // 降级：尝试本地缓存
-    const cached = JSON.parse(localStorage.getItem("users") || "{}");
-    if (cached[user]) {
-      userData = { password: cached[user].pwd, vip: cached[user].vip, expire: cached[user].expire };
-    }
+    console.error("[登录] 请求失败:", e.message);
+    if (tip) { tip.className = "auth-tip error"; tip.textContent = "❌ 网络错误，请稍后重试"; }
+    restoreBtn();
   }
-
-  if (!userData) {
-    if (tip) { tip.className = "auth-tip error"; tip.textContent = "❌ 用户不存在，请检查用户名或先注册"; }
-    return;
-  }
-
-  if (userData.password !== pwd) {
-    if (tip) { tip.className = "auth-tip error"; tip.textContent = "❌ 密码错误，请重试"; }
-    return;
-  }
-
-  localStorage.setItem("currentUser", user);
-
-  // 生成 session token 并同步到服务端（单设备登录）
-  // 必须 await 确保 PATCH 完成后再跳转，否则浏览器可能取消请求
-  var sessionToken = "sess_" + Date.now() + "_" + Math.random().toString(36).substring(2, 10);
-  localStorage.setItem("sessionToken", sessionToken);
-  await fetch("https://ruledlbrdqhruotuaxwi.supabase.co/rest/v1/users?username=eq." + encodeURIComponent(user), {
-    method: "PATCH",
-    headers: {
-      "apikey": "sb_publishable_0eFNMabL5IhHExao6wSE2A_nWbmMEKt",
-      "Authorization": "Bearer sb_publishable_0eFNMabL5IhHExao6wSE2A_nWbmMEKt",
-      "Content-Type": "application/json",
-      "Prefer": "return=representation"
-    },
-    body: JSON.stringify({ session_token: sessionToken })
-  }).catch(function(err) { console.warn("[登录] session_token 同步失败:", err.message); });
-
-  var params = new URLSearchParams(window.location.search);
-  var redirect = params.get('redirect');
-  location.href = redirect || "experiments.html";
 }
 
 // ========== 支付验证逻辑 ==========
 async function simulatePaySuccess(user, type, code) {
-  console.log(`[激活] 开始验证。用户: ${user}, 套餐: ${type}, 码: ${code}`);
+  console.log('[激活] 开始验证。用户:', user, '套餐:', type, '码:', code);
 
-  // 规范化：去空格、转大写、去分隔符（支持带 - 或不带 - 输入）
+  // 规范化：去空格、转大写、去分隔符
   const cleanCode = code.toString().trim().toUpperCase().replace(/[\s-]/g, '');
 
-  // 方案一：通过 activation_codes 表验证（推荐）
+  // 通过 proxy-user 查询激活码
   let codeRecord = null;
   try {
-    const data = await SB.getActivationCode(cleanCode);
-    if (data && data.length > 0) codeRecord = data[0];
+    var resp = await fetch('/api/proxy-user', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'getActivationCode', code: cleanCode }),
+    });
+    var result = await resp.json();
+    if (result.success && result.codes && result.codes.length > 0) codeRecord = result.codes[0];
   } catch (e) {
-    console.warn("[激活] activation_codes 表不可用:", e.message);
+    console.warn('[激活] 查询激活码失败:', e.message);
   }
 
   if (codeRecord) {
@@ -221,32 +206,52 @@ async function simulatePaySuccess(user, type, code) {
     }
 
     // 计算到期日期
-    let expireDate = "";
+    let expireDate = '';
     const now = new Date();
-    if (type === "月度VIP") { now.setDate(now.getDate() + 30); expireDate = now.toISOString().split('T')[0]; }
-    else if (type === "年度VIP") { now.setDate(now.getDate() + 365); expireDate = now.toISOString().split('T')[0]; }
-    else { expireDate = "永久"; }
+    if (type === '月度VIP') { now.setDate(now.getDate() + 30); expireDate = now.toISOString().split('T')[0]; }
+    else if (type === '年度VIP') { now.setDate(now.getDate() + 365); expireDate = now.toISOString().split('T')[0]; }
+    else { expireDate = '永久'; }
 
-    await SB.updateUser(user, { vip: type, expire: expireDate });
-    await SB.updateActivationCode(codeRecord.id, { status: 'used', used_by: user, used_at: new Date().toISOString() });
+    // 通过 proxy-user 更新用户 VIP
+    try {
+      await fetch('/api/proxy-user', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'updateUser', username: user, data: { vip: type, expire: expireDate } }),
+      });
+      await fetch('/api/proxy-user', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'updateActivationCode', id: codeRecord.id, data: { status: 'used', used_by: user, used_at: new Date().toISOString() } }),
+      });
+    } catch (e) {
+      console.error('[激活] 更新失败:', e.message);
+      alert('❌ 激活更新失败，请重试');
+      return false;
+    }
 
     // 同步本地缓存
-    const cached = JSON.parse(localStorage.getItem("users") || "{}");
-    if (cached[user]) { cached[user].vip = type; cached[user].expire = expireDate; localStorage.setItem("users", JSON.stringify(cached)); }
-    localStorage.setItem("currentUser", user);
+    const cached = JSON.parse(localStorage.getItem('users') || '{}');
+    if (cached[user]) { cached[user].vip = type; cached[user].expire = expireDate; localStorage.setItem('users', JSON.stringify(cached)); }
+    localStorage.setItem('currentUser', user);
 
-    console.log(`[激活] SUCCESS: ${user} → ${type} (${expireDate}) 码: ${code}`);
+    console.log('[激活] SUCCESS:', user, '->', type, expireDate, '码:', code);
     return true;
   }
 
   // 方案二：回退到旧版 per-user authCode（兼容旧数据）
-  console.log("[激活] activation_codes 未匹配，尝试旧版 authCode...");
+  console.log('[激活] activation_codes 未匹配，尝试旧版 authCode...');
   let userData = null;
   try {
-    const result = await SB.getUser(user);
-    if (result && result.length > 0) userData = result[0];
+    var resp = await fetch('/api/proxy-user', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'getUserPublic', username: user }),
+    });
+    var result = await resp.json();
+    if (result.success && result.user) userData = result.user;
   } catch (e) {
-    console.warn("[激活] Supabase 查询失败:", e.message);
+    console.warn('[激活] 查询用户失败:', e.message);
   }
 
   if (!userData) {
@@ -254,7 +259,7 @@ async function simulatePaySuccess(user, type, code) {
     return false;
   }
 
-  const tableCode = (userData.authCode || "").toString().trim();
+  const tableCode = (userData.authCode || '').toString().trim();
   const inputCode = cleanCode;
 
   if (!tableCode || tableCode !== inputCode) {
@@ -263,23 +268,27 @@ async function simulatePaySuccess(user, type, code) {
   }
 
   // 计算到期日期
-  let expireDate = "";
+  let expireDate = '';
   const now = new Date();
-  if (type === "月度VIP") { now.setDate(now.getDate() + 30); expireDate = now.toISOString().split('T')[0]; }
-  else if (type === "年度VIP") { now.setDate(now.getDate() + 365); expireDate = now.toISOString().split('T')[0]; }
-  else { expireDate = "永久"; }
+  if (type === '月度VIP') { now.setDate(now.getDate() + 30); expireDate = now.toISOString().split('T')[0]; }
+  else if (type === '年度VIP') { now.setDate(now.getDate() + 365); expireDate = now.toISOString().split('T')[0]; }
+  else { expireDate = '永久'; }
 
   try {
-    await SB.updateUser(user, { vip: type, expire: expireDate });
+    await fetch('/api/proxy-user', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'updateUser', username: user, data: { vip: type, expire: expireDate } }),
+    });
   } catch (e) {
-    console.error("[激活] 更新失败:", e.message);
+    console.error('[激活] 更新失败:', e.message);
     alert('❌ 激活更新失败，请重试');
     return false;
   }
 
-  const cached = JSON.parse(localStorage.getItem("users") || "{}");
-  if (cached[user]) { cached[user].vip = type; cached[user].expire = expireDate; localStorage.setItem("users", JSON.stringify(cached)); }
-  localStorage.setItem("currentUser", user);
+  const cached = JSON.parse(localStorage.getItem('users') || '{}');
+  if (cached[user]) { cached[user].vip = type; cached[user].expire = expireDate; localStorage.setItem('users', JSON.stringify(cached)); }
+  localStorage.setItem('currentUser', user);
 
   return true;
 }
@@ -517,15 +526,15 @@ async function logout() {
   localStorage.removeItem("currentUser");
   localStorage.removeItem("sessionToken");
   if (user) {
-    await fetch("https://ruledlbrdqhruotuaxwi.supabase.co/rest/v1/users?username=eq." + encodeURIComponent(user), {
-      method: "PATCH",
-      headers: {
-        "apikey": "sb_publishable_0eFNMabL5IhHExao6wSE2A_nWbmMEKt",
-        "Authorization": "Bearer sb_publishable_0eFNMabL5IhHExao6wSE2A_nWbmMEKt",
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({ session_token: null })
-    }).catch(function(err) { console.warn("[退出] session_token 清除失败:", err.message); });
+    try {
+      await fetch('/api/proxy-user', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'logout', username: user }),
+      });
+    } catch (e) {
+      console.warn("[退出] 请求失败:", e.message);
+    }
   }
   location.href = "index.html";
 }
@@ -571,7 +580,13 @@ window.onload = async function() {
       }
       // 更新在线状态（静默，不阻塞页面）
       if (uName) {
-        SB.updateUser(uName, { last_seen: new Date().toISOString() }).catch(() => {});
+        try {
+          fetch('/api/proxy-user', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'updateUser', username: uName, data: { last_seen: new Date().toISOString() } }),
+          });
+        } catch(e) {}
       }
     }
 
@@ -581,11 +596,13 @@ window.onload = async function() {
       var curToken = localStorage.getItem("sessionToken");
       if (!curUser || !curToken) return;
       try {
-        var res = await fetch(SUPABASE_URL + "/rest/v1/users?username=eq." + encodeURIComponent(curUser) + "&select=session_token", {
-          headers: { "apikey": SUPABASE_ANON_KEY, "Authorization": "Bearer " + SUPABASE_ANON_KEY }
+        var resp = await fetch('/api/proxy-user', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'checkSession', username: curUser, token: curToken }),
         });
-        var data = await res.json();
-        if (data && data[0] && data[0].session_token && data[0].session_token !== curToken) {
+        var result = await resp.json();
+        if (result.valid === false && result.reason === 'kicked') {
           localStorage.removeItem("currentUser");
           localStorage.removeItem("sessionToken");
           alert("您的账号已在其他设备登录，当前设备已下线。");
