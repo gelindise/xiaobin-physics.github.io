@@ -64,15 +64,14 @@
       accent-color: #3b82f6;
     }
     #myDataSheet {
-      position: absolute;
-      right: 0;
-      top: 0;
+      max-height: 240px;
       overflow-y: auto;
-      width: 200px;
       font-size: 13px;
-      background: rgba(255,255,255,0.92);
-      border-left: 1px solid #ddd;
+      background: #fafafa;
+      border: 1px solid #ddd;
+      border-radius: 8px;
       padding: 8px;
+      margin-top: 8px;
     }
     #myDataSheet table { width: 100%; border-collapse: collapse; }
     #myDataSheet td, #myDataSheet th {
@@ -143,7 +142,6 @@
   <div class="sim-wrapper">
     <div id="divFull" style="overflow:hidden;position:relative;">
       <div id="myContainer"></div>
-      <div id="myDataSheet"></div>
       <div class="flexContainer">
         <div class="flexItem"><span id="radioA"></span></div>
         <div class="flexItem"><button id="buttonRun">运行</button></div>
@@ -166,6 +164,7 @@
         </div>
       </div>
     </div>
+    <div id="myDataSheet"></div>
     <p style="text-align:center;font-size:14px;color:#999;margin-top:8px;">自由落体运动模拟 · 点击"运行"开始，点击"重置"归零</p>
   </div>
 
@@ -235,7 +234,7 @@
     function setup() {
       frameRate(60);
       let container = select("#myContainer");
-      let a = 2;
+      let a = 0.85;
       let w = int(min(container.width, (window.innerHeight - 160) / a));
       let h = int(w * a);
       if (w < 100) w = 800;
@@ -275,7 +274,7 @@
 
     function windowResized() {
       let container = select("#myContainer");
-      let a = 2;
+      let a = 0.85;
       let w = int(min(container.width, (window.innerHeight - 160) / a));
       let h = int(w * a);
       if (w < 100) w = 800;
@@ -284,7 +283,7 @@
     }
 
     function reSizing() {
-      myDataSheet.style("height", height + "px");
+      // Data sheet is now below canvas, no height sync needed
     }
 
     function setup2() {
@@ -318,7 +317,6 @@
 
     function draw() {
       if (touches.length > 1) return;
-      if (pauseChecked) return;
       background(255);
       strokeWeight(1);
       textSize(30);
@@ -326,10 +324,13 @@
       push();
       scale(height / 1000);
 
+      let internalW = width / (height / 1000);
+
+      // === LEFT SIDE: 小球下落区域 ===
       // 刻度线
       stroke(0);
-      for (let i = 0; i < 1000; i += 10) line(250, startY + i, 270, startY + i);
-      for (let i = 0; i < 1000; i += 100) line(250, startY + i, 290, startY + i);
+      for (let i = 0; i < 1000; i += 10) line(210, startY + i, 230, startY + i);
+      for (let i = 0; i < 1000; i += 100) line(210, startY + i, 250, startY + i);
 
       // 刻度标签
       fill(0);
@@ -338,13 +339,13 @@
       textAlign(LEFT, CENTER);
       for (let i = 0; i < 10; i++) {
         if (radioA.value() == "cm")
-          text(i * 100 + " cm", 300, startY + i * 100);
+          text(i * 100 + " cm", 260, startY + i * 100);
         else
-          text(i + " m", 300, startY + i * 100);
+          text(i + " m", 260, startY + i * 100);
       }
 
       // 物理模拟：自由落体 y = 0.5 * g * t²
-      if (timming >= 0) {
+      if (!pauseChecked && timming >= 0) {
         if (timming < 600) {
           timming++;
           y1 = 0.5 * 9.8 * timming * timming / 36;
@@ -358,19 +359,201 @@
       // 高度指示虚线
       if (timming < 0) {
         stroke(255, 128, 0);
-        dottedLine2(0, startY + y1, 250, startY + y1);
+        strokeWeight(2);
+        dottedLine2(80, startY + y1, 210, startY + y1);
       }
 
-      // 轨迹（历史位置）
+      // 轨迹（历史位置）— 图片底部对齐到高度位置
       if (checkA.checked()) {
         for (let i = 0; i < logData.length; i++) {
-          image(ball2Image, 0, startY + logData[i] - 200, 200, 200);
+          image(ball2Image, 50, startY + logData[i] - 150, 150, 150);
         }
       }
 
-      // 当前小球
-      image(ball2Image, 0, startY + y1 - 200, 200, 200);
+      // 当前小球 — 图片底部对齐到高度位置
+      image(ball2Image, 50, startY + y1 - 150, 150, 150);
+
+      // === RIGHT SIDE: h-t 图像（暂停时也绘制，以支持悬停坐标） ===
+      drawGraph(internalW);
+
       pop();
+    }
+
+    function drawGraph(internalW) {
+      let gx = 480, gy = 70, gh = 800;
+      let gw = internalW - gx - 15;
+      if (gw < 80) gw = 80;
+      let gBottom = gy + gh;
+      let gRight = gx + gw;
+
+      // 背景
+      fill(248, 249, 250);
+      noStroke();
+      rect(gx, gy, gw, gh);
+
+      // 边框
+      stroke(200);
+      strokeWeight(1.5);
+      noFill();
+      rect(gx, gy, gw, gh);
+
+      // 标题
+      fill(0);
+      noStroke();
+      textSize(34);
+      textAlign(CENTER, CENTER);
+      text("h-t 图像", gx + gw / 2, gy - 28);
+
+      if (logData.length < 1) {
+        fill(150);
+        textSize(24);
+        text('点击"运行"开始', gx + gw / 2, gy + gh / 2);
+        return;
+      }
+
+      let maxT = max((logData.length - 1) / 10, 0.1);
+      let maxH = logData[logData.length - 1];
+      if (maxH < 1) maxH = 1;
+      // 向上取整到合适的值
+      let yMax = maxH * 1.1;
+
+      // Y轴标签
+      fill(0);
+      noStroke();
+      textSize(28);
+      push();
+      translate(gx - 42, gy + gh / 2);
+      rotate(-PI / 2);
+      text("距离 (" + (radioA.value() == "cm" ? "cm" : "m") + ")", 0, 0);
+      pop();
+
+      // X轴标签
+      textSize(28);
+      textAlign(CENTER, CENTER);
+      text("时间 (s)", gx + gw / 2, gBottom + 46);
+
+      // Y轴刻度和网格
+      textSize(22);
+      textAlign(RIGHT, CENTER);
+      let yTicks = 5;
+      for (let i = 0; i <= yTicks; i++) {
+        let val = yMax * i / yTicks;
+        let y = gBottom - (val / yMax) * gh;
+        stroke(215);
+        strokeWeight(1);
+        line(gx, y, gRight, y);
+        stroke(0);
+        strokeWeight(1);
+        line(gx - 5, y, gx, y);
+        fill(0);
+        noStroke();
+        let label;
+        if (radioA.value() == "cm") {
+          label = val >= 1000 ? nf(val / 1000, 0, 1) + "k" : nf(val, 0, 0);
+        } else {
+          label = nf(val / 100, 0, 2);
+        }
+        text(label, gx - 10, y);
+      }
+
+      // X轴刻度
+      textAlign(CENTER, TOP);
+      let xTicks = 5;
+      for (let i = 0; i <= xTicks; i++) {
+        let val = maxT * i / xTicks;
+        let x = gx + (val / maxT) * gw;
+        stroke(0);
+        strokeWeight(1);
+        line(x, gBottom, x, gBottom + 5);
+        fill(0);
+        noStroke();
+        text(nf(val, 0, 1), x, gBottom + 8);
+      }
+
+      if (logData.length < 2) return;
+
+      // 绘制曲线
+      stroke(59, 130, 246);
+      strokeWeight(2.5);
+      noFill();
+      beginShape();
+      for (let i = 0; i < logData.length; i++) {
+        let t = i / 10;
+        let h = logData[i];
+        let x = gx + (t / maxT) * gw;
+        let y = gBottom - (h / yMax) * gh;
+        vertex(x, y);
+      }
+      endShape();
+
+      // 绘制数据点
+      fill(59, 130, 246);
+      noStroke();
+      for (let i = 0; i < logData.length; i++) {
+        if (i % 5 !== 0 && i !== logData.length - 1) continue;
+        let t = i / 10;
+        let h = logData[i];
+        let x = gx + (t / maxT) * gw;
+        let y = gBottom - (h / yMax) * gh;
+        circle(x, y, 6);
+      }
+
+      // === 鼠标悬停交互：坐标 + 垂线 ===
+      if (logData.length >= 2) {
+        let mx = mouseX / (height / 1000);
+        let my = mouseY / (height / 1000);
+        if (mx >= gx && mx <= gRight && my >= gy && my <= gBottom) {
+          let t = constrain((mx - gx) / gw * maxT, 0, maxT);
+          let idx = round(t * 10);
+          idx = constrain(idx, 0, logData.length - 1);
+          let pt = idx / 10;
+          let ph = logData[idx];
+          let px = gx + (pt / maxT) * gw;
+          let py = gBottom - (ph / yMax) * gh;
+
+          // 虚线垂线
+          drawingContext.setLineDash([6, 4]);
+          stroke(220, 50, 50);
+          strokeWeight(1.5);
+          line(px, py, px, gBottom);
+          line(px, py, gx, py);
+          drawingContext.setLineDash([]);
+
+          // 高亮圆点
+          fill(220, 50, 50);
+          noStroke();
+          circle(px, py, 9);
+
+          // X轴标注（时间）
+          fill(220, 50, 50);
+          noStroke();
+          textSize(22);
+          textAlign(CENTER, TOP);
+          text(nf(pt, 0, 1) + " s", px, gBottom + 26);
+
+          // Y轴标注（距离）
+          let hLabel = radioA.value() == "cm" ? nf(ph, 0, 0) : nf(ph / 100, 0, 2);
+          textAlign(RIGHT, CENTER);
+          text(hLabel, gx - 16, py);
+
+          // 浮窗提示
+          let tipText = "t=" + nf(pt, 0, 1) + "s  h=" + hLabel + (radioA.value() == "cm" ? "cm" : "m");
+          let tw = textWidth(tipText) + 20;
+          let th = 32;
+          let tipX = px + 20;
+          let tipY = py - 30;
+          if (tipX + tw > gRight) tipX = px - tw - 20;
+          if (tipY - th / 2 < gy) tipY = py + 30;
+          fill(255, 245, 245);
+          stroke(220, 50, 50);
+          strokeWeight(1.2);
+          rect(tipX, tipY - th / 2, tw, th, 6);
+          fill(180, 30, 30);
+          noStroke();
+          textAlign(LEFT, CENTER);
+          text(tipText, tipX + 10, tipY);
+        }
+      }
     }
 
     function doDataSheet() {
