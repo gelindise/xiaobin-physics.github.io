@@ -11,7 +11,7 @@
     "javalab_浮力实验.html","javalab_阿基米德王冠.html",
     "飞象_动滑轮定滑轮原理教学动画.html","javalab_电流表.html",
     "电阻的微观解释.html","javalab_磁场与磁感线.html",
-    "javalab_太阳风与极光.html","javalab_洛伦兹力.html","汽油机四冲程.html"
+    "javalab_太阳风与极光.html","javalab_洛伦兹力.html","汽油机四冲程.html","javalab_日食和月食.html"
   ];
 
   var page = window.location.pathname.substring(window.location.pathname.lastIndexOf('/') + 1) || 'experiments.html';
@@ -30,21 +30,8 @@
     return;
   }
 
-  // 通过 proxy-user 验证 session + 获取 VIP 信息
-  fetch('/api/proxy-user', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action: 'checkSession', username: user, token: token })
-  })
-  .then(function(r) { return r.json(); })
-  .then(function(result) {
-    if (result.valid === false && result.reason === 'kicked') {
-      localStorage.removeItem("currentUser");
-      localStorage.removeItem("sessionToken");
-      window.location.href = "login.html?reason=kicked";
-    }
-  })
-  .catch(function() {});
+  // VIP 信息获取（session 校验由 script.js 中的定时器统一处理）
+  // 先获取用户的 VIP 状态
 
   // VIP 状态校验
   var users = JSON.parse(localStorage.getItem("users") || "{}");

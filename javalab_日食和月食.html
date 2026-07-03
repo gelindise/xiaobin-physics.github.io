@@ -1,0 +1,1233 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=10">
+<title>日食和月食 - 物理虚拟实验</title>
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
+<link rel="stylesheet" href="style.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/0.9.0/p5.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/0.9.0/addons/p5.dom.min.js"></script>
+<style>
+  :root {
+    --bg-darker: #020617;
+    --bg-dark: #0f172a;
+    --surface: #1e293b;
+    --primary: #3b82f6;
+    --secondary: #06b6d4;
+    --accent: #8b5cf6;
+    --text-main: #f8fafc;
+    --text-muted: #94a3b8;
+    --glass-bg: rgba(255,255,255,0.05);
+    --glass-border: rgba(255,255,255,0.1);
+    --card-shadow: 0 8px 32px 0 rgba(0,0,0,0.37);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans SC", sans-serif;
+    background: var(--bg-darker);
+    color: var(--text-main);
+    min-height: 100vh;
+    padding-top: 48px;
+  }
+  body::before {
+    content: ''; position: fixed; inset: 0;
+    background:
+      radial-gradient(circle at 20% 30%, rgba(59,130,246,0.1) 0%, transparent 45%),
+      radial-gradient(circle at 80% 70%, rgba(139,92,246,0.08) 0%, transparent 45%);
+    pointer-events: none; z-index: 0;
+  }
+  body.header-hidden { padding-top: 0; }
+  body.header-hidden .header { transform: translateY(-100%); }
+  body { transition: padding-top 0.3s; }
+
+  .header {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+    background: rgba(2,6,23,0.85); backdrop-filter: blur(16px);
+    border-bottom: 1px solid var(--glass-border);
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 24px; height: 56px; transition: transform 0.3s;
+  }
+  .header .logo { font-size: 1.1rem; font-weight: 700; color: var(--text-main); text-decoration: none; display: flex; align-items: center; gap: 8px; }
+  .header .nav a { color: var(--text-muted); text-decoration: none; margin-left: 24px; font-size: 0.9rem; transition: color 0.2s; }
+  .header .nav a:hover { color: var(--text-main); }
+
+  .section { max-width: 1400px; margin: 0 auto; padding: 16px 16px 4px; position: relative; z-index: 1; }
+  .section h2 { font-size: 1.4rem; margin-bottom: 2px; }
+  .section p { color: var(--text-muted); font-size: 0.85rem; }
+
+  .main-card {
+    max-width: 1400px; margin: 0 auto 16px; padding: 0 16px; position: relative; z-index: 1;
+  }
+  .canvas-wrap {
+    background: var(--bg-dark); border-radius: 12px; padding: 4px;
+    display: flex; justify-content: center; align-items: center;
+    box-shadow: var(--card-shadow); border: 1px solid var(--glass-border);
+  }
+  #canvasContainer { width: 100%; min-height: 400px; display: flex; justify-content: center; align-items: center; }
+  #simCanvas { display: block; border-radius: 10px; touch-action: pinch-zoom; }
+
+  .controls-bar {
+    display: flex; flex-wrap: wrap; align-items: center; justify-content: center;
+    gap: 16px; padding: 16px 12px; margin-top: 12px;
+    background: var(--glass-bg); border-radius: 14px;
+    border: 1px solid var(--glass-border);
+  }
+  .controls-group {
+    display: flex; align-items: center; gap: 8px;
+  }
+  .controls-group label {
+    font-size: 0.82rem; color: var(--text-muted); white-space: nowrap;
+  }
+  .controls-group label .val { color: var(--secondary); font-weight: 600; }
+  .controls-group input[type="range"] {
+    -webkit-appearance: none; appearance: none;
+    width: 110px; height: 6px; border-radius: 3px;
+    background: linear-gradient(90deg, var(--primary), var(--secondary));
+    outline: none; cursor: pointer;
+  }
+  .controls-group input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none; width: 18px; height: 18px;
+    border-radius: 50%; background: #fff; cursor: pointer;
+    box-shadow: 0 0 8px rgba(59,130,246,0.5);
+  }
+  .btn-primary {
+    border: none; outline: none; cursor: pointer;
+    padding: 9px 20px; border-radius: 10px;
+    font-size: 0.85rem; font-weight: 600;
+    color: #fff;
+    background: linear-gradient(135deg, var(--primary), var(--secondary));
+    transition: all 0.2s; white-space: nowrap;
+  }
+  .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 4px 16px rgba(59,130,246,0.35); }
+  .btn-primary.active { background: linear-gradient(135deg, #ef4444, #f97316); }
+  .btn-reset {
+    border: 1px solid var(--glass-border); outline: none; cursor: pointer;
+    padding: 9px 16px; border-radius: 10px;
+    font-size: 0.85rem; color: var(--text-muted);
+    background: transparent; transition: all 0.2s; white-space: nowrap;
+  }
+  .btn-reset:hover { border-color: var(--text-muted); color: var(--text-main); }
+
+  .seg-toggle { display: flex; border-radius: 10px; overflow: hidden; border: 1px solid var(--glass-border); }
+  .seg-btn {
+    border: none; outline: none; cursor: pointer;
+    padding: 8px 16px; font-size: 0.82rem; color: var(--text-muted);
+    background: transparent; transition: all 0.2s; white-space: nowrap;
+  }
+  .seg-btn:not(:last-child) { border-right: 1px solid var(--glass-border); }
+  .seg-btn:hover { background: rgba(255,255,255,0.05); color: var(--text-main); }
+  .seg-btn.active { background: linear-gradient(135deg, var(--primary), var(--secondary)); color: #fff; }
+
+  .toggle-row { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+  .toggle-row input[type="checkbox"] { accent-color: var(--primary); width: 16px; height: 16px; cursor: pointer; }
+  .toggle-row span { font-size: 0.82rem; color: var(--text-muted); }
+
+  .data-panel { max-width: 1400px; margin: 0 auto 20px; padding: 0 16px; position: relative; z-index: 1; }
+  .data-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  .data-card {
+    background: var(--glass-bg); border: 1px solid var(--glass-border);
+    border-radius: 14px; padding: 16px; text-align: center;
+    backdrop-filter: blur(8px);
+  }
+  .data-card .title { font-size: 0.78rem; color: var(--text-muted); margin-bottom: 6px; }
+  .data-card .value { font-size: 1.3rem; font-weight: 700; }
+  .data-card .sub { font-size: 0.75rem; color: var(--text-muted); margin-top: 4px; }
+  .value.solar-eclipse { color: #f97316; }
+  .value.lunar-eclipse { color: #ef4444; }
+  .value.none { color: var(--text-muted); }
+  .value.blue { color: #38bdf8; }
+
+  .formula-bar { max-width: 1400px; margin: 0 auto 20px; padding: 0 16px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; position: relative; z-index: 1; }
+  .formula-item {
+    background: var(--glass-bg); border: 1px solid var(--glass-border);
+    border-radius: 14px; padding: 16px; text-align: center;
+  }
+  .formula-item .label { font-size: 0.8rem; color: var(--secondary); margin-bottom: 6px; font-weight: 600; }
+  .formula-item .value { font-size: 0.85rem; color: var(--text-main); line-height: 1.5; }
+
+  .experiment-info { max-width: 1400px; margin: 0 auto 40px; padding: 0 16px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; position: relative; z-index: 1; }
+  .info-card {
+    background: var(--glass-bg); border: 1px solid var(--glass-border);
+    border-radius: 14px; padding: 18px;
+  }
+  .info-card h3 { font-size: 1rem; margin-bottom: 8px; color: var(--secondary); }
+  .info-card p { font-size: 0.82rem; color: var(--text-muted); line-height: 1.6; }
+
+  /* Quiz overlay uses experiment-shell.css shared styles */
+
+  @media (max-width: 768px) {
+    .data-grid, .formula-bar, .experiment-info { grid-template-columns: 1fr; }
+    .controls-bar { gap: 10px; }
+    .controls-group input[type="range"] { width: 80px; }
+    .seg-btn { padding: 8px 10px; font-size: 0.75rem; }
+    .section h2 { font-size: 1.3rem; }
+  }
+  @media (max-width: 480px) {
+    .header { padding: 0 12px; }
+    .section { padding: 24px 8px 4px; }
+    .main-card { padding: 0 8px; }
+    .controls-bar { padding: 10px 8px; gap: 8px; }
+  }
+
+  /* Quiz overlay styles */
+  .quiz-option {
+    display: block; width: 100%; text-align: left;
+    padding: 12px 16px; margin-bottom: 6px;
+    background: rgba(255,255,255,0.06); border: 1px solid var(--glass-border);
+    border-radius: 10px; color: var(--text-main); font-size: 0.9rem;
+    cursor: pointer; transition: all 0.2s;
+  }
+  .quiz-option:hover { background: rgba(255,255,255,0.1); border-color: var(--primary); }
+  .quiz-option:disabled { cursor: not-allowed; opacity: 0.7; }
+  .quiz-option.correct { background: rgba(34,197,94,0.15); border-color: #22c55e; color: #22c55e; }
+  .quiz-option.wrong { background: rgba(239,68,68,0.15); border-color: #ef4444; color: #ef4444; }
+  .quiz-primary-btn {
+    border: none; outline: none; cursor: pointer;
+    padding: 10px 24px; border-radius: 10px;
+    font-size: 0.9rem; font-weight: 600; color: #fff;
+    background: linear-gradient(135deg, var(--accent), var(--primary));
+    transition: all 0.2s;
+  }
+  .quiz-primary-btn:hover { transform: translateY(-1px); box-shadow: 0 4px 16px rgba(139,92,246,0.35); }
+</style>
+<script src="auth-check.js"></script>
+</head>
+<body>
+<header class="header">
+  <a href="index.html" class="logo">⚡ 物理虚拟实验</a>
+  <div class="nav">
+    <a href="index.html">首页</a>
+    <a href="experiments.html">实验列表</a>
+  </div>
+</header>
+
+<div class="section">
+  <h2>🌑 日食和月食 — 光的直线传播</h2>
+  <p>从北极上方俯视日-地-月系统，观察日食和月食的形成过程。拖动滑块或点击按钮，理解本影与半影的区别。</p>
+</div>
+
+<div class="main-card">
+  <div class="canvas-wrap">
+    <div id="canvasContainer"></div>
+  </div>
+  <div class="controls-bar">
+    <div class="controls-group">
+      <button class="btn-primary" id="btnToggle">开始运行</button>
+      <button class="btn-reset" id="btnReset">重置</button>
+    </div>
+    <div class="controls-group">
+      <label>速度 <span class="val" id="speedLabel">1.0</span>×</label>
+      <input type="range" id="speedSlider" min="0.5" max="5.0" value="1.0" step="0.1">
+    </div>
+    <div class="controls-group seg-toggle">
+      <button class="seg-btn" id="btnSolarPos">日食位置</button>
+      <button class="seg-btn" id="btnLunarPos">月食位置</button>
+    </div>
+    <div class="controls-group">
+      <label>月球角度</label>
+      <input type="range" id="angleSlider" min="0" max="360" value="0" style="width:140px;">
+    </div>
+    <div class="controls-group">
+      <label class="toggle-row">
+        <input type="checkbox" id="chkRays" checked>
+        <span>显示光线</span>
+      </label>
+    </div>
+    <div class="controls-group">
+      <a href="javascript:doFullScreen();" style="box-shadow:none;display:inline-flex;align-items:center;" aria-label="全屏">
+        <svg width="26" height="26" viewBox="0 0 40 40">
+          <path d="M5,15 L5,5 L15,5 M35,25 L35,35 L25,35 M25,5 L35,5 L35,15 M15,35 L5,35 L5,25" fill="none" stroke="#94a3b8" stroke-width="3"/>
+        </svg>
+      </a>
+    </div>
+  </div>
+</div>
+
+<div style="max-width:1150px;margin:0 auto 24px;padding:0 16px;text-align:center;position:relative;z-index:1;">
+  <button class="btn-primary" id="quizStartBtn" style="font-size:16px;padding:10px 32px;background:linear-gradient(135deg,#8b5cf6,#06b6d4);">
+    🏆 过关挑战
+  </button>
+  <p style="color:#64748b;font-size:12px;margin-top:8px;">15道单选题 · 3关制 · 检验你对日食和月食的掌握程度</p>
+</div>
+
+<div class="data-panel">
+  <div class="data-grid">
+    <div class="data-card">
+      <div class="title">当前状态</div>
+      <div class="value none" id="statusVal">正常运行</div>
+      <div class="sub" id="statusSub">月球绕地球正常运行中</div>
+    </div>
+    <div class="data-card">
+      <div class="title">日-地-月夹角</div>
+      <div class="value blue" id="angleVal">0°</div>
+      <div class="sub" id="angleSub">日食条件：接近180° · 月食条件：接近0°</div>
+    </div>
+    <div class="data-card">
+      <div class="title">月球轨道角</div>
+      <div class="value blue" id="orbitVal">0°</div>
+      <div class="sub" id="orbitSub">0°=月食位(地球右侧) · 180°=日食位(太阳侧)</div>
+    </div>
+  </div>
+</div>
+
+<div class="formula-bar">
+  <div class="formula-item">
+    <div class="label">日食 (Solar Eclipse)</div>
+    <div class="value">月球运行到太阳和地球之间，三者在一条直线上，月球的影子落在地球表面。处于本影区可观测日全食，半影区可观测日偏食。</div>
+  </div>
+  <div class="formula-item">
+    <div class="label">月食 (Lunar Eclipse)</div>
+    <div class="value">地球运行到太阳和月球之间，三者在一条直线上，地球的影子落在月球表面。月全食时月球呈红铜色（血月），是大气折射所致。</div>
+  </div>
+  <div class="formula-item">
+    <div class="label">光的直线传播</div>
+    <div class="value">光在均匀介质中沿直线传播。太阳光照射不透明的月球或地球时，在背光侧形成本影（完全黑暗）和半影（部分黑暗）区域。</div>
+  </div>
+</div>
+
+<div class="experiment-info">
+  <div class="info-card">
+    <h3>📖 实验说明</h3>
+    <p>本实验从<strong>北极上方俯视</strong>日-地-月系统。<br>
+    🟡 <strong>黄色大圆</strong> = 太阳（光源）<br>
+    🔵 <strong>蓝色圆</strong> = 地球<br>
+    ⚪ <strong>灰色小圆</strong> = 月球<br>
+    虚线圆 = 月球绕地球轨道<br>
+    点击"日食位置"或"月食位置"按钮快速定位，观察光线和阴影的变化。</p>
+  </div>
+  <div class="info-card">
+    <h3>🔬 物理原理</h3>
+    <p>• <strong>日食成因</strong>：月球位于太阳和地球之间，月球的影子落在地球上。<br>
+    • <strong>月食成因</strong>：地球位于太阳和月球之间，地球的影子落在月球上。<br>
+    • <strong>本影(Umbra)</strong>：完全接收不到太阳光的区域（深红棕色）。<br>
+    • <strong>半影(Penumbra)</strong>：只能接收到部分太阳光的区域（浅红棕色）。</p>
+  </div>
+  <div class="info-card">
+    <h3>🌍 生活应用</h3>
+    <p>• <strong>日全食</strong>：太阳被月球完全遮挡，地面瞬间变暗，可观测日冕。<br>
+    • <strong>日偏食</strong>：观测者处于半影区，太阳只被部分遮挡。<br>
+    • <strong>月全食（血月）</strong>：月球呈红铜色，因地球大气折射红光至月面。<br>
+    • <strong>日环食</strong>：月球距地球较远时，角直径小于太阳，露出金环。</p>
+  </div>
+</div>
+
+<!-- Quiz overlay -->
+<div id="quizOverlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:200;align-items:center;justify-content:center;">
+  <div class="quiz-dialog" style="background:var(--bg-dark);border:1px solid var(--glass-border);border-radius:16px;padding:28px;max-width:560px;width:90%;max-height:85vh;overflow-y:auto;position:relative;">
+    <button id="quizCloseBtn" style="position:absolute;top:12px;right:16px;background:none;border:none;color:var(--text-muted);font-size:1.4rem;cursor:pointer;">&times;</button>
+    <h3 style="text-align:center;margin-bottom:6px;">🏆 日食和月食 · 过关挑战</h3>
+    <p style="text-align:center;color:var(--text-muted);font-size:0.85rem;margin-bottom:18px;">3关 · 每关5题 · 60%及格进入下一关</p>
+    <div id="quizProgressFill" style="height:4px;background:linear-gradient(90deg,var(--accent),var(--secondary));border-radius:2px;width:0%;transition:width 0.3s;"></div>
+    <div id="quizProgress" style="text-align:center;color:var(--text-muted);font-size:0.8rem;margin:6px 0 14px;"></div>
+    <div id="quizQuestion" style="font-size:1.05rem;margin-bottom:14px;line-height:1.5;"></div>
+    <div id="quizOptions" style="display:flex;flex-direction:column;gap:8px;"></div>
+    <div id="quizScore" style="text-align:center;color:var(--secondary);font-weight:600;margin-top:10px;"></div>
+    <div id="quizReview" style="margin-top:12px;"></div>
+  </div>
+</div>
+
+<script>
+/* ========== p5.js constants ========== */
+var W = 1400;
+var H = 680;
+var PANEL_DIVIDER = 880; // separates top-down view (left) from observer view (right)
+
+// Celestial body positions & sizes (top-down schematic, NOT to scale)
+var SUN_CX = 100, SUN_CY = 340, SUN_R = 75;
+var EARTH_CX = 500, EARTH_CY = 340, EARTH_R = 32;
+var MOON_ORBIT_R = 110;
+var MOON_R = 11;
+
+// State
+var running = false;
+var speedMul = 1.0;
+var moonAngle = 0;      // radians
+var showRays = true;
+var sliderDragging = false;
+
+// DOM refs
+var btnToggle, btnReset, speedSlider, speedLabel;
+var btnSolarPos, btnLunarPos, angleSlider;
+var chkRays;
+var statusVal, statusSub, angleVal, angleSub, orbitVal, orbitSub;
+
+/* ========== p5.js setup ========== */
+function setup() {
+  var container = select('#canvasContainer');
+  var cw = (container.width || container.elt.offsetWidth || windowWidth - 32);
+  var maxW = min(cw, windowWidth - 32, 1400);
+  var aspect = W / H;
+  var canvas = createCanvas(maxW, maxW / aspect);
+  canvas.parent('canvasContainer');
+  canvas.id('simCanvas');
+  frameRate(60);
+
+  // Handle fullscreen change to resize canvas
+  document.addEventListener('fullscreenchange', function() {
+    setTimeout(function() { windowResized(); }, 100);
+  });
+  document.addEventListener('webkitfullscreenchange', function() {
+    setTimeout(function() { windowResized(); }, 100);
+  });
+
+  btnToggle = select('#btnToggle');
+  btnReset = select('#btnReset');
+  speedSlider = select('#speedSlider');
+  speedLabel = select('#speedLabel');
+  btnSolarPos = select('#btnSolarPos');
+  btnLunarPos = select('#btnLunarPos');
+  angleSlider = select('#angleSlider');
+  chkRays = select('#chkRays');
+  statusVal = select('#statusVal');
+  statusSub = select('#statusSub');
+  angleVal = select('#angleVal');
+  angleSub = select('#angleSub');
+  orbitVal = select('#orbitVal');
+  orbitSub = select('#orbitSub');
+
+  btnToggle.mouseClicked(toggleRun);
+  btnReset.mouseClicked(resetAll);
+  speedSlider.input(function() {
+    speedMul = parseFloat(speedSlider.value());
+    speedLabel.html(speedMul.toFixed(1));
+  });
+  btnSolarPos.mouseClicked(snapToSolar);
+  btnLunarPos.mouseClicked(snapToLunar);
+  angleSlider.input(function() {
+    sliderDragging = true;
+    moonAngle = radians(parseFloat(angleSlider.value()));
+    updatePanel();
+  });
+  angleSlider.changed(function() {
+    sliderDragging = false;
+  });
+  chkRays.changed(function() {
+    showRays = chkRays.elt.checked;
+  });
+
+  resetAll();
+  updatePanel();
+
+  // Initialize quiz via ExpShell
+  function initQuizWhenReady() {
+    if (window.ExpShell && window.ExpShell.initQuiz) {
+      window.ExpShell.initQuiz({
+        questions: quizQuestions,
+        levels: 3,
+        perLevel: 5,
+        storageKey: 'quiz_eclipse_progress'
+      });
+    } else {
+      setTimeout(initQuizWhenReady, 100);
+    }
+  }
+  initQuizWhenReady();
+}
+
+function windowResized() {
+  var container = select('#canvasContainer');
+  var cw = (container.width || container.elt.offsetWidth || windowWidth - 32);
+  var maxW = min(cw, windowWidth - 32, 1200);
+  var aspect = W / H;
+  resizeCanvas(maxW, maxW / aspect);
+}
+
+/* ========== Controls ========== */
+function toggleRun() {
+  running = !running;
+  btnToggle.html(running ? '暂停' : '开始运行');
+  if (running) btnToggle.addClass('active');
+  else btnToggle.removeClass('active');
+}
+
+function resetAll() {
+  running = false;
+  btnToggle.html('开始运行');
+  btnToggle.removeClass('active');
+  moonAngle = 0;
+  sliderDragging = false;
+  angleSlider.value(0);
+  speedSlider.value(1);
+  speedMul = 1.0;
+  speedLabel.html('1.0');
+  updatePanel();
+}
+
+function snapToSolar() {
+  moonAngle = PI;
+  angleSlider.value(180);
+  sliderDragging = false;
+  updatePanel();
+}
+
+function snapToLunar() {
+  moonAngle = 0;
+  angleSlider.value(0);
+  sliderDragging = false;
+  updatePanel();
+}
+
+function doFullScreen() {
+  var el = document.documentElement;
+  if (el.requestFullscreen) el.requestFullscreen();
+  else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+  else if (el.msRequestFullscreen) el.msRequestFullscreen();
+}
+
+/* ========== Physics update ========== */
+function updatePhysics() {
+  if (!running) return;
+  moonAngle += 0.006 * speedMul;
+  if (moonAngle > TWO_PI) moonAngle -= TWO_PI;
+  if (moonAngle < 0) moonAngle += TWO_PI;
+
+  if (!sliderDragging) {
+    angleSlider.value(Math.round(degrees(moonAngle)));
+  }
+  updatePanel();
+}
+
+/* ========== Eclipse detection ========== */
+function getMoonPos() {
+  return {
+    x: EARTH_CX + MOON_ORBIT_R * cos(moonAngle),
+    y: EARTH_CY + MOON_ORBIT_R * sin(moonAngle)
+  };
+}
+
+function computeEclipseStatus() {
+  var moon = getMoonPos();
+  var dx1 = moon.x - EARTH_CX;
+  var dy1 = moon.y - EARTH_CY;
+  var dx2 = SUN_CX - EARTH_CX;
+  var dy2 = SUN_CY - EARTH_CY;
+
+  var angleMoon = atan2(dy1, dx1);
+  var angleSun = atan2(dy2, dx2);
+  var diff = degrees(angleMoon - angleSun);
+
+  // Normalize diff to [-180, 180]
+  while (diff > 180) diff -= 360;
+  while (diff < -180) diff += 360;
+
+  var absDiff = Math.abs(diff);
+  moonAngleDeg = Math.round(degrees(moonAngle));
+  sunEarthMoonAngle = Math.round(diff);
+
+  var PENUMBRA_DEG = 30;  // penumbra begins (wider range)
+  var UMBRA_DEG = 8;      // umbra / total eclipse (narrower core)
+
+  // Solar eclipse: Moon between Sun and Earth, diff ≈ 0
+  if (absDiff < PENUMBRA_DEG && moon.x < EARTH_CX) {
+    var align = Math.max(0, 1 - absDiff / PENUMBRA_DEG);
+    var phase = absDiff < UMBRA_DEG ? 'umbra' : 'penumbra';
+    return { type: 'solar', phase: phase, alignment: align, angle: diff };
+  }
+  // Lunar eclipse: Earth between Sun and Moon, diff ≈ ±180
+  if (absDiff > (180 - PENUMBRA_DEG) && moon.x > EARTH_CX) {
+    var gapFrom180 = 180 - absDiff;
+    var align2 = Math.max(0, 1 - gapFrom180 / PENUMBRA_DEG);
+    var phase2 = gapFrom180 < UMBRA_DEG ? 'umbra' : 'penumbra';
+    return { type: 'lunar', phase: phase2, alignment: align2, angle: diff };
+  }
+  return { type: 'none', phase: 'none', alignment: 0, angle: diff };
+}
+
+function updatePanel() {
+  var status = computeEclipseStatus();
+  var moonDeg = Math.round(degrees(moonAngle));
+
+  orbitVal.html(moonDeg + '°');
+  if (Math.abs(moonDeg - 180) < 5) {
+    orbitSub.html('≈日食位(太阳侧) · 月球位于日地之间');
+  } else if (Math.abs(moonDeg - 0) < 5 || Math.abs(moonDeg - 360) < 5) {
+    orbitSub.html('≈月食位(远离太阳侧) · 地球位于日月之间');
+  } else if (moonDeg > 90 && moonDeg < 270) {
+    orbitSub.html('月球在地球左侧(朝向太阳方向)');
+  } else {
+    orbitSub.html('月球在地球右侧(背离太阳方向)');
+  }
+
+  angleVal.html(Math.abs(status.angle) + '°');
+  angleSub.html('日食条件: |夹角|<15° · 月食条件: |夹角|>165°');
+
+  if (status.type === 'solar') {
+    if (status.phase === 'umbra') {
+      statusVal.html('🌑 日全食！（本影区）');
+      statusVal.elt.className = 'value solar-eclipse';
+      statusSub.html('观察者位于月球本影中，太阳完全被遮挡（对齐度: ' + Math.round(status.alignment * 100) + '%）');
+    } else {
+      statusVal.html('🌓 日偏食（半影区）');
+      statusVal.elt.className = 'value solar-eclipse';
+      statusSub.html('观察者位于月球半影中，太阳部分被遮挡（对齐度: ' + Math.round(status.alignment * 100) + '%）');
+    }
+  } else if (status.type === 'lunar') {
+    if (status.phase === 'umbra') {
+      statusVal.html('🔴 月全食！（本影区）');
+      statusVal.elt.className = 'value lunar-eclipse';
+      statusSub.html('月球完全进入地球本影，呈红铜色血月（对齐度: ' + Math.round(status.alignment * 100) + '%）');
+    } else {
+      statusVal.html('🌙 月偏食（半影区）');
+      statusVal.elt.className = 'value lunar-eclipse';
+      statusSub.html('月球进入地球半影，月面部分变暗（对齐度: ' + Math.round(status.alignment * 100) + '%）');
+    }
+  } else {
+    statusVal.html('正常运行');
+    statusVal.elt.className = 'value none';
+    statusSub.html('月球绕地球正常运行中，尚未形成日食或月食');
+  }
+}
+
+/* ========== Drawing ========== */
+function draw() {
+  updatePhysics();
+  background(5, 8, 22);
+  push();
+  scale(width / W, height / H);
+
+  // === Left Panel: Top-down orbital view ===
+  drawStars();
+  drawOrbitPath();
+  drawSun();
+  drawEarth();
+  if (showRays) drawAllRaysAndShadows();
+  drawMoon();
+  drawLabels();
+
+  // === Divider ===
+  drawPanelDivider();
+
+  // === Right Panel: Observer's sky view ===
+  drawObserverView();
+
+  pop();
+};
+
+function drawStars() {
+  randomSeed(3);
+  noStroke();
+  for (var i = 0; i < 140; i++) {
+    var sx = random(0, W);
+    var sy = random(0, H);
+    var alpha = random(40, 180);
+    fill(255, 255, 255, alpha);
+    circle(sx, sy, random(1, 2.5));
+  }
+}
+
+function drawOrbitPath() {
+  stroke(148, 163, 184, 60);
+  strokeWeight(1.2);
+  noFill();
+  drawingContext.setLineDash([7, 7]);
+  circle(EARTH_CX, EARTH_CY, MOON_ORBIT_R * 2);
+  drawingContext.setLineDash([]);
+}
+
+function drawSun() {
+  var cx = SUN_CX, cy = SUN_CY, r = SUN_R;
+  noStroke();
+  // Outer glow layers
+  var glowLayers = [
+    { n: 1, a: 6 }, { n: 2, a: 5 }, { n: 3, a: 4 },
+    { n: 4, a: 3 }, { n: 5, a: 2 }
+  ];
+  for (var g = glowLayers.length - 1; g >= 0; g--) {
+    var lr = r * 1.15 + glowLayers[g].n * 9;
+    fill(251, 191, 36, glowLayers[g].a);
+    circle(cx, cy, lr * 2);
+  }
+  // Main body
+  fill(250, 204, 21);
+  circle(cx, cy, r * 2);
+  // Surface spots
+  fill(245, 158, 11, 90);
+  ellipse(cx - 18, cy - 12, 16, 12);
+  ellipse(cx + 14, cy + 8, 20, 10);
+  ellipse(cx + 8, cy - 20, 12, 8);
+  // Inner glow
+  fill(254, 240, 138, 40);
+  circle(cx, cy, r * 1.8);
+  // Label
+  fill(251, 191, 36, 200);
+  textSize(13);
+  textAlign(CENTER, CENTER);
+  text('太阳', cx, cy + r + 22);
+  textSize(10);
+  fill(251, 191, 36, 120);
+  text('(光源)', cx, cy + r + 38);
+}
+
+function drawEarth() {
+  var cx = EARTH_CX, cy = EARTH_CY, r = EARTH_R;
+  noStroke();
+  // Atmosphere glow
+  for (var i = 4; i >= 1; i--) {
+    fill(56, 189, 248, 6 + i * 5);
+    circle(cx, cy, r * 1.4 + i * 8);
+  }
+  // Body gradient (scanlines)
+  for (var y = -r; y <= r; y += 2) {
+    var dist = abs(y) / r;
+    var shadeB = map(dist, 0, 1, 220, 70);
+    var shadeG = map(dist, 0, 1, 220, 110);
+    fill(26, shadeG, shadeB);
+    var bw = sqrt(r * r - y * y);
+    rect(cx - bw, cy + y - 1, bw * 2, 2);
+  }
+  // Continents
+  push();
+  translate(cx, cy);
+  noStroke();
+  fill(64, 180, 100, 210);
+  var land = [
+    [-22, -18, 24, 14], [-12, -2, 16, 9], [-14, 10, 16, 20],
+    [8, -20, 18, 10], [16, -10, 26, 12], [10, 2, 14, 24], [20, 12, 9, 9]
+  ];
+  for (var li = 0; li < land.length; li++) {
+    ellipse(land[li][0], land[li][1], land[li][2], land[li][3]);
+  }
+  pop();
+  // Highlight
+  noStroke();
+  fill(255, 255, 255, 26);
+  ellipse(cx - r * 0.2, cy - r * 0.25, r * 1.2, r * 0.75);
+
+  // Observer position (red dot on Earth surface)
+  var status = computeEclipseStatus();
+  if (status.type !== 'none') {
+    var obsAngle;
+    if (status.type === 'solar') {
+      // Solar eclipse: observer on Sun-facing side (LEFT)
+      obsAngle = PI;
+    } else {
+      // Lunar eclipse: observer on night side (RIGHT, facing away from Sun toward Moon)
+      obsAngle = 0;
+    }
+    var obsX = cx + r * cos(obsAngle);
+    var obsY = cy + r * sin(obsAngle);
+
+    // Red glow
+    noStroke();
+    fill(255, 50, 50, 80);
+    circle(obsX, obsY, 14);
+    fill(255, 50, 50, 160);
+    circle(obsX, obsY, 10);
+    // White center
+    fill(255, 255, 255, 220);
+    circle(obsX, obsY, 6);
+
+    // Label "观察者"
+    fill(255, 90, 90, 200);
+    textSize(9);
+    textAlign(CENTER, BOTTOM);
+    var labelOffX = obsX < cx ? -16 : 16;
+    text('观察者', obsX + labelOffX, obsY - 8);
+  }
+
+  // Label
+  fill(56, 189, 248, 200);
+  textSize(13);
+  textAlign(CENTER, CENTER);
+  text('地球', cx, cy + r + 22);
+}
+
+function drawMoon() {
+  var moon = getMoonPos();
+  var cx = moon.x, cy = moon.y, r = MOON_R;
+  noStroke();
+  // Small glow
+  for (var i = 3; i >= 1; i--) {
+    fill(180, 180, 190, 4 + i * 6);
+    circle(cx, cy, r * 1.2 + i * 4);
+  }
+  // Body
+  fill(180, 180, 190);
+  circle(cx, cy, r * 2);
+  // Crater hints
+  fill(150, 150, 160, 80);
+  ellipse(cx - 2, cy - 2, 4, 3);
+  ellipse(cx + 3, cy + 2, 3, 3);
+  // Highlight
+  fill(220, 220, 230, 70);
+  ellipse(cx - r * 0.3, cy - r * 0.3, r, r * 0.6);
+  // Label
+  fill(200, 200, 210, 200);
+  textSize(11);
+  textAlign(CENTER, CENTER);
+  // Offset label to avoid overlap
+  var lx = cx + (cx < EARTH_CX ? -18 : 18);
+  var ly = cy + (cy < EARTH_CY ? -14 : 14);
+  text('月球', lx, ly);
+}
+
+/* ========== Tangent & shadow geometry ========== */
+function computeTangentPoints(c1, r1, c2, r2, type) {
+  var dx = c2.x - c1.x;
+  var dy = c2.y - c1.y;
+  var d = sqrt(dx * dx + dy * dy);
+  if (d < 0.001) return null;
+  var alpha = atan2(dy, dx);
+
+  var delta;
+  if (type === 'inner_upper' || type === 'inner_lower') {
+    // Internal tangents: crossing, cos(delta) = (r1 + r2) / d
+    var cosVal = (r1 + r2) / d;
+    if (cosVal > 0.999) cosVal = 0.999;
+    delta = acos(cosVal);
+  } else {
+    // External tangents: same side, cos(delta) = (r1 - r2) / d
+    var cosVal2 = (r1 - r2) / d;
+    if (cosVal2 > 0.999) cosVal2 = 0.999;
+    if (cosVal2 < -0.999) cosVal2 = -0.999;
+    delta = acos(cosVal2);
+  }
+
+  var sign = (type === 'inner_upper' || type === 'outer_upper') ? 1 : -1;
+  var angle1 = alpha + sign * delta;
+  var p1 = { x: c1.x + r1 * cos(angle1), y: c1.y + r1 * sin(angle1) };
+
+  var angle2;
+  if (type === 'inner_upper' || type === 'inner_lower') {
+    // Internal: opposite side of circle 2
+    angle2 = angle1 + PI;
+  } else {
+    // External: same side
+    angle2 = angle1;
+  }
+  var p2 = { x: c2.x + r2 * cos(angle2), y: c2.y + r2 * sin(angle2) };
+
+  return { p1: p1, p2: p2, d: d };
+}
+
+function extendRay(p1, p2, dist) {
+  var dx = p2.x - p1.x;
+  var dy = p2.y - p1.y;
+  var len = sqrt(dx * dx + dy * dy);
+  if (len < 0.001) return { x: p2.x, y: p2.y };
+  return { x: p2.x + (dx / len) * dist, y: p2.y + (dy / len) * dist };
+}
+
+function drawAllRaysAndShadows() {
+  var sun = { x: SUN_CX, y: SUN_CY };
+  var moon = getMoonPos();
+  var earth = { x: EARTH_CX, y: EARTH_CY };
+  var status = computeEclipseStatus();
+
+  // Determine which body creates the shadow
+  var occluder, occluderR;
+  var shadeType = 'none';
+
+  if (status.type === 'solar') {
+    // Moon blocks Sun light from reaching Earth
+    occluder = moon;
+    occluderR = MOON_R;
+    shadeType = 'solar';
+  } else if (status.type === 'lunar') {
+    // Earth blocks Sun light from reaching Moon
+    occluder = earth;
+    occluderR = EARTH_R;
+    shadeType = 'lunar';
+  }
+
+  if (shadeType !== 'none') {
+    drawShadowRays(sun, SUN_R, occluder, occluderR, shadeType);
+  } else {
+    // Always draw faint rays from Sun to Moon for visual context
+    drawContextRays(sun, SUN_R, moon, MOON_R);
+  }
+}
+
+function drawShadowRays(sun, sunR, occluder, occR, shadeType) {
+  var ext = 350; // extension past occluder
+
+  // Compute all 4 tangents
+  var types = ['inner_upper', 'inner_lower', 'outer_upper', 'outer_lower'];
+  var tangents = {};
+  for (var t = 0; t < types.length; t++) {
+    var tp = computeTangentPoints(sun, sunR, occluder, occR, types[t]);
+    if (tp) tangents[types[t]] = tp;
+  }
+
+  // Draw rays
+  for (var k in tangents) {
+    var tg = tangents[k];
+    var isInner = k.indexOf('inner_') === 0;
+    if (isInner) {
+      stroke(255, 180, 50, 110);
+      strokeWeight(2.2);
+    } else {
+      stroke(255, 220, 100, 65);
+      strokeWeight(1.5);
+    }
+    var extPt = extendRay(tg.p1, tg.p2, ext);
+    line(tg.p1.x, tg.p1.y, extPt.x, extPt.y);
+    // Also draw from sun edge to occluder with slightly different alpha
+    if (isInner) {
+      stroke(255, 200, 80, 70);
+      strokeWeight(1.5);
+      line(tg.p1.x, tg.p1.y, tg.p2.x, tg.p2.y);
+    }
+  }
+
+  // Draw shadow regions (filled polygons behind occluder)
+  if (tangents['inner_upper'] && tangents['inner_lower'] &&
+      tangents['outer_upper'] && tangents['outer_lower']) {
+
+    var iu = tangents['inner_upper'];
+    var il = tangents['inner_lower'];
+    var ou = tangents['outer_upper'];
+    var ol = tangents['outer_lower'];
+
+    var iuExt = extendRay(iu.p1, iu.p2, ext);
+    var ilExt = extendRay(il.p1, il.p2, ext);
+    var ouExt = extendRay(ou.p1, ou.p2, ext);
+    var olExt = extendRay(ol.p1, ol.p2, ext);
+
+    noStroke();
+
+    // Umbra: region between inner tangents
+    fill(139, 0, 0, 45);
+    beginShape();
+    vertex(iu.p2.x, iu.p2.y);
+    vertex(iuExt.x, iuExt.y);
+    vertex(ilExt.x, ilExt.y);
+    vertex(il.p2.x, il.p2.y);
+    endShape(CLOSE);
+
+    // Penumbra upper: between outer_upper and inner_upper
+    fill(180, 60, 30, 30);
+    beginShape();
+    vertex(ou.p2.x, ou.p2.y);
+    vertex(ouExt.x, ouExt.y);
+    vertex(iuExt.x, iuExt.y);
+    vertex(iu.p2.x, iu.p2.y);
+    endShape(CLOSE);
+
+    // Penumbra lower: between inner_lower and outer_lower
+    fill(180, 60, 30, 30);
+    beginShape();
+    vertex(il.p2.x, il.p2.y);
+    vertex(ilExt.x, ilExt.y);
+    vertex(olExt.x, olExt.y);
+    vertex(ol.p2.x, ol.p2.y);
+    endShape(CLOSE);
+
+    // Labels on shadow regions
+    var midX = (iuExt.x + ilExt.x) / 2;
+    var midY = (iuExt.y + ilExt.y) / 2;
+    fill(255, 100, 80, 160);
+    textSize(11);
+    textAlign(CENTER, CENTER);
+    text('本影', midX, midY);
+
+    var penUpX = (ouExt.x + iuExt.x) / 2;
+    var penUpY = (ouExt.y + iuExt.y) / 2;
+    fill(255, 160, 130, 150);
+    textSize(10);
+    text('半影', penUpX, penUpY);
+
+    var penLoX = (ilExt.x + olExt.x) / 2;
+    var penLoY = (ilExt.y + olExt.y) / 2;
+    text('半影', penLoX, penLoY);
+  }
+}
+
+function drawContextRays(sun, sunR, target, targetR) {
+  // Faint rays when no eclipse (visual context)
+  var types = ['outer_upper', 'outer_lower'];
+  for (var t = 0; t < types.length; t++) {
+    var tp = computeTangentPoints(sun, sunR, target, targetR, types[t]);
+    if (!tp) continue;
+    stroke(255, 220, 100, 35);
+    strokeWeight(1);
+    var extPt = extendRay(tp.p1, tp.p2, 180);
+    line(tp.p1.x, tp.p1.y, extPt.x, extPt.y);
+  }
+}
+
+function drawLabels() {
+  var status = computeEclipseStatus();
+  if (status.type !== 'none') {
+    var labelText, labelColor;
+    if (status.type === 'solar') {
+      labelText = status.phase === 'umbra' ? '☀ →    →   日全食 (本影)' : '☀ →    →   日偏食 (半影)';
+      labelColor = status.phase === 'umbra' ? '#f97316' : '#f59e0b';
+    } else {
+      labelText = status.phase === 'umbra' ? '☀ →    →   月全食 (本影)' : '☀ →    →   月偏食 (半影)';
+      labelColor = status.phase === 'umbra' ? '#ef4444' : '#f87171';
+    }
+    var leftCenter = PANEL_DIVIDER / 2;
+    noStroke();
+    fill(0, 0, 0, 180);
+    rect(leftCenter - 200, 8, 400, 42, 10);
+    fill(labelColor);
+    textSize(15);
+    textAlign(CENTER, CENTER);
+    text(labelText, leftCenter, 30);
+  }
+}
+
+/* ========== Panel Divider ========== */
+function drawPanelDivider() {
+  stroke(148, 163, 184, 60);
+  strokeWeight(1.5);
+  drawingContext.setLineDash([4, 8]);
+  line(PANEL_DIVIDER, 30, PANEL_DIVIDER, H - 30);
+  drawingContext.setLineDash([]);
+}
+
+/* ========== Observer View (Right Panel) ========== */
+function drawObserverView() {
+  var status = computeEclipseStatus();
+  var viewCX = PANEL_DIVIDER + (W - PANEL_DIVIDER) / 2;
+  var viewCY = H / 2;
+  var viewR = 195;
+
+  // Panel background
+  noStroke();
+  fill(7, 15, 34, 150);
+  rect(PANEL_DIVIDER + 10, 30, W - PANEL_DIVIDER - 20, H - 60, 14);
+
+  // Title
+  fill(226, 232, 240, 200);
+  textSize(13);
+  textAlign(CENTER, TOP);
+  text('观察者视角', viewCX, 46);
+
+  // Circular sky viewport background
+  noStroke();
+  fill(10, 15, 30);
+  ellipse(viewCX, viewCY, viewR * 2, viewR * 2);
+
+  // Border ring
+  noFill();
+  stroke(148, 163, 184, 80);
+  strokeWeight(2);
+  ellipse(viewCX, viewCY, viewR * 2, viewR * 2);
+
+  // Clip to viewport circle
+  push();
+  // Simple clip by drawing within the circle bounds
+
+  if (status.type === 'solar') {
+    drawSolarObserverView(viewCX, viewCY, viewR, status.alignment, status.phase);
+  } else if (status.type === 'lunar') {
+    drawLunarObserverView(viewCX, viewCY, viewR, status.alignment, status.phase);
+  } else {
+    drawNormalObserverView(viewCX, viewCY, viewR);
+  }
+
+  pop();
+
+  // Labels below viewport
+  fill(200, 200, 210, 160);
+  textSize(11);
+  textAlign(CENTER, TOP);
+  if (status.type === 'solar') {
+    var alignPct = Math.round(status.alignment * 100);
+    fill(249, 115, 22, 200);
+    text(status.phase === 'umbra' ? '日全食（本影区）' : '日偏食（半影区）', viewCX, viewCY + viewR + 14);
+    textSize(10);
+    fill(180, 180, 190, 140);
+    text('对齐度 ' + alignPct + '% · 月球遮挡太阳的视觉效果', viewCX, viewCY + viewR + 32);
+    textSize(10);
+    fill(255, 200, 80, 180);
+    text('本影→完全遮挡', viewCX - 70, viewCY + viewR + 50);
+    fill(255, 160, 100, 160);
+    text('半影→部分遮挡', viewCX + 70, viewCY + viewR + 50);
+  } else if (status.type === 'lunar') {
+    var alignPct2 = Math.round(status.alignment * 100);
+    fill(239, 68, 68, 200);
+    text(status.phase === 'umbra' ? '月全食（本影区）' : '月偏食（半影区）', viewCX, viewCY + viewR + 14);
+    textSize(10);
+    fill(180, 180, 190, 140);
+    text('对齐度 ' + alignPct2 + '% · 地球阴影落在月球表面', viewCX, viewCY + viewR + 32);
+    textSize(10);
+    fill(200, 60, 60, 180);
+    text('本影→完全变暗', viewCX - 70, viewCY + viewR + 50);
+    fill(220, 120, 80, 160);
+    text('半影→部分变暗', viewCX + 70, viewCY + viewR + 50);
+  } else {
+    fill(148, 163, 184, 160);
+    text('无日食或月食发生', viewCX, viewCY + viewR + 14);
+    textSize(10);
+    fill(148, 163, 184, 120);
+    text('月球不在日地连线附近', viewCX, viewCY + viewR + 32);
+  }
+}
+
+function drawSolarObserverView(cx, cy, r, alignment, phase) {
+  var sunR = r * 0.42;
+  var moonR = r * 0.44;
+
+  // Smooth offset: alignment 0→1 maps to offset maxOffset→0
+  var maxOffset = sunR + moonR + 30;
+  var offsetX = (1 - alignment) * maxOffset;
+
+  // Sun (behind Moon) - centered
+  noStroke();
+  for (var i = 6; i >= 1; i--) {
+    fill(251, 191, 36, 4 + i * 4);
+    ellipse(cx - offsetX * 0.3, cy, sunR * 2 + i * 12, sunR * 2 + i * 12);
+  }
+  fill(253, 224, 71);
+  ellipse(cx - offsetX * 0.3, cy, sunR * 2, sunR * 2);
+
+  // Moon (dark disc, moving across Sun)
+  fill(25, 25, 35);
+  ellipse(cx + offsetX * 0.7, cy, moonR * 2, moonR * 2);
+  noFill();
+  stroke(40, 40, 55, 60);
+  strokeWeight(1);
+  ellipse(cx + offsetX * 0.7, cy, moonR * 2, moonR * 2);
+
+  // Phase label above viewport
+  noStroke();
+  fill(255, 100, 80, 200);
+  textSize(11);
+  textAlign(CENTER, CENTER);
+  if (phase === 'umbra') {
+    text('☀ 日全食（本影）', cx, cy - r - 10);
+  } else {
+    text('☀ 日偏食（半影）', cx, cy - r - 10);
+  }
+}
+
+function drawLunarObserverView(cx, cy, r, alignment, phase) {
+  var moonR = r * 0.38;
+  var penumbraR = r * 0.65;
+  var umbraR = r * 0.48;
+
+  // Shadow slides from right to left:
+  // alignment=0: shadow barely touches Moon's right edge
+  // alignment=1: shadow fully envelops the Moon
+  var shadowTravel = moonR + penumbraR;
+  var shadowCX = cx + shadowTravel - alignment * shadowTravel;
+
+  // Umbra center offset: decreases to 0 as alignment→1, so umbra fully covers Moon at totality
+  var umbraOffset = penumbraR * 0.22 * (1 - alignment);
+  var umbraCX = shadowCX + umbraOffset;
+
+  // Step 1: Moon body color
+  // Normal: light gray → Deep in umbra: dark red (blood moon)
+  var mr = map(alignment, 0, 1, 180, 130);
+  var mg = map(alignment, 0, 1, 180, 45);
+  var mb = map(alignment, 0, 1, 190, 40);
+
+  // Moon glow
+  noStroke();
+  for (var i = 3; i >= 1; i--) {
+    fill(mr, mg, mb, 3 + i * 4);
+    ellipse(cx, cy, moonR * 2 + i * 6, moonR * 2 + i * 6);
+  }
+  // Moon body
+  fill(mr, mg, mb);
+  ellipse(cx, cy, moonR * 2, moonR * 2);
+
+  // Craters (fade out as shadow deepens)
+  if (alignment < 0.8) {
+    fill(150, 150, 160, map(alignment, 0, 0.8, 80, 0));
+    ellipse(cx - moonR * 0.2, cy - moonR * 0.2, moonR * 0.4, moonR * 0.3);
+    ellipse(cx + moonR * 0.25, cy + moonR * 0.1, moonR * 0.3, moonR * 0.25);
+    fill(160, 160, 170, map(alignment, 0, 0.8, 60, 0));
+    ellipse(cx + moonR * 0.1, cy - moonR * 0.35, moonR * 0.25, moonR * 0.2);
+  }
+
+  // Step 2: Earth's shadow overlaid from the right
+  // Penumbra (lighter, larger, outer shadow)
+  noStroke();
+  fill(100, 40, 30, 35);
+  ellipse(shadowCX, cy, penumbraR * 2, penumbraR * 2);
+
+  // Umbra (darker, smaller, inner shadow) — fully covers Moon at alignment=1
+  fill(60, 15, 10, 60);
+  ellipse(umbraCX, cy, umbraR * 2, umbraR * 2);
+
+  // Step 3: If in total eclipse (umbra), draw a deep red blood-moon glow
+  if (phase === 'umbra') {
+    noStroke();
+    fill(120, 20, 15, 35);
+    ellipse(cx, cy, moonR * 2 + 8, moonR * 2 + 8);
+    fill(160, 30, 20, 25);
+    ellipse(cx, cy, moonR * 2 + 4, moonR * 2 + 4);
+  }
+
+  // Step 4: Left-edge rim light (fades as umbra deepens)
+  if (alignment < 0.9) {
+    noFill();
+    stroke(200, 200, 210, map(alignment, 0, 0.9, 70, 0));
+    strokeWeight(1.5);
+    arc(cx, cy, moonR * 2 - 2, moonR * 2 - 2, PI * 0.7, PI * 1.3);
+  }
+
+  // Phase label
+  noStroke();
+  fill(255, 130, 100, 200);
+  textSize(11);
+  textAlign(CENTER, CENTER);
+  if (phase === 'umbra') {
+    text('月全食（本影）', cx, cy - r - 10);
+  } else {
+    text('月偏食（半影）', cx, cy - r - 10);
+  }
+}
+
+function drawNormalObserverView(cx, cy, r) {
+  var sunR = r * 0.4;
+  // Show Sun peacefully
+  noStroke();
+  for (var i = 5; i >= 1; i--) {
+    fill(251, 191, 36, 3 + i * 4);
+    ellipse(cx, cy, sunR * 2 + i * 10, sunR * 2 + i * 10);
+  }
+  fill(253, 224, 71);
+  ellipse(cx, cy, sunR * 2, sunR * 2);
+  fill(255, 255, 240, 30);
+  ellipse(cx - sunR * 0.15, cy - sunR * 0.2, sunR * 0.9, sunR * 0.6);
+}
+
+/* ========== Quiz system ========== */
+var quizQuestions = [
+  { q: '日食发生时，日月地三者的位置关系是？', opts: ['地球位于太阳和月球之间', '月球位于太阳和地球之间', '太阳位于地球和月球之间', '三者呈直角三角形'], ans: 1, explain: '日食时，月球运行到太阳和地球之间，月球的影子落在地球上。' },
+  { q: '月食发生时，日月地三者的位置关系是？', opts: ['月球位于太阳和地球之间', '地球位于太阳和月球之间', '太阳位于地球和月球之间', '三者呈任意排列'], ans: 1, explain: '月食时，地球位于太阳和月球之间，地球的影子落在月球表面。' },
+  { q: '日食和月食发生的根本原因是？', opts: ['万有引力', '光的反射', '光的直线传播', '光的折射'], ans: 2, explain: '光沿直线传播，遇不透明物体阻挡后在其后方形成影子区域。' },
+  { q: '日全食时，地面观察者处于哪个区域？', opts: ['半影区', '本影区', '月球背面', '地球背面'], ans: 1, explain: '本影(umbra)区域完全接收不到太阳光，所以发生日全食。' },
+  { q: '月全食时，月球呈现暗红色的现象常被称为？', opts: ['蓝月', '血月', '红月', '黑月'], ans: 1, explain: '地球大气层折射了部分红光到月球表面，使月全食时的月球呈红铜色，俗称血月。' },
+  { q: '日食时，月球的本影落在地球上会形成？', opts: ['月牙形区域', '一个很小的圆形区域', '整个半球', '均匀分布的光斑'], ans: 1, explain: '月球比地球小得多，本影在地球上只能覆盖一小块区域，因此日全食只能在局部地区看到。' },
+  { q: '为什么月全食比日全食更容易被更多人观察到？', opts: ['月食持续时间更短', '月球比地球大', '整个处于夜半球的地球居民都能看到', '月食不受天气影响'], ans: 2, explain: '月全食时，整个处于夜半球的地球居民都能看到，而日全食只有本影区的一小片区域能看到。' },
+  { q: '对于同一地点而言，日全食和月全食哪个更罕见？', opts: ['日全食', '月全食', '同样罕见', '都不罕见'], ans: 0, explain: '日全食只有地面上一小片区域能看到，对固定地点来说数百年才能看到一次。' },
+  { q: '日食发生时，位于半影区的观察者会看到？', opts: ['太阳完全消失', '太阳被部分遮挡', '月亮变红', '天空完全变暗'], ans: 1, explain: '半影区只能接收部分太阳光，因此看到的是日偏食。' },
+  { q: '月球轨道面（白道面）与地球公转轨道面（黄道面）的夹角约为？', opts: ['约5°', '约23°', '约45°', '约90°'], ans: 0, explain: '白道面与黄道面约有5°的交角，因此不是每月都会发生日食和月食。' },
+  { q: '日食一般发生在农历的什么日期前后？', opts: ['十五前后', '初一前后', '初七初八', '二十二二十三'], ans: 1, explain: '初一前后月球位于太阳和地球之间，是日食发生的必要条件。' },
+  { q: '月食一般发生在农历的什么日期前后？', opts: ['十五前后', '初一前后', '初七初八', '任意日期'], ans: 0, explain: '十五前后地球位于太阳和月球之间，是月食发生的必要条件。' },
+  { q: '为什么不是每个月都会发生日食和月食？', opts: ['月球转速太快', '地球转速太快', '月球轨道面与黄道面有约5°夹角', '太阳不够大'], ans: 2, explain: '月球轨道（白道面）与地球公转轨道（黄道面）有约5°夹角，只有三者近乎严格共线时才会发生。' },
+  { q: '当月球完全进入地球的本影区时，将发生？', opts: ['月偏食', '月全食', '日环食', '半影月食'], ans: 1, explain: '月球全部位于地球本影内，整个月面都被遮挡，称为月全食。' },
+  { q: '日环食是怎样形成的？', opts: ['地球挡住太阳光线', '月球离地球较远，不能完全遮住太阳', '太阳被其他行星遮挡', '月球比太阳大'], ans: 1, explain: '日环食时月球距离地球较远，角直径小于太阳的角直径，无法完全遮挡太阳，露出金色的光环。' }
+];
+
+</script>
+<script src="experiment-shell.js"></script>
+<script src="protect.js"></script>
+<script src="supabase.js"></script>
+<script src="script.js"></script>
+<script>
+// Navigation auto-hide
+(function() {
+  var header = document.querySelector('.header');
+  var hideTimer = null;
+  var HIDE_DELAY = 800;
+  function show() { clearTimeout(hideTimer); header.classList.remove('hidden'); document.body.classList.remove('header-hidden'); }
+  function hide() { hideTimer = setTimeout(function() { header.classList.add('hidden'); document.body.classList.add('header-hidden'); }, HIDE_DELAY); }
+  document.addEventListener('mousemove', function(e) {
+    if (e.clientY <= 60) show();
+    else if (e.clientY > header.offsetHeight + 20 && !header.classList.contains('hidden')) hide();
+  });
+  header.addEventListener('mouseenter', show);
+  header.addEventListener('mouseleave', hide);
+  hideTimer = setTimeout(function() { header.classList.add('hidden'); document.body.classList.add('header-hidden'); }, 2000);
+})();
+</script>
+</body>
+</html>
