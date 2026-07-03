@@ -104,8 +104,12 @@
   </div>
 
   <script>
-  const NX = 80;  // grid columns
-  const NY = 48;  // grid rows
+  const NX = 78;
+  const NY = 34;
+  const SOURCE_X = 165;
+  const SOURCE_Y = 285;
+  const WAVE_START_X = 190;
+  const WAVE_END_X = 970;
 
   let labelA, rangeA, checkA, chalkA, checkB, chalkB;
   let timming = 0;
@@ -116,11 +120,8 @@
   let oy = [];  // origin/resting Y
   let px = [];  // current X
   let py = [];  // current Y
-  let vx = [];  // velocity X
-  let tmpX = []; // temp X for update
   let bdx = []; // brownian X offset
   let bdy = []; // brownian Y offset
-  let density = []; // computed per-frame
 
   function setup() {
     frameRate(60);
@@ -157,14 +158,12 @@
   function initGrid() {
     for (let i = 0; i < NX; i++) {
       ox[i] = []; oy[i] = []; px[i] = []; py[i] = [];
-      vx[i] = []; tmpX[i] = []; bdx[i] = []; bdy[i] = []; density[i] = [];
+      bdx[i] = []; bdy[i] = [];
       for (let j = 0; j < NY; j++) {
-        ox[i][j] = px[i][j] = map(i, 0, NX - 1, 8, 992);
-        oy[i][j] = py[i][j] = map(j, 0, NY - 1, 8, 470);
-        vx[i][j] = 0;
+        ox[i][j] = px[i][j] = map(i, 0, NX - 1, WAVE_START_X, WAVE_END_X);
+        oy[i][j] = py[i][j] = map(j, 0, NY - 1, 25, 460);
         bdx[i][j] = 0;
         bdy[i][j] = 0;
-        density[i][j] = 1.0;
       }
     }
   }
@@ -179,195 +178,181 @@
 
       if (checkA.checked()) {
         waveStarted = true;
-        updatePhysics();
-        timming += 0.04 * rangeA.value();
+        timming += 0.06 * rangeA.value();
       }
 
-      // Compute per-particle local density
-      computeDensity();
+      // Update particle positions based on wave equation
+      updateParticles();
 
-      // Draw density heatmap background (soft bands)
+      // Draw density background bands
       drawDensityBackground();
-
-      // Draw particles with density-based color and size
-      drawParticles();
 
       // Draw tuning fork
       drawTuningFork();
 
-      // Draw density strip at bottom (1D compression/rarefaction visualization)
-      drawDensityStrip();
+      // Draw particles
+      drawParticles();
 
-      // Apply prong force to nearby particles
-      if (checkA.checked()) {
-        applyProngForce();
-      }
+      // Draw density strip at bottom
+      drawDensityStrip();
 
       pop();
     } catch(e) { pop(); }
   }
 
-  // ==================== Density Computation ====================
-  // Density measured by horizontal spacing: closer than rest = compression, wider = rarefaction
+  // ==================== Update Particles ====================
+  // Particles oscillate horizontally based on traveling sine wave
 
-  function computeDensity() {
-    if (!waveStarted) {
-      for (let i = 0; i < NX; i++)
-        for (let j = 0; j < NY; j++)
-          density[i][j] = 1.0;
-      return;
-    }
+  function updateParticles() {
+    if (!waveStarted) return;
+
+    let waveSpeed = 80;  // pixels per "time unit"
+    let wavelength = 140;
+    let amplitude = 12;
+    let k = TWO_PI / wavelength;  // wave number
+    let sourcePhase = sin(timming);
 
     for (let i = 0; i < NX; i++) {
       for (let j = 0; j < NY; j++) {
-        let compSum = 0;
-        let compCount = 0;
+        let x0 = ox[i][j];
+        let distFromSource = x0 - SOURCE_X;
 
-        // Check horizontal spacing with neighbors
-        if (i > 0) {
-          let restD = ox[i][j] - ox[i - 1][j];
-          let curD = px[i][j] - px[i - 1][j];
-          if (restD > 0.1 && curD > 0.1) {
-            compSum += restD / curD;  // >1 = compressed, <1 = expanded
-            compCount++;
-          }
-        }
-        if (i < NX - 1) {
-          let restD = ox[i + 1][j] - ox[i][j];
-          let curD = px[i + 1][j] - px[i][j];
-          if (restD > 0.1 && curD > 0.1) {
-            compSum += restD / curD;
-            compCount++;
-          }
+        if (distFromSource < 0) {
+          px[i][j] = x0;
+          continue;
         }
 
-        let comp = (compCount > 0) ? compSum / compCount : 1.0;
-        // Clamp and smooth
-        comp = constrain(comp, 0.3, 2.5);
-        density[i][j] = comp;
+        let phase = k * distFromSource - timming;
+        let attenuation = 1.0 / (1.0 + distFromSource / 200);  // decay with distance
+        let disp = amplitude * sin(phase) * attenuation;
+
+        px[i][j] = x0 + disp;
+
+        // Brownian motion
+        if (checkB && checkB.checked()) {
+          bdx[i][j] += random(-1.5, 1.5);
+          bdy[i][j] += random(-1.5, 1.5);
+          bdx[i][j] = constrain(bdx[i][j], -6, 6);
+          bdy[i][j] = constrain(bdy[i][j], -6, 6);
+        } else {
+          bdx[i][j] = 0;
+          bdy[i][j] = 0;
+        }
       }
     }
   }
 
   // ==================== Density Background ====================
-  // Draw vertical bands: red tint where compressed, blue tint where rarefied
+  // Draw vertical bands: red = compression, blue = rarefaction
 
   function drawDensityBackground() {
     if (!waveStarted) return;
     noStroke();
 
-    for (let i = 0; i < NX; i++) {
-      // Average density in this column
-      let avg = 0;
-      for (let j = 0; j < NY; j++) avg += density[i][j];
-      avg /= NY;
+    for (let i = 1; i < NX; i++) {
+      let midJ = int(NY / 2);
+      let spacing = px[i][midJ] - px[i - 1][midJ];
+      let restSpacing = ox[i][midJ] - ox[i - 1][midJ];
+      let compression = restSpacing / spacing;  // >1 = compressed, <1 = rarefied
 
-      let x = px[i][int(NY / 2)];
-      let w = (i > 0) ? max(px[i][int(NY / 2)] - px[i - 1][int(NY / 2)], 8) : 12;
+      let x = (px[i][midJ] + px[i - 1][midJ]) / 2;
+      let w = abs(spacing);
 
-      if (avg > 1.03) {
-        // Compression: warm reddish band
-        let a = map(avg, 1.03, 1.8, 15, 90);
-        fill(255, 120, 80, constrain(a, 0, 90));
+      if (compression > 1.05) {
+        let a = map(compression, 1.05, 1.4, 20, 100);
+        fill(255, 140, 100, constrain(a, 0, 100));
         rect(x - w / 2, 0, w, 500);
-      } else if (avg < 0.97) {
-        // Rarefaction: cool bluish band
-        let a = map(avg, 0.4, 0.97, 80, 10);
-        fill(160, 200, 250, constrain(a, 0, 80));
+      } else if (compression < 0.95) {
+        let a = map(compression, 0.6, 0.95, 100, 20);
+        fill(140, 200, 255, constrain(a, 0, 100));
         rect(x - w / 2, 0, w, 500);
       }
     }
   }
 
-  // ==================== Density Strip (1D visualization) ====================
+  // ==================== Density Strip ====================
 
   function drawDensityStrip() {
     if (!waveStarted) return;
 
     let stripY = 485;
     let stripH = 15;
-    let stripX = 8;
-    let stripW = 984;
+    let stripX = WAVE_START_X;
+    let stripW = WAVE_END_X - WAVE_START_X;
 
-    // Background
     fill(240);
     noStroke();
     rect(stripX, stripY, stripW, stripH);
 
-    // Draw density as colored vertical bars
-    for (let i = 0; i < NX; i++) {
-      let avg = 0;
-      for (let j = 0; j < NY; j++) avg += density[i][j];
-      avg /= NY;
+    for (let i = 1; i < NX; i++) {
+      let midJ = int(NY / 2);
+      let spacing = px[i][midJ] - px[i - 1][midJ];
+      let restSpacing = ox[i][midJ] - ox[i - 1][midJ];
+      let compression = restSpacing / spacing;
 
-      // Color: red = compression, blue = rarefaction
       let r, g, b;
-      if (avg >= 1.0) {
-        let t = constrain((avg - 1.0) / 0.7, 0, 1);
+      if (compression >= 1.0) {
+        let t = constrain((compression - 1.0) / 0.4, 0, 1);
         r = lerp(150, 240, t);
-        g = lerp(180, 50, t);
-        b = lerp(230, 50, t);
+        g = lerp(180, 60, t);
+        b = lerp(230, 60, t);
       } else {
-        let t = constrain((1.0 - avg) / 0.6, 0, 1);
-        r = lerp(150, 60, t);
-        g = lerp(180, 140, t);
-        b = lerp(230, 240, t);
+        let t = constrain((1.0 - compression) / 0.4, 0, 1);
+        r = lerp(150, 80, t);
+        g = lerp(180, 160, t);
+        b = lerp(230, 250, t);
       }
 
-      let x = px[i][int(NY / 2)];
-      let w = (i > 0) ? max(px[i][int(NY / 2)] - px[i - 1][int(NY / 2)], 6) : 10;
+      let x = (px[i][midJ] + px[i - 1][midJ]) / 2;
+      let w = abs(spacing);
       x = constrain(x, stripX, stripX + stripW);
       w = min(w, stripX + stripW - (x - stripX));
 
       fill(r, g, b);
-      noStroke();
       rect(x - w / 2, stripY, w, stripH);
     }
 
-    // Labels
     fill(200, 60, 40);
-    noStroke();
     textSize(11);
     textAlign(LEFT, CENTER);
-    text("密部（压缩）", stripX + stripW - 170, stripY + stripH / 2);
+    text("密部", stripX + stripW - 150, stripY + stripH / 2);
 
-    fill(60, 140, 220);
-    text("疏部（稀疏）", stripX + stripW - 70, stripY + stripH / 2);
+    fill(80, 160, 240);
+    text("疏部", stripX + stripW - 70, stripY + stripH / 2);
 
-    // Title
     fill(80);
     textSize(10);
     textAlign(LEFT, BOTTOM);
-    text("密度分布 →", stripX, stripY - 2);
+    text("密度 →", stripX, stripY - 2);
   }
 
   // ==================== Particle Drawing ====================
-  // Size and color encode local density
 
   function drawParticles() {
     noStroke();
-    for (let i = 0; i < NX; i++) {
+    for (let i = 1; i < NX; i++) {
       for (let j = 0; j < NY; j++) {
         let x = px[i][j] + bdx[i][j];
         let y = py[i][j] + bdy[i][j];
-        let d = density[i][j];
 
-        // Size: bigger in compression, smaller in rarefaction
-        let sz = constrain(map(d, 0.4, 2.0, 2.2, 6.5), 1.8, 7);
+        let spacing = px[i][j] - px[i - 1][j];
+        let restSpacing = ox[i][j] - ox[i - 1][j];
+        let compression = restSpacing / spacing;
 
-        // Color: warm (red/orange) = compression, cool (light blue) = rarefaction
+        let sz = map(compression, 0.7, 1.4, 3, 7);
+        sz = constrain(sz, 2.5, 7);
+
         let r, g, b;
-        if (d >= 1.0) {
-          let t = constrain((d - 1.0) / 0.9, 0, 1);
-          // Blue → bright cyan → orange → red
-          r = lerp(30, 240, pow(t, 0.7));
-          g = lerp(100, 70, pow(t, 0.7));
-          b = lerp(220, 40, pow(t, 0.7));
+        if (compression >= 1.0) {
+          let t = constrain((compression - 1.0) / 0.5, 0, 1);
+          r = lerp(60, 255, pow(t, 0.6));
+          g = lerp(140, 100, pow(t, 0.6));
+          b = lerp(230, 60, pow(t, 0.6));
         } else {
-          let t = constrain((1.0 - d) / 0.6, 0, 1);
-          r = lerp(30, 175, pow(t, 0.7));
-          g = lerp(100, 195, pow(t, 0.7));
-          b = lerp(220, 240, pow(t, 0.7));
+          let t = constrain((1.0 - compression) / 0.4, 0, 1);
+          r = lerp(60, 120, pow(t, 0.6));
+          g = lerp(140, 180, pow(t, 0.6));
+          b = lerp(230, 255, pow(t, 0.6));
         }
 
         fill(r, g, b);
@@ -377,129 +362,67 @@
   }
 
   // ==================== Tuning Fork Drawing ====================
+  // Two prongs vibrate left-right from a fixed base, connected by an arc at the top.
 
   function drawTuningFork() {
-    let pkX = [480, 500, 520];
-    let pkY = [330, 240];
+    push();
+    let centerX = SOURCE_X;
+    let baseY = SOURCE_Y;        // where prongs connect to the handle
+    let prongLen = 90;           // length of each prong
+    let halfGap = 16;            // half the gap between inner edges of prongs
+    let prongThick = 10;         // prong thickness
+    let vibAmp = sin(timming) * 8;
 
-    // Prongs (vibrating)
+    // Each prong pivots at the base, top swings proportionally.
+    // Left prong top X = centerX - halfGap - prongThick/2 + vibAmp
+    // Right prong top X = centerX + halfGap + prongThick/2 - vibAmp
+    let leftTopX = centerX - halfGap - prongThick/2 + vibAmp;
+    let rightTopX = centerX + halfGap + prongThick/2 - vibAmp;
+    let prongTopY = baseY - prongLen;
+
+    // Prong bodies (drawn as thick lines from base to top)
+    strokeCap(ROUND);
+    stroke(100);
+    strokeWeight(prongThick);
+
+    // Left prong
+    line(centerX - halfGap - prongThick/2, baseY, leftTopX, prongTopY);
+    // Right prong
+    line(centerX + halfGap + prongThick/2, baseY, rightTopX, prongTopY);
+
+    // Arc connecting the two prongs at the base (above the handle)
     noFill();
+    stroke(100);
+    strokeWeight(prongThick);
+    let leftArcX = centerX - halfGap - prongThick/2;
+    let rightArcX = centerX + halfGap + prongThick/2;
+    let arcMidX = (leftArcX + rightArcX) / 2;
+    let arcW = abs(rightArcX - leftArcX);
+    arc(arcMidX, baseY + 8, arcW + prongThick * 0.5, 24, PI, TWO_PI);
+
+    // Handle (stem from base down)
+    strokeWeight(14);
     stroke(120);
-    strokeWeight(11);
-    line(pkX[0], pkY[0], pkX[0] + sin(timming) * 10, pkY[1]);
-    line(pkX[2], pkY[0], pkX[2] - sin(timming) * 10, pkY[1]);
+    line(centerX, baseY + 6, centerX, baseY + 85);
 
-    // Arc at top
-    strokeWeight(10);
-    arc(pkX[1], pkY[0], 44, 44, 0, PI);
-
-    // Handle
-    strokeWeight(12);
-    stroke(130);
-    line(pkX[1], pkY[0] + 33, pkX[1], 400);
-
-    // Base box (resonance box)
+    // Resonance box
     noStroke();
-    fill(233, 190, 59);
+    fill(220, 180, 60);
     rectMode(CENTER);
-    rect(pkX[1], 423, 82, 82);
-    // Box detail
-    fill(200, 160, 40);
-    rect(pkX[1], 423, 70, 70);
-    fill(233, 190, 59);
-    rect(pkX[1], 423, 58, 58);
+    rect(centerX, baseY + 108, 70, 68, 4);
+    fill(200, 160, 45);
+    rect(centerX, baseY + 108, 58, 56, 3);
+    fill(220, 180, 60);
+    rect(centerX, baseY + 108, 46, 44, 2);
 
-    // Labels on tuning fork
-    fill(100);
+    // Labels
+    fill(80);
     noStroke();
-    textSize(11);
-    textAlign(CENTER, CENTER);
-    text("叉股", pkX[0] - 16, pkY[1] + (pkY[0] - pkY[1])/2);
-    text("叉股", pkX[2] + 16, pkY[1] + (pkY[0] - pkY[1])/2);
-    text("共鸣箱", pkX[1], 450);
-  }
+    textSize(10);
+    textAlign(CENTER, TOP);
+    text("音叉", centerX, baseY + 148);
 
-  // ==================== Physics ====================
-
-  function updatePhysics() {
-    // Brownian motion
-    for (let i = 0; i < NX; i++) {
-      for (let j = 0; j < NY; j++) {
-        tmpX[i][j] = px[i][j];
-        if (checkB && checkB.checked()) {
-          bdx[i][j] += random(-2, 2);
-          bdy[i][j] += random(-2, 2);
-          bdx[i][j] = constrain(bdx[i][j], -8, 8);
-          bdy[i][j] = constrain(bdy[i][j], -8, 8);
-        } else {
-          bdx[i][j] = 0;
-          bdy[i][j] = 0;
-        }
-      }
-    }
-
-    // Spring forces between neighbors
-    for (let i = 0; i < NX; i++) {
-      for (let j = 0; j < NY; j++) {
-        let dx = 0;
-        // Right neighbor
-        if (i < NX - 1) {
-          dx += (ox[i][j] - ox[i + 1][j]) - (px[i][j] - px[i + 1][j]);
-        }
-        // Left neighbor
-        if (i > 0) {
-          dx += (ox[i][j] - ox[i - 1][j]) - (px[i][j] - px[i - 1][j]);
-        }
-        // Down neighbor
-        if (j < NY - 1) {
-          dx += (ox[i][j] - ox[i][j + 1]) - (px[i][j] - px[i][j + 1]);
-        }
-        // Up neighbor
-        if (j > 0) {
-          dx += (ox[i][j] - ox[i][j - 1]) - (px[i][j] - px[i][j - 1]);
-        }
-
-        vx[i][j] *= 0.985;       // damping (close to 1 = wave travels far)
-        vx[i][j] += 0.2 * dx;    // spring constant
-        tmpX[i][j] += vx[i][j];
-      }
-    }
-
-    // Copy back
-    for (let i = 0; i < NX; i++) {
-      for (let j = 0; j < NY; j++) {
-        px[i][j] = tmpX[i][j];
-      }
-    }
-  }
-
-  function applyProngForce() {
-    let leftCol = int(NX * 480 / 1000);
-    let rightCol = int(NX * 520 / 1000);
-
-    // Apply force across ALL rows, strongest near the prong opening
-    let prongCenter = 285; // midpoint of prong opening
-
-    for (let j = 0; j < NY; j++) {
-      let ly = oy[0][j];
-      // Strength peaks at prong center, tapers to edges
-      let distFromCenter = abs(ly - prongCenter);
-      let strength = map(distFromCenter, 0, 250, 14, 1);
-      strength = constrain(strength, 1, 14);
-
-      let force = sin(timming) * strength / 2.0;
-      if (leftCol >= 0 && leftCol < NX) {
-        vx[leftCol][j] += force;
-      }
-      if (rightCol >= 0 && rightCol < NX) {
-        vx[rightCol][j] -= force;
-      }
-      // Also push adjacent columns for wider wavefront
-      if (leftCol - 1 >= 0) vx[leftCol - 1][j] += force * 0.6;
-      if (leftCol + 1 < NX) vx[leftCol + 1][j] += force * 0.6;
-      if (rightCol - 1 >= 0) vx[rightCol - 1][j] -= force * 0.6;
-      if (rightCol + 1 < NX) vx[rightCol + 1][j] -= force * 0.6;
-    }
+    pop();
   }
   </script>
   <script src="supabase.js"></script>
