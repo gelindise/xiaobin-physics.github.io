@@ -268,10 +268,10 @@
 
   // ==================== State ====================
   const state = {
-    leveled: false,   // step 1 complete?
-    nutPos: -4,       // balance nut adjustment: -10..10, 0=symmetric
-    massLeft: 200,    // grams
-    posLeft: 3,       // 1-4 grid units
+    phase: 'leveling',  // 'leveling' | 'ready' | 'experiment'
+    nutPos: -4,         // balance nut adjustment: -10..10
+    massLeft: 200,
+    posLeft: 3,
     massRight: 150,
     posRight: 4,
     tiltAngle: 0,
@@ -290,9 +290,9 @@
   // Balance nut physics
   const NUT_MASS = 0.02;    // 20g each nut
   const BEAM_MASS = 0.15;   // 150g beam mass
-  const NUT_ROD_LEN = 20;   // threaded rod length beyond beam end (px)
-  const NUT_RANGE = 10;     // nut travel range on rod
-  const NUT_STEP = 2;       // px per slider unit
+  const NUT_ROD_LEN = 36;   // threaded rod length beyond beam end (px)
+  const NUT_RANGE = 16;     // nut travel range on rod
+  const NUT_STEP = 3;       // px per slider unit
 
   function getLeftX()  { return FULCRUM_X - state.posLeft * PX_PER_GRID; }
   function getRightX() { return FULCRUM_X + state.posRight * PX_PER_GRID; }
@@ -482,11 +482,11 @@
     ctx.fillStyle = 'rgba(255,255,255,0.3)';
     ctx.beginPath(); ctx.arc(cgX - 2, cy - 2, 2.5, 0, Math.PI * 2); ctx.fill();
 
-    // G label above beam
+    // "重心" label above beam and dot
     ctx.fillStyle = '#7c3aed';
-    ctx.font = 'bold 12px "Times New Roman",serif';
+    ctx.font = 'bold 11px "PingFang SC","Microsoft YaHei",sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText('G', cgX, cy - BEAM_H/2 - 9);
+    ctx.fillText('重心', cgX, cy - BEAM_H/2 - 9);
   }
 
   function drawWeight(hx, mass, label, colorLeft) {
@@ -576,7 +576,7 @@
     drawGrid();
 
     // Draw lever arm annotations behind beam
-    if (state.leveled) {
+    if (state.phase === 'experiment') {
       const lhx = getLeftX(), rhx = getRightX();
       drawLeverArm(lhx, state.posLeft, true);
       drawLeverArm(rhx, state.posRight, false);
@@ -593,7 +593,7 @@
     drawFulcrumBase();
 
     // Weights and force arrows (on top of everything)
-    if (state.leveled) {
+    if (state.phase === 'experiment') {
       const lhx = getLeftX(), rhx = getRightX();
       drawWeight(lhx, state.massLeft, 'F₁', true);
       drawWeight(rhx, state.massRight, 'F₂', false);
@@ -612,7 +612,7 @@
     // CG torque: beam CG * offset from fulcrum
     const cgTorque = BEAM_MASS * g * (cgOff / PX_PER_GRID * GRID_SCALE);
     // Weight torques (only when leveled)
-    const wTorque = state.leveled ? (getM1() - getM2()) : 0;
+    const wTorque = state.phase === 'experiment' ? (getM1() - getM2()) : 0;
     const netTorque = cgTorque + wTorque;
 
     const sensitivity = 20;
@@ -620,14 +620,15 @@
     state.targetAngle = Math.max(-0.35, Math.min(0.35, state.targetAngle));
     state.tiltAngle += (state.targetAngle - state.tiltAngle) * 0.12;
 
-    // Check leveling complete
-    if (!state.leveled && Math.abs(cgOff) < 1.5 && Math.abs(state.tiltAngle) < 0.005) {
-      state.leveled = true;
+    // Check leveling complete → move to 'ready'
+    if (state.phase === 'leveling' && Math.abs(cgOff) < 1.5 && Math.abs(state.tiltAngle) < 0.005) {
+      state.phase = 'ready';
+      document.getElementById('btnLeveled').style.display = '';
       updateLevelingUI();
     }
 
     // Check weight balance
-    if (state.leveled) {
+    if (state.phase === 'experiment') {
       const tol = 0.002;
       state.balanced = Math.abs(wTorque) < tol && Math.abs(state.tiltAngle) < 0.005;
     }
@@ -640,26 +641,41 @@
     const badge = document.getElementById('stepBadge');
     const msg = document.getElementById('levelingMsg');
     const btn = document.getElementById('btnLeveled');
+    const nutSlider = document.getElementById('nutSlider');
 
-    if (state.leveled) {
+    if (state.phase === 'experiment') {
       bar.className = 'leveling-bar done';
       badge.className = 'step-badge done';
-      badge.textContent = '✓ 完成';
-      msg.textContent = '调平成功！重心与支点重合，杠杆在水平位置平衡。现在可以挂砝码进行实验。';
+      badge.textContent = '✓✓ 完成';
+      msg.textContent = '杠杆已调平，砝码实验进行中。调节左右砝码质量和位置，探究 F₁L₁ = F₂L₂。';
       btn.style.display = 'none';
+      nutSlider.disabled = true;
+      nutSlider.style.opacity = '0.4';
       document.getElementById('sideLeft').classList.remove('disabled');
       document.getElementById('sideRight').classList.remove('disabled');
+    } else if (state.phase === 'ready') {
+      bar.className = 'leveling-bar done';
+      badge.className = 'step-badge done';
+      badge.textContent = '✓ 步骤1完成';
+      msg.textContent = '调平成功！重心与支点重合，杠杆在水平位置平衡。点击右侧按钮进入砝码实验。';
+      btn.style.display = '';
+      nutSlider.disabled = true;
+      nutSlider.style.opacity = '0.4';
+      document.getElementById('sideLeft').classList.add('disabled');
+      document.getElementById('sideRight').classList.add('disabled');
     } else {
       bar.className = 'leveling-bar';
       badge.className = 'step-badge active';
-      badge.textContent = '步骤1';
+      badge.textContent = '步骤1：调平';
       const absOff = Math.abs(cgOff);
       if (absOff < 5) {
         msg.textContent = '接近了！继续微调平衡螺母，使重心与支点完全重合...';
       } else {
-        msg.textContent = '调节平衡螺母，使杠杆在水平位置平衡（重心与支点重合）。观察紫色 G 标记靠近支点 O。';
+        msg.textContent = '调节平衡螺母，使杠杆在水平位置平衡。观察紫色"重心"标记靠近红色支点。';
       }
       btn.style.display = 'none';
+      nutSlider.disabled = false;
+      nutSlider.style.opacity = '';
       document.getElementById('sideLeft').classList.add('disabled');
       document.getElementById('sideRight').classList.add('disabled');
     }
@@ -667,7 +683,7 @@
 
   // ==================== Data Display ====================
   function updateDataCards() {
-    if (!state.leveled) {
+    if (state.phase !== 'experiment') {
       document.getElementById('cardF1').textContent = '--';
       document.getElementById('cardL1').textContent = '--';
       document.getElementById('cardM1').textContent = '--';
@@ -706,7 +722,7 @@
   let records = [];
 
   function recordData() {
-    if (!state.leveled || !state.balanced) return;
+    if (state.phase !== 'experiment' || !state.balanced) return;
     const f1 = getF1(), f2 = getF2();
     const l1 = getL1(), l2 = getL2();
     const m1 = getM1(), m2 = getM2();
@@ -826,7 +842,7 @@
   // ==================== Control Handlers ====================
   // Nut slider
   document.getElementById('nutSlider').addEventListener('input', function() {
-    if (state.leveled) return;
+    if (state.phase !== 'leveling') return;
     state.nutPos = parseInt(this.value);
     document.getElementById('nutVal').textContent = state.nutPos;
     updateLevelingUI();
@@ -856,9 +872,15 @@
   setupPosButtons('posLeft', 'left');
   setupPosButtons('posRight', 'right');
 
+  // Step transition: ready → experiment
+  document.getElementById('btnLeveled').addEventListener('click', function() {
+    state.phase = 'experiment';
+    updateLevelingUI();
+  });
+
   // Auto balance
   document.getElementById('btnAuto').addEventListener('click', function() {
-    if (!state.leveled) return;
+    if (state.phase !== 'experiment') return;
     const targetMass = Math.round(state.massLeft * state.posLeft / state.posRight / 50) * 50;
     const clamped = Math.max(50, Math.min(500, targetMass));
     state.massRight = clamped;
