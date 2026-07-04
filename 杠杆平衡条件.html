@@ -290,7 +290,9 @@
   // Balance nut physics
   const NUT_MASS = 0.02;    // 20g each nut
   const BEAM_MASS = 0.15;   // 150g beam mass
-  const NUT_BASE_DIST = BEAM_HALF - 24; // px from fulcrum — nuts at beam ends
+  const NUT_ROD_LEN = 20;   // threaded rod length beyond beam end (px)
+  const NUT_RANGE = 10;     // nut travel range on rod
+  const NUT_STEP = 2;       // px per slider unit
 
   function getLeftX()  { return FULCRUM_X - state.posLeft * PX_PER_GRID; }
   function getRightX() { return FULCRUM_X + state.posRight * PX_PER_GRID; }
@@ -301,17 +303,14 @@
   function getM1()  { return getF1() * getL1(); }
   function getM2()  { return getF2() * getL2(); }
 
-  // CG offset from fulcrum due to nut asymmetry (in px)
-  // nutPos=0 means symmetric nuts, CG at fulcrum
+  // Nut positions on threaded rods (beam coords, relative to fulcrum)
+  function getLeftNutX()  { return -(BEAM_HALF + NUT_ROD_LEN/2) + state.nutPos * NUT_STEP; }
+  function getRightNutX() { return (BEAM_HALF + NUT_ROD_LEN/2) + state.nutPos * NUT_STEP; }
+
+  // CG offset from fulcrum (in px)
   function getCGOffset() {
-    // Nut positions: step size ~6px per unit
-    const step = 6;
-    const leftNutDist = NUT_BASE_DIST - state.nutPos * step;
-    const rightNutDist = NUT_BASE_DIST + state.nutPos * step;
-    // CG = (m_nut * rightNutDist - m_nut * leftNutDist) / (M_beam + 2*m_nut)
-    //    = m_nut * (rightNutDist - leftNutDist) / totalMass
-    //    = m_nut * (2 * nutPos * step) / totalMass
-    return NUT_MASS * (2 * state.nutPos * step) / (BEAM_MASS + 2 * NUT_MASS);
+    const lx = getLeftNutX(), rx = getRightNutX();
+    return NUT_MASS * (rx + lx) / (BEAM_MASS + 2 * NUT_MASS);
   }
 
   // ==================== Drawing ====================
@@ -349,16 +348,14 @@
     roundRect(ctx, -BEAM_HALF, -BEAM_H/2, BEAM_HALF * 2, BEAM_H, 4);
     ctx.stroke();
 
-    // Thread marks at beam ends (for balance nuts)
-    drawThreadMarks(ctx, -NUT_BASE_DIST, BEAM_H);
-    drawThreadMarks(ctx, NUT_BASE_DIST, BEAM_H);
+    // Threaded rod extensions at both ends
+    drawThreadedRod(ctx, -BEAM_HALF);
+    drawThreadedRod(ctx, BEAM_HALF);
 
-    // Balance nuts
-    const step = 6;
-    const leftNX = -NUT_BASE_DIST + state.nutPos * step;
-    const rightNX = NUT_BASE_DIST + state.nutPos * step;
-    drawNut(ctx, leftNX, -1);
-    drawNut(ctx, rightNX, -1);
+    // Balance nuts on threaded rods
+    const lnx = getLeftNutX(), rnx = getRightNutX();
+    drawBalanceNut(ctx, lnx);
+    drawBalanceNut(ctx, rnx);
 
     // Hook positions
     for (let side = -1; side <= 1; side += 2) {
@@ -374,30 +371,63 @@
     ctx.restore();
   }
 
-  function drawThreadMarks(ctx, x, beamH) {
-    ctx.strokeStyle = '#94a3b8'; ctx.lineWidth = 1;
-    for (let j = x - 24; j <= x + 24; j += 6) {
+  function drawThreadedRod(ctx, x) {
+    // Rod extends outward from beam end
+    const dir = x > 0 ? 1 : -1;
+    const startX = x;
+    const endX = x + dir * NUT_ROD_LEN;
+    const rodH = 5;
+
+    // Rod body
+    ctx.fillStyle = '#94a3b8';
+    roundRect(ctx, Math.min(startX, endX), -rodH/2, NUT_ROD_LEN, rodH, 2);
+    ctx.fill();
+    ctx.strokeStyle = '#64748b'; ctx.lineWidth = 0.8;
+    roundRect(ctx, Math.min(startX, endX), -rodH/2, NUT_ROD_LEN, rodH, 2);
+    ctx.stroke();
+
+    // Thread grooves
+    ctx.strokeStyle = '#7889a0'; ctx.lineWidth = 0.6;
+    for (let gx = startX; (dir > 0 ? gx <= endX : gx >= endX); gx += dir * 2.5) {
       ctx.beginPath();
-      ctx.moveTo(j, -beamH/2 - 2); ctx.lineTo(j, -beamH/2 + 2);
+      ctx.moveTo(gx, -rodH/2); ctx.lineTo(gx + dir * 1, rodH/2);
       ctx.stroke();
     }
   }
 
-  function drawNut(ctx, x, yOff) {
-    const ny = -BEAM_H/2 - 3 + yOff;
-    const nw = 12, nh = 8;
-    // Nut body (hexagonal-ish)
-    const grad = ctx.createLinearGradient(0, ny - nh/2, 0, ny + nh/2);
-    grad.addColorStop(0, '#e2e8f0'); grad.addColorStop(0.5, '#f8fafc'); grad.addColorStop(1, '#94a3b8');
-    ctx.fillStyle = grad;
-    roundRect(ctx, x - nw/2, ny - nh/2, nw, nh, 2);
+  function drawBalanceNut(ctx, x) {
+    const ny = 0; // centered on beam midline
+    const nw = 9, nh = 13;
+
+    // Nut shadow
+    ctx.fillStyle = 'rgba(0,0,0,0.15)';
+    roundRect(ctx, x - nw/2 + 1, ny - nh/2 + 1, nw, nh, 2.5);
     ctx.fill();
-    ctx.strokeStyle = '#64748b'; ctx.lineWidth = 1;
-    roundRect(ctx, x - nw/2, ny - nh/2, nw, nh, 2);
+
+    // Nut body (brass/gold colored)
+    const grad = ctx.createLinearGradient(x - nw/2, 0, x + nw/2, 0);
+    grad.addColorStop(0, '#b8860b');
+    grad.addColorStop(0.3, '#daa520');
+    grad.addColorStop(0.6, '#f0c040');
+    grad.addColorStop(1, '#8b6914');
+    ctx.fillStyle = grad;
+    roundRect(ctx, x - nw/2, ny - nh/2, nw, nh, 2.5);
+    ctx.fill();
+    ctx.strokeStyle = '#8b6914'; ctx.lineWidth = 1;
+    roundRect(ctx, x - nw/2, ny - nh/2, nw, nh, 2.5);
     ctx.stroke();
+
+    // Nut edges (knurled top/bottom)
+    ctx.strokeStyle = '#8b6914'; ctx.lineWidth = 0.8;
+    for (let ey = ny - nh/2 + 2; ey <= ny + nh/2 - 2; ey += 2.5) {
+      ctx.beginPath();
+      ctx.moveTo(x - nw/2, ey); ctx.lineTo(x + nw/2, ey);
+      ctx.stroke();
+    }
+
     // Center hole
-    ctx.fillStyle = '#475569';
-    ctx.beginPath(); ctx.arc(x, ny, 2.5, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#334155';
+    ctx.beginPath(); ctx.arc(x, ny, 2, 0, Math.PI * 2); ctx.fill();
   }
 
   function drawFulcrumDot() {
