@@ -13,6 +13,14 @@
     .main-card { max-width: 900px; margin: 0 auto 24px; padding: 0 16px; }
     .canvas-wrap { border-radius: 12px; padding: 4px; width: 100%; box-sizing: border-box; border: 1px solid #e2e8f0; position: relative; background: #fff; }
     .controls-bar { display: flex; align-items: center; justify-content: center; padding: 12px 16px; gap: 20px; flex-wrap: wrap; background: #1a1a2e; border-radius: 0 0 12px 12px; border-top: 1px solid #333; color: #ccc; font-size: 13px; }
+    /* Fullscreen mode */
+    .main-card.fullscreen-mode { position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 9999; margin: 0; padding: 0; background: #1a1a2e; max-width: none; display: flex; flex-direction: column; }
+    .main-card.fullscreen-mode .canvas-wrap { flex: 1; display: flex; align-items: center; justify-content: center; border-radius: 0; border: none; min-height: 0; }
+    .main-card.fullscreen-mode .canvas-wrap canvas { max-width: 100vw; max-height: calc(100vh - 60px); object-fit: contain; }
+    .main-card.fullscreen-mode .controls-bar { flex-shrink: 0; border-radius: 0; }
+    .fullscreen-btn { position: absolute; top: 8px; right: 8px; z-index: 10; background: rgba(0,0,0,0.45); color: #ccc; border: 1px solid rgba(255,255,255,0.2); border-radius: 6px; padding: 5px 10px; font-size: 14px; cursor: pointer; transition: all 0.2s; }
+    .fullscreen-btn:hover { background: rgba(0,0,0,0.75); color: #fff; }
+    .main-card.fullscreen-mode .fullscreen-btn { top: 12px; right: 12px; }
     .controls-bar .ctrl-col { display: flex; flex-direction: column; align-items: center; gap: 4px; }
     .controls-bar label { color: #ccc; font-size: 12px; white-space: nowrap; }
     .controls-bar input[type="range"] { width: 100px; accent-color: #8b5cf6; }
@@ -98,11 +106,12 @@
 
   <div class="section">
     <h2>吉他的琴弦发声 — 谐波与频率</h2>
-    <p style="color:#94a3b8;margin:0 0 16px 0;">弦两端固定，拨动后形成驻波。调节按弦位置改变弦长，弦越短音调越高；调节松紧改变张力，弦越紧音调越高。选择不同谐波模式观察振动形态。</p>
+    <p style="color:#94a3b8;margin:0 0 16px 0;">弦两端固定，拨动后形成驻波。调节按弦位置改变弦长，弦越短音调越高；调节松紧改变张力，弦越紧音调越高；切换材质改变音色。选择不同谐波模式观察振动形态。</p>
   </div>
 
   <div class="main-card">
     <div class="canvas-wrap">
+      <button class="fullscreen-btn" id="fullscreenBtn" title="全屏模式">⛶ 全屏</button>
       <div id="myContainer"></div>
     </div>
     <div class="controls-bar">
@@ -124,8 +133,16 @@
         </div>
       </div>
       <div class="ctrl-col">
+        <label id="labelMaterial">琴弦材质</label>
+        <select id="selectMaterial" style="background:#2a2a3e;color:#ccc;border:1px solid #555;border-radius:6px;padding:3px 8px;font-size:12px;">
+          <option value="nylon">尼龙弦</option>
+          <option value="steel" selected>钢丝弦</option>
+          <option value="gut">羊肠弦</option>
+        </select>
+      </div>
+      <div class="ctrl-col">
         <input type="checkbox" id="checkA" name="checkA" value="checkA" unchecked />
-        <label for="checkA" id="checkAlabel">聆听声音（正弦波）</label>
+        <label for="checkA" id="checkAlabel">聆听声音</label>
       </div>
       <div class="ctrl-col">
         <label style="color:#ccc;font-size:12px;display:flex;align-items:center;gap:4px;"><input type="checkbox" id="quizPauseCheck" style="accent-color:#8b5cf6;"> 暂停实验</label>
@@ -133,7 +150,7 @@
       <div class="ctrl-col">
         <button class="btn-primary" id="btnChallenge" style="font-size:13px;padding:4px 14px;background:linear-gradient(135deg,#8b5cf6,#06b6d4);">过关挑战</button>
       </div>
-      <span class="hint-text">弦越紧音越高 | 谐波越高节点越多</span>
+      <span class="hint-text">材质决定音色 | 弦越紧音越高 | 谐波越高节点越多</span>
     </div>
   </div>
 
@@ -156,7 +173,7 @@
   <script>
   // ---- state ----
   var radioA;
-  var spanA, spanB, spanC, rangeA, rangeB, rangeC, checkA, checkAlabel;
+  var spanA, spanB, spanC, rangeA, rangeB, rangeC, checkA, checkAlabel, selectMaterial;
   var osc1, osc2, osc4;
   var guitarImage, fingerImage;
   var minX = 0.155;
@@ -170,6 +187,13 @@
   var waveMax = 200;
   var wave = [];
   var timming = 0;
+
+  // Material presets: each defines oscillator types + overtone mix = timbre
+  var MATERIALS = {
+    nylon: { name: '尼龙弦', desc: '温暖柔和', type1: 'sine', type2: 'sine', type4: 'sine', amp2: 0.12, amp4: 0.04 },
+    steel: { name: '钢丝弦', desc: '明亮金属', type1: 'sawtooth', type2: 'sawtooth', type4: 'square', amp2: 0.75, amp4: 0.45 },
+    gut:   { name: '羊肠弦', desc: '丰富饱满', type1: 'triangle', type2: 'sine', type4: 'sine', amp2: 0.40, amp4: 0.18 }
+  };
 
   function preload() {
     guitarImage = loadImage("standing_wave_guitar.png");
@@ -195,10 +219,12 @@
     rangeA = select("#rangeA");
     rangeB = select("#rangeB");
     rangeC = select("#rangeC");
+    selectMaterial = select("#selectMaterial");
+    selectMaterial.changed(applyMaterial);
     checkA = select("#checkA");
     checkA.changed(setup2);
     checkAlabel = select("#checkAlabel");
-    checkAlabel.html("聆听声音（正弦波）");
+    checkAlabel.html("聆听声音");
 
     radioA = createRadio("radioA");
     radioA.option("1", "1");
@@ -221,15 +247,57 @@
     osc4.setType('sine');
     osc4.amp(0);
 
+    applyMaterial();  // set initial material (steel)
     setup2();
+
+    // Fullscreen button
+    document.getElementById('fullscreenBtn').addEventListener('click', toggleFullscreen);
   }
+
+  var isFullscreen = false;
 
   function windowResized() {
     var o = select("#myContainer");
     var a = 0.36;
-    var w = int((o.width > (window.innerHeight - 160) / a) ? (window.innerHeight - 160) / a : o.width);
-    var h = int(w * a);
+    var w, h;
+    if (isFullscreen) {
+      // Fullscreen: fill viewport, keep aspect ratio on canvas element
+      var availH = window.innerHeight - 60; // reserve for controls bar
+      var availW = window.innerWidth;
+      if (availW / availH > 1 / a) {
+        w = int(availH / a);
+        h = int(availH);
+      } else {
+        w = int(availW);
+        h = int(availW * a);
+      }
+    } else {
+      w = int((o.width > (window.innerHeight - 160) / a) ? (window.innerHeight - 160) / a : o.width);
+      h = int(w * a);
+    }
     resizeCanvas(w, h);
+  }
+
+  function toggleFullscreen() {
+    isFullscreen = !isFullscreen;
+    var card = document.querySelector('.main-card');
+    var btn = document.getElementById('fullscreenBtn');
+    var header = document.querySelector('.header');
+    if (isFullscreen) {
+      card.classList.add('fullscreen-mode');
+      btn.innerHTML = '✕ 退出全屏';
+      btn.title = '退出全屏';
+      if (header) header.style.display = 'none';
+      document.body.style.paddingTop = '0';
+    } else {
+      card.classList.remove('fullscreen-mode');
+      btn.innerHTML = '⛶ 全屏';
+      btn.title = '全屏模式';
+      if (header) header.style.display = '';
+      document.body.style.paddingTop = '';
+    }
+    // Resize canvas after layout update
+    setTimeout(function() { windowResized(); }, 100);
   }
 
   function setup2() {
@@ -246,6 +314,13 @@
       osc2.amp(0, 0.5);
       osc4.amp(0, 0.5);
     }
+  }
+
+  function applyMaterial() {
+    var mat = MATERIALS[selectMaterial.value()];
+    osc1.setType(mat.type1);
+    osc2.setType(mat.type2);
+    osc4.setType(mat.type4);
   }
 
   function draw() {
@@ -277,10 +352,11 @@
     osc4.freq(frequency / 4);
 
     if (checkA.checked()) {
+      var mat = MATERIALS[selectMaterial.value()];
       var oscAmp = map(rangeB.value(), 0, 100, 0, 0.5);
       osc1.amp(oscAmp);
-      osc2.amp(oscAmp / 2);
-      osc4.amp(oscAmp / 4);
+      osc2.amp(oscAmp * mat.amp2);
+      osc4.amp(oscAmp * mat.amp4);
     }
 
     // Draw string with standing wave
