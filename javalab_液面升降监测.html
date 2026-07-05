@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=10">
+  <title>液面升降监测 — 光的反射定律应用 - 物理虚拟实验</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="stylesheet" href="style.css">
+  <style>
+    .main-card { max-width: 960px; margin: 0 auto 24px; padding: 0 16px; }
+    .canvas-wrap { border-radius: 12px; padding: 4px; width: 100%; box-sizing: border-box; border: 1px solid #e2e8f0; position: relative; background: #f8fafc; }
+    .canvas-wrap canvas { display: block; width: 100%; height: auto; }
+    .controls-bar { display: flex; align-items: center; justify-content: center; padding: 12px 16px; gap: 16px; flex-wrap: wrap; background: #1a1a2e; border-radius: 0 0 12px 12px; border-top: 1px solid #333; color: #ccc; font-size: 13px; }
+    .controls-bar .ctrl-col { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+    .controls-bar label { color: #ccc; font-size: 12px; white-space: nowrap; }
+    .controls-bar input[type="range"] { width: 110px; accent-color: #ef4444; }
+    .controls-bar input[type="checkbox"] { accent-color: #ef4444; }
+    .hint-text { color: #888; font-size: 12px; }
+    .section { padding: 1.5rem 2rem 0.5rem; }
+    .section h2 { font-size: 1.4rem; }
+    .formula-bar { max-width: 960px; margin: 0 auto 24px; padding: 0 16px; display: flex; gap: 12px; flex-wrap: wrap; }
+    .formula-item { flex: 1; min-width: 180px; background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 12px 16px; }
+    .formula-item .flabel { color: #64748b; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; display: block; margin-bottom: 4px; }
+    .formula-item .fvalue { color: #e2e8f0; font-size: 13px; }
+    .shadow-data { background: #f8fafc; border-radius: 8px; padding: 8px 14px; margin: 4px 0; display: flex; gap: 20px; flex-wrap: wrap; justify-content: center; font-size: 13px; color: #334155; }
+    .shadow-data span { white-space: nowrap; }
+    .shadow-data .val { font-weight: 700; color: #1e293b; }
+    .fullscreen-btn { position: absolute; top: 8px; right: 8px; z-index: 10; background: rgba(0,0,0,0.3); color: #666; border: 1px solid rgba(0,0,0,0.15); border-radius: 6px; padding: 5px 10px; font-size: 14px; cursor: pointer; transition: all 0.2s; }
+    .fullscreen-btn:hover { background: rgba(0,0,0,0.6); color: #fff; }
+    .main-card.fullscreen-mode { position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 9999; margin: 0; padding: 0; background: #1a1a2e; max-width: none; display: flex; flex-direction: column; }
+    .main-card.fullscreen-mode .canvas-wrap { flex: 1; display: flex; align-items: center; justify-content: center; border-radius: 0; border: none; min-height: 0; }
+    .main-card.fullscreen-mode .canvas-wrap canvas { width: auto; height: auto; max-width: 100vw; max-height: calc(100vh - 60px); }
+    .main-card.fullscreen-mode .controls-bar { flex-shrink: 0; border-radius: 0; }
+    .header { position: fixed !important; top: 0; left: 0; right: 0; transition: transform 0.35s cubic-bezier(0.4, 0, 0.2, 1); will-change: transform; }
+    .header.hidden { transform: translateY(-100%); }
+    body { padding-top: 56px; transition: padding-top 0.35s cubic-bezier(0.4, 0, 0.2, 1); }
+    body.header-hidden { padding-top: 0; }
+    @media (max-width: 768px) { body { padding-top: 48px; } }
+  </style>
+  <script src="auth-check.js"></script>
+</head>
+<body>
+  <header class="header">
+    <div class="logo">物理虚拟实验</div>
+    <nav class="nav">
+      <a href="index.html">首页</a>
+      <a href="experiments.html">实验列表</a>
+    </nav>
+  </header>
+
+  <div class="section">
+    <h2>液面升降监测 — 光的反射定律</h2>
+    <p style="color:#94a3b8;margin:0 0 16px 0;">激光以固定角度射向液面，经液面反射后在容器侧壁上形成光斑。液面升降时入射点水平移动，反射光斑在侧壁刻度上相应移动。这是光的反射定律在实际工程中的应用。</p>
+  </div>
+
+  <div class="main-card">
+    <div class="canvas-wrap">
+      <button class="fullscreen-btn" id="fullscreenBtn" title="全屏模式">⛶ 全屏</button>
+      <canvas id="simCanvas"></canvas>
+    </div>
+    <div class="shadow-data">
+      <span>💧 液面高度: <span class="val" id="sdLevel">--</span></span>
+      <span>📏 光斑在侧壁上的位置: <span class="val" id="sdSpot">--</span></span>
+      <span>↔️ 光斑位移: <span class="val" id="sdShift">--</span></span>
+    </div>
+    <div class="controls-bar">
+      <div class="ctrl-col">
+        <label for="liquidLevel">液面高度</label>
+        <div style="display:flex;align-items:center;gap:4px;">
+          <span style="color:#888;font-size:10px;">低</span>
+          <input type="range" id="liquidLevel" min="0" max="100" value="40">
+          <span style="color:#888;font-size:10px;">高</span>
+        </div>
+      </div>
+      <div class="ctrl-col">
+        <label for="laserPos">激光水平位置</label>
+        <input type="range" id="laserPos" min="55" max="85" value="68">
+      </div>
+      <div class="ctrl-col">
+        <label for="laserHeight">激光高度</label>
+        <div style="display:flex;align-items:center;gap:4px;">
+          <span style="color:#888;font-size:10px;">低</span>
+          <input type="range" id="laserHeight" min="2" max="25" value="18">
+          <span style="color:#888;font-size:10px;">高</span>
+        </div>
+      </div>
+      <div class="ctrl-col">
+        <label for="laserAngle">激光角度</label>
+        <div style="display:flex;align-items:center;gap:4px;">
+          <span style="color:#888;font-size:10px;">平</span>
+          <input type="range" id="laserAngle" min="15" max="55" value="30">
+          <span style="color:#888;font-size:10px;">陡</span>
+        </div>
+      </div>
+      <div class="ctrl-col">
+        <input type="checkbox" id="showNormal" checked />
+        <label for="showNormal">显示法线</label>
+      </div>
+      <span class="hint-text">液面上升→入射点左移→侧壁光斑上移 | 反射角始终等于入射角</span>
+    </div>
+  </div>
+
+  <div class="formula-bar">
+    <div class="formula-item">
+      <span class="flabel">反射定律</span>
+      <span class="fvalue">反射角 = 入射角。入射光线、反射光线、法线在同一平面内</span>
+    </div>
+    <div class="formula-item">
+      <span class="flabel">液面升降原理</span>
+      <span class="fvalue">液面上升 → 入射点沿液面左移 → 反射光斑在侧壁刻度上向上移动</span>
+    </div>
+    <div class="formula-item">
+      <span class="flabel">工程应用</span>
+      <span class="fvalue">液位监测、精密水准测量、地震预警。通过光斑位移反推液面变化量</span>
+    </div>
+  </div>
+
+  <script src="protect.js"></script>
+  <script>
+  (function() {
+    var canvas = document.getElementById("simCanvas");
+    var ctx = canvas.getContext("2d");
+    var isFullscreen = false;
+    var canvasW, canvasH;
+
+    var liquidLevelValue = 40;
+    var laserPosValue = 68;
+    var laserHeightValue = 18;
+    var laserAngleValue = 30;
+    var initialSpotY = null;
+
+    function readSliders() {
+      liquidLevelValue = Number(document.getElementById("liquidLevel").value);
+      laserPosValue = Number(document.getElementById("laserPos").value);
+      laserHeightValue = Number(document.getElementById("laserHeight").value);
+      laserAngleValue = Number(document.getElementById("laserAngle").value);
+    }
+
+    function resize() {
+      var wrap = document.querySelector(".canvas-wrap");
+      var w, h;
+      if (isFullscreen) {
+        w = Math.min(window.innerWidth, Math.floor((window.innerHeight - 60) / 0.45));
+        h = Math.floor(w * 0.45);
+      } else {
+        w = wrap ? wrap.clientWidth - 8 : 920;
+        if (w <= 0) w = 800;
+        w = Math.min(w, 960);
+        h = Math.floor(w * 0.45);
+      }
+      canvas.width = w;
+      canvas.height = h;
+      canvasW = w;
+      canvasH = h;
+      render();
+    }
+
+    function render() {
+      readSliders();
+      var W = canvasW, H = canvasH;
+
+      // Background
+      ctx.fillStyle = "#f8fafc";
+      ctx.fillRect(0, 0, W, H);
+
+      // World: 0-100 horizontal, 0-50 vertical
+      var scale = W / 100;
+      function wx(wx) { return wx * scale; }
+      function wy(wy) { return wy * scale; }
+
+      // ---- Geometry (world coords) ----
+      var containerLeft = 22;
+      var containerRight = 62;
+      var containerBottom = 44;
+      var laserX = laserPosValue;
+      var laserY = laserHeightValue;
+      var beamAngle = laserAngleValue;
+
+      // Liquid surface y (world coords)
+      var liquidY = 42 - (liquidLevelValue / 100) * 22;
+
+      var beamAngleRad = beamAngle * Math.PI / 180;
+
+      // Laser beam intersection with liquid surface
+      var t = (liquidY - laserY) / Math.sin(beamAngleRad);
+      var px = laserX - t * Math.cos(beamAngleRad);
+      var py = liquidY;
+
+      // Reflected ray hits container left wall at x = containerLeft
+      var t2 = (px - containerLeft) / Math.cos(beamAngleRad);
+      var spotY = py - t2 * Math.sin(beamAngleRad);
+
+      // ----- Draw container -----
+      // Container body outline
+      ctx.strokeStyle = "#475569";
+      ctx.lineWidth = 2.5;
+      ctx.setLineDash([]);
+      ctx.beginPath();
+      ctx.moveTo(wx(containerLeft), wy(containerBottom));
+      ctx.lineTo(wx(containerLeft), wy(3));
+      ctx.lineTo(wx(containerRight), wy(3));
+      ctx.lineTo(wx(containerRight), wy(containerBottom));
+      ctx.stroke();
+
+      // Container glass fill (lighter background inside)
+      ctx.fillStyle = "rgba(241, 245, 249, 0.6)";
+      ctx.fillRect(wx(containerLeft), wy(3), wx(containerRight) - wx(containerLeft), wy(containerBottom) - wy(3));
+
+      // Bottom thickness
+      ctx.fillStyle = "#cbd5e1";
+      ctx.fillRect(wx(containerLeft), wy(containerBottom), wx(containerRight) - wx(containerLeft), wy(50) - wy(containerBottom));
+
+      // Liquid
+      var liquidGrad = ctx.createLinearGradient(0, wy(liquidY), 0, wy(containerBottom));
+      liquidGrad.addColorStop(0, "rgba(59, 130, 246, 0.5)");
+      liquidGrad.addColorStop(0.3, "rgba(37, 99, 235, 0.55)");
+      liquidGrad.addColorStop(1, "rgba(29, 78, 216, 0.65)");
+      ctx.fillStyle = liquidGrad;
+      ctx.fillRect(wx(containerLeft) + 1, wy(liquidY), wx(containerRight) - wx(containerLeft) - 2, wy(containerBottom) - wy(liquidY));
+
+      // Liquid surface line (within container)
+      ctx.strokeStyle = "#3b82f6";
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.moveTo(wx(containerLeft), wy(liquidY));
+      ctx.lineTo(wx(containerRight), wy(liquidY));
+      ctx.stroke();
+
+      // Liquid surface ripple
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.4)";
+      ctx.lineWidth = 1;
+      for (var ri = 0; ri < 6; ri++) {
+        var rx = containerLeft + ri * 7 + 3;
+        ctx.beginPath();
+        ctx.moveTo(wx(rx), wy(liquidY));
+        ctx.lineTo(wx(rx + 2.5), wy(liquidY));
+        ctx.stroke();
+      }
+
+      // ----- Scale marks on left wall -----
+      var wallX = wx(containerLeft);
+      for (var si = 8; si <= 42; si += 2) {
+        var isMajor = (si % 10 === 0);
+        var tickLen = isMajor ? 10 : 5;
+        ctx.strokeStyle = isMajor ? "#334155" : "#94a3b8";
+        ctx.lineWidth = isMajor ? 1.5 : 0.8;
+        ctx.beginPath();
+        ctx.moveTo(wallX - tickLen, wy(si));
+        ctx.lineTo(wallX, wy(si));
+        ctx.stroke();
+        if (isMajor) {
+          ctx.fillStyle = "#334155";
+          ctx.font = "bold " + Math.round(W * 0.015) + "px sans-serif";
+          ctx.textAlign = "right";
+          ctx.fillText(si, wallX - tickLen - 3, wy(si) + 4);
+        }
+      }
+
+      var showNormal = document.getElementById("showNormal").checked;
+
+      // ---- Draw laser device ----
+      var lx = wx(laserX);
+      var ly = wy(laserY);
+      // Laser body
+      ctx.fillStyle = "#1e293b";
+      ctx.fillRect(lx - 6, ly - 3, 8, 14);
+
+      // Laser aperture
+      ctx.fillStyle = "#ef4444";
+      ctx.beginPath();
+      ctx.arc(lx - 2, ly + 4, 2.5, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Laser glow
+      ctx.fillStyle = "rgba(239, 68, 68, 0.3)";
+      ctx.beginPath();
+      ctx.arc(lx - 2, ly + 4, 5, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Laser label
+      ctx.fillStyle = "#1e293b";
+      ctx.font = "bold " + Math.round(W * 0.018) + "px sans-serif";
+      ctx.textAlign = "left";
+      ctx.fillText("激光器", lx - 8, ly - 8);
+
+      // ----- Draw optical path -----
+      var pxCan = wx(px);
+      var pyCan = wy(py);
+      var spotXCan = wx(containerLeft);
+      var spotYCan = wy(spotY);
+
+      // Incident ray (laser → liquid)
+      ctx.strokeStyle = "rgba(239, 68, 68, 0.8)";
+      ctx.lineWidth = 2.5;
+      ctx.setLineDash([]);
+      ctx.beginPath();
+      ctx.moveTo(lx - 2, ly + 4);
+      ctx.lineTo(pxCan, pyCan);
+      ctx.stroke();
+
+      // Arrow on incident ray
+      drawArrow(lx - 2, ly + 4, pxCan, pyCan, 0.4);
+
+      // Reflected ray (liquid → screen)
+      ctx.strokeStyle = "rgba(239, 68, 68, 0.8)";
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.moveTo(pxCan, pyCan);
+      ctx.lineTo(spotXCan, spotYCan);
+      ctx.stroke();
+
+      // Arrow on reflected ray
+      drawArrow(pxCan, pyCan, spotXCan, spotYCan, 0.5);
+
+      // Normal line
+      if (showNormal) {
+        ctx.strokeStyle = "rgba(100, 100, 100, 0.6)";
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([5, 4]);
+        ctx.beginPath();
+        ctx.moveTo(pxCan, pyCan - 50);
+        ctx.lineTo(pxCan, pyCan + 30);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        // Normal label
+        ctx.fillStyle = "#666";
+        ctx.font = Math.round(W * 0.016) + "px sans-serif";
+        ctx.textAlign = "left";
+        ctx.fillText("法线", pxCan + 6, pyCan - 25);
+      }
+
+      // ----- Draw light spot on wall -----
+      // Small spot glow
+      ctx.fillStyle = "rgba(239, 68, 68, 0.35)";
+      ctx.beginPath();
+      ctx.arc(spotXCan, spotYCan, 5, 0, Math.PI * 2);
+      ctx.fill();
+      // Spot core
+      ctx.fillStyle = "#ef4444";
+      ctx.beginPath();
+      ctx.arc(spotXCan, spotYCan, 2.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#fff";
+      ctx.beginPath();
+      ctx.arc(spotXCan - 0.5, spotYCan - 0.5, 1, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Spot label
+      ctx.fillStyle = "#dc2626";
+      ctx.font = "bold " + Math.round(W * 0.017) + "px sans-serif";
+      ctx.textAlign = "right";
+      ctx.fillText("光斑", spotXCan - 10, spotYCan + 4);
+
+      // ----- Incidence point marker -----
+      ctx.fillStyle = "#ef4444";
+      ctx.beginPath();
+      ctx.arc(pxCan, pyCan, 3.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "rgba(239, 68, 68, 0.3)";
+      ctx.beginPath();
+      ctx.arc(pxCan, pyCan, 7, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Incidence point label
+      ctx.fillStyle = "#b91c1c";
+      ctx.font = Math.round(W * 0.016) + "px sans-serif";
+      ctx.textAlign = "left";
+      ctx.fillText("入射点", pxCan + 8, pyCan - 8);
+
+      // ----- Update data panel -----
+      document.getElementById("sdLevel").textContent = liquidY.toFixed(1) + " (世界坐标)";
+      document.getElementById("sdSpot").textContent = spotY.toFixed(1) + " (世界坐标)";
+
+      if (initialSpotY === null) initialSpotY = spotY;
+      var shift = spotY - initialSpotY;
+      var shiftSign = shift >= 0 ? "+" : "";
+      document.getElementById("sdShift").textContent = shiftSign + shift.toFixed(1);
+
+      // ----- Labels -----
+      ctx.fillStyle = "#475569";
+      ctx.font = "bold " + Math.round(W * 0.02) + "px sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillText("容器", wx((containerLeft + containerRight) / 2), wy(containerBottom) + 20);
+      ctx.fillText("液面", wx(containerRight + 3), wy(liquidY) + 4);
+    }
+
+    function drawArrow(x1, y1, x2, y2, fraction) {
+      var ax = x1 + (x2 - x1) * fraction;
+      var ay = y1 + (y2 - y1) * fraction;
+      var angle = Math.atan2(y2 - y1, x2 - x1);
+      var al = 8;
+      var aw = 4;
+      ctx.fillStyle = "rgba(239, 68, 68, 0.9)";
+      ctx.beginPath();
+      ctx.moveTo(ax, ay);
+      ctx.lineTo(ax - al * Math.cos(angle - 0.4), ay - al * Math.sin(angle - 0.4));
+      ctx.lineTo(ax - al * Math.cos(angle + 0.4), ay - al * Math.sin(angle + 0.4));
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    function toggleFullscreen() {
+      isFullscreen = !isFullscreen;
+      var card = document.querySelector(".main-card");
+      var btn = document.getElementById("fullscreenBtn");
+      var header = document.querySelector(".header");
+      if (isFullscreen) {
+        card.classList.add("fullscreen-mode");
+        btn.innerHTML = "✕ 退出全屏";
+        if (header) header.style.display = "none";
+        document.body.style.paddingTop = "0";
+      } else {
+        card.classList.remove("fullscreen-mode");
+        btn.innerHTML = "⛶ 全屏";
+        if (header) header.style.display = "";
+        document.body.style.paddingTop = "";
+      }
+      setTimeout(resize, 100);
+    }
+
+    document.getElementById("fullscreenBtn").addEventListener("click", toggleFullscreen);
+    document.querySelectorAll("input[type=range], input[type=checkbox]").forEach(function(el) {
+      el.addEventListener("input", function() {
+        initialSpotY = null; // reset reference on any change
+        render();
+      });
+    });
+    window.addEventListener("resize", resize);
+    resize();
+  })();
+  </script>
+
+  <script>
+    (function() {
+      var header = document.querySelector('.header');
+      var hideTimer = null;
+      var HIDE_DELAY = 800;
+      function show() { clearTimeout(hideTimer); header.classList.remove('hidden'); document.body.classList.remove('header-hidden'); }
+      function hide() { hideTimer = setTimeout(function() { header.classList.add('hidden'); document.body.classList.add('header-hidden'); }, HIDE_DELAY); }
+      document.addEventListener('mousemove', function(e) {
+        if (e.clientY <= 60) show();
+        else if (e.clientY > header.offsetHeight + 20 && !header.classList.contains('hidden')) hide();
+      });
+      header.addEventListener('mouseenter', show);
+      header.addEventListener('mouseleave', hide);
+      hideTimer = setTimeout(function() { header.classList.add('hidden'); document.body.classList.add('header-hidden'); }, 2000);
+    })();
+  </script>
+</body>
+</html>
