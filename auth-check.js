@@ -1,7 +1,7 @@
 (function() {
   var VIP_EXPERIMENTS = [
     "声音麦克风波形.html","javalab_测速雷达原理.html","小孔成像2.html",
-    "phydemo_光路模拟器.html","光的折射规律.html","LCD像素显色.html",
+    "phydemo_光路模拟器.html","光的折射规律.html","光的折射—杯底光点.html","LCD像素显色.html",
     "牛顿第一定律_交互实验.html","飞象_飞机投弹惯性教学动画.html",
     "飞象_牛顿第一定律教学动画.html","飞象_液体压强实验教学动画.html",
     "飞象_船闸连通器原理分步动画演示.html","飞象_生成马德堡半球实验教学动画.html",
