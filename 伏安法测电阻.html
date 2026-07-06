@@ -65,6 +65,12 @@
       body { padding-top: 48px; }
       .meter-readout { margin-left: 0; width: 100%; justify-content: space-around; }
     }
+
+    /* 加载提示 */
+    .loading-overlay { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(255,255,255,0.9); border-radius: 8px; z-index: 5; }
+    .loading-overlay.hidden { display: none; }
+    .loading-spinner { width: 32px; height: 32px; border: 3px solid #e2e8f0; border-top-color: #3b82f6; border-radius: 50%; animation: spin 0.8s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
   </style>
   <script src="protect.js"></script>
   <script src="auth-check.js"></script>
@@ -80,9 +86,12 @@
 
   <div class="exp-wrap">
     <h2>伏安法测电阻</h2>
-    <p class="sub">闭合开关，拖动滑动变阻器滑片改变阻值，记录3组电压和电流数据，计算未知电阻 Rx 的阻值</p>
+    <p class="sub">闭合开关，拖动滑动变阻器滑片改变阻值，记录3组电压和电流数据，计算未知电阻 R<sub>x</sub> 的阻值</p>
 
-    <div class="main-card">
+    <div class="main-card" style="position:relative;">
+      <div class="loading-overlay" id="loadingOverlay">
+        <div class="loading-spinner"></div>
+      </div>
       <canvas id="simCanvas"></canvas>
 
       <div class="ctrl-bar">
@@ -123,13 +132,13 @@
       <h3>实验数据记录</h3>
       <table class="data-table">
         <thead>
-          <tr><th>实验次数</th><th>电压 U / V</th><th>电流 I / A</th><th>电阻 Rx / Ω</th></tr>
+          <tr><th>实验次数</th><th>电压 U / V</th><th>电流 I / A</th><th>电阻 R<sub>x</sub> / Ω</th></tr>
         </thead>
         <tbody id="dataBody">
           <tr><td>1</td><td class="empty-hint">—</td><td class="empty-hint">—</td><td class="empty-hint">—</td></tr>
           <tr><td>2</td><td class="empty-hint">—</td><td class="empty-hint">—</td><td class="empty-hint">—</td></tr>
           <tr><td>3</td><td class="empty-hint">—</td><td class="empty-hint">—</td><td class="empty-hint">—</td></tr>
-          <tr class="avg-row"><td>平均值</td><td class="empty-hint">—</td><td class="empty-hint">—</td><td class="empty-hint">—</td><td></td></tr>
+          <tr class="avg-row"><td>平均值</td><td class="empty-hint">—</td><td class="empty-hint">—</td><td class="empty-hint">—</td></tr>
         </tbody>
       </table>
     </div>
@@ -157,10 +166,55 @@
   <script src="script.js"></script>
 
 <script>
+// ============ 精灵图预加载 ============
 (function() {
 var canvas = document.getElementById('simCanvas'), ctx = canvas.getContext('2d');
 var W = 920, H = 440;
 var dpr = 1;
+
+// 精灵图存储
+var sprites = {};
+var SPRITE_BASE = 'sprites/final/';
+var spriteManifest = {
+  'battery':     'battery-cell.png',
+  'switchOpen':  'knife-switch-open.png',
+  'switchClosed':'knife-switch-closed.png',
+  'resistor':    'fixed-resistor.png',
+  'rheostat':    'rheostat.png',
+  'ammeter':     'ammeter.png',
+  'voltmeter':   'voltmeter.png',
+  'terminal':    'terminal-post.png',
+  'wire':        'wire-segment.png',
+};
+var spritesLoaded = false;
+
+// 预加载
+(function preloadSprites() {
+  var keys = Object.keys(spriteManifest);
+  var loaded = 0;
+  keys.forEach(function(key) {
+    var img = new Image();
+    img.onload = function() {
+      sprites[key] = img;
+      loaded++;
+      if (loaded >= keys.length) {
+        spritesLoaded = true;
+        document.getElementById('loadingOverlay').classList.add('hidden');
+      }
+    };
+    img.onerror = function() {
+      console.warn('精灵图加载失败: ' + spriteManifest[key] + ', 回退到程序化绘制');
+      loaded++;
+      if (loaded >= keys.length) {
+        spritesLoaded = true;
+        document.getElementById('loadingOverlay').classList.add('hidden');
+      }
+    };
+    img.src = SPRITE_BASE + spriteManifest[key];
+  });
+})();
+
+function getSprite(key) { return sprites[key] || null; }
 
 // === 物理参数 ===
 var batteryV = 3;
@@ -187,7 +241,7 @@ var recordCount = 0;
 var B1X = 222, B1Y = 355;
 var SX = 270, SY = 90;
 var RX1 = 370, RY = 90;
-var RX2 = 540, RY2 = 90;
+var RX2 = 540;
 var AX = 640, AY = 90;
 var XX = 740, XY1 = 90;
 var XX2 = 740, XY2 = 200;
@@ -199,13 +253,11 @@ var batt2Top = {x: B1X, y: B1Y - 33};
 var batt2Bot = {x: B1X, y: B1Y + 33};
 var swTL = {x: SX - 30, y: SY};
 var swTR = {x: SX + 30, y: SY};
-// 滑动变阻器四接线柱 (实际坐标由 drawRheostat 内部按布局计算并回写)
-// 限流式接法: 下方接 A (电阻丝左端), 上方接 D (金属杆右端)
+
 var rhA = {x: RX1 + 10, y: RY + 48};
 var rhB = {x: RX2 - 10, y: RY + 48};
 var rhC = {x: RX1 + 10, y: RY - 20};
 var rhD = {x: RX2 - 10, y: RY - 20};
-// 兼容旧连线变量: rA=下方接入点(A), rD=上方接入点(D)
 var rA = rhA, rD = rhD;
 var amL = {x: AX - 36, y: AY};
 var amR = {x: AX + 36, y: AY};
@@ -213,6 +265,8 @@ var rxT = {x: XX, y: XY1};
 var rxB = {x: XX, y: XY2};
 var vmT = {x: VX, y: VY - 48};
 var vmB = {x: VX, y: VY + 48};
+
+var rhTrackStart = RX1 + 18, rhTrackEnd = RX2 - 18;
 
 function calcCircuit() {
   if (!switchOn) { currentI = 0; voltageU = 0; return; }
@@ -238,7 +292,6 @@ function resize() {
   ctx.scale(dpr * w / W, dpr * w / W);
 }
 
-// === 辅助绘图函数 ===
 function roundRect(x, y, w, h, r) {
   ctx.beginPath();
   ctx.moveTo(x + r, y);
@@ -253,17 +306,7 @@ function roundRect(x, y, w, h, r) {
   ctx.closePath();
 }
 
-function drawTerminalPost(x, y, color, size) {
-  size = size || 1;
-  ctx.fillStyle = '#8899aa';
-  ctx.fillRect(x - 3*size, y - 5*size, 6*size, 10*size);
-  ctx.fillStyle = color;
-  ctx.beginPath(); ctx.arc(x, y - 5*size, 3.5*size, 0, Math.PI*2); ctx.fill();
-  ctx.strokeStyle = '#555'; ctx.lineWidth = 0.8;
-  ctx.beginPath(); ctx.arc(x, y - 5*size, 3.5*size, 0, Math.PI*2); ctx.stroke();
-}
-
-// ============ 电池组绘制 ============
+// ============ 精灵图电池组 ============
 function drawBatteries() {
   var cells = Math.round(batteryV / 1.5);
   var cellW = 46, cellH = 66, gap = 10;
@@ -271,8 +314,9 @@ function drawBatteries() {
   var startX = B1X - totalW / 2 + cellW / 2;
   var cellY = B1Y;
   var centerX = startX + (cells - 1) * (cellW + gap) / 2;
+  var sprite = getSprite('battery');
 
-  // Inter-cell series connection wires (behind cells)
+  // 电池间串联线
   for (var c = 0; c < cells - 1; c++) {
     var cx1 = startX + c * (cellW + gap);
     var cx2 = startX + (c + 1) * (cellW + gap);
@@ -290,685 +334,293 @@ function drawBatteries() {
 
   for (var c = 0; c < cells; c++) {
     var cx = startX + c * (cellW + gap);
-    drawBatteryCell(cx, cellY, cellW, cellH);
+    var bx = cx - cellW/2, by = cellY - cellH/2;
+    if (sprite) {
+      // 精灵图电池
+      ctx.drawImage(sprite, bx, by, cellW, cellH);
+    } else {
+      // 回退：简单矩形电池
+      var bgrad = ctx.createLinearGradient(bx, 0, bx + cellW, 0);
+      bgrad.addColorStop(0, '#888'); bgrad.addColorStop(0.3, '#ddd'); bgrad.addColorStop(0.6, '#bbb'); bgrad.addColorStop(1, '#777');
+      ctx.fillStyle = bgrad;
+      roundRect(bx, by, cellW, cellH, 7); ctx.fill();
+      ctx.strokeStyle = '#666'; ctx.lineWidth = 0.8;
+      roundRect(bx, by, cellW, cellH, 7); ctx.stroke();
+    }
   }
 
-  // Update terminal positions
   var firstX = startX, lastX = startX + (cells - 1) * (cellW + gap);
   batt1Top.x = firstX; batt1Top.y = cellY - cellH/2;
   batt1Bot.x = firstX; batt1Bot.y = cellY + cellH/2;
   batt2Top.x = lastX;  batt2Top.y = cellY - cellH/2;
   batt2Bot.x = lastX;  batt2Bot.y = cellY + cellH/2;
 
-  // Total voltage label
   ctx.fillStyle = '#d97706'; ctx.font = 'bold 13px sans-serif'; ctx.textAlign = 'center';
   ctx.fillText(batteryV + 'V', centerX, cellY - cellH/2 - 36);
 }
 
-// ============ 单节干电池绘制 (NoBook 半写实风格) ============
-// Unified lighting model: light from upper-left, specular highlight at ~30% from left edge.
-// All sections share the same highlight position so the cylinder reads as one continuous surface.
-function drawBatteryCell(x, y, cellW, cellH) {
-  var bx = x - cellW/2, by = y - cellH/2;
-  var bodyR = 7;
-
-  // Shared cylindrical lighting: t in [0,1], 0=left edge, ~0.3=specular, 1=right edge
-  function cylShade(t, baseR, baseG, baseB, contrast) {
-    var amb = 0.12;
-    var diff = Math.cos((t - 0.55) * Math.PI * 0.85);
-    diff = Math.max(-0.1, diff);
-    var spec = Math.exp(-Math.pow((t - 0.30) / 0.06, 2));
-    var light = amb + diff * 0.55 + spec * 0.7;
-    light = Math.max(0.08, Math.min(1.2, light * contrast));
-    var r = Math.round(Math.max(0, Math.min(255, baseR * light)));
-    var g = Math.round(Math.max(0, Math.min(255, baseG * light)));
-    var b = Math.round(Math.max(0, Math.min(255, baseB * light)));
-    return 'rgb(' + r + ',' + g + ',' + b + ')';
-  }
-
-  // ---- Ground shadow ----
-  ctx.fillStyle = 'rgba(0,0,0,0.12)';
-  ctx.beginPath();
-  ctx.ellipse(x, by + cellH + 3, cellW*0.6, 5, 0, 0, Math.PI*2);
-  ctx.fill();
-  ctx.fillStyle = 'rgba(0,0,0,0.05)';
-  ctx.beginPath();
-  ctx.ellipse(x, by + cellH + 7, cellW*0.75, 4, 0, 0, Math.PI*2);
-  ctx.fill();
-
-  // === BODY: metallic cylinder drawn as vertical strips with unified shading ===
-  var strips = 36;
-  var stripW = cellW / strips;
-  for (var s = 0; s < strips; s++) {
-    var t = (s + 0.5) / strips;
-    var sx = bx + s * stripW;
-    ctx.fillStyle = cylShade(t, 155, 160, 168, 1.15);
-    ctx.fillRect(sx, by, stripW + 0.5, cellH);
-  }
-
-  ctx.strokeStyle = '#999'; ctx.lineWidth = 0.6;
-  roundRect(bx, by, cellW, cellH, bodyR); ctx.stroke();
-
-  // === TOP ELLIPSE (foreshortened circular top of cylinder) ===
-  var topEy = by + 1.5;
-  var topERx = cellW/2 - 1;
-  var topERy = 5.5;
-  // Outer rim (dark)
-  ctx.fillStyle = '#8a8d95';
-  ctx.beginPath(); ctx.ellipse(x, topEy, topERx, topERy, 0, 0, Math.PI*2); ctx.fill();
-  // Inner face (lighter, shaded)
-  ctx.save();
-  ctx.beginPath(); ctx.ellipse(x, topEy - 0.5, topERx - 2, topERy - 1.5, 0, 0, Math.PI*2); ctx.clip();
-  for (var s = 0; s < strips; s++) {
-    var t = (s + 0.5) / strips;
-    var sx = bx + s * stripW;
-    ctx.fillStyle = cylShade(t, 195, 200, 208, 1.0);
-    ctx.fillRect(sx, topEy - 3, stripW + 0.5, topERy + 3);
-  }
-  ctx.restore();
-
-  // === LABEL BAND (~56% of body height, same lighting model for continuity) ===
-  var labelTop = by + topERy * 2 + 2;
-  var labelBot = by + cellH - 10;
-  var labelH = labelBot - labelTop;
-
-  // Dark label base
-  for (var s = 0; s < strips; s++) {
-    var t = (s + 0.5) / strips;
-    var sx = bx + s * stripW;
-    ctx.fillStyle = cylShade(t, 28, 30, 40, 0.9);
-    ctx.fillRect(sx + 1, labelTop, stripW + 0.5, labelH);
-  }
-
-  // Copper segment (top ~30%)
-  var copperTop = labelTop + 5;
-  var copperH = labelH * 0.3;
-  for (var s = 0; s < strips; s++) {
-    var t = (s + 0.5) / strips;
-    var sx = bx + s * stripW;
-    ctx.fillStyle = cylShade(t, 160, 100, 35, 1.0);
-    ctx.fillRect(sx + 1, copperTop, stripW + 0.5, copperH);
-  }
-
-  // Silver stripe
-  var silvTop = copperTop + copperH;
-  var silvH = labelH * 0.1;
-  for (var s = 0; s < strips; s++) {
-    var t = (s + 0.5) / strips;
-    var sx = bx + s * stripW;
-    ctx.fillStyle = cylShade(t, 170, 170, 175, 1.1);
-    ctx.fillRect(sx + 1, silvTop, stripW + 0.5, silvH);
-  }
-
-  // Black bottom segment
-  var blkTop = silvTop + silvH;
-  for (var s = 0; s < strips; s++) {
-    var t = (s + 0.5) / strips;
-    var sx = bx + s * stripW;
-    ctx.fillStyle = cylShade(t, 22, 24, 34, 0.85);
-    ctx.fillRect(sx + 1, blkTop, stripW + 0.5, labelBot - blkTop);
-  }
-
-  // Gold pinstripes
-  ctx.fillStyle = '#c8a850';
-  ctx.fillRect(bx + 2, labelTop + 1, cellW - 4, 1.5);
-  ctx.fillRect(bx + 2, labelBot - 2.5, cellW - 4, 1.5);
-  ctx.fillStyle = '#d4b860';
-  ctx.fillRect(bx + 2, labelTop + 3, cellW - 4, 0.8);
-  ctx.fillRect(bx + 2, labelBot - 3.8, cellW - 4, 0.8);
-
-  // "1.5V" text
-  ctx.fillStyle = '#d8d0c0'; ctx.font = 'bold 10px sans-serif'; ctx.textAlign = 'center';
-  ctx.fillText('1.5V', x, blkTop + (labelBot - blkTop) * 0.55);
-
-  // Glossy plastic specular overlay
-  ctx.fillStyle = 'rgba(255,255,255,0.07)';
-  ctx.fillRect(bx + cellW*0.25, labelTop + 2, cellW*0.15, labelH - 4);
-
-  // === EXPOSED METAL BOTTOM (below label) ===
-  var metalBotH = by + cellH - labelBot;
-  for (var s = 0; s < strips; s++) {
-    var t = (s + 0.5) / strips;
-    var sx = bx + s * stripW;
-    ctx.fillStyle = cylShade(t, 148, 153, 160, 1.1);
-    ctx.fillRect(sx + 1, labelBot, stripW + 0.5, metalBotH);
-  }
-
-  // === BRASS POSITIVE CAP ===
-  var capW = cellW * 0.35, capH = 11;
-  var capX = x - capW/2, capY = topEy - capH - 1.5;
-
-  // Cap shadow on top face
-  ctx.fillStyle = 'rgba(0,0,0,0.22)';
-  ctx.beginPath(); ctx.ellipse(x, topEy + 0.5, capW/2 + 2.5, 3.5, 0, 0, Math.PI*2); ctx.fill();
-
-  // Cap body (brass cylinder, same lighting)
-  var capStrips = 18;
-  var capStripW = capW / capStrips;
-  for (var s = 0; s < capStrips; s++) {
-    var t = (s + 0.5) / capStrips;
-    var sx = capX + s * capStripW;
-    ctx.fillStyle = cylShade(t, 175, 135, 30, 1.2);
-    ctx.fillRect(sx, capY, capStripW + 0.5, capH);
-  }
-  ctx.strokeStyle = '#705010'; ctx.lineWidth = 0.6;
-  roundRect(capX, capY, capW, capH, 2.5); ctx.stroke();
-
-  // Cap top ellipse
-  ctx.fillStyle = '#e8d068';
-  ctx.beginPath(); ctx.ellipse(x, capY, capW/2, capH*0.28, 0, 0, Math.PI*2); ctx.fill();
-  ctx.fillStyle = 'rgba(255,255,200,0.6)';
-  ctx.beginPath(); ctx.arc(x - capW*0.1, capY - 1, capW*0.14, 0, Math.PI*2); ctx.fill();
-
-  // === ZINC NEGATIVE BASE ===
-  var botW = cellW * 0.44, botH = 8;
-  var botX = x - botW/2, botY = by + cellH;
-
-  ctx.fillStyle = 'rgba(0,0,0,0.15)';
-  roundRect(botX + 1.5, botY + 1, botW, botH, 2); ctx.fill();
-
-  var botStrips = 14;
-  var botStripW = botW / botStrips;
-  for (var s = 0; s < botStrips; s++) {
-    var t = (s + 0.5) / botStrips;
-    var sx = botX + s * botStripW;
-    ctx.fillStyle = cylShade(t, 175, 178, 182, 1.05);
-    ctx.fillRect(sx, botY, botStripW + 0.5, botH);
-  }
-
-  ctx.fillStyle = '#c0c0c0';
-  ctx.beginPath(); ctx.ellipse(x, botY + botH, botW/2, botH*0.32, 0, 0, Math.PI*2); ctx.fill();
-  ctx.strokeStyle = '#777'; ctx.lineWidth = 0.6;
-  roundRect(botX, botY, botW, botH, 2); ctx.stroke();
-
-  // === POLARITY SYMBOLS ===
-  ctx.fillStyle = '#dc2626'; ctx.font = 'bold 13px sans-serif'; ctx.textAlign = 'center';
-  ctx.fillText('+', x, capY - 7);
-  ctx.fillStyle = '#64748b'; ctx.font = 'bold 11px sans-serif';
-  ctx.fillText('−', x, botY + botH + 17);
-
-  // === TERMINAL POSTS ===
-  drawTerminalPost(x, by, '#c8a040', 0.7);
-  drawTerminalPost(x, by + cellH, '#999', 0.7);
-}
-
-// ============ 闸刀开关绘制 ============
+// ============ 精灵图开关 (带刀片旋转动画) ============
 function drawSwitch(x, y) {
-  var bladeLen = 60;
-  var pivotX = swTL.x, pivotY = y - 8;
+  var spriteOpen = getSprite('switchOpen');
+  var spriteClosed = getSprite('switchClosed');
+  var sw = 80, sh = 55;
 
-  // Insulating base plate
-  var bw = 80, bh = 22;
-  var bx = x - bw/2, by = y - bh/2;
-  var baseGrad = ctx.createLinearGradient(bx, by, bx, by+bh);
-  baseGrad.addColorStop(0, '#e8e8e8'); baseGrad.addColorStop(0.4, '#f8f8f8');
-  baseGrad.addColorStop(0.7, '#e0e0e0'); baseGrad.addColorStop(1, '#c8c8c8');
-  ctx.fillStyle = baseGrad;
-  roundRect(bx, by, bw, bh, 5); ctx.fill();
-  ctx.strokeStyle = '#bbb'; ctx.lineWidth = 1;
-  roundRect(bx, by, bw, bh, 5); ctx.stroke();
-  ctx.fillStyle = 'rgba(255,255,255,0.5)';
-  roundRect(bx+3, by+2, bw-6, bh*0.4, 3); ctx.fill();
+  if (spriteOpen && spriteClosed) {
+    // 使用精灵图
+    var spr = switchOn ? spriteClosed : spriteOpen;
+    ctx.drawImage(spr, x - sw/2, y - sh/2, sw, sh);
+  } else {
+    // 回退：简化的程序化绘制
+    var bw = 80, bh = 22;
+    var bx = x - bw/2, by = y - bh/2;
+    var baseGrad = ctx.createLinearGradient(bx, by, bx, by+bh);
+    baseGrad.addColorStop(0, '#e8e8e8'); baseGrad.addColorStop(0.4, '#f8f8f8');
+    baseGrad.addColorStop(0.7, '#e0e0e0'); baseGrad.addColorStop(1, '#c8c8c8');
+    ctx.fillStyle = baseGrad;
+    roundRect(bx, by, bw, bh, 5); ctx.fill();
+    ctx.strokeStyle = '#bbb'; ctx.lineWidth = 1;
+    roundRect(bx, by, bw, bh, 5); ctx.stroke();
 
-  // Left terminal: hinge block (brass)
-  var hingeW = 14, hingeH = 16;
-  var hingeX = pivotX - hingeW/2, hingeY = pivotY - 2;
-  var hGrad = ctx.createLinearGradient(hingeX, 0, hingeX+hingeW, 0);
-  hGrad.addColorStop(0, '#b8a060'); hGrad.addColorStop(0.3, '#e8d090');
-  hGrad.addColorStop(0.6, '#d4b870'); hGrad.addColorStop(1, '#8a7030');
-  ctx.fillStyle = hGrad;
-  roundRect(hingeX, hingeY, hingeW, hingeH, 3); ctx.fill();
-  ctx.strokeStyle = '#7a6020'; ctx.lineWidth = 1;
-  roundRect(hingeX, hingeY, hingeW, hingeH, 3); ctx.stroke();
-  ctx.fillStyle = '#6a5020';
-  ctx.beginPath(); ctx.arc(pivotX, pivotY, 3.5, 0, Math.PI*2); ctx.fill();
-  ctx.strokeStyle = '#4a3010'; ctx.lineWidth = 0.8;
-  ctx.beginPath(); ctx.arc(pivotX, pivotY, 3.5, 0, Math.PI*2); ctx.stroke();
-  ctx.fillStyle = 'rgba(255,255,255,0.25)';
-  ctx.beginPath(); ctx.arc(pivotX-1, pivotY-1, 1.2, 0, Math.PI*2); ctx.fill();
-
-  // Right terminal: jaw receiver (brass)
-  var jawX = swTR.x, jawY = pivotY;
-  var jawW = 10, jawH = 18;
-  var jGrad = ctx.createLinearGradient(jawX-jawW/2, 0, jawX+jawW/2, 0);
-  jGrad.addColorStop(0, '#b8a060'); jGrad.addColorStop(0.3, '#e8d090');
-  jGrad.addColorStop(0.6, '#d4b870'); jGrad.addColorStop(1, '#8a7030');
-  ctx.fillStyle = jGrad;
-  roundRect(jawX-jawW/2, jawY-jawH/2, jawW, jawH, 3); ctx.fill();
-  ctx.strokeStyle = '#7a6020'; ctx.lineWidth = 1;
-  roundRect(jawX-jawW/2, jawY-jawH/2, jawW, jawH, 3); ctx.stroke();
-  ctx.fillStyle = '#3a3020';
-  ctx.fillRect(jawX-1.5, jawY-jawH/2+4, 3, jawH-8);
-  ctx.fillStyle = '#c8a850';
-  ctx.fillRect(jawX-5, jawY-2, 3.5, 4);
-  ctx.fillRect(jawX+1.5, jawY-2, 3.5, 4);
-
-  // Wire connection posts
-  var postY = y + bh/2 + 1;
-  [{px: pivotX, py: postY}, {px: jawX, py: postY}].forEach(function(cp) {
-    var pg = ctx.createLinearGradient(cp.px-3, 0, cp.px+3, 0);
-    pg.addColorStop(0, '#999'); pg.addColorStop(0.4, '#ddd'); pg.addColorStop(0.7, '#bbb'); pg.addColorStop(1, '#777');
-    ctx.fillStyle = pg;
-    ctx.fillRect(cp.px-3, cp.py, 6, 10);
-    ctx.fillStyle = '#c8a850';
-    ctx.beginPath(); ctx.arc(cp.px, cp.py+10, 4, 0, Math.PI*2); ctx.fill();
-    ctx.strokeStyle = '#8a7030'; ctx.lineWidth = 0.8;
-    ctx.beginPath(); ctx.arc(cp.px, cp.py+10, 4, 0, Math.PI*2); ctx.stroke();
-  });
-
-  // Blade (knife)
-  var angle = switchOn ? 0 : -0.85;
-  ctx.save();
-  ctx.translate(pivotX, pivotY);
-  ctx.rotate(angle);
-
-  var blGrad = ctx.createLinearGradient(0, -3, 0, 3);
-  blGrad.addColorStop(0, '#f0e8c0'); blGrad.addColorStop(0.25, '#fffef0');
-  blGrad.addColorStop(0.5, '#e8d898'); blGrad.addColorStop(0.75, '#d4c878');
-  blGrad.addColorStop(1, '#a89848');
-  ctx.fillStyle = blGrad;
-  ctx.beginPath();
-  ctx.moveTo(0, -3);
-  ctx.lineTo(bladeLen-10, -3);
-  ctx.lineTo(bladeLen-6, -1.5);
-  ctx.lineTo(bladeLen-2, -2);
-  ctx.lineTo(bladeLen, 0);
-  ctx.lineTo(bladeLen-2, 2);
-  ctx.lineTo(bladeLen-6, 1.5);
-  ctx.lineTo(bladeLen-10, 3);
-  ctx.lineTo(0, 3);
-  ctx.closePath();
-  ctx.fill();
-  ctx.strokeStyle = '#8a7830'; ctx.lineWidth = 0.8;
-  ctx.stroke();
-
-  ctx.strokeStyle = 'rgba(255,255,255,0.35)'; ctx.lineWidth = 0.7;
-  ctx.beginPath(); ctx.moveTo(4, -0.5); ctx.lineTo(bladeLen-12, -0.5); ctx.stroke();
-  ctx.strokeStyle = 'rgba(0,0,0,0.15)'; ctx.lineWidth = 0.5;
-  ctx.beginPath(); ctx.moveTo(4, 1); ctx.lineTo(bladeLen-12, 1); ctx.stroke();
-
-  // Insulating handle
-  var handleStart = bladeLen - 14;
-  var hdlGrad = ctx.createLinearGradient(0, -5, 0, 5);
-  hdlGrad.addColorStop(0, '#cc3333'); hdlGrad.addColorStop(0.4, '#ee4444');
-  hdlGrad.addColorStop(0.7, '#bb2222'); hdlGrad.addColorStop(1, '#881111');
-  ctx.fillStyle = hdlGrad;
-  roundRect(handleStart, -5, 14, 10, 3); ctx.fill();
-  ctx.strokeStyle = '#660000'; ctx.lineWidth = 0.8;
-  roundRect(handleStart, -5, 14, 10, 3); ctx.stroke();
-  ctx.strokeStyle = 'rgba(0,0,0,0.3)'; ctx.lineWidth = 0.5;
-  for (var gl = -3; gl <= 3; gl+=2) {
-    ctx.beginPath(); ctx.moveTo(handleStart+3, gl); ctx.lineTo(handleStart+11, gl); ctx.stroke();
-  }
-
-  ctx.restore();
-
-  if (switchOn) {
-    ctx.fillStyle = 'rgba(255,255,200,0.5)';
-    ctx.beginPath(); ctx.arc(jawX, jawY-1, 2.5, 0, Math.PI*2); ctx.fill();
+    // 刀片
+    var pivotX = swTL.x, pivotY = y - 8;
+    var angle = switchOn ? 0 : -0.85;
+    ctx.save();
+    ctx.translate(pivotX, pivotY);
+    ctx.rotate(angle);
+    ctx.fillStyle = '#d4c060';
+    ctx.fillRect(0, -3, 50, 6);
+    ctx.strokeStyle = '#8a7830'; ctx.lineWidth = 0.8;
+    ctx.strokeRect(0, -3, 50, 6);
+    ctx.fillStyle = '#cc3333';
+    roundRect(36, -5, 14, 10, 3); ctx.fill();
+    ctx.restore();
   }
 
   ctx.fillStyle = '#64748b'; ctx.font = '10px sans-serif'; ctx.textAlign = 'center';
-  ctx.fillText('S', x, y+bh/2+24);
-
+  ctx.fillText('S', x, y + sh/2 + 12);
   ctx.strokeStyle = 'rgba(217,119,6,0.12)'; ctx.lineWidth = 1;
   ctx.beginPath(); ctx.arc(x, y-4, 34, 0, Math.PI*2); ctx.stroke();
 }
 
-// ============ 滑动变阻器绘制 (接近实物的四接线柱结构) ============
-// 真实结构: 两金属立柱支架 → 上方金属杆(两端接线柱 C/D) + 下方陶瓷管绕电阻丝(两端接线柱 A/B)
-//           → 滑片跨接金属杆与电阻丝, 顶部绝缘把手
+// ============ 精灵图滑动变阻器 (精灵底图 + 程序化滑块) ============
 function drawRheostat(x1, y, x2) {
   var w = x2 - x1;
-  var tubeR = 14;            // 陶瓷管半厚
-  var rodCY = y - 20;        // 上方金属杆中心 Y
-  var tubeCY = y + 4;        // 陶瓷管中心 Y
-  var brW = 16;              // 立柱宽度
-  var lBrX = x1 + 2;         // 左立柱 X
-  var rBrX = x2 - brW - 2;   // 右立柱 X
-  var brTop = rodCY - 9;     // 立柱顶端(抱住金属杆)
-  var brBot = tubeCY + tubeR + 6; // 立柱底端(抱住陶瓷管)
-  var termY = brBot + 14;    // 接线柱顶端 Y
-  var baseY = termY + 8;     // 底座 Y
-  var handleTopY = rodCY - 22;
+  var sprite = getSprite('rheostat');
+  var sprH = 80;
+  var scale = w / 240; // 精灵图原始宽 240px
+  var drawH = sprH * scale;
+  var sprY = y - drawH/2;
+  var baseY = y + drawH/2;
 
-  // 接线柱坐标 (供外部连线/标注使用)
-  // 下方两接线柱 A(左)、B(右) 接电阻丝两端; 上方两接线柱 C(左)、D(右) 接金属杆两端
-  rhA = { x: lBrX + brW/2, y: termY + 6 };
-  rhB = { x: rBrX + brW/2, y: termY + 6 };
-  rhC = { x: lBrX + brW/2, y: rodCY };
-  rhD = { x: rBrX + brW/2, y: rodCY };
+  if (sprite) {
+    // 精灵图作为底图
+    ctx.drawImage(sprite, x1, sprY, w, drawH);
 
-  // ---- 底座 (黑色绝缘底板) ----
-  ctx.fillStyle = 'rgba(0,0,0,0.10)';
-  roundRect(x1 - 6, baseY, w + 12, 10, 4); ctx.fill();
-  var baseGrad = ctx.createLinearGradient(0, baseY, 0, baseY + 10);
-  baseGrad.addColorStop(0, '#2a2a2e'); baseGrad.addColorStop(0.5, '#1a1a1e'); baseGrad.addColorStop(1, '#0d0d10');
-  ctx.fillStyle = baseGrad;
-  roundRect(x1 - 6, baseY - 2, w + 12, 10, 4); ctx.fill();
-  ctx.strokeStyle = '#000'; ctx.lineWidth = 0.8;
-  roundRect(x1 - 6, baseY - 2, w + 12, 10, 4); ctx.stroke();
+    // 四接线柱坐标 (基于精灵比例推算)
+    rhA = {x: x1 + w * 0.08, y: baseY - drawH * 0.08};
+    rhB = {x: x2 - w * 0.08, y: baseY - drawH * 0.08};
+    rhC = {x: x1 + w * 0.08, y: sprY + drawH * 0.25};
+    rhD = {x: x2 - w * 0.08, y: sprY + drawH * 0.25};
+    rA = rhA; rD = rhD;
 
-  // ---- 金属立柱支架 (左右各一, 抱住金属杆与陶瓷管) ----
-  [lBrX, rBrX].forEach(function(bx) {
-    var g = ctx.createLinearGradient(bx, 0, bx + brW, 0);
-    g.addColorStop(0, '#aab2bc'); g.addColorStop(0.35, '#e4e9ee');
-    g.addColorStop(0.6, '#c4ccd4'); g.addColorStop(1, '#7e868f');
-    ctx.fillStyle = g;
-    roundRect(bx, brTop, brW, brBot - brTop, 4); ctx.fill();
-    ctx.strokeStyle = '#787f88'; ctx.lineWidth = 1.1;
-    roundRect(bx, brTop, brW, brBot - brTop, 4); ctx.stroke();
-    // 立柱高光
-    ctx.fillStyle = 'rgba(255,255,255,0.35)';
-    roundRect(bx + 2, brTop + 2, 3, brBot - brTop - 4, 1.5); ctx.fill();
-    // 立柱抱箍上的螺丝
-    ctx.fillStyle = '#5a6068';
-    ctx.beginPath(); ctx.arc(bx + brW/2, rodCY, 1.8, 0, Math.PI*2); ctx.fill();
-    ctx.beginPath(); ctx.arc(bx + brW/2, tubeCY, 1.8, 0, Math.PI*2); ctx.fill();
-  });
+    // 有效行程
+    var trkL = x1 + w * 0.12, trkR = x2 - w * 0.12;
+    rhTrackStart = trkL; rhTrackEnd = trkR;
 
-  // ---- 上方金属杆 ----
-  var rodGrad = ctx.createLinearGradient(0, rodCY - 4, 0, rodCY + 4);
-  rodGrad.addColorStop(0, '#e2e6ea'); rodGrad.addColorStop(0.35, '#ffffff');
-  rodGrad.addColorStop(0.7, '#c8ced4'); rodGrad.addColorStop(1, '#90969d');
-  ctx.fillStyle = rodGrad;
-  roundRect(lBrX + brW, rodCY - 4, rBrX - lBrX - brW, 8, 4); ctx.fill();
-  ctx.strokeStyle = '#888e95'; ctx.lineWidth = 0.9;
-  roundRect(lBrX + brW, rodCY - 4, rBrX - lBrX - brW, 8, 4); ctx.stroke();
-  // 金属杆高光线
-  ctx.strokeStyle = 'rgba(255,255,255,0.7)'; ctx.lineWidth = 0.8;
-  ctx.beginPath(); ctx.moveTo(lBrX + brW + 2, rodCY - 2); ctx.lineTo(rBrX - 2, rodCY - 2); ctx.stroke();
+    // 程序化滑块指示器
+    var sx = trkL + (rRheo / rRheoMax) * (trkR - trkL);
+    sx = Math.max(trkL, Math.min(trkR, sx));
+    var rodY = sprY + drawH * 0.32;
+    var tubeCY = sprY + drawH * 0.6;
+    var tubeR = drawH * 0.18;
 
-  // ---- 陶瓷管 + 电阻丝 ----
-  var tubeL = lBrX + brW + 2, tubeRt = rBrX - 2;
-  var tubeW = tubeRt - tubeL;
-  var tgrad = ctx.createLinearGradient(0, tubeCY - tubeR, 0, tubeCY + tubeR);
-  tgrad.addColorStop(0, '#f3eee2'); tgrad.addColorStop(0.25, '#fffdf6');
-  tgrad.addColorStop(0.6, '#efe6d2'); tgrad.addColorStop(1, '#d8ceb0');
-  ctx.fillStyle = tgrad;
-  roundRect(tubeL, tubeCY - tubeR, tubeW, tubeR * 2, tubeR); ctx.fill();
-  ctx.strokeStyle = '#c2b890'; ctx.lineWidth = 1.2;
-  roundRect(tubeL, tubeCY - tubeR, tubeW, tubeR * 2, tubeR); ctx.stroke();
+    // 滑片接触片
+    ctx.fillStyle = '#d6dade';
+    ctx.beginPath();
+    ctx.moveTo(sx - 4, rodY + 3);
+    ctx.lineTo(sx + 4, rodY + 3);
+    ctx.lineTo(sx + 2, tubeCY + tubeR);
+    ctx.lineTo(sx - 2, tubeCY + tubeR);
+    ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = '#8e959b'; ctx.lineWidth = 0.8; ctx.stroke();
 
-  // 滑片位置 → 对应接入段比例
-  var trackStart = lBrX + brW, trackEnd = rBrX, trackW = trackEnd - trackStart;
-  var sx = trackStart + (rRheo / rRheoMax) * trackW;
-  sx = Math.max(trackStart, Math.min(trackEnd, sx));
-  // 回写有效行程, 供拖拽逻辑使用
-  rhTrackStart = trackStart; rhTrackEnd = trackEnd;
-
-  // 电阻丝: 密集斜短线模拟绕线
-  var coilStep = 2.0;
-  function drawCoils(fromX, toX, color, lw) {
-    for (var cx = fromX; cx <= toX; cx += coilStep) {
-      ctx.strokeStyle = color; ctx.lineWidth = lw;
-      ctx.beginPath();
-      ctx.moveTo(cx, tubeCY - tubeR + 1.5);
-      ctx.lineTo(cx + coilStep, tubeCY + tubeR - 1.5);
-      ctx.stroke();
+    // 滑片把手
+    var handleY = rodY - 22;
+    ctx.fillStyle = '#202024';
+    roundRect(sx - 7, handleY, 14, 18, 3); ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.2)'; ctx.lineWidth = 0.6;
+    for (var gy = 4; gy <= 14; gy += 2.5) {
+      ctx.beginPath(); ctx.moveTo(sx - 5, handleY + gy); ctx.lineTo(sx + 5, handleY + gy); ctx.stroke();
     }
+    ctx.fillStyle = 'rgba(255,255,255,0.2)';
+    roundRect(sx - 5, handleY + 2, 3, 12, 1.5); ctx.fill();
+
+    // 高亮接入段 (电阻丝左侧到滑块)
+    var hL = trkL + 4, hR = sx - 2;
+    ctx.strokeStyle = 'rgba(214,48,40,0.6)'; ctx.lineWidth = 2.5;
+    ctx.beginPath(); ctx.moveTo(hL, tubeCY); ctx.lineTo(hR, tubeCY); ctx.stroke();
+
+    // 接线柱标注
+    ctx.fillStyle = '#1e293b'; ctx.font = 'bold 12px sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText('A', rhA.x, baseY + 3);
+    ctx.fillText('B', rhB.x, baseY + 3);
+    ctx.fillText('C', rhC.x, sprY - 3);
+    ctx.fillText('D', rhD.x, sprY - 3);
+
+    baseY = sprY + drawH + 6;
+  } else {
+    // 回退：简化的程序化变阻器
+    var tubeCY2 = y + 4, tubeR2 = 14;
+    ctx.fillStyle = '#e8dcc8';
+    roundRect(x1 + 2, tubeCY2 - tubeR2, w - 4, tubeR2 * 2, tubeR2); ctx.fill();
+    ctx.strokeStyle = '#c2b890'; ctx.lineWidth = 1.2;
+    roundRect(x1 + 2, tubeCY2 - tubeR2, w - 4, tubeR2 * 2, tubeR2); ctx.stroke();
+    rhTrackStart = x1 + 14; rhTrackEnd = x2 - 14;
+    var sx2 = rhTrackStart + (rRheo / rRheoMax) * (rhTrackEnd - rhTrackStart);
+    ctx.fillStyle = '#222';
+    roundRect(sx2 - 6, tubeCY2 - tubeR2 - 10, 12, tubeR2 * 2 + 20, 3); ctx.fill();
+    rhA = {x: x1 + 12, y: tubeCY2 + tubeR2 + 14};
+    rhB = {x: x2 - 12, y: tubeCY2 + tubeR2 + 14};
+    rhC = {x: x1 + 12, y: tubeCY2 - tubeR2 - 10};
+    rhD = {x: x2 - 12, y: tubeCY2 - tubeR2 - 10};
+    rA = rhA; rD = rhD;
+    baseY = tubeCY2 + tubeR2 + 26;
   }
-  // 接入段(A→滑片) 高亮红色; 未接入段(滑片→B) 暗黄
-  drawCoils(tubeL + 2, sx - 2, 'rgba(214,48,40,0.78)', 1.5);
-  drawCoils(sx + 2, tubeRt - 2, 'rgba(150,112,40,0.45)', 1.0);
 
-  // ---- 滑片 (跨接金属杆与电阻丝) ----
-  // 滑片金属片: 从金属杆向下贴到电阻丝
-  ctx.fillStyle = '#d6dade';
-  ctx.beginPath();
-  ctx.moveTo(sx - 4, rodCY + 3);
-  ctx.lineTo(sx + 4, rodCY + 3);
-  ctx.lineTo(sx + 2, tubeCY + tubeR - 1);
-  ctx.lineTo(sx - 2, tubeCY + tubeR - 1);
-  ctx.closePath(); ctx.fill();
-  ctx.strokeStyle = '#8e959b'; ctx.lineWidth = 0.8;
-  ctx.stroke();
-  // 滑片底部接触簧片
-  ctx.fillStyle = '#b8bfc6';
-  roundRect(sx - 5, tubeCY + tubeR - 3, 10, 5, 2); ctx.fill();
-  ctx.strokeStyle = '#7c838a'; ctx.lineWidth = 0.7;
-  roundRect(sx - 5, tubeCY + tubeR - 3, 10, 5, 2); ctx.stroke();
-
-  // 滑片绝缘把手 (黑色塑料, 顶部)
-  ctx.fillStyle = 'rgba(0,0,0,0.18)';
-  roundRect(sx - 7, handleTopY + 2, 14, 16, 3); ctx.fill();
-  var hGrad = ctx.createLinearGradient(0, handleTopY, 0, handleTopY + 18);
-  hGrad.addColorStop(0, '#3a3a40'); hGrad.addColorStop(0.5, '#202024'); hGrad.addColorStop(1, '#101014');
-  ctx.fillStyle = hGrad;
-  roundRect(sx - 7, handleTopY, 14, 18, 3); ctx.fill();
-  ctx.strokeStyle = '#000'; ctx.lineWidth = 0.8;
-  roundRect(sx - 7, handleTopY, 14, 18, 3); ctx.stroke();
-  // 把手滚花
-  ctx.strokeStyle = 'rgba(255,255,255,0.15)'; ctx.lineWidth = 0.6;
-  for (var gy = 4; gy <= 14; gy += 2.5) {
-    ctx.beginPath(); ctx.moveTo(sx - 5, handleTopY + gy); ctx.lineTo(sx + 5, handleTopY + gy); ctx.stroke();
-  }
-  ctx.fillStyle = 'rgba(255,255,255,0.25)';
-  roundRect(sx - 5, handleTopY + 2, 3, 12, 1.5); ctx.fill();
-
-  // ---- 四个接线柱 (红色塑料帽, 接近中学实物) ----
-  // A、B 在下方立柱(接电阻丝两端); C、D 在上方金属杆两端
-  // drawRedBindingPost(x,y): y=金属螺纹杆顶端, 螺纹杆向下 10px, 帽子在 y-6~y+3
-  // 下方 A/B: 螺纹杆底端接 termY+10 处的引出点; 上方 C/D: 螺纹杆底端接金属杆顶面 rodCY-4
-  var postAY = termY;                        // A 螺纹顶端
-  var postBY = termY;                        // B 螺纹顶端
-  var postCY = rodCY - 4 - 10;               // C: 底端=金属杆顶面
-  var postDY = rodCY - 4 - 10;               // D: 底端=金属杆顶面
-  // 回写接线柱连接点 (供外部连线): A/B 取螺纹杆底端, C/D 取螺纹杆底端(=金属杆顶面)
-  rhA = { x: rhA.x, y: postAY + 10 };
-  rhB = { x: rhB.x, y: postBY + 10 };
-  rhC = { x: rhC.x, y: postCY + 10 };
-  rhD = { x: rhD.x, y: postDY + 10 };
-  var posts = [
-    { x: rhA.x, y: postAY },
-    { x: rhB.x, y: postBY },
-    { x: rhC.x, y: postCY },
-    { x: rhD.x, y: postDY }
-  ];
-  posts.forEach(function(p) {
-    drawRedBindingPost(p.x, p.y);
-  });
-
-  // ---- 标注 ----
-  ctx.fillStyle = '#1e293b'; ctx.font = 'bold 13px sans-serif'; ctx.textAlign = 'center';
-  ctx.fillText('A', rhA.x, postAY + 25);
-  ctx.fillText('B', rhB.x, postBY + 25);
-  ctx.fillText('C', rhC.x, postCY - 9);
-  ctx.fillText('D', rhD.x, postDY - 9);
-  ctx.fillStyle = '#d97706'; ctx.font = 'bold 12px sans-serif';
-  ctx.fillText('Rp=' + rRheo.toFixed(1) + 'Ω', (x1 + x2) / 2, baseY + 26);
+  ctx.fillStyle = '#d97706'; ctx.font = 'bold 12px sans-serif'; ctx.textAlign = 'center';
+  ctx.fillText('Rp=' + rRheo.toFixed(1) + 'Ω', (x1 + x2) / 2, baseY + 6);
 }
 
-// 红色塑料帽接线柱 (滑动变阻器/电表通用)
-function drawRedBindingPost(x, y) {
-  // 金属螺纹杆
-  ctx.fillStyle = '#c9a040';
-  ctx.fillRect(x - 2, y, 4, 10);
-  ctx.strokeStyle = 'rgba(0,0,0,0.3)'; ctx.lineWidth = 0.4;
-  for (var ty = y + 2; ty < y + 10; ty += 1.5) {
-    ctx.beginPath(); ctx.moveTo(x - 2, ty); ctx.lineTo(x + 2, ty); ctx.stroke();
-  }
-  // 红色塑料帽
-  ctx.fillStyle = 'rgba(0,0,0,0.2)';
-  roundRect(x - 6, y - 5, 12, 8, 3); ctx.fill();
-  var g = ctx.createLinearGradient(x - 6, y, x + 6, y);
-  g.addColorStop(0, '#a01010'); g.addColorStop(0.4, '#e83838');
-  g.addColorStop(0.7, '#c41818'); g.addColorStop(1, '#780808');
-  ctx.fillStyle = g;
-  roundRect(x - 6, y - 6, 12, 9, 3); ctx.fill();
-  ctx.strokeStyle = '#5a0000'; ctx.lineWidth = 0.8;
-  roundRect(x - 6, y - 6, 12, 9, 3); ctx.stroke();
-  // 高光
-  ctx.fillStyle = 'rgba(255,255,255,0.4)';
-  roundRect(x - 4, y - 5, 4, 4, 1.5); ctx.fill();
-  // 一字螺丝槽
-  ctx.strokeStyle = 'rgba(0,0,0,0.5)'; ctx.lineWidth = 1;
-  ctx.beginPath(); ctx.moveTo(x - 3, y - 1.5); ctx.lineTo(x + 3, y - 1.5); ctx.stroke();
-}
-
-// ============ 电表绘制 (电压表/电流表) ============
+// ============ 精灵图电表 (精灵底图 + 程序化指针) ============
 function drawMeter(x, y, label, needleAngle, range, color) {
   var cw = 72, ch = 96;
-  var cx = x-cw/2, cy = y-ch/2;
+  var sprite = label === 'A' ? getSprite('ammeter') : getSprite('voltmeter');
 
-  // Case shadow
-  ctx.fillStyle = 'rgba(0,0,0,0.1)';
-  roundRect(cx+3, cy+3, cw, ch, 7); ctx.fill();
+  if (sprite) {
+    // 精灵图作为表身
+    ctx.drawImage(sprite, x - cw/2, y - ch/2, cw, ch);
 
-  // Case body (dark bakelite/plastic, like real analog meters)
-  var caseGrad = ctx.createLinearGradient(cx, cy, cx+cw, cy);
-  caseGrad.addColorStop(0, '#2a2a32');
-  caseGrad.addColorStop(0.2, '#3e3e48');
-  caseGrad.addColorStop(0.5, '#35353f');
-  caseGrad.addColorStop(0.8, '#2c2c36');
-  caseGrad.addColorStop(1, '#1e1e26');
-  ctx.fillStyle = caseGrad;
-  roundRect(cx, cy, cw, ch, 7); ctx.fill();
-  ctx.strokeStyle = '#555'; ctx.lineWidth = 1.5;
-  roundRect(cx, cy, cw, ch, 7); ctx.stroke();
-
-  // Case highlight (top edge)
-  ctx.fillStyle = 'rgba(255,255,255,0.06)';
-  roundRect(cx+3, cy+2, cw-6, ch*0.45, 5); ctx.fill();
-
-  // Bezel ring
-  var bezelR = 27;
-  ctx.fillStyle = '#333';
-  ctx.beginPath(); ctx.arc(x, y-2, bezelR+3, 0, Math.PI*2); ctx.fill();
-  ctx.strokeStyle = '#555'; ctx.lineWidth = 1;
-  ctx.beginPath(); ctx.arc(x, y-2, bezelR+3, 0, Math.PI*2); ctx.stroke();
-
-  // Bezel inner rim
-  ctx.strokeStyle = '#444'; ctx.lineWidth = 1.5;
-  ctx.beginPath(); ctx.arc(x, y-2, bezelR+1, 0, Math.PI*2); ctx.stroke();
-
-  // Dial face (cream/white, like real analog meter)
-  var dialGrad = ctx.createRadialGradient(x-2, y-6, 2, x, y-2, bezelR);
-  dialGrad.addColorStop(0, '#ffffff');
-  dialGrad.addColorStop(0.8, '#fafaf7');
-  dialGrad.addColorStop(1, '#f0f0e8');
-  ctx.fillStyle = dialGrad;
-  ctx.beginPath(); ctx.arc(x, y-2, bezelR, 0, Math.PI*2); ctx.fill();
-
-  // Scale arc
-  ctx.strokeStyle = '#222'; ctx.lineWidth = 1.5;
-  ctx.beginPath(); ctx.arc(x, y-2, bezelR-5, -Math.PI*0.72, Math.PI*0.72); ctx.stroke();
-
-  // Scale marks
-  for (var i = 0; i <= 20; i++) {
-    var a = -Math.PI*0.7 + (i/20)*Math.PI*1.4;
-    var isMajor = i%5===0, isMid = i%2===0;
-    var inner = isMajor ? bezelR-10 : (isMid ? bezelR-8 : bezelR-6);
-    ctx.strokeStyle = isMajor ? '#111' : '#555';
-    ctx.lineWidth = isMajor ? 1.3 : 0.5;
+    // 程序化指针 (覆盖在精灵图之上)
+    var bezelR = 27;
+    var na = -Math.PI * 0.7 + Math.min(needleAngle, 1) * Math.PI * 1.4;
+    ctx.strokeStyle = color; ctx.lineWidth = 2.2; ctx.lineCap = 'round';
     ctx.beginPath();
-    ctx.moveTo(x+Math.cos(a)*inner, y-2+Math.sin(a)*inner);
-    ctx.lineTo(x+Math.cos(a)*(bezelR-2), y-2+Math.sin(a)*(bezelR-2));
+    ctx.moveTo(x - Math.cos(na) * 5, y - 2 - Math.sin(na) * 5);
+    ctx.lineTo(x + Math.cos(na) * (bezelR - 10), y - 2 + Math.sin(na) * (bezelR - 10));
     ctx.stroke();
-    if (isMajor) {
-      var numR = bezelR-14;
-      ctx.fillStyle = '#111'; ctx.font = 'bold 7px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      var nv = i/20, numStr;
-      if (range.indexOf('0.6')>=0) numStr = (nv*0.6).toFixed(1);
-      else if (range.indexOf('3A')>=0||range.indexOf('3V')>=0) numStr = (nv*3).toFixed(0);
-      else numStr = (nv*15).toFixed(0);
-      ctx.fillText(numStr, x+Math.cos(a)*numR, y-2+Math.sin(a)*numR);
-    }
+
+    // 指针尾
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(x, y - 2);
+    ctx.lineTo(x - Math.cos(na) * 7, y - 2 - Math.sin(na) * 7);
+    ctx.stroke();
+
+    // 中心轴盖
+    ctx.fillStyle = '#222';
+    ctx.beginPath(); ctx.arc(x, y - 2, 3.5, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#444';
+    ctx.beginPath(); ctx.arc(x, y - 2, 2, 0, Math.PI * 2); ctx.fill();
+
+    // 接线柱标注
+    ctx.fillStyle = '#e8e8e8'; ctx.font = 'bold 15px sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText(label, x, y + 22);
+    ctx.fillStyle = 'rgba(0,0,0,0.4)';
+    var rangeW = ctx.measureText(range).width + 10;
+    roundRect(x - rangeW/2, y + 26, rangeW, 14, 3); ctx.fill();
+    ctx.fillStyle = '#ddd'; ctx.font = '8px sans-serif';
+    ctx.fillText(range, x, y + 35);
+  } else {
+    // 回退：简化电表
+    ctx.fillStyle = '#2a2a32';
+    roundRect(x - cw/2, y - ch/2, cw, ch, 7); ctx.fill();
+    ctx.strokeStyle = '#555'; ctx.lineWidth = 1.5;
+    roundRect(x - cw/2, y - ch/2, cw, ch, 7); ctx.stroke();
+
+    var bezelR2 = 27;
+    ctx.fillStyle = '#fff';
+    ctx.beginPath(); ctx.arc(x, y - 2, bezelR2, 0, Math.PI * 2); ctx.fill();
+
+    var na2 = -Math.PI * 0.7 + Math.min(needleAngle, 1) * Math.PI * 1.4;
+    ctx.strokeStyle = color; ctx.lineWidth = 2.2; ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(x - Math.cos(na2) * 5, y - 2 - Math.sin(na2) * 5);
+    ctx.lineTo(x + Math.cos(na2) * (bezelR2 - 8), y - 2 + Math.sin(na2) * (bezelR2 - 8));
+    ctx.stroke();
+    ctx.fillStyle = '#222';
+    ctx.beginPath(); ctx.arc(x, y - 2, 3.5, 0, Math.PI * 2); ctx.fill();
+
+    ctx.fillStyle = '#ddd'; ctx.font = 'bold 15px sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText(label, x, y + 22);
   }
 
-  // Mirror arc (anti-parallax strip below scale, a real meter feature)
-  ctx.strokeStyle = 'rgba(180,180,200,0.3)'; ctx.lineWidth = 3;
-  ctx.beginPath(); ctx.arc(x, y-2, bezelR-8.5, -Math.PI*0.7, Math.PI*0.7); ctx.stroke();
-
-  // Needle
-  var na = -Math.PI*0.7 + Math.min(needleAngle, 1)*Math.PI*1.4;
-  ctx.strokeStyle = color; ctx.lineWidth = 2.2; ctx.lineCap = 'round';
-  ctx.beginPath(); ctx.moveTo(x-Math.cos(na)*5, y-2-Math.sin(na)*5);
-  ctx.lineTo(x+Math.cos(na)*(bezelR-10), y-2+Math.sin(na)*(bezelR-10));
-  ctx.stroke();
-  // Needle counterweight (shorter, thicker tail)
-  ctx.lineWidth = 3;
-  ctx.beginPath(); ctx.moveTo(x, y-2);
-  ctx.lineTo(x-Math.cos(na)*7, y-2-Math.sin(na)*7);
-  ctx.stroke();
-
-  // Pivot cap
-  ctx.fillStyle = '#222';
-  ctx.beginPath(); ctx.arc(x, y-2, 3.5, 0, Math.PI*2); ctx.fill();
-  ctx.fillStyle = '#444';
-  ctx.beginPath(); ctx.arc(x, y-2, 2, 0, Math.PI*2); ctx.fill();
-
-  // Glass reflection
-  ctx.fillStyle = 'rgba(255,255,255,0.12)';
-  ctx.beginPath();
-  ctx.arc(x-5, y-12, bezelR*0.55, -Math.PI*0.6, -Math.PI*0.15);
-  ctx.arc(x-3, y-11, bezelR*0.45, -Math.PI*0.15, -Math.PI*0.6, true);
-  ctx.closePath();
-  ctx.fill();
-
-  // Labels
-  ctx.fillStyle = '#e8e8e8'; ctx.font = 'bold 15px sans-serif'; ctx.textAlign = 'center';
-  ctx.fillText(label, x, y+22);
-
-  // Range label with colored background
-  var rangeW = ctx.measureText(range).width + 10;
-  ctx.fillStyle = 'rgba(0,0,0,0.4)';
-  roundRect(x - rangeW/2, y+26, rangeW, 14, 3); ctx.fill();
-  ctx.fillStyle = '#ddd'; ctx.font = '8px sans-serif';
-  ctx.fillText(range, x, y+35);
-
-  // Terminal posts
+  // 接线端子
   if (label === 'A') {
-    drawTerminalPost(amL.x, amL.y, '#222', 0.9);
-    drawTerminalPost(amR.x, amR.y, '#cc3333', 0.9);
+    drawTerminal(amL.x, amL.y, '#222');
+    drawTerminal(amR.x, amR.y, '#cc3333');
   } else {
-    drawTerminalPost(vmT.x, vmT.y, '#cc3333', 0.9);
-    drawTerminalPost(vmB.x, vmB.y, '#222', 0.9);
+    drawTerminal(vmT.x, vmT.y, '#cc3333');
+    drawTerminal(vmB.x, vmB.y, '#222');
   }
 }
 
-// ============ 待测电阻绘制 ============
+// ============ 精灵图定值电阻 ============
 function drawResistor(x, y1, y2) {
-  var mid = (y1+y2)/2;
-  var bodyH = y2-y1-40, bodyW = 20;
-  var bx = x-bodyW/2, by = y1+20;
+  var sprite = getSprite('resistor');
+  var mid = (y1 + y2) / 2;
+  var bodyH = y2 - y1 - 40;
 
-  // Lead wires
-  ctx.strokeStyle = '#94a3b8'; ctx.lineWidth = 2.5; ctx.lineCap = 'round';
-  ctx.beginPath(); ctx.moveTo(x, y1); ctx.lineTo(x, y1+20); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(x, y2); ctx.lineTo(x, y2-20); ctx.stroke();
-
-  // Shadow
-  ctx.fillStyle = 'rgba(0,0,0,0.08)';
-  roundRect(bx+2, by+2, bodyW, bodyH, 10); ctx.fill();
-
-  // Ceramic body
-  var rgrad = ctx.createLinearGradient(bx, by, bx+bodyW, by);
-  rgrad.addColorStop(0, '#d4b896');
-  rgrad.addColorStop(0.3, '#f0dcc0');
-  rgrad.addColorStop(0.55, '#e8d0b0');
-  rgrad.addColorStop(0.8, '#c8a878');
-  rgrad.addColorStop(1, '#a08060');
-  ctx.fillStyle = rgrad;
-  roundRect(bx, by, bodyW, bodyH, 10); ctx.fill();
-  ctx.strokeStyle = '#8a7050'; ctx.lineWidth = 1;
-  roundRect(bx, by, bodyW, bodyH, 10); ctx.stroke();
-
-  // Color bands
-  var bandColors = ['#8B4513', '#222', '#CD853F', '#FFD700'];
-  var bandPcts = [0.18, 0.38, 0.58, 0.78];
-  for (var b = 0; b < 4; b++) {
-    ctx.fillStyle = bandColors[b];
-    ctx.fillRect(bx+1, by+bodyH*bandPcts[b]-3, bodyW-2, 6);
+  if (sprite) {
+    var sprW = sprite.naturalWidth;
+    var sprH = sprite.naturalHeight;
+    var scale = bodyH / sprH;
+    var drawW = sprW * scale;
+    var drawH = bodyH;
+    ctx.drawImage(sprite, x - drawW/2, y1 + 20, drawW, drawH);
+  } else {
+    // 回退
+    var bodyW = 20;
+    var bx = x - bodyW/2, by = y1 + 20;
+    var rgrad = ctx.createLinearGradient(bx, by, bx + bodyW, by);
+    rgrad.addColorStop(0, '#d4b896'); rgrad.addColorStop(0.3, '#f0dcc0');
+    rgrad.addColorStop(0.55, '#e8d0b0'); rgrad.addColorStop(0.8, '#c8a878');
+    rgrad.addColorStop(1, '#a08060');
+    ctx.fillStyle = rgrad;
+    roundRect(bx, by, bodyW, bodyH, 10); ctx.fill();
+    ctx.strokeStyle = '#8a7050'; ctx.lineWidth = 1;
+    roundRect(bx, by, bodyW, bodyH, 10); ctx.stroke();
+    // 色环
+    var bc = ['#8B4513', '#222', '#CD853F', '#FFD700'];
+    for (var b = 0; b < 4; b++) {
+      ctx.fillStyle = bc[b];
+      ctx.fillRect(bx + 1, by + bodyH * (0.18 + b * 0.2) - 3, bodyW - 2, 6);
+    }
   }
 
-  // Body highlight
-  ctx.fillStyle = 'rgba(255,255,255,0.2)';
-  roundRect(bx+3, by+3, bodyW-12, bodyH*0.4, 5); ctx.fill();
+  // 引脚线
+  ctx.strokeStyle = '#94a3b8'; ctx.lineWidth = 2.5; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(x, y1); ctx.lineTo(x, y1 + 20); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(x, y2); ctx.lineTo(x, y2 - 20); ctx.stroke();
 
-  // Label
+  // 标注
   ctx.fillStyle = '#475569'; ctx.font = 'bold 13px sans-serif'; ctx.textAlign = 'left';
-  ctx.fillText('Rx', x+bodyW/2+12, mid+4);
+  ctx.fillText('Rₓ', x + 14, mid + 4);
+}
+
+// ============ 接线端子 ============
+function drawTerminal(x, y, color) {
+  var sprite = getSprite('terminal');
+  if (sprite) {
+    var s = 10;
+    ctx.drawImage(sprite, x - s/2, y - s * 1.2, s, s * 1.5);
+  } else {
+    ctx.fillStyle = '#8899aa';
+    ctx.fillRect(x - 3, y - 5, 6, 10);
+    ctx.fillStyle = color;
+    ctx.beginPath(); ctx.arc(x, y - 5, 3.5, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = '#555'; ctx.lineWidth = 0.8;
+    ctx.beginPath(); ctx.arc(x, y - 5, 3.5, 0, Math.PI * 2); ctx.stroke();
+  }
 }
 
 // ============ 导线 ============
@@ -979,12 +631,8 @@ function drawWirePath(points) {
   ctx.stroke();
 }
 
-// 每帧基于当前坐标对象动态构建连线 (滑动变阻器接线柱坐标由 drawRheostat 回写)
 function buildWirePaths() {
   var BTY = batt2Bot.y;
-  // 限流式: 开关右→A(变阻器下方左接线柱); D(变阻器上方右接线柱)→电流表左
-  var wireRY = rA.y;            // 变阻器下方接线柱 Y
-  var upperY = rD.y;            // 变阻器上方接线柱 Y
   return [
     [{x:batt1Top.x,y:batt1Top.y}, {x:batt1Top.x,y:SY}, {x:swTL.x,y:SY}],
     [{x:swTR.x,y:SY}, {x:rA.x,y:SY}, {x:rA.x,y:rA.y}],
@@ -1004,14 +652,14 @@ function drawFlowDots(paths) {
   for (var p = 0; p < paths.length; p++) {
     var pts = paths[p];
     for (var i = 0; i < pts.length - 1; i++) {
-      var segLen = Math.hypot(pts[i+1].x-pts[i].x, pts[i+1].y-pts[i].y);
-      var dots = Math.max(1, Math.floor(segLen/30));
+      var segLen = Math.hypot(pts[i+1].x - pts[i].x, pts[i+1].y - pts[i].y);
+      var dots = Math.max(1, Math.floor(segLen / 30));
       for (var d = 0; d < dots; d++) {
-        var t = ((flowPhase*speed + d/dots) % 1 + 1) % 1;
-        var dx = pts[i].x + (pts[i+1].x-pts[i].x)*t;
-        var dy = pts[i].y + (pts[i+1].y-pts[i].y)*t;
+        var t = ((flowPhase * speed + d / dots) % 1 + 1) % 1;
+        var dx = pts[i].x + (pts[i+1].x - pts[i].x) * t;
+        var dy = pts[i].y + (pts[i+1].y - pts[i].y) * t;
         ctx.fillStyle = 'rgba(37,99,235,0.75)';
-        ctx.beginPath(); ctx.arc(dx, dy, 2.2, 0, Math.PI*2); ctx.fill();
+        ctx.beginPath(); ctx.arc(dx, dy, 2.2, 0, Math.PI * 2); ctx.fill();
       }
     }
   }
@@ -1030,7 +678,7 @@ function drawAll() {
   for (var gx = 0; gx < W; gx += 30) { ctx.beginPath(); ctx.moveTo(gx,0); ctx.lineTo(gx,H); ctx.stroke(); }
   for (var gy = 0; gy < H; gy += 30) { ctx.beginPath(); ctx.moveTo(0,gy); ctx.lineTo(W,gy); ctx.stroke(); }
 
-  // 导线 (基于当前接线柱坐标动态构建)
+  // 导线
   var paths = buildWirePaths();
   for (var p = 0; p < paths.length; p++) {
     drawWirePath(paths[p]);
@@ -1039,7 +687,7 @@ function drawAll() {
   // 电流动画
   drawFlowDots(paths);
 
-  // 元件
+  // 精灵图元件
   drawBatteries();
   drawSwitch(SX, SY);
   drawRheostat(RX1, RY, RX2);
@@ -1049,16 +697,15 @@ function drawAll() {
   var vRange = voltageU > 3 ? '0~15V' : '0~3V';
   var vFull = voltageU > 3 ? 15 : 3;
 
-  drawMeter(AX, AY, 'A', switchOn ? Math.min(currentI/aFull, 1) : 0, aRange, '#16a34a');
+  drawMeter(AX, AY, 'A', switchOn ? Math.min(currentI / aFull, 1) : 0, aRange, '#16a34a');
   drawResistor(XX, XY1, XY2);
-  drawMeter(VX, VY, 'V', switchOn ? Math.min(voltageU/vFull, 1) : 0, vRange, '#dc2626');
+  drawMeter(VX, VY, 'V', switchOn ? Math.min(voltageU / vFull, 1) : 0, vRange, '#dc2626');
 
-  // 连接点 (滑动变阻器只画实际接入的两个接线柱 A、D 的焊点)
+  // 连接点
   var conns = [batt1Top, batt1Bot, batt2Top, batt2Bot, swTL, swTR, rA, rD, amL, amR, rxT, rxB, vmT, vmB];
   for (var c = 0; c < conns.length; c++) {
-    var cn = conns[c];
     ctx.fillStyle = '#64748b';
-    ctx.beginPath(); ctx.arc(cn.x, cn.y, 2.8, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(conns[c].x, conns[c].y, 2.8, 0, Math.PI * 2); ctx.fill();
   }
 
   // 电压表并联高亮虚线
@@ -1125,8 +772,6 @@ function updateSwitchUI() {
 }
 
 // === 变阻器拖拽 ===
-// track 有效行程由 drawRheostat 回写, 初始化时用近似值
-var rhTrackStart = RX1 + 18, rhTrackEnd = RX2 - 18;
 function getRheoHandleX() {
   return rhTrackStart + (rRheo / rRheoMax) * (rhTrackEnd - rhTrackStart);
 }
@@ -1271,7 +916,8 @@ window.addEventListener('resize', function() { resize(); });
 resize();
 updateTable();
 animate();
-// 调试钩子 (仅暴露内部状态, 便于自动化验证, 无运行时副作用)
+
+// 调试钩子
 window.__rheo = { get r(){return rRheo;}, get max(){return rRheoMax;}, get ts(){return rhTrackStart;}, get te(){return rhTrackEnd;}, get ry(){return RY;} };
 })();
 </script>
