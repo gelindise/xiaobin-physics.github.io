@@ -81,6 +81,17 @@ module.exports = async (req, res) => {
       return res.json({ success: true, user: data[0] || null });
     }
 
+    // ========== 按邮箱查找账号（找回密码用，只返回非敏感字段） ==========
+    if (action === 'findByEmail') {
+      const email = req.body?.email;
+      if (!email) return res.status(400).json({ error: '缺少 email' });
+      const url = SUPABASE_URL + '/rest/v1/users?email=eq.' + encodeURIComponent(email) + '&select=username,email';
+      const r = await fetch(url, { headers: { ...headers, Prefer: undefined } });
+      if (!r.ok) return res.status(502).json({ error: '查询失败: ' + (await r.text()) });
+      const data = await r.json();
+      return res.json({ success: true, users: data || [] });
+    }
+
     // ========== 创建用户（服务端密码哈希） ==========
     if (action === 'createUser') {
       const body = req.body?.data || req.body;
