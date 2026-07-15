@@ -39,8 +39,8 @@
 </head>
 <body>
 <div class="exp-wrap" style="padding-top:20px;">
-  <h2>⚡ 电路分析 · 点击元件查看电压电流</h2>
-  <p class="sub">串联电路：定值电阻 R 与滑动变阻器 Rp 串联，点击任意元件查看其电压与电流</p>
+  <h2>⚡ 电路分析 · 点击查看电压电流</h2>
+  <p class="sub">串联电路：点击任意元件查看其电压与电流。布局参照标准电路图</p>
   <div class="main-card">
     <div class="layout">
       <div class="canvas-col"><canvas id="simCanvas" width="660" height="440"></canvas></div>
@@ -86,7 +86,6 @@
 </div>
 
 <script>
-// ============ 访问保护 ============
 (function() {
   if (window.location.hostname === 'xiaobinlaoshi.cn' || window.location.hostname === 'gelindise.github.io') {
     var ref = document.referrer;
@@ -95,7 +94,6 @@
     }
   }
 })();
-
 window.toggleFullscreen = function() {
   if (!document.fullscreenElement) document.documentElement.requestFullscreen().catch(function(){});
   else document.exitFullscreen();
@@ -105,36 +103,49 @@ window.toggleFullscreen = function() {
 var canvas = document.getElementById('simCanvas');
 var ctx = canvas.getContext('2d');
 var W = 660, H = 440;
-
 var U = 6, R = 10, Rp = 15, switchOn = true;
 var I, UR, Up, Rtotal;
 var hoveredComp = null, selectedComp = null;
 
-// ============ 电路节点坐标（主回路矩形 + 元件位置） ============
-//      nTL ----[A]----[  R  ]----[  Rp  ]---- nTR
-//      |                   |                    |
-//      |                  [V]                   |
-//      |                   |                    |
-//      nBL ----[K]-------[ U ]--------------- nBR
+// ============ 电路坐标（参照标准课本电路图布局） ============
+// 矩形主回路，顺时针：上边(电源→开关) → 右边 → 下边(Rp→R) → 左边(电流表)
 //
-var nTL = {x:100, y:100},  nTR = {x:560, y:100};
-var nBR = {x:560, y:340},  nBL = {x:100, y:340};
+//   TL ──[U=6V]──[K]── TR
+//   |                   |
+//  [A]                  |
+//   |                   |
+//   BL ────[R]──[Rp]── BR
+//          |     |
+//         [V]    |
+//          |_____|
 
-// 上边元件：电流表(A)、定值电阻(R)、滑动变阻器(Rp)
-var aA  = {x:195, y:100};   // 电流表中心
-var aR  = {x:348, y:100};   // 定值电阻R中心
-var aRp = {x:490, y:100};   // 滑动变阻器Rp中心
+// 四角
+var nTL = {x:100, y:90};
+var nTR = {x:560, y:90};
+var nBR = {x:560, y:350};
+var nBL = {x:100, y:350};
 
-// R两端节点（引出电压表并联支路）
-var rL = {x:318, y:100};    // R左端
-var rR = {x:378, y:100};    // R右端
+// 上边元件：电源U → 开关K
+var aU = {x:230, y:90};  // 电源中心
+var aK = {x:400, y:90};  // 开关中心
 
-// 下边元件：开关(K)、电源(U)
-var aK = {x:265, y:340};    // 开关中心
-var aU = {x:460, y:340};    // 电源中心
+// 左边元件：电流表A（竖直）
+var aA = {x:100, y:220};  // 电流表中心
 
-// 电压表位置（并联支路中）
-var aV = {x:348, y:225};
+// 下边元件：电阻R → 滑动变阻器Rp（从左到右）
+var aR  = {x:260, y:350};   // 电阻R中心
+var aRp = {x:440, y:350};   // 变阻器Rp中心
+var rL  = {x:228, y:350};   // R左端节点
+var rR  = {x:292, y:350};   // R右端节点
+var pL  = {x:388, y:350};   // Rp左端(A固定端)
+var pR  = {x:492, y:350};   // Rp右端(B端，悬空)
+
+// 电压表V位置（R上方，并联在R两端）
+var aV = {x:260, y:210};
+
+// 滑片P箭头位置
+var pTipX = aRp.x + 8;
+var pTipY = aRp.y - 36;
 
 // ============ 计算 ============
 function recalc() {
@@ -147,42 +158,25 @@ function recalc() {
 // ============ 绘图辅助 ============
 function wire(x1, y1, x2, y2, c) {
   ctx.strokeStyle = c || '#334155';
-  ctx.lineWidth = 2.5;
-  ctx.lineCap = 'round';
-  ctx.beginPath();
-  ctx.moveTo(x1, y1);
-  ctx.lineTo(x2, y2);
-  ctx.stroke();
+  ctx.lineWidth = 2.5; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
 }
-
-function dot(x, y) {
-  ctx.fillStyle = '#475569';
-  ctx.beginPath();
-  ctx.arc(x, y, 3, 0, Math.PI*2);
-  ctx.fill();
-}
-
+function dot(x, y) { ctx.fillStyle = '#475569'; ctx.beginPath(); ctx.arc(x, y, 3, 0, Math.PI*2); ctx.fill(); }
 function glow(x, y, r, color) {
-  ctx.save();
-  ctx.globalAlpha = 0.22;
-  ctx.fillStyle = color;
-  ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI*2); ctx.fill();
-  ctx.globalAlpha = 1;
-  ctx.strokeStyle = color; ctx.lineWidth = 3;
-  ctx.setLineDash([5,2]);
-  ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI*2); ctx.stroke();
-  ctx.setLineDash([]);
-  ctx.restore();
+  ctx.save(); ctx.globalAlpha = 0.22;
+  ctx.fillStyle = color; ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI*2); ctx.fill();
+  ctx.globalAlpha = 1; ctx.strokeStyle = color; ctx.lineWidth = 3;
+  ctx.setLineDash([5,2]); ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI*2); ctx.stroke();
+  ctx.setLineDash([]); ctx.restore();
 }
 
-// ============ 绘制元件符号（仅画符号本身，不含外部接线） ============
+// ============ 绘制元件符号 ============
 
-function drawBatterySymbol(x, y, color, hl) {
-  var n = 2, cellW = 12, totalW = n * cellW, sx = x - totalW/2;
-  // 连接桩头短线
-  wire(x-35, y, sx, y); wire(sx+totalW, y, x+35, y);
+function drawBattery(x, y, color, hl) {
+  var n = 2, cw = 12, tw = n*cw, sx = x-tw/2;
+  wire(x-35, y, sx, y); wire(sx+tw, y, x+35, y);
   for (var i = 0; i < n; i++) {
-    var cx = sx + i*cellW + cellW/2;
+    var cx = sx + i*cw + cw/2;
     ctx.strokeStyle = color; ctx.lineWidth = 2.2;
     ctx.beginPath(); ctx.moveTo(cx-3, y-12); ctx.lineTo(cx-3, y+12); ctx.stroke();
     ctx.lineWidth = 4.5;
@@ -190,91 +184,89 @@ function drawBatterySymbol(x, y, color, hl) {
   }
   ctx.fillStyle = color;
   ctx.font = 'bold 12px "PingFang SC","Microsoft YaHei",sans-serif';
-  ctx.textAlign = 'center';
-  ctx.fillText('U='+U.toFixed(0)+'V', x, y+26);
-  if (hl) glow(x, y, 30, color);
+  ctx.textAlign = 'center'; ctx.fillText('U='+U.toFixed(0)+'V', x, y+24);
+  if (hl) glow(x, y, 28, color);
 }
 
-function drawSwitchSymbol(x, y, color, hl) {
+function drawSwitch(x, y, color, hl) {
   var g = 18;
   ctx.fillStyle = '#64748b';
   ctx.beginPath(); ctx.arc(x-g, y, 4, 0, Math.PI*2); ctx.fill();
   ctx.beginPath(); ctx.arc(x+g, y, 4, 0, Math.PI*2); ctx.fill();
   wire(x-25, y, x-g, y); wire(x+g, y, x+25, y);
   ctx.strokeStyle = color; ctx.lineWidth = 2.5;
-  if (switchOn) {
-    ctx.beginPath(); ctx.moveTo(x-g, y); ctx.lineTo(x+g, y); ctx.stroke();
-  } else {
-    ctx.beginPath(); ctx.moveTo(x-g, y); ctx.lineTo(x+2, y-20); ctx.stroke();
-    ctx.fillStyle = color; ctx.beginPath(); ctx.arc(x+2, y-20, 3, 0, Math.PI*2); ctx.fill();
-  }
+  if (switchOn) { ctx.beginPath(); ctx.moveTo(x-g, y); ctx.lineTo(x+g, y); ctx.stroke(); }
+  else { ctx.beginPath(); ctx.moveTo(x-g, y); ctx.lineTo(x+2, y-20); ctx.stroke(); ctx.fillStyle = color; ctx.beginPath(); ctx.arc(x+2, y-20, 3, 0, Math.PI*2); ctx.fill(); }
   ctx.fillStyle = color;
   ctx.font = 'bold 12px "PingFang SC","Microsoft YaHei",sans-serif';
-  ctx.textAlign = 'center';
-  ctx.fillText(switchOn ? 'K(合)' : 'K(断)', x, y+22);
-  if (hl) glow(x, y, 22, color);
+  ctx.textAlign = 'center'; ctx.fillText(switchOn ? 'K(合)' : 'K(断)', x, y+22);
+  if (hl) glow(x, y, 20, color);
 }
 
-function drawMeterSymbol(x, y, r, symbol, color, hl, isVert) {
-  // 接线端短线（外部接线由主绘制处理）
-  if (!isVert) {
-    wire(x-35, y, x-r, y); wire(x+r, y, x+35, y);
-  }
-  // 圆圈
+function drawAmmeter(x, y, color, hl) {
+  var r = 21;
+  wire(x, y-r, x, y-32);   // 上方接线
+  wire(x, y+r, x, y+32);   // 下方接线
   ctx.fillStyle = '#fff'; ctx.strokeStyle = color; ctx.lineWidth = 2.5;
   ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI*2); ctx.fill(); ctx.stroke();
-  // 符号
   ctx.fillStyle = color;
   ctx.font = 'bold 18px "Georgia","Times New Roman",serif';
-  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  ctx.fillText(symbol, x, y);
-  // 接线柱标记
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('A', x, y);
   ctx.fillStyle = '#64748b'; ctx.font = 'bold 10px "PingFang SC","Microsoft YaHei",sans-serif';
-  if (!isVert) { ctx.textAlign = 'center'; ctx.fillText('+', x, y-r-8); ctx.fillText('−', x, y+r+15); }
-  else { ctx.textAlign = 'left'; ctx.fillText('+', x+r+4, y-6); ctx.fillText('−', x+r+4, y+14); }
+  ctx.textAlign = 'right'; ctx.fillText('+', x-2, y-r-8);
+  ctx.textAlign = 'left'; ctx.fillText('−', x+2, y+r+14);
   if (hl) glow(x, y, r+8, color);
 }
 
-function drawResistorSymbol(x, y, color, label, hl) {
+function drawVoltmeter(x, y, color, hl) {
+  var r = 21;
+  ctx.fillStyle = '#fff'; ctx.strokeStyle = color; ctx.lineWidth = 2.5;
+  ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI*2); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = color;
+  ctx.font = 'bold 18px "Georgia","Times New Roman",serif';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('V', x, y);
+  ctx.fillStyle = '#64748b'; ctx.font = 'bold 10px "PingFang SC","Microsoft YaHei",sans-serif';
+  ctx.textAlign = 'right'; ctx.fillText('+', x+r, y-6);
+  ctx.textAlign = 'left'; ctx.fillText('−', x+r-4, y+14);
+  if (hl) glow(x, y, r+8, color);
+}
+
+function drawResistor(x, y, color, label, hl) {
   var bw = 44, bh = 28;
   wire(x-36, y, x-bw/2, y); wire(x+bw/2, y, x+36, y);
   ctx.fillStyle = '#fffef5'; ctx.strokeStyle = color; ctx.lineWidth = 2.5;
   ctx.beginPath(); ctx.roundRect(x-bw/2, y-bh/2, bw, bh, 4); ctx.fill(); ctx.stroke();
   ctx.fillStyle = color;
   ctx.font = 'bold 14px "PingFang SC","Microsoft YaHei",sans-serif';
-  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  ctx.fillText(label, x, y);
-  if (hl) glow(x, y, 28, color);
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(label, x, y);
+  if (hl) glow(x, y, 26, color);
 }
 
-function drawRheostatSymbol(x, y, color, hl) {
+function drawRheostat(x, y, color, hl) {
   var bw = 56, bh = 28;
-  // A端（左）引出线
+  // A端（左，固定端）：接R右端
   wire(x-40, y, x-bw/2, y);
-  // B端（右）悬空不接，画虚线表示
-  ctx.strokeStyle = '#cbd5e1'; ctx.lineWidth = 1.5;
-  ctx.setLineDash([3,3]);
+  // B端（右，未用）：虚线
+  ctx.strokeStyle = '#cbd5e1'; ctx.lineWidth = 1.5; ctx.setLineDash([3,3]);
   ctx.beginPath(); ctx.moveTo(x+bw/2, y); ctx.lineTo(x+40, y); ctx.stroke();
   ctx.setLineDash([]);
-  // 电阻体矩形
+  // 电阻体
   ctx.fillStyle = '#faf5ff'; ctx.strokeStyle = color; ctx.lineWidth = 2.5;
   ctx.beginPath(); ctx.roundRect(x-bw/2, y-bh/2, bw, bh, 4); ctx.fill(); ctx.stroke();
-  // 滑片P箭头（从上方指向电阻体）
-  var arrowX = x - bw*0.15;
+  // 滑片P箭头（从上方引出）
+  var arrowX = x + bw*0.15;
   ctx.strokeStyle = color; ctx.lineWidth = 2;
   ctx.beginPath(); ctx.moveTo(arrowX, y-bh/2); ctx.lineTo(arrowX, y-bh/2-18); ctx.stroke();
   ctx.fillStyle = color;
   ctx.beginPath(); ctx.moveTo(arrowX, y-bh/2-22); ctx.lineTo(arrowX-6, y-bh/2-14); ctx.lineTo(arrowX+6, y-bh/2-14); ctx.closePath(); ctx.fill();
-  // P端接线点
   dot(arrowX, y-bh/2-22);
   // 标签
   ctx.fillStyle = color;
   ctx.font = 'bold 13px "PingFang SC","Microsoft YaHei",sans-serif';
-  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  ctx.fillText('Rp', x, y+1);
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('Rp', x, y+1);
   ctx.font = 'bold 11px "PingFang SC","Microsoft YaHei",sans-serif';
   ctx.fillText(Rp.toFixed(0)+'Ω', x, y-24);
-  if (hl) glow(x, y, 30, color);
+  if (hl) glow(x, y, 28, color);
 }
 
 // ============ 主绘制 ============
@@ -282,79 +274,66 @@ function draw() {
   ctx.clearRect(0, 0, W, H);
 
   // ===== 主回路导线 =====
-  // 上边: nTL → [A] → [R] → [Rp] → nTR
-  wire(nTL.x, nTL.y, aA.x-21, aA.y);          // nTL → A左
-  wire(aA.x+21, aA.y, rL.x, rL.y);             // A右 → R左节点
-  wire(rR.x, rR.y, aRp.x-28, aRp.y);           // R右节点 → Rp(A端)
-  // Rp → nTR 在drawRheostatSymbol中处理（从滑片P引出）
-  // 滑片P的箭头坐标 = (aRp.x - bw*0.15, aRp.y - bh/2 - 22) = (aRp.x-8.4, aRp.y-36)
-  var pTipX = aRp.x - 8;
-  var pTipY = aRp.y - 36;
-  wire(pTipX, pTipY, pTipX, aRp.y-50);          // 滑片引出向上
-  wire(pTipX, aRp.y-50, nTR.x, aRp.y-50);       // 向左到nTR上方
-  wire(nTR.x, aRp.y-50, nTR.x, nTR.y);          // 向下到nTR
+  // 上边：nTL → [U] → [K] → nTR
+  wire(nTL.x, nTL.y, aU.x-35, aU.y);
+  wire(aU.x+35, aU.y, aK.x-25, aK.y);
+  wire(aK.x+25, aK.y, nTR.x, nTR.y);
 
-  // 右边: nTR → nBR
+  // 右边：nTR → nBR
   wire(nTR.x, nTR.y, nBR.x, nBR.y);
 
-  // 下边: nBR → [U] → [K] → nBL
-  wire(nBR.x, nBR.y, aU.x+35, nBR.y);
-  wire(aU.x-35, nBR.y, aK.x+18, nBR.y);
-  wire(aK.x-18, nBR.y, nBL.x, nBL.y);
+  // 下边：nBR → [Rp] → [R] → nBL
+  // nBR → Rp滑片输出
+  var ptX = aRp.x + 8;   // 箭头尖X
+  var ptY = aRp.y - 36;  // 箭头尖Y
+  wire(nBR.x, nBR.y, ptX, nBR.y);     // nBR水平向左到滑片下方
+  wire(ptX, nBR.y, ptX, ptY);         // 向上到滑片箭头尖
+  // Rp A端 ← R右端
+  wire(pL.x, pL.y, rR.x, rR.y);       // Rp左端 → R右端
+  // R左端 → nBL
+  wire(rL.x, rL.y, nBL.x, nBL.y);
 
-  // 左边: nBL → nTL
-  wire(nBL.x, nBL.y, nTL.x, nTL.y);
+  // 左边：nBL → [A] → nTL
+  wire(nBL.x, nBL.y, aA.x, aA.y+21);
+  wire(aA.x, aA.y-21, nTL.x, nTL.y);
 
-  // ===== 电压表并联支路（跨接在R两端，不短路） =====
-  // 电压表上端连rL（R左端节点），下端连rR（R右端节点）
-  // rL(318,100) → 向下 → 水平 → 电压表上端(348,204)
-  var vTopY = aV.y - 21;    // 204
-  var vBotY = aV.y + 21;    // 246
-  wire(rL.x, rL.y, rL.x, vTopY);              // 左竖线：rL向下到V顶高度
-  wire(rL.x, vTopY, aV.x, vTopY);             // 左横线：连到V顶部
-
-  // 电压表下端连rR（R右端节点）
-  // rR(378,100) → 向下 → 水平 → 电压表下端(348,246)
-  wire(rR.x, rR.y, rR.x, vBotY);              // 右竖线：rR向下到V底高度
-  wire(rR.x, vBotY, aV.x, vBotY);             // 右横线：连到V底部
+  // ===== 电压表并联支路（V上端接rL，V下端接rR）=====
+  var vTopY = aV.y - 21;   // 189
+  var vBotY = aV.y + 21;   // 231
+  wire(rL.x, rL.y, rL.x, vTopY);        // rL向上到V顶高度
+  wire(rL.x, vTopY, aV.x, vTopY);       // 水平连到V顶部
+  wire(rR.x, rR.y, rR.x, vBotY);        // rR向上到V底高度
+  wire(rR.x, vBotY, aV.x, vBotY);       // 水平连到V底部
 
   // ===== 节点圆点 =====
   dot(nTL.x, nTL.y); dot(nTR.x, nTR.y); dot(nBR.x, nBR.y); dot(nBL.x, nBL.y);
   dot(rL.x, rL.y); dot(rR.x, rR.y);
-  dot(rL.x, vTopY); dot(rR.x, vBotY);
-  dot(aV.x, vTopY); dot(aV.x, vBotY);
-  dot(pTipX, pTipY);
+  dot(rL.x, vTopY); dot(aV.x, vTopY);
+  dot(rR.x, vBotY); dot(aV.x, vBotY);
+  dot(ptX, ptY);
 
   // ===== 画元件符号 =====
   var hl;
-  // 电流表 A
   hl = (hoveredComp === components[0] || selectedComp === components[0]);
-  drawMeterSymbol(aA.x, aA.y, 21, 'A', '#3b82f6', hl, false);
+  drawBattery(aU.x, aU.y, '#475569', hl);
 
-  // 定值电阻 R
   hl = (hoveredComp === components[1] || selectedComp === components[1]);
-  drawResistorSymbol(aR.x, aR.y, '#d97706', 'R', hl);
-  // R阻值标注
+  drawSwitch(aK.x, aK.y, '#475569', hl);
+
+  hl = (hoveredComp === components[2] || selectedComp === components[2]);
+  drawAmmeter(aA.x, aA.y, '#3b82f6', hl);
+
+  hl = (hoveredComp === components[3] || selectedComp === components[3]);
+  drawResistor(aR.x, aR.y, '#d97706', 'R', hl);
   ctx.fillStyle = '#d97706';
   ctx.font = 'bold 11px "PingFang SC","Microsoft YaHei",sans-serif';
-  ctx.textAlign = 'center';
-  ctx.fillText(R.toFixed(0)+'Ω', aR.x, aR.y-24);
+  ctx.textAlign = 'center'; ctx.fillText(R.toFixed(0)+'Ω', aR.x, aR.y-26);
 
-  // 滑动变阻器 Rp
-  hl = (hoveredComp === components[2] || selectedComp === components[2]);
-  drawRheostatSymbol(aRp.x, aRp.y, '#8b5cf6', hl);
-
-  // 开关 K
-  hl = (hoveredComp === components[3] || selectedComp === components[3]);
-  drawSwitchSymbol(aK.x, aK.y, '#475569', hl);
-
-  // 电源 U
   hl = (hoveredComp === components[4] || selectedComp === components[4]);
-  drawBatterySymbol(aU.x, aU.y, '#475569', hl);
+  drawRheostat(aRp.x, aRp.y, '#8b5cf6', hl);
 
-  // 电压表 V（竖直并联支路中）
   hl = (hoveredComp === components[5] || selectedComp === components[5]);
-  drawMeterSymbol(aV.x, aV.y, 21, 'V', '#ef4444', hl, true);
+  drawVoltmeter(aV.x, aV.y, '#ef4444', hl);
 
   // ===== 选中元件信息弹窗 =====
   if (selectedComp) drawPopup(selectedComp);
@@ -391,36 +370,31 @@ function drawPopup(comp) {
   if (info.current && info.current > 0) { ctx.fillStyle = '#16a34a'; ctx.fillText('  I='+info.current.toFixed(3)+'A', px+110, py+58); }
 }
 
-// ============ 元件数据（用于点击检测和信息获取） ============
+// ============ 元件数据 ============
 var components = [
-  { id:'ammeter',  label:'电流表',       x:aA.x,  y:aA.y,  r:25,   color:'#3b82f6', hitCircle:true,
-    getInfo:function(){ return { voltage:0, current:switchOn?I:0, title:'电流表 A', detail:switchOn?'测得 I='+I.toFixed(3)+' A（串联电流处处相等）':'开关断开，电流为 0' }; } },
-  { id:'resistor', label:'定值电阻 R',   x:aR.x,  y:aR.y,  r:30,   color:'#d97706', hitCircle:false,
-    getInfo:function(){ return { voltage:switchOn?UR:0, current:switchOn?I:0, title:'定值电阻 R='+R.toFixed(0)+' Ω', detail:switchOn?'UR='+UR.toFixed(2)+' V，I='+I.toFixed(3)+' A':'开关断开，电压电流均为 0' }; } },
-  { id:'rheostat', label:'滑动变阻器 Rp', x:aRp.x, y:aRp.y, r:32,   color:'#8b5cf6', hitCircle:false,
-    getInfo:function(){ return { voltage:switchOn?Up:0, current:switchOn?I:0, title:'滑动变阻器 Rp='+Rp.toFixed(0)+' Ω', detail:switchOn?'Up='+Up.toFixed(2)+' V，I='+I.toFixed(3)+' A':'开关断开，电压电流均为 0' }; } },
-  { id:'switch',   label:'开关',         x:aK.x,  y:aK.y,  r:22,   color:'#475569', hitCircle:false,
+  { id:'battery',  label:'电源',         x:aU.x, y:aU.y,  r:28, color:'#475569', hitCircle:false,
+    getInfo:function(){ return { voltage:switchOn?U:0, current:switchOn?I:0, title:'电源 U='+U.toFixed(1)+'V', detail:switchOn?'提供电压 '+U.toFixed(1)+'V，输出 '+I.toFixed(3)+'A':'开关断开，无电流输出' }; } },
+  { id:'switch',   label:'开关',         x:aK.x, y:aK.y,  r:22, color:'#475569', hitCircle:false,
     getInfo:function(){ return { voltage:0, current:switchOn?I:0, title:'开关：'+(switchOn?'闭合':'断开'), detail:switchOn?'开关闭合，电流正常流通':'开关断开，电路中没有电流' }; } },
-  { id:'battery',  label:'电源',         x:aU.x,  y:aU.y,  r:28,   color:'#475569', hitCircle:false,
-    getInfo:function(){ return { voltage:switchOn?U:0, current:switchOn?I:0, title:'电源 U='+U.toFixed(1)+' V', detail:switchOn?'提供 '+U.toFixed(1)+' V，输出 '+I.toFixed(3)+' A':'开关断开，无电流输出' }; } },
-  { id:'voltmeter',label:'电压表',       x:aV.x,  y:aV.y,  r:25,   color:'#ef4444', hitCircle:true,
-    getInfo:function(){ return { voltage:switchOn?UR:0, current:0, title:'电压表 V（测R两端）', detail:switchOn?'测得 UR='+UR.toFixed(2)+' V（并联在R两端）':'开关断开，读数为 0' }; } },
+  { id:'ammeter',  label:'电流表',       x:aA.x, y:aA.y,  r:25, color:'#3b82f6', hitCircle:true,
+    getInfo:function(){ return { voltage:0, current:switchOn?I:0, title:'电流表 A', detail:switchOn?'测得 I='+I.toFixed(3)+'A（串联电流处处相等）':'开关断开，电流为0' }; } },
+  { id:'resistor', label:'定值电阻 R',   x:aR.x, y:aR.y,  r:30, color:'#d97706', hitCircle:false,
+    getInfo:function(){ return { voltage:switchOn?UR:0, current:switchOn?I:0, title:'定值电阻 R='+R.toFixed(0)+'Ω', detail:switchOn?'UR='+UR.toFixed(2)+'V，I='+I.toFixed(3)+'A':'开关断开，电压电流均为0' }; } },
+  { id:'rheostat', label:'滑动变阻器 Rp',x:aRp.x,y:aRp.y, r:32, color:'#8b5cf6', hitCircle:false,
+    getInfo:function(){ return { voltage:switchOn?Up:0, current:switchOn?I:0, title:'滑动变阻器 Rp='+Rp.toFixed(0)+'Ω', detail:switchOn?'Up='+Up.toFixed(2)+'V，I='+I.toFixed(3)+'A':'开关断开，电压电流均为0' }; } },
+  { id:'voltmeter',label:'电压表',       x:aV.x, y:aV.y,  r:25, color:'#ef4444', hitCircle:true,
+    getInfo:function(){ return { voltage:switchOn?UR:0, current:0, title:'电压表 V（测R两端）', detail:switchOn?'测得 UR='+UR.toFixed(2)+'V（并联在R两端）':'开关断开，读数为0' }; } },
 ];
 
 // ============ 鼠标交互 ============
 function hitTest(px, py) {
   for (var i = components.length-1; i >= 0; i--) {
     var c = components[i];
-    if (c.hitCircle) {
-      var dx = px-c.x, dy = py-c.y;
-      if (Math.sqrt(dx*dx+dy*dy) < c.r) return c;
-    } else {
-      if (Math.abs(px-c.x) < c.r && Math.abs(py-c.y) < c.r*0.7) return c;
-    }
+    if (c.hitCircle) { var dx = px-c.x, dy = py-c.y; if (Math.sqrt(dx*dx+dy*dy) < c.r) return c; }
+    else { if (Math.abs(px-c.x) < c.r && Math.abs(py-c.y) < c.r*0.7) return c; }
   }
   return null;
 }
-
 canvas.addEventListener('mousemove', function(e) {
   var rect = canvas.getBoundingClientRect();
   var sx = W/rect.width, sy = H/rect.height;
@@ -453,14 +427,12 @@ function updateHint() {
     h.style.background = '#eff6ff'; h.style.borderColor = '#bfdbfe'; h.style.color = '#1e40af';
   }
 }
-
 function onSliderChange() {
   R = parseFloat(document.getElementById('rSlider').value);
   Rp = parseFloat(document.getElementById('rpSlider').value);
   U = parseFloat(document.getElementById('uSlider').value);
   recalc(); updatePanel(); draw();
 }
-
 function updatePanel() {
   document.getElementById('rVal').textContent = R.toFixed(0)+' Ω';
   document.getElementById('rpVal').textContent = Rp.toFixed(0)+' Ω';
@@ -470,7 +442,6 @@ function updatePanel() {
   document.getElementById('upDisp').textContent = Up.toFixed(2)+' V';
   document.getElementById('rtDisp').textContent = Rtotal.toFixed(0)+' Ω';
 }
-
 function resetAll() {
   document.getElementById('rSlider').value = 10;
   document.getElementById('rpSlider').value = 15;
@@ -478,15 +449,11 @@ function resetAll() {
   R = 10; Rp = 15; U = 6; switchOn = true; selectedComp = null;
   recalc(); updatePanel(); updateHint(); draw();
 }
-
-// ============ 响应式 ============
 function resizeCanvas() {
   var card = canvas.parentElement;
   var maxW = Math.min(card.clientWidth-16, 660);
-  canvas.style.width = maxW+'px';
-  canvas.style.height = Math.floor(440*(maxW/660))+'px';
+  canvas.style.width = maxW+'px'; canvas.style.height = Math.floor(440*(maxW/660))+'px';
 }
-
 recalc(); updatePanel(); resizeCanvas(); draw();
 window.addEventListener('resize', function() { resizeCanvas(); draw(); });
 </script>
