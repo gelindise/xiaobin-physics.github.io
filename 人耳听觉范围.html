@@ -916,7 +916,21 @@
   var SPEED_OF_SOUND = 343; // m/s at 20°C
 
   // ============ 音频引擎 ============
-  function initAudio() {
+  function preInitAudio() {
+    // 移动端：页面首次触摸时预初始化 AudioContext，确保后续播放正常
+    if (!audioCtx) {
+      try {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      } catch(e) {}
+    }
+    if (audioCtx && audioCtx.state === 'suspended') {
+      audioCtx.resume();
+    }
+  }
+  document.addEventListener('touchstart', preInitAudio, { once: true });
+  document.addEventListener('click', preInitAudio, { once: true });
+
+  async function initAudio() {
     if (!audioCtx) {
       try {
         audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -926,13 +940,43 @@
       }
     }
     if (audioCtx.state === 'suspended') {
-      audioCtx.resume();
+      try {
+        await audioCtx.resume();
+      } catch(e) {
+        console.warn('AudioContext resume 失败:', e);
+        return false;
+      }
+    }
+    // iOS 静音开关开启时 resume 后状态仍非 running
+    if (audioCtx.state !== 'running') {
+      console.warn('AudioContext 状态异常:', audioCtx.state);
+      return false;
     }
     return true;
   }
 
-  function startSound() {
-    if (!initAudio()) return;
+  // 音频提示浮层（移动端静音开关提示）
+  var audioTipTimer = null;
+  function showAudioTip(msg) {
+    var tip = document.getElementById('audioTip');
+    if (!tip) {
+      tip = document.createElement('div');
+      tip.id = 'audioTip';
+      tip.style.cssText = 'position:fixed;top:20px;left:50%;transform:translateX(-50%);background:#fef2f2;color:#991b1b;border:1px solid #fca5a5;padding:12px 20px;border-radius:12px;font-size:0.85rem;font-weight:600;z-index:9999;box-shadow:0 4px 20px rgba(0,0,0,0.15);max-width:90vw;text-align:center;line-height:1.5;transition:opacity 0.3s;pointer-events:none;';
+      document.body.appendChild(tip);
+    }
+    tip.textContent = msg;
+    tip.style.opacity = '1';
+    clearTimeout(audioTipTimer);
+    audioTipTimer = setTimeout(function() { tip.style.opacity = '0'; }, 4000);
+  }
+
+  async function startSound() {
+    var ok = await initAudio();
+    if (!ok) {
+      showAudioTip('⚠️ 音频无法播放，请检查手机是否处于静音模式，或调高媒体音量后重试');
+      return;
+    }
     stopSound();
     oscillator = audioCtx.createOscillator();
     gainNode = audioCtx.createGain();
@@ -1162,11 +1206,14 @@
       btnPlayIcon.textContent = '▶';
       btnPlayText.textContent = '播放声音';
     } else {
-      startSound();
-      isPlaying = true;
-      btnPlay.classList.add('playing');
-      btnPlayIcon.textContent = '⏸';
-      btnPlayText.textContent = '停止';
+      startSound().then(function() {
+        if (oscillator) {
+          isPlaying = true;
+          btnPlay.classList.add('playing');
+          btnPlayIcon.textContent = '⏸';
+          btnPlayText.textContent = '停止';
+        }
+      });
     }
   };
 
@@ -1179,7 +1226,9 @@
     if (type === 'square') document.getElementById('btnWaveSquare').classList.add('active');
     if (type === 'sawtooth') document.getElementById('btnWaveSawtooth').classList.add('active');
     if (isPlaying) {
-      startSound();
+      startSound().then(function() {
+        if (!oscillator) { isPlaying = false; btnPlay.classList.remove('playing'); btnPlayIcon.textContent = '▶'; btnPlayText.textContent = '播放声音'; }
+      });
     }
   };
 
@@ -1300,11 +1349,14 @@
       // 确保声音播放
       if (!isPlaying) {
         testVolumeBefore = volume;
-        startSound();
-        isPlaying = true;
-        btnPlay.classList.add('playing');
-        btnPlayIcon.textContent = '⏸';
-        btnPlayText.textContent = '停止';
+        startSound().then(function() {
+          if (oscillator) {
+            isPlaying = true;
+            btnPlay.classList.add('playing');
+            btnPlayIcon.textContent = '⏸';
+            btnPlayText.textContent = '停止';
+          }
+        });
       }
     } else if (state === 'between') {
       testInstruction.innerHTML = '✅ 低频阈值已记录：<strong>' + testLowFreq + ' Hz</strong><br>即将开始高频扫描，请准备…';
