@@ -128,6 +128,7 @@
           <div class="toggle-row" style="flex-direction:column; gap:8px;">
             <label><input type="checkbox" id="showNormalCheck" checked onchange="toggleNormal()"> 显示法线</label>
             <label><input type="checkbox" id="showArcsCheck" checked onchange="toggleArcs()"> 显示角度弧</label>
+            <label><input type="checkbox" id="fixRayCheck" onchange="toggleFixRay()"> 固定入射光线</label>
           </div>
 
           <div class="sep"></div>
@@ -177,6 +178,7 @@
           <li>点击<strong>方向按钮 (↑↓←→)</strong>平移镜面位置</li>
           <li>勾选<strong>显示法线</strong>切换法线的显示/隐藏</li>
           <li>勾选<strong>显示角度弧</strong>切换角度弧线的显示/隐藏</li>
+          <li>勾选<strong>固定入射光线</strong>锁定光源位置，观察镜面转动/平移时入射点如何变化</li>
           <li>点击<strong>⛶ 全屏</strong>进入全屏模式，便于课堂演示</li>
           <li>核心规律：<strong>无论入射角或镜面如何变化，反射角始终等于入射角</strong></li>
         </ul>
@@ -200,6 +202,9 @@
     var mirrorY = 250;          // 镜面中心 Y
     var showNormal = true;
     var showArcs = true;
+    var fixRay = false;         // 固定入射光线
+    var fixedSrcX = 560;        // 固定光源 X（画布坐标）
+    var fixedSrcY = 100;        // 固定光源 Y
     var MIRROR_LEN = 280;       // 镜面长度
     var RAY_LEN = 230;          // 光线长度
 
@@ -208,6 +213,14 @@
     function rotateVec(v, rad) {
       var c = Math.cos(rad), s = Math.sin(rad);
       return { x: v.x * c - v.y * s, y: v.x * s + v.y * c };
+    }
+
+    // 两直线交点: P + t*u = Q + s*v, 返回交点或null(平行时)
+    function lineIntersection(P, u, Q, v) {
+      var det = v.x * u.y - u.x * v.y;
+      if (Math.abs(det) < 1e-9) return null;
+      var t = (v.x * (P.y - Q.y) - v.y * (P.x - Q.x)) / det;
+      return { x: P.x + t * u.x, y: P.y + t * u.y };
     }
 
     // 核心几何计算
@@ -220,24 +233,36 @@
       var mDir = { x: Math.cos(alpha), y: -Math.sin(alpha) };
       // 法线 n = (-sin α, -cos α)，α=0 → (0,-1) 指向上方
       var n = { x: -Math.sin(alpha), y: -Math.cos(alpha) };
+      var M = { x: mirrorX, y: mirrorY };
 
-      // 入射光源 S = P + RAY_LEN * rotate(n, θi)
+      // 入射方向（射向镜面）
       var srcDir = rotateVec(n, theta);
-      var source = {
-        x: mirrorX + srcDir.x * RAY_LEN,
-        y: mirrorY + srcDir.y * RAY_LEN
-      };
+      var incDir = { x: -srcDir.x, y: -srcDir.y };
+
+      var P, source;
+      if (fixRay) {
+        // 固定光源：求入射光线与镜面的交点
+        var S = { x: fixedSrcX, y: fixedSrcY };
+        var hit = lineIntersection(M, mDir, S, incDir);
+        P = hit || { x: mirrorX, y: mirrorY };
+        source = S;
+      } else {
+        P = { x: mirrorX, y: mirrorY };
+        source = {
+          x: mirrorX + srcDir.x * RAY_LEN,
+          y: mirrorY + srcDir.y * RAY_LEN
+        };
+      }
 
       // 向量反射公式: r = d - 2(d·n)n
-      var incDir = { x: -srcDir.x, y: -srcDir.y };
       var dot = incDir.x * n.x + incDir.y * n.y;
       var refDir = {
         x: incDir.x - 2 * dot * n.x,
         y: incDir.y - 2 * dot * n.y
       };
       var reflection = {
-        x: mirrorX + refDir.x * RAY_LEN,
-        y: mirrorY + refDir.y * RAY_LEN
+        x: P.x + refDir.x * RAY_LEN,
+        y: P.y + refDir.y * RAY_LEN
       };
 
       // 镜面两端点（沿镜面方向展开）
@@ -251,7 +276,7 @@
       };
 
       return {
-        P: { x: mirrorX, y: mirrorY },
+        P: P,
         n: n,
         mDir: mDir,
         p1: p1, p2: p2,
@@ -474,17 +499,6 @@
       ctx.fillText('反射角 θr = ' + incidentDeg.toFixed(1) + '°', ix, iy + 20);
     }
 
-    // 入射点标记（小圆点）
-    function drawPoint(P) {
-      ctx.fillStyle = '#f59e0b';
-      ctx.beginPath();
-      ctx.arc(P.x, P.y, 4, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.strokeStyle = '#fff';
-      ctx.lineWidth = 1;
-      ctx.stroke();
-    }
-
     // === 主绘制 ===
     function drawAll() {
       ctx.clearRect(0, 0, W * dpr, H * dpr);
@@ -514,7 +528,24 @@
         drawAngleArc(P, n, refDirFromP, '#3b82f6', 'θr=' + incidentDeg.toFixed(1) + '°');
       }
 
-      drawPoint(P);
+      // 固定光源模式下绘制光源标记
+      if (fixRay) {
+        ctx.fillStyle = '#f59e0b';
+        ctx.beginPath();
+        ctx.arc(fixedSrcX, fixedSrcY, 5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#1e293b';
+        ctx.font = '11px "PingFang SC","Microsoft YaHei",sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('光源', fixedSrcX, fixedSrcY - 12);
+      }
+
+      // 入射点标记
+      ctx.fillStyle = '#1e293b';
+      ctx.beginPath();
+      ctx.arc(P.x, P.y, 3.5, 0, Math.PI * 2);
+      ctx.fill();
+
       drawAngleDisplay(P);
 
       ctx.restore();
@@ -567,6 +598,18 @@
     window.toggleArcs = function() {
       showArcs = document.getElementById('showArcsCheck').checked;
     };
+    window.toggleFixRay = function() {
+      fixRay = document.getElementById('fixRayCheck').checked;
+      if (fixRay) {
+        // 首次勾选时，把固定光源放在当前入射光线的起点位置
+        var alpha = degToRad(mirrorAngleDeg);
+        var theta = degToRad(incidentDeg);
+        var n = { x: -Math.sin(alpha), y: -Math.cos(alpha) };
+        var srcDir = rotateVec(n, theta);
+        fixedSrcX = mirrorX + srcDir.x * RAY_LEN;
+        fixedSrcY = mirrorY + srcDir.y * RAY_LEN;
+      }
+    };
 
     window.moveMirror = function(dir) {
       var step = 10;
@@ -583,10 +626,14 @@
       mirrorY = H / 2;
       showNormal = true;
       showArcs = true;
+      fixRay = false;
+      fixedSrcX = 560;
+      fixedSrcY = 100;
       document.getElementById('incidentSlider').value = 30;
       document.getElementById('mirrorAngleSlider').value = 0;
       document.getElementById('showNormalCheck').checked = true;
       document.getElementById('showArcsCheck').checked = true;
+      document.getElementById('fixRayCheck').checked = false;
     };
 
     window.toggleFullscreen = function() {
