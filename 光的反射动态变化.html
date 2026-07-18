@@ -166,7 +166,7 @@
           <li><strong style="color:#ef4444;">入射角 (θi)</strong>：入射光线与法线的夹角</li>
           <li><strong style="color:#3b82f6;">反射角 (θr)</strong>：反射光线与法线的夹角</li>
           <li><strong>法线</strong>：过入射点且垂直于镜面的直线</li>
-          <li><strong>镜面角度 (α)</strong>：镜面相对于竖直方向的旋转角度</li>
+          <li><strong>镜面角度 (α)</strong>：镜面相对于水平方向的旋转角度（0° 为水平放置）</li>
         </ul>
       </div>
       <div class="info-card">
@@ -195,12 +195,12 @@
 
     // 状态变量
     var incidentDeg = 30;       // 入射角 θi
-    var mirrorAngleDeg = 0;     // 镜面角度 α
+    var mirrorAngleDeg = 0;     // 镜面角度 α（0=水平，正=逆时针旋转）
     var mirrorX = 400;          // 镜面中心 X
     var mirrorY = 250;          // 镜面中心 Y
     var showNormal = true;
     var showArcs = true;
-    var MIRROR_LEN = 260;       // 镜面半长
+    var MIRROR_LEN = 280;       // 镜面长度
     var RAY_LEN = 230;          // 光线长度
 
     // 辅助函数
@@ -215,10 +215,11 @@
       var alpha = degToRad(mirrorAngleDeg);
       var theta = degToRad(incidentDeg);
 
-      // 法线（指向入射侧，即左侧当 α=0）
-      var n = { x: -Math.cos(alpha), y: Math.sin(alpha) };
-      // 镜面方向
-      var mDir = { x: Math.sin(alpha), y: Math.cos(alpha) };
+      // α=0 时镜面水平，法线指向上方（入射侧）
+      // 镜面方向 mDir = (cos α, -sin α)，α=0 → (1,0) 水平
+      var mDir = { x: Math.cos(alpha), y: -Math.sin(alpha) };
+      // 法线 n = (-sin α, -cos α)，α=0 → (0,-1) 指向上方
+      var n = { x: -Math.sin(alpha), y: -Math.cos(alpha) };
 
       // 入射光源 S = P + RAY_LEN * rotate(n, θi)
       var srcDir = rotateVec(n, theta);
@@ -227,9 +228,8 @@
         y: mirrorY + srcDir.y * RAY_LEN
       };
 
-      // 入射方向（从source指向P的单位向量）
-      var incDir = { x: -srcDir.x, y: -srcDir.y };
       // 向量反射公式: r = d - 2(d·n)n
+      var incDir = { x: -srcDir.x, y: -srcDir.y };
       var dot = incDir.x * n.x + incDir.y * n.y;
       var refDir = {
         x: incDir.x - 2 * dot * n.x,
@@ -240,7 +240,7 @@
         y: mirrorY + refDir.y * RAY_LEN
       };
 
-      // 镜面两端点
+      // 镜面两端点（沿镜面方向展开）
       var p1 = {
         x: mirrorX - mDir.x * MIRROR_LEN * 0.5,
         y: mirrorY - mDir.y * MIRROR_LEN * 0.5
@@ -275,8 +275,15 @@
     }
 
     function drawMirror(p1, p2, n) {
-      // 镜面主体 — 厚灰色线条
       ctx.save();
+      // 背面方向（-n）
+      var backN = { x: -n.x, y: -n.y };
+      var mx = (p1.x + p2.x) / 2, my = (p1.y + p2.y) / 2;
+      var halfLen = Math.hypot(p2.x - p1.x, p2.y - p1.y) / 2;
+      var ux = (p2.x - p1.x) / (halfLen * 2) || 0;
+      var uy = (p2.y - p1.y) / (halfLen * 2) || 0;
+
+      // 镜面主体
       ctx.strokeStyle = '#64748b';
       ctx.lineWidth = 10;
       ctx.lineCap = 'round';
@@ -285,47 +292,32 @@
       ctx.lineTo(p2.x, p2.y);
       ctx.stroke();
 
-      // 镜面高光（细白线偏左侧）
-      ctx.strokeStyle = 'rgba(255,255,255,0.6)';
+      // 镜面高光（入射侧）
+      ctx.strokeStyle = 'rgba(255,255,255,0.5)';
       ctx.lineWidth = 2;
-      var offsetDir = { x: -n.y, y: n.x }; // 沿镜面方向的垂直方向
-      var hl1 = {
-        x: p1.x + offsetDir.x * 2,
-        y: p1.y + offsetDir.y * 2
-      };
-      var hl2 = {
-        x: p2.x + offsetDir.x * 2,
-        y: p2.y + offsetDir.y * 2
-      };
       ctx.beginPath();
-      ctx.moveTo(hl1.x, hl1.y);
-      ctx.lineTo(hl2.x, hl2.y);
+      ctx.moveTo(p1.x + n.x * 2, p1.y + n.y * 2);
+      ctx.lineTo(p2.x + n.x * 2, p2.y + n.y * 2);
       ctx.stroke();
 
-      // 镜面背面的斜线纹理（非反射面）
+      // 背面斜线纹理
       ctx.strokeStyle = 'rgba(100,116,139,0.4)';
       ctx.lineWidth = 1;
-      var backDir = { x: -offsetDir.x, y: -offsetDir.y };
       var backOffset = 5;
-      var mx = (p1.x + p2.x) / 2, my = (p1.y + p2.y) / 2;
-      var halfLen = Math.hypot(p2.x - p1.x, p2.y - p1.y) / 2;
-      var ux = (p2.x - p1.x) / (halfLen * 2), uy = (p2.y - p1.y) / (halfLen * 2);
       for (var t = -halfLen + 15; t < halfLen; t += 18) {
-        var bx = mx + ux * t + backDir.x * backOffset;
-        var by = my + uy * t + backDir.y * backOffset;
+        var bx = mx + ux * t + backN.x * backOffset;
+        var by = my + uy * t + backN.y * backOffset;
         ctx.beginPath();
         ctx.moveTo(bx, by);
-        ctx.lineTo(bx + backDir.x * 8, by + backDir.y * 8);
+        ctx.lineTo(bx + backN.x * 8, by + backN.y * 8);
         ctx.stroke();
       }
 
-      // 镜面标签
+      // 镜面标签（背面）
       ctx.fillStyle = '#475569';
       ctx.font = '13px "PingFang SC","Microsoft YaHei",sans-serif';
       ctx.textAlign = 'center';
-      var labelX = mx + backDir.x * 22;
-      var labelY = my + backDir.y * 22;
-      ctx.fillText('镜面', labelX, labelY);
+      ctx.fillText('镜面', mx + backN.x * 24, my + backN.y * 24);
       ctx.restore();
     }
 
@@ -360,70 +352,64 @@
     }
 
     function drawNormalLine(P, n) {
-      var len = 100;
-      // 法线两端
-      var n1 = { x: P.x + n.x * len, y: P.y + n.y * len };
-      var n2 = { x: P.x - n.x * len, y: P.y - n.y * len };
+      var len = 110;
+      var gap = 7; // 镜面半宽，法线在镜面边缘断开
 
       ctx.save();
       ctx.setLineDash([6, 5]);
       ctx.strokeStyle = '#94a3b8';
       ctx.lineWidth = 1.5;
+
+      // 入射侧法线（从镜面边缘向外）
       ctx.beginPath();
-      ctx.moveTo(n1.x, n1.y);
-      ctx.lineTo(n2.x, n2.y);
+      ctx.moveTo(P.x + n.x * gap, P.y + n.y * gap);
+      ctx.lineTo(P.x + n.x * len, P.y + n.y * len);
       ctx.stroke();
+
+      // 背侧法线（从镜面边缘向外）
+      ctx.beginPath();
+      ctx.moveTo(P.x - n.x * gap, P.y - n.y * gap);
+      ctx.lineTo(P.x - n.x * len, P.y - n.y * len);
+      ctx.stroke();
+
       ctx.setLineDash([]);
 
-      // 法线标签
+      // 法线标签（入射侧末端）
       ctx.fillStyle = '#94a3b8';
       ctx.font = '12px "PingFang SC","Microsoft YaHei",sans-serif';
-      ctx.textAlign = 'left';
-      var lblX = n1.x + 6;
-      var lblY = n1.y - 6;
+      ctx.textAlign = 'center';
+      var lblX = P.x + n.x * (len + 10);
+      var lblY = P.y + n.y * (len + 10);
       ctx.fillText('法线', lblX, lblY);
       ctx.restore();
     }
 
-    function drawAngleArc(P, normalDir, rayDir, color, fillColor, label) {
+    function drawAngleArc(P, normalDir, rayDir, color, label) {
       var arcR = 35;
       var nAngle = Math.atan2(normalDir.y, normalDir.x);
       var rAngle = Math.atan2(rayDir.y, rayDir.x);
 
-      // 确保最短弧（使用counterclockwise=true（CCW），从normal到ray）
-      // 计算从nAngle到rAngle的CCW角度差
+      // 计算最短弧
       var diff = rAngle - nAngle;
       while (diff < 0) diff += Math.PI * 2;
       while (diff >= Math.PI * 2) diff -= Math.PI * 2;
-
-      // 如果CCW角度差大于180°，用CW（counterclockwise=false）绘制更短的弧
       var useCCW = diff <= Math.PI;
-      var endAngle = rAngle;
 
-      // 填充弧
-      ctx.fillStyle = fillColor;
-      ctx.beginPath();
-      ctx.moveTo(P.x, P.y);
-      ctx.arc(P.x, P.y, arcR, nAngle, endAngle, useCCW);
-      ctx.closePath();
-      ctx.fill();
-
-      // 弧线
+      // 只画细弧线（不填充）
       ctx.strokeStyle = color;
-      ctx.lineWidth = 1.5;
+      ctx.lineWidth = 2;
       ctx.beginPath();
-      ctx.arc(P.x, P.y, arcR, nAngle, endAngle, useCCW);
+      ctx.arc(P.x, P.y, arcR, nAngle, rAngle, useCCW);
       ctx.stroke();
 
-      // 标签位置（弧线中点，取角度平均值）
+      // 标签
       var midAngle;
       if (useCCW) {
         midAngle = nAngle + diff / 2;
       } else {
-        var cwDiff = Math.PI * 2 - diff;
-        midAngle = nAngle - cwDiff / 2;
+        midAngle = nAngle - (Math.PI * 2 - diff) / 2;
       }
-      var midR = arcR + 22;
+      var midR = arcR + 24;
       var lx = P.x + midR * Math.cos(midAngle);
       var ly = P.y + midR * Math.sin(midAngle);
 
@@ -522,12 +508,10 @@
 
       // 角度弧
       if (showArcs && incidentDeg > 0.1) {
-        // 入射角弧：从法线方向到入射光源方向
         var srcDirFromP = { x: geo.source.x - P.x, y: geo.source.y - P.y };
-        drawAngleArc(P, n, srcDirFromP, '#ef4444', 'rgba(239,68,68,0.12)', 'θi=' + incidentDeg.toFixed(1) + '°');
-        // 反射角弧：同样从法线方向到反射光线方向（两条光线在法线同侧）
+        drawAngleArc(P, n, srcDirFromP, '#ef4444', 'θi=' + incidentDeg.toFixed(1) + '°');
         var refDirFromP = { x: geo.reflection.x - P.x, y: geo.reflection.y - P.y };
-        drawAngleArc(P, n, refDirFromP, '#3b82f6', 'rgba(59,130,246,0.12)', 'θr=' + incidentDeg.toFixed(1) + '°');
+        drawAngleArc(P, n, refDirFromP, '#3b82f6', 'θr=' + incidentDeg.toFixed(1) + '°');
       }
 
       drawPoint(P);
