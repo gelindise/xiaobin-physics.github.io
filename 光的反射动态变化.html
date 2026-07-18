@@ -227,9 +227,14 @@
         y: mirrorY + srcDir.y * RAY_LEN
       };
 
-      // 反射终点 R = P + RAY_LEN * rotate(-n, θi)
-      var negN = { x: -n.x, y: -n.y };
-      var refDir = rotateVec(negN, theta);
+      // 入射方向（从source指向P的单位向量）
+      var incDir = { x: -srcDir.x, y: -srcDir.y };
+      // 向量反射公式: r = d - 2(d·n)n
+      var dot = incDir.x * n.x + incDir.y * n.y;
+      var refDir = {
+        x: incDir.x - 2 * dot * n.x,
+        y: incDir.y - 2 * dot * n.y
+      };
       var reflection = {
         x: mirrorX + refDir.x * RAY_LEN,
         y: mirrorY + refDir.y * RAY_LEN
@@ -324,50 +329,32 @@
       ctx.restore();
     }
 
-    function drawArrowLine(fromX, fromY, toX, toY, color, lineWidth, arrowAtEnd) {
+    function drawArrowLine(fromX, fromY, toX, toY, color, lineWidth) {
       var dx = toX - fromX, dy = toY - fromY;
       var len = Math.hypot(dx, dy);
       if (len < 1) return;
       var ux = dx / len, uy = dy / len;
-      var as = 11; // arrow size
+      var as = 12; // arrow size
 
-      var tipX, tipY, lineEndX, lineEndY;
-      if (arrowAtEnd) {
-        tipX = toX; tipY = toY;
-        lineEndX = toX - ux * as;
-        lineEndY = toY - uy * as;
-      } else {
-        tipX = fromX; tipY = fromY;
-        lineEndX = fromX + ux * as;
-        lineEndY = fromY + uy * as;
-      }
+      // 箭头位于光线中点
+      var midX = (fromX + toX) / 2;
+      var midY = (fromY + toY) / 2;
 
-      // 线段
+      // 完整线段
       ctx.strokeStyle = color;
       ctx.lineWidth = lineWidth;
       ctx.lineCap = 'round';
       ctx.beginPath();
-      if (arrowAtEnd) {
-        ctx.moveTo(fromX, fromY);
-        ctx.lineTo(lineEndX, lineEndY);
-      } else {
-        ctx.moveTo(lineEndX, lineEndY);
-        ctx.lineTo(toX, toY);
-      }
+      ctx.moveTo(fromX, fromY);
+      ctx.lineTo(toX, toY);
       ctx.stroke();
 
-      // 箭头
+      // 中点处绘制填充箭头（指向光线前进方向）
       ctx.fillStyle = color;
       ctx.beginPath();
-      if (arrowAtEnd) {
-        ctx.moveTo(tipX, tipY);
-        ctx.lineTo(tipX - ux * as + uy * as * 0.4, tipY - uy * as - ux * as * 0.4);
-        ctx.lineTo(tipX - ux * as - uy * as * 0.4, tipY - uy * as + ux * as * 0.4);
-      } else {
-        ctx.moveTo(tipX, tipY);
-        ctx.lineTo(tipX + ux * as + uy * as * 0.4, tipY + uy * as - ux * as * 0.4);
-        ctx.lineTo(tipX + ux * as - uy * as * 0.4, tipY + uy * as + ux * as * 0.4);
-      }
+      ctx.moveTo(midX + ux * as * 0.5, midY + uy * as * 0.5);
+      ctx.lineTo(midX - ux * as * 0.5 + uy * as * 0.4, midY - uy * as * 0.5 - ux * as * 0.4);
+      ctx.lineTo(midX - ux * as * 0.5 - uy * as * 0.4, midY - uy * as * 0.5 + ux * as * 0.4);
       ctx.closePath();
       ctx.fill();
     }
@@ -525,23 +512,22 @@
       drawMirror(geo.p1, geo.p2, n);
       if (showNormal) drawNormalLine(P, n);
 
-      // 入射光线（红色，箭头在镜面端）
-      drawArrowLine(geo.source.x, geo.source.y, P.x, P.y, '#ef4444', 2.5, true);
+      // 入射光线（红色，箭头在中点）
+      drawArrowLine(geo.source.x, geo.source.y, P.x, P.y, '#ef4444', 2.5);
       drawRayLabel(geo.source.x, geo.source.y, P.x, P.y, '入射光线', '#ef4444', 16);
 
-      // 反射光线（蓝色，箭头在远端）
-      drawArrowLine(P.x, P.y, geo.reflection.x, geo.reflection.y, '#3b82f6', 2.5, true);
+      // 反射光线（蓝色，箭头在中点）
+      drawArrowLine(P.x, P.y, geo.reflection.x, geo.reflection.y, '#3b82f6', 2.5);
       drawRayLabel(P.x, P.y, geo.reflection.x, geo.reflection.y, '反射光线', '#3b82f6', 16);
 
       // 角度弧
       if (showArcs && incidentDeg > 0.1) {
-        // 入射角弧：从法线方向（指向入射侧）到入射光源方向
+        // 入射角弧：从法线方向到入射光源方向
         var srcDirFromP = { x: geo.source.x - P.x, y: geo.source.y - P.y };
         drawAngleArc(P, n, srcDirFromP, '#ef4444', 'rgba(239,68,68,0.12)', 'θi=' + incidentDeg.toFixed(1) + '°');
-        // 反射角弧：从反射侧法线方向到反射光线方向
+        // 反射角弧：同样从法线方向到反射光线方向（两条光线在法线同侧）
         var refDirFromP = { x: geo.reflection.x - P.x, y: geo.reflection.y - P.y };
-        var refNormal = { x: -n.x, y: -n.y };
-        drawAngleArc(P, refNormal, refDirFromP, '#3b82f6', 'rgba(59,130,246,0.12)', 'θr=' + incidentDeg.toFixed(1) + '°');
+        drawAngleArc(P, n, refDirFromP, '#3b82f6', 'rgba(59,130,246,0.12)', 'θr=' + incidentDeg.toFixed(1) + '°');
       }
 
       drawPoint(P);
