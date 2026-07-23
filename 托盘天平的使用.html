@@ -20,6 +20,10 @@
       max-width: 1320px; margin: 0 auto; padding: 10px 16px;
       height: 100vh; display: flex; flex-direction: column;
     }
+    /* 确保所有按钮和可交互区域不响应 pointer-events 限制 */
+    button, input, select, label, #rider, #right-items g, #right-items rect {
+      pointer-events: auto;
+    }
     .topbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; flex: none; }
     .titles { min-width: 0; }
     .experiment-title { color: #1e40af; font-size: 20px; margin: 0; font-weight: bold; }
@@ -349,34 +353,62 @@
   }
 
   function initDrag() {
-    const rider = document.getElementById('rider');
-    const svg = document.getElementById('svg');
-    let dragging = false;
-    const move = (e) => {
-      if (!dragging) return;
-      const pt = svg.createSVGPoint();
-      pt.x = e.touches ? e.touches[0].clientX : e.clientX;
-      pt.y = 0;
-      const p = pt.matrixTransform(svg.getScreenCTM().inverse());
-      let nx = p.x - 7;
-      nx = Math.max(RIDER_MIN, Math.min(RIDER_MAX, nx));
-      rider.setAttribute("x", nx);
-      const ratio = (nx - RIDER_MIN) / (RIDER_MAX - RIDER_MIN);
-      let rawMass = ratio * 5;
-      if (mode === 0.2) {
-        riderMass = Math.round(rawMass / 0.2) * 0.2;
-      } else {
-        riderMass = Math.round(rawMass * 100) / 100;
+    var rider = document.getElementById('rider');
+    var svg = document.getElementById('svg');
+    if (!rider || !svg) return;
+    var dragging = false;
+
+    // 安全的 SVG 坐标转换：处理 getScreenCTM() 可能返回 null 的情况
+    function svgClientToLocal(clientX) {
+      var ctm = svg.getScreenCTM();
+      if (!ctm) return null; // SVG 尚未渲染完成，安全跳过
+      // 使用 DOMPoint（现代 API），createSVGPoint 作为回退
+      var pt;
+      try {
+        pt = new DOMPoint(clientX, 0);
+      } catch (e) {
+        pt = svg.createSVGPoint();
+        pt.x = clientX;
+        pt.y = 0;
       }
-      updatePhysics();
+      return pt.matrixTransform(ctm.inverse());
+    }
+
+    function onMove(e) {
+      if (!dragging) return;
+      try {
+        var clientX = e.touches ? e.touches[0].clientX : e.clientX;
+        var p = svgClientToLocal(clientX);
+        if (!p) return; // getScreenCTM 返回 null 时安全跳过
+        var nx = p.x - 7;
+        nx = Math.max(RIDER_MIN, Math.min(RIDER_MAX, nx));
+        rider.setAttribute('x', nx);
+        var ratio = (nx - RIDER_MIN) / (RIDER_MAX - RIDER_MIN);
+        var rawMass = ratio * 5;
+        if (mode === 0.2) {
+          riderMass = Math.round(rawMass / 0.2) * 0.2;
+        } else {
+          riderMass = Math.round(rawMass * 100) / 100;
+        }
+        updatePhysics();
+        if (e.cancelable) e.preventDefault();
+      } catch (err) {
+        dragging = false; // 异常时安全重置
+      }
+    }
+
+    function onStart(e) {
+      dragging = true;
       if (e.cancelable) e.preventDefault();
-    };
-    rider.onmousedown = () => dragging = true;
-    rider.ontouchstart = () => dragging = true;
-    window.addEventListener('mousemove', move);
-    window.addEventListener('touchmove', move, { passive: false });
-    window.onmouseup = () => dragging = false;
-    window.ontouchend = () => dragging = false;
+    }
+    function onStop() { dragging = false; }
+
+    rider.addEventListener('mousedown', onStart);
+    rider.addEventListener('touchstart', onStart, { passive: false });
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('touchmove', onMove, { passive: false });
+    window.addEventListener('mouseup', onStop);
+    window.addEventListener('touchend', onStop);
   }
 
   function hideFeedback() {
@@ -438,10 +470,10 @@
     }
   };
 
-  // 启动
-  initScale();
-  initDrag();
-  updatePhysics();
+  // 启动（逐项安全初始化，单项失败不影响其他）
+  try { initScale(); } catch (e) { console.warn('initScale 失败:', e); }
+  try { initDrag(); } catch (e) { console.warn('initDrag 失败:', e); }
+  try { updatePhysics(); } catch (e) { console.warn('updatePhysics 失败:', e); }
   </script>
 </body>
 </html>
