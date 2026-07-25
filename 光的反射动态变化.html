@@ -207,6 +207,9 @@
     var fixedSrcY = 100;        // 固定光源 Y
     var MIRROR_LEN = 280;       // 镜面长度
     var RAY_LEN = 230;          // 光线长度
+    var fixedIncDirX = 0;       // 固定模式下入射光线的世界空间方向（单位向量）
+    var fixedIncDirY = 0;
+    var actualIncidentDeg = 0;  // 固定模式下实际的入射角（从几何计算得出）
 
     // 辅助函数
     function degToRad(d) { return d * Math.PI / 180; }
@@ -219,8 +222,18 @@
     function lineIntersection(P, u, Q, v) {
       var det = v.x * u.y - u.x * v.y;
       if (Math.abs(det) < 1e-9) return null;
-      var t = (v.x * (P.y - Q.y) - v.y * (P.x - Q.x)) / det;
+      var t = (v.x * (Q.y - P.y) - v.y * (Q.x - P.x)) / det;
       return { x: P.x + t * u.x, y: P.y + t * u.y };
+    }
+
+    // 更新固定模式下的入射光线方向（从当前镜面法线和入射角计算）
+    function updateFixedIncDir() {
+      var alpha = degToRad(mirrorAngleDeg);
+      var theta = degToRad(incidentDeg);
+      var n = { x: -Math.sin(alpha), y: -Math.cos(alpha) };
+      var srcDir = rotateVec(n, theta);
+      fixedIncDirX = -srcDir.x;
+      fixedIncDirY = -srcDir.y;
     }
 
     // 核心几何计算
@@ -235,9 +248,20 @@
       var n = { x: -Math.sin(alpha), y: -Math.cos(alpha) };
       var M = { x: mirrorX, y: mirrorY };
 
-      // 入射方向（射向镜面）
-      var srcDir = rotateVec(n, theta);
-      var incDir = { x: -srcDir.x, y: -srcDir.y };
+      var incDir, srcDir;
+      if (fixRay) {
+        // 固定模式：使用存储的世界空间方向，不随镜面旋转而改变
+        incDir = { x: fixedIncDirX, y: fixedIncDirY };
+        // 计算实际的入射角（incDir 与法线 n 之间的夹角）
+        var dotCheck = -(incDir.x * n.x + incDir.y * n.y);
+        dotCheck = Math.max(-1, Math.min(1, dotCheck));
+        actualIncidentDeg = Math.acos(dotCheck) * 180 / Math.PI;
+      } else {
+        // 普通模式：入射方向从法线推算
+        srcDir = rotateVec(n, theta);
+        incDir = { x: -srcDir.x, y: -srcDir.y };
+        actualIncidentDeg = incidentDeg;
+      }
 
       var P, source;
       if (fixRay) {
@@ -480,6 +504,7 @@
 
     function drawAngleDisplay(P) {
       var cardX = W - 180, cardY = 14, cardW = 166, cardH = 52;
+      var displayInc = fixRay ? actualIncidentDeg : incidentDeg;
       // 背景卡片
       ctx.fillStyle = 'rgba(255,255,255,0.9)';
       ctx.strokeStyle = '#e2e8f0';
@@ -494,9 +519,9 @@
       ctx.textBaseline = 'top';
       var ix = cardX + 10, iy = cardY + 8;
       ctx.fillStyle = '#ef4444';
-      ctx.fillText('入射角 θi = ' + incidentDeg.toFixed(1) + '°', ix, iy);
+      ctx.fillText('入射角 θi = ' + displayInc.toFixed(1) + '°', ix, iy);
       ctx.fillStyle = '#3b82f6';
-      ctx.fillText('反射角 θr = ' + incidentDeg.toFixed(1) + '°', ix, iy + 20);
+      ctx.fillText('反射角 θr = ' + displayInc.toFixed(1) + '°', ix, iy + 20);
     }
 
     // === 主绘制 ===
@@ -521,11 +546,12 @@
       drawRayLabel(P.x, P.y, geo.reflection.x, geo.reflection.y, '反射光线', '#3b82f6', 16);
 
       // 角度弧
-      if (showArcs && incidentDeg > 0.1) {
+      var displayInc = fixRay ? actualIncidentDeg : incidentDeg;
+      if (showArcs && displayInc > 0.1) {
         var srcDirFromP = { x: geo.source.x - P.x, y: geo.source.y - P.y };
-        drawAngleArc(P, n, srcDirFromP, '#ef4444', 'θi=' + incidentDeg.toFixed(1) + '°');
+        drawAngleArc(P, n, srcDirFromP, '#ef4444', 'θi=' + displayInc.toFixed(1) + '°');
         var refDirFromP = { x: geo.reflection.x - P.x, y: geo.reflection.y - P.y };
-        drawAngleArc(P, n, refDirFromP, '#3b82f6', 'θr=' + incidentDeg.toFixed(1) + '°');
+        drawAngleArc(P, n, refDirFromP, '#3b82f6', 'θr=' + displayInc.toFixed(1) + '°');
       }
 
       // 固定光源模式下绘制光源标记
@@ -539,12 +565,6 @@
         ctx.textAlign = 'center';
         ctx.fillText('光源', fixedSrcX, fixedSrcY - 12);
       }
-
-      // 入射点标记
-      ctx.fillStyle = '#1e293b';
-      ctx.beginPath();
-      ctx.arc(P.x, P.y, 3.5, 0, Math.PI * 2);
-      ctx.fill();
 
       drawAngleDisplay(P);
 
@@ -577,16 +597,21 @@
     }
 
     function updateUI() {
-      document.getElementById('valIncident').textContent = incidentDeg.toFixed(1) + '°';
+      var displayInc = fixRay ? actualIncidentDeg : incidentDeg;
+      document.getElementById('valIncident').textContent = displayInc.toFixed(1) + '°';
       document.getElementById('valMirrorAngle').textContent = (mirrorAngleDeg >= 0 ? '+' : '') + mirrorAngleDeg + '°';
-      document.getElementById('cardIncident').textContent = incidentDeg.toFixed(1) + '°';
-      document.getElementById('cardReflected').textContent = incidentDeg.toFixed(1) + '°';
+      document.getElementById('cardIncident').textContent = displayInc.toFixed(1) + '°';
+      document.getElementById('cardReflected').textContent = displayInc.toFixed(1) + '°';
       document.getElementById('cardMirrorAngle').textContent = (mirrorAngleDeg >= 0 ? '+' : '') + mirrorAngleDeg + '°';
     }
 
     // === 事件处理 ===
     document.getElementById('incidentSlider').addEventListener('input', function() {
       incidentDeg = parseFloat(this.value);
+      if (fixRay) updateFixedIncDir();
+    });
+    document.getElementById('mirrorAngleSlider').addEventListener('input', function() {
+      mirrorAngleDeg = parseFloat(this.value);
     });
     document.getElementById('mirrorAngleSlider').addEventListener('input', function() {
       mirrorAngleDeg = parseFloat(this.value);
@@ -601,13 +626,14 @@
     window.toggleFixRay = function() {
       fixRay = document.getElementById('fixRayCheck').checked;
       if (fixRay) {
-        // 首次勾选时，把固定光源放在当前入射光线的起点位置
+        // 首次勾选时，把固定光源放在当前入射光线的起点位置，并锁定方向
         var alpha = degToRad(mirrorAngleDeg);
         var theta = degToRad(incidentDeg);
         var n = { x: -Math.sin(alpha), y: -Math.cos(alpha) };
         var srcDir = rotateVec(n, theta);
         fixedSrcX = mirrorX + srcDir.x * RAY_LEN;
         fixedSrcY = mirrorY + srcDir.y * RAY_LEN;
+        updateFixedIncDir();
       }
     };
 
@@ -629,6 +655,9 @@
       fixRay = false;
       fixedSrcX = 560;
       fixedSrcY = 100;
+      fixedIncDirX = 0;
+      fixedIncDirY = 0;
+      actualIncidentDeg = 30;
       document.getElementById('incidentSlider').value = 30;
       document.getElementById('mirrorAngleSlider').value = 0;
       document.getElementById('showNormalCheck').checked = true;
