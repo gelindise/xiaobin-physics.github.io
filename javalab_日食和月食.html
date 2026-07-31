@@ -229,6 +229,10 @@
       <input type="range" id="angleSlider" min="0" max="360" value="0" style="width:140px;">
     </div>
     <div class="controls-group">
+      <label>轨道距离 <span class="val" id="orbitDistLabel">62</span>px</label>
+      <input type="range" id="orbitDistSlider" min="45" max="120" value="62" step="1">
+    </div>
+    <div class="controls-group">
       <label class="toggle-row">
         <input type="checkbox" id="chkRays" checked>
         <span>显示光线</span>
@@ -336,7 +340,7 @@ var PANEL_DIVIDER = 880; // separates top-down view (left) from observer view (r
 // Celestial body positions & sizes (top-down schematic, NOT to scale)
 var SUN_CX = 100, SUN_CY = 340, SUN_R = 75;
 var EARTH_CX = 500, EARTH_CY = 340, EARTH_R = 32;
-var MOON_ORBIT_R = 110;
+var MOON_ORBIT_R = 62;
 var MOON_R = 11;
 
 // State
@@ -349,6 +353,7 @@ var sliderDragging = false;
 // DOM refs
 var btnToggle, btnReset, speedSlider, speedLabel;
 var btnSolarPos, btnLunarPos, angleSlider;
+var orbitDistSlider, orbitDistLabel;
 var chkRays;
 var statusVal, statusSub, angleVal, angleSub, orbitVal, orbitSub;
 
@@ -378,6 +383,8 @@ function setup() {
   btnSolarPos = select('#btnSolarPos');
   btnLunarPos = select('#btnLunarPos');
   angleSlider = select('#angleSlider');
+  orbitDistSlider = select('#orbitDistSlider');
+  orbitDistLabel = select('#orbitDistLabel');
   chkRays = select('#chkRays');
   statusVal = select('#statusVal');
   statusSub = select('#statusSub');
@@ -401,6 +408,10 @@ function setup() {
   });
   angleSlider.changed(function() {
     sliderDragging = false;
+  });
+  orbitDistSlider.input(function() {
+    MOON_ORBIT_R = parseInt(orbitDistSlider.value());
+    orbitDistLabel.html(MOON_ORBIT_R);
   });
   chkRays.changed(function() {
     showRays = chkRays.elt.checked;
@@ -451,6 +462,9 @@ function resetAll() {
   speedSlider.value(1);
   speedMul = 1.0;
   speedLabel.html('1.0');
+  orbitDistSlider.value(62);
+  MOON_ORBIT_R = 62;
+  orbitDistLabel.html('62');
   updatePanel();
 }
 
@@ -521,7 +535,16 @@ function computeEclipseStatus() {
   // Solar eclipse: Moon between Sun and Earth, diff ≈ 0
   if (absDiff < PENUMBRA_DEG && moon.x < EARTH_CX) {
     var align = Math.max(0, 1 - absDiff / PENUMBRA_DEG);
-    var phase = absDiff < UMBRA_DEG ? 'umbra' : 'penumbra';
+    var phase;
+    if (absDiff < UMBRA_DEG) {
+      // Calculate if umbra reaches Earth's surface
+      var dSunMoon = dist(moon.x, moon.y, SUN_CX, SUN_CY);
+      var umbraLen = MOON_R * dSunMoon / (SUN_R - MOON_R);
+      var dMoonEarth = dist(moon.x, moon.y, EARTH_CX, EARTH_CY);
+      phase = (umbraLen >= dMoonEarth - EARTH_R) ? 'umbra' : 'annular';
+    } else {
+      phase = 'penumbra';
+    }
     return { type: 'solar', phase: phase, alignment: align, angle: diff };
   }
   // Lunar eclipse: Earth between Sun and Moon, diff ≈ ±180
@@ -557,6 +580,10 @@ function updatePanel() {
       statusVal.html('🌑 日全食！（本影区）');
       statusVal.elt.className = 'value solar-eclipse';
       statusSub.html('观察者位于月球本影中，太阳完全被遮挡（对齐度: ' + Math.round(status.alignment * 100) + '%）');
+    } else if (status.phase === 'annular') {
+      statusVal.html('💫 日环食！（本影未到达地面）');
+      statusVal.elt.className = 'value solar-eclipse';
+      statusSub.html('月球距地球较远，本影锥无法到达地面，太阳边缘形成金环（对齐度: ' + Math.round(status.alignment * 100) + '%）');
     } else {
       statusVal.html('🌓 日偏食（半影区）');
       statusVal.elt.className = 'value solar-eclipse';
@@ -832,15 +859,23 @@ function drawAllRaysAndShadows() {
   }
 
   if (shadeType !== 'none') {
-    drawShadowRays(sun, SUN_R, occluder, occluderR, shadeType);
+    drawShadowRays(sun, SUN_R, occluder, occluderR, shadeType, status.phase);
   } else {
     // Always draw faint rays from Sun to Moon for visual context
     drawContextRays(sun, SUN_R, moon, MOON_R);
   }
 }
 
-function drawShadowRays(sun, sunR, occluder, occR, shadeType) {
+function drawShadowRays(sun, sunR, occluder, occR, shadeType, phase) {
   var ext = 350; // extension past occluder
+
+  // For annular eclipse, compute umbra tip distance
+  var isAnnular = (phase === 'annular');
+  var umbraTipDist = 0;
+  if (isAnnular) {
+    var d = dist(sun.x, sun.y, occluder.x, occluder.y);
+    umbraTipDist = occR * d / (sunR - occR);
+  }
 
   // Compute all 4 tangents
   var types = ['inner_upper', 'inner_lower', 'outer_upper', 'outer_lower'];
@@ -854,15 +889,29 @@ function drawShadowRays(sun, sunR, occluder, occR, shadeType) {
   for (var k in tangents) {
     var tg = tangents[k];
     var isInner = k.indexOf('inner_') === 0;
-    if (isInner) {
+    if (isInner && isAnnular) {
+      // Inner rays in annular: only draw up to umbra tip
+      stroke(255, 180, 50, 90);
+      strokeWeight(2.2);
+      var tipPt = extendRay(tg.p1, tg.p2, umbraTipDist);
+      line(tg.p1.x, tg.p1.y, tipPt.x, tipPt.y);
+      // Beyond umbra tip: dashed to show rays crossing
+      stroke(255, 180, 50, 40);
+      strokeWeight(1.2);
+      drawingContext.setLineDash([4, 6]);
+      line(tipPt.x, tipPt.y, tipPt.x + (tipPt.x - tg.p1.x) * 0.6, tipPt.y + (tipPt.y - tg.p1.y) * 0.6);
+      drawingContext.setLineDash([]);
+    } else if (isInner) {
       stroke(255, 180, 50, 110);
       strokeWeight(2.2);
+      var extPt = extendRay(tg.p1, tg.p2, ext);
+      line(tg.p1.x, tg.p1.y, extPt.x, extPt.y);
     } else {
       stroke(255, 220, 100, 65);
       strokeWeight(1.5);
+      var extPtO = extendRay(tg.p1, tg.p2, ext);
+      line(tg.p1.x, tg.p1.y, extPtO.x, extPtO.y);
     }
-    var extPt = extendRay(tg.p1, tg.p2, ext);
-    line(tg.p1.x, tg.p1.y, extPt.x, extPt.y);
     // Also draw from sun edge to occluder with slightly different alpha
     if (isInner) {
       stroke(255, 200, 80, 70);
@@ -880,21 +929,41 @@ function drawShadowRays(sun, sunR, occluder, occR, shadeType) {
     var ou = tangents['outer_upper'];
     var ol = tangents['outer_lower'];
 
-    var iuExt = extendRay(iu.p1, iu.p2, ext);
-    var ilExt = extendRay(il.p1, il.p2, ext);
+    var iuExt = extendRay(iu.p1, iu.p2, isAnnular ? umbraTipDist : ext);
+    var ilExt = extendRay(il.p1, il.p2, isAnnular ? umbraTipDist : ext);
     var ouExt = extendRay(ou.p1, ou.p2, ext);
     var olExt = extendRay(ol.p1, ol.p2, ext);
 
     noStroke();
 
-    // Umbra: region between inner tangents
-    fill(139, 0, 0, 45);
-    beginShape();
-    vertex(iu.p2.x, iu.p2.y);
-    vertex(iuExt.x, iuExt.y);
-    vertex(ilExt.x, ilExt.y);
-    vertex(il.p2.x, il.p2.y);
-    endShape(CLOSE);
+    if (isAnnular) {
+      // Umbra cone: ends at tip (triangle from occluder to tip)
+      fill(139, 0, 0, 40);
+      beginShape();
+      vertex(iu.p2.x, iu.p2.y);
+      vertex(iuExt.x, iuExt.y);
+      vertex(ilExt.x, ilExt.y);
+      vertex(il.p2.x, il.p2.y);
+      endShape(CLOSE);
+
+      // X mark at umbra tip to show it doesn't reach Earth
+      stroke(255, 100, 80, 180);
+      strokeWeight(2);
+      var tx = (iuExt.x + ilExt.x) / 2;
+      var ty = (iuExt.y + ilExt.y) / 2;
+      line(tx - 8, ty - 8, tx + 8, ty + 8);
+      line(tx + 8, ty - 8, tx - 8, ty + 8);
+      noStroke();
+    } else {
+      // Umbra: region between inner tangents (reaches Earth)
+      fill(139, 0, 0, 45);
+      beginShape();
+      vertex(iu.p2.x, iu.p2.y);
+      vertex(iuExt.x, iuExt.y);
+      vertex(ilExt.x, ilExt.y);
+      vertex(il.p2.x, il.p2.y);
+      endShape(CLOSE);
+    }
 
     // Penumbra upper: between outer_upper and inner_upper
     fill(180, 60, 30, 30);
@@ -915,12 +984,20 @@ function drawShadowRays(sun, sunR, occluder, occR, shadeType) {
     endShape(CLOSE);
 
     // Labels on shadow regions
-    var midX = (iuExt.x + ilExt.x) / 2;
-    var midY = (iuExt.y + ilExt.y) / 2;
-    fill(255, 100, 80, 160);
-    textSize(11);
-    textAlign(CENTER, CENTER);
-    text('本影', midX, midY);
+    if (isAnnular) {
+      // Label at umbra tip
+      fill(255, 160, 100, 170);
+      textSize(10);
+      textAlign(CENTER, CENTER);
+      text('本影尖端\n(未到达地面)', (iuExt.x + ilExt.x) / 2, (iuExt.y + ilExt.y) / 2 - 10);
+    } else {
+      var midX = (iuExt.x + ilExt.x) / 2;
+      var midY = (iuExt.y + ilExt.y) / 2;
+      fill(255, 100, 80, 160);
+      textSize(11);
+      textAlign(CENTER, CENTER);
+      text('本影', midX, midY);
+    }
 
     var penUpX = (ouExt.x + iuExt.x) / 2;
     var penUpY = (ouExt.y + iuExt.y) / 2;
@@ -952,8 +1029,16 @@ function drawLabels() {
   if (status.type !== 'none') {
     var labelText, labelColor;
     if (status.type === 'solar') {
-      labelText = status.phase === 'umbra' ? '☀ →    →   日全食 (本影)' : '☀ →    →   日偏食 (半影)';
-      labelColor = status.phase === 'umbra' ? '#f97316' : '#f59e0b';
+      if (status.phase === 'umbra') {
+        labelText = '☀ →    →   日全食 (本影)';
+        labelColor = '#f97316';
+      } else if (status.phase === 'annular') {
+        labelText = '☀ →    →   日环食 (本影未到达)';
+        labelColor = '#fbbf24';
+      } else {
+        labelText = '☀ →    →   日偏食 (半影)';
+        labelColor = '#f59e0b';
+      }
     } else {
       labelText = status.phase === 'umbra' ? '☀ →    →   月全食 (本影)' : '☀ →    →   月偏食 (半影)';
       labelColor = status.phase === 'umbra' ? '#ef4444' : '#f87171';
@@ -1027,16 +1112,40 @@ function drawObserverView() {
   textAlign(CENTER, TOP);
   if (status.type === 'solar') {
     var alignPct = Math.round(status.alignment * 100);
-    fill(249, 115, 22, 200);
-    text(status.phase === 'umbra' ? '日全食（本影区）' : '日偏食（半影区）', viewCX, viewCY + viewR + 14);
-    textSize(10);
-    fill(180, 180, 190, 140);
-    text('对齐度 ' + alignPct + '% · 月球遮挡太阳的视觉效果', viewCX, viewCY + viewR + 32);
-    textSize(10);
-    fill(255, 200, 80, 180);
-    text('本影→完全遮挡', viewCX - 70, viewCY + viewR + 50);
-    fill(255, 160, 100, 160);
-    text('半影→部分遮挡', viewCX + 70, viewCY + viewR + 50);
+    if (status.phase === 'umbra') {
+      fill(249, 115, 22, 200);
+      text('日全食（本影区）', viewCX, viewCY + viewR + 14);
+      textSize(10);
+      fill(180, 180, 190, 140);
+      text('对齐度 ' + alignPct + '% · 月球完全遮住太阳', viewCX, viewCY + viewR + 32);
+      textSize(10);
+      fill(255, 200, 80, 180);
+      text('本影→完全遮挡', viewCX - 70, viewCY + viewR + 50);
+      fill(255, 160, 100, 160);
+      text('半影→部分遮挡', viewCX + 70, viewCY + viewR + 50);
+    } else if (status.phase === 'annular') {
+      fill(251, 191, 36, 200);
+      text('日环食（本影未到达地面）', viewCX, viewCY + viewR + 14);
+      textSize(10);
+      fill(180, 180, 190, 140);
+      text('对齐度 ' + alignPct + '% · 月球太小无法完全遮住太阳', viewCX, viewCY + viewR + 32);
+      textSize(10);
+      fill(255, 200, 80, 180);
+      text('本影锥尖端未到达地面', viewCX - 70, viewCY + viewR + 50);
+      fill(255, 160, 100, 160);
+      text('可见金环→日环食', viewCX + 70, viewCY + viewR + 50);
+    } else {
+      fill(249, 115, 22, 200);
+      text('日偏食（半影区）', viewCX, viewCY + viewR + 14);
+      textSize(10);
+      fill(180, 180, 190, 140);
+      text('对齐度 ' + alignPct + '% · 月球部分遮挡太阳', viewCX, viewCY + viewR + 32);
+      textSize(10);
+      fill(255, 200, 80, 180);
+      text('本影→完全遮挡', viewCX - 70, viewCY + viewR + 50);
+      fill(255, 160, 100, 160);
+      text('半影→部分遮挡', viewCX + 70, viewCY + viewR + 50);
+    }
   } else if (status.type === 'lunar') {
     var alignPct2 = Math.round(status.alignment * 100);
     fill(239, 68, 68, 200);
@@ -1060,7 +1169,9 @@ function drawObserverView() {
 
 function drawSolarObserverView(cx, cy, r, alignment, phase) {
   var sunR = r * 0.42;
-  var moonR = r * 0.44;
+  // Moon apparent size varies inversely with orbit distance
+  var moonR = r * 0.44 * (62 / MOON_ORBIT_R);
+  moonR = constrain(moonR, r * 0.22, r * 0.58);
 
   // Smooth offset: alignment 0→1 maps to offset maxOffset→0
   var maxOffset = sunR + moonR + 30;
@@ -1075,13 +1186,40 @@ function drawSolarObserverView(cx, cy, r, alignment, phase) {
   fill(253, 224, 71);
   ellipse(cx - offsetX * 0.3, cy, sunR * 2, sunR * 2);
 
-  // Moon (dark disc, moving across Sun)
-  fill(25, 25, 35);
-  ellipse(cx + offsetX * 0.7, cy, moonR * 2, moonR * 2);
-  noFill();
-  stroke(40, 40, 55, 60);
-  strokeWeight(1);
-  ellipse(cx + offsetX * 0.7, cy, moonR * 2, moonR * 2);
+  // Moon
+  if (phase === 'annular') {
+    // Annular: Moon smaller than Sun, bright ring visible around Moon
+    fill(25, 25, 35);
+    ellipse(cx + offsetX * 0.7, cy, moonR * 2, moonR * 2);
+    // Bright golden ring (solar annulus)
+    noFill();
+    stroke(253, 224, 71, 220);
+    strokeWeight(3.5);
+    ellipse(cx + offsetX * 0.7, cy, moonR * 2 + 5, moonR * 2 + 5);
+    // Outer glow ring
+    stroke(253, 200, 50, 120);
+    strokeWeight(7);
+    ellipse(cx + offsetX * 0.7, cy, moonR * 2 + 10, moonR * 2 + 10);
+    // Corona rays beyond the ring
+    stroke(253, 224, 71, 50);
+    strokeWeight(2);
+    for (var a = 0; a < TWO_PI; a += PI / 6) {
+      var x1 = cx + offsetX * 0.7 + (moonR + 2) * cos(a);
+      var y1 = cy + (moonR + 2) * sin(a);
+      var x2 = cx + offsetX * 0.7 + (moonR + 15) * cos(a);
+      var y2 = cy + (moonR + 15) * sin(a);
+      line(x1, y1, x2, y2);
+    }
+    noStroke();
+  } else {
+    // Total or penumbra: Moon covers Sun (partially or fully)
+    fill(25, 25, 35);
+    ellipse(cx + offsetX * 0.7, cy, moonR * 2, moonR * 2);
+    noFill();
+    stroke(40, 40, 55, 60);
+    strokeWeight(1);
+    ellipse(cx + offsetX * 0.7, cy, moonR * 2, moonR * 2);
+  }
 
   // Phase label above viewport
   noStroke();
@@ -1090,6 +1228,9 @@ function drawSolarObserverView(cx, cy, r, alignment, phase) {
   textAlign(CENTER, CENTER);
   if (phase === 'umbra') {
     text('☀ 日全食（本影）', cx, cy - r - 10);
+  } else if (phase === 'annular') {
+    fill(251, 191, 36, 220);
+    text('💫 日环食（本影未到达）', cx, cy - r - 10);
   } else {
     text('☀ 日偏食（半影）', cx, cy - r - 10);
   }
