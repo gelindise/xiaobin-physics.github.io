@@ -1,123 +1,1660 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>物理虚拟实验 - 直流电路（PhET仿真）</title>
-  <link rel="stylesheet" href="style.css">
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
-      overflow: hidden;
-      background: #000;
-    }
-    /* 覆盖共享样式：将 sticky 改为 fixed，使导航栏可隐藏 */
-    .header {
-      position: fixed !important;
-      top: 0;
-      left: 0;
-      right: 0;
-      transition: transform 0.35s cubic-bezier(0.4, 0, 0.2, 1);
-      will-change: transform;
-    }
-    .header.hidden {
-      transform: translateY(-100%);
-    }
-    /* 顶部隐形触发区：鼠标移到顶部 40px 区域内显示导航栏 */
-    .header-trigger {
-      position: fixed;
-      top: 0;
-      left: 0;
-      right: 0;
-      height: 40px;
-      z-index: 101;
-    }
-    .sim-container {
-      position: fixed;
-      top: 56px;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      transition: top 0.35s cubic-bezier(0.4, 0, 0.2, 1);
-    }
-    .sim-container.expanded {
-      top: 0;
-    }
-    .sim-container iframe {
-      width: 100%;
-      height: 100%;
-      border: none;
-    }
-    @media (max-width: 768px) {
-      .sim-container { top: 52px; }
-    }
-  </style>
-  <script src="protect.js"></script>
-  <script src="auth-check.js"></script>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=10">
+<title>直流电路搭建 - 物理虚拟实验</title>
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
+<link rel="stylesheet" href="style.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/0.9.0/p5.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/0.9.0/addons/p5.dom.min.js"></script>
+<style>
+  :root {
+    --bg-darker: #020617; --bg-dark: #0f172a; --surface: #1e293b;
+    --primary: #3b82f6; --secondary: #06b6d4; --accent: #8b5cf6;
+    --text-main: #f8fafc; --text-muted: #94a3b8;
+    --glass-bg: rgba(255,255,255,0.05); --glass-border: rgba(255,255,255,0.1);
+    --card-shadow: 0 8px 32px 0 rgba(0,0,0,0.37);
+    --red: #ef4444; --orange: #f97316; --green: #22c55e;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: var(--bg-darker); color: var(--text-main);
+    min-height: 100vh; padding-top: 48px;
+    overflow: hidden; height: 100vh;
+  }
+  body::before {
+    content: ''; position: fixed; inset: 0;
+    background: radial-gradient(circle at 20% 30%, rgba(59,130,246,0.1) 0%, transparent 45%),
+                radial-gradient(circle at 80% 70%, rgba(139,92,246,0.08) 0%, transparent 45%);
+    pointer-events: none; z-index: 0;
+  }
+  body.header-hidden { padding-top: 0; }
+  body.header-hidden .header { transform: translateY(-100%); }
+  body { transition: padding-top 0.3s; }
+
+  /* ===== Header ===== */
+  .header {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+    background: rgba(2,6,23,0.85); backdrop-filter: blur(16px);
+    border-bottom: 1px solid var(--glass-border);
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 24px; height: 48px; transition: transform 0.3s;
+  }
+  .header .logo { font-size: 1rem; font-weight: 700; color: var(--text-main); text-decoration: none; display: flex; align-items: center; gap: 6px; }
+  .header .nav a { color: var(--text-muted); text-decoration: none; margin-left: 20px; font-size: 0.82rem; transition: color 0.2s; }
+  .header .nav a:hover { color: var(--text-main); }
+
+  /* ===== Main Layout ===== */
+  .app-wrap {
+    display: flex; height: calc(100vh - 48px); position: relative; z-index: 1;
+  }
+
+  /* ===== Palette (Left) ===== */
+  .palette {
+    width: 180px; min-width: 180px;
+    background: var(--bg-dark); border-right: 1px solid var(--glass-border);
+    padding: 12px 10px; display: flex; flex-direction: column; gap: 6px;
+    overflow-y: auto;
+  }
+  .palette h3 { font-size: 0.85rem; color: var(--text-muted); margin-bottom: 2px; text-align: center; }
+  .palette .comp-btn {
+    display: flex; align-items: center; gap: 8px;
+    padding: 10px 12px; border-radius: 10px;
+    border: 1px solid var(--glass-border);
+    background: var(--glass-bg); color: var(--text-main);
+    font-size: 0.82rem; cursor: pointer; transition: all 0.15s;
+    user-select: none;
+  }
+  .palette .comp-btn:hover { background: rgba(255,255,255,0.08); border-color: var(--primary); }
+  .palette .comp-btn.active { background: linear-gradient(135deg, var(--primary), var(--secondary)); border-color: transparent; }
+  .palette .comp-btn .icon { font-size: 1.2rem; width: 24px; text-align: center; }
+  .palette .comp-btn .tip { font-size: 0.7rem; color: var(--text-muted); }
+
+  /* ===== Canvas Area (Center) ===== */
+  .canvas-area {
+    flex: 1; display: flex; flex-direction: column; min-width: 0;
+  }
+  .canvas-shell {
+    flex: 1; position: relative; overflow: hidden;
+  }
+  #simContainer { width: 100%; height: 100%; }
+  #simCanvas { display: block; touch-action: none; }
+
+  /* ===== Control Bar ===== */
+  .controls-bar {
+    display: flex; flex-wrap: wrap; align-items: center; justify-content: center;
+    gap: 10px; padding: 8px 12px;
+    background: var(--glass-bg); border-top: 1px solid var(--glass-border);
+  }
+  .controls-group { display: flex; align-items: center; gap: 6px; }
+  .controls-group label { font-size: 0.78rem; color: var(--text-muted); white-space: nowrap; }
+  .controls-group label .val { color: var(--secondary); font-weight: 600; }
+  .btn-primary {
+    border: none; outline: none; cursor: pointer;
+    padding: 7px 16px; border-radius: 8px;
+    font-size: 0.8rem; font-weight: 600; color: #fff;
+    background: linear-gradient(135deg, var(--primary), var(--secondary));
+    transition: all 0.2s; white-space: nowrap;
+  }
+  .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 4px 16px rgba(59,130,246,0.35); }
+  .btn-primary.active { background: linear-gradient(135deg, #ef4444, #f97316); }
+  .btn-reset {
+    border: 1px solid var(--glass-border); outline: none; cursor: pointer;
+    padding: 7px 12px; border-radius: 8px; font-size: 0.8rem;
+    color: var(--text-muted); background: transparent; transition: all 0.2s;
+  }
+  .btn-reset:hover { border-color: var(--text-muted); color: var(--text-main); }
+  .btn-danger {
+    border: 1px solid rgba(239,68,68,0.4); outline: none; cursor: pointer;
+    padding: 7px 12px; border-radius: 8px; font-size: 0.8rem;
+    color: #f87171; background: transparent; transition: all 0.2s;
+  }
+  .btn-danger:hover { background: rgba(239,68,68,0.15); }
+  .seg-toggle { display: flex; border-radius: 8px; overflow: hidden; border: 1px solid var(--glass-border); }
+  .seg-btn {
+    border: none; outline: none; cursor: pointer;
+    padding: 6px 12px; font-size: 0.75rem; color: var(--text-muted);
+    background: transparent; transition: all 0.2s;
+  }
+  .seg-btn:not(:last-child) { border-right: 1px solid var(--glass-border); }
+  .seg-btn:hover { background: rgba(255,255,255,0.05); color: var(--text-main); }
+  .seg-btn.active { background: var(--primary); color: #fff; }
+
+  /* ===== Info Panel (Right) ===== */
+  .info-panel {
+    width: 220px; min-width: 220px;
+    background: var(--bg-dark); border-left: 1px solid var(--glass-border);
+    padding: 12px; display: flex; flex-direction: column; gap: 10px;
+    overflow-y: auto;
+  }
+  .info-panel h3 { font-size: 0.85rem; color: var(--text-muted); text-align: center; }
+  .data-card {
+    background: var(--glass-bg); border: 1px solid var(--glass-border);
+    border-radius: 10px; padding: 10px 14px; text-align: center;
+  }
+  .data-card .d-label { font-size: 0.72rem; color: var(--text-muted); }
+  .data-card .d-value { font-family: 'SF Mono','Consolas',monospace; font-size: 1.1rem; font-weight: 700; margin-top: 2px; }
+  .data-card.volt .d-value { color: #60a5fa; }
+  .data-card.amp .d-value { color: #4ade80; }
+  .data-card.res .d-value { color: #fbbf24; }
+  .data-card.warn .d-value { color: #f87171; }
+  .status-badge {
+    display: inline-block; padding: 4px 12px; border-radius: 20px;
+    font-size: 0.78rem; font-weight: 600; text-align: center;
+  }
+  .status-ok { background: rgba(34,197,94,0.15); color: #4ade80; }
+  .status-open { background: rgba(148,163,184,0.15); color: #94a3b8; }
+  .status-short { background: rgba(239,68,68,0.15); color: #f87171; }
+  .help-text { font-size: 0.72rem; color: var(--text-muted); line-height: 1.6; padding: 4px 0; }
+  .help-text kbd {
+    display: inline-block; padding: 1px 5px; border-radius: 3px;
+    background: rgba(255,255,255,0.1); font-size: 0.7rem; margin: 0 2px;
+  }
+
+  /* ===== Quiz overlay ===== */
+  .quiz-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 200;
+    display: none; align-items: center; justify-content: center;
+  }
+  .quiz-overlay.show { display: flex; }
+  .quiz-dialog {
+    background: var(--bg-dark); border: 1px solid var(--glass-border);
+    border-radius: 16px; padding: 28px; max-width: 560px; width: 90%;
+    max-height: 85vh; overflow-y: auto; position: relative;
+  }
+  .quiz-option {
+    display: block; width: 100%; text-align: left;
+    padding: 12px 16px; margin-bottom: 6px;
+    background: var(--glass-bg); border: 1px solid var(--glass-border);
+    border-radius: 10px; color: var(--text-main); font-size: 0.9rem;
+    cursor: pointer; transition: all 0.2s;
+  }
+  .quiz-option:hover { background: rgba(255,255,255,0.1); border-color: var(--primary); }
+  .quiz-option.correct { background: rgba(34,197,94,0.15); border-color: #22c55e; color: #22c55e; }
+  .quiz-option.wrong { background: rgba(239,68,68,0.15); border-color: #ef4444; color: #ef4444; }
+  .quiz-primary-btn {
+    border: none; outline: none; cursor: pointer;
+    padding: 10px 24px; border-radius: 10px;
+    font-size: 0.9rem; font-weight: 600; color: #fff;
+    background: linear-gradient(135deg, var(--accent), var(--primary));
+    transition: all 0.2s;
+  }
+  .quiz-primary-btn:hover { transform: translateY(-1px); box-shadow: 0 4px 16px rgba(139,92,246,0.35); }
+
+  @media (max-width: 900px) {
+    .app-wrap { flex-direction: column; }
+    .palette { width: 100%; min-width: unset; flex-direction: row; flex-wrap: wrap; padding: 8px; gap: 4px; }
+    .palette .comp-btn { padding: 8px 10px; font-size: 0.75rem; }
+    .info-panel { width: 100%; min-width: unset; border-left: none; border-top: 1px solid var(--glass-border); flex-direction: row; flex-wrap: wrap; padding: 8px; gap: 6px; }
+  }
+  @media (max-width: 480px) {
+    .header { padding: 0 12px; }
+    .palette .comp-btn { padding: 6px 8px; font-size: 0.7rem; }
+  }
+</style>
+<script src="auth-check.js"></script>
 </head>
 <body>
-  <header class="header">
-    <div class="logo">物理虚拟实验平台</div>
-    <nav class="nav">
-      <a href="experiments.html">实验目录</a>
-      <a href="index.html">首页</a>
-      <a href="vip.html">开通VIP</a>
-    </nav>
-  </header>
-  <div class="sim-container">
-    <iframe src="https://phet.colorado.edu/sims/html/circuit-construction-kit-dc/latest/circuit-construction-kit-dc_all.html?locale=zh_CN"
-      allowfullscreen
-      allow="fullscreen; accelerometer; autoplay; camera; encrypted-media; gyroscope; microphone; geolocation; xr-spatial-tracking">
-    </iframe>
+<header class="header">
+  <a href="index.html" class="logo">⚡ 物理虚拟实验</a>
+  <div class="nav">
+    <a href="index.html">首页</a>
+    <a href="experiments.html">实验列表</a>
   </div>
-  <script src="supabase.js"></script>
-  <script src="script.js"></script>
-  <script>
-    (function() {
-      var header = document.querySelector('.header');
-      var container = document.querySelector('.sim-container');
-      var hideTimer = null;
-      var HIDE_DELAY = 800; // 鼠标离开导航栏后延迟隐藏(ms)
+</header>
 
-      function showHeader() {
-        clearTimeout(hideTimer);
-        header.classList.remove('hidden');
-        container.classList.remove('expanded');
+<div class="app-wrap">
+  <!-- Left: Component Palette -->
+  <aside class="palette" id="palette">
+    <h3>🔧 元件箱</h3>
+    <button class="comp-btn" data-type="battery"><span class="icon">🔋</span> 电池</button>
+    <button class="comp-btn" data-type="resistor"><span class="icon">⚡</span> 电阻</button>
+    <button class="comp-btn" data-type="bulb"><span class="icon">💡</span> 灯泡</button>
+    <button class="comp-btn" data-type="switch"><span class="icon">🔘</span> 开关</button>
+    <button class="comp-btn" data-type="wire" style="border-style:dashed;"><span class="icon">〰</span> 导线<span class="tip">拖端子</span></button>
+    <button class="comp-btn" data-type="ammeter"><span class="icon">🅰</span> 电流表</button>
+    <button class="comp-btn" data-type="voltmeter"><span class="icon">Ⓥ</span> 电压表</button>
+  </aside>
+
+  <!-- Center: Canvas + Controls -->
+  <div class="canvas-area">
+    <div class="canvas-shell"><div id="simContainer"></div></div>
+    <div class="controls-bar">
+      <div class="controls-group">
+        <button class="btn-primary" id="btnToggle">运行</button>
+        <button class="btn-reset" id="btnReset">重置</button>
+        <button class="btn-danger" id="btnClear">清除全部</button>
+      </div>
+      <div class="controls-group seg-toggle">
+        <button class="seg-btn" id="btnShowV">显示电压</button>
+        <button class="seg-btn" id="btnShowI">显示电流</button>
+      </div>
+      <div class="controls-group">
+        <button class="btn-primary" id="quizStartBtn" style="background:linear-gradient(135deg,#8b5cf6,#06b6d4);">🏆 过关挑战</button>
+        <a href="javascript:doFullScreen();" style="box-shadow:none;display:inline-flex;align-items:center;" title="全屏">
+          <svg width="22" height="22" viewBox="0 0 40 40"><path d="M5,15 L5,5 L15,5 M35,25 L35,35 L25,35 M25,5 L35,5 L35,15 M15,35 L5,35 L5,25" fill="none" stroke="#94a3b8" stroke-width="3"/></svg>
+        </a>
+      </div>
+    </div>
+  </div>
+
+  <!-- Right: Info Panel -->
+  <aside class="info-panel" id="infoPanel">
+    <h3>📊 电路数据</h3>
+    <div class="data-card">
+      <div class="d-label">回路状态</div>
+      <div class="d-value" id="circuitStatus"><span class="status-badge status-open">未连接</span></div>
+    </div>
+    <div class="data-card amp">
+      <div class="d-label">总电流 I</div>
+      <div class="d-value" id="totalI">-- A</div>
+    </div>
+    <div class="data-card volt">
+      <div class="d-label">电池电压 U</div>
+      <div class="d-value" id="totalU">-- V</div>
+    </div>
+    <div class="data-card res">
+      <div class="d-label">总电阻 R总</div>
+      <div class="d-value" id="totalR">-- Ω</div>
+    </div>
+    <div class="data-card">
+      <div class="d-label">元件数量</div>
+      <div class="d-value" id="compCount" style="color:#e2e8f0;">0</div>
+    </div>
+    <div class="help-text">
+      <b>操作提示</b><br>
+      点击左侧元件 → 放置画布<br>
+      <kbd>端子</kbd> 拖拽 → 画弯曲导线<br>
+      拖拽元件 → 移动<br>
+      点击开关 → 切换通断<br>
+      <kbd>Delete</kbd> 删除选中<br>
+      滚轮 → 缩放画布
+    </div>
+  </aside>
+</div>
+
+<!-- Quiz Overlay -->
+<div class="quiz-overlay" id="quizOverlay">
+  <div class="quiz-dialog">
+    <button id="quizCloseBtn" style="position:absolute;top:12px;right:16px;background:none;border:none;color:var(--text-muted);font-size:1.4rem;cursor:pointer;">&times;</button>
+    <h3 style="text-align:center;margin-bottom:6px;">🏆 直流电路 · 过关挑战</h3>
+    <p style="text-align:center;color:var(--text-muted);font-size:0.85rem;margin-bottom:18px;">3关 · 每关5题 · 60%及格进入下一关</p>
+    <div id="quizProgressFill" style="height:4px;background:linear-gradient(90deg,var(--accent),var(--secondary));border-radius:2px;width:0%;transition:width 0.3s;"></div>
+    <div id="quizProgress" style="text-align:center;color:var(--text-muted);font-size:0.8rem;margin:6px 0 14px;"></div>
+    <div id="quizQuestion" style="font-size:1.05rem;margin-bottom:14px;line-height:1.5;"></div>
+    <div id="quizOptions" style="display:flex;flex-direction:column;gap:8px;"></div>
+    <div id="quizScore" style="text-align:center;color:var(--secondary);font-weight:600;margin-top:10px;"></div>
+    <div id="quizReview" style="margin-top:12px;"></div>
+  </div>
+</div>
+
+<script src="experiment-shell.js"></script>
+<script src="protect.js"></script>
+<script src="supabase.js"></script>
+<script src="script.js"></script>
+<script>
+/* =================================================================
+ * 直流电路搭建实验 — p5.js 实现
+ * 元件: 电池/电阻/灯泡/开关/电流表/电压表/结点
+ * 导线: Catmull-Rom 样条自由弯曲
+ * 分析: MNA (Modified Nodal Analysis)
+ * ================================================================= */
+
+// ============ Canvas constants ============
+var W = 1200, H = 700;
+
+// ============ Camera ============
+var camX = 0, camY = 0, camZoom = 1;
+
+// ============ ID counter ============
+var nextId = 1;
+
+// ============ Component & wire data ============
+var components = [];
+var wires = [];
+var junctions = [];
+
+// ============ App state ============
+var mode = 'select'; // 'select' | 'place'
+var placeType = null;
+var selected = null;      // {type:'comp'|'wire'|'junc', id, ...}
+var wireDraft = null;     // {a:{compId,termIdx}, pts:[{x,y}...]}
+var dragTarget = null;
+var dragMoved = false; // track if component was actually dragged
+var panStart = null;
+var showVoltage = false;
+var showCurrent = false;
+var circuitResult = null;
+var circuitStatus = 'open';
+var flowDots = []; // current animation dots: [{wireId, t:0..1, dir:1|-1, speed}]
+var flowTimer = 0;
+var running = true; // animation running
+
+// ============ Component type registry ============
+// Each type: {w, h, terminals:[{lx,ly}...], draw(ctx,x,y,w,h,props), defaultProps}
+var COMP_TYPES = {
+  battery: {
+    w: 90, h: 50,
+    terminals: [{lx:-45,ly:0}, {lx:45,ly:0}],
+    defaultProps: { U: 6, label: '电池' },
+    draw: function(ctx, x, y, w, h, props) {
+      var tw = 24;
+      ctx.strokeStyle = '#e2e8f0'; ctx.lineWidth = 2.5; ctx.lineCap = 'round';
+      // long line (positive)
+      ctx.beginPath(); ctx.moveTo(x-tw, y-18); ctx.lineTo(x-tw, y+18); ctx.stroke();
+      // short thick line (negative)
+      ctx.lineWidth = 5;
+      ctx.beginPath(); ctx.moveTo(x-4, y-8); ctx.lineTo(x-4, y+8); ctx.stroke();
+      // second cell
+      ctx.lineWidth = 2.5;
+      ctx.beginPath(); ctx.moveTo(x+8, y-18); ctx.lineTo(x+8, y+18); ctx.stroke();
+      ctx.lineWidth = 5;
+      ctx.beginPath(); ctx.moveTo(x+16, y-8); ctx.lineTo(x+16, y+8); ctx.stroke();
+      // label
+      ctx.fillStyle = '#94a3b8'; ctx.font = '11px "PingFang SC","Microsoft YaHei",sans-serif';
+      ctx.textAlign = 'center'; ctx.fillText(props.U+'V', x, y+30);
+    }
+  },
+  resistor: {
+    w: 80, h: 42,
+    terminals: [{lx:-40,ly:0}, {lx:40,ly:0}],
+    defaultProps: { R: 10, label: 'R' },
+    draw: function(ctx, x, y, w, h, props) {
+      ctx.strokeStyle = '#e2e8f0'; ctx.lineWidth = 2.5; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+      ctx.beginPath();
+      var zigN = 4, zigW = w / (zigN + 1), zigH = h * 0.8;
+      ctx.moveTo(x-w/2, y);
+      for (var i = 0; i < zigN; i++) {
+        var sx = x - w/2 + zigW * (i + 0.5);
+        var sy = y + (i%2===0 ? zigH/2 : -zigH/2);
+        ctx.lineTo(sx, sy);
       }
-
-      function hideHeader() {
-        hideTimer = setTimeout(function() {
-          header.classList.add('hidden');
-          container.classList.add('expanded');
-        }, HIDE_DELAY);
+      ctx.lineTo(x+w/2, y);
+      ctx.stroke();
+      ctx.fillStyle = '#94a3b8'; ctx.font = '11px "PingFang SC","Microsoft YaHei",sans-serif';
+      ctx.textAlign = 'center'; ctx.fillText(props.R+'Ω', x, y-22);
+    }
+  },
+  bulb: {
+    w: 50, h: 50,
+    terminals: [{lx:-25,ly:25}, {lx:25,ly:25}],
+    defaultProps: { R: 5, Pmax: 3, label: 'L' },
+    draw: function(ctx, x, y, w, h, props) {
+      var r = 18;
+      // Bulb glow (if current flows)
+      var cur = circuitResult && circuitResult.componentCurrents && circuitResult.componentCurrents[props._compId];
+      var brightness = (cur && cur.current) ? Math.min(1, Math.abs(cur.current) / 0.6) : 0;
+      if (brightness > 0.01) {
+        // Warm glow
+        ctx.save();
+        var alpha = brightness * 0.5;
+        ctx.fillStyle = 'rgba(251,191,36,' + alpha.toFixed(2) + ')';
+        ctx.beginPath(); ctx.arc(x, y-2, r+8, 0, Math.PI*2); ctx.fill();
+        ctx.fillStyle = 'rgba(254,240,138,' + (alpha * 0.7).toFixed(2) + ')';
+        ctx.beginPath(); ctx.arc(x, y-2, r+3, 0, Math.PI*2); ctx.fill();
+        ctx.restore();
       }
+      ctx.strokeStyle = brightness > 0.1 ? '#fbbf24' : '#e2e8f0';
+      ctx.lineWidth = 2.5;
+      ctx.beginPath(); ctx.arc(x, y-2, r, 0, Math.PI*2); ctx.stroke();
+      // filament
+      ctx.strokeStyle = brightness > 0.1 ? '#fde68a' : '#fbbf24';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(x-8, y-10); ctx.lineTo(x+8, y+6); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(x+8, y-10); ctx.lineTo(x-8, y+6); ctx.stroke();
+      // wires
+      ctx.strokeStyle = '#e2e8f0'; ctx.lineWidth = 2.5;
+      ctx.beginPath(); ctx.moveTo(x, y-2+r); ctx.lineTo(x, y+h/2); ctx.stroke();
+      // base
+      ctx.fillStyle = '#475569';
+      ctx.beginPath(); ctx.arc(x, y+h/2, 4, 0, Math.PI*2); ctx.fill();
+      ctx.fillStyle = brightness > 0.1 ? '#fbbf24' : '#94a3b8';
+      ctx.font = '10px "PingFang SC","Microsoft YaHei",sans-serif';
+      ctx.textAlign = 'center'; ctx.fillText(props.R+'Ω', x, y-28);
+    }
+  },
+  switch: {
+    w: 70, h: 44,
+    terminals: [{lx:-35,ly:0}, {lx:35,ly:0}],
+    defaultProps: { closed: false, label: 'K' },
+    draw: function(ctx, x, y, w, h, props) {
+      ctx.fillStyle = '#64748b';
+      ctx.beginPath(); ctx.arc(x-w/2, y, 4, 0, Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.arc(x+w/2, y, 4, 0, Math.PI*2); ctx.fill();
+      ctx.strokeStyle = '#e2e8f0'; ctx.lineWidth = 2.5; ctx.lineCap = 'round';
+      if (props.closed) {
+        ctx.beginPath(); ctx.moveTo(x-w/2, y); ctx.lineTo(x+w/2, y); ctx.stroke();
+      } else {
+        ctx.beginPath(); ctx.moveTo(x-w/2, y); ctx.lineTo(x+8, y-18); ctx.stroke();
+        ctx.fillStyle = '#e2e8f0'; ctx.beginPath(); ctx.arc(x+8, y-18, 3, 0, Math.PI*2); ctx.fill();
+      }
+      ctx.fillStyle = '#94a3b8'; ctx.font = '10px "PingFang SC","Microsoft YaHei",sans-serif';
+      ctx.textAlign = 'center'; ctx.fillText(props.closed?'闭合':'断开', x, y+18);
+    }
+  },
+  ammeter: {
+    w: 52, h: 52,
+    terminals: [{lx:-26,ly:0}, {lx:26,ly:0}],
+    defaultProps: { label: 'A' },
+    draw: function(ctx, x, y, w, h, props) {
+      var r = 22;
+      ctx.fillStyle = '#1e293b'; ctx.strokeStyle = '#3b82f6'; ctx.lineWidth = 2.5;
+      ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI*2); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = '#3b82f6'; ctx.font = 'bold 16px "Georgia",serif';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('A', x, y+1);
+      // + - labels near terminals
+      ctx.fillStyle = '#94a3b8'; ctx.font = '9px "PingFang SC","Microsoft YaHei",sans-serif';
+      ctx.textAlign = 'right'; ctx.fillText('+', x-r-2, y-6);
+      ctx.textAlign = 'left'; ctx.fillText('−', x+r+2, y+10);
+    }
+  },
+  voltmeter: {
+    w: 52, h: 52,
+    terminals: [{lx:-26,ly:0}, {lx:26,ly:0}],
+    defaultProps: { label: 'V' },
+    draw: function(ctx, x, y, w, h, props) {
+      var r = 22;
+      ctx.fillStyle = '#1e293b'; ctx.strokeStyle = '#ef4444'; ctx.lineWidth = 2.5;
+      ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI*2); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = '#ef4444'; ctx.font = 'bold 16px "Georgia",serif';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('V', x, y+1);
+      ctx.fillStyle = '#94a3b8'; ctx.font = '9px "PingFang SC","Microsoft YaHei",sans-serif';
+      ctx.textAlign = 'right'; ctx.fillText('+', x-r-2, y-6);
+      ctx.textAlign = 'left'; ctx.fillText('−', x+r+2, y+10);
+    }
+  }
+};
 
-      // 鼠标移到页面顶部 60px 以内 → 显示导航栏
-      document.addEventListener('mousemove', function(e) {
-        if (e.clientY <= 60) {
-          showHeader();
-        } else if (e.clientY > header.offsetHeight + 20 && !header.classList.contains('hidden')) {
-          hideHeader();
-        }
+// ============ Helpers ============
+function terminalWorldPos(comp, termIdx) {
+  var t = COMP_TYPES[comp.type];
+  var tx = t.terminals[termIdx].lx;
+  var ty = t.terminals[termIdx].ly;
+  return {x: comp.x + tx, y: comp.y + ty};
+}
+
+function dist(a, b) { return Math.sqrt((a.x-b.x)*(a.x-b.x) + (a.y-b.y)*(a.y-b.y)); }
+
+// ============ p5.js Setup ============
+function setup() {
+  var container = select('#simContainer');
+  var cw = container.width || container.elt.offsetWidth || windowWidth - 32;
+  var maxW = Math.min(cw, windowWidth - 380, 1400);
+  if (maxW < 400) maxW = 400;
+  var aspect = W / H;
+  var canvas = createCanvas(maxW, Math.floor(maxW / aspect));
+  canvas.parent('simContainer');
+  canvas.id('simCanvas');
+  frameRate(60);
+
+  // Listeners
+  document.addEventListener('fullscreenchange', function() { setTimeout(windowResized, 100); });
+  document.addEventListener('webkitfullscreenchange', function() { setTimeout(windowResized, 100); });
+
+  // Palette buttons
+  selectAll('.comp-btn').forEach(function(btn) {
+    btn.mouseClicked(function() {
+      var t = btn.attribute('data-type');
+      if (t === 'wire') {
+        mode = 'select'; placeType = null;
+        selectAll('.comp-btn').forEach(function(b) { b.removeClass('active'); });
+      } else if (placeType === t) {
+        // Deselect
+        mode = 'select'; placeType = null;
+        selectAll('.comp-btn').forEach(function(b) { b.removeClass('active'); });
+      } else {
+        mode = 'place'; placeType = t;
+        selectAll('.comp-btn').forEach(function(b) { b.removeClass('active'); });
+        btn.addClass('active');
+      }
+    });
+  });
+
+  // Control buttons
+  select('#btnToggle').mouseClicked(function() {
+    running = !running;
+    var btn = select('#btnToggle');
+    if (running) { btn.html('暂停'); btn.addClass('active'); }
+    else { btn.html('运行'); btn.removeClass('active'); flowDots = []; }
+  });
+  select('#btnReset').mouseClicked(resetAll);
+  select('#btnClear').mouseClicked(clearAll);
+  select('#btnShowV').mouseClicked(function() { showVoltage = !showVoltage; select('#btnShowV').toggleClass('active'); });
+  select('#btnShowI').mouseClicked(function() { showCurrent = !showCurrent; select('#btnShowI').toggleClass('active'); });
+
+  // Init quiz
+  function initQuizWhenReady() {
+    if (window.ExpShell && window.ExpShell.initQuiz) {
+      window.ExpShell.initQuiz({ questions: quizQuestions, levels: 3, perLevel: 5, storageKey: 'quiz_dc_circuit_kit' });
+    } else { setTimeout(initQuizWhenReady, 100); }
+  }
+  initQuizWhenReady();
+
+  // Default: place a battery and resistor for demo
+  resetAll();
+}
+
+function windowResized() {
+  var container = select('#simContainer');
+  var cw = container.width || container.elt.offsetWidth || windowWidth - 32;
+  var maxW = Math.min(cw, windowWidth - 380, 1200);
+  if (maxW < 400) maxW = 400;
+  var aspect = W / H;
+  resizeCanvas(maxW, Math.floor(maxW / aspect));
+}
+
+// ============ Screen/World transforms ============
+function screenToWorld(sx, sy) {
+  var pw = width, ph = height;
+  var wx = (sx - pw/2) / camZoom - camX + W/2;
+  var wy = (sy - ph/2) / camZoom - camY + H/2;
+  return {x: wx, y: wy};
+}
+
+function worldToScreen(wx, wy) {
+  var pw = width, ph = height;
+  var sx = (wx - W/2 + camX) * camZoom + pw/2;
+  var sy = (wy - H/2 + camY) * camZoom + ph/2;
+  return {x: sx, y: sy};
+}
+
+// ============ Drawing ============
+function draw() {
+  background(5, 8, 22);
+  push();
+  translate(width/2, height/2);
+  scale(camZoom);
+  translate(-W/2 + camX, -H/2 + camY);
+
+  drawGrid();
+  drawAllWires();
+  if (wireDraft) drawWireDraft();
+  drawAllJunctions();
+  drawAllComponents();
+  drawFlowDots();
+  if (showVoltage) drawVoltageLabels();
+  if (selected) drawSelectionHighlight();
+
+  pop();
+
+  // Animate flow dots
+  if (running) updateFlowDots();
+}
+
+function drawGrid() {
+  var gs = 40;
+  stroke(148, 163, 184, 12);
+  strokeWeight(0.8);
+  var sx = Math.floor((-camX) / gs) * gs;
+  var sy = Math.floor((-camY) / gs) * gs;
+  for (var x = sx; x < W - camX + gs; x += gs) {
+    line(x, Math.max(0, -camY), x, Math.min(H, H - camY));
+  }
+  for (var y = sy; y < H - camY + gs; y += gs) {
+    line(Math.max(0, -camX), y, Math.min(W, W - camX), y);
+  }
+}
+
+function drawAllComponents() {
+  for (var i = 0; i < components.length; i++) {
+    drawComponent(components[i]);
+  }
+}
+
+function drawComponent(comp) {
+  var t = COMP_TYPES[comp.type];
+  if (!t) return;
+  push();
+  translate(comp.x, comp.y);
+
+  // Body highlight (hover or selected)
+  var isSel = selected && selected.type === 'comp' && selected.id === comp.id;
+  if (isSel) {
+    noStroke(); fill(59, 130, 246, 20);
+    rect(-t.w/2 - 6, -t.h/2 - 6, t.w + 12, t.h + 12, 8);
+    stroke(59, 130, 246, 120); strokeWeight(2);
+    noFill();
+    rect(-t.w/2 - 6, -t.h/2 - 6, t.w + 12, t.h + 12, 8);
+  }
+
+  // Draw the component symbol
+  var ctx = drawingContext;
+  ctx.save();
+  // Pass compId so draw can access circuit results
+  comp.props._compId = comp.id;
+  t.draw(ctx, 0, 0, t.w, t.h, comp.props);
+  ctx.restore();
+
+  // Terminal circles
+  for (var ti = 0; ti < t.terminals.length; ti++) {
+    var tx = t.terminals[ti].lx;
+    var ty = t.terminals[ti].ly;
+    fill(30, 41, 59);
+    stroke(148, 163, 184, 200);
+    strokeWeight(1.5);
+    ellipse(tx, ty, 10, 10);
+  }
+
+  pop();
+}
+
+// ============ Wire drawing ============
+function drawAllWires() {
+  for (var i = 0; i < wires.length; i++) {
+    drawWire(wires[i]);
+  }
+}
+
+function drawWire(w) {
+  var pts = w.polyline || computeWirePolyline(w);
+  if (!pts || pts.length < 2) return;
+
+  var isSel = selected && selected.type === 'wire' && selected.id === w.id;
+
+  // Shadow pass
+  noFill();
+  stroke(0, 0, 0, 60);
+  strokeWeight(isSel ? 7 : 5);
+  strokeCap(ROUND); strokeJoin(ROUND);
+  beginShape();
+  for (var i = 0; i < pts.length; i++) vertex(pts[i].x, pts[i].y);
+  endShape();
+
+  // Color pass
+  stroke(isSel ? '#60a5fa' : '#64748b');
+  strokeWeight(isSel ? 3.5 : 2.5);
+  beginShape();
+  for (var i = 0; i < pts.length; i++) vertex(pts[i].x, pts[i].y);
+  endShape();
+}
+
+function computeWirePolyline(w) {
+  // Get endpoint positions
+  var aPos = getWireEndpointPos(w.a);
+  var bPos = getWireEndpointPos(w.b);
+  if (!aPos || !bPos) return null;
+
+  var pts = [aPos].concat(w.pts || []).concat([bPos]);
+  // Catmull-Rom to dense polyline (2px spacing)
+  var poly = catmullRomToPolyline(pts, 2);
+  w.polyline = poly; // cache
+  return poly;
+}
+
+function getWireEndpointPos(ep) {
+  if (!ep) return null;
+  if (ep.kind === 'term') {
+    var comp = findComponentById(ep.compId);
+    if (!comp) return null;
+    return terminalWorldPos(comp, ep.termIdx);
+  }
+  if (ep.kind === 'junc') {
+    var junc = findJunctionById(ep.juncId);
+    if (!junc) return null;
+    return {x: junc.x, y: junc.y};
+  }
+  return null;
+}
+
+function findComponentById(id) {
+  for (var i = 0; i < components.length; i++) {
+    if (components[i].id === id) return components[i];
+  }
+  return null;
+}
+
+function findJunctionById(id) {
+  for (var i = 0; i < junctions.length; i++) {
+    if (junctions[i].id === id) return junctions[i];
+  }
+  return null;
+}
+
+function catmullRomToPolyline(pts, spacing) {
+  if (pts.length < 2) return pts.slice();
+  if (pts.length === 2) {
+    var d = dist(pts[0], pts[1]);
+    var n = Math.max(2, Math.ceil(d / spacing));
+    var result = [];
+    for (var i = 0; i <= n; i++) {
+      var t = i / n;
+      result.push({x: lerp(pts[0].x, pts[1].x, t), y: lerp(pts[0].y, pts[1].y, t)});
+    }
+    return result;
+  }
+
+  // Catmull-Rom: use curvePoint for each segment
+  var totalLen = 0;
+  var segLens = [];
+  for (var i = 1; i < pts.length; i++) {
+    var sl = dist(pts[i-1], pts[i]);
+    segLens.push(sl);
+    totalLen += sl;
+  }
+  var nPts = Math.max(pts.length, Math.ceil(totalLen / spacing));
+  var result = [{x: pts[0].x, y: pts[0].y}];
+
+  for (var pt = 1; pt <= nPts; pt++) {
+    var t = pt / nPts;
+    var targetDist = t * totalLen;
+    var segIdx = 0, accum = 0;
+    while (segIdx < segLens.length && accum + segLens[segIdx] < targetDist) {
+      accum += segLens[segIdx]; segIdx++;
+    }
+    if (segIdx >= segLens.length) segIdx = segLens.length - 1;
+    var localT = segLens[segIdx] > 0 ? (targetDist - accum) / segLens[segIdx] : 0;
+    localT = Math.max(0, Math.min(1, localT));
+
+    // Get 4 control points for Catmull-Rom
+    var p0 = pts[Math.max(0, segIdx - 1)];
+    var p1 = pts[segIdx];
+    var p2 = pts[Math.min(pts.length - 1, segIdx + 1)];
+    var p3 = pts[Math.min(pts.length - 1, segIdx + 2)];
+
+    // Use p5's curvePoint (Catmull-Rom)
+    var cx = curvePoint(p0.x, p1.x, p2.x, p3.x, localT);
+    var cy = curvePoint(p0.y, p1.y, p2.y, p3.y, localT);
+    result.push({x: cx, y: cy});
+  }
+
+  return result;
+}
+
+function drawWireDraft() {
+  if (!wireDraft || wireDraft.pts.length < 1) return;
+  var aPos = getWireEndpointPos(wireDraft.a);
+  if (!aPos) return;
+
+  var allPts = [aPos].concat(wireDraft.pts);
+  if (allPts.length === 1) {
+    // Rubber band line to mouse
+    var mouseW = screenToWorld(mouseX, mouseY);
+    stroke(100, 180, 255, 150);
+    strokeWeight(2);
+    strokeCap(ROUND);
+    line(allPts[0].x, allPts[0].y, mouseW.x, mouseW.y);
+    return;
+  }
+
+  var poly = catmullRomToPolyline(allPts, 2);
+
+  noFill();
+  stroke(100, 180, 255, 100);
+  strokeWeight(4);
+  strokeCap(ROUND); strokeJoin(ROUND);
+  beginShape();
+  for (var i = 0; i < poly.length; i++) vertex(poly[i].x, poly[i].y);
+  endShape();
+
+  stroke(150, 210, 255, 180);
+  strokeWeight(2.5);
+  beginShape();
+  for (var i = 0; i < poly.length; i++) vertex(poly[i].x, poly[i].y);
+  endShape();
+}
+
+function drawAllJunctions() {
+  for (var i = 0; i < junctions.length; i++) {
+    var j = junctions[i];
+    fill(30, 41, 59);
+    stroke(148, 163, 184, 200);
+    strokeWeight(2);
+    ellipse(j.x, j.y, 8, 8);
+  }
+}
+
+function drawVoltageLabels() {
+  if (!circuitResult) return;
+  var nodeMap = circuitResult.nodeMap; // terminalKey -> voltage
+  if (!nodeMap) return;
+
+  // Draw voltage at each component terminal
+  for (var ci = 0; ci < components.length; ci++) {
+    var comp = components[ci];
+    var tdef = COMP_TYPES[comp.type];
+    if (!tdef) continue;
+    for (var ti = 0; ti < tdef.terminals.length; ti++) {
+      var key = comp.id + '_' + ti;
+      if (nodeMap[key] !== undefined) {
+        var tp = terminalWorldPos(comp, ti);
+        fill(96, 165, 250, 220);
+        noStroke();
+        textSize(10);
+        textAlign(CENTER, BOTTOM);
+        text((nodeMap[key]).toFixed(2) + 'V', tp.x, tp.y - 7);
+      }
+    }
+  }
+}
+
+function drawSelectionHighlight() {
+  if (!selected) return;
+  if (selected.type === 'comp') {
+    // Already drawn in drawComponent
+  } else if (selected.type === 'wire') {
+    // Draw handle points
+    var w = findWireById(selected.id);
+    if (!w || !w.pts) return;
+    for (var i = 0; i < w.pts.length; i++) {
+      fill(59, 130, 246);
+      noStroke();
+      ellipse(w.pts[i].x, w.pts[i].y, 9, 9);
+      stroke(255); strokeWeight(2);
+      noFill();
+      ellipse(w.pts[i].x, w.pts[i].y, 9, 9);
+    }
+  }
+}
+
+function findWireById(id) {
+  for (var i = 0; i < wires.length; i++) {
+    if (wires[i].id === id) return wires[i];
+  }
+  return null;
+}
+
+// ============ Interaction ============
+function hitTestTerminal(wx, wy) {
+  var best = null, bestDist = 14 / camZoom;
+  // Check component terminals
+  for (var ci = 0; ci < components.length; ci++) {
+    var comp = components[ci];
+    var tdef = COMP_TYPES[comp.type];
+    if (!tdef) continue;
+    for (var ti = 0; ti < tdef.terminals.length; ti++) {
+      var tp = terminalWorldPos(comp, ti);
+      var d = dist({x:wx,y:wy}, tp);
+      if (d < bestDist) { bestDist = d; best = {kind:'term', compId:comp.id, termIdx:ti, x:tp.x, y:tp.y}; }
+    }
+  }
+  // Check junctions
+  for (var ji = 0; ji < junctions.length; ji++) {
+    var j = junctions[ji];
+    var d = dist({x:wx,y:wy}, {x:j.x, y:j.y});
+    if (d < bestDist && d < 10) { bestDist = d; best = {kind:'junc', juncId:j.id, x:j.x, y:j.y}; }
+  }
+  return best;
+}
+
+function hitTestComponent(wx, wy) {
+  for (var ci = components.length - 1; ci >= 0; ci--) {
+    var comp = components[ci];
+    var tdef = COMP_TYPES[comp.type];
+    if (!tdef) continue;
+    var halfW = tdef.w / 2 + 4, halfH = tdef.h / 2 + 4;
+    if (Math.abs(wx - comp.x) < halfW && Math.abs(wy - comp.y) < halfH) {
+      return comp;
+    }
+  }
+  return null;
+}
+
+function hitTestWire(wx, wy) {
+  for (var wi = wires.length - 1; wi >= 0; wi--) {
+    var w = wires[wi];
+    var poly = w.polyline || computeWirePolyline(w);
+    if (!poly) continue;
+    for (var i = 1; i < poly.length; i++) {
+      var d = distToSegment({x:wx,y:wy}, poly[i-1], poly[i]);
+      if (d < 10 / camZoom) return w;
+    }
+  }
+  return null;
+}
+
+function distToSegment(p, a, b) {
+  var dx = b.x - a.x, dy = b.y - a.y;
+  var lenSq = dx*dx + dy*dy;
+  if (lenSq === 0) return dist(p, a);
+  var t = ((p.x-a.x)*dx + (p.y-a.y)*dy) / lenSq;
+  t = Math.max(0, Math.min(1, t));
+  return dist(p, {x: a.x + t*dx, y: a.y + t*dy});
+}
+
+function hitTestWireHandle(wx, wy) {
+  if (!selected || selected.type !== 'wire') return -1;
+  var w = findWireById(selected.id);
+  if (!w || !w.pts) return -1;
+  for (var i = 0; i < w.pts.length; i++) {
+    if (dist({x:wx,y:wy}, w.pts[i]) < 12 / camZoom) return i;
+  }
+  return -1;
+}
+
+function mousePressed() {
+  var wpos = screenToWorld(mouseX, mouseY);
+
+  // If in place mode, place component
+  if (mode === 'place' && placeType) {
+    placeComponent(placeType, wpos.x, wpos.y);
+    return;
+  }
+
+  // Check terminal (for wire start)
+  var termHit = hitTestTerminal(wpos.x, wpos.y);
+  if (termHit && termHit.kind === 'term') {
+    // Check if there's already a wire connecting from this terminal
+    // Start wire draft
+    wireDraft = {a: {kind:'term', compId:termHit.compId, termIdx:termHit.termIdx}, pts: []};
+    selected = null;
+    return;
+  }
+
+  // Check wire handle
+  if (selected && selected.type === 'wire') {
+    var hi = hitTestWireHandle(wpos.x, wpos.y);
+    if (hi >= 0) {
+      dragTarget = {type:'handle', id:selected.id, handleIdx:hi};
+      return;
+    }
+  }
+
+  // Check component
+  var compHit = hitTestComponent(wpos.x, wpos.y);
+  if (compHit) {
+    selected = {type:'comp', id: compHit.id};
+    dragTarget = {type:'comp', id: compHit.id, offsetX: compHit.x - wpos.x, offsetY: compHit.y - wpos.y};
+    dragMoved = false;
+    invalidateWirePolylines();
+    return;
+  }
+
+  // Check wire
+  var wireHit = hitTestWire(wpos.x, wpos.y);
+  if (wireHit) {
+    selected = {type:'wire', id: wireHit.id};
+    return;
+  }
+
+  // Deselect / start panning
+  selected = null;
+  dragTarget = null;
+  panStart = {camX: camX, camY: camY, mx: mouseX, my: mouseY};
+}
+
+function mouseDragged() {
+  var wpos = screenToWorld(mouseX, mouseY);
+
+  // Wire drafting
+  if (wireDraft) {
+    var lastPt = wireDraft.pts.length > 0 ? wireDraft.pts[wireDraft.pts.length - 1] : getWireEndpointPos(wireDraft.a);
+    if (lastPt && dist(wpos, lastPt) > 20) {
+      wireDraft.pts.push({x:wpos.x, y:wpos.y});
+    }
+    return;
+  }
+
+  // Drag component
+  if (dragTarget && dragTarget.type === 'comp') {
+    var comp = findComponentById(dragTarget.id);
+    if (comp) {
+      comp.x = wpos.x + dragTarget.offsetX;
+      comp.y = wpos.y + dragTarget.offsetY;
+      dragMoved = true;
+      invalidateWirePolylines();
+    }
+    return;
+  }
+
+  // Drag wire handle
+  if (dragTarget && dragTarget.type === 'handle') {
+    var w = findWireById(dragTarget.id);
+    if (w && w.pts) {
+      w.pts[dragTarget.handleIdx] = {x: wpos.x, y: wpos.y};
+      w.polyline = null;
+    }
+    return;
+  }
+
+  // Canvas panning
+  if (panStart) {
+    camX = panStart.camX - (mouseX - panStart.mx) / camZoom;
+    camY = panStart.camY - (mouseY - panStart.my) / camZoom;
+  }
+}
+
+function mouseReleased() {
+  // Finalize wire draft
+  if (wireDraft) {
+    var wpos = screenToWorld(mouseX, mouseY);
+    var termHit = hitTestTerminal(wpos.x, wpos.y);
+
+    if (termHit && termHit.kind === 'term' && termHit.compId !== wireDraft.a.compId) {
+      // Snap to terminal
+      var aPos = getWireEndpointPos(wireDraft.a);
+      if (wireDraft.pts.length > 0 && aPos) {
+        // Douglas-Peucker simplify
+        var simplified = douglasPeucker(wireDraft.pts, 3);
+        wires.push({
+          id: nextId++,
+          a: wireDraft.a,
+          b: {kind:'term', compId: termHit.compId, termIdx: termHit.termIdx},
+          pts: simplified,
+          polyline: null
+        });
+      } else if (aPos) {
+        // Straight wire (no bend points)
+        wires.push({
+          id: nextId++,
+          a: wireDraft.a,
+          b: {kind:'term', compId: termHit.compId, termIdx: termHit.termIdx},
+          pts: [],
+          polyline: null
+        });
+      }
+    } else if (wireDraft.pts.length > 0) {
+      // Create junction at end
+      var lastPt = wireDraft.pts[wireDraft.pts.length - 1];
+      var juncId = nextId++;
+      junctions.push({id: juncId, x: lastPt.x, y: lastPt.y});
+      var simplified = douglasPeucker(wireDraft.pts, 3);
+      wires.push({
+        id: nextId++,
+        a: wireDraft.a,
+        b: {kind:'junc', juncId: juncId},
+        pts: simplified,
+        polyline: null
       });
+    }
+    wireDraft = null;
+    runCircuitAnalysis();
+    return;
+  }
 
-      // 鼠标直接进入导航栏 → 保持显示
-      header.addEventListener('mouseenter', function() {
-        showHeader();
+  dragTarget = null;
+  panStart = null;
+
+  // Check switch toggle (only if not dragged)
+  var wpos = screenToWorld(mouseX, mouseY);
+  var compHit = hitTestComponent(wpos.x, wpos.y);
+  if (compHit && compHit.type === 'switch' && !dragMoved) {
+    compHit.props.closed = !compHit.props.closed;
+    runCircuitAnalysis();
+  }
+}
+
+function mouseWheel(event) {
+  var delta = event.delta > 0 ? -0.1 : 0.1;
+  camZoom = Math.max(0.3, Math.min(2.5, camZoom + delta));
+  return false;
+}
+
+// ============ Place component ============
+function placeComponent(type, x, y) {
+  var t = COMP_TYPES[type];
+  if (!t) return;
+  var comp = {
+    id: nextId++,
+    type: type,
+    x: x, y: y,
+    props: {}
+  };
+  // Copy default props
+  var defs = t.defaultProps || {};
+  for (var k in defs) comp.props[k] = defs[k];
+  components.push(comp);
+  updateDataPanel();
+}
+
+// ============ Wire polyline invalidation ============
+function invalidateWirePolylines() {
+  for (var i = 0; i < wires.length; i++) {
+    wires[i].polyline = null;
+  }
+}
+
+// ============ Douglas-Peucker simplification ============
+function douglasPeucker(pts, epsilon) {
+  if (pts.length <= 1) return pts.slice();
+  var dmax = 0, index = 0;
+  var end = pts.length - 1;
+  for (var i = 1; i < end; i++) {
+    var d = perpendicularDistance(pts[i], pts[0], pts[end]);
+    if (d > dmax) { dmax = d; index = i; }
+  }
+  if (dmax > epsilon) {
+    var left = douglasPeucker(pts.slice(0, index + 1), epsilon);
+    var right = douglasPeucker(pts.slice(index), epsilon);
+    return left.slice(0, -1).concat(right);
+  }
+  return [pts[0], pts[end]];
+}
+
+function perpendicularDistance(p, a, b) {
+  var dx = b.x - a.x, dy = b.y - a.y;
+  var lenSq = dx*dx + dy*dy;
+  if (lenSq === 0) return dist(p, a);
+  var t = ((p.x-a.x)*dx + (p.y-a.y)*dy) / lenSq;
+  t = Math.max(0, Math.min(1, t));
+  return dist(p, {x:a.x + t*dx, y:a.y + t*dy});
+}
+
+// ============ Circuit Analysis (MNA) ============
+function runCircuitAnalysis() {
+  if (components.length === 0) {
+    circuitResult = null;
+    circuitStatus = 'open';
+    updateDataPanel();
+    return;
+  }
+
+  // Step 1: Build electrical nodes via union-find
+  var uf = new UnionFind();
+  var terminalKeys = []; // [{compId, termIdx, key}]
+
+  // Add all component terminals
+  for (var ci = 0; ci < components.length; ci++) {
+    var comp = components[ci];
+    var tdef = COMP_TYPES[comp.type];
+    if (!tdef) continue;
+    for (var ti = 0; ti < tdef.terminals.length; ti++) {
+      var key = comp.id + '_' + ti;
+      uf.makeSet(key);
+      terminalKeys.push({compId: comp.id, termIdx: ti, comp: comp, key: key});
+    }
+  }
+
+  // Add junctions
+  for (var ji = 0; ji < junctions.length; ji++) {
+    var jkey = 'junc_' + junctions[ji].id;
+    uf.makeSet(jkey);
+  }
+
+  // Union: wires connect terminals/junctions
+  for (var wi = 0; wi < wires.length; wi++) {
+    var w = wires[wi];
+    var aKey = endpointToKey(w.a);
+    var bKey = endpointToKey(w.b);
+    if (aKey && bKey) uf.union(aKey, bKey);
+  }
+
+  // Union: closed switches connect their terminals
+  for (var ci = 0; ci < components.length; ci++) {
+    var comp = components[ci];
+    if (comp.type === 'switch' && comp.props.closed) {
+      var tdef = COMP_TYPES[comp.type];
+      if (tdef && tdef.terminals.length >= 2) {
+        uf.union(comp.id + '_0', comp.id + '_1');
+      }
+    }
+  }
+
+  // Step 2: Assign node numbers
+  var nodeMap = {}; // key -> nodeId
+  var nodeKeys = [];
+  var nodeIdCounter = 0;
+
+  for (var i = 0; i < terminalKeys.length; i++) {
+    var root = uf.find(terminalKeys[i].key);
+    if (nodeMap[root] === undefined) {
+      nodeMap[root] = nodeIdCounter++;
+      nodeKeys.push(root);
+    }
+  }
+
+  // Map each terminal to its node
+  var termNodeMap = {};
+  for (var i = 0; i < terminalKeys.length; i++) {
+    var root = uf.find(terminalKeys[i].key);
+    termNodeMap[terminalKeys[i].key] = nodeMap[root];
+  }
+
+  // Step 3: Identify voltage sources and resistive branches
+  var vSources = []; // {posNode, negNode, voltage, compId}
+  var resistors = []; // {nodeA, nodeB, resistance, compId}
+  var hasBattery = false;
+
+  for (var ci = 0; ci < components.length; ci++) {
+    var comp = components[ci];
+    if (comp.type === 'battery') {
+      var n0 = termNodeMap[comp.id + '_0'];
+      var n1 = termNodeMap[comp.id + '_1'];
+      if (n0 !== undefined && n1 !== undefined && n0 !== n1) {
+        vSources.push({posNode: n0, negNode: n1, voltage: comp.props.U || 6, compId: comp.id});
+        hasBattery = true;
+      }
+    } else if (comp.type === 'resistor' || comp.type === 'bulb') {
+      var n0 = termNodeMap[comp.id + '_0'];
+      var n1 = termNodeMap[comp.id + '_1'];
+      if (n0 !== undefined && n1 !== undefined && n0 !== n1) {
+        resistors.push({nodeA: n0, nodeB: n1, resistance: comp.props.R || 10, compId: comp.id, type: comp.type});
+      }
+    } else if (comp.type === 'ammeter') {
+      // Ammeter is a 0V source (to measure current)
+      var n0 = termNodeMap[comp.id + '_0'];
+      var n1 = termNodeMap[comp.id + '_1'];
+      if (n0 !== undefined && n1 !== undefined && n0 !== n1) {
+        vSources.push({posNode: n0, negNode: n1, voltage: 0, compId: comp.id});
+      }
+    }
+    // Voltmeter: infinite resistance, doesn't affect circuit (ignored in MNA)
+  }
+
+  var N = nodeIdCounter; // number of nodes
+  if (N < 2 || !hasBattery) {
+    circuitResult = {nodeVoltages: {}, componentCurrents: {}, nodeMap: {}, totalI: 0, totalR: null, status: 'open'};
+    circuitStatus = 'open';
+    updateDataPanel();
+    return;
+  }
+
+  // Step 4: Short circuit detection
+  // If a voltage source's + and - are on the same node → short
+  for (var vi = 0; vi < vSources.length; vi++) {
+    if (vSources[vi].posNode === vSources[vi].negNode && vSources[vi].voltage > 0) {
+      circuitResult = {nodeVoltages: {}, componentCurrents: {}, nodeMap: {}, totalI: null, totalR: 0, status: 'short'};
+      circuitStatus = 'short';
+      updateDataPanel();
+      return;
+    }
+  }
+
+  // Step 5: MNA matrix solve
+  // Ground node 0
+  var numVS = vSources.length;
+  // Variables: V1..V(N-1), then I_vs1..I_vs(numVS)
+  var size = (N - 1) + numVS;
+  var A = []; // 2D array size x size
+  var b = []; // 1D array size
+
+  // Initialize
+  for (var i = 0; i < size; i++) {
+    A[i] = [];
+    for (var j = 0; j < size; j++) A[i][j] = 0;
+    b[i] = 0;
+  }
+
+  // Conductance stamp: resistors
+  for (var ri = 0; ri < resistors.length; ri++) {
+    var r = resistors[ri];
+    var g = (r.resistance > 0) ? 1.0 / r.resistance : 0;
+    if (g === 0) continue;
+    if (r.nodeA > 0) { A[r.nodeA - 1][r.nodeA - 1] += g; }
+    if (r.nodeB > 0) { A[r.nodeB - 1][r.nodeB - 1] += g; }
+    if (r.nodeA > 0 && r.nodeB > 0) {
+      A[r.nodeA - 1][r.nodeB - 1] -= g;
+      A[r.nodeB - 1][r.nodeA - 1] -= g;
+    }
+  }
+
+  // Voltage source stamp
+  for (var vi = 0; vi < vSources.length; vi++) {
+    var vs = vSources[vi];
+    var row = (N - 1) + vi;
+    // +1 at positive node, -1 at negative node
+    if (vs.posNode > 0) {
+      A[vs.posNode - 1][row] += 1;
+      A[row][vs.posNode - 1] += 1;
+    }
+    if (vs.negNode > 0) {
+      A[vs.negNode - 1][row] -= 1;
+      A[row][vs.negNode - 1] -= 1;
+    }
+    b[row] = vs.voltage;
+  }
+
+  // Solve with Gaussian elimination
+  var x = gaussianElimination(A, b, size);
+  if (!x) {
+    circuitResult = null;
+    circuitStatus = 'open';
+    updateDataPanel();
+    return;
+  }
+
+  // Extract results
+  var nodeVoltages = {};
+  nodeVoltages[0] = 0; // ground
+  for (var i = 0; i < N - 1; i++) {
+    nodeVoltages[i + 1] = x[i];
+  }
+
+  // Map terminal keys to voltages
+  var termVoltageMap = {};
+  for (var i = 0; i < terminalKeys.length; i++) {
+    var t = terminalKeys[i];
+    var nodeId = termNodeMap[t.key];
+    termVoltageMap[t.key] = (nodeId !== undefined) ? (nodeVoltages[nodeId] || 0) : 0;
+  }
+
+  // Component currents
+  var compCurrents = {};
+  for (var ri = 0; ri < resistors.length; ri++) {
+    var r = resistors[ri];
+    var vA = nodeVoltages[r.nodeA] || 0;
+    var vB = nodeVoltages[r.nodeB] || 0;
+    var I = (vA - vB) / r.resistance;
+    compCurrents[r.compId] = {current: I, voltage: vA - vB};
+  }
+  for (var vi = 0; vi < vSources.length; vi++) {
+    var vs = vSources[vi];
+    var idx = (N - 1) + vi;
+    var Ivs = x[idx];
+    compCurrents[vs.compId] = {current: Ivs, voltage: vs.voltage};
+  }
+
+  // Total current & resistance
+  var totalI = 0;
+  for (var vi = 0; vi < vSources.length; vi++) {
+    var idx = (N - 1) + vi;
+    totalI += Math.abs(x[idx]);
+  }
+  var totalR = (totalI > 0 && hasBattery) ? (vSources[0].voltage / totalI) : null;
+
+  circuitResult = {
+    nodeVoltages: nodeVoltages,
+    componentCurrents: compCurrents,
+    nodeMap: termVoltageMap,
+    totalI: totalI,
+    totalR: totalR,
+    status: 'ok'
+  };
+  circuitStatus = 'ok';
+  updateDataPanel();
+}
+
+function endpointToKey(ep) {
+  if (!ep) return null;
+  if (ep.kind === 'term') return ep.compId + '_' + ep.termIdx;
+  if (ep.kind === 'junc') return 'junc_' + ep.juncId;
+  return null;
+}
+
+// ============ Union-Find ============
+function UnionFind() {
+  this.parent = {};
+}
+UnionFind.prototype.makeSet = function(x) {
+  if (!(x in this.parent)) this.parent[x] = x;
+};
+UnionFind.prototype.find = function(x) {
+  if (this.parent[x] !== x) this.parent[x] = this.find(this.parent[x]);
+  return this.parent[x];
+};
+UnionFind.prototype.union = function(a, b) {
+  var ra = this.find(a), rb = this.find(b);
+  if (ra !== rb) this.parent[rb] = ra;
+};
+
+// ============ Gaussian elimination ============
+function gaussianElimination(A, b, n) {
+  var mat = [];
+  for (var i = 0; i < n; i++) {
+    mat[i] = A[i].slice();
+    mat[i].push(b[i]);
+  }
+  for (var col = 0; col < n; col++) {
+    // Find pivot
+    var maxRow = col;
+    for (var row = col + 1; row < n; row++) {
+      if (Math.abs(mat[row][col]) > Math.abs(mat[maxRow][col])) maxRow = row;
+    }
+    if (Math.abs(mat[maxRow][col]) < 1e-12) return null; // singular
+    // Swap
+    var tmp = mat[col]; mat[col] = mat[maxRow]; mat[maxRow] = tmp;
+    // Eliminate
+    for (var row = 0; row < n; row++) {
+      if (row === col) continue;
+      var factor = mat[row][col] / mat[col][col];
+      for (var k = col; k <= n; k++) {
+        mat[row][k] -= factor * mat[col][k];
+      }
+    }
+  }
+  // Extract
+  var x = [];
+  for (var i = 0; i < n; i++) x[i] = mat[i][n] / mat[i][i];
+  return x;
+}
+
+// ============ Flow animation ============
+function updateFlowDots() {
+  // Sync flow dots with circuit result
+  if (!circuitResult || circuitStatus !== 'ok') {
+    flowDots = [];
+    return;
+  }
+
+  // Build/rebuild flow dots for active wires
+  var activeWires = getActiveWires();
+  // Rebuild if wire count changed
+  if (flowDots.length === 0 && activeWires.length > 0) {
+    var nDots = Math.min(activeWires.length * 4, 30);
+    for (var i = 0; i < nDots; i++) {
+      var wi = Math.floor(Math.random() * activeWires.length);
+      flowDots.push({
+        wireId: activeWires[wi],
+        t: Math.random(),
+        dir: 1,
+        speed: 0.001 + Math.random() * 0.003
       });
+    }
+  }
 
-      // 鼠标离开导航栏 → 延迟隐藏
-      header.addEventListener('mouseleave', function() {
-        hideHeader();
-      });
+  // Animate each dot along its wire polyline
+  for (var i = flowDots.length - 1; i >= 0; i--) {
+    var dot = flowDots[i];
+    var w = findWireById(dot.wireId);
+    if (!w) { flowDots.splice(i, 1); continue; }
+    var poly = w.polyline || computeWirePolyline(w);
+    if (!poly || poly.length < 2) { flowDots.splice(i, 1); continue; }
+    dot.t += dot.speed * dot.dir;
+    if (dot.t > 1) dot.t -= 1;
+    if (dot.t < 0) dot.t += 1;
+  }
+}
 
-      // 初始状态：几秒后自动隐藏
-      hideTimer = setTimeout(function() {
-        header.classList.add('hidden');
-        container.classList.add('expanded');
-      }, 2000);
-    })();
-  </script>
+function getActiveWires() {
+  // Return IDs of wires that carry current (> 0.001 mA)
+  if (!circuitResult || !circuitResult.componentCurrents) return [];
+  var active = [];
+  for (var i = 0; i < wires.length; i++) {
+    // A wire is active if any current flows (we consider all wires active when circuit is ok)
+    active.push(wires[i].id);
+  }
+  return active;
+}
+
+function drawFlowDots() {
+  if (!circuitResult || circuitStatus !== 'ok') return;
+  for (var i = 0; i < flowDots.length; i++) {
+    var dot = flowDots[i];
+    var w = findWireById(dot.wireId);
+    if (!w) continue;
+    var poly = w.polyline || computeWirePolyline(w);
+    if (!poly || poly.length < 2) continue;
+    var pos = pointOnPolyline(poly, dot.t);
+    if (!pos) continue;
+    // Glow
+    noStroke();
+    fill(74, 222, 128, 50);
+    ellipse(pos.x, pos.y, 8, 8);
+    fill(74, 222, 128, 200);
+    ellipse(pos.x, pos.y, 4, 4);
+  }
+}
+
+function pointOnPolyline(poly, t) {
+  if (poly.length < 2) return poly[0];
+  // Compute total length
+  var totalLen = 0, segLens = [];
+  for (var i = 1; i < poly.length; i++) {
+    var sl = dist(poly[i-1], poly[i]);
+    segLens.push(sl);
+    totalLen += sl;
+  }
+  if (totalLen === 0) return poly[0];
+  var target = t * totalLen;
+  var accum = 0, seg = 0;
+  while (seg < segLens.length && accum + segLens[seg] < target) {
+    accum += segLens[seg]; seg++;
+  }
+  if (seg >= segLens.length) return poly[poly.length-1];
+  var localT = segLens[seg] > 0 ? (target - accum) / segLens[seg] : 0;
+  localT = Math.max(0, Math.min(1, localT));
+  return {
+    x: poly[seg].x + (poly[seg+1].x - poly[seg].x) * localT,
+    y: poly[seg].y + (poly[seg+1].y - poly[seg].y) * localT
+  };
+}
+function updateDataPanel() {
+  // Component count
+  select('#compCount').html(components.length);
+
+  // Circuit status
+  var statusEl = select('#circuitStatus');
+  if (circuitStatus === 'short') {
+    statusEl.html('<span class="status-badge status-short">⚠ 短路</span>');
+  } else if (circuitStatus === 'ok') {
+    statusEl.html('<span class="status-badge status-ok">✓ 正常</span>');
+  } else {
+    statusEl.html('<span class="status-badge status-open">断路</span>');
+  }
+
+  if (circuitResult && circuitStatus === 'ok') {
+    select('#totalI').html((circuitResult.totalI * 1000).toFixed(1) + ' mA');
+  } else {
+    select('#totalI').html('-- A');
+  }
+
+  // Find battery voltage
+  var battV = null;
+  for (var ci = 0; ci < components.length; ci++) {
+    if (components[ci].type === 'battery') { battV = components[ci].props.U; break; }
+  }
+  select('#totalU').html(battV !== null ? battV.toFixed(0) + ' V' : '-- V');
+
+  if (circuitResult && circuitResult.totalR !== null) {
+    select('#totalR').html(circuitResult.totalR.toFixed(1) + ' Ω');
+  } else {
+    select('#totalR').html('-- Ω');
+  }
+}
+
+// ============ Actions ============
+function resetAll() {
+  components = [];
+  wires = [];
+  junctions = [];
+  selected = null;
+  dragTarget = null;
+  wireDraft = null;
+  mode = 'select';
+  placeType = null;
+  camX = 0;
+  camY = 0;
+  camZoom = 1;
+  circuitResult = null;
+  circuitStatus = 'open';
+  selectAll('.comp-btn').forEach(function(b) { b.removeClass('active'); });
+
+  // Place demo components
+  var batt = {id: nextId++, type:'battery', x:200, y:350, props:{U:6, label:'电池'}};
+  components.push(batt);
+  var sw = {id: nextId++, type:'switch', x:380, y:350, props:{closed:false, label:'K'}};
+  components.push(sw);
+  var r = {id: nextId++, type:'resistor', x:560, y:250, props:{R:10, label:'R1'}};
+  components.push(r);
+  var bulb = {id: nextId++, type:'bulb', x:560, y:450, props:{R:5, Pmax:3, label:'L1'}};
+  components.push(bulb);
+
+  // Connect demo wires: battery(+) to switch left
+  wires.push({id: nextId++, a:{kind:'term',compId:batt.id,termIdx:0}, b:{kind:'term',compId:sw.id,termIdx:0}, pts:[], polyline:null});
+  // switch right to junction, then split to resistor and bulb
+  var j1 = {id: nextId++, x:460, y:350};
+  junctions.push(j1);
+  wires.push({id: nextId++, a:{kind:'term',compId:sw.id,termIdx:1}, b:{kind:'junc',juncId:j1.id}, pts:[], polyline:null});
+  wires.push({id: nextId++, a:{kind:'junc',juncId:j1.id}, b:{kind:'term',compId:r.id,termIdx:0}, pts:[{x:460,y:250}], polyline:null});
+  wires.push({id: nextId++, a:{kind:'junc',juncId:j1.id}, b:{kind:'term',compId:bulb.id,termIdx:0}, pts:[{x:460,y:450}], polyline:null});
+  // resistor terminal 1 + bulb terminal 1 to junction 2 → battery negative
+  var j2 = {id: nextId++, x:660, y:350};
+  junctions.push(j2);
+  wires.push({id: nextId++, a:{kind:'term',compId:r.id,termIdx:1}, b:{kind:'junc',juncId:j2.id}, pts:[], polyline:null});
+  wires.push({id: nextId++, a:{kind:'term',compId:bulb.id,termIdx:1}, b:{kind:'junc',juncId:j2.id}, pts:[], polyline:null});
+  wires.push({id: nextId++, a:{kind:'junc',juncId:j2.id}, b:{kind:'term',compId:batt.id,termIdx:1}, pts:[{x:660,y:450},{x:200,y:450}], polyline:null});
+
+  updateDataPanel();
+}
+
+function clearAll() {
+  components = [];
+  wires = [];
+  junctions = [];
+  selected = null;
+  dragTarget = null;
+  wireDraft = null;
+  circuitResult = null;
+  circuitStatus = 'open';
+  updateDataPanel();
+}
+
+function keyPressed() {
+  if (keyCode === DELETE || keyCode === BACKSPACE) {
+    if (selected) {
+      if (selected.type === 'comp') {
+        // Remove component and connected wires
+        var compId = selected.id;
+        wires = wires.filter(function(w) {
+          return !((w.a.kind === 'term' && w.a.compId === compId) ||
+                   (w.b.kind === 'term' && w.b.compId === compId));
+        });
+        components = components.filter(function(c) { return c.id !== compId; });
+        selected = null;
+        invalidateWirePolylines();
+        runCircuitAnalysis();
+      } else if (selected.type === 'wire') {
+        wires = wires.filter(function(w) { return w.id !== selected.id; });
+        selected = null;
+        runCircuitAnalysis();
+      }
+    }
+    return false;
+  }
+}
+
+function doFullScreen() {
+  var el = document.documentElement;
+  if (el.requestFullscreen) el.requestFullscreen();
+  else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+  else if (el.msRequestFullscreen) el.msRequestFullscreen();
+}
+
+// ============ Quiz questions ============
+var quizQuestions = [
+  { q: '串联电路中，各处电流的特点是？', opts: ['逐渐减小', '处处相等', '逐渐增大', '零'], ans: 1, explain: '串联电路中电流处处相等，I=I₁=I₂。' },
+  { q: '两个10Ω电阻串联，总电阻为？', opts: ['5Ω', '10Ω', '20Ω', '0Ω'], ans: 2, explain: '串联：R总=R₁+R₂=10+10=20Ω。' },
+  { q: '两个10Ω电阻并联，总电阻为？', opts: ['20Ω', '10Ω', '5Ω', '0Ω'], ans: 2, explain: '并联：1/R总=1/10+1/10，R总=5Ω。' },
+  { q: '欧姆定律的公式是？', opts: ['U=IR', 'P=UI', 'W=UIt', 'Q=I²Rt'], ans: 0, explain: '欧姆定律：U=IR，电压=电流×电阻。' },
+  { q: '6V电池接3Ω电阻，电流为？', opts: ['0.5A', '1A', '2A', '3A'], ans: 2, explain: 'I=U/R=6/3=2A。' },
+  { q: '开关在电路中的作用是？', opts: ['提供电能', '控制电路通断', '测量电流', '消耗电能'], ans: 1, explain: '开关用于控制电路的通断。' },
+  { q: '发生短路时，电路中的电流会？', opts: ['减小', '不变', '急剧增大', '为零'], ans: 2, explain: '短路时电阻极小，电流急剧增大，非常危险。' },
+  { q: '电压表应该怎么接入电路？', opts: ['串联', '并联', '任意', '不接入'], ans: 1, explain: '电压表与被测元件并联，内阻极大。' },
+  { q: '电流表应该怎么接入电路？', opts: ['串联', '并联', '任意', '不接入'], ans: 0, explain: '电流表与被测元件串联，内阻极小。' },
+  { q: '灯泡的亮度取决于？', opts: ['电压', '电流', '实际功率', '电阻'], ans: 2, explain: '灯泡亮度由实际功率P=UI决定，功率越大越亮。' },
+  { q: '两个相同灯泡串联在6V电池上，每个灯泡两端电压为？', opts: ['6V', '3V', '12V', '0V'], ans: 1, explain: '串联分压，两个相同灯泡平分电压，各得3V。' },
+  { q: '导线连接电路时，导线两端应是？', opts: ['任意点', '元件端子', '画布边缘', '开关手柄'], ans: 1, explain: '导线必须连接在元件的接线端子（端子）上。' },
+  { q: '并联电路中，干路电流和各支路电流的关系是？', opts: ['I干=I₁+I₂', 'I干=I₁=I₂', 'I干=I₁-I₂', 'I干=0'], ans: 0, explain: '并联电路干路电流等于各支路电流之和。' },
+  { q: '电路中形成持续电流的条件是？', opts: ['有电源且电路闭合', '只有电源', '只有导线', '有电阻'], ans: 0, explain: '持续电流需两个条件：有电源提供电压，电路闭合形成通路。' },
+  { q: '开关断开时，电路中的电流为？', opts: ['不变', '增大', '减小', '零'], ans: 3, explain: '电路断开，电流为0，这是断路状态。' }
+];
+
+// ============ Header auto-hide ============
+(function() {
+  var header = document.querySelector('.header');
+  var hideTimer = null;
+  var HIDE_DELAY = 800;
+  function show() { clearTimeout(hideTimer); header.classList.remove('hidden'); document.body.classList.remove('header-hidden'); }
+  function hide() { hideTimer = setTimeout(function() { header.classList.add('hidden'); document.body.classList.add('header-hidden'); }, HIDE_DELAY); }
+  document.addEventListener('mousemove', function(e) {
+    if (e.clientY <= 48) show();
+    else if (e.clientY > header.offsetHeight + 20 && !header.classList.contains('hidden')) hide();
+  });
+  header.addEventListener('mouseenter', show);
+  header.addEventListener('mouseleave', hide);
+  hideTimer = setTimeout(function() { header.classList.add('hidden'); document.body.classList.add('header-hidden'); }, 2000);
+})();
+</script>
 </body>
 </html>
