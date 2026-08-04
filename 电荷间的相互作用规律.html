@@ -190,7 +190,7 @@
     ctx.scale(dpr, dpr);
 
     // ---- Physics constants ----
-    var PIVOT1_X = 310, PIVOT2_X = 470, PIVOT_Y = 80;   // hanging points
+    var PIVOT1_X = 230, PIVOT2_X = 550, PIVOT_Y = 80;   // hanging points (far apart)
     var STRING_L = 210;                                    // string length (px)
     var BALL_R = 22;                                       // ball radius
     var BALL1_CHARGE = 1;                                  // +1
@@ -225,28 +225,17 @@
     rods[3].charge = randomMysteryCharge();
 
     // ---- Pendulum equilibrium ----
-    function computeElectrostaticForce(ballX, ballY, ballCharge) {
-      // Sum forces from all rods
-      var fx = 0, fy = 0;
-      for (var i = 0; i < rods.length; i++) {
-        var r = rods[i];
-        if (r.charge === 0) continue; // neutral rod, no force
-        var dx = ballX - r.x;
-        var dy = ballY - r.y;
-        var dist = Math.sqrt(dx * dx + dy * dy);
-        if (dist < MIN_DIST) dist = MIN_DIST;
-        var forceMag = COULOMB_K * r.charge * ballCharge / (dist * dist);
-        // Normalize direction
-        var ux = dx / dist, uy = dy / dist;
-        // Same sign: force pushes ball away from rod (along ux, uy direction)
-        // Opposite sign: force pulls ball toward rod (opposite direction)
-        // forceMag already includes sign of q1*q2
-        // If forceMag > 0 (same sign): ball should be pushed away → force is in +u direction
-        // If forceMag < 0 (opp sign): ball should be pulled toward → force is in -u direction
-        fx += forceMag * ux;
-        fy += forceMag * uy;
-      }
-      return { fx: fx, fy: fy };
+    function computeElectrostaticForce(ballX, ballY, ballCharge, rodIndex) {
+      // Only consider the specified rod (single rod acts on a single ball)
+      var r = rods[rodIndex];
+      if (r.charge === 0) return { fx: 0, fy: 0 };
+      var dx = ballX - r.x;
+      var dy = ballY - r.y;
+      var dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist < MIN_DIST) dist = MIN_DIST;
+      var forceMag = COULOMB_K * r.charge * ballCharge / (dist * dist);
+      var ux = dx / dist, uy = dy / dist;
+      return { fx: forceMag * ux, fy: forceMag * uy, dist: dist };
     }
 
     function computeBallPos(angle, pivotX, pivotY) {
@@ -256,13 +245,25 @@
       };
     }
 
-    function computeTargetAngle(pivotX, pivotY, ballCharge) {
-      // Get ball position at current angle (use as approximation for force calculation)
-      var pos = computeBallPos(0, pivotX, pivotY); // use rest position for force calc
-      var force = computeElectrostaticForce(pos.x, pos.y, ballCharge);
-      // Horizontal force creates pendulum deflection
+    // Returns which ball the active rod is closest to, and whether to apply force
+    function getClosestBall() {
+      if (activeRod === null) return 0;
+      var r = rods[activeRod];
+      var pos1 = computeBallPos(0, PIVOT1_X, PIVOT_Y);
+      var pos2 = computeBallPos(0, PIVOT2_X, PIVOT_Y);
+      var d1 = Math.sqrt((pos1.x - r.x) * (pos1.x - r.x) + (pos1.y - r.y) * (pos1.y - r.y));
+      var d2 = Math.sqrt((pos2.x - r.x) * (pos2.x - r.x) + (pos2.y - r.y) * (pos2.y - r.y));
+      // Only interact if rod is dragged close enough (~140px = user actively bringing rod near)
+      var threshold = 140;
+      if (d1 < d2 && d1 < threshold) return 1;
+      if (d2 < d1 && d2 < threshold) return 2;
+      return 0; // neither close enough
+    }
+
+    function computeTargetAngle(pivotX, pivotY, ballCharge, rodIndex) {
+      var pos = computeBallPos(0, pivotX, pivotY);
+      var force = computeElectrostaticForce(pos.x, pos.y, ballCharge, rodIndex);
       var targetAngle = Math.atan2(force.fx, GRAVITY);
-      // Clamp to reasonable range
       return Math.max(-0.8, Math.min(0.8, targetAngle));
     }
 
@@ -449,117 +450,31 @@
       return { tipX: rod.x, tipY: tipY - rodH };
     }
 
-    function drawForceLines(rodX, rodTipY, ballPos, ballCharge) {
+    function drawInteractionHint() {
+      var closest = getClosestBall();
       var r = rods[activeRod];
-      if (!r || r.charge === 0) return;
+      if (!r || closest === 0) return;
 
-      var dx = ballPos.x - rodX;
-      var dy = ballPos.y - rodTipY;
-      var dist = Math.sqrt(dx * dx + dy * dy);
-      if (dist < 1) return;
+      var ballLabel = closest === 1 ? '小球A(+)' : '小球B(−)';
+      var ballCharge = closest === 1 ? BALL1_CHARGE : BALL2_CHARGE;
+      var interaction = r.charge * ballCharge > 0 ? '排斥' : '吸引';
 
-      var ux = dx / dist, uy = dy / dist;
-      // Determine attraction or repulsion
-      var forceDir = r.charge * ballCharge; // positive = repulsion, negative = attraction
-      var color, dash, label;
-
-      if (forceDir > 0) {
-        color = 'rgba(220,38,38,0.55)';
-        dash = [6, 4];
-        label = '排斥';
-      } else {
-        color = 'rgba(37,99,235,0.55)';
-        dash = [];
-        label = '吸引';
-      }
-
-      // Draw force line(s) between rod tip and ball
-      ctx.strokeStyle = color;
-      ctx.lineWidth = 2;
-      ctx.setLineDash(dash);
-      ctx.beginPath();
-      ctx.moveTo(rodX, rodTipY);
-      ctx.lineTo(ballPos.x, ballPos.y);
-      ctx.stroke();
-      ctx.setLineDash([]);
-
-      // Arrow in the middle
-      var midX = (rodX + ballPos.x) / 2;
-      var midY = (rodTipY + ballPos.y) / 2;
-
-      // For attraction: arrow points from rod to ball and ball to rod (pull)
-      // For repulsion: arrows point away from midpoint
-      var arrowSz = 8;
-      ctx.fillStyle = color;
-      if (forceDir > 0) {
-        // repulsion: arrows pointing away from each other
-        // Arrow on rod side pointing away from ball
-        var ax1 = rodX + ux * 15, ay1 = rodTipY + uy * 15;
-        ctx.beginPath();
-        ctx.moveTo(ax1, ay1);
-        ctx.lineTo(ax1 - ux * arrowSz + uy * arrowSz * 0.5, ay1 - uy * arrowSz - ux * arrowSz * 0.5);
-        ctx.lineTo(ax1 - ux * arrowSz - uy * arrowSz * 0.5, ay1 - uy * arrowSz + ux * arrowSz * 0.5);
-        ctx.closePath();
-        ctx.fill();
-        // Arrow on ball side pointing away from rod
-        var ax2 = ballPos.x - ux * 15, ay2 = ballPos.y - uy * 15;
-        ctx.beginPath();
-        ctx.moveTo(ax2, ay2);
-        ctx.lineTo(ax2 + ux * arrowSz + uy * arrowSz * 0.5, ay2 + uy * arrowSz - ux * arrowSz * 0.5);
-        ctx.lineTo(ax2 + ux * arrowSz - uy * arrowSz * 0.5, ay2 + uy * arrowSz + ux * arrowSz * 0.5);
-        ctx.closePath();
-        ctx.fill();
-      } else {
-        // attraction: arrows pointing toward each other
-        var ax1 = rodX + ux * 15, ay1 = rodTipY + uy * 15;
-        ctx.beginPath();
-        ctx.moveTo(ax1, ay1);
-        ctx.lineTo(ax1 + ux * arrowSz - uy * arrowSz * 0.5, ay1 + uy * arrowSz + ux * arrowSz * 0.5);
-        ctx.lineTo(ax1 + ux * arrowSz + uy * arrowSz * 0.5, ay1 + uy * arrowSz - ux * arrowSz * 0.5);
-        ctx.closePath();
-        ctx.fill();
-        var ax2 = ballPos.x - ux * 15, ay2 = ballPos.y - uy * 15;
-        ctx.beginPath();
-        ctx.moveTo(ax2, ay2);
-        ctx.lineTo(ax2 - ux * arrowSz - uy * arrowSz * 0.5, ay2 - uy * arrowSz + ux * arrowSz * 0.5);
-        ctx.lineTo(ax2 - ux * arrowSz + uy * arrowSz * 0.5, ay2 - uy * arrowSz - ux * arrowSz * 0.5);
-        ctx.closePath();
-        ctx.fill();
-      }
-
-      // Label
-      ctx.fillStyle = color;
-      ctx.font = 'bold 13px "PingFang SC","Microsoft YaHei",sans-serif';
-      ctx.textAlign = 'center';
-      var lx = midX - uy * 25, ly = midY + ux * 25;
-      ctx.fillText(label, lx, ly);
-    }
-
-    function drawInteractionHint(pos1, pos2) {
-      var r = rods[activeRod];
-      if (!r || r.charge === 0) return;
-
-      var chargeSymbol = r.mystery ? '?' : (r.charge > 0 ? '+' : '−');
-      var inter1 = r.charge * BALL1_CHARGE > 0 ? '排斥' : '吸引';
-      var inter2 = r.charge * BALL2_CHARGE > 0 ? '排斥' : '吸引';
-
-      // Hint at bottom of canvas
-      ctx.fillStyle = '#f8fafc';
+      // Simple hint bar at bottom
+      var hintY = H - 35;
+      var hintW = 280, hintH = 28;
+      ctx.fillStyle = 'rgba(255,255,255,0.9)';
       ctx.strokeStyle = '#e2e8f0';
       ctx.lineWidth = 1;
       ctx.beginPath();
-      ctx.roundRect(W / 2 - 180, H - 50, 360, 38, 8);
+      ctx.roundRect(W / 2 - hintW / 2, hintY, hintW, hintH, 6);
       ctx.fill();
       ctx.stroke();
 
+      var chargeSymbol = r.mystery ? '?' : (r.charge > 0 ? '+' : '−');
       ctx.fillStyle = '#475569';
       ctx.font = '13px "PingFang SC","Microsoft YaHei",sans-serif';
       ctx.textAlign = 'center';
-      var hint = chargeSymbol + ' 棒 → 小球A(+): ' + inter1 + ' | 小球B(−): ' + inter2;
-      if (r.mystery) {
-        hint += '  (推断未知电荷)';
-      }
-      ctx.fillText(hint, W / 2, H - 28);
+      ctx.fillText(chargeSymbol + ' 棒 ' + interaction + ' ' + ballLabel, W / 2, hintY + hintH - 8);
     }
 
     function drawScene() {
@@ -576,15 +491,8 @@
       var pos1 = drawBall(PIVOT1_X, PIVOT_Y, angle1, BALL1_CHARGE, 'A');
       var pos2 = drawBall(PIVOT2_X, PIVOT_Y, angle2, BALL2_CHARGE, 'B');
 
-      // Draw force lines between active rod and balls
-      if (activeRod !== null && rods[activeRod].charge !== 0) {
-        var activeTip = rodTips[activeRod];
-        drawForceLines(activeTip.tipX, activeTip.tipY, pos1, BALL1_CHARGE);
-        drawForceLines(activeTip.tipX, activeTip.tipY, pos2, BALL2_CHARGE);
-      }
-
-      // Draw interaction hint
-      drawInteractionHint(pos1, pos2);
+      // Draw interaction hint for closest ball only
+      drawInteractionHint();
 
       // Draw drop zone guide at bottom
       ctx.fillStyle = 'rgba(0,0,0,0.02)';
@@ -857,11 +765,16 @@
 
     // ---- Animation loop ----
     function animate(timestamp) {
-      // Compute target angles based on current rod positions
-      var target1 = computeTargetAngle(PIVOT1_X, PIVOT_Y, BALL1_CHARGE);
-      var target2 = computeTargetAngle(PIVOT2_X, PIVOT_Y, BALL2_CHARGE);
+      // Only the closest ball to the active rod gets affected
+      var closest = getClosestBall();
 
-      // Smooth toward target
+      var target1 = 0, target2 = 0;
+      if (closest === 1) {
+        target1 = computeTargetAngle(PIVOT1_X, PIVOT_Y, BALL1_CHARGE, activeRod);
+      } else if (closest === 2) {
+        target2 = computeTargetAngle(PIVOT2_X, PIVOT_Y, BALL2_CHARGE, activeRod);
+      }
+
       var stiffness = 0.06;
       vel1 += (target1 - angle1) * stiffness;
       vel2 += (target2 - angle2) * stiffness;
@@ -870,23 +783,27 @@
       angle1 += vel1;
       angle2 += vel2;
 
-      // Clamp
       angle1 = Math.max(-0.85, Math.min(0.85, angle1));
       angle2 = Math.max(-0.85, Math.min(0.85, angle2));
 
       drawScene();
       updateInteractionPanel();
 
-      // Update card
+      // Update cards based on closest ball interaction only
       var r = rods[activeRod];
-      if (r && r.charge !== 0) {
-        var inter1 = r.charge * BALL1_CHARGE > 0 ? '排斥' : '吸引';
-        var inter2 = r.charge * BALL2_CHARGE > 0 ? '排斥' : '吸引';
-        document.getElementById('cardBallA').innerHTML = '<span style="font-size:16px">' + inter1 + '</span><br><span style="font-size:11px;color:#94a3b8">' + r.label + '</span>';
-        document.getElementById('cardBallB').innerHTML = '<span style="font-size:16px">' + inter2 + '</span><br><span style="font-size:11px;color:#94a3b8">' + r.label + '</span>';
-      } else if (r && r.charge === 0) {
-        document.getElementById('cardBallA').innerHTML = '<span style="font-size:16px;color:#6b7280">无作用</span>';
-        document.getElementById('cardBallB').innerHTML = '<span style="font-size:16px;color:#6b7280">无作用</span>';
+      if (r && r.charge !== 0 && closest > 0) {
+        var ballCharge = closest === 1 ? BALL1_CHARGE : BALL2_CHARGE;
+        var ballLabel = closest === 1 ? '小球A(+)' : '小球B(−)';
+        var inter = r.charge * ballCharge > 0 ? '排斥' : '吸引';
+        document.getElementById('cardBallA').innerHTML = closest === 1 ?
+          '<span style="font-size:16px">' + inter + '</span><br><span style="font-size:11px;color:#94a3b8">' + r.label + '</span>' :
+          '<span style="font-size:13px;color:#94a3b8">— 无作用 —</span>';
+        document.getElementById('cardBallB').innerHTML = closest === 2 ?
+          '<span style="font-size:16px">' + inter + '</span><br><span style="font-size:11px;color:#94a3b8">' + r.label + '</span>' :
+          '<span style="font-size:13px;color:#94a3b8">— 无作用 —</span>';
+      } else {
+        document.getElementById('cardBallA').innerHTML = '<span style="font-size:13px;color:#94a3b8">— 无作用 —</span>';
+        document.getElementById('cardBallB').innerHTML = '<span style="font-size:13px;color:#94a3b8">— 无作用 —</span>';
       }
 
       requestAnimationFrame(animate);
