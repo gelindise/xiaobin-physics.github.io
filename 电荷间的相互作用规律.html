@@ -159,15 +159,16 @@
         <h3>🧪 实验原理</h3>
         <p>自然界中存在<strong>两种电荷</strong>——正电荷和负电荷。它们之间的相互作用遵循：</p>
         <p style="text-align:center;margin:10px 0;font-weight:700;font-size:15px;">同种电荷相互<strong style="color:#dc2626">排斥</strong> · 异种电荷相互<strong style="color:#2563eb">吸引</strong></p>
-        <p>本实验中：<br>🔴 <strong>小球A带正电</strong> — 排斥正电棒，吸引负电棒<br>🔵 <strong>小球B带负电</strong> — 吸引正电棒，排斥负电棒<br>⚪ <strong>不带电棒</strong> — 不引起任何电荷作用<br>🟡 <strong>未知棒</strong> — 通过观察与A、B的相互作用推断其电荷</p>
+        <p>本实验中：<br>🔴 <strong>小球A带正电</strong> — 排斥正电棒，吸引负电棒<br>🔵 <strong>小球B带负电</strong> — 吸引正电棒，排斥负电棒<br>⚪ <strong>不带电棒</strong> — 通过<strong>静电感应</strong>也能吸引带电小球（弱引力）<br>🟡 <strong>未知棒</strong> — 通过观察与A、B的相互作用推断其电荷</p>
       </div>
       <div class="info-card">
         <h3>📖 操作指南</h3>
         <ul>
           <li>点击左侧<strong>彩色圆点</strong>选择一个棒，或在画布上直接拖拽</li>
-          <li>将棒<strong>拖拽靠近</strong>两个小球，观察它们如何运动</li>
-          <li><strong>排斥</strong>：小球被推开，远离带电棒</li>
-          <li><strong>吸引</strong>：小球被拉近，靠近带电棒</li>
+          <li>将棒<strong>拖拽靠近</strong>一个小球，观察它如何运动</li>
+          <li><strong>排斥</strong>：小球被推开，远离带电棒（同种电荷）</li>
+          <li><strong>吸引</strong>：小球被拉近，靠近带电棒（异种电荷）</li>
+          <li><strong>静电感应</strong>：不带电棒也能微弱吸引带电小球</li>
           <li>松开后棒自动归位，小球恢复静止</li>
           <li>点击<strong>「重置未知棒」</strong>给未知棒随机赋新电荷</li>
           <li>试试判断未知棒带什么电？</li>
@@ -228,12 +229,22 @@
     function computeElectrostaticForce(ballX, ballY, ballCharge, rodIndex) {
       // Only consider the specified rod (single rod acts on a single ball)
       var r = rods[rodIndex];
-      if (r.charge === 0) return { fx: 0, fy: 0 };
       var dx = ballX - r.x;
       var dy = ballY - r.y;
       var dist = Math.sqrt(dx * dx + dy * dy);
       if (dist < MIN_DIST) dist = MIN_DIST;
-      var forceMag = COULOMB_K * r.charge * ballCharge / (dist * dist);
+
+      var effectiveCharge, forceMag;
+      if (r.charge === 0) {
+        // Neutral rod: electrostatic induction creates weak attraction
+        // Effective induced charge is opposite to ball charge, weaker magnitude
+        effectiveCharge = -ballCharge * 0.25;
+        forceMag = COULOMB_K * 0.5 * effectiveCharge * ballCharge / (dist * dist);
+        // forceMag is negative (attractive) since effectiveCharge * ballCharge < 0
+      } else {
+        forceMag = COULOMB_K * r.charge * ballCharge / (dist * dist);
+      }
+
       var ux = dx / dist, uy = dy / dist;
       return { fx: forceMag * ux, fy: forceMag * uy, dist: dist };
     }
@@ -261,10 +272,29 @@
     }
 
     function computeTargetAngle(pivotX, pivotY, ballCharge, rodIndex) {
+      var r = rods[rodIndex];
       var pos = computeBallPos(0, pivotX, pivotY);
       var force = computeElectrostaticForce(pos.x, pos.y, ballCharge, rodIndex);
-      var targetAngle = Math.atan2(force.fx, GRAVITY);
-      return Math.max(-0.8, Math.min(0.8, targetAngle));
+      var rawAngle = Math.atan2(force.fx, GRAVITY);
+
+      // Clamp: ball must not swing past the rod (for attraction) or beyond visual limits
+      var rodDir = r.x - pivotX; // positive if rod is to the right of pivot
+      var maxAngleToRod = Math.asin(Math.abs(rodDir) / STRING_L) * 0.85; // 85% of rod position
+
+      // Determine force direction relative to rod
+      var isAttraction = (force.fx * rodDir < 0); // force toward rod = attraction
+
+      if (isAttraction) {
+        // Attraction: ball swings toward rod, limit so it doesn't pass the rod
+        var limit = maxAngleToRod;
+        if (rodDir > 0) {
+          rawAngle = Math.max(-0.3, Math.min(limit, rawAngle));
+        } else {
+          rawAngle = Math.max(-limit, Math.min(0.3, rawAngle));
+        }
+      }
+
+      return Math.max(-0.8, Math.min(0.8, rawAngle));
     }
 
     // ---- Rendering ----
@@ -457,11 +487,15 @@
 
       var ballLabel = closest === 1 ? '小球A(+)' : '小球B(−)';
       var ballCharge = closest === 1 ? BALL1_CHARGE : BALL2_CHARGE;
-      var interaction = r.charge * ballCharge > 0 ? '排斥' : '吸引';
+      var interaction;
+      if (r.charge === 0) {
+        interaction = '吸引（静电感应）';
+      } else {
+        interaction = r.charge * ballCharge > 0 ? '排斥' : '吸引';
+      }
 
-      // Simple hint bar at bottom
       var hintY = H - 35;
-      var hintW = 280, hintH = 28;
+      var hintW = 320, hintH = 28;
       ctx.fillStyle = 'rgba(255,255,255,0.9)';
       ctx.strokeStyle = '#e2e8f0';
       ctx.lineWidth = 1;
@@ -470,7 +504,7 @@
       ctx.fill();
       ctx.stroke();
 
-      var chargeSymbol = r.mystery ? '?' : (r.charge > 0 ? '+' : '−');
+      var chargeSymbol = r.mystery ? '?' : (r.charge > 0 ? '+' : (r.charge < 0 ? '−' : '0'));
       ctx.fillStyle = '#475569';
       ctx.font = '13px "PingFang SC","Microsoft YaHei",sans-serif';
       ctx.textAlign = 'center';
@@ -731,9 +765,9 @@
 
       if (r.charge === 0) {
         title.textContent = '当前交互：不带电棒';
-        detail.innerHTML = '不带电棒靠近任何物体都<strong>不产生</strong>电荷作用。<br>两个小球保持静止不动。';
-        banner.className = 'result-banner none show';
-        banner.textContent = '⚪ 不带电 — 无电荷相互作用';
+        detail.innerHTML = '不带电棒靠近带电小球时，由于<strong>静电感应</strong>，棒内电荷重新分布，<br>靠近小球一侧感应出异种电荷，产生<strong style="color:#2563eb">弱吸引力</strong>。';
+        banner.className = 'result-banner attract show';
+        banner.textContent = '🔵 不带电棒也能吸引带电小球！— 静电感应现象';
       } else {
         var inter1 = r.charge * BALL1_CHARGE > 0 ? '排斥' : '吸引';
         var inter2 = r.charge * BALL2_CHARGE > 0 ? '排斥' : '吸引';
@@ -791,10 +825,16 @@
 
       // Update cards based on closest ball interaction only
       var r = rods[activeRod];
-      if (r && r.charge !== 0 && closest > 0) {
+      if (r && closest > 0) {
         var ballCharge = closest === 1 ? BALL1_CHARGE : BALL2_CHARGE;
         var ballLabel = closest === 1 ? '小球A(+)' : '小球B(−)';
-        var inter = r.charge * ballCharge > 0 ? '排斥' : '吸引';
+        var inter;
+        if (r.charge === 0) {
+          // Neutral rod: always attracts via induction
+          inter = '吸引(感应)';
+        } else {
+          inter = r.charge * ballCharge > 0 ? '排斥' : '吸引';
+        }
         document.getElementById('cardBallA').innerHTML = closest === 1 ?
           '<span style="font-size:16px">' + inter + '</span><br><span style="font-size:11px;color:#94a3b8">' + r.label + '</span>' :
           '<span style="font-size:13px;color:#94a3b8">— 无作用 —</span>';
