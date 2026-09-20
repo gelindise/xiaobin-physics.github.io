@@ -347,7 +347,8 @@
     canvas.style.width = w + 'px';
     canvas.style.height = h + 'px';
     ctx.setTransform(1,0,0,1,0,0);
-    ctx.scale((w*dpr)/VW, (w*dpr)/VH);
+    const s = (w * dpr) / VW;   // 统一缩放，保持 900:600 宽高比，避免画面被拉伸/裁切
+    ctx.scale(s, s);
   }
   window.addEventListener('resize', resize);
   resize();
@@ -506,7 +507,20 @@
       }
       simTime += dt;
     }
-    if (Math.abs(omega) < 0.02 && mode==='real') omega = 0;
+    // 真实环境下，机械能（动能）耗尽 → 彻底停转：转速与摆锤一并归零，摆锤回到自然下垂
+    if (mode === 'real') {
+      let T = 0.5 * IW * omega * omega;
+      for (let i = 0; i < N; i++) {
+        const ai = i * 2 * Math.PI / N;
+        const vx = -R * omega * Math.sin(theta + ai) - L * dphi[i] * Math.sin(phi[i]);
+        const vy =  R * omega * Math.cos(theta + ai) + L * dphi[i] * Math.cos(phi[i]);
+        T += 0.5 * MB * (vx * vx + vy * vy);
+      }
+      if (T < 0.01 && Math.abs(omega) < 0.05) {
+        omega = 0;
+        for (let i = 0; i < N; i++) { dphi[i] = 0; phi[i] = Math.PI / 2; }
+      }
+    }
     lampGlow += ((loadOn ? Math.min(1, Math.abs(omega)/2.6) : 0) - lampGlow)*0.15;
     // 摩擦耗散由能量守恒反推：减少的机械能 = 对外做功 + 摩擦耗散
     if (E0 > 0) Eloss = Math.max(0, E0 - energy() - Wout);
