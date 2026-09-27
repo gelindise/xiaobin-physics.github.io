@@ -12,8 +12,17 @@
  *   5. 阴影一律走 softShadow()，光源统一在左上方
  *
  * ── 极性铁律 ─────────────────────────────────────────────
- *   circuit-core 里 battery 的端子 0 是「+」，而端子 0 位于局部 (-HALF,0)。
- *   所以铜帽和「+」必须画在【左边】。画反了会出现电流从负极流出的诡异画面。
+ *   circuit-core 里 battery / ammeter / voltmeter 的端子 0 都是「+」。
+ *   端子 0 画在哪一头，由 TERMINALS 拍板，并且全站统一：
+ *     · 横向元件（电源、电流表）：端子 0 在【右端】
+ *     · 纵向元件（电压表）：      端子 0 在【上端】
+ *   为什么电源和电流表都得是右边：一个矩形回路里，电源正极的线往右出去，
+ *   电流绕一圈回来必然从右边进、左边出地穿过顶排的元件。把「+」画在右边，
+ *   红柱子才是电流【流进去】的那一头；画反了红柱子就成了电流流出的一端。
+ *   三处必须同时对上，任何一处画反画面都会自相矛盾：
+ *     1. TERMINALS 的坐标
+ *     2. 元件的正负记号（drawBattery 的加减号 / drawMeter 的 mk 圆圈+符号）
+ *     3. posts() 传入的 kinds —— kinds[i] 对应【端子序号】，一律 ['pos','neg']
  */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) module.exports = factory();
@@ -28,7 +37,7 @@
     grid: '#e0e7ef',
     wire: '#8496ab',
     wireDim: '#b3c0cf',
-    flow: '#f59e0b',         // 电流粒子
+    flow: '#f59e0b',         // 自由电子小球（画布上跑的小球）
     metalHi: '#eef3f8',
     metal: '#b9c6d3',
     metalLo: '#8496a8',
@@ -120,11 +129,11 @@
   // ============================================================
   var TERMINALS = {
     resistor: [{ x: -HALF, y: 0 }, { x: HALF, y: 0 }],
-    battery: [{ x: -HALF, y: 0 }, { x: HALF, y: 0 }],   // 0 = 正极（左）
+    battery: [{ x: HALF, y: 0 }, { x: -HALF, y: 0 }],   // 0 = 正极（右）
     switch: [{ x: -HALF, y: 0 }, { x: HALF, y: 0 }],
     bulb: [{ x: -HALF, y: 0 }, { x: HALF, y: 0 }],
-    ammeter: [{ x: -HALF, y: 0 }, { x: HALF, y: 0 }],
-    voltmeter: [{ x: 0, y: -HALF }, { x: 0, y: HALF }],
+    ammeter: [{ x: HALF, y: 0 }, { x: -HALF, y: 0 }],   // 0 = 正极（右）
+    voltmeter: [{ x: 0, y: -HALF }, { x: 0, y: HALF }], // 0 = 正极（上）
     rheostat: [
       { x: -78, y: -26 }, { x: 78, y: -26 },   // A 左上 / B 右上（金属杆）
       { x: -78, y: 26 }, { x: 78, y: 26 },     // C 左下 / D 右下（电阻丝）
@@ -210,7 +219,7 @@
   }
 
   // ============================================================
-  // 导线 + 电流粒子
+  // 导线 + 自由电子小球
   // ============================================================
   function polyLen(pts) {
     var L = 0;
@@ -237,22 +246,27 @@
     ctx.stroke();
   }
 
-  // 电流粒子的行程换算：返回沿导线 a→b 的有符号位移（px），正 = 朝 b 端走。
+  // 画布上跑的小球是【自由电子】，返回它沿导线 a→b 的有符号位移（px）。
+  //
+  // ⚠️ 电子带负电，定向移动方向【和电流方向相反】——金属导体里规定正电荷
+  // 定向移动的方向为电流方向，所以电子是从负极往正极跑的。这是初中考点，
+  // 画面上跑反了等于给学生刻一个错误印象。这里 flow 给的是【电流】，
+  // 所以返回值必须取反。
   //
   // 抽成独立函数是为了能直接测方向。这里出过两个错，都是像素测量很难断的：
-  //   1. 方向是反的（flow>0 时粒子朝 a 端走）。想用「粒子质心位移」来验证会被
-  //      坑死——粒子在端点绕回去时整幅图案平移一个大跳，永远盖过真实位移。
+  //   1. 方向反了。想用「粒子质心位移」来验证会被坑死——粒子在端点绕回去时
+  //      整幅图案平移一个大跳，永远盖过真实位移，得用单颗粒子才测得准。
   //   2. speed 曾经是「每秒走完整根导线的百分之几」，于是同样电流下长导线的
   //      粒子跑得比短导线快好几倍，串联回路里各段快慢不一。
   // 所以：速度按【每秒多少像素】算，与导线长短无关。
   var FLOW_PX_PER_PHASE = 320;
-  function particleShift(flow, phase) {
+  function electronShift(flow, phase) {
     var I = Math.abs(flow || 0);
     if (I <= 1e-6 || phase == null) return 0;
     // 用 sqrt 而不是线性：线性的话大电流快到糊成一片、小电流几乎不动。
     // 这里要的是「电流越大越快」的定性观感，不是漂移速度的定量还原。
     var spd = Math.min(1, Math.sqrt(I / 0.8)) * FLOW_PX_PER_PHASE;
-    return (flow > 0 ? 1 : -1) * phase * spd;
+    return (flow > 0 ? -1 : 1) * phase * spd;      // 负号 = 电子逆着电流走
   }
 
   // opts: { flow: 有符号电流(A, 正=从首端流向末端), phase: 秒, flowing: bool }
@@ -277,7 +291,7 @@
     strokePath(ctx, pts);
     ctx.restore();
 
-    // 电流粒子：间距按实际长度均分，位置沿【弧长】排布，
+    // 自由电子小球：间距按实际长度均分，位置沿【弧长】排布，
     // 所以速度是「每秒多少像素」，串联回路里长导线和短导线一样快。
     var I = Math.abs(opts.flow || 0);
     if (I > 1e-6 && opts.phase != null) {
@@ -285,7 +299,7 @@
       if (L < 1) return;
       var n = Math.max(1, Math.round(L / 42));   // 42px 一颗，长导线自动多排几颗
       var step = L / n;
-      var shift = particleShift(opts.flow, opts.phase);
+      var shift = electronShift(opts.flow, opts.phase);
       ctx.save();
       ctx.fillStyle = PALETTE.flow;
       ctx.shadowColor = 'rgba(245,158,11,0.85)';
@@ -367,6 +381,46 @@
   // ============================================================
   // 干电池组
   // ============================================================
+  // 电池盒的几何尺寸（局部坐标，未旋转）。
+  // 抽出来是因为「盒子有多宽」不只是画图的事：走线算法得知道盒子占哪块地，
+  // 否则导线会从盒体中间穿过去。测试也靠它做穿插检查，不能和画图各写一份。
+  //
+  // 盒子不能比两个接线柱之间的跨度还宽：4 节时 4×44+18 = 194 > 2×HALF = 140，
+  // 接线柱就陷进盒体里了，接上去的导线看着像从盒子中间钻出来，盒子上的
+  // 加减号也会跑到接线柱内侧。接线柱必须钉在 ±HALF（全站网格规范），
+  // 所以这里反过来把电池本身按比例缩小，宽高比保持不变。
+  function batterySize(cells) {
+    var CWD = cells <= 2 ? 54 : 44;      // 单节电池长
+    var CHD = 42;                        // 单节电池直径
+    var PADX = 9, PADY = 15;             // 上下留厚一点，盒体上沿要印正负极记号
+    var maxTotal = 2 * HALF - PADX * 2 - 8;                 // 留 4px 余量
+    var k = Math.min(1, maxTotal / (cells * CWD));
+    // 整节等比缩小，盒壁的留白也跟着缩，不然 4 节时电池小小的、盒子却空一圈。
+    // 2 节及以下 k = 1，画出来和以前一模一样。
+    CWD *= k; CHD *= k; PADX *= k; PADY *= k;
+    return { cwd: CWD, chd: CHD, k: k,
+             boxW: cells * CWD + PADX * 2, boxH: CHD + PADY * 2 + 4 };
+  }
+
+  // 元件实心本体的局部包围盒（半宽 / 半高）。导线走线时用来避让，
+  // 只保证「不穿过元件肚子」，接线柱附近的引线不算在内。
+  function bodyBox(comp) {
+    switch (comp.type) {
+      case 'battery': {
+        var P = comp.params || {};
+        var per = P.emfPerCell != null ? +P.emfPerCell : 1.5;
+        var emf = P.emf != null ? +P.emf : (P.cells != null ? P.cells * per : 3);
+        var s = batterySize(Math.max(1, Math.min(6, Math.round(emf / per))));
+        return { hw: s.boxW / 2, hh: s.boxH / 2 };
+      }
+      case 'switch': return { hw: 59, hh: 28 };          // drawSwitch 的 BW/BH
+      case 'bulb': return { hw: 38, hh: 38 };            // 玻璃泡 R=34 再放宽一点
+      case 'ammeter': case 'voltmeter': return { hw: 58, hh: 58 };  // drawMeter 的 R=54
+      case 'rheostat': return { hw: RHEO.BW / 2, hh: RHEO.BH / 2 }; // 含陶瓷管与滑片杆
+      default: return { hw: 54, hh: 20 };                // 定值电阻 BW/BH = 108/40
+    }
+  }
+
   function drawBattery(ctx, comp, rec) {
     // 干电池只有 1.5V 一种规格，所以【节数由电动势反推】，不能反过来信
     // params.cells：两者对不上时（比如 emf=4.5 却写着 2 节），画面就会印出
@@ -385,11 +439,10 @@
     // 电池盒：一个横躺的塑料盒，干电池横着码在里面。
     // 之所以不做成「竖直圆柱并列」：接线柱在左右两端，电池轴就该是水平的，
     // 竖着画的圆柱和水平引出的导线会互相打架。
-    var CWD = cells <= 2 ? 54 : 44;      // 单节电池长
-    var CHD = 42;                        // 单节电池直径
+    var SZ = batterySize(cells);         // 单节尺寸 + 盒体尺寸，见 batterySize()
+    var CWD = SZ.cwd, CHD = SZ.chd, k = SZ.k;
     var totalW = cells * CWD;
-    var PADX = 9, PADY = 15;             // 上下留厚一点，盒体上沿要印正负极记号
-    var boxW = totalW + PADX * 2, boxH = CHD + PADY * 2 + 4;
+    var boxW = SZ.boxW, boxH = SZ.boxH;
     var leadX = boxW / 2;
 
     // 引出导线：水平引出，不用斜线（斜线会让接线柱看起来像被导线戳穿）
@@ -432,22 +485,23 @@
         [0.32, '#d8d8d8'], [0.44, '#a6a6a6'], [0.60, '#5e5e5e'],
         [0.84, '#303030'], [1, '#111111'],
       ]);
-      roundRect(ctx, cx, -CHD / 2, CWD, CHD, 6); ctx.fill();
+      roundRect(ctx, cx, -CHD / 2, CWD, CHD, Math.min(CWD, CHD) * 0.14); ctx.fill();
 
       // 锐利高光条（圆柱反光）
       ctx.fillStyle = 'rgba(255,255,255,0.45)';
-      roundRect(ctx, cx + 6, -CHD * 0.30, CWD - 12, 3.4, 1.7); ctx.fill();
+      roundRect(ctx, cx + CWD * 0.111, -CHD * 0.30, CWD * 0.778, CHD * 0.081, CHD * 0.04); ctx.fill();
 
-      // 中部标贴环带：印 1.5V
-      var bandTop = -10, bandH = 20;
+      // 中部标贴环带：印 1.5V。尺寸都跟着 CHD 走——节数一多整节会缩小，
+      // 写死的 20/3/13 会从电池上溢出来。
+      var bandTop = -CHD * 0.238, bandH = CHD * 0.476;
       ctx.fillStyle = i % 2 ? '#b91c1c' : '#1d4ed8';
       ctx.fillRect(cx, bandTop, CWD, bandH);
       ctx.fillStyle = 'rgba(255,255,255,0.25)';
-      ctx.fillRect(cx, bandTop, CWD, 3);
+      ctx.fillRect(cx, bandTop, CWD, CHD * 0.071);
       ctx.fillStyle = 'rgba(0,0,0,0.22)';
-      ctx.fillRect(cx, bandTop + bandH - 3, CWD, 3);
+      ctx.fillRect(cx, bandTop + bandH - CHD * 0.071, CWD, CHD * 0.071);
       ctx.fillStyle = '#fff';
-      ctx.font = 'bold 13px -apple-system,"PingFang SC",sans-serif';
+      ctx.font = 'bold ' + Math.max(8, Math.round(13 * k)) + 'px -apple-system,"PingFang SC",sans-serif';
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       ctx.fillText(perCell.toFixed(1).replace(/\.0$/, '') + 'V', cx + CWD / 2, bandTop + bandH / 2 + 0.5);
 
@@ -469,23 +523,26 @@
 
     // 极性记号：直接印在盒体上沿的塑料面上，和真电池盒一样。
     // 画成实心图形而不是文字字形——「−」用字形画出来是一根细线，
-    // 摆在导线旁边会被误读成杂散线头。左端为正，这是不可动摇的极性。
+    // 摆在导线旁边会被误读成杂散线头。
+    // 右端为正（和 TERMINALS 里端子 0 落在 +HALF 一致），这是不可动摇的极性。
     // 往内收 22 而不是 14：14 的话减号正好压在盒体的圆角上，被切掉一截，
     // 看上去像盒子上破了个口子而不是一个记号。
     var markY = -boxH / 2 + 10, markX = boxW / 2 - 22;
     ctx.fillStyle = PALETTE.positive;
-    roundRect(ctx, -markX - 6.5, markY - 2.2, 13, 4.4, 2.2); ctx.fill();   // 加号横
-    roundRect(ctx, -markX - 2.2, markY - 6.5, 4.4, 13, 2.2); ctx.fill();   // 加号竖
+    roundRect(ctx, markX - 6.5, markY - 2.2, 13, 4.4, 2.2); ctx.fill();    // 加号横
+    roundRect(ctx, markX - 2.2, markY - 6.5, 4.4, 13, 2.2); ctx.fill();    // 加号竖
     // 减号：壳顶那条塑料棱是深灰的，所以记号必须用浅色。加号是红的一点就亮，
     // 减号只有靠「白条 + 深色垫底」才压得住，做成跟加号同样的视觉重量——
     // 两个记号一轻一重，学生眼睛只会看见加号，负极就形同没标。
     ctx.fillStyle = 'rgba(15,23,42,0.5)';                                  // 深色垫底，把白条从塑料棱上托起来
-    roundRect(ctx, markX - 8.4, markY - 3.4, 16.8, 6.8, 3.4); ctx.fill();
+    roundRect(ctx, -markX - 8.4, markY - 3.4, 16.8, 6.8, 3.4); ctx.fill();
     ctx.fillStyle = '#f8fafc';
-    roundRect(ctx, markX - 7.5, markY - 2.5, 15, 5, 2.5); ctx.fill();      // 减号
+    roundRect(ctx, -markX - 7.5, markY - 2.5, 15, 5, 2.5); ctx.fill();     // 减号
     ctx.restore();
 
-    posts(ctx, comp, ['pos', 'neg']);   // 端子 0 = 正极，位于左侧
+    // 端子 0 = 正极，在 TERMINALS 里落在 +HALF（右侧），所以这里仍是 ['pos','neg']：
+    // kinds[i] 对应的是【端子序号】，不是左右顺序，改了 TERMINALS 就不用动这里。
+    posts(ctx, comp, ['pos', 'neg']);
   }
 
   // ============================================================
@@ -751,7 +808,8 @@
 
     // 接线柱的正负标记：极性接反是考点，必须写在表面上。
     // 白底圆 + 加粗符号，压在深色外壳上也看得清。
-    var mk = isVolt ? [[-19, -HALF], [-19, HALF]] : [[-HALF, -19], [HALF, -19]];
+    // mk[0] 必须压在【端子 0】那一头：横向表在右端，纵向（电压表）在上端。
+    var mk = isVolt ? [[-19, -HALF], [-19, HALF]] : [[HALF, -19], [-HALF, -19]];
     var sym = ['+', '−'], col = [PALETTE.positive, PALETTE.negative];
     ctx.font = 'bold 15px -apple-system,"PingFang SC",sans-serif';
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
@@ -967,10 +1025,11 @@
     terminalWorld: terminalWorld, toWorld: toWorld, toLocal: toLocal,
     RHEO: RHEO, sliderLocalX: sliderLocalX, slideFromLocalX: slideFromLocalX,
     slideOf: slideOf,
-    drawComponent: drawComponent, drawWire: drawWire, particleShift: particleShift,
+    drawComponent: drawComponent, drawWire: drawWire, electronShift: electronShift,
     FLOW_PX_PER_PHASE: FLOW_PX_PER_PHASE, polyLen: polyLen, pointAt: pointAt,
     drawBackground: drawBackground, drawBindingPost: drawBindingPost,
     resistorBands: resistorBands, roundRect: roundRect, softShadow: softShadow,
+    batterySize: batterySize, bodyBox: bodyBox,
     version: '1.2.0',
   };
 });
