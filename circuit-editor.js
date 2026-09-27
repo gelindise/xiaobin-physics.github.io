@@ -53,6 +53,10 @@
     var getScene = opts.getScene;
     var onChange = opts.onChange || function () {};
     var onSelect = opts.onSelect || function () {};
+    // 「点一下某个元件」——按下到松开之间没有拖动才算（拖元件、拉线、拨滑片都不算），
+    // 位置给的是逻辑坐标，宿主自己判断点没点在该点的地方（例如电表的表盘）。
+    // 编辑器不知道宿主拿这一下干什么（沙盒用它开表盘放大镜），所以只报事件。
+    var onTap = opts.onTap || function () {};
 
     var selected = null;      // {kind:'comp'|'wire', id} 或 {kind:'wire', index}
     var hover = null;         // {kind:'term', compId, termIdx} | {kind:'comp'|'wire', ...}
@@ -650,6 +654,9 @@
           mc.params = mc.params || {};
           mc.params.closed = !mc.params.closed;
         } else discardEdit();       // 单纯点选，不留撤销记录
+        // 没拖动 = 单击，报给宿主。开关在上面已经就地翻转了，这里照样报一声：
+        // 宿主按类型自己过滤，编辑器不替它决定「哪些元件值得点」。
+        if (!wasMoved && mc) onTap(mc, lastPointer);
         changed();
       }
     }

@@ -52,6 +52,7 @@
   <div class="panel bar">
     <div class="presets" id="presets"></div>
     <button class="flowbtn" id="flowBtn"></button>
+    <button class="flowbtn" id="curBtn"></button>
   </div>
 
   <div class="stage">
@@ -211,8 +212,10 @@ var cur = 0, results = null, flows = [], phase = 0;
 var drag = null, hoverPt = null;
 // 电子流动动画开关（与「电路实验沙盒」共用同一个记忆）
 var FLOW_KEY = 'circuit_sandbox_flow';
-var showFlow = true;
+var CUR_KEY  = 'circuit_sandbox_current';
+var showFlow = true, showCurrent = false;
 try { showFlow = localStorage.getItem(FLOW_KEY) !== '0'; } catch (e) {}
+try { showCurrent = localStorage.getItem(CUR_KEY) === '1'; } catch (e) {}
 
 function scene(){ return SCENES[cur]; }
 function byId(cid){ var s=scene(); for(var i=0;i<s.comps.length;i++) if(s.comps[i].id===cid) return s.comps[i]; return null; }
@@ -325,8 +328,9 @@ function drawFrame(){
   if (!results) return;
 
   scene().wires.forEach(function(wr, i){
-    // phase 直接传秒数（drawWire 自己换算成像素行程）；关掉动画时传 null。
-    D.drawWire(ctx, pathOf(wr), { flow: flows[i], phase: showFlow ? phase : null });
+    // phase 直接传秒数（drawWire 自己换算成像素行程）；两个开关都关时传 null。
+    D.drawWire(ctx, pathOf(wr), { flow: flows[i], phase: (showFlow || showCurrent) ? phase : null,
+                                  electrons: showFlow, current: showCurrent });
   });
   ctx.drawImage(fgLayer, 0, 0, W, H);
 
@@ -461,8 +465,10 @@ SCENES.forEach(function(s, i){
   pc.appendChild(b);
 });
 
-// 电子流动开关
+// 两个动画开关（和「电路实验沙盒」共用同一套 key，两边保持一致）。
+// 各自独立：两个同时开时，同一条导线上琥珀色小球和红色箭头反向走。
 var flowBtn = document.getElementById('flowBtn');
+var curBtn  = document.getElementById('curBtn');
 function setFlow(on){
   showFlow = !!on;
   flowBtn.textContent = showFlow ? '⚡ 电子流动：开' : '⚡ 电子流动：关';
@@ -470,16 +476,25 @@ function setFlow(on){
   try { localStorage.setItem(FLOW_KEY, showFlow ? '1' : '0'); } catch (e) {}
   drawFrame();
 }
+function setCurrent(on){
+  showCurrent = !!on;
+  curBtn.textContent = showCurrent ? '➡ 电流方向：开' : '➡ 电流方向：关';
+  curBtn.className = showCurrent ? 'flowbtn' : 'flowbtn off';
+  try { localStorage.setItem(CUR_KEY, showCurrent ? '1' : '0'); } catch (e) {}
+  drawFrame();
+}
 flowBtn.onclick = function(){ setFlow(!showFlow); };
+curBtn.onclick  = function(){ setCurrent(!showCurrent); };
 setFlow(showFlow);
+setCurrent(showCurrent);
 
 // 动画循环
 var lastT = 0;
 function tick(t){
   var dt = lastT ? Math.min((t - lastT) / 1000, 0.06) : 0;
   lastT = t;
-  // 关掉电子动画就空转：画面静止，不需要每帧重绘。
-  if (!showFlow) { requestAnimationFrame(tick); return; }
+  // 两个动画都关就空转：画面静止，不需要每帧重绘。
+  if (!showFlow && !showCurrent) { requestAnimationFrame(tick); return; }
   if (results && results.status === 'ok') phase += dt;   // 单位是秒，不再取模
   drawFrame();
   requestAnimationFrame(tick);
@@ -489,7 +504,9 @@ window.addEventListener('resize', layout);
 layout();
 pc.children[0].className = 'on';
 // 给自动化验证留的钩子
-window.__preview = function(){ return { phase: phase, showFlow: showFlow, flows: flows.slice() }; };
+window.__preview = function(){ return { phase: phase, showFlow: showFlow, showCurrent: showCurrent,
+                                        flows: flows.slice() }; };
+window.__setCurrent = function(v){ setCurrent(v); };
 render();
 requestAnimationFrame(tick);
 

@@ -52,7 +52,8 @@
     grid: '#e0e7ef',
     wire: '#8496ab',
     wireDim: '#b3c0cf',
-    flow: '#f59e0b',         // 自由电子小球（画布上跑的小球）
+    flow: '#f59e0b',         // 自由电子小球（画布上跑的小球，琥珀色）
+    current: '#dc2626',      // 电流方向箭头（和电子反向跑，正红）
     metalHi: '#eef3f8',
     metal: '#b9c6d3',
     metalLo: '#8496a8',
@@ -294,17 +295,24 @@
     for (var i = 1; i < pts.length; i++) L += Math.hypot(pts[i].x - pts[i-1].x, pts[i].y - pts[i-1].y);
     return L;
   }
-  function pointAt(pts, d) {
+  // 沿导线走了 d 像素之后的位置。折返点处可能落在拐角上，返回的 (ux, uy) 是
+  // 所在那一段的单位切向——画电流箭头要靠它定朝向，所以一并返回。
+  function pointDirAt(pts, d) {
     for (var i = 1; i < pts.length; i++) {
-      var seg = Math.hypot(pts[i].x - pts[i-1].x, pts[i].y - pts[i-1].y);
+      var dx = pts[i].x - pts[i-1].x, dy = pts[i].y - pts[i-1].y;
+      var seg = Math.hypot(dx, dy);
       if (d <= seg || i === pts.length - 1) {
         var t = seg > 0 ? Math.min(d / seg, 1) : 0;
-        return { x: pts[i-1].x + (pts[i].x - pts[i-1].x) * t,
-                 y: pts[i-1].y + (pts[i].y - pts[i-1].y) * t };
+        return { x: pts[i-1].x + dx * t, y: pts[i-1].y + dy * t,
+                 ux: seg > 0 ? dx / seg : 1, uy: seg > 0 ? dy / seg : 0 };
       }
       d -= seg;
     }
-    return pts[pts.length - 1];
+    return { x: pts[pts.length - 1].x, y: pts[pts.length - 1].y, ux: 1, uy: 0 };
+  }
+  function pointAt(pts, d) {
+    var q = pointDirAt(pts, d);
+    return { x: q.x, y: q.y };
   }
 
   function strokePath(ctx, pts) {
@@ -337,7 +345,15 @@
     return (flow > 0 ? -1 : 1) * phase * spd;      // 负号 = 电子逆着电流走
   }
 
-  // opts: { flow: 有符号电流(A, 正=从首端流向末端), phase: 秒, flowing: bool }
+  // 电流方向动画（红箭头）的有符号位移。就是电子位移取反：
+  // 两者必须【严格等速反向】，屏幕上才看得出「同一条导线、两样东西对着走」——
+  // 各写一套速度公式迟早会漂开，箭头和球看着像两个不相干的动画。
+  // 只取反不重算，也顺便保证了「电流方向与电子定向移动方向相反」这条结论
+  // 无论怎么调速度曲线都成立。
+  function currentShift(flow, phase) { return -electronShift(flow, phase); }
+
+  // opts: { flow: 有符号电流(A, 正=从首端流向末端), phase: 秒,
+  //         current: 是否画电流方向箭头（默认关，向后兼容只传 flow/phase 的调用） }
   function drawWire(ctx, pts, opts) {
     if (!pts || pts.length < 2) return;
     opts = opts || {};
@@ -361,8 +377,10 @@
 
     // 自由电子小球：间距按实际长度均分，位置沿【弧长】排布，
     // 所以速度是「每秒多少像素」，串联回路里长导线和短导线一样快。
+    // electrons 只在【显式】传 false 时才不画：老调用方只传 flow/phase，
+    // 行为必须和以前一模一样（小球照旧出来）。
     var I = Math.abs(opts.flow || 0);
-    if (I > 1e-6 && opts.phase != null) {
+    if (I > 1e-6 && opts.phase != null && opts.electrons !== false) {
       var L = polyLen(pts);
       if (L < 1) return;
       var n = Math.max(1, Math.round(L / 42));   // 42px 一颗，长导线自动多排几颗
@@ -379,6 +397,33 @@
         ctx.beginPath();
         ctx.arc(p.x, p.y, 2.9, 0, 6.284);
         ctx.fill();
+      }
+      ctx.restore();
+    }
+
+    // 电流方向箭头（红色三角）。和电子小球可以同时开——这正是要对比的：
+    // 同一条导线上两者【反向】走。间距比小球大（64 vs 42）：箭头比小球大一圈，
+    // 排一样密会糊成一条红线，看不出是在动。
+    if (I > 1e-6 && opts.phase != null && opts.current) {
+      var L2 = polyLen(pts);
+      if (L2 < 1) return;
+      var n2 = Math.max(1, Math.round(L2 / 64));
+      var step2 = L2 / n2;
+      var sh2 = currentShift(opts.flow, opts.phase);
+      ctx.save();
+      ctx.fillStyle = PALETTE.current;
+      ctx.shadowColor = 'rgba(220,38,38,0.7)';
+      ctx.shadowBlur = 6;
+      for (var j = 0; j < n2; j++) {
+        var d2 = ((j * step2 + sh2) % L2 + L2) % L2;
+        var q = pointDirAt(pts, d2);
+        ctx.save();
+        ctx.translate(q.x, q.y);
+        ctx.rotate(Math.atan2(q.uy, q.ux));     // 箭头朝向 = 该点的切向
+        ctx.beginPath();
+        ctx.moveTo(7, 0); ctx.lineTo(-5, -4.8); ctx.lineTo(-5, 4.8);
+        ctx.closePath(); ctx.fill();
+        ctx.restore();
       }
       ctx.restore();
     }
@@ -1431,7 +1476,8 @@
     sliderLocalX: sliderLocalX, slideFromLocalX: slideFromLocalX,
     slideOf: slideOf,
     drawComponent: drawComponent, drawWire: drawWire, electronShift: electronShift,
-    FLOW_PX_PER_PHASE: FLOW_PX_PER_PHASE, polyLen: polyLen, pointAt: pointAt,
+    currentShift: currentShift,
+    FLOW_PX_PER_PHASE: FLOW_PX_PER_PHASE, polyLen: polyLen, pointAt: pointAt, pointDirAt: pointDirAt,
     drawBackground: drawBackground, drawBindingPost: drawBindingPost,
     resistorBands: resistorBands, roundRect: roundRect, softShadow: softShadow,
     batterySize: batterySize, bodyBox: bodyBox,

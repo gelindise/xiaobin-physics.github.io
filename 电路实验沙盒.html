@@ -71,13 +71,30 @@
   .keys{color:var(--dim);font-size:11.5px;line-height:1.9}
   .keys kbd{background:#f1f5f9;border:1px solid var(--line);border-bottom-width:2px;
     border-radius:4px;padding:0 5px;font-family:inherit;font-size:11px;color:var(--text)}
+  /* 表盘放大镜：整台表按 K 倍重画（不是另画一套「放大版表盘」），
+     所以下面那个 canvas 的尺寸由脚本按视口算，样式里不写死宽度。 */
+  .zoom{position:fixed;inset:0;z-index:50;background:rgba(15,23,42,.55);
+    display:flex;align-items:center;justify-content:center;padding:18px}
+  .zoom[hidden]{display:none}
+  .zoomBox{background:var(--card);border-radius:14px;padding:10px 14px 12px;
+    box-shadow:0 18px 50px rgba(15,23,42,.35);max-width:100%;max-height:100%;
+    display:flex;flex-direction:column;gap:7px}
+  .zoomHead{display:flex;align-items:center;gap:12px;font-size:13.5px;font-weight:700}
+  .zoomHead .zoomX{margin-left:auto;background:#f1f5f9;border:1px solid var(--line);
+    border-radius:7px;cursor:pointer;font-family:inherit;font-size:13px;color:var(--text);
+    padding:3px 9px;line-height:1.2}
+  .zoomHead .zoomX:hover{background:#e2e8f0}
+  .zoomBox canvas{display:block;border-radius:8px}
+  .zoomFoot{color:var(--text);font-size:13.5px;font-weight:700;text-align:center;
+    display:flex;gap:10px;justify-content:center;align-items:baseline}
+  .zoomFoot #zoomRange{color:var(--dim);font-weight:400;font-size:12.5px}
 </style>
 </head>
 <body>
 <div class="wrap">
   <h1>电路实验沙盒</h1>
   <div class="sub">自由拖拽元件、拉线搭电路，读数由 <code>circuit-core.js</code>（MNA 改进节点法）实时求解 —— 接成什么样，就算出什么样。</div>
-  <div class="sub legend">导线上跑的橙色小球是<b>自由电子</b>：它带负电，定向移动方向与<b>电流方向相反</b>（金属导体中规定正电荷定向移动的方向为电流方向），也就是从电源负极出发、回到正极。</div>
+  <div class="sub legend">导线上的<b>琥珀色小球</b>是自由电子、<b>红色箭头</b>是电流方向，两者<b>反向</b>跑（金属导体中规定正电荷定向移动的方向为电流方向）：电子从电源负极出发回到正极，电流从正极出发回到负极。两个动画可以单独开关，也可以同时开着一比就明白。点击电表<b>表盘</b>可放大读数。</div>
 
   <div class="bar" id="palette"></div>
 
@@ -101,13 +118,29 @@
   </div>
 </div>
 
+<!-- 表盘放大镜。里面的 canvas 由 openZoom() 按 K 倍重画【同一只表】
+     （同一个 drawComponent、同一份求解结果），不是另做一套放大版表盘——
+     两套画法迟早会画歪，那就等于放大了一个假的读数。 -->
+<div class="zoom" id="zoom" hidden>
+  <div class="zoomBox">
+    <div class="zoomHead">
+      <span id="zoomTitle">读数</span>
+      <button class="zoomX" id="zoomX" type="button">✕ 关闭</button>
+    </div>
+    <canvas id="zoomCanvas"></canvas>
+    <!-- 读数单独一个 span：量程那格可以照印，读数那格【接反时必须一个数字都没有】。
+         混成一行的话，「不印数字」这条规矩就说不清楚了。 -->
+    <div class="zoomFoot"><span id="zoomRead"></span><span id="zoomRange"></span></div>
+  </div>
+</div>
+
 <!-- 版本号只用来给浏览器缓存开门：GitHub Pages 的静态资源默认缓存 10 分钟，
      改了内核而 HTML 没变的话，老访客会拿缓存里的旧脚本跑新页面（画面上就
      会出现「说明写了电子逆流、小球却还顺着流」这种自相矛盾）。改脚本时
      把这个 build 号 +1 即可。 -->
-<script src="circuit-core.js?build=6"></script>
-<script src="circuit-draw.js?build=6"></script>
-<script src="circuit-editor.js?build=6"></script>
+<script src="circuit-core.js?build=7"></script>
+<script src="circuit-draw.js?build=7"></script>
+<script src="circuit-editor.js?build=7"></script>
 <script>
 // ---- 访问保护：仅允许站内跳转（与站内其它实验页一致）----
 (function(){
@@ -134,11 +167,15 @@ var ctx = canvas.getContext('2d');
 var scene = { comps: [], wires: [] };
 var results = null, flows = [], phase = 0;
 
-// 电子流动动画开关。上课讲解时可以关掉——静态图更容易指着某一段说电流走向，
-// 粒子一直在跑反而分散注意力。选择记在 localStorage 里，下次打开保持。
+// 两个动画开关，各自独立：电子流动（琥珀色小球）和电流方向（红色箭头）。
+// 上课讲解时可以都关掉——静态图更容易指着某一段说走向，粒子一直在跑反而分散注意力。
+// 但两个【同时开】是有用的：同一条导线上小球和箭头反向走，「电流方向与电子
+// 定向移动方向相反」这句话就不用讲了，看一眼就明白。选择记在 localStorage。
 var FLOW_KEY = 'circuit_sandbox_flow';
-var showFlow = true;
+var CUR_KEY = 'circuit_sandbox_current';
+var showFlow = true, showCurrent = false;
 try { showFlow = localStorage.getItem(FLOW_KEY) !== '0'; } catch (e) {}
+try { showCurrent = localStorage.getItem(CUR_KEY) === '1'; } catch (e) {}
 
 function w(a, ai, b, bi, via, auto){
   return { a:{compId:a,termIdx:ai}, b:{compId:b,termIdx:bi}, via:via||[], auto:auto !== false };
@@ -264,9 +301,10 @@ function drawFrame(){
   ctx.drawImage(bgLayer, 0, 0, W, H);
   if (results) {
     scene.wires.forEach(function(wr,i){
-      // phase 直接传秒数，由 drawWire 换算成像素行程；
-      // 关掉动画时传 null，drawWire 就不画粒子。
-      D.drawWire(ctx, pathOf(wr), { flow: flows[i], phase: showFlow ? phase : null });
+      // phase 直接传秒数，由 drawWire 换算成像素行程；两个开关都关时传 null，
+      // drawWire 就不画任何东西。current 只决定画不画箭头，小球照旧。
+      D.drawWire(ctx, pathOf(wr), { flow: flows[i], phase: (showFlow || showCurrent) ? phase : null,
+                                    electrons: showFlow, current: showCurrent });
     });
     ctx.drawImage(fgLayer, 0, 0, W, H);
   }
@@ -277,8 +315,8 @@ var lastT = 0;
 function tick(t){
   var dt = lastT ? Math.min((t - lastT)/1000, 0.06) : 0;
   lastT = t;
-  // 关掉电子动画就完全空转：画面是静止的，只在编辑操作时重绘。
-  if (!showFlow) { requestAnimationFrame(tick); return; }
+  // 两个动画都关就完全空转：画面是静止的，只在编辑操作时重绘。
+  if (!showFlow && !showCurrent) { requestAnimationFrame(tick); return; }
   if (results && results.status === 'ok') phase += dt;
   drawFrame();
   requestAnimationFrame(tick);
@@ -450,6 +488,7 @@ function render(){
   drawFrame();
   updateSide();
   renderParams(editor ? editor.getSelected() : null);
+  refreshZoom();          // 放大镜开着的时候，读数跟着一起重算（键盘改接法也能跟上）
 }
 // 参数面板里改滑片时不要每帧重建面板（会把正在拖的滑块抽掉）
 function renderSoft(){
@@ -459,6 +498,7 @@ function renderSoft(){
   updateSide();
   syncSlidePanel();
   syncRangePanel();
+  refreshZoom();
 }
 
 // 电表量程按钮亮哪一挡，取决于【线接在哪个量程柱上】——而接线是可以在画布上
@@ -511,7 +551,91 @@ editor = E.create({
   getScene: function(){ return scene; },
   onChange: renderSoft,
   onSelect: onSelChanged,
+  // 单击（按下到松开没拖动）落在电表表壳上 → 放大表盘。
+  // 拖动过的不算：那是搬元件，不该顺手弹一个浮层出来。
+  onTap: function(c, p){
+    if (c.type !== 'ammeter' && c.type !== 'voltmeter') return;
+    var l = D.toLocal(c, p.x, p.y);
+    if (dialHit(l.x, l.y)) openZoom(c);
+  },
 });
+
+// ── 表盘放大镜 ────────────────────────────────────────────
+// 点表壳上任何地方（接线柱除外）就把【这一只表】按 K 倍重画到浮层里。
+// 关键：重画的还是同一个 D.drawComponent、同一份求解结果 rec，
+// 所以放大镜里的指针位置和画布上那只表分毫不差——另画一套「大表盘」
+// 迟早会跟真表画歪，那时放大的就是个假读数。
+var ZBOX = { x: -100, y: -90, w: 200, h: 154 };   // 电表外壳+底座的外接框（元件局部坐标）
+var zoomEl = document.getElementById('zoom');
+var zoomCv = document.getElementById('zoomCanvas');
+var zoomTitle = document.getElementById('zoomTitle');
+var zoomRead = document.getElementById('zoomRead');
+var zoomRange = document.getElementById('zoomRange');
+var zoomComp = null;                              // 正在放大的元件（null = 没开）
+
+// 表盘的可点区域 = 表壳 + 底座正面：横向 ±96，纵向从表壳顶 −88 到底座 46。
+// 【不能】一直管到接线柱（局部 y = 72）：那两根柱子得留给拖线用，
+// 点柱子应该拉出一根导线，而不是弹放大镜。
+function dialHit(lx, ly){ return Math.abs(lx) <= 96 && ly >= -88 && ly <= 46; }
+
+function openZoom(c){
+  if (!c || (c.type !== 'ammeter' && c.type !== 'voltmeter')) return;
+  if (!results || !results.components || !results.components[c.id]) return;
+  zoomComp = c;
+  zoomTitle.textContent = (TYPE_LABEL[c.type] || '电表') + '　放大读数';
+  zoomEl.hidden = false;
+  drawZoom();
+}
+function closeZoom(){ zoomComp = null; zoomEl.hidden = true; }
+
+function drawZoom(){
+  if (!zoomComp) return;
+  var rec = results && results.components[zoomComp.id];
+  if (!rec) { closeZoom(); return; }             // 元件被删了，浮层自己收掉
+  // K 按视口算：手机上要放得下，桌面上也别把小表拉成一片糊掉的大色块。
+  var K = Math.min((Math.min(window.innerWidth - 72, 680)) / ZBOX.w,
+                   (window.innerHeight - 190) / ZBOX.h);
+  K = Math.max(1.4, Math.min(K, 3.4));
+  var cw = Math.round(ZBOX.w * K), ch = Math.round(ZBOX.h * K);
+  var dpr = window.devicePixelRatio || 1;
+  if (zoomCv.width !== Math.round(cw*dpr) || zoomCv.height !== Math.round(ch*dpr)) {
+    zoomCv.width = Math.round(cw*dpr); zoomCv.height = Math.round(ch*dpr);
+  }
+  zoomCv.style.width = cw + 'px'; zoomCv.style.height = ch + 'px';
+  var g = zoomCv.getContext('2d');
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, cw, ch);
+  g.fillStyle = '#ffffff'; g.fillRect(0, 0, cw, ch);   // 表盘放大后要读刻度，底色给白的
+  g.save();
+  g.translate(cw/2, ch/2);
+  g.scale(K, K);
+  g.translate(-(ZBOX.x + ZBOX.w/2), -(ZBOX.y + ZBOX.h/2));
+  // rot 一律 0：横着接的表也正着读。放大镜是给学生【读数】用的，
+  // 不是给他看这表在画布上朝哪边——斜着放大出来的数字照样没法读。
+  D.drawComponent(g, { id: zoomComp.id, type: zoomComp.type, x: 0, y: 0, rot: 0,
+                       params: zoomComp.params }, rec);
+  g.restore();
+  // 下面这行字和画布上的读数框共用 readoutLines()：反接时画布写「指针反偏」，
+  // 放大镜里也必须一样，不能这边照旧印一个数字出来。
+  zoomRead.textContent = (readoutLines(zoomComp, rec) || []).join('　·　');
+  // 量程单独一格：它是「线接在哪个柱上」的信息，跟能不能读数无关，
+  // 接反时照印——那时学生更该看清指针到底顶在哪一挡的零刻度左边。
+  zoomRange.textContent = rec.rangeWired
+    ? ('量程 ' + rec.range + (zoomComp.type === 'ammeter' ? 'A' : 'V')) : '未接量程柱';
+}
+function refreshZoom(){ if (zoomComp) drawZoom(); }
+
+document.getElementById('zoomX').onclick = closeZoom;
+zoomEl.addEventListener('pointerdown', function(ev){
+  if (ev.target === zoomEl) closeZoom();         // 点浮层背景关掉，点白盒子里面不关
+});
+window.addEventListener('keydown', function(ev){
+  if (!zoomComp) return;
+  if (ev.key === 'Escape' || ev.key === 'Esc') {
+    closeZoom();
+    ev.stopPropagation();                        // 别让编辑器再吃一次 Esc 去清选中
+  }
+}, true);                                        // 捕获阶段：抢在编辑器的 window 监听前面
 
 // 元件栏
 var PAL = ['battery','switch','resistor','rheostat','bulb','ammeter','voltmeter'];
@@ -549,16 +673,28 @@ toolBtn('示例电路', function(){
   editor.pushUndo(); seed(); editor.select(null); render();
 });
 
-// ── 电子流动动画开关 ──────────────────────────────────────
-var btnFlow = toolBtn('', function(){ setFlow(!showFlow); });
-function setFlow(on){
-  showFlow = !!on;
-  btnFlow.textContent = showFlow ? '⚡ 电子流动：开' : '⚡ 电子流动：关';
-  btnFlow.className = showFlow ? 'on' : 'off';
-  try { localStorage.setItem(FLOW_KEY, showFlow ? '1' : '0'); } catch (e) {}
-  drawFrame();                       // 关了要立刻把粒子擦掉，开了要立刻画出来
+// ── 两个动画开关 ──────────────────────────────────────────
+// 各自一个按钮、各自可开可关，两个同时开也允许：那时同一条导线上
+// 琥珀色小球和红色箭头对着走，「电子定向移动方向与电流方向相反」不用讲。
+// 做成「三态循环按钮」就买不到这个对比了，所以是两个独立按钮。
+function animToggle(label, key, initial, apply){
+  var on = initial;
+  var btn = toolBtn('', function(){ set(!on); });
+  function set(v){
+    on = !!v;
+    btn.textContent = label + '：' + (on ? '开' : '关');
+    btn.className = on ? 'on' : 'off';
+    try { localStorage.setItem(key, on ? '1' : '0'); } catch (e) {}
+    apply(on);
+    drawFrame();          // 关了要立刻把粒子擦掉，开了要立刻画出来
+  }
+  set(on);
+  return { btn: btn, set: set, isOn: function(){ return on; } };
 }
-setFlow(showFlow);
+var flowAnim = animToggle('⚡ 电子流动', FLOW_KEY, showFlow, function(v){ showFlow = v; });
+var curAnim  = animToggle('➡ 电流方向', CUR_KEY, showCurrent, function(v){ showCurrent = v; });
+var btnFlow = flowAnim.btn, btnCurrent = curAnim.btn;
+var setFlow = flowAnim.set, setCurrent = curAnim.set;
 
 seed();
 layout();
@@ -573,6 +709,24 @@ window.__flows = function(){ return flows.slice(); };
 window.__editor = function(){ return editor; };
 window.__showFlow = function(){ return showFlow; };
 window.__setFlow = function(v){ setFlow(v); };
+window.__showCurrent = function(){ return showCurrent; };
+window.__setCurrent = function(v){ setCurrent(v); };
+// 放大镜：测试要能问「现在开着没」「开的是哪只表」「浮层的字写了什么」，
+// 还得能在不点鼠标的情况下直接开一只表（点表盘那一路另有 pixel 断言守着）。
+window.__zoom = function(){
+  return { open: !!zoomComp, id: zoomComp ? zoomComp.id : null,
+           type: zoomComp ? zoomComp.type : null,
+           read: zoomRead.textContent, range: zoomRange.textContent,
+           foot: zoomRead.textContent + ' ' + zoomRange.textContent,
+           w: zoomCv.width, h: zoomCv.height };
+};
+window.__openZoom = function(id){
+  var c = scene.comps.filter(function(x){ return x.id === id; })[0];
+  if (c) openZoom(c);
+};
+window.__closeZoom = function(){ closeZoom(); };
+window.__dialHit = function(lx, ly){ return dialHit(lx, ly); };
+window.__btnCurrent = function(){ return btnCurrent; };
 window.__pathOf = function(wr){ return pathOf(wr); };
 window.__readout = function(c, r){ return readoutLines(c, r); };
 window.__btnFlow = function(){ return btnFlow; };
