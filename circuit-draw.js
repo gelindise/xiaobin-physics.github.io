@@ -151,11 +151,16 @@
   // 处离竖直只有 0.34r 的横向偏移，r 不够大时它们会挤到中线上，把「A」
   // 压掉。要对上教材的排布，弧半径得 60 上下，表盘就得 150 宽。
   var MET = {
-    CASE_HW: 88, CASE_TOP: -70, CASE_BOT: 42,       // 表壳（浅色胶木，上沿大圆角）
-    DIAL: { x: -76, y: -56, w: 152, h: 90 },        // 白色表盘
+    CASE_HW: 88, CASE_TOP: -86, CASE_BOT: 42,       // 表壳（浅色胶木，上沿大圆角）
+    // 表盘比上一版高了 16：大量程的数字要挪到刻度弧【外面】（真表就是这个排布），
+    // 弧的半径一动，两排数字就全挤到「A」字上——所以是往上长表壳，不是缩弧。
+    DIAL: { x: -76, y: -72, w: 152, h: 106 },       // 白色表盘
     PIVOT: { x: 0, y: 10 },                         // 指针转轴
     RT0: 50, RT1: 62,                               // 刻度线内 / 外半径
-    RN_HI: 44, RN_LO: 34,                           // 外圈 / 内圈数字半径
+    // 刻度的两排数字：大量程在弧线【外】（表盘上方），小量程在弧线【内】。
+    // 真表（J0407）就是这么印的：读数先看零刻度在哪一排，两排一上一下不会看串。
+    // 上一版两排都塞在弧线里面，大数字只是半径大一点，和「上面 / 下面」不是一回事。
+    RN_HI: 73, RN_LO: 38,                           // 弧外（大量程）/ 弧内（小量程）数字半径
     BLOCK: { top: 4, bot: 34, hwT: 24, hwB: 34 },   // 底部网纹块（梯形）
     ZERO: { x: 0, y: 26, r: 6.5 },                  // 调零螺丝
     BASE_HW: 96, BASE_TOP: 42, BASE_BOT: 60,        // 底座（比表壳宽一圈）
@@ -484,8 +489,11 @@
       case 'bulb': return { hw: 70, hh: 74 };            // 底板 ±70，玻璃泡顶 y = −71.5
       // 表头：整台仪器的包围盒（表壳 + 底座）。接线柱在 POST_Y，
       // 故意落在盒子【外面】——导线夹在柱子上，不该被当成穿体。
+      // 所以 hh 有【上限 70】：表壳为了放下大量程那排数字往上长到了 −86（见 MET），
+      // 但盒子不能跟着长——一过 75，接线柱（POST_Y = 72）就被圈回盒子里，
+      // 挂着导线的柱子会被判成「导线穿过表体」。盒子比表壳矮一截是有意的。
       case 'ammeter': case 'voltmeter':
-        return { hw: MET.BASE_HW + 4, hh: -MET.CASE_TOP };
+        return { hw: MET.BASE_HW + 4, hh: Math.min(-MET.CASE_TOP, 70) };
       case 'rheostat': return { hw: RHEO.BW / 2, hh: RHEO.BH / 2 }; // 含陶瓷管与滑片杆
       default: return { hw: 54, hh: 20 };                // 定值电阻 BW/BH = 108/40
     }
@@ -705,10 +713,15 @@
   }
 
   // ============================================================
-  // 闸刀开关（人教版实物：右边铰链、左边手柄，刀片往左上方抬起）
+  // 闸刀开关（人教版实物：左边铰链、右边手柄，刀片往右上方抬起）
   // ------------------------------------------------------------
-  // 手柄在【左】、铰链在【右】，和参考图一致；以前是反的（绕左端转、
-  // 手柄在右），看着像个船桨而不是闸刀。
+  // 手柄在【右】、铰链在【左】。教材实物图里手柄在左，这里按用户要求照
+  // 课本实验图的方向摆：断开时刀片从右边扬起来，闭上时往右压下去，
+  // 和「向左下方合闸」讲的是同一件事，但和多数教材插图的朝向一致。
+  // 改朝的时候 x 全部取反：转轴 −46、静触点 +28、刀片朝 +x 伸、手柄在
+  // 最外侧（本体 +81~+110）；刀片长度、柱高、底板一个字没动。
+  // 抬起/压下的角度也要一起取反——canvas 的正角是顺时针，刀片伸向 +x 时
+  // 要 θ<0 才是「抬起来」，沿用原来的 +0.28 会画成往板子里扎下去。
   // ============================================================
   function drawSwitch(ctx, comp, rec) {
     var closed = rec ? rec.closed : !!(comp.params && comp.params.closed);
@@ -724,7 +737,7 @@
     // 在 translate(comp.x, comp.y) 还没退出的上下文里调它，等于平移叠了两遍
     // ——沙盒里开关在 x=560，柱子就被画到 1120 去，屏幕上整个消失（离屏工具
     // 把元件摆在原点，所以那里一直看着是好的，这个错很难在单件特写里发现）。
-    // 刀片和手柄要从柱子【上面】掠过：手柄在本体 x −110~−81、左柱在 −70，
+    // 刀片和手柄要从柱子【上面】掠过：手柄在本体 x +81~+110、右柱在 +70，
     // 屏幕上必然重叠。柱子后画就压在刀片上，像刀片从柱子背后钻出来；
     // 先画才是「刀片从柱子上方越过」，和实物一致。
     // 柱高 1.4 倍、8 的螺杆（教材实物：闸刀开关的接线柱立在板面上很显眼）。
@@ -741,11 +754,13 @@
     // 转轴高度也是量出来的：参考图里刀片轴只比底板顶面高一点点（刀片是真的
     // 搭在板面上，不是举在半空）。原来 y=−34 高了 14，整把开关像一只翘着的
     // 船桨——断开时手柄顶到 104，实物只到 92。
-    var PIV = { x: 46, y: -27 };              // 铰链转轴
+    var PIV = { x: -46, y: -27 };             // 铰链转轴（在左）
     var BLADE_HT = 7.5;                       // 刀片半厚（教材图里刀片是厚实的一条）
-    var CONTACT_TOP = PIV.y + BLADE_HT, CONTACT_HW = 12, CONTACT_X = -28;
-    // 静触点偏左（教材图里它落在底板左起约三成处），不是压在正中间——
+    var CONTACT_TOP = PIV.y + BLADE_HT, CONTACT_HW = 12, CONTACT_X = 28;
+    // 静触点偏右（教材图里它落在底板右起约三成处），不是压在正中间——
     // 摆正中间整台开关像天平，也挡住了「闭合 / 断开」四个字。
+    // 渐变的两端是【绝对坐标】，镜像时元宝不镜像光：全站光源都在左上，
+    // 跟着形状一起翻的话，右半边的金属件会变成右上打光，一眼看去是两个方向。
     ctx.fillStyle = linGrad(ctx, CONTACT_X - CONTACT_HW, 0, CONTACT_X + CONTACT_HW, 0,
       [[0, '#f2f6fa'], [0.30, PALETTE.metal], [0.68, PALETTE.metalLo], [1, PALETTE.metalDark]]);
     roundRect(ctx, CONTACT_X - CONTACT_HW, CONTACT_TOP, CONTACT_HW * 2, PLATE.TOP - CONTACT_TOP, 2.5);
@@ -754,35 +769,34 @@
     ctx.fillStyle = 'rgba(40,52,68,0.45)';                      // 顶上那道夹线槽
     roundRect(ctx, CONTACT_X - CONTACT_HW, CONTACT_TOP + 1.4, CONTACT_HW * 2, 2.6, 1.3); ctx.fill();
 
-    // 铰链支架：比静触点高一截，转轴就在它的上部
-    ctx.fillStyle = linGrad(ctx, 35, 0, 55, 0,
+    // 铰链支架：比静触点高一截，转轴就在它的上部（同样保持左亮右暗）
+    ctx.fillStyle = linGrad(ctx, -55, 0, -35, 0,
       [[0, '#f2f6fa'], [0.30, PALETTE.metal], [0.68, PALETTE.metalLo], [1, PALETTE.metalDark]]);
-    roundRect(ctx, 35, PIV.y - 7, 20, PLATE.TOP - (PIV.y - 7), 2.5); ctx.fill();
+    roundRect(ctx, -55, PIV.y - 7, 20, PLATE.TOP - (PIV.y - 7), 2.5); ctx.fill();
     ctx.strokeStyle = 'rgba(60,72,88,0.55)'; ctx.lineWidth = 1; ctx.stroke();
 
-    // 刀片：绕右端转轴转。断开抬起约 20°（再高就像旗子，再低看不出断开）。
-    // 闭合时压到 −0.02：不能是 0，0 画出来像浮着，微微压下才有「压住触点」的意思。
-    // 长度：从转轴一直伸到【左接线柱之外】（局部 −127 = 本体 −81），静触点
-    // 在 −28 只是垫在刀片中段下面。
-    // 手柄原来卡在 −144~−96（本体 −98~−50），正好压在左接线柱（−70）头上——
-    // 屏幕上就是手柄盖住柱帽、导线从这个「柱子」上长出来。教材实物里手柄是
-    // 【在外侧、越过接线柱的】：手柄内端要比柱心再往外 11。
-    // 所以刀片放长到 −127（本体 −81），手柄跟着挪到外侧。
+    // 刀片：绕左端转轴转。断开抬起约 20°（再高就像旗子，再低看不出断开）。
+    // 闭合时压到 +0.02：不能是 0，0 画出来像浮着，微微压下才有「压住触点」的意思。
+    // 角度取反的原因见函数头：刀片现在伸向 +x，正角是顺时针，正角才是往下压。
+    // 长度：从转轴一直伸到【右接线柱之外】（局部 +127 = 本体 +81），静触点
+    // 在 +28 只是垫在刀片中段下面。
+    // 手柄不能压在接线柱（+70）头上——教材实物里手柄是【在外侧、越过接线柱的】：
+    // 手柄内端要比柱心再往外 11，所以刀片伸到 +127、手柄跟在 +127~+156。
     ctx.save();
     ctx.translate(PIV.x, PIV.y);
-    ctx.rotate(closed ? -0.02 : 0.28);
+    ctx.rotate(closed ? 0.02 : -0.28);
     ctx.fillStyle = linGrad(ctx, 0, -BLADE_HT, 0, BLADE_HT,
       [[0, '#ffffff'], [0.3, PALETTE.metalHi], [0.7, PALETTE.metal], [1, PALETTE.metalDark]]);
-    roundRect(ctx, -127, -BLADE_HT, 127, BLADE_HT * 2, 3); ctx.fill();
+    roundRect(ctx, 0, -BLADE_HT, 127, BLADE_HT * 2, 3); ctx.fill();
     ctx.strokeStyle = 'rgba(60,72,88,0.45)'; ctx.lineWidth = 0.9; ctx.stroke();
     // 绝缘手柄：刀片末端的灰色套筒（实物是胶木的，不是红的——红的在参考图里
     // 只有接线柱，手柄跟着红会让学生以为那是带电的一端）
     ctx.fillStyle = linGrad(ctx, 0, -11, 0, 11,
       [[0, '#e6ebf1'], [0.35, '#c3ccd8'], [0.75, '#98a6b7'], [1, '#7d8c9d']]);
-    roundRect(ctx, -156, -11, 29, 22, 8); ctx.fill();
+    roundRect(ctx, 127, -11, 29, 22, 8); ctx.fill();
     ctx.strokeStyle = 'rgba(60,72,88,0.5)'; ctx.lineWidth = 1; ctx.stroke();
     ctx.fillStyle = 'rgba(255,255,255,0.38)';
-    roundRect(ctx, -151, -7, 21, 5, 2.5); ctx.fill();
+    roundRect(ctx, 132, -7, 21, 5, 2.5); ctx.fill();
     ctx.restore();
 
     // 转轴销（黄铜）
@@ -997,14 +1011,20 @@
     ctx.strokeStyle = 'rgba(100,116,139,0.45)'; ctx.lineWidth = 1; ctx.stroke();
 
     // ── 刻度弧 ──────────────────────────────────────────────
-    // 大格 6 段（0.5A / 3V 一格），每大格 5 小格。两排数字共用这条弧。
-    var MAJOR = 6, MINOR = 5, total = MAJOR * MINOR, i;
+    // 三档线长，和真表一致：
+    //   大格（带数字）3 段 × 每段 10 小格 —— 0.6A 量程一大格 0.2A、小格 0.02A；
+    //   3A 量程共用同一条弧，一大格 1A、小格 0.1A（两排数字正好落在同一批长线上）。
+    //   大格【中点】的线短一截（8/12），其余小格再短（5/12）——
+    //   上一版把中点也画成大格那么长，一条弧上就多出三根没有数字的长线，
+    //   看着像刻度印漏了，读数时也分不清哪根才是大格。
+    var MAJOR = 3, MINOR = 10, total = MAJOR * MINOR, i;
     for (i = 0; i <= total; i++) {
       var a = SW.A0 + (SW.A1 - SW.A0) * (i / total);
-      var isMajor = (i % MINOR === 0);
-      var r1 = M.RT1, r0 = M.RT1 - (isMajor ? 12 : 6);
+      var step = i % MINOR;                       // 0 = 带数字的大格
+      var isMajor = (step === 0), isHalf = (step === MINOR / 2);
+      var r1 = M.RT1, r0 = M.RT1 - (isMajor ? 12 : (isHalf ? 8 : 5));
       ctx.strokeStyle = isMajor ? '#1f2937' : '#94a3b8';
-      ctx.lineWidth = isMajor ? 1.8 : 0.9;
+      ctx.lineWidth = isMajor ? 1.8 : (isHalf ? 1.2 : 0.9);
       ctx.beginPath();
       ctx.moveTo(M.PIVOT.x + Math.cos(a) * r0, M.PIVOT.y + Math.sin(a) * r0);
       ctx.lineTo(M.PIVOT.x + Math.cos(a) * r1, M.PIVOT.y + Math.sin(a) * r1);
