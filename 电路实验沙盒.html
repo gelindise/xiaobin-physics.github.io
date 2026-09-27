@@ -105,9 +105,9 @@
      改了内核而 HTML 没变的话，老访客会拿缓存里的旧脚本跑新页面（画面上就
      会出现「说明写了电子逆流、小球却还顺着流」这种自相矛盾）。改脚本时
      把这个 build 号 +1 即可。 -->
-<script src="circuit-core.js?build=5"></script>
-<script src="circuit-draw.js?build=5"></script>
-<script src="circuit-editor.js?build=5"></script>
+<script src="circuit-core.js?build=6"></script>
+<script src="circuit-draw.js?build=6"></script>
+<script src="circuit-editor.js?build=6"></script>
 <script>
 // ---- 访问保护：仅允许站内跳转（与站内其它实验页一致）----
 (function(){
@@ -190,6 +190,36 @@ function bh0(n){ return n*18 + 8; }
 // 铺到导线下方 y=+30 的底板，所以从 30/32 提到 38，不然读数框会压在板上。
 var DROP = {battery:40, ammeter:80, voltmeter:80, resistor:22, bulb:38, rheostat:46, switch:38};
 
+// 元件旁边那个读数框里写哪几行，返回 null 表示这个元件不飘框（开关写在底座上了）。
+// 单独抽成函数是为了让测试能直接断言文字：反接这种「读数框里该写什么」的判断
+// 混在画框的循环里，只能靠截图像素去猜，改一个字都验不出来。
+function readoutLines(c, r){
+  var lines = [];
+  if (c.type === 'switch') return null;   // 通断状态已经写在底座上，别再飘一个框
+  if (c.type === 'rheostat') {
+    lines.push('R = ' + (r.rUsed == null ? '—' : r.rUsed.toFixed(1)) + 'Ω');
+    lines.push('I = ' + Math.abs(r.i).toFixed(3) + 'A');
+  } else if (c.type === 'ammeter' || c.type === 'voltmeter') {
+    // 正负接线柱接反：指针顶在左边的限位钉上，表盘上根本没有刻度可读。
+    // 这里要是照 |reading| 印一个正数（以前就是这么写的），学生会把一个
+    // 无效读数当成有效数据抄进实验报告——反接最该教的正是「这一格读不了」。
+    if (r.reversed) { lines.push('指针反偏'); lines.push('读不出数'); }
+    else lines.push((c.type === 'ammeter' ? 'I = ' : 'U = ') + Math.abs(r.reading).toFixed(3) +
+               (c.type === 'ammeter' ? 'A' : 'V'));
+    // 量程柱没接线时表根本不在电路里，读数恒为 0。不写一句的话，
+    // 学生只会以为「这条支路没电流」，其实是自己少接了一根线。
+    if (!r.rangeWired) lines.push('量程柱没接线');
+  } else if (c.type === 'battery') {
+    lines.push('E = ' + r.emf.toFixed(1) + 'V');
+    lines.push('U = ' + Math.abs(r.v).toFixed(2) + 'V');
+  } else {
+    lines.push('R = ' + (r.R || 0).toFixed(1) + 'Ω');
+    lines.push('U = ' + Math.abs(r.v).toFixed(2) + 'V');
+    lines.push('I = ' + Math.abs(r.i).toFixed(3) + 'A');
+  }
+  return lines;
+}
+
 function drawForeground(){
   var f = fgLayer.getContext('2d');
   f.clearRect(0,0,W,H);
@@ -198,25 +228,8 @@ function drawForeground(){
   scene.comps.forEach(function(c){ D.drawComponent(f, c, recs[c.id]); });
   scene.comps.forEach(function(c){
     var r = recs[c.id]; if (!r) return;
-    var lines = [];
-    if (c.type === 'switch') return;   // 通断状态已经写在底座上，别再飘一个框
-    if (c.type === 'rheostat') {
-      lines.push('R = ' + (r.rUsed == null ? '—' : r.rUsed.toFixed(1)) + 'Ω');
-      lines.push('I = ' + Math.abs(r.i).toFixed(3) + 'A');
-    } else if (c.type === 'ammeter' || c.type === 'voltmeter') {
-      lines.push((c.type === 'ammeter' ? 'I = ' : 'U = ') + Math.abs(r.reading).toFixed(3) +
-                 (c.type === 'ammeter' ? 'A' : 'V'));
-      // 量程柱没接线时表根本不在电路里，读数恒为 0。不写一句的话，
-      // 学生只会以为「这条支路没电流」，其实是自己少接了一根线。
-      if (!r.rangeWired) lines.push('量程柱没接线');
-    } else if (c.type === 'battery') {
-      lines.push('E = ' + r.emf.toFixed(1) + 'V');
-      lines.push('U = ' + Math.abs(r.v).toFixed(2) + 'V');
-    } else {
-      lines.push('R = ' + (r.R || 0).toFixed(1) + 'Ω');
-      lines.push('U = ' + Math.abs(r.v).toFixed(2) + 'V');
-      lines.push('I = ' + Math.abs(r.i).toFixed(3) + 'A');
-    }
+    var lines = readoutLines(c, r);
+    if (!lines) return;
     var bx = c.x, by;
     if (c.rot === 90 || c.rot === 270) { bx = c.x + 86; by = c.y - (lines.length-1)*8; }
     else by = c.y + (DROP[c.type] || 24) + 8 + bh0(lines.length)/2;
@@ -561,6 +574,7 @@ window.__editor = function(){ return editor; };
 window.__showFlow = function(){ return showFlow; };
 window.__setFlow = function(v){ setFlow(v); };
 window.__pathOf = function(wr){ return pathOf(wr); };
+window.__readout = function(c, r){ return readoutLines(c, r); };
 window.__btnFlow = function(){ return btnFlow; };
 })();
 </script>

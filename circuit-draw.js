@@ -973,6 +973,9 @@
     var M = MET, SW = MET_SWEEP;
     var reading = rec ? (rec.reading || 0) : 0;
     var range = (rec && rec.range) || (comp.params && comp.params.range) || (isVolt ? 3 : 0.6);
+    // 反接：接线柱正负接反，电流从「−」柱流进，指针往【左】打。取 rec.reading 的
+    // 符号而不是 rec.reversed——离屏工具（dev-crop 之类）手搓的 rec 里没有那个字段。
+    var rev = reading < -1e-9;
     var over = !!(rec && rec.overRange);
     var POSTX = [TERMINALS[comp.type][0].x, TERMINALS[comp.type][1].x, TERMINALS[comp.type][2].x];
     // 两排刻度各自的满量程：外圈大、内圈小，比值恒为 5
@@ -1074,17 +1077,23 @@
 
     // ── 指针 ────────────────────────────────────────────────
     // 偏转量按【当前量程】算：同一个 0.3A，接 0.6 柱指半偏、接 3 柱指 10% 处。
-    var frac = Math.max(0, Math.min(Math.abs(reading) / (range || 1), 1.06));
+    var mag = Math.min(Math.abs(reading) / (range || 1), 1.06);
+    // 反接时**不按比例往左画**：真表的指针这时候会一直顶到左边的限位钉上，
+    // 电流再大也停在零刻度左边那一点点——那个位置根本没有刻度，所以「读不出数」。
+    // 按比例镜像（−0.3A 画成 0.3A 的镜像）会落在弧上、指着 0.3 那条线，
+    // 看着像是能读的，正好把这个知识点教反了。
+    var frac = rev ? -0.085 : mag;
     var na = SW.A0 + (SW.A1 - SW.A0) * frac;
+    var alert = over || rev;                       // 超量程 / 反接都用红针
     ctx.save();
     ctx.translate(M.PIVOT.x, M.PIVOT.y);
     ctx.rotate(na);
     ctx.lineCap = 'round';
     ctx.strokeStyle = 'rgba(15,23,42,0.18)'; ctx.lineWidth = 3.4;
     ctx.beginPath(); ctx.moveTo(-8, 1.6); ctx.lineTo(M.RT1 - 14, 1.6); ctx.stroke();
-    ctx.strokeStyle = over ? '#b91c1c' : '#111827'; ctx.lineWidth = 2.2;
+    ctx.strokeStyle = alert ? '#b91c1c' : '#111827'; ctx.lineWidth = 2.2;
     ctx.beginPath(); ctx.moveTo(-8, 0); ctx.lineTo(M.RT1 - 14, 0); ctx.stroke();
-    ctx.fillStyle = over ? '#b91c1c' : '#111827';
+    ctx.fillStyle = alert ? '#b91c1c' : '#111827';
     ctx.beginPath();
     ctx.moveTo(M.RT0 + 2, 0);
     ctx.lineTo(M.RT0 - 6, -2.8);
