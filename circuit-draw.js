@@ -75,7 +75,15 @@
 
   function linGrad(ctx, x0, y0, x1, y1, stops) {
     var g = ctx.createLinearGradient(x0, y0, x1, y1);
-    for (var i = 0; i < stops.length; i++) g.addColorStop(stops[i][0], stops[i][1]);
+    for (var i = 0; i < stops.length; i++) {
+      // 色标写错（漏了偏移量、把颜色怼到第一位）时，Canvas 只抛
+      // 「non-finite double」——看不出是哪个元件哪一行，只能挨个猜。
+      // 这里直接把坏掉的那个色标报出来。
+      if (stops[i].length !== 2 || !Number.isFinite(stops[i][0]) || typeof stops[i][1] !== 'string') {
+        throw new Error('linGrad 色标 #' + i + ' 格式错误（应为 [偏移, 颜色]）: ' + JSON.stringify(stops[i]));
+      }
+      g.addColorStop(stops[i][0], stops[i][1]);
+    }
     return g;
   }
 
@@ -128,9 +136,40 @@
     var c = Math.cos(r), s = Math.sin(r);
     return { x: comp.x + lx * c - ly * s, y: comp.y + lx * s + ly * c };
   }
+  // toWorld 的逆变换。命中判断（拖滑片）拿鼠标点反推回元件自身坐标系用。
+  function toLocal(comp, x, y) {
+    var r = -(comp.rot || 0) * Math.PI / 180;
+    var c = Math.cos(r), s = Math.sin(r);
+    var dx = x - comp.x, dy = y - comp.y;
+    return { x: dx * c - dy * s, y: dx * s + dy * c };
+  }
   function terminalWorld(comp, i) {
     var t = TERMINALS[comp.type][i];
     return toWorld(comp, t.x, t.y);
+  }
+
+  // 滑动变阻器的几何。绘制和「拨滑片」的命中判断必须共用这一组数字——
+  // 各写一份迟早漂移成「看得见却拨不动」，或者拨的是空气。
+  var RHEO = {
+    BW: 156, BH: 58,
+    cylX: -60, cylY: 4, cylW: 120, cylH: 26,   // 绕线瓷管（电阻丝本体）
+    knobHalf: 14, knobTop: -38, knobBottom: -12,  // 滑片（骑在金属杆上）
+    track: 9,                                    // 滑片行程两端各留的余量
+    postX: 78, postY: 26,                        // C / D 接线柱的局部坐标
+  };
+  // 滑片位置 slide（0~1）→ 局部横坐标
+  function sliderLocalX(slide) {
+    return RHEO.cylX + RHEO.track + (RHEO.cylW - RHEO.track * 2) * slide;
+  }
+  // 局部横坐标 → slide（未截断，调用方负责夹到 0~1）
+  function slideFromLocalX(lx) {
+    return (lx - RHEO.cylX - RHEO.track) / (RHEO.cylW - RHEO.track * 2);
+  }
+  // slide 的取值：注意别写成 `params.slide || 0.5`，滑片在最左端时 0 会被吞掉
+  function slideOf(comp, rec) {
+    if (rec && rec.slide != null) return +rec.slide;
+    if (comp && comp.params && comp.params.slide != null) return +comp.params.slide;
+    return 0.5;
   }
 
   // ============================================================
@@ -713,8 +752,8 @@
   // 滑动变阻器
   // ============================================================
   function drawRheostat(ctx, comp, rec) {
-    var slide = rec ? rec.slide : ((comp.params && comp.params.slide) || 0.5);
-    var BW = 156, BH = 58;
+    var slide = slideOf(comp, rec);
+    var BW = RHEO.BW, BH = RHEO.BH;
     ctx.save();
     ctx.translate(comp.x, comp.y);
     ctx.rotate((comp.rot || 0) * Math.PI / 180);
@@ -740,7 +779,15 @@
     ctx.strokeStyle = 'rgba(100,116,139,0.5)'; ctx.lineWidth = 1; ctx.stroke();
 
     // 电阻丝绕线管
-    var cylX = -BW / 2 + 18, cylW = BW - 36, cylY = 4, cylH = 26;
+    var cylX = RHEO.cylX, cylW = RHEO.cylW, cylY = RHEO.cylY, cylH = RHEO.cylH;
+    // 「已接入」= 真正有电流的那一段，直接从解里读，不靠推断接法。
+    // （A-C 接法接入左半，A-D 接法接入右半，C-D 接法整根都接入——画错会直接教错。）
+    // 提前算出来是因为下面的引线也要跟着它区分明暗。
+    var liveL = true, liveR = true;
+    if (rec && rec.segments && rec.segments.length >= 2) {
+      liveL = Math.abs(rec.segments[0].i) > 1e-12;   // seg0 = C → 滑片
+      liveR = Math.abs(rec.segments[1].i) > 1e-12;   // seg1 = 滑片 → D
+    }
     ctx.save();
     ctx.shadowColor = 'rgba(15,23,42,0.18)'; ctx.shadowBlur = 10; ctx.shadowOffsetY = 3;
     ctx.fillStyle = linGrad(ctx, 0, cylY, 0, cylY + cylH,
@@ -751,11 +798,6 @@
     roundRect(ctx, cylX, cylY, cylW, cylH, 12); ctx.clip();
     // 「已接入」= 真正有电流的那一段，直接从解里读，不靠推断接法。
     // （A-C 接法接入左半，A-D 接法接入右半，C-D 接法整根都接入——画错会直接教错。）
-    var liveL = true, liveR = true;
-    if (rec && rec.segments && rec.segments.length >= 2) {
-      liveL = Math.abs(rec.segments[0].i) > 1e-12;   // seg0 = C → 滑片
-      liveR = Math.abs(rec.segments[1].i) > 1e-12;   // seg1 = 滑片 → D
-    }
     var segs = 44, step = cylW / segs;
     for (var i = 0; i < segs; i++) {
       var isLeft = (i / (segs - 1)) <= slide;
@@ -771,9 +813,26 @@
     ctx.strokeStyle = 'rgba(120,104,78,0.4)'; ctx.lineWidth = 1;
     roundRect(ctx, cylX, cylY, cylW, cylH, 12); ctx.stroke();
 
+    // 端环：箍住电阻丝两头的铜环，引线就是从这里出来的
+    [[cylX, liveL], [cylX + cylW - RHEO.track - 1, liveR]].forEach(function (cap) {
+      ctx.save();
+      ctx.globalAlpha = cap[1] ? 1 : 0.5;
+      ctx.fillStyle = linGrad(ctx, cap[0], 0, cap[0] + RHEO.track + 1, 0,
+        [[0, PALETTE.copperLo], [0.35, PALETTE.copperHi], [0.7, PALETTE.copper], [1, PALETTE.copperLo]]);
+      roundRect(ctx, cap[0], cylY - 3, RHEO.track + 1, cylH + 6, 3); ctx.fill();
+      ctx.restore();
+      ctx.strokeStyle = 'rgba(140,86,36,0.55)'; ctx.lineWidth = 1;
+      roundRect(ctx, cap[0], cylY - 3, RHEO.track + 1, cylH + 6, 3); ctx.stroke();
+    });
+    // 端环上的小螺钉：铜环靠它压住电阻丝，也是「这根丝到头了」的视觉句号
+    ctx.fillStyle = 'rgba(60,40,18,0.5)';
+    [cylX + (RHEO.track + 1) / 2, cylX + cylW - (RHEO.track + 1) / 2].forEach(function (cx2) {
+      ctx.beginPath(); ctx.arc(cx2, cylY + cylH / 2, 1.5, 0, 6.284); ctx.fill();
+    });
+
     // 滑块：坐在金属杆上，不要画成一根竖着的烟囱
-    var sx = cylX + 9 + (cylW - 18) * slide;
-    var slidTop = -BH / 2 - 9, slidH = 26;
+    var sx = sliderLocalX(slide);
+    var slidTop = RHEO.knobTop, slidH = RHEO.knobBottom - RHEO.knobTop;
     ctx.save();
     ctx.shadowColor = 'rgba(15,23,42,0.3)'; ctx.shadowBlur = 9; ctx.shadowOffsetY = 3;
     ctx.fillStyle = linGrad(ctx, sx - 14, 0, sx + 14, 0,
@@ -807,6 +866,55 @@
     ctx.restore();
 
     posts(ctx, comp, ['neutral', 'neutral', 'neutral', 'neutral']);
+
+    // 电阻丝两端引线：左端接 C（端子 2），右端接 D（端子 3）。
+    // 这两根铜片不能省——「下面两个柱出厂就接在电阻丝两头，滑片那根才要自己接」
+    // 正是学生最容易搞混的地方，不画出来等于让他自己猜哪根是滑片线。
+    //
+    // 画在接线柱【之后】：铜片压在柱面上，读起来就是「铜片用螺钉拧在柱子上」。
+    // 早先画在柱体之前，18px 的横段被柱子盖掉只剩 12px，加上和背后瓷柱同为银色，
+    // 整根引线基本看不见。所以这里三件事一起做：铜色、加暗色描边、盖在柱子上。
+    (function () {
+      var my = cylY + cylH / 2, py = RHEO.postY, px = RHEO.postX;
+      var capMid = (RHEO.track + 1) / 2;
+      // 起点写成绝对局部坐标，不要用 sgn 去乘 cylX 那一项：
+      // cylX 是 -60，sgn*(-60+5) 会得到 +55，左引线就从右端环出发了——
+      // 两根铜片于是连成一根横贯整机的铜条，正好压在电阻丝上。
+      var ENDS = [
+        { x0: cylX + capMid,          x1: -px, live: liveL },   // 左端环 → C
+        { x0: cylX + cylW - capMid,   x1:  px, live: liveR },   // 右端环 → D
+      ];
+      // 上面那一大段 save/restore 已经结束了，这里回到了画布坐标系，
+      // 而下面的坐标全是元件局部坐标——必须自己把变换重新架上，
+      // 否则引线会画到画布左上角去（接线柱走的是 terminalWorld，不受影响）。
+      ctx.save();
+      ctx.translate(comp.x, comp.y);
+      ctx.rotate((comp.rot || 0) * Math.PI / 180);
+      ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+      ENDS.forEach(function (e) {
+        ctx.globalAlpha = e.live ? 1 : 0.5;   // 没电流的那半根压暗，和电阻丝上的灰段呼应
+        var path = function () {
+          ctx.beginPath();
+          ctx.moveTo(e.x0, my);              // 从端环螺钉出发
+          ctx.lineTo(e.x1, my);
+          ctx.lineTo(e.x1, py);              // 落到接线柱中心
+        };
+        // 先描一圈暗铜色当轮廓。没有它的话，铜片压在柱面上会糊成一片高光。
+        ctx.strokeStyle = 'rgba(74,44,14,0.85)'; ctx.lineWidth = 7.6;
+        path(); ctx.stroke();
+        ctx.strokeStyle = linGrad(ctx, 0, my - 6, 0, py + 6,
+          [[0, PALETTE.copperHi], [0.5, PALETTE.copper], [1, PALETTE.copperLo]]);
+        ctx.lineWidth = 4.6;
+        path(); ctx.stroke();
+        // 末端的压接螺钉：拧在接线柱上的那一下
+        ctx.fillStyle = PALETTE.copperLo;
+        ctx.beginPath(); ctx.arc(e.x1, py, 2.6, 0, 6.284); ctx.fill();
+        ctx.fillStyle = 'rgba(255,235,205,0.75)';
+        ctx.beginPath(); ctx.arc(e.x1 - 0.7, py - 0.7, 1.1, 0, 6.284); ctx.fill();
+      });
+      ctx.globalAlpha = 1;
+      ctx.restore();
+    })();
   }
 
   // ============================================================
@@ -838,7 +946,9 @@
 
   return {
     PALETTE: PALETTE, HALF: HALF, TERMINALS: TERMINALS,
-    terminalWorld: terminalWorld, toWorld: toWorld,
+    terminalWorld: terminalWorld, toWorld: toWorld, toLocal: toLocal,
+    RHEO: RHEO, sliderLocalX: sliderLocalX, slideFromLocalX: slideFromLocalX,
+    slideOf: slideOf,
     drawComponent: drawComponent, drawWire: drawWire,
     drawBackground: drawBackground, drawBindingPost: drawBindingPost,
     resistorBands: resistorBands, roundRect: roundRect, softShadow: softShadow,

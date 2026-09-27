@@ -51,6 +51,7 @@
     var selected = null;      // {kind:'comp'|'wire', id} 或 {kind:'wire', index}
     var hover = null;         // {kind:'term', compId, termIdx} | {kind:'comp'|'wire', ...}
     var moving = null;        // 拖元件 {id, dx, dy}
+    var slider = null;        // 拨变阻器滑片 {id, moved}
     var wiring = null;        // 拉导线 {from:{compId,termIdx}, cur:{x,y}, to:{...}|null}
     var lastPointer = {x: 0, y: 0};
 
@@ -103,6 +104,32 @@
     function hitComp(p, c) {
       var h = bodyHalf(c);
       return Math.abs(p.x - c.x) <= h[0] + 4 && Math.abs(p.y - c.y) <= h[1] + 4;
+    }
+    // 变阻器滑片能不能一把抓住。几何全部从 D.RHEO 取，和绘制同源；
+    // 命中框比滑片本体放大一点（+6），不然 14px 宽的小凸起很难瞄准。
+    var KNOB_SLACK = 6;
+    function hitSlider(p) {
+      var cs = getScene().comps;
+      for (var i = cs.length - 1; i >= 0; i--) {
+        var c = cs[i];
+        if (c.type !== 'rheostat') continue;
+        var l = D.toLocal(c, p.x, p.y);
+        var sx = D.sliderLocalX(D.slideOf(c));
+        if (l.y >= D.RHEO.knobTop - KNOB_SLACK && l.y <= D.RHEO.knobBottom + KNOB_SLACK &&
+            Math.abs(l.x - sx) <= D.RHEO.knobHalf + KNOB_SLACK) return c;
+      }
+      return null;
+    }
+    // 滑片在元件自身坐标系里占的矩形，覆盖层画高亮时用
+    function knobRect(c) {
+      var sx = D.sliderLocalX(D.slideOf(c));
+      return { x: sx - D.RHEO.knobHalf, y: D.RHEO.knobTop,
+               w: D.RHEO.knobHalf * 2, h: D.RHEO.knobBottom - D.RHEO.knobTop };
+    }
+    // 夹到 0~1，并对齐参数面板 range 的 step=0.01：不对齐的话面板滑块会
+    // 和画布上的滑片显示不一致（面板显示 0.42，画布其实在 0.4237）。
+    function slideClamp(v) {
+      return Math.round(Math.max(0, Math.min(1, v)) * 100) / 100;
     }
     function hitTerminal(p) {
       var cs = getScene().comps;
@@ -397,6 +424,19 @@
         canvas.setPointerCapture && canvas.setPointerCapture(ev.pointerId);
         return;
       }
+
+      // 拨滑片要排在「搬走整个变阻器」前面：滑片长在本体上，
+      // 先判本体的话这一下永远被当成拖元件，滑片就白画了。
+      var sl = hitSlider(p);
+      if (sl) {
+        beginEdit();
+        select({ kind: 'comp', id: sl.id });
+        slider = { id: sl.id, moved: false };
+        canvas.setPointerCapture && canvas.setPointerCapture(ev.pointerId);
+        changed();
+        return;
+      }
+
       var cs = getScene().comps;
       for (var i = cs.length - 1; i >= 0; i--) {   // 后画的在上层，从后往前找
         if (hitComp(p, cs[i])) {
@@ -427,6 +467,21 @@
         onChange();
         return;
       }
+      if (slider) {
+        var kc = byId(slider.id);
+        if (kc) {
+          var lx = D.toLocal(kc, p.x, p.y).x;
+          var nv = slideClamp(D.slideFromLocalX(lx));
+          if (nv !== D.slideOf(kc)) {
+            if (!slider.moved) { slider.moved = true; commitEdit(); }  // 真拨动了才入栈
+            kc.params = kc.params || {};
+            kc.params.slide = nv;
+          }
+          onChange();
+          return;
+        }
+        slider = null;
+      }
       if (moving) {
         var c = byId(moving.id);
         if (!moving.moved && Math.hypot(p.x - moving.x0, p.y - moving.y0) > 4) {
@@ -442,19 +497,32 @@
       var nt = hitTerminal(p), nh = null;
       if (nt) nh = { kind: 'term', compId: nt.compId, termIdx: nt.termIdx };
       else {
-        var cs = getScene().comps;
-        for (var i = cs.length - 1; i >= 0; i--) {
-          if (hitComp(p, cs[i])) { nh = { kind: 'comp', id: cs[i].id }; break; }
+        var ns = hitSlider(p);
+        if (ns) nh = { kind: 'slider', id: ns.id };
+        else {
+          var cs = getScene().comps;
+          for (var i = cs.length - 1; i >= 0; i--) {
+            if (hitComp(p, cs[i])) { nh = { kind: 'comp', id: cs[i].id }; break; }
+          }
         }
       }
       var changedHover = JSON.stringify(nh) !== JSON.stringify(hover);
       hover = nh;
       canvas.style.cursor = hitDeleteButton(p) ? 'pointer'
-        : nt ? 'crosshair' : (nh ? 'move' : 'default');
+        : nt ? 'crosshair'
+        : (nh && nh.kind === 'slider') ? 'ew-resize'
+        : (nh ? 'move' : 'default');
       if (changedHover) onChange();
     }
 
     function onUp() {
+      if (slider) {
+        // 拨动了就已经入过栈；只按一下没动，就是普通点选，不留撤销记录
+        if (!slider.moved) discardEdit();
+        slider = null;
+        changed();
+        return;
+      }
       if (wiring) {
         if (wiring.to) {
           var a = wiring.from, b = wiring.to;
@@ -548,6 +616,25 @@
         }
       }
 
+      // 悬停滑片：给滑片描一圈，告诉学生这东西可以直接拨。
+      // 在元件自身坐标系里画，这样变阻器转了 90° 高亮也跟着转。
+      var hk = slider || (hover && hover.kind === 'slider' ? hover : null);
+      if (hk) {
+        var kc = byId(hk.id);
+        if (kc && kc.type === 'rheostat') {
+          var kb = knobRect(kc);
+          ctx.save();
+          ctx.translate(kc.x, kc.y);
+          ctx.rotate((kc.rot || 0) * Math.PI / 180);
+          ctx.fillStyle = 'rgba(37,99,235,0.16)';
+          D.roundRect(ctx, kb.x - 3, kb.y - 3, kb.w + 6, kb.h + 6, 8);
+          ctx.fill();
+          ctx.strokeStyle = 'rgba(37,99,235,0.9)'; ctx.lineWidth = 2;
+          ctx.stroke();
+          ctx.restore();
+        }
+      }
+
       // 选中框
       if (selected && selected.kind === 'comp') {
         var c = byId(selected.id);
@@ -634,6 +721,13 @@
       getSelected: function () { return describeSelection(); },
       pushUndo: pushUndo,
       delButtonPos: delButtonPos,
+      // 滑片中心的逻辑坐标。测试和外部代码都用它，别自己按 RHEO 常数猜。
+      knobPos: function (id) {
+        var c = byId(id);
+        if (!c || c.type !== 'rheostat') return null;
+        return D.toWorld(c, D.sliderLocalX(D.slideOf(c)),
+                         (D.RHEO.knobTop + D.RHEO.knobBottom) / 2);
+      },
       beginSilent: function () { muted = true; },
       endSilent: function () { muted = false; pushUndo(); },
       drawOverlay: drawOverlay,
