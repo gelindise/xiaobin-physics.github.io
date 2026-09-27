@@ -1,0 +1,456 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>电路实验沙盒</title>
+<style>
+  :root{--bg:#eef2f7;--card:#fff;--line:#dbe3ec;--text:#1e293b;--dim:#64748b;
+        --accent:#ea580c;--ok:#16a34a;--warn:#dc2626;}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);
+       font:14px/1.5 -apple-system,"PingFang SC","Microsoft YaHei",sans-serif;padding:16px}
+  .wrap{max-width:1460px;margin:0 auto}
+  h1{font-size:19px;font-weight:700;margin-bottom:3px}
+  .sub{color:var(--dim);font-size:12.5px;margin-bottom:12px}
+  .panel{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:11px}
+  .bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px}
+  .bar button{background:#f1f5f9;border:1px solid var(--line);color:var(--text);
+    padding:7px 13px;border-radius:8px;cursor:pointer;font-size:13px;font-family:inherit;transition:.15s}
+  .bar button:hover{background:#e2e8f0}
+  .bar button.pal{background:#fff7ed;border-color:#fed7aa;color:#9a3412;font-weight:600}
+  .bar button.pal:hover{background:#ffedd5}
+  .bar button.danger{color:#b91c1c}
+  .bar .sep{width:1px;height:22px;background:var(--line);margin:0 4px}
+  .stage{display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap}
+  .cv{flex:1 1 700px;min-width:0;background:var(--card);border:1px solid var(--line);
+      border-radius:12px;padding:8px}
+  canvas{width:100%;display:block;border-radius:8px;touch-action:none}
+  .side{flex:0 0 360px;display:flex;flex-direction:column;gap:10px}
+  .side h3{font-size:13px;margin-bottom:8px;color:var(--dim);font-weight:600}
+  .prow{display:flex;align-items:center;gap:9px;margin:9px 0;font-size:12.5px}
+  .prow label{flex:0 0 68px;color:var(--dim)}
+  .prow input[type=range]{flex:1;min-width:0;accent-color:var(--accent)}
+  .prow .val{flex:0 0 58px;text-align:right;font-weight:600;font-variant-numeric:tabular-nums}
+  .prow select{flex:1;padding:4px 6px;border:1px solid var(--line);border-radius:6px;
+    font-family:inherit;font-size:12.5px;background:#fff}
+  .prow .chk{width:17px;height:17px;accent-color:var(--accent)}
+  .empty{color:var(--dim);font-size:12.5px;text-align:center;padding:16px 4px}
+  table{width:100%;border-collapse:collapse;font-size:12.5px}
+  th{text-align:right;color:var(--dim);font-weight:600;padding:5px 6px;
+     border-bottom:1px solid var(--line);font-size:11.5px}
+  th:first-child{text-align:left}
+  td{text-align:right;padding:5px 6px;border-bottom:1px solid #f1f5f9;
+     font-variant-numeric:tabular-nums}
+  td:first-child{text-align:left;font-weight:600}
+  tr.sel td{background:#fff7ed}
+  .status{display:flex;align-items:center;gap:8px;font-weight:600;font-size:12.5px;margin-bottom:8px}
+  .dot{width:9px;height:9px;border-radius:50%;background:var(--ok);flex:0 0 auto}
+  .dot.bad{background:var(--warn)} .dot.idle{background:#94a3b8}
+  .warn{background:#fef2f2;border:1px solid #fecaca;border-radius:8px;
+        padding:7px 10px;color:#b91c1c;font-size:12.5px;margin-top:7px}
+  /* 表格里的行内小标签（反接 / 充电）。不能复用 .warn——那是个块级横幅，
+     塞进单元格会把行高撑开、把表格撑歪。 */
+  .tag{display:inline-block;margin-left:5px;padding:1px 5px;border-radius:4px;
+       background:#fef2f2;border:1px solid #fecaca;color:#b91c1c;
+       font-size:10.5px;font-weight:700;vertical-align:1px}
+  .keys{color:var(--dim);font-size:11.5px;line-height:1.9}
+  .keys kbd{background:#f1f5f9;border:1px solid var(--line);border-bottom-width:2px;
+    border-radius:4px;padding:0 5px;font-family:inherit;font-size:11px;color:var(--text)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>电路实验沙盒</h1>
+  <div class="sub">自由拖拽元件、拉线搭电路，读数由 <code>circuit-core.js</code>（MNA 改进节点法）实时求解 —— 接成什么样，就算出什么样。</div>
+
+  <div class="bar" id="palette"></div>
+
+  <div class="stage">
+    <div class="cv"><canvas id="simCanvas"></canvas></div>
+    <div class="side">
+      <div class="panel" id="paramPanel"></div>
+      <div class="panel">
+        <div class="status"><span class="dot" id="dot"></span><span id="statusText">—</span></div>
+        <div id="warnBox"></div>
+        <table>
+          <thead><tr><th>元件</th><th>I / A</th><th>U / V</th><th>R / Ω</th><th>P / W</th></tr></thead>
+          <tbody id="tbody"></tbody>
+        </table>
+      </div>
+      <div class="panel keys">
+        <kbd>拖动</kbd> 移动元件　<kbd>点接线柱</kbd> 拖出导线<br>
+        <kbd>R</kbd> 旋转 90°　<kbd>Delete</kbd> 删除　<kbd>⌘Z</kbd> 撤销
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="circuit-core.js"></script>
+<script src="circuit-draw.js"></script>
+<script src="circuit-editor.js"></script>
+<script>
+// ---- 访问保护：仅允许站内跳转（与站内其它实验页一致）----
+(function(){
+  var tk = localStorage.getItem('_tk');
+  var valid = tk && (Date.now() - parseInt(tk) < 10000);
+  localStorage.removeItem('_tk');
+  if (!valid) {
+    var ref = document.referrer;
+    if (ref && ref.indexOf(location.hostname) === -1) {
+      location.replace('index.html');
+    }
+  }
+})();
+</script>
+<script>
+(function(){
+'use strict';
+var C = window.CircuitCore, D = window.CircuitDraw, E = window.CircuitEditor;
+var W = 1000, H = 740;
+var canvas = document.getElementById('simCanvas');
+var ctx = canvas.getContext('2d');
+
+// ── 场景（编辑器直接改这两个数组）──────────────────────────
+var scene = { comps: [], wires: [] };
+var results = null, flows = [], phase = 0;
+
+function w(a, ai, b, bi, via, auto){
+  return { a:{compId:a,termIdx:ai}, b:{compId:b,termIdx:bi}, via:via||[], auto:auto !== false };
+}
+function seed(){
+  scene.comps = [
+    {id:'E',  type:'battery',  x:280, y:600, params:{emf:3, rInt:0}},
+    {id:'S1', type:'switch',   x:720, y:600, params:{closed:true}},
+    {id:'R1', type:'resistor', x:340, y:160, params:{R:10}},
+    {id:'R2', type:'resistor', x:660, y:160, params:{R:20}},
+  ];
+  scene.wires = [
+    w('E',0,'R1',0,[[120,600],[120,160]]),
+    w('R1',1,'R2',0,[]),
+    w('R2',1,'S1',1,[[880,160],[880,600]]),
+    w('S1',0,'E',1,[]),
+  ];
+}
+
+function byId(id){
+  for (var i=0;i<scene.comps.length;i++) if (scene.comps[i].id===id) return scene.comps[i];
+  return null;
+}
+function solveNow(){
+  results = C.solve(scene.comps, scene.wires.map(function(x){ return {a:x.a, b:x.b}; }));
+  flows = C.wireCurrents(scene, results);
+}
+
+// ── 渲染：元件与标注进离屏层，只有导线每帧重绘（电流粒子要动）──
+var bgLayer = document.createElement('canvas');
+var fgLayer = document.createElement('canvas');
+function pathOf(wire){
+  var a = byId(wire.a.compId), b = byId(wire.b.compId);
+  if (!a || !b) return [];
+  var p0 = D.terminalWorld(a, wire.a.termIdx), p1 = D.terminalWorld(b, wire.b.termIdx);
+  var pts = [{x:p0.x, y:p0.y}];
+  (wire.via||[]).forEach(function(v){ pts.push({x:v[0], y:v[1]}); });
+  pts.push({x:p1.x, y:p1.y});
+  return pts;
+}
+function bh0(n){ return n*18 + 8; }
+var DROP = {battery:40, ammeter:70, voltmeter:70, resistor:22, bulb:32, rheostat:46, switch:30};
+
+function drawForeground(){
+  var f = fgLayer.getContext('2d');
+  f.clearRect(0,0,W,H);
+  if (!results) return;
+  var recs = results.components;
+  scene.comps.forEach(function(c){ D.drawComponent(f, c, recs[c.id]); });
+  scene.comps.forEach(function(c){
+    var r = recs[c.id]; if (!r) return;
+    var lines = [];
+    if (c.type === 'switch') return;   // 通断状态已经写在底座上，别再飘一个框
+    if (c.type === 'rheostat') {
+      lines.push('R = ' + (r.rUsed == null ? '—' : r.rUsed.toFixed(1)) + 'Ω');
+      lines.push('I = ' + Math.abs(r.i).toFixed(3) + 'A');
+    } else if (c.type === 'ammeter' || c.type === 'voltmeter') {
+      lines.push((c.type === 'ammeter' ? 'I = ' : 'U = ') + Math.abs(r.reading).toFixed(3) +
+                 (c.type === 'ammeter' ? 'A' : 'V'));
+    } else if (c.type === 'battery') {
+      lines.push('E = ' + r.emf.toFixed(1) + 'V');
+      lines.push('U = ' + Math.abs(r.v).toFixed(2) + 'V');
+    } else {
+      lines.push('R = ' + (r.R || 0).toFixed(1) + 'Ω');
+      lines.push('U = ' + Math.abs(r.v).toFixed(2) + 'V');
+      lines.push('I = ' + Math.abs(r.i).toFixed(3) + 'A');
+    }
+    var bx = c.x, by;
+    if (c.rot === 90 || c.rot === 270) { bx = c.x + 86; by = c.y - (lines.length-1)*8; }
+    else by = c.y + (DROP[c.type] || 24) + 8 + bh0(lines.length)/2;
+
+    f.save();
+    f.font = 'bold 12.5px -apple-system,"PingFang SC",sans-serif';
+    f.textAlign = 'center'; f.textBaseline = 'middle';
+    var wmax = 0;
+    lines.forEach(function(l){ wmax = Math.max(wmax, f.measureText(l).width); });
+    var bw = wmax + 16, bh = bh0(lines.length);
+    f.fillStyle = 'rgba(255,255,255,0.94)';
+    D.roundRect(f, bx - bw/2, by - bh/2, bw, bh, 7); f.fill();
+    f.strokeStyle = 'rgba(148,163,184,0.55)'; f.lineWidth = 1; f.stroke();
+    f.fillStyle = '#334155';
+    lines.forEach(function(l,i){ f.fillText(l, bx, by - bh/2 + 4 + 9 + i*18); });
+    f.restore();
+  });
+}
+
+function buildLayers(){
+  var dpr = window.devicePixelRatio || 1;
+  [bgLayer, fgLayer].forEach(function(c){
+    c.width = W*dpr; c.height = H*dpr;
+    c.getContext('2d').setTransform(dpr,0,0,dpr,0,0);
+  });
+  D.drawBackground(bgLayer.getContext('2d'), W, H);
+  drawForeground();
+}
+
+function drawFrame(){
+  ctx.clearRect(0,0,W,H);
+  ctx.drawImage(bgLayer, 0, 0, W, H);
+  if (results) {
+    scene.wires.forEach(function(wr,i){
+      D.drawWire(ctx, pathOf(wr), { flow: flows[i], phase: phase });
+    });
+    ctx.drawImage(fgLayer, 0, 0, W, H);
+  }
+  if (editor) editor.drawOverlay(ctx);      // 选中框 / 拉线预览，永远在最上层
+}
+
+var lastT = 0;
+function tick(t){
+  if (results && results.status === 'ok') {
+    var dt = lastT ? Math.min((t - lastT)/1000, 0.06) : 0;
+    phase = (phase + dt) % 1000;
+  }
+  lastT = t;
+  drawFrame();
+  requestAnimationFrame(tick);
+}
+
+function layout(){
+  var dpr = window.devicePixelRatio || 1;
+  var cssW = canvas.parentElement.clientWidth - 16;
+  canvas.width = W*dpr; canvas.height = H*dpr;
+  canvas.style.height = (cssW*H/W) + 'px';
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  buildLayers();
+}
+
+// ── 参数面板 ──────────────────────────────────────────────
+// 每类元件能调什么，写在这里；面板由它生成，不写死 HTML。
+var PARAM_UI = {
+  resistor:  [{k:'R', t:'range', label:'阻值', unit:'Ω', min:1, max:100, step:1}],
+  battery:   [{k:'emf', t:'range', label:'电动势', unit:'V', min:1.5, max:7.5, step:1.5},
+              {k:'rInt', t:'range', label:'内阻', unit:'Ω', min:0, max:2, step:0.1}],
+  switch:    [{k:'closed', t:'check', label:'闭合'}],
+  ammeter:   [{k:'range', t:'select', label:'量程', unit:'A', options:[0.6,3]}],
+  voltmeter: [{k:'range', t:'select', label:'量程', unit:'V', options:[3,15]}],
+  rheostat:  [{k:'Rmax', t:'range', label:'最大阻值', unit:'Ω', min:5, max:50, step:5},
+              {k:'slide', t:'range', label:'滑片位置', unit:'', min:0, max:1, step:0.01}],
+  bulb:      [{k:'ratedV', t:'range', label:'额定电压', unit:'V', min:1.5, max:6, step:0.5},
+              {k:'ratedW', t:'range', label:'额定功率', unit:'W', min:0.2, max:3, step:0.1}],
+};
+var TYPE_LABEL = {battery:'电源', resistor:'定值电阻', switch:'开关',
+  ammeter:'电流表', voltmeter:'电压表', rheostat:'滑动变阻器', bulb:'小灯泡'};
+
+// 无极性元件的电流/电压要显示大小，不能显示符号。
+// 内核里 rec.i 记的是「从 0 号端子流向 1 号端子」，而 0 号端子在元件的哪一侧
+// 只是绘制时的朝向——电阻转 180° 接进回路还是同一个电阻。直接把带符号的
+// 数印出来，串联回路里的开关就会显示 −0.1000A，学生只会以为电路接反了。
+// 只有极性本身就承载信息的元件（电表接反要报错、电源充电放电是两回事）才带符号。
+var POLAR = {ammeter:1, voltmeter:1, battery:1};
+function dispI(c, r){
+  var s = POLAR[c.type] ? r.i : Math.abs(r.i);
+  var tag = '';
+  if (r.reversed) tag = '<span class="tag">反接</span>';
+  else if (c.type === 'battery' && r.i < -1e-9) tag = '<span class="tag">充电</span>';
+  return s.toFixed(4) + tag;
+}
+function dispU(c, r){
+  return (POLAR[c.type] ? r.v : Math.abs(r.v)).toFixed(4);
+}
+
+function pval(c, k){
+  if (c.params && c.params[k] != null) return c.params[k];
+  var d = C.defaultParams(c.type);
+  return d[k];
+}
+function renderParams(sel){
+  var box = document.getElementById('paramPanel');
+  if (!sel || sel.kind !== 'comp') {
+    box.innerHTML = '<h3>元件参数</h3><div class="empty">点画布上的元件来调参数</div>';
+    return;
+  }
+  var c = sel.comp;
+  var specs = PARAM_UI[c.type] || [];
+  var html = '<h3>' + (TYPE_LABEL[c.type] || c.type) + ' ' + c.id + '</h3>';
+  specs.forEach(function(sp){
+    var v = pval(c, sp.k);
+    if (sp.t === 'range') {
+      html += '<div class="prow"><label>' + sp.label + '</label>' +
+        '<input type="range" data-k="' + sp.k + '" min="' + sp.min + '" max="' + sp.max +
+        '" step="' + sp.step + '" value="' + v + '">' +
+        '<span class="val" id="pv_' + sp.k + '">' + v + (sp.unit||'') + '</span></div>';
+    } else if (sp.t === 'check') {
+      html += '<div class="prow"><label>' + sp.label + '</label>' +
+        '<input class="chk" type="checkbox" data-k="' + sp.k + '"' + (v?' checked':'') + '></div>';
+    } else if (sp.t === 'select') {
+      html += '<div class="prow"><label>' + sp.label + '</label><select data-k="' + sp.k + '">' +
+        sp.options.map(function(o){
+          return '<option value="' + o + '"' + (o === v ? ' selected' : '') + '>' + o + (sp.unit||'') + '</option>';
+        }).join('') + '</select></div>';
+    }
+  });
+  box.innerHTML = html;
+
+  box.querySelectorAll('input,select').forEach(function(el){
+    function apply(){
+      var k = el.dataset.k;
+      var val = el.type === 'checkbox' ? el.checked : parseFloat(el.value);
+      var rec = editor.byId(c.id);
+      editor.setParam(c.id, k, val);
+      if (el.type === 'range') {
+        var sp = specs.filter(function(s){ return s.k === k; })[0];
+        document.getElementById('pv_' + k).textContent = val + ((sp && sp.unit) || '');
+      }
+    }
+    el.addEventListener('input', apply);
+    el.addEventListener('change', apply);
+  });
+}
+
+// ── 侧栏数据 ──────────────────────────────────────────────
+function updateSide(){
+  var recs = results.components;
+  var selId = null;
+  var s0 = editor && editor.getSelected();
+  if (s0 && s0.kind === 'comp') selId = s0.comp.id;
+
+  var tb = document.getElementById('tbody');
+  tb.innerHTML = '';
+  scene.comps.forEach(function(c){
+    var r = recs[c.id]; if (!r) return;
+    var R = c.type === 'rheostat' ? (r.rUsed == null ? '∞' : r.rUsed.toFixed(1))
+          : (r.R == null ? '—' : r.R.toFixed(2));
+    if (c.type === 'switch') R = r.closed ? '0' : '∞';
+    var tr = document.createElement('tr');
+    if (c.id === selId) tr.className = 'sel';
+    tr.innerHTML = '<td>' + (TYPE_LABEL[c.type]||c.type) + ' ' + c.id + '</td>' +
+      '<td>' + dispI(c, r) + '</td>' +
+      '<td>' + dispU(c, r) + '</td><td>' + R + '</td><td>' + Math.abs(r.p).toFixed(4) + '</td>';
+    tb.appendChild(tr);
+  });
+
+  var map = {ok:['电路导通',''], 'open-circuit':['断路：没有电流通路','bad'],
+    shorted:['短路！电流过大','bad'], 'no-source':['还没有接电源','idle'],
+    singular:['接线矛盾，无法求解','bad'], empty:['画布是空的','idle']};
+  var m = map[results.status] || ['未知状态','idle'];
+  document.getElementById('statusText').textContent = m[0] + '　·　' +
+    results.stats.branchCount + ' 条支路 / ' + results.stats.nodeCount + ' 个节点 / ' +
+    results.stats.solveMs + 'ms';
+  document.getElementById('dot').className = 'dot ' + m[1];
+
+  var wb = document.getElementById('warnBox');
+  wb.innerHTML = '';
+  (results.warnings||[]).forEach(function(wn){
+    var d = document.createElement('div');
+    d.className = 'warn'; d.textContent = '⚠ ' + wn.message;
+    wb.appendChild(d);
+  });
+}
+
+// ── 装配 ──────────────────────────────────────────────────
+var editor = null;
+
+function render(){
+  solveNow();
+  buildLayers();
+  drawFrame();
+  updateSide();
+  renderParams(editor ? editor.getSelected() : null);
+}
+// 参数面板里改滑片时不要每帧重建面板（会把正在拖的滑块抽掉）
+function renderSoft(){
+  solveNow();
+  buildLayers();
+  drawFrame();
+  updateSide();
+}
+
+// 只在【选中项变了】的时候重建参数面板。否则拖滑块拖到一半，
+// 面板会被整体重建，手里那个 input 元素直接从 DOM 上消失，拖动就断了。
+var lastSelKey = null;
+function onSelChanged(){
+  var s = editor.getSelected();
+  var key = !s ? '' : (s.kind === 'comp'
+    ? 'c:' + s.comp.id
+    : 'w:' + s.wire.a.compId + ':' + s.wire.a.termIdx + '>' + s.wire.b.compId + ':' + s.wire.b.termIdx);
+  if (key === lastSelKey) return;
+  lastSelKey = key;
+  renderParams(s);
+}
+
+editor = E.create({
+  canvas: canvas, W: W, H: H,
+  getScene: function(){ return scene; },
+  onChange: renderSoft,
+  onSelect: onSelChanged,
+});
+
+// 元件栏
+var PAL = ['battery','switch','resistor','rheostat','bulb','ammeter','voltmeter'];
+var bar = document.getElementById('palette');
+PAL.forEach(function(t){
+  var b = document.createElement('button');
+  b.className = 'pal'; b.textContent = '＋ ' + TYPE_LABEL[t];
+  b.onclick = function(){
+    // 找一个没被占的格位放进去，免得叠在一起
+    var spots = [[500,600],[300,600],[700,600],[500,200],[300,200],[700,200],[500,400],[200,400],[800,400]];
+    for (var i=0;i<spots.length;i++){
+      var free = !scene.comps.some(function(c){
+        return Math.abs(c.x-spots[i][0])<120 && Math.abs(c.y-spots[i][1])<110;
+      });
+      if (free) { editor.addComp(t, spots[i][0], spots[i][1]); render(); return; }
+    }
+    editor.addComp(t, 500, 400); render();
+  };
+  bar.appendChild(b);
+});
+function toolBtn(text, fn, cls){
+  var b = document.createElement('button');
+  b.textContent = text; b.onclick = fn; if (cls) b.className = cls;
+  bar.appendChild(b); return b;
+}
+var sep = document.createElement('div'); sep.className = 'sep'; bar.appendChild(sep);
+toolBtn('↺ 撤销', function(){ editor.undo(); render(); });
+toolBtn('🗑 删除选中', function(){ editor.removeSelected(); render(); }, 'danger');
+toolBtn('清空画布', function(){
+  editor.pushUndo();
+  scene.comps = []; scene.wires = [];
+  editor.select(null); render();
+}, 'danger');
+toolBtn('示例电路', function(){
+  editor.pushUndo(); seed(); editor.select(null); render();
+});
+
+seed();
+layout();
+render();
+window.addEventListener('resize', function(){ layout(); drawFrame(); });
+requestAnimationFrame(tick);
+
+// 给自动化验证留的钩子
+window.__scene = function(){ return scene; };
+window.__results = function(){ return results; };
+window.__flows = function(){ return flows.slice(); };
+window.__editor = function(){ return editor; };
+})();
+</script>
+</body>
+</html>
