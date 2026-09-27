@@ -237,7 +237,25 @@
     ctx.stroke();
   }
 
-  // opts: { flow: 有符号电流(A, 正=从首端流向末端), phase: 0..1, flowing: bool }
+  // 电流粒子的行程换算：返回沿导线 a→b 的有符号位移（px），正 = 朝 b 端走。
+  //
+  // 抽成独立函数是为了能直接测方向。这里出过两个错，都是像素测量很难断的：
+  //   1. 方向是反的（flow>0 时粒子朝 a 端走）。想用「粒子质心位移」来验证会被
+  //      坑死——粒子在端点绕回去时整幅图案平移一个大跳，永远盖过真实位移。
+  //   2. speed 曾经是「每秒走完整根导线的百分之几」，于是同样电流下长导线的
+  //      粒子跑得比短导线快好几倍，串联回路里各段快慢不一。
+  // 所以：速度按【每秒多少像素】算，与导线长短无关。
+  var FLOW_PX_PER_PHASE = 320;
+  function particleShift(flow, phase) {
+    var I = Math.abs(flow || 0);
+    if (I <= 1e-6 || phase == null) return 0;
+    // 用 sqrt 而不是线性：线性的话大电流快到糊成一片、小电流几乎不动。
+    // 这里要的是「电流越大越快」的定性观感，不是漂移速度的定量还原。
+    var spd = Math.min(1, Math.sqrt(I / 0.8)) * FLOW_PX_PER_PHASE;
+    return (flow > 0 ? 1 : -1) * phase * spd;
+  }
+
+  // opts: { flow: 有符号电流(A, 正=从首端流向末端), phase: 秒, flowing: bool }
   function drawWire(ctx, pts, opts) {
     if (!pts || pts.length < 2) return;
     opts = opts || {};
@@ -259,23 +277,23 @@
     strokePath(ctx, pts);
     ctx.restore();
 
-    // 电流粒子：方向由电压降决定，密度/速度由电流大小决定
+    // 电流粒子：间距按实际长度均分，位置沿【弧长】排布，
+    // 所以速度是「每秒多少像素」，串联回路里长导线和短导线一样快。
     var I = Math.abs(opts.flow || 0);
     if (I > 1e-6 && opts.phase != null) {
       var L = polyLen(pts);
-      var spacing = 42;
-      var n = Math.max(1, Math.round(L / spacing));
-      var dir = (opts.flow || 0) >= 0 ? 1 : -1;
-      // 电流越大粒子越快，1A 以上封顶
-      var spd = Math.min(1, Math.sqrt(I / 0.8)) * 0.55;
+      if (L < 1) return;
+      var n = Math.max(1, Math.round(L / 42));   // 42px 一颗，长导线自动多排几颗
+      var step = L / n;
+      var shift = particleShift(opts.flow, opts.phase);
       ctx.save();
       ctx.fillStyle = PALETTE.flow;
       ctx.shadowColor = 'rgba(245,158,11,0.85)';
       ctx.shadowBlur = 7;
       for (var i = 0; i < n; i++) {
-        var t = (i / n) - dir * opts.phase * spd;
-        t = t - Math.floor(t);
-        var p = pointAt(pts, t * L);
+        // 对 L 取模：粒子从导线末端出去就从首端进来，两端接得上，看不到跳变
+        var d = ((i * step + shift) % L + L) % L;
+        var p = pointAt(pts, d);
         ctx.beginPath();
         ctx.arc(p.x, p.y, 2.9, 0, 6.284);
         ctx.fill();
@@ -949,9 +967,10 @@
     terminalWorld: terminalWorld, toWorld: toWorld, toLocal: toLocal,
     RHEO: RHEO, sliderLocalX: sliderLocalX, slideFromLocalX: slideFromLocalX,
     slideOf: slideOf,
-    drawComponent: drawComponent, drawWire: drawWire,
+    drawComponent: drawComponent, drawWire: drawWire, particleShift: particleShift,
+    FLOW_PX_PER_PHASE: FLOW_PX_PER_PHASE, polyLen: polyLen, pointAt: pointAt,
     drawBackground: drawBackground, drawBindingPost: drawBindingPost,
     resistorBands: resistorBands, roundRect: roundRect, softShadow: softShadow,
-    version: '1.1.0',
+    version: '1.2.0',
   };
 });

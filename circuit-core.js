@@ -771,12 +771,20 @@
       if (termIdx === 2) return -segs[0].i;   // C：电流流进元件，注入节点为负
       if (termIdx === 3) return segs[1].i;    // D：电流从元件流出，注入节点为正
       // A(0)/B(1) 挂在同一个滑片节点上，KCL 给出两者注入之和：
-      //   inj_A + inj_B = segs[1].i − segs[0].i
-      // 但两者各分多少，解里是定不下来的（同一节点的两根引线）。
+      //   inj_A + inj_B = −(segs[1].i − segs[0].i)
+      // 这个负号是关键。segs[1].i − segs[0].i 由滑片节点 S 的 KCL 推出来，
+      // 它等于「从 A 端【流入】元件的电流」；而本函数的契约是「流出元件、
+      // 注入节点」，方向正好相反，所以必须取负。
+      //
+      // 漏掉这个负号的后果很隐蔽：剥叶子时哪个端子先被剥，取决于导线是
+      // 从哪端开始写的。接 A 的那根线若写成「E → A」（a 端是 E），先剥 E，
+      // 结果是对的；写成「A → E」先剥 A，用上这个注入量，这根线的电流就
+      // 整个反号——屏幕上就是【这一段和其它段的粒子反向跑】。
+      // 两者各分多少，解里是定不下来的（同一节点的两根引线）。
       // 实际接线只用一个，所以按「谁真的接了线」分配：只接一个就全给它，
       // 两个都接（少见，等于把同一根杆引到两处）才平分。
       if (termIdx !== 0 && termIdx !== 1) return 0;
-      var total = segs[1].i - segs[0].i;
+      var total = segs[0].i - segs[1].i;      // 从 A 端【流出】元件的电流
       var aWired = wired ? wired.has(comp.id + ':0') : false;
       var bWired = wired ? wired.has(comp.id + ':1') : false;
       if (aWired && !bWired) return (termIdx === 0) ? total : 0;
@@ -787,6 +795,62 @@
     // 别的元件 rec.i 是放电方向。这里统一成「流出元件、注入节点」。
     var out = (comp.type === 'battery') ? rec.i : -rec.i;
     return (termIdx === 0) ? out : -out;
+  }
+
+  // 剥叶子剥不动了：节点内部的导线绕成了环（一个度为 1 的顶点都没有）。
+  // 这时每根线各承担多少在物理上【本来就不定】——理想导线 0Ω，任何分配
+  // 都同样满足 KCL。所以取最小二乘解，等价于把这组导线当成等电阻网络
+  // 求各顶点电位、再取电位差（相位差为零的那部分电流不显示，符合直觉）。
+  //
+  // 原先这里按 (s[ka] − s[kb]) / 2 硬凑，两个毛病都会让画面出错：
+  //   · 两根线并接在同一对端子上（学生常画的冗余线）时，每根都报整份电流，
+  //     加起来是实际的两倍；
+  //   · 那个值随导线是从哪端开始写的而变号——同一对端子上就会出现
+  //     「一根朝左、一根朝右」，正是「某一段方向和其它段相反」。
+  // edges: [{ u, v, wi }]，u 恒为这根导线的 a 端。s 是各顶点注入量。
+  function ringFlow(verts, edges, s) {
+    var out = new Array(edges.length).fill(0);
+    var i;
+    // 按连通分量分别解：几组互不相连的环放在一个矩阵里会奇异
+    var dsu = createDSU();
+    edges.forEach(function (e) { dsu.union(e.u, e.v); });
+    var groups = new Map();
+    edges.forEach(function (e, k) {
+      var r = dsu.find(e.u);
+      if (!groups.has(r)) groups.set(r, []);
+      groups.get(r).push(k);
+    });
+    groups.forEach(function (ks) {
+      var vs = [];
+      ks.forEach(function (k) {
+        [edges[k].u, edges[k].v].forEach(function (v) { if (vs.indexOf(v) < 0) vs.push(v); });
+      });
+      var n = vs.length;
+      if (n < 2) return;                     // 自环线：两端同一个端子，电流恒 0
+      var m = n - 1;                          // 末位顶点接地，消掉拉普拉斯矩阵的零空间
+      var li = {};
+      vs.forEach(function (v, j) { li[v] = j; });
+      var A = [], z = new Array(m);
+      for (i = 0; i < m; i++) { A.push(new Array(m).fill(0)); z[i] = s[vs[i]]; }
+      var ok = true;
+      ks.forEach(function (k) {
+        var a = li[edges[k].u], b = li[edges[k].v];
+        if (a === b) { ok = false; return; }  // 自环
+        if (a < m) { A[a][a] += 1; if (b < m) { A[a][b] -= 1; } }
+        if (b < m) { A[b][b] += 1; if (a < m) { A[b][a] -= 1; } }
+      });
+      if (!ok) return;
+      var phi = solveLinear(A, z, m);
+      if (!phi) return;                       // 解不出来就留 0（宁可不动，也别反向）
+      var val = {};
+      vs.forEach(function (v, j) { val[v] = j < m ? phi[j] : 0; });
+      ks.forEach(function (k) {
+        // 沿 u→v 方向流出的电流 = 两端电位差。u 就是 a 端，
+        // 所以这个值直接就是「正 = 从 a 流向 b」。
+        out[k] = val[edges[k].u] - val[edges[k].v];
+      });
+    });
+    return out;
   }
 
   function wireCurrents(scene, res) {
@@ -845,13 +909,21 @@
         g.s[e.other] += g.s[v];
         if (g.deg[e.other] === 1) queue.push(e.other);
       }
-      // 剩下的成环（罕见）：残余按边数均分，至少保证方向不出错
-      var rest = Object.keys(g.live).filter(function (i) { return g.live[i]; });
-      rest.forEach(function (i) {
+      // 剩下的成环：交给最小二乘解法
+      var rest = Object.keys(g.live).filter(function (i) { return g.live[i]; }).map(Number);
+      if (!rest.length) return;
+      var ringEdges = rest.map(function (i) {
         var wr2 = wires[i];
-        var ka = wr2.a.compId + ':' + wr2.a.termIdx, kb = wr2.b.compId + ':' + wr2.b.termIdx;
-        flow[i] = (g.s[ka] - g.s[kb]) / 2;
+        return {
+          u: wr2.a.compId + ':' + wr2.a.termIdx,
+          v: wr2.b.compId + ':' + wr2.b.termIdx,
+          wi: i,
+        };
       });
+      var ringOut = ringFlow(
+        Object.keys(g.deg).filter(function (k) { return g.deg[k] > 0; }),
+        ringEdges, g.s);
+      rest.forEach(function (i, k) { flow[i] = ringOut[k]; });
     });
 
     return flow;
@@ -864,6 +936,9 @@
     lampRAt: lampRAt,
     solve: solve,
     wireCurrents: wireCurrents,
+    // 「这个端子往节点里注入多少电流」。导出是为了让测试能独立验 KCL，
+    // 从而钉死每根导线的电流方向（画面上电流粒子往哪边跑全靠它）。
+    terminalInjection: terminalInjection,
     version: '1.0.0',
   };
 });

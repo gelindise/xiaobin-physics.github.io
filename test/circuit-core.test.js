@@ -851,6 +851,175 @@ test('T20f 导线电流分布：C 端进出时 slide 不影响阻值，导线电
 });
 
 // ============================================================
+// T21 导线电流【方向】的自洽性：每一处端子上都要满足 KCL
+// ============================================================
+// 用户报的现象：「串联电路里有些段电荷移动方向和其它段相反」。
+// 粒子朝哪边跑 = flow 的正负号，而 flow 的正负号对不对，最终只能靠
+// KCL 兜底：某个端子往节点注入的电流，必须原封不动地从这个端子上
+// 挂着的导线流走——一根线的符号反了，它两端的 KCL 立刻崩。
+//
+// 单独一个「三根线同号」的断言是不够的：它只盯得住一根笔直的串联回路，
+// 而且无法发现「三根一起反」这种整体性错误。这里对每处端子逐个算账。
+function kclResidual(scene, res) {
+  var f = C.wireCurrents(scene, res);
+  // wired：真有导线挂着的端子。变阻器的 A/B 是同电位的一对引线，
+  // 不给它这个信息就没法把注入量分到具体哪一端（见 terminalInjection）。
+  var wired = {};          // 对象形态用于下面查「这个端子有没有线」
+  var wiredSet = new Set(); // 集合形态传给核心，和 wireCurrents 内部一致
+  scene.wires.forEach(function (wr) {
+    if (wr && wr.a) { wired[wr.a.compId + ':' + wr.a.termIdx] = true; wiredSet.add(wr.a.compId + ':' + wr.a.termIdx); }
+    if (wr && wr.b) { wired[wr.b.compId + ':' + wr.b.termIdx] = true; wiredSet.add(wr.b.compId + ':' + wr.b.termIdx); }
+  });
+  // 每个端子上：σ(导线流出量) 与 元件注入量 的差
+  var out = [];
+  Object.keys(wired).forEach(function (k) {
+    var p = k.split(':');
+    var sum = 0;
+    scene.wires.forEach(function (wr, i) {
+      var ka = wr.a.compId + ':' + wr.a.termIdx, kb = wr.b.compId + ':' + wr.b.termIdx;
+      // flow>0 = 从 a 流向 b。站在 ka 这个端子上看，正电流是「离开端子进入导线」；
+      // 站在 kb 上看则相反。
+      if (ka === k) sum += f[i];
+      else if (kb === k) sum -= f[i];
+    });
+    var byId = {};
+    scene.comps.forEach(function (c) { byId[c.id] = c; });
+    var inj = C.terminalInjection(byId[p[0]], res.components[p[0]], +p[1], wiredSet);
+    out.push({ term: k, sum: sum, inj: inj, diff: sum - inj, flow: f });
+  });
+  return out;
+}
+
+function kclSuite(scene, tag) {
+  var res = C.solve(scene.comps, scene.wires);
+  truthy(res.status === 'ok', tag + ' 电路应可解，实际 ' + res.status);
+  var rows = kclResidual(scene, res);
+  truthy(rows.length >= 4, tag + ' 至少应有 4 处端子挂了导线，实际 ' + rows.length);
+  var bad = rows.filter(function (r) { return Math.abs(r.diff) > 1e-9; });
+  truthy(bad.length === 0, tag + ' 每处端子的 KCL 都必须成立（不成立 = 有导线电流方向反了）',
+    bad.map(function (r) { return r.term + ' 残差 ' + r.diff; }));
+  return { res: res, rows: rows, flow: rows.length ? rows[0].flow : [] };
+}
+
+test('T21 串联回路：每处端子的 KCL 都成立，四根导线同向同大小', function () {
+  // 示例电路那种布局：电源 → 开关 → R1 → R2 → 电源
+  var scene = {
+    comps: [comp('E', 'battery', { emf: 3, rInt: 0 }),
+            comp('S1', 'switch', { closed: true }),
+            comp('R1', 'resistor', { R: 10 }),
+            comp('R2', 'resistor', { R: 20 })],
+    wires: [W('E', 0, 'R1', 0), W('R1', 1, 'R2', 0), W('R2', 1, 'S1', 0), W('S1', 1, 'E', 1)],
+  };
+  var r = kclSuite(scene, 'T21');
+  r.flow.forEach(function (v, i) {
+    close(v, 0.1, 'T21 第 ' + i + ' 根导线 = 3V/30Ω = 0.1A（方向沿书写顺序，故为正）', 1e-9);
+  });
+});
+
+test('T21b 并联回路：干路和支路各自满足 KCL，互不串味', function () {
+  var scene = {
+    comps: [comp('E', 'battery', { emf: 3, rInt: 0 }),
+            comp('R1', 'resistor', { R: 10 }), comp('R2', 'resistor', { R: 20 })],
+    wires: [W('E', 0, 'R1', 0), W('R1', 0, 'R2', 0),      // 正极母线（两段）
+            W('R1', 1, 'R2', 1),                          // 负极母线
+            W('R2', 1, 'E', 1)],
+  };
+  var r = kclSuite(scene, 'T21b');
+  // 导线是画成「树枝」而不是「母线」的：0.45A 从电源正极流出，
+  // 到 R1 的上端子时被 R1 分走 0.3A，剩下 0.15A 继续流到 R2。
+  // 所以每段导线各承担多少，取决于它在树上离电源多远——这正是
+  // 一维的「同段同电流」直觉会算错的地方，四个数必须逐个钉死。
+  close(r.flow[0], 0.45, 'T21b 电源正极出来的第一段 = 干路 0.45A', 1e-9);
+  close(r.flow[1], 0.15, 'T21b R1 分流之后剩下 0.15A 流到 R2', 1e-9);
+  close(r.flow[2], 0.30, 'T21b R1 下端子出来的是 0.3A', 1e-9);
+  close(r.flow[3], 0.45, 'T21b 汇合后回电源的是干路 0.45A', 1e-9);
+});
+
+test('T21c 含变阻器的混联：KCL 仍然处处成立', function () {
+  // 变阻器是四端元件，注入量要按半段算，最容易在这里把方向算反。
+  var scene = {
+    comps: [comp('E', 'battery', { emf: 4.5, rInt: 0 }),
+            comp('RH', 'rheostat', { Rmax: 20, slide: 0.25 }),
+            comp('R1', 'resistor', { R: 5 }),
+            comp('R2', 'resistor', { R: 10 })],
+    wires: [W('E', 0, 'RH', 0), W('RH', 3, 'R1', 0),
+            W('R1', 1, 'R2', 0), W('R2', 1, 'E', 1)],
+  };
+  kclSuite(scene, 'T21c');
+});
+
+test('T21d 导线正反着写不影响方向：交换 a/b 后 flow 变号，物理方向一点没变', function () {
+  // 这是用户看到的现象的真正来源。手绘出来的导线，a/b 哪端在前完全看
+  // 用户从哪个端子拉的线——同一张电路图，写法可以五花八门。
+  // 「正 = a→b」是个相对约定，所以交换 a/b 必须让数值变号，
+  // 这样一来画出来的方向（符号 × 端点朝向）才是同一个。
+  // 若某根线交换 a/b 后数值不变号，它在画面上就会和其它段反向。
+  var comps = [comp('E', 'battery', { emf: 3, rInt: 0 }),
+               comp('R1', 'resistor', { R: 10 }),
+               comp('R2', 'resistor', { R: 20 })];
+  var base = [W('E', 0, 'R1', 0), W('R1', 1, 'R2', 0), W('R2', 1, 'E', 1)];
+  var res0 = C.solve(comps, base);
+  var f0 = C.wireCurrents({ comps: comps, wires: base }, res0);
+
+  // 把三根线的书写方向分别翻过来（一根、两根、三根都试）
+  [[0], [1], [2], [0, 1], [0, 1, 2]].forEach(function (flip) {
+    var ws = base.map(function (wr, i) {
+      return flip.indexOf(i) >= 0 ? { a: wr.b, b: wr.a } : wr;
+    });
+    var res = C.solve(comps, ws);
+    var f = C.wireCurrents({ comps: comps, wires: ws }, res);
+    var ok = true, detail = [];
+    f.forEach(function (v, i) {
+      var expect = flip.indexOf(i) >= 0 ? -f0[i] : f0[i];
+      if (Math.abs(v - expect) > 1e-12) { ok = false; detail.push(i + ': ' + v + ' ≠ ' + expect); }
+    });
+    truthy(ok, 'T21d 翻转第 [' + flip.join(',') + '] 根导线的 a/b 后，电流必须恰好变号', detail);
+    // 方向没变 = KCL 依然成立
+    var rows = kclResidual({ comps: comps, wires: ws }, res);
+    truthy(rows.every(function (r) { return Math.abs(r.diff) < 1e-9; }),
+      'T21d 翻转 [' + flip.join(',') + '] 之后 KCL 仍处处成立');
+  });
+});
+
+test('T22 同一对端子上并接两根导线：各分一半，且方向不随书写顺序翻转', function () {
+  // 学生常画冗余线：同一对端子之间拉两根线。这时节点内部的导线图
+  // 【一个叶子都没有】（两个顶点度数都是 2），剥叶子的循环整个跳过，
+  // 靠的是兜底解法。旧兜底按 (s[ka]−s[kb])/2 硬凑：每根线都报整份电流，
+  // 而且只要其中一根写成反向的，它就整根反号——画面上就是两根并接的
+  // 导线一根朝左一根朝右。这条用例把两件事一起钉死。
+  var comps = [comp('E', 'battery', { emf: 3, rInt: 0 }),
+               comp('R1', 'resistor', { R: 10 })];
+  var ws = [W('E', 0, 'R1', 0), W('R1', 0, 'E', 0),   // 两根并接，第二根反向写
+            W('R1', 1, 'E', 1)];
+  var res = C.solve(comps, ws);
+  var f = C.wireCurrents({ comps: comps, wires: ws }, res);
+  close(res.components.R1.i, 0.3, 'T22 电阻电流 3V/10Ω = 0.3A', 1e-9);
+  close(f[0], 0.15, 'T22 并接的第一根承担一半 0.15A', 1e-9);
+  close(f[1], -0.15, 'T22 并接的第二根反向书写，故为 −0.15A（方向其实相同）', 1e-9);
+  close(f[2], 0.3, 'T22 回路的另一根导线仍是 0.3A', 1e-9);
+  // 两根并接线的物理方向必须一致：各自与本根 a→b 的符号乘上端点朝向
+  truthy(f[0] > 0 && f[1] < 0, 'T22 两根并接线物理方向一致（不是一根朝左一根朝右）', f);
+  kclResidual({ comps: comps, wires: ws }, res).forEach(function (r) {
+    truthy(Math.abs(r.diff) < 1e-9, 'T22 ' + r.term + ' 的 KCL 成立');
+  });
+});
+
+test('T22b 三角冗余线：四条导线也全都一半一半，KCL 处处成立', function () {
+  var comps = [comp('E', 'battery', { emf: 3, rInt: 0 }),
+               comp('R1', 'resistor', { R: 10 })];
+  var ws = [W('E', 0, 'R1', 0), W('R1', 0, 'E', 0),
+            W('R1', 1, 'E', 1), W('E', 1, 'R1', 1)];
+  var res = C.solve(comps, ws);
+  var f = C.wireCurrents({ comps: comps, wires: ws }, res);
+  f.forEach(function (v, i) {
+    close(Math.abs(v), 0.15, 'T22b 第 ' + i + ' 根导线承担 0.15A', 1e-9);
+  });
+  kclResidual({ comps: comps, wires: ws }, res).forEach(function (r) {
+    truthy(Math.abs(r.diff) < 1e-9, 'T22b ' + r.term + ' 的 KCL 成立');
+  });
+});
+
+// ============================================================
 // 汇总
 // ============================================================
 console.log('');

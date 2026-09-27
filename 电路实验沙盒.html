@@ -21,6 +21,9 @@
   .bar button.pal{background:#fff7ed;border-color:#fed7aa;color:#9a3412;font-weight:600}
   .bar button.pal:hover{background:#ffedd5}
   .bar button.danger{color:#b91c1c}
+  .bar button.on{background:#fffbeb;border-color:#fcd34d;color:#b45309;font-weight:600}
+  .bar button.on:hover{background:#fef3c7}
+  .bar button.off{color:#94a3b8}
   .bar .sep{width:1px;height:22px;background:var(--line);margin:0 4px}
   .stage{display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap}
   .cv{flex:1 1 700px;min-width:0;background:var(--card);border:1px solid var(--line);
@@ -114,6 +117,12 @@ var ctx = canvas.getContext('2d');
 // ── 场景（编辑器直接改这两个数组）──────────────────────────
 var scene = { comps: [], wires: [] };
 var results = null, flows = [], phase = 0;
+
+// 电子流动动画开关。上课讲解时可以关掉——静态图更容易指着某一段说电流走向，
+// 粒子一直在跑反而分散注意力。选择记在 localStorage 里，下次打开保持。
+var FLOW_KEY = 'circuit_sandbox_flow';
+var showFlow = true;
+try { showFlow = localStorage.getItem(FLOW_KEY) !== '0'; } catch (e) {}
 
 function w(a, ai, b, bi, via, auto){
   return { a:{compId:a,termIdx:ai}, b:{compId:b,termIdx:bi}, via:via||[], auto:auto !== false };
@@ -215,7 +224,9 @@ function drawFrame(){
   ctx.drawImage(bgLayer, 0, 0, W, H);
   if (results) {
     scene.wires.forEach(function(wr,i){
-      D.drawWire(ctx, pathOf(wr), { flow: flows[i], phase: phase });
+      // phase 直接传秒数，由 drawWire 换算成像素行程；
+      // 关掉动画时传 null，drawWire 就不画粒子。
+      D.drawWire(ctx, pathOf(wr), { flow: flows[i], phase: showFlow ? phase : null });
     });
     ctx.drawImage(fgLayer, 0, 0, W, H);
   }
@@ -224,11 +235,11 @@ function drawFrame(){
 
 var lastT = 0;
 function tick(t){
-  if (results && results.status === 'ok') {
-    var dt = lastT ? Math.min((t - lastT)/1000, 0.06) : 0;
-    phase = (phase + dt) % 1000;
-  }
+  var dt = lastT ? Math.min((t - lastT)/1000, 0.06) : 0;
   lastT = t;
+  // 关掉电子动画就完全空转：画面是静止的，只在编辑操作时重绘。
+  if (!showFlow) { requestAnimationFrame(tick); return; }
+  if (results && results.status === 'ok') phase += dt;
   drawFrame();
   requestAnimationFrame(tick);
 }
@@ -453,6 +464,17 @@ toolBtn('示例电路', function(){
   editor.pushUndo(); seed(); editor.select(null); render();
 });
 
+// ── 电子流动动画开关 ──────────────────────────────────────
+var btnFlow = toolBtn('', function(){ setFlow(!showFlow); });
+function setFlow(on){
+  showFlow = !!on;
+  btnFlow.textContent = showFlow ? '⚡ 电子流动：开' : '⚡ 电子流动：关';
+  btnFlow.className = showFlow ? 'on' : 'off';
+  try { localStorage.setItem(FLOW_KEY, showFlow ? '1' : '0'); } catch (e) {}
+  drawFrame();                       // 关了要立刻把粒子擦掉，开了要立刻画出来
+}
+setFlow(showFlow);
+
 seed();
 layout();
 render();
@@ -464,6 +486,10 @@ window.__scene = function(){ return scene; };
 window.__results = function(){ return results; };
 window.__flows = function(){ return flows.slice(); };
 window.__editor = function(){ return editor; };
+window.__showFlow = function(){ return showFlow; };
+window.__setFlow = function(v){ setFlow(v); };
+window.__pathOf = function(wr){ return pathOf(wr); };
+window.__btnFlow = function(){ return btnFlow; };
 })();
 </script>
 </body>
