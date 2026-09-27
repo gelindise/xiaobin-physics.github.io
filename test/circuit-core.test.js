@@ -299,10 +299,12 @@ function bridgeWires() {
     W('E', 0, 'R1', 0), W('E', 0, 'R3', 0),          // A
     W('R1', 1, 'R2', 0), W('R2', 1, 'E', 1),          // C → B
     W('R3', 1, 'R4', 0), W('R4', 1, 'E', 1),          // D → B
-    W('R1', 1, 'G', 0),                                // C
-    W('G', 1, 'R3', 1),                                // D
+    W('R1', 1, 'G', 0),                                // C → 表的「−」柱（端子 0，最左）
+    W('G', 1, 'R3', 1),                                // D → 表的量程柱（端子 1）
   ];
 }
+// 表头接线约定（三柱实物）：端子 0 = 「−」柱，端子 1/2 = 两个量程柱。
+// 电流【从量程柱流进、从「−」柱流出】时 rec.i > 0，就是正接。
 
 test('T8 电桥平衡：四臂均 10Ω，桥臂电流为 0', function () {
   var r = run(bridgeComponents(10, 10, 10, 10, 10, { range: 3, rInternal: 0 }),
@@ -331,8 +333,9 @@ test('T9a 电桥不平衡 + 理想电流表(r=0)：V_C=V_D=120/17V，I_表=−1/
   close(r.components.R3.i, 5 / 17, 'T9a I_R3', 1e-9);
   close(r.components.R4.i, 4 / 17, 'T9a I_R4 = (120/17)/30', 1e-9);
   // 节点 C 收支不平：R1 进 5/17，R2 出 6/17 ⇒ 差额 1/17 由电流表由 D 补给
-  // 电流由 D→C，即从端子 1 流入、端子 0 流出 ⇒ rec.i = −1/17
-  close(r.components.G.i, -1 / 17, 'T9a 桥臂电流（D→C 为 1/17 A）', 1e-9);
+  // 电流由 D→C，即【从量程柱（端子 1）流入、从「−」柱（端子 0）流出】⇒ rec.i = +1/17
+  close(r.components.G.i, 1 / 17, 'T9a 桥臂电流（D→C 为 1/17 A）', 1e-9);
+  truthy(r.components.G.reversed === false, 'T9a 桥臂电流从量程柱进 = 正接，不该被标记反接');
 
   // 关键：电流表绝不能是 0（0Ω 支路被误当成节点合并的典型症状）
   truthy(Math.abs(r.components.G.i) > 1e-6,
@@ -354,8 +357,8 @@ test('T9b 电桥不平衡 + 10Ω 检流计：v_C−v_D 打开，电流变小', f
   close(r.components.R2.i, vC / 20, 'T9b I_R2', 1e-9);
   close(r.components.R3.i, (10 - vD) / 10, 'T9b I_R3', 1e-9);
   close(r.components.R4.i, vD / 30, 'T9b I_R4', 1e-9);
-  // 电流由 D→C 流过表：从端子 1 进、端子 0 出 ⇒ 负
-  close(r.components.G.i, -(vD - vC) / 10, 'T9b 表电流 = −(vD−vC)/10', 1e-9);
+  // 电流由 D→C 流过表：从量程柱（端子 1）进、「−」柱（端子 0）出 ⇒ 正
+  close(r.components.G.i, (vD - vC) / 10, 'T9b 表电流 = (vD−vC)/10', 1e-9);
 
   // 表内阻 10Ω 让 C/D 拉开电位差，电流必然比理想表小
   truthy(Math.abs(r.components.G.i) < Math.abs(r0.components.G.i),
@@ -374,7 +377,7 @@ test('T10 电压表分流：R1=3kΩ 串 R2=3kΩ，电压表(3kΩ)并在 R2', fun
     comp('V', 'voltmeter', { range: 3, rInternal: null }),
   ], [
     W('E', 0, 'R1', 0), W('R1', 1, 'R2', 0), W('R2', 1, 'E', 1),
-    W('R1', 1, 'V', 0), W('V', 1, 'E', 1),
+    W('R1', 1, 'V', 1), W('V', 0, 'E', 1),
   ], 'T10-理想表');
 
   close(ideal.components.V.v, 1.5, 'T10 理想电压表读数', 1e-9);
@@ -396,7 +399,7 @@ test('T10 电压表分流：R1=3kΩ 串 R2=3kΩ，电压表(3kΩ)并在 R2', fun
     comp('V', 'voltmeter', { range: 3, rInternal: 3000 }),
   ], [
     W('E', 0, 'R1', 0), W('R1', 1, 'R2', 0), W('R2', 1, 'E', 1),
-    W('R1', 1, 'V', 0), W('V', 1, 'E', 1),
+    W('R1', 1, 'V', 1), W('V', 0, 'E', 1),
   ], 'T10-真实表');
 
   // R2 ∥ R_V = 1500Ω，总 4500Ω，I = 3/4500 = 0.6667mA，V = 1.0V
@@ -414,7 +417,7 @@ test('T11 电流表内阻：E=3V，R=4.9Ω 串电流表(r_A=0.1Ω)', function ()
     comp('R', 'resistor', { R: 4.9 }),
     comp('A', 'ammeter', { range: 0.6, rInternal: 0.1 }),
   ], [
-    W('E', 0, 'A', 0), W('A', 1, 'R', 0), W('R', 1, 'E', 1),
+    W('E', 0, 'A', 1), W('A', 0, 'R', 0), W('R', 1, 'E', 1),
   ], 'T11-真实表');
 
   close(real.components.A.i, 0.6, 'T11 恰满偏 I = 3/(4.9+0.1)', 1e-12);
@@ -427,7 +430,7 @@ test('T11 电流表内阻：E=3V，R=4.9Ω 串电流表(r_A=0.1Ω)', function ()
     comp('R', 'resistor', { R: 4.9 }),
     comp('A', 'ammeter', { range: 0.6, rInternal: 0 }),
   ], [
-    W('E', 0, 'A', 0), W('A', 1, 'R', 0), W('R', 1, 'E', 1),
+    W('E', 0, 'A', 1), W('A', 0, 'R', 0), W('R', 1, 'E', 1),
   ], 'T11-理想表');
 
   close(ideal.components.A.i, 3 / 4.9, 'T11 理想表电流', 1e-12);
@@ -594,7 +597,9 @@ test('T16 电流表反接：读数应为负且被标记', function () {
     comp('R', 'resistor', { R: 10 }),
     comp('A', 'ammeter', { range: 0.6, rInternal: 0 }),
   ], [
-    W('E', 0, 'A', 1), W('A', 0, 'R', 0), W('R', 1, 'E', 1),       // A 的 +/− 接反
+    // 反接：电源正极接到了「−」柱（端子 0），量程柱（端子 1）反而接了负载。
+    // 电流从「−」柱流进、从量程柱流出 ⇒ rec.i < 0。
+    W('E', 0, 'A', 0), W('A', 1, 'R', 0), W('R', 1, 'E', 1),
   ], 'T16');
 
   truthy(r.components.A.i < 0, 'T16 反接时电流读数应为负，实际 ' + r.components.A.i);
@@ -622,6 +627,134 @@ test('T17 悬空元件：只接一端的电阻 + 空电压表 + 空电流表', f
   close(r.components.V.i, 0, 'T17 空电压表电流为 0', 1e-15);
   close(r.components.A.i, 0, 'T17 空电流表电流为 0', 1e-15);
   truthy(Number.isFinite(r.components.RH.v), 'T17 悬空元件电压应为有限数');
+  // 三柱表头一根线都没接：量程柱空着 ⇒ 表头不在电路里，也没有「量程」可言
+  truthy(r.components.A.rangeWired === false, 'T17 没接量程柱的表不该有可用量程');
+  truthy(!r.warnings.some(function (w) { return w.code === 'METER_NO_RANGE'; }),
+    'T17 完全没接线的表不该报「只接了 − 柱」');
+});
+
+// ============================================================
+// T17b 量程由「导线接在哪个量程柱上」决定（人教版三柱表头）
+// 这是这次改动的核心：同一个电路、同一个电流值，接 0.6 柱和接 3 柱
+// 除了量程不同，超量程判定也必须不同。改错了不会报错，只会读数不对。
+// ============================================================
+function seriesAmmeter(taps, opts) {
+  // E=4V 串 R=5Ω 串电流表 ⇒ 0.8A
+  var wires = [W('A', 0, 'R', 0), W('R', 1, 'E', 1)];
+  taps.forEach(function (t) { wires.push(W('E', 0, 'A', t)); });
+  return {
+    comps: [comp('E', 'battery', { emf: 4, rInt: 0 }),
+            comp('A', 'ammeter', { range: 0.6, rInternal: 0 }),
+            comp('R', 'resistor', { R: 5 })],
+    wires: wires,
+  };
+}
+
+test('T17b 接 0.6 柱 vs 接 3 柱：电流相同，量程与超量程判定不同', function () {
+  var lo = seriesAmmeter([1]);
+  var hi = seriesAmmeter([2]);
+  var rLo = run(lo.comps, lo.wires, 'T17b-0.6');
+  var rHi = run(hi.comps, hi.wires, 'T17b-3');
+
+  close(rLo.components.A.i, 0.8, 'T17b 接 0.6 柱读数 0.8A', 1e-12);
+  close(rHi.components.A.i, 0.8, 'T17b 接 3 柱读数同样 0.8A（同一条支路）', 1e-12);
+
+  close(rLo.components.A.range, 0.6, 'T17b 接 0.6 柱时量程必须是 0.6A', 0);
+  close(rHi.components.A.range, 3, 'T17b 接 3 柱时量程必须是 3A', 0);
+  truthy(rLo.components.A.rangeWired && rHi.components.A.rangeWired,
+    'T17b 两种接法都应标记「量程已接上」');
+
+  // 0.8A 超 0.6A 量程但不超 3A —— 真表上就是「指针打到底」和「指在 27% 处」
+  truthy(rLo.components.A.overRange === true, 'T17b 0.8A 应判超 0.6A 量程');
+  truthy(rLo.warnings.some(function (w) { return w.code === 'METER_OVER_RANGE'; }),
+    'T17b 超量程应给出 METER_OVER_RANGE 告警');
+  truthy(rHi.components.A.overRange === false, 'T17b 0.8A 不该判超 3A 量程');
+  truthy(!rHi.warnings.some(function (w) { return w.code === 'METER_OVER_RANGE'; }),
+    'T17b 接 3 柱不该报超量程');
+
+  close(rLo.components.A.tapIdx, 1, 'T17b 记录生效的量程端子号（渲染层要用）', 0);
+  close(rHi.components.A.tapIdx, 2, 'T17b 记录生效的量程端子号', 0);
+});
+
+test('T17c 两个量程柱同时接：取小量程 + METER_RANGE_CONFLICT 告警', function () {
+  var sc = seriesAmmeter([1]);
+  sc.wires.push(W('A', 2, 'R', 0));            // 3 柱上又接了一根
+  var r = run(sc.comps, sc.wires, 'T17c');
+
+  close(r.components.A.i, 0.8, 'T17c 仍然只走一条支路，电流不会翻倍', 1e-12);
+  close(r.components.A.range, 0.6, 'T17c 两个柱都接时取【小】量程', 0);
+  truthy(r.warnings.some(function (w) { return w.code === 'METER_RANGE_CONFLICT'; }),
+    'T17c 应给出 METER_RANGE_CONFLICT 告警',
+    r.warnings.map(function (w) { return w.code; }));
+
+  // 悬空的那个量程柱必须注入 0：写成端子 1 的符号会让这根线凭空多一倍电流
+  var rows = kclResidual(sc, r);
+  var bad = rows.filter(function (x) { return Math.abs(x.diff) > 1e-9; });
+  truthy(bad.length === 0, 'T17c 两个量程柱的端子 KCL 都要成立',
+    bad.map(function (x) { return x.term + ' 残差 ' + x.diff; }));
+});
+
+test('T17d 只接「−」柱：表头没进电路，读数 0 且必须告警', function () {
+  var r = run([
+    comp('E', 'battery', { emf: 3, rInt: 0 }),
+    comp('R', 'resistor', { R: 10 }),
+    comp('A', 'ammeter', { range: 0.6, rInternal: 0 }),
+  ], [
+    W('E', 0, 'A', 0), W('A', 0, 'R', 0), W('R', 1, 'E', 1),   // 只接了「−」柱
+  ], 'T17d');
+
+  close(r.components.A.i, 0, 'T17d 没接量程柱 ⇒ 表头不分流，电流恒 0', 1e-15);
+  truthy(r.components.A.rangeWired === false, 'T17d 不该有可用量程');
+  truthy(r.warnings.some(function (w) { return w.code === 'METER_NO_RANGE'; }),
+    'T17d 应给出 METER_NO_RANGE 告警（学生少接一根线，指针不动得说清原因）',
+    r.warnings.map(function (w) { return w.code; }));
+  truthy(!r.warnings.some(function (w) { return w.code === 'METER_REVERSED'; }),
+    'T17d 没电流就谈不上接反');
+  // 两根线都落在同一个「−」柱上，等于把表头短路掉了：主回路照常通，
+  // 但电流全部从表外走 —— 这正是「接了一半」最迷惑人的地方，指针不动，
+  // 电路却「看着是通的」，所以必须靠 METER_NO_RANGE 告警点破。
+  close(r.components.R.i, 0.3, 'T17d 主回路电流照常 0.3A（表头被绕过）', 1e-12);
+  close(r.components.E.i, 0.3, 'T17d 电源电流照常', 1e-12);
+  truthy(r.status === 'ok', 'T17d 表头被绕过，电路本身是通的，实际 ' + r.status);
+});
+
+test('T17e 电压表接 15V 柱：量程 15V，读数与 3V 柱相同', function () {
+  function build(tap) {
+    return run([
+      comp('E', 'battery', { emf: 6, rInt: 0 }),
+      comp('R1', 'resistor', { R: 10 }),
+      comp('R2', 'resistor', { R: 20 }),
+      comp('V', 'voltmeter', { range: 3, rInternal: null }),
+    ], [
+      W('E', 0, 'R1', 0), W('R1', 1, 'R2', 0), W('R2', 1, 'E', 1),
+      W('R1', 1, 'V', tap), W('V', 0, 'E', 1),
+    ], 'T17e-' + tap);
+  }
+  var lo = build(1), hi = build(2);
+  close(lo.components.V.v, 4, 'T17e 接 3V 柱读数 4V', 1e-9);
+  close(hi.components.V.v, 4, 'T17e 接 15V 柱读数同样是 4V', 1e-9);
+  close(lo.components.V.range, 3, 'T17e 端子 1 = 3V 量程', 0);
+  close(hi.components.V.range, 15, 'T17e 端子 2 = 15V 量程', 0);
+  truthy(lo.components.V.overRange === true, 'T17e 4V 超 3V 量程');
+  truthy(hi.components.V.overRange === false, 'T17e 4V 不超 15V 量程');
+  truthy(hi.components.V.reversed === false, 'T17e 15V 柱是正接');
+});
+
+test('T17f 电压表接反：读数变负并标记（− 柱接到了高电位一侧）', function () {
+  var r = run([
+    comp('E', 'battery', { emf: 6, rInt: 0 }),
+    comp('R1', 'resistor', { R: 10 }),
+    comp('R2', 'resistor', { R: 20 }),
+    comp('V', 'voltmeter', { range: 15, rInternal: null }),
+  ], [
+    W('E', 0, 'R1', 0), W('R1', 1, 'R2', 0), W('R2', 1, 'E', 1),
+    W('R1', 1, 'V', 0), W('V', 2, 'E', 1),          // 「−」柱接高电位侧 = 接反
+  ], 'T17f');
+
+  close(r.components.V.v, -4, 'T17f 接反读数应为 −4V（不是 0）', 1e-9);
+  truthy(r.components.V.reversed === true, 'T17f 应被标记 reversed');
+  truthy(r.warnings.some(function (w) { return w.code === 'METER_REVERSED'; }),
+    'T17f 应给出 METER_REVERSED 告警');
 });
 
 // ============================================================
@@ -914,6 +1047,23 @@ test('T21 串联回路：每处端子的 KCL 都成立，四根导线同向同�
   r.flow.forEach(function (v, i) {
     close(v, 0.1, 'T21 第 ' + i + ' 根导线 = 3V/30Ω = 0.1A（方向沿书写顺序，故为正）', 1e-9);
   });
+});
+
+test('T21a2 三柱电流表串在回路里：量程柱进、「−」柱出，两根引线各自对上账', function () {
+  // 表头现在是三端元件，端子注入量必须按「量程柱 / − 柱 / 悬空量程柱」
+  // 分开算。落到老的两端兜底式子上，两个量程柱会各吐一份电流。
+  var scene = {
+    comps: [comp('E', 'battery', { emf: 3, rInt: 0 }),
+            comp('A', 'ammeter', { range: 3, rInternal: 0 }),
+            comp('R', 'resistor', { R: 10 })],
+    wires: [W('E', 0, 'A', 1), W('A', 0, 'R', 0), W('R', 1, 'E', 1)],
+  };
+  var r = kclSuite(scene, 'T21a2');
+  // 三根线都沿书写顺序（电源 + → 表的量程柱 → 电阻 → 电源 −），故都为正
+  r.flow.forEach(function (v, i) {
+    close(v, 0.3, 'T21a2 第 ' + i + ' 根导线 = 3V/10Ω = 0.3A', 1e-9);
+  });
+  close(r.res.components.A.i, 0.3, 'T21a2 电流从量程柱流进、从「−」柱流出 ⇒ 读数为正', 1e-12);
 });
 
 test('T21b 并联回路：干路和支路各自满足 KCL，互不串味', function () {

@@ -12,17 +12,23 @@
  *   5. 阴影一律走 softShadow()，光源统一在左上方
  *
  * ── 极性铁律 ─────────────────────────────────────────────
- *   circuit-core 里 battery / ammeter / voltmeter 的端子 0 都是「+」。
- *   端子 0 画在哪一头，由 TERMINALS 拍板，并且全站统一：
- *     · 横向元件（电源、电流表）：端子 0 在【右端】
- *     · 纵向元件（电压表）：      端子 0 在【上端】
- *   为什么电源和电流表都得是右边：一个矩形回路里，电源正极的线往右出去，
- *   电流绕一圈回来必然从右边进、左边出地穿过顶排的元件。把「+」画在右边，
- *   红柱子才是电流【流进去】的那一头；画反了红柱子就成了电流流出的一端。
- *   三处必须同时对上，任何一处画反画面都会自相矛盾：
+ *   端子 0 画在哪一头，由 TERMINALS 拍板，并且全站统一。分两种元件：
+ *
+ *   (1) 两端极性元件：电源的端子 0 是「+」，画在【右端】。
+ *       一个矩形回路里，电源正极的线往右出去，电流绕一圈回来必然从右边进、
+ *       左边出地穿过顶排的元件。把「+」画在右边，红柱子才是电流【流进去】
+ *       的那一头；画反了红柱子就成了电流流出的一端。
+ *
+ *   (2) 三柱表头（电流表 / 电压表，人教版实物）：端子 0 是「−」柱，画在
+ *       【最左】；1、2 号是两个量程柱，序号越大越靠右、量程越大。三根柱子
+ *       一起钉在底座下方的 POST_Y 上（外侧两根仍占 ±HALF 的网格位）。
+ *       读数方向仍是「电流从量程柱流进、从「−」柱流出为正」——core 里
+ *       rec.i 的含义没变，只是「+」那一头换成了当前接了线的量程柱。
+ *
+ *   两处必须同时对上，任何一处画反画面就自相矛盾：
  *     1. TERMINALS 的坐标
- *     2. 元件的正负记号（drawBattery 的加减号 / drawMeter 的 mk 圆圈+符号）
- *     3. posts() 传入的 kinds —— kinds[i] 对应【端子序号】，一律 ['pos','neg']
+ *     2. posts() 传入的 kinds —— kinds[i] 对应【端子序号】，不是左右顺序：
+ *        电源 ['pos','neg']，表头 ['neg','pos','pos']
  */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) module.exports = factory();
@@ -125,6 +131,31 @@
   }
 
   // ============================================================
+  // 表头几何（电流表 / 电压表共用，照人教版学生电表 J0407 的外形）
+  // ------------------------------------------------------------
+  // 这台仪器是「歪」的：表壳在上、底座在下、接线柱从底座底下探出来，
+  // 导线夹在柱子上。所以端子锚点（POST_Y）在仪器重心的下方，而仪器本体
+  // 全部落在导线【上方】—— 这样导线永远不会从表壳或底座中间穿过去。
+  // 绘制和 bodyBox 都从这里取数，别再各写一份。
+  // ============================================================
+  // 尺寸是「两排数字 + 中央字母 + 弧形刻度」挤出来的：内圈数字在 ±20°
+  // 处离竖直只有 0.34r 的横向偏移，r 不够大时它们会挤到中线上，把「A」
+  // 压掉。要对上教材的排布，弧半径得 60 上下，表盘就得 150 宽。
+  var MET = {
+    CASE_HW: 88, CASE_TOP: -70, CASE_BOT: 42,       // 表壳（浅色胶木，上沿大圆角）
+    DIAL: { x: -76, y: -56, w: 152, h: 90 },        // 白色表盘
+    PIVOT: { x: 0, y: 10 },                         // 指针转轴
+    RT0: 50, RT1: 62,                               // 刻度线内 / 外半径
+    RN_HI: 44, RN_LO: 34,                           // 外圈 / 内圈数字半径
+    BLOCK: { top: 4, bot: 34, hwT: 24, hwB: 34 },   // 底部网纹块（梯形）
+    ZERO: { x: 0, y: 26, r: 6.5 },                  // 调零螺丝
+    BASE_HW: 96, BASE_TOP: 42, BASE_BOT: 60,        // 底座（比表壳宽一圈）
+    POST_Y: 72,                                     // 三柱锚点（= TERMINALS 的 y）
+  };
+  // 指针扫角：−150° → −30°，绕正上方左右各 60°（教材表的弧线就这一段）
+  var MET_SWEEP = { A0: -Math.PI * 5 / 6, A1: -Math.PI / 6 };
+
+  // ============================================================
   // 端子坐标
   // ============================================================
   var TERMINALS = {
@@ -132,8 +163,10 @@
     battery: [{ x: HALF, y: 0 }, { x: -HALF, y: 0 }],   // 0 = 正极（右）
     switch: [{ x: -HALF, y: 0 }, { x: HALF, y: 0 }],
     bulb: [{ x: -HALF, y: 0 }, { x: HALF, y: 0 }],
-    ammeter: [{ x: HALF, y: 0 }, { x: -HALF, y: 0 }],   // 0 = 正极（右）
-    voltmeter: [{ x: 0, y: -HALF }, { x: 0, y: HALF }], // 0 = 正极（上）
+    // 三柱表头：0 = 「−」柱（黑，最左），1/2 = 两个量程柱（红，往右排）。
+    // 外侧两个柱仍钉在 ±HALF，保持全站网格约定，只有 y 落到底座下面。
+    ammeter: [{ x: -HALF, y: MET.POST_Y }, { x: 0, y: MET.POST_Y }, { x: HALF, y: MET.POST_Y }],
+    voltmeter: [{ x: -HALF, y: MET.POST_Y }, { x: 0, y: MET.POST_Y }, { x: HALF, y: MET.POST_Y }],
     rheostat: [
       { x: -78, y: -26 }, { x: 78, y: -26 },   // A 左上 / B 右上（金属杆）
       { x: -78, y: 26 }, { x: 78, y: 26 },     // C 左下 / D 右下（电阻丝）
@@ -415,7 +448,10 @@
       }
       case 'switch': return { hw: 59, hh: 28 };          // drawSwitch 的 BW/BH
       case 'bulb': return { hw: 38, hh: 38 };            // 玻璃泡 R=34 再放宽一点
-      case 'ammeter': case 'voltmeter': return { hw: 58, hh: 58 };  // drawMeter 的 R=54
+      // 表头：整台仪器的包围盒（表壳 + 底座）。接线柱在 POST_Y，
+      // 故意落在盒子【外面】——导线夹在柱子上，不该被当成穿体。
+      case 'ammeter': case 'voltmeter':
+        return { hw: MET.BASE_HW + 4, hh: -MET.CASE_TOP };
       case 'rheostat': return { hw: RHEO.BW / 2, hh: RHEO.BH / 2 }; // 含陶瓷管与滑片杆
       default: return { hw: 54, hh: 20 };                // 定值电阻 BW/BH = 108/40
     }
@@ -701,128 +737,211 @@
   }
 
   // ============================================================
-  // 表头（电流表 / 电压表）
+  // 表头（电流表 / 电压表）—— 照人教版学生电表画
+  // ------------------------------------------------------------
+  // 和教材实物对齐的几处：
+  //   · 浅色胶木表壳，上沿圆角、下沿收边，面板左右各一颗螺丝
+  //   · 白色表盘上【同一条弧线、两排数字】：外圈 0~3、内圈 0~0.6。
+  //     两排刻度完全重合，因为 0.6 : 3 = 1 : 5 —— 教材上「读数先看量程」
+  //     这句话的由来就是这个，画起来也必须重合，不能各画各的弧。
+  //   · 指针从底部深色网纹块里伸出来，块里嵌着调零螺丝
+  //   · 比表壳宽的底座 + 绿色面板，面板上三个接线柱：
+  //       −（黑，最左）、两个量程柱（红，按量程从小到大往右排）
+  // 端子坐标见 TERMINALS：锚点落在柱子顶帽下方，导线夹在柱子上，
+  // 整台仪器都在导线【上方】，导线不会从表壳或底座中间穿过去。
   // ============================================================
+
+  // 表壳：上沿大圆角、下沿小圆角。全站唯一一处两个圆角不一样的壳子，
+  // 所以不走通用的 roundRect。
+  function meterCasePath(ctx, hw, top, bot, rt, rb) {
+    ctx.beginPath();
+    ctx.moveTo(-hw, bot - rb);
+    ctx.lineTo(-hw, top + rt);
+    ctx.quadraticCurveTo(-hw, top, -hw + rt, top);
+    ctx.lineTo(hw - rt, top);
+    ctx.quadraticCurveTo(hw, top, hw, top + rt);
+    ctx.lineTo(hw, bot - rb);
+    ctx.quadraticCurveTo(hw, bot, hw - rb, bot);
+    ctx.lineTo(-hw + rb, bot);
+    ctx.quadraticCurveTo(-hw, bot, -hw, bot - rb);
+    ctx.closePath();
+  }
+
+  // 一字槽小螺丝。面板螺丝和调零螺丝共用 —— 调零螺丝必须是「金属螺钉」
+  // 的样子：画成深色圆片会和「−」接线柱标记混起来，学生分不清哪个是极性。
+  function meterScrew(ctx, x, y, r) {
+    ctx.fillStyle = linGrad(ctx, x - r, y - r, x + r, y + r,
+      [[0, '#fbfdff'], [0.45, '#b9c6d3'], [1, '#68788c']]);
+    ctx.beginPath(); ctx.arc(x, y, r, 0, 6.284); ctx.fill();
+    ctx.strokeStyle = 'rgba(51,65,85,0.6)'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.arc(x, y, r, 0, 6.284); ctx.stroke();
+    ctx.strokeStyle = 'rgba(71,85,105,0.85)'; ctx.lineWidth = Math.max(1.2, r * 0.3);
+    ctx.beginPath();
+    ctx.moveTo(x - r * 0.62, y + r * 0.18);
+    ctx.lineTo(x + r * 0.62, y - r * 0.18);
+    ctx.stroke();
+  }
+
   function drawMeter(ctx, comp, rec, isVolt) {
-    var R = 54, BOX = R + 8;
+    var M = MET, SW = MET_SWEEP;
     var reading = rec ? (rec.reading || 0) : 0;
     var range = (rec && rec.range) || (comp.params && comp.params.range) || (isVolt ? 3 : 0.6);
-    var over = rec && rec.overRange;
+    var over = !!(rec && rec.overRange);
+    var POSTX = [TERMINALS[comp.type][0].x, TERMINALS[comp.type][1].x, TERMINALS[comp.type][2].x];
+    // 两排刻度各自的满量程：外圈大、内圈小，比值恒为 5
+    var HI_V = isVolt ? 15 : 3, LO_V = isVolt ? 3 : 0.6;
+    var HI_TX = isVolt ? ['0', '5', '10', '15'] : ['0', '1', '2', '3'];
+    var LO_TX = isVolt ? ['0', '1', '2', '3'] : ['0', '0.2', '0.4', '0.6'];
+    var POST_TX = isVolt ? ['3', '15'] : ['0.6', '3'];
+    // 当前量程是哪一排：真表上两排数字都印着，看错排就读错数，
+    // 所以把【当前有效】的那排画深、另一排画浅，指针读数才对得上号。
+    var hiActive = range >= HI_V - 1e-9;
 
     ctx.save();
     ctx.translate(comp.x, comp.y);
     ctx.rotate((comp.rot || 0) * Math.PI / 180);
 
-    softShadow(ctx, -BOX, -BOX, BOX * 2, BOX * 2, 16, 12);
-    ctx.fillStyle = linGrad(ctx, -BOX, -BOX, BOX, BOX,
-      [[0, PALETTE.plasticHi], [0.42, PALETTE.plastic], [1, PALETTE.plasticLo]]);
-    roundRect(ctx, -BOX, -BOX, BOX * 2, BOX * 2, 12); ctx.fill();
-    ctx.strokeStyle = 'rgba(0,0,0,0.5)'; ctx.lineWidth = 1.4; ctx.stroke();
-    ctx.strokeStyle = 'rgba(255,255,255,0.14)'; ctx.lineWidth = 1.6;
-    roundRect(ctx, -BOX + 3, -BOX + 3, BOX * 2 - 6, BOX * 2 - 6, 10); ctx.stroke();
-
-    // 表盘
-    ctx.fillStyle = linGrad(ctx, 0, -R, 0, R, [[0, PALETTE.dial], [1, PALETTE.dialLo]]);
-    ctx.beginPath(); ctx.arc(0, 0, R, 0, 6.284); ctx.fill();
-    ctx.strokeStyle = '#8b9aab'; ctx.lineWidth = 1.2; ctx.stroke();
-
-    var A0 = Math.PI * 0.75, A1 = Math.PI * 2.25;
-    var MAJOR = 6, MINOR = 5, total = MAJOR * MINOR;
-    for (var i = 0; i <= total; i++) {
-      var t = i / total, a = A0 + (A1 - A0) * t;
-      var isMajor = i % MINOR === 0;
-      var r0 = R - (isMajor ? 14 : 9);
-      ctx.strokeStyle = isMajor ? '#334155' : '#a8b6c4';
-      ctx.lineWidth = isMajor ? 2 : 1;
-      ctx.beginPath();
-      ctx.moveTo(Math.cos(a) * r0, Math.sin(a) * r0);
-      ctx.lineTo(Math.cos(a) * (R - 3), Math.sin(a) * (R - 3));
-      ctx.stroke();
-    }
-    ctx.fillStyle = PALETTE.text;
-    ctx.font = 'bold 10px -apple-system,"PingFang SC",sans-serif';
-    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    for (i = 0; i <= MAJOR; i++) {
-      var tt = i / MAJOR, aa = A0 + (A1 - A0) * tt;
-      var v = range * tt;
-      var label = range <= 0.6 ? v.toFixed(1) : String(Math.round(v));
-      var rr = R - 25;
-      ctx.fillText(label, Math.cos(aa) * rr, Math.sin(aa) * rr);
-    }
-
-    ctx.fillStyle = PALETTE.accent;
-    ctx.font = 'bold 15px -apple-system,"PingFang SC",sans-serif';
-    ctx.fillText(isVolt ? 'V' : 'A', 0, R * 0.40);
-    ctx.fillStyle = '#7c8b9d';
-    ctx.font = 'bold 8px -apple-system,"PingFang SC",sans-serif';
-    // 量程用「~」不用「-」：短横在表盘上会被误当成负号接线柱
-    ctx.fillText('0~' + (range <= 0.6 ? range.toFixed(1) : range) + (isVolt ? 'V' : 'A'), 0, R * 0.60);
-
-    // 指针
-    var frac = Math.max(0, Math.min(Math.abs(reading) / range, 1.06));
-    var na = A0 + (A1 - A0) * frac;
-    ctx.save();
-    ctx.rotate(na);
-    ctx.strokeStyle = 'rgba(0,0,0,0.16)'; ctx.lineWidth = 3.2;
-    ctx.beginPath(); ctx.moveTo(-11, 1.5); ctx.lineTo(R - 11, 1.5); ctx.stroke();
-    ctx.strokeStyle = over ? '#b91c1c' : PALETTE.needle;
-    ctx.lineWidth = 2.4;
-    ctx.beginPath(); ctx.moveTo(-11, 0); ctx.lineTo(R - 11, 0); ctx.stroke();
-    ctx.fillStyle = over ? '#b91c1c' : PALETTE.needle;
-    ctx.beginPath(); ctx.moveTo(R - 11, 0); ctx.lineTo(R - 17, -2.8); ctx.lineTo(R - 17, 2.8); ctx.closePath(); ctx.fill();
-    ctx.fillStyle = '#8496a8';
-    ctx.beginPath(); ctx.arc(-11, 0, 3.4, 0, 6.284); ctx.fill();
-    ctx.restore();
-    ctx.fillStyle = linGrad(ctx, -5, 0, 5, 0, [[0, '#5b6c7d'], [0.5, '#eef3f8'], [1, '#5b6c7d']]);
-    ctx.beginPath(); ctx.arc(0, 0, 5.5, 0, 6.284); ctx.fill();
-    ctx.strokeStyle = 'rgba(0,0,0,0.35)'; ctx.lineWidth = 1; ctx.stroke();
-
-    // 调零螺丝（一字槽）——画成金属小螺钉，别画成深色圆片，
-    // 否则它和「−」接线柱标记长得一样，学生分不清哪个是极性。
-    var scY = R * 0.84;
-    ctx.fillStyle = linGrad(ctx, 0, scY - 5, 0, scY + 5,
-      [[0, '#f4f7fa'], [0.45, '#b9c6d3'], [1, '#6c7a8a']]);
-    ctx.beginPath(); ctx.arc(0, scY, 5, 0, 6.284); ctx.fill();
-    ctx.strokeStyle = 'rgba(51,65,85,0.55)'; ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.arc(0, scY, 5, 0, 6.284); ctx.stroke();
-    ctx.strokeStyle = '#475569'; ctx.lineWidth = 1.6;
-    ctx.beginPath(); ctx.moveTo(-3, scY); ctx.lineTo(3, scY); ctx.stroke();
-
-    // 玻璃面罩
-    ctx.save();
-    ctx.beginPath(); ctx.arc(0, 0, R, 0, 6.284); ctx.clip();
-    glassHighlight(ctx, -R, -R, R * 2, R * 2);
-    ctx.restore();
-    ctx.strokeStyle = 'rgba(255,255,255,0.6)'; ctx.lineWidth = 1.4;
-    ctx.beginPath(); ctx.arc(0, 0, R, 0, 6.284); ctx.stroke();
-
-    // 端子引线
-    var pos = isVolt ? [[0, -HALF], [0, HALF]] : [[-HALF, 0], [HALF, 0]];
-    ctx.strokeStyle = PALETTE.metalLo; ctx.lineWidth = 3.5; ctx.lineCap = 'round';
-    ctx.beginPath();
-    ctx.moveTo(pos[0][0] * (BOX / HALF), pos[0][1] * (BOX / HALF));
-    ctx.lineTo(pos[0][0], pos[0][1]);
-    ctx.moveTo(pos[1][0] * (BOX / HALF), pos[1][1] * (BOX / HALF));
-    ctx.lineTo(pos[1][0], pos[1][1]);
+    // ── 表壳 ────────────────────────────────────────────────
+    softShadow(ctx, -M.CASE_HW, M.CASE_TOP, M.CASE_HW * 2, M.CASE_BOT - M.CASE_TOP, 18, 16);
+    ctx.fillStyle = linGrad(ctx, -M.CASE_HW, M.CASE_TOP, M.CASE_HW * 0.5, M.CASE_BOT,
+      [[0, '#fdfefe'], [0.40, '#e9eff6'], [1, '#c4d0de']]);
+    meterCasePath(ctx, M.CASE_HW, M.CASE_TOP, M.CASE_BOT, 24, 7);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(51,65,85,0.55)'; ctx.lineWidth = 1.4; ctx.stroke();
+    ctx.strokeStyle = 'rgba(255,255,255,0.7)'; ctx.lineWidth = 1.1;
+    meterCasePath(ctx, M.CASE_HW - 3.5, M.CASE_TOP + 3.5, M.CASE_BOT - 3.5, 21, 5);
     ctx.stroke();
 
-    // 接线柱的正负标记：极性接反是考点，必须写在表面上。
-    // 白底圆 + 加粗符号，压在深色外壳上也看得清。
-    // mk[0] 必须压在【端子 0】那一头：横向表在右端，纵向（电压表）在上端。
-    var mk = isVolt ? [[-19, -HALF], [-19, HALF]] : [[HALF, -19], [-HALF, -19]];
-    var sym = ['+', '−'], col = [PALETTE.positive, PALETTE.negative];
-    ctx.font = 'bold 15px -apple-system,"PingFang SC",sans-serif';
+    // 面板螺丝（左右各一颗，压在表壳圆角内侧、表盘上方）
+    meterScrew(ctx, -M.CASE_HW + 14, M.CASE_TOP + 8, 5.5);
+    meterScrew(ctx, M.CASE_HW - 14, M.CASE_TOP + 8, 5.5);
+
+    // ── 白色表盘 ────────────────────────────────────────────
+    ctx.fillStyle = linGrad(ctx, 0, M.DIAL.y, 0, M.DIAL.y + M.DIAL.h,
+      [[0, '#ffffff'], [0.72, '#f8fbfd'], [1, '#eaf0f6']]);
+    roundRect(ctx, M.DIAL.x, M.DIAL.y, M.DIAL.w, M.DIAL.h, 14);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(100,116,139,0.45)'; ctx.lineWidth = 1; ctx.stroke();
+
+    // ── 刻度弧 ──────────────────────────────────────────────
+    // 大格 6 段（0.5A / 3V 一格），每大格 5 小格。两排数字共用这条弧。
+    var MAJOR = 6, MINOR = 5, total = MAJOR * MINOR, i;
+    for (i = 0; i <= total; i++) {
+      var a = SW.A0 + (SW.A1 - SW.A0) * (i / total);
+      var isMajor = (i % MINOR === 0);
+      var r1 = M.RT1, r0 = M.RT1 - (isMajor ? 12 : 6);
+      ctx.strokeStyle = isMajor ? '#1f2937' : '#94a3b8';
+      ctx.lineWidth = isMajor ? 1.8 : 0.9;
+      ctx.beginPath();
+      ctx.moveTo(M.PIVOT.x + Math.cos(a) * r0, M.PIVOT.y + Math.sin(a) * r0);
+      ctx.lineTo(M.PIVOT.x + Math.cos(a) * r1, M.PIVOT.y + Math.sin(a) * r1);
+      ctx.stroke();
+    }
+
+    // ── 两排数字 ────────────────────────────────────────────
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    for (var mi = 0; mi < 2; mi++) {
-      ctx.fillStyle = 'rgba(255,255,255,0.94)';
-      ctx.beginPath(); ctx.arc(mk[mi][0], mk[mi][1], 9.5, 0, 6.284); ctx.fill();
-      ctx.fillStyle = col[mi];
-      ctx.fillText(sym[mi], mk[mi][0], mk[mi][1] + 0.5);
+    [['hi', M.RN_HI, HI_TX, 12, 3],
+     ['lo', M.RN_LO, LO_TX, 10.5, 2]].forEach(function (row) {
+      var on = (row[0] === 'hi') ? hiActive : !hiActive;
+      ctx.fillStyle = on ? '#1f2937' : '#b9c3cf';
+      ctx.font = (on ? 'bold ' : '') + row[3] + 'px -apple-system,"PingFang SC",sans-serif';
+      for (var k = 0; k < row[2].length; k++) {
+        var ang = SW.A0 + (SW.A1 - SW.A0) * (k / (row[2].length - 1));
+        ctx.fillText(row[2][k],
+          M.PIVOT.x + Math.cos(ang) * row[1],
+          M.PIVOT.y + Math.sin(ang) * row[1]);
+      }
+    });
+
+    // 表盘正中的大字母
+    ctx.fillStyle = '#1f2937';
+    ctx.font = 'bold 19px -apple-system,"PingFang SC",sans-serif';
+    ctx.fillText(isVolt ? 'V' : 'A', 0, M.PIVOT.y - 16);
+
+    // ── 底部网纹块 + 调零螺丝 ───────────────────────────────
+    // 教材上指针的转轴就藏在这块深色网纹里。块先画，指针后画压在上面。
+    var B = M.BLOCK;
+    ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(-B.hwT, B.top); ctx.lineTo(B.hwT, B.top);
+    ctx.lineTo(B.hwB, B.bot); ctx.lineTo(-B.hwB, B.bot);
+    ctx.closePath();
+    ctx.fillStyle = linGrad(ctx, 0, B.top, 0, B.bot, [[0, '#4b5563'], [1, '#1f2937']]);
+    ctx.fill();
+    ctx.clip();
+    ctx.strokeStyle = 'rgba(226,232,240,0.30)'; ctx.lineWidth = 1;
+    for (var hx = -70; hx < 70; hx += 5) {
+      ctx.beginPath();
+      ctx.moveTo(hx, B.bot + 2);
+      ctx.lineTo(hx + (B.bot - B.top) + 4, B.top - 2);
+      ctx.stroke();
     }
     ctx.restore();
+    meterScrew(ctx, M.ZERO.x, M.ZERO.y, M.ZERO.r);
 
-    posts(ctx, comp, ['pos', 'neg']);
+    // ── 指针 ────────────────────────────────────────────────
+    // 偏转量按【当前量程】算：同一个 0.3A，接 0.6 柱指半偏、接 3 柱指 10% 处。
+    var frac = Math.max(0, Math.min(Math.abs(reading) / (range || 1), 1.06));
+    var na = SW.A0 + (SW.A1 - SW.A0) * frac;
+    ctx.save();
+    ctx.translate(M.PIVOT.x, M.PIVOT.y);
+    ctx.rotate(na);
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = 'rgba(15,23,42,0.18)'; ctx.lineWidth = 3.4;
+    ctx.beginPath(); ctx.moveTo(-8, 1.6); ctx.lineTo(M.RT1 - 14, 1.6); ctx.stroke();
+    ctx.strokeStyle = over ? '#b91c1c' : '#111827'; ctx.lineWidth = 2.2;
+    ctx.beginPath(); ctx.moveTo(-8, 0); ctx.lineTo(M.RT1 - 14, 0); ctx.stroke();
+    ctx.fillStyle = over ? '#b91c1c' : '#111827';
+    ctx.beginPath();
+    ctx.moveTo(M.RT0 + 2, 0);
+    ctx.lineTo(M.RT0 - 6, -2.8);
+    ctx.lineTo(M.RT0 - 6, 2.8);
+    ctx.closePath(); ctx.fill();
+    ctx.restore();
+    // 转轴轴心
+    ctx.fillStyle = linGrad(ctx, -5, M.PIVOT.y, 5, M.PIVOT.y,
+      [[0, '#5b6c7d'], [0.5, '#eef3f8'], [1, '#5b6c7d']]);
+    ctx.beginPath(); ctx.arc(M.PIVOT.x, M.PIVOT.y, 4.6, 0, 6.284); ctx.fill();
+    ctx.strokeStyle = 'rgba(15,23,42,0.45)'; ctx.lineWidth = 1; ctx.stroke();
+
+    // ── 玻璃面罩（画在指针之上，才有「隔着玻璃看」的感觉）────
+    ctx.save();
+    roundRect(ctx, M.DIAL.x, M.DIAL.y, M.DIAL.w, M.DIAL.h, 14);
+    ctx.clip();
+    glassHighlight(ctx, M.DIAL.x, M.DIAL.y, M.DIAL.w, M.DIAL.h);
+    ctx.restore();
+
+    // ── 底座 + 绿色面板 ─────────────────────────────────────
+    var BT = M.BASE_TOP, BB = M.BASE_BOT;
+    softShadow(ctx, -M.BASE_HW, BT - 3, M.BASE_HW * 2, BB - BT + 8, 12, 8);
+    ctx.fillStyle = linGrad(ctx, 0, BT, 0, BB, [[0, '#d9e2ec'], [0.55, '#c2cedb'], [1, '#98a8b9']]);
+    roundRect(ctx, -M.BASE_HW, BT, M.BASE_HW * 2, BB - BT, 6); ctx.fill();
+    ctx.strokeStyle = 'rgba(51,65,85,0.45)'; ctx.lineWidth = 1.2; ctx.stroke();
+    // 上表面（画成梯形，近大远小），白色字印在上面
+    ctx.beginPath();
+    ctx.moveTo(-M.BASE_HW + 4, BT + 3);
+    ctx.lineTo(M.BASE_HW - 4, BT + 3);
+    ctx.lineTo(M.BASE_HW - 13, BT + 15);
+    ctx.lineTo(-M.BASE_HW + 13, BT + 15);
+    ctx.closePath();
+    ctx.fillStyle = linGrad(ctx, 0, BT + 3, 0, BT + 15, [[0, '#2f8f5b'], [1, '#196240']]);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(6,78,59,0.75)'; ctx.lineWidth = 1; ctx.stroke();
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 10px -apple-system,"PingFang SC",sans-serif';
+    ctx.fillText('−', POSTX[0], BT + 9);
+    ctx.fillText(POST_TX[0], POSTX[1], BT + 9);
+    ctx.fillText(POST_TX[1], POSTX[2], BT + 9);
+
+    // ── 三个接线柱 ──────────────────────────────────────────
+    // 必须先把表壳那一套 translate/rotate 还回去：posts() 按【世界坐标】
+    // 落柱子，漏掉这个 restore 会把三根柱子整体平移一个元件的位置
+    // （画面上就是右下角凭空多出三根柱子，而本体上没有）。
+    ctx.restore();
+    // kind 按【端子序号】给：0 号是「−」柱（黑），1/2 号是两个量程柱（红）。
+    posts(ctx, comp, ['neg', 'pos', 'pos']);
   }
+
 
   // ============================================================
   // 滑动变阻器

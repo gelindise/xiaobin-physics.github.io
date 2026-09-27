@@ -41,6 +41,14 @@
   .prow select{flex:1;padding:4px 6px;border:1px solid var(--line);border-radius:6px;
     font-family:inherit;font-size:12.5px;background:#fff}
   .prow .chk{width:17px;height:17px;accent-color:var(--accent)}
+  /* 电表的量程按钮。做成按钮而不是下拉框：它不是「拧个旋钮就换」的参数，
+     而是「线插在哪个柱子上」——点一下就把导线挪过去。 */
+  .prow .tap{flex:0 0 auto;padding:4px 9px;border:1px solid var(--line);border-radius:6px;
+    background:#fff;color:var(--text);font-family:inherit;font-size:12px;font-weight:600;
+    cursor:pointer;font-variant-numeric:tabular-nums}
+  .prow .tap:hover{border-color:var(--accent);color:var(--accent)}
+  .prow .tap.on{background:var(--accent);border-color:var(--accent);color:#fff}
+  .prow .val.unwired{color:var(--warn);font-weight:600;font-size:11.5px;white-space:nowrap}
   .empty{color:var(--dim);font-size:12.5px;text-align:center;padding:16px 4px}
   table{width:100%;border-collapse:collapse;font-size:12.5px}
   th{text-align:right;color:var(--dim);font-weight:600;padding:5px 6px;
@@ -97,9 +105,9 @@
      改了内核而 HTML 没变的话，老访客会拿缓存里的旧脚本跑新页面（画面上就
      会出现「说明写了电子逆流、小球却还顺着流」这种自相矛盾）。改脚本时
      把这个 build 号 +1 即可。 -->
-<script src="circuit-core.js?build=2"></script>
-<script src="circuit-draw.js?build=2"></script>
-<script src="circuit-editor.js?build=2"></script>
+<script src="circuit-core.js?build=3"></script>
+<script src="circuit-draw.js?build=3"></script>
+<script src="circuit-editor.js?build=3"></script>
 <script>
 // ---- 访问保护：仅允许站内跳转（与站内其它实验页一致）----
 (function(){
@@ -175,7 +183,10 @@ function pathOf(wire){
   return pts;
 }
 function bh0(n){ return n*18 + 8; }
-var DROP = {battery:40, ammeter:70, voltmeter:70, resistor:22, bulb:32, rheostat:46, switch:30};
+// 读数框落在元件下方多远。两只表的三个接线柱是从底座底下探出来的
+// （局部 y = 72，柱子自身还往下伸到 ~75），所以读数框要比别的元件让得更低，
+// 否则会压在自己的接线柱上。
+var DROP = {battery:40, ammeter:80, voltmeter:80, resistor:22, bulb:32, rheostat:46, switch:30};
 
 function drawForeground(){
   var f = fgLayer.getContext('2d');
@@ -193,6 +204,9 @@ function drawForeground(){
     } else if (c.type === 'ammeter' || c.type === 'voltmeter') {
       lines.push((c.type === 'ammeter' ? 'I = ' : 'U = ') + Math.abs(r.reading).toFixed(3) +
                  (c.type === 'ammeter' ? 'A' : 'V'));
+      // 量程柱没接线时表根本不在电路里，读数恒为 0。不写一句的话，
+      // 学生只会以为「这条支路没电流」，其实是自己少接了一根线。
+      if (!r.rangeWired) lines.push('量程柱没接线');
     } else if (c.type === 'battery') {
       lines.push('E = ' + r.emf.toFixed(1) + 'V');
       lines.push('U = ' + Math.abs(r.v).toFixed(2) + 'V');
@@ -271,8 +285,11 @@ var PARAM_UI = {
   battery:   [{k:'emf', t:'range', label:'电动势', unit:'V', min:1.5, max:7.5, step:1.5},
               {k:'rInt', t:'range', label:'内阻', unit:'Ω', min:0, max:2, step:0.1}],
   switch:    [{k:'closed', t:'check', label:'闭合'}],
-  ammeter:   [{k:'range', t:'select', label:'量程', unit:'A', options:[0.6,3]}],
-  voltmeter: [{k:'range', t:'select', label:'量程', unit:'V', options:[3,15]}],
+  // 量程不是拧出来的参数，是「线接在哪个量程柱上」——所以这两个表的量程
+  // 走 t:'tap'（点一下把导线挪到那个柱子上），选项和柱号都取自内核的 TYPES，
+  // 页面这边不再抄一份量程数值。
+  ammeter:   [{k:'range', t:'tap', label:'量程', unit:'A'}],
+  voltmeter: [{k:'range', t:'tap', label:'量程', unit:'V'}],
   rheostat:  [{k:'Rmax', t:'range', label:'最大阻值', unit:'Ω', min:5, max:50, step:5},
               {k:'slide', t:'range', label:'滑片位置', unit:'', min:0, max:1, step:0.01}],
   bulb:      [{k:'ratedV', t:'range', label:'额定电压', unit:'V', min:1.5, max:6, step:0.5},
@@ -327,6 +344,19 @@ function renderParams(sel){
         sp.options.map(function(o){
           return '<option value="' + o + '"' + (o === v ? ' selected' : '') + '>' + o + (sp.unit||'') + '</option>';
         }).join('') + '</select></div>';
+    } else if (sp.t === 'tap') {
+      // 亮着的那一挡 = 【线当下真的接在哪个量程柱上】（内核按接线解出来的），
+      // 不是参数里记着的那个数。没接到量程柱上就直说，别显示一个假的量程。
+      var T = C.TYPES[c.type];
+      var rec = (results.components && results.components[c.id]) || {};
+      var cur = rec.rangeWired ? rec.range : null;
+      html += '<div class="prow"><label>' + sp.label + '</label>' +
+        T.rangeValues.map(function(val, i){
+          return '<button type="button" class="tap' + (cur === val ? ' on' : '') +
+            '" data-tap="' + T.rangeTaps[i] + '">' + val + (sp.unit || '') + '</button>';
+        }).join('') +
+        '<span class="val unwired" id="pv_' + sp.k + '">' +
+          (cur == null ? '未接量程柱' : '') + '</span></div>';
     }
   });
   box.innerHTML = html;
@@ -344,6 +374,15 @@ function renderParams(sel){
     }
     el.addEventListener('input', apply);
     el.addEventListener('change', apply);
+  });
+  // 量程按钮：把导线挪到目标量程柱上。挪完重画面板——亮起来的那一挡得跟着
+  // 接线走，只调 renderSoft 不重建面板的话按钮会一直停在旧状态。
+  box.querySelectorAll('button.tap').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      if (editor.plugRange(c.id, +btn.dataset.tap)) {
+        renderParams(editor.getSelected());
+      }
+    });
   });
 }
 
@@ -404,6 +443,26 @@ function renderSoft(){
   drawFrame();
   updateSide();
   syncSlidePanel();
+  syncRangePanel();
+}
+
+// 电表量程按钮亮哪一挡，取决于【线接在哪个量程柱上】——而接线是可以在画布上
+// 随手改的（拔掉量程柱上那根线、或者点面板换柱）。所以每次重绘都要同步一遍：
+// 否则面板会一直停在旧状态，学生看到「亮着 0.6A」可线早就拔了。
+// 和滑片一样只改状态、不重建面板。
+function syncRangePanel(){
+  var s = editor && editor.getSelected();
+  if (!s || s.kind !== 'comp' || !s.comp) return;
+  var T = C.TYPES[s.comp.type];
+  if (!T || !T.rangeTaps) return;
+  var rec = (results.components && results.components[s.comp.id]) || {};
+  var on = rec.rangeWired ? rec.tapIdx : null;
+  var bs = document.querySelectorAll('#paramPanel button.tap');
+  for (var i = 0; i < bs.length; i++) {
+    bs[i].classList.toggle('on', on != null && +bs[i].dataset.tap === on);
+  }
+  var lab = document.getElementById('pv_range');
+  if (lab) lab.textContent = on == null ? '未接量程柱' : '';
 }
 
 // 在画布上直接拨滑片时，右侧参数面板里的滑片滑块要跟着走。

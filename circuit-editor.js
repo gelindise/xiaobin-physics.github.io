@@ -35,8 +35,10 @@
     battery:   [66, 40],
     switch:    [59, 29],
     bulb:      [22, 48],
-    ammeter:   [62, 62],
-    voltmeter: [62, 62],
+    // 两只表的仪器本体全部落在导线【上方】（三个接线柱在底部探出来），
+    // 所以高只有表壳+底座这一截，不是上下对称的。
+    ammeter:   [100, 70],
+    voltmeter: [100, 70],
     rheostat:  [78, 31],
   };
 
@@ -276,6 +278,70 @@
       });
     }
 
+    // ---------- 表头的量程柱 ----------
+    // 哪几个端子是量程柱只有内核一份定义（circuit-core 的 TYPES）。编辑器和
+    // 求解器各写一份的话，迟早会打架：「求解器认为接在 3A 柱上读 3A、编辑器
+    // 却不认这个柱子」，而且两边都看不出来。
+    function meterTapsOf(type) {
+      var T = G.CircuitCore && G.CircuitCore.TYPES && G.CircuitCore.TYPES[type];
+      return (T && T.rangeTaps) ? T.rangeTaps : null;
+    }
+    // 这个接线柱上接着的导线下标，没接返回 -1
+    function wireAt(compId, termIdx) {
+      var ws = getScene().wires;
+      for (var i = 0; i < ws.length; i++) {
+        if ((ws[i].a.compId === compId && ws[i].a.termIdx === termIdx) ||
+            (ws[i].b.compId === compId && ws[i].b.termIdx === termIdx)) return i;
+      }
+      return -1;
+    }
+    // 再连一根线（两端是 e0、e1）会不会让同一个表头的两个量程柱同时接上。
+    // 两个量程柱同时接时读数取决于哪根线先接上，学生根本无从判断，所以直接
+    // 不让接——这也正是课本上「每次只能用一个量程」那句话。
+    function rangeConflict(e0, e1) {
+      var ends = [e0, e1];
+      for (var i = 0; i < ends.length; i++) {
+        var e = ends[i], c = byId(e.compId), T = meterTapsOf(c && c.type);
+        if (!T || T.indexOf(e.termIdx) < 0) continue;      // 不是量程柱，跟这条规矩无关
+        for (var k = 0; k < T.length; k++) {
+          var t = T[k];
+          if (t === e.termIdx) continue;
+          // 这根线的另一头就接在另一个量程柱上
+          if (ends[1 - i].compId === e.compId && ends[1 - i].termIdx === t) return true;
+          // 另一个量程柱上已经有一根线了
+          if (wireAt(e.compId, t) >= 0) return true;
+        }
+      }
+      return false;
+    }
+    // 把表头上接在另一个量程柱的那根导线挪到 tapIdx 柱上，参数面板的量程
+    // 按钮调的就是它。实物上「选量程」本来就是「换一个柱子插线」，这样画面、
+    // 读数、参数三者不可能不一致。
+    function plugRange(compId, tapIdx) {
+      var c = byId(compId), T = meterTapsOf(c && c.type);
+      if (!T || T.indexOf(tapIdx) < 0) return false;       // 不是量程柱，无事可做
+      var hit = null;                                      // 接在另一个量程柱上的那根线
+      wiresOf(compId).forEach(function (w) {
+        if (hit) return;
+        ['a', 'b'].forEach(function (k) {
+          var e = w[k];
+          if (hit || e.compId !== compId) return;
+          if (T.indexOf(e.termIdx) >= 0 && e.termIdx !== tapIdx) hit = { w: w, k: k };
+        });
+      });
+      if (!hit) return false;
+      pushUndo();
+      hit.w[hit.k] = { compId: compId, termIdx: tapIdx };
+      // 端点换了柱子，手绘的那个形状不再贴合新位置，改成自动正交走线，
+      // 免得挪完以后导线横穿表壳。
+      var a = byId(hit.w.a.compId), b = byId(hit.w.b.compId);
+      hit.w.auto = true; hit.w.base = null;
+      hit.w.via = routeTo(D.terminalWorld(a, hit.w.a.termIdx),
+                          D.terminalWorld(b, hit.w.b.termIdx), -1).via;
+      changed();
+      return true;
+    }
+
     // ---------- 改场景 ----------
     function addComp(type, x, y) {
       pushUndo();
@@ -464,6 +530,10 @@
         if (Math.hypot(p.x - last.x, p.y - last.y) >= TRAIL_MIN) tr.push({ x: p.x, y: p.y });
         var t = hitTerminal(p);
         wiring.to = (t && !(t.compId === wiring.from.compId && t.termIdx === wiring.from.termIdx)) ? t : null;
+        // 落点会让两个量程柱同时接上：预览就别变绿。变绿了再静默失败，
+        // 学生会以为是软件坏了。
+        wiring.blocked = !!(wiring.to && rangeConflict(wiring.from, wiring.to));
+        if (wiring.blocked) wiring.to = null;
         onChange();
         return;
       }
@@ -534,7 +604,9 @@
                      (w.a.compId === b.compId && w.a.termIdx === b.termIdx &&
                       w.b.compId === a.compId && w.b.termIdx === a.termIdx);
             });
-            if (!dup) {
+            // 兜底：落点预览已经拦过一次，但「起点就在量程柱上、别处已经
+            // 接了一根」这类情况只有到这里才看全，所以再判一次。
+            if (!dup && !rangeConflict(a, b)) {
               pushUndo();
               var ca = byId(a.compId), cb = byId(b.compId);
               var p0 = D.terminalWorld(ca, a.termIdx), p1 = D.terminalWorld(cb, b.termIdx);
@@ -688,7 +760,9 @@
           if (endGap < TRAIL_MIN * 2) trail.pop();
           var prev = simplify(trail, TRAIL_TOL);
           ctx.save();
-          ctx.strokeStyle = wiring.to ? '#16a34a' : '#f59e0b';
+          // 绿 = 能接、橙 = 悬空、红 = 这个落点不让接（见 rangeConflict）
+          var wc = wiring.blocked ? '#dc2626' : (wiring.to ? '#16a34a' : '#f59e0b');
+          ctx.strokeStyle = wc;
           ctx.lineWidth = 3; ctx.setLineDash([9, 6]);
           ctx.beginPath();
           ctx.moveTo(p0.x, p0.y);
@@ -696,8 +770,15 @@
           ctx.lineTo(p1.x, p1.y);
           ctx.stroke();
           ctx.setLineDash([]);
-          ctx.fillStyle = wiring.to ? '#16a34a' : '#f59e0b';
+          ctx.fillStyle = wc;
           ctx.beginPath(); ctx.arc(p1.x, p1.y, 6, 0, 6.284); ctx.fill();
+          if (wiring.blocked) {
+            // 光变红还不够，得说清为什么，否则学生只会反复试
+            ctx.fillStyle = '#dc2626';
+            ctx.font = 'bold 13px -apple-system,"PingFang SC",sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('只能用一个量程', p1.x, p1.y - 14);
+          }
           ctx.restore();
         }
       }
@@ -716,6 +797,9 @@
     return {
       toLogical: toLogical, pathOf: pathOf, bodyHalf: bodyHalf, byId: byId,
       addComp: addComp, setParam: setParam, removeSelected: removeSelected,
+      // 参数面板的「量程」按钮走它，而不是 setParam：量程在实物上是「线接在
+      // 哪个柱子上」，改参数不改接线的话画面和读数就对不上了。
+      plugRange: plugRange,
       rotateSelected: rotateSelected, undo: undo, rerouteAll: rerouteAll,
       select: function (s) { select(s); changed(); },
       getSelected: function () { return describeSelection(); },

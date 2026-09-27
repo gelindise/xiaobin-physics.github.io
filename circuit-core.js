@@ -57,12 +57,19 @@
       label: '开关', terminals: 2, termNames: ['a', 'b'],
       defaults: { closed: false },
     },
+    // 表头和人教版实物一样有【三个接线柱】：− 柱 + 两个量程柱。
+    // 端子按实物从左到右编号，所以 0 号是「−」柱，量程柱跟着往右排。
+    // 量程【由导线接在哪个量程柱上决定】，不是参数——面板上选的量程
+    // 只是把导线挪到对应的柱子上（见 circuit-editor 的 plugRange）。
+    // 这样画面和读数永远一致：不可能出现「线接在 0.6 柱上、表却按 3A 读」。
     ammeter: {
-      label: '电流表', terminals: 2, termNames: ['+', '-'],
+      label: '电流表', terminals: 3, termNames: ['-', '0.6', '3'],
+      commonTerm: 0, rangeTaps: [1, 2], rangeValues: [0.6, 3],
       defaults: { range: 0.6, rInternal: 0 },
     },
     voltmeter: {
-      label: '电压表', terminals: 2, termNames: ['+', '-'],
+      label: '电压表', terminals: 3, termNames: ['-', '3', '15'],
+      commonTerm: 0, rangeTaps: [1, 2], rangeValues: [3, 15],
       // rInternal = null 表示理想电压表（完全开路、不分流，初中标准模型）
       defaults: { range: 3, rInternal: null },
     },
@@ -157,15 +164,48 @@
   }
 
   // ============================================================
+  // 表头量程识别：量程由「导线接在哪个量程柱上」决定
+  // ------------------------------------------------------------
+  // 人教版电流表/电压表底部是三个接线柱：− 柱 + 两个量程柱。学生接哪个
+  // 量程柱，量程就是哪一个；两个都接是接线错误（真表上两个分流器并起来
+  // 读数没有意义），编辑器会当场拒绝，这里再兜一层。
+  //   返回 { idx, conflict }：idx = 生效的量程端子号，null = 没接量程柱。
+  //   wired：{"compId:termIdx"} 集合，由导线列表推出。
+  // ============================================================
+  function meterTap(comp, wired) {
+    var T = TYPES[comp.type];
+    if (!T || !T.rangeTaps) return { idx: null, conflict: false };
+    var on = T.rangeTaps.filter(function (t) { return wired.has(comp.id + ':' + t); });
+    if (on.length === 0) return { idx: null, conflict: false };
+    if (on.length === 1) return { idx: on[0], conflict: false };
+    // 两个都接：取小量程（rangeTaps 按从小到大排），并让调用方报警告
+    return { idx: T.rangeTaps[0], conflict: true };
+  }
+
+  // 量程端子号 → 量程值。没接量程柱（tapIdx == null）返回 null，
+  // 调用方拿它区分「真量程」和「只是拿来显示的参数值」。
+  function rangeValueOf(type, tapIdx) {
+    var T = TYPES[type];
+    if (tapIdx == null || !T || !T.rangeValues) return null;
+    var k = T.rangeTaps.indexOf(tapIdx);
+    return k < 0 ? null : T.rangeValues[k];
+  }
+
+  // ============================================================
   // 第二遍：元件 → 支路
   // ------------------------------------------------------------
   // R / LAMP 自环（p===q）→ 丢弃（电流恒 0，与不存在等效）
   // V 自环【不丢】→ 携带内阻信息，正是「电源被短路」的解
   // ============================================================
-  function describeComponent(comp, termNode, lampR) {
+  function describeComponent(comp, termNode, lampR, tap) {
     var out = [];
     var P = paramsOf(comp);
     var N = function (i) { return termNode[comp.id + ':' + i]; };
+    // 表头的公共端（「−」柱）。两端元件没有这一项，取 1 就退化成老行为。
+    var NC = function () {
+      var T = TYPES[comp.type];
+      return (T && T.commonTerm != null) ? T.commonTerm : 1;
+    };
 
     function addR(p, q, R) {
       if (p === q) return;                                 // 自环电阻：丢弃
@@ -190,12 +230,19 @@
         }
         break;
 
+      // 表头的支路端点由【实际接了线的量程柱】和「−」柱决定。
+      // tap 为 null（没接量程柱）时表根本不在电路里，不产生任何支路——
+      // 这样量程柱空着的表既不导通也不偷电流，和它没被接上是一致的。
       case 'voltmeter':
-        if (P.rInternal != null && isFinite(P.rInternal)) addR(N(0), N(1), P.rInternal);
+        if (tap != null && P.rInternal != null && isFinite(P.rInternal)) {
+          addR(N(tap), N(NC()), P.rInternal);
+        }
         break;                                             // 理想电压表：不产生支路
 
       case 'ammeter':
-        out.push({ kind: 'V', comp: comp, p: N(0), q: N(1), V: 0, Rs: P.rInternal || 0 });
+        if (tap != null) {
+          out.push({ kind: 'V', comp: comp, p: N(tap), q: N(NC()), V: 0, Rs: P.rInternal || 0 });
+        }
         break;
 
       case 'switch':
@@ -443,6 +490,20 @@
     var topo = buildNodes(components, wires);
     out.terminalNode = topo.termNode;
 
+    // 哪些端子上真的挂了导线（"compId:termIdx" 集合）。表头的量程柱、
+    // 「−」柱接没接上，只能从这里看——参数面板选了什么不算数。
+    var wired = new Set();
+    wires.forEach(function (w) {
+      if (w && w.a) wired.add(w.a.compId + ':' + w.a.termIdx);
+      if (w && w.b) wired.add(w.b.compId + ':' + w.b.termIdx);
+    });
+    // 每个表头生效的量程柱。导线接法在求解过程中不变，识别一次就固定，
+    // 灯泡迭代里反复 assemble() 拿的是同一份。
+    var meterTaps = {};
+    components.forEach(function (c) {
+      if (TYPES[c.type] && TYPES[c.type].rangeTaps) meterTaps[c.id] = meterTap(c, wired);
+    });
+
     var lamps = components.filter(function (c) { return c.type === 'bulb'; });
     var lampR = new Map();
     lamps.forEach(function (c) { lampR.set(c.id, lampColdR(c)); });
@@ -450,7 +511,8 @@
     function assemble() {
       var branches = [];
       components.forEach(function (c) {
-        describeComponent(c, topo.termNode, lampR.get(c.id))
+        var tap = meterTaps[c.id];                       // {idx, conflict} 或 undefined
+        describeComponent(c, topo.termNode, lampR.get(c.id), tap ? tap.idx : null)
           .forEach(function (b) { branches.push(b); });
       });
       return branches;
@@ -536,13 +598,18 @@
     components.forEach(function (c) {
       var P = paramsOf(c);
       var N = function (i) { return topo.termNode[c.id + ':' + i]; };
+      var TI = TYPES[c.type];
+      // 「−」柱（公共端）的端子号。两端元件没有这一项，取 1 退化成老行为。
+      var NCi = (TI.commonTerm != null) ? TI.commonTerm : 1;
+      var tp = meterTaps[c.id];                          // {idx, conflict} 或 undefined
+      var tapIdx = tp ? tp.idx : null;
       var bs = usedBranches.filter(function (b) { return b.comp === c; });
       var rec = { type: c.type, v: 0, i: 0, p: 0, R: null, isolated: false };
 
       // 「未接入电路」= 该元件没有任何端子落在有源岛内。
       // 对理想电压表这类「无支路」元件同样正确（它的节点不在任何岛里）。
       rec.isolated = true;
-      for (var t = 0; t < TYPES[c.type].terminals; t++) {
+      for (var t = 0; t < TI.terminals; t++) {
         if (poweredNode.has(N(t))) { rec.isolated = false; break; }
       }
 
@@ -551,11 +618,18 @@
           if (bs.length === 0) {
             // 理想电压表（无支路）：读数是两端节点电压差，电流为 0。
             // 注意不能在这里 break 成 v=0 —— 否则理想电压表永远读 0。
-            rec.v = nV(sol, N(0)) - nV(sol, N(1));
+            // 三柱电压表的「两端」= 当前量程柱 与 「−」柱；没接量程柱时
+            // N(null) 是 undefined，两边都取 0，读数自然是 0。
+            rec.v = (c.type === 'voltmeter')
+              ? (nV(sol, N(tapIdx)) - nV(sol, N(NCi)))
+              : (nV(sol, N(0)) - nV(sol, N(1)));
             rec.i = 0;
             rec.p = 0;
             rec.R = null;
-            if (c.type === 'voltmeter') fillVoltmeter(rec, c, P);
+            if (c.type === 'voltmeter') {
+              fillVoltmeter(rec, c, P, tapIdx, warnings);
+              warnMeterWiring(warnings, rec, c, tp, wired, '电压表');
+            }
             break;
           }
           var br = bs[0];
@@ -568,7 +642,10 @@
           }
           rec.p = rec.v * rec.i;
           if (c.type === 'bulb') fillLamp(rec, c, P);
-          if (c.type === 'voltmeter') fillVoltmeter(rec, c, P);
+          if (c.type === 'voltmeter') {
+            fillVoltmeter(rec, c, P, tapIdx, warnings);
+            warnMeterWiring(warnings, rec, c, tp, wired, '电压表');
+          }
           break;
         }
 
@@ -586,18 +663,21 @@
         }
 
         case 'ammeter': {
-          var ab = bs[0];
-          rec.i = bI(sol, ab);
+          // 没接量程柱 → 表头不在电路里（describeComponent 没产生支路），
+          // 读数是 0，但 rec.range 仍要给个值供面板显示，所以退回参数值。
+          rec.i = bs.length ? bI(sol, bs[0]) : 0;
           rec.R = P.rInternal || 0;
           rec.v = rec.R * rec.i;
           rec.p = rec.v * rec.i;
-          rec.range = P.range;
+          rec.tapIdx = tapIdx;
+          fillMeterRange(rec, c, tapIdx, P);
           rec.ideal = !P.rInternal;
           rec.reading = rec.i;
-          rec.overRange = Math.abs(rec.reading) > P.range + 1e-12;
+          rec.overRange = rec.rangeWired && Math.abs(rec.reading) > rec.range + 1e-12;
           rec.reversed = rec.i < -1e-9;
           if (rec.overRange) warnings.push({ code: 'METER_OVER_RANGE', message: '电流表超量程', componentIds: [c.id] });
           if (rec.reversed) warnings.push({ code: 'METER_REVERSED', message: '电流表正负接线柱接反', componentIds: [c.id] });
+          warnMeterWiring(warnings, rec, c, tp, wired, '电流表');
           break;
         }
 
@@ -727,13 +807,48 @@
     rec.R_selfCheck = lampRAt(pp, rec.p);
   }
 
+  // 表头量程字段：量程由【导线接在哪个量程柱上】决定，参数里的 range
+  // 只在没接量程柱时充当显示值。rangeWired 是「这个量程真的能用」的标记，
+  // 超量程判定必须挂在它上面——没接线的表读数是 0，不能拿参数值去判。
+  function fillMeterRange(rec, c, tapIdx, P) {
+    var rng = rangeValueOf(c.type, tapIdx);
+    rec.tapIdx = tapIdx;
+    rec.rangeWired = rng != null;
+    rec.range = rng != null ? rng : P.range;
+  }
+
+  // 表头接线的两种「不报错、但学生一定做错了」的情况：
+  //   · 两个量程柱同时接 —— 编辑器当场拒绝并提示，这里是手写场景的兜底；
+  //   · 只接了「−」柱 —— 表头根本没进电路，读数恒 0。必须说出来，否则
+  //     学生只看到「指针一动不动」却不知道是自己少接了一根线。
+  function warnMeterWiring(warnings, rec, c, tp, wired, name) {
+    if (tp && tp.conflict) {
+      warnings.push({
+        code: 'METER_RANGE_CONFLICT',
+        message: name + '两个量程接线柱同时接入，只能用一个量程',
+        componentIds: [c.id],
+      });
+    }
+    if (!rec.rangeWired && wired.has(c.id + ':' + TYPES[c.type].commonTerm)) {
+      warnings.push({
+        code: 'METER_NO_RANGE',
+        message: name + '只接了「−」柱，量程柱上还得接一根线',
+        componentIds: [c.id],
+      });
+    }
+  }
+
   // 电压表的读数/量程字段。理想电压表（无支路）和有内阻的电压表都要走这里，
   // 否则「理想电压表读数为 undefined」这种 bug 会从画布上冒出来。
-  function fillVoltmeter(rec, c, P) {
-    rec.range = P.range;
+  // warnings 必须由调用方传进来：这是模块级函数，够不到 solve() 里的局部
+  // 数组。原先这里直接写 warnings.push(...)，只要出现一次「电压表超量程或
+  // 接反」就抛 ReferenceError 把整个求解器带崩——测试里一直没触发，纯属
+  // 那几个用例的电压表恰好都没超量程。
+  function fillVoltmeter(rec, c, P, tapIdx, warnings) {
+    fillMeterRange(rec, c, tapIdx, P);
     rec.reading = rec.v;
     rec.ideal = !(P.rInternal > 0);
-    rec.overRange = Math.abs(rec.reading) > P.range + 1e-12;
+    rec.overRange = rec.rangeWired && Math.abs(rec.reading) > rec.range + 1e-12;
     rec.reversed = rec.v < -1e-9;
     if (rec.overRange) warnings.push({ code: 'METER_OVER_RANGE', message: '电压表超量程', componentIds: [c.id] });
     if (rec.reversed) warnings.push({ code: 'METER_REVERSED', message: '电压表正负接线柱接反', componentIds: [c.id] });
@@ -790,6 +905,19 @@
       if (aWired && !bWired) return (termIdx === 0) ? total : 0;
       if (bWired && !aWired) return (termIdx === 1) ? total : 0;
       return total / 2;
+    }
+    // 三柱表头（电流表/电压表）：电流只从【实际接了线的那个量程柱】流进，
+    // 从「−」柱流出，另一个量程柱悬空——它在电路外面，注入恒 0。
+    // 不能落到下面那个 `(termIdx === 0) ? out : -out` 的兜底上：那个式子
+    // 把端子 2 当成端子 1，会让两个量程柱同时往外吐电流（凭空多一倍）。
+    var MT = TYPES[comp.type];
+    if (MT && MT.rangeTaps) {
+      var mw = wired || new Set();
+      var on = MT.rangeTaps.filter(function (t) { return mw.has(comp.id + ':' + t); });
+      if (on.length === 0) return 0;                 // 没接量程柱 = 表头不在电路里
+      if (termIdx === on[0]) return -rec.i;          // 量程柱：电流流进表头
+      if (termIdx === MT.commonTerm) return rec.i;   // 「−」柱：电流流出表头
+      return 0;
     }
     // 电池的记录沿用了「支路电流 Ik = 充电方向」的约定，放电是 −Ik，
     // 别的元件 rec.i 是放电方向。这里统一成「流出元件、注入节点」。
