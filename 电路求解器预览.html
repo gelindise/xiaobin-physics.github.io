@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>电路求解内核 · 预览</title>
+<style>
+  :root{--bg:#eef2f7;--card:#fff;--line:#dbe3ec;--text:#1e293b;--dim:#64748b;--accent:#ea580c;--ok:#16a34a;--warn:#dc2626;}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);font:14px/1.5 -apple-system,"PingFang SC","Microsoft YaHei",sans-serif;padding:18px}
+  .wrap{max-width:1440px;margin:0 auto}
+  h1{font-size:19px;font-weight:700;margin-bottom:3px}
+  .sub{color:var(--dim);font-size:12.5px;margin-bottom:14px}
+  .sub code{background:#e2e8f0;padding:1px 5px;border-radius:4px;font-size:12px}
+  .panel{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px;margin-bottom:14px}
+  .presets{display:flex;gap:8px;flex-wrap:wrap}
+  .presets button{background:#f1f5f9;border:1px solid var(--line);color:var(--text);padding:7px 15px;border-radius:8px;cursor:pointer;font-size:13px;font-family:inherit;transition:.15s}
+  .presets button:hover{background:#e2e8f0}
+  .presets button.on{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+  .bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  .bar .presets{flex:1 1 auto}
+  .flowbtn{background:#fffbeb;border:1px solid #fcd34d;color:#b45309;padding:7px 13px;border-radius:8px;cursor:pointer;font-size:13px;font-family:inherit;font-weight:600;transition:.15s}
+  .flowbtn:hover{background:#fef3c7}
+  .flowbtn.off{background:#f1f5f9;border-color:var(--line);color:#94a3b8;font-weight:400}
+  .stage{display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap}
+  .cv{flex:1 1 700px;min-width:0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:8px}
+  canvas{width:100%;display:block;border-radius:8px;cursor:pointer}
+  .side{flex:0 0 380px;display:flex;flex-direction:column;gap:12px}
+  table{width:100%;border-collapse:collapse;font-size:12.5px}
+  th{text-align:right;color:var(--dim);font-weight:600;padding:5px 7px;border-bottom:1px solid var(--line);font-size:11.5px}
+  th:first-child{text-align:left}
+  td{text-align:right;padding:5px 7px;border-bottom:1px solid #f1f5f9;font-variant-numeric:tabular-nums}
+  td:first-child{text-align:left;font-weight:600}
+  tr.hi td{background:#fff7ed}
+  .status{display:flex;align-items:center;gap:8px;font-weight:600;font-size:13px;margin-bottom:9px}
+  .dot{width:9px;height:9px;border-radius:50%;background:var(--ok);flex:0 0 auto}
+  .dot.bad{background:var(--warn)}
+  .dot.idle{background:#94a3b8}
+  .desc{color:var(--dim);font-size:12.5px;line-height:1.65}
+  .desc b{color:var(--text)}
+  .key{background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;padding:9px 11px;font-size:12.5px;color:#9a3412;margin-top:9px}
+  .key b{color:#7c2d12;font-size:15px;font-variant-numeric:tabular-nums}
+  .tip{color:var(--dim);font-size:12px;margin-top:8px}
+  .warn{background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:8px 11px;color:#b91c1c;font-size:12.5px;margin-top:8px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>电路求解内核 · 预览</h1>
+  <div class="sub">物理由 <code>circuit-core.js</code>（MNA 改进节点法）实时求解，画面由 <code>circuit-draw.js</code> 程序化矢量绘制。表格里的每个数字都是解出来的，没有任何硬编码。</div>
+
+  <div class="panel bar">
+    <div class="presets" id="presets"></div>
+    <button class="flowbtn" id="flowBtn"></button>
+  </div>
+
+  <div class="stage">
+    <div class="cv"><canvas id="simCanvas"></canvas></div>
+    <div class="side">
+      <div class="panel">
+        <div class="status"><span class="dot" id="dot"></span><span id="statusText">—</span></div>
+        <div id="warnBox"></div>
+        <table>
+          <thead><tr><th>元件</th><th>I / A</th><th>U / V</th><th>R / Ω</th><th>P / W</th></tr></thead>
+          <tbody id="tbody"></tbody>
+        </table>
+      </div>
+      <div class="panel">
+        <div class="desc" id="desc"></div>
+        <div id="keyBox"></div>
+        <div class="tip" id="tip"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="circuit-core.js"></script>
+<script src="circuit-draw.js"></script>
+<script>
+(function(){
+'use strict';
+var C = window.CircuitCore, D = window.CircuitDraw;
+var W = 1000, H = 740;
+var canvas = document.getElementById('simCanvas');
+var ctx = canvas.getContext('2d');
+
+// ── 场景定义 ──────────────────────────────────────────────
+// 布线规范：一根导线 = 一段「串联支路」，不在中段挂接别的导线。
+// 因为并查集会把一根导线的两端并成同一个电气节点，若导线自身把三通
+//  junctions 包进 via 里，「分流」就再也算不出来了。
+function w(a, ai, b, bi, via){ return {a:{compId:a,termIdx:ai}, b:{compId:b,termIdx:bi}, via:via||[]}; }
+
+var SCENES = [
+{
+  name:'串联分压',
+  desc:'电源、开关、两个定值电阻首尾相接，只有一条电流通路。<b>串联电路电流处处相等</b>，各电阻分到的电压与其阻值成正比。',
+  comps:[
+    {id:'E',  type:'battery',  x:270, y:600, params:{emf:3, rInt:0}},
+    {id:'SW', type:'switch',   x:730, y:600, params:{closed:true}},
+    {id:'R1', type:'resistor', x:330, y:160, params:{R:10}},
+    {id:'R2', type:'resistor', x:670, y:160, params:{R:20}},
+  ],
+  // 电源正极在【右边】(340,600)：+ 往右去开关，回来的线沿左边的立线进 −。
+  // 接反了导线要横穿电池盒，看着像根扎进盒子的线头。
+  wires:[
+    w('E',0,'SW',0,[]),                          // + → 开关
+    w('SW',1,'R2',1,[[880,600],[880,160]]),      // 开关 → 右边立线上去 → R2 右端
+    w('R2',0,'R1',1,[]),                         // 顶上：R2 左端 → R1 右端
+    w('R1',0,'E',1,[[120,160],[120,600]]),       // 左边立线下来 → 回到 −
+  ],
+  key:function(r){ return {label:'R2 分到的电压', val:r.components.R2.v.toFixed(2)+' V',
+    note:'U₁ : U₂ = R₁ : R₂ = 10 : 20'}; },
+},
+{
+  name:'并联分流',
+  desc:'两个电阻并排接在同一对节点之间，<b>各支路电压相同</b>，电流按阻值的反比分配。干路电流等于各支路之和。',
+  comps:[
+    {id:'R1', type:'resistor', x:500, y:205, params:{R:10}},
+    {id:'R2', type:'resistor', x:500, y:435, params:{R:20}},
+    {id:'E',  type:'battery',  x:500, y:645, params:{emf:3, rInt:0}},
+  ],
+  // 教科书并联画法：左右各一条竖母线，两个电阻的端子各用一段水平短线接到母线。
+  // 若直接把两电阻的同侧端子用一根竖线连起来，画面上会读成串联。
+  wires:[
+    w('R1',0,'R2',0,[[240,205],[240,435]]),               // 左母线
+    w('R2',0,'E',1,[]),                                   // 左母线接到电源 −（− 在左边）
+    w('R1',1,'R2',1,[[760,205],[760,435]]),               // 右母线
+    w('R2',1,'E',0,[]),                                   // 右母线接到电源 +（+ 在右边）
+  ],
+  key:function(r){ var a=Math.abs(r.components.R1.i), b=Math.abs(r.components.R2.i);
+    return {label:'干路电流', val:Math.abs(r.components.E.i).toFixed(3)+' A',
+      note:'R₁ 支路 '+a.toFixed(3)+' A，R₂ 支路 '+b.toFixed(3)+' A，'+a.toFixed(3)+' + '+b.toFixed(3)+' = '+Math.abs(r.components.E.i).toFixed(3)+' A'}; },
+},
+{
+  name:'伏安法测未知电阻',
+  desc:'用电流表测电流、电压表测电压，由 <b>R = U / I</b> 算出未知电阻。滑动变阻器用来改变待测电阻两端的电压，多次测量取平均。',
+  comps:[
+    // 两只表的接线柱都在仪器【下方】（局部 y=72），所以元件坐标要往上抬 72，
+    // 三个柱子才落在顶排这条导线线上。表壳是往上长的，抬上去不压别的元件。
+    {id:'E',  type:'battery',  x:250, y:620, params:{emf:3, rInt:0.5}},
+    {id:'SW', type:'switch',   x:760, y:620, params:{closed:true}},
+    {id:'A',  type:'ammeter',  x:230, y:88,  params:{range:0.6, rInternal:0}},
+    {id:'RX', type:'resistor', x:540, y:160, params:{R:15}},
+    {id:'RH', type:'rheostat', x:830, y:160, params:{Rmax:20, slide:0.5}},
+    {id:'V',  type:'voltmeter',x:540, y:288, params:{range:3, rInternal:null}},
+  ],
+  // 电源 + 在右边，所以电流从 + 出发先往右去开关、绕右边立线上去，
+  // 沿顶排【从右往左】穿过变阻器、RX、电流表，再从左边立线回到 −。
+  // 顶排从右往左走，电流就是【从右边】进电流表的：表头三柱里 0 号是「−」、
+  // 1 号是量程柱（0.6A），所以 RX 接量程柱、立线回「−」柱，读数才为正。
+  // 接反了表会反向偏转并弹「接线柱接反」告警。
+  wires:[
+    w('E',1,'A',0,[[110,620],[110,160]]),        // 电源 − → 左立线 → 电流表「−」柱
+    w('A',1,'RX',0,[]),                          // 量程柱（0.6A）→ RX 左端
+    // 变阻器端子照人教版图16.4-2：A(0)/B(1) 在【下面】（电阻丝两端，世界坐标
+    // y=186），C(2)/D(3) 在【上面】（金属杆两端，y=134）。这里走的是
+    // 「一上一下」里的 C 进、B 出，接入右半段 = Rmax×(1−slide)。
+    w('RX',1,'RH',2,[[700,160],[700,134]]),      // 经 C 柱（金属杆，左上）进
+    w('RH',1,'SW',1,[[960,186],[960,620]]),      // 经 B 柱（电阻丝，右下）出
+    w('SW',0,'E',0,[]),                          // 开关 → 电源 +
+    // 表壳就长在接线柱的正上方，从柱子上直着往上走会从表壳里穿出来，
+    // 所以两根线都先横着让到表壳外面（左 430 / 右 660）再竖着上去。
+    w('V',1,'RX',1,[[660,360],[660,160]]),       // 量程柱（3V）→ RX 高电位端
+    w('V',0,'RX',0,[[430,360],[430,200]]),       // 「−」柱 → RX 低电位端
+  ],
+  key:function(r){ var rx=r.components.RX;
+    return {label:'测得未知电阻 Rx', val:(Math.abs(rx.v/rx.i)).toFixed(2)+' Ω',
+      note:'U = '+Math.abs(rx.v).toFixed(3)+' V，I = '+Math.abs(rx.i).toFixed(4)+' A（真实值 15.00 Ω）'}; },
+},
+{
+  name:'惠斯通电桥（不平衡）',
+  desc:'四个电阻接成桥式，中间桥臂接电流表。<b>当 R₁/R₃ = R₂/R₄ 时电桥平衡</b>，桥臂电流为零；此处两臂比例不等，桥臂有电流通过。',
+  comps:[
+    {id:'E',  type:'battery',  x:140, y:400, params:{emf:6, rInt:0}},
+    // 抬 72：三个接线柱落在 y=400 这条桥臂线上（柱子在仪器下方）
+    {id:'G',  type:'ammeter',  x:555, y:328, params:{range:0.6, rInternal:0}},
+    // 取值让 D 点电位高于 C 点，桥臂电流从 D 流向 C（右→左），正好从右边
+    // 进电流表的量程柱（1 号），读数为正。反过来接电流表会反向偏转并触发
+    // 「接线柱接反」告警——那是另一节课的内容。
+    // 左边两节的比值必须小于右边（R₁/R₃ < R₂/R₄ 时 C 点被拉得比 D 低）。
+    {id:'R1', type:'resistor', x:280, y:230, rot:90, params:{R:30}},   // A-C
+    {id:'R2', type:'resistor', x:830, y:230, rot:90, params:{R:10}},   // A-D
+    {id:'R3', type:'resistor', x:280, y:570, rot:90, params:{R:10}},   // C-B
+    {id:'R4', type:'resistor', x:830, y:570, rot:90, params:{R:20}},   // D-B
+  ],
+  // 电源 + 在右边：从 (210,400) 竖直往上、再拐到顶排；− 从左边竖直往下、
+  // 再拐到底排。两条竖线都走在电池盒外面（盒子只占 x∈[77,203]）。
+  wires:[
+    w('E',0,'R1',0,[[210,120],[280,120]]),
+    w('R1',0,'R2',0,[[280,120],[830,120]]),
+    w('R1',1,'R3',0,[[280,400]]),
+    w('R2',1,'R4',0,[[830,400]]),
+    w('R1',1,'G',0,[[280,400],[485,400]]),       // C 点 → 电流表「−」柱（最左）
+    w('R2',1,'G',1,[[830,400],[625,400]]),       // D 点 → 电流表量程柱（0.6A）
+    w('R3',1,'R4',1,[[280,690],[830,690]]),
+    w('E',1,'R3',1,[[70,690],[280,690]]),
+  ],
+  key:function(r){ var g=r.components.G;
+    return {label:'桥臂电流 Ig', val:Math.abs(g.i).toFixed(4)+' A',
+      note:'R₁/R₃ = 3.0 ≠ R₂/R₄ = 0.50，电桥不平衡（平衡时 Ig = 0）'}; },
+},
+];
+
+// ── 状态 ──────────────────────────────────────────────────
+var cur = 0, results = null, flows = [], phase = 0;
+var drag = null, hoverPt = null;
+// 电子流动动画开关（与「电路实验沙盒」共用同一个记忆）
+var FLOW_KEY = 'circuit_sandbox_flow';
+var showFlow = true;
+try { showFlow = localStorage.getItem(FLOW_KEY) !== '0'; } catch (e) {}
+
+function scene(){ return SCENES[cur]; }
+function byId(cid){ var s=scene(); for(var i=0;i<s.comps.length;i++) if(s.comps[i].id===cid) return s.comps[i]; return null; }
+
+function solveNow(){
+  var s = scene();
+  results = C.solve(s.comps, s.wires.map(function(x){ return {a:x.a, b:x.b}; }));
+  flows = C.wireCurrents(s, results);
+}
+
+// ── 导线电流分配 ──────────────────────────────────────────
+// 实现已下沉到内核 circuit-core.js 的 wireCurrents() —— 它是纯物理，
+// 与画布无关，放在这里会让内核的回归测试覆盖不到它。
+
+// ── 布局 ──────────────────────────────────────────────────
+var bgLayer = document.createElement('canvas');
+var fgLayer = document.createElement('canvas');
+
+function layout(){
+  var s = scene();
+  var dpr = window.devicePixelRatio || 1;
+  var cssW = canvas.parentElement.clientWidth - 16;
+  canvas.width = W * dpr; canvas.height = H * dpr;
+  canvas.style.height = (cssW * H / W) + 'px';
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  buildLayers(dpr);
+}
+function buildLayers(dpr){
+  [bgLayer, fgLayer].forEach(function(c){
+    c.width = W * dpr; c.height = H * dpr;
+    c.getContext('2d').setTransform(dpr, 0, 0, dpr, 0, 0);
+  });
+  var b = bgLayer.getContext('2d');
+  D.drawBackground(b, W, H);
+  drawForeground();
+}
+
+function pathOf(wire){
+  var p0 = D.terminalWorld(byId(wire.a.compId), wire.a.termIdx);
+  var p1 = D.terminalWorld(byId(wire.b.compId), wire.b.termIdx);
+  var pts = [{x:p0.x, y:p0.y}];
+  (wire.via||[]).forEach(function(v){ pts.push({x:v[0], y:v[1]}); });
+  pts.push({x:p1.x, y:p1.y});
+  return pts;
+}
+
+// ── 渲染 ──────────────────────────────────────────────────
+// 元件与标注画在离屏层，只有导线每帧重绘 —— 电流粒子才需要动画。
+function bh0(n){ return n * 18 + 8; }   // 标注框高度：与下面画框时的算法保持一致
+
+function drawForeground(){
+  var f = fgLayer.getContext('2d');
+  f.clearRect(0, 0, W, H);
+  if (!results) return;
+  var s = scene(), recs = results.components;
+
+  s.comps.forEach(function(c){ D.drawComponent(f, c, recs[c.id]); });
+
+  s.comps.forEach(function(c){
+    var r = recs[c.id]; if (!r) return;
+    var lines = [];
+    if (c.type === 'switch') return;   // 通断状态已经写在底座上，别再飘一个框
+    if (c.type === 'rheostat') {
+      lines.push('R = ' + (r.rUsed == null ? '—' : r.rUsed.toFixed(1)) + 'Ω');
+      lines.push('I = ' + Math.abs(r.i).toFixed(3) + 'A');
+    } else if (c.type === 'ammeter' || c.type === 'voltmeter') {
+      lines.push((c.type === 'ammeter' ? 'I = ' : 'U = ') + Math.abs(r.reading).toFixed(3) +
+                 (c.type === 'ammeter' ? 'A' : 'V'));
+    } else if (c.type === 'battery') {
+      lines.push('E = ' + r.emf.toFixed(1) + 'V');
+      lines.push('U = ' + Math.abs(r.v).toFixed(2) + 'V');
+    } else {
+      lines.push('R = ' + (r.R || 0).toFixed(1) + 'Ω');
+      lines.push('U = ' + Math.abs(r.v).toFixed(2) + 'V');
+      lines.push('I = ' + Math.abs(r.i).toFixed(3) + 'A');
+    }
+    // 每个元件「中心到最下沿」的距离，标注框必须整体落在它下面。
+    // 写死常量迟早会被画法改动甩掉，所以这里列成表，改元件尺寸时一起改。
+    // 表头的三个接线柱从底座底下探出来（局部 y=72、柱子还要再往下伸一点），
+    // 标注框得让到整台仪器下面去，否则会压在自己的柱子上。
+    var DROP = { battery: 38, ammeter: 80, voltmeter: 80, resistor: 22, bulb: 38, rheostat: 46, switch: 38 };
+    var bx = c.x, by;
+    if (c.rot === 90) { bx = c.x + 86; by = c.y - (lines.length - 1) * 8; }
+    else {
+      // 标注框是「以 by 为中心」画的，by 要再加上框自身高度的一半，否则会压住元件本体
+      by = c.y + (DROP[c.type] || 24) + 8 + bh0(lines.length) / 2;
+    }
+
+    f.save();
+    f.font = 'bold 12.5px -apple-system,"PingFang SC",sans-serif';
+    f.textAlign = 'center'; f.textBaseline = 'middle';
+    var wmax = 0;
+    lines.forEach(function(l){ wmax = Math.max(wmax, f.measureText(l).width); });
+    var bw = wmax + 16, bh = lines.length * 18 + 8;
+    f.fillStyle = 'rgba(255,255,255,0.92)';
+    D.roundRect(f, bx - bw/2, by - bh/2, bw, bh, 7); f.fill();
+    f.strokeStyle = 'rgba(148,163,184,0.5)'; f.lineWidth = 1; f.stroke();
+    f.fillStyle = '#334155';
+    lines.forEach(function(l, i){ f.fillText(l, bx, by - bh/2 + 4 + 9 + i * 18); });
+    f.restore();
+  });
+}
+
+function drawFrame(){
+  ctx.clearRect(0, 0, W, H);
+  ctx.drawImage(bgLayer, 0, 0, W, H);
+  if (!results) return;
+
+  scene().wires.forEach(function(wr, i){
+    // phase 直接传秒数（drawWire 自己换算成像素行程）；关掉动画时传 null。
+    D.drawWire(ctx, pathOf(wr), { flow: flows[i], phase: showFlow ? phase : null });
+  });
+  ctx.drawImage(fgLayer, 0, 0, W, H);
+
+  if (hoverPt) {
+    ctx.save();
+    ctx.strokeStyle = '#f59e0b'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(hoverPt.x, hoverPt.y, 11, 0, 6.284); ctx.stroke();
+    ctx.restore();
+  }
+}
+
+// ── 侧栏数据 ──────────────────────────────────────────────
+var TYPE_LABEL = {battery:'电源', resistor:'定值电阻', switch:'开关',
+  ammeter:'电流表', voltmeter:'电压表', rheostat:'滑动变阻器', bulb:'小灯泡'};
+
+// 无极性元件的电流/电压只显示大小：rec.i 记的是「从 0 号端子流向 1 号端子」，
+// 而 0 号端子在元件哪一侧只是绘制朝向——电阻转 180° 接进回路还是同一个电阻。
+// 直接印带符号的数，串联回路里的开关会显示 −0.1000A，看着像接反了。
+// 只有极性本身承载信息的元件（电表接反要报错、电源充放电是两回事）才带符号。
+var POLAR = {ammeter: 1, voltmeter: 1, battery: 1};
+function dispI(c, r){
+  var s = POLAR[c.type] ? r.i : Math.abs(r.i);
+  var tag = '';
+  if (r.reversed) tag = ' <b style="color:#dc2626">反接</b>';
+  else if (c.type === 'battery' && r.i < -1e-9) tag = ' <b style="color:#2563eb">充电</b>';
+  return s.toFixed(4) + tag;
+}
+function dispU(c, r){ return (POLAR[c.type] ? r.v : Math.abs(r.v)).toFixed(4); }
+
+function updateSide(){
+  var s = scene(), recs = results.components;
+  var tb = document.getElementById('tbody');
+  tb.innerHTML = '';
+  s.comps.forEach(function(c){
+    var r = recs[c.id]; if (!r) return;
+    var R = c.type === 'rheostat' ? (r.rUsed == null ? '∞' : r.rUsed.toFixed(1))
+          : (r.R == null ? '—' : r.R.toFixed(2));
+    if (c.type === 'switch') R = r.closed ? '0' : '∞';
+    var tr = document.createElement('tr');
+    tr.innerHTML = '<td>'+TYPE_LABEL[c.type]+' '+c.id+'</td><td>'+dispI(c, r)+'</td><td>'+
+      dispU(c, r)+'</td><td>'+R+'</td><td>'+Math.abs(r.p).toFixed(4)+'</td>';
+    if (c.id === 'RX' || c.id === 'G') tr.className = 'hi';
+    tb.appendChild(tr);
+  });
+
+  var map = {ok:['电路导通', ''], 'open-circuit':['断路：无电流', 'bad'],
+    shorted:['短路！电流过大', 'bad'], 'no-source':['没有电源', 'idle'],
+    singular:['接线矛盾，无法求解', 'bad'], empty:['画布为空', 'idle']};
+  var m = map[results.status] || ['未知状态', 'idle'];
+  document.getElementById('statusText').textContent = m[0] + '　·　' +
+    results.stats.branchCount + ' 条支路 / ' + results.stats.nodeCount + ' 个节点 / 矩阵 ' +
+    results.stats.matrixSize + '×' + results.stats.matrixSize + ' / ' + results.stats.solveMs + 'ms';
+  document.getElementById('dot').className = 'dot ' + m[1];
+
+  var wb = document.getElementById('warnBox');
+  wb.innerHTML = '';
+  (results.warnings||[]).forEach(function(wn){
+    var d = document.createElement('div');
+    d.className = 'warn'; d.textContent = '⚠ ' + wn.message;
+    wb.appendChild(d);
+  });
+
+  var k = s.key(results);
+  document.getElementById('keyBox').innerHTML =
+    '<div class="key">'+k.label+'：<b>'+k.val+'</b><br>'+k.note+'</div>';
+}
+
+function render(){
+  solveNow(); buildLayers(window.devicePixelRatio || 1); drawFrame(); updateSide();
+  document.getElementById('desc').innerHTML = scene().desc;
+  document.getElementById('tip').textContent = SCENES[cur].tipText ||
+    '提示：点击开关可切换通断；拖动滑动变阻器的滑块可改变接入阻值；橙色小圆点表示电流方向与相对大小。';
+}
+
+// ── 交互 ──────────────────────────────────────────────────
+var RHEO_BW = 156, RHEO_CYLX = -RHEO_BW/2 + 18, RHEO_CYLW = RHEO_BW - 36;
+function rheoSliderX(c){ return c.x + RHEO_CYLX + 9 + (RHEO_CYLW - 18) * c.params.slide; }
+
+function toLogical(ev){
+  var rect = canvas.getBoundingClientRect();
+  return { x: (ev.clientX - rect.left) * W / rect.width,
+           y: (ev.clientY - rect.top) * H / rect.height };
+}
+function hitSwitch(p, c){ return Math.abs(p.x-c.x) < 62 && Math.abs(p.y-c.y) < 36; }
+function hitRheo(p, c){
+  return Math.abs(p.y-c.y) < 40 && p.x > c.x + RHEO_CYLX - 16 && p.x < c.x + RHEO_CYLX + RHEO_CYLW + 16;
+}
+
+canvas.addEventListener('pointerdown', function(ev){
+  var p = toLogical(ev), s = scene();
+  for (var i = 0; i < s.comps.length; i++) {
+    var c = s.comps[i];
+    if (c.type === 'switch' && hitSwitch(p, c)) { c.params.closed = !c.params.closed; render(); return; }
+    if (c.type === 'rheostat' && hitRheo(p, c)) {
+      drag = c;
+      drag.x0 = c.x + RHEO_CYLX + 9; drag.span = RHEO_CYLW - 18;
+      moveDrag(p); return;
+    }
+  }
+});
+function moveDrag(p){
+  if (!drag) return;
+  drag.params.slide = Math.max(0, Math.min(1, (p.x - drag.x0) / drag.span));
+  render();
+}
+canvas.addEventListener('pointermove', function(ev){
+  var p = toLogical(ev);
+  if (drag) { moveDrag(p); return; }
+  var s = scene(), hit = false; hoverPt = null;
+  for (var i = 0; i < s.comps.length; i++) {
+    var c = s.comps[i];
+    if (c.type === 'switch' && hitSwitch(p, c)) hit = true;
+    if (c.type === 'rheostat' && hitRheo(p, c)) hit = true;
+    if (c.type === 'rheostat' && Math.abs(p.y-c.y) < 46 &&
+        Math.abs(p.x - rheoSliderX(c)) < 14) { hoverPt = {x:rheoSliderX(c), y:c.y}; hit = true; }
+  }
+  canvas.style.cursor = hit ? 'pointer' : 'default';
+  drawFrame();
+});
+window.addEventListener('pointerup', function(){ drag = null; });
+
+// 预设按钮
+var pc = document.getElementById('presets');
+SCENES.forEach(function(s, i){
+  var b = document.createElement('button');
+  b.textContent = s.name;
+  b.onclick = function(){
+    cur = i;
+    Array.prototype.forEach.call(pc.children, function(x,j){ x.className = j===i?'on':''; });
+    render();
+  };
+  pc.appendChild(b);
+});
+
+// 电子流动开关
+var flowBtn = document.getElementById('flowBtn');
+function setFlow(on){
+  showFlow = !!on;
+  flowBtn.textContent = showFlow ? '⚡ 电子流动：开' : '⚡ 电子流动：关';
+  flowBtn.className = showFlow ? 'flowbtn' : 'flowbtn off';
+  try { localStorage.setItem(FLOW_KEY, showFlow ? '1' : '0'); } catch (e) {}
+  drawFrame();
+}
+flowBtn.onclick = function(){ setFlow(!showFlow); };
+setFlow(showFlow);
+
+// 动画循环
+var lastT = 0;
+function tick(t){
+  var dt = lastT ? Math.min((t - lastT) / 1000, 0.06) : 0;
+  lastT = t;
+  // 关掉电子动画就空转：画面静止，不需要每帧重绘。
+  if (!showFlow) { requestAnimationFrame(tick); return; }
+  if (results && results.status === 'ok') phase += dt;   // 单位是秒，不再取模
+  drawFrame();
+  requestAnimationFrame(tick);
+}
+
+window.addEventListener('resize', layout);
+layout();
+pc.children[0].className = 'on';
+// 给自动化验证留的钩子
+window.__preview = function(){ return { phase: phase, showFlow: showFlow, flows: flows.slice() }; };
+render();
+requestAnimationFrame(tick);
+
+// 供自动化截图核对
+window.__probe = function(){ return results; };
+window.__flows = function(){ return flows.slice(); };
+// 预设自检用：把当前场景的元件、导线路径连同解一起交出去
+window.__dump = function(){
+  var s = scene();
+  return {
+    name: s.name, status: results.status,
+    warnings: (results.warnings||[]).map(function(w){ return w.code; }),
+    comps: s.comps.map(function(c){
+      var r = results.components[c.id] || {};
+      var bb = D.bodyBox(c);
+      var nt = D.TERMINALS[c.type] ? D.TERMINALS[c.type].length : 0;
+      return { id: c.id, type: c.type, x: c.x, y: c.y, rot: c.rot||0,
+               hw: bb.hw, hh: bb.hh,
+               i: r.i, v: r.v, reversed: !!r.reversed,
+               // 表头：reading 是表盘读数，rangeWired/range/tapIdx 说明线接在
+               // 哪个量程柱上（没接就是没接，不能用参数量程糊弄过去）
+               reading: r.reading, range: r.range, rangeWired: !!r.rangeWired,
+               tapIdx: r.tapIdx == null ? null : r.tapIdx, overRange: !!r.overRange,
+               t0: D.terminalWorld(c, 0), t1: D.terminalWorld(c, 1),
+               t2: nt > 2 ? D.terminalWorld(c, 2) : null };
+    }),
+    paths: s.wires.map(function(wr){ return pathOf(wr); }),
+  };
+};
+})();
+</script>
+</body>
+</html>

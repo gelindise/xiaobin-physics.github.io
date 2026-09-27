@@ -506,8 +506,10 @@ function rheostatCase(termA, termB, slide) {
   ], 'T14-' + termA + '-' + termB);
 }
 
-// slide 语义：0 = 滑片在 C 端，1 = 滑片在 D 端
-// A(0)/B(1) 同为金属杆末端（内部短接），C(2)/D(3) 是电阻丝两端
+// 端子编号照人教版教材图16.4-2 的实物位置：
+//   A(0)/B(1) = 下面两个柱 = 电阻丝两端；
+//   C(2)/D(3) = 上面两个柱 = 金属杆两端（内部短接成滑片节点）
+// slide 语义：0 = 滑片停在 A 端（左），1 = 滑片停在 B 端（右）
 test('T14a 变阻器 A-C 接法 slide=0.5 → 接入 10Ω', function () {
   var r = rheostatCase(0, 2, 0.5);
   truthy(r.components.RH.mode === 'A-C', 'T14a 接法应为 A-C，实际 ' + r.components.RH.mode);
@@ -516,48 +518,55 @@ test('T14a 变阻器 A-C 接法 slide=0.5 → 接入 10Ω', function () {
   close(r.components.RH.v, 1.5, 'T14a 变阻器分压', 1e-9);
 });
 
-test('T14b 变阻器 A-C 接法：滑片由 C 端滑到 D 端，阻值 0 → Rmax', function () {
-  var atC = rheostatCase(0, 2, 0);
-  var atD = rheostatCase(0, 2, 1);
-  close(atC.components.RH.rUsed, 0, 'T14b 滑片在 C 端 → 0Ω', 1e-9);
-  close(atD.components.RH.rUsed, 20, 'T14b 滑片在 D 端 → Rmax', 1e-9);
-  close(atC.components.R.i, 3 / 10, 'T14b 滑片在 C 端电流', 1e-9);
-  close(atD.components.R.i, 3 / 30, 'T14b 滑片在 D 端电流', 1e-9);
+test('T14b 变阻器 A-C 接法：滑片由 A 端滑到 B 端，阻值 0 → Rmax', function () {
+  var atA = rheostatCase(0, 2, 0);
+  var atB = rheostatCase(0, 2, 1);
+  close(atA.components.RH.rUsed, 0, 'T14b 滑片在 A 端 → 0Ω', 1e-9);
+  close(atB.components.RH.rUsed, 20, 'T14b 滑片在 B 端 → Rmax', 1e-9);
+  close(atA.components.R.i, 3 / 10, 'T14b 滑片在 A 端电流', 1e-9);
+  close(atB.components.R.i, 3 / 30, 'T14b 滑片在 B 端电流', 1e-9);
 });
 
-test('T14c 变阻器 B-C 接法 ≡ A-C（A/B 同为金属杆端）', function () {
+test('T14c 变阻器 A-C ≡ A-D（C/D 同为金属杆端，接哪个都一样）', function () {
   var ac = rheostatCase(0, 2, 0.5);
+  var ad = rheostatCase(0, 3, 0.5);
+  truthy(ac.components.RH.mode === 'A-C', 'T14c A-C 接法识别，实际 ' + ac.components.RH.mode);
+  truthy(ad.components.RH.mode === 'A-C', 'T14c A-D 也应识别为 A-C，实际 ' + ad.components.RH.mode);
+  close(ad.components.RH.rUsed, ac.components.RH.rUsed, 'T14c A-D 与 A-C 应等效', 1e-12);
+  close(ad.components.R.i, ac.components.R.i, 'T14c 电流应与 A-C 相同', 1e-12);
+  // 同理，下面接 B 时 C/D 也等效
   var bc = rheostatCase(1, 2, 0.5);
-  truthy(bc.components.RH.mode === 'A-C', 'T14c B-C 应识别为 A-C');
-  close(bc.components.RH.rUsed, ac.components.RH.rUsed, 'T14c B-C 与 A-C 应等效', 1e-12);
-  close(bc.components.R.i, ac.components.R.i, 'T14c 电流应与 A-C 相同', 1e-12);
+  var bd = rheostatCase(1, 3, 0.5);
+  close(bd.components.RH.rUsed, bc.components.RH.rUsed, 'T14c B-D 与 B-C 应等效', 1e-12);
 });
 
-test('T14d 变阻器 A-D 接法：接入 R(S,D)，方向与 A-C 相反', function () {
-  var atC = rheostatCase(0, 3, 0);   // 滑片在 C 端 → 电阻丝全段 20Ω
-  var atD = rheostatCase(0, 3, 1);   // 滑片在 D 端 → 0Ω
-  truthy(atC.components.RH.mode === 'A-D', 'T14d 接法应为 A-D，实际 ' + atC.components.RH.mode);
-  close(atC.components.RH.rUsed, 20, 'T14d 滑片在 C 端 → Rmax', 1e-9);
-  close(atD.components.RH.rUsed, 0, 'T14d 滑片在 D 端 → 0Ω', 1e-9);
-  // 与 A-C 恰好互补：A-C 在 slide 处取 Rmax·s，A-D 取 Rmax·(1−s)
+test('T14d 一上一下：A-C 接入左半段，B-C 接入右半段，两半互补', function () {
   var ac = rheostatCase(0, 2, 0.25);
-  var ad = rheostatCase(0, 3, 0.25);
-  close(ac.components.RH.rUsed + ad.components.RH.rUsed, 20, 'T14d 两种接法阻值互补', 1e-9);
+  var bc = rheostatCase(1, 2, 0.25);
+  truthy(ac.components.RH.mode === 'A-C', 'T14d A-C 接法识别，实际 ' + ac.components.RH.mode);
+  truthy(bc.components.RH.mode === 'B-C', 'T14d B-C 接法识别，实际 ' + bc.components.RH.mode);
+  close(ac.components.RH.rUsed, 5, 'T14d A-C 接入左半段 = 20×0.25', 1e-9);
+  close(bc.components.RH.rUsed, 15, 'T14d B-C 接入右半段 = 20×0.75', 1e-9);
+  close(ac.components.RH.rUsed + bc.components.RH.rUsed, 20, 'T14d 两半相加 = 整根电阻丝', 1e-9);
+  // 滑片移到 A 端（slide=0）：左边那段没了，右边那段变成整根
+  var ac0 = rheostatCase(0, 2, 0), bc0 = rheostatCase(1, 2, 0);
+  close(ac0.components.RH.rUsed, 0, 'T14d 滑片到 A 端 → 左半段 0Ω', 1e-9);
+  close(bc0.components.RH.rUsed, 20, 'T14d 滑片到 A 端 → 右半段 Rmax', 1e-9);
 });
 
-test('T14e 变阻器 C-D 接法 → 全阻丝 20Ω，与滑片位置无关', function () {
-  var lo = rheostatCase(2, 3, 0.2);
-  var hi = rheostatCase(2, 3, 0.8);
-  truthy(lo.components.RH.mode === 'C-D', 'T14e 接法应为 C-D，实际 ' + lo.components.RH.mode);
+test('T14e 变阻器 A-B 接法（两个下柱）→ 整根电阻丝 20Ω，滑片不起作用', function () {
+  var lo = rheostatCase(0, 1, 0.2);
+  var hi = rheostatCase(0, 1, 0.8);
+  truthy(lo.components.RH.mode === 'A-B', 'T14e 接法应为 A-B，实际 ' + lo.components.RH.mode);
   close(lo.components.RH.rUsed, 20, 'T14e 接入全阻', 1e-9);
-  close(hi.components.RH.rUsed, 20, 'T14e 接入全阻（滑动无效）', 1e-9);
+  close(hi.components.RH.rUsed, 20, 'T14e 接入全阻（滑片拨到哪都一样）', 1e-9);
   close(lo.components.R.i, hi.components.R.i, 'T14e 与滑片位置无关', 1e-12);
   close(lo.components.R.i, 3 / 30, 'T14e 电流 = 3/(20+10)', 1e-9);
 });
 
-test('T14f 变阻器 A-B 接法（初中经典错误接法）→ 金属杆直通 0Ω', function () {
-  var r = rheostatCase(0, 1, 0.6);
-  truthy(r.components.RH.mode === 'A-B', 'T14f 接法应为 A-B，实际 ' + r.components.RH.mode);
+test('T14f 变阻器 C-D 接法（两个上柱）→ 只有金属杆，0Ω 相当于一根导线', function () {
+  var r = rheostatCase(2, 3, 0.6);
+  truthy(r.components.RH.mode === 'C-D', 'T14f 接法应为 C-D，实际 ' + r.components.RH.mode);
   close(r.components.RH.rUsed, 0, 'T14f 接入阻值应为 0（滑片完全不起作用）', 1e-12);
   close(r.components.R.i, 3 / 10, 'T14f 电流 = 3/10（变阻器被短路）', 1e-9);
 });
@@ -928,18 +937,18 @@ test('T20d 导线电流分布：不产生 NaN，长度与 wires 一致', functio
 });
 
 test('T20e 导线电流分布：变阻器串在回路里，导线也要有电流', function () {
-  // 变阻器内部是 A-B 金属杆短接 + 两个半段，不是简单的两端元件。
+  // 变阻器内部是 C-D 金属杆短接 + 两个半段，不是简单的两端元件。
   // 曾经这里整个跳过（terminalInjection 直接 return 0），结果变阻器
   // 那一段导线电流恒为 0，画面上就是「电流粒子走到变阻器前面停住」。
   //
-  // 接法：A(金属杆) 进、D(电阻丝一端) 出，电流走 A→滑片→D，
+  // 接法：B(电阻丝一端) 进、C(金属杆) 出，电流走 B→右半段→滑片→C，
   // 用到的阻值 = Rmax×(1−slide)。slide=0.25、Rmax=20 → 15Ω。
   // 回路总阻 = 15 + 5 = 20Ω → I = 4.5/20 = 0.225A。
   var scene = {
     comps: [comp('E', 'battery', { emf: 4.5, rInt: 0 }),
             comp('RH', 'rheostat', { Rmax: 20, slide: 0.25 }),
             comp('R1', 'resistor', { R: 5 })],
-    wires: [W('E', 0, 'RH', 0), W('RH', 3, 'R1', 0), W('R1', 1, 'E', 1)],
+    wires: [W('E', 0, 'RH', 1), W('RH', 2, 'R1', 0), W('R1', 1, 'E', 1)],
   };
   var res = C.solve(scene.comps, scene.wires);
   truthy(res.status === 'ok', 'T20e 电路应可解，实际 ' + res.status);
@@ -958,21 +967,21 @@ test('T20e 导线电流分布：变阻器串在回路里，导线也要有电流
     'T20e 沿回路同向书写的三根导线应同号（都为正）', { f: f.map(function (x) { return +x.toFixed(6); }) });
 });
 
-test('T20f 导线电流分布：C 端进出时 slide 不影响阻值，导线电流也不能受影响', function () {
-  // 接 C、D 两端 = 两个半段串联，恒等于 Rmax，这是「变阻器变成定值电阻」
-  // 的经典错误接法，滑片怎么推电流都不变——导线电流同样得纹丝不动。
+test('T20f 导线电流分布：接 A、B 时 slide 不影响阻值，导线电流也不能受影响', function () {
+  // 接 A、B 两个下柱 = 整根电阻丝接入，恒等于 Rmax，这是初中最经典的
+  // 错误接法（「滑片不起作用」），滑片怎么推电流都不变——导线电流同样得纹丝不动。
   function run(slide) {
     var scene = {
       comps: [comp('E', 'battery', { emf: 4.5, rInt: 0 }),
               comp('RH', 'rheostat', { Rmax: 20, slide: slide }),
               comp('R1', 'resistor', { R: 5 })],
-      wires: [W('E', 0, 'RH', 2), W('RH', 3, 'R1', 0), W('R1', 1, 'E', 1)],
+      wires: [W('E', 0, 'RH', 0), W('RH', 1, 'R1', 0), W('R1', 1, 'E', 1)],
     };
     var res = C.solve(scene.comps, scene.wires);
     return { res: res, f: C.wireCurrents(scene, res) };
   }
   var a = run(0.2), b = run(0.8);
-  close(a.res.components.RH.rUsed, 20, 'T20f 接 C、D 时阻值恒为 Rmax', 1e-9);
+  close(a.res.components.RH.rUsed, 20, 'T20f 接 A、B 时阻值恒为 Rmax', 1e-9);
   close(b.res.components.RH.rUsed, 20, 'T20f 滑片推到底阻值也还是 Rmax', 1e-9);
   close(Math.abs(a.f[0]), Math.abs(b.f[0]), 'T20f 滑片从 0.2 推到 0.8，导线电流不变', 1e-12);
   a.f.forEach(function (v, i) {
@@ -995,7 +1004,7 @@ test('T20f 导线电流分布：C 端进出时 slide 不影响阻值，导线电
 // 而且无法发现「三根一起反」这种整体性错误。这里对每处端子逐个算账。
 function kclResidual(scene, res) {
   var f = C.wireCurrents(scene, res);
-  // wired：真有导线挂着的端子。变阻器的 A/B 是同电位的一对引线，
+  // wired：真有导线挂着的端子。变阻器的 C/D 是同电位的一对引线（金属杆两端），
   // 不给它这个信息就没法把注入量分到具体哪一端（见 terminalInjection）。
   var wired = {};          // 对象形态用于下面查「这个端子有没有线」
   var wiredSet = new Set(); // 集合形态传给核心，和 wireCurrents 内部一致
@@ -1087,6 +1096,8 @@ test('T21b 并联回路：干路和支路各自满足 KCL，互不串味', funct
 
 test('T21c 含变阻器的混联：KCL 仍然处处成立', function () {
   // 变阻器是四端元件，注入量要按半段算，最容易在这里把方向算反。
+  // 接法用的是「一上一下」里的 A 进、D 出（D 与 C 同为金属杆端，
+  // 走的是 terminalInjection 里 dWired 那条分支）。
   var scene = {
     comps: [comp('E', 'battery', { emf: 4.5, rInt: 0 }),
             comp('RH', 'rheostat', { Rmax: 20, slide: 0.25 }),

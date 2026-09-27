@@ -41,9 +41,15 @@
     },
     rheostat: {
       label: '滑动变阻器', terminals: 4, termNames: ['A', 'B', 'C', 'D'],
-      // A/B 都是滑片（金属杆两端，内部等效同一节点）；C/D 是电阻丝两端
+      // 编号照人教版教材图16.4-2 的实物位置来（这也是初中「一上一下」接法的
+      // 参照系，学生是对着教材数接线柱的）：
+      //   A(0)/B(1) = 【下面】两个柱，出厂就接在电阻丝两头
+      //   C(2)/D(3) = 【上面】两个柱，接在金属杆两头（内部等效同一节点 = 滑片）
+      // 接 A、B 两根线 = 整根电阻丝接入，滑片不起作用（R = Rmax）；
+      // 接 C、D 两根线 = 只有金属杆，R = 0，等于一根导线。两条都是经典错接法，
+      // 结论正好相反，所以编号反了等于把两个考点一起教反。
       defaults: { Rmax: 20, slide: 0.5 },
-      internalShort: [0, 1],
+      internalShort: [2, 3],
     },
     bulb: {
       label: '小灯泡', terminals: 2, termNames: ['a', 'b'],
@@ -257,10 +263,10 @@
         break;
 
       case 'rheostat':
-        // A(0)/B(1) 已在 buildNodes 中合并 → 同一节点 = 滑片 S
-        var S = N(0);
-        addR(N(2), S, P.Rmax * clamp01(P.slide));          // C → 滑片
-        addR(S, N(3), P.Rmax * (1 - clamp01(P.slide)));    // 滑片 → D
+        // C(2)/D(3) 已在 buildNodes 中合并 → 同一节点 = 滑片 S
+        var S = N(2);
+        addR(N(0), S, P.Rmax * clamp01(P.slide));          // A → 滑片（左半段）
+        addR(S, N(1), P.Rmax * (1 - clamp01(P.slide)));    // 滑片 → B（右半段）
         break;
 
       default:
@@ -722,9 +728,9 @@
           if (carry.length) {
             rec.rUsed = carry.reduce(function (a, s) { return a + s.R; }, 0);
           } else {
-            // 无电流段：A-B 接法 = 电流走金属杆，滑片不起作用 ⇒ 接入 0Ω
+            // 无电流段：C-D 接法 = 电流只走金属杆，电阻丝整根空着 ⇒ 接入 0Ω
             //（初中经典错误接法，必须给出 0 而不是 null）
-            rec.rUsed = (rec.mode === 'A-B') ? 0 : null;
+            rec.rUsed = (rec.mode === 'C-D') ? 0 : null;
           }
           // 对外一律用「接入部分」这一等效电阻的幅值表述，保证 v = i·R_used、p = v·i
           // 三者自洽（四端元件的段间正负号对教学毫无意义，只会让 UI 显示错）。
@@ -774,27 +780,32 @@
     return out;
   }
 
-  // 滑动变阻器接法识别：根据 C/D 端子是否与「滑片节点之外」相连来判定
+  // 滑动变阻器接法识别：看哪几个接线柱真的接到了别的元件上。
+  // 返回的字符串直接就是教材上的叫法（一个上柱 + 一个下柱 = 一上一下）：
+  //   A-C / A-D → 接入滑片左边那段（R = Rmax·slide）
+  //   B-C / B-D → 接入滑片右边那段（R = Rmax·(1−slide)）
+  //   A-B       → 两个下柱：整根电阻丝接入，滑片不起作用（R = Rmax，与滑片无关）
+  //   C-D       → 两个上柱：只有金属杆，R = 0
   function detectRheostatMode(comp, topo, branches, components) {
-    var S = topo.termNode[comp.id + ':0'];
-    var C = topo.termNode[comp.id + ':2'];
-    var D = topo.termNode[comp.id + ':3'];
-    var cWired = false, dWired = false, sWired = false;
+    var S = topo.termNode[comp.id + ':2'];   // C/D 同为金属杆端，合并成滑片节点
+    var A = topo.termNode[comp.id + ':0'];   // 电阻丝左端
+    var B = topo.termNode[comp.id + ':1'];   // 电阻丝右端
+    var aWired = false, bWired = false, sWired = false;
     for (var i = 0; i < components.length; i++) {
       if (components[i] === comp) continue;
       var ot = TYPES[components[i].type].terminals;
       for (var t = 0; t < ot; t++) {
         var nd = topo.termNode[components[i].id + ':' + t];
-        if (nd === C) cWired = true;
-        if (nd === D) dWired = true;
+        if (nd === A) aWired = true;
+        if (nd === B) bWired = true;
         if (nd === S) sWired = true;
       }
     }
-    if (sWired && cWired && !dWired) return 'A-C';
-    if (sWired && dWired && !cWired) return 'A-D';
-    if (sWired && cWired && dWired) return 'A-C+D';
-    if (!sWired && cWired && dWired) return 'C-D';
-    if (sWired && !cWired && !dWired) return 'A-B';
+    if (sWired && aWired && !bWired) return 'A-C';
+    if (sWired && bWired && !aWired) return 'B-C';
+    if (sWired && aWired && bWired) return 'A-B+C';
+    if (!sWired && aWired && bWired) return 'A-B';
+    if (sWired && !aWired && !bWired) return 'C-D';
     return 'open';
   }
 
@@ -878,32 +889,32 @@
   function terminalInjection(comp, rec, termIdx, wired) {
     if (!rec || !Number.isFinite(rec.i) || !comp) return 0;
     if (comp.type === 'rheostat') {
-      // 变阻器不是「两端元件」，它内部是 A-B 金属杆短接成滑片节点 S，
-      // 外加 C→S、S→D 两个半段电阻。整体 rec.i 在这里没有意义，
-      // 必须按半段算：segs[0] 的电流从 C 流向 S，segs[1] 从 S 流向 D。
+      // 变阻器不是「两端元件」，它内部是 C-D 金属杆短接成滑片节点 S，
+      // 外加 A→S、S→B 两个半段电阻。整体 rec.i 在这里没有意义，
+      // 必须按半段算：segs[0] 的电流从 A 流向 S，segs[1] 从 S 流向 B。
       var segs = rec.segments;
       if (!segs || segs.length < 2) return 0;
-      if (termIdx === 2) return -segs[0].i;   // C：电流流进元件，注入节点为负
-      if (termIdx === 3) return segs[1].i;    // D：电流从元件流出，注入节点为正
-      // A(0)/B(1) 挂在同一个滑片节点上，KCL 给出两者注入之和：
-      //   inj_A + inj_B = −(segs[1].i − segs[0].i)
+      if (termIdx === 0) return -segs[0].i;   // A：电流流进元件，注入节点为负
+      if (termIdx === 1) return segs[1].i;    // B：电流从元件流出，注入节点为正
+      // C(2)/D(3) 挂在同一个滑片节点上，KCL 给出两者注入之和：
+      //   inj_C + inj_D = −(segs[1].i − segs[0].i)
       // 这个负号是关键。segs[1].i − segs[0].i 由滑片节点 S 的 KCL 推出来，
-      // 它等于「从 A 端【流入】元件的电流」；而本函数的契约是「流出元件、
+      // 它等于「从 C 端【流入】元件的电流」；而本函数的契约是「流出元件、
       // 注入节点」，方向正好相反，所以必须取负。
       //
       // 漏掉这个负号的后果很隐蔽：剥叶子时哪个端子先被剥，取决于导线是
-      // 从哪端开始写的。接 A 的那根线若写成「E → A」（a 端是 E），先剥 E，
-      // 结果是对的；写成「A → E」先剥 A，用上这个注入量，这根线的电流就
+      // 从哪端开始写的。接 C 的那根线若写成「E → C」（a 端是 E），先剥 E，
+      // 结果是对的；写成「C → E」先剥 C，用上这个注入量，这根线的电流就
       // 整个反号——屏幕上就是【这一段和其它段的粒子反向跑】。
       // 两者各分多少，解里是定不下来的（同一节点的两根引线）。
       // 实际接线只用一个，所以按「谁真的接了线」分配：只接一个就全给它，
       // 两个都接（少见，等于把同一根杆引到两处）才平分。
-      if (termIdx !== 0 && termIdx !== 1) return 0;
-      var total = segs[0].i - segs[1].i;      // 从 A 端【流出】元件的电流
-      var aWired = wired ? wired.has(comp.id + ':0') : false;
-      var bWired = wired ? wired.has(comp.id + ':1') : false;
-      if (aWired && !bWired) return (termIdx === 0) ? total : 0;
-      if (bWired && !aWired) return (termIdx === 1) ? total : 0;
+      if (termIdx !== 2 && termIdx !== 3) return 0;
+      var total = segs[0].i - segs[1].i;      // 从 C 端【流出】元件的电流
+      var cWired = wired ? wired.has(comp.id + ':2') : false;
+      var dWired = wired ? wired.has(comp.id + ':3') : false;
+      if (cWired && !dWired) return (termIdx === 2) ? total : 0;
+      if (dWired && !cWired) return (termIdx === 3) ? total : 0;
       return total / 2;
     }
     // 三柱表头（电流表/电压表）：电流只从【实际接了线的那个量程柱】流进，
@@ -990,7 +1001,7 @@
     var compById = {};
     (scene.comps || []).forEach(function (c) { compById[c.id] = c; });
 
-    // 哪些端子上真的挂了导线。变阻器的 A/B 是同电位的一对引线，
+    // 哪些端子上真的挂了导线。变阻器的 C/D 是同电位的一对引线，
     // 不区分「接的是哪一个」就无法把注入量分对（见 terminalInjection）。
     var wired = new Set();
     wires.forEach(function (wr) {
