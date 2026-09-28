@@ -766,6 +766,101 @@ test('T17f 电压表接反：读数变负并标记（− 柱接到了高电位�
     'T17f 应给出 METER_REVERSED 告警');
 });
 
+// 「表头要两端都接上才算进了电路」。三柱表有两个接点：量程柱和「−」柱。
+// 只接一根柱子时，另一头是悬空的节点——理想电压表会把悬空节点当成 0V，
+// 于是读出一个【像模像样的电路节点电位】（3V 电源就报 3.000V），学生完全
+// 看不出表根本没接进去。这是用户实测报上来的 bug，两条路径都得钉死。
+test('T17g 电压表只接量程柱：读数必须是 0，并给出 METER_NO_COMMON 告警', function () {
+  var r = run([
+    comp('E', 'battery', { emf: 3, rInt: 0 }),
+    comp('R1', 'resistor', { R: 10 }),
+    comp('V', 'voltmeter', { range: 3, rInternal: null }),
+  ], [
+    W('E', 0, 'R1', 0), W('R1', 1, 'E', 1),
+    W('R1', 1, 'V', 1),                            // 只接了量程柱，「−」柱空着
+  ], 'T17g');
+
+  var V = r.components.V;
+  truthy(V.rangeWired === true, 'T17g 量程柱接着线，量程本身是有的');
+  truthy(V.commonWired === false, 'T17g 「−」柱没接线');
+  truthy(V.wired === false, 'T17g 两端没接全 ⇒ 表不在电路里');
+  close(V.v, 0, 'T17g 只接量程柱时读数必须是 0（改前会读出电路节点电位 3V）', 1e-12);
+  close(V.reading, 0, 'T17g reading 同样是 0', 1e-12);
+  truthy(V.reversed === false && V.overRange === false,
+    'T17g 表没进电路，谈不上接反或超量程',
+    { reversed: V.reversed, overRange: V.overRange });
+  truthy(r.warnings.some(function (w) { return w.code === 'METER_NO_COMMON'; }),
+    'T17g 应给出 METER_NO_COMMON 告警（学生少接一根线，得说清是哪一根）',
+    r.warnings.map(function (w) { return w.code; }));
+  truthy(!r.warnings.some(function (w) { return w.code === 'METER_REVERSED'; }),
+    'T17g 没读数就谈不上接反');
+  // 悬空的表不该把主回路带偏：串联的 R1 两端仍是 3V。
+  close(r.components.R1.v, 3, 'T17g 悬空电压表不影响主回路', 1e-9);
+  close(r.components.R1.i, 0.3, 'T17g 主回路电流照常', 1e-12);
+});
+
+test('T17h 电压表只接「−」柱：读数同样是 0，告警是 METER_NO_RANGE', function () {
+  var r = run([
+    comp('E', 'battery', { emf: 3, rInt: 0 }),
+    comp('R1', 'resistor', { R: 10 }),
+    comp('V', 'voltmeter', { range: 3, rInternal: null }),
+  ], [
+    W('E', 0, 'R1', 0), W('R1', 1, 'E', 1),
+    W('R1', 1, 'V', 0),                            // 只接了「−」柱
+  ], 'T17h');
+
+  var V = r.components.V;
+  truthy(V.rangeWired === false && V.wired === false, 'T17h 没接量程柱 ⇒ 表不在电路里');
+  close(V.v, 0, 'T17h 改前会读出 −3V（0 减「−」柱电位），现在是 0', 1e-12);
+  truthy(V.reversed === false, 'T17h 不该报反接（改前会误报）');
+  truthy(r.warnings.some(function (w) { return w.code === 'METER_NO_RANGE'; }),
+    'T17h 应给出 METER_NO_RANGE 告警');
+  truthy(!r.warnings.some(function (w) { return w.code === 'METER_NO_COMMON'; }),
+    'T17h 「−」柱是接了的，不该报 METER_NO_COMMON',
+    r.warnings.map(function (w) { return w.code; }));
+});
+
+// 有内阻的电压表走的是【另一条】回填路径（有支路），必须同样抹零：
+// 支路另一端悬空时支路里没有电流，但两端电位差照样算得出来。
+test('T17i 有内阻的电压表只接量程柱：读数同样必须是 0', function () {
+  var r = run([
+    comp('E', 'battery', { emf: 3, rInt: 0 }),
+    comp('R1', 'resistor', { R: 10 }),
+    comp('V', 'voltmeter', { range: 3, rInternal: 3000 }),
+  ], [
+    W('E', 0, 'R1', 0), W('R1', 1, 'E', 1),
+    W('R1', 1, 'V', 1),
+  ], 'T17i');
+
+  var V = r.components.V;
+  truthy(V.wired === false, 'T17i 表不在电路里');
+  close(V.v, 0, 'T17i 有内阻的电压表读数也得是 0', 1e-12);
+  close(V.i, 0, 'T17i 悬空支路没有电流', 1e-15);
+  truthy(V.reversed === false, 'T17i 不该报反接');
+});
+
+// 电流表同理：只接一个柱子时表头串不进去，读数恒 0，也不能判反接/超量程。
+test('T17j 电流表只接量程柱：读数 0，且不给 METER_NO_RANGE（那根线是接了的）', function () {
+  var r = run([
+    comp('E', 'battery', { emf: 3, rInt: 0 }),
+    comp('R', 'resistor', { R: 10 }),
+    comp('A', 'ammeter', { range: 0.6, rInternal: 0 }),
+  ], [
+    W('E', 0, 'R', 0), W('R', 1, 'A', 1), W('A', 1, 'E', 1),   // 电流只从量程柱进
+  ], 'T17j');
+
+  var A = r.components.A;
+  truthy(A.rangeWired === true && A.commonWired === false && A.wired === false,
+    'T17j 量程柱接了、「−」柱没接 ⇒ 表不在电路里');
+  close(A.reading, 0, 'T17j 读数 0', 1e-15);
+  truthy(A.reversed === false, 'T17j 不该报反接');
+  truthy(r.warnings.some(function (w) { return w.code === 'METER_NO_COMMON'; }),
+    'T17j 应给出 METER_NO_COMMON 告警',
+    r.warnings.map(function (w) { return w.code; }));
+  truthy(!r.warnings.some(function (w) { return w.code === 'METER_NO_RANGE'; }),
+    'T17j 量程柱是接着的，不该报 METER_NO_RANGE');
+});
+
 // ============================================================
 // T18 元件被导线短接
 // ============================================================

@@ -611,6 +611,9 @@
       var tapIdx = tp ? tp.idx : null;
       var bs = usedBranches.filter(function (b) { return b.comp === c; });
       var rec = { type: c.type, v: 0, i: 0, p: 0, R: null, isolated: false };
+      // 表头的「−」柱（公共端）接没接线。两端元件没有这一项，恒 true。
+      // 必须在这里、算读数之前定下来：读数要靠它决定「表到底在不在电路里」。
+      rec.commonWired = (TI.commonTerm == null) ? true : wired.has(c.id + ':' + TI.commonTerm);
 
       // 「未接入电路」= 该元件没有任何端子落在有源岛内。
       // 对理想电压表这类「无支路」元件同样正确（它的节点不在任何岛里）。
@@ -626,6 +629,9 @@
             // 注意不能在这里 break 成 v=0 —— 否则理想电压表永远读 0。
             // 三柱电压表的「两端」= 当前量程柱 与 「−」柱；没接量程柱时
             // N(null) 是 undefined，两边都取 0，读数自然是 0。
+            // ⚠️ 这个式子【只在两端都接了线时】才有物理意义：只接一根柱子时
+            // 另一端是悬空的，nV 会给悬空节点一个幽灵 0V，读出来的其实是电路
+            // 节点对地的电位。所以下面 fillVoltmeter() 里还会按 rec.wired 抹一遍 0。
             rec.v = (c.type === 'voltmeter')
               ? (nV(sol, N(tapIdx)) - nV(sol, N(NCi)))
               : (nV(sol, N(0)) - nV(sol, N(1)));
@@ -649,6 +655,8 @@
           rec.p = rec.v * rec.i;
           if (c.type === 'bulb') fillLamp(rec, c, P);
           if (c.type === 'voltmeter') {
+            // 有内阻的电压表走的是这条支路：支路另一端（「−」柱）没接线时
+            // 支路里没有电流，但两端电位差照样算得出来——同样得按 rec.wired 抹掉。
             fillVoltmeter(rec, c, P, tapIdx, warnings);
             warnMeterWiring(warnings, rec, c, tp, wired, '电压表');
           }
@@ -677,6 +685,11 @@
           rec.p = rec.v * rec.i;
           rec.tapIdx = tapIdx;
           fillMeterRange(rec, c, tapIdx, P);
+          // 两端没接全（缺量程柱或缺「−」柱）＝ 表头没进电路：读数一律抹 0。
+          // 支路本身这时也是断的（悬空那一端没有别的元件，电流恒 0），抹一遍
+          // 是把「解出来的 0」和「根本没接」两件事说成同一句话，免得将来
+          // 支路拓扑一变就在这里漏出一个假读数。
+          if (!rec.wired) { rec.i = 0; rec.v = 0; rec.p = 0; }
           rec.ideal = !P.rInternal;
           rec.reading = rec.i;
           rec.overRange = rec.rangeWired && Math.abs(rec.reading) > rec.range + 1e-12;
@@ -826,12 +839,19 @@
     rec.tapIdx = tapIdx;
     rec.rangeWired = rng != null;
     rec.range = rng != null ? rng : P.range;
+    // wired = 「表头真的串进电路了」。三柱表要【两个柱都接上】才算：
+    // 只接量程柱时表读的是悬空节点对地的电位，只接「−」柱时读数恒 0，
+    // 两种都不是一次测量。读数、反接、超量程判定统统挂在它上面。
+    rec.wired = rec.rangeWired && rec.commonWired !== false;
   }
 
-  // 表头接线的两种「不报错、但学生一定做错了」的情况：
+  // 表头接线的三种「不报错、但学生一定做错了」的情况：
   //   · 两个量程柱同时接 —— 编辑器当场拒绝并提示，这里是手写场景的兜底；
-  //   · 只接了「−」柱 —— 表头根本没进电路，读数恒 0。必须说出来，否则
-  //     学生只看到「指针一动不动」却不知道是自己少接了一根线。
+  //   · 只接了「−」柱 —— 表头根本没进电路，读数恒 0；
+  //   · 只接了量程柱 —— 更坏：另一头悬空，理想电压表会把悬空节点当成 0V，
+  //     读出一个像模像样的电路节点电位，学生完全看不出表没接进去。
+  // 三种都必须说出来，否则学生只看到「指针一动不动」或「读数怪怪的」，
+  // 却不知道是自己少接了一根线。
   function warnMeterWiring(warnings, rec, c, tp, wired, name) {
     if (tp && tp.conflict) {
       warnings.push({
@@ -840,7 +860,15 @@
         componentIds: [c.id],
       });
     }
-    if (!rec.rangeWired && wired.has(c.id + ':' + TYPES[c.type].commonTerm)) {
+    var hasCommon = wired.has(c.id + ':' + TYPES[c.type].commonTerm);
+    if (rec.rangeWired && !hasCommon) {
+      warnings.push({
+        code: 'METER_NO_COMMON',
+        message: name + '只接了量程柱，「−」柱上还得接一根线',
+        componentIds: [c.id],
+      });
+    }
+    if (!rec.rangeWired && hasCommon) {
       warnings.push({
         code: 'METER_NO_RANGE',
         message: name + '只接了「−」柱，量程柱上还得接一根线',
@@ -857,6 +885,10 @@
   // 那几个用例的电压表恰好都没超量程。
   function fillVoltmeter(rec, c, P, tapIdx, warnings) {
     fillMeterRange(rec, c, tapIdx, P);
+    // ⚠️ 表头【两端都接上】才真的在电路里。缺一根柱子时另一端悬空，上面算出的
+    // rec.v 是拿幽灵 0V 当参考读出来的（用户实测：电压表只连一个量程柱就有
+    // 示数）。抹成 0，而且不判反接/超量程——那都是「表在电路里」才有的现象。
+    if (!rec.wired) { rec.v = 0; rec.i = 0; rec.p = 0; }
     rec.reading = rec.v;
     rec.ideal = !(P.rInternal > 0);
     rec.overRange = rec.rangeWired && Math.abs(rec.reading) > rec.range + 1e-12;
