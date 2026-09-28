@@ -253,9 +253,10 @@
           <li><strong>电池节数</strong>只是粗调（1~4 节干电池），细调交给滑片</li>
           <li>点击画布上的 <strong>闸刀开关</strong> 可以断开、闭合电路</li>
           <li><strong>固定电阻探究</strong>：选一个定值电阻，拖滑片改变电压，记几组 U 和 I —— I 与 U 成正比</li>
-          <li><strong>固定电压探究</strong>：每换一次电阻，电压都会跟着变，<strong>必须移动滑片把电压调回 3.0V</strong>，页面提示「已回到」才让记录 —— 这就是<strong>控制变量</strong></li>
+          <li><strong>固定电压探究</strong>：每换一次电阻，电压都会跟着变，要移动滑片把它调回<strong>电压表读数相同的值</strong>（调到几伏由你决定，比如都调到 3.0V）—— 这就是<strong>控制变量</strong></li>
+          <li>没调回同一个值也照样能记（<strong>电压是多少就如实记多少</strong>，表格里的 U 列不会骗人），但页面会告诉你<strong>这么记图像会弯</strong>，那时图上的线只是拟合出来的，不能当成结论</li>
           <li>四个电阻都记完后，把 <strong>横轴</strong> 从 <strong>R</strong> 换成 <strong>1/R</strong>：原来那条弯曲的双曲线立刻变成一条过原点的<strong>直线</strong></li>
-          <li>这条直线的<strong>斜率</strong>正好是被控住的那个电压 3.0V —— 这就是「化曲为直」</li>
+          <li>这条直线的<strong>斜率</strong>就是你控住的<strong>那个电压</strong>（页面按这几行数据拟合出来，标在图上）—— 这就是「化曲为直」</li>
         </ul>
       </div>
     </div>
@@ -316,6 +317,7 @@ var recordedData = [];          // [{u, r, i}, ...]
 // 画图和数据为空时的兜底：直接从电路上读，不再单独存一份页面状态。
 function liveR(){ var r = results && results.components.R1; return r ? r.R : 1; }
 function liveI(){ var r = results && results.components.R1; return r ? Math.abs(r.i) : 0; }
+function liveU(){ var r = results && results.components.R1; return r ? Math.abs(r.v) : 0; }
 // 电子流动（琥珀色小球）和电流方向（红色箭头）各自独立。页面上仍是一个两态按钮，
 // 在两者之间切换 —— 原来那版的「电流方向 / 电子流动方向」就是这个意思。
 var showFlow = false, showCurrent = true;
@@ -541,36 +543,49 @@ function overRange(){
             results.warnings.some(function(x){ return x.code === 'METER_OVER_RANGE'; }));
 }
 
-// ── 控制变量：目标电压 ────────────────────────────────────
-// 「固定电压探究」要求换成不同的定值电阻之后，把电压【调回同一个值】。
-// 这个值是页面【预设】的常量，不是由第一行数据决定的 —— 全班做同一个数，好对答案。
-// 调回去的动作由学生自己拖滑片完成，页面只负责显示差多少、没调到位就不让记录。
-var TARGET_U = 3.0;
-// 电压表在 3V 挡上的最小分度是 0.1V，调到「读数 3.0V」就算到位，所以容差取 0.05V。
-// 滑片的 page 步长取 0.005（接入电阻 0.1Ω 一挡）：最坏情况 R=5Ω、滑片停在 5Ω 附近时
-// dU/dRr = −emf·R/(R+Rr)² = −0.3V/Ω，一挡只走 0.03V，稳在容差里面。
-var TOL_U = 0.05;
-// 当前电压离目标还差多少（V）。电路不通/没有 R1 时返回 null。
-function offTargetU(){
-  var r1 = results && results.components ? results.components.R1 : null;
-  if (!r1) return null;
-  return Math.abs(Math.abs(r1.v) - TARGET_U);
+// ── 电压「控住没控住」────────────────────────────────────
+// 「固定电压探究」要换成不同的定值电阻，并且把电压【调回同一个值】—— 这是控制变量
+// 那一步动作。但页面【不再设门槛】：3.0V 不是唯一正确答案，学生想看 2V、4.5V 都能记，
+// 电压是多少就如实记多少（记录表里有 U 列）。页面只负责把话说清楚「这么记图像会弯」，
+// 和下面的 mixedR() 一个路子：记都记了，拦着没用。
+//
+// 判据用【电压表分度】而不是原始解值：学生是把指针调到某一格才记的，
+// 解出来的 2.97 和 3.04 在他眼里是同一个读数，按原始值判就会冤枉做对的人。
+var U_STEP = 0.1;                                   // 3V 挡电压表的最小分度
+function dialOf(u){ return Math.round(u / U_STEP) * U_STEP; }
+// 「固定电压探究」里各行在表盘上读出好几个数（没控住）→ 返回那几个读数；一致返回 null。
+// withLive 为真时把【电路现在这一行】也算上：换完电阻滑片还没调回来，旁边的提示立刻变红，
+// 不用等学生先记下去才说。图上的注释放的却是【已记录各行】的实情（传 false）——
+// 学生只是把滑片推了一下、并没记，图像不能跟着喊「数据不一致」，那就成了冤枉。
+function mixedU(withLive){
+  if (dataMode !== 'fixedU') return null;
+  var us = [];
+  function put(u){
+    var k = dialOf(u);
+    if (!us.some(function(x){ return Math.abs(x - k) < 1e-9; })) us.push(k);
+  }
+  recordedData.forEach(function(d){ put(d.u); });
+  if (withLive) {
+    var r1 = results && results.components ? results.components.R1 : null;
+    if (r1) put(Math.abs(r1.v));
+  }
+  return us.length > 1 ? us.sort(function(a, b){ return a - b; }) : null;
 }
-function atTargetU(){
-  var d = offTargetU();
-  return d !== null && d <= TOL_U;
-}
-// 电池给不到目标电压（比如目标 3.0V 而只装了一节 1.5V）时，学生怎么拖滑片都没用 ——
-// 这一条要单独说，否则他们会以为是自己没调对。
-function batteryTooLow(){
-  var e = byId('E');
-  return !!e && e.params.emf <= TARGET_U + TOL_U;
+// 图像上的那条虚线：过原点最小二乘，min Σ(k·xᵢ − yᵢ)²  →  k = Σ(xᵢyᵢ) / Σ(xᵢ²)。
+// 它算的就是学生「控住电压」控出来的那个常量：各行电压一致时 k 恰好等于那个电压，
+// 于是「斜率就是电压」这句话由数据自己给出来，而不是页面预设的 3.0。
+// 电压没控住时 k 仍算得出来，但意义变了 —— 那时图上会加红字说明（见 drawDataGraph）。
+function fitK(pts){                                  // pts: [{x: 1/R, y: I}]
+  var sxy = 0, sxx = 0;
+  pts.forEach(function(p){ sxy += p.x * p.y; sxx += p.x * p.x; });
+  return sxx > 0 ? sxy / sxx : null;
 }
 function canRecord(){
-  if (!(results && results.status === 'ok' && results.components.R1 && !overRange())) return false;
-  // 固定电压探究：电压没调回目标就不让记 —— 这正是「控制变量」那一步动作。
-  // 固定电阻探究不设这道门槛（电压本来就该随着滑片变），那里由混电阻告警兜底。
-  if (dataMode === 'fixedU' && !atTargetU()) return false;
+  var r1 = results && results.components ? results.components.R1 : null;
+  // !r1.isolated：被测电阻被接成一条【死支路】时（自己搭电路很容易出），求解器给的
+  // status 仍是 'ok'，但它的 i/v 恒为 0 —— 记下去就是一行 0.000A 的假数据。
+  // 不能拿 rec.R == null 代替：孤立电阻的 R 还是真实阻值（rec.isolated 是内核算好的）。
+  if (!(results && results.status === 'ok' && r1 && !r1.isolated && !overRange())) return false;
   return true;
 }
 // 「固定电阻探究」里学生中途按了别的电阻按钮，这组数据就混了两个 R，I–U 图会弯。
@@ -586,23 +601,34 @@ function mixedR(){
 }
 
 // 记录按钮置灰时，旁边那句话要说明白【为什么不能记】。
+// 另外还有一种情况：【能记，但记下去会出问题】—— 比如电压没控住。
+// 那时按钮【不置灰】（拦着没用，学生想看别的电压是他的自由），只用红字把后果说出来。
 function recordHintText(){
-  if (!results || results.status !== 'ok' || !results.components.R1) {
+  var r1 = results && results.components ? results.components.R1 : null;
+  if (!results || results.status !== 'ok' || !r1) {
     return { text: '电路没接通，先闭合开关', cls: 'warn' };
+  }
+  // 孤立 ≠ 电路不通。实测：拿一根导线把定值电阻短路绕过去，主回路照样通（电流表读数
+  // 0.6A），但被测电阻的 i/v 恒为 0。—— 这时说「电路没接通」是假话，学生看着亮着的
+  // 电流表只会更糊涂。要点名【被测的那个元件】没在电路里。
+  if (r1.isolated) {
+    return { text: '被测电阻没接进电路（是不是被导线短路绕过去了）—— 它两端没有电压，' +
+                   '电流恒为 0，记下来是一行假数据', cls: 'warn' };
   }
   if (overRange()) return { text: '电流超过电流表量程，读数不可信', cls: 'warn' };
   if (dataMode === 'fixedU') {
-    if (batteryTooLow()) {
-      var e = byId('E');
-      return { text: '⚠ 电池电压太低（最高只有 ' + e.params.emf.toFixed(1) +
-                     ' V），请换更高的档位', cls: 'warn' };
+    var mu = mixedU(true);                       // 带上实时这一行：换完电阻立刻提醒
+    if (mu) {
+      return { text: '⚠ 这几次的电压不是同一个值（' +
+                     mu.map(function(x){ return x.toFixed(1); }).join(' / ') +
+                     ' V）—— 换电阻后要把滑片调回电压表读数相同的值，否则 I–R 图像会弯',
+               cls: 'warn' };
     }
-    if (!atTargetU()) {
-      var u = Math.abs(results.components.R1.v);
-      return { text: '⚠ 请移动滑片，使电压表示数回到 ' + TARGET_U.toFixed(1) +
-                     ' V　当前 ' + u.toFixed(2) + ' V', cls: 'warn' };
-    }
-    return { text: '✓ 电压已回到 ' + TARGET_U.toFixed(1) + ' V，可以记录', cls: 'ok' };
+    var u = Math.abs(r1.v);
+    return { text: recordedData.length
+                     ? '✓ 各行的电压都是 ' + dialOf(u).toFixed(1) + ' V，控制住了'
+                     : '✓ 当前 ' + u.toFixed(1) + ' V，可以记录',
+             cls: 'ok' };
   }
   var mixed = mixedR();
   if (mixed) {
@@ -766,7 +792,7 @@ window.setRecordMode = function(mode) {
   updateDataTable();
   // Redraw graph with existing data
   drawDataGraph();
-  refreshCards();     // 记录的门口条件跟着模式走（固定电压那组要先把电压调回目标）
+  refreshCards();     // 提示语跟着模式走：固定电压那组要提醒「各行电压是不是同一个值」
 };
 
 // 表头按 (模式, 横轴) 重建。1/R 那一列只在固定电压 + 1/R 横轴时出现。
@@ -777,6 +803,9 @@ function rebuildTableHead() {
   if (dataMode === 'fixedU') {
     th += '<th>R/Ω</th>';
     if (xAxis === 'invR') th += '<th>1/R (Ω⁻¹)</th>';
+    // U 列：电压不钉死在 3.0V 之后，每行【实际】是多少必须能一眼看见 ——
+    // 否则「各行电压不一致」那条告警在表上找不到出处，学生只能干瞪眼。
+    th += '<th>U/V</th>';
   } else {
     th += '<th>U/V</th>';
   }
@@ -825,6 +854,7 @@ function updateDataTable() {
       html += '<td class="r-col">' + d.r.toFixed(1) + '</td>';
       // 电阻的倒数，三位小数够用了：R=5Ω → 0.200，R=20Ω → 0.050。
       if (invR) html += '<td class="inv-col">' + (1 / d.r).toFixed(3) + '</td>';
+      html += '<td class="u-col">' + d.u.toFixed(1) + '</td>';
     } else {
       html += '<td class="u-col">' + d.u.toFixed(1) + '</td>';
     }
@@ -869,9 +899,12 @@ function drawDataGraph() {
     // I-R 图：横轴取 R（双曲线），或者取 1/R（过原点的直线）。
     // 横轴换成 1/R 就是中学里说的「化曲为直」：I = U·(1/R) 里 I 与 1/R 成正比。
     var invR = (xAxis === 'invR');
-    // 这里的「固定」就是页面预设的目标电压：每一行都是学生把滑片调回 3.0V 之后
-    // 才记下来的，所以理论线上的 U 是个常量，不必再去猜第一行数据是多少。
-    var fixedU = TARGET_U;
+    // 这条虚线是【从数据里拟合出来的】，不是页面预设的 3.0V：电压既然是学生自己控的，
+    // 页面就没资格替他写出「应该」控到几伏。点少于两个无从拟合，那时不画线。
+    var kFit = recordedData.length >= 2
+      ? fitK(recordedData.map(function(d){ return { x: 1 / d.r, y: d.i }; }))
+      : null;
+    var uRows = mixedU(false);      // 只看【已记录】各行：滑片刚被推动不冤枉学生
     var xOf = function(d){ return invR ? 1 / d.r : d.r; };   // 画图用的横坐标
 
     var xMax, yMax;
@@ -888,7 +921,7 @@ function drawDataGraph() {
       // 5/10/15/20 四档，四个点正好在图里铺开）；1/R 那档按当前电阻取；
       // 纵轴没有数据就跟着当前的电流走，否则四个点会全挤在最底下一条线里。
       xMax = invR ? Math.max(1.15 / Math.max(liveR(), 1), 0.05) : 24;
-      yMax = invR ? Math.max(TARGET_U * xMax * 1.1, 0.1)
+      yMax = invR ? Math.max(liveU() * xMax * 1.1, 0.1)   // 纵轴跟着当前电压走
                   : Math.max(liveI() * 1.3, 0.1);
     }
 
@@ -903,13 +936,20 @@ function drawDataGraph() {
     gctx.save(); gctx.translate(12, mt + ph / 2); gctx.rotate(-Math.PI / 2);
     gctx.fillText('I / A', 0, 0); gctx.restore();
 
-    // Title
-    gctx.fillStyle = '#1e293b'; gctx.font = 'bold 12px sans-serif'; gctx.textAlign = 'right';
-    gctx.fillText('U = ' + fixedU.toFixed(1) + ' V (固定)', gW - mr, mt + 4);
-    // 化成直线的代价与回报：这条线的斜率就是那个恒定的电压。
-    if (invR) {
-      gctx.fillStyle = '#d97706'; gctx.font = 'bold 11px sans-serif';
-      gctx.fillText('斜率 = U = ' + fixedU.toFixed(1) + ' V', gW - mr, mt + 20);
+    // 标题照实写。各行电压确实一致时它就是那个共同读数（斜率也正好等于它）；
+    // 不一致时不能写「U = …」——那是替学生圆场，改成红字把实情挂在图上。
+    var uTxt, uClr;
+    if (uRows) { uTxt = 'U 没控住'; uClr = '#dc2626'; }
+    else if (recordedData.length) {
+      uTxt = 'U = ' + dialOf(recordedData[0].u).toFixed(1) + ' V（各次一致）'; uClr = '#1e293b';
+    } else { uTxt = 'U = ' + liveU().toFixed(1) + ' V'; uClr = '#1e293b'; }
+    gctx.fillStyle = uClr; gctx.font = 'bold 12px sans-serif'; gctx.textAlign = 'right';
+    gctx.fillText(uTxt, gW - mr, mt + 4);
+    // 化成直线的代价与回报：这条线的斜率就是那个被控住的电压。没控住时它只是个拟合结果。
+    if (invR && kFit != null) {
+      gctx.fillStyle = uRows ? '#dc2626' : '#d97706'; gctx.font = 'bold 11px sans-serif';
+      gctx.fillText((uRows ? '拟合斜率 k = ' : '斜率 = U = ') + kFit.toFixed(2) + ' V',
+                    gW - mr, mt + 20);
     }
 
     // Tick labels
@@ -934,19 +974,20 @@ function drawDataGraph() {
       gctx.beginPath(); gctx.arc(px, py, 4, 0, Math.PI * 2); gctx.stroke();
     }
 
-    // 理论线。R 横轴是双曲线 I = U/R；1/R 横轴是一条过原点的直线 I = U·(1/R)。
-    if (fixedU > 0) {
+    // 参考线。R 横轴是双曲线 I = k/R；1/R 横轴是一条过原点的直线 I = k·(1/R)。
+    // 两视图共用同一个 k —— 它由数据拟合出来（见 fitK），不是页面预设的 3.0V。
+    if (kFit > 0) {
       gctx.strokeStyle = 'rgba(217,119,6,0.3)'; gctx.lineWidth = 1.5; gctx.setLineDash([4, 4]);
       gctx.beginPath();
       if (invR) {
         // 要按纵轴上限截断 —— 不截断的话直线直接画到框外面去。
-        var xEnd = Math.min(xMax, yMax / fixedU);
+        var xEnd = Math.min(xMax, yMax / kFit);
         gctx.moveTo(ml, gH - mb);
-        gctx.lineTo(ml + (xEnd / xMax) * pw, gH - mb - ((fixedU * xEnd) / yMax) * ph);
+        gctx.lineTo(ml + (xEnd / xMax) * pw, gH - mb - ((kFit * xEnd) / yMax) * ph);
       } else {
         var first = true;
         for (var rx = 1; rx <= xMax; rx += xMax / 200) {
-          var iy = fixedU / rx;
+          var iy = kFit / rx;
           var sx = ml + (rx / xMax) * pw;
           var sy = gH - mb - (iy / yMax) * ph;
           if (iy <= yMax) {
@@ -957,6 +998,18 @@ function drawDataGraph() {
       }
       gctx.stroke();
       gctx.setLineDash([]);
+    }
+
+    // 电压没控住时，这条虚线照样画（数据是真的，不该藏），但必须说清它能证明什么、
+    // 不能证明什么 —— 否则「化曲为直」那个结论就成了先画线再倒推。
+    // 摆右下角：R 视图的双曲线在左上、1/R 视图的直线从原点爬向右上，右下两块都是空的。
+    if (uRows) {
+      gctx.fillStyle = '#dc2626'; gctx.font = 'bold 10px sans-serif'; gctx.textAlign = 'right';
+      gctx.fillText('这条是拟合线，不能当 I ∝ 1/R 的证据',
+                    gW - mr, gH - mb - 6);
+      gctx.fillText('各行的 U 不一样（' +
+                    uRows.map(function(x){ return x.toFixed(1); }).join(' / ') + ' V）',
+                    gW - mr, gH - mb - 20);
     }
 
   } else {
@@ -1126,6 +1179,8 @@ window.__pathOf  = function(wr){ return pathOf(wr); };
 window.__status  = function(){ return document.getElementById('circuitStatus').textContent; };
 window.__recorded = function(){ return recordedData.slice(); };
 window.__xAxis = function(){ return xAxis; };
+// 测试钩子：直接改 scene 之后要重新解一次（画布坐标有变化时才需要，改拓扑也需要）。
+window.__render = function(){ renderSoft(); };
 // 图像模型：只算坐标和斜率，不碰像素 —— 「横轴换成 1/R 之后三个点共线」
 // 这种事靠截图像素是断言不出来的。
 window.__graphModel = function(){
@@ -1135,8 +1190,13 @@ window.__graphModel = function(){
   });
   var slope = null;
   if (invR && pts.length >= 2) slope = (pts[1].y - pts[0].y) / (pts[1].x - pts[0].x);
+  // slope 是【取前两点算的】，kFit 是【过原点最小二乘】。图上画的是 kFit。
+  // 两个数独立算法，理想数据下应当相等 —— 断言拿它俩互证，比各测各的有齿。
+  var kFit = (dataMode === 'fixedU' && recordedData.length >= 2)
+    ? fitK(recordedData.map(function(d){ return { x: 1 / d.r, y: d.i }; })) : null;
   return { mode: dataMode, axis: dataMode === 'fixedU' ? (invR ? 'invR' : 'R') : 'U',
-           pts: pts, slope: slope };
+           pts: pts, slope: slope, kFit: kFit,
+           mixedURows: mixedU(false), mixedU: mixedU(true) };
 };
 })();
 </script>
