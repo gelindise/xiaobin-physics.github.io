@@ -237,6 +237,53 @@
     .video-fullscreen-btn { position: absolute; top: 10px; right: 10px; z-index: 10; width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; border: none; border-radius: 8px; background: rgba(0,0,0,0.55); color: #fff; cursor: pointer; transition: background 0.2s ease; }
     .video-fullscreen-btn:hover { background: rgba(59,130,246,0.85); }
     .video-container:fullscreen, .video-container:-webkit-full-screen { width: 100%; height: 100%; padding-bottom: 0; border-radius: 0; }
+
+    /* ===== 电路图浮层：和沙盒页同一块（同一个 circuit-schematic.js + 同一份 DOM）。
+       ⚠️ 这一页的颜色是写死的，没有 CSS 变量（沙盒页有 --card/--line/--dim 那一套），
+       照抄过来必须换成实际色值，不然整块浮层会因为变量取不到而变成透明的一片。
+       ⚠️ 全局那条 canvas{width:100%} 会把浮层画布和图例小图拉变形；两处的宽高
+       都由脚本写成了 inline style（inline 优先级高于这条规则），这里再兜一道。 */
+    .sch { position: fixed; inset: 0; z-index: 60; background: rgba(15,23,42,.55);
+      display: flex; align-items: center; justify-content: center; padding: 16px; }
+    .sch[hidden] { display: none; }
+    .schBox { background: #fff; border-radius: 14px; padding: 10px 14px 12px;
+      box-shadow: 0 18px 50px rgba(15,23,42,.35); max-width: 100%; max-height: 100%;
+      display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+    .schHead { display: flex; align-items: center; gap: 10px; font-size: 13.5px;
+      font-weight: 700; color: #1e293b; }
+    .schHead .sp { flex: 1 1 auto; }
+    .schHead .ttlSub { font-weight: 400; color: #64748b; font-size: 12.5px; }
+    .schHead label { font-weight: 400; font-size: 12.5px; color: #64748b;
+      display: flex; align-items: center; gap: 5px; cursor: pointer; white-space: nowrap; }
+    .schHead label input { accent-color: #2563eb; width: 15px; height: 15px; }
+    .schHead button { background: #f1f5f9; border: 1px solid #e2e8f0; border-radius: 7px;
+      cursor: pointer; font-family: inherit; font-size: 12.5px; color: #334155;
+      padding: 4px 10px; line-height: 1.2; white-space: nowrap; }
+    .schHead button:hover { background: #e2e8f0; }
+    .schBody { display: flex; gap: 12px; align-items: stretch; min-height: 0; min-width: 0; }
+    .schCvWrap { flex: 1 1 auto; min-width: 0; overflow: auto; background: #fff;
+      border: 1px solid #e2e8f0; border-radius: 8px; }
+    .schCvWrap canvas { display: block; width: auto; height: auto; }
+    .schEmpty { color: #64748b; font-size: 13px; padding: 30px 34px; text-align: center; white-space: nowrap; }
+    .schLegend { flex: 0 0 296px; overflow: auto; font-size: 12px;
+      border-left: 1px solid #e2e8f0; padding-left: 12px; padding-right: 12px; }
+    .schLegend .lgTitle { color: #64748b; font-weight: 600; font-size: 11.5px; margin-bottom: 9px; }
+    .schLegend .lgRow { margin-bottom: 12px; }
+    .schLegend .lgIcons { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+    .schLegend .lgIcons canvas { display: block; background: #fff; width: auto; height: auto;
+      border: 1px solid #eef2f7; border-radius: 5px; }
+    .schLegend .lgArrow { color: #64748b; font-size: 13px; flex: 0 0 auto; }
+    .schLegend .lgTxt b { display: block; font-size: 12px; color: #334155; margin-bottom: 1px; }
+    .schLegend .lgTxt span { color: #64748b; line-height: 1.5; font-size: 11.5px; }
+    @media (max-width: 760px) {
+      .sch { padding: 8px; }
+      /* 窄屏顶栏塞不下「电路图（由实物图转换）」加三个控件，会把标题折成两行。
+         把括号里那半句收起来，剩下的正好一行。 */
+      .schHead .ttlSub { display: none; }
+      .schBody { flex-direction: column; }
+      .schLegend { flex: 1 1 auto; max-height: 170px; width: 100%;
+        border-left: 0; border-top: 1px solid #e2e8f0; padding-left: 0; padding-top: 9px; }
+    }
   </style>
   <script src="protect.js"></script>
   <script src="auth-check.js"></script>
@@ -392,9 +439,31 @@
     </div>
   </div>
 
+  <!-- 电路图浮层：把实物图折成标准符号的电路图。和沙盒页同一块 DOM、
+      同一颗内核（circuit-schematic.js），不是各写一份。 -->
+  <div class="sch" id="sch" hidden>
+    <div class="schBox">
+      <div class="schHead">
+        <span>电路图</span><span class="ttlSub">（由实物图转换）</span>
+        <span class="sp"></span>
+        <label><input type="checkbox" id="schValues" checked>标注数值</label>
+        <button id="schSave" type="button">⤓ 下载图片</button>
+        <button id="schX" type="button">✕ 关闭</button>
+      </div>
+      <div class="schBody">
+        <div class="schCvWrap" id="schCvWrap">
+          <canvas id="schCanvas"></canvas>
+          <div class="schEmpty" id="schEmpty" hidden>画布上还没有元件 —— 先摆一个再转成电路图</div>
+        </div>
+        <div class="schLegend" id="schLegend"></div>
+      </div>
+    </div>
+  </div>
+
   <script src="circuit-core.js?build=13"></script>
   <script src="circuit-draw.js?build=13"></script>
   <script src="circuit-editor.js?build=13"></script>
+  <script src="circuit-schematic.js?build=1"></script>
   <script>
 (function() {
 // === 电路改用沙盒内核 =====================================
@@ -1432,6 +1501,192 @@ function clearCanvas(){
 }
 window.clearCanvas = clearCanvas;
 
+// ── 电路图浮层：实物图 → 标准符号 ──────────────────────────
+// 点「📐 转成电路图」把眼前这张实物图折成课本意义上的电路图。
+// 和放大镜同一条理由：重画的是【同一份 scene、同一份求解结果】，
+// 不是另存一张图，所以电路图永远不可能和实物图对不上。
+var SC = window.CircuitSchematic;
+var schEl = document.getElementById('sch');
+var schCv = document.getElementById('schCanvas');
+var schWrap = document.getElementById('schCvWrap');
+var schLegend = document.getElementById('schLegend');
+var schValues = document.getElementById('schValues');
+var schEmpty = document.getElementById('schEmpty');
+var schPSave = document.getElementById('schSave');
+var schOpen = false;
+
+function schModel(opts){
+  var o = { draw: D, core: C, values: schValues.checked };
+  if (opts) for (var k in opts) o[k] = opts[k];
+  return SC.build(scene, results, o);
+}
+
+function openSchematic(){ schOpen = true; schEl.hidden = false; drawSchematic(); }
+function closeSchematic(){ schOpen = false; schEl.hidden = true; }
+
+function drawSchematic(){
+  if (!schOpen) return;
+  var model = schModel();
+  buildLegend();
+  if (!model.bounds) {
+    schCv.width = 0; schCv.height = 0;
+    schCv.style.width = '0px'; schCv.style.height = '0px';
+    schCv.hidden = true; schEmpty.hidden = false;
+    return;
+  }
+  schCv.hidden = false; schEmpty.hidden = true;
+
+  // 取景：按电路的外接框缩放到视口里。K 有【下限 0.5】——一张 1000 宽的电路图
+  // 塞进 400px 的手机，12px 的编号会变成 5px，那就不是给学生看的图了。
+  // 到下限还塞不下就让 .schCvWrap 横向滚动（它本来就是 overflow:auto）。
+  var legendW = window.innerWidth > 760 ? 304 : 0;   // .schLegend 的 296 + 它的左边线
+  var maxW = Math.min(window.innerWidth - 92 - legendW, 900);
+  var maxH = window.innerHeight - 170;
+  var K = Math.min(maxW / model.bounds.w, maxH / model.bounds.h);
+  K = Math.max(0.5, Math.min(K, 2.2));
+  var cw = Math.round(model.bounds.w * K), ch = Math.round(model.bounds.h * K);
+  var dpr = window.devicePixelRatio || 1;
+  schCv.width = Math.round(cw * dpr); schCv.height = Math.round(ch * dpr);
+  schCv.style.width = cw + 'px'; schCv.style.height = ch + 'px';
+  var g = schCv.getContext('2d');
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, cw, ch);
+  g.save();
+  g.translate(-model.bounds.x * K, -model.bounds.y * K);
+  g.scale(K, K);
+  SC.draw(g, model, { draw: D, values: schValues.checked });
+  g.restore();
+}
+function refreshSchematic(){ if (schOpen) drawSchematic(); }
+
+// 图例：只列【这张电路里真有的】元件，没接电压表就不列电压表。
+// 两栏都用真渲染器画，所以对照表不会和真图漂移。
+// 元件栏的顺序（PAL）排，和上面那排按钮对得上。
+var LG_ICON = { w: 86, h: 58 };
+// 实物那一栏的取景框。电表的仪器本体全落在导线上方（表壳顶 −86、接线柱在 +72），
+// 取景框不是对称的；照 bodyBox 的 hh 对称裁会把表切掉半截。
+var LG_VIEW = {
+  resistor:  { x0: -74, y0: -26, x1: 74, y1: 26 },
+  battery:   { x0: -112, y0: -42, x1: 112, y1: 42 },
+  switch:    { x0: -74, y0: -68, x1: 74, y1: 38 },
+  bulb:      { x0: -74, y0: -80, x1: 74, y1: 40 },
+  ammeter:   { x0: -102, y0: -92, x1: 102, y1: 82 },
+  voltmeter: { x0: -102, y0: -92, x1: 102, y1: 82 },
+  rheostat:  { x0: -94, y0: -46, x1: 94, y1: 54 },
+};
+// 图例要给电表/变阻器一个「已经接好线」的样子（不然圆圈的两根引线全是虚线，
+// 看着像坏了）。给一根挂在【不存在的元件】上的假导线：termHasWire 认它，
+// 而 build 里的导线循环会因为找不到那个元件直接跳过 —— 图例上不会多出一根线。
+function stubWire(compId, termIdx){
+  return { a:{compId:compId, termIdx:termIdx}, b:{compId:'__lg__', termIdx:0} };
+}
+function legendTypes(){
+  var seen = [];
+  scene.comps.forEach(function(c){ if (seen.indexOf(c.type) < 0) seen.push(c.type); });
+  return PAL.filter(function(t){ return seen.indexOf(t) >= 0; });
+}
+function iconCanvas(w, h){
+  var cv = document.createElement('canvas');
+  var dpr = window.devicePixelRatio || 1;
+  cv.width = Math.round(w*dpr); cv.height = Math.round(h*dpr);
+  cv.style.width = w + 'px'; cv.style.height = h + 'px';
+  var g = cv.getContext('2d');
+  g.setTransform(dpr,0,0,dpr,0,0);
+  g.fillStyle = '#fff'; g.fillRect(0,0,w,h);
+  return { cv: cv, g: g };
+}
+function drawRealIcon(type){
+  var ic = iconCanvas(LG_ICON.w, LG_ICON.h), v = LG_VIEW[type];
+  var comp = { id:'__lg__', type:type, x:0, y:0, rot:0, params: C.defaultParams(type) };
+  var k = Math.min(LG_ICON.w/(v.x1-v.x0), LG_ICON.h/(v.y1-v.y0));
+  ic.g.save();
+  ic.g.translate(LG_ICON.w/2, LG_ICON.h/2);
+  ic.g.scale(k, k);
+  ic.g.translate(-(v.x0+v.x1)/2, -(v.y0+v.y1)/2);
+  D.drawComponent(ic.g, comp, null);      // rec 传 null：画的是器材外形，不带读数
+  ic.g.restore();
+  return ic.cv;
+}
+function drawSymbolIcon(type){
+  var ic = iconCanvas(LG_ICON.w, LG_ICON.h);
+  var comp = { id:'__lg__', type:type, x:0, y:0, rot:0, params: C.defaultParams(type) };
+  var wires = [];
+  if (type === 'ammeter' || type === 'voltmeter') { wires = [stubWire(comp.id,0), stubWire(comp.id,1)]; }
+  else if (type === 'rheostat') { wires = [stubWire(comp.id,0), stubWire(comp.id,2)]; }
+  // pad 给到 18：符号的包围盒正好贴到边时，电池最下面那根长线和闸刀顶端
+  // 会被图标框裁掉（截图里就是这样）。多留一圈白边就不裁了。
+  // labels:false —— 86px 宽的图标里塞一个「R₁」正好压在矩形上，反而不认识符号。
+  var m = SC.build({comps:[comp], wires:wires}, null,
+                   {draw:D, core:C, pad:18, values:false, labels:false});
+  var g = ic.g;
+  g.save();
+  g.translate(LG_ICON.w/2, LG_ICON.h/2);
+  g.scale(Math.min(LG_ICON.w/m.bounds.w, LG_ICON.h/m.bounds.h), Math.min(LG_ICON.w/m.bounds.w, LG_ICON.h/m.bounds.h));
+  g.translate(-(m.bounds.x + m.bounds.w/2), -(m.bounds.y + m.bounds.h/2));
+  SC.draw(g, m, {draw:D, values:false});
+  g.restore();
+  return ic.cv;
+}
+function buildLegend(){
+  var types = legendTypes();
+  schLegend.innerHTML = '';
+  var t = document.createElement('div'); t.className = 'lgTitle';
+  t.textContent = '实物 ↔ 符号 对照'; schLegend.appendChild(t);
+  types.forEach(function(type){
+    var row = SC.LEGEND.filter(function(r){ return r.type === type; })[0];
+    if (!row) return;
+    var d = document.createElement('div'); d.className = 'lgRow';
+    d.setAttribute('data-type', type);
+    var ic = document.createElement('div'); ic.className = 'lgIcons';
+    ic.appendChild(drawRealIcon(type));
+    var ar = document.createElement('div'); ar.className = 'lgArrow'; ar.textContent = '→';
+    ic.appendChild(ar);
+    ic.appendChild(drawSymbolIcon(type));
+    d.appendChild(ic);
+    var tx = document.createElement('div'); tx.className = 'lgTxt';
+    var b = document.createElement('b'); b.textContent = row.name;
+    var s = document.createElement('span'); s.textContent = row.to;
+    tx.appendChild(b); tx.appendChild(s); d.appendChild(tx);
+    schLegend.appendChild(d);
+  });
+}
+
+// 导出 PNG：**另起一张 2 倍的离屏画布**，不是把浮层那张直接存下来。
+// 浮层那张带 DPR 缩放、四周还叠着页面底色，下载下来边距和底都不好看；
+// 单独渲染还能保证「看到的」和「存下来的」是同一份模型（同一个 SC.draw）。
+function schematicPNG(){
+  var model = schModel();
+  if (!model.bounds) return '';
+  var K = 2, pad = 26;
+  var cv = document.createElement('canvas');
+  cv.width = Math.round(model.bounds.w * K + pad*2);
+  cv.height = Math.round(model.bounds.h * K + pad*2);
+  var g = cv.getContext('2d');
+  g.fillStyle = '#ffffff'; g.fillRect(0, 0, cv.width, cv.height);
+  g.save();
+  g.scale(K, K);
+  g.translate(pad/K - model.bounds.x, pad/K - model.bounds.y);
+  SC.draw(g, model, {draw:D, values: schValues.checked});
+  g.restore();
+  return cv.toDataURL('image/png');
+}
+
+document.getElementById('schX').onclick = closeSchematic;
+schPSave.onclick = function(){
+  var url = schematicPNG();
+  if (!url) return;
+  var a = document.createElement('a');
+  a.href = url; a.download = '电路图.png'; a.click();
+};
+schValues.onchange = function(){ drawSchematic(); };
+schEl.addEventListener('pointerdown', function(ev){
+  if (ev.target === schEl) closeSchematic();     // 点浮层背景关掉，点白盒子里面不关
+});
+window.addEventListener('keydown', function(ev){
+  if (!schOpen) return;
+  if (ev.key === 'Escape' || ev.key === 'Esc') closeSchematic();
+}, true);
+
 // ── 元件栏 + 工具按钮 ─────────────────────────────────────
 var PAL = ['battery','switch','resistor','rheostat','bulb','ammeter','voltmeter'];
 var bar = document.getElementById('palette');
@@ -1476,6 +1731,9 @@ toolBtn('清空画布', function(){
   updateDataTable(); drawDataGraph(); refreshCards();
 }, 'danger');
 toolBtn('示例电路', function(){ editor.pushUndo(); seed(); editor.select(null); render(); scheduleSave(); });
+// 把眼前这张实物图折成标准符号的电路图。不推进撤销栈、也不 scheduleSave()——
+// 它只读不写，什么都没改，⌘Z 不该为看一眼电路图回退一步。
+toolBtn('📐 转成电路图', openSchematic);
 
 // ── 两个动画开关（照搬沙盒：各自独立，各自可开可关）──────────
 // 两个同时开也允许 —— 那时同一条导线上琥珀色小球和红色箭头对着走，
@@ -2020,6 +2278,7 @@ requestAnimationFrame(tick);
 window.addEventListener('resize', function() {
   layout();
   if (resizeGraphCanvas()) drawDataGraph();
+  refreshSchematic();      // 电路图浮层是另一张按视口取景的画布，得跟着重算
 });
 
 // ── 给自动化验证留的钩子（与沙盒同名，脚本里的断言全靠它们）──
@@ -2130,6 +2389,34 @@ window.__zoom = function(){
 window.__openZoom = function(id){ var c = byId(id); if (c) openZoom(c); };
 window.__closeZoom = function(){ closeZoom(); };
 window.__dialHit = function(lx, ly){ return dialHit(lx, ly); };
+// ── 电路图浮层的钩子（与沙盒页同名同形，两个页面用同一套断言）──
+// 模型层单独给一个钩子，断言尽量断在坐标上（截面比数像素稳得多）。
+// 不带 _items —— 那里面挂着 window.CircuitCore，不是给外面看的东西。
+window.__schModel = function(values){
+  var m = schModel(values === undefined ? undefined : {values: !!values});
+  return {comps: m.comps, wires: m.wires, bounds: m.bounds};
+};
+window.__schematic = function(){
+  var m = schOpen ? schModel() : null;
+  var rows = [].slice.call(schLegend.querySelectorAll('.lgRow'));
+  return {
+    open: schOpen,
+    empty: !!(schOpen && m && !m.bounds),
+    values: schValues.checked,
+    w: schCv.width, h: schCv.height,
+    cssW: schCv.style.width, cssH: schCv.style.height,
+    canvasHidden: !!schCv.hidden,
+    hint: schEmpty.hidden ? '' : schEmpty.textContent,
+    legendRows: rows.length,
+    legendTypes: rows.map(function(r){ return r.getAttribute('data-type'); }),
+  };
+};
+window.__openSchematic = function(){ openSchematic(); };
+window.__closeSchematic = function(){ closeSchematic(); };
+window.__schPNG = function(){ return schematicPNG(); };
+window.__schLegendIcon = function(type, which){
+  return (which === 'real' ? drawRealIcon(type) : drawSymbolIcon(type));
+};
 // 测试钩子：直接改 scene 之后要重新解一次（画布坐标有变化时才需要，改拓扑也需要）。
 window.__render = function(){ renderSoft(); };
 // 图像模型：只算坐标和斜率，不碰像素 —— 「横轴换成 1/R 之后三个点共线」
