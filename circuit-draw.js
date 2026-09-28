@@ -502,16 +502,35 @@
   // 接线柱就陷进盒体里了，接上去的导线看着像从盒子中间钻出来，盒子上的
   // 加减号也会跑到接线柱内侧。接线柱必须钉在 ±HALF（全站网格规范），
   // 所以这里反过来把电池本身按比例缩小，宽高比保持不变。
+  // 端板往里压住电池头的那一段（局部单位）。这是「电池身上的记号能不能露出来」
+  // 的总闸门：端板压住多少，记号就得从节端往里让多少，压得越深能印记号的地方
+  // 越少。所以它按节长收口（见 drawBattery）：2 节及以下固定 6，3 节 4.5、
+  // 4 节 3.4——再大就把整节让给端板了，4 节往上就再也印不下记号。
+  // 下限也卡着「端板必须盖住电池的圆角」：圆角深 0.15·CHD，而 CHD = 0.613·CWD，
+  // 即圆角 ≈ 0.092·CWD < 0.12·CWD，正好够。
+  var OV_MAX = 6, OV_RATE = 0.12;
+
   function batterySize(cells) {
-    var CWD = cells <= 2 ? 54 : 44;      // 单节电池长
-    var CHD = 42;                        // 单节电池直径
-    var PADX = 9, PADY = 15;             // 上下留厚一点，盒体上沿要印正负极记号
-    var maxTotal = 2 * HALF - PADX * 2 - 8;                 // 留 4px 余量
+    // 单节做得【长】一点：电池身上要印得下两头的极性记号（左「−」右「＋」），
+    // 一节里挤两个记号需要长度；同时把直径收到 38 让整条电池看起来是「长条」
+    // 而不是一截胖墩。
+    // 长度有硬上限：盒子半宽必须 < 70（接线柱钉在 ±70，再宽接线柱就陷进盒体，
+    // 走线检查会把「导线夹在柱子上」判成「穿过元件」），见下面的 maxTotal。
+    var CWD = cells <= 2 ? 62 : 50;      // 单节电池长
+    var CHD = 38;                        // 单节电池直径
+    // PADX 是电池组到盒沿的留白，端板就立在这段留白上、往里压住电池头 OV。
+    // 这段留白【不能小】：端板压住多少，电池身上的记号就得让出多少，
+    // 留白小 → 端板压得深 → 记号被吃掉得多。上一版 PADX=4、端板厚 16，
+    // 一节 62 长的电池被压掉 12，左端那个「−」只剩右半截，远看是一张白标签。
+    var PADX = 10, PADY = 16;
+    var maxTotal = 2 * HALF - PADX * 2 - 8;                 // 112：盒宽 ≤ 132
     var k = Math.min(1, maxTotal / (cells * CWD));
     // 整节等比缩小，盒壁的留白也跟着缩，不然 4 节时电池小小的、盒子却空一圈。
-    // 2 节及以下 k = 1，画出来和以前一模一样。
     CWD *= k; CHD *= k; PADX *= k; PADY *= k;
-    return { cwd: CWD, chd: CHD, k: k,
+    // PADY 兜的是电压标注那条带：bandH = PADY + 2 − 0.075·CHD ≥ 9 才印得下
+    // 「1.5V × 4」。4 节（6V）那档正好压在临界上，PADY 从 15 提到 16 就是为了
+    // 补上 maxTotal 缩小（124 → 114）带走的这点高度。
+    return { cwd: CWD, chd: CHD, k: k, padx: PADX,
              boxW: cells * CWD + PADX * 2, boxH: CHD + PADY * 2 + 4 };
   }
 
@@ -592,7 +611,8 @@
     // 两顶柱帽，量出来的「盒宽」其实是两根柱子的跨度。
     var endTop = Math.min(-CHD * 0.52, -16);
     var backTop = -CHD * 0.30;
-    var EW = Math.min(boxW * 0.26, 20);      // 端板厚度
+    var OV = Math.min(OV_MAX, CWD * OV_RATE);   // 端板压住电池头的长度（见 OV_MAX）
+    var EW = SZ.padx + OV;                      // 端板厚度：压在电池头上的那一段就是 OV
     var R2 = CR * 1.10, cy2 = rimY - CR * 0.33;   // 托口弧的圆心与半径
     var dy2 = rimY - cy2;
     var ax = Math.sqrt(Math.max(1, R2 * R2 - dy2 * dy2));   // 平段与弧的交界
@@ -632,19 +652,43 @@
         roundRect(ctx, cx + 1.9, -CR * 0.78, 2.2, CHD * 0.78, 1.1); ctx.fill();
       }
 
-      // 电池印记：红 ⊕（正极记号），每节一个，和实物一样印在电池身上。
-      // 用深红 #b91c1c 而不是正极红 #dc2626（PALETTE.positive）：dev-editor-test
+      // 每节电池身上印【两头的极性记号】：右端「＋」、左端「−」。
+      // 上一版是每节中间一个红 ⊕，印在节中央——只能看出「这节有正极」，
+      // 看不出正极在哪一头；一节只有一个记号时，学生得靠数「哪端算右」去猜。
+      // 现在记号贴在两头，一节自带一条「− …… ＋」，多节串起来正好读成
+      // 「前一节的＋顶着后一节的−」，串联的接法也就跟着看明白了。
+      // 记号中心离节端 ins：盒子两端的端板往里压住 OV 那么长，记号贴到节端
+      // 就会被端板吃掉半个（上一版就是这样，左端那个「−」只剩右半截，
+      // 屏幕上是一张贴在电池上的白标签，读不出是减号）。
+      // 颜色用深红 #b91c1c 而不是正极红 #dc2626（PALETTE.positive）：dev-editor-test
       // 会扫「电池」这条横带上的像素并断言【左半边一个 #dc2626 都没有】，
-      // 而奇数节时总有一节电池在左半边，用正极红就等于把加号画到了左边。
+      // 而奇数节时总有一节电池落在左半边，用正极红就等于把记号画到了左边。
       // 两色差 35 个色阶，正好落在测试的 ±18 容差之外；和金色底混出来的
       // 中间色 R 上不去、G 又冲得很高，也进不了那个窗口。
-      var rr = Math.max(3.6, CR * 0.34);
-      ctx.strokeStyle = '#b91c1c'; ctx.lineWidth = Math.max(1.3, rr * 0.30);
-      ctx.beginPath(); ctx.arc(cx + CWD / 2, 0, rr, 0, 6.284); ctx.stroke();
-      ctx.beginPath();
-      ctx.moveTo(cx + CWD / 2 - rr * 0.55, 0); ctx.lineTo(cx + CWD / 2 + rr * 0.55, 0);
-      ctx.moveTo(cx + CWD / 2, -rr * 0.55); ctx.lineTo(cx + CWD / 2, rr * 0.55);
-      ctx.stroke();
+      // 减号画得比加号那两条臂【长】一点（×1.3）：同样长度时加号多一条竖臂，
+      // 墨水多、看着更重，减号就成了缩在旁边的一小截。这是排字上的老规矩。
+      var gw = Math.max(3.2, Math.min(6.4, CR * 0.32));   // 加号的半臂长
+      // ins 取「端板 + 半个加号 + 1」：加号整个露在端板外面，减号比加号长出来的
+      // 那一点（0.3·gw）允许压进端板底下——两端都按减号的长度让位的话，同节里
+      // 两个记号反而挤到一起，看着像「−＋」贴在接缝上，读不出是哪一节的。
+      var ins = OV + gw + 1;                              // 记号中心离节端的距离
+      // 一节里要并排挤下两个记号，中间还得留出空档，人才看得出哪头是「−」
+      // 哪头是「＋」。4 节往上单节只剩 27 长（还被端板压掉 6），塞不下——
+      // 那种尺寸下端板上的大记号加「1.5V × 4」才是主角，这里干脆不印。
+      if (CWD - 2 * ins - gw * 2.3 >= 1.5) {
+        ctx.lineCap = 'round';
+        ctx.lineWidth = Math.max(1.8, gw * 0.62);
+        ctx.strokeStyle = '#b91c1c';
+        var px1 = cx + CWD - ins;                         // 右端：正极（加号）
+        ctx.beginPath();
+        ctx.moveTo(px1 - gw, 0); ctx.lineTo(px1 + gw, 0);
+        ctx.moveTo(px1, -gw); ctx.lineTo(px1, gw);
+        ctx.stroke();
+        var px0 = cx + ins, mh = gw * 1.3;                // 左端：负极（减号）
+        ctx.beginPath();
+        ctx.moveTo(px0 - mh, 0); ctx.lineTo(px0 + mh, 0);
+        ctx.stroke();
+      }
     }
 
     // ③ 前壁：托着电池的那道【弧形托口】。弧的半径贴着电池肚子，电池看着
@@ -699,17 +743,28 @@
     //    右端为正（和 TERMINALS 里端子 0 落在 +HALF 一致），这是不可动摇的极性。
     //    markY 要落进 dev-editor-test 扫的那条横带（局部 y ∈ [−30, +6]）里，
     //    否则像素扫描数不到加号，红线就形同没画。
+    //    mk 按【端板宽度】定，不按电池半径：端板内侧那一段被接线柱的底座压着，
+    //    记号排到板外就会被柱子吃掉一角（上一版 mk 跟着 CR 走，2 节时牌子宽到
+    //    23，比端板还宽，左端的「−」整个糊进柱子的黑影里）。
     var markY = -CHD * 0.16, markX = boxW / 2 - EW / 2;
+    var mk = Math.max(4.5, Math.min(6.5, EW * 0.33));    // 记号的半臂长
     ctx.fillStyle = PALETTE.positive;
-    roundRect(ctx, markX - 6.5, markY - 2.2, 13, 4.4, 2.2); ctx.fill();    // 加号横
-    roundRect(ctx, markX - 2.2, markY - 6.5, 4.4, 13, 2.2); ctx.fill();    // 加号竖
+    roundRect(ctx, markX - mk, markY - mk * 0.34, mk * 2, mk * 0.68, mk * 0.34); ctx.fill();
+    roundRect(ctx, markX - mk * 0.34, markY - mk, mk * 0.68, mk * 2, mk * 0.34); ctx.fill();
     // 减号：端板是浅灰的，白条不加垫底会直接糊掉。加号是红的一点就亮，
     // 减号只有靠「白条 + 深色垫底」才压得住，做成跟加号同样的视觉重量——
     // 两个记号一轻一重，学生眼睛只会看见加号，负极就形同没标。
-    ctx.fillStyle = 'rgba(15,23,42,0.5)';                                  // 深色垫底
-    roundRect(ctx, -markX - 8.4, markY - 3.4, 16.8, 6.8, 3.4); ctx.fill();
+    // 垫底的透明度和白条的【尺寸比例】都踩过坑：原先垫底只有 0.5 的透明度，
+    // 白条又占满垫底的七八成，画出来是「一块浅灰方块贴一根白条」，远看和
+    // 端板一个色，整块记号读成一张空白标签（用户就是这么反馈的）。
+    // 现在按「深色牌子 + 里面一根短白杠」配：垫底压到 0.78、白条只占它
+    // 宽度的六成、高度的三成，深色边框才露得出来，一眼就是个减号。
+    ctx.fillStyle = 'rgba(15,23,42,0.78)';                                 // 深色垫底
+    roundRect(ctx, -markX - mk * 1.45, markY - mk * 0.85, mk * 2.9, mk * 1.70, mk * 0.42);
+    ctx.fill();
     ctx.fillStyle = '#f8fafc';
-    roundRect(ctx, -markX - 7.5, markY - 2.5, 15, 5, 2.5); ctx.fill();     // 减号
+    roundRect(ctx, -markX - mk * 0.80, markY - mk * 0.31, mk * 1.60, mk * 0.62, mk * 0.31);
+    ctx.fill();                                                            // 减号
     ctx.restore();
 
     // 端子 0 = 正极，在 TERMINALS 里落在 +HALF（右侧），所以这里仍是 ['pos','neg']：
