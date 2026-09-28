@@ -2,11 +2,16 @@
  * circuit-schematic.js —— 实物图 → 电路图（标准符号）
  * ------------------------------------------------------------
  * 职责：把 circuit-draw.js 画的那张半写实【器材示意图】折成一张课本意义上的
- *       【电路图】：元件留在学生摆的原地，外形换成国标符号，导线走横平竖直，
+ *       【电路图】：外形换成国标符号，导线走横平竖直，元件按连线摆正，
  *       旁边标上编号（R₁ / A / V / E / S）和可选的铭牌值（10Ω、0.6A 挡、滑片 0.5）。
  * 依赖：circuit-draw.js（端子几何 + 圆角矩形）。可选注入 circuit-core.js
  *       （拿量程挡位的数字；不给就少印那几个数，图照样画得出来）。
  * 不含：物理求解、交互、页面外壳。
+ *
+ * 电路图要「统一规范」，只要**相对位置**正确即可（用户原话）。所以元件的位置是
+ * 【规整化】出来的：按导线连的关系把该在一行/一列的元件摆到严格对齐，位移上限
+ * MOVE_MAX。挪的是一份 lay 布局副本，**scene 里的坐标一个都不动**——沙盒主画布上
+ * 那台器材是学生亲手摆的。
  *
  * ⚠️ 两条不能动的地基
  *
@@ -35,6 +40,22 @@
   var LANE_OUT = 60;      // 外侧车道离端点再往外让这么多
   var PAD = 40;           // 取景时四周留白
   var AXIS_TOL = 0.5;     // 判定「这一段是横平竖直的」的容差
+
+  // ── 规整化（把学生摆得七扭八歪的元件按连线摆正）──
+  var MOVE_MAX = 40;      // 一个元件最多挪这么多。【硬契约】，对齐时逐条查
+  var ALIGN_RATIO = 4;    // 导线要「够直」才值得为它挪元件
+  var ALIGN_GAP = 6;      // 判「两个元件框撞上了」时往外胀的值
+
+  // ── 走线打分 ──
+  var BEND = 50;          // 一个拐点
+  var BLOCK = 1e6;        // 一段压在元件符号上：一票否决
+  var FOREIGN = 500;      // 一段和【别的节点】的导线重合
+  var SHORT_LEN = 24;     // 短于这么长的一段算「贴着引脚的台阶」
+  var SHORTSEG = 30;      // 台阶罚
+  var ESCAPE = 18;        // 端子附近的逃逸走廊：自家符号框在这一小圈里不算障碍
+  var PAD_SEG = 6;        // 线段避让时元件框往外胀的值
+  var LANE_SPAN = 160;    // 车道枚举范围：两端坐标各往外这么远，**不截断**
+  var LANE_OUT_K = 4;     // 外框兜底车道往外留几条（1 条的话兜底的线全重合）
 
   var COLOR = {
     wire:   '#1e293b',    // 导线与符号本体
@@ -177,7 +198,9 @@
       case 'bulb': return { x0: -24, y0: -24, x1: 24, y1: 24 };
       case 'ammeter': case 'voltmeter': {
         var m = it.meta;
-        return { x0: m.cx - m.r, y0: m.cy - m.r, x1: m.cx + m.r, y1: m.cy + m.r + 26 };
+        // 就画到圆周为止。空着的那根量程柱**不再画虚脚**（原来往下多留 26px），
+        // 那根虚脚固定在离圆心 100px 外，画出来是画面正中凭空一根小竖线。
+        return { x0: m.cx - m.r, y0: m.cy - m.r, x1: m.cx + m.r, y1: m.cy + m.r };
       }
       case 'rheostat': return { x0: -60, y0: -28, x1: 60, y1: 40 };
       default: return { x0: -58, y0: -14, x1: 58, y1: 14 };   // 定值电阻：矩形 ±56 加线宽
@@ -193,6 +216,100 @@
     return { x0: Math.min.apply(null, xs), y0: Math.min.apply(null, ys),
              x1: Math.max.apply(null, xs), y1: Math.max.apply(null, ys) };
   }
+  // 同一个局部框、换一个（试探性的）位置，算出来的世界框。
+  // 对齐的重叠预检要「落地前先试」，靠的就是它。
+  function worldRectAt(it, x, y, D) {
+    return worldRect({ rect: it.rect, comp: { x: x, y: y, rot: it.lay.rot } }, D);
+  }
+  function rectHit(p, q) {
+    return p.x0 - ALIGN_GAP < q.x1 && p.x1 + ALIGN_GAP > q.x0 &&
+           p.y0 - ALIGN_GAP < q.y1 && p.y1 + ALIGN_GAP > q.y0;
+  }
+
+  // ============================================================
+  // 规整化：按【导线】连的关系把元件摆正
+  // ------------------------------------------------------------
+  // 学生摆的是「差不多一行」，出来就是「差 30px 的一行」，导线跟着拐，整张图就散。
+  // 用户授权：「只要相对位置正确即可」。所以这里挪元件——**挪的是 lay 副本，scene 不动**。
+  //
+  // 三个不能再犯的错（都是设计评审抓出来的）：
+  //
+  // 1) 位移必须在【约束落地的那一刻】封顶。并查集式地「一个定了一个没定 → 没定的去凑」
+  //    会沿链传播：R1—R2—R3—R4 各差 80px 串起来，最后一个能被拖 200px。
+  // 2) 「定没定」要【分轴】。拿整体位置判定，会把「x 已被锁死、y 其实自由」的约束
+  //    误判成冲突而跳过。
+  // 3) 【本来就相等】的约束不许并进组。变阻器的 C/D 次轴偏移恒等，这种
+  //    「永远触发、永远无事」的约束会把两个元件并到一起，让另一个轴向的无关约束串过来。
+  //
+  // 锚点取的是【端子】而不是元件中心：电表的圆画在 local (−35,+72)，圆心 y 和它三个
+  // 柱子的 y 相同，所以对齐柱子 = 圆心正好落在导线上；对齐中心反而会把圆挪到离导线
+  // 72px 的地方，导线还多一个折角。变阻器 A/B 在 +26、C/D 在 −26 也是同理——
+  // 对齐端子导线才是直的，而「直」正是这个功能要的东西。
+  function alignLayout(items, byId, wires, D) {
+    items.forEach(function (it) {
+      it._off = D.TERMINALS[it.type].map(function (t) {
+        var w = D.toWorld(it.lay, t.x, t.y);
+        return { x: w.x - it.lay.x, y: w.y - it.lay.y };
+      });
+      it._fix = { x: null, y: null };
+      it._orig = { x: it.lay.x, y: it.lay.y };
+    });
+
+    var cand = [];
+    wires.forEach(function (w, wi) {
+      if (!w.a || !w.b) return;
+      var a = byId[w.a.compId], b = byId[w.b.compId];
+      if (!a || !b || a === b) return;
+      var oa = a._off[w.a.termIdx], ob = b._off[w.b.termIdx];
+      if (!oa || !ob) return;
+      var ax = a.lay.x + oa.x, bx = b.lay.x + ob.x;
+      var ay = a.lay.y + oa.y, by = b.lay.y + ob.y;
+      var dx = Math.abs(ax - bx), dy = Math.abs(ay - by);
+      var minor = Math.min(dx, dy), major = Math.max(dx, dy);
+      if (minor < 1) return;                     // 本来就直，别建立连接
+      if (minor > 2 * MOVE_MAX) return;          // 差太远，不是「本来该在一行」的
+      if (major < ALIGN_RATIO * minor) return;   // 不够直，不值得动元件
+      var horiz = dx >= dy;
+      cand.push({ wi: wi, a: a, b: b, oa: oa, ob: ob, len: major + minor,
+                  axis: horiz ? 'y' : 'x',
+                  av: horiz ? ay : ax, bv: horiz ? by : bx });
+    });
+    // 长线是更强的「本该是直的」证据，先满足它；同长按场景顺序，结果才确定
+    cand.sort(function (p, q) { return (q.len - p.len) || (p.wi - q.wi); });
+
+    cand.forEach(function (cd) {
+      var ax = cd.axis;
+      var V = snap((cd.av + cd.bv) / 2);
+      var na = V - cd.oa[ax], nb = V - cd.ob[ax];
+      if (Math.abs(na - cd.a._orig[ax]) > MOVE_MAX) return;   // ← 位移封顶（契约）
+      if (Math.abs(nb - cd.b._orig[ax]) > MOVE_MAX) return;
+      // 冲突就跳过，**不许取平均**——平均会把两边都挪成谁也不想要的数
+      if (cd.a._fix[ax] != null && Math.abs(cd.a._fix[ax] - na) > 0.5) return;
+      if (cd.b._fix[ax] != null && Math.abs(cd.b._fix[ax] - nb) > 0.5) return;
+      // 落地前先试一遍：撞上别的元件就整条放弃。
+      // 放在「落地前」而不是「事后回退」——事后回退会出现一边挪了、一边退回，
+      // 线还是斜的、元件白挪，比什么都不做更差。
+      var oa0 = cd.a.lay[ax], ob0 = cd.b.lay[ax];
+      cd.a.lay[ax] = na; cd.b.lay[ax] = nb;
+      if (layoutHits(items, D, cd.a.id, cd.b.id)) {
+        cd.a.lay[ax] = oa0; cd.b.lay[ax] = ob0; return;
+      }
+      cd.a._fix[ax] = na; cd.b._fix[ax] = nb;
+    });
+  }
+
+  // 按当前 lay 位置铺一遍世界框，看有没有哪一对撞上（只看涉及这两个元件的对）
+  function layoutHits(items, D, idA, idB) {
+    var rs = items.map(function (it) { return { id: it.id, r: worldRectAt(it, it.lay.x, it.lay.y, D) }; });
+    for (var i = 0; i < rs.length; i++) {
+      for (var j = i + 1; j < rs.length; j++) {
+        if (rs[i].id !== idA && rs[i].id !== idB &&
+            rs[j].id !== idA && rs[j].id !== idB) continue;
+        if (rectHit(rs[i].r, rs[j].r)) return true;
+      }
+    }
+    return false;
+  }
 
   // ============================================================
   // 导线
@@ -205,59 +322,195 @@
     }
     return true;
   }
-
-  // 车道是否空着：会不会压在别的符号身上、会不会和已有的同向线段重合。
-  // 骨架照抄 circuit-editor.js:259-281 的 laneFree，两处不同：
-  //   1) 「元件外形」换成【符号】外形（rects 来自 symRect，不是 D.bodyBox()）；
-  //   2) 竖车道、横车道共用一份——见 orthoRoute 为什么两种都要有。
-  // orient 'v'：竖车道，pos 是 x，扫的是 y 区间 [a0,a1]；'h' 反过来。
-  function laneFree(orient, pos, a0, a1, rects, segs) {
-    var i, k;
-    for (i = 0; i < rects.length; i++) {
-      var r = rects[i];
-      var lo = orient === 'v' ? r.x0 : r.y0, hi = orient === 'v' ? r.x1 : r.y1;
-      var s0 = orient === 'v' ? r.y0 : r.x0, s1 = orient === 'v' ? r.y1 : r.x1;
-      if (pos > lo - 6 && pos < hi + 6 && a1 > s0 - 6 && a0 < s1 + 6) return false;
+  // 拐几个弯。**不只看「横平竖直」**：TRAIL_TOL=6 的手划曲线能留下几十个拐点，
+  // 一条单调楼梯的长度恰等于曼哈顿距离、形状却很怪——只看长度比是拦不住的。
+  function bendCount(pts) {
+    var n = 0, dir = null;
+    for (var i = 1; i < pts.length; i++) {
+      var dx = pts[i].x - pts[i - 1].x, dy = pts[i].y - pts[i - 1].y;
+      if (Math.abs(dx) < AXIS_TOL && Math.abs(dy) < AXIS_TOL) continue;
+      var d = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'E' : 'W') : (dy > 0 ? 'S' : 'N');
+      if (dir && dir !== d) n++;
+      dir = d;
     }
-    for (k = 0; k < segs.length; k++) {
-      var s = segs[k];
-      if (s.orient !== orient || Math.abs(s.pos - pos) > 4) continue;
-      if (Math.max(s.a0, s.a1) > a0 - 4 && Math.min(s.a0, s.a1) < a1 + 4) return false;
+    return n;
+  }
+
+  // ── 障碍判定 ──
+  // **线段 × 外接盒的真实求交**，不是「只看两端点」。一条 L 的横段两端都在盒外、
+  // 中段正中穿过电阻——端点检查抓不到，那正是旧实现里「导线压在元件身上」的来源。
+  // 返回相交区间；不相交返回 null。pad 是把盒子往外胀的值。
+  function segHitsRect(a, b, r, pad) {
+    var lo, hi;
+    if (Math.abs(a.x - b.x) < 1) {                       // 竖段
+      if (a.x <= r.x0 - pad || a.x >= r.x1 + pad) return null;
+      lo = Math.max(Math.min(a.y, b.y), r.y0 - pad);
+      hi = Math.min(Math.max(a.y, b.y), r.y1 + pad);
+      return hi > lo ? { x0: a.x, y0: lo, x1: a.x, y1: hi } : null;
+    }
+    if (a.y <= r.y0 - pad || a.y >= r.y1 + pad) return null;
+    lo = Math.max(Math.min(a.x, b.x), r.x0 - pad);
+    hi = Math.min(Math.max(a.x, b.x), r.x1 + pad);
+    return hi > lo ? { x0: lo, y0: a.y, x1: hi, y1: a.y } : null;
+  }
+  // 这段相交是不是整个落在端子 p 的逃逸走廊里（自家符号框在端子那一小圈不算障碍）
+  function nearEnd(h, p) {
+    return Math.abs(h.x0 - p.x) <= ESCAPE && Math.abs(h.x1 - p.x) <= ESCAPE &&
+           Math.abs(h.y0 - p.y) <= ESCAPE && Math.abs(h.y1 - p.y) <= ESCAPE;
+  }
+  // excl: [{idx, p}] —— 本线两端各自的元件框下标 + 自己的端子坐标
+  function segBlocks(a, b, rects, excl) {
+    var hit = 0;
+    for (var i = 0; i < rects.length; i++) {
+      var h = segHitsRect(a, b, rects[i], PAD_SEG);
+      if (!h) continue;
+      var skip = false;
+      for (var k = 0; k < excl.length; k++) {
+        if (excl[k].idx === i && nearEnd(h, excl[k].p)) { skip = true; break; }
+      }
+      if (!skip) hit++;
+    }
+    return hit;
+  }
+  function segOverlaps(a, b, segs, net) {
+    var vert = Math.abs(a.x - b.x) < 1;
+    var pos = vert ? a.x : a.y;
+    var lo = vert ? Math.min(a.y, b.y) : Math.min(a.x, b.x);
+    var hi = vert ? Math.max(a.y, b.y) : Math.max(a.x, b.x);
+    var n = 0;
+    for (var i = 0; i < segs.length; i++) {
+      var s = segs[i];
+      if (s.net === net) continue;                    // 同一节点：教材上本来就允许共用一段
+      if (s.orient !== (vert ? 'v' : 'h')) continue;
+      if (Math.abs(s.pos - pos) > 4) continue;
+      if (Math.max(s.a0, s.a1) > lo - 4 && Math.min(s.a0, s.a1) < hi + 4) n++;
+    }
+    return n;
+  }
+
+  // 电气「节点」。两根导线只要共用同一个 {compId, termIdx} 就算同一节点。
+  // 只用来做两件事：① 同节点的线允许共用一段；② 判该不该画结点圆点。
+  // **不是**求解器的连通性——那个看电路通不通，是另一回事。
+  function netOf(wires) {
+    var parent = wires.map(function (_, i) { return i; });
+    function find(i) { while (parent[i] !== i) { parent[i] = parent[parent[i]]; i = parent[i]; } return i; }
+    var term = {};
+    wires.forEach(function (w, i) {
+      [w.a, w.b].forEach(function (e) {
+        if (!e) return;
+        var k = e.compId + ':' + e.termIdx;
+        if (term[k] != null) { var x = find(i), y = find(term[k]); if (x !== y) parent[x] = y; }
+        else term[k] = i;
+      });
+    });
+    return { wire: wires.map(function (_, i) { return find(i); }), term: term };
+  }
+
+  // ============================================================
+  // 走线：候选 + 打分
+  // ------------------------------------------------------------
+  // 旧实现（orthoRoute）有两个病，都实测过：
+  //   1) 一律甩到【整幅图外接框的外侧车道】，多根线叠成一圈同心框——用户抱怨的「乱」；
+  //   2) 只检查中间那条车道，**两端各一段「短脚」根本不检查**，导线横着穿过电阻。
+  // 现在改成：把所有像样的走法都摆出来，按代价挑最优的那个。
+  //
+  // 两个关键的量纲判断：
+  //   · 候选车道**不按「离中点近」截断**。离中点最近的那几条恰好最可能穿电路内部，
+  //     学生那条干净的绕行车道反而排在最外面，一截断就永远进不了候选。
+  //   · 压元件（1e6）远大于拐点（50）远大于台阶（30），量级拉开但不是单调的「长度最小」——
+  //     否则 1px 擦边就会换来 600px 的绕路。
+  function scorePath(pts, rects, segs, excl, net) {
+    var cost = 0, n = 0;
+    for (var i = 1; i < pts.length; i++) {
+      var a = pts[i - 1], b = pts[i];
+      var len = Math.abs(b.x - a.x) + Math.abs(b.y - a.y);
+      if (len < 0.5) continue;
+      n++;
+      cost += len;
+      if (len < SHORT_LEN) cost += SHORTSEG;
+      cost += BLOCK * segBlocks(a, b, rects, excl);
+      cost += FOREIGN * segOverlaps(a, b, segs, net);
+    }
+    var bends = Math.max(0, n - 1);
+    return { cost: cost + BEND * bends, bends: bends };
+  }
+  function firstLegH(pts) {
+    for (var i = 1; i < pts.length; i++) {
+      if (Math.abs(pts[i].x - pts[0].x) > AXIS_TOL) return true;
+      if (Math.abs(pts[i].y - pts[0].y) > AXIS_TOL) return false;
     }
     return true;
   }
+  function keySum(pts) {
+    var s = 0;
+    pts.forEach(function (p) { s += Math.abs(p.x) + Math.abs(p.y); });
+    return s;
+  }
 
-  // 斜线的正交化。**只处理本来就是斜的导线**——横平竖直的原走线一根都不动
-  // （见 build 里 routeOf 那段）。所以这里不必去还原学生的笔迹，直接给一条干净的外侧车道。
-  //
-  // 两个坑，都实测过：
-  //
-  // 1) **车道要和「拉开得多的那个方向」垂直。** 一律用竖车道的话，两点只差
-  //    26px 高、却差了 150px 宽的时候（电源正极 → 变阻器 A 柱就是这么接的），
-  //    竖车道会逼出一次绕远：先横到画面最左边、再折回来。横向拉开得多就该走横车道。
-  //
-  // 2) **绕到电路外侧，不走中线。** circuit-editor.js 的 routeTo 取两端横向中点，
-  //    在实物尺寸下够用；换成符号之后元件小了一圈，中点离两个端子只有 30px，
-  //    画出来是个「Z」字，看着像画歪了。绕到外接框外侧，才是教材上那种方框回路。
-  function orthoRoute(p0, p1, box, rects, segs) {
-    var dx = Math.abs(p0.x - p1.x), dy = Math.abs(p0.y - p1.y);
-    if (dx < 8 || dy < 8) return [p0, p1];
-    var vert = dy > dx;                       // 竖着拉开得多 → 走竖车道
-    var a0 = vert ? p0.x : p0.y, a1 = vert ? p1.x : p1.y;   // 沿车道法线（决定走哪条车道）
-    var b0 = vert ? p0.y : p0.x, b1 = vert ? p1.y : p1.x;   // 沿车道（决定车道要多长）
-    var blo = Math.min(b0, b1), bhi = Math.max(b0, b1);
-    var clo = vert ? box.x0 : box.y0, chi = vert ? box.x1 : box.y1;
-    var side = ((a0 + a1) / 2 >= (clo + chi) / 2) ? 1 : -1;
-    var base = snap(side > 0 ? Math.max(a0, a1) + LANE_OUT : Math.min(a0, a1) - LANE_OUT);
-    var lane = base;
-    for (var k = 0; k < 9; k++) {
-      // 只往【外侧】推，不往电路里挤——往里挤就又变回那个「Z」字了
-      var L = snap(base + side * k * GRID);
-      if (laneFree(vert ? 'v' : 'h', L, blo, bhi, rects, segs)) { lane = L; break; }
+  function routeWire(p0, p1, box, rects, segs, excl, net) {
+    var cands = [], seen = {};
+    function add(raw) {
+      var out = [raw[0]];
+      for (var i = 1; i < raw.length; i++) {
+        var p = raw[i], q = out[out.length - 1];
+        if (Math.abs(p.x - q.x) > AXIS_TOL || Math.abs(p.y - q.y) > AXIS_TOL) out.push(p);
+      }
+      if (out.length < 2) return;
+      var k = out.map(function (p) { return p.x + ',' + p.y; }).join('|');
+      if (seen[k]) return;
+      seen[k] = 1; cands.push(out);
     }
-    return vert
-      ? [p0, { x: lane, y: p0.y }, { x: lane, y: p1.y }, p1]
-      : [p0, { x: p0.x, y: lane }, { x: p1.x, y: lane }, p1];
+    var adx = Math.abs(p1.x - p0.x), ady = Math.abs(p1.y - p0.y);
+    var i, x, y;
+
+    if (adx < 1 || ady < 1) add([p0, p1]);
+    // 两个 L。端子坐标恒是 ±70 加在 20 的倍数上 → ≡10 (mod 20)，不是 GRID 的倍数，
+    // 所以这两个 L 和下面的「GRID 车道」是两批不同的候选，都得有。
+    add([p0, { x: p1.x, y: p0.y }, p1]);
+    add([p0, { x: p0.x, y: p1.y }, p1]);
+    // 全部 GRID 竖车道
+    for (x = snap(Math.min(p0.x, p1.x) - LANE_SPAN); x <= Math.max(p0.x, p1.x) + LANE_SPAN; x += GRID) {
+      add([p0, { x: x, y: p0.y }, { x: x, y: p1.y }, p1]);
+    }
+    // 全部 GRID 横车道
+    for (y = snap(Math.min(p0.y, p1.y) - LANE_SPAN); y <= Math.max(p0.y, p1.y) + LANE_SPAN; y += GRID) {
+      add([p0, { x: p0.x, y: y }, { x: p1.x, y: y }, p1]);
+    }
+    // 外框兜底：往里挤没戏了，只能一圈圈往外让。**留 4 条**——只留 1 条的话
+    // 所有兜底的线都落在同一条车道上，又变回那圈同心框。
+    for (i = 0; i < LANE_OUT_K; i++) {
+      var L = LANE_OUT + i * GRID;
+      add([p0, { x: snap(box.x0 - L), y: p0.y }, { x: snap(box.x0 - L), y: p1.y }, p1]);
+      add([p0, { x: snap(box.x1 + L), y: p0.y }, { x: snap(box.x1 + L), y: p1.y }, p1]);
+      add([p0, { x: p0.x, y: snap(box.y0 - L) }, { x: p1.x, y: snap(box.y0 - L) }, p1]);
+      add([p0, { x: p0.x, y: snap(box.y1 + L) }, { x: p1.x, y: snap(box.y1 + L) }, p1]);
+    }
+
+    var wantH = adx >= ady;      // 主轴优先：L_h 和 L_v 长度、拐点数完全相同，必须给个确定的规矩
+    var best = null, bestS = null, bestPref = 0;
+    cands.forEach(function (pts) {
+      var r = scorePath(pts, rects, segs, excl, net);
+      var pref = (firstLegH(pts) === wantH) ? 0 : 1;
+      if (!best) { best = pts; bestS = r; bestPref = pref; return; }
+      if (r.cost < bestS.cost - 0.5) { best = pts; bestS = r; bestPref = pref; return; }
+      if (r.cost > bestS.cost + 0.5) return;
+      if (pref !== bestPref) { if (pref < bestPref) { best = pts; bestS = r; bestPref = pref; } return; }
+      if (r.bends !== bestS.bends) { if (r.bends < bestS.bends) { best = pts; bestS = r; bestPref = pref; } return; }
+      if (keySum(pts) < keySum(best)) { best = pts; bestS = r; bestPref = pref; }
+    });
+    return best || [p0, p1];
+  }
+
+  // 「能不动就不动」的判据：横平竖直 + 拐点不超过 3 个 + 不压元件 + 不和别的节点的线重合。
+  // （旧实现只看第一条，于是手划的曲线和压着元件的线都被原样搬了进来。）
+  function pathClear(pts, rects, segs, excl, net) {
+    for (var i = 1; i < pts.length; i++) {
+      var a = pts[i - 1], b = pts[i];
+      if (Math.abs(b.x - a.x) + Math.abs(b.y - a.y) < 0.5) continue;
+      if (segBlocks(a, b, rects, excl) > 0) return false;
+      if (segOverlaps(a, b, segs, net) > 0) return false;
+    }
+    return true;
   }
 
   // ============================================================
@@ -312,26 +565,35 @@
 
     var items = comps.map(function (c) {
       var rec = recs[c.id] || null;
-      var it = { id: c.id, type: c.type, x: c.x, y: c.y, rot: c.rot || 0,
-                 comp: c, core: core, meta: {}, rect: null, rec: rec };
-      if (c.type === 'ammeter' || c.type === 'voltmeter') it.meta = meterGeom(c, wires, D);
-      else if (c.type === 'rheostat') it.meta = rheoGeom(c, wires, rec, D);
+      // 布局副本：规整化要挪元件，**绝不能碰 scene**——沙盒主画布上那台器材是学生
+      // 摆的，一个像素都不能动。params 仍共享引用（读数要用同一份）。
+      var lay = { id: c.id, type: c.type, x: c.x, y: c.y, rot: c.rot || 0,
+                  params: c.params || {} };
+      var it = { id: c.id, type: lay.type, x: lay.x, y: lay.y, rot: lay.rot,
+                 comp: lay, lay: lay, src: c, core: core, meta: {}, rect: null, rec: rec };
+      if (lay.type === 'ammeter' || lay.type === 'voltmeter') it.meta = meterGeom(lay, wires, D);
+      else if (lay.type === 'rheostat') it.meta = rheoGeom(lay, wires, rec, D);
       else it.meta = {};
-      it.rect = symRect(it);
-      it.worldRect = worldRect(it, D);
-      it.label = labels ? subscript(c.id) : '';
+      it.rect = symRect(it);                  // 局部框：只和 params / meta 有关，与位置无关
+      it.label = labels ? subscript(lay.id) : '';
       it.value = values ? valueOf(it, rec) : '';
       return it;
     });
     var byId = {};
-    items.forEach(function (it) { byId[it.id] = it; });
+    items.forEach(function (it, i) { byId[it.id] = it; it._ri = i; });
+
+    // 规整化。**顺序不能反**：先算布局，再算世界框。反了就是拿【旧】坐标算框，
+    // 路由器照着旧盒子避让，症状是「导线从刚挪过来的元件身上穿过去」。
+    if (!(opts && opts.regularize === false)) alignLayout(items, byId, wires, D);
+    items.forEach(function (it) { it.x = it.lay.x; it.y = it.lay.y; it.comp = it.lay; });
 
     var rects = items.map(function (it) { return worldRect(it, D); });
+    items.forEach(function (it, i) { it.worldRect = rects[i]; });
 
-    // 先算导线，再算外接框——外侧车道的选址要用到全图范围，而全图范围又要
-    // 包含导线。先用「元件框 + 端子」估一个初版，够用了：车道只看在左还是在右。
+    // 外接框：外侧兜底车道的选址要用到全图范围
     var rough = rects.slice();
     wires.forEach(function (w) {
+      if (!w.a || !w.b) return;
       var a = byId[w.a.compId], b = byId[w.b.compId];
       if (!a || !b) return;
       var p0 = D.terminalWorld(a.comp, w.a.termIdx), p1 = D.terminalWorld(b.comp, w.b.termIdx);
@@ -340,26 +602,31 @@
     });
     var box = unionBox(rough) || { x0: 0, y0: 0, x1: 0, y1: 0 };
 
-    var segs = [];        // 已经排好的竖段，后面的导线要躲开
+    var nets = netOf(wires);
+    var segs = [];        // 已经排好的线段，后面的导线要躲开
     var outWires = [];
-    wires.forEach(function (w) {
+    wires.forEach(function (w, wi) {
+      if (!w.a || !w.b) return;
       var a = byId[w.a.compId], b = byId[w.b.compId];
       if (!a || !b) return;
       var p0 = D.terminalWorld(a.comp, w.a.termIdx);
       var p1 = D.terminalWorld(b.comp, w.b.termIdx);
+      var myNet = nets.wire[wi];
+      var excl = [{ idx: a._ri, p: p0 }, { idx: b._ri, p: p1 }];
       var via = (w.via || []).map(function (v) { return { x: v[0], y: v[1] }; });
       var pts = [p0].concat(via, [p1]);
-      // 能不动就不动：编辑器 rerouteAll 规划的正交走线、学生拖出来的直线上，
-      // 原样搬进电路图。示例电路因此出来的就是那个规整的方框回路，和原来一模一样。
-      var kept = axisAligned(pts);
-      if (!kept) pts = orthoRoute(p0, p1, box, rects, segs);
-      // 记下已经排好的线段，后面的导线要躲开（和 circuit-editor 一样只记同向重合）
+      // 能不动就不动：编辑器 rerouteAll 规划的正交走线、学生拖出来的直线上，原样搬进
+      // 电路图，示例电路因此出来的就是那个规整的方框回路。但**得是真干净的走线才留**：
+      // 横平竖直、拐点不超过 3 个、不压元件、不和别的节点的线重合，四条缺一就重排。
+      var kept = axisAligned(pts) && bendCount(pts) <= 3 &&
+                 pathClear(pts, rects, segs, excl, myNet);
+      if (!kept) pts = routeWire(p0, p1, box, rects, segs, excl, myNet);
       for (var i = 1; i < pts.length; i++) {
         var A = pts[i - 1], B = pts[i];
-        if (Math.abs(B.x - A.x) < 1) segs.push({ orient: 'v', pos: B.x, a0: A.y, a1: B.y });
-        else if (Math.abs(B.y - A.y) < 1) segs.push({ orient: 'h', pos: B.y, a0: A.x, a1: B.x });
+        if (Math.abs(B.x - A.x) < 1) segs.push({ orient: 'v', pos: B.x, a0: A.y, a1: B.y, net: myNet });
+        else if (Math.abs(B.y - A.y) < 1) segs.push({ orient: 'h', pos: B.y, a0: A.x, a1: B.x, net: myNet });
       }
-      outWires.push({ pts: pts, kept: kept });
+      outWires.push({ pts: pts, kept: kept, _net: myNet });
     });
 
     var all = rects.slice();
@@ -375,15 +642,64 @@
       comps: items.map(function (it) {
         return { id: it.id, type: it.type, x: it.x, y: it.y, rot: it.rot,
                  label: it.label, value: it.value,
-                 meta: it.meta, rect: it.rect, worldRect: worldRect(it, D) };
+                 meta: it.meta, rect: it.rect, worldRect: it.worldRect };
       }),
       wires: outWires,
+      junctions: junctionsOf(outWires),
       bounds: full ? { x: full.x0 - pad, y: full.y0 - pad,
                        w: (full.x1 - full.x0) + pad * 2,
                        h: (full.y1 - full.y0) + pad * 2 } : null,
       // 给绘制用的元件顺序：先画导线，符号按原顺序
       _items: items,
     };
+  }
+
+  // ============================================================
+  // 结点圆点
+  // ------------------------------------------------------------
+  // 判据**两条**，都只认「电气上真的连在一起」：
+  //   ① ≥3 根导线的端点落在同一点（三线交汇，教材上必画点）；
+  //   ② 一根导线的顶点（端点**或拐点**）严格落在另一根导线的某段【内部】，
+  //      且这两根导线共用同一个端子。
+  // 第 ② 条的「共用端子」限定不能省：求解器的连通性只看端子共点、不看几何相交，
+  // 在不相干的交叉处画点，图和数当场自相矛盾；元件自己柱子上挂两根线也会被误判成结点。
+  // 两端相接的普通拐角不画点。
+  function junctionsOf(outWires) {
+    var seen = {}, out = [];
+    function key(p) { return Math.round(p.x) + ',' + Math.round(p.y); }
+    function push(p) {
+      var k = key(p);
+      if (seen[k]) return;
+      seen[k] = 1; out.push({ x: p.x, y: p.y });
+    }
+    var ends = {};
+    outWires.forEach(function (w) {
+      [w.pts[0], w.pts[w.pts.length - 1]].forEach(function (p) {
+        var k = key(p); ends[k] = (ends[k] || 0) + 1;
+      });
+    });
+    Object.keys(ends).forEach(function (k) {
+      if (ends[k] < 3) return;
+      var xy = k.split(',');
+      push({ x: +xy[0], y: +xy[1] });
+    });
+
+    outWires.forEach(function (w, i) {
+      w.pts.forEach(function (v) {
+        outWires.forEach(function (u, j) {
+          if (i === j || w._net !== u._net) return;
+          for (var k = 1; k < u.pts.length; k++) {
+            var A = u.pts[k - 1], B = u.pts[k];
+            if (Math.abs(A.x - B.x) < 1 && Math.abs(v.x - A.x) < 1) {
+              if (v.y > Math.min(A.y, B.y) + 1 && v.y < Math.max(A.y, B.y) - 1) push(v);
+            } else if (Math.abs(A.y - B.y) < 1 && Math.abs(v.y - A.y) < 1) {
+              if (v.x > Math.min(A.x, B.x) + 1 && v.x < Math.max(A.x, B.x) - 1) push(v);
+            }
+          }
+        });
+      });
+    });
+    return out;
   }
 
   function unionBox(rs) {
@@ -424,6 +740,13 @@
     ctx.fillRect(b ? b.x : 0, b ? b.y : 0, b ? b.w : 1, b ? b.h : 1);
 
     model.wires.forEach(function (w) { drawPolys(ctx, w.pts, COLOR.wire, 3); });
+    // 结点圆点画在导线之后、符号之前
+    (model.junctions || []).forEach(function (j) {
+      ctx.beginPath();
+      ctx.arc(j.x, j.y, 4, 0, Math.PI * 2);
+      ctx.fillStyle = COLOR.wire;
+      ctx.fill();
+    });
     items.forEach(function (it) { drawSymbol(ctx, it, D, values); });
     ctx.restore();
   }
@@ -487,11 +810,8 @@
         // 引线：从柱子水平引到圆周。没接线的那两根画虚线（悬空）。
         hLead(ctx, T[0], m.cx - m.r, m.posWired);
         if (m.tap) hLead(ctx, T[m.tap], m.cx + m.r, true);
-        // 悬空的柱子：一段往下的虚线短脚，让人看出「这儿还有一根柱，没接」
-        m.dangling.forEach(function (i) {
-          drawPolys(ctx, [{ x: T[i].x, y: T[i].y }, { x: T[i].x, y: T[i].y + 24 }],
-                    COLOR.dim, 1.6, true);
-        });
+        // 空着的那根量程柱**不画虚脚**：那根短脚固定在离圆心 100px 外，
+        // 画出来是画面正中凭空一根小竖线，反倒像根走错路的导线。
         ctx.beginPath(); ctx.arc(m.cx, m.cy, m.r, 0, Math.PI * 2);
         ctx.fillStyle = COLOR.paper; ctx.fill();
         ctx.strokeStyle = COLOR.wire; ctx.lineWidth = 2.4; ctx.stroke();
@@ -570,7 +890,7 @@
     { type: 'bulb',     name: '小灯泡',           from: '带灯座的玻璃泡',
       to: '一个圆，里面打一个叉' },
     { type: 'ammeter',  name: '电流表',           from: '三个接线柱的指针表',
-      to: '一个圆里写 A，串在电路里；只用到的两根柱接线，另一根画虚线' },
+      to: '一个圆里写 A，串在电路里；用到的两根柱各引一根线，空着那根不画' },
     { type: 'voltmeter', name: '电压表',          from: '三个接线柱的指针表',
       to: '一个圆里写 V，并接在被测元件的两端' },
   ];
@@ -580,6 +900,9 @@
     symRect: symRect, worldRect: worldRect,
     LEGEND: LEGEND, subscript: subscript, COLOR: COLOR,
     valueOf: valueOf, cellCount: cellCount, batteryHalf: batteryHalf,
-    version: '1.0.0',
+    // 规整化/走线的常量：测试要断言「位移 ≤ MOVE_MAX」，从这里取，
+    // 免得内核改了上限、测试还按老数字断（那就成了自证）
+    MOVE_MAX: MOVE_MAX,
+    version: '2.0.0',
   };
 });
