@@ -36,6 +36,11 @@
   .side h3{font-size:13px;margin-bottom:8px;color:var(--dim);font-weight:600}
   .prow{display:flex;align-items:center;gap:9px;margin:9px 0;font-size:12.5px}
   .prow label{flex:0 0 68px;color:var(--dim)}
+  /* 灯泡那个选项的标签是一整句话（「灯丝电阻随温度升高而增大」），68px 的
+     标签栏装不下，硬塞会折成两行把勾选框顶歪。放开标签宽度，让勾选框和
+     右边的旁注贴到最右。 */
+  .prow.wide label{flex:1 1 auto}
+  .prow .hint{flex:0 0 auto;color:var(--dim);font-size:11.5px;white-space:nowrap}
   .prow input[type=range]{flex:1;min-width:0;accent-color:var(--accent)}
   .prow .val{flex:0 0 58px;text-align:right;font-weight:600;font-variant-numeric:tabular-nums}
   .prow select{flex:1;padding:4px 6px;border:1px solid var(--line);border-radius:6px;
@@ -138,9 +143,9 @@
      改了内核而 HTML 没变的话，老访客会拿缓存里的旧脚本跑新页面（画面上就
      会出现「说明写了电子逆流、小球却还顺着流」这种自相矛盾）。改脚本时
      把这个 build 号 +1 即可。 -->
-<script src="circuit-core.js?build=12"></script>
-<script src="circuit-draw.js?build=12"></script>
-<script src="circuit-editor.js?build=12"></script>
+<script src="circuit-core.js?build=13"></script>
+<script src="circuit-draw.js?build=13"></script>
+<script src="circuit-editor.js?build=13"></script>
 <script>
 // ---- 访问保护：仅允许站内跳转（与站内其它实验页一致）----
 (function(){
@@ -351,8 +356,14 @@ var PARAM_UI = {
   voltmeter: [{k:'range', t:'tap', label:'量程', unit:'V'}],
   rheostat:  [{k:'Rmax', t:'range', label:'最大阻值', unit:'Ω', min:5, max:50, step:5},
               {k:'slide', t:'range', label:'滑片位置', unit:'', min:0, max:1, step:0.01}],
+  // 灯泡多一个【单独的选项】：灯丝电阻随温度升高而增大。
+  //   勾上（默认）= 真灯泡，R 随自身功率变，小电压下 R 掉到 1Ω 出头；
+  //   取消 = 当定值电阻，R 恒为额定电阻 U额²/P额（课本「不计温度影响」那一步）。
+  // 这一行是整句话的标签，比「额定电压」长得多，68px 的标签栏装不下（会挤成
+  // 两行把勾选框顶偏），所以走 wide：标签占满剩余宽度，勾选框贴右边。
   bulb:      [{k:'ratedV', t:'range', label:'额定电压', unit:'V', min:1.5, max:6, step:0.5},
-              {k:'ratedW', t:'range', label:'额定功率', unit:'W', min:0.2, max:3, step:0.1}],
+              {k:'ratedW', t:'range', label:'额定功率', unit:'W', min:0.2, max:3, step:0.1},
+              {k:'tempDependent', t:'check', wide:1, label:'灯丝电阻随温度升高而增大'}],
 };
 var TYPE_LABEL = {battery:'电源', resistor:'定值电阻', switch:'开关',
   ammeter:'电流表', voltmeter:'电压表', rheostat:'滑动变阻器', bulb:'小灯泡'};
@@ -379,6 +390,32 @@ function pval(c, k){
   var d = C.defaultParams(c.type);
   return d[k];
 }
+// 面板上那些【状态会从别处变】的勾选框，每次重绘都要跟当前参数对齐一遍。
+// 两条来路都不经过面板自己：
+//   · 开关的「闭合」——在画布上点一下开关就通断（见 circuit-editor 的 pointerup，
+//     那是开关最自然的操作方式），编辑器直接改 params。不同步的话，学生在画布上
+//     点了开关，右边面板还写着「闭合」，两边自相矛盾。
+//   · 灯泡的「灯丝电阻随温度升高而增大」——连同右边那个「恒为 8.3Ω」的旁注。
+// 旁注只在取消勾选后出现：那时灯泡按【额定电阻】R额 = U额²/P额 算，把这个数写在
+// 旁边，老师问「那它到底算多少欧」当场答得出来，而这个数正是课本上「不计温度对
+// 电阻的影响」时算出来的值。公式取内核的 lampParams()，页面这边不再抄一份。
+// 一律「只改状态、不重建面板」，和 syncSlidePanel / syncRangePanel 同一条路子。
+function syncCheckPanel(){
+  var s = editor && editor.getSelected();
+  if (!s || s.kind !== 'comp' || !s.comp) return;
+  var c = editor.byId(s.comp.id);
+  if (!c) return;
+  (PARAM_UI[c.type] || []).forEach(function(sp){
+    if (sp.t !== 'check') return;
+    var el = document.querySelector('#paramPanel input[data-k="' + sp.k + '"]');
+    if (el) el.checked = !!pval(c, sp.k);
+  });
+  var hint = document.getElementById('pv_tempDependent');
+  if (hint) {
+    hint.textContent = (c.type === 'bulb' && pval(c, 'tempDependent') === false)
+      ? '恒为 ' + C.lampParams(c).Rhot.toFixed(1) + 'Ω' : '';
+  }
+}
 function renderParams(sel){
   var box = document.getElementById('paramPanel');
   if (!sel || sel.kind !== 'comp') {
@@ -396,8 +433,13 @@ function renderParams(sel){
         '" step="' + sp.step + '" value="' + v + '">' +
         '<span class="val" id="pv_' + sp.k + '">' + v + (sp.unit||'') + '</span></div>';
     } else if (sp.t === 'check') {
-      html += '<div class="prow"><label>' + sp.label + '</label>' +
-        '<input class="chk" type="checkbox" data-k="' + sp.k + '"' + (v?' checked':'') + '></div>';
+      // wide 的行标签很长（一整句话），标签栏要放开、勾选框贴到最右。
+      // 灯泡那个选项取消勾选后，右边还要写一句「恒为 8.3Ω」——不写的话
+      // 老师一定会问「那它到底算多少欧」，而这个数正是课本上不计温度影响
+      // 时算出来的额定电阻，写在旁边正好把那个知识点连上。
+      html += '<div class="prow' + (sp.wide ? ' wide' : '') + '"><label>' + sp.label + '</label>' +
+        '<input class="chk" type="checkbox" data-k="' + sp.k + '"' + (v?' checked':'') + '>' +
+        (sp.wide ? '<span class="hint" id="pv_' + sp.k + '"></span>' : '') + '</div>';
     } else if (sp.t === 'select') {
       html += '<div class="prow"><label>' + sp.label + '</label><select data-k="' + sp.k + '">' +
         sp.options.map(function(o){
@@ -419,17 +461,18 @@ function renderParams(sel){
     }
   });
   box.innerHTML = html;
+  syncCheckPanel();
 
   box.querySelectorAll('input,select').forEach(function(el){
     function apply(){
       var k = el.dataset.k;
       var val = el.type === 'checkbox' ? el.checked : parseFloat(el.value);
-      var rec = editor.byId(c.id);
       editor.setParam(c.id, k, val);
       if (el.type === 'range') {
         var sp = specs.filter(function(s){ return s.k === k; })[0];
         document.getElementById('pv_' + k).textContent = val + ((sp && sp.unit) || '');
       }
+      syncCheckPanel();         // 改铭牌或改勾选，勾选状态和旁注都得跟着走
     }
     el.addEventListener('input', apply);
     el.addEventListener('change', apply);
@@ -504,6 +547,7 @@ function renderSoft(){
   updateSide();
   syncSlidePanel();
   syncRangePanel();
+  syncCheckPanel();
   refreshZoom();
 }
 

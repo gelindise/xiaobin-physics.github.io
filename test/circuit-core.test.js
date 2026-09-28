@@ -493,6 +493,82 @@ test('T13 灯泡非线性：灯串 2.5Ω 于 3V，自洽且单调', function () 
 });
 
 // ============================================================
+// T13b 灯泡「灯丝电阻随温度升高而增大」这个选项
+// ------------------------------------------------------------
+// 勾上（默认）= 真灯泡，R 随自身功率变；取消 = 当定值电阻，R 恒为额定电阻
+// R额 = U额²/P额。课本上「不计温度对电阻的影响」和「考虑温度的影响」是两个
+// 阶段，这个开关就是那两步之间的门，两组结论必须都能算准。
+// ============================================================
+function lampCase(Rs, tempDependent) {
+  var p = { ratedV: 2.5, ratedW: 0.75 };
+  if (tempDependent !== undefined) p.tempDependent = tempDependent;
+  return run([
+    comp('E', 'battery', { emf: 3, rInt: 0 }),
+    comp('R', 'resistor', { R: Rs }),
+    comp('L', 'bulb', p),
+  ], [
+    W('E', 0, 'L', 0), W('L', 1, 'R', 0), W('R', 1, 'E', 1),
+  ], 'lamp-' + Rs + '-' + tempDependent);
+}
+
+test('T13b 关掉温度项：灯泡变成定值电阻，R 恒为额定电阻 U额²/P额', function () {
+  var lin = lampCase(2.5, false), non = lampCase(2.5, true);
+  var L = lin.components.L, N = non.components.L;
+
+  close(L.R, 2.5 * 2.5 / 0.75, 'T13b 定值模式下 R = U额²/P额 = 2.5²/0.75', 1e-9);
+  truthy(L.R === L.Rhot, 'T13b 定值模式的 R 就是额定电阻本身');
+  truthy(L.tempDependent === false, 'T13b 记录里带着这个开关的状态（面板要显示）');
+  close(L.R, L.R_selfCheck, 'T13b 定值模式仍然自洽（R 不随功率变，自洽是恒等式）', 1e-9);
+  close(L.v + L.i * 2.5, 3.0, 'T13b KVL 照旧：V_L + I·2.5 = 3', 1e-7);
+
+  // 同一电路里两种模型的差别：定值模式 R 不会随功率掉下来，于是在串联分压里
+  // 占的份额更大 —— 灯泡分到更多电压，电流反而更小（总电阻大了）。
+  truthy(L.R > N.R, 'T13b 定值模式的灯泡电阻更大（' +
+    L.R.toFixed(3) + 'Ω vs ' + N.R.toFixed(3) + 'Ω）');
+  truthy(L.v > N.v, 'T13b 定值模式下灯泡分到的电压更多（' +
+    L.v.toFixed(4) + 'V vs ' + N.v.toFixed(4) + 'V）');
+  truthy(L.i < N.i, 'T13b 定值模式下电流更小（总电阻大了，' +
+    L.i.toFixed(4) + 'A vs ' + N.i.toFixed(4) + 'A）');
+  // ⚠️ 功率【不】跟着电压走：P = U²/R，R 涨得比 U² 快时功率反而更小。
+  // 这里灯泡工作在额定附近（0.65W ≈ 0.75W），两种模型的 R 只差 3%，于是
+  // 定值模式的功率略低（0.639 vs 0.650）。离额定越远这差值越大、方向还会
+  // 翻过来（见 T13c 的 20Ω 那档：定值模式 0.093W 远大于 0.073W）。
+  // 所以这里不钉功率，只钉「同一个 R 决定的两件事」：电阻和电流。
+  truthy(Math.abs(L.p - N.p) / N.p < 0.05,
+    'T13b 额定附近两种模型的功率只差几个百分点（' +
+    L.p.toFixed(4) + 'W vs ' + N.p.toFixed(4) + 'W）');
+  truthy(lin.iterations <= 2, 'T13b 定值灯泡不用反复迭代，实际 ' + lin.iterations + ' 轮');
+});
+
+test('T13c 温度项一关，改串联电阻就不再改变灯泡电阻（这正是这个开关的意义）', function () {
+  var a = lampCase(2.5, false).components.L, b = lampCase(20, false).components.L;
+  truthy(a.R === b.R, 'T13c 定值模式：串联电阻 2.5Ω → 20Ω，灯泡电阻纹丝不动（都是 ' +
+    a.R.toFixed(3) + 'Ω）');
+  truthy(b.p < a.p, 'T13c 但功率确实变了（分得的电压少了）');
+
+  // 同一个电路换成真灯泡，R 立刻跟着走——两组一比才看得出「R 不变」是模型
+  // 给的假设，不是物理事实。
+  var na = lampCase(2.5, true).components.L, nb = lampCase(20, true).components.L;
+  truthy(nb.R < na.R * 0.999, 'T13c 真灯泡：电压低了灯丝冷了，R 跟着掉（' +
+    nb.R.toFixed(3) + 'Ω < ' + na.R.toFixed(3) + 'Ω）');
+
+  // 离额定越远，两种模型的功率差别越大，而且方向是【定值模式更亮】：
+  // R 大 → 分压多 → P = U²/R 里 U² 涨得赢。低压下这个差别最显眼
+  // （0.093W 对 0.073W，差 28%），这正是「不计温度影响」会带来的偏差。
+  truthy(b.p > lampCase(20, true).components.L.p * 1.2,
+    'T13c 20Ω 那一档：定值模式算出的灯泡功率比真灯泡高两成以上（' +
+    b.p.toFixed(4) + 'W vs ' + lampCase(20, true).components.L.p.toFixed(4) + 'W）');
+});
+
+test('T13d 不写 tempDependent 时与显式 true 逐字段一致（老场景零变化）', function () {
+  var d = lampCase(2.5, undefined).components.L, t = lampCase(2.5, true).components.L;
+  ['R', 'v', 'i', 'p', 'Rhot', 'Rcold', 'brightness'].forEach(function (k) {
+    truthy(d[k] === t[k], 'T13d ' + k + ' 一致（' + d[k] + ' vs ' + t[k] + '）');
+  });
+  truthy(d.tempDependent === true, 'T13d 默认就是「随温度升高而增大」');
+});
+
+// ============================================================
 // T14 滑动变阻器四种接法
 // ============================================================
 function rheostatCase(termA, termB, slide) {

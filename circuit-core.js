@@ -53,7 +53,11 @@
     },
     bulb: {
       label: '小灯泡', terminals: 2, termNames: ['a', 'b'],
-      defaults: { ratedV: 2.5, ratedW: 0.75 },
+      // tempDependent：灯丝电阻随温度升高而增大（钨丝的正温度系数）。
+      // true（默认）= 真灯泡，R 随自身功率变；false = 当定值电阻，R 恒为
+      // 额定电阻 U额²/P额。课本上「不计温度影响」和「考虑温度影响」是
+      // 两个阶段，这个开关就是那两步之间的门，别把默认改掉。
+      defaults: { ratedV: 2.5, ratedW: 0.75, tempDependent: true },
     },
     battery: {
       label: '电源', terminals: 2, termNames: ['+', '-'],
@@ -156,16 +160,30 @@
   // 配合 R = R₀(1+α(T−T₀)) 得到上述单参数模型。
   // K 由额定点标定，保证 R(P_rated) === R_hot（自洽）。
   // ============================================================
+  // tempDependent = false 时上面这套作废，灯泡就是一个阻值不变的定值电阻，
+  // 阻值取【额定电阻】R额 = U额²/P额 —— 正是课本上「不计温度对电阻的影响」
+  // 时算出来的那个数（也是「测小灯泡电阻」实验里学生拿铭牌算出来的值）。
+  // 两种模式的差别在小电压下最刺眼：灯丝冷透时 R 只有额定电阻的 1/8
+  // （coldHotRatio），2.5V/0.75W 的灯泡是 1.04Ω 对 8.33Ω——差 8 倍，
+  // 一眼看得出「灯丝电阻变了」。
   function lampParams(comp) {
     var P = paramsOf(comp);
     var Rhot = (P.ratedV * P.ratedV) / P.ratedW;
     var ratio = P.coldHotRatio != null ? P.coldHotRatio : 8;   // 实测钨丝冷/热比约 8~12
     var Rcold = P.Rcold != null ? P.Rcold : Rhot / ratio;
     var K = (Rhot / Rcold - 1) / Math.pow(P.ratedW, 0.25);
-    return { Rhot: Rhot, Rcold: Rcold, K: K, Prated: P.ratedW, ratedV: P.ratedV };
+    var temp = P.tempDependent !== false;
+    return { Rhot: Rhot, Rcold: Rcold, K: K, tempDependent: temp,
+             Prated: P.ratedW, ratedV: P.ratedV };
   }
-  function lampColdR(comp) { return lampParams(comp).Rcold; }
+  // 迭代初值。定值模式直接拿额定电阻起步 —— 下一步 lampRAt() 还它同一个数，
+  // 于是 maxDelta = 0，一轮就收敛，不会为一只定值电阻空转地反复解矩阵。
+  function lampInitR(comp) {
+    var pp = lampParams(comp);
+    return pp.tempDependent ? pp.Rcold : pp.Rhot;
+  }
   function lampRAt(pp, power) {
+    if (!pp.tempDependent) return pp.Rhot;              // 不随功率（温度）变
     return pp.Rcold * (1 + pp.K * Math.pow(Math.max(power, 0), 0.25));
   }
 
@@ -228,7 +246,7 @@
         break;
 
       case 'bulb':
-        var rl = lampR != null ? lampR : lampColdR(comp);
+        var rl = lampR != null ? lampR : lampInitR(comp);
         if (N(0) !== N(1) && rl > EPS) {
           out.push({ kind: 'LAMP', comp: comp, p: N(0), q: N(1), R: rl });
         } else if (N(0) !== N(1)) {
@@ -512,7 +530,7 @@
 
     var lamps = components.filter(function (c) { return c.type === 'bulb'; });
     var lampR = new Map();
-    lamps.forEach(function (c) { lampR.set(c.id, lampColdR(c)); });
+    lamps.forEach(function (c) { lampR.set(c.id, lampInitR(c)); });
 
     function assemble() {
       var branches = [];
@@ -826,6 +844,7 @@
     var pp = lampParams(c);
     rec.Rcold = pp.Rcold; rec.Rhot = pp.Rhot;
     rec.ratedV = pp.ratedV; rec.ratedW = pp.Prated;
+    rec.tempDependent = pp.tempDependent;    // 面板要靠它显示那个勾选框的状态
     rec.brightness = Math.max(0, Math.min(rec.p / pp.Prated, 1.3));
     rec.overload = rec.p > 1.3 * pp.Prated;
     rec.R_selfCheck = lampRAt(pp, rec.p);
