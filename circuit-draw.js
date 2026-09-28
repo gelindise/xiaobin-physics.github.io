@@ -793,43 +793,42 @@
     ctx.translate(comp.x, comp.y);
     ctx.rotate((comp.rot || 0) * Math.PI / 180);
 
-    // 两块竖板：左边【铰链支架】（转轴在它上部）、右边【夹口】（刀片末段从它
-    // 中间穿过去）。外形照 NOBOOK 那个开关的实物件（两块一模一样的 26×62 竖板，
-    // 脚扎进底板、顶是圆角）。
-    // 上一版右边画的是一块【矮墩】（从刀片底边 −19.5 垫到板面），只能表达
-    // 「刀片搭在垫铁上」；夹口要【高过刀片顶边】才看得出刀片是插进去的，
-    // 所以竖板顶定在 −49（比刀片顶边 −34.5 还高 14.5）。
-    // 转轴高度是量出来的：参考图里刀片轴只比底板顶面高一点点（刀片是真的
+    // 静触点：立在板面上的一块金属片，刀片落下来正好搭在它的顶面上。
+    // 顶面高度 CONTACT_TOP 必须【等于刀片的底边】= PIV.y + 半厚 6.5：给高了
+    // 闭合时刀片悬在触点上，看着像没合上；给低了刀片就插进触点里，像穿模。
+    // 转轴高度也是量出来的：参考图里刀片轴只比底板顶面高一点点（刀片是真的
     // 搭在板面上，不是举在半空）。原来 y=−34 高了 14，整把开关像一只翘着的
     // 船桨——断开时手柄顶到 104，实物只到 92。
     var PIV = { x: -46, y: -27 };             // 铰链转轴（在左）
     var BLADE_HT = 7.5;                       // 刀片半厚（教材图里刀片是厚实的一条）
-    var BLADE_LEN = 90, GRIP_OVER = 12, GRIP_LEN = 26;
-    var BRK = { top: -46, bot: 12, w: 18 };   // 竖板：顶圆角、脚扎进板面到 +12
-    // 夹口中心 +18（占 9~27）：落在刀片末段下面，又躲开「闭合 / 断开」四个字。
-    // 板宽 18 是比着 NOBOOK 那件的比例收的：26/250 差不多是 10%，
-    // 给到 22（16%）时两块板在 140 宽的底板上像两根粗管子。
+    var BLADE_LEN = 86, GRIP_OVER = 12, GRIP_LEN = 28;
+    var CONTACT_TOP = PIV.y + BLADE_HT, CONTACT_HW = 12, CONTACT_X = 20;
+    // 静触点落在刀片末段下面（+20，占 8~32）：它必须撑在刀片长度的后段上，
+    // 垫得太靠左整把开关像天平，也挡住了「闭合 / 断开」四个字。
     // 渐变的两端是【绝对坐标】，镜像时元宝不镜像光：全站光源都在左上，
     // 跟着形状一起翻的话，右半边的金属件会变成右上打光，一眼看去是两个方向。
-    function bracket(cx) {
-      ctx.fillStyle = linGrad(ctx, cx - BRK.w / 2, 0, cx + BRK.w / 2, 0,
-        [[0, '#eef3f8'], [0.34, PALETTE.metal], [0.72, PALETTE.metalLo], [1, PALETTE.metalDark]]);
-      roundRect(ctx, cx - BRK.w / 2, BRK.top, BRK.w, BRK.bot - BRK.top, 3.5);
-      ctx.fill();
-      ctx.strokeStyle = 'rgba(60,72,88,0.55)'; ctx.lineWidth = 1; ctx.stroke();
-    }
-    bracket(18);            // 夹口
-    bracket(PIV.x);         // 铰链支架
+    ctx.fillStyle = linGrad(ctx, CONTACT_X - CONTACT_HW, 0, CONTACT_X + CONTACT_HW, 0,
+      [[0, '#f2f6fa'], [0.30, PALETTE.metal], [0.68, PALETTE.metalLo], [1, PALETTE.metalDark]]);
+    roundRect(ctx, CONTACT_X - CONTACT_HW, CONTACT_TOP, CONTACT_HW * 2, PLATE.TOP - CONTACT_TOP, 2.5);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(60,72,88,0.55)'; ctx.lineWidth = 1; ctx.stroke();
+    ctx.fillStyle = 'rgba(40,52,68,0.45)';                      // 顶上那道夹线槽
+    roundRect(ctx, CONTACT_X - CONTACT_HW, CONTACT_TOP + 1.4, CONTACT_HW * 2, 2.6, 1.3); ctx.fill();
+
+    // 铰链支架：比静触点高一截，转轴就在它的上部（同样保持左亮右暗）
+    ctx.fillStyle = linGrad(ctx, -55, 0, -35, 0,
+      [[0, '#f2f6fa'], [0.30, PALETTE.metal], [0.68, PALETTE.metalLo], [1, PALETTE.metalDark]]);
+    roundRect(ctx, -55, PIV.y - 7, 20, PLATE.TOP - (PIV.y - 7), 2.5); ctx.fill();
+    ctx.strokeStyle = 'rgba(60,72,88,0.55)'; ctx.lineWidth = 1; ctx.stroke();
 
     // 刀片：绕左端转轴转。断开抬起约 20°（再高就像旗子，再低看不出断开）。
     // 闭合时压到 +0.02：不能是 0，0 画出来像浮着，微微压下才有「压住触点」的意思。
     // 角度取反的原因见函数头：刀片现在伸向 +x，正角是顺时针，正角才是往下压。
-    // 刀片在【两块竖板之后】画：后画的压在上面，闭合时刀片正好盖在夹口上，
-    // 只露出夹口探出刀片的那一截——就是实物「刀片插进夹口」的样子。
-    // 【刀片和手柄都要停在右接线柱（+70）左边】——接线柱钉在 ±70 的端子上，
+    // 长度：从转轴（-46）伸到局部 +40，静触点移到 +20，正好垫在刀片末段下面。
+    // 【刀片和右手柄都要停在右接线柱（+70）左边】——接线柱钉在 ±70 的端子上，
     // 那个位置被全局端子网格锁死（所有导线、拖拽坐标、避让盒都按 ±70 算），
-    // 所以不能把柱子往外挪，只能把刀片收短：刀片伸到 +44、手柄到 +58，
-    // 柱子的滚花螺母从 +63 起，两者留 5px 空档，谁也不压谁。
+    // 所以不能把柱子往外挪，只能把刀片收短：刀片到 +40、手柄到 +56，
+    // 柱子的滚花螺母从 +63 起，两者留 7px 空档，谁也不压谁。
     // （原来刀片伸到 +81、手柄到 +110，直接从柱子上横穿过去，闭合时看着
     //   刀片把柱子切成两半。）
     ctx.save();
@@ -839,15 +838,15 @@
       [[0, '#ffffff'], [0.3, PALETTE.metalHi], [0.7, PALETTE.metal], [1, PALETTE.metalDark]]);
     roundRect(ctx, 0, -BLADE_HT, BLADE_LEN, BLADE_HT * 2, 3); ctx.fill();
     ctx.strokeStyle = 'rgba(60,72,88,0.45)'; ctx.lineWidth = 0.9; ctx.stroke();
-    // 绝缘手柄：刀片末端的套筒。颜色照 NOBOOK 那件实物——**深灰近黑的胶木**，
-    // 上一版画成银灰，远看和刀片连成一条，分不清哪儿是能摸的手柄。
-    // 也不给红色：红的在参考图里只有接线柱，手柄跟着红会让学生以为那是带电的一端。
+    // 绝缘手柄：刀片末端的灰色套筒（实物是胶木的，不是红的——红的在参考图里
+    // 只有接线柱，手柄跟着红会让学生以为那是带电的一端）。内端套住刀片末段
+    // GRIP_OVER，往外再伸 GRIP_LEN。
     ctx.fillStyle = linGrad(ctx, 0, -11, 0, 11,
-      [[0, '#4b5563'], [0.30, '#374151'], [0.75, '#1f2937'], [1, '#111827']]);
+      [[0, '#e6ebf1'], [0.35, '#c3ccd8'], [0.75, '#98a6b7'], [1, '#7d8c9d']]);
     roundRect(ctx, BLADE_LEN - GRIP_OVER, -11, GRIP_LEN, 22, 8); ctx.fill();
-    ctx.strokeStyle = 'rgba(15,23,42,0.55)'; ctx.lineWidth = 1; ctx.stroke();
-    ctx.fillStyle = 'rgba(255,255,255,0.16)';         // 顶面那一道哑光
-    roundRect(ctx, BLADE_LEN - GRIP_OVER + 5, -7, GRIP_LEN - 10, 5, 2.5); ctx.fill();
+    ctx.strokeStyle = 'rgba(60,72,88,0.5)'; ctx.lineWidth = 1; ctx.stroke();
+    ctx.fillStyle = 'rgba(255,255,255,0.38)';
+    roundRect(ctx, BLADE_LEN - GRIP_OVER + 5, -7, 21, 5, 2.5); ctx.fill();
     ctx.restore();
 
     // 转轴销（黄铜）
