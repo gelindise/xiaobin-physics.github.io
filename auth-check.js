@@ -11,10 +11,19 @@
     "javalab_浮力实验.html","javalab_阿基米德王冠.html",
     "飞象_动滑轮定滑轮原理教学动画.html","javalab_电流表.html",
     "电阻的微观解释.html","javalab_磁场与磁感线.html",
-    "javalab_太阳风与极光.html","javalab_洛伦兹力.html","汽油机四冲程.html","javalab_日食和月食.html"
+    "javalab_太阳风与极光.html","javalab_洛伦兹力.html","汽油机四冲程.html","javalab_日食和月食.html",
+    "测量小灯泡的电功率.html"
   ];
 
-  var page = window.location.pathname.substring(window.location.pathname.lastIndexOf('/') + 1) || 'experiments.html';
+  // ⚠️ 必须 decodeURIComponent。浏览器的 location.pathname 对中文文件名给的是【百分号编码】
+  //    （/测量小灯泡的电功率.html → /%E6%B5%8B%E9%87%8F...html），直接切出来跟下面名单里的
+  //    明文永远对不上，indexOf 恒为 -1 → 整条闸门静默放行。清单一多、全是中文名，这个 bug
+  //    就很难被发现：卡片看着是 VIP、点进去也拦，只有【直接输网址】才漏，而漏的时候页面
+  //    和正常一模一样，没有任何迹象。顺带这也修好了 redirect 参数（原来等于双重编码）。
+  var raw = window.location.pathname.substring(window.location.pathname.lastIndexOf('/') + 1);
+  var page;
+  try { page = decodeURIComponent(raw) || 'experiments.html'; }
+  catch (_) { page = raw || 'experiments.html'; }
   var isFreeTrial = window.location.search.indexOf('trial=1') !== -1;
 
   // 非 VIP 实验无需登录，直接放行
