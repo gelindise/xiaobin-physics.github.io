@@ -238,9 +238,9 @@
   // 缸盖
   const HEAD_L = 27, HEAD_R = 462;
   const HEAD_TOP = 133;
-  const HEAD_BROWN_TOP = 158, HEAD_BROWN_BOT = 174;
-  const HEAD_ORANGE_TOP = 185, HEAD_ORANGE_BOT = 205;
-  const HEAD_BOT = 205;                 // 燃烧室顶面 = 气门座面
+  const HEAD_BROWN_TOP = 150, HEAD_BROWN_BOT = 162;
+  const HEAD_ORANGE_TOP = 178, HEAD_ORANGE_BOT = 216;
+  const HEAD_BOT = 216;                 // 燃烧室顶面 = 气门座面
   const SPARK_GAP = 24;                 // 火花塞安装孔半宽
 
   // 气缸套
@@ -250,10 +250,16 @@
 
   // 气门（左进右排）
   const IVX = 131, EVX = 347;
-  const VALVE_HALF = 32;                // 气门室凹槽半宽
+  const VALVE_HALF = 32;                // 气门口凹腔半宽
+  const PORT_BOT = 290;                 // 进/排气口凹腔底（再往下只是导管孔）
+  const GUIDE_HALF = 13;                // 导管孔半宽
   const VALVE_LIFT = 20;                // 气门最大升程
-  const SPRING_TOP = 308, SPRING_BOT = 545;
-  const TAPPET_Y = 556;                 // 挺柱顶面
+  const SPRING_TOP = 322, SPRING_BOT = 492;
+
+  // 凸轮（曲轴半速旋转，从气门杆下端顶开气门）
+  const CAM_PY = 562;                   // 凸轮轴心
+  const CAM_R = 14;                     // 凸轮基圆半径
+  const CAM_LIFT = 16;                  // 凸轮鼻部凸起高度
 
   // 曲轴箱
   const CASE_CX = 244, CASE_CY = 668;
@@ -289,6 +295,19 @@
     return { iv, ev };
   }
 
+  // ── 凸轮 ──
+  // 凸轮以曲轴半速转动；鼻部（凸起）转到正上方时把气门杆顶起。
+  // 吸气凸轮在曲轴 π/2 处鼻朝上，排气凸轮在曲轴 7π/2 处鼻朝上。
+  function camNose(a, isIntake) {
+    return a / 2 + (isIntake ? -3 * PI / 4 : -PI / 4);
+  }
+  // 凸轮在“正上方”方向上的半径（即杆底落点高度）
+  function camTopRadius(nose) {
+    const d = -PI / 2 - nose;
+    const f = (1 + Math.cos(d)) / 2;
+    return CAM_R + CAM_LIFT * f * f;
+  }
+
   // ═══════════ 配色（取自参考图采样）═══════════
   const C = {
     bg: '#5b6164',
@@ -310,7 +329,6 @@
     blueDeep: '#012643',
     blueMid: '#023964',
     blueHi: '#0a4a7a',
-    blueIntake: '#0f2432',
     cavity: '#2b3036',
     rodBg: '#2a3a4a',
   };
@@ -376,15 +394,29 @@
     ctx.fillStyle = C.cavity;
     ctx.fillRect(BORE_L, HEAD_BOT, BORE_R - BORE_L, SLEEVE_BOT - HEAD_BOT);
 
-    // ── 气门室凹槽（挖空到缸体下缘）──
-    ctx.fillStyle = C.cavity;
-    ctx.fillRect(IVX - VALVE_HALF, HEAD_BOT, VALVE_HALF * 2, BODY_BOT - HEAD_BOT);
-    ctx.fillRect(EVX - VALVE_HALF, HEAD_BOT, VALVE_HALF * 2, BODY_BOT - HEAD_BOT);
+    // ── 进/排气口凹腔（紧贴燃烧室底，气门口在此与气缸直接相通）──
+    const portPocket = (px, c0, c1) => {
+      const g = ctx.createLinearGradient(0, HEAD_BOT, 0, PORT_BOT);
+      g.addColorStop(0, c0);
+      g.addColorStop(1, c1);
+      ctx.fillStyle = g;
+      ctx.fillRect(px - VALVE_HALF, HEAD_BOT, VALVE_HALF * 2, PORT_BOT - HEAD_BOT);
+      ctx.strokeStyle = 'rgba(30,34,38,0.5)';
+      ctx.lineWidth = 1.4;
+      ctx.strokeRect(px - VALVE_HALF, HEAD_BOT, VALVE_HALF * 2, PORT_BOT - HEAD_BOT);
+    };
+    portPocket(IVX, '#1e5078', '#071d33');   // 进气道：蓝（新鲜混合气）
+    portPocket(EVX, '#8c3a12', '#451a05');   // 排气道：暗棕（废气）
+
+    // 凹腔以下的导管孔（窄，只容气门杆与弹簧）
+    ctx.fillStyle = '#454a4f';
+    ctx.fillRect(IVX - GUIDE_HALF, PORT_BOT, GUIDE_HALF * 2, CASE_TOP - PORT_BOT);
+    ctx.fillRect(EVX - GUIDE_HALF, PORT_BOT, GUIDE_HALF * 2, CASE_TOP - PORT_BOT);
 
     // 气门室内侧壁（参考图中靠缸套一侧为深棕色窄条）
     ctx.fillStyle = C.brown;
-    ctx.fillRect(IVX + VALVE_HALF, HEAD_BOT, 20, BODY_BOT - HEAD_BOT);
-    ctx.fillRect(EVX - VALVE_HALF - 20, HEAD_BOT, 20, BODY_BOT - HEAD_BOT);
+    ctx.fillRect(IVX + VALVE_HALF, HEAD_BOT + 16, 18, 148);
+    ctx.fillRect(EVX - VALVE_HALF - 18, HEAD_BOT + 16, 18, 148);
 
     // ── 曲轴箱内腔 ──
     ctx.beginPath();
@@ -427,29 +459,6 @@
     ctx.beginPath();
     ctx.moveTo(BORE_L, HEAD_BOT); ctx.lineTo(BORE_R, HEAD_BOT);
     ctx.stroke();
-  }
-
-  // ═══════════ 左右气道（进气道深蓝 / 排气道暗棕）═══════════
-  function drawPorts() {
-    // 左侧进气道：深蓝直角块
-    ctx.fillStyle = C.blueIntake;
-    ctx.beginPath();
-    ctx.moveTo(HEAD_L + 4, 262);
-    ctx.lineTo(HEAD_L + 96, 262);
-    ctx.lineTo(HEAD_L + 78, 316);
-    ctx.lineTo(HEAD_L + 4, 316);
-    ctx.closePath();
-    ctx.fill();
-
-    // 右侧排气道：暗棕块
-    ctx.fillStyle = '#3b241f';
-    ctx.beginPath();
-    ctx.moveTo(HEAD_R - 4, 262);
-    ctx.lineTo(HEAD_R - 80, 262);
-    ctx.lineTo(HEAD_R - 62, 316);
-    ctx.lineTo(HEAD_R - 4, 316);
-    ctx.closePath();
-    ctx.fill();
   }
 
   // ═══════════ 缸内气体（随冲程变色）═══════════
@@ -504,7 +513,7 @@
 
   // ═══════════ 弹簧（金色螺旋）═══════════
   function drawSpring(x, yTop, yBot) {
-    const turns = 10, w = 20, seg = 240;
+    const turns = 11, w = 17, seg = 260;
     ctx.lineCap = 'round';
     // 主圈
     ctx.strokeStyle = C.brassLo;
@@ -532,16 +541,56 @@
     ctx.strokeStyle = C.silverLo;
     ctx.lineWidth = 3;
     ctx.beginPath();
-    ctx.moveTo(x - w / 2 - 4, yTop); ctx.lineTo(x + w / 2 + 4, yTop);
-    ctx.moveTo(x - w / 2 - 4, yBot); ctx.lineTo(x + w / 2 + 4, yBot);
+    ctx.moveTo(x - w / 2 - 3, yTop); ctx.lineTo(x + w / 2 + 3, yTop);
+    ctx.moveTo(x - w / 2 - 3, yBot); ctx.lineTo(x + w / 2 + 3, yBot);
     ctx.stroke();
   }
 
-  // ═══════════ 气门（金色杆 + 漏斗头 + 铲形挺柱）═══════════
-  function drawValve(x, lift) {
-    const headY = HEAD_BOT + 2 + lift * VALVE_LIFT;
-    const stemBot = TAPPET_Y + lift * VALVE_LIFT;
-    const springTop = SPRING_TOP + lift * VALVE_LIFT;
+  // ═══════════ 凸轮（水滴形单凸块 + 轴心孔）═══════════
+  function drawCam(x, py, nose) {
+    ctx.save();
+    ctx.translate(x, py);
+    ctx.rotate(nose);
+
+    // 轮廓：基圆 + 单鼻凸起
+    ctx.beginPath();
+    for (let i = 0; i <= 120; i++) {
+      const th = i / 120 * 2 * PI;
+      const f = (1 + Math.cos(th)) / 2;
+      const r = CAM_R + CAM_LIFT * f * f;
+      const px = Math.cos(th) * r, pyy = Math.sin(th) * r;
+      if (i === 0) ctx.moveTo(px, pyy); else ctx.lineTo(px, pyy);
+    }
+    ctx.closePath();
+    const g = ctx.createLinearGradient(-CAM_R, -CAM_R, CAM_R, CAM_R);
+    g.addColorStop(0, C.silverHi);
+    g.addColorStop(0.5, C.silver);
+    g.addColorStop(1, C.silverLo);
+    ctx.fillStyle = g;
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(104,110,118,0.85)';
+    ctx.lineWidth = 1.4;
+    ctx.stroke();
+
+    // 轴心圆孔
+    ctx.beginPath(); ctx.arc(0, 0, 7, 0, 7);
+    ctx.fillStyle = '#9aa0a4'; ctx.fill();
+    ctx.strokeStyle = 'rgba(88,94,102,0.9)'; ctx.lineWidth = 1.2; ctx.stroke();
+    ctx.beginPath(); ctx.arc(0, 0, 3, 0, 7);
+    ctx.fillStyle = '#5c6269'; ctx.fill();
+
+    ctx.restore();
+  }
+
+  // ═══════════ 气门（金色杆 + 喇叭口气门头 + 弹簧 + 凸轮）═══════════
+  function drawValve(x, lift, isIntake) {
+    const drop = lift * VALVE_LIFT;
+    const rimY = HEAD_BOT + drop;                       // 气门口平面（开启时下移）
+    const nose = camNose(crankAngle, isIntake);
+    const stemBot = CAM_PY - camTopRadius(nose);        // 杆底压在凸轮面上
+
+    // 凸轮（画在最底层）
+    drawCam(x, CAM_PY, nose);
 
     // 杆（细长金色）
     const sg = ctx.createLinearGradient(x - 5, 0, x + 5, 0);
@@ -552,11 +601,11 @@
     ctx.lineWidth = 9;
     ctx.lineCap = 'round';
     ctx.beginPath();
-    ctx.moveTo(x, headY + 34);
+    ctx.moveTo(x, rimY + 24);
     ctx.lineTo(x, stemBot);
     ctx.stroke();
 
-    // 气门头（细长漏斗形，向下收成尖端）
+    // 气门头：喇叭口朝上，口沿与燃烧室底齐平 → 气门与气缸直接相通
     const hg = ctx.createLinearGradient(x - 28, 0, x + 28, 0);
     hg.addColorStop(0, C.brassLo);
     hg.addColorStop(0.4, C.brassHi);
@@ -564,38 +613,30 @@
     hg.addColorStop(1, C.brassLo);
     ctx.fillStyle = hg;
     ctx.beginPath();
-    ctx.moveTo(x - 28, headY - 4);
-    ctx.lineTo(x + 28, headY - 4);
-    ctx.quadraticCurveTo(x + 25, headY + 22, x + 7, headY + 50);
-    ctx.lineTo(x - 7, headY + 50);
-    ctx.quadraticCurveTo(x - 25, headY + 22, x - 28, headY - 4);
+    ctx.moveTo(x - 28, rimY);
+    ctx.lineTo(x + 28, rimY);
+    ctx.bezierCurveTo(x + 26, rimY + 15, x + 15, rimY + 24, x + 8, rimY + 28);
+    ctx.lineTo(x - 8, rimY + 28);
+    ctx.bezierCurveTo(x - 15, rimY + 24, x - 26, rimY + 15, x - 28, rimY);
     ctx.closePath();
     ctx.fill();
     ctx.strokeStyle = 'rgba(50,44,12,0.55)';
     ctx.lineWidth = 1;
     ctx.stroke();
 
-    // 弹簧
-    drawSpring(x, springTop, SPRING_BOT);
-
-    // 挺柱（银色铲形，带圆孔）
-    const tGrad = ctx.createLinearGradient(x - 18, 0, x + 18, 0);
-    tGrad.addColorStop(0, C.silverLo);
-    tGrad.addColorStop(0.45, C.silverHi);
-    tGrad.addColorStop(1, C.silverLo);
-    ctx.fillStyle = tGrad;
+    // 喇叭口内壁（口沿椭圆，向下凹）
     ctx.beginPath();
-    ctx.moveTo(x - 17, TAPPET_Y + lift * VALVE_LIFT + 10);
-    ctx.lineTo(x + 17, TAPPET_Y + lift * VALVE_LIFT + 10);
-    ctx.lineTo(x + 8, TAPPET_Y + lift * VALVE_LIFT + 38);
-    ctx.lineTo(x - 8, TAPPET_Y + lift * VALVE_LIFT + 38);
-    ctx.closePath();
+    ctx.ellipse(x, rimY + 2.5, 24, 5, 0, 0, PI);
+    ctx.fillStyle = 'rgba(58,48,10,0.42)';
     ctx.fill();
-    ctx.strokeStyle = 'rgba(70,74,80,0.7)';
-    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.ellipse(x, rimY + 1.2, 27, 5.4, 0, 0, 2 * PI);
+    ctx.strokeStyle = 'rgba(226,206,124,0.75)';
+    ctx.lineWidth = 1.6;
     ctx.stroke();
-    ctx.fillStyle = '#4a525d';
-    ctx.beginPath(); ctx.arc(x, TAPPET_Y + lift * VALVE_LIFT + 22, 4.5, 0, 7); ctx.fill();
+
+    // 弹簧（下端坐死在缸体上，上端随气门杆下移而压缩）
+    drawSpring(x, SPRING_TOP + drop, SPRING_BOT);
   }
 
   // ═══════════ 火花塞 ═══════════
@@ -818,8 +859,8 @@
   }
 
   // ═══════════ 气流箭头 ═══════════
-  const INTAKE_PTS = [[HEAD_L + 12, 289], [HEAD_L + 60, 289], [IVX - 34, 289], [IVX, HEAD_BOT + 22]];
-  const EXHAUST_PTS = [[EVX, HEAD_BOT + 22], [EVX + 34, 289], [HEAD_R - 60, 289], [HEAD_R - 14, 289]];
+  const INTAKE_PTS = [[HEAD_L + 10, 256], [HEAD_L + 62, 256], [IVX - 30, 256], [IVX, HEAD_BOT + 34]];
+  const EXHAUST_PTS = [[EVX, HEAD_BOT + 34], [EVX + 30, 256], [HEAD_R - 62, 256], [HEAD_R - 10, 256]];
 
   function pathPoint(pts, t) {
     const seg = []; let total = 0;
@@ -964,13 +1005,12 @@
     ctx.fillRect(0, 0, VW, VH);
 
     drawBlock();
-    drawPorts();
     drawGas(s, pistonTop);
     drawCrankshaft(crankAngle);
     drawRod(crankAngle, wy);
     drawPiston(wy);
-    drawValve(IVX, ivPos);
-    drawValve(EVX, evPos);
+    drawValve(IVX, ivPos, true);
+    drawValve(EVX, evPos, false);
     drawSparkPlug(s);
 
     drawFlowArrows(INTAKE_PTS, ivPos, (animT * 0.25) % 1, 'rgba(150,205,245,0.95)');
