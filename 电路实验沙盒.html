@@ -137,8 +137,46 @@
   .schLegend .lgArrow{color:var(--dim);font-size:13px;flex:0 0 auto}
   .schLegend .lgTxt b{display:block;font-size:12px;color:var(--text);margin-bottom:1px}
   .schLegend .lgTxt span{color:var(--dim);line-height:1.5;font-size:11.5px}
+  /* 存档面板：还是那套浮层骨架（fixed + hidden + 点背景关），内容换成三行槽位。
+     每行 = 序号 + 名字输入框 + 元信息 + 保存/恢复/删除 三个行内链接。 */
+  .save{position:fixed;inset:0;z-index:70;background:rgba(15,23,42,.55);
+    display:flex;align-items:center;justify-content:center;padding:16px}
+  .save[hidden]{display:none}
+  .saveBox{background:var(--card);border-radius:14px;padding:12px 16px 14px;
+    box-shadow:0 18px 50px rgba(15,23,42,.35);max-width:100%;max-height:100%;
+    overflow:auto;display:flex;flex-direction:column;gap:8px;width:min(580px,100%)}
+  .saveHead{display:flex;align-items:center;gap:10px;font-size:13.5px;font-weight:700}
+  .saveHead .sp{flex:1 1 auto}
+  .saveHead .ttlSub{font-weight:400;color:var(--dim);font-size:12.5px}
+  .saveHead button{background:#f1f5f9;border:1px solid var(--line);border-radius:7px;
+    cursor:pointer;font-family:inherit;font-size:12.5px;color:var(--text);
+    padding:4px 10px;line-height:1.2;white-space:nowrap}
+  .saveHead button:hover{background:#e2e8f0}
+  .saveRow{display:flex;align-items:center;gap:9px;flex-wrap:wrap;
+    border:1px solid var(--line);border-radius:9px;padding:8px 10px}
+  .saveRow .idx{flex:0 0 auto;font-size:15px;color:var(--dim)}
+  /* min-width:0 是关键：不写的话 flex 子项的默认 min-width:auto 会让名字框
+     顶到自己的内容宽度，窄屏上把右边的链接挤出盒子。 */
+  .saveRow .saveName{flex:1 1 150px;min-width:0;font-family:inherit;font-size:13px;
+    color:var(--text);background:#f8fafc;border:1px solid var(--line);
+    border-radius:7px;padding:5px 9px}
+  .saveRow .saveName:focus{outline:2px solid var(--accent);outline-offset:-1px}
+  .saveRow .saveMeta{flex:0 0 auto;color:var(--dim);font-size:11.5px;white-space:nowrap}
+  .saveRow .saveActs{flex:0 0 auto;display:flex;gap:11px;margin-left:auto}
+  .saveRow .saveActs a{color:var(--accent);font-size:12.5px;font-weight:600;
+    cursor:pointer;text-decoration:none}
+  .saveRow .saveActs a:hover{text-decoration:underline}
+  .saveRow .saveActs a.dim{color:#b91c1c}
   @media (max-width:760px){
     .sch{padding:8px}
+    /* 窄屏一行横排会把名字框挤没，改成竖排：名字框占满一行，元信息和链接跟到下面。 */
+    .save{padding:10px}
+    .saveRow{flex-direction:column;align-items:stretch;gap:7px}
+    .saveRow .idx{align-self:flex-start}
+    /* 竖排时主/副轴对调：不把 flex 收回去的话，横排用的 flex-basis:150px 会变成
+       【高度】基准，名字框被撑成一大块。 */
+    .saveRow .saveName{flex:0 0 auto}
+    .saveRow .saveActs{margin-left:0;justify-content:flex-end}
     /* 手机宽度的顶栏塞不下「电路图（由实物图转换）」加三个控件，标题会被折成
        「电路图（由实物图转 / 换）」。窄屏把括号里那半句收起来，剩下的正好一行。 */
     .schHead .ttlSub{display:none}
@@ -213,6 +251,20 @@
       </div>
       <div class="schLegend" id="schLegend"></div>
     </div>
+  </div>
+</div>
+
+<!-- 存档面板：3 个槽位，各自可命名、保存、恢复、删除。和上面两个浮层同一套骨架
+     （fixed + hidden + 点背景关），行由 renderSavePanel() 用 createElement 搭出来——
+     槽位名字是用户输入的字符串，只能经 input.value / textContent 落地，不走 innerHTML。 -->
+<div class="save" id="save" hidden>
+  <div class="saveBox">
+    <div class="saveHead">
+      <span>保存电路</span><span class="ttlSub">（最多 3 份，下次打开自动接回最近保存的那份）</span>
+      <span class="sp"></span>
+      <button id="saveX" type="button">✕ 关闭</button>
+    </div>
+    <div class="saveBody" id="saveBody"></div>
   </div>
 </div>
 
@@ -951,6 +1003,7 @@ schEl.addEventListener('pointerdown', function(ev){
 });
 window.addEventListener('keydown', function(ev){
   if (!schOpen) return;
+  if (saveOpen) return;                          // 存档面板在最上面，先让它吃 Esc
   if (ev.key === 'Escape' || ev.key === 'Esc') closeSchematic();
 }, true);
 
@@ -993,16 +1046,30 @@ toolBtn('示例电路', function(){
 // 什么都没改，⌘Z 不该为看一眼电路图回退一步。
 toolBtn('📐 转成电路图', openSchematic);
 
-// ── 保存 / 恢复电路 ────────────────────────────────────────
-// 学生自己连好的电路存进 localStorage 的一个槽位，下次打开自动接回来。
-// 只存 scene（元件 + 导线 + 参数），不存选中态和撤销栈——那是「这一次操作」
-// 的临时状态，存下来对下次没有意义（两个动画开关本来就有自己的键）。
+// ── 保存 / 恢复电路（3 个槽位）─────────────────────────────
+// 学生自己连好的电路存进 localStorage 的三个槽位之一，下次打开自动接回
+// 【最近保存】的那份。只存 scene（元件 + 导线 + 参数），不存选中态和撤销栈
+// ——那是「这一次操作」的临时状态，存下来对下次没有意义（两个动画开关本来
+// 就有自己的键）。每份可以起名字，不填就用带时间的默认名。
 var SAVE_KEY = 'circuit_sandbox_scene';
-var SAVE_VER = 1;
+var SAVE_VER = 2;
+var SLOT_N = 3;
+var SLOT_MARK = ['①', '②', '③'];
+
+function fmtTime(t){
+  var d = new Date(t), p = function(n){ return (n < 10 ? '0' : '') + n; };
+  return p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+}
+function defaultSlotName(t){ return '存档 ' + fmtTime(t); }
+// 用户给槽位起的名字：折成一个空格、掐头去尾、最多 24 字。它只会经
+// input.value / textContent 落地，绝不进 innerHTML。
+function sanitizeName(s){
+  return String(s == null ? '' : s).replace(/\s+/g, ' ').trim().slice(0, 24);
+}
 
 // 存档可能是旧版本、手改过的、或者干脆是别的东西。直接塞进 scene，轻则画出
 // 个半坏电路，重则让求解器撞上不认识的元件类型。所以逐项过一遍再放行：
-// 坏的不认，退回示例电路——宁可不恢复，也不能恢复出一个画不对的电路。
+// 坏的不认、该槽位置空——宁可不恢复，也不能恢复出一个画不对的电路。
 function validScene(o){
   if (!o || !Array.isArray(o.comps) || !Array.isArray(o.wires)) return false;
   var seen = {};
@@ -1021,13 +1088,39 @@ function validScene(o){
   }
   return true;
 }
-function readSaved(){
+// 读出来的永远是【恰好 3 项】：坏的置 null，兄弟槽不受牵连。
+// comps/wires 直接放在槽对象顶层，于是 validScene(slot) 能原样复用。
+function readSlots(){
   var raw = null;
-  try { raw = localStorage.getItem(SAVE_KEY); } catch (e) { return null; }
-  if (!raw) return null;
+  try { raw = localStorage.getItem(SAVE_KEY); } catch (e) { return [null, null, null]; }
+  if (!raw) return [null, null, null];
   var o = null;
-  try { o = JSON.parse(raw); } catch (e) { return null; }
-  return validScene(o) ? o : null;
+  try { o = JSON.parse(raw); } catch (e) { return [null, null, null]; }
+  if (o && Array.isArray(o.slots)){
+    var out = [];
+    for (var i = 0; i < SLOT_N; i++){
+      var s = o.slots[i];
+      if (!s || !validScene(s)){ out.push(null); continue; }
+      var t = typeof s.t === 'number' ? s.t : Date.now();
+      out.push({ name: sanitizeName(s.name) || defaultSlotName(t), t: t,
+                 comps: s.comps, wires: s.wires });
+    }
+    return out;
+  }
+  // 旧版单槽存档（或测试直接写进来的裸 scene）：不清掉学生的旧作业，迁移进
+  // 第 1 个槽位。判据挂在 validScene 上而不是 v===1 上，裸 scene 也收。
+  if (o && validScene(o)){
+    var t2 = typeof o.t === 'number' ? o.t : Date.now();
+    return [{ name: sanitizeName(o.name) || defaultSlotName(t2), t: t2,
+              comps: o.comps, wires: o.wires }, null, null];
+  }
+  return [null, null, null];
+}
+function writeSlots(slots){
+  try {
+    localStorage.setItem(SAVE_KEY, JSON.stringify({ v: SAVE_VER, slots: slots }));
+    return true;
+  } catch (e) { return false; }           // 隐私模式 / 配额满
 }
 function applyScene(o){
   scene.comps = o.comps;
@@ -1035,28 +1128,115 @@ function applyScene(o){
   // 选中的那个元件可能压根不在新场景里，留着的话参数面板会去读它的 type 崩掉
   if (editor && editor.getSelected()) editor.select(null);
 }
-function saveScene(){
-  var ok = true;
-  try {
-    localStorage.setItem(SAVE_KEY, JSON.stringify({
-      v: SAVE_VER, t: Date.now(), comps: scene.comps, wires: scene.wires,
-    }));
-  } catch (e) { ok = false; }             // 隐私模式 / 配额满
-  renderSaveHint(ok ? '✓ 已保存' : '⚠ 保存失败（浏览器不允许存储）');
+// 覆盖已有槽位不弹 confirm：按钮写着「保存」、行里明摆着原来那份的时间，
+// 意图是明确的；原生 confirm() 会卡住 requestAnimationFrame(tick) 循环，
+// 手机上还多一次点击。改用工具条那行给一句反馈。
+function saveSlot(i, nameOverride){
+  var slots = readSlots();
+  var name = sanitizeName(nameOverride) || defaultSlotName(Date.now());
+  slots[i] = { name: name, t: Date.now(), comps: scene.comps, wires: scene.wires };
+  var ok = writeSlots(slots);
+  renderSavePanel();
+  renderSaveHint(ok ? ('✓ 已保存到槽 ' + (i + 1) + '「' + name + '」')
+                    : '⚠ 保存失败（浏览器不允许存储）');
   return ok;
 }
-function clearSaved(){
-  try { localStorage.removeItem(SAVE_KEY); } catch (e) {}
-  renderSaveHint('');
+function restoreSlot(i){
+  var s = readSlots()[i];
+  if (!s) return false;
+  applyScene(s);
+  render();
+  closeSavePanel();                        // 恢复完就该看画布，面板让开
+  renderSaveHint('✓ 已恢复「' + s.name + '」');
+  return true;
+}
+function deleteSlot(i){
+  var slots = readSlots();
+  if (!slots[i]) return false;
+  slots[i] = null;
+  writeSlots(slots);
+  renderSavePanel();
+  renderSaveHint('✓ 已删除槽 ' + (i + 1));
+  return true;
+}
+// 自动恢复挑「最近保存的那份」：时间戳最大的槽。全空返回 -1。
+function latestSlotIndex(){
+  var slots = readSlots(), best = -1;
+  for (var i = 0; i < slots.length; i++){
+    if (slots[i] && (best < 0 || slots[i].t > slots[best].t)) best = i;
+  }
+  return best;
 }
 
-function fmtTime(t){
-  var d = new Date(t), p = function(n){ return (n < 10 ? '0' : '') + n; };
-  return p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+// ── 存档面板 ──────────────────────────────────────────────
+var saveEl = document.getElementById('save');
+var saveBody = document.getElementById('saveBody');
+var saveOpen = false;
+function openSavePanel(){
+  saveOpen = true; saveEl.hidden = false; renderSavePanel();
+  var inp = saveBody.querySelector('.saveName');
+  if (inp){ inp.focus(); inp.select(); }   // 打开就能直接改名
 }
-// 状态行。有存档就把「恢复 / 清除」两个入口一起摆出来：「清空画布」清的是眼前
-// 这张画布、不清存档，而存档又会在下次打开时自动接回来，总得有地方关掉它。
-// flash 传了字就临时显示一句反馈，1.6 秒后退回存档信息。
+function closeSavePanel(){ saveOpen = false; saveEl.hidden = true; }
+
+function renderSavePanel(){
+  var slots = readSlots();
+  saveBody.innerHTML = '';                 // 可信的空壳，内容全部重新搭
+  for (var i = 0; i < SLOT_N; i++) (function(i){
+    var s = slots[i];
+    var row = document.createElement('div'); row.className = 'saveRow';
+    var idx = document.createElement('span'); idx.className = 'idx';
+    idx.textContent = SLOT_MARK[i];
+    row.appendChild(idx);
+
+    var name = document.createElement('input');
+    name.className = 'saveName'; name.type = 'text'; name.maxLength = 24;
+    name.value = s ? s.name : '';
+    name.placeholder = '给这份电路起个名字（可留空）';
+    row.appendChild(name);
+
+    var meta = document.createElement('span'); meta.className = 'saveMeta';
+    meta.textContent = s ? (fmtTime(s.t) + ' · ' + s.comps.length + ' 元件 · ' +
+                            s.wires.length + ' 导线') : '（空）';
+    row.appendChild(meta);
+
+    var acts = document.createElement('span'); acts.className = 'saveActs';
+    var aSave = document.createElement('a');
+    aSave.textContent = '保存';
+    aSave.onclick = function(){ saveSlot(i, name.value); };
+    acts.appendChild(aSave);
+    if (s){
+      var aRs = document.createElement('a');
+      aRs.textContent = '恢复';
+      aRs.onclick = function(){ restoreSlot(i); };
+      acts.appendChild(aRs);
+      var aDel = document.createElement('a');
+      aDel.className = 'dim'; aDel.textContent = '删除';
+      aDel.onclick = function(){ deleteSlot(i); };
+      acts.appendChild(aDel);
+    }
+    row.appendChild(acts);
+    saveBody.appendChild(row);
+  })(i);
+}
+document.getElementById('saveX').onclick = closeSavePanel;
+saveEl.addEventListener('pointerdown', function(ev){
+  if (ev.target === saveEl) closeSavePanel();   // 点浮层背景关掉，点白盒子里面不关
+});
+// 捕获阶段，且要抢在编辑器的 window 冒泡监听前面（照抄放大镜那条）。
+// stopPropagation 必须有：否则 Esc 会再落到 circuit-editor.js 的 window 监听上，
+// 顺手把画布选中清掉。
+window.addEventListener('keydown', function(ev){
+  if (!saveOpen) return;
+  if (ev.key === 'Escape' || ev.key === 'Esc') {
+    closeSavePanel();
+    ev.stopPropagation();
+  }
+}, true);
+
+// 状态行。现在有 3 个槽位，行内只报【最近保存的那份】的摘要，另给一个「管理」
+// 入口点开面板——三份的时间一起塞进这一行太挤。flash 传了字就临时显示一句
+// 反馈，1.6 秒后退回摘要。
 var hintTimer = null;
 function renderSaveHint(flash){
   var el = document.getElementById('saveHint');
@@ -1068,22 +1248,19 @@ function renderSaveHint(flash){
     return;
   }
   el.innerHTML = '';
-  var s = readSaved();
-  if (!s) return;
+  var li = latestSlotIndex();
+  if (li < 0) return;
+  var s = readSlots()[li];
   var t = document.createElement('span');
-  t.textContent = '存档 ' + fmtTime(s.t);
+  t.textContent = '最近保存 · ' + s.name + '（' + fmtTime(s.t) + '）';
   el.appendChild(t);
-  var rs = document.createElement('a');
-  rs.textContent = '恢复';
-  rs.onclick = function(){ applyScene(s); render(); renderSaveHint('✓ 已恢复'); };
-  el.appendChild(rs);
-  var cs = document.createElement('a');
-  cs.textContent = '清除';
-  cs.onclick = clearSaved;
-  el.appendChild(cs);
+  var m = document.createElement('a');
+  m.textContent = '管理';
+  m.onclick = openSavePanel;
+  el.appendChild(m);
 }
 
-toolBtn('💾 保存电路', saveScene);
+toolBtn('💾 保存电路', openSavePanel);
 
 // ── 两个动画开关 ──────────────────────────────────────────
 // 各自一个按钮、各自可开可关，两个同时开也允许：那时同一条导线上
@@ -1114,13 +1291,13 @@ var saveHintEl = document.createElement('span');
 saveHintEl.className = 'hint'; saveHintEl.id = 'saveHint';
 bar.appendChild(saveHintEl);
 
-// 起步：有存档就接回来，没有才用示例电路。首次来访的人 localStorage 是空的，
-// 看到的还是原来那张示例电路，行为不变。
-var boot = readSaved();
-if (boot) applyScene(boot); else seed();
+// 起步：有存档就接回【最近保存的那份】，一份都没有才用示例电路。首次来访的人
+// localStorage 是空的，看到的还是原来那张示例电路，行为不变。
+var bootSlot = latestSlotIndex();
+if (bootSlot >= 0) restoreSlot(bootSlot); else seed();
 layout();
 render();
-renderSaveHint(boot ? '✓ 已恢复上次保存的电路' : '');
+renderSaveHint(bootSlot >= 0 ? '✓ 已恢复上次保存的电路' : '');
 window.addEventListener('resize', function(){ layout(); drawFrame(); refreshSchematic(); });
 requestAnimationFrame(tick);
 
@@ -1152,11 +1329,27 @@ window.__btnCurrent = function(){ return btnCurrent; };
 window.__pathOf = function(wr){ return pathOf(wr); };
 window.__readout = function(c, r){ return readoutLines(c, r); };
 window.__btnFlow = function(){ return btnFlow; };
-// 存档：测试要能直接存/读/清，还要能单独问一句「这份存档我认不认」——
-// 校验那一关断在 validScene 上，比塞一份坏存档再去猜渲染结果稳得多。
-window.__save = function(){ return saveScene(); };
-window.__saved = function(){ return readSaved(); };
-window.__clearSaved = function(){ clearSaved(); };
+// 存档：测试要能直接读写删每个槽位、问「自动恢复会挑哪个」、还要能单独问一句
+// 「这份存档我认不认」——校验那一关断在 validScene 上，比塞一份坏存档再去猜
+// 渲染结果稳得多。__savePanel 给 DOM 级断言用（名字框的值、元信息、行内链接）。
+window.__slots = function(){ return readSlots(); };
+window.__saveSlot = function(i, name){ return saveSlot(i, name); };
+window.__restoreSlot = function(i){ return restoreSlot(i); };
+window.__deleteSlot = function(i){ return deleteSlot(i); };
+window.__latestSlotIndex = function(){ return latestSlotIndex(); };
+window.__openSave = function(){ openSavePanel(); };
+window.__closeSave = function(){ closeSavePanel(); };
+window.__savePanel = function(){
+  var rows = [].slice.call(saveBody.querySelectorAll('.saveRow'));
+  return {
+    open: saveOpen,
+    names: rows.map(function(r){ return r.querySelector('.saveName').value; }),
+    metas: rows.map(function(r){ return r.querySelector('.saveMeta').textContent; }),
+    links: rows.map(function(r){
+      return [].slice.call(r.querySelectorAll('.saveActs a')).map(function(a){ return a.textContent; });
+    }),
+  };
+};
 window.__validScene = function(o){ return validScene(o); };
 window.__saveKey = SAVE_KEY;
 // 电路图：模型层单独给一个钩子，断言尽量断在坐标上（截面比数像素稳得多）。
