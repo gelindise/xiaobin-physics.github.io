@@ -921,11 +921,48 @@
   // ============================================================
   // 小灯泡（人教版实物：浅灰底板 + 瓷灯座 + 银色螺口 + 玻璃泡）
   // ------------------------------------------------------------
-  // 亮度分档（0.02 亮起 / 0.15 发白）和发光配色一律不动：粒子的快慢、
-  // 光晕的浓淡、读数框的提示是同一套观感，动一处另两处就对不上了。
+  // rec.brightness 是 core 定的【物理量】P/P额，这里只把它画成
+  // 「看得出来在变亮」。旧的一套只有 0.02 / 0.15 两个硬档：一过 0.02
+  // 玻璃泡就跳到 0.55 的暖白、过 0.15 灯丝直接切白，于是 0.05 和 1.3
+  // 看着几乎一样 —— 灯泡成了开关，不是渐亮。
+  // 改成三条连续 ramp（灯丝色温 / 光晕半径与浓度 / 玻璃泡暖色填充），
+  // 硬阈值只剩「通没通电」的 0.02，其余全按 P/P额 平滑爬。
   // ============================================================
+  // 灯丝色温：暗红 → 橙 → 黄 → 近白，白炽灯真实的升温顺序。
+  // b = P/P额（0 = 灭，1 = 额定，1.3 = 内核判过载的那条线）。
+  var HEAT_STOPS = [
+    [0.00, [138, 106,  58]],   // 冷钨丝（金属本色，没通电的样子）
+    [0.10, [150,  44,  18]],   // 暗红
+    [0.25, [206,  74,  20]],   // 红橙
+    [0.45, [240, 132,  32]],   // 橙
+    [0.70, [255, 192,  64]],   // 黄
+    [1.00, [255, 238, 168]],   // 暖白（额定点）
+    [1.30, [255, 255, 246]],   // 过载近白
+  ];
+  function heatRgb(b) {
+    var s = HEAT_STOPS, i, k, a, c;
+    if (b <= s[0][0]) return s[0][1].slice();
+    for (i = 1; i < s.length; i++) {
+      if (b <= s[i][0]) {
+        k = (b - s[i - 1][0]) / (s[i][0] - s[i - 1][0]);
+        a = s[i - 1][1]; c = s[i][1];
+        return [Math.round(a[0] + (c[0] - a[0]) * k),
+                Math.round(a[1] + (c[1] - a[1]) * k),
+                Math.round(a[2] + (c[2] - a[2]) * k)];
+      }
+    }
+    return s[s.length - 1][1].slice();
+  }
+  function rgbaStr(c, a) {
+    return 'rgba(' + c[0] + ',' + c[1] + ',' + c[2] + ',' + a + ')';
+  }
   function drawBulb(ctx, comp, rec) {
     var bright = rec ? Math.max(0, Math.min(rec.brightness || 0, 1.3)) : 0;
+    // lit 以下当没通电。bg 是归一化强度，做 1.15 次幂把低亮度压一压，
+    // 让 0.1~0.7 这段（学生真正在调的那段）拉得开，而不是一上来就满。
+    var lit = bright > 0.02;
+    var bg = lit ? Math.pow(Math.min(bright, 1.3) / 1.3, 1.15) : 0;
+    var heat = heatRgb(bright);
     // 尺寸照教材实物（ref3）比着底板宽度折算：玻璃泡直径 ≈ 底板宽的 43%，
     // 瓷灯座底宽 ≈ 41%、高 ≈ 25%，螺口箍比灯座顶略窄。旧的一套（R=19）
     // 玻璃泡只有底板宽的 27%，摆在板子上像个顶针，和实物差着一倍。
@@ -948,14 +985,17 @@
     // 灯座底板：和闸刀开关共用一块，两件器材摆在一起才是同一套
     basePlate(ctx, PLATE.HW, PLATE.TOP, PLATE.FACE, PLATE.BOT);
 
-    // 发光光晕（压在灯座底下那一层，不然它会盖住瓷座的轮廓）
-    if (bright > 0.02) {
-      var glow = ctx.createRadialGradient(0, CY, 3, 0, CY, R * 3);
-      glow.addColorStop(0, 'rgba(255,242,180,' + (0.9 * bright) + ')');
-      glow.addColorStop(0.3, 'rgba(255,214,90,' + (0.45 * bright) + ')');
+    // 发光光晕（压在灯座底下那一层，不然它会盖住瓷座的轮廓）。
+    // 【半径】跟着亮度从 1.6R 长到 3.8R —— 旧的一套半径恒为 3R、只改浓度，
+    // 这正是「额定和过载看着差不多」的主因：亮的灯泡该照得更远，不是更黄。
+    if (lit) {
+      var haloR = R * (1.6 + 2.2 * bg);
+      var glow = ctx.createRadialGradient(0, CY, 2, 0, CY, haloR);
+      glow.addColorStop(0, rgbaStr(heat, 0.92 * bg));
+      glow.addColorStop(0.35, 'rgba(255,214,90,' + (0.42 * bg) + ')');
       glow.addColorStop(1, 'rgba(255,200,60,0)');
       ctx.fillStyle = glow;
-      ctx.beginPath(); ctx.arc(0, CY, R * 3, 0, 6.284); ctx.fill();
+      ctx.beginPath(); ctx.arc(0, CY, haloR, 0, 6.284); ctx.fill();
     }
 
     // 瓷灯座：下粗上细的白色圆台，玻璃泡坐在它顶上
@@ -973,10 +1013,13 @@
     // 玻璃泡：先画，螺口箍【后画】压住它下半圈——实物上玻璃就是拧进箍里的，
     // 所以泡的轮廓线到箍口就断了，不是完整的一个圆。
     var gg = ctx.createRadialGradient(-R * 0.35, CY - R * 0.3, 3, 0, CY, R);
-    if (bright > 0.02) {
-      gg.addColorStop(0, 'rgba(255,255,225,' + (0.55 + 0.45 * bright) + ')');
-      gg.addColorStop(0.55, 'rgba(255,236,150,' + (0.4 + 0.45 * bright) + ')');
-      gg.addColorStop(1, 'rgba(255,210,90,' + (0.3 + 0.35 * bright) + ')');
+    if (lit) {
+      // 玻璃泡是【透光的】——它自己不发光，暖色只是灯丝透过来的。所以三档的
+      // 下限都压到 0.1 附近：微亮时玻璃基本还是白的，只是灯丝那点暗红透出来。
+      gg.addColorStop(0, 'rgba(255,255,238,' + (0.10 + 0.88 * bg) + ')');
+      gg.addColorStop(0.55, rgbaStr([heat[0], Math.min(255, heat[1] + 24), Math.round(heat[2] * 0.7)],
+                                    (0.10 + 0.80 * bg)));
+      gg.addColorStop(1, 'rgba(255,206,96,' + (0.08 + 0.64 * bg) + ')');
     } else {
       gg.addColorStop(0, 'rgba(240,247,252,0.95)');
       gg.addColorStop(0.6, 'rgba(214,229,241,0.85)');
@@ -984,7 +1027,9 @@
     }
     ctx.fillStyle = gg;
     ctx.beginPath(); ctx.arc(0, CY, R, 0, 6.284); ctx.fill();
-    ctx.strokeStyle = 'rgba(148,163,184,0.9)'; ctx.lineWidth = 1.6; ctx.stroke();
+    // 泡的轮廓线随亮度淡出：烧得越亮，玻璃边缘越被光吃进去，不该还是一圈硬灰线。
+    ctx.strokeStyle = 'rgba(148,163,184,' + (0.9 - 0.62 * bg) + ')';
+    ctx.lineWidth = 1.6; ctx.stroke();
 
     // 玻璃泡上的斜高光（一条，别再加第二条——两条就成花纹了）
     ctx.save();
@@ -999,9 +1044,11 @@
 
     // 灯丝：两根引线从螺口里升上来，中间一段螺旋丝。引线起点埋在箍里，
     // 箍一盖就只剩露在玻璃中的那截——实物上正是这样。
-    ctx.strokeStyle = bright > 0.15 ? '#fff8d0' : '#8a6a3a';
+    // 灯丝本身就是那条色温曲线：微亮是暗红的丝，额定是暖白，过载近白。
+    // 辉光（shadowBlur）也随亮度连续长，不再靠 0.15 这一刀切白或切灭。
+    ctx.strokeStyle = lit ? rgbaStr(heat, 1) : '#8a6a3a';
     ctx.lineWidth = 1.8;
-    if (bright > 0.15) { ctx.shadowColor = '#ffd24a'; ctx.shadowBlur = 12 * bright; }
+    if (lit) { ctx.shadowColor = rgbaStr(heat, 0.9); ctx.shadowBlur = 3 + 13 * bg; }
     ctx.beginPath();
     ctx.moveTo(-6, CAP_TOP + 2); ctx.lineTo(-6, CY + 4);
     for (var i = 0; i < 5; i++) ctx.lineTo((i % 2 === 0 ? 4 : -4), CY + 4 - i * 2.1);
