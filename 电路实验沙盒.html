@@ -28,6 +28,12 @@
   .bar button.on:hover{background:#fef3c7}
   .bar button.off{color:#94a3b8}
   .bar .sep{width:1px;height:22px;background:var(--line);margin:0 4px}
+  /* 存档状态行。margin-left:auto 把它推到元件栏最右边；窄屏放不下就跟着折行。
+     里面的「恢复 / 清除」是链接样式的按钮——它们只对存档动手，不碰画布。 */
+  .bar .hint{font-size:12px;color:var(--dim);margin-left:auto;display:flex;
+    align-items:center;gap:9px;padding-left:6px}
+  .bar .hint a{color:var(--accent);font-weight:600;cursor:pointer;text-decoration:none}
+  .bar .hint a:hover{text-decoration:underline}
   .stage{display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap}
   .cv{flex:1 1 700px;min-width:0;background:var(--card);border:1px solid var(--line);
       border-radius:12px;padding:8px}
@@ -987,6 +993,98 @@ toolBtn('示例电路', function(){
 // 什么都没改，⌘Z 不该为看一眼电路图回退一步。
 toolBtn('📐 转成电路图', openSchematic);
 
+// ── 保存 / 恢复电路 ────────────────────────────────────────
+// 学生自己连好的电路存进 localStorage 的一个槽位，下次打开自动接回来。
+// 只存 scene（元件 + 导线 + 参数），不存选中态和撤销栈——那是「这一次操作」
+// 的临时状态，存下来对下次没有意义（两个动画开关本来就有自己的键）。
+var SAVE_KEY = 'circuit_sandbox_scene';
+var SAVE_VER = 1;
+
+// 存档可能是旧版本、手改过的、或者干脆是别的东西。直接塞进 scene，轻则画出
+// 个半坏电路，重则让求解器撞上不认识的元件类型。所以逐项过一遍再放行：
+// 坏的不认，退回示例电路——宁可不恢复，也不能恢复出一个画不对的电路。
+function validScene(o){
+  if (!o || !Array.isArray(o.comps) || !Array.isArray(o.wires)) return false;
+  var seen = {};
+  for (var i = 0; i < o.comps.length; i++){
+    var c = o.comps[i];
+    if (!c || typeof c.id !== 'string' || !c.type) return false;
+    if (!C.TYPES[c.type]) return false;
+    if (typeof c.x !== 'number' || typeof c.y !== 'number') return false;
+    if (seen[c.id]) return false;
+    seen[c.id] = 1;
+  }
+  for (var j = 0; j < o.wires.length; j++){
+    var wr = o.wires[j];
+    if (!wr || !wr.a || !wr.b) return false;
+    if (!seen[wr.a.compId] || !seen[wr.b.compId]) return false;
+  }
+  return true;
+}
+function readSaved(){
+  var raw = null;
+  try { raw = localStorage.getItem(SAVE_KEY); } catch (e) { return null; }
+  if (!raw) return null;
+  var o = null;
+  try { o = JSON.parse(raw); } catch (e) { return null; }
+  return validScene(o) ? o : null;
+}
+function applyScene(o){
+  scene.comps = o.comps;
+  scene.wires = o.wires;
+  // 选中的那个元件可能压根不在新场景里，留着的话参数面板会去读它的 type 崩掉
+  if (editor && editor.getSelected()) editor.select(null);
+}
+function saveScene(){
+  var ok = true;
+  try {
+    localStorage.setItem(SAVE_KEY, JSON.stringify({
+      v: SAVE_VER, t: Date.now(), comps: scene.comps, wires: scene.wires,
+    }));
+  } catch (e) { ok = false; }             // 隐私模式 / 配额满
+  renderSaveHint(ok ? '✓ 已保存' : '⚠ 保存失败（浏览器不允许存储）');
+  return ok;
+}
+function clearSaved(){
+  try { localStorage.removeItem(SAVE_KEY); } catch (e) {}
+  renderSaveHint('');
+}
+
+function fmtTime(t){
+  var d = new Date(t), p = function(n){ return (n < 10 ? '0' : '') + n; };
+  return p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+}
+// 状态行。有存档就把「恢复 / 清除」两个入口一起摆出来：「清空画布」清的是眼前
+// 这张画布、不清存档，而存档又会在下次打开时自动接回来，总得有地方关掉它。
+// flash 传了字就临时显示一句反馈，1.6 秒后退回存档信息。
+var hintTimer = null;
+function renderSaveHint(flash){
+  var el = document.getElementById('saveHint');
+  if (!el) return;
+  if (hintTimer) { clearTimeout(hintTimer); hintTimer = null; }
+  if (flash){
+    el.textContent = flash;
+    hintTimer = setTimeout(function(){ renderSaveHint(); }, 1600);
+    return;
+  }
+  el.innerHTML = '';
+  var s = readSaved();
+  if (!s) return;
+  var t = document.createElement('span');
+  t.textContent = '存档 ' + fmtTime(s.t);
+  el.appendChild(t);
+  var rs = document.createElement('a');
+  rs.textContent = '恢复';
+  rs.onclick = function(){ applyScene(s); render(); renderSaveHint('✓ 已恢复'); };
+  el.appendChild(rs);
+  var cs = document.createElement('a');
+  cs.textContent = '清除';
+  cs.onclick = clearSaved;
+  el.appendChild(cs);
+}
+
+toolBtn('💾 保存电路', saveScene);
+
 // ── 两个动画开关 ──────────────────────────────────────────
 // 各自一个按钮、各自可开可关，两个同时开也允许：那时同一条导线上
 // 琥珀色小球和红色箭头对着走，「电子定向移动方向与电流方向相反」不用讲。
@@ -1010,9 +1108,19 @@ var curAnim  = animToggle('➡ 电流方向', CUR_KEY, showCurrent, function(v){
 var btnFlow = flowAnim.btn, btnCurrent = curAnim.btn;
 var setFlow = flowAnim.set, setCurrent = curAnim.set;
 
-seed();
+// 存档状态行挂在元件栏最右边（两个动画按钮之后），这样它不会夹在
+// 「＋元件」和「撤销/清空」中间拆散那一排工具按钮。
+var saveHintEl = document.createElement('span');
+saveHintEl.className = 'hint'; saveHintEl.id = 'saveHint';
+bar.appendChild(saveHintEl);
+
+// 起步：有存档就接回来，没有才用示例电路。首次来访的人 localStorage 是空的，
+// 看到的还是原来那张示例电路，行为不变。
+var boot = readSaved();
+if (boot) applyScene(boot); else seed();
 layout();
 render();
+renderSaveHint(boot ? '✓ 已恢复上次保存的电路' : '');
 window.addEventListener('resize', function(){ layout(); drawFrame(); refreshSchematic(); });
 requestAnimationFrame(tick);
 
@@ -1044,6 +1152,13 @@ window.__btnCurrent = function(){ return btnCurrent; };
 window.__pathOf = function(wr){ return pathOf(wr); };
 window.__readout = function(c, r){ return readoutLines(c, r); };
 window.__btnFlow = function(){ return btnFlow; };
+// 存档：测试要能直接存/读/清，还要能单独问一句「这份存档我认不认」——
+// 校验那一关断在 validScene 上，比塞一份坏存档再去猜渲染结果稳得多。
+window.__save = function(){ return saveScene(); };
+window.__saved = function(){ return readSaved(); };
+window.__clearSaved = function(){ clearSaved(); };
+window.__validScene = function(o){ return validScene(o); };
+window.__saveKey = SAVE_KEY;
 // 电路图：模型层单独给一个钩子，断言尽量断在坐标上（截面比数像素稳得多）。
 // 不带 _items —— 那里面挂着 window.CircuitCore，不是给外面看的东西。
 window.__schModel = function(values, extra){
