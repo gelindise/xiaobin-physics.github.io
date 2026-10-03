@@ -94,6 +94,14 @@
     }
     return false;
   }
+  // 这个元件一根导线都没接。图例里的图标就是这种（画全引线，否则符号会飘着）。
+  function compHasWire(wires, compId) {
+    for (var i = 0; i < wires.length; i++) {
+      var w = wires[i];
+      if ((w.a && w.a.compId === compId) || (w.b && w.b.compId === compId)) return true;
+    }
+    return false;
+  }
 
   // 干电池只有 1.5V 一种规格，所以【节数由电动势反推】。和 circuit-draw.js:566
   // 同一条规矩：不能反过来信 params.cells，两者对不上时图和数就自相矛盾了。
@@ -178,6 +186,11 @@
       slide: slide, xl: D.sliderLocalX(slide),   // 箭头落在【真实滑片位置】上
       cWired: termHasWire(wires, comp.id, 2),
       dWired: termHasWire(wires, comp.id, 3),
+      // A/B 是电阻丝的两端（下面那两根）。没接的那根不画引线——人教版只画接上的线，
+      // 画出来是一截伸向空处的断头线。整件一根线都没接（图例图标）时照画全。
+      aWired: termHasWire(wires, comp.id, 0),
+      bWired: termHasWire(wires, comp.id, 1),
+      anyWire: compHasWire(wires, comp.id),
       // C/D 都没接线 → 滑片悬空：竖线画虚线、顶部不接。
       // 教材上变阻器另一头悬空就是这么处理的（和 电路分析_点击查看电压电流.html 一致）。
       stemDashed: !(termHasWire(wires, comp.id, 2) || termHasWire(wires, comp.id, 3)),
@@ -309,6 +322,216 @@
       }
     }
     return false;
+  }
+
+  // ============================================================
+  // 人教版版面：把回路重排成「两排长方形」
+  // ------------------------------------------------------------
+  // 上面 alignLayout 只微调、不重排，学生摆歪的回路出来还是歪的（实测把 MOVE_MAX 提到
+  // 200px 画面纹丝不动——弯的线压根进不了那个对齐循环）。人教版要求：长方形、导线
+  // 横平竖直、元件均匀分布、元件不能落在拐角。
+  //
+  // 一个简单回路必可拆成两条弧：一条摆下排、一条摆上排，两端各用一根竖线连起来——
+  // 正是人教版那种「上下两条长边放元件、左右两条短边走线」的宽矩形，且没有一个元件
+  // 落在拐角。**所有元件 rot 恒 0**：电表的 A/V 字母是在旋转过的坐标系里 fillText 的，
+  // 转到竖边字母就躺倒；电池端子 0 是「+」在右，旋转会动极性显示。
+  //
+  // 任何一处不趁手（断路、多电源、有孤岛、分支挂分支……）就返回 false，
+  // build 老老实实退回 alignLayout。**绝不抛异常**。
+  var ROW_GAP = 80;      // 同一排里相邻元件之间的净空
+  var ROW_H = 260;       // 上下两排端点线之间的间距
+  var ROW_X = 160;       // 回路左边界（竖线大致落在这条线附近）
+  var ROW_IN = 60;       // 元件离左右边界再内缩这么多 → 拐角处必定空着
+  var BRANCH_OFF = 120;  // 并联支路离被测件的垂直距离（往矩形外侧让）
+
+  // 这个元件在回路里【真用到的两个端子】。用不到两个（没接线/悬空）→ null。
+  function usedTerms(it, wires) {
+    if (it.type === 'ammeter' || it.type === 'voltmeter') {
+      if (!it.meta.posWired || !it.meta.tap) return null;
+      return [0, it.meta.tap];
+    }
+    if (it.type === 'rheostat') {
+      var u = [0, 1, 2, 3].filter(function (i) { return termHasWire(wires, it.id, i); });
+      return u.length === 2 ? u : null;
+    }
+    if (termHasWire(wires, it.id, 0) && termHasWire(wires, it.id, 1)) return [0, 1];
+    return null;
+  }
+
+  // 端子并查集 → 每个元件当成「两个节点之间的一条边」。不连通就返回 null。
+  function netGraph(items, byId, wires) {
+    var parent = {};
+    function find(k) {
+      if (parent[k] == null) { parent[k] = k; return k; }
+      while (parent[k] !== k) { parent[k] = parent[parent[k]]; k = parent[k]; }
+      return k;
+    }
+    function key(cid, ti) { return cid + ':' + ti; }
+    wires.forEach(function (w) {
+      if (!w.a || !w.b) return;
+      if (!byId[w.a.compId] || !byId[w.b.compId]) return;
+      var x = find(key(w.a.compId, w.a.termIdx)), y = find(key(w.b.compId, w.b.termIdx));
+      if (x !== y) parent[x] = y;
+    });
+    var ids = {}, next = 0;
+    function nid(k) { var r = find(k); if (ids[r] == null) ids[r] = next++; return ids[r]; }
+    var edges = [];
+    for (var i = 0; i < items.length; i++) {
+      var it = items[i];
+      var ut = usedTerms(it, wires);
+      if (!ut) return null;                       // 有元件没接满两个端子
+      var a = nid(key(it.id, ut[0])), b = nid(key(it.id, ut[1]));
+      if (a === b) return null;                   // 两端同节点：被短接，别重排
+      edges.push({ compId: it.id, type: it.type, tA: ut[0], tB: ut[1], a: a, b: b });
+    }
+    // 全图必须连成一片，否则没进回路的那块会被摆到谁也够不着的地方
+    var np = {};
+    edges.forEach(function (e) { np[e.a] = e.a; np[e.b] = e.b; });
+    function nfind(k) { while (np[k] !== k) { np[k] = np[np[k]]; k = np[k]; } return k; }
+    edges.forEach(function (e) { var x = nfind(e.a), y = nfind(e.b); if (x !== y) np[x] = y; });
+    var set = {};
+    Object.keys(np).forEach(function (k) { set[nfind(k)] = 1; });
+    if (Object.keys(set).length !== 1) return null;   // 有孤岛
+    return { edges: edges };
+  }
+
+  // 从电池那条边出发，把它删掉、BFS 两端点之间的最短路 → 拼回成一个环（按顺序）。
+  function mainCycle(graph, batteryId) {
+    var bat = null;
+    graph.edges.forEach(function (e) { if (e.compId === batteryId) bat = e; });
+    if (!bat) return null;
+    var adj = {};
+    graph.edges.forEach(function (e) {
+      if (e === bat) return;
+      (adj[e.a] || (adj[e.a] = [])).push({ to: e.b, e: e });
+      (adj[e.b] || (adj[e.b] = [])).push({ to: e.a, e: e });
+    });
+    var prev = {}, seen = {}, q = [bat.a];
+    seen[bat.a] = 1;
+    while (q.length) {
+      var cur = q.shift();
+      if (cur === bat.b) break;
+      (adj[cur] || []).forEach(function (nb) {
+        if (seen[nb.to]) return;
+        seen[nb.to] = 1; prev[nb.to] = { from: cur, e: nb.e }; q.push(nb.to);
+      });
+    }
+    if (!seen[bat.b]) return null;             // 断路：电池两端之间没有别的通路
+    var path = [], cur = bat.b;
+    while (cur !== bat.a) { var p = prev[cur]; path.unshift(p.e); cur = p.from; }
+    return [bat].concat(path);
+  }
+
+  // 把环上的元件摆成上下两排。返回矩形（含两条端点线的 y），失败返回 null。
+  function rectPlace(cycle, byId, D) {
+    var n = cycle.length;
+    if (n < 2) return null;
+    var bi = -1;
+    for (var i = 0; i < n; i++) if (cycle[i].type === 'battery') { bi = i; break; }
+    if (bi < 0) return null;
+    var seq = cycle.slice(bi).concat(cycle.slice(0, bi));   // 电池打头 → 落在下排左端
+
+    function T(e) { return D.TERMINALS[byId[e.compId].type]; }
+    function halfW(e) {
+      var r = symRect(byId[e.compId]), t = T(e);
+      return Math.max(-r.x0, r.x1, Math.abs(t[e.tA].x), Math.abs(t[e.tB].x));
+    }
+    function axisY(e) { var t = T(e); return (t[e.tA].y + t[e.tB].y) / 2; }
+    function widths(list) {
+      var w = 0;
+      list.forEach(function (e, i) { w += 2 * halfW(e); if (i) w += ROW_GAP; });
+      return w;
+    }
+
+    var j = Math.ceil(n / 2);
+    var bottom = seq.slice(0, j);            // 下排：seq[0..j-1]，左 → 右
+    var top = seq.slice(j).reverse();        // 上排：seq[j] 在最右，所以反过来从左往右摆
+    var wBottom = widths(bottom), wTop = widths(top);
+    var W = Math.max(wBottom, wTop);
+    if (!(W > 0)) return null;
+
+    var bottomY = 620, topY = bottomY - ROW_H;
+    function place(list, rowY) {
+      var start = ROW_X + ROW_IN + (W - widths(list)) / 2;   // 窄的那排居中
+      list.forEach(function (e, i) {
+        var hw = halfW(e), it = byId[e.compId];
+        it.lay.x = snap(start + hw);
+        // y 不能 snap：电表的端子线在局部 y=POST_Y(72)，不是 20 的倍数，把原点吸到
+        // 格点上端子就落不到端点线上了（差 8px，一整排就歪）。snap 只用在两排各自的 y。
+        it.lay.y = rowY - axisY(e);             // 让用到的端子落在端点线上
+        it.lay.rot = 0;
+        start += 2 * hw + ROW_GAP;
+      });
+    }
+    place(bottom, bottomY);
+    place(top, topY);
+    return { x0: ROW_X, x1: ROW_X + ROW_IN * 2 + W, topY: topY, bottomY: bottomY, W: W };
+  }
+
+  // 非回路上的元件（典型就是并接在某个元件两端的电压表）：摆到那个伙伴的【矩形外侧】。
+  // 两脚不在同一个伙伴上（弦/桥）→ false，交给兜底。
+  function placeBranches(cycle, graph, byId, D, rect) {
+    var onCycle = {}, branches = [];
+    cycle.forEach(function (e) { onCycle[e.compId] = 1; });
+    graph.edges.forEach(function (e) { if (!onCycle[e.compId]) branches.push(e); });
+    var shifts = {};
+    for (var i = 0; i < branches.length; i++) {
+      var br = branches[i], mate = null;
+      cycle.forEach(function (c) {
+        if ((c.a === br.a && c.b === br.b) || (c.a === br.b && c.b === br.a)) mate = c;
+      });
+      if (!mate) return false;
+      var mit = byId[mate.compId], bit = byId[br.compId];
+      var mt = D.TERMINALS[mit.type], bt = D.TERMINALS[bit.type];
+      var mateLine = mit.lay.y + (mt[mate.tA].y + mt[mate.tB].y) / 2;
+      var isTop = Math.abs(mateLine - rect.topY) < Math.abs(mateLine - rect.bottomY);
+      var k = shifts[mate.compId] || 0; shifts[mate.compId] = k + 1;
+      var off = BRANCH_OFF + k * BRANCH_OFF;
+      var lineY = isTop ? rect.topY - off : rect.bottomY + off;
+      bit.lay.x = snap(mit.lay.x);
+      bit.lay.y = snap(lineY - (bt[br.tA].y + bt[br.tB].y) / 2);
+      bit.lay.rot = 0;
+    }
+    return true;
+  }
+
+  // 摆完之后自检：坐标有限、尺寸正常、两两不重叠。不过就整条退回。
+  function layoutSane(items, D) {
+    var rs = items.map(function (it) { return worldRectAt(it, it.lay.x, it.lay.y, D); });
+    for (var i = 0; i < rs.length; i++) {
+      var r = rs[i];
+      if (!isFinite(r.x0) || !isFinite(r.y0) || !isFinite(r.x1) || !isFinite(r.y1)) return false;
+      if (r.x1 - r.x0 > 3000 || r.y1 - r.y0 > 3000) return false;
+    }
+    for (var a = 0; a < rs.length; a++) {
+      for (var b = a + 1; b < rs.length; b++) if (rectHit(rs[a], rs[b])) return false;
+    }
+    return true;
+  }
+
+  // 重排总入口。成功（真摆成了人教版那个长方形）返回 true；否则【原样退回】并返回 false，
+  // 由 build 交给 alignLayout 兜底。**任何一条 exit 走 false 前都必须 back() 复原坐标**，
+  // 否则兜底会拿着半截挪过的位置当"原始位置"用。
+  function textbookRelayout(items, byId, wires, D) {
+    if (items.length < 2 || !wires.length) return false;
+    var g = netGraph(items, byId, wires);
+    if (!g) return false;
+    var bats = g.edges.filter(function (e) { return e.type === 'battery'; });
+    if (bats.length !== 1) return false;
+    var cycle = mainCycle(g, bats[0].compId);
+    if (!cycle || cycle.length < 2) return false;
+
+    var keep = items.map(function (it) {
+      return { it: it, x: it.lay.x, y: it.lay.y, rot: it.lay.rot };
+    });
+    function back() {
+      keep.forEach(function (s) { s.it.lay.x = s.x; s.it.lay.y = s.y; s.it.lay.rot = s.rot; });
+    }
+    var rect = rectPlace(cycle, byId, D);
+    if (!rect) { back(); return false; }
+    if (!placeBranches(cycle, g, byId, D, rect)) { back(); return false; }
+    if (!layoutSane(items, D)) { back(); return false; }
+    return true;
   }
 
   // ============================================================
@@ -584,7 +807,10 @@
 
     // 规整化。**顺序不能反**：先算布局，再算世界框。反了就是拿【旧】坐标算框，
     // 路由器照着旧盒子避让，症状是「导线从刚挪过来的元件身上穿过去」。
-    if (!(opts && opts.regularize === false)) alignLayout(items, byId, wires, D);
+    if (!(opts && opts.regularize === false)) {
+      // 先试人教版两排长方形重排；不成（断路/多电源/孤岛/分支挂分支…）再退回旧的微调
+      if (!textbookRelayout(items, byId, wires, D)) alignLayout(items, byId, wires, D);
+    }
     items.forEach(function (it) { it.x = it.lay.x; it.y = it.lay.y; it.comp = it.lay; });
 
     var rects = items.map(function (it) { return worldRect(it, D); });
@@ -739,11 +965,13 @@
     var b = model.bounds;
     ctx.fillRect(b ? b.x : 0, b ? b.y : 0, b ? b.w : 1, b ? b.h : 1);
 
-    model.wires.forEach(function (w) { drawPolys(ctx, w.pts, COLOR.wire, 3); });
+    // 线宽和符号描边取同一个值（2.4）：人教版电路图所有线条一样粗，导线比符号粗
+    // 会显得像另画上去的。改这里要连 drawSymbol 一起想。
+    model.wires.forEach(function (w) { drawPolys(ctx, w.pts, COLOR.wire, 2.4); });
     // 结点圆点画在导线之后、符号之前
     (model.junctions || []).forEach(function (j) {
       ctx.beginPath();
-      ctx.arc(j.x, j.y, 4, 0, Math.PI * 2);
+      ctx.arc(j.x, j.y, 3.6, 0, Math.PI * 2);
       ctx.fillStyle = COLOR.wire;
       ctx.fill();
     });
@@ -781,16 +1009,18 @@
       }
       case 'switch': {
         lead(ctx, T[0], -22); lead(ctx, T[1], 22);
-        dot(ctx, -22, 0, 3.6); dot(ctx, 22, 0, 3.6);
-        ctx.lineWidth = 2.6;
-        // 断开时抬起的斜刀片是**刻意的例外**——教材的开关符号就是这么画的。
-        // 规矩是「导线横平竖直；只有符号内部的刀片是斜的」。
+        // 两个触点是固定不动的接点，刀片绕左触点转。
+        dot(ctx, -22, 0, 4.0); dot(ctx, 22, 0, 4.0);
+        // 断开的斜刀片是**刻意的例外**——教材的开关符号就是这么画的：导线横平竖直，
+        // 只有符号内部的刀片是斜的。闭合时刀片搭在两个触点上，画得比导线明显粗，
+        // 否则整把开关看上去就是「一根线加两个点」，和导线分不出来。
         var closed = it.rec ? !!it.rec.closed : !!(c.params || {}).closed;
+        ctx.lineWidth = closed ? 3.4 : 2.6;
         ctx.beginPath();
         ctx.moveTo(-22, 0);
         ctx.lineTo(closed ? 22 : 6, closed ? 0 : -20);
         ctx.stroke();
-        if (!closed) dot(ctx, 6, -20, 3.2);
+        if (!closed) dot(ctx, 6, -20, 3.4);
         break;
       }
       case 'bulb': {
@@ -824,7 +1054,9 @@
       }
       case 'rheostat': {
         var g = it.meta;
-        lead(ctx, T[0], -56); lead(ctx, T[1], 56);
+        // 只画接上的那根 A/B 引线（整件没接线时两根都画）
+        if (!g.anyWire || g.aWired) lead(ctx, T[0], -56);
+        if (!g.anyWire || g.bWired) lead(ctx, T[1], 56);
         ctx.beginPath();
         D.roundRect(ctx, -56, 14, 112, 24, 2);
         ctx.stroke();
@@ -903,6 +1135,6 @@
     // 规整化/走线的常量：测试要断言「位移 ≤ MOVE_MAX」，从这里取，
     // 免得内核改了上限、测试还按老数字断（那就成了自证）
     MOVE_MAX: MOVE_MAX,
-    version: '2.0.0',
+    version: '3.0.0',
   };
 });
