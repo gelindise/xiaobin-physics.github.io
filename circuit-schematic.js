@@ -336,8 +336,8 @@
   // 落在拐角。**所有元件 rot 恒 0**：电表的 A/V 字母是在旋转过的坐标系里 fillText 的，
   // 转到竖边字母就躺倒；电池端子 0 是「+」在右，旋转会动极性显示。
   //
-  // 任何一处不趁手（断路、多电源、有孤岛、分支挂分支……）就返回 false，
-  // build 老老实实退回 alignLayout。**绝不抛异常**。
+  // 任何一处不趁手（断路、多电源、有孤岛、复杂桥接……）就返回 false；
+  // 沙盒随后尝试基于接线关系的通用网格排版，其余旧调用仍可选择小幅对齐。
   var ROW_GAP = 80;      // 同一排里相邻元件之间的净空
   var ROW_H = 260;       // 上下两排端点线之间的间距
   var ROW_X = 160;       // 回路左边界（竖线大致落在这条线附近）
@@ -427,7 +427,7 @@
   }
 
   // 把环上的元件摆成上下两排。返回矩形（含两条端点线的 y），失败返回 null。
-  function rectPlace(cycle, byId, D) {
+  function rectPlace(cycle, byId, D, branchSpace) {
     var n = cycle.length;
     if (n < 2) return null;
     var bi = -1;
@@ -447,11 +447,19 @@
       return w;
     }
 
-    var j = Math.ceil(n / 2);
+    // 伏安法/测功率常见的五元件主回路是 E、S、RH、R/L、A。
+    // 下排只放电源和开关，其余放上排：滑变不再被挤在右下拐角，
+    // 被测件与电流表也能和滑变沿同一条水平主干排列。
+    var teachingLoop = n === 5 && seq.some(function (e) { return e.type === 'switch'; }) &&
+      seq.some(function (e) { return e.type === 'rheostat'; }) &&
+      seq.some(function (e) { return e.type === 'ammeter'; });
+    var j = teachingLoop ? 2 : Math.ceil(n / 2);
     var bottom = seq.slice(0, j);            // 下排：seq[0..j-1]，左 → 右
     var top = seq.slice(j).reverse();        // 上排：seq[j] 在最右，所以反过来从左往右摆
     var wBottom = widths(bottom), wTop = widths(top);
-    var W = Math.max(wBottom, wTop);
+    // 并联支路里若串了多个元件，主回路两端必须留得下整条支路；
+    // 否则支路元件会被挤到矩形外，导线绕成几层套框。
+    var W = Math.max(wBottom, wTop) + (branchSpace || 0) * 220;
     if (!(W > 0)) return null;
 
     var bottomY = 620, topY = bottomY - ROW_H;
@@ -494,6 +502,59 @@
       nodePos[c.a] = { x: it.lay.x + T[c.tA].x, y: it.lay.y + T[c.tA].y };
       nodePos[c.b] = { x: it.lay.x + T[c.tB].x, y: it.lay.y + T[c.tB].y };
     });
+    // 分支可能不是一只表，而是「灯泡—电流表」等串联的一整条并联支路。
+    // 沿未放置的元件边，从回路节点走到另一个回路节点；内部节点不属于主回路。
+    // 把整条路径排在矩形留白带（空间不足时移到外侧），而不是遇到内部节点就退回实物图。
+    var pending = branches.slice(), paths = [];
+    for (var guard = 0; guard < branches.length; guard++) {
+      var start = pending.filter(function (e) { return !!nodePos[e.a] !== !!nodePos[e.b]; })[0];
+      if (!start) break;
+      var first = nodePos[start.a] ? start.a : start.b;
+      var done = null, used = {}, visited = {}; visited[first] = true;
+      (function walk(node, path, nodes) {
+        if (done || path.length > branches.length) return;
+        if (node !== first && nodePos[node]) {
+          done = { edges: path.slice(), nodes: nodes.slice() }; return;
+        }
+        pending.forEach(function (e) {
+          if (done || used[e.compId] || (e.a !== node && e.b !== node)) return;
+          var next = e.a === node ? e.b : e.a;
+          if (visited[next]) return;
+          used[e.compId] = true; visited[next] = true;
+          path.push(e); nodes.push(next); walk(next, path, nodes);
+          path.pop(); nodes.pop(); visited[next] = false; used[e.compId] = false;
+        });
+      })(first, [], [first]);
+      if (!done || done.edges.length < 2) break;
+      var aPos = nodePos[done.nodes[0]], bPos = nodePos[done.nodes[done.nodes.length - 1]];
+      var atTop = Math.abs(aPos.y - rect.topY) < Math.abs(aPos.y - rect.bottomY);
+      var btTop = Math.abs(bPos.y - rect.topY) < Math.abs(bPos.y - rect.bottomY);
+      if (atTop !== btTop) break; // 竖向桥暂交给通用版式
+      // 第一条多元件并联支路放在回路内部的留白带，主回路在上、支路在下，
+      // 避免两条不同电位的长导线叠出一层“套框”。再多的支路才向外分层。
+      var lineY = paths.length === 0 && rect.bottomY - rect.topY >= 2 * BRANCH_OFF
+        ? (atTop ? rect.topY + BRANCH_OFF : rect.bottomY - BRANCH_OFF)
+        : (atTop ? rect.topY - BRANCH_OFF * (paths.length + 1)
+                 : rect.bottomY + BRANCH_OFF * (paths.length + 1));
+      var dir = aPos.x <= bPos.x ? 1 : -1;
+      var spacing = Math.abs(aPos.x - bPos.x) / (done.edges.length + 1);
+      done.edges.forEach(function (e, k) {
+        var it = byId[e.compId], T = D.TERMINALS[it.type];
+        var entering = done.nodes[k] === e.a ? e.tA : e.tB;
+        var leaving = entering === e.tA ? e.tB : e.tA;
+        var reversed = dir < 0 ? T[entering].x < T[leaving].x
+                               : T[entering].x > T[leaving].x;
+        var rot = reversed && ['resistor','bulb','ammeter','voltmeter','switch'].indexOf(it.type) >= 0 ? 180 : 0;
+        var axisX = (T[e.tA].x + T[e.tB].x) / 2;
+        var axisY = (T[e.tA].y + T[e.tB].y) / 2;
+        it.lay.rot = rot;
+        it.lay.x = snap(aPos.x + dir * (k + 1) * spacing - (rot ? -axisX : axisX));
+        it.lay.y = lineY - (rot ? -axisY : axisY);
+      });
+      paths.push(done);
+      pending = pending.filter(function (e) { return done.edges.indexOf(e) < 0; });
+    }
+    branches = pending;
     var shifts = {};
     for (var i = 0; i < branches.length; i++) {
       var br = branches[i], mate = null;
@@ -568,10 +629,104 @@
     function back() {
       keep.forEach(function (s) { s.it.lay.x = s.x; s.it.lay.y = s.y; s.it.lay.rot = s.rot; });
     }
-    var rect = rectPlace(cycle, byId, D);
+    var extra = g.edges.length - cycle.length;
+    var rect = rectPlace(cycle, byId, D, extra >= 2 ? extra : 0);
     if (!rect) { back(); return false; }
     if (!placeBranches(cycle, g, byId, D, rect)) { back(); return false; }
+    // 两节点并联：电源在下方正极朝右；上方电阻/灯泡的同一电气节点
+    // 必须也落在右侧。否则不同电位的两根母线会在图中央重叠，
+    // 看起来像把电源短接了。无极性的电阻和灯泡可安全转 180°。
+    if (cycle.length === 2) {
+      var source = cycle.filter(function (e) { return e.type === 'battery'; })[0];
+      g.edges.forEach(function (e) {
+        if (e === source || (e.type !== 'resistor' && e.type !== 'bulb')) return;
+        if (e.a === source.a || e.b === source.a) {
+          byId[e.compId].lay.rot = e.a === source.a ? 180 : 0;
+        }
+      });
+    }
     if (!layoutSane(items, D)) { back(); return false; }
+    return true;
+  }
+
+  // 任意接法的第二条版式通道。完整的单电源回路优先走上面的教材矩形；
+  // 断路、多电源、孤岛、桥接和分支上的分支则按【真实接线的元件邻接图】排版。
+  // 不用原实物坐标推断电气关系；旧的 alignLayout 只挪 40px，摆乱的自搭电路无法规整。
+  // 每个连通块独立排放，线性链沿两排折返，有分支的图按 BFS 层放置。
+  // 这里只改 lay 副本；每根导线仍由原 scene 的两个端子重新取点，保持电气拓扑。
+  function canonicalLayout(items, byId, wires, D) {
+    var adj = {}, seen = {}, groups = [], baseY = 240, stepX = 260, stepY = 240;
+    items.forEach(function (it) { adj[it.id] = []; });
+    wires.forEach(function (w) {
+      if (!w.a || !w.b) return;
+      var a = w.a.compId, b = w.b.compId;
+      if (!byId[a] || !byId[b] || a === b) return;
+      if (adj[a].indexOf(b) < 0) adj[a].push(b);
+      if (adj[b].indexOf(a) < 0) adj[b].push(a);
+    });
+    items.forEach(function (it) {
+      if (seen[it.id]) return;
+      var group = [], queue = [it.id]; seen[it.id] = true;
+      while (queue.length) {
+        var id = queue.shift(); group.push(id);
+        adj[id].forEach(function (next) {
+          if (!seen[next]) { seen[next] = true; queue.push(next); }
+        });
+      }
+      groups.push(group);
+    });
+    // 有电源的连通块在前，孤立元件在后；同级保持画布中的创建顺序。
+    groups.sort(function (a, b) {
+      var pa = a.some(function (id) { return byId[id].type === 'battery'; }) ? 0 : 1;
+      var pb = b.some(function (id) { return byId[id].type === 'battery'; }) ? 0 : 1;
+      return pa - pb;
+    });
+    function place(id, x, lineY) {
+      var it = byId[id], u = usedTerms(it, wires), terms = D.TERMINALS[it.type];
+      var axisY = u ? (terms[u[0]].y + terms[u[1]].y) / 2 : 0;
+      it.lay.x = snap(x);
+      it.lay.y = lineY - axisY;
+      it.lay.rot = 0; // 电表字母与元件标签保持正立
+    }
+    groups.forEach(function (group) {
+      var allSimple = group.every(function (id) { return adj[id].length <= 2; });
+      if (allSimple) {
+        var root = group.filter(function (id) { return adj[id].length <= 1; })[0] ||
+                   group.filter(function (id) { return byId[id].type === 'battery'; })[0] || group[0];
+        var order = [], visited = {}, current = root;
+        while (current != null && !visited[current]) {
+          order.push(current); visited[current] = true;
+          current = adj[current].filter(function (id) { return !visited[id]; })[0];
+        }
+        var cols = Math.min(6, order.length);
+        order.forEach(function (id, i) {
+          var row = Math.floor(i / cols), col = i % cols;
+          if (row % 2) col = cols - 1 - col;
+          place(id, 280 + col * stepX, baseY + row * stepY);
+        });
+        baseY += Math.ceil(order.length / cols) * stepY + 120;
+      } else {
+        var source = group.filter(function (id) { return byId[id].type === 'battery'; })[0] || group[0];
+        var levels = [[source]], visited2 = {}; visited2[source] = true;
+        for (var depth = 0; depth < levels.length; depth++) {
+          var nextLevel = [];
+          levels[depth].forEach(function (id) {
+            adj[id].forEach(function (next) {
+              if (!visited2[next]) { visited2[next] = true; nextLevel.push(next); }
+            });
+          });
+          if (nextLevel.length) levels.push(nextLevel);
+        }
+        var maxRows = Math.max.apply(null, levels.map(function (level) { return level.length; }));
+        levels.forEach(function (level, x) {
+          var offset = (maxRows - level.length) * stepY / 2;
+          level.forEach(function (id, y) {
+            place(id, 280 + x * stepX, baseY + offset + y * stepY);
+          });
+        });
+        baseY += maxRows * stepY + 120;
+      }
+    });
     return true;
   }
 
@@ -804,12 +959,33 @@
       }
       case 'rheostat': {
         var mx = (rec && rec.Rmax != null) ? +rec.Rmax : (P.Rmax != null ? +P.Rmax : 20);
-        var parts = ['最大 ' + num(mx) + ' Ω', '滑片 ' + num(it.meta.slide)];
-        if (rec && rec.mode && rec.mode !== 'open') parts.push('接法 ' + rec.mode);
-        return parts.join(' · ');
+        // 接线由导线本身表示，图上不重复印 B-C 等调试信息；保留教学需要的滑片位置。
+        return '最大 ' + num(mx) + ' Ω · 滑片 ' + num(it.meta.slide);
       }
       default: return '';
     }
+  }
+
+  // 标注也是图形的一部分：线路不能穿过字，导出的画布也不能把字裁掉。
+  // 这里按与 drawSymbol 相同的基线/字号估算保守包围盒；不依赖 DOM 或 Canvas。
+  function annotationRects(it) {
+    var r = it.worldRect, mid = (r.x0 + r.x1) / 2, out = [];
+    function width(s, size) {
+      var n = 0;
+      Array.from(s).forEach(function (c) {
+        n += /[\u3400-\u9fffΩ]/.test(c) ? size : /[il.· ]/.test(c) ? size * 0.36 : size * 0.65;
+      });
+      return n + 14;
+    }
+    if (it.label) {
+      var a = width(it.label, 15) / 2;
+      out.push({ x0: mid - a, x1: mid + a, y0: r.y0 - 25, y1: r.y0 - 4 });
+    }
+    if (it.value) {
+      var b = width(it.value, 12) / 2;
+      out.push({ x0: mid - b, x1: mid + b, y0: r.y1 + 2, y1: r.y1 + 20 });
+    }
+    return out;
   }
 
   // ============================================================
@@ -848,17 +1024,24 @@
 
     // 规整化。**顺序不能反**：先算布局，再算世界框。反了就是拿【旧】坐标算框，
     // 路由器照着旧盒子避让，症状是「导线从刚挪过来的元件身上穿过去」。
+    var layout = 'original';
     if (!(opts && opts.regularize === false)) {
-      // 先试人教版两排长方形重排；不成（断路/多电源/孤岛/分支挂分支…）再退回旧的微调
-      if (!textbookRelayout(items, byId, wires, D)) alignLayout(items, byId, wires, D);
+      if (textbookRelayout(items, byId, wires, D)) layout = 'textbook';
+      else if (opts && opts.canonical) {
+        canonicalLayout(items, byId, wires, D);
+        layout = 'canonical';
+      } else { alignLayout(items, byId, wires, D); layout = 'aligned'; }
     }
     items.forEach(function (it) { it.x = it.lay.x; it.y = it.lay.y; it.comp = it.lay; });
 
     var rects = items.map(function (it) { return worldRect(it, D); });
     items.forEach(function (it, i) { it.worldRect = rects[i]; });
+    var notes = [];
+    items.forEach(function (it) { notes = notes.concat(annotationRects(it)); });
+    var obstacles = rects.concat(notes);   // 前面 items.length 项仍对应端子所在的符号框
 
-    // 外接框：外侧兜底车道的选址要用到全图范围
-    var rough = rects.slice();
+    // 外接框：外侧兜底车道的选址要用到全图范围（标注也占位置）
+    var rough = obstacles.slice();
     wires.forEach(function (w) {
       if (!w.a || !w.b) return;
       var a = byId[w.a.compId], b = byId[w.b.compId];
@@ -871,7 +1054,7 @@
 
     var nets = netOf(wires);
     var segs = [];        // 已经排好的线段，后面的导线要躲开
-    var outWires = [];
+    var outWires = [], warnings = [];
     wires.forEach(function (w, wi) {
       if (!w.a || !w.b) return;
       var a = byId[w.a.compId], b = byId[w.b.compId];
@@ -885,9 +1068,14 @@
       // 能不动就不动：编辑器 rerouteAll 规划的正交走线、学生拖出来的直线上，原样搬进
       // 电路图，示例电路因此出来的就是那个规整的方框回路。但**得是真干净的走线才留**：
       // 横平竖直、拐点不超过 3 个、不压元件、不和别的节点的线重合，四条缺一就重排。
-      var kept = axisAligned(pts) && bendCount(pts) <= 3 &&
-                 pathClear(pts, rects, segs, excl, myNet);
-      if (!kept) pts = routeWire(p0, p1, box, rects, segs, excl, myNet);
+      var kept = layout !== 'canonical' && axisAligned(pts) && bendCount(pts) <= 3 &&
+                 pathClear(pts, obstacles, segs, excl, myNet);
+      if (!kept) pts = routeWire(p0, p1, box, obstacles, segs, excl, myNet);
+      // 极密集或互相矛盾的接线可能找不到不压符号/不混线的通道。
+      // 必须显式报告，不能把有歧义的示意图冒充“标准电路图”。
+      if (!axisAligned(pts) || !pathClear(pts, obstacles, segs, excl, myNet)) {
+        warnings.push('第 ' + (wi + 1) + ' 根导线布局需核对');
+      }
       for (var i = 1; i < pts.length; i++) {
         var A = pts[i - 1], B = pts[i];
         if (Math.abs(B.x - A.x) < 1) segs.push({ orient: 'v', pos: B.x, a0: A.y, a1: B.y, net: myNet });
@@ -896,7 +1084,7 @@
       outWires.push({ pts: pts, kept: kept, _net: myNet });
     });
 
-    var all = rects.slice();
+    var all = obstacles.slice();
     outWires.forEach(function (w) {
       w.pts.forEach(function (p) {
         all.push({ x0: p.x, y0: p.y, x1: p.x, y1: p.y });
@@ -912,6 +1100,9 @@
                  meta: it.meta, rect: it.rect, worldRect: it.worldRect };
       }),
       wires: outWires,
+      layout: layout,
+      warnings: warnings,
+      crossings: crossingsOf(outWires),
       junctions: junctionsOf(outWires),
       bounds: full ? { x: full.x0 - pad, y: full.y0 - pad,
                        w: (full.x1 - full.x0) + pad * 2,
@@ -996,6 +1187,35 @@
     ctx.restore();
   }
 
+  // 不同电气节点的线在纸面交叉时留一个明确的断口，避免被误认为相接。
+  // 只处理两段内部的十字相交；端点相交由结点或走线校验处理。
+  function crossingsOf(wires) {
+    var out = [], seen = {};
+    function segments(w) {
+      var s = [];
+      for (var i = 1; i < w.pts.length; i++) {
+        var a = w.pts[i - 1], b = w.pts[i];
+        if (Math.abs(a.x - b.x) < 0.5 && Math.abs(a.y - b.y) > 1)
+          s.push({ v: true, x: a.x, lo: Math.min(a.y, b.y), hi: Math.max(a.y, b.y) });
+        else if (Math.abs(a.y - b.y) < 0.5 && Math.abs(a.x - b.x) > 1)
+          s.push({ v: false, y: a.y, lo: Math.min(a.x, b.x), hi: Math.max(a.x, b.x) });
+      }
+      return s;
+    }
+    var all = wires.map(segments);
+    for (var i = 0; i < wires.length; i++) for (var j = i + 1; j < wires.length; j++) {
+      if (wires[i]._net === wires[j]._net) continue;
+      all[i].forEach(function (a) { all[j].forEach(function (b) {
+        if (a.v === b.v) return;
+        var v = a.v ? a : b, h = a.v ? b : a;
+        if (v.x <= h.lo + 6 || v.x >= h.hi - 6 || h.y <= v.lo + 6 || h.y >= v.hi - 6) return;
+        var key = Math.round(v.x) + ',' + Math.round(h.y);
+        if (!seen[key]) { seen[key] = 1; out.push({ x: v.x, y: h.y }); }
+      }); });
+    }
+    return out;
+  }
+
   function draw(ctx, model, opts) {
     var D = drawOf(opts);
     var items = model._items || [];
@@ -1009,6 +1229,12 @@
     // 线宽和符号描边取同一个值（2.4）：人教版电路图所有线条一样粗，导线比符号粗
     // 会显得像另画上去的。改这里要连 drawSymbol 一起想。
     model.wires.forEach(function (w) { drawPolys(ctx, w.pts, COLOR.wire, 2.4); });
+    // 纵线断开、横线跨过：让不同节点的十字交叉明确“不相连”。
+    (model.crossings || []).forEach(function (p) {
+      ctx.fillStyle = COLOR.paper; ctx.fillRect(p.x - 4, p.y - 6, 8, 12);
+      ctx.beginPath(); ctx.moveTo(p.x - 6, p.y); ctx.lineTo(p.x + 6, p.y);
+      ctx.strokeStyle = COLOR.wire; ctx.lineWidth = 2.4; ctx.stroke();
+    });
     // 结点圆点画在导线之后、符号之前
     (model.junctions || []).forEach(function (j) {
       ctx.beginPath();
@@ -1089,7 +1315,13 @@
         ctx.fillStyle = COLOR.wire;
         ctx.font = 'bold 24px Georgia,"Times New Roman",serif';
         ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        // 支路从右往左时表的接线极性需转 180°，字母仍须正立可读。
+        ctx.save();
+        if ((c.rot || 0) % 360 === 180) {
+          ctx.translate(m.cx, m.cy); ctx.rotate(Math.PI); ctx.translate(-m.cx, -m.cy);
+        }
         ctx.fillText(c.type === 'ammeter' ? 'A' : 'V', m.cx, m.cy + 1);
+        ctx.restore();
         ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
         break;
       }
@@ -1176,6 +1408,6 @@
     // 规整化/走线的常量：测试要断言「位移 ≤ MOVE_MAX」，从这里取，
     // 免得内核改了上限、测试还按老数字断（那就成了自证）
     MOVE_MAX: MOVE_MAX,
-    version: '3.1.0',
+    version: '3.3.0',
   };
 });
