@@ -395,7 +395,11 @@
     return { edges: edges };
   }
 
-  // 从电池那条边出发，把它删掉、BFS 两端点之间的最短路 → 拼回成一个环（按顺序）。
+  // 电池那条边删掉，枚举两端点之间的【所有简单路径】，取【最长】的一条拼回成环。
+  //
+  // 为什么是"最长"而不是"最短"：并联支路（电压表之类）在图上是一条【弦】，走它会抄近路
+  // ——BFS 最短路会被弦劫持（实测：主回路 E-A-L-RH-SW 被抄成 E-A-V-SW，L/RH 反倒被当成
+  // 支路，整张图退回）。串联主回路才是那条把电池两端绕【一整圈】的、最长的简单路径。
   function mainCycle(graph, batteryId) {
     var bat = null;
     graph.edges.forEach(function (e) { if (e.compId === batteryId) bat = e; });
@@ -406,20 +410,20 @@
       (adj[e.a] || (adj[e.a] = [])).push({ to: e.b, e: e });
       (adj[e.b] || (adj[e.b] = [])).push({ to: e.a, e: e });
     });
-    var prev = {}, seen = {}, q = [bat.a];
-    seen[bat.a] = 1;
-    while (q.length) {
-      var cur = q.shift();
-      if (cur === bat.b) break;
-      (adj[cur] || []).forEach(function (nb) {
+    var best = null, steps = 0, CAP = 60000;    // 课堂电路的元件就那几个，步数封顶防爆炸
+    var start = {}; start[bat.a] = 1;
+    (function dfs(node, seen, path) {
+      if (steps++ > CAP) return;
+      if (node === bat.b) { if (!best || path.length > best.length) best = path.slice(); return; }
+      (adj[node] || []).forEach(function (nb) {
         if (seen[nb.to]) return;
-        seen[nb.to] = 1; prev[nb.to] = { from: cur, e: nb.e }; q.push(nb.to);
+        seen[nb.to] = 1; path.push(nb.e);
+        dfs(nb.to, seen, path);
+        path.pop(); seen[nb.to] = 0;
       });
-    }
-    if (!seen[bat.b]) return null;             // 断路：电池两端之间没有别的通路
-    var path = [], cur = bat.b;
-    while (cur !== bat.a) { var p = prev[cur]; path.unshift(p.e); cur = p.from; }
-    return [bat].concat(path);
+    })(bat.a, start, []);
+    if (!best) return null;                    // 断路：电池两端之间没有别的通路
+    return [bat].concat(best);
   }
 
   // 把环上的元件摆成上下两排。返回矩形（含两条端点线的 y），失败返回 null。
@@ -451,16 +455,21 @@
     if (!(W > 0)) return null;
 
     var bottomY = 620, topY = bottomY - ROW_H;
+    // 两排都铺满同一个宽度 W：窄的那排把间隙撑开，于是左右两个端点各自对齐，
+    // 上下两条边一样长 → 矩形是"实"的，左右两条竖边是干净的直线（不是拧着的）。
     function place(list, rowY) {
-      var start = ROW_X + ROW_IN + (W - widths(list)) / 2;   // 窄的那排居中
-      list.forEach(function (e, i) {
+      var k = list.length, sum = 0;
+      list.forEach(function (e) { sum += 2 * halfW(e); });
+      var gap = k > 1 ? (W - sum) / (k - 1) : 0;
+      var cur = ROW_X + ROW_IN;
+      list.forEach(function (e) {
         var hw = halfW(e), it = byId[e.compId];
-        it.lay.x = snap(start + hw);
+        it.lay.x = snap(cur + hw);
         // y 不能 snap：电表的端子线在局部 y=POST_Y(72)，不是 20 的倍数，把原点吸到
         // 格点上端子就落不到端点线上了（差 8px，一整排就歪）。snap 只用在两排各自的 y。
         it.lay.y = rowY - axisY(e);             // 让用到的端子落在端点线上
         it.lay.rot = 0;
-        start += 2 * hw + ROW_GAP;
+        cur += 2 * hw + gap;
       });
     }
     place(bottom, bottomY);
@@ -468,29 +477,61 @@
     return { x0: ROW_X, x1: ROW_X + ROW_IN * 2 + W, topY: topY, bottomY: bottomY, W: W };
   }
 
-  // 非回路上的元件（典型就是并接在某个元件两端的电压表）：摆到那个伙伴的【矩形外侧】。
-  // 两脚不在同一个伙伴上（弦/桥）→ false，交给兜底。
+  // 非回路上的元件（并接的电压表之类）：贴到伙伴的【矩形外侧】。
+  // ① 两脚正好落在同一个回路元件的两端（并接一个元件）→ 贴着那个伙伴、同 x 让到矩形外。
+  // ② 两脚落在两个不同节点上（弦/桥，比如电压表跨串联的两个元件）→ 按两脚所在的那条边，
+  //    让到矩形外侧、横向对齐两脚中点。人教版里这也是一圈规整的线，不该整张图退回。
+  // 只有「分支又挂在分支上」（节点不在回路上）才 false 兜底。
   function placeBranches(cycle, graph, byId, D, rect) {
     var onCycle = {}, branches = [];
     cycle.forEach(function (e) { onCycle[e.compId] = 1; });
     graph.edges.forEach(function (e) { if (!onCycle[e.compId]) branches.push(e); });
+    if (!branches.length) return true;
+    // 已经摆好的回路节点 → 世界坐标，用来给弦/桥找落点
+    var nodePos = {};
+    cycle.forEach(function (c) {
+      var it = byId[c.compId], T = D.TERMINALS[it.type];
+      nodePos[c.a] = { x: it.lay.x + T[c.tA].x, y: it.lay.y + T[c.tA].y };
+      nodePos[c.b] = { x: it.lay.x + T[c.tB].x, y: it.lay.y + T[c.tB].y };
+    });
     var shifts = {};
     for (var i = 0; i < branches.length; i++) {
       var br = branches[i], mate = null;
       cycle.forEach(function (c) {
         if ((c.a === br.a && c.b === br.b) || (c.a === br.b && c.b === br.a)) mate = c;
       });
-      if (!mate) return false;
-      var mit = byId[mate.compId], bit = byId[br.compId];
-      var mt = D.TERMINALS[mit.type], bt = D.TERMINALS[bit.type];
-      var mateLine = mit.lay.y + (mt[mate.tA].y + mt[mate.tB].y) / 2;
-      var isTop = Math.abs(mateLine - rect.topY) < Math.abs(mateLine - rect.bottomY);
-      var k = shifts[mate.compId] || 0; shifts[mate.compId] = k + 1;
-      var off = BRANCH_OFF + k * BRANCH_OFF;
-      var lineY = isTop ? rect.topY - off : rect.bottomY + off;
-      bit.lay.x = snap(mit.lay.x);
-      bit.lay.y = snap(lineY - (bt[br.tA].y + bt[br.tB].y) / 2);
-      bit.lay.rot = 0;
+      var bit = byId[br.compId], bt = D.TERMINALS[bit.type];
+      var midY = (bt[br.tA].y + bt[br.tB].y) / 2;
+      var midX = (bt[br.tA].x + bt[br.tB].x) / 2;
+      if (mate) {
+        var mit = byId[mate.compId], mt = D.TERMINALS[mit.type];
+        var mateLine = mit.lay.y + (mt[mate.tA].y + mt[mate.tB].y) / 2;
+        var isTop = Math.abs(mateLine - rect.topY) < Math.abs(mateLine - rect.bottomY);
+        var k = shifts[mate.compId] || 0; shifts[mate.compId] = k + 1;
+        var off = BRANCH_OFF + k * BRANCH_OFF;
+        var lineY = isTop ? rect.topY - off : rect.bottomY + off;
+        bit.lay.x = snap(mit.lay.x);
+        bit.lay.y = snap(lineY - midY);
+        bit.lay.rot = 0;
+      } else {
+        var pa = nodePos[br.a], pb = nodePos[br.b];
+        if (!pa || !pb) return false;               // 分支挂在分支上
+        var topN = Math.abs(pa.y - rect.topY) < Math.abs(pa.y - rect.bottomY);
+        var topM = Math.abs(pb.y - rect.topY) < Math.abs(pb.y - rect.bottomY);
+        var q = shifts['__chord'] || 0; shifts['__chord'] = q + 1;
+        var off2 = BRANCH_OFF + q * BRANCH_OFF;
+        if (topN && topM) {                          // 两脚都在上排 → 让到上方
+          bit.lay.x = snap((pa.x + pb.x) / 2 - midX);
+          bit.lay.y = snap(rect.topY - off2 - midY);
+        } else if (!topN && !topM) {                 // 两脚都在下排 → 让到下方
+          bit.lay.x = snap((pa.x + pb.x) / 2 - midX);
+          bit.lay.y = snap(rect.bottomY + off2 - midY);
+        } else {                                     // 一上一下 → 让到矩形右侧
+          bit.lay.x = snap(rect.x1 + off2 - midX);
+          bit.lay.y = snap((pa.y + pb.y) / 2 - midY);
+        }
+        bit.lay.rot = 0;
+      }
     }
     return true;
   }
@@ -1135,6 +1176,6 @@
     // 规整化/走线的常量：测试要断言「位移 ≤ MOVE_MAX」，从这里取，
     // 免得内核改了上限、测试还按老数字断（那就成了自证）
     MOVE_MAX: MOVE_MAX,
-    version: '3.0.0',
+    version: '3.1.0',
   };
 });
