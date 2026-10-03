@@ -50,6 +50,8 @@
   var BEND = 50;          // 一个拐点
   var BLOCK = 1e6;        // 一段压在元件符号上：一票否决
   var FOREIGN = 500;      // 一段和【别的节点】的导线重合
+  var TERMDOT = 400;      // 一段从【别的节点】的接线柱正上方压过去
+  var CROSS = 120;        // 一段和【别的节点】的线十字交叉（教材尽量避免交叉）
   var SHORT_LEN = 24;     // 短于这么长的一段算「贴着引脚的台阶」
   var SHORTSEG = 30;      // 台阶罚
   var ESCAPE = 18;        // 端子附近的逃逸走廊：自家符号框在这一小圈里不算障碍
@@ -63,6 +65,7 @@
     dim:    '#94a3b8',    // 悬空端子的虚线短脚
     ink:    '#334155',    // 编号
     value:  '#64748b',    // 铭牌值
+    warn:   '#b45309',    // 图上那行提醒（接错线之类）
     paper:  '#ffffff',
   };
 
@@ -245,10 +248,19 @@
   // 而且框里还嵌着一个矩形，看着像电流绕了个圈。合并成杆顶一个点就干净了：
   // 导线直接落在滑片正上方，箭头照旧指向电阻丝。
   var RHEO_STEM_TOP = 0;        // 箭头杆顶端（局部 y）。取 0 = 元件的轴线，引线正好压在导线上
+  // 【左右镜像】。元件在回路里朝哪一头，由 rectPlace 按回路走向定；朝向不对时
+  // 不能转 180°——变阻器的滑片杆长在顶上、电表的三个柱全在下方，转过去就头朝下了。
+  // 所以用一个只翻左右、竖直方向不动的镜像（comp.mir，绘制层用 ctx.scale(-1,1) 实现）。
+  // 这里要跟着翻：端子在局部坐标里 x 取反，导线才落得到镜像后的柱子上。
   function schTermWorld(it, termIdx, D) {
+    var mir = !!(it.comp && it.comp.mir);
     if (it.type === 'rheostat' && termIdx >= 2) {
       var sx = Math.max(-54, Math.min(54, it.meta.xl));   // 和 drawSymbol 的 sx 取同一段
-      return D.toWorld(it.comp, sx, RHEO_STEM_TOP);
+      return D.toWorld(it.comp, mir ? -sx : sx, RHEO_STEM_TOP);
+    }
+    if (mir) {
+      var t = D.TERMINALS[it.type][termIdx];
+      return D.toWorld(it.comp, -t.x, t.y);
     }
     return D.terminalWorld(it.comp, termIdx);
   }
@@ -507,9 +519,36 @@
     if (!(W > 0)) return null;
 
     var bottomY = 620, topY = bottomY - ROW_H;
+
+    // ── 给主回路上的元件定向 ───────────────────────────────────────────
+    // 元件在图里是一条边（a/b 是两个节点），相邻两件共用一个节点；和【前一件】
+    // 共用的那个节点，就是这一件的「接进来」端子。知道了这个，再按回路走向要求
+    // 它该落在哪一侧，就能定出要不要翻。
+    //
+    // 这一段原来是把 rot 写死成 0 的。后果：上排是【从右往左】走的，可端子的左右
+    // 朝向和导线来的方向拧着，导线够不到该接的那个柱，只能绕过元件本体——绕出来
+    // 正好是一圈方框（用户截图里 S2 那个套框就是这么来的）。
+    var enteringOf = {};
+    for (var q = 0; q < n; q++) {
+      var cu = seq[q], pr = seq[(q - 1 + n) % n];
+      var shared = (pr.a === cu.a || pr.a === cu.b) ? pr.a : pr.b;
+      enteringOf[cu.compId] = (shared === cu.a) ? cu.tA : cu.tB;
+    }
+    // 能翻的只有「端子都落在轴线上」的元件。变阻器（滑片杆在顶上）和电表
+    // （三个柱全在下方）翻了就头朝下，所以不翻——它们的接线柱本来就在轴线两侧
+    // 或正下方，路由够得着。
+    var FLIPPABLE = ['switch', 'bulb', 'resistor'];
+    function flipOf(e, dir) {
+      var it = byId[e.compId], T = D.TERMINALS[it.type];
+      if (FLIPPABLE.indexOf(it.type) < 0) return false;
+      var en = enteringOf[e.compId], lv = (en === e.tA) ? e.tB : e.tA;
+      // dir=+1：这一件从左往右走，接进来的端子该在【左】；
+      // dir=-1：从右往左走，该在【右】。不满足就翻个面。
+      return dir > 0 ? T[en].x > T[lv].x : T[en].x < T[lv].x;
+    }
     // 两排都铺满同一个宽度 W：窄的那排把间隙撑开，于是左右两个端点各自对齐，
     // 上下两条边一样长 → 矩形是"实"的，左右两条竖边是干净的直线（不是拧着的）。
-    function place(list, rowY) {
+    function place(list, rowY, dir) {
       var k = list.length, sum = 0;
       list.forEach(function (e) { sum += 2 * halfW(e); });
       var gap = k > 1 ? (W - sum) / (k - 1) : 0;
@@ -520,12 +559,13 @@
         // y 不能 snap：电表的端子线在局部 y=POST_Y(72)，不是 20 的倍数，把原点吸到
         // 格点上端子就落不到端点线上了（差 8px，一整排就歪）。snap 只用在两排各自的 y。
         it.lay.y = rowY - axisY(e);             // 让用到的端子落在端点线上
+        it.lay.mir = flipOf(e, dir);            // 翻面：只翻左右，竖直方向不动
         it.lay.rot = 0;
         cur += 2 * hw + gap;
       });
     }
-    place(bottom, bottomY);
-    place(top, topY);
+    place(bottom, bottomY, 1);                  // 下排：左 → 右
+    place(top, topY, -1);                       // 上排：右 → 左（数组按左→右摆，走向相反）
     return { x0: ROW_X, x1: ROW_X + ROW_IN * 2 + W, topY: topY, bottomY: bottomY, W: W };
   }
 
@@ -668,10 +708,13 @@
     if (!cycle || cycle.length < 2) return false;
 
     var keep = items.map(function (it) {
-      return { it: it, x: it.lay.x, y: it.lay.y, rot: it.lay.rot };
+      return { it: it, x: it.lay.x, y: it.lay.y, rot: it.lay.rot, mir: it.lay.mir };
     });
     function back() {
-      keep.forEach(function (s) { s.it.lay.x = s.x; s.it.lay.y = s.y; s.it.lay.rot = s.rot; });
+      keep.forEach(function (s) {
+        s.it.lay.x = s.x; s.it.lay.y = s.y;
+        s.it.lay.rot = s.rot; s.it.lay.mir = s.mir;      // mir 必须一起复原
+      });
     }
     var extra = g.edges.length - cycle.length;
     var rect = rectPlace(cycle, byId, D, extra >= 2 ? extra : 0);
@@ -679,13 +722,17 @@
     if (!placeBranches(cycle, g, byId, D, rect)) { back(); return false; }
     // 两节点并联：电源在下方正极朝右；上方电阻/灯泡的同一电气节点
     // 必须也落在右侧。否则不同电位的两根母线会在图中央重叠，
-    // 看起来像把电源短接了。无极性的电阻和灯泡可安全转 180°。
+    // 看起来像把电源短接了。无极性的电阻和灯泡可以翻面。
+    // ⚠️ 这里设的是 mir（左右翻面），**不是 rot=180**：rectPlace 现在也按回路走向
+    // 给主回路元件定向，两处都翻就成了翻两次、端子又回到错的一侧；而且 rot=180
+    // 会把开关的刀片、变阻器的滑片杆一起倒过来（见 drawSymbol 里的 up / scale(-1,1)）。
     if (cycle.length === 2) {
       var source = cycle.filter(function (e) { return e.type === 'battery'; })[0];
       g.edges.forEach(function (e) {
         if (e === source || (e.type !== 'resistor' && e.type !== 'bulb')) return;
         if (e.a === source.a || e.b === source.a) {
-          byId[e.compId].lay.rot = e.a === source.a ? 180 : 0;
+          byId[e.compId].lay.mir = (e.a === source.a);
+          byId[e.compId].lay.rot = 0;
         }
       });
     }
@@ -731,6 +778,7 @@
       it.lay.x = snap(x);
       it.lay.y = lineY - axisY;
       it.lay.rot = 0; // 电表字母与元件标签保持正立
+      it.lay.mir = false; // 这条通道不翻面：端子左右按 TERMINALS 原样摆
     }
     groups.forEach(function (group) {
       var allSimple = group.every(function (id) { return adj[id].length <= 2; });
@@ -850,6 +898,51 @@
     }
     return n;
   }
+  // 这段线是不是从【别的节点】的接线柱正上方压过去了（端点落在柱上不算）。
+  // ------------------------------------------------------------
+  // 为什么要单列这一条：走线是**一根一根**排的，排前面的线不知道后面那根线要从哪儿
+  // 出发。变阻器接 B-C 就是这个坑——「S1 → B」那根线为了少拐一个弯，贴着下排轴线
+  // （y=620）一直走到 x=818；可滑片杆顶恰好也在 y=620 上，于是后面「滑片 → S2」那根
+  // 线的头一段和它叠在同一条线上。两根线属于**不同节点**，画出来却是同一条线，
+  // 图上分不出哪个是哪个——正是「图和数自相矛盾」那一类毛病。
+  // 加了这条代价，前一根线会主动改走变阻器【下方】的车道再折上去接 B，滑片杆顶
+  // 那条轴线就腾出来了。量级放在 FOREIGN(500) 之下、BEND(50) 之上：值得为它多拐两个
+  // 弯（2×50=100 < 400），但别为了躲它去压符号（1e6）。
+  // 这段线是不是和【别的节点】已经排好的线十字交叉了。
+  // 交叉本身画得出来（绘制层会给竖线开一个缺口、让横线跨过去，明确「不相连」），
+  // 但教材里的原则是「能不错开就不交叉」。给个不大的代价（约等于两三个拐点），
+  // 让它只在「不交叉就得绕很远」的时候才认交叉。
+  function segCrosses(a, b, segs, net) {
+    var vert = Math.abs(a.x - b.x) < 1;
+    var n = 0;
+    for (var i = 0; i < segs.length; i++) {
+      var s = segs[i];
+      if (s.net === net) continue;
+      if (s.orient === (vert ? 'v' : 'h')) continue;    // 只看正交的那一批
+      var lo, hi, pos;
+      if (vert) { pos = a.x; lo = Math.min(a.y, b.y); hi = Math.max(a.y, b.y); }
+      else { pos = a.y; lo = Math.min(a.x, b.x); hi = Math.max(a.x, b.x); }
+      if (pos > Math.min(s.a0, s.a1) + 1 && pos < Math.max(s.a0, s.a1) - 1 &&
+          s.pos > lo + 1 && s.pos < hi - 1) n++;
+    }
+    return n;
+  }
+  function segThroughDots(a, b, dots, net) {
+    if (!dots || !dots.length) return 0;
+    var vert = Math.abs(a.x - b.x) < 1;
+    var pos = vert ? a.x : a.y;
+    var lo = vert ? Math.min(a.y, b.y) : Math.min(a.x, b.x);
+    var hi = vert ? Math.max(a.y, b.y) : Math.max(a.x, b.x);
+    var n = 0;
+    for (var i = 0; i < dots.length; i++) {
+      var d = dots[i];
+      if (d.net === net) continue;
+      var q = vert ? d.y : d.x, t = vert ? d.x : d.y;
+      if (Math.abs(t - pos) > 1.5) continue;
+      if (q > lo + 1.5 && q < hi - 1.5) n++;
+    }
+    return n;
+  }
 
   // 电气「节点」。两根导线只要共用同一个 {compId, termIdx} 就算同一节点。
   // 只用来做两件事：① 同节点的线允许共用一段；② 判该不该画结点圆点。
@@ -882,7 +975,7 @@
   //     学生那条干净的绕行车道反而排在最外面，一截断就永远进不了候选。
   //   · 压元件（1e6）远大于拐点（50）远大于台阶（30），量级拉开但不是单调的「长度最小」——
   //     否则 1px 擦边就会换来 600px 的绕路。
-  function scorePath(pts, rects, segs, excl, net) {
+  function scorePath(pts, rects, segs, excl, net, dots) {
     var cost = 0, n = 0;
     for (var i = 1; i < pts.length; i++) {
       var a = pts[i - 1], b = pts[i];
@@ -893,6 +986,8 @@
       if (len < SHORT_LEN) cost += SHORTSEG;
       cost += BLOCK * segBlocks(a, b, rects, excl);
       cost += FOREIGN * segOverlaps(a, b, segs, net);
+      cost += TERMDOT * segThroughDots(a, b, dots, net);
+      cost += CROSS * segCrosses(a, b, segs, net);
     }
     var bends = Math.max(0, n - 1);
     return { cost: cost + BEND * bends, bends: bends };
@@ -910,7 +1005,7 @@
     return s;
   }
 
-  function routeWire(p0, p1, box, rects, segs, excl, net) {
+  function routeWire(p0, p1, box, rects, segs, excl, net, dots) {
     var cands = [], seen = {};
     function add(raw) {
       var out = [raw[0]];
@@ -952,7 +1047,7 @@
     var wantH = adx >= ady;      // 主轴优先：L_h 和 L_v 长度、拐点数完全相同，必须给个确定的规矩
     var best = null, bestS = null, bestPref = 0;
     cands.forEach(function (pts) {
-      var r = scorePath(pts, rects, segs, excl, net);
+      var r = scorePath(pts, rects, segs, excl, net, dots);
       var pref = (firstLegH(pts) === wantH) ? 0 : 1;
       if (!best) { best = pts; bestS = r; bestPref = pref; return; }
       if (r.cost < bestS.cost - 0.5) { best = pts; bestS = r; bestPref = pref; return; }
@@ -1012,6 +1107,15 @@
 
   // 标注也是图形的一部分：线路不能穿过字，导出的画布也不能把字裁掉。
   // 这里按与 drawSymbol 相同的基线/字号估算保守包围盒；不依赖 DOM 或 Canvas。
+  // 符号下面那行提醒（独立于铭牌值，单独一行画）。
+  // 目前只有一种：变阻器接成 A-B（下面两个柱）时滑片根本不在电路里。教材管这叫
+  // 「整个电阻线接入电路，滑片不起作用，相当于定值电阻」——不点出来，学生盯着一个
+  // 不接线的箭头只会以为图画错了。
+  function hintOf(it) {
+    if (it.type === 'rheostat' && it.meta.stemDashed) return '滑片未接入 · 相当于定值电阻';
+    return '';
+  }
+
   function annotationRects(it) {
     var r = it.worldRect, mid = (r.x0 + r.x1) / 2, out = [];
     function width(s, size) {
@@ -1028,6 +1132,15 @@
     if (it.value) {
       var b = width(it.value, 12) / 2;
       out.push({ x0: mid - b, x1: mid + b, y0: r.y1 + 2, y1: r.y1 + 20 });
+    }
+    if (it.hint) {
+      var h = width(it.hint, 12) / 2;
+      // soft：这行提醒只进【取景】的墨迹框，**不进走线的障碍表**。
+      // 提醒是「解释」，不是电路的一部分。把它当成硬障碍，导线为了躲一行字
+      // 会被挤到更远的车道，本就不宽裕的通道可能就此找不到干净路径
+      // （并-S2∥L1 就是这么被挤出一句「布局需核对」的）。字和线擦肩而过可以接受，
+      // 导线被迫多绕两个拐点、甚至绕不过去，才是真难看。
+      out.push({ x0: mid - h, x1: mid + h, y0: r.y1 + 20, y1: r.y1 + 38, soft: true });
     }
     return out;
   }
@@ -1051,7 +1164,7 @@
       var rec = recs[c.id] || null;
       // 布局副本：规整化要挪元件，**绝不能碰 scene**——沙盒主画布上那台器材是学生
       // 摆的，一个像素都不能动。params 仍共享引用（读数要用同一份）。
-      var lay = { id: c.id, type: c.type, x: c.x, y: c.y, rot: c.rot || 0,
+      var lay = { id: c.id, type: c.type, x: c.x, y: c.y, rot: c.rot || 0, mir: false,
                   params: c.params || {} };
       var it = { id: c.id, type: lay.type, x: lay.x, y: lay.y, rot: lay.rot,
                  comp: lay, lay: lay, src: c, core: core, meta: {}, rect: null, rec: rec };
@@ -1061,6 +1174,7 @@
       it.rect = symRect(it);                  // 局部框：只和 params / meta 有关，与位置无关
       it.label = labels ? subscript(lay.id) : '';
       it.value = values ? valueOf(it, rec) : '';
+      it.hint = values ? hintOf(it) : '';
       return it;
     });
     var byId = {};
@@ -1083,11 +1197,12 @@
     var notes = [];
     items.forEach(function (it) { notes = notes.concat(annotationRects(it)); });
     // 走线避让用的是（可能更小的）障碍框；前 items.length 项仍按元件顺序排列，
-    // excl 里存的下标就指着它们。
+    // excl 里存的下标就指着它们 —— 所以**只能往后过滤**，blocks 必须原样排在最前面。
+    // soft 标注（变阻器那行提醒）不进障碍表，理由见 annotationRects。
     var blocks = items.map(function (it) {
       return worldRect({ rect: obsRect(it), comp: it.comp }, D);
     });
-    var obstacles = blocks.concat(notes);
+    var obstacles = blocks.concat(notes.filter(function (n) { return !n.soft; }));
 
     // 外接框：外侧兜底车道的选址要用到全图范围（标注也占位置）。
     // 这里仍用【墨迹框】——图得把整件都框进去，不能按避让框缩水。
@@ -1103,6 +1218,19 @@
     var box = unionBox(rough) || { x0: 0, y0: 0, x1: 0, y1: 0 };
 
     var nets = netOf(wires);
+    // 所有导线端点的「接线柱点」，连着自己属于哪个节点。走线时用来躲开
+    // 【别的节点】的柱子（见 segThroughDots）。同一位置同一节点只留一个。
+    var dots = [], dotSeen = {};
+    wires.forEach(function (w, wi) {
+      if (!w.a || !w.b) return;
+      var a = byId[w.a.compId], b = byId[w.b.compId];
+      if (!a || !b) return;
+      [schTermWorld(a, w.a.termIdx, D), schTermWorld(b, w.b.termIdx, D)].forEach(function (p) {
+        var k = Math.round(p.x) + ',' + Math.round(p.y) + ',' + nets.wire[wi];
+        if (dotSeen[k]) return;
+        dotSeen[k] = 1; dots.push({ x: p.x, y: p.y, net: nets.wire[wi] });
+      });
+    });
     var segs = [];        // 已经排好的线段，后面的导线要躲开
     var outWires = [], warnings = [];
     wires.forEach(function (w, wi) {
@@ -1120,7 +1248,7 @@
       // 横平竖直、拐点不超过 3 个、不压元件、不和别的节点的线重合，四条缺一就重排。
       var kept = layout !== 'canonical' && axisAligned(pts) && bendCount(pts) <= 3 &&
                  pathClear(pts, obstacles, segs, excl, myNet);
-      if (!kept) pts = routeWire(p0, p1, box, obstacles, segs, excl, myNet);
+      if (!kept) pts = routeWire(p0, p1, box, obstacles, segs, excl, myNet, dots);
       // 极密集或互相矛盾的接线可能找不到不压符号/不混线的通道。
       // 必须显式报告，不能把有歧义的示意图冒充“标准电路图”。
       if (!axisAligned(pts) || !pathClear(pts, obstacles, segs, excl, myNet)) {
@@ -1147,8 +1275,11 @@
     var pad = (opts && opts.pad != null) ? +opts.pad : PAD;
     return {
       comps: items.map(function (it) {
+        // mir 要导出：它是「这一件在回路里朝哪头」的结论，测试要断它。
+        // 漏掉的话，方向回归（S2 被导线套框那个 bug）就没法在纯数据层锁住。
         return { id: it.id, type: it.type, x: it.x, y: it.y, rot: it.rot,
-                 label: it.label, value: it.value,
+                 mir: !!(it.lay && it.lay.mir),
+                 label: it.label, value: it.value, hint: it.hint,
                  meta: it.meta, rect: it.rect, worldRect: it.worldRect };
       }),
       wires: outWires,
@@ -1377,6 +1508,10 @@
     ctx.save();
     ctx.translate(c.x, c.y);
     if (c.rot) ctx.rotate(c.rot * Math.PI / 180);
+    // 左右镜像（见 schTermWorld）。用 scale(-1,1) 而不是 rot=180：变阻器的滑片杆
+    // 长在顶上、电表的三个柱全在下方，转 180° 会头朝下；镜像只翻左右，竖直不动。
+    // 编号和铭牌文字在下面单独画，不进这个变换，所以不会跟着变成反字。
+    if (c.mir) ctx.scale(-1, 1);
     ctx.strokeStyle = COLOR.wire; ctx.lineWidth = 2.4;
     ctx.lineCap = 'round'; ctx.lineJoin = 'round';
     ctx.fillStyle = COLOR.wire;
@@ -1408,12 +1543,16 @@
         // 只有符号内部的刀片是斜的。闭合时刀片搭在两个触点上，画得比导线明显粗，
         // 否则整把开关看上去就是「一根线加两个点」，和导线分不出来。
         var closed = it.rec ? !!it.rec.closed : !!(c.params || {}).closed;
+        // 断开的斜刀片一律朝【上】翘——教材的开关符号就是这么画的。
+        // 元件若被转了 180°（canonicalLayout 那条路会给 rot=180），刀片得再翻回来，
+        // 否则画出来是朝下翘的，看着不像开关。
+        var up = (Math.abs(c.rot) === 180) ? 1 : -1;
         ctx.lineWidth = closed ? 3.4 : 2.6;
         ctx.beginPath();
         ctx.moveTo(-22, 0);
-        ctx.lineTo(closed ? 22 : 6, closed ? 0 : -20);
+        ctx.lineTo(closed ? 22 : 6, closed ? 0 : 20 * up);
         ctx.stroke();
-        if (!closed) dot(ctx, 6, -20, 3.4);
+        if (!closed) dot(ctx, 6, 20 * up, 3.4);
         break;
       }
       case 'bulb': {
@@ -1463,10 +1602,13 @@
         // 横坐标就是 sliderLocalX(slide)——和实物上滑片的位置是同一个数。
         // 杆顶（RHEO_STEM_TOP）就是引线的落点：导线沿轴线直接压上来，不用拐台阶。
         var sx = Math.max(-54, Math.min(54, g.xl));
+        // 滑片杆和箭头是【变阻器符号本身的一部分】，不是接线柱：不管滑片接没接，
+        // 都照常画成实线。画成灰色虚线会让人以为图没画完——用户就是这么反馈的。
+        // 「滑片没接入」这件事，交给符号下面那行提示文字说清楚。
         drawPolys(ctx, [{ x: sx, y: RHEO_STEM_TOP }, { x: sx, y: 14 }],
-                  g.stemDashed ? COLOR.dim : COLOR.wire, 2.2, g.stemDashed);
+                  COLOR.wire, 2.2, false);
         ctx.save();
-        ctx.fillStyle = g.stemDashed ? COLOR.dim : COLOR.wire;
+        ctx.fillStyle = COLOR.wire;
         ctx.beginPath();
         ctx.moveTo(sx, 14); ctx.lineTo(sx - 5, 6); ctx.lineTo(sx + 5, 6);
         ctx.closePath(); ctx.fill();
@@ -1491,6 +1633,11 @@
       ctx.fillStyle = COLOR.value;
       ctx.font = '12px -apple-system,"PingFang SC","Microsoft YaHei",sans-serif';
       ctx.fillText(it.value, (wr.x0 + wr.x1) / 2, wr.y1 + 15);
+    }
+    if (values && it.hint) {
+      ctx.fillStyle = COLOR.warn;
+      ctx.font = '12px -apple-system,"PingFang SC","Microsoft YaHei",sans-serif';
+      ctx.fillText(it.hint, (wr.x0 + wr.x1) / 2, wr.y1 + 31);
     }
     ctx.restore();
   }
@@ -1538,6 +1685,6 @@
     // 规整化/走线的常量：测试要断言「位移 ≤ MOVE_MAX」，从这里取，
     // 免得内核改了上限、测试还按老数字断（那就成了自证）
     MOVE_MAX: MOVE_MAX,
-    version: '3.4.0',
+    version: '3.5.0',
   };
 });
