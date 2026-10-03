@@ -215,9 +215,53 @@
         // 那根虚脚固定在离圆心 100px 外，画出来是画面正中凭空一根小竖线。
         return { x0: m.cx - m.r, y0: m.cy - m.r, x1: m.cx + m.r, y1: m.cy + m.r };
       }
-      case 'rheostat': return { x0: -60, y0: -28, x1: 60, y1: 40 };
+      // 电阻丝 14..38，滑片杆顶在 0（= 轴线）。墨迹框要够高才放得下上面的编号
+      case 'rheostat': return { x0: -60, y0: -6, x1: 60, y1: 40 };
       default: return { x0: -58, y0: -14, x1: 58, y1: 14 };   // 定值电阻：矩形 ±56 加线宽
     }
+  }
+
+  // 走线避让用的【障碍框】。多数元件就是上面那个符号框；滑动变阻器要单独收一收。
+  // ------------------------------------------------------------
+  // 变阻器的墨迹一直顶到箭头杆顶端（局部 −28），可杆顶恰恰就是滑片引线的落点
+  // （见 schTermWorld）。把整件圈成障碍，导线想从主回路直接落到杆顶就会被判成
+  // 「压元件」，只能先爬到上方车道再折下来——平白多两个拐点，主回路上的三岔口
+  // 也被推离导线、画不出结点。真正挡视线的是那块【电阻丝】；杆和引线是细线，
+  // 别的线横穿过去顶多是个交叉，不是压符号。所以避让框只圈电阻丝。
+  // ⚠️ 下标必须和 rects 一一对齐——excl 里存的是下标。
+  function obsRect(it) {
+    if (it.type === 'rheostat') return { x0: -60, y0: 8, x1: 60, y1: 40 };
+    return it.rect;
+  }
+
+  // 滑动变阻器在【电路图】里的滑片接点：箭头杆的顶端，不是 C/D 那两个角。
+  // ------------------------------------------------------------
+  // 实物上 C(2)/D(3) 是金属杆的两端，core 里就是同一个节点（TYPES.rheostat.internalShort
+  // = [2,3]），滑片在杆上任意位置都跟它们等电位。教材的变阻器符号也是这么画的：引线从
+  // 箭头【正上方】出去，杆顶就是那个接点。
+  //
+  // 照实物坐标（±78, −26）引线的话，导线得先绕到左上角、再沿顶部横穿到滑片——那条
+  // 「横贯线」加上绕行的外线，画出来正好是一个套住电阻丝的方框（用户截图里那副样子），
+  // 而且框里还嵌着一个矩形，看着像电流绕了个圈。合并成杆顶一个点就干净了：
+  // 导线直接落在滑片正上方，箭头照旧指向电阻丝。
+  var RHEO_STEM_TOP = 0;        // 箭头杆顶端（局部 y）。取 0 = 元件的轴线，引线正好压在导线上
+  function schTermWorld(it, termIdx, D) {
+    if (it.type === 'rheostat' && termIdx >= 2) {
+      var sx = Math.max(-54, Math.min(54, it.meta.xl));   // 和 drawSymbol 的 sx 取同一段
+      return D.toWorld(it.comp, sx, RHEO_STEM_TOP);
+    }
+    return D.terminalWorld(it.comp, termIdx);
+  }
+
+  // 元件的【轴线】局部 y：导线该落在元件哪条水平线上。
+  // 一般取两个端子的平均（两端元件的端子本来就同高，等于没算）。
+  // 滑动变阻器要单独说：它一个接点在电阻丝一端（A/B，+26）、一个在滑片杆顶（0），
+  // 取平均会得到 13，整件被往下拽 13px——滑片引线于是落在导线上方，主回路走到
+  // 变阻器跟前必须拐个台阶才下得来，顺带把 V 表引线搭上主回路那个三岔口也推歪了。
+  // 取杆顶（0）当轴：滑片引线正好压在导线上，电阻丝规规矩矩骑在导线下面。
+  function axisYOf(type, tA, tB) {
+    if (type === 'rheostat') return RHEO_STEM_TOP;
+    return (tA.y + tB.y) / 2;
   }
 
   // 局部框 → 世界外接框（rot 只可能是 0/90/180/270，取四个角的外接就够）
@@ -440,7 +484,7 @@
       var r = symRect(byId[e.compId]), t = T(e);
       return Math.max(-r.x0, r.x1, Math.abs(t[e.tA].x), Math.abs(t[e.tB].x));
     }
-    function axisY(e) { var t = T(e); return (t[e.tA].y + t[e.tB].y) / 2; }
+    function axisY(e) { var t = T(e); return axisYOf(byId[e.compId].type, t[e.tA], t[e.tB]); }
     function widths(list) {
       var w = 0;
       list.forEach(function (e, i) { w += 2 * halfW(e); if (i) w += ROW_GAP; });
@@ -546,7 +590,7 @@
                                : T[entering].x > T[leaving].x;
         var rot = reversed && ['resistor','bulb','ammeter','voltmeter','switch'].indexOf(it.type) >= 0 ? 180 : 0;
         var axisX = (T[e.tA].x + T[e.tB].x) / 2;
-        var axisY = (T[e.tA].y + T[e.tB].y) / 2;
+        var axisY = axisYOf(it.type, T[e.tA], T[e.tB]);
         it.lay.rot = rot;
         it.lay.x = snap(aPos.x + dir * (k + 1) * spacing - (rot ? -axisX : axisX));
         it.lay.y = lineY - (rot ? -axisY : axisY);
@@ -562,11 +606,11 @@
         if ((c.a === br.a && c.b === br.b) || (c.a === br.b && c.b === br.a)) mate = c;
       });
       var bit = byId[br.compId], bt = D.TERMINALS[bit.type];
-      var midY = (bt[br.tA].y + bt[br.tB].y) / 2;
+      var midY = axisYOf(bit.type, bt[br.tA], bt[br.tB]);
       var midX = (bt[br.tA].x + bt[br.tB].x) / 2;
       if (mate) {
         var mit = byId[mate.compId], mt = D.TERMINALS[mit.type];
-        var mateLine = mit.lay.y + (mt[mate.tA].y + mt[mate.tB].y) / 2;
+        var mateLine = mit.lay.y + axisYOf(mit.type, mt[mate.tA], mt[mate.tB]);
         var isTop = Math.abs(mateLine - rect.topY) < Math.abs(mateLine - rect.bottomY);
         var k = shifts[mate.compId] || 0; shifts[mate.compId] = k + 1;
         var off = BRANCH_OFF + k * BRANCH_OFF;
@@ -1034,19 +1078,25 @@
     }
     items.forEach(function (it) { it.x = it.lay.x; it.y = it.lay.y; it.comp = it.lay; });
 
-    var rects = items.map(function (it) { return worldRect(it, D); });
+    var rects = items.map(function (it) { return worldRect(it, D); });      // 墨迹框：标注 / 重叠预检 / 取景
     items.forEach(function (it, i) { it.worldRect = rects[i]; });
     var notes = [];
     items.forEach(function (it) { notes = notes.concat(annotationRects(it)); });
-    var obstacles = rects.concat(notes);   // 前面 items.length 项仍对应端子所在的符号框
+    // 走线避让用的是（可能更小的）障碍框；前 items.length 项仍按元件顺序排列，
+    // excl 里存的下标就指着它们。
+    var blocks = items.map(function (it) {
+      return worldRect({ rect: obsRect(it), comp: it.comp }, D);
+    });
+    var obstacles = blocks.concat(notes);
 
-    // 外接框：外侧兜底车道的选址要用到全图范围（标注也占位置）
-    var rough = obstacles.slice();
+    // 外接框：外侧兜底车道的选址要用到全图范围（标注也占位置）。
+    // 这里仍用【墨迹框】——图得把整件都框进去，不能按避让框缩水。
+    var rough = rects.concat(notes);
     wires.forEach(function (w) {
       if (!w.a || !w.b) return;
       var a = byId[w.a.compId], b = byId[w.b.compId];
       if (!a || !b) return;
-      var p0 = D.terminalWorld(a.comp, w.a.termIdx), p1 = D.terminalWorld(b.comp, w.b.termIdx);
+      var p0 = schTermWorld(a, w.a.termIdx, D), p1 = schTermWorld(b, w.b.termIdx, D);
       rough.push({ x0: Math.min(p0.x, p1.x), y0: Math.min(p0.y, p1.y),
                    x1: Math.max(p0.x, p1.x), y1: Math.max(p0.y, p1.y) });
     });
@@ -1059,8 +1109,8 @@
       if (!w.a || !w.b) return;
       var a = byId[w.a.compId], b = byId[w.b.compId];
       if (!a || !b) return;
-      var p0 = D.terminalWorld(a.comp, w.a.termIdx);
-      var p1 = D.terminalWorld(b.comp, w.b.termIdx);
+      var p0 = schTermWorld(a, w.a.termIdx, D);
+      var p1 = schTermWorld(b, w.b.termIdx, D);
       var myNet = nets.wire[wi];
       var excl = [{ idx: a._ri, p: p0 }, { idx: b._ri, p: p1 }];
       var via = (w.via || []).map(function (v) { return { x: v[0], y: v[1] }; });
@@ -1084,7 +1134,9 @@
       outWires.push({ pts: pts, kept: kept, _net: myNet });
     });
 
-    var all = obstacles.slice();
+    // 导出画布要装下【所有墨迹】，所以这里用墨迹框而不是缩过水的避让框，
+    // 否则变阻器的箭头杆会被裁在画布外（标注值又恰好落在下面，缺口不容易被发现）。
+    var all = rects.concat(notes);
     outWires.forEach(function (w) {
       w.pts.forEach(function (p) {
         all.push({ x0: p.x, y0: p.y, x1: p.x, y1: p.y });
@@ -1103,7 +1155,7 @@
       layout: layout,
       warnings: warnings,
       crossings: crossingsOf(outWires),
-      junctions: junctionsOf(outWires),
+      junctions: junctionsOf(outWires, items, wires, D),
       bounds: full ? { x: full.x0 - pad, y: full.y0 - pad,
                        w: (full.x1 - full.x0) + pad * 2,
                        h: (full.y1 - full.y0) + pad * 2 } : null,
@@ -1116,30 +1168,104 @@
   // 结点圆点
   // ------------------------------------------------------------
   // 判据**两条**，都只认「电气上真的连在一起」：
-  //   ① ≥3 根导线的端点落在同一点（三线交汇，教材上必画点）；
+  //   ① 同一个点上朝【≥3 个方向】有导体伸出去。导体 = 导线 + 元件的接线柱（只数真的
+  //      接了线的柱）。电压表并到小灯泡两端就是这么个三岔口：两根线头加灯泡那个柱，
+  //      教材上必点圆点。旧版只数「≥3 个线头」，于是「V 表引线搭在灯泡柱上」那两处
+  //      永远缺点，图看着像并联只接了一半（用户那张图里的毛病之一）。
   //   ② 一根导线的顶点（端点**或拐点**）严格落在另一根导线的某段【内部】，
-  //      且这两根导线共用同一个端子。
+  //      且这两根导线共用同一个端子（同一个电气节点）。
+  // 为什么要数【方向】而不是数【线头】：两根线常常叠在一段上走（同一个端子出来的两根线
+  // 先并成一条主干再分岔），叠着的那一段画出来只有一条线，算两个方向就会在压根没有
+  // 三岔口的地方点一个圆点，而在真正的分岔处反倒漏掉。
   // 第 ② 条的「共用端子」限定不能省：求解器的连通性只看端子共点、不看几何相交，
-  // 在不相干的交叉处画点，图和数当场自相矛盾；元件自己柱子上挂两根线也会被误判成结点。
-  // 两端相接的普通拐角不画点。
-  function junctionsOf(outWires) {
-    var seen = {}, out = [];
+  // 在不相干的交叉处画点，图和数当场自相矛盾。
+  // 两端相接的普通拐角不画点（那儿只有两个方向）。
+  var RAY_TOL = 0.5;
+  // 接线柱的引线朝哪个方向伸进符号本体（沿主轴取，和 lead()/hLead() 画的横线一致）。
+  function leadDir(it, termIdx, D) {
+    var t = D.TERMINALS[it.type][termIdx], r = it.rect;
+    var cx = (r.x0 + r.x1) / 2, cy = (r.y0 + r.y1) / 2;
+    var dx = cx - t.x, dy = cy - t.y;
+    if (Math.abs(dx) >= Math.abs(dy)) return { x: dx >= 0 ? 1 : -1, y: 0 };
+    return { x: 0, y: dy >= 0 ? 1 : -1 };
+  }
+  // 从点 p 出发有几个方向的导体。同一方向叠着走的线只算一个。
+  // 除了「以 p 为顶点」的线，还要算【同一个节点、从 p 身上穿过去】的线——那正是
+  // 「一根线搭在另一根线中间」的三岔口，两个方向都要记上。别的节点的线穿过不算：
+  // 求解器的连通性只看端子共点，在交叉处画点，图和数当场自相矛盾。
+  function rayCount(p, outWires, terms) {
+    var dirs = {}, n = 0, pnet = null;
+    function add(dx, dy) {
+      if (Math.abs(dx) <= RAY_TOL && Math.abs(dy) <= RAY_TOL) return;
+      var k = (dx > RAY_TOL ? 'E' : dx < -RAY_TOL ? 'W' : '') +
+              (dy > RAY_TOL ? 'S' : dy < -RAY_TOL ? 'N' : '');
+      if (dirs[k]) return;
+      dirs[k] = 1; n++;
+    }
+    function at(i, q) {
+      return Math.abs(q[i].x - p.x) <= RAY_TOL && Math.abs(q[i].y - p.y) <= RAY_TOL;
+    }
+    outWires.forEach(function (w) {
+      var q = w.pts;
+      for (var i = 0; i < q.length; i++) {
+        if (!at(i, q)) continue;
+        if (pnet == null) pnet = w._net;
+        // 方向一律【从 p 指向邻点】。写成 q[i] − q[i-1] 就是把箭头指反了：
+        // 从左边接过来的线会被记成「往左伸」，两个方向刚好互换。
+        if (i > 0) add(q[i - 1].x - q[i].x, q[i - 1].y - q[i].y);
+        if (i < q.length - 1) add(q[i + 1].x - q[i].x, q[i + 1].y - q[i].y);
+      }
+    });
+    outWires.forEach(function (w) {
+      if (w._net !== pnet) return;
+      var q = w.pts;
+      for (var i = 1; i < q.length; i++) {
+        var a = q[i - 1], b = q[i];
+        if (Math.abs(a.x - b.x) <= RAY_TOL) {
+          if (Math.abs(p.x - a.x) <= RAY_TOL &&
+              p.y > Math.min(a.y, b.y) + RAY_TOL && p.y < Math.max(a.y, b.y) - RAY_TOL) { add(0, 1); add(0, -1); }
+        } else if (Math.abs(a.y - b.y) <= RAY_TOL) {
+          if (Math.abs(p.y - a.y) <= RAY_TOL &&
+              p.x > Math.min(a.x, b.x) + RAY_TOL && p.x < Math.max(a.x, b.x) - RAY_TOL) { add(1, 0); add(-1, 0); }
+        }
+      }
+    });
+    (terms || []).forEach(function (t) {
+      if (Math.abs(t.p.x - p.x) > RAY_TOL || Math.abs(t.p.y - p.y) > RAY_TOL) return;
+      add(t.dir.x, t.dir.y);
+    });
+    return n;
+  }
+  function junctionsOf(outWires, items, wires, D) {
+    var seen = {}, cseen = {}, out = [], cands = [];
     function key(p) { return Math.round(p.x) + ',' + Math.round(p.y); }
     function push(p) {
       var k = key(p);
       if (seen[k]) return;
       seen[k] = 1; out.push({ x: p.x, y: p.y });
     }
-    var ends = {};
-    outWires.forEach(function (w) {
-      [w.pts[0], w.pts[w.pts.length - 1]].forEach(function (p) {
-        var k = key(p); ends[k] = (ends[k] || 0) + 1;
+    function cand(p) {
+      var k = key(p);
+      if (cseen[k]) return;
+      cseen[k] = 1; cands.push(p);
+    }
+    outWires.forEach(function (w) { w.pts.forEach(cand); });
+    // 接线柱的坐标必须和导线端点走同一个函数（schTermWorld），
+    // 自己拿 D.terminalWorld 取，变阻器的滑片柱就会落在另一个点上，圆点飘到空处。
+    var terms = [];
+    if (items && wires && D) {
+      items.forEach(function (it) {
+        var ts = D.TERMINALS[it.type] || [];
+        for (var t = 0; t < ts.length; t++) {
+          if (!termHasWire(wires, it.id, t)) continue;   // 悬空的柱不是导体
+          var p = schTermWorld(it, t, D);
+          terms.push({ p: p, dir: leadDir(it, t, D) });
+          cand(p);
+        }
       });
-    });
-    Object.keys(ends).forEach(function (k) {
-      if (ends[k] < 3) return;
-      var xy = k.split(',');
-      push({ x: +xy[0], y: +xy[1] });
+    }
+    cands.forEach(function (p) {
+      if (rayCount(p, outWires, terms) >= 3) push(p);
     });
 
     outWires.forEach(function (w, i) {
@@ -1333,20 +1459,21 @@
         ctx.beginPath();
         D.roundRect(ctx, -56, 14, 112, 24, 2);
         ctx.stroke();
-        // 滑片：从上面垂下来一根，箭头尖顶到矩形上沿。
+        // 滑片：从轴线上垂下来一根，箭头尖顶到矩形上沿。
         // 横坐标就是 sliderLocalX(slide)——和实物上滑片的位置是同一个数。
+        // 杆顶（RHEO_STEM_TOP）就是引线的落点：导线沿轴线直接压上来，不用拐台阶。
         var sx = Math.max(-54, Math.min(54, g.xl));
-        drawPolys(ctx, [{ x: sx, y: T[2].y }, { x: sx, y: 14 }],
+        drawPolys(ctx, [{ x: sx, y: RHEO_STEM_TOP }, { x: sx, y: 14 }],
                   g.stemDashed ? COLOR.dim : COLOR.wire, 2.2, g.stemDashed);
         ctx.save();
         ctx.fillStyle = g.stemDashed ? COLOR.dim : COLOR.wire;
         ctx.beginPath();
-        ctx.moveTo(sx, 14); ctx.lineTo(sx - 5, 5); ctx.lineTo(sx + 5, 5);
+        ctx.moveTo(sx, 14); ctx.lineTo(sx - 5, 6); ctx.lineTo(sx + 5, 6);
         ctx.closePath(); ctx.fill();
         ctx.restore();
-        // 顶部横线接到用到的 C / D 柱（没接就不画）
-        if (g.cWired) drawPolys(ctx, [{ x: sx, y: T[2].y }, { x: T[2].x, y: T[2].y }], COLOR.wire, 2.4);
-        if (g.dWired) drawPolys(ctx, [{ x: sx, y: T[3].y }, { x: T[3].x, y: T[3].y }], COLOR.wire, 2.4);
+        // 顶部不再画「横贯到 C/D 角」的线：C/D 电气上就是滑片这一个节点，
+        // 引线端点已经落在箭头杆正上方（见 schTermWorld），导线直接接在杆顶。
+        // 留着那条横线，画出来就是套住电阻丝的方框。
         break;
       }
     }
@@ -1403,11 +1530,14 @@
   return {
     build: build, draw: draw, bounds: bounds,
     symRect: symRect, worldRect: worldRect,
+    // 电路图里的端子坐标。**页面和测试都该用这个**，别用 D.terminalWorld
+    // ——那返回的是【实物】接线柱的位置，变阻器的 C/D 在电路图上已经并到滑片杆顶了。
+    termWorld: schTermWorld,
     LEGEND: LEGEND, subscript: subscript, COLOR: COLOR,
     valueOf: valueOf, cellCount: cellCount, batteryHalf: batteryHalf,
     // 规整化/走线的常量：测试要断言「位移 ≤ MOVE_MAX」，从这里取，
     // 免得内核改了上限、测试还按老数字断（那就成了自证）
     MOVE_MAX: MOVE_MAX,
-    version: '3.3.0',
+    version: '3.4.0',
   };
 });
