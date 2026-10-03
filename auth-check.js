@@ -12,7 +12,8 @@
     "飞象_动滑轮定滑轮原理教学动画.html","javalab_电流表.html",
     "电阻的微观解释.html","javalab_磁场与磁感线.html",
     "javalab_太阳风与极光.html","javalab_洛伦兹力.html","汽油机四冲程.html","javalab_日食和月食.html",
-    "测量小灯泡的电功率.html"
+    "测量小灯泡的电功率.html",
+    "st图像_匀速直线运动.html"
   ];
 
   // ⚠️ 必须 decodeURIComponent。浏览器的 location.pathname 对中文文件名给的是【百分号编码】
