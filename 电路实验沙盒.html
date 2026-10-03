@@ -137,14 +137,21 @@
   .schLegend .lgArrow{color:var(--dim);font-size:13px;flex:0 0 auto}
   .schLegend .lgTxt b{display:block;font-size:12px;color:var(--text);margin-bottom:1px}
   .schLegend .lgTxt span{color:var(--dim);line-height:1.5;font-size:11.5px}
-  /* 存档面板：还是那套浮层骨架（fixed + hidden + 点背景关），内容换成三行槽位。
-     每行 = 序号 + 名字输入框 + 元信息 + 保存/恢复/删除 三个行内链接。 */
+  /* 存档面板：还是那套浮层骨架（fixed + hidden + 点背景关），内容换成一份份存档。
+     每行 = 序号 + 名字输入框 + 元信息 + 保存/恢复/删除 三个行内链接；份数不限，
+     装不下就让 .saveBox 自己滚。 */
   .save{position:fixed;inset:0;z-index:70;background:rgba(15,23,42,.55);
     display:flex;align-items:center;justify-content:center;padding:16px}
   .save[hidden]{display:none}
   .saveBox{background:var(--card);border-radius:14px;padding:12px 16px 14px;
     box-shadow:0 18px 50px rgba(15,23,42,.35);max-width:100%;max-height:100%;
     overflow:auto;display:flex;flex-direction:column;gap:8px;width:min(580px,100%)}
+  .saveBody{display:flex;flex-direction:column;gap:8px}
+  .saveEmpty{color:var(--dim);font-size:12.5px;padding:24px 8px;text-align:center}
+  .saveFoot button{width:100%;background:#fff7ed;border:1px solid #fed7aa;color:#9a3412;
+    font-weight:600;border-radius:8px;padding:8px 12px;cursor:pointer;
+    font-family:inherit;font-size:13px}
+  .saveFoot button:hover{background:#ffedd5}
   .saveHead{display:flex;align-items:center;gap:10px;font-size:13.5px;font-weight:700}
   .saveHead .sp{flex:1 1 auto}
   .saveHead .ttlSub{font-weight:400;color:var(--dim);font-size:12.5px}
@@ -254,17 +261,20 @@
   </div>
 </div>
 
-<!-- 存档面板：3 个槽位，各自可命名、保存、恢复、删除。和上面两个浮层同一套骨架
-     （fixed + hidden + 点背景关），行由 renderSavePanel() 用 createElement 搭出来——
-     槽位名字是用户输入的字符串，只能经 input.value / textContent 落地，不走 innerHTML。 -->
+<!-- 存档面板：存多少份都可以，每份可命名、保存、恢复、删除。和上面两个浮层同一套
+     骨架（fixed + hidden + 点背景关），行由 renderSavePanel() 用 createElement 搭出来——
+     存档名字是用户输入的字符串，只能经 input.value / textContent 落地，不走 innerHTML。 -->
 <div class="save" id="save" hidden>
   <div class="saveBox">
     <div class="saveHead">
-      <span>保存电路</span><span class="ttlSub">（最多 3 份，下次打开自动接回最近保存的那份）</span>
+      <span>保存电路</span><span class="ttlSub" id="saveCount"></span>
       <span class="sp"></span>
       <button id="saveX" type="button">✕ 关闭</button>
     </div>
     <div class="saveBody" id="saveBody"></div>
+    <div class="saveFoot">
+      <button id="saveNew" type="button">＋ 把当前电路存为新的一份</button>
+    </div>
   </div>
 </div>
 
@@ -1046,30 +1056,31 @@ toolBtn('示例电路', function(){
 // 什么都没改，⌘Z 不该为看一眼电路图回退一步。
 toolBtn('📐 转成电路图', openSchematic);
 
-// ── 保存 / 恢复电路（3 个槽位）─────────────────────────────
-// 学生自己连好的电路存进 localStorage 的三个槽位之一，下次打开自动接回
-// 【最近保存】的那份。只存 scene（元件 + 导线 + 参数），不存选中态和撤销栈
-// ——那是「这一次操作」的临时状态，存下来对下次没有意义（两个动画开关本来
-// 就有自己的键）。每份可以起名字，不填就用带时间的默认名。
+// ── 保存 / 恢复电路（份数不限）─────────────────────────────
+// 学生自己连好的电路一份份存进 localStorage，下次打开自动接回【最近保存】的
+// 那份。只存 scene（元件 + 导线 + 参数），不存选中态和撤销栈——那是「这一次
+// 操作」的临时状态，存下来对下次没有意义（两个动画开关本来就有自己的键）。
+// 每份可以起名字，不填就用带时间的默认名。存多少份都行，上限是 localStorage
+// 的配额（超了 writeSlots 会失败，界面上给一句提示，不静默丢）。
 var SAVE_KEY = 'circuit_sandbox_scene';
 var SAVE_VER = 2;
-var SLOT_N = 3;
-var SLOT_MARK = ['①', '②', '③'];
+var SLOT_MARK = '①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳';
 
 function fmtTime(t){
   var d = new Date(t), p = function(n){ return (n < 10 ? '0' : '') + n; };
   return p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
 }
 function defaultSlotName(t){ return '存档 ' + fmtTime(t); }
-// 用户给槽位起的名字：折成一个空格、掐头去尾、最多 24 字。它只会经
-// input.value / textContent 落地，绝不进 innerHTML。
+function slotMark(i){ return i < SLOT_MARK.length ? SLOT_MARK.charAt(i) : (i + 1) + '.'; }
+// 用户起的名字：折成一个空格、掐头去尾、最多 24 字。它只会经 input.value /
+// textContent 落地，绝不进 innerHTML。
 function sanitizeName(s){
   return String(s == null ? '' : s).replace(/\s+/g, ' ').trim().slice(0, 24);
 }
 
 // 存档可能是旧版本、手改过的、或者干脆是别的东西。直接塞进 scene，轻则画出
 // 个半坏电路，重则让求解器撞上不认识的元件类型。所以逐项过一遍再放行：
-// 坏的不认、该槽位置空——宁可不恢复，也不能恢复出一个画不对的电路。
+// 坏的那份直接丢掉——宁可不恢复，也不能恢复出一个画不对的电路。
 function validScene(o){
   if (!o || !Array.isArray(o.comps) || !Array.isArray(o.wires)) return false;
   var seen = {};
@@ -1088,33 +1099,33 @@ function validScene(o){
   }
   return true;
 }
-// 读出来的永远是【恰好 3 项】：坏的置 null，兄弟槽不受牵连。
-// comps/wires 直接放在槽对象顶层，于是 validScene(slot) 能原样复用。
+// 读出这一份份存档，坏的跳过、不留空位（所以面板里序号永远连号）。
+// comps/wires 直接放在存档对象顶层，于是 validScene(entry) 能原样复用。
 function readSlots(){
   var raw = null;
-  try { raw = localStorage.getItem(SAVE_KEY); } catch (e) { return [null, null, null]; }
-  if (!raw) return [null, null, null];
+  try { raw = localStorage.getItem(SAVE_KEY); } catch (e) { return []; }
+  if (!raw) return [];
   var o = null;
-  try { o = JSON.parse(raw); } catch (e) { return [null, null, null]; }
+  try { o = JSON.parse(raw); } catch (e) { return []; }
   if (o && Array.isArray(o.slots)){
     var out = [];
-    for (var i = 0; i < SLOT_N; i++){
+    for (var i = 0; i < o.slots.length; i++){
       var s = o.slots[i];
-      if (!s || !validScene(s)){ out.push(null); continue; }
+      if (!s || !validScene(s)) continue;
       var t = typeof s.t === 'number' ? s.t : Date.now();
       out.push({ name: sanitizeName(s.name) || defaultSlotName(t), t: t,
                  comps: s.comps, wires: s.wires });
     }
     return out;
   }
-  // 旧版单槽存档（或测试直接写进来的裸 scene）：不清掉学生的旧作业，迁移进
-  // 第 1 个槽位。判据挂在 validScene 上而不是 v===1 上，裸 scene 也收。
+  // 旧版单槽存档（或测试直接写进来的裸 scene）：不清掉学生的旧作业，收成第 1 份。
+  // 判据挂在 validScene 上而不是 v===1 上，裸 scene 也收。
   if (o && validScene(o)){
     var t2 = typeof o.t === 'number' ? o.t : Date.now();
     return [{ name: sanitizeName(o.name) || defaultSlotName(t2), t: t2,
-              comps: o.comps, wires: o.wires }, null, null];
+              comps: o.comps, wires: o.wires }];
   }
-  return [null, null, null];
+  return [];
 }
 function writeSlots(slots){
   try {
@@ -1128,17 +1139,28 @@ function applyScene(o){
   // 选中的那个元件可能压根不在新场景里，留着的话参数面板会去读它的 type 崩掉
   if (editor && editor.getSelected()) editor.select(null);
 }
-// 覆盖已有槽位不弹 confirm：按钮写着「保存」、行里明摆着原来那份的时间，
-// 意图是明确的；原生 confirm() 会卡住 requestAnimationFrame(tick) 循环，
-// 手机上还多一次点击。改用工具条那行给一句反馈。
+// i 落在现有范围内 = 覆盖那一份；越界（等于份数、或更大）= 追加一份新的。
+// 覆盖不弹 confirm：按钮写着「保存」、行里明摆着原来那份的时间，意图是明确的；
+// 原生 confirm() 会卡住 requestAnimationFrame(tick) 循环，手机上还多一次点击。
 function saveSlot(i, nameOverride){
   var slots = readSlots();
+  if (!(i >= 0 && i <= slots.length)) i = slots.length;
   var name = sanitizeName(nameOverride) || defaultSlotName(Date.now());
   slots[i] = { name: name, t: Date.now(), comps: scene.comps, wires: scene.wires };
   var ok = writeSlots(slots);
   renderSavePanel();
-  renderSaveHint(ok ? ('✓ 已保存到槽 ' + (i + 1) + '「' + name + '」')
+  renderSaveHint(ok ? ('✓ 已保存「' + name + '」（第 ' + (i + 1) + ' 份）')
                     : '⚠ 保存失败（浏览器不允许存储）');
+  return ok;
+}
+// 只改名字、不动电路内容。改名是打字后回车/失焦触发的，这时候学生多半正看着
+// 另一张电路，绝不能顺手把它写进这行存档。
+function renameSlot(i, name){
+  var slots = readSlots();
+  if (i < 0 || i >= slots.length) return false;
+  slots[i].name = sanitizeName(name) || defaultSlotName(slots[i].t);
+  var ok = writeSlots(slots);
+  renderSaveHint(ok ? ('✓ 已改名为「' + slots[i].name + '」') : '⚠ 保存失败（浏览器不允许存储）');
   return ok;
 }
 function restoreSlot(i){
@@ -1152,18 +1174,18 @@ function restoreSlot(i){
 }
 function deleteSlot(i){
   var slots = readSlots();
-  if (!slots[i]) return false;
-  slots[i] = null;
+  if (i < 0 || i >= slots.length) return false;
+  var gone = slots.splice(i, 1)[0];
   writeSlots(slots);
   renderSavePanel();
-  renderSaveHint('✓ 已删除槽 ' + (i + 1));
+  renderSaveHint('✓ 已删除「' + gone.name + '」');
   return true;
 }
-// 自动恢复挑「最近保存的那份」：时间戳最大的槽。全空返回 -1。
+// 自动恢复挑「最近保存的那份」：时间戳最大的那份。一份都没有返回 -1。
 function latestSlotIndex(){
   var slots = readSlots(), best = -1;
   for (var i = 0; i < slots.length; i++){
-    if (slots[i] && (best < 0 || slots[i].t > slots[best].t)) best = i;
+    if (best < 0 || slots[i].t > slots[best].t) best = i;
   }
   return best;
 }
@@ -1182,44 +1204,66 @@ function closeSavePanel(){ saveOpen = false; saveEl.hidden = true; }
 function renderSavePanel(){
   var slots = readSlots();
   saveBody.innerHTML = '';                 // 可信的空壳，内容全部重新搭
-  for (var i = 0; i < SLOT_N; i++) (function(i){
+  document.getElementById('saveCount').textContent = slots.length
+    ? '（共 ' + slots.length + ' 份 · 下次打开自动接回最近保存的那份）'
+    : '（还没有存档）';
+  if (!slots.length){
+    var e = document.createElement('div'); e.className = 'saveEmpty';
+    e.textContent = '还没有保存的电路 —— 点下面的按钮把当前这张存起来';
+    saveBody.appendChild(e);
+    return;
+  }
+  for (var i = 0; i < slots.length; i++) (function(i){
     var s = slots[i];
     var row = document.createElement('div'); row.className = 'saveRow';
     var idx = document.createElement('span'); idx.className = 'idx';
-    idx.textContent = SLOT_MARK[i];
+    idx.textContent = slotMark(i);
     row.appendChild(idx);
 
     var name = document.createElement('input');
     name.className = 'saveName'; name.type = 'text'; name.maxLength = 24;
-    name.value = s ? s.name : '';
-    name.placeholder = '给这份电路起个名字（可留空）';
+    name.value = s.name;
+    name.title = '改完名字回车或点开别处即生效（只改名字，不动电路）';
+    // 改名只改名字：回车/失焦触发，这时学生多半正看着另一张电路，
+    // 不能顺手把它写进这行存档。
+    name.addEventListener('change', function(){ renameSlot(i, name.value); });
     row.appendChild(name);
 
     var meta = document.createElement('span'); meta.className = 'saveMeta';
-    meta.textContent = s ? (fmtTime(s.t) + ' · ' + s.comps.length + ' 元件 · ' +
-                            s.wires.length + ' 导线') : '（空）';
+    meta.textContent = fmtTime(s.t) + ' · ' + s.comps.length + ' 元件 · ' +
+                       s.wires.length + ' 导线';
     row.appendChild(meta);
 
     var acts = document.createElement('span'); acts.className = 'saveActs';
     var aSave = document.createElement('a');
-    aSave.textContent = '保存';
+    aSave.textContent = '保存'; aSave.title = '用当前画布上的电路覆盖这一份';
     aSave.onclick = function(){ saveSlot(i, name.value); };
     acts.appendChild(aSave);
-    if (s){
-      var aRs = document.createElement('a');
-      aRs.textContent = '恢复';
-      aRs.onclick = function(){ restoreSlot(i); };
-      acts.appendChild(aRs);
-      var aDel = document.createElement('a');
-      aDel.className = 'dim'; aDel.textContent = '删除';
-      aDel.onclick = function(){ deleteSlot(i); };
-      acts.appendChild(aDel);
-    }
+    var aRs = document.createElement('a');
+    aRs.textContent = '恢复';
+    aRs.onclick = function(){ restoreSlot(i); };
+    acts.appendChild(aRs);
+    var aDel = document.createElement('a');
+    aDel.className = 'dim'; aDel.textContent = '删除';
+    aDel.onclick = function(){ deleteSlot(i); };
+    acts.appendChild(aDel);
     row.appendChild(acts);
     saveBody.appendChild(row);
   })(i);
 }
+// 追加一份新的，然后把光标落到它的名字框里，方便立刻改名。
+function appendSlot(){
+  var ok = saveSlot(readSlots().length, '');
+  if (ok && saveOpen){                     // 面板开着才需要把它滚进视野、点进名字框
+    var rows = saveBody.querySelectorAll('.saveRow');
+    var last = rows[rows.length - 1];
+    if (last){ last.scrollIntoView({ block: 'nearest' });
+               var inp = last.querySelector('.saveName'); inp.focus(); inp.select(); }
+  }
+  return ok;
+}
 document.getElementById('saveX').onclick = closeSavePanel;
+document.getElementById('saveNew').onclick = appendSlot;
 saveEl.addEventListener('pointerdown', function(ev){
   if (ev.target === saveEl) closeSavePanel();   // 点浮层背景关掉，点白盒子里面不关
 });
@@ -1234,9 +1278,8 @@ window.addEventListener('keydown', function(ev){
   }
 }, true);
 
-// 状态行。现在有 3 个槽位，行内只报【最近保存的那份】的摘要，另给一个「管理」
-// 入口点开面板——三份的时间一起塞进这一行太挤。flash 传了字就临时显示一句
-// 反馈，1.6 秒后退回摘要。
+// 状态行。存档份数不限，行内只报【最近保存的那份】的摘要，另给一个「管理」
+// 入口点开面板——全塞进这一行太挤。flash 传了字就临时显示一句反馈，1.6 秒后退回摘要。
 var hintTimer = null;
 function renderSaveHint(flash){
   var el = document.getElementById('saveHint');
@@ -1329,11 +1372,14 @@ window.__btnCurrent = function(){ return btnCurrent; };
 window.__pathOf = function(wr){ return pathOf(wr); };
 window.__readout = function(c, r){ return readoutLines(c, r); };
 window.__btnFlow = function(){ return btnFlow; };
-// 存档：测试要能直接读写删每个槽位、问「自动恢复会挑哪个」、还要能单独问一句
+// 存档：测试要能直接读写删每一份、问「自动恢复会挑哪个」、还要能单独问一句
 // 「这份存档我认不认」——校验那一关断在 validScene 上，比塞一份坏存档再去猜
-// 渲染结果稳得多。__savePanel 给 DOM 级断言用（名字框的值、元信息、行内链接）。
+// 渲染结果稳得多。__savePanel 给 DOM 级断言用（名字框的值、元信息、行内链接、
+// 份数统计、空态）。
 window.__slots = function(){ return readSlots(); };
 window.__saveSlot = function(i, name){ return saveSlot(i, name); };
+window.__appendSlot = function(){ return appendSlot(); };
+window.__renameSlot = function(i, name){ return renameSlot(i, name); };
 window.__restoreSlot = function(i){ return restoreSlot(i); };
 window.__deleteSlot = function(i){ return deleteSlot(i); };
 window.__latestSlotIndex = function(){ return latestSlotIndex(); };
@@ -1341,8 +1387,12 @@ window.__openSave = function(){ openSavePanel(); };
 window.__closeSave = function(){ closeSavePanel(); };
 window.__savePanel = function(){
   var rows = [].slice.call(saveBody.querySelectorAll('.saveRow'));
+  var marks = rows.map(function(r){ return r.querySelector('.idx').textContent; });
   return {
     open: saveOpen,
+    count: document.getElementById('saveCount').textContent,
+    empty: saveBody.querySelector('.saveEmpty') ? saveBody.querySelector('.saveEmpty').textContent : null,
+    marks: marks,
     names: rows.map(function(r){ return r.querySelector('.saveName').value; }),
     metas: rows.map(function(r){ return r.querySelector('.saveMeta').textContent; }),
     links: rows.map(function(r){
