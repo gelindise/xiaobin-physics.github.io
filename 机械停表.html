@@ -26,9 +26,11 @@
     .layout { display: flex; gap: 0; flex-wrap: wrap; }
     .canvas-wrap {
       flex: 1; min-width: 380px;
-      display: flex; align-items: center; justify-content: center;
-      padding: 0.25rem;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      gap: 6px; padding: 0.25rem;
     }
+    #simCanvas { cursor: zoom-in; }
+    .zoom-hint { font-size: 11px; color: #94a3b8; letter-spacing: 0.3px; }
     .panel {
       width: 320px; border-left: 1px solid #e2e8f0;
       padding: 0.8rem 1rem; display: flex; flex-direction: column; gap: 0.5rem;
@@ -173,6 +175,23 @@
     .explain-box .et { font-size: 0.75rem; color: #a78bfa; margin-bottom: 4px; }
     .explain-box .ex { font-size: 0.8rem; color: #c4b5fd; line-height: 1.6; }
 
+    /* 放大读数 */
+    .zoom-overlay {
+      display: none; position: fixed; inset: 0; z-index: 1100;
+      background: rgba(15,23,42,0.9);
+      -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px);
+      align-items: center; justify-content: center; flex-direction: column;
+      cursor: zoom-out; padding: 16px;
+    }
+    .zoom-overlay.open { display: flex; }
+    .zoom-frame { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+    #zoomCanvas {
+      display: block; border-radius: 16px; background: #f8fafc;
+      box-shadow: 0 24px 70px rgba(0,0,0,0.55);
+    }
+    .zoom-tip { color: #cbd5e1; font-size: 12px; text-align: center; line-height: 1.7; }
+    .zoom-tip .k { color: #fbbf24; font-weight: 600; }
+
     /* header */
     .header {
       position: fixed !important; top: 0; left: 0; right: 0; z-index: 100;
@@ -219,7 +238,8 @@
     <div class="main-card">
       <div class="layout">
         <div class="canvas-wrap">
-          <canvas id="simCanvas" width="480" height="580"></canvas>
+          <canvas id="simCanvas" width="480" height="580" title="点击表盘放大读数"></canvas>
+          <div class="zoom-hint">🔍 点击表盘可放大读数</div>
         </div>
         <div class="panel">
           <div class="ctrl-group">
@@ -317,6 +337,16 @@
         <div id="quizResult" style="display:none;text-align:center;padding:30px 0"></div>
       </div>
     </div>
+
+    <div class="zoom-overlay" id="zoomOverlay">
+      <div class="zoom-frame">
+        <canvas id="zoomCanvas"></canvas>
+        <div class="zoom-tip">
+          先读<span class="k">小盘</span>（分）→ 看指针是否过半分钟刻度 → 大盘秒数需 +30s 时再加<br>
+          点击任意处 / 按 Esc 退出放大
+        </div>
+      </div>
+    </div>
   </div>
 
   <script>
@@ -359,11 +389,6 @@
       reset: 0
     };
 
-    // Reset button position (at 27s mark on the dial)
-    var BTN27_ANGLE = -Math.PI / 2 + (27 / 30) * 2 * Math.PI;
-    var RESET_BTN_CX = 240 + 228 * Math.cos(BTN27_ANGLE);
-    var RESET_BTN_CY = 320 + 228 * Math.sin(BTN27_ANGLE);
-
     // ===== DOM refs =====
     var modeSelect = document.getElementById('modeSelect');
     var freeControls = document.getElementById('freeControls');
@@ -392,9 +417,123 @@
 
     // ===== Drawing functions =====
     // Stopwatch geometry constants
-    var BODY_CX = 240, BODY_CY = 320, BODY_R = 210;
+    var BODY_CX = 240, BODY_CY = 350, BODY_R = 210;
     var DIAL_R = 185;
-    var SMALL_CX = 240, SMALL_CY = 228, SMALL_R = 48;
+    var SMALL_CX = 240, SMALL_CY = 258, SMALL_R = 48;
+
+    // 表冠（开始/停止）在正上方；复位钮在左上方约 10 点方向 —— 参照 504 型机械秒表
+    var CROWN = { angle: -Math.PI / 2, baseR: BODY_R - 8, len: 46, wid: 44, collarLen: 18, collarWid: 34 };
+    var RESET = { angle: -Math.PI / 2 - 0.55, baseR: BODY_R - 8, len: 30, wid: 28, collarLen: 14, collarWid: 22 };
+
+    function roundRectPath(x, y, w, h, r) {
+      ctx.beginPath();
+      ctx.moveTo(x + r, y);
+      ctx.lineTo(x + w - r, y);
+      ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+      ctx.lineTo(x + w, y + h - r);
+      ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+      ctx.lineTo(x + r, y + h);
+      ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+      ctx.lineTo(x, y + r);
+      ctx.quadraticCurveTo(x, y, x + r, y);
+      ctx.closePath();
+    }
+
+    // 沿表壳径向伸出的按钮：根部套环 + 滚花圆柱，按下时向表壳内缩
+    function drawPusher(cfg, pressed) {
+      var cosA = Math.cos(cfg.angle), sinA = Math.sin(cfg.angle);
+      var bx = BODY_CX + cfg.baseR * cosA;
+      var by = BODY_CY + cfg.baseR * sinA;
+      var wid = cfg.wid, collarWid = cfg.collarWid;
+      var sink = pressed ? 3 : 0;
+
+      ctx.save();
+      ctx.translate(bx, by);
+      ctx.rotate(cfg.angle);          // 局部 +x 指向表壳外侧
+
+      // 根部套环：与表壳相接的过渡段
+      ctx.save();
+      ctx.shadowColor = 'rgba(15,23,42,' + (pressed ? 0.20 : 0.30) + ')';
+      ctx.shadowBlur = pressed ? 3 : 8;
+      ctx.shadowOffsetY = pressed ? 1 : 4;
+      var collarGrad = ctx.createLinearGradient(0, -collarWid / 2, 0, collarWid / 2);
+      collarGrad.addColorStop(0, '#8b98a8');
+      collarGrad.addColorStop(0.22, '#eef2f7');
+      collarGrad.addColorStop(0.52, '#c3cdd9');
+      collarGrad.addColorStop(0.8, '#64748b');
+      collarGrad.addColorStop(1, '#414d5e');
+      roundRectPath(-5, -collarWid / 2, cfg.collarLen + 5, collarWid, 3);
+      ctx.fillStyle = collarGrad;
+      ctx.fill();
+      ctx.restore();
+
+      // 滚花柱体
+      var x0 = cfg.collarLen - 2 - sink;
+      var x1 = cfg.collarLen + cfg.len - sink;
+      ctx.save();
+      ctx.shadowColor = 'rgba(15,23,42,' + (pressed ? 0.18 : 0.28) + ')';
+      ctx.shadowBlur = pressed ? 3 : 7;
+      ctx.shadowOffsetY = pressed ? 1 : 3;
+      var bodyGrad = ctx.createLinearGradient(0, -wid / 2, 0, wid / 2);
+      bodyGrad.addColorStop(0, '#8b98a8');
+      bodyGrad.addColorStop(0.15, '#f8fafc');
+      bodyGrad.addColorStop(0.38, '#dde5ee');
+      bodyGrad.addColorStop(0.66, '#98a5b5');
+      bodyGrad.addColorStop(0.88, '#5b6878');
+      bodyGrad.addColorStop(1, '#39424f');
+      roundRectPath(x0, -wid / 2, x1 - x0, wid, 3);
+      ctx.fillStyle = bodyGrad;
+      ctx.fill();
+      ctx.restore();
+
+      // 滚花竖纹
+      ctx.save();
+      roundRectPath(x0, -wid / 2, x1 - x0, wid, 3);
+      ctx.clip();
+      for (var x = x0 + 1.5; x < x1 - 1; x += 3.2) {
+        ctx.beginPath();
+        ctx.moveTo(x, -wid / 2);
+        ctx.lineTo(x, wid / 2);
+        ctx.strokeStyle = 'rgba(30,41,59,0.32)';
+        ctx.lineWidth = 0.9;
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(x + 1.1, -wid / 2);
+        ctx.lineTo(x + 1.1, wid / 2);
+        ctx.strokeStyle = 'rgba(255,255,255,0.55)';
+        ctx.lineWidth = 0.8;
+        ctx.stroke();
+      }
+      // 端面高光
+      var capGrad = ctx.createLinearGradient(0, -wid / 2, 0, wid / 2);
+      capGrad.addColorStop(0, 'rgba(255,255,255,0)');
+      capGrad.addColorStop(0.5, 'rgba(255,255,255,0.38)');
+      capGrad.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.beginPath();
+      ctx.ellipse(x1 - 4, 0, 3.5, wid / 2 - 1.5, 0, 0, 2 * Math.PI);
+      ctx.fillStyle = capGrad;
+      ctx.fill();
+      ctx.restore();
+
+      // 轮廓
+      roundRectPath(x0, -wid / 2, x1 - x0, wid, 3);
+      ctx.strokeStyle = 'rgba(51,65,85,0.7)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+
+      ctx.restore();
+    }
+
+    function drawPusherLabel(cfg, text) {
+      var dist = cfg.collarLen + cfg.len + 18;
+      var lx = BODY_CX + (cfg.baseR + dist) * Math.cos(cfg.angle);
+      var ly = BODY_CY + (cfg.baseR + dist) * Math.sin(cfg.angle);
+      ctx.fillStyle = '#94a3b8';
+      ctx.font = '10px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(text, lx, ly);
+    }
 
     function drawStopwatchBody() {
       // Shadow beneath the body
@@ -436,140 +575,42 @@
 
       ctx.restore();
 
-      // === Crown button (start/stop) — top center, interactive ===
-      var crownCY = BODY_CY - BODY_R - 2;
-
-      var ssPressed = btnPress.startStop > 0.5;
-      var ssOffY = ssPressed ? 2 : 0; // sink effect
-
-      ctx.save();
-      ctx.shadowColor = 'rgba(0,0,0,0.3)';
-      ctx.shadowBlur = ssPressed ? 2 : 6;
-      ctx.shadowOffsetY = ssPressed ? 1 : 3;
-
-      var crownGrad = ctx.createLinearGradient(BODY_CX - 20, crownCY, BODY_CX + 20, crownCY);
-      if (ssPressed) {
-        crownGrad.addColorStop(0, '#64748b');
-        crownGrad.addColorStop(0.3, '#94a3b8');
-        crownGrad.addColorStop(0.5, '#cbd5e1');
-        crownGrad.addColorStop(0.7, '#94a3b8');
-        crownGrad.addColorStop(1, '#475569');
-      } else {
-        crownGrad.addColorStop(0, '#94a3b8');
-        crownGrad.addColorStop(0.3, '#cbd5e1');
-        crownGrad.addColorStop(0.5, '#e2e8f0');
-        crownGrad.addColorStop(0.7, '#cbd5e1');
-        crownGrad.addColorStop(1, '#64748b');
-      }
-      ctx.fillStyle = crownGrad;
-
-      var cw = 30, ch = 16, cx = BODY_CX, cy = crownCY + ssOffY;
-      ctx.beginPath();
-      ctx.moveTo(cx - cw/2 + 8, cy - ch/2);
-      ctx.lineTo(cx + cw/2 - 8, cy - ch/2);
-      ctx.quadraticCurveTo(cx + cw/2, cy - ch/2, cx + cw/2, cy - ch/2 + 8);
-      ctx.lineTo(cx + cw/2, cy + ch/2 - 8);
-      ctx.quadraticCurveTo(cx + cw/2, cy + ch/2, cx + cw/2 - 8, cy + ch/2);
-      ctx.lineTo(cx - cw/2 + 8, cy + ch/2);
-      ctx.quadraticCurveTo(cx - cw/2, cy + ch/2, cx - cw/2, cy + ch/2 - 8);
-      ctx.lineTo(cx - cw/2, cy - ch/2 + 8);
-      ctx.quadraticCurveTo(cx - cw/2, cy - ch/2, cx - cw/2 + 8, cy - ch/2);
-      ctx.closePath();
-      ctx.fill();
-
-      ctx.shadowColor = 'transparent';
-      ctx.strokeStyle = '#475569';
-      ctx.lineWidth = 1;
-      ctx.stroke();
-
-      // Crown ridges
-      ctx.strokeStyle = ssPressed ? '#475569' : '#64748b';
-      ctx.lineWidth = 0.6;
-      for (var rx = -8; rx <= 8; rx += 4) {
-        ctx.beginPath();
-        ctx.moveTo(cx + rx, cy - ch/2 + 2);
-        ctx.lineTo(cx + rx, cy + ch/2 - 2);
-        ctx.stroke();
-      }
-
-      ctx.restore();
-
-      // Crown label
-      ctx.fillStyle = '#94a3b8';
-      ctx.font = '9px sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillText('开始/停止', BODY_CX, crownCY - 16);
-
-      // === Reset button — at 27s position on dial edge, interactive ===
-      var rstPressed = btnPress.reset > 0.5;
-      var rstOffX = rstPressed ? -2 : 0;
-      var rstX = RESET_BTN_CX + rstOffX, rstY = RESET_BTN_CY;
-
-      ctx.save();
-      ctx.shadowColor = 'rgba(0,0,0,0.3)';
-      ctx.shadowBlur = rstPressed ? 2 : 5;
-      ctx.shadowOffsetY = 2;
-
-      var resetGrad = ctx.createLinearGradient(rstX - 10, rstY - 10, rstX + 10, rstY + 10);
-      if (rstPressed) {
-        resetGrad.addColorStop(0, '#64748b');
-        resetGrad.addColorStop(0.5, '#94a3b8');
-        resetGrad.addColorStop(1, '#475569');
-      } else {
-        resetGrad.addColorStop(0, '#94a3b8');
-        resetGrad.addColorStop(0.5, '#cbd5e1');
-        resetGrad.addColorStop(1, '#64748b');
-      }
-      ctx.fillStyle = resetGrad;
-
-      ctx.beginPath();
-      ctx.arc(rstX, rstY, 9, 0, 2 * Math.PI);
-      ctx.fill();
-
-      ctx.shadowColor = 'transparent';
-      ctx.strokeStyle = '#475569';
-      ctx.lineWidth = 1;
-      ctx.stroke();
-
-      // Inner highlight
-      ctx.fillStyle = rstPressed ? '#94a3b8' : '#e2e8f0';
-      ctx.beginPath();
-      ctx.arc(rstX - 1, rstY - 1, 4.5, 0, 2 * Math.PI);
-      ctx.fill();
-      ctx.restore();
-
-      // Reset label
-      ctx.fillStyle = '#94a3b8';
-      ctx.font = '8px sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillText('复位', rstX, rstY + 17);
+      // === 表冠（开始/停止）与复位钮 ===
+      drawPusher(CROWN, btnPress.startStop > 0.5);
+      drawPusherLabel(CROWN, '开始/停止');
+      drawPusher(RESET, btnPress.reset > 0.5);
+      drawPusherLabel(RESET, '复位');
     }
 
-    function drawLargeDial() {
-      var cx = BODY_CX, cy = BODY_CY, R = DIAL_R;
+    function drawLargeDial(cx, cy, s) {
+      s = s || 1;
+      var R = DIAL_R;
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.scale(s, s);
 
       // Dial face — clean white with subtle cream gradient
-      var grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, R);
+      var grad = ctx.createRadialGradient(0, 0, 0, 0, 0, R);
       grad.addColorStop(0, '#ffffff');
       grad.addColorStop(0.7, '#fffffb');
       grad.addColorStop(1, '#f5f0e5');
       ctx.fillStyle = grad;
       ctx.beginPath();
-      ctx.arc(cx, cy, R, 0, 2 * Math.PI);
+      ctx.arc(0, 0, R, 0, 2 * Math.PI);
       ctx.fill();
 
       // Thin border
       ctx.strokeStyle = '#475569';
       ctx.lineWidth = 2.5;
       ctx.beginPath();
-      ctx.arc(cx, cy, R, 0, 2 * Math.PI);
+      ctx.arc(0, 0, R, 0, 2 * Math.PI);
       ctx.stroke();
 
       // Inner guide ring
       ctx.strokeStyle = '#cbd5e1';
       ctx.lineWidth = 0.5;
       ctx.beginPath();
-      ctx.arc(cx, cy, R - 3, 0, 2 * Math.PI);
+      ctx.arc(0, 0, R - 3, 0, 2 * Math.PI);
       ctx.stroke();
 
       // Minor ticks: every 0.1s (300 total around the dial)
@@ -583,22 +624,20 @@
         var innerR = isMid ? R - 14 : R - 8;
         var outerR = R - 2;
         ctx.beginPath();
-        ctx.moveTo(cx + innerR * cosA, cy + innerR * sinA);
-        ctx.lineTo(cx + outerR * cosA, cy + outerR * sinA);
+        ctx.moveTo(innerR * cosA, innerR * sinA);
+        ctx.lineTo(outerR * cosA, outerR * sinA);
         ctx.strokeStyle = isMid ? '#64748b' : '#94a3b8';
         ctx.lineWidth = isMid ? 1 : 0.5;
         ctx.stroke();
       }
 
       // Major ticks: 30 ticks (one per second)
-      for (var s = 0; s < 30; s++) {
-        var angle = -Math.PI / 2 + (s / 30) * 2 * Math.PI;
-        var cosA = Math.cos(angle), sinA = Math.sin(angle);
-        var outerR = R - 2;
-        var innerR = R - 18;
+      for (var s2 = 0; s2 < 30; s2++) {
+        var a2 = -Math.PI / 2 + (s2 / 30) * 2 * Math.PI;
+        var c2 = Math.cos(a2), n2 = Math.sin(a2);
         ctx.beginPath();
-        ctx.moveTo(cx + innerR * cosA, cy + innerR * sinA);
-        ctx.lineTo(cx + outerR * cosA, cy + outerR * sinA);
+        ctx.moveTo((R - 18) * c2, (R - 18) * n2);
+        ctx.lineTo((R - 2) * c2, (R - 2) * n2);
         ctx.strokeStyle = '#1e293b';
         ctx.lineWidth = 2;
         ctx.stroke();
@@ -608,9 +647,9 @@
       // Position 0→30, 1→1, 2→32, 3→3, 4→34, 5→5, 6→36, ...
       var labelR = R - 28;
       for (var n = 0; n < 30; n++) {
-        var angle = -Math.PI / 2 + (n / 30) * 2 * Math.PI;
-        var lx = cx + labelR * Math.cos(angle);
-        var ly = cy + labelR * Math.sin(angle);
+        var a3 = -Math.PI / 2 + (n / 30) * 2 * Math.PI;
+        var lx = labelR * Math.cos(a3);
+        var ly = labelR * Math.sin(a3);
         var label;
         if (n === 0) {
           label = '30';
@@ -626,36 +665,40 @@
         ctx.textBaseline = 'middle';
         ctx.fillText(label, lx, ly);
       }
+      ctx.restore();
     }
 
-    function drawSmallDial(elapsedSec) {
-      var scx = SMALL_CX, scy = SMALL_CY, sR = SMALL_R;
+    function drawSmallDial(cx, cy, s, elapsedSec) {
+      s = s || 1;
+      var sR = SMALL_R;
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.scale(s, s);
 
       // White dial face
-      var grad = ctx.createRadialGradient(scx, scy, 0, scx, scy, sR);
+      var grad = ctx.createRadialGradient(0, 0, 0, 0, 0, sR);
       grad.addColorStop(0, '#ffffff');
       grad.addColorStop(0.8, '#fffffb');
       grad.addColorStop(1, '#f0ead6');
       ctx.fillStyle = grad;
       ctx.beginPath();
-      ctx.arc(scx, scy, sR, 0, 2 * Math.PI);
+      ctx.arc(0, 0, sR, 0, 2 * Math.PI);
       ctx.fill();
 
       // Border
       ctx.strokeStyle = '#475569';
       ctx.lineWidth = 2;
       ctx.beginPath();
-      ctx.arc(scx, scy, sR, 0, 2 * Math.PI);
+      ctx.arc(0, 0, sR, 0, 2 * Math.PI);
       ctx.stroke();
 
       // Minute ticks (0-15)
       for (var m = 0; m <= 15; m++) {
-        var angle = -Math.PI / 2 + (m / 15) * 2 * Math.PI;
-        var cosA = Math.cos(angle), sinA = Math.sin(angle);
-        var outerR = sR - 2, innerR = sR - 10;
+        var a1 = -Math.PI / 2 + (m / 15) * 2 * Math.PI;
+        var c1 = Math.cos(a1), n1 = Math.sin(a1);
         ctx.beginPath();
-        ctx.moveTo(scx + innerR * cosA, scy + innerR * sinA);
-        ctx.lineTo(scx + outerR * cosA, scy + outerR * sinA);
+        ctx.moveTo((sR - 10) * c1, (sR - 10) * n1);
+        ctx.lineTo((sR - 2) * c1, (sR - 2) * n1);
         ctx.strokeStyle = '#1e293b';
         ctx.lineWidth = 1.5;
         ctx.stroke();
@@ -663,12 +706,11 @@
 
       // Half-minute ticks
       for (var h = 0; h < 15; h++) {
-        var angle = -Math.PI / 2 + ((h + 0.5) / 15) * 2 * Math.PI;
-        var cosA = Math.cos(angle), sinA = Math.sin(angle);
-        var outerR = sR - 2, innerR = sR - 6;
+        var a2 = -Math.PI / 2 + ((h + 0.5) / 15) * 2 * Math.PI;
+        var c2 = Math.cos(a2), n2 = Math.sin(a2);
         ctx.beginPath();
-        ctx.moveTo(scx + innerR * cosA, scy + innerR * sinA);
-        ctx.lineTo(scx + outerR * cosA, scy + outerR * sinA);
+        ctx.moveTo((sR - 6) * c2, (sR - 6) * n2);
+        ctx.lineTo((sR - 2) * c2, (sR - 2) * n2);
         ctx.strokeStyle = '#64748b';
         ctx.lineWidth = 0.7;
         ctx.stroke();
@@ -677,9 +719,9 @@
       // ALL number labels: 0 through 15
       var labelR = sR - 16;
       for (var n = 0; n <= 15; n++) {
-        var angle = -Math.PI / 2 + (n / 15) * 2 * Math.PI;
-        var lx = scx + labelR * Math.cos(angle);
-        var ly = scy + labelR * Math.sin(angle);
+        var a3 = -Math.PI / 2 + (n / 15) * 2 * Math.PI;
+        var lx = labelR * Math.cos(a3);
+        var ly = labelR * Math.sin(a3);
         ctx.fillStyle = n % 5 === 0 ? '#b91c1c' : '#1e293b';
         ctx.font = (n % 5 === 0 ? 'bold ' : '') + '9px sans-serif';
         ctx.textAlign = 'center';
@@ -699,19 +741,23 @@
       ctx.lineWidth = 2.5;
       ctx.lineCap = 'round';
       ctx.beginPath();
-      ctx.moveTo(scx - 4 * Math.cos(smallAngle), scy - 4 * Math.sin(smallAngle));
-      ctx.lineTo(scx + handLen * Math.cos(smallAngle), scy + handLen * Math.sin(smallAngle));
+      ctx.moveTo(-4 * Math.cos(smallAngle), -4 * Math.sin(smallAngle));
+      ctx.lineTo(handLen * Math.cos(smallAngle), handLen * Math.sin(smallAngle));
       ctx.stroke();
+      ctx.restore();
+
       ctx.restore();
     }
 
-    function drawLargeHand(elapsedSec) {
-      var cx = BODY_CX, cy = BODY_CY;
+    function drawLargeHand(cx, cy, s, elapsedSec) {
+      s = s || 1;
       var sec30 = elapsedSec % 30;
       var angle = -Math.PI / 2 + (sec30 / 30) * 2 * Math.PI;
       var handLen = DIAL_R - 18;
 
       ctx.save();
+      ctx.translate(cx, cy);
+      ctx.scale(s, s);
       ctx.shadowColor = 'rgba(0,0,0,0.25)';
       ctx.shadowBlur = 4;
 
@@ -720,13 +766,13 @@
       ctx.lineWidth = 2.5;
       ctx.lineCap = 'round';
       ctx.beginPath();
-      ctx.moveTo(cx - 14 * Math.cos(angle), cy - 14 * Math.sin(angle));
-      ctx.lineTo(cx + handLen * Math.cos(angle), cy + handLen * Math.sin(angle));
+      ctx.moveTo(-14 * Math.cos(angle), -14 * Math.sin(angle));
+      ctx.lineTo(handLen * Math.cos(angle), handLen * Math.sin(angle));
       ctx.stroke();
 
       // Arrow tip
-      var tipX = cx + handLen * Math.cos(angle);
-      var tipY = cy + handLen * Math.sin(angle);
+      var tipX = handLen * Math.cos(angle);
+      var tipY = handLen * Math.sin(angle);
       var perpX = -Math.sin(angle), perpY = Math.cos(angle);
       ctx.fillStyle = '#dc2626';
       ctx.beginPath();
@@ -739,17 +785,20 @@
       // Small counterweight circle at the back
       ctx.fillStyle = '#dc2626';
       ctx.beginPath();
-      ctx.arc(cx - 12 * Math.cos(angle), cy - 12 * Math.sin(angle), 3, 0, 2 * Math.PI);
+      ctx.arc(-12 * Math.cos(angle), -12 * Math.sin(angle), 3, 0, 2 * Math.PI);
       ctx.fill();
 
       ctx.restore();
     }
 
-    function drawCenterPivot() {
-      var cx = BODY_CX, cy = BODY_CY;
+    function drawCenterPivot(cx, cy, s) {
+      s = s || 1;
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.scale(s, s);
       // Outer ring
       ctx.beginPath();
-      ctx.arc(cx, cy, 7, 0, 2 * Math.PI);
+      ctx.arc(0, 0, 7, 0, 2 * Math.PI);
       ctx.fillStyle = '#64748b';
       ctx.fill();
       ctx.strokeStyle = '#475569';
@@ -757,12 +806,13 @@
       ctx.stroke();
       // Inner dot with highlight
       ctx.beginPath();
-      ctx.arc(cx, cy, 3.5, 0, 2 * Math.PI);
-      var capGrad = ctx.createRadialGradient(cx - 0.5, cy - 0.5, 0, cx, cy, 3.5);
+      ctx.arc(0, 0, 3.5, 0, 2 * Math.PI);
+      var capGrad = ctx.createRadialGradient(-0.5, -0.5, 0, 0, 0, 3.5);
       capGrad.addColorStop(0, '#64748b');
       capGrad.addColorStop(1, '#1e293b');
       ctx.fillStyle = capGrad;
       ctx.fill();
+      ctx.restore();
     }
 
     function drawBrandText() {
@@ -815,16 +865,91 @@
       var elapsedSec = getElapsedSec();
 
       drawStopwatchBody();
-      drawLargeDial();
-      drawSmallDial(elapsedSec);
+      drawLargeDial(BODY_CX, BODY_CY, 1);
+      drawSmallDial(SMALL_CX, SMALL_CY, 1, elapsedSec);
       drawBrandText();
-      drawLargeHand(elapsedSec);
-      drawCenterPivot();
+      drawLargeHand(BODY_CX, BODY_CY, 1, elapsedSec);
+      drawCenterPivot(BODY_CX, BODY_CY, 1);
 
       updateDisplay(elapsedSec);
 
+      if (zoomOpen) renderZoom(elapsedSec);
+
       requestAnimationFrame(render);
     }
+
+    // ===== 放大读数 =====
+    var ZW = 720, ZH = 760;        // 放大视图逻辑尺寸
+    var ZS = 1.9;                  // 放大倍数
+    var ZCX = 360, ZCY = 385;      // 盘中位置
+    var SMALL_OFFSET = SMALL_CY - BODY_CY;   // 小盘相对大盘的偏移
+
+    var zoomOverlay = document.getElementById('zoomOverlay');
+    var zoomCanvas = document.getElementById('zoomCanvas');
+    var zoomCtx = zoomCanvas.getContext('2d');
+    var zoomOpen = false;
+
+    function layoutZoomCanvas() {
+      var availW = window.innerWidth * 0.92;
+      var availH = window.innerHeight * 0.82;
+      var k = Math.min(availW / ZW, availH / ZH);
+      var cssW = Math.max(200, Math.round(ZW * k));
+      var cssH = Math.round(ZH * k);
+      var dpr = window.devicePixelRatio || 1;
+      zoomCanvas.style.width = cssW + 'px';
+      zoomCanvas.style.height = cssH + 'px';
+      zoomCanvas.width = Math.round(cssW * dpr);
+      zoomCanvas.height = Math.round(cssH * dpr);
+    }
+
+    function renderZoom(elapsedSec) {
+      var scale = zoomCanvas.width / ZW;
+      var prev = ctx;
+      ctx = zoomCtx;
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.clearRect(0, 0, zoomCanvas.width, zoomCanvas.height);
+      ctx.setTransform(scale, 0, 0, scale, 0, 0);
+      ctx.fillStyle = '#f8fafc';
+      ctx.fillRect(0, 0, ZW, ZH);
+
+      // 底盘投影
+      ctx.save();
+      ctx.shadowColor = 'rgba(15,23,42,0.22)';
+      ctx.shadowBlur = 26;
+      ctx.shadowOffsetY = 10;
+      ctx.beginPath();
+      ctx.arc(ZCX, ZCY, DIAL_R * ZS, 0, 2 * Math.PI);
+      ctx.fillStyle = '#ffffff';
+      ctx.fill();
+      ctx.restore();
+
+      drawLargeDial(ZCX, ZCY, ZS);
+      drawSmallDial(ZCX, ZCY + SMALL_OFFSET * ZS, ZS, elapsedSec);
+      drawLargeHand(ZCX, ZCY, ZS, elapsedSec);
+      drawCenterPivot(ZCX, ZCY, ZS);
+
+      ctx = prev;
+    }
+
+    function openZoom() {
+      if (zoomOpen) return;
+      zoomOpen = true;
+      zoomOverlay.classList.add('open');
+      layoutZoomCanvas();
+    }
+
+    function closeZoom() {
+      zoomOpen = false;
+      zoomOverlay.classList.remove('open');
+    }
+
+    zoomOverlay.addEventListener('click', closeZoom);
+    window.addEventListener('keydown', function(e) {
+      if (e.key === 'Escape' && zoomOpen) closeZoom();
+    });
+    window.addEventListener('resize', function() {
+      if (zoomOpen) layoutZoomCanvas();
+    });
 
     // ===== Canvas click interaction for buttons =====
     function getLogicalPos(e) {
@@ -846,17 +971,23 @@
       };
     }
 
-    function hitCrownButton(lx, ly) {
-      var crownCY = BODY_CY - BODY_R - 2;
-      var cw = 30, ch = 16;
-      return lx > BODY_CX - cw/2 && lx < BODY_CX + cw/2 &&
-             ly > crownCY - ch/2 && ly < crownCY + ch/2;
+    // 把点击点换算到按钮的局部坐标（u 沿径向、v 为横向）再判断
+    function hitPusher(cfg, lx, ly) {
+      var cosA = Math.cos(cfg.angle), sinA = Math.sin(cfg.angle);
+      var dx = lx - (BODY_CX + cfg.baseR * cosA);
+      var dy = ly - (BODY_CY + cfg.baseR * sinA);
+      var u = dx * cosA + dy * sinA;
+      var v = -dx * sinA + dy * cosA;
+      return u > -6 && u < cfg.collarLen + cfg.len + 3 &&
+             Math.abs(v) < Math.max(cfg.wid, cfg.collarWid) / 2 + 4;
     }
 
-    function hitResetButton(lx, ly) {
-      var dx = lx - RESET_BTN_CX;
-      var dy = ly - RESET_BTN_CY;
-      return Math.sqrt(dx * dx + dy * dy) < 14;
+    function hitCrownButton(lx, ly) { return hitPusher(CROWN, lx, ly); }
+    function hitResetButton(lx, ly) { return hitPusher(RESET, lx, ly); }
+
+    function inDialArea(lx, ly) {
+      var dx = lx - BODY_CX, dy = ly - BODY_CY;
+      return Math.sqrt(dx * dx + dy * dy) <= DIAL_R + 6;
     }
 
     function onCanvasDown(e) {
@@ -872,18 +1003,28 @@
     function onCanvasUp(e) {
       if (e.type === 'touchend') e.preventDefault();
       var pos = getLogicalPos(e);
+      var used = false;
       if (hitCrownButton(pos.x, pos.y)) {
         btnPress.startStop = 0;
         startStopwatch();
+        used = true;
       }
       if (hitResetButton(pos.x, pos.y)) {
         btnPress.reset = 0;
         resetStopwatch();
+        used = true;
       }
+      // 触摸端被 preventDefault 抑制了 click，这里补上表盘点击放大
+      if (!used && e.type === 'touchend' && inDialArea(pos.x, pos.y)) openZoom();
     }
 
     canvas.addEventListener('mousedown', onCanvasDown);
     canvas.addEventListener('mouseup', onCanvasUp);
+    canvas.addEventListener('click', function(e) {
+      var pos = getLogicalPos(e);
+      if (hitCrownButton(pos.x, pos.y) || hitResetButton(pos.x, pos.y)) return;
+      if (inDialArea(pos.x, pos.y)) openZoom();
+    });
     canvas.addEventListener('mouseleave', function() {
       btnPress.startStop = Math.max(0, btnPress.startStop - 0.5);
       btnPress.reset = Math.max(0, btnPress.reset - 0.5);
