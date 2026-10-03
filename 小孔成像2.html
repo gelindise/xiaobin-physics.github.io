@@ -330,6 +330,9 @@
             cursor: grab; touch-action: none;
         }
         .lab3d-stage canvas:active { cursor: grabbing; }
+        /* 悬停/拖动发光点 P 时换成上下拖动光标（放在 :active 之后才能覆盖它） */
+        .lab3d-stage canvas.pick-point { cursor: ns-resize; }
+        .lab3d-stage canvas.pick-point:active { cursor: ns-resize; }
         .lab3d-stage .stage-hint {
             position: absolute; top: 13px; left: 15px; pointer-events: none; font-size: 12px;
             color: #bae6fd; background: rgba(2, 6, 23, .78); border: 1px solid rgba(56, 189, 248, .25);
@@ -352,6 +355,7 @@
         .lab3d-foot .legend { margin-left: auto; color: #8ba7b6; }
         .lab3d-foot .warm { color: #ffc06a; }
         .lab3d-foot .cool { color: #7fd8f5; }
+        .lab3d-foot .mark { color: #c084fc; }
         .lab3d-sidebar {
             padding: 18px; color: #cbd5e1; border-left: 1px solid var(--line);
             background: linear-gradient(180deg, rgba(15, 23, 42, .75), rgba(2, 6, 23, .6));
@@ -443,13 +447,14 @@
           <div class="lab3d-stage">
             <canvas id="lab3d-canvas" aria-label="可拖动旋转、滚轮缩放的三维小孔成像装置"></canvas>
             <div class="stage-hint"><b></b>三维实验场景 · 物体 → 小孔 → 光屏</div>
-            <div class="stage-help">拖动旋转 · 滚轮缩放 · 点击上方切换视角</div>
+            <div class="stage-help">拖动旋转 · 滚轮缩放 · 拖动紫色光点可移动 P</div>
           </div>
           <div class="lab3d-foot">
             <label><input id="lab3d-rays" type="checkbox" checked>显示光路</label>
             <label><input id="lab3d-grid" type="checkbox" checked>显示参考网格</label>
             <label><input id="lab3d-board" type="checkbox" checked>透视挡板</label>
-            <span class="legend"><span class="warm">━</span> 上端光线　<span class="cool">━</span> 下端光线　- - 中轴线</span>
+            <label><input id="lab3d-point" type="checkbox" checked>标记发光点 P</label>
+            <span class="legend"><span class="warm">━</span> 上端光线　<span class="cool">━</span> 下端光线　<span class="mark">━</span> 发光点光线　- - 中轴线</span>
           </div>
           <div class="lab3d-metrics" aria-live="polite">
             <div class="lab3d-metric"><span>放大倍数  v / u</span><strong id="lab3d-mag">1.67 倍</strong></div>
@@ -457,7 +462,7 @@
             <div class="lab3d-metric"><span>成像性质</span><strong>倒立 · 实像</strong></div>
             <div class="lab3d-metric"><span>光屏亮度 / 清晰度</span><strong id="lab3d-quality">较亮 · 清晰</strong></div>
           </div>
-          <p class="lab3d-note"><b>观察提示：</b>物体上端的光线穿过小孔后到达光屏下方，下端则到达上方；改变孔径会影响亮度与清晰度，<b>不会改变像的倒立方向</b>。孔径在模型中作示意放大。</p>
+          <p class="lab3d-note"><b>观察提示：</b>物体上端的光线穿过小孔后到达光屏下方，下端则到达上方；<b>拖动紫色发光点 P</b>，可以看到像点 P′ 在光屏上同步反向移动——物点越靠上，像点越靠下，说明像是逐点一一对应过去的。改变孔径会影响亮度与清晰度，<b>不会改变像的倒立方向</b>。孔径在模型中作示意放大。</p>
         </div>
         <aside class="lab3d-sidebar">
           <h3>实验参数</h3>
@@ -467,6 +472,7 @@
           <div class="lab3d-field"><span class="field-label">小孔形状</span><div class="lab3d-segment" role="group" aria-label="小孔形状"><button type="button" class="active" data-hole="circle">○ 圆形</button><button type="button" data-hole="square">□ 方形</button><button type="button" data-hole="triangle">△ 三角形</button></div></div>
           <div class="lab3d-field"><label for="lab3d-object">发光物体</label><select id="lab3d-object"><option value="candle">蜡烛</option><option value="arrow">箭头</option><option value="letter">字母 F</option></select></div>
           <div class="lab3d-field"><label for="lab3d-h">物体高度 h <output id="lab3d-h-value">6 cm</output></label><input id="lab3d-h" type="range" min="3" max="8" value="6" step="0.5"><small>保持其余参数不变时，像高随之变化</small></div>
+          <div class="lab3d-field"><label for="lab3d-p">发光点 P 位置 <output id="lab3d-p-value">距下端 62%</output></label><input id="lab3d-p" type="range" min="0" max="100" value="62" step="1"><small>也可直接拖动场景里的紫色光点 · 像点 P′ 同步反向移动</small></div>
           <div class="lab3d-preview"><strong>光屏正面 · 实像预览</strong><canvas id="lab3d-preview" width="320" height="320" aria-label="光屏上的倒立实像预览"></canvas><span id="lab3d-preview-caption">点亮的蜡烛 · 倒立成像</span></div>
         </aside>
       </div>
@@ -613,21 +619,24 @@
       u: document.getElementById('lab3d-u'), v: document.getElementById('lab3d-v'),
       d: document.getElementById('lab3d-d'), h: document.getElementById('lab3d-h'),
       object: document.getElementById('lab3d-object'), rays: document.getElementById('lab3d-rays'),
-      grid: document.getElementById('lab3d-grid'), board: document.getElementById('lab3d-board')
+      grid: document.getElementById('lab3d-grid'), board: document.getElementById('lab3d-board'),
+      p: document.getElementById('lab3d-p'), point: document.getElementById('lab3d-point')
     };
     const out = {
       u: document.getElementById('lab3d-u-value'), v: document.getElementById('lab3d-v-value'),
       d: document.getElementById('lab3d-d-value'), h: document.getElementById('lab3d-h-value'),
       mag: document.getElementById('lab3d-mag'), ih: document.getElementById('lab3d-image-height'),
-      quality: document.getElementById('lab3d-quality'), caption: document.getElementById('lab3d-preview-caption')
+      quality: document.getElementById('lab3d-quality'), caption: document.getElementById('lab3d-preview-caption'),
+      p: document.getElementById('lab3d-p-value')
     };
     const VIEWS = { perspective: [.60, .22], side: [.03, .05], front: [1.50, .07], top: [.30, 1.26] };
     const state = {
       hole: 'circle', yaw: VIEWS.perspective[0], pitch: VIEWS.perspective[1], zoom: 1,
-      w: 1, h: 1, dpr: 0, pdpr: 0, dragging: false, time: 0, dirty: true, visible: true
+      w: 1, h: 1, dpr: 0, pdpr: 0, dragging: false, dragPoint: null, hoverPoint: false,
+      pf: .62, time: 0, dirty: true, previewDirty: true, visible: true, lastStat: null
     };
     const U = .42, V = .42, FOCAL = 68, PI2 = Math.PI * 2;
-    const WARM = '#ffc06a', COOL = '#7fd8f5';
+    const WARM = '#ffc06a', COOL = '#7fd8f5', MARK = '#c084fc';
     const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
     const frac = n => n - Math.floor(n);
     const NAMES = { candle: '点亮的蜡烛', arrow: '发光箭头', letter: '发光字母 F' };
@@ -638,11 +647,18 @@
       const uw = u * U, vw = v * V;
       const hw = 2.00 + (h - 3) * .19;           // 物体在场景中的高度（视觉上保持一支长蜡烛）
       const ih = hw * .5 * (vw / uw);            // 像的半高 h'/2 = h/2 · v/u
+      const pf = clamp(state.pf, 0, 1);          // 第三个发光点 P：0 = 物体下端，1 = 物体上端
+      const oy = -hw * .5 + pf * hw;             // P 的世界高度
       return {
         u, v, d, h, uw, vw, hw, ih,
         R: ih + .62,                             // 光屏半径始终比像大一圈，光线必定落在屏上
         table: -hw * .5,                         // 台面正好在物体底部：蜡烛直接立在台面上
-        object: inputs.object.value
+        object: inputs.object.value,
+        pf: pf,
+        // 注意别把这个字段叫 py：camera() 会用 q.py 存投影中心的屏幕 y，
+        // 而 camera() 在 render 里先跑，重名会把光点高度直接覆盖掉。
+        oy: oy,                                  // 发光点 P 的高度
+        iy: -oy * (vw / uw)                      // 对应像点 P′ 的高度：严格倒立，|P′| = |P|·v/u
       };
     }
     function camera(q, w, h) {
@@ -705,6 +721,17 @@
       ctx.fillStyle = fill; ctx.fill();
       if (stroke) { ctx.lineWidth = 1.6; ctx.strokeStyle = stroke; ctx.stroke(); }
     }
+    // 发光点的光晕：外圈柔光 + 内圈实心，让小标记点在深色场景里也一眼可见。
+    function halo(p, r, color) {
+      const g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, r);
+      g.addColorStop(0, 'rgba(255,255,255,.55)');
+      g.addColorStop(.45, color);
+      g.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.save();
+      ctx.globalAlpha = .5;
+      ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, PI2); ctx.fillStyle = g; ctx.fill();
+      ctx.restore();
+    }
     function tag(text, p, color) {
       ctx.font = '700 11px Inter, system-ui, sans-serif';
       const tw = ctx.measureText(text).width;
@@ -760,10 +787,19 @@
     function rayPoints(q) {
       const x0 = -q.uw, top = q.hw * .5;
       const hole = project(0, 0, 0, q);
-      return [
+      const list = [
         { a: project(x0, top, 0, q), b: project(q.vw, -q.ih, 0, q), hole: hole, color: WARM, from: '物体上端', to: '像的下端' },
         { a: project(x0, -top, 0, q), b: project(q.vw, q.ih, 0, q), hole: hole, color: COOL, from: '物体下端', to: '像的上端' }
       ];
+      // 第三个发光点 P：物体上任意一点都有一条直线穿过小孔、落到屏上唯一的对应点，
+      // 这条光路才真正说明"像是怎样被逐点搬运过去的"，比只画上下两端更有说服力。
+      if (inputs.point && inputs.point.checked) {
+        list.push({
+          a: project(x0, q.oy, 0, q), b: project(q.vw, q.iy, 0, q), hole: hole,
+          color: MARK, from: '发光点 P', to: '像点 P′', isMark: true
+        });
+      }
+      return list;
     }
     function drawRays(q, rays) {
       seg(project(-q.uw - .95, 0, 0, q), project(q.vw + .7, 0, 0, q), 'rgba(148, 163, 184, .3)', 1, [6, 7]);
@@ -947,8 +983,22 @@
       dot(iBot, 4.4, WARM, '#3a2408');
       dot(iTop, 4.4, COOL, '#08283a');
       if (rays && state.w > 620) {
-        tag('上端', { x: oTop.x - 36, y: oTop.y - 20 }, WARM);
-        tag('下端', { x: oBot.x - 36, y: oBot.y + 20 }, COOL);
+        tag('上端', { x: oTop.x - 36, y: oTop.y - 26 }, WARM);
+        tag('下端', { x: oBot.x - 36, y: oBot.y + 26 }, COOL);
+      }
+      // 第三个发光点 P 与它在屏上的对应像点 P′。两者必须共用一条过孔直线，
+      // 且高度严格互为反向，才能说明"每个物点都对应唯一的像点"。
+      if (inputs.point && inputs.point.checked) {
+        const oP = project(-q.uw, q.oy, 0, q), iP = project(q.vw, q.iy, 0, q);
+        halo(oP, 13, MARK); halo(iP, 13, MARK);
+        dot(oP, 4.8, '#fff6ff', MARK);
+        dot(iP, 4.8, '#fff6ff', MARK);
+        if (state.w > 620) {
+          // 标签朝"离最近端点更远"的一侧让开，否则 P 靠近上/下端时会和那两个标签叠在一起。
+          const dy = q.pf > .5 ? 26 : -26;
+          tag('发光点 P', { x: oP.x - 60, y: oP.y + dy }, MARK);
+          tag('像点 P′', { x: iP.x + 46, y: iP.y - dy }, MARK);
+        }
       }
     }
 
@@ -1058,7 +1108,15 @@
       tx.filter = softPx > 0 ? 'blur(' + softPx.toFixed(2) + 'px)' : 'none';
       motif(tx, q.object, hPx);
       tx.restore();
-      pctx.setTransform(state.pdpr || 1, 0, 0, state.pdpr || 1, 0, 0);
+      state.previewDirty = true;
+      return { blurFrac: blurFrac, alpha: alpha, bright: bright };
+    }
+    // 预览面板的合成：底色 + 倒像 + 边框 + 像点 P′ 标记。
+    // 必须整块重画。之前只在重做贴图时才清屏，而拖动光点走的是"不重做贴图"的
+    // 轻量路径，于是每一帧的标记都叠在上一帧上面，拖完就留下一串残影。
+    function drawPreview(q) {
+      const dpr = state.pdpr || 1;
+      pctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       pctx.clearRect(0, 0, 320, 320);
       pctx.imageSmoothingEnabled = true;
       pctx.imageSmoothingQuality = 'high';
@@ -1071,7 +1129,23 @@
       pctx.restore();
       pctx.beginPath(); pctx.arc(160, 160, 154, 0, PI2);
       pctx.lineWidth = 5; pctx.strokeStyle = 'rgba(125, 211, 252, .55)'; pctx.stroke();
-      return { blurFrac: blurFrac, alpha: alpha, bright: bright };
+      // 像点 P′ 标记。贴图占 284px 宽，正好对应光屏直径 2R，所以半高 R ↔ 142px。
+      if (inputs.point && inputs.point.checked) {
+        const py = 160 - (q.iy / q.R) * 142;
+        pctx.save();
+        pctx.beginPath(); pctx.arc(160, py, 12, 0, PI2);
+        const g = pctx.createRadialGradient(160, py, 0, 160, py, 12);
+        g.addColorStop(0, 'rgba(255,255,255,.85)');
+        g.addColorStop(.42, MARK);
+        g.addColorStop(1, 'rgba(0,0,0,0)');
+        pctx.globalAlpha = .8; pctx.fillStyle = g; pctx.fill();
+        pctx.restore();
+        pctx.save();
+        pctx.beginPath(); pctx.arc(160, py, 3.4, 0, PI2);
+        pctx.fillStyle = '#fff6ff'; pctx.fill();
+        pctx.lineWidth = 1.4; pctx.strokeStyle = MARK; pctx.stroke();
+        pctx.restore();
+      }
     }
 
     /* ---------- 主渲染 ---------- */
@@ -1098,23 +1172,44 @@
       if (inputs.rays.checked) drawRays(q, rays);
       if (inputs.rays.checked) drawArrowHeads(rays, state.time);
       drawMarkers(q, rays);
+      // 预览只在内容真的变了时重画（换参数、移动光点），不必每帧重做，
+      // 免得动画期间白白跑一次贴图缩放。
+      if (state.previewDirty) { drawPreview(q); state.previewDirty = false; }
     }
 
     /* ---------- 参数与交互 ---------- */
-    function update() {
-      const q = model();
-      camera(q, state.w, state.h);   // 贴图分辨率依赖投影比例，先算相机
-      const stat = paintTexture(q);
+    function syncReadouts(q, stat) {
       out.u.textContent = q.u + ' cm';
       out.v.textContent = q.v + ' cm';
       out.d.textContent = q.d.toFixed(1) + ' mm';
       out.h.textContent = q.h + ' cm';
       out.mag.textContent = (q.v / q.u).toFixed(2) + ' 倍';
       out.ih.textContent = (q.h * q.v / q.u).toFixed(1) + ' cm';
-      const light = stat.bright < .4 ? '偏暗' : stat.bright < 1.2 ? '较亮' : '明亮';
-      const sharp = stat.blurFrac < .035 ? '清晰' : stat.blurFrac < .085 ? '较清晰' : stat.blurFrac < .15 ? '略模糊' : '模糊';
-      out.quality.textContent = light + ' · ' + sharp;
+      if (stat) {
+        const light = stat.bright < .4 ? '偏暗' : stat.bright < 1.2 ? '较亮' : '明亮';
+        const sharp = stat.blurFrac < .035 ? '清晰' : stat.blurFrac < .085 ? '较清晰' : stat.blurFrac < .15 ? '略模糊' : '模糊';
+        out.quality.textContent = light + ' · ' + sharp;
+        state.lastStat = stat;
+      }
       out.caption.textContent = NAMES[q.object] + ' · 上下左右均颠倒';
+      if (out.p) {
+        const pct = Math.round(q.pf * 100);
+        out.p.textContent = pct <= 1 ? '在物体下端' : pct >= 99 ? '在物体上端' : '距下端 ' + pct + '%';
+      }
+    }
+    function update() {
+      const q = model();
+      camera(q, state.w, state.h);   // 贴图分辨率依赖投影比例，先算相机
+      syncReadouts(q, paintTexture(q));
+      state.dirty = true;
+    }
+    // 只移动发光点 P 时用：像本身没变，不必重做贴图（那是这个页面最贵的一步），
+    // 只更新读数并请求重绘，拖动才能跟手。
+    function updatePoint() {
+      const q = model();
+      camera(q, state.w, state.h);
+      syncReadouts(q, null);
+      state.previewDirty = true;
       state.dirty = true;
     }
     function resize() {
@@ -1145,7 +1240,15 @@
       state.dirty = true;
     }
 
-    Object.keys(inputs).forEach(function (k) { inputs[k].addEventListener('input', update); });
+    Object.keys(inputs).forEach(function (k) {
+      if (k === 'p' || k === 'point') return;   // 这两个单独绑：移动光点不需要重做光屏贴图
+      inputs[k].addEventListener('input', update);
+    });
+    inputs.p.addEventListener('input', function () {
+      state.pf = clamp(+inputs.p.value / 100, 0, 1);
+      updatePoint();
+    });
+    inputs.point.addEventListener('change', function () { state.previewDirty = true; state.dirty = true; });
     document.querySelectorAll('.lab3d [data-hole]').forEach(function (b) {
       b.addEventListener('click', function () {
         state.hole = b.dataset.hole;
@@ -1160,22 +1263,81 @@
     });
     document.getElementById('lab3d-reset-view').addEventListener('click', function () { setView('perspective'); });
 
+    // 把屏幕纵坐标反解成世界高度。project 对 y 是仿射的，取 ±1 两点就能定出系数，
+    // 比按视角分类讨论简单得多，任意视角都成立。
+    function worldYAt(x, z, sy, q) {
+      const p1 = project(x, -1, z, q), p2 = project(x, 1, z, q);
+      const b = (p2.y - p1.y) * .5;
+      if (Math.abs(b) < 1e-6) return 0;
+      return (sy - (p1.y + p2.y) * .5) / b;
+    }
+    // 指针是否落在 P / P′ 标记上；命中就返回抓的是哪一个
+    function pickPoint(px, py, q) {
+      if (!inputs.point || !inputs.point.checked) return null;
+      const oP = project(-q.uw, q.oy, 0, q), iP = project(q.vw, q.iy, 0, q);
+      const dO = Math.hypot(px - oP.x, py - oP.y), dI = Math.hypot(px - iP.x, py - iP.y);
+      const best = Math.min(dO, dI);
+      return best <= 20 ? (dO <= dI ? 'obj' : 'img') : null;
+    }
+    function pointerPos(e) {
+      const r = canvas.getBoundingClientRect();
+      return { x: e.clientX - r.left, y: e.clientY - r.top };
+    }
     let lastX = 0, lastY = 0;
     canvas.addEventListener('pointerdown', function (e) {
+      const p = pointerPos(e);
+      const q = model(); camera(q, state.w, state.h);
+      const which = pickPoint(p.x, p.y, q);
+      if (which) {
+        // 抓住了光点：这一拖只移动光点，不旋转相机
+        state.dragPoint = which;
+        canvas.setPointerCapture(e.pointerId);
+        canvas.classList.add('pick-point');
+        return;
+      }
       canvas.setPointerCapture(e.pointerId);
       state.dragging = true; lastX = e.clientX; lastY = e.clientY;
     });
     canvas.addEventListener('pointermove', function (e) {
-      if (!state.dragging) return;
-      state.yaw += (e.clientX - lastX) * .007;
-      state.pitch = clamp(state.pitch - (e.clientY - lastY) * .006, -1.3, 1.3);
-      lastX = e.clientX; lastY = e.clientY;
-      document.querySelectorAll('.lab3d [data-view]').forEach(function (b) { b.classList.remove('active'); });
-      state.dirty = true;
+      const p = pointerPos(e);
+      if (state.dragPoint) {
+        const q = model(); camera(q, state.w, state.h);
+        let pf;
+        if (state.dragPoint === 'obj') {
+          pf = (worldYAt(-q.uw, 0, p.y, q) + q.hw * .5) / q.hw;
+        } else {
+          // 像点是倒立的：屏上越靠上（y 越小）对应物点越高，所以要再翻一次符号。
+          const y = -worldYAt(q.vw, 0, p.y, q) * (q.uw / q.vw);
+          pf = (y + q.hw * .5) / q.hw;
+        }
+        state.pf = clamp(pf, 0, 1);
+        inputs.p.value = Math.round(state.pf * 100);
+        updatePoint();
+        return;
+      }
+      if (state.dragging) {
+        state.yaw += (e.clientX - lastX) * .007;
+        state.pitch = clamp(state.pitch - (e.clientY - lastY) * .006, -1.3, 1.3);
+        lastX = e.clientX; lastY = e.clientY;
+        document.querySelectorAll('.lab3d [data-view]').forEach(function (b) { b.classList.remove('active'); });
+        state.dirty = true;
+        return;
+      }
+      // 悬停到光点上时换成上下拖动光标，提示这里可以拖
+      const q = model(); camera(q, state.w, state.h);
+      const hit = !!pickPoint(p.x, p.y, q);
+      if (hit !== state.hoverPoint) {
+        state.hoverPoint = hit;
+        canvas.classList.toggle('pick-point', hit);
+      }
     });
-    function endDrag() { state.dragging = false; }
+    function endDrag() { state.dragging = false; state.dragPoint = null; }
     canvas.addEventListener('pointerup', endDrag);
     canvas.addEventListener('pointercancel', endDrag);
+    canvas.addEventListener('pointerleave', function () {
+      state.hoverPoint = false;
+      canvas.classList.remove('pick-point');
+    });
     canvas.addEventListener('wheel', function (e) {
       e.preventDefault();
       state.zoom = clamp(state.zoom * (e.deltaY > 0 ? 1.08 : .926), .55, 2.4);
