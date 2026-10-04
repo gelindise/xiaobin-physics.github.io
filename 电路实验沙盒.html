@@ -108,8 +108,12 @@
   .schBox{background:var(--card);border-radius:14px;padding:10px 14px 12px;
     box-shadow:0 18px 50px rgba(15,23,42,.35);max-width:100%;max-height:100%;
     display:flex;flex-direction:column;gap:8px;min-width:0}
-  .schHead{display:flex;align-items:center;gap:10px;font-size:13.5px;font-weight:700}
-  .schHead .sp{flex:1 1 auto}
+  /* flex-wrap —— 390px 的手机上「电路图」+ 四个控件一行放不下，不换行就会把标题
+     挤成一列竖着的字。换行之后标题保持完整，控件掉到第二行。 */
+  .schHead{display:flex;align-items:center;gap:10px;font-size:13.5px;font-weight:700;
+    flex-wrap:wrap}
+  .schHead > span{flex:0 0 auto;white-space:nowrap}
+  .schHead .sp{flex:1 1 auto;min-width:0}
   .schHead .ttlSub{font-weight:400;color:var(--dim);font-size:12.5px}
   .schHead label{font-weight:400;font-size:12.5px;color:var(--dim);
     display:flex;align-items:center;gap:5px;cursor:pointer;white-space:nowrap}
@@ -128,6 +132,15 @@
     border:1px solid var(--line);border-radius:8px}
   .schCvWrap canvas{display:block}
   .schEmpty{color:var(--dim);font-size:13px;padding:30px 34px;text-align:center;white-space:nowrap}
+  /* 拖动微调的提示条。只在真画出图来的时候显示（画布还空着那会儿有 schEmpty 顶着）。 */
+  .schTip{color:var(--dim);font-size:12px;line-height:1.5;margin:-3px 0 0}
+  .schTip[hidden]{display:none}
+  .schTip b{color:var(--text);font-weight:600}
+  /* 「复位布局」在没有手工微调时是禁用的，得看得出来（否则点了没反应像坏了）。 */
+  .schHead button:disabled{opacity:.45;cursor:default}
+  .schHead button:disabled:hover{background:#f1f5f9}
+  /* 悬停到元件上才给 move 光标：整块画布都是 move 的话，学生不知道该抓哪儿。 */
+  .schCvWrap canvas.grab{cursor:move}
   .schLegend{flex:0 0 296px;overflow:auto;font-size:12px;
     border-left:1px solid var(--line);padding-left:12px;padding-right:12px}
   .schLegend .lgTitle{color:var(--dim);font-weight:600;font-size:11.5px;margin-bottom:9px}
@@ -251,9 +264,11 @@
       <span>电路图</span><span class="ttlSub">（由实物图转换）</span>
       <span class="sp"></span>
       <label><input type="checkbox" id="schValues" checked>标注数值</label>
+      <button id="schReset" type="button" title="把所有元件放回自动排好的位置">↺ 复位布局</button>
       <button id="schSave" type="button">⤓ 下载图片</button>
       <button id="schX" type="button">✕ 关闭</button>
     </div>
+    <div class="schTip" id="schTip" hidden>拖动元件可微调位置 —— 会自动吸附到同一根导线或整格 · 双击元件复位这一件 · 按住 <b>Shift</b> 自由摆放</div>
     <div class="schWarning" id="schWarning" role="status" hidden></div>
     <div class="schBody">
       <div class="schCvWrap" id="schCvWrap">
@@ -291,7 +306,7 @@
 <script src="circuit-editor.js?build=14"></script>
 <!-- 电路图（实物图 → 标准符号）。独立成第四块内核：沙盒和欧姆定律页共用同一份，
      免得各写一套符号，两边的图画法迟早不一样。三个老内核一行没动，build 号不升。 -->
-<script src="circuit-schematic.js?build=8"></script>
+<script src="circuit-schematic.js?build=9"></script>
 <script>
 // ---- 访问保护：仅允许站内跳转（与站内其它实验页一致）----
 (function(){
@@ -846,19 +861,48 @@ var schLegend = document.getElementById('schLegend');
 var schValues = document.getElementById('schValues');
 var schEmpty = document.getElementById('schEmpty');
 var schPSave = document.getElementById('schSave');
+var schReset = document.getElementById('schReset');
+var schTip = document.getElementById('schTip');
 var schOpen = false;
 
+// ── 手工微调的位置表 ────────────────────────────────────────
+// schPlace = { 元件id: {x, y} }，坐标是【电路图坐标系】，不是实物图坐标（两套数完全
+// 不是一回事：实物图是学生摆的 500/600，电路图是规整化排出来的 160/260）。
+// 拖过的元件钉在这里，没拖过的照旧走自动布局。键是元件 id，而 id 会回收（删掉 R₁
+// 再加一个电阻，新元件又叫 R₁），所以元件一增一减就整表作废——见 syncPlace。
+var schPlace = {};
+var schPlaceSig = '';
+// 取景（K + 世界原点）和上一次画出来的模型。拖动时冻住取景：每帧重新取景的话，
+// 被拖的那件会跟着视口一起漂，手感变成「追不上鼠标」。
+var schView = null, schLast = null, schDraw = null;
+// 拖动状态 / 对齐辅助线 / rAF 句柄
+var schDrag = null, schGuide = null, schHoverId = null, schRaf = 0;
+
+// 元件集合一变，规整化就会重排，旧的微调位置反而是错的 —— 整表清掉。
+// 签名带上 type：删掉 R₁ 又加个灯泡，签名变了，不会把旧位置套到灯泡上。
+function syncPlace(){
+  var sig = scene.comps.map(function(c){ return c.id + ':' + c.type; }).sort().join(',');
+  if (sig === schPlaceSig) return;
+  schPlaceSig = sig; schPlace = {}; schView = null;
+}
+function schPlacedCount(){
+  var n = 0;
+  scene.comps.forEach(function(c){ if (schPlace[c.id]) n++; });
+  return n;
+}
+
 function schModel(opts){
-  var o = { draw: D, core: C, values: schValues.checked, canonical: true };
+  var o = { draw: D, core: C, values: schValues.checked, canonical: true, place: schPlace };
   if (opts) for (var k in opts) o[k] = opts[k];
   return SC.build(scene, results, o);
 }
 
-function openSchematic(){ schOpen = true; schEl.hidden = false; drawSchematic(); }
-function closeSchematic(){ schOpen = false; schEl.hidden = true; }
+function openSchematic(){ schOpen = true; schEl.hidden = false; schView = null; drawSchematic(); }
+function closeSchematic(){ schOpen = false; schEl.hidden = true; schDrag = null; schGuide = null; }
 
-function drawSchematic(){
+function drawSchematic(keepView){
   if (!schOpen) return;
+  syncPlace();
   var model = schModel();
   var hint = schEl.querySelector('.schHead .ttlSub');
   if (hint) hint.textContent = '（按实际接线转换）';
@@ -867,23 +911,35 @@ function drawSchematic(){
   warning.textContent = warning.hidden ? '' :
     '这张图有走线冲突，暂不能作为标准电路图使用。请核对：' + model.warnings.join('、');
   buildLegend();
+  schReset.disabled = !schPlacedCount();
   if (!model.bounds) {
+    schLast = null; schDraw = null;
     schCv.width = 0; schCv.height = 0;
     schCv.style.width = '0px'; schCv.style.height = '0px';
-    schCv.hidden = true; schEmpty.hidden = false;
+    schCv.hidden = true; schEmpty.hidden = false; schTip.hidden = true;
     return;
   }
-  schCv.hidden = false; schEmpty.hidden = true;
+  schCv.hidden = false; schEmpty.hidden = true; schTip.hidden = false;
+  schLast = model;
 
   // 取景：按电路的外接框缩放到视口里。K 有【下限 0.5】——一张 1000 宽的电路图
   // 塞进 400px 的手机，12px 的编号会变成 5px，那就不是给学生看的图了。
   // 到下限还塞不下就让 .schCvWrap 横向滚动（它本来就是 overflow:auto）。
-  var legendW = window.innerWidth > 760 ? 304 : 0;   // .schLegend 的 296 + 它的左边线
-  var maxW = Math.min(window.innerWidth - 92 - legendW, 900);
-  var maxH = window.innerHeight - 170;
-  var K = Math.min(maxW / model.bounds.w, maxH / model.bounds.h);
-  K = Math.max(0.5, Math.min(K, 2.2));
-  var cw = Math.round(model.bounds.w * K), ch = Math.round(model.bounds.h * K);
+  // keepView：拖动中沿用上一帧的取景。元件挪出原外接框也不重新取景——一重新取景
+  // 整幅图就会缩一下、被拖的那件还会跟着漂；松手时才重取一次（见 pointerup）。
+  var K, ox, oy, cw, ch;
+  if (keepView && schView) {
+    K = schView.K; ox = schView.ox; oy = schView.oy; cw = schView.cw; ch = schView.ch;
+  } else {
+    var legendW = window.innerWidth > 760 ? 304 : 0;   // .schLegend 的 296 + 它的左边线
+    var maxW = Math.min(window.innerWidth - 92 - legendW, 900);
+    var maxH = window.innerHeight - 170;
+    K = Math.min(maxW / model.bounds.w, maxH / model.bounds.h);
+    K = Math.max(0.5, Math.min(K, 2.2));
+    cw = Math.round(model.bounds.w * K); ch = Math.round(model.bounds.h * K);
+    ox = model.bounds.x; oy = model.bounds.y;
+    schView = { K: K, ox: ox, oy: oy, cw: cw, ch: ch };
+  }
   var dpr = window.devicePixelRatio || 1;
   schCv.width = Math.round(cw * dpr); schCv.height = Math.round(ch * dpr);
   schCv.style.width = cw + 'px'; schCv.style.height = ch + 'px';
@@ -891,12 +947,152 @@ function drawSchematic(){
   g.setTransform(dpr, 0, 0, dpr, 0, 0);
   g.clearRect(0, 0, cw, ch);
   g.save();
-  g.translate(-model.bounds.x * K, -model.bounds.y * K);
+  g.translate(-ox * K, -oy * K);
   g.scale(K, K);
   SC.draw(g, model, { draw: D, values: schValues.checked });
   g.restore();
+  schDraw = { K: K, ox: ox, oy: oy };
+  drawSchOverlay(g, cw, ch);          // 拖动中的高亮框 + 对齐辅助线
 }
 function refreshSchematic(){ if (schOpen) drawSchematic(); }
+
+// ── 拖动微调：抓住一件元件挪到别处 ──────────────────────────
+// 只改 schPlace（电路图坐标），**不碰 scene** —— 实物图上那台器材是学生亲手摆的，
+// 一个像素都不动。导线不用管：build() 按新位置重算，自己会绕开。
+var SNAP_G = 20;        // 和内核的 GRID 同值：吸到同一张网格上，两件元件才好严丝合缝
+var SNAP_PX = 8;        // 屏幕 8px 之内就吸到邻件的同一根导线/同一条竖线上
+
+// 屏幕（canvas CSS 像素）→ 电路图坐标
+function schPointer(ev){
+  var r = schCv.getBoundingClientRect();
+  return { x: ev.clientX - r.left, y: ev.clientY - r.top };
+}
+function schToWorld(p){
+  var v = schDraw || { K: 1, ox: 0, oy: 0 };
+  return { x: p.x / v.K + v.ox, y: p.y / v.K + v.oy };
+}
+// 命中哪一件。倒着扫（后画的在上面），框往外胀 4px 方便抓边。
+function schHit(wx, wy){
+  if (!schLast) return null;
+  var pad = 4 / ((schView && schView.K) || 1);
+  for (var i = schLast.comps.length - 1; i >= 0; i--) {
+    var c = schLast.comps[i], r = c.worldRect;
+    if (!r) continue;
+    if (wx >= r.x0 - pad && wx <= r.x1 + pad && wy >= r.y0 - pad && wy <= r.y1 + pad) return c;
+  }
+  return null;
+}
+// 吸附：邻件对齐优先于吸网格 —— 「更规范」要的是两件元件压在同一根导线上，
+// 而网格只能保证落在同一张网上，未必和邻件对齐。返回 ax/ay 好让调用方画辅助线。
+function schSnap(x, y, id, free){
+  if (free) return { x: x, y: y, ax: null, ay: null };
+  var tol = SNAP_PX / ((schView && schView.K) || 1);
+  var ax = null, ay = null;
+  if (schLast) schLast.comps.forEach(function(c){
+    if (c.id === id) return;
+    if (ax === null && Math.abs(x - c.x) <= tol) ax = c.x;
+    if (ay === null && Math.abs(y - c.y) <= tol) ay = c.y;
+  });
+  return {
+    x: ax !== null ? ax : Math.round(x / SNAP_G) * SNAP_G,
+    y: ay !== null ? ay : Math.round(y / SNAP_G) * SNAP_G,
+    ax: ax, ay: ay,
+  };
+}
+// 拖动中的叠加层：被拖那件描一个虚线框，吸上邻件时画一条通到底的辅助线。
+// 画在屏幕坐标里（不进 world 变换），线宽才不会被 K 缩放。
+function drawSchOverlay(g, cw, ch){
+  if (!schDrag || !schDraw || !schLast) return;
+  var K = schDraw.K, ox = schDraw.ox, oy = schDraw.oy;
+  var SX = function(x){ return (x - ox) * K; }, SY = function(y){ return (y - oy) * K; };
+  if (schGuide) {
+    g.save();
+    g.strokeStyle = '#3b82f6'; g.lineWidth = 1; g.setLineDash([5, 4]);
+    if (schGuide.x !== null) {
+      var gx = Math.round(SX(schGuide.x)) + .5;
+      g.beginPath(); g.moveTo(gx, 0); g.lineTo(gx, ch); g.stroke();
+    }
+    if (schGuide.y !== null) {
+      var gy = Math.round(SY(schGuide.y)) + .5;
+      g.beginPath(); g.moveTo(0, gy); g.lineTo(cw, gy); g.stroke();
+    }
+    g.restore();
+  }
+  var c = null;
+  for (var i = 0; i < schLast.comps.length; i++) if (schLast.comps[i].id === schDrag.id) c = schLast.comps[i];
+  if (!c || !c.worldRect) return;
+  var r = c.worldRect;
+  g.save();
+  g.strokeStyle = '#8b5cf6'; g.lineWidth = 1.5; g.setLineDash([6, 4]);
+  g.strokeRect(SX(r.x0) - 4, SY(r.y0) - 4, (r.x1 - r.x0) * K + 8, (r.y1 - r.y0) * K + 8);
+  g.restore();
+}
+// 一帧只重建一次：pointermove 的密度比帧率高得多，逐条重建会把拖动拖成幻灯片。
+function schSchedule(){
+  if (schRaf) return;
+  schRaf = requestAnimationFrame(function(){ schRaf = 0; drawSchematic(true); });
+}
+
+schCv.addEventListener('pointerdown', function(ev){
+  if (!schOpen || ev.button) return;
+  if (!schLast || !schLast.bounds) return;
+  var w = schToWorld(schPointer(ev));
+  var c = schHit(w.x, w.y);
+  if (!c) return;                                  // 抓空 = 什么也不做（不关浮层）
+  ev.preventDefault();
+  schDrag = { id: c.id, dx: w.x - c.x, dy: w.y - c.y, moved: false };
+  schGuide = null;
+  try { schCv.setPointerCapture(ev.pointerId); } catch (e) {}
+});
+schCv.addEventListener('pointermove', function(ev){
+  if (!schOpen || !schLast) return;
+  var p = schPointer(ev);
+  if (!schDrag) {
+    var h = schHit(schToWorld(p).x, schToWorld(p).y);
+    var id = h ? h.id : null;
+    if (id !== schHoverId) {
+      schHoverId = id;
+      schCv.className = id ? 'grab' : '';
+    }
+    return;
+  }
+  var w = schToWorld(p);
+  var sn = schSnap(w.x - schDrag.dx, w.y - schDrag.dy, schDrag.id, ev.shiftKey);
+  schPlace[schDrag.id] = { x: sn.x, y: sn.y };
+  schGuide = (sn.ax === null && sn.ay === null) ? null : { x: sn.ax, y: sn.ay };
+  schDrag.moved = true;
+  schSchedule();
+});
+function schDrop(ev){
+  if (!schDrag) return;
+  var moved = schDrag.moved;
+  schDrag = null; schGuide = null;
+  try { schCv.releasePointerCapture(ev.pointerId); } catch (e) {}
+  if (schRaf) { cancelAnimationFrame(schRaf); schRaf = 0; }
+  // 松手重取一次景：元件被挪到原外接框之外也不会被裁掉。
+  if (moved) drawSchematic();
+}
+schCv.addEventListener('pointerup', schDrop);
+schCv.addEventListener('pointercancel', schDrop);
+schCv.addEventListener('pointerleave', function(){
+  if (schDrag) return;
+  schHoverId = null; schCv.className = '';
+});
+// 双击一件元件 = 只复位这一件（比整幅复位精细，改坏一件不用把整张图重来）。
+schCv.addEventListener('dblclick', function(ev){
+  if (!schOpen || !schLast || !schLast.bounds) return;
+  var w = schToWorld(schPointer(ev));
+  var c = schHit(w.x, w.y);
+  if (!c) return;
+  ev.preventDefault();
+  delete schPlace[c.id];
+  schView = null;
+  drawSchematic();
+});
+schReset.onclick = function(){
+  schPlace = {}; schView = null;
+  drawSchematic();
+};
 
 // 图例：只列【这张电路里真有的】元件，没接电压表就不列电压表。
 // 两栏都用真渲染器画，所以对照表不会和真图漂移。
@@ -1418,7 +1614,8 @@ window.__schModel = function(values, extra){
   var o = values === undefined ? {} : {values: !!values};
   if (extra) for (var k in extra) o[k] = extra[k];
   var m = schModel(o);
-  return {comps: m.comps, wires: m.wires, junctions: m.junctions, bounds: m.bounds, layout: m.layout};
+  return {comps: m.comps, wires: m.wires, junctions: m.junctions, bounds: m.bounds,
+          layout: m.layout, warnings: m.warnings};
 };
 window.__schematic = function(){
   var m = schOpen ? schModel() : null;
@@ -1433,7 +1630,28 @@ window.__schematic = function(){
     hint: schEmpty.hidden ? '' : schEmpty.textContent,
     legendRows: rows.length,
     legendTypes: rows.map(function(r){ return r.getAttribute('data-type'); }),
+    placed: schPlacedCount(),
+    tip: schTip.hidden ? '' : schTip.textContent,
+    resetDisabled: !!schReset.disabled,
   };
+};
+// 拖动微调：测试要能问「现在钉了哪几件」「某一件在画布上的屏幕坐标是多少」，
+// 好在不碰鼠标的情况下把断言断在坐标上。真鼠标那一路另有 pointer 事件的测试守着。
+window.__schPlace = function(){ return JSON.parse(JSON.stringify(schPlace)); };
+window.__schView = function(){
+  return schView ? {K: schView.K, ox: schView.ox, oy: schView.oy, cw: schView.cw, ch: schView.ch} : null;
+};
+window.__schBoxScreen = function(id){
+  if (!schLast || !schDraw) return null;
+  for (var i = 0; i < schLast.comps.length; i++) {
+    var c = schLast.comps[i]; if (c.id !== id) continue;
+    var r = c.worldRect;
+    return { x: (r.x0 - schDraw.ox) * schDraw.K, y: (r.y0 - schDraw.oy) * schDraw.K,
+             w: (r.x1 - r.x0) * schDraw.K, h: (r.y1 - r.y0) * schDraw.K,
+             cx: ((r.x0 + r.x1) / 2 - schDraw.ox) * schDraw.K,
+             cy: ((r.y0 + r.y1) / 2 - schDraw.oy) * schDraw.K };
+  }
+  return null;
 };
 window.__openSchematic = function(){ openSchematic(); };
 window.__closeSchematic = function(){ closeSchematic(); };

@@ -13,6 +13,10 @@
  * MOVE_MAX。挪的是一份 lay 布局副本，**scene 里的坐标一个都不动**——沙盒主画布上
  * 那台器材是学生亲手摆的。
  *
+ * 规整化是自动的，总有摆不到学生心坎上的时候。所以 build 认一个可选的
+ * opts.place = { 元件id: {x, y} }：拖过的那几件钉在这个坐标上，其余仍走自动布局。
+ * 位置一变，导线按新位置重新绕 —— 手工微调因此**不需要**另写一套布线。
+ *
  * ⚠️ 两条不能动的地基
  *
  * 1) 符号的引脚坐标**一律取自 D.TERMINALS**，一个常数都不许自己发明。
@@ -1190,6 +1194,23 @@
         layout = 'canonical';
       } else { alignLayout(items, byId, wires, D); layout = 'aligned'; }
     }
+
+    // 手工微调：把学生拖过的元件钉在指定位置（opts.place = { 元件id: {x, y} }）。
+    // ------------------------------------------------------------
+    // **必须排在规整化之后**：规整化自己会挪元件，先钉后挪等于没钉。只覆盖被拖过的
+    // 那几件，其余照旧走自动布局。位置一变，下面的世界框 / 障碍框 / 走线全部按新位置
+    // 重算，导线自己绕开挪过来的元件 —— 「拖完这张图更规范」就是从这条顺序里来的。
+    // 传进来的坐标不再 snap：吸网格还是吸对齐由调用方定，内核只管照办（纯数据，可测）。
+    var place = (opts && opts.place) || null;
+    if (place) {
+      items.forEach(function (it) {
+        var p = place[it.id];
+        if (!p) return;
+        if (typeof p.x === 'number') it.lay.x = p.x;
+        if (typeof p.y === 'number') it.lay.y = p.y;
+      });
+    }
+
     items.forEach(function (it) { it.x = it.lay.x; it.y = it.lay.y; it.comp = it.lay; });
 
     var rects = items.map(function (it) { return worldRect(it, D); });      // 墨迹框：标注 / 重叠预检 / 取景
@@ -1685,6 +1706,6 @@
     // 规整化/走线的常量：测试要断言「位移 ≤ MOVE_MAX」，从这里取，
     // 免得内核改了上限、测试还按老数字断（那就成了自证）
     MOVE_MAX: MOVE_MAX,
-    version: '3.5.0',
+    version: '3.6.0',
   };
 });
