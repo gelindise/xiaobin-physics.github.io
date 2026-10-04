@@ -21,9 +21,15 @@ import * as THREE from './assets/optics-three.min.js';
     screenRemoved: false, autoScreen: false, observing: false, lastNeedsOff: false,
     rays: false, virtual: true, labels: false, yaw: -.42, pitch: .21, zoom: 1.06,
     step: 0, records: {},
+    // Written by updateGhost() each frame: whether the image is currently in the eye's view.
+    imageVisible: false, imageOnObjectSide: false,
     get u() { return this.lensP - this.objP; },
     get sd() { return this.scrP - this.lensP; }
   };
+  // While a slide is being dragged the framing is frozen: re-framing mid-gesture would move the
+  // camera under the pointer, which changes what world x the pointer maps to and makes the slide
+  // chase itself. The shot is recomputed once the finger comes up instead.
+  let framed = true;
   const CASES = [
     { id: 'far', ratio: 3, name: 'u > 2f', result: '倒立、缩小的实像' },
     { id: 'twice', ratio: 2, name: 'u = 2f', result: '倒立、等大的实像' },
@@ -51,14 +57,16 @@ import * as THREE from './assets/optics-three.min.js';
     return { kind, v, real: u > f, crisp, needsScreenOff: u <= f };
   };
   // The letter F is the classic object for showing that a real image is inverted in both
-  // directions. Strokes are listed in world (z, y): the upright bar sits at z < 0, so the
-  // default three-quarter camera reads a normal F while the screen receives a 180° copy.
-  const F_BAR = { z0:-2.4, z1:-1.78, y0:7.5, y1:16.5 };   // upright stroke
-  const F_TOP = { z0:-2.4, z1: 2.4,  y0:15.88, y1:16.5 }; // top arm
-  const F_MID = { z0:-2.4, z1: 1.2,  y0:12.6,  y1:13.22 };// middle arm
+  // directions. Strokes are listed in world (z, y). The lit face points at the lens (+x), and
+  // an eye on that side sees screen-right along -z, so the upright bar has to sit at z > 0 for
+  // the letter to read normally from the lens; the screen then receives a 180° copy of it.
+  const F_BAR = { z0: 1.78, z1: 2.4,  y0:7.5,  y1:16.5 };  // upright stroke
+  const F_TOP = { z0:-2.4,  z1: 2.4,  y0:15.88,y1:16.5 };  // top arm
+  const F_MID = { z0:-1.2,  z1: 2.4,  y0:12.6, y1:13.22 }; // middle arm
   const F_STROKES = [F_BAR, F_TOP, F_MID];
-  // Three well separated corners used as ray origins and as ghost-image markers.
-  const F_POINTS = [[-2.4,16.5],[2.4,16.19],[1.2,12.91]];
+  // Three well separated corners used as ray origins and as ghost-image markers. These are
+  // absolute world (z, y) on the F itself, not offsets from the axis.
+  const F_POINTS = [{ z:2.4, y:16.5 }, { z:-2.4, y:16.5 }, { z:-1.2, y:12.91 }];
 
   let renderer;
   try {
@@ -272,15 +280,17 @@ import * as THREE from './assets/optics-three.min.js';
   // F-shaped light source: an opaque housing with a bright F aperture, carried by the same
   // slide as the candle so both objects share one optical axis and one object plane.
   const fSource=new THREE.Group();candle.add(fSource);fSource.visible=false;
-  // A matte black plate: a shiny one would throw a specular blob straight onto the optical
-  // axis and read as if the light source were there.
-  box(fSource,[1.0,13.6,11.2],[.55,12,0],material('#2a3037',.06,.82));
+  // The lit face has to point at the lens, so the matte housing sits BEHIND the aperture
+  // (x < 0, away from the lens) and the glowing strokes sit in front of it on the lens side,
+  // centred on the object plane x = 0. A shiny housing would throw a specular blob straight
+  // onto the optical axis and read as if the light source were there.
+  box(fSource,[1.0,13.9,11.6],[-.78,12,0],material('#2a3037',.06,.82));
   const fEmit=material('#fff6dd',.02,.42,{emissive:'#ffeda8',emissiveIntensity:1.7});
-  // Every stroke is a flat bar lying just in front of the housing face.
+  // Every stroke is a flat bar lying just in front of the housing face, on the +x side.
   for(const s of F_STROKES)
-    box(fSource,[.34,s.y1-s.y0,s.z1-s.z0],[-.12,(s.y0+s.y1)/2,(s.z0+s.z1)/2],fEmit,false);
-  for(const y of [5.5,18.5])box(fSource,[1.1,.7,1.1],[.55,y,0],brass);
-  const fGlow=new THREE.PointLight('#ffe2a0',17,28,1.6);fGlow.position.set(-1.4,12,0);fSource.add(fGlow);
+    box(fSource,[.36,s.y1-s.y0,s.z1-s.z0],[.06,(s.y0+s.y1)/2,(s.z0+s.z1)/2],fEmit,false);
+  for(const y of [5.6,18.4])box(fSource,[1.1,.7,1.1],[-.78,y,0],brass);
+  const fGlow=new THREE.PointLight('#ffe2a0',15,28,1.6);fGlow.position.set(1.3,12,0);fSource.add(fGlow);
 
   const sources = new THREE.Group();candle.add(sources);
   const ghostLabels = new THREE.Group();scene.add(ghostLabels);
@@ -407,11 +417,14 @@ import * as THREE from './assets/optics-three.min.js';
   function sourceMarker(y,color,which){
     const group=new THREE.Group();group.position.set(0,y,0);sources.add(group);
     // Markers sit directly on the object face; no extra hardware is drawn so the
-    // candle keeps the plain look of the real apparatus.
-    const core=mesh(new THREE.SphereGeometry(.30,18,12),which===0?gold:blue,group,0,0,.98,false);
+    // candle keeps the plain look of the real apparatus. They are also the grab handles,
+    // so the disc is deliberately chunky enough to read and to hit at any camera angle.
+    const core=mesh(new THREE.SphereGeometry(.42,20,14),which===0?gold:blue,group,0,0,.98,false);
     core.material.emissiveIntensity=.95;
+    const ring=mesh(new THREE.TorusGeometry(.62,.075,8,26),which===0?gold:blue,group,0,0,1.0,false);
+    ring.material=ring.material.clone();ring.material.transparent=true;ring.material.opacity=.75;
     const halo=new THREE.Sprite(new THREE.SpriteMaterial({map:glowMap,color,transparent:true,opacity:.58,depthWrite:false,depthTest:false,blending:THREE.AdditiveBlending}));
-    halo.position.set(0,0,1.0);halo.scale.set(2.1,2.1,1);halo.renderOrder=17;group.add(halo);
+    halo.position.set(0,0,1.0);halo.scale.set(2.8,2.8,1);halo.renderOrder=17;group.add(halo);
     lightSources.push(group);
   }
   function refreshSources(){
@@ -450,24 +463,23 @@ import * as THREE from './assets/optics-three.min.js';
     clear(rays);clear(ghostLabels);
     const info=status();
     const LX=wx(state.lensP),u=state.u,f=state.f;
-    const v=info.v,finiteV=Number.isFinite(v);
-    const virtualV=state.virtual&&finiteV&&v<0&&LX+v>=-62;
-    // With the screen taken off the bench a real image is still there, just unsupported.
-    const realGhost=state.virtual&&state.screenRemoved&&info.real&&finiteV&&v>0&&v<=95;
+    const v=info.v;
+    const c=imageCase();
     // Seeing the image is the point and the rays are only the proof, so the virtual-image
     // switch works on its own: the ghost appears whether or not the ray fan is on.
-    paintGhost(virtualV||realGhost,LX,v,realGhost);
+    const seen=updateGhost();
     if(!state.rays)return;
     const stopX=state.screenRemoved?LX+88:wx(state.scrP);
     const lensShifts=[[-3.7,0],[0,0],[3.7,0]];
     const active=state.source==='f'
-      ? F_POINTS.map(([zr,y])=>({y:12+y,z:-zr,c:'#c98c46'}))
+      ? F_POINTS.map(p=>({y:p.y,z:p.z,c:'#c98c46'}))
       : (state.second?[{y:state.sourceY,z:0,c:'#d99a48'},{y:state.secondY,z:0,c:'#4b8fc4'}]:[{y:state.sourceY,z:0,c:'#d99a48'}]);
     for(const src of active){
       for(const [shiftY,shiftZ] of lensShifts){
         const r=traceRay([src.y,src.z],LX,stopX,shiftY,shiftZ,src.c,.85);
-        // Behind the lens the extensions meet again where the upright virtual image is.
-        if(virtualV)lineSegment(rays,r.hit,V(LX+v,r.YL+r.sy*v,r.ZL+r.sz*v),src.c,.6,true);
+        // Behind the lens the extensions meet again where the upright virtual image is. They
+        // are drawn only while that image is genuinely in view, so the object side stays clean.
+        if(c&&!c.inverted&&seen)lineSegment(rays,r.hit,V(LX+v,r.YL+r.sy*v,r.ZL+r.sz*v),src.c,.6,true);
       }
       const mark=(op)=>{
         const g=mesh(new THREE.SphereGeometry(.34,16,12),src.c==='#4b8fc4'?blue:gold,ghostLabels,LX+v,12-(src.y-12)*v/u,-src.z*v/u,false);
@@ -475,18 +487,50 @@ import * as THREE from './assets/optics-three.min.js';
       };
       // The virtual image is drawn where the dashed extensions meet; a real image without a
       // screen is drawn too, because the eye still sees it hanging in mid air.
-      if(virtualV)mark(.62);else if(realGhost)mark(.34);
+      if(c&&seen)mark(c.inverted?.34:.62);
     }
   }
-  // A translucent copy of the object placed exactly where the image is: upright and enlarged
-  // for a virtual image, turned through 180° for a real image that has lost its screen.
-  function paintGhost(on,LX,v,inverted){
-    ghostObject.visible=on;
-    if(!on)return;
-    const size=clamp(Math.abs(v)/state.u,.2,3.2);
-    ghostObject.position.set(LX+v,12,0);
-    ghostObject.scale.set(inverted?-size:size,inverted?-size:size,1);
-    ghostObject.material.opacity=inverted?.32:.48;
+  // Where an image exists at all, and whether it is the upright virtual one or a real one that
+  // has lost its screen. Returns null when there is nothing to draw.
+  function imageCase(){
+    const info=status(),v=info.v;
+    if(!state.virtual||!Number.isFinite(v))return null;
+    const LX=wx(state.lensP);
+    if(v<0)return LX+v>=-62?{v,inverted:false}:null;
+    return state.screenRemoved&&info.real&&v<=95?{v,inverted:true}:null;
+  }
+  // An image is only ever seen by an eye on the far side of the lens. A virtual image forms on
+  // the object side, so the only way to see it is to look back through the glass from the
+  // screen side - standing on the object side shows nothing at all, exactly as with the real
+  // apparatus. A real image that has lost its screen behaves the same way. The thresholds are
+  // sticky so that re-framing the camera can never make the image flicker on and off.
+  function imageSeenFromCamera(v){
+    const LX=wx(state.lensP),C=camera.position,was=state.imageVisible;
+    if(C.x<=LX+(was?1.2:2.6))return false;
+    if(v>0)return true;                      // a real image hangs beyond the lens
+    // The sight line has to pass through the lens aperture to reach the virtual image.
+    const t=(LX-C.x)/((LX+v)-C.x);
+    if(!(t>0&&t<1))return false;
+    const gy=C.y+t*(12-C.y),gz=C.z+t*(0-C.z);
+    return Math.hypot(gy-12,gz)<=(was?7.6:6.3);
+  }
+  // Recomputed before the camera is framed, because it depends on where the eye is: orbiting
+  // round to the object side has to make the image disappear immediately.
+  function updateGhost(){
+    const c=imageCase();
+    const show=!!c&&imageSeenFromCamera(c.v);
+    ghostObject.visible=show;
+    if(show){
+      const size=clamp(Math.abs(c.v)/state.u,.2,3.2);
+      ghostObject.position.set(wx(state.lensP)+c.v,12,0);
+      ghostObject.scale.set(c.inverted?-size:size,c.inverted?-size:size,1);
+      ghostObject.material.opacity=c.inverted?.32:.48;
+    }
+    ghostLabels.visible=show;
+    // Stored on the state so the self-check reads the very decision the renderer used.
+    state.imageVisible=show;
+    state.imageOnObjectSide=!!c&&c.v<0;
+    return show;
   }
   const format = y => `${y.toFixed(1)} cm`;
   // The object is authored once on a square-centimetre grid and then re-projected by a
@@ -499,6 +543,13 @@ import * as THREE from './assets/optics-three.min.js';
   const objCtx = objCanvas.getContext('2d');
   const artX = z => objCanvas.width / 2 + z * ART_PX_CM;
   const artY = y => objCanvas.height / 2 + (12 - y) * ART_PX_CM;
+  // The art canvas is authored as the object looks from the lens side, where screen-right runs
+  // along -z. The candle is symmetric about z = 0 so artX serves it, but the letter F is not:
+  // its strokes have to be mirrored in z to be drawn the way the lens actually sees them.
+  const artXz = z => objCanvas.width / 2 - z * ART_PX_CM;
+  const artStroke = (g, s) => g.fillRect(
+    Math.min(artXz(s.z0), artXz(s.z1)), artY(s.y1),
+    (s.z1 - s.z0) * ART_PX_CM, (s.y1 - s.y0) * ART_PX_CM);
   // The ghost plane is a 10 x 12 cm window that carries a copy of the object art, so the
   // virtual image (or a real image with no screen to land on) is visible in the 3D scene.
   const ghostCanvas = document.createElement('canvas');
@@ -518,8 +569,7 @@ import * as THREE from './assets/optics-three.min.js';
     if (state.source === 'f') {
       // The lit strokes glow, so the letter stays legible after the 180° image rotation.
       g.shadowColor = '#ffd98a'; g.shadowBlur = 14; g.fillStyle = '#fffaf0';
-      for (const s of F_STROKES)
-        g.fillRect(artX(s.z0), artY(s.y1), (s.z1 - s.z0) * ART_PX_CM, (s.y1 - s.y0) * ART_PX_CM);
+      for (const s of F_STROKES) artStroke(g, s);
       g.shadowBlur = 0;
     } else {
       g.fillStyle = '#f0e6cc'; g.shadowColor = '#b99a68'; g.shadowBlur = 6;
@@ -535,15 +585,18 @@ import * as THREE from './assets/optics-three.min.js';
     if (state.source === 'f') return;
     for (const [y, color] of [[state.sourceY, '#e79a3c'], ...(state.second ? [[state.secondY, '#4b8fc4']] : [])]) {
       g.shadowColor = color; g.shadowBlur = 20; g.fillStyle = color;
-      g.beginPath(); g.arc(artX(0), artY(y), .34 * ART_PX_CM, 0, Math.PI * 2); g.fill();
-      g.fillStyle = '#ffffff'; g.beginPath(); g.arc(artX(0), artY(y), .13 * ART_PX_CM, 0, Math.PI * 2); g.fill();
+      g.beginPath(); g.arc(artX(0), artY(y), .42 * ART_PX_CM, 0, Math.PI * 2); g.fill();
+      g.fillStyle = '#ffffff'; g.beginPath(); g.arc(artX(0), artY(y), .16 * ART_PX_CM, 0, Math.PI * 2); g.fill();
     }
   }
   // Vertical extent of the object that actually matters, in world centimetres. The candle
   // stands below the axis while the F is centred on it, so their images are not centred alike.
+  // The candle's span must cover the whole legal range of the sampling points, otherwise a
+  // point dragged near either end would fall outside the framed image and simply disappear.
+  const SRC_MIN = 7, SRC_MAX = 16;
   const objectSpan = () => state.source === 'f'
     ? { top: 16.5, bottom: 7.5 }
-    : { top: 14.3, bottom: 6.3 };
+    : { top: SRC_MAX + .8, bottom: SRC_MIN - .8 };
   // Stamps the object art onto any canvas. The sampling density must be passed in, because
   // the screen face and the close-up preview are drawn at different pixels per centimetre.
   function stampObject(g, cx, cy, magnification, flip, pxPerCm){
@@ -672,6 +725,7 @@ import * as THREE from './assets/optics-three.min.js';
     camera.lookAt(target);
   }
   function fitCamera(){
+    if(!framed)return;      // a rail drag freezes the shot until the gesture ends
     const el=canvas.getBoundingClientRect();
     const w=Math.max(1,el.width),h=Math.max(1,el.height);
     // Frame the three slides themselves, never closer than a comfortable working span of the
@@ -708,7 +762,14 @@ import * as THREE from './assets/optics-three.min.js';
     camera.updateMatrixWorld();
   }
   function render(){
-    fitCamera();renderer.render(scene,camera);
+    // Where the eye sits decides whether the image is in view, and a visible image in turn
+    // widens the shot, so the framing is settled first and the decision is then taken with that
+    // very camera. The second pass only moves the camera by the amount the ghost adds to the
+    // envelope, which the sticky thresholds in imageSeenFromCamera absorb without flicker.
+    fitCamera();
+    updateGhost();
+    fitCamera();
+    renderer.render(scene,camera);
   }
   function resize(){
     const rect=canvas.getBoundingClientRect();if(!rect.width||!rect.height)return;
@@ -753,12 +814,8 @@ import * as THREE from './assets/optics-three.min.js';
     eyeBadge.position.set(wx(state.scrP)+4,16.5,0);
     refreshMarks();refreshSources();refreshRays();redrawScreen();
     const candleMode=state.source==='candle';
-    for(const [id,value] of [['focalLength',state.f],['objectPos',state.objP],['lensPos',state.lensP],
-        ['screenPos',state.scrP],['sourceHeight',state.sourceY],['secondHeight',state.secondY]])$(id).value=value;
+    for(const [id,value] of [['focalLength',state.f],['sourceHeight',state.sourceY],['secondHeight',state.secondY]])$(id).value=value;
     $('focalValue').textContent=format(state.f);
-    $('objectPosValue').textContent=format(state.objP);
-    $('lensPosValue').textContent=format(state.lensP);
-    $('screenPosValue').textContent=format(state.scrP);
     $('sourceValue').textContent=format(state.sourceY);
     $('secondValue').textContent=format(state.secondY);
     $('secondSource').checked=state.second;
@@ -785,23 +842,28 @@ import * as THREE from './assets/optics-three.min.js';
       :state.screenRemoved?'空中的实像':info.crisp?'清晰实像':'实像未合焦';
     $('metricState').className=info.crisp?'good':info.kind==='near'||info.kind==='focus'?'warn':'';
     $('autoFocus').disabled=!info.real||info.v>75;
-    $('recordBtn').disabled=info.real&&!state.screenRemoved&&!info.crisp;
-    $('recordHint').textContent=info.real&&!state.screenRemoved&&!info.crisp
+    const blocked=info.real&&!state.screenRemoved&&!info.crisp;
+    $('recordBtn').disabled=blocked;
+    $('recordBtn2').disabled=blocked;
+    $('recordHint').textContent=blocked
       ?'请先移动光屏找到清晰像再记录':'现在可以记录本组观察';
     const toggle=state.screenRemoved?'放回光屏':'撤去光屏';
     $('screenToggle').textContent=toggle;
     $('screenToggle2').textContent=toggle;
     $('observerBtn').classList.toggle('active',state.observing);
     $('stage').classList.toggle('observer-mode',state.screenRemoved);
-    $('observeBanner').textContent=info.real
-      ?'撤去光屏 · 从光屏这一侧透过透镜，看到悬在空中的倒立实像'
-      :'撤去光屏 · 从光屏这一侧透过透镜，看到正立、放大的虚像';
-    const ghostOn=state.screenRemoved&&state.virtual&&Number.isFinite(info.v);
-    $('stage').classList.toggle('show-ghost',ghostOn);
+    // A virtual image sits on the object side, so it can only be reached by looking back
+    // through the lens. Say so rather than leaving an empty stage unexplained.
+    $('observeBanner').textContent=state.imageOnObjectSide&&!state.imageVisible
+      ?'虚像在透镜左侧，只有从光屏一侧透过透镜才看得到 · 可点「透过透镜观察」'
+      : info.real
+        ?'撤去光屏 · 从光屏这一侧透过透镜，看到悬在空中的倒立实像'
+        :'撤去光屏 · 从光屏这一侧透过透镜，看到正立、放大的虚像';
+    $('stage').classList.toggle('show-ghost',state.imageVisible);
     $('ghostBadge').textContent=info.real?'实像（倒立，悬在空中）':'虚像（正立、放大）';
     $('observeHint').textContent=info.needsScreenOff
-      ?'u ≤ f：光屏上接不到像。光屏已自动撤去，请从光屏这一侧透过透镜观察虚像；也可以直接点击 3D 画面里的光屏把它撤去或放回。'
-      :'u > f：移动光屏接收实像，直到屏上的像最清晰；也可以点击 3D 画面里的光屏把它撤去，看像是否仍悬在空中。';
+      ?'u ≤ f：光屏上接不到像，光屏已自动撤去。虚像在透镜左侧，必须绕到光屏一侧透过透镜才看得到 —— 站在物体这一侧什么都看不到，可以转动视角亲自验证。'
+      :'u > f：移动光屏接收实像，直到屏上的像最清晰；也可以点击 3D 画面里的光屏把它撤去，再绕到光屏一侧看像是否仍悬在空中。';
     let text;
     if(info.kind==='focus')text='u = f：折射后的光线同向平行射出，在有限位置不能获得清晰像；屏上和眼中都只有一片模糊。';
     else if(info.kind==='near')text=`u = ${state.u.toFixed(1)} cm < f：实际光线在屏侧发散，反向延长后在光源同侧得到正立、放大的虚像（放大 ${(Math.abs(info.v)/state.u).toFixed(2)} 倍）。光屏接不到虚像。`;
@@ -816,8 +878,7 @@ import * as THREE from './assets/optics-three.min.js';
     $('stepDetail').innerHTML=descriptions[state.step];
     render();
   }
-  for(const [id,key] of [['focalLength','f'],['objectPos','objP'],['lensPos','lensP'],
-      ['screenPos','scrP'],['sourceHeight','sourceY'],['secondHeight','secondY']])
+  for(const [id,key] of [['focalLength','f'],['sourceHeight','sourceY'],['secondHeight','secondY']])
     $(id).addEventListener('input',e=>{state[key]=+e.target.value;update();});
   $('sourceKind').addEventListener('click',e=>{
     const b=e.target.closest('button[data-kind]');if(!b)return;
@@ -856,28 +917,52 @@ import * as THREE from './assets/optics-three.min.js';
     state.observing=true;state.screenRemoved=true;state.autoScreen=false;
     state.yaw=1.06;state.pitch=.13;state.zoom=1.4;update();
   });
+  // One row per object-distance region, always present, so the shape of the finished table is
+  // visible before anything has been recorded and the student can see what is still missing.
+  function renderRecords(){
+    $('records').innerHTML=CASES.map(c=>{
+      const r=state.records[c.id];
+      const cell=v=>r?`<td>${v}</td>`:'<td class="pending">—</td>';
+      return `<tr class="${r?'filled':''}"><td>${c.name}</td>`
+        +cell(r&&r.u)+cell(r&&r.v)+cell(r&&r.nature)+cell(r&&r.mag)+cell(r&&r.onScreen)+'</tr>';
+    }).join('');
+    const count=Object.keys(state.records).length;
+    $('summary').textContent=count===5
+      ?'五类物距已全部观察：物体从焦点外移向焦点，实像渐远、变大；进入焦点以内，形成正立、放大的虚像，光屏再也接不到。'
+      :`已记录 ${count} / 5 类，还有 ${5-count} 类没有数据。`;
+  }
+  // Recording writes the same numbers the readout shows, so the table can always be checked
+  // against the apparatus on screen.
+  function recordMark(){
+    const info=status();if(info.real&&!state.screenRemoved&&!info.crisp)return;
+    const item=CASES.find(c=>c.id===info.kind);
+    const real=info.real,mag=Number.isFinite(info.v)?Math.abs(info.v)/state.u:NaN;
+    const size=mag>1.01?'放大':mag<.99?'缩小':'等大';
+    state.records[item.id]={
+      name:item.name,u:state.u.toFixed(1),
+      v:item.id==='focus'?'∞':(info.v<0?'−':'')+Math.abs(info.v).toFixed(1),
+      nature:item.id==='focus'?'不成像'
+        :(real?'倒立、':'正立、')+size+(real?'的实像':'的虚像'),
+      mag:item.id==='focus'?'—':mag.toFixed(2)+'×',
+      onScreen:real?'能':'不能'
+    };
+    renderRecords();
+    state.step=4;update();
+  }
+  $('recordBtn').addEventListener('click',recordMark);
+  $('recordBtn2').addEventListener('click',recordMark);
+  $('clearRecords').addEventListener('click',()=>{
+    state.records={};renderRecords();update();
+  });
   $('resetAll').addEventListener('click',()=>{
     Object.assign(state,{f:10,objP:35,lensP:65,scrP:80,sourceY:12,secondY:8,second:false,
       source:'candle',screenRemoved:false,autoScreen:false,observing:false,lastNeedsOff:false,
       rays:false,virtual:true,labels:false,yaw:-.42,pitch:.21,zoom:1.06,step:0,records:{}});
     for(const [id,checked] of [['showRays',false],['showVirtual',true],['showLabels',false]])$(id).checked=checked;
-    $('records').innerHTML='<tr><td colspan="4" class="empty">尚无记录，先移动器材开始探究</td></tr>';
-    $('summary').textContent='完整走过五个区域，可比较像的大小、正倒与实虚如何改变。';
+    renderRecords();
     update();
   });
   $('steps').addEventListener('click',e=>{const b=e.target.closest('[data-step]');if(!b)return;state.step=+b.dataset.step;update();});
-  $('recordBtn').addEventListener('click',()=>{
-    const info=status();if(info.real&&!state.screenRemoved&&!info.crisp)return;
-    const item=CASES.find(c=>c.id===info.kind);
-    state.records[item.id]={name:item.name,u:state.u.toFixed(1),
-      v:item.id==='focus'?'∞':(info.v<0?'−':'')+Math.abs(info.v).toFixed(1),result:item.result};
-    $('records').innerHTML=CASES.filter(c=>state.records[c.id]).map(c=>{
-      const r=state.records[c.id];return `<tr><td>${r.name}</td><td>${r.u}</td><td>${r.v}</td><td>${r.result}</td></tr>`;
-    }).join('');
-    const count=Object.keys(state.records).length;
-    $('summary').textContent=count===5?'五类物距已全部观察：物体从焦点外移向焦点，实像渐远且变大；进入焦点以内，形成正立虚像。':`已记录 ${count}/5 类，继续更换物距并调焦。`;
-    state.step=4;update();
-  });
   const VIEWS={side:[0,.10],front:[-1.22,.17],top:[-.54,1.17],reset:[-.42,.21]};
   document.querySelectorAll('[data-view]').forEach(b=>b.addEventListener('click',()=>{
     [state.yaw,state.pitch]=VIEWS[b.dataset.view];
@@ -885,39 +970,73 @@ import * as THREE from './assets/optics-three.min.js';
     if(b.dataset.view==='reset')state.observing=false;
     update();
   }));
-  const pointers=new Map();let pinch=0,dragPoint=null,press=null;
+  const pointers=new Map();let pinch=0,dragPoint=null,dragRail=null,railGrab=0,press=null;
   function hitSource(e){
     if(state.source!=='candle')return null;
     const rect=canvas.getBoundingClientRect();
     const active=state.second?[{y:state.sourceY,index:0},{y:state.secondY,index:1}]:[{y:state.sourceY,index:0}];
     for(const s of active){
       const q=project({x:wx(state.objP),y:s.y,z:1.1});
-      if(Math.hypot(q.x-(e.clientX-rect.left),q.y-(e.clientY-rect.top))<17)return s.index;
+      if(Math.hypot(q.x-(e.clientX-rect.left),q.y-(e.clientY-rect.top))<26)return s.index;
     }
     return null;
   }
   const raycaster=new THREE.Raycaster();
-  // The screen itself is clickable, and so is the wireframe left behind once it is off the
-  // bench, which is what makes "click to take it off / click to put it back" work both ways.
-  function hitScreen(e){
+  function castAt(e){
     const rect=canvas.getBoundingClientRect();
     if(!rect.width||!rect.height)return false;
     fitCamera();
     raycaster.setFromCamera(new THREE.Vector2(
       ((e.clientX-rect.left)/rect.width)*2-1, -((e.clientY-rect.top)/rect.height)*2+1), camera);
+    return true;
+  }
+  // The screen itself is clickable, and so is the wireframe left behind once it is off the
+  // bench, which is what makes "click to take it off / click to put it back" work both ways.
+  function hitScreen(e){
+    if(!castAt(e))return false;
     return raycaster.intersectObject(state.screenRemoved?screenGhost:screen,true).length>0;
+  }
+  // The three slides are dragged straight along the rail: the pointer is cast onto the bench
+  // top and the slide follows that world x, so the gesture reads the same from any angle.
+  const RAIL_PLANE=new THREE.Plane(new THREE.Vector3(0,1,0),-3.2);
+  const RAIL_KEY={candle:'objP',lens:'lensP',screen:'scrP'};
+  function railXAt(e){
+    if(!castAt(e))return null;
+    const hit=new THREE.Vector3();
+    if(!raycaster.ray.intersectPlane(RAIL_PLANE,hit))return null;
+    return Math.abs(hit.x)<400?hit.x:null;
+  }
+  function hitCarriage(e){
+    if(!castAt(e))return null;
+    let best=null,bestD=Infinity;
+    for(const [kind,group] of [['candle',candle],['lens',lens],['screen',screen]]){
+      if(kind==='screen'&&state.screenRemoved)continue;
+      const hits=raycaster.intersectObject(group,true);
+      if(hits.length&&hits[0].distance<bestD){bestD=hits[0].distance;best=kind;}
+    }
+    return best;
   }
   canvas.addEventListener('pointerdown',e=>{
     pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});canvas.setPointerCapture(e.pointerId);
-    dragPoint=pointers.size===1?hitSource(e):null;
-    press=pointers.size===1?{x:e.clientX,y:e.clientY,screen:hitScreen(e)}:null;
+    const single=pointers.size===1;
+    dragPoint=single?hitSource(e):null;
+    dragRail=(single&&dragPoint===null)?hitCarriage(e):null;
+    if(dragRail){
+      const x=railXAt(e);
+      // Grabbing the slide where it already is stops it jumping under the pointer.
+      railGrab=x===null?0:x-wx(state[RAIL_KEY[dragRail]]);
+      framed=false;
+    }
+    press=single?{x:e.clientX,y:e.clientY,screen:hitScreen(e)}:null;
     pinch=0;
   });
   canvas.addEventListener('pointermove',e=>{
     if(!pointers.has(e.pointerId)){
       const src=hitSource(e);
+      const car=src===null?hitCarriage(e):null;
       canvas.classList.toggle('pick-source',src!==null);
-      canvas.classList.toggle('pick-screen',src===null&&hitScreen(e));
+      canvas.classList.toggle('pick-rail',car!==null);
+      canvas.classList.toggle('pick-screen',src===null&&car===null&&hitScreen(e));
       return;
     }
     const prev=pointers.get(e.pointerId);pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});
@@ -926,24 +1045,31 @@ import * as THREE from './assets/optics-three.min.js';
         const key=dragPoint===0?'sourceY':'secondY',y=state[key];
         const p1=project({x:wx(state.objP),y,z:1.1}),p2=project({x:wx(state.objP),y:y+1,z:1.1});
         const px=p1.y-p2.y;
-        if(Math.abs(px)>1){const next=clamp(roundHalf(y+(prev.y-e.clientY)/px),5,17);if(next!==y){state[key]=next;update();}}
+        if(Math.abs(px)>1){const next=clamp(roundHalf(y+(prev.y-e.clientY)/px),SRC_MIN,SRC_MAX);if(next!==y){state[key]=next;update();}}
+      }else if(dragRail){
+        const x=railXAt(e);
+        if(x!==null){
+          const key=RAIL_KEY[dragRail],next=roundHalf(x-railGrab-RULER0);
+          if(next!==state[key]){state[key]=next;update();}
+        }
       }else{
         state.yaw+=(e.clientX-prev.x)*.006;
         state.pitch=clamp(state.pitch+(prev.y-e.clientY)*.005,-1.0,1.28);
         render();
       }
     }else if(pointers.size===2){
-      dragPoint=null;press=null;
+      dragPoint=null;dragRail=null;press=null;
       const [a,b]=[...pointers.values()],d=Math.hypot(a.x-b.x,a.y-b.y);
       if(pinch)state.zoom=clamp(state.zoom*d/pinch,.68,2.35);
       pinch=d;render();
     }
   });
   const release=e=>{
-    const was=press;
-    pointers.delete(e.pointerId);dragPoint=null;pinch=0;press=null;
+    const was=press,wasRail=dragRail;
+    pointers.delete(e.pointerId);dragPoint=null;dragRail=null;pinch=0;press=null;
     // A drag that merely starts on the screen must not be read as a click on it.
     if(was&&pointers.size===0&&was.screen&&Math.hypot(e.clientX-was.x,e.clientY-was.y)<5)setScreen(state.screenRemoved);
+    if(wasRail&&!framed){framed=true;render();}
   };
   canvas.addEventListener('pointerup',release);canvas.addEventListener('pointercancel',release);
   canvas.addEventListener('wheel',e=>{e.preventDefault();state.zoom=clamp(state.zoom*(e.deltaY>0?.91:1.1),.68,2.35);render();},{passive:false});
@@ -967,7 +1093,19 @@ import * as THREE from './assets/optics-three.min.js';
       source:state.source,candle:candle.position.x,lens:lens.position.x,screen:screen.position.x,
       sources:lightSources.map(g=>g.position.y),rayCount:rays.children.length,
       ghost:ghostObject.visible,ghostX:ghostObject.position.x,ghostScale:ghostObject.scale.x,
+      imageVisible:state.imageVisible,imageOnObjectSide:state.imageOnObjectSide,
+      frameFrozen:!framed,records:Object.keys(state.records),
       textureSize:[texCanvas.width,texCanvas.height],insetSize:[inset.width,inset.height]};}};
+  // Pointer plumbing and the two authoring canvases are exposed so the self-check can drive the
+  // very same hit tests and read the very same pixels the page uses, instead of re-implementing
+  // them and only proving itself consistent.
+  window.__lensLab.hitSource=hitSource;
+  window.__lensLab.hitCarriage=hitCarriage;
+  window.__lensLab.railXAt=railXAt;
+  window.__lensLab.art={canvas:objCanvas,artY,artX,artXz,pxCm:ART_PX_CM};
+  window.__lensLab.screen={canvas:texCanvas,pxCm:PX_CM};
+  window.__lensLab.fSource={group:fSource,strokes:F_STROKES,points:F_POINTS};
   $('showRays').checked=state.rays;
+  renderRecords();
   update();resize();
 })();
