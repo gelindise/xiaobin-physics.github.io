@@ -8,10 +8,21 @@ import * as THREE from './assets/optics-three.min.js';
   const canvas = $('sceneCanvas');
   const inset = $('screenPreview');
   const insetCtx = inset.getContext('2d');
+  // All three carriages ride the same bench rail, so the lens moves too. Positions are
+  // stored exactly as printed on the bench scale (0 at the left end cap); u and the
+  // screen distance are derived, never stored, so they cannot drift out of step.
+  const RULER0 = -65;                 // world x of the printed zero
+  const wx = p => p + RULER0;         // printed reading -> world x
+  const RAIL = { obj:[1,105], lens:[30,110], screen:[35,147] };
+  const MIN_GAP = 6;                  // slides are 6.7 cm long and cannot pass through
   const state = {
-    f: 10, u: 30, screen: 15, sourceY: 12, secondY: 8, second: false,
-    rays: false, virtual: true, labels: false, yaw: -.54, pitch: .27, zoom: 1.16,
-    step: 0, records: {}
+    f: 10, objP: 35, lensP: 65, scrP: 80,
+    sourceY: 12, secondY: 8, second: false, source: 'candle',
+    screenRemoved: false, autoScreen: false, observing: false, lastNeedsOff: false,
+    rays: false, virtual: true, labels: false, yaw: -.42, pitch: .21, zoom: 1.06,
+    step: 0, records: {},
+    get u() { return this.lensP - this.objP; },
+    get sd() { return this.scrP - this.lensP; }
   };
   const CASES = [
     { id: 'far', ratio: 3, name: 'u > 2f', result: '倒立、缩小的实像' },
@@ -22,20 +33,32 @@ import * as THREE from './assets/optics-three.min.js';
   ];
   const descriptions = [
     '<strong>认识器材：</strong>铝合金双槽导轨、带锁紧旋钮的滑座、圆环镜架与磨砂白屏均是独立的立体部件。关闭光路开关，绕着装置看它们的形状与连接方式。',
-    '<strong>调整三心：</strong>蜡烛焰心（12 cm）、凸透镜光心（12 cm）与光屏中心（12 cm）初始同高。上下移动发光点，可以对照像点朝相反方向移动。',
-    '<strong>改变物距：</strong>依次选 u > 2f、u = 2f、f < u < 2f、u = f 与 u < f；打开光路，比较真实折射光线的会聚状态。',
-    '<strong>移动光屏：</strong>在 u > f 时缓慢移动光屏，观察散焦到清晰；只有实像才能被光屏接住。也可以添加第二个发光点，同时比较两个像点。',
+    '<strong>调整三心：</strong>焰心、透镜光心、光屏中心初始同在 12 cm 高度。画面右下角的读数面板会实时给出三个滑座在光具座上的刻度读数，以及物距 u 与像距 v。',
+    '<strong>改变物距：</strong>蜡烛、凸透镜、光屏三个滑座都能移动。改变物距后，比较折射光线是汇聚、平行还是发散。',
+    '<strong>移动光屏：</strong>u > f 时缓慢移动光屏，从散焦找到清晰实像；只有实像才能被光屏接住。切到 F 光源还能看清像的倒立与左右颠倒。',
     '<strong>记录归纳：</strong>记录各物距区域的数据。比较光屏中的像、两个发光点的相对位置，以及焦距与二倍焦距两处分界。'
   ];
   const clamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
   const roundHalf = x => Math.round(x * 2) / 2;
   const V = (x, y, z = 0) => new THREE.Vector3(x, y, z);
   const status = () => {
-    const { f, u } = state;
-    const kind = u > 2*f ? 'far' : u === 2*f ? 'twice' : u > f ? 'between' : u === f ? 'focus' : 'near';
-    const v = u === f ? Infinity : f*u/(u-f);
-    return { kind, v, real: u > f, crisp: u > f && v <= 75 && Math.abs(v-state.screen) <= .75 };
+    const f = state.f, u = state.u;
+    const near = (a, b) => Math.abs(a - b) < 1e-6;
+    const kind = u > 2*f ? 'far' : near(u, 2*f) ? 'twice' : u > f ? 'between' : near(u, f) ? 'focus' : 'near';
+    const v = near(u, f) ? Infinity : f*u/(u-f);
+    const crisp = u > f && !state.screenRemoved && v <= 75 && Math.abs(v-state.sd) <= .45;
+    // A real image can only be received while the screen is on the bench.
+    return { kind, v, real: u > f, crisp, needsScreenOff: u <= f };
   };
+  // The letter F is the classic object for showing that a real image is inverted in both
+  // directions. Strokes are listed in world (z, y): the upright bar sits at z < 0, so the
+  // default three-quarter camera reads a normal F while the screen receives a 180° copy.
+  const F_BAR = { z0:-2.4, z1:-1.78, y0:7.5, y1:16.5 };   // upright stroke
+  const F_TOP = { z0:-2.4, z1: 2.4,  y0:15.88, y1:16.5 }; // top arm
+  const F_MID = { z0:-2.4, z1: 1.2,  y0:12.6,  y1:13.22 };// middle arm
+  const F_STROKES = [F_BAR, F_TOP, F_MID];
+  // Three well separated corners used as ray origins and as ghost-image markers.
+  const F_POINTS = [[-2.4,16.5],[2.4,16.19],[1.2,12.91]];
 
   let renderer;
   try {
@@ -50,7 +73,7 @@ import * as THREE from './assets/optics-three.min.js';
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.18;
+  renderer.toneMappingExposure = 1.06;
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   const scene = new THREE.Scene();
@@ -84,8 +107,8 @@ import * as THREE from './assets/optics-three.min.js';
   scene.add(key);
   const edgeLight = new THREE.DirectionalLight('#c9deed', 1.05);
   edgeLight.position.set(35, 50, -65); scene.add(edgeLight);
-  const warm = new THREE.PointLight('#fbb979', 19, 33, 1.5);
-  warm.position.set(-state.u, 12.5, 1); scene.add(warm);
+  const warm = new THREE.PointLight('#fbb979', 9, 26, 1.9);
+  warm.position.set(wx(state.objP), 12.5, 2.4); scene.add(warm);
 
   const material = (color, metalness = 0, roughness = .65, opts = {}) =>
     new THREE.MeshStandardMaterial({ color, metalness, roughness, ...opts });
@@ -98,7 +121,7 @@ import * as THREE from './assets/optics-three.min.js';
   const brass = material('#bd9151', .58, .28);
   const bronze = material('#66543e', .56, .38);
   const cream = material('#e5dbbd', .05, .75);
-  const paper = material('#e9e7d9', .03, .88, { side: THREE.DoubleSide });
+  const paper = material('#c6cbc3', .03, .88, { side: THREE.DoubleSide });
   const gold = material('#e5a75d', .21, .37, { emissive: '#533019', emissiveIntensity: .38 });
   const blue = material('#64a4ce', .20, .34, { emissive: '#224d66', emissiveIntensity: .38 });
   function mesh(geometry, mat, parent, x = 0, y = 0, z = 0, shadow = true) {
@@ -182,7 +205,7 @@ import * as THREE from './assets/optics-three.min.js';
     const plane = mesh(new THREE.PlaneGeometry(2.15,1.36),new THREE.MeshBasicMaterial({map:t,transparent:true,depthWrite:false,side:THREE.DoubleSide}),tickLabels,x,1.82,3.25,false);
     plane.rotation.x=-Math.PI/2;
   }
-  for(let x=-60;x<=80;x+=10)rulerLabel(String(Math.abs(x)),x);
+  for(let x=-65;x<=75;x+=10)rulerLabel(String(x-RULER0),x);
   // Factory scale marker / inlaid metal plaque, independent of ruler labels.
   const makerTex=labelTexture('OPTICAL BENCH  ·  01','#4a555a');
   const maker=mesh(new THREE.PlaneGeometry(15.7,1.60),new THREE.MeshBasicMaterial({map:makerTex,transparent:true,side:THREE.DoubleSide}),bench,-32,.12,4.67,false);
@@ -195,8 +218,11 @@ import * as THREE from './assets/optics-three.min.js';
     box(runner,[6.7,1.1,9.1],[0,2.36,0],alu);
     box(runner,[6.35,.17,8.8],[0,2.99,0],brightAlu);
     for (const z of [-2.25,2.25]) box(runner,[5.8,.1,1.45],[0,1.82,z],slotBlack);
-    const stem = cylinder(group,.38,kind==='candle'?3.65:kind==='lens'?4.1:3.45,[0,kind==='candle'?5:kind==='lens'?5.25:4.9,0],brightAlu);
-    const col = cylinder(group,.62,.40,[0,3.31,0],metalDark);
+    // The screen's own frame sits in front of its slide, so the post is pushed behind the
+    // panel; otherwise the stem would poke through the diffusing face.
+    const sx=kind==='screen'?.70:0;
+    const stem = cylinder(group,.38,kind==='candle'?3.65:kind==='lens'?4.1:3.45,[sx,kind==='candle'?5:kind==='lens'?5.25:4.9,0],brightAlu);
+    const col = cylinder(group,.62,.40,[sx,3.31,0],metalDark);
     const lock = cylinder(group,.77,.48,[1.55,2.43,5.0],bronze,24);
     lock.rotation.x=Math.PI/2;
     const dial = cylinder(group,.50,.53,[1.55,2.43,5.3],brass,24);
@@ -214,35 +240,48 @@ import * as THREE from './assets/optics-three.min.js';
   const waxTexCanvas = document.createElement('canvas'); waxTexCanvas.width=256;waxTexCanvas.height=256;
   const waxg=waxTexCanvas.getContext('2d');
   const waxGrad=waxg.createLinearGradient(0,0,256,0);
-  waxGrad.addColorStop(0,'#a6a38d');waxGrad.addColorStop(.20,'#faf4df');waxGrad.addColorStop(.56,'#eee8d4');waxGrad.addColorStop(1,'#aba696');
+  waxGrad.addColorStop(0,'#8d8a76');waxGrad.addColorStop(.20,'#efe7cf');waxGrad.addColorStop(.56,'#e2dac2');waxGrad.addColorStop(1,'#948f7c');
   waxg.fillStyle=waxGrad;waxg.fillRect(0,0,256,256);
   for(let i=0;i<15;i++){
     waxg.strokeStyle=i%2?'#ffffff17':'#857e6b12';waxg.lineWidth=i%3+1;
     waxg.beginPath();waxg.moveTo(i*19,0);waxg.lineTo(i*19+5,256);waxg.stroke();
   }
   const waxMap=new THREE.CanvasTexture(waxTexCanvas);waxMap.colorSpace=THREE.SRGBColorSpace;
-  const wax=material('#ffffff',.01,.70,{map:waxMap});
-  cylinder(candle,1.35,.42,[0,6.2,0],brass,40);
-  cylinder(candle,.93,5.35,[0,9.09,0],wax,40);
-  cylinder(candle,.9,.16,[0,11.84,0],cream,40);
+  const wax=material('#f6f0df',.01,.72,{map:waxMap});
+  const candleBody = new THREE.Group(); candle.add(candleBody);
+  cylinder(candleBody,1.35,.42,[0,6.2,0],brass,40);
+  cylinder(candleBody,.93,5.35,[0,9.09,0],wax,40);
+  cylinder(candleBody,.9,.16,[0,11.84,0],cream,40);
   for(let i=0;i<7;i++){
     const a=i*2*Math.PI/7;
-    cylinder(candle,.07,.48+(i%3)*.2,[.87*Math.sin(a),11.45-(i%3)*.12,.87*Math.cos(a)],cream,8);
+    cylinder(candleBody,.07,.48+(i%3)*.2,[.87*Math.sin(a),11.45-(i%3)*.12,.87*Math.cos(a)],cream,8);
   }
-  cylinder(candle,.065,.72,[0,12.25,0],blackRubber,10);
-  const flameOuter=mesh(new THREE.SphereGeometry(1,20,16),new THREE.MeshBasicMaterial({color:'#e58645',transparent:true,opacity:.50,depthWrite:false}),candle,0,13.04,0,false);
-  flameOuter.scale.set(.37,.82,.36);
-  const flameCore=mesh(new THREE.SphereGeometry(1,16,12),new THREE.MeshBasicMaterial({color:'#ffdb87',transparent:true,opacity:.86,depthWrite:false}),candle,0,12.93,0,false);
-  flameCore.scale.set(.17,.52,.18);
-  const dish=cylinder(candle,1.52,.16,[0,6.54,0],material('#a79571',.2,.48),40);
-  // Adjustable optical-point sampling probe, held by the candle carriage; its
-  // fine metal guide makes all slider heights physically attached to the model.
-  cylinder(candle,.10,12.2,[0,11.0,1.65],brightAlu,14);
-  cylinder(candle,.20,.22,[0,17.17,1.65],brass,14);
-  for(const y of [6,9,12,15]){
-    const tick=box(candle,[.42,.055,.07],[0,y,1.77],metalDark,false);
-    tick.castShadow=false;
-  }
+  cylinder(candleBody,.07,.78,[0,12.3,0],blackRubber,10);
+  // Layered flame: additive halo, warm envelope, white-hot core. Emissive-only
+  // materials keep it bright at any camera angle instead of depending on lighting.
+  const flameHalo=mesh(new THREE.SphereGeometry(1,20,16),new THREE.MeshBasicMaterial({color:'#ff9a3c',transparent:true,opacity:.30,depthWrite:false,blending:THREE.AdditiveBlending}),candleBody,0,13.1,0,false);
+  flameHalo.scale.set(.80,1.42,.78);
+  const flameOuter=mesh(new THREE.SphereGeometry(1,20,16),new THREE.MeshBasicMaterial({color:'#f7a34e',transparent:true,opacity:.85,depthWrite:false}),candleBody,0,13.06,0,false);
+  flameOuter.scale.set(.46,1.0,.44);
+  const flameMid=mesh(new THREE.SphereGeometry(1,18,14),new THREE.MeshBasicMaterial({color:'#ffdc8e',depthWrite:false}),candleBody,0,12.95,0,false);
+  flameMid.scale.set(.28,.66,.27);
+  const flameCore=mesh(new THREE.SphereGeometry(1,16,12),new THREE.MeshBasicMaterial({color:'#fffdf2',depthWrite:false}),candleBody,0,12.78,0,false);
+  flameCore.scale.set(.15,.36,.15);
+  const dish=cylinder(candleBody,1.52,.16,[0,6.54,0],material('#a79571',.2,.48),40);
+
+  // F-shaped light source: an opaque housing with a bright F aperture, carried by the same
+  // slide as the candle so both objects share one optical axis and one object plane.
+  const fSource=new THREE.Group();candle.add(fSource);fSource.visible=false;
+  // A matte black plate: a shiny one would throw a specular blob straight onto the optical
+  // axis and read as if the light source were there.
+  box(fSource,[1.0,13.6,11.2],[.55,12,0],material('#2a3037',.06,.82));
+  const fEmit=material('#fff6dd',.02,.42,{emissive:'#ffeda8',emissiveIntensity:1.7});
+  // Every stroke is a flat bar lying just in front of the housing face.
+  for(const s of F_STROKES)
+    box(fSource,[.34,s.y1-s.y0,s.z1-s.z0],[-.12,(s.y0+s.y1)/2,(s.z0+s.z1)/2],fEmit,false);
+  for(const y of [5.5,18.5])box(fSource,[1.1,.7,1.1],[.55,y,0],brass);
+  const fGlow=new THREE.PointLight('#ffe2a0',17,28,1.6);fGlow.position.set(-1.4,12,0);fSource.add(fGlow);
+
   const sources = new THREE.Group();candle.add(sources);
   const ghostLabels = new THREE.Group();scene.add(ghostLabels);
 
@@ -261,8 +300,8 @@ import * as THREE from './assets/optics-three.min.js';
     screw.rotation.z=Math.PI/2;
   }
   const glassMat=new THREE.MeshPhysicalMaterial({
-    color:'#e2efeb',metalness:0,roughness:.08,transmission:.84,thickness:1.2,
-    ior:1.5,transparent:true,opacity:.8,side:THREE.DoubleSide,depthWrite:false
+    color:'#eef9f4',metalness:0,roughness:.04,transmission:.88,thickness:.8,
+    ior:1.45,transparent:true,opacity:.88,side:THREE.DoubleSide,depthWrite:false,envMapIntensity:1.7
   });
   function glassCap(sign){
     const verts=[],indices=[],R=5.65,rings=14,segments=64;
@@ -287,19 +326,20 @@ import * as THREE from './assets/optics-three.min.js';
   highlight.rotation.x=.48;
   const lensLabel=badge(lens,'凸透镜 · f 可调',[0,20,0],'#485c63',17);
 
-  // Fixed rectangular white diffusing screen. CanvasTexture is renewed when optics change.
-  const texCanvas=document.createElement('canvas');texCanvas.width=768;texCanvas.height=640;
+  // Fixed rectangular white diffusing screen. The texture grid matches the 16.8 x 18.8 cm
+  // face exactly (50 px per cm), so the projected image is never stretched or upscaled.
+  const texCanvas=document.createElement('canvas');texCanvas.width=840;texCanvas.height=940;
   const texCtx=texCanvas.getContext('2d');
   const screenTexture=new THREE.CanvasTexture(texCanvas);
   screenTexture.colorSpace=THREE.SRGBColorSpace;
-  screenTexture.anisotropy=Math.min(8,renderer.capabilities.getMaxAnisotropy());
+  screenTexture.anisotropy=Math.min(16,renderer.capabilities.getMaxAnisotropy());
   const screenMat=new THREE.MeshBasicMaterial({map:screenTexture,side:THREE.DoubleSide, toneMapped:false});
   box(screen,[.28,19.9,17.9],[.22,12,0],brightAlu);
   box(screen,[.25,19.0,17.0],[-.02,12,0],paper);
   const screenFace=mesh(new THREE.PlaneGeometry(16.8,18.8),screenMat,screen,-.17,12,0,false);
   screenFace.rotation.y=-Math.PI/2;
   screenFace.receiveShadow=false;
-  const screenBack=mesh(new THREE.PlaneGeometry(16.8,18.8),new THREE.MeshStandardMaterial({color:'#d4d8d3',roughness:.82,side:THREE.DoubleSide}),screen,.39,12,0,false);
+  const screenBack=mesh(new THREE.PlaneGeometry(16.8,18.8),new THREE.MeshStandardMaterial({color:'#c3c8c2',roughness:.82,side:THREE.DoubleSide}),screen,.39,12,0,false);
   screenBack.rotation.y=Math.PI/2;
   for(const z of [-8.85,8.85])box(screen,[.82,20.5,.42],[.2,12,z],metalDark);
   for(const y of [1.95,22.05])box(screen,[.82,.42,18.1],[.2,y,0],metalDark);
@@ -309,6 +349,22 @@ import * as THREE from './assets/optics-three.min.js';
   }
   box(screen,[.35,12.0,.40],[.57,12,0],alu);
   const screenLabel=badge(screen,'毛玻璃光屏',[-.2,25,0],'#4c6070',14);
+  // When the screen is lifted off the bench a faint wireframe stays in its place, so the
+  // spot it belongs to is still visible and can be clicked to put it back.
+  const screenGhost=new THREE.Group();scene.add(screenGhost);screenGhost.visible=false;
+  {
+    const hw=8.6,hh=9.9,ghostMat=new THREE.LineBasicMaterial({color:'#9fe0f2',transparent:true,opacity:.8});
+    const corners=[[-.3,12-hh,-hw],[-.3,12+hh,-hw],[-.3,12+hh,hw],[-.3,12-hh,hw]];
+    const pts=[];
+    for(let i=0;i<4;i++){pts.push(V(...corners[i]),V(...corners[(i+1)%4]));}
+    const outline=new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(pts),ghostMat);
+    outline.renderOrder=9;screenGhost.add(outline);
+    // A translucent panel gives the wireframe enough surface to be an easy pointer target.
+    const panel=mesh(new THREE.PlaneGeometry(hw*2,hh*2),
+      new THREE.MeshBasicMaterial({color:'#7fd4f2',transparent:true,opacity:.10,side:THREE.DoubleSide,depthWrite:false}),
+      screenGhost,-.3,12,0,false);
+    panel.rotation.y=-Math.PI/2;
+  }
 
   const focusMarks=new THREE.Group();scene.add(focusMarks);
   const labels=new THREE.Group();scene.add(labels);
@@ -316,20 +372,30 @@ import * as THREE from './assets/optics-three.min.js';
   function clear(group){
     for(const child of [...group.children]){
       group.remove(child);
-      if(child.isSprite && child.material.map){child.material.map.dispose(); child.material.dispose();}
+      if(child.isSprite){if(child.material.map)child.material.map.dispose();child.material.dispose();}
       else if(child.isLine){child.geometry.dispose();child.material.dispose();}
-      else if(child.isMesh && group===ghostLabels){child.geometry.dispose();child.material.dispose();}
+      // Geometry is always unique to its mesh; materials are shared except for the
+      // deliberately cloned ghost markers, which own theirs.
+      else if(child.isMesh){child.geometry.dispose();if(group===ghostLabels)child.material.dispose();}
     }
   }
   function refreshMarks(){
     clear(focusMarks);
     if(!state.labels)return;
+    // Focus marks are bench positions, so they follow the movable lens carriage.
     for(const m of [-2,-1,1,2]){
-      const x=m*state.f;
+      const x=wx(state.lensP)+m*state.f;
       const dot=mesh(new THREE.SphereGeometry(.20,12,8),m%2?brass:bronze,focusMarks,x,2.1,3.7,false);
       dot.castShadow=false;
       badge(focusMarks,Math.abs(m)===2?'2F':'F',[x,4.65,4.3],'#63594b',5.4);
     }
+    // Two side rulers double as a distance scale for the current u and screen distance.
+    const f=state.f,LP=wx(state.lensP),OP=wx(state.objP),SP=wx(state.scrP);
+    for(const [x0,x1,color] of [[OP,LP,'#c08a4e'],[LP,SP,'#4f88ab']]){
+      lineSegment(focusMarks,V(x0,3.05,6.4),V(x1,3.05,6.4),color,.9);
+    }
+    badge(focusMarks,`u = ${state.u.toFixed(1)} cm`,[(OP+LP)/2,3.9,6.6],'#8a6234',10.4);
+    badge(focusMarks,`v = ${state.sd.toFixed(1)} cm`,[(LP+SP)/2,3.9,6.6],'#3f6d8b',10.4);
   }
   const glowCanvas=document.createElement('canvas');glowCanvas.width=128;glowCanvas.height=128;
   const gc=glowCanvas.getContext('2d');
@@ -340,12 +406,12 @@ import * as THREE from './assets/optics-three.min.js';
   const lightSources=[];
   function sourceMarker(y,color,which){
     const group=new THREE.Group();group.position.set(0,y,0);sources.add(group);
-    const core=mesh(new THREE.SphereGeometry(.25,18,12),which===0?gold:blue,group,0,0,1.12,false);
-    const halo=new THREE.Sprite(new THREE.SpriteMaterial({map:glowMap,color,transparent:true,opacity:.75,depthWrite:false,depthTest:false,blending:THREE.AdditiveBlending}));
-    halo.position.set(0,0,1.15);halo.scale.set(3.8,3.8,1);halo.renderOrder=17;group.add(halo);
-    // A sprung sampling probe clamped alongside the real candle distinguishes it from the wick.
-    const mount=cylinder(group,.19,.30,[0,0,1.65],metalDark,16);
-    mount.rotation.x=Math.PI/2;
+    // Markers sit directly on the object face; no extra hardware is drawn so the
+    // candle keeps the plain look of the real apparatus.
+    const core=mesh(new THREE.SphereGeometry(.30,18,12),which===0?gold:blue,group,0,0,.98,false);
+    core.material.emissiveIntensity=.95;
+    const halo=new THREE.Sprite(new THREE.SpriteMaterial({map:glowMap,color,transparent:true,opacity:.58,depthWrite:false,depthTest:false,blending:THREE.AdditiveBlending}));
+    halo.position.set(0,0,1.0);halo.scale.set(2.1,2.1,1);halo.renderOrder=17;group.add(halo);
     lightSources.push(group);
   }
   function refreshSources(){
@@ -354,89 +420,249 @@ import * as THREE from './assets/optics-three.min.js';
       child.traverse(m=>{if(m.isMesh)m.geometry.dispose();});
     }
     lightSources.length=0;
-    sourceMarker(state.sourceY,'#ffd79a',0);
-    if(state.second)sourceMarker(state.secondY,'#b4ddf8',1);
-    warm.position.set(-state.u,state.sourceY,1);
+    const isCandle=state.source==='candle';
+    candleBody.visible=isCandle;
+    fSource.visible=!isCandle;
+    // The F is a fixed silhouette, so the movable sampling points belong to the candle only.
+    if(isCandle){
+      sourceMarker(state.sourceY,'#ffd79a',0);
+      if(state.second)sourceMarker(state.secondY,'#b4ddf8',1);
+    }
+    warm.position.set(wx(state.objP),isCandle?state.sourceY:12,2.4);
+    warm.intensity=isCandle?6:5;
   }
 
   function imageY(sourceY,v){return 12-(sourceY-12)*v/state.u;}
   const rays=new THREE.Group();scene.add(rays);
+  // A ray leaves an object point, bends once in the lens plane and then travels straight.
+  // Both transverse axes obey the same rule, so the fan stays correct for the planar F.
+  function traceRay(src,LX,stopX,shiftY,shiftZ,color,opacity){
+    const u=state.u,f=state.f;
+    const y0=src[0],z0=src[1];
+    const YL=12+shiftY,ZL=shiftZ;
+    const sy=(YL-y0)/u-(YL-12)/f, sz=(ZL-z0)/u-ZL/f;
+    const hit=V(LX,YL,ZL),start=V(LX-u,y0,z0),dx=stopX-LX;
+    lineSegment(rays,start,hit,color,opacity);
+    lineSegment(rays,hit,V(stopX,YL+sy*dx,ZL+sz*dx),color,opacity+.05);
+    return {hit,YL,ZL,sy,sz};
+  }
   function refreshRays(){
     clear(rays);clear(ghostLabels);
-    if(!state.rays)return;
     const info=status();
-    const sampleYs=[-3.7,0,3.7];
-    const active=state.second?[{y:state.sourceY,c:'#be843e'},{y:state.secondY,c:'#326a97'}]:[{y:state.sourceY,c:'#be843e'}];
+    const LX=wx(state.lensP),u=state.u,f=state.f;
+    const v=info.v,finiteV=Number.isFinite(v);
+    const virtualV=state.virtual&&finiteV&&v<0&&LX+v>=-62;
+    // With the screen taken off the bench a real image is still there, just unsupported.
+    const realGhost=state.virtual&&state.screenRemoved&&info.real&&finiteV&&v>0&&v<=95;
+    // Seeing the image is the point and the rays are only the proof, so the virtual-image
+    // switch works on its own: the ghost appears whether or not the ray fan is on.
+    paintGhost(virtualV||realGhost,LX,v,realGhost);
+    if(!state.rays)return;
+    const stopX=state.screenRemoved?LX+88:wx(state.scrP);
+    const lensShifts=[[-3.7,0],[0,0],[3.7,0]];
+    const active=state.source==='f'
+      ? F_POINTS.map(([zr,y])=>({y:12+y,z:-zr,c:'#c98c46'}))
+      : (state.second?[{y:state.sourceY,z:0,c:'#d99a48'},{y:state.secondY,z:0,c:'#4b8fc4'}]:[{y:state.sourceY,z:0,c:'#d99a48'}]);
     for(const src of active){
-      for(const shift of sampleYs){
-        const lensY=12+shift, slope=(lensY-src.y)/state.u-shift/state.f;
-        const hit=V(0,lensY,0),start=V(-state.u,src.y,0),end=V(state.screen,lensY+slope*state.screen,0);
-        lineSegment(rays,start,hit,src.c,.80);
-        lineSegment(rays,hit,end,src.c,.87);
-        if(info.kind==='near' && state.virtual && info.v>=-63)
-          lineSegment(rays,hit,V(info.v,lensY+slope*info.v,0),src.c,.55,true);
+      for(const [shiftY,shiftZ] of lensShifts){
+        const r=traceRay([src.y,src.z],LX,stopX,shiftY,shiftZ,src.c,.85);
+        // Behind the lens the extensions meet again where the upright virtual image is.
+        if(virtualV)lineSegment(rays,r.hit,V(LX+v,r.YL+r.sy*v,r.ZL+r.sz*v),src.c,.6,true);
       }
-      if(info.kind==='near' && state.virtual && info.v>=-63){
-        const ghost=mesh(new THREE.SphereGeometry(.30,16,12),src.c==='#326a97'?blue:gold,ghostLabels,info.v,imageY(src.y,info.v),0,false);
-        ghost.material = ghost.material.clone();ghost.material.transparent=true;ghost.material.opacity=.55;
-      }
+      const mark=(op)=>{
+        const g=mesh(new THREE.SphereGeometry(.34,16,12),src.c==='#4b8fc4'?blue:gold,ghostLabels,LX+v,12-(src.y-12)*v/u,-src.z*v/u,false);
+        g.material=g.material.clone();g.material.transparent=true;g.material.opacity=op;g.material.emissiveIntensity=.9;
+      };
+      // The virtual image is drawn where the dashed extensions meet; a real image without a
+      // screen is drawn too, because the eye still sees it hanging in mid air.
+      if(virtualV)mark(.62);else if(realGhost)mark(.34);
     }
   }
+  // A translucent copy of the object placed exactly where the image is: upright and enlarged
+  // for a virtual image, turned through 180° for a real image that has lost its screen.
+  function paintGhost(on,LX,v,inverted){
+    ghostObject.visible=on;
+    if(!on)return;
+    const size=clamp(Math.abs(v)/state.u,.2,3.2);
+    ghostObject.position.set(LX+v,12,0);
+    ghostObject.scale.set(inverted?-size:size,inverted?-size:size,1);
+    ghostObject.material.opacity=inverted?.32:.48;
+  }
   const format = y => `${y.toFixed(1)} cm`;
-  // A paper texture with restrained photographic grain; the image and both sample points
-  // share the same thin-lens equation, including sign inversion for a real image.
+  // The object is authored once on a square-centimetre grid and then re-projected by a
+  // single rule: a real image is that grid rotated 180° and scaled by the distance ratio.
+  // 50 texture pixels per model centimetre keeps the screen face and the close-up preview
+  // at the same sampling density, so nothing is drawn by upscaling a small bitmap.
+  const PX_CM = 50, ART_PX_CM = 24;
+  const objCanvas = document.createElement('canvas');
+  objCanvas.width = 10 * ART_PX_CM; objCanvas.height = 12 * ART_PX_CM;
+  const objCtx = objCanvas.getContext('2d');
+  const artX = z => objCanvas.width / 2 + z * ART_PX_CM;
+  const artY = y => objCanvas.height / 2 + (12 - y) * ART_PX_CM;
+  // The ghost plane is a 10 x 12 cm window that carries a copy of the object art, so the
+  // virtual image (or a real image with no screen to land on) is visible in the 3D scene.
+  const ghostCanvas = document.createElement('canvas');
+  ghostCanvas.width = objCanvas.width; ghostCanvas.height = objCanvas.height;
+  const ghostCtx = ghostCanvas.getContext('2d');
+  const ghostTex = new THREE.CanvasTexture(ghostCanvas);
+  ghostTex.colorSpace = THREE.SRGBColorSpace;
+  const ghostObject = mesh(new THREE.PlaneGeometry(10,12),
+    new THREE.MeshBasicMaterial({map:ghostTex,transparent:true,opacity:.48,depthWrite:false,
+      toneMapped:false,side:THREE.DoubleSide,blending:THREE.AdditiveBlending}),
+    scene,0,12,0,false);
+  ghostObject.rotation.y = Math.PI/2;
+  ghostObject.renderOrder = 6;
+  ghostObject.visible = false;
+  function drawObjectArt(){
+    const g = objCtx; g.clearRect(0, 0, objCanvas.width, objCanvas.height);
+    if (state.source === 'f') {
+      // The lit strokes glow, so the letter stays legible after the 180° image rotation.
+      g.shadowColor = '#ffd98a'; g.shadowBlur = 14; g.fillStyle = '#fffaf0';
+      for (const s of F_STROKES)
+        g.fillRect(artX(s.z0), artY(s.y1), (s.z1 - s.z0) * ART_PX_CM, (s.y1 - s.y0) * ART_PX_CM);
+      g.shadowBlur = 0;
+    } else {
+      g.fillStyle = '#f0e6cc'; g.shadowColor = '#b99a68'; g.shadowBlur = 6;
+      g.beginPath(); g.roundRect(artX(-.95), artY(11.8), 1.9 * ART_PX_CM, 5.5 * ART_PX_CM, 3); g.fill();
+      g.fillStyle = '#fdf6e2'; g.fillRect(artX(-.62), artY(11.6), 1.24 * ART_PX_CM, 5.2 * ART_PX_CM);
+      g.fillStyle = '#3a3129'; g.fillRect(artX(-.07), artY(12.6), .14 * ART_PX_CM, .9 * ART_PX_CM);
+      g.shadowColor = '#ffab3d'; g.shadowBlur = 26;
+      const fy = artY(13.05);
+      g.fillStyle = '#ffb64f'; g.beginPath(); g.ellipse(artX(0), fy, .5 * ART_PX_CM, 1.15 * ART_PX_CM, 0, 0, Math.PI * 2); g.fill();
+      g.fillStyle = '#fff2c6'; g.beginPath(); g.ellipse(artX(0), fy + 3, .24 * ART_PX_CM, .62 * ART_PX_CM, 0, 0, Math.PI * 2); g.fill();
+    }
+    // The sampling points belong to the candle; the F already carries its own shape.
+    if (state.source === 'f') return;
+    for (const [y, color] of [[state.sourceY, '#e79a3c'], ...(state.second ? [[state.secondY, '#4b8fc4']] : [])]) {
+      g.shadowColor = color; g.shadowBlur = 20; g.fillStyle = color;
+      g.beginPath(); g.arc(artX(0), artY(y), .34 * ART_PX_CM, 0, Math.PI * 2); g.fill();
+      g.fillStyle = '#ffffff'; g.beginPath(); g.arc(artX(0), artY(y), .13 * ART_PX_CM, 0, Math.PI * 2); g.fill();
+    }
+  }
+  // Vertical extent of the object that actually matters, in world centimetres. The candle
+  // stands below the axis while the F is centred on it, so their images are not centred alike.
+  const objectSpan = () => state.source === 'f'
+    ? { top: 16.5, bottom: 7.5 }
+    : { top: 14.3, bottom: 6.3 };
+  // Stamps the object art onto any canvas. The sampling density must be passed in, because
+  // the screen face and the close-up preview are drawn at different pixels per centimetre.
+  function stampObject(g, cx, cy, magnification, flip, pxPerCm){
+    const k = pxPerCm / ART_PX_CM * magnification;
+    g.save(); g.translate(cx, cy); g.scale(flip ? -k : k, flip ? -k : k);
+    g.drawImage(objCanvas, -objCanvas.width / 2, -objCanvas.height / 2);
+    g.restore();
+  }
+  // Defocus follows the circle of confusion of a real lens of this aperture, which is why
+  // the image snaps sharp exactly when the screen reaches the conjugate distance.
+  function blurSigma(offsetCm, vCm, pxPerCm = PX_CM){
+    const confusion = vCm > 0 ? 2 * 5.6 * offsetCm / vCm : 999;
+    return clamp(confusion * pxPerCm / 2.5, 0, 40);
+  }
+  function paintPaper(c, w, h){
+    // A slightly grey diffusing screen: the projected image is light added on top, so the
+    // paper must stay darker than the image for the strokes to read at a glance.
+    const grad = c.createLinearGradient(0, 0, w, h);
+    grad.addColorStop(0, '#a8aea8'); grad.addColorStop(.52, '#c2c0b6'); grad.addColorStop(1, '#959a94');
+    c.fillStyle = grad; c.fillRect(0, 0, w, h);
+    // Seeded deterministic grain, so nothing flickers while the camera is dragged.
+    let seed = 87591;
+    for (let i = 0; i < 900; i++) {
+      seed = (seed * 1664525 + 1013904223) >>> 0; const x = seed % w;
+      seed = (seed * 1664525 + 1013904223) >>> 0; const y = seed % h;
+      c.fillStyle = i % 4 ? '#4a5a6412' : '#ffffff20'; c.fillRect(x, y, 1, 1);
+    }
+  }
   function redrawScreen(){
     const c=texCtx,w=texCanvas.width,h=texCanvas.height;
+    // The object art is the single source for the screen texture, the preview and the ghost.
+    drawObjectArt();
+    ghostCtx.clearRect(0,0,ghostCanvas.width,ghostCanvas.height);
+    ghostCtx.drawImage(objCanvas,0,0);
+    ghostTex.needsUpdate=true;
+    c.setTransform(1,0,0,1,0,0);
+    c.filter='none';c.globalAlpha=1;
     c.clearRect(0,0,w,h);
-    const paperGrad=c.createLinearGradient(0,0,w,h);
-    paperGrad.addColorStop(0,'#e1e3db');paperGrad.addColorStop(.52,'#fcfaf0');paperGrad.addColorStop(1,'#cbcfc8');
-    c.fillStyle=paperGrad;c.fillRect(0,0,w,h);
-    // Seeded deterministic paper grain (no motion or flicker while dragging the camera).
-    let seed=87591;
-    for(let i=0;i<720;i++){
-      seed=(seed*1664525+1013904223)>>>0;const x=seed%w;
-      seed=(seed*1664525+1013904223)>>>0;const y=seed%h;
-      c.fillStyle=i%4?'#60707908':'#ffffff17';c.fillRect(x,y,1,1);
-    }
+    paintPaper(c,w,h);
     const info=status();
-    const py=y=>h/2-(y-12)*h/18.8;
-    if(info.real && info.v<=250){
-      const magnification=state.screen/state.u;
-      const offset=Math.abs(state.screen-info.v);
-      const aperture=5.6;
-      const confusion=info.v>0?2*aperture*offset/info.v:999;
-      const sigma=clamp(confusion*h/18.8/3,0,38);
-      c.save();c.beginPath();c.rect(8,8,w-16,h-16);c.clip();
-      c.globalAlpha=clamp(1-offset/90,.35,1);
-      c.filter=sigma<.6?'none':`blur(${sigma.toFixed(1)}px)`;
-      const x=w/2;
-      const waxTop=py(12),waxEnd=py(12-(6.5-12)*magnification);
-      const bodyTop=Math.min(waxTop,waxEnd)+7,bodyHeight=Math.max(5,Math.abs(waxTop-waxEnd)-12);
-      c.fillStyle='#ad7751';c.shadowColor='#8c5f38';c.shadowBlur=5;
-      c.beginPath();c.roundRect(x-clamp(17*magnification,5,30),bodyTop,clamp(34*magnification,10,60),bodyHeight,3);c.fill();
-      c.fillStyle='#e9b47a';c.fillRect(x-clamp(12*magnification,3,23),bodyTop+4,clamp(18*magnification,6,40),Math.max(3,bodyHeight-8));
-      c.shadowBlur=18;c.shadowColor='#e6ac5a';c.fillStyle='#f6cc8b';
-      c.beginPath();c.ellipse(x,py(12),clamp(6*magnification,3,11),clamp(11*magnification,4,17),0,0,Math.PI*2);c.fill();
-      function spot(y,color){
-        const sy=py(12-(y-12)*magnification);
-        c.shadowColor=color;c.shadowBlur=13;c.fillStyle=color;
-        c.beginPath();c.arc(x,sy,7.5,0,Math.PI*2);c.fill();
-        c.fillStyle='#fff';c.beginPath();c.arc(x,sy,2.5,0,Math.PI*2);c.fill();
-      }
-      spot(state.sourceY,'#eaa549');
-      if(state.second)spot(state.secondY,'#5e98bd');
+    const m=state.sd/state.u;
+    if(info.real&&Number.isFinite(info.v)&&info.v<=300&&!state.screenRemoved){
+      const offset=Math.abs(state.sd-info.v), sigma=blurSigma(offset,info.v);
+      c.save();c.beginPath();c.rect(6,6,w-12,h-12);c.clip();
+      c.globalAlpha=clamp(1-offset/80,.45,1);
+      c.filter=sigma<.5?'none':`blur(${sigma.toFixed(1)}px)`;
+      stampObject(c,w/2,h/2,m,true,PX_CM);
       c.restore();
+      // A faint axis line lets the image be judged against the optical axis.
+      c.save();c.globalAlpha=.15;c.strokeStyle='#6b7b83';c.lineWidth=1.5;
+      c.beginPath();c.moveTo(w/2,10);c.lineTo(w/2,h-10);c.stroke();c.restore();
     }
     c.strokeStyle='#a7a9a154';c.lineWidth=1.5;c.strokeRect(5,5,w-10,h-10);
     screenTexture.needsUpdate=true;
-    insetCtx.clearRect(0,0,inset.width,inset.height);
-    insetCtx.fillStyle='#e8e6dc';insetCtx.fillRect(0,0,inset.width,inset.height);
-    const cropH=clamp(360*state.screen/state.u,210,555);
-    const cropW=cropH*texCanvas.width/texCanvas.height;
-    insetCtx.drawImage(texCanvas,(w-cropW)/2,(h-cropH)/2,cropW,cropH,0,0,inset.width,inset.height);
-    $('previewText').textContent = !info.real ? '光屏接不到像 · 请从透镜另一侧观察虚像' :
-      info.v>75 ? '理论像超出光屏滑动范围' : info.crisp ? '屏上得到清晰的倒立实像' :
-      `离焦 ${Math.abs(info.v-state.screen).toFixed(1)} cm · 移动光屏寻找像`;
+    paintInset(info);
+  }
+  // The preview is painted at its own resolution instead of cropping the screen texture, so
+  // it stays genuinely sharp. It shows what the eye receives: the diffusing screen while it
+  // is on the bench, otherwise the image seen through the lens from the screen side.
+  function paintInset(info){
+    const W=inset.width,H=inset.height,g=insetCtx;
+    g.setTransform(1,0,0,1,0,0);g.filter='none';g.globalAlpha=1;
+    const m=state.sd/state.u;
+    const throughLens=state.screenRemoved||!info.real;
+    let mode=throughLens?(info.kind==='focus'?'none':info.real?'air':'virtual'):'screen';
+    let mag=throughLens?Math.abs(info.v)/state.u:Math.abs(m);
+    if(!Number.isFinite(mag))mode='none';
+    if(mode==='none'){
+      g.fillStyle='#0d1820';g.fillRect(0,0,W,H);
+      g.textAlign='center';g.textBaseline='middle';
+      g.fillStyle='#7fd4f2';g.font='bold 34px sans-serif';g.fillText('u = f',W/2,H/2-30);
+      g.fillStyle='#cfe3ec';g.font='19px sans-serif';
+      g.fillText('折射光平行射出，没有清晰的像',W/2,H/2+16);
+      g.fillText('把光源移开焦点再观察',W/2,H/2+48);
+      $('previewText').textContent='u = f：折射光平行射出，屏上和眼中都看不到清晰的像';
+      $('previewTitle').textContent='透过透镜观察';
+      return;
+    }
+    // The preview always frames the image, so its size does not depend on how far the
+    // screen happens to sit. When the image is genuinely huge only part of it fits.
+    const span=objectSpan(),mid=(span.top+span.bottom)/2;
+    const capCm=mode==='screen'?18.8:30;
+    const needCm=(span.top-span.bottom)*mag;
+    const viewCm=clamp(needCm*1.7,4.6,capCm);
+    const pxCm=H/viewCm;
+    const clipped=needCm>viewCm*.94;
+    // The frame centres the image itself. stampObject places the art's own centre, which is
+    // the optical axis, at (W/2, cy), so cy shifts by however far the image centre moved.
+    const cy=H/2+(mode==='virtual'?1:-1)*pxCm*mag*(mid-12);
+    g.save();
+    if(mode==='screen'){
+      paintPaper(g,W,H);
+      const offset=Math.abs(state.sd-info.v),sigma=blurSigma(offset,info.v,pxCm);
+      g.beginPath();g.rect(4,4,W-8,H-8);g.clip();
+      g.filter=sigma<.5?'none':`blur(${sigma.toFixed(1)}px)`;
+      stampObject(g,W/2,cy,mag,true,pxCm);
+    }else{
+      const bg=g.createRadialGradient(W/2,H/2,10,W/2,H/2,H*.78);
+      bg.addColorStop(0,'#20323d');bg.addColorStop(1,'#0b141a');
+      g.fillStyle=bg;g.fillRect(0,0,W,H);
+      // The eye sees the image hanging in air, so a dashed axis is the only reference.
+      g.strokeStyle='#7fd4f255';g.lineWidth=1.5;g.setLineDash([9,8]);
+      g.beginPath();g.moveTo(10,cy);g.lineTo(W-10,cy);g.stroke();g.setLineDash([]);
+      g.save();g.beginPath();g.rect(4,4,W-8,H-8);g.clip();
+      // A real image is inverted in both directions; only the virtual image stays upright.
+      stampObject(g,W/2,cy,mag,mode==='air',pxCm);
+      g.restore();
+    }
+    g.restore();
+    g.strokeStyle='#a7a9a155';g.lineWidth=1.5;g.strokeRect(4,4,W-8,H-8);
+    const sizeText=`放大 ${mag.toFixed(2)} 倍`;
+    $('previewTitle').textContent=mode==='screen'?'光屏近景 · 放大观察'
+      :mode==='air'?'透过透镜 · 空中的实像':'透过透镜 · 正立的虚像';
+    $('previewText').textContent = mode==='screen'
+      ? (info.crisp?'屏上得到清晰的倒立实像 · '+sizeText
+        :`离焦 ${Math.abs(info.v-state.sd).toFixed(1)} cm · 移动光屏寻找像`)
+      : (mode==='air'?'撤去光屏后，实像仍悬在空中（倒立） · '+sizeText
+        :'透过透镜看到正立、放大的虚像（与物同侧） · '+sizeText)
+        +(clipped?' · 像很大，画面只显示局部':'');
   }
 
   function cameraPosition(){
@@ -448,12 +674,20 @@ import * as THREE from './assets/optics-three.min.js';
   function fitCamera(){
     const el=canvas.getBoundingClientRect();
     const w=Math.max(1,el.width),h=Math.max(1,el.height);
-    target.x=w<500?-5:6;
+    // Frame the three slides themselves, never closer than a comfortable working span of the
+    // rail, so the camera keeps the whole experiment in view however the slides are moved.
+    const edgeLo=[wx(state.objP)-7,wx(state.lensP)-7,wx(state.scrP)-9];
+    const edgeHi=[wx(state.objP)+7,wx(state.lensP)+7,wx(state.scrP)+9];
+    // A virtual image forms on the object side and can sit far outside the slides, so its
+    // centre is framed too - otherwise it would be pushed off the edge of the view.
+    if(ghostObject.visible){const gx=ghostObject.position.x;edgeLo.push(gx-8);edgeHi.push(gx+8);}
+    const left=Math.min(...edgeLo),right=Math.max(...edgeHi),cx=(left+right)/2;
+    const half=Math.max((right-left)/2,32);
+    target.x=cx;target.y=11.5;
     camera.aspect=w/h;
     camera.updateProjectionMatrix();
-    // Fixed apparatus envelope including 22cm high screen and long metal rail.
     const samples=[];
-    for(const x of [-67,85])for(const y of [-5,25])for(const z of [-12,12])samples.push(V(x,y,z));
+    for(const x of [cx-half,cx+half])for(const y of [-5,25])for(const z of [-12,12])samples.push(V(x,y,z));
     let lo=85,hi=500;
     for(let k=0;k<24;k++){
       const r=(lo+hi)/2;
@@ -461,15 +695,15 @@ import * as THREE from './assets/optics-three.min.js';
       camera.lookAt(target);camera.updateMatrixWorld();
       const max=samples.reduce((m,p)=>{
         const q=p.clone().project(camera);
-        return Math.max(m,Math.abs(q.x)/.90,Math.abs(q.y)/.75);
+        return Math.max(m,Math.abs(q.x)/.90,Math.abs(q.y)/.78);
       },0);
       if(max>1)lo=r;else hi=r;
     }
     camera.position.set(target.x+hi*Math.sin(state.yaw)*Math.cos(state.pitch),target.y+hi*Math.sin(state.pitch),hi*Math.cos(state.yaw)*Math.cos(state.pitch));
     camera.lookAt(target);
-    // Narrow screens intentionally frame the working apparatus closer, leaving
-    // some unused rail out of view instead of reducing the lens to a few pixels.
-    const base=hi/(state.zoom*(w<500?1.77:1));
+    // Narrow screens deliberately frame the working apparatus closer, leaving some unused
+    // rail out of view instead of reducing the lens to a few pixels.
+    const base=hi/(state.zoom*(w<500?1.55:1));
     camera.position.sub(target).multiplyScalar(base/hi).add(target);
     camera.updateMatrixWorld();
   }
@@ -485,66 +719,158 @@ import * as THREE from './assets/optics-three.min.js';
     fitCamera();const v=V(p.x,p.y,p.z||0).project(camera),rect=canvas.getBoundingClientRect();
     return {x:(v.x+1)*rect.width/2,y:(1-v.y)*rect.height/2,depth:v.z};
   }
+  // A floating marker that shows where the observer's eye sits in the "look through the
+  // lens" mode, so the viewpoint reads as a labelled position rather than a camera move.
+  const eyeBadge = badge(scene,'观察者 · 眼睛位置',[0,16.5,0],'#8a6a2f',14);
+  eyeBadge.visible = false;
+  // The three slides cannot pass through each other, so every position is pulled back onto
+  // the rail before anything is drawn, and snapped to the slider grid so the browser never
+  // has to clamp an out-of-range input behind our back.
+  function normalize(){
+    state.lensP = clamp(roundHalf(state.lensP), RAIL.lens[0], RAIL.lens[1]);
+    state.objP  = clamp(roundHalf(state.objP), RAIL.obj[0], state.lensP - MIN_GAP);
+    state.scrP  = clamp(roundHalf(state.scrP), state.lensP + MIN_GAP, RAIL.screen[1]);
+  }
   function update(){
+    normalize();
     const info=status(),preset=CASES.find(x=>x.id===info.kind);
-    sliders.candle.position.x=-state.u;sliders.screen.position.x=state.screen;
-    warm.position.x=-state.u;
-    labels.position.x=-state.u;
+    // u ≤ f cannot put an image on the screen at all, so the screen steps aside when the
+    // situation changes and comes back when a real image exists again. The move is edge
+    // triggered, so it never overrules someone who just put the screen back by hand.
+    const need=info.needsScreenOff;
+    if(need&&!state.lastNeedsOff&&!state.screenRemoved){state.screenRemoved=true;state.autoScreen=true;}
+    else if(!need&&state.lastNeedsOff&&state.screenRemoved&&state.autoScreen){state.screenRemoved=false;state.autoScreen=false;}
+    state.lastNeedsOff=need;
+    sliders.candle.position.x=wx(state.objP);
+    sliders.lens.position.x=wx(state.lensP);
+    sliders.screen.position.x=wx(state.scrP);
+    screen.visible=!state.screenRemoved;
+    screenGhost.visible=state.screenRemoved;
+    screenGhost.position.x=wx(state.scrP);
+    labels.position.x=wx(state.objP);
     lensLabel.visible=screenLabel.visible=candleLabel.visible=state.labels;
-    // Device labels follow their own sliders; focus marks follow the focal length.
+    eyeBadge.visible=state.screenRemoved;
+    eyeBadge.position.set(wx(state.scrP)+4,16.5,0);
     refreshMarks();refreshSources();refreshRays();redrawScreen();
-    for(const [id,value] of [['focalLength',state.f],['objectDistance',state.u],['screenDistance',state.screen],['sourceHeight',state.sourceY],['secondHeight',state.secondY]])$(id).value=value;
+    const candleMode=state.source==='candle';
+    for(const [id,value] of [['focalLength',state.f],['objectPos',state.objP],['lensPos',state.lensP],
+        ['screenPos',state.scrP],['sourceHeight',state.sourceY],['secondHeight',state.secondY]])$(id).value=value;
     $('focalValue').textContent=format(state.f);
-    $('objectValue').textContent=format(state.u);
-    $('screenValue').textContent=format(state.screen);
+    $('objectPosValue').textContent=format(state.objP);
+    $('lensPosValue').textContent=format(state.lensP);
+    $('screenPosValue').textContent=format(state.scrP);
     $('sourceValue').textContent=format(state.sourceY);
     $('secondValue').textContent=format(state.secondY);
     $('secondSource').checked=state.second;
     $('secondSourceControls').hidden=!state.second;
+    // The F is a fixed silhouette, so the sampling-point controls belong to the candle only.
+    for(const id of ['sourceHeight','secondSource','secondHeight'])$(id).disabled=!candleMode;
+    $('sourcePanel').classList.toggle('muted',!candleMode);
+    $('fSourceHint').hidden=candleMode;
+    // Bench readout pinned beside the scene: the engraved scale is hard to read at an angle.
+    $('roObj').textContent=format(state.objP);
+    $('roLens').textContent=format(state.lensP);
+    $('roScr').textContent=state.screenRemoved?'已撤去':format(state.scrP);
+    $('roU').textContent=format(state.u);
+    $('roV').textContent=info.kind==='focus'?'∞（不成像）':(info.v<0?'−':'')+Math.abs(info.v).toFixed(1)+' cm';
+    $('roV').className=info.crisp?'hi ok':'hi';
+    const f=state.f;
+    $('roNote').textContent=`刻度 0 在导轨左端 · 透镜在 ${format(state.lensP)}，`
+      +`F 在 ${format(state.lensP-f)} / ${format(state.lensP+f)}，`
+      +`2F 在 ${format(state.lensP-2*f)} / ${format(state.lensP+2*f)}`;
     $('metricU').textContent=format(state.u);
-    $('metricV').textContent=info.kind==='focus'?'∞（无穷远）':(info.v<0?'−':'')+Math.abs(info.v).toFixed(1)+' cm';
-    $('metricScreen').textContent=format(state.screen);
-    $('metricState').textContent=info.kind==='focus'?'无有限像':info.kind==='near'?'正立虚像':info.crisp?'清晰实像':'实像未合焦';
+    $('metricScreen').textContent=state.screenRemoved?'光屏已撤去':format(state.sd);
+    $('metricV').textContent=info.kind==='focus'?'∞（不成像）':(info.v<0?'−':'')+Math.abs(info.v).toFixed(1)+' cm';
+    $('metricState').textContent=info.kind==='focus'?'无有限像':info.kind==='near'?'正立虚像'
+      :state.screenRemoved?'空中的实像':info.crisp?'清晰实像':'实像未合焦';
     $('metricState').className=info.crisp?'good':info.kind==='near'||info.kind==='focus'?'warn':'';
     $('autoFocus').disabled=!info.real||info.v>75;
-    $('recordBtn').disabled=info.real&&!info.crisp;
-    $('recordHint').textContent=info.real&&!info.crisp?'请先移动光屏找到清晰像再记录':'现在可以记录本组观察';
+    $('recordBtn').disabled=info.real&&!state.screenRemoved&&!info.crisp;
+    $('recordHint').textContent=info.real&&!state.screenRemoved&&!info.crisp
+      ?'请先移动光屏找到清晰像再记录':'现在可以记录本组观察';
+    const toggle=state.screenRemoved?'放回光屏':'撤去光屏';
+    $('screenToggle').textContent=toggle;
+    $('screenToggle2').textContent=toggle;
+    $('observerBtn').classList.toggle('active',state.observing);
+    $('stage').classList.toggle('observer-mode',state.screenRemoved);
+    $('observeBanner').textContent=info.real
+      ?'撤去光屏 · 从光屏这一侧透过透镜，看到悬在空中的倒立实像'
+      :'撤去光屏 · 从光屏这一侧透过透镜，看到正立、放大的虚像';
+    const ghostOn=state.screenRemoved&&state.virtual&&Number.isFinite(info.v);
+    $('stage').classList.toggle('show-ghost',ghostOn);
+    $('ghostBadge').textContent=info.real?'实像（倒立，悬在空中）':'虚像（正立、放大）';
+    $('observeHint').textContent=info.needsScreenOff
+      ?'u ≤ f：光屏上接不到像。光屏已自动撤去，请从光屏这一侧透过透镜观察虚像；也可以直接点击 3D 画面里的光屏把它撤去或放回。'
+      :'u > f：移动光屏接收实像，直到屏上的像最清晰；也可以点击 3D 画面里的光屏把它撤去，看像是否仍悬在空中。';
     let text;
-    if(info.kind==='focus')text='u = f：折射后的光线同向传播；在有限位置不能获得清晰像。';
-    else if(info.kind==='near')text='u < f：实际光线在屏侧发散；向后反向延长，在蜡烛同侧形成正立虚像。光屏无法接收。';
-    else if(info.v>75)text=`实像位于 ${info.v.toFixed(1)} cm 处，已超出光屏滑动范围；把蜡烛移远再试。`;
-    else if(info.crisp)text=`${preset.result}；屏上 ${state.second?'两个发光点分别成像':'发光点成像'}，上下移动蜡烛上的取样点，屏上的像点沿反方向移动。`;
-    else text=`光屏距离清晰像面 ${Math.abs(info.v-state.screen).toFixed(1)} cm。观察屏上模糊的轮廓，缓慢滑动光屏。`;
+    if(info.kind==='focus')text='u = f：折射后的光线同向平行射出，在有限位置不能获得清晰像；屏上和眼中都只有一片模糊。';
+    else if(info.kind==='near')text=`u = ${state.u.toFixed(1)} cm < f：实际光线在屏侧发散，反向延长后在光源同侧得到正立、放大的虚像（放大 ${(Math.abs(info.v)/state.u).toFixed(2)} 倍）。光屏接不到虚像。`;
+    else if(info.v>75)text=`实像位于透镜右侧 ${info.v.toFixed(1)} cm 处，已超出光屏滑动范围；把光源移远一点再试。`;
+    else if(state.screenRemoved)text=`撤去光屏后，${preset.result}仍然悬在透镜右侧 ${info.v.toFixed(1)} cm 处；从光屏一侧透过透镜就能看到它。`;
+    else if(info.crisp)text=`${preset.result}；光屏在 ${state.scrP.toFixed(1)} cm 刻度上得到最清晰的像。`;
+    else text=`光屏距离清晰像面 ${Math.abs(info.v-state.sd).toFixed(1)} cm。观察屏上模糊的轮廓，缓慢滑动光屏。`;
     $('finding').innerHTML='<b>当前观察</b><br>'+text;
     document.querySelectorAll('#presets button').forEach(b=>b.classList.toggle('active',b.dataset.case===info.kind));
+    document.querySelectorAll('#sourceKind button').forEach(b=>b.classList.toggle('active',b.dataset.kind===state.source));
     document.querySelectorAll('#steps button').forEach(b=>b.classList.toggle('active',+b.dataset.step===state.step));
     $('stepDetail').innerHTML=descriptions[state.step];
     render();
   }
-  for(const [id,key] of [['focalLength','f'],['objectDistance','u'],['screenDistance','screen'],['sourceHeight','sourceY'],['secondHeight','secondY']])
+  for(const [id,key] of [['focalLength','f'],['objectPos','objP'],['lensPos','lensP'],
+      ['screenPos','scrP'],['sourceHeight','sourceY'],['secondHeight','secondY']])
     $(id).addEventListener('input',e=>{state[key]=+e.target.value;update();});
+  $('sourceKind').addEventListener('click',e=>{
+    const b=e.target.closest('button[data-kind]');if(!b)return;
+    state.source=b.dataset.kind;state.step=Math.max(state.step,2);update();
+  });
   $('secondSource').addEventListener('change',e=>{state.second=e.target.checked;update();});
   for(const [id,key] of [['showRays','rays'],['showVirtual','virtual'],['showLabels','labels']])
     $(id).addEventListener('change',e=>{state[key]=e.target.checked;update();});
   $('presets').addEventListener('click',e=>{
     const b=e.target.closest('button[data-case]');if(!b)return;
-    state.u=roundHalf(state.f*CASES.find(c=>c.id===b.dataset.case).ratio);
+    const c=CASES.find(x=>x.id===b.dataset.case);
+    const need=state.f*c.ratio;
+    // Slide the lens right when the requested object distance would otherwise push the
+    // source off the left end of the rail, so the preset always lands on its exact ratio.
+    state.lensP=clamp(Math.max(state.lensP,need+RAIL.obj[0]+2),RAIL.lens[0],RAIL.lens[1]);
+    state.objP=roundHalf(state.lensP-need);
     state.step=2;update();
   });
   $('autoFocus').addEventListener('click',()=>{
     const info=status();if(!info.real||info.v>75)return;
-    state.screen=roundHalf(info.v);state.step=3;update();
+    state.scrP=roundHalf(state.lensP+info.v);state.step=3;update();
+  });
+  // Putting the screen on or taking it off the bench by hand: the automatic move only
+  // happens when the optical situation itself changes, never to overrule the user.
+  function setScreen(on){
+    state.screenRemoved=!on;state.autoScreen=false;
+    if(on)state.observing=false;
+    update();
+  }
+  $('screenToggle').addEventListener('click',()=>setScreen(state.screenRemoved));
+  $('screenToggle2').addEventListener('click',()=>setScreen(state.screenRemoved));
+  // Standing behind where the screen was and looking back through the lens: the only way to
+  // see a virtual image, and the clearest way to see a real image that no longer has a screen.
+  $('observerBtn').addEventListener('click',()=>{
+    if(state.observing){setScreen(true);return;}
+    state.observing=true;state.screenRemoved=true;state.autoScreen=false;
+    state.yaw=1.06;state.pitch=.13;state.zoom=1.4;update();
   });
   $('resetAll').addEventListener('click',()=>{
-    Object.assign(state,{f:10,u:30,screen:15,sourceY:12,secondY:8,second:false,rays:false,virtual:true,labels:false,yaw:-.54,pitch:.27,zoom:1.16,step:0});
+    Object.assign(state,{f:10,objP:35,lensP:65,scrP:80,sourceY:12,secondY:8,second:false,
+      source:'candle',screenRemoved:false,autoScreen:false,observing:false,lastNeedsOff:false,
+      rays:false,virtual:true,labels:false,yaw:-.42,pitch:.21,zoom:1.06,step:0,records:{}});
     for(const [id,checked] of [['showRays',false],['showVirtual',true],['showLabels',false]])$(id).checked=checked;
+    $('records').innerHTML='<tr><td colspan="4" class="empty">尚无记录，先移动器材开始探究</td></tr>';
+    $('summary').textContent='完整走过五个区域，可比较像的大小、正倒与实虚如何改变。';
     update();
   });
   $('steps').addEventListener('click',e=>{const b=e.target.closest('[data-step]');if(!b)return;state.step=+b.dataset.step;update();});
   $('recordBtn').addEventListener('click',()=>{
-    const info=status();if(info.real&&!info.crisp)return;
+    const info=status();if(info.real&&!state.screenRemoved&&!info.crisp)return;
     const item=CASES.find(c=>c.id===info.kind);
-    state.records[item.id]={name:item.name,u:state.u.toFixed(1),v:item.id==='focus'?'∞':(info.v<0?'−':'')+Math.abs(info.v).toFixed(1),result:item.result};
+    state.records[item.id]={name:item.name,u:state.u.toFixed(1),
+      v:item.id==='focus'?'∞':(info.v<0?'−':'')+Math.abs(info.v).toFixed(1),result:item.result};
     $('records').innerHTML=CASES.filter(c=>state.records[c.id]).map(c=>{
       const r=state.records[c.id];return `<tr><td>${r.name}</td><td>${r.u}</td><td>${r.v}</td><td>${r.result}</td></tr>`;
     }).join('');
@@ -552,33 +878,53 @@ import * as THREE from './assets/optics-three.min.js';
     $('summary').textContent=count===5?'五类物距已全部观察：物体从焦点外移向焦点，实像渐远且变大；进入焦点以内，形成正立虚像。':`已记录 ${count}/5 类，继续更换物距并调焦。`;
     state.step=4;update();
   });
+  const VIEWS={side:[0,.10],front:[-1.22,.17],top:[-.54,1.17],reset:[-.42,.21]};
   document.querySelectorAll('[data-view]').forEach(b=>b.addEventListener('click',()=>{
-    const views={side:[0,.10],front:[-1.22,.17],top:[-.54,1.17],reset:[-.54,.27]};
-    [state.yaw,state.pitch]=views[b.dataset.view];state.zoom=b.dataset.view==='reset'?1.16:1;render();
+    [state.yaw,state.pitch]=VIEWS[b.dataset.view];
+    state.zoom=b.dataset.view==='reset'?1.06:1;
+    if(b.dataset.view==='reset')state.observing=false;
+    update();
   }));
-  const pointers=new Map();let pinch=0,dragPoint=null;
+  const pointers=new Map();let pinch=0,dragPoint=null,press=null;
   function hitSource(e){
+    if(state.source!=='candle')return null;
     const rect=canvas.getBoundingClientRect();
     const active=state.second?[{y:state.sourceY,index:0},{y:state.secondY,index:1}]:[{y:state.sourceY,index:0}];
     for(const s of active){
-      const q=project({x:-state.u,y:s.y,z:1.15});
+      const q=project({x:wx(state.objP),y:s.y,z:1.1});
       if(Math.hypot(q.x-(e.clientX-rect.left),q.y-(e.clientY-rect.top))<17)return s.index;
     }
     return null;
   }
+  const raycaster=new THREE.Raycaster();
+  // The screen itself is clickable, and so is the wireframe left behind once it is off the
+  // bench, which is what makes "click to take it off / click to put it back" work both ways.
+  function hitScreen(e){
+    const rect=canvas.getBoundingClientRect();
+    if(!rect.width||!rect.height)return false;
+    fitCamera();
+    raycaster.setFromCamera(new THREE.Vector2(
+      ((e.clientX-rect.left)/rect.width)*2-1, -((e.clientY-rect.top)/rect.height)*2+1), camera);
+    return raycaster.intersectObject(state.screenRemoved?screenGhost:screen,true).length>0;
+  }
   canvas.addEventListener('pointerdown',e=>{
     pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});canvas.setPointerCapture(e.pointerId);
-    dragPoint=pointers.size===1?hitSource(e):null;pinch=0;
+    dragPoint=pointers.size===1?hitSource(e):null;
+    press=pointers.size===1?{x:e.clientX,y:e.clientY,screen:hitScreen(e)}:null;
+    pinch=0;
   });
   canvas.addEventListener('pointermove',e=>{
     if(!pointers.has(e.pointerId)){
-      canvas.classList.toggle('pick-source',hitSource(e)!==null);return;
+      const src=hitSource(e);
+      canvas.classList.toggle('pick-source',src!==null);
+      canvas.classList.toggle('pick-screen',src===null&&hitScreen(e));
+      return;
     }
     const prev=pointers.get(e.pointerId);pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});
     if(pointers.size===1){
       if(dragPoint!==null){
         const key=dragPoint===0?'sourceY':'secondY',y=state[key];
-        const p1=project({x:-state.u,y,z:1.15}),p2=project({x:-state.u,y:y+1,z:1.15});
+        const p1=project({x:wx(state.objP),y,z:1.1}),p2=project({x:wx(state.objP),y:y+1,z:1.1});
         const px=p1.y-p2.y;
         if(Math.abs(px)>1){const next=clamp(roundHalf(y+(prev.y-e.clientY)/px),5,17);if(next!==y){state[key]=next;update();}}
       }else{
@@ -587,12 +933,18 @@ import * as THREE from './assets/optics-three.min.js';
         render();
       }
     }else if(pointers.size===2){
-      dragPoint=null;const [a,b]=[...pointers.values()],d=Math.hypot(a.x-b.x,a.y-b.y);
+      dragPoint=null;press=null;
+      const [a,b]=[...pointers.values()],d=Math.hypot(a.x-b.x,a.y-b.y);
       if(pinch)state.zoom=clamp(state.zoom*d/pinch,.68,2.35);
       pinch=d;render();
     }
   });
-  const release=e=>{pointers.delete(e.pointerId);dragPoint=null;pinch=0;};
+  const release=e=>{
+    const was=press;
+    pointers.delete(e.pointerId);dragPoint=null;pinch=0;press=null;
+    // A drag that merely starts on the screen must not be read as a click on it.
+    if(was&&pointers.size===0&&was.screen&&Math.hypot(e.clientX-was.x,e.clientY-was.y)<5)setScreen(state.screenRemoved);
+  };
   canvas.addEventListener('pointerup',release);canvas.addEventListener('pointercancel',release);
   canvas.addEventListener('wheel',e=>{e.preventDefault();state.zoom=clamp(state.zoom*(e.deltaY>0?.91:1.1),.68,2.35);render();},{passive:false});
   canvas.addEventListener('keydown',e=>{
@@ -609,8 +961,13 @@ import * as THREE from './assets/optics-three.min.js';
   });
   window.addEventListener('resize',resize);
   if(window.ResizeObserver)new ResizeObserver(resize).observe(canvas);
-  window.__lensLab={state,status,project,imageY,update,render,resize,
-    debug:()=>({candle:candle.position.x,lens:lens.position.x,screen:screen.position.x,sources:lightSources.map(g=>g.position.y),rayCount:rays.children.length,textureSize:[texCanvas.width,texCanvas.height]})};
+  window.__lensLab={state,status,project,imageY,wx,setScreen,update,render,resize,
+    debug:()=>{const i=status();return {objP:state.objP,lensP:state.lensP,scrP:state.scrP,u:state.u,sd:state.sd,
+      kind:i.kind,v:Number.isFinite(i.v)?i.v:null,crisp:i.crisp,real:i.real,screenRemoved:state.screenRemoved,
+      source:state.source,candle:candle.position.x,lens:lens.position.x,screen:screen.position.x,
+      sources:lightSources.map(g=>g.position.y),rayCount:rays.children.length,
+      ghost:ghostObject.visible,ghostX:ghostObject.position.x,ghostScale:ghostObject.scale.x,
+      textureSize:[texCanvas.width,texCanvas.height],insetSize:[inset.width,inset.height]};}};
   $('showRays').checked=state.rays;
   update();resize();
 })();
