@@ -214,6 +214,16 @@
         .lp-fbd .dn { color: #fca5a5; }
         .lp-fbd .zero { color: #94a3b8; }
 
+        /* 力箭头图例 */
+        .lp-legend {
+            display: flex; flex-direction: column; gap: 5px;
+            margin-top: 10px; font-size: 11px; line-height: 1.5; color: #a9bccc;
+        }
+        .lp-legend span { display: flex; align-items: baseline; gap: 7px; }
+        .lp-legend i { flex: none; width: 16px; height: 4px; border-radius: 2px; transform: translateY(-2px); }
+        .lp-legend b { color: #e2e8f0; }
+        .lp-legend b.g { color: #6ee7b7; }
+
         @media (max-width: 900px) {
             .lab3d-layout { grid-template-columns: minmax(0, 1fr); }
             .lab3d-sidebar { border-left: 0; border-top: 1px solid var(--line); }
@@ -330,6 +340,12 @@
             <button type="button" id="lp-pick-0">甲 直壁</button>
             <button type="button" id="lp-pick-1">乙 敞口</button>
             <button type="button" class="active" id="lp-pick-2">丙 收口</button>
+          </div>
+          <div class="lp-legend">
+            <span><i style="background:#a78bfa"></i>重力 G：作用在<b>重心</b>上，竖直向下</span>
+            <span><i style="background:#38bdf8"></i>底部支持力 N：竖直向上，大小 = F</span>
+            <span><i style="background:#34d399"></i>侧壁压力：<b class="g">⊥ 侧壁</b>指向水里，作用在离底 h/3</span>
+            <span><i style="background:#f87171"></i>液体压底部的力 F：竖直向下</span>
           </div>
           <div class="lp-fbd" id="lp-fbd-box" style="margin-top:10px"></div>
         </aside>
@@ -488,6 +504,10 @@
        * ============================================================ */
       // 每帧记录画过的标签盒，供自检做两两重叠检查（见 dev-lp-test.js）
       let LBOX = [];
+      /* 每帧记录【实际画出去】的力箭头几何，供自检核对方向。
+         自检里把公式重抄一遍只能证明自检自洽 —— 必须读页面真正用的那份数。 */
+      let FBDDIR = [];   // 受力分析：两侧壁力的作用点与方向（世界坐标单位向量）
+      let GARROW = [];   // 重力箭头：锚点（= 重心）与尖端
       function rrect(x, y, w, h, r) {
         r = Math.min(r, w / 2, h / 2);
         ctx.beginPath();
@@ -559,6 +579,21 @@
       }
 
       function n1(v) { return (Math.round(v * 10) / 10).toFixed(1); }
+
+      /* 一个候选盒子和已画标签的最坏重叠率（按【真实盒子面积】算，不按锚点距离 ——
+         同一竖线上两个读数锚点可能只差十几 px，盒子却有四五十 px 宽）。 */
+      function worstOverlapOf(box, boxes) {
+        let worst = 0;
+        for (const b of boxes) {
+          const ox = Math.min(box.x + box.w, b.x + b.w) - Math.max(box.x, b.x);
+          const oy = Math.min(box.y + box.h, b.y + b.h) - Math.max(box.y, b.y);
+          if (ox > 0 && oy > 0) {
+            const r = (ox * oy) / Math.min(box.w * box.h, b.w * b.h);
+            if (r > worst) worst = r;
+          }
+        }
+        return worst;
+      }
 
       /* 窄屏时画面本来就小，标签得跟着缩 —— 否则相邻杯子的标签会糊在一起。
          VIEW.k 是「1 cm 折合多少像素」，用它判断：小于 8.5 px/cm 就算窄屏。 */
@@ -735,22 +770,31 @@
        * ============================================================ */
       function drawG(i, g) {
         if (g.G <= 0.01 || g.h < 0.6) return;
-        const L = clamp(g.G * N2CM, ARROW_MIN, ARROW_MAX);
-        // 受力分析里 N 也画在中线上，两根箭头容易打架 —— 把 G 让到左边，用引线连回形心
-        const off = state.showFBD ? -3.2 : ((g.yc - L < L + 0.8) ? -2.4 : 0);
-        const x = g.cx + off;
-        if (off !== 0) seg(g.cx, g.yc, x, g.yc, 'rgba(167,139,250,.45)', 1, [3, 3]);
-        arrow(x, g.yc, x, g.yc - L, '#a78bfa', 2.6, 8);
-        // 形心圆点
+        /* 重力作用在【重心】上 —— 箭头根部锚死在形心 (cx, yc)，任何时候都不许平移。
+           （以前受力分析时把 G 整体左移 3.2 cm 去让开 N，那是错的。）
+           受力分析里 N 也画在中线上，浅水时两根箭头会互相穿过，所以把 G 的最小长度
+           从 1.2 cm 收到 0.45 cm —— 靠"长度"让开，而不是靠"挪位置"。 */
+        const L = clamp(g.G * N2CM, state.showFBD ? 0.45 : ARROW_MIN, ARROW_MAX);
+        arrow(g.cx, g.yc, g.cx, g.yc - L, '#a78bfa', 2.6, 8);
+        GARROW.push({ i, ax: g.cx, ay: g.yc, tx: g.cx, ty: g.yc - L, L });
+        // 形心：十字 + 圆点，让「作用在重心上」一眼可见
         const c = P(g.cx, g.yc);
+        ctx.strokeStyle = 'rgba(196,181,253,.6)'; ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(c[0] - 5, c[1]); ctx.lineTo(c[0] + 5, c[1]);
+        ctx.moveTo(c[0], c[1] - 5); ctx.lineTo(c[0], c[1] + 5);
+        ctx.stroke();
         ctx.fillStyle = '#c4b5fd';
-        ctx.beginPath(); ctx.arc(c[0], c[1], 3.2, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.arc(c[0], c[1], 2.8, 0, Math.PI * 2); ctx.fill();
         if (state.showLabels) {
           // 浅水时箭头尖会落到基线以下，标签得夹回基线之上，否则和下面的 F 标签叠在一起
-          const gy = Math.min(P(x, g.yc - L)[1] + 14, BELOW.baseY - 11);
-          tagS(compact() ? n1(g.G) + ' N' : 'G = ' + n1(g.G) + ' N',
-               P(x, 0)[0], gy,
-               { color: '#ddd6fe', border: 'rgba(167,139,250,.5)', bg: 'rgba(28,18,52,.9)',
+          const gy = Math.min(P(g.cx, g.yc - L)[1] + 14, BELOW.baseY - 11);
+          // 受力分析里 N 的标签贴在箭头右侧，G 的标签就贴左侧，两者不再挤在一条竖线上
+          tagS(compact() ? n1(g.G) + ' N'
+                         : (state.showFBD ? '重心 G = ' + n1(g.G) + ' N' : 'G = ' + n1(g.G) + ' N'),
+               P(g.cx, 0)[0] + (state.showFBD ? -8 : 0), gy,
+               { align: state.showFBD ? 'right' : 'center',
+                 color: '#ddd6fe', border: 'rgba(167,139,250,.5)', bg: 'rgba(28,18,52,.9)',
                  h: compact() ? 15 : 17, font: compact() ? '600 10px Inter, "Microsoft YaHei", sans-serif' : null });
         }
       }
@@ -761,42 +805,67 @@
       function drawFBD(i, g) {
         if (g.h < 0.6) return;
         const cx = g.cx, hb = B / 2;
-        const Ln = clamp(g.F * N2CM, ARROW_MIN, ARROW_MAX);
+        /* N 和 G 都画在中线上、方向相反，浅水时若都硬撑到 ARROW_MIN 会互相穿过。
+           这里给它们同一个更小的下限（0.45 cm），实测 h∈[3,30] 全程最多只差 1.5 px。 */
+        const Lmin = 0.45;
+        const Ln = clamp(g.F * N2CM, Lmin, ARROW_MAX);
         const Lw = clamp(g.wallMag * N2CM, 0.9, ARROW_MAX);
 
         // 底部对液体的支持力 N（向上，大小 = F）
         arrow(cx, 0.05, cx, 0.05 + Ln, '#38bdf8', 2.6, 8);
         if (state.showLabels) {
-          // 标签贴到箭头【右侧】，不去和左边的 G 挤在一条竖线上
+          // 标签贴到箭头【右侧】（+14px，别盖住箭头尖），不去和左边的 G 挤在一条竖线上
           tagS(compact() ? n1(g.F) + ' N' : 'N = ' + n1(g.F) + ' N',
-               P(cx, 0)[0] + 7, P(cx, Ln)[1] + 2,
+               P(cx, 0)[0] + 14, P(cx, Ln)[1] + 2,
                { align: 'left', color: '#bae6fd', border: 'rgba(56,189,248,.55)', bg: 'rgba(6,26,42,.92)',
                  h: compact() ? 15 : 17, font: compact() ? '600 10px Inter, "Microsoft YaHei", sans-serif' : null });
         }
 
-        // 两侧壁对液体的压力（垂直于壁面，指向液体内部）
+        /* 两侧壁对液体的压力：大小 ρgD·h²/2·√(1+k²)，方向【垂直于壁面、指向液体内部】，
+           作用在离底 h/3 的压力中心（三角形压强分布）。
+             右壁单位方向 = (-1, +k)/√(1+k²)
+             左壁单位方向 = (+1, +k)/√(1+k²)   ← x 分量反向，y 分量【同号】
+           y 同号是关键：敞口(k>0) 两壁都斜向上、收口(k<0) 两壁都斜向下。
+           以前左壁写成 (-1, -k)，于是乙杯左边朝下、丙杯左边朝上 —— 全反了。 */
         const nrm = Math.sqrt(1 + g.k * g.k);
-        const ux = -1 / nrm, uy = g.k / nrm;
-        const cpXr = cx + hb + g.k * g.cpY, cpY = g.cpY;
-        const cpXl = cx - hb - g.k * g.cpY;
-        arrow(cpXr, cpY, cpXr + ux * Lw, cpY + uy * Lw, '#34d399', 2.4, 7.5);
-        arrow(cpXl, cpY, cpXl - ux * Lw, cpY - uy * Lw, '#34d399', 2.4, 7.5);
-        // 竖直分量的虚线直角（很小 —— 这正是 F 和 G 只差一点点的原因）
+        const ux = -1 / nrm, uy = g.k / nrm;         // 右壁指向液体
+        const cpY = g.cpY;
+        const cpXr = cx + hb + g.k * cpY;            // 右壁在压力中心处的 x
+        const cpXl = cx - hb - g.k * cpY;            // 左壁在压力中心处的 x
+        // 壁面切向（沿壁向上）：右壁 (k,1)/nrm、左壁 (-k,1)/nrm —— 画一小段当「⊥」的底边
+        const txr = g.k / nrm, tyr = 1 / nrm;
+        const TICK = 0.9;
+        FBDDIR.push({
+          i, k: g.k, cpY, Lw,
+          nRoot: { x: cx, y: 0.05 }, nTip: { x: cx, y: 0.05 + Ln },
+          right: { x: cpXr, y: cpY, dx: ux, dy: uy },
+          left:  { x: cpXl, y: cpY, dx: -ux, dy: uy }
+        });
+        for (const s of [-1, 1]) {
+          const px = s > 0 ? cpXr : cpXl;
+          const dx = s > 0 ? ux : -ux;               // x 分量反向（指向液体内部）
+          const dy = uy;                             // y 分量同号 —— 两侧一起朝上 / 一起朝下
+          const mx = s > 0 ? txr : -txr, my = tyr;   // 壁面切向
+          // 「⊥」的底边：沿壁面画一小段，让"力垂直于侧壁"看得见
+          seg(px - mx * TICK, cpY - my * TICK, px + mx * TICK, cpY + my * TICK,
+              'rgba(52,211,153,.5)', 1.6);
+          arrow(px, cpY, px + dx * Lw, cpY + dy * Lw, '#34d399', 2.4, 7.5);
+        }
+        // 竖直分量的直角分解（很小 —— 这正是 F 和 G 只差一点点的原因）
         const vy = (g.Wy / 2) * N2CM;
-        if (Math.abs(vy) > 0.06) {
-          for (const s of [1, -1]) {
-            const tx = s > 0 ? cpXr : cpXl, dx = s > 0 ? ux : -ux, dy = s > 0 ? uy : -uy;
+        if (Math.abs(vy) * VIEW.k > 9) {
+          for (const s of [-1, 1]) {
+            const tx = s > 0 ? cpXr : cpXl;
+            const dx = s > 0 ? ux : -ux, dy = uy;    // 与上面同一套方向
             seg(tx, cpY, tx + dx * Lw, cpY, 'rgba(52,211,153,.4)', 1, [3, 3]);
-            seg(tx + dx * Lw, cpY, tx + dx * Lw, cpY + dy * Lw, '#34d399', 2, [3, 3]);
+            // 竖直分量画成一根实心小箭头（向上 / 向下 一眼可辨），不是一根含糊的虚线
+            arrow(tx + dx * Lw, cpY, tx + dx * Lw, cpY + dy * Lw, 'rgba(52,211,153,.95)', 2.2, 6);
           }
         }
-        // 只给选中的杯子标出壁面压力与竖直合力（窄屏上这行太长会横穿整个画布，省掉）
-        if (state.showLabels && !compact() && i === state.pick) {
-          const up = g.Wy > 0.02 ? '向上' : (g.Wy < -0.02 ? '向下' : '为零');
-          tagS('侧壁压力 ' + n1(g.wallMag) + ' N／两侧竖直合计 ' + (g.Wy >= 0 ? '+' : '−') + n1(Math.abs(g.Wy)) + ' N（' + up + '）',
-               P(cpXr, 0)[0] + 6, P(cpXr, cpY)[1] - 16,
-               { align: 'left', color: '#a7f3d0', border: 'rgba(52,211,153,.5)', bg: 'rgba(4,30,22,.92)' });
-        }
+        /* 壁面压力的数值不在画布上标了 —— 侧栏「受力分析」面板里已经有完整读数，
+           而画布上这一带（离底 h/3）正是 G 箭头和 N 标签的必经之地，
+           任何够宽能说清话的标签都会横穿它们。方向由箭头本身 + 壁面「⊥」小标记表达，
+           配色由侧栏图例解释。 */
       }
 
       /* ============================================================
@@ -934,15 +1003,35 @@
       }
 
       function drawDepthTicks(gs) {
-        // 深度读数一般贴在水面下方；受力分析时给 N 让位、浅水时给 G 让位，就挪到水面之上
+        /* 深度读数有两个候选落点：水面上方 / 水面下方。
+           受力分析时 N 占着下方、浅水时 G 的标签占着下方，所以优先放上面；
+           但到底放哪，按「与已画标签的真实盒子重叠面积」挑小的那个 —— 写死"浅水就放上面"
+           会在 390px 上和 G 的读数压在一起（实测压掉 20%）。 */
         for (let i = 0; i < 3; i++) {
           const g = gs[i];
           if (g.h < 1.6) continue;
-          const up = state.showFBD || g.h < 6;
-          const yy = up ? g.h + 1.6 : Math.max(1.3, g.h - 1.8);
-          tag(compact() ? n1(g.h) + ' cm' : 'h = ' + n1(g.h) + ' cm', g.cx, yy,
+          const txt = compact() ? n1(g.h) + ' cm' : 'h = ' + n1(g.h) + ' cm';
+          const bh = compact() ? 15 : 17;
+          const font = compact() ? '600 10px Inter, "Microsoft YaHei", sans-serif' : null;
+          ctx.font = font || '600 11px Inter, "Microsoft YaHei", sans-serif';
+          const tw = ctx.measureText(txt).width;
+          const sx = P(g.cx, 0)[0];
+          const preferUp = state.showFBD || g.h < 6;
+          const near = Math.max(1.3, g.h - 1.8);      // 水面下方
+          const up = g.h + 1.6;                       // 水面上方
+          const up2 = g.h + 1.6 + 4.6;                // 水面上方再让一格（浅水时给 G 的读数腾位）
+          const cands = preferUp ? [up, up2, near] : [near, up, up2];
+          let best = null;
+          for (const yy of cands) {
+            const sy = P(g.cx, yy)[1];
+            const box = { x: sx - tw / 2 - 6, y: clamp(sy - bh / 2, 3, Math.max(3, HPX - bh - 3)), w: tw + 12, h: bh };
+            const ov = worstOverlapOf(box, LBOX);
+            if (!best || ov < best.ov) best = { yy, ov };
+            if (ov === 0) break;
+          }
+          tag(txt, g.cx, best.yy,
               { align: 'center', color: '#e0f2fe', border: 'rgba(125,211,252,.45)', bg: 'rgba(6,26,42,.9)',
-                h: compact() ? 15 : 17, font: compact() ? '600 10px Inter, "Microsoft YaHei", sans-serif' : null });
+                h: bh, font });
         }
       }
 
@@ -952,7 +1041,7 @@
       function draw() {
         ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
         ctx.clearRect(0, 0, W, HPX);
-        LBOX = [];
+        LBOX = []; FBDDIR = []; GARROW = [];
         updateView();
 
         // 背景网格 + 地面
@@ -1076,22 +1165,32 @@
 
       function refreshFBD(g) {
         const box = $('lp-fbd-box');
-        const upTxt = g.Wy > 0.02 ? '向上' : (g.Wy < -0.02 ? '向下' : '为零');
-        const cls = g.Wy > 0.02 ? 'up' : (g.Wy < -0.02 ? 'dn' : 'zero');
+        const flat = Math.abs(g.Wy) < 0.02;          // 直壁：侧壁竖直分量恰好为 0
+        const cls = flat ? 'zero' : (g.Wy > 0 ? 'up' : 'dn');
         const sign = g.Wy >= 0 ? '−' : '+';
+        const wyTxt = flat ? '0 N（直壁不产生竖直分量）'
+                           : ((g.Wy >= 0 ? '+' : '−') + n1(Math.abs(g.Wy)) + ' N ' + (g.Wy > 0 ? '↑' : '↓'));
+        const dirTxt = flat ? '两侧壁都水平推水'
+                            : (g.Wy > 0 ? '两侧壁都【斜向上】推水' : '两侧壁都【斜向下】压水');
         box.innerHTML =
           '<div class="eq">' +
-            'N + F<sub>侧壁</sub> = G<br>' +
-            'N = G ' + sign + ' ' + n1(Math.abs(g.Wy)) + ' = ' + n1(g.F) + ' N' +
+            'N + F<sub>侧壁竖直</sub> = G<br>' +
+            (flat ? 'N = G = ' + n1(g.F) + ' N'
+                  : 'N = G ' + sign + ' ' + n1(Math.abs(g.Wy)) + ' = ' + n1(g.F) + ' N') +
           '</div>' +
-          '<div class="row"><span>液体重力 G</span><b>' + n1(g.G) + ' N ↓</b></div>' +
-          '<div class="row"><span>侧壁竖直合力</span><b class="' + cls + '">' +
-            (g.Wy >= 0 ? '+' : '−') + n1(Math.abs(g.Wy)) + ' N ' + (g.Wy > 0.02 ? '↑' : (g.Wy < -0.02 ? '↓' : '')) + '</b></div>' +
+          '<div class="row"><span>液体重力 G（作用在重心）</span><b>' + n1(g.G) + ' N ↓</b></div>' +
+          '<div class="row"><span>侧壁压力（单侧，⊥ 侧壁）</span><b>' + n1(g.wallMag) + ' N</b></div>' +
+          '<div class="row"><span>　└ 方向</span><b class="' + cls + '">' + dirTxt + '</b></div>' +
+          '<div class="row"><span>　└ 竖直分量合计</span><b class="' + cls + '">' + wyTxt + '</b></div>' +
           '<div class="row"><span>底部支持力 N</span><b>' + n1(g.F) + ' N ↑</b></div>' +
           '<div class="row" style="margin-top:6px"><span>液体压底部的力 F = N</span><b style="color:#fca5a5">' + n1(g.F) + ' N ↓</b></div>' +
           '<div style="margin-top:8px;color:#7c93a5;font-size:10.5px;line-height:1.6">' +
-            '侧壁斜 ' + n1(Math.abs(g.k) * 100) + ' %，壁面压力 ' + n1(g.wallMag) + ' N，' +
-            '其中竖直方向只占 ' + n1(Math.abs(g.Wy) / 2) + ' N —— 所以 F 和 G 只差一点点。' +
+            (flat
+              ? '侧壁竖直，壁面压力 ' + n1(g.wallMag) + ' N 全部沿水平方向 —— 竖直方向一点不占，所以 F 恰好等于 G。'
+              : '侧壁斜 ' + n1(Math.abs(g.k) * 100) + ' %：单侧壁面压力 ' + n1(g.wallMag) +
+                ' N，方向垂直于侧壁、指向水里，两侧一起' + (g.Wy > 0 ? '斜向上' : '斜向下') +
+                '；竖直方向只占 ' + n1(Math.abs(g.Wy) / 2) + ' N（两侧合计 ' + n1(Math.abs(g.Wy)) +
+                ' N），所以 F 和 G 只差这一点点。') +
           '</div>';
       }
 
@@ -1235,6 +1334,9 @@
         ENV, view: VIEW, canvas,
         effFill, setMode,
         labels: () => LBOX,
+        fbdDirs: () => FBDDIR,      // 两侧壁力实际画出的方向
+        gArrows: () => GARROW,      // 重力箭头实际画出的锚点/尖端
+        fbdText: () => ($('lp-fbd-box') ? $('lp-fbd-box').textContent : ''),
         set(partial) { Object.assign(state, partial); syncInputs(); },
         redraw() { draw(); },
         isDirty() { return dirty; }
