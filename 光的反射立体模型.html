@@ -334,17 +334,25 @@
       const L    = R * 0.94;      // 激光笔到入射点的距离（略小于 R，笔头落在屏内）
       const HN   = R * 0.98;      // 法线长度
       const AR   = R * 0.42;      // 角度弧半径
-      const PEN  = R * 0.20;      // 激光笔笔身长度
+      const PEN  = R * 0.16;      // 激光笔笔身长度
+      // 激光笔笔尾到原点的距离。笔尖在 L 处、笔身再往外伸 PEN，所以笔尾比光屏半径 R 还远——
+      // 取景包络必须把它算进去，否则俯视/放大时笔会被画布上沿削掉一截（实测最狠出界 55px）。
+      // 笔身定成 0.16R 而不是更长，是为了让 RP 只比底座半径 RB 大 4%：
+      // 包络每胀一圈，整个装置就要跟着缩一圈，笔身省下的长度最后都变成了装置的大小。
+      const RP   = L + PEN;
       const CAMD = R * 3.5;       // 相机距离基准
       const TARGET = [0, R * 0.30, 0];
       const DEG_PER_PX_I = 0.28;  // 拖动笔头时，1 像素对应多少度入射角
       const DEG_PER_PX_P = 0.40;  // 拖动笔头时，1 像素对应多少度方位角
 
+      // 三支激光（红/绿/蓝三原色）。方位角按 120° 均匀铺开——四支时用 0/45/90/135
+      // 是不得已的折中，减到三支就没有这个约束了，等分一圈看着才对称。
+      // 入射角刻意各不相同，一眼能看出「不同入射角下 r 都等于 i」。
+      // 支数少一支，每片光屏分到的画面更大，屏也就能画得更实（见 laserPrims 的填充与描边）。
       const LASERS = [
-        { id: 'red',    name: '红激光', color: '#ff7b72', glow: 'rgba(255,123,114,.55)', soft: 'rgba(255,123,114,.20)', i: 58, phi: 0   },
-        { id: 'green',  name: '绿激光', color: '#4ade80', glow: 'rgba(74,222,128,.55)',  soft: 'rgba(74,222,128,.20)',  i: 48, phi: 45  },
-        { id: 'blue',   name: '蓝激光', color: '#60a5fa', glow: 'rgba(96,165,250,.55)',  soft: 'rgba(96,165,250,.20)',  i: 64, phi: 90  },
-        { id: 'violet', name: '紫激光', color: '#c084fc', glow: 'rgba(192,132,252,.55)', soft: 'rgba(192,132,252,.20)', i: 54, phi: 135 }
+        { id: 'red',   name: '红激光', color: '#ff7b72', glow: 'rgba(255,123,114,.55)', soft: 'rgba(255,123,114,.20)', i: 55, phi: 0   },
+        { id: 'green', name: '绿激光', color: '#4ade80', glow: 'rgba(74,222,128,.55)',  soft: 'rgba(74,222,128,.20)',  i: 45, phi: 60  },
+        { id: 'blue',  name: '蓝激光', color: '#60a5fa', glow: 'rgba(96,165,250,.55)',  soft: 'rgba(96,165,250,.20)',  i: 62, phi: 120 }
       ];
 
       const VIEWS = {
@@ -399,6 +407,27 @@
       /* ============================================================
        * 相机：轨道 + 透视投影
        * ============================================================ */
+      // 场景包络的采样点：底座圆周 + 光屏半球(R) + 激光笔半球(RP)。
+      // 【取景】和【自检】必须用这同一份采样。两边各写一套的话，自检其实在验另一个东西：
+      // 密度不同、边界框就不同，会出现「自检说出界、而相机按自己的框算确实没出界」的假失败。
+      function envelopePoints() {
+        const pts = [];
+        for (let k = 0; k < 72; k++) {
+          const a = k / 72 * PI2;
+          pts.push([Math.cos(a) * RB, 0, Math.sin(a) * RB]);
+        }
+        for (const rad of [R, RP]) {
+          for (let k = 0; k < 48; k++) {
+            const a = k / 48 * PI2;
+            for (let e = 0; e <= 6; e++) {
+              const ph = e / 6 * Math.PI / 2;
+              pts.push([Math.cos(a) * Math.cos(ph) * rad, Math.sin(ph) * rad, Math.sin(a) * Math.cos(ph) * rad]);
+            }
+          }
+        }
+        return pts;
+      }
+
       function makeCam(q, w, h) {
         const cy = Math.cos(state.yaw), sy = Math.sin(state.yaw);
         const cp = Math.cos(state.pitch), sp = Math.sin(state.pitch);
@@ -408,20 +437,12 @@
         q.fwd = scl(dir, -1);
         q.right = vnorm(cross(q.fwd, [0, 1, 0]));
         q.up = cross(q.right, q.fwd);
-        // 取景：对【固定的场景包络】采样（底座圆周 + 半径 R 的半球）。
+        // 取景：对【固定的场景包络】采样（见 envelopePoints）。
         // 不能用当前几何去算——那样每改一次参数视野就会跟着一缩一放，转起来晃。
-        const pts = [];
-        for (let k = 0; k < 24; k++) {
-          const a = k / 24 * PI2;
-          pts.push([Math.cos(a) * RB, 0, Math.sin(a) * RB]);
-        }
-        for (let k = 0; k < 12; k++) {
-          const a = k / 12 * PI2;
-          for (let e = 1; e <= 3; e++) {
-            const ph = e / 3 * Math.PI / 2;
-            pts.push([Math.cos(a) * Math.cos(ph) * R, Math.sin(ph) * R, Math.sin(a) * Math.cos(ph) * R]);
-          }
-        }
+        // 包络必须【盖住所有会画出来的东西】：早先只按光屏半径 R 取景，漏了伸到 RP 的激光笔，
+        // 于是笔尾在俯视/放大时被裁掉。多加一层 RP 半球后，底座圆周仍是最大的那一圈，
+        // 视野只缩了几个百分点，换笔不被削，值。
+        const pts = envelopePoints();
         let loR = 1e9, hiR = -1e9, loU = 1e9, hiU = -1e9;
         for (const p of pts) {
           const v = sub(p, q.eye);
@@ -430,8 +451,10 @@
           loR = Math.min(loR, r); hiR = Math.max(hiR, r);
           loU = Math.min(loU, u); hiU = Math.max(hiU, u);
         }
-        const s = Math.min(w * 0.90 / Math.max(1e-6, hiR - loR),
-                           h * 0.86 / Math.max(1e-6, hiU - loU));
+        // 留白：包络现在把激光笔也算进去了，本身就是"要完整看见的东西"，
+        // 所以留白可以收得比原来紧（0.90/0.86 → 0.95/0.91），把装置大小换回来。
+        const s = Math.min(w * 0.95 / Math.max(1e-6, hiR - loR),
+                           h * 0.91 / Math.max(1e-6, hiU - loU));
         q.focal = s;
         q.px = w * 0.5 - (loR + hiR) * 0.5 * s;
         q.py = h * 0.5 + (loU + hiU) * 0.5 * s;
@@ -549,10 +572,12 @@
             const a = deg * DEG;
             const p0 = project([Math.cos(a) * r0, 0, Math.sin(a) * r0], q);
             const p1 = project([Math.cos(a) * RB * 0.975, 0, Math.sin(a) * RB * 0.975], q);
-            line([p0, p1], major ? 'rgba(186,230,253,.62)' : 'rgba(148,163,184,.30)', major ? 1.3 : 1);
+            line([p0, p1], major ? 'rgba(148,178,200,.46)' : 'rgba(148,163,184,.20)', major ? 1.3 : 1);
             if (major) {
               const pl = project([Math.cos(a) * RB * 0.79, 0, Math.sin(a) * RB * 0.79], q);
-              label(pl, deg + '°', 'rgba(186,230,253,.72)', 10);
+              // 刻度数字压暗一档、去掉蓝味：光屏的网格也是青白色，两者同色同时亮的时候，
+              // 底盘刻度会从屏里透出来跟网格抢视线，屏反而显得"花"。青白留给光屏。
+              label(pl, deg + '°', 'rgba(154,176,196,.50)', 10);
             }
           }
         }
@@ -584,13 +609,16 @@
 
       // 半圆光屏上的「量角器」网格：每 15° 一条辐线 + 三条同心弧。
       // 侧看时光屏会缩成一条薄片，光靠淡填充读不出「这是一整个平面」；
-      // 有了网格，平面的走向和大小就一目了然了。
+      // 有了网格，平面的走向和大小就一目了然了。三支激光之后画面不再拥挤，
+      // 网格可以画得比原来实一档——它同时也是「入射角/反射角都是从法线量起的」的视觉提示。
       function panelGrid(dirH, q) {
         const O = project([0, 0, 0], q);
         for (let deg = 0; deg <= 90; deg += 15) {
           const a = deg * DEG;
           const d = add(scl(dirH, Math.cos(a)), [0, Math.sin(a), 0]);
-          line([O, project(scl(d, R), q)], 'rgba(186,230,253,.15)', 1);
+          const major = deg % 45 === 0;
+          line([O, project(scl(d, R), q)],
+               major ? 'rgba(186,230,253,.34)' : 'rgba(186,230,253,.20)', major ? 1.3 : 1);
         }
         [0.4, 0.7, 0.95].forEach(k => {
           const pts = [];
@@ -599,7 +627,7 @@
             const d = add(scl(dirH, Math.cos(a)), [0, Math.sin(a), 0]);
             pts.push(project(scl(d, R * k), q));
           }
-          line(pts, 'rgba(186,230,253,.12)', 1);
+          line(pts, 'rgba(186,230,253,.22)', 1.1);
         });
       }
 
@@ -610,9 +638,9 @@
       function laserPrims(las, q, isSel, noPanel, noBeam) {
         const p = physOf(las);
         const items = [];
-        const edge  = isSel ? 'rgba(186,230,253,.60)' : 'rgba(148,163,184,.22)';
+        const edge  = isSel ? 'rgba(186,230,253,.85)' : 'rgba(148,163,184,.38)';
         const wA = scl(p.w, -1);                        // 含入射光线的半页（固定）
-        // 折转【只作用在选中的那一支】上：四支激光是四套独立的演示装置，
+        // 折转【只作用在选中的那一支】上：三支激光是三套独立的演示装置，
         // 一起折画面糊成一团，也说不清到底在演示哪一套。
         const foldHere = isSel ? state.fold : 0;
         const wB = horizDir(las.phi + foldHere);        // 含反射光线的半页（可折）
@@ -639,11 +667,24 @@
             f: () => {
               const sp = poly3.map(v => project(v, q));
               const g = ctx.createLinearGradient(sp[0].x, sp[0].y, sp[sp.length - 1].x, sp[sp.length - 1].y);
-              // 未选中的光屏填充要压得很淡：它立在底座上，靠镜头这一侧的半页会盖到
-              // 底盘上，填充一浓，底盘就被切成一片片扇形，看着像底座自己的结构。
-              g.addColorStop(0, isSel ? 'rgba(125,211,252,.26)' : 'rgba(148,163,184,.042)');
-              g.addColorStop(1, isSel ? 'rgba(56,189,248,.08)' : 'rgba(148,163,184,.012)');
-              poly(sp, g, edge, isSel ? 1.5 : 1);
+              // 渐变方向是【底边(入射点→水平半径) → 法线顶端】。
+              // 底边整条都贴在底盘上，所以那里必须最淡——一浓，半页就把底盘切成一片片扇形，
+              // 看着像底座自己长出来的结构。越往屏的上方越实，屏才像一块立起来的板。
+              // （早先的渐变方向是反的：最浓的一档正好压在底盘上，屏反而糊成一团。）
+              if (folded) {
+                g.addColorStop(0, 'rgba(253,224,71,.05)');
+                g.addColorStop(1, 'rgba(253,224,71,.26)');
+              } else if (isSel) {
+                g.addColorStop(0, 'rgba(125,211,252,.10)');
+                g.addColorStop(1, 'rgba(125,211,252,.34)');
+              } else {
+                g.addColorStop(0, 'rgba(148,163,184,.035)');
+                g.addColorStop(1, 'rgba(148,163,184,.15)');
+              }
+              // 边框分两遍画：先垫一道深色当背衬，再压亮线。
+              // 只画一遍亮线时，屏立在有刻度的底盘上，边线会和刻度糊在一起——「不清晰」多半就出在这。
+              poly(sp, g, 'rgba(2,6,23,.55)', (folded || isSel) ? 4 : 3);
+              poly(sp, null, folded ? 'rgba(253,224,71,.85)' : edge, (folded || isSel) ? 2 : 1.3);
               if (isSel) panelGrid(dirH, q);
             }
           });
@@ -656,9 +697,14 @@
           }
           items.push({
             d: project(mid, q).z - 0.01,
-            f: () => line(arcPts,
-              folded ? 'rgba(253,224,71,.88)' : (isSel ? 'rgba(125,211,252,.72)' : 'rgba(148,163,184,.18)'),
-              (folded || isSel) ? 1.8 : 1)
+            f: () => {
+              // 外弧是「这是一块圆光屏」最强的形状线索。同样先垫深色再压亮线，
+              // 否则在密集的底盘刻度上，这条弧会被读成「底盘又多了一圈刻度」。
+              line(arcPts, 'rgba(2,6,23,.60)', (folded || isSel) ? 5 : 3.4);
+              line(arcPts,
+                folded ? 'rgba(253,224,71,.95)' : (isSel ? 'rgba(186,230,253,.92)' : 'rgba(148,163,184,.42)'),
+                (folded || isSel) ? 2.4 : 1.4);
+            }
           });
         });
 
@@ -968,22 +1014,38 @@
           if (zoom != null) state.zoom = zoom;
           state.dirty = true;
         },
-        // 把场景包络的采样点全部投影出来，用来断言「没有任何东西被裁到画布外」
+        // 把场景包络的采样点全部投影出来，用来断言「没有任何东西被裁到画布外」。
+        // 用的是和取景【同一份】采样（envelopePoints），所以这条断言是严格的：
+        // 它验的就是相机自己承诺的那个框，而不是另一套更密的点集。
         projectedEnvelope() {
           const q = {}; makeCam(q, state.w, state.h);
-          const pts = [];
-          for (let k = 0; k < 48; k++) {
-            const a = k / 48 * PI2;
-            pts.push([Math.cos(a) * RB, 0, Math.sin(a) * RB]);
+          return envelopePoints().map(p => { const s = project(p, q); return { x: s.x, y: s.y }; });
+        },
+        // 激光笔笔尾伸到 L + PEN ≈ 1.14R 处，比场景包络（半径 R）还远，
+        // 取景保证不了它不出画布——必须单独投影出来查，否则笔会被上沿削掉一截。
+        penTails() {
+          const q = {}; makeCam(q, state.w, state.h);
+          return LASERS.map(las => {
+            const p = physOf(las);
+            const t = project(add(p.P, scl(p.dirIn, PEN)), q);
+            return { x: +t.x.toFixed(1), y: +t.y.toFixed(1) };
+          });
+        },
+        // 选中光屏在若干方向上的「屏内 / 屏边 / 屏外」三个投影点。
+        // 自检拿它量屏边的对比度：沿同一方向从屏里往外走，亮度应当在边缘处冒出一个峰
+        // （先升后降）。屏边没画够亮的话，这条会红。
+        // 「清晰」是用户提的硬要求，不能只靠肉眼看图守着，得有个数。
+        panelProfile(n) {
+          const q = {}; makeCam(q, state.w, state.h);
+          const dirH = horizDir(LASERS[state.sel].phi);
+          const N = n || 24, out = [];
+          for (let k = 1; k < N; k++) {
+            const th = (k / N) * Math.PI / 2;
+            const d = add(scl(dirH, Math.cos(th)), [0, Math.sin(th), 0]);
+            const at = m => { const s = project(scl(d, R * m), q); return { x: s.x, y: s.y }; };
+            out.push({ inn: at(0.90), rim: at(1.00), out: at(1.10) });
           }
-          for (let k = 0; k < 24; k++) {
-            const a = k / 24 * PI2;
-            for (let e = 0; e <= 4; e++) {
-              const ph = e / 4 * Math.PI / 2;
-              pts.push([Math.cos(a) * Math.cos(ph) * R, Math.sin(ph) * R, Math.sin(a) * Math.cos(ph) * R]);
-            }
-          }
-          return pts.map(p => { const s = project(p, q); return { x: s.x, y: s.y }; });
+          return out;
         },
         size() { return { w: state.w, h: state.h, dpr: state.dpr }; }
       };
