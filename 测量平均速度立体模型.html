@@ -1,0 +1,1648 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>测量平均速度 · 三维实验台 - 物理虚拟实验</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="stylesheet" href="style.css">
+  <script src="auth-check.js"></script>
+  <style>
+    body { margin: 0; padding: 20px; min-width: 320px; }
+
+    .lab3d h1 { margin: 0; font-size: 19px; letter-spacing: .3px; }
+    .lab3d-sub { margin: 7px 0 16px; color: #93b4c4; font-size: 12.5px; line-height: 1.6; }
+    .lab3d-sub b { color: #a5f3fc; font-weight: 700; }
+
+    .lab3d-layout {
+      display: grid; grid-template-columns: minmax(0, 1fr) 340px;
+      gap: 16px; align-items: start;
+    }
+
+    .lab3d-stage {
+      position: relative; overflow: hidden;
+      height: clamp(360px, 60vh, 620px);
+      border: 1px solid rgba(148, 163, 184, .18); border-radius: 16px;
+      background: #020617; box-shadow: 0 18px 46px rgba(2, 6, 23, .5);
+    }
+    .lab3d-stage canvas { display: block; touch-action: none; cursor: grab; }
+    .lab3d-stage canvas.pick { cursor: pointer; }
+    .lab3d-stage canvas.grabbing { cursor: grabbing; }
+
+    .lab3d-stage .stage-hint {
+      position: absolute; left: 12px; top: 12px; max-width: 62%;
+      padding: 7px 11px; border-radius: 8px; pointer-events: none;
+      border: 1px solid rgba(56, 189, 248, .28); background: rgba(2, 6, 23, .78);
+      color: #c3e8f5; font-size: 11px; line-height: 1.55;
+    }
+    .lab3d-stage .stage-hint b { color: #7dd3fc; }
+
+    .lab3d-stage .stage-tip {
+      position: absolute; left: 0; top: 0; padding: 5px 9px; border-radius: 7px;
+      background: rgba(2, 6, 23, .9); border: 1px solid rgba(148, 163, 184, .3);
+      color: #e2e8f0; font-size: 11px; white-space: nowrap;
+      pointer-events: none; opacity: 0; transition: opacity .12s;
+    }
+    .lab3d-stage .stage-tip.show { opacity: 1; }
+
+    /* 舞台底部那一条：左边两个按钮（释放 / 记录），右边操作提示。
+       做成一条 flex 行是为了让它们【永远不重叠】——各用绝对定位占一角的话，
+       窄屏上提示文字会横穿底边压在按钮上。提示文字用省略号截断，
+       宁可少显示几个字，也不能压住按钮。
+       【为什么按钮必须在舞台上】.lab3d-layout 在 ≤900px 折成一列后，
+       侧栏会被挤到舞台【下面】；而「释放小车」「记录」恰恰是眼睛盯着画面时按的。 */
+    .lab3d-stage .stage-bar {
+      position: absolute; left: 0; right: 0; bottom: 0;
+      display: flex; align-items: center; justify-content: space-between; gap: 8px;
+      padding: 0 12px 11px; pointer-events: none;
+    }
+    .lab3d-stage .bar-left { display: flex; align-items: center; gap: 7px; flex: none; pointer-events: auto; }
+    .lab3d-stage .stage-btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 8px 13px; border-radius: 10px; font-family: inherit;
+      font-size: 12px; font-weight: 800; cursor: pointer;
+      border: 1px solid rgba(148, 163, 184, .35); background: rgba(2, 6, 23, .88); color: #cbd5e1;
+      transition: background .2s, border-color .2s, color .2s, box-shadow .2s;
+    }
+    .lab3d-stage .stage-btn.go { border-color: rgba(56, 189, 248, .55); background: rgba(14, 116, 144, .3); color: #e0f2fe; }
+    .lab3d-stage .stage-btn.go:hover { background: rgba(14, 116, 144, .46); }
+    .lab3d-stage .stage-btn:disabled { opacity: .45; cursor: not-allowed; }
+    .lab3d-stage .stage-btn .cnt {
+      display: inline-grid; place-items: center; min-width: 17px; height: 17px; padding: 0 4px;
+      border-radius: 99px; font-size: 10px; font-weight: 800;
+      background: rgba(148, 163, 184, .22); color: #e2e8f0;
+    }
+    /* 跑完一次（有数据可记）时按钮自己亮起来——这一刻正是该记录的时候 */
+    .lab3d-stage .stage-btn.ready {
+      border-color: rgba(52, 211, 153, .8); background: rgba(16, 185, 129, .24); color: #d1fae5;
+      box-shadow: 0 0 0 3px rgba(52, 211, 153, .14), 0 0 18px rgba(52, 211, 153, .3);
+    }
+    .lab3d-stage .stage-btn.ready .cnt { background: rgba(52, 211, 153, .32); color: #ecfdf5; }
+    .lab3d-stage .stage-help {
+      min-width: 0; pointer-events: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      color: #93b4c4; font-size: 11px; background: rgba(2, 6, 23, .72); padding: 6px 10px; border-radius: 7px;
+    }
+
+    .lab3d-stage .stage-toast {
+      position: absolute; left: 50%; transform: translateX(-50%); bottom: 96px;
+      padding: 8px 14px; border-radius: 10px; font-size: 12px; font-weight: 700;
+      background: rgba(2, 6, 23, .93); border: 1px solid rgba(148, 163, 184, .32); color: #e2e8f0;
+      opacity: 0; transition: opacity .18s, transform .18s; pointer-events: none; white-space: nowrap;
+    }
+    .lab3d-stage .stage-toast.show { opacity: 1; }
+
+    .lab3d-stage .stage-flag {
+      position: absolute; left: 50%; transform: translateX(-50%); bottom: 58px;
+      padding: 7px 13px; border-radius: 99px; font-size: 12px; font-weight: 800;
+      background: rgba(6, 78, 59, .92); border: 1px solid rgba(52, 211, 153, .6); color: #d1fae5;
+      opacity: 0; transition: opacity .2s; pointer-events: none; white-space: nowrap;
+    }
+    .lab3d-stage .stage-flag.show { opacity: 1; }
+
+    .lab3d-sidebar { display: flex; flex-direction: column; gap: 11px; min-width: 0; }
+    .panel {
+      border: 1px solid rgba(148, 163, 184, .17); border-radius: 13px;
+      background: rgba(9, 20, 35, .82); padding: 13px 14px;
+    }
+    .panel > h3 {
+      margin: 0 0 10px; font-size: 12px; font-weight: 800; color: #7dd3fc;
+      letter-spacing: .4px; display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    }
+    .panel > h3 .pill {
+      font-size: 10px; font-weight: 800; padding: 2px 8px; border-radius: 99px;
+      background: rgba(148, 163, 184, .18); color: #e2e8f0;
+    }
+    .fld { display: block; margin-bottom: 11px; }
+    .fld:last-child { margin-bottom: 0; }
+    .fld .row { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 5px; }
+    .fld .row span { color: #a9c2d2; font-size: 11.5px; }
+    .fld .row b { color: #e2e8f0; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+    .fld input[type=range] { width: 100%; accent-color: #38bdf8; }
+    .fld .note { margin: 6px 0 0; color: #8aa6b8; font-size: 11px; line-height: 1.55; }
+
+    .btn-row { display: flex; flex-wrap: wrap; gap: 7px; }
+    .btn-row button {
+      flex: 1 1 auto; min-width: 0; padding: 9px 11px; border-radius: 9px; cursor: pointer;
+      font-family: inherit; font-size: 12px; font-weight: 800;
+      border: 1px solid rgba(148, 163, 184, .3); background: rgba(30, 41, 59, .7); color: #cbd5e1;
+    }
+    .btn-row button.primary { border-color: rgba(56, 189, 248, .6); background: rgba(14, 116, 144, .42); color: #e0f2fe; }
+    .btn-row button:disabled { opacity: .45; cursor: not-allowed; }
+    .btn-row button:hover:not(:disabled) { border-color: rgba(125, 211, 252, .7); }
+
+    .watch {
+      display: flex; align-items: baseline; justify-content: center; gap: 5px;
+      padding: 9px 8px; border-radius: 10px; margin-bottom: 8px;
+      background: linear-gradient(180deg, #0b1a2a, #07131f); border: 1px solid rgba(56, 189, 248, .3);
+    }
+    .watch .num {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 30px; font-weight: 800;
+      color: #a5f3fc; letter-spacing: 1px; font-variant-numeric: tabular-nums;
+      text-shadow: 0 0 12px rgba(56, 189, 248, .5);
+    }
+    .watch .unit { color: #5e8496; font-size: 13px; font-weight: 700; }
+    .watch-sub { display: flex; flex-direction: column; gap: 5px; color: #a9c2d2; font-size: 11.5px; }
+    .watch-sub div { display: flex; justify-content: space-between; gap: 8px; }
+    .watch-sub b { color: #e2e8f0; font-variant-numeric: tabular-nums; }
+
+    table.rec { width: 100%; border-collapse: collapse; font-size: 11.5px; font-variant-numeric: tabular-nums; }
+    table.rec th, table.rec td { padding: 5px 4px; text-align: right; border-bottom: 1px solid rgba(148, 163, 184, .13); }
+    table.rec th { color: #8aa6b8; font-weight: 700; font-size: 10.5px; }
+    table.rec th:first-child, table.rec td:first-child { text-align: left; }
+    table.rec td { color: #dbe7f0; }
+    table.rec tr.seg-mid td:first-child { color: #7dd3fc; }
+    table.rec tr.seg-all td:first-child { color: #fbbf24; }
+    table.rec tr.seg-low td:first-child { color: #34d399; }
+    table.rec tr.seg-err td:first-child { color: #f87171; }
+    .rec-empty { color: #6f8b9c; font-size: 11.5px; padding: 6px 0; }
+
+    .analysis { color: #c8d8e4; font-size: 11.5px; line-height: 1.75; }
+    .analysis .line { display: flex; justify-content: space-between; gap: 8px; }
+    .analysis .line b { color: #e2e8f0; font-variant-numeric: tabular-nums; }
+    .analysis .conc {
+      margin-top: 9px; padding: 8px 10px; border-radius: 8px; font-size: 11.5px; line-height: 1.65;
+      background: rgba(6, 78, 59, .35); border: 1px solid rgba(52, 211, 153, .4); color: #d1fae5;
+    }
+    .analysis .conc.warn { background: rgba(127, 29, 29, .35); border-color: rgba(248, 113, 113, .45); color: #fee2e2; }
+    .analysis .muted { color: #7d97a8; }
+
+    .info-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; margin-top: 16px; }
+    .info-card {
+      border: 1px solid rgba(148, 163, 184, .16); border-radius: 14px;
+      background: rgba(9, 20, 35, .7); padding: 15px 17px;
+    }
+    .info-card h4 { margin: 0 0 9px; font-size: 13px; color: #7dd3fc; }
+    .info-card ul { margin: 0; padding-left: 17px; color: #a9c2d2; font-size: 12px; line-height: 1.85; }
+    .info-card li b { color: #e2e8f0; }
+    .info-card .fml {
+      display: inline-block; margin: 3px 0; padding: 3px 9px; border-radius: 7px;
+      background: rgba(56, 189, 248, .13); color: #a5f3fc; font-weight: 700;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+
+    @media (max-width: 900px) {
+      .lab3d-layout { grid-template-columns: minmax(0, 1fr); }
+      .lab3d-stage { height: clamp(320px, 52vh, 480px); }
+      .lab3d-sidebar { border-top: 1px solid rgba(148, 163, 184, .16); padding-top: 12px; }
+    }
+    @media (max-width: 620px) {
+      body { padding: 14px; }
+      .lab3d h1 { font-size: 16px; }
+      .lab3d-stage { height: 330px; }
+      .lab3d-stage .stage-hint { font-size: 10px; padding: 6px 9px; max-width: 66%; }
+      .lab3d-stage .stage-help { display: none; }
+      .lab3d-stage .stage-btn { padding: 7px 10px; font-size: 11px; gap: 5px; }
+      .lab3d-stage .stage-flag { bottom: 54px; font-size: 11px; padding: 6px 11px; }
+      .watch .num { font-size: 26px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="lab3d">
+    <h1>测量平均速度 · 三维实验台</h1>
+    <p class="lab3d-sub">
+      斜面长 <b>100 cm</b>，一端垫高；小车从斜面顶端由静止下滑，经过<b>光电门</b>时记一个时刻，撞到<b>金属挡板</b>时停下。
+      用刻度尺量路程、用停表量时间，算出每一段的平均速度。
+    </p>
+
+    <div class="lab3d-layout">
+      <div class="lab3d-stage">
+        <canvas id="slope-canvas"></canvas>
+
+        <div class="stage-hint" id="slope-hint"></div>
+        <div class="stage-tip" id="slope-tip"></div>
+        <div class="stage-toast" id="slope-toast"></div>
+        <div class="stage-flag" id="slope-flag">跑完一组 ✓ 数据可以记录了</div>
+
+        <div class="stage-bar">
+          <div class="bar-left">
+            <button type="button" class="stage-btn go" id="slope-release">▶ 释放小车</button>
+            <button type="button" class="stage-btn" id="slope-record">
+              记录这一组<b class="cnt" id="slope-record-cnt">0</b>
+            </button>
+          </div>
+          <div class="stage-help">拖动空白处旋转 · 滚轮缩放 · 光标碰到光电门 / 挡板就能拖 · 拖动小车可放到任意起点</div>
+        </div>
+      </div>
+
+      <div class="lab3d-sidebar">
+        <div class="panel">
+          <h3>实验装置</h3>
+          <label class="fld">
+            <div class="row"><span>斜面垫高</span><b><span id="v-h">20</span> cm</b></div>
+            <input type="range" id="sl-h" min="10" max="30" step="1" value="20">
+          </label>
+          <label class="fld">
+            <div class="row"><span>光电门位置（从顶端量）</span><b><span id="v-mid">50</span> cm</b></div>
+            <input type="range" id="sl-mid" min="10" max="90" step="1" value="50">
+          </label>
+          <label class="fld">
+            <div class="row"><span>挡板位置（从顶端量）</span><b><span id="v-end">100</span> cm</b></div>
+            <input type="range" id="sl-end" min="30" max="100" step="1" value="100">
+          </label>
+          <p class="note" id="slope-info"></p>
+        </div>
+
+        <div class="panel">
+          <h3>停表 <span class="pill" id="watch-state">待释放</span></h3>
+          <div class="watch"><span class="num" id="watch-num">0.00</span><span class="unit">s</span></div>
+          <div class="watch-sub">
+            <div><span>经过光电门</span><b id="v-tmid">—</b></div>
+            <div><span>撞击挡板</span><b id="v-tend">—</b></div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h3>操作</h3>
+          <div class="btn-row">
+            <button type="button" class="primary" id="btn-release">▶ 从顶端释放</button>
+            <button type="button" id="btn-release-mid">从光电门处释放</button>
+          </div>
+          <div class="btn-row" style="margin-top:7px;">
+            <button type="button" id="btn-slow">慢动作：关</button>
+            <button type="button" id="btn-reset">重置</button>
+          </div>
+          <p class="note">
+            「从光电门处释放」是<b>故意做错</b>的对照：小车在该点的速度是 0，
+            和全程实验里经过光电门时已经有速度完全不是一回事。
+          </p>
+        </div>
+
+        <div class="panel">
+          <h3>数据记录 <span class="pill" id="rec-count">0 组</span></h3>
+          <div id="rec-body"><p class="rec-empty">还没有记录。先释放一次小车。</p></div>
+        </div>
+
+        <div class="panel">
+          <h3>分析与结论</h3>
+          <div class="analysis" id="analysis"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="info-cards">
+      <div class="info-card">
+        <h4>实验原理</h4>
+        <ul>
+          <li>平均速度的定义式：<span class="fml">v̄ = s / t</span></li>
+          <li><b>s</b> 是用刻度尺量出的路程，<b>t</b> 是用停表量出的时间，两者必须对应<b>同一段</b>路程。</li>
+          <li>斜面下滑的小车速度越来越快，所以<b>每一段的平均速度都不一样</b>，说平均速度必须指明是哪一段。</li>
+          <li>下半段的平均速度不能把小车放在中点由静止释放来测 —— 那时它在该点的速度是 0，而全程实验里它已经有速度了。</li>
+        </ul>
+      </div>
+      <div class="info-card">
+        <h4>操作指南</h4>
+        <ul>
+          <li>先<b>拖动光电门和挡板</b>（或拖侧栏滑块）确定要测的两段路程，刻度从斜面<b>顶端</b>量起。</li>
+          <li>点<b>「释放小车」</b>，小车由静止下滑，停表自动计时，撞到挡板停下。</li>
+          <li>跑完点<b>「记录这一组」</b>，表格里会同时给出上半段、全程、下半段三个数据。</li>
+          <li>斜面垫得<b>越高</b>小车越快、时间越短，测起来误差越大 —— 所以真实的实验里斜面坡度要小一些。</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <script>
+  (() => {
+    'use strict';
+
+    const canvas = document.getElementById('slope-canvas');
+    const stage = document.querySelector('.lab3d-stage');
+    if (!canvas || !stage) return;
+    const ctx = canvas.getContext('2d');
+
+    const PI2 = Math.PI * 2;
+    const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
+    const $ = id => document.getElementById(id);
+
+    /* ============================================================
+     * 向量工具（与站内其它三维页同一套约定）
+     * ============================================================ */
+    const add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+    const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+    const scl = (a, k) => [a[0] * k, a[1] * k, a[2] * k];
+    const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+    const vlen = a => Math.hypot(a[0], a[1], a[2]);
+    const vnorm = a => { const l = vlen(a) || 1; return [a[0] / l, a[1] / l, a[2] / l]; };
+
+    /* ============================================================
+     * 场景常量
+     * ------------------------------------------------------------
+     * 世界坐标：y 向上，x/z 水平。1 世界单位 = 10 cm。
+     * 斜面【沿 x 轴】摆放，高端在 +x、低端在 −x（小车从 +x 滑向 −x）。
+     * 斜面长 100 cm 是【沿斜面方向】的长度，所以：
+     *   竖直落差 h = SLOPE_L·sinθ     水平投影 = SLOPE_L·cosθ
+     * 这样「刻度尺读数 = 沿斜面的路程」，和小车实际走过的距离严格一致。
+     * ============================================================ */
+    const U         = 10;            // 1 世界单位 = 10 cm
+    const SLOPE_L   = 10.0;          // 斜面长 100 cm（沿斜面方向）
+    // 【别把 SLOPE_L 当 cm 用】onSlope / xOf / surfY 的 s 一律是 cm，
+    // 斜面全长写成 SLOPE_L(=10) 只会画出最靠上的 10 cm —— 现象是「刻度尺铺满
+    // 整个台面，木板却只剩顶端一小块」，而且取景、标签、命中全跟着错位。
+    const L_CM      = SLOPE_L * U;   // 斜面全长 100 cm
+    const SLOPE_W   = 1.90;          // 斜面宽 19 cm（真实的斜面木板就这么宽，太窄了小车和刻度都看不清）
+    const SLOPE_T   = 0.15;          // 斜面厚 1.5 cm
+    const H_MIN     = 1.0, H_MAX = 3.0;   // 垫高 10 ~ 30 cm
+    const CAR_L     = 0.86, CAR_W = 0.52, CAR_BODY = 0.34;
+    const WHEEL_R   = 0.085;         // 轮半径 0.85 cm —— 再小就看不出是轮子，只剩一条黑边
+    // 车身离地 2·WHEEL_R，底盘与车身之间还留 0.055 的缝 —— CAR_H 必须把这两段算进去，
+    // 否则取景包络、命中框、标签锚点全都按一个偏矮的车算，车顶会被裁。
+    const CAR_GAP   = 0.055;
+    const CAR_H     = WHEEL_R * 2 + 0.045 + CAR_GAP + CAR_BODY;
+    const GATE_R    = 0.075;         // 光电门立杆半径 0.75 cm
+    const GATE_H    = 1.05;          // 立杆伸出斜面顶面的高度
+    const GATE_OUT  = 0.45;          // 立杆离斜面边缘的距离
+    const BEAM_H    = 0.20;          // 光路离斜面顶面的高度（车身占 1.7~5.1 cm，挡得住）
+    const PLATE_W   = 1.10, PLATE_H = 0.62, PLATE_T = 0.032;   // 挡板必须比小车高，才挡得住
+    const TABLE_W   = 5.75, TABLE_D = 1.95, TABLE_T = 0.16;   // 桌面必须放得下 1 米的斜面
+    // 【桌面进深直接决定器材在画面里的大小】取景包络含桌面四角，进深一大，
+    // 包络就被前方那块空台面撑高，斜面只能缩到画布中间一条。2.60 收到 1.95。
+    const BLOCK_L   = 1.10;          // 垫块长 11 cm
+    const WATCH_X   = -3.15, WATCH_Z = -1.40;   // 秒表放【远侧】：近侧有刻度尺与 s₂/s₃ 标注车道
+    const WATCH_L   = 0.90, WATCH_W = 0.62, WATCH_T = 0.22;
+    const ETA       = 0.40;          // 滚动损耗因子：a = g·sinθ·η
+    const G_CM      = 1000;          // g 取 10 m/s² = 1000 cm/s²
+    const CAMD      = 18;            // 相机距离基准
+    const TARGET    = [0, 1.05, 0];
+    const S_LO      = 10, S_HI = 100;   // 光电门 / 挡板位置的 cm 范围
+    const GAP       = 10;               // 光电门必须比挡板靠前至少这么多 cm
+
+    const VIEWS = {
+      // 默认：斜俯视偏一点。斜面沿 x 铺开，转到 30° 才看得出「这是一块斜的板」，
+      // 完全正对着看（yaw=0）会被压成一条线，坡度就看不出来了。
+      perspective: [0.52, 0.44],
+      side:        [0.05, 0.24],   // 正侧方：坡度最清楚
+      top:         [0.30, 1.30],   // 俯视：看清刻度和小车位置
+      along:       [1.55, 0.22],   // 沿斜面方向看：小车正对着你冲过来
+      back:        [Math.PI, 0.30]
+    };
+
+    const state = {
+      yaw: VIEWS.perspective[0], pitch: VIEWS.perspective[1], zoom: 1,
+      rise: 20 / U,              // 垫高（世界单位）
+      dMid: 50, dEnd: 100,       // 光电门 / 挡板位置（cm，从顶端量）
+      startS: 0,                 // 本次释放的起点（cm）
+      carS: 0,                   // 小车此刻的位置（cm，从顶端量）
+      carT: 0,                   // 本次释放已经过的物理时间（s）
+      running: false, done: false,
+      tMid: null, tEnd: null,    // 本次释放记录到的两个时刻
+      tMidHit: false,
+      slow: false,
+      marks: [],                 // 记录下来的数据组
+      w: 1, h: 1, dpr: 0, dirty: true,
+      dragging: false, drag: null, downAt: null, dragGrab: { x: 0, y: 0 },
+      hover: null, view: 'perspective',
+      drawn: {}
+    };
+
+    /* ---------------------------- 派生几何 ---------------------------- */
+    const theta = () => Math.asin(clamp(state.rise / SLOPE_L, 0, 0.98));
+    const sinT  = () => Math.sin(theta());
+    const cosT  = () => Math.cos(theta());
+    // 加速度：a = g·sinθ·η（cm/s²）。坡度一变，所有时间都跟着变——不能写死。
+    const accel = () => G_CM * sinT() * ETA;
+    // 斜面水平半跨（x 方向的半长）
+    const halfX = () => SLOPE_L * cosT() / 2;
+    const xHi   = () => halfX();
+    const xLo   = () => -halfX();
+    // 【单位只在 uOf 这一处换算】沿斜面的位置一律用 cm（和刻度尺、滑块、记录表同一套），
+    // 世界单位只出现在几何量（宽、厚、高）里。混着用的话 s>10 会被静默钳到低端，
+    // 现象是「光电门拖到哪都停在斜面底端」，极难查。
+    const uOf   = s => clamp(s / (SLOPE_L * U), 0, 1);
+    const surfY = s => (state.rise + SLOPE_T) - uOf(s) * state.rise;
+    const xOf   = s => xHi() - uOf(s) * (xHi() - xLo());
+    // 斜面的两个方向：d 沿斜面向下，n 是朝上的法线
+    const dirD = () => vnorm([-cosT(), -sinT(), 0]);
+    const dirN = () => [-sinT(), cosT(), 0];
+    // 斜面上的一点：s 沿斜面位置，dz 横向偏移，dn 沿法线偏移
+    const onSlope = (s, dz, dn) => {
+      const n = dirN(), x = xOf(s), y = surfY(s);
+      return [x + n[0] * (dn || 0), y + n[1] * (dn || 0), dz || 0];
+    };
+    // 沿斜面走 s 需要的时间（由静止开始，匀加速）
+    const tOf = s => Math.sqrt(2 * Math.max(0, s) / accel());
+    // 小车此刻的位置（cm）：s = ½at²。动画与自检都走这一个函数 ——
+    // 公式抄成两份的话，改了一处另一处不跟着变，「画面在动但时间和路程对不上」，
+    // 而且自检量到的是没被使用的那一份，永远绿的。
+    const carSAt = t => clamp(state.startS + 0.5 * accel() * t * t, state.startS, state.dEnd);
+
+    /* ---------------------------- 相机 ---------------------------- */
+    // 取景包络：【固定】用最陡的坡度算，且把光电门 / 挡板能到的所有位置都罩住。
+    // 用当前几何去算的话，拖一次挡板视野就一缩一放，晃得没法用。
+    function envelopePoints() {
+      const h = H_MAX, th = Math.asin(h / SLOPE_L), ct = Math.cos(th), st = Math.sin(th);
+      const hx = SLOPE_L * ct / 2;
+      const pts = [];
+      // 【桌面只算「器材脚下那一圈」】整块桌面的近角离相机最近，投影到画布最下方，
+      // 会把包络撑高一截 —— 取景于是被一块几乎看不见的暗台面支配，器材缩到中间一条，
+      // 画面下半全是空背景。真实照片里桌子本来就会伸出画外，这里照做：
+      // x 收到 ±0.90·TABLE_W、z 只保留 −TABLE_D 到 +0.62·TABLE_D。
+      for (const sx of [-1, 1]) for (const sz of [-1, 0.62]) {
+        pts.push([sx * TABLE_W * 0.90, 0, sz * TABLE_D]);
+      }
+      const uu = s => clamp(s / (SLOPE_L * U), 0, 1);
+      const topAt = s => (h + SLOPE_T) - uu(s) * h;
+      const xAt = s => hx - uu(s) * (2 * hx);
+      // 斜面顶面 + 小车顶（最高处就在顶端）
+      for (const s of [0, SLOPE_L * U]) {
+        for (const sz of [-1, 1]) {
+          pts.push([xAt(s), topAt(s) + CAR_H, sz * SLOPE_W / 2]);
+          pts.push([xAt(s), topAt(s), sz * SLOPE_W / 2]);
+        }
+      }
+      // 光电门立杆：位置从 S_LO 到 S_HI−GAP 都要罩住，杆顶在斜面顶面之上 GATE_H
+      for (const s of [S_LO, S_HI - GAP]) {
+        for (const sz of [-1, 1]) {
+          pts.push([xAt(s), topAt(s) + GATE_H, sz * (SLOPE_W / 2 + GATE_OUT)]);
+        }
+      }
+      // 挡板：位置从 S_LO+GAP 到 S_HI
+      for (const s of [S_LO + GAP, S_HI]) {
+        for (const sz of [-1, 1]) {
+          pts.push([xAt(s), topAt(s) + PLATE_H + 0.12, sz * PLATE_W / 2]);
+        }
+      }
+      // 垫块：它比斜面高端还往外伸一点，不列进来就会被画布右边缘切掉
+      const bx1 = hx + 0.15, bx0 = bx1 - BLOCK_L;
+      for (const sx of [bx0, bx1]) for (const sz of [-1, 1]) {
+        pts.push([sx, 0, sz * 0.52], [sx, h, sz * 0.52]);
+      }
+      // 秒表（放在桌面上）
+      pts.push([WATCH_X - WATCH_L / 2, WATCH_T, WATCH_Z - WATCH_W / 2],
+               [WATCH_X + WATCH_L / 2, WATCH_T, WATCH_Z + WATCH_W / 2]);
+      return pts;
+    }
+
+    function makeCam(q, w, h) {
+      const cy = Math.cos(state.yaw), sy = Math.sin(state.yaw);
+      const cp = Math.cos(state.pitch), sp = Math.sin(state.pitch);
+      const dir = [cp * sy, sp, cp * cy];
+      q.dist = CAMD / state.zoom;
+      q.eye = add(TARGET, scl(dir, q.dist));
+      q.fwd = scl(dir, -1);
+      q.right = vnorm(cross(q.fwd, [0, 1, 0]));
+      q.up = cross(q.right, q.fwd);
+      const pts = envelopePoints();
+      let loR = 1e9, hiR = -1e9, loU = 1e9, hiU = -1e9;
+      for (const p of pts) {
+        const v = sub(p, q.eye);
+        const z = Math.max(0.05, dot(v, q.fwd));
+        const r = dot(v, q.right) / z, u = dot(v, q.up) / z;
+        loR = Math.min(loR, r); hiR = Math.max(hiR, r);
+        loU = Math.min(loU, u); hiU = Math.max(hiU, u);
+      }
+      const s = Math.min(w * 0.94 / Math.max(1e-6, hiR - loR),
+                         h * 0.90 / Math.max(1e-6, hiU - loU));
+      q.focal = s;
+      q.px = w * 0.5 - (loR + hiR) * 0.5 * s;
+      q.py = h * 0.5 + (loU + hiU) * 0.5 * s;
+      q.eyeDist = p => { const v = sub(p, q.eye); return dot(v, q.fwd); };
+      return q;
+    }
+    function project(p, q) {
+      const v = sub(p, q.eye);
+      const z = Math.max(0.05, dot(v, q.fwd));
+      const s = q.focal / z;
+      return { x: q.px + dot(v, q.right) * s, y: q.py - dot(v, q.up) * s, s: s, z: z };
+    }
+    // 屏幕点 → 水平面 y = 给定高度 上的世界点。拖动就靠它把光标射线打回斜面。
+    function unproject(sx, sy, q, planeY) {
+      const dx = (sx - q.px) / q.focal;
+      const dy = -(sy - q.py) / q.focal;
+      const d = add(add(q.fwd, scl(q.right, dx)), scl(q.up, dy));
+      if (Math.abs(d[1]) < 1e-6) return null;
+      const t = ((planeY === undefined ? 0 : planeY) - q.eye[1]) / d[1];
+      if (t <= 0) return null;
+      return add(q.eye, scl(d, t));
+    }
+
+    /* ============================================================
+     * 绘图小工具
+     * ============================================================ */
+    function polyPath(pts) {
+      ctx.beginPath();
+      pts.forEach((p, k) => k ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+      ctx.closePath();
+    }
+    function poly(pts, fill, stroke, lw) {
+      if (!pts || pts.length < 2) return;
+      polyPath(pts);
+      if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+      if (stroke) { ctx.lineWidth = lw || 1; ctx.strokeStyle = stroke; ctx.stroke(); }
+    }
+    function line(pts, color, lw, dash) {
+      if (!pts || pts.length < 2) return;
+      ctx.beginPath();
+      pts.forEach((p, k) => k ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+      ctx.setLineDash(dash || []);
+      ctx.lineWidth = lw; ctx.strokeStyle = color; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+      ctx.stroke(); ctx.setLineDash([]);
+    }
+    function dot2(p, r, fill, stroke, lw) {
+      ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, PI2);
+      if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+      if (stroke) { ctx.lineWidth = lw || 1; ctx.strokeStyle = stroke; ctx.stroke(); }
+    }
+    const mix = (c1, c2, k) => [c1[0] + (c2[0] - c1[0]) * k, c1[1] + (c2[1] - c1[1]) * k, c1[2] + (c2[2] - c1[2]) * k];
+    const rgb = (c, k) => {
+      const s = k === undefined ? 1 : k;
+      return 'rgb(' + Math.round(clamp(c[0] * s, 0, 255)) + ',' +
+                      Math.round(clamp(c[1] * s, 0, 255)) + ',' +
+                      Math.round(clamp(c[2] * s, 0, 255)) + ')';
+    };
+    const LIGHT = vnorm([-0.34, 0.86, 0.38]);
+    // 面的明暗：按面法线与光线的夹角给亮度。这是「写实」的来源——
+    // 同一个颜色的盒子，三个面必须读出三种明度，否则就是一张贴纸。
+    const shade = (base, n, amb) => rgb(base, (amb === undefined ? 0.52 : amb) + 0.60 * Math.max(0, dot(n, LIGHT)));
+
+    // 本帧已经画出来的标签盒（避让用真实盒子，不按锚点距离）
+    let frameBoxes = [];
+    function labelBox(p, text, size, align) {
+      ctx.font = '800 ' + size + 'px Inter, "Microsoft YaHei", sans-serif';
+      const wpx = ctx.measureText(text).width;
+      const pad = 4;
+      const half = size * 0.72 + pad * 0.5;
+      const wBox = wpx + pad * 2;
+      const EDGE = 8;
+      const y = clamp(p.y, half + EDGE, Math.max(half + EDGE, state.h - half - EDGE));
+      let bx = align === 'left' ? p.x - 4 - pad
+             : align === 'right' ? p.x + 4 - wpx - pad
+             : p.x - wpx / 2 - pad;
+      bx = clamp(bx, EDGE, Math.max(EDGE, state.w - wBox - EDGE));
+      return { x: bx, y: y - half, w: wBox, h: half * 2, cx: bx + wBox / 2, cy: y };
+    }
+    function label(p, text, color, size, align) {
+      ctx.font = '800 ' + size + 'px Inter, "Microsoft YaHei", sans-serif';
+      ctx.textAlign = align || 'center';
+      ctx.textBaseline = 'middle';
+      const pad = 4;
+      const wpx = ctx.measureText(text).width;
+      const b = labelBox(p, text, size, align);
+      const x = align === 'left' ? b.x + pad : align === 'right' ? b.x + wpx + pad : b.cx;
+      ctx.fillStyle = 'rgba(2,6,23,.76)';
+      ctx.fillRect(b.x, b.y, b.w, b.h);
+      ctx.fillStyle = color;
+      ctx.fillText(text, x, b.cy);
+      frameBoxes.push(b);
+      if (window.__slopeLabelLog) {
+        window.__slopeLabelLog.push({ text: text, x: b.x, y: b.y, w: b.w, h: b.h });
+      }
+      return b;
+    }
+    // 一帧里，先算出候选位置的重叠面积，取最小的那个。区域名这类标签
+    // 必须等别的标签都画完再挑位置，否则谁压住谁全凭运气。
+    function bestLabel(anchor, text, color, size, offs) {
+      let best = null, bestOv = 1e18;
+      for (const o of offs) {
+        const b = labelBox({ x: anchor.x + o[0], y: anchor.y + o[1] }, text, size, 'center');
+        let ov = 0;
+        for (const q of frameBoxes) {
+          const ox = Math.min(b.x + b.w, q.x + q.w) - Math.max(b.x, q.x);
+          const oy = Math.min(b.y + b.h, q.y + q.h) - Math.max(b.y, q.y);
+          if (ox > 0 && oy > 0) ov += ox * oy;
+        }
+        if (ov < bestOv) { bestOv = ov; best = { x: anchor.x + o[0], y: anchor.y + o[1] }; }
+      }
+      label(best, text, color, size, 'center');
+      return bestOv;
+    }
+    // 带避让的标签：在锚点周围试几个落点，取与本帧已画盒子重叠面积最小的那个。
+    // 不避让的话，光电门 / 挡板 / 小车这几个标注在窄屏上必然互相压
+    // （它们是沿一条斜线排开的，锚点只差几十像素，而每个盒子有六十几像素宽）。
+    const AVOID = [[0, 0], [0, -17], [0, 17], [0, -34], [0, 34],
+                   [-46, -17], [46, -17], [-46, 17], [46, 17], [0, -51], [0, 51]];
+    // 读数标签（s₂ / s₃）的候选落点：只在竖直方向让位。
+    // 竖直让位读起来仍是「这条读数」，横着挪会被误认为在标另一段。
+    const DIST_AVOID = [[0, 0], [0, -21], [0, 21], [0, -42], [0, 42], [0, -63], [0, 63]];
+    const avoidLabel = (anchor, text, color, size) => bestLabel(anchor, text, color, size, AVOID);
+    // 竖直圆柱的轮廓：屏幕 x 的极值点给出两条母线
+    function cylSilhouette(cx, cz, r, h, q, N) {
+      const bot = [], top = [];
+      for (let k = 0; k < N; k++) {
+        const a = k / N * PI2;
+        const x = cx + Math.cos(a) * r, z = cz + Math.sin(a) * r;
+        bot.push(project([x, 0, z], q));
+        top.push(project([x, h, z], q));
+      }
+      let iL = 0, iR = 0;
+      for (let k = 1; k < N; k++) {
+        if (bot[k].x < bot[iL].x) iL = k;
+        if (bot[k].x > bot[iR].x) iR = k;
+      }
+      const walk = (pts, i, j, wantLower) => {
+        const fwd = [], bwd = [];
+        for (let k = i; ; k = (k + 1) % N) { fwd.push(pts[k]); if (k === j) break; }
+        for (let k = i; ; k = (k - 1 + N) % N) { bwd.push(pts[k]); if (k === j) break; }
+        const avgY = arr => arr.reduce((s, p) => s + p.y, 0) / arr.length;
+        const fa = avgY(fwd), ba = avgY(bwd);
+        return wantLower ? (fa > ba ? fwd : bwd) : (fa < ba ? fwd : bwd);
+      };
+      return { bot: bot, top: top, outline: walk(bot, iL, iR, true).concat(walk(top, iR, iL, false)) };
+    }
+    // 立杆（细圆柱）：用一条带横向渐变的粗线画，中间亮两边暗 —— 圆柱感就出来了
+    function pole(p0, p1, q, rWorld, cLight, cDark) {
+      const a = project(p0, q), b = project(p1, q);
+      const dx = b.x - a.x, dy = b.y - a.y;
+      const L = Math.hypot(dx, dy) || 1;
+      const nx = -dy / L, ny = dx / L;
+      const rad = Math.max(1.2, rWorld * (a.s + b.s) * 0.5);
+      const g = ctx.createLinearGradient(a.x - nx * rad, a.y - ny * rad, a.x + nx * rad, a.y + ny * rad);
+      g.addColorStop(0, cDark);
+      g.addColorStop(0.34, cLight);
+      g.addColorStop(0.62, cLight);
+      g.addColorStop(1, cDark);
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
+      ctx.lineWidth = rad * 2; ctx.strokeStyle = g; ctx.lineCap = 'round';
+      ctx.stroke();
+    }
+
+    /* ============================================================
+     * 器材绘制
+     * ============================================================ */
+    const WOOD      = [176, 132, 88];
+    const WOOD_DARK = [96, 66, 40];
+    const STEEL     = [186, 196, 208];
+    const PLASTIC   = [64, 82, 102];
+    const RUBBER    = [26, 28, 34];
+    const CAR_C     = [186, 74, 52];   // 车身：暖红塑料，木色与深蓝底之间都跳得出来
+    const CHASSIS_C = [58, 62, 70];    // 底盘：深灰
+
+    function drawBackdrop(w, h) {
+      const g = ctx.createRadialGradient(w * 0.46, h * 0.10, 12, w * 0.5, h * 0.55, Math.max(w, h) * 0.86);
+      g.addColorStop(0, '#0d2035');
+      g.addColorStop(0.52, '#071626');
+      g.addColorStop(1, '#020a14');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, w, h);
+    }
+
+    const rectPts = (x0, z0, x1, z1, y, q) => [
+      project([x0, y, z0], q), project([x1, y, z0], q),
+      project([x1, y, z1], q), project([x0, y, z1], q)
+    ];
+
+    // 桌面：一块厚板，前面给一条厚度，才像张实验台而不是一张纸
+    function drawTable(q) {
+      poly(rectPts(-TABLE_W, -TABLE_D, TABLE_W, TABLE_D, 0, q),
+           '#1b2739', 'rgba(125,211,252,.26)', 1.4);
+      // 前侧厚度
+      poly([project([-TABLE_W, 0, TABLE_D], q), project([TABLE_W, 0, TABLE_D], q),
+            project([TABLE_W, -TABLE_T, TABLE_D], q), project([-TABLE_W, -TABLE_T, TABLE_D], q)],
+           '#0e1a29', null, 0);
+      // 台面高光：一条沿 x 的柔和亮带，让台面有反光
+      const g = ctx.createLinearGradient(0, project([0, 0, -TABLE_D], q).y, 0, project([0, 0, TABLE_D], q).y);
+      g.addColorStop(0, 'rgba(148,197,255,.14)');
+      g.addColorStop(0.45, 'rgba(148,197,255,.05)');
+      g.addColorStop(1, 'rgba(2,6,23,.34)');
+      poly(rectPts(-TABLE_W, -TABLE_D, TABLE_W, TABLE_D, 0.001, q), g, null, 0);
+    }
+
+    // 垫块：高端下面那块木头
+    function drawBlock(q) {
+      const h = state.rise;
+      const x1 = xHi() + 0.15, x0 = x1 - BLOCK_L;
+      const z1 = 0.52, z0 = -z1;      // 垫块比斜面窄，藏在板子底下
+      const top = [[x0, h, z0], [x1, h, z0], [x1, h, z1], [x0, h, z1]].map(p => project(p, q));
+      const front = [[x0, h, z1], [x1, h, z1], [x1, 0, z1], [x0, 0, z1]].map(p => project(p, q));
+      const side = [[x1, h, z0], [x1, h, z1], [x1, 0, z1], [x1, 0, z0]].map(p => project(p, q));
+      const nTop = [0, 1, 0], nF = [0, 0, 1], nS = [1, 0, 0];
+      const faces = [
+        { pts: top, n: nTop }, { pts: front, n: nF }, { pts: side, n: nS }
+      ];
+      // 按到相机的距离排序（远的先画），凸多面体这样画一定对
+      faces.sort((a, b) => {
+        const ca = a.pts.reduce((s, p) => s + p.z, 0) / a.pts.length;
+        const cb = b.pts.reduce((s, p) => s + p.z, 0) / b.pts.length;
+        return cb - ca;
+      });
+      for (const f of faces) poly(f.pts, shade(WOOD_DARK, f.n, 0.5), 'rgba(20,12,6,.5)', 1);
+    }
+
+    // 斜面：一块长木板。顶面画木纹 + 刻度尺。
+    function drawSlope(q) {
+      const T = SLOPE_T, W = SLOPE_W / 2;
+      const A = onSlope(0, -W, 0), B = onSlope(0, W, 0);      // 高端
+      const C = onSlope(L_CM, W, 0), D = onSlope(L_CM, -W, 0); // 低端
+      const A2 = [A[0], A[1] - T, A[2]], B2 = [B[0], B[1] - T, B[2]];
+      const C2 = [C[0], C[1] - T, C[2]], D2 = [D[0], D[1] - T, D[2]];
+      const P = p => project(p, q);
+      const topFace = [P(A), P(B), P(C), P(D)];
+      const sideFaces = [
+        { pts: [P(B), P(C), P(C2), P(B2)], n: [0, 0, 1] },     // +z 长边
+        { pts: [P(D), P(A), P(A2), P(D2)], n: [0, 0, -1] },    // −z 长边
+        { pts: [P(C), P(D), P(D2), P(C2)], n: dirN() },        // 低端断面
+        { pts: [P(A), P(B), P(B2), P(A2)], n: dirN() }         // 高端断面
+      ];
+      // 先画侧面里离得远的，再画顶面，再画近的侧面 —— 顶面永远可见
+      sideFaces.sort((a, b) => {
+        const ca = a.pts.reduce((s, p) => s + p.z, 0) / a.pts.length;
+        const cb = b.pts.reduce((s, p) => s + p.z, 0) / b.pts.length;
+        return cb - ca;
+      });
+      for (const f of sideFaces) poly(f.pts, shade(WOOD, f.n, 0.42), 'rgba(38,24,12,.55)', 1);
+
+      // 顶面：底 + 木纹
+      poly(topFace, shade(WOOD, dirN(), 0.6), 'rgba(58,38,20,.6)', 1.1);
+      ctx.save();
+      polyPath(topFace); ctx.clip();
+      const t0 = project(onSlope(0, 0, 0), q), t1 = project(onSlope(L_CM, 0, 0), q);
+      for (let k = 0; k < 22; k++) {
+        const off = -W + (k + 0.5) * (SLOPE_W / 22) + Math.sin(k * 2.7) * 0.03;
+        const dark = k % 3 === 0;
+        line([project(onSlope(0, off, 0), q), project(onSlope(L_CM, off, 0), q)],
+             dark ? 'rgba(92,62,34,.30)' : 'rgba(122,88,52,.20)', dark ? 1.6 : 1.1);
+      }
+      // 沿斜面的浅色反光带
+      const gg = ctx.createLinearGradient(t0.x, t0.y, t1.x, t1.y);
+      gg.addColorStop(0, 'rgba(255,236,205,.20)');
+      gg.addColorStop(0.5, 'rgba(255,236,205,.06)');
+      gg.addColorStop(1, 'rgba(30,18,8,.16)');
+      ctx.fillStyle = gg;
+      ctx.fillRect(0, 0, state.w, state.h);
+      ctx.restore();
+
+      drawRuler(q);
+      state.drawn.slopeTop = topFace.map(p => ({ x: +p.x.toFixed(1), y: +p.y.toFixed(1) }));
+    }
+
+    // 斜面顶面上的刻度尺：零点在【顶端】，读数就是沿斜面的路程
+    function drawRuler(q) {
+      const W = SLOPE_W / 2;
+      const zEdge = W - 0.05;
+      const minor = state.zoom >= 0.75;
+      for (let s = 0; s <= 100; s += 1) {
+        const isBig = s % 10 === 0, isMid = s % 5 === 0;
+        if (!isBig && !isMid && !minor) continue;
+        const len = isBig ? 0.26 : isMid ? 0.17 : 0.10;
+        line([project(onSlope(s, zEdge, 0.004), q), project(onSlope(s, zEdge - len, 0.004), q)],
+             isBig ? 'rgba(248,250,252,.92)' : isMid ? 'rgba(226,240,250,.72)' : 'rgba(196,220,238,.5)',
+             isBig ? 1.7 : 1.1);
+        if (isBig && s <= 100) {
+          const p = project(onSlope(s, zEdge - 0.40, 0.004), q);
+          ctx.font = '800 ' + (s === 0 || s === 100 ? 10 : 9) + 'px Inter, sans-serif';
+          ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+          ctx.fillStyle = 'rgba(15,23,42,.62)';
+          ctx.fillText(String(s), p.x + 0.7, p.y + 0.7);
+          ctx.fillStyle = 'rgba(250,250,252,.95)';
+          ctx.fillText(String(s), p.x, p.y);
+        }
+      }
+      // 尺子的底色条，让刻度有个「尺」的样子
+      const z0 = zEdge + 0.05, z1 = zEdge - 0.52;
+      poly([project(onSlope(0, z0, 0.002), q), project(onSlope(L_CM, z0, 0.002), q),
+            project(onSlope(L_CM, z1, 0.002), q), project(onSlope(0, z1, 0.002), q)],
+           'rgba(248,250,252,.09)', null, 0);
+    }
+
+    // 光电门：两根立杆 + 中间一道红外光路
+    function drawGate(q) {
+      const s = state.dMid;
+      const zOut = SLOPE_W / 2 + GATE_OUT;
+      const yTop = surfY(s) + GATE_H;
+      const yBeam = surfY(s) + BEAM_H;
+      const xs = xOf(s);
+      const p0 = [xs, yBeam, -zOut], p1 = [xs, yBeam, zOut];
+      // 立杆
+      for (const z of [-zOut, zOut]) {
+        pole([xs, 0, z], [xs, yTop, z], q, GATE_R, '#cbd5e1', '#475569');
+        const a = project([xs, yTop - 0.16, z], q);
+        const b = project([xs, yTop, z], q);
+        const rad = Math.max(2, GATE_R * 2.2 * a.s);
+        ctx.beginPath();
+        ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
+        ctx.lineWidth = rad * 2; ctx.strokeStyle = '#1f2937'; ctx.lineCap = 'round';
+        ctx.stroke();
+        // 发射 / 接收窗口
+        dot2(project([xs, yTop - 0.10, z], q), Math.max(1.5, rad * 0.62), '#ef4444', null, 0);
+      }
+      // 红外光路
+      const hit = state.carS >= s && state.carS < s + CAR_L;
+      line([project(p0, q), project(p1, q)], hit ? 'rgba(248,113,113,.95)' : 'rgba(239,68,68,.42)',
+           hit ? 3 : 1.6, hit ? [] : [5, 4]);
+      state.drawn.gateBeam = hit ? 1 : 0;
+      // 底座
+      for (const z of [-zOut, zOut]) {
+        const r = GATE_R * 2.6;
+        poly([project([xs - r, 0, z - r], q), project([xs + r, 0, z - r], q),
+              project([xs + r, 0, z + r], q), project([xs - r, 0, z + r], q)],
+             'rgba(51,65,85,.92)', 'rgba(148,163,184,.5)', 1);
+      }
+    }
+
+    // 金属挡板：垂直立在斜面 s 处，大面正对着冲过来的小车（法线沿斜面方向）。
+    // 六个面按到相机的距离排序绘制——凸多面体这样画一定对，不用管哪面朝前。
+    function drawPlate(q) {
+      const s = state.dEnd, n = dirN(), d = dirD();
+      const base = onSlope(s, 0, 0);
+      const w = PLATE_W / 2, hh = PLATE_H, t = PLATE_T / 2;
+      // (横向 dz, 沿法线 dn, 沿斜面 da)
+      const P = (dz, dn, da) => [
+        base[0] + n[0] * dn + d[0] * da,
+        base[1] + n[1] * dn + d[1] * da,
+        base[2] + dz
+      ];
+      const faces = [
+        { n: scl(d, -1), big: true,  pts: [P(-w, 0, -t), P(w, 0, -t), P(w, hh, -t), P(-w, hh, -t)] },
+        { n: d,          big: true,  pts: [P(-w, 0, t), P(w, 0, t), P(w, hh, t), P(-w, hh, t)] },
+        { n: n,          big: false, pts: [P(-w, hh, -t), P(w, hh, -t), P(w, hh, t), P(-w, hh, t)] },
+        { n: [0, 0, -1], big: false, pts: [P(-w, 0, -t), P(-w, hh, -t), P(-w, hh, t), P(-w, 0, t)] },
+        { n: [0, 0, 1],  big: false, pts: [P(w, 0, -t), P(w, hh, -t), P(w, hh, t), P(w, 0, t)] }
+      ];
+      const drawn = faces.map(f => {
+        const pts = f.pts.map(p => project(p, q));
+        return { pts: pts, n: f.n, big: f.big, z: pts.reduce((a, p) => a + p.z, 0) / 4 };
+      });
+      drawn.sort((a, b) => b.z - a.z);
+      for (const f of drawn) {
+        if (f.big) {
+          // 大面给一条竖向金属渐变：上缘亮、下缘暗，读得出是一块不锈钢片
+          const g = ctx.createLinearGradient(f.pts[3].x, f.pts[3].y, f.pts[0].x, f.pts[0].y);
+          g.addColorStop(0, '#eef2f7');
+          g.addColorStop(0.42, '#9fadbd');
+          g.addColorStop(1, '#66748a');
+          poly(f.pts, g, 'rgba(15,23,42,.5)', 1);
+        } else {
+          poly(f.pts, shade(STEEL, f.n, 0.44), 'rgba(15,23,42,.5)', 1);
+        }
+      }
+      // 底部夹子（把挡板夹在斜面两侧的挡边上）
+      const clampPts = [P(-w * 0.92, 0, -t * 2.4), P(w * 0.92, 0, -t * 2.4),
+                        P(w * 0.92, 0.055, -t * 2.4), P(-w * 0.92, 0.055, -t * 2.4)].map(p => project(p, q));
+      poly(clampPts, 'rgba(30,41,59,.95)', 'rgba(148,163,184,.45)', 1);
+      state.drawn.plateFace = drawn.filter(f => f.big).map(f => f.pts.map(p => ({ x: +p.x.toFixed(1), y: +p.y.toFixed(1) })));
+    }
+
+    // 沿斜面摆的一个盒子：六个面 + 各自法线，按到相机的距离排序后逐面画。
+    // 凸多面体这样画一定对，不用管哪面朝前。
+    function slopeBox(at, d, n, yc, ha, hb, hc) {
+      const V = (a, b, u) => at(a, b, u);
+      return [
+        { n: n,          pts: [V(-ha, -hb, yc + hc), V(ha, -hb, yc + hc), V(ha, hb, yc + hc), V(-ha, hb, yc + hc)] },
+        { n: scl(n, -1), pts: [V(-ha, -hb, yc - hc), V(ha, -hb, yc - hc), V(ha, hb, yc - hc), V(-ha, hb, yc - hc)] },
+        { n: scl(d, -1), pts: [V(ha, -hb, yc - hc), V(ha, hb, yc - hc), V(ha, hb, yc + hc), V(ha, -hb, yc + hc)] },
+        { n: d,          pts: [V(-ha, -hb, yc - hc), V(-ha, hb, yc - hc), V(-ha, hb, yc + hc), V(-ha, -hb, yc + hc)] },
+        { n: [0, 0, 1],  pts: [V(-ha, hb, yc - hc), V(ha, hb, yc - hc), V(ha, hb, yc + hc), V(-ha, hb, yc + hc)] },
+        { n: [0, 0, -1], pts: [V(-ha, -hb, yc - hc), V(ha, -hb, yc - hc), V(ha, -hb, yc + hc), V(-ha, -hb, yc + hc)] }
+      ];
+    }
+    function paintBox(faces, q, base, amb) {
+      const pr = faces.map(f => {
+        const pts = f.pts.map(p => project(p, q));
+        return { pts: pts, n: f.n, z: pts.reduce((a, p) => a + p.z, 0) / 4 };
+      });
+      pr.sort((a, b) => b.z - a.z);
+      for (const f of pr) poly(f.pts, shade(base, f.n, amb), 'rgba(8,12,20,.55)', 1);
+    }
+
+    // 小车：底盘 + 车身 + 四个轮子。
+    // 【为什么不能画成一个盒子】真实斜面小车最抓眼的特征是「车身架在四个轮子上」。
+    // 轮子看不见，画出来就只是一块搁在斜面上的砖头 —— 读不出「车」。
+    function drawCar(q) {
+      const s = state.carS;
+      const n = dirN(), d = dirD();
+      const c = onSlope(s + CAR_L * U / 2, 0, 0);     // 车身中心（沿斜面，cm）
+      const at = (dAlong, dSide, dUp) => [
+        c[0] + d[0] * dAlong + n[0] * dUp,
+        c[1] + d[1] * dAlong + n[1] * dUp,
+        c[2] + dSide
+      ];
+      const P = p => project(p, q);
+      const hl = CAR_L / 2, hw = CAR_W / 2;
+      const yWheel = WHEEL_R;                        // 轮心离斜面顶面
+      const yChas  = WHEEL_R * 2 + 0.045;            // 底盘中心
+      const yBody  = yChas + CAR_GAP + CAR_BODY / 2; // 车身中心
+      // 底盘：比车身窄一圈、薄，深灰
+      paintBox(slopeBox(at, d, n, yChas, hl * 0.97, hw * 0.92, 0.045), q, CHASSIS_C, 0.44);
+      // 车身：暖红塑料
+      paintBox(slopeBox(at, d, n, yBody, hl, hw, CAR_BODY / 2), q, CAR_C, 0.5);
+      // 顶面一道浅色高光条，读得出是「塑料壳」
+      poly([at(-hl * 0.82, -hw * 0.52, yBody + CAR_BODY / 2 + 0.002), at(hl * 0.82, -hw * 0.52, yBody + CAR_BODY / 2 + 0.002),
+            at(hl * 0.82, hw * 0.52, yBody + CAR_BODY / 2 + 0.002), at(-hl * 0.82, hw * 0.52, yBody + CAR_BODY / 2 + 0.002)].map(P),
+           'rgba(255,236,214,.22)', null, 0);
+      // 车身两侧各一条浅色腰线，侧视时读得出「上下两块」
+      for (const sd of [-1, 1]) {
+        poly([at(-hl * 0.9, sd * (hw + 0.001), yBody - 0.01), at(hl * 0.9, sd * (hw + 0.001), yBody - 0.01),
+              at(hl * 0.9, sd * (hw + 0.001), yBody + 0.035), at(-hl * 0.9, sd * (hw + 0.001), yBody + 0.035)].map(P),
+             'rgba(255,214,196,.16)', null, 0);
+      }
+      // 轮子：4 个圆盘（轴沿 z）。胎 + 亮圈 + 轮毂，三层才读得出是个轮子
+      const wheelAt = (dAlong, dSide, r) => {
+        const cw = at(dAlong, dSide, yWheel);
+        const pts = [];
+        for (let k = 0; k < 16; k++) {
+          const a = k / 16 * PI2;
+          pts.push(project([cw[0] + (d[0] * Math.cos(a) + n[0] * Math.sin(a)) * r,
+                            cw[1] + (d[1] * Math.cos(a) + n[1] * Math.sin(a)) * r, cw[2]], q));
+        }
+        return pts;
+      };
+      const wheels = [[-hl * 0.60, -hw - 0.030], [hl * 0.60, -hw - 0.030],
+                      [-hl * 0.60, hw + 0.030], [hl * 0.60, hw + 0.030]];
+      const wl = wheels.map(w => ({ w: w, z: project(at(w[0], w[1], yWheel), q).z }));
+      wl.sort((a, b) => b.z - a.z);
+      for (const o of wl) {
+        const s0 = project(at(o.w[0], o.w[1], yWheel), q).s || 1;
+        poly(wheelAt(o.w[0], o.w[1], WHEEL_R), rgb(RUBBER, 1.0), 'rgba(0,0,0,.55)', 1);
+        poly(wheelAt(o.w[0], o.w[1], WHEEL_R * 0.56), rgb(STEEL, 0.72), null, 0);
+        dot2(project(at(o.w[0], o.w[1], yWheel), q), Math.max(1.2, WHEEL_R * 0.26 * s0), 'rgba(203,213,225,.85)', null, 0);
+      }
+      state.drawn.car = 1;
+    }
+
+    // 桌面上的电子秒表：LCD 上的数字用三点仿射贴到屏幕上，是真的「贴在表上」
+    function drawWatch(q) {
+      const x0 = WATCH_X - WATCH_L / 2, x1 = WATCH_X + WATCH_L / 2;
+      const z0 = WATCH_Z - WATCH_W / 2, z1 = WATCH_Z + WATCH_W / 2;
+      const P = p => project(p, q);
+      const top = [P([x0, WATCH_T, z0]), P([x1, WATCH_T, z0]), P([x1, WATCH_T, z1]), P([x0, WATCH_T, z1])];
+      const front = [P([x0, WATCH_T, z1]), P([x1, WATCH_T, z1]), P([x1, 0, z1]), P([x0, 0, z1])];
+      const right = [P([x1, WATCH_T, z0]), P([x1, WATCH_T, z1]), P([x1, 0, z1]), P([x1, 0, z0])];
+      poly(right, shade([42, 52, 66], [1, 0, 0], 0.5), 'rgba(8,12,20,.6)', 1);
+      poly(front, shade([42, 52, 66], [0, 0, 1], 0.5), 'rgba(8,12,20,.6)', 1);
+      poly(top, shade([48, 58, 74], [0, 1, 0], 0.62), 'rgba(8,12,20,.6)', 1);
+      // LCD 屏：内嵌一块深绿黑的矩形
+      const m = 0.06;
+      const lcd = [P([x0 + m, WATCH_T + 0.002, z0 + m]), P([x1 - m, WATCH_T + 0.002, z0 + m]),
+                   P([x1 - m, WATCH_T + 0.002, z1 - m]), P([x0 + m, WATCH_T + 0.002, z1 - m])];
+      poly(lcd, '#0b2b22', 'rgba(6,78,59,.9)', 1);
+      // 数字：三点仿射（用左上、右上、左下三个角定一个平行四边形）
+      const c0 = lcd[0], c1 = lcd[1], c3 = lcd[3];
+      const lw = 0.78, lh = 0.50;   // LCD 的局部尺寸（世界单位）
+      const ax = (c1.x - c0.x) / lw, ay = (c1.y - c0.y) / lw;
+      const bx = (c3.x - c0.x) / lh, by = (c3.y - c0.y) / lh;
+      ctx.save();
+      ctx.transform(ax, ay, bx, by, c0.x, c0.y);
+      ctx.fillStyle = 'rgba(52,211,153,.96)';
+      ctx.font = '800 0.24px ui-monospace, Menlo, monospace';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(fmtTime(state.carT), lw * 0.5, lh * 0.42);
+      ctx.font = '800 0.11px Inter, sans-serif';
+      ctx.fillStyle = 'rgba(52,211,153,.6)';
+      ctx.fillText('STOPWATCH  s', lw * 0.5, lh * 0.74);
+      ctx.restore();
+      // 两个按钮
+      for (const bxr of [[x0 + 0.16, x0 + 0.30], [x0 + 0.38, x0 + 0.52]]) {
+        poly([P([bxr[0], WATCH_T + 0.003, z1 - 0.16]), P([bxr[1], WATCH_T + 0.003, z1 - 0.16]),
+              P([bxr[1], WATCH_T + 0.003, z1 - 0.06]), P([bxr[0], WATCH_T + 0.003, z1 - 0.06])],
+             'rgba(203,213,225,.72)', null, 0);
+      }
+      state.drawn.watch = 1;
+    }
+
+    // 斜面上的路程标注：从顶端量到光电门 / 挡板
+    function drawDistances(q) {
+      const zLane = SLOPE_W / 2 + 0.34;
+      const yAt = s => surfY(s) + 0.05;
+      const seg = (a, b, color) => {
+        line([project([xOf(a), yAt(a), zLane], q), project([xOf(b), yAt(b), zLane], q)], color, 2.4);
+        for (const s of [a, b]) {
+          line([project([xOf(s), yAt(s), zLane - 0.10], q), project([xOf(s), yAt(s), zLane + 0.10], q)], color, 2.4);
+        }
+      };
+      seg(0, state.dMid, 'rgba(56,189,248,.85)');
+      seg(state.dMid, state.dEnd, 'rgba(52,211,153,.85)');
+      // 【两条读数必须分车道】沿斜面方向看时（along 视角），z 才是屏幕水平方向，
+      // 沿斜面的 s 退化成深度。两个标注若同在 zLane−0.26 这条线上，屏幕间距只剩
+      // 十几像素、盒子却有 76 px 宽 —— 必然叠成一块（实测重叠 61%~77%）。
+      // 分到刻度线两侧 + 走避让求解器，两个方向同时给余量。
+      const pa = project([xOf(state.dMid / 2), yAt(state.dMid / 2), zLane - 0.26], q);
+      bestLabel(pa, 's₂ = ' + state.dMid.toFixed(1) + ' cm', '#7dd3fc', 11, DIST_AVOID);
+      const pb = project([xOf((state.dMid + state.dEnd) / 2), yAt((state.dMid + state.dEnd) / 2), zLane + 0.34], q);
+      bestLabel(pb, 's₃ = ' + (state.dEnd - state.dMid).toFixed(1) + ' cm', '#6ee7b7', 11, DIST_AVOID);
+    }
+
+    /* ============================================================
+     * 渲染
+     * ============================================================ */
+    function render() {
+      const w = state.w, h = state.h;
+      ctx.setTransform(state.dpr, 0, 0, state.dpr, 0, 0);
+      frameBoxes = [];
+      state.drawn = {};
+      const q = {};
+      makeCam(q, w, h);
+
+      drawBackdrop(w, h);
+      drawTable(q);
+
+      // 【斜面不能参与「按到相机的距离」排序】它是全场最大的一块面，排序键只能取在
+      // 板子中心。于是「板心比小车远」的那些视角（实测：侧视）里，整块顶面被排到
+      // 小车之后画，把车轮和车底那 1~2 cm 一起盖掉 —— 现象是「小车看着像浮在板上，
+      // 轮子凭空消失」，而轮心像素读出来全是木色。器材的遮挡关系本来就是固定的：
+      // 垫块在板子下面，其余都在板面上。所以拆成「板下 / 板面上」两组，斜面夹在中间。
+      const under = [
+        { k: 'block', z: q.eyeDist([xHi() - BLOCK_L / 2, state.rise / 2, 0]), f: () => drawBlock(q) }
+      ];
+      const over = [
+        { k: 'gate',  z: q.eyeDist([xOf(state.dMid), surfY(state.dMid) + GATE_H / 2, 0]), f: () => drawGate(q) },
+        { k: 'plate', z: q.eyeDist(onSlope(state.dEnd, 0, PLATE_H / 2)), f: () => drawPlate(q) },
+        { k: 'car',   z: q.eyeDist(onSlope(state.carS + CAR_L * U / 2, 0, CAR_H / 2)), f: () => drawCar(q) },
+        { k: 'watch', z: q.eyeDist([WATCH_X, WATCH_T, WATCH_Z]), f: () => drawWatch(q) }
+      ];
+      under.sort((a, b) => b.z - a.z);
+      for (const o of under) o.f();
+      drawSlope(q);                      // 斜面：垫块之后、板面上一切器材之前
+      over.sort((a, b) => b.z - a.z);    // 板面上的这几件之间才按远近排
+      for (const o of over) o.f();
+
+      drawDistances(q);
+
+      // 标签：一律走避让（锚点周围试几个落点，取重叠最小的）
+      avoidLabel(project(onSlope(0, 0, 0.42), q), '斜面顶端', '#fca5a5', 11);
+      avoidLabel(project(onSlope(L_CM, 0, 0.30), q), '斜面底端', '#fca5a5', 11);
+      avoidLabel(project([xOf(state.dMid), surfY(state.dMid) + GATE_H + 0.24, 0], q), '光电门', '#7dd3fc', 11);
+      avoidLabel(project(onSlope(state.dEnd, 0, PLATE_H + 0.22), q), '金属挡板', '#e2e8f0', 11);
+      const cp = project(onSlope(state.carS + CAR_L * U / 2, 0, CAR_H + 0.22), q);
+      avoidLabel(cp, state.running ? '小车（下滑中）' : '小车', '#fde68a', 11);
+      avoidLabel(project([WATCH_X, WATCH_T + 0.14, WATCH_Z], q), '停表', '#a5f3fc', 10);
+
+      // 区域名最后画（要挑一个不压住别的位置）
+      bestLabel(project([0, 0.02, TABLE_D * 0.62], q), '实验台', 'rgba(148,197,255,.85)', 11, AVOID);
+
+      // 提示条与气泡
+      updateHint();
+      drawTip(q);
+    }
+
+    function drawTip(q) {
+      const tip = $('slope-tip');
+      if (!state.hover || state.dragging) { tip.classList.remove('show'); return; }
+      if (state.hover === 'car') {
+        const pc = project(onSlope(state.carS + CAR_L * U / 2, 0, CAR_H + 0.5), q);
+        tip.textContent = '拖动小车 · 起点 ' + state.carS.toFixed(0) + ' cm（松手后从这释放）';
+        tip.style.left = Math.round(pc.x + 14) + 'px';
+        tip.style.top = Math.round(pc.y - 14) + 'px';
+        tip.classList.add('show');
+        return;
+      }
+      const s = state.hover === 'gate' ? state.dMid : state.dEnd;
+      const p = project([xOf(s), surfY(s) + (state.hover === 'gate' ? GATE_H + 0.5 : PLATE_H + 0.5), 0], q);
+      tip.textContent = state.hover === 'gate'
+        ? '拖动光电门 · 现在 ' + state.dMid.toFixed(0) + ' cm'
+        : '拖动挡板 · 现在 ' + state.dEnd.toFixed(0) + ' cm';
+      tip.style.left = Math.round(p.x + 14) + 'px';
+      tip.style.top = Math.round(p.y - 14) + 'px';
+      tip.classList.add('show');
+    }
+
+    function fmtTime(t) { return (t || 0).toFixed(2); }
+
+    function updateHint() {
+      const el = $('slope-hint');
+      const txt = [];
+      if (state.running) {
+        txt.push('<b>小车下滑中…</b>停表 ' + fmtTime(state.carT) + ' s');
+      } else if (state.tEnd != null) {
+        txt.push('<b>本次跑完</b>：撞击挡板 ' + fmtTime(state.tEnd) + ' s' +
+                 (state.tMid != null ? '，经过光电门 ' + fmtTime(state.tMid) + ' s' : ''));
+        txt.push('点「记录这一组」把三段数据都存下来');
+      } else {
+        txt.push('斜面长 100 cm，垫高 ' + (state.rise * U).toFixed(0) + ' cm（倾角 ' +
+                 (theta() / Math.PI * 180).toFixed(1) + '°）');
+        txt.push('a = g·sinθ·η = <b>' + accel().toFixed(0) + ' cm/s²</b>　' +
+                 '全程预计 <b>' + tOf(state.dEnd).toFixed(2) + ' s</b>');
+      }
+      el.innerHTML = txt.map(t => '<div>' + t + '</div>').join('');
+    }
+
+    /* ============================================================
+     * 物理与交互动作
+     * ============================================================ */
+    function resetRun(keepMarks) {
+      state.running = false; state.done = false;
+      state.carT = 0; state.tMidHit = false;
+      state.tMid = null; state.tEnd = null;
+      state.startS = 0;
+      state.carS = 0;
+      state.dirty = true;
+      if (!keepMarks) { state.marks = []; }
+      syncUI();
+      // 表格与结论也要跟着清 —— 只清 state 不清 DOM 的话，画面/角标是新的、
+      // 表格还挂着上一轮的行。刷新只留这一个入口，按钮和自检钩子都走它。
+      renderTable(); renderAnalysis();
+    }
+    function release(fromMid) {
+      if (state.running) return false;
+      state.startS = fromMid ? state.dMid : 0;
+      state.carS = state.startS;
+      state.carT = 0;
+      state.tMidHit = false;
+      state.tMid = null; state.tEnd = null;
+      state.running = true; state.done = false;
+      state.dirty = true;
+      syncUI();
+      return true;
+    }
+    // 本次释放是否已经跑完（有数据可记）
+    const runComplete = () => !state.running && state.tEnd != null;
+    function recordMark() {
+      if (!runComplete()) {
+        showToast(state.running ? '等小车撞到挡板再记录' : '先释放一次小车，跑完再记录');
+        return false;
+      }
+      const m = {
+        from: state.startS > 0 ? 'mid' : 'top',
+        rise: state.rise, dMid: state.dMid, dEnd: state.dEnd,
+        tMid: state.tMid, tEnd: state.tEnd
+      };
+      state.marks.push(m);
+      renderTable(); renderAnalysis();
+      showToast('已记录第 ' + state.marks.length + ' 组数据');
+      state.dirty = true;
+      syncUI();
+      return true;
+    }
+    function updateRecordBtn() {
+      const ready = runComplete();
+      const b = $('slope-record');
+      b.classList.toggle('ready', ready);
+      $('slope-record-cnt').textContent = state.marks.length;
+      b.title = ready ? '本次跑完了，点这里把三段数据都记下来'
+                      : '先释放一次小车，等它撞到挡板停下，再记录';
+    }
+
+    /* ============================================================
+     * UI 同步
+     * ============================================================ */
+    function syncUI() {
+      $('v-h').textContent = (state.rise * U).toFixed(0);
+      $('v-mid').textContent = state.dMid.toFixed(0);
+      $('v-end').textContent = state.dEnd.toFixed(0);
+      $('sl-h').value = String(Math.round(state.rise * U));
+      $('sl-mid').value = String(Math.round(state.dMid));
+      $('sl-end').value = String(Math.round(state.dEnd));
+      // 光电门必须比挡板靠前至少 GAP cm，否则「下半段」是负的
+      $('sl-mid').max = String(Math.round(state.dEnd - GAP));
+      $('sl-end').min = String(Math.round(state.dMid + GAP));
+      const sInfo = '斜面长 100 cm，垫高 ' + (state.rise * U).toFixed(0) + ' cm　→　倾角 ' +
+                    (theta() / Math.PI * 180).toFixed(1) + '°，a = g·sinθ·η = ' + accel().toFixed(0) + ' cm/s²';
+      $('slope-info').textContent = sInfo;
+      $('watch-num').textContent = fmtTime(state.carT);
+      $('v-tmid').textContent = state.tMid == null ? '—' : fmtTime(state.tMid) + ' s';
+      $('v-tend').textContent = state.tEnd == null ? '—' : fmtTime(state.tEnd) + ' s';
+      $('watch-state').textContent = state.running ? '计时中' : (runComplete() ? '已停表' : '待释放');
+      $('btn-release').disabled = state.running;
+      $('btn-release-mid').disabled = state.running;
+      $('slope-release').disabled = state.running;
+      $('btn-slow').textContent = '慢动作：' + (state.slow ? '开' : '关');
+      updateRecordBtn();
+      state.dirty = true;
+    }
+    function showToast(text) {
+      const t = $('slope-toast');
+      t.textContent = text;
+      t.classList.add('show');
+      clearTimeout(showToast._t);
+      showToast._t = setTimeout(() => t.classList.remove('show'), 1900);
+    }
+    function flashFlag(on) {
+      const f = $('slope-flag');
+      f.classList.toggle('show', !!on);
+      if (on) {
+        clearTimeout(flashFlag._t);
+        flashFlag._t = setTimeout(() => f.classList.remove('show'), 2200);
+      }
+    }
+
+    /* ---------------------------- 数据表 ---------------------------- */
+    function fmtV(sCm, tS) { return (sCm / 100 / tS).toFixed(2); }   // m/s
+    function renderTable() {
+      const box = $('rec-body');
+      $('rec-count').textContent = state.marks.length + ' 组';
+      if (!state.marks.length) {
+        box.innerHTML = '<p class="rec-empty">还没有记录。先释放一次小车。</p>';
+        return;
+      }
+      const rows = [];
+      state.marks.forEach((m, i) => {
+        const n = i + 1;
+        if (m.from === 'top' && m.tMid != null && m.tEnd != null) {
+          rows.push('<tr class="seg-mid"><td>' + n + ' 上半段</td><td>' + m.dMid.toFixed(1) + '</td><td>' +
+                    m.tMid.toFixed(2) + '</td><td>' + fmtV(m.dMid, m.tMid) + '</td></tr>');
+          rows.push('<tr class="seg-all"><td>' + n + ' 全程</td><td>' + m.dEnd.toFixed(1) + '</td><td>' +
+                    m.tEnd.toFixed(2) + '</td><td>' + fmtV(m.dEnd, m.tEnd) + '</td></tr>');
+          const s3 = m.dEnd - m.dMid, t3 = m.tEnd - m.tMid;
+          rows.push('<tr class="seg-low"><td>' + n + ' 下半段</td><td>' + s3.toFixed(1) + '</td><td>' +
+                    t3.toFixed(2) + '</td><td>' + fmtV(s3, t3) + '</td></tr>');
+        } else if (m.from === 'top') {
+          // 数据不全（正常流程走不到：recordMark 有前置条件拦着）。但表格必须自己扛住 ——
+          // 一个 null 让整个 render 抛 TypeError，画面和侧栏会一起停摆，比少一行严重得多。
+          rows.push('<tr class="seg-err"><td>' + n + ' 数据不全</td><td>' + m.dEnd.toFixed(1) +
+                    '</td><td>—</td><td>—</td></tr>');
+        } else {
+          const s3 = m.dEnd - m.dMid;
+          rows.push('<tr class="seg-err"><td>' + n + ' 下半段<br><span style="font-size:10px;color:#f87171">' +
+                    '从中部释放（错）</span></td><td>' + s3.toFixed(1) + '</td><td>' + m.tEnd.toFixed(2) +
+                    '</td><td>' + fmtV(s3, m.tEnd) + '</td></tr>');
+        }
+      });
+      box.innerHTML = '<table class="rec"><thead><tr><th>组 / 路段</th><th>s / cm</th><th>t / s</th>' +
+                      '<th>v̄ / (m·s⁻¹)</th></tr></thead><tbody>' + rows.join('') + '</tbody></table>';
+    }
+
+    function renderAnalysis() {
+      const el = $('analysis');
+      const top = state.marks.filter(m => m.from === 'top');
+      const err = state.marks.filter(m => m.from === 'mid');
+      if (!top.length) {
+        el.innerHTML = '<p class="muted">还没有数据。释放一次小车并记录，这里会自动算出三段平均速度并给出结论。</p>';
+        return;
+      }
+      const m = top[top.length - 1];
+      // 与 renderTable 同理：坏数据（tMid / tEnd 是 null）只能让这一块显示「数据不全」，
+      // 不能让 render 抛 TypeError —— 那样画面和侧栏会一起停摆，比少一段文字严重得多。
+      if (m.tMid == null || m.tEnd == null) {
+        el.innerHTML = '<p class="muted">最近一组数据不全（缺光电门 / 挡板时刻），重新跑一遍再记录。</p>';
+        return;
+      }
+      const s3 = m.dEnd - m.dMid, t3 = m.tEnd - m.tMid;
+      const v2 = fmtV(m.dMid, m.tMid), v1 = fmtV(m.dEnd, m.tEnd), v3 = fmtV(s3, t3);
+      let html = '';
+      html += '<div class="line"><span>上半段　' + m.dMid.toFixed(1) + ' cm / ' + m.tMid.toFixed(2) + ' s</span><b>' + v2 + ' m/s</b></div>';
+      html += '<div class="line"><span>全　程　' + m.dEnd.toFixed(1) + ' cm / ' + m.tEnd.toFixed(2) + ' s</span><b>' + v1 + ' m/s</b></div>';
+      html += '<div class="line"><span>下半段　' + s3.toFixed(1) + ' cm / (' +
+              m.tEnd.toFixed(2) + ' − ' + m.tMid.toFixed(2) + ') s</span><b>' + v3 + ' m/s</b></div>';
+      const inc = (+v2) < (+v1) && (+v1) < (+v3);
+      html += '<div class="conc">' + (inc
+        ? 'v̄上半段 ' + v2 + ' &lt; v̄全程 ' + v1 + ' &lt; v̄下半段 ' + v3 +
+          ' —— 小车沿斜面下滑时<b>速度越来越大</b>，做的是<b>加速运动</b>。<br>所以「平均速度」必须指明是哪一段。'
+        : '三段平均速度的大小关系不是递增的，检查一下挡板和光电门的位置（光电门必须比挡板靠前）。') + '</div>';
+      const avg = ((+v2 + +v3) / 2).toFixed(2);
+      html += '<div class="conc warn" style="margin-top:7px">注意：' + v2 + ' 与 ' + v3 +
+              ' 的<b>平均是 ' + avg + ' m/s</b>，但全程平均速度是 <b>' + v1 +
+              ' m/s</b>，两者<b>不相等</b>。平均速度不是「速度的平均」。</div>';
+      if (err.length) {
+        const e = err[err.length - 1];
+        const ratio = (t3 > 0 ? (e.tEnd / t3) : 0);
+        html += '<div class="conc warn" style="margin-top:7px">对照实验：让小车从光电门处<b>由静止释放</b>，' +
+                '下半段用了 <b>' + e.tEnd.toFixed(2) + ' s</b>，算出 v̄ = <b>' + fmtV(s3, e.tEnd) +
+                ' m/s</b>。<br>而正确做法是 <b>' + t3.toFixed(2) + ' s</b> → ' + v3 + ' m/s，' +
+                '相差 <b>' + ratio.toFixed(1) + ' 倍</b>。因为从中部释放时小车在该点的速度是 0，' +
+                '全程实验里它经过光电门时已经有速度了 —— 所以下半段只能用 <b>t₃ = t₁ − t₂</b> 来测。</div>';
+      }
+      el.innerHTML = html;
+    }
+
+    /* ============================================================
+     * 输入：拖动 / 缩放 / 命中
+     * ============================================================ */
+    // 命中测试：按投影包围盒判，整身都能拖
+    function boxesFor(q) {
+      const mk = (s, halfAlong, halfAcross, top) => {
+        const ha = halfAlong * U;      // 沿斜面方向：世界单位 → cm
+        let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
+        for (const a of [-ha, ha]) {
+          for (const z of [-halfAcross, halfAcross]) {
+            for (const up of [0, top]) {
+              const p = project(onSlope(s + a, z, up), q);
+              x0 = Math.min(x0, p.x); x1 = Math.max(x1, p.x);
+              y0 = Math.min(y0, p.y); y1 = Math.max(y1, p.y);
+            }
+          }
+        }
+        return { x0: x0, x1: x1, y0: y0, y1: y1, cx: (x0 + x1) / 2, cy: (y0 + y1) / 2,
+                 w: x1 - x0, h: y1 - y0 };
+      };
+      return {
+        gate:  mk(state.dMid, 0.34, SLOPE_W / 2 + GATE_OUT, GATE_H),
+        plate: mk(state.dEnd, 0.30, PLATE_W / 2, PLATE_H),
+        car:   mk(state.carS + CAR_L * U / 2, CAR_L / 2, CAR_W / 2, CAR_H)
+      };
+    }
+    function hitTest(x, y, q) {
+      const B = boxesFor(q);
+      const PAD = 6;
+      const cands = [];
+      for (const k of ['gate', 'plate', 'car']) {
+        const b = B[k];
+        if (x < b.x0 - PAD || x > b.x1 + PAD || y < b.y0 - PAD || y > b.y1 + PAD) continue;
+        cands.push({ k: k, d: Math.hypot(b.cx - x, b.cy - y) });
+      }
+      if (!cands.length) return null;
+      cands.sort((a, b) => a.d - b.d);
+      return cands[0].k;
+    }
+    // 光标处 → 沿斜面的位置（cm）由 sFromAnchor 反解，见下方。
+    function clampDrags() {
+      state.dEnd = clamp(Math.round(state.dEnd), 30, S_HI);
+      state.dMid = clamp(Math.round(state.dMid), S_LO, state.dEnd - GAP);
+      state.carS = clamp(state.carS, 0, state.dEnd);
+    }
+
+    // 三种器材各自「拖动时跟着光标走」的那一点对应的状态量
+    const dragSOf = k => k === 'gate' ? state.dMid : k === 'plate' ? state.dEnd : state.carS;
+
+    // 器材的「锚点」：拖动时让这个点在屏幕上跟着光标走。
+    function anchorOf(kind, v) {
+      if (kind === 'gate') return [xOf(v), surfY(v) + GATE_H * 0.5, 0];
+      if (kind === 'plate') return onSlope(v, 0, PLATE_H / 2);
+      return onSlope(v + CAR_L * U / 2, 0, CAR_H / 2);      // 小车：车身中心
+    }
+    // 反解 s：屏幕上让「锚点 x = 光标 x − 按下那一刻的偏移」。
+    // 【为什么不做「光标射线交斜面平面」】用户抓的是立杆 / 挡板 / 车身的中段，
+    // 离斜面有几厘米高；同一束射线打在平面上解出的 s 会偏大，而且偏多少随位置变 ——
+    // 记一个固定差值补不干净（实测抓光电门中段拖 22 cm，光电门仍差 2 cm）。
+    // 直接按锚点的投影 x 反解：抓哪儿就是哪儿，一点不漂。x 随 s 单调递减，二分即可。
+    function sFromAnchor(px, q, kind) {
+      const tx = px - state.dragGrab.x;
+      let lo = 0, hi = SLOPE_L * U;
+      for (let k = 0; k < 26; k++) {
+        const mid = (lo + hi) / 2;
+        if (project(anchorOf(kind, mid), q).x > tx) lo = mid; else hi = mid;
+      }
+      return (lo + hi) / 2;
+    }
+
+    function onDown(e) {
+      const r = canvas.getBoundingClientRect();
+      const x = e.clientX - r.left, y = e.clientY - r.top;
+      const q = {}; makeCam(q, state.w, state.h);
+      const hit = hitTest(x, y, q);
+      state.downAt = { x: x, y: y, hit: hit, moved: 0 };
+      const grab = (k) => {
+        state.dragging = true; state.drag = k;
+        const a = project(anchorOf(k, dragSOf(k)), q);
+        state.dragGrab = { x: x - a.x, y: y - a.y };
+        try { canvas.setPointerCapture(e.pointerId); } catch (_) { /* 合成事件没有活动指针 */ }
+      };
+      if (hit === 'gate' || hit === 'plate' || hit === 'car') {
+        grab(hit);
+      } else {
+        state.dragging = true;
+        state.drag = 'orbit';
+        state.lastX = x; state.lastY = y;
+        canvas.classList.add('grabbing');
+        try { canvas.setPointerCapture(e.pointerId); } catch (_) { }
+      }
+      state.dirty = true;
+    }
+    function onMove(e) {
+      const r = canvas.getBoundingClientRect();
+      const x = e.clientX - r.left, y = e.clientY - r.top;
+      const q = {}; makeCam(q, state.w, state.h);
+      if (state.dragging) {
+        if (state.downAt) state.downAt.moved = Math.max(state.downAt.moved,
+          Math.hypot(x - state.downAt.x, y - state.downAt.y));
+        if (state.drag === 'orbit') {
+          state.yaw -= (x - state.lastX) * 0.006;
+          state.pitch = clamp(state.pitch + (y - state.lastY) * 0.005, 0.04, 1.42);
+          state.lastX = x; state.lastY = y;
+          state.view = 'custom';
+        } else if (state.drag === 'gate' || state.drag === 'plate' || state.drag === 'car') {
+          const sv = sFromAnchor(x, q, state.drag);
+          if (sv != null) {
+            if (state.drag === 'gate') state.dMid = clamp(sv, S_LO, state.dEnd - GAP);
+            else if (state.drag === 'plate') state.dEnd = clamp(sv, state.dMid + GAP, S_HI);
+            // 小车可以拖到任意起点（帮助文字里承诺了）—— 松手后从那里释放
+            else state.carS = clamp(sv, 0, state.dEnd);
+            clampDrags();
+            if (!state.running) {
+              // 挪光电门 / 挡板后小车回到顶端，保证下一次释放还是「从顶端出发」；
+              // 拖小车本身当然不能把它弹回顶端。
+              if (state.drag !== 'car') state.carS = 0;
+              state.tMid = null; state.tEnd = null; state.done = false;
+            }
+            syncUI();
+          }
+        }
+        state.dirty = true;
+        return;
+      }
+      const hit = hitTest(x, y, q);
+      state.hover = (hit === 'gate' || hit === 'plate' || hit === 'car') ? hit : null;
+      canvas.classList.toggle('pick', !!state.hover);
+      state.dirty = true;
+    }
+    function onUp(e) {
+      const wasDrag = state.dragging;
+      state.dragging = false;
+      canvas.classList.remove('grabbing');
+      // 位移小于 6 px 才算「点了一下」，否则是拖视角/拖器材
+      if (wasDrag && state.downAt && state.downAt.moved < 6) {
+        const hit = state.downAt.hit;
+        if (hit === 'car' && !state.running) release(false);
+      }
+      state.drag = null;
+      state.dirty = true;
+    }
+    function onWheel(e) {
+      e.preventDefault();
+      state.zoom = clamp(state.zoom * (e.deltaY > 0 ? 0.92 : 1.087), 0.45, 3.2);
+      state.dirty = true;
+    }
+
+    /* ============================================================
+     * 尺寸 / 主循环
+     * ============================================================ */
+    function resize() {
+      const r = stage.getBoundingClientRect();
+      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      const w = Math.max(320, Math.round(r.width));
+      const h = Math.max(240, Math.round(r.height));
+      state.w = w; state.h = h; state.dpr = dpr;
+      canvas.width = Math.round(w * dpr);
+      canvas.height = Math.round(h * dpr);
+      canvas.style.width = w + 'px';
+      canvas.style.height = h + 'px';
+      state.dirty = true;
+    }
+    let lastTs = 0;
+    function tick(ts) {
+      const dt = lastTs ? Math.min(0.06, (ts - lastTs) / 1000) : 0;
+      lastTs = ts;
+      if (state.running) {
+        // 物理时间推进；慢动作只放慢「看起来的速度」，停表读数仍然是真实物理时间
+        state.carT += dt * (state.slow ? 0.28 : 1);
+        const a = accel(), span = state.dEnd - state.startS;
+        const tEnd = Math.sqrt(2 * span / a);
+        if (state.carT >= tEnd) {
+          state.carT = tEnd;
+          state.running = false;
+          state.done = true;
+          state.tEnd = tEnd;
+          if (state.startS < state.dMid) {
+            state.tMidHit = true;
+            state.tMid = Math.sqrt(2 * (state.dMid - state.startS) / a);
+          }
+          flashFlag(true);
+          showToast('撞击挡板，停表 ' + tEnd.toFixed(2) + ' s');
+          syncUI();
+        } else {
+          // 经过光电门：按解析解记时刻（和 s=½at² 严格一致）
+          if (!state.tMidHit && state.startS < state.dMid &&
+              state.startS + 0.5 * a * state.carT * state.carT >= state.dMid) {
+            state.tMidHit = true;
+            state.tMid = Math.sqrt(2 * (state.dMid - state.startS) / a);
+          }
+          $('watch-num').textContent = fmtTime(state.carT);
+          $('v-tmid').textContent = state.tMid == null ? '—' : fmtTime(state.tMid) + ' s';
+          updateHint();
+        }
+        state.carS = carSAt(state.carT);
+        state.dirty = true;
+      }
+      if (state.dirty) { render(); state.dirty = false; }
+      requestAnimationFrame(tick);
+    }
+
+    /* ============================================================
+     * 事件绑定
+     * ============================================================ */
+    canvas.addEventListener('pointerdown', onDown);
+    canvas.addEventListener('pointermove', onMove);
+    canvas.addEventListener('pointerup', onUp);
+    canvas.addEventListener('pointercancel', onUp);
+    canvas.addEventListener('pointerleave', () => { state.hover = null; canvas.classList.remove('pick'); state.dirty = true; });
+    canvas.addEventListener('wheel', onWheel, { passive: false });
+
+    $('sl-h').addEventListener('input', e => {
+      state.rise = clamp(+e.target.value, H_MIN * U, H_MAX * U) / U;
+      // 坡度一变，所有时间都跟着变：把这一次没跑完的读数清掉，免得留着一个
+      // 和当前坡度对不上的时间让人记录。
+      if (!state.running) { state.carS = 0; state.tMid = null; state.tEnd = null; }
+      syncUI();
+    });
+    $('sl-mid').addEventListener('input', e => {
+      state.dMid = clamp(+e.target.value, S_LO, state.dEnd - GAP);
+      clampDrags();
+      if (!state.running) { state.carS = 0; state.tMid = null; state.tEnd = null; }
+      syncUI();
+    });
+    $('sl-end').addEventListener('input', e => {
+      state.dEnd = clamp(+e.target.value, state.dMid + GAP, S_HI);
+      clampDrags();
+      if (!state.running) { state.carS = 0; state.tMid = null; state.tEnd = null; }
+      syncUI();
+    });
+    $('btn-release').addEventListener('click', () => release(false));
+    $('btn-release-mid').addEventListener('click', () => release(true));
+    $('slope-release').addEventListener('click', () => release(false));
+    $('slope-record').addEventListener('click', recordMark);
+    $('btn-slow').addEventListener('click', () => { state.slow = !state.slow; syncUI(); });
+    $('btn-reset').addEventListener('click', () => {
+      resetRun(false);
+      renderTable(); renderAnalysis();
+      showToast('已重置');
+    });
+
+    if (window.ResizeObserver) new ResizeObserver(() => resize()).observe(stage);
+    window.addEventListener('resize', resize);
+
+    resize();
+    clampDrags();
+    renderTable();
+    renderAnalysis();
+    syncUI();
+    requestAnimationFrame(tick);
+
+    /* ============================================================
+     * 自检钩子
+     * ============================================================ */
+    window.__slope = {
+      state: state,
+      consts: {
+        U: U, SLOPE_L: SLOPE_L, SLOPE_W: SLOPE_W, SLOPE_T: SLOPE_T,
+        H_MIN: H_MIN, H_MAX: H_MAX, CAR_L: CAR_L, CAR_W: CAR_W, CAR_H: CAR_H,
+        // 轮半径 / 离地缝 / 车身高：自检要按【真实几何】去轮子上采样，
+        // 少一个就会退化成 dn=0（斜面表面），量到的就不是轮子
+        WHEEL_R: WHEEL_R, CAR_GAP: CAR_GAP, CAR_BODY: CAR_BODY,
+        GATE_H: GATE_H, GATE_OUT: GATE_OUT, BEAM_H: BEAM_H,
+        PLATE_W: PLATE_W, PLATE_H: PLATE_H, PLATE_T: PLATE_T,
+        TABLE_W: TABLE_W, TABLE_D: TABLE_D, WATCH_X: WATCH_X, WATCH_Z: WATCH_Z,
+        WATCH_L: WATCH_L, WATCH_W: WATCH_W, WATCH_T: WATCH_T,
+        ETA: ETA, G_CM: G_CM, S_LO: S_LO, S_HI: S_HI, GAP: GAP,
+        VIEWS: VIEWS
+      },
+      makeCam: makeCam, project: project, unproject: unproject,
+      size: () => ({ w: state.w, h: state.h, dpr: state.dpr }),
+      envelopePoints: envelopePoints,
+      // 几何与物理：自检要和页面用【同一套函数】，不能各抄一遍公式
+      theta: theta, accel: accel, tOf: tOf,
+      surfY: surfY, xOf: xOf, onSlope: onSlope,
+      carSAt: carSAt,
+      set(o) {
+        o = o || {};
+        for (const k of ['rise', 'dMid', 'dEnd', 'startS', 'carS', 'carT', 'slow']) {
+          if (o[k] != null) state[k] = o[k];
+        }
+        if (o.yaw != null) state.yaw = o.yaw;
+        if (o.pitch != null) state.pitch = o.pitch;
+        if (o.zoom != null) state.zoom = o.zoom;
+        if (o.tMid !== undefined) state.tMid = o.tMid;
+        if (o.tEnd !== undefined) state.tEnd = o.tEnd;
+        if (o.running != null) state.running = o.running;
+        clampDrags();
+        state.dirty = true;
+        syncUI();
+      },
+      setView(v) {
+        if (!VIEWS[v]) return;
+        state.yaw = VIEWS[v][0]; state.pitch = VIEWS[v][1];
+        state.view = v; state.dirty = true;
+      },
+      click(id) { const b = $(id); if (b) b.click(); },
+      release: release,
+      reset: resetRun,
+      recordMark: recordMark,
+      // 直接跑完一次（跳过动画），自检用
+      finishRun(fromMid) {
+        release(fromMid);
+        const a = accel(), span = state.dEnd - state.startS;
+        const tEnd = Math.sqrt(2 * span / a);
+        state.carT = tEnd;
+        state.carS = state.dEnd;
+        state.running = false; state.done = true;
+        state.tEnd = tEnd;
+        if (state.startS < state.dMid) {
+          state.tMidHit = true;
+          state.tMid = Math.sqrt(2 * (state.dMid - state.startS) / a);
+        }
+        state.dirty = true;
+        syncUI();
+        return { tMid: state.tMid, tEnd: state.tEnd };
+      },
+      runComplete: runComplete,
+      recordBtn() {
+        const r = $('slope-record').getBoundingClientRect();
+        const st = stage.getBoundingClientRect();
+        return {
+          count: +$('slope-record-cnt').textContent,
+          ready: $('slope-record').classList.contains('ready'),
+          text: $('slope-record').textContent.replace(/\s+/g, ' ').trim(),
+          title: $('slope-record').title,
+          onStage: r.left >= st.left - 1 && r.right <= st.right + 1 &&
+                   r.top >= st.top - 1 && r.bottom <= st.bottom + 1,
+          rect: { x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height) },
+          stage: { x: Math.round(st.left), y: Math.round(st.top), w: Math.round(st.width), h: Math.round(st.height) },
+          visibleWithoutScroll: r.bottom <= window.innerHeight + 1
+        };
+      },
+      releaseBtn() {
+        const r = $('slope-release').getBoundingClientRect();
+        const st = stage.getBoundingClientRect();
+        return { onStage: r.left >= st.left - 1 && r.right <= st.right + 1 &&
+                           r.top >= st.top - 1 && r.bottom <= st.bottom + 1,
+                 disabled: $('slope-release').disabled,
+                 rect: { x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height) } };
+      },
+      hover: () => state.hover,
+      cursor: () => canvas.className,
+      toast: () => ({ text: $('slope-toast').textContent, show: $('slope-toast').classList.contains('show') }),
+      watch: () => ({ num: $('watch-num').textContent, state: $('watch-state').textContent,
+                      tMid: $('v-tmid').textContent, tEnd: $('v-tend').textContent }),
+      table: () => {
+        const rows = [...document.querySelectorAll('#rec-body tr')];
+        return rows.map(tr => [...tr.children].map(td => td.textContent.replace(/\s+/g, ' ').trim()));
+      },
+      analysis: () => $('analysis').textContent.replace(/\s+/g, ' ').trim(),
+      hitTest: hitTest,
+      dirty: () => { state.dirty = true; },
+      drawn: () => state.drawn
+    };
+  })();
+  </script>
+  <script src="protect.js"></script>
+</body>
+</html>
