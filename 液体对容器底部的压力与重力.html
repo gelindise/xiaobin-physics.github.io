@@ -1,0 +1,1245 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>虚拟物理实验 - 液体对容器底部的压力与重力</title>
+    <link rel="stylesheet" href="style.css">
+    <style>
+        :root {
+            --bg: #020617;
+            --line: rgba(148, 163, 184, .18);
+            --primary: #3b82f6;
+            --secondary: #06b6d4;
+            --accent: #8b5cf6;
+            --text: #f8fafc;
+            --muted: #94a3b8;
+        }
+
+        body {
+            font-family: 'Inter', 'Microsoft YaHei', 'Noto Sans SC', sans-serif;
+            margin: 0;
+            /* 这一页不放站内页头（页头是 sticky，一滚动就盖住实验区），留 20px 即可 */
+            padding: 20px;
+            background: var(--bg);
+            color: var(--text);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+            box-sizing: border-box;
+        }
+
+        body::before {
+            content: "";
+            position: fixed;
+            inset: 0;
+            z-index: -1;
+            pointer-events: none;
+            background:
+                radial-gradient(circle at 18% 22%, rgba(59, 130, 246, .16), transparent 42%),
+                radial-gradient(circle at 82% 68%, rgba(139, 92, 246, .14), transparent 44%),
+                radial-gradient(circle at 50% 100%, rgba(6, 182, 212, .10), transparent 55%);
+        }
+
+        .lab3d {
+            width: 100%;
+            max-width: 1600px;
+            margin: 8px auto 26px;
+            box-sizing: border-box;
+            overflow: hidden;
+            border: 1px solid rgba(56, 189, 248, .22);
+            border-radius: 18px;
+            background: linear-gradient(160deg, rgba(15, 23, 42, .92), rgba(2, 6, 23, .96));
+            color: #e2e8f0;
+            box-shadow: 0 26px 70px rgba(2, 6, 23, .6), 0 0 0 1px rgba(2, 6, 23, .8) inset;
+        }
+        .lab3d * { box-sizing: border-box; }
+        .lab3d-top {
+            display: flex; justify-content: space-between; gap: 15px; align-items: center;
+            padding: 17px 23px; border-bottom: 1px solid var(--line);
+            background: linear-gradient(90deg, rgba(59, 130, 246, .12), rgba(6, 182, 212, .05) 45%, transparent);
+        }
+        .lab3d-kicker { color: #22d3ee; font-size: 11px; font-weight: 800; letter-spacing: .2em; }
+        .lab3d-top h2 { margin: 3px 0 0; color: #f8fafc; font-size: 21px; letter-spacing: .02em; }
+        .lab3d-top p { margin: 4px 0 0; color: #94a3b8; font-size: 12px; }
+        .lab3d-status {
+            border: 1px solid rgba(34, 211, 238, .45); border-radius: 99px; padding: 6px 12px;
+            color: #67e8f9; font-size: 12px; white-space: nowrap; background: rgba(6, 182, 212, .08);
+        }
+        .lab3d-layout { display: grid; grid-template-columns: minmax(0, 1fr) 336px; }
+        .lab3d-main {
+            min-width: 0; padding: 15px 16px 16px;
+            background: radial-gradient(circle at 43% 36%, rgba(30, 64, 100, .55), rgba(8, 22, 36, .92) 62%, rgba(3, 10, 18, .96));
+        }
+        .lab3d-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; padding-bottom: 12px; }
+        .lab3d-toolbar .toolbar-label { color: #94a3b8; font-size: 12px; margin-right: 5px; }
+        .lab3d button {
+            padding: 7px 12px; border: 1px solid rgba(148, 163, 184, .25); border-radius: 8px;
+            background: rgba(30, 41, 59, .7); color: #cbd5e1; font-size: 12px; font-weight: 600;
+            box-shadow: none; transition: background .2s, border-color .2s, color .2s; cursor: pointer;
+        }
+        .lab3d button:hover { transform: none; box-shadow: none; background: rgba(51, 65, 85, .85); }
+        .lab3d button.active {
+            background: rgba(59, 130, 246, .25); border-color: #38bdf8; color: #e0f2fe;
+            box-shadow: 0 0 14px rgba(56, 189, 248, .3);
+        }
+        .lab3d button:disabled { opacity: .42; cursor: not-allowed; }
+        .lab3d-toolbar .toolbar-spacer { flex: 1; }
+        .lab3d-stage {
+            position: relative; height: clamp(400px, 50vw, 592px);
+            border: 1px solid rgba(56, 189, 248, .2); border-radius: 12px; overflow: hidden;
+            background: #061423;
+        }
+        .lab3d-stage canvas {
+            display: block; width: 100%; height: 100%;
+            border: 0; border-radius: 0; box-shadow: none; background: transparent;
+        }
+        .lab3d-stage .stage-hint {
+            position: absolute; top: 13px; left: 15px; pointer-events: none; font-size: 12px;
+            color: #bae6fd; background: rgba(2, 6, 23, .78); border: 1px solid rgba(56, 189, 248, .25);
+            padding: 7px 11px; border-radius: 8px;
+        }
+        .lab3d-stage .stage-hint b {
+            display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+            background: #22d3ee; vertical-align: 2px; margin-right: 6px; box-shadow: 0 0 8px #22d3ee;
+        }
+        /* 提示放右上角：右下角正是丙杯的名字/读数所在，放那儿会压住它 */
+        .lab3d-stage .stage-help {
+            position: absolute; right: 13px; top: 13px; pointer-events: none;
+            color: #93b4c4; font-size: 11px; background: rgba(2, 6, 23, .72); padding: 6px 10px; border-radius: 7px;
+            max-width: 46%;
+        }
+        .lab3d-foot {
+            display: flex; align-items: center; flex-wrap: wrap; gap: 10px 16px;
+            padding: 12px 3px 1px; font-size: 12px; color: #b6c8d4;
+        }
+        .lab3d-foot label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; white-space: nowrap; }
+        .lab3d-foot input { accent-color: #22d3ee; margin: 0; }
+        .lab3d-foot .legend { margin-left: auto; color: #8ba7b6; font-size: 11px; }
+        .lab3d-sidebar {
+            padding: 18px; color: #cbd5e1; border-left: 1px solid var(--line);
+            background: linear-gradient(180deg, rgba(15, 23, 42, .75), rgba(2, 6, 23, .6));
+        }
+        .lab3d-sidebar h3 { margin: 0 0 13px; color: #e2e8f0; font-size: 14px; letter-spacing: .05em; }
+        .lab3d-sidebar h3:not(:first-child) { margin-top: 22px; }
+        .lab3d-field { margin: 0 0 15px; }
+        .lab3d-field label, .lab3d-field .field-label {
+            display: flex; justify-content: space-between; gap: 8px; align-items: baseline;
+            color: #cbd5e1; font-size: 12px; font-weight: 700;
+        }
+        .lab3d-field output { color: #38bdf8; font-size: 13px; font-weight: 800; }
+        .lab3d-field input[type="range"] { display: block; width: 100%; margin: 11px 0 5px; }
+        .lab3d-field input[type="range"]::-webkit-slider-thumb { background: linear-gradient(135deg, #3b82f6, #22d3ee); }
+        .lab3d-field small { color: #64748b; font-size: 10px; line-height: 1.5; display: block; }
+        .lab3d-field small b { color: #7dd3fc; }
+        .lab3d-metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 12px; }
+        .lab3d-metric {
+            padding: 11px 12px; border: 1px solid rgba(56, 189, 248, .18); border-radius: 10px;
+            background: linear-gradient(160deg, rgba(30, 58, 95, .55), rgba(15, 23, 42, .6));
+        }
+        .lab3d-metric span { display: block; font-size: 11px; color: #9fb8c6; }
+        .lab3d-metric strong { display: block; margin-top: 4px; color: #e0f2fe; font-size: 16px; }
+        .lab3d-metric.a strong { color: #67e8f9; }
+        .lab3d-metric.b strong { color: #fcd34d; }
+        .lab3d-metric.c strong { color: #c4b5fd; }
+        .lab3d-metric.ok strong { color: #6ee7b7; }
+        .lab3d-note { margin: 12px 0 0; color: #9fb8c6; font-size: 12px; line-height: 1.7; }
+        .lab3d-note b { color: #7dd3fc; }
+        .lab3d-note .hi { color: #fcd34d; }
+
+        .law-list { margin: 0; padding: 0; list-style: none; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+        .law-list li {
+            display: flex; gap: 8px; align-items: flex-start;
+            padding: 9px 11px; border-radius: 9px; font-size: 12px; line-height: 1.55;
+            border: 1px solid rgba(148, 163, 184, .16); background: rgba(148, 163, 184, .05);
+            color: #b6c8d4; transition: background .2s, border-color .2s, color .2s;
+        }
+        .law-list li.on {
+            border-color: rgba(52, 211, 153, .5); background: rgba(16, 185, 129, .12); color: #d1fae5;
+        }
+        .law-list li i { font-style: normal; color: #64748b; flex: none; font-weight: 700; }
+        .law-list li.on i { color: #6ee7b7; }
+
+        .lab3d-btnrow { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-top: 4px; }
+        .lab3d-btnrow button { width: 100%; }
+        .lab3d-btnrow.two { grid-template-columns: 1fr 1fr; }
+        .lab3d-btnrow button.primary {
+            border-color: rgba(56, 189, 248, .55); background: rgba(56, 189, 248, .16); color: #e0f2fe;
+        }
+
+        /* 数据表 */
+        .lp-table { width: 100%; border-collapse: collapse; font-size: 11.5px; }
+        .lp-table th {
+            text-align: right; color: #7c93a5; font-weight: 700; font-size: 10.5px;
+            padding: 0 0 6px; border-bottom: 1px solid rgba(148, 163, 184, .18);
+        }
+        .lp-table th:first-child { text-align: left; }
+        .lp-table td { padding: 6px 0; text-align: right; border-bottom: 1px dashed rgba(148, 163, 184, .12); }
+        .lp-table td:first-child { text-align: left; font-weight: 700; }
+        .lp-table tr:last-child td { border-bottom: 0; }
+        .lp-table .c0 { color: #67e8f9; }
+        .lp-table .c1 { color: #fcd34d; }
+        .lp-table .c2 { color: #c4b5fd; }
+        .lp-table .rel { font-weight: 800; }
+        .lp-table .rel.lt { color: #5eead4; }
+        .lp-table .rel.gt { color: #fca5a5; }
+        .lp-table .rel.eq { color: #93c5fd; }
+
+        /* F / G 条形对比 */
+        .lp-bars { margin-top: 12px; display: flex; flex-direction: column; gap: 9px; }
+        .lp-brow { display: grid; grid-template-columns: 34px 1fr; gap: 8px; align-items: center; }
+        .lp-brow .nm { font-size: 11px; font-weight: 700; }
+        .lp-btrack { display: flex; flex-direction: column; gap: 3px; }
+        .lp-bar { display: flex; align-items: center; gap: 6px; }
+        .lp-bar .lbl { width: 12px; font-size: 10px; color: #8298a8; font-weight: 700; }
+        .lp-bar .fill { height: 9px; border-radius: 5px; transition: width .18s linear; min-width: 2px; }
+        .lp-bar.f .fill { background: linear-gradient(90deg, #f87171, #fb923c); }
+        .lp-bar.g .fill { background: linear-gradient(90deg, #a78bfa, #818cf8); }
+        .lp-bar .val { font-size: 10px; color: #a9bccc; }
+
+        /* 受力分析读数块 */
+        .lp-fbd {
+            border: 1px solid rgba(148, 163, 184, .18); border-radius: 10px; padding: 11px 12px;
+            background: rgba(15, 23, 42, .55); font-size: 11.5px; line-height: 1.75; color: #a9bccc;
+        }
+        .lp-fbd .eq {
+            font-family: "SFMono-Regular", Consolas, monospace; font-size: 11px;
+            color: #e0f2fe; background: rgba(56, 189, 248, .08); border-radius: 7px;
+            padding: 7px 9px; margin-bottom: 8px; line-height: 1.9; white-space: nowrap; overflow-x: auto;
+        }
+        .lp-fbd .row { display: flex; justify-content: space-between; gap: 8px; }
+        .lp-fbd .row b { color: #e2e8f0; font-weight: 700; }
+        .lp-fbd .up { color: #6ee7b7; }
+        .lp-fbd .dn { color: #fca5a5; }
+        .lp-fbd .zero { color: #94a3b8; }
+
+        @media (max-width: 900px) {
+            .lab3d-layout { grid-template-columns: minmax(0, 1fr); }
+            .lab3d-sidebar { border-left: 0; border-top: 1px solid var(--line); }
+        }
+        @media (max-width: 620px) {
+            body { padding-left: 10px; padding-right: 10px; }
+            .lab3d { border-radius: 14px; }
+            .lab3d-top { padding: 15px; }
+            .lab3d-top h2 { font-size: 17px; }
+            .lab3d-status { display: none; }
+            .lab3d-main { padding: 10px; }
+            .lab3d-toolbar { gap: 6px; }
+            .lab3d-toolbar .toolbar-label { display: none; }
+            .lab3d-toolbar button { padding: 6px 9px; font-size: 11px; }
+            .lab3d-stage { height: 360px; }
+            .lab3d-stage .stage-hint { font-size: 10.5px; padding: 6px 9px; }
+            /* 窄屏上顶部一行放不下「场景说明 + 操作提示」，操作提示去掉（侧栏本来就有滑块） */
+            .lab3d-stage .stage-help { display: none; }
+            .lab3d-sidebar { padding: 16px; }
+            .lab3d-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+            .law-list { grid-template-columns: minmax(0, 1fr); }
+            .lab3d-foot { gap: 8px 12px; }
+            .lab3d-foot .legend { margin-left: 0; width: 100%; }
+        }
+    </style>
+    <script src="auth-check.js"></script>
+</head>
+<body>
+    <!-- 这一页不放站内页头：页头是 position:sticky，一滚动就贴在顶上盖住实验区。
+         script.js 注入用户信息前有 `if (nav)` 判空，缺 .nav 不会报错。 -->
+    <section class="lab3d" aria-label="液体对容器底部的压力与重力">
+      <div class="lab3d-top">
+        <div>
+          <div class="lab3d-kicker">INTERACTIVE HYDROSTATICS LAB · 液体压强实验</div>
+          <h2>液体对容器底部的压力 与 液体重力</h2>
+          <p>三只杯子底面积完全相同、装一样多的水，只把侧壁形状改一改 —— 看底部压力怎么变</p>
+        </div>
+        <span class="lab3d-status">● 实时物理模拟</span>
+      </div>
+
+      <div class="lab3d-layout">
+        <div class="lab3d-main">
+          <div class="lab3d-toolbar" role="group" aria-label="注水方式">
+            <span class="toolbar-label">注水方式</span>
+            <button type="button" class="active" id="lp-mode-v">① 注入等量水</button>
+            <button type="button" id="lp-mode-h">② 注入等高水</button>
+            <span class="toolbar-spacer"></span>
+            <button type="button" id="lp-pour">▶ 演示注水</button>
+            <button type="button" id="lp-reset">↺ 复位</button>
+          </div>
+
+          <div class="lab3d-stage">
+            <canvas id="lp-canvas" aria-label="三只底面积相同的容器：甲直壁、乙敞口、丙收口，显示液体对底部的压力与液体重力"></canvas>
+            <div class="stage-hint" id="lp-stagehint"><b></b>甲 直壁 · 乙 敞口 · 丙 收口</div>
+            <div class="stage-help">拖动「注水量 / 侧壁倾角」看实时变化 · 空格键可暂停/恢复注水</div>
+          </div>
+
+          <div class="lab3d-foot">
+            <label><input id="lp-g" type="checkbox" checked>重力 G 箭头</label>
+            <label><input id="lp-fbd" type="checkbox">受力分析（G / N / 侧壁力）</label>
+            <label><input id="lp-col" type="checkbox">液柱模型</label>
+            <label><input id="lp-scale" type="checkbox">底部电子秤</label>
+            <label><input id="lp-lab" type="checkbox" checked>标注与刻度</label>
+            <span class="legend" id="lp-legend"></span>
+          </div>
+
+          <div class="lab3d-metrics" aria-live="polite">
+            <div class="lab3d-metric a"><span>甲 直壁 · 底部压力 F</span><strong id="lp-mF0">—</strong></div>
+            <div class="lab3d-metric b"><span>乙 敞口 · 底部压力 F</span><strong id="lp-mF1">—</strong></div>
+            <div class="lab3d-metric c"><span>丙 收口 · 底部压力 F</span><strong id="lp-mF2">—</strong></div>
+            <div class="lab3d-metric ok"><span>三杯液体重力 G</span><strong id="lp-mG">—</strong></div>
+          </div>
+
+          <ul class="law-list" style="margin-top:12px">
+            <li id="lp-c1"><i>①</i><span>液体对底部的压力 F = pS = ρgh·S：只由<b>深度</b>和<b>底面积</b>决定</span></li>
+            <li id="lp-c2"><i>②</i><span>液体重力 G = ρgV：由液体的<b>体积</b>决定</span></li>
+            <li id="lp-c3"><i>③</i><span>甲 直壁：F = G</span></li>
+            <li id="lp-c4"><i>④</i><span>乙 敞口：F &lt; G（侧壁把多出来的水托住了）</span></li>
+            <li id="lp-c5"><i>⑤</i><span>丙 收口：F &gt; G（侧壁把液体往下压）</span></li>
+          </ul>
+
+          <p class="lab3d-note" id="lp-verdict"><b>观察提示：</b>三只杯子的底面积一样大，所以底部的压力只看水深。水深一样，压力就一样；水多水少，不影响底部压力。</p>
+        </div>
+
+        <aside class="lab3d-sidebar">
+          <h3>注水</h3>
+          <div class="lab3d-field">
+            <label for="lp-fill">注水量 <output id="lp-fill-v">3000 cm³</output></label>
+            <input id="lp-fill" type="range" min="500" max="3500" value="3000" step="50">
+            <small id="lp-fill-hint">三只杯子注入<b>同样多</b>的水（体积相同、重力相同）</small>
+          </div>
+          <div class="lab3d-field">
+            <label for="lp-k">侧壁倾角 <output id="lp-k-v">8 %</output></label>
+            <input id="lp-k" type="range" min="0" max="12" value="8" step="0.5">
+            <small>0 % 时三只杯子都是直壁；调大后<b>乙</b>向外张、<b>丙</b>向内收</small>
+          </div>
+
+          <h3>数据对比</h3>
+          <table class="lp-table">
+            <thead>
+              <tr><th>杯子</th><th>深度 h</th><th>压力 F</th><th>重力 G</th><th>关系</th></tr>
+            </thead>
+            <tbody>
+              <tr><td class="c0">甲 直壁</td><td id="lp-h-0">—</td><td id="lp-f-0">—</td><td id="lp-g-0">—</td><td id="lp-r-0" class="rel eq">—</td></tr>
+              <tr><td class="c1">乙 敞口</td><td id="lp-h-1">—</td><td id="lp-f-1">—</td><td id="lp-g-1">—</td><td id="lp-r-1" class="rel eq">—</td></tr>
+              <tr><td class="c2">丙 收口</td><td id="lp-h-2">—</td><td id="lp-f-2">—</td><td id="lp-g-2">—</td><td id="lp-r-2" class="rel eq">—</td></tr>
+            </tbody>
+          </table>
+
+          <div class="lp-bars" id="lp-bars"></div>
+
+          <h3>受力分析</h3>
+          <div class="lab3d-btnrow" id="lp-pick">
+            <button type="button" id="lp-pick-0">甲 直壁</button>
+            <button type="button" id="lp-pick-1">乙 敞口</button>
+            <button type="button" class="active" id="lp-pick-2">丙 收口</button>
+          </div>
+          <div class="lp-fbd" id="lp-fbd-box" style="margin-top:10px"></div>
+        </aside>
+      </div>
+    </section>
+
+    <script src="protect.js"></script>
+    <script>
+    (function () {
+      'use strict';
+      const canvas = document.getElementById('lp-canvas');
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
+
+      /* ============================================================
+       * 一、几何与物理常量
+       *
+       * 三只杯子的【底面积完全相同】，只有侧壁倾角不同：
+       *   甲 k = 0        直壁
+       *   乙 k = +kS      敞口（越往上越宽）
+       *   丙 k = -kS      收口（越往上越窄）
+       * 前后两块玻璃竖直（宽 D），左右两块侧壁倾斜 —— 与剖面图一致。
+       *
+       * 记底宽 B、深 D、水深 h、半宽随高度的变化率 k（cm 横向 / cm 竖直）：
+       *   水面宽  a = B + 2kh
+       *   剖面面积 A = (B + a)h/2 = Bh + kh²
+       *   体积    V = A·D
+       *   底面积  S = B·D            ← 三只杯子一样
+       *   底部压力 F = ρgh·S
+       *   液体重力 G = ρgV
+       *   相减：F - G = ρgD(Bh - Bh - kh²) = -ρgDkh²
+       *   → 敞口(k>0) F<G；收口(k<0) F>G；直壁(k=0) F=G。这是本页全部结论的来源。
+       * ============================================================ */
+      const RHO = 1000, GRAV = 9.8;
+      const H = 30;                    // 容器高 cm
+      const B = 16;                    // 底部内宽 cm
+      const D = 10;                    // 前后壁内宽（深度）cm
+      const CX = [-25, 0, 25];         // 三个杯子的中心 x（cm）
+      const KMAX = 0.12;               // 侧壁倾角上限
+      const VMAX = 3500, VMIN = 500;   // 注水量范围 cm³
+      const HMIN = 3, HMAX = H;        // 注水深度范围 cm
+      const KIND = [0, 1, -1];         // k 的符号
+      const NAMES = ['甲', '乙', '丙'];
+      const SHAPES = ['直壁', '敞口', '收口'];
+      const ACC = ['#22d3ee', '#fbbf24', '#a78bfa'];
+      const ACC_DIM = ['rgba(34,211,238,.16)', 'rgba(251,191,36,.16)', 'rgba(167,139,250,.16)'];
+
+      // 力箭头比例（cm / N）。F 与 G 共用同一个比例，长度才能直接比。
+      const N2CM = 0.14;
+      const ARROW_MIN = 1.2, ARROW_MAX = 6.0;
+
+      /* 斜二测投影：背面相对正面在屏幕上偏移 (DX, DY) 厘米 */
+      const DX = 2.6, DY = 2.0;
+
+      /* 固定取景包络（按 k 取上限、水位取满、箭头取最长来估），
+         不随参数变化，免得拖滑块时画面一缩一放。 */
+      const ENV = { x0: -40, x1: 39, y0: -10.5, y1: 37 };
+
+      /* ============================================================
+       * 二、状态
+       * ============================================================ */
+      const state = {
+        mode: 'V',        // 'V' 等量水 | 'h' 等高水
+        V: 3000,          // 目标注水量 cm³
+        hLevel: 18,       // 目标注水深度 cm
+        kS: 0.08,         // 侧壁倾角
+        showG: true,
+        showFBD: false,
+        showColumn: false,
+        showScale: false,
+        showLabels: true,
+        pick: 2           // 受力分析选中的杯子
+      };
+      // 注水动画：eff 是当前实际注到目标的百分之几
+      const pour = { active: false, p: 1, dir: 1, paused: false };
+
+      function effFill() { return pour.active ? pour.p : 1; }
+      function targetFill() { return state.mode === 'V' ? state.V : state.hLevel; }
+
+      /* ============================================================
+       * 三、物理
+       * ============================================================ */
+      // 解 A(h) = B·h + k·h² = At，在 [0, H] 上二分。
+      // k<0 时 A(h) 在 h < B/(2|k|) 上仍单调增（本页 KMAX=0.12、H=30，B/(2KMAX)≈66 > 30），二分安全。
+      function solveH(k, At) {
+        const f = (h) => B * h + k * h * h;
+        if (At >= f(H)) return H;
+        if (At <= 0) return 0;
+        let lo = 0, hi = H;
+        for (let i = 0; i < 60; i++) {
+          const mid = (lo + hi) / 2;
+          if (f(mid) < At) lo = mid; else hi = mid;
+        }
+        return (lo + hi) / 2;
+      }
+
+      function geo(i) {
+        const k = KIND[i] * state.kS;
+        const f = effFill();
+        let h;
+        if (state.mode === 'V') {
+          h = solveH(k, (state.V * f) / D);
+        } else {
+          h = state.hLevel * f;
+        }
+        h = clamp(h, 0, H);
+
+        const a = B + 2 * k * h;          // 水面宽
+        const A = (B + a) / 2 * h;        // 剖面面积
+        const V = A * D;                  // cm³
+        const S = B * D;                  // cm² —— 三杯相同
+        const hm = h / 100, Sm = S / 1e4, Vm = V / 1e6;
+        const p = RHO * GRAV * hm;        // Pa
+        const F = p * Sm;                 // N —— 液体压底部的力
+        const G = RHO * GRAV * Vm;        // N —— 液体重力
+
+        // 侧壁：单侧压力合力（垂直于壁面，指向液体内部）
+        //   大小  = ρgD·h²/2·√(1+k²)
+        //   方向  = (-1, k)/√(1+k²)  （右壁；左壁 x 反向）
+        //   竖直分量（两侧合计）= ρgDkh²，恰好等于 G - F
+        const wallMag = RHO * GRAV * (D / 100) * hm * hm / 2 * Math.sqrt(1 + k * k);
+        const Wy = RHO * GRAV * (D / 100) * k * hm * hm;   // 侧壁对液体的竖直合力（向上为正）
+        // 侧壁压力中心：三角形分布，合力作用在离底 h/3 处
+        const cpY = h / 3;
+
+        // 梯形形心（离底）
+        const yc = (a + B) > 1e-9 ? h * (a + 2 * B) / (3 * (a + B)) : h / 2;
+
+        return {
+          i, k, cx: CX[i], h, a, A, V, S, p, F, G,
+          wallMag, Wy, cpY, yc,
+          diff: F - G,                        // F - G，应等于 -ρgDkh²
+          wing: RHO * GRAV * (D / 100) * k * hm * hm   // 多余/缺失那部分水的重力
+        };
+      }
+
+      /* ============================================================
+       * 四、视图
+       * ============================================================ */
+      let W = 0, HPX = 0, DPR = 1;
+      const VIEW = { k: 10, ox: 0, oy: 0 };
+
+      function updateView() {
+        const kk = Math.min(W / (ENV.x1 - ENV.x0), HPX / (ENV.y1 - ENV.y0));
+        VIEW.k = kk;
+        VIEW.ox = W / 2 - kk * (ENV.x0 + ENV.x1) / 2;
+        VIEW.oy = HPX / 2 + kk * (ENV.y0 + ENV.y1) / 2;
+      }
+      const P = (x, y) => [VIEW.ox + x * VIEW.k, VIEW.oy - y * VIEW.k];
+      // 背面：世界坐标加 (DX, DY)
+      const PB = (x, y) => P(x + DX, y + DY);
+
+      /* ============================================================
+       * 五、绘图小工具
+       * ============================================================ */
+      // 每帧记录画过的标签盒，供自检做两两重叠检查（见 dev-lp-test.js）
+      let LBOX = [];
+      function rrect(x, y, w, h, r) {
+        r = Math.min(r, w / 2, h / 2);
+        ctx.beginPath();
+        ctx.moveTo(x + r, y);
+        ctx.arcTo(x + w, y, x + w, y + h, r);
+        ctx.arcTo(x + w, y + h, x, y + h, r);
+        ctx.arcTo(x, y + h, x, y, r);
+        ctx.arcTo(x, y, x + w, y, r);
+        ctx.closePath();
+      }
+
+      // pts: 世界坐标数组；back=true 时整组平移到背面
+      function poly(pts, fill, stroke, lw, back) {
+        ctx.beginPath();
+        for (let i = 0; i < pts.length; i++) {
+          const q = back ? PB(pts[i][0], pts[i][1]) : P(pts[i][0], pts[i][1]);
+          i ? ctx.lineTo(q[0], q[1]) : ctx.moveTo(q[0], q[1]);
+        }
+        ctx.closePath();
+        if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+        if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = lw || 1; ctx.stroke(); }
+      }
+
+      function arrow(x0, y0, x1, y1, color, lw, head) {
+        const A = P(x0, y0), Bp = P(x1, y1);
+        ctx.strokeStyle = color; ctx.fillStyle = color;
+        ctx.lineWidth = lw || 2; ctx.lineCap = 'round';
+        ctx.beginPath(); ctx.moveTo(A[0], A[1]); ctx.lineTo(Bp[0], Bp[1]); ctx.stroke();
+        const ang = Math.atan2(Bp[1] - A[1], Bp[0] - A[0]);
+        const hd = head || 7.5;
+        ctx.beginPath();
+        ctx.moveTo(Bp[0], Bp[1]);
+        ctx.lineTo(Bp[0] - hd * Math.cos(ang - 0.42), Bp[1] - hd * Math.sin(ang - 0.42));
+        ctx.lineTo(Bp[0] - hd * Math.cos(ang + 0.42), Bp[1] - hd * Math.sin(ang + 0.42));
+        ctx.closePath(); ctx.fill();
+      }
+
+      function seg(x0, y0, x1, y1, color, lw, dash) {
+        const A = P(x0, y0), Bp = P(x1, y1);
+        ctx.save();
+        if (dash) ctx.setLineDash(dash);
+        ctx.strokeStyle = color; ctx.lineWidth = lw || 1;
+        ctx.beginPath(); ctx.moveTo(A[0], A[1]); ctx.lineTo(Bp[0], Bp[1]); ctx.stroke();
+        ctx.restore();
+      }
+
+      // 画布上的小标签。wx/wy 是世界坐标锚点，align 决定盒子往哪边长。
+      function tag(text, wx, wy, opt) {
+        opt = opt || {};
+        ctx.font = opt.font || '600 11px Inter, "Microsoft YaHei", sans-serif';
+        const tw = ctx.measureText(text).width;
+        const padX = 6, bh = opt.h || 17;
+        const [sx, sy] = P(wx, wy);
+        let bx;
+        if (opt.align === 'left') bx = sx;
+        else if (opt.align === 'right') bx = sx - tw - padX * 2;
+        else bx = sx - tw / 2 - padX;
+        let by = sy - bh / 2;
+        // 夹进画布，别被裁掉
+        bx = clamp(bx, 3, Math.max(3, W - tw - padX * 2 - 3));
+        by = clamp(by, 3, Math.max(3, HPX - bh - 3));
+        rrect(bx, by, tw + padX * 2, bh, 5);
+        ctx.fillStyle = opt.bg || 'rgba(2,6,23,.84)'; ctx.fill();
+        if (opt.border) { ctx.strokeStyle = opt.border; ctx.lineWidth = 1; ctx.stroke(); }
+        ctx.fillStyle = opt.color || '#e2e8f0';
+        ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+        ctx.fillText(text, bx + padX, by + bh / 2 + .5);
+        LBOX.push({ x: bx, y: by, w: tw + padX * 2, h: bh, t: text });
+      }
+
+      function n1(v) { return (Math.round(v * 10) / 10).toFixed(1); }
+
+      /* 窄屏时画面本来就小，标签得跟着缩 —— 否则相邻杯子的标签会糊在一起。
+         VIEW.k 是「1 cm 折合多少像素」，用它判断：小于 8.5 px/cm 就算窄屏。 */
+      function compact() { return VIEW.k < 8.5; }
+
+      function tagS(text, sx, sy, opt) {
+        opt = opt || {};
+        ctx.font = opt.font || '600 11px Inter, "Microsoft YaHei", sans-serif';
+        const tw = ctx.measureText(text).width;
+        const padX = 6, bh = opt.h || 17;
+        let bx = sx - tw / 2 - padX, by = sy - bh / 2;
+        if (opt.align === 'left') bx = sx - padX;
+        else if (opt.align === 'right') bx = sx - tw - padX;
+        bx = clamp(bx, 3, Math.max(3, W - tw - padX * 2 - 3));
+        by = clamp(by, 3, Math.max(3, HPX - bh - 3));
+        rrect(bx, by, tw + padX * 2, bh, 5);
+        ctx.fillStyle = opt.bg || 'rgba(2,6,23,.84)'; ctx.fill();
+        if (opt.border) { ctx.strokeStyle = opt.border; ctx.lineWidth = 1; ctx.stroke(); }
+        ctx.fillStyle = opt.color || '#e2e8f0';
+        ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+        ctx.fillText(text, bx + padX, by + bh / 2 + .5);
+        LBOX.push({ x: bx, y: by, w: tw + padX * 2, h: bh, t: text });
+      }
+
+      function textS(text, sx, sy, font, color, align) {
+        ctx.font = font;
+        ctx.fillStyle = color;
+        ctx.textAlign = align || 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(text, sx, clamp(sy, 8, HPX - 8));
+      }
+
+      /* ============================================================
+       * 六、绘制：容器与水
+       * ============================================================ */
+      function drawContainer(i, g) {
+        const cx = g.cx, k = g.k, h = g.h;
+        const hb = B / 2;
+        const hw = hb + k * h;            // 水面半宽
+        const ht = hb + k * H;            // 杯口半宽
+        if (hw <= 0.2) return;
+
+        const backFill = 'rgba(148,163,184,.045)';
+        const backLine = 'rgba(148,163,184,.20)';
+        const glassLine = 'rgba(203,230,255,.62)';
+
+        // 1) 背面玻璃
+        poly([[cx - hb, 0], [cx + hb, 0], [cx + ht, H], [cx - ht, H]], backFill, backLine, 1, true);
+
+        // 2) 右壁玻璃面（整高，先铺一层，水再压上去）
+        (function () {
+          const A = P(cx + hb, 0), Bp = P(cx + ht, H);
+          const C = PB(cx + ht, H), Dp = PB(cx + hb, 0);
+          ctx.beginPath();
+          ctx.moveTo(A[0], A[1]); ctx.lineTo(Bp[0], Bp[1]);
+          ctx.lineTo(C[0], C[1]); ctx.lineTo(Dp[0], Dp[1]);
+          ctx.closePath();
+          ctx.fillStyle = 'rgba(186,214,240,.055)'; ctx.fill();
+          ctx.strokeStyle = 'rgba(148,163,184,.22)'; ctx.lineWidth = 1; ctx.stroke();
+        })();
+
+        // 3) 杯口面
+        (function () {
+          const A = P(cx - ht, H), Bp = P(cx + ht, H);
+          const C = PB(cx + ht, H), Dp = PB(cx - ht, H);
+          ctx.beginPath();
+          ctx.moveTo(A[0], A[1]); ctx.lineTo(Bp[0], Bp[1]);
+          ctx.lineTo(C[0], C[1]); ctx.lineTo(Dp[0], Dp[1]);
+          ctx.closePath();
+          ctx.fillStyle = 'rgba(186,214,240,.075)'; ctx.fill();
+          ctx.strokeStyle = glassLine; ctx.lineWidth = 1.3; ctx.stroke();
+        })();
+
+        if (h > 0.05) {
+          // 4) 水的背面
+          poly([[cx - hb, 0], [cx + hb, 0], [cx + hw, h], [cx - hw, h]],
+               'rgba(56,189,248,.10)', null, 1, true);
+
+          // 5) 水的右面
+          (function () {
+            const A = P(cx + hb, 0), Bp = P(cx + hw, h);
+            const C = PB(cx + hw, h), Dp = PB(cx + hb, 0);
+            ctx.beginPath();
+            ctx.moveTo(A[0], A[1]); ctx.lineTo(Bp[0], Bp[1]);
+            ctx.lineTo(C[0], C[1]); ctx.lineTo(Dp[0], Dp[1]);
+            ctx.closePath();
+            const gd = ctx.createLinearGradient(A[0], A[1], Bp[0], Bp[1]);
+            gd.addColorStop(0, 'rgba(14,116,190,.72)');
+            gd.addColorStop(1, 'rgba(56,189,248,.58)');
+            ctx.fillStyle = gd; ctx.fill();
+          })();
+
+          // 6) 水的顶面
+          (function () {
+            const A = P(cx - hw, h), Bp = P(cx + hw, h);
+            const C = PB(cx + hw, h), Dp = PB(cx - hw, h);
+            ctx.beginPath();
+            ctx.moveTo(A[0], A[1]); ctx.lineTo(Bp[0], Bp[1]);
+            ctx.lineTo(C[0], C[1]); ctx.lineTo(Dp[0], Dp[1]);
+            ctx.closePath();
+            ctx.fillStyle = 'rgba(125,211,252,.42)'; ctx.fill();
+            ctx.strokeStyle = 'rgba(186,230,253,.9)'; ctx.lineWidth = 1.4; ctx.stroke();
+          })();
+
+          // 7) 水的正面（剖面）
+          const A0 = P(cx - hb, 0), B0 = P(cx + hb, 0);
+          const gd = ctx.createLinearGradient(A0[0], A0[1], A0[0], P(0, h)[1]);
+          gd.addColorStop(0, 'rgba(2,132,199,.86)');
+          gd.addColorStop(1, 'rgba(56,189,248,.52)');
+          poly([[cx - hb, 0], [cx + hb, 0], [cx + hw, h], [cx - hw, h]], gd, null, 1);
+          // 水面高光
+          seg(cx - hw, h, cx + hw, h, 'rgba(224,242,254,.92)', 1.6);
+          // 左右内壁反光
+          seg(cx - hb, 0, cx - hw, h, 'rgba(186,230,253,.30)', 1);
+          seg(cx + hb, 0, cx + hw, h, 'rgba(186,230,253,.30)', 1);
+        }
+
+        // 8) 正面玻璃轮廓
+        poly([[cx - hb, 0], [cx + hb, 0], [cx + ht, H], [cx - ht, H]],
+             'rgba(148,163,184,.035)', glassLine, 1.7);
+        // 杯底加粗
+        seg(cx - hb, 0, cx + hb, 0, 'rgba(226,240,255,.9)', 2.6);
+      }
+
+      /* 杯子下方这一摞标注统一按【像素】排：
+         箭头长度 ∝ F，所有标注挂在"最长那根箭头"下面，三杯才对得齐。 */
+      const BELOW = { baseY: 0, maxL: 0 };
+      function calcBelow(gs) {
+        const c = compact();
+        BELOW.baseY = P(0, 0)[1];
+        let mx = 0;
+        for (const g of gs) mx = Math.max(mx, clamp(g.F * N2CM * VIEW.k, 11, 999));
+        BELOW.maxL = mx;
+        BELOW.dyF = c ? 13 : 15;
+        BELOW.dyName = c ? 30 : 34;
+        BELOW.dySub = c ? 0 : 52;
+        BELOW.font = c ? '800 12px Inter, "Microsoft YaHei", sans-serif'
+                       : '800 13.5px Inter, "Microsoft YaHei", sans-serif';
+      }
+
+      /* ============================================================
+       * 七、绘制：底部压力箭头 F（永远显示）
+       * ============================================================ */
+      function drawF(i, g) {
+        if (g.F <= 0.01) return;
+        const Lpx = clamp(g.F * N2CM * VIEW.k, 11, 999);
+        const hb = B / 2;
+        const y0 = state.showScale ? -1.95 : -0.05;
+        const n = 5;
+        for (let j = 0; j < n; j++) {
+          const x = g.cx - hb + (j + 0.5) * (B / n);
+          const A = P(x, y0), Bp = P(x, y0 - Lpx / VIEW.k);
+          ctx.strokeStyle = 'rgba(248,113,113,.95)';
+          ctx.lineWidth = compact() ? 1.8 : 2.2; ctx.lineCap = 'round';
+          ctx.beginPath(); ctx.moveTo(A[0], A[1]); ctx.lineTo(Bp[0], Bp[1]); ctx.stroke();
+          const hd = compact() ? 5.5 : 7;
+          ctx.fillStyle = 'rgba(248,113,113,.95)';
+          ctx.beginPath();
+          ctx.moveTo(Bp[0], Bp[1]);
+          ctx.lineTo(Bp[0] - hd * 0.42, Bp[1] - hd);
+          ctx.lineTo(Bp[0] + hd * 0.42, Bp[1] - hd);
+          ctx.closePath(); ctx.fill();
+        }
+        if (state.showLabels) {
+          tagS(compact() ? n1(g.F) + ' N' : 'F = ' + n1(g.F) + ' N',
+               P(g.cx, 0)[0], BELOW.baseY + Lpx + BELOW.dyF,
+               { color: '#fecaca', border: 'rgba(248,113,113,.5)', bg: 'rgba(45,10,10,.9)',
+                 h: compact() ? 15 : 17, font: compact() ? '600 10px Inter, "Microsoft YaHei", sans-serif' : null });
+        }
+      }
+
+      /* ============================================================
+       * 八、绘制：液体重力箭头 G（形心，向下）
+       * ============================================================ */
+      function drawG(i, g) {
+        if (g.G <= 0.01 || g.h < 0.6) return;
+        const L = clamp(g.G * N2CM, ARROW_MIN, ARROW_MAX);
+        // 受力分析里 N 也画在中线上，两根箭头容易打架 —— 把 G 让到左边，用引线连回形心
+        const off = state.showFBD ? -3.2 : ((g.yc - L < L + 0.8) ? -2.4 : 0);
+        const x = g.cx + off;
+        if (off !== 0) seg(g.cx, g.yc, x, g.yc, 'rgba(167,139,250,.45)', 1, [3, 3]);
+        arrow(x, g.yc, x, g.yc - L, '#a78bfa', 2.6, 8);
+        // 形心圆点
+        const c = P(g.cx, g.yc);
+        ctx.fillStyle = '#c4b5fd';
+        ctx.beginPath(); ctx.arc(c[0], c[1], 3.2, 0, Math.PI * 2); ctx.fill();
+        if (state.showLabels) {
+          // 浅水时箭头尖会落到基线以下，标签得夹回基线之上，否则和下面的 F 标签叠在一起
+          const gy = Math.min(P(x, g.yc - L)[1] + 14, BELOW.baseY - 11);
+          tagS(compact() ? n1(g.G) + ' N' : 'G = ' + n1(g.G) + ' N',
+               P(x, 0)[0], gy,
+               { color: '#ddd6fe', border: 'rgba(167,139,250,.5)', bg: 'rgba(28,18,52,.9)',
+                 h: compact() ? 15 : 17, font: compact() ? '600 10px Inter, "Microsoft YaHei", sans-serif' : null });
+        }
+      }
+
+      /* ============================================================
+       * 九、绘制：受力分析（G / N / 两侧壁力）
+       * ============================================================ */
+      function drawFBD(i, g) {
+        if (g.h < 0.6) return;
+        const cx = g.cx, hb = B / 2;
+        const Ln = clamp(g.F * N2CM, ARROW_MIN, ARROW_MAX);
+        const Lw = clamp(g.wallMag * N2CM, 0.9, ARROW_MAX);
+
+        // 底部对液体的支持力 N（向上，大小 = F）
+        arrow(cx, 0.05, cx, 0.05 + Ln, '#38bdf8', 2.6, 8);
+        if (state.showLabels) {
+          // 标签贴到箭头【右侧】，不去和左边的 G 挤在一条竖线上
+          tagS(compact() ? n1(g.F) + ' N' : 'N = ' + n1(g.F) + ' N',
+               P(cx, 0)[0] + 7, P(cx, Ln)[1] + 2,
+               { align: 'left', color: '#bae6fd', border: 'rgba(56,189,248,.55)', bg: 'rgba(6,26,42,.92)',
+                 h: compact() ? 15 : 17, font: compact() ? '600 10px Inter, "Microsoft YaHei", sans-serif' : null });
+        }
+
+        // 两侧壁对液体的压力（垂直于壁面，指向液体内部）
+        const nrm = Math.sqrt(1 + g.k * g.k);
+        const ux = -1 / nrm, uy = g.k / nrm;
+        const cpXr = cx + hb + g.k * g.cpY, cpY = g.cpY;
+        const cpXl = cx - hb - g.k * g.cpY;
+        arrow(cpXr, cpY, cpXr + ux * Lw, cpY + uy * Lw, '#34d399', 2.4, 7.5);
+        arrow(cpXl, cpY, cpXl - ux * Lw, cpY - uy * Lw, '#34d399', 2.4, 7.5);
+        // 竖直分量的虚线直角（很小 —— 这正是 F 和 G 只差一点点的原因）
+        const vy = (g.Wy / 2) * N2CM;
+        if (Math.abs(vy) > 0.06) {
+          for (const s of [1, -1]) {
+            const tx = s > 0 ? cpXr : cpXl, dx = s > 0 ? ux : -ux, dy = s > 0 ? uy : -uy;
+            seg(tx, cpY, tx + dx * Lw, cpY, 'rgba(52,211,153,.4)', 1, [3, 3]);
+            seg(tx + dx * Lw, cpY, tx + dx * Lw, cpY + dy * Lw, '#34d399', 2, [3, 3]);
+          }
+        }
+        // 只给选中的杯子标出壁面压力与竖直合力（窄屏上这行太长会横穿整个画布，省掉）
+        if (state.showLabels && !compact() && i === state.pick) {
+          const up = g.Wy > 0.02 ? '向上' : (g.Wy < -0.02 ? '向下' : '为零');
+          tagS('侧壁压力 ' + n1(g.wallMag) + ' N／两侧竖直合计 ' + (g.Wy >= 0 ? '+' : '−') + n1(Math.abs(g.Wy)) + ' N（' + up + '）',
+               P(cpXr, 0)[0] + 6, P(cpXr, cpY)[1] - 16,
+               { align: 'left', color: '#a7f3d0', border: 'rgba(52,211,153,.5)', bg: 'rgba(4,30,22,.92)' });
+        }
+      }
+
+      /* ============================================================
+       * 十、绘制：液柱模型
+       * ============================================================ */
+      function drawColumn(i, g) {
+        if (g.h < 0.6) return;
+        const cx = g.cx, hb = B / 2;
+        const col = [[cx - hb, 0], [cx + hb, 0], [cx + hb, g.h], [cx - hb, g.h]];
+
+        // 底面积正上方的那根竖直液柱：重量恰好 = F = ρghS
+        poly(col, 'rgba(56,189,248,.20)', 'rgba(125,211,252,.95)', 1.6, false);
+        // 液柱的 3D 侧面，让它读起来是一根"柱子"而不是一个矩形
+        (function () {
+          const A = P(cx + hb, 0), Bp = P(cx + hb, g.h);
+          const C = PB(cx + hb, g.h), Dp = PB(cx + hb, 0);
+          ctx.beginPath();
+          ctx.moveTo(A[0], A[1]); ctx.lineTo(Bp[0], Bp[1]);
+          ctx.lineTo(C[0], C[1]); ctx.lineTo(Dp[0], Dp[1]);
+          ctx.closePath();
+          ctx.fillStyle = 'rgba(56,189,248,.16)'; ctx.fill();
+          ctx.strokeStyle = 'rgba(125,211,252,.55)'; ctx.lineWidth = 1; ctx.stroke();
+        })();
+        (function () {
+          const A = P(cx - hb, g.h), Bp = P(cx + hb, g.h);
+          const C = PB(cx + hb, g.h), Dp = PB(cx - hb, g.h);
+          ctx.beginPath();
+          ctx.moveTo(A[0], A[1]); ctx.lineTo(Bp[0], Bp[1]);
+          ctx.lineTo(C[0], C[1]); ctx.lineTo(Dp[0], Dp[1]);
+          ctx.closePath();
+          ctx.fillStyle = 'rgba(125,211,252,.22)'; ctx.fill();
+          ctx.strokeStyle = 'rgba(125,211,252,.8)'; ctx.lineWidth = 1.2; ctx.stroke();
+        })();
+
+        // 多出来 / 缺掉的那两块三角形：重力恰好 = |G - F|
+        if (Math.abs(g.k) > 1e-4 && g.h > 0.6) {
+          const up = g.k > 0;
+          const c = up ? 'rgba(251,191,36,.95)' : 'rgba(248,113,113,.95)';
+          const cf = up ? 'rgba(251,191,36,.26)' : 'rgba(248,113,113,.24)';
+          for (const s of [-1, 1]) {
+            const p0 = [cx + s * hb, 0], p1 = [cx + s * hb, g.h], p2 = [cx + s * (hb + g.k * g.h), g.h];
+            if (up) poly([p0, p1, p2], cf, c, 1.4);
+            else {
+              // 收口：这块三角形里其实【没有水】，是杯壁压下来的
+              poly([p0, p1, p2], 'rgba(248,113,113,.10)', c, 1.2);
+              const [qx, qy] = P((p0[0] + p2[0]) / 2, (p1[1] + p2[1]) / 2);
+              ctx.save();
+              ctx.strokeStyle = 'rgba(248,113,113,.75)'; ctx.lineWidth = 1.2;
+              for (let t = -14; t <= 14; t += 6) {
+                ctx.beginPath();
+                ctx.moveTo(qx + t - 6, qy + 9); ctx.lineTo(qx + t + 6, qy - 9);
+                ctx.stroke();
+              }
+              ctx.restore();
+            }
+          }
+          if (state.showLabels) {
+            const w = Math.abs(g.wing);
+            const txt = compact()
+              ? (up ? '多出 ' + n1(w) + ' N' : '侧壁压下 ' + n1(w) + ' N')
+              : (up ? '多出的水重 ' + n1(w) + ' N → 由侧壁托住' : '这块没有水 → 侧壁压下来 ' + n1(w) + ' N');
+            // 窄屏上「液柱重」标签已经省掉；但「受力分析」会把 h 读数顶到水面上方，
+            // 所以这里要抬到 h+5.0，和 h 读数拉开 3.4 cm（≈16 px）才不打架
+            tag(txt, cx, g.h + (compact() ? 5.0 : 2.8),
+                { color: up ? '#fde68a' : '#fecaca', border: c, bg: 'rgba(30,16,6,.92)',
+                  font: compact() ? '600 9.5px Inter, "Microsoft YaHei", sans-serif' : null });
+          }
+        }
+        // 窄屏上 1 cm 才 4~5 px，两个标签差 2.6 cm 也会糊在一起 —— 直接省掉，数值侧栏里有
+        if (state.showLabels && !compact() && g.h > 8) {
+          tag('液柱重 = F = ' + n1(g.F) + ' N', cx, g.h - 4.4,
+              { color: '#e0f2fe', border: 'rgba(125,211,252,.6)', bg: 'rgba(6,26,42,.92)' });
+        }
+      }
+
+      /* ============================================================
+       * 十一、绘制：底部电子秤（三杯读数相同）
+       * ============================================================ */
+      function drawScale(i, g) {
+        const cx = g.cx, hb = B / 2 + 1.6;
+        const yTop = -1.95, yBot = -0.15;
+        const A = P(cx - hb, yTop), Bp = P(cx + hb, yTop);
+        const C = PB(cx + hb, yBot), Dp = PB(cx - hb, yBot);
+        ctx.beginPath();
+        ctx.moveTo(A[0], A[1]); ctx.lineTo(Bp[0], Bp[1]);
+        ctx.lineTo(C[0], C[1]); ctx.lineTo(Dp[0], Dp[1]);
+        ctx.closePath();
+        const gd = ctx.createLinearGradient(A[0], A[1], Dp[0], Dp[1]);
+        gd.addColorStop(0, 'rgba(51,65,85,.96)'); gd.addColorStop(1, 'rgba(15,23,42,.96)');
+        ctx.fillStyle = gd; ctx.fill();
+        ctx.strokeStyle = 'rgba(148,163,184,.55)'; ctx.lineWidth = 1.2; ctx.stroke();
+        // 读数
+        const [tx, ty] = P(cx, (yTop + yBot) / 2);
+        ctx.font = '700 10.5px "SFMono-Regular", Consolas, monospace';
+        ctx.fillStyle = '#6ee7b7'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText(n1(g.G) + ' N', tx, ty + 0.5);
+      }
+
+      /* ============================================================
+       * 十二、绘制：参考液面线 + 杯子名 + 深度读数
+       * ============================================================ */
+      let refY = 0;
+      function drawRefLine(gs) {
+        let hmax = 0;
+        for (const g of gs) hmax = Math.max(hmax, g.h);
+        refY = hmax;
+        if (hmax < 0.5) return;
+        ctx.save();
+        ctx.setLineDash([7, 6]);
+        ctx.strokeStyle = 'rgba(248,113,113,.55)'; ctx.lineWidth = 1.3;
+        const A = P(ENV.x0 + 2, hmax), Bp = P(ENV.x1 - 1, hmax);
+        ctx.beginPath(); ctx.moveTo(A[0], A[1]); ctx.lineTo(Bp[0], Bp[1]); ctx.stroke();
+        ctx.restore();
+      }
+      // 标签最后画（压在杯子上），否则会被丙杯挡掉。
+      // 窄屏上它必然和「液柱模型」的多余水重标签撞在一起（1 cm 才 4~5 px），索性只在宽屏显示。
+      function drawRefTag() {
+        if (refY < 0.5 || !state.showLabels || compact()) return;
+        tagS(state.mode === 'h' ? '三杯液面等高' : '最高液面', W - 10, P(0, refY)[1] - 15,
+             { align: 'right', color: '#fecaca', border: 'rgba(248,113,113,.5)', bg: 'rgba(45,10,10,.92)' });
+      }
+
+      function drawNames(gs) {
+        const yName = BELOW.baseY + BELOW.maxL + BELOW.dyName;
+        const ySub = BELOW.baseY + BELOW.maxL + BELOW.dySub;
+        for (let i = 0; i < 3; i++) {
+          const sx = P(gs[i].cx, 0)[0];
+          textS(compact() ? NAMES[i] : NAMES[i] + '（' + SHAPES[i] + '）',
+                sx, yName, BELOW.font, ACC[i]);
+          if (!compact()) {
+            textS('底面积 ' + n1(gs[i].S) + ' cm² · 水深 ' + n1(gs[i].h) + ' cm',
+                  sx, ySub, '600 10.5px Inter, "Microsoft YaHei", sans-serif', 'rgba(148,163,184,.95)');
+          }
+        }
+      }
+
+      function drawDepthTicks(gs) {
+        // 深度读数一般贴在水面下方；受力分析时给 N 让位、浅水时给 G 让位，就挪到水面之上
+        for (let i = 0; i < 3; i++) {
+          const g = gs[i];
+          if (g.h < 1.6) continue;
+          const up = state.showFBD || g.h < 6;
+          const yy = up ? g.h + 1.6 : Math.max(1.3, g.h - 1.8);
+          tag(compact() ? n1(g.h) + ' cm' : 'h = ' + n1(g.h) + ' cm', g.cx, yy,
+              { align: 'center', color: '#e0f2fe', border: 'rgba(125,211,252,.45)', bg: 'rgba(6,26,42,.9)',
+                h: compact() ? 15 : 17, font: compact() ? '600 10px Inter, "Microsoft YaHei", sans-serif' : null });
+        }
+      }
+
+      /* ============================================================
+       * 十三、主绘制
+       * ============================================================ */
+      function draw() {
+        ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+        ctx.clearRect(0, 0, W, HPX);
+        LBOX = [];
+        updateView();
+
+        // 背景网格 + 地面
+        const g0 = P(ENV.x0, 0), g1 = P(ENV.x1, 0);
+        ctx.save();
+        ctx.strokeStyle = 'rgba(56,189,248,.055)'; ctx.lineWidth = 1;
+        for (let x = ENV.x0; x <= ENV.x1; x += 10) {
+          const a = P(x, ENV.y0), b = P(x, ENV.y1);
+          ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke();
+        }
+        for (let y = 0; y <= ENV.y1; y += 10) {
+          const a = P(ENV.x0, y), b = P(ENV.x1, y);
+          ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke();
+        }
+        ctx.restore();
+
+        // 桌面
+        const tA = P(ENV.x0, 0), tB = P(ENV.x1, 0);
+        const tC = PB(ENV.x1, 0), tD = PB(ENV.x0, 0);
+        ctx.beginPath();
+        ctx.moveTo(tA[0], tA[1]); ctx.lineTo(tB[0], tB[1]);
+        ctx.lineTo(tC[0], tC[1]); ctx.lineTo(tD[0], tD[1]);
+        ctx.closePath();
+        const tg = ctx.createLinearGradient(tA[0], tA[1], tD[0], tD[1]);
+        tg.addColorStop(0, 'rgba(51,65,85,.9)'); tg.addColorStop(1, 'rgba(15,23,42,.9)');
+        ctx.fillStyle = tg; ctx.fill();
+        ctx.strokeStyle = 'rgba(125,211,252,.45)'; ctx.lineWidth = 1.6; ctx.stroke();
+
+        const gs = [geo(0), geo(1), geo(2)];
+        calcBelow(gs);
+
+        for (let i = 0; i < 3; i++) drawContainer(i, gs[i]);
+        if (state.showLabels) drawRefLine(gs);
+        if (state.showColumn) for (let i = 0; i < 3; i++) drawColumn(i, gs[i]);
+        if (state.showScale) for (let i = 0; i < 3; i++) drawScale(i, gs[i]);
+        if (state.showG) for (let i = 0; i < 3; i++) drawG(i, gs[i]);
+        if (state.showFBD) for (let i = 0; i < 3; i++) drawFBD(i, gs[i]);
+        for (let i = 0; i < 3; i++) drawF(i, gs[i]);
+        if (state.showLabels) { drawDepthTicks(gs); drawNames(gs); drawRefTag(); }
+      }
+
+      /* ============================================================
+       * 十四、界面刷新
+       * ============================================================ */
+      const $ = (id) => document.getElementById(id);
+
+      function setRel(el, F, G) {
+        const d = F - G;
+        const rel = Math.abs(d) / Math.max(G, 1e-6);
+        if (rel < 0.015) { el.textContent = 'F = G'; el.className = 'rel eq'; }
+        else if (d < 0) { el.textContent = 'F < G'; el.className = 'rel lt'; }
+        else { el.textContent = 'F > G'; el.className = 'rel gt'; }
+      }
+
+      const barEls = [];
+      (function buildBars() {
+        const box = $('lp-bars');
+        const maxN = 60;
+        for (let i = 0; i < 3; i++) {
+          const row = document.createElement('div'); row.className = 'lp-brow';
+          const nm = document.createElement('div'); nm.className = 'nm';
+          nm.textContent = NAMES[i]; nm.style.color = ACC[i];
+          const tr = document.createElement('div'); tr.className = 'lp-btrack';
+          const mk = (cls, lbl) => {
+            const b = document.createElement('div'); b.className = 'lp-bar ' + cls;
+            const l = document.createElement('div'); l.className = 'lbl'; l.textContent = lbl;
+            const f = document.createElement('div'); f.className = 'fill'; f.style.width = '0%';
+            const v = document.createElement('div'); v.className = 'val'; v.textContent = '—';
+            b.appendChild(l); b.appendChild(f); b.appendChild(v);
+            tr.appendChild(b);
+            return { fill: f, val: v };
+          };
+          const bf = mk('f', 'F'), bg = mk('g', 'G');
+          row.appendChild(nm); row.appendChild(tr); box.appendChild(row);
+          barEls.push({ f: bf, g: bg, maxN });
+        }
+      })();
+
+      function refreshDOM(gs) {
+        for (let i = 0; i < 3; i++) {
+          const g = gs[i];
+          $('lp-h-' + i).textContent = n1(g.h) + ' cm';
+          $('lp-f-' + i).textContent = n1(g.F) + ' N';
+          $('lp-g-' + i).textContent = n1(g.G) + ' N';
+          setRel($('lp-r-' + i), g.F, g.G);
+        }
+        $('lp-mF0').textContent = n1(gs[0].F) + ' N';
+        $('lp-mF1').textContent = n1(gs[1].F) + ' N';
+        $('lp-mF2').textContent = n1(gs[2].F) + ' N';
+        $('lp-mG').textContent = n1(gs[0].G) + ' N';
+
+        const maxN = barEls[0].maxN;
+        for (let i = 0; i < 3; i++) {
+          const g = gs[i];
+          barEls[i].f.fill.style.width = clamp(g.F / maxN * 100, 0, 100) + '%';
+          barEls[i].f.val.textContent = n1(g.F);
+          barEls[i].g.fill.style.width = clamp(g.G / maxN * 100, 0, 100) + '%';
+          barEls[i].g.val.textContent = n1(g.G);
+        }
+
+        // 结论逐条点亮
+        $('lp-c1').className = gs[0].h > 0.5 ? 'on' : '';
+        $('lp-c2').className = gs[0].h > 0.5 ? 'on' : '';
+        $('lp-c3').className = (Math.abs(gs[0].F - gs[0].G) / Math.max(gs[0].G, 1e-6) < 0.015 && gs[0].h > 0.5) ? 'on' : '';
+        $('lp-c4').className = (gs[1].F < gs[1].G - 0.05) ? 'on' : '';
+        $('lp-c5').className = (gs[2].F > gs[2].G + 0.05) ? 'on' : '';
+
+        refreshFBD(gs[state.pick]);
+
+        // 提示条
+        if (state.mode === 'V') {
+          $('lp-verdict').innerHTML = '<b>注入等量水：</b>三杯水一样重（G 相同）。' +
+            '乙敞口杯里的水最浅，底部压力最小；丙收口杯里的水最深，底部压力最大。' +
+            '<span class="hi">同样重的水，压底部的力却不一样</span>——因为底部的压力只看深度，不看水的多少。';
+        } else {
+          $('lp-verdict').innerHTML = '<b>注入等高水：</b>三杯水深一样，底部压力完全相同（F 相同）。' +
+            '但乙敞口杯装的水最多、丙收口杯装的水最少，<span class="hi">重力 G 反而不一样</span>。' +
+            '底部压力一样大，不代表液体一样重。';
+        }
+      }
+
+      function refreshFBD(g) {
+        const box = $('lp-fbd-box');
+        const upTxt = g.Wy > 0.02 ? '向上' : (g.Wy < -0.02 ? '向下' : '为零');
+        const cls = g.Wy > 0.02 ? 'up' : (g.Wy < -0.02 ? 'dn' : 'zero');
+        const sign = g.Wy >= 0 ? '−' : '+';
+        box.innerHTML =
+          '<div class="eq">' +
+            'N + F<sub>侧壁</sub> = G<br>' +
+            'N = G ' + sign + ' ' + n1(Math.abs(g.Wy)) + ' = ' + n1(g.F) + ' N' +
+          '</div>' +
+          '<div class="row"><span>液体重力 G</span><b>' + n1(g.G) + ' N ↓</b></div>' +
+          '<div class="row"><span>侧壁竖直合力</span><b class="' + cls + '">' +
+            (g.Wy >= 0 ? '+' : '−') + n1(Math.abs(g.Wy)) + ' N ' + (g.Wy > 0.02 ? '↑' : (g.Wy < -0.02 ? '↓' : '')) + '</b></div>' +
+          '<div class="row"><span>底部支持力 N</span><b>' + n1(g.F) + ' N ↑</b></div>' +
+          '<div class="row" style="margin-top:6px"><span>液体压底部的力 F = N</span><b style="color:#fca5a5">' + n1(g.F) + ' N ↓</b></div>' +
+          '<div style="margin-top:8px;color:#7c93a5;font-size:10.5px;line-height:1.6">' +
+            '侧壁斜 ' + n1(Math.abs(g.k) * 100) + ' %，壁面压力 ' + n1(g.wallMag) + ' N，' +
+            '其中竖直方向只占 ' + n1(Math.abs(g.Wy) / 2) + ' N —— 所以 F 和 G 只差一点点。' +
+          '</div>';
+      }
+
+      /* ============================================================
+       * 十五、交互
+       * ============================================================ */
+      function invalidate() { dirty = true; }
+      let dirty = true;
+
+      function resize() {
+        const r = canvas.getBoundingClientRect();
+        DPR = Math.min(window.devicePixelRatio || 1, 2);
+        W = Math.max(1, r.width); HPX = Math.max(1, r.height);
+        canvas.width = Math.round(W * DPR);
+        canvas.height = Math.round(HPX * DPR);
+        invalidate();
+      }
+
+      function syncFillLabel() {
+        const v = parseFloat($('lp-fill').value);
+        if (state.mode === 'V') { state.V = v; $('lp-fill-v').textContent = v + ' cm³'; }
+        else { state.hLevel = v; $('lp-fill-v').textContent = n1(v) + ' cm'; }
+      }
+
+      /* state → 控件。程序里改了 state（自检钩子、复位）之后必须调它，
+         否则滑块停在旧值上，画面和控件对不上。 */
+      function syncInputs() {
+        const m = state.mode;
+        const fill = $('lp-fill');
+        if (m === 'V') {
+          fill.min = VMIN; fill.max = VMAX; fill.step = 50;
+          $('lp-fill-hint').innerHTML = '三只杯子注入<b>同样多</b>的水（体积相同、重力相同）';
+        } else {
+          fill.min = HMIN; fill.max = HMAX; fill.step = 0.5;
+          $('lp-fill-hint').innerHTML = '三只杯子注入<b>同样深</b>的水（液面一样高）';
+        }
+        fill.value = (m === 'V') ? state.V : state.hLevel;
+        syncFillLabel();
+
+        const kEl = $('lp-k');
+        kEl.value = Math.round(state.kS * 1000) / 10;
+        $('lp-k-v').textContent = kEl.value + ' %';
+
+        $('lp-mode-v').classList.toggle('active', m === 'V');
+        $('lp-mode-h').classList.toggle('active', m === 'h');
+        $('lp-g').checked = state.showG;
+        $('lp-fbd').checked = state.showFBD;
+        $('lp-col').checked = state.showColumn;
+        $('lp-scale').checked = state.showScale;
+        $('lp-lab').checked = state.showLabels;
+        for (let j = 0; j < 3; j++) $('lp-pick-' + j).classList.toggle('active', j === state.pick);
+        invalidate();
+      }
+
+      function setMode(m) {
+        state.mode = m;
+        syncInputs();
+      }
+
+      $('lp-mode-v').addEventListener('click', () => setMode('V'));
+      $('lp-mode-h').addEventListener('click', () => setMode('h'));
+
+      $('lp-fill').addEventListener('input', () => {
+        pour.active = false; pour.p = 1;
+        syncFillLabel(); invalidate();
+      });
+
+      $('lp-k').addEventListener('input', () => {
+        state.kS = parseFloat($('lp-k').value) / 100;
+        $('lp-k-v').textContent = $('lp-k').value + ' %';
+        invalidate();
+      });
+
+      $('lp-pour').addEventListener('click', () => {
+        pour.active = true; pour.p = 0; pour.dir = 1; pour.paused = false;
+        $('lp-pour').textContent = '⏸ 暂停注水';
+        invalidate();
+      });
+      $('lp-reset').addEventListener('click', () => {
+        state.mode = 'V'; state.V = 3000; state.hLevel = 18; state.kS = 0.08;
+        state.showG = true; state.showFBD = false; state.showColumn = false;
+        state.showScale = false; state.showLabels = true; state.pick = 2;
+        pour.active = false; pour.p = 1; pour.paused = false;
+        $('lp-pour').textContent = '▶ 演示注水';
+        syncInputs();
+      });
+
+      const bindChk = (id, key) => {
+        const el = $(id);
+        el.addEventListener('change', () => { state[key] = el.checked; invalidate(); });
+      };
+      bindChk('lp-g', 'showG');
+      bindChk('lp-fbd', 'showFBD');
+      bindChk('lp-col', 'showColumn');
+      bindChk('lp-scale', 'showScale');
+      bindChk('lp-lab', 'showLabels');
+
+      for (let i = 0; i < 3; i++) {
+        $('lp-pick-' + i).addEventListener('click', () => {
+          state.pick = i;
+          for (let j = 0; j < 3; j++) $('lp-pick-' + j).classList.toggle('active', j === i);
+          invalidate();
+        });
+      }
+
+      window.addEventListener('keydown', (e) => {
+        if (e.code === 'Space' && pour.active) { e.preventDefault(); pour.paused = !pour.paused; }
+      });
+
+      $('lp-legend').textContent = '红箭头 F 液体压底部 · 紫箭头 G 液体重力 · 蓝箭头 N 底部支持力 · 绿箭头 侧壁压力';
+
+      /* ============================================================
+       * 十六、动画循环
+       * ============================================================ */
+      let lastTs = 0;
+      function loop(ts) {
+        requestAnimationFrame(loop);
+        const dt = lastTs ? Math.min(0.05, (ts - lastTs) / 1000) : 0;
+        lastTs = ts;
+        if (pour.active && !pour.paused) {
+          pour.p = Math.min(1, pour.p + dt / 2.2);
+          if (pour.p >= 1) { pour.active = false; $('lp-pour').textContent = '▶ 演示注水'; }
+          dirty = true;
+        }
+        if (dirty) { dirty = false; draw(); refreshDOM([geo(0), geo(1), geo(2)]); }
+      }
+
+      /* ============================================================
+       * 十七、启动
+       * ============================================================ */
+      window.addEventListener('resize', resize);
+      resize();
+      setMode('V');
+      draw();
+      refreshDOM([geo(0), geo(1), geo(2)]);
+      requestAnimationFrame(loop);
+
+      // 自检钩子
+      window.__lp = {
+        state, pour, geo, solveH, B, D, H, VMAX, VMIN, RHO, GRAV,
+        ENV, view: VIEW, canvas,
+        effFill, setMode,
+        labels: () => LBOX,
+        set(partial) { Object.assign(state, partial); syncInputs(); },
+        redraw() { draw(); },
+        isDirty() { return dirty; }
+      };
+    })();
+    </script>
+</body>
+</html>
