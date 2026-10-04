@@ -1,0 +1,1280 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>虚拟物理实验 - 平面镜成像立体模型</title>
+    <link rel="stylesheet" href="style.css">
+    <style>
+        :root {
+            --bg: #020617;
+            --line: rgba(148, 163, 184, .18);
+            --primary: #3b82f6;
+            --secondary: #06b6d4;
+            --accent: #8b5cf6;
+            --text: #f8fafc;
+            --muted: #94a3b8;
+        }
+
+        body {
+            font-family: 'Inter', 'Microsoft YaHei', 'Noto Sans SC', sans-serif;
+            margin: 0;
+            /* 这一页不放站内页头（页头是 sticky，一滚动就盖住实验区），留 20px 即可 */
+            padding: 20px;
+            background: var(--bg);
+            color: var(--text);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+            box-sizing: border-box;
+        }
+
+        body::before {
+            content: "";
+            position: fixed;
+            inset: 0;
+            z-index: -1;
+            pointer-events: none;
+            background:
+                radial-gradient(circle at 18% 22%, rgba(59, 130, 246, .16), transparent 42%),
+                radial-gradient(circle at 82% 68%, rgba(139, 92, 246, .14), transparent 44%),
+                radial-gradient(circle at 50% 100%, rgba(6, 182, 212, .10), transparent 55%);
+        }
+
+        /* ===== 可交互三维实验台（与站内其它 lab3d 页面同一套视觉基线）===== */
+        .lab3d {
+            width: 100%;
+            max-width: 1600px;
+            margin: 8px auto 26px;
+            box-sizing: border-box;
+            overflow: hidden;
+            border: 1px solid rgba(56, 189, 248, .22);
+            border-radius: 18px;
+            background: linear-gradient(160deg, rgba(15, 23, 42, .92), rgba(2, 6, 23, .96));
+            color: #e2e8f0;
+            box-shadow: 0 26px 70px rgba(2, 6, 23, .6), 0 0 0 1px rgba(2, 6, 23, .8) inset;
+        }
+        .lab3d * { box-sizing: border-box; }
+        .lab3d-top {
+            display: flex; justify-content: space-between; gap: 15px; align-items: center;
+            padding: 17px 23px; border-bottom: 1px solid var(--line);
+            background: linear-gradient(90deg, rgba(59, 130, 246, .12), rgba(6, 182, 212, .05) 45%, transparent);
+        }
+        .lab3d-kicker { color: #22d3ee; font-size: 11px; font-weight: 800; letter-spacing: .2em; }
+        .lab3d-top h2 { margin: 3px 0 0; color: #f8fafc; font-size: 21px; letter-spacing: .02em; }
+        .lab3d-top p { margin: 4px 0 0; color: #94a3b8; font-size: 12px; }
+        .lab3d-status {
+            border: 1px solid rgba(34, 211, 238, .45); border-radius: 99px; padding: 6px 12px;
+            color: #67e8f9; font-size: 12px; white-space: nowrap; background: rgba(6, 182, 212, .08);
+        }
+        .lab3d-layout { display: grid; grid-template-columns: minmax(0, 1fr) 320px; }
+        .lab3d-main {
+            min-width: 0; padding: 15px 16px 16px;
+            background: radial-gradient(circle at 43% 36%, rgba(30, 64, 100, .55), rgba(8, 22, 36, .92) 62%, rgba(3, 10, 18, .96));
+        }
+        .lab3d-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; padding-bottom: 12px; }
+        .lab3d-toolbar .toolbar-label { color: #94a3b8; font-size: 12px; margin-right: 5px; }
+        .lab3d button {
+            padding: 7px 12px; border: 1px solid rgba(148, 163, 184, .25); border-radius: 8px;
+            background: rgba(30, 41, 59, .7); color: #cbd5e1; font-size: 12px; font-weight: 600;
+            box-shadow: none; transition: background .2s, border-color .2s, color .2s;
+        }
+        .lab3d button:hover { transform: none; box-shadow: none; background: rgba(51, 65, 85, .85); }
+        .lab3d button.active {
+            background: rgba(59, 130, 246, .25); border-color: #38bdf8; color: #e0f2fe;
+            box-shadow: 0 0 14px rgba(56, 189, 248, .3);
+        }
+        .lab3d button:disabled { opacity: .42; cursor: not-allowed; }
+        .lab3d-toolbar .toolbar-spacer { flex: 1; }
+        .lab3d-stage {
+            position: relative; height: clamp(400px, 49vw, 580px);
+            border: 1px solid rgba(56, 189, 248, .2); border-radius: 12px; overflow: hidden;
+            background: #061423;
+        }
+        .lab3d-stage canvas {
+            display: block; width: 100%; height: 100%;
+            border: 0; border-radius: 0; box-shadow: none; background: transparent;
+            cursor: grab; touch-action: none;
+        }
+        .lab3d-stage canvas:active { cursor: grabbing; }
+        /* 指针落在可拖动物体上时换光标（放在 :active 之后才能覆盖它） */
+        .lab3d-stage canvas.pick { cursor: move; }
+        .lab3d-stage canvas.pick:active { cursor: move; }
+        .lab3d-stage .stage-hint {
+            position: absolute; top: 13px; left: 15px; pointer-events: none; font-size: 12px;
+            color: #bae6fd; background: rgba(2, 6, 23, .78); border: 1px solid rgba(56, 189, 248, .25);
+            padding: 7px 11px; border-radius: 8px;
+        }
+        .lab3d-stage .stage-hint b {
+            display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+            background: #22d3ee; vertical-align: 2px; margin-right: 6px; box-shadow: 0 0 8px #22d3ee;
+        }
+        .lab3d-stage .stage-help {
+            position: absolute; right: 14px; bottom: 13px; pointer-events: none;
+            color: #93b4c4; font-size: 11px; background: rgba(2, 6, 23, .72); padding: 6px 10px; border-radius: 7px;
+        }
+        /* 重合成功时在舞台上闪一条横幅——这是整个实验的关键动作，要有明确回馈 */
+        .lab3d-stage .stage-flag {
+            position: absolute; left: 50%; transform: translateX(-50%); bottom: 44px;
+            pointer-events: none; font-size: 12px; font-weight: 700;
+            padding: 7px 14px; border-radius: 99px; opacity: 0; transition: opacity .25s;
+            background: rgba(16, 185, 129, .18); border: 1px solid rgba(52, 211, 153, .6); color: #a7f3d0;
+        }
+        .lab3d-stage .stage-flag.show { opacity: 1; }
+        .lab3d-foot {
+            display: flex; align-items: center; flex-wrap: wrap; gap: 12px 18px;
+            padding: 12px 3px 1px; font-size: 12px; color: #b6c8d4;
+        }
+        .lab3d-foot label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+        .lab3d-foot input { accent-color: #22d3ee; margin: 0; }
+        .lab3d-foot .legend { margin-left: auto; color: #8ba7b6; }
+        .lab3d-sidebar {
+            padding: 18px; color: #cbd5e1; border-left: 1px solid var(--line);
+            background: linear-gradient(180deg, rgba(15, 23, 42, .75), rgba(2, 6, 23, .6));
+        }
+        .lab3d-sidebar h3 { margin: 0 0 15px; color: #e2e8f0; font-size: 15px; letter-spacing: .05em; }
+        .lab3d-sidebar h3:not(:first-child) { margin-top: 22px; }
+        .lab3d-field { margin: 0 0 16px; }
+        .lab3d-field label, .lab3d-field .field-label {
+            display: flex; justify-content: space-between; gap: 8px; align-items: baseline;
+            color: #cbd5e1; font-size: 12px; font-weight: 700;
+        }
+        .lab3d-field output { color: #38bdf8; font-size: 13px; font-weight: 800; }
+        .lab3d-field input[type="range"] { display: block; width: 100%; margin: 11px 0 5px; }
+        .lab3d-field input[type="range"]::-webkit-slider-thumb { background: linear-gradient(135deg, #3b82f6, #22d3ee); }
+        .lab3d-field small { color: #64748b; font-size: 10px; line-height: 1.5; display: block; }
+        .lab3d-metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 12px; }
+        .lab3d-metric {
+            padding: 12px 13px; border: 1px solid rgba(56, 189, 248, .18); border-radius: 10px;
+            background: linear-gradient(160deg, rgba(30, 58, 95, .55), rgba(15, 23, 42, .6));
+        }
+        .lab3d-metric span { display: block; font-size: 11px; color: #9fb8c6; }
+        .lab3d-metric strong { display: block; margin-top: 4px; color: #e0f2fe; font-size: 17px; }
+        .lab3d-metric.ok strong { color: #6ee7b7; }
+        .lab3d-metric.bad strong { color: #fca5a5; }
+        .lab3d-metric.warn strong { color: #fcd34d; }
+        .lab3d-note { margin: 12px 0 0; color: #9fb8c6; font-size: 12px; line-height: 1.65; }
+        .lab3d-note b { color: #7dd3fc; }
+
+        /* 实验步骤：当前一步高亮，做完了打勾 */
+        .step-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
+        .step-list li {
+            display: flex; gap: 8px; align-items: flex-start;
+            padding: 8px 10px; border-radius: 9px; font-size: 12px; line-height: 1.5;
+            border: 1px solid rgba(148, 163, 184, .16); background: rgba(148, 163, 184, .05);
+            color: #a9bccc; transition: background .2s, border-color .2s, color .2s;
+        }
+        .step-list li i {
+            font-style: normal; flex: none; width: 16px; height: 16px; border-radius: 50%;
+            display: grid; place-items: center; font-size: 10px; font-weight: 800;
+            background: rgba(148, 163, 184, .18); color: #94a3b8; margin-top: 1px;
+        }
+        .step-list li.cur { border-color: rgba(56, 189, 248, .55); background: rgba(56, 189, 248, .10); color: #e0f2fe; }
+        .step-list li.cur i { background: #38bdf8; color: #052437; }
+        .step-list li.on { border-color: rgba(52, 211, 153, .5); background: rgba(16, 185, 129, .12); color: #d1fae5; }
+        .step-list li.on i { background: #10b981; color: #04231a; }
+
+        /* 结论卡：四条结论，逐条点亮 */
+        .law-list { margin: 0; padding: 0; list-style: none; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+        .law-list li {
+            display: flex; gap: 8px; align-items: flex-start;
+            padding: 9px 11px; border-radius: 9px; font-size: 12px; line-height: 1.55;
+            border: 1px solid rgba(148, 163, 184, .16); background: rgba(148, 163, 184, .05);
+            color: #b6c8d4; transition: background .2s, border-color .2s, color .2s;
+        }
+        .law-list li.on {
+            border-color: rgba(52, 211, 153, .5); background: rgba(16, 185, 129, .12); color: #d1fae5;
+        }
+        .law-list li i { font-style: normal; color: #64748b; flex: none; font-weight: 700; }
+        .law-list li.on i { color: #6ee7b7; }
+
+        .lab3d-btnrow { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 4px; }
+        .lab3d-btnrow button { width: 100%; }
+        .lab3d-btnrow button.primary {
+            border-color: rgba(56, 189, 248, .55); background: rgba(56, 189, 248, .16); color: #e0f2fe;
+        }
+
+        @media (max-width: 900px) {
+            .lab3d-layout { grid-template-columns: minmax(0, 1fr); }
+            .lab3d-sidebar { border-left: 0; border-top: 1px solid var(--line); }
+        }
+        @media (max-width: 620px) {
+            body { padding-left: 10px; padding-right: 10px; }
+            .lab3d { border-radius: 14px; }
+            .lab3d-top { padding: 15px; }
+            .lab3d-top h2 { font-size: 17px; }
+            .lab3d-status { display: none; }
+            .lab3d-main { padding: 10px; }
+            .lab3d-toolbar { gap: 6px; }
+            .lab3d-toolbar .toolbar-label, .lab3d-toolbar .toolbar-spacer { display: none; }
+            .lab3d-toolbar button { padding: 6px 9px; font-size: 11px; }
+            .lab3d-stage { height: 330px; }
+            .lab3d-stage .stage-help { font-size: 10px; }
+            .lab3d-sidebar { padding: 16px; }
+            .lab3d-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+            .law-list { grid-template-columns: minmax(0, 1fr); }
+            .lab3d-foot .legend { margin-left: 0; width: 100%; }
+        }
+    </style>
+    <script src="auth-check.js"></script>
+</head>
+<body>
+    <!-- 这一页不放站内页头：页头是 position:sticky，一滚动就贴在顶上盖住实验区。
+         旗舰 3D 实验页（小孔成像2.html、光的反射立体模型.html）本来就没有页头。
+         script.js 注入用户信息前有 `if (nav)` 判空，缺 .nav 不会报错。 -->
+    <section class="lab3d" aria-label="探究平面镜成像">
+      <div class="lab3d-top">
+        <div>
+          <div class="lab3d-kicker">INTERACTIVE OPTICS LAB · 三维光学实验</div>
+          <h2>探究平面镜成像 · 立体模型</h2>
+          <p>竖一块玻璃板，点燃蜡烛 A，把没点燃的蜡烛 B 移到玻璃板后，直到它与 A 的像完全重合</p>
+        </div>
+        <span class="lab3d-status">● 实时物理模拟</span>
+      </div>
+
+      <div class="lab3d-layout">
+        <div class="lab3d-main">
+          <div class="lab3d-toolbar" role="group" aria-label="观察视角">
+            <span class="toolbar-label">观察视角</span>
+            <button type="button" class="active" data-view="perspective">立体视角</button>
+            <button type="button" data-view="front">正对玻璃板</button>
+            <button type="button" data-view="top">俯视装置</button>
+            <button type="button" data-view="side">侧视（看对称）</button>
+            <button type="button" data-view="back">玻璃板后</button>
+            <span class="toolbar-spacer"></span>
+            <button type="button" id="mir-reset-view">↺ 重置视角</button>
+          </div>
+
+          <div class="lab3d-stage">
+            <canvas id="mir-canvas" aria-label="可拖动旋转、滚轮缩放，并可拖动蜡烛与光屏的平面镜成像三维装置"></canvas>
+            <div class="stage-hint"><b></b>三维实验场景 · 玻璃板 → 蜡烛 A → 蜡烛 B → 光屏</div>
+            <div class="stage-help">拖动空白处旋转 · 滚轮缩放 · 直接拖动蜡烛 / 光屏</div>
+            <div class="stage-flag" id="mir-flag">完全重合 ✓ 像与物到玻璃板的距离相等</div>
+          </div>
+
+          <div class="lab3d-foot">
+            <label><input id="mir-ghost" type="checkbox" checked>显示像的位置</label>
+            <label><input id="mir-aid" type="checkbox" checked>显示辅助线</label>
+            <label><input id="mir-ruler" type="checkbox" checked>显示刻度尺</label>
+            <label><input id="mir-marks" type="checkbox" checked>显示记录点</label>
+            <label><input id="mir-front" type="checkbox">只看玻璃板前</label>
+            <label><input id="mir-back" type="checkbox">只看玻璃板后</label>
+            <span class="legend" id="mir-legend"></span>
+          </div>
+
+          <div class="lab3d-metrics" aria-live="polite">
+            <div class="lab3d-metric"><span>物距 u（A → 玻璃板）</span><strong id="mir-mu">—</strong></div>
+            <div class="lab3d-metric ok"><span>像距 v（像 → 玻璃板）</span><strong id="mir-mv">—</strong></div>
+            <div class="lab3d-metric"><span>B → 玻璃板</span><strong id="mir-mb">—</strong></div>
+            <div class="lab3d-metric" id="mir-mcard"><span>B 与像</span><strong id="mir-mc">未重合</strong></div>
+          </div>
+
+          <ul class="law-list" style="margin-top:12px">
+            <li id="mir-c1"><i>①</i><span>像与物大小相等（B 与像完全重合）</span></li>
+            <li id="mir-c2"><i>②</i><span>像到玻璃板的距离等于物到玻璃板的距离</span></li>
+            <li id="mir-c3"><i>③</i><span>像与物的连线与玻璃板垂直</span></li>
+            <li id="mir-c4"><i>④</i><span>像是虚像——光屏上承接不到</span></li>
+          </ul>
+
+          <p class="lab3d-note" id="mir-verdict"><b>观察提示：</b>玻璃板既能反射又能透光，所以它后面的替代蜡烛 B 能透过玻璃被看见。把 B 移到「A 的像」的位置，从前面看过去 B 就像被点着了一样——那一瞬间 B 就和像完全重合了。</p>
+        </div>
+
+        <aside class="lab3d-sidebar">
+          <h3>实验步骤</h3>
+          <ol class="step-list" id="mir-steps"></ol>
+
+          <h3>位置微调</h3>
+          <div class="lab3d-field">
+            <label for="mir-az">物距 u · A 到玻璃板 <output id="mir-az-v">13.5 cm</output></label>
+            <input id="mir-az" type="range" min="2.5" max="19.5" value="13.5" step="0.5">
+            <small>拖动蜡烛 A 也可以，滑块用来精确到 0.5 cm</small>
+          </div>
+          <div class="lab3d-field">
+            <label for="mir-ax">A 的左右位置 <output id="mir-ax-v">5.5 cm</output></label>
+            <input id="mir-ax" type="range" min="-22" max="22" value="5.5" step="0.5">
+          </div>
+          <div class="lab3d-field">
+            <label for="mir-bx">B 的左右位置 <output id="mir-bx-v">0.0 cm</output></label>
+            <input id="mir-bx" type="range" min="-22" max="22" value="0" step="0.5">
+          </div>
+          <div class="lab3d-field">
+            <label for="mir-bz">B 到玻璃板 <output id="mir-bz-v">6.2 cm</output></label>
+            <input id="mir-bz" type="range" min="2" max="19.5" value="6" step="0.5">
+          </div>
+
+          <div class="lab3d-btnrow">
+            <button type="button" class="primary" id="mir-light">🔥 点燃蜡烛 A</button>
+            <button type="button" class="primary" id="mir-record">记录这一组</button>
+          </div>
+          <div class="lab3d-btnrow" style="margin-top:8px">
+            <button type="button" id="mir-reset" style="grid-column:1/-1">↺ 重做实验</button>
+          </div>
+          <small style="color:#64748b;font-size:10px;display:block;margin-top:8px;line-height:1.5">
+            记录会在白纸上留下 A、B 的位置点和它们的连线，用来判断「像与物关于玻璃板对称」。
+          </small>
+        </aside>
+      </div>
+    </section>
+
+    <script src="protect.js"></script>
+    <script>
+    (function () {
+      'use strict';
+      const canvas = document.getElementById('mir-canvas');
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      const PI2 = Math.PI * 2, DEG = Math.PI / 180;
+      const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
+
+      /* ============================================================
+       * 向量工具
+       * ============================================================ */
+      const add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+      const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+      const scl = (a, k) => [a[0] * k, a[1] * k, a[2] * k];
+      const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+      const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+      const vlen = a => Math.hypot(a[0], a[1], a[2]);
+      const vnorm = a => { const l = vlen(a) || 1; return [a[0] / l, a[1] / l, a[2] / l]; };
+
+      /* ============================================================
+       * 场景常量（世界坐标：y 向上；x/z 水平。1 世界单位 = 10 cm）
+       * ------------------------------------------------------------
+       * 玻璃板【竖直】立在 z = 0 平面上，法线是水平的 (0,0,1)。
+       * 这是实验的真实摆法：玻璃板竖着插在桌面上，蜡烛 A 放在它前面（z > 0），
+       * 替代蜡烛 B 放在它后面（z < 0）。像的位置就是 A 关于 z = 0 的镜像，
+       * 即 (ax, 0, -az)——不需要「算」成像，取镜像就严格对称。
+       * ============================================================ */
+      const U       = 10;         // 1 世界单位 = 10 cm，读数时乘它
+      const TABLE_W = 3.05;       // 桌面半宽
+      const TABLE_D = 2.60;       // 桌面半深
+      const PT_W    = 2.70;       // 白纸半宽
+      const PT_D    = 2.30;       // 白纸半深
+      const GW      = 0.82;       // 玻璃板半宽
+      const GH      = 1.70;       // 玻璃板高
+      const CR      = 0.135;      // 蜡烛半径（直径 2.7 cm，与课本上那两支短粗蜡烛接近）
+      const CH      = 1.20;       // 蜡烛高
+      const WK      = 0.10;       // 烛芯长
+      const FL      = 0.34;       // 火焰高
+      const SCR_W   = 0.55;       // 光屏半宽
+      const SCR_H   = 1.00;       // 光屏高（比蜡烛略矮，和真实的白色卡纸差不多）
+      const CAMD    = 13.5;       // 相机距离基准。取得比场景大得多，透视就弱，
+                                  // 前后两支蜡烛看起来才一样大——这是个测量实验，
+                                  // 近大远小会让人误判「B 是不是和像一样大」。
+      const TARGET  = [0, 0.78, 0];
+      const RULER_X = -1.92;      // 刻度尺所在位置（沿 z 轴摆放）
+      const PAD     = 0.34;       // 蜡烛 / 光屏离纸边的最小留白
+      const ENV_TOP = CH + WK + FL;   // 蜡烛能到的最高点（火焰尖）
+
+      const VIEWS = {
+        perspective: [0.62, 0.42],
+        // 「正对玻璃板」故意偏一点点（0.18 而不是 0）：完全正对着看时，
+        // 蜡烛 A 和它自己的像在视线里是重合的，像会被 A 整个挡住——
+        // 真实实验里也是稍微侧一点头才能同时看见实物和像。
+        front:       [0.18, 0.20],
+        top:         [0.25, 1.28],
+        side:        [1.5708, 0.26],
+        back:        [Math.PI, 0.36]
+      };
+
+      const state = {
+        yaw: VIEWS.perspective[0], pitch: VIEWS.perspective[1], zoom: 1,
+        // 蜡烛 A（玻璃板前，z > 0）
+        ax: 0.55, az: 1.35,
+        // 替代蜡烛 B（玻璃板后，z < 0）
+        bx: 0.00, bz: -0.60,
+        // 光屏（玻璃板后）
+        sx: 0.00, sz: -0.40,
+        aLit: false,                 // A 是否点燃
+        snapped: false,              // B 是否被「吸」到像的位置
+        coincideErr: 1e9,            // B 与像的距离（世界单位）
+        screenChecked: false,        // 是否做过光屏验证
+        screenHit: false,            // 此刻光屏是否正放在像的位置
+        marks: [],                   // 记录下来的位置组
+        showGhost: true, showAid: true, showRuler: true, showMarks: true,
+        onlyFront: false, onlyBack: false,
+        w: 1, h: 1, dpr: 0, dirty: true,
+        dragging: false, drag: null, dragOff: [0, 0],
+        lastX: 0, lastY: 0, hover: null, view: 'perspective',
+        drawn: { candle: 0, glass: 0 }
+      };
+
+      const imagePos = () => ({ x: state.ax, z: -state.az });   // 像：A 关于 z=0 的镜像
+
+      /* ============================================================
+       * 物理：重合判定
+       * ------------------------------------------------------------
+       * B 与像「完全重合」= 在桌面上的位置相同。鼠标拖 3D 物体精度有限，
+       * 所以进了 1.3 cm 就吸到像上（松手也不会掉），要离开得拖过 2.0 cm ——
+       * 这叫回差，不然一吸附就粘住，学生想演示「没重合」都拖不开。
+       * ============================================================ */
+      function updateCoincide() {
+        const im = imagePos();
+        let d = Math.hypot(state.bx - im.x, state.bz - im.z);
+        if (state.snapped) { if (d > 0.20) state.snapped = false; }
+        else { if (d < 0.13) state.snapped = true; }
+        if (state.snapped) { state.bx = im.x; state.bz = im.z; d = 0; }
+        state.coincideErr = d;
+        // 光屏是否正放在像的位置（±1.5 cm 内）
+        state.screenHit = Math.hypot(state.sx - im.x, state.sz - im.z) < 0.15;
+        if (state.screenHit) state.screenChecked = true;
+      }
+
+      /* ============================================================
+       * 相机：轨道 + 透视投影
+       * ============================================================ */
+      // 取景包络的采样点：把【所有会被画出来的东西】的极点列出来——
+      // 桌面四角、玻璃板顶端两角、蜡烛能到的最高点（纸的四角附近）、光屏顶端两角。
+      // 投影是射影映射，凸多面体投影后就是它顶点投影的凸包，所以列极点就够了。
+      // 【取景】和【自检】必须用这同一份采样——两边各写一套、密度不同，边界框就不同，
+      // 会出现「自检说出界、而相机按自己的框算确实没出界」的假失败。
+      // 【坑】图省事用一个把一切罩住的大盒子是错的：盒子顶上那四个角根本没有东西，
+      // 白白把整个装置压小了一圈（实测装置会小掉约 1/4）。
+      function envelopePoints() {
+        const pts = [];
+        for (const sx of [-1, 1]) for (const sz of [-1, 1]) pts.push([sx * TABLE_W, 0, sz * TABLE_D]);
+        pts.push([-GW, GH, 0], [GW, GH, 0]);
+        for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+          pts.push([sx * (PT_W - PAD), ENV_TOP, sz * (PT_D - PAD)]);
+        }
+        pts.push([-SCR_W, SCR_H, -0.18], [SCR_W, SCR_H, -0.18]);
+        return pts;
+      }
+
+      function makeCam(q, w, h) {
+        const cy = Math.cos(state.yaw), sy = Math.sin(state.yaw);
+        const cp = Math.cos(state.pitch), sp = Math.sin(state.pitch);
+        const dir = [cp * sy, sp, cp * cy];              // 目标 → 相机
+        q.dist = CAMD / state.zoom;
+        q.eye = add(TARGET, scl(dir, q.dist));
+        q.fwd = scl(dir, -1);
+        q.right = vnorm(cross(q.fwd, [0, 1, 0]));
+        q.up = cross(q.right, q.fwd);
+        // 取景：对【固定的场景包络】采样（见 envelopePoints）。
+        // 不能用当前几何去算——那样每拖一次蜡烛视野就跟着一缩一放，晃得没法用。
+        const pts = envelopePoints();
+        let loR = 1e9, hiR = -1e9, loU = 1e9, hiU = -1e9;
+        for (const p of pts) {
+          const v = sub(p, q.eye);
+          const z = Math.max(0.05, dot(v, q.fwd));
+          const r = dot(v, q.right) / z, u = dot(v, q.up) / z;
+          loR = Math.min(loR, r); hiR = Math.max(hiR, r);
+          loU = Math.min(loU, u); hiU = Math.max(hiU, u);
+        }
+        const s = Math.min(w * 0.94 / Math.max(1e-6, hiR - loR),
+                           h * 0.90 / Math.max(1e-6, hiU - loU));
+        q.focal = s;
+        q.px = w * 0.5 - (loR + hiR) * 0.5 * s;
+        q.py = h * 0.5 + (loU + hiU) * 0.5 * s;
+      }
+      function project(p, q) {
+        const v = sub(p, q.eye);
+        const z = Math.max(0.05, dot(v, q.fwd));
+        const s = q.focal / z;
+        return { x: q.px + dot(v, q.right) * s, y: q.py - dot(v, q.up) * s, s: s, z: z };
+      }
+      // 屏幕点 → 桌面(y=0)上的世界点。拖动蜡烛就靠它：把光标处的射线打回桌面。
+      function unproject(sx, sy, q) {
+        const dx = (sx - q.px) / q.focal;
+        const dy = -(sy - q.py) / q.focal;
+        const d = add(add(q.fwd, scl(q.right, dx)), scl(q.up, dy));
+        if (Math.abs(d[1]) < 1e-6) return null;
+        const t = -q.eye[1] / d[1];
+        if (t <= 0) return null;
+        return add(q.eye, scl(d, t));
+      }
+
+      /* ============================================================
+       * 绘图小工具
+       * ============================================================ */
+      function polyPath(pts) {
+        ctx.beginPath();
+        pts.forEach((p, k) => k ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+        ctx.closePath();
+      }
+      function poly(pts, fill, stroke, lw) {
+        if (!pts || pts.length < 2) return;
+        polyPath(pts);
+        if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+        if (stroke) { ctx.lineWidth = lw || 1; ctx.strokeStyle = stroke; ctx.stroke(); }
+      }
+      function line(pts, color, lw, dash) {
+        if (!pts || pts.length < 2) return;
+        ctx.beginPath();
+        pts.forEach((p, k) => k ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+        ctx.setLineDash(dash || []);
+        ctx.lineWidth = lw; ctx.strokeStyle = color; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+        ctx.stroke(); ctx.setLineDash([]);
+      }
+      function dot2(p, r, fill, stroke, lw) {
+        ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, PI2);
+        if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+        if (stroke) { ctx.lineWidth = lw || 1; ctx.strokeStyle = stroke; ctx.stroke(); }
+      }
+      function label(p, text, color, size, align, baseline) {
+        ctx.font = '600 ' + size + 'px Inter, "Microsoft YaHei", sans-serif';
+        ctx.textAlign = align || 'center';
+        ctx.textBaseline = baseline || 'middle';
+        const wpx = ctx.measureText(text).width;
+        const pad = 4;
+        const half = size * 0.72 + pad * 0.5;      // 标签盒的上下半高
+        const wBox = wpx + pad * 2;
+        const EDGE = 8;                            // 离画布边至少留这么多，贴着边看着太挤
+        // 【坑】标签是画在 canvas 上的，锚点一靠近画布边缘整块就被裁掉一半。
+        // 侧视图里「像 A′」的锚点在装置最高点之上，正好顶出画布上沿，只剩半个字。
+        // 取景包络只管装置、管不到标签，所以这里单独把盒子夹进画布内。
+        const y = clamp(p.y, half + EDGE, Math.max(half + EDGE, state.h - half - EDGE));
+        let bx = align === 'left' ? p.x - 4 - pad
+               : align === 'right' ? p.x + 4 - wpx - pad
+               : p.x - wpx / 2 - pad;
+        bx = clamp(bx, EDGE, Math.max(EDGE, state.w - wBox - EDGE));
+        const x = align === 'left' ? bx + pad
+                : align === 'right' ? bx + wpx + pad
+                : bx + wBox / 2;
+        ctx.fillStyle = 'rgba(2,6,23,.74)';
+        ctx.fillRect(bx, y - half, wBox, half * 2);
+        ctx.fillStyle = color;
+        ctx.fillText(text, x, y);
+        // 自检用：把「实际画出来的盒子」记下来。只有测试打开了这个数组才会推，
+        // 平时零开销。测真盒子而不是另算一套锚点，才不会和渲染逻辑各说各话。
+        if (window.__mirLabelLog) {
+          window.__mirLabelLog.push({ text: text, x: bx, y: y - half, w: wBox, h: half * 2 });
+        }
+      }
+      // 竖直圆柱的轮廓。屏幕 x 的极值点给出两条母线，
+      // 「屏幕 y 更大」的那半底圆 + 「屏幕 y 更小」的那半顶圆连起来就是侧面。
+      // 【坑】直接把底圈点 + 反序顶圈点连成一个多边形 fill() 是错的：两圈缠绕方向相反，
+      // 非零填充规则下侧带会被抵消掉，只剩顶盖和底盘。
+      function cylSilhouette(cx, cz, r, h, q, N) {
+        const bot = [], top = [];
+        for (let k = 0; k < N; k++) {
+          const a = k / N * PI2;
+          const x = cx + Math.cos(a) * r, z = cz + Math.sin(a) * r;
+          bot.push(project([x, 0, z], q));
+          top.push(project([x, h, z], q));
+        }
+        let iL = 0, iR = 0;
+        for (let k = 1; k < N; k++) {
+          if (bot[k].x < bot[iL].x) iL = k;
+          if (bot[k].x > bot[iR].x) iR = k;
+        }
+        const walk = (pts, i, j, wantLower) => {
+          const fwd = [], bwd = [];
+          for (let k = i; ; k = (k + 1) % N) { fwd.push(pts[k]); if (k === j) break; }
+          for (let k = i; ; k = (k - 1 + N) % N) { bwd.push(pts[k]); if (k === j) break; }
+          const avgY = arr => arr.reduce((s, p) => s + p.y, 0) / arr.length;
+          const fa = avgY(fwd), ba = avgY(bwd);
+          return wantLower ? (fa > ba ? fwd : bwd) : (fa < ba ? fwd : bwd);
+        };
+        return { bot: bot, top: top, outline: walk(bot, iL, iR, true).concat(walk(top, iR, iL, false)) };
+      }
+
+      /* ============================================================
+       * 场景绘制
+       * ============================================================ */
+      function drawBackdrop(w, h) {
+        const g = ctx.createRadialGradient(w * 0.5, h * 0.14, 10, w * 0.5, h * 0.5, Math.max(w, h) * 0.8);
+        g.addColorStop(0, '#0b2036');
+        g.addColorStop(0.55, '#061423');
+        g.addColorStop(1, '#020a14');
+        ctx.fillStyle = g;
+        ctx.fillRect(0, 0, w, h);
+      }
+
+      const rectPts = (x0, z0, x1, z1, y, q) => [
+        project([x0, y, z0], q), project([x1, y, z0], q),
+        project([x1, y, z1], q), project([x0, y, z1], q)
+      ];
+
+      // 桌面 + 白纸 + 方格 + 刻度尺 + 位置环 + 记录点。全都在 y=0 平面上，
+      // 永远最先画（场景里没有低于桌面的东西），不必参与深度排序。
+      function drawTable(q) {
+        poly(rectPts(-TABLE_W, -TABLE_D, TABLE_W, TABLE_D, 0, q),
+             'rgba(19,29,44,.97)', 'rgba(125,211,252,.26)', 1.4);
+
+        // 白纸：实验是在白纸上做的，纸上还要画点、连线。
+        // 亮度压到 .40：再亮就成了一块发光的板，把玻璃板和蜡烛全压下去，暗色主题里也不好看。
+        poly(rectPts(-PT_W, -PT_D, PT_W, PT_D, 0.004, q),
+             'rgba(203,216,230,.40)', 'rgba(148,178,200,.55)', 1.2);
+        // 方格（每 5 cm 一条），既是尺子也是「像与物对称」的参照
+        for (let x = -PT_W + 0.5; x < PT_W; x += 0.5) {
+          line([project([x, 0.005, -PT_D], q), project([x, 0.005, PT_D], q)], 'rgba(125,160,190,.34)', 1);
+        }
+        for (let z = -PT_D + 0.5; z < PT_D; z += 0.5) {
+          line([project([-PT_W, 0.005, z], q), project([PT_W, 0.005, z], q)], 'rgba(125,160,190,.34)', 1);
+        }
+        // 玻璃板站的那条线：白纸上的「镜面线」，是量距离的基准
+        line([project([-PT_W, 0.007, 0], q), project([PT_W, 0.007, 0], q)], 'rgba(56,189,248,.72)', 2);
+
+        if (state.showRuler) drawRuler(q);
+        // 位置环：蜡烛 / 像 / 光屏 落在白纸上的位置。实验里本来就要在纸上标出这些点。
+        ring(state.ax, state.az, 0.20, 'rgba(248,113,113,.85)', null, q);
+        if (!state.onlyFront) {
+          ring(state.bx, state.bz, 0.20, 'rgba(74,222,128,.85)', null, q);
+          if (state.showGhost) {
+            const im = imagePos();
+            ring(im.x, im.z, 0.20, 'rgba(103,232,249,.75)', [4, 4], q);
+          }
+          ring(state.sx, state.sz, 0.26, 'rgba(226,232,240,.55)', [3, 5], q);
+        }
+        if (state.showMarks) drawMarks(q);
+      }
+      // 白纸上的位置圈
+      function ring(x, z, r, color, dash, q) {
+        const pts = [];
+        for (let k = 0; k <= 32; k++) {
+          const a = k / 32 * PI2;
+          pts.push(project([x + Math.cos(a) * r, 0.009, z + Math.sin(a) * r], q));
+        }
+        line(pts, color, 1.6, dash);
+      }
+
+      // 刻度尺：沿 z 轴摆，0 对准玻璃板。每 1 cm 一小格、5 cm 一大格。
+      function drawRuler(q) {
+        const z0 = -PT_D + 0.16, z1 = PT_D - 0.16;
+        const w = 0.13;
+        poly(rectPts(RULER_X - w, z0, RULER_X + w, z1, 0.010, q),
+             'rgba(250,204,21,.20)', 'rgba(250,204,21,.55)', 1.1);
+        // 数字要不要隔一个标，取决于相邻两个数字在【屏幕上】的实际间距，而不是
+        // 世界里的 5 cm：手机画布只有 ~350px 时，尺子整根才几十像素，每 5 cm 一个
+        // 数字会挤成一团（实测相邻标注盒重叠 50%+）。刻度线照旧，只把数字放稀。
+        const pe0 = project([RULER_X, 0.011, z0], q), pe1 = project([RULER_X, 0.011, z1], q);
+        const spanPx = Math.hypot(pe1.x - pe0.x, pe1.y - pe0.y);
+        const nMaj = Math.max(1, Math.round((z1 - z0) * U / 5));   // 每 5 cm 一个「大格」
+        const spacing = s => spanPx * s / (nMaj * 5);              // 步距 s(cm) 时相邻数字的像素间距
+        let stride = 5;
+        while (stride < 20 && spacing(stride) < 20) stride *= 2;   // 至少留 20px 才不打架
+        for (let cm = Math.ceil(z0 * U); cm <= Math.floor(z1 * U); cm++) {
+          const z = cm / U;
+          const major = cm % 5 === 0;
+          const len = major ? w * 0.95 : w * 0.5;
+          line([project([RULER_X - w, 0.011, z], q), project([RULER_X - w + len, 0.011, z], q)],
+               major ? 'rgba(253,224,71,.85)' : 'rgba(253,224,71,.45)', major ? 1.3 : 1);
+          if (major && cm !== 0 && cm % stride === 0) {
+            const pl = project([RULER_X - w - 0.13, 0.011, z], q);
+            label(pl, String(Math.abs(cm)), 'rgba(253,224,71,.85)', 10);
+          }
+        }
+        label(project([RULER_X - w - 0.13, 0.011, 0], q), '0', 'rgba(56,189,248,.95)', 11);
+        // 单位「cm」不能跟在末端的数字后面——那个数字和它只差 0.20，盒子会叠上。
+        // 数字列在尺子左侧，单位就放到右侧的末端，各占一边。
+        label(project([RULER_X + w + 0.16, 0.011, z1 - 0.10], q), 'cm', 'rgba(253,224,71,.75)', 10);
+      }
+
+      // 记录下来的位置点：A 点、B 点、连线（连线垂直于玻璃板正是要证的结论之一）
+      function drawMarks(q) {
+        state.marks.forEach((m, i) => {
+          const cA = i % 4;
+          dot2(project([m.ax, 0.012, m.az], q), 5, 'rgba(248,113,113,.95)', 'rgba(2,6,23,.7)', 1.4);
+          dot2(project([m.bx, 0.012, m.bz], q), 5, 'rgba(74,222,128,.95)', 'rgba(2,6,23,.7)', 1.4);
+          line([project([m.ax, 0.012, m.az], q), project([m.bx, 0.012, m.bz], q)],
+               'rgba(226,232,240,.72)', 1.3, [5, 4]);
+          label(project([m.ax, 0.012, m.az], q), 'A' + (i + 1), 'rgba(252,165,165,.95)', 10, 'left');
+          label(project([m.bx, 0.012, m.bz], q), 'B' + (i + 1), 'rgba(134,239,172,.95)', 10, 'left');
+        });
+      }
+
+      // 火焰：屏幕空间的水滴 + 外光晕。alpha 用来画「像」的暗一号火焰。
+      function drawFlame(p, q, size, alpha) {
+        const s = project(p, q);
+        const r = Math.max(1.5, size * s.s);
+        let g = ctx.createRadialGradient(s.x, s.y, 0, s.x, s.y, r * 3.1);
+        g.addColorStop(0, 'rgba(255,214,102,' + (0.40 * alpha) + ')');
+        g.addColorStop(0.42, 'rgba(255,152,44,' + (0.18 * alpha) + ')');
+        g.addColorStop(1, 'rgba(255,120,20,0)');
+        ctx.fillStyle = g;
+        ctx.beginPath(); ctx.arc(s.x, s.y, r * 3.1, 0, PI2); ctx.fill();
+
+        ctx.beginPath();
+        ctx.moveTo(s.x, s.y - r * 1.95);
+        ctx.bezierCurveTo(s.x + r * 0.92, s.y - r * 0.55, s.x + r * 0.76, s.y + r * 0.92, s.x, s.y + r);
+        ctx.bezierCurveTo(s.x - r * 0.76, s.y + r * 0.92, s.x - r * 0.92, s.y - r * 0.55, s.x, s.y - r * 1.95);
+        const g2 = ctx.createLinearGradient(s.x, s.y - r * 1.95, s.x, s.y + r);
+        g2.addColorStop(0, 'rgba(255,240,182,' + (0.95 * alpha) + ')');
+        g2.addColorStop(0.48, 'rgba(255,193,64,' + (0.98 * alpha) + ')');
+        g2.addColorStop(1, 'rgba(255,132,26,' + (0.88 * alpha) + ')');
+        ctx.fillStyle = g2; ctx.fill();
+        // 内芯：让火焰有层次，不然只是一块橙色
+        ctx.beginPath();
+        ctx.ellipse(s.x, s.y + r * 0.22, r * 0.34, r * 0.62, 0, 0, PI2);
+        ctx.fillStyle = 'rgba(255,255,238,' + (0.72 * alpha) + ')';
+        ctx.fill();
+      }
+
+      // 一支蜡烛。ghost=true 时画成半透明的「像」，颜色偏冷。
+      function drawCandle(cx, cz, q, opt) {
+        const N = 26;
+        const sil = cylSilhouette(cx, cz, CR, CH, q, N);
+        const a = opt.alpha == null ? 1 : opt.alpha;
+        const edge = opt.ghost ? 'rgba(165,243,252,' + (0.72 * a) + ')' : 'rgba(30,41,59,' + (0.55 * a) + ')';
+
+        // 侧带
+        const xL = Math.min.apply(null, sil.bot.map(p => p.x));
+        const xR = Math.max.apply(null, sil.bot.map(p => p.x));
+        const gl = ctx.createLinearGradient(xL, 0, xR, 0);
+        if (opt.ghost) {
+          gl.addColorStop(0, 'rgba(125,211,252,' + (0.54 * a) + ')');
+          gl.addColorStop(0.5, 'rgba(186,230,253,' + (0.30 * a) + ')');
+          gl.addColorStop(1, 'rgba(56,189,248,' + (0.54 * a) + ')');
+        } else {
+          gl.addColorStop(0, 'rgba(248,250,252,' + a + ')');
+          gl.addColorStop(0.42, 'rgba(253,246,227,' + a + ')');
+          gl.addColorStop(1, 'rgba(176,190,204,' + a + ')');
+        }
+        poly(sil.outline, gl, edge, opt.ghost ? 1.1 : 1.3);
+        // 像的轮廓用虚线再勾一遍——一眼就能和实心的 B 区分开
+        if (opt.ghost) line(sil.outline.concat([sil.outline[0]]), 'rgba(165,243,252,' + (0.85 * a) + ')', 1.4, [6, 5]);
+        // 顶盖（从上方看得到）
+        poly(sil.top, opt.ghost ? 'rgba(186,230,253,' + (0.38 * a) + ')' : 'rgba(255,252,240,' + a + ')', edge, 1.1);
+
+        // 烛芯
+        const wt = project([cx, CH, cz], q), wb = project([cx, CH + WK, cz], q);
+        line([wt, wb], opt.ghost ? 'rgba(186,230,253,' + (0.5 * a) + ')' : 'rgba(69,26,3,' + (0.9 * a) + ')', 1.6);
+
+        if (opt.lit) drawFlame([cx, CH + WK + FL * 0.52, cz], q, CR * 1.55, a);
+        return sil;
+      }
+
+      // 玻璃板：竖直立在 z = 0。半透明，所以后面的 B 能透过来被看见——
+      // 这正是这个实验用玻璃板而不用平面镜的原因。
+      function drawGlass(q) {
+        const pts = [
+          project([-GW, 0, 0], q), project([GW, 0, 0], q),
+          project([GW, GH, 0], q), project([-GW, GH, 0], q)
+        ];
+        const g = ctx.createLinearGradient(pts[0].x, pts[0].y, pts[2].x, pts[2].y);
+        g.addColorStop(0, 'rgba(186,230,253,.36)');
+        g.addColorStop(0.42, 'rgba(125,211,252,.16)');
+        g.addColorStop(0.62, 'rgba(226,240,255,.30)');
+        g.addColorStop(1, 'rgba(56,189,248,.20)');
+        // 玻璃板的法线是 (0,0,1)：|fwd·n| 就是它「正对相机」的程度。
+        // 快侧过来时投影只剩一条细带，那道深色背衬会把整条带涂黑——
+        // 俯视和侧视时玻璃板会变成一块莫名其妙的黑斑，就是这里来的。
+        const facing = Math.abs(q.fwd[2]);
+        const backW = facing < 0.30 ? 0 : (facing < 0.55 ? 3 : 6);
+        poly(pts, g, backW ? 'rgba(2,6,23,.68)' : null, backW);
+        poly(pts, null, 'rgba(196,235,253,.95)', facing < 0.30 ? 3 : 2.4);
+        // 底边压一道亮线：玻璃板是「站」在纸上的，这条边把它和纸锚在一起
+        if (facing >= 0.30) line([pts[0], pts[1]], 'rgba(226,244,255,.9)', 2.6);
+        // 一道斜高光，让「这是一块玻璃」一眼可辨
+        line([project([-GW * 0.72, GH * 0.10, 0], q), project([-GW * 0.18, GH * 0.92, 0], q)],
+             'rgba(255,255,255,.42)', 2.2);
+        line([project([GW * 0.30, GH * 0.08, 0], q), project([GW * 0.72, GH * 0.66, 0], q)],
+             'rgba(255,255,255,.22)', 1.4);
+        // 底座夹子：玻璃板是插在这个夹子里竖起来的
+        const clamp1 = [
+          project([-GW * 0.34, 0, -0.10], q), project([GW * 0.34, 0, -0.10], q),
+          project([GW * 0.34, 0.10, 0.10], q), project([-GW * 0.34, 0.10, 0.10], q)
+        ];
+        poly(clamp1, 'rgba(51,65,85,.95)', 'rgba(148,163,184,.65)', 1.2);
+      }
+
+      // 光屏：用来验证「像是虚像」。放在像的位置上，屏上什么也没有。
+      function drawScreen(q) {
+        const x0 = state.sx - SCR_W, x1 = state.sx + SCR_W;
+        const pts = [
+          project([x0, 0, state.sz], q), project([x1, 0, state.sz], q),
+          project([x1, SCR_H, state.sz], q), project([x0, SCR_H, state.sz], q)
+        ];
+        const hit = state.screenHit;
+        const g = ctx.createLinearGradient(pts[0].x, pts[0].y, pts[2].x, pts[2].y);
+        // 光屏是不透明的白卡纸：它必须挡得住后面的东西，否则「屏上什么都没有」这件事说不清
+        g.addColorStop(0, 'rgba(241,245,249,.97)');
+        g.addColorStop(1, 'rgba(170,183,197,.95)');
+        poly(pts, g, 'rgba(2,6,23,.5)', 5);
+        poly(pts, null, hit ? 'rgba(52,211,153,.95)' : 'rgba(203,213,225,.8)', hit ? 2.8 : 1.6);
+        const t = project([state.sx, SCR_H * 0.55, state.sz], q);
+        label({ x: t.x, y: t.y }, '光屏', 'rgba(226,232,240,.92)', 11);
+        if (hit) {
+          label({ x: t.x, y: t.y + 18 }, '屏上无像 → 虚像', 'rgba(110,231,183,.98)', 11);
+        }
+      }
+
+      // 辅助线：物距 / 像距 / 连线。画在所有实体之后，作为标注叠在上面。
+      // 标注要沿线的法向推开一点——不然会正好压在蜡烛身上，读数被蜡烛盖住。
+      function midLabel(a, b, text, color, off, avoidList) {
+        const dx = b.x - a.x, dy = b.y - a.y;
+        const L = Math.hypot(dx, dy) || 1;
+        const nx = -dy / L, ny = dx / L;
+        const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+        // 法向有两个方向。固定取一侧的话，光屏（或另一个读数）正好在那侧时就被压住
+        // （顶视图实测重叠 95%，读数整个看不见）。两个候选位置都算出来，
+        // 取「离所有要躲的点都更远」的那个。没有要躲的点时保持原来的固定方向。
+        let best = { x: mx + nx * off, y: my + ny * off }, bestD = -1;
+        for (const sgn of [1, -1]) {
+          const c = { x: mx + nx * off * sgn, y: my + ny * off * sgn };
+          let d = Infinity;
+          for (const av of (avoidList || [])) d = Math.min(d, Math.hypot(av.x - c.x, av.y - c.y));
+          if (d > bestD) { bestD = d; best = c; }
+        }
+        label(best, text, color, 11);
+        return best;
+      }
+      function drawAids(q) {
+        const im = imagePos();
+        const zA = project([state.ax, 0.014, state.az], q);
+        const zB = project([state.bx, 0.014, state.bz], q);
+        const zI = project([im.x, 0.014, im.z], q);
+        const z0 = project([state.ax, 0.014, 0], q);
+        const z0b = project([state.bx, 0.014, 0], q);
+        const z0i = project([im.x, 0.014, 0], q);
+
+        // 物距 u
+        const sc = project([state.sx, SCR_H * 0.55, state.sz], q);   // 光屏标注的位置，用来让 u/v 躲开
+        line([zA, z0], 'rgba(248,113,113,.90)', 1.6, [6, 4]);
+        const pu = midLabel(zA, z0, 'u = ' + (state.az * U).toFixed(1) + ' cm', 'rgba(252,165,165,.98)', 13, [sc]);
+        // 像距 v：同时躲开光屏和刚刚放好的 u，免得两个读数叠在一起
+        line([zI, z0i], 'rgba(56,189,248,.90)', 1.6, [6, 4]);
+        midLabel(zI, z0i, 'v = ' + (state.az * U).toFixed(1) + ' cm', 'rgba(125,211,252,.98)', 13, [sc, pu]);
+        // B 到玻璃板
+        line([zB, z0b], 'rgba(74,222,128,.85)', 1.4, [5, 4]);
+        // 物与像的连线（应垂直于玻璃板，且被玻璃板平分）
+        line([zA, zI], 'rgba(226,232,240,.42)', 1.2, [3, 5]);
+      }
+
+      /* ============================================================
+       * 渲染主流程
+       * ============================================================ */
+      function render() {
+        const w = state.w, h = state.h;
+        ctx.setTransform(state.dpr, 0, 0, state.dpr, 0, 0);
+        ctx.clearRect(0, 0, w, h);
+        drawBackdrop(w, h);
+
+        const q = {};
+        makeCam(q, w, h);
+
+        drawTable(q);
+
+        // 深度排序（画家算法）。玻璃板是一块半透明的大平面，按质心深度排就够了：
+        // 相机在玻璃板前 → 后面的蜡烛先画、玻璃板后画，于是 B 透过玻璃可见；
+        // 相机绕到玻璃板后 → 顺序自动反过来。不需要额外的分组逻辑。
+        let items = [];
+        const drawn = { candle: 0, glass: 0 };
+        const push = (d, f) => items.push({ d: d, f: f });
+        const dOf = p => project(p, q).z;
+
+        const im = imagePos();
+        const showA = !state.onlyBack;
+        const showBack = !state.onlyFront;
+
+        if (showA) {
+          drawn.candle++;
+          push(dOf([state.ax, CH * 0.5, state.az]), () => drawCandle(state.ax, state.az, q, { lit: state.aLit }));
+        }
+        if (showBack && state.showGhost && !state.screenHit) {
+          // 像的「身体」比 B 稍远一点画（B 是不透明的，要能压住它），
+          // 火焰则比 B 稍近一点画——重合时火焰正好落在 B 的烛芯上，看上去就是 B 被点着了。
+          // 所以这里 lit 传 false：火焰单独作为一项画，不然会画两遍。
+          push(dOf([im.x, CH * 0.5, im.z]) + 0.05, () =>
+            drawCandle(im.x, im.z, q, { ghost: true, lit: false, alpha: 0.58 }));
+        }
+        if (showBack) {
+          drawn.candle++;
+          push(dOf([state.bx, CH * 0.5, state.bz]), () => drawCandle(state.bx, state.bz, q, { lit: false }));
+        }
+        // 火焰比 B 稍近一点画——重合时火焰正好落在 B 的烛芯上，看上去就是 B 被点着了。
+        // 但光屏挪到像的位置时要收起来：光屏是不透明的，像被挡在后面，
+        // 这时候还让火焰浮在屏上，就变成「屏上有像」了，正好把要证的结论说反。
+        if (showBack && state.showGhost && state.aLit && !state.screenHit) {
+          push(dOf([im.x, CH * 0.5, im.z]) - 0.05, () =>
+            drawFlame([im.x, CH + WK + FL * 0.52, im.z], q, CR * 1.55, 0.68));
+        }
+        if (showBack) {
+          push(dOf([state.sx, SCR_H * 0.5, state.sz]), () => drawScreen(q));
+        }
+
+        drawn.glass++;
+        push(dOf([0, GH * 0.5, 0]), () => drawGlass(q));
+
+        state.drawn = drawn;
+        items.sort((a, b) => b.d - a.d);
+        items.forEach(it => it.f());
+
+        if (state.showAid) drawAids(q);
+
+        // 标注画在最上层
+        // 三个标注分档高度、左右错开：A 和 B 常常落在同一个位置（重合时本来就是），
+        // 不错开的话两行字会叠在一起，正好在最该看清的那一刻糊掉。
+        if (showA) {
+          const pA = project([state.ax, ENV_TOP + 0.22, state.az], q);
+          label({ x: pA.x - 62, y: pA.y }, state.aLit ? '蜡烛 A（点燃）' : '蜡烛 A', 'rgba(252,165,165,.98)', 12);
+        }
+        if (showBack) {
+          const pB = project([state.bx, ENV_TOP + 0.22, state.bz], q);
+          label({ x: pB.x + 62, y: pB.y }, '蜡烛 B（未点燃）', 'rgba(134,239,172,.98)', 12);
+        }
+        if (showBack && state.showGhost && !state.screenHit) {
+          const pI = project([im.x, ENV_TOP + 0.70, im.z], q);
+          label(pI, state.aLit ? '像 A′' : '像 A′（A 未点燃）', 'rgba(165,243,252,.98)', 12);
+        }
+
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+      }
+
+      /* ============================================================
+       * 尺寸 / 交互
+       * ============================================================ */
+      function resize() {
+        const rect = canvas.getBoundingClientRect();
+        const dpr = window.devicePixelRatio || 1;
+        const w = Math.max(1, Math.round(rect.width));
+        const h = Math.max(1, Math.round(rect.height));
+        if (state.w === w && state.h === h && state.dpr === dpr) return;
+        state.w = w; state.h = h; state.dpr = dpr;
+        canvas.width = Math.round(w * dpr);
+        canvas.height = Math.round(h * dpr);
+        state.dirty = true;
+      }
+
+      function hitTest(x, y) {
+        const q = {}; makeCam(q, state.w, state.h);
+        const near = (p, r) => Math.hypot(p.x - x, p.y - y) <= r;
+        if (!state.onlyBack) {
+          if (near(project([state.ax, CH * 0.55, state.az], q), 30)) return 'a';
+        }
+        if (!state.onlyFront) {
+          if (near(project([state.bx, CH * 0.55, state.bz], q), 30)) return 'b';
+          if (near(project([state.sx, SCR_H * 0.5, state.sz], q), 34)) return 'screen';
+        }
+        return null;
+      }
+
+      function pointerPos(e) {
+        const r = canvas.getBoundingClientRect();
+        return { x: e.clientX - r.left, y: e.clientY - r.top };
+      }
+      // ── 长度单位：state 里一律用「世界单位」，1 单位 = U cm = 10 cm；
+      //    而侧栏滑块和读数一律用 cm。两个单位只在这两个函数里换算。
+      //    【坑】之前 syncInputs 把世界单位直接写进以 cm 为刻度的 range：
+      //    浏览器把 1.35 钳到 min（az 滑块显示成 4 而不是 13.5），bz 同理；
+      //    更糟的是用户一碰滑块，input 又把 cm 当世界单位读回 state，
+      //    蜡烛瞬间跳 10 倍。所以换算必须收敛到一处。
+      const toCm = w => w * U;
+      const fromCm = c => c / U;
+
+      // ── 白纸上各物体的可用范围（cm）。滑块刻度与拖动限位都从这一张表派生——
+      //    之前两边各写一套（拖动能到 ±23.6 cm，滑块只到 ±22 cm），拖到边上
+      //    滑块就被钳住，画面和读数对不上。
+      //    z 一律写成「离玻璃板的距离」，正值；B 和光屏在玻璃板后，世界坐标 z 取负。
+      //    端点必须是 STEP_CM 的整数倍，否则步进网格会整体错位：
+      //    min=3.2 时网格是 3.2/3.7/…/13.7，把 13.5 吸成 13.7，滑块和读数就打起来了。
+      const STEP_CM = 0.5;        // 滑块步进 = 0.5 cm，state 也活在同一个网格上
+      const CM = {
+        a:      { x: [-22, 22], z: [2.5, 19.5] },   // 蜡烛半径 1.35 cm，离板 2.5 cm 才不穿玻璃
+        b:      { x: [-22, 22], z: [2.0, 19.5] },
+        screen: { x: [-22, 22], z: [2.0, 19.5] }
+      };
+      // 把 cm 值对齐到滑块网格。拖动也走这一步——否则 state 停在 13.23 这种
+      // 网格外的数，滑块显示 13.0、侧栏读数显示 13.2，同一件事两个数。
+      // 5 mm 的量化远小于本实验的判定容差（吸附回差 1.3~2.0 cm），不影响手感。
+      const snapCm = v => Math.round(v / STEP_CM) * STEP_CM;
+      const limX = c => c.map(fromCm);
+      const limZBehind = c => [-fromCm(c[1]), -fromCm(c[0])];   // 正值区间 → 负的世界 z，且端点要翻转
+      const LIM = {
+        a:      { x: limX(CM.a.x),      z: limX(CM.a.z) },
+        b:      { x: limX(CM.b.x),      z: limZBehind(CM.b.z) },
+        screen: { x: limX(CM.screen.x), z: limZBehind(CM.screen.z) }
+      };
+      const posOf = k => k === 'a' ? { x: state.ax, z: state.az }
+                    : k === 'b' ? { x: state.bx, z: state.bz }
+                    : { x: state.sx, z: state.sz };
+      function setPos(k, x, z) {
+        const L = LIM[k];
+        // 先钳到可用范围，再对齐到滑块刻度（cm 网格 → 再换回世界单位）
+        x = fromCm(snapCm(clamp(toCm(x), toCm(L.x[0]), toCm(L.x[1]))));
+        z = fromCm(snapCm(clamp(toCm(z), toCm(L.z[0]), toCm(L.z[1]))));
+        if (k === 'a') { state.ax = x; state.az = z; }
+        else if (k === 'b') { state.bx = x; state.bz = z; }
+        else { state.sx = x; state.sz = z; }
+      }
+
+      canvas.addEventListener('pointerdown', e => {
+        const p = pointerPos(e);
+        const hit = hitTest(p.x, p.y);
+        canvas.setPointerCapture(e.pointerId);
+        if (hit) {
+          const q = {}; makeCam(q, state.w, state.h);
+          const wpt = unproject(p.x, p.y, q);
+          const cur = posOf(hit);
+          // 记住「抓取点」与物体中心的差，拖起来物体不会跳到光标底下
+          state.dragOff = wpt ? [cur.x - wpt[0], cur.z - wpt[2]] : [0, 0];
+          state.drag = hit;
+          canvas.classList.add('pick');
+        } else {
+          state.dragging = true;
+        }
+        state.lastX = p.x; state.lastY = p.y;
+        e.preventDefault();
+      });
+      canvas.addEventListener('pointermove', e => {
+        const p = pointerPos(e);
+        if (state.drag) {
+          const q = {}; makeCam(q, state.w, state.h);
+          const wpt = unproject(p.x, p.y, q);
+          if (wpt) setPos(state.drag, wpt[0] + state.dragOff[0], wpt[2] + state.dragOff[1]);
+          syncInputs(); state.dirty = true;
+        } else if (state.dragging) {
+          state.yaw += (p.x - state.lastX) * 0.0075;
+          state.pitch = clamp(state.pitch + (p.y - state.lastY) * 0.006, 0.04, 1.38);
+          state.dirty = true;
+        } else {
+          const hit = hitTest(p.x, p.y);
+          if (hit !== state.hover) {
+            state.hover = hit;
+            canvas.classList.toggle('pick', !!hit);
+          }
+        }
+        state.lastX = p.x; state.lastY = p.y;
+      });
+      const endDrag = () => { state.dragging = false; state.drag = null; };
+      canvas.addEventListener('pointerup', endDrag);
+      canvas.addEventListener('pointercancel', endDrag);
+      canvas.addEventListener('pointerleave', () => { if (!state.dragging && !state.drag) canvas.classList.remove('pick'); });
+      canvas.addEventListener('wheel', e => {
+        e.preventDefault();
+        state.zoom = clamp(state.zoom * (e.deltaY > 0 ? 0.92 : 1.08), 0.55, 2.2);
+        state.dirty = true;
+      }, { passive: false });
+
+      /* ============================================================
+       * 控件
+       * ============================================================ */
+      const el = id => document.getElementById(id);
+      const ui = {
+        steps: el('mir-steps'),
+        az: el('mir-az'), ax: el('mir-ax'), bx: el('mir-bx'), bz: el('mir-bz'),
+        azV: el('mir-az-v'), axV: el('mir-ax-v'), bxV: el('mir-bx-v'), bzV: el('mir-bz-v'),
+        mu: el('mir-mu'), mv: el('mir-mv'), mb: el('mir-mb'), mc: el('mir-mc'),
+        mcard: el('mir-mcard'), verdict: el('mir-verdict'), flag: el('mir-flag'),
+        c1: el('mir-c1'), c2: el('mir-c2'), c3: el('mir-c3'), c4: el('mir-c4'),
+        light: el('mir-light'),
+        record: el('mir-record'), reset: el('mir-reset'), legend: el('mir-legend')
+      };
+
+      // 实验步骤。每一步都挂一个「做完了没有」的判据，页面自己判断，不靠学生自觉。
+      const STEPS = [
+        { text: '点燃蜡烛 A', done: () => state.aLit },
+        { text: '把蜡烛 B 移到玻璃板后，直到它与 A 的像完全重合', done: () => state.coincideErr < 1e-6 },
+        { text: '点「记录这一组」，在白纸上留下 A、B 的位置和连线', done: () => state.marks.length >= 1 },
+        { text: '把光屏移到像的位置，直接观察光屏上有没有像', done: () => state.screenChecked },
+        { text: '改变 A 的位置，再重合、再记录一组', done: () => state.marks.length >= 2 }
+      ];
+      ui.steps.innerHTML = STEPS.map((s, i) =>
+        '<li><i>' + (i + 1) + '</i><span>' + s.text + '</span></li>').join('');
+
+      function updateSteps() {
+        const li = [...ui.steps.children];
+        let cur = -1;
+        STEPS.forEach((s, i) => { if (cur < 0 && !s.done()) cur = i; });
+        STEPS.forEach((s, i) => {
+          li[i].classList.toggle('on', s.done());
+          li[i].classList.toggle('cur', i === cur);
+          li[i].querySelector('i').textContent = s.done() ? '✓' : String(i + 1);
+        });
+      }
+
+      function syncInputs() {
+        // 滑块刻度是 cm，state 是世界单位——在这里换算，别把世界单位塞进 range
+        ui.az.value = toCm(state.az); ui.azV.textContent = toCm(state.az).toFixed(1) + ' cm';
+        ui.ax.value = toCm(state.ax); ui.axV.textContent = toCm(state.ax).toFixed(1) + ' cm';
+        ui.bx.value = toCm(state.bx); ui.bxV.textContent = toCm(state.bx).toFixed(1) + ' cm';
+        ui.bz.value = toCm(-state.bz); ui.bzV.textContent = toCm(-state.bz).toFixed(1) + ' cm';
+      }
+
+      // 滑块的 min/max/step 也从 CM 表派生，别让 HTML 里再存一份会和拖动限位打架的刻度
+      function applySliderRanges() {
+        const set = (input, lo, hi) => { input.min = lo; input.max = hi; input.step = 0.5; };
+        set(ui.ax, CM.a.x[0], CM.a.x[1]);
+        set(ui.az, CM.a.z[0], CM.a.z[1]);
+        set(ui.bx, CM.b.x[0], CM.b.x[1]);
+        set(ui.bz, CM.b.z[0], CM.b.z[1]);
+      }
+
+      function updateReadout() {
+        const im = imagePos();
+        const u = state.az * U, v = state.az * U, db = -state.bz * U;
+        ui.mu.textContent = u.toFixed(1) + ' cm';
+        ui.mv.textContent = v.toFixed(1) + ' cm';
+        ui.mb.textContent = db.toFixed(1) + ' cm';
+
+        const co = state.coincideErr < 1e-6;
+        ui.mc.textContent = co ? '完全重合 ✓' : '还差 ' + (state.coincideErr * U).toFixed(1) + ' cm';
+        ui.mcard.className = 'lab3d-metric ' + (co ? 'ok' : (state.coincideErr < 0.35 ? 'warn' : ''));
+        ui.flag.classList.toggle('show', co && state.aLit);
+
+        // 四条结论
+        ui.c1.className = co ? 'on' : '';
+        ui.c2.className = co ? 'on' : '';
+        ui.c3.className = co ? 'on' : '';
+        ui.c4.className = state.screenChecked ? 'on' : '';
+
+        if (!state.aLit) {
+          ui.verdict.innerHTML = '<b>观察提示：</b>先把蜡烛 A 点着——没有火焰就看不清「像」在哪，也就没法用 B 去对。'
+            + '点亮后，把 B 从玻璃板后慢慢往前挪，直到它看起来像被点着了一样。';
+        } else if (!co) {
+          ui.verdict.innerHTML = '<b>观察提示：</b>B 距离像还有 <b>' + (state.coincideErr * U).toFixed(1)
+            + ' cm</b>。继续移动 B，注意看 B 的烛芯——当烛芯正好落在 A 的火焰上时，B 就像被点着了，'
+            + '那一刻就是「完全重合」。';
+        } else if (!state.screenChecked) {
+          ui.verdict.innerHTML = '<b>观察提示：</b>B 与像完全重合了，说明<b>像与物大小相等</b>、'
+            + '而且 <b>' + u.toFixed(1) + ' cm = ' + v.toFixed(1) + ' cm</b>（物距 = 像距）。'
+            + '接下来把<b>光屏</b>拖到像的位置，直接看光屏上有没有东西——这一步用来判断是实像还是虚像。';
+        } else {
+          ui.verdict.innerHTML = '<b>结论：</b>光屏上<b>什么也没有</b>，说明平面镜成的像是<b>虚像</b>，'
+            + '不能用光屏承接。像与物关于玻璃板<b>对称</b>：大小相等、到玻璃板距离相等、连线与玻璃板垂直。';
+        }
+        updateSteps();
+      }
+
+      ui.az.addEventListener('input', () => { state.az = fromCm(+ui.az.value); syncInputs(); state.dirty = true; });
+      ui.ax.addEventListener('input', () => { state.ax = fromCm(+ui.ax.value); syncInputs(); state.dirty = true; });
+      ui.bx.addEventListener('input', () => { state.bx = fromCm(+ui.bx.value); state.snapped = false; syncInputs(); state.dirty = true; });
+      ui.bz.addEventListener('input', () => { state.bz = -fromCm(+ui.bz.value); state.snapped = false; syncInputs(); state.dirty = true; });
+      [['mir-ghost', 'showGhost'], ['mir-aid', 'showAid'], ['mir-ruler', 'showRuler'],
+       ['mir-marks', 'showMarks'], ['mir-front', 'onlyFront'], ['mir-back', 'onlyBack']].forEach(([id, key]) => {
+        el(id).addEventListener('change', e => { state[key] = e.target.checked; state.dirty = true; });
+      });
+
+      ui.light.addEventListener('click', () => {
+        state.aLit = !state.aLit;
+        ui.light.textContent = state.aLit ? '🌫 熄灭蜡烛 A' : '🔥 点燃蜡烛 A';
+        state.dirty = true;
+      });
+      ui.record.addEventListener('click', () => {
+        state.marks.push({ ax: state.ax, az: state.az, bx: state.bx, bz: state.bz });
+        state.dirty = true;
+      });
+      ui.reset.addEventListener('click', () => {
+        state.ax = 0.55; state.az = 1.35; state.bx = 0.0; state.bz = -0.60;
+        state.sx = 0.0; state.sz = -0.40;
+        state.aLit = false; state.snapped = false; state.screenChecked = false;
+        state.marks = [];
+        ui.light.textContent = '🔥 点燃蜡烛 A';
+        syncInputs(); state.dirty = true;
+      });
+
+      document.querySelectorAll('.lab3d-toolbar button[data-view]').forEach(b => {
+        b.addEventListener('click', () => {
+          document.querySelectorAll('.lab3d-toolbar button[data-view]').forEach(x => x.classList.remove('active'));
+          b.classList.add('active');
+          applyView(b.dataset.view);
+        });
+      });
+      el('mir-reset-view').addEventListener('click', () => {
+        state.zoom = 1;
+        document.querySelectorAll('.lab3d-toolbar button[data-view]').forEach(x =>
+          x.classList.toggle('active', x.dataset.view === 'perspective'));
+        applyView('perspective');
+      });
+      function applyView(name) {
+        state.view = name;
+        const v = VIEWS[name] || VIEWS.perspective;
+        state.yaw = v[0]; state.pitch = v[1];
+        state.zoom = 1;
+        state.dirty = true;
+      }
+
+      ui.legend.innerHTML = '<span style="color:#fca5a5">●</span> 蜡烛 A（物）　'
+        + '<span style="color:#86efac">●</span> 蜡烛 B（替代物）　'
+        + '<span style="color:#a5f3fc">●</span> 像 A′';
+
+      /* ============================================================
+       * 主循环：只在需要时重绘（谁重画谁清屏，避免残影）
+       * ============================================================ */
+      function tick() {
+        resize();
+        if (state.dirty) {
+          state.dirty = false;
+          updateCoincide();
+          render();
+          updateReadout();
+        }
+        requestAnimationFrame(tick);
+      }
+      window.addEventListener('resize', () => { state.dirty = true; });
+
+      applySliderRanges();
+      syncInputs();
+      updateCoincide();
+      updateReadout();
+      resize();
+      tick();
+
+      // 调试钩子：数值/几何自检用（页面本身不依赖它）
+      window.__mir = {
+        state: state, imagePos: imagePos, makeCam: makeCam, project: project,
+        unproject: unproject, envelopePoints: envelopePoints, hitTest: hitTest,
+        VIEWS: VIEWS,
+        consts: { U: U, GW: GW, GH: GH, CR: CR, CH: CH, WK: WK, FL: FL, PAD: PAD,
+                  ENV_TOP: ENV_TOP, SCR_W: SCR_W, SCR_H: SCR_H,
+                  PT_W: PT_W, PT_D: PT_D, TABLE_W: TABLE_W, TABLE_D: TABLE_D },
+        set(o) {
+          o = o || {};
+          if (o.ax != null) state.ax = o.ax;
+          if (o.az != null) state.az = o.az;
+          if (o.bx != null) { state.bx = o.bx; state.snapped = false; }
+          if (o.bz != null) { state.bz = o.bz; state.snapped = false; }
+          if (o.sx != null) state.sx = o.sx;
+          if (o.sz != null) state.sz = o.sz;
+          if (o.aLit != null) state.aLit = o.aLit;
+          syncInputs();
+          updateCoincide();
+          updateReadout();
+          state.dirty = true;
+          return { ax: state.ax, az: state.az, bx: state.bx, bz: state.bz,
+                   coincideErr: state.coincideErr, snapped: state.snapped };
+        },
+        // 走真实的点击路径，不直接写 state：否则按钮的 .active 高亮不会跟着动
+        setView(name) {
+          const btn = document.querySelector('.lab3d-toolbar button[data-view="' + name + '"]');
+          if (btn) btn.click();
+          else { state.yaw = name; }
+          return { yaw: state.yaw, pitch: state.pitch, zoom: state.zoom, view: state.view };
+        },
+        setCam(yaw, pitch, zoom) {
+          if (yaw != null) state.yaw = yaw;
+          if (pitch != null) state.pitch = pitch;
+          if (zoom != null) state.zoom = zoom;
+          state.dirty = true;
+        },
+        click(id) { const b = document.getElementById(id); if (b) b.click(); },
+        // 只挪 B、【保留吸附状态】。set() 会把 snapped 清掉（那是给「直接设定位置」用的），
+        // 回差（吸附后小幅移动应当仍然吸住）只能靠这条路径验。
+        nudgeB(bx, bz) {
+          if (bx != null) state.bx = bx;
+          if (bz != null) state.bz = bz;
+          updateCoincide();
+          syncInputs(); updateReadout();
+          state.dirty = true;
+          return { bx: state.bx, bz: state.bz, err: state.coincideErr, snapped: state.snapped };
+        },
+        projectedEnvelope() {
+          const q = {}; makeCam(q, state.w, state.h);
+          return envelopePoints().map(p => { const s = project(p, q); return { x: s.x, y: s.y }; });
+        },
+        // 把所有【会画出来的东西】的极点投影出来，用来断言「没有任何东西被裁到画布外」。
+        // envelopePoints() 是「应该盖住一切」的承诺，这里是【当下的实物】——
+        // 两者是两回事：包络是常量，实物随学生拖动而变。测试要同时验两边。
+        drawnExtremes() {
+          const q = {}; makeCam(q, state.w, state.h);
+          const pts = envelopePoints().slice();
+          const top = (x, z) => [x, ENV_TOP, z];
+          const im = imagePos();
+          if (!state.onlyBack) pts.push(top(state.ax, state.az));
+          if (!state.onlyFront) {
+            pts.push(top(state.bx, state.bz));
+            pts.push(top(im.x, im.z));
+            pts.push([state.sx - SCR_W, SCR_H, state.sz], [state.sx + SCR_W, SCR_H, state.sz]);
+          }
+          return pts.map(p => { const s = project(p, q); return { x: s.x, y: s.y }; });
+        },
+        size() { return { w: state.w, h: state.h, dpr: state.dpr }; }
+      };
+    })();
+    </script>
+    <script src="supabase.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>
