@@ -98,9 +98,12 @@
             cursor: grab; touch-action: none;
         }
         .lab3d-stage canvas:active { cursor: grabbing; }
-        /* 指针落在可拖动物体上时换光标（放在 :active 之后才能覆盖它） */
-        .lab3d-stage canvas.pick { cursor: move; }
-        .lab3d-stage canvas.pick:active { cursor: move; }
+        /* 指针「碰到」可拖动的物体时换手型（放在 :active 之后才能覆盖它）。
+           原来这里是 cursor:move（四向箭头）——那不像手，用户要的是手型；
+           而空白处本来就是 grab，所以手型必须和它区分得开，用 pointer。
+           按住开始拖之后换成攥住的手，和「拖动空白处旋转」区分开。 */
+        .lab3d-stage canvas.pick { cursor: pointer; }
+        .lab3d-stage canvas.pick.dragging { cursor: grabbing; }
         .lab3d-stage .stage-hint {
             position: absolute; top: 13px; left: 15px; pointer-events: none; font-size: 12px;
             color: #bae6fd; background: rgba(2, 6, 23, .78); border: 1px solid rgba(56, 189, 248, .25);
@@ -131,6 +134,26 @@
             opacity: 0; transition: opacity .2s;
         }
         .lab3d-stage .stage-note.show { opacity: 1; }
+        /* 悬停在可拖动物体上时跟着物体走的小气泡：既说「能拖」，也说「能点」。
+           没有它的话，点击点燃这个动作完全无从发现——页面上没有任何提示。 */
+        .lab3d-stage .stage-tip {
+            position: absolute; pointer-events: none; opacity: 0; transition: opacity .15s;
+            transform: translate(-50%, -100%);
+            font-size: 11px; font-weight: 700; white-space: nowrap;
+            padding: 4px 9px; border-radius: 7px;
+            background: rgba(2, 6, 23, .92); border: 1px solid rgba(56, 189, 248, .55); color: #bae6fd;
+        }
+        .lab3d-stage .stage-tip.show { opacity: 1; }
+        /* 动作回馈（点燃 / 熄灭）。和提示条分开：提示条是「状态说明」，这个是「刚做了什么」。
+           放到底部偏上：顶部左边是场景说明、底部中间是重合横幅，都不去挤。 */
+        .lab3d-stage .stage-toast {
+            position: absolute; left: 50%; transform: translateX(-50%); bottom: 82px;
+            pointer-events: none; opacity: 0; transition: opacity .2s;
+            font-size: 12px; font-weight: 700; white-space: nowrap;
+            padding: 6px 13px; border-radius: 99px;
+            background: rgba(2, 6, 23, .9); border: 1px solid rgba(251, 191, 36, .6); color: #fde68a;
+        }
+        .lab3d-stage .stage-toast.show { opacity: 1; }
         .lab3d-foot {
             display: flex; align-items: center; flex-wrap: wrap; gap: 12px 18px;
             padding: 12px 3px 1px; font-size: 12px; color: #b6c8d4;
@@ -259,7 +282,9 @@
             <canvas id="mir-canvas" aria-label="可拖动旋转、滚轮缩放，并可拖动蜡烛与光屏的平面镜成像三维装置"></canvas>
             <div class="stage-hint" id="mir-stagehint"><b></b>三维实验场景 · 玻璃板 → 蜡烛 A → 蜡烛 B → 光屏</div>
             <div class="stage-note" id="mir-ghostnote"></div>
-            <div class="stage-help">拖动空白处旋转 · 滚轮缩放 · 直接拖动光源 / 光屏</div>
+            <div class="stage-tip" id="mir-tip"></div>
+            <div class="stage-toast" id="mir-toast"></div>
+            <div class="stage-help">拖动空白处旋转 · 滚轮缩放 · 光标碰到光源 / 光屏就能拖 · 点一下光源可点燃</div>
             <div class="stage-flag" id="mir-flag">完全重合 ✓ 像与物到玻璃板的距离相等</div>
           </div>
 
@@ -326,6 +351,11 @@
           </div>
 
           <h3>位置微调</h3>
+          <small style="color:#64748b;font-size:10px;display:block;margin:0 0 12px;line-height:1.5">
+            没点燃的 B 和光屏一开始摆在白纸右边的<b style="color:#7dd3fc">器材区</b>，
+            要自己把它们拖到玻璃板后面去。玻璃板挡在中间，物体不能停在板里——
+            从板外侧绕到后面最顺手。
+          </small>
           <div class="lab3d-field">
             <label for="mir-az">物距 u · A 到玻璃板 <output id="mir-az-v">13.5 cm</output></label>
             <input id="mir-az" type="range" min="2.5" max="19.5" value="13.5" step="0.5">
@@ -336,12 +366,13 @@
             <input id="mir-ax" type="range" min="-22" max="22" value="5.5" step="0.5">
           </div>
           <div class="lab3d-field">
-            <label for="mir-bx">B 的左右位置 <output id="mir-bx-v">0.0 cm</output></label>
-            <input id="mir-bx" type="range" min="-22" max="22" value="0" step="0.5">
+            <label for="mir-bx">B 的左右位置 <output id="mir-bx-v">20.5 cm</output></label>
+            <input id="mir-bx" type="range" min="-22" max="22" value="20.5" step="0.5">
           </div>
           <div class="lab3d-field">
-            <label for="mir-bz">B 到玻璃板 <output id="mir-bz-v">6.0 cm</output></label>
-            <input id="mir-bz" type="range" min="2" max="19.5" value="6" step="0.5">
+            <label for="mir-bz">B 到玻璃板 <output id="mir-bz-v">待取用</output></label>
+            <input id="mir-bz" type="range" min="2" max="19.5" value="2" step="0.5">
+            <small>滑块只能把 B 放到玻璃板<b style="color:#7dd3fc">后面</b>；要把它放回器材区，直接拖</small>
           </div>
 
           <div class="lab3d-btnrow">
@@ -419,6 +450,22 @@
       const PAPER_Z = 1.95;       // 白纸在 z 方向可用到 ±1.95：A/B/光屏的绝对边界
       const ENV_TOP = CH + WK + FL;   // 蜡烛能到的最高点（火焰尖）
 
+      /* 器材区：白纸右侧的一条竖带。没点燃的 B 和光屏一开始就搁在这儿——
+         真实实验里它们也是摆在台子边上的，学生得自己把它们拿到玻璃板后面去。
+         一进页面就摆好，等于把「取器材、放器材」这一步替他做了，页面上就只剩「对位置」。
+         【为什么按 x 判定、不按「板前板后」判定】玻璃板只挡在 |x − gx| ≤ gw 那一段，
+         板【右侧】本来就没有玻璃，那里前后是连通的。按 x 判定既合物理，也好解释。
+         【初始坐标是量出来的，别随手改】把 B / 光屏 / A / 像 的屏幕包围盒在五个预设视角下
+         两两求重叠率，网格搜出来的最优解就是下面这组：
+           · B 在侧视图里曾经整个压住 A（重叠 82%），把 B 的 z 挪离 A 的 1.35 才解决；
+           · B 还不能落在「像 A′」的屏幕位置上（默认视角下像偏右，px≈729）。
+         现在五个视角下 B-A、B-像 的重叠都是 0，B 与光屏只差一个前后关系（屏在后面，正常）。 */
+      const STAGE = {
+        x0: 1.30, x1: 2.62, z0: -2.10, z1: 2.10,
+        b:   { x: 2.05, z: -1.35 },     // 蜡烛 B / F 光源 B 的初始位置
+        scr: { x: 1.60, z: -0.45 }      // 光屏的初始位置
+      };
+
       const VIEWS = {
         // 方位 24°、俯仰 15°：这是个「学生站在玻璃板前偏一点」的视角。
         // 【为什么不能像原来那样偏 35°】虚像只有看进玻璃板才看得见（见 imageVisible），
@@ -443,10 +490,10 @@
         src: 'candle',
         // 物体 A（玻璃板前，z > gz）
         ax: 0.55, az: 1.35,
-        // 替代物 B（玻璃板后，z < gz）
-        bx: 0.00, bz: -0.60,
-        // 光屏（玻璃板后）
-        sx: 0.00, sz: -0.40,
+        // 替代物 B：一开始在【器材区】（板前右侧），要学生自己拖到板后去
+        bx: STAGE.b.x, bz: STAGE.b.z,
+        // 光屏：同上
+        sx: STAGE.scr.x, sz: STAGE.scr.z,
         aLit: false,                 // A 是否点燃
         snapped: false,              // B 是否被「吸」到像的位置
         coincideErr: 1e9,            // B 与像的距离（世界单位）
@@ -459,8 +506,9 @@
         ghostAlways: false,          // 像是否「始终显示」（不按真实可见性裁剪）
         onlyFront: false, onlyBack: false,
         w: 1, h: 1, dpr: 0, dirty: true,
-        dragging: false, drag: null, dragOff: [0, 0],
+        dragging: false, drag: null, dragOff: [0, 0], downAt: null,
         lastX: 0, lastY: 0, hover: null, view: 'perspective',
+        depth: null,                 // 这一帧「像 / 光屏」的深度关系（render 里写）
         drawn: { candle: 0, glass: 0, ghost: 0 }
       };
 
@@ -475,6 +523,18 @@
       const imagePos = () => ({ x: state.ax, z: 2 * state.gz - state.az });
       // 物距 / 像距（世界单位）。两者按构造恒等。
       const objDist = () => state.az - state.gz;
+      // B / 光屏还在不在【器材区】。判据是「在玻璃板右侧那片空地上」——
+      // 玻璃板只挡在 |x − gx| ≤ gw 那一段，板右侧本来就没有玻璃，前后是连通的。
+      // 还在器材区时「到玻璃板的距离」对实验没有意义，读数就说「待取用」。
+      const staged = k => (k === 'b' ? state.bx : state.sx) >= STAGE.x0;
+      // 物体此刻在哪个区。分三种，读数要分开说——都说「待取用」是错的：
+      //   'staged' 还在白纸右边的器材区（还没取用，谈「到玻璃板」没意义）
+      //   'behind' 已经放到板后（这才是实验要的那个读数）
+      //   'front'  被拖到了板前、但没进器材区——「到玻璃板」是个负数，如实写出来
+      const zoneOf = k => staged(k) ? 'staged'
+                     : ((k === 'b' ? state.bz : state.sz) <= state.gz ? 'behind' : 'front');
+      // 「已经放进实验区」：既不在器材区，又在玻璃板后面。只有这时候距离才是个有意义的读数。
+      const placed = k => zoneOf(k) === 'behind';
 
       /* ============================================================
        * 物理：虚像到底看不看得见
@@ -630,10 +690,15 @@
         if (fill) { ctx.fillStyle = fill; ctx.fill(); }
         if (stroke) { ctx.lineWidth = lw || 1; ctx.strokeStyle = stroke; ctx.stroke(); }
       }
-      function label(p, text, color, size, align, baseline) {
+      // 这一帧已经画出来的标签盒。避让算法要用【真实盒子】而不是「锚点距离」——
+      // 两个读数（u = / v =）都挂在同一根轴线上（A→板→像 本来就是一条直线），
+      // 窄屏上两个锚点只差三十几像素，而每个盒子有六十几像素宽，
+      // 按「锚点谁离得远」挑方向，两个盒子照样叠掉一半（实测 390px 下重叠 47%）。
+      let frameBoxes = [];
+      // 标签盒的几何：锚点 → 实际画出来的矩形。label() 和避让算法【共用这一个】——
+      // 各写一套的话，避让算的是 A 位置、画出来的是 B 位置，等于没避。
+      function labelBox(p, text, size, align) {
         ctx.font = '600 ' + size + 'px Inter, "Microsoft YaHei", sans-serif';
-        ctx.textAlign = align || 'center';
-        ctx.textBaseline = baseline || 'middle';
         const wpx = ctx.measureText(text).width;
         const pad = 4;
         const half = size * 0.72 + pad * 0.5;      // 标签盒的上下半高
@@ -647,17 +712,25 @@
                : align === 'right' ? p.x + 4 - wpx - pad
                : p.x - wpx / 2 - pad;
         bx = clamp(bx, EDGE, Math.max(EDGE, state.w - wBox - EDGE));
-        const x = align === 'left' ? bx + pad
-                : align === 'right' ? bx + wpx + pad
-                : bx + wBox / 2;
+        return { x: bx, y: y - half, w: wBox, h: half * 2, cx: bx + wBox / 2, cy: y };
+      }
+      function label(p, text, color, size, align, baseline) {
+        ctx.font = '600 ' + size + 'px Inter, "Microsoft YaHei", sans-serif';
+        ctx.textAlign = align || 'center';
+        ctx.textBaseline = baseline || 'middle';
+        const pad = 4;
+        const wpx = ctx.measureText(text).width;
+        const b = labelBox(p, text, size, align);
+        const x = align === 'left' ? b.x + pad : align === 'right' ? b.x + wpx + pad : b.cx;
         ctx.fillStyle = 'rgba(2,6,23,.74)';
-        ctx.fillRect(bx, y - half, wBox, half * 2);
+        ctx.fillRect(b.x, b.y, b.w, b.h);
         ctx.fillStyle = color;
-        ctx.fillText(text, x, y);
+        ctx.fillText(text, x, b.cy);
+        frameBoxes.push(b);
         // 自检用：把「实际画出来的盒子」记下来。只有测试打开了这个数组才会推，
         // 平时零开销。测真盒子而不是另算一套锚点，才不会和渲染逻辑各说各话。
         if (window.__mirLabelLog) {
-          window.__mirLabelLog.push({ text: text, x: bx, y: y - half, w: wBox, h: half * 2 });
+          window.__mirLabelLog.push({ text: text, x: b.x, y: b.y, w: b.w, h: b.h });
         }
       }
       // 竖直圆柱的轮廓。屏幕 x 的极值点给出两条母线，
@@ -722,6 +795,21 @@
         for (let z = -PT_D + 0.5; z < PT_D; z += 0.5) {
           line([project([-PT_W, 0.005, z], q), project([PT_W, 0.005, z], q)], 'rgba(125,160,190,.34)', 1);
         }
+        // 器材区：白纸右侧那块空地，没点燃的 B 和光屏一开始摆在这里。
+        // 画出来是为了让「器材搁在台子右边、要自己拿过来」这件事在画面里说得清——
+        // 不画的话两个物件孤零零杵在右边，看不出它们是「还没放进实验」的。
+        const stg = [
+          project([STAGE.x0, 0.006, STAGE.z0], q), project([STAGE.x1, 0.006, STAGE.z0], q),
+          project([STAGE.x1, 0.006, STAGE.z1], q), project([STAGE.x0, 0.006, STAGE.z1], q)
+        ];
+        // 【颜色别调太淡】默认视角是斜俯视，纸面本身就有渐变，0.055 的填充和 0.32 的虚线
+        // 在默认视角下几乎看不见（俯视图里才清楚）。加浓一点，任何视角都能看出这是「一块区域」。
+        // 【名字不在这里画】区域名要挑一个不压住别的位置，得等本帧所有标签都画完
+        // （见 render 末尾的 drawStageLabel）——在这里画的话它是最早的一个，
+        // 谁压住谁全凭运气，390px 窄屏上实测被「光屏」压掉 14%。
+        poly(stg, 'rgba(34,211,238,.085)', null, 0);
+        line(stg.concat([stg[0]]), 'rgba(103,232,249,.52)', 1.4, [7, 5]);
+
         // 玻璃板站的那条线：白纸上的「镜面线」，是量距离的基准。
         // 板一挪这条线就跟着挪——物距 / 像距都是从它量起的。
         const gl0 = state.gx - state.gw - 0.18, gl1 = state.gx + state.gw + 0.18;
@@ -741,6 +829,27 @@
         }
         if (state.showMarks) drawMarks(q);
       }
+      // 器材区那块地儿的名字。画在【最后】（render 末尾调用）：这时候 frameBoxes 里
+      // 已经有本帧所有标签了，可以挑一个不打架的落点。两个候选是区域的近边和远边——
+      // 一条竖带的两端，总有一头是空的。（390px 窄屏上「器材区」曾被「光屏」压掉 14%。）
+      function drawStageLabel(q) {
+        const cands = [
+          project([(STAGE.x0 + STAGE.x1) / 2, 0.012, STAGE.z1 - 0.12], q),
+          project([(STAGE.x0 + STAGE.x1) / 2, 0.012, STAGE.z0 + 0.12], q)
+        ];
+        let best = cands[0], bestOv = Infinity;
+        for (const c of cands) {
+          const bx = labelBox(c, '器材区', 10);
+          let ov = 0;
+          for (const o of frameBoxes) {
+            const ox = Math.min(bx.x + bx.w, o.x + o.w) - Math.max(bx.x, o.x);
+            const oy = Math.min(bx.y + bx.h, o.y + o.h) - Math.max(bx.y, o.y);
+            if (ox > 0 && oy > 0) ov += ox * oy;
+          }
+          if (ov < bestOv) { bestOv = ov; best = c; }
+        }
+        label(best, '器材区', 'rgba(103,232,249,.72)', 10);
+      }
       // 白纸上的位置圈
       function ring(x, z, r, color, dash, q) {
         const pts = [];
@@ -749,6 +858,32 @@
           pts.push(project([x + Math.cos(a) * r, 0.009, z + Math.sin(a) * r], q));
         }
         line(pts, color, 1.6, dash);
+      }
+
+      // 光标悬停在可拖动的物体上时，在它脚下的白纸上打一圈高亮。
+      // 【为什么要这个】只换光标不够：画面里三个物体常常挨得很近（B 与像重合、
+      // 光屏又挪到像位），手型出现了却不知道要拖的是哪一个。一圈亮框把「就是它」说清楚。
+      function drawHover(q) {
+        const h = state.hover;
+        if (!h) return;
+        const at = h === 'a' ? { x: state.ax, z: state.az }
+                 : h === 'b' ? { x: state.bx, z: state.bz }
+                 : { x: state.sx, z: state.sz };
+        const r = h === 'screen' ? 0.74 : 0.42;
+        const pts = [];
+        for (let k = 0; k <= 28; k++) {
+          const a = k / 28 * PI2;
+          pts.push(project([at.x + Math.cos(a) * r, 0.013, at.z + Math.sin(a) * r], q));
+        }
+        ctx.save();
+        ctx.beginPath();
+        pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+        ctx.closePath();
+        ctx.fillStyle = 'rgba(34,211,238,.15)';
+        ctx.fill();
+        ctx.lineWidth = 2; ctx.strokeStyle = 'rgba(103,232,249,.88)';
+        ctx.setLineDash([5, 4]); ctx.stroke(); ctx.setLineDash([]);
+        ctx.restore();
       }
 
       // 刻度尺：沿 z 轴摆，0 对准玻璃板。每 1 cm 一小格、5 cm 一大格。
@@ -1007,26 +1142,45 @@
         const t = project([state.sx, SCR_H * 0.55, state.sz], q);
         label({ x: t.x, y: t.y }, '光屏', 'rgba(226,232,240,.92)', 11);
         if (hit) {
-          label({ x: t.x, y: t.y + 18 }, '屏上无像 → 虚像', 'rgba(110,231,183,.98)', 11);
+          // 【为什么不说「屏上无像」】光屏正放在像的位置时，透过玻璃板看过去，
+          // 像恰好和光屏重合，屏上【看得见】那个像——那是板里的虚像，不是屏上的光斑。
+          // 写「屏上无像」会和学生眼睛看到的东西直接打架，所以改成「无光斑」。
+          label({ x: t.x, y: t.y + 18 }, '屏上无光斑 → 虚像', 'rgba(110,231,183,.98)', 11);
         }
       }
 
       // 辅助线：物距 / 像距 / 连线。画在所有实体之后，作为标注叠在上面。
       // 标注要沿线的法向推开一点——不然会正好压在蜡烛身上，读数被蜡烛盖住。
-      function midLabel(a, b, text, color, off, avoidList) {
+      // 【为什么改成按【盒子】避让】原来是「两个候选方向，挑离避让点更远的那一个」。
+      // 那是按蜡烛这种细长条定的；u 和 v 两个读数挂在同一条直线上，锚点只差三十几像素，
+      // 而盒子有六十几像素宽——按锚点距离挑，两个盒子照样叠掉近一半（390px 下实测 47%）。
+      // 现在把候选位置的【真实盒子】算出来（含画布边缘夹取），和本帧已经画好的所有盒子
+      // 求重叠面积，取重叠最小的那个；一个 offset 不够就试两倍、三倍。
+      function midLabel(a, b, text, color, off, avoidPts) {
         const dx = b.x - a.x, dy = b.y - a.y;
         const L = Math.hypot(dx, dy) || 1;
         const nx = -dy / L, ny = dx / L;
         const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
-        // 法向有两个方向。固定取一侧的话，光屏（或另一个读数）正好在那侧时就被压住
-        // （顶视图实测重叠 95%，读数整个看不见）。两个候选位置都算出来，
-        // 取「离所有要躲的点都更远」的那个。没有要躲的点时保持原来的固定方向。
-        let best = { x: mx + nx * off, y: my + ny * off }, bestD = -1;
-        for (const sgn of [1, -1]) {
-          const c = { x: mx + nx * off * sgn, y: my + ny * off * sgn };
-          let d = Infinity;
-          for (const av of (avoidList || [])) d = Math.min(d, Math.hypot(av.x - c.x, av.y - c.y));
-          if (d > bestD) { bestD = d; best = c; }
+        const boxes = frameBoxes.slice();
+        // 除了已经画出来的盒子，还要躲几个「不是标注、但也不该被压住」的点
+        // （光屏位置、F 光源中横笔的末端）。按和标注同量级的小盒子参与计算。
+        for (const p of (avoidPts || [])) boxes.push({ x: p.x - 12, y: p.y - 12, w: 24, h: 24 });
+        let best = { x: mx + nx * off, y: my + ny * off }, bestOv = Infinity;
+        for (const k of [1, 2, 3]) {
+          for (const sgn of [1, -1]) {
+            const o = off * k * sgn;
+            const c = { x: mx + nx * o, y: my + ny * o };
+            const bx = labelBox(c, text, 11);
+            let ov = 0;
+            for (const q2 of boxes) {
+              const ox = Math.min(bx.x + bx.w, q2.x + q2.w) - Math.max(bx.x, q2.x);
+              const oy = Math.min(bx.y + bx.h, q2.y + q2.h) - Math.max(bx.y, q2.y);
+              if (ox > 0 && oy > 0) ov += ox * oy;
+            }
+            if (ov < bestOv - 1e-9) { bestOv = ov; best = c; }
+            if (ov === 0) break;
+          }
+          if (bestOv === 0) break;
         }
         label(best, text, color, 11);
         return best;
@@ -1056,10 +1210,11 @@
           avoid.push(tip(state.ax, state.az), tip(im.x, im.z));
         }
         line([zA, z0], 'rgba(248,113,113,.90)', 1.6, [6, 4]);
-        const pu = midLabel(zA, z0, 'u = ' + (d * U).toFixed(1) + ' cm', 'rgba(252,165,165,.98)', 13, avoid);
-        // 像距 v：同时躲开光屏和刚刚放好的 u，免得两个读数叠在一起
+        // u 先画：它的盒子会自动进 frameBoxes，v 再画时就躲得开它，不用手动传。
+        midLabel(zA, z0, 'u = ' + (d * U).toFixed(1) + ' cm', 'rgba(252,165,165,.98)', 13, avoid);
+        // 像距 v：同时躲开光屏和刚刚放好的 u（见 midLabel 里的盒子避让）
         line([zI, z0i], 'rgba(56,189,248,.90)', 1.6, [6, 4]);
-        midLabel(zI, z0i, 'v = ' + (d * U).toFixed(1) + ' cm', 'rgba(125,211,252,.98)', 13, avoid.concat([pu]));
+        midLabel(zI, z0i, 'v = ' + (d * U).toFixed(1) + ' cm', 'rgba(125,211,252,.98)', 13, avoid);
         // B 到玻璃板
         line([zB, z0b], 'rgba(74,222,128,.85)', 1.4, [5, 4]);
         // 物与像的连线（应垂直于玻璃板，且被玻璃板平分）
@@ -1073,6 +1228,9 @@
         const w = state.w, h = state.h;
         ctx.setTransform(state.dpr, 0, 0, state.dpr, 0, 0);
         ctx.clearRect(0, 0, w, h);
+        // 标签避让是「本帧已经画了哪些盒子」，每帧必须清空——
+        // 不清的话上一帧的盒子会一直参与计算，标注会被越推越远。
+        frameBoxes = [];
         drawBackdrop(w, h);
 
         const q = {};
@@ -1099,10 +1257,28 @@
         const showA = !state.onlyBack;
         const showBack = !state.onlyFront;
         // 像要不要画：勾了「像始终显示」就无条件画（演示用），否则按真实可见性裁剪。
-        // 光屏挡在像前面时也收起来——屏是不透明的，这时候还让像浮在屏上就变成
-        // 「屏上有像」了，正好把要证的结论说反。
-        const ghostOn = showBack && state.showGhost && !state.screenHit &&
+        // 【光屏挡在像前面时不再无条件收起来】原来这里有 `!state.screenHit`：
+        // 光屏一挪到像的位置，像就整个消失了。但那是错的——光屏和像重合时，
+        // 从板前透过玻璃看过去，像恰好落在光屏上，这个角度【确实看得见】。
+        // 现在交给 imageVisible 判据：看得见就画（画在光屏稍前，不然不透明的屏会盖住它），
+        // 视角一转开、视线不再穿过玻璃板，它自己就没了。
+        const ghostOn = showBack && state.showGhost &&
                         (state.ghostAlways || state.ghostVisible);
+
+        // 像的深度。正常情况下比 B 稍远（+0.05），好让不透明的 B 压住它；
+        // 但光屏正放在像的位置时，像必须画在光屏【前面】才看得见。
+        // 深度直接挂到光屏自己的采样点上——像和屏的采样高度不同（0.82 vs 0.50），
+        // 相机又是俯视的，两个深度天然差 0.08 左右，各自加个小偏移根本压不住。
+        const dIm = dOf([im.x, srcTop() * 0.5, im.z]);
+        const dScr = dOf([state.sx, SCR_H * 0.5, state.sz]);
+        const onScr = state.screenHit && showBack;
+        const dGhost = onScr ? dScr - 0.02 : dIm + 0.05;
+        const dNear = onScr ? dScr - 0.06 : dIm - 0.05;
+        // 把这一帧的深度关系存下来。光屏是不透明的白卡纸，像要「看得见」就必须排在它【前面】——
+        // 自检直接读这一份，而不是把上面两行公式再抄一遍：抄一遍只能证明自检自洽，
+        // 证明不了页面画对了。
+        state.depth = { dIm: dIm, dScr: dScr, dGhost: dGhost, onScr: onScr,
+                        ghostInFrontOfScreen: dGhost < dScr };
 
         if (showA) {
           drawn.candle++;
@@ -1112,31 +1288,29 @@
           // 像的「身体」比 B 稍远一点画（B 是不透明的，要能压住它），
           // 火焰则比 B 稍近一点画——重合时火焰正好落在 B 的烛芯上，看上去就是 B 被点着了。
           // 所以这里 lit 传 false：火焰单独作为一项画，不然会画两遍。
+          // 光屏在像位时像被画在浅色屏面上，透明度要调高一点才看得清。
           drawn.ghost++;
-          push(dOf([im.x, srcTop() * 0.5, im.z]) + 0.05, () =>
-            drawSrc(im.x, im.z, q, { ghost: true, lit: false, alpha: 0.58 }));
+          const ga = onScr ? 0.9 : 0.58;
+          push(dGhost, () => drawSrc(im.x, im.z, q, { ghost: true, lit: false, alpha: ga }));
         }
         if (showBack) {
           drawn.candle++;
           push(dOf([state.bx, srcTop() * 0.5, state.bz]), () => drawSrc(state.bx, state.bz, q, { lit: false }));
         }
         // 火焰比 B 稍近一点画——重合时火焰正好落在 B 的烛芯上，看上去就是 B 被点着了。
-        // 但光屏挪到像的位置时要收起来：光屏是不透明的，像被挡在后面，
-        // 这时候还让火焰浮在屏上，就变成「屏上有像」了，正好把要证的结论说反。
+        // 光屏挪到像位时也一样画，只是深度改挂到光屏上（见上面的 dNear）。
         // F 光源没有火焰，这一步跳过。
         if (ghostOn && state.aLit && state.src === 'candle') {
-          push(dOf([im.x, srcTop() * 0.5, im.z]) - 0.05, () =>
-            drawFlame([im.x, CH + WK + FL * 0.52, im.z], q, CR * 1.55, 0.68));
+          push(dNear, () => drawFlame([im.x, CH + WK + FL * 0.52, im.z], q, CR * 1.55, onScr ? 0.92 : 0.68));
         }
         // F 光源没有火焰，重合时像会被不透明的 B 整个盖住，「对不对齐」就看不出来了。
         // 所以再画一层【比 B 稍近】的虚线轮廓：对齐时虚线正好压在 B 的边上，
         // 没对齐时虚线独立地偏在一边——和蜡烛「火焰落在烛芯上」是同一个作用。
         if (ghostOn && state.src === 'f') {
-          push(dOf([im.x, srcTop() * 0.5, im.z]) - 0.06, () =>
-            drawF(im.x, im.z, q, { ghost: true, outlineOnly: true, alpha: 0.9 }));
+          push(dNear - 0.01, () => drawF(im.x, im.z, q, { ghost: true, outlineOnly: true, alpha: 0.9 }));
         }
         if (showBack) {
-          push(dOf([state.sx, SCR_H * 0.5, state.sz]), () => drawScreen(q));
+          push(dScr, () => drawScreen(q));
         }
 
         drawn.glass++;
@@ -1145,6 +1319,9 @@
         state.drawn = drawn;
         items.sort((a, b) => b.d - a.d);
         items.forEach(it => it.f());
+
+        // 悬停高亮画在实体之后：它是一圈虚线，叠在桌面上才看得见（画在前面会被蜡烛压掉）
+        drawHover(q);
 
         if (state.showAid) drawAids(q);
 
@@ -1167,6 +1344,9 @@
           const pI = project([im.x, srcTop() + 0.45, im.z], q);
           label(pI, '像 A′' + (state.aLit ? '' : '（A 未点亮）'), 'rgba(165,243,252,.98)', 12);
         }
+        // 器材区那块区域的【名字】放在所有标签之后：它是地面区域的名字，
+        // 而且这时候才知道本帧有哪些标签、哪个落点不打架（见 drawStageLabel）。
+        drawStageLabel(q);
 
         ctx.setTransform(1, 0, 0, 1, 0, 0);
       }
@@ -1186,18 +1366,44 @@
         state.dirty = true;
       }
 
+      // 命中测试：认「碰到物体了没有」。
+      // 【为什么不能用「腰高那一个点」】原来每个物体只在腰高处量一个 30 px 的圆。
+      // 蜡烛有 12 cm 高，光标落在火焰上或底座上都不认——学生明明碰到了却拖不动，
+      // 只好反复瞄准中间那一点。现在把物体在世界里的包围盒八个角投影出来取屏幕 AABB，
+      // 整个身子都算「碰到」。
+      // 【为什么给蜡烛留出比半径更宽的盒子】蜡烛半径才 1.35 cm，投影出来只有十来像素宽，
+      // 还是要瞄。放宽到 ±(CR+0.09) 世界单位（≈4.5 cm 宽），手感才接近「碰到就选中」。
+      // 光屏是块大卡纸，按真实半宽 SCR_W 来，不必再放宽。
       function hitTest(x, y) {
         const q = {}; makeCam(q, state.w, state.h);
-        const near = (p, r) => Math.hypot(p.x - x, p.y - y) <= r;
-        const mid = srcTop() * 0.5;      // 抓取点取光源的腰高：蜡烛取 0.82、F 取 0.56
-        if (!state.onlyBack) {
-          if (near(project([state.ax, mid, state.az], q), 30)) return 'a';
-        }
+        const boxOf = (cx, cz, hw, top) => {
+          let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
+          for (const dx of [-hw, hw]) for (const dz of [-hw, hw]) for (const yy of [0, top]) {
+            const s = project([cx + dx, yy, cz + dz], q);
+            if (s.x < x0) x0 = s.x;
+            if (s.x > x1) x1 = s.x;
+            if (s.y < y0) y0 = s.y;
+            if (s.y > y1) y1 = s.y;
+          }
+          return { x0: x0, x1: x1, y0: y0, y1: y1 };
+        };
+        const PAD = 5;                       // 再给几个像素的宽容，别让人贴着一像素边找
+        const cands = [];
+        const add = (key, bx) => {
+          if (x < bx.x0 - PAD || x > bx.x1 + PAD || y < bx.y0 - PAD || y > bx.y1 + PAD) return;
+          cands.push({ key: key, d: Math.hypot((bx.x0 + bx.x1) / 2 - x, (bx.y0 + bx.y1) / 2 - y) });
+        };
+        const hwObj = CR + 0.09;
+        if (!state.onlyBack) add('a', boxOf(state.ax, state.az, hwObj, srcTop()));
         if (!state.onlyFront) {
-          if (near(project([state.bx, mid, state.bz], q), 30)) return 'b';
-          if (near(project([state.sx, SCR_H * 0.5, state.sz], q), 34)) return 'screen';
+          add('b', boxOf(state.bx, state.bz, hwObj, srcTop()));
+          add('screen', boxOf(state.sx, state.sz, SCR_W, SCR_H));
         }
-        return null;
+        if (!cands.length) return null;
+        // 两个物体在屏幕上叠住时（B 与像重合、光屏又挪到像位就是这种情况），
+        // 取屏幕中心离光标最近的那个——按固定优先级会让人「想拖 B 却拖走了光屏」。
+        cands.sort((u, v) => u.d - v.d);
+        return cands[0].key;
       }
 
       function pointerPos(e) {
@@ -1228,6 +1434,12 @@
       // 早先的拖动限位也是直接拿 PAPER_Z 当 z 上限，这里减一次就凭空少 3.4 cm，
       // 老测试里 az = 19.5 cm 会被悄悄钳到 16.1 cm。
       const Z_CM    = toCm(PAPER_Z);
+      // 板前能到多远（cm，负值 = 在板前）。器材区就在这一段里。
+      // 和板后的上限一样，端点必须是 STEP_CM 的整数倍，否则滑块/拖动网格会错位；
+      // 但这里是【拖动的钳位】，不落到滑块上，所以直接用即可。
+      const frontLoCm = () => toCm(state.gz) - Z_CM;
+      // 换段回差：想从板前挪到板后（或反过来），至少要拖过板面这么多，免得贴着板来回跳。
+      const HYST_CM = 0.5;
       // z 方向的可用范围【以板面为零点】，随玻璃板前后位置变：
       //   板往前走，板前剩的深度就少几厘米；板往后挪，板后就更宽敞。
       //   所以这张表是【函数】而不是常量——板一挪就得重算（applySliderRanges 会调）。
@@ -1252,14 +1464,40 @@
         const C = cmOf(k);
         // 先钳到可用范围，再对齐到滑块刻度（cm 网格 → 再换回世界单位）
         x = fromCm(snapCm(clamp(toCm(x), C.x[0], C.x[1])));
-        // z 的限位写的是「离板面的距离」，所以先把世界坐标 z 换算成距离再比。
-        // 【坑】dc 从头到尾都是 cm：zWorld() 自己会把 cm 换成世界单位。
-        // 这里若先 fromCm 一次再交给 zWorld，就等于除了两次 10，
-        // 蜡烛会缩到 1/10 处——物距 13.5 cm 变成 1.35 cm，读数却还写着 13.5。
-        const dcm = k === 'a' ? toCm(z - state.gz) : toCm(state.gz - z);
-        const dc = snapCm(clamp(dcm, C.z[0], C.z[1]));
-        if (k === 'a') { state.ax = x; state.az = zWorld(k, dc); }
-        else if (k === 'b') { state.bx = x; state.bz = zWorld(k, dc); }
+
+        if (k === 'a') {
+          const dc = snapCm(clamp(toCm(z - state.gz), C.z[0], C.z[1]));
+          state.ax = x; state.az = zWorld(k, dc);
+          return;
+        }
+
+        // ── B 和光屏：玻璃板是一块【挡板】，物体不能从板中间穿过去。
+        // 板只挡在 |x − gx| ≤ gw 那一段，所以分两种情形（d 为「到板面的距离」，
+        // 正 = 板后，负 = 板前）：
+        //   ① 在板的【外侧】（器材区那一片）：没有玻璃，z 方向整张纸都能走；
+        //   ② 在板的正前方 / 正后方：只能待在原来那一侧，d ∈ [−GAP_B, …] 或 [+GAP_B, …]。
+        // 想换侧要拖过板面 0.5 cm 以上（回差），免得贴着板来回跳。
+        // 【为什么不做「必须绕过去」】真实实验里 B 是从桌子右边绕过玻璃板放到板后的，
+        // 但那要求命中测试懂「绕过」这件事，手感反而更差。用一点回差代替，
+        // 物理上讲得通（板前板后确实不连通），操作上也不会卡住。
+        const cur = k === 'b' ? state.bz : state.sz;
+        const d0 = toCm(state.gz - z);
+        const behind = { lo: GAP_B, hi: C.z[1] };
+        const front  = { lo: frontLoCm(), hi: -GAP_B };
+        const blocked = Math.abs(x - state.gx) < state.gw + 0.16;
+        let r;
+        if (!blocked) {
+          r = { lo: frontLoCm(), hi: C.z[1] };              // 板外：整张纸都能用
+        } else if (cur > state.gz) {
+          // 【符号别看反】d 为正 = 板后，为负 = 板前。
+          // 在板前 → 只有目标跑到板后（d0 > +GAP_B）才换侧；
+          // 一开始写成「在板后、目标也在板后」也换侧，于是 B 一被设到板后就立刻被扔回板前。
+          r = d0 > GAP_B + HYST_CM ? behind : front;
+        } else {
+          r = d0 < -GAP_B - HYST_CM ? front : behind;
+        }
+        const dc = snapCm(clamp(d0, r.lo, r.hi));
+        if (k === 'b') { state.bx = x; state.bz = zWorld(k, dc); }
         else { state.sx = x; state.sz = zWorld(k, dc); }
       }
       // 玻璃板一挪，物体到板面的距离就变了。最小间隙必须重新保证，
@@ -1276,6 +1514,9 @@
         const p = pointerPos(e);
         const hit = hitTest(p.x, p.y);
         canvas.setPointerCapture(e.pointerId);
+        // 记下按下的位置和按在谁身上：抬起时若几乎没移动，这就是一次「点击」，
+        // 点在光源上就点燃 / 熄灭它（见 pointerup）。
+        state.downAt = { x: p.x, y: p.y, hit: hit };
         if (hit) {
           const q = {}; makeCam(q, state.w, state.h);
           const wpt = unproject(p.x, p.y, q);
@@ -1283,7 +1524,7 @@
           // 记住「抓取点」与物体中心的差，拖起来物体不会跳到光标底下
           state.dragOff = wpt ? [cur.x - wpt[0], cur.z - wpt[2]] : [0, 0];
           state.drag = hit;
-          canvas.classList.add('pick');
+          canvas.classList.add('pick', 'dragging');
         } else {
           state.dragging = true;
         }
@@ -1306,14 +1547,37 @@
           if (hit !== state.hover) {
             state.hover = hit;
             canvas.classList.toggle('pick', !!hit);
+            state.dirty = true;                 // 悬停高亮要重画
           }
+          if (hit) updateTip();
         }
         state.lastX = p.x; state.lastY = p.y;
       });
-      const endDrag = () => { state.dragging = false; state.drag = null; };
-      canvas.addEventListener('pointerup', endDrag);
+      function endDrag() {
+        state.dragging = false; state.drag = null; state.downAt = null;
+        canvas.classList.remove('dragging');
+        if (!state.hover) canvas.classList.remove('pick');
+      }
+      canvas.addEventListener('pointerup', e => {
+        const d = state.downAt;
+        // 一次「点击」= 按下和抬起之间几乎没移动。点在光源 A 上就直接点燃 / 熄灭它，
+        // 不用再跑去侧栏找按钮——用户要的就是「点蜡烛直接点燃」。
+        // 6 px 的阈值：手抖、以及「想微调一下位置」的拖动都不会被误判成点击。
+        if (d && d.hit === 'a') {
+          const p = pointerPos(e);
+          if (Math.hypot(p.x - d.x, p.y - d.y) < 6) setLit(!state.aLit);
+        }
+        endDrag();
+      });
       canvas.addEventListener('pointercancel', endDrag);
-      canvas.addEventListener('pointerleave', () => { if (!state.dragging && !state.drag) canvas.classList.remove('pick'); });
+      canvas.addEventListener('pointerleave', () => {
+        if (!state.dragging && !state.drag) {
+          state.hover = null;
+          canvas.classList.remove('pick');
+          ui.tip.classList.remove('show');
+          state.dirty = true;
+        }
+      });
       canvas.addEventListener('wheel', e => {
         e.preventDefault();
         state.zoom = clamp(state.zoom * (e.deltaY > 0 ? 0.92 : 1.08), 0.55, 2.2);
@@ -1331,6 +1595,7 @@
         gw: el('mir-gw'), gh: el('mir-gh'), gx: el('mir-gx'), gz: el('mir-gz'),
         gwV: el('mir-gw-v'), ghV: el('mir-gh-v'), gxV: el('mir-gx-v'), gzV: el('mir-gz-v'),
         note: el('mir-ghostnote'), always: el('mir-ghost-always'),
+        tip: el('mir-tip'), toast: el('mir-toast'),
         srcCandle: el('mir-src-candle'), srcF: el('mir-src-f'),
         mu: el('mir-mu'), mv: el('mir-mv'), mb: el('mir-mb'), mc: el('mir-mc'),
         mcard: el('mir-mcard'), verdict: el('mir-verdict'), flag: el('mir-flag'),
@@ -1343,9 +1608,10 @@
       // 文字写成函数：换光源（蜡烛 / F 光源）时步骤说法要跟着变，
       // 否则切到 F 光源后第一条还写着「点燃蜡烛 A」，学生照着找蜡烛。
       const STEPS = [
-        { text: () => '点亮' + (state.src === 'f' ? ' F 光源 A' : '蜡烛 A'), done: () => state.aLit },
+        { text: () => '点亮' + (state.src === 'f' ? ' F 光源 A' : '蜡烛 A') +
+            '（直接点一下画面里的它）', done: () => state.aLit },
         { text: () => '把' + (state.src === 'f' ? ' F 光源 B' : '蜡烛 B') +
-            '移到玻璃板后，直到它与 A 的像完全重合', done: () => state.coincideErr < 1e-6 },
+            '从右边的器材区拖到玻璃板后，直到它与 A 的像完全重合', done: () => state.coincideErr < 1e-6 },
         { text: () => '点「记录这一组」，在白纸上留下 A、B 的位置和连线', done: () => state.marks.length >= 1 },
         { text: () => '把光屏移到像的位置，直接观察光屏上有没有像', done: () => state.screenChecked },
         { text: () => '改变 A 的位置，再重合、再记录一组', done: () => state.marks.length >= 2 }
@@ -1376,7 +1642,15 @@
         ui.az.value = dA; ui.azV.textContent = dA.toFixed(1) + ' cm';
         ui.ax.value = toCm(state.ax); ui.axV.textContent = toCm(state.ax).toFixed(1) + ' cm';
         ui.bx.value = toCm(state.bx); ui.bxV.textContent = toCm(state.bx).toFixed(1) + ' cm';
-        ui.bz.value = dB; ui.bzV.textContent = dB.toFixed(1) + ' cm';
+        // B 还在器材区时「到玻璃板」不是个有意义的读数，滑块 min = 2 cm 也写不进去——
+        // 硬写会被浏览器钳成 2.0，看上去像 B 在板后 2 cm 处。
+        // 所以分三种写：器材区 →「待取用」；板后 → 距离；板前 → 「板前 x cm」（如实说）。
+        const bZone = zoneOf('b');
+        const bBehind = bZone === 'behind';
+        ui.bz.value = bBehind ? dB : +ui.bz.min;
+        ui.bzV.textContent = bZone === 'staged' ? '待取用'
+                           : bBehind ? dB.toFixed(1) + ' cm'
+                           : '板前 ' + ((state.bz - state.gz) * U).toFixed(1) + ' cm';
         // 玻璃板：宽度滑块写的是【整块板的宽度】（23 cm），state 里存的是半宽
         const gwc = toCm(state.gw * 2);
         ui.gw.value = gwc; ui.gwV.textContent = gwc.toFixed(1) + ' cm';
@@ -1400,12 +1674,19 @@
       function updateReadout() {
         const im = imagePos();
         const u = objDist() * U, v = objDist() * U, db = (state.gz - state.bz) * U;
+        const bZone = zoneOf('b');
+        const bPlaced = bZone === 'behind';
         ui.mu.textContent = u.toFixed(1) + ' cm';
         ui.mv.textContent = v.toFixed(1) + ' cm';
-        ui.mb.textContent = db.toFixed(1) + ' cm';
+        // 和侧栏滑块同一套说法（见 syncInputs）：器材区 →「待取用」；板前 →「板前 x cm」。
+        // 两处各写一套的话，同一件事会在两个地方显示成两个不同的数。
+        ui.mb.textContent = bZone === 'staged' ? '待取用'
+                          : bPlaced ? db.toFixed(1) + ' cm'
+                          : '板前 ' + ((state.bz - state.gz) * U).toFixed(1) + ' cm';
 
         const co = state.coincideErr < 1e-6;
-        ui.mc.textContent = co ? '完全重合 ✓' : '还差 ' + (state.coincideErr * U).toFixed(1) + ' cm';
+        ui.mc.textContent = co ? '完全重合 ✓'
+          : (bPlaced ? '还差 ' + (state.coincideErr * U).toFixed(1) + ' cm' : '未重合');
         ui.mcard.className = 'lab3d-metric ' + (co ? 'ok' : (state.coincideErr < 0.35 ? 'warn' : ''));
         ui.flag.classList.toggle('show', co && state.aLit);
 
@@ -1421,9 +1702,18 @@
         const aName = isF ? 'F 光源 A' : '蜡烛 A';
         const bName = isF ? 'F 光源 B' : '蜡烛 B';
         if (!state.aLit) {
-          ui.verdict.innerHTML = '<b>观察提示：</b>先把' + aName + '点亮——不发光就看不清「像」在哪，'
-            + '也就没法用 ' + bName + ' 去对。点亮后，把 ' + bName + ' 从玻璃板后慢慢往前挪，'
-            + '直到它与像完全重合。';
+          ui.verdict.innerHTML = '<b>观察提示：</b>先把' + aName + '点亮——直接点一下画面里的它，'
+            + '或者按侧栏的按钮。不发光就看不清「像」在哪，也就没法用 ' + bName + ' 去对。'
+            + '点亮后把 ' + bName + ' 从白纸右边的<b>器材区</b>拖到玻璃板后面，'
+            + '慢慢挪，直到它与像完全重合。';
+        } else if (bZone === 'staged') {
+          ui.verdict.innerHTML = '<b>观察提示：</b>' + bName + '还摆在白纸右边的<b>器材区</b>里，'
+            + '先把它拖到<b>玻璃板后面</b>去。把光标移到它身上（变手型）按住往左后方拖就行——'
+            + '玻璃板挡在中间，从板正前方是拖不过去的，要从板外侧绕到后面。';
+        } else if (bZone === 'front') {
+          ui.verdict.innerHTML = '<b>观察提示：</b>' + bName + '现在还在<b>玻璃板前面</b>，'
+            + '而像在板后。把它往<b>板后</b>拖：从板外侧（右边那片空地）绕过去最顺手，'
+            + '或者直接往板后拖过板面也行——它不会停在玻璃里，会被挡在板外 2 cm 处。';
         } else if (!co) {
           ui.verdict.innerHTML = '<b>观察提示：</b>' + bName + '距离像还有 <b>'
             + (state.coincideErr * U).toFixed(1) + ' cm</b>。继续移动它，'
@@ -1435,8 +1725,10 @@
             + (isF ? '顺便看一眼：像里的 F <b>还是 F，没有左右颠倒</b>。' : '')
             + '接下来把<b>光屏</b>拖到像的位置，直接看光屏上有没有东西——这一步用来判断是实像还是虚像。';
         } else {
-          ui.verdict.innerHTML = '<b>结论：</b>光屏上<b>什么也没有</b>，说明平面镜成的像是<b>虚像</b>，'
-            + '不能用光屏承接。像与物关于玻璃板<b>对称</b>：大小相等、到玻璃板距离相等、连线与玻璃板垂直。';
+          ui.verdict.innerHTML = '<b>结论：</b>光屏上<b>没有任何光斑</b>，说明平面镜成的像是<b>虚像</b>，'
+            + '不能用光屏承接。注意：你在光屏上看到的那个「像」并不是屏上的光斑——'
+            + '它是玻璃板里的虚像恰好和光屏重合了，把视角转开、视线不再穿过玻璃板，它就没了。'
+            + '像与物关于玻璃板<b>对称</b>：大小相等、到玻璃板距离相等、连线与玻璃板垂直。';
         }
         updateSteps();
       }
@@ -1489,6 +1781,43 @@
           ? (isF ? '🌫 熄灭 F 光源 A' : '🌫 熄灭蜡烛 A')
           : (isF ? '🔠 点亮 F 光源 A' : '🔥 点燃蜡烛 A');
       }
+
+      // 点燃 / 熄灭的【唯一入口】：侧栏按钮和「点击画面里的光源」都走这里。
+      // 两条路径各写一遍的话，迟早出现「点了蜡烛亮了、按钮文字没跟着变」这种不同步。
+      let toastTimer = 0;
+      function showToast(txt) {
+        ui.toast.textContent = txt;
+        ui.toast.classList.add('show');
+        clearTimeout(toastTimer);
+        toastTimer = setTimeout(() => ui.toast.classList.remove('show'), 1700);
+      }
+      function setLit(on) {
+        state.aLit = on;
+        updateLightBtn();
+        state.dirty = true;
+        const isF = state.src === 'f';
+        showToast(on ? (isF ? '🔠 F 光源 A 已点亮' : '🔥 蜡烛 A 已点燃')
+                     : (isF ? '🌫 F 光源 A 已熄灭' : '🌫 蜡烛 A 已熄灭'));
+      }
+      // 悬停小气泡：跟着物体顶端走。它同时承担两件事——说「能拖」，
+      // 以及说「点一下能点燃」（否则「点击点燃」这个动作在页面上完全无从发现）。
+      function updateTip() {
+        const h = state.hover;
+        if (!h) { ui.tip.classList.remove('show'); return; }
+        const q = {}; makeCam(q, state.w, state.h);
+        const at = h === 'a' ? { x: state.ax, z: state.az, top: srcTop() }
+                 : h === 'b' ? { x: state.bx, z: state.bz, top: srcTop() }
+                 : { x: state.sx, z: state.sz, top: SCR_H };
+        const s = project([at.x, at.top, at.z], q);
+        ui.tip.textContent = h === 'a'
+          ? (state.aLit ? '拖动移动 · 点一下熄灭' : '拖动移动 · 点一下点燃')
+          : '拖动移动';
+        // 气泡是 DOM，坐标系是 CSS 像素（和 canvas 的 CSS 尺寸同一套）。
+        // 要夹在舞台内——靠边的物体不夹的话气泡会飞出去被 overflow:hidden 裁掉。
+        ui.tip.style.left = clamp(s.x, 66, Math.max(66, state.w - 66)) + 'px';
+        ui.tip.style.top = clamp(s.y - 8, 24, Math.max(24, state.h - 6)) + 'px';
+        ui.tip.classList.add('show');
+      }
       function updateLegend() {
         const isF = state.src === 'f';
         ui.legend.innerHTML = '<span style="color:#fca5a5">●</span> ' + (isF ? 'F 光源 A（物）' : '蜡烛 A（物）') + '　'
@@ -1504,7 +1833,9 @@
       // 不解释一句的话，像一消失就会被当成画错了，学生反而学到错的东西。
       function updateGhostNote() {
         let txt = '';
-        if (state.showGhost && !state.screenHit && !state.ghostVisible) {
+        // 【不要在这里加 !state.screenHit】光屏挪到像的位置时，像会不会显示，
+        // 由 imageVisible 这一个判据说了算：透过玻璃板看得见就显示，视线转开就消失。
+        if (state.showGhost && !state.ghostVisible) {
           // 一定要把「去哪儿能把它调回来」写出来：像突然消失，第一反应是画错了。
           txt = state.ghostAlways
             ? '⚠ 这个角度其实看不到像：' + state.ghostReason + '。现在按「像始终显示」画了出来，这是演示画法。'
@@ -1515,18 +1846,16 @@
         ui.note.classList.toggle('show', !!txt);
       }
 
-      ui.light.addEventListener('click', () => {
-        state.aLit = !state.aLit;
-        updateLightBtn();
-        state.dirty = true;
-      });
+      ui.light.addEventListener('click', () => setLit(!state.aLit));
       ui.record.addEventListener('click', () => {
         state.marks.push({ ax: state.ax, az: state.az, bx: state.bx, bz: state.bz });
         state.dirty = true;
       });
       ui.reset.addEventListener('click', () => {
-        state.ax = 0.55; state.az = 1.35; state.bx = 0.0; state.bz = -0.60;
-        state.sx = 0.0; state.sz = -0.40;
+        state.ax = 0.55; state.az = 1.35;
+        // B 和光屏回到右边的【器材区】，不是玻璃板后——重做实验要连「取器材」这一步一起重来
+        state.bx = STAGE.b.x; state.bz = STAGE.b.z;
+        state.sx = STAGE.scr.x; state.sz = STAGE.scr.z;
         state.gw = GW0; state.gh = GH0; state.gx = 0; state.gz = 0;
         state.aLit = false; state.snapped = false; state.screenChecked = false;
         state.ghostAlways = false; ui.always.checked = false;
@@ -1594,11 +1923,18 @@
         imageVisible: () => { const q = {}; makeCam(q, state.w, state.h); return imageVisible(q); },
         // srcTop / objDist 都要暴露：自检里要算「像应该出现在哪儿」，用同一套函数才算同源
         srcTop: srcTop, objDist: objDist,
+        // 器材区：初始摆位和「还在不在器材区」都要能被自检问到，
+        // 否则测试只能靠抄一遍坐标，页面一改测试就悄悄失去意义。
+        stage: STAGE, staged: staged, placed: placed, frontLoCm: frontLoCm, zoneOf: zoneOf,
+        setLit: setLit,
+        // 这一帧「像 / 光屏」的深度关系（render 里算的，不是自检重算的）
+        depth: () => state.depth,
         consts: { U: U, GW0: GW0, GH0: GH0, CR: CR, CH: CH, WK: WK, FL: FL, PAD: PAD,
                   F_H: F_H, F_W: F_W, F_S: F_S, F_Z: F_Z, F_M0: F_M0, F_M1: F_M1,
                   ENV_TOP: ENV_TOP, SCR_W: SCR_W, SCR_H: SCR_H, PAPER_Z: PAPER_Z,
                   PT_W: PT_W, PT_D: PT_D, TABLE_W: TABLE_W, TABLE_D: TABLE_D,
-                  STEP_CM: STEP_CM, X_CM: X_CM, GAP_A: GAP_A, GAP_B: GAP_B },
+                  STEP_CM: STEP_CM, X_CM: X_CM, GAP_A: GAP_A, GAP_B: GAP_B,
+                  HYST_CM: HYST_CM, STAGE: STAGE },
         // 玻璃板此刻的实时尺寸 / 位置（世界单位）。常量只有默认值，
         // 自检要验「拖滑块板真的动了」，必须能读到实时值。
         plate() { return { gw: state.gw, gh: state.gh, gx: state.gx, gz: state.gz }; },
@@ -1661,6 +1997,17 @@
           state.dirty = true;
           return { bx: state.bx, bz: state.bz, err: state.coincideErr, snapped: state.snapped };
         },
+        // 走【真实的拖动路径】。set() 是直接写 state 再钳位，那时「物体此刻在哪一侧」
+        // 已经变成新值了，回差和「板挡在中间」这两条根本验不到。
+        // 拖动时 setPos 读到的 cur 是【上一帧】的位置，才是真行为。
+        dragTo(k, x, z) {
+          setPos(k, x, z);
+          syncInputs(); updateCoincide(); updateReadout();
+          state.dirty = true;
+          const pos = k === 'a' ? [state.ax, state.az] : k === 'b' ? [state.bx, state.bz] : [state.sx, state.sz];
+          return { x: +pos[0].toFixed(4), z: +pos[1].toFixed(4),
+                   d: +((state.gz - pos[1]) * U).toFixed(2) };   // d 为「到板面的距离」，正 = 板后
+        },
         projectedEnvelope() {
           const q = {}; makeCam(q, state.w, state.h);
           return envelopePoints().map(p => { const s = project(p, q); return { x: s.x, y: s.y }; });
@@ -1682,7 +2029,14 @@
           }
           return pts.map(p => { const s = project(p, q); return { x: s.x, y: s.y }; });
         },
-        size() { return { w: state.w, h: state.h, dpr: state.dpr }; }
+        size() { return { w: state.w, h: state.h, dpr: state.dpr }; },
+        // 悬停 / 气泡 / 光标：这三样是「碰到物体就能拖」这条需求的可见证据，
+        // 自检要能直接读到它们，而不是去截图比对。
+        hover: () => state.hover,
+        tip() { return { text: ui.tip.textContent, show: ui.tip.classList.contains('show'),
+                         x: ui.tip.style.left, y: ui.tip.style.top }; },
+        toast() { return { text: ui.toast.textContent, show: ui.toast.classList.contains('show') }; },
+        cursor() { return canvas.className; }
       };
     })();
     </script>
