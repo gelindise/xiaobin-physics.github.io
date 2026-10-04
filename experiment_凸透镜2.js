@@ -359,19 +359,15 @@ import * as THREE from './assets/optics-three.min.js';
   }
   box(screen,[.35,12.0,.40],[.57,12,0],alu);
   const screenLabel=badge(screen,'毛玻璃光屏',[-.2,25,0],'#4c6070',14);
-  // When the screen is lifted off the bench a faint wireframe stays in its place, so the
-  // spot it belongs to is still visible and can be clicked to put it back.
+  // Taking the screen off the bench has to leave the stage completely clear: no leftover
+  // wireframe, no translucent panel, nothing between the eye and the image. The only thing kept
+  // is a fully invisible pick plane in the screen's own place, so clicking that empty spot still
+  // brings the screen back where it belongs.
   const screenGhost=new THREE.Group();scene.add(screenGhost);screenGhost.visible=false;
   {
-    const hw=8.6,hh=9.9,ghostMat=new THREE.LineBasicMaterial({color:'#9fe0f2',transparent:true,opacity:.8});
-    const corners=[[-.3,12-hh,-hw],[-.3,12+hh,-hw],[-.3,12+hh,hw],[-.3,12-hh,hw]];
-    const pts=[];
-    for(let i=0;i<4;i++){pts.push(V(...corners[i]),V(...corners[(i+1)%4]));}
-    const outline=new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(pts),ghostMat);
-    outline.renderOrder=9;screenGhost.add(outline);
-    // A translucent panel gives the wireframe enough surface to be an easy pointer target.
+    const hw=8.6,hh=9.9;
     const panel=mesh(new THREE.PlaneGeometry(hw*2,hh*2),
-      new THREE.MeshBasicMaterial({color:'#7fd4f2',transparent:true,opacity:.10,side:THREE.DoubleSide,depthWrite:false}),
+      new THREE.MeshBasicMaterial({transparent:true,opacity:0,colorWrite:false,depthWrite:false,side:THREE.DoubleSide}),
       screenGhost,-.3,12,0,false);
     panel.rotation.y=-Math.PI/2;
   }
@@ -465,8 +461,8 @@ import * as THREE from './assets/optics-three.min.js';
     const LX=wx(state.lensP),u=state.u,f=state.f;
     const v=info.v;
     const c=imageCase();
-    // Seeing the image is the point and the rays are only the proof, so the virtual-image
-    // switch works on its own: the ghost appears whether or not the ray fan is on.
+    // Seeing the image is the point and the rays are only the proof, so the ghost appears on its
+    // own the moment the eye is behind the lens, whether or not the ray fan is switched on.
     const seen=updateGhost();
     if(!state.rays)return;
     const stopX=state.screenRemoved?LX+88:wx(state.scrP);
@@ -477,9 +473,10 @@ import * as THREE from './assets/optics-three.min.js';
     for(const src of active){
       for(const [shiftY,shiftZ] of lensShifts){
         const r=traceRay([src.y,src.z],LX,stopX,shiftY,shiftZ,src.c,.85);
-        // Behind the lens the extensions meet again where the upright virtual image is. They
-        // are drawn only while that image is genuinely in view, so the object side stays clean.
-        if(c&&!c.inverted&&seen)lineSegment(rays,r.hit,V(LX+v,r.YL+r.sy*v,r.ZL+r.sz*v),src.c,.6,true);
+        // Behind the lens the extensions meet again where the upright virtual image is. They are
+        // a construction aid rather than the observation itself, so they answer to their own
+        // switch, and they are only drawn while that image is genuinely in view.
+        if(c&&!c.inverted&&seen&&state.virtual)lineSegment(rays,r.hit,V(LX+v,r.YL+r.sy*v,r.ZL+r.sz*v),src.c,.6,true);
       }
       const mark=(op)=>{
         const g=mesh(new THREE.SphereGeometry(.34,16,12),src.c==='#4b8fc4'?blue:gold,ghostLabels,LX+v,12-(src.y-12)*v/u,-src.z*v/u,false);
@@ -492,9 +489,14 @@ import * as THREE from './assets/optics-three.min.js';
   }
   // Where an image exists at all, and whether it is the upright virtual one or a real one that
   // has lost its screen. Returns null when there is nothing to draw.
+  //
+  // Looking through the lens is a single act of observation, so the image shows up for both the
+  // real and the virtual case the moment the eye is on the screen side. The「显示光线反向延长线」
+  // switch is deliberately NOT consulted here: it only governs the dashed construction lines, and
+  // making it a precondition for the image itself was what hid the virtual image by default.
   function imageCase(){
     const info=status(),v=info.v;
-    if(!state.virtual||!Number.isFinite(v))return null;
+    if(!Number.isFinite(v))return null;
     const LX=wx(state.lensP);
     if(v<0)return LX+v>=-62?{v,inverted:false}:null;
     return state.screenRemoved&&info.real&&v<=95?{v,inverted:true}:null;
@@ -780,10 +782,9 @@ import * as THREE from './assets/optics-three.min.js';
     fitCamera();const v=V(p.x,p.y,p.z||0).project(camera),rect=canvas.getBoundingClientRect();
     return {x:(v.x+1)*rect.width/2,y:(1-v.y)*rect.height/2,depth:v.z};
   }
-  // A floating marker that shows where the observer's eye sits in the "look through the
-  // lens" mode, so the viewpoint reads as a labelled position rather than a camera move.
-  const eyeBadge = badge(scene,'观察者 · 眼睛位置',[0,16.5,0],'#8a6a2f',14);
-  eyeBadge.visible = false;
+  // The observer's own eye is the camera in "look through the lens" mode, so no floating label is
+  // drawn for it: a badge parked right where the image appears only gets in the way, and the
+  // banner over the stage already says which viewpoint is active.
   // The three slides cannot pass through each other, so every position is pulled back onto
   // the rail before anything is drawn, and snapped to the slider grid so the browser never
   // has to clamp an out-of-range input behind our back.
@@ -810,8 +811,6 @@ import * as THREE from './assets/optics-three.min.js';
     screenGhost.position.x=wx(state.scrP);
     labels.position.x=wx(state.objP);
     lensLabel.visible=screenLabel.visible=candleLabel.visible=state.labels;
-    eyeBadge.visible=state.screenRemoved;
-    eyeBadge.position.set(wx(state.scrP)+4,16.5,0);
     refreshMarks();refreshSources();refreshRays();redrawScreen();
     const candleMode=state.source==='candle';
     for(const [id,value] of [['focalLength',state.f],['sourceHeight',state.sourceY],['secondHeight',state.secondY]])$(id).value=value;
@@ -912,10 +911,16 @@ import * as THREE from './assets/optics-three.min.js';
   $('screenToggle2').addEventListener('click',()=>setScreen(state.screenRemoved));
   // Standing behind where the screen was and looking back through the lens: the only way to
   // see a virtual image, and the clearest way to see a real image that no longer has a screen.
+  //
+  // The azimuth has to be near-axial. A virtual image sits far behind the lens on the object
+  // side, so the sight line only clears the lens aperture while the eye is close to the axis:
+  // measured, the image is lost for every u < f at yaw 1.06-1.42 and reliably visible from
+  // yaw >= 1.48. Parking the camera at 1.06 (an older value) put the student in a spot where
+  // pressing「透过透镜观察」showed nothing at all.
   $('observerBtn').addEventListener('click',()=>{
     if(state.observing){setScreen(true);return;}
     state.observing=true;state.screenRemoved=true;state.autoScreen=false;
-    state.yaw=1.06;state.pitch=.13;state.zoom=1.4;update();
+    state.yaw=1.50;state.pitch=.12;state.zoom=1.4;update();
   });
   // One row per object-distance region, always present, so the shape of the finished table is
   // visible before anything has been recorded and the student can see what is still missing.
@@ -923,7 +928,7 @@ import * as THREE from './assets/optics-three.min.js';
     $('records').innerHTML=CASES.map(c=>{
       const r=state.records[c.id];
       const cell=v=>r?`<td>${v}</td>`:'<td class="pending">—</td>';
-      return `<tr class="${r?'filled':''}"><td>${c.name}</td>`
+      return `<tr data-case="${c.id}" class="${r?'filled':''}"><td>${c.name}</td>`
         +cell(r&&r.u)+cell(r&&r.v)+cell(r&&r.nature)+cell(r&&r.mag)+cell(r&&r.onScreen)+'</tr>';
     }).join('');
     const count=Object.keys(state.records).length;
@@ -947,6 +952,10 @@ import * as THREE from './assets/optics-three.min.js';
       onScreen:real?'能':'不能'
     };
     renderRecords();
+    // The table now sits straight under the stage, so the row that just changed is flashed once:
+    // the eye stays on the apparatus and still sees which line the click landed on.
+    const row=$('records').querySelector(`tr[data-case="${item.id}"]`);
+    if(row){row.classList.add('flash');setTimeout(()=>row.classList.remove('flash'),1200);}
     state.step=4;update();
   }
   $('recordBtn').addEventListener('click',recordMark);
@@ -990,8 +999,9 @@ import * as THREE from './assets/optics-three.min.js';
       ((e.clientX-rect.left)/rect.width)*2-1, -((e.clientY-rect.top)/rect.height)*2+1), camera);
     return true;
   }
-  // The screen itself is clickable, and so is the wireframe left behind once it is off the
-  // bench, which is what makes "click to take it off / click to put it back" work both ways.
+  // The screen itself is clickable, and so is the empty spot it leaves behind once it is off the
+  // bench (an invisible pick plane, not a leftover frame), which is what makes "click to take it
+  // off / click to put it back" work both ways.
   function hitScreen(e){
     if(!castAt(e))return false;
     return raycaster.intersectObject(state.screenRemoved?screenGhost:screen,true).length>0;
@@ -1105,6 +1115,12 @@ import * as THREE from './assets/optics-three.min.js';
   window.__lensLab.art={canvas:objCanvas,artY,artX,artXz,pxCm:ART_PX_CM};
   window.__lensLab.screen={canvas:texCanvas,pxCm:PX_CM};
   window.__lensLab.fSource={group:fSource,strokes:F_STROKES,points:F_POINTS};
+  // The scene graph itself is exposed for the round-7 checks: "the stage must be left completely
+  // clear" and "no floating label for the eye" are properties of what is actually in the scene,
+  // so the self-check reads the graph rather than re-deriving the geometry.
+  window.__lensLab.scene=scene;
+  window.__lensLab.screenGhost=screenGhost;
+  window.__lensLab.rays=rays;
   $('showRays').checked=state.rays;
   renderRecords();
   update();resize();
