@@ -1,0 +1,1381 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>探究质量与体积的关系 · 3D 密度台 - 物理虚拟实验</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="stylesheet" href="style.css">
+  <script src="auth-check.js"></script>
+  <style>
+    body { margin: 0; padding: 20px; min-width: 320px; }
+
+    .lab3d h1 { margin: 0; font-size: 19px; letter-spacing: .3px; }
+    .lab3d-sub { margin: 7px 0 16px; color: #93b4c4; font-size: 12.5px; line-height: 1.6; }
+    .lab3d-sub b { color: #a5f3fc; font-weight: 700; }
+
+    .lab3d-layout {
+      display: grid; grid-template-columns: minmax(0, 1fr) 356px;
+      gap: 16px; align-items: start; align-content: start;
+    }
+    /* 三块的位置写死，DOM 顺序按【窄屏需要的顺序】排：舞台 → 侧栏 → 下半区。
+       宽屏把「视角 / 密度表 / 单位换算 / 结论」摆到舞台正下方（左列第二行），侧栏跨两行，
+       两列高度才相当，不会在舞台下面留一大片空白。 */
+    .lab3d-stage { grid-column: 1; grid-row: 1; }
+    .lab3d-sidebar { grid-column: 2; grid-row: 1 / span 2; }
+    .lab3d-lower {
+      grid-column: 1; grid-row: 2;
+      display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px; align-content: start; align-items: stretch; min-width: 0;
+    }
+
+    .lab3d-stage {
+      position: relative; overflow: hidden;
+      height: clamp(400px, 60vh, 620px);
+      border: 1px solid rgba(148, 163, 184, .18); border-radius: 16px;
+      background: #020617; box-shadow: 0 18px 46px rgba(2, 6, 23, .5);
+    }
+    .lab3d-stage canvas { display: block; touch-action: none; cursor: grab; }
+    .lab3d-stage canvas.pick { cursor: pointer; }
+    .lab3d-stage canvas.grabbing { cursor: grabbing; }
+
+    .lab3d-stage .stage-hint {
+      position: absolute; left: 12px; top: 12px; max-width: 62%;
+      padding: 7px 11px; border-radius: 8px; pointer-events: none;
+      border: 1px solid rgba(56, 189, 248, .28); background: rgba(2, 6, 23, .78);
+      color: #c3e8f5; font-size: 11px; line-height: 1.55;
+    }
+    .lab3d-stage .stage-hint b { color: #7dd3fc; }
+
+    .lab3d-stage .stage-bar {
+      position: absolute; left: 0; right: 0; bottom: 0;
+      display: flex; align-items: center; justify-content: space-between; gap: 8px;
+      padding: 0 12px 11px; pointer-events: none;
+    }
+    .lab3d-stage .bar-left { display: flex; align-items: center; gap: 7px; flex: none; pointer-events: auto; }
+    .lab3d-stage .stage-btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 8px 13px; border-radius: 10px; font-family: inherit;
+      font-size: 12px; font-weight: 800; cursor: pointer;
+      border: 1px solid rgba(148, 163, 184, .35); background: rgba(2, 6, 23, .88); color: #cbd5e1;
+      transition: background .2s, border-color .2s, color .2s;
+    }
+    .lab3d-stage .stage-btn.go { border-color: rgba(56, 189, 248, .55); background: rgba(14, 116, 144, .3); color: #e0f2fe; }
+    .lab3d-stage .stage-btn.go:hover { background: rgba(14, 116, 144, .46); }
+    .lab3d-stage .stage-btn.ok { border-color: rgba(52, 211, 153, .55); background: rgba(6, 78, 59, .42); color: #d1fae5; }
+    .lab3d-stage .stage-btn.ok:hover { background: rgba(6, 78, 59, .62); }
+    .lab3d-stage .stage-btn.on { border-color: rgba(125, 211, 252, .8); background: rgba(12, 74, 110, .55); color: #e0f2fe; }
+    .lab3d-stage .stage-help {
+      min-width: 0; pointer-events: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      color: #93b4c4; font-size: 11px; background: rgba(2, 6, 23, .72); padding: 6px 10px; border-radius: 7px;
+    }
+    .lab3d-stage .stage-toast {
+      position: absolute; left: 50%; transform: translateX(-50%); bottom: 96px;
+      padding: 8px 14px; border-radius: 10px; font-size: 12px; font-weight: 700;
+      background: rgba(2, 6, 23, .93); border: 1px solid rgba(148, 163, 184, .32); color: #e2e8f0;
+      opacity: 0; transition: opacity .18s; pointer-events: none; white-space: nowrap;
+    }
+    .lab3d-stage .stage-toast.show { opacity: 1; }
+
+    .lab3d-sidebar { display: flex; flex-direction: column; gap: 11px; min-width: 0; }
+    .panel {
+      border: 1px solid rgba(148, 163, 184, .17); border-radius: 13px;
+      background: rgba(9, 20, 35, .82); padding: 13px 14px;
+    }
+    .panel > h3 {
+      margin: 0 0 10px; font-size: 12px; font-weight: 800; color: #7dd3fc;
+      letter-spacing: .4px; display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    }
+    .panel > h3 .pill {
+      font-size: 10px; font-weight: 800; padding: 2px 8px; border-radius: 99px;
+      background: rgba(148, 163, 184, .18); color: #e2e8f0;
+    }
+    .panel > h3 .pill.ok { background: rgba(52, 211, 153, .22); color: #d1fae5; }
+    .panel > h3 .pill.warn { background: rgba(251, 191, 36, .22); color: #fef3c7; }
+
+    .gauge-num {
+      display: flex; align-items: baseline; justify-content: center; gap: 6px;
+      padding: 9px 8px; border-radius: 10px; margin-bottom: 9px;
+      background: linear-gradient(180deg, #0b1a2a, #07131f); border: 1px solid rgba(56, 189, 248, .3);
+    }
+    .gauge-num .num {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 26px; font-weight: 800;
+      color: #a5f3fc; letter-spacing: .5px; font-variant-numeric: tabular-nums;
+      text-shadow: 0 0 12px rgba(56, 189, 248, .45);
+    }
+    .gauge-num .unit { color: #5e8496; font-size: 13px; font-weight: 700; }
+
+    .readouts { display: flex; flex-direction: column; gap: 5px; color: #a9c2d2; font-size: 11.5px; }
+    .readouts div { display: flex; justify-content: space-between; gap: 8px; }
+    .readouts b { color: #e2e8f0; font-variant-numeric: tabular-nums; }
+    .readouts div.sum { border-top: 1px solid rgba(148, 163, 184, .16); padding-top: 6px; margin-top: 2px; }
+    .readouts div.sum b { color: #a5f3fc; font-size: 13px; }
+
+    .btn-row { display: flex; flex-wrap: wrap; gap: 7px; }
+    .btn-row button {
+      flex: 1 1 auto; min-width: 0; padding: 9px 10px; border-radius: 9px; cursor: pointer;
+      font-family: inherit; font-size: 12px; font-weight: 800;
+      border: 1px solid rgba(148, 163, 184, .3); background: rgba(30, 41, 59, .7); color: #cbd5e1;
+    }
+    .btn-row button.primary { border-color: rgba(56, 189, 248, .6); background: rgba(14, 116, 144, .42); color: #e0f2fe; }
+    .btn-row button.ok { border-color: rgba(52, 211, 153, .55); background: rgba(6, 78, 59, .45); color: #d1fae5; }
+    .btn-row button.on { border-color: rgba(125, 211, 252, .85); background: rgba(12, 74, 110, .6); color: #e0f2fe; }
+    .btn-row button:disabled { opacity: .45; cursor: not-allowed; }
+    .btn-row button:hover:not(:disabled) { border-color: rgba(125, 211, 252, .7); }
+
+    /* 物块列表：材料色块 + 边长，点一下就送到电子秤上 */
+    .cubes { display: flex; flex-direction: column; gap: 5px; }
+    .cubes .cb {
+      display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 9px; cursor: pointer;
+      border: 1px solid rgba(148, 163, 184, .18); background: rgba(15, 27, 44, .7);
+      color: #cbd5e1; font-size: 11.5px; text-align: left; font-family: inherit;
+    }
+    .cubes .cb:hover { border-color: rgba(125, 211, 252, .6); }
+    .cubes .cb.sel { border-color: rgba(52, 211, 153, .75); background: rgba(6, 78, 59, .3); color: #d1fae5; }
+    .cubes .cb i { width: 13px; height: 13px; border-radius: 3px; flex: none; box-shadow: inset 0 0 0 1px rgba(2, 6, 23, .6); }
+    .cubes .cb span { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .cubes .cb b { font-variant-numeric: tabular-nums; color: #e2e8f0; }
+
+    .recs { display: flex; flex-direction: column; gap: 4px; font-size: 11.5px; }
+    .recs .hd, .recs .rw { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 4px; }
+    .recs .hd { color: #7d97a8; font-size: 10.5px; padding-bottom: 3px; border-bottom: 1px solid rgba(148, 163, 184, .16); }
+    .recs .rw { color: #c8d8e4; font-variant-numeric: tabular-nums; }
+    .recs .rw b { color: #a5f3fc; font-weight: 700; }
+    .recs .empty { color: #5e8496; font-size: 11.5px; padding: 6px 0; }
+
+    .chartwrap { position: relative; width: 100%; height: 196px; }
+    .chartwrap canvas { display: block; width: 100%; height: 196px; border-radius: 9px; background: rgba(2, 6, 23, .6); border: 1px solid rgba(56, 189, 248, .16); }
+
+    .ansrow { display: flex; gap: 7px; }
+    .ansrow input {
+      flex: 1 1 auto; min-width: 0; padding: 9px 10px; border-radius: 9px;
+      border: 1px solid rgba(148, 163, 184, .35); background: rgba(2, 6, 23, .72); color: #e2e8f0;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 14px; font-weight: 700;
+      font-variant-numeric: tabular-nums;
+    }
+    .ansrow input:focus { outline: none; border-color: rgba(56, 189, 248, .75); box-shadow: 0 0 0 3px rgba(56, 189, 248, .12); }
+    .ansrow button {
+      flex: none; padding: 9px 15px; border-radius: 9px; cursor: pointer; font-family: inherit;
+      font-size: 12px; font-weight: 800; border: 1px solid rgba(52, 211, 153, .6);
+      background: rgba(6, 78, 59, .5); color: #d1fae5;
+    }
+    .ansrow button:hover { background: rgba(6, 78, 59, .72); }
+
+    .fb { margin-top: 9px; padding: 9px 11px; border-radius: 9px; font-size: 11.5px; line-height: 1.7; display: none; }
+    .fb.show { display: block; }
+    .fb.ok { background: rgba(6, 78, 59, .45); border: 1px solid rgba(52, 211, 153, .5); color: #d1fae5; }
+    .fb.bad { background: rgba(127, 29, 29, .45); border: 1px solid rgba(248, 113, 113, .5); color: #fee2e2; }
+    .fb.warn { background: rgba(120, 53, 15, .45); border: 1px solid rgba(251, 191, 36, .5); color: #fef3c7; }
+
+    .analysis { color: #c8d8e4; font-size: 11.5px; line-height: 1.8; }
+    .analysis .line { display: flex; justify-content: space-between; gap: 8px; }
+    .analysis .line b { color: #e2e8f0; font-variant-numeric: tabular-nums; }
+    .analysis .conc {
+      margin-top: 9px; padding: 8px 10px; border-radius: 8px; font-size: 11.5px; line-height: 1.7;
+      background: rgba(6, 78, 59, .35); border: 1px solid rgba(52, 211, 153, .4); color: #d1fae5;
+    }
+    .analysis .conc.info { background: rgba(12, 74, 110, .35); border-color: rgba(56, 189, 248, .4); color: #e0f2fe; }
+
+    /* 密度表 */
+    .dtab { width: 100%; border-collapse: collapse; font-size: 11.5px; color: #c8d8e4; }
+    .dtab th, .dtab td { padding: 4px 6px; text-align: left; border-bottom: 1px solid rgba(148, 163, 184, .12); }
+    .dtab th { color: #7d97a8; font-weight: 700; font-size: 10.5px; }
+    .dtab td.n { text-align: right; font-variant-numeric: tabular-nums; color: #a5f3fc; }
+    .dtab tr.hit td { background: rgba(6, 78, 59, .35); color: #d1fae5; }
+    .dtab tr.hit td.n { color: #a7f3d0; font-weight: 800; }
+
+    .unitbox { display: flex; flex-direction: column; gap: 7px; font-size: 11.5px; color: #c8d8e4; }
+    .unitbox .eq {
+      padding: 8px 10px; border-radius: 8px; text-align: center;
+      background: rgba(56, 189, 248, .1); border: 1px solid rgba(56, 189, 248, .28);
+      color: #a5f3fc; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 700;
+    }
+    .unitbox .live { display: flex; justify-content: space-between; gap: 8px; }
+    .unitbox .live b { color: #a5f3fc; font-variant-numeric: tabular-nums; }
+
+    .info-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; margin-top: 16px; }
+    .info-card {
+      border: 1px solid rgba(148, 163, 184, .16); border-radius: 14px;
+      background: rgba(9, 20, 35, .7); padding: 15px 17px;
+    }
+    .info-card h4 { margin: 0 0 9px; font-size: 13px; color: #7dd3fc; }
+    .info-card ul { margin: 0; padding-left: 17px; color: #a9c2d2; font-size: 12px; line-height: 1.85; }
+    .info-card li b { color: #e2e8f0; }
+    .info-card .fml {
+      display: inline-block; margin: 3px 0; padding: 3px 9px; border-radius: 7px;
+      background: rgba(56, 189, 248, .13); color: #a5f3fc; font-weight: 700;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+
+    @media (max-width: 900px) {
+      .lab3d-layout { grid-template-columns: minmax(0, 1fr); }
+      .lab3d-stage, .lab3d-sidebar, .lab3d-lower { grid-column: 1; grid-row: auto; }
+      .lab3d-stage { height: clamp(340px, 54vh, 500px); }
+      .lab3d-sidebar { border-top: 1px solid rgba(148, 163, 184, .16); padding-top: 12px; }
+      .lab3d-lower { border-top: 1px solid rgba(148, 163, 184, .16); padding-top: 12px; }
+    }
+    @media (max-width: 620px) {
+      body { padding: 14px; }
+      .lab3d h1 { font-size: 16px; }
+      .lab3d-stage { height: 350px; }
+      .lab3d-stage .stage-hint { font-size: 10px; padding: 6px 9px; max-width: 66%; }
+      .lab3d-stage .stage-help { display: none; }
+      .lab3d-stage .stage-btn { padding: 7px 10px; font-size: 11px; gap: 5px; }
+      .gauge-num .num { font-size: 23px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="lab3d">
+    <h1>探究质量与体积的关系 · 3D 密度台</h1>
+    <p class="lab3d-sub">
+      一张真实的实验台：<b>一排立方体物块</b>（木 / 冰 / 铝 / 铁 / 铜）摆在台面上，右边一台<b>电子秤</b>。
+      把物块<b>点一下送到秤上</b>读出质量，边长与体积直接标在物块上，再<b>记录</b>进数据表。
+      三种比法：<b>同体积比质量</b>、<b>同质量比体积</b>、<b>同种物质取三组数据画 m–V 图</b>。
+      切到<b>分子视图</b>还能看见物块内部的分子疏密 —— 密度到底是什么，一眼就懂。
+    </p>
+
+    <div class="lab3d-layout">
+      <div class="lab3d-stage">
+        <canvas id="den3-canvas"></canvas>
+
+        <div class="stage-hint" id="den3-hint"></div>
+        <div class="stage-toast" id="den3-toast"></div>
+
+        <div class="stage-bar">
+          <div class="bar-left">
+            <button type="button" class="stage-btn go" id="den3-recmode">🔬 分子视图</button>
+            <button type="button" class="stage-btn ok" id="den3-record">📋 记录本组数据</button>
+            <button type="button" class="stage-btn" id="den3-reset">↺ 重置</button>
+          </div>
+          <div class="stage-help">点物块 → 送上电子秤 · 拖动空白处旋转 · 滚轮缩放</div>
+        </div>
+      </div>
+
+      <div class="lab3d-sidebar">
+        <div class="panel">
+          <h3>实验模式 <span class="pill" id="den3-modepill">同体积比质量</span></h3>
+          <div class="btn-row">
+            <button type="button" data-mode="vol">同体积比质量</button>
+            <button type="button" data-mode="mass">同质量比体积</button>
+            <button type="button" data-mode="same">同种物质三组数据</button>
+          </div>
+          <p class="note" id="den3-modesub"></p>
+        </div>
+
+        <div class="panel">
+          <h3>电子秤 <span class="pill" id="den3-scalepill">空载</span></h3>
+          <div class="gauge-num">
+            <span class="num" id="den3-mnum">0.0</span><span class="unit">g</span>
+          </div>
+          <div class="readouts">
+            <div><span>材料</span><b id="den3-mat">—</b></div>
+            <div><span>边长 a</span><b id="den3-a">—</b></div>
+            <div><span>体积 V = a³</span><b id="den3-v">—</b></div>
+            <div class="sum"><span>密度 ρ = m / V</span><b id="den3-rho">—</b></div>
+          </div>
+          <p class="note" id="den3-scalenote">点画面里的物块，或点下面的列表，把它送上电子秤。</p>
+        </div>
+
+        <div class="panel">
+          <h3>物块 <span class="pill" id="den3-cnt">5 块</span></h3>
+          <div class="cubes" id="den3-cubes"></div>
+        </div>
+
+        <div class="panel">
+          <h3>数据记录 <span class="pill" id="den3-recn">0 组</span></h3>
+          <div class="recs" id="den3-recs"></div>
+          <div class="btn-row" style="margin-top:8px;">
+            <button type="button" id="den3-record2" class="primary">记录本组数据</button>
+            <button type="button" id="den3-clear">清空记录</button>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h3>m–V 图像 <span class="pill" id="den3-fitpill">—</span></h3>
+          <div class="chartwrap"><canvas id="den3-chart"></canvas></div>
+          <p class="note" id="den3-chartnote">横轴 V / cm³，纵轴 m / g。同种物质的点会连成一条<b>过原点</b>的直线，斜率就是密度。</p>
+        </div>
+
+        <div class="panel">
+          <h3>算一算：这物块的密度</h3>
+          <div class="ansrow">
+            <input type="number" id="den3-ans" placeholder="ρ（g/cm³）" step="0.01">
+            <button type="button" id="den3-submit">提交</button>
+          </div>
+          <div class="fb" id="den3-fb"></div>
+        </div>
+      </div>
+
+      <div class="lab3d-lower">
+        <div class="panel">
+          <h3>视角</h3>
+          <div class="btn-row">
+            <button type="button" data-view="perspective">默认</button>
+            <button type="button" data-view="front">正面</button>
+            <button type="button" data-view="side">正侧</button>
+            <button type="button" data-view="close">贴近</button>
+            <button type="button" data-view="top">俯视</button>
+          </div>
+          <p class="note" style="margin-top:9px;">分子视图把物块画成透明框 + 分子小球；物块越大、材料越密，小球越多越挤。</p>
+        </div>
+
+        <div class="panel">
+          <h3>常见物质密度表</h3>
+          <table class="dtab" id="den3-dtab"></table>
+          <p class="note">ρ 的单位是 g/cm³（等价于 ×10³ kg/m³）。</p>
+        </div>
+
+        <div class="panel">
+          <h3>单位换算</h3>
+          <div class="unitbox">
+            <div class="eq">1 g/cm³ = 1 × 10³ kg/m³</div>
+            <div class="live"><span>水的密度</span><b>1.0 g/cm³ = 1.0×10³ kg/m³</b></div>
+            <div class="live"><span>当前物块</span><b id="den3-conv">—</b></div>
+          </div>
+          <p class="note">换算只差 1000 倍：把 g/cm³ 换成 kg/m³ 就<b>乘 10³</b>（因为 1 g = 10⁻³ kg、1 cm³ = 10⁻⁶ m³）。</p>
+        </div>
+
+        <div class="panel">
+          <h3>分析与结论</h3>
+          <div class="analysis" id="den3-analysis"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="info-cards">
+      <div class="info-card">
+        <h4>实验原理</h4>
+        <ul>
+          <li>密度是物质的一种<b>特性</b>：<span class="fml">ρ = m / V</span>，单位 <b>g/cm³</b> 或 <b>kg/m³</b>。</li>
+          <li>同种物质，<b>质量与体积成正比</b>（m–V 图像是一条<b>过原点</b>的直线），比值 ρ 恒定。</li>
+          <li>不同物质，<b>体积相同则质量一般不同</b>；<b>质量相同则体积一般不同</b> —— 这正是密度不同的表现。</li>
+          <li>ρ 与 m、V <b>都无关</b>：把一块铁切成两半，每一半的密度还是 7.9 g/cm³。</li>
+          <li>微观上看，密度就是<b>单位体积里塞了多少分子</b>：分子排得越密，密度越大。</li>
+        </ul>
+      </div>
+      <div class="info-card">
+        <h4>操作指南与易错点</h4>
+        <ul>
+          <li>点画面里的物块（或右侧列表）→ 物块飞到电子秤上 → 读数就是它的质量。</li>
+          <li>立方体的体积用 <b>V = a³</b> 算（边长 a 已标在物块上），不用量筒。</li>
+          <li>测完一组就点<b>记录本组数据</b>，三种模式的数据会画在同一张 m–V 图上。</li>
+          <li>易错：把 <b>ρ = m/V</b> 算成 <b>m·V</b>；单位混用（g 配 cm³，kg 配 m³，不能混）。</li>
+          <li>易错：认为「体积越大密度越大」。同一块材料切一半，体积减半、质量也减半，密度<b>不变</b>。</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <script>
+  (function () {
+    'use strict';
+
+    const $ = id => document.getElementById(id);
+    const PI2 = Math.PI * 2;
+    const clamp = (v, a, b) => v < a ? a : (v > b ? b : v);
+    const add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+    const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+    const scl = (a, k) => [a[0] * k, a[1] * k, a[2] * k];
+    const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+    const vlen = a => Math.sqrt(a[0] * a[0] + a[1] * a[1] + a[2] * a[2]);
+    const vnorm = a => { const l = vlen(a) || 1; return [a[0] / l, a[1] / l, a[2] / l]; };
+
+    /* ============================================================
+     * 单位：cm ↔ 世界单位
+     * ------------------------------------------------------------
+     * 【唯一换算点】。画布坐标、命中框、包络、标签全都走它 ——
+     * 两边各换算一次就是静默除两次（本站栽过）。
+     * ============================================================ */
+    const U = 0.17;                       // 1 cm = 0.17 世界单位
+    const cm = v => v * U;
+
+    /* ---------------------------- 材料 ---------------------------- */
+    // rho 单位 g/cm³。真实值（20 ℃）：木(松)≈0.5、冰 0.9、铝 2.7、铁 7.9、铜 8.9。
+    const MATS = {
+      wood:   { name: '木块（松）', short: '木', rho: 0.50, col: [178, 138, 86] },
+      ice:    { name: '冰',         short: '冰', rho: 0.90, col: [146, 204, 236] },
+      alu:    { name: '铝',         short: '铝', rho: 2.70, col: [188, 196, 206] },
+      iron:   { name: '铁',         short: '铁', rho: 7.90, col: [104, 116, 132] },
+      copper: { name: '铜',         short: '铜', rho: 8.90, col: [198, 124, 70] }
+    };
+    const MAT_ORDER = ['wood', 'ice', 'alu', 'iron', 'copper'];
+
+    // 密度表（教材常见值，g/cm³）
+    const DENSITY_TABLE = [
+      { name: '木（松）', rho: 0.5 }, { name: '酒精', rho: 0.8 }, { name: '冰', rho: 0.9 },
+      { name: '水', rho: 1.0 }, { name: '铝', rho: 2.7 }, { name: '铁', rho: 7.9 }, { name: '铜', rho: 8.9 }
+    ];
+
+    /* ---------------------------- 三种模式 ----------------------------
+     * 每种模式给出一排物块（材料 + 边长 cm）。
+     *  vol ：边长都是 2.0 cm（V = 8 cm³）—— 一样大，轻重差十几倍
+     *  mass：质量都约 21.6 g —— 一样重，个头差两倍多
+     *  same：同一材料三块（a = 1 / 2 / 3 cm），量 m 和 V 画 m–V 图
+     * ---------------------------------------------------------------- */
+    const MODES = {
+      vol: {
+        title: '同体积比质量',
+        sub: '五块物块的边长都是 2.00 cm（体积都是 8.00 cm³）—— 一样大，但轻重能差十几倍。',
+        cubes: [
+          { mat: 'wood', a: 2.0 }, { mat: 'ice', a: 2.0 }, { mat: 'alu', a: 2.0 },
+          { mat: 'iron', a: 2.0 }, { mat: 'copper', a: 2.0 }
+        ]
+      },
+      mass: {
+        title: '同质量比体积',
+        sub: '五块物块的质量都约 21.6 g —— 一样重，但个头能差两倍多。',
+        cubes: [
+          { mat: 'alu', a: 2.0 }, { mat: 'iron', a: 1.40 }, { mat: 'copper', a: 1.34 },
+          { mat: 'ice', a: 2.88 }, { mat: 'wood', a: 3.51 }
+        ]
+      },
+      same: {
+        title: '同种物质 · 三组数据',
+        sub: '三块都是铝，边长 1.00 / 2.00 / 3.00 cm。量出每块的 m 和 V，画到 m–V 图上看看。',
+        cubes: [{ mat: 'alu', a: 1.0 }, { mat: 'alu', a: 2.0 }, { mat: 'alu', a: 3.0 }]
+      }
+    };
+
+    /* ---------------------------- 场景几何 ---------------------------- */
+    const TABLE_HW = 2.95, TABLE_HD = 1.86, TABLE_T = 0.13;
+    // 物块那一排所在的 z。⚠️ 别往近端挪：z 越靠近电子秤（SCALE_Z = 0.34），
+    // 物块底面在屏幕上就越靠近秤盘顶面 —— 实测 -0.58 时 same 模式 3 cm 那块
+    // 【底面正好与秤盘顶面齐平】，看着像「物块已经放在秤上、读数却是 0.0」。
+    // 后移到 -0.95 后两者在屏幕上明显拉开（深度差 1.29 世界单位）。
+    const ROW_Z = -0.95;
+    const SLOT_X = [-2.25, -1.48, -0.71, 0.06, 0.83]; // 五槽（vol / mass 用）
+    const WIDE_X = [-1.50, 0.00, 1.50];               // 三槽（same 用）
+    const AMAX = 3.51;                                // 所有模式里最大的边长（取景包络用）
+
+    const SCALE_X = 2.02, SCALE_Z = 0.34;
+    const SCALE_W = 0.88, SCALE_D = 0.72, SCALE_H = 0.22;
+    const PLAT_T = 0.035;
+    const PLAT_Y = SCALE_H + PLAT_T;                  // 秤台面高度：物块坐这儿
+
+    const CAMD = 10.4;
+    const TARGET = [0, 0.60, 0];
+
+    const VIEWS = {
+      perspective: [0.44, 0.335, 1.00],
+      front:       [0.00, 0.19, 1.06],
+      side:        [1.16, 0.20, 1.02],
+      close:       [0.30, 0.24, 1.62],
+      top:         [0.36, 1.10, 0.98]
+    };
+
+    const ANIM_DUR = 0.42;                            // 物块飞上秤的时长（秒）
+
+    /* ---------------------------- 状态 ---------------------------- */
+    const state = {
+      mode: 'vol',
+      onScale: null,          // 正在秤上的物块序号
+      anim: [],               // [{i, t, fromScale}]
+      recs: [],               // [{mat, a, V, m}]
+      molecules: false,       // 分子视图
+      solved: false,
+      yaw: VIEWS.perspective[0], pitch: VIEWS.perspective[1], zoom: VIEWS.perspective[2],
+      w: 1, h: 1, dpr: 0, dirty: true,
+      dragging: false, drag: null, downAt: null,
+      hover: null, view: 'perspective',
+      drawn: {}
+    };
+
+    /* ============================================================
+     * 物理 —— 页面、判分、自检共用这一份
+     * ============================================================ */
+    const rhoOf = mat => MATS[mat].rho;
+    const cubesOf = () => MODES[state.mode].cubes;
+    const cubeMat = i => cubesOf()[i].mat;
+    const cubeA = i => cubesOf()[i].a;                       // cm
+    const cubeV = i => cubeA(i) * cubeA(i) * cubeA(i);       // cm³
+    const cubeM = i => rhoOf(cubeMat(i)) * cubeV(i);         // g = ρV
+
+    const slotX = i => (state.mode === 'same' ? WIDE_X[i] : SLOT_X[i]);
+
+    // 单位换算：g/cm³ → kg/m³ 就是乘 1000
+    const unitConv = r => r * 1000;
+
+    /* 分子点阵：每边 n 个球，n 由「边长 × ρ^(1/3)」定 ——
+     * 因为「每边分子数 ∝ (质量)^(1/3)」，所以【同质量 ⇒ 分子数相同】、
+     * 【同体积 ⇒ 分子数随 ρ 递增】。这两条都是可证伪的判据。 */
+    const LAT_K = 1.35, LAT_MIN = 2, LAT_MAX = 6;
+    function latN(i) {
+      const n = Math.round(cubeA(i) * Math.cbrt(rhoOf(cubeMat(i))) * LAT_K);
+      return clamp(n, LAT_MIN, LAT_MAX);
+    }
+    const moleculeCount = i => { const n = latN(i); return n * n * n; };
+    const latticeSpacing = i => cubeA(i) / latN(i);          // cm
+
+    /* 记录 */
+    const recKey = i => cubeMat(i) + '|' + cubeA(i).toFixed(2);
+    function addRecord() {
+      const i = state.onScale;
+      if (i === null || i === undefined) return { ok: false, why: 'empty' };
+      const k = recKey(i);
+      if (state.recs.some(r => r.key === k)) return { ok: false, why: 'dup' };
+      state.recs.push({ key: k, mat: cubeMat(i), a: cubeA(i), V: cubeV(i), m: cubeM(i) });
+      return { ok: true };
+    }
+    const clearRecords = () => { state.recs.length = 0; };
+
+    /* m–V 拟合：取「与第一条同材料」的点做过原点最小二乘；截距另用一般最小二乘 */
+    function fitRecs() {
+      if (!state.recs.length) return [];
+      const mat = state.recs[0].mat;
+      return state.recs.filter(r => r.mat === mat);
+    }
+    function lineFit() {
+      const rs = fitRecs();
+      const base = rs.length ? rhoOf(rs[0].mat) : NaN;
+      if (rs.length < 2) return { n: rs.length, slope: NaN, intercept: NaN, rho: base, mat: rs.length ? rs[0].mat : null };
+      let sVV = 0, sVm = 0, sx = 0, sy = 0, sxx = 0, sxy = 0;
+      for (const r of rs) { sVV += r.V * r.V; sVm += r.V * r.m; sx += r.V; sy += r.m; sxx += r.V * r.V; sxy += r.V * r.m; }
+      const n = rs.length;
+      const slope = sVm / sVV;                                // 过原点
+      const den = n * sxx - sx * sx;
+      const k = den ? (n * sxy - sx * sy) / den : NaN;
+      const intercept = (sy - k * sx) / n;                    // 一般最小二乘的截距
+      return { n, slope, intercept, rho: base, mat: rs[0].mat };
+    }
+
+    /* 算一算：输入 ρ 判分 */
+    function submitRho(v) {
+      const i = state.onScale;
+      if (i === null || i === undefined) return { ok: false, why: 'empty', want: NaN };
+      const want = rhoOf(cubeMat(i));
+      if (!isFinite(v)) return { ok: false, why: 'bad', want: want };
+      const ok = Math.abs(v - want) <= 0.05;
+      return { ok: ok, why: ok ? 'ok' : (v > want ? 'high' : 'low'), want: want };
+    }
+
+    /* ============================================================
+     * 物块姿态（含「飞上秤」的插值）
+     * ============================================================ */
+    function poseOf(i, onScale) {
+      return {
+        x: onScale ? SCALE_X : slotX(i),
+        z: onScale ? SCALE_Z : ROW_Z,
+        y0: onScale ? PLAT_Y : 0
+      };
+    }
+    function cubePose(i) {
+      const to = state.onScale === i;
+      const A = poseOf(i, to);
+      let F = A, t = 1;
+      for (const a of state.anim) if (a.i === i) { F = poseOf(i, a.fromScale); t = a.t; }
+      const a = cubeA(i);
+      const x = F.x + (A.x - F.x) * t;
+      const z = F.z + (A.z - F.z) * t;
+      const y0 = F.y0 + (A.y0 - F.y0) * t;
+      return { cx: x, cz: z, y0: y0, y1: y0 + cm(a), a: a, half: cm(a) / 2 };
+    }
+    function placeOnScale(i) {
+      if (i < 0 || i >= cubesOf().length) return false;
+      if (state.onScale === i) return false;
+      const prev = state.onScale;
+      state.onScale = i;
+      state.anim = [{ i: i, t: 0, fromScale: false }];
+      if (prev !== null && prev !== undefined) state.anim.push({ i: prev, t: 0, fromScale: true });
+      state.dirty = true;
+      return true;
+    }
+    // 唯一的动画推进入口：主循环与自检共用
+    function frameStep(dt) {
+      if (!state.anim.length) return false;
+      let alive = false;
+      for (const a of state.anim) {
+        a.t = Math.min(1, a.t + dt / ANIM_DUR);
+        if (a.t < 1) alive = true;
+      }
+      if (!alive) state.anim = [];
+      state.dirty = true;
+      return true;
+    }
+    function driveAnim(sec, dt) {
+      const n = Math.max(1, Math.round(sec / dt));
+      for (let k = 0; k < n; k++) frameStep(dt);
+      return n;
+    }
+
+    /* ============================================================
+     * 相机
+     * ============================================================ */
+    // 取景包络：写死，不跟随 state（物块上秤 / 缩放都不改取景）。
+    // 只跟【模式】走 —— 模式切换会整排换物块，属离散操作；不跟就会在 same 模式下
+    // 因为五槽的宽度把三块铝缩成中间一小条。包络一律按【最大边长 AMAX】算，不按实际尺寸，
+    // 否则换一块物块视野就抖一下。
+    function envelopePoints() {
+      const pts = [];
+      // 台面：只算远端与 80% 横向 —— 近端那两条边本来就伸到画外，
+      // 四角全算进来会喧宾夺主，物块缩成中间一小条。
+      for (const sx of [-1, 1]) {
+        pts.push([sx * TABLE_HW * 0.82, 0, -TABLE_HD * 0.97]);
+        pts.push([sx * TABLE_HW * 0.82, 0, TABLE_HD * 0.20]);
+      }
+      const xs = state.mode === 'same' ? WIDE_X : SLOT_X;
+      const hA = cm(AMAX) / 2, tA = cm(AMAX);
+      // 每个槽位取【8 个角全取】。投影是线性分式，r/u 的极值确实落在角上，
+      // 但【哪两个角】随相机变 —— 只取「左下前 + 右上后」两个角时，front 视角下
+      // 最高的那块（mass 模式的木块，a = AMAX）的【后上角】会漏在包络外
+      // （实测超 u 0.0025），取景就罩不住物块。
+      for (let k = 0; k < cubesOf().length; k++) {
+        const x = xs[k];
+        for (const sx of [-1, 1]) for (const sy of [0, 1]) for (const sz of [-1, 1]) {
+          pts.push([x + sx * hA, sy ? tA : 0, ROW_Z + sz * hA]);
+        }
+      }
+      // 秤台同理：物块上秤后要落在这个盒子里，8 个角也要全取。
+      for (const sx of [-1, 1]) for (const sy of [0, 1]) for (const sz of [-1, 1]) {
+        pts.push([SCALE_X + sx * SCALE_W / 2, sy ? PLAT_Y + tA : 0, SCALE_Z + sz * SCALE_D / 2]);
+      }
+      return pts;
+    }
+    function makeCam(q, w, h) {
+      const cy = Math.cos(state.yaw), sy = Math.sin(state.yaw);
+      const cp = Math.cos(state.pitch), sp = Math.sin(state.pitch);
+      const dir = [cp * sy, sp, cp * cy];
+      q.dist = CAMD / state.zoom;
+      q.eye = add(TARGET, scl(dir, q.dist));
+      q.fwd = scl(dir, -1);
+      q.right = vnorm(cross(q.fwd, [0, 1, 0]));
+      q.up = cross(q.right, q.fwd);
+      const pts = envelopePoints();
+      let loR = 1e9, hiR = -1e9, loU = 1e9, hiU = -1e9;
+      for (const p of pts) {
+        const v = sub(p, q.eye);
+        const z = Math.max(0.05, dot(v, q.fwd));
+        const r = dot(v, q.right) / z, u = dot(v, q.up) / z;
+        loR = Math.min(loR, r); hiR = Math.max(hiR, r);
+        loU = Math.min(loU, u); hiU = Math.max(hiU, u);
+      }
+      const s = Math.min(w * 0.94 / Math.max(1e-6, hiR - loR),
+                         h * 0.90 / Math.max(1e-6, hiU - loU));
+      // 缩放必须乘在【算出来的焦距】上：只改 q.dist 的话焦距又被包络反算回来，缩放被抵消。
+      q.focal = s * state.zoom;
+      q.px = w * 0.5 - (loR + hiR) * 0.5 * s;
+      q.py = h * 0.5 + (loU + hiU) * 0.5 * s;
+      q.env = { loR: loR, hiR: hiR, loU: loU, hiU: hiU };
+      return q;
+    }
+    function project(p, q) {
+      const v = sub(p, q.eye);
+      const z = Math.max(0.05, dot(v, q.fwd));
+      const s = q.focal / z;
+      return { x: q.px + dot(v, q.right) * s, y: q.py - dot(v, q.up) * s, s: s, z: z };
+    }
+    function unproject(sx, sy, q, planeY) {
+      const dx = (sx - q.px) / q.focal;
+      const dy = -(sy - q.py) / q.focal;
+      const d = add(add(q.fwd, scl(q.right, dx)), scl(q.up, dy));
+      if (Math.abs(d[1]) < 1e-6) return null;
+      const t = ((planeY === undefined ? 0 : planeY) - q.eye[1]) / d[1];
+      if (t <= 0) return null;
+      return add(q.eye, scl(d, t));
+    }
+
+    /* ============================================================
+     * 绘图工具
+     * ============================================================ */
+    const canvas = $('den3-canvas');
+    const ctx = canvas.getContext('2d');
+    const stage = document.querySelector('.lab3d-stage');
+
+    function polyPath(pts) {
+      ctx.beginPath();
+      pts.forEach((p, k) => k ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+      ctx.closePath();
+    }
+    function poly(pts, fill, stroke, lw) {
+      if (!pts || pts.length < 2) return;
+      polyPath(pts);
+      if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+      if (stroke) { ctx.lineWidth = lw || 1; ctx.strokeStyle = stroke; ctx.stroke(); }
+    }
+    function line(pts, color, lw, dash) {
+      if (!pts || pts.length < 2) return;
+      ctx.beginPath();
+      pts.forEach((p, k) => k ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+      ctx.setLineDash(dash || []);
+      ctx.lineWidth = lw; ctx.strokeStyle = color; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+      ctx.stroke(); ctx.setLineDash([]);
+    }
+    const rgb = (c, k) => {
+      const s = k === undefined ? 1 : k;
+      return 'rgb(' + Math.round(clamp(c[0] * s, 0, 255)) + ',' +
+                      Math.round(clamp(c[1] * s, 0, 255)) + ',' +
+                      Math.round(clamp(c[2] * s, 0, 255)) + ')';
+    };
+    const LIGHT = vnorm([-0.34, 0.86, 0.38]);
+    const shade = (base, n, amb) => rgb(base, (amb === undefined ? 0.52 : amb) + 0.60 * Math.max(0, dot(n, LIGHT)));
+
+    const BOX_FACES = [
+      { i: [0, 1, 2, 3], n: [0, 0, -1] }, { i: [4, 5, 6, 7], n: [0, 0, 1] },
+      { i: [0, 1, 5, 4], n: [0, -1, 0] }, { i: [3, 2, 6, 7], n: [0, 1, 0] },
+      { i: [0, 3, 7, 4], n: [-1, 0, 0] }, { i: [1, 2, 6, 5], n: [1, 0, 0] }
+    ];
+    const BOX_V = (x0, y0, z0, x1, y1, z1) => [
+      [x0, y0, z0], [x1, y0, z0], [x1, y1, z0], [x0, y1, z0],
+      [x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1]
+    ];
+    function box3(x0, y0, z0, x1, y1, z1, base, q, amb) {
+      const V = BOX_V(x0, y0, z0, x1, y1, z1);
+      const P = V.map(v => project(v, q));
+      for (const f of BOX_FACES) {
+        const c = [0, 0, 0];
+        for (const k of f.i) { c[0] += V[k][0] / 4; c[1] += V[k][1] / 4; c[2] += V[k][2] / 4; }
+        if (dot(f.n, sub(q.eye, c)) <= 0) continue;
+        poly(f.i.map(k => P[k]), shade(base, f.n, amb), null, 0);
+      }
+      return P;
+    }
+    // 立方体的屏幕包围盒（命中用）
+    function cubeScreenBox(i, q) {
+      const P = cubePose(i);
+      const h = P.half;
+      const V = BOX_V(P.cx - h, P.y0, P.cz - h, P.cx + h, P.y1, P.cz + h);
+      let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+      for (const v of V) {
+        const p = project(v, q);
+        x0 = Math.min(x0, p.x); x1 = Math.max(x1, p.x);
+        y0 = Math.min(y0, p.y); y1 = Math.max(y1, p.y);
+      }
+      return { x0: x0, y0: y0, x1: x1, y1: y1, cx: (x0 + x1) / 2, cy: (y0 + y1) / 2 };
+    }
+    function hitCube(sx, sy, q) {
+      let best = null, bestZ = 1e9;
+      for (let i = 0; i < cubesOf().length; i++) {
+        const b = cubeScreenBox(i, q);
+        if (sx >= b.x0 && sx <= b.x1 && sy >= b.y0 && sy <= b.y1) {
+          const P = cubePose(i);
+          // 深度用【世界坐标】算：屏幕坐标当世界坐标用是错的（x/y 单位都不一样）
+          const z = dot(sub([P.cx, (P.y0 + P.y1) / 2, P.cz], q.eye), q.fwd);
+          if (z < bestZ) { bestZ = z; best = i; }
+        }
+      }
+      return best;
+    }
+
+    /* ---------------------------- 标签（带避让） ---------------------------- */
+    let frameBoxes = [];
+    function labelBox(p, text, size, align) {
+      ctx.font = '800 ' + size + 'px Inter, "Microsoft YaHei", sans-serif';
+      const wpx = ctx.measureText(text).width;
+      const pad = 4, half = size * 0.72 + pad * 0.5;
+      const wBox = wpx + pad * 2, EDGE = 8;
+      const y = clamp(p.y, half + EDGE, Math.max(half + EDGE, state.h - half - EDGE));
+      let bx = align === 'left' ? p.x - 4 - pad
+             : align === 'right' ? p.x + 4 - wpx - pad
+             : p.x - wpx / 2 - pad;
+      bx = clamp(bx, EDGE, Math.max(EDGE, state.w - wBox - EDGE));
+      return { x: bx, y: y - half, w: wBox, h: half * 2, cx: bx + wBox / 2, cy: y };
+    }
+    function label(p, text, color, size, align) {
+      ctx.font = '800 ' + size + 'px Inter, "Microsoft YaHei", sans-serif';
+      ctx.textAlign = align || 'center';
+      ctx.textBaseline = 'middle';
+      const pad = 4;
+      const wpx = ctx.measureText(text).width;
+      const b = labelBox(p, text, size, align);
+      const x = align === 'left' ? b.x + pad : align === 'right' ? b.x + wpx + pad : b.cx;
+      ctx.fillStyle = 'rgba(2,6,23,.76)';
+      ctx.fillRect(b.x, b.y, b.w, b.h);
+      ctx.fillStyle = color;
+      ctx.fillText(text, x, b.cy);
+      frameBoxes.push(b);
+      if (window.__den3LabelLog) window.__den3LabelLog.push({ text: text, x: b.x, y: b.y, w: b.w, h: b.h });
+      return b;
+    }
+    function bestLabel(anchor, text, color, size, offs) {
+      let best = null, bestOv = 1e18;
+      for (const o of offs) {
+        const b = labelBox({ x: anchor.x + o[0], y: anchor.y + o[1] }, text, size, 'center');
+        let ov = 0;
+        for (const q of frameBoxes) {
+          const ox = Math.min(b.x + b.w, q.x + q.w) - Math.max(b.x, q.x);
+          const oy = Math.min(b.y + b.h, q.y + q.h) - Math.max(b.y, q.y);
+          if (ox > 0 && oy > 0) ov += ox * oy;
+        }
+        if (ov < bestOv) { bestOv = ov; best = { x: anchor.x + o[0], y: anchor.y + o[1] }; }
+      }
+      return label(best, text, color, size, 'center');
+    }
+    const LBL_OFFS = [[0, -16], [0, -28], [0, 16], [-34, -16], [34, -16], [-34, 16], [34, 16], [0, 30], [0, -40]];
+
+    /* ---------------------------- 场景 ---------------------------- */
+    function drawBackdrop(w, h) {
+      const g = ctx.createRadialGradient(w * 0.44, h * 0.10, 12, w * 0.5, h * 0.55, Math.max(w, h) * 0.86);
+      g.addColorStop(0, '#0d2035'); g.addColorStop(0.52, '#071626'); g.addColorStop(1, '#020a14');
+      ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
+    }
+    function drawTable(q) {
+      const P = (x, y, z) => project([x, y, z], q);
+      const x0 = -TABLE_HW, x1 = TABLE_HW, z0 = -TABLE_HD, z1 = TABLE_HD;
+      poly([P(x0, 0, z0), P(x1, 0, z0), P(x1, 0, z1), P(x0, 0, z1)], '#141f2f', null, 0);
+      ctx.save();
+      polyPath([P(x0, 0, z0), P(x1, 0, z0), P(x1, 0, z1), P(x0, 0, z1)]); ctx.clip();
+      const a0 = P(x0, 0, z0), a1 = P(x1, 0, z1);
+      const g = ctx.createLinearGradient(a0.x, a0.y, a1.x, a1.y);
+      g.addColorStop(0.00, 'rgba(152,201,255,.17)');
+      g.addColorStop(0.40, 'rgba(118,170,232,.06)');
+      g.addColorStop(0.72, 'rgba(4,10,22,.16)');
+      g.addColorStop(1.00, 'rgba(2,6,16,.44)');
+      ctx.fillStyle = g; ctx.fillRect(0, 0, state.w, state.h);
+      ctx.restore();
+      for (let k = 1; k <= 4; k++) {
+        const zz = z0 + (z1 - z0) * (k / 5);
+        line([P(x0, 0.001, zz), P(x1, 0.001, zz)], 'rgba(6,12,24,.30)', 1);
+      }
+      poly([P(x0, 0, z1), P(x1, 0, z1), P(x1, -TABLE_T, z1), P(x0, -TABLE_T, z1)], '#0b1523', null, 0);
+      line([P(x0, 0, z1), P(x1, 0, z1)], 'rgba(150,200,255,.22)', 1.4);
+    }
+
+    // 电子秤：机身 + 秤盘 + 前脸读数窗。
+    // 秤盘做在【后 62%】、读数窗占满前脸 —— 物块坐在盘上时永远盖不住读数。
+    function drawScale(q) {
+      const hw = SCALE_W / 2, hd = SCALE_D / 2;
+      const zBack = SCALE_Z - hd, zFront = SCALE_Z + hd;
+      const zPlatFront = zFront - SCALE_D * 0.62;
+      box3(SCALE_X - hw, 0, zBack, SCALE_X + hw, SCALE_H, zFront, [58, 70, 88], q, 0.62);
+      // 秤盘（金属）：只铺后 62%
+      box3(SCALE_X - hw * 0.90, SCALE_H, zBack + 0.035, SCALE_X + hw * 0.90, PLAT_Y, zPlatFront, [176, 186, 200], q, 0.68);
+      // 秤盘前沿的一道亮边，让「盘」和「机身」分得开
+      const P = (x, y, z) => project([x, y, z], q);
+      line([P(SCALE_X - hw * 0.90, PLAT_Y, zPlatFront), P(SCALE_X + hw * 0.90, PLAT_Y, zPlatFront)], 'rgba(226,238,252,.75)', 1.4);
+      // 前脸读数窗
+      const zf = zFront + 0.001;
+      const wx0 = SCALE_X - hw * 0.80, wx1 = SCALE_X + hw * 0.80;
+      const wy0 = SCALE_H * 0.16, wy1 = SCALE_H * 0.86;
+      poly([P(wx0, wy0, zf), P(wx1, wy0, zf), P(wx1, wy1, zf), P(wx0, wy1, zf)], '#07131f', 'rgba(56,189,248,.55)', 1.3);
+      const txt = (state.onScale === null) ? '0.0' : cubeM(state.onScale).toFixed(1);
+      const c = P(SCALE_X, (wy0 + wy1) * 0.52, zf);
+      const fs = clamp(Math.abs(P(SCALE_X, wy1, zf).y - P(SCALE_X, wy0, zf).y) * 0.52, 8, 17);
+      ctx.font = '800 ' + fs.toFixed(1) + 'px ui-monospace, Menlo, monospace';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillStyle = '#a5f3fc';
+      ctx.fillText(txt + ' g', c.x, c.y);
+      // 秤脚
+      for (const sx of [-1, 1]) box3(SCALE_X + sx * hw * 0.70 - 0.035, -0.030, zBack + 0.06, SCALE_X + sx * hw * 0.70 + 0.035, 0, zFront - 0.06, [36, 44, 56], q, 0.5);
+    }
+
+    // 分子点阵：透明线框 + 小球，按深度从远到近画
+    function drawMolecules(i, q) {
+      const P = cubePose(i);
+      const h = P.half, a = P.a;
+      const n = latN(i);
+      const d = cm(a) / n;
+      const r = clamp(d * 0.34, 0.010, 0.052);
+      const col = MATS[cubeMat(i)].col;
+      // 线框
+      const V = BOX_V(P.cx - h, P.y0, P.cz - h, P.cx + h, P.y1, P.cz + h);
+      const SP = V.map(v => project(v, q));
+      const EDGES = [[0, 1], [1, 2], [2, 3], [3, 0], [4, 5], [5, 6], [6, 7], [7, 4], [0, 4], [1, 5], [2, 6], [3, 7]];
+      for (const e of EDGES) line([SP[e[0]], SP[e[1]]], 'rgba(125,211,252,.42)', 1.1);
+      // 小球（按深度排序，远的先画）
+      const balls = [];
+      for (let ix = 0; ix < n; ix++) for (let iy = 0; iy < n; iy++) for (let iz = 0; iz < n; iz++) {
+        const wx = P.cx - h + (ix + 0.5) * d;
+        const wy = P.y0 + (iy + 0.5) * d;
+        const wz = P.cz - h + (iz + 0.5) * d;
+        const p = project([wx, wy, wz], q);
+        balls.push({ p: p, z: p.z });
+      }
+      balls.sort((u, v) => v.z - u.z);
+      // 记账必须【跟着绘制走】：写在循环外面的话，把循环改成空数组，
+      // molBalls 照样等于总分子数 —— 自检会以为「都画了」，而画面上一颗球都没有。
+      let nDrawn = 0;
+      for (const b of balls) {
+        const rp = clamp(b.p.s * r * 0.9, 0.7, 14);
+        ctx.beginPath(); ctx.arc(b.p.x, b.p.y, rp, 0, PI2);
+        ctx.fillStyle = rgb(col, 0.80 + 0.35 * clamp(1 - b.z / 14, 0, 1));
+        ctx.fill();
+        nDrawn++;
+      }
+      state.drawn.molBalls = (state.drawn.molBalls || 0) + nDrawn;
+      state.drawn.molLast = { i: i, n: n, count: balls.length, d: d, r: r };
+      // 逐块记账：自检要读【画面真画了什么】，不是把公式重抄一遍
+      state.drawn.mol.push({ i: i, n: n, count: balls.length, dWorld: d, r: r, screenR: balls.length ? balls[0].p.s * r * 0.9 : 0 });
+      return { n: n, count: balls.length };
+    }
+
+    // 物块：实物模式画实心盒，分子模式画线框 + 点阵
+    function drawCube(i, q) {
+      const P = cubePose(i);
+      const h = P.half, mat = cubeMat(i);
+      const sel = state.onScale === i;
+      const base = MATS[mat].col;
+      if (state.molecules) {
+        drawMolecules(i, q);
+      } else {
+        box3(P.cx - h, P.y0, P.cz - h, P.cx + h, P.y1, P.cz + h, base, q, sel ? 0.66 : 0.52);
+      }
+      // 选中：底下一圈亮环
+      if (sel) {
+        const V = BOX_V(P.cx - h, P.y0 + 0.002, P.cz - h, P.cx + h, P.y0 + 0.002, P.cz + h);
+        const SP = V.map(v => project(v, q));
+        poly(SP, null, 'rgba(52,211,153,.9)', 2);
+      }
+      return P;
+    }
+
+    // 边长标注（量出来的尺寸）
+    function drawDim(i, q) {
+      const P = cubePose(i);
+      const h = P.half;
+      const y = P.y0 + 0.004;
+      const a = project([P.cx - h, y, P.cz + h], q);
+      const b = project([P.cx + h, y, P.cz + h], q);
+      line([a, b], 'rgba(165,243,252,.95)', 1.6);
+      for (const p of [a, b]) line([{ x: p.x, y: p.y - 6 }, { x: p.x, y: p.y + 6 }], 'rgba(165,243,252,.95)', 1.6);
+      const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+      // 候选里【优先往上】（物块上方是空的），实在放不下才往两侧 —— 往下会压住秤的读数窗
+      bestLabel(mid, 'a = ' + P.a.toFixed(2) + ' cm', '#a5f3fc', 11,
+        [[0, -14], [0, -26], [0, -38], [-44, -14], [44, -14], [-44, -26], [44, -26], [0, 16]]);
+    }
+
+    // 电子秤的屏幕包围盒 —— 要进 frameBoxes，否则标签会正好落在读数窗上
+    function scaleScreenBox(q) {
+      const hw = SCALE_W / 2, hd = SCALE_D / 2;
+      const V = BOX_V(SCALE_X - hw, 0, SCALE_Z - hd, SCALE_X + hw, SCALE_H, SCALE_Z + hd);
+      let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+      for (const v of V) {
+        const p = project(v, q);
+        x0 = Math.min(x0, p.x); x1 = Math.max(x1, p.x);
+        y0 = Math.min(y0, p.y); y1 = Math.max(y1, p.y);
+      }
+      return { x: x0, y: y0, w: x1 - x0, h: y1 - y0, x0: x0, y0: y0, x1: x1, y1: y1 };
+    }
+
+    /* ============================================================
+     * 渲染
+     * ============================================================ */
+    function render() {
+      if (!state.w) return;
+      frameBoxes = [];
+      if (window.__den3LabelLog) window.__den3LabelLog.length = 0;
+      state.drawn = { molBalls: 0, molLast: null, mol: [], cubes: [], scaleMass: null };
+      ctx.clearRect(0, 0, state.w, state.h);
+      drawBackdrop(state.w, state.h);
+      const q = makeCam({}, state.w, state.h);
+
+      drawTable(q);
+      drawScale(q);
+      // 器材本体也要进 frameBoxes，否则标签避让看不见它、正好落在读数窗上
+      frameBoxes.push(scaleScreenBox(q));
+
+      // 物块：按屏幕 y 排序（远的先画），保证遮挡关系
+      const order = [];
+      for (let i = 0; i < cubesOf().length; i++) order.push({ i: i, b: cubeScreenBox(i, q) });
+      order.sort((u, v) => u.b.y0 - v.b.y0);
+      for (const o of order) {
+        const P = drawCube(o.i, q);
+        state.drawn.cubes.push({ i: o.i, mat: cubeMat(o.i), a: cubeA(o.i), cx: P.cx, cz: P.cz, y0: P.y0, y1: P.y1, box: cubeScreenBox(o.i, q) });
+      }
+
+      // 标注：材料名
+      for (let i = 0; i < cubesOf().length; i++) {
+        const P = cubePose(i);
+        const top = project([P.cx, P.y1 + 0.02, P.cz], q);
+        const m = MATS[cubeMat(i)];
+        bestLabel(top, m.short, sel_color(i), 11, LBL_OFFS);
+      }
+      function sel_color(i) { return state.onScale === i ? '#a7f3d0' : '#e2e8f0'; }
+
+      // 秤上那块：标出边长，并在秤旁标质量
+      if (state.onScale !== null) {
+        drawDim(state.onScale, q);
+        state.drawn.scaleMass = cubeM(state.onScale);
+      }
+
+      // 舞台提示
+      $('den3-hint').innerHTML = state.molecules
+        ? '分子视图：每个小球代表一大群分子。<b>体积相同</b>时，密度越大球越多；<b>质量相同</b>时球数一样多，只是排得疏密不同。'
+        : '点物块 → 送上电子秤读质量 · 拖动空白处旋转 · 滚轮缩放';
+    }
+
+    /* ============================================================
+     * m–V 图
+     * ============================================================ */
+    const CH_V_MAX = 48, CH_M_MAX = 80;
+    const CH_PAD = { l: 36, r: 12, t: 12, b: 26 };
+    const chartCv = $('den3-chart');
+    const chartCtx = chartCv.getContext('2d');
+    let chartW = 300, chartH = 196;
+
+    function chartPt(V, m) {
+      const x = CH_PAD.l + (V / CH_V_MAX) * (chartW - CH_PAD.l - CH_PAD.r);
+      const y = chartH - CH_PAD.b - (m / CH_M_MAX) * (chartH - CH_PAD.t - CH_PAD.b);
+      return { x: x, y: y };
+    }
+    function resizeChart() {
+      const r = chartCv.getBoundingClientRect();
+      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      chartW = Math.max(160, Math.round(r.width));
+      chartH = Math.max(140, Math.round(r.height));
+      chartCv.width = Math.round(chartW * dpr);
+      chartCv.height = Math.round(chartH * dpr);
+      chartCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+    function drawChart() {
+      const c = chartCtx;
+      c.clearRect(0, 0, chartW, chartH);
+      const x0 = CH_PAD.l, x1 = chartW - CH_PAD.r, y0 = chartH - CH_PAD.b, y1 = CH_PAD.t;
+      // 网格
+      c.strokeStyle = 'rgba(148,163,184,.14)'; c.lineWidth = 1;
+      for (let V = 0; V <= CH_V_MAX; V += 12) {
+        const p = chartPt(V, 0);
+        c.beginPath(); c.moveTo(p.x, y0); c.lineTo(p.x, y1); c.stroke();
+      }
+      for (let m = 0; m <= CH_M_MAX; m += 20) {
+        const p = chartPt(0, m);
+        c.beginPath(); c.moveTo(x0, p.y); c.lineTo(x1, p.y); c.stroke();
+      }
+      // 轴
+      c.strokeStyle = 'rgba(148,163,184,.5)'; c.lineWidth = 1.2;
+      c.beginPath(); c.moveTo(x0, y0); c.lineTo(x1, y0); c.stroke();
+      c.beginPath(); c.moveTo(x0, y0); c.lineTo(x0, y1); c.stroke();
+      c.font = '700 10px Inter, "Microsoft YaHei", sans-serif';
+      c.fillStyle = '#7d97a8'; c.textAlign = 'center'; c.textBaseline = 'top';
+      for (let V = 0; V <= CH_V_MAX; V += 12) { const p = chartPt(V, 0); c.fillText(String(V), p.x, y0 + 5); }
+      c.textAlign = 'right'; c.textBaseline = 'middle';
+      for (let m = 0; m <= CH_M_MAX; m += 20) { const p = chartPt(0, m); c.fillText(String(m), x0 - 5, p.y); }
+      c.textAlign = 'center'; c.textBaseline = 'top';
+      c.fillStyle = '#93b4c4'; c.fillText('V / cm³', (x0 + x1) / 2, chartH - 12);
+      c.save();
+      c.translate(10, (y0 + y1) / 2); c.rotate(-Math.PI / 2);
+      c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText('m / g', 0, 0);
+      c.restore();
+
+      // 拟合直线（同一材料 ≥2 点才画）
+      const fit = lineFit();
+      if (fit.n >= 2 && isFinite(fit.slope)) {
+        const Vm = CH_V_MAX;
+        const p0 = chartPt(0, 0), p1 = chartPt(Vm, fit.slope * Vm);
+        c.strokeStyle = 'rgba(52,211,153,.85)'; c.lineWidth = 1.8;
+        c.setLineDash([5, 4]);
+        c.beginPath(); c.moveTo(p0.x, p0.y); c.lineTo(p1.x, p1.y); c.stroke();
+        c.setLineDash([]);
+      }
+      // 数据点
+      for (const r of state.recs) {
+        const p = chartPt(r.V, r.m);
+        c.beginPath(); c.arc(p.x, p.y, 4, 0, PI2);
+        c.fillStyle = rgb(MATS[r.mat].col, 1.0);
+        c.fill();
+        c.strokeStyle = '#020617'; c.lineWidth = 1.4; c.stroke();
+      }
+    }
+
+    /* ============================================================
+     * UI 同步
+     * ============================================================ */
+    function syncUI() {
+      const M = MODES[state.mode];
+      $('den3-modepill').textContent = M.title;
+      $('den3-modesub').textContent = M.sub;
+      document.querySelectorAll('[data-mode]').forEach(b =>
+        b.classList.toggle('on', b.getAttribute('data-mode') === state.mode));
+
+      const i = state.onScale;
+      const has = i !== null && i !== undefined;
+      $('den3-mnum').textContent = has ? cubeM(i).toFixed(1) : '0.0';
+      $('den3-scalepill').textContent = has ? MATS[cubeMat(i)].short + ' 在秤上' : '空载';
+      $('den3-mat').textContent = has ? MATS[cubeMat(i)].name : '—';
+      $('den3-a').textContent = has ? cubeA(i).toFixed(2) + ' cm' : '—';
+      $('den3-v').textContent = has ? cubeV(i).toFixed(2) + ' cm³' : '—';
+      $('den3-rho').textContent = has ? (cubeM(i) / cubeV(i)).toFixed(2) + ' g/cm³' : '—';
+      $('den3-conv').textContent = has
+        ? (cubeM(i) / cubeV(i)).toFixed(2) + ' g/cm³ = ' + unitConv(cubeM(i) / cubeV(i)).toFixed(0) + ' kg/m³'
+        : '—';
+
+      // 物块列表
+      const list = $('den3-cubes');
+      list.innerHTML = '';
+      cubesOf().forEach((c, k) => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'cb' + (state.onScale === k ? ' sel' : '');
+        b.setAttribute('data-cube', String(k));
+        const col = MATS[c.mat].col;
+        b.innerHTML = '<i style="background:' + rgb(col, 1) + '"></i>' +
+          '<span>' + MATS[c.mat].name + '</span><b>a = ' + c.a.toFixed(2) + ' cm</b>';
+        b.addEventListener('click', () => { if (placeOnScale(k)) { syncUI(); } });
+        list.appendChild(b);
+      });
+      $('den3-cnt').textContent = cubesOf().length + ' 块';
+
+      // 记录表
+      const rw = $('den3-recs');
+      rw.innerHTML = '';
+      $('den3-recn').textContent = state.recs.length + ' 组';
+      if (!state.recs.length) {
+        rw.innerHTML = '<div class="empty">还没有数据。把物块送上秤，再点「记录本组数据」。</div>';
+      } else {
+        rw.innerHTML = '<div class="hd"><span>材料</span><span>V/cm³</span><span>m/g</span><span>ρ/(g·cm⁻³)</span></div>';
+        for (const r of state.recs) {
+          const d = document.createElement('div');
+          d.className = 'rw';
+          d.innerHTML = '<span>' + MATS[r.mat].short + '</span><b>' + r.V.toFixed(2) + '</b><b>' +
+            r.m.toFixed(1) + '</b><b>' + (r.m / r.V).toFixed(2) + '</b>';
+          rw.appendChild(d);
+        }
+      }
+
+      // 拟合徽标
+      const fit = lineFit();
+      $('den3-fitpill').textContent = (fit.n >= 2 && isFinite(fit.slope))
+        ? ('斜率 ' + fit.slope.toFixed(2)) : (state.recs.length ? state.recs.length + ' 点' : '—');
+      $('den3-chartnote').innerHTML = (fit.n >= 2 && isFinite(fit.slope))
+        ? ('同种物质（' + MATS[fit.mat].short + '）的 ' + fit.n + ' 个点连成一条<b>过原点</b>的直线，斜率 ' +
+           fit.slope.toFixed(2) + ' = 该物质的<b>密度</b>（' + fit.rho.toFixed(2) + ' g/cm³）。')
+        : '横轴 V / cm³，纵轴 m / g。同种物质的点会连成一条<b>过原点</b>的直线，斜率就是密度。';
+
+      // 密度表
+      const dt = $('den3-dtab');
+      dt.innerHTML = '<tr><th>物质</th><th style="text-align:right">ρ / (g·cm⁻³)</th></tr>' +
+        DENSITY_TABLE.map(d => {
+          const hit = has && Math.abs(d.rho - rhoOf(cubeMat(i))) < 1e-6;
+          return '<tr' + (hit ? ' class="hit"' : '') + '><td>' + d.name + '</td><td class="n">' +
+            d.rho.toFixed(1) + '</td></tr>';
+        }).join('');
+
+      // 分析与结论
+      const an = $('den3-analysis');
+      const fit2 = lineFit();
+      let html = '';
+      if (state.mode === 'vol') {
+        html += '<div class="line"><span>五块体积</span><b>都是 8.00 cm³</b></div>' +
+                '<div class="line"><span>质量范围</span><b>4.0 g ~ 71.2 g</b></div>' +
+                '<div class="conc info">体积相同的不同物质，<b>质量一般不同</b> —— 差得越多，说明它们的密度相差越大。</div>';
+      } else if (state.mode === 'mass') {
+        html += '<div class="line"><span>五块质量</span><b>都约 21.6 g</b></div>' +
+                '<div class="line"><span>体积范围</span><b>2.4 cm³ ~ 43.2 cm³</b></div>' +
+                '<div class="conc info">质量相同的不同物质，<b>体积一般不同</b> —— 密度大的那块个头小。</div>';
+      } else {
+        html += '<div class="line"><span>材料</span><b>铝 ρ = 2.70 g/cm³</b></div>' +
+                '<div class="line"><span>已记录</span><b>' + state.recs.length + ' / 3 组</b></div>';
+        if (fit2.n >= 2 && isFinite(fit2.slope)) {
+          html += '<div class="line"><span>m–V 直线斜率</span><b>' + fit2.slope.toFixed(3) + ' g/cm³</b></div>' +
+                  '<div class="line"><span>截距</span><b>' + fit2.intercept.toFixed(3) + ' g</b></div>' +
+                  '<div class="conc">同种物质 <b>m ∝ V</b>：图像是一条过原点的直线，斜率就是密度 ' +
+                  fit2.slope.toFixed(2) + ' g/cm³。</div>';
+        } else {
+          html += '<div class="conc info">再记录 ' + (2 - state.recs.length) + ' 组数据，就能连成直线了。</div>';
+        }
+      }
+      if (fit2.n >= 2 && isFinite(fit2.slope) && state.mode !== 'same') {
+        html += '<div class="line" style="margin-top:6px;"><span>' + MATS[fit2.mat].short + ' 的斜率</span><b>' +
+                fit2.slope.toFixed(2) + ' g/cm³</b></div>';
+      }
+      an.innerHTML = html;
+
+      drawChart();
+      state.dirty = true;
+    }
+
+    function showToast(t) {
+      const el = $('den3-toast');
+      el.textContent = t;
+      el.classList.add('show');
+      clearTimeout(showToast._t);
+      showToast._t = setTimeout(() => el.classList.remove('show'), 1700);
+    }
+    function setMode(k) {
+      if (!MODES[k]) return;
+      state.mode = k;
+      state.onScale = null;
+      state.anim = [];
+      clearRecords();          // 摆位变了 ⇒ 清掉已记数据
+      state.solved = false;
+      $('den3-fb').className = 'fb';
+      syncUI();
+    }
+    function applyView(k) {
+      if (!VIEWS[k]) return;
+      state.view = k;
+      state.yaw = VIEWS[k][0]; state.pitch = VIEWS[k][1]; state.zoom = VIEWS[k][2];
+      document.querySelectorAll('[data-view]').forEach(b =>
+        b.classList.toggle('on', b.getAttribute('data-view') === k));
+      state.dirty = true;
+    }
+    function resetAll() {
+      state.onScale = null; state.anim = []; clearRecords(); state.solved = false;
+      state.molecules = false;
+      $('den3-recmode').classList.remove('on');
+      $('den3-fb').className = 'fb';
+      $('den3-ans').value = '';
+      applyView('perspective');
+      syncUI();
+    }
+
+    /* ============================================================
+     * 事件
+     * ============================================================ */
+    function onDown(ev) {
+      const r = canvas.getBoundingClientRect();
+      const sx = ev.clientX - r.left, sy = ev.clientY - r.top;
+      const q = makeCam({}, state.w, state.h);
+      const hit = hitCube(sx, sy, q);
+      if (hit !== null) {
+        state.downAt = { x: sx, y: sy, hit: hit };
+        return;
+      }
+      state.dragging = true;
+      state.drag = { x: ev.clientX, y: ev.clientY, yaw: state.yaw, pitch: state.pitch };
+      canvas.classList.add('grabbing');
+    }
+    function onMove(ev) {
+      const r = canvas.getBoundingClientRect();
+      const sx = ev.clientX - r.left, sy = ev.clientY - r.top;
+      if (state.dragging && state.drag) {
+        const dx = ev.clientX - state.drag.x, dy = ev.clientY - state.drag.y;
+        state.yaw = state.drag.yaw + dx * 0.006;
+        state.pitch = clamp(state.drag.pitch + dy * 0.005, -0.35, 1.30);
+        state.dirty = true;
+        return;
+      }
+      const q = makeCam({}, state.w, state.h);
+      const hit = hitCube(sx, sy, q);
+      state.hover = hit;
+      canvas.classList.toggle('pick', hit !== null);
+    }
+    function onUp(ev) {
+      canvas.classList.remove('grabbing');
+      if (state.downAt) {
+        const r = canvas.getBoundingClientRect();
+        const sx = ev.clientX - r.left, sy = ev.clientY - r.top;
+        const moved = Math.hypot(sx - state.downAt.x, sy - state.downAt.y);
+        if (moved < 6) {
+          const k = state.downAt.hit;
+          if (placeOnScale(k)) syncUI();
+        }
+        state.downAt = null;
+      }
+      state.dragging = false; state.drag = null;
+    }
+    function onWheel(ev) {
+      ev.preventDefault();
+      state.zoom = clamp(state.zoom * (ev.deltaY < 0 ? 1.08 : 1 / 1.08), 0.55, 2.6);
+      state.dirty = true;
+    }
+
+    canvas.addEventListener('pointerdown', onDown);
+    canvas.addEventListener('pointermove', onMove);
+    canvas.addEventListener('pointerup', onUp);
+    canvas.addEventListener('pointercancel', onUp);
+    canvas.addEventListener('pointerleave', () => { state.hover = null; canvas.classList.remove('pick'); state.dirty = true; });
+    canvas.addEventListener('wheel', onWheel, { passive: false });
+
+    $('den3-record').addEventListener('click', doRecord);
+    $('den3-record2').addEventListener('click', doRecord);
+    $('den3-clear').addEventListener('click', () => { clearRecords(); $('den3-fb').className = 'fb'; syncUI(); showToast('记录已清空'); });
+    $('den3-reset').addEventListener('click', () => { resetAll(); showToast('已重置'); });
+    $('den3-recmode').addEventListener('click', () => {
+      state.molecules = !state.molecules;
+      $('den3-recmode').classList.toggle('on', state.molecules);
+      state.dirty = true;
+    });
+    document.querySelectorAll('[data-mode]').forEach(b =>
+      b.addEventListener('click', () => setMode(b.getAttribute('data-mode'))));
+    document.querySelectorAll('[data-view]').forEach(b =>
+      b.addEventListener('click', () => applyView(b.getAttribute('data-view'))));
+    $('den3-submit').addEventListener('click', doSubmit);
+    $('den3-ans').addEventListener('keydown', ev => { if (ev.key === 'Enter') doSubmit(); });
+
+    function doRecord() {
+      const r = addRecord();
+      if (r.ok) { syncUI(); showToast('已记录第 ' + state.recs.length + ' 组数据'); }
+      else if (r.why === 'empty') showToast('先把物块放到电子秤上');
+      else showToast('这组数据已经记过了');
+    }
+    function doSubmit() {
+      const v = parseFloat($('den3-ans').value);
+      const r = submitRho(v);
+      const fb = $('den3-fb');
+      if (r.why === 'empty') { fb.className = 'fb warn show'; fb.textContent = '先把物块送上电子秤。'; return; }
+      if (r.why === 'bad') { fb.className = 'fb warn show'; fb.textContent = '请输入一个数字。'; return; }
+      if (r.ok) {
+        state.solved = true;
+        fb.className = 'fb ok show';
+        fb.textContent = '答对了 ✓ ρ = m / V = ' + r.want.toFixed(2) + ' g/cm³，查表就是' + MATS[cubeMat(state.onScale)].name + '。';
+      } else {
+        fb.className = 'fb bad show';
+        fb.textContent = (r.why === 'high' ? '偏大了' : '偏小了') + '。ρ = m / V，把质量除以体积再算一次（正确值约 ' + r.want.toFixed(2) + ' g/cm³）。';
+      }
+      syncUI();
+    }
+
+    /* ============================================================
+     * 尺寸 / 主循环
+     * ============================================================ */
+    function resize() {
+      const r = stage.getBoundingClientRect();
+      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      const w = Math.max(320, Math.round(r.width));
+      const h = Math.max(240, Math.round(r.height));
+      state.w = w; state.h = h; state.dpr = dpr;
+      canvas.width = Math.round(w * dpr);
+      canvas.height = Math.round(h * dpr);
+      canvas.style.width = w + 'px';
+      canvas.style.height = h + 'px';
+      // 画布位图是 w·dpr 宽，所有绘制都按 CSS px 写坐标 —— 必须补上变换，
+      // 否则 retina 屏上整个场景会缩成左上角四分之一。
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      resizeChart();
+      state.dirty = true;
+    }
+    let lastTs = 0;
+    function tick(ts) {
+      const dt = lastTs ? Math.min(0.05, (ts - lastTs) / 1000) : 0;
+      lastTs = ts;
+      frameStep(dt);
+      if (state.dirty) { render(); state.dirty = false; }
+      requestAnimationFrame(tick);
+    }
+
+    if (window.ResizeObserver) new ResizeObserver(() => resize()).observe(stage);
+    window.addEventListener('resize', resize);
+
+    resize();
+    applyView('perspective');
+    syncUI();
+    requestAnimationFrame(tick);
+
+    /* ============================================================
+     * 自检钩子 —— 渲染 / 判分 / 自检共用同一份物理
+     * ============================================================ */
+    window.__den3 = {
+      state: state,
+      consts: {
+        U: U, MATS: MATS, MODES: MODES, MAT_ORDER: MAT_ORDER, DENSITY_TABLE: DENSITY_TABLE,
+        SLOT_X: SLOT_X, WIDE_X: WIDE_X, ROW_Z: ROW_Z, AMAX: AMAX,
+        SCALE_X: SCALE_X, SCALE_Z: SCALE_Z, SCALE_W: SCALE_W, SCALE_D: SCALE_D, SCALE_H: SCALE_H, PLAT_Y: PLAT_Y,
+        TABLE_HW: TABLE_HW, TABLE_HD: TABLE_HD, CAMD: CAMD, TARGET: TARGET, VIEWS: VIEWS,
+        ANIM_DUR: ANIM_DUR, CH_V_MAX: CH_V_MAX, CH_M_MAX: CH_M_MAX, CH_PAD: CH_PAD, LAT_K: LAT_K, LAT_MIN: LAT_MIN, LAT_MAX: LAT_MAX
+      },
+      size: () => ({ w: state.w, h: state.h, dpr: state.dpr }),
+      makeCam: makeCam, project: project, unproject: unproject, envelopePoints: envelopePoints,
+      cm: cm, rhoOf: rhoOf, cubesOf: cubesOf, cubeMat: cubeMat, cubeA: cubeA, cubeV: cubeV, cubeM: cubeM,
+      slotX: slotX, poseOf: poseOf, cubePose: cubePose, cubeScreenBox: cubeScreenBox, hitCube: hitCube,
+      latN: latN, moleculeCount: moleculeCount, latticeSpacing: latticeSpacing,
+      unitConv: unitConv, chartPt: chartPt,
+      // 绘图区实际尺寸（自检用来验「V 轴把整幅绘图区用满」—— 不导出的话测试只能把
+      // chartW 写死，那又是自指恒等式）
+      chartSize: () => ({ w: chartW, h: chartH }),
+      fitRecs: fitRecs, lineFit: lineFit, submitRho: submitRho,
+      placeOnScale: placeOnScale, addRecord: addRecord, clearRecords: clearRecords,
+      setMode: setMode, applyView: applyView, resetAll: resetAll,
+      frameStep: frameStep, driveAnim: driveAnim,
+      setOnScale: k => { state.onScale = (k === null ? null : +k); state.anim = []; syncUI(); },
+      setMolecules: v => { state.molecules = !!v; state.dirty = true; },
+      pushRecord: (mat, a) => { state.recs.push({ key: mat + '|' + a.toFixed(2), mat: mat, a: a, V: a * a * a, m: rhoOf(mat) * a * a * a }); syncUI(); },
+      render: render, syncUI: syncUI, drawChart: drawChart,
+      drawn: () => state.drawn,
+      labels: () => (window.__den3LabelLog || []).slice()
+    };
+    window.__den3LabelLog = [];
+  })();
+  </script>
+</body>
+</html>
