@@ -16,15 +16,15 @@ import * as THREE from './assets/optics-three.min.js';
 
   /* ------------------------------ 器材尺寸 ------------------------------ */
   const BASE_W = 26, BASE_D = 17, BASE_H = 1.8;      // 铸铁底座
-  const ROD_R = 0.55, ROD_H = 42, ROD_Z = -5.6;      // 镀铬立柱
+  const ROD_R = 0.55, ROD_H = 43, ROD_Z = -5.6;      // 镀铬立柱（够高，容温度计悬挂支架上下滑动）
   const RING_Y = 17.5;                               // 铁圈高度
   const CLAMP_Y = 30.5;                              // 试管夹高度
 
-  const LAMP_R = 3.5, LAMP_H = 6.4;                  // 酒精灯玻璃灯体
-  const LAMP_SHOULDER_H = 1.5, LAMP_COLLAR_H = 1.5, WICK_H = 1.7;
-  const FLAME_H = 4.6;
-  const LAMP_TOP = BASE_H + LAMP_H + LAMP_SHOULDER_H + LAMP_COLLAR_H + WICK_H;  // 12.9
-  const FLAME_TOP = LAMP_TOP + FLAME_H;                                          // 17.5
+  const LAMP_R = 3.5, LAMP_H = 6.9;                  // 酒精灯玻璃灯体（颈口高度）
+  const LAMP_SHOULDER_H = 0, LAMP_COLLAR_H = 1.4, WICK_H = 1.7;
+  const FLAME_H = 5.4;
+  const LAMP_TOP = BASE_H + LAMP_H + LAMP_SHOULDER_H + LAMP_COLLAR_H + WICK_H;  // 11.8
+  const FLAME_TOP = LAMP_TOP + FLAME_H;                                          // 17.2
 
   const NET_W = 15, NET_T = 0.22;                    // 石棉网
   const BK_R = 4.3, BK_H = 10.2;                     // 烧杯
@@ -37,8 +37,14 @@ import * as THREE from './assets/optics-three.min.js';
   const SAMPLE_H = 6.0;                              // 试样高度
   const SAMPLE_R = TT_R - 0.13;
 
-  const TH_BULB_Y = TT_Y0 + 4.3;                     // 温度计感温泡
-  const TH_TUBE_H = 17.5;
+  const TH_BULB_Y = TT_Y0 + 4.0;                     // 温度计感温泡（插到底时的绝对高度）
+  const TH_BULB_R = 0.42;                            // 感温泡半径（要看得见，比原来大一圈）
+  // 管长只留「露出烧杯口 + 够印 0~100 刻度」的最小值：整机越矮，取景就能压得越紧，
+  // 器材在画面里才够大。14 cm 的管子会把立柱顶到 53 cm，白占半屏。
+  const TH_TUBE_H = 11.5;                            // 温度计管长
+  const TH_TOP = TH_BULB_Y + TH_TUBE_H - 0.6 + 0.24; // 顶端球帽中心（34.57）
+  const TH_LIFT = 5;                                 // 「提起」时整体抬升量（感温泡提出试样）
+  const THREAD_LEN = 2.6;                            // 悬挂细线长度（横臂高度 = TH_TOP + 它）
 
   const MAX_WEIGHTS_UNUSED = 0;                      // （占位，保持常量区整齐）
 
@@ -73,15 +79,18 @@ import * as THREE from './assets/optics-three.min.js';
     t: 0, Tt: AMB, Tw: AMB, phi: 0, soft: 0,
     finished: false,
     step: 0,
-    records: []
+    records: [],
+    thDepth: 1,          // 温度计插入程度：0 = 提起（感温泡离开试样），1 = 插到底
+    thAnim: 1,           // 动画用的平滑值（默认就是装好的状态，点「提起」才看得到动作）
+    xray: true           // 透视：试样半透明，能看见里面的玻璃泡
   };
   const toggles = { bath: true, melt: true, micro: true };
 
   const VIEWS = {
-    front: { yaw: -0.08, pitch: 0.10, dist: 80, ty: 19 },
-    angle: { yaw: -0.55, pitch: 0.16, dist: 82, ty: 19 },
-    top:   { yaw: -0.50, pitch: 0.86, dist: 78, ty: 17 },
-    close: { yaw: -0.42, pitch: 0.06, dist: 27, ty: 22.5 }
+    front: { yaw: -0.08, pitch: 0.10, dist: 85, ty: 22.5 },
+    angle: { yaw: -0.55, pitch: 0.16, dist: 87, ty: 22.5 },
+    top:   { yaw: -0.50, pitch: 0.86, dist: 82, ty: 20 },
+    close: { yaw: -0.42, pitch: 0.06, dist: 30, ty: 22.5 }
   };
   const view = { ...VIEWS.angle };
 
@@ -265,38 +274,41 @@ import * as THREE from './assets/optics-three.min.js';
   function makeBenchMap() {
     const S = 512, rnd = mulberry32(99);
     const c = newCanvas(S, S), g = c.getContext('2d');
-    g.fillStyle = '#2c3037'; g.fillRect(0, 0, S, S);
+    // 台面压到深灰：比背景再暗一档，白玻璃器皿才有「亮—中—暗」三层可读的层次。
+    // （原来 #4c4a46 被 2.05 强度的主光一照就泛白，整屏糊成一片灰。）
+    g.fillStyle = '#33312e'; g.fillRect(0, 0, S, S);
     for (let i = 0; i < 260; i++) {
       const x = rnd() * S, y = rnd() * S, r = 8 + rnd() * 46;
       const grd = g.createRadialGradient(x, y, 0, x, y, r);
-      grd.addColorStop(0, `hsla(${205 + rnd() * 30},${4 + rnd() * 8}%,${13 + rnd() * 20}%,${0.06 + rnd() * 0.1})`);
+      grd.addColorStop(0, `hsla(${205 + rnd() * 30},${4 + rnd() * 8}%,${9 + rnd() * 15}%,${0.06 + rnd() * 0.1})`);
       grd.addColorStop(1, 'hsla(0,0%,0%,0)');
       g.fillStyle = grd; g.beginPath(); g.arc(x, y, r, 0, 7); g.fill();
     }
     for (let i = 0; i < 5200; i++) {
       const x = rnd() * S, y = rnd() * S, r = 0.4 + rnd() * 1.5;
-      const l = rnd() < 0.55 ? 10 + rnd() * 14 : 48 + rnd() * 30;
+      const l = rnd() < 0.55 ? 7 + rnd() * 10 : 30 + rnd() * 20;
       g.fillStyle = `hsla(${200 + rnd() * 40},${4 + rnd() * 10}%,${l}%,${0.2 + rnd() * 0.44})`;
       g.beginPath(); g.arc(x, y, r, 0, 7); g.fill();
     }
     const t = new THREE.CanvasTexture(c);
     t.colorSpace = THREE.SRGBColorSpace;
     t.wrapS = t.wrapT = THREE.RepeatWrapping;
-    t.repeat.set(16, 11);
+    t.repeat.set(14, 9);
     return t;
   }
 
   function makeBackdropMap() {
     const W = 512, H = 512;
     const c = newCanvas(W, H), g = c.getContext('2d');
+    // 背景墙压成深石板蓝：白色玻璃器皿才和背景分得开（原来近白，白上白分不出器材轮廓）
     const grad = g.createLinearGradient(0, 0, 0, H);
-    grad.addColorStop(0, '#c6cdd5');
-    grad.addColorStop(0.55, '#a7b0b9');
-    grad.addColorStop(1, '#8a939c');
+    grad.addColorStop(0, '#4a5666');
+    grad.addColorStop(0.45, '#333e4a');
+    grad.addColorStop(1, '#1e252d');
     g.fillStyle = grad; g.fillRect(0, 0, W, H);
-    const r = g.createRadialGradient(W * 0.3, H * 0.22, 10, W * 0.3, H * 0.22, W * 0.75);
-    r.addColorStop(0, 'rgba(255,255,255,0.32)');
-    r.addColorStop(1, 'rgba(255,255,255,0)');
+    const r = g.createRadialGradient(W * 0.34, H * 0.30, 10, W * 0.34, H * 0.30, W * 0.72);
+    r.addColorStop(0, 'rgba(210,228,244,0.20)');
+    r.addColorStop(1, 'rgba(210,228,244,0)');
     g.fillStyle = r; g.fillRect(0, 0, W, H);
     const t = new THREE.CanvasTexture(c);
     t.colorSpace = THREE.SRGBColorSpace;
@@ -328,8 +340,8 @@ import * as THREE from './assets/optics-three.min.js';
   const MAX_ANISO = renderer.capabilities.getMaxAnisotropy ? renderer.capabilities.getMaxAnisotropy() : 1;
 
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color('#aeb6be');
-  scene.fog = new THREE.Fog('#cdd3d9', 200, 460);
+  scene.background = new THREE.Color('#2b333c');
+  scene.fog = new THREE.Fog('#2b333c', 190, 430);
 
   const camera = new THREE.PerspectiveCamera(32, 1, 1, 900);
 
@@ -380,17 +392,22 @@ import * as THREE from './assets/optics-three.min.js';
   scene.add(rim);
 
   const backdrop = new THREE.Mesh(
-    new THREE.PlaneGeometry(560, 420),
+    new THREE.PlaneGeometry(420, 320),
     new THREE.MeshBasicMaterial({ map: makeBackdropMap(), fog: false })
   );
-  backdrop.position.set(0, 150, -120);
+  backdrop.position.set(0, 138, -95);
   scene.add(backdrop);
 
   const benchMap = makeBenchMap();
   benchMap.anisotropy = MAX_ANISO;
   const bench = new THREE.Mesh(
-    new THREE.BoxGeometry(320, 7, 210),
-    new THREE.MeshStandardMaterial({ map: benchMap, bumpMap: benchMap, bumpScale: 0.05, roughness: 0.74, metalness: 0.02 })
+    new THREE.BoxGeometry(220, 7, 140),
+    // envMapIntensity 压到 0.5：棚拍环境贴图对水平台面的贡献极大，不压的话
+    // 深灰台面会被 IBL 拉成中亮灰，白玻璃器皿又和它糊在一起。
+    new THREE.MeshStandardMaterial({
+      map: benchMap, bumpMap: benchMap, bumpScale: 0.04,
+      roughness: 0.9, metalness: 0.0, envMapIntensity: 0.5
+    })
   );
   bench.position.set(0, -3.5, 0);
   bench.receiveShadow = true;
@@ -411,6 +428,13 @@ import * as THREE from './assets/optics-three.min.js';
   const glassMat = new THREE.MeshPhysicalMaterial({
     color: '#e6f3f8', transparent: true, opacity: 0.15, roughness: 0.05, metalness: 0.0,
     clearcoat: 1.0, clearcoatRoughness: 0.03, envMapIntensity: 2.1,
+    side: THREE.DoubleSide, depthWrite: false
+  });
+  // 酒精灯单独一份玻璃：它前面没有别的半透明层挡着，太薄就只剩里面那柱酒精，
+  // 看上去像个敞口杯子 —— 提亮一档、加环境反射，瓶壁的高光轮廓才立得住。
+  const lampGlassMat = new THREE.MeshPhysicalMaterial({
+    color: '#eef6fa', transparent: true, opacity: 0.24, roughness: 0.04, metalness: 0.0,
+    clearcoat: 1.0, clearcoatRoughness: 0.02, envMapIntensity: 2.9,
     side: THREE.DoubleSide, depthWrite: false
   });
   const waterMat = new THREE.MeshPhysicalMaterial({
@@ -516,52 +540,87 @@ import * as THREE from './assets/optics-three.min.js';
     new THREE.CylinderGeometry(5.0, 5.0, 0.2, 40),
     new THREE.MeshStandardMaterial({
       map: asbestosMap, bumpMap: asbestosMap, bumpScale: 0.03,
-      color: '#ded7c8', roughness: 0.97, metalness: 0
+      // 石棉片不能是纯白：它正对着主光，纯白会变成全画面最亮的一块，把烧杯和试管压下去
+      color: '#a49d8f', roughness: 0.97, metalness: 0, envMapIntensity: 0.6
     })
   );
   pad.position.set(0, RING_Y + 0.3, -0.35);
   pad.receiveShadow = true;
   scene.add(pad);
 
-  /* --- 酒精灯 --- */
+  /* --- 酒精灯（按实物重塑：鼓腹玻璃瓶 + 肩部收颈 + 金属螺旋灯盖 + 瓷灯芯管 + 棉灯芯） --- */
   const lamp = new THREE.Group();
   scene.add(lamp);
-  const lampGlass = new THREE.Mesh(
-    new THREE.CylinderGeometry(LAMP_R, LAMP_R * 0.96, LAMP_H, 40, 1, true),
-    glassMat
-  );
-  lampGlass.position.set(0, BASE_H + LAMP_H / 2, 0);
-  lamp.add(lampGlass);
-  const lampBottom = new THREE.Mesh(new THREE.CircleGeometry(LAMP_R * 0.96, 40), glassMat);
-  lampBottom.rotation.x = -Math.PI / 2;
-  lampBottom.position.set(0, BASE_H + 0.02, 0);
-  lamp.add(lampBottom);
+  const lampY0 = BASE_H;                                 // 灯体底面
 
+  // 玻璃灯体：用回转体做出「鼓腹 → 收肩 → 短颈」的真实瓶形，而不是一根直筒
+  const lampProfile = [
+    [0.00, 0.00], [LAMP_R * 0.82, 0.00], [LAMP_R, 0.42], [LAMP_R, 3.60],
+    [LAMP_R * 0.985, 4.30], [LAMP_R * 0.90, 5.05], [LAMP_R * 0.72, 5.70],
+    [LAMP_R * 0.50, 6.15], [LAMP_R * 0.40, 6.45], [LAMP_R * 0.39, 6.90]
+  ].map(([r, y]) => new THREE.Vector2(r, y));
+  const lampBody = new THREE.Mesh(new THREE.LatheGeometry(lampProfile, 44), lampGlassMat);
+  lampBody.position.set(0, lampY0, 0);
+  lamp.add(lampBody);
+  // 瓶底加厚一圈（真实玻璃瓶底都有厚墩）
+  const lampFoot = new THREE.Mesh(new THREE.CylinderGeometry(LAMP_R * 0.80, LAMP_R * 0.76, 0.5, 40), lampGlassMat);
+  lampFoot.position.set(0, lampY0 + 0.25, 0);
+  lamp.add(lampFoot);
+
+  // 酒精液面（约半瓶）
+  const ALCOHOL_H = 3.7;
   const alcohol = new THREE.Mesh(
-    new THREE.CylinderGeometry(LAMP_R * 0.94, LAMP_R * 0.90, 4.6, 40),
-    new THREE.MeshPhysicalMaterial({ color: '#f0e2a8', transparent: true, opacity: 0.55, roughness: 0.08, metalness: 0, envMapIntensity: 1.0, depthWrite: false })
+    new THREE.CylinderGeometry(LAMP_R * 0.955, LAMP_R * 0.93, ALCOHOL_H, 40),
+    new THREE.MeshPhysicalMaterial({
+      color: '#e8dfae', transparent: true, opacity: 0.62, roughness: 0.06, metalness: 0,
+      clearcoat: 1, clearcoatRoughness: 0.05, envMapIntensity: 1.2, depthWrite: false
+    })
   );
-  alcohol.position.set(0, BASE_H + 2.3, 0);
+  alcohol.position.set(0, lampY0 + 0.45 + ALCOHOL_H / 2, 0);
   lamp.add(alcohol);
-
-  const shoulder = new THREE.Mesh(new THREE.CylinderGeometry(1.95, LAMP_R * 0.98, LAMP_SHOULDER_H, 40), glassMat);
-  shoulder.position.set(0, BASE_H + LAMP_H + LAMP_SHOULDER_H / 2, 0);
-  lamp.add(shoulder);
-
-  const collar = new THREE.Mesh(
-    new THREE.CylinderGeometry(1.5, 1.55, LAMP_COLLAR_H, 28),
-    new THREE.MeshStandardMaterial({ color: '#e9e6df', roughness: 0.5, metalness: 0.05 })
+  const alcoholTop = new THREE.Mesh(
+    new THREE.CircleGeometry(LAMP_R * 0.955, 40),
+    new THREE.MeshPhysicalMaterial({ color: '#f2ecc6', transparent: true, opacity: 0.5, roughness: 0.03, metalness: 0, clearcoat: 1, envMapIntensity: 1.5, depthWrite: false })
   );
-  collar.position.set(0, BASE_H + LAMP_H + LAMP_SHOULDER_H + LAMP_COLLAR_H / 2, 0);
-  collar.castShadow = true;
-  lamp.add(collar);
+  alcoholTop.rotation.x = -Math.PI / 2;
+  alcoholTop.position.set(0, lampY0 + 0.45 + ALCOHOL_H, 0);
+  lamp.add(alcoholTop);
 
+  // 金属螺旋灯盖（镍黄铜，带滚花）
+  const capMat = new THREE.MeshStandardMaterial({ color: '#b9b2a2', roughness: 0.34, metalness: 0.95, envMapIntensity: 1.3 });
+  const cap = new THREE.Mesh(new THREE.CylinderGeometry(LAMP_R * 0.44, LAMP_R * 0.46, LAMP_COLLAR_H, 30), capMat);
+  cap.position.set(0, lampY0 + LAMP_H + LAMP_COLLAR_H / 2, 0);
+  cap.castShadow = true;
+  lamp.add(cap);
+  const knurl = new THREE.Mesh(
+    new THREE.CylinderGeometry(LAMP_R * 0.47, LAMP_R * 0.47, LAMP_COLLAR_H * 0.62, 40, 1, true),
+    new THREE.MeshStandardMaterial({ color: '#8f8878', roughness: 0.5, metalness: 0.9, side: THREE.DoubleSide })
+  );
+  knurl.position.set(0, lampY0 + LAMP_H + LAMP_COLLAR_H * 0.5, 0);
+  lamp.add(knurl);
+
+  // 瓷质灯芯管（白色小套管，真实酒精灯都有）
+  const wickTube = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.72, 0.78, WICK_H * 0.72, 24),
+    new THREE.MeshStandardMaterial({ color: '#f2efe6', roughness: 0.42, metalness: 0.03 })
+  );
+  wickTube.position.set(0, lampY0 + LAMP_H + LAMP_COLLAR_H + WICK_H * 0.30, 0);
+  wickTube.castShadow = true;
+  lamp.add(wickTube);
+
+  // 棉灯芯：下端米白、上端烧焦发黑
   const wick = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.58, 0.62, WICK_H, 16),
-    new THREE.MeshStandardMaterial({ color: '#d8cdb4', roughness: 0.95, metalness: 0 })
+    new THREE.CylinderGeometry(0.46, 0.52, WICK_H, 16),
+    new THREE.MeshStandardMaterial({ color: '#e0d6bd', roughness: 0.98, metalness: 0 })
   );
-  wick.position.set(0, LAMP_TOP - WICK_H / 2 + 0.1, 0);
+  wick.position.set(0, LAMP_TOP - WICK_H / 2 + 0.05, 0);
   lamp.add(wick);
+  const wickChar = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.44, 0.47, WICK_H * 0.34, 16),
+    new THREE.MeshStandardMaterial({ color: '#2b2622', roughness: 0.95, metalness: 0 })
+  );
+  wickChar.position.set(0, LAMP_TOP - WICK_H * 0.13, 0);
+  lamp.add(wickChar);
 
   /* --- 火焰（三层叠加 + 暖光） --- */
   /* --- 酒精灯火焰 --- */
@@ -599,10 +658,14 @@ import * as THREE from './assets/optics-three.min.js';
 
   const flameAlpha = makeFlameAlpha();
   const flameLayers = [];
+  // 真实酒精灯火焰：底部一小段淡蓝焰心，外面包橙黄外焰
+  // 全部用 AdditiveBlending 叠加，四层都拉满就会叠成一柱纯白 —— 逐层压低不透明度，
+  // 让焰心只比外焰亮一点，才是「酒精灯」而不是「蜡烛」。
   const FLAME_SPEC = [
-    { r: 1.18, h: FLAME_H, color: '#ff7a18', opacity: 0.26, blend: THREE.AdditiveBlending },
-    { r: 0.76, h: FLAME_H * 0.74, color: '#ffc247', opacity: 0.40, blend: THREE.AdditiveBlending },
-    { r: 0.34, h: FLAME_H * 0.38, color: '#bfe9ff', opacity: 0.52, blend: THREE.AdditiveBlending }
+    { r: 1.16, h: FLAME_H, color: '#ff6a10', opacity: 0.20, blend: THREE.AdditiveBlending },
+    { r: 0.74, h: FLAME_H * 0.72, color: '#ffb02e', opacity: 0.26, blend: THREE.AdditiveBlending },
+    { r: 0.40, h: FLAME_H * 0.30, color: '#7cb8ff', opacity: 0.26, blend: THREE.AdditiveBlending },
+    { r: 0.52, h: FLAME_H * 0.16, color: '#4f9bf5', opacity: 0.22, blend: THREE.AdditiveBlending }
   ];
   for (const s of FLAME_SPEC) {
     const geo = new THREE.ConeGeometry(s.r, s.h, 20, 1, true);
@@ -614,9 +677,9 @@ import * as THREE from './assets/optics-three.min.js';
     flameGroup.add(m);
     flameLayers.push({ mesh: m, base: s });
   }
-  // 外圈柔和辉光：把锥体的硬轮廓“糊”开
+  // 外圈柔和辉光：把锥体的硬轮廓“糊”开（太亮会把火焰整个冲成白色，压到 0.4）
   const flameGlow = new THREE.Sprite(new THREE.SpriteMaterial({
-    map: makeGlowMap(), transparent: true, opacity: 0.72,
+    map: makeGlowMap(), transparent: true, opacity: 0.40,
     blending: THREE.AdditiveBlending, depthWrite: false, fog: false
   }));
   flameGlow.scale.set(5.4, 7.2, 1);
@@ -627,19 +690,64 @@ import * as THREE from './assets/optics-three.min.js';
   scene.add(flameLight);
 
   /* --- 烧杯 + 水 --- */
+  // 烧杯刻度：真实烧杯的白色印刷刻度（透明底），单独一层贴在杯壁外侧
+  function makeBeakerMarks() {
+    const W = 1024, H = 512;
+    const c = newCanvas(W, H), g = c.getContext('2d');
+    g.clearRect(0, 0, W, H);
+    const x0 = Math.round(W * 0.055), x1 = Math.round(W * 0.30);   // 刻度只占杯壁一段
+    g.strokeStyle = 'rgba(255,255,255,0.94)';
+    g.fillStyle = 'rgba(255,255,255,0.96)';
+    g.font = 'bold 34px "Helvetica Neue", Arial, sans-serif';
+    g.textAlign = 'left'; g.textBaseline = 'middle';
+    const labels = ['50', '100', '150', '200'];
+    for (let i = 0; i < labels.length; i++) {
+      const y = H - (0.14 + i * 0.225) * H;
+      g.lineWidth = 5;
+      g.beginPath(); g.moveTo(x0, y); g.lineTo(x1, y); g.stroke();
+      g.fillText(labels[i], x1 + 9, y);
+      // 中间的小格刻度
+      for (let k = 1; k < 5; k++) {
+        const yy = y + (k / 5) * (0.225 * H);
+        if (yy > H - 8) break;
+        g.lineWidth = 3;
+        g.beginPath(); g.moveTo(x0 + (x1 - x0) * 0.42, yy); g.lineTo(x1, yy); g.stroke();
+      }
+    }
+    const t = new THREE.CanvasTexture(c);
+    t.colorSpace = THREE.SRGBColorSpace;
+    return t;
+  }
+
   const beaker = new THREE.Group();
   scene.add(beaker);
   const bkWall = new THREE.Mesh(new THREE.CylinderGeometry(BK_R, BK_R, BK_H, 48, 1, true), glassMat);
   bkWall.position.set(0, BK_Y0 + BK_H / 2, 0);
   beaker.add(bkWall);
+  // 杯壁刻度层（只画外侧，避免字被镜像）
+  const bkMarks = new THREE.Mesh(
+    new THREE.CylinderGeometry(BK_R + 0.012, BK_R + 0.012, BK_H - 0.5, 48, 1, true),
+    new THREE.MeshBasicMaterial({ map: makeBeakerMarks(), transparent: true, depthWrite: false, side: THREE.FrontSide })
+  );
+  bkMarks.position.set(0, BK_Y0 + BK_H / 2 - 0.1, 0);
+  beaker.add(bkMarks);
+  // 加厚杯底（真实烧杯底是一块厚玻璃）
+  const bkFoot = new THREE.Mesh(new THREE.CylinderGeometry(BK_R * 0.985, BK_R * 0.965, 0.55, 48), glassMat);
+  bkFoot.position.set(0, BK_Y0 + 0.27, 0);
+  beaker.add(bkFoot);
   const bkBottom = new THREE.Mesh(new THREE.CircleGeometry(BK_R, 48), glassMat);
   bkBottom.rotation.x = -Math.PI / 2;
   bkBottom.position.set(0, BK_Y0 + 0.02, 0);
   beaker.add(bkBottom);
-  const bkRim = new THREE.Mesh(new THREE.TorusGeometry(BK_R, 0.11, 8, 48), glassMat);
+  // 卷边杯口 + 倒液嘴
+  const bkRim = new THREE.Mesh(new THREE.TorusGeometry(BK_R, 0.14, 10, 48), glassMat);
   bkRim.rotation.x = Math.PI / 2;
   bkRim.position.set(0, BK_Y0 + BK_H, 0);
   beaker.add(bkRim);
+  const bkSpout = new THREE.Mesh(new THREE.SphereGeometry(0.44, 18, 12), glassMat);
+  bkSpout.scale.set(2.0, 0.82, 1.0);
+  bkSpout.position.set(BK_R * 0.93, BK_Y0 + BK_H + 0.06, 0);
+  beaker.add(bkSpout);
 
   const water = new THREE.Mesh(
     new THREE.CylinderGeometry(BK_R - 0.1, BK_R - 0.1, WATER_H, 48),
@@ -661,12 +769,20 @@ import * as THREE from './assets/optics-three.min.js';
   const tubeWall = new THREE.Mesh(new THREE.CylinderGeometry(TT_R, TT_R, TT_H, 36, 1, true), glassMat);
   tubeWall.position.set(0, TT_Y0 + TT_H / 2, 0);
   tube.add(tubeWall);
+  // 加厚球底（内外两层，看起来才有玻璃厚度）
   const tubeBottom = new THREE.Mesh(new THREE.SphereGeometry(TT_R, 28, 14, 0, Math.PI * 2, Math.PI / 2, Math.PI / 2), glassMat);
   tubeBottom.position.set(0, TT_Y0, 0);
   tube.add(tubeBottom);
-  const tubeRim = new THREE.Mesh(new THREE.TorusGeometry(TT_R, 0.09, 8, 36), glassMat);
+  const tubeBottomIn = new THREE.Mesh(new THREE.SphereGeometry(TT_R - 0.16, 26, 12, 0, Math.PI * 2, Math.PI / 2, Math.PI / 2), glassMat);
+  tubeBottomIn.position.set(0, TT_Y0 + 0.10, 0);
+  tube.add(tubeBottomIn);
+  // 卷口：一小段外翻的锥面 + 圆环，比单纯一个圆环更像真试管口
+  const tubeFlare = new THREE.Mesh(new THREE.CylinderGeometry(TT_R * 1.16, TT_R, 0.42, 36, 1, true), glassMat);
+  tubeFlare.position.set(0, TT_Y0 + TT_H + 0.16, 0);
+  tube.add(tubeFlare);
+  const tubeRim = new THREE.Mesh(new THREE.TorusGeometry(TT_R * 1.16, 0.11, 10, 36), glassMat);
   tubeRim.rotation.x = Math.PI / 2;
-  tubeRim.position.set(0, TT_Y0 + TT_H, 0);
+  tubeRim.position.set(0, TT_Y0 + TT_H + 0.36, 0);
   tube.add(tubeRim);
 
   /* --- 试样（固体段 + 液体段 + 糊状过渡带） --- */
@@ -718,34 +834,105 @@ import * as THREE from './assets/optics-three.min.js';
   tube.add(waxTop);
 
   /* --- 温度计 --- */
+  // 温度计管壁比烧杯玻璃略实一点，否则整支温度计在背景里会化掉
+  const thGlassMat = new THREE.MeshPhysicalMaterial({
+    color: '#f2fbff', transparent: true, opacity: 0.30, roughness: 0.04, metalness: 0,
+    clearcoat: 1, clearcoatRoughness: 0.02, envMapIntensity: 2.6,
+    side: THREE.DoubleSide, depthWrite: false
+  });
+  // 感温泡 = 玻璃外囊 + 红色工作液内芯：内芯是不透明的，才能在试样里被看见
+  // （玻璃泡隔着「杯壁 + 水 + 管壁 + 试样」四层，不加自发光会在透射里被稀释掉）
+  const thRedMat = new THREE.MeshStandardMaterial({
+    color: '#e0212c', emissive: '#a5121d', emissiveIntensity: 1.15, roughness: 0.26, metalness: 0.05
+  });
+
+  // 温度计刻度：印刷在管壁上（透明底 + 白色刻度与数字）
+  function makeThermoScale() {
+    const W = 160, H = 1024;
+    const c = newCanvas(W, H), g = c.getContext('2d');
+    g.clearRect(0, 0, W, H);
+    const u0 = 8, u1 = 62;                 // 刻度只占管壁一小条
+    g.strokeStyle = 'rgba(38,50,60,0.92)';
+    g.fillStyle = 'rgba(30,42,52,0.95)';
+    g.lineWidth = 3;
+    g.beginPath(); g.moveTo(u1, 6); g.lineTo(u1, H - 6); g.stroke();
+    g.font = 'bold 26px "Helvetica Neue", Arial, sans-serif';
+    g.textAlign = 'left'; g.textBaseline = 'middle';
+    for (let T = 0; T <= 100; T += 2) {
+      const y = H - 6 - (T / 100) * (H - 12);
+      const major = T % 10 === 0;
+      const len = major ? (u1 - u0) : (u1 - u0) * 0.45;
+      g.lineWidth = major ? 3 : 2;
+      g.beginPath(); g.moveTo(u1 - len, y); g.lineTo(u1, y); g.stroke();
+      if (major) g.fillText(String(T), u1 + 7, y);
+    }
+    const t = new THREE.CanvasTexture(c);
+    t.colorSpace = THREE.SRGBColorSpace;
+    return t;
+  }
+
+  const STEM_Y0 = TH_BULB_Y + 0.55;                  // 刻度 0 ℃ 的位置
+  const STEM_Y1 = TH_BULB_Y + TH_TUBE_H - 0.6;       // 刻度 100 ℃ 的位置
+
   const thermometer = new THREE.Group();
   thermometer.position.set(0.52, 0, 0.28);
   scene.add(thermometer);
-  const thGlass = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.24, TH_TUBE_H, 16, 1, true), glassMat);
+
+  const thGlass = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.24, TH_TUBE_H, 20, 1, true), thGlassMat);
   thGlass.position.set(0, TH_BULB_Y + TH_TUBE_H / 2 - 0.6, 0);
   thermometer.add(thGlass);
-  const thBulb = new THREE.Mesh(new THREE.SphereGeometry(0.36, 18, 12), glassMat);
+  const thScale = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.248, 0.248, TH_TUBE_H - 1.2, 20, 1, true),
+    new THREE.MeshBasicMaterial({ map: makeThermoScale(), transparent: true, depthWrite: false, side: THREE.FrontSide })
+  );
+  thScale.position.set(0, TH_BULB_Y + TH_TUBE_H / 2 - 0.6, 0);
+  thermometer.add(thScale);
+  const thBulb = new THREE.Mesh(new THREE.SphereGeometry(TH_BULB_R, 22, 14), thGlassMat);
   thBulb.position.set(0, TH_BULB_Y, 0);
   thermometer.add(thBulb);
-  const thCap = new THREE.Mesh(new THREE.SphereGeometry(0.24, 14, 8), glassMat);
+  const thCap = new THREE.Mesh(new THREE.SphereGeometry(0.24, 16, 10), thGlassMat);
   thCap.position.set(0, TH_BULB_Y + TH_TUBE_H - 0.6, 0);
   thermometer.add(thCap);
 
-  const mercury = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.105, 0.105, 1, 12),
-    new THREE.MeshStandardMaterial({ color: '#e0242b', emissive: '#7a0d12', emissiveIntensity: 0.45, roughness: 0.32, metalness: 0.05 })
-  );
-  const mercuryBulb = new THREE.Mesh(
-    new THREE.SphereGeometry(0.30, 16, 12),
-    new THREE.MeshStandardMaterial({ color: '#e0242b', emissive: '#7a0d12', emissiveIntensity: 0.45, roughness: 0.32, metalness: 0.05 })
-  );
+  const mercury = new THREE.Mesh(new THREE.CylinderGeometry(0.105, 0.105, 1, 12), thRedMat);
+  const mercuryBulb = new THREE.Mesh(new THREE.SphereGeometry(TH_BULB_R - 0.07, 18, 12), thRedMat);
   mercuryBulb.position.set(0, TH_BULB_Y, 0);
   thermometer.add(mercury);
   thermometer.add(mercuryBulb);
 
+  /* --- 温度计悬挂支架：铁架台上的横臂 + 眼环 + 细线 --- */
+  // 横臂随温度计一起上下滑（真实铁架台就是松开螺丝滑 boss 头），细线长度恒定
+  const TH_X = 0.52, TH_Z = 0.28;
+  const ARM_Y = TH_TOP + THREAD_LEN;
+  const thSupport = new THREE.Group();
+  scene.add(thSupport);
+
+  const armLen = TH_Z - ROD_Z;                        // 从立柱伸到温度计正上方
+  const armBar = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.62, armLen), darkSteel);
+  armBar.position.set(TH_X / 2, ARM_Y + 0.5, ROD_Z + armLen / 2);
+  armBar.castShadow = true;
+  thSupport.add(armBar);
+  const armSleeve = new THREE.Mesh(new THREE.CylinderGeometry(ROD_R + 0.46, ROD_R + 0.46, 2.2, 20), darkSteel);
+  armSleeve.position.set(0, ARM_Y + 0.5, ROD_Z);
+  armSleeve.castShadow = true;
+  thSupport.add(armSleeve);
+  const armScrew = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.4, 1.4, 12), knobMat);
+  armScrew.rotation.z = Math.PI / 2;
+  armScrew.position.set(ROD_R + 1.0, ARM_Y + 0.5, ROD_Z);
+  armScrew.castShadow = true;
+  thSupport.add(armScrew);
+  const eyelet = new THREE.Mesh(new THREE.TorusGeometry(0.19, 0.055, 8, 20), darkSteel);
+  eyelet.rotation.x = Math.PI / 2;
+  eyelet.position.set(TH_X, ARM_Y, TH_Z);
+  thSupport.add(eyelet);
+  const threadMat = new THREE.MeshStandardMaterial({ color: '#e8e2d4', roughness: 0.92, metalness: 0 });
+  const thread = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, THREAD_LEN, 8), threadMat);
+  thread.position.set(TH_X, ARM_Y - THREAD_LEN / 2, TH_Z);
+  thSupport.add(thread);
+
   /* --- 玻璃搅拌棒 --- */
-  const stir = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 20, 14), glassMat);
-  stir.position.set(-0.62, TT_Y0 + 6.4, -0.2);
+  const stir = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 18, 14), glassMat);
+  stir.position.set(-0.62, TT_Y0 + 5.6, -0.2);
   stir.rotation.z = 0.045;
   scene.add(stir);
 
@@ -884,18 +1071,45 @@ import * as THREE from './assets/optics-three.min.js';
       waxBump.repeat.copy(waxTex.repeat);
       waxTop.position.set(0, TT_Y0 + 0.12 + h + 0.005, 0);
 
-      waxMat.transparent = s > 0.02;
-      waxMat.opacity = 1 - 0.62 * smoothstep(0.05, 0.95, s);
+      // 透明度交给 applyXray() 统一处理（要兼顾「软化变透明」和「透视」两件事）
       waxMat.roughness = 0.48 - 0.36 * s;
       waxMat.bumpScale = 0.04 * (1 - 0.8 * s);
       waxMat.color.setRGB(0.97, 0.92 - 0.02 * s, 0.82 - 0.05 * s);
-      waxMat.needsUpdate = false;
     }
 
-    // 温度计液柱
-    const colH = Math.max(0.1, 2.2 + (state.Tt - AMB) * 0.152);
+    // 温度计液柱：顶端按刻度线性映射（0 ℃ → STEM_Y0，100 ℃ → STEM_Y1），与印刷刻度一致
+    const stemLen = STEM_Y1 - STEM_Y0;
+    const colTop = STEM_Y0 + clamp(state.Tt / 100, 0, 1) * stemLen;
+    const colH = Math.max(0.4, colTop - TH_BULB_Y);
     mercury.scale.set(1, colH, 1);
     mercury.position.set(0, TH_BULB_Y + colH / 2, 0);
+
+    // 透视：试样半透明，能看见插在里面的红色玻璃泡（海波晶体本来就是半透明的）
+    applyXray();
+  }
+
+  /* 透视开关：试样（固 / 糊 / 蜡）变半透明，好让插在里面的感温泡看得见。
+     关键：半透明时必须 depthWrite=false，否则后面那个不透明的红色玻璃泡
+     会被试样写下的深度值剔除掉 —— 看上去就是「泡不见了」。
+     不透明度取「能看清泡」和「试样本身还像个实物」的折中：0.34 太透，试样会化掉；
+     0.62 以上玻璃泡就被吃掉了。实测 0.48 附近两边都成立。 */
+  function applyXray() {
+    const on = state.xray;
+    const setMat = (mat, onOp, offOp) => {
+      const op = on ? onOp : offOp;
+      const tr = op < 0.999;
+      if (mat.opacity !== op) mat.opacity = op;
+      if (mat.transparent !== tr) { mat.transparent = tr; mat.needsUpdate = true; }
+      if (mat.depthWrite === tr) mat.depthWrite = !tr;
+    };
+    setMat(solidMat, 0.48, 1.0);
+    setMat(mushMat, 0.56, 1.0);
+    // 液相要压得比固相还透：感温泡在熔化中后期泡在熔液里，液相若比固相实，
+    // 泡反而在最需要看见的时候消失（实测 0.70 时红色信号只剩 1/6）。真实的熔融海波本来就是澄清液体。
+    liquidMat.opacity = on ? 0.50 : 0.78;
+    liquidMat.depthWrite = false;
+    // 石蜡：既有「软化变透明」又有「透视」，两者相乘
+    setMat(waxMat, 0.50 * (1 - 0.55 * smoothstep(0.05, 0.95, state.soft)), 1 - 0.62 * smoothstep(0.05, 0.95, state.soft));
   }
 
   /* ==========================================================================
@@ -951,8 +1165,10 @@ import * as THREE from './assets/optics-three.min.js';
     }
     g.textAlign = 'left';
     g.fillStyle = 'rgba(160,190,215,0.9)';
-    g.fillText('t/s', padL - 30, padT - 12);
-    g.fillText('T/℃', padL - 30, padT - 12 + 0);
+    g.fillText('T/℃', padL - 32, padT - 12);
+    g.textAlign = 'right';
+    g.fillText('t/s', W - padR, padT - 12);
+    g.textAlign = 'left';
 
     // 熔点参考线
     const s = sub[state.substance];
@@ -981,7 +1197,7 @@ import * as THREE from './assets/optics-three.min.js';
           runStart = -1;
         }
       }
-      g.fillStyle = 'rgba(251,146,60,0.13)';
+      g.fillStyle = 'rgba(251,146,60,0.11)';
       for (const [a, b] of bands) g.fillRect(X(a), padT, Math.max(1, X(b) - X(a)), ph);
     }
 
@@ -999,7 +1215,7 @@ import * as THREE from './assets/optics-three.min.js';
     // 试样曲线
     if (series.length > 1) {
       const grad = g.createLinearGradient(0, padT, 0, H - padB);
-      grad.addColorStop(0, 'rgba(251,146,60,0.30)');
+      grad.addColorStop(0, 'rgba(251,146,60,0.22)');
       grad.addColorStop(1, 'rgba(251,146,60,0.02)');
       g.beginPath();
       g.moveTo(X(series[0][0]), H - padB);
@@ -1149,6 +1365,19 @@ import * as THREE from './assets/optics-three.min.js';
     return '逐渐变软 · 无固定熔点';
   }
 
+  /* 右侧窄表格里的短状态，四个字以内才排得下一行 */
+  function shortState() {
+    const f = meltFraction();
+    if (state.substance === 'hypo') {
+      if (f <= 0.001) return '固态';
+      if (f >= 0.999) return '液态';
+      return '熔化中';
+    }
+    if (f <= 0.02) return '固态';
+    if (f >= 0.985) return '液态';
+    return '软化中';
+  }
+
   function updateReadouts() {
     const s = sub[state.substance];
     const frac = meltFraction();
@@ -1206,6 +1435,14 @@ import * as THREE from './assets/optics-three.min.js';
     flameGroup.position.x = wob * 0.11;
     flameGroup.rotation.z = wob * 0.035;
     flameLight.intensity = 3.2 + wob * 0.5;
+
+    // 温度计插入 / 拔出：指数平滑跟随目标，动作看得见（支架横臂与细线一起上下滑）
+    state.thAnim += (state.thDepth - state.thAnim) * Math.min(1, dt * 3.6);
+    if (Math.abs(state.thDepth - state.thAnim) < 0.002) state.thAnim = state.thDepth;
+    const thLift = (1 - state.thAnim) * TH_LIFT;
+    thermometer.position.y = thLift;
+    thSupport.position.y = thLift;
+    if (Math.abs(state.thDepth - state.thAnim) > 5e-4) dirty = true;   // 只有还在动的时候才要求重绘
 
     // 气泡
     const heat = clamp((state.Tw - 55) / 45, 0, 1);
@@ -1334,9 +1571,23 @@ import * as THREE from './assets/optics-three.min.js';
     });
   });
 
+  /* --- 温度计插入 / 提起（支架横臂与细线一起上下滑） --- */
+  document.querySelectorAll('[data-thdepth]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      state.thDepth = Number(btn.dataset.thdepth);
+      document.querySelectorAll('[data-thdepth]').forEach((b) => b.classList.toggle('active', b === btn));
+      requestRender();
+    });
+  });
+
   /* --- 显示开关 --- */
   $('toggleBath').addEventListener('change', (e) => { toggles.bath = e.target.checked; requestRender(); });
   $('toggleMelt').addEventListener('change', (e) => { toggles.melt = e.target.checked; requestRender(); });
+  $('toggleXray').addEventListener('change', (e) => {
+    state.xray = e.target.checked;
+    applyXray();
+    requestRender();
+  });
   $('toggleMicro').addEventListener('change', (e) => {
     toggles.micro = e.target.checked;
     const box = document.querySelector('.micro-inset');
@@ -1364,11 +1615,18 @@ import * as THREE from './assets/optics-three.min.js';
   stepButtons.forEach((b, i) => b.addEventListener('click', () => showStep(i)));
   showStep(0);
 
-  const recordBtn = $('recordBtn'), recordBody = $('records'), summary = $('summary'), recordHint = $('recordHint');
+  const recordBtn = $('recordBtn'), recordBody = $('records'), recordBodySide = $('recordsSide'),
+        summary = $('summary'), recSum = $('recSum'), recordHint = $('recordHint');
+
+  const EMPTY_MAIN = '<tr><td colspan="6" class="empty">尚无记录，先点“开始加热”再记录</td></tr>';
+  const EMPTY_SIDE = '<tr><td colspan="4" class="empty">还没有记录</td></tr>';
+
   function renderRecords() {
     if (!state.records.length) {
-      recordBody.innerHTML = '<tr><td colspan="6" class="empty">尚无记录，先点“开始加热”再记录</td></tr>';
+      recordBody.innerHTML = EMPTY_MAIN;
+      recordBodySide.innerHTML = EMPTY_SIDE;
       summary.textContent = '建议记录：海波的“开始熔化 / 熔化一半 / 刚好熔化完”三个时刻，看温度是否相同。';
+      recSum.textContent = '点上面的按钮开始记录。';
       return;
     }
     recordBody.innerHTML = state.records.map((r) => `
@@ -1376,20 +1634,29 @@ import * as THREE from './assets/optics-three.min.js';
         <td>${r.substance}</td><td>${r.t.toFixed(0)} s</td><td>${r.Tt.toFixed(1)} ℃</td>
         <td>${r.Tw.toFixed(1)} ℃</td><td>${r.state}</td><td>${(r.frac * 100).toFixed(0)}%</td>
       </tr>`).join('');
+    recordBodySide.innerHTML = state.records.map((r, i) => `
+      <tr class="${r.crystal ? 'crystal' : 'wax'}">
+        <td>${i + 1}</td><td>${r.t.toFixed(0)} s</td>
+        <td>${r.Tt.toFixed(1)} ℃</td><td>${r.short}</td>
+      </tr>`).join('');
+
     const hypo = state.records.filter((r) => r.crystal && r.frac > 0.01 && r.frac < 0.99);
+    let text;
     if (hypo.length >= 2) {
       const ts = hypo.map((r) => r.Tt);
       const spread = Math.max(...ts) - Math.min(...ts);
-      summary.textContent = `熔化过程的 ${hypo.length} 次记录中，试样温度最大只差 ${spread.toFixed(1)} ℃ —— 晶体熔化时温度确实不变。`;
+      text = `熔化过程的 ${hypo.length} 次记录中，试样温度最大只差 ${spread.toFixed(1)} ℃ —— 晶体熔化时温度确实不变。`;
     } else {
       const paras = state.records.filter((r) => !r.crystal);
       if (paras.length >= 2) {
         const ts = paras.map((r) => r.Tt);
-        summary.textContent = `石蜡的 ${paras.length} 次记录温度从 ${Math.min(...ts).toFixed(1)} ℃ 一直升到 ${Math.max(...ts).toFixed(1)} ℃，始终没有停下来。`;
+        text = `石蜡的 ${paras.length} 次记录温度从 ${Math.min(...ts).toFixed(1)} ℃ 一直升到 ${Math.max(...ts).toFixed(1)} ℃，始终没有停下来。`;
       } else {
-        summary.textContent = `已记录 ${state.records.length} 组。再补几组不同阶段的记录，才能比较温度是否改变。`;
+        text = `已记录 ${state.records.length} 组。再补几组不同阶段的记录，才能比较温度是否改变。`;
       }
     }
+    summary.textContent = text;
+    recSum.textContent = text;
   }
   recordBtn.addEventListener('click', () => {
     const frac = meltFraction();
@@ -1397,11 +1664,16 @@ import * as THREE from './assets/optics-three.min.js';
       substance: sub[state.substance].name,
       crystal: sub[state.substance].crystal,
       t: state.t, Tt: state.Tt, Tw: state.Tw,
-      state: statusText(), frac
+      state: statusText(), short: shortState(), frac
     });
     if (state.records.length > 24) state.records.shift();
     renderRecords();
-    recordHint.textContent = '已记录（换物质重新加热时，旧记录会保留以便对照）';
+    const wrap = recordBodySide.closest('.rec-wrap');
+    if (wrap) wrap.scrollTop = wrap.scrollHeight;
+    recordBtn.classList.remove('hit');
+    void recordBtn.offsetWidth;                    // 强制重排，动画才能连点连放
+    recordBtn.classList.add('hit');
+    recordHint.textContent = '已记录。换物质重新加热时旧记录会保留，正好用来对照。';
     requestRender();
   });
   renderRecords();
@@ -1461,6 +1733,10 @@ import * as THREE from './assets/optics-three.min.js';
   window.__meltLab = {
     state, view, VIEWS, SUBSTANCES, toggles, series,
     camera, renderer, scene,
+    thermometer, thSupport, thermometerX: TH_X,
+    thBulbY: TH_BULB_Y, thLiftMax: TH_LIFT, thTubeH: TH_TUBE_H,
+    rodTop: BASE_H + ROD_H, armY: ARM_Y, sleeveHalf: 1.1,
+    mats: { solidMat, mushMat, liquidMat, waxMat, thGlassMat, thRedMat, glassMat, waterMat },
     setRunning, resetSim, refreshAll,
     step(dt) { stepSim(dt); updateSample(); pushSample(); updateReadouts(); drawChart(); drawMicro(dt); requestRender(); },
     advance(seconds) {                       // 直接推进仿真，不依赖真实时间
@@ -1472,11 +1748,33 @@ import * as THREE from './assets/optics-three.min.js';
       updateSample(); pushSample(); updateReadouts(); drawChart(); drawMicro(0.016);
       return { t: state.t, Tt: state.Tt, Tw: state.Tw, phi: state.phi, soft: state.soft };
     },
-    statusText, meltFraction,
+    statusText, meltFraction, shortState, renderRecords,
+    clearRecords() { state.records.length = 0; renderRecords(); },
     setSubstance(k) {
       state.substance = k;
       document.querySelectorAll('[data-substance]').forEach((b) => b.classList.toggle('active', b.dataset.substance === k));
       resetSim(); refreshAll();
+    },
+    /* 温度计当前实际抬升量（世界单位 cm），走的是渲染用的同一份位置 */
+    thLift() { return thermometer.position.y; },
+    /* 感温泡在 GL 缓冲区里的落点，供像素探针采样（GL 原点在左下，与 NDC 同向） */
+    bulbRect() {
+      const v = new THREE.Vector3(TH_X, TH_BULB_Y + thermometer.position.y, TH_Z);
+      v.project(camera);
+      const gl = renderer.getContext();
+      const W = gl.drawingBufferWidth, H = gl.drawingBufferHeight;
+      return { x: (v.x * 0.5 + 0.5) * W, y: (v.y * 0.5 + 0.5) * H, W, H };
+    },
+    setThDepth(v) {
+      state.thDepth = v;
+      document.querySelectorAll('[data-thdepth]').forEach((b) => b.classList.toggle('active', Number(b.dataset.thdepth) === v));
+      requestRender();
+    },
+    setXray(v) {
+      state.xray = v;
+      const cb = $('toggleXray');
+      if (cb) cb.checked = v;
+      applyXray(); requestRender();
     }
   };
 })();
