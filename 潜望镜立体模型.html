@@ -330,9 +330,11 @@
           </div>
 
           <div class="lab3d-field" id="peri-angle-field" hidden>
-            <label for="peri-angle"><span id="peri-angle-label">光线在进光口的高度</span> <output id="peri-angle-value">+0.00 cm</output></label>
+            <label for="peri-angle"><span id="peri-angle-label">发光点高度（上下）</span> <output id="peri-angle-value">+0.00 cm</output></label>
             <input id="peri-angle" type="range" min="0" max="100" value="50" step="0.5">
-            <small id="peri-angle-hint">拖动它，入射点就在进光口里连续上下移动，出射点跟着一起移动 —— 两端正好停在窗口的边缘。</small>
+            <label for="peri-objdx"><span>光源左右</span> <output id="peri-objdx-value">0.0 cm</output></label>
+            <input id="peri-objdx" type="range" min="-2.5" max="2.5" value="0" step="0.1">
+            <small id="peri-angle-hint">F 光源上那个亮点就是这条光线的出发点：<b>上下</b>换的是物体上不同的点（光线整条跟着上下移动），<b>左右</b>换的是光源的远近（入射光段跟着变长变短，但出射方向一点不变）。</small>
             <div class="lab3d-angle-row">
               <span>反射次数 <b id="peri-bounce">2</b></span>
               <span>出射方向偏差 <b id="peri-dev">0.0°</b></span>
@@ -426,7 +428,8 @@
       const YBOT = 4.8;               // 下镜中心高度 = CAP，于是管底正好落在地面 y = 0 上
       const L_MIN = 10, L_MAX = 22, L_DEF = 16;
       const PH_MIN = 30, PH_MAX = 60, PH_DEF = 45;      // 镜子与管轴的夹角 φ
-      const OBJ_H = 1.8;              // 物箭头的高度（上下各 0.9 cm）
+      const OBJ_H = 2.6;              // F 形光源的高度（上下各 1.3 cm）—— 单条光线行程 ±1.196 落在里面
+      const OBJ_W = 2.4;              // F 形光源的宽度（竖笔画在左、两条横臂往右伸，朝着潜望镜）
       const ENV = { x0: -27.5, x1: 10.0, y0: -3.0, y1: 32.5, z0: -5.5, z1: 5.5 };
       const ENV_C = [-8.8, 14.8, 0];
       const CAMD = 108;
@@ -452,6 +455,7 @@
         phi1: PH_DEF, phi2: PH_DEF,   // 两块镜子与管轴的夹角（度）
         raySet: 'all',                // 'all' 三条光线 | 'single' 单条可调
         rayT: 0.5,                    // 单条光线在进光口内的归一化高度
+        objDx: 0,                     // F 光源的左右位置（cm）：单条模式下的「左右可调」
         mirrorStyle: 'real',          // 'schematic' 示意网格 | 'real' 真实金属质感
         yaw: VIEWS.perspective.yaw, pitch: VIEWS.perspective.pitch, zoom: 1,
         view: 'perspective',
@@ -473,6 +477,10 @@
       const DEG = 180 / Math.PI;
       // 把角度规整到 (−180, 180]，避免出现 359.9° 这种读数
       const wrap180 = d => { let x = d % 360; if (x > 180) x -= 360; if (x <= -180) x += 360; return x; };
+      // F 光源当前所在的 x。物体左右移动【不改变物理】—— 光线仍然是水平的、
+      // 仍然从同一个高度进管，所以「看到的像」不会因为物体远近而变。
+      const OBJ_DX_MAX = 2.5;
+      const objX = () => X_OBJ + state.objDx;
 
       // ================= 相机 =================
       // 取景与自检【共用】这一个函数，不另算一套（抄两遍的话改坏一处自检读的是另一处，永远绿）。
@@ -582,13 +590,20 @@
         if (!(t > 1e-6) || s < -1e-9 || s > 1 + 1e-9) return null;
         return { t, s, P: [P[0] + d[0] * t, P[1] + d[1] * t] };
       }
-      // 追踪一条光线：从进光口高度 y0 水平射入。
+      // 追踪一条光线：从【物体】上高度 y0 的水平方向射出，经进光口进入管子。
       // 返回折线 pts、每次反射的记录 hits、以及「有没有从出光口射出去」。
       function traceRay(y0) {
         const G = geom();
         const segs = [G.mTop, G.mBot].concat(G.walls);
-        let P = [-A, y0], d = [1, 0];
-        const pts = [[-A, y0]];
+        // ⚠️ 入射光必须从【物体】(X_OBJ) 起画，不能从管壁 (-A) 起画。
+        //    原来写 [-A, y0] 时，「物体 → 进光口」这一整段（15.8 个世界单位，
+        //    约占画面宽度的 42%）根本没画出来 —— 学生看到的是「光线凭空出现在
+        //    管子里」，既不知道它从哪儿来，也看不出单条光线调高度时对应的是
+        //    物体上的哪一个点（用户报的正是这两条）。
+        //    从 X_OBJ 起画后，水平光线会自己穿过左壁的进光口（窗口之外的高度
+        //    会先撞在管壁上，blocked = true —— 这是对的，光本来就进不去）。
+        let P = [objX(), y0], d = [1, 0];
+        const pts = [[objX(), y0]];
         const hits = [];
         let escaped = false, blocked = false, exitY = null, exitDir = null;
         for (let k = 0; k < 6; k++) {
@@ -650,7 +665,10 @@
         };
       }
       // 画面里当前要画的那几条光线。渲染、读数、自检都走这一个函数。
-      const RAY_SPREAD = OBJ_H / 2;     // 三条光线的间距 = 物箭头的半高，出射后正好对上「看到的像」
+      // ⚠️ 三条光线的间距【不再】写成 OBJ_H / 2：OBJ_H 是 F 光源的高度（2.6），
+      //    而三条光线的间距是 0.9 —— 两者一旦绑死，改光源大小就会把光路一起改掉，
+      //    自检里那串「进 21.5/22.4/23.3、出 5.5/6.4/7.3」也会跟着漂。
+      const RAY_SPREAD = 0.9;
       function rays(G) {
         G = G || geom();
         if (state.raySet === 'single') {
@@ -1037,9 +1055,16 @@
       function drawRayList(q, list) {
         let wallHit = null;
         for (const r of list) {
+          // 这条光线【实际落笔的每一段】——世界坐标与屏幕坐标各一份。
+          // 记「段」而不是「顶点」：只记顶点的话，「traceRay 从物体起算、
+          // drawRayList 却把第一段丢了」这种一半的错会漏过去
+          // （顶点表里第一个点仍然在物体上，画面里那段却根本没画）。
+          const wsegs = [], ssegs = [];
           for (let k = 0; k + 1 < r.pts.length; k++) {
             const a = project(P3(r.pts[k]), q), b = project(P3(r.pts[k + 1]), q);
             if (a.z <= 0.05 || b.z <= 0.05) continue;
+            wsegs.push([r.pts[k].slice(), r.pts[k + 1].slice()]);
+            ssegs.push([[a.x, a.y], [b.x, b.y]]);
             const col = LEG_COLOR[Math.min(k, LEG_COLOR.length - 1)];
             seg(a, b, col, 2.4);
             const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
@@ -1053,29 +1078,69 @@
             if (h.kind === 'wall') { dotAt(s, 3.4, '#f87171', 'rgba(248,113,113,.6)'); wallHit = h; }
             else dotAt(s, 3.2, '#e0f2fe', 'rgba(56,189,248,.55)');
           }
+          state.drawn.rays.push({ y0: r.y0, wsegs, ssegs,
+            hits: r.hits.map(h => ({ kind: h.kind, P: h.P.slice() })) });
         }
         if (wallHit) {
           label(P3(wallHit.P), '光打在管壁上', '#fca5a5', 11, 'center', 'bottom', P3(wallHit.P));
         }
       }
-      function drawNormals(q, list, G) {
-        for (const m of [G.mTop, G.mBot]) {
-          const n = mirrorNormal(m);
-          const a = project(P3(m.c), q), b = project(add(P3(m.c), mul(n, 3.4)), q);
-          if (a.z <= 0.05 || b.z <= 0.05) continue;
-          seg(a, b, 'rgba(167,139,250,.9)', 1.6, [6, 5]);
-          label(add(P3(m.c), mul(n, 3.9)), '法线', 'rgba(196,181,253,.95)', 10, 'center', 'bottom',
-                add(P3(m.c), mul(n, 3.9)));
+      const wrapRad = a => { while (a > Math.PI) a -= 2 * Math.PI; while (a < -Math.PI) a += 2 * Math.PI; return a; };
+      // 从 a 到 b 走【较短】那一侧的中间方向
+      const shortMid = (a, b) => a + wrapRad(b - a) / 2;
+      const dirOf = a => [Math.cos(a), Math.sin(a), 0];
+      // 在世界坐标里画一段圆弧（采样后投影再连线），这样换视角也不会与法线脱钩
+      function drawArc(q, c, a0, a1, r, color) {
+        const d = wrapRad(a1 - a0), n = 22, pts = [];
+        for (let i = 0; i <= n; i++) {
+          const a = a0 + d * i / n;
+          pts.push(project([c[0] + Math.cos(a) * r, c[1] + Math.sin(a) * r, 0], q));
         }
-        // 入射 / 反射光与法线的夹角（入射角、反射角）在单条模式下标出来
-        if (state.raySet !== 'single') return;
-        const r = list[0];
+        if (pts.some(p => p.z <= 0.05)) return;
+        polyline(pts, color, 1.9);
+      }
+      // 法线必须画在【光线实际打中的那一点】上，不能画在镜面中心。
+      // 原来画在 m.c 上：光线从进光口（比镜心高 A/2 = 1.6 cm）水平射入，打在镜面上的点
+      // 沿镜面偏离镜心 2.263 cm（平面视图里约 40 px），于是法线整个飘在入射点旁边，
+      // 「入射角 / 反射角」跟着一起错位 —— 用户报的第 2 条就是它。
+      // 只画【主光线】的法线：三条光线各有各的入射点，全画会糊成一片，
+      // 而读数区给的本来就是主光线那一组角。
+      function drawNormals(q, list, G) {
+        const r = mainRay(list);
         if (!r) return;
         for (const h of r.hits) {
           if (h.kind === 'wall') continue;
-          label(add(P3(h.P), [0, -0.75, 0]),
-                (h.kind === 'mTop' ? '上镜' : '下镜') + '：入射 ' + h.inc.toFixed(1) + '° / 反射 ' + h.ref.toFixed(1) + '°',
-                '#e9d5ff', 10, 'center', 'top', P3(h.P));
+          const n = mirrorNormal(h.mirror);
+          const P = P3(h.P);
+          const a = project(P, q), b = project(add(P, mul(n, 4.6)), q);
+          if (a.z <= 0.05 || b.z <= 0.05) continue;
+          seg(a, b, 'rgba(167,139,250,.9)', 1.6, [6, 5]);
+          // 落笔记录：法线的起点必须 = 入射点（不是镜面中心）
+          state.drawn.normals.push({ kind: h.kind, P: h.P.slice(), n: n.slice(),
+            a: [a.x, a.y], b: [b.x, b.y], c: h.mirror.c.slice() });
+          label(add(P, mul(n, 5.2)), '法线', 'rgba(196,181,253,.95)', 10, 'center', 'bottom',
+                add(P, mul(n, 5.2)));
+        }
+        // 入射角 / 反射角在单条模式下标出来：以【入射点】为圆心画两段圆弧，
+        // 一段夹在「逆着入射方向」与法线之间，一段夹在法线与反射方向之间。
+        if (state.raySet !== 'single') return;
+        for (const h of r.hits) {
+          if (h.kind === 'wall') continue;
+          const n = mirrorNormal(h.mirror);
+          const nAng = Math.atan2(n[1], n[0]);          // 法线方向角，直接取它，别再 +90°
+          const inBack = wrapRad(h.inAng + Math.PI);     // 逆着入射方向（从入射点回看光源）
+          const outA = wrapRad(h.outAng);
+          const P = P3(h.P);
+          const R = 2.0;
+          drawArc(q, P, inBack, nAng, R, 'rgba(251,191,36,.95)');   // 入射角
+          drawArc(q, P, nAng, outA, R, 'rgba(74,222,128,.95)');     // 反射角
+          // 标签放在各自圆弧的外侧（沿角平分线往外），仍然挂在入射点上。
+          // 半径要比「法线」标签小：三条标注挤在同一个 90° 扇形里，
+          // 半径一样就会两两相撞（实测下镜的「入射 45°」正好压住「法线」）。
+          label(add(P, mul(dirOf(shortMid(inBack, nAng)), R + 1.1)),
+                '入射 ' + h.inc.toFixed(0) + '°', '#fcd34d', 10, 'center', 'middle', P);
+          label(add(P, mul(dirOf(shortMid(nAng, outA)), R + 1.1)),
+                '反射 ' + h.ref.toFixed(0) + '°', '#86efac', 10, 'center', 'middle', P);
         }
       }
       // 镜面与水平方向的夹角：画一条水平参考虚线 + 一段小圆弧 + 度数
@@ -1110,15 +1175,43 @@
       }
 
       // ================= 物体 / 眼睛 / 视线示意 =================
+      // F 形光源的三段笔画（世界坐标，z = 0 平面内）：竖笔画 + 上横臂 + 中横臂。
+      // 用 F 而不是箭头：F 左右不对称，像一旦被翻转（或上下颠倒）学生一眼就能看出来；
+      // 而且它有两条不同高度的横臂，正好用来指认「光是从物体上哪一个点发出来的」。
+      function fStrokesAt(cx, cy) {
+        const x0 = cx, x1 = cx + OBJ_W;
+        const yT = cy + OBJ_H / 2, yB = cy - OBJ_H / 2;
+        return [
+          { a: [x0, yB], b: [x0, yT], arm: false },                  // 竖笔画
+          { a: [x0, yT], b: [x1, yT], arm: true },                   // 上横臂
+          { a: [x0, cy], b: [x0 + OBJ_W * 0.68, cy], arm: true }     // 中横臂（短一些才像 F）
+        ];
+      }
+      const fStrokes = G => fStrokesAt(objX(), G.yE);
       function drawObjectEye(q, G) {
-        // 物：竖直箭头，中心正好在进光口高度上
-        const y0 = G.yE - OBJ_H / 2, y1 = G.yE + OBJ_H / 2;
-        const a = project([X_OBJ, y0, 0], q), b = project([X_OBJ, y1, 0], q);
-        if (a.z > 0.05 && b.z > 0.05) {
-          seg(a, b, '#67e8f9', 2.6);
-          arrowHead({ x: a.x, y: a.y + (b.y - a.y) * 0.6 }, b, '#67e8f9', 9);
-          bodyBox([a, b], '物', 4);
-          label([X_OBJ, y1 + 0.35, 0], '物体', '#a5f3fc', 11, 'center', 'bottom', [X_OBJ, y1 + 0.35, 0]);
+        // 物：F 形光源，竖直方向中心正好在进光口高度上
+        const strokes = fStrokes(G);
+        const proj = strokes.map(st => [project([st.a[0], st.a[1], 0], q), project([st.b[0], st.b[1], 0], q)]);
+        if (proj.every(st => st.every(s => s.z > 0.05))) {
+          state.drawn.objStrokes = strokes.map(st => [st.a.slice(), st.b.slice()]);
+          for (let i = 0; i < strokes.length; i++) {
+            const [a, b] = proj[i];
+            seg(a, b, 'rgba(103,232,249,.30)', 6.5);          // 外发光：这是「光源」
+            seg(a, b, '#67e8f9', 2.8);
+            // 两条横臂的末端加箭头，表示「朝潜望镜发光」
+            if (strokes[i].arm) arrowHead({ x: a.x + (b.x - a.x) * 0.72, y: a.y + (b.y - a.y) * 0.72 }, b, '#67e8f9', 8);
+          }
+          bodyBox(proj.flat(), 'F', 4);
+          label([objX() + OBJ_W / 2, G.yE + OBJ_H / 2 + 0.45, 0], 'F 形光源', '#a5f3fc', 11,
+                'center', 'bottom', [objX() + OBJ_W / 2, G.yE + OBJ_H / 2 + 0.45, 0]);
+        }
+        // 发光点：当前这几条光线正是从这些点射出的（单条模式只有一个）。
+        // 把它点亮，学生才能把「画面里那条光线」和「物体上的这个点」对上号。
+        for (const r of rays(G)) {
+          const s = project([objX(), r.y0, 0], q);
+          if (s.z <= 0.05) continue;
+          dotAt(s, 5.2, 'rgba(253,224,71,.35)');
+          dotAt(s, 3.0, '#fde68a');
         }
         // 眼：一只杏仁形眼睛 + 瞳孔，画在出光口右侧
         const e = project([X_EYE, G.yX, 0], q);
@@ -1154,12 +1247,20 @@
         }
         // ② 「眼睛看到的像」：光始终水平射来，眼睛判断不出远近，
         //    只能把物体「看」在正前方、与眼睛同高的位置上 —— 正立、等大，整体低了 L。
-        const g0 = project([X_OBJ, G.yX - OBJ_H / 2, 0], q), g1 = project([X_OBJ, G.yX + OBJ_H / 2, 0], q);
-        if (g0.z > 0.05 && g1.z > 0.05) {
-          seg(g0, g1, 'rgba(103,232,249,.55)', 2.0, [6, 5]);
-          arrowHead({ x: g0.x, y: g0.y + (g1.y - g0.y) * 0.6 }, g1, 'rgba(103,232,249,.6)', 8);
-          label([X_OBJ, G.yX - OBJ_H / 2 - 0.4, 0], '眼睛看到的像', 'rgba(165,243,252,.9)', 10,
-                'center', 'top', [X_OBJ, G.yX - OBJ_H / 2 - 0.4, 0]);
+        //    ⚠️ 像也画成 F，而且【不翻转】：潜望镜用【两面】平面镜，两次反射把左右
+        //    又翻了回来，所以看到的是正常朝向的 F（单面镜会左右颠倒）。这是本页
+        //    最该让人一眼看见的结论之一，画成箭头就看不出来了。
+        const img = fStrokesAt(objX(), G.yX);
+        const ip = img.map(st => [project([st.a[0], st.a[1], 0], q), project([st.b[0], st.b[1], 0], q)]);
+        if (ip.every(st => st.every(s => s.z > 0.05))) {
+          state.drawn.image = img.map(st => [st.a.slice(), st.b.slice()]);
+          for (const [a, b] of ip) seg(a, b, 'rgba(103,232,249,.60)', 2.2, [6, 5]);
+          // 「像」也是器材：不登记成障碍物的话，「眼睛直接看只能看到这个高度」
+          // 那条视线标注会稳稳横穿两个 F 中间的空白 —— 看着像压在像上。
+          bodyBox(ip.flat(), '像', 3);
+          label([objX() + OBJ_W / 2, G.yX - OBJ_H / 2 - 0.45, 0], '眼睛看到的像（正立、等大、不翻转）',
+                'rgba(165,243,252,.9)', 10, 'center', 'top',
+                [objX() + OBJ_W / 2, G.yX - OBJ_H / 2 - 0.45, 0]);
         }
         // ③ 「视线抬高 L」的尺寸标注：在两镜中心高度之间拉一条双箭头
         const d0 = project([X_DIM, G.yX, 0], q), d1 = project([X_DIM, G.yE, 0], q);
@@ -1191,6 +1292,10 @@
         ctx.clearRect(0, 0, state.w, state.h);
         // 障碍物表以「舞台浮层」打底，再叠本帧的器材与刻度
         frameBoxes = uiBoxes(); pendingLabels = []; drawnLabels = [];
+        // 本帧【真的落笔了】的几何。自检必须读这一份，不能自己再推一遍公式 ——
+        // 「入射光线从物体起画」「法线过入射点」这类断言，只有读落笔结果才抓得住
+        // 「traceRay 算对了、drawRayList 却把第一个点丢了」这种一半的错。
+        state.drawn = { rays: [], normals: [], objStrokes: null, image: null };
         const G = geom();
         const list = rays(G);
 
@@ -1324,11 +1429,11 @@
         $('peri-angle-field').hidden = !single;
         if (!single) return;                       // 隐藏的东西没人看，没必要刷
         const off = singleOffset();
-        $('peri-angle-label').textContent = '光线在进光口的高度';
+        $('peri-angle-label').textContent = '发光点高度（上下）';
         $('peri-angle-value').textContent = (off >= 0 ? '+' : '') + off.toFixed(2) + ' cm';
-        $('peri-angle-hint').textContent =
-          '拖动它，入射点就在进光口里连续上下移动，出射点跟着一起移动 —— 两端正好停在窗口的边缘。';
         $('peri-angle').value = String(clamp(state.rayT, 0, 1) * 100);
+        $('peri-objdx-value').textContent = (state.objDx >= 0 ? '+' : '') + state.objDx.toFixed(1) + ' cm';
+        $('peri-objdx').value = String(state.objDx);
       }
       // 单条光线自身的读数：反射次数 / 出射方向偏差 / 出射点高度
       function updateSingleRayReadout() {
@@ -1384,6 +1489,12 @@
         state.rayT = clamp(v, 0, 1);
         syncAngle(); render(); updateSingleRayReadout();
       }
+      // 「单条光线左右可调」：移动 F 光源的远近。物理一点没变（光线仍水平、仍从同一高度
+      // 进管），所以出射方向与出射点高度都不动 —— 这正好说明「物体远近不影响看到的像」。
+      function setObjDx(v) {
+        state.objDx = clamp(v, -OBJ_DX_MAX, OBJ_DX_MAX);
+        syncAngle(); render(); updateReadout(); updateSingleRayReadout();
+      }
       function setL(v) {
         state.L = clamp(v, L_MIN, L_MAX);
         syncSliders(); render(); updateReadout();
@@ -1414,14 +1525,23 @@
       }
 
       // ================= 交互 =================
-      // 物箭头的屏幕包围盒（点中它就能上下拖着改管高）
+      // F 光源的屏幕包围盒（点中它就能上下拖着改管高）
+      // ⚠️ 必须跟着 objX() 走、并且覆盖 F 的【宽度】：F 光源现在能被「光源左右」
+      //    滑块整体挪走（±2.5 cm），命中框还写死在 X_OBJ 上的话，光源挪开后
+      //    拖动就落空了 —— 而光标还会在原来的位置显示 ns-resize，
+      //    看着像「能拖」，其实拖的是空气（还会顺手转视角）。
       function objectBoxOnScreen(q) {
         const G = geom();
-        const a = project([X_OBJ, G.yE - OBJ_H / 2, 0], q), b = project([X_OBJ, G.yE + OBJ_H / 2, 0], q);
-        if (a.z <= 0.01 || b.z <= 0.01) return null;
+        const pts = [];
+        for (const st of fStrokes(G)) for (const e of [st.a, st.b]) {
+          const s = project([e[0], e[1], 0], q);
+          if (s.z <= 0.01) return null;
+          pts.push(s);
+        }
         const pad = 16;
-        return { x0: Math.min(a.x, b.x) - pad, x1: Math.max(a.x, b.x) + pad,
-                 y0: Math.min(a.y, b.y) - pad, y1: Math.max(a.y, b.y) + pad };
+        const xs = pts.map(p => p.x), ys = pts.map(p => p.y);
+        return { x0: Math.min(...xs) - pad, x1: Math.max(...xs) + pad,
+                 y0: Math.min(...ys) - pad, y1: Math.max(...ys) + pad };
       }
       let dragState = null;
       canvas.addEventListener('pointerdown', e => {
@@ -1452,7 +1572,7 @@
           // 直接按固定比例换算会在贴近镜面 / 俯视等视角下与手指脱钩。
           const q = camNow();
           const G = geom();
-          const p0 = project([X_OBJ, G.yE, 0], q), p1 = project([X_OBJ, G.yE + 1, 0], q);
+          const p0 = project([objX(), G.yE, 0], q), p1 = project([objX(), G.yE + 1, 0], q);
           const pxPerCm = Math.max(Math.hypot(p1.x - p0.x, p1.y - p0.y), 0.6);
           const dL = -(py - dragState.y) / pxPerCm;
           state.L = clamp(Math.round((state.L + dL) * 2) / 2, L_MIN, L_MAX);
@@ -1478,6 +1598,7 @@
       // 拖动时只重画 + 更新这条光线自己的读数：**不**调 updateReadout()（管高没变，
       // 每次 input 都刷一遍是白做功，而且会让读数区在拖动时闪）。
       $('peri-angle').addEventListener('input', e => setRayT(+e.target.value / 100));
+      $('peri-objdx').addEventListener('input', e => setObjDx(parseFloat(e.target.value)));
       document.querySelectorAll('.lab3d-toolbar [data-view]').forEach(b => b.addEventListener('click', () => applyView(b.dataset.view)));
       $('peri-reset-view').addEventListener('click', () => applyView('perspective'));
       for (const pair of [['peri-rays', 'showRays'], ['peri-normal', 'showNormal'], ['peri-angle', 'showAngle'],
@@ -1498,16 +1619,21 @@
         state, VIEWS, geom, mirrorSeg, mirrorNormal, mirrorQuad, traceRay, rays, singleRay,
         raySeg, wrap180, singleOffset,
         ENV, ENV_C, CAMD, ZOOM_MIN, ZOOM_MAX,
-        A, ML, CAP, WIN_H, YBOT, L_MIN, L_MAX, PH_MIN, PH_MAX, OBJ_H, RAY_SPREAD,
+        A, ML, CAP, WIN_H, YBOT, L_MIN, L_MAX, PH_MIN, PH_MAX, OBJ_H, OBJ_W, RAY_SPREAD,
+        OBJ_DX_MAX, objX, fStrokesAt,
         X_OBJ, X_EYE, X_RULER, X_DIM,
         metalColor, LIGHT, GLINT, GLINT_EXP,
         camNow, project: p => project(p, camNow()),
+        // 本帧【实际落笔】的几何（render() 每帧重建）：自检读这一份，
+        // 不自己重推公式，免得「算对了没画出来」被漏掉。
+        drawn: () => JSON.parse(JSON.stringify(state.drawn || {})),
+        objectBox: () => objectBoxOnScreen(camNow()),
         size: () => ({ w: state.w, h: state.h, dpr: canvas.width / Math.max(state.w, 1e-6) }),
         boxes: () => frameBoxes.concat(drawnLabels)
           .map(b => ({ kind: b.kind, text: b.text, x0: b.x0, y0: b.y0, x1: b.x1, y1: b.y1 })),
         records: () => state.records.map(r => ({ L: r.L, phi1: r.phi1, phi2: r.phi2, diff: r.diff, dev: r.dev, ok: r.ok, blocked: r.blocked, bounces: r.bounces })),
         recordNow, clearRecords, applyView, align45,
-        setL, setPhi1, setPhi2, setRaySet, setMirrorStyle, setRayT,
+        setL, setPhi1, setPhi2, setRaySet, setMirrorStyle, setRayT, setObjDx,
         renderNow() { render(); },
         debug() {
           const G = geom();
@@ -1534,6 +1660,7 @@
             // 三条光线的入射 / 出射高度（用来验「顺序与间距不变」）
             rayYs: list.map(x => ({ y0: x.y0, exitY: x.exitY, escaped: x.escaped })),
             view: state.view, raySet: state.raySet, rayT: state.rayT, mirrorStyle: state.mirrorStyle,
+            objDx: state.objDx, objX: objX(),
             mirrorHalf: m.length ? m[0].half : null,
             mirrorQuads: m.length
           };
