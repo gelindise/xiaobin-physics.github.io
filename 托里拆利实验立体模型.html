@@ -314,7 +314,11 @@
           </div>
           <div class="fld">
             <div class="row"><span>管的内径</span><b id="tor-bore-num">1.6 cm</b></div>
-            <input type="range" id="tor-bore" min="0" max="1" step="1" value="0">
+            <div class="btn-row">
+              <button type="button" class="primary" id="tor-bore-thin">细管 · 1.6 cm</button>
+              <button type="button" id="tor-bore-thick">粗管 · 3.2 cm</button>
+            </div>
+            <div class="mini-note" id="tor-bore-pill">换个粗细，液面高度一点不变</div>
           </div>
           <div class="fld">
             <div class="row"><span>管口浸入深度</span><b id="tor-sub-num">3.0 cm</b></div>
@@ -322,8 +326,9 @@
             <div class="mini-note" id="tor-sub-pill">浸在液面下</div>
           </div>
           <div class="btn-row" style="margin:8px 0 0;">
-            <button type="button" id="tor-hole">🔒 管顶：封闭</button>
+            <button type="button" id="tor-hole">🕳 在管顶开个孔</button>
           </div>
+          <div class="mini-note" id="tor-hole-pill">管顶封住（默认）· 点了它会通大气</div>
           <div class="readouts">
             <div><span>液柱长（沿管）</span><b id="tor-len-out">76.0 cm</b></div>
             <div><span>真空段长度</span><b id="tor-vac-out">25.0 cm</b></div>
@@ -437,6 +442,7 @@
     // 也可以下压（正值）。默认浸入 3 cm。
     const SUB_DEF = 3;               // 默认浸入深度 3 cm
     const SUB_LIFT = 8;              // 上提上限 8 cm（管口悬在液面上方 8 cm）
+    const HOLE_DUR = 2.0;            // 开孔 / 堵孔时液面升降的动画时长（s）—— 要看得见「缓慢下落」
     const MARGIN = 0.42;             // 管顶必须高出液柱顶的余量（4.2 cm）
     const Y_MOUTH = Y_LIQ - SUB_DEF / U;   // 默认管口高度（= 0.32）
     // ── 灌装姿态（第一步「倒满水银」）──
@@ -1400,6 +1406,9 @@
     function toFree() {
       if (state.anim) state.submerge = subCur();   // 固化动画当前值，别跳回旧值
       state.anim = null;
+      // 第 2 步的「手指堵住管口」(held) 必须一起解除 —— 否则 colTarget() 仍返回
+      // tubeLen()，用户一拖浸入深度滑块会发现液面纹丝不动，像滑块坏了。
+      state.held = stepTargets(4).held;
       if (state.step < 4) state.step = 4;
     }
 
@@ -1465,19 +1474,34 @@
         : subCur() <= 0 ? '已提离液面 · 管内流空'
         : '浸在液面下 · 柱高与深度无关';
       pill.className = 'mini-note ' + (state.flip ? '' : (state.hole || subCur() <= 0) ? 'warn' : 'ok');
-      $('tor-hole').textContent = state.hole ? '🔓 管顶：已开孔' : '🔒 管顶：封闭';
+      // 按钮写「动作」、状态交给下面的 mini-note —— 状态写在按钮上时，
+      // 用户看不出「点它会发生什么」。
+      $('tor-hole').textContent = state.hole ? '🔒 把管顶的孔堵上' : '🕳 在管顶开个孔';
       // 侧栏按钮用的是 .on 那套（不是舞台栏的 .go）—— 换错类名会让按钮永远不变色
       $('tor-hole').classList.toggle('on', state.hole);
+      const hp = $('tor-hole-pill');
+      hp.textContent = state.hole ? '管顶通大气 · 液面落回槽内' : '管顶封住（默认）· 点了它会通大气';
+      hp.className = 'mini-note' + (state.hole ? ' warn' : '');
+      // 内径两档改用按钮：只有两个刻度的滑块在触控板上拖起来像「卡住 / 拖不动」。
+      $('tor-bore-thin').classList.toggle('primary', !state.bore);
+      $('tor-bore-thick').classList.toggle('primary', !!state.bore);
 
       // 分步流程没走完时，把「自由探究」用的控件锁住 —— 否则中途拖滑块，
       // 分步动画的终点会立刻把用户刚设的值盖回去，看起来像「拖不动」。
+      // 开孔按钮放宽到第 3 步（松手后液面已稳定在 h）：用户很可能一看到 76 cm
+      // 就想马上开孔，锁到第 4 步会让人以为「根本没有这个功能」。
+      // 动画进行中也不给点 —— 那一刻 toFree() 会把液面按到静止值上，看着是跳一下。
       const locked = n < 4;
-      for (const id of ['tor-tilt', 'tor-sub', 'tor-hole']) {
+      const holeLocked = n < 3 || !!state.anim;
+      for (const id of ['tor-tilt', 'tor-sub']) {
         const el = $(id);
         if (el.disabled !== locked) el.disabled = locked;
       }
+      const hb = $('tor-hole');
+      if (hb.disabled !== holeLocked) hb.disabled = holeLocked;
       $('tor-help').textContent = locked
-        ? '按左上角的步骤走完 4 步（或点「跳过步骤」）就能自由改参数'
+        ? (holeLocked ? '按左上角的步骤走完 3 步（或点「跳过步骤」）就能开孔、自由改参数'
+                      : '液面已经稳住，可以开孔了 —— 走完第 4 步后所有参数都能自由改')
         : '拖动空白处旋转 · 滚轮缩放 · 拖动玻璃管能把它掰斜';
     }
 
@@ -1598,10 +1622,20 @@
       state.submerge = clamp(v, -SUB_LIFT, subMaxCm());
       state.dirty = true; updateReadouts(); renderAnalysis();
     }
-    // 管顶开孔 / 堵上
+    // 管顶开孔 / 堵上 —— 液面要「缓慢」落下去 / 升回来，不能瞬间跳。
+    // 起点读改 hole 之前的 colCur()、终点读改 hole 之后的 colTarget()：
+    // 两边都走被测入口，不另抄一份公式（抄一份就会和静止值对不上，动画结束再跳一下）。
+    // 倾角不在这里收 —— 开孔后 tiltMax() 会变大（柱高变短），关孔后变小，
+    // 立刻收会瞬间掰一下管子；改由 tick() 在动画结束那一帧收。
     function setHole(on) {
-      state.hole = !!on;
-      state.tilt = Math.min(state.tilt, tiltMax());
+      on = !!on;
+      if (state.hole === on) return;
+      const from = { sub: subCur(), col: colCur() };
+      state.hole = on;
+      const colEnd = colTarget();
+      state.anim = Math.abs(colEnd - from.col) > 1e-6
+        ? { sub0: from.sub, sub1: from.sub, col0: from.col, col1: colEnd, t: 0, dur: HOLE_DUR }
+        : null;
       state.dirty = true; updateReadouts(); renderAnalysis();
     }
     function setAlt(a) {
@@ -1708,8 +1742,10 @@
         if (ended) state.anim = null;
         state.dirty = true;
         updateReadouts();
-        // 动画期间只刷数值；结束那一刻再刷一次结论（结论里有「落到 h」这类句子）
-        if (ended) renderAnalysis();
+        // 动画期间只刷数值；结束那一刻再刷一次结论（结论里有「落到 h」这类句子）。
+        // 倾角也放到这一刻收：开孔 / 堵孔会让 tiltMax() 变大或变小，
+        // 中途收等于瞬间把管子掰一下（关孔时柱高变长、上限变小）。
+        if (ended) { state.tilt = Math.min(state.tilt, tiltMax()); renderAnalysis(); }
       }
       if (state.dirty) { render(); state.dirty = false; }
       requestAnimationFrame(tick);
@@ -1727,7 +1763,11 @@
 
     $('tor-alt').addEventListener('input', e => setAlt(+e.target.value));
     $('tor-tilt').addEventListener('input', e => setTilt(+e.target.value * Math.PI / 180));
-    $('tor-bore').addEventListener('input', e => setBore(+e.target.value));
+    // 内径用两个按钮而不是滑块：只有两个刻度的滑块在触控板上拖起来像「卡住 / 拖不动」，
+    // 也看不出「细 / 粗」各是多少。换粗细时液面高度一点不变 —— 这正是实验要说明的。
+    // 提示里不报具体数值：分步还没走到液柱那一步时读数是 0，报出来反而让人困惑。
+    $('tor-bore-thin').addEventListener('click', () => { setBore(0); showToast('换成细管（内径 1.6 cm）· 液面高度不变'); });
+    $('tor-bore-thick').addEventListener('click', () => { setBore(1); showToast('换成粗管（内径 3.2 cm）· 液面高度不变'); });
     // 管口浸入深度：拖它就等于「自己动手把管子往上提 / 往下压」。
     // 一提就退出分步流程（toFree），否则动画终点会把用户刚设的值盖回去。
     $('tor-sub').addEventListener('input', e => {
@@ -1735,9 +1775,11 @@
       setSubmerge(+e.target.value);
     });
     $('tor-hole').addEventListener('click', () => {
+      // 第 3 步（松手后）就允许开孔：这时液面已稳定在 h，toFree() 不会造成跳变。
       toFree();
-      setHole(!state.hole);
-      showToast(state.hole ? '管顶开了孔 —— 液面正在下落' : '把孔堵上 —— 水银又升回 ' + fmtAct());
+      const on = !state.hole;
+      setHole(on);
+      showToast(on ? '管顶开了孔 —— 液面正缓慢下落，直到与槽内液面齐平' : '把孔堵上 —— 液面正缓慢升回去');
     });
     // 分步流程
     $('tor-step-next').addEventListener('click', () => goStep(state.step + 1));
@@ -1782,7 +1824,7 @@
       state: state,
       consts: {
         U: U, G_ACC: G_ACC, Y_LIQ: Y_LIQ, Y_MOUTH: Y_MOUTH,
-        SUB_DEF: SUB_DEF, SUB_LIFT: SUB_LIFT, MARGIN: MARGIN,
+        SUB_DEF: SUB_DEF, SUB_LIFT: SUB_LIFT, MARGIN: MARGIN, HOLE_DUR: HOLE_DUR,
         FILL_X: FILL_X, FILL_Y0: FILL_Y0,
         TUBE_HG: TUBE_HG, TUBE_WATER: TUBE_WATER,
         BORE_THIN: BORE_THIN, BORE_THICK: BORE_THICK, WALL: WALL,
