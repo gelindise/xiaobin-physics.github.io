@@ -16,7 +16,18 @@
 
     .lab3d-layout {
       display: grid; grid-template-columns: minmax(0, 1fr) 340px;
-      gap: 16px; align-items: start;
+      gap: 16px; align-items: start; align-content: start;
+    }
+    /* 三块的位置写死，DOM 顺序按【窄屏需要的顺序】排：舞台 → 侧栏 → 下半区。
+       宽屏用 grid 把「数据记录 / 分析与结论」摆到舞台正下方（左列第二行），
+       侧栏跨两行 —— 这样两列高度接近，不会在舞台下面留一大片空白。
+       窄屏（≤900px）把三块都还原成单列自动排布，顺序就是 DOM 顺序。 */
+    .lab3d-stage { grid-column: 1; grid-row: 1; }
+    .lab3d-sidebar { grid-column: 2; grid-row: 1 / span 2; }
+    .lab3d-lower {
+      grid-column: 1; grid-row: 2;
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(270px, 1fr));
+      gap: 14px; align-content: start; align-items: start; min-width: 0;
     }
 
     .lab3d-stage {
@@ -201,8 +212,10 @@
 
     @media (max-width: 900px) {
       .lab3d-layout { grid-template-columns: minmax(0, 1fr); }
+      .lab3d-stage, .lab3d-sidebar, .lab3d-lower { grid-column: 1; grid-row: auto; }
       .lab3d-stage { height: clamp(340px, 54vh, 500px); }
       .lab3d-sidebar { border-top: 1px solid rgba(148, 163, 184, .16); padding-top: 12px; }
+      .lab3d-lower { border-top: 1px solid rgba(148, 163, 184, .16); padding-top: 12px; }
     }
     @media (max-width: 620px) {
       body { padding: 14px; }
@@ -276,6 +289,9 @@
             <div><span>② 底座固体传播</span><b id="vac-l-solid">16.0 dB</b></div>
             <div><span>教室本底（听阈）</span><b>20 dB</b></div>
           </div>
+          <div class="btn-row" style="margin-top:9px;">
+            <button type="button" id="btn-sound">🔈 点一下开声音</button>
+          </div>
           <div id="vac-hear-badge"></div>
         </div>
 
@@ -295,7 +311,13 @@
             还是能听到铃声 —— 因为固体也是传声的介质。
           </p>
         </div>
+      </div>
 
+      <!-- 舞台正下方的第二行：视角切换、数据记录、分析与结论。
+           摆在左列（舞台下面）而不是全塞侧栏，是为了让两列高度相当 ——
+           六个面板全塞侧栏会在舞台下面留出六七百像素的空白。
+           窄屏时它排在侧栏之后（见 .lab3d-lower 的媒体查询）。 -->
+      <div class="lab3d-lower">
         <div class="panel">
           <h3>视角</h3>
           <div class="btn-row">
@@ -333,7 +355,10 @@
       <div class="info-card">
         <h4>操作指南</h4>
         <ul>
-          <li>点<b>「开始抽气」</b>：泵开始工作，真空表指针往左走，罩内声波一圈圈变淡。</li>
+          <li><b>先点一下页面任意处开启声音</b> —— 浏览器规定必须有一次点击才允许网页出声，
+              没点之前页面上会有提示，铃声也是「哑」的。</li>
+          <li>点<b>「开始抽气」</b>：泵开始工作，真空表指针往左走，罩内声波一圈圈变淡，
+              <b>耳机/音箱里的铃声也真的越来越轻</b>，抽到听阈以下就彻底听不见了。</li>
           <li>注意抽气<b>越到后面越慢</b> —— 真实的泵就是这样：抽速和罩内压强成正比，
               最后那一点点空气最难抽。</li>
           <li>点<b>「记录这一组」</b>把当前的气压和声压级存进表格，多记几组就能看出规律。</li>
@@ -454,6 +479,7 @@
       pumpOn: false,
       ventOpen: false,
       bellOn: true,             // 电铃是否通电（响不响）
+      soundOn: true,            // 要不要真的出声（用户的静音开关，和 bellOn 无关）
       padOn: true,              // 电铃下面有没有垫软垫
       jarLift: 0,               // 钟罩提起的高度（世界单位）
       t: 0,                     // 动画时间（s），驱动小锤与声波
@@ -505,6 +531,125 @@
     // 读数用的仍然是严格的 p/p₀ —— 视觉是对数的，数字是线性的。
     const waveAmp = () => (state.bellOn ? Math.pow(clamp(state.p / P0, 0, 1), 0.55) : 0);
 
+    /* ============================================================
+     * 电铃的声音（Web Audio）
+     * ------------------------------------------------------------
+     * 声音不是装饰 —— 它是这个实验的主角：抽气到听阈以下，铃声要真的消失。
+     * 所以音量由【总声压级 Ltotal】决定（空气路径 + 固体路径的能量和），
+     * 于是撤掉软垫后（固体 46 dB）真空里仍能听见微弱的铃声。
+     *
+     * 两条工程约束：
+     *  ① 浏览器自动播放策略要求先有一次用户手势 → AudioContext 只在第一次
+     *     pointerdown / keydown 时创建（ensureAudio）。没手势之前不出声，
+     *     页面上必须说清楚这一点。
+     *  ② 打击调度【不用 AudioContext.currentTime 当时间轴】，而是由页面的 dt
+     *     推进（pumpAudio）。无头浏览器里音频时钟可能压根不走，用页面时钟推进
+     *     才能让自检确定性地数出「敲了几下、增益多大」。
+     * ============================================================ */
+    const BELL_F0 = 520;              // 铃碗基频 Hz
+    const BELL_STRIKE_HZ = 7;         // 小锤每秒敲 7 下（与动画里的 swing 同频）
+    const BELL_STRIKE_DT = 1 / BELL_STRIKE_HZ;
+    // 金属铃的泛音是【非谐】的（不是 1,2,3,4 倍频）—— 这一条决定了它像铃还是像哨。
+    // a 是相对振幅，d 是各自衰减到听不见所需的秒数（高次泛音衰减更快）。
+    const BELL_PARTIALS = [
+      { r: 1.00, a: 1.00, d: 0.62 },
+      { r: 2.76, a: 0.52, d: 0.40 },
+      { r: 5.40, a: 0.28, d: 0.24 },
+      { r: 8.93, a: 0.15, d: 0.14 },
+      { r: 13.34, a: 0.07, d: 0.08 }
+    ];
+    const AUD_FLOOR = 1e-4;           // 增益低于此值就不排打击，省得空转
+    const AUD_BACKLOG = 0.5;          // 落后超过 0.5 s（切回标签页）就重新对齐，别补敲一串
+
+    // 听到的响度 → 线性振幅。物理上振幅比 = 声压比 = 10^((L−L₀)/20)；
+    // 再叠一道【听阈门】：Ltotal < 20 dB 直接归零 —— 读数写「听不见」的同一刻，
+    // 声音也真的停，两者共用 audible()，不会各说各话。
+    function audioGain(p) {
+      if (!state.bellOn || !state.soundOn) return 0;
+      const L = Ltotal(p);
+      if (!audible(L)) return 0;
+      return clamp(Math.pow(10, (L - L0_AIR) / 20), 0, 1);
+    }
+
+    let AC = null, bellBus = null;
+    let audioT = 0, nextStrikeT = 0, strikeCount = 0, audioGainLast = 0;
+
+    function ensureAudio() {
+      if (AC) { if (AC.state === 'suspended') AC.resume(); return AC; }
+      const Ctor = window.AudioContext || window.webkitAudioContext;
+      if (!Ctor) return null;
+      try { AC = new Ctor(); } catch (_) { AC = null; return null; }
+      bellBus = AC.createGain();
+      // 总音量。5 个泛音的振幅加起来是 2.02，直接送出去会顶到满刻度 —— 上课时
+      // 一耳朵 82 dB 的铃声是折磨。0.34 让常压下大约在 0.7 满刻度：够响，不刺耳。
+      // 注意这是【总音量】，与气压无关；随气压变的那部分全在 audioGain() 里，
+      // 自检量的是 audioGain()，不会因为调这个数而变红。
+      bellBus.gain.value = 0.34;
+      // 5 个泛音 + 咔声叠起来会超过 1，加一级软削波（tanh）当限幅器，免得爆音
+      const shaper = AC.createWaveShaper();
+      const curve = new Float32Array(1024);
+      for (let i = 0; i < 1024; i++) curve[i] = Math.tanh(((i / 1023) * 2 - 1) * 1.4);
+      shaper.curve = curve;
+      bellBus.connect(shaper);
+      shaper.connect(AC.destination);
+      return AC;
+    }
+
+    // 一次敲击：5 个非谐泛音（各有自己的衰减）+ 一段 14 ms 的带通噪声「咔」
+    function strikeBell(when, amp) {
+      if (!AC || !bellBus) return;
+      for (const P of BELL_PARTIALS) {
+        const o = AC.createOscillator();
+        o.type = 'sine';
+        o.frequency.setValueAtTime(BELL_F0 * P.r, when);
+        const g = AC.createGain();
+        const peak = Math.max(1e-5, amp * P.a);
+        g.gain.setValueAtTime(1e-5, when);
+        g.gain.linearRampToValueAtTime(peak, when + 0.004);
+        g.gain.exponentialRampToValueAtTime(1e-5, when + P.d);
+        o.connect(g); g.connect(bellBus);
+        o.start(when); o.stop(when + P.d + 0.03);
+      }
+      const n = Math.max(8, Math.floor(AC.sampleRate * 0.014));
+      const buf = AC.createBuffer(1, n, AC.sampleRate);
+      const d = buf.getChannelData(0);
+      for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / n, 2.6);
+      const src = AC.createBufferSource(); src.buffer = buf;
+      const bp = AC.createBiquadFilter(); bp.type = 'bandpass';
+      bp.frequency.value = 2600; bp.Q.value = 0.9;
+      const g2 = AC.createGain(); g2.gain.value = Math.min(0.5, amp * 0.45);
+      src.connect(bp); bp.connect(g2); g2.connect(bellBus);
+      src.start(when); src.stop(when + 0.03);
+    }
+
+    // 打击调度器：dt 秒里该敲几下就排几下，时间基准是页面自己的 audioT
+    function pumpAudio(dt) {
+      audioGainLast = audioGain(state.p);
+      if (!AC || AC.state !== 'running') return;
+      audioT += dt;
+      if (audioGainLast <= AUD_FLOOR) { nextStrikeT = audioT; return; }
+      if (audioT - nextStrikeT > AUD_BACKLOG) nextStrikeT = audioT;
+      let guard = 0;
+      while (nextStrikeT < audioT && guard++ < 64) {
+        // when 必须 >= currentTime：setValueAtTime/start 都拒绝负数时间。
+        // 落后于页面时钟的那几下就当「此刻敲」，不做时间旅行。
+        strikeBell(AC.currentTime + Math.max(0, nextStrikeT - audioT), audioGainLast);
+        nextStrikeT += BELL_STRIKE_DT;
+        strikeCount++;
+      }
+    }
+
+    let audioKicked = false;
+    function kickAudio() {
+      if (audioKicked) return;
+      if (!ensureAudio()) return;
+      audioKicked = true;
+      audioT = 0; nextStrikeT = 0;
+      window.removeEventListener('pointerdown', kickAudio, true);
+      window.removeEventListener('keydown', kickAudio, true);
+      updateAudioUI();
+    }
+
     // 声压级的文字描述（教学用）
     function hearWord(L) {
       if (!state.bellOn) return '电铃已关闭';
@@ -523,7 +668,14 @@
     const vacPct = p => (1 - p / P0) * 100;
 
     /* ---------------------------- 派生几何 ---------------------------- */
-    const jarY = () => state.jarLift;                 // 钟罩整体抬起的高度
+    // 钟罩的落座面：底口压在密封圈的【上表面】，而不是底座顶面，也不是世界原点。
+    // 密封圈厚 H_SEAL、坐在底座顶面 T_BASE 上 → 落座高度 = T_BASE + H_SEAL。
+    // 少了这一项，钟罩会沉进底座 2.15 cm：玻璃壁穿到铁盘顶面以下，看着就是「没盖严、错位」。
+    const JAR_SEAT = T_BASE + H_SEAL;
+    const jarY = () => JAR_SEAT + state.jarLift;      // 钟罩底口的世界 y
+    // 顶部旋钮顶端的世界 y。拖动反解与抓取偏移都用它 —— 凡是「把屏幕 y 换算成抬起高度」
+    // 的地方都必须带 JAR_SEAT，否则一按下钟罩就先跳起 2.15 cm。
+    const knobTopY = lift => JAR_SEAT + lift + JAR_TOP + KNOB_H;
     const sealGap = () => state.jarLift > LIFT_SEAL;
 
     /* ---------------------------- 相机 ---------------------------- */
@@ -538,7 +690,7 @@
         pts.push([TABLE_CX + sx * TABLE_W * 0.62, 0, sz * TABLE_D * 0.88]);
       }
       // 钟罩（含抬到最高时的顶点与底座外沿）
-      const top = JAR_TOP + KNOB_H + LIFT_MAX;
+      const top = JAR_SEAT + JAR_TOP + KNOB_H + LIFT_MAX;
       for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
         pts.push([JAR_X + sx * R_BASE, 0, sz * R_BASE]);
         pts.push([JAR_X + sx * R_JAR, top, sz * R_JAR]);
@@ -1674,11 +1826,24 @@
         t.push('罩内气压 ' + pText(state.p).num + ' ' + pText(state.p).unit +
                '　真空度 ' + vacPct(state.p).toFixed(1) + ' %');
       }
+      // 浏览器要求先有一次交互才允许出声 —— 不明说，用户只会以为「这个页面没声音」
+      if (state.soundOn && !audioKicked) {
+        t.push('<b>🔈 点一下页面任意处开启声音</b>（浏览器要求先有一次点击）');
+      } else if (!state.soundOn) {
+        t.push('🔇 声音已静音，点右侧「声音」按钮可以打开。');
+      }
       el.innerHTML = t.map(s => '<div>' + s + '</div>').join('');
     }
 
-    function updateStageButtons() {
-      const bp = $('vac-pump');
+    function updateAudioUI() {
+      const b = $('btn-sound');
+      if (!b) return;
+      const live = state.soundOn && audioKicked && !!AC;
+      b.textContent = !state.soundOn ? '🔇 声音：已静音' : (live ? '🔊 声音：开' : '🔈 点一下开声音');
+      b.classList.toggle('on', !state.soundOn);
+    }
+
+    function updateStageButtons() {      const bp = $('vac-pump');
       bp.textContent = state.pumpOn ? '⏸ 停止抽气' : '⏻ 开始抽气';
       bp.classList.toggle('on', state.pumpOn);
       bp.classList.toggle('go', !state.pumpOn);
@@ -1799,7 +1964,7 @@
       el.innerHTML = html;
     }
 
-    function syncUI() { updateReadouts(); renderTable(); renderAnalysis(); updateStageButtons(); }
+    function syncUI() { updateReadouts(); renderTable(); renderAnalysis(); updateStageButtons(); updateAudioUI(); }
 
     let toastTimer = 0;
     function showToast(text) {
@@ -1835,7 +2000,21 @@
     function setBell(on) {
       state.bellOn = !!on;
       if (!state.bellOn) state.hammer = 0;
+      // 开铃顺带把音频踢起来（这也是一次用户手势：按钮点击）
+      if (state.bellOn) { kickAudio(); if (AC && AC.state === 'suspended') AC.resume(); }
       syncUI(); state.dirty = true;
+    }
+    function setSound(on) {
+      state.soundOn = !!on;
+      if (state.soundOn) {
+        kickAudio();
+        if (AC && AC.state === 'suspended') AC.resume();
+      } else {
+        // 静音时把调度器重新对齐：再开时不会补敲静音期间积压的那一串
+        audioT = 0; nextStrikeT = 0;
+      }
+      syncUI(); state.dirty = true;
+      return state.soundOn;
     }
     function setPad(on) {
       state.padOn = !!on;
@@ -1895,7 +2074,7 @@
       let lo = 0, hi = LIFT_MAX;
       for (let k = 0; k < 24; k++) {
         const mid = (lo + hi) / 2;
-        const yy = project([JAR_X, JAR_TOP + KNOB_H + mid, 0], q).y;
+        const yy = project([JAR_X, knobTopY(mid), 0], q).y;
         if (yy > ty) lo = mid; else hi = mid;
       }
       return (lo + hi) / 2;
@@ -1909,7 +2088,7 @@
       state.downAt = { x: x, y: y, hit: hit, moved: 0 };
       if (hit === 'jar') {
         state.dragging = true; state.drag = 'jar';
-        const a = project([JAR_X, JAR_TOP + KNOB_H + state.jarLift, 0], q);
+        const a = project([JAR_X, knobTopY(state.jarLift), 0], q);
         state.dragGrab = y - a.y;
       } else {
         state.dragging = true; state.drag = 'orbit';
@@ -1991,6 +2170,8 @@
           updateReadouts(); renderAnalysis(); state.dirty = true;
         }
         if (state.bellOn || state.pumpOn || state.ventOpen || sealGap()) state.dirty = true;
+        // 声音的打击调度由页面时钟推进（不用 AudioContext.currentTime —— 无头环境里它可能不走）
+        pumpAudio(dt);
       }
       const atMin = state.p <= P_MIN * 1.6;
       if (atMin && !wasAtMin && !sealGap()) {
@@ -2016,12 +2197,21 @@
     $('vac-vent').addEventListener('click', () => setVent(!state.ventOpen));
     $('vac-record').addEventListener('click', recordMark);
     $('btn-bell').addEventListener('click', () => setBell(!state.bellOn));
+    $('btn-sound').addEventListener('click', () => {
+      const on = setSound(!state.soundOn);
+      showToast(on ? '声音已打开' : '已静音');
+    });
     $('btn-pad').addEventListener('click', () => setPad(!state.padOn));
     $('btn-vent2').addEventListener('click', () => setVent(!state.ventOpen));
     $('btn-reset').addEventListener('click', () => { resetAll(); showToast('已重置'); });
     document.querySelectorAll('[data-view]').forEach(b => {
       b.addEventListener('click', () => applyView(b.getAttribute('data-view')));
     });
+
+    // 自动播放策略：第一次用户手势才允许创建 AudioContext。捕获阶段监听，免得被别的
+    // handler 的 preventDefault/stopPropagation 拦掉。只挂一次，成功即摘。
+    window.addEventListener('pointerdown', kickAudio, true);
+    window.addEventListener('keydown', kickAudio, true);
 
     if (window.ResizeObserver) new ResizeObserver(() => resize()).observe(stage);
     window.addEventListener('resize', resize);
@@ -2043,6 +2233,7 @@
         L0_AIR: L0_AIR, L_SOLID: L_SOLID, L_PAD_CUT: L_PAD_CUT, THRESH: THRESH,
         R_JAR: R_JAR, H_CYL: H_CYL, JAR_TOP: JAR_TOP, R_BASE: R_BASE, T_BASE: T_BASE,
         R_SEAL_O: R_SEAL_O, R_SEAL_I: R_SEAL_I, H_SEAL: H_SEAL,
+        KNOB_R: KNOB_R, KNOB_H: KNOB_H, FOOT_R: FOOT_R, FOOT_H: FOOT_H,
         PAD_R: PAD_R, PAD_H: PAD_H, BOWL_R: BOWL_R, BOWL_CY: BOWL_CY, BELL_H: BELL_H,
         PUMP_X: PUMP_X, PUMP_Z: PUMP_Z, PUMP_W: PUMP_W, PUMP_H: PUMP_H, PUMP_D: PUMP_D,
         GAUGE_R: GAUGE_R, GAUGE_CX: GAUGE_CX, GAUGE_CY: GAUGE_CY,
@@ -2057,8 +2248,17 @@
       audible: audible, sones: sones, sonesFull: sonesFull, waveAmp: waveAmp,
       pText: pText, vacPct: vacPct, hearWord: hearWord, hearClass: hearClass,
       bellFootY: bellFootY, jarY: jarY, sealGap: sealGap, jarBox: jarBox,
+      // 声音：纯函数 + 状态，自检里不需要真的放出声音也能验
+      audioGain: audioGain, pumpAudio: pumpAudio, ensureAudio: ensureAudio, kickAudio: kickAudio,
+      audio: () => ({
+        ready: !!AC, ctxState: AC ? AC.state : null, kicked: audioKicked,
+        soundOn: state.soundOn, bellOn: state.bellOn,
+        gainLast: audioGainLast, strikes: strikeCount, t: audioT,
+        partials: BELL_PARTIALS.length, f0: BELL_F0, strikeHz: BELL_STRIKE_HZ
+      }),
+      audioReset: () => { audioT = 0; nextStrikeT = 0; strikeCount = 0; },
       // 动作（自检用，和按钮走同一条路）
-      setPump: setPump, setVent: setVent, setBell: setBell, setPad: setPad,
+      setPump: setPump, setVent: setVent, setBell: setBell, setPad: setPad, setSound: setSound,
       resetAll: resetAll, recordMark: recordMark, applyView: applyView,
       // 把气压直接摆到某个值，用于「给定工况」的断言
       setP: p => { state.p = clamp(+p, 1e-4, P0); updateReadouts(); renderAnalysis(); state.dirty = true; },
