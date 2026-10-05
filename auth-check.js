@@ -2,6 +2,7 @@
   var VIP_EXPERIMENTS = [
     "声音麦克风波形.html","javalab_测速雷达原理.html","小孔成像2.html",
     "光的反射立体模型.html",
+    "光的折射立体模型.html",
     "平面镜成像立体模型.html",
     "测量平均速度立体模型.html",
     "真空铃实验立体模型.html",
