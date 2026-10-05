@@ -1,0 +1,1389 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>刻度尺的使用 · 三维实验台 - 物理虚拟实验</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="stylesheet" href="style.css">
+  <script src="auth-check.js"></script>
+  <style>
+    body { margin: 0; padding: 20px; min-width: 320px; }
+
+    .lab3d h1 { margin: 0; font-size: 19px; letter-spacing: .3px; }
+    .lab3d-sub { margin: 7px 0 16px; color: #93b4c4; font-size: 12.5px; line-height: 1.6; }
+    .lab3d-sub b { color: #a5f3fc; font-weight: 700; }
+
+    .lab3d-layout {
+      display: grid; grid-template-columns: minmax(0, 1fr) 340px;
+      gap: 16px; align-items: start;
+    }
+
+    .lab3d-stage {
+      position: relative; overflow: hidden;
+      height: clamp(360px, 60vh, 620px);
+      border: 1px solid rgba(148, 163, 184, .18); border-radius: 16px;
+      background: #020617; box-shadow: 0 18px 46px rgba(2, 6, 23, .5);
+    }
+    .lab3d-stage canvas { display: block; touch-action: none; cursor: grab; }
+    .lab3d-stage canvas.pick { cursor: pointer; }
+    .lab3d-stage canvas.grabbing { cursor: grabbing; }
+
+    .lab3d-stage .stage-hint {
+      position: absolute; left: 12px; top: 12px; max-width: 62%;
+      padding: 7px 11px; border-radius: 8px; pointer-events: none;
+      border: 1px solid rgba(56, 189, 248, .28); background: rgba(2, 6, 23, .78);
+      color: #c3e8f5; font-size: 11px; line-height: 1.55;
+    }
+    .lab3d-stage .stage-hint b { color: #7dd3fc; }
+
+    .lab3d-stage .stage-tip {
+      position: absolute; left: 0; top: 0; padding: 5px 9px; border-radius: 7px;
+      background: rgba(2, 6, 23, .9); border: 1px solid rgba(148, 163, 184, .3);
+      color: #e2e8f0; font-size: 11px; white-space: nowrap;
+      pointer-events: none; opacity: 0; transition: opacity .12s;
+    }
+    .lab3d-stage .stage-tip.show { opacity: 1; }
+
+    /* 舞台底部那一条：左边是操作按钮，右边是操作提示。
+       做成一条 flex 行是为了让它们【永远不重叠】——各用绝对定位占一角的话，
+       窄屏上提示文字会横穿底边压在按钮上。
+       【为什么按钮必须在舞台上】.lab3d-layout 在 ≤900px 折成一列后，
+       侧栏会被挤到舞台【下面】；而切分度值 / 一键规范操作恰恰是眼睛盯着画面时按的。 */
+    .lab3d-stage .stage-bar {
+      position: absolute; left: 0; right: 0; bottom: 0;
+      display: flex; align-items: center; justify-content: space-between; gap: 8px;
+      padding: 0 12px 11px; pointer-events: none;
+    }
+    .lab3d-stage .bar-left { display: flex; align-items: center; gap: 7px; flex: none; pointer-events: auto; }
+    .lab3d-stage .stage-btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 8px 13px; border-radius: 10px; font-family: inherit;
+      font-size: 12px; font-weight: 800; cursor: pointer;
+      border: 1px solid rgba(148, 163, 184, .35); background: rgba(2, 6, 23, .88); color: #cbd5e1;
+      transition: background .2s, border-color .2s, color .2s, box-shadow .2s;
+    }
+    .lab3d-stage .stage-btn.go { border-color: rgba(56, 189, 248, .55); background: rgba(14, 116, 144, .3); color: #e0f2fe; }
+    .lab3d-stage .stage-btn.go:hover { background: rgba(14, 116, 144, .46); }
+    .lab3d-stage .stage-btn:disabled { opacity: .45; cursor: not-allowed; }
+    .lab3d-stage .stage-btn .cnt {
+      display: inline-grid; place-items: center; min-width: 17px; height: 17px; padding: 0 4px;
+      border-radius: 99px; font-size: 10px; font-weight: 800;
+      background: rgba(148, 163, 184, .22); color: #e2e8f0;
+    }
+    /* 一键规范操作：摆位还有可修的地方时按钮自己亮起来 —— 这一刻正该按它 */
+    .lab3d-stage .stage-btn.ready {
+      border-color: rgba(52, 211, 153, .8); background: rgba(16, 185, 129, .24); color: #d1fae5;
+      box-shadow: 0 0 0 3px rgba(52, 211, 153, .14), 0 0 18px rgba(52, 211, 153, .3);
+    }
+    /* 分度值切换：两个按钮并成一个分段控件，只留选中那一块的亮底 ——
+       一眼能看出「现在拿的是哪把尺」。 */
+    .lab3d-stage .seg {
+      display: inline-flex; align-items: center; gap: 2px; padding: 2px; flex: none;
+      border-radius: 11px; border: 1px solid rgba(148, 163, 184, .3);
+      background: rgba(2, 6, 23, .88);
+    }
+    .lab3d-stage .seg-btn { border: none; background: transparent; padding: 6px 11px; color: #94a3b8; }
+    .lab3d-stage .seg-btn:hover { background: rgba(51, 65, 85, .5); }
+    .lab3d-stage .seg-btn.on {
+      background: rgba(14, 116, 144, .55); color: #e0f2fe;
+      box-shadow: inset 0 0 0 1px rgba(56, 189, 248, .55);
+    }
+    .lab3d-stage .stage-help {
+      min-width: 0; pointer-events: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      color: #93b4c4; font-size: 11px; background: rgba(2, 6, 23, .72); padding: 6px 10px; border-radius: 7px;
+    }
+
+    .lab3d-stage .stage-toast {
+      position: absolute; left: 50%; transform: translateX(-50%); bottom: 96px;
+      padding: 8px 14px; border-radius: 10px; font-size: 12px; font-weight: 700;
+      background: rgba(2, 6, 23, .93); border: 1px solid rgba(148, 163, 184, .32); color: #e2e8f0;
+      opacity: 0; transition: opacity .18s, transform .18s; pointer-events: none; white-space: nowrap;
+    }
+    .lab3d-stage .stage-toast.show { opacity: 1; }
+
+    .lab3d-stage .stage-flag {
+      position: absolute; left: 50%; transform: translateX(-50%); bottom: 58px;
+      padding: 7px 13px; border-radius: 99px; font-size: 12px; font-weight: 800;
+      background: rgba(6, 78, 59, .92); border: 1px solid rgba(52, 211, 153, .6); color: #d1fae5;
+      opacity: 0; transition: opacity .2s; pointer-events: none; white-space: nowrap;
+    }
+    .lab3d-stage .stage-flag.show { opacity: 1; }
+    .lab3d-stage .stage-flag.warn {
+      background: rgba(127, 29, 29, .92); border-color: rgba(248, 113, 113, .6); color: #fee2e2;
+    }
+
+    .lab3d-sidebar { display: flex; flex-direction: column; gap: 11px; min-width: 0; }
+    .panel {
+      border: 1px solid rgba(148, 163, 184, .17); border-radius: 13px;
+      background: rgba(9, 20, 35, .82); padding: 13px 14px;
+    }
+    .panel > h3 {
+      margin: 0 0 10px; font-size: 12px; font-weight: 800; color: #7dd3fc;
+      letter-spacing: .4px; display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    }
+    .panel > h3 .pill {
+      font-size: 10px; font-weight: 800; padding: 2px 8px; border-radius: 99px;
+      background: rgba(148, 163, 184, .18); color: #e2e8f0;
+    }
+    .panel > h3 .pill.ok { background: rgba(52, 211, 153, .24); color: #d1fae5; }
+    .fld { display: block; margin-bottom: 11px; }
+    .fld:last-child { margin-bottom: 0; }
+    .fld .row { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 5px; }
+    .fld .row span { color: #a9c2d2; font-size: 11.5px; }
+    .fld .row b { color: #e2e8f0; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+    .fld input[type=range] { width: 100%; accent-color: #38bdf8; }
+    .fld .note { margin: 6px 0 0; color: #8aa6b8; font-size: 11px; line-height: 1.55; }
+
+    .btn-row { display: flex; flex-wrap: wrap; gap: 7px; }
+    .btn-row button {
+      flex: 1 1 auto; min-width: 0; padding: 9px 11px; border-radius: 9px; cursor: pointer;
+      font-family: inherit; font-size: 12px; font-weight: 800;
+      border: 1px solid rgba(148, 163, 184, .3); background: rgba(30, 41, 59, .7); color: #cbd5e1;
+    }
+    .btn-row button.primary { border-color: rgba(56, 189, 248, .6); background: rgba(14, 116, 144, .42); color: #e0f2fe; }
+    .btn-row button:disabled { opacity: .45; cursor: not-allowed; }
+    .btn-row button:hover:not(:disabled) { border-color: rgba(125, 211, 252, .7); }
+
+    /* 读数输入：准确值 / 估读值 / 单位 三个格子一行 */
+    .readrow { display: grid; grid-template-columns: 1fr 1fr 78px; gap: 7px; margin-bottom: 9px; }
+    .readrow label { display: block; }
+    .readrow .cap { display: block; color: #8aa6b8; font-size: 10.5px; margin-bottom: 4px; }
+    .readrow input, .readrow select {
+      width: 100%; box-sizing: border-box; padding: 8px 9px; border-radius: 8px;
+      font-family: inherit; font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums;
+      border: 1px solid rgba(148, 163, 184, .32); background: rgba(2, 6, 23, .72); color: #e2e8f0;
+    }
+    .readrow input:focus, .readrow select:focus { outline: none; border-color: rgba(56, 189, 248, .7); }
+    .sumline {
+      display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
+      padding: 8px 10px; border-radius: 9px; margin-bottom: 9px;
+      background: rgba(56, 189, 248, .1); border: 1px solid rgba(56, 189, 248, .25);
+      color: #a5f3fc; font-size: 12px; font-weight: 700;
+    }
+    .sumline b { font-family: ui-monospace, Menlo, monospace; font-size: 15px; color: #e0f2fe; }
+
+    /* 「五会」评分 */
+    .rubric { display: flex; flex-direction: column; gap: 6px; }
+    .rubric .it {
+      display: flex; align-items: flex-start; gap: 8px; padding: 7px 9px; border-radius: 9px;
+      background: rgba(148, 163, 184, .07); border: 1px solid rgba(148, 163, 184, .14);
+    }
+    .rubric .it .mk {
+      flex: none; width: 17px; height: 17px; border-radius: 99px; display: grid; place-items: center;
+      font-size: 11px; font-weight: 800; margin-top: 1px;
+      background: rgba(148, 163, 184, .2); color: #94a3b8;
+    }
+    .rubric .it .tx { min-width: 0; }
+    .rubric .it .tx b { display: block; color: #cbd5e1; font-size: 11.5px; margin-bottom: 2px; }
+    .rubric .it .tx span { display: block; color: #7d97a8; font-size: 10.5px; line-height: 1.5; }
+    .rubric .it.ok { background: rgba(6, 78, 59, .3); border-color: rgba(52, 211, 153, .38); }
+    .rubric .it.ok .mk { background: rgba(52, 211, 153, .3); color: #d1fae5; }
+    .rubric .it.ok .tx b { color: #d1fae5; }
+    .rubric .it.bad { background: rgba(127, 29, 29, .22); border-color: rgba(248, 113, 113, .32); }
+    .rubric .it.bad .mk { background: rgba(248, 113, 113, .3); color: #fee2e2; }
+
+    .analysis { color: #c8d8e4; font-size: 11.5px; line-height: 1.75; }
+    .analysis .line { display: flex; justify-content: space-between; gap: 8px; }
+    .analysis .line b { color: #e2e8f0; font-variant-numeric: tabular-nums; }
+    .analysis .conc {
+      margin-top: 9px; padding: 8px 10px; border-radius: 8px; font-size: 11.5px; line-height: 1.65;
+      background: rgba(6, 78, 59, .35); border: 1px solid rgba(52, 211, 153, .4); color: #d1fae5;
+    }
+    .analysis .conc.warn { background: rgba(127, 29, 29, .35); border-color: rgba(248, 113, 113, .45); color: #fee2e2; }
+    .analysis .muted { color: #7d97a8; }
+
+    .info-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; margin-top: 16px; }
+    .info-card {
+      border: 1px solid rgba(148, 163, 184, .16); border-radius: 14px;
+      background: rgba(9, 20, 35, .7); padding: 15px 17px;
+    }
+    .info-card h4 { margin: 0 0 9px; font-size: 13px; color: #7dd3fc; }
+    .info-card ul { margin: 0; padding-left: 17px; color: #a9c2d2; font-size: 12px; line-height: 1.85; }
+    .info-card li b { color: #e2e8f0; }
+    .info-card .fml {
+      display: inline-block; margin: 3px 0; padding: 3px 9px; border-radius: 7px;
+      background: rgba(56, 189, 248, .13); color: #a5f3fc; font-weight: 700;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+
+    @media (max-width: 900px) {
+      .lab3d-layout { grid-template-columns: minmax(0, 1fr); }
+      .lab3d-stage { height: clamp(320px, 52vh, 480px); }
+      .lab3d-sidebar { border-top: 1px solid rgba(148, 163, 184, .16); padding-top: 12px; }
+    }
+    @media (max-width: 620px) {
+      body { padding: 14px; }
+      .lab3d h1 { font-size: 16px; }
+      .lab3d-stage { height: 330px; }
+      .lab3d-stage .stage-hint { font-size: 10px; padding: 6px 9px; max-width: 66%; }
+      .lab3d-stage .stage-help { display: none; }
+      .lab3d-stage .stage-btn { padding: 7px 10px; font-size: 11px; gap: 5px; }
+      .lab3d-stage .stage-flag { bottom: 54px; font-size: 11px; padding: 6px 11px; }
+      .readrow { grid-template-columns: 1fr 1fr 70px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="lab3d">
+    <h1>刻度尺的使用 · 三维实验台</h1>
+    <p class="lab3d-sub">
+      桌上是一把<b>刻度尺</b>和一支<b>待测木棒</b>。要做到<b>「五会」</b>：会选（分度值）、会放（零刻度线对齐）、
+      会看（视线垂直于尺面）、会读（准确值 + 估读值）、会记（数值带单位）。全部做到，才算一次合格的测量。
+    </p>
+
+    <div class="lab3d-layout">
+      <div class="lab3d-stage">
+        <canvas id="ruler-canvas"></canvas>
+
+        <div class="stage-hint" id="ruler-hint"></div>
+        <div class="stage-tip" id="ruler-tip"></div>
+        <div class="stage-toast" id="ruler-toast"></div>
+        <div class="stage-flag" id="ruler-flag">五会全部做到 ✓ 可以读刻度了</div>
+
+        <div class="stage-bar">
+          <div class="bar-left">
+            <div class="seg" id="ruler-step" role="group" aria-label="刻度尺分度值">
+              <button type="button" class="stage-btn seg-btn on" id="mode-mm">1 mm</button>
+              <button type="button" class="stage-btn seg-btn" id="mode-cm">1 cm</button>
+            </div>
+            <button type="button" class="stage-btn go" id="ruler-fix">一键规范操作</button>
+            <button type="button" class="stage-btn" id="ruler-new">换一题</button>
+          </div>
+          <div class="stage-help">拖动空白处旋转 · 滚轮缩放 · 拖木棒对齐零刻度 · 拖眼睛到正上方</div>
+        </div>
+      </div>
+
+      <div class="lab3d-sidebar">
+        <div class="panel">
+          <h3>实验装置 <span class="pill" id="q-pill">第 1 题</span></h3>
+          <div class="fld">
+            <div class="row"><span>刻度尺分度值</span><b id="v-step">1 mm</b></div>
+            <div class="btn-row">
+              <button type="button" class="primary" id="btn-mm">1 mm 分度值</button>
+              <button type="button" id="btn-cm">1 cm 分度值</button>
+            </div>
+          </div>
+          <label class="fld">
+            <div class="row"><span>木棒左端位置（相对零刻度）</span><b><span id="v-obj">0.30</span> cm</b></div>
+            <input type="range" id="sl-obj" min="-0.5" max="0.8" step="0.01" value="0.3">
+          </label>
+          <label class="fld">
+            <div class="row"><span>眼睛位置（相对零刻度）</span><b><span id="v-eye">8.0</span> cm</b></div>
+            <input type="range" id="sl-eye" min="-0.5" max="16" step="0.1" value="8">
+          </label>
+          <p class="note" id="ruler-info"></p>
+        </div>
+
+        <div class="panel">
+          <h3>读数记录 <span class="pill" id="read-pill">待填写</span></h3>
+          <div class="readrow">
+            <label><span class="cap">准确值</span><input type="number" id="in-acc" step="0.01" placeholder="如 7.3"></label>
+            <label><span class="cap">估读值</span><input type="number" id="in-est" step="0.01" placeholder="如 0.04"></label>
+            <label><span class="cap">单位</span>
+              <select id="in-unit"><option value="cm">cm</option><option value="mm">mm</option><option value="m">m</option></select>
+            </label>
+          </div>
+          <div class="sumline"><span>读数 = 准确值 + 估读值</span><b id="read-sum">—</b></div>
+          <div class="btn-row">
+            <button type="button" class="primary" id="btn-check">提交读数</button>
+          </div>
+          <p class="note">
+            读数要写到<b>分度值的下一位</b>：分度值 1 mm 时读到 0.1 mm（即 0.01 cm），分度值 1 cm 时读到 0.1 cm。
+            记录必须写单位。
+          </p>
+        </div>
+
+        <div class="panel">
+          <h3>「五会」评分 <span class="pill" id="score-pill">0 / 5</span></h3>
+          <div class="rubric" id="rubric"></div>
+        </div>
+
+        <div class="panel">
+          <h3>分析与结论</h3>
+          <div class="analysis" id="analysis"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="info-cards">
+      <div class="info-card">
+        <h4>实验原理</h4>
+        <ul>
+          <li>测量长度的基本工具是<b>刻度尺</b>。使用前要观察它的<b>零刻度线</b>、<b>量程</b>和<b>分度值</b>。</li>
+          <li><b>分度值</b>就是相邻两条刻度线之间的长度。分度值越小，测量结果越精确。</li>
+          <li>测量结果 = <span class="fml">准确值 + 估读值</span>。准确值读到分度值那一位，估读值要估到分度值的<b>下一位</b>。</li>
+          <li>记录结果必须<b>带单位</b>。同一长度用不同单位记录时，数值不同但含义相同（7.34 cm = 73.4 mm）。</li>
+        </ul>
+      </div>
+      <div class="info-card">
+        <h4>操作指南（五会）</h4>
+        <ul>
+          <li><b>会选</b>：先看测量要求。要精确到毫米，就得选分度值是 <b>1 mm</b> 的尺；拿 1 cm 的尺只能读到 7.3 cm，读不出那 0.04 cm。</li>
+          <li><b>会放</b>：把<b>零刻度线</b>（或某一整数刻度线）对准木棒的左端，刻度线要<b>紧贴</b>被测物体，尺与被测边<b>平行</b>。</li>
+          <li><b>会看</b>：视线要<b>正对</b>刻度线，跟尺面垂直。眼睛沿尺长方向偏出去，看到的端点位置就会跟着偏 —— 这就是<b>视差</b>，读数会偏大或偏小。</li>
+          <li><b>会读</b>：先读准确值，再估读一位。木棒右端落在 7.3 cm 与 7.4 cm 之间时，准确值 7.3 cm，估读值约 0.04 cm。</li>
+          <li><b>会记</b>：写成 <b>7.34 cm</b>，数值 + 单位，缺一不可。</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <script>
+  (() => {
+    'use strict';
+
+    const canvas = document.getElementById('ruler-canvas');
+    const stage = document.querySelector('.lab3d-stage');
+    if (!canvas || !stage) return;
+    const ctx = canvas.getContext('2d');
+
+    const PI2 = Math.PI * 2;
+    const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
+    const $ = id => document.getElementById(id);
+
+    /* ============================================================
+     * 向量工具（与站内其它三维页同一套约定）
+     * ============================================================ */
+    const add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+    const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+    const scl = (a, k) => [a[0] * k, a[1] * k, a[2] * k];
+    const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+    const vlen = a => Math.hypot(a[0], a[1], a[2]);
+    const vnorm = a => { const l = vlen(a) || 1; return [a[0] / l, a[1] / l, a[2] / l]; };
+
+    /* ============================================================
+     * 场景常量
+     * ------------------------------------------------------------
+     * 世界坐标：y 向上，x/z 水平。1 世界单位 = 10 cm。
+     * 刻度尺【沿 x 轴】平放在桌面上，零刻度线在左端附近，刻度值向右增大。
+     * 【单位只在两处换算】尺上的位置一律用 cm（和刻度数字、滑块、读数同一套），
+     * 世界单位只出现在几何尺寸里。xOfV / vOfX 是唯一的一对换算函数。
+     * ============================================================ */
+    const U          = 10;            // 1 世界单位 = 10 cm
+    const RULER_L    = 1.60;          // 尺长 16 cm
+    const RULER_W    = 0.32;          // 尺宽 3.2 cm
+    const RULER_T    = 0.016;         // 尺厚 1.6 mm
+    const X0         = 0.03;          // 零刻度线的世界 x（尺左端往内 3 mm，真实尺子都这样）
+    const V_MAX      = 15;            // 刻度值 0 ~ 15 cm
+    // 刻度线画在尺的【近侧】（+z）边缘往里，长度按级别递增。木棒放在远侧，
+    // 于是从默认视角看刻度线在木棒前面，不会被木棒挡住。
+    const Z_TICK_EDGE = RULER_W / 2 - 0.005;
+    const TICK_LEN   = { mm: 0.030, mid: 0.050, cm: 0.075 };   // 世界单位
+    const Z_NUM      = Z_TICK_EDGE - TICK_LEN.cm - 0.035;      // 刻度数字的 z
+    const OBJ_R      = 0.055;         // 木棒半径 5.5 mm（直径 11 mm，比铅笔略粗，太细就看不出是个圆柱）
+    const Z_ROD      = -0.050;        // 木棒轴线 z（在刻度线的远侧，互不遮挡）
+    const OBJ_AXIS_Y = RULER_T + OBJ_R;                 // 木棒轴线高 = 尺面 + 半径
+    // 【视差的几何来源就是这个高度差】木棒【顶端】比尺面高 OBJ_TOP_Y − RULER_T = 2R，
+    // 眼睛偏离端点正上方时，视线越过顶端打到尺面上的落点就跟着偏。
+    // 写成 OBJ_R 的话高度差只有半个直径，视差会被算小一半。
+    const OBJ_TOP_Y  = RULER_T + OBJ_R * 2;
+    const EYE_H      = 0.80;          // 眼睛在木棒顶端之上 8 cm
+    const EYE_Y      = OBJ_TOP_Y + EYE_H;
+    const EYE_R      = 0.10;          // 眼睛图标半径（世界单位）
+    // 【桌面只要比尺略大】桌面四角进取景包络，桌子一大包络就被空台面撑开，
+    // 尺和木棒只能缩到画布中间一小条（实测 2.60×1.30 时尺只占画面宽度三成）。
+    const TABLE_W    = 1.95, TABLE_D = 1.00, TABLE_T = 0.14;
+    const CAMD       = 4.6;           // 相机距离基准（场景比斜面小车小得多）
+    const TARGET     = [0.80, 0.40, 0];
+    const VIEWS = {
+      // 默认：斜俯视偏一点，同时看得见刻度数字和木棒
+      perspective: [0.42, 0.70],
+      top:         [0.16, 1.16],   // 俯视：读数最清楚
+      side:        [0.02, 0.22],   // 正侧方：视差最清楚
+      along:       [1.50, 0.42],   // 沿尺长方向看
+      back:        [Math.PI, 0.52]
+    };
+    // 判据容差（都在 cm 域）
+    const TOL_PUT   = 0.05;   // 零刻度线对齐：±0.05 cm
+    const TOL_LOOK  = 0.60;   // 视线正对：±0.6 cm（视差 ≤ 0.6×0.1375 = 0.83 mm，不到一格）
+    const STEP_MM   = 0.1;    // 分度值 1 mm，用 cm 表示就是 0.1
+    const STEP_CM   = 1.0;    // 分度值 1 cm
+
+    const state = {
+      yaw: VIEWS.perspective[0], pitch: VIEWS.perspective[1], zoom: 1,
+      // 【主数据是 objU（0.01 cm 单位的整数）】长度用浮点存的话，
+      // 「准确值该填多少」的取整会在 7.3 这种二进制不精确的值上抖一下，
+      // 于是同一道题时对时错。整数比浮点稳。
+      objU: 734,                 // 木棒长度，单位 0.01 cm（= 7.34 cm）
+      objS: 0.30,                // 木棒【左端】的刻度值（cm，从零刻度量）
+      eyeS: 8.00,                // 眼睛所在的刻度值（cm）
+      step: STEP_MM,             // 当前尺的分度值（cm）
+      acc: '', est: '', unit: 'cm',
+      submitted: false,
+      qno: 1,
+      w: 1, h: 1, dpr: 0, dirty: true,
+      dragging: false, drag: null, downAt: null, dragGrab: { x: 0, y: 0 },
+      hover: null, view: 'perspective',
+      drawn: {}
+    };
+
+    /* ---------------------------- 派生几何 ---------------------------- */
+    const objL  = () => state.objU / 100;              // 木棒长度（cm）
+    const L_end = () => state.objS + objL();           // 木棒右端的刻度值（cm）
+    // 刻度值 ↔ 世界 x（唯一的一对换算点）
+    const xOfV = v => X0 + v / U;
+    const vOfX = x => (x - X0) * U;
+    // 【视差系数】把眼睛、木棒顶端、尺面三点共线的射线求交写成闭式：
+    //   xs = ex + m·(xe − ex)，  m = (EYE_Y − RULER_T)/(EYE_Y − OBJ_TOP_Y)
+    // 眼睛正对（ex = xe）时 m 那一项消失，看到的落点就是真实位置。
+    const parallaxM = () => (EYE_Y - RULER_T) / (EYE_Y - OBJ_TOP_Y);
+    // 视线与尺面交点对应的刻度值（cm）—— 这是【眼睛实际看到的】读数位置
+    const seenValue = () => {
+      const ex = xOfV(state.eyeS), xe = xOfV(L_end());
+      return vOfX(ex + parallaxM() * (xe - ex));
+    };
+    // 同一个量的【独立算法】，只给自检做交叉验证：老老实实做一次三维射线求交
+    // （眼睛 → 木棒顶端 → 与尺面求交），完全不碰上面那个闭式系数 m。
+    // 两条路必须吻合到 1e-9 —— 否则就是闭式推错了，而自检如果只调 seenValue()
+    // 就会跟着一起错（探针绕过被测入口）。
+    const seenValueRay = () => {
+      const E = [xOfV(state.eyeS), EYE_Y, Z_ROD];
+      const P = [xOfV(L_end()), OBJ_TOP_Y, Z_ROD];
+      const d = sub(P, E);
+      if (Math.abs(d[1]) < 1e-12) return NaN;
+      const t = (RULER_T - E[1]) / d[1];
+      return vOfX(add(E, scl(d, t))[0]);
+    };
+
+    /* ---------------------------- 相机 ---------------------------- */
+    // 取景包络：【固定值】，不跟随滑块 / 模式 —— 拖一次木棒视野就一缩一放的话没法用。
+    function envelopePoints() {
+      const pts = [];
+      // 桌面：只算「器材脚下那一圈」。整块桌面的近角离相机最近，会把包络撑高一大截，
+      // 取景于是被一块几乎看不见的暗台面支配，器材缩到中间一条。
+      for (const sx of [-1, 1]) for (const sz of [-1, 0.6]) {
+        pts.push([TARGET[0] + sx * TABLE_W * 0.92, 0, sz * TABLE_D]);
+      }
+      // 尺的四角（含厚度）
+      for (const sx of [0, RULER_L]) for (const sz of [-1, 1]) {
+        pts.push([sx, 0, sz * RULER_W / 2], [sx, RULER_T, sz * RULER_W / 2]);
+      }
+      // 木棒两端（左端最小刻度值、右端最大刻度值都要罩住）
+      for (const v of [-0.5, V_MAX]) {
+        for (const sz of [-1, 1]) {
+          pts.push([xOfV(v), OBJ_TOP_Y, Z_ROD + sz * OBJ_R]);
+        }
+      }
+      // 眼睛：拖到两端都要在画面内
+      for (const v of [-0.5, V_MAX]) {
+        pts.push([xOfV(v), EYE_Y + EYE_R, Z_ROD], [xOfV(v), EYE_Y - EYE_R, Z_ROD]);
+      }
+      return pts;
+    }
+
+    function makeCam(q, w, h) {
+      const cy = Math.cos(state.yaw), sy = Math.sin(state.yaw);
+      const cp = Math.cos(state.pitch), sp = Math.sin(state.pitch);
+      const dir = [cp * sy, sp, cp * cy];
+      q.dist = CAMD / state.zoom;
+      q.eye = add(TARGET, scl(dir, q.dist));
+      q.fwd = scl(dir, -1);
+      q.right = vnorm(cross(q.fwd, [0, 1, 0]));
+      q.up = cross(q.right, q.fwd);
+      const pts = envelopePoints();
+      let loR = 1e9, hiR = -1e9, loU = 1e9, hiU = -1e9;
+      for (const p of pts) {
+        const v = sub(p, q.eye);
+        const z = Math.max(0.05, dot(v, q.fwd));
+        const r = dot(v, q.right) / z, u = dot(v, q.up) / z;
+        loR = Math.min(loR, r); hiR = Math.max(hiR, r);
+        loU = Math.min(loU, u); hiU = Math.max(hiU, u);
+      }
+      // 【zoom 必须乘在算出来的焦距上】只改相机距离的话，焦距会被包络反算回来，
+      // 缩放被自动取景完全抵消（滚轮就成了摆设）。
+      const s = Math.min(w * 0.96 / Math.max(1e-6, hiR - loR),
+                         h * 0.92 / Math.max(1e-6, hiU - loU)) * state.zoom;
+      q.focal = s;
+      q.px = w * 0.5 - (loR + hiR) * 0.5 * s;
+      q.py = h * 0.5 + (loU + hiU) * 0.5 * s;
+      q.eyeDist = p => { const v = sub(p, q.eye); return dot(v, q.fwd); };
+      return q;
+    }
+    function project(p, q) {
+      const v = sub(p, q.eye);
+      const z = Math.max(0.05, dot(v, q.fwd));
+      const s = q.focal / z;
+      return { x: q.px + dot(v, q.right) * s, y: q.py - dot(v, q.up) * s, s: s, z: z };
+    }
+
+    /* ============================================================
+     * 绘图小工具
+     * ============================================================ */
+    function polyPath(pts) {
+      ctx.beginPath();
+      pts.forEach((p, k) => k ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+      ctx.closePath();
+    }
+    function poly(pts, fill, stroke, lw) {
+      if (!pts || pts.length < 2) return;
+      polyPath(pts);
+      if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+      if (stroke) { ctx.lineWidth = lw || 1; ctx.strokeStyle = stroke; ctx.stroke(); }
+    }
+    function line(pts, color, lw, dash) {
+      if (!pts || pts.length < 2) return;
+      ctx.beginPath();
+      pts.forEach((p, k) => k ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+      ctx.setLineDash(dash || []);
+      ctx.lineWidth = lw; ctx.strokeStyle = color; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+      ctx.stroke(); ctx.setLineDash([]);
+    }
+    function dot2(p, r, fill, stroke, lw) {
+      ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, PI2);
+      if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+      if (stroke) { ctx.lineWidth = lw || 1; ctx.strokeStyle = stroke; ctx.stroke(); }
+    }
+    const mix = (c1, c2, k) => [c1[0] + (c2[0] - c1[0]) * k, c1[1] + (c2[1] - c1[1]) * k, c1[2] + (c2[2] - c1[2]) * k];
+    const rgb = (c, k) => {
+      const s = k === undefined ? 1 : k;
+      return 'rgb(' + Math.round(clamp(c[0] * s, 0, 255)) + ',' +
+                      Math.round(clamp(c[1] * s, 0, 255)) + ',' +
+                      Math.round(clamp(c[2] * s, 0, 255)) + ')';
+    };
+    const LIGHT = vnorm([-0.30, 0.88, 0.36]);
+    // 面的明暗：按面法线与光线的夹角给亮度。同一个颜色的盒子，
+    // 三个面必须读出三种明度，否则就是一张贴纸。
+    const shade = (base, n, amb) => rgb(base, (amb === undefined ? 0.52 : amb) + 0.60 * Math.max(0, dot(n, LIGHT)));
+
+    // 本帧已经画出来的标签盒（避让用真实盒子，不按锚点距离）
+    let frameBoxes = [];
+    function labelBox(p, text, size, align) {
+      ctx.font = '800 ' + size + 'px Inter, "Microsoft YaHei", sans-serif';
+      const wpx = ctx.measureText(text).width;
+      const pad = 4;
+      const half = size * 0.72 + pad * 0.5;
+      const wBox = wpx + pad * 2;
+      const EDGE = 8;
+      const y = clamp(p.y, half + EDGE, Math.max(half + EDGE, state.h - half - EDGE));
+      let bx = align === 'left' ? p.x - 4 - pad
+             : align === 'right' ? p.x + 4 - wpx - pad
+             : p.x - wpx / 2 - pad;
+      bx = clamp(bx, EDGE, Math.max(EDGE, state.w - wBox - EDGE));
+      return { x: bx, y: y - half, w: wBox, h: half * 2, cx: bx + wBox / 2, cy: y };
+    }
+    // 【两件事要同时成立】① 标签要最后落笔 —— 后画的零件（木棒、眼睛、视线）
+    // 会把它压住；② 避让求解器必须【看得见】已经排好的标签，否则后挑位置的
+    // 标签会稳稳压在先挑的标签上。所以：盒子当场算出来并登记进 frameBoxes，
+    // 真正 fillText 推迟到 flushLabels()。
+    let labelQueue = [];
+    let labelLog = [];              // 本帧真正落笔的标签盒子，供自检判重叠
+    function label(p, text, color, size, align) {
+      const al = align || 'center';
+      const b = labelBox(p, text, size, al);
+      labelQueue.push({ b: b, text: text, color: color, size: size, align: al });
+      frameBoxes.push(b);
+      return b;
+    }
+    function flushLabels() {
+      for (const L of labelQueue) {
+        ctx.font = '800 ' + L.size + 'px Inter, "Microsoft YaHei", sans-serif';
+        ctx.textAlign = L.align; ctx.textBaseline = 'middle';
+        const pad = 4;
+        const b = L.b;
+        const x = L.align === 'left' ? b.x + pad
+                : L.align === 'right' ? b.x + b.w - pad
+                : b.cx;
+        ctx.fillStyle = 'rgba(2,6,23,.76)';
+        ctx.fillRect(b.x, b.y, b.w, b.h);
+        ctx.fillStyle = L.color;
+        ctx.fillText(L.text, x, b.cy);
+        labelLog.push({ text: L.text, x: b.x, y: b.y, w: b.w, h: b.h });
+      }
+      labelQueue = [];
+    }
+    // 【候选落点 = 粗网格外扩 ＋ 精确推出量】，两者缺一不可：
+    //   粗网格（每圈 9 个方向、含纯左右）负责「近处被占满时往哪逃」；
+    //   精确推出量负责「只差 3 px 就别把标签挪到 138 px 外」。
+    // 只有粗网格时实测过两种坏结果：① 网格太窄 → 五个标签 + 浮层占满近处，
+    // 求解器只能在「压眼睛」与「压木棒」之间挑更小的，仍然压着东西
+    // （390px / along：眼睛标签压自己图标的包围盒 24%）；
+    // ② 网格往外扩 → 390px / top 的「视线落点」明明只要往下挪 3.4 px，
+    // 却被推到左边 138 px 外，和它标的东西完全脱钩。
+    const AVOID_ONE = [[0, -17], [0, 17],
+                       [-46, -17], [46, -17], [-46, 17], [46, 17], [-46, 0], [46, 0]];
+    function avoidCandidates(anchor, text, size) {
+      const cands = [[0, 0]];
+      for (let r = 1; r <= 3; r++) for (const o of AVOID_ONE) cands.push([o[0] * r, o[1] * r]);
+      const b0 = labelBox(anchor, text, size, 'center');
+      for (const q of frameBoxes) {
+        const ox = Math.min(b0.x + b0.w, q.x + q.w) - Math.max(b0.x, q.x);
+        const oy = Math.min(b0.y + b0.h, q.y + q.h) - Math.max(b0.y, q.y);
+        if (ox <= 0 || oy <= 0) continue;                 // 本来就不碰它
+        // 往左 / 右 / 上 / 下各推出 1 px，四条都是「贴着障碍边」的最小位移
+        cands.push([q.x - (b0.x + b0.w) - 1, 0], [q.x + q.w - b0.x + 1, 0],
+                   [0, q.y - (b0.y + b0.h) - 1], [0, q.y + q.h - b0.y + 1]);
+      }
+      // 位移小的先试：同样 0 重叠时近的赢，标签不会无故飘远
+      cands.sort((a, b) => (a[0] * a[0] + a[1] * a[1]) - (b[0] * b[0] + b[1] * b[1]));
+      return cands;
+    }
+
+    // 候选落点里取与本帧已画盒子重叠面积最小的那个；命中 0 重叠立刻收工。
+    function bestLabel(anchor, text, color, size) {
+      let best = null, bestOv = 1e18;
+      for (const o of avoidCandidates(anchor, text, size)) {
+        const b = labelBox({ x: anchor.x + o[0], y: anchor.y + o[1] }, text, size, 'center');
+        let ov = 0;
+        for (const q of frameBoxes) {
+          const ox = Math.min(b.x + b.w, q.x + q.w) - Math.max(b.x, q.x);
+          const oy = Math.min(b.y + b.h, q.y + q.h) - Math.max(b.y, q.y);
+          if (ox > 0 && oy > 0) ov += ox * oy;
+        }
+        if (ov < bestOv) { bestOv = ov; best = { x: anchor.x + o[0], y: anchor.y + o[1] }; }
+        if (bestOv === 0) break;
+      }
+      label(best, text, color, size, 'center');
+      return bestOv;
+    }
+    // 四角投影 → 屏幕包围盒（尺面 / 端面这类四边形用它当避让障碍）
+    function quadBox(quad) {
+      if (!quad || !quad.length) return null;
+      let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
+      for (const p of quad) {
+        x0 = Math.min(x0, p.x); x1 = Math.max(x1, p.x);
+        y0 = Math.min(y0, p.y); y1 = Math.max(y1, p.y);
+      }
+      return { x: x0, y: y0, w: x1 - x0, h: y1 - y0, cx: (x0 + x1) / 2, cy: (y0 + y1) / 2 };
+    }
+    // 标签还要「推回画布内」：锚点常落在画面外，不推回来会被裁掉半个字。
+    // 这条只在窄屏真的起作用（字号是固定 CSS px，画布一缩小占比就大）。
+    const avoidLabel = (anchor, text, color, size) => bestLabel(anchor, text, color, size);
+
+    // 轴对齐盒子：六个面按到相机的距离从远到近画（凸体这样画一定对，不用管朝向）
+    function box3(x0, x1, y0, y1, z0, z1, q, base, amb, stroke) {
+      const W = [[x0, y0, z0], [x1, y0, z0], [x1, y0, z1], [x0, y0, z1],
+                 [x0, y1, z0], [x1, y1, z0], [x1, y1, z1], [x0, y1, z1]];
+      const P = W.map(p => project(p, q));
+      const F = [[4, 5, 6, 7], [0, 1, 2, 3], [3, 2, 6, 7], [0, 1, 5, 4], [1, 2, 6, 5], [0, 3, 7, 4]];
+      const N = [[0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1], [1, 0, 0], [-1, 0, 0]];
+      const order = F.map((f, i) => ({ f: f, i: i, d: f.reduce((s, k) => s + q.eyeDist(W[k]), 0) / 4 }));
+      order.sort((a, b) => b.d - a.d);
+      for (const o of order) poly(o.f.map(k => P[k]), shade(base, N[o.i], amb), stroke || null, stroke ? 1 : 0);
+    }
+
+    /* ============================================================
+     * 器材绘制
+     * ============================================================ */
+    const WOOD      = [176, 132, 88];
+    const WOOD_DARK = [96, 66, 40];
+    const PLASTIC   = [206, 220, 232];   // 尺身：浅色半透明塑料
+    const ROD_BODY  = [214, 176, 92];    // 木棒：暖黄
+    const ROD_CAP   = [232, 214, 176];   // 端面：木质浅色
+
+    function drawBackdrop(w, h) {
+      const g = ctx.createRadialGradient(w * 0.46, h * 0.10, 12, w * 0.5, h * 0.55, Math.max(w, h) * 0.86);
+      g.addColorStop(0, '#0d2035');
+      g.addColorStop(0.52, '#071626');
+      g.addColorStop(1, '#020a14');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, w, h);
+    }
+
+    function drawTable(q) {
+      const xc = TARGET[0], hw = TABLE_W / 2, hd = TABLE_D / 2;
+      box3(xc - hw, xc + hw, -TABLE_T, 0, -hd, hd, q, WOOD, 0.44, 'rgba(60,40,24,.5)');
+      // 台面上一圈淡淡的冷光，压住木色、把器材托出来
+      const top = [[xc - hw, 0, -hd], [xc + hw, 0, -hd], [xc + hw, 0, hd], [xc - hw, 0, hd]]
+        .map(p => project(p, q));
+      poly(top, 'rgba(120,180,220,.05)', null, 0);
+    }
+
+    // 刻度尺：尺身 + 刻度线 + 刻度数字
+    function drawRuler(q) {
+      box3(0, RULER_L, 0, RULER_T, -RULER_W / 2, RULER_W / 2, q, PLASTIC, 0.66, 'rgba(120,150,175,.55)');
+      const yTick = RULER_T + 0.0012;
+      const zE = Z_TICK_EDGE;
+      const fine = state.step === STEP_MM;   // 1 mm 的尺才画毫米线
+      for (let v = 0; v <= V_MAX * 10; v++) {
+        const mm = v / 10;
+        const isCm = v % 10 === 0, isMid = v % 5 === 0;
+        if (!isCm && !isMid && !fine) continue;
+        const len = isCm ? TICK_LEN.cm : isMid ? TICK_LEN.mid : TICK_LEN.mm;
+        const col = isCm ? 'rgba(15,23,42,.92)' : isMid ? 'rgba(15,23,42,.68)' : 'rgba(15,23,42,.44)';
+        line([project([xOfV(mm), yTick, zE], q), project([xOfV(mm), yTick, zE - len], q)], col, isCm ? 1.7 : 1.1);
+        if (isCm) {
+          const p = project([xOfV(mm), yTick, Z_NUM], q);
+          ctx.font = '800 ' + (mm === 0 ? 11 : 10) + 'px Inter, "Microsoft YaHei", sans-serif';
+          ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+          ctx.fillStyle = 'rgba(15,23,42,.55)';
+          ctx.fillText(String(mm), p.x + 0.6, p.y + 0.6);
+          ctx.fillStyle = mm === 0 ? '#b91c1c' : 'rgba(15,23,42,.95)';
+          ctx.fillText(String(mm), p.x, p.y);
+          // 【刻度数字是标定位置，不许挪】登记成障碍物，让后来的标签避开它们
+          frameBoxes.push(labelBox(p, String(mm), 10, 'center'));
+        }
+      }
+      // 零刻度线：横贯尺宽的一条醒目红线 —— 这是木棒左端必须对齐的那条线
+      line([project([xOfV(0), yTick, RULER_W / 2 - 0.004], q),
+            project([xOfV(0), yTick, -RULER_W / 2 + 0.004], q)], 'rgba(185,28,28,.85)', 1.8);
+      // 尺面四角：存给自检（判「木棒有没有压在尺上」）
+      state.drawn.rulerTop = [[0, RULER_T, -RULER_W / 2], [RULER_L, RULER_T, -RULER_W / 2],
+                              [RULER_L, RULER_T, RULER_W / 2], [0, RULER_T, RULER_W / 2]]
+                             .map(p => project(p, q)).map(p => ({ x: +p.x.toFixed(1), y: +p.y.toFixed(1) }));
+    }
+
+    // 待测木棒：横放在尺面上，轴线沿 x。圆柱用「一条带横向渐变的粗线 + 两端椭圆端面」画。
+    function drawRod(q) {
+      const xl = xOfV(state.objS), xr = xOfV(L_end());
+      const y = OBJ_AXIS_Y, z = Z_ROD;
+      const a = project([xl, y, z], q), b = project([xr, y, z], q);
+      const dx = b.x - a.x, dy = b.y - a.y;
+      const L = Math.hypot(dx, dy) || 1;
+      const nx = -dy / L, ny = dx / L;
+      const rad = Math.max(1.4, OBJ_R * (a.s + b.s) * 0.5);
+      const g = ctx.createLinearGradient(a.x - nx * rad, a.y - ny * rad, a.x + nx * rad, a.y + ny * rad);
+      g.addColorStop(0, rgb(ROD_BODY, 0.46));
+      g.addColorStop(0.32, rgb(ROD_BODY, 1.06));
+      g.addColorStop(0.60, rgb(ROD_BODY, 1.0));
+      g.addColorStop(1, rgb(ROD_BODY, 0.44));
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
+      ctx.lineWidth = rad * 2; ctx.strokeStyle = g; ctx.lineCap = 'butt';
+      ctx.stroke();
+      // 两个端面（圆盘，在 yz 平面内）：采样一圈投影成多边形
+      for (const xx of [xl, xr]) {
+        const pts = [];
+        for (let k = 0; k < 26; k++) {
+          const t = k / 26 * PI2;
+          pts.push(project([xx, y + Math.sin(t) * OBJ_R, z + Math.cos(t) * OBJ_R], q));
+        }
+        poly(pts, rgb(ROD_CAP, xx === xr ? 1.0 : 0.86), 'rgba(90,64,24,.6)', 1);
+      }
+      // 木棒右端【真实位置】在尺面上的正投影：一条绿色竖线 + 竖虚线。
+      // 它就是「视线正对时该看到的落点」，和红线重合就说明视线正了。
+      const yTick = RULER_T + 0.002;
+      line([project([xr, OBJ_AXIS_Y - OBJ_R, z], q), project([xr, yTick, z], q)],
+           'rgba(52,211,153,.55)', 1.2, [4, 4]);
+      line([project([xr, yTick, RULER_W / 2 - 0.004], q), project([xr, yTick, -RULER_W / 2 + 0.004], q)],
+           'rgba(52,211,153,.95)', 2.0);
+      // 木棒左端也标一条，便于看「对齐了没有」
+      line([project([xl, yTick, RULER_W / 2 - 0.004], q), project([xl, yTick, -RULER_W / 2 + 0.004], q)],
+           'rgba(148,163,184,.75)', 1.4);
+      const pTrue = project([xr, yTick, z], q);
+      state.drawn.rodLeft  = +state.objS.toFixed(3);
+      state.drawn.rodRight = +L_end().toFixed(3);
+      state.drawn.rodTrueX = +pTrue.x.toFixed(1);
+      state.drawn.rodTrueY = +pTrue.y.toFixed(1);
+      // 木棒的屏幕包围盒：当成本帧障碍物推进 frameBoxes ——
+      // 只把标签盒子当障碍的话，「视线落点」会稳稳压在木棒上。
+      const rb = [];
+      for (const x of [xl, xr]) for (const yy of [yTick, OBJ_TOP_Y]) for (const zz of [z - OBJ_R, z + OBJ_R]) rb.push([x, yy, zz]);
+      state.drawn.rodBox = aabbOf(rb, q);
+      frameBoxes.push(state.drawn.rodBox);
+    }
+
+    // 眼睛 + 视线 + 「看到的落点」
+    function drawEye(q) {
+      const ex = xOfV(state.eyeS), xe = xOfV(L_end());
+      const m = parallaxM();
+      const xs = ex + m * (xe - ex);
+      const eye = [ex, EYE_Y, Z_ROD];
+      const top = [xe, OBJ_TOP_Y, Z_ROD];
+      const hit = [xs, RULER_T + 0.002, Z_ROD];
+      // 视线：眼睛 → 木棒顶端（自由空间，实线）；顶端 → 尺面（穿过木棒，虚线延长）
+      line([project(eye, q), project(top, q)], 'rgba(56,189,248,.9)', 2.0);
+      line([project(top, q), project(hit, q)], 'rgba(56,189,248,.55)', 1.3, [5, 4]);
+      // 眼睛图标：白眼球 + 深色瞳孔
+      const pe = project(eye, q);
+      const re = Math.max(3, EYE_R * pe.s);
+      dot2(pe, re, 'rgba(241,245,249,.96)', 'rgba(15,23,42,.75)', 1.2);
+      dot2(pe, re * 0.42, '#0f172a', null, 0);
+      dot2(pe, re * 0.16, '#e2e8f0', null, 0);
+      // 「看到的落点」：尺面上一条红色竖线（横贯尺宽）—— 这就是读数该读的地方
+      const yTick = RULER_T + 0.003;
+      line([project([xs, yTick, RULER_W / 2 - 0.004], q), project([xs, yTick, -RULER_W / 2 + 0.004], q)],
+           'rgba(248,113,113,.98)', 2.4);
+      const pHit = project([xs, yTick, Z_ROD], q);
+      state.drawn.seenX = +pHit.x.toFixed(1);
+      state.drawn.seenY = +pHit.y.toFixed(1);
+      state.drawn.eyeX  = +pe.x.toFixed(1);
+      state.drawn.eyeY  = +pe.y.toFixed(1);
+      state.drawn.eyeS  = +state.eyeS.toFixed(3);
+      state.drawn.seenValue = +seenValue().toFixed(4);
+      state.drawn.parallax  = +(seenValue() - L_end()).toFixed(4);
+      state.drawn.eye = [{ x: +pe.x.toFixed(1), y: +pe.y.toFixed(1) }];
+      state.drawn.sight = [project(eye, q), project(top, q), project(hit, q)]
+        .map(p => ({ x: +p.x.toFixed(1), y: +p.y.toFixed(1) }));
+      // 眼睛图标本身也进障碍表，「眼睛」两个字才不会被自己的球压住
+      state.drawn.eyeBox = { x: pe.x - re, y: pe.y - re, w: re * 2, h: re * 2,
+                             cx: pe.x, cy: pe.y };
+      frameBoxes.push(state.drawn.eyeBox);
+    }
+
+    /* ============================================================
+     * 渲染
+     * ============================================================ */
+    // 舞台上的 DOM 浮层也是障碍物：提示框、浮标、按钮条、操作提示。
+    // 【只算真正看得见的】opacity 为 0 的浮层照样占位置，把它当障碍会在画面中间
+    // 空出一块假禁区，标签全被挤到边角。
+    // 【别把 left:0;right:0 的整条 .stage-bar 当障碍】它中间那片空白也会变成禁区，
+    // 只取左侧按钮条与右侧提示这两个真实矩形。
+    function uiBoxes() {
+      // 画布坐标以 canvas 自身左上角为原点（stage 有 1px 边框，用 stage 会整体偏 1px）
+      const cr = canvas.getBoundingClientRect();
+      const out = [];
+      for (const sel of ['.stage-hint', '.stage-flag', '.bar-left', '.stage-help']) {
+        const el = stage.querySelector(sel);
+        if (!el) continue;
+        if (parseFloat(getComputedStyle(el).opacity || '1') < 0.05) continue;
+        const r = el.getBoundingClientRect();
+        if (r.width < 1 || r.height < 1) continue;
+        out.push({ x: r.left - cr.left, y: r.top - cr.top, w: r.width, h: r.height,
+                   cx: r.left - cr.left + r.width / 2, cy: r.top - cr.top + r.height / 2 });
+      }
+      return out;
+    }
+
+    function render() {
+      const w = state.w, h = state.h;
+      ctx.setTransform(state.dpr, 0, 0, state.dpr, 0, 0);
+      frameBoxes = uiBoxes();      // DOM 浮层先占位
+      labelQueue = [];
+      labelLog = [];
+      state.drawn = {};
+      const q = {};
+      makeCam(q, w, h);
+
+      drawBackdrop(w, h);
+      drawTable(q);
+      drawRuler(q);       // 尺在下面
+      drawRod(q);         // 木棒压在尺面上
+      drawEye(q);         // 眼睛与视线在最上面
+
+      // 标签一律走避让；文字最后统一落笔
+      avoidLabel(project([xOfV(V_MAX * 0.62), RULER_T, RULER_W / 2 + 0.30], q), '刻度尺', '#cbd5e1', 11);
+      avoidLabel(project([xOfV((state.objS + L_end()) / 2), OBJ_TOP_Y + 0.26, Z_ROD], q), '待测木棒', '#fde68a', 11);
+      avoidLabel(project([xOfV(state.eyeS), EYE_Y + EYE_R + 0.16, Z_ROD], q), '眼睛', '#7dd3fc', 11);
+      avoidLabel(project([xOfV(seenValue()), RULER_T, Z_ROD], q), '视线落点', '#fca5a5', 10);
+      avoidLabel(project([TARGET[0], 0.02, TABLE_D * 0.6], q), '实验台', 'rgba(148,197,255,.85)', 11);
+
+      flushLabels();
+      updateHint();
+      drawTip(q);
+    }
+
+    function drawTip(q) {
+      const tip = $('ruler-tip');
+      if (!state.hover || state.dragging) { tip.classList.remove('show'); return; }
+      let p;
+      if (state.hover === 'eye') {
+        p = project([xOfV(state.eyeS), EYE_Y + EYE_R, Z_ROD], q);
+        // 气泡里【不报视线落点的数值】——那正是要学生自己读的读数
+        tip.textContent = '拖动眼睛 · 现在在 ' + state.eyeS.toFixed(1) + ' cm 上方';
+      } else {
+        p = project([xOfV(state.objS), OBJ_TOP_Y, Z_ROD], q);
+        tip.textContent = '拖动木棒 · 左端在 ' + state.objS.toFixed(2) + ' cm 处';
+      }
+      tip.style.left = Math.round(p.x + 14) + 'px';
+      tip.style.top = Math.round(p.y - 14) + 'px';
+      tip.classList.add('show');
+    }
+
+    /* ============================================================
+     * 「五会」判据
+     * ------------------------------------------------------------
+     * 五项互相独立，各自有自己的物理含义，不能互相顶替：
+     *   会选 = 分度值选对（1 mm 的尺才读得出 0.04 cm 这一位）
+     *   会放 = 零刻度线对齐木棒左端
+     *   会看 = 视线正对木棒右端（视差为 0）
+     *   会读 = 准确值取整正确 + 估读值在 [0, 分度值) 内 + 两者之和落在真值附近
+     *   会记 = 单位选对
+     * 注意「会读」比的是【木棒真长】而不是【眼睛看到的落点】：
+     * 前面两步没做好，画面上的落点本身就偏了，老实照抄就会读错 —— 这正是设计意图。
+     * ============================================================ */
+    const stepU = () => Math.round(state.step * 100);          // 分度值，单位 0.01 cm
+    const accWantU = () => Math.floor(state.objU / stepU()) * stepU();
+    const estWantU = () => state.objU - accWantU();
+    function readOK() {
+      if (state.acc === '' || state.est === '') return false;
+      const a = Math.round(+state.acc * 100), e = Math.round(+state.est * 100);
+      if (!isFinite(a) || !isFinite(e)) return false;
+      if (a !== accWantU()) return false;
+      // 【只要 e ≥ 0 就一定不越格，所以这里没有「e < 分度值」那一条】
+      // a 已经被锁死成向下取整的那一格，而真值 objU = a + r，r ∈ [0, 分度值)。
+      // 于是 e ≥ 分度值 ⟹ |a + e − objU| = e − r ≥ 分度值 − r > 分度值/2，下面那条
+      // 一定会否掉它 —— 写着也永远不会生效。写成「有这一条」只会让自检误以为覆盖到了
+      // （实测：把它删掉，一条断言都不变红）。真正会漏的是负的估读值：
+      // e = −1 时 a + e 与真值只差 r − 1 ≤ 5，下面那条反而会放过它。
+      if (e < 0) return false;
+      return Math.abs(a + e - state.objU) <= stepU() / 2;
+    }
+    function grade() {
+      const g = {
+        sel:   state.step === STEP_MM,
+        put:   Math.abs(state.objS) <= TOL_PUT,
+        look:  Math.abs(state.eyeS - L_end()) <= TOL_LOOK,
+        read:  readOK(),
+        write: state.unit === 'cm'
+      };
+      g.n = (g.sel ? 1 : 0) + (g.put ? 1 : 0) + (g.look ? 1 : 0) + (g.read ? 1 : 0) + (g.write ? 1 : 0);
+      g.ok = g.n === 5;
+      return g;
+    }
+    // 判据里用到的、自检要能独立复算的量
+    const gradeDetail = () => {
+      const g = grade();
+      return {
+        g: g,
+        step: state.step, stepU: stepU(),
+        objU: state.objU, objL: objL(), Lend: L_end(),
+        objS: state.objS, eyeS: state.eyeS,
+        accWant: accWantU() / 100, estWant: estWantU() / 100,
+        acc: state.acc, est: state.est, unit: state.unit,
+        seen: seenValue(), parallax: seenValue() - L_end(),
+        tolPut: TOL_PUT, tolLook: TOL_LOOK
+      };
+    };
+
+    const RUBRIC = [
+      { k: 'sel',   t: '会选 · 分度值', d: '题目要求精确到毫米，得拿分度值 1 mm 的尺' },
+      { k: 'put',   t: '会放 · 零刻度线对齐', d: '木棒左端要对准零刻度线（±0.05 cm）' },
+      { k: 'look',  t: '会看 · 视线垂直于尺面', d: '眼睛要正对木棒右端，否则读数有视差' },
+      { k: 'read',  t: '会读 · 准确值 + 估读值', d: '准确值取整到分度值，估读值取到分度值下一位' },
+      { k: 'write', t: '会记 · 数值带单位', d: '本次用厘米作单位记录' }
+    ];
+
+    /* ============================================================
+     * 界面同步
+     * ============================================================ */
+    function fmt(n, k) { return isFinite(n) ? n.toFixed(k === undefined ? 2 : k) : '—'; }
+
+    function renderRubric() {
+      const g = grade();
+      $('rubric').innerHTML = RUBRIC.map(it =>
+        '<div class="it ' + (g[it.k] ? 'ok' : 'bad') + '">' +
+          '<span class="mk">' + (g[it.k] ? '✓' : '✕') + '</span>' +
+          '<span class="tx"><b>' + it.t + '</b><span>' + it.d + '</span></span>' +
+        '</div>').join('');
+      $('score-pill').textContent = g.n + ' / 5';
+      $('score-pill').classList.toggle('ok', g.ok);
+      const btn = $('ruler-fix');
+      btn.classList.toggle('ready', !g.put || !g.look || !g.sel);
+      return g;
+    }
+
+    // 【分析区不许报数值】真值、视线落点、准确值该填多少，都是答案本身。
+    // 五会没全做到之前只给「往哪个方向改」的话；全部做到之后才把拆解摊开。
+    function renderAnalysis() {
+      const g = grade();
+      if (!g.ok) {
+        let tip;
+        if (!g.sel) {
+          tip = '分度值选错了：1 cm 的尺只能读到 0.1 cm，量不出这支木棒毫米以下的那点零头。要精确到毫米，得换分度值 1 mm 的尺。';
+        } else if (!g.put) {
+          tip = '零刻度线没对准木棒左端 —— 木棒整体偏了多少，读数就会整体偏多少。把木棒拖到左端正好压在 0 刻度线上。';
+        } else if (!g.look) {
+          tip = '视线不正：眼睛沿尺长方向偏离了木棒右端，视线斜着打到尺面上，落点就跟着偏 —— 这就是视差。把眼睛拖到木棒右端的正上方。';
+        } else if (!g.read) {
+          tip = '读数还不对。先读准确值（取到分度值那一位），再估读一位（分度值的下一位），两者相加才是测量结果。';
+        } else {
+          tip = '数值对了，单位不对。本次要求用厘米作单位记录 —— 记录结果必须带单位。';
+        }
+        $('analysis').innerHTML =
+          '<div class="analysis"><div class="line"><span>当前分度值</span><b>' +
+          (state.step === STEP_MM ? '1 mm' : '1 cm') + '</b></div>' +
+          '<div class="line"><span>五会完成</span><b>' + g.n + ' / 5</b></div>' +
+          '<div class="conc warn">' + tip + '</div></div>';
+        return;
+      }
+      const acc = accWantU() / 100, est = estWantU() / 100;
+      $('analysis').innerHTML =
+        '<div class="analysis">' +
+        '<div class="line"><span>木棒长度（真值）</span><b>' + fmt(objL(), 2) + ' cm</b></div>' +
+        '<div class="line"><span>准确值</span><b>' + fmt(acc, 2) + ' cm</b></div>' +
+        '<div class="line"><span>估读值</span><b>' + fmt(est, 2) + ' cm</b></div>' +
+        '<div class="line"><span>视差</span><b>' + (Math.abs(seenValue() - L_end()) < 1e-9 ? '0（视线正对）' : fmt(seenValue() - L_end(), 3) + ' cm') + '</b></div>' +
+        '<div class="conc">规范操作完成 ✓ 读数 <b>' + fmt(state.objU / 100, 2) + ' cm</b> = 准确值 ' +
+        fmt(acc, 2) + ' cm + 估读值 ' + fmt(est, 2) + ' cm。换成毫米就是 <b>' +
+        fmt(state.objU / 10, 1) + ' mm</b> —— 数值变了，含义没变，这就是「会记」。</div>' +
+        '</div>';
+    }
+
+    function syncUI() {
+      $('v-step').textContent = state.step === STEP_MM ? '1 mm' : '1 cm';
+      $('v-obj').textContent = state.objS.toFixed(2);
+      $('v-eye').textContent = state.eyeS.toFixed(1);
+      $('sl-obj').value = state.objS;
+      $('sl-eye').value = state.eyeS;
+      $('mode-mm').classList.toggle('on', state.step === STEP_MM);
+      $('mode-cm').classList.toggle('on', state.step === STEP_CM);
+      $('btn-mm').classList.toggle('primary', state.step === STEP_MM);
+      $('btn-cm').classList.toggle('primary', state.step === STEP_CM);
+      $('in-acc').value = state.acc;
+      $('in-est').value = state.est;
+      $('in-unit').value = state.unit;
+      const a = state.acc === '' ? NaN : +state.acc, e = state.est === '' ? NaN : +state.est;
+      $('read-sum').textContent = (isFinite(a) || isFinite(e))
+        ? fmt((isFinite(a) ? a : 0) + (isFinite(e) ? e : 0), 2) + ' ' + state.unit
+        : '—';
+      $('read-pill').textContent = readOK() ? '已正确' : (state.acc === '' && state.est === '' ? '待填写' : '检查中');
+      $('read-pill').classList.toggle('ok', readOK());
+      $('q-pill').textContent = '第 ' + state.qno + ' 题';
+      $('ruler-info').innerHTML = '当前尺：分度值 <b>' + (state.step === STEP_MM ? '1 mm' : '1 cm') +
+        '</b>，量程 0 ~ ' + V_MAX + ' cm。眼睛在木棒顶端之上 ' + fmt(EYE_H * U, 0) + ' cm 处。';
+      const g = renderRubric();
+      renderAnalysis();
+      $('ruler-flag').classList.toggle('show', g.ok);
+      $('ruler-flag').classList.toggle('warn', false);
+      state.dirty = true;
+    }
+
+    // 提示条也不报「木棒右端在哪」——那正是学生要自己读出来的数
+    function updateHint() {
+      const g = grade();
+      const txt = [];
+      if (g.ok) {
+        txt.push('<b>五会全部做到 ✓</b>现在读尺：木棒右端落在哪两条刻度线之间？');
+        txt.push('准确值读到分度值那一位，再估读到<b>下一位</b>，别忘了写单位。');
+      } else {
+        const miss = RUBRIC.filter(it => !g[it.k]).map(it => it.t.split(' · ')[0]);
+        txt.push('还差：<b>' + miss.join('、') + '</b>');
+        txt.push('木棒左端 ' + state.objS.toFixed(2) + ' cm ｜ 眼睛 ' + state.eyeS.toFixed(1) + ' cm');
+      }
+      $('ruler-hint').innerHTML = txt.map(t => '<div>' + t + '</div>').join('');
+    }
+
+    let toastTimer = 0;
+    function showToast(text) {
+      const el = $('ruler-toast');
+      el.textContent = text;
+      el.classList.add('show');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => el.classList.remove('show'), 1900);
+    }
+
+    /* ============================================================
+     * 动作
+     * ============================================================ */
+    function setStep(s) {
+      state.step = s;
+      // 分度值一变，已经填好的「准确值 / 估读值」就不一定还成立，清掉重填
+      state.acc = ''; state.est = '';
+      showToast(s === STEP_MM ? '换成分度值 1 mm 的尺' : '换成分度值 1 cm 的尺');
+      syncUI();
+    }
+    function fixAll() {
+      state.step = STEP_MM;
+      state.objS = 0;
+      state.eyeS = L_end();
+      showToast('已按规范摆好：零刻度线对齐 · 视线正对右端');
+      syncUI();
+    }
+    function newQuestion() {
+      state.qno++;
+      // 长度取 6.00 ~ 9.00 cm，并强制百分位非零（不然估读值就是 0，练不到「估读」）
+      const h = [1, 2, 3, 4, 6, 7, 8, 9][Math.floor(Math.random() * 8)];
+      state.objU = Math.floor((600 + Math.floor(Math.random() * 301)) / 10) * 10 + h;
+      // 故意把木棒放偏一点、眼睛放歪一点，让学生自己动手
+      state.objS = +(0.12 + Math.random() * 0.45).toFixed(2);
+      const off = (Math.random() < 0.5 ? -1 : 1) * (1.2 + Math.random() * 3.0);
+      state.eyeS = +(state.objS + objL() + off).toFixed(2);
+      state.step = STEP_MM;
+      state.acc = ''; state.est = ''; state.unit = 'cm'; state.submitted = false;
+      showToast('换了一题：木棒长度变了，重新摆一次');
+      syncUI();
+    }
+    function checkRead() {
+      state.submitted = true;
+      const g = grade();
+      showToast(g.read ? '读数正确 ✓' : '读数还不对，看看「五会」评分');
+      syncUI();
+    }
+
+    /* ============================================================
+     * 输入：拖动 / 缩放 / 命中
+     * ============================================================ */
+    // 【返回的盒子必须同时有 x0/y0 和 x/y】命中测试读 x0/y0，而标签避让求解器
+    // 统一读 x/y/w/h。只给一套的话，另一种读法拿到 undefined → 算出来是 NaN →
+    // `NaN > 0` 为假 → 这个障碍物被【静默忽略】（实测：木棒盒子推进去却毫无作用）。
+    function aabbOf(pts, q) {
+      let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
+      for (const p of pts) {
+        const s = project(p, q);
+        x0 = Math.min(x0, s.x); x1 = Math.max(x1, s.x);
+        y0 = Math.min(y0, s.y); y1 = Math.max(y1, s.y);
+      }
+      return { x0: x0, x1: x1, y0: y0, y1: y1,
+               x: x0, y: y0, w: x1 - x0, h: y1 - y0,
+               cx: (x0 + x1) / 2, cy: (y0 + y1) / 2 };
+    }
+    function boxesFor(q) {
+      const xl = xOfV(state.objS), xr = xOfV(L_end());
+      const rod = [];
+      for (const x of [xl, xr]) for (const y of [OBJ_AXIS_Y - OBJ_R, OBJ_AXIS_Y + OBJ_R])
+        for (const z of [Z_ROD - OBJ_R, Z_ROD + OBJ_R]) rod.push([x, y, z]);
+      const ex = xOfV(state.eyeS), eye = [];
+      for (const x of [ex - EYE_R, ex + EYE_R]) for (const y of [EYE_Y - EYE_R, EYE_Y + EYE_R])
+        for (const z of [Z_ROD - EYE_R, Z_ROD + EYE_R]) eye.push([x, y, z]);
+      return { obj: aabbOf(rod, q), eye: aabbOf(eye, q) };
+    }
+    function hitTest(x, y, q) {
+      const B = boxesFor(q);
+      const PAD = 6;
+      const cands = [];
+      for (const k of ['eye', 'obj']) {
+        const b = B[k];
+        if (x < b.x0 - PAD || x > b.x1 + PAD || y < b.y0 - PAD || y > b.y1 + PAD) continue;
+        cands.push({ k: k, d: Math.hypot(b.cx - x, b.cy - y) });
+      }
+      if (!cands.length) return null;
+      cands.sort((a, b) => a.d - b.d);
+      return cands[0].k;
+    }
+    const dragSOf = k => k === 'eye' ? state.eyeS : state.objS;
+    function anchorOf(kind, v) {
+      if (kind === 'eye') return [xOfV(v), EYE_Y, Z_ROD];
+      return [xOfV(v + objL() / 2), OBJ_AXIS_Y, Z_ROD];   // 木棒：锚在它的中点
+    }
+    // 反解刻度值：让锚点的【投影 x】跟着光标走。不做「光标射线交尺面」——
+    // 用户抓的是木棒中段 / 眼睛球心，离尺面有一段高度，同一束射线解出的刻度会偏，
+    // 而且偏多少随位置变，记一个固定差值补不干净。按锚点投影 x 二分反解则一点不漂。
+    // 【二分方向必须先量出来】本页刻度值增大时世界 x 也增大，投影 x 是随刻度值
+    // 单调【增】还是【减】取决于相机在 +x 还是 −x 一侧。写死方向的话，转到对侧
+    // 视角拖动就会反向飞出去 —— 所以先投影两端点，由两端的大小定方向。
+    function sFromAnchor(px, q, kind) {
+      const tx = px - state.dragGrab.x;
+      const a0 = project(anchorOf(kind, -2), q).x, a1 = project(anchorOf(kind, 18), q).x;
+      const inc = a1 > a0;
+      let lo = -2, hi = 18;
+      for (let k = 0; k < 26; k++) {
+        const mid = (lo + hi) / 2;
+        const mx = project(anchorOf(kind, mid), q).x;
+        if ((mx > tx) === inc) hi = mid; else lo = mid;
+      }
+      return (lo + hi) / 2;
+    }
+    function clampDrags() {
+      state.objS = clamp(state.objS, -0.5, 0.8);
+      state.eyeS = clamp(state.eyeS, -0.5, 16);
+    }
+
+    function onDown(e) {
+      const r = canvas.getBoundingClientRect();
+      const x = e.clientX - r.left, y = e.clientY - r.top;
+      const q = {}; makeCam(q, state.w, state.h);
+      const hit = hitTest(x, y, q);
+      state.downAt = { x: x, y: y, hit: hit, moved: 0 };
+      const grab = k => {
+        state.dragging = true; state.drag = k;
+        const a = project(anchorOf(k, dragSOf(k)), q);
+        state.dragGrab = { x: x - a.x, y: y - a.y };
+        try { canvas.setPointerCapture(e.pointerId); } catch (_) { }
+      };
+      if (hit === 'eye' || hit === 'obj') {
+        grab(hit);
+      } else {
+        state.dragging = true;
+        state.drag = 'orbit';
+        state.lastX = x; state.lastY = y;
+        canvas.classList.add('grabbing');
+        try { canvas.setPointerCapture(e.pointerId); } catch (_) { }
+      }
+      state.dirty = true;
+    }
+    function onMove(e) {
+      const r = canvas.getBoundingClientRect();
+      const x = e.clientX - r.left, y = e.clientY - r.top;
+      const q = {}; makeCam(q, state.w, state.h);
+      if (state.dragging) {
+        if (state.downAt) state.downAt.moved = Math.max(state.downAt.moved,
+          Math.hypot(x - state.downAt.x, y - state.downAt.y));
+        if (state.drag === 'orbit') {
+          state.yaw -= (x - state.lastX) * 0.006;
+          state.pitch = clamp(state.pitch + (y - state.lastY) * 0.005, 0.04, 1.42);
+          state.lastX = x; state.lastY = y;
+          state.view = 'custom';
+        } else if (state.drag === 'eye' || state.drag === 'obj') {
+          const sv = sFromAnchor(x, q, state.drag);
+          if (sv != null) {
+            if (state.drag === 'eye') state.eyeS = sv; else state.objS = sv;
+            clampDrags();
+            syncUI();
+          }
+        }
+        state.dirty = true;
+        return;
+      }
+      const hit = hitTest(x, y, q);
+      state.hover = (hit === 'eye' || hit === 'obj') ? hit : null;
+      canvas.classList.toggle('pick', !!state.hover);
+      state.dirty = true;
+    }
+    function onUp() {
+      state.dragging = false;
+      canvas.classList.remove('grabbing');
+      state.drag = null;
+      state.dirty = true;
+    }
+    function onWheel(e) {
+      e.preventDefault();
+      state.zoom = clamp(state.zoom * (e.deltaY > 0 ? 0.92 : 1.087), 0.45, 3.2);
+      state.dirty = true;
+    }
+
+    /* ============================================================
+     * 尺寸 / 主循环
+     * ============================================================ */
+    function resize() {
+      const r = stage.getBoundingClientRect();
+      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      const w = Math.max(320, Math.round(r.width));
+      const h = Math.max(240, Math.round(r.height));
+      state.w = w; state.h = h; state.dpr = dpr;
+      canvas.width = Math.round(w * dpr);
+      canvas.height = Math.round(h * dpr);
+      canvas.style.width = w + 'px';
+      canvas.style.height = h + 'px';
+      state.dirty = true;
+    }
+    function tick() {
+      if (state.dirty) { render(); state.dirty = false; }
+      requestAnimationFrame(tick);   // 末尾重挂：抛异常就杀死循环，宁可这一帧没画
+    }
+
+    /* ============================================================
+     * 事件绑定
+     * ============================================================ */
+    canvas.addEventListener('pointerdown', onDown);
+    canvas.addEventListener('pointermove', onMove);
+    canvas.addEventListener('pointerup', onUp);
+    canvas.addEventListener('pointercancel', onUp);
+    canvas.addEventListener('pointerleave', () => { state.hover = null; canvas.classList.remove('pick'); state.dirty = true; });
+    canvas.addEventListener('wheel', onWheel, { passive: false });
+
+    $('mode-mm').addEventListener('click', () => setStep(STEP_MM));
+    $('mode-cm').addEventListener('click', () => setStep(STEP_CM));
+    $('btn-mm').addEventListener('click', () => setStep(STEP_MM));
+    $('btn-cm').addEventListener('click', () => setStep(STEP_CM));
+    $('ruler-fix').addEventListener('click', fixAll);
+    $('ruler-new').addEventListener('click', newQuestion);
+    $('btn-check').addEventListener('click', checkRead);
+    $('sl-obj').addEventListener('input', e => { state.objS = clamp(+e.target.value, -0.5, 0.8); syncUI(); });
+    $('sl-eye').addEventListener('input', e => { state.eyeS = clamp(+e.target.value, -0.5, 16); syncUI(); });
+    $('in-acc').addEventListener('input', e => { state.acc = e.target.value; syncUI(); });
+    $('in-est').addEventListener('input', e => { state.est = e.target.value; syncUI(); });
+    $('in-unit').addEventListener('change', e => { state.unit = e.target.value; syncUI(); });
+
+    if (window.ResizeObserver) new ResizeObserver(() => resize()).observe(stage);
+    window.addEventListener('resize', resize);
+
+    // 第一题：木棒放偏一点、眼睛放歪一点，让学生自己动手
+    state.objU = 734;
+    state.objS = 0.30;
+    state.eyeS = +(state.objS + objL() + 2.2).toFixed(2);
+    resize();
+    clampDrags();
+    syncUI();
+    requestAnimationFrame(tick);
+
+    /* ============================================================
+     * 自检钩子
+     * ============================================================ */
+    window.__ruler = {
+      state: state,
+      consts: {
+        U: U, RULER_L: RULER_L, RULER_W: RULER_W, RULER_T: RULER_T, X0: X0, V_MAX: V_MAX,
+        OBJ_R: OBJ_R, Z_ROD: Z_ROD, OBJ_AXIS_Y: OBJ_AXIS_Y, OBJ_TOP_Y: OBJ_TOP_Y,
+        EYE_H: EYE_H, EYE_Y: EYE_Y, EYE_R: EYE_R,
+        TABLE_W: TABLE_W, TABLE_D: TABLE_D, TABLE_T: TABLE_T,
+        TOL_PUT: TOL_PUT, TOL_LOOK: TOL_LOOK, STEP_MM: STEP_MM, STEP_CM: STEP_CM,
+        Z_NUM: Z_NUM, TICK_LEN: TICK_LEN, VIEWS: VIEWS
+      },
+      makeCam: makeCam, project: project, size: () => ({ w: state.w, h: state.h, dpr: state.dpr }),
+      envelopePoints: envelopePoints,
+      // 几何 / 物理：自检必须和页面用【同一套函数】，不能各抄一遍公式
+      xOfV: xOfV, vOfX: vOfX, objL: objL, L_end: L_end,
+      parallaxM: parallaxM, seenValue: seenValue, seenValueRay: seenValueRay,
+      stepU: stepU, accWantU: accWantU, estWantU: estWantU, readOK: readOK,
+      grade: grade, gradeDetail: gradeDetail,
+      set(o) {
+        o = o || {};
+        for (const k of ['objU', 'objS', 'eyeS', 'step', 'unit', 'acc', 'est']) {
+          if (o[k] != null) state[k] = o[k];
+        }
+        if (o.yaw != null) state.yaw = o.yaw;
+        if (o.pitch != null) state.pitch = o.pitch;
+        if (o.zoom != null) state.zoom = o.zoom;
+        clampDrags();
+        syncUI();
+      },
+      setView(v) {
+        if (!VIEWS[v]) return;
+        state.yaw = VIEWS[v][0]; state.pitch = VIEWS[v][1];
+        state.view = v; state.dirty = true;
+      },
+      click(id) { const b = $(id); if (b) b.click(); },
+      setStep: setStep, fixAll: fixAll, newQuestion: newQuestion, checkRead: checkRead,
+      hitTest: hitTest,
+      dragTo(kind, v, grab) {               // 自检用：走真实的拖动反解路径
+        const q = {}; makeCam(q, state.w, state.h);
+        state.drag = kind;
+        // 【grab 要能传进来】真实拖动时 dragGrab 记的是「按下点 − 锚点」，不是 0。
+        // 写死 {0,0} 的话，把补偿那一行删掉自检照样全绿 —— 探针绕过了被测入口。
+        state.dragGrab = grab ? { x: grab[0], y: grab[1] } : { x: 0, y: 0 };
+        const sv = sFromAnchor(project(anchorOf(kind, v), q).x + state.dragGrab.x, q, kind);
+        state.drag = null;
+        if (sv == null) return null;
+        if (kind === 'eye') state.eyeS = sv; else state.objS = sv;
+        clampDrags(); syncUI();
+        return kind === 'eye' ? state.eyeS : state.objS;
+      },
+      anchorOf: anchorOf, sFromAnchor: sFromAnchor, boxesFor: boxesFor,
+      hover: () => state.hover,
+      cursor: () => canvas.className,
+      toast: () => ({ text: $('ruler-toast').textContent, show: $('ruler-toast').classList.contains('show') }),
+      flag: () => ({ text: $('ruler-flag').textContent, show: $('ruler-flag').classList.contains('show') }),
+      hint: () => $('ruler-hint').textContent.replace(/\s+/g, ' ').trim(),
+      rubric: () => [...document.querySelectorAll('#rubric .it')].map(el => ({
+        ok: el.classList.contains('ok'),
+        mark: el.querySelector('.mk').textContent.trim(),
+        title: el.querySelector('.tx b').textContent.trim(),
+        desc: el.querySelector('.tx span').textContent.trim()
+      })),
+      analysis: () => $('analysis').textContent.replace(/\s+/g, ' ').trim(),
+      readUI: () => ({
+        acc: $('in-acc').value, est: $('in-est').value, unit: $('in-unit').value,
+        sum: $('read-sum').textContent, pill: $('read-pill').textContent,
+        pillOK: $('read-pill').classList.contains('ok')
+      }),
+      stepUI: () => ({
+        step: state.step, vStep: $('v-step').textContent,
+        mmOn: $('mode-mm').classList.contains('on'), cmOn: $('mode-cm').classList.contains('on'),
+        mmBtn: $('btn-mm').classList.contains('primary'), cmBtn: $('btn-cm').classList.contains('primary'),
+        fixReady: $('ruler-fix').classList.contains('ready')
+      }),
+      stageBtns() {
+        const st = stage.getBoundingClientRect();
+        const out = {};
+        for (const id of ['mode-mm', 'mode-cm', 'ruler-fix', 'ruler-new']) {
+          const r = $(id).getBoundingClientRect();
+          out[id] = {
+            onStage: r.left >= st.left - 1 && r.right <= st.right + 1 &&
+                     r.top >= st.top - 1 && r.bottom <= st.bottom + 1,
+            visibleWithoutScroll: r.bottom <= window.innerHeight + 1,
+            rect: { x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height) }
+          };
+        }
+        out.stage = { x: Math.round(st.left), y: Math.round(st.top), w: Math.round(st.width), h: Math.round(st.height) };
+        return out;
+      },
+      labels: () => labelLog.map(o => ({ text: o.text, x: o.x, y: o.y, w: o.w, h: o.h })),
+      uiBoxes: uiBoxes,
+      // 供自检量「避让候选表到底给了哪些落点、每个的代价是多少」——
+      // 只测最终落点的话，看不出求解器是「没找到空位」还是「找到了却选错」。
+      labelBox: labelBox,
+      avoidCandidates: avoidCandidates,
+      bestLabel: bestLabel,
+      drawn: () => state.drawn,
+      dirty: () => { state.dirty = true; },
+      // 立刻重画一帧（同步）。自检要在「刚设好的 state」上读 drawn.*，
+      // 靠等 rAF 的话读到的可能已经是下一场景。
+      renderNow: () => { render(); }
+    };
+  })();
+  </script>
+  <script src="protect.js"></script>
+</body>
+</html>
