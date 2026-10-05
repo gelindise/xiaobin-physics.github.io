@@ -59,10 +59,14 @@
     .stage-hud em { font-style: normal; color: #fdba74; }
     .stage-hud s { text-decoration: none; color: #fca5a5; font-variant-numeric: tabular-nums; }
 
-    .mag-inset { position: absolute; top: 12px; right: 12px; width: 236px; border: 1px solid #45627b; border-radius: 10px; background: #091729ee; padding: 8px; box-shadow: 0 8px 28px #0006; pointer-events: none; }
-    .mag-inset > span { display: block; text-align: center; color: #bae6fd; font-size: 11px; font-weight: 700; margin-bottom: 5px; }
-    #magCanvas { width: 100%; height: 112px; display: block; border-radius: 5px; background: #0a1a2b; }
-    .mag-inset small { display: block; text-align: center; padding-top: 5px; color: #a3b7c9; font-size: 10px; line-height: 1.4; }
+    /* 放大镜要能【真的用来读数】：画布放大到 ~320×200，刻度按分度值逐条标数字。
+       它是浮在画面右上角的，一大就挡场景 —— 所以只放大到「够读」为止。
+       ★ 改这里的尺寸不用同步改 JS 常量：drawMag() 的几何是按画布 W/H 成比例算的
+         （旧版把 26/52/39/112 写死，只对 218×112 成立）。 */
+    .mag-inset { position: absolute; top: 12px; right: 12px; width: 340px; border: 1px solid #45627b; border-radius: 10px; background: #091729f2; padding: 9px; box-shadow: 0 8px 28px #0007; pointer-events: none; }
+    .mag-inset > span { display: block; text-align: center; color: #bae6fd; font-size: 12px; font-weight: 700; margin-bottom: 6px; }
+    #magCanvas { width: 100%; height: 200px; display: block; border-radius: 5px; background: #0a1a2b; }
+    .mag-inset small { display: block; text-align: center; padding-top: 6px; color: #a3b7c9; font-size: 10.5px; line-height: 1.45; }
 
     .chart-wrap { margin-top: 12px; border: 1px solid #25415a; border-radius: 12px; background: #0b1a2c; padding: 12px 14px 8px; }
     .chart-head { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; margin-bottom: 6px; font-size: 11.5px; color: #9db4c8; }
@@ -132,8 +136,11 @@
     .callout.warn { border-color: #9a3412; background: #3a1a0c55; color: #fcd9b6; }
     .callout.warn b { color: #fdba74; }
 
-    .below { display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, .78fr); gap: 15px; margin-top: 17px; }
     .panel { border: 1px solid #263e54; background: #0e1d2e; border-radius: 14px; padding: 18px; min-width: 0; }
+    /* 「按步骤学会用温度计」与「实验记录」原来挂在页面底部的 .below 里，而左栏内容
+       只到 y≈1327、栏底却在 2209（空白 882 px，侧栏只空 19 px）—— 实测出来的。
+       现在两块都并进实验栏：左栏内容 ≈ 侧栏内容，两栏等高，页面不再有一大块空白。 */
+    .viewer .steps-panel, .viewer .records-panel { margin-top: 12px; }
     .panel h2 { margin: 0 0 8px; font-size: 18px; color: #f1f5f9; }
     .panel p { color: #a9bdcb; font-size: 12px; line-height: 1.65; margin: 0 0 12px; }
 
@@ -200,8 +207,8 @@
       .shell-head { align-items: flex-start; flex-direction: column; }
       .viewer { padding: 9px; }
       .stage { height: 430px; }
-      .mag-inset { width: 158px; top: 8px; right: 8px; padding: 5px; }
-      #magCanvas { height: 84px; }
+      .mag-inset { width: 206px; top: 8px; right: 8px; padding: 6px; }
+      #magCanvas { height: 126px; }
       .stage-top { left: 8px; top: 8px; max-width: 138px; font-size: 10px; }
       .stage-hud { right: 8px; bottom: 8px; padding: 6px 9px; font-size: 10px; }
       .stage-hud b { font-size: 14px; }
@@ -209,7 +216,6 @@
       .metrics { grid-template-columns: repeat(2, 1fr); }
       .sidebar { display: block; padding: 15px; }
       .group { border-bottom: 1px solid #213449; margin-bottom: 13px; padding-bottom: 13px; }
-      .below { grid-template-columns: 1fr; }
     }
   </style>
   <script src="auth-check.js"></script>
@@ -276,6 +282,48 @@
             <div class="metric"><span>玻璃泡位置</span><strong id="metricPlace">—</strong></div>
             <div class="metric"><span>量程 / 分度值</span><strong id="metricRange">—</strong></div>
           </div>
+
+      <section class="panel steps-panel">
+        <h2>按步骤学会用温度计</h2>
+        <p>沿着真实操作顺序走一遍：先认清量程和分度值，再学怎么放、什么时候读、视线怎么摆，最后看体温计特殊在哪里。</p>
+        <div class="steps" id="steps">
+          <button type="button" data-step="0" class="active">01 认识温度计</button>
+          <button type="button" data-step="1">02 会放</button>
+          <button type="button" data-step="2">03 会读</button>
+          <button type="button" data-step="3">04 会记</button>
+          <button type="button" data-step="4">05 体温计</button>
+        </div>
+        <div class="step-detail" id="stepDetail" aria-live="polite"></div>
+        <div class="record-actions">
+          <small>记录按钮在实验台右侧的「⑥ 记录数据」里 —— 每换一种条件就点一下，数据会同步到下面这张表。</small>
+        </div>
+        <div class="law">
+          <b>温度</b>：表示物体<b>冷热程度</b>的物理量。温度计的原理是液体的<b>热胀冷缩</b>。<br>
+          <b>摄氏温度的规定</b>：把<code>冰水混合物</code>的温度规定为 0 ℃，把<code>标准大气压下沸水</code>的温度规定为 100 ℃，在 0 ℃ 和 100 ℃ 之间分成 100 等份，每一份就是 1 ℃。<br>
+          <b>会认</b>：看清温度计的<b>量程</b>（能测的温度范围）和<b>分度值</b>（一个小格代表多少 ℃），以及零刻度在哪。<br>
+          <b>会放</b>：玻璃泡要<b>全部浸入</b>被测液体中，不要碰到容器<b>底</b>，也不要碰到容器<b>壁</b>。<br>
+          <b>会读</b>：玻璃泡要<b>留在液体中</b>；要等示数<b>稳定</b>后再读；视线要与温度计中液柱的上表面<b>相平</b>。俯视读数偏大，仰视读数偏小。<br>
+          <b>会记</b>：记录要写<b>数值 + 单位</b>（如 65 ℃），不能只写 65。<br>
+          <b>体温计</b>：量程 <code>35 ~ 42 ℃</code>，分度值 <code>0.1 ℃</code>；玻璃泡上方有一段很细的<b>缩口</b>，水银退不回去，所以可以<b>离开人体读数</b>；用前要拿着它<b>甩一甩</b>，把水银甩回玻璃泡。<br>
+          <b>提示</b>：本页的视线偏差由管径、眼睛到温度计的距离和视线倾角<b>算出来</b>（<code>ΔT = (r/D)·Δy ÷ 每 ℃ 的刻度高度</code>），不是写死的数。三种错误放法的偏差都按「玻璃泡接触到的各部分按换热系数加权」算：碰杯壁的壁温、碰杯底的杯底水温，都按<b>向室温靠拢</b>定，所以水温高于室温时读数都偏低、低于室温时都偏高 —— 方向随水温变号，这才是必须避开它们的理由。本页<b>不加热</b>，没有「杯底被烤热」这一条。
+        </div>
+      </section>
+
+      <section class="panel records-panel">
+        <h2>实验记录</h2>
+        <p>每换一种条件就点一次「记录数据」，表格会留下载数、真实水温和这一次的误差 —— 你能一眼看出哪些读数是可信的。点「重置」会把表格一起清空，重新开始记录。</p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>序号</th><th>读数</th><th>真实水温</th><th>误差</th><th>玻璃泡位置</th><th>视线</th><th>温度计</th><th>读数可信吗</th></tr>
+            </thead>
+            <tbody id="records">
+              <tr><td colspan="8" class="empty">尚无记录，先调好条件再点“记录数据”</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="note" id="summary">建议记录：先记一次「全部浸入 + 平视」的正确读数，再逐个改坏条件（碰底 / 碰壁 / 浸一半 / 俯视 / 仰视）各记一次，比较误差的方向和大小。</div>
+      </section>
         </div>
 
         <aside class="sidebar" aria-label="实验控制">
@@ -369,50 +417,6 @@
         </aside>
       </div>
     </section>
-
-    <div class="below">
-      <section class="panel">
-        <h2>按步骤学会用温度计</h2>
-        <p>沿着真实操作顺序走一遍：先认清量程和分度值，再学怎么放、什么时候读、视线怎么摆，最后看体温计特殊在哪里。</p>
-        <div class="steps" id="steps">
-          <button type="button" data-step="0" class="active">01 认识温度计</button>
-          <button type="button" data-step="1">02 会放</button>
-          <button type="button" data-step="2">03 会读</button>
-          <button type="button" data-step="3">04 会记</button>
-          <button type="button" data-step="4">05 体温计</button>
-        </div>
-        <div class="step-detail" id="stepDetail" aria-live="polite"></div>
-        <div class="record-actions">
-          <small>记录按钮在实验台右侧的「⑥ 记录数据」里 —— 每换一种条件就点一下，数据会同步到下面这张表。</small>
-        </div>
-        <div class="law">
-          <b>温度</b>：表示物体<b>冷热程度</b>的物理量。温度计的原理是液体的<b>热胀冷缩</b>。<br>
-          <b>摄氏温度的规定</b>：把<code>冰水混合物</code>的温度规定为 0 ℃，把<code>标准大气压下沸水</code>的温度规定为 100 ℃，在 0 ℃ 和 100 ℃ 之间分成 100 等份，每一份就是 1 ℃。<br>
-          <b>会认</b>：看清温度计的<b>量程</b>（能测的温度范围）和<b>分度值</b>（一个小格代表多少 ℃），以及零刻度在哪。<br>
-          <b>会放</b>：玻璃泡要<b>全部浸入</b>被测液体中，不要碰到容器<b>底</b>，也不要碰到容器<b>壁</b>。<br>
-          <b>会读</b>：玻璃泡要<b>留在液体中</b>；要等示数<b>稳定</b>后再读；视线要与温度计中液柱的上表面<b>相平</b>。俯视读数偏大，仰视读数偏小。<br>
-          <b>会记</b>：记录要写<b>数值 + 单位</b>（如 65 ℃），不能只写 65。<br>
-          <b>体温计</b>：量程 <code>35 ~ 42 ℃</code>，分度值 <code>0.1 ℃</code>；玻璃泡上方有一段很细的<b>缩口</b>，水银退不回去，所以可以<b>离开人体读数</b>；用前要拿着它<b>甩一甩</b>，把水银甩回玻璃泡。<br>
-          <b>提示</b>：本页的视线偏差由管径、眼睛到温度计的距离和视线倾角<b>算出来</b>（<code>ΔT = (r/D)·Δy ÷ 每 ℃ 的刻度高度</code>），不是写死的数。三种错误放法的偏差都按「玻璃泡接触到的各部分按换热系数加权」算：碰杯壁的壁温、碰杯底的杯底水温，都按<b>向室温靠拢</b>定，所以水温高于室温时读数都偏低、低于室温时都偏高 —— 方向随水温变号，这才是必须避开它们的理由。本页<b>不加热</b>，没有「杯底被烤热」这一条。
-        </div>
-      </section>
-
-      <section class="panel">
-        <h2>实验记录</h2>
-        <p>每换一种条件就点一次「记录数据」，表格会留下载数、真实水温和这一次的误差 —— 你能一眼看出哪些读数是可信的。点「重置」会把表格一起清空，重新开始记录。</p>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr><th>序号</th><th>读数</th><th>真实水温</th><th>误差</th><th>玻璃泡位置</th><th>视线</th><th>温度计</th><th>读数可信吗</th></tr>
-            </thead>
-            <tbody id="records">
-              <tr><td colspan="8" class="empty">尚无记录，先调好条件再点“记录数据”</td></tr>
-            </tbody>
-          </table>
-        </div>
-        <div class="note" id="summary">建议记录：先记一次「全部浸入 + 平视」的正确读数，再逐个改坏条件（碰底 / 碰壁 / 浸一半 / 俯视 / 仰视）各记一次，比较误差的方向和大小。</div>
-      </section>
-    </div>
   </main>
   <script type="module" src="experiment_温度计.js"></script>
 </body>

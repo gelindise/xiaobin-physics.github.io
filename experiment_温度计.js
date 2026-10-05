@@ -198,7 +198,10 @@ import * as THREE from './assets/optics-three.min.js';
     Td: AMB,         // 温度计示数（连续量）
     t: 0,
     records: [],
-    step: 0
+    step: 0,
+    /* 画面上【真正画出来】的量（坐标 / 像素间距 …）留给自检读。
+       自检若自己重算一遍公式，就是自指 —— 页面画错了它照样绿。 */
+    drawn: {}
   };
   const toggles = { sight: true, eye: true, trueLine: true, steam: true };
 
@@ -1061,12 +1064,21 @@ import * as THREE from './assets/optics-three.min.js';
   const magText = $('magText');
   /* 示意图（管径已放大）：右边是眼睛，左边是玻璃管的侧视剖面。
      刻度面在靠近眼睛的一侧，红色液柱在管中心 —— 视线斜着穿过去，
-     与刻度面相交的位置就和液柱的真实高度错开了。 */
-  const MAG_TUBE_L = 26, MAG_TUBE_R = 52, MAG_AXIS = 39, MAG_EYE_X = 112;
+     与刻度面相交的位置就和液柱的真实高度错开了。
+
+     ★ 几何全部按画布尺寸【成比例】算。旧版把 26/52/39/112 写死，只对 218×112
+       的小画布成立，画布一放大就全挤到左上角、右边空一大片。
+     ★ MAG_T = (刻度面x − 眼x) / (轴心x − 眼x)，就是【视差的放大倍数】。
+       画面上「视线与刻度面的交点」相对液柱顶的偏移，必须【等于】真实偏差换算到
+       刻度上的距离 —— 否则图上量出来的偏移与文字里说的「偏 1.3 ℃」是同一件事的
+       两个数（本仓已有过一次同形教训）。所以先定 MAG_T，再由它【反解】刻度面位置，
+       而不是先画好管子再让交点随便落在哪儿。 */
+  const MAG_T = 0.60;
+  const MAG_HALF = 4;              // 刻度面上下各画几个分度（共 2*MAG_HALF+1 条）
   function drawMag() {
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    const W = magCanvas.clientWidth || 220;
-    const H = magCanvas.clientHeight || 112;
+    const W = magCanvas.clientWidth || 320;
+    const H = magCanvas.clientHeight || 190;
     if (magCanvas.width !== Math.round(W * dpr) || magCanvas.height !== Math.round(H * dpr)) {
       magCanvas.width = Math.round(W * dpr);
       magCanvas.height = Math.round(H * dpr);
@@ -1076,81 +1088,142 @@ import * as THREE from './assets/optics-three.min.js';
     g.clearRect(0, 0, W, H);
     g.fillStyle = '#0a1a2b'; g.fillRect(0, 0, W, H);
 
-    const cy = H / 2;
-    const s = SIGHTS[state.sight];
-    const dir = s.dy > 0 ? 1 : s.dy < 0 ? -1 : 0;
-    const eyeDy = dir * Math.min(H * 0.38, 40);
-    const eyeX = Math.min(MAG_EYE_X, W - 22);
+    const k = KINDS[state.kind];
+    const cy = H / 2;                       // 液柱顶（= 温度计示数）永远画在正中
+    /* 刻度条数与字号都跟着画布高度走：画布小的时候硬画 9 条会挤成一团、数字互相
+       压住 —— 那还不如少画几条。字号取「分度间距的 62%」，从根上保证不重叠。 */
+    const half = H >= 150 ? MAG_HALF : 3;
+    const padY = H * 0.085;
+    const pxPerDiv = (H - 2 * padY) / (2 * half);
+    const fs = Math.max(8, Math.min(11.5, pxPerDiv * 0.62));
+    const yOfDeg = (T) => cy - (T - state.Td) / k.div * pxPerDiv;
+
+    /* 眼睛在右，刻度面在玻璃管朝眼睛的那一侧（右边缘）；由 MAG_T 反解它的位置 */
+    const eyeX = W - 21;
+    const axis = W * 0.52;
+    const tubeR = MAG_T * axis + (1 - MAG_T) * eyeX;
+    const tubeL = 2 * axis - tubeR;
+    const tubeTop = padY * 0.55, tubeBot = H - padY * 0.55;
 
     /* 玻璃管剖面 */
-    g.fillStyle = 'rgba(150,200,225,0.14)';
-    g.fillRect(MAG_TUBE_L, 8, MAG_TUBE_R - MAG_TUBE_L, H - 16);
-    g.strokeStyle = 'rgba(180,220,240,0.55)';
+    g.fillStyle = 'rgba(150,200,225,0.13)';
+    g.fillRect(tubeL, tubeTop, tubeR - tubeL, tubeBot - tubeTop);
+    g.strokeStyle = 'rgba(180,220,240,0.5)';
     g.lineWidth = 1;
-    g.strokeRect(MAG_TUBE_L + 0.5, 8.5, MAG_TUBE_R - MAG_TUBE_L - 1, H - 17);
-    /* 刻度面（朝眼睛的那一侧） */
+    g.strokeRect(tubeL + 0.5, tubeTop + 0.5, tubeR - tubeL - 1, tubeBot - tubeTop - 1);
+
+    /* 刻度：每个分度一条、横贯管身；数字标在管子左侧（视线在管子右边，不会压住数字）。
+       n0 是「最靠近示数的那个整刻度」，上下各取 MAG_HALF 条。 */
+    const n0 = Math.round(state.Td / k.div);
+    const tickVals = [], tickYs = [];
+    g.font = `600 ${fs.toFixed(1)}px "Helvetica Neue", Arial, sans-serif`;
+    g.textAlign = 'right'; g.textBaseline = 'middle';
+    for (let i = -half; i <= half; i++) {
+      const T = (n0 + i) * k.div;
+      const y = yOfDeg(T);
+      if (y < tubeTop - 0.5 || y > tubeBot + 0.5) continue;
+      const isZero = Math.abs(T) < 1e-9;          // 0 ℃ 是摄氏温度的定标点，单独标色
+      g.strokeStyle = isZero ? 'rgba(125,211,252,0.95)' : 'rgba(200,224,240,0.6)';
+      g.lineWidth = isZero ? 1.8 : 1;
+      g.beginPath(); g.moveTo(tubeL, y); g.lineTo(tubeR, y); g.stroke();
+      g.fillStyle = isZero ? '#7dd3fc' : 'rgba(206,226,240,0.92)';
+      g.fillText(T.toFixed(k.dec), tubeL - 8, y);
+      tickVals.push(+T.toFixed(4)); tickYs.push(+y.toFixed(2));
+    }
+    /* 刻度面（朝眼睛的那一侧）压在刻度右端上 */
     g.strokeStyle = 'rgba(226,240,250,0.9)';
     g.lineWidth = 2.4;
-    g.beginPath(); g.moveTo(MAG_TUBE_R, 8); g.lineTo(MAG_TUBE_R, H - 8); g.stroke();
-    g.lineWidth = 1;
-    for (let y = 12; y < H - 10; y += 7) {
-      g.beginPath(); g.moveTo(MAG_TUBE_R - 6, y); g.lineTo(MAG_TUBE_R, y); g.stroke();
-    }
-    /* 液柱（在管中心） */
-    g.fillStyle = '#e0212c';
-    g.fillRect(MAG_AXIS - 3.5, cy, 7, H - 10 - cy);
-    g.fillStyle = '#ff5a63';
-    g.fillRect(MAG_AXIS - 4.5, cy - 2.4, 9, 2.4);
+    g.beginPath(); g.moveTo(tubeR, tubeTop); g.lineTo(tubeR, tubeBot); g.stroke();
 
-    /* 视线：从眼睛穿过液柱顶端，延长到刻度面 */
-    const eyeY = cy - eyeDy;
-    const t = (MAG_TUBE_R - eyeX) / (MAG_AXIS - eyeX);
-    const crossY = eyeY + t * (cy - eyeY);
-    g.strokeStyle = 'rgba(56,224,255,0.95)';
-    g.lineWidth = 1.6;
-    g.beginPath(); g.moveTo(eyeX, eyeY); g.lineTo(MAG_TUBE_R, crossY); g.stroke();
+    /* 液柱（在管中心，从示数往下）—— 画在刻度之后，盖住穿过它的那些刻度 */
+    const colW = Math.max(6, W * 0.022);
+    g.fillStyle = '#e0212c';
+    g.fillRect(axis - colW / 2, cy, colW, tubeBot - 4 - cy);
+    g.fillStyle = '#ff5a63';
+    g.beginPath();
+    g.ellipse(axis, cy, colW / 2 + 1, Math.max(2, colW * 0.42), 0, 0, Math.PI * 2);
+    g.fill();
+
+    /* 视差：把真实偏差（℃）换算成刻度上的像素距离 */
+    const biasPx = sightBias() / k.div * pxPerDiv;
+    const crossWant = cy - biasPx;
+    /* 由「视线必须穿过液柱顶端」反解眼睛该多高 */
+    let eyeY = cy - biasPx / (1 - MAG_T);
+    let eyeClamped = false;
+    const eyeLo = 12, eyeHi = H - 12;
+    if (eyeY < eyeLo) { eyeY = eyeLo; eyeClamped = true; }
+    if (eyeY > eyeHi) { eyeY = eyeHi; eyeClamped = true; }
+    /* 眼睛被钳住时以【实际眼位】重新解交点 —— 保证画面自洽（线确实穿过液柱顶）。
+       此时图上偏移不再等于 biasPx，eyeClamped 把这件事记下来，自检分开断言。 */
+    const crossY = eyeY + MAG_T * (cy - eyeY);
+    const hasBias = Math.abs(sightBias()) > 1e-9;
+
     /* 液柱真实高度 */
     g.save();
-    g.strokeStyle = 'rgba(255,150,150,0.95)';
-    g.setLineDash([4, 3]);
-    g.beginPath(); g.moveTo(MAG_TUBE_L - 5, cy); g.lineTo(MAG_TUBE_R + 6, cy); g.stroke();
+    g.strokeStyle = 'rgba(255,150,150,0.9)';
+    g.setLineDash([4, 3]); g.lineWidth = 1;
+    g.beginPath(); g.moveTo(tubeL - 6, cy); g.lineTo(tubeR + 9, cy); g.stroke();
     g.restore();
+    /* 视线：从眼睛穿过液柱顶端，延长到刻度面 */
+    g.strokeStyle = 'rgba(56,224,255,0.9)';
+    g.lineWidth = 1.6;
+    g.beginPath(); g.moveTo(eyeX, eyeY); g.lineTo(tubeR, crossY); g.stroke();
     /* 眼睛以为的高度 */
-    if (dir) {
+    if (hasBias) {
       g.strokeStyle = 'rgba(56,224,255,0.95)';
-      g.beginPath(); g.moveTo(MAG_TUBE_R, crossY); g.lineTo(MAG_TUBE_R + 8, crossY); g.stroke();
+      g.beginPath(); g.moveTo(tubeR, crossY); g.lineTo(tubeR + 9, crossY); g.stroke();
       g.fillStyle = '#38e0ff';
-      g.beginPath(); g.arc(MAG_TUBE_R, crossY, 2.6, 0, 7); g.fill();
+      g.beginPath(); g.arc(tubeR, crossY, 3, 0, 7); g.fill();
     }
     /* 眼睛 */
+    const eyeR = Math.max(7, W * 0.027);
     g.fillStyle = '#f4f7fa';
-    g.beginPath(); g.arc(eyeX, eyeY, 8, 0, 7); g.fill();
+    g.beginPath(); g.arc(eyeX, eyeY, eyeR, 0, 7); g.fill();
     g.fillStyle = '#2f6fb5';
-    g.beginPath(); g.arc(eyeX, eyeY, 4.4, 0, 7); g.fill();
+    g.beginPath(); g.arc(eyeX, eyeY, eyeR * 0.55, 0, 7); g.fill();
     g.fillStyle = '#0b1520';
-    g.beginPath(); g.arc(eyeX, eyeY, 2, 0, 7); g.fill();
-    /* 标注 */
-    g.font = '9px "Helvetica Neue", Arial, sans-serif';
-    g.fillStyle = 'rgba(190,215,235,0.95)';
-    g.textAlign = 'left'; g.textBaseline = 'top';
-    g.fillText('刻度面', MAG_TUBE_R + 6, 10);
-    g.textAlign = 'right'; g.textBaseline = 'bottom';
-    g.fillStyle = 'rgba(255,170,170,0.95)';
-    g.fillText('液柱真实高度', MAG_TUBE_L - 6, cy - 3);
-    g.textAlign = 'right'; g.textBaseline = 'top';
-    g.fillStyle = 'rgba(56,224,255,0.95)';
-    g.fillText('眼睛以为的高度', MAG_TUBE_L - 6, Math.max(12, crossY + 3));
+    g.beginPath(); g.arc(eyeX, eyeY, eyeR * 0.25, 0, 7); g.fill();
+
+    /* 标注：每个标签自带一层深色底，压在视线上也读得清 */
+    const tag = (txt, x, y, color) => {
+      g.font = '700 10px "Helvetica Neue", Arial, sans-serif';
+      g.textAlign = 'left'; g.textBaseline = 'middle';
+      const w = g.measureText(txt).width;
+      g.fillStyle = 'rgba(9,23,41,0.94)';
+      g.fillRect(x - 3, y - 7.5, w + 8, 15);
+      g.fillStyle = color;
+      g.fillText(txt, x, y + 0.5);
+    };
+    tag('真实高度', tubeR + 12, cy, 'rgba(255,170,170,0.98)');
+    if (hasBias) {
+      /* 两个标签靠太近会叠在一起 —— 把「眼睛以为」推开一点 */
+      const ty = Math.abs(crossY - cy) < 17 ? crossY + (crossY >= cy ? 17 : -17) : crossY;
+      tag('眼睛以为', tubeR + 12, ty, 'rgba(56,224,255,0.98)');
+    }
+
+    /* 把这次真正画出来的量留给自检 —— 断言要读画面，不能自己重算一遍公式（那是自指） */
+    state.drawn.mag = {
+      W, H, cy, padY, pxPerDiv, div: k.div, n0,
+      axis: +axis.toFixed(2), tubeL: +tubeL.toFixed(2), tubeR: +tubeR.toFixed(2),
+      tubeTop: +tubeTop.toFixed(2), tubeBot: +tubeBot.toFixed(2),
+      eyeX: +eyeX.toFixed(2), eyeY: +eyeY.toFixed(2), eyeR: +eyeR.toFixed(2),
+      colW: +colW.toFixed(2), colTopY: cy,
+      biasPx: +biasPx.toFixed(4), crossY: +crossY.toFixed(2), crossWant: +crossWant.toFixed(2),
+      eyeClamped, hasBias, eyeOnCanvas: eyeY >= 0 && eyeY <= H,
+      tickVals, tickYs, fs: +fs.toFixed(2),
+      magT: MAG_T, half
+    };
 
     /* 文案 */
     const dT = sightBias();
     if (state.sight === 'level') {
-      magText.textContent = '平视：视线与液柱上表面相平，读到的是液柱的真实高度。';
+      magText.textContent = `刻度每格 ${k.div.toFixed(k.dec)} ℃，放大后可以直接读数：视线与液柱上表面相平，读到的是液柱的真实高度。`;
     } else if (!inRange()) {
       magText.textContent = '液柱已经顶到量程尽头，读数不可用。';
     } else {
       const sgn = dT > 0 ? '偏大' : '偏小';
       magText.textContent = `${SIGHTS[state.sight].short}：视线与刻度面相交的位置比液柱${dT > 0 ? '高' : '低'} `
-        + `${Math.abs(dT).toFixed(2)} ℃ 的刻度，所以读数${sgn}。`;
+        + `${Math.abs(dT).toFixed(2)} ℃ 的刻度（图上那两条横线的间距就是这个数），所以读数${sgn}。`;
     }
   }
 
