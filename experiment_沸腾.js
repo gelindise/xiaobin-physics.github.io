@@ -1,13 +1,15 @@
 import * as THREE from './assets/optics-three.min.js';
 
 /* ============================================================================
-   探究固体熔化时温度的变化规律 —— 三维写实水浴加热实验台
+   探究水沸腾时温度变化的特点 —— 三维写实加热实验台
    ---------------------------------------------------------------------------
    世界坐标单位：厘米（cm），y 轴向上，实验台台面为 y = 0。
-   器材：铁架台（铸铁底座 + 镀铬立柱 + 铁圈 / 试管夹）、酒精灯、石棉网、
-         硼硅玻璃烧杯 + 水、试管 + 试样（海波 / 石蜡）、温度计。
-   物理：酒精灯 → 水浴 → 试管的两节点热平衡；晶体用“显热 + 熔化潜热”分段积分，
-         非晶体用随温度变化的等效比热容（软化区急升），温度曲线由方程实时算出。
+   器材：铁架台（铸铁底座 + 镀铬立柱 + 铁圈 / 铁夹）、酒精灯、石棉网、
+         硼硅玻璃烧杯 + 水、硬纸盖（中央开孔穿温度计）、温度计。
+   物理：单节点热平衡 —— 酒精灯给水加热，水向环境散热；到达沸点后温度不再上升，
+         多出来的功率全部用于汽化（汽化潜热），水量随之缓慢减少。
+         沸点由当前气压用 Antoine 方程算出（101 kPa → 100 ℃，70 kPa → 90 ℃），
+         温度曲线由方程实时算出，不是预先画好的折线。
    ========================================================================== */
 (() => {
   'use strict';
@@ -16,39 +18,44 @@ import * as THREE from './assets/optics-three.min.js';
 
   /* ------------------------------ 器材尺寸 ------------------------------ */
   const BASE_W = 26, BASE_D = 17, BASE_H = 1.8;      // 铸铁底座
-  const ROD_R = 0.55, ROD_H = 43, ROD_Z = -5.6;      // 镀铬立柱（够高，容温度计悬挂支架上下滑动）
+  const ROD_R = 0.55, ROD_H = 37, ROD_Z = -5.6;      // 镀铬立柱（够高，容铁夹夹住温度计）
   const RING_Y = 17.5;                               // 铁圈高度
-  const CLAMP_Y = 30.5;                              // 试管夹高度
+  const CLAMP_Y = 31.5;                              // 铁夹高度（夹住温度计管身，在纸盖上方）
 
   const LAMP_R = 3.5, LAMP_H = 6.9;                  // 酒精灯玻璃灯体（颈口高度）
   const LAMP_SHOULDER_H = 0, LAMP_COLLAR_H = 1.4, WICK_H = 1.7;
   const FLAME_H = 5.4;
   const LAMP_TOP = BASE_H + LAMP_H + LAMP_SHOULDER_H + LAMP_COLLAR_H + WICK_H;  // 11.8
   const FLAME_TOP = LAMP_TOP + FLAME_H;                                          // 17.2
+  const LAMP_X0 = 0, LAMP_X1 = -8.6;                 // 灯在杯下 / 撤到旁边（两个 x 位置）
 
-  const NET_W = 15, NET_T = 0.22;                    // 石棉网
-  const BK_R = 4.3, BK_H = 10.2;                     // 烧杯
+  const NET_W = 12, NET_T = 0.22;                    // 石棉网（铁圈外径 11.1 cm，网只比它大一点）
+  // 低型烧杯（250 mL 量级：直径 8.4 cm、高 6.6 cm）。烧杯越矮，纸盖离水面越近，
+  // 温度计上「露出盖子的刻度」就越多 —— 这是本实验能不能读到全程温度的关键。
+  const BK_R = 4.2, BK_H = 6.6;
   const BK_Y0 = RING_Y + NET_T + 0.06;               // 17.78
-  const WATER_H = 6.8;                               // 水量
-  const WATER_TOP = BK_Y0 + WATER_H;
+  const WATER_H = 3.8;                               // 初始水深（0.20 kg 水 ÷ π·3.9²）
+  const WATER_TOP = BK_Y0 + WATER_H;                 // 21.58
+  const BK_INNER_BOTTOM = BK_Y0 + 0.55;              // 加厚杯底的顶面
 
-  const TT_R = 1.5, TT_H = 15;                       // 试管
-  const TT_Y0 = BK_Y0 + 1.35;
-  const SAMPLE_H = 6.0;                              // 试样高度
-  const SAMPLE_R = TT_R - 0.13;
+  /* 硬纸盖：中央开一个孔穿温度计（温度计就装在烧杯轴线上，孔正好对得上） */
+  const LID_Y = BK_Y0 + BK_H;                        // 24.38
+  const LID_R = BK_R + 0.18;
+  const LID_T = 0.12;
+  const LID_HOLE = 0.34;
 
-  const TH_BULB_Y = TT_Y0 + 4.0;                     // 温度计感温泡（插到底时的绝对高度）
-  const TH_BULB_R = 0.42;                            // 感温泡半径（要看得见，比原来大一圈）
-  // 管长只留「露出烧杯口 + 够印 0~100 刻度」的最小值：整机越矮，取景就能压得越紧，
-  // 器材在画面里才够大。14 cm 的管子会把立柱顶到 53 cm，白占半屏。
-  const TH_TUBE_H = 11.5;                            // 温度计管长
-  const TH_TOP = TH_BULB_Y + TH_TUBE_H - 0.6 + 0.24; // 顶端球帽中心（34.57）
-  const TH_LIFT = 5;                                 // 「提起」时整体抬升量（感温泡提出试样）
-  const THREAD_LEN = 2.6;                            // 悬挂细线长度（横臂高度 = TH_TOP + 它）
+  // 感温泡浸在水的中上部：全部浸入（离水面 0.9 cm、离杯内底 2.4 cm），既满足
+  // 「玻璃泡全部浸入水中、不碰容器底」，又让纸盖上方露出的刻度尽量多。
+  const TH_BULB_Y = 20.70;
+  const TH_BULB_R = 0.42;
+  const TH_TUBE_H = 17.65;                           // 温度计管长
+  const TH_TOP = TH_BULB_Y + TH_TUBE_H - 0.6 + 0.24; // 顶端球帽中心（37.99）
+  const TH_LIFT = 4.4;                               // 「提起」时整体抬升量（感温泡提出水面）
+  const TH_X = 0, TH_Z = 0;                          // 温度计装在烧杯轴线上
 
   /* 印刷刻度：贴图尺寸、版面，以及「刻度条要正对哪个方位角」。
      刻度是贴在圆柱管壁上的（FrontSide），贴图的 u 决定它落在管子的哪一侧；
-     画在背面 = 相机永远看不到（实测四个默认视角里刻度条只有 3~12 px 宽，等于没画）。
+     画在背面 = 相机永远看不到（实测四个默认视角里刻度条只有 2~7 px 宽，等于没画）。
      默认视角的相机方位角在 −0.08 ~ −0.55 rad（≈ −4.6° ~ −31.5°），所以让刻度条正对 −25°。
      转多少不手估：makeThermoScale() 画完直接量出刻度条在贴图里占的水平范围再反算。 */
   const SCALE_TEX_W = 160, SCALE_TEX_H = 1024;
@@ -58,51 +65,48 @@ import * as THREE from './assets/optics-three.min.js';
   const SCALE_NUM_FONT = 20;                         // 数字字号（贴图 px）
   let scaleU0 = 0, scaleU1 = 1;                      // 由 makeThermoScale() 实测填入
 
-  const MAX_WEIGHTS_UNUSED = 0;                      // （占位，保持常量区整齐）
-
   /* ------------------------------ 物理参数 ------------------------------ */
   const AMB = 20;                                    // 室温 ℃
-  const M_WATER = 0.25;                              // 水浴质量 kg
-  const C_WATER = 4200;                              // 水的比热容
-  const P_LAMP = 300;                                // 酒精灯有效功率 W
-  const K_LOSS = 2.0;                                // 水浴向环境散热 W/K
-  const K_COUPLE = 2.2;                              // 水浴→试管 的传热系数 W/K
-  const TW_MAX = 100;                                // 标准大气压下水浴上限
-  const M_SAMPLE = 0.02;                             // 试样 20 g
+  const M_WATER = 0.20;                              // 水的质量 kg（200 g）
+  const C_WATER = 4200;                              // 水的比热容 J/(kg·K)
+  const P_LAMP = 300;                                // 酒精灯传给水的有效功率 W
+  const K_LOSS = 0.62;                               // 水向环境散热 W/K
+  const LV_WATER = 2.26e6;                           // 水的汽化潜热 J/kg
+  const BOIL_HOLD = 180;                             // 沸腾平台维持这么久（模拟秒）才算做完
+  const MASS_MIN = 0.55;                             // 水量降到初始值的这个比例就收工（别把水烧干）
 
-  const SUBSTANCES = {
-    hypo: {
-      name: '海波', crystal: true, tm: 48,
-      cs: 1700, cl: 2400, L: 2.0e5,
-      note: '晶体 · 有固定熔点 48 ℃'
-    },
-    paraffin: {
-      name: '石蜡', crystal: false, tm: null,
-      cBase: 2200, cPeak: 22000, tSoft: 55, softW: 4.5,
-      note: '非晶体 · 没有固定熔点'
-    }
+  /* 气压环境：沸点不写死，用 Antoine 方程从气压算出来 —— 面板上标多少就真算多少 */
+  const PRESSURES = {
+    std:   { name: '标准大气压', p: 101.3, place: '平原地区' },
+    plain: { name: '高原',       p: 70.0,  place: '海拔约 3000 m' },
+    high:  { name: '高山',       p: 54.0,  place: '海拔约 5000 m' }
   };
 
   /* ------------------------------ 状态 ------------------------------ */
   const state = {
-    substance: 'hypo',
+    pressure: 'std',
     running: false,
     speed: 4,
-    t: 0, Tt: AMB, Tw: AMB, phi: 0, soft: 0,
+    t: 0, T: AMB, Tb: 100,
+    mass: M_WATER,           // 剩余水量 kg（沸腾时缓慢汽化）
+    lampOn: true,            // 酒精灯是否在加热
+    lampAnim: 1,             // 0 = 已撤到旁边，1 = 在烧杯正下方
+    flameAnim: 1,            // 火焰强度 0~1（撤去时淡出）
+    boilStart: -1,           // 开始沸腾的时刻（-1 = 还没沸腾）
+    boilTime: 0,             // 已沸腾的时长（模拟秒）
     finished: false,
     step: 0,
     records: [],
-    thDepth: 1,          // 温度计插入程度：0 = 提起（感温泡离开试样），1 = 插到底
-    thAnim: 1,           // 动画用的平滑值（默认就是装好的状态，点「提起」才看得到动作）
-    xray: true           // 透视：试样半透明，能看见里面的玻璃泡
+    thDepth: 1,              // 温度计插入程度：0 = 提起（离开水面），1 = 浸在水中
+    thAnim: 1                // 动画用的平滑值（默认就是装好的状态）
   };
-  const toggles = { bath: true, melt: true, micro: true };
+  const toggles = { bubbles: true, steam: true, boilLine: true, micro: true };
 
   const VIEWS = {
-    front: { yaw: -0.08, pitch: 0.10, dist: 85, ty: 22.5 },
-    angle: { yaw: -0.55, pitch: 0.16, dist: 87, ty: 22.5 },
-    top:   { yaw: -0.50, pitch: 0.86, dist: 82, ty: 20 },
-    close: { yaw: -0.42, pitch: 0.06, dist: 30, ty: 22.5 }
+    front: { yaw: -0.08, pitch: 0.10, dist: 74, ty: 19.5 },
+    angle: { yaw: -0.55, pitch: 0.16, dist: 76, ty: 19.5 },
+    top:   { yaw: -0.50, pitch: 0.86, dist: 71, ty: 17 },
+    close: { yaw: -0.42, pitch: 0.06, dist: 26, ty: 20.5 }
   };
   const view = { ...VIEWS.angle };
 
@@ -188,98 +192,34 @@ import * as THREE from './assets/optics-three.min.js';
     return t;
   }
 
-  /* 海波晶体：白色半透明结晶颗粒 */
-  function makeHypoMap() {
-    const S = 512, rnd = mulberry32(2468);
+  /* 硬纸盖：纤维纸浆的米黄卡纸，中央开孔穿温度计 */
+  function makeCardboardMap() {
+    const S = 512, rnd = mulberry32(7788);
     const c = newCanvas(S, S), g = c.getContext('2d');
-    const b = newCanvas(S, S), gb = b.getContext('2d');
-    g.fillStyle = '#e9eef2'; g.fillRect(0, 0, S, S);
-    gb.fillStyle = '#8a8a8a'; gb.fillRect(0, 0, S, S);
-
-    const step = 3.6;
-    for (let gy = -step; gy < S + step; gy += step) {
-      for (let gx = -step; gx < S + step; gx += step) {
-        const x = gx + (rnd() - 0.5) * step * 1.1;
-        const y = gy + (rnd() - 0.5) * step * 1.1;
-        const r = 1.5 + rnd() * 2.0;
-        const asp = 0.68 + rnd() * 0.6;
-        const rot = rnd() * Math.PI;
-        const l = 82 + rnd() * 15;
-        const s = 6 + rnd() * 12;
-        g.fillStyle = `hsl(${200 + rnd() * 20},${s}%,${l}%)`;
-        g.beginPath(); g.ellipse(x, y, r, r * asp, rot, 0, 7); g.fill();
-
-        // 晶体棱面的亮边（半透明结晶的关键）
-        g.strokeStyle = `hsla(0,0%,100%,${0.35 + rnd() * 0.45})`;
-        g.lineWidth = 0.5 + rnd() * 0.7;
-        g.beginPath();
-        g.ellipse(x - r * 0.16, y - r * asp * 0.16, r * 0.72, r * asp * 0.72, rot, Math.PI * 0.9, Math.PI * 1.9);
-        g.stroke();
-
-        const v = Math.round(clamp(120 + (l - 88) * 8, 60, 250));
-        gb.fillStyle = `rgb(${v},${v},${v})`;
-        gb.beginPath(); gb.ellipse(x, y, r * 0.94, r * asp * 0.94, rot, 0, 7); gb.fill();
-      }
+    g.fillStyle = '#cbb894'; g.fillRect(0, 0, S, S);
+    // 纸浆纤维：短而不规则的深浅短线。压得太规则就变成「布」了。
+    for (let i = 0; i < 5200; i++) {
+      const x = rnd() * S, y = rnd() * S, a = rnd() * Math.PI, len = 1.5 + rnd() * 6.5;
+      const v = 0.78 + rnd() * 0.34;
+      g.strokeStyle = 'rgba(' + Math.round(206 * v) + ',' + Math.round(186 * v) + ',' + Math.round(148 * v) + ',0.5)';
+      g.lineWidth = 0.7 + rnd() * 1.1;
+      g.beginPath(); g.moveTo(x, y); g.lineTo(x + Math.cos(a) * len, y + Math.sin(a) * len); g.stroke();
     }
-    for (let i = 0; i < 500; i++) {
-      const x = rnd() * S, y = rnd() * S, r = 2.4 + rnd() * 4.6;
-      g.fillStyle = `hsla(${195 + rnd() * 25},${8 + rnd() * 18}%,${88 + rnd() * 10}%,0.5)`;
-      g.beginPath(); g.ellipse(x, y, r, r * (0.6 + rnd() * 0.5), rnd() * 3, 0, 7); g.fill();
-    }
-    const map = new THREE.CanvasTexture(c);
-    map.colorSpace = THREE.SRGBColorSpace;
-    map.wrapS = map.wrapT = THREE.RepeatWrapping;
-    const bump = new THREE.CanvasTexture(b);
-    bump.wrapS = bump.wrapT = THREE.RepeatWrapping;
-    DEBUG_TEX.hypo = c;
-    return { map, bump };
-  }
-
-  /* 石蜡：乳白蜡质，表面有细微收缩纹 */
-  function makeParaffinMap() {
-    const S = 512, rnd = mulberry32(777);
-    const c = newCanvas(S, S), g = c.getContext('2d');
-    const b = newCanvas(S, S), gb = b.getContext('2d');
-    g.fillStyle = '#f7f2e6'; g.fillRect(0, 0, S, S);
-    gb.fillStyle = '#a0a0a0'; gb.fillRect(0, 0, S, S);
-
-    for (let i = 0; i < 160; i++) {
-      const x = rnd() * S, y = rnd() * S, r = 20 + rnd() * 90;
-      const grd = g.createRadialGradient(x, y, 0, x, y, r);
-      grd.addColorStop(0, `hsla(${40 + rnd() * 16},${24 + rnd() * 22}%,${88 + rnd() * 8}%,0.30)`);
-      grd.addColorStop(1, 'hsla(0,0%,0%,0)');
-      g.fillStyle = grd; g.beginPath(); g.arc(x, y, r, 0, 7); g.fill();
-    }
-    // 蜡的收缩裂纹
-    for (let i = 0; i < 130; i++) {
-      const x0 = rnd() * S, y0 = rnd() * S;
-      let x = x0, y = y0;
-      g.strokeStyle = `hsla(${36 + rnd() * 14},${20 + rnd() * 20}%,${74 + rnd() * 14}%,${0.16 + rnd() * 0.26})`;
-      g.lineWidth = 0.5 + rnd() * 1.5;
-      g.beginPath(); g.moveTo(x, y);
-      const dir = rnd() * 6.28;
-      for (let k = 0; k < 9; k++) {
-        x += Math.cos(dir + (rnd() - 0.5) * 0.9) * (3 + rnd() * 8);
-        y += Math.sin(dir + (rnd() - 0.5) * 0.9) * (3 + rnd() * 8);
-        g.lineTo(x, y);
-      }
-      g.stroke();
-    }
-    for (let i = 0; i < 3000; i++) {
-      const x = rnd() * S, y = rnd() * S, r = 0.6 + rnd() * 1.6;
-      g.fillStyle = `hsla(${40 + rnd() * 12},${18 + rnd() * 20}%,${rnd() < 0.5 ? 80 + rnd() * 12 : 94 + rnd() * 6}%,0.4)`;
+    // 几处淡淡的水渍，让纸面不至于太干净
+    for (let i = 0; i < 26; i++) {
+      const x = rnd() * S, y = rnd() * S, r = 14 + rnd() * 46;
+      const rg = g.createRadialGradient(x, y, 0, x, y, r);
+      rg.addColorStop(0, 'rgba(176,154,116,0.16)');
+      rg.addColorStop(1, 'rgba(176,154,116,0)');
+      g.fillStyle = rg;
       g.beginPath(); g.arc(x, y, r, 0, 7); g.fill();
-      const v = Math.round(clamp(128 + (rnd() - 0.5) * 60, 60, 220));
-      gb.fillStyle = `rgb(${v},${v},${v})`;
-      gb.beginPath(); gb.arc(x, y, r * 0.9, 0, 7); gb.fill();
     }
-    const map = new THREE.CanvasTexture(c);
-    map.colorSpace = THREE.SRGBColorSpace;
-    map.wrapS = map.wrapT = THREE.RepeatWrapping;
-    const bump = new THREE.CanvasTexture(b);
-    bump.wrapS = bump.wrapT = THREE.RepeatWrapping;
-    DEBUG_TEX.paraffin = c;
-    return { map, bump };
+    const t = new THREE.CanvasTexture(c);
+    t.colorSpace = THREE.SRGBColorSpace;
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    t.repeat.set(1.6, 1.6);
+    DEBUG_TEX.cardboard = c;
+    return t;
   }
 
   /* 实验台面 */
@@ -498,25 +438,6 @@ import * as THREE from './assets/optics-three.min.js';
   ring.castShadow = true;
   stand.add(ring);
 
-  makeBoss(CLAMP_Y, 3.4);
-  const clampArm = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.9, 4.4), darkSteel);
-  clampArm.position.set(0, CLAMP_Y, -2.6);
-  clampArm.castShadow = true;
-  stand.add(clampArm);
-  for (const s of [-1, 1]) {
-    const jaw = new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.36, 0.5), darkSteel);
-    jaw.position.set(s * 1.55, CLAMP_Y, 0.55);
-    jaw.rotation.z = s * 0.16;
-    jaw.castShadow = true;
-    stand.add(jaw);
-  }
-  const clampPad = new THREE.Mesh(new THREE.TorusGeometry(1.62, 0.16, 8, 24, Math.PI), darkSteel);
-  clampPad.rotation.y = Math.PI / 2;
-  clampPad.rotation.z = Math.PI;
-  clampPad.position.set(0, CLAMP_Y, 0.55);
-  clampPad.castShadow = true;
-  stand.add(clampPad);
-
   /* 石棉圆片：短纤维随机铺满，别用纯白平面（会读成陶瓷盘） */
   function makeAsbestosMap() {
     const S = 256, rnd = mulberry32(9753);
@@ -666,7 +587,8 @@ import * as THREE from './assets/optics-three.min.js';
 
   const flameGroup = new THREE.Group();
   flameGroup.position.set(0, LAMP_TOP, 0);
-  scene.add(flameGroup);
+  // 挂在 lamp 组里（而不是 scene）：撤去酒精灯时整盏灯平移，火焰和灯光要跟着走
+  lamp.add(flameGroup);
 
   const flameAlpha = makeFlameAlpha();
   const flameLayers = [];
@@ -699,7 +621,7 @@ import * as THREE from './assets/optics-three.min.js';
   flameGroup.add(flameGlow);
   const flameLight = new THREE.PointLight('#ff9a3c', 3.4, 60, 2);
   flameLight.position.set(0, LAMP_TOP + FLAME_H * 0.45, 0);
-  scene.add(flameLight);
+  lamp.add(flameLight);
 
   /* --- 烧杯 + 水 --- */
   // 烧杯刻度：真实烧杯的白色印刷刻度（透明底），单独一层贴在杯壁外侧
@@ -712,16 +634,21 @@ import * as THREE from './assets/optics-three.min.js';
     g.fillStyle = 'rgba(255,255,255,0.96)';
     g.font = 'bold 34px "Helvetica Neue", Arial, sans-serif';
     g.textAlign = 'left'; g.textBaseline = 'middle';
-    const labels = ['50', '100', '150', '200'];
-    for (let i = 0; i < labels.length; i++) {
-      const y = H - (0.14 + i * 0.225) * H;
+    const labels = [50, 100, 150, 200];
+    // 刻度按真实几何算，不写死比例：内半径 4.1 cm 的烧杯底面积 52.8 cm²，
+    // 于是 1 mL 就是 1 cm³，每 50 mL 对应的高度 = 50 / 底面积 cm，再换算成杯高的比例。
+    // 200 mL 正好落在 0.574 杯高处 —— 与初始水位 3.8 cm 对得上。
+    const area = Math.PI * (BK_R - 0.1) * (BK_R - 0.1);
+    const vOf = (mL) => (mL / area) / BK_H;
+    for (const mL of labels) {
+      const y = H - vOf(mL) * H;
       g.lineWidth = 5;
       g.beginPath(); g.moveTo(x0, y); g.lineTo(x1, y); g.stroke();
-      g.fillText(labels[i], x1 + 9, y);
-      // 中间的小格刻度
+      g.fillText(String(mL), x1 + 9, y);
+      // 每 50 mL 之间再分 5 小格（每格 10 mL）
       for (let k = 1; k < 5; k++) {
-        const yy = y + (k / 5) * (0.225 * H);
-        if (yy > H - 8) break;
+        const yy = H - vOf(mL - 50 + k * 10) * H;
+        if (yy > H - 8) continue;
         g.lineWidth = 3;
         g.beginPath(); g.moveTo(x0 + (x1 - x0) * 0.42, yy); g.lineTo(x1, yy); g.stroke();
       }
@@ -775,75 +702,34 @@ import * as THREE from './assets/optics-three.min.js';
   waterTop.position.set(0, WATER_TOP, 0);
   beaker.add(waterTop);
 
-  /* --- 试管 --- */
-  const tube = new THREE.Group();
-  scene.add(tube);
-  const tubeWall = new THREE.Mesh(new THREE.CylinderGeometry(TT_R, TT_R, TT_H, 36, 1, true), glassMat);
-  tubeWall.position.set(0, TT_Y0 + TT_H / 2, 0);
-  tube.add(tubeWall);
-  // 加厚球底（内外两层，看起来才有玻璃厚度）
-  const tubeBottom = new THREE.Mesh(new THREE.SphereGeometry(TT_R, 28, 14, 0, Math.PI * 2, Math.PI / 2, Math.PI / 2), glassMat);
-  tubeBottom.position.set(0, TT_Y0, 0);
-  tube.add(tubeBottom);
-  const tubeBottomIn = new THREE.Mesh(new THREE.SphereGeometry(TT_R - 0.16, 26, 12, 0, Math.PI * 2, Math.PI / 2, Math.PI / 2), glassMat);
-  tubeBottomIn.position.set(0, TT_Y0 + 0.10, 0);
-  tube.add(tubeBottomIn);
-  // 卷口：一小段外翻的锥面 + 圆环，比单纯一个圆环更像真试管口
-  const tubeFlare = new THREE.Mesh(new THREE.CylinderGeometry(TT_R * 1.16, TT_R, 0.42, 36, 1, true), glassMat);
-  tubeFlare.position.set(0, TT_Y0 + TT_H + 0.16, 0);
-  tube.add(tubeFlare);
-  const tubeRim = new THREE.Mesh(new THREE.TorusGeometry(TT_R * 1.16, 0.11, 10, 36), glassMat);
-  tubeRim.rotation.x = Math.PI / 2;
-  tubeRim.position.set(0, TT_Y0 + TT_H + 0.36, 0);
-  tube.add(tubeRim);
-
-  /* --- 试样（固体段 + 液体段 + 糊状过渡带） --- */
-  const unitCyl = new THREE.CylinderGeometry(SAMPLE_R, SAMPLE_R, 1, 36, 1);
-  const unitDisk = new THREE.CircleGeometry(SAMPLE_R, 36);
-
-  const hypo = makeHypoMap();
-  hypo.map.anisotropy = MAX_ANISO;
-  const solidTex = hypo.map.clone();
-  solidTex.needsUpdate = true;
-  const solidBump = hypo.bump.clone();
-  solidBump.needsUpdate = true;
-
-  // 固相偏暖哑光、液相偏冷高光：熔化界面靠「色调 + 光泽」两级差读出来，不靠几何缝隙
-  const solidMat = new THREE.MeshStandardMaterial({
-    map: solidTex, bumpMap: solidBump, bumpScale: 0.05, color: '#f7ead0', roughness: 0.62, metalness: 0.02
+  /* --- 硬纸盖：盖住杯口、减少散热，中央开孔让温度计穿过去 --- */
+  const lid = new THREE.Group();
+  scene.add(lid);
+  const cardMap = makeCardboardMap();
+  cardMap.anisotropy = MAX_ANISO;
+  const cardMat = new THREE.MeshStandardMaterial({
+    map: cardMap, bumpMap: cardMap, bumpScale: 0.012,
+    color: '#ffffff', roughness: 0.94, metalness: 0, envMapIntensity: 0.7, side: THREE.DoubleSide
   });
-  const liquidMat = new THREE.MeshPhysicalMaterial({
-    color: '#d5ebef', transparent: true, opacity: 0.78, roughness: 0.05, metalness: 0,
-    clearcoat: 1, clearcoatRoughness: 0.03, envMapIntensity: 1.9, depthWrite: false
-  });
-  const mushMat = new THREE.MeshStandardMaterial({ color: '#f0e2c8', roughness: 0.9, metalness: 0 });
-
-  const solidMesh = new THREE.Mesh(unitCyl, solidMat);
-  const liquidMesh = new THREE.Mesh(unitCyl, liquidMat);
-  const liquidTopMesh = new THREE.Mesh(unitDisk, liquidMat);
-  liquidTopMesh.rotation.x = -Math.PI / 2;
-  const mushMesh = new THREE.Mesh(unitCyl, mushMat);
-  for (const m of [solidMesh, liquidMesh, liquidTopMesh, mushMesh]) {
-    m.castShadow = false; m.receiveShadow = false;
-    tube.add(m);
-  }
-
-  const paraffin = makeParaffinMap();
-  paraffin.map.anisotropy = MAX_ANISO;
-  const waxTex = paraffin.map.clone();
-  waxTex.needsUpdate = true;
-  const waxBump = paraffin.bump.clone();
-  waxBump.needsUpdate = true;
-  const waxMat = new THREE.MeshStandardMaterial({
-    map: waxTex, bumpMap: waxBump, bumpScale: 0.04, color: '#ffffff', roughness: 0.48, metalness: 0,
-    transparent: true, opacity: 1.0
-  });
-  const waxMesh = new THREE.Mesh(unitCyl, waxMat);
-  waxMesh.castShadow = false;
-  tube.add(waxMesh);
-  const waxTop = new THREE.Mesh(unitDisk, waxMat);
-  waxTop.rotation.x = -Math.PI / 2;
-  tube.add(waxTop);
+  // 用「上环 + 下环 + 外圈 + 内圈」拼出一块真有厚度的圆环板。
+  // 只放一个 RingGeometry 的话孔壁没有厚度，侧看就是一张贴纸。
+  const lidTop = new THREE.Mesh(new THREE.RingGeometry(LID_HOLE, LID_R, 56, 1), cardMat);
+  lidTop.rotation.x = -Math.PI / 2;
+  lidTop.position.set(0, LID_Y + LID_T / 2, 0);
+  lidTop.castShadow = true; lidTop.receiveShadow = true;
+  lid.add(lidTop);
+  const lidBot = new THREE.Mesh(new THREE.RingGeometry(LID_HOLE, LID_R, 56, 1), cardMat);
+  lidBot.rotation.x = -Math.PI / 2;
+  lidBot.position.set(0, LID_Y - LID_T / 2, 0);
+  lidBot.receiveShadow = true;
+  lid.add(lidBot);
+  const lidOuter = new THREE.Mesh(new THREE.CylinderGeometry(LID_R, LID_R, LID_T, 56, 1, true), cardMat);
+  lidOuter.position.set(0, LID_Y, 0);
+  lidOuter.castShadow = true;
+  lid.add(lidOuter);
+  const lidInner = new THREE.Mesh(new THREE.CylinderGeometry(LID_HOLE, LID_HOLE, LID_T, 28, 1, true), cardMat);
+  lidInner.position.set(0, LID_Y, 0);
+  lid.add(lidInner);
 
   /* --- 温度计 --- */
   // 温度计管壁比烧杯玻璃略实一点，否则整支温度计在背景里会化掉
@@ -859,6 +745,7 @@ import * as THREE from './assets/optics-three.min.js';
   });
 
   // 温度计刻度：印刷在管壁上（透明底 + 深色刻度与数字）
+  /* 温度计刻度：0~110 ℃。留 10 ℃ 余量，100 ℃ 时液柱不会顶到管顶（真实温度计也这样）。 */
   function makeThermoScale() {
     const W = SCALE_TEX_W, H = SCALE_TEX_H;
     const c = newCanvas(W, H), g = c.getContext('2d');
@@ -869,7 +756,7 @@ import * as THREE from './assets/optics-three.min.js';
     g.beginPath(); g.moveTo(SCALE_TICK_X, 6); g.lineTo(SCALE_TICK_X, H - 6); g.stroke();
     g.font = `bold ${SCALE_NUM_FONT}px "Helvetica Neue", Arial, sans-serif`;
     g.textAlign = 'left'; g.textBaseline = 'middle';
-    for (let T = 0; T <= 100; T += 2) {
+    for (let T = 0; T <= 110; T += 2) {
       const y = scaleCanvasY(T);
       const major = T % 10 === 0;
       const len = major ? 16 : 7;
@@ -894,21 +781,21 @@ import * as THREE from './assets/optics-three.min.js';
 
   /* 刻度 T 画在贴图的哪一行 —— 印刷刻度与液柱映射共用这一个式子，两边不可能再对不上 */
   function scaleCanvasY(T) {
-    return SCALE_TEX_H - 6 - (T / 100) * (SCALE_TEX_H - 12);
+    return SCALE_TEX_H - 6 - (T / 110) * (SCALE_TEX_H - 12);
   }
-  /* 刻度网格的竖直跨度（下沿 = 感温泡中心，上沿 = 管顶下 0.6 cm） */
+  /* 刻度网格的竖直跨度（下沿 = 玻璃泡中心，上沿 = 管顶下 0.6 cm） */
   const SCALE_Y0 = TH_BULB_Y;
   const SCALE_Y1 = TH_BULB_Y + TH_TUBE_H - 1.2;
   /* CanvasTexture 默认 flipY：贴图 v = 1 − y/H。刻度 T 的世界高度由这里唯一给出。
      曾把 STEM_Y0/STEM_Y1 另写成 TH_BULB_Y+0.55 / TH_BULB_Y+TH_TUBE_H−0.6，
-     与印刷刻度差了 0.45~0.70 cm（≈4~7 ℃），液柱顶端和数字对不上。 */
+     与印刷刻度差了 0.45~0.70 cm（≈3~5 ℃），液柱顶端和数字对不上。 */
   const scaleYOf = (T) => SCALE_Y0 +
     (1 - scaleCanvasY(T) / SCALE_TEX_H) * (SCALE_Y1 - SCALE_Y0);
   const STEM_Y0 = scaleYOf(0);                       // 刻度 0 ℃ 的世界高度
-  const STEM_Y1 = scaleYOf(100);                     // 刻度 100 ℃ 的世界高度
+  const STEM_Y1 = scaleYOf(110);                     // 刻度 110 ℃ 的世界高度
 
   const thermometer = new THREE.Group();
-  thermometer.position.set(0.52, 0, 0.28);
+  thermometer.position.set(TH_X, 0, TH_Z);
   scene.add(thermometer);
 
   const thGlass = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.24, TH_TUBE_H, 20, 1, true), thGlassMat);
@@ -942,65 +829,78 @@ import * as THREE from './assets/optics-three.min.js';
   thermometer.add(mercury);
   thermometer.add(mercuryBulb);
 
-  /* --- 温度计悬挂支架：铁架台上的横臂 + 眼环 + 细线 --- */
-  // 横臂随温度计一起上下滑（真实铁架台就是松开螺丝滑 boss 头），细线长度恒定
-  const TH_X = 0.52, TH_Z = 0.28;
-  const ARM_Y = TH_TOP + THREAD_LEN;
+  /* --- 铁夹：把温度计固定在铁架台的横臂上（松开螺丝可整体上下滑动） --- */
+  // 整组跟着温度计一起升降 —— 真实操作就是「松开螺丝 → 夹子带着温度计一起滑」，
+  // 所以它属于 thSupport 而不是 stand。
   const thSupport = new THREE.Group();
   scene.add(thSupport);
 
-  const armLen = TH_Z - ROD_Z;                        // 从立柱伸到温度计正上方
-  const armBar = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.62, armLen), darkSteel);
-  armBar.position.set(TH_X / 2, ARM_Y + 0.5, ROD_Z + armLen / 2);
-  armBar.castShadow = true;
-  thSupport.add(armBar);
-  const armSleeve = new THREE.Mesh(new THREE.CylinderGeometry(ROD_R + 0.46, ROD_R + 0.46, 2.2, 20), darkSteel);
-  armSleeve.position.set(0, ARM_Y + 0.5, ROD_Z);
-  armSleeve.castShadow = true;
-  thSupport.add(armSleeve);
-  const armScrew = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.4, 1.4, 12), knobMat);
-  armScrew.rotation.z = Math.PI / 2;
-  armScrew.position.set(ROD_R + 1.0, ARM_Y + 0.5, ROD_Z);
-  armScrew.castShadow = true;
-  thSupport.add(armScrew);
-  const eyelet = new THREE.Mesh(new THREE.TorusGeometry(0.19, 0.055, 8, 20), darkSteel);
-  eyelet.rotation.x = Math.PI / 2;
-  eyelet.position.set(TH_X, ARM_Y, TH_Z);
-  thSupport.add(eyelet);
-  const threadMat = new THREE.MeshStandardMaterial({ color: '#e8e2d4', roughness: 0.92, metalness: 0 });
-  const thread = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, THREAD_LEN, 8), threadMat);
-  thread.position.set(TH_X, ARM_Y - THREAD_LEN / 2, TH_Z);
-  thSupport.add(thread);
+  const clampArm = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.86, 4.7), darkSteel);
+  clampArm.position.set(0, CLAMP_Y, ROD_Z + 0.9 + 4.7 / 2);
+  clampArm.castShadow = true;
+  thSupport.add(clampArm);
 
-  /* --- 玻璃搅拌棒 --- */
-  const stir = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 18, 14), glassMat);
-  stir.position.set(-0.62, TT_Y0 + 5.6, -0.2);
-  stir.rotation.z = 0.045;
-  scene.add(stir);
+  const clampSleeve = new THREE.Mesh(new THREE.CylinderGeometry(ROD_R + 0.5, ROD_R + 0.5, 2.3, 20), darkSteel);
+  clampSleeve.position.set(0, CLAMP_Y, ROD_Z);
+  clampSleeve.castShadow = true;
+  thSupport.add(clampSleeve);
 
-  /* --- 气泡与蒸汽 --- */
-  const bubbleMat = new THREE.MeshPhysicalMaterial({ color: '#ffffff', transparent: true, opacity: 0.5, roughness: 0.05, metalness: 0, envMapIntensity: 1.4, depthWrite: false });
+  const clampScrew = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.42, 1.5, 12), knobMat);
+  clampScrew.rotation.z = Math.PI / 2;
+  clampScrew.position.set(ROD_R + 1.05, CLAMP_Y, ROD_Z);
+  clampScrew.castShadow = true;
+  thSupport.add(clampScrew);
+
+  // 夹口：两片夹爪 + 一圈软垫。软垫是真实铁夹必有的，不然夹碎玻璃管。
+  for (const s of [-1, 1]) {
+    const jaw = new THREE.Mesh(new THREE.BoxGeometry(0.5, 1.6, 0.4), darkSteel);
+    jaw.position.set(s * 0.52, CLAMP_Y, 0);
+    jaw.rotation.z = s * 0.08;
+    jaw.castShadow = true;
+    thSupport.add(jaw);
+  }
+  const clampPad = new THREE.Mesh(new THREE.TorusGeometry(0.30, 0.11, 8, 24), knobMat);
+  clampPad.rotation.x = Math.PI / 2;
+  clampPad.position.set(0, CLAMP_Y, 0);
+  thSupport.add(clampPad);
+
+  /* --- 气泡：沸腾前「上升变小」，沸腾时「上升变大、到水面破裂」 --- */
+  // 这是本实验最核心的观察点，所以气泡不是装饰：每个泡自己记着出生位置与半径，
+  // 由物理量 boilness 决定它一路上是缩还是胀（形态函数 bubbleScale() 在物理段里）。
+  const bubbleMat = new THREE.MeshPhysicalMaterial({
+    color: '#ffffff', transparent: true, opacity: 0.42, roughness: 0.04, metalness: 0,
+    clearcoat: 1, envMapIntensity: 1.5, depthWrite: false
+  });
+  const BUBBLE_N = 34;
   const bubbles = [];
   const rndB = mulberry32(31337);
-  for (let i = 0; i < 18; i++) {
+  for (let i = 0; i < BUBBLE_N; i++) {
     const m = new THREE.Mesh(new THREE.SphereGeometry(1, 10, 8), bubbleMat);
-    m.scale.setScalar(0.1 + rndB() * 0.12);
     m.userData = {
-      a: rndB() * Math.PI * 2,
-      rad: 0.6 + rndB() * 3.1,
-      y: BK_Y0 + rndB() * WATER_H,
-      spd: 0.5 + rndB() * 0.9,
-      ph: rndB() * 6.28
+      a: rndB() * Math.PI * 2,          // 绕杯轴的方位角
+      rad: rndB() * (BK_R - 1.0),       // 离轴距离
+      u: rndB(),                        // 归一化高度：0 = 杯内底，1 = 水面
+      spd: 0.26 + rndB() * 0.40,        // 上升速度（u / 秒）
+      r0: 0.055 + rndB() * 0.05,        // 出生半径
+      wob: rndB() * 6.28
     };
     m.visible = false;
     scene.add(m);
     bubbles.push(m);
   }
-  const steamMat = new THREE.MeshBasicMaterial({ color: '#ffffff', transparent: true, opacity: 0.0, depthWrite: false, fog: false });
+
+  /* --- 白气：从纸盖的孔里冒出来的水蒸气，遇冷液化成的小水珠 --- */
+  // 注意：白气是「小水珠」不是水蒸气，水蒸气本身无色透明 —— 这一点在结论里要讲清楚。
   const steams = [];
-  for (let i = 0; i < 7; i++) {
-    const m = new THREE.Mesh(new THREE.SphereGeometry(1, 10, 8), steamMat.clone());
-    m.userData = { ph: rndB() * 6.28, a: rndB() * 6.28, rad: 0.8 + rndB() * 2.4, spd: 0.55 + rndB() * 0.6 };
+  for (let i = 0; i < 12; i++) {
+    const m = new THREE.Mesh(
+      new THREE.SphereGeometry(1, 10, 8),
+      new THREE.MeshBasicMaterial({ color: '#ffffff', transparent: true, opacity: 0, depthWrite: false, fog: false })
+    );
+    m.userData = {
+      ph: rndB(), a: rndB() * 6.28, rad: 0.30 + rndB() * 0.62,
+      spd: 0.30 + rndB() * 0.34, r0: 0.20 + rndB() * 0.16
+    };
     m.visible = false;
     scene.add(m);
     steams.push(m);
@@ -1008,37 +908,65 @@ import * as THREE from './assets/optics-three.min.js';
 
   /* ==========================================================================
      四、物理积分
+     --------------------------------------------------------------------------
+     单节点热平衡：酒精灯给水加热，水同时向环境散热。
+       dT/dt = (P − k·(T − T₀)) / (m·c)
+     一旦 T 到达沸点 Tb，温度就锁在 Tb，多出来的净功率全部变成汽化潜热：
+       dm/dt = −(P − k·(Tb − T₀)) / L_v
+     撤去酒精灯（P = 0）后水开始降温，沸腾立刻停止 —— 这正是「沸腾需要继续吸热」。
      ========================================================================== */
-  const sub = SUBSTANCES;
 
-  function cEffParaffin(T) {
-    const s = sub.paraffin;
-    return s.cBase + s.cPeak * Math.exp(-Math.pow((T - s.tSoft) / s.softW, 2));
+  /* 沸点由气压决定：Antoine 方程（水的常用参数，1~100 ℃ 内误差 < 0.1 ℃）。
+     面板上标出的沸点必须由这里算出来，不许在文案里另写一个数。 */
+  function boilingPoint(pKPa) {
+    const mmHg = pKPa * 7.500617;
+    return 1730.63 / (8.07131 - Math.log10(mmHg)) - 233.426;
+  }
+
+  /* 沸腾程度：0 = 远未沸腾，1 = 正在剧烈沸腾。
+     统一驱动气泡形态、白气浓度、水面翻腾与结论文案 —— 只留一个真值来源。 */
+  function boilness() {
+    return smoothstep(state.Tb - 8, state.Tb - 0.3, state.T);
+  }
+
+  function isBoiling() {
+    return state.lampOn && state.T >= state.Tb - 0.02;
+  }
+
+  /* 气泡半径随高度 u（0 = 杯内底，1 = 水面）的变化 —— 本实验要看的核心现象：
+     沸腾前：上层水温低，泡里的水蒸气遇冷又液化，越升越小，还没到水面就没了；
+     沸腾时：整杯水都在沸点，泡里不断有水蒸气补充，越升越大，到水面破裂。
+     两者按 boilness 线性混合，过渡是连续的，不会突然跳变。 */
+  function bubbleScale(u) {
+    const b = boilness();
+    const shrink = Math.max(0, 0.55 * (1 - 1.15 * u));  // 沸腾前：越升越小，到 u≈0.87 就缩没了
+    const grow = 0.75 + 1.65 * u;                       // 沸腾时：越升越大
+    return shrink * (1 - b) + grow * b;
+  }
+
+  /* 水深随汽化缓慢变浅（沸腾时一直在失水） */
+  function waterDepth() {
+    return WATER_H * (state.mass / M_WATER);
   }
 
   function integrate(dt) {
-    const q = K_COUPLE * (state.Tw - state.Tt);
-    if (state.substance === 'hypo') {
-      const s = sub.hypo;
-      if (state.phi > 0 && state.phi < 1) {
-        state.phi = Math.min(1, state.phi + q / (M_SAMPLE * s.L) * dt);
-        state.Tt = s.tm;
-      } else if (state.phi >= 1) {
-        state.Tt += q / (M_SAMPLE * s.cl) * dt;
-      } else {
-        state.Tt += q / (M_SAMPLE * s.cs) * dt;
-        if (state.Tt >= s.tm) { state.Tt = s.tm; state.phi = 1e-6; }
-      }
+    const P = state.lampOn ? P_LAMP : 0;
+    const net = P - K_LOSS * (state.T - AMB);
+
+    if (state.T >= state.Tb - 1e-9 && net > 0) {
+      // 沸腾：温度锁死，净功率全部用于汽化，水量缓慢减少
+      state.T = state.Tb;
+      state.mass = Math.max(0, state.mass - net / LV_WATER * dt);
+      if (state.boilStart < 0) state.boilStart = state.t;
+      state.boilTime += dt;
     } else {
-      state.Tt += q / (M_SAMPLE * cEffParaffin(state.Tt)) * dt;
-      state.soft = clamp((state.Tt - 44) / 16, 0, 1);
+      state.T += net / (state.mass * C_WATER) * dt;
+      if (state.T > state.Tb) state.T = state.Tb;   // 不会冲过沸点
+      if (state.boilStart >= 0 && !isBoiling()) state.boilStart = -1;
     }
-    if (state.Tw < TW_MAX) {
-      state.Tw += (P_LAMP - q - K_LOSS * (state.Tw - AMB)) / (M_WATER * C_WATER) * dt;
-      if (state.Tw > TW_MAX) state.Tw = TW_MAX;
-    }
+
     state.t += dt;
-    if (state.Tt >= 96) state.finished = true;
+    if (state.boilTime >= BOIL_HOLD || state.mass <= M_WATER * MASS_MIN) state.finished = true;
   }
 
   function stepSim(dtReal) {
@@ -1051,9 +979,22 @@ import * as THREE from './assets/optics-three.min.js';
     }
   }
 
+  /* 换气压环境：沸点重算，已经越过新沸点的水立刻被拉回沸点（换到低气压时马上开锅） */
+  function setPressure(key) {
+    state.pressure = Object.prototype.hasOwnProperty.call(PRESSURES, key) ? key : 'std';
+    state.Tb = boilingPoint(PRESSURES[state.pressure].p);
+    if (state.T > state.Tb) state.T = state.Tb;
+  }
+
   function resetSim() {
-    state.t = 0; state.Tt = AMB; state.Tw = AMB;
-    state.phi = 0; state.soft = 0; state.finished = false;
+    state.t = 0;
+    state.T = AMB;
+    state.mass = M_WATER;
+    state.boilStart = -1;
+    state.boilTime = 0;
+    state.finished = false;
+    setLamp(true);            // 「重置」= 回到初始状态：撤走的酒精灯也放回来（否则重置后永远烧不开）
+    setPressure(state.pressure);
     series.length = 0;
     pushSample();
   }
@@ -1061,97 +1002,19 @@ import * as THREE from './assets/optics-three.min.js';
   /* ==========================================================================
      五、随状态更新器材
      ========================================================================== */
-  function meltFraction() {
-    return state.substance === 'hypo' ? state.phi : state.soft;
-  }
+  function updateWater() {
+    const depth = waterDepth();
+    // 水位随汽化下降：整根水柱按比例压扁，再重新摆到底面上
+    water.scale.set(1, depth / WATER_H, 1);
+    water.position.set(0, BK_Y0 + depth / 2, 0);
+    waterTop.position.set(0, BK_Y0 + depth, 0);
 
-  function applySubstanceVisual() {
-    const isHypo = state.substance === 'hypo';
-    solidMesh.visible = isHypo;
-    liquidMesh.visible = isHypo;
-    liquidTopMesh.visible = isHypo;
-    mushMesh.visible = isHypo;
-    waxMesh.visible = !isHypo;
-    waxTop.visible = !isHypo;
-  }
-
-  function updateSample() {
-    const isHypo = state.substance === 'hypo';
-    if (isHypo) {
-      const solidH = SAMPLE_H * Math.pow(1 - state.phi, 0.82);
-      const liquidH = Math.max(0, SAMPLE_H - solidH);
-      const showSolid = solidH > 0.02;
-
-      solidMesh.visible = showSolid;
-      if (showSolid) {
-        solidMesh.scale.set(1, solidH, 1);
-        solidMesh.position.set(0, TT_Y0 + 0.12 + solidH / 2, 0);
-        solidTex.repeat.set(2.2, Math.max(0.05, solidH * 1.55));
-        solidBump.repeat.copy(solidTex.repeat);
-      }
-      mushMesh.visible = showSolid && state.phi > 0.01 && state.phi < 0.99;
-      if (mushMesh.visible) {
-        const mh = 0.34;
-        mushMesh.scale.set(1, mh, 1);
-        mushMesh.position.set(0, TT_Y0 + 0.12 + solidH + mh / 2, 0);
-      }
-      const liqBottom = TT_Y0 + 0.12 + solidH + (mushMesh.visible ? 0.34 : 0);
-      liquidMesh.visible = liquidH > 0.06;
-      if (liquidMesh.visible) {
-        const lh = Math.max(0.06, TT_Y0 + 0.12 + SAMPLE_H - liqBottom);
-        liquidMesh.scale.set(1, lh, 1);
-        liquidMesh.position.set(0, liqBottom + lh / 2, 0);
-        liquidTopMesh.position.set(0, liqBottom + lh + 0.005, 0);
-      }
-    } else {
-      // 石蜡：先变软、再变稀；体积基本不变，顶部略有塌陷
-      const s = state.soft;
-      const h = SAMPLE_H * (1 - 0.10 * s);
-      waxMesh.scale.set(1, h, 1);
-      waxMesh.position.set(0, TT_Y0 + 0.12 + h / 2, 0);
-      waxTex.repeat.set(1.9, Math.max(0.05, h * 1.25));
-      waxBump.repeat.copy(waxTex.repeat);
-      waxTop.position.set(0, TT_Y0 + 0.12 + h + 0.005, 0);
-
-      // 透明度交给 applyXray() 统一处理（要兼顾「软化变透明」和「透视」两件事）
-      waxMat.roughness = 0.48 - 0.36 * s;
-      waxMat.bumpScale = 0.04 * (1 - 0.8 * s);
-      waxMat.color.setRGB(0.97, 0.92 - 0.02 * s, 0.82 - 0.05 * s);
-    }
-
-    // 温度计液柱：顶端按刻度线性映射（0 ℃ → STEM_Y0，100 ℃ → STEM_Y1），与印刷刻度一致
+    // 温度计液柱：顶端按刻度线性映射（0 ℃ → STEM_Y0，110 ℃ → STEM_Y1），与印刷刻度一致
     const stemLen = STEM_Y1 - STEM_Y0;
-    const colTop = STEM_Y0 + clamp(state.Tt / 100, 0, 1) * stemLen;
+    const colTop = STEM_Y0 + clamp(state.T / 110, 0, 1) * stemLen;
     const colH = Math.max(0.4, colTop - TH_BULB_Y);
     mercury.scale.set(1, colH, 1);
     mercury.position.set(0, TH_BULB_Y + colH / 2, 0);
-
-    // 透视：试样半透明，能看见插在里面的红色玻璃泡（海波晶体本来就是半透明的）
-    applyXray();
-  }
-
-  /* 透视开关：试样（固 / 糊 / 蜡）变半透明，好让插在里面的感温泡看得见。
-     关键：半透明时必须 depthWrite=false，否则后面那个不透明的红色玻璃泡
-     会被试样写下的深度值剔除掉 —— 看上去就是「泡不见了」。
-     不透明度取「能看清泡」和「试样本身还像个实物」的折中：0.34 太透，试样会化掉；
-     0.62 以上玻璃泡就被吃掉了。实测 0.48 附近两边都成立。 */
-  function applyXray() {
-    const on = state.xray;
-    const setMat = (mat, onOp, offOp) => {
-      const op = on ? onOp : offOp;
-      const tr = op < 0.999;
-      if (mat.opacity !== op) mat.opacity = op;
-      if (mat.transparent !== tr) { mat.transparent = tr; mat.needsUpdate = true; }
-      if (mat.depthWrite === tr) mat.depthWrite = !tr;
-    };
-    setMat(solidMat, 0.48, 1.0);
-    setMat(mushMat, 0.56, 1.0);
-    // 液相要压得比固相还透：感温泡在熔化中后期泡在熔液里，液相若比固相实，
-    // 泡反而在最需要看见的时候消失（实测 0.70 时红色信号只剩 1/6）。真实的熔融海波本来就是澄清液体。
-    liquidMat.opacity = on ? 0.50 : 0.78;
-    liquidMat.depthWrite = false;
-    // 石蜡：既有「软化变透明」又有「透视」，两者相乘
-    setMat(waxMat, 0.50 * (1 - 0.55 * smoothstep(0.05, 0.95, state.soft)), 1 - 0.62 * smoothstep(0.05, 0.95, state.soft));
   }
 
   /* ==========================================================================
@@ -1161,7 +1024,7 @@ import * as THREE from './assets/optics-three.min.js';
   const series = [];
   let sampleAcc = 0;
   function pushSample() {
-    series.push([state.t, state.Tt, state.Tw, meltFraction()]);
+    series.push([state.t, state.T, boilness()]);
     if (series.length > 3000) series.splice(0, 1000);
   }
 
@@ -1179,7 +1042,7 @@ import * as THREE from './assets/optics-three.min.js';
 
     const padL = 42, padR = 16, padT = 14, padB = 26;
     const pw = W - padL - padR, ph = H - padT - padB;
-    const tMax = Math.max(300, Math.ceil((state.t + 20) / 60) * 60);
+    const tMax = Math.max(240, Math.ceil((state.t + 20) / 60) * 60);
     const T0 = 10, T1 = 110;
     const X = (t) => padL + (t / tMax) * pw;
     const Y = (T) => padT + (T1 - T) / (T1 - T0) * ph;
@@ -1196,15 +1059,16 @@ import * as THREE from './assets/optics-three.min.js';
     for (let T = 20; T <= 100; T += 20) {
       const y = Y(T);
       g.beginPath(); g.moveTo(padL, y); g.lineTo(W - padR, y); g.stroke();
-      g.fillText(`${T}`, padL - 5, y);
+      g.fillText(String(T), padL - 5, y);
     }
     g.textAlign = 'center'; g.textBaseline = 'top';
     const tStep = tMax <= 300 ? 60 : tMax <= 600 ? 120 : 180;
     for (let t = 0; t <= tMax; t += tStep) {
       const x = X(t);
       g.beginPath(); g.moveTo(x, padT); g.lineTo(x, H - padB); g.stroke();
-      g.fillText(`${t}`, x, H - padB + 6);
+      g.fillText(String(t), x, H - padB + 6);
     }
+    // 两个轴单位分左右锚，写在同一坐标会完全重叠
     g.textAlign = 'left';
     g.fillStyle = 'rgba(160,190,215,0.9)';
     g.fillText('T/℃', padL - 32, padT - 12);
@@ -1212,49 +1076,49 @@ import * as THREE from './assets/optics-three.min.js';
     g.fillText('t/s', W - padR, padT - 12);
     g.textAlign = 'left';
 
-    // 熔点参考线
-    const s = sub[state.substance];
-    if (toggles.melt && s.crystal) {
-      const y = Y(s.tm);
+    // 沸点参考线：低气压时额外画一条 100 ℃ 的标准大气压对照线
+    if (toggles.boilLine) {
+      if (state.Tb < 99.5) {
+        const y100 = Y(100);
+        g.setLineDash([3, 4]);
+        g.strokeStyle = 'rgba(148,163,184,0.75)';
+        g.lineWidth = 1.3;
+        g.beginPath(); g.moveTo(padL, y100); g.lineTo(W - padR, y100); g.stroke();
+        g.setLineDash([]);
+        g.fillStyle = 'rgba(148,163,184,0.95)';
+        g.font = '10px "Helvetica Neue", Arial, sans-serif';
+        g.textAlign = 'right'; g.textBaseline = 'bottom';
+        g.fillText('标准大气压 100 ℃', W - padR - 4, y100 - 3);
+      }
+      const y = Y(state.Tb);
       g.setLineDash([6, 4]);
-      g.strokeStyle = 'rgba(250,204,21,0.9)';
-      g.lineWidth = 1.6;
+      g.strokeStyle = 'rgba(250,204,21,0.92)';
+      g.lineWidth = 1.7;
       g.beginPath(); g.moveTo(padL, y); g.lineTo(W - padR, y); g.stroke();
       g.setLineDash([]);
       g.fillStyle = '#facc15';
       g.font = 'bold 11px "Helvetica Neue", Arial, sans-serif';
       g.textAlign = 'left'; g.textBaseline = 'bottom';
-      g.fillText(`熔点 ${s.tm} ℃`, padL + 6, y - 3);
+      g.fillText(`沸点 ${state.Tb.toFixed(1)} ℃`, padL + 6, y - 3);
     }
 
-    // 熔化区间着色
+    // 沸腾平台着色（曲线走平的那一段）
     if (series.length > 1) {
       let runStart = -1;
       const bands = [];
       for (let i = 0; i < series.length; i++) {
-        const inMelt = series[i][3] > 0.001 && series[i][3] < 0.999;
-        if (inMelt && runStart < 0) runStart = i;
-        if ((!inMelt || i === series.length - 1) && runStart >= 0) {
+        const inBoil = series[i][2] > 0.9;
+        if (inBoil && runStart < 0) runStart = i;
+        if ((!inBoil || i === series.length - 1) && runStart >= 0) {
           bands.push([series[runStart][0], series[i][0]]);
           runStart = -1;
         }
       }
-      g.fillStyle = 'rgba(251,146,60,0.11)';
+      g.fillStyle = 'rgba(251,146,60,0.13)';
       for (const [a, b] of bands) g.fillRect(X(a), padT, Math.max(1, X(b) - X(a)), ph);
     }
 
-    // 水浴曲线
-    if (toggles.bath && series.length > 1) {
-      g.setLineDash([5, 4]);
-      g.strokeStyle = '#38bdf8';
-      g.lineWidth = 1.7;
-      g.beginPath();
-      series.forEach((p, i) => (i ? g.lineTo(X(p[0]), Y(p[2])) : g.moveTo(X(p[0]), Y(p[2]))));
-      g.stroke();
-      g.setLineDash([]);
-    }
-
-    // 试样曲线
+    // 水温曲线
     if (series.length > 1) {
       const grad = g.createLinearGradient(0, padT, 0, H - padB);
       grad.addColorStop(0, 'rgba(251,146,60,0.22)');
@@ -1283,25 +1147,39 @@ import * as THREE from './assets/optics-three.min.js';
 
   /* ==========================================================================
      七、微观分子示意
+     --------------------------------------------------------------------------
+     要讲清两件事：① 温度越高，分子平均动能越大，能挣脱水面的分子越多（蒸发）；
+     ② 沸腾时分子是在液体【内部】也大量汽化 —— 所以液体里会冒气泡，
+        而蒸发只发生在表面。这也是「蒸发和沸腾」最本质的区别。
      ========================================================================== */
   const microCanvas = $('microCanvas');
   const microText = $('microText');
   const rndM = mulberry32(5150);
-  const MP = [];
+  const SURF = 0.46;                 // 水面在画面里的位置（v：0 在上、1 在下）
+  const MM = [];                     // 液态分子
+  const MV = [];                     // 已汽化、跑到水面上方的分子
   (() => {
-    const cols = 13, rows = 8;
+    const cols = 12, rows = 6;
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
-        MP.push({
+        MM.push({
           hx: (c + 0.5 + (r % 2 ? 0.5 : 0)) / cols,
-          hy: (r + 0.5) / rows,
-          x: 0, y: 0, vx: (rndM() - 0.5), vy: (rndM() - 0.5),
-          jp: rndM() * 6.28, row: r, col: c
+          hy: SURF + 0.08 + (r + 0.5) / rows * 0.42,
+          x: 0, y: 0, jp: rndM() * 6.28, escaped: false
         });
       }
     }
-    MP.forEach((p) => { p.x = p.hx; p.y = p.hy; });
+    MM.forEach((p) => { p.x = p.hx; p.y = p.hy; });
   })();
+
+  /* 供自检读取：三种粒子的实时数量 */
+  function microStats() {
+    return {
+      liquid: MM.filter((p) => !p.escaped).length,
+      vapour: MV.length,
+      boilness: +boilness().toFixed(3)
+    };
+  }
 
   function drawMicro(dt) {
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -1316,145 +1194,142 @@ import * as THREE from './assets/optics-three.min.js';
     g.fillStyle = '#0a1a2b';
     g.fillRect(0, 0, W, H);
 
-    const isHypo = state.substance === 'hypo';
-    const frac = meltFraction();
-    const energy = clamp((state.Tt - AMB) / 70, 0, 1);          // 平均动能 ∝ 温度
-    const amp = 0.9 + energy * 4.2;
-    const spd = 6 + energy * 42;
+    const b = boilness();
+    const energy = clamp((state.T - AMB) / Math.max(1, state.Tb - AMB), 0, 1);
+    const amp = 0.0016 + energy * 0.0075;      // 热运动幅度 ∝ 温度
+    const px = (u) => 4 + u * (W - 8);
+    const py = (v) => 4 + v * (H - 8);
 
     g.save();
     g.beginPath(); g.rect(4, 4, W - 8, H - 8); g.clip();
 
-    const px = (u) => 4 + u * (W - 8);
-    const py = (v) => 4 + v * (H - 8);
+    // 水体与水面的位置随水量一起下降（沸腾时水在变少）
+    const surf = SURF + (1 - state.mass / M_WATER) * 0.5;
+    g.fillStyle = 'rgba(56,189,248,0.10)';
+    g.fillRect(px(0), py(surf), W - 8, H - 4 - py(surf));
+    g.strokeStyle = 'rgba(125,211,252,0.5)';
+    g.lineWidth = 1;
+    g.beginPath(); g.moveTo(px(0), py(surf)); g.lineTo(px(1), py(surf)); g.stroke();
 
-    // 晶格连线（只连尚未脱离的分子）
-    if (isHypo) {
-      g.strokeStyle = 'rgba(56,189,248,0.42)';
-      g.lineWidth = 1;
-      const freeCount = Math.floor(MP.length * frac);
-      for (let i = 0; i < MP.length; i++) {
-        if (i < freeCount) continue;
-        const p = MP[i];
-        for (let j = i + 1; j < MP.length; j++) {
-          if (j < freeCount) continue;
-          const q = MP[j];
-          if (Math.abs(p.row - q.row) + Math.abs(p.col - q.col) === 1) {
-            g.beginPath(); g.moveTo(px(p.x), py(p.y)); g.lineTo(px(q.x), py(q.y)); g.stroke();
-          }
-        }
+    // 沸腾时液体【内部】大量汽化 —— 画成从底部升起、越升越大的气泡
+    if (b > 0.05) {
+      g.strokeStyle = 'rgba(186,230,253,' + (0.25 + 0.5 * b).toFixed(2) + ')';
+      g.lineWidth = 1.1;
+      for (let i = 0; i < 7; i++) {
+        const ph = ((clock * 0.30 * (0.7 + i * 0.09) + i * 0.37) % 1);
+        const bx = px(0.08 + ((i * 0.137) % 0.84));
+        const by = py(surf + (1 - ph) * (1 - surf) * 0.92);
+        const r = 1.1 + ph * 3.4 * b;
+        g.beginPath(); g.arc(bx, by, r, 0, 7); g.stroke();
       }
     }
 
-    const freeCount = Math.floor(MP.length * frac);
-    for (let i = 0; i < MP.length; i++) {
-      const p = MP[i];
-      const free = i < freeCount;
-      if (!free) {
-        p.jp += dt * (2 + energy * 10);
-        p.x = p.hx + Math.sin(p.jp) * amp * 0.0016;
-        p.y = p.hy + Math.cos(p.jp * 1.3) * amp * 0.0016;
-      } else {
-        p.x += p.vx * spd * dt * 0.01;
-        p.y += p.vy * spd * dt * 0.01;
-        if (p.x < 0.03 || p.x > 0.97) { p.vx *= -1; p.x = clamp(p.x, 0.03, 0.97); }
-        if (p.y < 0.06 || p.y > 0.94) { p.vy *= -1; p.y = clamp(p.y, 0.06, 0.94); }
+    // 液态分子：在原位小幅振动；够能量又靠近水面的会挣脱（蒸发）
+    const escapeRate = (0.10 + 2.6 * b) * dt;      // 沸腾时大幅提高，且不再限制在表面
+    for (const p of MM) {
+      if (p.escaped) {
+        // 逃出去的分子往上飘，飘出画面后在底部重生
+        p.y -= dt * 0.55;
+        p.x += Math.sin(clock * 3 + p.jp) * dt * 0.10;
+        if (p.y < 0.02) { p.escaped = false; p.x = p.hx; p.y = surf + 0.10 + rndM() * 0.28; }
+        continue;
       }
-      const r = free ? 2.5 : 2.9;
-      g.fillStyle = free ? `rgba(251,146,60,${0.55 + energy * 0.4})` : `rgba(125,211,252,${0.6 + energy * 0.35})`;
-      g.beginPath(); g.arc(px(p.x), py(p.y), r, 0, 7); g.fill();
+      p.jp += dt * (2 + energy * 14);
+      p.x = p.hx + Math.sin(p.jp) * amp;
+      p.y = p.hy + Math.cos(p.jp * 1.3) * amp;
+      const nearSurface = p.y < surf + 0.14;
+      if (Math.random() < escapeRate && (nearSurface || b > 0.5)) {
+        p.escaped = true;
+        MV.push(p);
+      }
+    }
+
+    // 上方的水蒸气分子
+    for (let i = MV.length - 1; i >= 0; i--) {
+      const p = MV[i];
+      if (!p.escaped) { MV.splice(i, 1); continue; }
+      g.fillStyle = 'rgba(226,240,255,0.75)';
+      g.beginPath(); g.arc(px(p.x), py(p.y), 2.1, 0, 7); g.fill();
+    }
+    // 逃逸分子数封顶，避免长时间跑下去把画面塞满
+    if (MV.length > 26) MV.splice(0, MV.length - 26);
+
+    // 液态分子
+    for (const p of MM) {
+      if (p.escaped) continue;
+      g.fillStyle = 'rgba(125,211,252,' + (0.62 + energy * 0.34).toFixed(2) + ')';
+      g.beginPath(); g.arc(px(p.x), py(p.y), 2.6, 0, 7); g.fill();
     }
     g.restore();
 
     g.font = '10px "Helvetica Neue", Arial, sans-serif';
     g.textAlign = 'left'; g.textBaseline = 'top';
     g.fillStyle = 'rgba(150,180,205,0.8)';
-    g.fillText(isHypo ? '蓝＝晶格内 · 橙＝已挣脱' : '石蜡分子本来就不规则排列', 8, 7);
+    g.fillText(b > 0.5 ? '液体内部也在汽化 → 冒气泡' : '只有水面上的分子能挣脱', 8, 7);
 
-    if (isHypo) {
-      microText.textContent = frac <= 0.001
-        ? '分子规则排列在晶格上，只在小范围振动'
-        : frac >= 0.999
-          ? '晶格全部瓦解，分子可以自由移动（液态）'
-          : `晶格正在瓦解（${(frac * 100).toFixed(0)}%），但温度不变 → 分子平均动能不变`;
-    } else {
-      microText.textContent = frac <= 0.02
-        ? '分子排列不规则，靠得很紧，只能在原位振动'
-        : `分子逐渐松开（${(frac * 100).toFixed(0)}%），越软越容易移动，但始终没有晶格`;
-    }
+    microText.textContent = b <= 0.02
+      ? '分子挨在一起振动，只有少数跑得快的能从水面挣脱 —— 这是蒸发，比较缓慢'
+      : b < 0.5
+        ? '温度升高，分子平均动能变大，能挣脱水面的分子越来越多'
+        : '到了沸点：液体【内部】也大量汽化，水里冒出气泡，到水面破裂 —— 这就是沸腾';
   }
 
   /* ==========================================================================
      八、界面刷新
      ========================================================================== */
   const els = {
-    sample: $('metricSample'), bath: $('metricBath'), state: $('metricState'),
-    time: $('metricTime'), melt: $('metricMelt'),
-    hudSample: $('hudSample'), hudBath: $('hudBath'),
+    temp: $('metricTemp'), boil: $('metricBoil'), state: $('metricState'),
+    time: $('metricTime'), mass: $('metricMass'),
+    hudTemp: $('hudTemp'), hudBoil: $('hudBoil'), hudLamp: $('hudLamp'),
     finding: $('finding'),
-    runBtn: $('runBtn'), pauseBtn: $('pauseBtn'), resetBtn: $('resetBtn')
+    runBtn: $('runBtn'), pauseBtn: $('pauseBtn'), resetBtn: $('resetBtn'), lampBtn: $('lampBtn')
   };
 
   function statusText() {
-    const s = sub[state.substance];
-    if (state.substance === 'hypo') {
-      if (state.phi <= 0.001) return state.Tt < s.tm ? '固态 · 升温中' : '即将熔化';
-      if (state.phi >= 0.999) return '液态 · 升温中';
-      return '固液共存 · 正在熔化';
-    }
-    if (state.soft <= 0.02) return '固态 · 升温中';
-    if (state.soft >= 0.985) return '已熔化成液态';
-    return '逐渐变软 · 无固定熔点';
+    if (!state.lampOn) return state.T >= state.Tb - 0.05 ? '已撤火 · 停止沸腾' : '降温中 · 不再沸腾';
+    if (state.T >= state.Tb - 0.02) return '沸腾中 · 温度不变';
+    if (state.T >= state.Tb - 5) return '即将沸腾';
+    return '升温中';
   }
 
   /* 右侧窄表格里的短状态，四个字以内才排得下一行 */
   function shortState() {
-    const f = meltFraction();
-    if (state.substance === 'hypo') {
-      if (f <= 0.001) return '固态';
-      if (f >= 0.999) return '液态';
-      return '熔化中';
-    }
-    if (f <= 0.02) return '固态';
-    if (f >= 0.985) return '液态';
-    return '软化中';
+    if (!state.lampOn) return '降温中';
+    if (state.T >= state.Tb - 0.02) return '沸腾中';
+    if (state.T >= state.Tb - 5) return '快开了';
+    return '升温中';
   }
 
   function updateReadouts() {
-    const s = sub[state.substance];
-    const frac = meltFraction();
-    els.sample.textContent = `${state.Tt.toFixed(1)} ℃`;
-    els.bath.textContent = `${state.Tw.toFixed(1)} ℃`;
+    els.temp.textContent = `${state.T.toFixed(1)} ℃`;
+    els.boil.textContent = `${state.Tb.toFixed(1)} ℃`;
     els.state.textContent = statusText();
     els.time.textContent = `${state.t.toFixed(0)} s`;
-    els.melt.textContent = `${(frac * 100).toFixed(0)}%`;
-    els.hudSample.textContent = state.Tt.toFixed(1);
-    els.hudBath.textContent = state.Tw.toFixed(1);
+    els.mass.textContent = `${(state.mass * 1000).toFixed(0)} g`;
+    els.hudTemp.textContent = state.T.toFixed(1);
+    els.hudBoil.textContent = state.Tb.toFixed(1);
+    if (els.hudLamp) els.hudLamp.textContent = state.lampOn ? '加热中' : '已撤去';
 
+    const b = boilness();
+    const lowP = state.Tb < 99.5;
     let hint;
-    if (state.substance === 'hypo') {
-      if (state.phi <= 0.001) {
-        hint = `加热中：海波是晶体，温度升到 ${s.tm} ℃ 之前一直是固态。留意水浴温度比试样高多少 —— 水浴法让它升得慢、受热匀。`;
-      } else if (state.phi < 0.999) {
-        hint = `熔化中：温度死死钉在 ${s.tm} ℃，而水浴已经升到 ${state.Tw.toFixed(1)} ℃。这段时间吸收的热量全部用来破坏晶格，温度不变 —— 这就是晶体有固定熔点的原因。`;
-      } else {
-        hint = `已全部熔化：变成液态后温度又开始上升。整个熔化过程中，温度${s.tm} ℃始终没变。`;
-      }
+    if (!state.lampOn) {
+      hint = state.T >= state.Tb - 0.05
+        ? `酒精灯已经撤走：水还是 ${state.T.toFixed(1)} ℃，却立刻不再沸腾 —— 说明沸腾必须<b>继续吸热</b>，光达到沸点还不够。`
+        : `撤去酒精灯后水温正在下降（现在 ${state.T.toFixed(1)} ℃），气泡很快消失，沸腾停止。`;
+    } else if (state.T < state.Tb - 8) {
+      hint = `升温中：水温 ${state.T.toFixed(1)} ℃，离沸点还差 ${(state.Tb - state.T).toFixed(1)} ℃。盯住杯底 —— 有小气泡冒出来，但越往上越小。`;
+    } else if (state.T < state.Tb - 0.02) {
+      hint = `快开了：气泡明显变多变大，却还没到水面就消失了。因为上层水温还低于沸点，泡里的水蒸气遇冷又液化。`;
     } else {
-      if (state.soft <= 0.02) {
-        hint = '加热中：石蜡是非晶体，没有固定熔点。继续观察它会不会出现平台。';
-      } else if (state.soft < 0.985) {
-        hint = `正在软化：石蜡变软、变稀，但温度一直在升高，只是升得慢了一些。曲线只有“拐弯”，没有平台 —— 这就是非晶体没有固定熔点的表现。`;
-      } else {
-        hint = '已完全熔化：整条曲线从头到尾都在上升，从来没有出现过水平的平台。';
-      }
+      hint = `正在沸腾：温度死死停在 ${state.Tb.toFixed(1)} ℃，酒精灯还在烧，水还在吸热。气泡一路上升一路<b>变大</b>，到水面破裂放出水蒸气 —— 这些水蒸气遇冷液化成小水珠，就是我们看到的白气。`
+        + (lowP ? `注意：这里的气压只有 ${PRESSURES[state.pressure].p.toFixed(1)} kPa，所以沸点不是 100 ℃ 而是 ${state.Tb.toFixed(1)} ℃ —— 气压越低，沸点越低。` : '');
     }
-    els.finding.textContent = hint;
+    els.finding.innerHTML = hint;
   }
 
   function refreshAll(dt) {
-    applySubstanceVisual();
-    updateSample();
+    updateWater();
     drawChart();
     drawMicro(dt || 0.016);
     updateReadouts();
@@ -1470,15 +1345,33 @@ import * as THREE from './assets/optics-three.min.js';
 
   function animateParts(dt) {
     clock += dt;
-    // 火焰摇曳
+    const b = boilness();
+    const depth = waterDepth();
+
+    /* 酒精灯：撤去时整盏灯滑到旁边，火焰同步缩小 + 淡出。
+       两个平滑值（位置 / 火焰）走同一段代码，所以「熄火」和「移开」是同时发生的。 */
+    const lampTarget = state.lampOn ? 1 : 0;
+    state.lampAnim += (lampTarget - state.lampAnim) * Math.min(1, dt * 2.6);
+    if (Math.abs(lampTarget - state.lampAnim) < 0.002) state.lampAnim = lampTarget;
+    lamp.position.x = LAMP_X0 + (LAMP_X1 - LAMP_X0) * (1 - state.lampAnim);
+
+    state.flameAnim += (lampTarget - state.flameAnim) * Math.min(1, dt * 3.4);
+    if (Math.abs(lampTarget - state.flameAnim) < 0.004) state.flameAnim = lampTarget;
+    const fa = state.flameAnim;
+
     const wob = Math.sin(clock * 7.3) * 0.5 + Math.sin(clock * 11.7 + 1.3) * 0.3 + Math.sin(clock * 3.1) * 0.2;
     const wob2 = Math.sin(clock * 9.1 + 0.7);
-    flameGroup.scale.set(1 + wob * 0.055, 1 + wob2 * 0.045, 1 + wob * 0.05);
-    flameGroup.position.x = wob * 0.11;
-    flameGroup.rotation.z = wob * 0.035;
-    flameLight.intensity = 3.2 + wob * 0.5;
+    flameGroup.visible = fa > 0.012;
+    if (flameGroup.visible) {
+      flameGroup.scale.set((1 + wob * 0.055) * fa, (1 + wob2 * 0.045) * fa, (1 + wob * 0.05) * fa);
+      flameGroup.position.x = wob * 0.11;
+      flameGroup.rotation.z = wob * 0.035;
+      for (const L of flameLayers) L.mesh.material.opacity = L.base.opacity * fa;
+      flameGlow.material.opacity = 0.40 * fa;
+    }
+    flameLight.intensity = (3.2 + wob * 0.5) * fa;
 
-    // 温度计插入 / 拔出：指数平滑跟随目标，动作看得见（支架横臂与细线一起上下滑）
+    /* 温度计插入 / 提起：指数平滑跟随目标，铁夹带着它一起上下滑 */
     state.thAnim += (state.thDepth - state.thAnim) * Math.min(1, dt * 3.6);
     if (Math.abs(state.thDepth - state.thAnim) < 0.002) state.thAnim = state.thDepth;
     const thLift = (1 - state.thAnim) * TH_LIFT;
@@ -1486,34 +1379,47 @@ import * as THREE from './assets/optics-three.min.js';
     thSupport.position.y = thLift;
     if (Math.abs(state.thDepth - state.thAnim) > 5e-4) dirty = true;   // 只有还在动的时候才要求重绘
 
-    // 气泡
-    const heat = clamp((state.Tw - 55) / 45, 0, 1);
-    for (const b of bubbles) {
-      const u = b.userData;
-      b.visible = heat > 0.02;
-      if (!b.visible) continue;
-      u.y += u.spd * heat * dt * 6;
-      if (u.y > WATER_TOP - 0.2) { u.y = BK_Y0 + 0.3; u.a = rndB() * 6.28; u.rad = 0.6 + rndB() * 3.1; }
-      b.position.set(Math.cos(u.a) * u.rad, u.y, Math.sin(u.a) * u.rad);
-      const sc = (0.07 + 0.07 * heat) * (0.8 + 0.4 * Math.sin(u.ph + clock * 3));
-      b.scale.setScalar(sc);
+    /* 气泡：出生在杯底，按 bubbleScale(u) 决定上升途中是缩还是胀。
+       u ≥ 1（到水面破裂）或半径缩到看不见（半路消失）都回收，重新从杯底冒。 */
+    const showB = toggles.bubbles && state.T > 42;
+    for (const m of bubbles) {
+      const u = m.userData;
+      m.visible = showB;
+      if (!m.visible) continue;
+      u.u += u.spd * (0.30 + 1.7 * b) * dt;
+      const sc = bubbleScale(u.u) * u.r0;
+      if (u.u >= 1 || sc < 0.012) {
+        u.u = 0.015 + rndB() * 0.10;
+        u.a = rndB() * 6.28;
+        u.rad = rndB() * (BK_R - 1.0);
+        u.r0 = 0.085 + rndB() * 0.07;
+        continue;
+      }
+      const jitter = Math.sin(clock * 2.4 + u.wob) * (0.08 + 0.16 * b);
+      m.position.set(
+        Math.cos(u.a) * u.rad + jitter,
+        BK_Y0 + 0.35 + u.u * (depth - 0.5),
+        Math.sin(u.a) * u.rad + jitter
+      );
+      m.scale.setScalar(sc);
     }
 
-    // 蒸汽
+    /* 白气：从纸盖的孔里冒出来。孔被温度计占着，所以水蒸气是从孔壁那一圈缝隙喷出的。 */
     for (const m of steams) {
       const u = m.userData;
-      m.visible = heat > 0.25;
+      m.visible = toggles.steam && b > 0.16;
       if (!m.visible) continue;
       u.ph += dt * u.spd;
-      const cyc = (u.ph % 1);
-      const y = WATER_TOP + cyc * 7.5;
-      m.position.set(Math.cos(u.a) * u.rad + Math.sin(cyc * 5) * 0.4, y, Math.sin(u.a) * u.rad);
-      m.scale.setScalar(0.5 + cyc * 1.5);
-      m.material.opacity = 0.30 * heat * Math.sin(cyc * Math.PI) * (1 - cyc * 0.6);
+      const cyc = u.ph % 1;
+      const y = LID_Y + 0.30 + cyc * 8.6;
+      const spread = u.rad + cyc * 1.55;
+      m.position.set(Math.cos(u.a) * spread, y, Math.sin(u.a) * spread);
+      m.scale.setScalar(u.r0 + cyc * 1.5);
+      m.material.opacity = 0.30 * b * Math.sin(cyc * Math.PI) * (1 - cyc * 0.55);
     }
 
-    // 水面轻微起伏
-    waterTop.position.y = WATER_TOP + Math.sin(clock * 1.7) * 0.012;
+    /* 水面：沸腾时明显翻腾，平时只有极轻微的起伏 */
+    waterTop.position.y = BK_Y0 + depth + Math.sin(clock * (1.6 + 3.4 * b)) * (0.010 + 0.052 * b);
   }
 
   /* ==========================================================================
@@ -1578,15 +1484,25 @@ import * as THREE from './assets/optics-three.min.js';
     });
   });
 
-  /* --- 物质 --- */
-  document.querySelectorAll('[data-substance]').forEach((btn) => {
+  /* --- 气压环境 --- */
+  // 按钮上的沸点必须由 boilingPoint() 现算，不许在 HTML 里写死一个数 ——
+  // 否则改公式的时候文案会和曲线打架。
+  function applyPressureUI() {
+    document.querySelectorAll('[data-pressure]').forEach((b) => {
+      b.classList.toggle('active', b.dataset.pressure === state.pressure);
+      const pr = PRESSURES[b.dataset.pressure];
+      const small = b.querySelector('small');
+      if (pr && small) small.textContent = `${pr.place} · 沸点 ${boilingPoint(pr.p).toFixed(1)} ℃`;
+    });
+  }
+  document.querySelectorAll('[data-pressure]').forEach((btn) => {
     btn.addEventListener('click', () => {
-      state.substance = btn.dataset.substance;
-      document.querySelectorAll('[data-substance]').forEach((b) => b.classList.toggle('active', b === btn));
-      resetSim();
+      setPressure(btn.dataset.pressure);
+      applyPressureUI();
       refreshAll();
     });
   });
+  applyPressureUI();
 
   /* --- 运行控制 --- */
   function setRunning(v) {
@@ -1594,7 +1510,6 @@ import * as THREE from './assets/optics-three.min.js';
     els.runBtn.disabled = v;
     els.pauseBtn.disabled = !v;
     els.runBtn.textContent = state.t > 0 ? '继续加热' : '开始加热';
-    els.pauseBtn.textContent = '暂停';
   }
   els.runBtn.addEventListener('click', () => {
     if (state.finished) resetSim();
@@ -1607,6 +1522,16 @@ import * as THREE from './assets/optics-three.min.js';
     clearRecords();            // 「重置」= 从头再来，记录表一起清空
     refreshAll();
   });
+
+  /* --- 撤去 / 放回酒精灯：这是「沸腾需要继续吸热」的关键操作 --- */
+  function setLamp(on) {
+    state.lampOn = on;
+    els.lampBtn.textContent = on ? '撤去酒精灯' : '放回酒精灯';
+    els.lampBtn.classList.toggle('active', !on);
+    requestRender();
+  }
+  els.lampBtn.addEventListener('click', () => setLamp(!state.lampOn));
+
   document.querySelectorAll('[data-speed]').forEach((btn) => {
     btn.addEventListener('click', () => {
       state.speed = Number(btn.dataset.speed);
@@ -1614,7 +1539,7 @@ import * as THREE from './assets/optics-three.min.js';
     });
   });
 
-  /* --- 温度计插入 / 提起（支架横臂与细线一起上下滑） --- */
+  /* --- 温度计插入 / 提起（铁夹带着温度计一起上下滑） --- */
   document.querySelectorAll('[data-thdepth]').forEach((btn) => {
     btn.addEventListener('click', () => {
       state.thDepth = Number(btn.dataset.thdepth);
@@ -1624,13 +1549,9 @@ import * as THREE from './assets/optics-three.min.js';
   });
 
   /* --- 显示开关 --- */
-  $('toggleBath').addEventListener('change', (e) => { toggles.bath = e.target.checked; requestRender(); });
-  $('toggleMelt').addEventListener('change', (e) => { toggles.melt = e.target.checked; requestRender(); });
-  $('toggleXray').addEventListener('change', (e) => {
-    state.xray = e.target.checked;
-    applyXray();
-    requestRender();
-  });
+  $('toggleBubbles').addEventListener('change', (e) => { toggles.bubbles = e.target.checked; requestRender(); });
+  $('toggleSteam').addEventListener('change', (e) => { toggles.steam = e.target.checked; requestRender(); });
+  $('toggleBoil').addEventListener('change', (e) => { toggles.boilLine = e.target.checked; drawChart(); requestRender(); });
   $('toggleMicro').addEventListener('change', (e) => {
     toggles.micro = e.target.checked;
     const box = document.querySelector('.micro-inset');
@@ -1642,11 +1563,11 @@ import * as THREE from './assets/optics-three.min.js';
      十一、步骤与记录
      ========================================================================== */
   const STEPS = [
-    { name: '01 认识器材', text: '<strong>认识器材：</strong>铁架台的铸铁底座上立着镀铬立柱，铁圈托住<b>石棉网</b>，烧杯放在石棉网上，试管用铁夹夹住、浸在烧杯的水里，温度计插在试管中。下方是点燃的酒精灯。' },
-    { name: '02 水浴加热', text: '<strong>为什么要把试管泡在水里：</strong>火焰直接加热试管，受热不均匀、温度升得太快，来不及记录。用水浴加热，试管里的物质受热<b>均匀</b>、升温<b>缓慢</b>，而且最高只会接近 100 ℃，安全又便于观察。' },
-    { name: '03 海波熔化', text: '<strong>找熔点：</strong>选海波开始加热。温度升到 <b>48 ℃</b> 时注意看 —— 温度计的液柱停住了，但酒精灯还在烧，物质还在吸热。这个不变的温度就是海波的<b>熔点</b>。' },
-    { name: '04 石蜡对照', text: '<strong>换石蜡：</strong>换成石蜡重新加热。石蜡没有固定熔点：它先变软、再变稀，温度<b>一直在升高</b>，曲线只有“拐弯”，没有平台。这就是晶体和非晶体最本质的区别。' },
-    { name: '05 记录归纳', text: '<strong>记录归纳：</strong>把海波“开始熔化 / 熔化一半 / 刚好熔化完”三个时刻记下来，你会发现三个温度都是 48 ℃。再记录石蜡同一阶段的温度，结论就出来了。' }
+    { name: '01 认识器材', text: '<strong>认识器材：</strong>铁架台的铸铁底座上立着镀铬立柱，铁圈托住<b>石棉网</b>，<b>烧杯</b>放在石棉网上，杯口盖一块<b>硬纸板</b>、中间开孔让<b>温度计</b>穿过去，感温泡浸在水里但<b>不碰杯底</b>。杯下是点燃的酒精灯。' },
+    { name: '02 加热升温', text: '<strong>开始加热：</strong>点“开始加热”，看着温度计的液柱一路上升，同时记下几个时刻的水温。这一步先不着急下结论，只把“升温”这段曲线画出来。' },
+    { name: '03 观察气泡', text: '<strong>水开之前先看气泡：</strong>杯底冒出小气泡，可它<b>越往上升越小</b>，还没到水面就没了。原因是上层水温还低于沸点，泡里的水蒸气遇冷又液化成水。' },
+    { name: '04 水沸腾了', text: '<strong>到沸点：</strong>温度升到 <b>100 ℃</b>（标准大气压）就不再上升了，但酒精灯还在烧。这时气泡<b>越往上升越大</b>，到水面破裂，放出大量水蒸气。水面上方的“白气”是水蒸气遇冷液化成的<b>小水珠</b>，不是水蒸气本身。' },
+    { name: '05 撤去酒精灯', text: '<strong>撤去酒精灯：</strong>点右侧的“撤去酒精灯”。水明明还是 100 ℃，却<b>立刻停止沸腾</b> —— 说明沸腾必须同时满足两个条件：<b>温度达到沸点</b>、<b>继续吸热</b>，缺一不可。' }
   ];
   const stepButtons = Array.from(document.querySelectorAll('[data-step]'));
   const stepDetail = $('stepDetail');
@@ -1663,8 +1584,8 @@ import * as THREE from './assets/optics-three.min.js';
 
   const EMPTY_MAIN = '<tr><td colspan="6" class="empty">尚无记录，先点“开始加热”再记录</td></tr>';
   const EMPTY_SIDE = '<tr><td colspan="4" class="empty">还没有记录</td></tr>';
-  const HINT_READY = '加热时随时点一下，当前时刻和试样温度就记进下面的表格（点「重置」会清空）。';
-  const HINT_DONE = '已记录。换物质重新加热时旧记录会保留，正好用来对照；点「重置」则把表格一起清空。';
+  const HINT_READY = '加热时随时点一下，当前时刻和水温就记进下面的表格（点「重置」会清空）。';
+  const HINT_DONE = '已记录。换气压环境重新加热时旧记录会保留，正好用来对照；点「重置」则把表格一起清空。';
 
   /* 清空记录（「重置」按钮和调试钩子共用同一个入口） */
   function clearRecords() {
@@ -1677,46 +1598,41 @@ import * as THREE from './assets/optics-three.min.js';
     if (!state.records.length) {
       recordBody.innerHTML = EMPTY_MAIN;
       recordBodySide.innerHTML = EMPTY_SIDE;
-      summary.textContent = '建议记录：海波的“开始熔化 / 熔化一半 / 刚好熔化完”三个时刻，看温度是否相同。';
+      summary.textContent = '建议记录：水沸腾前后各记几个时刻，尤其是“开始沸腾 / 沸腾中 / 沸腾一会儿之后”这三组，看温度是否相同。';
       recSum.textContent = '点上面的按钮开始记录。';
       return;
     }
     recordBody.innerHTML = state.records.map((r) => `
-      <tr>
-        <td>${r.substance}</td><td>${r.t.toFixed(0)} s</td><td>${r.Tt.toFixed(1)} ℃</td>
-        <td>${r.Tw.toFixed(1)} ℃</td><td>${r.state}</td><td>${(r.frac * 100).toFixed(0)}%</td>
+      <tr class="${r.boiling ? 'boil' : ''}">
+        <td>${r.t.toFixed(0)} s</td><td>${r.T.toFixed(1)} ℃</td><td>${r.Tb.toFixed(1)} ℃</td>
+        <td>${r.state}</td><td>${r.boiling ? '是' : '否'}</td><td>${(r.mass * 1000).toFixed(0)} g</td>
       </tr>`).join('');
     recordBodySide.innerHTML = state.records.map((r, i) => `
-      <tr class="${r.crystal ? 'crystal' : 'wax'}">
+      <tr class="${r.boiling ? 'boil' : ''}">
         <td>${i + 1}</td><td>${r.t.toFixed(0)} s</td>
-        <td>${r.Tt.toFixed(1)} ℃</td><td>${r.short}</td>
+        <td>${r.T.toFixed(1)} ℃</td><td>${r.short}</td>
       </tr>`).join('');
 
-    const hypo = state.records.filter((r) => r.crystal && r.frac > 0.01 && r.frac < 0.99);
+    const bo = state.records.filter((r) => r.boiling);
     let text;
-    if (hypo.length >= 2) {
-      const ts = hypo.map((r) => r.Tt);
+    if (bo.length >= 2) {
+      const ts = bo.map((r) => r.T);
       const spread = Math.max(...ts) - Math.min(...ts);
-      text = `熔化过程的 ${hypo.length} 次记录中，试样温度最大只差 ${spread.toFixed(1)} ℃ —— 晶体熔化时温度确实不变。`;
+      text = `沸腾过程的 ${bo.length} 次记录中，水温最大只差 ${spread.toFixed(1)} ℃ —— 水沸腾时温度确实不变。`;
+    } else if (state.records.length >= 2) {
+      text = `已记录 ${state.records.length} 组，但还没有一组是在沸腾时记的。等水真的沸腾了（气泡一路上升变大、到水面破裂）再记，才看得出温度变不变。`;
     } else {
-      const paras = state.records.filter((r) => !r.crystal);
-      if (paras.length >= 2) {
-        const ts = paras.map((r) => r.Tt);
-        text = `石蜡的 ${paras.length} 次记录温度从 ${Math.min(...ts).toFixed(1)} ℃ 一直升到 ${Math.max(...ts).toFixed(1)} ℃，始终没有停下来。`;
-      } else {
-        text = `已记录 ${state.records.length} 组。再补几组不同阶段的记录，才能比较温度是否改变。`;
-      }
+      text = `已记录 ${state.records.length} 组。再补几组不同阶段的记录，才能比较温度是否改变。`;
     }
     summary.textContent = text;
     recSum.textContent = text;
   }
   recordBtn.addEventListener('click', () => {
-    const frac = meltFraction();
     state.records.push({
-      substance: sub[state.substance].name,
-      crystal: sub[state.substance].crystal,
-      t: state.t, Tt: state.Tt, Tw: state.Tw,
-      state: statusText(), short: shortState(), frac
+      t: state.t, T: state.T, Tb: state.Tb,
+      boiling: isBoiling(), boil: boilness(),
+      lampOn: state.lampOn, mass: state.mass,
+      state: statusText(), short: shortState()
     });
     if (state.records.length > 24) state.records.shift();
     renderRecords();
@@ -1734,9 +1650,9 @@ import * as THREE from './assets/optics-three.min.js';
      十二、启动
      ========================================================================== */
   canvas.style.cursor = 'grab';
-  applySubstanceVisual();
+  setPressure(state.pressure);
   resetSim();
-  updateSample();
+  updateWater();
   updateReadouts();
   drawChart();
   drawMicro(0.016);
@@ -1744,7 +1660,7 @@ import * as THREE from './assets/optics-three.min.js';
   resize();
 
   /* 单帧推进。真实 rAF 循环与验收用的驱动钩子走【同一段】代码 ——
-     无头沙箱里 requestAnimationFrame 可能一帧都不触发，
+     无头沙箱里 requestAnimationFrame 一次都不触发（实测 0 帧/秒），
      若验收自己另抄一遍推进逻辑，改坏这里照样全绿。 */
   let uiAcc = 0;
   function frameStep(dt) {
@@ -1754,7 +1670,7 @@ import * as THREE from './assets/optics-three.min.js';
       stepSim(dt);
       sampleAcc += dt * state.speed;
       if (sampleAcc >= 0.6) { sampleAcc = 0; pushSample(); }
-      updateSample();
+      updateWater();
       if (state.finished) { setRunning(false); pushSample(); }
     }
 
@@ -1788,43 +1704,44 @@ import * as THREE from './assets/optics-three.min.js';
   window.addEventListener('resize', () => { resize(); drawChart(); drawMicro(0.016); });
 
   /* --- 供无头验收脚本读取 --- */
-  window.__meltLab = {
-    state, view, VIEWS, SUBSTANCES, toggles, series,
+  window.__boilLab = {
+    state, view, VIEWS, PRESSURES, toggles, series,
     camera, renderer, scene,
-    thermometer, thSupport, thermometerX: TH_X, thScale, mercury, updateCamera,
-    thBulbY: TH_BULB_Y, thLiftMax: TH_LIFT, thTubeH: TH_TUBE_H,
-    stemY0: STEM_Y0, stemY1: STEM_Y1,
+    thermometer, thSupport, lamp, flameGroup, thScale, mercury,
+    bubbles, steams, waterTop, flameLayers,
+    thermometerX: TH_X, thBulbY: TH_BULB_Y, thLiftMax: TH_LIFT, thTubeH: TH_TUBE_H,
+    stemY0: STEM_Y0, stemY1: STEM_Y1, updateCamera,
     scaleU0, scaleU1, scaleYOf, scaleCanvasY, scaleTexH: SCALE_TEX_H, scaleFaceDeg: SCALE_FACE_DEG,
-    rodTop: BASE_H + ROD_H, armY: ARM_Y, sleeveHalf: 1.1,
-    mats: { solidMat, mushMat, liquidMat, waxMat, thGlassMat, thRedMat, glassMat, waterMat },
-    setRunning, resetSim, refreshAll,
-    step(dt) { stepSim(dt); updateSample(); pushSample(); updateReadouts(); drawChart(); drawMicro(dt); requestRender(); },
+    rodTop: BASE_H + ROD_H, clampY: CLAMP_Y, sleeveHalf: 1.15,
+    lidY: LID_Y, bkY0: BK_Y0, bkR: BK_R, waterH: WATER_H, bulbR: TH_BULB_R,
+    mats: { glassMat, waterMat, thGlassMat, thRedMat, cardMat },
+    setRunning, resetSim, refreshAll, setLamp, applyPressureUI,
+    step(dt) { stepSim(dt); updateWater(); pushSample(); updateReadouts(); drawChart(); drawMicro(dt); requestRender(); },
     advance(seconds) {                       // 直接推进仿真，不依赖真实时间
       let left = seconds;
       while (left > 0 && !state.finished) {
         const d = Math.min(0.2, left);
         stepSim(d); left -= d;
       }
-      updateSample(); pushSample(); updateReadouts(); drawChart(); drawMicro(0.016);
-      return { t: state.t, Tt: state.Tt, Tw: state.Tw, phi: state.phi, soft: state.soft };
+      updateWater(); pushSample(); updateReadouts(); drawChart(); drawMicro(0.016);
+      return { t: state.t, T: state.T, Tb: state.Tb, mass: state.mass, boiling: isBoiling(), boil: boilness() };
     },
     /* 无头环境没有 rAF：按固定步长喂帧，走的是与真实循环同一个 frameStep。
-       指数平滑（温度计升降等）与逐帧动画靠它才能被确定性地推到稳态。 */
+       指数平滑（温度计升降、酒精灯移动、火焰淡出）与气泡/白气的逐帧运动靠它才能推进。 */
     driveAnim(seconds, dt = 1 / 60) {
       const n = Math.max(1, Math.round(seconds / dt));
       for (let i = 0; i < n; i++) frameStep(dt);
       renderer.render(scene, camera);
       return {
-        frames: n, thDepth: state.thDepth, thAnim: state.thAnim,
-        thLift: thermometer.position.y, supportY: thSupport.position.y
+        frames: n,
+        thDepth: state.thDepth, thAnim: state.thAnim, thLift: thermometer.position.y,
+        lampAnim: state.lampAnim, flameAnim: state.flameAnim,
+        lampX: lamp.position.x, flameVisible: flameGroup.visible
       };
     },
-    statusText, meltFraction, shortState, renderRecords, clearRecords,
-    setSubstance(k) {
-      state.substance = k;
-      document.querySelectorAll('[data-substance]').forEach((b) => b.classList.toggle('active', b.dataset.substance === k));
-      resetSim(); refreshAll();
-    },
+    statusText, shortState, renderRecords, clearRecords, microStats,
+    boilness, isBoiling, bubbleScale, waterDepth, boilingPoint,
+    setPressure(key) { setPressure(key); applyPressureUI(); refreshAll(); },
     /* 温度计当前实际抬升量（世界单位 cm），走的是渲染用的同一份位置 */
     thLift() { return thermometer.position.y; },
     /* 感温泡在 GL 缓冲区里的落点，供像素探针采样（GL 原点在左下，与 NDC 同向） */
@@ -1835,16 +1752,19 @@ import * as THREE from './assets/optics-three.min.js';
       const W = gl.drawingBufferWidth, H = gl.drawingBufferHeight;
       return { x: (v.x * 0.5 + 0.5) * W, y: (v.y * 0.5 + 0.5) * H, W, H };
     },
+    /* 某个气泡在 GL 缓冲区里的落点（用来断言「气泡真的画出来了」） */
+    bubbleRect(i) {
+      const m = bubbles[i % bubbles.length];
+      const v = m.position.clone();
+      v.project(camera);
+      const gl = renderer.getContext();
+      const W = gl.drawingBufferWidth, H = gl.drawingBufferHeight;
+      return { x: (v.x * 0.5 + 0.5) * W, y: (v.y * 0.5 + 0.5) * H, W, H, visible: m.visible, r: m.scale.x };
+    },
     setThDepth(v) {
       state.thDepth = v;
       document.querySelectorAll('[data-thdepth]').forEach((b) => b.classList.toggle('active', Number(b.dataset.thdepth) === v));
       requestRender();
-    },
-    setXray(v) {
-      state.xray = v;
-      const cb = $('toggleXray');
-      if (cb) cb.checked = v;
-      applyXray(); requestRender();
     }
   };
 })();
