@@ -25,6 +25,7 @@
     "javalab_太阳风与极光.html","javalab_洛伦兹力.html","汽油机四冲程.html","javalab_日食和月食.html",
     "比热容立体模型.html",
     "改变内能的方式立体模型.html",
+    "能量的转化和守恒立体模型.html",
     "测量小灯泡的电功率.html",
     "st图像_匀速直线运动.html",
     "噪声的危害和控制立体模型.html",
