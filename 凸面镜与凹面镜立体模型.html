@@ -1,0 +1,1255 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>虚拟物理实验 - 凸面镜与凹面镜立体模型</title>
+    <link rel="stylesheet" href="style.css">
+    <style>
+        :root {
+            --bg: #020617;
+            --line: rgba(148, 163, 184, .18);
+            --primary: #3b82f6;
+            --secondary: #06b6d4;
+            --accent: #8b5cf6;
+            --text: #f8fafc;
+            --muted: #94a3b8;
+        }
+
+        body {
+            font-family: 'Inter', 'Microsoft YaHei', 'Noto Sans SC', sans-serif;
+            margin: 0;
+            /* 站内页头是 position:sticky，一滚动就贴顶盖住实验区，所以这一页不放页头
+               （和同章的「光的反射 / 光的折射 / 小孔成像立体模型」一致）。留 20px 内边距即可。 */
+            padding: 20px;
+            background: var(--bg);
+            color: var(--text);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+            box-sizing: border-box;
+        }
+
+        /* 科技风背景光晕 */
+        body::before {
+            content: "";
+            position: fixed;
+            inset: 0;
+            z-index: -1;
+            pointer-events: none;
+            background:
+                radial-gradient(circle at 18% 22%, rgba(59, 130, 246, .16), transparent 42%),
+                radial-gradient(circle at 82% 68%, rgba(139, 92, 246, .14), transparent 44%),
+                radial-gradient(circle at 50% 100%, rgba(6, 182, 212, .10), transparent 55%);
+        }
+
+        /* ===== 可交互三维实验台（与站内其它 lab3d 页面同一套视觉基线）===== */
+        .lab3d {
+            width: 100%;
+            max-width: 1600px;
+            margin: 8px auto 26px;
+            box-sizing: border-box;
+            overflow: hidden;
+            border: 1px solid rgba(56, 189, 248, .22);
+            border-radius: 18px;
+            background: linear-gradient(160deg, rgba(15, 23, 42, .92), rgba(2, 6, 23, .96));
+            color: #e2e8f0;
+            box-shadow: 0 26px 70px rgba(2, 6, 23, .6), 0 0 0 1px rgba(2, 6, 23, .8) inset;
+        }
+        .lab3d * { box-sizing: border-box; }
+        .lab3d-top {
+            display: flex; justify-content: space-between; gap: 15px; align-items: center;
+            padding: 17px 23px; border-bottom: 1px solid var(--line);
+            background: linear-gradient(90deg, rgba(59, 130, 246, .12), rgba(6, 182, 212, .05) 45%, transparent);
+        }
+        .lab3d-kicker { color: #22d3ee; font-size: 11px; font-weight: 800; letter-spacing: .2em; }
+        .lab3d-top h2 { margin: 3px 0 0; color: #f8fafc; font-size: 21px; letter-spacing: .02em; }
+        .lab3d-top p { margin: 4px 0 0; color: #94a3b8; font-size: 12px; }
+        .lab3d-status {
+            border: 1px solid rgba(34, 211, 238, .45); border-radius: 99px; padding: 6px 12px;
+            color: #67e8f9; font-size: 12px; white-space: nowrap; background: rgba(6, 182, 212, .08);
+        }
+        .lab3d-layout { display: grid; grid-template-columns: minmax(0, 1fr) 300px; }
+        .lab3d-main {
+            min-width: 0; padding: 15px 16px 16px;
+            background: radial-gradient(circle at 43% 36%, rgba(30, 64, 100, .55), rgba(8, 22, 36, .92) 62%, rgba(3, 10, 18, .96));
+        }
+        .lab3d-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; padding-bottom: 12px; }
+        .lab3d-toolbar .toolbar-label { color: #94a3b8; font-size: 12px; margin-right: 5px; }
+        .lab3d button {
+            padding: 7px 12px; border: 1px solid rgba(148, 163, 184, .25); border-radius: 8px;
+            background: rgba(30, 41, 59, .7); color: #cbd5e1; font-size: 12px; font-weight: 600;
+            box-shadow: none; transition: background .2s, border-color .2s, color .2s;
+        }
+        .lab3d button:hover { transform: none; box-shadow: none; background: rgba(51, 65, 85, .85); }
+        .lab3d button.active {
+            background: rgba(59, 130, 246, .25); border-color: #38bdf8; color: #e0f2fe;
+            box-shadow: 0 0 14px rgba(56, 189, 248, .3);
+        }
+        .lab3d button:disabled { opacity: .42; cursor: not-allowed; }
+        .lab3d button.primary { background: rgba(59, 130, 246, .3); border-color: #38bdf8; color: #e0f2fe; }
+        .lab3d-toolbar .toolbar-spacer { flex: 1; }
+        .lab3d-stage {
+            position: relative; height: clamp(400px, 49vw, 580px);
+            border: 1px solid rgba(56, 189, 248, .2); border-radius: 12px; overflow: hidden;
+            background: #061423;
+        }
+        .lab3d-stage canvas {
+            display: block; width: 100%; height: 100%;
+            border: 0; border-radius: 0; box-shadow: none; background: transparent;
+            cursor: grab; touch-action: none;
+        }
+        .lab3d-stage canvas:active { cursor: grabbing; }
+        /* 指针落在可拖动的器材上时换成左右拖动光标（放在 :active 之后才能覆盖它） */
+        .lab3d-stage canvas.pick-move { cursor: ew-resize; }
+        .lab3d-stage canvas.pick-move:active { cursor: ew-resize; }
+        .lab3d-stage .stage-hint {
+            position: absolute; top: 13px; left: 15px; pointer-events: none; font-size: 12px;
+            color: #bae6fd; background: rgba(2, 6, 23, .78); border: 1px solid rgba(56, 189, 248, .25);
+            padding: 7px 11px; border-radius: 8px;
+        }
+        .lab3d-stage .stage-hint b {
+            display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+            background: #22d3ee; vertical-align: 2px; margin-right: 6px; box-shadow: 0 0 8px #22d3ee;
+        }
+        .lab3d-stage .stage-help {
+            position: absolute; right: 14px; bottom: 13px; pointer-events: none;
+            color: #93b4c4; font-size: 11px; background: rgba(2, 6, 23, .72); padding: 6px 10px; border-radius: 7px;
+        }
+        /* 舞台内的观察结论条：眼睛盯着装置时也要能看见（侧栏在窄屏会被挤到下面） */
+        .lab3d-stage .stage-verdict {
+            position: absolute; left: 15px; bottom: 13px; pointer-events: none;
+            font-size: 12px; padding: 7px 12px; border-radius: 8px;
+            color: #d1fae5; background: rgba(6, 78, 59, .82); border: 1px solid rgba(52, 211, 153, .45);
+        }
+        .lab3d-stage .stage-verdict.warn { color: #fee2e2; background: rgba(127, 29, 29, .82); border-color: rgba(248, 113, 113, .5); }
+        .lab3d-foot {
+            display: flex; align-items: center; flex-wrap: wrap; gap: 12px 18px;
+            padding: 12px 3px 1px; font-size: 12px; color: #b6c8d4;
+        }
+        .lab3d-foot label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+        .lab3d-foot input { accent-color: #22d3ee; margin: 0; }
+        .lab3d-foot .legend { margin-left: auto; color: #8ba7b6; }
+        .lab3d-sidebar {
+            padding: 18px; color: #cbd5e1; border-left: 1px solid var(--line);
+            background: linear-gradient(180deg, rgba(15, 23, 42, .75), rgba(2, 6, 23, .6));
+        }
+        .lab3d-sidebar h3 { margin: 0 0 15px; color: #e2e8f0; font-size: 15px; letter-spacing: .05em; }
+        .lab3d-field { margin: 0 0 16px; }
+        .lab3d-field label, .lab3d-field .field-label {
+            display: flex; justify-content: space-between; gap: 8px; align-items: baseline;
+            color: #cbd5e1; font-size: 12px; font-weight: 700;
+        }
+        .lab3d-field output { color: #38bdf8; font-size: 13px; font-weight: 800; }
+        .lab3d-field input[type="range"] { display: block; width: 100%; margin: 11px 0 5px; }
+        .lab3d-field input[type="range"]::-webkit-slider-thumb { background: linear-gradient(135deg, #3b82f6, #22d3ee); }
+        .lab3d-field small { color: #64748b; font-size: 10px; line-height: 1.5; display: block; }
+        .lab3d-segment { display: flex; gap: 5px; margin-top: 9px; }
+        .lab3d-segment button { flex: 1; min-width: 0; padding: 7px 4px; font-size: 11px; }
+        .lab3d-metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 12px; }
+        .lab3d-metric {
+            padding: 12px 13px; border: 1px solid rgba(56, 189, 248, .18); border-radius: 10px;
+            background: linear-gradient(160deg, rgba(30, 58, 95, .55), rgba(15, 23, 42, .6));
+        }
+        .lab3d-metric span { display: block; font-size: 11px; color: #9fb8c6; }
+        .lab3d-metric strong { display: block; margin-top: 4px; color: #e0f2fe; font-size: 17px; }
+        .lab3d-metric.ok strong { color: #6ee7b7; }
+        .lab3d-metric.bad strong { color: #fca5a5; }
+        .lab3d-note { margin: 12px 0 0; color: #9fb8c6; font-size: 12px; line-height: 1.65; }
+        .lab3d-note b { color: #7dd3fc; }
+
+        /* 结论卡：四条球面镜规律，逐条点亮 */
+        .law-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 8px; }
+        .law-list li {
+            display: flex; gap: 8px; align-items: flex-start;
+            padding: 9px 11px; border-radius: 9px; font-size: 12px; line-height: 1.55;
+            border: 1px solid rgba(148, 163, 184, .16); background: rgba(148, 163, 184, .05);
+            color: #b6c8d4; transition: background .2s, border-color .2s, color .2s;
+        }
+        .law-list li.on {
+            border-color: rgba(52, 211, 153, .5); background: rgba(16, 185, 129, .12); color: #d1fae5;
+        }
+        .law-list li.off {
+            border-color: rgba(248, 113, 113, .45); background: rgba(239, 68, 68, .12); color: #fee2e2;
+        }
+        .law-list li i { font-style: normal; color: #64748b; flex: none; font-weight: 700; }
+        .law-list li.on i { color: #6ee7b7; }
+        .law-list li.off i { color: #fca5a5; }
+
+        /* ===== 实验记录表：就放在实验台正下方，做完一次就能点记录 ===== */
+        .record-panel { margin-top: 0; }
+        .record-body { padding: 16px 18px 18px; }
+        .record-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; }
+        .record-actions small { color: #8ea6b7; font-size: 11px; }
+        .table-wrap { overflow-x: auto; margin-top: 13px; }
+        .record-body table { width: 100%; border-collapse: collapse; font-size: 12px; white-space: nowrap; min-width: 640px; }
+        .record-body th, .record-body td {
+            text-align: left; padding: 9px 8px; border-bottom: 1px solid rgba(148, 163, 184, .16); color: #c5d6e4;
+        }
+        .record-body th { color: #80ddec; font-size: 11px; font-weight: 700; }
+        .record-body tbody tr:last-child td { border-bottom: 0; }
+        .record-body .empty { text-align: center; color: #91a6b9; padding: 19px 5px; }
+        .record-body td.num { font-variant-numeric: tabular-nums; }
+        .record-body td.ratio { color: #7dd3fc; font-weight: 700; }
+        /* 刚记录的那一行闪一下：视线还停在装置上，也知道数据落到了哪一行 */
+        .record-body tr.flash td { animation: sphRowFlash 1.2s ease-out; }
+        @keyframes sphRowFlash { 0% { background: rgba(34, 112, 143, .8); color: #f1fbff; } 100% { background: transparent; } }
+        .record-body .note { color: #90a9b9; font-size: 11px; line-height: 1.65; margin-top: 11px; }
+        .record-body .note b { color: #7dd3fc; }
+
+        @media (max-width: 900px) {
+            .lab3d-layout { grid-template-columns: minmax(0, 1fr); }
+            .lab3d-sidebar { border-left: 0; border-top: 1px solid var(--line); display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 18px; }
+            .lab3d-sidebar h3 { grid-column: 1 / -1; }
+            .lab3d-sidebar .span-2 { grid-column: 1 / -1; }
+        }
+        @media (max-width: 620px) {
+            body { padding-left: 10px; padding-right: 10px; }
+            .lab3d { border-radius: 14px; }
+            .lab3d-top { padding: 15px; }
+            .lab3d-top h2 { font-size: 17px; }
+            .lab3d-status { display: none; }
+            .lab3d-main { padding: 10px; }
+            .lab3d-toolbar { gap: 6px; }
+            .lab3d-toolbar .toolbar-label, .lab3d-toolbar .toolbar-spacer { display: none; }
+            .lab3d-toolbar button { padding: 6px 9px; font-size: 11px; }
+            .lab3d-stage { height: 340px; }
+            .lab3d-stage .stage-help { display: none; }
+            .lab3d-stage .stage-verdict { left: 10px; right: 10px; bottom: 10px; font-size: 11px; }
+            .lab3d-sidebar { display: block; padding: 16px; }
+            .lab3d-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+            .lab3d-foot .legend { margin-left: 0; width: 100%; }
+            .record-body { padding: 14px; }
+            /* 窄屏上 7 列会被挤到横向滚动里，而最后一列「像的性质」正是这张表的结论。
+               缩字号 + 收紧内边距 + 隐藏表头里的长前缀，让 7 列全部看得见。 */
+            .record-body table { font-size: 10.5px; min-width: 0; }
+            .record-body th, .record-body td { padding: 7px 5px; }
+            .record-body th .th-full { display: none; }
+        }
+    </style>
+    <script src="auth-check.js"></script>
+</head>
+<body>
+    <!-- 这一页不放站内页头：页头是 position:sticky，一滚动就贴在顶上盖住实验区。
+         同章的「光的反射 / 光的折射 / 小孔成像立体模型」本来就没有页头，这里沿用同一做法。 -->
+    <section class="lab3d" aria-label="凸面镜与凹面镜立体模型">
+      <div class="lab3d-top">
+        <div>
+          <div class="lab3d-kicker">INTERACTIVE OPTICS LAB · 三维光学实验</div>
+          <h2>凸面镜与凹面镜 · 立体模型</h2>
+          <p>球面镜怎样改变光的传播方向 —— 凹面镜把平行光会聚到焦点，凸面镜把它发散开，而焦点到镜面的距离恰好是曲率半径的一半</p>
+        </div>
+        <span class="lab3d-status">● 实时物理模拟</span>
+      </div>
+
+      <div class="lab3d-layout">
+        <div class="lab3d-main">
+          <div class="lab3d-toolbar" role="group" aria-label="观察视角">
+            <span class="toolbar-label">观察视角</span>
+            <button type="button" class="active" data-view="perspective">立体视角</button>
+            <button type="button" data-view="plane">正视光路</button>
+            <button type="button" data-view="mirror">贴近镜面</button>
+            <button type="button" data-view="top">俯视装置</button>
+            <span class="toolbar-spacer"></span>
+            <button type="button" id="sph-reset-view">↺ 重置视角</button>
+          </div>
+
+          <div class="lab3d-stage">
+            <canvas id="sph-canvas" aria-label="可拖动旋转、滚轮缩放的凸面镜与凹面镜三维装置"></canvas>
+            <div class="stage-hint"><b></b>三维实验场景 · 主光轴 → 球面镜 → 反射光路</div>
+            <div class="stage-verdict" id="sph-verdict">凹面镜　焦距 f = 6.0 cm　像距 v = 9.0 cm　倒立、缩小的实像</div>
+            <div class="stage-help">拖动空白处旋转 · 滚轮缩放 · 按住画面里的物体左右拖动改物距</div>
+          </div>
+
+          <div class="lab3d-foot">
+            <label><input id="sph-rays" type="checkbox" checked>显示光线</label>
+            <label><input id="sph-normal" type="checkbox">显示法线</label>
+            <label><input id="sph-focus" type="checkbox" checked>显示焦点与球心</label>
+            <label><input id="sph-axis" type="checkbox" checked>显示主光轴</label>
+            <label><input id="sph-object" type="checkbox" checked>显示物与像</label>
+            <span class="legend">橙：入射光线　黄：反射光线　青：平行于主光轴的那条　紫虚线：反向延长线</span>
+          </div>
+
+          <div class="lab3d-metrics" aria-live="polite">
+            <div class="lab3d-metric"><span>焦距 f = R/2</span><strong id="sph-m1">6.0 cm</strong></div>
+            <div class="lab3d-metric"><span>像距 v</span><strong id="sph-m2">9.0 cm</strong></div>
+            <div class="lab3d-metric"><span>放大率 |h′/h|</span><strong id="sph-m3">0.50</strong></div>
+            <div class="lab3d-metric ok"><span>像的性质</span><strong id="sph-m4">倒立缩小实像</strong></div>
+          </div>
+
+          <p class="lab3d-note"><b>观察提示：</b>球面镜的反射面是球面的一部分，球心 <b>C</b> 在主光轴上、离镜面一个曲率半径 <b>R</b>；焦点 <b>F</b> 在球心和镜面正中间，所以 <b>f = R/2</b>。切到「<b>平行光束</b>」模式，一束平行于主光轴的光打到镜面上：<b>凹面镜</b>把光会聚到 F 处，<b>凸面镜</b>把光发散开、但每条反射光线的反向延长线都过镜后的 F。切回「<b>点光源成像</b>」，从物点发出的光经镜面反射后，实像由反射光线<b>真的相交</b>而成，虚像则要沿反射光线<b>反向延长</b>才交得到 —— 所以虚像只能用眼睛看、不能在屏上接到。拖动 <b>R</b> 和 <b>u</b> 看像怎么变：凹面镜在 <b>u &gt; R</b> 时成倒立缩小的实像，<b>f &lt; u &lt; R</b> 时倒立放大，<b>u &lt; f</b> 时变成正立放大的虚像；凸面镜无论物放在哪里，永远成正立缩小的虚像。</p>
+        </div>
+
+        <aside class="lab3d-sidebar">
+          <h3>实验参数</h3>
+
+          <div class="lab3d-field span-2">
+            <span class="field-label">镜的类型 <output id="sph-kind-name">凹面镜</output></span>
+            <div class="lab3d-segment" id="sph-kind" role="group" aria-label="选择镜的类型">
+              <button type="button" data-kind="concave" class="active">凹面镜</button>
+              <button type="button" data-kind="convex">凸面镜</button>
+            </div>
+            <small>凹面镜的反射面凹向光源（会聚），凸面镜凸向光源（发散）</small>
+          </div>
+
+          <div class="lab3d-field span-2">
+            <span class="field-label">演示模式 <output id="sph-mode-name">点光源成像</output></span>
+            <div class="lab3d-segment" id="sph-mode" role="group" aria-label="选择演示模式">
+              <button type="button" data-mode="image" class="active">点光源成像</button>
+              <button type="button" data-mode="parallel">平行光束</button>
+            </div>
+            <small>「平行光束」用来看焦点：「点光源成像」用来看像</small>
+          </div>
+
+          <div class="lab3d-field">
+            <label for="sph-R">曲率半径 R <output id="sph-R-value">12.0 cm</output></label>
+            <input id="sph-R" type="range" min="8" max="16" value="12" step="0.5">
+            <small>镜面所在球的半径 · 8 – 16 cm（焦距 f = R/2）</small>
+          </div>
+
+          <div class="lab3d-field">
+            <label for="sph-u">物距 u（物 → 镜面）<output id="sph-u-value">18.0 cm</output></label>
+            <input id="sph-u" type="range" min="3" max="26" value="18" step="0.5">
+            <small>也可以直接按住画面里的物体左右拖动</small>
+          </div>
+
+          <div class="lab3d-field span-2">
+            <span class="field-label">球面镜的规律</span>
+            <ul class="law-list">
+              <li id="law1"><i>①</i><span>平行于主光轴的光线，反射后<b>过焦点 F</b>（凹面镜）或<b>反向延长过 F</b>（凸面镜）</span></li>
+              <li id="law2"><i>②</i><span>过焦点 F 的光线，反射后<b>平行于主光轴</b>射出</span></li>
+              <li id="law3"><i>③</i><span>过球心 C 的光线，沿半径入射，反射后<b>原路返回</b></span></li>
+              <li id="law4"><i>④</i><span>球面镜成像满足 <b>1/u + 1/v = 2/R</b>（凹面镜 R 取正，凸面镜 R 取负）</span></li>
+            </ul>
+            <small id="sph-law-verdict">当前：凹面镜 R = 12.0 cm，f = 6.0 cm，u = 18.0 cm —— v = 9.0 cm，倒立缩小的实像</small>
+          </div>
+        </aside>
+      </div>
+    </section>
+
+    <section class="lab3d record-panel" aria-label="实验记录表">
+      <div class="lab3d-top">
+        <div>
+          <div class="lab3d-kicker">DATA SHEET · 定量记录</div>
+          <h2>实验记录表</h2>
+          <p>实验台就在上面：每调好一组曲率半径与物距就点一次「记录当前数据」，数据会立刻填进下表</p>
+        </div>
+        <span class="lab3d-status" id="sph-count-label">已记录 0 组</span>
+      </div>
+      <div class="record-body">
+        <div class="record-actions">
+          <button type="button" class="primary" id="sph-record">记录当前数据</button>
+          <button type="button" id="sph-clear">清空记录</button>
+          <small id="sph-record-hint">改一改物距多记几组，看看 1/u + 1/v 是不是始终等于 2/R</small>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>次数</th>
+                <th>镜型</th>
+                <th><span class="th-full">曲率半径 </span>R</th>
+                <th><span class="th-full">物距 </span>u</th>
+                <th><span class="th-full">像距 </span>v</th>
+                <th><span class="th-full">1/u + 1/v</span></th>
+                <th>像的性质</th>
+              </tr>
+            </thead>
+            <tbody id="sph-rows">
+              <tr><td colspan="7" class="empty">尚无记录，先拖动物体改变物距开始探究</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="note" id="sph-summary">记录 3 组以上不同物距的数据，看看「1/u + 1/v」这一列是不是始终等于 2/R。</div>
+      </div>
+    </section>
+
+    <script>
+    (function () {
+      'use strict';
+      const $ = id => document.getElementById(id);
+
+      // ================= 常量 =================
+      // 坐标约定（全篇唯一的一套，别在别处另立）：
+      //   主光轴 = x 轴，光从 −x 一侧射向 +x；镜面顶点 O 在原点。
+      //   凹面镜：球心 C 在 (−R,0,0)，反射面凹向 −x（迎着来光）；
+      //   凸面镜：球心 C 在 (+R,0,0)，反射面凸向 −x。
+      //   用 sgn() 一个符号统一两种镜：sgn = −1（凹）/ +1（凸），则
+      //     C = (sgn·R, 0, 0)，F = (sgn·R/2, 0, 0)，
+      //     镜面 x = sgn·(R − √(R²−ρ²))，ρ = √(y²+z²) ≤ 口径。
+      const R_MIN = 8, R_MAX = 16, R_DEF = 12;
+      const U_MIN = 3, U_MAX = 26, U_DEF = 18;
+      const OBJ_H = 1.2;              // 物高（cm），固定 —— 只改物距和曲率半径两个自变量
+      const APERTURE_K = 0.22;        // 镜面孔径半径 ρ_max = 0.22 R
+      const ENV = { x0: -27, x1: 17, y0: -5.6, y1: 5.6, z0: -4.2, z1: 4.2 };
+      const ENV_C = [-5, 0, 0];
+      const CAMD = 78;
+      const ZOOM_MIN = 0.55, ZOOM_MAX = 2.6;
+
+      // 四个预设视角。注意 yaw 的符号决定相机落在哪一侧：
+      //   dir = [cp·sin(yaw), sin(pitch), cp·cos(yaw)] 是「注视点 → 相机」的方向，
+      //   所以 yaw < 0 才是把相机放到 −x 侧 —— 只有那一侧才能看见两种镜的【反射面】。
+      const VIEWS = {
+        perspective: { yaw: -0.62, pitch: 0.30 },
+        plane:       { yaw: 0.00,  pitch: 0.02 },   // 相机在 +z：屏幕水平方向正好是 x 轴，标准光路图
+        mirror:      { yaw: -1.20, pitch: 0.20 },
+        // 俯视【不能】压到 90°：本页所有成像光线都在 z = 0 平面内，正俯视会把整个
+        // 光路压成一条线（实测 pitch 1.30 时画面只剩中间一条横带，上下各空一半）。
+        // 留 58° 才既看得出「光路是平的」，又看得出镜面是三维的。
+        top:         { yaw: 0.00,  pitch: 1.02 }
+      };
+
+      const state = {
+        kind: 'concave',      // 'concave' 凹面镜 | 'convex' 凸面镜
+        mode: 'image',        // 'image' 点光源成像 | 'parallel' 平行光束
+        R: R_DEF, u: U_DEF,
+        yaw: VIEWS.perspective.yaw, pitch: VIEWS.perspective.pitch, zoom: 1,
+        view: 'perspective',
+        showRays: true, showNormal: false, showFocus: true, showAxis: true, showObject: true,
+        w: 800, h: 500,
+        records: []
+      };
+
+      // ================= 向量小工具 =================
+      const sub = (a, b) => [a[0]-b[0], a[1]-b[1], a[2]-b[2]];
+      const add = (a, b) => [a[0]+b[0], a[1]+b[1], a[2]+b[2]];
+      const mul = (a, k) => [a[0]*k, a[1]*k, a[2]*k];
+      const dot = (a, b) => a[0]*b[0] + a[1]*b[1] + a[2]*b[2];
+      const cross = (a, b) => [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]];
+      const len = a => Math.hypot(a[0], a[1], a[2]);
+      const vnorm = a => { const L = len(a) || 1; return [a[0]/L, a[1]/L, a[2]/L]; };
+      const clamp = (v, a, b) => v < a ? a : (v > b ? b : v);
+
+      // ================= 相机 =================
+      // 取景与自检【共用】这一个函数，不另算一套（抄两遍的话改坏一处自检读的是另一处，永远绿）。
+      function makeCam(yaw, pitch, w, h) {
+        const cp = Math.cos(pitch), sp = Math.sin(pitch);
+        const sy = Math.sin(yaw), cy = Math.cos(yaw);
+        const dir = [cp * sy, sp, cp * cy];                 // 注视点 → 相机
+        const eye = add(ENV_C, mul(dir, CAMD));
+        const fwd = mul(dir, -1);                           // 相机 → 注视点
+        const right = vnorm(cross(fwd, [0, 1, 0]));
+        const up = cross(right, fwd);
+        return { eye, fwd, right, up, w, h, focal: 1, cx: w / 2, cy: h / 2 };
+      }
+      function camSpace(p, q) {
+        const d = sub(p, q.eye);
+        return [dot(d, q.right), dot(d, q.up), dot(d, q.fwd)];
+      }
+      function project(p, q) {
+        const c = camSpace(p, q);
+        const z = Math.max(c[2], 0.001);
+        return { x: q.cx + q.focal * c[0] / z, y: q.cy - q.focal * c[1] / z, z: c[2] };
+      }
+      // 用【固定】包络取景：包络绝不跟着 R / u 走，否则一拖滑块整幅画就在缩放，
+      // 像素差分立刻失效（同章「小孔成像」踩过）。zoom 必须乘在【算出来的焦距】上 ——
+      // 只改相机距离会被自动取景反算回来、完全抵消。
+      //
+      // ⚠️ 必须用【投影后】的范围（r/z 与 u/z），不能用相机空间的 r、u 本身。
+      //    r 是「离光轴多远（世界单位）」，而屏幕上占多少像素是 focal·r/z ——
+      //    同样大的 r，离相机近的就占更多像素。本页光轴方向长 44、纵深却有 65~90，
+      //    拿 r 定焦距会把整个装置压成中心十几像素宽的一条（实测 focal 小 80 多倍，
+      //    画面上只剩一堆挤在中心的标签）。纵深越大的场景越要吃这个亏。
+      function frameCam(q) {
+        let loR = 1e9, hiR = -1e9, loU = 1e9, hiU = -1e9;
+        for (const x of [ENV.x0, ENV.x1]) for (const y of [ENV.y0, ENV.y1]) for (const z of [ENV.z0, ENV.z1]) {
+          const c = camSpace([x, y, z], q);
+          const zz = Math.max(c[2], 0.001);
+          const r = c[0] / zz, u = c[1] / zz;
+          loR = Math.min(loR, r); hiR = Math.max(hiR, r);
+          loU = Math.min(loU, u); hiU = Math.max(hiU, u);
+        }
+        q.focal = Math.min(q.w * 0.95 / Math.max(hiR - loR, 1e-6),
+                           q.h * 0.93 / Math.max(hiU - loU, 1e-6)) * state.zoom;
+        // 让包络的屏幕中心落在画布中心。写成 cx + focal·r 的形式，
+        // 就等价于「绕包络中心缩放」，缩放时画面不会平移。
+        q.cx = q.w / 2 - q.focal * (loR + hiR) / 2;
+        q.cy = q.h / 2 + q.focal * (loU + hiU) / 2;
+      }
+
+      // ================= 球面镜几何 =================
+      const sgn = () => (state.kind === 'concave' ? -1 : 1);
+      const aperture = () => APERTURE_K * state.R;         // 镜面孔径半径 ρ_max
+      const centerX = () => sgn() * state.R;               // 球心 C 的 x
+      const focalX = () => sgn() * state.R / 2;            // 焦点 F 的 x
+      const vertexX = () => 0;                             // 顶点 O
+
+      // 镜面上距主光轴 ρ 处的 x 坐标（精确球面，不是抛物面近似）
+      function mirrorX(rho) {
+        const R = state.R, rr = Math.min(Math.abs(rho), R * 0.9995);
+        return sgn() * (R - Math.sqrt(R * R - rr * rr));
+      }
+      // 镜面上 (ρ, θ) 处的三维点：y = ρcosθ，z = ρsinθ（θ = 0 就是主光轴平面内、y > 0 那半）
+      function mirrorPt(rho, th) {
+        return [mirrorX(rho), rho * Math.cos(th), rho * Math.sin(th)];
+      }
+      // 反射面（真正反光的那一侧）的单位外法线。
+      // 凹面镜的反射面朝 −x、凸面镜也朝 −x，统一写成 (P − C)·sgn —— 两种镜一个式子。
+      function faceNormal(P) {
+        return vnorm(mul(sub(P, [centerX(), 0, 0]), sgn()));
+      }
+      // 从 A 沿单位方向 d 射出的光线与【镜面】的交点。
+      // ⚠️ 球面与这条直线有【两个】交点：一个在顶点附近的球冠上，另一个在球面的对面。
+      //    只取近根会挑到对面去 —— 凹面镜 R=12 时对面那一侧正好落在 x = −24、ρ = 0，
+      //    看起来完全合法，于是光线会「钻进镜子」从球面背面反射回来。
+      //    所以两个根都要试，并且挑「ρ ≤ 口径 且 落在顶点那一侧」的那个。
+      function hitMirror(A, d) {
+        const R = state.R, C = [centerX(), 0, 0];
+        const m = sub(A, C);
+        const md = dot(m, d);
+        const disc = md * md - (dot(m, m) - R * R);
+        if (disc < 0) return null;
+        const sq = Math.sqrt(disc);
+        for (const t of [-md - sq, -md + sq].sort((a, b) => a - b)) {
+          if (!(t > 1e-6)) continue;
+          const P = add(A, mul(d, t));
+          if (Math.hypot(P[1], P[2]) > aperture() + 1e-9) continue;
+          if ((P[0] - C[0]) * (0 - C[0]) <= 0) continue;   // 跑到球面对面去了
+          return { t, P };
+        }
+        return null;
+      }
+      // 球面反射：n 取半径方向，d_out = d − 2(d·n)n
+      function reflectDir(d, P) {
+        const C = [centerX(), 0, 0];
+        const n = vnorm(sub(P, C));
+        return sub(d, mul(n, 2 * dot(d, n)));
+      }
+
+      // ================= 光学量 =================
+      // 近轴成像：1/u + 1/v = 2/R（凹面镜 R > 0）／= −2/R（凸面镜）。
+      // 写成 sgn 的形式就是 1/v = −2·sgn/R − 1/u，两种镜共用一个式子。
+      //   v > 0 → 像在顶点【左侧】v 处（镜前，实像）；v < 0 → 像在镜后 |v| 处（虚像）。
+      //   放大率 m = −v/u（m < 0 表示倒立）。
+      function optics() {
+        const R = state.R, u = state.u, sg = sgn();
+        const f = R / 2;
+        const invV = -2 * sg / R - 1 / u;
+        const parallel = Math.abs(invV) < 1e-9;            // u = f：反射光是平行光，不成像
+        const v = parallel ? null : 1 / invV;
+        const m = v === null ? null : -v / u;
+        return {
+          R, u, f, sg, v, m, parallel,
+          real: v === null ? null : v > 0,
+          erect: m === null ? null : m > 0,
+          mag: m === null ? null : Math.abs(m),
+          h: OBJ_H,
+          hp: m === null ? null : Math.abs(m) * OBJ_H,
+          xImg: v === null ? null : -v,
+          yImg: m === null ? null : m * OBJ_H,
+          aperture: aperture()
+        };
+      }
+      // 像点（世界坐标）。渲染与自检都走这一个函数，绝不另抄一份公式。
+      function imagePoint(o) {
+        return [o.xImg, o.yImg, 0];
+      }
+      function objectPoint() {
+        return [-state.u, OBJ_H, 0];
+      }
+
+      // 球面镜的【纵向球差】：平行于主光轴、离轴 ρ 的光线反射后交主光轴于
+      //   x = −R + R² / (2√(R² − ρ²))   （凹面镜；凸面镜对称地落在 +x 侧）
+      // 而近轴公式说它落在 −f = −R/2。两者之差就是球差，用来给自检定容差、也给界面提示。
+      // 小 ρ 时它 ≈ ρ²/(4R)。原先写成 0.53·(ρ/R)²·R，比真值大了一倍多 —— 容差白送一倍，
+      // 断言就松了。这里用精确式，并且接受一个 ρ 参数，好让自检【逐条光线】取容差。
+      function sphericalAberration(rho) {
+        const R = state.R;
+        const h = Math.min(Math.abs(rho === undefined ? aperture() : rho), R * 0.9995);
+        const s = Math.sqrt(R * R - h * h);
+        return Math.abs(R / 2 - R * R / (2 * s));
+      }
+
+      // 像距 v = Ru/(2u − R) 在 u → f 附近会发散到无穷：R = 16、u = 8.5 时 v = 136 cm，
+      // 比取景包络（x ∈ [−27, 17]）远出好几倍。包络是【固定】的（像素差分与标签避让都
+      // 靠它稳定，不能跟着 v 跑），所以这种时候画面里真的没有那个像。
+      // 必须【显式说出来】——默默什么都不画，用户会以为页面坏了。
+      const IMG_LIMIT = 26;
+      function imageOffFrame(o) {
+        return o.v !== null && Math.abs(o.xImg) > IMG_LIMIT;
+      }
+
+      // ================= 画布 =================
+      const canvas = $('sph-canvas');
+      const ctx = canvas.getContext('2d');
+      const FONT = (size, weight) => (weight || 600) + ' ' + size + 'px Inter, "Microsoft YaHei", "Noto Sans SC", sans-serif';
+
+      function resize() {
+        const r = canvas.getBoundingClientRect();
+        const dpr = Math.min(2, window.devicePixelRatio || 1);
+        canvas.width = Math.max(1, Math.round(r.width * dpr));
+        canvas.height = Math.max(1, Math.round(r.height * dpr));
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        state.w = r.width; state.h = r.height;
+        render();
+      }
+
+      // ================= 标签避让 =================
+      // 三层：boxOf() 唯一盒子几何 / tickLabel() 位置固定但登记成障碍 / label() 只入队，
+      // 所有几何（含后画的器材）都画完后由 flushLabels() 统一落笔 —— 当场画会被后画的零件压住。
+      const DIRS9 = [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, 1], [1, -1], [-1, -1]];
+      const AVOID_STEP = 16;      // 挪一步 16 px
+      const AVOID_COST = 100;     // 挪一步的代价（≈ 半个字的面积）—— 太大宁可压住器材，太小则转视角时乱跳
+      let frameBoxes = [];        // 本帧障碍物（器材本体 weight 8 / 刻度与已落笔的标签 weight 1）
+      let pendingLabels = [];     // 本帧待落笔的标签
+      // flushLabels 真正落笔的标签盒。必须单独留一份并暴露给自检：
+      // 只报 frameBoxes 的话，自检看不到「锚在器材上」的那批标签（物 / 实像 / 虚像 / O / F / C），
+      // 而它们恰恰是最可能压住器材的 —— 遮挡探针会对着空集合量出 0%，永远绿。
+      let drawnLabels = [];
+
+      function boxOf(px, py, text, size, align, baseline) {
+        ctx.font = FONT(size);
+        const w = ctx.measureText(text).width, h = size * 1.26;
+        const x0 = align === 'center' ? px - w / 2 : (align === 'right' ? px - w : px);
+        const y0 = baseline === 'middle' ? py - h / 2 : (baseline === 'bottom' ? py - h : py);
+        return { x0, y0, x1: x0 + w, y1: y0 + h };
+      }
+      function overlapArea(a, b) {
+        const w = Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0);
+        const h = Math.min(a.y1, b.y1) - Math.max(a.y0, b.y0);
+        return (w > 0 && h > 0) ? w * h : 0;
+      }
+      // 把盒子推回画布内。光路端点常落在画面外，不推回来会被裁掉半个字。
+      // 对【每个】候选位置都做一次，所以「留在原地」这个候选也会被推进来。
+      function fitBox(b, q) {
+        const pad = 3;
+        if (b.x0 < pad) { const d = pad - b.x0; b.x0 += d; b.x1 += d; }
+        if (b.x1 > q.w - pad) { const d = b.x1 - (q.w - pad); b.x0 -= d; b.x1 -= d; }
+        if (b.y0 < pad) { const d = pad - b.y0; b.y0 += d; b.y1 += d; }
+        if (b.y1 > q.h - pad) { const d = b.y1 - (q.h - pad); b.y0 -= d; b.y1 -= d; }
+        return b;
+      }
+      // 器材【本体】必须登记成障碍物，否则标签会稳稳压住它自己标注的那个东西。
+      // 权重 8：压住刻度数字（权重 1）时挪一步常常不划算、标签宁可不动，
+      // 但压住「像」这种要害必须不惜挪两三步。两类障碍共用同一个代价函数、只差一个倍率。
+      function bodyBox(pts, text, pad) {
+        let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+        for (const s of pts) {
+          if (s.z <= 0.01) return;
+          x0 = Math.min(x0, s.x); x1 = Math.max(x1, s.x);
+          y0 = Math.min(y0, s.y); y1 = Math.max(y1, s.y);
+        }
+        if (x0 > x1) return;
+        // ⚠️ 竖直的「物 / 像」箭头投影出来是一条【零宽】的线，AABB 面积恒为 0 ——
+        //    overlapArea 永远是 0，代价函数看不出冲突，标签就永远不会给它让位。
+        //    实测：「物」稳稳压在物箭头上（盖掉 57%）。所以必须给盒子一个最小厚度。
+        // 另外还要按【笔画粗细】外扩一点：箭头尖比线宽 4 px，而标签盒的左边缘恰好等于
+        // 盒子的右边缘时 overlapArea 算出来是 0（边界相切不算重叠），标签就停在原地，
+        // 底衬把箭头尖切掉一角（实测「虚像」盖住像箭头 3.2%）。外扩 2 px 才把这件事
+        // 变成代价函数看得见的冲突。
+        const M = 2, PAD = (pad === undefined ? 4 : pad);
+        x0 -= M; x1 += M; y0 -= M; y1 += M;
+        if (x1 - x0 < 2 * PAD) { const c = (x0 + x1) / 2; x0 = c - PAD; x1 = c + PAD; }
+        if (y1 - y0 < 2 * PAD) { const c = (y0 + y1) / 2; y0 = c - PAD; y1 = c + PAD; }
+        frameBoxes.push({ kind: 'body', text: text || '', weight: 8, x0, y0, x1, y1 });
+      }
+      function label(p3, text, color, size, align, baseline, world) {
+        pendingLabels.push({ p: p3, text: text, color: color, size: size || 11,
+                             align: align, baseline: baseline, world: world || p3 });
+      }
+      function drawText(b, text, color, size) {
+        ctx.font = FONT(size);
+        ctx.fillStyle = color;
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'top';
+        ctx.fillText(text, b.x0, b.y0 + size * 0.1);
+      }
+      function flushLabels(q) {
+        const placed = [];
+        for (const it of pendingLabels) {
+          const s = project(it.p, q);
+          if (s.z <= 0.01) continue;
+          let best = null, bestCost = Infinity;
+          for (let step = 0; step <= 3; step++) {
+            for (const d of DIRS9) {
+              const cand = boxOf(s.x + d[0] * step * AVOID_STEP, s.y + d[1] * step * AVOID_STEP,
+                                 it.text, it.size, it.align, it.baseline);
+              fitBox(cand, q);
+              let cost = step * AVOID_COST;
+              for (const b of frameBoxes) cost += (b.weight || 1) * overlapArea(cand, b);
+              for (const b of placed) cost += overlapArea(cand, b);
+              if (cost < bestCost) { bestCost = cost; best = cand; }
+            }
+          }
+          if (!best) continue;
+          // 半透明底衬：光路是亮色细线，字直接压上去会看不清
+          ctx.fillStyle = 'rgba(2,6,23,.62)';
+          ctx.fillRect(best.x0 - 2, best.y0, best.x1 - best.x0 + 4, best.y1 - best.y0);
+          drawText(best, it.text, it.color, it.size);
+          placed.push(best);
+          drawnLabels.push({ kind: 'label', text: it.text, weight: 1,
+                             x0: best.x0, y0: best.y0, x1: best.x1, y1: best.y1 });
+        }
+        pendingLabels = [];
+      }
+      // 刻度数字：位置固定不许挪，但要登记成障碍物（后来的标签得避开它）
+      function tickText(px, py, text, align) {
+        const b = boxOf(px, py, text, 10, align || 'center', 'top');
+        frameBoxes.push({ kind: 'tick', text: text, weight: 1, x0: b.x0, y0: b.y0, x1: b.x1, y1: b.y1 });
+        ctx.font = FONT(10);
+        ctx.fillStyle = 'rgba(148,163,184,.72)';
+        ctx.textAlign = align || 'center';
+        ctx.textBaseline = 'top';
+        ctx.fillText(text, px, py);
+        ctx.textAlign = 'left';
+      }
+
+      // ================= 基础绘制 =================
+      function seg(a, b, color, width, dash) {
+        ctx.save();
+        ctx.beginPath();
+        if (dash) ctx.setLineDash(dash);
+        ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
+        ctx.strokeStyle = color; ctx.lineWidth = width || 1;
+        ctx.stroke();
+        ctx.restore();
+      }
+      function polyline(pts, color, width, dash) {
+        if (pts.length < 2) return;
+        ctx.save();
+        ctx.beginPath();
+        if (dash) ctx.setLineDash(dash);
+        ctx.moveTo(pts[0].x, pts[0].y);
+        for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+        ctx.strokeStyle = color; ctx.lineWidth = width || 1;
+        ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+        ctx.stroke();
+        ctx.restore();
+      }
+      function dotAt(s, r, color, glow) {
+        if (glow) {
+          const g = ctx.createRadialGradient(s.x, s.y, 0, s.x, s.y, r * 3.4);
+          g.addColorStop(0, glow); g.addColorStop(1, 'rgba(0,0,0,0)');
+          ctx.fillStyle = g;
+          ctx.beginPath(); ctx.arc(s.x, s.y, r * 3.4, 0, Math.PI * 2); ctx.fill();
+        }
+        ctx.fillStyle = color;
+        ctx.beginPath(); ctx.arc(s.x, s.y, r, 0, Math.PI * 2); ctx.fill();
+      }
+      // 屏幕空间的方向箭头（末端小三角），用来画「物 / 像」和光线方向
+      function arrowHead(from, to, color, size) {
+        const dx = to.x - from.x, dy = to.y - from.y;
+        const L = Math.hypot(dx, dy) || 1;
+        const ux = dx / L, uy = dy / L, s = size || 8;
+        const bx = to.x - ux * s, by = to.y - uy * s;
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.moveTo(to.x, to.y);
+        ctx.lineTo(bx - uy * s * 0.45, by + ux * s * 0.45);
+        ctx.lineTo(bx + uy * s * 0.45, by - ux * s * 0.45);
+        ctx.closePath();
+        ctx.fill();
+      }
+
+      // 主光轴 + 刻度。刻度数字位置固定、登记成障碍物。
+      function drawAxis(q) {
+        const y = 0;
+        const a = project([ENV.x0 + 1.2, y, 0], q), b = project([ENV.x1 - 1.2, y, 0], q);
+        if (a.z > 0.01 && b.z > 0.01) seg(a, b, 'rgba(203,213,225,.40)', 1.2, [8, 6]);
+        // 每 5 cm 一根短刻度；从 −25 到 +15
+        for (let x = -25; x <= 15; x += 5) {
+          if (x === 0) continue;
+          const p0 = project([x, 0, 0], q), p1 = project([x, -0.55, 0], q);
+          if (p0.z <= 0.01 || p1.z <= 0.01) continue;
+          seg(p0, p1, 'rgba(148,163,184,.45)', 1);
+          tickText(p1.x, p1.y + 2, String(x), 'center');
+        }
+        label([ENV.x1 - 2.4, 0.55, 0], '主光轴', 'rgba(203,213,225,.8)', 11, 'right', 'bottom', [ENV.x1 - 2.4, 0.55, 0]);
+      }
+
+      // 球面镜：绕主光轴的回转面。按 (ρ, θ) 打网格画四边形。
+      // 反射面朝向相机的用亮银蓝、背向的用暗色 —— 从任何角度看都还有东西，
+      // 不会出现「转过去镜面整个消失」。
+      function drawMirror(q, o) {
+        const NR = 6, NT = 20, RHO = o.aperture;
+        const grid = [];
+        for (let i = 0; i <= NR; i++) {
+          const rho = RHO * i / NR, row = [];
+          for (let j = 0; j <= NT; j++) row.push(project(mirrorPt(rho, 2 * Math.PI * j / NT), q));
+          grid.push(row);
+        }
+        const quads = [];
+        for (let i = 0; i < NR; i++) {
+          for (let j = 0; j < NT; j++) {
+            const P = [grid[i][j], grid[i][j + 1], grid[i + 1][j + 1], grid[i + 1][j]];
+            if (P.some(s => s.z <= 0.01)) continue;
+            const mid = mirrorPt(RHO * (i + 0.5) / NR, 2 * Math.PI * (j + 0.5) / NT);
+            const front = dot(vnorm(sub(q.eye, mid)), faceNormal(mid)) > 0;
+            quads.push({ P, front, depth: (P[0].z + P[1].z + P[2].z + P[3].z) / 4 });
+          }
+        }
+        quads.sort((a, b) => b.depth - a.depth);   // 远 → 近
+        for (const qd of quads) {
+          ctx.beginPath();
+          ctx.moveTo(qd.P[0].x, qd.P[0].y);
+          for (let k = 1; k < 4; k++) ctx.lineTo(qd.P[k].x, qd.P[k].y);
+          ctx.closePath();
+          ctx.fillStyle = qd.front ? 'rgba(186,230,253,.20)' : 'rgba(71,85,105,.22)';
+          ctx.fill();
+          ctx.strokeStyle = qd.front ? 'rgba(125,211,252,.30)' : 'rgba(100,116,139,.22)';
+          ctx.lineWidth = 0.6;
+          ctx.stroke();
+        }
+        // 镜框：ρ = ρ_max 那一圈，加粗一点，让「镜面有多大」看得清
+        const rim = [];
+        for (let j = 0; j <= NT; j++) rim.push(project(mirrorPt(RHO, 2 * Math.PI * j / NT), q));
+        polyline(rim, 'rgba(147,197,253,.75)', 1.8);
+        // 镜面本体的障碍盒（标签不许压住镜子）
+        bodyBox([grid[0][0], grid[NR][0], grid[NR][NT / 2], grid[0][NT / 2],
+                 grid[0][NT / 4], grid[NR][NT / 4], grid[0][NT * 3 / 4], grid[NR][NT * 3 / 4]], '镜面');
+      }
+
+      // 屏幕空间的竖直箭头（物 / 像）。y0 → y1 沿世界 y 方向。
+      function drawArrowAt(q, x, y0, y1, color, dashed, width, glow) {
+        const a = project([x, y0, 0], q), b = project([x, y1, 0], q);
+        if (a.z <= 0.01 || b.z <= 0.01) return null;
+        seg(a, b, color, width || 2.4, dashed ? [6, 5] : null);
+        if (Math.hypot(b.x - a.x, b.y - a.y) > 12) arrowHead(a, b, color, 8.5);
+        if (glow) dotAt(b, 2.6, color, glow);   // 发光点在箭头【顶端】（物点），不是底部
+        return [a, b];
+      }
+
+      // 球心 C / 焦点 F / 顶点 O：各画一条竖直短标线 + 一个点，位置固定，
+      // 标签交给避让系统（它们仨常常挨得很近）。
+      function drawKeyPoints(q, o) {
+        const marks = [
+          { x: vertexX(), color: '#e2e8f0', text: 'O 顶点' },
+          // 凸面镜的 F 在镜后，是反射光【反向延长线】的交点，本来就叫虚焦点 ——
+          // 两种模式都该这么叫，别在成像模式里改口叫「焦点」。
+          { x: focalX(), color: '#f472b6', text: o.sg > 0 ? 'F 虚焦点' : 'F 焦点' },
+          { x: centerX(), color: '#a78bfa', text: 'C 球心' }
+        ];
+        for (const m of marks) {
+          const p = project([m.x, 0, 0], q);
+          if (p.z <= 0.01) continue;
+          const up = project([m.x, 1.5, 0], q), dn = project([m.x, -1.5, 0], q);
+          if (up.z > 0.01 && dn.z > 0.01) seg(up, dn, m.color + '55', 1.2, [3, 4]);
+          dotAt(p, 3.2, m.color, m.color + '55');
+          label([m.x, 1.5, 0], m.text, m.color, 11, 'center', 'bottom', [m.x, 1.5, 0]);
+        }
+      }
+
+      // 尺寸标注：物距 u、像距 v、焦距 f。标签【不能】锚在尺寸线中点上 ——
+      // 那正好是被标注物的正中央。改成沿尺寸线【法线】两侧各算一次代价、取压得少的那侧。
+      function drawMarks(q, o) {
+        const dim = (x0, x1, yOff, text, color) => {
+          const a = project([x0, yOff, 0], q), b = project([x1, yOff, 0], q);
+          if (a.z <= 0.01 || b.z <= 0.01) return;
+          seg(a, b, color, 1.3, [5, 4]);
+          const t0 = project([x0, yOff - 0.6, 0], q), t1 = project([x1, yOff - 0.6, 0], q);
+          if (t0.z > 0.01 && t1.z > 0.01) {
+            seg(t0, project([x0, yOff + 0.6, 0], q), color, 1.1);
+            seg(t1, project([x1, yOff + 0.6, 0], q), color, 1.1);
+          }
+          const dx = b.x - a.x, dy = b.y - a.y, L = Math.hypot(dx, dy) || 1;
+          const nx = -dy / L, ny = dx / L;                 // 尺寸线的单位法线（屏幕空间）
+          const m = boxOf(0, 0, text, 11, 'center', 'middle');
+          const off = Math.abs(nx) * (m.x1 - m.x0) / 2 + Math.abs(ny) * (m.y1 - m.y0) / 2 + 9;
+          let best = null, bestCost = Infinity;
+          for (const sg of [1, -1]) {
+            const px = (a.x + b.x) / 2 + nx * off * sg, py = (a.y + b.y) / 2 + ny * off * sg;
+            const cand = fitBox(boxOf(px, py, text, 11, 'center', 'middle'), q);
+            let cost = 0;
+            for (const bx of frameBoxes) cost += (bx.weight || 1) * overlapArea(cand, bx);
+            if (cost < bestCost) { bestCost = cost; best = cand; }
+          }
+          if (!best) return;
+          ctx.fillStyle = 'rgba(2,6,23,.62)';
+          ctx.fillRect(best.x0 - 2, best.y0, best.x1 - best.x0 + 4, best.y1 - best.y0);
+          drawText(best, text, color, 11);
+          frameBoxes.push({ kind: 'label', text: text, weight: 1, x0: best.x0, y0: best.y0, x1: best.x1, y1: best.y1 });
+        };
+        // 平行光束模式【没有物点】，物距 u 与像距 v 都无从谈起。画出来的话会跟旁边的
+        // 焦距标注互相打架：实测凸面镜那一帧的「虚像 |v| = 4.5 cm」标在 x = +4.5，
+        // 而反向延长线真正交于 F = +6.0 —— 两行字当场自相矛盾（u 是上一个模式的残留）。
+        const beam = (state.mode === 'parallel');
+        if (!beam) dim(-o.u, 0, -5.0, '物距 u = ' + o.u.toFixed(1) + ' cm', 'rgba(253,186,116,.9)');
+        // 焦距要按 F 的【实际位置】量：凹面镜 F 在镜前（−f），凸面镜 F 在镜后（+f）。
+        // 写成 dim(0, o.f) 的话凸面镜看着对、凹面镜的尺寸线会画到镜后去。
+        dim(0, focalX(), -3.3, '焦距 f = ' + o.f.toFixed(1) + ' cm', 'rgba(244,114,182,.9)');
+        if (!beam && o.v !== null && !imageOffFrame(o) && Math.abs(o.v) > 0.6) {
+          const xEnd = -o.v;
+          dim(0, xEnd, o.real ? 2.6 : 4.4,
+              (o.real ? '像距 v = ' : '虚像 |v| = ') + Math.abs(o.v).toFixed(1) + ' cm',
+              o.real ? 'rgba(110,231,183,.9)' : 'rgba(167,139,250,.95)');
+        }
+      }
+
+      // ================= 光线 =================
+      const RAY_STYLE = {
+        normal:   { in: 'rgba(251,146,60,.70)', out: 'rgba(253,224,71,.58)', w: 1.4 },
+        parallel: { in: 'rgba(34,211,238,.95)', out: 'rgba(103,232,249,.95)', w: 2.1 },
+        focus:    { in: 'rgba(244,114,182,.92)', out: 'rgba(249,168,212,.92)', w: 2.0 },
+        center:   { in: 'rgba(167,139,250,.92)', out: 'rgba(196,181,253,.92)', w: 2.0 },
+        beam:     { in: 'rgba(251,146,60,.50)', out: 'rgba(253,224,71,.46)', w: 1.2 }
+      };
+
+      // 点光源成像：从物点 A 发出的光线。其中三条是课本的【特殊光线】，各自单独配色：
+      //   平行于主光轴的那条（ρ = 物高 h）→ 反射后过 F；
+      //   过焦点 F 的那条 → 反射后平行于主光轴射出；
+      //   过球心 C 的那条 → 沿半径入射（入射角为 0），反射后【原路返回】。
+      // 后两条不是任何时候都存在 —— 物点跑到 F 或 C 内侧时，「朝焦点/球心」的方向就背离镜面了，
+      // 这时它们连镜面都打不到，自然不该画。所以先 hitMirror 试一次，打不到就跳过。
+      function raysImage(o) {
+        const A = objectPoint(), RHO = o.aperture, out = [];
+        const push = (kind, rho, dir) => {
+          let d;
+          if (dir) d = vnorm(dir);
+          else { const M = [mirrorX(rho), rho, 0]; d = vnorm(sub(M, A)); }
+          const h = hitMirror(A, d);
+          if (!h) return;
+          out.push({ kind, A, P: h.P, d, d2: reflectDir(d, h.P) });
+        };
+        if (OBJ_H <= RHO) push('parallel', OBJ_H, [1, 0, 0]);          // 平行于主光轴
+        push('focus', 0, sub([focalX(), 0, 0], A));                    // 过焦点 F
+        push('center', 0, sub([centerX(), 0, 0], A));                  // 过球心 C
+        for (const k of [0.98, 0.62, -0.62, -0.98]) push('normal', RHO * k);
+        return out;
+      }
+
+      // 平行光束：一组平行于主光轴的光，在 y-z 平面上按 9 个方向铺开 —— 这样才看得出
+      // 凹面镜的会聚是【三维】的（太阳灶就是这个原理），而不是某一条线上的巧合。
+      function raysParallel(o) {
+        const a = o.aperture * 0.86, x0 = ENV.x0 + 2.0, out = [];
+        const offs = [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1],
+                      [0.72, 0.72], [-0.72, 0.72], [0.72, -0.72], [-0.72, -0.72]];
+        for (const [dy, dz] of offs) {
+          const A = [x0, a * dy, a * dz], d = [1, 0, 0];
+          const h = hitMirror(A, d);
+          if (!h) continue;
+          out.push({ kind: 'beam', A, P: h.P, d, d2: reflectDir(d, h.P) });
+        }
+        return out;
+      }
+
+      function drawRayList(q, o, list) {
+        const xEnd = ENV.x0 + 1.0;
+        // 虚像 / 虚焦点：反射光线本身是【发散】的，必须沿反方向延长才交得到 ——
+        // 这就是「虚像不能成在屏上、只能用眼睛看」的几何原因。
+        // 点光源模式看 v < 0；平行光束模式看是不是凸面镜。
+        const virtualAt = (state.mode === 'parallel')
+          ? (o.sg > 0 ? focalX() : null)
+          : (o.v !== null && o.v < 0 ? imagePoint(o)[0] : null);
+        for (const r of list) {
+          const st = RAY_STYLE[r.kind] || RAY_STYLE.normal;
+          const sA = project(r.A, q), sP = project(r.P, q);
+          if (sA.z > 0.01 && sP.z > 0.01) seg(sA, sP, st.in, st.w);
+          let tEnd = (xEnd - r.P[0]) / (r.d2[0] || -1e-9);
+          if (!(tEnd > 0) || !isFinite(tEnd)) tEnd = 30;
+          const sE = project(add(r.P, mul(r.d2, tEnd)), q);
+          if (sE.z > 0.01) seg(sP, sE, st.out, st.w);
+          if (virtualAt !== null) {
+            const tRev = (virtualAt - r.P[0]) / (-(r.d2[0] || -1e-9));
+            if (tRev > 0 && isFinite(tRev)) {
+              const sV = project(add(r.P, mul(r.d2, -tRev)), q);
+              if (sV.z > 0.01) seg(sP, sV, 'rgba(167,139,250,.42)', 1, [5, 5]);
+            }
+          }
+        }
+      }
+
+      // 法线：球面镜的法线就是【半径方向】，所以每条法线都一定过球心 C。
+      function drawNormals(q, list) {
+        const C = [centerX(), 0, 0];
+        for (const r of list) {
+          const n = vnorm(sub(C, r.P));
+          const a = project(r.P, q), b = project(add(r.P, mul(n, state.R * 0.6)), q);
+          if (a.z > 0.01 && b.z > 0.01) seg(a, b, 'rgba(226,232,240,.5)', 1.1, [4, 4]);
+        }
+      }
+
+      // 物与像。像的位置走【同一个】imagePoint()，不在别处另抄一遍公式 ——
+      // 抄两遍的话「把符号写反」只会出现在其中一处，自检读到的却是另一处，永远绿。
+      function drawObjectAndImage(q, o) {
+        const obj = drawArrowAt(q, -o.u, 0, OBJ_H, 'rgba(251,191,36,.95)', false, 2.6, 'rgba(251,191,36,.4)');
+        if (obj) bodyBox(obj, '物');
+        label([-o.u, OBJ_H, 0], '物', 'rgba(251,191,36,.95)', 12, 'left', 'middle', [-o.u, OBJ_H, 0]);
+        if (o.v === null || Math.abs(o.yImg) < 0.03 || imageOffFrame(o)) return;
+        const col = o.real ? 'rgba(110,231,183,.95)' : 'rgba(167,139,250,.95)';
+        const ip = imagePoint(o);
+        const img = drawArrowAt(q, ip[0], 0, ip[1], col, !o.real, 2.6, o.real ? 'rgba(110,231,183,.4)' : null);
+        if (img) bodyBox(img, '像');
+        label([ip[0], ip[1], 0], o.real ? '实像' : '虚像', col, 12, 'left', 'middle', [ip[0], ip[1], 0]);
+      }
+
+      // ================= 主渲染 =================
+      // render() 是【唯一】清屏入口；渲染里算出的判据存进 state 暴露给自检，
+      // 动画与自检必须走同一个函数（否则自检读到的是第二条公式）。
+      function camNow() {
+        const q = makeCam(state.yaw, state.pitch, state.w, state.h);
+        frameCam(q);
+        return q;
+      }
+      function render() {
+        const q = camNow();
+        ctx.clearRect(0, 0, state.w, state.h);
+        frameBoxes = []; pendingLabels = []; drawnLabels = [];
+        const o = optics();
+        let list = [];
+
+        if (state.showAxis) drawAxis(q);
+        drawMirror(q, o);                       // 镜面先画：光线端点精确落在镜面上，不会被盖住
+        if (state.showRays) {
+          list = (state.mode === 'image') ? raysImage(o) : raysParallel(o);
+          drawRayList(q, o, list);
+        }
+        if (state.showNormal) drawNormals(q, list);
+        if (state.showFocus) drawKeyPoints(q, o);
+        // 平行光束模式里没有物，画一个「物」箭头会让人以为物距还有意义。
+        if (state.showObject && state.mode === 'image') drawObjectAndImage(q, o);
+        drawMarks(q, o);
+        flushLabels(q);                         // 标签最后落笔：当场画会被后画的零件压住
+
+        state.lastOptics = o;
+        state.lastRays = list;
+      }
+
+      // ================= 读数与规律卡 =================
+      const kindText = () => (state.kind === 'concave' ? '凹面镜' : '凸面镜');
+      function natureText(o) {
+        if (o.v === null) return '不成像（反射光是平行光）';
+        const up = o.erect ? '正立' : '倒立';
+        const sz = o.mag > 1.02 ? '放大' : (o.mag < 0.98 ? '缩小' : '等大');
+        return up + sz + (o.real ? '实像' : '虚像');
+      }
+      function setLaw(id, ok) {
+        const el = $(id);
+        if (el) el.classList.toggle('on', !!ok);
+      }
+      function updateReadout() {
+        const o = optics();
+        const beam = (state.mode === 'parallel');
+        $('sph-m1').textContent = o.f.toFixed(1) + ' cm';
+        const vd = $('sph-verdict');
+        let law2ok, law3ok, law4ok;
+        if (beam) {
+          // 平行光束模式【没有物点】，像距 / 放大率 / 像的性质都不存在 ——
+          // 一律显示「—」，不要沿用上一个模式残留的 v。否则读数区写着「虚像 |v| = 4.5 cm」，
+          // 而画面上反向延长线明明交在 F = 6.0，两处对不上（实测就是这个问题）。
+          $('sph-m2').textContent = '—';
+          $('sph-m3').textContent = '—';
+          const conv = (state.kind === 'concave');
+          $('sph-m4').textContent = conv ? '会聚于焦点 F' : '发散 · 虚焦点 F';
+          vd.textContent = kindText() + '　焦距 f = ' + o.f.toFixed(1) + ' cm　' + (conv
+            ? '平行光射入 → 反射光会聚于焦点 F'
+            : '平行光射入 → 反射光发散，反向延长线交于虚焦点 F');
+          vd.classList.remove('warn');
+          $('sph-law-verdict').textContent = '当前：' + kindText() + ' R = ' + o.R.toFixed(1)
+            + ' cm，f = ' + o.f.toFixed(1) + ' cm —— 平行光束演示：' + (conv
+              ? '反射光全部会聚于焦点 F。'
+              : '反射光全部发散，反向延长线交于虚焦点 F。');
+          law2ok = law3ok = law4ok = false;      // ②③④ 都以「有物点」为前提
+        } else {
+          $('sph-m2').textContent = o.v === null ? '—' : o.v.toFixed(1) + ' cm';
+          $('sph-m3').textContent = o.mag === null ? '—' : o.mag.toFixed(2);
+          $('sph-m4').textContent = o.v === null ? '不成像' : natureText(o);
+          vd.textContent = kindText() + '　焦距 f = ' + o.f.toFixed(1) + ' cm　' + (o.v === null
+            ? '物正好在焦点上，反射光是平行光'
+            : '像距 v = ' + o.v.toFixed(1) + ' cm　' + natureText(o)
+              + (imageOffFrame(o) ? '（像远在画面之外，把物距调离焦点就看得见）' : ''));
+          vd.classList.toggle('warn', o.v === null);
+          $('sph-law-verdict').textContent = '当前：' + kindText() + ' R = ' + o.R.toFixed(1)
+            + ' cm，f = ' + o.f.toFixed(1) + ' cm，u = ' + o.u.toFixed(1) + ' cm —— '
+            + (o.v === null ? '不成像' : 'v = ' + o.v.toFixed(1) + ' cm，' + natureText(o));
+          // 规律卡第②③条各有【适用条件】：物点跑到焦点 / 球心内侧时，
+          // 「朝焦点 / 朝球心」的方向就背离镜面，那两条特殊光线根本不存在。
+          law2ok = (state.kind === 'convex') || (state.u > o.f + 0.05);
+          law3ok = (state.kind === 'convex') || (state.u > o.R + 0.05);
+          law4ok = o.v !== null;
+        }
+        setLaw('law1', true);
+        setLaw('law2', law2ok);
+        setLaw('law3', law3ok);
+        setLaw('law4', law4ok);
+      }
+
+      // ================= 记录表 =================
+      function recordNow() {
+        const o = optics();
+        if (state.mode !== 'image') return false;   // 平行光束模式无物无像，不给记
+        if (o.v === null) return false;
+        state.records.forEach(r => { r.flash = false; });
+        state.records.push({
+          kind: state.kind, kindText: kindText(), R: o.R, u: o.u, v: o.v,
+          invSum: 1 / o.u + 1 / o.v,
+          twoOverR: (state.kind === 'concave' ? 2 : -2) / o.R,
+          nature: natureText(o), flash: true
+        });
+        renderRecords();
+        return true;
+      }
+      function clearRecords() { state.records = []; renderRecords(); }
+      function renderRecords() {
+        const tb = $('sph-rows'), n = state.records.length;
+        tb.innerHTML = n === 0
+          ? '<tr><td colspan="7" class="empty">尚无记录，先拖动物体改变物距开始探究</td></tr>'
+          : state.records.map((r, i) =>
+              '<tr' + (r.flash ? ' class="flash"' : '') + '>' +
+              '<td class="num">' + (i + 1) + '</td>' +
+              '<td>' + r.kindText + '</td>' +
+              '<td class="num">' + r.R.toFixed(1) + '</td>' +
+              '<td class="num">' + r.u.toFixed(1) + '</td>' +
+              '<td class="num">' + r.v.toFixed(1) + '</td>' +
+              '<td class="num ratio">' + r.invSum.toFixed(3) + '</td>' +
+              '<td class="num">' + r.twoOverR.toFixed(3) + '</td>' +
+              '</tr>').join('');
+        $('sph-count-label').textContent = '已记录 ' + n + ' 组';
+        $('sph-summary').innerHTML = n === 0
+          ? '记录 3 组以上不同物距的数据，看看「1/u + 1/v」这一列是不是始终等于 2/R。'
+          : '已记 ' + n + ' 组。凹面镜的 <b>2/R</b> 取正值、凸面镜的取负值 —— 而每一行的 <b>1/u + 1/v</b> 都跟它相等，这就是球面镜的成像公式。';
+      }
+
+      // ================= 同步界面 =================
+      function syncSliders() {
+        $('sph-R').value = state.R;
+        $('sph-R-value').textContent = state.R.toFixed(1) + ' cm';
+        $('sph-u').value = state.u;
+        $('sph-u-value').textContent = state.u.toFixed(1) + ' cm';
+        $('sph-u').disabled = (state.mode !== 'image');
+      }
+      function syncSegment() {
+        document.querySelectorAll('#sph-kind button').forEach(b => b.classList.toggle('active', b.dataset.kind === state.kind));
+        document.querySelectorAll('#sph-mode button').forEach(b => b.classList.toggle('active', b.dataset.mode === state.mode));
+        $('sph-kind-name').textContent = kindText();
+        $('sph-mode-name').textContent = state.mode === 'image' ? '点光源成像' : '平行光束';
+      }
+      function syncViewButtons() {
+        document.querySelectorAll('.lab3d-toolbar [data-view]').forEach(b => b.classList.toggle('active', b.dataset.view === state.view));
+      }
+      function applyView(name) {
+        const v = VIEWS[name];
+        if (!v) return false;
+        state.view = name; state.yaw = v.yaw; state.pitch = v.pitch; state.zoom = 1;
+        syncViewButtons(); render();
+        return true;
+      }
+
+      // ================= 交互 =================
+      // 物箭头的屏幕包围盒（点中它就能左右拖着改物距）
+      function objectBoxOnScreen(q) {
+        // 平行光束模式画面上没有物箭头，别在画布上留一个看不见的拖动热区：
+        // 拖它只会改一个当前毫无作用的 u，用户会以为页面卡住了。
+        if (state.mode !== 'image') return null;
+        const a = project([-state.u, 0, 0], q), b = project([-state.u, OBJ_H, 0], q);
+        if (a.z <= 0.01 || b.z <= 0.01) return null;
+        const pad = 15;
+        return { x0: Math.min(a.x, b.x) - pad, x1: Math.max(a.x, b.x) + pad,
+                 y0: Math.min(a.y, b.y) - pad, y1: Math.max(a.y, b.y) + pad };
+      }
+      let dragState = null;
+      canvas.addEventListener('pointerdown', e => {
+        const r = canvas.getBoundingClientRect();
+        const px = e.clientX - r.left, py = e.clientY - r.top;
+        const box = objectBoxOnScreen(camNow());
+        const onObj = box && px >= box.x0 && px <= box.x1 && py >= box.y0 && py <= box.y1;
+        dragState = { mode: onObj ? 'obj' : 'orbit', x: px, y: py };
+        canvas.setPointerCapture(e.pointerId);
+      });
+      canvas.addEventListener('pointermove', e => {
+        const r = canvas.getBoundingClientRect();
+        const px = e.clientX - r.left, py = e.clientY - r.top;
+        if (!dragState) {
+          const box = objectBoxOnScreen(camNow());
+          canvas.classList.toggle('pick-move',
+            !!(box && px >= box.x0 && px <= box.x1 && py >= box.y0 && py <= box.y1));
+          return;
+        }
+        if (dragState.mode === 'orbit') {
+          state.yaw += (px - dragState.x) * 0.008;
+          state.pitch = clamp(state.pitch + (py - dragState.y) * 0.006, -1.35, 1.35);
+          dragState.x = px; dragState.y = py;
+          state.view = ''; syncViewButtons();
+          render();
+        } else {
+          // 用【局部导数】把屏幕位移换成物距变化：投影两个相差 1 cm 的位置量出 px/cm。
+          // 直接按固定比例换算会在贴近镜面 / 俯视等视角下与手指脱钩。
+          const q = camNow();
+          const p0 = project([-state.u, 0, 0], q), p1 = project([-state.u + 1, 0, 0], q);
+          const pxPerCm = Math.max(Math.hypot(p1.x - p0.x, p1.y - p0.y), 0.6);
+          const du = -(px - dragState.x) / pxPerCm;
+          state.u = clamp(Math.round((state.u + du) * 2) / 2, U_MIN, U_MAX);
+          dragState.x = px;
+          syncSliders(); render(); updateReadout();
+        }
+      });
+      const endDrag = () => { dragState = null; };
+      canvas.addEventListener('pointerup', endDrag);
+      canvas.addEventListener('pointercancel', endDrag);
+      canvas.addEventListener('wheel', e => {
+        e.preventDefault();
+        state.zoom = clamp(state.zoom * (e.deltaY > 0 ? 0.92 : 1.08), ZOOM_MIN, ZOOM_MAX);
+        render();
+      }, { passive: false });
+
+      $('sph-R').addEventListener('input', e => {
+        state.R = clamp(parseFloat(e.target.value), R_MIN, R_MAX);
+        syncSliders(); render(); updateReadout();
+      });
+      $('sph-u').addEventListener('input', e => {
+        state.u = clamp(parseFloat(e.target.value), U_MIN, U_MAX);
+        syncSliders(); render(); updateReadout();
+      });
+      document.querySelectorAll('#sph-kind button').forEach(b => b.addEventListener('click', () => {
+        state.kind = b.dataset.kind; syncSegment(); render(); updateReadout();
+      }));
+      document.querySelectorAll('#sph-mode button').forEach(b => b.addEventListener('click', () => {
+        state.mode = b.dataset.mode; syncSegment(); syncSliders(); render(); updateReadout();
+      }));
+      document.querySelectorAll('.lab3d-toolbar [data-view]').forEach(b => b.addEventListener('click', () => {
+        applyView(b.dataset.view);
+      }));
+      $('sph-reset-view').addEventListener('click', () => applyView('perspective'));
+      for (const pair of [['sph-rays', 'showRays'], ['sph-normal', 'showNormal'], ['sph-focus', 'showFocus'],
+                          ['sph-axis', 'showAxis'], ['sph-object', 'showObject']]) {
+        $(pair[0]).addEventListener('change', e => { state[pair[1]] = e.target.checked; render(); });
+      }
+      $('sph-record').addEventListener('click', () => {
+        if (state.mode !== 'image') {
+          $('sph-record-hint').textContent = '平行光束模式没有物和像，记不了数据 —— 切到「点光源成像」再记录';
+          return;
+        }
+        if (!recordNow()) {
+          $('sph-record-hint').textContent = '物正好在焦点上，反射光是平行光、不成像 —— 换个物距再记录';
+          return;
+        }
+        $('sph-record-hint').textContent = '已记录 ' + state.records.length + ' 组，改一改物距再记一组';
+      });
+      $('sph-clear').addEventListener('click', clearRecords);
+
+      // ================= 调试钩子 =================
+      window.__sph = {
+        state, VIEWS, optics, imagePoint, objectPoint, mirrorX, mirrorPt, faceNormal,
+        hitMirror, reflectDir, sgn, aperture, centerX, focalX, vertexX, sphericalAberration,
+        imageOffFrame, IMG_LIMIT, ENV, ENV_C, CAMD, ZOOM_MIN, ZOOM_MAX,
+        camNow, project: p => project(p, camNow()),
+        rays: () => (state.mode === 'image' ? raysImage(optics()) : raysParallel(optics())),
+        size: () => ({ w: state.w, h: state.h, dpr: canvas.width / Math.max(state.w, 1e-6) }),
+        boxes: () => frameBoxes.concat(drawnLabels)
+          .map(b => ({ kind: b.kind, text: b.text, x0: b.x0, y0: b.y0, x1: b.x1, y1: b.y1 })),
+        records: () => state.records.map(r => ({ kind: r.kind, R: r.R, u: r.u, v: r.v, invSum: r.invSum, twoOverR: r.twoOverR, nature: r.nature })),
+        recordNow, clearRecords, applyView,
+        setR(v) { state.R = clamp(v, R_MIN, R_MAX); syncSliders(); render(); updateReadout(); },
+        setU(v) { state.u = clamp(v, U_MIN, U_MAX); syncSliders(); render(); updateReadout(); },
+        setKind(k) { state.kind = k; syncSegment(); render(); updateReadout(); },
+        setMode(m) { state.mode = m; syncSegment(); syncSliders(); render(); updateReadout(); },
+        renderNow() { render(); },
+        debug() {
+          const o = optics();
+          return {
+            kind: state.kind, mode: state.mode, R: o.R, u: o.u, f: o.f, v: o.v, m: o.m,
+            mag: o.mag, real: o.real, erect: o.erect, hp: o.hp, aperture: o.aperture,
+            focalX: focalX(), centerX: centerX(), aberration: sphericalAberration(),
+            rayCount: (state.lastRays || []).length, view: state.view
+          };
+        }
+      };
+
+      // ================= 启动 =================
+      syncSliders(); syncSegment(); syncViewButtons(); renderRecords(); updateReadout();
+      resize();
+      window.addEventListener('resize', resize);
+    })();
+    </script>
+</body>
+</html>
