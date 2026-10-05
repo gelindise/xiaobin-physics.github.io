@@ -471,8 +471,9 @@
 
     // ── 人 ──
     const PERSON_Z = 0.0;
-    const PERSON_H = 1.72;                  // 身高 m
-    const METER_DX = 0.30, METER_DZ = 0.68; // 声级计相对人的位置（摆在人斜前方）
+    const PERSON_H = 1.72;                  // 取景包络用的头顶高度（人是坐着的，实际约 1.38；
+                                        // 留余量是为了改坐姿时不用重调相机）
+    const METER_DX = 0.30, METER_DZ = -0.68; // 声级计相对人的位置（摆在人的侧后方）
 
     // ── 吸音板（贴在右房这侧的隔墙实心部分）──
     const PANEL_Y0 = 0.50, PANEL_Y1 = 2.30;
@@ -635,6 +636,8 @@
       const Ctor = window.AudioContext || window.webkitAudioContext;
       if (!Ctor) return null;
       try { AC = new Ctor(); } catch (_) { AC = null; return null; }
+      // 新建的上下文有可能直接是 suspended（取决于浏览器/时机），补一次 resume
+      if (AC.state === 'suspended') AC.resume();
 
       nzBus = AC.createGain();
       nzBus.gain.value = 0.30;              // 总线音量，与声压级无关
@@ -660,7 +663,11 @@
       // 音箱：两个正弦，有明确的音调 —— 一听就知道「这不是噪声，但它照样吵」
       srcGain.speaker = buildSpeaker();
 
-      for (const k of SRC_ORDER) srcGain[k].gain.value = 0;
+      // ★★ 三条链必须【接到总线上】。buildXxx() 只负责把链搭好并把出口 return 出来，
+      //    少了这一句，三条链的 gain 照样按物理量一帧一帧地动，但出口【悬空】——
+      //    页面一点声音都没有，而所有基于 audioGain() 的自检却全绿
+      //    （它们量的是那个数，不是声音）。这是「断言读什么比断言断言什么更重要」的活教材。
+      for (const k of SRC_ORDER) { srcGain[k].gain.value = 0; srcGain[k].connect(nzBus); }
       return AC;
     }
 
@@ -712,6 +719,8 @@
     // 每帧把三条链的 gain 摆到位：只有当前声源那条有音量，音量由 audioGain() 定
     function pumpAudio() {
       audioGainLast = audioGain();
+      // 上下文被浏览器挂起（切标签页、长时间无交互）时，这里不再往 gain 上写 ——
+      // 但也不要每帧都 resume()（控制台会刷警告）。唤醒交给下一次用户手势。
       if (!AC || AC.state !== 'running') return;
       for (const k of SRC_ORDER) {
         const g = srcGain[k];
@@ -721,13 +730,16 @@
       }
     }
 
+    // 只挂一次、且【不摘除】：浏览器可能把上下文重新挂起（切标签页、省电），
+    // 摘掉监听就再也唤不醒了。第二次以后只做一件事 —— 需要时 resume。
     function kickAudio() {
-      if (audioKicked) return;
-      if (!ensureAudio()) return;
-      audioKicked = true;
-      window.removeEventListener('pointerdown', kickAudio, true);
-      window.removeEventListener('keydown', kickAudio, true);
-      updateAudioUI();
+      if (!audioKicked) {
+        if (!ensureAudio()) return;
+        audioKicked = true;
+        updateAudioUI();
+        return;
+      }
+      if (AC && AC.state === 'suspended') AC.resume();
     }
 
     /* ---------------------------- 派生几何 ---------------------------- */
@@ -856,39 +868,47 @@
      * 不剔除的话，按相机距离排序是另一条路 —— 但盒子小、面多，
      * 剔除比排序稳，也不会出现「整块顶面盖住轮子」那种排序事故。
      * ------------------------------------------------------------------ */
-    const BOX_FACES = [
-      { idx: [4, 5, 6, 7], n: [0, 1, 0] },   // 顶
-      { idx: [0, 3, 2, 1], n: [0, -1, 0] },  // 底
-      { idx: [3, 2, 6, 7], n: [0, 0, 1] },   // 前 (+z)
-      { idx: [1, 0, 4, 5], n: [0, 0, -1] },  // 后 (−z)
-      { idx: [2, 1, 5, 6], n: [1, 0, 0] },   // 右 (+x)
-      { idx: [0, 3, 7, 4], n: [-1, 0, 0] }   // 左 (−x)
+    /* 六个面，顶点【从外面看逆时针】排列 —— 于是面法线可以直接由两条边
+     * 叉乘算出来（cross(v1−v0, v2−v1) 朝外），不必为每种朝向另抄一份法线表。
+     * 这一点在做【锥形/斜置】的柱体时是必需的：同一段代码要服务任意朝向。
+     * 顶点编号：0..3 = 底面（x−z−, x+z−, x+z+, x−z+），4..7 = 顶面（同序）。 */
+    const HEX_FACES = [
+      [4, 7, 6, 5],   // 顶 (+y)
+      [0, 1, 2, 3],   // 底 (−y)
+      [3, 2, 6, 7],   // 前 (+z)
+      [1, 0, 4, 5],   // 后 (−z)
+      [2, 1, 5, 6],   // 右 (+x)
+      [0, 3, 7, 4]    // 左 (−x)
     ];
-    function box3(q, cx, cy, cz, w, h, d, base, opts) {
+    // 八顶点凸体的公共部分：背面剔除 + 屏幕盒子 + 世界盒子。
+    // 顶点顺序必须与 HEX_FACES 一致：
+    //   0..3 = 底面（x−z−, x+z−, x+z+, x−z+），4..7 = 顶面（同序）
+    function hexa(q, world, base, opts) {
       const o = opts || {};
-      const hw = w / 2, hd = d / 2;
-      const world = [
-        [cx - hw, cy, cz - hd], [cx + hw, cy, cz - hd], [cx + hw, cy, cz + hd], [cx - hw, cy, cz + hd],
-        [cx - hw, cy + h, cz - hd], [cx + hw, cy + h, cz - hd], [cx + hw, cy + h, cz + hd], [cx - hw, cy + h, cz + hd]
-      ];
       const P = world.map(p => project(p, q));
-      const center = [cx, cy + h / 2, cz];
-      const toEye = sub(q.eye, center);
       const amb = o.amb === undefined ? 0.50 : o.amb;
       // 除了屏幕盒子，还带一份【世界坐标盒子】出去。
       // 有了它，「隔声罩有没有真的把声源罩住」这类判据才能对着【实际画出去的
       // 几何】去量，而不是对着源码里另抄一份常量。
-      let box = {
+      const box = {
         x0: 1e9, x1: -1e9, y0: 1e9, y1: -1e9,
-        wx0: cx - hw, wx1: cx + hw, wy0: cy, wy1: cy + h, wz0: cz - hd, wz1: cz + hd
+        wx0: 1e9, wx1: -1e9, wy0: 1e9, wy1: -1e9, wz0: 1e9, wz1: -1e9
       };
-      for (const f of BOX_FACES) {
+      for (const p of world) {
+        box.wx0 = Math.min(box.wx0, p[0]); box.wx1 = Math.max(box.wx1, p[0]);
+        box.wy0 = Math.min(box.wy0, p[1]); box.wy1 = Math.max(box.wy1, p[1]);
+        box.wz0 = Math.min(box.wz0, p[2]); box.wz1 = Math.max(box.wz1, p[2]);
+      }
+      for (const idx of HEX_FACES) {
         // 背面剔除：法线朝外的面才画。底面的法线朝下，从上方看就被剔掉了。
+        // 法线由顶点顺序算出 —— 顶点从外面看是逆时针的，所以这个叉乘朝外。
+        const v0 = world[idx[0]], v1 = world[idx[1]], v2 = world[idx[2]];
+        const n = vnorm(cross(sub(v1, v0), sub(v2, v1)));
         const fc = [0, 0, 0];
-        for (const i of f.idx) { fc[0] += world[i][0] / 4; fc[1] += world[i][1] / 4; fc[2] += world[i][2] / 4; }
-        if (dot(f.n, sub(q.eye, fc)) <= 0) continue;
-        const quad = f.idx.map(i => P[i]);
-        poly(quad, o.flat ? rgb(base, o.k === undefined ? 1 : o.k) : shade(base, f.n, amb),
+        for (const i of idx) { fc[0] += world[i][0] / 4; fc[1] += world[i][1] / 4; fc[2] += world[i][2] / 4; }
+        if (dot(n, sub(q.eye, fc)) <= 0) continue;
+        const quad = idx.map(i => P[i]);
+        poly(quad, o.flat ? rgb(base, o.k === undefined ? 1 : o.k) : shade(base, n, amb),
              o.stroke, o.lw || 1);
         for (const p of quad) {
           box.x0 = Math.min(box.x0, p.x); box.x1 = Math.max(box.x1, p.x);
@@ -896,6 +916,25 @@
         }
       }
       return box;
+    }
+    function box3(q, cx, cy, cz, w, h, d, base, opts) {
+      const hw = w / 2, hd = d / 2;
+      return hexa(q, [
+        [cx - hw, cy, cz - hd], [cx + hw, cy, cz - hd], [cx + hw, cy, cz + hd], [cx - hw, cy, cz + hd],
+        [cx - hw, cy + h, cz - hd], [cx + hw, cy + h, cz - hd], [cx + hw, cy + h, cz + hd], [cx - hw, cy + h, cz + hd]
+      ], base, opts);
+    }
+    // 两头粗细不同的「盒」：做锥形的四肢、收腰的躯干。
+    // p0/p1 是两端【截面中心】，w 是 x 向宽、d 是 z 向宽。
+    // 两端 x 不同就是一个斜着的柱体 —— 坐着的人前倾、小臂往前伸全靠它。
+    function limb3(q, p0, p1, w0, d0, w1, d1, base, opts) {
+      const h0 = w0 / 2, g0 = d0 / 2, h1 = w1 / 2, g1 = d1 / 2;
+      return hexa(q, [
+        [p0[0] - h0, p0[1], p0[2] - g0], [p0[0] + h0, p0[1], p0[2] - g0],
+        [p0[0] + h0, p0[1], p0[2] + g0], [p0[0] - h0, p0[1], p0[2] + g0],
+        [p1[0] - h1, p1[1], p1[2] - g1], [p1[0] + h1, p1[1], p1[2] - g1],
+        [p1[0] + h1, p1[1], p1[2] + g1], [p1[0] - h1, p1[1], p1[2] + g1]
+      ], base, opts);
     }
 
     /* ---------------------------- 标签（带避让） ---------------------------- */
@@ -1276,62 +1315,180 @@
     }
 
     /* ---------------------------- 人 ---------------------------- */
-    function drawPerson(q) {
+    /* ---------------------- 书桌 · 椅子 · 读书的人 ----------------------
+     * 站着的「火柴人」读不出「在读书」这件事 —— 改成【坐在书桌前看书】：
+     * 椅子 + 书桌 + 前倾的躯干 + 搭在桌面上的小臂 + 摊开的书。
+     * 四肢和躯干都走 limb3（两端粗细不同的柱体），所以是锥形的，不是方棍。
+     *
+     * 画序（R 组内）是【椅子 → 下身 → 书桌 → 上身/手臂/书 → 声级计】。
+     * 三条约束互相打架，只有这一个顺序同时满足：
+     *   · 相机在 +x 侧、书桌在人的 −x 前方 → 桌子比人【远】，所以桌子先画、
+     *     人后画；反过来桌面板会盖住人的躯干；
+     *   · 人的【小腿和脚】在桌子底下 → 得让桌子盖住它们，所以下身排在桌子【之前】；
+     *   · 【小臂、手和书】搭在桌面上方 → 必须排在桌子【之后】，否则手穿进桌面。
+     * ------------------------------------------------------------------- */
+    const SKIN = [232, 198, 168], SHIRT = [78, 124, 176], SHIRT_D = [56, 94, 140];
+    const TROUSER = [58, 68, 90], SHOE = [40, 44, 56];
+    const WOOD = [172, 128, 82], WOOD_D = [124, 88, 54], PAPER = [244, 242, 234];
+
+    // 人【面朝 +z】（也就是朝着默认机位）。这样看到的是脸、胸和摊开的书，
+    // 而不是后脑勺 —— 侧对着相机时整个人会缩成一块看不出是什么的蓝色。
+    // 于是「前后」都落在 z 上、「左右」落在 x 上，桌椅沿 z 排开。
+    const SEAT_TOP = 0.45;                  // 椅面高 —— 髋关节就落在这个高度
+    const HIP_Z = -0.20;                    // 髋关节（相对人的中心；身后是 −z）
+    const KNEE_Z = 0.30;                    // 膝盖（前方是 +z）
+    const DESK_Z0 = 0.22, DESK_Z1 = 0.66;   // 桌面前后沿（相对人）
+    const DESK_HX = 0.44;                   // 桌面半宽（x 向）
+    const DESK_T = 0.045, DESK_Y = 0.70;
+    const DESK_SURF = DESK_Y + DESK_T;      // 桌面上表面 0.745
+
+    // 本帧「椅子 + 人 + 书桌」的并集屏幕盒子。既当自检的像素排除区，
+    // 也是「这一坨东西占了多大屏幕」的锚。
+    let studyBox = null;
+    function studyMerge(b) {
+      if (!b) return;
+      if (!studyBox) studyBox = { x0: b.x0, x1: b.x1, y0: b.y0, y1: b.y1 };
+      else {
+        studyBox.x0 = Math.min(studyBox.x0, b.x0); studyBox.x1 = Math.max(studyBox.x1, b.x1);
+        studyBox.y0 = Math.min(studyBox.y0, b.y0); studyBox.y1 = Math.max(studyBox.y1, b.y1);
+      }
+    }
+
+    function drawChair(q) {
       const [px, , pz] = personPos();
-      const skin = [226, 190, 160], cloth = [72, 118, 168], pants = [58, 68, 88];
-      let box = null;
-      const merge = b => {
-        if (!b) return;
-        if (!box) box = { x0: b.x0, x1: b.x1, y0: b.y0, y1: b.y1 };
-        else {
-          box.x0 = Math.min(box.x0, b.x0); box.x1 = Math.max(box.x1, b.x1);
-          box.y0 = Math.min(box.y0, b.y0); box.y1 = Math.max(box.y1, b.y1);
+      const cz = pz - 0.27;
+      studyBox = null;                       // R 组的第一件事：清掉上一帧的并集盒子
+      for (const dx of [-0.16, 0.16]) for (const dz of [-0.16, 0.16]) {
+        studyMerge(box3(q, px + dx, 0, cz + dz, 0.035, SEAT_TOP, 0.035, WOOD_D,
+                        { stroke: 'rgba(2,6,23,.42)', amb: 0.42 }));
+      }
+      studyMerge(box3(q, px, SEAT_TOP - 0.045, cz, 0.42, 0.045, 0.42, WOOD,
+                      { stroke: 'rgba(2,6,23,.45)' }));
+      // 靠背：两根立柱 + 一块横板（在人背后，−z 侧）
+      for (const dx of [-0.16, 0.16]) {
+        studyMerge(box3(q, px + dx, SEAT_TOP, cz - 0.19, 0.035, 0.40, 0.035, WOOD_D,
+                        { stroke: 'rgba(2,6,23,.42)', amb: 0.42 }));
+      }
+      studyMerge(box3(q, px, SEAT_TOP + 0.24, cz - 0.19, 0.37, 0.15, 0.045, WOOD,
+                      { stroke: 'rgba(2,6,23,.45)' }));
+    }
+
+    // 下身：鞋 → 小腿 → 大腿 → 骨盆。排在书桌【之前】画，好让桌子盖住桌下的腿。
+    function drawPersonLower(q) {
+      const [px, , pz] = personPos();
+      for (const dx of [-0.10, 0.10]) {
+        studyMerge(box3(q, px + dx, 0, pz + KNEE_Z + 0.05, 0.14, 0.065, 0.21, SHOE,
+                        { stroke: 'rgba(2,6,23,.5)' }));
+        studyMerge(limb3(q, [px + dx, 0.055, pz + KNEE_Z + 0.02], [px + dx, 0.46, pz + KNEE_Z],
+                         0.15, 0.135, 0.165, 0.15, TROUSER, { stroke: 'rgba(2,6,23,.4)' }));
+        studyMerge(box3(q, px + dx, 0.44, pz + (HIP_Z + KNEE_Z) / 2,
+                        0.17, 0.15, KNEE_Z - HIP_Z, TROUSER, { stroke: 'rgba(2,6,23,.4)' }));
+      }
+      studyMerge(box3(q, px, 0.44, pz - 0.15, 0.35, 0.19, 0.30, TROUSER,
+                      { stroke: 'rgba(2,6,23,.4)' }));
+    }
+
+    function drawDesk(q) {
+      const [px, , pz] = personPos();
+      const cz = pz + (DESK_Z0 + DESK_Z1) / 2, d = DESK_Z1 - DESK_Z0;
+      for (const dx of [-DESK_HX + 0.05, DESK_HX - 0.05]) {
+        for (const dz of [DESK_Z0 + 0.035, DESK_Z1 - 0.035]) {
+          studyMerge(box3(q, px + dx, 0, pz + dz, 0.05, DESK_Y, 0.05, WOOD_D,
+                          { stroke: 'rgba(2,6,23,.42)', amb: 0.42 }));
         }
-      };
-      // 两条腿
-      for (const dz of [-0.10, 0.10]) {
-        merge(box3(q, px, 0, pz + dz, 0.13, 0.78, 0.15, pants, { stroke: 'rgba(2,6,23,.4)' }));
       }
-      // 身体
-      merge(box3(q, px, 0.78, pz, 0.40, 0.56, 0.24, cloth, { stroke: 'rgba(2,6,23,.4)' }));
-      // 两条手臂（自然下垂，稍微分开）
-      for (const dz of [-0.26, 0.26]) {
-        merge(box3(q, px, 0.74, pz + dz, 0.11, 0.50, 0.12, cloth, { stroke: 'rgba(2,6,23,.4)', amb: 0.44 }));
-      }
-      // 头（球）
-      const headY = 1.50, headR = 0.135;
-      const hp = project([px, headY, pz], q);
+      const top = box3(q, px, DESK_Y, cz, DESK_HX * 2, DESK_T, d, WOOD,
+                       { stroke: 'rgba(2,6,23,.5)' });
+      studyMerge(top);
+      // 前挡板 —— 没有它，桌面板看着像浮在空中
+      studyMerge(box3(q, px, DESK_Y - 0.13, pz + DESK_Z1 - 0.03,
+                      DESK_HX * 2 - 0.06, 0.13, 0.03, WOOD_D,
+                      { stroke: 'rgba(2,6,23,.35)', amb: 0.44 }));
+      state.drawn.deskBox = top;
+      state.drawn.deskSurf = DESK_SURF;
+    }
+
+    // 上身：躯干 → 肩 → 颈 → 头 → 耳罩，再是搭在桌面上的手臂、手和书。
+    // 必须排在书桌【之后】画。
+    function drawPersonUpper(q) {
+      const [px, , pz] = personPos();
+      // 躯干：坐着前倾（上端比下端更靠 +z）。limb3 的 wa 沿 e1、wb 沿 e2 ——
+      // 轴接近竖直时 e1≈+z（前后厚）、e2≈+x（左右宽），所以 wa 是身厚、wb 是肩宽。
+      studyMerge(limb3(q, [px, 0.50, pz + HIP_Z + 0.05], [px, 0.99, pz - 0.03],
+                       0.24, 0.30, 0.21, 0.34, SHIRT, { stroke: 'rgba(2,6,23,.42)' }));
+      studyMerge(box3(q, px, 0.94, pz - 0.03, 0.36, 0.09, 0.21, SHIRT,
+                      { stroke: 'rgba(2,6,23,.42)' }));
+      // 脖子要【露出来】：头直接压在肩上会读成一坨
+      studyMerge(limb3(q, [px, 1.00, pz - 0.03], [px, 1.135, pz - 0.05],
+                       0.105, 0.115, 0.095, 0.10, SKIN, { stroke: 'rgba(2,6,23,.42)' }));
+
+      // 头。人面朝 +z（相机那一侧）→【脸朝着相机】。头发往后脑（−z）偏，
+      // 别糊住整张脸；耳朵和眼睛排在头发【之后】才不会被盖掉。
+      const headY = 1.255, headR = 0.128, headZ = pz - 0.055;
+      const hp = project([px, headY, headZ], q);
       const rr = headR * hp.s;
-      dot2(hp, rr, 'rgb(226,190,160)', 'rgba(2,6,23,.45)', 1.2);
-      // 头发（头顶一小片深色）
-      dot2(project([px, headY + 0.045, pz], q), rr * 0.86, 'rgba(38,32,30,.92)');
-      // 脸朝声源（−x）：在 −x 侧点两只眼睛
-      dot2(project([px - headR * 0.72, headY + 0.02, pz - 0.06], q), Math.max(1.2, rr * 0.11), 'rgba(20,20,26,.95)');
-      dot2(project([px - headR * 0.72, headY + 0.02, pz + 0.06], q), Math.max(1.2, rr * 0.11), 'rgba(20,20,26,.95)');
-      // 手里举着书（在胸前）
-      merge(box3(q, px - 0.02, 1.06, pz, 0.26, 0.18, 0.32, [238, 238, 228], { stroke: 'rgba(2,6,23,.35)' }));
-      state.drawn.person = box;
+      dot2(hp, rr, 'rgb(232,198,168)', 'rgba(2,6,23,.45)', 1.2);
+      dot2(project([px, headY + headR * 0.28, headZ - headR * 0.25], q), rr * 0.80, 'rgba(46,38,34,.96)');
+      dot2(project([px - headR * 0.30, headY + headR * 0.44, headZ + headR * 0.34], q), rr * 0.38, 'rgba(255,246,235,.24)');
+      // 耳（在 ±x 两侧）
+      for (const dx of [-1, 1]) {
+        dot2(project([px + dx * headR * 0.95, headY - 0.005, headZ + 0.010], q),
+             Math.max(1.2, rr * 0.21), 'rgba(214,176,146,.95)');
+      }
+      // 眼（脸朝 +z，所以眼在 +z 侧）
+      for (const dx of [-0.050, 0.050]) {
+        dot2(project([px + dx, headY + 0.014, headZ + headR * 0.84], q),
+             Math.max(1.1, rr * 0.105), 'rgba(24,22,28,.95)');
+      }
       state.drawn.headPt = hp;
 
-      // 耳罩：头梁 + 两侧罩杯。只画两个圆片会读成「头上顶了个光环」，
-      // 加一条跨过头顶的梁才认得出是耳罩。
+      // 耳罩：头梁 + 两侧罩杯。耳朵在 ±x 上，所以头梁是【x-y 平面】里的一道弧。
+      // 只画两个圆片会读成「头上顶了个光环」，加一条跨过头顶的梁才认得出是耳罩。
       if (state.earOn) {
         const band = [];
-        for (let k = 0; k <= 12; k++) {
-          const a = Math.PI * (k / 12);
-          band.push(project([px, headY + Math.sin(a) * (headR + 0.055),
-                                 pz + Math.cos(a) * (headR + 0.055)], q));
+        for (let k = 0; k <= 14; k++) {
+          const a = Math.PI * (k / 14);
+          band.push(project([px + Math.cos(a) * (headR + 0.052),
+                             headY + Math.sin(a) * (headR + 0.052), headZ], q));
         }
         line(band, 'rgba(251,191,36,.95)', 3);
-        for (const dz of [-1, 1]) {
-          const ep = project([px, headY - 0.01, pz + dz * (headR + 0.075)], q);
-          dot2(ep, rr * 0.80, 'rgba(251,191,36,.95)', 'rgba(120,53,15,.95)', 1.6);
+        for (const dx of [-1, 1]) {
+          const ep = project([px + dx * (headR + 0.072), headY - 0.008, headZ], q);
+          dot2(ep, rr * 0.82, 'rgba(251,191,36,.95)', 'rgba(120,53,15,.95)', 1.6);
           dot2(ep, rr * 0.34, 'rgba(120,53,15,.9)');
         }
         state.drawn.earMuffs = 2;
       } else {
         state.drawn.earMuffs = 0;
       }
+
+      // 手臂：上臂 肩→肘，小臂 肘→腕，手搭在桌面上。
+      // 肘比肩【更靠外】—— 手肘撑开是「伏案看书」的典型剪影，
+      // 也顺手把手臂从躯干轮廓里分出来，不然三块蓝色糊成一坨。
+      for (const dx of [-1, 1]) {
+        const sh = [px + dx * 0.185, 0.965, pz - 0.02];
+        const el = [px + dx * 0.255, 0.815, pz + 0.11];
+        const wr = [px + dx * 0.205, 0.775, pz + 0.28];
+        studyMerge(limb3(q, sh, el, 0.105, 0.105, 0.095, 0.095, SHIRT,
+                         { stroke: 'rgba(2,6,23,.45)', amb: 0.44 }));
+        studyMerge(limb3(q, el, wr, 0.095, 0.095, 0.085, 0.085, SHIRT_D,
+                         { stroke: 'rgba(2,6,23,.45)', amb: 0.44 }));
+        studyMerge(box3(q, px + dx * 0.195, DESK_SURF, pz + 0.315, 0.09, 0.035, 0.075, SKIN,
+                        { stroke: 'rgba(2,6,23,.4)' }));
+      }
+
+      // 摊开的书：贴在桌面上，书脊沿 z（人的视线方向），两页分在 ±x。
+      // 每页几道横排的「字迹」——远看就是「有字」。
+      const bz = pz + 0.40;
+      studyMerge(box3(q, px, DESK_SURF, bz, 0.30, 0.020, 0.26, PAPER,
+                      { stroke: 'rgba(2,6,23,.4)' }));
+      studyMerge(box3(q, px, DESK_SURF + 0.019, bz, 0.022, 0.006, 0.26, [172, 168, 158],
+                      { stroke: 'rgba(2,6,23,.25)' }));
+      for (const s of [-1, 1]) for (let k = 0; k < 3; k++) {
+        studyMerge(box3(q, px + s * 0.085, DESK_SURF + 0.019, bz + (k - 1) * 0.055,
+                        0.115, 0.004, 0.011, [180, 186, 192], { flat: true }));
+      }
+      state.drawn.person = studyBox;
     }
 
     /* ---------------------------- 声级计 ---------------------------- */
@@ -1377,7 +1534,7 @@
       // 直接画在关着的门上 —— 看着像「电锯摆在了门口」。
       const L = () => { drawHood(q); drawSource(q); };
       const W = () => { drawDivider(q); drawPanels(q); drawDoor(q); };
-      const R = () => { drawPerson(q); drawMeter(q); };
+      const R = () => { drawChair(q); drawPersonLower(q); drawDesk(q); drawPersonUpper(q); drawMeter(q); };
       for (const g of (q.eye[0] > 0 ? [L, W, R] : [R, W, L])) g();
 
       drawFrontWaveFields(q);     // 右房的波画在墙之后，才不会被墙盖没
@@ -1387,12 +1544,12 @@
       avoidLabel(project([SRC_X, HOOD_H + 0.34, SRC_Z], q),
                  state.srcOn ? SOURCES[state.src].name : '声源（已关闭）',
                  state.srcOn ? '#fca5a5' : '#7d97a8', 11);
-      avoidLabel(project([px, 1.86, pz], q), '正在读书', '#a5f3fc', 11);
+      avoidLabel(project([px + 0.02, 1.52, pz], q), '正在读书', '#a5f3fc', 11);
       avoidLabel(project([meterPos()[0], 1.42, meterPos()[2]], q), '声级计', '#a5f3fc', 10);
       avoidLabel(project([WALL_X, ROOM_H - 0.30, DOOR_CZ], q), '隔墙', '#cbd5e1', 10);
       if (state.hoodOn) avoidLabel(project([SRC_X - HOOD_R - 0.10, HOOD_H * 0.6, SRC_Z + HOOD_R], q), '隔声罩', '#7dd3fc', 10);
       if (state.panelOn) avoidLabel(project([WALL_X + 0.35, PANEL_Y1 - 0.12, 1.55], q), '吸音板', '#7dd3fc', 10);
-      if (state.earOn) avoidLabel(project([px + 0.30, 1.62, pz], q), '耳罩', '#fde68a', 10);
+      if (state.earOn) avoidLabel(project([px + 0.30, 1.40, pz], q), '耳罩', '#fde68a', 10);
       // 区域名最后画（要挑一个不压住别的位置）
       bestLabel(project([ROOM_L + 0.55, 0.02, ROOM_F * 0.55], q), '噪声源房间', 'rgba(248,180,180,.75)', 11, AVOID);
       bestLabel(project([ROOM_R - 0.85, 0.02, ROOM_F * 0.55], q), '安静房间', 'rgba(165,243,252,.75)', 11, AVOID);
@@ -1887,6 +2044,9 @@
         DOOR_Z0: DOOR_Z0, DOOR_Z1: DOOR_Z1, DOOR_H: DOOR_H, DOOR_CZ: DOOR_CZ,
         SRC_X: SRC_X, SRC_Z: SRC_Z, HOOD_R: HOOD_R, HOOD_H: HOOD_H,
         PERSON_H: PERSON_H, PERSON_Z: PERSON_Z, METER_DX: METER_DX, METER_DZ: METER_DZ,
+      // 书桌/坐姿的尺寸：自检要能判「桌子是不是在人前方」「桌面高不高过髋」
+      SEAT_TOP: SEAT_TOP, HIP_Z: HIP_Z, KNEE_Z: KNEE_Z,
+      DESK_Z0: DESK_Z0, DESK_Z1: DESK_Z1, DESK_HX: DESK_HX, DESK_SURF: DESK_SURF,
         PANEL_Y0: PANEL_Y0, PANEL_Y1: PANEL_Y1, PANEL_D: PANEL_D,
         PANEL_SPAN: PANEL_SPAN, PANEL_GAP: PANEL_GAP,
         IL_HOOD: IL_HOOD, IL_DOOR: IL_DOOR, IL_PANEL: IL_PANEL, IL_EAR: IL_EAR,
@@ -1905,6 +2065,10 @@
       personPos: personPos, meterPos: meterPos, doorMouth: doorMouth, wallDist: wallDist,
       // 声音
       audioGain: audioGain, pumpAudio: pumpAudio, ensureAudio: ensureAudio, kickAudio: kickAudio,
+      // 自检要能【真的量到声音】：把总线和上下文暴露出去，让测试自己挂一个
+      // AnalyserNode 到总线上。只查 audioGain() 这个【数】是查不出
+      // 「链搭好了但出口悬空」的 —— 那正是这个页面曾经一点声都没有的原因。
+      audioBus: () => nzBus, audioCtx: () => AC,
       audio: () => ({
         ready: !!AC, ctxState: AC ? AC.state : null, kicked: audioKicked,
         soundOn: state.soundOn, srcOn: state.srcOn, src: state.src,
