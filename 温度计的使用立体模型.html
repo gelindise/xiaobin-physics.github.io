@@ -59,14 +59,25 @@
     .stage-hud em { font-style: normal; color: #fdba74; }
     .stage-hud s { text-decoration: none; color: #fca5a5; font-variant-numeric: tabular-nums; }
 
-    /* 放大镜要能【真的用来读数】：画布放大到 ~320×200，刻度按分度值逐条标数字。
-       它是浮在画面右上角的，一大就挡场景 —— 所以只放大到「够读」为止。
+    /* 放大镜要能【真的用来读数】：画布 320×250，刻度按【三级】画 —— 长线每 10 ℃ 一条
+       并标数字、中线每 5 ℃、短线每 1 ℃（与 3D 模型印在管身上的刻度同一套常数与长度比）。
+       它是浮在画面右上角的，一大就挡场景 ⇒ 标题栏上带一个折叠按钮，收起后只剩一个小药丸。
        ★ 改这里的尺寸不用同步改 JS 常量：drawMag() 的几何是按画布 W/H 成比例算的
          （旧版把 26/52/39/112 写死，只对 218×112 成立）。 */
     .mag-inset { position: absolute; top: 12px; right: 12px; width: 340px; border: 1px solid #45627b; border-radius: 10px; background: #091729f2; padding: 9px; box-shadow: 0 8px 28px #0007; pointer-events: none; }
-    .mag-inset > span { display: block; text-align: center; color: #bae6fd; font-size: 12px; font-weight: 700; margin-bottom: 6px; }
-    #magCanvas { width: 100%; height: 200px; display: block; border-radius: 5px; background: #0a1a2b; }
-    .mag-inset small { display: block; text-align: center; padding-top: 6px; color: #a3b7c9; font-size: 10.5px; line-height: 1.45; }
+    .mag-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+    .mag-head > span { flex: 1 1 auto; min-width: 0; color: #bae6fd; font-size: 12px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .mag-head i { font-style: normal; color: #8fb4cc; font-weight: 600; }
+    .mag-toggle { flex: none; pointer-events: auto; cursor: pointer; font: inherit; font-size: 10.5px; font-weight: 700; line-height: 1; padding: 4px 9px; border-radius: 999px; border: 1px solid #3f5f7d; background: #10283f; color: #cfe9f7; }
+    .mag-toggle:hover { background: #16354f; border-color: #5d86a8; color: #eaf6ff; }
+    #magCanvas { width: 100%; height: 250px; display: block; border-radius: 5px; background: #0a1a2b; }
+    .mag-legend { padding-top: 6px; color: #9fb6c8; font-size: 10px; line-height: 1.6; }
+    .mag-legend b { color: #dbeefc; font-variant-numeric: tabular-nums; }
+    .mag-inset small { display: block; text-align: center; padding-top: 4px; color: #a3b7c9; font-size: 10.5px; line-height: 1.45; }
+    /* 折叠：只剩「标题 + 按钮」的一个小药丸，不再挡场景 */
+    .mag-inset.collapsed { width: auto; padding: 6px 9px; }
+    .mag-inset.collapsed .mag-sub { display: none; }
+    .mag-inset.collapsed .mag-body { display: none; }
 
     .chart-wrap { margin-top: 12px; border: 1px solid #25415a; border-radius: 12px; background: #0b1a2c; padding: 12px 14px 8px; }
     .chart-head { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; margin-bottom: 6px; font-size: 11.5px; color: #9db4c8; }
@@ -207,8 +218,8 @@
       .shell-head { align-items: flex-start; flex-direction: column; }
       .viewer { padding: 9px; }
       .stage { height: 430px; }
-      .mag-inset { width: 206px; top: 8px; right: 8px; padding: 6px; }
-      #magCanvas { height: 126px; }
+      .mag-inset { width: 232px; top: 8px; right: 8px; padding: 6px; }
+      #magCanvas { height: 152px; }
       .stage-top { left: 8px; top: 8px; max-width: 138px; font-size: 10px; }
       .stage-hud { right: 8px; bottom: 8px; padding: 6px 9px; font-size: 10px; }
       .stage-hud b { font-size: 14px; }
@@ -252,10 +263,16 @@
           <div class="stage" id="stage">
             <canvas id="sceneCanvas" tabindex="0" aria-label="可旋转的三维实验场景：实验台上放着一只盛水的烧杯，烧杯左边横躺着一支温度计。用鼠标点住温度计可以把它拿起来、移到烧杯口上方松手，铁架台的铁夹会自动把它夹住。俯视或仰视时画面里还会出现一只代表观察者眼睛的球和一条视线。"></canvas>
             <div class="stage-top"><b>真实器材渲染</b><br>点住温度计拖动 · 拖动空白处环绕</div>
-            <div class="mag-inset">
-              <span>读数放大镜 · 视线与刻度</span>
-              <canvas id="magCanvas" aria-label="读数放大镜示意图：温度计的刻度面在前、液柱在管中心，视线斜着穿过时与刻度相交的位置与液柱实际高度不同，于是读出的数偏大或偏小"></canvas>
-              <small id="magText">—</small>
+            <div class="mag-inset" id="magBox">
+              <div class="mag-head">
+                <span>读数放大镜<i class="mag-sub"> · 刻度与视线</i></span>
+                <button type="button" id="magToggle" class="mag-toggle" aria-expanded="true" aria-controls="magBody" title="折叠读数放大镜">▾ 折叠</button>
+              </div>
+              <div class="mag-body" id="magBody" aria-hidden="false">
+                <canvas id="magCanvas" aria-label="读数放大镜：这是温度计刻度的放大版，长线每 10 摄氏度一条并标数字、中线每 5 摄氏度一条、短线每 1 摄氏度一条，红色液柱在管中心；视线斜着穿过时与刻度相交的位置与液柱实际高度不同，于是读出的数偏大或偏小"></canvas>
+                <div class="mag-legend" id="magLegend">—</div>
+                <small id="magText">—</small>
+              </div>
             </div>
             <div class="stage-bottom">铸铁底座 · 镀铬立柱 · 硼硅玻璃烧杯 · 红色工作液温度计</div>
             <div class="stage-hud">

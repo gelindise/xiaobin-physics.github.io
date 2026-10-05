@@ -199,6 +199,8 @@ import * as THREE from './assets/optics-three.min.js';
     t: 0,
     records: [],
     step: 0,
+    /* 放大镜是否收起。纯界面状态：不参与仿真，reset 也不会把它弹开 */
+    magCollapsed: false,
     /* 画面上【真正画出来】的量（坐标 / 像素间距 …）留给自检读。
        自检若自己重算一遍公式，就是自指 —— 页面画错了它照样绿。 */
     drawn: {}
@@ -1058,10 +1060,14 @@ import * as THREE from './assets/optics-three.min.js';
   }
 
   /* ==========================================================================
-     八、读数放大镜（把「视差」画出来）
+     八、读数放大镜（把刻度放大成能读数的样子 + 把「视差」画出来）
      ========================================================================== */
   const magCanvas = $('magCanvas');
   const magText = $('magText');
+  const magLegend = $('magLegend');
+  const magBox = $('magBox');
+  const magToggle = $('magToggle');
+  const magBody = $('magBody');
   /* 示意图（管径已放大）：右边是眼睛，左边是玻璃管的侧视剖面。
      刻度面在靠近眼睛的一侧，红色液柱在管中心 —— 视线斜着穿过去，
      与刻度面相交的位置就和液柱的真实高度错开了。
@@ -1071,14 +1077,21 @@ import * as THREE from './assets/optics-three.min.js';
      ★ MAG_T = (刻度面x − 眼x) / (轴心x − 眼x)，就是【视差的放大倍数】。
        画面上「视线与刻度面的交点」相对液柱顶的偏移，必须【等于】真实偏差换算到
        刻度上的距离 —— 否则图上量出来的偏移与文字里说的「偏 1.3 ℃」是同一件事的
-       两个数（本仓已有过一次同形教训）。所以先定 MAG_T，再由它【反解】刻度面位置，
-       而不是先画好管子再让交点随便落在哪儿。 */
+       两个数（本仓已有过一次同形教训）。所以先定 MAG_T，再由它【反解】刻度面位置。
+     ★ 三级刻线（长 / 中 / 短）不是另画一套，而是与 3D 模型里 makeScale() 印在管身上
+       的刻度【同源】：同一组 k.numStep / k.longStep / k.div，同一组长度比 16 : 11 : 6。
+       用户说的「有长有短、第 5 格是半个格、数字标 60 和 70」正是这个 ——
+       旧版每格画等长线并逐格标数字（61 / 62 / 63…），真实温度计上没有这种刻度。
+     ★ 窗口中心【吸到长格上】，于是液柱在窗口里占多少会随示数变（25% ~ 75%），
+       而不是永远 50% —— 「液柱所占的比例」才真的看得出来。 */
   const MAG_T = 0.60;
-  const MAG_HALF = 4;              // 刻度面上下各画几个分度（共 2*MAG_HALF+1 条）
+  const TICK_RATIO = { num: 16, long: 11, minor: 6 };   // 抄自 makeScale() 的 16 / 11 / 6
+  const TICK_W = { num: 2.2, long: 1.7, minor: 1.1 };
+  const TICK_FRAC = 0.80;                                // 长线占管宽的比例
   function drawMag() {
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     const W = magCanvas.clientWidth || 320;
-    const H = magCanvas.clientHeight || 190;
+    const H = magCanvas.clientHeight || 250;
     if (magCanvas.width !== Math.round(W * dpr) || magCanvas.height !== Math.round(H * dpr)) {
       magCanvas.width = Math.round(W * dpr);
       magCanvas.height = Math.round(H * dpr);
@@ -1089,80 +1102,121 @@ import * as THREE from './assets/optics-three.min.js';
     g.fillStyle = '#0a1a2b'; g.fillRect(0, 0, W, H);
 
     const k = KINDS[state.kind];
-    const cy = H / 2;                       // 液柱顶（= 温度计示数）永远画在正中
-    /* 刻度条数与字号都跟着画布高度走：画布小的时候硬画 9 条会挤成一团、数字互相
-       压住 —— 那还不如少画几条。字号取「分度间距的 62%」，从根上保证不重叠。 */
-    const half = H >= 150 ? MAG_HALF : 3;
-    const padY = H * 0.085;
-    const pxPerDiv = (H - 2 * padY) / (2 * half);
-    const fs = Math.max(8, Math.min(11.5, pxPerDiv * 0.62));
-    const yOfDeg = (T) => cy - (T - state.Td) / k.div * pxPerDiv;
+    /* 一个长格 = 几个小格。实验室温度计 10 ℃ / 1 ℃ = 10，体温计 1 ℃ / 0.1 ℃ = 10 ——
+       两种温度计都是 10，所以窗口一律 20 个小格（上下各一个长格）。 */
+    const perNum = Math.round(k.numStep / k.div);
+    const perLong = Math.round(k.longStep / k.div);
+    const padY = Math.max(12, H * 0.05);
+    const pxPerDiv = (H - 2 * padY) / (2 * perNum);
+    /* 窗口上下沿（= 刻度区的上下沿）。★ 必须定义在 colTopY 之前 ——
+       负向对照里有一条要把液柱顶钉在窗口正中（正是旧版的行为），会用到这两个量；
+       放在后面会变成 TDZ 报错，那条对照就退化成「页面崩溃」，测不到东西了。 */
+    const tubeTop = padY, tubeBot = H - padY;
+
+    /* 窗口中心吸到长格上（round 到 numStep 的整数倍），并且不许跑到量程之外 ——
+       否则体温计顶到 42 ℃ 时窗口里会一条刻度都没有。 */
+    const numLo = Math.ceil(k.TMin / k.numStep), numHi = Math.floor(k.TMax / k.numStep);
+    const rDiv = state.Td / k.div;                        // 示数在第几个小格
+    const cNum = Math.min(numHi, Math.max(numLo, Math.round(rDiv / perNum)));
+    const cDiv = cNum * perNum;                           // 窗口中心的格号（落在长格上）
+    const loDiv = cDiv - perNum, hiDiv = cDiv + perNum;
+    const yOfDiv = (i) => padY + (hiDiv - i) * pxPerDiv;
+    /* 示数可能被钳在量程外（体温计插进 65 ℃ 的水）—— 画液柱时钳回窗口内，
+       免得画到画布外面去；colClamped 记下这件事，自检分开断言。 */
+    const rDraw = Math.min(hiDiv, Math.max(loDiv, rDiv));
+    const colTopY = yOfDiv(rDraw);
+    const colClamped = Math.abs(rDraw - rDiv) > 1e-9;
+    const fs = Math.max(9, Math.min(13, pxPerDiv * 1.15));
 
     /* 眼睛在右，刻度面在玻璃管朝眼睛的那一侧（右边缘）；由 MAG_T 反解它的位置 */
     const eyeX = W - 21;
     const axis = W * 0.52;
     const tubeR = MAG_T * axis + (1 - MAG_T) * eyeX;
     const tubeL = 2 * axis - tubeR;
-    const tubeTop = padY * 0.55, tubeBot = H - padY * 0.55;
+    const tubeW = tubeR - tubeL;
 
     /* 玻璃管剖面 */
     g.fillStyle = 'rgba(150,200,225,0.13)';
-    g.fillRect(tubeL, tubeTop, tubeR - tubeL, tubeBot - tubeTop);
+    g.fillRect(tubeL, tubeTop, tubeW, tubeBot - tubeTop);
     g.strokeStyle = 'rgba(180,220,240,0.5)';
     g.lineWidth = 1;
-    g.strokeRect(tubeL + 0.5, tubeTop + 0.5, tubeR - tubeL - 1, tubeBot - tubeTop - 1);
+    g.strokeRect(tubeL + 0.5, tubeTop + 0.5, tubeW - 1, tubeBot - tubeTop - 1);
 
-    /* 刻度：每个分度一条、横贯管身；数字标在管子左侧（视线在管子右边，不会压住数字）。
-       n0 是「最靠近示数的那个整刻度」，上下各取 MAG_HALF 条。 */
-    const n0 = Math.round(state.Td / k.div);
-    const tickVals = [], tickYs = [];
+    /* 刻度：三级，长度比与 3D 模型印在管身上的那一套完全一致。数字【只】标在长线上，
+       所以「标了数字的刻度」远少于刻度总数 —— 真实温度计就是每 10 格标一个数，
+       中间全是小格（旧版每格都标，那是把放大镜画成了一把尺子）。 */
+    const lenOf = {
+      num: tubeW * TICK_FRAC,
+      long: tubeW * TICK_FRAC * TICK_RATIO.long / TICK_RATIO.num,
+      minor: tubeW * TICK_FRAC * TICK_RATIO.minor / TICK_RATIO.num
+    };
+    const ticks = [], tickVals = [], tickYs = [], tickKinds = [], tickLens = [];
+    const labelVals = [], labelYs = [];
     g.font = `600 ${fs.toFixed(1)}px "Helvetica Neue", Arial, sans-serif`;
     g.textAlign = 'right'; g.textBaseline = 'middle';
-    for (let i = -half; i <= half; i++) {
-      const T = (n0 + i) * k.div;
-      const y = yOfDeg(T);
+    for (let i = Math.ceil(loDiv - 1e-9); i <= Math.floor(hiDiv + 1e-9); i++) {
+      const T = i * k.div;
+      /* 量程之外没有刻度 —— 体温计 42 ℃ 以上就是空白，不该凭空画出来 */
+      if (T < k.TMin - 1e-9 || T > k.TMax + 1e-9) continue;
+      const y = yOfDiv(i);
       if (y < tubeTop - 0.5 || y > tubeBot + 0.5) continue;
+      /* 整除判定用【整数格号】做，不用浮点比值 —— i * div 会攒出 1e-14 级的误差 */
+      const isNum = i % perNum === 0;
+      const isLong = !isNum && i % perLong === 0;
+      const kind = isNum ? 'num' : (isLong ? 'long' : 'minor');
       const isZero = Math.abs(T) < 1e-9;          // 0 ℃ 是摄氏温度的定标点，单独标色
-      g.strokeStyle = isZero ? 'rgba(125,211,252,0.95)' : 'rgba(200,224,240,0.6)';
-      g.lineWidth = isZero ? 1.8 : 1;
-      g.beginPath(); g.moveTo(tubeL, y); g.lineTo(tubeR, y); g.stroke();
-      g.fillStyle = isZero ? '#7dd3fc' : 'rgba(206,226,240,0.92)';
-      g.fillText(T.toFixed(k.dec), tubeL - 8, y);
+      g.strokeStyle = isZero ? 'rgba(125,211,252,0.95)'
+        : (kind === 'num' ? 'rgba(228,241,251,0.94)'
+          : (kind === 'long' ? 'rgba(206,228,244,0.76)' : 'rgba(184,210,232,0.52)'));
+      g.lineWidth = isZero ? TICK_W.num : TICK_W[kind];
+      /* 刻线【从管子左沿往右长】—— 数字就在左沿外侧，三者紧挨着；
+         若改成从右沿往左长，短线会孤零零贴在右边、左边空一大片（看着像一把梳子）。
+         右沿（tubeR）仍是几何上的「刻度面」，视线在那里与刻度相交。 */
+      g.beginPath(); g.moveTo(tubeL, y); g.lineTo(tubeL + lenOf[kind], y); g.stroke();
+      if (kind === 'num') {
+        g.fillStyle = isZero ? '#7dd3fc' : 'rgba(228,241,251,0.96)';
+        g.fillText(T.toFixed(k.dec), tubeL - 8, y);
+        labelVals.push(+T.toFixed(4)); labelYs.push(+y.toFixed(2));
+      }
+      ticks.push({ T: +T.toFixed(4), y: +y.toFixed(2), kind, len: +lenOf[kind].toFixed(2) });
       tickVals.push(+T.toFixed(4)); tickYs.push(+y.toFixed(2));
+      tickKinds.push(kind); tickLens.push(+lenOf[kind].toFixed(2));
     }
     /* 刻度面（朝眼睛的那一侧）压在刻度右端上 */
     g.strokeStyle = 'rgba(226,240,250,0.9)';
     g.lineWidth = 2.4;
     g.beginPath(); g.moveTo(tubeR, tubeTop); g.lineTo(tubeR, tubeBot); g.stroke();
 
-    /* 液柱（在管中心，从示数往下）—— 画在刻度之后，盖住穿过它的那些刻度 */
+    /* 液柱（在管中心，从液柱顶一直填到窗口底）—— 画在刻度之后，盖住穿过它的那些刻度。
+       「液柱占了这段刻度的多少」= (窗口底 − 液柱顶) / 窗口高，随示数在 25% ~ 75% 之间变。 */
     const colW = Math.max(6, W * 0.022);
     g.fillStyle = '#e0212c';
-    g.fillRect(axis - colW / 2, cy, colW, tubeBot - 4 - cy);
+    g.fillRect(axis - colW / 2, colTopY, colW, tubeBot - colTopY);
     g.fillStyle = '#ff5a63';
     g.beginPath();
-    g.ellipse(axis, cy, colW / 2 + 1, Math.max(2, colW * 0.42), 0, 0, Math.PI * 2);
+    g.ellipse(axis, colTopY, colW / 2 + 1, Math.max(2, colW * 0.42), 0, 0, Math.PI * 2);
     g.fill();
+    const colFrac = (tubeBot - colTopY) / (tubeBot - tubeTop);
 
     /* 视差：把真实偏差（℃）换算成刻度上的像素距离 */
     const biasPx = sightBias() / k.div * pxPerDiv;
-    const crossWant = cy - biasPx;
+    const crossWant = colTopY - biasPx;
     /* 由「视线必须穿过液柱顶端」反解眼睛该多高 */
-    let eyeY = cy - biasPx / (1 - MAG_T);
+    let eyeY = colTopY - biasPx / (1 - MAG_T);
     let eyeClamped = false;
     const eyeLo = 12, eyeHi = H - 12;
     if (eyeY < eyeLo) { eyeY = eyeLo; eyeClamped = true; }
     if (eyeY > eyeHi) { eyeY = eyeHi; eyeClamped = true; }
     /* 眼睛被钳住时以【实际眼位】重新解交点 —— 保证画面自洽（线确实穿过液柱顶）。
        此时图上偏移不再等于 biasPx，eyeClamped 把这件事记下来，自检分开断言。 */
-    const crossY = eyeY + MAG_T * (cy - eyeY);
+    const crossY = eyeY + MAG_T * (colTopY - eyeY);
     const hasBias = Math.abs(sightBias()) > 1e-9;
 
     /* 液柱真实高度 */
     g.save();
     g.strokeStyle = 'rgba(255,150,150,0.9)';
     g.setLineDash([4, 3]); g.lineWidth = 1;
-    g.beginPath(); g.moveTo(tubeL - 6, cy); g.lineTo(tubeR + 9, cy); g.stroke();
+    g.beginPath(); g.moveTo(tubeL - 6, colTopY); g.lineTo(tubeR + 9, colTopY); g.stroke();
     g.restore();
     /* 视线：从眼睛穿过液柱顶端，延长到刻度面 */
     g.strokeStyle = 'rgba(56,224,255,0.9)';
@@ -1194,37 +1248,76 @@ import * as THREE from './assets/optics-three.min.js';
       g.fillStyle = color;
       g.fillText(txt, x, y + 0.5);
     };
-    tag('真实高度', tubeR + 12, cy, 'rgba(255,170,170,0.98)');
+    tag('真实高度', tubeR + 12, colTopY, 'rgba(255,170,170,0.98)');
     if (hasBias) {
       /* 两个标签靠太近会叠在一起 —— 把「眼睛以为」推开一点 */
-      const ty = Math.abs(crossY - cy) < 17 ? crossY + (crossY >= cy ? 17 : -17) : crossY;
+      const ty = Math.abs(crossY - colTopY) < 17 ? crossY + (crossY >= colTopY ? 17 : -17) : crossY;
       tag('眼睛以为', tubeR + 12, ty, 'rgba(56,224,255,0.98)');
     }
 
     /* 把这次真正画出来的量留给自检 —— 断言要读画面，不能自己重算一遍公式（那是自指） */
     state.drawn.mag = {
-      W, H, cy, padY, pxPerDiv, div: k.div, n0,
+      W, H, padY, pxPerDiv, div: k.div, perNum, perLong,
+      numStep: k.numStep, longStep: k.longStep, TMin: k.TMin, TMax: k.TMax,
+      numLo, numHi, cNum, cDiv, loDiv, hiDiv,
+      rDiv: +rDiv.toFixed(4), winLo: +(loDiv * k.div).toFixed(4), winHi: +(hiDiv * k.div).toFixed(4),
+      colTopY: +colTopY.toFixed(2), colBotY: +tubeBot.toFixed(2),
+      colFrac: +colFrac.toFixed(6), colClamped,
       axis: +axis.toFixed(2), tubeL: +tubeL.toFixed(2), tubeR: +tubeR.toFixed(2),
-      tubeTop: +tubeTop.toFixed(2), tubeBot: +tubeBot.toFixed(2),
+      tubeTop: +tubeTop.toFixed(2), tubeBot: +tubeBot.toFixed(2), tubeW: +tubeW.toFixed(2),
       eyeX: +eyeX.toFixed(2), eyeY: +eyeY.toFixed(2), eyeR: +eyeR.toFixed(2),
-      colW: +colW.toFixed(2), colTopY: cy,
+      colW: +colW.toFixed(2),
       biasPx: +biasPx.toFixed(4), crossY: +crossY.toFixed(2), crossWant: +crossWant.toFixed(2),
       eyeClamped, hasBias, eyeOnCanvas: eyeY >= 0 && eyeY <= H,
-      tickVals, tickYs, fs: +fs.toFixed(2),
-      magT: MAG_T, half
+      ticks, tickVals, tickYs, tickKinds, tickLens, labelVals, labelYs,
+      lenOf: { num: +lenOf.num.toFixed(2), long: +lenOf.long.toFixed(2), minor: +lenOf.minor.toFixed(2) },
+      fs: +fs.toFixed(2), magT: MAG_T,
+      legend: magLegend ? magLegend.textContent : '',
+      collapsed: !!state.magCollapsed
     };
 
-    /* 文案 */
+    /* 刻度图例：把「长/中/短各是几度」写在图上 —— 这正是用户问的「数字是怎么标的」 */
+    if (magLegend) {
+      /* ★ 用钳过的 rDraw 算占比：直接用 rDiv 的话，体温计插进 65 ℃ 的水会印出
+         「液柱占这段刻度 150%」—— 一个超过 100% 的比例。 */
+      const filled = (rDraw - loDiv) / (hiDiv - loDiv);
+      magLegend.innerHTML = `长线每 <b>${k.numStep.toFixed(k.dec)}</b> ℃ 一条并标数字　`
+        + `中线每 <b>${k.longStep.toFixed(k.dec)}</b> ℃　短线每 <b>${k.div.toFixed(k.dec)}</b> ℃`
+        + `<br>液柱占这段刻度 <b>${Math.round(filled * 100)}%</b>`
+        + `（${(rDraw - loDiv).toFixed(k.dec)} / ${(hiDiv - loDiv).toFixed(k.dec)} 格）`;
+    }
+
+    /* 文案。★ 先判量程：体温计插进 65 ℃ 的水时，说「读到的是液柱的真实高度」是错的 */
     const dT = sightBias();
-    if (state.sight === 'level') {
-      magText.textContent = `刻度每格 ${k.div.toFixed(k.dec)} ℃，放大后可以直接读数：视线与液柱上表面相平，读到的是液柱的真实高度。`;
-    } else if (!inRange()) {
+    if (!inRange()) {
       magText.textContent = '液柱已经顶到量程尽头，读数不可用。';
+    } else if (state.sight === 'level') {
+      magText.textContent = `视线与液柱上表面相平，读到的是液柱的真实高度（这段刻度里液柱占 ${Math.round(colFrac * 100)}%）。`;
     } else {
       const sgn = dT > 0 ? '偏大' : '偏小';
       magText.textContent = `${SIGHTS[state.sight].short}：视线与刻度面相交的位置比液柱${dT > 0 ? '高' : '低'} `
         + `${Math.abs(dT).toFixed(2)} ℃ 的刻度（图上那两条横线的间距就是这个数），所以读数${sgn}。`;
     }
+  }
+
+  /* ---- 折叠 / 展开：放大镜浮在画面右上角，一大就挡场景 ---- */
+  function setMagCollapsed(v) {
+    state.magCollapsed = !!v;
+    if (magBox) magBox.classList.toggle('collapsed', state.magCollapsed);
+    if (magBody) magBody.setAttribute('aria-hidden', state.magCollapsed ? 'true' : 'false');
+    if (magToggle) {
+      magToggle.textContent = state.magCollapsed ? '▸ 展开' : '▾ 折叠';
+      magToggle.setAttribute('aria-expanded', state.magCollapsed ? 'false' : 'true');
+      magToggle.title = state.magCollapsed ? '展开读数放大镜' : '折叠读数放大镜';
+    }
+    /* 收起时画布 clientWidth 是 0，展开后必须重画一次才有内容 */
+    if (!state.magCollapsed) drawMag();
+  }
+  if (magToggle) {
+    magToggle.addEventListener('click', () => setMagCollapsed(!state.magCollapsed));
+    /* 别让这一次按下落到场景画布上（会被当成「开始拖温度计」） */
+    ['pointerdown', 'mousedown', 'touchstart'].forEach((ev) =>
+      magToggle.addEventListener(ev, (e) => e.stopPropagation()));
   }
 
   /* ==========================================================================
@@ -1853,6 +1946,7 @@ import * as THREE from './assets/optics-three.min.js';
     immersed, classifyDrop, placeText, thermoPoseTarget, snapThermo,
     shake,
     resetSim, resetRun, refreshAll, syncButtons, updateThermo, drawMag, drawChart,
+    setMagCollapsed, magBox, magToggle, magBody, magLegend,
     updateCamera, resize, syncViewToPlace, viewFollow: () => followRead,
     /* 直接推进仿真（不依赖真实时间）。走的是与真实循环同一个 stepSim。 */
     advance(seconds) {
