@@ -1,0 +1,1550 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>虚拟物理实验 - 潜望镜立体模型</title>
+    <link rel="stylesheet" href="style.css">
+    <style>
+        :root {
+            --bg: #020617;
+            --line: rgba(148, 163, 184, .18);
+            --primary: #3b82f6;
+            --secondary: #06b6d4;
+            --accent: #8b5cf6;
+            --text: #f8fafc;
+            --muted: #94a3b8;
+        }
+
+        body {
+            font-family: 'Inter', 'Microsoft YaHei', 'Noto Sans SC', sans-serif;
+            margin: 0;
+            /* 站内页头是 position:sticky，一滚动就贴顶盖住实验区，所以这一页不放页头
+               （和同章的「光的反射 / 光的折射 / 小孔成像 / 凸面镜与凹面镜立体模型」一致）。 */
+            padding: 20px;
+            background: var(--bg);
+            color: var(--text);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+            box-sizing: border-box;
+        }
+
+        /* 科技风背景光晕 */
+        body::before {
+            content: "";
+            position: fixed;
+            inset: 0;
+            z-index: -1;
+            pointer-events: none;
+            background:
+                radial-gradient(circle at 18% 22%, rgba(59, 130, 246, .16), transparent 42%),
+                radial-gradient(circle at 82% 68%, rgba(139, 92, 246, .14), transparent 44%),
+                radial-gradient(circle at 50% 100%, rgba(6, 182, 212, .10), transparent 55%);
+        }
+
+        /* ===== 可交互三维实验台（与站内其它 lab3d 页面同一套视觉基线）===== */
+        .lab3d {
+            width: 100%;
+            max-width: 1600px;
+            margin: 8px auto 26px;
+            box-sizing: border-box;
+            overflow: hidden;
+            border: 1px solid rgba(56, 189, 248, .22);
+            border-radius: 18px;
+            background: linear-gradient(160deg, rgba(15, 23, 42, .92), rgba(2, 6, 23, .96));
+            color: #e2e8f0;
+            box-shadow: 0 26px 70px rgba(2, 6, 23, .6), 0 0 0 1px rgba(2, 6, 23, .8) inset;
+        }
+        .lab3d * { box-sizing: border-box; }
+        .lab3d-top {
+            display: flex; justify-content: space-between; gap: 15px; align-items: center;
+            padding: 17px 23px; border-bottom: 1px solid var(--line);
+            background: linear-gradient(90deg, rgba(59, 130, 246, .12), rgba(6, 182, 212, .05) 45%, transparent);
+        }
+        .lab3d-kicker { color: #22d3ee; font-size: 11px; font-weight: 800; letter-spacing: .2em; }
+        .lab3d-top h2 { margin: 3px 0 0; color: #f8fafc; font-size: 21px; letter-spacing: .02em; }
+        .lab3d-top p { margin: 4px 0 0; color: #94a3b8; font-size: 12px; }
+        .lab3d-status {
+            border: 1px solid rgba(34, 211, 238, .45); border-radius: 99px; padding: 6px 12px;
+            color: #67e8f9; font-size: 12px; white-space: nowrap; background: rgba(6, 182, 212, .08);
+        }
+        .lab3d-layout { display: grid; grid-template-columns: minmax(0, 1fr) 300px; }
+        .lab3d-main {
+            min-width: 0; padding: 15px 16px 16px;
+            background: radial-gradient(circle at 43% 36%, rgba(30, 64, 100, .55), rgba(8, 22, 36, .92) 62%, rgba(3, 10, 18, .96));
+        }
+        .lab3d-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; padding-bottom: 12px; }
+        .lab3d-toolbar .toolbar-label { color: #94a3b8; font-size: 12px; margin-right: 5px; }
+        .lab3d button {
+            padding: 7px 12px; border: 1px solid rgba(148, 163, 184, .25); border-radius: 8px;
+            background: rgba(30, 41, 59, .7); color: #cbd5e1; font-size: 12px; font-weight: 600;
+            box-shadow: none; transition: background .2s, border-color .2s, color .2s;
+        }
+        .lab3d button:hover { transform: none; box-shadow: none; background: rgba(51, 65, 85, .85); }
+        .lab3d button.active {
+            background: rgba(59, 130, 246, .25); border-color: #38bdf8; color: #e0f2fe;
+            box-shadow: 0 0 14px rgba(56, 189, 248, .3);
+        }
+        .lab3d button:disabled { opacity: .42; cursor: not-allowed; }
+        .lab3d button.primary { background: rgba(59, 130, 246, .3); border-color: #38bdf8; color: #e0f2fe; }
+        .lab3d-toolbar .toolbar-spacer { flex: 1; }
+        /* 潜望镜是【竖直细长】的装置，画布比同章其它页高一点，竖向才装得下。 */
+        .lab3d-stage {
+            position: relative; height: clamp(430px, 56vw, 660px);
+            border: 1px solid rgba(56, 189, 248, .2); border-radius: 12px; overflow: hidden;
+            background: #061423;
+        }
+        .lab3d-stage canvas {
+            display: block; width: 100%; height: 100%;
+            border: 0; border-radius: 0; box-shadow: none; background: transparent;
+            cursor: grab; touch-action: none;
+        }
+        .lab3d-stage canvas:active { cursor: grabbing; }
+        .lab3d-stage .stage-hint {
+            position: absolute; top: 13px; left: 15px; pointer-events: none; font-size: 12px;
+            color: #bae6fd; background: rgba(2, 6, 23, .78); border: 1px solid rgba(56, 189, 248, .25);
+            padding: 7px 11px; border-radius: 8px;
+        }
+        .lab3d-stage .stage-hint b {
+            display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+            background: #22d3ee; vertical-align: 2px; margin-right: 6px; box-shadow: 0 0 8px #22d3ee;
+        }
+        .lab3d-stage .stage-help {
+            position: absolute; right: 14px; bottom: 13px; pointer-events: none;
+            color: #93b4c4; font-size: 11px; background: rgba(2, 6, 23, .72); padding: 6px 10px; border-radius: 7px;
+        }
+        /* 舞台内的观察结论条：眼睛盯着装置时也要能看见（侧栏在窄屏会被挤到下面） */
+        .lab3d-stage .stage-verdict {
+            position: absolute; left: 15px; bottom: 13px; pointer-events: none;
+            font-size: 12px; padding: 7px 12px; border-radius: 8px;
+            color: #d1fae5; background: rgba(6, 78, 59, .82); border: 1px solid rgba(52, 211, 153, .45);
+        }
+        .lab3d-stage .stage-verdict.warn { color: #fee2e2; background: rgba(127, 29, 29, .82); border-color: rgba(248, 113, 113, .5); }
+        .lab3d-foot {
+            display: flex; align-items: center; flex-wrap: wrap; gap: 12px 18px;
+            padding: 12px 3px 1px; font-size: 12px; color: #b6c8d4;
+        }
+        .lab3d-foot label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+        .lab3d-foot input { accent-color: #22d3ee; margin: 0; }
+        .lab3d-foot .legend { margin-left: auto; color: #8ba7b6; }
+        .lab3d-sidebar {
+            padding: 18px; color: #cbd5e1; border-left: 1px solid var(--line);
+            background: linear-gradient(180deg, rgba(15, 23, 42, .75), rgba(2, 6, 23, .6));
+        }
+        .lab3d-sidebar h3 { margin: 0 0 15px; color: #e2e8f0; font-size: 15px; letter-spacing: .05em; }
+        .lab3d-field { margin: 0 0 16px; }
+        .lab3d-field label, .lab3d-field .field-label {
+            display: flex; justify-content: space-between; gap: 8px; align-items: baseline;
+            color: #cbd5e1; font-size: 12px; font-weight: 700;
+        }
+        .lab3d-field output { color: #38bdf8; font-size: 13px; font-weight: 800; }
+        .lab3d-field input[type="range"] { display: block; width: 100%; margin: 11px 0 5px; }
+        .lab3d-field input[type="range"]::-webkit-slider-thumb { background: linear-gradient(135deg, #3b82f6, #22d3ee); }
+        .lab3d-field small { color: #64748b; font-size: 10px; line-height: 1.5; display: block; }
+        .lab3d-segment { display: flex; gap: 5px; margin-top: 9px; }
+        .lab3d-segment button { flex: 1; min-width: 0; padding: 7px 4px; font-size: 11px; }
+        /* 「单条可调」时才出现的那个滑块。必须显式写 [hidden] 规则：
+           .lab3d-field 自己不设 display，靠 UA 的 [hidden]{display:none} 也能关掉，
+           但只要以后有人给它加一句 display:block，隐藏就静默失效了。 */
+        .lab3d-field[hidden] { display: none; }
+        .lab3d-angle-row {
+            display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 8px;
+            font-size: 11px; color: #9fb8c6;
+        }
+        .lab3d-angle-row b { color: #e0f2fe; font-weight: 700; }
+        .lab3d-metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 12px; }
+        .lab3d-metric {
+            padding: 12px 13px; border: 1px solid rgba(56, 189, 248, .18); border-radius: 10px;
+            background: linear-gradient(160deg, rgba(30, 58, 95, .55), rgba(15, 23, 42, .6));
+        }
+        .lab3d-metric span { display: block; font-size: 11px; color: #9fb8c6; }
+        .lab3d-metric strong { display: block; margin-top: 4px; color: #e0f2fe; font-size: 17px; }
+        .lab3d-metric.ok strong { color: #6ee7b7; }
+        .lab3d-metric.bad strong { color: #fca5a5; }
+        .lab3d-note { margin: 12px 0 0; color: #9fb8c6; font-size: 12px; line-height: 1.65; }
+        .lab3d-note b { color: #7dd3fc; }
+
+        /* 结论卡：潜望镜的四条规律，逐条点亮 */
+        .law-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 8px; }
+        .law-list li {
+            display: flex; gap: 8px; align-items: flex-start;
+            padding: 9px 11px; border-radius: 9px; font-size: 12px; line-height: 1.55;
+            border: 1px solid rgba(148, 163, 184, .16); background: rgba(148, 163, 184, .05);
+            color: #b6c8d4; transition: background .2s, border-color .2s, color .2s;
+        }
+        .law-list li.on {
+            border-color: rgba(52, 211, 153, .5); background: rgba(16, 185, 129, .12); color: #d1fae5;
+        }
+        .law-list li.off {
+            border-color: rgba(248, 113, 113, .45); background: rgba(239, 68, 68, .12); color: #fee2e2;
+        }
+        .law-list li i { font-style: normal; color: #64748b; flex: none; font-weight: 700; }
+        .law-list li.on i { color: #6ee7b7; }
+        .law-list li.off i { color: #fca5a5; }
+
+        /* ===== 实验记录表：就放在实验台正下方，做完一次就能点记录 ===== */
+        .record-panel { margin-top: 0; }
+        .record-body { padding: 16px 18px 18px; }
+        .record-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; }
+        .record-actions small { color: #8ea6b7; font-size: 11px; }
+        .table-wrap { overflow-x: auto; margin-top: 13px; }
+        .record-body table { width: 100%; border-collapse: collapse; font-size: 12px; white-space: nowrap; min-width: 640px; }
+        .record-body th, .record-body td {
+            text-align: left; padding: 9px 8px; border-bottom: 1px solid rgba(148, 163, 184, .16); color: #c5d6e4;
+        }
+        .record-body th { color: #80ddec; font-size: 11px; font-weight: 700; }
+        .record-body tbody tr:last-child td { border-bottom: 0; }
+        .record-body .empty { text-align: center; color: #91a6b9; padding: 19px 5px; }
+        .record-body td.num { font-variant-numeric: tabular-nums; }
+        .record-body td.ratio { color: #7dd3fc; font-weight: 700; }
+        .record-body td.no { color: #fca5a5; font-weight: 700; }
+        /* 刚记录的那一行闪一下：视线还停在装置上，也知道数据落到了哪一行 */
+        .record-body tr.flash td { animation: periRowFlash 1.2s ease-out; }
+        @keyframes periRowFlash { 0% { background: rgba(34, 112, 143, .8); color: #f1fbff; } 100% { background: transparent; } }
+        .record-body .note { color: #90a9b9; font-size: 11px; line-height: 1.65; margin-top: 11px; }
+        .record-body .note b { color: #7dd3fc; }
+
+        @media (max-width: 900px) {
+            .lab3d-layout { grid-template-columns: minmax(0, 1fr); }
+            .lab3d-sidebar { border-left: 0; border-top: 1px solid var(--line); display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 18px; }
+            .lab3d-sidebar h3 { grid-column: 1 / -1; }
+            .lab3d-sidebar .span-2 { grid-column: 1 / -1; }
+        }
+        @media (max-width: 620px) {
+            body { padding-left: 10px; padding-right: 10px; }
+            .lab3d { border-radius: 14px; }
+            .lab3d-top { padding: 15px; }
+            .lab3d-top h2 { font-size: 17px; }
+            .lab3d-status { display: none; }
+            .lab3d-main { padding: 10px; }
+            .lab3d-toolbar { gap: 6px; }
+            .lab3d-toolbar .toolbar-label, .lab3d-toolbar .toolbar-spacer { display: none; }
+            .lab3d-toolbar button { padding: 6px 9px; font-size: 11px; }
+            /* ⚠️ 这里不能把舞台压矮。结论条是贴着舞台【底边】的（bottom:10px），
+               舞台一矮，下镜的「45°」角度标签就被夹在下镜本体与结论条之间：
+               往上挪一格会压住镜子、留在原地只压到结论条 1 px —— 代价函数算下来
+               「压 1 px」更便宜，于是标签就永远贴着条子顶边。430px 是这套场景
+               在窄屏下的最小可用高度（实测 380px 时 390 宽视口 5/28 组压住结论条）。 */
+            .lab3d-stage { height: 430px; }
+            .lab3d-stage .stage-help { display: none; }
+            .lab3d-stage .stage-verdict { left: 10px; right: 10px; bottom: 10px; font-size: 11px; }
+            .lab3d-sidebar { display: block; padding: 16px; }
+            .lab3d-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+            .lab3d-foot .legend { margin-left: 0; width: 100%; }
+            .record-body { padding: 14px; }
+            /* 窄屏上 7 列会被挤到横向滚动里，而最后一列「结论」正是这张表的要点。
+               缩字号 + 收紧内边距 + 隐藏表头里的长前缀，让 7 列全部看得见。 */
+            .record-body table { font-size: 10.5px; min-width: 0; }
+            .record-body th, .record-body td { padding: 7px 5px; }
+            .record-body th .th-full { display: none; }
+        }
+    </style>
+    <script src="auth-check.js"></script>
+</head>
+<body>
+    <!-- 这一页不放站内页头：页头是 position:sticky，一滚动就贴在顶上盖住实验区。
+         同章的「光的反射 / 光的折射 / 小孔成像 / 凸面镜与凹面镜立体模型」本来就没有页头。 -->
+    <section class="lab3d" aria-label="潜望镜立体模型">
+      <div class="lab3d-top">
+        <div>
+          <div class="lab3d-kicker">INTERACTIVE OPTICS LAB · 三维光学实验</div>
+          <h2>潜望镜 · 立体模型</h2>
+          <p>两块平面镜怎么把视线「搬」到高处 —— 光在管子里经过两次反射，出射光与入射光方向完全相同，所以看到的是正立、等大的像</p>
+        </div>
+        <span class="lab3d-status">● 实时物理模拟</span>
+      </div>
+
+      <div class="lab3d-layout">
+        <div class="lab3d-main">
+          <div class="lab3d-toolbar" role="group" aria-label="观察视角">
+            <span class="toolbar-label">观察视角</span>
+            <button type="button" class="active" data-view="perspective">立体视角</button>
+            <button type="button" data-view="plane">正视光路</button>
+            <button type="button" data-view="mirror">贴近镜面</button>
+            <button type="button" data-view="top">俯视管口</button>
+            <span class="toolbar-spacer"></span>
+            <button type="button" id="peri-reset-view">↺ 重置视角</button>
+          </div>
+
+          <div class="lab3d-stage">
+            <canvas id="peri-canvas" aria-label="可拖动旋转、滚轮缩放的潜望镜三维装置"></canvas>
+            <div class="stage-hint"><b></b>三维实验场景 · 进光口 → 上镜 → 下镜 → 出光口</div>
+            <div class="stage-verdict" id="peri-verdict">两次反射后方向不变 · 视线抬高 16.0 cm · 看到正立、等大的像</div>
+            <div class="stage-help">拖动空白处旋转 · 滚轮缩放 · 按住画面里的物体上下拖动改管高</div>
+          </div>
+
+          <div class="lab3d-foot">
+            <label><input id="peri-rays" type="checkbox" checked>显示光线</label>
+            <label><input id="peri-normal" type="checkbox">显示法线</label>
+            <label><input id="peri-angle" type="checkbox" checked>显示角度</label>
+            <label><input id="peri-object" type="checkbox" checked>显示物体与眼睛</label>
+            <label><input id="peri-sight" type="checkbox" checked>显示视线示意</label>
+            <label><input id="peri-tube" type="checkbox" checked>显示管壁</label>
+            <span class="legend" id="peri-legend">橙：射入的光　黄：管内竖直段　绿：射出的光　红点：光撞在管壁上</span>
+          </div>
+
+          <div class="lab3d-metrics" aria-live="polite">
+            <div class="lab3d-metric"><span>视线抬高 L</span><strong id="peri-m1">16.0 cm</strong></div>
+            <div class="lab3d-metric"><span>出射与入射夹角</span><strong id="peri-m2">0.0°</strong></div>
+            <div class="lab3d-metric"><span>两镜夹角</span><strong id="peri-m3">0.0°</strong></div>
+            <div class="lab3d-metric ok"><span>能不能看到</span><strong id="peri-m4">能</strong></div>
+          </div>
+
+          <p class="lab3d-note"><b>观察提示：</b>潜望镜的管子是竖直的，光从左上方的<b>进光口</b>水平射进来，打在<b>上镜</b>上折成竖直向下，走完整个管长后再打在<b>下镜</b>上，又折回水平、从右下的<b>出光口</b>射进眼睛。把「<b>上镜与管轴的夹角</b>」拖离 <b>45°</b>，光就斜着撞到管壁上、根本出不来；把两块镜子的角度调得<b>不一样</b>（不平行），光虽然能出来，方向却偏了 —— 面板上的「出射与入射夹角」会立刻变大。只有<b>两块镜子互相平行、且都与管轴成 45°</b>时，出射光才和入射光<b>平行且同向</b>：方向一点没变，所以眼睛看到的是<b>正立、等大</b>的像，只是整个视野被<b>抬高了 L</b>（也就是两块镜子之间的距离）。按住画面里左侧的<b>物体</b>上下拖动，可以直接改管高。</p>
+        </div>
+
+        <aside class="lab3d-sidebar">
+          <h3>实验参数</h3>
+
+          <div class="lab3d-field">
+            <label for="peri-L">管高 L（两镜间距）<output id="peri-L-value">16.0 cm</output></label>
+            <input id="peri-L" type="range" min="10" max="22" value="16" step="0.5">
+            <small>也可以直接按住画面里的物体上下拖动 · 管越高，看得越远</small>
+          </div>
+
+          <div class="lab3d-field">
+            <label for="peri-th1">上镜与管轴的夹角 <output id="peri-th1-value">45.0°</output></label>
+            <input id="peri-th1" type="range" min="30" max="60" value="45" step="0.5">
+            <small>只有 45° 才能把水平光折成【竖直向下】</small>
+          </div>
+
+          <div class="lab3d-field">
+            <label for="peri-th2">下镜与管轴的夹角 <output id="peri-th2-value">45.0°</output></label>
+            <input id="peri-th2" type="range" min="30" max="60" value="45" step="0.5">
+            <small>与上镜【相同】才平行，出射光才和入射光同向</small>
+          </div>
+
+          <div class="lab3d-field">
+            <button type="button" class="primary" id="peri-align" style="width:100%">⇥ 两块都摆成 45°（正确的潜望镜）</button>
+          </div>
+
+          <div class="lab3d-field span-2">
+            <span class="field-label">光线显示 <output id="peri-rayset-name">全部光线</output></span>
+            <div class="lab3d-segment" id="peri-rayset" role="group" aria-label="选择显示哪些光线">
+              <button type="button" data-rayset="all" class="active">三条光线</button>
+              <button type="button" data-rayset="single">单条可调</button>
+            </div>
+            <small id="peri-rayset-hint">三条光线分别从进光口的【下沿 / 中间 / 上沿】射入，出射后顺序和间距都不变 —— 这就是「正立、等大」。</small>
+          </div>
+
+          <div class="lab3d-field" id="peri-angle-field" hidden>
+            <label for="peri-angle"><span id="peri-angle-label">光线在进光口的高度</span> <output id="peri-angle-value">+0.00 cm</output></label>
+            <input id="peri-angle" type="range" min="0" max="100" value="50" step="0.5">
+            <small id="peri-angle-hint">拖动它，入射点就在进光口里连续上下移动，出射点跟着一起移动 —— 两端正好停在窗口的边缘。</small>
+            <div class="lab3d-angle-row">
+              <span>反射次数 <b id="peri-bounce">2</b></span>
+              <span>出射方向偏差 <b id="peri-dev">0.0°</b></span>
+              <span>出射点高度 <b id="peri-exity">6.40 cm</b></span>
+            </div>
+          </div>
+
+          <div class="lab3d-field span-2">
+            <span class="field-label">镜面样式 <output id="peri-mirror-name">真实质感</output></span>
+            <div class="lab3d-segment" id="peri-mirror" role="group" aria-label="选择镜面的画法">
+              <button type="button" data-mirror="schematic">示意图</button>
+              <button type="button" data-mirror="real" class="active">真实质感</button>
+            </div>
+            <small>「示意图」用网格线把镜面的位置画清楚；「真实质感」画成有金属光泽、能反出环境的真镜子。</small>
+          </div>
+
+          <div class="lab3d-field span-2">
+            <span class="field-label">潜望镜的四条规律</span>
+            <ul class="law-list">
+              <li id="law1"><i>①</i><span>光在管子里经过<b>两次反射</b>，每一次都遵守反射定律（入射角 = 反射角 = 45°）</span></li>
+              <li id="law2"><i>②</i><span>两块平面镜<b>互相平行</b>时，出射光与入射光<b>平行且同向</b>，方向一点没变</span></li>
+              <li id="law3"><i>③</i><span>每块平面镜都要与管轴成 <b>45°</b>，光才会沿管子竖直传播、不撞到管壁</span></li>
+              <li id="law4"><i>④</i><span>正因为出射光方向与入射光相同，看到的是<b>正立、等大</b>的像 —— 潜望镜只是把视线<b>抬高了 L</b></span></li>
+            </ul>
+            <small id="peri-law-verdict">当前：上镜 45.0°、下镜 45.0° —— 出射光与入射光方向相同，视线抬高 16.0 cm</small>
+          </div>
+        </aside>
+      </div>
+    </section>
+
+    <section class="lab3d record-panel" aria-label="实验记录表">
+      <div class="lab3d-top">
+        <div>
+          <div class="lab3d-kicker">DATA SHEET · 定量记录</div>
+          <h2>实验记录表</h2>
+          <p>实验台就在上面：每调好一组管高与两块镜子的角度就点一次「记录当前数据」，数据会立刻填进下表</p>
+        </div>
+        <span class="lab3d-status" id="peri-count-label">已记录 0 组</span>
+      </div>
+      <div class="record-body">
+        <div class="record-actions">
+          <button type="button" class="primary" id="peri-record">记录当前数据</button>
+          <button type="button" id="peri-clear">清空记录</button>
+          <small id="peri-record-hint">把两块镜子的角度一组一组改过去，看看「出射偏差」这一列什么时候才归零</small>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>次数</th>
+                <th><span class="th-full">管高 </span>L</th>
+                <th><span class="th-full">上镜与管轴 </span>φ₁</th>
+                <th><span class="th-full">下镜与管轴 </span>φ₂</th>
+                <th><span class="th-full">两镜夹角 </span>|φ₁−φ₂|</th>
+                <th>出射偏差</th>
+                <th>结论</th>
+              </tr>
+            </thead>
+            <tbody id="peri-rows">
+              <tr><td colspan="7" class="empty">尚无记录，先调一调两块镜子的角度开始探究</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="note" id="peri-summary">把上镜、下镜的角度各记几组，看看「出射偏差」这一列是不是始终等于两镜夹角的两倍 —— 而且只有两者都为 0 时才真的看得见。</div>
+      </div>
+    </section>
+
+    <script>
+    (function () {
+      'use strict';
+
+      const $ = id => document.getElementById(id);
+
+      // ================= 常量 =================
+      // 坐标约定（全篇唯一的一套，别在别处另立）：
+      //   管轴 = y 轴（竖直向上），地面在 y = 0；光路【全部】落在 z = 0 平面内。
+      //   光从 −x 一侧水平射入（沿 +x），打在【上镜】上折向竖直向下，
+      //   走完管长后打在【下镜】上，再折回水平（仍是 +x），从右侧的观察窗射出。
+      //   两块镜子的镜面都平行于 z 轴，在 xy 截面里都是「\」形。
+      //
+      //   ★ 反射方向公式（2D，镜面方向角 θ、入射方向角 α）：β = 2θ − α。
+      //     设镜子与管轴的夹角为 φ（本页滑块就是 φ），则 θ = −φ，于是
+      //       上镜反射后 β₁ = −2φ₁          （φ₁ = 45° → −90°，正好竖直向下）
+      //       下镜反射后 β₂ = 2φ₁ − 2φ₂      （φ₁ = φ₂ → 0°，正好水平、与入射光同向）
+      //     所以「出射方向与入射方向的夹角」= 2|φ₁ − φ₂| —— 两镜平行就归零。
+      //     这条恒等式是整页的骨架，渲染、读数、自检都从它出发，不在别处重算。
+      const A = 3.2;                  // 方管内半宽（x 与 z 两个方向都是 2A）
+      const ML = 9.0;                 // 平面镜长度（45° 时正好张满管内的对角）
+      const CAP = 4.8;                // 管子上下端各多留一段（容得下镜子的竖直跨度）
+      const WIN_H = 2.6;              // 进光口 / 出光口的高度
+      const YBOT = 4.8;               // 下镜中心高度 = CAP，于是管底正好落在地面 y = 0 上
+      const L_MIN = 10, L_MAX = 22, L_DEF = 16;
+      const PH_MIN = 30, PH_MAX = 60, PH_DEF = 45;      // 镜子与管轴的夹角 φ
+      const OBJ_H = 1.8;              // 物箭头的高度（上下各 0.9 cm）
+      const ENV = { x0: -27.5, x1: 10.0, y0: -3.0, y1: 32.5, z0: -5.5, z1: 5.5 };
+      const ENV_C = [-8.8, 14.8, 0];
+      const CAMD = 108;
+      const ZOOM_MIN = 0.55, ZOOM_MAX = 2.6;
+      const X_OBJ = -19.0;            // 物体所在的 x
+      const X_EYE = 8.0;              // 眼睛所在的 x
+      const X_RULER = -25.0;          // 竖直刻度尺所在的 x
+      const X_DIM = -22.0;            // 「视线抬高 L」那条尺寸标注所在的 x
+
+      // 四个预设视角。yaw 的符号决定相机落在哪一侧：
+      //   dir = [cp·sin(yaw), sin(pitch), cp·cos(yaw)] 是「注视点 → 相机」的方向。
+      const VIEWS = {
+        perspective: { yaw: -0.62, pitch: 0.26 },
+        // 相机在 +z：屏幕水平方向正好是 x 轴、竖直方向是 y 轴 —— 就是课本上那张光路图。
+        plane:       { yaw: 0.00,  pitch: 0.02 },
+        mirror:      { yaw: -1.15, pitch: 0.14 },
+        // 俯视不能压到 90°：光路全在 z = 0 平面内，正俯视会把整条光路压成一条线。
+        top:         { yaw: 0.00,  pitch: 0.86 }
+      };
+
+      const state = {
+        L: L_DEF,
+        phi1: PH_DEF, phi2: PH_DEF,   // 两块镜子与管轴的夹角（度）
+        raySet: 'all',                // 'all' 三条光线 | 'single' 单条可调
+        rayT: 0.5,                    // 单条光线在进光口内的归一化高度
+        mirrorStyle: 'real',          // 'schematic' 示意网格 | 'real' 真实金属质感
+        yaw: VIEWS.perspective.yaw, pitch: VIEWS.perspective.pitch, zoom: 1,
+        view: 'perspective',
+        showRays: true, showNormal: false, showAngle: true,
+        showObject: true, showSight: true, showTube: true,
+        w: 900, h: 620,
+        records: []
+      };
+
+      // ================= 向量小工具 =================
+      const sub = (a, b) => [a[0]-b[0], a[1]-b[1], a[2]-b[2]];
+      const add = (a, b) => [a[0]+b[0], a[1]+b[1], a[2]+b[2]];
+      const mul = (a, k) => [a[0]*k, a[1]*k, a[2]*k];
+      const dot = (a, b) => a[0]*b[0] + a[1]*b[1] + a[2]*b[2];
+      const cross = (a, b) => [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]];
+      const len = a => Math.hypot(a[0], a[1], a[2]);
+      const vnorm = a => { const L = len(a) || 1; return [a[0]/L, a[1]/L, a[2]/L]; };
+      const clamp = (v, a, b) => v < a ? a : (v > b ? b : v);
+      const DEG = 180 / Math.PI;
+      // 把角度规整到 (−180, 180]，避免出现 359.9° 这种读数
+      const wrap180 = d => { let x = d % 360; if (x > 180) x -= 360; if (x <= -180) x += 360; return x; };
+
+      // ================= 相机 =================
+      // 取景与自检【共用】这一个函数，不另算一套（抄两遍的话改坏一处自检读的是另一处，永远绿）。
+      function makeCam(yaw, pitch, w, h) {
+        const cp = Math.cos(pitch), sp = Math.sin(pitch);
+        const sy = Math.sin(yaw), cy = Math.cos(yaw);
+        const dir = [cp * sy, sp, cp * cy];                 // 注视点 → 相机
+        const eye = add(ENV_C, mul(dir, CAMD));
+        const fwd = mul(dir, -1);                           // 相机 → 注视点
+        const right = vnorm(cross(fwd, [0, 1, 0]));
+        const up = cross(right, fwd);
+        return { eye, fwd, right, up, w, h, focal: 1, cx: w / 2, cy: h / 2 };
+      }
+      function camSpace(p, q) {
+        const d = sub(p, q.eye);
+        return [dot(d, q.right), dot(d, q.up), dot(d, q.fwd)];
+      }
+      function project(p, q) {
+        const c = camSpace(p, q);
+        const z = Math.max(c[2], 0.001);
+        return { x: q.cx + q.focal * c[0] / z, y: q.cy - q.focal * c[1] / z, z: c[2] };
+      }
+      // 用【固定】包络取景：包络绝不跟着 L / φ 走，否则一拖滑块整幅画就在缩放，
+      // 像素差分立刻失效。zoom 必须乘在【算出来的焦距】上 —— 只改相机距离会被
+      // 自动取景反算回来、完全抵消。
+      //
+      // ⚠️ 必须用【投影后】的范围（r/z 与 u/z），不能用相机空间的 r、u 本身：
+      //    屏幕上占多少像素是 focal·r/z，同样大的 r、离相机近的就占更多像素。
+      //    本页装置竖直方向 35 cm、相机距离却有 108，拿 r 定焦距会把整个装置压扁。
+      function frameCam(q) {
+        let loR = 1e9, hiR = -1e9, loU = 1e9, hiU = -1e9;
+        for (const x of [ENV.x0, ENV.x1]) for (const y of [ENV.y0, ENV.y1]) for (const z of [ENV.z0, ENV.z1]) {
+          const c = camSpace([x, y, z], q);
+          const zz = Math.max(c[2], 0.001);
+          const r = c[0] / zz, u = c[1] / zz;
+          loR = Math.min(loR, r); hiR = Math.max(hiR, r);
+          loU = Math.min(loU, u); hiU = Math.max(hiU, u);
+        }
+        q.focal = Math.min(q.w * 0.95 / Math.max(hiR - loR, 1e-6),
+                           q.h * 0.93 / Math.max(hiU - loU, 1e-6)) * state.zoom;
+        // 让包络的屏幕中心落在画布中心。写成 cx + focal·r 的形式，
+        // 就等价于「绕包络中心缩放」，缩放时画面不会平移。
+        q.cx = q.w / 2 - q.focal * (loR + hiR) / 2;
+        q.cy = q.h / 2 + q.focal * (loU + hiU) / 2;
+      }
+
+      // ================= 潜望镜几何 =================
+      // 镜子在 xy 截面里是一条线段：中心 (0, y)，方向 (cosθ, sinθ)，θ = −φ。
+      // 长度取「不超过 ML，且两端不穿出管壁」—— 角度越小镜子越接近水平，
+      // 若不夹一下，30° 时线段两端会戳到管壁外面去。
+      function mirrorSeg(cy, phiDeg, kind) {
+        const th = -phiDeg * Math.PI / 180;
+        const ux = Math.cos(th), uy = Math.sin(th);
+        const half = Math.min(ML / 2, (A - 0.06) / Math.max(Math.abs(ux), 1e-6));
+        return {
+          kind, th, phi: phiDeg, c: [0, cy], u: [ux, uy],
+          a: [-ux * half, cy - uy * half],
+          b: [ ux * half, cy + uy * half],
+          half
+        };
+      }
+      function geom() {
+        const L = state.L;
+        const yBot = YBOT, yTop = YBOT + L;
+        const yHigh = yTop + CAP, yLow = yBot - CAP;
+        const yE = yTop + A / 2;              // 进光口中心高度
+        const yX = yBot + A / 2;              // 出光口中心高度 —— 恰好 = yE − L，【与 L 无关】
+        const mTop = mirrorSeg(yTop, state.phi1, 'mTop');
+        const mBot = mirrorSeg(yBot, state.phi2, 'mBot');
+        const wall = (x, y0, y1) => ({ a: [x, y0], b: [x, y1], kind: 'wall' });
+        return {
+          L, phi1: state.phi1, phi2: state.phi2,
+          yBot, yTop, yHigh, yLow, yE, yX,
+          winIn: [yE - WIN_H / 2, yE + WIN_H / 2],
+          winOut: [yX - WIN_H / 2, yX + WIN_H / 2],
+          mTop, mBot,
+          // 管壁：左壁与右壁各留出一个窗口，上下再各封一段
+          walls: [
+            wall(-A, yLow, yE - WIN_H / 2),
+            wall(-A, yE + WIN_H / 2, yHigh),
+            wall(A, yLow, yX - WIN_H / 2),
+            wall(A, yX + WIN_H / 2, yHigh),
+            { a: [-A, yHigh], b: [A, yHigh], kind: 'wall' },
+            { a: [-A, yLow],  b: [A, yLow],  kind: 'wall' }
+          ]
+        };
+      }
+      // 镜子【反射面】的法线（三维）。两块镜子的镜面平行，但反射面朝的方向相反：
+      //   上镜的反射面朝【下前方】（迎着射进来的光），下镜的反射面朝【上后方】（迎着往下走的光）。
+      function mirrorNormal(m) {
+        const s = Math.sin(m.th), c = Math.cos(m.th);
+        return (m.kind === 'mTop') ? vnorm([s, -c, 0]) : vnorm([-s, c, 0]);
+      }
+      function mirrorQuad(m) {
+        return [[m.a[0], m.a[1], -A], [m.b[0], m.b[1], -A], [m.b[0], m.b[1], A], [m.a[0], m.a[1], A]];
+      }
+
+      // ================= 光线追踪（二维，xy 截面）=================
+      // 光线与【线段】求交：P + t·d = a + s·e，t > 0 且 s ∈ [0,1]。
+      function raySeg(P, d, S) {
+        const ex = S.b[0] - S.a[0], ey = S.b[1] - S.a[1];
+        const D = d[0] * ey - d[1] * ex;                  // d × e
+        if (Math.abs(D) < 1e-12) return null;             // 平行
+        const mx = S.a[0] - P[0], my = S.a[1] - P[1];
+        const t = (mx * ey - my * ex) / D;                // (m × e) / (d × e)
+        const s = (mx * d[1] - my * d[0]) / D;            // (m × d) / (d × e)
+        if (!(t > 1e-6) || s < -1e-9 || s > 1 + 1e-9) return null;
+        return { t, s, P: [P[0] + d[0] * t, P[1] + d[1] * t] };
+      }
+      // 追踪一条光线：从进光口高度 y0 水平射入。
+      // 返回折线 pts、每次反射的记录 hits、以及「有没有从出光口射出去」。
+      function traceRay(y0) {
+        const G = geom();
+        const segs = [G.mTop, G.mBot].concat(G.walls);
+        let P = [-A, y0], d = [1, 0];
+        const pts = [[-A, y0]];
+        const hits = [];
+        let escaped = false, blocked = false, exitY = null, exitDir = null;
+        for (let k = 0; k < 6; k++) {
+          let best = null;
+          for (const S of segs) {
+            const h = raySeg(P, d, S);
+            if (!h) continue;
+            if (!best || h.t < best.t) { h.S = S; best = h; }
+          }
+          if (!best) {
+            // 再没撞到任何东西 —— 光已经离开管子。看它是从右侧的窗口出去，还是原路返回。
+            if (d[0] > 1e-9) {
+              const t = (A - P[0]) / d[0];
+              exitY = P[1] + d[1] * t;
+              exitDir = Math.atan2(d[1], d[0]);
+              escaped = (exitY >= G.winOut[0] && exitY <= G.winOut[1]);
+              pts.push([A, exitY]);
+            } else {
+              const t = (ENV.x0 - P[0]) / d[0];
+              exitY = P[1] + d[1] * t;
+              exitDir = Math.atan2(d[1], d[0]);
+              pts.push([ENV.x0, exitY]);
+            }
+            break;
+          }
+          P = best.P; pts.push(P.slice());
+          const S = best.S;
+          const alpha = Math.atan2(d[1], d[0]);
+          if (S.kind === 'mTop' || S.kind === 'mBot') {
+            const beta = 2 * S.th - alpha;                // ★ β = 2θ − α
+            // 入射角 / 反射角是【光线与镜面法线】的夹角，不是光线的方向角。
+            // 法线方向角 = θ + 90°；两个方向之间取锐角（acos|cos|），
+            // 否则反射光那一侧会算出 135° 这种数（看着像「反射角不等于入射角」）。
+            const nAng = S.th + Math.PI / 2;
+            const acute = (a, b) => Math.acos(clamp(Math.abs(Math.cos(a - b)), 0, 1)) * DEG;
+            hits.push({ kind: S.kind, P: P.slice(), inAng: alpha, outAng: beta, mirror: S,
+                        inc: acute(alpha, nAng), ref: acute(beta, nAng) });
+            d = [Math.cos(beta), Math.sin(beta)];
+          } else {
+            hits.push({ kind: 'wall', P: P.slice(), inAng: alpha, outAng: null, mirror: null,
+                        inc: null, ref: null });
+            blocked = true;
+            // 再往外画一小段，让人一眼看出它是【撞在管壁上】断掉的
+            pts.push([P[0] + d[0] * 2.4, P[1] + d[1] * 2.4]);
+            break;
+          }
+        }
+        const last = hits.length ? hits[hits.length - 1] : null;
+        return {
+          y0, pts, hits, escaped, blocked, exitY, exitDir,
+          bounces: hits.filter(h => h.kind !== 'wall').length,
+          // 出射方向与入射方向（0°）的夹角。没射出去时按最后一段的方向算，
+          // 好让读数区始终有个数，但会明确标成「没射出去」。
+          dev: exitDir === null ? null : Math.abs(wrap180(exitDir * DEG)),
+          incTop: hits[0] ? hits[0].inc : null,
+          refTop: hits[0] ? hits[0].ref : null,
+          incBot: hits[1] ? hits[1].inc : null,
+          refBot: hits[1] ? hits[1].ref : null
+        };
+      }
+      // 画面里当前要画的那几条光线。渲染、读数、自检都走这一个函数。
+      const RAY_SPREAD = OBJ_H / 2;     // 三条光线的间距 = 物箭头的半高，出射后正好对上「看到的像」
+      function rays(G) {
+        G = G || geom();
+        if (state.raySet === 'single') {
+          const t = clamp(state.rayT, 0, 1);
+          const half = (WIN_H / 2) * 0.92;
+          return [traceRay(G.yE + (t * 2 - 1) * half)];
+        }
+        return [-RAY_SPREAD, 0, RAY_SPREAD].map(dy => traceRay(G.yE + dy));
+      }
+      // 单条光线在进光口内的偏移量（cm）与它对应的滑块值
+      const singleOffset = () => (clamp(state.rayT, 0, 1) * 2 - 1) * (WIN_H / 2) * 0.92;
+
+      // ================= 画布 =================
+      const canvas = $('peri-canvas');
+      const ctx = canvas.getContext('2d');
+      const FONT = (size, weight) => (weight || 600) + ' ' + size + 'px Inter, "Microsoft YaHei", "Noto Sans SC", sans-serif';
+
+      function resize() {
+        const r = canvas.getBoundingClientRect();
+        const dpr = Math.min(2, window.devicePixelRatio || 1);
+        canvas.width = Math.max(1, Math.round(r.width * dpr));
+        canvas.height = Math.max(1, Math.round(r.height * dpr));
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        state.w = r.width; state.h = r.height;
+        render();
+      }
+
+      // ================= 标签避让 =================
+      // 三层：boxOf() 唯一盒子几何 / tickText() 位置固定但登记成障碍 / label() 只入队，
+      // 所有几何（含后画的器材）都画完后由 flushLabels() 统一落笔 —— 当场画会被后画的零件压住。
+      const DIRS9 = [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, 1], [1, -1], [-1, -1]];
+      const AVOID_STEP = 16;      // 挪一步 16 px
+      const AVOID_COST = 100;     // 挪一步的代价（≈ 半个字的面积）—— 太大宁可压住器材，太小则转视角时乱跳
+      let frameBoxes = [];        // 本帧障碍物（器材本体 weight 8 / 刻度与已落笔的标签 weight 1）
+      let pendingLabels = [];     // 本帧待落笔的标签
+      // flushLabels 真正落笔的标签盒。必须单独留一份并暴露给自检：
+      // 只报 frameBoxes 的话，自检看不到「锚在器材上」的那批标签，
+      // 遮挡探针会对着空集合量出 0%，永远绿。
+      let drawnLabels = [];
+
+      // 舞台上的 DOM 浮层（观察提示 / 结论条 / 操作提示）也必须是障碍物。
+      // 只登记画布里的标签是不够的：窄屏时画布变小、标签被 fitBox 推到边上，
+      // 正好扎进这些浮层里（实测 620 px 宽时 28/28 组都压住 .stage-hint，
+      // 390 px 时 21/28 组；1440 px 宽屏全绿 —— 只扫宽屏这条断言永远绿）。
+      // ⚠️ 别把整条 .lab3d-stage 当障碍：中间那片空白会变成假禁区，
+      //    标签被逼到边角反而压住器材。
+      function uiBoxes() {
+        const cv = canvas.getBoundingClientRect();
+        const out = [];
+        for (const sel of ['.stage-hint', '.stage-verdict', '.stage-help']) {
+          const el = document.querySelector('.lab3d-stage ' + sel);
+          if (!el) continue;
+          const r = el.getBoundingClientRect();
+          if (r.width <= 0 || r.height <= 0) continue;      // display:none 的不算
+          out.push({ kind: 'ui', text: sel, weight: 8,
+                     x0: r.left - cv.left, y0: r.top - cv.top,
+                     x1: r.right - cv.left, y1: r.bottom - cv.top });
+        }
+        return out;
+      }
+      function boxOf(px, py, text, size, align, baseline) {
+        ctx.font = FONT(size);
+        const w = ctx.measureText(text).width, h = size * 1.26;
+        const x0 = align === 'center' ? px - w / 2 : (align === 'right' ? px - w : px);
+        const y0 = baseline === 'middle' ? py - h / 2 : (baseline === 'bottom' ? py - h : py);
+        return { x0, y0, x1: x0 + w, y1: y0 + h };
+      }
+      function overlapArea(a, b) {
+        const w = Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0);
+        const h = Math.min(a.y1, b.y1) - Math.max(a.y0, b.y0);
+        return (w > 0 && h > 0) ? w * h : 0;
+      }
+      // 把盒子推回画布内。光路端点常落在画面外，不推回来会被裁掉半个字。
+      // 对【每个】候选位置都做一次，所以「留在原地」这个候选也会被推进来。
+      function fitBox(b, q) {
+        const pad = 3;
+        if (b.x0 < pad) { const d = pad - b.x0; b.x0 += d; b.x1 += d; }
+        if (b.x1 > q.w - pad) { const d = b.x1 - (q.w - pad); b.x0 -= d; b.x1 -= d; }
+        if (b.y0 < pad) { const d = pad - b.y0; b.y0 += d; b.y1 += d; }
+        if (b.y1 > q.h - pad) { const d = b.y1 - (q.h - pad); b.y0 -= d; b.y1 -= d; }
+        return b;
+      }
+      // 器材【本体】必须登记成障碍物，否则标签会稳稳压住它自己标注的那个东西。
+      // 权重 8：压住刻度数字（权重 1）时挪一步常常不划算、标签宁可不动，
+      // 但压住「镜面 / 出光口」这种要害必须不惜挪两三步。两类障碍共用同一个代价函数、只差一个倍率。
+      function bodyBox(pts, text, pad) {
+        let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+        for (const s of pts) {
+          if (s.z <= 0.01) return;
+          x0 = Math.min(x0, s.x); x1 = Math.max(x1, s.x);
+          y0 = Math.min(y0, s.y); y1 = Math.max(y1, s.y);
+        }
+        if (x0 > x1) return;
+        // ⚠️ 竖直的「物」箭头投影出来是一条【零宽】的线，AABB 面积恒为 0 ——
+        //    overlapArea 永远是 0，代价函数看不出冲突，标签就永远不会给它让位。
+        //    所以必须给盒子一个最小厚度；另外还要按【笔画粗细】外扩一点，
+        //    否则标签盒边缘恰好贴着箭头时 overlapArea 算出来是 0（相切不算重叠）。
+        const M = 2, PAD = (pad === undefined ? 4 : pad);
+        x0 -= M; x1 += M; y0 -= M; y1 += M;
+        if (x1 - x0 < 2 * PAD) { const c = (x0 + x1) / 2; x0 = c - PAD; x1 = c + PAD; }
+        if (y1 - y0 < 2 * PAD) { const c = (y0 + y1) / 2; y0 = c - PAD; y1 = c + PAD; }
+        frameBoxes.push({ kind: 'body', text: text || '', weight: 8, x0, y0, x1, y1 });
+      }
+      function label(p3, text, color, size, align, baseline, world) {
+        pendingLabels.push({ p: p3, text: text, color: color, size: size || 11,
+                             align: align, baseline: baseline, world: world || p3 });
+      }
+      function drawText(b, text, color, size) {
+        ctx.font = FONT(size);
+        ctx.fillStyle = color;
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'top';
+        ctx.fillText(text, b.x0, b.y0 + size * 0.1);
+      }
+      function flushLabels(q) {
+        const placed = [];
+        for (const it of pendingLabels) {
+          const s = project(it.p, q);
+          if (s.z <= 0.01) continue;
+          let best = null, bestCost = Infinity;
+          for (let step = 0; step <= 3; step++) {
+            for (const d of DIRS9) {
+              const cand = boxOf(s.x + d[0] * step * AVOID_STEP, s.y + d[1] * step * AVOID_STEP,
+                                 it.text, it.size, it.align, it.baseline);
+              fitBox(cand, q);
+              let cost = step * AVOID_COST;
+              for (const b of frameBoxes) cost += (b.weight || 1) * overlapArea(cand, b);
+              for (const b of placed) cost += overlapArea(cand, b);
+              if (cost < bestCost) { bestCost = cost; best = cand; }
+            }
+          }
+          if (!best) continue;
+          // 半透明底衬：光路是亮色细线，字直接压上去会看不清
+          ctx.fillStyle = 'rgba(2,6,23,.62)';
+          ctx.fillRect(best.x0 - 2, best.y0, best.x1 - best.x0 + 4, best.y1 - best.y0);
+          drawText(best, it.text, it.color, it.size);
+          placed.push(best);
+          drawnLabels.push({ kind: 'label', text: it.text, weight: 1,
+                             x0: best.x0, y0: best.y0, x1: best.x1, y1: best.y1 });
+        }
+        pendingLabels = [];
+      }
+      // 刻度数字：位置固定不许挪，但要登记成障碍物（后来的标签得避开它）
+      function tickText(px, py, text, align) {
+        const b = boxOf(px, py, text, 10, align || 'center', 'top');
+        frameBoxes.push({ kind: 'tick', text: text, weight: 1, x0: b.x0, y0: b.y0, x1: b.x1, y1: b.y1 });
+        ctx.font = FONT(10);
+        ctx.fillStyle = 'rgba(148,163,184,.72)';
+        ctx.textAlign = align || 'center';
+        ctx.textBaseline = 'top';
+        ctx.fillText(text, px, py);
+        ctx.textAlign = 'left';
+      }
+
+      // ================= 基础绘制 =================
+      function seg(a, b, color, width, dash) {
+        ctx.save();
+        ctx.beginPath();
+        if (dash) ctx.setLineDash(dash);
+        ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
+        ctx.strokeStyle = color; ctx.lineWidth = width || 1;
+        ctx.stroke();
+        ctx.restore();
+      }
+      function polyline(pts, color, width, dash) {
+        if (pts.length < 2) return;
+        ctx.save();
+        ctx.beginPath();
+        if (dash) ctx.setLineDash(dash);
+        ctx.moveTo(pts[0].x, pts[0].y);
+        for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+        ctx.strokeStyle = color; ctx.lineWidth = width || 1;
+        ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+        ctx.stroke();
+        ctx.restore();
+      }
+      function dotAt(s, r, color, glow) {
+        if (glow) {
+          const g = ctx.createRadialGradient(s.x, s.y, 0, s.x, s.y, r * 3.4);
+          g.addColorStop(0, glow); g.addColorStop(1, 'rgba(0,0,0,0)');
+          ctx.fillStyle = g;
+          ctx.beginPath(); ctx.arc(s.x, s.y, r * 3.4, 0, Math.PI * 2); ctx.fill();
+        }
+        ctx.fillStyle = color;
+        ctx.beginPath(); ctx.arc(s.x, s.y, r, 0, Math.PI * 2); ctx.fill();
+      }
+      // 屏幕空间的方向箭头（末端小三角），用来标光线的传播方向
+      function arrowHead(from, to, color, size) {
+        const dx = to.x - from.x, dy = to.y - from.y;
+        const L = Math.hypot(dx, dy) || 1;
+        const ux = dx / L, uy = dy / L, s = size || 8;
+        const bx = to.x - ux * s, by = to.y - uy * s;
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.moveTo(to.x, to.y);
+        ctx.lineTo(bx - uy * s * 0.45, by + ux * s * 0.45);
+        ctx.lineTo(bx + uy * s * 0.45, by - ux * s * 0.45);
+        ctx.closePath();
+        ctx.fill();
+      }
+      // 光路平面内的点 → 三维点
+      const P3 = p => [p[0], p[1], 0];
+
+      // 地面参考线 + 竖直刻度尺。刻度数字位置固定、登记成障碍物。
+      function drawScale(q) {
+        const a = project([ENV.x0 + 0.6, 0, 0], q), b = project([ENV.x1 - 0.6, 0, 0], q);
+        if (a.z > 0.01 && b.z > 0.01) seg(a, b, 'rgba(203,213,225,.30)', 1.2, [9, 7]);
+        const p0 = project([X_RULER, 0, 0], q), p1 = project([X_RULER, 30, 0], q);
+        if (p0.z > 0.01 && p1.z > 0.01) seg(p0, p1, 'rgba(148,163,184,.45)', 1.2);
+        for (let y = 0; y <= 30; y += 5) {
+          const t0 = project([X_RULER, y, 0], q), t1 = project([X_RULER - 0.75, y, 0], q);
+          if (t0.z <= 0.01 || t1.z <= 0.01) continue;
+          seg(t0, t1, 'rgba(148,163,184,.55)', 1);
+          tickText(t1.x - 4, t1.y - 5, String(y), 'right');
+        }
+        label([X_RULER, 30.6, 0], '高度 / cm', 'rgba(203,213,225,.75)', 10, 'center', 'bottom', [X_RULER, 30.6, 0]);
+      }
+
+      // ================= 方管 =================
+      // 六个面（左右两壁各被窗口切成上下两段），按相机深度排序后半透明填充；
+      // 填充极淡（0.055），所以即使排序不完美也看不出来，真正的轮廓靠后面的线框。
+      function tubeFaces(G) {
+        return [
+          { pts: [[-A, G.yLow, -A], [A, G.yLow, -A], [A, G.yHigh, -A], [-A, G.yHigh, -A]], key: 'z-' },
+          { pts: [[-A, G.yLow,  A], [A, G.yLow,  A], [A, G.yHigh,  A], [-A, G.yHigh,  A]], key: 'z+' },
+          { pts: [[-A, G.yLow, -A], [-A, G.yLow, A], [-A, G.winIn[0], A], [-A, G.winIn[0], -A]], key: 'x-' },
+          { pts: [[-A, G.winIn[1], -A], [-A, G.winIn[1], A], [-A, G.yHigh, A], [-A, G.yHigh, -A]], key: 'x-' },
+          { pts: [[A, G.yLow, -A], [A, G.yLow, A], [A, G.winOut[0], A], [A, G.winOut[0], -A]], key: 'x+' },
+          { pts: [[A, G.winOut[1], -A], [A, G.winOut[1], A], [A, G.yHigh, A], [A, G.yHigh, -A]], key: 'x+' }
+        ];
+      }
+      function drawTubeFaces(q, G) {
+        const fs = tubeFaces(G);
+        const live = [];
+        for (const f of fs) {
+          const cs = f.pts.map(p => camSpace(p, q));
+          if (cs.some(c => c[2] <= 0.05)) continue;
+          f.depth = cs.reduce((s, c) => s + c[2], 0) / cs.length;
+          live.push(f);
+        }
+        live.sort((a, b) => b.depth - a.depth);       // 远的先画
+        for (const f of live) {
+          const sp = f.pts.map(p => project(p, q));
+          ctx.beginPath();
+          ctx.moveTo(sp[0].x, sp[0].y);
+          for (let i = 1; i < sp.length; i++) ctx.lineTo(sp[i].x, sp[i].y);
+          ctx.closePath();
+          ctx.fillStyle = 'rgba(56,189,248,.055)';
+          ctx.fill();
+          ctx.strokeStyle = 'rgba(56,189,248,.09)';
+          ctx.lineWidth = 1;
+          ctx.stroke();
+        }
+      }
+      function drawTubeEdges(q, G) {
+        const E = [
+          [[-A, G.yLow, -A], [-A, G.yHigh, -A]], [[A, G.yLow, -A], [A, G.yHigh, -A]],
+          [[-A, G.yLow,  A], [-A, G.yHigh,  A]], [[A, G.yLow,  A], [A, G.yHigh,  A]],
+          [[-A, G.yHigh, -A], [A, G.yHigh, -A]], [[A, G.yHigh, -A], [A, G.yHigh, A]],
+          [[A, G.yHigh, A], [-A, G.yHigh, A]],   [[-A, G.yHigh, A], [-A, G.yHigh, -A]],
+          [[-A, G.yLow, -A], [A, G.yLow, -A]],   [[A, G.yLow, -A], [A, G.yLow, A]],
+          [[A, G.yLow, A], [-A, G.yLow, A]],     [[-A, G.yLow, A], [-A, G.yLow, -A]]
+        ];
+        for (const [a, b] of E) {
+          const sa = project(a, q), sb = project(b, q);
+          if (sa.z <= 0.05 || sb.z <= 0.05) continue;
+          seg(sa, sb, 'rgba(125,211,252,.34)', 1.1);
+        }
+        // 进光口 / 出光口：整圈描出来，一眼就能看出光是从哪儿进出管子的
+        const win = (x, y0, y1, color) => {
+          const sp = [[x, y0, -A], [x, y0, A], [x, y1, A], [x, y1, -A]].map(p => project(p, q));
+          if (sp.some(s => s.z <= 0.05)) return;
+          polyline(sp.concat([sp[0]]), color, 2.4);
+        };
+        win(-A, G.winIn[0], G.winIn[1], 'rgba(34,211,238,.95)');
+        win(A, G.winOut[0], G.winOut[1], 'rgba(250,204,21,.95)');
+        // 进光口上下沿各打一条短横线，当障碍物用（标签不许压住窗口）
+        bodyBox([project([-A, G.winIn[0], -A], q), project([-A, G.winIn[1], A], q)], '进光口', 3);
+        bodyBox([project([A, G.winOut[0], -A], q), project([A, G.winOut[1], A], q)], '出光口', 3);
+      }
+
+      // ================= 金属镜面 =================
+      // 场景主光：定的是「环境」—— 金属看到的是它反射的环境，所以主光管的是环境色。
+      // 按法线 y 分量的渐变（天空在上、地面在下）+ 一个朗伯调制。
+      // **固定在世界里、不跟着相机转** —— 跟着相机转的话镜面永远是最亮的那一面，
+      // 就失去了「这是面镜子」的感觉。
+      const LIGHT = vnorm([-0.45, 0.78, 0.44]);
+      // 高光方向【必须另给一个】，不能拿 LIGHT 凑合：本页镜面朝【下前方】（上镜），
+      // 视线却在斜上方，用 LIGHT 算出的半程向量与镜面法线差得很远，
+      // pow(0.5, 48) ≈ 1e-15 —— 高光项【恒为 0】，是一段永远不生效的死代码
+      // （凸面镜那一页实测：把这一项整个删掉，渲染出来的像素一模一样）。
+      // 要让镜面真的出现一小块亮点，光源得落在「视线关于镜面法线的镜像」方向，
+      // 也就是从下前方来。指数取 500 让瓣足够窄。
+      const GLINT = vnorm([-0.34, -0.62, -0.71]);
+      const GLINT_EXP = 500;
+      // 金属几乎不漫反射 —— 你看到的其实是它【反射的环境】，所以主项是
+      // 「环境色按法线的 y 分量取渐变」，再叠一个 Blinn-Phong 高光和一个边缘菲涅尔。
+      function metalColor(n, P, q) {
+        const v = vnorm(sub(q.eye, P));
+        const ndl = Math.max(0, dot(n, LIGHT));
+        const t = clamp(n[1] * 0.5 + 0.5, 0, 1);
+        const er = 40 + 190 * t, eg = 62 + 178 * t, eb = 88 + 160 * t;
+        const hv = vnorm(add(GLINT, v));
+        const spec = Math.pow(Math.max(0, dot(n, hv)), GLINT_EXP) * 235;
+        const fres = Math.pow(1 - Math.abs(dot(n, v)), 3) * 70;
+        const k = 0.40 + 0.60 * ndl;
+        return 'rgb(' + Math.round(clamp(er * k + spec + fres, 0, 255)) + ','
+                       + Math.round(clamp(eg * k + spec + fres, 0, 255)) + ','
+                       + Math.round(clamp(eb * k + spec + fres, 0, 255)) + ')';
+      }
+      function drawMirrors(q, G) {
+        const real = (state.mirrorStyle === 'real');
+        const info = [];
+        for (const m of [G.mTop, G.mBot]) {
+          const quad = mirrorQuad(m);
+          const sp = quad.map(p => project(p, q));
+          if (sp.some(s => s.z <= 0.05)) continue;
+          const n3 = mirrorNormal(m);
+          ctx.beginPath();
+          ctx.moveTo(sp[0].x, sp[0].y);
+          for (let i = 1; i < sp.length; i++) ctx.lineTo(sp[i].x, sp[i].y);
+          ctx.closePath();
+          if (real) {
+            // 沿镜长方向取 5 个色标做屏幕空间线性渐变：法线是常量，
+            // 颜色只随「视线方向」和「镜上位置」变，于是自然出现一条明暗带。
+            const g = ctx.createLinearGradient(sp[0].x, sp[0].y, sp[1].x, sp[1].y);
+            for (let k = 0; k <= 4; k++) {
+              const t = k / 4;
+              const P = [m.a[0] + (m.b[0] - m.a[0]) * t, m.a[1] + (m.b[1] - m.a[1]) * t, (t - 0.5) * 2 * A];
+              g.addColorStop(t, metalColor(n3, P, q));
+            }
+            ctx.fillStyle = g;
+          } else {
+            ctx.fillStyle = 'rgba(147,197,253,.26)';
+          }
+          ctx.fill();
+          // 镜背（厚度）：沿屏幕法线外扩一点再填一层暗色，镜片才不像一张纸
+          if (real) {
+            const cx = sp.reduce((s, p) => s + p.x, 0) / sp.length;
+            const cy = sp.reduce((s, p) => s + p.y, 0) / sp.length;
+            ctx.beginPath();
+            for (let i = 0; i < sp.length; i++) {
+              const dx = sp[i].x - cx, dy = sp[i].y - cy;
+              const L = Math.hypot(dx, dy) || 1;
+              const ex = sp[i].x + dx / L * 3.6, ey = sp[i].y + dy / L * 3.6;
+              if (i === 0) ctx.moveTo(ex, ey); else ctx.lineTo(ex, ey);
+            }
+            ctx.closePath();
+            ctx.fillStyle = 'rgba(15,23,42,.85)';
+            ctx.fill();
+            // 再把镜面本身重画一遍盖在背板上面
+            ctx.beginPath();
+            ctx.moveTo(sp[0].x, sp[0].y);
+            for (let i = 1; i < sp.length; i++) ctx.lineTo(sp[i].x, sp[i].y);
+            ctx.closePath();
+            const g2 = ctx.createLinearGradient(sp[0].x, sp[0].y, sp[1].x, sp[1].y);
+            for (let k = 0; k <= 4; k++) {
+              const t = k / 4;
+              const P = [m.a[0] + (m.b[0] - m.a[0]) * t, m.a[1] + (m.b[1] - m.a[1]) * t, (t - 0.5) * 2 * A];
+              g2.addColorStop(t, metalColor(n3, P, q));
+            }
+            ctx.fillStyle = g2;
+            ctx.fill();
+          }
+          polyline(sp.concat([sp[0]]), real ? 'rgba(226,232,240,.85)' : 'rgba(147,197,253,.85)', 1.6);
+          if (!real) {
+            // 示意网格：沿镜长方向铺几条短线，让人看出这是一块平板
+            for (let k = 1; k <= 3; k++) {
+              const t = k / 4;
+              const p0 = [m.a[0] + (m.b[0] - m.a[0]) * t, m.a[1] + (m.b[1] - m.a[1]) * t, -A];
+              const p1 = [m.a[0] + (m.b[0] - m.a[0]) * t, m.a[1] + (m.b[1] - m.a[1]) * t, A];
+              const s0 = project(p0, q), s1 = project(p1, q);
+              if (s0.z > 0.05 && s1.z > 0.05) seg(s0, s1, 'rgba(191,219,254,.55)', 1);
+            }
+          }
+          bodyBox(sp, m.kind === 'mTop' ? '上镜' : '下镜', 3);
+          info.push({ kind: m.kind, phi: m.phi, half: m.half, n: n3 });
+        }
+        state.lastMirror = info;
+      }
+
+      // ================= 光线 =================
+      const LEG_COLOR = ['#fb923c', '#fbbf24', '#4ade80', '#4ade80'];
+      function drawRayList(q, list) {
+        let wallHit = null;
+        for (const r of list) {
+          for (let k = 0; k + 1 < r.pts.length; k++) {
+            const a = project(P3(r.pts[k]), q), b = project(P3(r.pts[k + 1]), q);
+            if (a.z <= 0.05 || b.z <= 0.05) continue;
+            const col = LEG_COLOR[Math.min(k, LEG_COLOR.length - 1)];
+            seg(a, b, col, 2.4);
+            const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+            const dx = b.x - a.x, dy = b.y - a.y, L = Math.hypot(dx, dy) || 1;
+            const u = 9 / L;
+            arrowHead({ x: mx - dx * u, y: my - dy * u }, { x: mx + dx * u, y: my + dy * u }, col, 8);
+          }
+          for (const h of r.hits) {
+            const s = project(P3(h.P), q);
+            if (s.z <= 0.05) continue;
+            if (h.kind === 'wall') { dotAt(s, 3.4, '#f87171', 'rgba(248,113,113,.6)'); wallHit = h; }
+            else dotAt(s, 3.2, '#e0f2fe', 'rgba(56,189,248,.55)');
+          }
+        }
+        if (wallHit) {
+          label(P3(wallHit.P), '光打在管壁上', '#fca5a5', 11, 'center', 'bottom', P3(wallHit.P));
+        }
+      }
+      function drawNormals(q, list, G) {
+        for (const m of [G.mTop, G.mBot]) {
+          const n = mirrorNormal(m);
+          const a = project(P3(m.c), q), b = project(add(P3(m.c), mul(n, 3.4)), q);
+          if (a.z <= 0.05 || b.z <= 0.05) continue;
+          seg(a, b, 'rgba(167,139,250,.9)', 1.6, [6, 5]);
+          label(add(P3(m.c), mul(n, 3.9)), '法线', 'rgba(196,181,253,.95)', 10, 'center', 'bottom',
+                add(P3(m.c), mul(n, 3.9)));
+        }
+        // 入射 / 反射光与法线的夹角（入射角、反射角）在单条模式下标出来
+        if (state.raySet !== 'single') return;
+        const r = list[0];
+        if (!r) return;
+        for (const h of r.hits) {
+          if (h.kind === 'wall') continue;
+          label(add(P3(h.P), [0, -0.75, 0]),
+                (h.kind === 'mTop' ? '上镜' : '下镜') + '：入射 ' + h.inc.toFixed(1) + '° / 反射 ' + h.ref.toFixed(1) + '°',
+                '#e9d5ff', 10, 'center', 'top', P3(h.P));
+        }
+      }
+      // 镜面与水平方向的夹角：画一条水平参考虚线 + 一段小圆弧 + 度数
+      function drawAngles(q, G) {
+        for (const m of [G.mTop, G.mBot]) {
+          const c = project(P3(m.c), q);
+          const px = project(add(P3(m.c), [3.4, 0, 0]), q);
+          const pm = project(add(P3(m.c), mul([m.u[0], m.u[1], 0], 3.4)), q);
+          if (c.z <= 0.05 || px.z <= 0.05 || pm.z <= 0.05) continue;
+          seg(c, px, 'rgba(148,163,184,.5)', 1.2, [5, 5]);
+          const a0 = Math.atan2(px.y - c.y, px.x - c.x);
+          const a1 = Math.atan2(pm.y - c.y, pm.x - c.x);
+          ctx.save();
+          ctx.beginPath();
+          // 圆弧从 a0 扫到 a1（取较短的那一侧，|Δ| 一定小于 π）
+          let dA = a1 - a0;
+          while (dA > Math.PI) dA -= 2 * Math.PI;
+          while (dA < -Math.PI) dA += 2 * Math.PI;
+          ctx.arc(c.x, c.y, 26, a0, a0 + dA, dA < 0);
+          ctx.strokeStyle = 'rgba(250,204,21,.85)';
+          ctx.lineWidth = 1.6;
+          ctx.stroke();
+          ctx.restore();
+          const mid = a0 + dA / 2;
+          // ⚠️ 第一个参数是【用来投影的锚点】。原来这里写的是 [0, 0, 0]（世界原点），
+          //    真正的锚点被塞进了第 7 个参数 world —— 而 world 只存不用。
+          //    于是两块镜子的角度标注【都投影到管轴底部那一点】上，两条「45°」叠在一起，
+          //    谁也看不出哪个是上镜的。锚点必须两边传同一个。
+          const anchor = add(P3(m.c), [Math.cos(mid) * 4.6, Math.sin(mid) * 4.6, 0]);
+          label(anchor, m.phi.toFixed(0) + '°', '#fde68a', 11, 'center', 'middle', anchor);
+        }
+      }
+
+      // ================= 物体 / 眼睛 / 视线示意 =================
+      function drawObjectEye(q, G) {
+        // 物：竖直箭头，中心正好在进光口高度上
+        const y0 = G.yE - OBJ_H / 2, y1 = G.yE + OBJ_H / 2;
+        const a = project([X_OBJ, y0, 0], q), b = project([X_OBJ, y1, 0], q);
+        if (a.z > 0.05 && b.z > 0.05) {
+          seg(a, b, '#67e8f9', 2.6);
+          arrowHead({ x: a.x, y: a.y + (b.y - a.y) * 0.6 }, b, '#67e8f9', 9);
+          bodyBox([a, b], '物', 4);
+          label([X_OBJ, y1 + 0.35, 0], '物体', '#a5f3fc', 11, 'center', 'bottom', [X_OBJ, y1 + 0.35, 0]);
+        }
+        // 眼：一只杏仁形眼睛 + 瞳孔，画在出光口右侧
+        const e = project([X_EYE, G.yX, 0], q);
+        if (e.z > 0.05) {
+          const w = 1.55, h = 0.82;
+          const arc = (sgn) => {
+            const pts = [];
+            for (let i = 0; i <= 12; i++) {
+              const t = -1 + 2 * i / 12;
+              const yy = sgn * h * Math.sqrt(Math.max(0, 1 - t * t));
+              pts.push(project([X_EYE + t * w, G.yX + yy, 0], q));
+            }
+            return pts;
+          };
+          const up = arc(1), dn = arc(-1);
+          if (up.every(s => s.z > 0.05) && dn.every(s => s.z > 0.05)) {
+            polyline(up, '#e0f2fe', 2.0);
+            polyline(dn, '#e0f2fe', 2.0);
+            dotAt(e, 4.6, '#38bdf8');
+            dotAt(e, 2.0, '#0f172a');
+            bodyBox([project([X_EYE - w, G.yX - h, 0], q), project([X_EYE + w, G.yX + h, 0], q)], '眼', 3);
+            label([X_EYE, G.yX + h + 0.4, 0], '眼睛', '#bae6fd', 11, 'center', 'bottom', [X_EYE, G.yX + h + 0.4, 0]);
+          }
+        }
+      }
+      function drawSight(q, G) {
+        // ① 眼睛的水平视线：从眼睛一路往左，就是「不借助潜望镜时能看到的高度」
+        const s0 = project([X_EYE - 1.6, G.yX, 0], q), s1 = project([X_DIM - 1.2, G.yX, 0], q);
+        if (s0.z > 0.05 && s1.z > 0.05) {
+          seg(s0, s1, 'rgba(148,163,184,.6)', 1.4, [7, 6]);
+          label([X_DIM + 0.6, G.yX, 0], '眼睛直接看只能看到这个高度', 'rgba(203,213,225,.85)', 10,
+                'left', 'bottom', [X_DIM + 0.6, G.yX, 0]);
+        }
+        // ② 「眼睛看到的像」：光始终水平射来，眼睛判断不出远近，
+        //    只能把物体「看」在正前方、与眼睛同高的位置上 —— 正立、等大，整体低了 L。
+        const g0 = project([X_OBJ, G.yX - OBJ_H / 2, 0], q), g1 = project([X_OBJ, G.yX + OBJ_H / 2, 0], q);
+        if (g0.z > 0.05 && g1.z > 0.05) {
+          seg(g0, g1, 'rgba(103,232,249,.55)', 2.0, [6, 5]);
+          arrowHead({ x: g0.x, y: g0.y + (g1.y - g0.y) * 0.6 }, g1, 'rgba(103,232,249,.6)', 8);
+          label([X_OBJ, G.yX - OBJ_H / 2 - 0.4, 0], '眼睛看到的像', 'rgba(165,243,252,.9)', 10,
+                'center', 'top', [X_OBJ, G.yX - OBJ_H / 2 - 0.4, 0]);
+        }
+        // ③ 「视线抬高 L」的尺寸标注：在两镜中心高度之间拉一条双箭头
+        const d0 = project([X_DIM, G.yX, 0], q), d1 = project([X_DIM, G.yE, 0], q);
+        if (d0.z > 0.05 && d1.z > 0.05) {
+          seg(d0, d1, 'rgba(52,211,153,.9)', 1.8);
+          arrowHead({ x: d0.x, y: d0.y + (d1.y - d0.y) * 0.35 }, d1, 'rgba(52,211,153,.9)', 8);
+          arrowHead({ x: d1.x, y: d1.y + (d0.y - d1.y) * 0.35 }, d0, 'rgba(52,211,153,.9)', 8);
+          // 两端各拉一条水平引线到刻度尺，读得出高度
+          const h0 = project([X_RULER, G.yX, 0], q), h1 = project([X_RULER, G.yE, 0], q);
+          if (h0.z > 0.05 && h1.z > 0.05) {
+            seg(d0, h0, 'rgba(52,211,153,.35)', 1.1, [4, 4]);
+            seg(d1, h1, 'rgba(52,211,153,.35)', 1.1, [4, 4]);
+          }
+          label([X_DIM, (G.yX + G.yE) / 2, 0], '视线抬高 L = ' + G.L.toFixed(1) + ' cm',
+                '#6ee7b7', 11, 'right', 'middle', [X_DIM, (G.yX + G.yE) / 2, 0]);
+        }
+      }
+
+      // ================= 主渲染 =================
+      // render() 是【唯一】清屏入口；渲染里算出的判据存进 state 暴露给自检，
+      // 渲染与自检必须走同一个函数（否则自检读到的是第二条公式）。
+      function camNow() {
+        const q = makeCam(state.yaw, state.pitch, state.w, state.h);
+        frameCam(q);
+        return q;
+      }
+      function render() {
+        const q = camNow();
+        ctx.clearRect(0, 0, state.w, state.h);
+        // 障碍物表以「舞台浮层」打底，再叠本帧的器材与刻度
+        frameBoxes = uiBoxes(); pendingLabels = []; drawnLabels = [];
+        const G = geom();
+        const list = rays(G);
+
+        drawScale(q);
+        if (state.showTube) drawTubeFaces(q, G);
+        drawMirrors(q, G);
+        if (state.showTube) drawTubeEdges(q, G);
+        if (state.showRays) drawRayList(q, list);
+        if (state.showNormal) drawNormals(q, list, G);
+        if (state.showAngle) drawAngles(q, G);
+        if (state.showObject) drawObjectEye(q, G);
+        if (state.showSight) drawSight(q, G);
+        flushLabels(q);                    // 标签最后落笔：当场画会被后画的零件压住
+
+        state.lastGeom = G;
+        state.lastRays = list;
+      }
+
+      // ================= 读数与规律卡 =================
+      function setLaw(id, ok) {
+        const el = $(id);
+        if (el) el.classList.toggle('on', !!ok);
+        if (el) el.classList.toggle('off', ok === false && el.dataset.strict === '1');
+      }
+      // 主光线 = 中间那条（或单条模式下的那一条）。所有读数都从【画出来的那条】上取，
+      // 不另算一套 —— 否则「读数在变」和「画面上那条线」可能对不上。
+      const mainRay = list => (state.raySet === 'single' ? list[0] : list[1]);
+      function verdictOf(r, G) {
+        if (!r) return { text: '没有光线', warn: true, see: false };
+        if (r.blocked) return { text: '光打在管壁上，出不来', warn: true, see: false };
+        if (!r.escaped) return { text: '光没有从出光口射出去', warn: true, see: false };
+        const dev = r.dev === null ? 999 : r.dev;
+        if (dev > 0.5) return { text: '光出来了，但方向偏了 ' + dev.toFixed(1) + '°', warn: true, see: false };
+        return { text: '两次反射后方向不变 · 视线抬高 ' + G.L.toFixed(1) + ' cm · 看到正立、等大的像',
+                 warn: false, see: true };
+      }
+      function updateReadout() {
+        const G = geom();
+        const list = rays(G);
+        const r = mainRay(list);
+        const v = verdictOf(r, G);
+        const dev = (r && r.escaped && r.dev !== null) ? r.dev : null;
+        const devTxt = (r && r.escaped) ? r.dev.toFixed(1) + '°' : '—';
+
+        $('peri-m1').textContent = G.L.toFixed(1) + ' cm';
+        $('peri-m2').textContent = devTxt;
+        $('peri-m3').textContent = Math.abs(state.phi1 - state.phi2).toFixed(1) + '°';
+        $('peri-m4').textContent = v.see ? '能' : (r && r.blocked ? '不能（撞管壁）' : '不能');
+        const m4 = $('peri-m4').parentElement;
+        m4.classList.toggle('ok', v.see);
+        m4.classList.toggle('bad', !v.see);
+
+        const vd = $('peri-verdict');
+        vd.textContent = v.text;
+        vd.classList.toggle('warn', v.warn);
+
+        $('peri-law-verdict').textContent = '当前：上镜 ' + state.phi1.toFixed(1) + '°、下镜 '
+          + state.phi2.toFixed(1) + '° —— ' + (v.see
+            ? '出射光与入射光方向相同，视线抬高 ' + G.L.toFixed(1) + ' cm'
+            : (r && r.blocked ? '光撞在管壁上，根本出不来' : '出射光方向偏了 ' + devTxt));
+
+        const parallel = Math.abs(state.phi1 - state.phi2) <= 0.5;
+        const both45 = Math.abs(state.phi1 - 45) <= 0.5 && Math.abs(state.phi2 - 45) <= 0.5;
+        // ⚠️ ②④ 必须【同时】要求「真的走完了两次反射」。
+        //    实测：φ₁ = 35° 时，光打完上镜就斜着从出光口溜出去了（只反射一次），
+        //    此时两镜仍可能「平行」、出射光也确实出了管子，但方向偏了 2φ₁ = 70°。
+        //    只判「平行 + 出得去」的话，规律卡会把 70° 的偏差点亮成「方向一点没变」。
+        const twoBounce = !!(r && r.escaped && r.bounces === 2);
+        setLaw('law1', true);                                     // 反射定律永远成立
+        setLaw('law2', parallel && twoBounce);
+        setLaw('law3', both45 && twoBounce);
+        setLaw('law4', twoBounce && dev !== null && dev <= 0.5);
+      }
+
+      // ================= 记录表 =================
+      function recordNow() {
+        const G = geom();
+        const r = mainRay(rays(G));
+        if (!r) return false;
+        state.records.forEach(x => { x.flash = false; });
+        state.records.push({
+          L: G.L, phi1: state.phi1, phi2: state.phi2,
+          diff: Math.abs(state.phi1 - state.phi2),
+          dev: (r.escaped && r.dev !== null) ? r.dev : null,
+          ok: !!(r.escaped && r.dev !== null && r.dev <= 0.5),
+          blocked: !!r.blocked,
+          // ⚠️ 必须把 bounces 一起存下来：下面 renderRecords() 的「结论」列要拿它
+          //    区分「两次反射但方向偏了」和「只反射了一次」。漏存的话
+          //    `r.bounces === 2` 恒为 false（undefined），45°/40° 这种真正走了
+          //    两次反射、只偏 10° 的记录会被写成「只反射了一次」—— 物理结论是错的。
+          bounces: r.bounces,
+          flash: true
+        });
+        renderRecords();
+        return true;
+      }
+      function clearRecords() { state.records = []; renderRecords(); }
+      function renderRecords() {
+        const tb = $('peri-rows'), n = state.records.length;
+        tb.innerHTML = n === 0
+          ? '<tr><td colspan="7" class="empty">尚无记录，先调一调两块镜子的角度开始探究</td></tr>'
+          : state.records.map((r, i) => {
+              const concl = r.ok ? '能 · 方向不变'
+                : (r.blocked ? '不能 · 撞管壁'
+                  : (r.bounces === 2 ? '方向偏了 ' + r.dev.toFixed(1) + '°' : '只反射了一次'));
+              return '<tr' + (r.flash ? ' class="flash"' : '') + '>'
+                + '<td class="num">' + (i + 1) + '</td>'
+                + '<td class="num">' + r.L.toFixed(1) + '</td>'
+                + '<td class="num">' + r.phi1.toFixed(1) + '</td>'
+                + '<td class="num">' + r.phi2.toFixed(1) + '</td>'
+                + '<td class="num">' + r.diff.toFixed(1) + '</td>'
+                + '<td class="num ' + (r.ok ? 'ratio' : 'no') + '">'
+                + (r.dev === null ? '—' : r.dev.toFixed(1)) + '</td>'
+                + '<td class="' + (r.ok ? '' : 'no') + '">' + concl + '</td>'
+                + '</tr>';
+            }).join('');
+        $('peri-count-label').textContent = '已记录 ' + n + ' 组';
+        $('peri-summary').innerHTML = n === 0
+          ? '把上镜、下镜的角度各记几组，看看「出射偏差」这一列是不是始终等于两镜夹角的两倍 —— 而且只有两者都为 0 时才真的看得见。'
+          : '已记 ' + n + ' 组。<b>只有两块镜子都摆成 45°</b>，光才会在管子里老老实实走完<b>两次</b>反射；'
+            + '这时「出射偏差」正好是「两镜夹角」的 <b>两倍</b>，夹角为 0（两镜平行）时它就归零。'
+            + '镜子一偏离 45°，光要么直接撞在管壁上，要么只反射一次就斜着从出光口溜出去 —— 那时两列对不上是正常的。';
+      }
+
+      // ================= 同步界面 =================
+      // 单条光线当前那条（UI 与自检都走这里，不在别处另算一遍）
+      const singleRay = G => rays(G)[0];
+
+      function syncAngle() {
+        const single = (state.raySet === 'single');
+        $('peri-angle-field').hidden = !single;
+        if (!single) return;                       // 隐藏的东西没人看，没必要刷
+        const off = singleOffset();
+        $('peri-angle-label').textContent = '光线在进光口的高度';
+        $('peri-angle-value').textContent = (off >= 0 ? '+' : '') + off.toFixed(2) + ' cm';
+        $('peri-angle-hint').textContent =
+          '拖动它，入射点就在进光口里连续上下移动，出射点跟着一起移动 —— 两端正好停在窗口的边缘。';
+        $('peri-angle').value = String(clamp(state.rayT, 0, 1) * 100);
+      }
+      // 单条光线自身的读数：反射次数 / 出射方向偏差 / 出射点高度
+      function updateSingleRayReadout() {
+        // 不是「单条可调」时这块面板是隐藏的，没必要算
+        if (state.raySet !== 'single') return;
+        const r = singleRay(geom());
+        if (!r) {
+          $('peri-bounce').textContent = '—'; $('peri-dev').textContent = '—'; $('peri-exity').textContent = '—';
+          return;
+        }
+        $('peri-bounce').textContent = String(r.bounces);
+        $('peri-dev').textContent = (r.escaped && r.dev !== null) ? r.dev.toFixed(1) + '°' : '—';
+        $('peri-exity').textContent = r.exitY === null ? '—' : r.exitY.toFixed(2) + ' cm';
+      }
+
+      function syncLegend() {
+        $('peri-legend').textContent = (state.raySet === 'single')
+          ? '橙：射入的光　黄：管内竖直段　绿：射出的光　红点：光撞在管壁上'
+          : '橙：射入的光　黄：管内竖直段　绿：射出的光　红点：光撞在管壁上';
+        $('peri-rayset-hint').textContent = state.raySet === 'all'
+          ? '三条光线分别从进光口的【下沿 / 中间 / 上沿】射入，出射后顺序和间距都不变 —— 这就是「正立、等大」。'
+          : '画面里只剩一条光线，入射点在进光口里连续上下移动，看它出射后落在哪儿。';
+      }
+
+      function syncSliders() {
+        $('peri-L').value = state.L;
+        $('peri-L-value').textContent = state.L.toFixed(1) + ' cm';
+        $('peri-th1').value = state.phi1;
+        $('peri-th1-value').textContent = state.phi1.toFixed(1) + '°';
+        $('peri-th2').value = state.phi2;
+        $('peri-th2-value').textContent = state.phi2.toFixed(1) + '°';
+        syncAngle();
+        updateSingleRayReadout();
+      }
+      function syncSegment() {
+        document.querySelectorAll('#peri-rayset button').forEach(b => b.classList.toggle('active', b.dataset.rayset === state.raySet));
+        document.querySelectorAll('#peri-mirror button').forEach(b => b.classList.toggle('active', b.dataset.mirror === state.mirrorStyle));
+        $('peri-rayset-name').textContent = state.raySet === 'all' ? '三条光线' : '单条可调';
+        $('peri-mirror-name').textContent = state.mirrorStyle === 'real' ? '真实质感' : '示意图';
+      }
+
+      // 新档位的入口都收敛到这里，按钮与调试钩子共用（只留一个入口，
+      // 免得「按钮切了、钩子没切」两套行为 —— 自检也会因此读到假状态）。
+      function setRaySet(v) {
+        state.raySet = v;
+        syncSegment(); syncSliders(); syncLegend(); render(); updateReadout();
+      }
+      function setMirrorStyle(v) {
+        state.mirrorStyle = v;
+        syncSegment(); render();
+      }
+      function setRayT(v) {
+        state.rayT = clamp(v, 0, 1);
+        syncAngle(); render(); updateSingleRayReadout();
+      }
+      function setL(v) {
+        state.L = clamp(v, L_MIN, L_MAX);
+        syncSliders(); render(); updateReadout();
+      }
+      function setPhi1(v) {
+        state.phi1 = clamp(v, PH_MIN, PH_MAX);
+        syncSliders(); render(); updateReadout();
+      }
+      function setPhi2(v) {
+        state.phi2 = clamp(v, PH_MIN, PH_MAX);
+        syncSliders(); render(); updateReadout();
+      }
+      // 「两块都摆成 45°」：把两块镜子一起归位，一个动作一条路径
+      function align45() {
+        state.phi1 = PH_DEF; state.phi2 = PH_DEF;
+        syncSliders(); render(); updateReadout();
+        return true;
+      }
+      function syncViewButtons() {
+        document.querySelectorAll('.lab3d-toolbar [data-view]').forEach(b => b.classList.toggle('active', b.dataset.view === state.view));
+      }
+      function applyView(name) {
+        const v = VIEWS[name];
+        if (!v) return false;
+        state.view = name; state.yaw = v.yaw; state.pitch = v.pitch; state.zoom = 1;
+        syncViewButtons(); render();
+        return true;
+      }
+
+      // ================= 交互 =================
+      // 物箭头的屏幕包围盒（点中它就能上下拖着改管高）
+      function objectBoxOnScreen(q) {
+        const G = geom();
+        const a = project([X_OBJ, G.yE - OBJ_H / 2, 0], q), b = project([X_OBJ, G.yE + OBJ_H / 2, 0], q);
+        if (a.z <= 0.01 || b.z <= 0.01) return null;
+        const pad = 16;
+        return { x0: Math.min(a.x, b.x) - pad, x1: Math.max(a.x, b.x) + pad,
+                 y0: Math.min(a.y, b.y) - pad, y1: Math.max(a.y, b.y) + pad };
+      }
+      let dragState = null;
+      canvas.addEventListener('pointerdown', e => {
+        const r = canvas.getBoundingClientRect();
+        const px = e.clientX - r.left, py = e.clientY - r.top;
+        const box = objectBoxOnScreen(camNow());
+        const onObj = box && px >= box.x0 && px <= box.x1 && py >= box.y0 && py <= box.y1;
+        dragState = { mode: onObj ? 'obj' : 'orbit', x: px, y: py };
+        canvas.setPointerCapture(e.pointerId);
+      });
+      canvas.addEventListener('pointermove', e => {
+        const r = canvas.getBoundingClientRect();
+        const px = e.clientX - r.left, py = e.clientY - r.top;
+        if (!dragState) {
+          const box = objectBoxOnScreen(camNow());
+          canvas.style.cursor = (box && px >= box.x0 && px <= box.x1 && py >= box.y0 && py <= box.y1)
+            ? 'ns-resize' : 'grab';
+          return;
+        }
+        if (dragState.mode === 'orbit') {
+          state.yaw += (px - dragState.x) * 0.008;
+          state.pitch = clamp(state.pitch + (py - dragState.y) * 0.006, -1.35, 1.35);
+          dragState.x = px; dragState.y = py;
+          state.view = ''; syncViewButtons();
+          render();
+        } else {
+          // 用【局部导数】把屏幕位移换成管高变化：投影两个相差 1 cm 的位置量出 px/cm。
+          // 直接按固定比例换算会在贴近镜面 / 俯视等视角下与手指脱钩。
+          const q = camNow();
+          const G = geom();
+          const p0 = project([X_OBJ, G.yE, 0], q), p1 = project([X_OBJ, G.yE + 1, 0], q);
+          const pxPerCm = Math.max(Math.hypot(p1.x - p0.x, p1.y - p0.y), 0.6);
+          const dL = -(py - dragState.y) / pxPerCm;
+          state.L = clamp(Math.round((state.L + dL) * 2) / 2, L_MIN, L_MAX);
+          dragState.x = px; dragState.y = py;
+          syncSliders(); render(); updateReadout();
+        }
+      });
+      const endDrag = () => { dragState = null; };
+      canvas.addEventListener('pointerup', endDrag);
+      canvas.addEventListener('pointercancel', endDrag);
+      canvas.addEventListener('wheel', e => {
+        e.preventDefault();
+        state.zoom = clamp(state.zoom * (e.deltaY > 0 ? 0.92 : 1.08), ZOOM_MIN, ZOOM_MAX);
+        render();
+      }, { passive: false });
+
+      $('peri-L').addEventListener('input', e => setL(parseFloat(e.target.value)));
+      $('peri-th1').addEventListener('input', e => setPhi1(parseFloat(e.target.value)));
+      $('peri-th2').addEventListener('input', e => setPhi2(parseFloat(e.target.value)));
+      $('peri-align').addEventListener('click', align45);
+      document.querySelectorAll('#peri-rayset button').forEach(b => b.addEventListener('click', () => setRaySet(b.dataset.rayset)));
+      document.querySelectorAll('#peri-mirror button').forEach(b => b.addEventListener('click', () => setMirrorStyle(b.dataset.mirror)));
+      // 拖动时只重画 + 更新这条光线自己的读数：**不**调 updateReadout()（管高没变，
+      // 每次 input 都刷一遍是白做功，而且会让读数区在拖动时闪）。
+      $('peri-angle').addEventListener('input', e => setRayT(+e.target.value / 100));
+      document.querySelectorAll('.lab3d-toolbar [data-view]').forEach(b => b.addEventListener('click', () => applyView(b.dataset.view)));
+      $('peri-reset-view').addEventListener('click', () => applyView('perspective'));
+      for (const pair of [['peri-rays', 'showRays'], ['peri-normal', 'showNormal'], ['peri-angle', 'showAngle'],
+                          ['peri-object', 'showObject'], ['peri-sight', 'showSight'], ['peri-tube', 'showTube']]) {
+        $(pair[0]).addEventListener('change', e => { state[pair[1]] = e.target.checked; render(); });
+      }
+      $('peri-record').addEventListener('click', () => {
+        if (!recordNow()) {
+          $('peri-record-hint').textContent = '当前这组光路没能算出来，换个参数再记录';
+          return;
+        }
+        $('peri-record-hint').textContent = '已记录 ' + state.records.length + ' 组，换一组角度再记一次';
+      });
+      $('peri-clear').addEventListener('click', clearRecords);
+
+      // ================= 调试钩子 =================
+      window.__peri = {
+        state, VIEWS, geom, mirrorSeg, mirrorNormal, mirrorQuad, traceRay, rays, singleRay,
+        raySeg, wrap180, singleOffset,
+        ENV, ENV_C, CAMD, ZOOM_MIN, ZOOM_MAX,
+        A, ML, CAP, WIN_H, YBOT, L_MIN, L_MAX, PH_MIN, PH_MAX, OBJ_H, RAY_SPREAD,
+        X_OBJ, X_EYE, X_RULER, X_DIM,
+        metalColor, LIGHT, GLINT, GLINT_EXP,
+        camNow, project: p => project(p, camNow()),
+        size: () => ({ w: state.w, h: state.h, dpr: canvas.width / Math.max(state.w, 1e-6) }),
+        boxes: () => frameBoxes.concat(drawnLabels)
+          .map(b => ({ kind: b.kind, text: b.text, x0: b.x0, y0: b.y0, x1: b.x1, y1: b.y1 })),
+        records: () => state.records.map(r => ({ L: r.L, phi1: r.phi1, phi2: r.phi2, diff: r.diff, dev: r.dev, ok: r.ok, blocked: r.blocked, bounces: r.bounces })),
+        recordNow, clearRecords, applyView, align45,
+        setL, setPhi1, setPhi2, setRaySet, setMirrorStyle, setRayT,
+        renderNow() { render(); },
+        debug() {
+          const G = geom();
+          const list = rays(G);
+          const r = mainRay(list);
+          const m = state.lastMirror || [];
+          return {
+            L: G.L, phi1: G.phi1, phi2: G.phi2,
+            yBot: G.yBot, yTop: G.yTop, yLow: G.yLow, yHigh: G.yHigh,
+            yE: G.yE, yX: G.yX, winIn: G.winIn, winOut: G.winOut,
+            rayCount: list.length,
+            bounces: r ? r.bounces : null,
+            escaped: r ? r.escaped : null,
+            blocked: r ? r.blocked : null,
+            exitY: r ? r.exitY : null,
+            exitDev: (r && r.escaped && r.dev !== null) ? r.dev : null,
+            incTop: r ? r.incTop : null,
+            refTop: r ? r.refTop : null,
+            incBot: r ? r.incBot : null,
+            refBot: r ? r.refBot : null,
+            // 理论值：出射方向与入射方向的夹角 = 2|φ₁ − φ₂|；两镜夹角 = |φ₁ − φ₂|
+            theoryDev: 2 * Math.abs(state.phi1 - state.phi2),
+            mirrorAngle: Math.abs(state.phi1 - state.phi2),
+            // 三条光线的入射 / 出射高度（用来验「顺序与间距不变」）
+            rayYs: list.map(x => ({ y0: x.y0, exitY: x.exitY, escaped: x.escaped })),
+            view: state.view, raySet: state.raySet, rayT: state.rayT, mirrorStyle: state.mirrorStyle,
+            mirrorHalf: m.length ? m[0].half : null,
+            mirrorQuads: m.length
+          };
+        }
+      };
+
+      // ================= 启动 =================
+      syncSliders(); syncSegment(); syncViewButtons(); syncLegend(); renderRecords(); updateReadout();
+      resize();
+      window.addEventListener('resize', resize);
+    })();
+    </script>
+</body>
+</html>
