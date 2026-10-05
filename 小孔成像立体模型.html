@@ -1,0 +1,1520 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>虚拟物理实验 - 小孔成像立体模型</title>
+    <link rel="stylesheet" href="style.css">
+    <style>
+        :root {
+            --bg: #020617;
+            --line: rgba(148, 163, 184, .18);
+            --primary: #3b82f6;
+            --secondary: #06b6d4;
+            --accent: #8b5cf6;
+            --text: #f8fafc;
+            --muted: #94a3b8;
+        }
+
+        body {
+            font-family: 'Inter', 'Microsoft YaHei', 'Noto Sans SC', sans-serif;
+            margin: 0;
+            /* 站内页头是 position:sticky，一滚动就贴顶盖住实验区，所以这一页不放页头
+               （和同章的「光的反射 / 光的折射立体模型」一致）。留 20px 内边距即可。 */
+            padding: 20px;
+            background: var(--bg);
+            color: var(--text);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+            box-sizing: border-box;
+        }
+
+        /* 科技风背景光晕 */
+        body::before {
+            content: "";
+            position: fixed;
+            inset: 0;
+            z-index: -1;
+            pointer-events: none;
+            background:
+                radial-gradient(circle at 18% 22%, rgba(59, 130, 246, .16), transparent 42%),
+                radial-gradient(circle at 82% 68%, rgba(139, 92, 246, .14), transparent 44%),
+                radial-gradient(circle at 50% 100%, rgba(6, 182, 212, .10), transparent 55%);
+        }
+
+        /* ===== 可交互三维实验台（与站内其它 lab3d 页面同一套视觉基线）===== */
+        .lab3d {
+            width: 100%;
+            max-width: 1600px;
+            margin: 8px auto 26px;
+            box-sizing: border-box;
+            overflow: hidden;
+            border: 1px solid rgba(56, 189, 248, .22);
+            border-radius: 18px;
+            background: linear-gradient(160deg, rgba(15, 23, 42, .92), rgba(2, 6, 23, .96));
+            color: #e2e8f0;
+            box-shadow: 0 26px 70px rgba(2, 6, 23, .6), 0 0 0 1px rgba(2, 6, 23, .8) inset;
+        }
+        .lab3d * { box-sizing: border-box; }
+        .lab3d-top {
+            display: flex; justify-content: space-between; gap: 15px; align-items: center;
+            padding: 17px 23px; border-bottom: 1px solid var(--line);
+            background: linear-gradient(90deg, rgba(59, 130, 246, .12), rgba(6, 182, 212, .05) 45%, transparent);
+        }
+        .lab3d-kicker { color: #22d3ee; font-size: 11px; font-weight: 800; letter-spacing: .2em; }
+        .lab3d-top h2 { margin: 3px 0 0; color: #f8fafc; font-size: 21px; letter-spacing: .02em; }
+        .lab3d-top p { margin: 4px 0 0; color: #94a3b8; font-size: 12px; }
+        .lab3d-status {
+            border: 1px solid rgba(34, 211, 238, .45); border-radius: 99px; padding: 6px 12px;
+            color: #67e8f9; font-size: 12px; white-space: nowrap; background: rgba(6, 182, 212, .08);
+        }
+        .lab3d-layout { display: grid; grid-template-columns: minmax(0, 1fr) 300px; }
+        .lab3d-main {
+            min-width: 0; padding: 15px 16px 16px;
+            background: radial-gradient(circle at 43% 36%, rgba(30, 64, 100, .55), rgba(8, 22, 36, .92) 62%, rgba(3, 10, 18, .96));
+        }
+        .lab3d-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; padding-bottom: 12px; }
+        .lab3d-toolbar .toolbar-label { color: #94a3b8; font-size: 12px; margin-right: 5px; }
+        .lab3d button {
+            padding: 7px 12px; border: 1px solid rgba(148, 163, 184, .25); border-radius: 8px;
+            background: rgba(30, 41, 59, .7); color: #cbd5e1; font-size: 12px; font-weight: 600;
+            box-shadow: none; transition: background .2s, border-color .2s, color .2s;
+        }
+        .lab3d button:hover { transform: none; box-shadow: none; background: rgba(51, 65, 85, .85); }
+        .lab3d button.active {
+            background: rgba(59, 130, 246, .25); border-color: #38bdf8; color: #e0f2fe;
+            box-shadow: 0 0 14px rgba(56, 189, 248, .3);
+        }
+        .lab3d button:disabled { opacity: .42; cursor: not-allowed; }
+        .lab3d button.primary { background: rgba(59, 130, 246, .3); border-color: #38bdf8; color: #e0f2fe; }
+        .lab3d-toolbar .toolbar-spacer { flex: 1; }
+        .lab3d-stage {
+            position: relative; height: clamp(400px, 49vw, 580px);
+            border: 1px solid rgba(56, 189, 248, .2); border-radius: 12px; overflow: hidden;
+            background: #061423;
+        }
+        .lab3d-stage canvas {
+            display: block; width: 100%; height: 100%;
+            border: 0; border-radius: 0; box-shadow: none; background: transparent;
+            cursor: grab; touch-action: none;
+        }
+        .lab3d-stage canvas:active { cursor: grabbing; }
+        /* 指针落在可拖动的器材上时换成左右拖动光标（放在 :active 之后才能覆盖它） */
+        .lab3d-stage canvas.pick-move { cursor: ew-resize; }
+        .lab3d-stage canvas.pick-move:active { cursor: ew-resize; }
+        .lab3d-stage .stage-hint {
+            position: absolute; top: 13px; left: 15px; pointer-events: none; font-size: 12px;
+            color: #bae6fd; background: rgba(2, 6, 23, .78); border: 1px solid rgba(56, 189, 248, .25);
+            padding: 7px 11px; border-radius: 8px;
+        }
+        .lab3d-stage .stage-hint b {
+            display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+            background: #22d3ee; vertical-align: 2px; margin-right: 6px; box-shadow: 0 0 8px #22d3ee;
+        }
+        .lab3d-stage .stage-help {
+            position: absolute; right: 14px; bottom: 13px; pointer-events: none;
+            color: #93b4c4; font-size: 11px; background: rgba(2, 6, 23, .72); padding: 6px 10px; border-radius: 7px;
+        }
+        /* 舞台内的观察结论条：眼睛盯着装置时也要能看见（侧栏在窄屏会被挤到下面） */
+        .lab3d-stage .stage-verdict {
+            position: absolute; left: 15px; bottom: 13px; pointer-events: none;
+            font-size: 12px; padding: 7px 12px; border-radius: 8px;
+            color: #d1fae5; background: rgba(6, 78, 59, .82); border: 1px solid rgba(52, 211, 153, .45);
+        }
+        .lab3d-stage .stage-verdict.warn { color: #fee2e2; background: rgba(127, 29, 29, .82); border-color: rgba(248, 113, 113, .5); }
+        .lab3d-foot {
+            display: flex; align-items: center; flex-wrap: wrap; gap: 12px 18px;
+            padding: 12px 3px 1px; font-size: 12px; color: #b6c8d4;
+        }
+        .lab3d-foot label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+        .lab3d-foot input { accent-color: #22d3ee; margin: 0; }
+        .lab3d-foot .legend { margin-left: auto; color: #8ba7b6; }
+        .lab3d-sidebar {
+            padding: 18px; color: #cbd5e1; border-left: 1px solid var(--line);
+            background: linear-gradient(180deg, rgba(15, 23, 42, .75), rgba(2, 6, 23, .6));
+        }
+        .lab3d-sidebar h3 { margin: 0 0 15px; color: #e2e8f0; font-size: 15px; letter-spacing: .05em; }
+        .lab3d-field { margin: 0 0 16px; }
+        .lab3d-field label, .lab3d-field .field-label {
+            display: flex; justify-content: space-between; gap: 8px; align-items: baseline;
+            color: #cbd5e1; font-size: 12px; font-weight: 700;
+        }
+        .lab3d-field output { color: #38bdf8; font-size: 13px; font-weight: 800; }
+        .lab3d-field input[type="range"] { display: block; width: 100%; margin: 11px 0 5px; }
+        .lab3d-field input[type="range"]::-webkit-slider-thumb { background: linear-gradient(135deg, #3b82f6, #22d3ee); }
+        .lab3d-field small { color: #64748b; font-size: 10px; line-height: 1.5; display: block; }
+        .lab3d-segment { display: flex; gap: 5px; margin-top: 9px; }
+        .lab3d-segment button { flex: 1; min-width: 0; padding: 7px 4px; font-size: 11px; }
+        .lab3d-metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 12px; }
+        .lab3d-metric {
+            padding: 12px 13px; border: 1px solid rgba(56, 189, 248, .18); border-radius: 10px;
+            background: linear-gradient(160deg, rgba(30, 58, 95, .55), rgba(15, 23, 42, .6));
+        }
+        .lab3d-metric span { display: block; font-size: 11px; color: #9fb8c6; }
+        .lab3d-metric strong { display: block; margin-top: 4px; color: #e0f2fe; font-size: 17px; }
+        .lab3d-metric.ok strong { color: #6ee7b7; }
+        .lab3d-metric.bad strong { color: #fca5a5; }
+        .lab3d-note { margin: 12px 0 0; color: #9fb8c6; font-size: 12px; line-height: 1.65; }
+        .lab3d-note b { color: #7dd3fc; }
+
+        /* 结论卡：五条小孔成像规律，逐条点亮 */
+        .law-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 8px; }
+        .law-list li {
+            display: flex; gap: 8px; align-items: flex-start;
+            padding: 9px 11px; border-radius: 9px; font-size: 12px; line-height: 1.55;
+            border: 1px solid rgba(148, 163, 184, .16); background: rgba(148, 163, 184, .05);
+            color: #b6c8d4; transition: background .2s, border-color .2s, color .2s;
+        }
+        .law-list li.on {
+            border-color: rgba(52, 211, 153, .5); background: rgba(16, 185, 129, .12); color: #d1fae5;
+        }
+        .law-list li.off {
+            border-color: rgba(248, 113, 113, .45); background: rgba(239, 68, 68, .12); color: #fee2e2;
+        }
+        .law-list li i { font-style: normal; color: #64748b; flex: none; font-weight: 700; }
+        .law-list li.on i { color: #6ee7b7; }
+        .law-list li.off i { color: #fca5a5; }
+
+        /* ===== 实验记录表：就放在实验台正下方，做完一次就能点记录 ===== */
+        .record-panel { margin-top: 0; }
+        .record-body { padding: 16px 18px 18px; }
+        .record-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; }
+        .record-actions small { color: #8ea6b7; font-size: 11px; }
+        .table-wrap { overflow-x: auto; margin-top: 13px; }
+        .record-body table { width: 100%; border-collapse: collapse; font-size: 12px; white-space: nowrap; min-width: 640px; }
+        .record-body th, .record-body td {
+            text-align: left; padding: 9px 8px; border-bottom: 1px solid rgba(148, 163, 184, .16); color: #c5d6e4;
+        }
+        .record-body th { color: #80ddec; font-size: 11px; font-weight: 700; }
+        .record-body tbody tr:last-child td { border-bottom: 0; }
+        .record-body .empty { text-align: center; color: #91a6b9; padding: 19px 5px; }
+        .record-body td.num { font-variant-numeric: tabular-nums; }
+        .record-body td.ratio { color: #7dd3fc; font-weight: 700; }
+        /* 刚记录的那一行闪一下：视线还停在装置上，也知道数据落到了哪一行 */
+        .record-body tr.flash td { animation: phRowFlash 1.2s ease-out; }
+        @keyframes phRowFlash { 0% { background: rgba(34, 112, 143, .8); color: #f1fbff; } 100% { background: transparent; } }
+        .record-body .note { color: #90a9b9; font-size: 11px; line-height: 1.65; margin-top: 11px; }
+        .record-body .note b { color: #7dd3fc; }
+
+        @media (max-width: 900px) {
+            .lab3d-layout { grid-template-columns: minmax(0, 1fr); }
+            .lab3d-sidebar { border-left: 0; border-top: 1px solid var(--line); display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 18px; }
+            .lab3d-sidebar h3 { grid-column: 1 / -1; }
+            .lab3d-sidebar .span-2 { grid-column: 1 / -1; }
+        }
+        @media (max-width: 620px) {
+            body { padding-left: 10px; padding-right: 10px; }
+            .lab3d { border-radius: 14px; }
+            .lab3d-top { padding: 15px; }
+            .lab3d-top h2 { font-size: 17px; }
+            .lab3d-status { display: none; }
+            .lab3d-main { padding: 10px; }
+            .lab3d-toolbar { gap: 6px; }
+            .lab3d-toolbar .toolbar-label, .lab3d-toolbar .toolbar-spacer { display: none; }
+            .lab3d-toolbar button { padding: 6px 9px; font-size: 11px; }
+            .lab3d-stage { height: 340px; }
+            .lab3d-stage .stage-help { display: none; }
+            .lab3d-stage .stage-verdict { left: 10px; right: 10px; bottom: 10px; font-size: 11px; }
+            .lab3d-sidebar { display: block; padding: 16px; }
+            .lab3d-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+            .lab3d-foot .legend { margin-left: 0; width: 100%; }
+            .record-body { padding: 14px; }
+            /* 窄屏上 7 列会被挤到横向滚动里，而最后两列 h′/h 与 v/u 正是这张表的结论。
+               缩字号 + 收紧内边距 + 隐藏表头里的长前缀，让 7 列全部看得见。 */
+            .record-body table { font-size: 10.5px; min-width: 0; }
+            .record-body th, .record-body td { padding: 7px 5px; }
+            .record-body th .th-full { display: none; }
+        }
+    </style>
+    <script src="auth-check.js"></script>
+</head>
+<body>
+    <!-- 这一页不放站内页头：页头是 position:sticky，一滚动就贴在顶上盖住实验区。
+         同章的「光的反射 / 光的折射立体模型」本来就没有页头，这里沿用同一做法。 -->
+    <section class="lab3d" aria-label="小孔成像立体模型">
+      <div class="lab3d-top">
+        <div>
+          <div class="lab3d-kicker">INTERACTIVE OPTICS LAB · 三维光学实验</div>
+          <h2>小孔成像 · 立体模型</h2>
+          <p>光沿直线传播 —— 蜡烛的光穿过小孔，在光屏上成一个倒立的实像，像的大小只由物距与像距决定</p>
+        </div>
+        <span class="lab3d-status">● 实时物理模拟</span>
+      </div>
+
+      <div class="lab3d-layout">
+        <div class="lab3d-main">
+          <div class="lab3d-toolbar" role="group" aria-label="观察视角">
+            <span class="toolbar-label">观察视角</span>
+            <button type="button" class="active" data-view="perspective">立体视角</button>
+            <button type="button" data-view="screen">正对光屏</button>
+            <button type="button" data-view="side">侧看光路</button>
+            <button type="button" data-view="top">俯视装置</button>
+            <span class="toolbar-spacer"></span>
+            <button type="button" id="ph-reset-view">↺ 重置视角</button>
+          </div>
+
+          <div class="lab3d-stage">
+            <canvas id="ph-canvas" aria-label="可拖动旋转、滚轮缩放的小孔成像三维装置"></canvas>
+            <div class="stage-hint"><b></b>三维实验场景 · 蜡烛 → 小孔 → 光屏上的倒立实像</div>
+            <div class="stage-verdict" id="ph-verdict">物距 u = 10.0 cm　像距 v = 20.0 cm　像高是物高的 2.00 倍</div>
+            <div class="stage-help">拖动空白处旋转 · 滚轮缩放 · 按住蜡烛或光屏左右拖动改距离</div>
+          </div>
+
+          <div class="lab3d-foot">
+            <label><input id="ph-rays" type="checkbox" checked>显示光线</label>
+            <label><input id="ph-marks" type="checkbox" checked>显示尺寸标注</label>
+            <label><input id="ph-scale" type="checkbox" checked>显示光具座刻度</label>
+            <label><input id="ph-grid" type="checkbox">光屏网格</label>
+            <span class="legend">橙：从蜡烛出发的光线　黄：穿过小孔的光　白虚线：光轴</span>
+          </div>
+
+          <div class="lab3d-metrics" aria-live="polite">
+            <div class="lab3d-metric"><span>物距 u</span><strong id="ph-m1">10.0 cm</strong></div>
+            <div class="lab3d-metric"><span>像距 v</span><strong id="ph-m2">20.0 cm</strong></div>
+            <div class="lab3d-metric"><span>像高 h′</span><strong id="ph-m3">5.2 cm</strong></div>
+            <div class="lab3d-metric ok"><span>像高 ÷ 物高</span><strong id="ph-m4">2.00</strong></div>
+          </div>
+
+          <p class="lab3d-note"><b>观察提示：</b>蜡烛发出的光沿<b>直线</b>向四面八方跑，只有穿过小孔的那一束能继续走到光屏上。火焰<b>上端</b>的光穿过小孔后落在屏的<b>下方</b>，<b>下端</b>的光落在<b>上方</b> —— 所以像一定是<b>倒立</b>的。按住<b>蜡烛</b>或<b>光屏</b>左右拖动：把蜡烛挪近小孔、或把光屏挪远，像都会变大，而最后一格 <b>像高÷物高</b> 始终等于 <b>像距÷物距</b>。再把小孔调大一点看看 —— 像会变模糊，但<b>大小和位置都不变</b>；换一换孔的形状，像还是那个倒立的蜡烛。</p>
+        </div>
+
+        <aside class="lab3d-sidebar">
+          <h3>实验参数</h3>
+
+          <div class="lab3d-field">
+            <label for="ph-u">物距 u（蜡烛 → 小孔）<output id="ph-u-value">10.0 cm</output></label>
+            <input id="ph-u" type="range" min="6" max="22" value="10" step="0.5">
+            <small>也可以直接按住画面里的蜡烛左右拖动</small>
+          </div>
+
+          <div class="lab3d-field">
+            <label for="ph-v">像距 v（小孔 → 光屏）<output id="ph-v-value">20.0 cm</output></label>
+            <input id="ph-v" type="range" min="5" max="22" value="20" step="0.5">
+            <small>也可以直接按住画面里的光屏左右拖动</small>
+          </div>
+
+          <div class="lab3d-field">
+            <label for="ph-d">小孔直径 d <output id="ph-d-value">1.0 mm</output></label>
+            <input id="ph-d" type="range" min="0.2" max="6" value="1" step="0.1">
+            <small>孔很小时像清晰；孔变大，像变模糊，但大小和位置不变</small>
+          </div>
+
+          <div class="lab3d-field span-2">
+            <span class="field-label">发光体 <output id="ph-src-name">蜡烛</output></span>
+            <div class="lab3d-segment" id="ph-src" role="group" aria-label="选择发光体">
+              <button type="button" data-src="candle" class="active">蜡烛</button>
+              <button type="button" data-src="letter">F 形光源</button>
+            </div>
+            <small>换发光体只改变「物」的形状与高度，成像规律不变</small>
+          </div>
+
+          <div class="lab3d-field span-2">
+            <span class="field-label">小孔的形状</span>
+            <div class="lab3d-segment" id="ph-hole" role="group" aria-label="选择小孔形状">
+              <button type="button" data-hole="circle" class="active">圆形</button>
+              <button type="button" data-hole="square">方形</button>
+              <button type="button" data-hole="triangle">三角形</button>
+            </div>
+            <small>只要孔足够小，像的形状就<b>只由发光体决定</b>，跟孔的形状无关</small>
+          </div>
+
+          <div class="lab3d-field span-2">
+            <span class="field-label">小孔的数量</span>
+            <div class="lab3d-segment" id="ph-count" role="group" aria-label="选择小孔数量">
+              <button type="button" data-count="1" class="active">单个小孔</button>
+              <button type="button" data-count="4">2 × 2 四个小孔</button>
+            </div>
+            <small>每个小孔都成一个完整的像 —— 有几个孔，屏上就有几个倒立的像</small>
+          </div>
+
+          <div class="lab3d-field span-2">
+            <span class="field-label">小孔成像的规律</span>
+            <ul class="law-list">
+              <li id="law1"><i>①</i><span>光沿直线传播，所以小孔成的是<b>倒立</b>的实像</span></li>
+              <li id="law2"><i>②</i><span>像高 ÷ 物高 = 像距 ÷ 物距（h′/h = v/u）</span></li>
+              <li id="law3"><i>③</i><span>像的形状只由发光体决定，跟小孔的形状无关</span></li>
+              <li id="law4"><i>④</i><span>小孔越大，像越模糊，但大小与位置不变</span></li>
+              <li id="law5"><i>⑤</i><span>有几个小孔，屏上就有几个像</span></li>
+            </ul>
+            <small id="ph-law-verdict">当前：u = 10.0 cm，v = 20.0 cm，h′/h = v/u = 2.00 —— 五条都成立</small>
+          </div>
+        </aside>
+      </div>
+    </section>
+
+    <section class="lab3d record-panel" aria-label="实验记录表">
+      <div class="lab3d-top">
+        <div>
+          <div class="lab3d-kicker">DATA SHEET · 定量记录</div>
+          <h2>实验记录表</h2>
+          <p>实验台就在上面：每调好一组物距与像距就点一次「记录当前数据」，数据会立刻填进下表</p>
+        </div>
+        <span class="lab3d-status" id="ph-count-label">已记录 0 组</span>
+      </div>
+      <div class="record-body">
+        <div class="record-actions">
+          <button type="button" class="primary" id="ph-record">记录当前数据</button>
+          <button type="button" id="ph-clear">清空记录</button>
+          <small id="ph-record-hint">拖动蜡烛或光屏改变距离，多记几组才能看出规律</small>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>次数</th>
+                <th><span class="th-full">物距 </span>u</th>
+                <th><span class="th-full">像距 </span>v</th>
+                <th><span class="th-full">物高 </span>h</th>
+                <th><span class="th-full">像高 </span>h′</th>
+                <th>h′<span class="th-full"> / </span>h</th>
+                <th>v<span class="th-full"> / </span>u</th>
+              </tr>
+            </thead>
+            <tbody id="ph-rows">
+              <tr><td colspan="7" class="empty">尚无记录，先拖动蜡烛或光屏开始探究</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="note" id="ph-summary">记录 3 组以上不同物距、像距的数据，看看最后两列是不是始终相等。</div>
+      </div>
+    </section>
+
+    <script src="protect.js"></script>
+    <script>
+    (function () {
+      'use strict';
+      const canvas = document.getElementById('ph-canvas');
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      const $ = id => document.getElementById(id);
+      const PI2 = Math.PI * 2, DEG = Math.PI / 180, RAD = 180 / Math.PI;
+      const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
+      const f1 = v => (v == null || !isFinite(v)) ? '—' : v.toFixed(1);
+      const f2 = v => (v == null || !isFinite(v)) ? '—' : v.toFixed(2);
+
+      /* ============================================================
+       * 向量工具
+       * ============================================================ */
+      const add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+      const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+      const scl = (a, k) => [a[0] * k, a[1] * k, a[2] * k];
+      const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+      const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+      const vlen = a => Math.hypot(a[0], a[1], a[2]);
+      const vnorm = a => { const l = vlen(a) || 1; return [a[0] / l, a[1] / l, a[2] / l]; };
+
+      /* ============================================================
+       * 场景常量
+       * ------------------------------------------------------------
+       * 关键几何约定，动之前先读懂：
+       *   · 光轴沿【x 轴】，1 世界单位 = 1 cm。
+       *     蜡烛在 x = −u，小孔（挡板）固定在 x = 0，光屏在 x = +v。
+       *   · 小孔在原点，所以「物距」和「像距」就是坐标轴上的两段长度，
+       *     挡板不做成可拖的 —— 它是这把尺子的零点，挪了读数就没法直接对上。
+       *   · 物点 S = (−u, y, z) 的光穿过孔心 a = (0, ay, az) 后落在屏上：
+       *         P = (v, −y·v/u + (1+v/u)·ay, −z·v/u + (1+v/u)·az)
+       *     前一项是【倒立且放大 m = v/u 倍】的几何像，
+       *     后一项是【孔有多大、像就糊多大】的模糊斑（孔的形状按 k = 1+m 放大投到屏上）。
+       *     这两项合起来正好就是「理想像 ⊛ 孔径核」，也就是真实的成像公式。
+       * ============================================================ */
+      const OBJ_BOX  = 3.6;        // 发光体所在的方框边长（cm），两种发光体都画在这个框里
+      const SCREEN_S = 18.8;       // 光屏边长（cm）
+      const PLATE_S  = 14.0;       // 挡板边长（cm）
+      const BENCH_Y  = -9.4;       // 台面高度（光轴在 y = 0）
+      const BENCH_HZ = 3.0;        // 台面半宽（z 方向）
+      const BENCH_X0 = -24.0, BENCH_X1 = 24.0;
+      const U_MIN = 6, U_MAX = 22; // 物距范围（cm）
+      const V_MIN = 5, V_MAX = 22; // 像距范围（cm）
+      const D_MIN = 0.2, D_MAX = 6; // 小孔直径范围（mm）
+      const HOLE_GAP = 2.0;        // 2×2 四孔时相邻两孔的间距（cm）
+      const ENV = [24.6, 10.6, 10.6];  // 取景包络（固定，不跟滑块走）
+      const CAMD = 74;
+      const TARGET = [0, 0, 0];
+      const MINR = 1.6;            // 模糊斑在屏幕上的最小半径（px）—— 见 drawImageOnScreen
+      const TAPS_MAX = 40;         // 模糊核最多采样多少个「重影」
+
+      const VIEWS = {
+        perspective: [0.62, 0.30],
+        screen:      [1.5708, 0.06],   // 站到光屏后面正对着看（观察者真正站的那一侧）
+        side:        [0.02, 0.06],     // 从侧面看整条光路
+        // 俯视用 yaw = 0：光具座在屏幕上是横的，整条装置铺满画布。
+        // 原来 yaw = 0.62 时装置斜着摆，49 cm 的长边在屏幕上的投影被 yaw 掺进了竖直分量，
+        // 取景那一项只好整体缩小，装置只占画布的 43% 宽、四周全是空的。
+        top:         [0.0, 1.30]
+      };
+
+      const state = {
+        yaw: VIEWS.perspective[0], pitch: VIEWS.perspective[1], zoom: 1,
+        // 默认取 u = 10、v = 20，也就是 m = v/u = 2.00。
+        // 一进来就能看见「像比物大、而且是倒立的」——原来默认 u=14/v=12（m=0.86），
+        // 像只有 2.2 cm，在 18.8 cm 的光屏上投出来才 33 px 高，学生根本看不清。
+        // 顺带把「像距是物距的 2 倍，像高就是物高的 2 倍」这条规律摆在开局。
+        u: 10, v: 20, d: 1.0,
+        src: 'candle', hole: 'circle', holes: 1,
+        showRays: true, showMarks: true, showScale: true, showGrid: false,
+        view: 'perspective',
+        w: 1, h: 1, dpr: 0, dirty: true,
+        dragging: false, dragObj: null, hoverObj: null,
+        lastX: 0, lastY: 0, records: []
+      };
+
+      /* ============================================================
+       * 物理：小孔成像
+       * ------------------------------------------------------------
+       * m = v/u 是放大率（像距 ÷ 物距）；k = 1 + m 是模糊斑的放大系数。
+       * d 从界面上的 mm 换算成 cm 再进几何 —— 单位换算只在这一个地方发生。
+       * ============================================================ */
+      function optics() {
+        const u = state.u, v = state.v;
+        const m = v / u;
+        const k = 1 + m;
+        const d = state.d / 10;          // mm → cm
+        return { u, v, m, k, d, r: d / 2 };
+      }
+
+      // 小孔在挡板上的位置（挡板就是 y–z 平面，孔在原点附近）
+      // 界面上「2 × 2 四个小孔」那个按钮给的是 state.holes = 4，这里就必须判 4。
+      // 曾经判的是 === 2：按钮设成 4 之后这个分支永远不成立，于是【画面上只有一个孔、一个像】，
+      // 而侧栏的结论却在说「4 个孔 → 屏上有 4 个像」—— 按钮看着生效、画面完全没变。
+      function holes() {
+        if (state.holes === 4) {
+          const g = HOLE_GAP / 2;                       // 相邻两孔间距正好是 HOLE_GAP
+          return [[-g, -g], [-g, g], [g, -g], [g, g]];
+        }
+        return [[0, 0]];
+      }
+
+      // 单位孔径形状：三种形状都取【面积相同】（= π），这样「换孔形」只改变模糊斑的形状，
+      // 不会顺手把进光量也改掉，学生看到的差异才真的只来自形状。
+      function apertureShape(kind) {
+        if (kind === 'square') {
+          const h = Math.sqrt(Math.PI) / 2;                 // 边长 √π，面积 π
+          return [[-h, -h], [h, -h], [h, h], [-h, h]];
+        }
+        if (kind === 'triangle') {
+          // 正三角形外接圆半径 R，面积 = (3√3/4)R² = π  →  R = 2√π / 3^(3/4)。
+          // 这里曾经写成 3 * 3^0.25（= 3^1.25 = 3.948），分母大了 1.73 倍，
+          // 于是 R = 0.898 而不是 1.555，三角形面积只有 π/3 —— 换到三角形时进光量
+          // 顺带少了三分之二，学生看到的差异里混进了「孔变小了」，不再是纯形状差异。
+          const R = 2 * Math.sqrt(Math.PI) / Math.pow(3, 0.75);
+          const out = [];
+          for (let i = 0; i < 3; i++) {
+            const a = Math.PI / 2 + i * PI2 / 3;
+            out.push([Math.cos(a) * R, Math.sin(a) * R]);
+          }
+          return out;
+        }
+        const out = [];                                     // 圆：半径 1 的 32 边形（顶点在半径 1 上，面积 3.1215 ≈ π）
+        for (let i = 0; i < 32; i++) {
+          const a = i / 32 * PI2;
+          out.push([Math.cos(a), Math.sin(a)]);
+        }
+        return out;
+      }
+
+      // 把单位形状的「内部」铺一批均匀点，用来做模糊核的重影采样。
+      // 先按网格 + 拒绝法取满 256 个点，再用固定种子的洗牌打乱 ——
+      // 这样「取前 T 个」得到的永远是分布良好的一批（而不是挤在中心的螺旋）。
+      const SHAPE_PTS = {};
+      function shapePoints(kind) {
+        if (SHAPE_PTS[kind]) return SHAPE_PTS[kind];
+        const poly = apertureShape(kind);
+        const inPoly = (x, y) => {
+          let inside = false;
+          for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+            const xi = poly[i][0], yi = poly[i][1], xj = poly[j][0], yj = poly[j][1];
+            if ((yi > y) !== (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) inside = !inside;
+          }
+          return inside;
+        };
+        let lo = 1e9, hi = -1e9;
+        for (const p of poly) { lo = Math.min(lo, p[0], p[1]); hi = Math.max(hi, p[0], p[1]); }
+        const pts = [], N = 26;
+        for (let i = 0; i < N && pts.length < 256; i++) {
+          for (let j = 0; j < N && pts.length < 256; j++) {
+            const x = lo + (hi - lo) * (i + 0.5) / N;
+            const y = lo + (hi - lo) * (j + 0.5) / N;
+            if (inPoly(x, y)) pts.push([x, y]);
+          }
+        }
+        let seed = 20261005;
+        const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
+        for (let i = pts.length - 1; i > 0; i--) {
+          const j = Math.floor(rnd() * (i + 1));
+          const t = pts[i]; pts[i] = pts[j]; pts[j] = t;
+        }
+        SHAPE_PTS[kind] = pts;
+        return pts;
+      }
+
+      /* ============================================================
+       * 发光体：两种形状都写成 (y, z) 平面上的多边形
+       * ------------------------------------------------------------
+       * 用多边形而不是像素掩模，是因为像就是【物形按 m 放大、再绕光轴转 180°】，
+       * 直接把顶点投到屏上填色就是精确的理想像，不必靠密集采样去「点」出来。
+       * ============================================================ */
+      function rectPoly(y0, z0, y1, z1) {
+        return [[y0, z0], [y0, z1], [y1, z1], [y1, z0]];
+      }
+      function objectPolys(kind) {
+        if (kind === 'letter') {
+          // 一个正立的「F」：一根竖条 + 上下两根横条。倒过来一眼就能认出来。
+          const H = 3.4, W = 2.2, T = 0.60;
+          const hy = H / 2, hz = W / 2;
+          return [
+            rectPoly(-hy, -hz, hy, -hz + T),              // 竖条
+            rectPoly(hy - T, -hz, hy, hz),                // 上横条
+            rectPoly(0.12, -hz, 0.12 + T, hz - 0.42)      // 中横条
+          ];
+        }
+        // 蜡烛火焰：一个上尖下圆的水滴形，高 2.6 cm、宽 1.14 cm
+        const half = [
+          [1.30, 0.00], [1.05, 0.22], [0.72, 0.38], [0.32, 0.50], [-0.10, 0.57],
+          [-0.55, 0.55], [-0.98, 0.42], [-1.24, 0.22], [-1.30, 0.00]
+        ];
+        const out = half.slice();
+        for (let i = half.length - 2; i >= 1; i--) out.push([half[i][0], -half[i][1]]);
+        return [out];
+      }
+      // 发光体的「物高」——直接从多边形算，不写死常数，换发光体时读数自动跟着变
+      function objectHeight(kind) {
+        let lo = 1e9, hi = -1e9;
+        for (const poly of objectPolys(kind)) for (const p of poly) { lo = Math.min(lo, p[0]); hi = Math.max(hi, p[0]); }
+        return hi - lo;
+      }
+      // 发光体自身的 (y,z) 包围盒。与 imageBBox 同一个来源（都是 objectPolys），不另写一份几何。
+      function polyBBox(polys) {
+        let y0 = 1e9, y1 = -1e9, z0 = 1e9, z1 = -1e9;
+        for (const poly of polys) for (const [y, z] of poly) {
+          y0 = Math.min(y0, y); y1 = Math.max(y1, y);
+          z0 = Math.min(z0, z); z1 = Math.max(z1, z);
+        }
+        return { y0: y0, y1: y1, z0: z0, z1: z1 };
+      }
+      // 发光体的【世界 AABB】—— 避让必须按它算，不能只按 (y,z) 剖面。
+      // 蜡烛是绕【竖直轴】的回转体：它在 x 和 z 两个方向各铺开一个半径，
+      // 只投影 (y,z) 四个角会漏掉 x 方向那一半，于是「物高」标签照样压在火焰上
+      // （实测侧视图压住 30%，而 (y,z) 版障碍盒报的是 0%）。
+      // F 形是三个薄盒，x 方向只有半个厚度。
+      function sourceAABB(x, kind) {
+        const bb = polyBBox(objectPolys(kind));
+        if (kind === 'letter') return { x0: x - 0.15, x1: x + 0.15, y0: bb.y0, y1: bb.y1, z0: bb.z0, z1: bb.z1 };
+        const R = Math.max(Math.abs(bb.z0), Math.abs(bb.z1));
+        return { x0: x - R, x1: x + R, y0: bb.y0, y1: bb.y1, z0: -R, z1: R };
+      }
+
+      /* ============================================================
+       * 相机：轨道 + 透视投影（与站内其它 lab3d 页面同一套）
+       * ============================================================ */
+      // 取景包络写成【固定的一个长方体】，不跟 u/v/d 走。
+      // 跟着滑块走的话，一拖蜡烛整个画面就跟着缩放，像素差分与「像有没有变大」全都测不准。
+      function envelopePoints() {
+        const pts = [], N = 5;
+        for (let a = 0; a < 3; a++) {
+          for (let b = a + 1; b < 3; b++) {
+            const c = 3 - a - b;
+            for (const sa of [-1, 1]) {
+              for (const sb of [-1, 1]) {
+                for (let i = 0; i <= N; i++) {
+                  const t = (i / N) * 2 - 1;
+                  const p = [0, 0, 0];
+                  p[a] = sa * ENV[a]; p[b] = sb * ENV[b]; p[c] = t * ENV[c];
+                  pts.push(add(p, TARGET));
+                }
+              }
+            }
+          }
+        }
+        return pts;
+      }
+
+      function makeCam(q, w, h) {
+        const cy = Math.cos(state.yaw), sy = Math.sin(state.yaw);
+        const cp = Math.cos(state.pitch), sp = Math.sin(state.pitch);
+        const dir = [cp * sy, sp, cp * cy];              // 目标 → 相机
+        q.dist = CAMD / state.zoom;
+        q.eye = add(TARGET, scl(dir, q.dist));
+        q.fwd = scl(dir, -1);
+        q.right = vnorm(cross(q.fwd, [0, 1, 0]));
+        q.up = cross(q.right, q.fwd);
+        const pts = envelopePoints();
+        let loR = 1e9, hiR = -1e9, loU = 1e9, hiU = -1e9;
+        for (const p of pts) {
+          const v = sub(p, q.eye);
+          const z = Math.max(0.05, dot(v, q.fwd));
+          const r = dot(v, q.right) / z, u = dot(v, q.up) / z;
+          loR = Math.min(loR, r); hiR = Math.max(hiR, r);
+          loU = Math.min(loU, u); hiU = Math.max(hiU, u);
+        }
+        // 注意：宽扁画布下 h 那一项永远更小、永远由它说了算 —— 想改取景比例得改 h 项。
+        const s = Math.min(w * 0.95 / Math.max(1e-6, hiR - loR),
+                           h * 0.93 / Math.max(1e-6, hiU - loU));
+        q.focal = s;
+        q.px = w * 0.5 - (loR + hiR) * 0.5 * s;
+        q.py = h * 0.5 + (loU + hiU) * 0.5 * s;
+      }
+      function project(p, q) {
+        const v = sub(p, q.eye);
+        const z = Math.max(0.05, dot(v, q.fwd));
+        const s = q.focal / z;
+        return { x: q.px + dot(v, q.right) * s, y: q.py - dot(v, q.up) * s, s: s, z: z };
+      }
+      const pxOf = (p, q) => project(p, q).s;
+
+      /* ============================================================
+       * 绘图小工具
+       * ============================================================ */
+      function trace(pts) {
+        ctx.beginPath();
+        pts.forEach((p, k) => k ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+      }
+      function poly(pts, fill, stroke, lw) {
+        if (!pts || pts.length < 2) return;
+        trace(pts); ctx.closePath();
+        if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+        if (stroke) { ctx.lineWidth = lw || 1; ctx.strokeStyle = stroke; ctx.stroke(); }
+      }
+      function line(pts, color, lw, dash) {
+        if (!pts || pts.length < 2) return;
+        trace(pts);
+        ctx.setLineDash(dash || []);
+        ctx.lineWidth = lw; ctx.strokeStyle = color; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+        ctx.stroke(); ctx.setLineDash([]);
+      }
+      function glowLine(pts, color, glow, lw) {
+        line(pts, glow, lw * 3.6);
+        line(pts, color, lw);
+      }
+      function dot2(p, r, fill, stroke, lw) {
+        ctx.beginPath(); ctx.arc(p.x, p.y, Math.max(0.5, r), 0, PI2);
+        if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+        if (stroke) { ctx.lineWidth = lw || 1; ctx.strokeStyle = stroke; ctx.stroke(); }
+      }
+      // 长方体：按世界法线做背面剔除（比按投影有向面积可靠，不受投影翻转影响）
+      const BOX_FACES = [
+        { i: [0, 1, 2, 3], n: [0, 0, -1] },
+        { i: [4, 7, 6, 5], n: [0, 0, 1] },
+        { i: [0, 4, 5, 1], n: [0, -1, 0] },
+        { i: [3, 2, 6, 7], n: [0, 1, 0] },
+        { i: [0, 3, 7, 4], n: [-1, 0, 0] },
+        { i: [1, 5, 6, 2], n: [1, 0, 0] }
+      ];
+      function box3(lo, hi, fillOf, stroke, lw) {
+        const P = [
+          [lo[0], lo[1], lo[2]], [hi[0], lo[1], lo[2]], [hi[0], hi[1], lo[2]], [lo[0], hi[1], lo[2]],
+          [lo[0], lo[1], hi[2]], [hi[0], lo[1], hi[2]], [hi[0], hi[1], hi[2]], [lo[0], hi[1], hi[2]]
+        ];
+        for (const f of BOX_FACES) {
+          const c = [0, 0, 0];
+          for (const k of f.i) { c[0] += P[k][0] / 4; c[1] += P[k][1] / 4; c[2] += P[k][2] / 4; }
+          if (dot(f.n, sub(q0.eye, c)) <= 0) continue;
+          poly(f.i.map(k => project(P[k], q0)), fillOf(f.n), stroke, lw);
+        }
+      }
+      // 竖直的矩形薄板（挡板、光屏都是这一类）
+      function panel3(x, half, thick, fillFront, fillEdge, stroke) {
+        box3([x - thick / 2, -half, -half], [x + thick / 2, half, half],
+             n => Math.abs(n[0]) > 0.5 ? fillFront : fillEdge, stroke, 1.2);
+      }
+
+      /* ============================================================
+       * 标签：几何、避让、绘制分三层（与站内其它 lab3d 页面同一套）
+       *   boxOf()      —— 唯一的盒子几何，避让与绘制共用
+       *   tickLabel()  —— 刻度数字，位置固定不许挪，但登记成障碍物
+       *   label()      —— 说明标签，入队；本帧所有几何画完后再统一落笔
+       * 统一落笔很关键：光屏上的像、蜡烛的火焰都是后画的，标签当场画会被压住。
+       * ============================================================ */
+      let frameBoxes = [];
+      const pendingLabels = [];
+      function fontOf(size) { return '600 ' + size + 'px Inter, "Microsoft YaHei", sans-serif'; }
+      function boxOf(p, text, size, align, baseline) {
+        ctx.font = fontOf(size);
+        const wpx = ctx.measureText(text).width;
+        const pad = 4;
+        const x = p.x + (align === 'left' ? -4 : align === 'right' ? 4 : 0);
+        const bx = align === 'left' ? x - pad : align === 'right' ? x - wpx - pad : x - wpx / 2 - pad;
+        const by = baseline === 'bottom' ? p.y - size * 1.44 - pad : p.y - size * 0.72 - pad * 0.5;
+        return { x0: bx, y0: by, x1: bx + wpx + pad * 2, y1: by + size * 1.44 + pad, x, wpx, y: p.y };
+      }
+      function overlapArea(a, b) {
+        const w = Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0);
+        const h = Math.min(a.y1, b.y1) - Math.max(a.y0, b.y0);
+        return (w > 0 && h > 0) ? w * h : 0;
+      }
+      // 器材【本体】也要登记成障碍物：标签绝不许压住它自己标注的那个东西。
+      // 曾经只把「其它标签」当障碍，于是「像高 h′」正好落在像的正中间、把它切掉一半，
+      // 「孔 ⌀…」压在孔上、「物高 h」压在火焰上 —— 三处要害全被自己的标注盖住。
+      // 权重给 8：压住刻度数字（权重 1）时挪一步（代价 100）常常不划算、标签宁可不动；
+      // 但压住「像」这种要害必须不惜挪两三步。两类障碍用同一个代价函数、只差一个倍率。
+      function bodyBox(pts, grow, tag) {
+        let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+        for (const p of pts) {
+          if (!p || !isFinite(p.x) || !isFinite(p.y)) continue;
+          x0 = Math.min(x0, p.x); x1 = Math.max(x1, p.x);
+          y0 = Math.min(y0, p.y); y1 = Math.max(y1, p.y);
+        }
+        if (x0 > x1) return null;                       // 全部退化（比如正侧视时的薄板）
+        const bx = { x0: x0 - grow, y0: y0 - grow, x1: x1 + grow, y1: y1 + grow,
+                     kind: 'body', text: tag || '', weight: 8 };
+        frameBoxes.push(bx);
+        return bx;
+      }
+      function drawLabelBox(bx, text, color, size, align, baseline) {
+        ctx.fillStyle = 'rgba(2,6,23,.74)';
+        ctx.fillRect(bx.x0, bx.y0, bx.x1 - bx.x0, bx.y1 - bx.y0);
+        ctx.font = fontOf(size);
+        ctx.textAlign = align || 'center';
+        ctx.textBaseline = baseline || 'middle';
+        ctx.fillStyle = color;
+        ctx.fillText(text, bx.x, bx.y);
+      }
+      function tickLabel(p, text, color, size) {
+        const bx = boxOf(p, text, size, 'center', 'middle');
+        drawLabelBox(bx, text, color, size, 'center', 'middle');
+        bx.kind = 'tick'; bx.text = text;
+        frameBoxes.push(bx);
+      }
+      function label(p, text, color, size, align, baseline, world) {
+        pendingLabels.push({ p, text, color, size, align, baseline, world });
+      }
+      // 光屏是不透光的实体。锚点落在屏【背后】的标签，在「正对光屏」视角下会整排浮到屏上
+      // （蜡烛、挡板全在屏后，实测「孔 ⌀…」「发光点」两个标签 100% 压在像上），
+      // 把这一视角真正要看的那个像盖住。实体被挡住了，它的标注也该一起收起来。
+      // 判据是真正的视线遮挡：从眼睛到锚点的连线，是否在到达锚点之前穿过了屏面。
+      function hiddenByScreen(w, o) {
+        const E = q0 && q0.eye;
+        if (!E || !w) return false;
+        const dx = w[0] - E[0];
+        if (Math.abs(dx) < 1e-6) return false;
+        const t = (o.v - E[0]) / dx;
+        if (t <= 0 || t >= 1 - 1e-9) return false;      // 屏不在眼睛与锚点之间
+        const hy = E[1] + (w[1] - E[1]) * t, hz = E[2] + (w[2] - E[2]) * t;
+        const H = SCREEN_S / 2;
+        return Math.abs(hy) <= H && Math.abs(hz) <= H;
+      }
+      // 候选位移：8 个方向 × 0~3 步。挪一步付 100 的代价（约半个字的面积），
+      // 所以「只是压住一条边」时标签宁可不动，「整块压住刻度数字」时才让开。
+      const LABEL_DIRS = [[0, 0], [0, 1], [0, -1], [1, 0], [-1, 0], [1, 1], [-1, 1], [1, -1], [-1, -1]];
+      // 把盒子整体推回画布内（对每个候选位置都做，所以「留在原地」也会被推进来）。
+      // 标签字号是固定 CSS px，窄屏画布一小，端点落在画面外的标签就会被裁掉半个字。
+      function fitBox(bx) {
+        const W = state.w, H = state.h, m = 2;
+        let dx = 0, dy = 0;
+        if (bx.x0 < m) dx = m - bx.x0; else if (bx.x1 > W - m) dx = W - m - bx.x1;
+        if (bx.y0 < m) dy = m - bx.y0; else if (bx.y1 > H - m) dy = H - m - bx.y1;
+        if (dx) { bx.x0 += dx; bx.x1 += dx; bx.x += dx; }
+        if (dy) { bx.y0 += dy; bx.y1 += dy; bx.y += dy; }
+        return bx;
+      }
+      function flushLabels(o) {
+        for (const it of pendingLabels) {
+          const { p, text, size, align, baseline, world } = it;
+          if (hiddenByScreen(world, o)) continue;        // 被光屏挡住的标注不画
+          let best = null, bestScore = Infinity;
+          for (const [ux, uy] of LABEL_DIRS) {
+            for (let k = 0; k <= 3; k++) {
+              if (ux === 0 && uy === 0 && k > 0) continue;
+              const cand = { x: p.x + ux * k * size * 1.5, y: p.y + uy * k * size * 1.3 };
+              const bx = fitBox(boxOf(cand, text, size, align, baseline));
+              let sc = k * 100;
+              // 障碍物分两档：器材本体（weight 8）比刻度数字（weight 1）更该让开
+              for (const o of frameBoxes) sc += (o.weight || 1) * overlapArea(bx, o);
+              if (sc < bestScore) { bestScore = sc; best = bx; }
+            }
+          }
+          best.kind = 'label'; best.text = text;
+          drawLabelBox(best, text, it.color, size, align, baseline);
+          frameBoxes.push(best);
+        }
+        pendingLabels.length = 0;
+      }
+      let q0 = null;   // 本帧的相机，供 box3() 之类的短工具用
+
+      /* ============================================================
+       * 场景绘制
+       * ============================================================ */
+      function drawBackdrop(w, h) {
+        const g = ctx.createRadialGradient(w * 0.5, h * 0.16, 10, w * 0.5, h * 0.5, Math.max(w, h) * 0.78);
+        g.addColorStop(0, '#0b2036');
+        g.addColorStop(0.55, '#061423');
+        g.addColorStop(1, '#020a14');
+        ctx.fillStyle = g;
+        ctx.fillRect(0, 0, w, h);
+      }
+
+      // 绕竖直轴的回转体：把每一层的水平圆投影出来，取屏幕左右极点拼成轮廓。
+      // （圆盘/圆柱侧看会退化成一条线，所以左右极点必须逐层在屏幕空间里现求。）
+      function revolveY(q, cx, cz, profile, N, fill, stroke) {
+        const L = [], R = [];
+        for (const [r, y] of profile) {
+          let lo = null, hi = null;
+          for (let i = 0; i < N; i++) {
+            const a = i / N * PI2;
+            const p = project([cx + Math.cos(a) * r, y, cz + Math.sin(a) * r], q);
+            if (!lo || p.x < lo.x) lo = p;
+            if (!hi || p.x > hi.x) hi = p;
+          }
+          L.push(lo); R.push(hi);
+        }
+        const out = R.concat(L.slice().reverse());
+        poly(out, fill, stroke, 1.2);
+        return out;
+      }
+
+      // 光具座：一条长台面 + 前缘的厘米刻度。
+      // 刻度按【到小孔的距离】标注（两边都是正数），这正是学生要读的 u 与 v。
+      function drawBench(q) {
+        box3([BENCH_X0, BENCH_Y - 1.0, -BENCH_HZ], [BENCH_X1, BENCH_Y, BENCH_HZ],
+          n => n[1] > 0.5 ? '#16283f' : (Math.abs(n[2]) > 0.5 ? '#0d1c2e' : '#0a1626'),
+          'rgba(56,189,248,.18)', 1);
+        if (!state.showScale) return;
+        const zf = BENCH_HZ - 0.02;
+        for (let x = Math.round(BENCH_X0); x <= Math.round(BENCH_X1); x++) {
+          const major = x % 5 === 0;
+          const a = project([x, BENCH_Y + 0.01, zf], q);
+          const b = project([x, BENCH_Y + 0.01, zf - (major ? 1.05 : 0.5)], q);
+          line([a, b], major ? 'rgba(148,197,220,.85)' : 'rgba(120,160,190,.45)', major ? 1.4 : 1, []);
+          if (major && x !== 0) tickLabel({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 + 9 },
+                                          String(Math.abs(x)), 'rgba(160,200,220,.9)', 10);
+        }
+      }
+
+      // 发光体：蜡烛（火焰做成回转体，侧看也有体积）/ F 形光源（三根薄条拼出来）
+      function drawSource(q, o) {
+        const x = -o.u;
+        // 发光体本体先登记成障碍物 —— 「物高」「发光点」两个标签都不许压在它身上
+        const sb = sourceAABB(x, state.src), corners = [];
+        for (const sx of [sb.x0, sb.x1]) for (const sy of [sb.y0, sb.y1]) for (const sz of [sb.z0, sb.z1])
+          corners.push(project([sx, sy, sz], q));
+        bodyBox(corners, 2, '发光体');
+        if (state.src === 'letter') {
+          const T = 0.30, hy = 1.7, hz = 1.1;
+          const bars = [
+            [-hy, -hz, hy, -hz + 0.60],
+            [hy - 0.60, -hz, hy, hz],
+            [0.12, -hz, 0.12 + 0.60, hz - 0.42]
+          ];
+          for (const [y0, z0, y1, z1] of bars) {
+            box3([x - T / 2, y0, z0], [x + T / 2, y1, z1],
+              n => Math.abs(n[0]) > 0.5 ? 'rgba(255,236,190,.92)' : 'rgba(255,214,140,.72)',
+              'rgba(255,244,214,.9)', 1);
+          }
+          // 支架
+          line([project([x, BENCH_Y, 0], q), project([x, -hy, 0], q)], 'rgba(148,163,184,.5)', 2, []);
+          return;
+        }
+        // 蜡烛：托座 + 蜡身 + 烛芯 + 火焰
+        box3([x - 1.5, BENCH_Y, -1.5], [x + 1.5, BENCH_Y + 0.30, 1.5],
+          n => n[1] > 0.5 ? 'rgba(120,150,180,.55)' : 'rgba(70,95,125,.55)', 'rgba(148,163,184,.35)', 1);
+        revolveY(q, x, 0, [[0.02, BENCH_Y + 0.28], [0.46, BENCH_Y + 0.34], [0.46, -1.62],
+                           [0.44, -1.50], [0.41, -1.44]], 14, '#e8e2d4', 'rgba(255,255,255,.35)');
+        line([project([x, -1.44, 0], q), project([x, -1.24, 0], q)], '#3b3226', 2.2, []);
+        const prof = [[0.02, -1.30], [0.32, -1.10], [0.47, -0.85], [0.55, -0.55], [0.575, -0.25],
+                      [0.56, 0.05], [0.50, 0.35], [0.40, 0.65], [0.27, 0.90], [0.16, 1.10], [0.02, 1.30]];
+        const halo = revolveY(q, x, 0, prof.map(([r, y]) => [r * 2.15, y]), 16, 'rgba(255,150,60,.13)', null);
+        void halo;
+        revolveY(q, x, 0, prof, 16, 'rgba(255,178,72,.95)', 'rgba(255,232,170,.85)');
+        revolveY(q, x, 0, prof.map(([r, y]) => [r * 0.52, y]), 14, 'rgba(255,246,205,.9)', null);
+      }
+
+      // 小孔的【视觉半径】：真实孔径只有 0.2–6 mm，在 14 cm 的挡板上最小处不足半个像素，
+      // 画成真实尺寸就完全看不见、也分不出形状。这里用幂函数压一下（0.2mm → 3.5px，6mm → 16px），
+      // 保证孔形始终可辨；读数与成像模糊用的都是【真实孔径】，孔旁边也标了真实值。
+      function holeVisualR(dmm) { return 0.16 * Math.pow(dmm / 0.2, 0.45); }
+
+      function drawPlate(q, o) {
+        const H = PLATE_S / 2, th = 0.13, vr = holeVisualR(state.d);
+        const hs = holes();
+        for (const xf of [-th, th]) {
+          const outer = [[xf, -H, -H], [xf, H, -H], [xf, H, H], [xf, -H, H]].map(p => project(p, q));
+          ctx.beginPath();
+          outer.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+          ctx.closePath();
+          for (const [ay, az] of hs) {
+            const ring = [];
+            for (let i = 0; i < 24; i++) {
+              const a = i / 24 * PI2;
+              ring.push(project([xf, ay + Math.cos(a) * vr, az + Math.sin(a) * vr], q));
+            }
+            ring.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+            ctx.closePath();
+          }
+          ctx.fillStyle = xf < 0 ? 'rgba(30,41,59,.97)' : 'rgba(15,23,42,.97)';
+          ctx.fill('evenodd');
+          ctx.lineWidth = 1; ctx.strokeStyle = 'rgba(120,150,180,.35)'; ctx.stroke();
+        }
+        // 支架
+        line([project([0, BENCH_Y, 0], q), project([0, -H, 0], q)], 'rgba(148,163,184,.45)', 2, []);
+        // 小孔本体登记成障碍物 —— 「孔 ⌀…」标签不许把孔盖住（孔本来就小，一压就看不见了）
+        const holePts = [];
+        for (const [ay, az] of hs) {
+          for (let i = 0; i < 24; i++) {
+            const a = i / 24 * PI2;
+            holePts.push(project([0, ay + Math.cos(a) * vr, az + Math.sin(a) * vr], q));
+          }
+        }
+        bodyBox(holePts, 3, '小孔');
+        // 孔旁边标真实孔径
+        const hw = [0, hs[0][0] + vr + 0.5, hs[0][1]];
+        label(project(hw, q), '孔 ⌀' + state.d.toFixed(1) + ' mm', '#fbbf24', 11, undefined, undefined, hw);
+        const pw = [0, H - 0.7, H - 0.5];
+        label(project(pw, q), '带小孔的挡板', 'rgba(199,210,254,.95)', 11, undefined, undefined, pw);
+      }
+
+      function drawScreen(q, o) {
+        const H = SCREEN_S / 2, th = 0.22;
+        box3([o.v - th, -H, -H], [o.v + th, H, H],
+          n => Math.abs(n[0]) > 0.5 ? 'rgba(24,38,58,.94)' : 'rgba(14,24,38,.96)',
+          'rgba(120,170,205,.45)', 1.2);
+        if (state.showGrid) {
+          for (let k = -4; k <= 4; k++) {
+            const y = k * (H / 4.5), z = k * (H / 4.5);
+            line([project([o.v, y, -H], q), project([o.v, y, H], q)], 'rgba(120,170,205,.16)', 1, []);
+            line([project([o.v, -H, z], q), project([o.v, H, z], q)], 'rgba(120,170,205,.16)', 1, []);
+          }
+        }
+        line([project([o.v, BENCH_Y, 0], q), project([o.v, -H, 0], q)], 'rgba(148,163,184,.45)', 2, []);
+        const sw = [o.v, H - 0.7, -H + 0.5];
+        label(project(sw, q), '光屏', 'rgba(199,210,254,.95)', 12, undefined, undefined, sw);
+      }
+
+      /* ============================================================
+       * 成像：理想像 ⊛ 孔径核
+       * ------------------------------------------------------------
+       * 理想像 = 物形按 m = v/u 放大、再绕光轴转 180°（所以一定倒立）。
+       * 真实像 = 理想像与「孔径核」做卷积 —— 也就是把理想像沿着孔径形状
+       * 撒 T 个重影、每个重影的透明度取 1/T，叠加起来。
+       *   · 孔很小时核只有一两个像素，T = 1，像就是清清楚楚的理想像；
+       *   · 孔变大时核变大，重影摊开，像变模糊，但【几何中心与理想像完全重合】，
+       *     边缘按核的宽度向外糊出去 —— 这就是「孔越大越糊，但大小位置不变」。
+       * 用重影叠加而不是逐点撒斑，是因为「点撒斑」要求采样密到斑的尺度，
+       * 孔小时需要上万个点；而重影法一次只要几十个多边形，且形状是精确的。
+       * ============================================================ */
+      function drawImageOnScreen(q, o) {
+        const { v, k, r } = o;
+        const sc = pxOf([v, 0, 0], q);              // 屏面处 1 cm 对应多少像素
+        const kernR = k * r * sc;                   // 模糊核在屏上的半径（px）
+        const taps = clamp(Math.ceil(kernR / 2.0), 1, TAPS_MAX);
+        const pts = shapePoints(state.hole);
+        const polys = objectPolys(state.src);
+        const hs = holes();
+        const alpha = 0.86 / taps;
+        const tint = state.src === 'letter' ? '255,232,176' : '255,178,92';
+
+        const H = SCREEN_S / 2;
+        const quad = [[v, -H, -H], [v, H, -H], [v, H, H], [v, -H, H]].map(p => project(p, q));
+        ctx.save();
+        trace(quad); ctx.closePath(); ctx.clip();    // 像超出光屏的部分本来就被屏边切掉
+        ctx.globalCompositeOperation = 'lighter';
+        for (const [ay, az] of hs) {
+          for (let t = 0; t < taps; t++) {
+            const sp = pts[Math.floor(t * pts.length / taps) % pts.length];
+            for (const p2 of polys) {
+              // 用 imagePoint() 这一个公式算像点，不在这里另抄一遍 ——
+              // 抄两遍的话「把符号写反」这类错误只会在其中一处出现，自检读到的是另一处，永远绿。
+              const verts = p2.map(([y, z]) =>
+                project(imagePoint(y, z, ay + sp[0] * r, az + sp[1] * r, o), q));
+              trace(verts); ctx.closePath();
+              ctx.fillStyle = 'rgba(' + tint + ',' + alpha + ')';
+              ctx.fill();
+            }
+          }
+        }
+        ctx.restore();
+        // 像本体登记成障碍物 —— 「像高 h′」标签曾经正好落在像的正中间，把像切成两半。
+        // 卷积会把像的边缘向外糊出 kernR，所以障碍盒也按 kernR 放大，糊出去的部分同样不许压。
+        const ob = polyBBox(polys);
+        bodyBox([[ob.y0, ob.z0], [ob.y0, ob.z1], [ob.y1, ob.z0], [ob.y1, ob.z1]]
+          .map(([y, z]) => project(imagePoint(y, z, 0, 0, o), q)), Math.max(3, kernR), '像');
+        return { taps: taps, kernR: kernR };
+      }
+
+      // 光路：从发光体的上下两端各画三条光线 —— 两条打在不透光的挡板上停住，
+      // 一条正好穿过小孔、落在屏上的像点。这一眼就是「光沿直线传播」。
+      function drawRays(q, o) {
+        if (!state.showRays) return;
+        // 发光体被光屏挡住时（「正对光屏」视角下蜡烛整个在屏后面），整条光路都在屏后面，
+        // 那就整条都不画 —— 否则两条光线会整条浮在不透明的屏面上，等于告诉学生光能穿透屏。
+        // 判据用发光体的【中心点】而不是逐点裁剪：逐点裁会把「光线落到屏上」那最后一小段也
+        // 裁掉，透视视角下光线就停在离像 30 px 的地方，看着像渲染坏了（教材上光线是画到像上的）。
+        const srcSeen = !hiddenByScreen([-o.u, 0, 0], o);
+        const h = objectHeight(state.src);
+        const [ay, az] = holes()[0];
+        if (srcSeen) for (const sy of [h / 2, -h / 2]) {
+          const S = [-o.u, sy, 0];
+          const P = imagePoint(sy, 0, ay, az, o);      // 与成像共用同一个像点公式
+          const mid = [0, ay, az];
+          glowLine([project(S, q), project(mid, q), project(P, q)], 'rgba(255,225,140,.95)', 'rgba(255,190,70,.20)', 1.9);
+          for (const wy of [4.6, -4.6]) {
+            const w = [0, wy, 0];
+            const d = sub(w, S), t = (0 - S[0]) / d[0];
+            const hit = add(S, scl(d, t));
+            if (Math.abs(hit[1]) > PLATE_S / 2) continue;
+            line([project(S, q), project(hit, q)], 'rgba(255,150,70,.30)', 1.2, []);
+          }
+          dot2(project(S, q), 2.6, '#ffd27a', null, 0);
+          dot2(project(P, q), 2.6, '#ffe9b0', null, 0);
+        }
+        const rw1 = [-o.u, h / 2 + 0.55, 0], rw2 = [0, 6.2, 0];
+        label(project(rw1, q), '发光点', 'rgba(255,210,140,.95)', 11, undefined, undefined, rw1);
+        label(project(rw2, q), '只有穿过小孔的光能到达光屏', 'rgba(255,190,110,.9)', 11, undefined, undefined, rw2);
+      }
+
+      // 尺寸标注：物高 h、像高 h′、物距 u、像距 v
+      function drawMarks(q, o) {
+        if (!state.showMarks) return;
+        const h = objectHeight(state.src);
+        const yb = BENCH_Y + 0.9, zb = BENCH_HZ + 0.6;
+        // 尺寸标签【不能】锚在尺寸线的中点上 —— 那正好是「物」和「像」的正中央，
+        // 标签会把它们整个盖住（实测「像高 h′」压掉像的 69%）。
+        // 改成沿【垂直于尺寸线】的方向让开，让开多少按标签盒子在法线方向上的投影算：
+        // 竖直的尺寸线（物高/像高）得让开半个标签宽，水平的（物距/像距）只要让开半个标签高。
+        // 法线两侧各算一遍代价，取压得少的那一侧；代价表就是本帧已登记好的器材本体障碍。
+        const dim = (a, b, text, color) => {
+          const A = project(a, q), B = project(b, q);
+          line([A, B], color, 1.3, [5, 4]);
+          dot2(A, 2, color, null, 0); dot2(B, 2, color, null, 0);
+          const mid = { x: (A.x + B.x) / 2, y: (A.y + B.y) / 2 };
+          const wmid = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2];
+          const dx = B.x - A.x, dy = B.y - A.y, L = Math.hypot(dx, dy) || 1;
+          const nx = -dy / L, ny = dx / L;               // 尺寸线的单位法线（屏幕空间）
+          const wpx = boxOf(mid, text, 11).wpx, hpx = 11 * 1.44;
+          const off = Math.abs(nx) * (wpx / 2) + Math.abs(ny) * (hpx / 2) + 9;
+          let best = mid, bestSc = Infinity;
+          for (const sgn of [1, -1]) {
+            const cand = { x: mid.x + nx * off * sgn, y: mid.y + ny * off * sgn };
+            const bx = fitBox(boxOf(cand, text, 11));
+            let sc = 0;
+            for (const o of frameBoxes) sc += (o.weight || 1) * overlapArea(bx, o);
+            if (sc < bestSc) { bestSc = sc; best = cand; }
+          }
+          label(best, text, color, 11, undefined, undefined, wmid);
+        };
+        // 物高 / 像高（像高那一段也走 imagePoint，与成像几何同源）
+        dim([-o.u, -h / 2, 0], [-o.u, h / 2, 0], '物高 h = ' + h.toFixed(1) + ' cm', '#fcd34d');
+        dim(imagePoint(h / 2, 0, 0, 0, o), imagePoint(-h / 2, 0, 0, 0, o),
+            '像高 h′ = ' + (h * o.m).toFixed(1) + ' cm', '#fcd34d');
+        // 物距 / 像距
+        dim([-o.u, yb, zb], [0, yb, zb], '物距 u = ' + o.u.toFixed(1) + ' cm', '#7dd3fc');
+        dim([0, yb, zb], [o.v, yb, zb], '像距 v = ' + o.v.toFixed(1) + ' cm', '#7dd3fc');
+      }
+
+      // 小孔放大镜：真实孔径太小、形状分不出，右上角给一个固定倍率的示意。
+      // 只画形状，尺寸以旁边标的真实直径为准（宽度不够就不画，免得挤掉画面）。
+      function drawApertureInset(q) {
+        if (state.w < 560) return;
+        const S = 88, M = 12;
+        const x0 = state.w - S - M, y0 = M;
+        ctx.save();
+        ctx.beginPath();
+        ctx.roundRect ? ctx.roundRect(x0, y0, S, S, 10) : ctx.rect(x0, y0, S, S);
+        ctx.fillStyle = 'rgba(2,6,23,.72)';
+        ctx.fill();
+        ctx.lineWidth = 1; ctx.strokeStyle = 'rgba(56,189,248,.35)'; ctx.stroke();
+        const cx = x0 + S / 2, cy = y0 + S / 2 - 6, R = 26;
+        const sp = apertureShape(state.hole);
+        ctx.beginPath();
+        sp.forEach((p, i) => {
+          const px = cx + p[0] * R, py = cy - p[1] * R;
+          i ? ctx.lineTo(px, py) : ctx.moveTo(px, py);
+        });
+        ctx.closePath();
+        ctx.fillStyle = 'rgba(255,205,110,.9)';
+        ctx.fill();
+        ctx.restore();
+        // 右上角的放大镜面板也是障碍物，标签不许压上去
+        frameBoxes.push({ x0: x0 - 2, y0: y0 - 2, x1: x0 + S + 2, y1: y0 + S + 2,
+                          kind: 'body', text: '孔径放大镜', weight: 8 });
+        tickLabel({ x: cx, y: y0 + S - 13 }, '孔 ⌀' + state.d.toFixed(1) + ' mm', '#fbbf24', 10);
+      }
+
+      function render() {
+        const w = state.w, h = state.h;
+        ctx.setTransform(state.dpr, 0, 0, state.dpr, 0, 0);
+        ctx.globalCompositeOperation = 'source-over';
+        drawBackdrop(w, h);
+        const q = {};
+        makeCam(q, w, h);
+        q0 = q;
+        const o = optics();
+        frameBoxes = []; pendingLabels.length = 0;
+
+        drawBench(q);
+        // 光轴
+        line([project([BENCH_X0 + 1, 0, 0], q), project([BENCH_X1 - 1, 0, 0], q)],
+             'rgba(226,232,240,.35)', 1, [7, 6]);
+        drawSource(q, o);
+        drawPlate(q, o);
+        drawScreen(q, o);
+        const drawn = drawImageOnScreen(q, o);
+        drawRays(q, o);
+        drawMarks(q, o);
+        drawApertureInset(q);
+        flushLabels(o);
+        state.drawn = drawn;
+      }
+      /* ============================================================
+       * 尺寸 / 交互
+       * ============================================================ */
+      function resize() {
+        const rect = canvas.getBoundingClientRect();
+        if (!rect.width || !rect.height) return;
+        const dpr = Math.min(2, window.devicePixelRatio || 1);
+        state.w = rect.width; state.h = rect.height; state.dpr = dpr;
+        canvas.width = Math.round(rect.width * dpr);
+        canvas.height = Math.round(rect.height * dpr);
+        state.dirty = true;
+      }
+
+      function projRect(box, q) {
+        let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+        for (const sx of [box[0][0], box[1][0]]) {
+          for (const sy of [box[0][1], box[1][1]]) {
+            for (const sz of [box[0][2], box[1][2]]) {
+              const p = project([sx, sy, sz], q);
+              x0 = Math.min(x0, p.x); x1 = Math.max(x1, p.x);
+              y0 = Math.min(y0, p.y); y1 = Math.max(y1, p.y);
+            }
+          }
+        }
+        return { x0, y0, x1, y1, area: (x1 - x0) * (y1 - y0) };
+      }
+
+      // 命中测试：按【投影包围盒】判，多个候选里取「包含光标的、面积最小的那个」
+      // —— 光屏很大，正对视角下会把蜡烛罩进去，用面积排序才不会永远选中光屏。
+      function objHit(x, y) {
+        const q = {}; makeCam(q, state.w, state.h);
+        const o = optics();
+        const S = SCREEN_S / 2;
+        const cands = [
+          { k: 'src', box: state.src === 'letter'
+              ? [[-o.u - 0.6, -1.9, -1.3], [-o.u + 0.6, 1.9, 1.3]]
+              : [[-o.u - 1.6, BENCH_Y + 0.2, -1.6], [-o.u + 1.6, 1.5, 1.6]] },
+          { k: 'screen', box: [[o.v - 0.6, -S, -S], [o.v + 0.6, S, S]] }
+        ];
+        const hits = [];
+        for (const c of cands) {
+          const r = projRect(c.box, q);
+          if (x >= r.x0 && x <= r.x1 && y >= r.y0 && y <= r.y1) hits.push({ k: c.k, area: r.area });
+        }
+        if (!hits.length) return null;
+        hits.sort((a, b) => a.area - b.area);
+        return hits[0].k;
+      }
+
+      function pointerPos(e) {
+        const rect = canvas.getBoundingClientRect();
+        return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+      }
+
+      // 把「鼠标横向移动的像素」换算成「物距/像距的变化」。
+      // 不写死正负号：先投影两个相差 1 cm 的位置量出局部导数，
+      // 这样从正面看、从背面看、侧看都对，也不会因为视角翻转而反向。
+      let dragX0 = 0, dragVal0 = 0, dragPerPx = 0;
+      function beginObjDrag(kind, p) {
+        const q = {}; makeCam(q, state.w, state.h);
+        state.dragObj = kind;
+        dragX0 = p.x;
+        dragVal0 = kind === 'src' ? state.u : state.v;
+        const step = kind === 'src' ? -1 : 1;                 // u 变大 → 蜡烛的 x 更小
+        const base = kind === 'src' ? -state.u : state.v;
+        const a = project([base, 0, 0], q).x;
+        const b = project([base + step, 0, 0], q).x;
+        dragPerPx = Math.abs(b - a) > 1e-3 ? 1 / (b - a) : 0;
+      }
+
+      canvas.addEventListener('pointerdown', e => {
+        const p = pointerPos(e);
+        canvas.setPointerCapture(e.pointerId);
+        state.lastX = p.x; state.lastY = p.y;
+        const hit = objHit(p.x, p.y);
+        if (hit) beginObjDrag(hit, p);
+        else state.dragging = true;
+      });
+      canvas.addEventListener('pointermove', e => {
+        const p = pointerPos(e);
+        if (state.dragObj) {
+          const d = (p.x - dragX0) * (dragPerPx || 0.02);
+          if (state.dragObj === 'src') setU(dragVal0 + d);
+          else setV(dragVal0 + d);
+          return;
+        }
+        if (state.dragging) {
+          state.yaw -= (p.x - state.lastX) * 0.0075;
+          state.pitch = clamp(state.pitch + (p.y - state.lastY) * 0.0060, -0.30, 1.45);
+          state.lastX = p.x; state.lastY = p.y;
+          state.view = '';
+          syncViewButtons();
+          state.dirty = true;
+          return;
+        }
+        const hit = objHit(p.x, p.y);
+        if (hit !== state.hoverObj) {
+          state.hoverObj = hit;
+          canvas.classList.toggle('pick-move', !!hit);
+        }
+      });
+      const endDrag = () => { state.dragging = false; state.dragObj = null; };
+      canvas.addEventListener('pointerup', endDrag);
+      canvas.addEventListener('pointercancel', endDrag);
+      canvas.addEventListener('pointerleave', () => {
+        if (!state.dragging && !state.dragObj) {
+          state.hoverObj = null;
+          canvas.classList.remove('pick-move');
+        }
+      });
+      canvas.addEventListener('wheel', e => {
+        e.preventDefault();
+        state.zoom = clamp(state.zoom * (e.deltaY > 0 ? 0.92 : 1.08), 0.55, 3.2);
+        state.dirty = true;
+      }, { passive: false });
+
+      /* ============================================================
+       * 状态 → 界面
+       * ============================================================ */
+      // 物距、像距、孔径都只有一个状态源：滑块 step 就是 0.5 / 0.5 / 0.1，
+      // 拖动也吸附到同一格。不吸附的话 state 里会留下 13.87 而滑块显示 14 ——
+      // 读数和滑块对不上，学生一动滑块数值就跳。
+      function setU(v) {
+        state.u = clamp(Math.round(+v * 2) / 2, U_MIN, U_MAX);
+        syncInputs(); updateReadout(); state.dirty = true;
+      }
+      function setV(v) {
+        state.v = clamp(Math.round(+v * 2) / 2, V_MIN, V_MAX);
+        syncInputs(); updateReadout(); state.dirty = true;
+      }
+      function setD(v) {
+        state.d = clamp(Math.round(+v * 10) / 10, D_MIN, D_MAX);
+        syncInputs(); updateReadout(); state.dirty = true;
+      }
+      function syncInputs() {
+        $('ph-u').value = state.u;
+        $('ph-u-value').textContent = state.u.toFixed(1) + ' cm';
+        $('ph-v').value = state.v;
+        $('ph-v-value').textContent = state.v.toFixed(1) + ' cm';
+        $('ph-d').value = state.d;
+        $('ph-d-value').textContent = state.d.toFixed(1) + ' mm';
+        $('ph-src-name').textContent = state.src === 'letter' ? 'F 形光源' : '蜡烛';
+        for (const b of document.querySelectorAll('#ph-src button')) b.classList.toggle('active', b.dataset.src === state.src);
+        for (const b of document.querySelectorAll('#ph-hole button')) b.classList.toggle('active', b.dataset.hole === state.hole);
+        for (const b of document.querySelectorAll('#ph-count button')) b.classList.toggle('active', +b.dataset.count === state.holes);
+      }
+      function syncViewButtons() {
+        for (const b of document.querySelectorAll('[data-view]')) b.classList.toggle('active', b.dataset.view === state.view);
+      }
+
+      // 五条规律的「当前成立（绿）/ 当前不适用（灰）」。
+      // 注意第 ③ 条：孔小到模糊斑不足 1.6 px 时，像的形状只由发光体决定；
+      // 孔一大，模糊斑本身就能看出孔形了，这条就不再是「显然成立」，标成不适用。
+      function lawStates(o, drawn) {
+        const kernR = drawn ? drawn.kernR : 0;
+        return {
+          law1: 'on',
+          law2: 'on',
+          law3: kernR <= MINR ? 'on' : '',
+          law4: 'on',
+          law5: state.holes > 1 ? 'on' : ''
+        };
+      }
+
+      function updateReadout() {
+        const o = optics();
+        const h = objectHeight(state.src), hp = h * o.m;
+        $('ph-m1').textContent = o.u.toFixed(1) + ' cm';
+        $('ph-m2').textContent = o.v.toFixed(1) + ' cm';
+        $('ph-m3').textContent = hp.toFixed(1) + ' cm';
+        $('ph-m4').textContent = o.m.toFixed(2);
+
+        const st = lawStates(o, state.drawn);
+        for (const k in st) $(k).className = st[k];
+
+        const v = $('ph-verdict');
+        v.textContent = '物距 u = ' + o.u.toFixed(1) + ' cm　像距 v = ' + o.v.toFixed(1)
+                      + ' cm　像高是物高的 ' + o.m.toFixed(2) + ' 倍';
+        v.className = 'stage-verdict';
+
+        const hp2 = state.holes > 1 ? '　' + state.holes + ' 个孔 → 屏上有 ' + state.holes + ' 个像' : '';
+        $('ph-law-verdict').textContent = '当前：u = ' + o.u.toFixed(1) + ' cm，v = ' + o.v.toFixed(1)
+          + ' cm，h′/h = v/u = ' + o.m.toFixed(2) + '；物高 ' + h.toFixed(1)
+          + ' cm → 像高 ' + hp.toFixed(1) + ' cm。' + (st.law3 === 'on' ? '孔很小，像的形状只由发光体决定' : '孔偏大，像已经开始发糊') + hp2;
+
+        $('ph-record-hint').textContent = '拖动蜡烛或光屏改变距离，多记几组才能看出规律';
+      }
+
+      /* ============================================================
+       * 实验记录表
+       * ============================================================ */
+      function renderRecords() {
+        const rows = $('ph-rows');
+        if (!state.records.length) {
+          rows.innerHTML = '<tr><td colspan="7" class="empty">尚无记录，先拖动蜡烛或光屏开始探究</td></tr>';
+        } else {
+          rows.innerHTML = state.records.map((r, i) =>
+            '<tr>' +
+            '<td class="num">' + (i + 1) + '</td>' +
+            '<td class="num">' + r.u.toFixed(1) + ' cm</td>' +
+            '<td class="num">' + r.v.toFixed(1) + ' cm</td>' +
+            '<td class="num">' + r.h.toFixed(1) + ' cm</td>' +
+            '<td class="num">' + r.hp.toFixed(1) + ' cm</td>' +
+            '<td class="ratio">' + r.r1.toFixed(2) + '</td>' +
+            '<td class="ratio">' + r.r2.toFixed(2) + '</td>' +
+            '</tr>').join('');
+        }
+        $('ph-count-label').textContent = '已记录 ' + state.records.length + ' 组';
+
+        if (!state.records.length) {
+          $('ph-summary').innerHTML = '记录 3 组以上不同物距、像距的数据，看看最后两列是不是始终相等。';
+          return;
+        }
+        let worst = 0;
+        for (const r of state.records) worst = Math.max(worst, Math.abs(r.r1 - r.r2));
+        $('ph-summary').innerHTML = '已记录 ' + state.records.length + ' 组 —— 最后一列 <b>h′/h</b> 与倒数第二列 <b>v/u</b> '
+          + '始终相等（最大偏差 ' + worst.toFixed(3) + '）。像高与物高的比，只由像距与物距的比决定，'
+          + '跟发光体是什么、小孔什么样都没有关系。';
+      }
+      function recordNow() {
+        const o = optics();
+        const h = objectHeight(state.src);
+        state.records.push({ u: o.u, v: o.v, h: h, hp: h * o.m, r1: (h * o.m) / h, r2: o.v / o.u });
+        renderRecords();
+        const tr = $('ph-rows').lastElementChild;
+        if (tr) { tr.classList.add('flash'); setTimeout(() => tr.classList.remove('flash'), 1200); }
+      }
+
+      /* ============================================================
+       * 绑定
+       * ============================================================ */
+      $('ph-u').addEventListener('input', e => setU(e.target.value));
+      $('ph-v').addEventListener('input', e => setV(e.target.value));
+      $('ph-d').addEventListener('input', e => setD(e.target.value));
+      document.getElementById('ph-src').addEventListener('click', e => {
+        const b = e.target.closest('button[data-src]'); if (!b) return;
+        state.src = b.dataset.src; syncInputs(); updateReadout(); state.dirty = true;
+      });
+      document.getElementById('ph-hole').addEventListener('click', e => {
+        const b = e.target.closest('button[data-hole]'); if (!b) return;
+        state.hole = b.dataset.hole; syncInputs(); updateReadout(); state.dirty = true;
+      });
+      document.getElementById('ph-count').addEventListener('click', e => {
+        const b = e.target.closest('button[data-count]'); if (!b) return;
+        state.holes = +b.dataset.count; syncInputs(); updateReadout(); state.dirty = true;
+      });
+      for (const [id, key] of [['ph-rays', 'showRays'], ['ph-marks', 'showMarks'],
+                               ['ph-scale', 'showScale'], ['ph-grid', 'showGrid']]) {
+        $(id).addEventListener('change', e => { state[key] = e.target.checked; state.dirty = true; });
+      }
+      document.querySelectorAll('[data-view]').forEach(b => b.addEventListener('click', () => {
+        const v = VIEWS[b.dataset.view];
+        if (!v) return;
+        state.yaw = v[0]; state.pitch = v[1]; state.zoom = 1;
+        state.view = b.dataset.view;
+        syncViewButtons(); state.dirty = true;
+      }));
+      $('ph-reset-view').addEventListener('click', () => {
+        state.yaw = VIEWS.perspective[0]; state.pitch = VIEWS.perspective[1]; state.zoom = 1;
+        state.view = 'perspective'; syncViewButtons(); state.dirty = true;
+      });
+      $('ph-record').addEventListener('click', recordNow);
+      $('ph-clear').addEventListener('click', () => { state.records = []; renderRecords(); });
+
+      /* ============================================================
+       * 自检钩子：暴露页面【真正用到的】那份几何与判定，而不是另写一份
+       * ============================================================ */
+      // 理想像在世界坐标里的包围盒（不含模糊扩散）。像就是物形按 m 放大再绕光轴转 180°。
+      // 不传 o 就按当前参数算 —— 自检里 imageBBox() 与页面的 imageBBox(o) 必须是同一份几何。
+      function imageBBox(o) {
+        o = o || optics();
+        let y0 = 1e9, y1 = -1e9, z0 = 1e9, z1 = -1e9;
+        for (const p2 of objectPolys(state.src)) {
+          for (const [y, z] of p2) {
+            const ip = imagePoint(y, z, 0, 0, o);       // 与渲染共用同一个像点公式
+            y0 = Math.min(y0, ip[1]); y1 = Math.max(y1, ip[1]);
+            z0 = Math.min(z0, ip[2]); z1 = Math.max(z1, ip[2]);
+          }
+        }
+        return { y0: y0, y1: y1, z0: z0, z1: z1, hy: y1 - y0, hz: z1 - z0 };
+      }
+      // 物点 → 像点（孔心在 (ay,az) 时）。自检拿它验「物点—孔心—像点三点共线」。
+      // 单孔时孔心就是 (0,0)，所以 ay/az 也给了默认值，钩子可以只传物点。
+      function imagePoint(y, z, ay, az, o) {
+        o = o || optics();
+        ay = ay || 0; az = az || 0;
+        return [o.v, -y * o.m + o.k * ay, -z * o.m + o.k * az];
+      }
+
+      window.__ph = {
+        state, VIEWS, optics, holes, objectPolys, objectHeight,
+        apertureShape, shapePoints, imageBBox, imagePoint,
+        // 与页面渲染同源的投影：自检拿到的像素坐标就是画出去的那一个
+        project(p) {
+          const q = {}; makeCam(q, state.w, state.h);
+          const s = project(p, q);
+          return { x: s.x, y: s.y, z: s.z, s: s.s };
+        },
+        screenQuad() {
+          const o = optics(), H = SCREEN_S / 2;
+          return [[o.v, -H, -H], [o.v, H, -H], [o.v, H, H], [o.v, -H, H]].map(p => this.project(p));
+        },
+        setU, setV, setD,
+        setSrc(k) { state.src = k; syncInputs(); updateReadout(); state.dirty = true; },
+        setHole(k) { state.hole = k; syncInputs(); updateReadout(); state.dirty = true; },
+        setHoles(n) { state.holes = n; syncInputs(); updateReadout(); state.dirty = true; },
+        recordNow,
+        clearRecords() { state.records = []; renderRecords(); },
+        renderNow() { render(); },
+        size() { return { w: state.w, h: state.h, dpr: state.dpr }; },
+        // 本帧所有文字盒子的位置（刻度 + 说明标签），供自检核对避让与越界
+        boxes() {
+          return frameBoxes.map(b => ({
+            kind: b.kind, text: b.text,
+            x0: b.x0, y0: b.y0, x1: b.x1, y1: b.y1
+          }));
+        },
+        records() { return state.records.slice(); },
+        debug() {
+          const o = optics();
+          const h = objectHeight(state.src);
+          const bb = imageBBox(o);
+          const dr = state.drawn || { taps: 0, kernR: 0 };
+          return {
+            u: o.u, v: o.v, m: o.m, k: o.k, d: o.d, r: o.r,
+            h: h, hp: h * o.m,
+            src: state.src, hole: state.hole, holes: state.holes,
+            holesXY: holes(),
+            imgBBox: bb,
+            taps: dr.taps, kernR: dr.kernR,
+            laws: lawStates(o, state.drawn),
+            metrics: [$('ph-m1'), $('ph-m2'), $('ph-m3'), $('ph-m4')].map(e => e.textContent),
+            verdict: $('ph-verdict').textContent,
+            lawVerdict: $('ph-law-verdict').textContent,
+            rowCount: $('ph-rows').querySelectorAll('tr').length,
+            lastRow: (() => {
+              const tr = $('ph-rows').querySelector('tr:last-child');
+              return tr ? [...tr.querySelectorAll('td')].map(td => td.textContent.trim()) : null;
+            })(),
+            summary: $('ph-summary').textContent
+          };
+        }
+      };
+
+      syncInputs();
+      syncViewButtons();
+      renderRecords();
+      render();
+      updateReadout();
+      window.addEventListener('resize', resize);
+      resize();
+      render();
+      updateReadout();
+
+      function tick() {
+        if (state.dirty) { state.dirty = false; render(); updateReadout(); }
+        requestAnimationFrame(tick);
+      }
+      requestAnimationFrame(tick);
+    })();
+    </script>
+</body>
+</html>
