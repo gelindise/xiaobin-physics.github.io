@@ -542,8 +542,22 @@
        取 0.62 是量出来的：再小（0.45）边缘会出现折角、像塑料壳；再大就退回平塌。
        ★ 改了它必须同步 ringUV()（等凹陷环要按同一个等值面解），见那里的注释。 */
     const MEM_P = 0.62;
-    const FRAME_W = 0.9;                // 骨架棱条的截面（cm）
-    const STUD_W = 1.3;                 // 角上的小方块（cm）
+    /* ★ 骨架必须【细】，而且必须【骑在棱线上】（不许整体外移）。
+       它骑在立方体的 12 条棱上，截面有多粗就往立方体内部占多深（FRAME_W/2）——
+       而六个面绷的是【朝内凹】的橡皮膜：上表面那张最深只凹 0.684 cm（yb=4）。
+       棱条一粗，正前方那根上棱条就把膜靠边那一圈（连同标定「绷平参照」的
+       ±0.94 亮边线）整个盖掉，「上表面下凹」的形态就看不出来了
+       （用户反馈「骨架用得太粗了，上表面下凹的时候就挡住了」）。
+       这两个数是【扫网格量出来的】，判据 = 用户实际看到的【上表面膜青绿像素数】
+       （骨架挡得越少它越大；量测脚本 /tmp/bpc/sweep-frame.js，1440×900 透视+正视）：
+         W=0.9（旧） 2149 像素 / 遮挡 22.5%   →   W=0.4 2269 像素 / 遮挡 18.2%
+         W=0.5 2254 / 18.7%，W=0.6 2212 / 20.2% —— 单调越细越好，0.4 与 0.5 只差 0.7%。
+       ★★ 「整体外移」这条路是【反的】，别再走：把棱条外挪到内表面与棱齐平，
+          在斜上方视角下反而把棱条推进了上表面膜的【投影区】—— 同一套量测：
+          外移 0.5×W/2 → 遮挡 26.6%，外移 1×W/2 → 33.9%（比不外移的 18.7% 差了近一倍）。
+          所以棱条【保持骑在棱线上】，只把截面调细。 */
+    const FRAME_W = 0.4;                // 骨架棱条的截面（cm）
+    const STUD_W = 0.6;                 // 角上的小方块（cm）
     // 膜的填充透明度 / 本色往角色色偏多少 / 凹陷线的透明度。
     // ★ 这三个数是【量出来的】，不是拍的：立方体是空心的，从斜上方看，
     //   上表面那张膜整个盖在下表面那张膜前面。上表面太实，下表面的红就被糊掉，
@@ -599,6 +613,11 @@
       yaw: VIEWS.perspective[0], pitch: VIEWS.perspective[1], zoom: 1,
       yb: YB_DEF,               // 立方体底面高度 cm
       mode: 'all',              // all | topbot | side | bare
+      /* ★ 骨架开关。默认开，用户永远看不到关的样子 —— 这是【自检专用】的接缝：
+         要量「骨架把上表面那张膜挡住了多少」，必须在【同一个页面、同一个视角、
+         同一帧状态】下把骨架关掉再数一遍青绿像素，两次相减才是遮挡量。
+         跨页面（另存一份不画骨架的页）也能量，但那会把两份文件的其它差异混进来。 */
+      skelOn: true,
       auto: false,              // 自动演示
       autoPhase: 'down', autoHold: 0,
       t: 0,                     // 动画时间 s（水面微波 + 高光）
@@ -1435,7 +1454,9 @@
           alpha: membraneAlpha(fi, q),
           dist: vlen(sub(faceCentre(fi), q.eye)) });
       }
-      for (const b of skeletonBoxes(q)) groups.push(b);
+      /* 骨架也参与画家算法排序（只记膜的顺序，骨架不参与透明混合）。
+         ★ 受 state.skelOn 控制：关掉是【自检专用】，用来量骨架对膜的遮挡。 */
+      if (state.skelOn) for (const b of skeletonBoxes(q)) groups.push(b);
       groups.sort((a, b) => b.dist - a.dist);
 
       for (const g of groups) {
@@ -1543,7 +1564,13 @@
 
     /* 骨架：12 根棱条（截面 FRAME_W²，骑在棱线上）+ 8 个角块。
        立方体【只有这个骨架】—— 六个面之间全靠它们撑着，里面是空的。
-       棱条端头稍微伸出去一点（LEN = 棱长 + FRAME_W），把角块包住，看起来才像焊接的框。 */
+       棱条端头稍微伸出去一点（LEN = 棱长 + FRAME_W），把角块包住，看起来才像焊接的框。
+
+       ★ 棱条与角块一律【骑在棱线上 / 角上】，不做任何整体外移。
+         曾经试过「外移到内表面与棱齐平」，量出来是反效果：外移之后棱条在斜上方
+         视角下反而压住上表面那张膜（遮挡 18.7% → 33.9%）。真正起作用的是把截面
+         调细 —— FRAME_W/2 从 0.45 cm 降到 0.2 cm，膜靠边那一圈（含 ±0.94 的
+         绷平参照亮边）就露出来了。详见 FRAME_W 常量处的量测表。 */
     function skeletonBoxes(q) {
       const out = [];
       const push = (cen, sx, sy, sz) => {
@@ -1560,7 +1587,8 @@
       for (const y of [y0, y1]) for (const z of [x0, x1]) push([0, y, z], LEN, FRAME_W, FRAME_W);
       for (const y of [y0, y1]) for (const x of [x0, x1]) push([x, y, 0], FRAME_W, FRAME_W, LEN);
       for (const x of [x0, x1]) for (const z of [x0, x1]) push([x, yc, z], FRAME_W, CUBE_A + FRAME_W, FRAME_W);
-      for (const x of [x0, x1]) for (const y of [y0, y1]) for (const z of [x0, x1]) push([x, y, z], STUD_W, STUD_W, STUD_W);
+      for (const x of [x0, x1]) for (const y of [y0, y1]) for (const z of [x0, x1])
+        push([x, y, z], STUD_W, STUD_W, STUD_W);
       return out;
     }
     /* ---------------------------- 玻璃槽的棱 ---------------------------- */
@@ -2177,6 +2205,8 @@
       isobarY: isobarY,
       // 动作：与按钮走同一份
       setYb: setYb, setMode: setMode, setAuto: setAuto, resetAll: resetAll,
+      /* 自检专用：关掉骨架再渲染一帧，用来量「骨架挡住了膜多少」（见 state.skelOn） */
+      setSkel: (on) => { state.skelOn = !!on; },
       recordMark: recordMark, applyView: applyView,
       stepAnim: stepAnim, render: render, hitTest: hitTest,
       // 自检要能【量到膜到底画出来没有】—— 只查「应该凹多少」是查不出
