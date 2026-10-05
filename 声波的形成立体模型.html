@@ -741,7 +741,14 @@
     }
     const AVOID = [[0, 0], [0, -16], [0, 16], [0, -32], [0, 32],
                    [-46, -16], [46, -16], [-46, 16], [46, 16], [0, -48], [0, 48]];
-    const avoidLabel = (anchor, text, color, size) => bestLabel(anchor, text, color, size, AVOID);
+    /* ★ 窄屏专用：360 px 宽的画布里「波前」与「追踪微粒」两个锚点常挨在一起，
+     *   原来最大 ±48 的候选挪不开（实测两行字叠印）。给一组更远的候选 ——
+     *   横向会被 labelBox 的 clamp 夹回边界，真正起作用的是【纵向】那几档。 */
+    const AVOID_NARROW = [[0, 0], [0, -20], [0, 20], [0, -42], [0, 42], [0, -64], [0, 64],
+                          [0, -86], [0, 86], [-72, -20], [72, -20], [-72, 20], [72, 20],
+                          [-72, -42], [72, -42], [-72, 42], [72, 42]];
+    const avoidLabel = (anchor, text, color, size) =>
+      bestLabel(anchor, text, color, size, state.w < 620 ? AVOID_NARROW : AVOID);
 
     /* ============================================================
      * 场景常量（世界盒子）
@@ -1116,6 +1123,23 @@
       }
 
       // ── 标签（一律走避让，且必须在所有实体画完之后）──
+      /* ★ DOM 浮层（左上提示框 `sw-hint`）不在 canvas 里，避让算法本来【看不见】它 ——
+       *   实测窄屏下把候选偏移调大后，标签正好被挪进提示框、与提示文字叠印。
+       *   先把它的屏幕盒子折算成画布逻辑坐标塞进 frameSolids，避让才会真的避开。 */
+      {
+        const cvEl = $('sw-canvas');
+        const hint = $('sw-hint');
+        if (cvEl && hint && hint.offsetWidth > 1 && hint.offsetHeight > 1) {
+          const cr = cvEl.getBoundingClientRect();
+          const hr = hint.getBoundingClientRect();
+          frameSolids.push({ x: hr.left - cr.left, y: hr.top - cr.top, w: hr.width, h: hr.height });
+        }
+      }
+      /* ★ 窄屏（手机 390px 视口 → 画布只有 ~360 CSS px）必须【减少标签】：
+       *   7 个标签在 360 px 宽里必然互相压住 —— 实测「空气柱 L = 2.00 m　c = 340 m/s
+       *   f = 340 Hz　λ = 1.000 m」这一条本身就有 ~330 px 宽，几乎占满整行。
+       *   下面这两条的信息在侧栏「读数」里都有，窄屏省掉不影响理解。 */
+      const narrow = state.w < 620;
       avoidLabel(project([SRC_BACK + 0.15, TUBE_CY - 0.16, 0], q), '扬声器（声源）', '#a5f3fc', 11);
       if (state.showMemb) {
         avoidLabel(project([MEMB_X, TUBE_CY + TUBE_HY + 0.05, 0], q), '耳膜（接收）', '#5eead4', 10);
@@ -1123,7 +1147,9 @@
       if (state.drawn.markAnchor && state.showMarks) {
         avoidLabel(state.drawn.markAnchor, '密部 · 一起向右平移', '#fcd34d', 10);
       }
-      if (state.drawn.frontAnchor) {
+      /* 「波前 · 已走 X m」窄屏省掉：提示框正文里已经写了「波前已经走到 X m」，
+       * 而且它和提示框都锚在管子左上，是窄屏叠印的第一嫌疑。 */
+      if (state.drawn.frontAnchor && !narrow) {
         avoidLabel(state.drawn.frontAnchor,
                    '波前 · 已走 ' + frontInTube().toFixed(2) + ' m', '#fca5a5', 10);
       }
@@ -1132,14 +1158,16 @@
         avoidLabel({ x: tr.sx, y: tr.sy - 20 },
                    '① 这个微粒只在原地抖 ±' + (tr.amp * 100).toFixed(2) + ' cm', '#fde047', 10);
       }
-      if (state.showCurve) {
+      if (state.showCurve && !narrow) {
         avoidLabel(project([L_TUBE * 0.5, CURVE_Y0 + CURVE_H * 0.5, 0], q),
                    '空气密度曲线（高 = 密部，低 = 疏部）', '#a5b4fc', 10);
       }
       // 区域名最后画（挑一个不压住别的位置）
-      bestLabel(project([L_TUBE * 0.5, TUBE_Y0 - 0.055, TUBE_HZ * 0.9], q),
-                '空气柱 L = 2.00 m　c = 340 m/s　f = ' + state.f + ' Hz　λ = ' + lam().toFixed(3) + ' m',
-                'rgba(165,243,252,.78)', 11, AVOID);
+      if (!narrow) {
+        bestLabel(project([L_TUBE * 0.5, TUBE_Y0 - 0.055, TUBE_HZ * 0.9], q),
+                  '空气柱 L = 2.00 m　c = 340 m/s　f = ' + state.f + ' Hz　λ = ' + lam().toFixed(3) + ' m',
+                  'rgba(165,243,252,.78)', 11, AVOID);
+      }
 
       updateHint();
       updateLiveReadouts();
