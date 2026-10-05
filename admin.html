@@ -235,6 +235,15 @@
         </div>
         <button class="auth-btn blue" onclick="queryUserInfo()">查询</button>
         <div class="admin-tip" id="queryTip" style="text-align:left;font-size:0.8rem;"></div>
+
+        <hr style="border-color:var(--glass-border);margin:1.5rem 0;">
+
+        <div class="input-group">
+          <span class="input-icon">🔑</span>
+          <input type="text" id="queryCode" placeholder="输入激活码（如 ABC-DEF-GHJ）" maxlength="20">
+        </div>
+        <button class="auth-btn green" onclick="queryUserByCode()">按激活码查询使用者</button>
+        <div class="admin-tip" id="queryCodeTip" style="text-align:left;font-size:0.8rem;"></div>
       </div>
 
       <!-- 重置密码 -->
@@ -463,6 +472,58 @@
           '🔑 激活码：' + (d.authCode||'无') + '<br>' +
           '📋 注册时间：' + (d.created_at ? new Date(d.created_at).toLocaleString() : '未知');
       } catch(e) {
+        tip.className = 'admin-tip error'; tip.textContent = '❌ ' + e.message;
+      }
+    }
+
+    // 按激活码查询使用者信息
+    async function queryUserByCode() {
+      const raw = document.getElementById('queryCode').value.trim();
+      const tip = document.getElementById('queryCodeTip');
+      if (!raw) { tip.className = 'admin-tip error'; tip.textContent = '⚠️ 请输入激活码'; return; }
+      // 规范化：去空格/连字符、转大写（与 vip.html 激活逻辑一致）
+      const code = raw.toUpperCase().replace(/[\s-]/g, '');
+      tip.className = 'admin-tip'; tip.textContent = '⏳ 查询中...';
+      try {
+        var r = await proxy('getActivationCode', { code: code });
+        if (!r.success) { tip.className = 'admin-tip error'; tip.textContent = '❌ ' + (r.error || '查询失败'); return; }
+        if (!r.codes || r.codes.length === 0) {
+          tip.className = 'admin-tip error';
+          tip.textContent = '❌ 激活码不存在：' + formatCode(code);
+          return;
+        }
+        var c = r.codes[0];
+        var used = c.status === 'used';
+        var html =
+          '🔑 激活码：' + formatCode(c.code) + '<br>' +
+          '💎 类型：' + (c.vip_type || '未知') + '<br>' +
+          '📌 状态：' + (used ? '<span style="color:#ef4444;">已使用</span>' : '<span style="color:#4ade80;">未使用</span>') + '<br>' +
+          '📋 生成时间：' + (c.created_at ? new Date(c.created_at).toLocaleString() : '未知');
+
+        if (used && c.used_by) {
+          html += '<br>👤 使用者：' + c.used_by +
+                  (c.used_at ? '<br>🕒 使用时间：' + new Date(c.used_at).toLocaleString() : '');
+          try {
+            var ur = await proxy('getUserPublic', { username: c.used_by });
+            if (ur.success && ur.user) {
+              var d = ur.user;
+              html += '<hr style="border-color:var(--glass-border);margin:0.5rem 0;">' +
+                      '💎 VIP：' + (d.vip || '普通用户') + '<br>' +
+                      '📅 到期：' + (d.expire || '无') + '<br>' +
+                      '📧 邮箱：' + (d.email || '无') + '<br>' +
+                      '📋 注册时间：' + (d.created_at ? new Date(d.created_at).toLocaleString() : '未知');
+            } else {
+              html += '<br><span style="color:#f59e0b;">⚠️ 未找到该用户（可能已注销）</span>';
+            }
+          } catch (e) {
+            html += '<br><span style="color:#f59e0b;">⚠️ 用户信息加载失败：' + e.message + '</span>';
+          }
+        } else {
+          html += '<br><span style="color:var(--text-muted);">该激活码尚未被使用</span>';
+        }
+        tip.className = 'admin-tip success';
+        tip.innerHTML = html;
+      } catch (e) {
         tip.className = 'admin-tip error'; tip.textContent = '❌ ' + e.message;
       }
     }
