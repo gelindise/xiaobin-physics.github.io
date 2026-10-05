@@ -83,6 +83,11 @@
       border-color: rgba(52, 211, 153, .8); background: rgba(16, 185, 129, .24); color: #d1fae5;
       box-shadow: 0 0 0 3px rgba(52, 211, 153, .14), 0 0 18px rgba(52, 211, 153, .3);
     }
+    /* 声音开着 —— 用琥珀色，和上面「稳态」的绿区分开，免得两个状态看着一样 */
+    .lab3d-stage .stage-btn.snd-on {
+      border-color: rgba(251, 191, 36, .85); background: rgba(217, 119, 6, .3); color: #fef3c7;
+      box-shadow: 0 0 0 3px rgba(251, 191, 36, .14), 0 0 18px rgba(251, 191, 36, .3);
+    }
     .lab3d-stage .stage-help {
       min-width: 0; pointer-events: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
       color: #93b4c4; font-size: 11px; background: rgba(2, 6, 23, .72); padding: 6px 10px; border-radius: 7px;
@@ -210,6 +215,7 @@
         <div class="stage-bar">
           <div class="bar-left">
             <button type="button" class="stage-btn go" id="sw-play">暂停</button>
+            <button type="button" class="stage-btn" id="sw-sound" title="让扬声器真的发出这个频率的声音">🔊 声音</button>
             <button type="button" class="stage-btn" id="sw-restart">重新发声</button>
             <button type="button" class="stage-btn" id="sw-reset">重置</button>
           </div>
@@ -1348,6 +1354,9 @@
     }
 
     function syncUI() {
+      const sb = $('sw-sound');
+      sb.textContent = audio.on ? '🔇 静音' : '🔊 声音';
+      sb.classList.toggle('snd-on', audio.on);
       $('sw-f-num').textContent = state.f + ' Hz';
       $('sw-amp-num').textContent = (amp() * 100).toFixed(2) + ' cm';
       $('sw-lam').textContent = lam().toFixed(3) + ' m';
@@ -1363,11 +1372,15 @@
       sn.innerHTML = '波长 λ = c ÷ f = 340 ÷ ' + state.f + ' = <b>' + lam().toFixed(3) +
         ' m</b>；管长 2.00 m 固定，所以管里有 <b>' + (L_TUBE / lam()).toFixed(1) +
         ' 个</b>完整波长。' +
-        (state.f >= F_MAX - 1e-9 ? ' 已经是最高频 —— 波长最短、管里波最多。' : '');
+        (state.f >= F_MAX - 1e-9 ? ' 已经是最高频 —— 波长最短、管里波最多。' : '') +
+        (audio.on
+          ? '<br>🔊 声音已开：你听到的就是 <b>' + state.f + ' Hz</b> 的音高，拖动上面的滑块听听看。'
+          : '<br>按画面左下角的「🔊 声音」能听到它真实的音高 —— 频率一改，音高就跟着变。');
       const sp = $('sw-speed-note');
-      sp.innerHTML = state.slow
+      sp.innerHTML = (state.slow
         ? '慢放：墙上 1 秒 = 物理 1/400 秒。波前穿完整根管子要 2.35 s，微粒振动一次要 1.18 s，都看得清。'
-        : '实时：这就是它真正的速度 —— 每秒振动 ' + state.f + ' 次，只能看到一片模糊。';
+        : '实时：这就是它真正的速度 —— 每秒振动 ' + state.f + ' 次，只能看到一片模糊。') +
+        ' <b>慢放只影响画面，不影响声音</b>：你听到的始终是它真实的音高。';
       document.querySelectorAll('[data-view]').forEach(b => {
         b.classList.toggle('on', b.getAttribute('data-view') === state.view);
       });
@@ -1387,6 +1400,103 @@
       if (as.value !== String(Math.round(state.ampK * 100))) as.value = String(Math.round(state.ampK * 100));
     };
 
+    /* ============================================================
+     * 声音 —— 扬声器真的在响，而且音高跟着「频率 f」滑块走
+     * ------------------------------------------------------------
+     * 链：osc(sine, f) → ampGain(振幅) → masterGain(开关 × 播放) → 输出
+     *   两条 gain 各管一件事，自检也分别读它们：
+     *     ampGain    = 振幅 → 音量（振幅越大越响）
+     *     masterGain = 开关 / 暂停（两者都满足才响）
+     *
+     * ★ 声音【不跟着慢放】。慢放只改画面（1/400），声音始终按真实频率
+     *   340~680 Hz 播放 —— 否则慢放时频率会掉到 0.85 Hz，什么都听不见，
+     *   而「频率一变、音高就变」这个最该听出来的对应关系也就没了。
+     * ★ 所有参数变化都走 `setTargetAtTime`（不是直接赋值）—— 拖滑块时是
+     *   连续滑音，不是一跳一跳的爆音。
+     * ============================================================ */
+    const SOUND_TAU = 0.02;                  // 音高/音量过渡时间常数 s
+    const SOUND_TAU_SW = 0.05;               // 开关淡入淡出
+    const GAIN_LO = 0.035, GAIN_HI = 0.22;   // 振幅 → 音量 的两端
+
+    const audio = {
+      ctx: null, osc: null, ampGain: null, masterGain: null,
+      on: false,                                            // 用户开关
+      ready: false,
+      targetF: F_DEF, appliedGain: 0, targetMaster: 0       // 记账（自检读它）
+    };
+    const audioReady = () => audio.ready;
+    const soundOn = () => audio.on;
+    const audioFreq = () => (audio.osc ? audio.osc.frequency.value : null);
+    const audioGain = () => (audio.ampGain ? audio.ampGain.gain.value : null);
+    const audioMaster = () => (audio.masterGain ? audio.masterGain.gain.value : null);
+
+    /* 振幅 → 音量。物理上声强 ∝ 振幅²，但完全按平方走听感太陡（小振幅几乎没声），
+     * 用 t^0.75 折中：既听得出「振幅越大越响」，最小振幅也不至于听不见。 */
+    function ampToGain(ampK) {
+      const t = clamp((ampK - AMP_K_MIN) / (AMP_K_MAX - AMP_K_MIN), 0, 1);
+      return GAIN_LO + (GAIN_HI - GAIN_LO) * Math.pow(t, 0.75);
+    }
+
+    function initAudio() {
+      if (audio.ctx) return audio.ready;
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return false;
+      try {
+        audio.ctx = new AC();
+        audio.osc = audio.ctx.createOscillator();
+        audio.osc.type = 'sine';                 // 纯正弦 —— 和画面上那条正弦波对应
+        audio.osc.frequency.value = state.f;
+        audio.ampGain = audio.ctx.createGain();
+        audio.ampGain.gain.value = 0;
+        audio.masterGain = audio.ctx.createGain();
+        audio.masterGain.gain.value = 0;
+        audio.osc.connect(audio.ampGain);
+        audio.ampGain.connect(audio.masterGain);
+        audio.masterGain.connect(audio.ctx.destination);
+        audio.osc.start();                       // 只 start 一次，之后靠 gain 开关
+        audio.ready = true;
+      } catch (e) { audio.ready = false; }
+      return audio.ready;
+    }
+
+    /* 「现在该不该响」只有这一处判据：开关打开 ∧ 画面在播放 */
+    const audioShouldSound = () => audio.on && state.playing;
+
+    /* 唯一的「声音参数该是什么」入口 —— 频率 / 振幅 / 开关 / 播放 全走它。
+     * ★ 先把三个目标值记账、再判断能不能真设：这样「声音还没开」时自检也读得到
+     *   目标值（否则记账跟着 AudioContext 一起哑掉，断言就没法写）。 */
+    function applyAudio() {
+      audio.targetF = state.f;
+      audio.appliedGain = ampToGain(state.ampK);
+      audio.targetMaster = audioShouldSound() ? 1 : 0;
+      if (!audio.ready) return;
+      const t = audio.ctx.currentTime;
+      audio.osc.frequency.setTargetAtTime(audio.targetF, t, SOUND_TAU);
+      audio.ampGain.gain.setTargetAtTime(audio.appliedGain, t, SOUND_TAU);
+      audio.masterGain.gain.setTargetAtTime(audio.targetMaster, t, SOUND_TAU_SW);
+    }
+
+    function setSound(on) {
+      audio.on = !!on;
+      if (audio.on) {
+        if (!initAudio()) {
+          audio.on = false;
+          syncUI();
+          showToast('这个浏览器不支持播放声音');
+          return false;
+        }
+        /* 浏览器要求「用户手势之后」才能出声 —— 这个函数正是从点击进来的 */
+        if (audio.ctx.state === 'suspended') { try { audio.ctx.resume(); } catch (e) { } }
+        applyAudio();
+        showToast('声音开了：现在是 ' + state.f + ' Hz。拖动「频率 f」，音高会跟着变。');
+      } else {
+        applyAudio();
+        showToast('已静音');
+      }
+      syncUI();
+      return audio.on;
+    }
+
     const invalidate = () => { state.dirty = true; };
 
     /* ============================================================
@@ -1396,23 +1506,27 @@
       const nf = clamp(Math.round(v / F_STEP) * F_STEP, F_MIN, F_MAX);
       if (nf === state.f) return state.f;
       state.f = nf;
+      applyAudio();                      // ★ 音高跟着变（拖滑块时是连续滑音）
       syncUI(); invalidate();
       return state.f;
     }
     function setAmpK(v) {
       state.ampK = clamp(v, AMP_K_MIN, AMP_K_MAX);
+      applyAudio();                      // ★ 振幅越大越响
       syncUI(); invalidate();
       return state.ampK;
     }
     function setSlow(on) { state.slow = !!on; syncUI(); invalidate(); }
     function setPlaying(on) {
       state.playing = !!on;
+      applyAudio();                      // ★ 暂停就静音（开关不动）
       syncUI(); invalidate();
       return state.playing;
     }
     function restartWave() {
       state.tAnim = 0;
       state.playing = true;
+      applyAudio();                      // 重新发声 = 回到播放状态，声音也要回来
       syncUI(); invalidate();
       showToast('波从扬声器那里重新出发');
     }
@@ -1423,6 +1537,7 @@
       state.showCurve = state.showMarks = state.showTrace = state.showMemb = true;
       state.yaw = VIEWS.perspective[0]; state.pitch = VIEWS.perspective[1];
       state.zoom = 1; state.view = 'perspective';
+      applyAudio();                      // 频率/振幅回默认 → 声音也跟着回默认
       syncUI(); invalidate();
     }
     function setTrack(i) {
@@ -1583,6 +1698,8 @@
       setPlaying(!state.playing);
       showToast(state.playing ? '继续振动' : '已暂停 —— 可以慢慢看这一刻的疏密');
     });
+    /* 声音开关。提示语由 setSound 自己给（开的时候要报当前频率） */
+    $('sw-sound').addEventListener('click', () => setSound(!audio.on));
     $('sw-restart').addEventListener('click', restartWave);
     $('sw-reset').addEventListener('click', () => { resetAll(); showToast('已重置'); });
     $('sw-slow').addEventListener('click', () => {
@@ -1632,7 +1749,8 @@
         SLOW_N: SLOW_N, SLOW_R: SLOW_R,
         CURVE_Y0: CURVE_Y0, CURVE_H: CURVE_H,
         MEMB_X: MEMB_X, MEMB_T: MEMB_T, SRC_BACK: SRC_BACK, TRACK_DEF: TRACK_DEF,
-        VIEWS: VIEWS, CAMD_K: CAMD_K, DENS_LEVELS: DENS_LEVELS
+        VIEWS: VIEWS, CAMD_K: CAMD_K, DENS_LEVELS: DENS_LEVELS,
+        SOUND_TAU: SOUND_TAU, SOUND_TAU_SW: SOUND_TAU_SW, GAIN_LO: GAIN_LO, GAIN_HI: GAIN_HI
       },
       // 相机 / 投影
       makeCam: makeCam, project: project, unproject: unproject, envelopePoints: envelopePoints,
@@ -1648,6 +1766,10 @@
       // 动作（与按钮同一份）
       setF: setF, setAmpK: setAmpK, setSlow: setSlow, setPlaying: setPlaying,
       restartWave: restartWave, resetAll: resetAll, setTrack: setTrack,
+      // 声音（与「🔊 声音」按钮同一份）
+      setSound: setSound, soundOn: soundOn, audioReady: audioReady, applyAudio: applyAudio,
+      audio: audio, ampToGain: ampToGain,
+      audioFreq: audioFreq, audioGain: audioGain, audioMaster: audioMaster,
       applyView: applyView, setLayer: setLayer, holdAt: holdAt,
       // 动画推进（tick 与自检共用的同一个函数）
       stepAnim: stepAnim,
