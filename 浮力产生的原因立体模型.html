@@ -204,6 +204,9 @@
     table.dt td.d { color: #a5f3fc; font-weight: 800; }
     table.dt tr.now td { background: rgba(56, 189, 248, .16); color: #e0f2fe; font-weight: 800; }
     table.dt tr.seal td { color: #fca5a5; }
+    /* 「下表面贴到槽底、被顶住」那一行 —— 与密合不同色，因为它是【还浸在水里】
+       但膜凹不下去了，Δ 因此不再等于自由段那个常数。 */
+    table.dt tr.clamp td { color: #fcd34d; }
     .dt-conc {
       margin-top: 8px; padding: 7px 10px; border-radius: 8px; font-size: 11.5px; line-height: 1.6;
       background: rgba(6, 78, 59, .32); border: 1px solid rgba(52, 211, 153, .38); color: #d1fae5;
@@ -367,7 +370,7 @@
             <span class="vl"><span id="bu-ind-dn">1.11</span><small> cm</small></span>
           </div>
           <div class="force">
-            <span class="swatch" style="background:#60a5fa"></span>
+            <span class="swatch" style="background:#2dd4bf"></span>
             <span class="nm">上表面 <i>凹得最浅</i></span>
             <span class="vl"><span id="bu-ind-up">0.37</span><small> cm</small></span>
           </div>
@@ -528,24 +531,52 @@
      *   下 : 上 = p下 : p上 = 3 : 1     → 两张膜凹得【明显不一样】。
      * （严格地说竖直面上不同高度的压强略有不同；这个理想化在教材里也是这么做的。）
      */
-    const MAX_INDENT = 0.14 * CUBE_A;   // 面中心处的最深凹陷（cm）——对应 P_MAX
+    const MAX_INDENT = 0.26 * CUBE_A;   // 面中心处的最深凹陷（cm）——对应 P_MAX
     const MEM_STEP = 0.25;              // 等凹陷线的间隔（cm）—— 线条越多 = 凹得越深
-    const MEM_N = 6;                    // 每个面画成 6×6 格（5×5 个四边形）
+    const MEM_N = 10;                   // 每个面画成 10×10 格（100 个四边形）
+    /* 膜的【剖面形状】指数。真实的橡皮膜被绷在方框上、再被压强顶出去，形状接近
+       一个饱满的球冠：边缘是以一定角度离开框边的，不是平着贴上去的。
+       (1−u²)(1−v²) 的幂次：
+         p = 1   → 边缘处斜率恰好为 0（像一块摊平的布，看着「软塌塌」）；
+         p < 1   → 边缘更陡、中间更饱满，正是绷紧的橡皮膜的样子。
+       取 0.62 是量出来的：再小（0.45）边缘会出现折角、像塑料壳；再大就退回平塌。
+       ★ 改了它必须同步 ringUV()（等凹陷环要按同一个等值面解），见那里的注释。 */
+    const MEM_P = 0.62;
     const FRAME_W = 0.9;                // 骨架棱条的截面（cm）
     const STUD_W = 1.3;                 // 角上的小方块（cm）
     // 膜的填充透明度 / 本色往角色色偏多少 / 凹陷线的透明度。
     // ★ 这三个数是【量出来的】，不是拍的：立方体是空心的，从斜上方看，
     //   上表面那张膜整个盖在下表面那张膜前面。上表面太实，下表面的红就被糊掉，
     //   「上下凹得不一样」这个唯一要讲的点反而看不见了。见 test.js 的 I 组。
-    const MEM_ALPHA = 0.88;             // 膜填充（远处那些面）
+    const MEM_ALPHA = 0.88;             // 膜填充（不需要当窗口的那些面）
     const MEM_WIN   = 0.26;             // 「窗口」那张膜的填充（见 membraneAlpha）
-    const MEM_WIN_SPAN = 0.40;          // 窗口的过渡宽度（cm）—— 太宽会把几张膜一起冲淡
+    /* 判定「这张膜要不要当窗口」的门槛：它把后面那张膜盖住的屏幕面积比例。
+       低于它就保持不透明 —— 没挡住谁就不该被调淡。取 0.35 是量出来的：
+       「只看上下表面 + 透视」两张膜几乎不重叠（hide ≈ 0.0）→ 都保持 0.88，
+       两边一样实，「比一比谁凹得深」才成立；俯视时同心、hide ≈ 0.95 →
+       上面那张降到 0.27；「只看侧面 + 侧视」两张并排、只重叠约 0.27 → 也保持 0.88，
+       「两张完全一样」才不会被透明度差异搅浑。 */
+    const MEM_HIDE_MIN = 0.35;
     const MEM_MIX   = 0.86;             // 本色往角色色偏多少
     const MEM_RING  = 0.88;             // 等凹陷线
     const MEM_RIM   = 0.72;             // 膜的四条边（平的参照边）
+    /* 橡皮膜的质感：靠三样东西叠出来，缺一样就退成「一块彩色塑料片」——
+       · 漫反射（shadeK）：决定凹形的明暗，是形状的主要线索；
+       · 镜面高光（MEM_SPEC/MEM_SHINE）：绷紧的橡皮是【半亮】的，凸起处有一片
+         柔和的高光带，眼睛靠它读出「这是个鼓起来的曲面」；
+       · 掠射反光（MEM_FRES）：薄膜在掠射角上最亮，正好给出一圈亮边，
+         把「膜被绷在框上」这件事画出来。
+       三项都写成【对本色整体缩放】，不是加白色 —— 缩放保持色相不变，
+       自检用的通道差判据（R−B、R−G、B−G）对缩放天然免疫，换材质不会让它们失真。 */
+    const MEM_SPEC  = 0.42;             // 镜面高光强度
+    const MEM_SHINE = 22;               // 镜面高光的锐度
+    const MEM_FRES  = 0.30;             // 掠射反光强度
 
     const C_UP   = [248, 113, 113];   // 下表面（膜往里凹得最深）
-    const C_DN   = [ 96, 165, 250];   // 上表面
+    /* 上表面【不用蓝】：水本身就是蓝的，蓝膜贴着蓝水等于没画 —— 实测默认视角下
+       上表面那张膜几乎糊在水里，而它恰恰是「和下面比谁凹得深」的另一半。
+       换成【青绿】：与红互补、与水（蓝）分得开，三种角色色（红/青/紫）互相也分得开。 */
+    const C_DN   = [ 45, 212, 191];   // 上表面
     const C_SIDE = [167, 139, 250];   // 四个侧面
     const C_MEMB = [186, 200, 214];   // 橡皮膜本色（往上面三种色偏）
     const C_FRAME = [ 92, 108, 132];  // 骨架本色（暗、不透明）
@@ -609,6 +640,11 @@
     const FACE_CN = ['上表面', '下表面', '前侧面', '后侧面', '右侧面', '左侧面'];
     const FACE_ROLE = [C_DN, C_UP, C_SIDE, C_SIDE, C_SIDE, C_SIDE];
     const SIDE_FACES = [2, 3, 4, 5];
+    /* 「只看侧面」模式里【画出来】的那一对。用户的要求：只看左右两张（右侧面 4 /
+       左侧面 5），前侧面(2)与后侧面(3)【完全不画】—— 它们和视线夹角大、正好横在
+       中间，会把左右两张膜的凹陷整个挡住。四个侧面在物理上仍然完全一样（SIDE_FACES
+       一条不少地喂给 sideIndents / sideNet），收起来的只是「挡视线的那两张」。 */
+    const SIDE_PAIR = [4, 5];
 
     // 面 fi 上 (u,v) 处【还没凹】的世界坐标（双线性）
     function faceParam(fi, u, v) {
@@ -628,20 +664,32 @@
       if (fi === 1 && isSealed()) return 0;
       return pressAtCm(H_W - faceCentre(fi)[1]);
     }
-    // 该面【中心处】的凹陷（cm）—— 也就是这张膜凹得最深的地方
-    const indentFace = fi => MAX_INDENT * facePress(fi) / P_MAX;
+    // 该面【中心处】的凹陷（cm）—— 也就是这张膜凹得最深的地方。
+    // ★ 只有【下表面】多一道钳位：它凹得最深（P_MAX 时 2.2 cm），而立方体底面在
+    //   y = yb、槽底在 y = 0 —— yb 小于该凹深时，膜会先【碰到槽底】。这时它不可能
+    //   再往下鼓，只能被槽底顶住 ⇒ 整张膜按「最多凹到槽底」等比压扁。
+    //   这一条同时喂给画面、读数、账本、预置表四处，不会再各写各的。
+    const sagFree = fi => MAX_INDENT * facePress(fi) / P_MAX;
+    const bottomClamped = () => !isSealed() && sagFree(1) > state.yb + 1e-9;
+    const indentFace = fi => (fi === 1 ? Math.min(sagFree(1), Math.max(0, state.yb)) : sagFree(fi));
     // 四个侧面的凹陷（自检要断言它们【完全相等】）
     const sideIndents = () => SIDE_FACES.map(indentFace);
     // 上下表面凹陷之差 —— 本页的核心结论，F浮 正比于它
     const indentDelta = () => indentFace(1) - indentFace(0);
 
-    // 膜的形状：中心 1 → 整个边缘 0（被棱条绷住）
-    const domeK = (u, v) => (1 - u * u) * (1 - v * v);
+    // 膜的形状：中心 1 → 整个边缘 0（被棱条绷住）。
+    // 幂次 MEM_P < 1 让它成为一个【饱满的球冠】而不是一块摊平的布，见常量处的注释。
+    const domeK = (u, v) => Math.pow(Math.max(0, (1 - u * u) * (1 - v * v)), MEM_P);
     // 膜上一点的世界坐标（含凹陷：沿【内法线】凹进去）
     function membranePoint(fi, u, v) {
       const p = faceParam(fi, u, v);
       return sub(p, scl(FACE_N[fi], indentFace(fi) * domeK(u, v)));
     }
+    // 膜【绷平】时中心点的世界坐标 —— 凹陷深度就是从它量到膜的最深处。
+    // 画面上那条深度标注线的起点就是它（见 drawCube 的 sag 段）。
+    const flatCentre = fi => faceParam(fi, 0, 0);
+    const apexPoint  = fi => membranePoint(fi, 0, 0);
+    const sagOf      = fi => indentFace(fi);
 
     /* ---------------------- 力的两条独立路径 ----------------------
      * ① 解析：F = p·A（读数、账本用它，精确）
@@ -1221,21 +1269,65 @@
       const n = FACE_N[fi], c = faceCentre(fi);
       return dot(sub(c, q.eye), q.fwd) + 2.0 * (1 - Math.abs(dot(n, q.fwd)));
     };
-    function membraneAlpha(fi, q) {
-      let best = 1e9;
-      for (let k = 0; k < 6; k++) {
-        if (!faceShown(k)) continue;
-        best = Math.min(best, winScore(k, q));
+    /* 一个面在屏幕上的包围盒（用它自己的四个角）—— 判「谁挡住了谁」用。 */
+    function faceScreenBox(fi, q) {
+      const w = cubeWorld(), idx = HEX_FACES[fi];
+      let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
+      for (const i of idx) {
+        const p = project(w[i], q);
+        x0 = Math.min(x0, p.x); x1 = Math.max(x1, p.x);
+        y0 = Math.min(y0, p.y); y1 = Math.max(y1, p.y);
       }
-      const t = clamp((winScore(fi, q) - best) / MEM_WIN_SPAN, 0, 1);
-      return MEM_WIN + (MEM_ALPHA - MEM_WIN) * t;
+      return { x0: x0, x1: x1, y0: y0, y1: y1 };
+    }
+    const boxOv = (a, b) => {
+      const ox = Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0);
+      const oy = Math.min(a.y1, b.y1) - Math.max(a.y0, b.y0);
+      return (ox > 0 && oy > 0) ? ox * oy : 0;
+    };
+
+    /* 这张膜【挡住了后面那张膜】多少 —— 用「后面那张被盖掉的屏幕面积占它自己的
+       比例」来量，而不是占「我」的比例。
+       ★ 为什么按【被挡者】算：俯视时上面那张离相机近、屏幕盒子比下面那张大，
+         按「我」算出来只有 0.46（因为我的盒子大、下面那张只占我一半），
+         可实际上下面那张【整个】被压住了 —— 该调淡的是上面那张。
+         按被挡者算才是「它把别人盖住了多少」，与两张的远近大小无关。 */
+    function hideFraction(fi, q) {
+      const mine = faceScreenBox(fi, q);
+      const myWin = winScore(fi, q);
+      let worst = 0;
+      for (let k = 0; k < 6; k++) {
+        if (k === fi || !faceShown(k)) continue;
+        if (winScore(k, q) <= myWin) continue;      // k 在 fi 后面 → 挡不到 fi
+        const o = faceScreenBox(k, q);
+        const areaK = Math.max(1, (o.x1 - o.x0) * (o.y1 - o.y0));
+        worst = Math.max(worst, boxOv(mine, o) / areaK);
+      }
+      return clamp(worst, 0, 1);
+    }
+
+    function membraneAlpha(fi, q) {
+      /* ★ 窗口规则改成【按屏幕遮挡】判定，不再无条件生效。
+         原来是不管怎样都把「分数最好的那张」压到 0.26，结果：只看上下表面 +
+         透视视角时，上下两张膜在屏幕上明明【上下分开、谁也没挡住谁】，上面那张
+         却还是被压到 0.26 —— 跟下面那张 0.88 摆在一起，「比一比谁凹得深」就成了
+         一边倒，用户直接反馈「看不太清楚」。而俯视时两张同心、确实互相盖住，
+         这时才真需要把前面那张调淡。
+         判据：这张膜被「在它前面的另一张【已显示】的膜」盖住的比例 hideFraction。
+         没盖住（< MEM_HIDE_MIN）→ 保持不透明；盖满 → 降到 MEM_WIN。 */
+      const hide = hideFraction(fi, q);
+      if (hide < MEM_HIDE_MIN) return MEM_ALPHA;
+      const t = clamp((hide - MEM_HIDE_MIN) / (1 - MEM_HIDE_MIN), 0, 1);
+      return MEM_ALPHA + (MEM_WIN - MEM_ALPHA) * t;
     }
 
     // 这个面此刻要不要画膜（显示模式）。骨架【永远画】—— 它就是立方体的形状本身。
     function faceShown(fi) {
       if (state.mode === 'bare') return false;              // 只留骨架
       if (state.mode === 'topbot') return fi === 0 || fi === 1;
-      if (state.mode === 'side') return fi >= 2;
+      // ★ 只看侧面 = 只画【左右两张】。前后两张收起来（完全透明）：
+      //   它们与视线夹角小、横在左右两张前面，不收起就把凹陷挡住看不见了。
+      if (state.mode === 'side') return SIDE_PAIR.indexOf(fi) !== -1;
       return true;                                          // all
     }
 
@@ -1256,13 +1348,17 @@
        实测凹陷偏 10%（0.276 cm 画成 0.25 cm），四个侧面「逐点一样」也就跟着不成立了。
        这个错由 C10 抓出来（它验的是「线上每一点的 domeK 是否恰等于该圈的 r」）。 */
     function ringUV(r) {
+      // ★ 膜的形状是 domeK = (1−u²)(1−v²) 的 MEM_P 次幂，所以「凹陷 = r」这一圈
+      //   等价于「(1−u²)(1−v²) = r^(1/MEM_P)」。下面解的是后者，先做这一次换算 ——
+      //   漏掉它的话，环画在 r^(1/P) 的位置上，自检 C10（逐点验 domeK == r）立刻红。
+      const rq = Math.pow(clamp(r, 0, 1), 1 / MEM_P);
       const out = [];
       for (let i = 0; i <= RING_N; i++) {
         const th = PI2 * i / RING_N;
         const ct = Math.cos(th), st = Math.sin(th);
         const S = Math.pow(Math.sin(2 * th), 2);
-        const x = S < 1e-9 ? (1 - r)
-                : 2 * (1 - Math.sqrt(Math.max(0, 1 - S * (1 - r)))) / S;
+        const x = S < 1e-9 ? (1 - rq)
+                : 2 * (1 - Math.sqrt(Math.max(0, 1 - S * (1 - rq)))) / S;
         const tMax = 1 / Math.max(Math.abs(ct), Math.abs(st));
         const t = Math.min(Math.sqrt(Math.max(0, x)), tMax);
         out.push([t * ct, t * st]);
@@ -1279,23 +1375,43 @@
        按到相机的距离【由远到近】画。
        ★ 必须排序：膜是半透明的，不排的话远处那张膜会浮到近处那张上面。
        骨架是不透明的盒子（hexa 自己会做背面剔除），混在同一条序列里也不会出错。 */
+    /* 深度标注线画在哪几张膜上：只在【当前模式真正要比的那几张】上画 ——
+       「全部展开」时六张都拉一条线会糊成一片，反而看不出重点。 */
+    function sagFocus(fi) {
+      if (!faceShown(fi)) return false;
+      if (state.mode === 'side') return SIDE_PAIR.indexOf(fi) !== -1;
+      return fi === 0 || fi === 1;              // all / topbot
+    }
+
     function drawCube(q) {
       const groups = [];
       const tint = [0, 1, 2, 3, 4, 5].map(membraneTint);
       const ringN = [0, 0, 0, 0, 0, 0];
+      // 每张膜那条深度标注线在屏幕上的长度（px）—— 自检用它断言「上下两条线的
+      // 长短之比 == 凹陷之比」，比数像素稳得多。
+      const sagPx = [null, null, null, null, null, null];
+      const meshBoxes = [null, null, null, null, null, null];
 
       for (let fi = 0; fi < 6; fi++) {
         if (!faceShown(fi)) continue;
         const G = [];
+        /* 这张膜【网格顶点】的世界包围盒 —— 自检拿它验「膜朝内凹，一个顶点都不许穿出立方体」。
+           为什么不能拿 `rim`（立方体六个面的四个角）去验：那批角本来就是 cubeBox 的来源，
+           「角落在自己的包围盒里」恒成立，那样的断言是装饰。 */
+        const mb = { x0: 1e9, x1: -1e9, y0: 1e9, y1: -1e9, z0: 1e9, z1: -1e9 };
         for (let i = 0; i <= MEM_N; i++) {
           const row = [];
           for (let j = 0; j <= MEM_N; j++) {
             const u = -1 + 2 * i / MEM_N, v = -1 + 2 * j / MEM_N;
             const w = membranePoint(fi, u, v);
+            mb.x0 = Math.min(mb.x0, w[0]); mb.x1 = Math.max(mb.x1, w[0]);
+            mb.y0 = Math.min(mb.y0, w[1]); mb.y1 = Math.max(mb.y1, w[1]);
+            mb.z0 = Math.min(mb.z0, w[2]); mb.z1 = Math.max(mb.z1, w[2]);
             row.push({ w: w, p: project(w, q), k: domeK(u, v) });
           }
           G.push(row);
         }
+        meshBoxes[fi] = mb;
         const quads = [];
         for (let i = 0; i < MEM_N; i++) for (let j = 0; j < MEM_N; j++) {
           const A2 = G[i][j], B2 = G[i + 1][j], C2 = G[i + 1][j + 1], D2 = G[i][j + 1];
@@ -1329,22 +1445,54 @@
              当窗口的那张太透明，压暗等于没画（暗盖在暗上），改用【掠射高光】——
              薄膜在掠射角上反光最强，正好给出一圈亮边，凹形反而更清楚。 */
           const glow = clamp(1 - g.alpha / MEM_ALPHA, 0, 1) * 0.30;
+          const tintG = tint[g.fi];
           for (const qd of g.quads) {
             const A2 = qd.wq[0], B2 = qd.wq[1], C2 = qd.wq[2], D2 = qd.wq[3];
             let n = vnorm(cross(sub(B2, A2), sub(D2, A2)));
             const cen = scl(add(add(A2, B2), add(C2, D2)), 0.25);
+            const vdir = vnorm(sub(q.eye, cen));
             // 双面光照：膜里外都看得见，哪一面朝着相机就按哪一面打光
-            if (dot(n, sub(q.eye, cen)) < 0) n = scl(n, -1);
-            const k = clamp(shadeK(n, 0.46) * (0.70 + 0.30 * qd.kk) + glow * (1 - qd.kk), 0, 1.15);
-            poly(qd.quad, rgba(scl(tint[g.fi], k), g.alpha));
+            if (dot(n, vdir) < 0) n = scl(n, -1);
+            // ① 漫反射 —— 凹形的明暗主线：越靠绷平的边越暗，一眼看出这是个坑。
+            //    kk 的权重给到 0.46（原来是 0.30）：权重太小时整张膜明暗几乎一样，
+            //    看上去就是「一块贴着框的彩色板」，读不出它是个鼓起来的曲面。
+            const diff = shadeK(n, 0.38) * (0.54 + 0.46 * qd.kk);
+            // ② 镜面高光 —— 绷紧的橡皮是【半亮】的，凸起处一条柔和的高光带，
+            //    眼睛靠它读出「这是一张鼓起来的曲面」而不是一块平贴的色板
+            const hh = vnorm(add(LIGHT, vdir));
+            const spec = Math.pow(Math.max(0, dot(n, hh)), MEM_SHINE) * MEM_SPEC;
+            // ③ 掠射反光 —— 薄膜在掠射角最亮，给出一圈「被绷在框上」的亮边
+            const fres = Math.pow(1 - Math.abs(dot(n, vdir)), 3) * MEM_FRES;
+            const k = clamp(diff + spec + fres + glow * (1 - qd.kk), 0, 1.5);
+            poly(qd.quad, rgba(scl(tintG, k), g.alpha));
           }
           line(g.rimPts, rgba(FACE_ROLE[g.fi], MEM_RIM), 2.2);
           for (const rg of g.rings) {
             line(rg.pts.concat([rg.pts[0]]), rgba(FACE_ROLE[g.fi], MEM_RING), 1.4);
           }
-          // 面中心那一小点 = 这张膜【凹得最深】的地方
-          if (indentFace(g.fi) > 1e-9) {
-            dot2(project(membranePoint(g.fi, 0, 0), q), 2.3, rgba(FACE_ROLE[g.fi], 0.9));
+          /* 深度标注线：从【绷平时的中心】拉到膜的最深处，把「凹了多深」画成一段
+             可以直接比长短的线段（两端各加一道横杠，读起来像量出来的）。
+             没有它的话，浅膜与深坑在小屏上只差几十像素，眼睛读不出来 —— 这正是
+             用户说的「上下表面凹陷相差比较小，看不太清楚」。 */
+          if (sagFocus(g.fi) && indentFace(g.fi) > 0.04) {
+            const pf = project(flatCentre(g.fi), q), pa = project(apexPoint(g.fi), q);
+            const dx = pa.x - pf.x, dy = pa.y - pf.y, L2 = Math.hypot(dx, dy) || 1;
+            const ux = -dy / L2 * 6, uy = dx / L2 * 6;
+            // 先铺一条近黑的底线：膜本身是浅色曲面，直接画彩线会糊在里面
+            line([pf, pa], 'rgba(2,6,23,.62)', 4.6);
+            line([{ x: pf.x - ux, y: pf.y - uy }, { x: pf.x + ux, y: pf.y + uy }], 'rgba(2,6,23,.62)', 4.0);
+            line([{ x: pa.x - ux, y: pa.y - uy }, { x: pa.x + ux, y: pa.y + uy }], 'rgba(2,6,23,.62)', 4.0);
+            line([pf, pa], rgba(FACE_ROLE[g.fi], 0.96), 2.4);
+            line([{ x: pf.x - ux, y: pf.y - uy }, { x: pf.x + ux, y: pf.y + uy }],
+                 rgba(FACE_ROLE[g.fi], 0.92), 2.0);
+            line([{ x: pa.x - ux, y: pa.y - uy }, { x: pa.x + ux, y: pa.y + uy }],
+                 rgba(FACE_ROLE[g.fi], 0.92), 2.0);
+            dot2(pf, 2.2, 'rgba(226,232,240,.9)');
+            dot2(pa, 3.0, rgba(FACE_ROLE[g.fi], 0.98));
+            sagPx[g.fi] = { len: L2, flat: { x: pf.x, y: pf.y }, apex: { x: pa.x, y: pa.y } };
+          } else if (indentFace(g.fi) > 1e-9) {
+            // 没画标注线时至少留一个「最深处」的点，别让浅膜变成没有任何参照的色块
+            dot2(project(apexPoint(g.fi), q), 2.3, rgba(FACE_ROLE[g.fi], 0.9));
           }
         } else {
           hexa(q, g.world, g.base, { amb: 0.42, stroke: 'rgba(203,213,225,.28)', lw: 1 });
@@ -1367,8 +1515,15 @@
           // alpha 是【画的时候真正用的那个数】—— 自检靠它验「窗口那张膜必须更透明」，
           // 不然那条规则只能靠像素间接推，改坏了不容易定位。
           alpha: membraneAlpha(fi, q),
+          // 被前面的膜盖住的屏幕面积比例 —— 窗口规则就是按它判的，
+          // 自检读它才验得出「该调淡的调淡了、不该调淡的没被调淡」。
+          hide: hideFraction(fi, q),
           centre: project(membranePoint(fi, 0, 0), q),
           flat: project(faceParam(fi, 0, 0), q),
+          // 那条深度标注线的屏幕长度（没画时为 null）—— 自检靠它验
+          // 「上下的凹陷之比真的被画出来了」，而不是只在侧栏写了个数。
+          sag: sagPx[fi],
+          meshBox: meshBoxes[fi],
           rim: HEX_FACES[fi].map(i => project(cubeWorld()[i], q))
         });
       }
@@ -1464,31 +1619,47 @@
       flushLabels();
       const M = state.drawn.membranes || [];
       const sealed = isSealed();
-      const pTop = project([0, state.yb + CUBE_A, 0], q);
-      const pBot = project([0, state.yb, 0], q);
+      // 读数锚在【膜的最深处】（那条深度标注线的末端），不是立方体的中心 ——
+      // 标签指的就是它量的那一点，挪开就说不清说的是哪张膜了。
+      const apex = fi => (M[fi] && M[fi].centre ? M[fi].centre : project(apexPoint(fi), q));
+      const pTop = apex(0), pBot = apex(1);
 
-      /* 三张水平/竖直膜的凹陷读数，锚在【面中心】（也就是膜凹得最深的那一点）上。
-         锚到膜的中心而不是立方体的角：避让一挪就会挪到水里，读者仍然知道说的是哪张膜。 */
-      if (!sealed) {
-        avoidLabel({ x: pBot.x, y: pBot.y + 24 },
-                   '下表面凹 ' + fmt(indentFace(1), 2) + ' cm', rgb(C_UP, 1), 11);
-      } else {
-        avoidLabel({ x: pBot.x, y: pBot.y + 24 }, '下表面：拉平了 0.00 cm', '#fca5a5', 11);
+      /* 上下两张膜的凹陷读数。锚到膜的最深处：避让一挪就会挪到水里，
+         读者仍然知道说的是哪张膜。
+         ★ 只有【这一张真的画着】的时候才标它 —— 「只看侧面」里上下两张已经收起来了，
+           还挂一个「上表面凹 0.58 cm」就是给画面上不存在的东西贴标签。 */
+      if (faceShown(1)) {
+        if (!sealed) {
+          avoidLabel({ x: pBot.x, y: pBot.y + 24 },
+                     '下表面凹 ' + fmt(indentFace(1), 2) + ' cm', rgb(C_UP, 1), 11);
+        } else {
+          avoidLabel({ x: pBot.x, y: pBot.y + 24 }, '下表面：拉平了 0.00 cm', '#fca5a5', 11);
+        }
       }
-      avoidLabel({ x: pTop.x, y: pTop.y - 24 },
-                 '上表面凹 ' + fmt(indentFace(0), 2) + ' cm', rgb(C_DN, 1), 11);
-      if (M.length && M[2] && M[2].shown) {
-        // 侧面锚在【右面中心】上。锚到立方体右前方的空水里，避让一挪就掉到槽底，
-        // 跟那张膜完全脱开。
+      if (faceShown(0)) {
+        avoidLabel({ x: pTop.x, y: pTop.y - 24 },
+                   '上表面凹 ' + fmt(indentFace(0), 2) + ' cm', rgb(C_DN, 1), 11);
+      }
+      if (state.mode === 'side') {
+        // 「只看侧面」只画了左右两张 —— 这里必须说「左右两张一样」，
+        // 说「四个侧面」就成了画面上根本没有的东西（前后两张已收起）。
+        const s4 = apex(4), s5 = apex(5);
+        avoidLabel({ x: s4.x, y: s4.y - 22 },
+                   '右侧面凹 ' + fmt(indentFace(4), 2) + ' cm', rgb(C_SIDE, 1), 10);
+        avoidLabel({ x: s5.x, y: s5.y + 22 },
+                   '左侧面凹 ' + fmt(indentFace(5), 2) + ' cm', rgb(C_SIDE, 1), 10);
+      } else if (M.length && M[2] && M[2].shown) {
         const s = project([HALF + 0.4, state.yb + CUBE_A / 2, 0], q);
         avoidLabel({ x: s.x, y: s.y }, '四个侧面一样 ' + fmt(indentFace(2), 2) + ' cm', rgb(C_SIDE, 1), 10);
       }
-      if (!sealed) {
+      // Δ 是上下两张膜之差，只有这两张都画着的时候才标它（「只看侧面」里它们已收起）
+      const bothHB = faceShown(0) && faceShown(1);
+      if (!sealed && bothHB) {
         // Δ 是本页的结论，单独给一行，放在立方体左前方的空水里
         const d = project([-HALF - 3.4, state.yb + CUBE_A + 1.6, HALF * 0.4], q);
         avoidLabel({ x: d.x, y: d.y }, 'Δ 凹陷差 ' + fmt(indentDelta(), 2) + ' cm', '#a5f3fc', 11);
       }
-      if (sealed) {
+      if (sealed && bothHB) {
         const s = project([0, state.yb + 1.2, HALF + 2.5], q);
         avoidLabel({ x: s.x, y: s.y }, '下方没有液体 → 膜被拉平', '#fca5a5', 11);
       }
@@ -1546,11 +1717,18 @@
         topbot: '只看上下两张膜：<b>' + fmt(indentFace(1), 2) + ' cm</b> 对 <b>' +
                 fmt(indentFace(0), 2) + ' cm</b> —— 凹陷差 <b>Δ = ' + fmt(indentDelta(), 2) +
                 ' cm</b>，它就是浮力的来源。',
-        side:   '四个侧面凹得<b>完全一样</b>（同一深度处各方向压强相等）—— 液体对它们的压力' +
-                '<b>大小相等、方向相反</b>，两两抵消，合力 = 0。',
+        side:   '只画了<b>左右</b>两张侧面膜（前后两张收起来了，它们会挡住视线）—— 两张凹得' +
+                '<b>完全一样</b>：同一深度处各方向压强相等，液体对它们的压力大小相等、' +
+                '方向相反，两两抵消，水平合力 = 0。',
         bare:   '六张膜收起来了：立方体<b>只剩骨架</b>（12 根棱条 + 8 个角块），里面<b>是空的</b>。'
       };
-      el.innerHTML = m[state.mode] || m.all;
+      let html = m[state.mode] || m.all;
+      // 立方体压低到一定程度，下表面那张膜会先碰到槽底、凹不下去了 ——
+      // 这时画面上它明显比读数浅，不说一句会被当成 bug。
+      if (bottomClamped()) {
+        html += ' <b>（下表面那张膜已经贴到槽底，被顶住、凹不下去了）</b>';
+      }
+      el.innerHTML = html;
     }
     function updateStageButtons() {
       const btn = $('bu-auto');
@@ -1615,7 +1793,7 @@
       const modeNote = {
         all:    '六张膜全画出来。凹得越深 = 那里压强越大，等凹陷线也越多。',
         topbot: '只留上下两张水平膜 —— 比一比谁凹得深，差就是浮力。',
-        side:   '只留四个侧面。它们凹得【完全一样】，压力两两抵消。',
+        side:   '只留【左右】两张侧面膜，前后两张收起来了（它们会挡住视线）。左右两张凹得【完全一样】。',
         bare:   '把膜全收起来，看清立方体其实只是一个【空的骨架】。'
       };
       note.textContent = modeNote[state.mode] || modeNote.all;
@@ -1674,12 +1852,15 @@
 
     /* 预置表：把六个深度上的凹陷一次列出来。
        这张表是【算出来的】，不是抄的 —— 它直接证明 Δ 与深度无关：
-       只要下表面还浸在水里（yb > 0），Δ 恒为 0.737 cm。 */
-    const DT_YB = [7, 5.5, 4, 2.5, 1, 0];
+       只要下表面还浸在水里、并且还没有贴到槽底，Δ 就是同一个数。
+       ★ 取点必须全部落在【自由段】：下表面那张膜凹得最深，yb 小到一定程度它就
+         先碰到槽底、被顶住（见 bottomClamped），再往下 Δ 就不成立了。 */
+    const DT_YB = [7, 5.5, 4, 3, 2.5, 0];
     function deltaAt(yb) {
       const save = state.yb;
       state.yb = yb;
-      const o = { yb: yb, dn: indentFace(1), up: indentFace(0), d: indentDelta(), sealed: isSealed() };
+      const o = { yb: yb, dn: indentFace(1), up: indentFace(0), d: indentDelta(),
+                  sealed: isSealed(), clamped: bottomClamped() };
       state.yb = save;
       return o;
     }
@@ -1690,15 +1871,17 @@
       const now = state.yb;
       const body = rows.map(r => {
         const isNow = Math.abs(r.yb - now) < 1e-9;
-        return '<tr class="' + (isNow ? 'now' : '') + (r.sealed ? ' seal' : '') + '">' +
+        return '<tr class="' + (isNow ? 'now' : '') + (r.sealed ? ' seal' : '') +
+          (r.clamped ? ' clamp' : '') + '">' +
           '<td>' + fmt(r.yb, 1) + '</td><td>' + fmt(r.dn, 2) + '</td><td>' + fmt(r.up, 2) +
           '</td><td class="d">' + fmt(r.d, 2) + '</td></tr>';
       }).join('');
-      const open = rows.filter(r => !r.sealed).map(r => r.d);
+      const free = rows.filter(r => !r.sealed && !r.clamped).map(r => r.d);
+      const spread = free.length ? Math.max.apply(null, free) - Math.min.apply(null, free) : 0;
       el.innerHTML = '<table class="dt"><thead><tr><th>底面高/cm</th><th>下表面凹陷/cm</th>' +
         '<th>上表面凹陷/cm</th><th>Δ/cm</th></tr></thead><tbody>' + body + '</tbody></table>' +
-        '<div class="dt-conc">完全浸没时 Δ 恒为 <b>' + fmt(open[0], 2) +
-        ' cm</b>（' + rows.filter(r => !r.sealed).length + ' 行都一样）—— ' +
+        '<div class="dt-conc">完全浸没时 Δ 恒为 <b>' + fmt(free[0], 2) +
+        ' cm</b>（' + free.length + ' 行都一样，最大差 ' + fmt(spread, 3) + ' cm）—— ' +
         '两张膜都跟着变深，但<b>差不变</b>，所以 <b>F浮 与深度无关</b>。' +
         '贴底那一行下表面被拉平，Δ 反而变成负的。</div>';
     }
@@ -1960,11 +2143,14 @@
         RHO: RHO, GRA: GRA, A_AREA: A_AREA, V_DISP: V_DISP,
         FLOOR: FLOOR,
         RULER_X: RULER_X, RULER_W: RULER_W, RULER_D: RULER_D,
-        MAX_INDENT: MAX_INDENT, MEM_STEP: MEM_STEP, MEM_N: MEM_N,
+        MAX_INDENT: MAX_INDENT, MEM_STEP: MEM_STEP, MEM_N: MEM_N, MEM_P: MEM_P,
+        MEM_ALPHA: MEM_ALPHA, MEM_WIN: MEM_WIN, MEM_HIDE_MIN: MEM_HIDE_MIN,
+        MEM_MIX: MEM_MIX, MEM_RING: MEM_RING, MEM_RIM: MEM_RIM,
+        MEM_SPEC: MEM_SPEC, MEM_SHINE: MEM_SHINE, MEM_FRES: MEM_FRES,
         FRAME_W: FRAME_W, STUD_W: STUD_W, P_MAX: P_MAX,
         ISOBAR_P: ISOBAR_P, RULER_TICK: RULER_TICK, CAMD: CAMD, TARGET: TARGET,
         VIEWS: VIEWS, DT_YB: DT_YB,
-        FACE_N: FACE_N, FACE_CN: FACE_CN, SIDE_FACES: SIDE_FACES
+        FACE_N: FACE_N, FACE_CN: FACE_CN, SIDE_FACES: SIDE_FACES, SIDE_PAIR: SIDE_PAIR
       },
       makeCam: makeCam, project: project, unproject: unproject, envelopePoints: envelopePoints,
       size: () => ({ w: state.w, h: state.h, dpr: state.dpr }),
@@ -1977,9 +2163,12 @@
       // 橡皮膜：几何 + 凹陷
       faceParam: faceParam, faceCentre: faceCentre, facePress: facePress,
       indentFace: indentFace, indentDelta: indentDelta, sideIndents: sideIndents,
+      sagFree: sagFree, bottomClamped: bottomClamped, sagOf: sagOf,
+      flatCentre: flatCentre, apexPoint: apexPoint, sagFocus: sagFocus,
       membranePoint: membranePoint, domeK: domeK, ringPath: ringPath, ringUV: ringUV, RING_N: RING_N,
       faceShown: faceShown, membraneTint: membraneTint, skeletonBoxes: skeletonBoxes,
       membraneAlpha: membraneAlpha, winScore: winScore,
+      hideFraction: hideFraction, faceScreenBox: faceScreenBox,
       // 力的第二条路径：逐块积分，自检拿它交叉验证 p·A
       faceNetForce: faceNetForce,
       // 预置表（凹陷之差与深度无关）：把 yb 拨过去量一行再拨回来
