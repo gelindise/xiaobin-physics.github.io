@@ -4,22 +4,31 @@ import * as THREE from './assets/optics-three.min.js';
    温度计的使用 —— 三维写实测温实验台（人教版八上 第三章 第1节 温度）
    ---------------------------------------------------------------------------
    世界坐标单位：厘米（cm），y 轴向上，实验台台面为 y = 0。
-   器材：铁架台（铸铁底座 + 镀铬立柱 + 十字夹）、酒精灯、石棉网、铁圈、
-         硼硅玻璃烧杯 + 水（可放冰块）、两支可换的温度计（实验室温度计 / 体温计）。
+   器材：铁架台（铸铁底座 + 镀铬立柱 + 十字夹）、硼硅玻璃烧杯（直接坐在台面上）
+         + 水（可放冰块）、两支可换的温度计（实验室温度计 / 体温计）。
+   ★ 本页【不加热】—— 没有酒精灯。水就是一杯已经调到某个温度的水，
+     实验要练的是「怎么把温度计放对、读对、记对」，不是加热。
+   ---------------------------------------------------------------------------
+   操作：温度计一开始横放在台面上。鼠标点住它就把它拿起来，拖到烧杯上方松手，
+        铁夹会自动合拢把它夹住；松手时玻璃泡落在哪儿，就判成哪种放法。
+   ---------------------------------------------------------------------------
    物理：
      ① 示数滞后 —— 玻璃泡与被测液体之间是有限速率的换热，示数按一阶滞后趋近
         「玻璃泡感受到的温度」，所以刚插进去读不准，要等示数稳定。
      ② 玻璃泡位置偏差 —— 玻璃泡测的是【它接触到的物质】的温度。按「接触面积 ×
-        换热系数」加权：水 500、空气 18、被火焰加热的玻璃杯底 900 W/(m²·K)。
-        碰杯底：约 45% 泡面贴住杯底，杯底内表面比水体平均温度高 15 ℃ → 明显偏大。
-        碰杯壁：杯壁外侧和空气换热，内表面温度偏向室温 → 偏差方向随水温和室温的关系变号。
+        换热系数」加权：水 500、空气 18。
+        碰杯底：杯底隔着玻璃压在台面上，台面是室温 —— 热水时杯底偏凉、冰水时偏暖。
+        碰杯壁：杯壁外侧和空气换热，内表面温度偏向室温 → 方向随水温与室温的关系变号。
         只浸入一半：一半泡面在空气里 → 偏向室温，同样会变号。
+        三种错法的偏差【方向都随水温变号】，这是规则要禁它们的根本原因。
      ③ 视线视差 —— 刻度印在玻璃管前表面（半径 r），红色液柱在管中心，两者相隔 r。
         眼睛在距管 D、比液柱高（低）Δy 处，视线与刻度面相交的高度
         y_read = h + (r/D)·Δy，换算成温度 ΔT = (r/D)·Δy ÷ (每 ℃ 的刻度高度)。
         俯视 Δy > 0 → 读数偏大；仰视 Δy < 0 → 读数偏小。这不是写死的数。
+        平视时没有视差可看，眼球与视线【都不画】（画出来只会喧宾夺主）。
      ④ 量程与分度值 —— 读数按分度值取整；超出量程时液柱顶到管口并报警。
-     ⑤ 缩口 —— 体温计玻璃泡上方有缩口，离开液体后示数冻结；实验室温度计会回落。
+     ⑤ 缩口 —— 体温计玻璃泡上方有缩口，水银只能往上走，所以能离开人体读数；
+        要降下来必须【甩一甩】。
    ========================================================================== */
 (() => {
   'use strict';
@@ -27,41 +36,58 @@ import * as THREE from './assets/optics-three.min.js';
   const $ = (id) => document.getElementById(id);
 
   /* ------------------------------ 器材尺寸 ------------------------------ */
-  const BASE_W = 24, BASE_D = 16, BASE_H = 1.8;      // 铸铁底座
-  const ROD_R = 0.55, ROD_H = 37, ROD_Z = -5.2;      // 镀铬立柱
-  const RING_Y = 15.6;                               // 铁圈高度
+  /* 台面就是 y = 0。烧杯直接坐在台面上，不再用铁圈 + 石棉网架到半空 ——
+     整套器材的重心因此低了一大截，相机取景与铁夹高度都要跟着重算。 */
+  const BASE_W = 20, BASE_D = 8, BASE_H = 1.8;       // 铸铁底座
+  const BASE_Z = -9;                                 // 底座整体后移，给台面上的烧杯让出位置
+  const ROD_R = 0.55, ROD_H = 15, ROD_Z = BASE_Z;    // 镀铬立柱
 
-  const NET_W = 11.6, NET_T = 0.22;                  // 石棉网
-  const LAMP_R = 3.5, LAMP_H = 6.9;
-  const LAMP_COLLAR_H = 1.4, WICK_H = 1.7;
-  const LAMP_TOP = BASE_H + LAMP_H + LAMP_COLLAR_H + WICK_H;   // 11.8
-  const FLAME_H = 5.0;
-  const LAMP_X = 0;                                  // 酒精灯一直在杯下加热
-
-  // 低型烧杯（250 mL 量级）：直径 8.4 cm、高 6.6 cm
-  const BK_R = 4.2, BK_H = 6.6;
-  const BK_Y0 = RING_Y + NET_T + 0.06;               // 15.88
-  const WATER_H = 3.8;
-  const WATER_TOP = BK_Y0 + WATER_H;                 // 19.68
+  // 烧杯：直径 8.4 cm、高 9.5 cm
+  const BK_R = 4.2, BK_H = 9.5;
+  const BK_Y0 = 0.04;                                // 直接坐在台面上
+  const WATER_H = 7.0;
+  const WATER_TOP = BK_Y0 + WATER_H;                 // 7.04
   const BK_INNER_R = BK_R - 0.1;                     // 4.1
-  const BK_INNER_BOTTOM = BK_Y0 + 0.55;              // 16.43（加厚杯底的顶面）
+  const BK_INNER_BOTTOM = BK_Y0 + 0.55;              // 0.59（加厚杯底的顶面）
 
-  /* 温度计：管长足够让铁夹在管身中段夹住它 */
+  /* 温度计：管身比原来短。管越短，「每 ℃ 占多少厘米」越小 —— 同样一个眼睛
+     高度差换算出的读数偏差就越大。这是让「视线相平」这条规则在【低矮的台面场景】
+     里仍然看得见的关键：泡只能放到 4 cm 上下，眼睛的上下余地本来就小，
+     再用原来那根 18.6 cm 的长管，偏差会被摊薄到半个分度值以下，读数上完全看不出来。 */
   const TH_BULB_R = 0.42;
   const TH_TUBE_R = 0.24;
-  const TH_TUBE_H = 18.6;
-  const CLAMP_Y = 29.5;                              // 铁夹横梁高度
-  const LIFT_DY = 5.6;                               // 「提起温度计」抬升量（玻璃泡离开水面）
+  const TH_TUBE_H = 10.8;
+  const LIFT_DY = 6.2;                               // 「提起温度计」抬升量（泡离开水面并高过杯口）
 
-  /* 玻璃泡的四种放法（玻璃泡中心的世界坐标）。
-     base 那一档（全部浸入）就是温度计组的原点，其余都是相对它的偏移。 */
-  const TH_BULB_Y_BASE = BK_INNER_BOTTOM + 1.35;     // 17.78
+  /* 玻璃泡的四种放法（玻璃泡中心的世界坐标）。 */
+  const TH_BULB_Y_BASE = BK_INNER_BOTTOM + 3.6;      // 4.19（泡在水体中下层，上下都留出余量）
   const PLACE_POS = {
     right:  { x: 0,                     y: TH_BULB_Y_BASE },
     bottom: { x: 0,                     y: BK_INNER_BOTTOM + TH_BULB_R },
     wall:   { x: BK_INNER_R - TH_BULB_R, y: TH_BULB_Y_BASE },
     half:   { x: 0,                     y: WATER_TOP }
   };
+
+  /* 松手时按玻璃泡落在哪儿判「这是哪种放法」。阈值全部由几何本身给出，不另设玄学数字：
+     横向超出杯口（内半径 + 半个泡）→ 根本没进杯子，退回台面；
+     泡心压到「内底面 + 泡半径」附近 → 碰杯底；
+     泡心落在水面上下各 0.8 cm 内 → 只浸入一半；
+     其余按横向离轴的距离分「碰杯壁 / 全部浸入」。 */
+  const DROP = {
+    inX:     BK_INNER_R + 0.55,                      // 4.65
+    bottomY: BK_INNER_BOTTOM + TH_BULB_R + 0.5,      // 1.51
+    halfLo:  WATER_TOP - 0.8,                        // 6.24
+    halfHi:  WATER_TOP + 0.8,                        // 7.84
+    wallX:   BK_INNER_R - TH_BULB_R - 0.55           // 3.13
+  };
+
+  /* 初始状态：温度计横放在台面上，摆在烧杯【左边】，和烧杯在同一条竖直平面里（z 都为 0）。
+     放在同一个竖直平面里是拖动交互的前提 —— 鼠标在一张平面内移动，就能把它从台面搬到杯口；
+     落点 (x, y) 直接就是玻璃泡在杯里的位置，不用再猜深度。
+     泡在左边、管身朝 −x 伸出去：管身朝 +x 的话会一直伸进烧杯里。 */
+  const BENCH_X = -7.0;                              // 泡中心 x
+  const BENCH_Y = TH_BULB_R + 0.03;                  // 泡搁在台面上（泡比管粗，先碰到台面）
+  const BENCH_Z = 0;
 
   /* 印刷刻度：贴图尺寸与版面。刻度条要正对哪个方位角，由 makeScale() 量出墨迹后反算。 */
   const SCALE_TEX_W = 160, SCALE_TEX_H = 1024;
@@ -70,7 +96,21 @@ import * as THREE from './assets/optics-three.min.js';
   const SCALE_NUM_X = 75;
   const SCALE_NUM_FONT = 20;
   const SCALE_Y0 = 0;                                // 刻度下限（贴图最下一行）在管身的局部高度
-  const SCALE_Y1 = TH_TUBE_H - 1.2;                  // 刻度上限
+  /* 刻度只画到管身 8.2 cm 处，上面留出 2.2 cm 的空管给铁夹 ——
+     刻度一直画到管口的话，夹口正好压住最高温那一段数字。 */
+  const SCALE_Y1 = TH_TUBE_H - 2.6;                  // 8.2
+
+  /* 铁夹夹口的高度：刻度上端再往上 1.1 cm，正好落在「刻度之上、管口之下」那段空管上。 */
+  const CLAMP_Y = TH_BULB_Y_BASE + SCALE_Y1 + 1.1;   // 13.49
+  /* 横臂停靠位置：还没夹住东西时缩回立柱旁边 */
+  const ARM_PARK = BASE_Z + 2.6;                     // -6.4
+
+  /* 温度计横躺在台面上时，还要绕管轴滚一下，让刻度条朝上 ——
+     不滚的话印字那一面正好压在台面上，躺着的温度计就是一片空白玻璃，认不出是什么。
+     推导：刻度条在管身局部坐标系里的方位是 SCALE_FACE_DEG（从 +z 起算）；
+     躺下（绕 z 轴转 90°）之后，这个方位落到世界 (y, z) 平面里的 90° − SCALE_FACE_DEG 处；
+     要把它转到正上方，绕世界 x 轴补 (SCALE_FACE_DEG − 90°) 就行。 */
+  const LIE_ROLL = (SCALE_FACE_DEG - 90) * Math.PI / 180;
 
   /* ------------------------------ 物理参数 ------------------------------ */
   const AMB = 20;                                    // 室温 ℃
@@ -79,30 +119,36 @@ import * as THREE from './assets/optics-three.min.js';
 
   /* 玻璃泡「感受到」的温度 = 它接触到的各部分的加权平均。
      —— 水的自然对流换热系数约 500 W/(m²·K)，空气（对流 + 辐射）约 18。
-     碰杯底：热量从杯底进入水里，最下面那一层水最热（真实实验要不断搅拌就是这个原因），
-             压在水底上的玻璃泡读到的是这一层 —— 比水体平均温度高 BOTTOM_DT ℃。
+     碰杯底：本页【不加热】，杯底不再是「被火焰烤热的那一层」。它隔着玻璃压在
+             台面上，而台面就是室温 —— 于是杯底那一层水的温度是「水温向室温靠拢」
+             的结果：热水时杯底偏凉（读数偏小），冰水时杯底偏暖（读数偏大）。
+             方向同样随水温变号，而且因为台面这个热库比空气大得多，偏差也最大。
      碰杯壁：杯壁内表面由「水侧」和「空气侧」两个串联热阻定温：
-             T_wall = (h_水·Tw + h_空·Ta)/(h_水 + h_空) = Tw − (Tw − Ta)·WALL_K，
-             所以壁温其实很接近水温（WALL_K ≈ 0.035），偏差只有 1 ℃ 上下 ——
-             但它的方向随「水温比室温高还是低」变号，方向不可控才是规则要禁它的原因。
+             T_wall = Tw − (Tw − Ta)·WALL_K，所以壁温其实很接近水温（WALL_K ≈ 0.035），
+             偏差只有 1 ℃ 上下 —— 但方向随水温变号，方向不可控才是规则要禁它的原因。
      只浸入一半：一半泡面在空气里，按 h·A 加权，同样偏向室温、同样会变号。 */
   const H_WATER = 500, H_AIR = 18;
   const WALL_K = H_AIR / (H_WATER + H_AIR);          // ≈ 0.0348
-  const BOTTOM_DT = 6.0;                             // 杯底那一层水比水体平均温度高多少 ℃
+  const BOTTOM_K = 0.10;                             // 杯底向室温靠拢的比例（台面比空气导热好）
+  const CONTACT_BOTTOM = 0.85;                       // 压住杯底时贴住杯底的泡面比例
   const CONTACT_WALL = 0.45;                         // 碰杯壁时贴住杯壁的泡面比例
   const HALF_F = 0.5;                                // 「只浸入一半」时在空气中的泡面比例
 
   /* 视线视差：眼睛到温度计的距离、俯视 / 仰视时眼睛比液柱高（低）多少。
-     20 cm 是「把温度计拿到眼前看」的距离；距离越近视差越大 —— 这也是读数时要正对着看的原因。 */
-  const EYE_DIST = 20;                               // cm
-  const EYE_DY = 12;                                 // cm
-  /* 眼球只是「观察者」的符号，不是实验器材。半径按「站在 20 cm 外读数的人眼」取，
-     再大就会在近距离视角（read）里挡住温度计本身。 */
+     11 cm 是「把温度计凑到眼前看」的距离；距离越近视差越大 ——
+     这也是读数时要正对着看的原因。 */
+  const EYE_DIST = 11;                               // cm
+  /* 眼睛的高度差不能再取 12 cm：泡只放到台面上方 4 cm 上下，取 12 的话
+     仰视时眼睛会落到台面以下（跑到桌子底下去），画面上直接消失。
+     3.6 cm 是「泡到台面」这段余地的一半多一点，配合上面缩短的管身，
+     换算出的偏差正好还是一个分度值（≈1.1 ℃），看得见。 */
+  const EYE_DY = 3.6;                                // cm
+  /* 眼球只是「观察者」的符号，不是实验器材。 */
   const EYE_R = 0.75;                                // 眼球半径 cm
   /* 相机离眼球比这更近时干脆不画它：那时相机基本就站在观察者的位置上，
-     再画一颗大白球只会糊住温度计。30 cm 落在「read 视角 ≈ 20 cm」与
-     「其余三个视角 ≈ 80 cm 以上」之间的空档里，两边都不贴边。 */
-  const EYE_MIN_DIST = 30;                           // cm
+     再画一颗大白球只会糊住温度计。阈值落在「read 视角」与「其余三个视角」
+     之间的空档里，两边都不贴边（具体数值由 dev-thermo-smoke.js 量出来核对）。 */
+  const EYE_MIN_DIST = 22;                           // cm
 
   /* ------------------------------ 可选项 ------------------------------ */
   const WATERS = {
@@ -132,10 +178,23 @@ import * as THREE from './assets/optics-three.min.js';
 
   /* ------------------------------ 状态 ------------------------------ */
   const state = {
-    water: '25', place: 'right', sight: 'level', kind: 'lab',
-    lifted: false, liftAnim: 0,
-    Tw: 25,          // 水的真实温度 ℃（直接切换）
-    TwVis: 25,       // 视觉用（颜色 / 白气 / 冰块）的平滑值
+    /* 默认用【热水】而不是常温水：本页不加热，三种错放的偏差都正比于「水温 − 室温」。
+       默认取 25 ℃（≈ 室温）的话三种偏差全部归零，一进来点哪个都看不出区别；
+       65 ℃ 既看得出示数爬升的滞后，偏差也都还有 1 个分度值以上。 */
+    water: '65', place: 'right', sight: 'level', kind: 'lab',
+    /* 温度计的握持状态：
+         bench   —— 横放在实验台上（初始状态，还没开始测）
+         hand    —— 被鼠标拿在手里，跟着指针走
+         clamped —— 已经放进烧杯，铁夹合拢夹住 */
+    grip: 'bench',
+    lifted: false,                    // 已夹住的前提下，铁夹把它提起来（泡离开水面）
+    handX: BENCH_X, handY: BENCH_Y,   // 拿在手里时玻璃泡的世界坐标
+    thX: BENCH_X, thY: BENCH_Y,       // 平滑之后的玻璃泡位置 —— 真正驱动渲染的是这两个
+    tilt: 0,                          // 0 = 横躺，1 = 竖立
+    jawOpen: 1,                       // 铁夹张开程度：1 = 完全张开，0 = 夹紧
+    armReach: ARM_PARK,               // 铁夹横臂伸到哪个 z（不夹时缩回立柱旁）
+    Tw: 65,          // 水的真实温度 ℃（直接切换）
+    TwVis: 65,       // 视觉用（颜色 / 白气 / 冰块）的平滑值
     Td: AMB,         // 温度计示数（连续量）
     t: 0,
     records: [],
@@ -143,13 +202,50 @@ import * as THREE from './assets/optics-three.min.js';
   };
   const toggles = { sight: true, eye: true, trueLine: true, steam: true };
 
+  /* 玻璃泡在不在液体里：要「已经放进烧杯」而且「没被提起来」才算。
+     横在台面上、拿在手里、被铁夹提着，泡都只和室温的空气打交道。 */
+  function immersed() { return state.grip === 'clamped' && !state.lifted; }
+
+  /* 松手时按落点判放法。返回 null 表示「没放进杯里」—— 温度计退回台面。
+     拖动和「模拟松手」的验收钩子都走这一个函数，两边不可能判得不一样。 */
+  function classifyDrop(bx, by) {
+    if (Math.abs(bx) > DROP.inX) return null;       // 玻璃泡横向就在杯口外
+    if (by > DROP.halfHi) return null;              // 泡还悬在水面以上，等于没放进去
+    if (by <= DROP.bottomY) return 'bottom';
+    if (by >= DROP.halfLo) return 'half';
+    return Math.abs(bx) >= DROP.wallX ? 'wall' : 'right';
+  }
+
+  /* 取景：这一版的器材整体只有 0 ~ 17 cm 高，横向却铺开将近 28 cm
+     （左边躺着温度计、右边是铁架台底座），所以注视点要往左挪、距离也要比
+     「烧杯吊在半空」那一版近得多。下面这四个值不是手调的 —— 由 /tmp/tune-all.js
+     把器材的极值点投影到 NDC，按「最长边占满 86%、包围盒居中」迭代反算出来，
+     收敛误差都在 0.004 以内。改器材尺寸后重跑那个脚本再粘回来。
+
+     ★ front / angle / top 是【四种放法】的并集（不是只按「全部浸入」调的）：
+       只按一种放法调的话，45° 视角在「只浸入一半」时会把管口裁掉 0.024 NDC ——
+       一截空白玻璃出画，看着像温度计断了。
+     ★ read 带 followRead（相机跟着玻璃泡升降），所以它的相对取景与放法无关，
+       按「全部浸入」调一次就够；这样它还能保持 21 cm 的近距离特写。 */
   const VIEWS = {
-    front: { yaw: -0.06, pitch: 0.10, dist: 88, ty: 19 },
-    angle: { yaw: -0.52, pitch: 0.15, dist: 92, ty: 19 },
-    top:   { yaw: -0.50, pitch: 0.80, dist: 86, ty: 17 },
-    read:  { yaw: -0.44, pitch: 0.04, dist: 40, ty: 25 }
+    front: { yaw: -0.06, pitch: 0.10, dist: 37.37, tx: -5.17, ty: 9.14 },
+    angle: { yaw: -0.52, pitch: 0.15, dist: 38.15, tx: -7.91, ty: 8.30 },
+    top:   { yaw: -0.50, pitch: 0.76, dist: 44.05, tx: -6.77, ty: 11.75 },
+    read:  { yaw: -0.44, pitch: 0.04, dist: 21.12, tx: -1.78, ty: 9.67 }
   };
+  /* 上面那四个 dist 是按【画布宽高比 1.364】调出来的（1280×840 下舞台的实际比例）。
+     画布一窄，横向视野就跟着窄，器材会被左右裁掉 —— 手机上就是这样。
+     所以窄于参考比例时按比例把相机往后退：宁可整体小一点，也不许裁。
+     宽于参考比例不用管，横向只会更宽，纵向半展仍是调好的 0.86。 */
+  const REF_ASPECT = 1.364;
   const view = { ...VIEWS.angle };
+  /* 「读数特写」是【跟着温度计走】的：温度计在哪，它就特写哪儿。
+     固定注视点做不到 —— 四种放法里玻璃泡的位置相差 6 cm，而特写视野只有 12 cm 高：
+     按「全部浸入」调好，碰杯底时连 0 ℃ 那道刻度都被裁到画外（实测 NDC y = −1.35）；
+     改成按最矮的那种调，四种放法就都糊成一团（dist 得从 21 拉到 34，不再是特写）。
+     所以 read 视角只记「相对『全部浸入』的偏移」，切换放法时把相机一起平移过去。
+     另外三个是全景视角，不跟 —— 它们本来就要把整个实验台框住。 */
+  let followRead = false;
 
   /* ------------------------------ 小工具 ------------------------------ */
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -205,49 +301,6 @@ import * as THREE from './assets/optics-three.min.js';
     t.colorSpace = THREE.SRGBColorSpace;
     t.wrapS = t.wrapT = THREE.RepeatWrapping;
     t.repeat.set(3, 2);
-    return t;
-  }
-
-  /* 石棉网：金属丝编织网 + 中间石棉圆片 */
-  function makeNetMap() {
-    const S = 512;
-    const c = newCanvas(S, S), g = c.getContext('2d');
-    g.clearRect(0, 0, S, S);
-    const step = S / 26;
-    g.strokeStyle = 'rgba(168,176,186,0.96)';
-    g.lineWidth = step * 0.30;
-    for (let i = 0; i <= 26; i++) {
-      g.beginPath(); g.moveTo(i * step, 0); g.lineTo(i * step, S); g.stroke();
-      g.beginPath(); g.moveTo(0, i * step); g.lineTo(S, i * step); g.stroke();
-    }
-    g.strokeStyle = 'rgba(228,234,240,0.42)';
-    g.lineWidth = step * 0.10;
-    for (let i = 0; i <= 26; i++) {
-      g.beginPath(); g.moveTo(i * step - step * 0.09, 0); g.lineTo(i * step - step * 0.09, S); g.stroke();
-      g.beginPath(); g.moveTo(0, i * step - step * 0.09); g.lineTo(S, i * step - step * 0.09); g.stroke();
-    }
-    const t = new THREE.CanvasTexture(c);
-    t.colorSpace = THREE.SRGBColorSpace;
-    t.wrapS = t.wrapT = THREE.RepeatWrapping;
-    t.repeat.set(3, 3);
-    return t;
-  }
-
-  function makeAsbestosMap() {
-    const S = 256, rnd = mulberry32(4242);
-    const c = newCanvas(S, S), g = c.getContext('2d');
-    g.fillStyle = '#b9b2a4'; g.fillRect(0, 0, S, S);
-    for (let i = 0; i < 2600; i++) {
-      const x = rnd() * S, y = rnd() * S, a = rnd() * Math.PI, len = 1 + rnd() * 4;
-      const v = 0.82 + rnd() * 0.3;
-      g.strokeStyle = `rgba(${Math.round(186 * v)},${Math.round(178 * v)},${Math.round(162 * v)},0.55)`;
-      g.lineWidth = 0.6 + rnd() * 0.9;
-      g.beginPath(); g.moveTo(x, y); g.lineTo(x + Math.cos(a) * len, y + Math.sin(a) * len); g.stroke();
-    }
-    const t = new THREE.CanvasTexture(c);
-    t.colorSpace = THREE.SRGBColorSpace;
-    t.wrapS = t.wrapT = THREE.RepeatWrapping;
-    t.repeat.set(2, 2);
     return t;
   }
 
@@ -353,14 +406,17 @@ import * as THREE from './assets/optics-three.min.js';
   key.position.set(-42, 66, 44);
   key.castShadow = true;
   key.shadow.mapSize.set(2048, 2048);
-  key.shadow.camera.left = -46; key.shadow.camera.right = 46;
-  key.shadow.camera.top = 60; key.shadow.camera.bottom = -14;
+  /* 阴影正交视锥按新场景收紧：器材只占 y 0 ~ 17 cm、x −19 ~ 10 cm。
+     原来那套（top 60 / bottom −14 / ±46，注视 y = 16）是「烧杯吊在半空」时定的，
+     照搬过来会让 2048 的阴影贴图摊到一大片空处，接缝变糊。 */
+  key.shadow.camera.left = -38; key.shadow.camera.right = 38;
+  key.shadow.camera.top = 42; key.shadow.camera.bottom = -18;
   key.shadow.camera.near = 20; key.shadow.camera.far = 200;
   key.shadow.bias = -0.0006;
   key.shadow.normalBias = 0.026;
   scene.add(key);
   scene.add(key.target);
-  key.target.position.set(0, 16, 0);
+  key.target.position.set(-2, 8, 0);
 
   const fill = new THREE.DirectionalLight('#dce9f8', 0.58);
   fill.position.set(50, 34, 30);
@@ -413,11 +469,14 @@ import * as THREE from './assets/optics-three.min.js';
   const stand = new THREE.Group();
   scene.add(stand);
   const base = new THREE.Mesh(new THREE.BoxGeometry(BASE_W, BASE_H, BASE_D), castIron);
-  base.position.set(0, BASE_H / 2, 0);
+  /* 底座要跟着立柱一起后移到 BASE_Z：立柱在 BASE_Z、底座留在 z = 0 的话，
+     立柱会插在底座外面的半空中。底座占 z ∈ [BASE_Z − 4, BASE_Z + 4]，
+     正好把 z ∈ [−4.2, 4.2] 的烧杯让开。 */
+  base.position.set(0, BASE_H / 2, BASE_Z);
   base.castShadow = true; base.receiveShadow = true;
   stand.add(base);
   const baseTop = new THREE.Mesh(new THREE.BoxGeometry(BASE_W - 1.6, 0.5, BASE_D - 1.6), castIron);
-  baseTop.position.set(0, BASE_H + 0.2, 0);
+  baseTop.position.set(0, BASE_H + 0.2, BASE_Z);
   baseTop.castShadow = true;
   stand.add(baseTop);
   const rod = new THREE.Mesh(new THREE.CylinderGeometry(ROD_R, ROD_R, ROD_H, 24), chrome);
@@ -425,152 +484,11 @@ import * as THREE from './assets/optics-three.min.js';
   rod.castShadow = true;
   stand.add(rod);
 
-  /* 铁圈（架石棉网用） */
-  function makeBoss(y, armLen) {
-    const g = new THREE.Group();
-    const sleeve = new THREE.Mesh(new THREE.CylinderGeometry(ROD_R + 0.42, ROD_R + 0.42, 2.0, 20), darkSteel);
-    sleeve.position.set(0, y, ROD_Z);
-    sleeve.castShadow = true;
-    g.add(sleeve);
-    const arm = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.7, armLen), darkSteel);
-    arm.position.set(0, y, ROD_Z + 0.9 + armLen / 2);
-    arm.castShadow = true;
-    g.add(arm);
-    const screw = new THREE.Mesh(new THREE.CylinderGeometry(0.36, 0.36, 1.3, 12), knobMat);
-    screw.rotation.z = Math.PI / 2;
-    screw.position.set(ROD_R + 0.95, y, ROD_Z);
-    screw.castShadow = true;
-    g.add(screw);
-    return g;
-  }
-  stand.add(makeBoss(RING_Y, 4.6));
-  const ring = new THREE.Mesh(new THREE.TorusGeometry(5.3, 0.26, 12, 40), darkSteel);
-  ring.rotation.x = Math.PI / 2;
-  ring.position.set(0, RING_Y, 0);
-  ring.castShadow = true;
-  stand.add(ring);
-
-  const netMap = makeNetMap();
-  const netMesh = new THREE.Mesh(
-    new THREE.PlaneGeometry(NET_W, NET_W),
-    new THREE.MeshStandardMaterial({ map: netMap, transparent: true, alphaTest: 0.36, roughness: 0.55, metalness: 0.85, side: THREE.DoubleSide })
-  );
-  netMesh.rotation.x = -Math.PI / 2;
-  netMesh.position.set(0, RING_Y + NET_T, 0);
-  netMesh.castShadow = true;
-  scene.add(netMesh);
-  const asbestosMap = makeAsbestosMap();
-  const pad = new THREE.Mesh(
-    new THREE.CylinderGeometry(NET_W * 0.30, NET_W * 0.30, NET_T, 32),
-    new THREE.MeshStandardMaterial({ map: asbestosMap, bumpMap: asbestosMap, bumpScale: 0.02, color: '#d9d3c6', roughness: 0.95, metalness: 0 })
-  );
-  pad.position.set(0, RING_Y + NET_T + 0.01, 0);
-  pad.receiveShadow = true; pad.castShadow = true;
-  scene.add(pad);
-
-  /* --- 酒精灯（一直在杯下加热，这是「杯底更热」的原因） --- */
-  const lamp = new THREE.Group();
-  lamp.position.set(LAMP_X, BASE_H, 0);
-  scene.add(lamp);
-  const lampGlassMat = new THREE.MeshPhysicalMaterial({
-    color: '#f6fbff', transparent: true, opacity: 0.30, roughness: 0.05, metalness: 0,
-    clearcoat: 1, envMapIntensity: 2.2, side: THREE.DoubleSide, depthWrite: false
-  });
-  const lampProfile = [];
-  for (let i = 0; i <= 16; i++) {
-    const t = i / 16, r = LAMP_R * Math.sin(Math.PI * (0.14 + t * 0.72));
-    lampProfile.push(new THREE.Vector2(Math.max(0.6, r), t * LAMP_H));
-  }
-  const lampBody = new THREE.Mesh(new THREE.LatheGeometry(lampProfile, 44), lampGlassMat);
-  lampBody.castShadow = true;
-  lamp.add(lampBody);
-  const lampFoot = new THREE.Mesh(new THREE.CylinderGeometry(LAMP_R * 0.80, LAMP_R * 0.76, 0.5, 40), lampGlassMat);
-  lampFoot.position.y = 0.25;
-  lamp.add(lampFoot);
-  const alcohol = new THREE.Mesh(
-    new THREE.CylinderGeometry(LAMP_R * 0.80, LAMP_R * 0.86, LAMP_H * 0.62, 40),
-    new THREE.MeshPhysicalMaterial({ color: '#dff0fa', transparent: true, opacity: 0.42, roughness: 0.06, metalness: 0, envMapIntensity: 2.4, depthWrite: false })
-  );
-  alcohol.position.y = LAMP_H * 0.31 + 0.2;
-  lamp.add(alcohol);
-  const alcoholTop = new THREE.Mesh(new THREE.CircleGeometry(LAMP_R * 0.80, 40),
-    new THREE.MeshPhysicalMaterial({ color: '#eaf7ff', transparent: true, opacity: 0.5, roughness: 0.03, metalness: 0, envMapIntensity: 2.6, side: THREE.DoubleSide, depthWrite: false }));
-  alcoholTop.rotation.x = -Math.PI / 2;
-  alcoholTop.position.y = LAMP_H * 0.62 + 0.2;
-  lamp.add(alcoholTop);
-  const capMat = new THREE.MeshStandardMaterial({ color: '#b9b2a2', roughness: 0.34, metalness: 0.95, envMapIntensity: 1.3 });
-  const cap = new THREE.Mesh(new THREE.CylinderGeometry(LAMP_R * 0.44, LAMP_R * 0.46, LAMP_COLLAR_H, 32), capMat);
-  cap.position.y = LAMP_H + LAMP_COLLAR_H / 2;
-  cap.castShadow = true;
-  lamp.add(cap);
-  const knurl = new THREE.Mesh(new THREE.CylinderGeometry(LAMP_R * 0.45, LAMP_R * 0.45, 0.24, 32), capMat);
-  knurl.position.y = LAMP_H + LAMP_COLLAR_H * 0.55;
-  lamp.add(knurl);
-  const wickTube = new THREE.Mesh(new THREE.CylinderGeometry(LAMP_R * 0.24, LAMP_R * 0.24, WICK_H * 0.7, 18), capMat);
-  wickTube.position.y = LAMP_H + LAMP_COLLAR_H + WICK_H * 0.35;
-  lamp.add(wickTube);
-  const wick = new THREE.Mesh(new THREE.CylinderGeometry(LAMP_R * 0.19, LAMP_R * 0.21, WICK_H * 0.85, 16),
-    new THREE.MeshStandardMaterial({ color: '#c9bda6', roughness: 0.9, metalness: 0 }));
-  wick.position.y = LAMP_H + LAMP_COLLAR_H + WICK_H * 0.5;
-  lamp.add(wick);
-
-  /* 火焰：两层锥体 + 光晕 + 点光源 */
-  function makeFlameAlpha() {
-    const W = 128, H = 256;
-    const c = newCanvas(W, H), g = c.getContext('2d');
-    const grd = g.createRadialGradient(W / 2, H * 0.74, 4, W / 2, H * 0.62, W * 0.52);
-    grd.addColorStop(0, 'rgba(255,255,255,1)');
-    grd.addColorStop(0.28, 'rgba(255,236,170,0.92)');
-    grd.addColorStop(0.6, 'rgba(255,164,54,0.34)');
-    grd.addColorStop(1, 'rgba(255,120,20,0)');
-    g.fillStyle = grd;
-    g.beginPath();
-    g.moveTo(W / 2, 6);
-    g.bezierCurveTo(W * 0.94, H * 0.44, W * 0.86, H * 0.96, W / 2, H - 4);
-    g.bezierCurveTo(W * 0.14, H * 0.96, W * 0.06, H * 0.44, W / 2, 6);
-    g.fill();
-    const t = new THREE.CanvasTexture(c);
-    t.colorSpace = THREE.SRGBColorSpace;
-    return t;
-  }
-  function makeGlowMap() {
-    const S = 256;
-    const c = newCanvas(S, S), g = c.getContext('2d');
-    const grd = g.createRadialGradient(S / 2, S / 2, 2, S / 2, S / 2, S / 2);
-    grd.addColorStop(0, 'rgba(255,214,150,0.9)');
-    grd.addColorStop(0.4, 'rgba(255,150,60,0.34)');
-    grd.addColorStop(1, 'rgba(255,120,20,0)');
-    g.fillStyle = grd; g.fillRect(0, 0, S, S);
-    const t = new THREE.CanvasTexture(c);
-    t.colorSpace = THREE.SRGBColorSpace;
-    return t;
-  }
-  const flameGroup = new THREE.Group();
-  flameGroup.position.y = LAMP_TOP;
-  lamp.add(flameGroup);
-  const flameAlpha = makeFlameAlpha();
-  const flameLayers = [];
-  const flameSpecs = [
-    { h: FLAME_H, r: 1.05, color: '#ff9b28', op: 0.62 },
-    { h: FLAME_H * 0.72, r: 0.66, color: '#ffd36a', op: 0.72 },
-    { h: FLAME_H * 0.40, r: 0.34, color: '#fff3c9', op: 0.86 }
-  ];
-  for (const s of flameSpecs) {
-    const m = new THREE.Mesh(
-      new THREE.ConeGeometry(s.r, s.h, 20, 1, true),
-      new THREE.MeshBasicMaterial({ map: flameAlpha, color: s.color, transparent: true, opacity: s.op, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide })
-    );
-    m.position.y = s.h / 2;
-    flameLayers.push({ mesh: m, base: { opacity: s.op, scale: 1 } });
-    flameGroup.add(m);
-  }
-  const flameGlow = new THREE.Sprite(new THREE.SpriteMaterial({ map: makeGlowMap(), color: '#ffb066', transparent: true, opacity: 0.40, blending: THREE.AdditiveBlending, depthWrite: false }));
-  flameGlow.scale.set(11, 11, 1);
-  flameGlow.position.y = FLAME_H * 0.45;
-  flameGroup.add(flameGlow);
-  const flameLight = new THREE.PointLight('#ff9a3c', 3.2, 60, 2);
-  flameLight.position.set(0, FLAME_H * 0.4, 0);
-  flameGroup.add(flameLight);
+  /* --- 酒精灯、铁圈、石棉网、石棉片：全部取消 ---
+     烧杯直接坐在台面上（不再是「铁圈 + 石棉网架到半空、下面点着酒精灯」）。
+     本页讲的是【温度计怎么用】，不是加热：既然没有加热，就不该摆一盏酒精灯 ——
+     留着它，反而会让「碰杯底读数偏大」这条结论失去依据（见下面物理那一段）。 */
+  /* --- 酒精灯、火焰、灯芯：整段删除（本页不加热） --- */
 
   /* --- 烧杯 --- */
   function makeBeakerMarks() {
@@ -776,7 +694,10 @@ import * as THREE from './assets/optics-three.min.js';
   }
   applyScale('lab');
 
-  /* --- 十字夹：把温度计固定住。竖直方向随温度计一起升降，水平方向靠横梁伸缩。 --- */
+  /* --- 十字夹（铁夹）：把温度计夹住。竖直方向整组随温度计升降；横臂从立柱伸出去。 ---
+     立柱在 z = ROD_Z（底座上），温度计在 z = 0（烧杯轴线），所以横臂要伸出去 9 cm。
+     没夹东西的时候横臂缩回立柱旁边、夹口张开；温度计一放进烧杯，横臂伸出去、夹口合拢。
+     这条「伸出去 + 合拢」的动画就是用户松手之后「铁架台自动固定」的那一下。 */
   const thSupport = new THREE.Group();
   scene.add(thSupport);
   const clampSleeve = new THREE.Mesh(new THREE.CylinderGeometry(ROD_R + 0.5, ROD_R + 0.5, 2.3, 20), darkSteel);
@@ -788,28 +709,55 @@ import * as THREE from './assets/optics-three.min.js';
   clampScrew.position.set(ROD_R + 1.05, CLAMP_Y, ROD_Z);
   clampScrew.castShadow = true;
   thSupport.add(clampScrew);
-  /* 横梁：单位长度立方体，靠 scale.x 伸缩（覆盖立柱与温度计之间的水平距离） */
-  const clampBar = new THREE.Mesh(new THREE.BoxGeometry(1, 0.66, 0.78), darkSteel);
-  clampBar.position.set(0, CLAMP_Y, ROD_Z);
+  /* 横臂：单位长度立方体（长轴沿 +z），从立柱摆到夹口座 —— 摆位靠 orientBar() */
+  const clampBar = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.68, 1), darkSteel);
   clampBar.castShadow = true;
   thSupport.add(clampBar);
-  const clampArm = new THREE.Mesh(new THREE.BoxGeometry(0.86, 0.72, 4.5), darkSteel);
-  clampArm.position.set(0, CLAMP_Y, ROD_Z + 0.9 + 2.25);
-  clampArm.castShadow = true;
-  thSupport.add(clampArm);
+  /* 夹口座：横臂末端那一小块，夹口挂在它下面 */
+  const clampHead = new THREE.Mesh(new THREE.BoxGeometry(1.5, 1.0, 1.2), darkSteel);
+  clampHead.castShadow = true;
+  thSupport.add(clampHead);
   const jaws = new THREE.Group();
-  jaws.position.set(0, CLAMP_Y, 0);
   thSupport.add(jaws);
+  /* 夹口的两片颚 + 软垫。每片记下自己的侧向（±z）和「完全张开时的偏移」，
+     合拢时统一按 jawOpen 往中间收 —— 张开量只有一个来源，不会两片跑得不一样。 */
   for (const s of [-1, 1]) {
     const jaw = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.5, 0.5), darkSteel);
-    jaw.position.set(0, 0, s * (TH_TUBE_R + 0.34));
+    jaw.userData = { s, off: TH_TUBE_R + 0.34 };
     jaw.castShadow = true;
     jaws.add(jaw);
     const padm = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.34, 0.22),
       new THREE.MeshStandardMaterial({ color: '#2f3338', roughness: 0.95, metalness: 0.05 }));
-    padm.position.set(0, 0, s * (TH_TUBE_R + 0.12));
+    padm.userData = { s, off: TH_TUBE_R + 0.12 };
     jaws.add(padm);
   }
+  /* 夹口张开量：jawOpen = 1 完全张开，0 夹紧（软垫刚好贴住管壁） */
+  const JAW_GAP = 1.35;
+  function applyJaw() {
+    for (const m of jaws.children) m.position.set(0, 0, m.userData.s * (m.userData.off + state.jawOpen * JAW_GAP));
+  }
+
+  /* 把单位长（长轴沿 +z）的横臂从 a 摆到 b */
+  const AXIS_Z = new THREE.Vector3(0, 0, 1);
+  function orientBar(mesh, a, b) {
+    const d = new THREE.Vector3().subVectors(b, a);
+    const len = d.length();
+    if (len < 1e-4) return;
+    mesh.position.copy(a).addScaledVector(d, 0.5);
+    mesh.scale.z = len;
+    mesh.quaternion.setFromUnitVectors(AXIS_Z, d.clone().normalize());
+  }
+  /* 拾取代理：一根包住整支温度计的隐形圆柱。
+     玻璃管是 openEnded 的薄壳，直接拿它做拾取目标，点在管壁上才算命中 ——
+     太细，点不准。代理给到半径 1.15，点「温度计附近」就能抓住。
+     opacity 0 而不是 visible = false：射线拾取不看材质，但 visible = false 在部分
+     版本里会让 intersectObject 直接跳过，用全透明最保险。 */
+  const pickProxy = new THREE.Mesh(
+    new THREE.CylinderGeometry(1.15, 1.15, TH_TUBE_H + 1.2, 8),
+    new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false })
+  );
+  pickProxy.position.y = (TH_TUBE_H - 0.4) / 2;
+  thermometer.add(pickProxy);
 
   /* --- 观察者的眼睛 + 视线 --- */
   const eyeGroup = new THREE.Group();
@@ -847,13 +795,20 @@ import * as THREE from './assets/optics-three.min.js';
      五、物理
      ========================================================================== */
 
-  /* 玻璃泡「感受到」的温度：按接触面积 × 换热系数加权 */
+  /* 玻璃泡「感受到」的温度：按接触面积 × 换热系数加权。
+     先判它在不在液体里 —— 横在台面上、拿在手里、被铁夹提起来，都只和室温的空气打交道。 */
   function envTemp() {
     const Tw = state.Tw, Ta = AMB;
-    if (state.lifted) return Ta;                       // 玻璃泡离开液面，只和空气打交道
+    if (!immersed()) return Ta;
     switch (state.place) {
-      case 'bottom':
-        return Tw + BOTTOM_DT;
+      case 'bottom': {
+        /* 本页【不加热】：杯底不是「被火焰烤热的那一层」。它隔着玻璃压在台面上，
+           而台面就是室温 —— 杯底那一层水的温度是「水温向室温靠拢」的结果，
+           靠拢的比例 BOTTOM_K 由台面这个热库的强弱定。
+           热水时杯底偏凉（读数偏小），冰水时杯底偏暖（读数偏大）：方向随水温变号。 */
+        const Tbot = Tw - (Tw - Ta) * BOTTOM_K;
+        return CONTACT_BOTTOM * Tbot + (1 - CONTACT_BOTTOM) * Tw;
+      }
       case 'wall': {
         const Twall = Tw - (Tw - Ta) * WALL_K;         // 串联热阻定出的壁温，其实很接近水温
         return CONTACT_WALL * Twall + (1 - CONTACT_WALL) * Tw;
@@ -895,9 +850,9 @@ import * as THREE from './assets/optics-three.min.js';
     if (state.Td <= k.TMin + 0.05) return `< ${k.TMin.toFixed(k.dec)} ℃`;
     return `${reading().toFixed(k.dec)} ℃`;
   }
-  /* 这一次读数可不可信：位置对、视线对、而且没超出量程 */
+  /* 这一次读数可不可信：温度计确实放好了、位置对、视线对，而且没超出量程 */
   function trustworthy() {
-    return !state.lifted && state.place === 'right' && state.sight === 'level' && inRange();
+    return immersed() && state.place === 'right' && state.sight === 'level' && inRange();
   }
 
   function stepSim(dt) {
@@ -936,39 +891,61 @@ import * as THREE from './assets/optics-three.min.js';
     pushSample();
   }
   function resetSim() {
-    state.water = '25'; state.place = 'right'; state.sight = 'level'; state.kind = 'lab';
-    state.lifted = false; state.liftAnim = 0;
+    state.water = '65'; state.place = 'right'; state.sight = 'level'; state.kind = 'lab';
+    state.grip = 'bench'; state.lifted = false;
+    state.handX = BENCH_X; state.handY = BENCH_Y;
+    state.armReach = ARM_PARK; state.jawOpen = 1;
     state.Tw = WATERS[state.water].T; state.TwVis = state.Tw;
     state.Td = AMB;
     applyScale('lab');
+    snapThermo();                                      // 温度计直接回到台面上，不留中间姿态
     resetRun();
+    syncViewToPlace();                                 // 放法复位成「全部浸入」，特写也跟着回位
     syncButtons();
   }
 
   /* ==========================================================================
      六、随状态更新器材
      ========================================================================== */
-  function targetThermoPos() {
-    const p = PLACE_POS[state.place];
-    const base = PLACE_POS.right;
-    let dx = p.x, dy = p.y - base.y;
-    if (state.lifted) { dx = 0; dy = LIFT_DY; }
-    return { dx, dy };
+  /* 温度计的「目标姿态」——位置是玻璃泡中心，tilt 0 = 横躺、1 = 竖立。
+     三种握持状态各自对应一个目标，平滑由 animateParts 统一做。 */
+  function thermoPoseTarget() {
+    if (state.grip === 'clamped') {
+      const p = PLACE_POS[state.place];
+      return { x: p.x, y: p.y + (state.lifted ? LIFT_DY : 0), tilt: 1 };
+    }
+    if (state.grip === 'hand') return { x: state.handX, y: state.handY, tilt: 1 };
+    return { x: BENCH_X, y: BENCH_Y, tilt: 0 };        // 横躺在台面上
+  }
+  /* 不走平滑，直接落到目标姿态（初始化 / 重置用） */
+  function snapThermo() {
+    const t = thermoPoseTarget();
+    state.thX = t.x; state.thY = t.y; state.tilt = t.tilt;
+    updateThermo();
   }
 
   function updateThermo() {
-    const t = targetThermoPos();
-    state.thX = state.thX === undefined ? t.dx : state.thX;
-    state.thY = state.thY === undefined ? t.dy : state.thY;
-    thermometer.position.set(state.thX, TH_BULB_Y_BASE + state.thY, 0);
+    /* 姿态：横躺 = 绕 z 转 90°（管身朝 −x）再绕世界 x 轴滚 LIE_ROLL（刻度朝上）；
+       竖立 = 不转。Euler 顺序 XYZ ⇒ 世界变换是 Rx·Ry·Rz，Rz 先作用、Rx 最后作用，
+       正好是「先躺下、再绕已经躺平的管轴滚一圈」。 */
+    const lie = 1 - state.tilt;
+    thermometer.rotation.set(lie * LIE_ROLL, 0, lie * Math.PI / 2);
+    thermometer.position.set(state.thX, state.thY, 0);
 
-    /* 铁夹跟着温度计走：竖直方向整组升降，水平方向横梁伸缩 */
-    thSupport.position.set(0, state.thY, 0);
-    const barLen = Math.abs(state.thX) + 1.7;
-    clampBar.scale.x = barLen;
-    clampBar.position.set(state.thX / 2, CLAMP_Y, ROD_Z);
-    clampArm.position.set(state.thX, CLAMP_Y, ROD_Z + 0.9 + 2.25);
-    jaws.position.set(state.thX, CLAMP_Y, 0);
+    /* 铁夹：横臂从立柱摆到夹口座，夹口座随横臂伸出而靠近温度计。
+       ext 是「伸出程度」：armReach 停在 ARM_PARK（−6.4，贴着立柱）时 0，
+       伸到 0（温度计轴线）时 1。分母是 |0 − ARM_PARK|，写反了会让停靠姿态
+       也当成伸到位（曾经就写成 1 − (armReach − ARM_PARK)/2.6，停靠时恒等于 1）。 */
+    const ext = clamp((state.armReach - ARM_PARK) / (0 - ARM_PARK), 0, 1);
+    const headX = state.thX * ext;
+    orientBar(clampBar,
+      new THREE.Vector3(0, CLAMP_Y, ROD_Z),
+      new THREE.Vector3(headX, CLAMP_Y, state.armReach));
+    clampHead.position.set(headX, CLAMP_Y, state.armReach);
+    jaws.position.set(headX, CLAMP_Y, state.armReach);
+    applyJaw();
+    /* 整组随温度计升降：只在夹住的时候跟（横在台面上、拿在手里时铁夹停在原位） */
+    thSupport.position.set(0, ext * (state.thY - TH_BULB_Y_BASE), 0);
 
     /* 缩口只在体温计上出现 */
     thNeck.visible = KINDS[state.kind].neck;
@@ -1191,7 +1168,16 @@ import * as THREE from './assets/optics-three.min.js';
     if (Math.abs(d) < 0.05) return '0.0 ℃';
     return `${d >= 0 ? '+' : ''}${d.toFixed(1)} ℃`;
   }
+  /* 玻璃泡此刻算什么状态（读数面板和记录表共用一份说法） */
+  function placeText() {
+    if (state.grip === 'bench') return '放在台面上';
+    if (state.grip === 'hand') return '拿在手里';
+    if (state.lifted) return '已提起';
+    return PLACES[state.place].short;
+  }
   function statusText() {
+    if (state.grip === 'bench') return '温度计还在台面上';
+    if (state.grip === 'hand') return '正在移动温度计';
     if (!inRange()) {
       return state.Td >= KINDS[state.kind].TMax - 0.05 ? '超出量程' : '低于量程';
     }
@@ -1209,11 +1195,18 @@ import * as THREE from './assets/optics-three.min.js';
     els.metricRead.textContent = readingText();
     els.metricTrue.textContent = `${state.Tw.toFixed(1)} ℃`;
     els.metricErr.textContent = errText();
-    els.metricPlace.textContent = state.lifted ? '已提起' : PLACES[state.place].short;
+    els.metricPlace.textContent = placeText();
     els.metricRange.textContent = `${k.TMin} ~ ${k.TMax} ℃ / ${k.div} ℃`;
 
     let hint, warn = false;
-    if (state.Td >= k.TMax - 0.05) {
+    if (state.grip === 'bench') {
+      hint = `温度计还<b>横放在实验台上</b>，玻璃泡只和 ${AMB} ℃ 的空气打交道。`
+        + `<b>用鼠标点住温度计</b>把它拿起来，移到烧杯口上方再松手 —— 铁架台的铁夹会自动伸过来夹住它。`;
+    } else if (state.grip === 'hand') {
+      hint = `温度计在你手里。把它移到<b>烧杯口的正上方</b>再松手：落得越靠下，玻璃泡浸得越深；`
+        + `贴着杯壁落下去就会碰到杯壁；落点在水面附近就是「只浸入一半」。`
+        + `松手的地方要是在杯口之外，温度计会退回实验台。`;
+    } else if (state.Td >= k.TMax - 0.05) {
       warn = true;
       hint = `液柱已经顶到管口！${k.name}的量程只有 ${k.TMin} ~ ${k.TMax} ℃，被测温度远高于它的量程 —— `
         + `温度计里的液体膨胀过度，会把玻璃管胀破。测液体温度前<b>先估一估温度、看清量程</b>。`;
@@ -1226,9 +1219,10 @@ import * as THREE from './assets/optics-three.min.js';
         : `实验室温度计没有缩口，玻璃泡一离开液体，示数立刻向室温回落（现在 ${readingText()}）—— 所以读数时玻璃泡必须<b>留在液体中</b>。`;
     } else if (state.place === 'bottom') {
       warn = true;
-      hint = `玻璃泡碰到了<b>杯底</b>。热量是从杯底进入水里的，最下面那一层水最热（比水体平均温度高约 ${BOTTOM_DT} ℃）——`
-        + `真实实验里要不断搅拌，就是为了让整杯水温度均匀。压在水底上的玻璃泡读到的是这一层，`
-        + `读数比真实水温高 ${errText()}。`;
+      hint = `玻璃泡压在了<b>杯底</b>上。本页的烧杯直接坐在实验台上、<b>没有加热</b>：`
+        + `杯底那一层水的温度由「水」和「台面」一起定，而台面就是室温（${AMB} ℃）。`
+        + `所以水温比室温高时杯底那层比水体<b>凉</b>，读数偏小 ${errText()}；换成冰水就反过来偏大。`
+        + `压住杯底的泡读到的是这一层，不是整杯水的温度。`;
     } else if (state.place === 'wall') {
       warn = true;
       hint = `玻璃泡碰到了<b>杯壁</b>。杯壁内表面的温度由「水侧」和「空气侧」两个热阻一起定：`
@@ -1273,20 +1267,22 @@ import * as THREE from './assets/optics-three.min.js';
 
   function animateParts(dt) {
     clock += dt;
-    /* 温度计在几种放法之间平滑滑动（松开铁夹螺丝 → 移动 → 再夹紧） */
-    const tg = targetThermoPos();
-    if (state.thX === undefined) { state.thX = tg.dx; state.thY = tg.dy; }
-    state.thX += (tg.dx - state.thX) * (1 - Math.exp(-dt * 4.5));
-    state.thY += (tg.dy - state.thY) * (1 - Math.exp(-dt * 4.5));
-    if (Math.abs(tg.dx - state.thX) < 0.004) state.thX = tg.dx;
-    if (Math.abs(tg.dy - state.thY) < 0.004) state.thY = tg.dy;
+    /* 温度计在三种握持状态之间平滑过渡：
+         bench → 横躺回台面、hand → 跟着指针、clamped → 竖立插进烧杯。
+       位置 (thX, thY)、姿态 tilt、铁夹的 armReach / jawOpen 一起平滑 ——
+       「松手之后铁架台自动固定」那一下就是 armReach 收拢 + jawOpen 合拢。 */
+    const tg = thermoPoseTarget();
+    const ease = (cur, to) => {
+      const v = cur + (to - cur) * (1 - Math.exp(-dt * 5.0));
+      return Math.abs(to - v) < 0.004 ? to : v;
+    };
+    state.thX = ease(state.thX, tg.x);
+    state.thY = ease(state.thY, tg.y);
+    state.tilt = ease(state.tilt, tg.tilt);
+    const wantArm = state.grip === 'clamped' ? 0 : ARM_PARK;
+    state.armReach = ease(state.armReach, wantArm);
+    state.jawOpen = ease(state.jawOpen, state.grip === 'clamped' ? 0 : 1);
     updateThermo();
-
-    /* 火焰跳动 */
-    const wob = Math.sin(clock * 7.3) * 0.5 + Math.sin(clock * 11.7 + 1.3) * 0.3 + Math.sin(clock * 3.1) * 0.2;
-    flameGroup.scale.set(1 + wob * 0.055, 1 + Math.sin(clock * 9.1 + 0.7) * 0.045, 1 + wob * 0.05);
-    flameGroup.position.x = wob * 0.10;
-    flameLight.intensity = 3.2 + wob * 0.5;
 
     /* 白气：从水面往上飘 */
     for (const m of steams) {
@@ -1299,9 +1295,11 @@ import * as THREE from './assets/optics-three.min.js';
       m.material.opacity = 0.20 * Math.sin(cyc * Math.PI) * (1 - cyc * 0.5);
     }
 
-    /* 眼睛与视线 */
+    /* 眼睛与视线。
+       ★ 平视时不画：眼睛与视线存在的意义就是「显示视线歪了」，
+         平视时它们只会挡住温度计本身，用户明确要求这种时候不要画。 */
     const k = KINDS[state.kind];
-    const readY = TH_BULB_Y_BASE + state.thY + scaleYOf(clamp(state.Td, k.TMin, k.TMax), k);
+    const readY = state.thY + scaleYOf(clamp(state.Td, k.TMin, k.TMax), k);
     const faceRad = SCALE_FACE_DEG * Math.PI / 180;
     const fx = Math.sin(faceRad), fz = Math.cos(faceRad);
     const tubeX = state.thX, tubeZ = 0;
@@ -1317,11 +1315,11 @@ import * as THREE from './assets/optics-three.min.js';
     /* 相机离眼球太近就不画（read 视角下相机 ≈ 观察者本人）。
        先量距离再判可见性，自检读的就是这个数。 */
     eyeCamDist = camera.position.distanceTo(eyePos);
-    eyeGroup.visible = toggles.eye && eyeCamDist > EYE_MIN_DIST;
-
-    sightLine.visible = toggles.sight;
-    sightDot.visible = toggles.sight;
-    if (toggles.sight) {
+    const showObserver = state.sight !== 'level';
+    eyeGroup.visible = toggles.eye && showObserver && eyeCamDist > EYE_MIN_DIST;
+    sightLine.visible = toggles.sight && showObserver;
+    sightDot.visible = toggles.sight && showObserver;
+    if (showObserver) {
       /* 视线：眼睛 → 液柱顶端。与刻度面（半径 SCALE_R 的圆柱面）的交点由
          s = 1 − r/D 给出，其高度正好是 readY + (r/D)·Δy —— 与 sightBias() 同源，
          所以画出来的交点位置和算出来的读数偏差不可能对不上。 */
@@ -1337,40 +1335,135 @@ import * as THREE from './assets/optics-three.min.js';
      十一、相机与交互
      ========================================================================== */
   function updateCamera() {
-    const t = new THREE.Vector3(0, view.ty, 0);
+    /* 读数特写跟着玻璃泡升降：注视点整体平移，视角 / 距离 / 缩放都不动。
+       （平移相机与注视点是同一个变换，所以用户手动环绕出来的姿态不会被这一下丢掉。） */
+    const dy = followRead ? PLACE_POS[state.place].y - PLACE_POS.right.y : 0;
+    const t = new THREE.Vector3(view.tx || 0, view.ty + dy, 0);
+    /* 画布比参考比例窄就往后退，保证横向不裁（见 REF_ASPECT 那段） */
+    const dist = view.dist * (camera.aspect < REF_ASPECT ? REF_ASPECT / camera.aspect : 1);
     const cp = Math.cos(view.pitch), sp = Math.sin(view.pitch);
     camera.position.set(
-      t.x + view.dist * cp * Math.sin(view.yaw),
-      t.y + view.dist * sp,
-      t.z + view.dist * cp * Math.cos(view.yaw)
+      t.x + dist * cp * Math.sin(view.yaw),
+      t.y + dist * sp,
+      t.z + dist * cp * Math.cos(view.yaw)
     );
     camera.lookAt(t);
     requestRender();
   }
+  /* 放法变了：只有读数特写需要跟着挪，其它视角一动不动 */
+  function syncViewToPlace() { if (followRead) updateCamera(); }
   function resize() {
     const w = stage.clientWidth, h = stage.clientHeight;
     if (!w || !h) return;
     renderer.setSize(w, h, false);
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
-    requestRender();
+    /* 宽高比变了要【重新推一次相机位置】—— 取景距离跟着比例走，
+       只改投影矩阵不改位置的话，窄屏上照样裁（而且相机会停在上一次的比例上）。 */
+    updateCamera();
   }
+
+  /* --- 鼠标：点中温度计 = 把它拿起来；点空白 = 环绕视角 --- */
+  const raycaster = new THREE.Raycaster();
+  const ndc = new THREE.Vector2();
+  /* 拖动平面：过烧杯轴线、也过温度计初始位置的竖直平面 z = 0。
+     温度计一开始就横躺在这张平面里，拖动时它只在这张平面内移动 ——
+     指针落点 (x, y) 直接就是玻璃泡在杯里 / 杯外的位置，判定不需要再猜深度。 */
+  const dragPlane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
+  const hitPt = new THREE.Vector3();
+  let grabLen = 0;                 // 手指抓在管身的哪一段（泡到手心的距离）
+  let mode = 'orbit';              // 'orbit' = 环绕视角，'thermo' = 正在搬温度计
   let dragging = false, lastX = 0, lastY = 0;
+
+  function toNDC(e) {
+    const r = canvas.getBoundingClientRect();
+    ndc.set(((e.clientX - r.left) / Math.max(r.width, 1)) * 2 - 1,
+            -((e.clientY - r.top) / Math.max(r.height, 1)) * 2 + 1);
+    return ndc;
+  }
+  /* 指针是不是落在温度计上。矩阵要先手动更新：无头环境里 rAF 不跑，
+     renderer.render 可能还没把这一帧的相机 / 温度计姿态写进 matrixWorld，
+     而 setFromCamera 用的就是 camera.matrixWorld —— 不更新的话射线还停在上一个视角。 */
+  function pointerOnThermo(e) {
+    camera.updateMatrixWorld(true);
+    thermometer.updateMatrixWorld(true);
+    raycaster.setFromCamera(toNDC(e), camera);
+    return raycaster.intersectObject(pickProxy, false).length > 0;
+  }
+  function pointerOnPlane(e) {
+    camera.updateMatrixWorld(true);
+    raycaster.setFromCamera(toNDC(e), camera);
+    return raycaster.ray.intersectPlane(dragPlane, hitPt) ? hitPt : null;
+  }
+
   canvas.addEventListener('pointerdown', (e) => {
+    if (e.button !== undefined && e.button !== 0) return;
+    const p = pointerOnThermo(e) ? pointerOnPlane(e) : null;
+    if (p) {
+      /* 拿起来。记下抓在管身的哪一段 —— 竖起来之后玻璃泡就在手指正下方那么远的地方。
+         不记的话，一点下去玻璃泡会平移到光标位置，看起来像温度计被「吸」过去。 */
+      grabLen = clamp(Math.hypot(p.x - state.thX, p.y - state.thY), 0, TH_TUBE_H * 0.92);
+      state.grip = 'hand';
+      state.lifted = false;
+      state.handX = clamp(p.x, -30, 30);
+      state.handY = clamp(p.y - grabLen, BENCH_Y, 30);
+      mode = 'thermo';
+      canvas.style.cursor = 'grabbing';
+      try { canvas.setPointerCapture(e.pointerId); } catch (_) { /* ignore */ }
+      syncButtons(); refreshAll();
+      return;
+    }
+    /* 没点中温度计 → 照旧环绕视角 */
+    mode = 'orbit';
     dragging = true; lastX = e.clientX; lastY = e.clientY;
     try { canvas.setPointerCapture(e.pointerId); } catch (_) { /* ignore */ }
     canvas.style.cursor = 'grabbing';
   });
+
   canvas.addEventListener('pointermove', (e) => {
-    if (!dragging) return;
-    const dx = (e.clientX - lastX) / Math.max(canvas.clientWidth, 1);
-    const dy = (e.clientY - lastY) / Math.max(canvas.clientHeight, 1);
-    lastX = e.clientX; lastY = e.clientY;
-    view.yaw -= dx * 2.9;
-    view.pitch = clamp(view.pitch + dy * 2.2, -0.10, 1.36);
-    updateCamera();
+    if (mode === 'thermo') {
+      const p = pointerOnPlane(e);
+      if (p) {
+        state.handX = clamp(p.x, -30, 30);
+        state.handY = clamp(p.y - grabLen, BENCH_Y, 30);
+      }
+      updateThermo(); updateReadouts(); requestRender();
+      return;
+    }
+    if (dragging) {
+      const dx = (e.clientX - lastX) / Math.max(canvas.clientWidth, 1);
+      const dy = (e.clientY - lastY) / Math.max(canvas.clientHeight, 1);
+      lastX = e.clientX; lastY = e.clientY;
+      view.yaw -= dx * 2.9;
+      view.pitch = clamp(view.pitch + dy * 2.2, -0.10, 1.36);
+      updateCamera();
+      return;
+    }
+    /* 悬停反馈：指着温度计时换个光标，让人知道这东西能拖 */
+    canvas.style.cursor = pointerOnThermo(e) ? 'pointer' : 'grab';
   });
+
   const endDrag = (e) => {
+    if (mode === 'thermo') {
+      mode = 'orbit';
+      /* 松手：玻璃泡落在哪儿就判成哪种放法；落在杯口之外就退回台面。
+         判定走 classifyDrop()，和验收钩子的「模拟松手」是同一个函数。 */
+      const place = classifyDrop(state.handX, state.handY);
+      if (place) {
+        state.place = place;
+        state.grip = 'clamped';       // 铁架台的铁夹会自动伸过来夹住
+        state.lifted = false;
+      } else {
+        state.grip = 'bench';
+        state.handX = BENCH_X; state.handY = BENCH_Y;
+      }
+      canvas.style.cursor = 'grab';
+      resetRun();
+      syncViewToPlace();
+      syncButtons(); refreshAll();
+      try { canvas.releasePointerCapture(e.pointerId); } catch (_) { /* ignore */ }
+      return;
+    }
     dragging = false;
     canvas.style.cursor = 'grab';
     try { canvas.releasePointerCapture(e.pointerId); } catch (_) { /* ignore */ }
@@ -1379,13 +1472,15 @@ import * as THREE from './assets/optics-three.min.js';
   canvas.addEventListener('pointercancel', endDrag);
   canvas.addEventListener('wheel', (e) => {
     e.preventDefault();
-    view.dist = clamp(view.dist * (1 + Math.sign(e.deltaY) * 0.08), 24, 200);
+    view.dist = clamp(view.dist * (1 + Math.sign(e.deltaY) * 0.08), 20, 200);
     updateCamera();
   }, { passive: false });
 
   document.querySelectorAll('[data-view]').forEach((btn) => {
     btn.addEventListener('click', () => {
       Object.assign(view, VIEWS[btn.dataset.view]);
+      /* 只有「读数特写」跟着温度计走；换成全景视角就交回固定注视点 */
+      followRead = btn.dataset.view === 'read';
       document.querySelectorAll('[data-view]').forEach((b) => b.classList.toggle('active', b === btn));
       updateCamera();
     });
@@ -1400,9 +1495,13 @@ import * as THREE from './assets/optics-three.min.js';
     mark('[data-place]', 'place', state.place);
     mark('[data-sight]', 'sight', state.sight);
     mark('[data-kind]', 'kind', state.kind);
+    /* 温度计还横在台面上 / 拿在手里的时候，「提起」无从谈起 —— 直接禁用并说明原因 */
     const lb = $('liftBtn');
-    lb.classList.toggle('active', state.lifted);
+    const canLift = state.grip === 'clamped';
+    lb.disabled = !canLift;
+    lb.classList.toggle('active', canLift && state.lifted);
     lb.textContent = state.lifted ? '把温度计放回水中' : '提起温度计';
+    lb.title = canLift ? '把玻璃泡提到水面以上' : '温度计还没放进烧杯 —— 先用鼠标把它拖进去';
     /* 甩一甩只对带缩口的体温计有意义：实验室温度计的水银本来就会自己跟着环境走。
        没有缩口时直接禁用（并说明原因），比让它点了没反应好。 */
     const sb = $('shakeBtn');
@@ -1411,6 +1510,21 @@ import * as THREE from './assets/optics-three.min.js';
       sb.disabled = !need;
       sb.title = need ? '把水银甩回玻璃泡（示数落到 35 ℃ 以下）'
                       : '实验室温度计没有缩口，示数本来就会跟着水温走，不需要甩';
+    }
+    /* 平视时眼睛和视线【根本不画】，这两个勾选框跟着失效 —— 一起禁用并说明原因，
+       否则点了没反应，看起来像坏了。 */
+    const lvl = state.sight === 'level';
+    const optLabels = { toggleSight: '视线', toggleEye: '观察者的眼睛' };
+    for (const id of Object.keys(optLabels)) {
+      const el = $(id);
+      if (!el) continue;
+      el.disabled = lvl;
+      const lab = el.closest('label');
+      if (!lab) continue;
+      lab.classList.toggle('off', lvl);
+      lab.title = lvl
+        ? `平视时视线与液柱上表面本来就相平，没有偏差要显示 —— 所以不画${optLabels[id]}。换成俯视 / 仰视就会画出来。`
+        : '';
     }
   }
   document.querySelectorAll('[data-water]').forEach((btn) => {
@@ -1423,9 +1537,13 @@ import * as THREE from './assets/optics-three.min.js';
   });
   document.querySelectorAll('[data-place]').forEach((btn) => {
     btn.addEventListener('click', () => {
+      /* 点按钮 = 直接跳到位。用鼠标把温度计拖进烧杯是另一条路，两条路都通到同一个
+         place 状态，所以后面的物理、记录表、曲线完全共用。 */
       state.place = btn.dataset.place;
+      state.grip = 'clamped';
       state.lifted = false;
       resetRun();
+      syncViewToPlace();
       syncButtons(); refreshAll();
     });
   });
@@ -1445,6 +1563,7 @@ import * as THREE from './assets/optics-three.min.js';
     });
   });
   $('liftBtn').addEventListener('click', () => {
+    if (state.grip !== 'clamped') return;      // 还没放进去，没什么可提的
     state.lifted = !state.lifted;
     resetRun();
     syncButtons(); refreshAll();
@@ -1478,15 +1597,20 @@ import * as THREE from './assets/optics-three.min.js';
         + '拿一支体温计去测 65 ℃ 的热水，液柱会一直冲到管口 —— 超出量程是会把温度计胀破的。' },
     { name: '02 会放',
       text: '<strong>玻璃泡要全部浸入被测液体中，不碰容器底，不碰容器壁。</strong>'
-        + '试试点「碰到杯底」：杯底正被酒精灯加热，比水体更热，读数立刻偏大好几度。'
-        + '再试「碰到杯壁」和「只浸入一半」：偏差小一些，但<b>方向会随水温变化</b> —— '
-        + '水温比室温高时读数偏低，水温比室温低时读数偏高。方向不可控的误差，才是必须避开的。' },
+        + '温度计一开始<b>横放在实验台上</b>：用鼠标点住它拿起来，移到烧杯口上方再松手，'
+        + '铁架台的铁夹会自动伸过来把它夹住。松手的位置就是放法 —— 落得越靠下浸得越深，'
+        + '贴着杯壁落下去就是「碰杯壁」，落点在水面附近就是「只浸入一半」。'
+        + '也可以直接点右边的四个按钮跳到位。'
+        + '试试点「碰到杯底」：本页<b>不加热</b>，烧杯就坐在室温的实验台上，'
+        + '杯底那一层水被台面拉向室温 —— 热水时它比水体<b>凉</b>，读数偏小；换成冰水就反过来偏大。' },
+
     { name: '03 会读',
       text: '<strong>玻璃泡留在液体中，等示数稳定后再读，视线与液柱上表面相平。</strong>'
         + '刚把温度计插进去，示数会慢慢往上爬 —— 玻璃泡和水之间换热要时间，这时读到的数一定偏低。'
         + '再看视线：刻度印在玻璃管前表面、红色液柱在管中心，两者相隔一个管半径。'
-        + '俯视时视线斜向下，与刻度相交在液柱<b>上方</b>，读数偏大；仰视则相反。看右上角的放大镜，'
-        + '偏差的由来一目了然。' },
+        + '俯视时视线斜向下，与刻度相交在液柱<b>上方</b>，读数偏大；仰视则相反。'
+        + '<b>平视时不画眼睛和视线</b> —— 它们存在的意义就是显示「视线歪了」，平视时画出来只会挡住温度计。'
+        + '点「俯视」或「仰视」，右上角的放大镜会把偏差的由来画出来。' },
     { name: '04 会记',
       text: '<strong>记录要写数值 + 单位。</strong>只写「65」是错的，必须写「65 ℃」。'
         + '点右侧「记录数据」，表格会同时记下读数、真实水温和这一次的误差 —— '
@@ -1494,8 +1618,9 @@ import * as THREE from './assets/optics-three.min.js';
     { name: '05 体温计',
       text: '<strong>体温计是特殊设计的温度计。</strong>量程只有 35 ~ 42 ℃、分度值 0.1 ℃（比实验室温度计精确得多）；'
         + '玻璃泡上方有一段很细的<b>缩口</b>，水银通过时被挤上去，离开人体后却退不回来，所以可以'
-        + '<b>离开人体读数</b>。把水温调到 37 ℃ 再点「提起温度计」，你会看到示数<b>冻结不动</b>；'
-        + '换回实验室温度计做同样的动作，示数立刻往室温回落。用前要拿着体温计<b>甩一甩</b>，把水银甩回玻璃泡。' }
+        + '<b>离开人体读数</b>。先把温度计放进烧杯，再点「提起温度计」（泡还横在台面上时这个按钮是灰的），'
+        + '你会看到示数<b>冻结不动</b>；换回实验室温度计做同样的动作，示数立刻往室温回落。'
+        + '用前要拿着体温计<b>甩一甩</b>，把水银甩回玻璃泡。' }
   ];
   const stepButtons = [...document.querySelectorAll('[data-step]')];
   const stepDetail = $('stepDetail');
@@ -1564,7 +1689,7 @@ import * as THREE from './assets/optics-three.min.js';
       read: reading(), readText: readingText(),
       err: inRange() ? rawReading() - state.Tw : NaN,
       errText: errText(),
-      place: state.lifted ? '已提起' : PLACES[state.place].short,
+      place: placeText(),
       sight: SIGHTS[state.sight].short,
       kind: k.name,
       ok: trustworthy()
@@ -1586,7 +1711,7 @@ import * as THREE from './assets/optics-three.min.js';
      ========================================================================== */
   canvas.style.cursor = 'grab';
   syncButtons();
-  updateThermo();
+  snapThermo();                    // 一进来温度计就横躺在台面上，不留过渡
   updateWater();
   updateReadouts();
   drawChart();
@@ -1640,17 +1765,22 @@ import * as THREE from './assets/optics-three.min.js';
     state, view, VIEWS, WATERS, PLACES, SIGHTS, KINDS, toggles, series,
     camera, renderer, scene,
     thermometer, thSupport, thScale, thScaleBack, mercury, mercuryBulb, thNeck,
-    eyeGroup, sightLine, sightDot, ices, steams, waterTop, flameGroup, lamp, jaws, clampBar,
+    eyeGroup, sightLine, sightDot, ices, steams, waterTop, beaker, stand,
+    jaws, clampBar, clampHead, pickProxy,
     scaleTex, scaleYOf, scaleCanvasY, cmPerDeg, applyScale,
     thBulbYBase: TH_BULB_Y_BASE, placePos: PLACE_POS, tubeR: TH_TUBE_R, scaleR: SCALE_R, bulbR: TH_BULB_R,
     eyeDist: EYE_DIST, eyeDy: EYE_DY, eyeR: EYE_R, eyeMinDist: EYE_MIN_DIST,
-    liftDy: LIFT_DY, clampY: CLAMP_Y,
+    liftDy: LIFT_DY, clampY: CLAMP_Y, armPark: ARM_PARK, lieRoll: LIE_ROLL,
+    bench: { x: BENCH_X, y: BENCH_Y, z: BENCH_Z },
+    drop: DROP,
     bkY0: BK_Y0, bkR: BK_R, waterH: WATER_H, waterTopY: WATER_TOP, innerBottom: BK_INNER_BOTTOM,
-    consts: { AMB, TAU_TH, TAU_VIS, H_WATER, H_AIR, BOTTOM_DT, WALL_K, CONTACT_WALL, HALF_F, SCALE_Y0, SCALE_Y1 },
+    consts: { AMB, TAU_TH, TAU_VIS, H_WATER, H_AIR, BOTTOM_K, CONTACT_BOTTOM, WALL_K, CONTACT_WALL, HALF_F, SCALE_Y0, SCALE_Y1 },
     mats: { glassMat, waterMat, thGlassMat, thRedMat },
     envTemp, sightBias, rawReading, reading, readingText, inRange, trustworthy, statusText, errText,
+    immersed, classifyDrop, placeText, thermoPoseTarget, snapThermo,
     shake,
     resetSim, resetRun, refreshAll, syncButtons, updateThermo, drawMag, drawChart,
+    updateCamera, resize, syncViewToPlace, viewFollow: () => followRead,
     /* 直接推进仿真（不依赖真实时间）。走的是与真实循环同一个 stepSim。 */
     advance(seconds) {
       let left = seconds;
@@ -1658,18 +1788,40 @@ import * as THREE from './assets/optics-three.min.js';
       updateThermo(); updateWater(); pushSample(); updateReadouts(); drawChart(); drawMag();
       return { t: state.t, Td: state.Td, Tw: state.Tw, read: reading(), readText: readingText(), err: reading() - state.Tw };
     },
+    /* 模拟一次「拿起来 → 放到 (x, y) → 松手」。走的判定与真实鼠标松手完全同一段代码
+       （classifyDrop），所以不存在「测试里能过、真拖不行」的偏差。 */
+    dropAt(x, y) {
+      state.grip = 'hand';
+      state.lifted = false;
+      state.handX = x; state.handY = y;
+      const place = classifyDrop(x, y);
+      if (place) {
+        state.place = place;
+        state.grip = 'clamped';
+      } else {
+        state.grip = 'bench';
+        state.handX = BENCH_X; state.handY = BENCH_Y;
+      }
+      resetRun(); syncButtons(); syncViewToPlace(); refreshAll();
+      return { place, grip: state.grip, lifted: state.lifted, at: state.place, pose: thermoPoseTarget() };
+    },
     /* 无头环境没有 rAF：按固定步长喂帧，走的是与真实循环同一个 frameStep。
-       指数平滑（温度计滑动、示数滞后、白气）靠它才能推进。 */
+       指数平滑（温度计过渡、铁夹收拢、示数滞后、白气）靠它才能推进。 */
     driveAnim(seconds, dt = 1 / 60) {
       const n = Math.max(1, Math.round(seconds / dt));
       for (let i = 0; i < n; i++) frameStep(dt);
       renderer.render(scene, camera);
       return {
-        frames: n, thX: state.thX, thY: state.thY,
+        frames: n, thX: state.thX, thY: state.thY, tilt: state.tilt,
         posX: thermometer.position.x, posY: thermometer.position.y,
-        Td: state.Td, read: reading(), lifted: state.lifted,
+        rotZ: thermometer.rotation.z, rotX: thermometer.rotation.x,
+        grip: state.grip, armReach: state.armReach, jawOpen: state.jawOpen,
+        jawZ: jaws.children.map((m) => +m.position.z.toFixed(3)),
+        supportY: thSupport.position.y,
+        Td: state.Td, read: reading(), lifted: state.lifted, immersed: immersed(),
         eyeVisible: eyeGroup.visible, lineVisible: sightLine.visible,
-        eyeCamDist: +eyeCamDist.toFixed(3),
+        eyeCamDist: +eyeCamDist.toFixed(3), follow: followRead,
+        camX: +camera.position.x.toFixed(3), camY: +camera.position.y.toFixed(3),
         eyeY: eyeGroup.position.y, eyeX: eyeGroup.position.x, eyeZ: eyeGroup.position.z
       };
     },
@@ -1677,7 +1829,7 @@ import * as THREE from './assets/optics-three.min.js';
        cross 就是视线与刻度面的交点，与 sightBias() 用同一份几何算出来。 */
     sightGeom() {
       const k = KINDS[state.kind];
-      const readY = TH_BULB_Y_BASE + state.thY + scaleYOf(clamp(state.Td, k.TMin, k.TMax), k);
+      const readY = state.thY + scaleYOf(clamp(state.Td, k.TMin, k.TMax), k);
       const faceRad = SCALE_FACE_DEG * Math.PI / 180;
       const fx = Math.sin(faceRad), fz = Math.cos(faceRad);
       const eye = { x: state.thX + fx * EYE_DIST, y: readY + SIGHTS[state.sight].dy, z: fz * EYE_DIST };
@@ -1689,6 +1841,98 @@ import * as THREE from './assets/optics-three.min.js';
         z: eye.z + (merTop.z - eye.z) * sCross
       };
       return { readY, tubeX: state.thX, tubeZ: 0, eye, merTop, cross, sCross };
+    },
+    /* 印刷刻度条的世界法线：横躺时应当【朝上】（刻度露出来），竖立时朝向 SCALE_FACE_DEG。
+       忘了 LIE_ROLL 的话，躺着时法线朝下 —— 画面上是一片空白玻璃，肉眼很难一眼看出画错了。
+
+       注意别写成「局部方位取 SCALE_FACE_DEG 再乘 thScale.matrixWorld」：
+       thScale 自己的 rotation.y 已经把刻度条从贴图方位转到 SCALE_FACE_DEG 了，
+       再按 SCALE_FACE_DEG 取一次就等于转了两次，测出来的方向是错的（实测躺着时
+       得到 (0, −0.88, −0.48)，看着像「朝下偏后」，其实是重复旋转的假象）。
+       正确做法：局部方位用【贴图里刻度条真正的中心】360°·u_center。 */
+    scaleNormal() {
+      const s = scaleTex[state.kind];
+      const th = (360 * (s.u0 + s.u1) / 2) * Math.PI / 180;
+      thermometer.updateMatrixWorld(true);
+      const v = new THREE.Vector3(Math.sin(th), 0, Math.cos(th));
+      v.transformDirection(thScale.matrixWorld);
+      return { x: +v.x.toFixed(4), y: +v.y.toFixed(4), z: +v.z.toFixed(4) };
+    },
+    /* 场景体检：数一数点光源、量一量烧杯底落在哪儿。
+       酒精灯是场景里唯一带点光源的东西，取消它之后点光源数必须是 0；
+       烧杯「直接坐在台面上」则要求它的世界包围盒底面贴在 y ≈ 0。 */
+    sceneAudit() {
+      scene.updateMatrixWorld(true);
+      let pointLights = 0, meshes = 0;
+      scene.traverse((o) => {
+        if (o.isPointLight) pointLights++;
+        if (o.isMesh) meshes++;
+      });
+      const bb = new THREE.Box3().setFromObject(beaker);
+      /* 温度计的包围盒要【排除拾取代理】：那根半径 1.15 的隐形圆柱躺下之后
+         会伸到台面以下，Box3 又是按「变换后的 AABB 再取 AABB」，会把它算成
+         y = −1.08，看着像「温度计插进台面里」。真正要量的是看得见的那些零件。 */
+      const tb = new THREE.Box3();
+      for (const c of thermometer.children) { if (c !== pickProxy) tb.expandByObject(c); }
+      /* ★ 但排除掉代理之后，Box3 仍然量不准「温度计有没有陷进台面」：
+         expandByObject 对每个网格取的是【局部 AABB 的八个角】再变换，旋转过的球体
+         那八个角会伸到球面之外 —— 实测躺着的温度计报出 y = −0.104，看着像陷进台面
+         1 mm 多，其实玻璃泡稳稳停在 y = 0.03。
+         真正可能碰到台面的只有玻璃泡，它是个球：球心世界 y 减半径就是最低点，
+         与姿态无关、也与 AABB 无关。两个数一起报，差值就是那条假象的大小。 */
+      thBulb.updateWorldMatrix(true, false);
+      const bulbY = new THREE.Vector3().setFromMatrixPosition(thBulb.matrixWorld).y;
+      return {
+        pointLights, meshes,
+        beakerMinY: +bb.min.y.toFixed(3), beakerMaxY: +bb.max.y.toFixed(3),
+        thermoMinY: +tb.min.y.toFixed(3), thermoMaxY: +tb.max.y.toFixed(3),
+        thermoLowY: +(bulbY - TH_BULB_R).toFixed(3), bulbY: +bulbY.toFixed(3)
+      };
+    },
+    /* 世界坐标 → 页面坐标。给「真的用鼠标拖一次」的验收用：
+       只有走真实的 pointerdown/move/up 才能证明射线拾取真的接通了，
+       光调 dropAt() 是证明不了的（那条路绕过了 Raycaster）。 */
+    screenOf(x, y, z) {
+      camera.updateMatrixWorld(true);
+      const v = new THREE.Vector3(x, y, z).project(camera);
+      const r = canvas.getBoundingClientRect();
+      return {
+        x: r.left + (v.x + 1) / 2 * r.width,
+        y: r.top + (1 - v.y) / 2 * r.height,
+        ndc: { x: +v.x.toFixed(4), y: +v.y.toFixed(4) }
+      };
+    },
+    /* 取景自检：把器材的极值点投影到 NDC，四个视角都要落在 ±0.98 之内。
+       器材的横向铺得很开（左边躺着温度计、右边是铁架台底座），
+       只调 VIEWS 的 ty / dist 而不量一遍，很容易把某一头裁掉。 */
+    framePoints() {
+      camera.updateMatrixWorld(true);
+      const placed = PLACE_POS[state.place];
+      /* 夹口挂在 thSupport 上，而 thSupport 是【跟着温度计升降】的
+         （position.y = 泡位 − 泡的基准位）。写成固定的 CLAMP_Y 会漏掉这一截：
+         「碰杯底」时夹口其实已经降到 10.3 附近，自检却以为它还在 14.69 —— 于是
+         「器材没被裁到画外」这条断言在最低的那两种放法下是照着假点验的。
+         用【目标泡位 placed.y】而不是平滑中的 state.thY：自检经常在动画还没跑完时
+         就取景，读平滑值会拿到上一个放法的位置，量出来的又是个假点。 */
+      const supY = state.grip === 'clamped' ? placed.y - TH_BULB_Y_BASE : 0;
+      const pts = [
+        ['rodTop',      0, BASE_H + ROD_H, ROD_Z],
+        ['baseL',       -BASE_W / 2, 0, BASE_Z - BASE_D / 2],
+        ['baseR',       BASE_W / 2, 0, BASE_Z + BASE_D / 2],
+        ['bkTop',       BK_R, BK_Y0 + BK_H, 0],
+        ['bkBot',       -BK_R, BK_Y0, 0],
+        ['benchBulb',   BENCH_X, BENCH_Y, BENCH_Z],
+        ['benchTip',    BENCH_X - TH_TUBE_H, BENCH_Y, BENCH_Z],
+        ['placedBulb',  placed.x, placed.y, 0],
+        ['placedTop',   placed.x, placed.y + TH_TUBE_H, 0],
+        ['clampTop',    0, CLAMP_Y + 1.2 + supY, ROD_Z]
+      ];
+      const out = {};
+      for (const [n, x, y, z] of pts) {
+        const v = new THREE.Vector3(x, y, z).project(camera);
+        out[n] = { x: +v.x.toFixed(4), y: +v.y.toFixed(4) };
+      }
+      return out;
     }
   };
 })();
