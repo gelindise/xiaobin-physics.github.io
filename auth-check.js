@@ -31,7 +31,8 @@
     "st图像_匀速直线运动.html",
     "噪声的危害和控制立体模型.html",
     "探究水沸腾时温度变化的特点.html",
-    "凸面镜与凹面镜立体模型.html"
+    "凸面镜与凹面镜立体模型.html",
+    "温度计的使用立体模型.html"
   ];
 
   // ⚠️ 必须 decodeURIComponent。浏览器的 location.pathname 对中文文件名给的是【百分号编码】
