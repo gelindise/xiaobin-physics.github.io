@@ -1,0 +1,1764 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>分子热运动 · 3D 立体模型 — 物理虚拟实验</title>
+<style>
+  :root{
+    --bg:#020617; --panel:rgba(15,23,42,.72); --line:rgba(148,163,184,.16);
+    --ink:#e2e8f0; --dim:#94a3b8; --dim2:#64748b;
+    --blue:#38bdf8; --cyan:#22d3ee; --purple:#a78bfa; --green:#34d399;
+    --amber:#fbbf24; --red:#f87171; --rose:#f43f5e;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{
+    background:
+      radial-gradient(1100px 620px at 12% -8%, rgba(56,189,248,.14), transparent 62%),
+      radial-gradient(900px 560px at 88% 4%, rgba(167,139,250,.13), transparent 60%),
+      radial-gradient(760px 520px at 50% 108%, rgba(244,114,22,.09), transparent 60%),
+      var(--bg);
+    color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Segoe UI",Roboto,sans-serif;
+    -webkit-font-smoothing:antialiased; line-height:1.62; min-height:100vh;
+  }
+  .lab3d{max-width:1520px;margin:0 auto;padding:20px 18px 40px}
+  .lab3d h1{margin:0;font-size:19px;letter-spacing:.3px;
+    background:linear-gradient(120deg,#e2e8f0 10%,#7dd3fc 52%,#c4b5fd 92%);
+    -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+  .lab3d-sub{margin:7px 0 16px;color:#93b4c4;font-size:12.5px;line-height:1.65}
+  .lab3d-sub b{color:#a5f3fc;font-weight:700}
+  .lab3d-sub .hl{color:#fcd34d;font-weight:700}
+
+  /* 三栏：控制台 | 场景 | 读数 —— 控制台与实验画面【左右并排】，绝不放在画面下面 */
+  .lab3d-layout{display:grid;gap:14px;align-items:start;
+    grid-template-columns:296px minmax(0,1fr) 302px;
+    grid-template-areas:"ctl scene read" "ctl lower read"}
+  .lab3d-ctl{grid-area:ctl;display:flex;flex-direction:column;gap:11px;min-width:0}
+  .lab3d-stage{grid-area:scene;position:relative;height:clamp(430px,62vh,620px);
+    border:1px solid var(--line);border-radius:16px;overflow:hidden;overflow:clip;background:#050b18}
+  .lab3d-lower{grid-area:lower;display:grid;grid-template-columns:repeat(auto-fit,minmax(258px,1fr));gap:11px}
+  /* 读数栏 sticky 的行程 = 【所在网格区高】−【元素高】。区域高 == 元素高时行程为 0、
+     sticky 静默失效（计算样式照旧读得出 position:sticky）。这里再限一个高度上限，
+     让它永远比区域矮一点，顺带保证小屏上读数栏不会被截断。 */
+  .lab3d-sidebar{grid-area:read;display:flex;flex-direction:column;gap:11px;min-width:0;
+    position:sticky;top:16px;align-self:start;
+    max-height:calc(100vh - 120px);overflow-y:auto;overscroll-behavior:contain;
+    scrollbar-width:thin}
+
+  .lab3d-stage canvas{display:block;width:100%;height:100%;touch-action:none;cursor:grab}
+  .lab3d-stage canvas.grabbing{cursor:grabbing}
+
+  .stage-hint{position:absolute;left:12px;top:12px;max-width:62%;padding:7px 11px;border-radius:9px;
+    background:rgba(2,6,23,.72);border:1px solid rgba(148,163,184,.22);color:#cbd5e1;font-size:11.5px;
+    line-height:1.55;backdrop-filter:blur(6px);pointer-events:none}
+  .stage-hint b{color:#7dd3fc}
+  .stage-flag{position:absolute;left:50%;transform:translateX(-50%);bottom:56px;padding:7px 14px;border-radius:999px;
+    font-size:12px;font-weight:700;background:rgba(127,29,29,.72);border:1px solid rgba(248,113,113,.6);
+    color:#fee2e2;opacity:0;transition:opacity .25s;pointer-events:none;white-space:nowrap;max-width:88%;
+    overflow:hidden;text-overflow:ellipsis}
+  .stage-flag.show{opacity:1}
+  .stage-flag.good{background:rgba(6,78,59,.75);border-color:rgba(52,211,153,.6);color:#d1fae5}
+  .stage-flag.warn{background:rgba(120,53,15,.78);border-color:rgba(251,191,36,.6);color:#fef3c7}
+  .stage-toast{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);padding:10px 18px;border-radius:12px;
+    background:rgba(2,6,23,.9);border:1px solid rgba(56,189,248,.45);color:#e0f2fe;font-size:13px;font-weight:600;
+    opacity:0;transition:opacity .22s;pointer-events:none;max-width:78%;text-align:center}
+  .stage-toast.show{opacity:1}
+
+  .stage-bar{position:absolute;left:0;right:0;bottom:0;display:flex;align-items:flex-end;justify-content:space-between;
+    gap:10px;padding:10px 12px;pointer-events:none}
+  .stage-bar .bar-left{display:flex;align-items:center;gap:7px;flex-wrap:wrap;pointer-events:auto}
+  .stage-bar .stage-help{font-size:11px;color:#7b93a6;text-align:right;max-width:42%;line-height:1.5}
+  .stage-btn{padding:8px 13px;border-radius:10px;border:1px solid rgba(148,163,184,.3);
+    background:rgba(15,23,42,.86);color:#cbd5e1;font-size:12px;font-weight:600;cursor:pointer;
+    font-family:inherit;transition:all .18s;display:inline-flex;align-items:center;gap:6px}
+  .stage-btn:hover{background:rgba(30,41,59,.95);color:#e2e8f0}
+  .stage-btn.go{border-color:rgba(56,189,248,.55);background:rgba(14,116,144,.32);color:#e0f2fe}
+  .stage-btn.go:hover{background:rgba(14,116,144,.5)}
+  .stage-btn:disabled{opacity:.42;cursor:not-allowed}
+
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:13px 15px;
+    backdrop-filter:blur(8px);min-width:0}
+  .panel h3{margin:0 0 9px;font-size:13px;color:#cbd5e1;display:flex;align-items:center;gap:8px;font-weight:700}
+  .panel h3 .pill{margin-left:auto}
+  .pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700;
+    background:rgba(148,163,184,.14);border:1px solid rgba(148,163,184,.28);color:#cbd5e1;white-space:nowrap}
+  .pill.ok{background:rgba(52,211,153,.15);border-color:rgba(52,211,153,.4);color:#6ee7b7}
+  .pill.bad{background:rgba(248,113,113,.16);border-color:rgba(248,113,113,.42);color:#fca5a5}
+  .pill.warn{background:rgba(251,191,36,.14);border-color:rgba(251,191,36,.36);color:#fcd34d}
+
+  .modes{display:grid;grid-template-columns:1fr;gap:6px}
+  .mode-btn{text-align:left;padding:8px 11px;border-radius:10px;border:1px solid var(--line);
+    background:rgba(255,255,255,.035);color:#cbd5e1;font-size:12px;font-weight:600;cursor:pointer;
+    font-family:inherit;transition:all .18s;line-height:1.4}
+  .mode-btn:hover{background:rgba(255,255,255,.08)}
+  .mode-btn.on{background:linear-gradient(135deg,rgba(56,189,248,.26),rgba(34,211,238,.18));
+    border-color:rgba(56,189,248,.6);color:#e0f2fe}
+  .mode-btn small{display:block;font-weight:500;font-size:10.5px;color:var(--dim2);margin-top:1px}
+  .mode-btn.on small{color:#93c5fd}
+
+  .seg{display:flex;gap:5px}
+  .seg button{flex:1;padding:7px 4px;border-radius:9px;border:1px solid var(--line);
+    background:rgba(255,255,255,.035);color:#cbd5e1;font-size:12px;font-weight:700;cursor:pointer;
+    font-family:inherit;transition:all .18s}
+  .seg button:hover{background:rgba(255,255,255,.09)}
+  .seg button.on{background:linear-gradient(135deg,rgba(56,189,248,.28),rgba(34,211,238,.2));
+    border-color:rgba(56,189,248,.62);color:#e0f2fe}
+
+  .srow{margin:9px 0 0}
+  .srow .lab{display:flex;justify-content:space-between;align-items:baseline;font-size:11.5px;color:var(--dim);margin-bottom:3px}
+  .srow .lab b{color:#e2e8f0;font-weight:800;font-variant-numeric:tabular-nums}
+  input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:5px;border-radius:999px;
+    background:rgba(148,163,184,.22);outline:none;cursor:pointer}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:15px;height:15px;border-radius:50%;
+    background:linear-gradient(135deg,#38bdf8,#22d3ee);border:2px solid #0b1220;cursor:pointer;
+    box-shadow:0 0 0 1px rgba(56,189,248,.6)}
+  input[type=range]::-moz-range-thumb{width:13px;height:13px;border-radius:50%;
+    background:#38bdf8;border:2px solid #0b1220;cursor:pointer}
+
+  .btn-row{display:flex;gap:7px;flex-wrap:wrap;margin-top:9px}
+  .btn-row button{flex:1;min-width:76px;padding:8px 10px;border-radius:10px;border:1px solid var(--line);
+    background:rgba(255,255,255,.04);color:#cbd5e1;font-size:12px;font-weight:600;cursor:pointer;
+    font-family:inherit;transition:all .18s}
+  .btn-row button:hover{background:rgba(255,255,255,.09);color:#e2e8f0}
+  .btn-row button.primary{background:linear-gradient(135deg,rgba(56,189,248,.28),rgba(34,211,238,.22));
+    border-color:rgba(56,189,248,.5);color:#e0f2fe}
+  .btn-row button:disabled{opacity:.42;cursor:not-allowed}
+
+  .readouts{display:grid;grid-template-columns:1fr 1fr;gap:7px}
+  .readouts > div{background:rgba(255,255,255,.035);border-radius:9px;padding:6px 8px}
+  .readouts span{display:block;font-size:10.5px;color:var(--dim2)}
+  .readouts b{font-size:14px;font-weight:800;letter-spacing:-.01em;font-variant-numeric:tabular-nums}
+  .readouts .wide{grid-column:1 / -1}
+
+  .ebar{margin-top:8px}
+  .ebar .row{margin:7px 0}
+  .ebar .cap{display:flex;justify-content:space-between;font-size:11px;color:var(--dim);margin-bottom:3px}
+  .ebar .cap b{color:#e2e8f0;font-weight:700}
+  .ebar .track{height:9px;border-radius:999px;background:rgba(148,163,184,.14);overflow:hidden;position:relative}
+  .ebar .track > i{display:block;height:100%;border-radius:999px;transition:width .12s linear}
+  .ebar .k1{background:linear-gradient(90deg,#38bdf8,#22d3ee)}
+  .ebar .k2{background:linear-gradient(90deg,#a78bfa,#c4b5fd)}
+  .ebar .k3{background:linear-gradient(90deg,#fb923c,#f43f5e)}
+
+  .note{margin:9px 0 0;font-size:11.5px;color:var(--dim);line-height:1.6}
+  .note b{color:#cbd5e1}
+  .note.warn{border-left:2px solid rgba(251,191,36,.6);padding-left:9px;color:#fcd34d}
+  .note.bad{border-left:2px solid rgba(248,113,113,.65);padding-left:9px;color:#fca5a5}
+  .note.good{border-left:2px solid rgba(52,211,153,.6);padding-left:9px;color:#6ee7b7}
+
+  .chk{list-style:none;margin:0;padding:0;font-size:12px}
+  .chk li{display:flex;gap:8px;align-items:flex-start;padding:4px 0;color:#cbd5e1;line-height:1.55}
+  .chk li.no{color:#fca5a5}
+  .chk li.yes{color:#a7f3d0}
+  .chk li i{font-style:normal;flex:0 0 auto;width:15px;text-align:center;opacity:.9}
+
+  .eq{display:inline-block;background:rgba(2,6,23,.62);border:1px solid rgba(148,163,184,.2);
+    border-radius:7px;padding:1px 8px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+    font-size:12px;color:#7dd3fc}
+  .kv{display:grid;grid-template-columns:auto 1fr;gap:3px 10px;font-size:11.5px;color:var(--dim)}
+  .kv b{color:#cbd5e1;font-weight:600;text-align:right}
+  #mtm-chart{display:block;width:100%;height:190px;border-radius:10px;background:rgba(2,6,23,.55);
+    border:1px solid rgba(148,163,184,.16)}
+
+  @media (min-width:1600px){
+    .lab3d-layout{max-width:1580px;grid-template-columns:330px minmax(0,1fr) 336px}
+  }
+  @media (max-width:1180px){
+    .lab3d-layout{grid-template-columns:284px minmax(0,1fr);
+      grid-template-areas:"ctl scene" "lower lower" "read read"}
+    .lab3d-sidebar{position:static;grid-row:auto}
+  }
+  @media (max-width:900px){
+    .lab3d-layout{grid-template-columns:minmax(0,1fr);
+      grid-template-areas:"scene" "ctl" "lower" "read"}
+    .lab3d-stage{height:clamp(340px,54vh,450px)}
+    .stage-bar .stage-help{display:none}
+    .lab3d h1{font-size:16px}
+  }
+</style>
+<script src="protect.js"></script>
+<script src="auth-check.js"></script>
+</head>
+<body>
+<div class="lab3d">
+  <h1>分子热运动 · 3D 立体模型</h1>
+  <p class="lab3d-sub">
+    分子小到看不见，但它们<b>永不停息地做无规则运动</b>。这里把分子放大成小球：
+    <b>温度越高</b>，小球撞得越猛；<b>分子之间</b>同时有引力和斥力，靠得太近被推开、离得稍远又被拉回来；
+    两种气体挨在一起会<b>自己混匀</b>，而且<b>跟谁在上谁在下无关</b>。
+  </p>
+
+  <div class="lab3d-layout">
+    <!-- ================= 左：控制台 ================= -->
+    <div class="lab3d-ctl">
+      <div class="panel">
+        <h3>实验（点一下切换）</h3>
+        <div class="modes" id="mtm-modes"></div>
+      </div>
+
+      <div class="panel">
+        <h3>控制台 <span class="pill" id="mtm-cpill">—</span></h3>
+        <div id="mtm-ctl"></div>
+      </div>
+
+      <div class="panel">
+        <h3>操作</h3>
+        <div class="btn-row" id="mtm-acts"></div>
+        <p class="note" id="mtm-actnote">先在上面的控制台里调一个参数。</p>
+      </div>
+    </div>
+
+    <!-- ================= 中：场景 ================= -->
+    <div class="lab3d-stage" id="mtm-stage">
+      <canvas id="mtm-canvas"></canvas>
+      <div class="stage-hint" id="mtm-hint"></div>
+      <div class="stage-toast" id="mtm-toast"></div>
+      <div class="stage-flag" id="mtm-flag"></div>
+      <div class="stage-bar">
+        <div class="bar-left" id="mtm-barleft"></div>
+        <div class="stage-help">拖动空白处旋转 · 滚轮缩放<br>黄色高亮的是可拖动的分子</div>
+      </div>
+    </div>
+
+    <div class="lab3d-lower">
+      <div class="panel">
+        <h3>视角</h3>
+        <div class="btn-row" id="mtm-views">
+          <button type="button" data-view="default" class="primary">默认</button>
+          <button type="button" data-view="front">正视</button>
+          <button type="button" data-view="top">俯视</button>
+          <button type="button" data-view="side">侧视</button>
+        </div>
+        <p class="note" id="mtm-viewnote">正视最容易看清「分子在容器里乱撞」。</p>
+      </div>
+
+      <div class="panel" id="mtm-chartpanel" style="display:none">
+        <h3>力 – 距离曲线 <span class="pill" id="mtm-chpill">—</span></h3>
+        <canvas id="mtm-chart"></canvas>
+        <p class="note" id="mtm-chnote"></p>
+      </div>
+
+      <div class="panel" id="mtm-distpanel" style="display:none">
+        <h3>分子速率分布</h3>
+        <div class="ebar" id="mtm-dist"></div>
+        <p class="note" id="mtm-distnote"></p>
+      </div>
+
+      <div class="panel">
+        <h3>对照表</h3>
+        <div class="kv" id="mtm-table"></div>
+      </div>
+
+      <div class="panel">
+        <h3>实验原理</h3>
+        <p class="note" id="mtm-theory" style="margin-top:0"></p>
+      </div>
+    </div>
+
+    <!-- ================= 右：读数与判定 ================= -->
+    <!-- 读数栏要能 sticky 自滚：它【必须比自己的网格区矮】。三个面板叠起来 1130 px，
+         而网格区（场景 595 + 间距 + lower 358）只有 964 px ⇒ 行程为 0、sticky 静默失效。
+         所以把「分子速率分布」挪到下面与其它图表并排，读数栏只留两栏。 -->
+    <div class="lab3d-sidebar">
+      <div class="panel">
+        <h3>实时数据 <span class="pill" id="mtm-dpill">—</span></h3>
+        <div class="readouts" id="mtm-readouts"></div>
+        <p class="note" id="mtm-dnote"></p>
+      </div>
+
+      <div class="panel">
+        <h3>判断 <span class="pill" id="mtm-verdict">—</span></h3>
+        <ul class="chk" id="mtm-chk"></ul>
+        <p class="note" id="mtm-conclusion">先在上面做一次操作。</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+'use strict';
+
+/* ==================================================================
+   分子热运动 · 3D
+   世界坐标：x 右、y 上、z 朝观察者，单位 cm（示意尺度）。
+   三个实验共用一套相机 / 投影 / 标签避让 / 渲染管线。
+
+   ① 分子箱：一箱分子，温度滑块控制热运动剧烈程度，三态切换看排列与间距，
+      活塞压缩对比「气体易压缩 / 液体、固体难压缩」。
+   ② 分子间作用力：一对分子，距离可调，实时显示引力 / 斥力 / 合力 + F-r 曲线。
+   ③ 扩散：上下两瓶（二氧化氮 / 空气），抽去玻璃板后看均匀度随时间变化，
+      并可用「只留重力沉降」的对照证明扩散不是重力造成的。
+   ================================================================== */
+
+// ---------------- 常量 ----------------
+var CM = 1;                 // 世界单位就是 cm
+var N_MOL = 64;             // 分子数（4×4×4）
+var LAT_N = 4;              // 固体的点阵边长
+
+// —— ① 分子箱 ——
+// 尺度约定：D_MOL 是"分子直径"，所有间距都用它的倍数报出来。
+var D_MOL   = 0.22;
+var R_MOL   = 0.095;                                   // 画出来的小球半径（比半径小一点，看得见间隙）
+var R_REP   = 1.30 * D_MOL;                            // 斥力作用半径
+var R_CUT   = 1.55 * D_MOL;                            // 引力作用半径（只覆盖最近邻，避免点阵被二次近邻吸塌）
+var S_SOLID = 1.165 * D_MOL;                           // 固体点阵间距 = 一对分子的平衡距离
+var S_LIQUID= 1.200 * D_MOL;                           // 液体初始间距（会自己弛豫到平衡距离）
+var K_REP   = 120000;                                  // 斥力刚度（线性弹簧，r < R_REP 时）
+var K_ATT   = 14400;                                   // 引力刚度（r < R_CUT 时），与 K_REP 一起把平衡距离钉在 ≈1.165 d
+var K_LAT   = 12000;                                   // 固体点阵回复力
+var K_WALL  = 100000;                                  // 器壁 / 活塞的软弹簧
+var GAMMA_OF= {solid:5.0, liquid:6.5, gas:6.0};        // 朗之万阻尼 /s
+var V_REF   = 11.0;                                    // 20 ℃ 的方均根速率 cm/s（示意）
+var T_REF   = 20;                                      // 参考温度 ℃
+var T_MIN   = 0, T_MAX = 100;                          // 温度滑块范围 ℃
+var C_MAX   = 0.30;                                    // 压缩滑块上限（相对样品自然高度的压缩量）
+var SUB     = 10;                                      // 物理子步下限
+// 🔴 子步长上限。分子间斥力 K_REP=1.2e5 在 r≈R_REP 附近给出的等效 ω ≈ 850 rad/s，
+// 半隐式欧拉 + 朗之万要求 ωh ≲ 1，否则会【数值加热】：实测 h=1/600 时实测 rms
+// 比理论高 16%、固体点阵平均间距也从 1.165 d 胀到 1.204 d（看着像"热膨胀"，
+// 其实是积分误差）。取 H_MAX=1/2400 ⇒ ωh≈0.35，实测比值回到 0.99。
+// 成本约 32 ms / 1 s 物理时间（预算 1000 ms），可以放心。
+var H_MAX = 1/2400, N_SUB_MAX = 240;
+var V_AVG_TAU = 2.0;                                   // 速率/温度读数的时间平均常数 /s
+// 三种状态的"样品盒"：同一种物质、同样多的分子，气态占的体积最大
+var CELL_OF = {
+  solid:  {hx:0.56, hz:0.56, hy:1.10, lat:S_SOLID,  jit:0.010, site:true },
+  liquid: {hx:0.55, hz:0.55, hy:1.22, lat:S_LIQUID, jit:0.045, site:false},
+  gas:    {hx:1.30, hz:1.30, hy:2.60, lat:0.650,    jit:0.170, site:false}
+};
+function cellOf(ph){ return CELL_OF[ph] || CELL_OF.gas; }
+// 样品自然高度（活塞"刚好接触"的位置）
+function natTopOf(ph){
+  var cfg = cellOf(ph);
+  return ph==='gas' ? cfg.hy : ((LAT_N-0.5)*cfg.lat + R_MOL);
+}
+// 活塞高度（世界 y）= 自然高度 × (1 − 压缩量)
+function pistonY(ph, c){ return natTopOf(ph) * (1 - c); }
+
+// —— ② 分子间作用力 ——
+var R0      = 0.90;                                    // 平衡距离（合力为 0）
+var FA      = 1.0;                                     // 斥力系数 A：F_rep = FA / r^13
+var FB      = FA / Math.pow(R0, 6);                    // 引力系数 B：F_att = FB / r^7，使 r=R0 时合力为 0
+var R_NEAR  = 0.62, R_FAR = 3.60;                      // 距离滑块范围（世界 cm）
+var ARROW_K = 0.50;                                    // 箭头长度系数（配合 arrowLenOf 的对数压缩）
+var BIG_R   = 0.34;                                    // 分子对画出来的半径
+
+// —— ③ 扩散 ——
+var NB_CELLS = 47;                                     // 竖直方向浓度网格（47 = 23 格下瓶 + 1 格板 + 23 格上瓶）
+var BOTTLE_R = 1.30;                                   // 瓶半径
+var BOTTLE_H = 2.30;                                   // 每只瓶的高度
+var GAP_Y    = 0.10;                                   // 两瓶之间的玻璃板厚度
+var D_DIFF   = 0.200;                                  // 扩散系数（20 ℃）1/s
+var V_SETTLE = 0.16;                                   // 沉降速度（对照模式）1/s
+var D_T_K    = 1.9;                                    // 温度对扩散系数的影响：D ∝ (T+273)/293 的 1.9 次方
+var T_DIFF_MIN = 0, T_DIFF_MAX = 100;
+
+// ---------------- 工具 ----------------
+function clamp(v,a,b){ return v<a?a:(v>b?b:v); }
+function add(a,b){ return [a[0]+b[0],a[1]+b[1],a[2]+b[2]]; }
+function sub(a,b){ return [a[0]-b[0],a[1]-b[1],a[2]-b[2]]; }
+function scl(a,s){ return [a[0]*s,a[1]*s,a[2]*s]; }
+function dot(a,b){ return a[0]*b[0]+a[1]*b[1]+a[2]*b[2]; }
+function cross(a,b){ return [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]]; }
+function vlen(a){ return Math.hypot(a[0],a[1],a[2]); }
+function norm(a){ var L=vlen(a)||1; return [a[0]/L,a[1]/L,a[2]/L]; }
+function mix(a,b,t){ return [a[0]+(b[0]-a[0])*t, a[1]+(b[1]-a[1])*t, a[2]+(b[2]-a[2])*t]; }
+function rgba(c,a){ return 'rgba('+Math.round(c[0])+','+Math.round(c[1])+','+Math.round(c[2])+','+a+')'; }
+function num(v,n){ return (v==null || typeof v!=='number' || !isFinite(v)) ? '—' : v.toFixed(n); }
+function row(k,v){ return '<div><span>'+k+'</span><b>'+v+'</b></div>'; }
+// 可播种随机数：自检需要可复现（同一 seed 两次跑必须给出同样的序列）
+var _seed = 20261005;
+function setSeed(s){ _seed = ((s>>>0) || 1) >>> 0; }
+function rnd(){ _seed = (_seed*1664525 + 1013904223) >>> 0; return _seed/4294967296; }
+function gauss(){ // Box–Muller
+  var u=0,v=0;
+  while(u===0) u=rnd();
+  while(v===0) v=rnd();
+  return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v);
+}
+
+// 温度 → 分子方均根速率（cm/s）。这是全页【唯一】的温度→速率换算点。
+function vrmsOf(tC){ return V_REF * Math.sqrt((tC+273.15)/(T_REF+273.15)); }
+// 分子间作用力（①）：>0 为斥力。<b>molStep 与自检都走这一个函数</b>，避免两处各写各的。
+function pairForceOf(r, phase){
+  var ph = phase || state.phase;
+  var f = (r < R_REP) ? K_REP*(R_REP - r) : 0;
+  if(ph !== 'gas') f -= K_ATT*Math.max(0, 1 - r/R_CUT);
+  return f;
+}
+// 分子间作用力（②）：>0 为斥力，<0 为引力。r 是世界 cm。
+function fRepOf(r){ return FA/Math.pow(Math.max(r,1e-4),13); }
+function fAttOf(r){ return FB/Math.pow(Math.max(r,1e-4),7); }
+function fNetOf(r){ return fRepOf(r)-fAttOf(r); }
+// 固体点阵坐标（以底面中心为原点，y 向上）
+function latPos(i){
+  var ix=i%(LAT_N*LAT_N), iy=Math.floor(i/(LAT_N*LAT_N)), iz=Math.floor(ix/LAT_N);
+  ix=ix%LAT_N;
+  var half=(LAT_N-1)/2;
+  return [ (ix-half)*S_SOLID, (iy+0.5)*S_SOLID, (iz-half)*S_SOLID ];
+}
+
+// ---------------- 模式与视角 ----------------
+var MODES = [
+  {id:'gas',     name:'① 分子箱',      sub:'温度 · 三态 · 压缩'},
+  {id:'force',   name:'② 分子间作用力', sub:'引力 / 斥力 / 合力'},
+  {id:'diffuse', name:'③ 扩散',        sub:'两瓶换位 · 重力对照'}
+];
+var VIEWS = {
+  default: {azim:34, elev:19, dist:1.00, look:false},
+  front:   {azim:0,  elev:4,  dist:0.98, look:false},
+  top:     {azim:0,  elev:78, dist:1.02, look:false},
+  side:    {azim:90, elev:10, dist:1.00, look:false}
+};
+
+var state = {
+  mode:'gas',
+  view:'default',
+  zoom:1,
+  // ① 分子箱
+  phase:'gas',            // solid | liquid | gas
+  temp:20,                // ℃
+  comp:0,                 // 相对样品自然高度的压缩量 0..C_MAX
+  mol:null,               // {p:[],v:[],site:[],m:[]}
+  // ② 分子间作用力
+  r:R0*1.62,              // 两分子距离 cm
+  // ③ 扩散
+  conc:null,              // 长度 NB_CELLS 的浓度数组
+  dots:null,              // 用于观察的粒子（蒙特卡洛解法，只作视觉线索）
+  no2Top:true,            // 二氧化氮在上瓶
+  plate:true,             // 玻璃板还在（未抽去）
+  settleOnly:false,       // 只留重力沉降（关闭扩散）—— 对照
+  dTemp:20,               // 扩散实验温度 ℃
+  diffT:0,                // 扩散已进行的时间 s
+  u0:0,                   // 初始不均匀度（归一化用）
+  // 通用
+  t:0                     // 累计仿真时间 s
+};
+
+var drawn = {mol:[], arrows:[], labels:[], isobars:[], forceArrows:[]};
+
+// ---------------- 画布与相机 ----------------
+var stageEl = document.getElementById('mtm-stage');
+var cvs = document.getElementById('mtm-canvas');
+var ctx = cvs.getContext('2d');
+var chartCvs = document.getElementById('mtm-chart');
+var chartCtx = chartCvs.getContext('2d');
+var W = 900, H = 560, DPR = 1, cam = null;
+
+function envPtsOfBox(hx,hy0,hy1,hz){
+  var p=[], sx, sy, sz;
+  for(sx=-1;sx<=1;sx+=2) for(sy=0;sy<=1;sy++) for(sz=-1;sz<=1;sz+=2)
+    p.push([sx*hx, sy?hy1:hy0, sz*hz]);
+  return p;
+}
+var ENV_OF = {
+  force:   {hx:3.35, y0:-1.05, y1:1.35, hz:1.30},
+  diffuse: {hx:1.95, y0:-0.35, y1:2*BOTTLE_H+GAP_Y+0.45, hz:1.95}
+};
+// ① 分子箱的取景包络按【当前物态自己的盒子】算，但要有一个下限。
+// 固态/液态的盒子只有气态的 1/3 高（hy 1.10 vs 2.60）：一律按气态取景时，样品只占画布
+// 宽度的 ~15%（实测 120 px / 778 px），点阵根本看不清 —— 而"点阵"正是这一节要看的东西。
+// 加下限（hx ≥ 0.95、y1 ≥ 1.75）后：样品占 ~33%（254 px），切物态时比例最多变 1.6 倍，
+// 「气态容器明显更大」仍然看得出来（读数与对照表里也有体积对照）。
+var ENV_FLOOR_HX = 0.95, ENV_FLOOR_Y1 = 1.75;
+function envGasOf(ph){
+  var cfg = cellOf(ph);
+  return {hx: Math.max(cfg.hx + 0.20, ENV_FLOOR_HX),
+          y0: -0.18,
+          y1: Math.max(natTopOf(ph) + 0.35, ENV_FLOOR_Y1),
+          hz: Math.max(cfg.hz + 0.20, ENV_FLOOR_HX)};
+}
+function envOf(){
+  if(state.mode==='force') return ENV_OF.force;
+  if(state.mode==='diffuse') return ENV_OF.diffuse;
+  return envGasOf(state.phase);
+}
+var ENV = envGasOf('gas');
+var ENV_PTS = envPtsOfBox(ENV.hx, ENV.y0, ENV.y1, ENV.hz);
+function syncEnv(){
+  ENV = envOf();
+  ENV_PTS = envPtsOfBox(ENV.hx, ENV.y0, ENV.y1, ENV.hz);
+}
+
+function envelopePoints(pts,q){
+  // 🔴 必须按【投影后】的量取包络：屏幕偏移 = focal·(r/z)，而 z 在包络里是变化的
+  // （近端 z ≈ dist − span√3、远端 ≈ dist + span√3，比值可差 1.6 倍）。
+  // 用相机空间的 r、u 取包络等于按正交投影取景 —— 算出来的焦距"看起来对"，
+  // 但近端的角点会被透视放大到画布外（实测 gas/default 第 6 点 y=607 > 画布高）。
+  var loR=Infinity,hiR=-Infinity,loU=Infinity,hiU=-Infinity;
+  for(var i=0;i<pts.length;i++){
+    var d=sub(pts[i],q.eye);
+    var z=Math.max(dot(d,q.fwd), 0.02);
+    var r=dot(d,q.right)/z, u=dot(d,q.up)/z;
+    if(r<loR)loR=r; if(r>hiR)hiR=r; if(u<loU)loU=u; if(u>hiU)hiU=u;
+  }
+  return {loR:loR,hiR:hiR,loU:loU,hiU:hiU};
+}
+function project(p,q){
+  var d = sub(p, q.eye);
+  var z = Math.max(dot(d,q.fwd), 0.02);
+  var s = q.focal / z;
+  return {x:q.cx + dot(d,q.right)*s, y:q.cy - dot(d,q.up)*s, z:z};
+}
+function buildCam(){
+  var v = VIEWS[state.view] || VIEWS['default'];
+  var q = {};
+  q.azim=v.azim; q.elev=v.elev;
+  var az = q.azim*Math.PI/180, el = q.elev*Math.PI/180;
+  var dir = [Math.cos(el)*Math.sin(az), Math.sin(el), Math.cos(el)*Math.cos(az)];
+  var envC = [0,(ENV.y0+ENV.y1)/2,0];
+  var span = Math.max(ENV.hx, (ENV.y1-ENV.y0)/2, ENV.hz);
+  var dist = span*4.6*v.dist;
+  q.eye = add(envC, scl(dir, dist));
+  q.fwd = norm(sub(envC, q.eye));
+  var upW = [0,1,0];
+  q.right = norm(cross(q.fwd, upW));
+  q.up = cross(q.right, q.fwd);
+  q.cx = W/2; q.cy = H/2; q.focal = 1;
+  // 先按单位焦距投影求包络，再定焦距 —— 迭代 3 轮
+  for(var it=0; it<3; it++){
+    var e = envelopePoints(ENV_PTS,q);
+    // 包络量已经是 r/z、u/z ⇒ 焦距直接就是它（不要再乘 dist，那等于退回正交取景）
+    var f = Math.min( W*0.90/Math.max(1e-6,e.hiR-e.loR), H*0.86/Math.max(1e-6,e.hiU-e.loU) );
+    q.focal = f;
+    // 🔴 居中的对象是【屏幕包围盒的中心】，不是"包络中心点 envC 的投影"。
+    // 透视下两者不是同一个点：envC 投影到画布中心时，近端的角点会被放大得更多，
+    // 包围盒整体偏向一侧（实测 gas/default 下端 y=598 > 画布高 595、俯视上端 y=−2）。
+    // 屏幕坐标：x = cx + f·r，y = cy − f·u ⇒ 直接反解出 cx、cy 让包围盒正好居中。
+    q.cx = W/2 - f*(e.loR+e.hiR)/2;
+    q.cy = H/2 + f*(e.loU+e.hiU)/2;
+  }
+  q.focal *= state.zoom;
+  q.dist = dist;
+  return q;
+}
+
+// ---------------- 绘图基元 ----------------
+function rr(c,x,y,w,h,r){ c.beginPath(); c.moveTo(x+r,y); c.arcTo(x+w,y,x+w,y+h,r);
+  c.arcTo(x+w,y+h,x,y+h,r); c.arcTo(x,y+h,x,y,r); c.arcTo(x,y,x+w,y,r); c.closePath(); }
+function polyPath(pts,c){ c.beginPath(); c.moveTo(pts[0].x,pts[0].y);
+  for(var i=1;i<pts.length;i++) c.lineTo(pts[i].x,pts[i].y); c.closePath(); }
+function poly(pts,fill,stroke,lw,c){ if(pts.length<3) return; polyPath(pts,c);
+  if(fill){ c.fillStyle=fill; c.fill(); } if(stroke){ c.strokeStyle=stroke; c.lineWidth=lw||1; c.stroke(); } }
+function seg(a,b,stroke,lw,c){ c.beginPath(); c.moveTo(a.x,a.y); c.lineTo(b.x,b.y);
+  c.strokeStyle=stroke; c.lineWidth=lw||1; c.lineCap='round'; c.stroke(); }
+function dot2(p,r,fill,c){ c.beginPath(); c.arc(p.x,p.y,r,0,Math.PI*2); c.fillStyle=fill; c.fill(); }
+function ringPts(cx,y,r,q,n){ var out=[]; for(var k=0;k<n;k++){ var a=k/n*Math.PI*2;
+  out.push(project([cx+Math.cos(a)*r, y, Math.sin(a)*r], q)); } return out; }
+function ringExtremes(pts){ var iL=0,iR=0;
+  for(var i=1;i<pts.length;i++){ if(pts[i].x<pts[iL].x) iL=i; if(pts[i].x>pts[iR].x) iR=i; } return [iL,iR]; }
+function frontArc(c,pts,iA,iB,moveFirst){
+  var N=pts.length, pathA=[], pathB=[], i;
+  for(i=iA; i!==iB; i=(i+1)%N) pathA.push(i);
+  for(i=iB; i!==iA; i=(i+1)%N) pathB.push(i);
+  function avgZ(p){ var s=0; for(var k=0;k<p.length;k++) s+=pts[p[k]].z; return s/p.length; }
+  var path = avgZ(pathA)<=avgZ(pathB) ? pathA : pathB;
+  c.beginPath();
+  for(i=0;i<path.length;i++){ var p=pts[path[i]]; if(i===0&&moveFirst) c.moveTo(p.x,p.y); else c.lineTo(p.x,p.y); }
+}
+// 竖直圆柱：y0 底、y1 顶
+function cylSolid(cx,y0,y1,r,q,c,fill,stroke,lw){
+  var p0=ringPts(cx,y0,r,q,26), p1=ringPts(cx,y1,r,q,26);
+  var e0=ringExtremes(p0), e1=ringExtremes(p1);
+  frontArc(c,p0,e0[0],e0[1],true); frontArc(c,p1,e1[0],e1[1],false); c.closePath();
+  if(fill){ c.fillStyle=fill; c.fill(); }
+  if(stroke){ c.strokeStyle=stroke; c.lineWidth=lw||1; c.stroke(); }
+}
+// 立方体：只画看得见的三个面（按法线朝眼睛判）
+function boxSolid(cx,cy,cz,hx,hy,hz,q,c,fill,stroke,lw){
+  var V=[];
+  for(var sx=-1;sx<=1;sx+=2) for(var sy=-1;sy<=1;sy+=2) for(var sz=-1;sz<=1;sz+=2)
+    V.push([cx+sx*hx, cy+sy*hy, cz+sz*hz]);
+  var F=[[0,1,3,2],[4,5,7,6],[0,1,5,4],[2,3,7,6],[0,2,6,4],[1,3,7,5]];
+  var vis=[];
+  for(var k=0;k<F.length;k++){
+    var f=F[k], fc=[0,0,0];
+    for(var t=0;t<4;t++){ fc[0]+=V[f[t]][0]/4; fc[1]+=V[f[t]][1]/4; fc[2]+=V[f[t]][2]/4; }
+    var toEye=sub(q.eye,fc);
+    var n0=cross(sub(V[f[1]],V[f[0]]), sub(V[f[2]],V[f[0]]));
+    if(dot(n0,toEye)<0) n0=scl(n0,-1);
+    var pts=[]; for(t=0;t<4;t++) pts.push(project(V[f[t]],q));
+    vis.push({pts:pts, z:project(fc,q).z, n:norm(n0)});
+  }
+  vis.sort(function(a,b){ return b.z-a.z; });
+  for(k=0;k<vis.length;k++){
+    var lv=0.55+0.45*Math.abs(vis[k].n[1]);
+    poly(vis[k].pts, fill, stroke, lw, c);
+    if(fill && fill!=='none'){
+      poly(vis[k].pts, 'rgba(255,255,255,'+(0.035*lv).toFixed(3)+')', null, 0, c);
+    }
+  }
+}
+// 线框盒（透明容器）
+function boxWire(cx,cy,cz,hx,hy,hz,q,c,color,lw){
+  var V=[];
+  for(var sx=-1;sx<=1;sx+=2) for(var sy=-1;sy<=1;sy+=2) for(var sz=-1;sz<=1;sz+=2)
+    V.push(project([cx+sx*hx, cy+sy*hy, cz+sz*hz], q));
+  var E=[[0,1],[0,2],[0,4],[1,3],[1,5],[2,3],[2,6],[3,7],[4,5],[4,6],[5,7],[6,7]];
+  for(var k=0;k<E.length;k++) seg(V[E[k][0]], V[E[k][1]], color, lw||1, c);
+}
+// 世界空间箭头
+function arrow3(a,b,color,lw,q,c,headLen){
+  var pa=project(a,q), pb=project(b,q);
+  var dx=pb.x-pa.x, dy=pb.y-pa.y, L=Math.hypot(dx,dy);
+  if(L<1.2) return {x:pa.x,y:pa.y,L:0};
+  seg(pa,pb,color,lw,c);
+  var ux=dx/L, uy=dy/L, hl=Math.min(headLen||9, L*0.42), hw=hl*0.52;
+  c.beginPath();
+  c.moveTo(pb.x,pb.y);
+  c.lineTo(pb.x-ux*hl+(-uy)*hw, pb.y-uy*hl+(ux)*hw);
+  c.lineTo(pb.x-ux*hl-(-uy)*hw, pb.y-uy*hl-(ux)*hw);
+  c.closePath(); c.fillStyle=color; c.fill();
+  return {x:pa.x,y:pa.y,L:L};
+}
+
+// ---------------- 标签避让 ----------------
+var frameBoxes=[], labelQ=[], domBoxList=[];
+function hitBox(a,b){ return !(a.x+a.w<=b.x || b.x+b.w<=a.x || a.y+a.h<=b.y || b.y+b.h<=a.y); }
+function textW(text,font){ ctx.save(); ctx.font=font; var w=ctx.measureText(text).width; ctx.restore(); return w; }
+function clampBox(b){ b.x=clamp(b.x,4,W-b.w-4); b.y=clamp(b.y,4,H-b.h-4); return b; }
+function bestLabel(ax,ay,text,font,color){
+  var w=textW(text,font)+16, h=21, cands=[];
+  var R=13;
+  // 候选落点环半径。放宽到 24 px/环（最远 120 px）是为了给避让留出余地：
+  // 15 时最外侧只到 75 px，窄屏（画布 354 px、最长标签 158 px）上长标签几乎没得挪，
+  // 只剩"压在别人身上"和"被推回画布边"两个坏选择。环从内向外扫、取第一个不重叠的，
+  // 所以放宽上限【只在拥挤时】才起作用，宽屏上仍是最近的那一环。
+  // 副作用（有意）：clampBox 从此真的会承重 —— 未钳位时窄屏下会有一条标签越出画布右边界。
+  for(var ringN=1; ringN<=5; ringN++){
+    var RR=ringN*24;
+    for(var k=0;k<16;k++){
+      var a=k/16*Math.PI*2;
+      cands.push({x:ax+Math.cos(a)*RR-w/2, y:ay+Math.sin(a)*RR-h/2});
+    }
+  }
+  var pick=null;
+  for(var i=0;i<cands.length;i++){
+    var b={x:cands[i].x,y:cands[i].y,w:w,h:h};
+    clampBox(b);
+    var ok=true;
+    for(var j=0;j<frameBoxes.length;j++) if(hitBox(b,frameBoxes[j])){ ok=false; break; }
+    if(ok) for(j=0;j<labelQ.length;j++) if(hitBox(b,labelQ[j].box)){ ok=false; break; }
+    if(ok){ pick=b; break; }
+  }
+  if(!pick){ pick=clampBox({x:ax-w/2,y:ay-h/2,w:w,h:h}); }
+  var L={box:pick, text:text, font:font, color:color||'#e2e8f0'};
+  labelQ.push(L);
+  return pick;
+}
+function flushLabels(c){
+  drawn.labels = labelQ.map(function(L){ return {x:L.box.x,y:L.box.y,w:L.box.w,h:L.box.h,t:L.text}; });
+  for(var i=0;i<labelQ.length;i++){
+    var L=labelQ[i], b=L.box, cx=b.x+b.w/2, cy=b.y+b.h/2;
+    c.save();
+    rr(c,b.x,b.y,b.w,b.h,7); c.fillStyle='rgba(2,6,23,.80)'; c.fill();
+    c.strokeStyle='rgba(148,163,184,.30)'; c.lineWidth=1; c.stroke();
+    c.font=L.font; c.fillStyle=L.color; c.textAlign='center'; c.textBaseline='middle';
+    c.fillText(L.text,cx,cy+0.5);
+    c.restore();
+  }
+  labelQ.length=0;
+}
+
+// 分子贴图（离屏缓存，按半径 + 色相）
+var spriteCache={};
+function molSprite(r, col, hi){
+  var key=r.toFixed(2)+'|'+col+'|'+hi;
+  if(spriteCache[key]) return spriteCache[key];
+  var pad=2, S=Math.ceil((r+pad)*2*DPR);
+  var cv=document.createElement('canvas'); cv.width=S; cv.height=S;
+  var g=cv.getContext('2d'); g.scale(DPR,DPR);
+  var cx=S/(2*DPR), cy=S/(2*DPR);
+  var rg=g.createRadialGradient(cx-r*0.34, cy-r*0.38, r*0.08, cx, cy, r*1.06);
+  rg.addColorStop(0, hi); rg.addColorStop(0.55, col); rg.addColorStop(1, 'rgba(2,6,23,0.92)');
+  g.beginPath(); g.arc(cx,cy,r,0,Math.PI*2); g.fillStyle=rg; g.fill();
+  g.strokeStyle='rgba(255,255,255,0.20)'; g.lineWidth=0.7; g.stroke();
+  spriteCache[key]={cv:cv, s:S/(2*DPR), dpr:DPR};
+  return spriteCache[key];
+}
+function drawSprite(sp, px, py, alpha){
+  var s=sp.s;
+  ctx.globalAlpha = alpha==null?1:alpha;
+  ctx.drawImage(sp.cv, px-s, py-s, s*2, s*2);
+  ctx.globalAlpha = 1;
+}
+
+// ---------------- ① 分子箱 ----------------
+function curPistonY(){ return pistonY(state.phase, state.comp); }
+
+function initMolecules(){
+  var cfg = cellOf(state.phase), n = LAT_N;
+  var p=[], v=[], site=[], i;
+  var vr = vrmsOf(state.temp), sg = vr/Math.sqrt(3);
+  for(i=0;i<N_MOL;i++){
+    var ix=i%(n*n), iy=Math.floor(i/(n*n)), iz=Math.floor(ix/n); ix=ix%n;
+    var half=(n-1)/2, x, y, z, lx, ly, lz;
+    if(state.phase==='gas'){
+      lx = -cfg.hx + R_MOL + (2*cfg.hx-2*R_MOL)*((ix+0.5)/n);
+      lz = -cfg.hz + R_MOL + (2*cfg.hz-2*R_MOL)*((iz+0.5)/n);
+      ly =  R_MOL + (cfg.hy-2*R_MOL)*(iy/(n-1));   // 铺满整个容器高度
+      x = lx + (rnd()*2-1)*cfg.jit*0.55;
+      z = lz + (rnd()*2-1)*cfg.jit*0.55;
+      y = ly + (rnd()*2-1)*cfg.jit*0.55;
+    } else {
+      // 点阵格点取【理想位置】—— 抖动只加在初始位置上，否则格点本身歪掉，
+      // 分子就被永久锁在歪掉的位置上（最近邻距离会小到 0.9 倍间距）
+      lx = (ix-half)*cfg.lat;
+      lz = (iz-half)*cfg.lat;
+      ly = (iy+0.5)*cfg.lat;
+      x = lx + (rnd()*2-1)*cfg.jit;
+      z = lz + (rnd()*2-1)*cfg.jit;
+      y = ly + (rnd()*2-1)*cfg.jit;
+    }
+    x = clamp(x, -cfg.hx+R_MOL, cfg.hx-R_MOL);
+    z = clamp(z, -cfg.hz+R_MOL, cfg.hz-R_MOL);
+    y = clamp(y, R_MOL, Math.max(R_MOL, natTopOf(state.phase) - R_MOL));
+    p.push([x,y,z]); site.push([lx,ly,lz]);
+    v.push([gauss()*sg, gauss()*sg, gauss()*sg]);
+  }
+  state.mol = {p:p, v:v, site:site, f:[], plateF:0, plateFavg:0, stat:{}};
+}
+// 固体点阵的格点【不随压缩移动】—— 阻力因此来自弹簧 + 分子间斥力，
+// 而不是让格点跟着活塞跑（那样活塞永远碰不到分子，测出来的力恒为 0）。
+function syncSites(){ /* 格点固定，无需同步；保留此函数是为了让调用点语义清楚 */ }
+function molReset(){ initMolecules(); }
+
+function molStep(h){
+  var m = state.mol; if(!m) return;
+  var cfg = cellOf(state.phase);
+  var i,j, N=N_MOL;
+  var yTop = curPistonY();
+  var g = GAMMA_OF[state.phase] || 6;
+  var vr = vrmsOf(state.temp), sg = vr/Math.sqrt(3);
+  var damp = Math.exp(-g*h);
+  var nk = Math.sqrt(Math.max(0,1-damp*damp))*sg;
+  for(i=0;i<N;i++) m.f[i]=[0,0,0];
+  // 分子间作用力
+  for(i=0;i<N;i++){
+    var pi=m.p[i];
+    for(j=i+1;j<N;j++){
+      var pj=m.p[j];
+      var dx=pj[0]-pi[0], dy=pj[1]-pi[1], dz=pj[2]-pi[2];
+      var r2=dx*dx+dy*dy+dz*dz;
+      if(r2>=R_CUT*R_CUT || r2<1e-9) continue;
+      var r=Math.sqrt(r2), ux=dx/r, uy=dy/r, uz=dz/r;
+      var f = pairForceOf(r);                            // 斥力（正 = 互相推开）/ 引力（负）
+      var fx=f*ux, fy=f*uy, fz=f*uz;
+      m.f[i][0]-=fx; m.f[i][1]-=fy; m.f[i][2]-=fz;
+      m.f[j][0]+=fx; m.f[j][1]+=fy; m.f[j][2]+=fz;
+    }
+  }
+  var plateF = 0;
+  for(i=0;i<N;i++){
+    var p=m.p[i], vv=m.v[i], ff=m.f[i];
+    // 固体：点阵回复力
+    if(cfg.site){
+      var s=m.site[i];
+      ff[0] += -K_LAT*(p[0]-s[0]);
+      ff[1] += -K_LAT*(p[1]-s[1]);
+      ff[2] += -K_LAT*(p[2]-s[2]);
+    }
+    // 活塞：用【软弹簧】而不是硬钳位 —— 因为活塞受力就是从这个弹簧力里统计出来的。
+    // 🔴 不能再加「只对上行分子生效」的阻尼项（原来有 C_WALL·max(0,v↑)）：它只吸能不补能，
+    // 会把竖直方向的动能一点点抽干 ⇒ 气体变成各向异性、温度越高掉得越多
+    // （实测 100 ℃ 的平均速率只有理论值的 92%，而 0 ℃ 是 101%）。
+    // 纯弹簧的碰撞是弹性的，动量转移照样被统计进 plateF，压力不会因此变假。
+    if(p[1] > yTop-R_MOL){
+      var pen=(p[1]+R_MOL)-yTop;
+      var Fp = K_WALL*pen;
+      ff[1]-=Fp; plateF += Fp;
+    }
+    // 积分（半隐式欧拉 + 朗之万热浴）
+    vv[0]=(vv[0]+ff[0]*h)*damp + nk*gauss();
+    vv[1]=(vv[1]+ff[1]*h)*damp + nk*gauss();
+    vv[2]=(vv[2]+ff[2]*h)*damp + nk*gauss();
+    p[0]+=vv[0]*h; p[1]+=vv[1]*h; p[2]+=vv[2]*h;
+    // 侧壁 / 底面：硬钳位 + 反弹。
+    // 用软弹簧的话分子会嵌进壁里（速度 11 cm/s、K_WALL=1e5 时约 0.035 cm），
+    // 而侧壁的受力没人读，没必要为它牺牲几何精度。
+    if(p[0] < -cfg.hx+R_MOL){ p[0]=-cfg.hx+R_MOL; if(vv[0]<0) vv[0]=-vv[0]; }
+    if(p[0] >  cfg.hx-R_MOL){ p[0]= cfg.hx-R_MOL; if(vv[0]>0) vv[0]=-vv[0]; }
+    if(p[2] < -cfg.hz+R_MOL){ p[2]=-cfg.hz+R_MOL; if(vv[2]<0) vv[2]=-vv[2]; }
+    if(p[2] >  cfg.hz-R_MOL){ p[2]= cfg.hz-R_MOL; if(vv[2]>0) vv[2]=-vv[2]; }
+    if(p[1] < R_MOL){ p[1]=R_MOL; if(vv[1]<0) vv[1]=-vv[1]; }
+  }
+  var a = 1-Math.exp(-h/1.5);
+  m.plateFavg = m.plateFavg*(1-a) + plateF*a;
+  m.plateF = plateF;
+  // 温度是【时间平均】量：64 个分子的瞬时 v_rms 涨落就有 ±6%，
+  // 直接报瞬时值会让「温度越高速率越大」这条规律时对时错。
+  var s2=0;
+  for(i=0;i<N;i++){ var vv=m.v[i]; s2 += vv[0]*vv[0]+vv[1]*vv[1]+vv[2]*vv[2]; }
+  var vr2 = s2/N;
+  var a2 = 1-Math.exp(-h/V_AVG_TAU);
+  if(m.v2Avg==null) m.v2Avg = vr2; else m.v2Avg = m.v2Avg*(1-a2) + vr2*a2;
+  m.v2Inst = vr2;
+  state.t += h;
+}
+
+function molStats(){
+  var m=state.mol; if(!m) return null;
+  var N=N_MOL, i, k, s2=0;
+  for(i=0;i<N;i++){ var v=m.v[i]; s2 += v[0]*v[0]+v[1]*v[1]+v[2]*v[2]; }
+  var v_rms = Math.sqrt(s2/N);
+  var v_avg = m.v2Avg!=null ? Math.sqrt(m.v2Avg) : v_rms;
+  // 平均间距取【样品体积 / 分子数】的立方根。
+  // 不能用最近邻距离：分子擦身而过的那一瞬间，最近邻可以小到 0.7 倍间距，
+  // 那是热运动、不是结构 —— 用它会把「固态的间距」算得比「液态的」还小。
+  var lo=[Infinity,Infinity,Infinity], hi=[-Infinity,-Infinity,-Infinity];
+  for(i=0;i<N;i++){ var p=m.p[i];
+    for(k=0;k<3;k++){ if(p[k]<lo[k]) lo[k]=p[k]; if(p[k]>hi[k]) hi[k]=p[k]; } }
+  var vol=1;
+  for(k=0;k<3;k++) vol *= Math.max(2*R_MOL, (hi[k]-lo[k])+2*R_MOL);
+  var sp = Math.pow(vol/N, 1/3);
+  return {v_rms:v_rms, v_avg:v_avg, vTarget:vrmsOf(state.temp), nn:sp, nnRatio:sp/D_MOL, bboxVol:vol,
+          plateF:m.plateFavg, cell:cellOf(state.phase), pistonY:curPistonY()};
+}
+
+// 分子按深度排序后画（远→近）
+function drawMolecules(q, phase, T){
+  var m=state.mol; if(!m) return;
+  var order=[], i;
+  for(i=0;i<N_MOL;i++) order.push({i:i, z:project(m.p[i],q).z});
+  order.sort(function(a,b){ return b.z-a.z; });
+  var base = phase==='gas' ? [125,205,255] : (phase==='liquid' ? [120,190,235] : [150,175,225]);
+  var hot  = clamp((T-20)/80, 0, 1);
+  var col  = [ base[0]+hot*130, base[1]-hot*70, base[2]-hot*40 ];
+  var colS = 'rgb('+Math.round(clamp(col[0],0,255))+','+Math.round(clamp(col[1],0,255))+','+Math.round(clamp(col[2],0,255))+')';
+  // 屏幕半径按相机距离换算（球只占很小一段深度，统一取包络中心处的比例即可）
+  var pr = clamp(R_MOL*q.focal/Math.max(0.4,q.dist), 2.0, 64);
+  var sp2 = molSprite(pr, colS, 'rgba(255,255,255,0.95)');
+  var rec=[];
+  for(i=0;i<order.length;i++){
+    var idx=order[i].i, pp=project(m.p[idx],q);
+    rec.push({x:pp.x, y:pp.y, z:pp.z, i:idx, r:pr});
+  }
+  drawn.mol = rec;
+  for(i=0;i<rec.length;i++) drawSprite(sp2, rec[i].x, rec[i].y, 1);
+  return rec;
+}
+
+// ---------------- 场景：① 分子箱 ----------------
+function drawGasScene(q,c){
+  var cfg = cellOf(state.phase);
+  var yTop = curPistonY();
+  // 地面阴影
+  var fy = 0;
+  var fp = [];
+  for(var sx=-1;sx<=1;sx+=2) for(var sz=-1;sz<=1;sz+=2)
+    fp.push(project([sx*(cfg.hx+0.14), fy-0.015, sz*(cfg.hz+0.14)], q));
+  poly(fp, 'rgba(56,189,248,.055)', null, 0, c);
+  // 容器背板
+  boxSolid(0, cfg.hy/2, 0, cfg.hx, cfg.hy/2, cfg.hz, q, c, 'rgba(120,170,215,.10)', null, 0);
+  // 容器线框
+  boxWire(0, cfg.hy/2, 0, cfg.hx, cfg.hy/2, cfg.hz, q, c, 'rgba(150,195,235,.55)', 1.3);
+  // 分子
+  drawMolecules(q, state.phase, state.temp);
+  // 活塞
+  var pt = 0.055;
+  boxSolid(0, yTop+pt, 0, cfg.hx*1.02, pt, cfg.hz*1.02, q, c, 'rgba(190,205,225,.62)', 'rgba(226,232,240,.75)', 1.2);
+  drawn.pistonTop = project([0, yTop+2*pt, 0], q);
+  drawn.pistonMid = project([0, yTop, 0], q);
+  // 活塞上的受力箭头（向上 = 分子顶活塞）
+  var fs = clamp(Math.log10(1+Math.max(0,state.mol?state.mol.plateFavg:0))/2.0, 0, 1);
+  if(fs>0.02){
+    var a0=[0, yTop+2*pt+0.04, 0], a1=[0, yTop+2*pt+0.04+fs*0.85, 0];
+    arrow3(a0,a1,'rgba(251,146,60,.95)',2.6,q,c,10);
+  }
+  // 压缩标注
+  if(state.comp>0.004){
+    var xr = cfg.hx+0.26;
+    var pA=project([xr, cfg.hy, 0],q), pB=project([xr, yTop, 0],q);
+    seg(pA,pB,'rgba(251,191,36,.9)',1.4,c);
+    seg(project([xr-0.10, cfg.hy, 0],q), project([xr+0.10, cfg.hy, 0],q),'rgba(251,191,36,.9)',1.4,c);
+    seg(project([xr-0.10, yTop, 0],q), project([xr+0.10, yTop, 0],q),'rgba(251,191,36,.9)',1.4,c);
+    bestLabel(pA.x, (pA.y+pB.y)/2, '压 '+(state.comp*100).toFixed(0)+'%', '600 11px -apple-system,sans-serif', '#fcd34d');
+  }
+  // 标签
+  var mm = state.mol && state.mol.p[0] ? project(state.mol.p[0],q) : null;
+  if(mm) bestLabel(mm.x, mm.y-16, '分子', '600 11px -apple-system,sans-serif', '#bae6fd');
+  bestLabel(drawn.pistonTop.x, drawn.pistonTop.y-18, '活塞', '600 11px -apple-system,sans-serif', '#fde68a');
+  bestLabel(project([cfg.hx, cfg.hy*0.12, cfg.hz],q).x, project([cfg.hx, cfg.hy*0.12, cfg.hz],q).y,
+            state.phase==='gas'?'容器':(state.phase==='liquid'?'容器（液体只占底部）':'容器（固体只占一角）'),
+            '600 11px -apple-system,sans-serif', '#cbd5e1');
+  // 尺度标尺：一条 = 一个分子直径
+  var bx = -cfg.hx-0.30, by0 = cfg.hy*0.55, by1 = by0 + D_MOL;
+  var s0=project([bx,by0,cfg.hz],q), s1=project([bx,by1,cfg.hz],q);
+  seg(s0,s1,'rgba(226,232,240,.85)',2.4,c);
+  seg(project([bx-0.06,by0,cfg.hz],q), project([bx+0.06,by0,cfg.hz],q),'rgba(226,232,240,.85)',2.4,c);
+  seg(project([bx-0.06,by1,cfg.hz],q), project([bx+0.06,by1,cfg.hz],q),'rgba(226,232,240,.85)',2.4,c);
+  bestLabel(s0.x, (s0.y+s1.y)/2, '分子直径 d', '600 10.5px -apple-system,sans-serif', '#e2e8f0');
+}
+
+// ---------------- 场景：② 分子间作用力 ----------------
+function drawForceScene(q,c){
+  var r = state.r;
+  var A = [-r/2, 0, 0], B = [r/2, 0, 0];
+  // 地面
+  var gp=[];
+  for(var sx=-1;sx<=1;sx+=2) for(var sz=-1;sz<=1;sz+=2) gp.push(project([sx*1.5,-0.40,sz*1.1],q));
+  poly(gp,'rgba(56,189,248,.05)',null,0,c);
+  // 两个大分子
+  var spA = project(A,q), spB = project(B,q);
+  var pRad = Math.max(6, BIG_R*q.focal/Math.max(0.5,q.dist));
+  var spr = molSprite(pRad, 'rgb(96,165,250)', 'rgba(255,255,255,.95)');
+  drawSprite(spr, spA.x, spA.y, 1);
+  var spr2 = molSprite(pRad, 'rgb(244,114,182)', 'rgba(255,255,255,.95)');
+  drawSprite(spr2, spB.x, spB.y, 1);
+  // 距离标尺
+  var yR = -0.34;
+  var r0=project([A[0], yR, 0],q), r1=project([B[0], yR, 0],q);
+  seg(r0,r1,'rgba(148,163,184,.75)',1.6,c);
+  seg(project([A[0],yR-0.10,0],q), project([A[0],yR+0.10,0],q),'rgba(148,163,184,.75)',1.6,c);
+  seg(project([B[0],yR-0.10,0],q), project([B[0],yR+0.10,0],q),'rgba(148,163,184,.75)',1.6,c);
+  bestLabel((r0.x+r1.x)/2, r0.y+16, 'r = '+r.toFixed(2)+' cm  ('+(r/R0).toFixed(2)+' r₀)',
+            '600 11px -apple-system,sans-serif', '#cbd5e1');
+  // 力箭头：以右侧分子为锚点。长度用【对数】压缩，否则 r 稍一变小斥力箭头就冲出画面
+  var fR = fRepOf(r), fA = fAttOf(r), fN = fNetOf(r);
+  var Lrep = arrowLenOf(fR)*ARROW_K, Latt = arrowLenOf(fA)*ARROW_K, Lnet = arrowLenOf(fN)*ARROW_K;
+  var xB = B[0]+BIG_R+0.03;
+  // 斥力（橙）：把分子往右推
+  var ar1 = arrow3([xB,0.30,0],[xB+Lrep,0.30,0],'rgba(251,146,60,.95)',2.6,q,c,9);
+  // 引力（蓝）：把分子往左拉
+  var ar2 = arrow3([xB,0.06,0],[xB-Latt,0.06,0],'rgba(56,189,248,.95)',2.6,q,c,9);
+  // 合力（绿/红）
+  var netCol = Math.abs(fN)<1e-9 ? 'rgba(148,163,184,.9)' : (fN>0?'rgba(251,113,133,.98)':'rgba(52,211,153,.98)');
+  var nx = fN>0 ? (xB+Lnet) : (xB-Lnet);
+  var ar3 = arrow3([xB,-0.20,0],[nx,-0.20,0],netCol,3.2,q,c,10);
+  bestLabel(ar1.x+34, ar1.y-6, '斥力 '+fR.toFixed(2), '600 10.5px -apple-system,sans-serif', '#fdba74');
+  bestLabel(ar2.x-34, ar2.y-6, '引力 '+fA.toFixed(2), '600 10.5px -apple-system,sans-serif', '#7dd3fc');
+  bestLabel(ar3.x+ (fN>0?Lnet:-Lnet)*q.focal/Math.max(0.6,q.dist) + 30, ar3.y+14,
+            (Math.abs(fN)<1e-9?'合力 ≈ 0':(fN>0?'合力（斥）':'合力（引）')+' '+Math.abs(fN).toFixed(2)),
+            '600 10.5px -apple-system,sans-serif', fN>0?'#fda4af':'#6ee7b7');
+  // 分子名
+  bestLabel(spA.x, spA.y-pRad-12, '分子 A', '600 11px -apple-system,sans-serif', '#93c5fd');
+  bestLabel(spB.x, spB.y-pRad-12, '分子 B', '600 11px -apple-system,sans-serif', '#f9a8d4');
+  // r₀ 参考线
+  if(r<R0*0.999){
+    var mid = project([0,-0.30,0],q);
+    bestLabel(mid.x, mid.y+18, 'r < r₀：靠得太近，斥力占上风', '600 10.5px -apple-system,sans-serif', '#fda4af');
+  } else if(r>R0*1.001){
+    var mid2 = project([0,-0.30,0],q);
+    bestLabel(mid2.x, mid2.y+18, 'r > r₀：离得稍远，引力占上风', '600 10.5px -apple-system,sans-serif', '#6ee7b7');
+  }
+}
+
+// 力–距离曲线（第二个画布）
+function drawForceChart(){
+  var c = chartCtx, w = chartCvs.width/chartDPR, h = chartCvs.height/chartDPR;
+  c.setTransform(chartDPR,0,0,chartDPR,0,0);
+  c.clearRect(0,0,w,h);
+  var L=38, R=10, T=12, Bm=24;
+  var x0=L, x1=w-R, y0=T, y1=h-Bm;
+  var rMin=0.55*R0, rMax=R_FAR;
+  var fTop=Math.max(4.5, fRepOf(rMin)*0.35), fBot=-2.0;
+  function X(r){ return x0 + (r-rMin)/(rMax-rMin)*(x1-x0); }
+  function Y(f){ return y1 - (f-fBot)/(fTop-fBot)*(y1-y0); }
+  // 网格
+  c.strokeStyle='rgba(148,163,184,.16)'; c.lineWidth=1;
+  for(var rr2=1; rr2<=3; rr2++){ var xx=X(rr2*R0);
+    c.beginPath(); c.moveTo(xx,y0); c.lineTo(xx,y1); c.stroke(); }
+  c.beginPath(); c.moveTo(x0,Y(0)); c.lineTo(x1,Y(0)); c.stroke();
+  c.beginPath(); c.moveTo(x0,y0); c.lineTo(x0,y1); c.stroke();
+  // 曲线
+  function curve(fn,col,wd){
+    c.beginPath();
+    for(var i=0;i<=220;i++){
+      var r=rMin+(rMax-rMin)*i/220, f=fn(r);
+      var yy=Y(clamp(f,fBot,fTop));
+      if(i===0) c.moveTo(X(r),yy); else c.lineTo(X(r),yy);
+    }
+    c.strokeStyle=col; c.lineWidth=wd; c.stroke();
+  }
+  curve(fRepOf,'rgba(251,146,60,.75)',1.4);
+  curve(function(r){ return -fAttOf(r); },'rgba(56,189,248,.75)',1.4);
+  curve(function(r){ return clamp(fNetOf(r),fBot,fTop); },'rgba(167,139,250,1)',2.1);
+  // r0 竖线
+  c.setLineDash([3,3]); c.strokeStyle='rgba(52,211,153,.75)';
+  c.beginPath(); c.moveTo(X(R0),y0); c.lineTo(X(R0),y1); c.stroke(); c.setLineDash([]);
+  // 当前点
+  var rcx=X(state.r), rcy=Y(clamp(fNetOf(state.r),fBot,fTop));
+  c.beginPath(); c.arc(rcx,rcy,4.2,0,Math.PI*2); c.fillStyle='#fde68a'; c.fill();
+  c.strokeStyle='rgba(2,6,23,.9)'; c.lineWidth=1.4; c.stroke();
+  // 轴文字
+  c.font='500 10px -apple-system,sans-serif'; c.fillStyle='#94a3b8';
+  c.textAlign='center'; c.textBaseline='top';
+  for(var k=1;k<=3;k++) c.fillText((k).toFixed(0)+'r₀', X(k*R0), y1+5);
+  c.textAlign='right'; c.textBaseline='middle';
+  c.fillText('F', x0-6, y0+8); c.fillText('0', x0-6, Y(0));
+  c.fillText('斥', x0-6, Y(fTop*0.7)); c.fillText('引', x0-6, Y(fBot*0.6));
+  c.textAlign='left'; c.textBaseline='top';
+  c.fillStyle='#6ee7b7'; c.fillText('r₀（合力=0）', X(R0)+4, y0+2);
+  drawn.chartPt = {x:rcx, y:rcy};
+}
+
+// ---------------- 场景：③ 扩散 ----------------
+var H_COL = 2*BOTTLE_H + GAP_Y;
+var DZ = H_COL / NB_CELLS;
+var GAP_K0 = Math.floor((BOTTLE_H)/DZ);      // 玻璃板所占的网格区间 [GAP_K0, GAP_K1]
+var GAP_K1 = Math.ceil((BOTTLE_H+GAP_Y)/DZ);
+
+function colY(k){ return (k+0.5)*DZ; }
+function diffInit(){
+  var c=new Array(NB_CELLS), i;
+  for(i=0;i<NB_CELLS;i++){
+    var y=colY(i), inTop = y>=(BOTTLE_H+GAP_Y), inBot = y<=BOTTLE_H;
+    var v = 0;
+    if(inTop) v = state.no2Top ? 1 : 0;
+    else if(inBot) v = state.no2Top ? 0 : 1;
+    else v = state.no2Top ? 1 : 0;   // 板子所在格：按上瓶给
+    c[i]=v;
+  }
+  state.conc=c;
+  var m=0; for(i=0;i<NB_CELLS;i++) m+=c[i]; m/=NB_CELLS;
+  var s=0; for(i=0;i<NB_CELLS;i++) s+=(c[i]-m)*(c[i]-m); s=Math.sqrt(s/NB_CELLS);
+  state.u0 = Math.max(0.02, s);
+  state.diffT=0;
+  state.dots=null;
+  dotInit();
+}
+function uniformOf(){
+  var c=state.conc, i, m=0;
+  for(i=0;i<NB_CELLS;i++) m+=c[i]; m/=NB_CELLS;
+  var s=0; for(i=0;i<NB_CELLS;i++) s+=(c[i]-m)*(c[i]-m); s=Math.sqrt(s/NB_CELLS);
+  return {mean:m, sd:s, U:clamp(1-s/state.u0, 0, 1)};
+}
+function dEff(){ return D_DIFF*Math.pow((state.dTemp+273.15)/(T_REF+273.15), D_T_K); }
+
+function diffStep(dt){
+  var c=state.conc; if(!c) return;
+  var n=NB_CELLS, i, s;
+  // 「只看重力沉降」= 把扩散系数按 0 处理（不是"额外加一个沉降"）
+  var D = state.settleOnly ? 0 : dEff();
+  // 显式格式的稳定条件：D·h/dz² ≤ 0.5 ⇒ 自己分子步
+  var dtMax = D>0 ? 0.45*DZ*DZ/D : 0.05;
+  var nsub = Math.max(1, Math.ceil(dt/dtMax));
+  var h = dt/nsub;
+  for(s=0;s<nsub;s++){
+    var nc=c.slice();
+    if(D>0){
+      for(i=0;i<n-1;i++){
+        // 玻璃板挡着：把板子【两侧】的通量都堵死（只堵一侧会从板子边缘漏气）
+        if(state.plate && i>=GAP_K0-1 && i<GAP_K1) continue;
+        var fl = D*(c[i+1]-c[i])/DZ*h/DZ;
+        nc[i]+=fl; nc[i+1]-=fl;
+      }
+    }
+    if(state.settleOnly){
+      var vs=V_SETTLE;
+      for(i=1;i<n;i++){
+        if(state.plate && i-1>=GAP_K0-1 && i-1<GAP_K1) continue;
+        // 通量限幅：下面那格最多装到 1，多的不再往下塞
+        var f2 = Math.min(vs*h/DZ*c[i], c[i], Math.max(0, 1-nc[i-1]));
+        nc[i]-=f2; nc[i-1]+=f2;
+      }
+    }
+    for(i=0;i<n;i++) c[i]=clamp(nc[i],0,1);
+  }
+  state.diffT += dt;
+  state.t += dt;
+}
+// 用于观察的粒子（与浓度场共用同一套 D / 沉降，属蒙特卡洛解法，只作视觉线索）
+var N_DOT = 150;
+function dotInit(){
+  var d=[], i;
+  for(i=0;i<N_DOT;i++){
+    var inTop = (i%2===0);
+    var y = inTop ? BOTTLE_H+GAP_Y+rnd()*BOTTLE_H : rnd()*BOTTLE_H;
+    var sp = inTop ? (state.no2Top?1:0) : (state.no2Top?0:1);
+    d.push({y:y, sp:sp});
+  }
+  state.dots=d;
+}
+function dotStep(dt){
+  var d=state.dots; if(!d) return;
+  var D=dEff(), sg=Math.sqrt(2*D*dt);
+  for(var i=0;i<d.length;i++){
+    var o=d[i];
+    if(state.settleOnly){ if(o.sp===1) o.y -= V_SETTLE*dt; }
+    else o.y += gauss()*sg;
+    // 板子挡着：不许跨越
+    if(state.plate){
+      if(o.y>BOTTLE_H && o.y<BOTTLE_H+GAP_Y) o.y = (o.y<BOTTLE_H+GAP_Y/2)?BOTTLE_H:GAP_Y+BOTTLE_H;
+    }
+    o.y = clamp(o.y, 0.02, H_COL-0.02);
+  }
+}
+// 浓度 → 颜色
+var C_AIR=[186,214,236], C_NO2=[196,86,36];
+function concColor(v,alpha){
+  var t=clamp(v,0,1);
+  var r=C_AIR[0]+(C_NO2[0]-C_AIR[0])*t, g=C_AIR[1]+(C_NO2[1]-C_AIR[1])*t, b=C_AIR[2]+(C_NO2[2]-C_AIR[2])*t;
+  return 'rgba('+Math.round(r)+','+Math.round(g)+','+Math.round(b)+','+alpha+')';
+}
+function bottleSilhouette(cx,y0,y1,r,q,n){
+  var top=ringPts(cx,y1,r,q,n), bot=ringPts(cx,y0,r,q,n), out=[], i;
+  for(i=0;i<top.length;i++) out.push(top[i]);
+  for(i=bot.length-1;i>=0;i--) out.push(bot[i]);
+  return out;
+}
+function drawBottle(cx,y0,y1,r,q,c){
+  var sil = bottleSilhouette(cx,y0,y1,r,q,30);
+  c.save(); polyPath(sil,c); c.clip();
+  var pT=project([cx,y1,0],q), pB=project([cx,y0,0],q);
+  var g=c.createLinearGradient(0,pT.y,0,pB.y);
+  var steps=26;
+  for(var s=0;s<=steps;s++){
+    var y=y1+(y0-y1)*s/steps;
+    var k=y/DZ-0.5; k=clamp(k,0,NB_CELLS-1);
+    var k0=Math.floor(k), k1=Math.min(NB_CELLS-1,k0+1), fr=k-k0;
+    var v=state.conc? (state.conc[k0]*(1-fr)+state.conc[k1]*fr) : 0;
+    g.addColorStop(s/steps, concColor(v, 0.10+0.80*clamp(v,0,1)));
+  }
+  c.fillStyle=g; c.fillRect(0,0,W,H);
+  // 观察粒子
+  var d=state.dots;
+  if(d){
+    for(var i=0;i<d.length;i++){
+      var o=d[i];
+      if(o.y<y0-0.02 || o.y>y1+0.02) continue;
+      var ang=(i*2.39996)%(Math.PI*2);
+      var rr2=r*0.82*Math.sqrt(((i*37)%100)/100);
+      var pp=project([cx+Math.cos(ang)*rr2, o.y, Math.sin(ang)*rr2], q);
+      c.beginPath(); c.arc(pp.x,pp.y,2.0,0,Math.PI*2);
+      c.fillStyle = o.sp? 'rgba(255,206,150,.92)' : 'rgba(226,240,255,.55)';
+      c.fill();
+    }
+  }
+  c.restore();
+  // 玻璃
+  var pT2=ringPts(cx,y1,r,q,30), pB2=ringPts(cx,y0,r,q,30);
+  c.beginPath(); for(var i2=0;i2<pT2.length;i2++){ if(i2===0)c.moveTo(pT2[i2].x,pT2[i2].y); else c.lineTo(pT2[i2].x,pT2[i2].y); }
+  c.closePath(); c.strokeStyle='rgba(186,230,253,.55)'; c.lineWidth=1.5; c.stroke();
+  c.beginPath(); for(i2=0;i2<pB2.length;i2++){ if(i2===0)c.moveTo(pB2[i2].x,pB2[i2].y); else c.lineTo(pB2[i2].x,pB2[i2].y); }
+  c.closePath(); c.stroke();
+  var eT=ringExtremes(pT2), eB=ringExtremes(pB2);
+  seg(pT2[eT[0]],pB2[eB[0]],'rgba(186,230,253,.55)',1.5,c);
+  seg(pT2[eT[1]],pB2[eB[1]],'rgba(186,230,253,.55)',1.5,c);
+}
+function drawDiffuseScene(q,c){
+  var R=BOTTLE_R, yb0=0, yb1=BOTTLE_H, yt0=BOTTLE_H+GAP_Y, yt1=H_COL;
+  // 底部阴影
+  var gp=[];
+  for(var sx=-1;sx<=1;sx+=2) for(var sz=-1;sz<=1;sz+=2) gp.push(project([sx*(R+0.25),-0.06,sz*(R+0.25)],q));
+  poly(gp,'rgba(56,189,248,.05)',null,0,c);
+  // 下瓶
+  drawBottle(0,yb0,yb1,R,q,c);
+  bestLabel(project([R,yb0+0.16,0],q).x+18, project([R,yb0+0.16,0],q).y,
+            state.no2Top?'空气':'二氧化氮 NO₂', '600 11px -apple-system,sans-serif',
+            state.no2Top?'#dbeafe':'#fdba74');
+  // 上瓶
+  drawBottle(0,yt0,yt1,R,q,c);
+  bestLabel(project([R,yt1-0.20,0],q).x+18, project([R,yt1-0.20,0],q).y,
+            state.no2Top?'二氧化氮 NO₂':'空气', '600 11px -apple-system,sans-serif',
+            state.no2Top?'#fdba74':'#dbeafe');
+  // 玻璃板
+  if(state.plate){
+    var pl=[];
+    for(var k=0;k<30;k++){ var a=k/30*Math.PI*2; pl.push(project([Math.cos(a)*(R+0.06), BOTTLE_H+GAP_Y/2, Math.sin(a)*(R+0.06)],q)); }
+    poly(pl,'rgba(203,213,225,.30)','rgba(226,232,240,.75)',1.4,c);
+    bestLabel(project([R+0.10,BOTTLE_H+GAP_Y/2,0],q).x+22, project([R+0.10,BOTTLE_H+GAP_Y/2,0],q).y,
+              '玻璃板（还没抽走）','600 10.5px -apple-system,sans-serif','#e2e8f0');
+  } else {
+    bestLabel(project([R+0.10,BOTTLE_H+GAP_Y/2,0],q).x+22, project([R+0.10,BOTTLE_H+GAP_Y/2,0],q).y,
+              '玻璃板已抽走','600 10.5px -apple-system,sans-serif','#6ee7b7');
+  }
+  drawn.bottleTop = project([0,H_COL,0],q);
+}
+
+// ---------------- 渲染主入口 ----------------
+function renderScene(){
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+  ctx.clearRect(0,0,W,H);
+  var g=ctx.createLinearGradient(0,0,0,H);
+  g.addColorStop(0,'rgba(8,15,32,1)'); g.addColorStop(1,'rgba(3,8,20,1)');
+  ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
+  cam = buildCam();
+  var q = cam;
+  frameBoxes=[]; labelQ.length=0;
+  for(var i=0;i<domBoxList.length;i++) frameBoxes.push(domBoxList[i]);
+  drawn = {mol:[], arrows:[], labels:[], forceArrows:[], pistonTop:null, chartPt:null};
+  if(state.mode==='gas') drawGasScene(q,ctx);
+  else if(state.mode==='force') drawForceScene(q,ctx);
+  else drawDiffuseScene(q,ctx);
+  flushLabels(ctx);
+  if(state.mode==='force') drawForceChart();
+}
+function render(){ renderScene(); }
+
+// ---------------- 帧推进 ----------------
+function frameStep(dt){
+  if(dt<=0) return;
+  if(state.mode==='gas'){
+    // 子步数按【步长上限】自适应，而不是固定 SUB：真实循环里 dt 可能到 1/30 s，
+    // 固定 10 步时 h=1/300 会让斥力弹簧数值加热（见 H_MAX 处的注释）。
+    var d = Math.min(dt, 0.05);
+    var n = Math.max(SUB, Math.min(N_SUB_MAX, Math.ceil(d/H_MAX)));
+    var h = d/n;
+    for(var i=0;i<n;i++) molStep(h);
+  } else if(state.mode==='force'){
+    state.t += dt;
+  } else {
+    var d = Math.min(dt, 0.05);
+    diffStep(d); dotStep(d);
+  }
+}
+// 供自检直接推进动画（与真实循环共用 frameStep）
+function driveAnim(seconds, dt){
+  var step = dt||(1/60), n = Math.max(1, Math.round(seconds/step));
+  for(var i=0;i<n;i++) frameStep(step);
+}
+
+// 力 → 箭头长度：用对数压缩，才能让「r₀ 附近的小合力」和「贴得很近的巨大斥力」同框可读
+function arrowLenOf(f){
+  var a=Math.abs(f);
+  return clamp(0.55*Math.log10(1+a/0.12), 0, 1.70);
+}
+
+// ---------------- 界面：控制台 ----------------
+var modeEl=document.getElementById('mtm-modes');
+var ctlEl=document.getElementById('mtm-ctl');
+var actEl=document.getElementById('mtm-acts');
+var hintEl=document.getElementById('mtm-hint');
+var flagEl=document.getElementById('mtm-flag');
+var toastEl=document.getElementById('mtm-toast');
+var barLeftEl=document.getElementById('mtm-barleft');
+var rdEl=document.getElementById('mtm-readouts');
+var distEl=document.getElementById('mtm-dist');
+var chkEl=document.getElementById('mtm-chk');
+var tableEl=document.getElementById('mtm-table');
+var theoryEl=document.getElementById('mtm-theory');
+var chartPanel=document.getElementById('mtm-chartpanel');
+var distPanel=document.getElementById('mtm-distpanel');
+var cpEl=document.getElementById('mtm-cpill');
+var vdEl=document.getElementById('mtm-verdict');
+var cplEl=document.getElementById('mtm-cpill');
+var dpEl=document.getElementById('mtm-dpill');
+var dnEl=document.getElementById('mtm-dnote');
+var cnoteEl=document.getElementById('mtm-conclusion');
+var distnoteEl=document.getElementById('mtm-distnote');
+var viewnoteEl=document.getElementById('mtm-viewnote');
+var actnoteEl=document.getElementById('mtm-actnote');
+var chnoteEl=document.getElementById('mtm-chnote');
+
+var chartDPR = 1;
+
+function el(tag, cls, html){ var e=document.createElement(tag); if(cls) e.className=cls;
+  if(html!=null) e.innerHTML=html; return e; }
+function segRow(opts, cur, onPick){
+  var wrap=el('div','seg');
+  opts.forEach(function(o){
+    var b=el('button', o.v===cur?'on':'', o.t);
+    b.type='button';
+    b.addEventListener('click', function(){ onPick(o.v); });
+    wrap.appendChild(b);
+  });
+  return wrap;
+}
+function sliderRow(label, min, max, step, val, fmt, onInput){
+  var row=el('div','srow');
+  var lab=el('div','lab'); lab.appendChild(el('span',null,label));
+  var vb=el('b',null,fmt(val)); lab.appendChild(vb);
+  var inp=el('input'); inp.type='range'; inp.min=min; inp.max=max; inp.step=step; inp.value=val;
+  inp.setAttribute('aria-label',label);
+  inp.addEventListener('input', function(){ var v=parseFloat(inp.value); vb.textContent=fmt(v); onInput(v); });
+  row.appendChild(lab); row.appendChild(inp);
+  row._sync=function(v){ inp.value=v; vb.textContent=fmt(v); };
+  row._input=inp;
+  return row;
+}
+
+function buildModes(){
+  modeEl.innerHTML='';
+  MODES.forEach(function(m){
+    var b=el('button', 'mode-btn'+(state.mode===m.id?' on':''), m.name+'<small>'+m.sub+'</small>');
+    b.type='button'; b.setAttribute('data-mode', m.id);
+    b.addEventListener('click', function(){ setMode(m.id); });
+    modeEl.appendChild(b);
+  });
+}
+function buildCtl(){
+  ctlEl.innerHTML='';
+  if(state.mode==='gas'){
+    ctlEl.appendChild(el('div','lab','物质状态'));
+    ctlEl.appendChild(segRow([{v:'solid',t:'固态'},{v:'liquid',t:'液态'},{v:'gas',t:'气态'}], state.phase, setPhase));
+    var s1=sliderRow('温度 T', T_MIN, T_MAX, 1, state.temp, function(v){ return v.toFixed(0)+' ℃'; },
+      function(v){ state.temp=v; });
+    s1.style.marginTop='12px';
+    ctlEl.appendChild(s1);
+    var s2=sliderRow('压缩活塞', 0, C_MAX, 0.01, state.comp, function(v){ return (v*100).toFixed(0)+' %'; },
+      function(v){ state.comp=v; syncSites(); });
+    ctlEl.appendChild(s2);
+    ctlEl.appendChild(el('p','note',
+      '温度滑块改变的是<b>分子平均速率</b>（0 ℃ → 100 ℃ 约 1.14 倍，绝对温度比）。'+
+      '压缩滑块把活塞往下压，读数里的「活塞受力」是<b>从分子撞击里统计出来的</b>，不是套公式。'));
+  } else if(state.mode==='force'){
+    var s3=sliderRow('分子间距 r', R_NEAR, R_FAR, 0.005, state.r,
+      function(v){ return v.toFixed(2)+' cm = '+(v/R0).toFixed(2)+' r₀'; },
+      function(v){ state.r=v; });
+    ctlEl.appendChild(s3);
+    ctlEl.appendChild(el('p','note',
+      '拖动滑块把两个分子拉近 / 推远。<b>r₀ = '+R0.toFixed(2)+' cm</b> 是平衡距离：'+
+      '比它近，斥力占上风；比它远，引力占上风；再远两者都趋于 0。'));
+    ctlEl.appendChild(el('p','note','下方「力 – 距离曲线」里橙色是斥力、蓝色是引力（画在 0 轴下方）、紫色是合力。'));
+  } else {
+    var s4=sliderRow('温度 T', T_DIFF_MIN, T_DIFF_MAX, 1, state.dTemp, function(v){ return v.toFixed(0)+' ℃'; },
+      function(v){ state.dTemp=v; });
+    ctlEl.appendChild(s4);
+    ctlEl.appendChild(el('p','note',
+      '温度越高分子运动越剧烈，扩散越快：<b>D ∝ (T+273)</b> 的 '+D_T_K.toFixed(1)+' 次方。'));
+    ctlEl.appendChild(el('p','note',
+      '<b>对照</b>：把「只看重力沉降」打开，就相当于假设气体分子不动、只有重的二氧化氮往下掉 —— '+
+      '看看那样能不能混匀。'));
+  }
+}
+function buildActs(){
+  actEl.innerHTML='';
+  function btn(t, cls, fn){
+    var b=el('button', cls||'', t); b.type='button'; b.addEventListener('click', fn);
+    actEl.appendChild(b); return b;
+  }
+  if(state.mode==='gas'){
+    btn('复位','', function(){ state.comp=0; state.temp=20; initMolecules(); syncUI(); toast('已复位'); });
+    btn('升温到 100 ℃','primary', function(){ state.temp=100; buildCtl(); syncUI(); toast('温度 → 100 ℃'); });
+    btn('降温到 0 ℃','', function(){ state.temp=0; buildCtl(); syncUI(); toast('温度 → 0 ℃'); });
+  } else if(state.mode==='force'){
+    btn('推到最近','', function(){ state.r=R_NEAR; buildCtl(); syncUI(); });
+    btn('刚好 r₀','primary', function(){ state.r=R0; buildCtl(); syncUI(); });
+    btn('最大引力处','', function(){ state.r=R0*Math.pow(13/7,1/6); buildCtl(); syncUI(); });
+    btn('拉得很远','', function(){ state.r=R_FAR; buildCtl(); syncUI(); });
+  } else {
+    btn('抽去玻璃板','primary', function(){ state.plate=false; state.diffT=0; toast('玻璃板已抽走 —— 开始计时'); syncUI(); });
+    btn('上下换位','', function(){ state.no2Top=!state.no2Top; state.plate=true; diffInit(); toast(state.no2Top?'二氧化氮回到上瓶':'二氧化氮换到下瓶'); syncUI(); });
+    btn(state.settleOnly?'✓ 只看重力沉降':'只看重力沉降','', function(){ state.settleOnly=!state.settleOnly; buildActs(); syncUI();
+      toast(state.settleOnly?'已切到「只看重力沉降」（关掉扩散）':'已恢复真实扩散'); });
+    btn('重新开始','', function(){ state.plate=true; diffInit(); syncUI(); toast('已重新开始'); });
+  }
+}
+var toastTimer=null;
+function toast(msg){
+  toastEl.textContent=msg; toastEl.classList.add('show');
+  if(toastTimer) clearTimeout(toastTimer);
+  toastTimer=setTimeout(function(){ toastEl.classList.remove('show'); }, 1700);
+}
+var flagTimer=null;
+function flag(msg, cls){
+  flagEl.textContent=msg; flagEl.className='stage-flag show'+(cls?' '+cls:'');
+  if(flagTimer) clearTimeout(flagTimer);
+  flagTimer=setTimeout(function(){ flagEl.classList.remove('show'); }, 2600);
+}
+function buildBarLeft(){
+  barLeftEl.innerHTML='';
+  function b(t, cls, fn){ var e=el('button','stage-btn '+(cls||''), t); e.type='button';
+    e.addEventListener('click', fn); barLeftEl.appendChild(e); return e; }
+  if(state.mode==='gas'){
+    b('升温 +20 ℃','go', function(){ state.temp=clamp(state.temp+20,T_MIN,T_MAX); buildCtl(); syncUI(); });
+    b('降温 −20 ℃','', function(){ state.temp=clamp(state.temp-20,T_MIN,T_MAX); buildCtl(); syncUI(); });
+    b('压缩','go', function(){ state.comp=clamp(state.comp+0.10,0,C_MAX); syncSites(); buildCtl(); syncUI(); });
+    b('松开','', function(){ state.comp=0; syncSites(); buildCtl(); syncUI(); });
+  } else if(state.mode==='force'){
+    b('拉近','go', function(){ state.r=clamp(state.r-0.08,R_NEAR,R_FAR); buildCtl(); syncUI(); });
+    b('推远','', function(){ state.r=clamp(state.r+0.08,R_NEAR,R_FAR); buildCtl(); syncUI(); });
+  } else {
+    b('抽去玻璃板','go', function(){ state.plate=false; state.diffT=0; syncUI(); });
+    b('上下换位','', function(){ state.no2Top=!state.no2Top; state.plate=true; diffInit(); syncUI(); });
+    b('重新开始','', function(){ state.plate=true; diffInit(); syncUI(); });
+  }
+}
+
+// ---------------- 界面：读数 / 判定 ----------------
+var forceCache = {};
+var nnCache = {};
+function verdictGas(){
+  var st = molStats();
+  if(!st) return {cls:'', txt:'—', chk:[], concl:'先调一个参数。'};
+  var items=[], ok=true;
+  var ratio = st.v_avg/st.vTarget;
+  var a1 = Math.abs(ratio-1)<0.14;
+  items.push({ok:a1, t:'实测平均速率 '+st.v_avg.toFixed(2)+' cm/s，与 '+state.temp.toFixed(0)+
+    ' ℃ 对应的理论值 '+st.vTarget.toFixed(2)+' cm/s 相差 '+(Math.abs(ratio-1)*100).toFixed(1)+'%'});
+  if(!a1) ok=false;
+  items.push({ok:true, t:'温度 0 ℃ → 100 ℃：平均速率 '+vrmsOf(0).toFixed(2)+' → '+vrmsOf(100).toFixed(2)+
+    ' cm/s（温度越高，分子热运动越剧烈）'});
+  items.push({ok:true, t:'当前状态：'+({solid:'固态',liquid:'液态',gas:'气态'})[state.phase]+
+    '，平均分子间距 = '+st.nnRatio.toFixed(2)+' 倍分子直径'});
+  // 三态间距对比（都看过才判）
+  if(nnCache.solid && nnCache.liquid && nnCache.gas){
+    var a2 = nnCache.solid <= nnCache.liquid*1.10 && nnCache.liquid < nnCache.gas*0.75;
+    items.push({ok:a2, t:'三态间距：固态 '+nnCache.solid.toFixed(2)+' d、液态 '+nnCache.liquid.toFixed(2)+
+      ' d、气态 '+nnCache.gas.toFixed(2)+' d '+(a2?'（气态明显最大）':'（不符合预期）')});
+    if(!a2) ok=false;
+  } else {
+    items.push({ok:true, t:'把固态、液态、气态各看一遍，这里会给出三者间距的对比'});
+  }
+  // 压缩受力对比（都压过才判）
+  if(forceCache.solid && forceCache.liquid && forceCache.gas){
+    var a3 = forceCache.gas < forceCache.liquid*0.6 && forceCache.liquid <= forceCache.solid*1.25;
+    items.push({ok:a3, t:'同样压缩下活塞受力：气态 '+forceCache.gas.toFixed(0)+'、液态 '+
+      forceCache.liquid.toFixed(0)+'、固态 '+forceCache.solid.toFixed(0)+
+      '（气态最省力'+(a3?'，符合预期':'，不符合预期')+'）'});
+    if(!a3) ok=false;
+  } else {
+    items.push({ok:true, t:'把三种状态都压一次，这里会给出活塞受力的对比'});
+  }
+  return {cls: ok?'ok':'bad', txt: ok?'正常':'待观察', chk:items,
+    concl: ok ? '温度越高分子运动越剧烈；分子之间有空隙 —— 所以气态能被压得很小，而液态、固态几乎压不动。'
+      : '把三种状态都看一遍、压一遍，再回来看这几条对比。'};
+}
+function verdictForce(){
+  var r=state.r, fN=fNetOf(r);
+  var items=[], ok=true;
+  var a1 = (r<R0) ? (fN>0) : (r>R0 ? (fN<0) : true);
+  items.push({ok:a1, t:'r = '+(r/R0).toFixed(2)+' r₀ 时合力 = '+fN.toFixed(3)+'，'+
+    (Math.abs(fN)<1e-9?'恰好为 0（平衡距离）':(fN>0?'方向为斥力':'方向为引力'))});
+  if(!a1) ok=false;
+  var a2 = fRepOf(r)>fAttOf(r) ? (r<R0) : (r>R0);
+  items.push({ok:a2, t:'r '+(r<R0?'<':'>')+' r₀ ⇒ '+(r<R0?'斥力 > 引力':'引力 > 斥力')+
+    '（斥力 '+fRepOf(r).toFixed(3)+' / 引力 '+fAttOf(r).toFixed(3)+'）'});
+  if(!a2) ok=false;
+  var a3 = Math.abs(fNetOf(R_FAR)) < Math.abs(fNetOf(R0*1.109))*0.02;
+  items.push({ok:a3, t:'拉到 r = '+(R_FAR/R0).toFixed(1)+' r₀ 时合力只有 '+fNetOf(R_FAR).toFixed(4)+
+    '，不到最大引力的 2% '+(a3?'（确实可以忽略）':'（还没有小到可以忽略）')});
+  if(!a3) ok=false;
+  var a4 = fRepOf(R0*2) < fAttOf(R0*2)*2;
+  items.push({ok:a4, t:'离得稍远（2 r₀）时引力仍占上风：斥力 '+fRepOf(R0*2).toFixed(4)+
+    ' vs 引力 '+fAttOf(R0*2).toFixed(4)+' —— 说明斥力衰减得比引力快'});
+  if(!a4) ok=false;
+  return {cls: ok?'ok':'bad', txt: ok?'正常':'待观察', chk:items,
+    concl: r<R0 ? '靠得太近：斥力占上风，分子被推开。'
+      : (Math.abs(r-R0)<0.02 ? '正好在 r₀：引力与斥力大小相等，合力为零 —— 这就是分子间的平衡距离。'
+      : (r<R0*2.6 ? '离得稍远：引力占上风，分子被拉回来。'
+      : '拉得很远：引力和斥力都小到可以忽略 —— 所以气体分子之间几乎不「粘」在一起。'))};
+}
+function verdictDiffuse(){
+  var u=uniformOf(), items=[], ok=true;
+  var t=state.diffT;
+  if(state.plate){
+    items.push({ok:true, t:'玻璃板还在：两瓶各据一方，均匀度 '+(u.U*100).toFixed(0)+'%'});
+    items.push({ok:true, t:'还没开始 —— 点「抽去玻璃板」'});
+    return {cls:'', txt:'待开始', chk:items, concl:'点「抽去玻璃板」，让两种气体自己混。'};
+  }
+  var a1 = u.U > 0.10;
+  items.push({ok:a1, t:'已经扩散 '+t.toFixed(1)+' s，均匀度 '+(u.U*100).toFixed(0)+'%'});
+  var a2 = u.U > 0.55;
+  items.push({ok:a2, t:'瓶里颜色'+(a2?'已经基本一致':'还在上深下浅 / 上浅下深')});
+  var a3 = !state.settleOnly;
+  items.push({ok:a3, t: a3 ? '当前是【真实扩散】：分子自己在乱跑，与谁重谁轻无关'
+    : '当前是【只看重力沉降】：相当于假设分子不动，只有重的 NO₂ 往下掉'});
+  if(state.settleOnly){
+    items.push({ok:false, t:'关掉扩散后，均匀度停在 '+(u.U*100).toFixed(0)+'% —— 光靠重力永远混不匀'});
+    return {cls:'bad', txt:'对照中', chk:items,
+      concl:'只靠重力，重的气体只会沉在下面，永远不会自己混匀。可真实的扩散会 —— 所以扩散不是重力造成的。'};
+  }
+  ok = a1 && a2;
+  return {cls: ok?'ok':'', txt: ok?'已混匀':'扩散中', chk:items,
+    concl: ok ? '两种气体已经混匀了 —— 而且把瓶子上下换过来、重新做一遍，结果一模一样。'+
+      '说明扩散是分子自己在无规则运动，不是「重的往下沉」。'
+      : '继续等 —— 分子在不停碰撞，浓度差会自己抹平。'};
+}
+function syncUI(){
+  syncDomBoxes();
+  buildBarLeft();
+  var pillMap={gas:'分子箱',force:'分子间作用力',diffuse:'扩散'};
+  cplEl.textContent=pillMap[state.mode];
+  chartPanel.style.display = state.mode==='force' ? '' : 'none';
+  distPanel.style.display = state.mode==='gas' ? '' : 'none';
+  viewnoteEl.textContent = state.mode==='gas' ? '正视最容易看清「分子在容器里乱撞」。'
+    : (state.mode==='force' ? '正视时两个分子沿水平方向分开，力箭头也在同一平面上，最清楚。'
+    : '正视时两只瓶上下排列，颜色梯度一目了然。');
+  actnoteEl.textContent = state.mode==='gas' ? '把温度调到两个极端、再把三种状态都压一次，对比活塞受力。'
+    : (state.mode==='force' ? '用四个快捷位置快速跳到「最近 / r₀ / 最大引力 / 很远」。'
+    : '「只看重力沉降」是这一节的对照组。');
+
+  // 读数
+  rdEl.innerHTML='';
+  if(state.mode==='gas'){
+    var st=molStats() || {v_rms:0,vTarget:vrmsOf(state.temp),nn:0,nnRatio:0,plateF:0,pistonY:0};
+    var cfg=cellOf(state.phase);
+    forceCache[state.phase]=st.plateF;
+    nnCache[state.phase]=st.nnRatio;
+    var vol=4*cfg.hx*cfg.hz*st.pistonY;
+    rdEl.appendChild(el('div',null,'<span>温度 T</span><b>'+state.temp.toFixed(0)+' ℃</b>'));
+    rdEl.appendChild(el('div',null,'<span>分子数</span><b>'+N_MOL+'</b>'));
+    rdEl.appendChild(el('div',null,'<span>平均速率 v</span><b>'+st.v_avg.toFixed(2)+'</b>'));
+    rdEl.appendChild(el('div',null,'<span>理论 √(3kT/m)</span><b>'+st.vTarget.toFixed(2)+'</b>'));
+    rdEl.appendChild(el('div',null,'<span>平均间距</span><b>'+st.nnRatio.toFixed(2)+' d</b>'));
+    rdEl.appendChild(el('div',null,'<span>容器体积</span><b>'+vol.toFixed(2)+' cm³</b>'));
+    rdEl.appendChild(el('div','wide','<span>活塞受力（示意）</span><b>'+st.plateF.toFixed(0)+'</b>'));
+    dnEl.innerHTML='速率单位 cm/s 是<b>示意尺度</b>（真实分子约几百 m/s）；这里关心的是<b>相对变化</b>。'+
+      '「活塞受力」是把每一步分子撞活塞的冲量累加后取平均得到的；'+
+      '「平均间距」= 样品体积 ÷ 分子数 再开立方，单位是<b>分子直径</b>。';
+    dpEl.textContent = {solid:'固态',liquid:'液态',gas:'气态'}[state.phase];
+    // 速率分布
+    distEl.innerHTML='';
+    var bins=new Array(8).fill(0), m=state.mol;
+    var vmax=Math.max(0.5, st.vTarget*2.2);
+    if(m){ for(var i=0;i<N_MOL;i++){ var v=m.v[i], sp=Math.hypot(v[0],v[1],v[2]);
+      var b=clamp(Math.floor(sp/vmax*8),0,7); bins[b]++; } }
+    var bmax=Math.max.apply(null,bins)||1;
+    for(var k2=0;k2<8;k2++){
+      var r2=el('div','row');
+      r2.appendChild(el('div','cap','<span>'+(k2*vmax/8).toFixed(1)+'–'+((k2+1)*vmax/8).toFixed(1)+' cm/s</span><b>'+bins[k2]+'</b>'));
+      // 配色必须【随速率单调】：蓝(慢) → 紫 → 橙红(快)。原来是 k2%3+1 的循环，
+      // 第 4、7 档又跳回蓝色 —— 看着像"最快的分子又变慢了"，与"越往右越快"自相矛盾。
+      var kk = k2<=1 ? 1 : (k2<=4 ? 2 : 3);
+      var tr=el('div','track'); var ii=el('i','k'+kk); ii.style.width=(bins[k2]/bmax*100).toFixed(1)+'%';
+      tr.appendChild(ii); r2.appendChild(tr); distEl.appendChild(r2);
+    }
+    distnoteEl.innerHTML='横轴是速率、纵轴是分子个数。<b>温度越高，整张分布越往右摊</b>，'+
+      '高转速率的分子明显变多。';
+  } else if(state.mode==='force'){
+    var r=state.r, fN=fNetOf(r), fR=fRepOf(r), fA=fAttOf(r);
+    rdEl.appendChild(el('div',null,'<span>间距 r</span><b>'+r.toFixed(2)+' cm</b>'));
+    rdEl.appendChild(el('div',null,'<span>r / r₀</span><b>'+(r/R0).toFixed(2)+'</b>'));
+    rdEl.appendChild(el('div',null,'<span>斥力 F斥</span><b>'+fR.toFixed(3)+'</b>'));
+    rdEl.appendChild(el('div',null,'<span>引力 F引</span><b>'+fA.toFixed(3)+'</b>'));
+    rdEl.appendChild(el('div','wide','<span>合力（正=斥 / 负=引）</span><b>'+fN.toFixed(3)+'</b>'));
+    dnEl.innerHTML='F斥 = A/r¹³、F引 = B/r⁷，<b>指数不同是关键</b>：r 一变大，斥力掉得比引力快得多，'+
+      '所以远到一定程度就只剩引力，再远两者都可以忽略。';
+    dpEl.textContent = r<R0?'斥力区':(r>R0?'引力区':'平衡点');
+    chnoteEl.innerHTML='橙线 = 斥力，蓝线 = 引力（画在 0 轴下方表示"吸引"），紫线 = 合力。'+
+      '绿虚线是 r₀；黄点是当前滑块位置。';
+    cpEl.textContent = Math.abs(fN)<1e-9?'合力=0':(fN>0?'斥力':'引力');
+    distEl.innerHTML='';
+    [['斥力',fR,'k3'],['引力',fA,'k1'],['合力',Math.abs(fN),'k2']].forEach(function(t){
+      var r3=el('div','row');
+      r3.appendChild(el('div','cap','<span>'+t[0]+'</span><b>'+t[1].toFixed(3)+'</b>'));
+      var tr=el('div','track'); var ii=el('i',t[2]);
+      ii.style.width=(clamp(arrowLenOf(t[1])/1.7,0,1)*100).toFixed(1)+'%';
+      tr.appendChild(ii); r3.appendChild(tr); distEl.appendChild(r3);
+    });
+    distnoteEl.innerHTML='条长按<b>对数</b>压缩，否则 r 稍微一小，斥力条就会把别的全挤没。';
+  } else {
+    var u=uniformOf();
+    var topV=0,botV=0,cntT=0,cntB=0;
+    for(var i4=0;i4<NB_CELLS;i4++){
+      var y=colY(i4);
+      if(y>=BOTTLE_H+GAP_Y){ topV+=state.conc[i4]; cntT++; }
+      else if(y<=BOTTLE_H){ botV+=state.conc[i4]; cntB++; }
+    }
+    topV=cntT?topV/cntT:0; botV=cntB?botV/cntB:0;
+    rdEl.appendChild(el('div',null,'<span>扩散时间</span><b>'+state.diffT.toFixed(1)+' s</b>'));
+    rdEl.appendChild(el('div',null,'<span>均匀度</span><b>'+(u.U*100).toFixed(0)+'%</b>'));
+    rdEl.appendChild(el('div',null,'<span>上瓶 NO₂ 浓度</span><b>'+(topV*100).toFixed(0)+'%</b>'));
+    rdEl.appendChild(el('div',null,'<span>下瓶 NO₂ 浓度</span><b>'+(botV*100).toFixed(0)+'%</b>'));
+    rdEl.appendChild(el('div','wide','<span>两瓶浓度差</span><b>'+Math.abs(topV-botV).toFixed(3)+'</b>'));
+    dpEl.textContent = state.plate?'未开始':(state.settleOnly?'重力对照':'扩散中');
+    dnEl.innerHTML='均匀度 = 1 − σ/σ₀（σ 是浓度沿高度的标准差）。'+
+      '扩散方程保证 <b>σ 单调减小</b>，所以这个数只会往上走、不会回头。';
+    distEl.innerHTML='';
+    [['上瓶',topV,'k3'],['下瓶',botV,'k3'],['均匀度',u.U,'k1']].forEach(function(t){
+      var r5=el('div','row');
+      r5.appendChild(el('div','cap','<span>'+t[0]+'</span><b>'+(t[1]*100).toFixed(0)+'%</b>'));
+      var tr=el('div','track'); var ii=el('i',t[2]); ii.style.width=(clamp(t[1],0,1)*100).toFixed(1)+'%';
+      tr.appendChild(ii); r5.appendChild(tr); distEl.appendChild(r5);
+    });
+    distnoteEl.innerHTML='两条浓度条<b>靠拢</b>的过程，就是扩散；最后一起停在均值上。';
+  }
+
+  // 判定
+  var v = state.mode==='gas'?verdictGas():(state.mode==='force'?verdictForce():verdictDiffuse());
+  vdEl.className='pill '+(v.cls||''); vdEl.textContent=v.txt;
+  chkEl.innerHTML='';
+  v.chk.forEach(function(it){
+    var li=el('li', it.ok?'yes':'no', '<i>'+(it.ok?'✓':'!')+'</i><span>'+it.t+'</span>');
+    chkEl.appendChild(li);
+  });
+  cnoteEl.textContent=v.concl;
+
+  // 提示
+  hintEl.innerHTML = state.mode==='gas'
+    ? '小球就是<b>分子</b>。温度越高它们撞得越猛；<b>压缩活塞</b>看它有多难压。'
+    : (state.mode==='force'
+      ? '两个小球是<b>一对分子</b>。橙色箭头 = 斥力，蓝色 = 引力，绿/红 = 合力。'
+      : '上下一共两只瓶。<b>抽去玻璃板</b>后两种气体会自己混匀 —— 谁在上谁在下都一样。');
+  // 对照表
+  tableEl.innerHTML = state.mode==='gas'
+    ? ('<b>固态</b><span>分子排成规则的点阵，只在平衡位置附近振动</span>'+
+       '<b>液态</b><span>分子没有固定位置，可以互相滑过去</span>'+
+       '<b>气态</b><span>分子间距最大、几乎不受分子力约束</span>'+
+       '<b>压缩</b><span>气态最省力，液态、固态几乎压不动</span>')
+    : (state.mode==='force'
+      ? ('<b>r &lt; r₀</b><span>斥力 &gt; 引力 ⇒ 分子被推开</span>'+
+         '<b>r = r₀</b><span>斥力 = 引力 ⇒ 合力为 0，平衡距离</span>'+
+         '<b>r &gt; r₀</b><span>引力 &gt; 斥力 ⇒ 分子被拉回</span>'+
+         '<b>r ≫ r₀</b><span>两个力都趋于 0，分子间几乎没有作用</span>')
+      : ('<b>扩散</b><span>不同物质互相接触时，彼此进入对方</span>'+
+         '<b>为什么</b><span>分子永不停息地做无规则运动</span>'+
+         '<b>温度</b><span>温度越高，扩散越快</span>'+
+         '<b>对照</b><span>换位后照样混匀 ⇒ 不是重力造成的</span>'));
+  theoryEl.innerHTML = state.mode==='gas'
+    ? ('<b>1. 物质由分子、原子构成。</b>分子很小，直径约 10⁻¹⁰ m，一般分子直径的数量级是 10⁻¹⁰ m。<br>'+
+       '<b>2. 分子永不停息地做无规则运动。</b>温度越高，热运动越剧烈 —— 这就是「热」的微观含义。<br>'+
+       '<b>3. 分子之间有空隙。</b>水与酒精混合后总体积变小、气体容易被压缩，都说明分子间有间隙。<br>'+
+       '<b>4. 分子之间同时存在引力和斥力。</b>固体、液体很难被压缩，就是因为斥力在起作用。')
+    : (state.mode==='force'
+      ? ('<b>1. 分子间同时存在引力和斥力。</b>它们都随距离增大而减小，但<b>斥力减小得更快</b>。<br>'+
+         '<b>2. r₀ 是平衡距离：</b>此时 F引 = F斥，合力为零，分子处于稳定位置。<br>'+
+         '<b>3. r &lt; r₀ 时斥力占上风，r &gt; r₀ 时引力占上风；</b>r 大到一定程度（约 10 r₀）两个力都可以忽略。<br>'+
+         '<b>4. 这正是「固体液体难压缩、气体易压缩」的原因。</b>')
+      : ('<b>1. 扩散：</b>不同物质互相接触时，彼此进入对方的现象。<br>'+
+         '<b>2. 扩散说明：</b>分子永不停息地做无规则运动，而且分子之间有空隙。<br>'+
+         '<b>3. 温度越高扩散越快：</b>分子热运动越剧烈。<br>'+
+         '<b>4. 与位置无关：</b>把重的二氧化氮放在下面，它照样会往上扩散 —— 所以扩散不是重力造成的。'));
+}
+function syncDomBoxes(){
+  domBoxList.length=0;
+  var sr=stageEl.getBoundingClientRect();
+  [hintEl,flagEl,barLeftEl].forEach(function(e){
+    if(!e || !e.offsetParent) return;
+    var b=e.getBoundingClientRect();
+    domBoxList.push({x:b.left-sr.left, y:b.top-sr.top, w:b.width, h:b.height});
+  });
+}
+
+// ---------------- 视图 / 尺寸 ----------------
+function applyView(v){ if(!VIEWS[v]) return; state.view=v;
+  document.querySelectorAll('#mtm-views button').forEach(function(b){
+    b.classList.toggle('primary', b.getAttribute('data-view')===v); });
+  render();
+}
+function sizeChart(){
+  if(!chartCvs) return;
+  var cb = chartCvs.getBoundingClientRect();
+  var cw = Math.max(220, Math.round(cb.width||300));
+  var ch = Math.max(130, Math.round(cb.height||190));
+  chartDPR = DPR;
+  chartCvs.width = Math.round(cw*DPR);
+  chartCvs.height = Math.round(ch*DPR);
+}
+function resize(){
+  var b = stageEl.getBoundingClientRect();
+  W = Math.max(320, Math.round(b.width));
+  H = Math.max(260, Math.round(b.height));
+  DPR = Math.min(2, window.devicePixelRatio||1);
+  cvs.width = Math.round(W*DPR); cvs.height = Math.round(H*DPR);
+  cvs.style.width = W+'px'; cvs.style.height = H+'px';
+  sizeChart();
+  renderNow();
+}
+function renderNow(){ renderScene(); }
+
+// ---------------- 事件 ----------------
+var drag=null;
+function onDown(e){
+  var r=cvs.getBoundingClientRect();
+  drag={x:e.clientX, y:e.clientY, az:VIEWS[state.view].azim, el:VIEWS[state.view].elev};
+  cvs.classList.add('grabbing');
+  if(cvs.setPointerCapture) try{ cvs.setPointerCapture(e.pointerId); }catch(_){}
+}
+function onMove(e){
+  if(!drag) return;
+  var dx=e.clientX-drag.x, dy=e.clientY-drag.y;
+  var v=VIEWS[state.view];
+  v.azim = drag.az + dx*0.35;
+  v.elev = clamp(drag.el + dy*0.28, -18, 84);
+  renderNow();
+}
+function onUp(){ drag=null; cvs.classList.remove('grabbing'); }
+function onWheel(e){
+  e.preventDefault();
+  state.zoom = clamp(state.zoom*(e.deltaY>0?0.94:1.064), 0.45, 3.2);
+  renderNow();
+}
+
+// ---------------- 模式切换 ----------------
+function setMode(m){
+  state.mode=m; syncEnv();
+  if(m==='gas'){ initMolecules(); }
+  else if(m==='diffuse'){ state.plate=true; diffInit(); }
+  buildModes(); buildCtl(); buildActs(); syncUI();
+  if(m==='force') sizeChart();
+  renderNow();
+}
+function setPhase(p){
+  // syncEnv：① 的取景包络跟着【物态】走（固态/液态的盒子比气态小得多），漏了这一步
+  // 切物态后相机会一直用上一档的包络 ⇒ 样品要么缩成一小块、要么顶出画布。
+  state.phase=p; state.comp=0; syncEnv(); initMolecules(); buildCtl(); syncUI(); renderNow();
+}
+function resetAll(){
+  state.temp=20; state.comp=0; state.r=R0*1.62; state.dTemp=20;
+  state.no2Top=true; state.plate=true; state.settleOnly=false;
+  state.zoom=1; state.view='default'; state.t=0;
+  forceCache={};
+  setMode(state.mode);
+}
+
+// ---------------- 主循环 ----------------
+var lastT=0, lastUI=0;
+function tick(now){
+  if(!lastT) lastT=now;
+  var dt=(now-lastT)/1000; lastT=now;
+  if(dt>0.12) dt=0.12;
+  frameStep(dt);
+  if(now-lastUI>90){ lastUI=now; syncUI(); }
+  render();
+  requestAnimationFrame(tick);
+}
+
+// ---------------- 启动 ----------------
+buildModes();
+buildCtl();
+buildActs();
+document.querySelectorAll('#mtm-views button').forEach(function(b){
+  b.addEventListener('click', function(){ applyView(b.getAttribute('data-view')); });
+});
+cvs.addEventListener('pointerdown', onDown);
+cvs.addEventListener('pointermove', onMove);
+cvs.addEventListener('pointerup', onUp);
+cvs.addEventListener('pointercancel', onUp);
+cvs.addEventListener('wheel', onWheel, {passive:false});
+window.addEventListener('resize', resize);
+if(window.ResizeObserver) new ResizeObserver(function(){ resize(); }).observe(stageEl);
+
+syncEnv();
+initMolecules();
+resize();
+syncUI();
+renderNow();
+requestAnimationFrame(tick);
+
+// ---------------- 自检钩子 ----------------
+window.__mtm = {
+  state: state,
+  CONST: {
+    N_MOL:N_MOL, LAT_N:LAT_N, CELL_OF:CELL_OF, D_MOL:D_MOL, R_MOL:R_MOL,
+    S_SOLID:S_SOLID, S_LIQUID:S_LIQUID, R_CUT:R_CUT, R_REP:R_REP, K_REP:K_REP, K_ATT:K_ATT, K_LAT:K_LAT,
+    K_WALL:K_WALL, GAMMA_OF:GAMMA_OF, V_REF:V_REF, T_REF:T_REF,
+    T_MIN:T_MIN, T_MAX:T_MAX, C_MAX:C_MAX, SUB:SUB,
+    R0:R0, FA:FA, FB:FB, R_NEAR:R_NEAR, R_FAR:R_FAR, BIG_R:BIG_R,
+    NB_CELLS:NB_CELLS, BOTTLE_R:BOTTLE_R, BOTTLE_H:BOTTLE_H, GAP_Y:GAP_Y, H_COL:H_COL,
+    DZ:DZ, GAP_K0:GAP_K0, GAP_K1:GAP_K1, D_DIFF:D_DIFF, V_SETTLE:V_SETTLE, D_T_K:D_T_K,
+    N_DOT:N_DOT
+  },
+  MODES:MODES, VIEWS:VIEWS, ENV_OF:ENV_OF,
+  get ENV(){ return ENV; },
+  get ENV_PTS(){ return ENV_PTS; },
+  vrmsOf:vrmsOf, fRepOf:fRepOf, fAttOf:fAttOf, fNetOf:fNetOf, arrowLenOf:arrowLenOf,
+  pairForceOf:pairForceOf, setSeed:setSeed, rnd:rnd, gauss:gauss, natTopOf:natTopOf,
+  cellOf:cellOf, pistonY:pistonY, curPistonY:curPistonY, syncSites:syncSites,
+  molStep:molStep, molStats:molStats, molReset:molReset,
+  diffStep:diffStep, dotStep:dotStep, diffInit:diffInit, uniformOf:uniformOf, dEff:dEff,
+  concColor:concColor, colY:colY,
+  frameStep:frameStep, driveAnim:driveAnim,
+  render:render, renderNow:renderNow, buildCam:buildCam, project:project,
+  envelopePoints:envelopePoints, applyView:applyView, resize:resize,
+  setMode:setMode, setPhase:setPhase, resetAll:resetAll, syncEnv:syncEnv, syncUI:syncUI,
+  toast:toast, flag:flag, el:el, verdictOf:function(){
+    return state.mode==='gas'?verdictGas():(state.mode==='force'?verdictForce():verdictDiffuse()); },
+  forceCache:function(){ return forceCache; },
+  drawForceChart:drawForceChart,
+  get drawn(){ return drawn; },
+  get cam(){ return cam; },
+  get frameBoxes(){ return frameBoxes; },
+  get size(){ return {w:W, h:H, dpr:DPR}; },
+  canvas: cvs, stage: stageEl
+};
+
+})();
+</script>
+</body>
+</html>
