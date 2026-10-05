@@ -267,6 +267,17 @@ module.exports = async (req, res) => {
       return res.json({ success: true, codes: data });
     }
 
+    // ========== 按码删除激活码 ==========
+    if (action === 'deleteActivationCode') {
+      const code = req.body?.code;
+      if (!code) return res.status(400).json({ error: '缺少 code' });
+      var url = SUPABASE_URL + '/rest/v1/activation_codes?code=eq.' + encodeURIComponent(code);
+      var r = await fetch(url, { method: 'DELETE', headers });
+      if (!r.ok) return res.status(502).json({ error: '删除失败: ' + (await r.text()) });
+      var data = await r.json();
+      return res.json({ success: true, deleted: (data || []).length });
+    }
+
     // ========== 更新激活码 ==========
     if (action === 'updateActivationCode') {
       const { id, data: fields } = req.body;

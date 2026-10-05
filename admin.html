@@ -176,19 +176,23 @@
         <div class="admin-tip" id="adminTip"></div>
       </div>
 
-      <!-- 激活码管理 -->
+      <!-- 激活码录入 -->
       <div class="tab-content" id="tabCode">
         <div class="input-group">
-          <span class="input-icon">👤</span>
-          <input type="text" id="codeUser" placeholder="目标用户名">
+          <span class="input-icon">💎</span>
+          <select id="codeVipType">
+            <option value="月度VIP">月度VIP (30天)</option>
+            <option value="年度VIP">年度VIP (365天)</option>
+            <option value="终身VIP">终身VIP (永久)</option>
+          </select>
         </div>
         <div class="input-group">
           <span class="input-icon">🔑</span>
-          <input type="text" id="authCode" placeholder="设置激活码（如支付单号后4位）" maxlength="10">
+          <input type="text" id="authCode" placeholder="输入激活码（如交易单号）">
         </div>
         <div class="inline-flex">
           <button class="auth-btn blue" onclick="setAuthCode()">写入激活码</button>
-          <button class="auth-btn green" onclick="clearAuthCode()">清除激活码</button>
+          <button class="auth-btn green" onclick="clearAuthCode()">删除该激活码</button>
         </div>
         <div class="admin-tip" id="codeTip"></div>
       </div>
@@ -426,30 +430,47 @@
       }
     }
 
+    // 写入单个激活码到 activation_codes（状态：未使用）
     async function setAuthCode() {
-      const user = document.getElementById('codeUser').value.trim();
-      const code = document.getElementById('authCode').value.trim();
+      const raw = document.getElementById('authCode').value.trim();
+      const type = document.getElementById('codeVipType').value;
       const tip = document.getElementById('codeTip');
-      if (!user || !code) { tip.className = 'admin-tip error'; tip.textContent = '⚠️ 请填写用户名和激活码'; return; }
+      const code = raw.toUpperCase().replace(/[\s-]/g, '');
+      if (!raw) { tip.className = 'admin-tip error'; tip.textContent = '⚠️ 请输入激活码'; return; }
+      if (!code) { tip.className = 'admin-tip error'; tip.textContent = '⚠️ 激活码不能只含分隔符'; return; }
+      tip.className = 'admin-tip'; tip.textContent = '⏳ 写入中...';
       try {
-        var r = await proxy('updateUser', { username: user, data: { authCode: code } });
-        if (!r.success) { tip.className = 'admin-tip error'; tip.textContent = '❌ ' + (r.error || '设置失败'); return; }
+        var r = await proxy('createActivationCodes', { codes: [{ code: code, vip_type: type }] });
+        if (!r.success) {
+          const msg = r.error || '写入失败';
+          tip.className = 'admin-tip error';
+          tip.textContent = (msg.indexOf('duplicate') !== -1 || msg.indexOf('23505') !== -1)
+            ? '❌ 该激活码已存在'
+            : '❌ ' + msg;
+          return;
+        }
         tip.className = 'admin-tip success';
-        tip.textContent = '✅ 已为 ' + user + ' 设置激活码：' + code;
+        tip.textContent = '✅ 已写入激活码 ' + formatCode(code) + '（' + type + '·未使用）';
       } catch(e) {
         tip.className = 'admin-tip error'; tip.textContent = '❌ ' + e.message;
       }
     }
 
+    // 按码从 activation_codes 删除
     async function clearAuthCode() {
-      const user = document.getElementById('codeUser').value.trim();
+      const raw = document.getElementById('authCode').value.trim();
       const tip = document.getElementById('codeTip');
-      if (!user) { tip.className = 'admin-tip error'; tip.textContent = '⚠️ 请输入用户名'; return; }
+      if (!raw) { tip.className = 'admin-tip error'; tip.textContent = '⚠️ 请输入要删除的激活码'; return; }
+      const code = raw.toUpperCase().replace(/[\s-]/g, '');
+      if (!confirm('确定删除激活码 ' + formatCode(code) + ' ？')) return;
+      tip.className = 'admin-tip'; tip.textContent = '⏳ 删除中...';
       try {
-        await proxy('updateUser', { username: user, data: { authCode: '' } });
+        var r = await proxy('deleteActivationCode', { code: code });
+        if (!r.success) { tip.className = 'admin-tip error'; tip.textContent = '❌ ' + (r.error || '删除失败'); return; }
+        if (!r.deleted) { tip.className = 'admin-tip error'; tip.textContent = '❌ 未找到该激活码：' + formatCode(code); return; }
         document.getElementById('authCode').value = '';
         tip.className = 'admin-tip success';
-        tip.textContent = '✅ 已清除 ' + user + ' 的激活码';
+        tip.textContent = '✅ 已删除激活码 ' + formatCode(code);
       } catch(e) {
         tip.className = 'admin-tip error'; tip.textContent = '❌ ' + e.message;
       }
@@ -556,7 +577,9 @@
       return c; // 纯 9 位，数据库只存字母数字
     }
     function formatCode(code) {
-      return code.substring(0,3) + '-' + code.substring(3,6) + '-' + code.substring(6,9);
+      code = String(code);
+      // 仅 9 位生成的激活码加分隔符；交易单号等长码原样显示，避免被截断
+      return code.length === 9 ? (code.substring(0,3) + '-' + code.substring(3,6) + '-' + code.substring(6,9)) : code;
     }
 
     async function generateCodes() {
