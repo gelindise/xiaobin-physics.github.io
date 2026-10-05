@@ -1,0 +1,1737 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>浮力产生的原因 · 三维实验台 - 物理虚拟实验</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="stylesheet" href="style.css">
+  <script src="auth-check.js"></script>
+  <style>
+    body { margin: 0; padding: 20px; min-width: 320px; }
+    /* 舞台宽高比由世界包络定死（水槽是竖长的），不限宽的话 1920 屏上
+       舞台会拉到 1500px 宽，左右各留一大片空白。 */
+    .lab3d { max-width: 1240px; margin: 0 auto; }
+
+    .lab3d h1 { margin: 0; font-size: 17px; letter-spacing: .3px; }
+    .lab3d-sub { margin: 5px 0 10px; color: #93b4c4; font-size: 12px; line-height: 1.5; }
+    .lab3d-sub b { color: #a5f3fc; font-weight: 700; }
+
+    .lab3d-layout {
+      display: grid; grid-template-columns: minmax(0, 1fr) 350px;
+      gap: 16px; align-items: start; align-content: start;
+    }
+    .lab3d-stage { grid-column: 1; grid-row: 1; }
+    .lab3d-sidebar { grid-column: 2; grid-row: 1 / span 2; }
+    .lab3d-lower {
+      grid-column: 1; grid-row: 2;
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(290px, 1fr));
+      gap: 14px; align-content: start; align-items: start; min-width: 0;
+    }
+
+    .lab3d-stage {
+      position: relative; overflow: hidden;
+      height: clamp(420px, 70vh, 700px);
+      border: 1px solid rgba(148, 163, 184, .18); border-radius: 16px;
+      background: #020617; box-shadow: 0 18px 46px rgba(2, 6, 23, .5);
+    }
+    .lab3d-stage canvas { display: block; touch-action: none; cursor: grab; }
+    .lab3d-stage canvas.pick { cursor: pointer; }
+    .lab3d-stage canvas.grabbing { cursor: grabbing; }
+
+    .lab3d-stage .stage-hint {
+      position: absolute; left: 12px; top: 12px; max-width: 62%;
+      padding: 7px 11px; border-radius: 8px; pointer-events: none;
+      border: 1px solid rgba(56, 189, 248, .28); background: rgba(2, 6, 23, .78);
+      color: #c3e8f5; font-size: 11px; line-height: 1.55;
+    }
+    .lab3d-stage .stage-hint b { color: #7dd3fc; }
+
+    .lab3d-stage .stage-tip {
+      position: absolute; left: 0; top: 0; padding: 5px 9px; border-radius: 7px;
+      background: rgba(2, 6, 23, .9); border: 1px solid rgba(148, 163, 184, .3);
+      color: #e2e8f0; font-size: 11px; white-space: nowrap;
+      pointer-events: none; opacity: 0; transition: opacity .12s;
+    }
+    .lab3d-stage .stage-tip.show { opacity: 1; }
+
+    /* 舞台底部那一条：左边按钮，右边操作提示。做成一条 flex 行是为了让它们
+       【永远不重叠】——各占一角的话，窄屏上提示文字会横穿底边压在按钮上。
+       按钮必须在舞台上：.lab3d-layout 在 ≤900px 折成一列后侧栏会被挤到舞台【下面】，
+       而「记录这一组」恰恰是眼睛盯着画面时该按的。 */
+    .lab3d-stage .stage-bar {
+      position: absolute; left: 0; right: 0; bottom: 0;
+      display: flex; align-items: center; justify-content: space-between; gap: 8px;
+      padding: 0 12px 11px; pointer-events: none;
+    }
+    .lab3d-stage .bar-left { display: flex; align-items: center; gap: 7px; flex: none; pointer-events: auto; }
+    .lab3d-stage .stage-btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 8px 13px; border-radius: 10px; font-family: inherit;
+      font-size: 12px; font-weight: 800; cursor: pointer;
+      border: 1px solid rgba(148, 163, 184, .35); background: rgba(2, 6, 23, .88); color: #cbd5e1;
+      transition: background .2s, border-color .2s, color .2s, box-shadow .2s;
+    }
+    .lab3d-stage .stage-btn.go { border-color: rgba(56, 189, 248, .55); background: rgba(14, 116, 144, .3); color: #e0f2fe; }
+    .lab3d-stage .stage-btn.go:hover { background: rgba(14, 116, 144, .46); }
+    .lab3d-stage .stage-btn.on { border-color: rgba(248, 113, 113, .7); background: rgba(127, 29, 29, .5); color: #fee2e2; }
+    .lab3d-stage .stage-btn:disabled { opacity: .45; cursor: not-allowed; }
+    .lab3d-stage .stage-btn .cnt {
+      display: inline-grid; place-items: center; min-width: 17px; height: 17px; padding: 0 4px;
+      border-radius: 99px; font-size: 10px; font-weight: 800;
+      background: rgba(148, 163, 184, .22); color: #e2e8f0;
+    }
+    .lab3d-stage .stage-btn.ready {
+      border-color: rgba(52, 211, 153, .8); background: rgba(16, 185, 129, .24); color: #d1fae5;
+      box-shadow: 0 0 0 3px rgba(52, 211, 153, .14), 0 0 18px rgba(52, 211, 153, .3);
+    }
+    .lab3d-stage .stage-help {
+      min-width: 0; pointer-events: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      color: #93b4c4; font-size: 11px; background: rgba(2, 6, 23, .72); padding: 6px 10px; border-radius: 7px;
+    }
+
+    /* 视角按钮放在【舞台上】而不是侧栏里：它是「眼睛正盯着画面时该按」的那一类。
+       放在侧栏最底部（第 4 块）会落到首屏之外 —— 1440×900 下 y≈942，
+       又得往下拉才点得到，正是用户明确不要的形态。 */
+    .lab3d-stage .stage-views {
+      position: absolute; right: 12px; top: 12px;
+      display: flex; gap: 5px; pointer-events: none;
+    }
+    .lab3d-stage .stage-views button {
+      font-family: inherit; font-size: 11px; font-weight: 700; cursor: pointer;
+      padding: 5px 9px; border-radius: 8px; pointer-events: auto;
+      border: 1px solid rgba(148, 163, 184, .32); background: rgba(2, 6, 23, .84); color: #cbd5e1;
+      transition: background .2s, border-color .2s, color .2s;
+    }
+    .lab3d-stage .stage-views button.primary {
+      border-color: rgba(56, 189, 248, .65); background: rgba(14, 116, 144, .5); color: #e0f2fe;
+    }
+    .lab3d-stage .stage-views button:hover { border-color: rgba(125, 211, 252, .75); }
+
+    .lab3d-stage .stage-toast {
+      position: absolute; left: 50%; transform: translateX(-50%); bottom: 96px;
+      padding: 8px 14px; border-radius: 10px; font-size: 12px; font-weight: 700;
+      background: rgba(2, 6, 23, .93); border: 1px solid rgba(148, 163, 184, .32); color: #e2e8f0;
+      opacity: 0; transition: opacity .18s, transform .18s; pointer-events: none; white-space: nowrap;
+    }
+    .lab3d-stage .stage-toast.show { opacity: 1; }
+
+    .lab3d-stage .stage-flag {
+      position: absolute; left: 50%; transform: translateX(-50%); bottom: 58px;
+      padding: 7px 13px; border-radius: 99px; font-size: 12px; font-weight: 800;
+      background: rgba(127, 29, 29, .92); border: 1px solid rgba(248, 113, 113, .6); color: #fee2e2;
+      opacity: 0; transition: opacity .2s; pointer-events: none; white-space: nowrap;
+    }
+    .lab3d-stage .stage-flag.show { opacity: 1; }
+
+    .lab3d-sidebar { display: flex; flex-direction: column; gap: 9px; min-width: 0; }
+    /* 控制栏吸顶 + 自身可滚：往下看「实验原理 / 数据记录」时，调参按钮仍在手边；
+       视口不够高时（≤800px 的窗口）侧栏自己滚，【绝不去滚页面】——
+       页面一滚，画布就跟着走，正是用户说的「拉下去上面的实验就看不见了」。
+       max-height 里的 104px = 顶部标题区 + 一点余量。
+
+       ★ sticky 能不能动，只取决于一件事：【它所在的网格区要比它自己高】。
+       侧栏是 grid-row 1 / span 2，网格区 = 第1行(舞台) + gap + 第2行(.lab3d-lower)。
+       所以「实验原理 / 操作指南」两张卡必须留在左列（第 2 行）里 —— 把它们拿掉，
+       左列就只剩舞台那么高（630 < 侧栏 792），行程变成负数，sticky 一步都动不了：
+       计算样式照旧写着 position=sticky、top=16px，页面看着完全正常，就是吸不住。
+       （实测：把左列的两张卡 display:none，滚 300px 后侧栏顶边由 16 掉到 -220。） */
+    .lab3d-sidebar {
+      position: sticky; top: 16px; align-self: start;
+      max-height: calc(100vh - 104px); overflow-y: auto; overscroll-behavior: contain;
+      scrollbar-width: thin;
+    }
+    .panel {
+      border: 1px solid rgba(148, 163, 184, .17); border-radius: 13px;
+      background: rgba(9, 20, 35, .82); padding: 11px 13px;
+    }
+    .panel > h3 {
+      margin: 0 0 10px; font-size: 12px; font-weight: 800; color: #7dd3fc;
+      letter-spacing: .4px; display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    }
+    .panel > h3 .pill {
+      font-size: 10px; font-weight: 800; padding: 2px 8px; border-radius: 99px;
+      background: rgba(148, 163, 184, .18); color: #e2e8f0;
+    }
+    .panel > h3 .pill.live { background: rgba(248, 113, 113, .25); color: #fecaca; }
+    .panel > h3 .pill.ok { background: rgba(52, 211, 153, .22); color: #d1fae5; }
+    .fld { display: block; margin-bottom: 11px; }
+    .fld:last-child { margin-bottom: 0; }
+    .fld .row { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 5px; }
+    .fld .row span { color: #a9c2d2; font-size: 11.5px; }
+    .fld .row b { color: #e2e8f0; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+    .fld .note { margin: 6px 0 0; color: #8aa6b8; font-size: 11px; line-height: 1.55; }
+    .fld input[type=range] { width: 100%; }
+
+    .btn-row { display: flex; flex-wrap: wrap; gap: 7px; }
+    .btn-row button {
+      flex: 1 1 auto; min-width: 0; padding: 9px 11px; border-radius: 9px; cursor: pointer;
+      font-family: inherit; font-size: 12px; font-weight: 800;
+      border: 1px solid rgba(148, 163, 184, .3); background: rgba(30, 41, 59, .7); color: #cbd5e1;
+    }
+    .btn-row button.primary { border-color: rgba(56, 189, 248, .6); background: rgba(14, 116, 144, .42); color: #e0f2fe; }
+    .btn-row button.on { border-color: rgba(248, 113, 113, .65); background: rgba(127, 29, 29, .5); color: #fee2e2; }
+    .btn-row button.warm.on { border-color: rgba(251, 191, 36, .7); background: rgba(120, 53, 15, .55); color: #fef3c7; }
+    .btn-row button:disabled { opacity: .45; cursor: not-allowed; }
+    .btn-row button:hover:not(:disabled) { border-color: rgba(125, 211, 252, .7); }
+
+    /* 三个力：一行一个，色块 + 名称 + 数值 */
+    .force {
+      display: flex; align-items: center; gap: 9px;
+      padding: 5px 9px; border-radius: 9px; margin-bottom: 5px;
+      background: rgba(2, 6, 23, .55); border: 1px solid rgba(148, 163, 184, .14);
+    }
+    .force .swatch { width: 12px; height: 12px; border-radius: 3px; flex: none; }
+    .force .nm { color: #a9c2d2; font-size: 11.5px; flex: 1 1 auto; min-width: 0; }
+    .force .nm i { font-style: normal; color: #7d97a8; font-size: 10.5px; }
+    .force .vl {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 15px; font-weight: 800;
+      color: #e2e8f0; font-variant-numeric: tabular-nums;
+    }
+    .force.big { padding: 9px 10px; background: rgba(12, 74, 110, .3); border-color: rgba(56, 189, 248, .38); }
+    .force.big .vl { font-size: 21px; color: #a5f3fc; text-shadow: 0 0 12px rgba(56, 189, 248, .4); }
+    .force.zero { background: rgba(127, 29, 29, .3); border-color: rgba(248, 113, 113, .45); }
+    .force.zero .vl { color: #fecaca; text-shadow: 0 0 12px rgba(248, 113, 113, .4); }
+
+    /* 压强色标（与画面里水柱的渐变换算自同一份压强函数） */
+    .pbar { display: flex; gap: 8px; margin-top: 8px; }
+    .pbar .col { width: 13px; border-radius: 4px; flex: none; border: 1px solid rgba(148, 163, 184, .25); }
+    .pbar .ticks {
+      display: flex; flex-direction: column; justify-content: space-between;
+      font-size: 9.5px; color: #7d97a8; font-variant-numeric: tabular-nums; padding: 1px 0;
+    }
+    .pbar .cap { color: #8aa6b8; font-size: 10.5px; margin-left: auto; align-self: flex-end; }
+
+    .readouts { display: flex; flex-direction: column; gap: 4px; color: #a9c2d2; font-size: 11.5px; }
+    .readouts div { display: flex; justify-content: space-between; gap: 8px; }
+    .readouts b { color: #e2e8f0; font-variant-numeric: tabular-nums; }
+    .readouts .dim { color: #7d97a8; }
+
+    .badge {
+      display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 9px;
+      font-size: 12px; font-weight: 800; margin-top: 8px;
+    }
+    .badge.ok { background: rgba(6, 78, 59, .45); border: 1px solid rgba(52, 211, 153, .5); color: #d1fae5; }
+    .badge.warn { background: rgba(120, 53, 15, .45); border: 1px solid rgba(251, 191, 36, .5); color: #fef3c7; }
+    .badge.bad { background: rgba(127, 29, 29, .45); border: 1px solid rgba(248, 113, 113, .5); color: #fee2e2; }
+
+    table.rec { width: 100%; border-collapse: collapse; font-size: 11px; font-variant-numeric: tabular-nums; }
+    table.rec th, table.rec td { padding: 5px 3px; text-align: right; border-bottom: 1px solid rgba(148, 163, 184, .13); }
+    table.rec th { color: #8aa6b8; font-weight: 700; font-size: 10px; }
+    table.rec th:first-child, table.rec td:first-child { text-align: left; }
+    table.rec td { color: #dbe7f0; }
+    table.rec td.dim { color: #7d97a8; text-align: left; }
+    .rec-empty { color: #6f8b9c; font-size: 11.5px; padding: 6px 0; }
+
+    .analysis { color: #c8d8e4; font-size: 11.5px; line-height: 1.75; }
+    .analysis .line { display: flex; justify-content: space-between; gap: 8px; }
+    .analysis .line b { color: #e2e8f0; font-variant-numeric: tabular-nums; }
+    .analysis .line.up b { color: #fca5a5; }
+    .analysis .line.dn b { color: #93c5fd; }
+    .analysis .line.sum { border-top: 1px dashed rgba(148, 163, 184, .3); margin-top: 5px; padding-top: 6px; }
+    .analysis .line.sum b { color: #a5f3fc; font-size: 13px; }
+    .analysis .line.off { color: #6f8b9c; }
+    .analysis .conc {
+      margin-top: 9px; padding: 8px 10px; border-radius: 8px; font-size: 11.5px; line-height: 1.65;
+      background: rgba(6, 78, 59, .35); border: 1px solid rgba(52, 211, 153, .4); color: #d1fae5;
+    }
+    .analysis .conc.warn { background: rgba(127, 29, 29, .35); border-color: rgba(248, 113, 113, .45); color: #fee2e2; }
+    .analysis .conc.info { background: rgba(12, 74, 110, .35); border-color: rgba(56, 189, 248, .4); color: #e0f2fe; }
+    .analysis .muted { color: #7d97a8; }
+
+    /* 「实验原理 / 操作指南」两张卡与「恒等式账本 / 数据记录」一起排在左列
+       （.lab3d-lower 的第 2 行）。这样左列比右侧控制栏高得多，
+       控制栏的 position:sticky 才有【行程】—— 元素比它所在的网格区还高时，
+       sticky 一步都动不了。 */
+    .info-card {
+      border: 1px solid rgba(148, 163, 184, .16); border-radius: 14px;
+      background: rgba(9, 20, 35, .7); padding: 15px 17px; min-width: 0;
+    }
+    .info-card h4 { margin: 0 0 9px; font-size: 13px; color: #7dd3fc; }
+    .info-card ul { margin: 0; padding-left: 17px; color: #a9c2d2; font-size: 12px; line-height: 1.85; }
+    .info-card li b { color: #e2e8f0; }
+    .info-card .fml {
+      display: inline-block; margin: 3px 0; padding: 3px 9px; border-radius: 7px;
+      background: rgba(56, 189, 248, .13); color: #a5f3fc; font-weight: 700;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+
+    @media (max-width: 900px) {
+      .lab3d-layout { grid-template-columns: minmax(0, 1fr); }
+      .lab3d-stage, .lab3d-sidebar, .lab3d-lower { grid-column: 1; grid-row: auto; }
+      .lab3d-stage { height: clamp(340px, 54vh, 520px); }
+      .lab3d-sidebar { border-top: 1px solid rgba(148, 163, 184, .16); padding-top: 12px; }
+      .lab3d-lower { border-top: 1px solid rgba(148, 163, 184, .16); padding-top: 12px; }
+    }
+    @media (max-width: 620px) {
+      body { padding: 14px; }
+      .lab3d h1 { font-size: 16px; }
+      .lab3d-stage { height: 360px; }
+      .lab3d-stage .stage-hint { font-size: 10px; padding: 6px 9px; max-width: 66%; }
+      .lab3d-stage .stage-help { display: none; }
+      .lab3d-stage .stage-btn { padding: 7px 10px; font-size: 11px; gap: 5px; }
+      .lab3d-stage .stage-flag { bottom: 54px; font-size: 11px; padding: 6px 11px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="lab3d">
+    <h1>浮力产生的原因 · 三维实验台</h1>
+    <p class="lab3d-sub">
+      液体内部<b>越深压强越大</b>：下表面受到的<b>向上</b>压力比上表面受到的<b>向下</b>压力大，
+      这个<b>压力差</b>就是浮力 —— <b>F浮 = F向上 − F向下</b>；左右两个侧面的压力<b>大小相等、方向相反</b>，两两抵消。
+    </p>
+
+    <div class="lab3d-layout">
+      <div class="lab3d-stage">
+        <canvas id="bu-canvas"></canvas>
+
+        <div class="stage-hint" id="bu-hint"></div>
+        <div class="stage-tip" id="bu-tip"></div>
+        <div class="stage-toast" id="bu-toast"></div>
+        <div class="stage-flag" id="bu-flag">下表面密合槽底 —— 浮力消失了</div>
+
+        <div class="stage-views">
+          <button type="button" data-view="perspective" title="默认斜视">默认</button>
+          <button type="button" data-view="front" title="正对水槽：看左右侧面两两抵消">正对</button>
+          <button type="button" data-view="side" title="看左侧面">左视</button>
+          <button type="button" data-view="top" title="俯视：看上下表面">俯视</button>
+        </div>
+
+        <div class="stage-bar">
+          <div class="bar-left">
+            <button type="button" class="stage-btn go" id="bu-record">
+              记录这一组<b class="cnt" id="bu-record-cnt">0</b>
+            </button>
+            <button type="button" class="stage-btn" id="bu-reset">重置</button>
+          </div>
+          <div class="stage-help">拖动立方体改深度 · 拖动空白处旋转 · 滚轮缩放</div>
+        </div>
+      </div>
+
+      <div class="lab3d-sidebar">
+        <div class="panel">
+          <h3>立方体的位置 <span class="pill" id="bu-pos-pill">浸没在水中</span></h3>
+          <div class="fld">
+            <div class="row"><span>底面离槽底</span><b id="bu-yb-num">4.0 cm</b></div>
+            <input type="range" id="bu-yb" min="0" max="7" step="0.5" value="4">
+          </div>
+          <div class="btn-row">
+            <button type="button" class="warm" id="bu-auto">自动演示：沉下去</button>
+          </div>
+          <div class="btn-row" style="margin-top:7px;">
+            <button type="button" id="bu-seal">完全压到槽底</button>
+            <button type="button" id="bu-lift">提到水面下</button>
+          </div>
+          <p class="note" id="bu-yb-note"></p>
+        </div>
+
+        <!-- 显示模式必须紧跟在位置后面（第 2 块）：它是「一边看画面一边切」的控件，
+             放到力读数之后，1440×900 下会落到 y≈924 —— 已经在首屏之外，
+             又要往下拉才能点到，正是用户明确不要的那种形态。 -->
+        <div class="panel">
+          <h3>显示模式</h3>
+          <div class="btn-row">
+            <button type="button" class="primary" data-mode="all">全部箭头</button>
+            <button type="button" data-mode="down">只画上表面</button>
+            <button type="button" data-mode="up">只画下表面</button>
+            <button type="button" data-mode="side">只看侧面抵消</button>
+          </div>
+          <p class="note" id="bu-mode-note"></p>
+        </div>
+
+        <div class="panel">
+          <h3>液体对立方体的力 <span class="pill" id="bu-fb-pill">10.0 N</span></h3>
+          <div class="force">
+            <span class="swatch" style="background:#f87171"></span>
+            <span class="nm">F<sub>向上</sub> <i>下表面受到的液体压力</i></span>
+            <span class="vl" id="bu-fup">15.0</span>
+          </div>
+          <div class="force">
+            <span class="swatch" style="background:#60a5fa"></span>
+            <span class="nm">F<sub>向下</sub> <i>上表面受到的液体压力</i></span>
+            <span class="vl" id="bu-fdn">5.0</span>
+          </div>
+          <div class="force big" id="bu-fb-row">
+            <span class="swatch" style="background:#a5f3fc"></span>
+            <span class="nm">F<sub>浮</sub> <i>= F向上 − F向下</i></span>
+            <span class="vl" id="bu-fb">10.0</span>
+          </div>
+          <!-- 读数压成 3 行（下表面 / 上表面 / 校验各一行）。
+               5 行时侧栏总高 1160px，超过 900px 视口 —— 不但「视角」按钮掉出首屏，
+               连 position:sticky 都会失效（元素比它所在的网格区还高时，sticky 一步都动不了）。 -->
+          <div class="readouts" style="margin-top:8px;">
+            <div><span>下表面 h<sub>下</sub> / p<sub>下</sub></span><b><span id="bu-hd">15.0 cm</span> / <span id="bu-pd">1500 Pa</span></b></div>
+            <div><span>上表面 h<sub>上</sub> / p<sub>上</sub></span><b><span id="bu-hu">5.0 cm</span> / <span id="bu-pu">500 Pa</span></b></div>
+            <div><span>ρ<sub>液</sub>gV<sub>排</sub> 校验</span><b id="bu-arch">10.0 N</b></div>
+          </div>
+          <div class="pbar">
+            <div class="col" id="bu-pbar"></div>
+            <div class="ticks" id="bu-pticks"></div>
+            <span class="cap">液体压强 / Pa</span>
+          </div>
+        </div>
+
+      </div>
+
+      <div class="lab3d-lower">
+        <div class="panel">
+          <h3>恒等式账本</h3>
+          <div class="analysis" id="analysis"></div>
+        </div>
+
+        <div class="panel">
+          <h3>数据记录 <span class="pill" id="rec-count">0 组</span></h3>
+          <div id="rec-body"><p class="rec-empty">还没有记录。把立方体放到不同深度各记一组，看看 F浮 变不变。</p></div>
+        </div>
+        <div class="info-card">
+          <h4>实验原理</h4>
+          <ul>
+            <li>液体内部向各个方向都有压强，且<b>深度越大压强越大</b>：
+                <span class="fml">p = ρ<sub>液</sub> g h</span></li>
+            <li>立方体的<b>下表面</b>浸得深、压强大，受到的<b>向上的压力</b>大；
+                <b>上表面</b>浸得浅、压强小，受到的<b>向下的压力</b>小。
+                这两个压力的<b>差</b>就是浮力：
+                <span class="fml">F<sub>浮</sub> = F<sub>向上</sub> − F<sub>向下</sub> = p<sub>下</sub>A − p<sub>上</sub>A = ρ<sub>液</sub> g (h<sub>下</sub> − h<sub>上</sub>) A = ρ<sub>液</sub> g V<sub>排</sub></span></li>
+            <li><b>前后、左右</b>两个侧面在同一深度处受到的液体压力
+                <b>大小相等、方向相反</b>，互相抵消 —— 所以侧面对浮力<b>没有贡献</b>。</li>
+            <li>完全浸没以后，立方体再往深处去，上下表面的压强<b>都变大</b>，
+                但<b>压力差不变</b> —— 所以 <b>F<sub>浮</sub> 与深度无关</b>。</li>
+            <li>把下表面<b>紧紧压在槽底</b>（下面进不去液体）时，
+                <b>F<sub>向上</sub> = 0</b>，液体不再有向上的托力，<b>浮力消失</b>。</li>
+          </ul>
+        </div>
+        <div class="info-card">
+          <h4>操作指南</h4>
+          <ul>
+            <li>拖<b>深度滑块</b>，或直接用鼠标<b>拖动立方体</b>上下移动，看三个力怎么变。</li>
+            <li>点<b>「自动演示：沉下去」</b>，立方体自己慢慢沉到槽底并停住 ——
+                注意 F<sub>浮</sub> 一路都是 <b>10.0 N</b>，只在<b>贴底的那一刻突然变成 0</b>。</li>
+            <li>点<b>「完全压到槽底」</b>：下表面密合槽底，下面没有液体，
+                下表面的箭头整排消失，F<sub>向上</sub> 变成 <b>0</b>，<b>浮力消失</b>。</li>
+            <li>把视角切到<b>「正对」</b>：左右两侧的紫色箭头正对着彼此，
+                数一数它们是<b>成对</b>的，合力就是 <b>0</b>。</li>
+            <li>切<b>「只看侧面抵消」</b>把上下表面的箭头收起来，侧面的两两抵消看得最清楚。</li>
+            <li>看水槽里的<b>色带与等压线</b>：颜色越深表示压强越大，
+                同一条等压线上的压强处处相等。</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+  (() => {
+    'use strict';
+
+    const canvas = document.getElementById('bu-canvas');
+    const stage = document.querySelector('.lab3d-stage');
+    if (!canvas || !stage) return;
+    const ctx = canvas.getContext('2d');
+
+    const PI2 = Math.PI * 2;
+    const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
+    const $ = id => document.getElementById(id);
+    // 读数/自检统一走它 —— 坏数据（null / NaN）只显示成「—」，不能把渲染循环打死
+    const fmt = (v, n) => (v == null || !isFinite(v)) ? '—' : v.toFixed(n);
+
+    /* ============================================================
+     * 向量工具（与站内其它三维页同一套约定）
+     * ============================================================ */
+    const add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+    const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+    const scl = (a, k) => [a[0] * k, a[1] * k, a[2] * k];
+    const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+    const vlen = a => Math.hypot(a[0], a[1], a[2]);
+    const vnorm = a => { const l = vlen(a) || 1; return [a[0] / l, a[1] / l, a[2] / l]; };
+    const rgba = (c, a) => 'rgba(' + Math.round(clamp(c[0], 0, 255)) + ',' +
+      Math.round(clamp(c[1], 0, 255)) + ',' + Math.round(clamp(c[2], 0, 255)) + ',' + a + ')';
+
+    /* ============================================================
+     * 场景常量
+     * ------------------------------------------------------------
+     * 世界坐标：y 向上，x/z 水平。**1 世界单位 = 1 cm**（小器材，和真空铃同一量级）。
+     *
+     * 水槽内壁 20 × 20 × 22 cm，水位 19 cm，立方体棱长 10 cm。
+     *   A = (0.10 m)² = 0.01 m²      V排 = 0.01 × 0.10 = 1.0e-3 m³
+     *   F浮 = ρ g V排 = 1000 × 10 × 1.0e-3 = 10 N   ← 定标值，自检写死这个数
+     * ============================================================ */
+    const TANK_W = 20, TANK_D = 20, TANK_H = 22;   // 内壁：宽 × 深 × 高（cm）
+    const GLASS = 1.0;                             // 玻璃壁厚（cm）
+    const H_W = 19;                                // 水位高（从内底算，cm）
+    // 槽只比立方体大一圈（内壁 20 : 立方体 10），水面以上只留 3 cm 玻璃。
+    // 槽一大、玻璃一高，自动取景就按整个槽取，立方体被压成画面正中一小块 ——
+    // 这一页的主角是立方体和它上下表面的箭头，不是水槽。
+
+    const CUBE_A = 10, HALF = CUBE_A / 2;          // 立方体棱长 / 半棱长（cm）
+    const YB_MIN = 0, YB_MAX = 7, YB_DEF = 4;      // 立方体【底面】高度（cm）
+    // YB_MAX = 7 → 顶面在水面下 19−7−10 = 2 cm，永远保持完全浸没。
+    // 这样「压力差 = ρgV排」在整段行程里都成立，学生才能看出「F浮 与深度无关」。
+
+    const RHO = 1000, GRA = 10;                    // kg/m³, N/kg
+    const A_AREA = Math.pow(CUBE_A / 100, 2);      // 底面积 m²（由棱长推出，不许另写一个字面量）
+    const V_DISP = A_AREA * (CUBE_A / 100);        // 全浸没排开体积 m³
+
+    // 地面：只画一块【大而暗】的地板，不进取景包络 ——
+    // 换成一张比水槽宽一倍多的实验台面的话，包络被它撑大，水槽在画面里就缩了一半。
+    const FLOOR = 60;                              // 地板半宽（cm）
+    // 压强标尺：立在水槽左侧（槽外壁 x = -11）的 3D 立牌，刻度与画面里的等压线
+    // 共用同一份压强函数，读色标就等于读压强。它的【顶角在取景包络里】，
+    // 所以往左推不是免费的：包络变宽，一旦横向项成为瓶颈，槽体就被压小。
+    // 取 -17：默认视角下它和槽体左壁有一点重叠，但读起来仍是「槽边上的标尺」。
+    const RULER_X = -17, RULER_W = 3.2, RULER_D = 2.0;  // 压强标尺（立在水槽左侧）
+
+    // 力与长度的换算：**所有箭头共用同一个比例尺**。
+    const P_SCALE = 2.00;                          // N → cm 的画长比例
+    const ARROW_N = 3;                             // 上下表面各 3×3 支
+    const A_CELL = A_AREA / (ARROW_N * ARROW_N);   // 每支箭头代表的面积 m²
+
+    const C_UP   = [248, 113, 113];   // F向上（下表面，红）
+    const C_DN   = [ 96, 165, 250];   // F向下（上表面，蓝）
+    const C_SIDE = [167, 139, 250];   // 侧面（紫）
+    const C_CUBE = [152, 164, 186];   // 立方体本色
+
+    const CAMD = 96;                               // 相机距离基准
+    const TARGET = [-3.0, 12.0, 0];                // 注视点：水槽中部略偏左下（标尺在左）
+
+    const VIEWS = {
+      // 默认：右前上方斜俯视。俯仰角是量出来的 —— 太平时槽口沿与水面几乎重合，
+      // 立方体顶面的箭头会被水面反光糊住；抬到 0.40 rad（23°）槽口张开成椭圆，
+      // 上下表面同时看得见。
+      perspective: [0.58, 0.40],
+      // 正对：左右两个侧面的箭头正对着彼此，「两两抵消」一眼就看出来。
+      front:       [0.02, 0.11],
+      side:        [-0.98, 0.24],
+      top:         [0.22, 1.02]
+    };
+
+    const state = {
+      yaw: VIEWS.perspective[0], pitch: VIEWS.perspective[1], zoom: 1,
+      yb: YB_DEF,               // 立方体底面高度 cm
+      mode: 'all',              // all | up | down | side
+      auto: false,              // 自动演示
+      autoPhase: 'down', autoHold: 0,
+      t: 0,                     // 动画时间 s（水面微波 + 高光）
+      marks: [],
+      w: 1, h: 1, dpr: 0, dirty: true,
+      dragging: false, drag: null, downAt: null, dragYaw: 0, dragPitch: 0,
+      cubeDrag: false, dragYb: 0, dragSy: 0,
+      hover: null, view: 'perspective',
+      drawn: {}
+    };
+
+    /* ============================================================
+     * 物理模型
+     * ------------------------------------------------------------
+     * 全部抽成纯函数：渲染、读数、账本、自检共用同一份 —— 公式抄两遍的话，
+     * 改了一处另一处不跟着变，画面在动而数字对不上，自检还永远是绿的。
+     * ============================================================ */
+
+    // 深度（cm）→ 液体压强（Pa）。整页只有这一个换算点，
+    // 色带、标尺、箭头、读数、账本全走它。
+    function pressAtCm(d) { return RHO * GRA * Math.max(0, d) / 100; }
+    const P_MAX = pressAtCm(H_W);                  // 槽底处压强 = 2100 Pa
+
+    // 下表面与槽底密合 → 下面进不去液体 → 没有向上的压力。
+    // 判据用「底面高度」而不是「画面上挨着」，自检和画面才能指向同一件事。
+    const isSealed = () => state.yb <= YB_MIN + 1e-6;
+
+    const hDown = () => H_W - state.yb;                        // 下表面深度 cm
+    const hUp   = () => H_W - state.yb - CUBE_A;               // 上表面深度 cm
+    const pDown = () => pressAtCm(hDown());
+    const pUp   = () => pressAtCm(hUp());
+
+    // 一支箭头代表的力（N）= 该处压强 × 它分摊到的面积
+    const arrowForce = pPa => pPa * A_CELL;
+    // 一支箭头的画长（cm）—— 统一比例尺，不随压强大小改比例
+    const arrowLen = pPa => arrowForce(pPa) * P_SCALE;
+
+    // 下表面受到的液体压力（向上为正）。密合时下表面没有液体 → 0。
+    const Fup = () => isSealed() ? 0 : pDown() * A_AREA;
+    // 上表面受到的液体压力（向下为正）。上表面永远泡在水里。
+    const Fdown = () => pUp() * A_AREA;
+    // 浮力 = 压力差。密合时下表面没有液体、液体不再提供向上的托力 → 浮力消失。
+    // 注意这不是「算出来等于 0」，而是「定义上就是 0」—— 液体对物体的合力其实
+    // 是 −p上A（向下），要靠槽底的支持力才平衡。netLiquid() 就是那个合力。
+    const Fbuoy = () => isSealed() ? 0 : (Fup() - Fdown());
+    const netLiquid = () => Fup() - Fdown();       // 液体对物体的合力（向上为正）
+
+    // 阿基米德路径：另一条独立的算式，用来和压力差路径互相校验
+    const Farch = () => RHO * GRA * V_DISP;
+
+    // 侧面箭头：四个竖直侧面、每个面【上下两支】，画在立方体【外面的液体里】，
+    // 从外指向表面。
+    // 为什么不画在内部：上下表面的 3×3 箭头占据了立方体内部，侧面箭头放在面中心
+    // 会正好穿过它们，两组箭头交叉成一团，「同一高度、相对两面、力相等反向」
+    // 这个唯一要讲的点反而看不见了。挪到外面，两组在屏幕上一左一右，各读各的。
+    const SIDE_GAP = 0.8;      // 箭头尖端与立方体表面之间的空隙（cm）
+    function sideArrows() {
+      const out = [];
+      const ys = [state.yb + CUBE_A * 0.26, state.yb + CUBE_A * 0.74];
+      for (const y of ys) {
+        const p = pressAtCm(H_W - y);              // 该高度处的压强（与朝向无关）
+        const F = arrowForce(p);
+        const d = SIDE_GAP + arrowLen(p);          // 箭尾离表面的距离
+        // p0 是【箭尾】——在液体里；箭头朝立方体指
+        out.push({ p0: [-HALF - d, y, 0], dir: [1, 0, 0], F: F, p: p, face: '左' });
+        out.push({ p0: [HALF + d, y, 0], dir: [-1, 0, 0], F: F, p: p, face: '右' });
+        out.push({ p0: [0, y, HALF + d], dir: [0, 0, -1], F: F, p: p, face: '前' });
+        out.push({ p0: [0, y, -HALF - d], dir: [0, 0, 1], F: F, p: p, face: '后' });
+      }
+      return out;
+    }
+    // 侧面水平合力（世界坐标向量）。四个面成对、同高度同压强，理论上恒为 0；
+    // 但这里是从【真正生成的箭头】累加出来的，不是写死一个 0 ——
+    // 少画一个面的箭头，它就不再是 0。
+    function sideNet() {
+      let s = [0, 0, 0];
+      for (const a of sideArrows()) s = add(s, scl(a.dir, a.F));
+      return s;
+    }
+    const sideMagnitude = () => sideArrows().reduce((t, a) => t + a.F, 0);
+
+    // 上下表面箭头代表的力之和 —— 与 Fup()/Fdown() 是两条独立的路径
+    function gridForce(pPa) {
+      let t = 0;
+      for (let i = 0; i < ARROW_N * ARROW_N; i++) t += arrowForce(pPa);
+      return t;
+    }
+
+    /* ---------------------------- 深度色带 ---------------------------- */
+    // 压强 → 颜色：浅青（表面）→ 中蓝 → 深靛（槽底）。
+    // 水柱渐变、标尺、等压线共用它，颜色深浅本身就是压强读数。
+    const RAMP = [[125, 211, 252], [37, 99, 235], [12, 26, 74]];
+    function rampRGB(p) {
+      const t = clamp(p / P_MAX, 0, 1);
+      const a = RAMP[0], b = RAMP[1], c = RAMP[2];
+      const seg = t < 0.5 ? [a, b, t / 0.5] : [b, c, (t - 0.5) / 0.5];
+      return [0, 1, 2].map(i => seg[0][i] + (seg[1][i] - seg[0][i]) * seg[2]);
+    }
+    const rampCss = (p, al) => rgba(rampRGB(p), al === undefined ? 1 : al);
+
+    /* ---------------------- 压强 ↔ 高度（唯一换算点） ----------------------
+       静止液体里 p = ρg·d，d 是【从水面往下】的深度，所以压强 p 对应的高度是
+       H_W − p/(ρg/100)（厘米）。等压线、标尺刻度、自检全走这一个函数。
+
+       ★ 这里踩过一次坑：标尺刻度曾写成 y = p/(ρg/100)，把「从水面往下量」
+         这一步漏掉了。后果是上下【翻了个个儿】——
+           700 Pa 的等压线画在 y = 12 cm，
+           而标尺上写着「700」的那根刻度线画在 y = 7 cm；
+         两套参照物对不上，而且色带是「越深越暗」（暗 = 压强大），
+         于是标尺最暗的那一段旁边赫然写着「0 Pa」，最亮的那段写着「2100 Pa」。
+         单看标尺是「数越大越往上」，单看水柱是「越深越暗」，各自都像对的，
+         只有把两者放在一起量高度才露馅 —— 所以自检 L1 断的就是【两者同一高度】。 */
+    const isobarY = p => H_W - p / (RHO * GRA / 100);
+
+    /* ---------------------------- 相机 ---------------------------- */
+    // 取景包络：用固定值而不是当前几何 —— 否则拖滑块改立方体位置，视野就一缩一放，
+    // 晃得没法用。立方体取最低/最高两个极限，保证整段行程都不出画。
+    function envelopePoints() {
+      const pts = [];
+      const x0 = -TANK_W / 2 - GLASS, x1 = TANK_W / 2 + GLASS;
+      const z0 = -TANK_D / 2 - GLASS, z1 = TANK_D / 2 + GLASS;
+      const yTop = TANK_H + GLASS;                 // 槽口沿
+      // 槽体外框（上下两圈）
+      for (const x of [x0, x1]) for (const z of [z0, z1]) pts.push([x, 0, z], [x, yTop, z]);
+      // 水面四角
+      for (const x of [-TANK_W / 2, TANK_W / 2]) for (const z of [-TANK_D / 2, TANK_D / 2]) pts.push([x, H_W, z]);
+      // 立方体的最低位与最高位（顶面）
+      pts.push([-HALF, YB_MIN, -HALF], [HALF, YB_MIN, HALF]);
+      pts.push([-HALF, YB_MAX + CUBE_A, -HALF], [HALF, YB_MAX + CUBE_A, HALF]);
+      // 标尺顶（压在画面左侧，把横向留白用掉）
+      pts.push([RULER_X - RULER_W, H_W + 2.4, 0], [RULER_X + RULER_W, H_W + 2.4, 0]);
+      // 地面留一圈余量：只给 2 cm 左右，再多就把水槽压小、底下留一大片空地板
+      for (const x of [-12, 12]) for (const z of [-10, 10]) pts.push([x, 0, z]);
+      return pts;
+    }
+
+    function makeCam(q, w, h) {
+      const cy = Math.cos(state.yaw), sy = Math.sin(state.yaw);
+      const cp = Math.cos(state.pitch), sp = Math.sin(state.pitch);
+      const dir = [cp * sy, sp, cp * cy];
+      q.dist = CAMD;                               // 距离固定，缩放交给焦距
+      q.eye = add(TARGET, scl(dir, q.dist));
+      q.fwd = scl(dir, -1);
+      q.right = vnorm(cross(q.fwd, [0, 1, 0]));
+      q.up = cross(q.right, q.fwd);
+      const pts = envelopePoints();
+      let loR = 1e9, hiR = -1e9, loU = 1e9, hiU = -1e9;
+      for (const p of pts) {
+        const v = sub(p, q.eye);
+        const z = Math.max(0.05, dot(v, q.fwd));
+        const r = dot(v, q.right) / z, u = dot(v, q.up) / z;
+        loR = Math.min(loR, r); hiR = Math.max(hiR, r);
+        loU = Math.min(loU, u); hiU = Math.max(hiU, u);
+      }
+      // ★ zoom 必须乘在【算出来的焦距】上。
+      //   若写成 q.dist = CAMD / zoom，自动取景会把缩放完全抵消掉
+      //   （距离改了 → 包络的 r/u 跟着改 → 焦距反算回来 → 画面大小几乎不动）。
+      const s = Math.min(w * 0.94 / Math.max(1e-6, hiR - loR),
+                         h * 0.90 / Math.max(1e-6, hiU - loU)) * state.zoom;
+      q.focal = s;
+      q.px = w * 0.5 - (loR + hiR) * 0.5 * s;
+      q.py = h * 0.5 + (loU + hiU) * 0.5 * s;
+      q.spanR = hiR - loR; q.spanU = hiU - loU;
+      return q;
+    }
+    function project(p, q) {
+      const v = sub(p, q.eye);
+      const z = Math.max(0.05, dot(v, q.fwd));
+      const s = q.focal / z;
+      return { x: q.px + dot(v, q.right) * s, y: q.py - dot(v, q.up) * s, s: s, z: z };
+    }
+    // 屏幕点 → 世界射线与水平面 y = planeY 的交点
+    function unproject(sx, sy, q, planeY) {
+      const dx = (sx - q.px) / q.focal;
+      const dy = -(sy - q.py) / q.focal;
+      const d = add(add(q.fwd, scl(q.right, dx)), scl(q.up, dy));
+      if (Math.abs(d[1]) < 1e-6) return null;
+      const t = ((planeY === undefined ? 0 : planeY) - q.eye[1]) / d[1];
+      if (t <= 0) return null;
+      return add(q.eye, scl(d, t));
+    }
+
+    /* ============================================================
+     * 绘图小工具
+     * ============================================================ */
+    function polyPath(pts) {
+      ctx.beginPath();
+      pts.forEach((p, k) => k ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+      ctx.closePath();
+    }
+    function poly(pts, fill, stroke, lw) {
+      if (!pts || pts.length < 2) return;
+      polyPath(pts);
+      if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+      if (stroke) { ctx.lineWidth = lw || 1; ctx.strokeStyle = stroke; ctx.stroke(); }
+    }
+    function line(pts, color, lw, dash) {
+      if (!pts || pts.length < 2) return;
+      ctx.beginPath();
+      pts.forEach((p, k) => k ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+      ctx.setLineDash(dash || []);
+      ctx.lineWidth = lw; ctx.strokeStyle = color; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+      ctx.stroke(); ctx.setLineDash([]);
+    }
+    function dot2(p, r, fill, stroke, lw) {
+      if (r <= 0.2) return;
+      ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, PI2);
+      if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+      if (stroke) { ctx.lineWidth = lw || 1; ctx.strokeStyle = stroke; ctx.stroke(); }
+    }
+    const rgb = (c, k) => {
+      const s = k === undefined ? 1 : k;
+      return 'rgb(' + Math.round(clamp(c[0] * s, 0, 255)) + ',' +
+                      Math.round(clamp(c[1] * s, 0, 255)) + ',' +
+                      Math.round(clamp(c[2] * s, 0, 255)) + ')';
+    };
+    const mix = (a, b, k) => [a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k, a[2] + (b[2] - a[2]) * k];
+    const LIGHT = vnorm([-0.36, 0.84, 0.40]);
+    const shade = (base, n, amb) => rgb(base, (amb === undefined ? 0.50 : amb) + 0.62 * Math.max(0, dot(n, LIGHT)));
+
+    /* 带竖直渐变的四边形 —— 水柱、标尺都用它。
+       渐变的两端直接取这个四边形自己的上下缘，而水柱的上下缘就是水面与槽底，
+       所以「屏幕上某点的颜色 = 该点深度处的压强」这条关系是精确的。 */
+    function gradQuad(q, world, stops, alpha, stroke, lw) {
+      const P = world.map(p => project(p, q));
+      let yTop = 1e9, yBot = -1e9;
+      for (const p of P) { yTop = Math.min(yTop, p.y); yBot = Math.max(yBot, p.y); }
+      if (yBot - yTop < 0.5) return null;
+      const g = ctx.createLinearGradient(0, yTop, 0, yBot);
+      for (const st of stops) g.addColorStop(st[0], st[1]);
+      polyPath(P);
+      ctx.globalAlpha = alpha === undefined ? 1 : alpha;
+      ctx.fillStyle = g; ctx.fill();
+      ctx.globalAlpha = 1;
+      if (stroke) { ctx.lineWidth = lw || 1; ctx.strokeStyle = stroke; ctx.stroke(); }
+      return P;
+    }
+
+    /* ---------------------------- 通用盒子 ----------------------------
+     * 八个顶点、六个面，【背面剔除】后按任意顺序画都正确（凸体）。
+     * 顶点编号：0..3 = 底面（x−z−, x+z−, x+z+, x−z+），4..7 = 顶面（同序）。
+     * 六个面从外面看逆时针排列 —— 面法线由两条边叉乘算出，不必另抄一份法线表。
+     * ------------------------------------------------------------------ */
+    const HEX_FACES = [
+      [4, 7, 6, 5],   // 0 顶 (+y)
+      [0, 1, 2, 3],   // 1 底 (−y)
+      [3, 2, 6, 7],   // 2 前 (+z)
+      [1, 0, 4, 5],   // 3 后 (−z)
+      [2, 1, 5, 6],   // 4 右 (+x)
+      [0, 3, 7, 4]    // 5 左 (−x)
+    ];
+    function hexa(q, world, base, opts) {
+      const o = opts || {};
+      const P = world.map(p => project(p, q));
+      const amb = o.amb === undefined ? 0.50 : o.amb;
+      const box = {
+        x0: 1e9, x1: -1e9, y0: 1e9, y1: -1e9,
+        wx0: 1e9, wx1: -1e9, wy0: 1e9, wy1: -1e9, wz0: 1e9, wz1: -1e9
+      };
+      for (const p of world) {
+        box.wx0 = Math.min(box.wx0, p[0]); box.wx1 = Math.max(box.wx1, p[0]);
+        box.wy0 = Math.min(box.wy0, p[1]); box.wy1 = Math.max(box.wy1, p[1]);
+        box.wz0 = Math.min(box.wz0, p[2]); box.wz1 = Math.max(box.wz1, p[2]);
+      }
+      for (let fi = 0; fi < HEX_FACES.length; fi++) {
+        const idx = HEX_FACES[fi];
+        const v0 = world[idx[0]], v1 = world[idx[1]], v2 = world[idx[2]];
+        const n = vnorm(cross(sub(v1, v0), sub(v2, v1)));
+        const fc = [0, 0, 0];
+        for (const i of idx) { fc[0] += world[i][0] / 4; fc[1] += world[i][1] / 4; fc[2] += world[i][2] / 4; }
+        if (dot(n, sub(q.eye, fc)) <= 0) continue;      // 背面剔除
+        const quad = idx.map(i => P[i]);
+        const col = o.faceColor ? o.faceColor(fi, n) : (o.flat ? rgb(base, o.k === undefined ? 1 : o.k) : shade(base, n, amb));
+        // 半透明只作用于【填充】—— 描边要留全不透明，否则立方体的棱会跟着糊掉
+        polyPath(quad);
+        if (o.alpha !== undefined) ctx.globalAlpha = o.alpha;
+        ctx.fillStyle = col; ctx.fill();
+        if (o.alpha !== undefined) ctx.globalAlpha = 1;
+        if (o.stroke) { ctx.lineWidth = o.lw || 1; ctx.strokeStyle = o.stroke; ctx.stroke(); }
+        for (const p of quad) {
+          box.x0 = Math.min(box.x0, p.x); box.x1 = Math.max(box.x1, p.x);
+          box.y0 = Math.min(box.y0, p.y); box.y1 = Math.max(box.y1, p.y);
+        }
+      }
+      return box;
+    }
+    function box3(q, cx, cy, cz, w, h, d, base, opts) {
+      const hw = w / 2, hd = d / 2;
+      return hexa(q, [
+        [cx - hw, cy, cz - hd], [cx + hw, cy, cz - hd], [cx + hw, cy, cz + hd], [cx - hw, cy, cz + hd],
+        [cx - hw, cy + h, cz - hd], [cx + hw, cy + h, cz - hd], [cx + hw, cy + h, cz + hd], [cx - hw, cy + h, cz + hd]
+      ], base, opts);
+    }
+    // 一头粗一头细的「盒」——做玻璃壁、标尺这种薄片
+    function limb3(q, p0, p1, w0, d0, w1, d1, base, opts) {
+      const h0 = w0 / 2, g0 = d0 / 2, h1 = w1 / 2, g1 = d1 / 2;
+      return hexa(q, [
+        [p0[0] - h0, p0[1], p0[2] - g0], [p0[0] + h0, p0[1], p0[2] - g0],
+        [p0[0] + h0, p0[1], p0[2] + g0], [p0[0] - h0, p0[1], p0[2] + g0],
+        [p1[0] - h1, p1[1], p1[2] - g1], [p1[0] + h1, p1[1], p1[2] - g1],
+        [p1[0] + h1, p1[1], p1[2] + g1], [p1[0] - h1, p1[1], p1[2] + g1]
+      ], base, opts);
+    }
+
+    /* ---------------------------- 标签（带避让） ---------------------------- */
+    // frameBoxes 在每帧开头装进【舞台上的 DOM 浮层】（提示框、按钮条），
+    // 再一路累积已画标签的盒子 —— 标签既要互相避让，也不能压在浮层上。
+    let frameBoxes = [];
+    // 固定参照物的文字（等压线、标尺刻度）先【入队】，等所有几何画完再统一落笔。
+    // 当场画的话会被后面画的立方体、箭头、玻璃压住 —— 刻度被拦腰截断是常见事故。
+    // 本页这两个固定参照物都立在水槽【外面】，实测「当场画」只影响 11 个标签里的 2 个
+    // （盒内平均亮度 62→105），所以这一条在本页是【守规矩】而不是救火；
+    // 自检覆盖的是真正会出事的那条 —— 标签之间的避让（见 bestLabel）。
+    let pendingLabels = [];
+    const queueLabel = (p, text, color, size, align) => pendingLabels.push({ p: p, text: text, color: color, size: size, align: align });
+    const flushLabels = () => { for (const L of pendingLabels) label(L.p, L.text, L.color, L.size, L.align); };
+    function uiBoxes() {
+      const sr = stage.getBoundingClientRect();
+      const out = [];
+      for (const sel of ['.stage-hint', '.bar-left', '.stage-help', '.stage-toast', '.stage-flag', '.stage-views']) {
+        const el = stage.querySelector(sel);
+        if (!el) continue;
+        const st2 = getComputedStyle(el);
+        if (st2.display === 'none' || st2.visibility === 'hidden') continue;
+        // 带 .show 的浮层（toast / flag）是淡入的：正在过渡时 opacity 还接近 0，
+        // 只看 opacity 会把它判成「不存在」，标签就落到它下面，等它淡入完再被压住。
+        // 判据用「有没有 .show 这个类」，而不是「此刻透明度是多少」。
+        if (parseFloat(st2.opacity || '1') < 0.05 && !el.classList.contains('show')) continue;
+        const r = el.getBoundingClientRect();
+        if (r.width < 1 || r.height < 1) continue;
+        out.push({ x: r.left - sr.left, y: r.top - sr.top, w: r.width, h: r.height });
+      }
+      return out;
+    }
+    function labelBox(p, text, size, align) {
+      ctx.font = '800 ' + size + 'px Inter, "Microsoft YaHei", sans-serif';
+      const wpx = ctx.measureText(text).width;
+      const pad = 4;
+      const half = size * 0.72 + pad * 0.5;
+      const wBox = wpx + pad * 2;
+      const EDGE = 8;
+      const y = clamp(p.y, half + EDGE, Math.max(half + EDGE, state.h - half - EDGE));
+      let bx = align === 'left' ? p.x - 4 - pad
+             : align === 'right' ? p.x + 4 - wpx - pad
+             : p.x - wpx / 2 - pad;
+      // 推回画布内：光路/端点常落在画面外，不推回来会被裁掉半个字
+      bx = clamp(bx, EDGE, Math.max(EDGE, state.w - wBox - EDGE));
+      return { x: bx, y: y - half, w: wBox, h: half * 2, cx: bx + wBox / 2, cy: y };
+    }
+    function label(p, text, color, size, align) {
+      ctx.font = '800 ' + size + 'px Inter, "Microsoft YaHei", sans-serif';
+      ctx.textAlign = align || 'center';
+      ctx.textBaseline = 'middle';
+      const pad = 4;
+      const wpx = ctx.measureText(text).width;
+      const b = labelBox(p, text, size, align);
+      const x = align === 'left' ? b.x + pad : align === 'right' ? b.x + wpx + pad : b.cx;
+      ctx.fillStyle = 'rgba(2,6,23,.76)';
+      ctx.fillRect(b.x, b.y, b.w, b.h);
+      ctx.fillStyle = color;
+      ctx.fillText(text, x, b.cy);
+      frameBoxes.push(b);
+      return b;
+    }
+    function bestLabel(anchor, text, color, size, offs) {
+      let best = null, bestOv = 1e18;
+      for (const o of offs) {
+        const b = labelBox({ x: anchor.x + o[0], y: anchor.y + o[1] }, text, size, 'center');
+        let ov = 0;
+        for (const q of frameBoxes) {
+          const ox = Math.min(b.x + b.w, q.x + q.w) - Math.max(b.x, q.x);
+          const oy = Math.min(b.y + b.h, q.y + q.h) - Math.max(b.y, q.y);
+          if (ox > 0 && oy > 0) ov += ox * oy;
+        }
+        if (ov < bestOv) { bestOv = ov; best = { x: anchor.x + o[0], y: anchor.y + o[1] }; }
+      }
+      label(best, text, color, size, 'center');
+      return bestOv;
+    }
+    const AVOID = [[0, 0], [0, -16], [0, 16], [0, -32], [0, 32],
+                   [-46, -16], [46, -16], [-46, 16], [46, 16], [0, -48], [0, 48]];
+    const avoidLabel = (anchor, text, color, size) => bestLabel(anchor, text, color, size, AVOID);
+
+    /* ============================================================
+     * 场景绘制
+     * ============================================================ */
+    function drawBackdrop(w, h) {
+      const g = ctx.createLinearGradient(0, 0, 0, h);
+      g.addColorStop(0, '#040b18');
+      g.addColorStop(0.55, '#061223');
+      g.addColorStop(1, '#02060f');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, w, h);
+    }
+
+    /* ---------------------------- 地面 ---------------------------- */
+    function drawFloor(q) {
+      const h = FLOOR;
+      poly([project([-h, 0, -h], q), project([h, 0, -h], q),
+            project([h, 0, h], q), project([-h, 0, h], q)], 'rgba(13,21,36,.92)');
+      // 网格每 10 cm 一条 —— 给水槽和标尺一个尺度参照
+      for (let x = -h; x <= h; x += 10) {
+        line([project([x, 0, -h], q), project([x, 0, h], q)], 'rgba(148,163,184,.055)', 1);
+      }
+      for (let z = -h; z <= h; z += 10) {
+        line([project([-h, 0, z], q), project([h, 0, z], q)], 'rgba(148,163,184,.045)', 1);
+      }
+      // 水槽底下那一片被水照亮的光斑 —— 让水槽「站」在地上，而不是浮在空中
+      const c = project([0, 0, 0], q);
+      const rr = Math.max(14, 30 * (c.s || 1));
+      const rg = ctx.createRadialGradient(c.x, c.y, 0, c.x, c.y, rr);
+      rg.addColorStop(0, 'rgba(125,211,252,.20)');
+      rg.addColorStop(0.55, 'rgba(56,189,248,.07)');
+      rg.addColorStop(1, 'rgba(56,189,248,0)');
+      ctx.fillStyle = rg;
+      ctx.fillRect(c.x - rr, c.y - rr * 0.55, rr * 2, rr * 1.1);
+    }
+
+    /* ---------------------------- 水槽（玻璃） ---------------------------- */
+    // 内壁：x ∈ ±TANK_W/2，z ∈ ±TANK_D/2，y ∈ [0, TANK_H]
+    const T_X = TANK_W / 2, T_Z = TANK_D / 2;
+    const T_XO = T_X + GLASS, T_ZO = T_Z + GLASS, T_HO = TANK_H + GLASS;
+
+    function drawTankBack(q) {
+      // 后内壁：整面做成深度色带（压强随深度加深）—— 这是本页的视觉主体。
+      // alpha 给到 0.92：色带被后面一层层半透明叠上去会【被平均掉】，
+      // 层数一多，深浅就看不出来了（第一版就是这样，整槽一片均匀的浅蓝）。
+      gradQuad(q,
+        [[-T_X, H_W, -T_Z], [T_X, H_W, -T_Z], [T_X, 0, -T_Z], [-T_X, 0, -T_Z]],
+        [[0, rampCss(0)], [0.5, rampCss(P_MAX * 0.5)], [1, rampCss(P_MAX)]], 0.92);
+      // 槽底
+      poly([project([-T_X, 0, -T_Z], q), project([T_X, 0, -T_Z], q),
+            project([T_X, 0, T_Z], q), project([-T_X, 0, T_Z], q)], rampCss(P_MAX, 0.95));
+      // 水面以上那一段玻璃（后内壁 + 左右内壁），淡淡一层
+      poly([project([-T_X, TANK_H, -T_Z], q), project([T_X, TANK_H, -T_Z], q),
+            project([T_X, H_W, -T_Z], q), project([-T_X, H_W, -T_Z], q)], 'rgba(148,163,184,.10)');
+      poly([project([-T_X, TANK_H, -T_Z], q), project([-T_X, TANK_H, T_Z], q),
+            project([-T_X, H_W, T_Z], q), project([-T_X, H_W, -T_Z], q)], 'rgba(148,163,184,.08)');
+      poly([project([T_X, TANK_H, -T_Z], q), project([T_X, TANK_H, T_Z], q),
+            project([T_X, H_W, T_Z], q), project([T_X, H_W, -T_Z], q)], 'rgba(148,163,184,.08)');
+    }
+
+    // 等压线：静止液体里同一深度的压强处处相等，所以等压面就是水平面。
+    // 画在后内壁上，配一条压强的读数 —— 深度色带从「好看」变成「能读」。
+    const ISOBAR_P = [700, 1400];
+    function drawIsobars(q) {
+      // 把「等压线画在哪」记下来 —— 自检要拿它和标尺刻度【逐条对高度】。
+      // 两个函数各画各的，只有把它们真正落笔的位置比一遍，
+      // 才抓得住「其中一个换算了、另一个没换」这种翻车（自检 L1）。
+      state.drawn.isobars = [];
+      for (const p of ISOBAR_P) {
+        const y = isobarY(p);                      // 该压强对应的高度（唯一换算点）
+        if (y <= 0.5 || y >= H_W - 0.5) continue;
+        // 等压线本身【不用色带色】：700 Pa 那档的蓝跟水柱中段的蓝几乎同色，
+        // 画上去等于没画。它是参照物，就用浅灰白，靠对比度读出来。
+        line([project([-T_X, y, -T_Z], q), project([T_X, y, -T_Z], q)],
+             'rgba(226,232,240,.72)', 1.4, [5, 4]);
+        const a = project([T_X, y, -T_Z], q);
+        // 标签放在线【内侧】（右端往左排）—— 放外侧会飘到槽壁右边，
+        // 跟那条虚线脱开，看着像两个不相干的东西
+        queueLabel({ x: a.x - 8, y: a.y }, fmt(p, 0) + ' Pa', 'rgba(226,232,240,.92)', 10, 'right');
+        state.drawn.isobars.push({ p: p, ycm: y, sy: a.y, sx: a.x });
+      }
+    }
+
+    /* ---------------------------- 水（半透明体） ---------------------------- */
+    // 面是否朝向相机 —— 半透明体不能把背面也涂上去：
+    // 左内壁在默认视角是【背面】，涂上去会把后壁的色带整片洗淡。
+    const facing = (q, p, n) => dot(n, sub(q.eye, p)) > 0;
+    // 水的后半：渐变实体。深度色带在这一层最完整。
+    // 前壁【不在这里画】—— 它在立方体前面，画在这里会把立方体盖住；
+    // 前壁留给 drawWaterFront 做一层薄薄的「水膜」。
+    function drawWaterBack(q) {
+      if (facing(q, [-T_X, 0, 0], [-1, 0, 0])) {
+        gradQuad(q, [[-T_X, H_W, -T_Z], [-T_X, H_W, T_Z], [-T_X, 0, T_Z], [-T_X, 0, -T_Z]],
+                 [[0, rampCss(0, .52)], [1, rampCss(P_MAX, .52)]], 1);
+      }
+      if (facing(q, [T_X, 0, 0], [1, 0, 0])) {
+        gradQuad(q, [[T_X, H_W, -T_Z], [T_X, H_W, T_Z], [T_X, 0, T_Z], [T_X, 0, -T_Z]],
+                 [[0, rampCss(0, .52)], [1, rampCss(P_MAX, .52)]], 1);
+      }
+      // 水面：一个略微起伏的亮面 + 高光。
+      // 两条边必须分别落在【后壁】与【前壁】上 —— 都取 z≈0 的话，
+      // 多边形只盖住水面的一半，另一半是空的。
+      const rip = 0.16 * Math.sin(state.t * 1.1);
+      const pts = [];
+      const N = 14;
+      for (let i = 0; i <= N; i++) {
+        const u = i / N;
+        const x = -T_X + TANK_W * u;
+        pts.push([x, H_W, -T_Z + Math.sin(u * 6.4 + state.t * 1.4) * rip]);
+      }
+      for (let i = N; i >= 0; i--) {
+        const u = i / N;
+        const x = -T_X + TANK_W * u;
+        pts.push([x, H_W, T_Z + Math.sin(u * 5.2 - state.t * 1.2) * rip]);
+      }
+      const pj = pts.map(p => project(p, q));
+      // ★ 水面这一层不能太淡。只给 .24 时，俯视（「俯视：看上下表面」那个视角）
+      //   往下看到的是槽底的深靛色 + 后壁的色带，整槽像空的 —— 水看不出有体积。
+      //   真实水面本来就有反射，给到 .42 后俯视能看见一整片亮面。
+      //   上限也受约束：再亮下去，水柱上部会靠近「F向下」那支箭头的蓝，
+      //   I4 的像素计数就会把水算成箭头（见 test.js 里容差 14 的那段注释）。
+      poly(pj, 'rgba(186,230,253,.42)', 'rgba(224,242,254,.72)', 1.3);
+    }
+    // 水的前半：薄薄一层压在立方体和箭头上，做出「泡在水里」的观感。
+    // 只画前面这一片，不重画整个水柱 —— 否则会把箭头洗淡。
+    function drawWaterFront(q) {
+      gradQuad(q, [[-T_X, H_W, T_Z], [T_X, H_W, T_Z], [T_X, 0, T_Z], [-T_X, 0, T_Z]],
+               [[0, 'rgba(125,211,252,.04)'], [0.5, 'rgba(59,130,246,.06)'], [1, 'rgba(30,58,138,.10)']], 1);
+      // 水面高光扫过（很淡，只是让水面「活」起来）
+      const sh = 0.5 + 0.5 * Math.sin(state.t * 0.6);
+      const x0 = -T_X + TANK_W * sh * 0.7;
+      poly([project([x0, H_W, -T_Z], q), project([x0 + 5, H_W, -T_Z], q),
+            project([x0 + 5, H_W, T_Z], q), project([x0, H_W, T_Z], q)], 'rgba(224,242,254,.10)');
+    }
+
+    /* ---------------------------- 压强标尺 ---------------------------- */
+    // 立在台面左侧的一根色柱：颜色和水柱用同一份 rampCss，刻度是压强值。
+    // 作用有两个 —— 把「颜色 = 压强」这层意思说明白；把画面左侧的空白填掉。
+    //
+    // ★ 刻度值【必须和水深对得上】：标尺站在槽底旁边，柱身 0→H_W 就是槽底→水面，
+    //   所以刻度要用 isobarY(p) 定位，和等压线同一高度、同一份换算。
+    //   刻度表取 [0, 700, 1400, 1900]：1900 Pa 正好是 19 cm 水深的最大压强（P_MAX），
+    //   于是最下面那根刻度就落在槽底、最上面那根落在水面 —— 刻度范围 = 水柱范围。
+    //   曾经写成 2100 且用 y = p/(ρg/100) 定位：2100 Pa 对应 21 cm，
+    //   比水面还高 2 cm，刻度飘在柱身之外的「空段」里，而整张表是上下颠倒的。
+    const RULER_TICK = [0, 700, 1400, 1900];
+    function drawRuler(q) {
+      const x0 = RULER_X - RULER_W / 2, x1 = RULER_X + RULER_W / 2;
+      const z0 = -RULER_D / 2, z1 = RULER_D / 2;
+      const yTop = H_W + 2.4;
+      // 柱身：从 0 到 H_W 用色带，顶上一段是空的（让标尺像块立牌，高出水面一截）
+      gradQuad(q, [[x0, H_W, z1], [x1, H_W, z1], [x1, 0, z1], [x0, 0, z1]],
+               [[0, rampCss(0)], [0.5, rampCss(P_MAX * 0.5)], [1, rampCss(P_MAX)]], 1,
+               'rgba(148,163,184,.5)', 1);
+      // 侧面（厚度感）
+      poly([project([x1, H_W, z1], q), project([x1, H_W, z0], q),
+            project([x1, 0, z0], q), project([x1, 0, z1], q)], rampCss(P_MAX * 0.75, 0.9));
+      // 空段
+      poly([project([x0, yTop, z1], q), project([x1, yTop, z1], q),
+            project([x1, H_W, z1], q), project([x0, H_W, z1], q)], 'rgba(148,163,184,.10)');
+      // 刻度：与等压线【同一高度】
+      state.drawn.rulerTicks = [];
+      for (const p of RULER_TICK) {
+        const y = isobarY(p);
+        line([project([x0 - 1.2, y, z1], q), project([x0, y, z1], q)], 'rgba(226,232,240,.75)', 1.6);
+        const a = project([x0 - 1.4, y, z1], q);
+        queueLabel({ x: a.x - 5, y: a.y }, String(p), 'rgba(203,213,225,.92)', 10, 'right');
+        state.drawn.rulerTicks.push({ p: p, ycm: y, sy: a.y, sx: a.x });
+      }
+      // 柱顶的小箭头，指向【下方】—— 越往下压强越大
+      const a0 = project([RULER_X, yTop - 1.0, z1], q);
+      const a1 = project([RULER_X, yTop - 2.6, z1], q);
+      arrowSeg(a0, a1, 'rgba(224,242,254,.75)', 1.6, 7);
+      state.drawn.ruler = { yTop: yTop, x: RULER_X };
+    }
+
+    /* ---------------------------- 立方体 ---------------------------- */
+    // 六个面按显示模式换底色：下表面（−y）朝 F向上 的暖红，上表面（+y）朝 F向下 的冷蓝，
+    // 四个侧面在「只看侧面」模式下朝紫。面高亮 = 这个面正在「受力」。
+    function faceColorFor(fi, n) {
+      const hi = 0.62, dim = 0.16;
+      if (state.mode === 'side') {
+        // 「只看侧面」模式下立方体【保持中性】—— 四个侧面一起染紫的话，
+        // 整个立方体变成一块淡紫玻璃，反而把紫箭头压没了。
+        return shade(C_CUBE, n, 0.52);
+      }
+      if (fi === 1) {   // 底面
+        if (state.mode === 'down') return shade(mix(C_CUBE, C_UP, dim), n, 0.52);
+        return shade(mix(C_CUBE, C_UP, hi), n, 0.52);
+      }
+      if (fi === 0) {   // 顶面
+        if (state.mode === 'up') return shade(mix(C_CUBE, C_DN, dim), n, 0.52);
+        return shade(mix(C_CUBE, C_DN, hi), n, 0.52);
+      }
+      return shade(C_CUBE, n, 0.52);
+    }
+    function cubeWorld() {
+      const yb = state.yb, yt = yb + CUBE_A;
+      return [
+        [-HALF, yb, -HALF], [HALF, yb, -HALF], [HALF, yb, HALF], [-HALF, yb, HALF],
+        [-HALF, yt, -HALF], [HALF, yt, -HALF], [HALF, yt, HALF], [-HALF, yt, HALF]
+      ];
+    }
+    function drawCube(q) {
+      // 立方体做成【半透明】的：箭头要画在它内部（下表面朝上、上表面朝下），
+      // 不透明的话箭头全被前表面盖住，只剩一堆贴在面上的短线。
+      const box = hexa(q, cubeWorld(), C_CUBE,
+        { faceColor: faceColorFor, stroke: 'rgba(226,232,240,.45)', lw: 1.2, alpha: 0.80 });
+      state.drawn.cubeBox = box;
+      // 密合槽底：立方体下面那一层是干的 —— 画一条近黑的缝，把「下面没有液体」画出来
+      if (isSealed()) {
+        const y = state.yb;
+        poly([project([-HALF, y, -HALF], q), project([HALF, y, -HALF], q),
+              project([HALF, y - 0.9, -HALF], q), project([-HALF, y - 0.9, -HALF], q)], 'rgba(2,6,23,.96)');
+        poly([project([-HALF, y, HALF], q), project([HALF, y, HALF], q),
+              project([HALF, y - 0.9, HALF], q), project([-HALF, y - 0.9, HALF], q)], 'rgba(2,6,23,.96)');
+        poly([project([-HALF, y, -HALF], q), project([-HALF, y, HALF], q),
+              project([-HALF, y - 0.9, HALF], q), project([-HALF, y - 0.9, -HALF], q)], 'rgba(2,6,23,.96)');
+        poly([project([HALF, y, -HALF], q), project([HALF, y, HALF], q),
+              project([HALF, y - 0.9, HALF], q), project([HALF, y - 0.9, -HALF], q)], 'rgba(2,6,23,.96)');
+      }
+    }
+
+    /* ---------------------------- 箭头 ---------------------------- */
+    // 带箭头的线段。返回屏幕上的两端点，供自检量「这支箭头到底画出来没有」。
+    // 画两遍：先一条深色描边，再上彩色 —— 箭头压在浅蓝的水柱和半透明的立方体上，
+    // 只画一遍的话细箭头会糊进背景（实测红色箭头在浅蓝水面上几乎看不见）。
+    function arrowSeg(a, b, color, lw, headPx) {
+      if (!a || !b) return null;
+      const dx = b.x - a.x, dy = b.y - a.y;
+      const L = Math.hypot(dx, dy);
+      const rec = { x0: a.x, y0: a.y, x1: b.x, y1: b.y, len: L };
+      // 箭头几乎【正对视线】时投影只剩几个像素，画成三角会变成一个色块。
+      // 这种情况改画「⊙」—— 物理图里「垂直纸面向外」的约定画法。
+      if (L < 8) {
+        const c = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+        ctx.beginPath(); ctx.arc(c.x, c.y, 5, 0, PI2);
+        ctx.fillStyle = 'rgba(2,6,23,.62)'; ctx.fill();
+        ctx.beginPath(); ctx.arc(c.x, c.y, 5, 0, PI2);
+        ctx.lineWidth = 2.2; ctx.strokeStyle = color; ctx.stroke();
+        dot2(c, 1.9, color);
+        rec.degenerate = true;
+        return rec;
+      }
+      const ux = dx / L, uy = dy / L;
+      const hp = Math.min(headPx, L * 0.5);
+      const tip = { x: b.x, y: b.y };
+      const shaftEnd = { x: b.x - ux * hp * 0.9, y: b.y - uy * hp * 0.9 };
+      const wing = (sgn) => ({ x: b.x - ux * hp + sgn * uy * hp * 0.46, y: b.y - uy * hp - sgn * ux * hp * 0.46 });
+      // 深色描边
+      line([a, shaftEnd], 'rgba(2,6,23,.62)', lw + 2.6);
+      poly([tip, wing(1), wing(-1)], 'rgba(2,6,23,.62)');
+      // 彩色本体
+      line([a, shaftEnd], color, lw);
+      poly([tip, wing(1), wing(-1)], color);
+      return rec;
+    }
+    // 在【世界坐标】里画一支箭头：从 p0 沿 dir 走 len（cm）
+    function arrow3(q, p0, dir, len, color, lw, headPx) {
+      const p1 = add(p0, scl(vnorm(dir), len));
+      return arrowSeg(project(p0, q), project(p1, q), color, lw, headPx);
+    }
+
+    // 侧面箭头分两批画：背面那一支在立方体【后面】，必须赶在立方体之前落笔，
+    // 否则它会浮到立方体前面（半透明立方体下尤其明显，像贴在玻璃上）。
+    function drawSideArrows(q, isBack) {
+      if (!(state.mode === 'all' || state.mode === 'side')) return [];
+      const col = rgb(C_SIDE, 1);
+      const out = [];
+      for (const a of sideArrows()) {
+        if ((a.face === '后') !== !!isBack) continue;
+        const s = arrow3(q, a.p0, a.dir, arrowLen(a.p), col, 2.4, 8);
+        if (s) out.push(s);
+      }
+      return out;
+    }
+
+    function drawArrows(q, segSideBack) {
+      const yb = state.yb, yt = yb + CUBE_A;
+      const segs = { up: [], down: [], side: (segSideBack || []).slice() };
+      const showUp = (state.mode === 'all' || state.mode === 'up');
+      const showDn = (state.mode === 'all' || state.mode === 'down');
+      const showSd = (state.mode === 'all' || state.mode === 'side');
+
+      // ── 下表面：3×3 支，都朝上（液体托着它）──
+      if (showUp && !isSealed()) {
+        const L = arrowLen(pDown());
+        const col = rgb(C_UP, 1);
+        for (let i = 0; i < ARROW_N; i++) for (let j = 0; j < ARROW_N; j++) {
+          const x = -HALF + CUBE_A * (i + 0.5) / ARROW_N;
+          const z = -HALF + CUBE_A * (j + 0.5) / ARROW_N;
+          const s = arrow3(q, [x, yb + 0.12, z], [0, 1, 0], L, col, 2.2, 8);
+          if (s) segs.up.push(s);
+        }
+      }
+      // ── 上表面：3×3 支，都朝下 ──
+      if (showDn) {
+        const L = arrowLen(pUp());
+        const col = rgb(C_DN, 1);
+        for (let i = 0; i < ARROW_N; i++) for (let j = 0; j < ARROW_N; j++) {
+          const x = -HALF + CUBE_A * (i + 0.5) / ARROW_N;
+          const z = -HALF + CUBE_A * (j + 0.5) / ARROW_N;
+          const s = arrow3(q, [x, yt - 0.12, z], [0, -1, 0], L, col, 2.2, 8);
+          if (s) segs.down.push(s);
+        }
+      }
+      // ── 四个侧面：每个面 2×2 支，一律【指向立方体内部】──
+      // 同一高度、相对的两个面压强相同 → 大小相等、方向相反 → 两两抵消。
+      if (showSd) {
+        const col = rgb(C_SIDE, 1);
+        for (const a of sideArrows()) {
+          if (a.face === '后') continue;          // 背面那一支已经在 drawSideArrows 里画过
+          const s = arrow3(q, a.p0, a.dir, arrowLen(a.p), col, 2.4, 8);
+          if (s) segs.side.push(s);
+        }
+      }
+      state.drawn.arrowSegs = segs;
+      state.drawn.arrowCount = { up: segs.up.length, down: segs.down.length, side: segs.side.length };
+    }
+
+    /* ---------------------------- 玻璃槽的棱 ---------------------------- */
+    function drawTankGlass(q) {
+      const yTop = T_HO;
+      const V = [
+        [-T_XO, -T_ZO], [T_XO, -T_ZO], [T_XO, T_ZO], [-T_XO, T_ZO]
+      ];
+      // 四条竖棱
+      for (const [x, z] of V) {
+        line([project([x, 0, z], q), project([x, yTop, z], q)], 'rgba(186,230,253,.30)', 1.4);
+      }
+      // 槽口沿（外圈）—— 玻璃的「边」，让水槽一眼看出是个容器
+      const rim = V.map(([x, z]) => project([x, yTop, z], q));
+      line([rim[0], rim[1], rim[2], rim[3], rim[0]], 'rgba(186,230,253,.46)', 1.8);
+      // 底沿
+      const bot = V.map(([x, z]) => project([x, 0, z], q));
+      line([bot[0], bot[1], bot[2], bot[3], bot[0]], 'rgba(148,163,184,.28)', 1.3);
+      // 前玻璃上一道竖向高光
+      line([project([T_X * 0.42, 1.4, T_ZO], q), project([T_X * 0.42, TANK_H * 0.94, T_ZO], q)],
+           'rgba(224,242,254,.13)', 5);
+    }
+
+    /* ---------------------------- 主渲染 ---------------------------- */
+    function render() {
+      const w = state.w, h = state.h;
+      ctx.setTransform(state.dpr, 0, 0, state.dpr, 0, 0);
+      // 每帧开头：先把舞台上的 DOM 浮层当作障碍物，再累积标签盒子
+      const ui = uiBoxes();
+      frameBoxes = ui.slice();
+      pendingLabels = [];
+      state.drawn = {};
+      state.drawn.uiBoxes = ui.map(b => ({ x0: b.x, x1: b.x + b.w, y0: b.y, y1: b.y + b.h }));
+      const q = {};
+      makeCam(q, w, h);
+
+      drawBackdrop(w, h);
+      drawFloor(q);
+      drawTankBack(q);
+      drawIsobars(q);
+      drawWaterBack(q);
+      drawRuler(q);
+      // 背面那两支侧面箭头在立方体后面 —— 先落笔
+      const segSideBack = drawSideArrows(q, true);
+      drawCube(q);
+      // 水膜压在【立方体】上（做出泡在水里的观感），但要在箭头【之前】——
+      // 反过来的话箭头会被这层半透明蒙一遍，红色不再纯红，像素判据跟着失真。
+      drawWaterFront(q);
+      drawArrows(q, segSideBack);
+      drawTankGlass(q);
+
+      /* ── 标签：所有几何（含后画的玻璃）都画完之后才落笔 ── */
+      // 固定参照物（等压线、标尺刻度）先落，位置不许挪；随状态变的标签再避让它们。
+      flushLabels();
+      const A = state.drawn.arrowSegs || { up: [], down: [], side: [] };
+      const sealed = isSealed();
+      const pTop = project([0, state.yb + CUBE_A, 0], q);
+      const pBot = project([0, state.yb, 0], q);
+
+      if (!sealed && A.up.length) {
+        avoidLabel({ x: pBot.x, y: pBot.y + 22 },
+                   'F向上 ' + fmt(Fup(), 1) + ' N', rgb(C_UP, 1), 11);
+      }
+      if (A.down.length) {
+        avoidLabel({ x: pTop.x, y: pTop.y - 22 },
+                   'F向下 ' + fmt(Fdown(), 1) + ' N', rgb(C_DN, 1), 11);
+      }
+      if (A.side.length) {
+        // 锚在【右面那支箭头的尖端】上：锚到立方体右前方的空水里，
+        // 避让一挪就掉到水槽底部，跟紫色箭头完全脱开。
+        const s = project([HALF + 0.6, state.yb + CUBE_A * 0.74, 0], q);
+        avoidLabel({ x: s.x, y: s.y }, '侧面：两两抵消 = 0', rgb(C_SIDE, 1), 10);
+      }
+      if (sealed) {
+        const s = project([0, state.yb + 1.2, HALF + 2.5], q);
+        avoidLabel({ x: s.x, y: s.y }, '下方没有液体 → F向上 = 0', '#fca5a5', 11);
+      }
+      // 水面：锚在【右内壁的水线】上。锚在水面前缘的话，投影落点就在立方体
+      // 正上方那一带，避让算法再一挪，标签会飘到立方体头顶，读不出指的是哪条线。
+      const wl = project([T_X, H_W, 0], q);
+      avoidLabel({ x: wl.x + 20, y: wl.y - 11 }, '水面', 'rgba(224,242,254,.9)', 10);
+      // 标尺名
+      const rt = project([RULER_X, H_W + 2.0, T_Z], q);
+      avoidLabel({ x: rt.x, y: rt.y - 12 }, '液体压强', 'rgba(186,230,253,.85)', 10);
+
+      updateHint();
+      drawTip(q);
+      updateStageButtons();
+      // 本帧所有标签的屏幕盒子。暴露出去是为了让自检做像素差分时能把标签整块
+      // 排除 —— 标签位置由避让算法挑，改一个模式就可能挪一格，不排除的话
+      // 差分量里混进来的是「文字搬家」而不是「箭头变了」。
+      // 分成 uiBoxes（DOM 浮层）与 textBoxes（画布文字）两份 —— 自检要能分别断言
+      // 「文字没有压在浮层上」，混在一起就只能自己压自己。
+      state.drawn.labelBoxes = frameBoxes.map(b => ({ x0: b.x, x1: b.x + b.w, y0: b.y, y1: b.y + b.h }));
+      state.drawn.textBoxes = frameBoxes.slice(ui.length)
+        .map(b => ({ x0: b.x, x1: b.x + b.w, y0: b.y, y1: b.y + b.h }));
+    }
+
+    /* ---------------------------- 悬浮提示 ---------------------------- */
+    function drawTip(q) {
+      const tip = $('bu-tip');
+      if (!tip) return;
+      if (state.hover === 'cube') {
+        const b = state.drawn.cubeBox;
+        if (b) {
+          tip.textContent = '拖动我：改变浸入深度';
+          tip.style.left = clamp(b.x1 + 8, 0, Math.max(0, state.w - 150)) + 'px';
+          tip.style.top = clamp((b.y0 + b.y1) / 2 - 12, 0, Math.max(0, state.h - 26)) + 'px';
+          tip.classList.add('show');
+          return;
+        }
+      }
+      tip.classList.remove('show');
+    }
+    function updateHint() {
+      const el = $('bu-hint');
+      if (!el) return;
+      // ★ 贴底密合时【不能】再念「蓝比红小，差就是浮力」—— 那一刻根本没有红色箭头，
+      //   照着念等于教错。提示必须跟着状态走（和侧栏那句 bu-yb-note 同一个判断）。
+      if (state.mode === 'all' && isSealed()) {
+        el.innerHTML = '下表面<b>密合</b>槽底，下面进不去液体 —— <b>没有向上</b>的压力，' +
+          '只剩上表面往下压的 <b>' + fmt(Fdown(), 1) + ' N</b>，浮力为 <b>0</b>。';
+        return;
+      }
+      const m = {
+        all:  '上表面朝<b>下</b>的压力（蓝）比下表面朝<b>上</b>的压力（红）<b>小</b>，差就是浮力。',
+        down: '只画上表面：液体把它<b>往下压</b> —— F向下 = ' + fmt(Fdown(), 1) + ' N。',
+        up:   '只画下表面：液体把它<b>往上托</b> —— F向上 = ' + fmt(Fup(), 1) + ' N。',
+        side: '四个侧面上的压力<b>成对</b>出现：大小相等、方向相反，<b>合力 = 0</b>。'
+      };
+      el.innerHTML = m[state.mode] || m.all;
+    }
+    function updateStageButtons() {
+      const btn = $('bu-auto');
+      if (btn) {
+        btn.classList.toggle('on', state.auto);
+        btn.textContent = state.auto
+          ? (state.autoPhase === 'up' ? '自动演示：提起来…' : '自动演示：沉下去…')
+          : '自动演示：沉下去';
+      }
+      const rc = $('bu-record-cnt');
+      if (rc) rc.textContent = String(state.marks.length);
+      const f = $('bu-flag');
+      if (f) f.classList.toggle('show', isSealed());
+    }
+
+    /* ---------------------------- 读数 / 账本 ---------------------------- */
+    function syncUI() {
+      const sealed = isSealed();
+      $('bu-yb-num').textContent = fmt(state.yb, 1) + ' cm';
+      $('bu-hd').textContent = fmt(hDown(), 1) + ' cm';
+      $('bu-hu').textContent = fmt(hUp(), 1) + ' cm';
+      $('bu-pd').textContent = fmt(pDown(), 0) + ' Pa';
+      $('bu-pu').textContent = fmt(pUp(), 0) + ' Pa';
+      $('bu-fup').textContent = fmt(Fup(), 1);
+      $('bu-fdn').textContent = fmt(Fdown(), 1);
+      $('bu-fb').textContent = fmt(Fbuoy(), 1);
+      $('bu-arch').textContent = fmt(Farch(), 1) + ' N';
+      $('bu-fb-row').classList.toggle('zero', sealed);
+
+      const pill = $('bu-pos-pill');
+      pill.textContent = sealed ? '密合槽底' : '浸没在水中';
+      pill.className = 'pill' + (sealed ? ' live' : '');
+      const fp = $('bu-fb-pill');
+      fp.textContent = fmt(Fbuoy(), 1) + ' N';
+      fp.className = 'pill' + (sealed ? ' live' : ' ok');
+
+      $('bu-yb-note').innerHTML = sealed
+        ? '下表面<b>密合</b>在槽底，下面进不去液体 —— 没有向上的压力，<b>浮力消失</b>。'
+        : '完全浸没：上下表面压强差 × 底面积 = <b>' + fmt(Fbuoy(), 1) + ' N</b>，与 ρ<sub>液</sub>gV<sub>排</sub> 一致。';
+
+      // 色标：颜色与水柱渐变换算自同一份 rampCss
+      const bar = $('bu-pbar');
+      const stops = [];
+      for (let i = 0; i <= 10; i++) {
+        const p = P_MAX * i / 10;
+        stops.push(rampCss(p) + ' ' + (100 - i * 10) + '%');
+      }
+      bar.style.background = 'linear-gradient(180deg,' + stops.join(',') + ')';
+      bar.style.height = '62px';
+      // 刻度由 RULER_TICK 生成（与画面里的标尺、等压线同一份数据）。
+      // ★ 顺序【不要 reverse】：色标顶端是浅青 = 压强小，底端是深靛 = 压强大，
+      //   所以从上到下必须是由小到大。以前反着排，最暗的那格旁边写着 2100。
+      const ticks = $('bu-pticks');
+      if (ticks && !ticks.childElementCount) {
+        ticks.innerHTML = RULER_TICK.map(p => '<span>' + p + '</span>').join('');
+      }
+
+      const note = $('bu-mode-note');
+      const modeNote = {
+        all:  '三个方向的箭头同时画出来。红色向上、蓝色向下、紫色水平。',
+        down: '把下表面的箭头收起来，只看上表面受到的压力。',
+        up:   '把上表面的箭头收起来，只看下表面受到的压力。',
+        side: '只留四个侧面 —— 切到「正对」视角，看它们怎么两两抵消。'
+      };
+      note.textContent = modeNote[state.mode] || modeNote.all;
+
+      document.querySelectorAll('[data-mode]').forEach(b => {
+        b.classList.toggle('primary', b.getAttribute('data-mode') === state.mode);
+      });
+      document.querySelectorAll('[data-view]').forEach(b => {
+        b.classList.toggle('primary', b.getAttribute('data-view') === state.view);
+      });
+      const sl = $('bu-yb');
+      if (parseFloat(sl.value) !== state.yb) sl.value = String(state.yb);
+
+      renderAnalysis();
+      updateStageButtons();
+      // 画布上的标签要跟着读数走 —— 标一个 dirty 就够了，主循环会重画
+      state.dirty = true;
+    }
+
+    function renderAnalysis() {
+      const el = $('analysis');
+      if (!el) return;
+      const sealed = isSealed();
+      const diff = Farch() === 0 ? 0 : Math.abs(Fbuoy() - Farch()) / Farch() * 100;
+      const net = sideNet();
+      const netAbs = Math.hypot(net[0], net[1], net[2]);
+      const L = [];
+      L.push('<div class="line up"><span>F向上 = p下 · A = ' + fmt(pDown(), 0) + ' Pa × 0.01 m²</span><b>' + fmt(Fup(), 1) + ' N</b></div>');
+      L.push('<div class="line dn"><span>F向下 = p上 · A = ' + fmt(pUp(), 0) + ' Pa × 0.01 m²</span><b>' + fmt(Fdown(), 1) + ' N</b></div>');
+      L.push('<div class="line sum"><span>F浮 = F向上 − F向下</span><b>' + fmt(Fbuoy(), 1) + ' N</b></div>');
+      L.push('<div class="line' + (sealed ? ' off' : '') + '"><span>另一条路：ρ液gV排 = 1000×10×0.001 m³</span><b>' + fmt(Farch(), 1) + ' N</b></div>');
+      if (!sealed) {
+        L.push('<div class="line"><span>两条路的差</span><b>' + fmt(diff, 3) + ' %</b></div>');
+      }
+      L.push('<div class="line"><span>侧面水平合力 |ΣF侧|</span><b>' + fmt(netAbs, 6) + ' N</b></div>');
+
+      if (sealed) {
+        L.push('<div class="conc warn"><b>浮力消失了。</b>下表面与槽底密合，下面没有液体，' +
+               'F向上 = 0。液体对物体的合力其实是 ' + fmt(netLiquid(), 1) +
+               ' N（<b>向下</b>）—— 要靠槽底的支持力托着它，所以「提不起来」。</div>');
+      } else {
+        L.push('<div class="conc">上下表面的压强差 × 底面积 = <b>' + fmt(Fbuoy(), 1) +
+               ' N</b>，与 ρ液gV排 算出的 <b>' + fmt(Farch(), 1) + ' N</b> 一致（差 ' + fmt(diff, 3) +
+               '%）。四个侧面的压力两两抵消，水平合力 = 0。</div>');
+      }
+      el.innerHTML = L.join('');
+    }
+
+    function renderTable() {
+      const body = $('rec-body');
+      const cnt = $('rec-count');
+      cnt.textContent = state.marks.length + ' 组';
+      if (!state.marks.length) {
+        body.innerHTML = '<p class="rec-empty">还没有记录。把立方体放到不同深度各记一组，看看 F浮 变不变。</p>';
+        return;
+      }
+      const rows = state.marks.map((m, i) =>
+        '<tr><td>' + (i + 1) + '</td><td>' + fmt(m.yb, 1) + '</td><td>' + fmt(m.pd, 0) +
+        '</td><td>' + fmt(m.fup, 1) + '</td><td>' + fmt(m.fdn, 1) + '</td><td><b>' + fmt(m.fb, 1) + '</b></td></tr>');
+      body.innerHTML = '<table class="rec"><thead><tr><th>#</th><th>底面高度</th><th>p下/Pa</th>' +
+        '<th>F向上</th><th>F向下</th><th>F浮</th></tr></thead><tbody>' + rows.join('') + '</tbody></table>';
+    }
+
+    /* ---------------------------- 提示条 / 横幅 ---------------------------- */
+    let toastTimer = 0;
+    function showToast(text) {
+      const el = $('bu-toast');
+      if (!el) return;
+      el.textContent = text;
+      el.classList.add('show');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => el.classList.remove('show'), 2000);
+    }
+
+    /* ============================================================
+     * 动作（侧栏按钮、舞台按钮、自检共用同一份）
+     * ============================================================ */
+    function setYb(v) {
+      const nv = clamp(v, YB_MIN, YB_MAX);
+      const wasSealed = isSealed();
+      state.yb = nv;
+      syncUI();
+      // 密合/离开槽底【不弹 toast】—— 舞台下方那条常驻横幅（stage-flag）已经在说
+      // 同一件事，再弹一个 toast 会跟画布上的标签、横幅三个叠在底部，糊成一片。
+      if (wasSealed && !isSealed()) showToast('下表面又进了液体 —— 浮力回来了');
+    }
+    function setMode(m) {
+      if (!m) return;
+      state.mode = m;
+      syncUI();
+    }
+    function setAuto(on) {
+      state.auto = !!on;
+      state.autoPhase = 'down';
+      state.autoHold = 0;
+      if (state.auto && isSealed()) setYb(YB_DEF);
+      syncUI();
+    }
+    function resetAll() {
+      state.auto = false;
+      state.mode = 'all';
+      state.yb = YB_DEF;
+      state.zoom = 1;
+      applyView('perspective');
+      syncUI();
+    }
+    function recordMark() {
+      state.marks.push({
+        yb: state.yb, hd: hDown(), pd: pDown(), pu: pUp(),
+        fup: Fup(), fdn: Fdown(), fb: Fbuoy(), sealed: isSealed()
+      });
+      renderTable();
+      updateStageButtons();
+      showToast('已记录：F浮 = ' + fmt(Fbuoy(), 1) + ' N');
+    }
+    function applyView(name) {
+      if (!VIEWS[name]) return;
+      state.view = name;
+      state.yaw = VIEWS[name][0]; state.pitch = VIEWS[name][1];
+      state.dirty = true;
+      syncUI();
+    }
+
+    /* ---------------------------- 动画 ---------------------------- */
+    // 纯函数：主循环与自检共用。dt 秒。
+    function stepAnim(dt) {
+      if (!(dt > 0)) return;
+      state.t += dt;
+      if (!state.auto) return;
+      if (state.autoPhase === 'down') {
+        const v = state.yb - 2.4 * dt;
+        if (v <= YB_MIN) {
+          state.yb = YB_MIN;
+          state.autoPhase = 'hold'; state.autoHold = 0;
+          showToast('下表面密合槽底 —— 浮力消失了');
+        } else state.yb = v;
+        syncUI();
+        return;
+      }
+      if (state.autoPhase === 'hold') {
+        state.autoHold += dt;
+        if (state.autoHold >= 1.6) { state.autoPhase = 'up'; }
+        return;
+      }
+      const v = state.yb + 2.4 * dt;
+      if (v >= YB_DEF) {
+        state.yb = YB_DEF;
+        state.auto = false; state.autoPhase = 'down';
+        showToast('又回到了 ' + fmt(YB_DEF, 1) + ' cm —— 浮力一直是 10.0 N');
+      } else state.yb = v;
+      syncUI();
+    }
+
+    /* ---------------------------- 命中测试 ---------------------------- */
+    function hitTest(x, y, q) {
+      const b = state.drawn.cubeBox;
+      if (!b) return null;
+      if (x >= b.x0 - 5 && x <= b.x1 + 5 && y >= b.y0 - 5 && y <= b.y1 + 5) return 'cube';
+      return null;
+    }
+    // 屏幕上 1 px 对应多少 cm（沿 y 方向）—— 拖动时用它把位移换算成深度变化。
+    // 数值上取「立方体中心处 +1 cm」的投影差，比用焦距解析式更稳（透视会变）。
+    function cmPerPx(q) {
+      const a = project([0, state.yb + CUBE_A / 2, 0], q);
+      const b = project([0, state.yb + CUBE_A / 2 + 1, 0], q);
+      return Math.abs(a.y - b.y) || 1;
+    }
+
+    /* ---------------------------- 事件 ---------------------------- */
+    function onDown(e) {
+      const r = canvas.getBoundingClientRect();
+      const x = e.clientX - r.left, y = e.clientY - r.top;
+      const q = {}; makeCam(q, state.w, state.h);
+      const hit = hitTest(x, y, q);
+      state.downAt = { x: x, y: y, hit: hit };
+      if (hit === 'cube') {
+        state.auto = false;                       // 一上手就停下自动演示
+        state.cubeDrag = true;
+        state.dragYb = state.yb;
+        state.dragSy = y;
+        state.pxPerCm = cmPerPx(q);
+        canvas.classList.add('grabbing');
+        canvas.setPointerCapture && canvas.setPointerCapture(e.pointerId);
+        return;
+      }
+      state.dragging = true;
+      state.drag = { x: x, y: y };
+      state.dragYaw = state.yaw; state.dragPitch = state.pitch;
+      canvas.classList.add('grabbing');
+      canvas.setPointerCapture && canvas.setPointerCapture(e.pointerId);
+    }
+    function onMove(e) {
+      const r = canvas.getBoundingClientRect();
+      const x = e.clientX - r.left, y = e.clientY - r.top;
+      if (state.cubeDrag) {
+        // 拖动补偿：位移换算成深度，不是把光标位置直接当深度
+        setYb(state.dragYb + (state.dragSy - y) / (state.pxPerCm || 1));
+        return;
+      }
+      if (state.dragging && state.drag) {
+        state.yaw = state.dragYaw + (x - state.drag.x) * 0.0075;
+        state.pitch = clamp(state.dragPitch + (y - state.drag.y) * 0.0060, -0.20, 1.32);
+        state.view = 'custom';
+        state.dirty = true;
+        return;
+      }
+      const q = {}; makeCam(q, state.w, state.h);
+      const hit = hitTest(x, y, q);
+      state.hover = hit;
+      canvas.classList.toggle('pick', !!hit);
+      state.dirty = true;
+    }
+    function onUp(e) {
+      // 点一下立方体不做任何事 —— 深度只由【拖动】和滑块改。
+      // 曾让它「点一下就跳到底」，结果用户想选中立方体时它直接瞬移到底部。
+      state.dragging = false; state.drag = null; state.downAt = null;
+      state.cubeDrag = false;
+      canvas.classList.remove('grabbing');
+    }
+    function onWheel(e) {
+      e.preventDefault();
+      state.zoom = clamp(state.zoom * (e.deltaY > 0 ? 0.92 : 1.087), 0.5, 3.0);
+      state.dirty = true;
+    }
+
+    /* ============================================================
+     * 尺寸 / 主循环
+     * ============================================================ */
+    function resize() {
+      const r = stage.getBoundingClientRect();
+      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      const w = Math.max(320, Math.round(r.width));
+      const h = Math.max(240, Math.round(r.height));
+      state.w = w; state.h = h; state.dpr = dpr;
+      const bw = Math.round(w * dpr), bh = Math.round(h * dpr);
+      // 只在真的变了才改 canvas.width/height —— 每次 resize 都赋值会把画布清空
+      if (canvas.width !== bw) canvas.width = bw;
+      if (canvas.height !== bh) canvas.height = bh;
+      canvas.style.width = w + 'px';
+      canvas.style.height = h + 'px';
+      state.dirty = true;
+      // resize 是「改尺寸 + 立刻重画」的唯一入口。
+      // 把重画交给 rAF 的话，headless 里 rAF 不跑，画布会一直空白。
+      render();
+    }
+    let lastTs = 0;
+    function tick(ts) {
+      const dt = lastTs ? Math.min(0.05, (ts - lastTs) / 1000) : 0;
+      lastTs = ts;
+      stepAnim(dt);
+      if (state.dirty) { render(); state.dirty = false; }
+      // rAF 在末尾重挂：render 抛异常就杀掉循环，不会每帧刷屏
+      requestAnimationFrame(tick);
+    }
+
+    /* ============================================================
+     * 绑定
+     * ============================================================ */
+    canvas.addEventListener('pointerdown', onDown);
+    canvas.addEventListener('pointermove', onMove);
+    canvas.addEventListener('pointerup', onUp);
+    canvas.addEventListener('pointercancel', onUp);
+    canvas.addEventListener('pointerleave', () => {
+      state.hover = null; state.dragging = false; state.drag = null; state.cubeDrag = false;
+      canvas.classList.remove('pick'); canvas.classList.remove('grabbing'); state.dirty = true;
+    });
+    canvas.addEventListener('wheel', onWheel, { passive: false });
+
+    $('bu-record').addEventListener('click', recordMark);
+    $('bu-reset').addEventListener('click', () => { resetAll(); showToast('已重置'); });
+    $('bu-auto').addEventListener('click', () => setAuto(!state.auto));
+    $('bu-seal').addEventListener('click', () => { state.auto = false; setYb(YB_MIN); });
+    $('bu-lift').addEventListener('click', () => { state.auto = false; setYb(YB_MAX); });
+    document.querySelectorAll('[data-mode]').forEach(b => {
+      b.addEventListener('click', () => setMode(b.getAttribute('data-mode')));
+    });
+    document.querySelectorAll('[data-view]').forEach(b => {
+      b.addEventListener('click', () => applyView(b.getAttribute('data-view')));
+    });
+    const ybs = $('bu-yb');
+    ybs.addEventListener('input', () => { state.auto = false; setYb(parseFloat(ybs.value)); });
+
+    if (window.ResizeObserver) new ResizeObserver(() => resize()).observe(stage);
+    window.addEventListener('resize', resize);
+
+    resize();
+    syncUI();
+    renderTable();
+    requestAnimationFrame(tick);
+
+    /* ============================================================
+     * 自检钩子
+     * ------------------------------------------------------------
+     * 渲染、读数、账本、自检必须共用同一份物理函数。下面把这些原样暴露出去，
+     * 测试算出来的就是页面真正在用的值 —— 自检把公式重抄一遍只证明自检自洽。
+     * ============================================================ */
+    window.__buoy = {
+      state: state,
+      consts: {
+        TANK_W: TANK_W, TANK_D: TANK_D, TANK_H: TANK_H, GLASS: GLASS, H_W: H_W,
+        CUBE_A: CUBE_A, HALF: HALF, YB_MIN: YB_MIN, YB_MAX: YB_MAX, YB_DEF: YB_DEF,
+        RHO: RHO, GRA: GRA, A_AREA: A_AREA, V_DISP: V_DISP,
+        FLOOR: FLOOR,
+        RULER_X: RULER_X, RULER_W: RULER_W, RULER_D: RULER_D,
+        P_SCALE: P_SCALE, ARROW_N: ARROW_N, A_CELL: A_CELL, P_MAX: P_MAX,
+        ISOBAR_P: ISOBAR_P, RULER_TICK: RULER_TICK, CAMD: CAMD, TARGET: TARGET,
+        VIEWS: VIEWS
+      },
+      makeCam: makeCam, project: project, unproject: unproject, envelopePoints: envelopePoints,
+      size: () => ({ w: state.w, h: state.h, dpr: state.dpr }),
+      // 物理：与页面同一份
+      pressAtCm: pressAtCm, arrowForce: arrowForce, arrowLen: arrowLen,
+      hDown: hDown, hUp: hUp, pDown: pDown, pUp: pUp,
+      Fup: Fup, Fdown: Fdown, Fbuoy: Fbuoy, Farch: Farch, netLiquid: netLiquid,
+      isSealed: isSealed, sideArrows: sideArrows, sideNet: sideNet, sideMagnitude: sideMagnitude,
+      gridForce: gridForce, rampRGB: rampRGB, rampCss: rampCss, cubeWorld: cubeWorld,
+      // 压强 ↔ 高度：等压线与标尺刻度共用，自检 L1 要断言「两者同一高度」
+      isobarY: isobarY,
+      // 动作：与按钮走同一份
+      setYb: setYb, setMode: setMode, setAuto: setAuto, resetAll: resetAll,
+      recordMark: recordMark, applyView: applyView,
+      stepAnim: stepAnim, render: render, hitTest: hitTest,
+      // 自检要能【量到箭头到底画出来没有】—— 只查「应该画几支」是查不出
+      // 「算出来了但长度不足 1.5 px 被丢掉了」的。
+      drawn: () => JSON.parse(JSON.stringify(state.drawn)),
+      freeze: (t) => { state.auto = false; state.t = t === undefined ? 0 : t; }
+    };
+  })();
+  </script>
+</body>
+</html>

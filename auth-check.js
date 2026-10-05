@@ -19,6 +19,7 @@
     "飞象_飞机升力.html","飞象_生成浮力产生原因教学动画.html",
     "密度计.html",
     "javalab_浮力比较.html",
+    "浮力产生的原因立体模型.html",
     "称重法测浮力.html",
     "javalab_浮力实验.html","javalab_阿基米德王冠.html",
     "飞象_动滑轮定滑轮原理教学动画.html","javalab_电流表.html",
