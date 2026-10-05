@@ -1,0 +1,2313 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>测量物质的密度 · 3D 立体实验台 - 物理虚拟实验</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="stylesheet" href="style.css">
+  <script src="auth-check.js"></script>
+  <style>
+    body { margin: 0; padding: 20px; min-width: 320px; }
+
+    .lab3d h1 { margin: 0; font-size: 19px; letter-spacing: .3px; }
+    .lab3d-sub { margin: 7px 0 16px; color: #93b4c4; font-size: 12.5px; line-height: 1.6; }
+    .lab3d-sub b { color: #a5f3fc; font-weight: 700; }
+
+    .lab3d-layout {
+      display: grid; grid-template-columns: minmax(0, 1fr) 352px;
+      gap: 16px; align-items: start; align-content: start;
+    }
+    /* 三块的位置写死，DOM 顺序按【窄屏需要的顺序】排：舞台 → 侧栏 → 下半区。
+       宽屏用 grid 把「视角 / 计算提交 / 分析与结论 / 实验原理 / 操作指南」摆到舞台正下方
+       （左列第二行），侧栏跨两行。
+       ⚠️ 这里的「两列高度才相当」是【量出来的】，不是估的：侧栏五块面板合计 1465 px，
+       而舞台只有 558 px —— 下半区如果只放三张小卡（231 px），左栏总共 805 px，
+       侧栏就会把两行撑到 888 + 561，**舞台下面和下半区下面各留一条 ~330 px 的空白带**。
+       所以把原本全宽的「实验原理 / 操作指南」两张卡拆成两列并进来，左栏才追到 ≈1370 px。
+       以后动侧栏面板高度，要连着这里一起复核（判据：左栏总高 ≈ 侧栏总高）。 */
+    .lab3d-stage { grid-column: 1; grid-row: 1; }
+    .lab3d-sidebar { grid-column: 2; grid-row: 1 / span 2; }
+    .lab3d-lower {
+      grid-column: 1; grid-row: 2;
+      display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px; align-content: start; align-items: stretch; min-width: 0;
+    }
+    /* 第 5 块（操作指南）整行铺满，最后一行才不只剩半格 */
+    .lab3d-lower > :last-child { grid-column: 1 / -1; }
+
+    .lab3d-stage {
+      position: relative; overflow: hidden;
+      height: clamp(380px, 62vh, 640px);
+      border: 1px solid rgba(148, 163, 184, .18); border-radius: 16px;
+      background: #020617; box-shadow: 0 18px 46px rgba(2, 6, 23, .5);
+    }
+    .lab3d-stage canvas { display: block; touch-action: none; cursor: grab; }
+    .lab3d-stage canvas.pick { cursor: pointer; }
+    .lab3d-stage canvas.grabbing { cursor: grabbing; }
+
+    .lab3d-stage .stage-hint {
+      position: absolute; left: 12px; top: 12px; max-width: 58%;
+      padding: 7px 11px; border-radius: 8px; pointer-events: none;
+      border: 1px solid rgba(56, 189, 248, .28); background: rgba(2, 6, 23, .78);
+      color: #c3e8f5; font-size: 11px; line-height: 1.55;
+    }
+    .lab3d-stage .stage-hint b { color: #7dd3fc; }
+
+    .lab3d-stage .stage-toast {
+      position: absolute; left: 50%; transform: translateX(-50%); bottom: 96px;
+      padding: 8px 14px; border-radius: 10px; font-size: 12px; font-weight: 700;
+      background: rgba(2, 6, 23, .93); border: 1px solid rgba(148, 163, 184, .32); color: #e2e8f0;
+      opacity: 0; transition: opacity .18s; pointer-events: none; white-space: nowrap;
+    }
+    .lab3d-stage .stage-toast.show { opacity: 1; }
+
+    .lab3d-stage .stage-flag {
+      position: absolute; left: 50%; transform: translateX(-50%); bottom: 58px;
+      padding: 7px 13px; border-radius: 99px; font-size: 12px; font-weight: 800;
+      background: rgba(6, 78, 59, .92); border: 1px solid rgba(52, 211, 153, .6); color: #d1fae5;
+      opacity: 0; transition: opacity .2s; pointer-events: none; white-space: nowrap;
+    }
+    .lab3d-stage .stage-flag.show { opacity: 1; }
+
+    /* 舞台底部那一条：左边几个按钮，右边操作提示。做成一条 flex 行是为了
+       让它们【永远不重叠】——各占一角的话，窄屏上提示文字会横穿底边压在按钮上。
+       按钮必须在舞台上：.lab3d-layout 在 ≤900px 折成一列后侧栏会被挤到舞台【下面】，
+       而「放上左盘 / 倒水 / 浸没 / 提交」恰恰是眼睛盯着器材时要按的。 */
+    .lab3d-stage .stage-bar {
+      position: absolute; left: 0; right: 0; bottom: 0;
+      display: flex; align-items: center; justify-content: space-between; gap: 8px;
+      padding: 0 12px 11px; pointer-events: none;
+    }
+    .lab3d-stage .bar-left { display: flex; align-items: center; gap: 6px; flex: none; pointer-events: auto; }
+    .lab3d-stage .stage-btn {
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 8px 11px; border-radius: 10px; font-family: inherit;
+      font-size: 12px; font-weight: 800; cursor: pointer;
+      border: 1px solid rgba(148, 163, 184, .35); background: rgba(2, 6, 23, .88); color: #cbd5e1;
+      transition: background .2s, border-color .2s, color .2s, box-shadow .2s;
+    }
+    .lab3d-stage .stage-btn.go { border-color: rgba(56, 189, 248, .55); background: rgba(14, 116, 144, .3); color: #e0f2fe; }
+    .lab3d-stage .stage-btn.go:hover { background: rgba(14, 116, 144, .46); }
+    .lab3d-stage .stage-btn.ok { border-color: rgba(52, 211, 153, .55); background: rgba(6, 78, 59, .42); color: #d1fae5; }
+    .lab3d-stage .stage-btn.ok:hover { background: rgba(6, 78, 59, .62); }
+    .lab3d-stage .stage-btn:disabled { opacity: .42; cursor: not-allowed; }
+    /* 该读数 / 该提交的那一刻，按钮自己亮起来 */
+    .lab3d-stage .stage-btn.ready {
+      border-color: rgba(52, 211, 153, .8); background: rgba(16, 185, 129, .24); color: #d1fae5;
+      box-shadow: 0 0 0 3px rgba(52, 211, 153, .14), 0 0 18px rgba(52, 211, 153, .3);
+    }
+    .lab3d-stage .stage-help {
+      min-width: 0; pointer-events: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      color: #93b4c4; font-size: 11px; background: rgba(2, 6, 23, .72); padding: 6px 10px; border-radius: 7px;
+    }
+
+    .lab3d-sidebar { display: flex; flex-direction: column; gap: 11px; min-width: 0; }
+    .panel {
+      border: 1px solid rgba(148, 163, 184, .17); border-radius: 13px;
+      background: rgba(9, 20, 35, .82); padding: 13px 14px;
+    }
+    .panel > h3 {
+      margin: 0 0 10px; font-size: 12px; font-weight: 800; color: #7dd3fc;
+      letter-spacing: .4px; display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    }
+    .panel > h3 .pill {
+      font-size: 10px; font-weight: 800; padding: 2px 8px; border-radius: 99px;
+      background: rgba(148, 163, 184, .18); color: #e2e8f0;
+    }
+    .panel > h3 .pill.ok { background: rgba(52, 211, 153, .22); color: #d1fae5; }
+    .panel > h3 .pill.warn { background: rgba(251, 191, 36, .22); color: #fef3c7; }
+    .panel > h3 .pill.bad { background: rgba(248, 113, 113, .22); color: #fee2e2; }
+
+    /* 读数大数字 */
+    .gauge-num {
+      display: flex; align-items: baseline; justify-content: center; gap: 6px;
+      padding: 9px 8px; border-radius: 10px; margin-bottom: 9px;
+      background: linear-gradient(180deg, #0b1a2a, #07131f); border: 1px solid rgba(56, 189, 248, .3);
+    }
+    .gauge-num .num {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 25px; font-weight: 800;
+      color: #a5f3fc; letter-spacing: .5px; font-variant-numeric: tabular-nums;
+      text-shadow: 0 0 12px rgba(56, 189, 248, .45);
+    }
+    .gauge-num .unit { color: #5e8496; font-size: 13px; font-weight: 700; }
+
+    .readouts { display: flex; flex-direction: column; gap: 5px; color: #a9c2d2; font-size: 11.5px; }
+    .readouts div { display: flex; justify-content: space-between; gap: 8px; }
+    .readouts b { color: #e2e8f0; font-variant-numeric: tabular-nums; }
+    .readouts .dim { color: #7d97a8; }
+    .readouts div.sum { border-top: 1px solid rgba(148, 163, 184, .16); padding-top: 6px; margin-top: 2px; }
+    .readouts div.sum b { color: #a5f3fc; font-size: 13px; }
+
+    .badge {
+      display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 9px;
+      font-size: 12px; font-weight: 800; margin-top: 8px;
+    }
+    .badge.ok { background: rgba(6, 78, 59, .45); border: 1px solid rgba(52, 211, 153, .5); color: #d1fae5; }
+    .badge.warn { background: rgba(120, 53, 15, .45); border: 1px solid rgba(251, 191, 36, .5); color: #fef3c7; }
+    .badge.bad { background: rgba(127, 29, 29, .45); border: 1px solid rgba(248, 113, 113, .5); color: #fee2e2; }
+
+    .btn-row { display: flex; flex-wrap: wrap; gap: 7px; }
+    .btn-row button {
+      flex: 1 1 auto; min-width: 0; padding: 9px 11px; border-radius: 9px; cursor: pointer;
+      font-family: inherit; font-size: 12px; font-weight: 800;
+      border: 1px solid rgba(148, 163, 184, .3); background: rgba(30, 41, 59, .7); color: #cbd5e1;
+    }
+    .btn-row button.primary { border-color: rgba(56, 189, 248, .6); background: rgba(14, 116, 144, .42); color: #e0f2fe; }
+    .btn-row button.ok { border-color: rgba(52, 211, 153, .55); background: rgba(6, 78, 59, .45); color: #d1fae5; }
+    .btn-row button.sel { border-color: rgba(52, 211, 153, .75); background: rgba(6, 78, 59, .5); color: #d1fae5; }
+    .btn-row button:disabled { opacity: .45; cursor: not-allowed; }
+    .btn-row button:hover:not(:disabled) { border-color: rgba(125, 211, 252, .7); }
+
+    /* 砝码按钮：做成黄铜色，和画布里的砝码同一套语言 */
+    .wgrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+    .wgrid button {
+      padding: 8px 4px; border-radius: 9px; cursor: pointer; font-family: inherit;
+      font-size: 12px; font-weight: 800; color: #fde9c8;
+      border: 1px solid rgba(196, 152, 74, .55);
+      background: linear-gradient(180deg, rgba(196, 152, 74, .30), rgba(120, 86, 30, .30));
+      transition: border-color .15s, background .15s;
+    }
+    .wgrid button:hover { border-color: rgba(250, 214, 130, .9); background: linear-gradient(180deg, rgba(196, 152, 74, .48), rgba(120, 86, 30, .42)); }
+
+    .ansrow { display: flex; gap: 7px; }
+    .ansrow input {
+      flex: 1 1 auto; min-width: 0; padding: 9px 10px; border-radius: 9px;
+      border: 1px solid rgba(148, 163, 184, .35); background: rgba(2, 6, 23, .72); color: #e2e8f0;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 14px; font-weight: 700;
+      font-variant-numeric: tabular-nums;
+    }
+    .ansrow input:focus { outline: none; border-color: rgba(56, 189, 248, .75); box-shadow: 0 0 0 3px rgba(56, 189, 248, .12); }
+    .ansrow button {
+      flex: none; padding: 9px 15px; border-radius: 9px; cursor: pointer; font-family: inherit;
+      font-size: 12px; font-weight: 800; border: 1px solid rgba(52, 211, 153, .6);
+      background: rgba(6, 78, 59, .5); color: #d1fae5;
+    }
+    .ansrow button:hover { background: rgba(6, 78, 59, .72); }
+
+    .fb { margin-top: 9px; padding: 9px 11px; border-radius: 9px; font-size: 11.5px; line-height: 1.7; display: none; }
+    .fb.show { display: block; }
+    .fb.ok { background: rgba(6, 78, 59, .45); border: 1px solid rgba(52, 211, 153, .5); color: #d1fae5; }
+    .fb.bad { background: rgba(127, 29, 29, .45); border: 1px solid rgba(248, 113, 113, .5); color: #fee2e2; }
+    .fb.warn { background: rgba(120, 53, 15, .45); border: 1px solid rgba(251, 191, 36, .5); color: #fef3c7; }
+
+    .steps { display: flex; flex-direction: column; gap: 4px; }
+    .steps .st {
+      display: flex; align-items: center; gap: 7px; padding: 5px 8px; border-radius: 8px;
+      font-size: 11.5px; color: #7d97a8; border: 1px solid transparent;
+    }
+    .steps .st i {
+      display: inline-grid; place-items: center; width: 16px; height: 16px; flex: none;
+      border-radius: 99px; font-size: 9.5px; font-weight: 800; font-style: normal;
+      background: rgba(148, 163, 184, .2); color: #cbd5e1;
+    }
+    .steps .st.now { color: #e2e8f0; border-color: rgba(56, 189, 248, .45); background: rgba(14, 116, 144, .2); }
+    .steps .st.now i { background: rgba(56, 189, 248, .35); color: #e0f2fe; }
+    .steps .st.done { color: #a7f3d0; }
+    .steps .st.done i { background: rgba(52, 211, 153, .3); color: #d1fae5; }
+
+    .analysis { color: #c8d8e4; font-size: 11.5px; line-height: 1.8; }
+    .analysis .line { display: flex; justify-content: space-between; gap: 8px; }
+    .analysis .line b { color: #e2e8f0; font-variant-numeric: tabular-nums; }
+    .analysis .conc {
+      margin-top: 9px; padding: 8px 10px; border-radius: 8px; font-size: 11.5px; line-height: 1.7;
+      background: rgba(6, 78, 59, .35); border: 1px solid rgba(52, 211, 153, .4); color: #d1fae5;
+    }
+    .analysis .conc.warn { background: rgba(127, 29, 29, .35); border-color: rgba(248, 113, 113, .45); color: #fee2e2; }
+    .analysis .conc.info { background: rgba(12, 74, 110, .35); border-color: rgba(56, 189, 248, .4); color: #e0f2fe; }
+    .analysis .muted { color: #7d97a8; }
+
+    /* 数据记录表 */
+    table.rec { width: 100%; border-collapse: collapse; font-size: 11.5px; }
+    table.rec th, table.rec td {
+      padding: 6px 7px; border-bottom: 1px solid rgba(148, 163, 184, .14); text-align: left;
+    }
+    table.rec th { color: #7d97a8; font-weight: 700; font-size: 10.5px; }
+    table.rec td { color: #e2e8f0; font-variant-numeric: tabular-nums; }
+    table.rec td.k { color: #a9c2d2; }
+    table.rec tr.empty td { color: #4d6b7d; }
+    table.rec button {
+      padding: 4px 9px; border-radius: 7px; cursor: pointer; font-family: inherit;
+      font-size: 10.5px; font-weight: 800; border: 1px solid rgba(56, 189, 248, .5);
+      background: rgba(14, 116, 144, .35); color: #e0f2fe;
+    }
+    table.rec button:disabled { opacity: .35; cursor: not-allowed; border-color: rgba(148, 163, 184, .3); background: rgba(30, 41, 59, .5); color: #7d97a8; }
+    table.rec tr.flash { animation: recflash 1.1s ease-out; }
+    @keyframes recflash { 0% { background: rgba(52, 211, 153, .32); } 100% { background: transparent; } }
+
+    /* 量筒读数窗：把凹液面附近放大，并画出视线 —— 这是一张真正的「视差光路图」 */
+    .gauge-wrap { position: relative; margin-top: 9px; }
+    .gauge-wrap canvas {
+      display: block; width: 100%; height: 236px; border-radius: 10px;
+      border: 1px solid rgba(56, 189, 248, .26); background: #04101c;
+    }
+
+    .note { margin: 8px 0 0; color: #7d97a8; font-size: 11px; line-height: 1.7; }
+    .note b { color: #a9c2d2; }
+    .note.warn { color: #fcd34d; }
+
+    /* .info-card 现在直接挂在下半区的 grid 里（原来外面还套一层 .info-cards，
+       为了让左栏高度追上侧栏，已经拆掉那层包装） */
+    .info-card {
+      border: 1px solid rgba(148, 163, 184, .16); border-radius: 14px;
+      background: rgba(9, 20, 35, .7); padding: 15px 17px;
+    }
+    .info-card h4 { margin: 0 0 9px; font-size: 13px; color: #7dd3fc; }
+    .info-card ul { margin: 0; padding-left: 17px; color: #a9c2d2; font-size: 12px; line-height: 1.85; }
+    .info-card li b { color: #e2e8f0; }
+    .info-card .fml {
+      display: inline-block; margin: 3px 0; padding: 3px 9px; border-radius: 7px;
+      background: rgba(56, 189, 248, .13); color: #a5f3fc; font-weight: 700;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+
+    @media (max-width: 900px) {
+      .lab3d-layout { grid-template-columns: minmax(0, 1fr); }
+      .lab3d-stage, .lab3d-sidebar, .lab3d-lower { grid-column: 1; grid-row: auto; }
+      .lab3d-stage { height: clamp(340px, 54vh, 500px); }
+      .lab3d-sidebar { border-top: 1px solid rgba(148, 163, 184, .16); padding-top: 12px; }
+      .lab3d-lower {
+        grid-template-columns: minmax(0, 1fr);
+        border-top: 1px solid rgba(148, 163, 184, .16); padding-top: 12px;
+      }
+      /* 单列时不再需要「最后一块铺满」 */
+      .lab3d-lower > :last-child { grid-column: auto; }
+    }
+    @media (max-width: 620px) {
+      body { padding: 14px; }
+      .lab3d h1 { font-size: 16px; }
+      .lab3d-stage { height: 350px; }
+      .lab3d-stage .stage-hint { font-size: 10px; padding: 6px 9px; max-width: 62%; }
+      .lab3d-stage .stage-help { display: none; }
+      .lab3d-stage .stage-btn { padding: 7px 8px; font-size: 11px; gap: 4px; }
+      .lab3d-stage .stage-flag { bottom: 54px; font-size: 11px; padding: 6px 11px; }
+      .gauge-num .num { font-size: 22px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="lab3d">
+    <h1>测量物质的密度 · 3D 立体实验台</h1>
+    <p class="lab3d-sub">
+      一张真实的实验台：<b>托盘天平</b>（测质量）+ <b>量筒</b>（测体积）+ 待测<b>石块</b> / <b>烧杯与盐水</b>。
+      固体走<b>排水法</b>：<span class="fml">V = V₂ − V₁</span>；液体走<b>差量法</b>：<span class="fml">ρ = (m₁ − m₂) / V</span>。
+      读数时<b>视线要与量筒里凹液面的最低处相平</b> —— 右侧读数窗会画出视线，俯视 / 仰视看到的数会差出来。
+    </p>
+
+    <div class="lab3d-layout">
+      <div class="lab3d-stage">
+        <canvas id="den-canvas"></canvas>
+
+        <div class="stage-hint" id="den-hint"></div>
+        <div class="stage-toast" id="den-toast"></div>
+        <div class="stage-flag" id="den-flag">可以读数了 ✓</div>
+
+        <div class="stage-bar">
+          <div class="bar-left">
+            <button type="button" class="stage-btn go" id="den-b-obj">⬆ 放到左盘</button>
+            <button type="button" class="stage-btn go" id="den-b-water">💧 倒入 30 mL</button>
+            <button type="button" class="stage-btn go" id="den-b-sub">🪨 浸没</button>
+            <button type="button" class="stage-btn ok" id="den-b-submit">✓ 提交密度</button>
+          </div>
+          <div class="stage-help">拖动空白处旋转 · 滚轮缩放 · 拖动游码 · 点右盘砝码取下</div>
+        </div>
+      </div>
+
+      <div class="lab3d-sidebar">
+        <div class="panel">
+          <h3>实验模式 <span class="pill" id="den-mode-pill">测固体</span></h3>
+          <div class="btn-row">
+            <button type="button" data-mode="solid" class="sel" id="den-m-solid">测固体的密度</button>
+            <button type="button" data-mode="liquid" id="den-m-liquid">测液体的密度</button>
+          </div>
+          <div class="btn-row" style="margin-top:7px;">
+            <button type="button" id="den-new">🎲 换一组数据</button>
+            <button type="button" id="den-reset">↺ 重置实验</button>
+          </div>
+          <p class="note" id="den-new-note">待测固体：花岗岩块</p>
+        </div>
+
+        <div class="panel">
+          <h3>天平 · 测质量 <span class="pill" id="den-bal-pill">未平衡</span></h3>
+          <div class="gauge-num">
+            <span class="num" id="den-mass">0.0</span><span class="unit">g</span>
+          </div>
+          <div class="readouts">
+            <div><span>左盘物体</span><b id="den-left">空盘</b></div>
+            <div><span>右盘砝码</span><b id="den-wsum">0 g</b></div>
+            <div><span>游码示数</span><b id="den-rmass">0.0 g</b></div>
+            <div><span>分度值</span><b>0.2 g</b></div>
+            <div class="sum"><span>指针偏离中央</span><b id="den-gap">水平</b></div>
+          </div>
+          <p class="note">加砝码<b>用镊子、由大到小</b>；点画面右盘里的砝码能把它取下来。</p>
+          <div class="wgrid" style="margin-top:8px;">
+            <button type="button" data-w="100">100 g</button>
+            <button type="button" data-w="50">50 g</button>
+            <button type="button" data-w="20">20 g</button>
+            <button type="button" data-w="10">10 g</button>
+            <button type="button" data-w="5">5 g</button>
+            <button type="button" data-w="1">1 g</button>
+          </div>
+          <div class="btn-row" style="margin-top:8px;">
+            <button type="button" id="den-clear">清空右盘</button>
+            <button type="button" id="den-rz">游码归零</button>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h3>量筒 · 测体积 <span class="pill" id="den-cyl-pill">0.0 mL</span></h3>
+          <div class="gauge-num" style="border-color:rgba(52,211,153,.32)">
+            <span class="num" id="den-vread" style="color:#a7f3d0;text-shadow:0 0 12px rgba(52,211,153,.4)">0.0</span>
+            <span class="unit">mL</span>
+          </div>
+          <div class="readouts">
+            <div><span>量程 / 分度值</span><b>100 mL / 1 mL</b></div>
+            <div><span>真实体积</span><b id="den-vtrue">0.0 mL</b></div>
+            <div class="sum"><span>视线</span><b id="den-sight">平视 ✓</b></div>
+          </div>
+          <p class="note" style="margin-bottom:7px;">视线：</p>
+          <div class="btn-row">
+            <button type="button" data-elev="20">俯视</button>
+            <button type="button" data-elev="0" class="sel">平视 ✓</button>
+            <button type="button" data-elev="-20">仰视</button>
+          </div>
+          <div class="gauge-wrap"><canvas id="den-gauge"></canvas></div>
+          <p class="note" id="den-gauge-note">读数窗是<b>侧视光路图</b>：绿点是凹液面最低处，红点是视线穿过刻度面时落到的高度。</p>
+        </div>
+
+        <div class="panel">
+          <h3>操作步骤</h3>
+          <div class="steps" id="den-steps"></div>
+        </div>
+
+        <div class="panel">
+          <h3>数据记录 <span class="pill" id="den-rec-pill">0 / 3</span></h3>
+          <table class="rec" id="den-rec"></table>
+          <p class="note">先把天平调平、读数，再<b>平视</b>读量筒，最后逐项记录。</p>
+        </div>
+      </div>
+
+      <!-- 舞台正下方的第二行：视角、计算提交、分析与结论。
+           摆在左列（舞台下面）而不是全塞侧栏，是为了让两列高度相当。 -->
+      <div class="lab3d-lower">
+        <div class="panel">
+          <h3>视角</h3>
+          <div class="btn-row">
+            <button type="button" data-view="bench" class="sel">全台</button>
+            <button type="button" data-view="balance">天平特写</button>
+            <button type="button" data-view="cylinder">量筒特写</button>
+            <button type="button" data-view="front">正面</button>
+            <button type="button" data-view="top">俯视</button>
+          </div>
+          <p class="note">读数时切到<b>量筒特写</b>，画面里的视线和刻度才看得清。</p>
+        </div>
+
+        <div class="panel">
+          <h3>计算与提交</h3>
+          <div class="analysis" id="den-calc"></div>
+          <div class="ansrow" style="margin-top:9px;">
+            <input type="number" id="den-ans" placeholder="输入密度（g/cm³）" step="0.01">
+            <button type="button" id="den-submit">提交</button>
+          </div>
+          <div class="fb" id="den-fb"></div>
+          <p class="note">单位：<b>1 g/cm³ = 1.0×10³ kg/m³</b>；结果保留两位小数。</p>
+        </div>
+
+        <div class="panel">
+          <h3>分析与结论</h3>
+          <div class="analysis" id="den-analysis"></div>
+          <label class="note" style="display:flex;align-items:center;gap:7px;cursor:pointer;">
+            <input type="checkbox" id="den-wet" style="width:15px;height:15px;">
+            <span>做「先测体积、后测质量」的对照（石块从水里取出时带着一层水）</span>
+          </label>
+        </div>
+
+  <div class="info-card">
+          <h4>实验原理</h4>
+          <ul>
+            <li>密度是物质的<b>一种特性</b>：同种物质的质量与体积成正比，比值 <span class="fml">ρ = m / V</span> 是定值，与 m、V 的大小无关。</li>
+            <li>不规则固体<b>不能直接用刻度尺量体积</b>，要用<b>排水法</b>：<span class="fml">V = V₂ − V₁</span>。</li>
+            <li>液体用<b>差量法</b>：先称烧杯和液体的总质量 m₁，倒出一部分进量筒并读出 V，再称剩余的总质量 m₂，<span class="fml">ρ = (m₁ − m₂) / V</span>。</li>
+            <li>差量法的好处：<b>不用称空烧杯</b>，也避开了「液体残留在烧杯壁上倒不干净」带来的误差。</li>
+          </ul>
+        </div>
+        <div class="info-card">
+          <h4>操作指南与易错点</h4>
+          <ul>
+            <li><b>量筒读数是本节最大的坑</b>：视线必须与<b>凹液面的最低处</b>相平。俯视读数<b>偏大</b>，仰视读数<b>偏小</b>。</li>
+            <li>量筒<b>不能加热、不能当反应容器</b>；读数时要放在水平桌面上，不能拿在手里。</li>
+            <li>石块要用<b>细线</b>拴住<b>缓慢</b>放入，防止溅出水、砸破量筒；必须<b>完全浸没</b>且不碰壁、不触底。</li>
+            <li>先测<b>质量</b>后测<b>体积</b>：若先测体积，石块沾水后再称，<b>质量偏大 → ρ 偏大</b>。勾选下方对照项可以亲眼看到。</li>
+            <li>倒液体进量筒时若<b>洒出</b>或<b>残留在烧杯壁</b>上，测得的 V 偏小 → ρ 偏大。</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+
+  </div>
+
+  <script>
+  (() => {
+    'use strict';
+
+    const canvas = document.getElementById('den-canvas');
+    const stage = document.querySelector('.lab3d-stage');
+    const gcan = document.getElementById('den-gauge');
+    if (!canvas || !stage || !gcan) return;
+    const ctx = canvas.getContext('2d');
+    const gctx = gcan.getContext('2d');
+
+    const PI2 = Math.PI * 2;
+    const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
+    const $ = id => document.getElementById(id);
+
+    /* ============================================================
+     * 向量工具（与站内其它三维页同一套约定）
+     * ============================================================ */
+    const add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+    const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+    const scl = (a, k) => [a[0] * k, a[1] * k, a[2] * k];
+    const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+    const vlen = a => Math.hypot(a[0], a[1], a[2]);
+    const vnorm = a => { const l = vlen(a) || 1; return [a[0] / l, a[1] / l, a[2] / l]; };
+
+    /* ============================================================
+     * 场景常量
+     * ------------------------------------------------------------
+     * 世界坐标：y 向上，x/z 水平。1 世界单位 = 10 cm。
+     * 左边一台托盘天平（几何与「托盘天平立体模型.html」同一套，整体平移 BX），
+     * 中间一支 100 mL 量筒，右边一个烧杯 + 待测石块。
+     * ============================================================ */
+    const U = 10;
+
+    /* ---- 台面 ---- */
+    const TABLE_HW = 2.82, TABLE_HD = 1.54, TABLE_T = 0.13;
+
+    /* ---- 托盘天平（沿用 ① 的全部常量，只把中心从原点挪到 BX） ---- */
+    const BX = -1.36;
+    const PIVOT_Y = 1.42;
+    const BASE_HW = 0.74, BASE_HD = 0.50, BASE_H = 0.10, BASE_BEV = 0.028;
+    const COL_BW = 0.088, COL_BD = 0.078, COL_TW = 0.046, COL_TD = 0.042;
+    const COL_TOP = PIVOT_Y - 0.075, BRG_TOP = PIVOT_Y - 0.038;
+    const ARM = 1.02, BEAM_H = 0.078, BEAM_D = 0.072, HOOK_X = 0.84, ANG_MAX = 12;
+    const ROD_X0 = 1.00, ROD_X1 = 1.32, ROD_R = 0.021;
+    const RIDER_X0 = 0.10, RIDER_X1 = 0.80, RIDER_G = 5, RIDER_W = 0.040, RIDER_LIFT = 0.062;
+    const PAN_R = 0.42, HANG = 0.90, PAN_D = 0.086;
+    const PTR_LEN = 1.055, PTR_Z = 0.150, PTR_W0 = 0.032, PTR_W1 = 0.007;
+    const SCALE_Z = 0.118, SCALE_TH = 0.013;
+    const SCALE_HALF = ANG_MAX * Math.PI / 180, SCALE_RO = 1.115, SCALE_RI = 0.995;
+
+    /* ---- 量筒：100 mL，分度值 1 mL（0 → 100 mL 对应 0.50 → 2.10 世界单位） ---- */
+    const CX = 0.46, CZ = 0.0;
+    const CY_RIN = 0.141, CY_WALL = 0.024, CY_ROUT = CY_RIN + CY_WALL;
+    const CY_GLASS_Y0 = 0.26, CY_TOP = 2.30;
+    const V_MAX = 100, SCALE_Y0 = 0.50, SCALE_Y1 = 2.10;
+    const MENISCUS_RISE = 0.011;          // 凹液面边缘比最低处高约 1 mm
+    const CY_FOOT_R = 0.30, CY_FOOT_H = 0.26;
+
+    /* ---- 烧杯：内径 4 cm，50 mL 规格（测液体用） ---- */
+    const KX = 1.62, KZ = -0.34;
+    const BK_RIN = 0.20, BK_WALL = 0.013, BK_H = 0.62;
+    const BK_AREA = Math.PI * (BK_RIN * U) * (BK_RIN * U);   // cm²
+
+    /* ---- 待测固体：几组预设（质量都恰好能用「砝码 + 0.2 g 游码」配平） ---- */
+    const STONES = [
+      { name: '花岗岩块', m: 20.8, v: 8.0 },
+      { name: '铝块',     m: 16.2, v: 6.0 },
+      { name: '铁块',     m: 31.2, v: 4.0 },
+      { name: '玻璃块',   m: 15.0, v: 6.0 }
+    ];
+    const WET_GAIN = 0.8;                 // 先测体积时石块带走的水（g），用来演示系统误差
+    const STONE_HOME = [1.82, 0.0, 0.46]; // 石块在台面上的「家」
+    // 石块必须能塞进量筒内径（半径 0.141 世界单位），所以最长半轴 + 顶点扰动要小于它
+    const STONE_BASE = [0.116, 0.102, 0.096];   // v = 8.0 cm³ 时的半尺寸
+    const STONE_D = [                    // 每个顶点的固定扰动 —— 摆成一块河卵石
+      [-0.020, -0.015, 0.012], [0.018, -0.021, 0.010],
+      [0.023, 0.018, 0.014], [-0.016, 0.022, 0.011],
+      [-0.022, -0.012, -0.015], [0.021, -0.018, -0.012],
+      [0.014, 0.021, -0.018], [-0.020, 0.016, -0.014]
+    ];
+    const STONE_YAW = 0.62, STONE_TILT = 0.22;   // 让石块「斜着躺」，一眼看出是不规则的
+
+    /* ---- 液体（盐水）---- */
+    const LIQ = { m1: 96.4, m2: 63.4, v: 30.0 };   // 倒入量筒 30.0 mL，Δm = 33.0 g → ρ = 1.10
+    const BK_V0 = 42.2;                            // 烧杯里原有的盐水体积（mL），只为画液面高度
+
+    /* ---- 相机 ---- */
+    const CAMD = 11.6, TARGET = [0, 0.86, 0];
+    const VIEWS = {
+      bench:    { yaw: 0.42, pitch: 0.40, zoom: 1.00, env: true },
+      // 特写视角的 look 是【注视点】，同时决定相机朝向和画面居中。
+      // look 的高度必须让「指针 + 分度盘」留在画面里 —— 那是天平唯一读数的地方。
+      // 原来 look.y = 1.06 / zoom 2.55 时指针尖落到画布下缘之外（像素自检抓到的）。
+      // 现在的参数在 1024×760 ~ 1440×1000 四种视口下下缘都留 50 px 以上。
+      balance:  { yaw: 0.30, pitch: 0.24, zoom: 2.10, look: [BX, 0.98, 0] },
+      // 量筒特写要能看见 5 ~ 60 mL 的全部液面高度（倒入范围）以及浸没后的石块
+      cylinder: { yaw: 0.28, pitch: 0.16, zoom: 2.05, look: [CX, 0.97, 0] },
+      front:    { yaw: 0.00, pitch: 0.22, zoom: 1.06, env: true },
+      top:      { yaw: 0.34, pitch: 1.06, zoom: 0.96, env: true }
+    };
+
+    /* ============================================================
+     * 状态
+     * ============================================================ */
+    const state = {
+      yaw: VIEWS.bench.yaw, pitch: VIEWS.bench.pitch, zoom: VIEWS.bench.zoom,
+      view: 'bench', look: null,
+      w: 0, h: 0, dpr: 1, dirty: true,
+      drag: null, hover: null, downAt: null,
+      drawn: {}, solved: false,
+      mode: 'solid',            // 'solid' | 'liquid'
+      stone: 0,                 // 当前石块预设下标
+      elev: 0,                  // 视线俯仰角（度）> 0 俯视，< 0 仰视
+      wetFirst: false           // 先测体积（石块沾水）
+    };
+
+    const PHY = {
+      onPan: false,             // 物体是否已放到天平左盘
+      riderMass: 0,
+      weightsOnPan: [],
+      cylV: 0,                  // 量筒中的液体体积（mL）
+      stoneIn: false,           // 石块是否已浸没在量筒里
+      poured: false,            // 液体模式：是否已把盐水倒入量筒
+      // 石块从水里取出来会带一层水。带水的石块再上天平，读数就偏大 ——
+      // 「先测体积」之所以错，根子在这一条【物理状态】上，不在那个勾选框上。
+      // 所以这里记的是「石块此刻湿不湿」，勾选框只决定取出时擦不擦。
+      stoneWet: false
+    };
+    const W_MAX = 10;           // 右盘最多摆得下 10 个砝码
+    const REC = { m: null, v1: null, v2: null, m1: null, m2: null, v: null };
+    // 每个体积读数是在什么视线角度下记的 —— 诊断「读数为什么偏」时要用它，
+    // 不能用「此刻的视线」，因为学生很可能读完就把视线拨回平视了。
+    const REC_EL = { v1: 0, v2: 0, v: 0 };
+    const DATA_TOL = 0.06;      // 自己测出的 ρ 与标准值差多少就算「测量过程有问题」
+    const ANS_TOL = 0.06;       // 提交的答案与标准值差多少算对
+
+    /* ============================================================
+     * 物理
+     * ------------------------------------------------------------
+     * 与 ① 同一套力矩模型，只是把「平衡螺母调零 + 随机零点偏差」去掉 ——
+     * 这一节的重点是测密度，天平按「已经调好」的仪器使用。
+     * ============================================================ */
+    const stoneNow = () => STONES[state.stone];
+    const weightsSum = () => PHY.weightsOnPan.reduce((a, b) => a + b, 0);
+
+    function leftPanMass() {
+      if (!PHY.onPan) return 0;
+      if (state.mode === 'liquid') return PHY.poured ? LIQ.m2 : LIQ.m1;
+      // 湿石块带着一层水，称出来就比干石块重 —— 这是真实的系统误差，不是演示开关
+      const wet = PHY.stoneWet ? WET_GAIN : 0;
+      return stoneNow().m + wet;
+    }
+    const momentLeft = () => leftPanMass();
+    const momentRight = () => weightsSum() + PHY.riderMass;
+    const beamAngleDeg = () => clamp((momentRight() - momentLeft()) * 2.0, -ANG_MAX, ANG_MAX);
+    const balanceGap = () => Math.abs(momentRight() - momentLeft());
+    const realReading = () => weightsSum() + PHY.riderMass;
+    const BAL_GATE = 0.5;       // 0.5 g 力矩差 ⇔ 1.0°
+
+    /* ---------------------------- 量筒几何 ---------------------------- */
+    const yOfV = v => SCALE_Y0 + (v / V_MAX) * (SCALE_Y1 - SCALE_Y0);
+    const vOfY = y => (y - SCALE_Y0) / (SCALE_Y1 - SCALE_Y0) * V_MAX;
+    const liquidV = () => PHY.cylV;
+    const ySurf = () => yOfV(liquidV());
+
+    // 视线穿过刻度面（量筒外壁 z = CZ − CY_ROUT）时落到的高度。
+    // 凹液面最低处在中轴上，刻度在外壁上，两者相差一个 CY_ROUT 的深度差 ——
+    // 俯仰 θ 时看到的高度就是 ySurf + CY_ROUT·tanθ，与眼睛离多远【无关】。
+    const ySight = () => ySurf() + CY_ROUT * Math.tan(state.elev * Math.PI / 180);
+    // 视差造成的【读数偏差】（mL）。只跟俯仰角有关，是个【常数偏移】——
+    // 所以排水法里 V₁、V₂ 都用同一个角去读时，偏差在相减时抵消；
+    // 只有两次读数用不同的角，V = V₂ − V₁ 才真的被带偏。
+    const sightBias = (elevDeg) =>
+      CY_ROUT * Math.tan(elevDeg * Math.PI / 180) * V_MAX / (SCALE_Y1 - SCALE_Y0);
+    const vRead = () => clamp(liquidV() + sightBias(state.elev), 0, V_MAX);
+    const sightErr = () => sightBias(state.elev);          // 读数 − 真实，>0 偏大
+    const sightVerdict = () => {
+      if (Math.abs(state.elev) < 1.2) return 'level';
+      return state.elev > 0 ? 'high' : 'low';
+    };
+
+    /* ---- 石块体积（由密度反推，供画面上「该有多大」用） ---- */
+    const stoneScale = () => Math.cbrt(stoneNow().v / 8.0);
+    const stoneHalf = () => STONE_BASE.map(v => v * stoneScale());
+    // 石块浸没后液面升高量（mL）
+    const stoneRise = () => stoneNow().v;
+
+    /* ============================================================
+     * 派生几何：天平（横梁局部系 → 世界系，已经带上 BX）
+     * ============================================================ */
+    const beamTh = () => -beamAngleDeg() * Math.PI / 180;
+    function beamPt(lx, ly, lz) {
+      const th = beamTh(), c = Math.cos(th), s = Math.sin(th);
+      return [BX + lx * c - ly * s, PIVOT_Y + lx * s + ly * c, lz];
+    }
+    function beamRotN(n) {
+      const th = beamTh(), c = Math.cos(th), s = Math.sin(th);
+      return [n[0] * c - n[1] * s, n[0] * s + n[1] * c, n[2]];
+    }
+    const bp = (x, y, z) => [x + BX, y, z];
+    function hookWorld(side) {
+      const th = beamTh(), c = Math.cos(th), s = Math.sin(th), lx = side * HOOK_X;
+      return [BX + lx * c, PIVOT_Y + lx * s, 0];
+    }
+    const panRimY = side => hookWorld(side)[1] - HANG;
+    const panCx = side => hookWorld(side)[0];
+    const panFloorY = side => panRimY(side) - PAN_D;
+    const riderX = () => RIDER_X0 + (PHY.riderMass / RIDER_G) * (RIDER_X1 - RIDER_X0);
+    const massFromX = lx => clamp((lx - RIDER_X0) / (RIDER_X1 - RIDER_X0), 0, 1) * RIDER_G;
+    const nutLocalX = (side, pos) => side * (1.16 - side * pos * 0.0048);
+    const pointerTip = () => beamPt(0, -PTR_LEN, PTR_Z);
+    const scalePt = (phi, r) => [BX + r * Math.sin(phi), PIVOT_Y - r * Math.cos(phi), SCALE_Z];
+
+    /* ============================================================
+     * 相机
+     * ============================================================ */
+    // 取景包络：写死的一组点（含天平横梁的两个极限角、量筒顶端、烧杯、石块的家），
+    // 不跟随滑块 —— 否则拖一次游码视野就一缩一放，晃得没法用。
+    function envelopePoints() {
+      const pts = [];
+      for (const sx of [-1, 1]) for (const sz of [-1, 0.35]) {
+        pts.push([sx * TABLE_HW * 0.60, 0, sz * TABLE_HD * 0.92]);
+      }
+      for (const ang of [0, ANG_MAX, -ANG_MAX]) {
+        const th = -ang * Math.PI / 180, c = Math.cos(th), s = Math.sin(th);
+        const put = (lx, ly, lz) => pts.push([BX + lx * c - ly * s, PIVOT_Y + lx * s + ly * c, lz]);
+        put(0, 0.11, 0);
+        for (const sx of [-1, 1]) {
+          put(sx * ROD_X1, -0.04, -ROD_R); put(sx * ROD_X1, -0.04, ROD_R);
+          put(sx * ROD_X1, 0.04, 0);
+          const hx = BX + sx * HOOK_X * c, hy = PIVOT_Y + sx * HOOK_X * s;
+          pts.push([hx, hy - HANG - PAN_D, 0]);
+          pts.push([hx + PAN_R, hy - HANG, 0]);
+          pts.push([hx - PAN_R, hy - HANG, 0]);
+          // 托盘是【水平圆盘】：透视下最宽的那一点落在 z = ±PAN_R 上，只算 z = 0 会漏掉，
+          // 结果左盘的边缘会被切到画布外（实测刚好贴着左边缘）。
+          pts.push([hx - PAN_R, hy - HANG, -PAN_R]);
+          pts.push([hx - PAN_R, hy - HANG, PAN_R]);
+          pts.push([hx + PAN_R, hy - HANG, -PAN_R]);
+          pts.push([hx + PAN_R, hy - HANG, PAN_R]);
+          pts.push([hx, hy - HANG - PAN_D + 0.34, 0]);
+        }
+      }
+      for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+        pts.push([BX + sx * BASE_HW, 0, sz * BASE_HD]);
+        pts.push([BX + sx * BASE_HW, BASE_H, sz * BASE_HD]);
+      }
+      pts.push([BX, PIVOT_Y - PTR_LEN - 0.02, PTR_Z]);
+      for (const sx of [-1, 1]) {
+        const p = scalePt(sx * SCALE_HALF, SCALE_RO + 0.02);
+        pts.push([p[0], p[1], SCALE_Z]);
+      }
+      // 量筒：底座四角 + 筒顶
+      pts.push([CX - CY_FOOT_R, 0, CZ - CY_FOOT_R]); pts.push([CX + CY_FOOT_R, 0, CZ + CY_FOOT_R]);
+      pts.push([CX - CY_ROUT - 0.02, CY_TOP + 0.02, CZ]);
+      pts.push([CX + CY_ROUT + 0.02, CY_TOP + 0.02, CZ]);
+      // 烧杯
+      pts.push([KX + BK_RIN + BK_WALL + 0.02, BK_H + 0.02, KZ]);
+      pts.push([KX - BK_RIN - BK_WALL - 0.02, BK_H + 0.02, KZ]);
+      pts.push([KX - BK_RIN - BK_WALL - 0.02, 0, KZ]);
+      // 石块在台面上的家
+      pts.push([STONE_HOME[0] + 0.24, 0.26, STONE_HOME[2] + 0.20]);
+      pts.push([STONE_HOME[0] - 0.24, 0, STONE_HOME[2] - 0.20]);
+      return pts;
+    }
+
+    function makeCam(q, w, h) {
+      const cy = Math.cos(state.yaw), sy = Math.sin(state.yaw);
+      const cp = Math.cos(state.pitch), sp = Math.sin(state.pitch);
+      const dir = [cp * sy, sp, cp * cy];
+      q.dist = CAMD / state.zoom;
+      q.eye = add(TARGET, scl(dir, q.dist));
+      q.fwd = scl(dir, -1);
+      q.right = vnorm(cross(q.fwd, [0, 1, 0]));
+      q.up = cross(q.right, q.fwd);
+      const pts = envelopePoints();
+      let loR = 1e9, hiR = -1e9, loU = 1e9, hiU = -1e9;
+      for (const p of pts) {
+        const v = sub(p, q.eye);
+        const z = Math.max(0.05, dot(v, q.fwd));
+        const r = dot(v, q.right) / z, u = dot(v, q.up) / z;
+        loR = Math.min(loR, r); hiR = Math.max(hiR, r);
+        loU = Math.min(loU, u); hiU = Math.max(hiU, u);
+      }
+      // 缩放必须乘在【算出来的焦距】上：只改 q.dist 的话，焦距又被包络反算回来，
+      // 缩放会被自动取景完全抵消（站内踩过好几次的老毛病）。
+      const s = Math.min(w * 0.94 / Math.max(1e-6, hiR - loR),
+                         h * 0.90 / Math.max(1e-6, hiU - loU));
+      q.focal = s * state.zoom;
+      const look = state.look;
+      if (look) {
+        // 放大 / 贴近视角：居中于【注视点】，否则高瘦的器材会被推到画面外
+        const vL = sub(look, q.eye);
+        const zL = Math.max(0.05, dot(vL, q.fwd));
+        q.px = w * 0.5 - dot(vL, q.right) * (q.focal / zL);
+        q.py = h * 0.5 + dot(vL, q.up) * (q.focal / zL);
+      } else {
+        // 默认视角：居中于【包络】，保证整台器材都在画面里
+        q.px = w * 0.5 - (loR + hiR) * 0.5 * s;
+        q.py = h * 0.5 + (loU + hiU) * 0.5 * s;
+      }
+      q.eyeDist = p => dot(sub(p, q.eye), q.fwd);
+      return q;
+    }
+    function project(p, q) {
+      const v = sub(p, q.eye);
+      const z = Math.max(0.05, dot(v, q.fwd));
+      const s = q.focal / z;
+      return { x: q.px + dot(v, q.right) * s, y: q.py - dot(v, q.up) * s, s: s, z: z };
+    }
+    function unprojectZ(sx, sy, q, z0) {
+      const dx = (sx - q.px) / q.focal;
+      const dy = -(sy - q.py) / q.focal;
+      const d = add(add(q.fwd, scl(q.right, dx)), scl(q.up, dy));
+      if (Math.abs(d[2]) < 1e-6) return null;
+      const t = ((z0 === undefined ? 0 : z0) - q.eye[2]) / d[2];
+      if (t <= 0) return null;
+      return add(q.eye, scl(d, t));
+    }
+    const camAzim = (q, cx, cz) => Math.atan2(q.eye[2] - cz, q.eye[0] - cx);
+
+    /* ============================================================
+     * 绘图小工具
+     * ============================================================ */
+    function polyPath(pts) {
+      ctx.beginPath();
+      pts.forEach((p, k) => k ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+      ctx.closePath();
+    }
+    function poly(pts, fill, stroke, lw) {
+      if (!pts || pts.length < 2) return;
+      polyPath(pts);
+      if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+      if (stroke) { ctx.lineWidth = lw || 1; ctx.strokeStyle = stroke; ctx.stroke(); }
+    }
+    function line(pts, color, lw, dash) {
+      if (!pts || pts.length < 2) return;
+      ctx.beginPath();
+      pts.forEach((p, k) => k ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+      ctx.setLineDash(dash || []);
+      ctx.lineWidth = lw; ctx.strokeStyle = color; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+      ctx.stroke(); ctx.setLineDash([]);
+    }
+    function dot2(p, r, fill, stroke, lw) {
+      ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, PI2);
+      if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+      if (stroke) { ctx.lineWidth = lw || 1; ctx.strokeStyle = stroke; ctx.stroke(); }
+    }
+    const rgb = (c, k) => {
+      const s = k === undefined ? 1 : k;
+      return 'rgb(' + Math.round(clamp(c[0] * s, 0, 255)) + ',' +
+                      Math.round(clamp(c[1] * s, 0, 255)) + ',' +
+                      Math.round(clamp(c[2] * s, 0, 255)) + ')';
+    };
+    const LIGHT = vnorm([-0.34, 0.86, 0.38]);
+    // 面的明暗：按面法线与光线的夹角给亮度。同一个颜色的盒子三个面必须读出
+    // 三种明度 —— 这是「像实物」而不是「像贴纸」的来源。
+    const shade = (base, n, amb) => rgb(base, (amb === undefined ? 0.52 : amb) + 0.60 * Math.max(0, dot(n, LIGHT)));
+
+    /* ---------------------------- 标签（带避让） ---------------------------- */
+    let frameBoxes = [];
+    function labelBox(p, text, size, align) {
+      ctx.font = '800 ' + size + 'px Inter, "Microsoft YaHei", sans-serif';
+      const wpx = ctx.measureText(text).width;
+      const pad = 4;
+      const half = size * 0.72 + pad * 0.5;
+      const wBox = wpx + pad * 2;
+      const EDGE = 8;
+      const y = clamp(p.y, half + EDGE, Math.max(half + EDGE, state.h - half - EDGE));
+      let bx = align === 'left' ? p.x - 4 - pad
+             : align === 'right' ? p.x + 4 - wpx - pad
+             : p.x - wpx / 2 - pad;
+      bx = clamp(bx, EDGE, Math.max(EDGE, state.w - wBox - EDGE));
+      return { x: bx, y: y - half, w: wBox, h: half * 2, cx: bx + wBox / 2, cy: y };
+    }
+    function label(p, text, color, size, align) {
+      ctx.font = '800 ' + size + 'px Inter, "Microsoft YaHei", sans-serif';
+      ctx.textAlign = align || 'center';
+      ctx.textBaseline = 'middle';
+      const pad = 4;
+      const wpx = ctx.measureText(text).width;
+      const b = labelBox(p, text, size, align);
+      const x = align === 'left' ? b.x + pad : align === 'right' ? b.x + wpx + pad : b.cx;
+      ctx.fillStyle = 'rgba(2,6,23,.76)';
+      ctx.fillRect(b.x, b.y, b.w, b.h);
+      ctx.fillStyle = color;
+      ctx.fillText(text, x, b.cy);
+      frameBoxes.push(b);
+      if (window.__denLabelLog) window.__denLabelLog.push({ text: text, x: b.x, y: b.y, w: b.w, h: b.h });
+      return b;
+    }
+    // 在一组候选落点里挑「与本帧已画盒子重叠面积最小」的那个。
+    function bestLabel(anchor, text, color, size, offs) {
+      let best = null, bestOv = 1e18;
+      for (const o of offs) {
+        const b = labelBox({ x: anchor.x + o[0], y: anchor.y + o[1] }, text, size, 'center');
+        let ov = 0;
+        for (const q of frameBoxes) {
+          const ox = Math.min(b.x + b.w, q.x + q.w) - Math.max(b.x, q.x);
+          const oy = Math.min(b.y + b.h, q.y + q.h) - Math.max(b.y, q.y);
+          if (ox > 0 && oy > 0) ov += ox * oy;
+        }
+        if (ov < bestOv) { bestOv = ov; best = { x: anchor.x + o[0], y: anchor.y + o[1] }; }
+      }
+      label(best, text, color, size, 'center');
+      return bestOv;
+    }
+    // 只许上下平移的候选位，在【竖直参照物旁边】必然躲不开 —— 量筒、刻度尺一样竖直，
+    // 所以必须再给一组能往左右滑的候选位。
+    const AVOID = [[0, -18], [0, 18], [-52, 0], [52, 0], [0, -36], [0, 36],
+                   [-58, -18], [58, -18], [-58, 18], [58, 18], [0, -54], [0, 54]];
+    const avoidLabel = (anchor, text, color, size) => bestLabel(anchor, text, color, size, AVOID);
+
+    /* ---------------------------- 回转体 / 管 ---------------------------- */
+    function revolveRings(profile, q, N, cx, cz) {
+      const rings = [];
+      for (const [r, y] of profile) {
+        let L = null, R = null, aL = 0, aR = 0;
+        for (let k = 0; k < N; k++) {
+          const a = k / N * PI2;
+          const P = project([cx + r * Math.cos(a), y, cz + r * Math.sin(a)], q);
+          if (!L || P.x < L.x) { L = P; aL = a; }
+          if (!R || P.x > R.x) { R = P; aR = a; }
+        }
+        rings.push({ r: r, y: y, L: L, R: R, aL: aL, aR: aR });
+      }
+      return rings;
+    }
+    function frontArc(cx, cz, r, y, a0, a1, camA, q, n) {
+      const norm = a => ((a % PI2) + PI2) % PI2;
+      const midOf = s => a0 + s * norm(s > 0 ? a1 - a0 : a0 - a1) * 0.5;
+      const dev = a => Math.abs(Math.atan2(Math.sin(a - camA), Math.cos(a - camA)));
+      const s = dev(midOf(1)) <= dev(midOf(-1)) ? 1 : -1;
+      const span = norm(s > 0 ? a1 - a0 : a0 - a1);
+      const out = [];
+      for (let k = 0; k <= n; k++) {
+        const a = a0 + s * span * (k / n);
+        out.push(project([cx + r * Math.cos(a), y, cz + r * Math.sin(a)], q));
+      }
+      return out;
+    }
+    function ringOutline(rings, q, cx, cz, nArc) {
+      const out = [];
+      for (const g of rings) out.push(g.R);
+      for (let k = rings.length - 1; k >= 0; k--) out.push(rings[k].L);
+      const b = rings[0];
+      const camA = camAzim(q, cx, cz);
+      const arc = frontArc(cx, cz, b.r, b.y, b.aL, b.aR, camA, q, nArc);
+      for (const p of arc) out.push(p);
+      return out;
+    }
+    function ringPath(cx, cz, r, y, q, n) {
+      const out = [];
+      for (let k = 0; k <= n; k++) {
+        const a = k / n * PI2;
+        out.push(project([cx + r * Math.cos(a), y, cz + r * Math.sin(a)], q));
+      }
+      return out;
+    }
+    // 圆柱面上的一段弧（画量筒刻度用）：以「正对相机」的方位角为中心，向两侧各展 dw
+    function cylArc(y, r, dw, camA, q, n, cx, cz) {
+      const out = [];
+      for (let k = 0; k <= n; k++) {
+        const a = camA - dw + 2 * dw * (k / n);
+        out.push(project([cx + r * Math.cos(a), y, cz + r * Math.sin(a)], q));
+      }
+      return out;
+    }
+    // 一根「管子」：沿折线画，每段按投影宽度取线宽，再叠一条偏左上的亮带。
+    function tube(pts, rWorld, cols, q) {
+      const pr = pts.map(p => project(p, q));
+      ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+      for (let i = 1; i < pr.length; i++) {
+        const a = pr[i - 1], b = pr[i];
+        const w = Math.max(1.7, rWorld * (a.s + b.s));
+        ctx.strokeStyle = cols.edge; ctx.lineWidth = w + 1.6;
+        ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+      }
+      for (let i = 1; i < pr.length; i++) {
+        const a = pr[i - 1], b = pr[i];
+        const w = Math.max(1.7, rWorld * (a.s + b.s));
+        ctx.strokeStyle = cols.body; ctx.lineWidth = w;
+        ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+      }
+      for (let i = 1; i < pr.length; i++) {
+        const a = pr[i - 1], b = pr[i];
+        const w = Math.max(1.7, rWorld * (a.s + b.s));
+        const dx = -(b.y - a.y), dy = (b.x - a.x);
+        const L = Math.hypot(dx, dy) || 1;
+        const ox = dx / L * w * 0.24 - w * 0.10, oy = dy / L * w * 0.24 - w * 0.10;
+        ctx.strokeStyle = cols.hi; ctx.lineWidth = Math.max(0.9, w * 0.34);
+        ctx.beginPath(); ctx.moveTo(a.x + ox, a.y + oy); ctx.lineTo(b.x + ox, b.y + oy); ctx.stroke();
+      }
+    }
+
+    /* ---------------------------- 凸箱体 ---------------------------- */
+    // 背面剔除，不按距离排序：排序会出「整块顶面盖住别的东西」。
+    // 顶点序：0(x0,y0,z0) 1(x1,y0,z0) 2(x1,y1,z0) 3(x0,y1,z0) 4(x0,y0,z1) 5(x1,y0,z1) 6(x1,y1,z1) 7(x0,y1,z1)
+    const BOX_FACES = [
+      { n: [0, 1, 0],  i: [4, 5, 6, 7] },   // 顶
+      { n: [0, -1, 0], i: [0, 3, 2, 1] },   // 底
+      { n: [0, 0, 1],  i: [3, 2, 6, 7] },   // 前 +z
+      { n: [0, 0, -1], i: [0, 1, 5, 4] },   // 后 −z
+      { n: [1, 0, 0],  i: [1, 2, 6, 5] },   // 右 +x
+      { n: [-1, 0, 0], i: [0, 3, 7, 4] }    // 左 −x
+    ];
+    const BOX_V = (x0, y0, z0, x1, y1, z1) => [
+      [x0, y0, z0], [x1, y0, z0], [x1, y1, z0], [x0, y1, z0],
+      [x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1]
+    ];
+    function box3(x0, y0, z0, x1, y1, z1, base, q, amb, mapV, mapN) {
+      const V = BOX_V(x0, y0, z0, x1, y1, z1);
+      const W = mapV ? V.map(v => mapV(v[0], v[1], v[2])) : V;
+      const P = W.map(v => project(v, q));
+      for (const f of BOX_FACES) {
+        const c = [0, 0, 0];
+        for (const i of f.i) { c[0] += W[i][0] / 4; c[1] += W[i][1] / 4; c[2] += W[i][2] / 4; }
+        if (dot(f.n, sub(q.eye, c)) <= 0) continue;
+        const n = mapN ? mapN(f.n) : f.n;
+        poly(f.i.map(i => P[i]), shade(base, n, amb), null, 0);
+      }
+      return P;
+    }
+
+    /* ============================================================
+     * 材质
+     * ============================================================ */
+    const C_STEEL = [176, 188, 202];
+    const C_BRASS = [196, 152, 74];
+    const C_IRON  = [96, 104, 116];
+    const C_PAN   = [190, 200, 212];
+    const C_STONE = [138, 141, 147];
+
+    const STEEL_COLS = { edge: '#121c29', body: '#9dadbf', hi: '#eef5fc' };
+    const BRASS_COLS = { edge: '#2c1f08', body: '#c79a4e', hi: '#ffeec0' };
+    const DARK_COLS  = { edge: '#080e18', body: '#5a6678', hi: '#9fb0c2' };
+
+    function drawBackdrop(w, h) {
+      const g = ctx.createRadialGradient(w * 0.46, h * 0.10, 12, w * 0.5, h * 0.55, Math.max(w, h) * 0.86);
+      g.addColorStop(0, '#0d2035');
+      g.addColorStop(0.52, '#071626');
+      g.addColorStop(1, '#020a14');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, w, h);
+    }
+    const rectPts = (x0, z0, x1, z1, y, q) => [
+      project([x0, y, z0], q), project([x1, y, z0], q),
+      project([x1, y, z1], q), project([x0, y, z1], q)
+    ];
+    function drawTable(q) {
+      const x0 = -TABLE_HW, x1 = TABLE_HW, z0 = -TABLE_HD, z1 = TABLE_HD;
+      const P = (x, y, z) => project([x, y, z], q);
+      poly(rectPts(x0, z0, x1, z1, 0, q), '#141f2f', null, 0);
+      ctx.save();
+      polyPath(rectPts(x0, z0, x1, z1, 0, q)); ctx.clip();
+      const a0 = P(x0, 0, z0), a1 = P(x1, 0, z1);
+      const g = ctx.createLinearGradient(a0.x, a0.y, a1.x, a1.y);
+      g.addColorStop(0.00, 'rgba(152,201,255,.16)');
+      g.addColorStop(0.38, 'rgba(118,170,232,.10)');
+      g.addColorStop(0.72, 'rgba(96,142,198,.07)');
+      g.addColorStop(1.00, 'rgba(52,84,128,.13)');
+      ctx.fillStyle = g; ctx.fillRect(0, 0, state.w, state.h);
+      ctx.restore();
+      // 台面前沿
+      const e0 = P(x0, 0, z1), e1 = P(x1, 0, z1);
+      const e2 = P(x1, -TABLE_T, z1), e3 = P(x0, -TABLE_T, z1);
+      poly([e0, e1, e2, e3], 'rgba(10,20,34,.94)', 'rgba(148,163,184,.22)', 1);
+    }
+
+    /* ---------------------------- 天平：底座 ---------------------------- */
+    function drawBase(q) {
+      const SX = BASE_HW, SZ = BASE_HD, H = BASE_H, B = BASE_BEV;
+      const V = [
+        [BX - SX, 0, -SZ], [BX + SX, 0, -SZ], [BX + SX - B, H, -SZ + B], [BX - SX + B, H, -SZ + B],
+        [BX - SX, 0, SZ], [BX + SX, 0, SZ], [BX + SX - B, H, SZ - B], [BX - SX + B, H, SZ - B]
+      ];
+      const P = V.map(v => project(v, q));
+      const FACES = [
+        { i: [4, 5, 6, 7], n: [0, 1, 0], k: 1.00 },
+        { i: [3, 2, 6, 7], n: [0, 0, 1], k: 0.92 },
+        { i: [1, 2, 6, 5], n: [1, 0, 0], k: 0.80 },
+        { i: [0, 3, 7, 4], n: [-1, 0, 0], k: 0.72 },
+        { i: [0, 1, 5, 4], n: [0, 0, -1], k: 0.66 }
+      ];
+      for (const f of FACES) {
+        if (dot(f.n, sub(q.eye, [BX, H * 0.5, 0])) <= 0) continue;
+        poly(f.i.map(i => P[i]), shade([78, 88, 102], f.n, 0.46), null, 0);
+      }
+      // 底座上表面压一条高光边，底座才不像一块贴纸
+      line([P[7], P[6]], 'rgba(190,215,240,.34)', 1.2);
+      line([P[6], P[5]], 'rgba(190,215,240,.26)', 1.2);
+      state.drawn.baseTop = (P[4].y + P[5].y + P[6].y + P[7].y) / 4;
+    }
+
+    /* ---------------------------- 天平：立柱 + 刀口支承 ---------------------------- */
+    function drawColumn(q) {
+      const V = [
+        [BX - COL_BW, BASE_H, -COL_BD], [BX + COL_BW, BASE_H, -COL_BD],
+        [BX + COL_TW, COL_TOP, -COL_TD], [BX - COL_TW, COL_TOP, -COL_TD],
+        [BX - COL_BW, BASE_H, COL_BD], [BX + COL_BW, BASE_H, COL_BD],
+        [BX + COL_TW, COL_TOP, COL_TD], [BX - COL_TW, COL_TOP, COL_TD]
+      ];
+      const P = V.map(v => project(v, q));
+      const FACES = [
+        { i: [3, 2, 6, 7], n: [0, 0, 1], k: 0.90 },
+        { i: [1, 2, 6, 5], n: [1, 0, 0], k: 0.78 },
+        { i: [0, 3, 7, 4], n: [-1, 0, 0], k: 0.70 },
+        { i: [0, 1, 5, 4], n: [0, 0, -1], k: 0.62 }
+      ];
+      for (const f of FACES) {
+        if (dot(f.n, sub(q.eye, [BX, (BASE_H + COL_TOP) * 0.5, 0])) <= 0) continue;
+        poly(f.i.map(i => P[i]), shade(C_STEEL, f.n, 0.44), null, 0);
+      }
+      line([P[3], P[2]], 'rgba(226,240,255,.5)', 1.4);
+      // 刀口支承
+      const b0 = project(bp(-0.052, COL_TOP, -0.030), q), b1 = project(bp(0.052, COL_TOP, -0.030), q);
+      const b2 = project(bp(0.052, BRG_TOP, 0.030), q), b3 = project(bp(-0.052, BRG_TOP, 0.030), q);
+      poly([b0, b1, b2, b3], shade([150, 164, 182], [0, 0.2, 1], 0.5), null, 0);
+    }
+
+    /* ---------------------------- 天平：横梁 + 游码 + 平衡螺母 ---------------------------- */
+    function beamBox(x0, y0, z0, x1, y1, z1, base, q, amb) {
+      return box3(x0, y0, z0, x1, y1, z1, base, q, amb,
+        (x, y, z) => beamPt(x, y, z), n => beamRotN(n));
+    }
+    function drawBeam(q) {
+      beamBox(-ARM, -BEAM_H / 2, -BEAM_D / 2, ARM, BEAM_H / 2, BEAM_D / 2, C_STEEL, q, 0.50);
+      // 标尺带（游码读数的刻度就刻在这条带子上）
+      const yT = BEAM_H / 2 + 0.001;
+      const b0 = beamPt(-ARM * 0.985, yT, -BEAM_D * 0.44), b1 = beamPt(ARM * 0.985, yT, -BEAM_D * 0.44);
+      const b2 = beamPt(ARM * 0.985, yT, BEAM_D * 0.44), b3 = beamPt(-ARM * 0.985, yT, BEAM_D * 0.44);
+      poly([b0, b1, b2, b3].map(p => project(p, q)), 'rgba(14,26,42,.9)', null, 0);
+      for (let g = 0; g <= RIDER_G; g += 0.2) {
+        const lx = RIDER_X0 + (g / RIDER_G) * (RIDER_X1 - RIDER_X0);
+        const big = Math.abs(g - Math.round(g)) < 1e-6;
+        const l0 = project(beamPt(lx, yT, -BEAM_D * 0.42), q);
+        const l1 = project(beamPt(lx, yT, -BEAM_D * (big ? 0.06 : 0.24)), q);
+        line([l0, l1], big ? 'rgba(226,240,255,.9)' : 'rgba(160,190,215,.55)', big ? 1.4 : 1);
+      }
+      // 两端吊环
+      for (const sx of [-1, 1]) {
+        const h = hookWorld(sx);
+        const a0 = beamPt(sx * HOOK_X, BEAM_H / 2 - 0.004, 0);
+        tube([a0, h], 0.014, STEEL_COLS, q);
+        dot2(project(h, q), 3.2, '#cfdbe8', '#0a121e', 1);
+        // 吊线
+        tube([h, [h[0], h[1] - HANG, 0]], 0.009, DARK_COLS, q);
+      }
+      // 螺杆 + 平衡螺母（螺母固定在中位：这一节用的是「已经调好」的天平）
+      for (const sx of [-1, 1]) {
+        const r0 = beamPt(sx * ROD_X0, 0, 0), r1 = beamPt(sx * ROD_X1, 0, 0);
+        tube([r0, r1], ROD_R * 0.62, STEEL_COLS, q);
+        const nx = nutLocalX(sx, 0);
+        const c0 = beamPt(nx, -0.052, -0.052), c1 = beamPt(nx, 0.052, 0.052);
+        const C = [0, 0, 0];
+        for (let i = 0; i < 3; i++) C[i] = (c0[i] + c1[i]) / 2;
+        const n0 = beamPt(nx - 0.026, 0, 0), n1 = beamPt(nx + 0.026, 0, 0);
+        tube([n0, n1], 0.062, BRASS_COLS, q);
+      }
+      // 游码
+      const rx = riderX();
+      const ry = -BEAM_H / 2 - RIDER_LIFT;
+      beamBox(rx - RIDER_W, ry, -RIDER_W * 1.05, rx + RIDER_W, -BEAM_H / 2 + 0.004, RIDER_W * 1.05,
+              C_BRASS, q, 0.56);
+      // 游码顶面挖一道槽，让它一眼看出是「跨在标尺上」的
+      const g0 = beamPt(rx - RIDER_W * 0.5, -BEAM_H / 2 + 0.006, -RIDER_W * 0.5);
+      const g1 = beamPt(rx + RIDER_W * 0.5, -BEAM_H / 2 + 0.006, -RIDER_W * 0.5);
+      const g2 = beamPt(rx + RIDER_W * 0.5, -BEAM_H / 2 + 0.006, RIDER_W * 0.5);
+      const g3 = beamPt(rx - RIDER_W * 0.5, -BEAM_H / 2 + 0.006, RIDER_W * 0.5);
+      poly([g0, g1, g2, g3].map(p => project(p, q)), 'rgba(44,31,8,.85)', null, 0);
+      state.drawn.rider = { rx: rx, r: RIDER_W };
+    }
+
+    /* ---------------------------- 天平：指针 + 分度盘 ---------------------------- */
+    function drawPointerAndScale(q) {
+      const N = 30;
+      const zF = SCALE_Z + SCALE_TH, zB = SCALE_Z - SCALE_TH;
+      const band = (z, fill, stroke) => {
+        const pts = [];
+        for (let k = 0; k <= N; k++) {
+          const phi = -SCALE_HALF + 2 * SCALE_HALF * (k / N);
+          const r = SCALE_RO;
+          pts.push(project([BX + r * Math.sin(phi), PIVOT_Y - r * Math.cos(phi), z], q));
+        }
+        for (let k = N; k >= 0; k--) {
+          const phi = -SCALE_HALF + 2 * SCALE_HALF * (k / N);
+          const r = SCALE_RI;
+          pts.push(project([BX + r * Math.sin(phi), PIVOT_Y - r * Math.cos(phi), z], q));
+        }
+        poly(pts, fill, stroke, 1.2);
+      };
+      band(zB, '#0a1420', 'rgba(148,163,184,.30)');
+      // 侧壁
+      for (let k = 0; k < N; k++) {
+        const p0 = -SCALE_HALF + 2 * SCALE_HALF * (k / N);
+        const p1 = -SCALE_HALF + 2 * SCALE_HALF * ((k + 1) / N);
+        for (const r of [SCALE_RO, SCALE_RI]) {
+          const a = project([BX + r * Math.sin(p0), PIVOT_Y - r * Math.cos(p0), zB], q);
+          const b = project([BX + r * Math.sin(p1), PIVOT_Y - r * Math.cos(p1), zB], q);
+          const c = project([BX + r * Math.sin(p1), PIVOT_Y - r * Math.cos(p1), zF], q);
+          const d = project([BX + r * Math.sin(p0), PIVOT_Y - r * Math.cos(p0), zF], q);
+          poly([a, b, c, d], 'rgba(18,32,47,.96)', null, 0);
+        }
+      }
+      band(zF, '#12202f', 'rgba(148,163,184,.38)');
+      // 13 条刻度：正中间那条是绿色的「平衡」参照
+      for (let k = -6; k <= 6; k++) {
+        const phi = k / 6 * SCALE_HALF;
+        const mid = k === 0;
+        const r0 = mid ? SCALE_RI + 0.004 : SCALE_RI + 0.014;
+        const a = project([BX + r0 * Math.sin(phi), PIVOT_Y - r0 * Math.cos(phi), zF], q);
+        const b = project([BX + (SCALE_RO - 0.006) * Math.sin(phi), PIVOT_Y - (SCALE_RO - 0.006) * Math.cos(phi), zF], q);
+        line([a, b], mid ? '#34d399' : 'rgba(203,213,225,.78)', mid ? 2.6 : 1.4);
+      }
+      // 与立柱相连的小支架
+      const s0 = project(bp(-0.030, PIVOT_Y - SCALE_RO * Math.cos(SCALE_HALF) + 0.010, SCALE_Z), q);
+      const s1 = project(bp(0.030, PIVOT_Y - SCALE_RO * Math.cos(SCALE_HALF) + 0.010, SCALE_Z), q);
+      line([s0, s1], 'rgba(148,163,184,.45)', 2.2);
+
+      // 指针：一块【平放的锥形薄钢板】，吊在立柱正面 —— 用圆杆画会整根埋进立柱里看不见
+      const shape = [
+        beamPt(-PTR_W0, -0.010, PTR_Z), beamPt(PTR_W0, -0.010, PTR_Z),
+        beamPt(PTR_W1, -PTR_LEN + 0.10, PTR_Z), beamPt(0, -PTR_LEN, PTR_Z),
+        beamPt(-PTR_W1, -PTR_LEN + 0.10, PTR_Z)
+      ].map(p => project(p, q));
+      poly(shape, '#cfdbe8', '#0a121e', 1.4);
+      const hl = [
+        beamPt(-PTR_W0 * 0.34, -0.010, PTR_Z + 0.002), beamPt(-PTR_W0 * 0.06, -0.010, PTR_Z + 0.002),
+        beamPt(-PTR_W1 * 0.20, -PTR_LEN + 0.11, PTR_Z + 0.002), beamPt(-PTR_W1 * 0.44, -PTR_LEN + 0.11, PTR_Z + 0.002)
+      ].map(p => project(p, q));
+      poly(hl, 'rgba(255,255,255,.55)', null, 0);
+      const boss = project(bp(0, PIVOT_Y - 0.012, PTR_Z), q);
+      dot2(boss, Math.max(3, 0.030 * boss.s), '#8b98a8', '#0a121e', 1.2);
+      const tp = project(pointerTip(), q);
+      dot2(tp, 3.4, '#f87171', '#450a0a', 1);
+      state.drawn.ptrTip = tp;
+    }
+
+    /* ---------------------------- 天平：托盘 ---------------------------- */
+    function drawPan(q, side) {
+      const cx = panCx(side), rim = panRimY(side);
+      const prof = [[PAN_R * 0.30, rim - PAN_D], [PAN_R * 0.80, rim - PAN_D + 0.020],
+                    [PAN_R, rim - PAN_D * 0.42], [PAN_R, rim]];
+      const rings = revolveRings(prof, q, 40, cx, 0);
+      poly(ringOutline(rings, q, cx, 0, 22), 'rgba(190,200,212,.20)', 'rgba(214,226,238,.66)', 1.3);
+      // 盘面：铺一层浅色圆面，让砝码有「落在盘上」的感觉
+      const face = ringPath(cx, 0, PAN_R * 0.985, rim - 0.004, q, 40);
+      poly(face, 'rgba(176,190,205,.20)', 'rgba(226,238,248,.5)', 1);
+      line([project([cx - PAN_R, rim, 0], q), project([cx + PAN_R, rim, 0], q)],
+           'rgba(240,248,255,.6)', 1.6);
+    }
+
+    /* ---------------------------- 砝码 / 石块 ---------------------------- */
+    const W_SLOTS = [
+      [0.00, -0.215], [-0.225, -0.115], [0.225, -0.115], [0.00, 0.010],
+      [-0.235, 0.105], [0.235, 0.105], [-0.120, 0.265], [0.120, 0.265],
+      [-0.120, -0.030], [0.120, -0.030]
+    ];
+    const weightR = g => 0.045 + 0.075 * Math.cbrt(g / 100);
+    const weightH = g => weightR(g) * 0.95;
+
+    function drawOneWeight(q, cx, cz, y0, g, brass) {
+      const r = weightR(g), h = weightH(g);
+      const base = brass ? C_BRASS : C_IRON;
+      const rings = revolveRings([[r * 0.92, y0], [r, y0 + h * 0.14], [r, y0 + h * 0.82], [r * 0.72, y0 + h]],
+                                 q, 32, cx, cz);
+      poly(ringOutline(rings, q, cx, cz, 18), shade(base, [0.3, 0.9, 0.3], 0.5), null, 0);
+      // 顶部提钮
+      const kn = revolveRings([[r * 0.30, y0 + h], [r * 0.30, y0 + h + 0.030], [r * 0.16, y0 + h + 0.042]],
+                              q, 20, cx, cz);
+      poly(ringOutline(kn, q, cx, cz, 12), shade(base, [0.2, 1, 0.2], 0.62), null, 0);
+      const top = project([cx, y0 + h, cz], q);
+      ctx.font = '800 9px Inter, "Microsoft YaHei", sans-serif';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillStyle = 'rgba(24,18,4,.85)';
+      ctx.fillText(String(g), top.x, top.y - h * top.s * 0.28);
+      return { cx: cx, cz: cz, y0: y0, r: r, h: h, g: g };
+    }
+
+    function drawRightPan(q) {
+      const cx = panCx(1), rim = panRimY(1);
+      const arr = PHY.weightsOnPan.map((g, k) => ({ g: g, k: k })).sort((a, b) => b.g - a.g);
+      const boxes = [];
+      arr.forEach((it, i) => {
+        const s = W_SLOTS[i % W_SLOTS.length];
+        boxes.push(drawOneWeight(q, cx + s[0], s[1], rim - PAN_D + 0.004, it.g, true));
+      });
+      state.drawn.weightBoxes = boxes;
+    }
+
+    /* ---- 石块：不规则多面体（带扰动的凸箱体，再整体斜躺，保证背面剔除仍然正确） ---- */
+    const S_CY = Math.cos(STONE_YAW), S_SY = Math.sin(STONE_YAW);
+    const S_CT = Math.cos(STONE_TILT), S_ST = Math.sin(STONE_TILT);
+    function stoneRotP(p) {
+      const x1 = p[0] * S_CY + p[2] * S_SY;
+      const z1 = -p[0] * S_SY + p[2] * S_CY;
+      return [x1, p[1] * S_CT - z1 * S_ST, p[1] * S_ST + z1 * S_CT];
+    }
+    const stoneRotN = n => stoneRotP(n);
+    // 斜躺之后竖直方向的半高会变大 —— 摆放时用它，石块才不会陷进盘面里
+    const stoneVHalf = () => { const h = stoneHalf(); return h[1] * S_CT + h[2] * S_ST + 0.026; };
+
+    function stonePlace() {
+      // 返回石块的中心 [cx, cy, cz]
+      if (PHY.stoneIn && state.mode === 'solid') {
+        return [CX, CY_GLASS_Y0 + 0.006 + stoneVHalf(), CZ];
+      }
+      if (PHY.onPan && state.mode === 'solid') {
+        return [panCx(-1), panFloorY(-1) + 0.004 + stoneVHalf(), 0];
+      }
+      return [STONE_HOME[0], stoneVHalf(), STONE_HOME[2]];
+    }
+    function drawStone(q) {
+      const c = stonePlace();
+      const h = stoneHalf();
+      let vi = 0;
+      box3(-h[0], -h[1], -h[2], h[0], h[1], h[2], C_STONE, q, 0.52,
+        (x, y, z) => {
+          const d = STONE_D[(vi++) & 7];
+          const p = stoneRotP([x + d[0], y + d[1], z + d[2]]);
+          return [c[0] + p[0], c[1] + p[1], c[2] + p[2]];
+        },
+        n => stoneRotN(n));
+      state.drawn.stone = { cx: c[0], cy: c[1], cz: c[2], h: [h[0], stoneVHalf(), h[2]] };
+    }
+
+    /* ---------------------------- 烧杯（测液体用） ---------------------------- */
+    function beakerLevelH() {
+      const v = PHY.poured ? (BK_V0 - LIQ.v) : BK_V0;
+      // v 是 cm³、BK_AREA 是 cm²，相除得 cm，再除以 U 换成世界单位
+      return clamp(v / BK_AREA / U, 0, BK_H - 0.04);
+    }
+    function drawBeaker(q, baseY, cx, cz) {
+      const R = BK_RIN + BK_WALL;
+      const prof = [[R, baseY], [R, baseY + BK_H]];
+      const rings = revolveRings(prof, q, 40, cx, cz);
+      poly(ringOutline(rings, q, cx, cz, 20), 'rgba(150,190,215,.14)', 'rgba(198,228,246,.55)', 1.3);
+      // 杯口
+      line(ringPath(cx, cz, R, baseY + BK_H, q, 40), 'rgba(214,236,250,.72)', 1.5);
+      const h = beakerLevelH();
+      if (h > 0.004) {
+        const lr = revolveRings([[BK_RIN, baseY + 0.010], [BK_RIN, baseY + h]], q, 40, cx, cz);
+        poly(ringOutline(lr, q, cx, cz, 20), 'rgba(70,160,220,.44)', 'rgba(160,220,255,.55)', 1.1);
+        line(ringPath(cx, cz, BK_RIN, baseY + h, q, 36), 'rgba(196,238,255,.6)', 1.4);
+      }
+      // 玻璃高光：一条偏左上的竖向亮带
+      const a0 = camAzim(q, cx, cz) - 0.55;
+      line([project([cx + R * Math.cos(a0), baseY + 0.04, cz + R * Math.sin(a0)], q),
+            project([cx + R * Math.cos(a0), baseY + BK_H - 0.04, cz + R * Math.sin(a0)], q)],
+           'rgba(255,255,255,.30)', 3);
+      state.drawn.beaker = { cx: cx, cz: cz, baseY: baseY };
+    }
+
+    /* ---------------------------- 量筒 ---------------------------- */
+    // 顺序：筒身 → 水 → 内容物 → 刻度与高光。玻璃不铺不透明面，内容物才看得见。
+    function drawCylinderBody(q) {
+      // 底座
+      const fr = revolveRings([[CY_FOOT_R, 0], [CY_FOOT_R, CY_FOOT_H * 0.72], [CY_ROUT + 0.02, CY_FOOT_H]],
+                              q, 40, CX, CZ);
+      poly(ringOutline(fr, q, CX, CZ, 20), 'rgba(146,166,188,.30)', 'rgba(196,216,236,.5)', 1.2);
+      // 筒身玻璃
+      const rings = revolveRings([[CY_ROUT, CY_FOOT_H], [CY_ROUT, CY_TOP]], q, 44, CX, CZ);
+      poly(ringOutline(rings, q, CX, CZ, 22), 'rgba(150,190,215,.12)', 'rgba(198,228,246,.5)', 1.2);
+      // 筒口
+      line(ringPath(CX, CZ, CY_ROUT, CY_TOP, q, 44), 'rgba(214,236,250,.7)', 1.5);
+      line(ringPath(CX, CZ, CY_RIN, CY_TOP, q, 44), 'rgba(160,200,228,.45)', 1);
+      // 竖向高光
+      const a0 = camAzim(q, CX, CZ) - 0.60;
+      line([project([CX + CY_ROUT * Math.cos(a0), CY_FOOT_H + 0.05, CZ + CY_ROUT * Math.sin(a0)], q),
+            project([CX + CY_ROUT * Math.cos(a0), CY_TOP - 0.06, CZ + CY_ROUT * Math.sin(a0)], q)],
+           'rgba(255,255,255,.26)', 2.6);
+    }
+    function drawWater(q) {
+      const V = liquidV();
+      if (V <= 0.05) return;
+      const ys = ySurf() + MENISCUS_RISE;
+      const rings = revolveRings([[CY_RIN, CY_GLASS_Y0 + 0.02], [CY_RIN, ys]], q, 44, CX, CZ);
+      poly(ringOutline(rings, q, CX, CZ, 22), 'rgba(56,150,214,.40)', 'rgba(150,220,255,.5)', 1.1);
+      // 凹液面：外缘高、中心低 —— 画成一组同心弧，就读出「碗形」了
+      line(ringPath(CX, CZ, CY_RIN, ys, q, 44), 'rgba(186,232,255,.62)', 1.3);
+      for (const k of [0.72, 0.46, 0.22]) {
+        line(ringPath(CX, CZ, CY_RIN * k, ySurf() + MENISCUS_RISE * k * k, q, 36),
+             'rgba(196,238,255,.30)', 1);
+      }
+      const mb = project([CX, ySurf(), CZ], q);
+      dot2(mb, 3, '#a7f3d0', '#064e3b', 1);
+      state.drawn.meniscus = mb;
+    }
+    function drawCylinderScale(q) {
+      const camA = camAzim(q, CX, CZ);
+      for (let v = 0; v <= V_MAX; v++) {
+        const y = yOfV(v);
+        const major = v % 10 === 0, mid = v % 5 === 0;
+        const dw = major ? 0.30 : mid ? 0.19 : 0.10;
+        line(cylArc(y, CY_ROUT + 0.002, dw, camA, q, 8, CX, CZ),
+             major ? 'rgba(232,244,255,.94)' : 'rgba(186,216,240,.58)', major ? 1.5 : 0.9);
+        if (major) {
+          const a = camA - dw - 0.16;
+          const p = project([CX + (CY_ROUT + 0.004) * Math.cos(a), y, CZ + (CY_ROUT + 0.004) * Math.sin(a)], q);
+          ctx.font = '800 9px Inter, "Microsoft YaHei", sans-serif';
+          ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+          ctx.fillStyle = 'rgba(226,240,255,.9)';
+          ctx.fillText(String(v), p.x, p.y);
+        }
+      }
+    }
+    // 视线：眼睛 → 凹液面最低处，延长到刻度面上 —— 这一条虚线就是「视差」的全部秘密
+    function drawSight(q) {
+      if (liquidV() <= 0.5) return;          // 量筒里没液体就没有液面，视线也就无从谈起
+      const D = 0.62;
+      const el = state.elev * Math.PI / 180;
+      const ys = ySurf();
+      const eye = [CX, ys + Math.tan(el) * D, CZ - D];
+      const men = [CX, ys, CZ];
+      const back = [CX, ys - Math.tan(el) * CY_RIN, CZ + CY_RIN];
+      line([project(eye, q), project(men, q)], 'rgba(248,113,113,.85)', 1.6, [6, 5]);
+      line([project(men, q), project(back, q)], 'rgba(248,113,113,.45)', 1.3, [4, 5]);
+      const p = project(eye, q);
+      dot2(p, 5.2, 'rgba(248,113,113,.22)', 'rgba(248,113,113,.8)', 1.4);
+      dot2(p, 2.2, '#fca5a5', null, 0);
+      const cr = project([CX, ySight(), CZ - CY_ROUT], q);
+      dot2(cr, 3.4, '#f87171', '#450a0a', 1.2);
+      state.drawn.eye = p;
+      state.drawn.cross = cr;
+    }
+
+    /* ---------------------------- 标签 ---------------------------- */
+    function uiBoxes() {
+      const r = stage.getBoundingClientRect();
+      const out = [];
+      for (const sel of ['#den-hint', '.lab3d-stage .bar-left']) {
+        const el = document.querySelector(sel);
+        if (!el) continue;
+        const b = el.getBoundingClientRect();
+        if (b.width < 1 || b.height < 1) continue;
+        out.push({ x: b.left - r.left, y: b.top - r.top, w: b.width, h: b.height });
+      }
+      return out;
+    }
+    function drawLabels(q) {
+      // 特写视角下，画面外的器材就别再往上贴标签了 —— 它们会被钳到边缘叠成一团
+      const cylView = state.view === 'cylinder';
+      const balView = state.view === 'balance';
+      if (!cylView) {
+        avoidLabel(project(beamPt(-ARM * 0.62, 0.055, 0), q), '横梁', '#cfe3f5', 11.5);
+        avoidLabel(project(beamPt(riderX(), -BEAM_H / 2 - RIDER_LIFT - 0.02, 0), q), '游码', '#ffd79a', 11.5);
+        avoidLabel(project([BX, PIVOT_Y - PTR_LEN * 0.55, PTR_Z], q), '指针', '#fca5a5', 11.5);
+        avoidLabel(project(scalePt(SCALE_HALF * 0.94, SCALE_RO + 0.03), q), '分度盘', '#cbd5e1', 11.5);
+        avoidLabel(project([panCx(1), panRimY(1) - PAN_D * 0.4, PAN_R * 0.6], q), '右盘', '#cbd5e1', 11.5);
+        avoidLabel(project([panCx(-1), panRimY(-1) - PAN_D * 0.4, PAN_R * 0.6], q), '左盘', '#cbd5e1', 11.5);
+        if (PHY.weightsOnPan.length) {
+          const b = state.drawn.weightBoxes[0];
+          if (b) avoidLabel(project([b.cx, b.y0 + b.h + 0.03, b.cz], q), '砝码', '#ffe4ae', 11.5);
+        }
+        avoidLabel(project([BX + BASE_HW * 0.86, BASE_H + 0.01, -BASE_HD * 0.55], q), '底座', '#cbd5e1', 11.5);
+        avoidLabel(project([BX + COL_TW, (BASE_H + COL_TOP) * 0.42, COL_TD], q), '立柱', '#cbd5e1', 11.5);
+      }
+      if (!balView) {
+        avoidLabel(project([CX + CY_ROUT + 0.02, CY_TOP - 0.10, CZ], q), '量筒', '#bae6fd', 11.5);
+        if (liquidV() > 0.5) {
+          avoidLabel(project([CX - CY_ROUT - 0.02, ySurf(), CZ], q), '凹液面', '#a7f3d0', 11.5);
+        }
+        if (state.mode === 'solid') {
+          const s = state.drawn.stone;
+          if (s) avoidLabel(project([s.cx, s.cy + s.h[1] + 0.05, s.cz], q), '石块', '#cbd5e1', 11.5);
+        } else {
+          const b = state.drawn.beaker;
+          if (b) avoidLabel(project([b.cx, b.baseY + BK_H + 0.06, b.cz], q), '烧杯（盐水）', '#cbd5e1', 11.5);
+        }
+      }
+      // 视线
+      if (state.drawn.eye && cylView) {
+        avoidLabel(state.drawn.eye, '视线', '#fca5a5', 11.5);
+      }
+    }
+
+    /* ============================================================
+     * 渲染总入口 —— 唯一的清屏点
+     * ============================================================ */
+    function render() {
+      const q = {}; makeCam(q, state.w, state.h);
+      drawBackdrop(state.w, state.h);
+      drawTable(q);
+
+      frameBoxes = uiBoxes();
+      state.drawn = {};
+
+      // 分层：指针吊在立柱【正面】(z = PTR_Z)，相机在指针前面时它该最后画，绕到背后时最先画。
+      const backCam = q.eye[2] < PTR_Z;
+      const pans = [1, -1].sort((a, b) =>
+        q.eyeDist([panCx(b), panRimY(b), 0]) - q.eyeDist([panCx(a), panRimY(a), 0]));
+
+      if (backCam) {
+        drawPointerAndScale(q);
+        drawColumn(q);
+        drawBase(q);
+      } else {
+        drawBase(q);
+        drawColumn(q);
+      }
+      for (const s of pans) drawPan(q, s);
+
+      // 左盘上的东西
+      if (state.mode === 'solid') {
+        if (PHY.stoneIn) { /* 在量筒里，稍后画 */ }
+        else drawStone(q);
+      } else if (PHY.onPan) {
+        drawBeaker(q, panFloorY(-1) + 0.004, panCx(-1), 0);
+      }
+      drawRightPan(q);
+      drawBeam(q);
+      if (!backCam) drawPointerAndScale(q);
+
+      // 台面右边的器材：量筒（玻璃 → 水 → 内容物 → 刻度）与烧杯
+      drawCylinderBody(q);
+      drawWater(q);
+      if (state.mode === 'solid' && PHY.stoneIn) drawStone(q);
+      drawCylinderScale(q);
+      if (state.mode === 'liquid' && !PHY.onPan) {
+        drawBeaker(q, 0.0, KX, KZ);
+      }
+      drawSight(q);
+      drawLabels(q);
+    }
+
+    /* ============================================================
+     * 界面：读数
+     * ============================================================ */
+    const fmt = (n, d) => (typeof n === 'number' && isFinite(n))
+      ? n.toFixed(d === undefined ? 1 : d) : '—';
+
+    const STEP_TEXT = {
+      solid: ['把石块放到天平左盘', '加砝码 / 移游码使天平平衡，记录 m',
+              '量筒中倒入适量水，平视读数并记录 V₁',
+              '把石块浸没在水中，平视读数并记录 V₂',
+              '计算 ρ = m / (V₂ − V₁) 并提交'],
+      liquid: ['把装有盐水的烧杯放到天平左盘，测出 m₁',
+               '向量筒中倒入一部分盐水，读出体积 V',
+               '再称烧杯和剩余盐水 m₂',
+               '计算 ρ = (m₁ − m₂) / V 并提交', '', '']
+    };
+    function stepState() {
+      const bal = PHY.onPan && balanceGap() <= BAL_GATE;
+      const hasObj = PHY.onPan;
+      if (state.mode === 'solid') {
+        return {
+          done: [hasObj, REC.m !== null, REC.v1 !== null, REC.v2 !== null, state.solved],
+          now: !hasObj ? 0 : (REC.m === null ? 1 : (REC.v1 === null ? 2 : (REC.v2 === null ? 3 : 4)))
+        };
+      }
+      return {
+        done: [REC.m1 !== null, REC.v !== null, REC.m2 !== null, state.solved, false, false],
+        now: REC.m1 === null ? 0 : (REC.v === null ? 1 : (REC.m2 === null ? 2 : 3))
+      };
+    }
+
+    function updateReadouts() {
+      const ang = beamAngleDeg(), gap = balanceGap();
+      const bal = PHY.onPan && gap <= BAL_GATE;
+      const lp = leftPanMass();
+      $('den-mass').textContent = PHY.onPan ? fmt(realReading(), 1) : '0.0';
+      $('den-left').textContent = !PHY.onPan ? '空盘'
+        : (state.mode === 'solid' ? (PHY.stoneWet ? '石块（带水）' : '石块')
+                                  : (PHY.poured ? '烧杯 + 剩余盐水' : '烧杯 + 盐水'));
+      $('den-wsum').textContent = weightsSum() + ' g';
+      $('den-rmass').textContent = fmt(PHY.riderMass, 1) + ' g';
+      $('den-gap').textContent = !PHY.onPan ? '空盘，水平'
+        : (bal ? '已平衡 ✓' : fmt(Math.abs(ang), 1) + '° 偏差');
+      const bp = $('den-bal-pill');
+      bp.textContent = !PHY.onPan ? '未放物体' : (bal ? '已平衡' : '未平衡');
+      bp.className = 'pill' + (bal ? ' ok' : (PHY.onPan ? ' warn' : ''));
+
+      const vr = vRead(), vt = liquidV(), ver = sightVerdict();
+      $('den-vread').textContent = fmt(vr, 1);
+      $('den-vtrue').textContent = fmt(vt, 1) + ' mL';
+      const sv = $('den-sight');
+      sv.textContent = ver === 'level' ? '平视 ✓ 读数准确'
+                     : (ver === 'high' ? '俯视 · 读数偏大 +' + fmt(sightErr(), 1) + ' mL'
+                                       : '仰视 · 读数偏小 ' + fmt(sightErr(), 1) + ' mL');
+      $('den-sight').style.color = ver === 'level' ? '#a7f3d0' : '#fca5a5';
+      const cp = $('den-cyl-pill');
+      cp.textContent = fmt(vt, 1) + ' mL';
+      cp.className = 'pill' + (vt > 0.5 ? ' ok' : '');
+
+      $('den-hint').innerHTML = hintText();
+      $('den-new-note').textContent = state.mode === 'solid'
+        ? '待测固体：' + stoneNow().name
+        : '待测液体：盐水（倒入量筒 ' + fmt(LIQ.v, 1) + ' mL）';
+    }
+
+    function hintText() {
+      const ss = stepState();
+      const base = '<b>第 ' + (ss.now + 1) + ' 步</b>：' + STEP_TEXT[state.mode][ss.now];
+      if (state.mode === 'solid' && PHY.onPan && balanceGap() > BAL_GATE) {
+        return base + '<br>指针偏向哪边，哪边就重。';
+      }
+      if (state.mode === 'solid' && PHY.stoneIn) {
+        return base + '<br>V₂ 是<b>放入石块后</b>的读数，要平视。';
+      }
+      return base;
+    }
+
+    /* ---------------------------- 数据记录表 ---------------------------- */
+    function recRows() {
+      if (state.mode === 'solid') {
+        return [
+          { k: 'm',  label: '石块的质量 m',     unit: 'g',  btn: 'den-rec-m',  val: REC.m,  ok: REC.m !== null },
+          { k: 'v1', label: '水的体积 V₁',      unit: 'mL', btn: 'den-rec-v1', val: REC.v1, ok: REC.v1 !== null },
+          { k: 'v2', label: '水和石块的 V₂',    unit: 'mL', btn: 'den-rec-v2', val: REC.v2, ok: REC.v2 !== null }
+        ];
+      }
+      return [
+        { k: 'm1', label: '烧杯 + 盐水 m₁',   unit: 'g',  btn: 'den-rec-m1', val: REC.m1, ok: REC.m1 !== null },
+        { k: 'm2', label: '烧杯 + 剩余 m₂',   unit: 'g',  btn: 'den-rec-m2', val: REC.m2, ok: REC.m2 !== null },
+        { k: 'v',  label: '倒出的盐水 V',     unit: 'mL', btn: 'den-rec-v',  val: REC.v,  ok: REC.v !== null }
+      ];
+    }
+    function renderRec() {
+      const rows = recRows();
+      for (const r of rows) {
+        const cell = $('den-rv-' + r.k);
+        if (cell) {
+          cell.textContent = r.ok ? fmt(r.val, 1) + ' ' + r.unit : '—';
+          cell.parentElement.className = r.ok ? '' : 'empty';
+        }
+        const btn = $(r.btn);
+        if (btn) btn.disabled = !recEnabled(r.k);
+      }
+      const n = rows.filter(r => r.ok).length;
+      const p = $('den-rec-pill');
+      p.textContent = n + ' / 3';
+      p.className = 'pill' + (n === 3 ? ' ok' : (n ? ' warn' : ''));
+    }
+    // 「记录」按钮什么时候能按：必须真的测到了那个量
+    function recEnabled(k) {
+      const bal = PHY.onPan && balanceGap() <= BAL_GATE;
+      const vt = liquidV();
+      if (k === 'm') return bal && !PHY.stoneIn;
+      if (k === 'v1') return vt > 0.5 && !PHY.stoneIn;
+      if (k === 'v2') return PHY.stoneIn;
+      if (k === 'm1') return bal && !PHY.poured;
+      if (k === 'm2') return bal && PHY.poured;
+      if (k === 'v') return vt > 0.5;
+      return false;
+    }
+    // 表格 DOM 只建一次（每次 syncUI 都重建会把事件监听和闪烁动画一起冲掉）
+    function buildRec() {
+      const rows = recRows();
+      let h = '<thead><tr><th>物理量</th><th>测量值</th><th></th></tr></thead><tbody>';
+      for (const r of rows) {
+        h += '<tr data-k="' + r.k + '"><td class="k">' + r.label + '</td>'
+           + '<td id="den-rv-' + r.k + '">—</td>'
+           + '<td style="text-align:right"><button type="button" id="' + r.btn + '">记录</button></td></tr>';
+      }
+      h += '</tbody>';
+      $('den-rec').innerHTML = h;
+      for (const r of rows) {
+        const el = $(r.btn);
+        if (el) el.addEventListener('click', () => record(r.k));
+      }
+    }
+    function record(k) {
+      if (!recEnabled(k)) return false;
+      if (k === 'm' || k === 'm1' || k === 'm2') REC[k] = realReading();
+      else { REC[k] = vRead(); REC_EL[k] = state.elev; }
+      state.dirty = true;
+      renderRec();
+      syncUI();
+      const tr = document.querySelector('#den-rec tr[data-k="' + k + '"]');
+      if (tr) { tr.classList.remove('flash'); void tr.offsetWidth; tr.classList.add('flash'); }
+      showToast('已记录 ' + fmt(REC[k], 1));
+      return true;
+    }
+
+    /* ---------------------------- 计算区 ---------------------------- */
+    function measured() {
+      if (state.mode === 'solid') {
+        const m = REC.m, v1 = REC.v1, v2 = REC.v2;
+        const V = (v1 !== null && v2 !== null) ? v2 - v1 : null;
+        return { m: m, V: V, rho: (m !== null && V) ? m / V : null,
+                 expr: m !== null && V ? fmt(m, 1) + ' g ÷ ' + fmt(V, 1) + ' cm³' : null };
+      }
+      const m1 = REC.m1, m2 = REC.m2, v = REC.v;
+      const dm = (m1 !== null && m2 !== null) ? m1 - m2 : null;
+      return { m: dm, V: v, rho: (dm !== null && v) ? dm / v : null,
+               expr: dm !== null && v ? fmt(dm, 1) + ' g ÷ ' + fmt(v, 1) + ' cm³' : null };
+    }
+    const trueRho = () => state.mode === 'solid' ? stoneNow().m / stoneNow().v : (LIQ.m1 - LIQ.m2) / LIQ.v;
+
+    function renderCalc() {
+      const M = measured();
+      const lines = [];
+      if (state.mode === 'solid') {
+        lines.push(['V = V₂ − V₁', M.V !== null ? fmt(M.V, 1) + ' cm³' : '待测']);
+        lines.push(['m', M.m !== null ? fmt(M.m, 1) + ' g' : '待测']);
+      } else {
+        lines.push(['Δm = m₁ − m₂', M.m !== null ? fmt(M.m, 1) + ' g' : '待测']);
+        lines.push(['V', M.V !== null ? fmt(M.V, 1) + ' cm³' : '待测']);
+      }
+      lines.push(['ρ = m / V', M.rho !== null ? fmt(M.rho, 2) + ' g/cm³' : '待测']);
+      let h = '';
+      for (const [a, b] of lines) h += '<div class="line"><span>' + a + '</span><b>' + b + '</b></div>';
+      if (M.expr) h += '<div class="conc info">ρ = ' + M.expr + ' = <b>' + fmt(M.rho, 2) + ' g/cm³</b></div>';
+      $('den-calc').innerHTML = h;
+    }
+
+    /* ---------------------------- 分析与结论 ---------------------------- */
+    function renderAnalysis() {
+      const M = measured();
+      const tr = trueRho();
+      let h = '';
+      if (state.mode === 'solid') {
+        h += '<div class="line"><span>石块真实质量</span><b>' + fmt(stoneNow().m, 1) + ' g</b></div>';
+        h += '<div class="line"><span>石块真实体积</span><b>' + fmt(stoneNow().v, 1) + ' cm³</b></div>';
+        h += '<div class="line"><span>真实密度</span><b>' + fmt(tr, 2) + ' g/cm³</b></div>';
+        if (M.rho !== null) {
+          const d = M.rho - tr;
+          h += '<div class="line"><span>你的结果偏差</span><b>' + (d >= 0 ? '+' : '') + fmt(d, 2) + ' g/cm³</b></div>';
+        }
+        if (REC.v1 !== null && REC.v2 !== null) {
+          const b1 = sightBias(REC_EL.v1), b2 = sightBias(REC_EL.v2);
+          if (Math.abs(b2 - b1) > 0.15) {
+            h += '<div class="conc warn">V₁ 用<b>' + elName(REC_EL.v1) + '</b>读、V₂ 用<b>' +
+                 elName(REC_EL.v2) + '</b>读 —— 两次视线不一致，V 偏了 ' + fmt(Math.abs(b2 - b1), 2) +
+                 ' mL。<b>两次读数必须用同一个视线</b>，否则视差不会抵消。</div>';
+          } else if (Math.abs(b1) > 0.15) {
+            h += '<div class="conc info">两次读数都用了<b>' + elName(REC_EL.v1) +
+                 '</b>，V₁、V₂ 各偏 ' + fmt(Math.abs(b1), 2) + ' mL，但相减时<b>抵消</b>了 —— ' +
+                 '视差是个常数偏移。不过每次读数仍然应该平视，否则一旦两次视线不同，误差就藏不住了。</div>';
+          }
+        }
+        if (PHY.stoneWet) {
+          h += '<div class="conc warn">石块是从水里取出来的，身上挂着约 ' +
+               fmt(WET_GAIN, 1) + ' g 的水，再上天平称出的质量<b>偏大</b>，算出的 ρ 就<b>偏大</b>。' +
+               '正确顺序是<b>先测质量、后测体积</b>。</div>';
+        } else if (M.rho !== null && Math.abs(M.rho - tr) <= DATA_TOL) {
+          h += '<div class="conc">ρ = m / V 算对了。同种物质的质量与体积之比是<b>定值</b> —— ' +
+               '换一块更大的' + stoneNow().name + '来测，这个比值不变。</div>';
+        } else if (M.rho === null) {
+          h += '<div class="conc info">先测质量、再测体积：<b>石块先干着上天平</b>，才不会把水带上天平。</div>';
+        }
+      } else {
+        h += '<div class="line"><span>m₁ − m₂（倒出的盐水）</span><b>' +
+             (REC.m1 !== null && REC.m2 !== null ? fmt(REC.m1 - REC.m2, 1) + ' g' : '待测') + '</b></div>';
+        h += '<div class="line"><span>真实密度</span><b>' + fmt(tr, 2) + ' g/cm³</b></div>';
+        if (REC.v !== null && Math.abs(sightBias(REC_EL.v)) > 0.15) {
+          h += '<div class="conc warn">量筒读数用了<b>' + elName(REC_EL.v) + '</b>，V ' +
+               (sightBias(REC_EL.v) > 0 ? '偏大' : '偏小') + ' ' + fmt(Math.abs(sightBias(REC_EL.v)), 2) +
+               ' mL → ρ 跟着' + (sightBias(REC_EL.v) > 0 ? '偏小' : '偏大') +
+               '。液体模式里 V 是<b>直接读</b>的，视差没有相减的机会，全落在结果上。</div>';
+        } else if (M.rho !== null) {
+          h += '<div class="conc">差量法避开了「烧杯壁上残留液体」的误差：' +
+               '留在杯里的那部分盐水<b>两次都称了</b>，一减就抵消掉了。</div>';
+        } else {
+          h += '<div class="conc info">差量法三步：<b>称总 → 倒出一部分进量筒读 V → 再称剩余</b>。</div>';
+        }
+      }
+      $('den-analysis').innerHTML = h;
+    }
+
+    function syncUI() { updateReadouts(); renderRec(); renderCalc(); renderAnalysis(); drawGauge(); }
+
+    /* ---------------------------- 提示条 ---------------------------- */
+    let toastTimer = 0;
+    function showToast(text) {
+      const el = $('den-toast');
+      el.textContent = text;
+      el.classList.add('show');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => el.classList.remove('show'), 2000);
+    }
+    let flagTimer = 0;
+    function flashFlag(on, text) {
+      const el = $('den-flag');
+      if (text) el.textContent = text;
+      if (on) {
+        el.classList.add('show');
+        clearTimeout(flagTimer);
+        flagTimer = setTimeout(() => el.classList.remove('show'), 2600);
+      } else el.classList.remove('show');
+    }
+
+    /* ---------------------------- 读数窗（2D 侧视光路图） ---------------------------- */
+    function drawGauge() {
+      const gw = gcan.clientWidth || 300, gh = gcan.clientHeight || 236;
+      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      if (gcan.width !== Math.round(gw * dpr) || gcan.height !== Math.round(gh * dpr)) {
+        gcan.width = Math.round(gw * dpr); gcan.height = Math.round(gh * dpr);
+      }
+      gctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      gctx.clearRect(0, 0, gw, gh);
+      gctx.fillStyle = '#04101c'; gctx.fillRect(0, 0, gw, gh);
+
+      const ys = ySurf();
+      const gpp = gw / 0.60;                       // 横向 0.60 世界单位铺满整宽 → 等比缩放
+      const gx = z => gw / 2 + (z - CZ) * gpp;
+      const gy = y => gh / 2 - (y - ys) * gpp;
+      const cxL = gx(CZ - CY_ROUT), cxR = gx(CZ + CY_ROUT);
+      const cxIn = gx(CZ - CY_RIN);
+
+      // 液体（凹液面以下）
+      gctx.beginPath();
+      gctx.moveTo(gx(CZ - CY_RIN), gy(ys + MENISCUS_RISE));
+      for (let k = 0; k <= 30; k++) {
+        const t = k / 30, zz = CZ - CY_RIN + 2 * CY_RIN * t;
+        const rr = Math.abs(zz - CZ) / CY_RIN;
+        gctx.lineTo(gx(zz), gy(ys + MENISCUS_RISE * rr * rr));
+      }
+      gctx.lineTo(cxR, gh); gctx.lineTo(cxL, gh); gctx.closePath();
+      gctx.fillStyle = 'rgba(56,150,214,.30)'; gctx.fill();
+
+      // 玻璃壁
+      gctx.strokeStyle = 'rgba(198,228,246,.55)'; gctx.lineWidth = 2;
+      gctx.beginPath(); gctx.moveTo(cxL, 0); gctx.lineTo(cxL, gh);
+      gctx.moveTo(cxR, 0); gctx.lineTo(cxR, gh); gctx.stroke();
+      gctx.strokeStyle = 'rgba(198,228,246,.22)'; gctx.lineWidth = 1;
+      gctx.beginPath(); gctx.moveTo(cxIn, 0); gctx.lineTo(cxIn, gh); gctx.stroke();
+
+      // 刻度（刻在外壁上，短线朝筒内伸）
+      gctx.font = '700 9px Inter, "Microsoft YaHei", sans-serif';
+      gctx.textBaseline = 'middle';
+      const v0 = Math.max(0, Math.floor(vOfY(ys - 0.30)));
+      const v1 = Math.min(V_MAX, Math.ceil(vOfY(ys + 0.30)));
+      for (let v = v0; v <= v1; v++) {
+        const y = yOfV(v);
+        const major = v % 10 === 0, mid = v % 5 === 0;
+        const len = major ? 30 : mid ? 19 : 11;
+        gctx.strokeStyle = major ? 'rgba(232,244,255,.92)' : 'rgba(186,216,240,.6)';
+        gctx.lineWidth = major ? 1.5 : 1;
+        gctx.beginPath(); gctx.moveTo(cxL, gy(y)); gctx.lineTo(cxL + len, gy(y)); gctx.stroke();
+        if (mid) {
+          gctx.fillStyle = 'rgba(226,240,255,.9)';
+          gctx.textAlign = 'left';
+          gctx.fillText(String(v), cxL + len + 4, gy(y));
+        }
+      }
+      // 凹液面
+      gctx.strokeStyle = 'rgba(186,232,255,.85)'; gctx.lineWidth = 2;
+      gctx.beginPath();
+      gctx.moveTo(gx(CZ - CY_RIN), gy(ys + MENISCUS_RISE));
+      for (let k = 0; k <= 30; k++) {
+        const t = k / 30, zz = CZ - CY_RIN + 2 * CY_RIN * t;
+        const rr = Math.abs(zz - CZ) / CY_RIN;
+        gctx.lineTo(gx(zz), gy(ys + MENISCUS_RISE * rr * rr));
+      }
+      gctx.stroke();
+
+      // 视线：从窗口左缘按 tanθ 的斜率打过来，穿过凹液面最低处，继续延伸到后壁
+      const el = state.elev * Math.PI / 180;
+      const yAt = z => ys + (CZ - z) * Math.tan(el);
+      const zL = CZ - 0.28, zR = CZ + CY_RIN;
+      gctx.setLineDash([6, 5]);
+      gctx.strokeStyle = 'rgba(248,113,113,.9)'; gctx.lineWidth = 1.6;
+      gctx.beginPath(); gctx.moveTo(gx(zL), gy(yAt(zL))); gctx.lineTo(gx(CZ), gy(ys)); gctx.stroke();
+      gctx.strokeStyle = 'rgba(248,113,113,.45)';
+      gctx.beginPath(); gctx.moveTo(gx(CZ), gy(ys)); gctx.lineTo(gx(zR), gy(yAt(zR))); gctx.stroke();
+      gctx.setLineDash([]);
+      // 眼睛
+      const ey = gy(yAt(zL));
+      gctx.beginPath(); gctx.ellipse(gx(zL) + 14, ey, 10, 6, 0, 0, PI2);
+      gctx.fillStyle = 'rgba(248,113,113,.22)'; gctx.fill();
+      gctx.strokeStyle = 'rgba(248,113,113,.85)'; gctx.lineWidth = 1.4; gctx.stroke();
+      gctx.beginPath(); gctx.arc(gx(zL) + 14, ey, 2.6, 0, PI2);
+      gctx.fillStyle = '#fca5a5'; gctx.fill();
+      gLabel(gx(zL) + 28, ey, '眼睛', '#fca5a5');
+
+      // 凹液面最低处（真实读数）—— 绿；视线穿过刻度面的点（看到的读数）—— 红。
+      // 两个标注必须【分居两行】：仰视时红线会落到绿线下面，写同一行必然叠字。
+      const mby = gy(ys), cyy = gy(ySight());
+      const up = cyy <= mby;
+      gctx.beginPath(); gctx.arc(gx(CZ), mby, 3.4, 0, PI2);
+      gctx.fillStyle = '#a7f3d0'; gctx.fill();
+      gctx.setLineDash([3, 4]);
+      gctx.strokeStyle = 'rgba(52,211,153,.85)'; gctx.lineWidth = 1.2;
+      gctx.beginPath(); gctx.moveTo(cxL + 34, mby); gctx.lineTo(gx(CZ), mby); gctx.stroke();
+      gctx.setLineDash([]);
+      gLabel(cxL + 38, up ? mby + 15 : mby - 13, '真实 ' + fmt(liquidV(), 1) + ' mL', '#a7f3d0');
+
+      gctx.beginPath(); gctx.arc(cxL, cyy, 3.8, 0, PI2);
+      gctx.fillStyle = '#f87171'; gctx.fill();
+      gctx.setLineDash([3, 4]);
+      gctx.strokeStyle = 'rgba(248,113,113,.9)'; gctx.lineWidth = 1.2;
+      gctx.beginPath(); gctx.moveTo(cxL + 30, cyy); gctx.lineTo(cxL, cyy); gctx.stroke();
+      gctx.setLineDash([]);
+      gLabel(cxL + 38, up ? cyy - 13 : cyy + 15, '读数 ' + fmt(vRead(), 1) + ' mL', '#fca5a5');
+
+      // 左上角注：挪到左下角，免得压在 30/40 的刻度数字上
+      gLabel(10, gh - 24, '量筒读数窗 · 侧视光路', 'rgba(125,211,252,.95)');
+      gLabel(10, gh - 9, state.elev > 1.2 ? '俯视 → 读数偏大'
+                      : (state.elev < -1.2 ? '仰视 → 读数偏小' : '平视 → 读数准确'),
+             state.elev > 1.2 || state.elev < -1.2 ? '#fca5a5' : '#a7f3d0');
+      state.drawn.gauge = { gpp: gpp, vTrue: liquidV(), vRead: vRead() };
+    }
+    // 读数窗里的小标注：带一块底色，压在液体上也能看清
+    function gLabel(x, y, text, color) {
+      gctx.font = '800 9.5px Inter, "Microsoft YaHei", sans-serif';
+      gctx.textAlign = 'left'; gctx.textBaseline = 'middle';
+      const w = gctx.measureText(text).width;
+      gctx.fillStyle = 'rgba(4,16,28,.82)';
+      gctx.fillRect(x - 3, y - 7, w + 6, 14);
+      gctx.fillStyle = color;
+      gctx.fillText(text, x, y);
+    }
+
+    /* ============================================================
+     * 动作（按钮、画布拖动、自检都走同一条路）
+     * ============================================================ */
+    function setMode(m) {
+      state.mode = m;
+      buildRec();
+      resetAll(true);
+      $('den-m-solid').classList.toggle('sel', m === 'solid');
+      $('den-m-liquid').classList.toggle('sel', m === 'liquid');
+      $('den-mode-pill').textContent = m === 'solid' ? '测固体' : '测液体';
+      $('den-b-sub').style.display = m === 'solid' ? '' : 'none';
+      refreshStageBar();
+      syncUI();
+      state.dirty = true;
+    }
+    function setStone(i) {
+      state.stone = ((i % STONES.length) + STONES.length) % STONES.length;
+      resetAll(true);
+      syncUI();
+      state.dirty = true;
+    }
+    function setElev(e) {
+      state.elev = e;
+      document.querySelectorAll('[data-elev]').forEach(b =>
+        b.classList.toggle('sel', Math.abs(parseFloat(b.getAttribute('data-elev')) - e) < 0.01));
+      syncUI();
+      state.dirty = true;
+    }
+    function setRiderMass(g) {
+      PHY.riderMass = clamp(Math.round(g / 0.2) * 0.2, 0, RIDER_G);
+      syncUI(); state.dirty = true;
+    }
+    function addWeight(val) {
+      if (PHY.weightsOnPan.length >= W_MAX) { showToast('右盘摆不下了'); return false; }
+      PHY.weightsOnPan.push(val);
+      syncUI(); state.dirty = true;
+      return true;
+    }
+    function removeWeightAt(i) {
+      if (i < 0 || i >= PHY.weightsOnPan.length) return false;
+      PHY.weightsOnPan.splice(i, 1);
+      syncUI(); state.dirty = true;
+      return true;
+    }
+    function clearPan() { PHY.weightsOnPan = []; syncUI(); state.dirty = true; }
+    function riderZero() { PHY.riderMass = 0; syncUI(); state.dirty = true; }
+
+    // 物体上/下天平左盘
+    function toggleObj() {
+      if (state.mode === 'solid' && PHY.stoneIn) { showToast('石块还在量筒里，先取出来'); return false; }
+      PHY.onPan = !PHY.onPan;
+      if (!PHY.onPan) { PHY.weightsOnPan = []; PHY.riderMass = 0; }
+      syncUI(); state.dirty = true;
+      return true;
+    }
+    // 倒水（固体）/ 倒盐水（液体）
+    function pourWater(ml) {
+      if (state.mode === 'solid') {
+        if (PHY.stoneIn) { showToast('石块已经在量筒里了'); return false; }
+        PHY.cylV = clamp(ml === undefined ? 30 : ml, 5, 60);
+        showToast('量筒中已倒入 ' + fmt(PHY.cylV, 1) + ' mL 水');
+      } else {
+        PHY.cylV = LIQ.v;
+        PHY.poured = true;
+        showToast('已倒入量筒 ' + fmt(LIQ.v, 1) + ' mL 盐水');
+      }
+      syncUI(); state.dirty = true;
+      return true;
+    }
+    // 石块浸没 / 取出。石块还在左盘上就先「顺手拿下来」—— 真实操作也是这样，
+    // 但必须把砝码和游码一起清掉，否则「测完质量再浸没」会带着一盘子砝码留在原地。
+    function toggleStoneIn() {
+      if (state.mode !== 'solid') return false;
+      if (!PHY.stoneIn && PHY.cylV <= 0.5) { showToast('量筒里还没有水'); return false; }
+      if (!PHY.stoneIn && PHY.onPan) {
+        PHY.onPan = false; PHY.weightsOnPan = []; PHY.riderMass = 0;
+        showToast('石块已从天平上取下');
+      }
+      PHY.stoneIn = !PHY.stoneIn;
+      // 取出来的石块挂着水。勾了「先测体积」就是按错误顺序做，水不擦掉 —— 再上天平必然偏大。
+      if (!PHY.stoneIn) PHY.stoneWet = state.wetFirst;
+      PHY.cylV = PHY.stoneIn ? (PHY.cylV + stoneRise()) : Math.max(0, PHY.cylV - stoneRise());
+      showToast(PHY.stoneIn ? '石块已浸没，液面升高了 ' + fmt(stoneRise(), 1) + ' mL'
+                            : (PHY.stoneWet ? '石块已取出（沾着水）' : '石块已取出'));
+      syncUI(); state.dirty = true;
+      return true;
+    }
+    function setWetFirst(on) {
+      state.wetFirst = !!on;
+      if (!on) PHY.stoneWet = false;     // 取消勾选 = 把石块擦干
+      syncUI(); state.dirty = true;
+    }
+    function resetAll(keepMode) {
+      PHY.onPan = false; PHY.riderMass = 0; PHY.weightsOnPan = [];
+      PHY.cylV = 0; PHY.stoneIn = false; PHY.poured = false; PHY.stoneWet = false;
+      REC.m = REC.v1 = REC.v2 = REC.m1 = REC.m2 = REC.v = null;
+      REC_EL.v1 = REC_EL.v2 = REC_EL.v = 0;
+      state.solved = false;
+      if (!keepMode) { state.wetFirst = false; }
+      $('den-wet').checked = state.wetFirst;
+      hideFeedback();
+      syncUI(); state.dirty = true;
+    }
+    function newData() {
+      if (state.mode === 'solid') setStone(state.stone + 1);
+      else { resetAll(true); showToast('换了一组盐水'); }
+    }
+    function hideFeedback() { const el = $('den-fb'); el.className = 'fb'; el.innerHTML = ''; }
+    function setFeedback(kind, html) {
+      const el = $('den-fb');
+      el.className = 'fb show ' + kind;
+      el.innerHTML = html;
+    }
+    // 判分分两层：先判【测量过程】有没有系统误差（数据本身就偏了），再判【答案】对不对。
+    // 顺序不能反 —— 学生完全可能用错误的数据算出一个「标准答案」，那是蒙对的，不算会做。
+    function dataDiagnosis() {
+      const M = measured();
+      const tr = trueRho();
+      if (M.rho === null) return null;
+      const dev = M.rho - tr;
+      if (Math.abs(dev) <= DATA_TOL) return { dev: dev, why: 'ok' };
+      const d = { dev: dev, why: 'data', msg: '' };
+      if (state.mode === 'solid') {
+        const b = sightBias(REC_EL.v2) - sightBias(REC_EL.v1);
+        if (Math.abs(b) > 0.15) {
+          d.why = 'sight';
+          d.msg = '两次读数用的视线不一样：V₁ 是<b>' + elName(REC_EL.v1) + '</b>读的，V₂ 是<b>' +
+                  elName(REC_EL.v2) + '</b>读的。视差是个常数偏移，两次读数只要用<b>同一个</b>视线，' +
+                  '相减时本来会抵消；用了不同的视线，偏差就全跑到 V 上来了（V 偏了 ' +
+                  fmt(Math.abs(b), 2) + ' mL）。';
+          return d;
+        }
+        if (PHY.stoneWet) {
+          d.why = 'wet';
+          d.msg = '石块从量筒里取出来时带走了一层水（约 ' +
+                  fmt(WET_GAIN, 1) + ' g），带着水上盘称，质量就<b>偏大</b>了 —— 于是 ρ 偏大。' +
+                  '正确顺序是先测质量、再测体积：称完质量石块还没沾过水，读数才是干的。';
+          return d;
+        }
+        if (Math.abs(M.V - stoneNow().v) > 0.4) {
+          d.why = 'volume';
+          d.msg = 'V = V₂ − V₁ = ' + fmt(M.V, 1) + ' cm³，但石块浸没后液面只该升高 ' +
+                  fmt(stoneNow().v, 1) + ' mL。回去核对 V₁、V₂ 是不是在<b>同一个状态</b>下读的。';
+          return d;
+        }
+        d.msg = '测出的 ρ 与标准值差了 ' + fmt(Math.abs(dev), 2) + ' g/cm³，回去把三步都复核一遍。';
+        return d;
+      }
+      // 液体模式：V 是直接读的，视差不会被减掉
+      if (Math.abs(sightBias(REC_EL.v)) > 0.15) {
+        d.why = 'sight';
+        d.msg = '量筒读数时用的是<b>' + elName(REC_EL.v) + '</b>，读数比真实值' +
+                (sightBias(REC_EL.v) > 0 ? '偏大' : '偏小') + ' ' + fmt(Math.abs(sightBias(REC_EL.v)), 2) +
+                ' mL。视线要与<b>凹液面最低处</b>相平。';
+        return d;
+      }
+      d.msg = '倒出的盐水体积 V 应该等于量筒里真实上升的体积，回去核对 m₁、m₂ 和 V。';
+      return d;
+    }
+    const elName = e => e > 1.2 ? '俯视' : (e < -1.2 ? '仰视' : '平视');
+
+    function submitAnswer(valIn) {
+      const inp = $('den-ans');
+      const raw = valIn !== undefined ? valIn : inp.value;
+      const M = measured();
+      // V 有可能算出 0（两次读数一样）—— 此时 ρ 没有定义，必须在这里拦住，
+      // 否则下面 fmt(null) 会把整条渲染/判分路径打死。
+      if (M.V === null || M.m === null || !(M.V > 0)) {
+        setFeedback('warn', '数据还没记全，或者 V = V₂ − V₁ 算出来是 0：' +
+                            '先把 <b>m</b> 和 <b>V</b> 都记下来，并保证 V₂ 比 V₁ 大。');
+        return { ok: false, why: 'incomplete' };
+      }
+      const tr = trueRho();
+      const dia = dataDiagnosis();
+      if (dia && dia.why !== 'ok') {
+        setFeedback('bad', '你测出的 ρ = <b>' + fmt(M.rho, 2) + ' g/cm³</b>，标准值是 <b>' +
+                           fmt(tr, 2) + ' g/cm³</b> —— 差的不是算错，是<b>测量过程</b>有问题。<br>' + dia.msg);
+        return { ok: false, why: dia.why, rho: M.rho };
+      }
+      const val = parseFloat(raw);
+      if (!isFinite(val)) { setFeedback('warn', '请先输入密度数值。'); return { ok: false, why: 'nan' }; }
+      if (Math.abs(val - tr) < ANS_TOL) {
+        state.solved = true;
+        setFeedback('ok', '答对了 ✓ 你算出的 ρ = <b>' + fmt(M.rho, 2) + ' g/cm³</b>，标准值 <b>' +
+                          fmt(tr, 2) + ' g/cm³</b>。' +
+                          '<br>换算成国际单位：<b>' + fmt(tr * 1000, 0) + ' kg/m³</b>。');
+        flashFlag(true, '密度测出来了 ✓');
+        showToast('答对了 ✓');
+        syncUI(); state.dirty = true;
+        return { ok: true, rho: M.rho, true: tr };
+      }
+      setFeedback('bad', '数据本身没问题，但答案不对：ρ = m / V = ' + fmt(M.m, 1) + ' ÷ ' +
+                         fmt(M.V, 1) + ' = <b>' + fmt(M.rho, 2) + ' g/cm³</b>，' +
+                         '而你填的是 ' + fmt(val, 2) + '。');
+      return { ok: false, why: 'wrong', rho: M.rho };
+    }
+
+    function applyView(name) {
+      const v = VIEWS[name];
+      if (!v) return;
+      state.view = name;
+      state.yaw = v.yaw; state.pitch = v.pitch; state.zoom = v.zoom;
+      state.look = v.look ? v.look.slice() : null;
+      document.querySelectorAll('[data-view]').forEach(b =>
+        b.classList.toggle('sel', b.getAttribute('data-view') === name));
+      state.dirty = true;
+    }
+
+    function refreshStageBar() {
+      const solid = state.mode === 'solid';
+      $('den-b-obj').textContent = PHY.onPan ? '⬇ 取下物体' : '⬆ 放到左盘';
+      $('den-b-obj').classList.toggle('go', !PHY.onPan);
+      $('den-b-obj').classList.toggle('ok', PHY.onPan);
+      $('den-b-water').textContent = solid ? '💧 倒入 30 mL' : '💧 倒入量筒 30 mL';
+      $('den-b-water').disabled = solid ? (PHY.cylV > 0.5) : PHY.poured;
+      $('den-b-sub').textContent = PHY.stoneIn ? '🪨 取出石块' : '🪨 石块浸没';
+      $('den-b-sub').classList.toggle('ok', PHY.stoneIn);
+      const ready = measured().rho !== null && !state.solved;
+      $('den-b-submit').classList.toggle('ready', ready);
+    }
+
+    /* ============================================================
+     * 交互
+     * ============================================================ */
+    function boxOf(p, q, pad) {
+      const P = project(p, q);
+      const r = Math.max(pad || 9, (pad || 9));
+      return { x: P.x - r, y: P.y - r, w: r * 2, h: r * 2, cx: P.x, cy: P.y, s: P.s };
+    }
+    function hitTest(x, y, q) {
+      const cands = [];
+      // 游码
+      const rp = project(beamPt(riderX(), -BEAM_H / 2 - RIDER_LIFT / 2, 0), q);
+      const rw = Math.max(9, RIDER_W * 2 * rp.s);
+      cands.push({ kind: 'rider', i: -1, x: rp.x - rw, y: rp.y - rw * 0.8, w: rw * 2, h: rw * 1.6,
+                   cx: rp.x, cy: rp.y, s: rp.s });
+      // 右盘砝码
+      const wb = state.drawn.weightBoxes || [];
+      wb.forEach((b, i) => {
+        const P = project([b.cx, b.y0 + b.h / 2, b.cz], q);
+        const r = Math.max(10, b.r * P.s);
+        cands.push({ kind: 'weight', i: i, x: P.x - r, y: P.y - r, w: r * 2, h: r * 2, cx: P.x, cy: P.y, s: P.s });
+      });
+      let best = null, bd = 1e18;
+      for (const c of cands) {
+        if (x < c.x || x > c.x + c.w || y < c.y || y > c.y + c.h) continue;
+        const d = Math.hypot(x - c.cx, y - c.cy);
+        if (d < bd) { bd = d; best = c; }
+      }
+      return best;
+    }
+    function beamLocalXFromScreen(x, y, q) {
+      const w = unprojectZ(x, y, q, 0);
+      if (!w) return null;
+      const th = beamTh();
+      return (w[0] - BX) * Math.cos(th) + (w[1] - PIVOT_Y) * Math.sin(th);
+    }
+    function canvasPos(e) {
+      const r = canvas.getBoundingClientRect();
+      return { x: e.clientX - r.left, y: e.clientY - r.top };
+    }
+    function onDown(e) {
+      const p = canvasPos(e);
+      const q = {}; makeCam(q, state.w, state.h);
+      const hit = hitTest(p.x, p.y, q);
+      state.downAt = { x: p.x, y: p.y, moved: false };
+      if (hit && hit.kind === 'rider') {
+        const lx = beamLocalXFromScreen(p.x, p.y, q);
+        state.drag = { kind: 'rider', grab: (lx === null ? 0 : lx - riderX()) };
+        state.zoomFrozen = state.zoom;
+        canvas.classList.add('grabbing');
+      } else {
+        state.drag = { kind: 'orbit', yaw: state.yaw, pitch: state.pitch, x: p.x, y: p.y };
+        state.zoomFrozen = state.zoom;
+      }
+      try { canvas.setPointerCapture(e.pointerId); } catch (_) {}
+    }
+    function onMove(e) {
+      const p = canvasPos(e);
+      if (!state.drag) {
+        const q = {}; makeCam(q, state.w, state.h);
+        const hit = hitTest(p.x, p.y, q);
+        const was = state.hover;
+        state.hover = hit ? hit.kind : null;
+        canvas.classList.toggle('pick', !!hit);
+        if (was !== state.hover) state.dirty = true;
+        return;
+      }
+      if (state.downAt && Math.hypot(p.x - state.downAt.x, p.y - state.downAt.y) > 6) state.downAt.moved = true;
+      if (state.drag.kind === 'rider') {
+        const q = {}; makeCam(q, state.w, state.h);
+        const lx = beamLocalXFromScreen(p.x, p.y, q);
+        if (lx !== null) setRiderMass(massFromX(lx - state.drag.grab));
+      } else {
+        const dx = p.x - state.drag.x, dy = p.y - state.drag.y;
+        state.drag.x = p.x; state.drag.y = p.y;
+        state.yaw = state.drag.yaw - dx * 0.006;
+        state.pitch = clamp(state.drag.pitch + dy * 0.005, 0.04, 1.42);
+        state.drag.yaw = state.yaw; state.drag.pitch = state.pitch;
+        state.view = 'custom'; state.look = null;
+        document.querySelectorAll('[data-view]').forEach(b => b.classList.remove('sel'));
+        state.dirty = true;
+      }
+    }
+    function onUp() {
+      if (state.drag && state.drag.kind === 'orbit' && state.downAt && !state.downAt.moved) {
+        const p = state.downAt;
+        const q = {}; makeCam(q, state.w, state.h);
+        const hit = hitTest(p.x, p.y, q);
+        if (hit && hit.kind === 'weight') {
+          const arr = PHY.weightsOnPan.map((g, k) => ({ g: g, k: k })).sort((a, b) => b.g - a.g);
+          if (arr[hit.i]) { removeWeightAt(arr[hit.i].k); showToast('取下一个 ' + arr[hit.i].g + ' g 砝码'); }
+        }
+      }
+      state.drag = null; state.downAt = null;
+      canvas.classList.remove('grabbing');
+      state.dirty = true;
+    }
+    function onWheel(e) {
+      e.preventDefault();
+      state.zoom = clamp(state.zoom * (e.deltaY > 0 ? 0.92 : 1.087), 0.5, 3.0);
+      state.dirty = true;
+    }
+
+    /* ============================================================
+     * 尺寸 / 主循环
+     * ============================================================ */
+    function resize() {
+      const r = stage.getBoundingClientRect();
+      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      const w = Math.max(320, Math.round(r.width));
+      const h = Math.max(240, Math.round(r.height));
+      state.w = w; state.h = h; state.dpr = dpr;
+      canvas.width = Math.round(w * dpr);
+      canvas.height = Math.round(h * dpr);
+      canvas.style.width = w + 'px';
+      canvas.style.height = h + 'px';
+      // 画布位图是 w·dpr 宽，但所有绘制都按 CSS px 写坐标 —— 必须把变换补上，
+      // 否则 retina 屏（dpr=2）上整个场景会缩成左上角四分之一。
+      // 站内其它三维页（托里拆利 / 真空铃）都有这一句，新页最容易漏。
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      state.dirty = true;
+      drawGauge();
+    }
+    let lastTs = 0, wasBalanced = false;
+    function tick(ts) {
+      const dt = lastTs ? Math.min(0.05, (ts - lastTs) / 1000) : 0;
+      lastTs = ts;
+      const bal = PHY.onPan && balanceGap() <= BAL_GATE;
+      if (bal && !wasBalanced) {
+        flashFlag(true, '天平平衡了 ✓ 可以记录质量');
+        showToast('指针指中央了，读数 = ' + fmt(realReading(), 1) + ' g');
+        syncUI();
+      }
+      wasBalanced = bal;
+      if (state.dirty) { render(); state.dirty = false; }
+      requestAnimationFrame(tick);
+    }
+
+    /* ============================================================
+     * 事件绑定
+     * ============================================================ */
+    canvas.addEventListener('pointerdown', onDown);
+    canvas.addEventListener('pointermove', onMove);
+    canvas.addEventListener('pointerup', onUp);
+    canvas.addEventListener('pointercancel', onUp);
+    canvas.addEventListener('pointerleave', () => { state.hover = null; canvas.classList.remove('pick'); state.dirty = true; });
+    canvas.addEventListener('wheel', onWheel, { passive: false });
+
+    $('den-b-obj').addEventListener('click', () => { toggleObj(); refreshStageBar(); });
+    $('den-b-water').addEventListener('click', () => { pourWater(); refreshStageBar(); });
+    $('den-b-sub').addEventListener('click', () => { toggleStoneIn(); refreshStageBar(); });
+    $('den-b-submit').addEventListener('click', () => submitAnswer());
+    $('den-submit').addEventListener('click', () => submitAnswer());
+    $('den-ans').addEventListener('keydown', ev => { if (ev.key === 'Enter') submitAnswer(); });
+    $('den-new').addEventListener('click', newData);
+    $('den-reset').addEventListener('click', () => { resetAll(false); showToast('实验已重置'); refreshStageBar(); });
+    $('den-clear').addEventListener('click', () => { clearPan(); refreshStageBar(); });
+    $('den-rz').addEventListener('click', riderZero);
+    $('den-wet').addEventListener('change', ev => setWetFirst(ev.target.checked));
+    document.querySelectorAll('[data-w]').forEach(b =>
+      b.addEventListener('click', () => { if (addWeight(parseFloat(b.getAttribute('data-w')))) refreshStageBar(); }));
+    document.querySelectorAll('[data-view]').forEach(b =>
+      b.addEventListener('click', () => applyView(b.getAttribute('data-view'))));
+    document.querySelectorAll('[data-mode]').forEach(b =>
+      b.addEventListener('click', () => setMode(b.getAttribute('data-mode'))));
+    document.querySelectorAll('[data-elev]').forEach(b =>
+      b.addEventListener('click', () => setElev(parseFloat(b.getAttribute('data-elev')))));
+
+    if (window.ResizeObserver) new ResizeObserver(() => resize()).observe(stage);
+    window.addEventListener('resize', resize);
+
+    setMode('solid');
+    setElev(0);
+    applyView('bench');
+    resize();
+    refreshStageBar();
+    syncUI();
+    requestAnimationFrame(tick);
+
+    /* ============================================================
+     * 自检钩子
+     * ------------------------------------------------------------
+     * 渲染、读数、判分、自检必须共用同一份物理函数。下面把这些函数原样暴露出去，
+     * 测试算出来的就是页面真正在用的值 —— 自检把公式重抄一遍只证明自检自洽。
+     * ============================================================ */
+    window.__den = {
+      state: state, phy: PHY, rec: REC, recEl: REC_EL, liq: LIQ, stones: STONES,
+      consts: {
+        U: U, TABLE_HW: TABLE_HW, TABLE_HD: TABLE_HD,
+        BX: BX, PIVOT_Y: PIVOT_Y, ARM: ARM, HOOK_X: HOOK_X, HANG: HANG, PAN_R: PAN_R, PAN_D: PAN_D,
+        RIDER_X0: RIDER_X0, RIDER_X1: RIDER_X1, RIDER_G: RIDER_G, ANG_MAX: ANG_MAX,
+        RIDER_W: RIDER_W, RIDER_LIFT: RIDER_LIFT,
+        BEAM_H: BEAM_H, BEAM_D: BEAM_D, BASE_HW: BASE_HW, BASE_HD: BASE_HD, BASE_H: BASE_H,
+        COL_TOP: COL_TOP, PTR_LEN: PTR_LEN, PTR_Z: PTR_Z, SCALE_HALF: SCALE_HALF,
+        SCALE_RO: SCALE_RO, SCALE_RI: SCALE_RI, SCALE_Z: SCALE_Z, SCALE_TH: SCALE_TH,
+        CX: CX, CZ: CZ, CY_RIN: CY_RIN, CY_ROUT: CY_ROUT, CY_WALL: CY_WALL,
+        CY_GLASS_Y0: CY_GLASS_Y0, CY_TOP: CY_TOP, CY_FOOT_H: CY_FOOT_H,
+        V_MAX: V_MAX, SCALE_Y0: SCALE_Y0, SCALE_Y1: SCALE_Y1, MENISCUS_RISE: MENISCUS_RISE,
+        KX: KX, KZ: KZ, BK_RIN: BK_RIN, BK_H: BK_H, BK_AREA: BK_AREA,
+        STONE_HOME: STONE_HOME, STONE_BASE: STONE_BASE, STONE_D: STONE_D,
+        WET_GAIN: WET_GAIN, BAL_GATE: BAL_GATE, W_MAX: W_MAX,
+        DATA_TOL: DATA_TOL, ANS_TOL: ANS_TOL,
+        CAMD: CAMD, TARGET: TARGET, VIEWS: VIEWS, W_SLOTS: W_SLOTS
+      },
+      makeCam: makeCam, project: project, unprojectZ: unprojectZ,
+      envelopePoints: envelopePoints,
+      size: () => ({ w: state.w, h: state.h, dpr: state.dpr }),
+      // 天平物理
+      weightsSum: weightsSum, leftPanMass: leftPanMass, momentLeft: momentLeft,
+      momentRight: momentRight, beamAngleDeg: beamAngleDeg, balanceGap: balanceGap,
+      realReading: realReading, beamTh: beamTh, beamPt: beamPt, hookWorld: hookWorld,
+      panRimY: panRimY, panCx: panCx, panFloorY: panFloorY,
+      riderX: riderX, massFromX: massFromX, nutLocalX: nutLocalX,
+      pointerTip: pointerTip, scalePt: scalePt, weightR: weightR, weightH: weightH,
+      // 量筒物理
+      yOfV: yOfV, vOfY: vOfY, liquidV: liquidV, ySurf: ySurf, ySight: ySight,
+      vRead: vRead, sightErr: sightErr, sightBias: sightBias, sightVerdict: sightVerdict,
+      elName: elName, dataDiagnosis: dataDiagnosis,
+      stoneNow: stoneNow, stoneScale: stoneScale, stoneHalf: stoneHalf, stoneRise: stoneRise,
+      beakerLevelH: beakerLevelH,
+      // 判分
+      measured: measured, trueRho: trueRho, stepState: stepState,
+      hitTest: hitTest, beamLocalXFromScreen: beamLocalXFromScreen,
+      // 动作（和按钮走同一条路）
+      setMode: setMode, setStone: setStone, setElev: setElev, setRiderMass: setRiderMass,
+      addWeight: addWeight, removeWeightAt: removeWeightAt, clearPan: clearPan, riderZero: riderZero,
+      toggleObj: toggleObj, pourWater: pourWater, toggleStoneIn: toggleStoneIn,
+      setWetFirst: setWetFirst, resetAll: resetAll, newData: newData,
+      record: record, submitAnswer: submitAnswer, applyView: applyView, refreshStageBar: refreshStageBar,
+      syncUI: syncUI, drawGauge: drawGauge,
+      render: render,
+      labels: () => (window.__denLabelLog || []).slice()
+    };
+  })();
+  </script>
+</body>
+</html>

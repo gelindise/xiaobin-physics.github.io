@@ -1,0 +1,1915 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>托盘天平 · 3D 立体模型 - 物理虚拟实验</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="stylesheet" href="style.css">
+  <script src="auth-check.js"></script>
+  <style>
+    body { margin: 0; padding: 20px; min-width: 320px; }
+
+    .lab3d h1 { margin: 0; font-size: 19px; letter-spacing: .3px; }
+    .lab3d-sub { margin: 7px 0 16px; color: #93b4c4; font-size: 12.5px; line-height: 1.6; }
+    .lab3d-sub b { color: #a5f3fc; font-weight: 700; }
+
+    .lab3d-layout {
+      display: grid; grid-template-columns: minmax(0, 1fr) 340px;
+      gap: 16px; align-items: start; align-content: start;
+    }
+    /* 三块的位置写死，DOM 顺序按【窄屏需要的顺序】排：舞台 → 侧栏 → 下半区。
+       宽屏用 grid 把「视角 / 读数提交 / 分析与结论」摆到舞台正下方（左列第二行），
+       侧栏跨两行 —— 两列高度才相当，不会在舞台下面留一大片空白。 */
+    .lab3d-stage { grid-column: 1; grid-row: 1; }
+    .lab3d-sidebar { grid-column: 2; grid-row: 1 / span 2; }
+    .lab3d-lower {
+      grid-column: 1; grid-row: 2;
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(270px, 1fr));
+      gap: 14px; align-content: start; align-items: start; min-width: 0;
+    }
+
+    .lab3d-stage {
+      position: relative; overflow: hidden;
+      height: clamp(380px, 62vh, 640px);
+      border: 1px solid rgba(148, 163, 184, .18); border-radius: 16px;
+      background: #020617; box-shadow: 0 18px 46px rgba(2, 6, 23, .5);
+    }
+    .lab3d-stage canvas { display: block; touch-action: none; cursor: grab; }
+    .lab3d-stage canvas.pick { cursor: pointer; }
+    .lab3d-stage canvas.grabbing { cursor: grabbing; }
+
+    .lab3d-stage .stage-hint {
+      position: absolute; left: 12px; top: 12px; max-width: 60%;
+      padding: 7px 11px; border-radius: 8px; pointer-events: none;
+      border: 1px solid rgba(56, 189, 248, .28); background: rgba(2, 6, 23, .78);
+      color: #c3e8f5; font-size: 11px; line-height: 1.55;
+    }
+    .lab3d-stage .stage-hint b { color: #7dd3fc; }
+
+    .lab3d-stage .stage-tip {
+      position: absolute; left: 0; top: 0; padding: 5px 9px; border-radius: 7px;
+      background: rgba(2, 6, 23, .9); border: 1px solid rgba(148, 163, 184, .3);
+      color: #e2e8f0; font-size: 11px; white-space: nowrap;
+      pointer-events: none; opacity: 0; transition: opacity .12s;
+    }
+    .lab3d-stage .stage-tip.show { opacity: 1; }
+
+    /* 舞台底部那一条：左边几个按钮，右边操作提示。做成一条 flex 行是为了
+       让它们【永远不重叠】——各占一角的话，窄屏上提示文字会横穿底边压在按钮上。
+       按钮必须在舞台上：.lab3d-layout 在 ≤900px 折成一列后侧栏会被挤到舞台【下面】，
+       而「出题 / 调零 / 提交」恰恰是眼睛盯着天平时要按的。 */
+    .lab3d-stage .stage-bar {
+      position: absolute; left: 0; right: 0; bottom: 0;
+      display: flex; align-items: center; justify-content: space-between; gap: 8px;
+      padding: 0 12px 11px; pointer-events: none;
+    }
+    .lab3d-stage .bar-left { display: flex; align-items: center; gap: 7px; flex: none; pointer-events: auto; }
+    .lab3d-stage .stage-btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 8px 13px; border-radius: 10px; font-family: inherit;
+      font-size: 12px; font-weight: 800; cursor: pointer;
+      border: 1px solid rgba(148, 163, 184, .35); background: rgba(2, 6, 23, .88); color: #cbd5e1;
+      transition: background .2s, border-color .2s, color .2s, box-shadow .2s;
+    }
+    .lab3d-stage .stage-btn.go { border-color: rgba(56, 189, 248, .55); background: rgba(14, 116, 144, .3); color: #e0f2fe; }
+    .lab3d-stage .stage-btn.go:hover { background: rgba(14, 116, 144, .46); }
+    .lab3d-stage .stage-btn.ok { border-color: rgba(52, 211, 153, .55); background: rgba(6, 78, 59, .42); color: #d1fae5; }
+    .lab3d-stage .stage-btn.ok:hover { background: rgba(6, 78, 59, .62); }
+    .lab3d-stage .stage-btn.on { border-color: rgba(248, 113, 113, .7); background: rgba(127, 29, 29, .5); color: #fee2e2; }
+    .lab3d-stage .stage-btn:disabled { opacity: .45; cursor: not-allowed; }
+    /* 天平真的平衡了，这一刻正是该读数提交的时候 —— 按钮自己亮起来 */
+    .lab3d-stage .stage-btn.ready {
+      border-color: rgba(52, 211, 153, .8); background: rgba(16, 185, 129, .24); color: #d1fae5;
+      box-shadow: 0 0 0 3px rgba(52, 211, 153, .14), 0 0 18px rgba(52, 211, 153, .3);
+    }
+    .lab3d-stage .stage-help {
+      min-width: 0; pointer-events: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      color: #93b4c4; font-size: 11px; background: rgba(2, 6, 23, .72); padding: 6px 10px; border-radius: 7px;
+    }
+
+    .lab3d-stage .stage-toast {
+      position: absolute; left: 50%; transform: translateX(-50%); bottom: 96px;
+      padding: 8px 14px; border-radius: 10px; font-size: 12px; font-weight: 700;
+      background: rgba(2, 6, 23, .93); border: 1px solid rgba(148, 163, 184, .32); color: #e2e8f0;
+      opacity: 0; transition: opacity .18s; pointer-events: none; white-space: nowrap;
+    }
+    .lab3d-stage .stage-toast.show { opacity: 1; }
+
+    .lab3d-stage .stage-flag {
+      position: absolute; left: 50%; transform: translateX(-50%); bottom: 58px;
+      padding: 7px 13px; border-radius: 99px; font-size: 12px; font-weight: 800;
+      background: rgba(6, 78, 59, .92); border: 1px solid rgba(52, 211, 153, .6); color: #d1fae5;
+      opacity: 0; transition: opacity .2s; pointer-events: none; white-space: nowrap;
+    }
+    .lab3d-stage .stage-flag.show { opacity: 1; }
+
+    .lab3d-sidebar { display: flex; flex-direction: column; gap: 11px; min-width: 0; }
+    .panel {
+      border: 1px solid rgba(148, 163, 184, .17); border-radius: 13px;
+      background: rgba(9, 20, 35, .82); padding: 13px 14px;
+    }
+    .panel > h3 {
+      margin: 0 0 10px; font-size: 12px; font-weight: 800; color: #7dd3fc;
+      letter-spacing: .4px; display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    }
+    .panel > h3 .pill {
+      font-size: 10px; font-weight: 800; padding: 2px 8px; border-radius: 99px;
+      background: rgba(148, 163, 184, .18); color: #e2e8f0;
+    }
+    .panel > h3 .pill.ok { background: rgba(52, 211, 153, .22); color: #d1fae5; }
+    .panel > h3 .pill.warn { background: rgba(251, 191, 36, .22); color: #fef3c7; }
+
+    /* 读数大数字 */
+    .gauge-num {
+      display: flex; align-items: baseline; justify-content: center; gap: 6px;
+      padding: 9px 8px; border-radius: 10px; margin-bottom: 9px;
+      background: linear-gradient(180deg, #0b1a2a, #07131f); border: 1px solid rgba(56, 189, 248, .3);
+    }
+    .gauge-num .num {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 26px; font-weight: 800;
+      color: #a5f3fc; letter-spacing: .5px; font-variant-numeric: tabular-nums;
+      text-shadow: 0 0 12px rgba(56, 189, 248, .45);
+    }
+    .gauge-num .unit { color: #5e8496; font-size: 13px; font-weight: 700; }
+
+    /* 指针偏转条：中间一条绿线是「平衡」参照，黄针走到哪儿就是偏到哪儿 */
+    .tilt {
+      position: relative; height: 24px; margin: 4px 0 8px; border-radius: 8px;
+      background: linear-gradient(180deg, #0b1a2a, #07131f);
+      border: 1px solid rgba(56, 189, 248, .26); overflow: hidden;
+    }
+    .tilt .mid { position: absolute; left: 50%; top: 2px; bottom: 2px; width: 1px; background: rgba(52, 211, 153, .75); }
+    .tilt .nd {
+      position: absolute; top: 3px; bottom: 3px; width: 3px; margin-left: -1.5px; border-radius: 2px;
+      background: #f59e0b; box-shadow: 0 0 9px rgba(245, 158, 11, .8); transition: left .07s linear;
+    }
+    .tilt .nd.ok { background: #34d399; box-shadow: 0 0 9px rgba(52, 211, 153, .85); }
+    .tilt .cap { position: absolute; top: 4px; font-size: 9px; color: #4d6b7d; letter-spacing: .5px; }
+
+    .readouts { display: flex; flex-direction: column; gap: 5px; color: #a9c2d2; font-size: 11.5px; }
+    .readouts div { display: flex; justify-content: space-between; gap: 8px; }
+    .readouts b { color: #e2e8f0; font-variant-numeric: tabular-nums; }
+    .readouts .dim { color: #7d97a8; }
+    .readouts div.sum { border-top: 1px solid rgba(148, 163, 184, .16); padding-top: 6px; margin-top: 2px; }
+    .readouts div.sum b { color: #a5f3fc; font-size: 13px; }
+
+    .badge {
+      display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 9px;
+      font-size: 12px; font-weight: 800; margin-top: 8px;
+    }
+    .badge.ok { background: rgba(6, 78, 59, .45); border: 1px solid rgba(52, 211, 153, .5); color: #d1fae5; }
+    .badge.warn { background: rgba(120, 53, 15, .45); border: 1px solid rgba(251, 191, 36, .5); color: #fef3c7; }
+    .badge.bad { background: rgba(127, 29, 29, .45); border: 1px solid rgba(248, 113, 113, .5); color: #fee2e2; }
+
+    .btn-row { display: flex; flex-wrap: wrap; gap: 7px; }
+    .btn-row button {
+      flex: 1 1 auto; min-width: 0; padding: 9px 11px; border-radius: 9px; cursor: pointer;
+      font-family: inherit; font-size: 12px; font-weight: 800;
+      border: 1px solid rgba(148, 163, 184, .3); background: rgba(30, 41, 59, .7); color: #cbd5e1;
+    }
+    .btn-row button.primary { border-color: rgba(56, 189, 248, .6); background: rgba(14, 116, 144, .42); color: #e0f2fe; }
+    .btn-row button.ok { border-color: rgba(52, 211, 153, .55); background: rgba(6, 78, 59, .45); color: #d1fae5; }
+    .btn-row button:disabled { opacity: .45; cursor: not-allowed; }
+    .btn-row button:hover:not(:disabled) { border-color: rgba(125, 211, 252, .7); }
+
+    /* 砝码按钮：做成黄铜色，和画布里的砝码同一套语言 */
+    .wgrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+    .wgrid button {
+      padding: 8px 4px; border-radius: 9px; cursor: pointer; font-family: inherit;
+      font-size: 12px; font-weight: 800; color: #fde9c8;
+      border: 1px solid rgba(196, 152, 74, .55);
+      background: linear-gradient(180deg, rgba(196, 152, 74, .30), rgba(120, 86, 30, .30));
+      transition: border-color .15s, background .15s;
+    }
+    .wgrid button:hover { border-color: rgba(250, 214, 130, .9); background: linear-gradient(180deg, rgba(196, 152, 74, .48), rgba(120, 86, 30, .42)); }
+
+    .nutrow { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 7px; }
+    .nutrow span { color: #a9c2d2; font-size: 11.5px; }
+    .nutrow b { color: #e2e8f0; font-variant-numeric: tabular-nums; }
+    .nutrow .bs { display: flex; gap: 5px; }
+    .nutrow button {
+      width: 32px; padding: 5px 0; border-radius: 8px; cursor: pointer; font-family: inherit;
+      font-size: 12px; font-weight: 800; border: 1px solid rgba(148, 163, 184, .32);
+      background: rgba(30, 41, 59, .7); color: #cbd5e1;
+    }
+    .nutrow button:hover { border-color: rgba(125, 211, 252, .7); }
+
+    .ansrow { display: flex; gap: 7px; }
+    .ansrow input {
+      flex: 1 1 auto; min-width: 0; padding: 9px 10px; border-radius: 9px;
+      border: 1px solid rgba(148, 163, 184, .35); background: rgba(2, 6, 23, .72); color: #e2e8f0;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 14px; font-weight: 700;
+      font-variant-numeric: tabular-nums;
+    }
+    .ansrow input:focus { outline: none; border-color: rgba(56, 189, 248, .75); box-shadow: 0 0 0 3px rgba(56, 189, 248, .12); }
+    .ansrow button {
+      flex: none; padding: 9px 15px; border-radius: 9px; cursor: pointer; font-family: inherit;
+      font-size: 12px; font-weight: 800; border: 1px solid rgba(52, 211, 153, .6);
+      background: rgba(6, 78, 59, .5); color: #d1fae5;
+    }
+    .ansrow button:hover { background: rgba(6, 78, 59, .72); }
+
+    .fb { margin-top: 9px; padding: 9px 11px; border-radius: 9px; font-size: 11.5px; line-height: 1.7; display: none; }
+    .fb.show { display: block; }
+    .fb.ok { background: rgba(6, 78, 59, .45); border: 1px solid rgba(52, 211, 153, .5); color: #d1fae5; }
+    .fb.bad { background: rgba(127, 29, 29, .45); border: 1px solid rgba(248, 113, 113, .5); color: #fee2e2; }
+    .fb.warn { background: rgba(120, 53, 15, .45); border: 1px solid rgba(251, 191, 36, .5); color: #fef3c7; }
+
+    .steps { display: flex; flex-direction: column; gap: 4px; }
+    .steps .st {
+      display: flex; align-items: center; gap: 7px; padding: 5px 8px; border-radius: 8px;
+      font-size: 11.5px; color: #7d97a8; border: 1px solid transparent;
+    }
+    .steps .st i {
+      display: inline-grid; place-items: center; width: 16px; height: 16px; flex: none;
+      border-radius: 99px; font-size: 9.5px; font-weight: 800; font-style: normal;
+      background: rgba(148, 163, 184, .2); color: #cbd5e1;
+    }
+    .steps .st.now { color: #e2e8f0; border-color: rgba(56, 189, 248, .45); background: rgba(14, 116, 144, .2); }
+    .steps .st.now i { background: rgba(56, 189, 248, .35); color: #e0f2fe; }
+    .steps .st.done { color: #a7f3d0; }
+    .steps .st.done i { background: rgba(52, 211, 153, .3); color: #d1fae5; }
+
+    .analysis { color: #c8d8e4; font-size: 11.5px; line-height: 1.8; }
+    .analysis .line { display: flex; justify-content: space-between; gap: 8px; }
+    .analysis .line b { color: #e2e8f0; font-variant-numeric: tabular-nums; }
+    .analysis .conc {
+      margin-top: 9px; padding: 8px 10px; border-radius: 8px; font-size: 11.5px; line-height: 1.7;
+      background: rgba(6, 78, 59, .35); border: 1px solid rgba(52, 211, 153, .4); color: #d1fae5;
+    }
+    .analysis .conc.warn { background: rgba(127, 29, 29, .35); border-color: rgba(248, 113, 113, .45); color: #fee2e2; }
+    .analysis .conc.info { background: rgba(12, 74, 110, .35); border-color: rgba(56, 189, 248, .4); color: #e0f2fe; }
+    .analysis .muted { color: #7d97a8; }
+
+    .info-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; margin-top: 16px; }
+    .info-card {
+      border: 1px solid rgba(148, 163, 184, .16); border-radius: 14px;
+      background: rgba(9, 20, 35, .7); padding: 15px 17px;
+    }
+    .info-card h4 { margin: 0 0 9px; font-size: 13px; color: #7dd3fc; }
+    .info-card ul { margin: 0; padding-left: 17px; color: #a9c2d2; font-size: 12px; line-height: 1.85; }
+    .info-card li b { color: #e2e8f0; }
+    .info-card .fml {
+      display: inline-block; margin: 3px 0; padding: 3px 9px; border-radius: 7px;
+      background: rgba(56, 189, 248, .13); color: #a5f3fc; font-weight: 700;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+
+    @media (max-width: 900px) {
+      .lab3d-layout { grid-template-columns: minmax(0, 1fr); }
+      .lab3d-stage, .lab3d-sidebar, .lab3d-lower { grid-column: 1; grid-row: auto; }
+      .lab3d-stage { height: clamp(340px, 54vh, 500px); }
+      .lab3d-sidebar { border-top: 1px solid rgba(148, 163, 184, .16); padding-top: 12px; }
+      .lab3d-lower { border-top: 1px solid rgba(148, 163, 184, .16); padding-top: 12px; }
+    }
+    @media (max-width: 620px) {
+      body { padding: 14px; }
+      .lab3d h1 { font-size: 16px; }
+      .lab3d-stage { height: 350px; }
+      .lab3d-stage .stage-hint { font-size: 10px; padding: 6px 9px; max-width: 64%; }
+      .lab3d-stage .stage-help { display: none; }
+      .lab3d-stage .stage-btn { padding: 7px 10px; font-size: 11px; gap: 5px; }
+      .lab3d-stage .stage-flag { bottom: 54px; font-size: 11px; padding: 6px 11px; }
+      .gauge-num .num { font-size: 23px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="lab3d">
+    <h1>托盘天平 · 3D 立体模型</h1>
+    <p class="lab3d-sub">
+      一台<b>真实的托盘天平</b>摆在实验台上：<b>底座、立柱、横梁、游码、平衡螺母、指针、分度盘、两个托盘</b>一个不缺。
+      按顺序做：<b>游码归零 → 调平衡螺母让指针指中央 → 左物右码 → 移游码 → 读数</b>。
+      拖动游码和平衡螺母，天平会像真的一样倾斜。
+    </p>
+
+    <div class="lab3d-layout">
+      <div class="lab3d-stage">
+        <canvas id="bal-canvas"></canvas>
+
+        <div class="stage-hint" id="bal-hint"></div>
+        <div class="stage-tip" id="bal-tip"></div>
+        <div class="stage-toast" id="bal-toast"></div>
+        <div class="stage-flag" id="bal-flag">天平平衡了 ✓ 可以读数提交</div>
+
+        <div class="stage-bar">
+          <div class="bar-left">
+            <button type="button" class="stage-btn go" id="bal-new">🎲 随机出题</button>
+            <button type="button" class="stage-btn" id="bal-zero">⚡ 快速调零</button>
+            <button type="button" class="stage-btn ok" id="bal-submit2">✓ 提交读数</button>
+          </div>
+          <div class="stage-help">拖动空白处旋转 · 滚轮缩放 · 拖动游码 / 平衡螺母 · 点右盘砝码取下</div>
+        </div>
+      </div>
+
+      <div class="lab3d-sidebar">
+        <div class="panel">
+          <h3>天平状态 <span class="pill" id="bal-state">未平衡</span></h3>
+          <div class="gauge-num">
+            <span class="num" id="bal-ang-num">+0.0</span><span class="unit">°</span>
+          </div>
+          <div class="tilt">
+            <i class="mid"></i><i class="nd" id="bal-nd" style="left:50%"></i>
+            <span class="cap" style="left:7px">左盘重</span>
+            <span class="cap" style="right:7px">右盘重</span>
+          </div>
+          <div class="readouts">
+            <div><span>分度值</span><b id="bal-mode">0.1 g</b></div>
+            <div><span>指针偏离中央</span><b id="bal-gap">—</b></div>
+            <div><span>平衡判据</span><b>|指针偏角| ≤ 0.9°</b></div>
+          </div>
+          <p class="note" id="bal-note">指针偏向哪边，哪边就重。</p>
+        </div>
+
+        <div class="panel">
+          <h3>读数 <span class="pill" id="bal-read-pill">未出题</span></h3>
+          <div class="gauge-num" style="border-color:rgba(52,211,153,.32)">
+            <span class="num" id="bal-read-num" style="color:#a7f3d0;text-shadow:0 0 12px rgba(52,211,153,.4)">0.00</span>
+            <span class="unit">g</span>
+          </div>
+          <div class="readouts">
+            <div><span>砝码总质量</span><b id="bal-wsum">0 g</b></div>
+            <div><span>游码示数</span><b id="bal-rmass">0.00 g</b></div>
+            <div class="sum"><span>读数 = 砝码 + 游码</span><b id="bal-read2">0.00 g</b></div>
+          </div>
+          <div id="bal-badge"></div>
+        </div>
+
+        <div class="panel">
+          <h3>操作步骤</h3>
+          <div class="steps" id="bal-steps"></div>
+        </div>
+
+        <div class="panel">
+          <h3>调节</h3>
+          <div class="nutrow">
+            <span>左平衡螺母</span>
+            <div class="bs">
+              <button type="button" id="bal-nutl-">◀</button>
+              <button type="button" id="bal-nutl+">▶</button>
+            </div>
+          </div>
+          <div class="nutrow">
+            <span>右平衡螺母</span>
+            <div class="bs">
+              <button type="button" id="bal-nutr-">◀</button>
+              <button type="button" id="bal-nutr+">▶</button>
+            </div>
+          </div>
+          <p class="note">口诀：<b>指针偏左，螺母右移</b>；指针偏右，螺母左移。测量前游码必须先归零。</p>
+        </div>
+
+        <div class="panel">
+          <h3>右盘砝码 <span class="pill" id="bal-wcnt">0 个</span></h3>
+          <div class="wgrid">
+            <button type="button" data-w="100">100 g</button>
+            <button type="button" data-w="50">50 g</button>
+            <button type="button" data-w="20">20 g</button>
+            <button type="button" data-w="10">10 g</button>
+            <button type="button" data-w="5">5 g</button>
+            <button type="button" data-w="1">1 g</button>
+          </div>
+          <div class="btn-row" style="margin-top:8px;">
+            <button type="button" id="bal-clear">清空右盘</button>
+            <button type="button" id="bal-rz">游码归零</button>
+          </div>
+          <p class="note">加砝码<b>用镊子、由大到小</b>；点画面右盘里的砝码也能把它取下来。</p>
+        </div>
+      </div>
+
+      <!-- 舞台正下方的第二行：视角、读数提交、分析与结论。
+           摆在左列（舞台下面）而不是全塞侧栏，是为了让两列高度相当。 -->
+      <div class="lab3d-lower">
+        <div class="panel">
+          <h3>视角</h3>
+          <div class="btn-row">
+            <button type="button" data-view="perspective">默认</button>
+            <button type="button" data-view="front">正面</button>
+            <button type="button" data-view="close">贴近读数</button>
+            <button type="button" data-view="side">正侧</button>
+            <button type="button" data-view="top">俯视</button>
+          </div>
+          <p class="note" style="margin-top:9px;">分度值：</p>
+          <div class="btn-row">
+            <button type="button" data-mode="0.1">0.1 g（估读到 0.01 g）</button>
+            <button type="button" data-mode="0.2">0.2 g（不需估读）</button>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h3>第三步 · 读数提交</h3>
+          <div class="ansrow">
+            <input type="number" id="bal-ans" placeholder="输入物体质量（g）" step="0.01">
+            <button type="button" id="bal-submit">提交</button>
+          </div>
+          <div class="fb" id="bal-fb"></div>
+          <p class="note">读数 = <b>砝码总质量 + 游码所对刻度</b>；游码看<b>左边缘</b>。</p>
+        </div>
+
+        <div class="panel">
+          <h3>分析与结论</h3>
+          <div class="analysis" id="bal-analysis"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="info-cards">
+      <div class="info-card">
+        <h4>实验原理</h4>
+        <ul>
+          <li>托盘天平是<b>等臂杠杆</b>：左右两臂一样长，所以<b>平衡时左盘物体的质量 = 右盘砝码总质量 + 游码示数</b>。</li>
+          <li>天平平衡的判据是<b>指针指向分度盘中央</b>，不是「两边看起来一样高」。</li>
+          <li>横梁两端各有一个<b>平衡螺母</b>，它们是<b>调零</b>用的 —— 把横梁自身的重心调回支点正上方。</li>
+          <li>读数规则：<span class="fml">m = m砝码 + m游码</span>
+              分度值 0.1 g 时需<b>估读到 0.01 g</b>；分度值 0.2 g 时不必估读。</li>
+        </ul>
+      </div>
+      <div class="info-card">
+        <h4>操作指南与易错点</h4>
+        <ul>
+          <li><b>① 放平、② 游码归零、③ 调平衡螺母使指针指中央</b> —— 这三步没做完就放物体，读数一定是错的。</li>
+          <li><b>左物右码</b>：物体放左盘，砝码放右盘。放反了，读数就不是「砝码 + 游码」了。</li>
+          <li>加砝码<b>用镊子</b>、<b>由大到小</b>试加；最后用<b>游码</b>微调。</li>
+          <li>潮湿的物体、化学药品<b>不能直接放盘</b>，要放在玻璃器皿或纸片上。</li>
+          <li>拖动画面里的<b>游码</b>或点<b>右盘砝码</b>都能改变右盘；天平会立刻跟着倾斜。</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <script>
+  (() => {
+    'use strict';
+
+    const canvas = document.getElementById('bal-canvas');
+    const stage = document.querySelector('.lab3d-stage');
+    if (!canvas || !stage) return;
+    const ctx = canvas.getContext('2d');
+
+    const PI2 = Math.PI * 2;
+    const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
+    const $ = id => document.getElementById(id);
+
+    /* ============================================================
+     * 向量工具（与站内其它三维页同一套约定）
+     * ============================================================ */
+    const add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+    const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+    const scl = (a, k) => [a[0] * k, a[1] * k, a[2] * k];
+    const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+    const vlen = a => Math.hypot(a[0], a[1], a[2]);
+    const vnorm = a => { const l = vlen(a) || 1; return [a[0] / l, a[1] / l, a[2] / l]; };
+
+    /* ============================================================
+     * 场景常量
+     * ------------------------------------------------------------
+     * 世界坐标：y 向上，x/z 水平。1 世界单位 = 10 cm。
+     * 天平摆在世界原点，横梁沿 x 轴，托盘吊在 x = ±HOOK_X。
+     * 指针吊在立柱【前面】(z = PTR_Z)，分度盘挂在指针后面一点 ——
+     * 真机就是这个结构，指针不在立柱里，而在立柱正面。
+     * ============================================================ */
+    const U = 10;                       // 1 世界单位 = 10 cm
+
+    // ── 底座 ──
+    const BASE_HW = 0.74, BASE_HD = 0.50, BASE_H = 0.10, BASE_BEV = 0.028;
+
+    // ── 立柱 ──
+    const PIVOT_Y   = 1.42;             // 支点高度
+    const COL_BW = 0.088, COL_BD = 0.078;   // 立柱底部半宽 / 半深
+    const COL_TW = 0.046, COL_TD = 0.042;   // 立柱顶部半宽 / 半深
+    const COL_TOP = PIVOT_Y - 0.075;        // 立柱顶面
+    const BRG_TOP = PIVOT_Y - 0.038;        // 刀口支承顶面
+
+    // ── 横梁 ──
+    const ARM     = 1.02;               // 横梁半长
+    const BEAM_H  = 0.078, BEAM_D = 0.072;
+    const HOOK_X  = 0.84;               // 吊盘刀口位置
+    const ANG_MAX = 12;                 // 横梁最大倾角（度）—— 和 2D 页的限幅一致
+
+    // ── 游码 ──
+    const RIDER_X0 = 0.10, RIDER_X1 = 0.80;   // 游码 0 → 5 g 的世界行程
+    const RIDER_G  = 5;                        // 游码量程
+    const RIDER_W  = 0.040, RIDER_LIFT = 0.062;
+
+    // ── 平衡螺母与螺杆 ──
+    const NUT_D0   = 1.16;              // 螺母中位到支点的距离
+    const NUT_XK   = 0.0048;            // 每单位 nutPos 的世界位移（±25 → ±0.12）
+    const NUT_LIM  = 25;                // 螺母位置限幅
+    const ROD_X0   = 1.00, ROD_X1 = 1.32, ROD_R = 0.021;
+    const NUT_R    = 0.062, NUT_W = 0.052;
+
+    // ── 托盘 ──
+    const PAN_R   = 0.42;
+    const HANG    = 0.90;               // 刀口到盘口的高度
+    const PAN_D   = 0.086;              // 盘深
+
+    // ── 指针与分度盘 ──
+    // 指针做成【扁平板】而不是细杆：真机的指针就是一片薄钢片，从正面看是一条
+    // 由粗到细的针；做成圆杆的话，正面投影只有三四像素，直接淹在立柱里看不见。
+    const PTR_LEN = 1.055;
+    const PTR_Z   = 0.150;              // 指针平面（立柱正面之外）
+    const PTR_W0  = 0.032, PTR_W1 = 0.007;
+    const SCALE_Z = 0.118;
+    const SCALE_TH = 0.013;             // 分度盘板厚的一半
+    const SCALE_HALF = ANG_MAX * Math.PI / 180;   // 分度盘张角 = 横梁极限倾角
+    const SCALE_RO = 1.115, SCALE_RI = 0.995;
+
+    // ── 实验台 ──
+    const TABLE_HW = 2.35, TABLE_HD = 1.60, TABLE_T = 0.13;
+
+    const CAMD   = 9.6;                       // 相机距离基准
+    const TARGET = [0, 0.66, 0];              // 轨道中心：天平腰部
+
+    const VIEWS = {
+      // 默认：右前方斜俯视。天平是对称的，方位角给一点就能同时看清横梁、指针和两个托盘。
+      perspective: [0.42, 0.30, 1.00],
+      front:       [0.00, 0.20, 1.08],
+      close:       [0.24, 0.22, 1.62],
+      side:        [1.16, 0.18, 1.02],
+      top:         [0.34, 1.12, 0.96]
+    };
+
+    const state = {
+      yaw: VIEWS.perspective[0], pitch: VIEWS.perspective[1], zoom: VIEWS.perspective[2],
+      w: 1, h: 1, dpr: 0, dirty: true,
+      dragging: false, drag: null, downAt: null, dragGrab: 0,
+      hover: null, view: 'perspective',
+      solved: false,                 // 本题是否已经答对
+      lastOk: false,
+      drawn: {}
+    };
+
+    /* ============================================================
+     * 物理模型
+     * ------------------------------------------------------------
+     * 全部照搬自 2D 页「托盘天平的使用.html」的力矩模型，一个字都没改：
+     *   totalLeft  = 物体 + randomOffset − 左螺母×0.1
+     *   totalRight = Σ砝码 + 游码 + 右螺母×0.1
+     *   angle      = clamp((right − left) × 2.0, −12, 12)
+     * 渲染、读数、提交判分、自检共用这一份 —— 公式抄两遍必然对不上。
+     * ============================================================ */
+    const PHY = {
+      mode: 0.1,
+      targetMass: 0,
+      riderMass: 0,
+      weightsOnPan: [],
+      nutLPos: -15,
+      nutRPos: 10,
+      randomOffset: (Math.random() - 0.5) * 5
+    };
+    const W_MAX = 10;                 // 右盘最多摆得下 10 个砝码（画面上就 10 个位置）
+
+    const weightsSum = () => PHY.weightsOnPan.reduce((a, b) => a + b, 0);
+    const momentLeft  = () => PHY.targetMass + PHY.randomOffset - PHY.nutLPos * 0.1;
+    const momentRight = () => weightsSum() + PHY.riderMass + PHY.nutRPos * 0.1;
+    const beamAngleDeg = () => clamp((momentRight() - momentLeft()) * 2.0, -ANG_MAX, ANG_MAX);
+    const balanceGap = () => Math.abs(momentRight() - momentLeft());
+    const realReading = () => weightsSum() + PHY.riderMass;
+    // 出题前的零点残差（2D 页 tryGenerateProblem 里那一条）
+    const zeroGap = () => Math.abs(PHY.randomOffset - PHY.nutLPos * 0.1 - PHY.nutRPos * 0.1);
+    // 平衡判据：2D 页 submitAnswer 用 0.5 g 的力矩差；本页把「指针偏角」也一起看，
+    // 两者其实是同一件事 —— 力矩差 0.5 g 恰好对应 1.0°。这里统一用 0.5 g 当闸门。
+    const BAL_GATE = 0.5;
+
+    /* ---------------------------- 派生几何 ---------------------------- */
+    // 横梁绕 z 轴转：th = −angle。angle>0（右重）→ 右端下降。
+    const beamTh = () => -beamAngleDeg() * Math.PI / 180;
+    function beamPt(lx, ly, lz) {
+      const th = beamTh(), c = Math.cos(th), s = Math.sin(th);
+      return [lx * c - ly * s, PIVOT_Y + lx * s + ly * c, lz];
+    }
+    // 吊盘刀口的世界位置
+    function hookWorld(side) {
+      const th = beamTh(), c = Math.cos(th), s = Math.sin(th), lx = side * HOOK_X;
+      return [lx * c, PIVOT_Y + lx * s, 0];
+    }
+    const panRimY = side => hookWorld(side)[1] - HANG;      // 盘口高度
+    const panCx   = side => hookWorld(side)[0];             // 盘心 x
+    const panFloorY = side => panRimY(side) - PAN_D;        // 盘底（砝码坐这儿）
+
+    // 游码在横梁上的局部 x
+    const riderX = () => RIDER_X0 + (PHY.riderMass / RIDER_G) * (RIDER_X1 - RIDER_X0);
+    const massFromX = lx => clamp((lx - RIDER_X0) / (RIDER_X1 - RIDER_X0), 0, 1) * RIDER_G;
+
+    // 平衡螺母的局部 x。左螺母：nutPos 变大 = 靠近支点（和 2D 页 x = 40 + nutLPos 一致）；
+    // 右螺母：nutPos 变大 = 远离支点（和 2D 页 x = 530 + nutRPos 一致）。
+    const nutLocalX = (side, pos) => side * (NUT_D0 - side * pos * NUT_XK);
+    const nutPosFromX = (side, lx) => clamp((lx * side - NUT_D0) / NUT_XK, -NUT_LIM, NUT_LIM);
+
+    // 指针尖：与横梁刚性相连、朝下。世界角度 φ_tip = th = −angle。
+    const pointerTip = () => beamPt(0, -PTR_LEN, PTR_Z);
+    // 分度盘上的点：φ 是相对「竖直向下」的角度（世界系，不跟着横梁转）
+    const scalePt = (phi, r) => [r * Math.sin(phi), PIVOT_Y - r * Math.cos(phi), SCALE_Z];
+
+    /* ---------------------------- 相机 ---------------------------- */
+    // 取景包络：把「横梁摆到两个极限角」「托盘吊到最低」「底座四角」「台面远端」全罩住。
+    // 用固定值而不是当前几何 —— 否则拖一次游码视野就一缩一放，晃得没法用。
+    function envelopePoints() {
+      const pts = [];
+      // 台面：只算远端与 60% 处，横向也只取 60% 宽。近端那两条边本来就伸到画外，
+      // 四角全算进来会喧宾夺主 —— 取景被一块空台面撑开，天平缩成中间一小条。
+      for (const sx of [-1, 1]) for (const sz of [-1, 0.35]) {
+        pts.push([sx * TABLE_HW * 0.60, 0, sz * TABLE_HD * 0.92]);
+      }
+      // 底座四角
+      for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+        pts.push([sx * BASE_HW, 0, sz * BASE_HD]);
+        pts.push([sx * BASE_HW, BASE_H, sz * BASE_HD]);
+      }
+      // 横梁 + 螺母杆 + 托盘：三个倾角（水平 / 两个极限）都算一遍
+      for (const ang of [0, ANG_MAX, -ANG_MAX]) {
+        const th = -ang * Math.PI / 180, c = Math.cos(th), s = Math.sin(th);
+        const put = (lx, ly, lz) => pts.push([lx * c - ly * s, PIVOT_Y + lx * s + ly * c, lz]);
+        put(0, 0.11, 0);                                   // 梁顶
+        for (const sx of [-1, 1]) {
+          put(sx * ROD_X1, -0.04, -ROD_R); put(sx * ROD_X1, -0.04, ROD_R);
+          put(sx * ROD_X1, 0.04, 0);
+          // 托盘不跟着横梁转，只跟着刀口上下平移
+          const hx = sx * HOOK_X * c, hy = PIVOT_Y + sx * HOOK_X * s;
+          pts.push([hx, hy - HANG - PAN_D, 0]);
+          pts.push([hx + PAN_R, hy - HANG, 0]);
+          pts.push([hx - PAN_R, hy - HANG, 0]);
+          pts.push([hx, hy - HANG - PAN_D + 0.34, 0]);      // 盘上砝码堆的最高点
+        }
+      }
+      // 指针尖与分度盘两端
+      pts.push([0, PIVOT_Y - PTR_LEN - 0.02, PTR_Z]);
+      for (const sx of [-1, 1]) {
+        const p = scalePt(sx * SCALE_HALF, SCALE_RO + 0.02);
+        pts.push([p[0], p[1], SCALE_Z]);
+      }
+      return pts;    }
+
+    function makeCam(q, w, h) {
+      const cy = Math.cos(state.yaw), sy = Math.sin(state.yaw);
+      const cp = Math.cos(state.pitch), sp = Math.sin(state.pitch);
+      const dir = [cp * sy, sp, cp * cy];
+      q.dist = CAMD / state.zoom;
+      q.eye = add(TARGET, scl(dir, q.dist));
+      q.fwd = scl(dir, -1);
+      q.right = vnorm(cross(q.fwd, [0, 1, 0]));
+      q.up = cross(q.right, q.fwd);
+      const pts = envelopePoints();
+      let loR = 1e9, hiR = -1e9, loU = 1e9, hiU = -1e9;
+      for (const p of pts) {
+        const v = sub(p, q.eye);
+        const z = Math.max(0.05, dot(v, q.fwd));
+        const r = dot(v, q.right) / z, u = dot(v, q.up) / z;
+        loR = Math.min(loR, r); hiR = Math.max(hiR, r);
+        loU = Math.min(loU, u); hiU = Math.max(hiU, u);
+      }
+      // 缩放必须乘在【算出来的焦距】上：只改 q.dist 的话，焦距又被包络反算回来，
+      // 缩放会被自动取景完全抵消（提示写着「滚轮缩放」，实测只是轻微透视畸变）。
+      const s = Math.min(w * 0.94 / Math.max(1e-6, hiR - loR),
+                         h * 0.90 / Math.max(1e-6, hiU - loU));
+      q.focal = s * state.zoom;
+      q.px = w * 0.5 - (loR + hiR) * 0.5 * s;
+      q.py = h * 0.5 + (loU + hiU) * 0.5 * s;
+      q.eyeDist = p => dot(sub(p, q.eye), q.fwd);
+      return q;
+    }
+    function project(p, q) {
+      const v = sub(p, q.eye);
+      const z = Math.max(0.05, dot(v, q.fwd));
+      const s = q.focal / z;
+      return { x: q.px + dot(v, q.right) * s, y: q.py - dot(v, q.up) * s, s: s, z: z };
+    }
+    // 屏幕点 → 世界射线与水平面 y = planeY 的交点
+    function unproject(sx, sy, q, planeY) {
+      const dx = (sx - q.px) / q.focal;
+      const dy = -(sy - q.py) / q.focal;
+      const d = add(add(q.fwd, scl(q.right, dx)), scl(q.up, dy));
+      if (Math.abs(d[1]) < 1e-6) return null;
+      const t = ((planeY === undefined ? 0 : planeY) - q.eye[1]) / d[1];
+      if (t <= 0) return null;
+      return add(q.eye, scl(d, t));
+    }
+    // 屏幕点 → 世界射线与竖平面 z = z0 的交点。拖游码 / 拖螺母都用它 ——
+    // 横梁的中轴就躺在 z = 0 这个竖平面里。
+    function unprojectZ(sx, sy, q, z0) {
+      const dx = (sx - q.px) / q.focal;
+      const dy = -(sy - q.py) / q.focal;
+      const d = add(add(q.fwd, scl(q.right, dx)), scl(q.up, dy));
+      if (Math.abs(d[2]) < 1e-6) return null;
+      const t = ((z0 === undefined ? 0 : z0) - q.eye[2]) / d[2];
+      if (t <= 0) return null;
+      return add(q.eye, scl(d, t));
+    }
+    const camAzim = (q, cx, cz) => Math.atan2(q.eye[2] - cz, q.eye[0] - cx);
+
+    /* ============================================================
+     * 绘图小工具
+     * ============================================================ */
+    function polyPath(pts) {
+      ctx.beginPath();
+      pts.forEach((p, k) => k ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+      ctx.closePath();
+    }
+    function poly(pts, fill, stroke, lw) {
+      if (!pts || pts.length < 2) return;
+      polyPath(pts);
+      if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+      if (stroke) { ctx.lineWidth = lw || 1; ctx.strokeStyle = stroke; ctx.stroke(); }
+    }
+    function line(pts, color, lw, dash) {
+      if (!pts || pts.length < 2) return;
+      ctx.beginPath();
+      pts.forEach((p, k) => k ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+      ctx.setLineDash(dash || []);
+      ctx.lineWidth = lw; ctx.strokeStyle = color; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+      ctx.stroke(); ctx.setLineDash([]);
+    }
+    function dot2(p, r, fill, stroke, lw) {
+      ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, PI2);
+      if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+      if (stroke) { ctx.lineWidth = lw || 1; ctx.strokeStyle = stroke; ctx.stroke(); }
+    }
+    const rgb = (c, k) => {
+      const s = k === undefined ? 1 : k;
+      return 'rgb(' + Math.round(clamp(c[0] * s, 0, 255)) + ',' +
+                      Math.round(clamp(c[1] * s, 0, 255)) + ',' +
+                      Math.round(clamp(c[2] * s, 0, 255)) + ')';
+    };
+    const LIGHT = vnorm([-0.34, 0.86, 0.38]);
+    // 面的明暗：按面法线与光线的夹角给亮度。同一个颜色的盒子三个面必须读出
+    // 三种明度 —— 这是「像实物」而不是「像贴纸」的来源。
+    const shade = (base, n, amb) => rgb(base, (amb === undefined ? 0.52 : amb) + 0.60 * Math.max(0, dot(n, LIGHT)));
+
+    /* ---------------------------- 标签（带避让） ---------------------------- */
+    let frameBoxes = [];
+    function labelBox(p, text, size, align) {
+      ctx.font = '800 ' + size + 'px Inter, "Microsoft YaHei", sans-serif';
+      const wpx = ctx.measureText(text).width;
+      const pad = 4;
+      const half = size * 0.72 + pad * 0.5;
+      const wBox = wpx + pad * 2;
+      const EDGE = 8;
+      const y = clamp(p.y, half + EDGE, Math.max(half + EDGE, state.h - half - EDGE));
+      let bx = align === 'left' ? p.x - 4 - pad
+             : align === 'right' ? p.x + 4 - wpx - pad
+             : p.x - wpx / 2 - pad;
+      bx = clamp(bx, EDGE, Math.max(EDGE, state.w - wBox - EDGE));
+      return { x: bx, y: y - half, w: wBox, h: half * 2, cx: bx + wBox / 2, cy: y };
+    }
+    function label(p, text, color, size, align) {
+      ctx.font = '800 ' + size + 'px Inter, "Microsoft YaHei", sans-serif';
+      ctx.textAlign = align || 'center';
+      ctx.textBaseline = 'middle';
+      const pad = 4;
+      const wpx = ctx.measureText(text).width;
+      const b = labelBox(p, text, size, align);
+      const x = align === 'left' ? b.x + pad : align === 'right' ? b.x + wpx + pad : b.cx;
+      ctx.fillStyle = 'rgba(2,6,23,.76)';
+      ctx.fillRect(b.x, b.y, b.w, b.h);
+      ctx.fillStyle = color;
+      ctx.fillText(text, x, b.cy);
+      frameBoxes.push(b);
+      if (window.__balLabelLog) window.__balLabelLog.push({ text: text, x: b.x, y: b.y, w: b.w, h: b.h });
+      return b;
+    }
+    // 在一组候选落点里挑「与本帧已画盒子重叠面积最小」的那个。
+    // 不避让的话，横梁 / 游码 / 螺母 / 指针 / 托盘这几个标注必然互相压。
+    function bestLabel(anchor, text, color, size, offs) {
+      let best = null, bestOv = 1e18;
+      for (const o of offs) {
+        const b = labelBox({ x: anchor.x + o[0], y: anchor.y + o[1] }, text, size, 'center');
+        let ov = 0;
+        for (const q of frameBoxes) {
+          const ox = Math.min(b.x + b.w, q.x + q.w) - Math.max(b.x, q.x);
+          const oy = Math.min(b.y + b.h, q.y + q.h) - Math.max(b.y, q.y);
+          if (ox > 0 && oy > 0) ov += ox * oy;
+        }
+        if (ov < bestOv) { bestOv = ov; best = { x: anchor.x + o[0], y: anchor.y + o[1] }; }
+      }
+      label(best, text, color, size, 'center');
+      return bestOv;
+    }
+    // 只许上下平移的候选位，在【竖直参照物旁边】必然躲不开 —— 分度盘就在立柱正面、
+    // 刻度尺一样竖直，所以必须再给一组能往左右滑的候选位。
+    const AVOID = [[0, -18], [0, 18], [-52, 0], [52, 0], [0, -36], [0, 36],
+                   [-58, -18], [58, -18], [-58, 18], [58, 18], [0, -54], [0, 54]];
+    const avoidLabel = (anchor, text, color, size) => bestLabel(anchor, text, color, size, AVOID);
+
+    /* ---------------------------- 回转体 / 管 ---------------------------- */
+    function revolveRings(profile, q, N, cx, cz) {
+      const rings = [];
+      for (const [r, y] of profile) {
+        let L = null, R = null, aL = 0, aR = 0;
+        for (let k = 0; k < N; k++) {
+          const a = k / N * PI2;
+          const P = project([cx + r * Math.cos(a), y, cz + r * Math.sin(a)], q);
+          if (!L || P.x < L.x) { L = P; aL = a; }
+          if (!R || P.x > R.x) { R = P; aR = a; }
+        }
+        rings.push({ r: r, y: y, L: L, R: R, aL: aL, aR: aR });
+      }
+      return rings;
+    }
+    function frontArc(cx, cz, r, y, a0, a1, camA, q, n) {
+      const norm = a => ((a % PI2) + PI2) % PI2;
+      const midOf = s => a0 + s * norm(s > 0 ? a1 - a0 : a0 - a1) * 0.5;
+      const dev = a => Math.abs(Math.atan2(Math.sin(a - camA), Math.cos(a - camA)));
+      const s = dev(midOf(1)) <= dev(midOf(-1)) ? 1 : -1;
+      const span = norm(s > 0 ? a1 - a0 : a0 - a1);
+      const out = [];
+      for (let k = 0; k <= n; k++) {
+        const a = a0 + s * span * (k / n);
+        out.push(project([cx + r * Math.cos(a), y, cz + r * Math.sin(a)], q));
+      }
+      return out;
+    }
+    function ringOutline(rings, q, cx, cz, nArc) {
+      const out = [];
+      for (const g of rings) out.push(g.R);
+      for (let k = rings.length - 1; k >= 0; k--) out.push(rings[k].L);
+      const b = rings[0];
+      const camA = camAzim(q, cx, cz);
+      const arc = frontArc(cx, cz, b.r, b.y, b.aL, b.aR, camA, q, nArc);
+      for (const p of arc) out.push(p);
+      return out;
+    }
+    function ringPath(cx, cz, r, y, q, n) {
+      const out = [];
+      for (let k = 0; k <= n; k++) {
+        const a = k / n * PI2;
+        out.push(project([cx + r * Math.cos(a), y, cz + r * Math.sin(a)], q));
+      }
+      return out;
+    }
+    // 一根「管子」：沿折线画，每段按投影宽度取线宽，再叠一条偏左上的亮带。
+    // 吊杆、指针、螺杆都用它 —— 圆柱感就来自那条偏移的亮带。
+    function tube(pts, rWorld, cols, q) {
+      const pr = pts.map(p => project(p, q));
+      ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+      for (let i = 1; i < pr.length; i++) {
+        const a = pr[i - 1], b = pr[i];
+        const w = Math.max(1.7, rWorld * (a.s + b.s));
+        ctx.strokeStyle = cols.edge; ctx.lineWidth = w + 1.6;
+        ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+      }
+      for (let i = 1; i < pr.length; i++) {
+        const a = pr[i - 1], b = pr[i];
+        const w = Math.max(1.7, rWorld * (a.s + b.s));
+        ctx.strokeStyle = cols.body; ctx.lineWidth = w;
+        ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+      }
+      for (let i = 1; i < pr.length; i++) {
+        const a = pr[i - 1], b = pr[i];
+        const w = Math.max(1.7, rWorld * (a.s + b.s));
+        const dx = -(b.y - a.y), dy = (b.x - a.x);
+        const L = Math.hypot(dx, dy) || 1;
+        const ox = dx / L * w * 0.24 - w * 0.10, oy = dy / L * w * 0.24 - w * 0.10;
+        ctx.strokeStyle = cols.hi; ctx.lineWidth = Math.max(0.9, w * 0.34);
+        ctx.beginPath(); ctx.moveTo(a.x + ox, a.y + oy); ctx.lineTo(b.x + ox, b.y + oy); ctx.stroke();
+      }
+    }
+
+    /* ---------------------------- 凸箱体 ---------------------------- */
+    // 背面剔除，不按距离排序：排序会出「整块顶面盖住别的东西」。
+    // 顶点序：0(x0,y0,z0) 1(x1,y0,z0) 2(x1,y1,z0) 3(x0,y1,z0) 4(x0,y0,z1) 5(x1,y0,z1) 6(x1,y1,z1) 7(x0,y1,z1)
+    const BOX_FACES = [
+      { n: [0, 1, 0],  i: [4, 5, 6, 7] },   // 顶
+      { n: [0, -1, 0], i: [0, 3, 2, 1] },   // 底
+      { n: [0, 0, 1],  i: [3, 2, 6, 7] },   // 前 +z
+      { n: [0, 0, -1], i: [0, 1, 5, 4] },   // 后 −z
+      { n: [1, 0, 0],  i: [1, 2, 6, 5] },   // 右 +x
+      { n: [-1, 0, 0], i: [0, 3, 7, 4] }    // 左 −x
+    ];
+    const BOX_V = (x0, y0, z0, x1, y1, z1) => [
+      [x0, y0, z0], [x1, y0, z0], [x1, y1, z0], [x0, y1, z0],
+      [x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1]
+    ];
+    function box3(x0, y0, z0, x1, y1, z1, base, q, amb, mapV, mapN) {
+      const V = BOX_V(x0, y0, z0, x1, y1, z1);
+      const W = mapV ? V.map(v => mapV(v[0], v[1], v[2])) : V;
+      const P = W.map(v => project(v, q));
+      for (const f of BOX_FACES) {
+        const c = [0, 0, 0];
+        for (const i of f.i) { c[0] += W[i][0] / 4; c[1] += W[i][1] / 4; c[2] += W[i][2] / 4; }
+        if (dot(f.n, sub(q.eye, c)) <= 0) continue;
+        const n = mapN ? mapN(f.n) : f.n;
+        poly(f.i.map(i => P[i]), shade(base, n, amb), null, 0);
+      }
+      return P;
+    }
+
+    /* ============================================================
+     * 材质
+     * ------------------------------------------------------------
+     * 全站光源统一在【左上方】，每个器材只留一条主高光。
+     * ============================================================ */
+    const C_STEEL  = [176, 188, 202];
+    const C_BRASS  = [196, 152, 74];
+    const C_IRON   = [96, 104, 116];
+    const C_DARK   = [56, 64, 76];
+    const C_PAN    = [190, 200, 212];
+    const C_IVORY  = [226, 232, 240];
+    const C_BLUE   = [56, 118, 214];
+
+    const STEEL_COLS = { edge: '#121c29', body: '#9dadbf', hi: '#eef5fc' };
+    const BRASS_COLS = { edge: '#2c1f08', body: '#c79a4e', hi: '#ffeec0' };
+    const DARK_COLS  = { edge: '#080e18', body: '#5a6678', hi: '#9fb0c2' };
+
+    function drawBackdrop(w, h) {
+      const g = ctx.createRadialGradient(w * 0.46, h * 0.10, 12, w * 0.5, h * 0.55, Math.max(w, h) * 0.86);
+      g.addColorStop(0, '#0d2035');
+      g.addColorStop(0.52, '#071626');
+      g.addColorStop(1, '#020a14');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, w, h);
+    }
+    const rectPts = (x0, z0, x1, z1, y, q) => [
+      project([x0, y, z0], q), project([x1, y, z0], q),
+      project([x1, y, z1], q), project([x0, y, z1], q)
+    ];
+    function drawTable(q) {
+      const x0 = -TABLE_HW, x1 = TABLE_HW, z0 = -TABLE_HD, z1 = TABLE_HD;
+      const P = (x, y, z) => project([x, y, z], q);
+      poly(rectPts(x0, z0, x1, z1, 0, q), '#141f2f', null, 0);
+      ctx.save();
+      polyPath(rectPts(x0, z0, x1, z1, 0, q)); ctx.clip();
+      const a0 = P(x0, 0, z0), a1 = P(x1, 0, z1);
+      const g = ctx.createLinearGradient(a0.x, a0.y, a1.x, a1.y);
+      g.addColorStop(0.00, 'rgba(152,201,255,.17)');
+      g.addColorStop(0.40, 'rgba(118,170,232,.06)');
+      g.addColorStop(0.72, 'rgba(4,10,22,.16)');
+      g.addColorStop(1.00, 'rgba(2,6,16,.44)');
+      ctx.fillStyle = g; ctx.fillRect(0, 0, state.w, state.h);
+      ctx.restore();
+      // 台面板的拼缝（只在放大时画，小了只是脏点）
+      if (state.zoom >= 0.7) {
+        for (let k = 1; k <= 4; k++) {
+          const zz = z0 + (z1 - z0) * (k / 5);
+          line([P(x0, 0.001, zz), P(x1, 0.001, zz)], 'rgba(6,12,24,.30)', 1);
+        }
+      }
+      // 前沿：台板的厚度。上棱受光提亮，往下压暗 —— 台面才有「板」的厚度
+      poly([P(x0, 0, z1), P(x1, 0, z1), P(x1, -TABLE_T, z1), P(x0, -TABLE_T, z1)], '#0b1523', null, 0);
+      line([P(x0, 0, z1), P(x1, 0, z1)], 'rgba(163,216,255,.46)', 1.8);
+      line([P(x1, 0, z0), P(x1, 0, z1)], 'rgba(163,216,255,.30)', 1.4);
+      line([P(x0, 0, z0), P(x0, 0, z1)], 'rgba(163,216,255,.14)', 1.2);
+    }
+
+    /* ---------------------------- 底座 ---------------------------- */
+    function drawBase(q) {
+      // 接触阴影：底座压在台面上的一圈暗 —— 少了它底座像浮在空中
+      ctx.save();
+      const shPts = [];
+      for (let k = 0; k < 36; k++) {
+        const a = k / 36 * PI2;
+        shPts.push(project([BASE_HW * 1.20 * Math.cos(a), 0.002, BASE_HD * 1.30 * Math.sin(a)], q));
+      }
+      ctx.filter = 'blur(7px)';
+      poly(shPts, 'rgba(0,0,0,.45)', null, 0);
+      ctx.filter = 'none';
+      ctx.restore();
+
+      box3(-BASE_HW, 0, -BASE_HD, BASE_HW, BASE_H - BASE_BEV, BASE_HD, C_DARK, q, 0.42);
+      box3(-BASE_HW + BASE_BEV, BASE_H - BASE_BEV, -BASE_HD + BASE_BEV,
+            BASE_HW - BASE_BEV, BASE_H, BASE_HD - BASE_BEV, C_IRON, q, 0.56);
+      // 台面沿口的一道亮边 —— 金属板的倒角受光
+      const b = BASE_BEV;
+      line([project([-BASE_HW + b, BASE_H, -BASE_HD + b], q), project([BASE_HW - b, BASE_H, -BASE_HD + b], q)],
+           'rgba(196,224,255,.34)', 1.2);
+      line([project([-BASE_HW + b, BASE_H, BASE_HD - b], q), project([BASE_HW - b, BASE_H, BASE_HD - b], q)],
+           'rgba(196,224,255,.48)', 1.4);
+      // 四角的两颗底脚螺丝（真机靠它们把天平调水平）
+      for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+        const fx = sx * (BASE_HW - 0.14), fz = sz * (BASE_HD - 0.11);
+        const t = project([fx, 0.001, fz], q), b2 = project([fx, -0.028, fz], q);
+        line([t, b2], 'rgba(20,28,40,.85)', 5.5);
+        dot2(b2, Math.max(1.6, 0.026 * b2.s), '#39424f', null, 0);
+      }
+    }
+
+    /* ---------------------------- 立柱 + 刀口支承 ---------------------------- */
+    function drawColumn(q) {
+      // 立柱：上细下粗的锥台。四个侧面 + 顶面，背面剔除。
+      const y0 = BASE_H, y1 = COL_TOP;
+      const V = [
+        [-COL_BW, y0, -COL_BD], [COL_BW, y0, -COL_BD], [COL_BW, y0, COL_BD], [-COL_BW, y0, COL_BD],
+        [-COL_TW, y1, -COL_TD], [COL_TW, y1, -COL_TD], [COL_TW, y1, COL_TD], [-COL_TW, y1, COL_TD]
+      ];
+      const P = V.map(v => project(v, q));
+      const FACES = [
+        { n: [0, 1, 0],  i: [4, 5, 6, 7] },
+        { n: [0, 0, 1],  i: [3, 2, 6, 7] },
+        { n: [0, 0, -1], i: [0, 1, 5, 4] },
+        { n: [1, 0, 0],  i: [1, 2, 6, 5] },
+        { n: [-1, 0, 0], i: [0, 3, 7, 4] }
+      ];
+      for (const f of FACES) {
+        const c = [0, 0, 0];
+        for (const i of f.i) { c[0] += V[i][0] / 4; c[1] += V[i][1] / 4; c[2] += V[i][2] / 4; }
+        if (dot(f.n, sub(q.eye, c)) <= 0) continue;
+        poly(f.i.map(i => P[i]), shade(C_IRON, f.n, 0.44), null, 0);
+      }
+      // 立柱正面的高光棱（一条就够，多了读成两种材料）
+      line([project([COL_TW, y1, COL_TD], q), project([COL_BW, y0, COL_BD], q)], 'rgba(190,220,255,.24)', 1.3);
+
+      // 刀口支承：横梁就架在这上面
+      box3(-0.048, COL_TOP, -0.058, 0.048, BRG_TOP, 0.058, C_STEEL, q, 0.60);
+      const apex = project([0, PIVOT_Y - 0.010, 0], q);
+      const lf = project([-0.030, BRG_TOP, 0], q), rf = project([0.030, BRG_TOP, 0], q);
+      poly([lf, rf, apex], '#e6eef8', null, 0);
+      dot2(apex, 2.6, '#7dd3fc', null, 0);
+    }
+
+    /* ---------------------------- 横梁 + 游码 + 平衡螺母 ---------------------------- */
+    function beamRotN(n) {
+      const th = beamTh(), c = Math.cos(th), s = Math.sin(th);
+      return [n[0] * c - n[1] * s, n[0] * s + n[1] * c, n[2]];
+    }
+    function beamBox(x0, y0, z0, x1, y1, z1, base, q, amb) {
+      return box3(x0, y0, z0, x1, y1, z1, base, q, amb,
+        (x, y, z) => beamPt(x, y, z), n => beamRotN(n));
+    }
+
+    function drawBeam(q) {
+      const hh = BEAM_H / 2, hd = BEAM_D / 2;
+      // 梁身：中间略粗、两端收细，读起来才像一根「梁」而不是一根方管
+      beamBox(-ARM, -hh, -hd, ARM, hh, hd, C_STEEL, q, 0.50);
+      beamBox(-ARM * 0.42, -hh - 0.012, -hd - 0.010, ARM * 0.42, hh + 0.012, hd + 0.010, C_STEEL, q, 0.56);
+      // 两端的小圆头
+      for (const sx of [-1, 1]) {
+        const c = project(beamPt(sx * ARM, 0, 0), q);
+        dot2(c, Math.max(2.0, hh * c.s), rgb(C_STEEL, 0.86), null, 0);
+      }
+      // 上棱高光
+      line([project(beamPt(-ARM, hh, 0), q), project(beamPt(ARM, hh, 0), q)], 'rgba(214,236,255,.42)', 1.6);
+
+      // 标尺：贴在横梁正面的一块浅色条
+      const faceZ = (q.eye[2] >= 0) ? hd : -hd;
+      const sgn = (q.eye[2] >= 0) ? 1 : -1;
+      const rx0 = RIDER_X0 - 0.030, rx1 = RIDER_X1 + 0.030;
+      box3(rx0, -0.022, Math.min(faceZ, faceZ + sgn * 0.008), rx1, 0.022, Math.max(faceZ, faceZ + sgn * 0.008),
+           C_IVORY, q, 0.66, (x, y, z) => beamPt(x, y, z), n => beamRotN(n));
+      // 刻度线：0.1 g 分度画 50 格，0.2 g 分度画 25 格
+      const steps = PHY.mode === 0.1 ? 50 : 25;
+      const per = PHY.mode === 0.1 ? 0.1 : 0.2;
+      for (let k = 0; k <= steps; k++) {
+        const t = k / steps;
+        const lx = RIDER_X0 + t * (RIDER_X1 - RIDER_X0);
+        const major = (k % 5 === 0);
+        const y0 = major ? -0.021 : -0.012, y1 = 0.021;
+        const zz = faceZ + sgn * 0.010;
+        line([project(beamPt(lx, y0, zz), q), project(beamPt(lx, y1, zz), q)],
+             major ? 'rgba(30,41,59,.95)' : 'rgba(51,65,85,.7)', major ? 1.4 : 0.9);
+      }
+      // 标尺数字 0…5：跟着横梁的屏幕倾角一起转，才不会像贴上去的
+      if (state.zoom >= 0.62) {
+        const a0 = project(beamPt(RIDER_X0, 0, faceZ + sgn * 0.012), q);
+        const a1 = project(beamPt(RIDER_X1, 0, faceZ + sgn * 0.012), q);
+        let ang = Math.atan2(a1.y - a0.y, a1.x - a0.x);
+        if (sgn < 0) ang += Math.PI;
+        ctx.save();
+        ctx.font = '800 9px Inter, "Microsoft YaHei", sans-serif';
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        for (let g = 0; g <= RIDER_G; g++) {
+          const lx = RIDER_X0 + (g / RIDER_G) * (RIDER_X1 - RIDER_X0);
+          const p = project(beamPt(lx, -0.036, faceZ + sgn * 0.012), q);
+          ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(ang);
+          ctx.fillStyle = 'rgba(2,6,23,.9)';
+          ctx.fillText(String(g), 0, 0);
+          ctx.restore();
+        }
+        ctx.restore();
+      }
+
+      // 游码：骑在横梁上的小铜夹
+      const rx = riderX();
+      beamBox(rx - RIDER_W, -hh - RIDER_LIFT, -hd - 0.020, rx + RIDER_W, hh + 0.026, hd + 0.020,
+              C_BRASS, q, 0.52);
+      beamBox(rx - RIDER_W, hh + 0.012, -hd - 0.020, rx + RIDER_W, hh + 0.026, hd + 0.020,
+              C_BRASS, q, 0.72);
+      // 游码的下沿做成一个小尖 —— 读数看的就是这条边
+      const tipL = project(beamPt(rx, -hh - RIDER_LIFT, hd + 0.020), q);
+      const tipR = project(beamPt(rx, -hh - RIDER_LIFT, -hd - 0.020), q);
+      line([tipL, tipR], 'rgba(255,236,192,.85)', 1.2);
+
+      // 螺杆 + 平衡螺母
+      for (const side of [-1, 1]) {
+        const rod = [beamPt(side * ROD_X0, 0, 0), beamPt(side * ROD_X1, 0, 0)];
+        tube(rod, ROD_R, STEEL_COLS, q);
+        const nx = nutLocalX(side, side < 0 ? PHY.nutLPos : PHY.nutRPos);
+        beamBox(nx - NUT_W, -NUT_R, -NUT_R, nx + NUT_W, NUT_R, NUT_R, C_BRASS, q, 0.50);
+        // 螺母上的两条滚花，转起来才像有螺纹
+        for (const dz of [-0.022, 0.022]) {
+          beamBox(nx - NUT_W * 1.02, -NUT_R * 0.55, dz - 0.006, nx + NUT_W * 1.02, NUT_R * 0.55, dz + 0.006,
+                  C_BRASS, q, 0.28);
+        }
+      }
+      state.drawn.beam = [project(beamPt(-ROD_X1, 0, 0), q), project(beamPt(ROD_X1, 0, 0), q)];
+      state.drawn.rider = project(beamPt(rx, -hh, 0), q);
+    }
+
+    /* ---------------------------- 指针 + 分度盘 ---------------------------- */
+    function drawPointerAndScale(q) {
+      // 分度盘：弧带。外弧 + 内弧两段子路径，中间就是盘面。
+      // 沿着 z 方向挤出一点厚度，从侧面看它才是「一块板」而不是一张纸。
+      const N = 30;
+      const zF = SCALE_Z + SCALE_TH, zB = SCALE_Z - SCALE_TH;
+      const arc = (r, z) => {
+        const out = [];
+        for (let k = 0; k <= N; k++) {
+          const phi = -SCALE_HALF + 2 * SCALE_HALF * k / N;
+          const p = scalePt(phi, r);
+          out.push(project([p[0], p[1], z], q));
+        }
+        return out;
+      };
+      const band = (z) => arc(SCALE_RO, z).concat(arc(SCALE_RI, z).reverse());
+      // 板厚侧面：外弧与内弧各拉一圈四边形。先画暗的，正面板最后盖上。
+      for (const r of [SCALE_RO, SCALE_RI]) {
+        const f = arc(r, zF), b = arc(r, zB);
+        for (let k = 0; k < N; k++) poly([f[k], f[k + 1], b[k + 1], b[k]], '#0a1420', null, 0);
+      }
+      poly(band(zB), '#0a1420', null, 0);
+      poly(band(zF), '#12202f', 'rgba(148,163,184,.38)', 1);
+      // 刻度：13 条，中央那条是绿的、长的
+      const steps = 12;
+      for (let k = 0; k <= steps; k++) {
+        const phi = -SCALE_HALF + 2 * SCALE_HALF * k / steps;
+        const mid = (k === steps / 2);
+        const a = scalePt(phi, SCALE_RI + 0.008), b2 = scalePt(phi, mid ? SCALE_RO - 0.002 : SCALE_RO - 0.034);
+        line([project([a[0], a[1], zF + 0.004], q), project([b2[0], b2[1], zF + 0.004], q)],
+             mid ? '#34d399' : 'rgba(203,213,225,.78)', mid ? 2.6 : 1.2);
+      }
+      // 分度盘接到立柱上的小支架
+      const brA = project([0, PIVOT_Y - SCALE_RO + 0.02, zB], q);
+      const brB = project([0, PIVOT_Y - SCALE_RO + 0.02, COL_TD], q);
+      line([brA, brB], 'rgba(148,163,184,.6)', 2.4);
+
+      // 指针：一片由粗到细的薄钢板，与横梁刚性相连
+      const shape = [
+        beamPt(-PTR_W0, -0.010, PTR_Z),
+        beamPt(PTR_W0, -0.010, PTR_Z),
+        beamPt(PTR_W1, -PTR_LEN + 0.10, PTR_Z),
+        beamPt(0, -PTR_LEN, PTR_Z),
+        beamPt(-PTR_W1, -PTR_LEN + 0.10, PTR_Z)
+      ].map(p => project(p, q));
+      poly(shape, '#cfdbe8', '#0a121e', 1.4);
+      // 板身一条竖向高光，读起来才有「金属片」的厚度
+      const hp = [
+        beamPt(-PTR_W0 * 0.34, -0.014, PTR_Z), beamPt(-PTR_W1 * 0.34, -PTR_LEN + 0.10, PTR_Z)
+      ].map(p => project(p, q));
+      line(hp, 'rgba(255,255,255,.72)', 1.2);
+      // 支点处的小轴套，把指针和横梁连起来
+      const boss = project(beamPt(0, 0, PTR_Z), q);
+      dot2(boss, Math.max(3, 0.030 * boss.s), '#8b98a8', '#0a121e', 1.2);
+
+      const tip = pointerTip();
+      const tp = project(tip, q);
+      dot2(tp, 3.4, '#f87171', '#450a0a', 1);
+      state.drawn.tip = tp;
+      state.drawn.tipPhi = -beamAngleDeg() * Math.PI / 180;
+      state.drawn.scaleMid = project(scalePt(0, (SCALE_RO + SCALE_RI) / 2), q);
+    }
+
+    /* ---------------------------- 托盘 ---------------------------- */
+    function drawPan(q, side) {
+      const hx = panCx(side), rimY = panRimY(side), floorY = rimY - PAN_D;
+      const hook = hookWorld(side);
+      // 吊杆：从刀口垂到盘口
+      tube([[hook[0], hook[1], 0], [hx, rimY + 0.030, 0]], 0.020, STEEL_COLS, q);
+      // 盘口的三角吊耳
+      const e1 = project([hx, rimY + 0.030, 0], q);
+      const e2 = project([hx - PAN_R * 0.62, rimY + 0.004, 0], q);
+      const e3 = project([hx + PAN_R * 0.62, rimY + 0.004, 0], q);
+      poly([e1, e2, e3], 'rgba(120,132,148,.55)', null, 0);
+
+      const prof = [
+        [0.001, floorY],
+        [PAN_R * 0.52, floorY + 0.026],
+        [PAN_R * 0.86, floorY + 0.064],
+        [PAN_R * 0.985, floorY + PAN_D - 0.010],
+        [PAN_R, floorY + PAN_D]
+      ];
+      const rings = revolveRings(prof, q, 48, hx, 0);
+      const outline = ringOutline(rings, q, hx, 0, 22);
+      poly(outline, rgb(C_PAN, 0.72), null, 0);
+      // 环向渐变 = 圆柱光照：高光落在左上（和全站光源一致）
+      const camA = camAzim(q, hx, 0);
+      const gA = project([hx + PAN_R * Math.cos(camA + Math.PI * 0.72), floorY + PAN_D * 0.45,
+                          0 + PAN_R * Math.sin(camA + Math.PI * 0.72)], q);
+      const gB = project([hx + PAN_R * Math.cos(camA - Math.PI * 0.36), floorY + PAN_D * 0.45,
+                          0 + PAN_R * Math.sin(camA - Math.PI * 0.36)], q);
+      ctx.save();
+      polyPath(outline); ctx.clip();
+      const g = ctx.createLinearGradient(gA.x, gA.y, gB.x, gB.y);
+      g.addColorStop(0.00, rgb(C_PAN, 1.30));
+      g.addColorStop(0.20, rgb(C_PAN, 1.06));
+      g.addColorStop(0.58, rgb(C_PAN, 0.74));
+      g.addColorStop(1.00, rgb(C_PAN, 0.44));
+      ctx.fillStyle = g; ctx.fillRect(0, 0, state.w, state.h);
+      ctx.restore();
+      // 盘内表面：顶圈填一层略暗的金属，盘才有「凹」
+      poly(ringPath(hx, 0, PAN_R * 0.985, floorY + PAN_D, q, 44), rgb(C_PAN, 0.50), null, 0);
+      poly(ringPath(hx, 0, PAN_R * 0.66, floorY + PAN_D * 0.72, q, 40), rgb(C_PAN, 0.66), null, 0);
+      // 盘口高光
+      line(frontArc(hx, 0, PAN_R, floorY + PAN_D, 0, PI2, camA, q, 30), 'rgba(232,244,255,.55)', 1.5);
+      state.drawn['pan' + side] = { cx: hx, rimY: rimY, floorY: floorY, r: PAN_R };
+    }
+
+    /* ---------------------------- 砝码 / 物体 ---------------------------- */
+    // 盘上 10 个落位，从【远到近】排好序：大的重的先放（摆在后面），小的摆在前面
+    // 才不会被挡住。凭世界坐标目测摆位必错，这里按固定表来。
+    const W_SLOTS = [
+      [0.00, -0.215],
+      [-0.225, -0.115], [0.225, -0.115],
+      [0.00, 0.010],
+      [-0.235, 0.105], [0.235, 0.105],
+      [-0.120, 0.265], [0.120, 0.265],
+      [-0.120, -0.030], [0.120, -0.030]
+    ];
+    // 质量 → 圆柱半径：按体积的立方根走，100 g 和 1 g 的差别才看得出来
+    const weightR = g => 0.045 + 0.075 * Math.cbrt(g / 100);
+    const weightH = g => weightR(g) * 0.95;
+
+    function drawOneWeight(q, cx, cz, y0, g, brass) {
+      const r = weightR(g), h = weightH(g);
+      const prof = [
+        [0.001, y0],
+        [r, y0 + 0.008],
+        [r, y0 + h],
+        [r * 0.62, y0 + h + 0.016],
+        [0.001, y0 + h + 0.024]
+      ];
+      const rings = revolveRings(prof, q, 26, cx, cz);
+      const outline = ringOutline(rings, q, cx, cz, 16);
+      const base = brass ? C_BRASS : C_STEEL;
+      poly(outline, rgb(base, 0.86), null, 0);
+      // 左上方一条主高光
+      const gA = project([cx - r * 0.72, y0 + h * 0.55, cz + r * 0.72], q);
+      const gB = project([cx + r * 0.72, y0 + h * 0.42, cz - r * 0.72], q);
+      ctx.save();
+      polyPath(outline); ctx.clip();
+      const gr = ctx.createLinearGradient(gA.x, gA.y, gB.x, gB.y);
+      gr.addColorStop(0.00, rgb(base, 1.34));
+      gr.addColorStop(0.22, rgb(base, 1.08));
+      gr.addColorStop(0.62, rgb(base, 0.80));
+      gr.addColorStop(1.00, rgb(base, 0.50));
+      ctx.fillStyle = gr; ctx.fillRect(0, 0, state.w, state.h);
+      ctx.restore();
+      // 顶面（圆柱顶 + 小提钮）
+      poly(ringPath(cx, cz, r, y0 + h, q, 22), rgb(base, brass ? 1.22 : 1.16), null, 0);
+      poly(ringPath(cx, cz, r * 0.62, y0 + h + 0.016, q, 18), rgb(base, brass ? 1.30 : 1.22), null, 0);
+      // 盘面上的印字
+      const p = project([cx, y0 + h * 0.52, cz + r * 0.98], q);
+      if (r * p.s >= 8.5) {
+        ctx.font = '800 ' + Math.max(8, Math.min(13, r * p.s * 0.85)) + 'px Inter, "Microsoft YaHei", sans-serif';
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillStyle = 'rgba(2,6,23,.85)';
+        ctx.fillText(String(g), p.x, p.y);
+      }
+      return { cx: cx, cz: cz, y0: y0, r: r, h: h + 0.024, g: g };
+    }
+
+    function drawRightPan(q) {
+      const side = 1;
+      const baseY = panFloorY(side) + 0.012;
+      const cx0 = panCx(side);
+      const list = PHY.weightsOnPan.slice().sort((a, b) => b - a);
+      const boxes = [];
+      for (let i = 0; i < list.length && i < W_SLOTS.length; i++) {
+        const s = W_SLOTS[i];
+        boxes.push(drawOneWeight(q, cx0 + s[0], s[1], baseY, list[i], true));
+      }
+      state.drawn.weightBoxes = boxes;
+    }
+
+    function drawLeftObject(q) {
+      if (PHY.targetMass <= 0) { state.drawn.objBox = null; return; }
+      const side = -1;
+      const s = 0.135;                       // 半边长 = 2.7 cm
+      const cx = panCx(side), cz = 0, y0 = panFloorY(side) + 0.012;
+      box3(cx - s, y0, cz - s, cx + s, y0 + s * 2, cz + s, C_BLUE, q, 0.46);
+      // 顶面提亮 + 前面写「物体」
+      poly(rectPts(cx - s, cz - s, cx + s, cz + s, y0 + s * 2, q), rgb(C_BLUE, 1.30), null, 0);
+      const p = project([cx, y0 + s, cz + s], q);
+      if (s * p.s >= 9) {
+        ctx.font = '800 ' + Math.max(9, Math.min(13, s * p.s * 0.62)) + 'px Inter, "Microsoft YaHei", sans-serif';
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillStyle = 'rgba(240,248,255,.92)';
+        ctx.fillText('物体', p.x, p.y);
+      }
+      state.drawn.objBox = { cx: cx, cz: cz, y0: y0, s: s };
+    }
+
+    /* ---------------------------- 标签 ---------------------------- */
+    // 舞台上的 DOM 浮层也是障碍物：提示框、底部按钮条。不用 rect 换算进去的话，
+    // 标签会直接压在提示文字上，而这种冲突自检抓不到。
+    function uiBoxes() {
+      const r = stage.getBoundingClientRect();
+      const out = [];
+      for (const sel of ['#bal-hint', '.lab3d-stage .bar-left']) {
+        const el = document.querySelector(sel);
+        if (!el) continue;
+        const b = el.getBoundingClientRect();
+        if (b.width < 1 || b.height < 1) continue;
+        out.push({ x: b.left - r.left, y: b.top - r.top, w: b.width, h: b.height });
+      }
+      return out;
+    }
+    function drawLabels(q) {
+      const th = beamTh();
+      // 横梁
+      avoidLabel(project(beamPt(-ARM * 0.62, 0.055, 0), q), '横梁', '#cfe3f5', 11.5);
+      // 游码
+      avoidLabel(project(beamPt(riderX(), -BEAM_H / 2 - RIDER_LIFT - 0.02, 0), q), '游码', '#ffd79a', 11.5);
+      // 两个平衡螺母
+      const nxL = nutLocalX(-1, PHY.nutLPos), nxR = nutLocalX(1, PHY.nutRPos);
+      avoidLabel(project(beamPt(nxL, NUT_R + 0.03, 0), q), '平衡螺母', '#ffd79a', 11.5);
+      avoidLabel(project(beamPt(nxR, NUT_R + 0.03, 0), q), '平衡螺母', '#ffd79a', 11.5);
+      // 指针 / 分度盘：两个都锚在下部中央，靠左右滑的候选位分开
+      avoidLabel(project([0, PIVOT_Y - PTR_LEN * 0.55, PTR_Z], q), '指针', '#fca5a5', 11.5);
+      avoidLabel(project(scalePt(SCALE_HALF * 0.94, SCALE_RO + 0.03), q), '分度盘', '#cbd5e1', 11.5);
+      // 托盘
+      const pR = panCx(1), pL = panCx(-1);
+      avoidLabel(project([pR, panRimY(1) - PAN_D * 0.4, PAN_R * 0.6], q), '右盘', '#cbd5e1', 11.5);
+      avoidLabel(project([pL, panRimY(-1) - PAN_D * 0.4, PAN_R * 0.6], q), '左盘', '#cbd5e1', 11.5);
+      // 砝码 / 物体
+      if (PHY.weightsOnPan.length) {
+        const b = state.drawn.weightBoxes[0];
+        if (b) avoidLabel(project([b.cx, b.y0 + b.h + 0.03, b.cz], q), '砝码', '#ffe4ae', 11.5);
+      }
+      if (PHY.targetMass > 0) {
+        avoidLabel(project([panCx(-1), panFloorY(-1) + 0.34, 0], q), '被测物体', '#9ec5ff', 11.5);
+      }
+      // 底座 / 立柱
+      avoidLabel(project([BASE_HW * 0.86, BASE_H + 0.01, -BASE_HD * 0.55], q), '底座', '#cbd5e1', 11.5);
+      avoidLabel(project([COL_TW, (BASE_H + COL_TOP) * 0.42, COL_TD], q), '立柱', '#cbd5e1', 11.5);
+    }
+
+    /* ============================================================
+     * 渲染总入口 —— 唯一的清屏点
+     * ============================================================ */
+    function render() {
+      const q = {}; makeCam(q, state.w, state.h);
+      drawBackdrop(state.w, state.h);
+      drawTable(q);
+
+      frameBoxes = uiBoxes();
+      state.drawn = {};
+
+      // 分层：指针吊在立柱【正面】(z = PTR_Z)，所以相机在指针前面时它该最后画，
+      // 绕到背后时它该最先画。托盘按「远的先画」定序。
+      const backCam = q.eye[2] < PTR_Z;
+      const pans = [1, -1].sort((a, b) =>
+        q.eyeDist([panCx(b), panRimY(b), 0]) - q.eyeDist([panCx(a), panRimY(a), 0]));
+
+      if (backCam) {
+        drawPointerAndScale(q);
+        drawColumn(q);
+        drawBase(q);
+        for (const s of pans) drawPan(q, s);
+        drawLeftObject(q);
+        drawRightPan(q);
+        drawBeam(q);
+      } else {
+        drawBase(q);
+        drawColumn(q);
+        for (const s of pans) drawPan(q, s);
+        drawLeftObject(q);
+        drawRightPan(q);
+        drawBeam(q);
+        drawPointerAndScale(q);
+      }
+      drawLabels(q);
+    }
+
+    /* ============================================================
+     * 读数 / 界面
+     * ============================================================ */
+    const fmt = (n, d) => n.toFixed(d === undefined ? 2 : d);
+    const massText = (g, m) => (m === 0.2 ? g.toFixed(1) : g.toFixed(2));
+
+    // 五步流程。步骤条只回答「走到哪儿了」，所以前两步一旦【出过题】就算完成 ——
+    // 否则测量到一半回头去拖游码，步骤条会倒退着喊「游码归零」，看着像 bug。
+    const STEP_TEXT = ['游码归零', '调平衡螺母使指针指中央', '随机出题（物体放左盘）',
+                       '加砝码 / 移游码使天平平衡', '读数并提交'];
+    function stepState() {
+      const hasObj = PHY.targetMass > 0;
+      const riderZero = PHY.riderMass < 0.005;
+      const zeroed = zeroGap() <= 0.2;
+      const balanced = hasObj && balanceGap() <= BAL_GATE;
+      return {
+        riderZero: riderZero, zeroed: zeroed, hasObj: hasObj, balanced: balanced,
+        done: [hasObj || riderZero, hasObj || zeroed, hasObj, balanced, state.solved],
+        // 提示语按【真正的当前动作】走：出题之后就不再念叨游码了
+        phase: !hasObj ? (riderZero ? (zeroed ? 2 : 1) : 0)
+                       : (balanced ? 4 : 3)
+      };
+    }
+
+    function updateReadouts() {
+      const ang = beamAngleDeg();
+      const gap = balanceGap();
+      const bal = gap <= BAL_GATE;
+      $('bal-ang-num').textContent = (ang >= 0 ? '+' : '') + ang.toFixed(1);
+      $('bal-mode').textContent = PHY.mode === 0.1 ? '0.1 g' : '0.2 g';
+      $('bal-gap').textContent = bal ? '已平衡' : (gap).toFixed(2) + ' g 力矩差';
+      const nd = $('bal-nd');
+      nd.style.left = (50 + (ang / ANG_MAX) * 46) + '%';
+      nd.classList.toggle('ok', bal);
+      const st = $('bal-state');
+      st.textContent = bal ? '已平衡' : '未平衡';
+      st.className = 'pill' + (bal ? ' ok' : ' warn');
+
+      $('bal-wsum').textContent = weightsSum() + ' g';
+      $('bal-rmass').textContent = massText(PHY.riderMass, PHY.mode) + ' g';
+      $('bal-read-num').textContent = massText(realReading(), PHY.mode);
+      $('bal-read2').textContent = massText(realReading(), PHY.mode) + ' g';
+      const rp = $('bal-read-pill');
+      rp.textContent = PHY.targetMass > 0 ? (bal ? '可以读数' : '待平衡') : '未出题';
+      rp.className = 'pill' + (PHY.targetMass > 0 && bal ? ' ok' : '');
+
+      $('bal-wcnt').textContent = PHY.weightsOnPan.length + ' 个';
+      const badge = $('bal-badge');
+      if (PHY.targetMass <= 0) {
+        badge.innerHTML = '<span class="badge warn">还没出题 · 点「随机出题」</span>';
+      } else if (!bal) {
+        badge.innerHTML = '<span class="badge bad">指针没指中央 · 还不能读数</span>';
+      } else {
+        badge.innerHTML = '<span class="badge ok">指针指中央 ✓ 读数 ' +
+          massText(realReading(), PHY.mode) + ' g</span>';
+      }
+
+      const s = stepState();
+      $('bal-steps').innerHTML = s.done.map((ok, i) =>
+        '<div class="st ' + (ok ? 'done' : (i === s.phase ? 'now' : '')) + '">' +
+        '<i>' + (ok ? '✓' : (i + 1)) + '</i>' + STEP_TEXT[i] + '</div>').join('');
+
+      // 舞台上的提示随当前动作走
+      const hint = $('bal-hint');
+      if (s.phase === 0) {
+        hint.innerHTML = '测量前<b>游码必须归零</b> —— 拖动横梁上的游码，把它推到标尺的 <b>0</b> 刻度。';
+      } else if (s.phase === 1) {
+        hint.innerHTML = '调节<b>平衡螺母</b>，让指针指向分度盘<b>中央绿线</b>。口诀：指针偏左，螺母右移。';
+      } else if (s.phase === 2) {
+        hint.innerHTML = '天平已调平 ✓ 点<b>「随机出题」</b>，把一个未知质量的物体放进左盘。';
+      } else if (s.phase === 3) {
+        hint.innerHTML = '左物右码：点砝码按钮<b>由大到小</b>加到右盘，再用<b>游码</b>微调，直到指针回到中央。';
+      } else {
+        hint.innerHTML = '<b>指针指中央了 ✓</b> 读数 = 砝码总质量 + 游码示数。填进「读数提交」里核对吧。';
+      }
+      updateStageButtons();
+    }
+
+    function updateStageButtons() {
+      const s = stepState();
+      const b = $('bal-submit2');
+      b.classList.toggle('ready', PHY.targetMass > 0 && s.balanced);
+      $('bal-new').disabled = false;
+      $('bal-zero').disabled = false;
+    }
+
+    function renderAnalysis() {
+      const el = $('bal-analysis');
+      const gap = balanceGap(), bal = gap <= BAL_GATE;
+      const wsum = weightsSum(), rd = realReading();
+      let html = '';
+      html += '<div class="line"><span>砝码总质量</span><b>' + wsum + ' g</b></div>';
+      html += '<div class="line"><span>游码示数</span><b>' + massText(PHY.riderMass, PHY.mode) + ' g</b></div>';
+      html += '<div class="line"><span>读数 = 砝码 + 游码</span><b>' + massText(rd, PHY.mode) + ' g</b></div>';
+      html += '<div class="line"><span>指针偏角</span><b>' + (beamAngleDeg() >= 0 ? '+' : '') +
+              beamAngleDeg().toFixed(1) + '°</b></div>';
+      html += '<div class="line"><span>两盘力矩差</span><b>' + gap.toFixed(2) + ' g</b></div>';
+
+      let conc = '', cls = 'conc info';
+      if (PHY.targetMass <= 0) {
+        conc = '天平是<b>等臂杠杆</b>：平衡时两边的「质量 × 力臂」相等。力臂相等，所以' +
+               '<b>左盘物体质量 = 右盘砝码总质量 + 游码示数</b>。先点「随机出题」吧。';
+      } else if (!bal) {
+        const heavier = beamAngleDeg() > 0 ? '右盘' : '左盘';
+        conc = '指针偏向<b>' + (beamAngleDeg() > 0 ? '左' : '右') + '</b>，说明<b>' + heavier +
+               '重</b>。力矩差 ' + gap.toFixed(2) + ' g：' +
+               (beamAngleDeg() > 0 ? '砝码加多了或游码移太远了，取下一个砝码或把游码往左移。'
+                                   : '砝码不够，再加一个砝码，或把游码往右移。');
+        cls = 'conc warn';
+      } else {
+        conc = '指针指在分度盘中央，天平平衡，<b>可以读数了</b>：' +
+               wsum + ' g + ' + massText(PHY.riderMass, PHY.mode) + ' g = <b>' +
+               massText(rd, PHY.mode) + ' g</b>。';
+        if (state.solved) {
+          const truth = PHY.targetMass;
+          if (Math.abs(truth - rd) > 0.02) {
+            conc += '<br>物体真实质量是 <b>' + truth.toFixed(2) + ' g</b>，和读数差 ' +
+                    Math.abs(truth - rd).toFixed(2) + ' g —— 这是天平<b>零点还有残差</b>造成的系统误差。' +
+                    '所以「先调平、再测量」这一步绝不能省。';
+          } else {
+            conc += '<br>物体真实质量就是 <b>' + truth.toFixed(2) + ' g</b>，读数完全正确。';
+          }
+        }
+      }
+      html += '<div class="' + cls + '">' + conc + '</div>';
+      el.innerHTML = html;
+    }
+
+    function syncUI() { updateReadouts(); renderAnalysis(); }
+
+    let toastTimer = 0;
+    function showToast(text) {
+      const el = $('bal-toast');
+      el.textContent = text;
+      el.classList.add('show');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => el.classList.remove('show'), 1700);
+    }
+    let flagTimer = 0;
+    function flashFlag(on) {
+      const el = $('bal-flag');
+      el.classList.toggle('show', !!on);
+      clearTimeout(flagTimer);
+      if (on) flagTimer = setTimeout(() => el.classList.remove('show'), 3000);
+    }
+
+    /* ============================================================
+     * 动作（按钮与画布走同一条路）
+     * ============================================================ */
+    function setMode(m) {
+      PHY.mode = parseFloat(m) === 0.2 ? 0.2 : 0.1;
+      // 2D 页 initScale() 也会把游码清零 —— 分度值一换，标尺刻度就变了
+      PHY.riderMass = 0;
+      document.querySelectorAll('[data-mode]').forEach(b =>
+        b.classList.toggle('primary', parseFloat(b.getAttribute('data-mode')) === PHY.mode));
+      syncUI(); state.dirty = true;
+    }
+    function setRiderMass(g) {
+      PHY.riderMass = clamp(+g || 0, 0, RIDER_G);
+      if (PHY.mode === 0.2) PHY.riderMass = Math.round(PHY.riderMass / 0.2) * 0.2;
+      else PHY.riderMass = Math.round(PHY.riderMass * 100) / 100;
+      syncUI(); state.dirty = true;
+    }
+    function setNuts(l, r) {
+      if (l !== undefined && l !== null) PHY.nutLPos = clamp(Math.round(l), -NUT_LIM, NUT_LIM);
+      if (r !== undefined && r !== null) PHY.nutRPos = clamp(Math.round(r), -NUT_LIM, NUT_LIM);
+      syncUI(); state.dirty = true;
+    }
+    function moveNut(side, dir) {
+      if (side === 'L') PHY.nutLPos = clamp(PHY.nutLPos + dir, -NUT_LIM, NUT_LIM);
+      else PHY.nutRPos = clamp(PHY.nutRPos + dir, -NUT_LIM, NUT_LIM);
+      syncUI(); state.dirty = true;
+    }
+    function addWeight(val) {
+      if (PHY.weightsOnPan.length >= W_MAX) { showToast('右盘最多摆 ' + W_MAX + ' 个砝码'); return false; }
+      PHY.weightsOnPan.push(val);
+      syncUI(); state.dirty = true;
+      return true;
+    }
+    function removeWeightAt(i) {
+      if (i < 0 || i >= PHY.weightsOnPan.length) return false;
+      PHY.weightsOnPan.splice(i, 1);
+      syncUI(); state.dirty = true;
+      return true;
+    }
+    function clearPan() {
+      PHY.weightsOnPan = [];
+      syncUI(); state.dirty = true;
+    }
+    function riderZero() {
+      PHY.riderMass = 0;
+      syncUI(); state.dirty = true;
+    }
+    function tryGenerateProblem() {
+      if (PHY.riderMass > 0.001) { showToast('规范警告：出题前请把游码归零'); return false; }
+      if (weightsSum() > 0) { showToast('规范警告：出题前请清空托盘'); return false; }
+      if (zeroGap() > 0.2) { showToast('规范警告：天平未调平衡，请先调平衡螺母'); return false; }
+      PHY.targetMass = (Math.random() * 150 + 5).toFixed(2) * 1;
+      state.solved = false;
+      hideFeedback();
+      syncUI(); state.dirty = true;
+      showToast('出题成功：物体已放进左盘，质量约 ' + PHY.targetMass.toFixed(0) + ' g 量级');
+      return true;
+    }
+    function autoZero() {
+      PHY.targetMass = 0;
+      PHY.weightsOnPan = [];
+      PHY.riderMass = 0;
+      PHY.nutLPos = 0;
+      PHY.nutRPos = clamp(PHY.randomOffset * 10, -NUT_LIM, NUT_LIM);
+      state.solved = false;
+      hideFeedback();
+      syncUI(); state.dirty = true;
+      showToast('已快速调零：游码归零、托盘清空、指针居中');
+      return true;
+    }
+    function resetAll() {
+      PHY.targetMass = 0; PHY.weightsOnPan = []; PHY.riderMass = 0;
+      PHY.nutLPos = -15; PHY.nutRPos = 10;
+      PHY.randomOffset = (Math.random() - 0.5) * 5;
+      state.solved = false;
+      flashFlag(false);
+      hideFeedback();
+      syncUI(); state.dirty = true;
+    }
+
+    function hideFeedback() {
+      const fb = $('bal-fb');
+      fb.className = 'fb';
+      fb.innerHTML = '';
+    }
+    function setFeedback(kind, html) {
+      const fb = $('bal-fb');
+      fb.className = 'fb show ' + kind;
+      fb.innerHTML = html;
+    }
+    // 提交判分：闸门与文案都照 2D 页 submitAnswer，只把 alert 换成了面板里的提示。
+    function submitAnswer(valIn) {
+      const inputEl = $('bal-ans');
+      const raw = (valIn === undefined || valIn === null) ? inputEl.value : String(valIn);
+      const val = parseFloat(raw);
+      if (PHY.targetMass === 0) { setFeedback('warn', '请先点「随机出题」！'); return { ok: false, why: 'no-problem' }; }
+      const gap = balanceGap();
+      if (gap > BAL_GATE) {
+        setFeedback('bad', '❌ <b>天平尚未平衡！</b> 请继续加减砝码或移动游码，让指针指向分度盘中央。');
+        return { ok: false, why: 'unbalanced' };
+      }
+      if (isNaN(val)) { setFeedback('warn', '请输入你的读数。'); return { ok: false, why: 'nan' }; }
+      const wsum = weightsSum(), rd = realReading();
+      if (PHY.mode === 0.1) {
+        const decimals = raw.indexOf('.') >= 0 ? raw.split('.')[1].length : 0;
+        if (decimals !== 2) {
+          setFeedback('warn', '⚠️ <b>读数规范错误：</b>分度值为 0.1 g 的天平需要估读到 0.01 g（必须保留 2 位小数）。');
+          return { ok: false, why: 'format' };
+        }
+        if (Math.abs(val - rd) < 0.02) {
+          state.solved = true;
+          setFeedback('ok', '✅ <b>完全正确！</b><br>参考读数：砝码 ' + wsum + ' g + 游码 ' +
+            rd.toFixed(2) + ' g = <b>' + rd.toFixed(2) + ' g</b>。');
+          syncUI(); state.dirty = true;
+          return { ok: true };
+        }
+        setFeedback('bad', '❌ <b>读数结果错误。</b><br>当前正确读数为：<b>' + rd.toFixed(2) +
+          ' g</b>。<br>计算方法：砝码总质量 ' + wsum + ' g + 游码示数 ' + (rd - wsum).toFixed(2) + ' g。');
+        return { ok: false, why: 'wrong' };
+      }
+      if (Math.abs(val - rd) < 0.01) {
+        state.solved = true;
+        setFeedback('ok', '✅ <b>完全正确！</b><br>参考读数：砝码 ' + wsum + ' g + 游码 ' +
+          rd.toFixed(1) + ' g = <b>' + rd.toFixed(1) + ' g</b>。');
+        syncUI(); state.dirty = true;
+        return { ok: true };
+      }
+      setFeedback('bad', '❌ <b>读数结果错误。</b><br>当前正确读数为：<b>' + rd.toFixed(1) +
+        ' g</b>。<br>计算方法：砝码总质量 ' + wsum + ' g + 游码示数 ' + (rd - wsum).toFixed(1) + ' g。');
+      return { ok: false, why: 'wrong' };
+    }
+
+    function applyView(name) {
+      const v = VIEWS[name];
+      if (!v) return;
+      state.yaw = v[0]; state.pitch = v[1];
+      if (v[2]) state.zoom = v[2];
+      state.view = name;
+      state.dirty = true;
+    }
+
+    /* ============================================================
+     * 交互
+     * ============================================================ */
+    function boxOf(p, q, pad) {
+      const P = project(p, q);
+      const r = (pad || 0) * P.s;
+      return { x0: P.x - r, x1: P.x + r, y0: P.y - r, y1: P.y + r, cx: P.x, cy: P.y, s: P.s };
+    }
+    // 命中：游码 > 平衡螺母 > 右盘砝码。命中框按【投影 AABB】，整身可拖。
+    function hitTest(x, y, q) {
+      const cands = [];
+      // 游码
+      const rp = project(beamPt(riderX(), -BEAM_H / 2 - RIDER_LIFT * 0.5, 0), q);
+      cands.push({ id: 'rider', cx: rp.x, cy: rp.y, w: Math.max(9, RIDER_W * 2 * rp.s), h: Math.max(14, (BEAM_H + RIDER_LIFT + 0.03) * rp.s) });
+      // 平衡螺母
+      for (const side of [-1, 1]) {
+        const nx = nutLocalX(side, side < 0 ? PHY.nutLPos : PHY.nutRPos);
+        const p = project(beamPt(nx, 0, 0), q);
+        cands.push({ id: side < 0 ? 'nutL' : 'nutR', cx: p.x, cy: p.y, w: Math.max(13, NUT_W * 2.4 * p.s), h: Math.max(13, NUT_R * 2.4 * p.s) });
+      }
+      // 右盘砝码
+      const wb = state.drawn.weightBoxes || [];
+      for (let i = 0; i < wb.length; i++) {
+        const b = wb[i];
+        const p = project([b.cx, b.y0 + b.h * 0.5, b.cz], q);
+        cands.push({ id: 'w' + i, cx: p.x, cy: p.y, w: Math.max(12, b.r * 2.1 * p.s), h: Math.max(12, b.h * 1.1 * p.s) });
+      }
+      let best = null, bestD = 1e9;
+      for (const c of cands) {
+        if (x < c.cx - c.w / 2 || x > c.cx + c.w / 2) continue;
+        if (y < c.cy - c.h / 2 || y > c.cy + c.h / 2) continue;
+        const d = Math.hypot(x - c.cx, y - c.cy);
+        if (d < bestD) { bestD = d; best = c; }
+      }
+      return best ? best.id : null;
+    }
+    // 屏幕点 → 横梁中轴（z = 0 竖平面）上的局部 x
+    function beamLocalXFromScreen(x, y, q) {
+      const w = unprojectZ(x, y, q, 0);
+      if (!w) return null;
+      const th = beamTh();
+      return (w[0] * Math.cos(th) + (w[1] - PIVOT_Y) * Math.sin(th));
+    }
+
+    function onDown(e) {
+      const r = canvas.getBoundingClientRect();
+      const x = e.clientX - r.left, y = e.clientY - r.top;
+      const q = {}; makeCam(q, state.w, state.h);
+      const hit = hitTest(x, y, q);
+      state.downAt = { x: x, y: y, hit: hit, moved: 0 };
+      state.dragging = true;
+      if (hit === 'rider' || hit === 'nutL' || hit === 'nutR') {
+        state.drag = hit;
+        const lx = beamLocalXFromScreen(x, y, q);
+        const cur = hit === 'rider' ? riderX()
+                  : nutLocalX(hit === 'nutL' ? -1 : 1, hit === 'nutL' ? PHY.nutLPos : PHY.nutRPos);
+        state.dragGrab = (lx === null) ? 0 : lx - cur;
+      } else {
+        state.drag = 'orbit';
+        state.lastX = x; state.lastY = y;
+        canvas.classList.add('grabbing');
+      }
+      try { canvas.setPointerCapture(e.pointerId); } catch (_) { /* 合成事件没有活动指针 */ }
+      state.dirty = true;
+    }
+    function onMove(e) {
+      const r = canvas.getBoundingClientRect();
+      const x = e.clientX - r.left, y = e.clientY - r.top;
+      const q = {}; makeCam(q, state.w, state.h);
+      if (state.dragging) {
+        if (state.downAt) state.downAt.moved = Math.max(state.downAt.moved,
+          Math.hypot(x - state.downAt.x, y - state.downAt.y));
+        if (state.drag === 'orbit') {
+          state.yaw -= (x - state.lastX) * 0.006;
+          state.pitch = clamp(state.pitch + (y - state.lastY) * 0.005, 0.04, 1.42);
+          state.lastX = x; state.lastY = y;
+          state.view = 'custom';
+        } else if (state.drag) {
+          const lx = beamLocalXFromScreen(x, y, q);
+          if (lx !== null) {
+            const t = lx - state.dragGrab;
+            if (state.drag === 'rider') {
+              // 拖动补偿抓取偏移：解出的是【中轴上的点】，用户抓的却是游码中段，
+              // 不补偿的话一按下游码就先跳半个身位。
+              setRiderMass(massFromX(t));
+            } else if (state.drag === 'nutL') {
+              setNuts(Math.round(nutPosFromX(-1, t)), null);
+            } else if (state.drag === 'nutR') {
+              setNuts(null, Math.round(nutPosFromX(1, t)));
+            }
+          }
+        }
+        state.dirty = true;
+        return;
+      }
+      state.hover = hitTest(x, y, q);
+      canvas.classList.toggle('pick', !!state.hover);
+      state.dirty = true;
+    }
+    function onUp() {
+      const wasDrag = state.dragging;
+      state.dragging = false;
+      canvas.classList.remove('grabbing');
+      // 位移小于 6 px 才算「点了一下」。点右盘砝码 = 取下来。
+      if (wasDrag && state.downAt && state.downAt.moved < 6) {
+        const h = state.downAt.hit;
+        if (h && h.charAt(0) === 'w') {
+          const i = parseInt(h.slice(1), 10);
+          // 画出来的顺序是「按质量降序」，索引要映射回 weightsOnPan 的真实下标
+          const sorted = PHY.weightsOnPan.map((g, k) => ({ g: g, k: k })).sort((a, b) => b.g - a.g);
+          if (sorted[i]) {
+            const g = sorted[i].g;
+            removeWeightAt(sorted[i].k);
+            showToast('取下了 ' + g + ' g 砝码');
+          }
+        }
+      }
+      state.drag = null;
+      state.dirty = true;
+    }
+    function onWheel(e) {
+      e.preventDefault();
+      state.zoom = clamp(state.zoom * (e.deltaY > 0 ? 0.92 : 1.087), 0.5, 3.0);
+      state.dirty = true;
+    }
+
+    /* ============================================================
+     * 尺寸 / 主循环
+     * ============================================================ */
+    function resize() {
+      const r = stage.getBoundingClientRect();
+      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      const w = Math.max(320, Math.round(r.width));
+      const h = Math.max(240, Math.round(r.height));
+      state.w = w; state.h = h; state.dpr = dpr;
+      canvas.width = Math.round(w * dpr);
+      canvas.height = Math.round(h * dpr);
+      canvas.style.width = w + 'px';
+      canvas.style.height = h + 'px';
+      // 画布位图是 w·dpr 宽，但所有绘制都按 CSS px 写坐标 —— 必须把变换补上，
+      // 否则 retina 屏（dpr=2）上整个天平会缩成左上角四分之一。
+      // 站内其它三维页（托里拆利 / 真空铃）都有这一句，新页最容易漏。
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      state.dirty = true;
+    }
+    let lastTs = 0, wasBalanced = false;
+    function tick(ts) {
+      const dt = lastTs ? Math.min(0.05, (ts - lastTs) / 1000) : 0;
+      lastTs = ts;
+      // 天平是静态的：只在 dirty 时重画。但「刚平衡」这一刻要提示一次。
+      const bal = PHY.targetMass > 0 && balanceGap() <= BAL_GATE;
+      if (bal && !wasBalanced) {
+        flashFlag(true);
+        showToast('指针指中央了 ✓ 读数 = ' + massText(realReading(), PHY.mode) + ' g');
+        syncUI();
+      }
+      wasBalanced = bal;
+      if (state.dirty) { render(); state.dirty = false; }
+      requestAnimationFrame(tick);
+    }
+
+    /* ============================================================
+     * 事件绑定
+     * ============================================================ */
+    canvas.addEventListener('pointerdown', onDown);
+    canvas.addEventListener('pointermove', onMove);
+    canvas.addEventListener('pointerup', onUp);
+    canvas.addEventListener('pointercancel', onUp);
+    canvas.addEventListener('pointerleave', () => { state.hover = null; canvas.classList.remove('pick'); state.dirty = true; });
+    canvas.addEventListener('wheel', onWheel, { passive: false });
+
+    $('bal-new').addEventListener('click', () => tryGenerateProblem());
+    $('bal-zero').addEventListener('click', () => autoZero());
+    $('bal-submit').addEventListener('click', () => submitAnswer());
+    $('bal-submit2').addEventListener('click', () => {
+      const r = submitAnswer();
+      if (r && r.ok) showToast('答对了 ✓');
+    });
+    $('bal-clear').addEventListener('click', () => { clearPan(); showToast('右盘已清空'); });
+    $('bal-rz').addEventListener('click', () => { riderZero(); showToast('游码已归零'); });
+    $('bal-nutl-').addEventListener('click', () => moveNut('L', -1));
+    $('bal-nutl+').addEventListener('click', () => moveNut('L', 1));
+    $('bal-nutr-').addEventListener('click', () => moveNut('R', -1));
+    $('bal-nutr+').addEventListener('click', () => moveNut('R', 1));
+    document.querySelectorAll('[data-w]').forEach(b =>
+      b.addEventListener('click', () => { if (addWeight(parseFloat(b.getAttribute('data-w')))) state.dirty = true; }));
+    document.querySelectorAll('[data-view]').forEach(b =>
+      b.addEventListener('click', () => applyView(b.getAttribute('data-view'))));
+    document.querySelectorAll('[data-mode]').forEach(b =>
+      b.addEventListener('click', () => setMode(b.getAttribute('data-mode'))));
+    $('bal-ans').addEventListener('keydown', ev => { if (ev.key === 'Enter') submitAnswer(); });
+
+    if (window.ResizeObserver) new ResizeObserver(() => resize()).observe(stage);
+    window.addEventListener('resize', resize);
+
+    setMode(PHY.mode);
+    resize();
+    syncUI();
+    requestAnimationFrame(tick);
+
+    /* ============================================================
+     * 自检钩子
+     * ------------------------------------------------------------
+     * 渲染、读数、判分、自检必须共用同一份物理函数。下面把这些函数原样暴露出去，
+     * 测试算出来的就是页面真正在用的值 —— 自检把公式重抄一遍只证明自检自洽。
+     * ============================================================ */
+    window.__bal = {
+      state: state,
+      phy: PHY,
+      consts: {
+        U: U, PIVOT_Y: PIVOT_Y, ARM: ARM, HOOK_X: HOOK_X, HANG: HANG, PAN_R: PAN_R, PAN_D: PAN_D,
+        RIDER_X0: RIDER_X0, RIDER_X1: RIDER_X1, RIDER_G: RIDER_G, ANG_MAX: ANG_MAX,
+        NUT_D0: NUT_D0, NUT_XK: NUT_XK, NUT_LIM: NUT_LIM, NUT_R: NUT_R,
+        PTR_LEN: PTR_LEN, PTR_Z: PTR_Z, SCALE_Z: SCALE_Z, SCALE_HALF: SCALE_HALF,
+        SCALE_RO: SCALE_RO, SCALE_RI: SCALE_RI, BEAM_H: BEAM_H, BEAM_D: BEAM_D,
+        BASE_HW: BASE_HW, BASE_HD: BASE_HD, BASE_H: BASE_H, COL_TOP: COL_TOP,
+        CAMD: CAMD, TARGET: TARGET, BAL_GATE: BAL_GATE, VIEWS: VIEWS, W_SLOTS: W_SLOTS
+      },
+      makeCam: makeCam, project: project, unproject: unproject, unprojectZ: unprojectZ,
+      envelopePoints: envelopePoints,
+      size: () => ({ w: state.w, h: state.h, dpr: state.dpr }),
+      // 物理：与页面同一份
+      weightsSum: weightsSum, momentLeft: momentLeft, momentRight: momentRight,
+      beamAngleDeg: beamAngleDeg, balanceGap: balanceGap, realReading: realReading,
+      zeroGap: zeroGap, beamTh: beamTh, beamPt: beamPt, hookWorld: hookWorld,
+      panRimY: panRimY, panCx: panCx, panFloorY: panFloorY,
+      riderX: riderX, massFromX: massFromX, nutLocalX: nutLocalX, nutPosFromX: nutPosFromX,
+      pointerTip: pointerTip, scalePt: scalePt, weightR: weightR, weightH: weightH,
+      hitTest: hitTest, beamLocalXFromScreen: beamLocalXFromScreen,
+      massText: massText, stepState: stepState,
+      // 动作（和按钮走同一条路）
+      setMode: setMode, setRiderMass: setRiderMass, setNuts: setNuts, moveNut: moveNut,
+      addWeight: addWeight, removeWeightAt: removeWeightAt, clearPan: clearPan, riderZero: riderZero,
+      tryGenerateProblem: tryGenerateProblem, autoZero: autoZero, resetAll: resetAll,
+      submitAnswer: submitAnswer, applyView: applyView,
+      // 给定工况（自检用）
+      setTarget: m => { PHY.targetMass = +m; syncUI(); state.dirty = true; },
+      setOffset: v => { PHY.randomOffset = +v; syncUI(); state.dirty = true; },
+      setWeights: arr => { PHY.weightsOnPan = arr.slice(0, W_MAX); syncUI(); state.dirty = true; },
+      render: render,
+      labels: () => (window.__balLabelLog || []).slice()
+    };
+  })();
+  </script>
+</body>
+</html>
