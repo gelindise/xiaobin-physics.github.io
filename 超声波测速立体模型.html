@@ -1,0 +1,2354 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>超声波测速 · 三维高速公路实验台 - 物理虚拟实验</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="stylesheet" href="style.css">
+  <script src="auth-check.js"></script>
+  <style>
+    body { margin: 0; padding: 20px; min-width: 320px; }
+
+    .lab3d h1 { margin: 0; font-size: 19px; letter-spacing: .3px; }
+    .lab3d-sub { margin: 7px 0 14px; color: #93b4c4; font-size: 12.5px; line-height: 1.62; }
+    .lab3d-sub b { color: #a5f3fc; font-weight: 700; }
+
+    /* ── 三栏：控制台 | 场景+示波器 | 读数 ──────────────────────────
+       控制台【必须】和实验画面左右并排（用户明确要求）：放在画面下面时，
+       想拖滑块就得先往下滚，滚到控制条时画布已经出了视口 —— 等于闭着眼调参。
+       总宽 1500px 左右时三栏都够用；1180 以下先退成「控制台 | 场景」两栏，
+       读数整行挪到下面（横排成一行卡片）；900 以下才折成一列。 */
+    .lab3d-layout {
+      display: grid;
+      grid-template-columns: 286px minmax(0, 1fr) 318px;
+      grid-template-areas: "ctl scene read";
+      gap: 16px; align-items: start; align-content: start;
+    }
+    .lab3d-ctl    { grid-area: ctl;   display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+    .lab3d-scene  { grid-area: scene; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+    .lab3d-read   { grid-area: read;  display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+
+    .lab3d-stage {
+      position: relative; overflow: hidden;
+      /* 舞台 + 示波器 + 页头要能一起塞进首屏：高度按视口走，再卡一个上限，
+         免得在超高的窗口里把示波器顶到屏幕外。 */
+      height: clamp(300px, 40vh, 460px);
+      border: 1px solid rgba(148, 163, 184, .18); border-radius: 16px;
+      background: #020617; box-shadow: 0 18px 46px rgba(2, 6, 23, .5);
+    }
+    .lab3d-stage canvas { display: block; touch-action: none; cursor: grab; }
+    .lab3d-stage canvas.pick { cursor: pointer; }
+    .lab3d-stage canvas.grabx { cursor: ew-resize; }
+    .lab3d-stage canvas.grabbing { cursor: grabbing; }
+
+    .lab3d-stage .stage-hint {
+      position: absolute; left: 12px; top: 12px; max-width: 64%;
+      padding: 7px 11px; border-radius: 8px; pointer-events: none;
+      border: 1px solid rgba(56, 189, 248, .28); background: rgba(2, 6, 23, .8);
+      color: #c3e8f5; font-size: 11px; line-height: 1.55;
+    }
+    .lab3d-stage .stage-hint b { color: #7dd3fc; }
+
+    .lab3d-stage .stage-tip {
+      position: absolute; left: 0; top: 0; padding: 5px 9px; border-radius: 7px;
+      background: rgba(2, 6, 23, .9); border: 1px solid rgba(148, 163, 184, .3);
+      color: #e2e8f0; font-size: 11px; white-space: nowrap;
+      pointer-events: none; opacity: 0; transition: opacity .12s;
+    }
+    .lab3d-stage .stage-tip.show { opacity: 1; }
+
+    /* 舞台底部一条：左边按钮、右边提示。做成一条 flex 行是为了让两者
+       【永远不重叠】—— 各占一角的话，窄屏上提示文字会横穿底边压在按钮上。 */
+    .lab3d-stage .stage-bar {
+      position: absolute; left: 0; right: 0; bottom: 0;
+      display: flex; align-items: center; justify-content: space-between; gap: 8px;
+      padding: 0 12px 11px; pointer-events: none;
+    }
+    .lab3d-stage .bar-left { display: flex; align-items: center; gap: 7px; flex: none; pointer-events: auto; }
+    .lab3d-stage .stage-btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 8px 13px; border-radius: 10px; font-family: inherit;
+      font-size: 12px; font-weight: 800; cursor: pointer;
+      border: 1px solid rgba(148, 163, 184, .35); background: rgba(2, 6, 23, .88); color: #cbd5e1;
+      transition: background .2s, border-color .2s, color .2s, box-shadow .2s;
+    }
+    .lab3d-stage .stage-btn.go { border-color: rgba(56, 189, 248, .55); background: rgba(14, 116, 144, .3); color: #e0f2fe; }
+    .lab3d-stage .stage-btn.go:hover { background: rgba(14, 116, 144, .46); }
+    .lab3d-stage .stage-btn:disabled { opacity: .45; cursor: not-allowed; }
+    .lab3d-stage .stage-btn .cnt {
+      display: inline-grid; place-items: center; min-width: 17px; height: 17px; padding: 0 4px;
+      border-radius: 99px; font-size: 10px; font-weight: 800;
+      background: rgba(148, 163, 184, .22); color: #e2e8f0;
+    }
+    /* 收到第二次回声、这组数据可以记了 —— 这一刻正是该按的时候，按钮自己亮起来 */
+    .lab3d-stage .stage-btn.ready {
+      border-color: rgba(52, 211, 153, .8); background: rgba(16, 185, 129, .24); color: #d1fae5;
+      box-shadow: 0 0 0 3px rgba(52, 211, 153, .14), 0 0 18px rgba(52, 211, 153, .3);
+    }
+    .lab3d-stage .stage-btn.ready .cnt { background: rgba(52, 211, 153, .32); color: #ecfdf5; }
+    .lab3d-stage .stage-help {
+      min-width: 0; pointer-events: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      color: #93b4c4; font-size: 11px; background: rgba(2, 6, 23, .72); padding: 6px 10px; border-radius: 7px;
+    }
+
+    .lab3d-stage .stage-toast {
+      position: absolute; left: 50%; transform: translateX(-50%); bottom: 96px;
+      padding: 8px 14px; border-radius: 10px; font-size: 12px; font-weight: 700;
+      background: rgba(2, 6, 23, .93); border: 1px solid rgba(148, 163, 184, .32); color: #e2e8f0;
+      opacity: 0; transition: opacity .18s, transform .18s; pointer-events: none; white-space: nowrap;
+      max-width: 90%; overflow: hidden; text-overflow: ellipsis;
+    }
+    .lab3d-stage .stage-toast.show { opacity: 1; }
+
+    .lab3d-stage .stage-flag {
+      position: absolute; left: 50%; transform: translateX(-50%); bottom: 58px;
+      padding: 7px 13px; border-radius: 99px; font-size: 12px; font-weight: 800;
+      background: rgba(6, 78, 59, .92); border: 1px solid rgba(52, 211, 153, .6); color: #d1fae5;
+      opacity: 0; transition: opacity .2s; pointer-events: none; white-space: nowrap;
+    }
+    .lab3d-stage .stage-flag.show { opacity: 1; }
+    .lab3d-stage .stage-flag.warn { background: rgba(120, 53, 15, .92); border-color: rgba(251, 191, 36, .6); color: #fef3c7; }
+
+    /* ── 面板 ─────────────────────────────────────────────── */
+    .panel {
+      border: 1px solid rgba(148, 163, 184, .17); border-radius: 13px;
+      background: rgba(9, 20, 35, .82); padding: 13px 14px;
+    }
+    .panel > h3 {
+      margin: 0 0 10px; font-size: 12px; font-weight: 800; color: #7dd3fc;
+      letter-spacing: .4px; display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    }
+    .panel > h3 .pill {
+      font-size: 10px; font-weight: 800; padding: 2px 8px; border-radius: 99px;
+      background: rgba(148, 163, 184, .18); color: #e2e8f0;
+    }
+    .panel > h3 .pill.live { background: rgba(248, 113, 113, .25); color: #fecaca; }
+    .panel > h3 .pill.ok { background: rgba(52, 211, 153, .22); color: #d1fae5; }
+    .fld { display: block; margin-bottom: 11px; }
+    .fld:last-child { margin-bottom: 0; }
+    .fld .row { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 5px; }
+    .fld .row span { color: #a9c2d2; font-size: 11.5px; }
+    .fld .row b { color: #e2e8f0; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+    .fld input[type=range] { width: 100%; }
+    .note { margin: 6px 0 0; color: #8aa6b8; font-size: 11px; line-height: 1.55; }
+    .note b { color: #cbd5e1; }
+
+    .btn-row { display: flex; flex-wrap: wrap; gap: 7px; }
+    .btn-row button {
+      flex: 1 1 auto; min-width: 0; padding: 9px 11px; border-radius: 9px; cursor: pointer;
+      font-family: inherit; font-size: 12px; font-weight: 800;
+      border: 1px solid rgba(148, 163, 184, .3); background: rgba(30, 41, 59, .7); color: #cbd5e1;
+    }
+    .btn-row button.primary { border-color: rgba(56, 189, 248, .6); background: rgba(14, 116, 144, .42); color: #e0f2fe; }
+    .btn-row button.on { border-color: rgba(52, 211, 153, .65); background: rgba(6, 78, 59, .5); color: #d1fae5; }
+    .btn-row button:disabled { opacity: .45; cursor: not-allowed; }
+    .btn-row button:hover:not(:disabled) { border-color: rgba(125, 211, 252, .7); }
+    .btn-row button i { display: block; font-style: normal; font-weight: 600; font-size: 10.5px; color: #8aa6b8; margin-top: 2px; }
+    .btn-row.col button { flex: 1 1 100%; text-align: left; }
+
+    .readouts { display: flex; flex-direction: column; gap: 5px; color: #a9c2d2; font-size: 11.5px; }
+    .readouts div { display: flex; justify-content: space-between; gap: 8px; }
+    .readouts b { color: #e2e8f0; font-variant-numeric: tabular-nums; }
+    .readouts .dim { color: #7d97a8; }
+
+    /* 示波器大数字（t₁ / t₂ / δ） */
+    .sw {
+      padding: 8px 10px; border-radius: 10px; margin-bottom: 8px;
+      background: linear-gradient(180deg, #0b1a2a, #07131f); border: 1px solid rgba(56, 189, 248, .3);
+    }
+    .sw:last-child { margin-bottom: 0; }
+    .sw .cap { display: flex; justify-content: space-between; align-items: baseline; color: #5e8496; font-size: 10.5px; font-weight: 700; margin-bottom: 3px; }
+    .sw .val { display: flex; align-items: baseline; justify-content: center; gap: 5px; }
+    .sw .val .num {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 22px; font-weight: 800;
+      color: #a5f3fc; letter-spacing: .5px; font-variant-numeric: tabular-nums;
+      text-shadow: 0 0 12px rgba(56, 189, 248, .45);
+    }
+    .sw .val .unit { color: #5e8496; font-size: 12px; font-weight: 700; }
+    .sw.done { border-color: rgba(52, 211, 153, .5); }
+    .sw.done .val .num { color: #6ee7b7; text-shadow: 0 0 12px rgba(52, 211, 153, .45); }
+    .sw.amber { border-color: rgba(251, 191, 36, .38); }
+    .sw.amber .val .num { color: #fcd34d; text-shadow: 0 0 12px rgba(251, 191, 36, .4); }
+
+    .subst {
+      margin: 8px 0 0; padding: 8px 10px; border-radius: 9px;
+      background: rgba(2, 6, 23, .55); border: 1px solid rgba(148, 163, 184, .2);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; line-height: 1.85;
+      color: #a5f3fc; word-break: break-all;
+    }
+    .subst .dim { color: #6f8b9c; }
+    .subst b { color: #fde68a; }
+    .subst .hl { color: #fcd34d; }
+
+    .badge {
+      display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 9px;
+      font-size: 12px; font-weight: 800; margin-top: 8px;
+    }
+    .badge.ok { background: rgba(6, 78, 59, .45); border: 1px solid rgba(52, 211, 153, .5); color: #d1fae5; }
+    .badge.warn { background: rgba(120, 53, 15, .45); border: 1px solid rgba(251, 191, 36, .5); color: #fef3c7; }
+    .badge.bad { background: rgba(127, 29, 29, .45); border: 1px solid rgba(248, 113, 113, .5); color: #fee2e2; }
+
+    table.rec { width: 100%; border-collapse: collapse; font-size: 11px; font-variant-numeric: tabular-nums; }
+    table.rec th, table.rec td { padding: 5px 3px; text-align: right; border-bottom: 1px solid rgba(148, 163, 184, .13); }
+    table.rec th { color: #8aa6b8; font-weight: 700; font-size: 10px; }
+    table.rec th:first-child, table.rec td:first-child { text-align: left; }
+    table.rec td { color: #dbe7f0; }
+    table.rec td.dim { color: #6f8b9c; }
+    table.rec td.err.ok { color: #6ee7b7; font-weight: 700; }
+    table.rec td.err.bad { color: #fca5a5; font-weight: 700; }
+
+    .analysis { color: #c8d8e4; font-size: 11.5px; line-height: 1.8; }
+    .analysis .line { display: flex; justify-content: space-between; gap: 8px; }
+    .analysis .line b { color: #e2e8f0; font-variant-numeric: tabular-nums; }
+    .analysis .line.sum { border-top: 1px dashed rgba(148, 163, 184, .3); margin-top: 5px; padding-top: 6px; }
+    .analysis .line.sum b { color: #a5f3fc; font-size: 13px; }
+    .analysis .line.off { color: #6f8b9c; }
+    .analysis .conc {
+      margin-top: 9px; padding: 8px 10px; border-radius: 8px; font-size: 11.5px; line-height: 1.7;
+      background: rgba(6, 78, 59, .35); border: 1px solid rgba(52, 211, 153, .4); color: #d1fae5;
+    }
+    .analysis .conc.warn { background: rgba(127, 29, 29, .35); border-color: rgba(248, 113, 113, .45); color: #fee2e2; }
+    .analysis .conc.info { background: rgba(12, 74, 110, .35); border-color: rgba(56, 189, 248, .4); color: #e0f2fe; }
+    .analysis .muted { color: #7d97a8; }
+
+    /* ── 示波器 ─────────────────────────────────────────────
+       横轴是时间。左大块是「总览」：四次事件（发射1 / 回声1 / 发射2 / 回声2），
+       右小块是「放大窗」：一次发射的 40 kHz 载波真形 —— 总览上它不到 1 个像素，
+       不放大根本看不见，这正是这一页必须有两层显示的原因。 */
+    .scope-panel { padding: 11px 12px 12px; }
+    .scope-row { display: flex; gap: 10px; align-items: stretch; }
+    .scope-row .scope-main { flex: 1 1 auto; min-width: 0; position: relative; }
+    .scope-row .scope-zoom { flex: 0 0 192px; }
+    .scope-row canvas {
+      display: block; width: 100%; border-radius: 9px;
+      background: #04121c; border: 1px solid rgba(56, 189, 248, .2);
+    }
+    #usv-scope { height: clamp(196px, 23vh, 240px); }
+    #usv-carrier { height: clamp(196px, 23vh, 240px); }
+
+    .info-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; margin-top: 16px; }
+    .info-card {
+      border: 1px solid rgba(148, 163, 184, .16); border-radius: 14px;
+      background: rgba(9, 20, 35, .7); padding: 15px 17px;
+    }
+    .info-card h4 { margin: 0 0 9px; font-size: 13px; color: #7dd3fc; }
+    .info-card ul { margin: 0; padding-left: 17px; color: #a9c2d2; font-size: 12px; line-height: 1.85; }
+    .info-card li b { color: #e2e8f0; }
+    .info-card .fml {
+      display: inline-block; margin: 3px 0; padding: 3px 9px; border-radius: 7px;
+      background: rgba(56, 189, 248, .13); color: #a5f3fc; font-weight: 700;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+
+    @media (max-width: 1180px) {
+      .lab3d-layout { grid-template-columns: 268px minmax(0, 1fr); grid-template-areas: "ctl scene" "read read"; }
+      .lab3d-read { flex-direction: row; flex-wrap: wrap; }
+      .lab3d-read > .panel { flex: 1 1 300px; }
+    }
+    @media (max-width: 900px) {
+      .lab3d-layout { grid-template-columns: minmax(0, 1fr); grid-template-areas: "ctl" "scene" "read"; }
+      .lab3d-read { flex-direction: column; }
+      .lab3d-stage { height: clamp(280px, 42vh, 420px); }
+      .lab3d-ctl, .lab3d-scene { border-top: 1px solid rgba(148, 163, 184, .16); padding-top: 12px; }
+      .lab3d-ctl { border-top: none; padding-top: 0; }
+      .scope-row { flex-direction: column; }
+      .scope-row .scope-zoom { flex: 0 0 auto; }
+      #usv-carrier { height: 128px; }
+    }
+    @media (max-width: 620px) {
+      body { padding: 14px; }
+      .lab3d h1 { font-size: 16px; }
+      .lab3d-stage { height: 330px; }
+      .lab3d-stage .stage-hint { font-size: 10px; padding: 6px 9px; max-width: 70%; }
+      .lab3d-stage .stage-help { display: none; }
+      .lab3d-stage .stage-btn { padding: 7px 10px; font-size: 11px; gap: 5px; }
+      .lab3d-stage .stage-flag { bottom: 54px; font-size: 11px; padding: 6px 11px; }
+      .sw .val .num { font-size: 19px; }
+      #usv-scope { height: 190px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="lab3d">
+    <h1>超声波测速 · 三维高速公路实验台</h1>
+    <p class="lab3d-sub">
+      高速公路路肩立着一台<b>超声波测速仪</b>：悬臂把换能器伸到车道正上方，声轴<b>沿车道方向</b>。
+      汽车以恒定速度 <b>v 驶离</b>，测速仪先后发出<b>两次</b>超声脉冲，各收到一次回声。
+      示波器上读到的四个时刻 —— <b>发射₁、回声₁、发射₂、回声₂</b> —— 就是全部原始数据。<br>
+      题眼是：<b>回声测到的是「往返时间」，而车在声音飞的这段时间里还在往前走</b>。
+      所以 <span class="fml">s₁ = c·t₁/2</span> 量到的是<b>第一次反射那一刻</b>车的位置，
+      第二次同理；两次反射之间车走了 <b>s₂ − s₁</b>，用的时间是
+      <b>Δt₀ + (t₂ − t₁)/2</b>（<b>不是</b> Δt₀！）—— 相除就是车速。
+    </p>
+
+    <div class="lab3d-layout">
+      <!-- ── 左：控制台（必须和画面并排） ───────────────────── -->
+      <div class="lab3d-ctl">
+        <div class="panel">
+          <h3>车 <span class="pill" id="usv-dir-pill">驶离</span></h3>
+          <div class="btn-row">
+            <button type="button" id="dir-away">驶离测速仪</button>
+            <button type="button" id="dir-toward">迎面驶来</button>
+          </div>
+          <label class="fld" style="margin-top:11px;">
+            <div class="row"><span>车速 v</span><b id="v-num">22.0 m/s</b></div>
+            <input type="range" id="sl-v" min="5" max="30" step="0.5" value="22">
+          </label>
+          <p class="note" id="v-note"></p>
+        </div>
+
+        <div class="panel">
+          <h3>测量设置</h3>
+          <label class="fld">
+            <div class="row"><span>第一次发射时车距 s₁</span><b id="s1-num">12 m</b></div>
+            <input type="range" id="sl-s1" min="6" max="26" step="1" value="12">
+          </label>
+          <label class="fld">
+            <div class="row"><span>两次发射间隔 Δt₀</span><b id="dtg-num">0.40 s</b></div>
+            <input type="range" id="sl-dtg" min="0.25" max="0.90" step="0.05" value="0.4">
+          </label>
+          <label class="fld">
+            <div class="row"><span>气温 T</span><b id="temp-num">15 ℃</b></div>
+            <input type="range" id="sl-temp" min="0" max="40" step="1" value="15">
+          </label>
+          <div class="readouts">
+            <div><span>真实声速 c = 331 + 0.6T</span><b id="c-num">340 m/s</b></div>
+            <div><span>仪器内部按 c₀ 计算</span><b>340 m/s</b></div>
+          </div>
+          <p class="note" id="setup-note"></p>
+        </div>
+
+        <div class="panel">
+          <h3>视角</h3>
+          <div class="btn-row">
+            <button type="button" data-view="persp">默认</button>
+            <button type="button" data-view="side">正对全程</button>
+            <button type="button" data-view="axial">沿声轴</button>
+            <button type="button" data-view="top">俯视</button>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h3>播放 <span class="pill" id="rate-pill">慢放</span></h3>
+          <label class="fld">
+            <div class="row"><span>时间轴</span><b id="tau-num">0.000 s</b></div>
+            <input type="range" id="sl-tau" min="0" max="1" step="0.001" value="0">
+          </label>
+          <div class="btn-row">
+            <button type="button" id="btn-rate">慢放 / 实时</button>
+            <button type="button" id="btn-sound">🔈 声音开</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── 中：三维场景 + 示波器 ─────────────────────────── -->
+      <div class="lab3d-scene">
+        <div class="lab3d-stage">
+          <canvas id="usv-canvas"></canvas>
+
+          <div class="stage-hint" id="usv-hint"></div>
+          <div class="stage-tip" id="usv-tip"></div>
+          <div class="stage-toast" id="usv-toast"></div>
+          <div class="stage-flag" id="usv-flag"></div>
+
+          <div class="stage-bar">
+            <div class="bar-left">
+              <button type="button" class="stage-btn go" id="btn-run">发射两次脉冲</button>
+              <button type="button" class="stage-btn" id="btn-record">
+                记录这一组<b class="cnt" id="record-cnt">0</b>
+              </button>
+              <button type="button" class="stage-btn" id="btn-reset">重置</button>
+            </div>
+            <div class="stage-help">拖动空白处旋转 · 滚轮缩放 · 直接拖动车或测速仪改位置</div>
+          </div>
+        </div>
+
+        <div class="panel scope-panel">
+          <h3>示波器 · 回波时序 <span class="pill" id="scope-pill">等待发射</span></h3>
+          <div class="scope-row">
+            <div class="scope-main"><canvas id="usv-scope"></canvas></div>
+            <div class="scope-zoom"><canvas id="usv-carrier"></canvas></div>
+          </div>
+          <p class="note" id="scope-note"></p>
+        </div>
+      </div>
+
+      <!-- ── 右：读数 ───────────────────────────────────────── -->
+      <div class="lab3d-read">
+        <div class="panel">
+          <h3>时间读数 <span class="pill" id="phase-pill">等待发射</span></h3>
+          <div class="sw" id="sw-t1">
+            <div class="cap"><span>往返时间 t₁（发射₁ → 回声₁）</span><span>1 μs</span></div>
+            <div class="val"><span class="num" id="t1-num">—</span><span class="unit">s</span></div>
+          </div>
+          <div class="sw amber" id="sw-t2">
+            <div class="cap"><span>往返时间 t₂（发射₂ → 回声₂）</span><span>1 μs</span></div>
+            <div class="val"><span class="num" id="t2-num">—</span><span class="unit">s</span></div>
+          </div>
+          <div class="sw" id="sw-d">
+            <div class="cap"><span>两者之差 δ = t₂ − t₁</span><span>关键量</span></div>
+            <div class="val"><span class="num" id="d-num">—</span><span class="unit">s</span></div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h3>算一算</h3>
+          <div class="analysis" id="analysis"></div>
+          <div class="subst" id="subst"></div>
+          <div id="badge"></div>
+        </div>
+
+        <div class="panel">
+          <h3>数据记录 <span class="pill" id="rec-count">0 / 5 组</span></h3>
+          <div id="rec-body"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="info-cards">
+      <div class="info-card">
+        <h4>实验原理：回声测速的两个关键量</h4>
+        <ul>
+          <li>测速仪发出一次超声脉冲，声音以 <b>c ≈ 340 m/s</b> 沿车道跑出去，撞上汽车被反射回来。
+              从<b>发射</b>到<b>收到回声</b>的时间就是<b>往返时间 t</b>。声音走的是 <b>2s</b>（去一趟、回一趟），
+              所以 <span class="fml">s = c·t ÷ 2</span> 得到的是<b>反射发生那一刻</b>车距测速仪的距离。</li>
+          <li><b>一次测量求不出车速</b> —— 只知道一个距离，v 与 s 解不开。所以测速仪要发<b>两次</b>脉冲：
+              相隔 <b>Δt₀</b> 发出，分别读到往返时间 <b>t₁</b>、<b>t₂</b>。</li>
+          <li>由 <b>s₁ = c·t₁/2</b>、<b>s₂ = c·t₂/2</b> 得到两次反射点。两次反射的<b>时刻</b>分别是
+              <b>t₁/2</b>（从发射₁ 起算）和 <b>Δt₀ + t₂/2</b>（从发射₁ 起算）。</li>
+          <li>于是 <span class="fml">v = (s₂ − s₁) ÷ [Δt₀ + (t₂ − t₁)/2]</span>。
+              分母里那个 <b>(t₂ − t₁)/2</b> 是最容易漏掉的：车走的这段路并不是在 Δt₀ 里走的，
+              而是<b>从第一次反射到第二次反射</b>之间走的。</li>
+          <li>整理后等价于 <span class="fml">v = c(t₂ − t₁) ÷ [2Δt₀ + (t₂ − t₁)]</span>。
+              两式在数学上<b>完全等价</b>，本页两条都算给你看。</li>
+        </ul>
+      </div>
+      <div class="info-card">
+        <h4>为什么必须看波形（示波器）</h4>
+        <ul>
+          <li>测速仪发出的是一段 <b>40 kHz 的超声脉冲</b>：<b>8 个周期 = 200 μs</b>。
+              而两次回声之间相隔几百毫秒 —— <b>差 2000 多倍</b>。
+              在「总览」的时间轴上，一个 200 μs 的脉冲<b>不到一个像素宽</b>，所以它看起来就是一根竖线。</li>
+          <li>所以真实仪器用两层显示：<b>总览</b>看四个事件的<b>时刻</b>（这是算车速要用的量），
+              <b>放大窗</b>看脉冲本身的<b>载波形状</b>（判断它是不是真的 40 kHz、有没有被噪声淹没）。</li>
+          <li>示波器读数只能读到<b>整周期</b>：40 kHz 的一个周期是 <b>25 μs</b>。
+              本页的仪器计时分辨率按 <b>1 μs</b> 算 —— 这就是「算出车速」与「真实车速」差别的来源之一。</li>
+          <li>人耳听不见 40 kHz（听觉上限约 20 kHz），所以测速仪工作时<b>很安静</b>。
+              页面里的「滴」声只是为了让你听见事件发生，<b>不是真实频率</b>。</li>
+        </ul>
+      </div>
+      <div class="info-card">
+        <h4>误差来源：仪器里的声速是写死的</h4>
+        <ul>
+          <li>仪器内部按 <b>c₀ = 340 m/s</b> 计算（这是 15 ℃ 空气中的声速）。但真实声速随气温变：
+              <span class="fml">c = 331 + 0.6T</span>（T 用 ℃）。</li>
+          <li>把 <b>c₀ = 340</b> 代进公式，得到的是 <b>v′ = (c₀/c)·v</b> ——
+              读数与<b>真实车速成正比</b>，比例系数就是 <b>c₀/c</b>。</li>
+          <li>所以 35 ℃ 时 c = 352 m/s，仪器读出的车速只有真实值的 <b>340/352 = 96.6%</b>，偏低 <b>3.4%</b>；
+              0 ℃ 时 c = 331 m/s，读数偏高 <b>2.7%</b>。真实测速仪必须做温度补偿。</li>
+          <li>拖左侧的<b>气温滑块</b>看这个偏差怎么变 —— 侧栏「算一算」里同时给出<b>仪器读数</b>与<b>真实车速</b>，
+              以及两者的百分比差。</li>
+        </ul>
+      </div>
+      <div class="info-card">
+        <h4>操作指南</h4>
+        <ul>
+          <li>先设好 <b>车速 v</b>、<b>第一次发射时车距 s₁</b>、<b>两次发射间隔 Δt₀</b>、<b>气温 T</b>。
+              想看车动起来，就把<b>方向</b>切到「迎面驶来」—— 那时车会迎着测速仪开过来。</li>
+          <li>按<b>「发射两次脉冲」</b>：第一束声波从换能器扩散出去，撞上车后从<b>撞击点生出次级波</b>扫回来；
+              隔 Δt₀ 再发第二束。示波器上四个事件依次亮起。</li>
+          <li>想慢慢看，拖左侧的<b>「时间轴」</b>可以停在任意时刻；点「慢放 / 实时」切换速度 ——
+              切到实时就知道真实过程有多快（整段只有零点几秒）。</li>
+          <li>两次回声都收到后，按<b>「记录这一组」</b>存进表格。表格里同时给出<b>算出车速</b>、
+              <b>真实车速</b>和<b>误差</b>，误差超过 <b>1%</b> 标红。多记几组，看误差随气温怎么变。</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <script>
+  (() => {
+    'use strict';
+
+    const canvas = document.getElementById('usv-canvas');
+    const scopeCv = document.getElementById('usv-scope');
+    const carrierCv = document.getElementById('usv-carrier');
+    const stage = document.querySelector('.lab3d-stage');
+    if (!canvas || !scopeCv || !carrierCv || !stage) return;
+    const ctx = canvas.getContext('2d');
+    const sctx = scopeCv.getContext('2d');
+    const cctx = carrierCv.getContext('2d');
+
+    const PI2 = Math.PI * 2;
+    const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
+    const $ = id => document.getElementById(id);
+    const num = (n, k) => (Math.abs(n) < 5e-13 ? 0 : n).toFixed(k);
+
+    /* ============================================================
+     * 向量工具（与站内其它三维页同一套约定）
+     * ============================================================ */
+    const add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+    const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+    const scl = (a, k) => [a[0] * k, a[1] * k, a[2] * k];
+    const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+    const vlen = a => Math.hypot(a[0], a[1], a[2]);
+    const vnorm = a => { const l = vlen(a) || 1; return [a[0] / l, a[1] / l, a[2] / l]; };
+    const rgba = (c, a) => 'rgba(' + Math.round(clamp(c[0], 0, 255)) + ',' +
+      Math.round(clamp(c[1], 0, 255)) + ',' + Math.round(clamp(c[2], 0, 255)) + ',' + a + ')';
+
+    /* ============================================================
+     * 常量
+     * ------------------------------------------------------------
+     * ★ 这一页的物理核心只有三个数：声速 c、两次发射间隔 Δt₀、两个往返时间 t₁ t₂。
+     *   画面、示波器、读数、算一算、表格、自检【共用下面这一份】——
+     *   抄两遍的话改了一处另一处不跟着变，页面在动而数字对不上。
+     * ============================================================ */
+    const C_STD = 340;                 // 仪器内部写死的声速（15 ℃ 空气）
+    const C_ICE = 331, C_KT = 0.6;     // 真实声速 c = 331 + 0.6T（T 用 ℃）
+    const T_MIN = 0, T_MAX = 40, T_DEF = 15;
+    const V_MIN = 5, V_MAX = 30, V_DEF = 22;                 // 车速 m/s（108 km/h 上限）
+    const S1_MIN = 6, S1_MAX = 26, S1_DEF = 12;              // 驶离时「第一次发射时车距」
+    const S1T_MIN = 26, S1T_MAX = 60, S1T_DEF = 34;          // 迎面时（车得先够远）
+    const DTG_MIN = 0.25, DTG_MAX = 0.90, DTG_DEF = 0.40;    // 两次发射间隔 s
+    const T_QUANT = 1e-6;              // 仪器计时分辨率 1 μs
+    const PULSE_KHZ = 40;              // 载波 40 kHz
+    const PULSE_CYCLES = 8;            // 一次发射 = 8 个周期 = 200 μs
+    const ANIM_T = 3.0;                // 慢放：整段过程占用的墙上时间（s）
+    const TAIL_F = 0.16;               // 收到第二次回声后波前还要多走的一段（比例）
+    const MAX_REC = 5;
+
+    /* 场景常量（单位 = m，1 世界单位 = 1 m，所以地面刻度尺是真的） */
+    const CAR_L = 4.6, CAR_W = 1.85, CAR_H = 1.42;
+    const CAR_Z = 2.70;                // 近侧车道中心线（z 向）—— 也是声轴的 z
+    const ROAD_HW = 6.0;               // 路面半宽
+    const LANE_EDGE = 5.35;            // 车道边缘白线
+    const RAIL_Z = -6.35;              // 对面（远侧）护栏
+    const RAIL_H = 0.78;
+    const STATION_Z = 6.85;            // 测速仪立柱所在的 z（路肩上）
+    const ARM_Y = 2.10;                // 悬臂高度（车高 1.42，从下面过）
+    const TX_Y = 1.05;                 // 换能器 / 声轴高度
+    const BEAM_HA = 0.20;              // 声束半角（rad，≈11.5°）
+    const POLE_H = 2.30;               // 立柱高
+
+    /* ============================================================
+     * 状态
+     * ============================================================ */
+    const VIEWS = {
+      // [方位角, 俯仰角, 缩放]
+      // ★ 方位角是唯一能把整个场景翻转的参数（场景沿路几十米长）：
+      //   |yaw| 太小 —— 相机与路面几乎共面，路面被压成一条斜带；
+      //   |yaw| 太大 —— 相机甩到场景正前方，路朝观察者迎面缩。
+      //   -1.17 时：沿路方向在屏幕上朝右上（约 45°），路宽方向朝左，
+      //   两者夹角约 123°，路面读得出「是一块面」而不是一根线。
+      persp: [-1.17, 0.46, 1],
+      side:  [-0.10, 0.42, 1],
+      axial: [-1.53, 0.16, 1],
+      top:   [-1.20, 1.16, 1]
+    };
+
+    const state = {
+      yaw: VIEWS.persp[0], pitch: VIEWS.persp[1], zoom: 1, view: 'persp',
+      dir: 'away',                 // 'away' 驶离 | 'toward' 迎面
+      v: V_DEF, s1: S1_DEF, dtg: DTG_DEF, temp: T_DEF,
+      camD: S1_DEF,                // 取景用的「车最远处」：拖动期间冻结
+      running: false, tau: 0,      // 物理时间（s）—— 动画推进的唯一状态量
+      paused: false, realtime: false, soundOn: true,
+      flashEcho: 0, flashHit: 0,
+      marks: [],
+      t: 0,                        // 墙上时间，驱动呼吸与闪烁
+      w: 1, h: 1, sw: 1, sh: 1, cw: 1, ch: 1, dpr: 1, dirty: true,
+      dragging: false, drag: null, downAt: null, dragYaw: 0, dragPitch: 0,
+      draggingCar: false, draggingSt: false, dragGrabX: 0,
+      hover: null,
+      drawn: {}
+    };
+
+    /* ============================================================
+     * 物理
+     * ------------------------------------------------------------
+     * 全部抽成纯函数 —— 渲染、示波器、读数、表格、自检共用同一份。
+     *
+     * 推导（设测速仪在原点，车以 v 沿 +x 匀速离开；迎面时 v 取负）：
+     *   第一次发射（t = 0）时车在 d₁。脉冲以 c 追车，追上用时
+     *        τ₁ = d₁ / (c − v)                    （相向运动，相对速度 c − v）
+     *   反射点距测速仪
+     *        s₁ = c·τ₁ = c·d₁/(c − v)
+     *   回声以 c 原路返回，路程正好也是 s₁，所以往返时间
+     *        t₁ = τ₁ + s₁/c = 2s₁/c   ⇒   s₁ = c·t₁/2      ★ 教科书那一式
+     *   第二次（t = Δt₀）时车在 d₂ = d₁ + v·Δt₀，同理 t₂ = 2s₂/c。
+     *
+     *   两次【反射】的时刻：t₁/2 与 Δt₀ + t₂/2（都从发射₁ 起算）。
+     *   这段时间车从 s₁ 走到 s₂，于是
+     *        v = (s₂ − s₁) / [ Δt₀ + (t₂ − t₁)/2 ]
+     *   代入 s = c·t/2 化简：
+     *        v = c(t₂ − t₁) / [ 2Δt₀ + (t₂ − t₁) ]
+     *   两式在代数上【完全等价】，而且对任意 v 都精确成立（不是近似）——
+     *   这一点是这一页的头号断言：vCalc() 与 vNow() 必须逐位相等。
+     * ============================================================ */
+    const modeSign = () => (state.dir === 'toward' ? -1 : 1);
+    const vNow = () => state.v * modeSign();          // 有符号车速（驶离 +、迎面 −）
+    const cNow = () => C_ICE + C_KT * state.temp;     // 真实声速
+    const d1Now = () => state.s1;                     // 第一次发射时车的位置
+    const d2Now = () => state.s1 + vNow() * state.dtg; // 第二次发射时车的位置
+    const tauOf = d => d / (cNow() - vNow());         // 脉冲追上车的用时
+    const t1Raw = () => 2 * tauOf(d1Now());           // 第一次往返时间（未量化）
+    const t2Raw = () => 2 * tauOf(d2Now());
+    // 仪器读到的是【量化过】的数：分辨率 1 μs。表格里的误差有一部分来自它。
+    const qz = x => Math.round(x / T_QUANT) * T_QUANT;
+    const t1M = () => qz(t1Raw());
+    const t2M = () => qz(t2Raw());
+    const dRaw = () => t2Raw() - t1Raw();             // δ（有符号：驶离为正）
+    const dM = () => t2M() - t1M();
+    const s1Ref = () => cNow() * t1M() / 2;           // 第一次反射点距测速仪
+    const s2Ref = () => cNow() * t2M() / 2;
+    // 两次反射之间车走的距离与用的时间
+    const sDiff = () => s2Ref() - s1Ref();
+    const gapT = () => state.dtg + dM() / 2;
+    // 用【未量化】的读数算车速 —— 这是「物理真值」，与 vNow() 逐位相等
+    const vCalcRaw = () => cNow() * dRaw() / (2 * state.dtg + dRaw());
+    // 用仪器实际读到的数（1 μs 量化）算，声速用真实的 c
+    const vCalc = () => cNow() * dM() / (2 * state.dtg + dM());
+    // 仪器【显示】出来的数：内部写死 c₀ = 340，这才是学生看到的那一个
+    const vShown = () => C_STD * dM() / (2 * state.dtg + dM());
+    const vTrue = () => vNow();
+    const errPct = () => Math.abs(vShown() - vTrue()) / Math.abs(vTrue()) * 100;
+    // 整段过程的物理时长（到第二次回声到达为止）
+    const tEndRaw = () => state.dtg + t2Raw();
+    // 慢放倍率：整段固定占 ANIM_T 秒墙上时间。实时就是 1。
+    const rate = () => (state.realtime ? 1 : clamp(tEndRaw() / ANIM_T, 1 / 4000, 1));
+
+    /* 脉冲 k 的前沿位置（距测速仪，m）；不在飞行中返回 null。
+     * 去程：以换能器为心，半径 c·u；回程：以【反射点】为心，半径 c·(u − t_k/2)。
+     * 两条在 u = t_k/2 处衔接（都等于 s_k），在 u = t_k 处回到 0 —— 回声到家。 */
+    const emitOf = k => (k === 1 ? 0 : state.dtg);
+    const tOf = k => (k === 1 ? t1Raw() : t2Raw());
+    function frontX(k, tau) {
+      const u = tau - emitOf(k), tk = tOf(k);
+      if (u < -1e-12) return null;
+      if (u <= tk / 2) return cNow() * Math.max(0, u);          // 去程
+      if (u <= tk) return cNow() * (tk - u);                    // 回程
+      return null;
+    }
+    // 反射点（第 k 次）的世界 x —— 与「车在那一时刻的位置」是同一个数
+    const reflX = k => cNow() * tOf(k) / 2;
+    const reflTau = k => emitOf(k) + tOf(k) / 2;
+    // 车在物理时刻 tau 的位置。动画在第二次回声之后还留一段 TAIL，
+    // 那一段是留给【波前】的，车本身停住（否则「车已走」会一路涨下去）。
+    const carXat = tau => state.s1 + vNow() * Math.min(tau, tEndRaw());
+    const carX = () => carXat(state.tau);
+
+    /* 相位：示波器、提示文字、按钮状态都按它分支 */
+    function phaseNow() {
+      const tau = state.tau;
+      if (!state.running && tau <= 1e-9) return 'idle';
+      if (tau < t1Raw() / 2) return 'out1';
+      if (tau < t1Raw()) return 'back1';
+      if (tau < state.dtg) return 'gap';
+      if (tau < state.dtg + t2Raw() / 2) return 'out2';
+      if (tau < tEndRaw()) return 'back2';
+      return 'done';
+    }
+    const phaseLabel = {
+      idle: '等待发射', out1: '脉冲₁ 去程', back1: '回声₁ 回程', gap: '等第二次发射',
+      out2: '脉冲₂ 去程', back2: '回声₂ 回程', done: '两次回声都收到'
+    };
+    // 已经收到几次回声 —— 记录按钮与示波器都看它
+    const echoesIn = () => (state.tau >= tEndRaw() ? 2 : (state.tau >= t1Raw() ? 1 : 0));
+    const ready = () => echoesIn() >= 2;
+
+    /* ============================================================
+     * 取景几何
+     * ------------------------------------------------------------
+     * 取景是一个「沿路的长方体走廊」，装下：测速仪 → 车的最远处。
+     * 用 camD（而不是实时的 d₂）是为了拖动期间画面不跟着缩 ——
+     * 否则被拖的那个东西会「追不上手指」。
+     * ============================================================ */
+    const farD = () => Math.max(d1Now(), d2Now());
+    const CL = () => clamp(1.22 * state.camD + 6, 26, 82);
+    const XA = () => -0.10 * CL();
+    const XB = () => XA() + CL();
+    const YT = () => 0.10 * CL();          // 取景上边界（含悬臂的高度）
+    const ZF = () => 0.20 * CL();          // 近端（+z）
+    const ZN = () => -0.16 * CL();         // 远端（−z）
+    const ZRULER = () => 0.30 * CL();      // 地面刻度尺铺在这里（取景盒子之外）
+
+    /* 包络 = 走廊八个角 + 测速仪 + 车的最远处。
+     * ★ 走廊本身不是实物（地面是无限的），它只是「我们要看的那一块」。 */
+    function envelopePoints() {
+      const x0 = XA(), x1 = XB(), y1 = YT(), zn = ZN(), zf = ZF();
+      const carTail = state.camD + CAR_L;
+      return [
+        [x0, 0, zn], [x1, 0, zn], [x1, 0, zf], [x0, 0, zf],
+        [x0, y1, zn], [x1, y1, zn], [x1, y1, zf], [x0, y1, zf],
+        [x0, 0, ZRULER()], [x1, 0, ZRULER()],
+        [0, POLE_H, STATION_Z], [carTail, CAR_H, CAR_Z]
+      ];
+    }
+
+    function makeCam(q, w, h) {
+      const cy = Math.cos(state.yaw), sy = Math.sin(state.yaw);
+      const cp = Math.cos(state.pitch), sp = Math.sin(state.pitch);
+      const dir = [cp * sy, sp, cp * cy];
+      const L = CL();
+      const target = [XA() + 0.50 * L, 0.045 * L, 0];
+      q.dist = 1.05 * L / state.zoom;
+      q.eye = add(target, scl(dir, q.dist));
+      q.fwd = scl(dir, -1);
+      q.right = vnorm(cross(q.fwd, [0, 1, 0]));
+      q.up = cross(q.right, q.fwd);
+      /* ★ 自动取景必须累加【投影后】的 r/z、u/z —— 屏幕尺度是 focal·(r/z)，
+       *   用相机空间的 r、u 会让大 z 跨度的场景整体塌掉。 */
+      let loR = 1e9, hiR = -1e9, loU = 1e9, hiU = -1e9;
+      for (const p of envelopePoints()) {
+        const v = sub(p, q.eye);
+        const z = Math.max(0.05, dot(v, q.fwd));
+        const r = dot(v, q.right) / z, u = dot(v, q.up) / z;
+        loR = Math.min(loR, r); hiR = Math.max(hiR, r);
+        loU = Math.min(loU, u); hiU = Math.max(hiU, u);
+      }
+      const s = Math.min(w * 0.94 / Math.max(1e-6, hiR - loR),
+                         h * 0.90 / Math.max(1e-6, hiU - loU));
+      q.focal = s;
+      // 居中的对象是【屏幕包围盒的中心】，不是「包络中心点的投影」
+      q.px = w * 0.5 - (loR + hiR) * 0.5 * s;
+      q.py = h * 0.5 + (loU + hiU) * 0.5 * s;
+      q.envR = [loR, hiR]; q.envU = [loU, hiU];
+      return q;
+    }
+    function project(p, q) {
+      const v = sub(p, q.eye);
+      const z = Math.max(0.05, dot(v, q.fwd));
+      const s = q.focal / z;
+      return { x: q.px + dot(v, q.right) * s, y: q.py - dot(v, q.up) * s, s: s, z: z };
+    }
+    // 屏幕点 → 世界射线与水平面 y = planeY 的交点
+    function unproject(sx, sy, q, planeY) {
+      const dx = (sx - q.px) / q.focal;
+      const dy = -(sy - q.py) / q.focal;
+      const d = add(add(q.fwd, scl(q.right, dx)), scl(q.up, dy));
+      if (Math.abs(d[1]) < 1e-6) return null;
+      const t = ((planeY === undefined ? 0 : planeY) - q.eye[1]) / d[1];
+      if (t <= 0) return null;
+      return add(q.eye, scl(d, t));
+    }
+
+    /* ============================================================
+     * 绘图小工具
+     * ============================================================ */
+    function polyPath(pts) {
+      ctx.beginPath();
+      pts.forEach((p, k) => k ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+      ctx.closePath();
+    }
+    function poly(pts, fill, stroke, lw) {
+      if (!pts || pts.length < 2) return;
+      polyPath(pts);
+      if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+      if (stroke) { ctx.lineWidth = lw || 1; ctx.strokeStyle = stroke; ctx.stroke(); }
+    }
+    function line(pts, color, lw, dash) {
+      if (!pts || pts.length < 2) return;
+      ctx.beginPath();
+      pts.forEach((p, k) => k ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+      ctx.setLineDash(dash || []);
+      ctx.lineWidth = lw; ctx.strokeStyle = color; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+      ctx.stroke(); ctx.setLineDash([]);
+    }
+    // 点列里可能夹着 null（被裁掉的部分），遇到 null 就断开成另一段
+    function segLine(pts, color, lw, dash) {
+      let cur = [];
+      for (const p of pts) {
+        if (p) cur.push(p);
+        else { if (cur.length > 1) line(cur, color, lw, dash); cur = []; }
+      }
+      if (cur.length > 1) line(cur, color, lw, dash);
+    }
+    function dot2(p, r, fill, stroke, lw) {
+      if (r <= 0.2) return;
+      ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, PI2);
+      if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+      if (stroke) { ctx.lineWidth = lw || 1; ctx.strokeStyle = stroke; ctx.stroke(); }
+    }
+    const rgb = (c, k) => {
+      const s = k === undefined ? 1 : k;
+      return 'rgb(' + Math.round(clamp(c[0] * s, 0, 255)) + ',' +
+                      Math.round(clamp(c[1] * s, 0, 255)) + ',' +
+                      Math.round(clamp(c[2] * s, 0, 255)) + ')';
+    };
+    const LIGHT = vnorm([-0.30, 0.86, 0.42]);
+    const shade = (base, n, amb) => rgb(base, (amb === undefined ? 0.50 : amb) + 0.62 * Math.max(0, dot(n, LIGHT)));
+
+    /* ---------------------------- 通用盒子 ----------------------------
+     * 六个面，顶点【从外面看逆时针】排列 —— 面法线由 cross(v1−v0, v2−v1) 直接算出。
+     * 顶点编号：0..3 底面，4..7 顶面（同序）。
+     * ------------------------------------------------------------------ */
+    const HEX_FACES = [
+      [4, 7, 6, 5],   // 顶 (+y)
+      [0, 1, 2, 3],   // 底 (−y)
+      [3, 2, 6, 7],   // 前 (+z)
+      [1, 0, 4, 5],   // 后 (−z)
+      [2, 1, 5, 6],   // 右 (+x)
+      [0, 3, 7, 4]    // 左 (−x)
+    ];
+    function hexa(q, world, base, opts) {
+      const o = opts || {};
+      const P = world.map(p => project(p, q));
+      const amb = o.amb === undefined ? 0.50 : o.amb;
+      const box = {
+        x0: 1e9, x1: -1e9, y0: 1e9, y1: -1e9,
+        wx0: 1e9, wx1: -1e9, wy0: 1e9, wy1: -1e9, wz0: 1e9, wz1: -1e9
+      };
+      for (const p of world) {
+        box.wx0 = Math.min(box.wx0, p[0]); box.wx1 = Math.max(box.wx1, p[0]);
+        box.wy0 = Math.min(box.wy0, p[1]); box.wy1 = Math.max(box.wy1, p[1]);
+        box.wz0 = Math.min(box.wz0, p[2]); box.wz1 = Math.max(box.wz1, p[2]);
+      }
+      for (const idx of HEX_FACES) {
+        const v0 = world[idx[0]], v1 = world[idx[1]], v2 = world[idx[2]];
+        const n = vnorm(cross(sub(v1, v0), sub(v2, v1)));
+        const fc = [0, 0, 0];
+        for (const i of idx) { fc[0] += world[i][0] / 4; fc[1] += world[i][1] / 4; fc[2] += world[i][2] / 4; }
+        if (dot(n, sub(q.eye, fc)) <= 0) continue;      // 背面剔除
+        const quad = idx.map(i => P[i]);
+        poly(quad, o.flat ? rgb(base, o.k === undefined ? 1 : o.k) : shade(base, n, amb),
+             o.stroke, o.lw || 1);
+        for (const p of quad) {
+          box.x0 = Math.min(box.x0, p.x); box.x1 = Math.max(box.x1, p.x);
+          box.y0 = Math.min(box.y0, p.y); box.y1 = Math.max(box.y1, p.y);
+        }
+      }
+      return box;
+    }
+    function box3(q, cx, cy, cz, w, h, d, base, opts) {
+      const hw = w / 2, hd = d / 2;
+      return hexa(q, [
+        [cx - hw, cy, cz - hd], [cx + hw, cy, cz - hd], [cx + hw, cy, cz + hd], [cx - hw, cy, cz + hd],
+        [cx - hw, cy + h, cz - hd], [cx + hw, cy + h, cz - hd], [cx + hw, cy + h, cz + hd], [cx - hw, cy + h, cz + hd]
+      ], base, opts);
+    }
+    // 两头粗细不同的「盒」：做锥形支架、收腰的机身。p0/p1 是两端截面中心。
+    function limb3(q, p0, p1, w0, d0, w1, d1, base, opts) {
+      const h0 = w0 / 2, g0 = d0 / 2, h1 = w1 / 2, g1 = d1 / 2;
+      return hexa(q, [
+        [p0[0] - h0, p0[1], p0[2] - g0], [p0[0] + h0, p0[1], p0[2] - g0],
+        [p0[0] + h0, p0[1], p0[2] + g0], [p0[0] - h0, p0[1], p0[2] + g0],
+        [p1[0] - h1, p1[1], p1[2] - g1], [p1[0] + h1, p1[1], p1[2] - g1],
+        [p1[0] + h1, p1[1], p1[2] + g1], [p1[0] - h1, p1[1], p1[2] + g1]
+      ], base, opts);
+    }
+    // 地面上的影子：一个贴在 y≈0 的扁椭圆（在水平面上画成椭圆多边形）
+    function shadow(q, cx, cz, rx, rz, alpha) {
+      const pts = [];
+      for (let k = 0; k <= 26; k++) {
+        const a = k / 26 * PI2;
+        pts.push(project([cx + rx * Math.cos(a), 0.012, cz + rz * Math.sin(a)], q));
+      }
+      poly(pts, 'rgba(2,6,23,' + alpha + ')');
+    }
+
+    /* ---------------------------- 标签（带避让） ----------------------------
+     * ★ frameBoxes 是标签盒，frameSolids 是【实体】的屏幕盒 —— 两者要一起参与
+     *   打分。只躲别的标签的话，字会直接压在车身上（车比标签先画，避让算法
+     *   又不知道它在哪）。实测踩过：橙色车身把四个字劈成两半。 */
+    let frameBoxes = [];
+    let frameSolids = [];
+    function labelBox(p, text, size, align) {
+      ctx.font = '800 ' + size + 'px Inter, "Microsoft YaHei", sans-serif';
+      const wpx = ctx.measureText(text).width;
+      const pad = 4;
+      const half = size * 0.72 + pad * 0.5;
+      const wBox = wpx + pad * 2;
+      const EDGE = 8;
+      const y = clamp(p.y, half + EDGE, Math.max(half + EDGE, state.h - half - EDGE));
+      let bx = align === 'left' ? p.x - 4 - pad
+             : align === 'right' ? p.x + 4 - wpx - pad
+             : p.x - wpx / 2 - pad;
+      bx = clamp(bx, EDGE, Math.max(EDGE, state.w - wBox - EDGE));
+      return { x: bx, y: y - half, w: wBox, h: half * 2, cx: bx + wBox / 2, cy: y };
+    }
+    function label(p, text, color, size, align) {
+      ctx.font = '800 ' + size + 'px Inter, "Microsoft YaHei", sans-serif';
+      ctx.textAlign = align || 'center';
+      ctx.textBaseline = 'middle';
+      const pad = 4;
+      const wpx = ctx.measureText(text).width;
+      const b = labelBox(p, text, size, align);
+      const x = align === 'left' ? b.x + pad : align === 'right' ? b.x + wpx + pad : b.cx;
+      ctx.fillStyle = 'rgba(2,6,23,.76)';
+      ctx.fillRect(b.x, b.y, b.w, b.h);
+      ctx.fillStyle = color;
+      ctx.fillText(text, x, b.cy);
+      frameBoxes.push(b);
+      // ★ 把【真正落笔】的标签盒子也记一份给自检（state.drawn.labels）
+      if (state.drawn) {
+        (state.drawn.labels || (state.drawn.labels = [])).push({ text: text, box: b });
+      }
+      return b;
+    }
+    // 在一组候选落点里挑「与本帧已画盒子（标签 + 实体）重叠面积最小」的那个
+    function bestLabel(anchor, text, color, size, offs) {
+      let best = null, bestOv = 1e18;
+      for (const o of offs) {
+        const b = labelBox({ x: anchor.x + o[0], y: anchor.y + o[1] }, text, size, 'center');
+        let ov = 0;
+        for (const q of frameBoxes.concat(frameSolids)) {
+          const ox = Math.min(b.x + b.w, q.x + q.w) - Math.max(b.x, q.x);
+          const oy = Math.min(b.y + b.h, q.y + q.h) - Math.max(b.y, q.y);
+          if (ox > 0 && oy > 0) ov += ox * oy;
+        }
+        if (ov < bestOv) { bestOv = ov; best = { x: anchor.x + o[0], y: anchor.y + o[1] }; }
+      }
+      label(best, text, color, size, 'center');
+      return bestOv;
+    }
+    const AVOID = [[0, 0], [0, -16], [0, 16], [0, -32], [0, 32],
+                   [-52, -16], [52, -16], [-52, 16], [52, 16], [0, -48], [0, 48]];
+    const avoidLabel = (anchor, text, color, size) => bestLabel(anchor, text, color, size, AVOID);
+
+    /* ============================================================
+     * 声音（Web Audio）
+     * ------------------------------------------------------------
+     * 40 kHz 人耳听不见 —— 这里用可听的高音「代表」它，界面里写明。
+     * ★★ 每次新建 voice 必须【立刻 connect(bus)】：站内声学页曾经链搭好了、
+     *    gain 也按物理量一帧一帧地动，但出口悬空 —— 所有查「那个数」的自检
+     *    全绿，耳朵里一片死寂。
+     * ============================================================ */
+    let AC = null, bus = null, muted = false;
+    const TX_F = 3200, TX_PEAK = 0.42, TX_DUR = 0.16;
+    const RX_F = 2300, RX_PEAK = 0.15, RX_DUR = 0.30;
+    const HIT_F = 4200, HIT_PEAK = 0.09, HIT_DUR = 0.06;
+
+    function ensureAudio() {
+      if (AC) { if (AC.state === 'suspended') AC.resume(); return AC; }
+      const Ctor = window.AudioContext || window.webkitAudioContext;
+      if (!Ctor) return null;
+      try { AC = new Ctor(); } catch (_) { AC = null; return null; }
+      if (AC.state === 'suspended') AC.resume();
+      bus = AC.createGain();
+      bus.gain.value = 0.5;
+      const shaper = AC.createWaveShaper();
+      const curve = new Float32Array(1024);
+      for (let i = 0; i < 1024; i++) curve[i] = Math.tanh(((i / 1023) * 2 - 1) * 1.6);
+      shaper.curve = curve;
+      bus.connect(shaper);
+      shaper.connect(AC.destination);
+      return AC;
+    }
+    function ping(freq, peak, dur, delay) {
+      if (!AC || muted || !state.soundOn) return null;
+      const t0 = AC.currentTime + (delay || 0);
+      const o = AC.createOscillator(); o.type = 'sine'; o.frequency.value = freq;
+      const g = AC.createGain();
+      g.gain.setValueAtTime(0, t0);
+      g.gain.linearRampToValueAtTime(peak, t0 + 0.006);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+      o.connect(g); g.connect(bus);            // ← 这一句就是「有没有声音」的分界线
+      o.start(t0); o.stop(t0 + dur + 0.05);
+      return { freq: freq, peak: peak, dur: dur, at: t0 };
+    }
+    const pingTX = () => ping(TX_F, TX_PEAK, TX_DUR, 0);
+    const pingRX = () => ping(RX_F, RX_PEAK, RX_DUR, 0);
+    const pingHit = () => ping(HIT_F, HIT_PEAK, HIT_DUR, 0);
+
+    let audioKicked = false;
+    function kickAudio() {
+      if (!audioKicked) {
+        if (!ensureAudio()) return;
+        audioKicked = true;
+        syncUI();
+        return;
+      }
+      if (AC && AC.state === 'suspended') AC.resume();
+    }
+
+    /* ============================================================
+     * 场景绘制
+     * ============================================================ */
+    function drawBackdrop(w, h) {
+      const g = ctx.createLinearGradient(0, 0, 0, h);
+      g.addColorStop(0, '#040a16');
+      g.addColorStop(0.52, '#071627');
+      g.addColorStop(1, '#020610');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, w, h);
+    }
+
+    /* ---------------------------- 地形 ----------------------------
+     * 路两侧的原野。它【远大于取景盒子】—— 不这么画的话，路在 x = XB 处
+     * 会戛然而止，看着像悬空的板子。远处的边缘落在画外，地面就一直延伸出去。
+     * ------------------------------------------------------------ */
+    function drawTerrain(q) {
+      const L = CL();
+      const x0 = XA() - 1.4 * L, x1 = XB() + 2.6 * L;
+      const z1 = 3.4 * ZF();
+      const P = (x, y, z) => project([x, y, z], q);
+      /* 远→近分四层铺色。一层平色会让地面像一块塑料板；分层之后
+       * 「远处更暗」这件事自己就把纵深交代了，不必等透视。 */
+      const bands = [-1, -0.42, 0.42, 1];
+      const cols = ['rgba(11,24,20,.99)', 'rgba(15,32,26,.99)', 'rgba(19,40,31,.99)', 'rgba(24,49,37,.99)'];
+      for (let i = 0; i < 4; i++) {
+        const za = bands[i] * z1, zb = bands[i + 1] * z1;
+        poly([P(x0, -0.05, za), P(x1, -0.05, za), P(x1, -0.05, zb), P(x0, -0.05, zb)], cols[i], null, 0);
+      }
+      // 田野纹理：与路平行的一排排浅色条带
+      for (let k = 1; k <= 9; k++) {
+        const zz = -z1 + 2 * z1 * k / 10;
+        if (Math.abs(zz) < ROAD_HW + 1.6) continue;
+        line([P(x0, -0.035, zz), P(x1, -0.035, zz)], 'rgba(78,138,108,.26)', 1);
+      }
+      for (let k = 1; k <= 7; k++) {
+        const xx = x0 + (x1 - x0) * k / 8;
+        line([P(xx, -0.035, -z1), P(xx, -0.035, z1)], 'rgba(78,138,108,.15)', 1);
+      }
+    }
+
+    /* 路边的树：用【屏幕空间的圆】当树冠 —— 它不依赖视线方向。
+     * 用竖直线段在别的视角会被压成一条边（persp 视角几乎正沿路看过去）。 */
+    function drawTrees(q) {
+      const P = (x, y, z) => project([x, y, z], q);
+      const H = 3.3, CROWN = 0.36;
+      for (let x = Math.ceil((XA() - 14) / 11) * 11; x <= XB() + 34; x += 11) {
+        for (const z of [-9.4, 9.8, -13.6, 13.2]) {
+          const base = P(x + (z > 0 ? 5.5 : 0), 0, z);
+          const top = P(x + (z > 0 ? 5.5 : 0), H, z);
+          const rpx = Math.hypot(top.x - base.x, top.y - base.y) * CROWN;
+          if (rpx < 1.2) continue;
+          line([base, P(x + (z > 0 ? 5.5 : 0), H * 0.42, z)], 'rgba(62,48,34,.9)', Math.max(1.2, rpx * 0.20));
+          dot2({ x: top.x, y: top.y + rpx * 0.42 }, rpx,
+               'rgba(26,62,44,.97)', 'rgba(12,34,24,.9)', 1);
+        }
+      }
+    }
+
+    /* 距离雾：屏幕空间的竖向渐变，压在远景上。近处的路面在它之后画，不受影响。 */
+    function drawHaze(w, h) {
+      const g = ctx.createLinearGradient(0, 0, 0, h * 0.32);
+      g.addColorStop(0, 'rgba(3,8,18,.94)');
+      g.addColorStop(0.5, 'rgba(4,12,24,.44)');
+      g.addColorStop(1, 'rgba(4,12,24,0)');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, w, h * 0.32);
+    }
+
+    /* ---------------------------- 路面 ----------------------------
+     * 一条双车道高速：中央虚线、两侧实线，再往外是路肩。
+     * ------------------------------------------------------------ */
+    function drawRoad(q) {
+      const L = CL();
+      const x0 = XA() - 0.9 * L, x1 = XB() + 1.8 * L;
+      const P = (x, y, z) => project([x, y, z], q);
+      // 路肩（比路面再宽一点，颜色略深）
+      poly([P(x0, 0, -ROAD_HW - 1.4), P(x1, 0, -ROAD_HW - 1.4), P(x1, 0, ROAD_HW + 1.4), P(x0, 0, ROAD_HW + 1.4)],
+           'rgba(50,58,72,.99)', null, 0);
+      // 路面
+      poly([P(x0, 0.002, -ROAD_HW), P(x1, 0.002, -ROAD_HW), P(x1, 0.002, ROAD_HW), P(x0, 0.002, ROAD_HW)],
+           'rgba(36,43,56,.99)', null, 0);
+      // 路面上一条更亮的「车辙带」：给沥青一点材质感，也让路面不是一块死色
+      poly([P(x0, 0.004, -LANE_EDGE + 0.5), P(x1, 0.004, -LANE_EDGE + 0.5),
+            P(x1, 0.004, LANE_EDGE - 0.5), P(x0, 0.004, LANE_EDGE - 0.5)],
+           'rgba(48,56,70,.55)', null, 0);
+      // 边缘实线
+      for (const zz of [-LANE_EDGE, LANE_EDGE]) {
+        line([P(x0, 0.008, zz), P(x1, 0.008, zz)], 'rgba(226,232,240,.8)', 2.4);
+      }
+      // 中央虚线：一段 4 m、空 6 m
+      let dashes = 0;
+      for (let x = Math.ceil(x0 / 10) * 10; x < x1; x += 10) {
+        line([P(x, 0.008, 0), P(x + 4, 0.008, 0)], 'rgba(238,242,247,.78)', 2.4);
+        dashes++;
+      }
+      // 车道内的一条浅色磨痕（近侧车道），给路面一点材质感
+      line([P(x0, 0.005, CAR_Z - 0.95), P(x1, 0.005, CAR_Z - 0.95)], 'rgba(148,163,184,.10)', 3);
+      line([P(x0, 0.005, CAR_Z + 0.95), P(x1, 0.005, CAR_Z + 0.95)], 'rgba(148,163,184,.10)', 3);
+      state.drawn.roadDashes = dashes;
+      state.drawn.roadEdgeZ = LANE_EDGE;
+    }
+
+    /* ---------------------------- 对面护栏 + 近侧轮廓标 ---------------------------- */
+    function drawGuardrail(q) {
+      const x0 = XA() - 0.6 * CL(), x1 = XB() + 1.2 * CL();
+      const P = (x, y, z) => project([x, y, z], q);
+      const RAIL = [126, 138, 156], POST = [96, 108, 126];
+      let posts = 0;
+      for (let x = Math.ceil(x0 / 4) * 4; x <= x1; x += 4) {
+        box3(q, x, 0, RAIL_Z, 0.14, RAIL_H, 0.14, POST, { stroke: 'rgba(2,6,23,.4)' });
+        posts++;
+      }
+      // 波形梁：一条沿 x 的扁盒子
+      const b = hexa(q, [
+        [x0, RAIL_H - 0.20, RAIL_Z - 0.05], [x1, RAIL_H - 0.20, RAIL_Z - 0.05],
+        [x1, RAIL_H - 0.20, RAIL_Z + 0.05], [x0, RAIL_H - 0.20, RAIL_Z + 0.05],
+        [x0, RAIL_H + 0.06, RAIL_Z - 0.05], [x1, RAIL_H + 0.06, RAIL_Z - 0.05],
+        [x1, RAIL_H + 0.06, RAIL_Z + 0.05], [x0, RAIL_H + 0.06, RAIL_Z + 0.05]
+      ], RAIL, { stroke: 'rgba(2,6,23,.35)', lw: 1 });
+      // 近侧轮廓标（白色小柱 + 红色反光片）—— 每 8 m 一根，给路肩一个尺度线索
+      let marks = 0;
+      for (let x = Math.ceil(x0 / 8) * 8; x <= x1; x += 8) {
+        box3(q, x, 0, ROAD_HW + 0.62, 0.10, 0.78, 0.10, [222, 228, 236], { stroke: 'rgba(2,6,23,.35)' });
+        const p = P(x, 0.62, ROAD_HW + 0.62);
+        dot2(p, 2.2, 'rgba(248,113,113,.95)', null, 0);
+        marks++;
+      }
+      state.drawn.railPosts = posts;
+      state.drawn.markerPosts = marks;
+      state.drawn.railBox = b;
+    }
+
+    /* ---------------------------- 地面刻度尺 ----------------------------
+     * 这一页的「诚实锚点」：取景会随 s₁ 缩放，单看画面判断不了距离；
+     * 把米数画在地上，压缩感才不会骗人。
+     * ------------------------------------------------------------------ */
+    function drawRuler(q) {
+      const L = CL(), y = 0.014, zr = ZRULER();
+      const P = (x, y2, z) => project([x, y2, z], q);
+      line([P(0, y, zr), P(XB(), y, zr)], 'rgba(148,163,184,.40)', 1.6);
+      let ticks = 0, labels = 0;
+      for (let x = 0; x <= XB() + 1e-6; x += 5) {
+        const major = Math.abs(x / 10 - Math.round(x / 10)) < 1e-6;
+        line([P(x, y, zr), P(x, y, zr + (major ? L * 0.020 : L * 0.010))],
+             major ? 'rgba(203,213,225,.66)' : 'rgba(148,163,184,.38)', major ? 2 : 1);
+        ticks++;
+        if (major && x > 0.5) {
+          const a = P(x, y, zr + L * 0.032);
+          avoidLabel({ x: a.x, y: a.y }, x + ' m', 'rgba(203,213,225,.8)', 10);
+          labels++;
+        }
+      }
+      state.drawn.rulerTicks = ticks;
+      state.drawn.rulerLabels = labels;
+      state.drawn.rulerZ = zr;
+    }
+
+    /* ---------------------------- 声束（圆锥） ----------------------------
+     * 换能器的指向性：一个半角 BEAM_HA 的圆锥。真实 40 kHz 换能器的
+     * −6 dB 波束宽度在 15°~30° 之间，这里取 ±17°。
+     * 圆锥画成线框 + 两个极低透明度的剖面三角，读起来像一束探照灯。
+     * ------------------------------------------------------------------ */
+    const beamReach = () => clamp(farD() + 4, 14, Math.min(36, XB() - 1.5));
+    const beamRimR = () => Math.tan(BEAM_HA) * beamReach();
+
+    function drawBeam(q) {
+      const reach = beamReach(), rr = beamRimR();
+      const A = [0, TX_Y, CAR_Z];
+      const P = (x, y, z) => project([x, y, z], q);
+      // 水平剖面 + 竖直剖面（低透明度，给锥体一点体积感）
+      poly([P(A[0], A[1], A[2]), P(reach, A[1], A[2] - rr), P(reach, A[1], A[2] + rr)],
+           'rgba(56,189,248,.10)', null, 0);
+      poly([P(A[0], A[1], A[2]), P(reach, A[1] - rr, A[2]), P(reach, A[1] + rr, A[2])],
+           'rgba(56,189,248,.085)', null, 0);
+      // 端面圆【不画】：它是个大圆，在画面上跟「球面波前」长得一模一样，
+      // 学生分不清哪个是脉冲。只留母线 + 一圈中环，读起来才是一束「光」。
+      const ring = (xr, col, lw) => {
+        const pts = [];
+        for (let i = 0; i <= 44; i++) {
+          const a = i / 44 * PI2;
+          const p = [xr, A[1] + rr * xr / reach * Math.sin(a), A[2] + rr * xr / reach * Math.cos(a)];
+          pts.push(p[1] >= 0.02 ? project(p, q) : null);
+        }
+        segLine(pts, col, lw);
+      };
+      ring(reach * 0.52, 'rgba(125,211,252,.20)', 1.1);
+      // 六条母线
+      for (let i = 0; i < 6; i++) {
+        const a = i / 6 * PI2;
+        const e = [reach, A[1] + rr * Math.sin(a), A[2] + rr * Math.cos(a)];
+        line([P(A[0], A[1], A[2]), P(e[0], e[1], e[2])], 'rgba(125,211,252,.26)', 1.2);
+      }
+      // 换能器口的一个小亮环 —— 声从这里出来
+      const mouth = [];
+      for (let i = 0; i <= 30; i++) {
+        const a = i / 30 * PI2;
+        mouth.push(P(0.06, A[1] + 0.16 * Math.sin(a), A[2] + 0.16 * Math.cos(a)));
+      }
+      segLine(mouth, 'rgba(125,211,252,.55)', 1.6);
+      state.drawn.beamReach = reach;
+      state.drawn.beamRimR = rr;
+      state.drawn.beamApex = A;
+    }
+
+    /* ---------------------------- 脉冲波前 ----------------------------
+     * 球冠：以【换能器】为心向外鼓的是去程（蓝），以【反射点】为心往回扫的是
+     * 回程（琥珀）。两条在 r = s_k 处衔接 —— 波前撞上车的那一刻。
+     * 画四条母线的弧 + 冠的边缘圆：只画一条弧的话读出来是「一个环」，
+     * 四条 + 边缘圆才读得出「一个球面被锥体切下来的一块」。
+     * ------------------------------------------------------------------ */
+    function drawCap(q, cx, r, sg, col, lw) {
+      if (r < 1e-4) return 0;
+      const A = [cx, TX_Y, CAR_Z];
+      let plotted = 0;
+      for (const th of [0, Math.PI / 2, Math.PI, Math.PI * 1.5]) {
+        const pts = [];
+        for (let i = 0; i <= 20; i++) {
+          const ph = BEAM_HA * i / 20;
+          const p = [A[0] + sg * r * Math.cos(ph),
+                     A[1] + r * Math.sin(ph) * Math.cos(th),
+                     A[2] + r * Math.sin(ph) * Math.sin(th)];
+          if (p[1] >= 0.02) { pts.push(project(p, q)); plotted++; } else pts.push(null);
+        }
+        segLine(pts, col, lw);
+      }
+      const rim = [];
+      for (let i = 0; i <= 44; i++) {
+        const th = i / 44 * PI2;
+        const p = [A[0] + sg * r * Math.cos(BEAM_HA),
+                   A[1] + r * Math.sin(BEAM_HA) * Math.cos(th),
+                   A[2] + r * Math.sin(BEAM_HA) * Math.sin(th)];
+        rim.push(p[1] >= 0.02 ? project(p, q) : null);
+      }
+      segLine(rim, col, lw * 0.72);
+      const pole = project([A[0] + sg * r, A[1], A[2]], q);
+      dot2(pole, 3.6, col, 'rgba(2,6,23,.75)', 1);
+      return plotted;
+    }
+
+    function drawFronts(q) {
+      const tau = state.tau;
+      const list = [];
+      const glow = 0.55 + 0.20 * Math.sin(state.t * 3.4);
+      for (const k of [1, 2]) {
+        const emit = emitOf(k), tk = tOf(k);
+        const u = tau - emit;
+        if (u < -1e-9 || u > tk + 1e-9) continue;
+        const back = u > tk / 2;
+        const r = back ? cNow() * (u - tk / 2) : cNow() * u;
+        const cx = back ? cNow() * tk / 2 : 0;
+        const sg = back ? -1 : 1;
+        const col = back ? 'rgba(251,191,36,' + glow.toFixed(3) + ')'
+                         : 'rgba(125,211,252,' + glow.toFixed(3) + ')';
+        const n = drawCap(q, cx, r, sg, col, 2.1);
+        list.push({ k: k, back: back, cx: cx, r: r, sg: sg, x: cx + sg * r, plotted: n });
+      }
+      state.drawn.fronts = list;
+      state.drawn.front1X = list.filter(f => f.k === 1).map(f => f.x)[0];
+      state.drawn.front2X = list.filter(f => f.k === 2).map(f => f.x)[0];
+    }
+
+    /* ---------------------------- 测速仪（路肩立柱 + 悬臂 + 换能器） ----------------------------
+     * 换能器必须【正好落在车道中心线正上方】：声轴沿车道方向，测到的是
+     * 沿路距离。立柱立在路肩上，用一根悬臂伸过来 —— 真实高速测速仪就是这么装的。
+     * ------------------------------------------------------------------ */
+    function drawStation(q) {
+      const P = (x, y, z) => project([x, y, z], q);
+      const POST = [104, 116, 134], CAB = [76, 88, 106], TXB = [148, 160, 178], ACC = [96, 165, 250];
+      let box = null;
+      const merge = b => {
+        if (!b) return;
+        if (!box) box = { x0: b.x0, x1: b.x1, y0: b.y0, y1: b.y1 };
+        else {
+          box.x0 = Math.min(box.x0, b.x0); box.x1 = Math.max(box.x1, b.x1);
+          box.y0 = Math.min(box.y0, b.y0); box.y1 = Math.max(box.y1, b.y1);
+        }
+      };
+      shadow(q, 0, STATION_Z, 0.42, 0.42, 0.42);
+      // 立柱（带一点锥度）
+      merge(limb3(q, [0, 0, STATION_Z], [0, POLE_H, STATION_Z], 0.20, 0.20, 0.14, 0.14, POST,
+                   { stroke: 'rgba(2,6,23,.45)' }));
+      // 立柱上的机箱 + 屏幕
+      merge(box3(q, 0, 1.20, STATION_Z, 0.46, 0.62, 0.34, CAB, { stroke: 'rgba(2,6,23,.5)' }));
+      const scr = P(0.24, 1.50, STATION_Z);
+      dot2(scr, 8.5, 'rgba(6,24,34,.96)', 'rgba(125,211,252,.5)', 1.2);
+      state.drawn.stationScr = scr;
+      // 悬臂：从立柱伸到车道中心线正上方
+      merge(limb3(q, [0, ARM_Y, STATION_Z], [0, ARM_Y, CAR_Z - 0.10], 0.13, 0.13, 0.11, 0.11,
+                  POST, { stroke: 'rgba(2,6,23,.4)' }));
+      // 换能器吊杆 + 探头
+      merge(limb3(q, [0, ARM_Y, CAR_Z], [0, TX_Y + 0.10, CAR_Z], 0.09, 0.09, 0.09, 0.09,
+                  POST, { stroke: 'rgba(2,6,23,.4)' }));
+      merge(box3(q, 0, TX_Y - 0.17, CAR_Z, 0.34, 0.27, 0.34, TXB, { stroke: 'rgba(2,6,23,.5)' }));
+      // 辐射面：朝 +x 的圆盘 + 三圈同心环
+      const fx = 0.175, rad = 0.155;
+      const face = [];
+      for (let k = 0; k <= 36; k++) {
+        const a = k / 36 * PI2;
+        face.push(P(fx, TX_Y + rad * Math.sin(a), CAR_Z + rad * Math.cos(a)));
+      }
+      poly(face, 'rgba(22,32,46,.96)', 'rgba(148,163,184,.6)', 1.2);
+      for (const k of [0.70, 0.44, 0.20]) {
+        const rr = [];
+        for (let i = 0; i <= 28; i++) {
+          const a = i / 28 * PI2;
+          rr.push(P(fx + 0.005, TX_Y + rad * k * Math.sin(a), CAR_Z + rad * k * Math.cos(a)));
+        }
+        segLine(rr, 'rgba(96,165,250,.55)', 1.1);
+      }
+      // 收发指示灯：收到回声时亮绿
+      const lit = state.flashEcho > 0.01;
+      dot2(P(fx + 0.01, TX_Y + 0.215, CAR_Z), 2.6,
+           lit ? 'rgba(52,211,153,.98)' : 'rgba(248,113,113,.85)', 'rgba(2,6,23,.6)', 1);
+      state.drawn.stationBox = box;
+      state.drawn.txPt = P(0, TX_Y, CAR_Z);
+      state.drawn.stationWorld = { z: STATION_Z, poleH: POLE_H, armY: ARM_Y, txY: TX_Y, carZ: CAR_Z };
+      if (box) frameSolids.push({ x: box.x0, y: box.y0, w: box.x1 - box.x0, h: box.y1 - box.y0 });
+    }
+
+    /* ---------------------------- 汽车 ----------------------------
+     * 车头朝 +x（正在驶离），所以镜头看到的是【车尾】—— 尾灯、牌照都在这一面。
+     * ------------------------------------------------------------------ */
+    function drawCar(q) {
+      const cx = carX(), L = CAR_L, W = CAR_W, H = CAR_H, z0 = CAR_Z;
+      const P = (x, y, z) => project([x, y, z], q);
+      const BODY = [178, 92, 74], DARK = [46, 54, 68], GLASS = [104, 136, 164], TYRE = [22, 28, 38];
+      let box = null;
+      const merge = b => {
+        if (!b) return;
+        if (!box) box = { x0: b.x0, x1: b.x1, y0: b.y0, y1: b.y1 };
+        else {
+          box.x0 = Math.min(box.x0, b.x0); box.x1 = Math.max(box.x1, b.x1);
+          box.y0 = Math.min(box.y0, b.y0); box.y1 = Math.max(box.y1, b.y1);
+        }
+      };
+      shadow(q, cx, z0, L * 0.54, W * 0.62, 0.46);
+      // 四个车轮：立在 z = ±W/2 的竖直面上的圆盘
+      const wr = 0.33;
+      for (const sz of [-1, 1]) {
+        const cz = z0 + sz * W * 0.50;
+        for (const sx of [-0.32, 0.32]) {
+          const pts = [];
+          for (let k = 0; k <= 22; k++) {
+            const a = k / 22 * PI2;
+            pts.push(P(cx + sx * L + Math.cos(a) * wr, wr + Math.sin(a) * wr, cz));
+          }
+          poly(pts, 'rgba(20,27,38,.96)', 'rgba(148,163,184,.45)', 1.0);
+        }
+      }
+      // 车身（下箱）+ 驾驶室（上箱，偏车头一侧）
+      merge(box3(q, cx, 0.30, z0, L, 0.62, W, BODY, { stroke: 'rgba(2,6,23,.5)' }));
+      merge(box3(q, cx + L * 0.06, 0.92, z0, L * 0.46, 0.40, W * 0.86, GLASS,
+                 { stroke: 'rgba(2,6,23,.5)' }));
+      // 车顶
+      merge(box3(q, cx + L * 0.06, 1.30, z0, L * 0.44, 0.06, W * 0.80, BODY,
+                 { stroke: 'rgba(2,6,23,.4)' }));
+      // 车尾面：尾灯 + 牌照（车在驶离，这一面正对测速仪和镜头）
+      const rear = cx - L / 2;
+      dot2(P(rear - 0.01, 0.78, z0 - W * 0.34), 3.4, 'rgba(248,113,113,.95)', 'rgba(2,6,23,.5)', 1);
+      dot2(P(rear - 0.01, 0.78, z0 + W * 0.34), 3.4, 'rgba(248,113,113,.95)', 'rgba(2,6,23,.5)', 1);
+      const plate = [];
+      for (const c of [[-0.24, 0.56], [0.24, 0.56], [0.24, 0.76], [-0.24, 0.76]]) {
+        plate.push(P(rear - 0.012, c[1], z0 + c[0]));
+      }
+      poly(plate, 'rgba(226,232,240,.88)', 'rgba(2,6,23,.4)', 0.8);
+      // 车头两盏灯（朝 +x，一般看不见，斜视时才露一点）
+      dot2(P(cx + L / 2, 0.72, z0 - W * 0.34), 2.6, 'rgba(253,224,71,.75)', null, 0);
+      dot2(P(cx + L / 2, 0.72, z0 + W * 0.34), 2.6, 'rgba(253,224,71,.75)', null, 0);
+      // 后视镜
+      dot2(P(cx + L * 0.28, 1.06, z0 - W * 0.52), 2.2, DARK, null, 0);
+      dot2(P(cx + L * 0.28, 1.06, z0 + W * 0.52), 2.2, DARK, null, 0);
+      state.drawn.carBox = box;
+      state.drawn.carWorld = { x: cx, z: z0, L: L, W: W, H: H };
+      if (box) frameSolids.push({ x: box.x0, y: box.y0, w: box.x1 - box.x0, h: box.y1 - box.y0 });
+    }
+
+    /* ---------------------------- 地面标线：s₁ / s₂ / 车走的这段 ----------------------------
+     * 全部画在【地面】上（y 很小），并且是纯几何 —— 文字标签留给最后统一避让。
+     * 出现的时机是渐进的：s₁ 的竖线在第一次反射之后才变亮，s₂ 同理。
+     * ------------------------------------------------------------------ */
+    function drawMarks(q) {
+      const P = (x, y, z) => project([x, y, z], q);
+      const tau = state.tau;
+      const r1x = reflX(1), r2x = reflX(2);
+      const has1 = tau >= reflTau(1) - 1e-9;
+      const has2 = tau >= reflTau(2) - 1e-9;
+      const topY = Math.max(CAR_H * 1.55, 1.9);
+      // 两条竖直虚线
+      line([P(r1x, 0, CAR_Z), P(r1x, topY, CAR_Z)],
+           has1 ? 'rgba(125,211,252,.85)' : 'rgba(125,211,252,.24)', has1 ? 2.0 : 1.4, [6, 5]);
+      line([P(r2x, 0, CAR_Z), P(r2x, topY, CAR_Z)],
+           has2 ? 'rgba(251,191,36,.88)' : 'rgba(251,191,36,.22)', has2 ? 2.0 : 1.4, [6, 5]);
+      // 竖直虚线的顶端各点一个小点
+      dot2(P(r1x, topY, CAR_Z), 3.2, has1 ? 'rgba(125,211,252,.95)' : 'rgba(125,211,252,.35)', null, 0);
+      dot2(P(r2x, topY, CAR_Z), 3.2, has2 ? 'rgba(251,191,36,.95)' : 'rgba(251,191,36,.35)', null, 0);
+      // s₂ − s₁ 的双箭头（架在两条竖线之间）
+      const byY = topY + 0.28;
+      line([P(r1x, byY, CAR_Z), P(r2x, byY, CAR_Z)], 'rgba(226,232,240,.55)', 1.6);
+      arrowHead(P(r1x, byY, CAR_Z), P(r1x + Math.min(1.6, (r2x - r1x) * 0.22), byY, CAR_Z), 'rgba(226,232,240,.7)', 8);
+      arrowHead(P(r2x, byY, CAR_Z), P(r2x - Math.min(1.6, (r2x - r1x) * 0.22), byY, CAR_Z), 'rgba(226,232,240,.7)', 8);
+      state.drawn.refl1X = r1x; state.drawn.refl2X = r2x;
+      state.drawn.refl1Pt = P(r1x, topY, CAR_Z);
+      state.drawn.refl2Pt = P(r2x, topY, CAR_Z);
+      state.drawn.diffPt = P((r1x + r2x) / 2, byY, CAR_Z);
+      // 车从「发射₁ 时」到「发射₂ 时」走过的一段（画在车底下的地面上）
+      const c0 = carXat(0), c1 = carXat(state.dtg);
+      if (state.running || tau > 1e-9) {
+        segLine([P(c0, 0.016, CAR_Z), P(Math.max(c0, carX()), 0.016, CAR_Z)],
+                'rgba(52,211,153,.55)', 2.0, [6, 5]);
+        state.drawn.runA = P(c0, 0.016, CAR_Z);
+        state.drawn.runB = P(c1, 0.016, CAR_Z);
+        state.drawn.runMid = P((c0 + c1) / 2, 0.016, CAR_Z);
+        state.drawn.runWorld = { c0: c0, c1: c1, d: c1 - c0 };
+      } else {
+        state.drawn.runA = null; state.drawn.runB = null; state.drawn.runMid = null;
+        state.drawn.runWorld = null;
+      }
+    }
+
+    function arrowHead(a, b, col, size) {
+      const dx = b.x - a.x, dy = b.y - a.y, l = Math.hypot(dx, dy) || 1;
+      const ux = dx / l, uy = dy / l, px = -uy, py = ux;
+      poly([b,
+            { x: b.x - ux * size + px * size * 0.55, y: b.y - uy * size + py * size * 0.55 },
+            { x: b.x - ux * size - px * size * 0.55, y: b.y - uy * size - py * size * 0.55 }], col);
+    }
+
+    /* ============================================================
+     * render
+     * ============================================================ */
+    function render() {
+      const w = state.w, h = state.h;
+      ctx.setTransform(state.dpr, 0, 0, state.dpr, 0, 0);
+      frameBoxes = [];
+      frameSolids = [];
+      state.drawn = {};
+      const q = {};
+      makeCam(q, w, h);
+
+      drawBackdrop(w, h);
+      drawTerrain(q);
+      drawTrees(q);
+      drawHaze(w, h);
+      drawRoad(q);
+      drawGuardrail(q);
+      drawRuler(q);
+      drawMarks(q);
+      drawBeam(q);
+      drawFronts(q);
+      drawStation(q);
+      drawCar(q);
+
+      // ── 标签（一律走避让，且【必须在所有实体画完之后】）──
+      const P = (x, y, z) => project([x, y, z], q);
+      if (state.drawn.diffPt) {
+        avoidLabel(state.drawn.diffPt, 's₂ − s₁ = ' + sDiff().toFixed(2) + ' m', '#e2e8f0', 11);
+      }
+      if (state.drawn.refl1Pt) {
+        avoidLabel(state.drawn.refl1Pt, 's₁ = ' + s1Ref().toFixed(2) + ' m（第一次反射点）', '#7dd3fc', 10);
+      }
+      if (state.drawn.refl2Pt) {
+        avoidLabel(state.drawn.refl2Pt, 's₂ = ' + s2Ref().toFixed(2) + ' m（第二次反射点）', '#fcd34d', 10);
+      }
+      if (state.drawn.runMid) {
+        avoidLabel({ x: state.drawn.runMid.x, y: state.drawn.runMid.y - 14 },
+                   '车已走 v·Δt₀ = ' + Math.abs(vNow() * state.dtg).toFixed(2) + ' m', '#6ee7b7', 10);
+      }
+      avoidLabel(P(0, POLE_H + 0.35, STATION_Z), '超声波测速仪', '#a5f3fc', 11);
+      avoidLabel(P(carX(), CAR_H * 1.9, CAR_Z),
+                 '汽车 v = ' + state.v.toFixed(1) + ' m/s（' + Math.round(state.v * 3.6) + ' km/h）',
+                 '#fca5a5', 11);
+      for (const f of (state.drawn.fronts || [])) {
+        const anchor = P(f.x, TX_Y + 0.55, CAR_Z);
+        avoidLabel(anchor, f.back ? '回声' + f.k + '（回程）' : '脉冲' + f.k + '（去程）',
+                   f.back ? '#fcd34d' : '#7dd3fc', 10);
+      }
+      avoidLabel(P(XA() + CL() * 0.14, 0.02, ZF() * 0.72),
+                 '声速 c = ' + cNow().toFixed(1) + ' m/s（' + state.temp + ' ℃）',
+                 'rgba(165,243,252,.72)', 11);
+
+      updateHint();
+      drawTip(q);
+      updateStageButtons();
+      state.drawn.labelBoxes = frameBoxes.map(b => ({ x0: b.x, x1: b.x + b.w, y0: b.y, y1: b.y + b.h }));
+    }
+
+    function drawTip(q) {
+      const tip = $('usv-tip');
+      if (!state.hover || state.dragging) { tip.classList.remove('show'); return; }
+      const p = state.hover === 'car' ? project([carX(), CAR_H, CAR_Z], q)
+              : state.hover === 'st' ? project([0, POLE_H, STATION_Z], q) : null;
+      if (!p) { tip.classList.remove('show'); return; }
+      tip.textContent = state.hover === 'car' ? '左右拖动汽车改它第一次发射时的位置' : '左右拖动测速仪改位置';
+      tip.style.left = Math.round(p.x + 14) + 'px';
+      tip.style.top = Math.round(p.y - 14) + 'px';
+      tip.classList.add('show');
+    }
+
+    /* ============================================================
+     * 示波器
+     * ------------------------------------------------------------
+     * 两层显示：
+     *   总览（左大块）—— 横轴是时间，四次事件的位置就是算车速要用的原始数据；
+     *   放大窗（右小块）—— 一次发射的 40 kHz 载波真形。总览上它不到 1 像素宽。
+     * ★ 时间轴右端 = t_end × 1.06：留一点边，否则第二个回声正好贴在右框上。
+     * ============================================================ */
+    const scopeTEnd = () => tEndRaw() * 1.06 + 0.01;
+
+    function drawScope() {
+      const w = state.sw, h = state.sh;
+      sctx.setTransform(state.dpr, 0, 0, state.dpr, 0, 0);
+      sctx.fillStyle = '#04121c';
+      sctx.fillRect(0, 0, w, h);
+
+      const PADL = 42, PADR = 14, PADT = 8;
+      const brkY = PADT + 10;
+      const pulseTop = PADT + 30;
+      /* 基线以上是脉冲区，以下是三行：事件名 / 时间刻度 / 两条对比条 + δ 标注。
+       * 三行的高度是【量出来的】：事件名 4+10、刻度 22+10、两条 15 px 的条各带 7 px
+       * 间距（+42 / +64）、δ 标注在括号下沿再留 3 px（到 +85，字高 10）—— 一共 95 px，
+       * 再留 13 px 余量。 */
+      const baseY = h - 108;
+      const TEND = scopeTEnd();
+      const X = t => PADL + (t / TEND) * (w - PADL - PADR);
+      const PH = baseY - pulseTop;
+
+      // 网格
+      sctx.strokeStyle = 'rgba(56,189,248,.10)'; sctx.lineWidth = 1;
+      for (let i = 0; i <= 8; i++) {
+        const x = Math.round(PADL + (w - PADL - PADR) * i / 8) + .5;
+        sctx.beginPath(); sctx.moveTo(x, pulseTop - 6); sctx.lineTo(x, baseY); sctx.stroke();
+      }
+      for (let i = 0; i <= 3; i++) {
+        const y = Math.round(pulseTop + PH * i / 3) + .5;
+        sctx.beginPath(); sctx.moveTo(PADL, y); sctx.lineTo(w - PADR, y); sctx.stroke();
+      }
+      // 基线
+      sctx.strokeStyle = 'rgba(148,163,184,.5)'; sctx.lineWidth = 1.4;
+      sctx.beginPath(); sctx.moveTo(PADL, baseY + .5); sctx.lineTo(w - PADR, baseY + .5); sctx.stroke();
+
+      const tx1 = 0, rx1 = t1M(), tx2 = state.dtg, rx2 = state.dtg + t2M();
+      const showRX1 = state.tau >= t1Raw() - 1e-9;
+      const showTX2 = state.tau >= state.dtg - 1e-9;
+      const showRX2 = state.tau >= tEndRaw() - 1e-9;
+
+      // 一个脉冲：竖直细线 + 半透明三角包络 + 顶端亮点
+      const spike = (t, amp, col, dotCol) => {
+        const x = X(t), top = baseY - amp * PH;
+        sctx.beginPath();
+        sctx.moveTo(x - 5, baseY); sctx.lineTo(x, top); sctx.lineTo(x + 5, baseY); sctx.closePath();
+        sctx.fillStyle = col.replace(/[\d.]+\)$/, '0.20)');
+        sctx.fill();
+        sctx.beginPath(); sctx.moveTo(x, baseY); sctx.lineTo(x, top);
+        sctx.strokeStyle = col; sctx.lineWidth = 2; sctx.stroke();
+        sctx.beginPath(); sctx.arc(x, top, 3.0, 0, PI2);
+        sctx.fillStyle = dotCol; sctx.fill();
+        return { x: x, top: top };
+      };
+      const TXC = 'rgba(125,211,252,1)', RXC = 'rgba(251,191,36,1)';
+      spike(tx1, 0.94, TXC, '#e0f2fe');
+      if (showRX1) spike(rx1, 0.44, RXC, '#fde68a');
+      if (showTX2) spike(tx2, 0.94, TXC, '#e0f2fe');
+      if (showRX2) spike(rx2, 0.44, RXC, '#fde68a');
+
+      // 事件名（压在基线下面一点）
+      const evLabel = (x, text, col) => {
+        sctx.font = '800 10px Inter, "Microsoft YaHei", sans-serif';
+        sctx.textAlign = 'center'; sctx.textBaseline = 'top';
+        sctx.fillStyle = col;
+        sctx.fillText(text, clamp(x, PADL + 16, w - PADR - 16), baseY + 4);
+      };
+      evLabel(X(tx1), '发射₁', '#7dd3fc');
+      if (showRX1) evLabel(X(rx1), '回声₁', '#fcd34d');
+      if (showTX2) evLabel(X(tx2), '发射₂', '#7dd3fc');
+      if (showRX2) evLabel(X(rx2), '回声₂', '#fcd34d');
+
+      // Δt₀ 双箭头（架在脉冲上方）
+      if (showTX2) {
+        const a = X(tx1), b = X(tx2);
+        sctx.strokeStyle = 'rgba(148,163,184,.7)'; sctx.lineWidth = 1.4;
+        sctx.beginPath(); sctx.moveTo(a, brkY); sctx.lineTo(b, brkY); sctx.stroke();
+        const ah = (x, s2) => {
+          sctx.beginPath(); sctx.moveTo(x, brkY); sctx.lineTo(x + s2 * 5, brkY - 3.2);
+          sctx.lineTo(x + s2 * 5, brkY + 3.2); sctx.closePath();
+          sctx.fillStyle = 'rgba(148,163,184,.8)'; sctx.fill();
+        };
+        ah(a, 1); ah(b, -1);
+        sctx.font = '800 10px Inter, "Microsoft YaHei", sans-serif';
+        sctx.textAlign = 'center'; sctx.textBaseline = 'bottom';
+        sctx.fillStyle = '#cbd5e1';
+        sctx.fillText('Δt₀ = ' + state.dtg.toFixed(2) + ' s', (a + b) / 2, brkY - 3);
+      }
+
+      // ── 下半：t₁ / t₂ 对比条 ──
+      // 两条从【同一个起点】画，长度分别正比于 t₁、t₂ —— 多出来的那一截就是 δ。
+      const barX0 = PADL + 6, barW = w - PADL - PADR - 12;
+      const maxT = Math.max(t2M(), 1e-9);
+      const barY1 = baseY + 42, barY2 = barY1 + 22, barH = 15;
+      const bar = (y, t, col, fill, cap) => {
+        const bw = Math.max(2, barW * (t / maxT));
+        sctx.fillStyle = 'rgba(148,163,184,.14)';
+        sctx.fillRect(barX0, y, barW, barH);
+        sctx.fillStyle = fill;
+        sctx.fillRect(barX0, y, bw, barH);
+        sctx.strokeStyle = col; sctx.lineWidth = 1.2;
+        sctx.strokeRect(barX0 + .5, y + .5, bw - 1, barH - 1);
+        sctx.font = '800 10px Inter, "Microsoft YaHei", sans-serif';
+        sctx.textAlign = 'left'; sctx.textBaseline = 'middle';
+        sctx.fillStyle = '#cbd5e1';
+        sctx.fillText(cap, barX0 + 5, y + barH / 2 + 0.5);
+        return bw;
+      };
+      let dLabel = null, brk = null;
+      if (showRX1) bar(barY1, t1M(), 'rgba(125,211,252,.9)', 'rgba(14,116,144,.65)',
+                       't₁ = ' + t1M().toFixed(6) + ' s');
+      if (showRX2) {
+        const bw1 = Math.max(2, barW * (t1M() / maxT));
+        const bw2 = bar(barY2, t2M(), 'rgba(251,191,36,.9)', 'rgba(120,53,15,.6)',
+                         't₂ = ' + t2M().toFixed(6) + ' s');
+        // 多出来的那一段单独描出来 —— 它就是 δ
+        const bTop = barY2 - 3, bBot = barY2 + barH + 3;
+        sctx.strokeStyle = 'rgba(52,211,153,.95)'; sctx.lineWidth = 2;
+        sctx.beginPath(); sctx.moveTo(barX0 + bw1, bTop); sctx.lineTo(barX0 + bw2, bTop);
+        sctx.lineTo(barX0 + bw2, bBot); sctx.lineTo(barX0 + bw1, bBot);
+        sctx.stroke();
+        /* ★ δ 的字必须落在【括号下沿之外】。原来写的是 textBaseline='bottom' +
+         *   y = barY2 + barH + 4，字身实际占 barY2+11 … barY2+19 —— 下半个字压在琥珀色
+         *   填充里，而括号下沿那条线（barY2+18）正好从字中间穿过去（放大 4 倍才看清）。
+         *   改成 top 基线、下沿再让 3 px：字占 +85…+95，与括号线彻底分开。 */
+        sctx.font = '800 10px Inter, "Microsoft YaHei", sans-serif';
+        sctx.textAlign = 'center'; sctx.textBaseline = 'top';
+        sctx.fillStyle = '#6ee7b7';
+        const dcap = 'δ = ' + dM().toFixed(6) + ' s';
+        const dcx = (barX0 + bw1 + barX0 + bw2) / 2, dcy = bBot + 3;
+        sctx.fillText(dcap, dcx, dcy);
+        const dTW = sctx.measureText(dcap).width;
+        dLabel = { x0: dcx - dTW / 2, y0: dcy, x1: dcx + dTW / 2, y1: dcy + 10 };
+        brk = { x0: barX0 + bw1, y0: bTop, x1: barX0 + bw2, y1: bBot };
+      }
+      // 时间轴刻度（放在事件名下面一行，避免与「发射₁」压在一起）
+      sctx.font = '700 9.5px ui-monospace, Menlo, monospace';
+      sctx.textAlign = 'center'; sctx.textBaseline = 'top';
+      sctx.fillStyle = 'rgba(148,163,184,.6)';
+      const step = TEND > 1.2 ? 0.4 : (TEND > 0.6 ? 0.2 : 0.1);
+      for (let t = 0; t <= TEND + 1e-9; t += step) {
+        sctx.fillText(t.toFixed(1), X(t), baseY + 22);
+      }
+      state.drawn.scope = {
+        w: w, h: h, PADL: PADL, PADR: PADR, baseY: baseY, pulseTop: pulseTop, TEND: TEND,
+        x1: X(tx1), x2: X(rx1), x3: X(tx2), x4: X(rx2),
+        showRX1: showRX1, showTX2: showTX2, showRX2: showRX2,
+        barY1: barY1, barY2: barY2, barX0: barX0, barW: barW,
+        dLabel: dLabel, brk: brk
+      };
+    }
+
+    /* ---------------------------- 放大窗：40 kHz 载波 ---------------------------- */
+    function drawCarrier() {
+      const w = state.cw, h = state.ch;
+      cctx.setTransform(state.dpr, 0, 0, state.dpr, 0, 0);
+      cctx.fillStyle = '#04121c';
+      cctx.fillRect(0, 0, w, h);
+      const PADL = 12, PADR = 12, mid = h * 0.50, amp = h * 0.235;
+      const TP = PULSE_CYCLES / (PULSE_KHZ * 1000);      // 200 μs
+      const TSPAN = TP * 1.34;
+      const X = t => PADL + (t / TSPAN) * (w - PADL - PADR);
+      // 零线
+      cctx.strokeStyle = 'rgba(148,163,184,.35)'; cctx.lineWidth = 1;
+      cctx.beginPath(); cctx.moveTo(PADL, mid + .5); cctx.lineTo(w - PADR, mid + .5); cctx.stroke();
+      // 波形：高斯包络 × 40 kHz 正弦
+      cctx.beginPath();
+      for (let i = 0; i <= 700; i++) {
+        const t = i / 700 * TSPAN;
+        const g = Math.exp(-Math.pow((t - TP / 2) / (TP * 0.30), 2));
+        const y = mid - amp * g * Math.sin(PI2 * PULSE_KHZ * 1000 * t);
+        i ? cctx.lineTo(X(t), y) : cctx.moveTo(X(t), y);
+      }
+      cctx.strokeStyle = 'rgba(125,211,252,.95)'; cctx.lineWidth = 1.3; cctx.stroke();
+      // 包络线
+      cctx.setLineDash([3, 3]);
+      cctx.beginPath();
+      for (let i = 0; i <= 200; i++) {
+        const t = i / 200 * TSPAN;
+        const g = Math.exp(-Math.pow((t - TP / 2) / (TP * 0.30), 2));
+        cctx.lineTo(X(t), mid - amp * g);
+      }
+      cctx.strokeStyle = 'rgba(251,191,36,.55)'; cctx.lineWidth = 1; cctx.stroke();
+      cctx.setLineDash([]);
+      // 脉冲宽度双箭头
+      const by = h - 30;
+      cctx.strokeStyle = 'rgba(148,163,184,.7)'; cctx.lineWidth = 1.2;
+      cctx.beginPath(); cctx.moveTo(X(0), by); cctx.lineTo(X(TP), by); cctx.stroke();
+      cctx.beginPath(); cctx.moveTo(X(0), by - 3); cctx.lineTo(X(0), by + 3); cctx.stroke();
+      cctx.beginPath(); cctx.moveTo(X(TP), by - 3); cctx.lineTo(X(TP), by + 3); cctx.stroke();
+      cctx.font = '800 9.5px Inter, "Microsoft YaHei", sans-serif';
+      cctx.textAlign = 'center'; cctx.textBaseline = 'top';
+      cctx.fillStyle = '#cbd5e1';
+      cctx.fillText(PULSE_CYCLES + ' 个周期 = 200 μs', (X(0) + X(TP)) / 2, by + 4);
+      // 一个周期的标注
+      const T1 = 1 / (PULSE_KHZ * 1000);
+      const tcy = mid - amp * 1.15;
+      cctx.strokeStyle = 'rgba(52,211,153,.8)';
+      cctx.beginPath(); cctx.moveTo(X(TP / 2 - T1 / 2), tcy); cctx.lineTo(X(TP / 2 + T1 / 2), tcy); cctx.stroke();
+      cctx.beginPath(); cctx.moveTo(X(TP / 2 - T1 / 2), tcy - 2.6); cctx.lineTo(X(TP / 2 - T1 / 2), tcy + 2.6); cctx.stroke();
+      cctx.beginPath(); cctx.moveTo(X(TP / 2 + T1 / 2), tcy - 2.6); cctx.lineTo(X(TP / 2 + T1 / 2), tcy + 2.6); cctx.stroke();
+      cctx.textAlign = 'left'; cctx.textBaseline = 'bottom';
+      cctx.fillStyle = '#6ee7b7';
+      cctx.fillText('T = 25 μs', X(TP / 2 + T1 / 2) + 5, tcy + 3);
+      // 标题
+      cctx.font = '800 10px Inter, "Microsoft YaHei", sans-serif';
+      cctx.textAlign = 'left'; cctx.textBaseline = 'top';
+      cctx.fillStyle = '#7dd3fc';
+      cctx.fillText('放大窗 · 载波 40 kHz', PADL, 7);
+      state.drawn.carrier = { w: w, h: h, TP: TP, span: TSPAN, x0: X(0), x1: X(TP) };
+    }
+
+    /* ============================================================
+     * UI 刷新
+     * ============================================================ */
+    function updateHint() {
+      const el = $('usv-hint');
+      const ph = phaseNow();
+      const t = [];
+      const dirTxt = state.dir === 'away' ? '正驶离' : '正迎面开来';
+      if (ph === 'idle') {
+        t.push('汽车在 <b>' + state.s1.toFixed(0) + ' m</b> 外，以 <b>' + state.v.toFixed(1) +
+               ' m/s</b>（' + Math.round(state.v * 3.6) + ' km/h）' + dirTxt +
+               '。按「发射两次脉冲」：先发一次，隔 <b>Δt₀ = ' + state.dtg.toFixed(2) + ' s</b> 再发一次。');
+      } else if (ph === 'out1') {
+        t.push('脉冲₁ 已经走了 <b>' + (cNow() * state.tau).toFixed(2) + ' m</b>，还要走 <b>' +
+               Math.max(0, reflX(1) - cNow() * state.tau).toFixed(2) + ' m</b> 才追上汽车。');
+      } else if (ph === 'back1') {
+        t.push('脉冲₁ 在 <b>' + reflX(1).toFixed(2) + ' m</b> 处撞上汽车 —— 反射波正在往回扫，' +
+               '离换能器还有 <b>' + (cNow() * (t1Raw() - state.tau)).toFixed(2) + ' m</b>。');
+      } else if (ph === 'gap') {
+        t.push('回声₁ 已收到（<b>t₁ = ' + t1M().toFixed(6) + ' s</b>）。测速仪要等 <b>Δt₀</b> 才发第二次；' +
+               '这段时间里汽车又往前开了 <b>' + Math.abs(vNow() * state.tau).toFixed(2) + ' m</b>。');
+      } else if (ph === 'out2') {
+        t.push('脉冲₂ 在追汽车 —— 它比脉冲₁ 时又远了 <b>' + Math.abs(vNow() * state.dtg).toFixed(2) +
+               ' m</b>，所以这次往返更久。');
+      } else if (ph === 'back2') {
+        t.push('脉冲₂ 在 <b>' + reflX(2).toFixed(2) + ' m</b> 处反射，回声正在返回（还剩 <b>' +
+               (cNow() * (tEndRaw() - state.tau)).toFixed(2) + ' m</b>）。');
+      } else {
+        t.push('两次回声都收到：<b>t₁ = ' + t1M().toFixed(6) + ' s</b>、<b>t₂ = ' + t2M().toFixed(6) +
+               ' s</b>，<b>δ = ' + dM().toFixed(6) + ' s</b>。可以按「记录这一组」了。');
+      }
+      el.innerHTML = t.join('');
+    }
+
+    function updateStageButtons() {
+      const btn = $('btn-record');
+      btn.classList.toggle('ready', ready());
+      $('record-cnt').textContent = state.marks.length;
+      const flag = $('usv-flag');
+      const ph = phaseNow();
+      if (ph === 'done') {
+        const bad = errPct() > 1;
+        flag.classList.toggle('warn', bad);
+        flag.textContent = bad
+          ? '读数 ' + Math.abs(vShown()).toFixed(2) + ' m/s ≠ 真实 ' + state.v.toFixed(2) +
+            ' m/s（差 ' + errPct().toFixed(2) + '%）—— 声速随气温变了'
+          : '两次回声都收到 ✓ 读数 ' + Math.abs(vShown()).toFixed(2) + ' m/s（误差 ' + errPct().toFixed(2) + '%）';
+        flag.classList.add('show');
+      } else {
+        flag.classList.remove('show');
+      }
+      // 时间轴滑块：用户正在拖的时候别抢它的值
+      if (document.activeElement !== tauSlider) {
+        const lim = tEndRaw() * (1 + TAIL_F);
+        tauSlider.value = String(clamp(state.tau / Math.max(1e-9, lim), 0, 1));
+      }
+    }
+
+    function updateReadouts() {
+      const ph = phaseNow();
+      const n1 = echoesIn() >= 1, n2 = echoesIn() >= 2;
+      $('t1-num').textContent = n1 ? t1M().toFixed(6) : '—';
+      $('t2-num').textContent = n2 ? t2M().toFixed(6) : '—';
+      $('d-num').textContent = n2 ? dM().toFixed(6) : '—';
+      $('sw-t1').classList.toggle('done', n1);
+      $('sw-t2').classList.toggle('done', n2);
+      $('sw-d').classList.toggle('done', n2);
+      const pill = $('phase-pill');
+      pill.textContent = phaseLabel[ph];
+      pill.className = 'pill' + (ph === 'done' ? ' ok' : (ph === 'idle' ? '' : ' live'));
+      $('scope-pill').textContent = phaseLabel[ph];
+      $('scope-pill').className = 'pill' + (ph === 'done' ? ' ok' : (ph === 'idle' ? '' : ' live'));
+
+      // 方向 / 车速 / 设置
+      $('usv-dir-pill').textContent = state.dir === 'away' ? '驶离' : '迎面';
+      $('v-num').textContent = state.v.toFixed(1) + ' m/s';
+      $('v-note').innerHTML = state.v.toFixed(1) + ' m/s = <b>' + Math.round(state.v * 3.6) +
+        ' km/h</b>。' + (state.v > 27.8 ? '已经超过 100 km/h 了。' : '');
+      $('s1-num').textContent = state.s1.toFixed(0) + ' m';
+      $('dtg-num').textContent = state.dtg.toFixed(2) + ' s';
+      $('temp-num').textContent = state.temp + ' ℃';
+      $('c-num').textContent = cNow().toFixed(1) + ' m/s';
+      $('tau-num').textContent = state.tau.toFixed(3) + ' s';
+      $('rate-pill').textContent = state.realtime ? '实时' : '慢放 ×' + (1 / rate()).toFixed(1);
+      $('btn-rate').classList.toggle('on', state.realtime);
+      $('btn-sound').textContent = state.soundOn ? '🔈 声音开' : '🔇 声音关';
+      $('rec-count').textContent = state.marks.length + ' / ' + MAX_REC + ' 组';
+
+      const r = s1Range(), dr = dtgRange();
+      $('setup-note').innerHTML = state.dir === 'toward'
+        ? '迎面时车要在两次发射之间都没开过测速仪，所以 s₁ 必须大于 v·Δt₀（现在 ' +
+          (state.v * state.dtg).toFixed(1) + ' m），Δt₀ 上限自动收到 <b>' + dr[1].toFixed(2) + ' s</b>。'
+        : '两次发射间隔 Δt₀ 越大，两次反射点离得越远，δ 也越大 —— 但车也可能开出画面。' +
+          's₁ 范围 ' + r[0] + '~' + r[1] + ' m。';
+      $('scope-note').innerHTML =
+        '横轴 <b>0 ~ ' + scopeTEnd().toFixed(3) + ' s</b>；四次事件的位置就是全部原始数据。' +
+        '脉冲本身只有 <b>200 μs</b> 宽 —— 在这条轴上<b>不到一个像素</b>，所以这里画成竖线；' +
+        '真实波形看右边的放大窗。';
+    }
+
+    /* 算一算：把两条等价的路子都写出来 —— 学生手算用的是第一条（路程 ÷ 时间），
+     * 整理后的第二条才是仪器内部实际算的那一个。 */
+    function renderAnalysis() {
+      const el = $('analysis');
+      const n1 = echoesIn() >= 1, n2 = echoesIn() >= 2;
+      const rows = [];
+      rows.push('<div class="line"><span>真实声速 c（' + state.temp + ' ℃）</span><b>' +
+                cNow().toFixed(1) + ' m/s</b></div>');
+      rows.push('<div class="line"><span>两次发射间隔 Δt₀</span><b>' + state.dtg.toFixed(2) + ' s</b></div>');
+      rows.push('<div class="line"><span>s₁ = c·t₁/2</span><b>' +
+                (n1 ? s1Ref().toFixed(3) + ' m' : '等回声₁…') + '</b></div>');
+      rows.push('<div class="line"><span>s₂ = c·t₂/2</span><b>' +
+                (n2 ? s2Ref().toFixed(3) + ' m' : '等回声₂…') + '</b></div>');
+      if (n2) {
+        rows.push('<div class="line"><span>车走的距离 s₂ − s₁</span><b>' + sDiff().toFixed(3) + ' m</b></div>');
+        rows.push('<div class="line"><span>两次反射的间隔 Δt₀ + (t₂−t₁)/2</span><b>' +
+                  gapT().toFixed(5) + ' s</b></div>');
+        rows.push('<div class="line sum"><span>仪器读数（内部按 c₀ = 340）</span><b>' +
+                  Math.abs(vShown()).toFixed(3) + ' m/s</b></div>');
+        rows.push('<div class="line"><span>真实车速</span><b>' + state.v.toFixed(3) + ' m/s</b></div>');
+        rows.push('<div class="line off"><span>若仪器用真实声速算</span><b>' +
+                  Math.abs(vCalc()).toFixed(3) + ' m/s</b></div>');
+        rows.push('<div class="line"><span>换算成 km/h</span><b>' +
+                  (Math.abs(vShown()) * 3.6).toFixed(1) + ' km/h</b></div>');
+      } else {
+        rows.push('<div class="line sum off"><span>仪器读数</span><b>等两次回声…</b></div>');
+      }
+      let conc = '';
+      if (n2) {
+        const e = errPct();
+        if (e > 1) {
+          conc = '<div class="conc warn">误差 ' + e.toFixed(2) + '% 偏大：仪器内部把声速当成 <b>340 m/s</b>，' +
+            '而 ' + state.temp + ' ℃ 时真实声速是 <b>' + cNow().toFixed(1) + ' m/s</b>。' +
+            '读数 = 真实车速 × (340 ÷ c)，所以偏差正好是 <b>' +
+            ((C_STD / cNow() - 1) * 100).toFixed(2) + '%</b>。</div>';
+        } else {
+          conc = '<div class="conc">误差 ' + e.toFixed(2) + '% ✓ ' + state.temp + ' ℃ 时 c ≈ ' +
+            cNow().toFixed(1) + ' m/s，与仪器内部用的 340 m/s 基本一致。' +
+            '把气温滑块拖到 0 ℃ 或 40 ℃，看这个误差怎么涨上去 —— 这就是测速仪要做温度补偿的原因。</div>';
+        }
+      } else {
+        conc = '<div class="conc info">δ = t₂ − t₁ 是这一页的关键量：两次往返时间之差越大，' +
+          '说明车在这段时间里走得越远。等两次回声都收到，这里会给出完整代入过程。</div>';
+      }
+      el.innerHTML = rows.join('') + conc;
+    }
+
+    function renderSubst() {
+      const sub = $('subst');
+      const n2 = echoesIn() >= 2;
+      if (!n2) {
+        sub.innerHTML = '<span class="dim">收到两次回声后，这里写出完整代入过程：</span><br>' +
+          '<span class="dim">s₁ = c·t₁/2　s₂ = c·t₂/2</span><br>' +
+          '<span class="dim">v = (s₂ − s₁) ÷ [Δt₀ + (t₂ − t₁)/2]</span>';
+        return;
+      }
+      const c = cNow();
+      sub.innerHTML =
+        's₁ = ' + c.toFixed(1) + ' × ' + t1M().toFixed(6) + ' ÷ 2 = <b>' + s1Ref().toFixed(3) + ' m</b><br>' +
+        's₂ = ' + c.toFixed(1) + ' × ' + t2M().toFixed(6) + ' ÷ 2 = <b>' + s2Ref().toFixed(3) + ' m</b><br>' +
+        '<span class="dim">车走的距离 </span>' + s2Ref().toFixed(3) + ' − ' + s1Ref().toFixed(3) +
+        ' = <b>' + sDiff().toFixed(3) + ' m</b><br>' +
+        '<span class="dim">用的时间 </span>' + state.dtg.toFixed(2) + ' + (' + t2M().toFixed(6) + ' − ' +
+        t1M().toFixed(6) + ') ÷ 2 = <b>' + gapT().toFixed(5) + ' s</b><br>' +
+        '<span class="hl">v = ' + sDiff().toFixed(3) + ' ÷ ' + gapT().toFixed(5) + ' = ' +
+        Math.abs(vCalc()).toFixed(3) + ' m/s</span><br>' +
+        '<span class="dim">（等价式 v = c·δ ÷ [2Δt₀ + δ] = ' + c.toFixed(1) + ' × ' +
+        dM().toFixed(6) + ' ÷ ' + (2 * state.dtg + dM()).toFixed(6) + '）</span>';
+    }
+
+    function renderBadge() {
+      const bd = $('badge');
+      const n2 = echoesIn() >= 2;
+      if (n2) {
+        const e = errPct();
+        const cls = e > 1 ? 'bad' : 'ok';
+        bd.innerHTML = '<span class="badge ' + cls + '">' +
+          (e > 1 ? '⚠ 仪器读数与真实车速差 ' + e.toFixed(2) + '%（> 1%）'
+                 : '✓ 仪器读数与真实车速差 ' + e.toFixed(2) + '%') + '</span>';
+      } else if (!state.running) {
+        bd.innerHTML = '<span class="badge warn">还没发射脉冲 —— 先测，再记</span>';
+      } else {
+        bd.innerHTML = '';
+      }
+    }
+
+    function renderTable() {
+      const body = $('rec-body');
+      const head = '<table class="rec"><thead><tr>' +
+        '<th>气温</th><th>Δt₀</th><th>仪器读数</th><th>真实车速</th><th>误差</th>' +
+        '</tr></thead><tbody>';
+      const rows = [];
+      for (let i = 0; i < MAX_REC; i++) {
+        const r = state.marks[i];
+        if (!r) {
+          rows.push('<tr><td class="dim">—</td><td class="dim">—</td><td class="dim">—</td>' +
+                    '<td class="dim">—</td><td class="dim">—</td></tr>');
+        } else {
+          const bad = r.err > 1;
+          rows.push('<tr><td>' + r.temp + ' ℃</td><td>' + r.dtg.toFixed(2) + ' s</td><td>' +
+                    r.vs.toFixed(2) + ' m/s</td><td>' + r.vt.toFixed(2) + ' m/s</td>' +
+                    '<td class="err ' + (bad ? 'bad' : 'ok') + '">' + r.err.toFixed(2) + '%</td></tr>');
+        }
+      }
+      body.innerHTML = head + rows.join('') + '</tbody></table>' +
+        '<p class="note" style="margin:7px 0 0;color:#8aa6b8;font-size:11px;line-height:1.55;">' +
+        '「仪器读数」是仪器内部按 <b>c₀ = 340 m/s</b> 算出来的，「真实车速」是画面上车的速度。' +
+        '误差全部来自<b>声速假设</b>：读数 ÷ 真实 = c₀ ÷ c。</p>';
+    }
+
+    function showToast(text) {
+      const el = $('usv-toast');
+      el.textContent = text;
+      el.classList.add('show');
+      clearTimeout(showToast._t);
+      showToast._t = setTimeout(() => el.classList.remove('show'), 2600);
+    }
+
+    // 滑块与 state 必须同步：每个改参数的入口各写一次的话，漏掉一个入口就各说各话。
+    // 统一收在 syncUI 末尾回写。
+    function syncUI() {
+      updateReadouts(); renderAnalysis(); renderSubst(); renderBadge(); renderTable();
+      updateStageButtons(); syncSliders();
+    }
+
+    /* ============================================================
+     * 参数范围（唯一来源：滑块 min/max、钳位、自检都取这一份）
+     * ============================================================ */
+    const s1Range = () => (modeSign() > 0 ? [S1_MIN, S1_MAX] : [S1T_MIN, S1T_MAX]);
+    /* 迎面时车不能在两次发射之间开过测速仪：Δt₀ ≤ (s₁ − 4)/v。
+     * 这是「物理上说得通」的硬约束，写在这里比写进按钮的 disabled 更可靠 ——
+     * 按钮只挡得住手点，挡不住滑块和自检。 */
+    function dtgRange() {
+      if (modeSign() > 0) return [DTG_MIN, DTG_MAX];
+      const cap = (state.s1 - 4) / Math.max(1e-6, state.v);
+      return [DTG_MIN, Math.max(DTG_MIN, Math.min(DTG_MAX, cap))];
+    }
+
+    /* ============================================================
+     * 动作（侧栏、画面、自检走同一份 —— 一个动作只留一个入口）
+     * ============================================================ */
+    // 参数一变，上一次测量就作废：读数对应的已经不是现在这组设置了。
+    function invalidate(silent) {
+      const had = state.running;
+      state.running = false; state.tau = 0; state.paused = false;
+      state.flashEcho = 0; state.flashHit = 0;
+      if (had && !silent) showToast('参数变了，上一次测量作废 —— 请重新发射脉冲');
+      state.dirty = true;
+    }
+
+    function run() {
+      ensureAudio();
+      state.running = true; state.paused = false; state.tau = 0;
+      state.flashEcho = 0; state.flashHit = 0;
+      state.dirty = true;
+      pingTX();
+      syncUI();
+      return true;
+    }
+
+    // 自检 / 出图要能把波前【停】在某个物理时刻。没有它的话，tick 会在两次
+    // evaluate 之间把 tau 推走 —— 截图和断言看到的都不是你设的那个状态。
+    function setTau(tau, opts) {
+      const lim = tEndRaw() * (1 + TAIL_F);
+      state.running = true;
+      state.tau = clamp(tau, 0, lim);
+      if (opts && opts.pause) state.paused = true;
+      state.dirty = true;
+      syncUI();
+      return state.tau;
+    }
+    const holdAt = frac => setTau(tEndRaw() * (1 + TAIL_F) * clamp(frac, 0, 1), { pause: true });
+    const pause = on => { state.paused = !!on; state.dirty = true; };
+
+    function setDir(d) {
+      if (d !== 'away' && d !== 'toward') return;
+      if (d === state.dir) return;
+      state.dir = d;
+      const r = s1Range();
+      if (state.s1 < r[0] || state.s1 > r[1]) state.s1 = (d === 'toward' ? S1T_DEF : S1_DEF);
+      clampDtg();
+      state.camD = farD();
+      invalidate();
+      state.dirty = true; syncUI();
+    }
+    function clampDtg() {
+      const dr = dtgRange();
+      state.dtg = clamp(state.dtg, dr[0], dr[1]);
+    }
+    function setV(v) {
+      const nv = clamp(Math.round(v * 2) / 2, V_MIN, V_MAX);
+      if (nv === state.v) return;
+      state.v = nv;
+      const r = s1Range();
+      state.s1 = clamp(state.s1, r[0], r[1]);
+      clampDtg();
+      state.camD = farD();
+      invalidate();
+      state.dirty = true; syncUI();
+    }
+    function setS1(v, silent) {
+      const r = s1Range();
+      const nv = clamp(Math.round(v), r[0], r[1]);
+      if (nv === state.s1) return;
+      state.s1 = nv;
+      clampDtg();
+      if (!state.draggingCar) state.camD = farD();
+      invalidate(silent);
+      state.dirty = true; syncUI();
+    }
+    function setDtg(v) {
+      const dr = dtgRange();
+      const nv = clamp(Math.round(v * 20) / 20, dr[0], dr[1]);
+      if (nv === state.dtg) return;
+      state.dtg = nv;
+      state.camD = farD();
+      invalidate();
+      state.dirty = true; syncUI();
+    }
+    function setTemp(v) {
+      const nv = clamp(Math.round(v), T_MIN, T_MAX);
+      if (nv === state.temp) return;
+      state.temp = nv;
+      invalidate();
+      state.dirty = true; syncUI();
+    }
+    function setRealtime(on) { state.realtime = !!on; state.dirty = true; syncUI(); }
+    function setSound(on) {
+      state.soundOn = !!on;
+      if (on) { kickAudio(); showToast('声音已打开（真实载波 40 kHz 听不见，这里是代表音）'); }
+      else showToast('已静音');
+      syncUI();
+    }
+
+    function resetAll() {
+      state.dir = 'away'; state.v = V_DEF; state.s1 = S1_DEF; state.dtg = DTG_DEF; state.temp = T_DEF;
+      state.camD = farD();
+      state.marks = [];
+      state.realtime = false;
+      invalidate(true);
+      state.dirty = true; syncUI();
+    }
+
+    // 记录：唯一入口 —— 侧栏与画面都走它
+    function recordMark() {
+      if (!ready()) {
+        showToast(echoesIn() === 0 ? '还没发射脉冲 —— 先测，再记'
+                                   : '只收到一次回声，还差第二次 —— t₂ 还没读出来，不能记');
+        return false;
+      }
+      if (state.marks.length >= MAX_REC) { showToast('已经记满 ' + MAX_REC + ' 组了，先重置再记'); return false; }
+      state.marks.push({
+        temp: state.temp, dtg: state.dtg, s1: state.s1,
+        vt: state.v, vs: Math.abs(vShown()), err: errPct()
+      });
+      renderTable(); renderAnalysis(); updateStageButtons();
+      showToast('已记录：仪器读数 ' + Math.abs(vShown()).toFixed(2) + ' m/s，真实 ' +
+                state.v.toFixed(2) + ' m/s（误差 ' + errPct().toFixed(2) + '%）');
+      return true;
+    }
+
+    function applyView(name) {
+      if (!VIEWS[name]) return;
+      state.view = name;
+      state.yaw = VIEWS[name][0]; state.pitch = VIEWS[name][1];
+      state.zoom = VIEWS[name][2] || 1;
+      state.dirty = true;
+    }
+
+    /* ---------------------------- 命中测试 / 拖动反解 ---------------------------- */
+    function rectOf(b) {
+      if (!b) return null;
+      return { x0: b.x0, x1: b.x1, y0: b.y0, y1: b.y1, w: b.x1 - b.x0, h: b.y1 - b.y0 };
+    }
+    function hitTest(x, y, q) {
+      const cb = rectOf(state.drawn.carBox);
+      const sb = rectOf(state.drawn.stationBox);
+      const near = (b, pad) => b && x >= b.x0 - pad && x <= b.x1 + pad && y >= b.y0 - pad && y <= b.y1 + pad;
+      // 车优先：它是这一页唯一需要拖的东西
+      if (near(cb, 8)) return 'car';
+      if (near(sb, 6)) return 'st';
+      return null;
+    }
+    const carAnchorX = q => project([carXat(0), CAR_H, CAR_Z], q).x;
+    /* 车是【路面上的一个点】，抓点可能落在车身任意高度，射线与地面求交解出的
+     * 世界 x 会随抓点变。所以：按下时记下「锚点投影 x − 光标 x」，之后对锚点投影 x
+     * 二分反解 s₁ —— 零误差，不会「追不上手指」。
+     * ★ 二分方向【先量出来】：s₁ 变大时屏幕 x 是变大还是变小，取决于相机在路的哪一侧。 */
+    function s1FromScreenX(target, q) {
+      const xAt = v => { const s = state.s1; state.s1 = v; const px = carAnchorX(q); state.s1 = s; return px; };
+      let lo = S1_MIN, hi = S1_MAX;
+      const inc = xAt(hi) >= xAt(lo);
+      for (let i = 0; i < 30; i++) {
+        const mid = (lo + hi) / 2;
+        if ((xAt(mid) < target) === inc) lo = mid; else hi = mid;
+      }
+      return (lo + hi) / 2;
+    }
+
+    /* ---------------------------- 事件 ---------------------------- */
+    function localXY(e) {
+      const r = canvas.getBoundingClientRect();
+      return { x: e.clientX - r.left, y: e.clientY - r.top };
+    }
+    function onDown(e) {
+      const p = localXY(e);
+      const q = {}; makeCam(q, state.w, state.h);
+      const hit = hitTest(p.x, p.y, q);
+      state.downAt = { x: p.x, y: p.y, hit: hit };
+      if (hit === 'car') {
+        state.draggingCar = true;
+        state.dragGrabX = carAnchorX(q) - p.x;
+        state.dragging = false; state.drag = null;
+        canvas.classList.add('grabx');
+        canvas.setPointerCapture && canvas.setPointerCapture(e.pointerId);
+        return;
+      }
+      state.dragging = true;
+      state.drag = { x: p.x, y: p.y };
+      state.dragYaw = state.yaw; state.dragPitch = state.pitch;
+      canvas.classList.add('grabbing');
+      canvas.setPointerCapture && canvas.setPointerCapture(e.pointerId);
+    }
+    function onMove(e) {
+      const p = localXY(e);
+      const q = {}; makeCam(q, state.w, state.h);
+      if (state.draggingCar) {
+        setS1(s1FromScreenX(p.x + state.dragGrabX, q), true);
+        return;
+      }
+      if (state.dragging && state.drag) {
+        state.yaw = state.dragYaw + (p.x - state.drag.x) * 0.0075;
+        state.pitch = clamp(state.dragPitch + (p.y - state.drag.y) * 0.0060, -0.20, 1.40);
+        state.view = 'custom';
+        state.dirty = true;
+        return;
+      }
+      const hit = hitTest(p.x, p.y, q);
+      state.hover = hit;
+      canvas.classList.toggle('pick', hit === 'car');
+      canvas.classList.toggle('grabx', hit === 'car');
+      state.dirty = true;
+    }
+    function onUp(e) {
+      // 点击 vs 拖动：位移小于 6 px 才算「点了一下」
+      const d = state.downAt;
+      if (d && e) {
+        const p = localXY(e);
+        if (Math.hypot(p.x - d.x, p.y - d.y) < 6 && d.hit === 'car') {
+          showToast('左右拖动汽车可以改它第一次发射时的位置');
+        }
+      }
+      if (state.draggingCar) {
+        state.draggingCar = false;
+        state.camD = farD();          // 松手才把取景交还给真实距离
+        state.dirty = true; syncUI();
+      }
+      state.dragging = false; state.drag = null; state.downAt = null;
+      canvas.classList.remove('grabbing'); canvas.classList.remove('grabx');
+    }
+    function onWheel(e) {
+      e.preventDefault();
+      state.zoom = clamp(state.zoom * (e.deltaY > 0 ? 0.92 : 1.087), 0.5, 3.0);
+      state.dirty = true;
+    }
+
+    /* ============================================================
+     * 尺寸 / 主循环
+     * ============================================================ */
+    function setBacking(cv, cssW, cssH) {
+      const bw = Math.max(1, Math.round(cssW * state.dpr));
+      const bh = Math.max(1, Math.round(cssH * state.dpr));
+      if (cv.width !== bw || cv.height !== bh) { cv.width = bw; cv.height = bh; }
+    }
+    function resize() {
+      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      state.dpr = dpr;
+      const w = Math.max(320, stage.clientWidth || Math.round(stage.getBoundingClientRect().width));
+      const h = Math.max(240, stage.clientHeight || Math.round(stage.getBoundingClientRect().height));
+      state.w = w; state.h = h;
+      setBacking(canvas, w, h);
+      const sr = scopeCv.getBoundingClientRect();
+      state.sw = Math.max(240, Math.round(sr.width));
+      state.sh = Math.max(150, Math.round(sr.height));
+      setBacking(scopeCv, state.sw, state.sh);
+      const cr = carrierCv.getBoundingClientRect();
+      state.cw = Math.max(120, Math.round(cr.width));
+      state.ch = Math.max(120, Math.round(cr.height));
+      setBacking(carrierCv, state.cw, state.ch);
+      /* ★ 改 canvas.width/height 会【清空画布】，所以补画【无条件】放在这里，
+       *   而不是挂在 tick 上等 rAF —— ResizeObserver 在 observe() 之后必然回调一次，
+       *   那次 resize() 会把 init 里刚画好的首帧清掉；补画若等 rAF，rAF 一被推迟
+       *   （headless / 后台标签页）画布就永远是空的。职责只留这一处。 */
+      render(); drawScope(); drawCarrier();
+      state.dirty = false;
+    }
+    let lastTs = 0;
+    /* ★ 动画推进抽成纯函数 stepAnim(dt)：tick 调它、自检（window.__usv.stepAnim）
+     *   也调它。自检里另抄一份「tau += dt·rate()」的话，改了 tick 也拦不住回归 ——
+     *   「动画与自检必须走同一个函数」。本机 headless 下 rAF 一次都不回调，
+     *   只有把推进抽出来，自检才能在无 rAF 的环境里确定性验它。 */
+    function stepAnim(dt) {
+      state.t += dt;
+      if (state.flashEcho > 0) state.flashEcho = Math.max(0, state.flashEcho - dt * 1.5);
+      if (state.flashHit > 0) state.flashHit = Math.max(0, state.flashHit - dt * 3.2);
+      if (state.flashEcho > 0 || state.flashHit > 0) state.dirty = true;
+
+      if (state.running && !state.paused) {
+        const tEnd = tEndRaw(), lim = tEnd * (1 + TAIL_F);
+        if (state.tau < lim) {
+          const before = state.tau;
+          state.tau = Math.min(lim, state.tau + dt * rate());
+          const crossed = a => before < a - 1e-12 && state.tau >= a - 1e-12;
+          if (crossed(reflTau(1))) { state.flashHit = 1; pingHit(); }
+          if (crossed(t1Raw())) { state.flashEcho = 1; pingRX(); }
+          if (crossed(state.dtg)) { pingTX(); }
+          if (crossed(reflTau(2))) { state.flashHit = 1; pingHit(); }
+          if (crossed(tEnd)) { state.flashEcho = 1; pingRX(); syncUI(); }
+          state.dirty = true;
+        }
+      }
+    }
+    function tick(ts) {
+      const dt = lastTs ? Math.min(0.05, (ts - lastTs) / 1000) : 0;
+      lastTs = ts;
+      stepAnim(dt);
+      if (state.dirty) { render(); drawScope(); drawCarrier(); state.dirty = false; }
+      requestAnimationFrame(tick);
+    }
+
+    /* ============================================================
+     * 绑定
+     * ============================================================ */
+    const s1Slider = $('sl-s1'), vSlider = $('sl-v'), dtgSlider = $('sl-dtg');
+    const tempSlider = $('sl-temp'), tauSlider = $('sl-tau');
+
+    function syncSliders() {
+      const r = s1Range();
+      s1Slider.min = String(r[0]); s1Slider.max = String(r[1]);
+      if (+s1Slider.value !== state.s1) s1Slider.value = String(state.s1);
+      const dr = dtgRange();
+      dtgSlider.min = String(dr[0]); dtgSlider.max = String(dr[1]);
+      if (Math.abs(+dtgSlider.value - state.dtg) > 1e-9) dtgSlider.value = String(state.dtg);
+      if (+vSlider.value !== state.v) vSlider.value = String(state.v);
+      if (+tempSlider.value !== state.temp) tempSlider.value = String(state.temp);
+      document.querySelectorAll('[data-view]').forEach(b => {
+        b.classList.toggle('on', b.getAttribute('data-view') === state.view);
+      });
+      $('dir-away').classList.toggle('on', state.dir === 'away');
+      $('dir-toward').classList.toggle('on', state.dir === 'toward');
+    }
+
+    canvas.addEventListener('pointerdown', onDown);
+    canvas.addEventListener('pointermove', onMove);
+    canvas.addEventListener('pointerup', onUp);
+    canvas.addEventListener('pointercancel', onUp);
+    canvas.addEventListener('pointerleave', () => {
+      state.hover = null; state.dragging = false; state.drag = null;
+      canvas.classList.remove('pick'); canvas.classList.remove('grabbing'); canvas.classList.remove('grabx');
+      state.dirty = true;
+    });
+    canvas.addEventListener('wheel', onWheel, { passive: false });
+
+    $('btn-run').addEventListener('click', run);
+    $('btn-record').addEventListener('click', recordMark);
+    $('btn-reset').addEventListener('click', () => { resetAll(); showToast('已重置'); });
+    $('btn-rate').addEventListener('click', () => {
+      setRealtime(!state.realtime);
+      showToast(state.realtime ? '实时：整段只有零点几秒，一闪就过去了' : '慢放：把整段过程拉长到 3 s 看清楚');
+    });
+    $('btn-sound').addEventListener('click', () => setSound(!state.soundOn));
+    $('dir-away').addEventListener('click', () => setDir('away'));
+    $('dir-toward').addEventListener('click', () => setDir('toward'));
+    document.querySelectorAll('[data-view]').forEach(b => {
+      b.addEventListener('click', () => applyView(b.getAttribute('data-view')));
+    });
+    vSlider.addEventListener('input', () => setV(parseFloat(vSlider.value)));
+    s1Slider.addEventListener('input', () => setS1(parseFloat(s1Slider.value)));
+    dtgSlider.addEventListener('input', () => setDtg(parseFloat(dtgSlider.value)));
+    tempSlider.addEventListener('input', () => setTemp(parseFloat(tempSlider.value)));
+    tauSlider.addEventListener('input', () => {
+      const lim = tEndRaw() * (1 + TAIL_F);
+      setTau(parseFloat(tauSlider.value) * lim, { pause: true });
+    });
+
+    window.addEventListener('pointerdown', kickAudio, true);
+    window.addEventListener('keydown', kickAudio, true);
+
+    if (window.ResizeObserver) {
+      const ro = new ResizeObserver(() => resize());
+      ro.observe(stage);
+      ro.observe(scopeCv);
+      ro.observe(carrierCv);
+    }
+    window.addEventListener('resize', resize);
+
+    state.camD = farD();
+    resize();
+    syncUI();
+    // 首帧由 resize() 自己负责补画（见上），这里只管把主循环挂起来。
+    requestAnimationFrame(tick);
+
+    /* ============================================================
+     * 自检钩子
+     * ------------------------------------------------------------
+     * 渲染、示波器、读数、表格、自检必须共用同一份物理函数。下面把这些原样
+     * 暴露出去，测试算出来的就是页面真正在用的值 —— 自检把公式重抄一遍
+     * 只证明自检自洽。
+     * ============================================================ */
+    window.__usv = {
+      state: state,
+      consts: {
+        C_STD: C_STD, C_ICE: C_ICE, C_KT: C_KT,
+        T_MIN: T_MIN, T_MAX: T_MAX, T_DEF: T_DEF,
+        V_MIN: V_MIN, V_MAX: V_MAX, V_DEF: V_DEF,
+        S1_MIN: S1_MIN, S1_MAX: S1_MAX, S1_DEF: S1_DEF,
+        S1T_MIN: S1T_MIN, S1T_MAX: S1T_MAX, S1T_DEF: S1T_DEF,
+        DTG_MIN: DTG_MIN, DTG_MAX: DTG_MAX, DTG_DEF: DTG_DEF,
+        T_QUANT: T_QUANT, PULSE_KHZ: PULSE_KHZ, PULSE_CYCLES: PULSE_CYCLES,
+        ANIM_T: ANIM_T, TAIL_F: TAIL_F, MAX_REC: MAX_REC,
+        CAR_L: CAR_L, CAR_W: CAR_W, CAR_H: CAR_H, CAR_Z: CAR_Z,
+        ROAD_HW: ROAD_HW, LANE_EDGE: LANE_EDGE, STATION_Z: STATION_Z,
+        ARM_Y: ARM_Y, TX_Y: TX_Y, BEAM_HA: BEAM_HA, POLE_H: POLE_H, RAIL_Z: RAIL_Z,
+        VIEWS: VIEWS
+      },
+      makeCam: makeCam, project: project, unproject: unproject, envelopePoints: envelopePoints,
+      size: () => ({ w: state.w, h: state.h, sw: state.sw, sh: state.sh, cw: state.cw, ch: state.ch, dpr: state.dpr }),
+      // 物理：与页面同一份
+      modeSign: modeSign, vNow: vNow, cNow: cNow,
+      d1Now: d1Now, d2Now: d2Now, tauOf: tauOf,
+      t1Raw: t1Raw, t2Raw: t2Raw, t1M: t1M, t2M: t2M,
+      dRaw: dRaw, dM: dM, s1Ref: s1Ref, s2Ref: s2Ref, sDiff: sDiff, gapT: gapT,
+      vCalcRaw: vCalcRaw, vCalc: vCalc, vShown: vShown, vTrue: vTrue, errPct: errPct,
+      tEndRaw: tEndRaw, rate: rate, phaseNow: phaseNow, phaseLabel: phaseLabel,
+      echoesIn: echoesIn, ready: ready,
+      emitOf: emitOf, tOf: tOf, frontX: frontX, reflX: reflX, reflTau: reflTau,
+      carXat: carXat, carX: carX,
+      // 取景几何
+      CL: CL, XA: XA, XB: XB, YT: YT, ZF: ZF, ZN: ZN, ZRULER: ZRULER,
+      farD: farD, beamReach: beamReach, beamRimR: beamRimR, scopeTEnd: scopeTEnd,
+      s1Range: s1Range, dtgRange: dtgRange,
+      // 动作：与按钮走同一份
+      run: run, resetAll: resetAll, recordMark: recordMark, applyView: applyView,
+      setDir: setDir, setV: setV, setS1: setS1, setDtg: setDtg, setTemp: setTemp,
+      setRealtime: setRealtime, setSound: setSound,
+      setTau: setTau, holdAt: holdAt, pause: pause,
+      // 动画推进（tick 与自检共用的同一个函数）—— 无 rAF 的环境里靠它确定性推进
+      stepAnim: stepAnim,
+      // 「改尺寸 + 立刻同步补画」的唯一入口。自检要验「首帧不会空」必须走它，
+      // 自己手动调 render() 等于绕过被测路径（resize 里那次补画才是承重的那一半）。
+      resize: resize,
+      // 走真实路径的拖动钩子 —— 直接写 state.s1 会让「参数一变测量作废」这条路径被绕过
+      dragCarTo: x => { setS1(x, true); return state.s1; },
+      s1FromScreenX: s1FromScreenX, carAnchorX: carAnchorX,
+      render: render, drawScope: drawScope, drawCarrier: drawCarrier, hitTest: hitTest,
+      // 声音
+      audio: {
+        ctx: () => AC, bus: () => bus,
+        ensure: ensureAudio, kick: kickAudio,
+        tx: pingTX, rx: pingRX,
+        setMuted: m => { muted = !!m; },
+        muted: () => muted,
+        state: () => ({
+          ready: !!AC, ctxState: AC ? AC.state : null, kicked: audioKicked,
+          muted: muted, soundOn: state.soundOn
+        })
+      }
+    };
+  })();
+  </script>
+</body>
+</html>
