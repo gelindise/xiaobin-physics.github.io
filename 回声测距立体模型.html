@@ -1524,12 +1524,26 @@
       const dpr = Math.min(2, window.devicePixelRatio || 1);
       const w = Math.max(320, Math.round(r.width));
       const h = Math.max(240, Math.round(r.height));
+      const bw = Math.round(w * dpr), bh = Math.round(h * dpr);
+      /* ★ 改 canvas.width/height 会【清空画布】。所以：① 只在尺寸真的变了时才动它；
+       *   ② 动完立刻同步补画一次，绝不留到下一帧。
+       *   踩过的坑：ResizeObserver 在 observe() 之后【必然回调一次】，那次 resize()
+       *   把 init 里刚画好的首帧清掉了；而补画挂在 tick 上、要等 rAF —— rAF 一被推迟
+       *   （headless / 后台标签页），画布就永远是空的（看着像没加载）。 */
+      const changed = (canvas.width !== bw || canvas.height !== bh);
       state.w = w; state.h = h; state.dpr = dpr;
-      canvas.width = Math.round(w * dpr);
-      canvas.height = Math.round(h * dpr);
+      if (changed) { canvas.width = bw; canvas.height = bh; }
       canvas.style.width = w + 'px';
       canvas.style.height = h + 'px';
-      state.dirty = true;
+      /* ★ 补画【无条件】放在这里，而不是挂在 tick 上等 rAF：改 canvas.width/height
+       *   会清空画布，而 ResizeObserver 在 observe() 之后【必然回调一次】—— 那次
+       *   resize() 会把 init 里刚画好的首帧清掉。补画若等 rAF，rAF 一被推迟
+       *   （headless / 后台标签页）画布就永远是空的（看着像没加载）。
+       *   职责只留这一处：resize() 是唯一的「改尺寸 + 立刻补画」入口，
+       *   init 里不再另写一次 render() —— 两处互相兜底的话，去掉任何一个都不会变红，
+       *   负向对照就失去意义了。 */
+      render();
+      state.dirty = false;
     }
     let lastTs = 0;
     /* ★ 动画推进抽成纯函数 stepAnim(dt)：tick 调它、自检（window.__echo.stepAnim）
@@ -1611,11 +1625,7 @@
 
     resize();
     syncUI();
-    /* ★ 首帧同步画一次，不等 rAF。rAF 在有些环境会迟迟不回调（headless、
-     *   后台标签页、合成器推迟首帧），那时页面会是一片空白 —— 看着像没加载。
-     *   这里只保证「一打开就有画面」；后续每帧仍由 tick 负责。 */
-    render();
-    state.dirty = false;
+    // 首帧由 resize() 自己负责补画（见上），这里只管把主循环挂起来。
     requestAnimationFrame(tick);
 
     /* ============================================================
