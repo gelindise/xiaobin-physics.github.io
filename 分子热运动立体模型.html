@@ -1062,7 +1062,9 @@ function diffStep(dt){
   state.t += dt;
 }
 // 用于观察的粒子（与浓度场共用同一套 D / 沉降，属蒙特卡洛解法，只作视觉线索）
-var N_DOT = 150;
+// 🔴 数量必须够：原来 150 个（每瓶 75）+ 半径写死 2 px 时，瓶子里是大片空白、
+//    「中间没有任何分子」（用户直接反馈）。560 个（每瓶 280）才看得出两瓶都被填满。
+var N_DOT = 560;
 function dotInit(){
   var d=[], i;
   for(i=0;i<N_DOT;i++){
@@ -1094,11 +1096,38 @@ function concColor(v,alpha){
   var r=C_AIR[0]+(C_NO2[0]-C_AIR[0])*t, g=C_AIR[1]+(C_NO2[1]-C_AIR[1])*t, b=C_AIR[2]+(C_NO2[2]-C_AIR[2])*t;
   return 'rgba('+Math.round(r)+','+Math.round(g)+','+Math.round(b)+','+alpha+')';
 }
-function bottleSilhouette(cx,y0,y1,r,q,n){
-  var top=ringPts(cx,y1,r,q,n), bot=ringPts(cx,y0,r,q,n), out=[], i;
-  for(i=0;i<top.length;i++) out.push(top[i]);
-  for(i=bot.length-1;i>=0;i--) out.push(bot[i]);
+// 凸包（单调链）。竖直圆柱是【凸体】⇒ 投影后两圆的凸包就是它的轮廓。
+function convexHull(pts){
+  var p=pts.slice().sort(function(a,b){ return (a.x===b.x)?(a.y-b.y):(a.x-b.x); });
+  var n=p.length, out=[], i, k;
+  if(n<3) return p;
+  function cr(o,a,b){ return (a.x-o.x)*(b.y-o.y)-(a.y-o.y)*(b.x-o.x); }
+  for(i=0;i<n;i++){ while(out.length>=2 && cr(out[out.length-2],out[out.length-1],p[i])<=0) out.pop(); out.push(p[i]); }
+  k=out.length;
+  for(i=n-2;i>=0;i--){ while(out.length>k && cr(out[out.length-2],out[out.length-1],p[i])<=0) out.pop(); out.push(p[i]); }
+  out.pop();
   return out;
+}
+function bottleSilhouette(cx,y0,y1,r,q,n){
+  // 🔴 曾经写成「上圆 30 点 + 下圆 30 点【逆序】」直接连成一个闭合路径 —— 这是画圆柱侧面的
+  //    常见写法，但在 nonzero 环绕规则下**会相消**：两条连接边（角度 0 与角度 (n−1)/n·2π）
+  //    都落在同一侧（正视时都在右边），瓶身中段向右引射线的净穿越数为 0 ⇒ 该区域不被填充。
+  //    实测 isPointInPath：只有 y=y0 与 y=y1 两个端点在内，中间 2.69~4.41 全部 false。
+  //    后果是底色只画出了上下两个端面椭圆，瓶身露的是页面背景 —— 用户看到的
+  //    「瓶子里是空的、中间没有任何分子」正是它（clip 同时把观测粒子也裁掉了）。
+  //    改用凸包，轮廓与填充规则无关。
+  var top=ringPts(cx,y1,r,q,n), bot=ringPts(cx,y0,r,q,n), all=[], i;
+  for(i=0;i<top.length;i++) all.push(top[i]);
+  for(i=0;i<bot.length;i++) all.push(bot[i]);
+  var h=convexHull(all);
+  if(h.length<3){ // 极端退化（理论不可达）：退回屏幕包围盒矩形，宁可比实际大也不要空白
+    var xs=[],ys=[];
+    for(i=0;i<all.length;i++){ xs.push(all[i].x); ys.push(all[i].y); }
+    var x0=Math.min.apply(null,xs), x1=Math.max.apply(null,xs);
+    var yy0=Math.min.apply(null,ys), yy1=Math.max.apply(null,ys);
+    return [{x:x0,y:yy0},{x:x1,y:yy0},{x:x1,y:yy1},{x:x0,y:yy1}];
+  }
+  return h;
 }
 function drawBottle(cx,y0,y1,r,q,c){
   var sil = bottleSilhouette(cx,y0,y1,r,q,30);
@@ -1111,20 +1140,37 @@ function drawBottle(cx,y0,y1,r,q,c){
     var k=y/DZ-0.5; k=clamp(k,0,NB_CELLS-1);
     var k0=Math.floor(k), k1=Math.min(NB_CELLS-1,k0+1), fr=k-k0;
     var v=state.conc? (state.conc[k0]*(1-fr)+state.conc[k1]*fr) : 0;
-    g.addColorStop(s/steps, concColor(v, 0.10+0.80*clamp(v,0,1)));
+    // 底色透明度：原来 0.10 起步 ⇒ 「空气」那半瓶几乎全黑，看着像没装东西。
+    // 抬到 0.15 起步、上限收到 0.77，既让空气侧有淡淡的蓝雾，又不至于盖掉观测粒子。
+    g.addColorStop(s/steps, concColor(v, 0.15+0.62*clamp(v,0,1)));
   }
   c.fillStyle=g; c.fillRect(0,0,W,H);
-  // 观察粒子
+  // 观测粒子。三条一起改（原来只有 75 个/瓶、半径写死 2 px、空气粒子用 55% 淡蓝 ⇒ 看不见）：
+  //   ① 屏幕半径跟着【瓶半径的屏幕像素】走，窄屏自动等比缩小；
+  //   ② 按深度排序（远的先画）+ 深度调大小与透明度 ⇒ 有"装在瓶子里"的立体感；
+  //   ③ 空气粒子换成明显的淡蓝（147,197,253），与 NO₂ 的橙（251,146,60）拉开。
   var d=state.dots;
   if(d){
-    for(var i=0;i<d.length;i++){
-      var o=d[i];
+    var midY=(y0+y1)/2;
+    var pC=project([cx,midY,0],q), pE=project([cx+r,midY,0],q);
+    var rPix=Math.abs(pE.x-pC.x);
+    var pr=clamp(rPix*0.026, 2.0, 4.4);
+    var arr=[], i3;
+    for(i3=0;i3<d.length;i3++){
+      var o=d[i3];
       if(o.y<y0-0.02 || o.y>y1+0.02) continue;
-      var ang=(i*2.39996)%(Math.PI*2);
-      var rr2=r*0.82*Math.sqrt(((i*37)%100)/100);
+      var ang=(i3*2.39996)%(Math.PI*2);
+      var rr2=r*0.86*Math.sqrt(((i3*37)%100)/100);
       var pp=project([cx+Math.cos(ang)*rr2, o.y, Math.sin(ang)*rr2], q);
-      c.beginPath(); c.arc(pp.x,pp.y,2.0,0,Math.PI*2);
-      c.fillStyle = o.sp? 'rgba(255,206,150,.92)' : 'rgba(226,240,255,.55)';
+      arr.push({x:pp.x, y:pp.y, z:pp.z, sp:o.sp});
+    }
+    arr.sort(function(a,b){ return b.z-a.z; });          // 远的先画
+    for(i3=0;i3<arr.length;i3++){
+      var a=arr[i3];
+      var t=clamp(0.5 + 0.5*(a.z-pC.z)/(r*0.9), 0, 1);   // 0 = 最近、1 = 最远
+      var al=(a.sp?0.96:0.86)*(1-0.42*t);
+      c.beginPath(); c.arc(a.x, a.y, pr*(1.22-0.34*t), 0, Math.PI*2);
+      c.fillStyle = a.sp ? 'rgba(251,146,60,'+al.toFixed(3)+')' : 'rgba(147,197,253,'+al.toFixed(3)+')';
       c.fill();
     }
   }
@@ -1574,7 +1620,7 @@ function syncUI(){
     ? '小球就是<b>分子</b>。温度越高它们撞得越猛；<b>压缩活塞</b>看它有多难压。'
     : (state.mode==='force'
       ? '两个小球是<b>一对分子</b>。橙色箭头 = 斥力，蓝色 = 引力，绿/红 = 合力。'
-      : '上下一共两只瓶。<b>抽去玻璃板</b>后两种气体会自己混匀 —— 谁在上谁在下都一样。');
+      : '上下一共两只瓶，<b>橙点 = 二氧化氮 NO₂ 分子</b>、<b>蓝点 = 空气分子</b>。<b>抽去玻璃板</b>后两种气体会自己混匀 —— 谁在上谁在下都一样。');
   // 对照表
   tableEl.innerHTML = state.mode==='gas'
     ? ('<b>固态</b><span>分子排成规则的点阵，只在平衡位置附近振动</span>'+
