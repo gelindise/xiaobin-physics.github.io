@@ -929,6 +929,14 @@ import * as THREE from './assets/optics-three.min.js';
     return smoothstep(state.Tb - 8, state.Tb - 0.3, state.T);
   }
 
+  /* 画面上的沸腾程度：温度够了【并且】还在继续吸热才算沸腾。
+     撤去酒精灯后水仍是 100 ℃，但气泡、白气、水面翻腾必须立刻收住 ——
+     「沸腾需要继续吸热」正是本节要得出的结论，只按温度画就会自相矛盾。
+     乘 flameAnim（火焰本来就在 0.3 s 内淡出）是为了让「立刻停」在视觉上平滑收尾。 */
+  function boilnessVis() {
+    return boilness() * state.flameAnim;
+  }
+
   function isBoiling() {
     return state.lampOn && state.T >= state.Tb - 0.02;
   }
@@ -936,9 +944,11 @@ import * as THREE from './assets/optics-three.min.js';
   /* 气泡半径随高度 u（0 = 杯内底，1 = 水面）的变化 —— 本实验要看的核心现象：
      沸腾前：上层水温低，泡里的水蒸气遇冷又液化，越升越小，还没到水面就没了；
      沸腾时：整杯水都在沸点，泡里不断有水蒸气补充，越升越大，到水面破裂。
-     两者按 boilness 线性混合，过渡是连续的，不会突然跳变。 */
+     两者按 boilnessVis 线性混合，过渡是连续的，不会突然跳变。
+     ⚠ 这里必须用 boilnessVis 而不是 boilness：撤去酒精灯后水仍是 100 ℃，
+     boilness 还是 1，气泡就会继续「越升越大」地翻腾，与本节结论自相矛盾。 */
   function bubbleScale(u) {
-    const b = boilness();
+    const b = boilnessVis();
     const shrink = Math.max(0, 0.55 * (1 - 1.15 * u));  // 沸腾前：越升越小，到 u≈0.87 就缩没了
     const grow = 0.75 + 1.65 * u;                       // 沸腾时：越升越大
     return shrink * (1 - b) + grow * b;
@@ -994,6 +1004,10 @@ import * as THREE from './assets/optics-three.min.js';
     state.boilTime = 0;
     state.finished = false;
     setLamp(true);            // 「重置」= 回到初始状态：撤走的酒精灯也放回来（否则重置后永远烧不开）
+    // 灯的位移与火焰强度是平滑量，重置时必须直接归位；否则重置后头 0.3 s
+    // boilnessVis() 还是 0，气泡/白气会「先不出来」再慢慢浮现。
+    state.lampAnim = 1;
+    state.flameAnim = 1;
     setPressure(state.pressure);
     series.length = 0;
     pushSample();
@@ -1310,7 +1324,6 @@ import * as THREE from './assets/optics-three.min.js';
     els.hudBoil.textContent = state.Tb.toFixed(1);
     if (els.hudLamp) els.hudLamp.textContent = state.lampOn ? '加热中' : '已撤去';
 
-    const b = boilness();
     const lowP = state.Tb < 99.5;
     let hint;
     if (!state.lampOn) {
@@ -1345,7 +1358,9 @@ import * as THREE from './assets/optics-three.min.js';
 
   function animateParts(dt) {
     clock += dt;
-    const b = boilness();
+    /* 视觉强度走 boilnessVis（温度够了【且】还在吸热）：
+       撤火后它 0.3 s 内归零，气泡形态、白气、水面翻腾一起收住。 */
+    const b = boilnessVis();
     const depth = waterDepth();
 
     /* 酒精灯：撤去时整盏灯滑到旁边，火焰同步缩小 + 淡出。
@@ -1380,8 +1395,12 @@ import * as THREE from './assets/optics-three.min.js';
     if (Math.abs(state.thDepth - state.thAnim) > 5e-4) dirty = true;   // 只有还在动的时候才要求重绘
 
     /* 气泡：出生在杯底，按 bubbleScale(u) 决定上升途中是缩还是胀。
-       u ≥ 1（到水面破裂）或半径缩到看不见（半路消失）都回收，重新从杯底冒。 */
-    const showB = toggles.bubbles && state.T > 42;
+       u ≥ 1（到水面破裂）或半径缩到看不见（半路消失）都回收，重新从杯底冒。
+       出现条件还要加一条「还在吸热，或水还没烧到沸点附近」：
+       撤去酒精灯后水温仍是 100 ℃（> Tb−8），此时杯底不再产生水蒸气，
+       气泡必须收住 —— 否则「沸腾需要继续吸热」的结论在画面上就站不住。
+       阈值 Tb−8 与 boilness() 的斜坡下沿取同一个值，两边不会各写一个数。 */
+    const showB = toggles.bubbles && state.T > 42 && (state.lampOn || state.T < state.Tb - 8);
     for (const m of bubbles) {
       const u = m.userData;
       m.visible = showB;
@@ -1740,7 +1759,7 @@ import * as THREE from './assets/optics-three.min.js';
       };
     },
     statusText, shortState, renderRecords, clearRecords, microStats,
-    boilness, isBoiling, bubbleScale, waterDepth, boilingPoint,
+    boilness, boilnessVis, isBoiling, bubbleScale, waterDepth, boilingPoint,
     setPressure(key) { setPressure(key); applyPressureUI(); refreshAll(); },
     /* 温度计当前实际抬升量（世界单位 cm），走的是渲染用的同一份位置 */
     thLift() { return thermometer.position.y; },
