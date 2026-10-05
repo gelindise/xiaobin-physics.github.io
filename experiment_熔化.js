@@ -1562,6 +1562,7 @@ import * as THREE from './assets/optics-three.min.js';
   els.resetBtn.addEventListener('click', () => {
     setRunning(false);
     resetSim();
+    clearRecords();            // 「重置」= 从头再来，记录表一起清空
     refreshAll();
   });
   document.querySelectorAll('[data-speed]').forEach((btn) => {
@@ -1620,6 +1621,15 @@ import * as THREE from './assets/optics-three.min.js';
 
   const EMPTY_MAIN = '<tr><td colspan="6" class="empty">尚无记录，先点“开始加热”再记录</td></tr>';
   const EMPTY_SIDE = '<tr><td colspan="4" class="empty">还没有记录</td></tr>';
+  const HINT_READY = '加热时随时点一下，当前时刻和试样温度就记进下面的表格（点「重置」会清空）。';
+  const HINT_DONE = '已记录。换物质重新加热时旧记录会保留，正好用来对照；点「重置」则把表格一起清空。';
+
+  /* 清空记录（「重置」按钮和调试钩子共用同一个入口） */
+  function clearRecords() {
+    state.records.length = 0;
+    renderRecords();
+    recordHint.textContent = HINT_READY;
+  }
 
   function renderRecords() {
     if (!state.records.length) {
@@ -1673,7 +1683,7 @@ import * as THREE from './assets/optics-three.min.js';
     recordBtn.classList.remove('hit');
     void recordBtn.offsetWidth;                    // 强制重排，动画才能连点连放
     recordBtn.classList.add('hit');
-    recordHint.textContent = '已记录。换物质重新加热时旧记录会保留，正好用来对照。';
+    recordHint.textContent = HINT_DONE;
     requestRender();
   });
   renderRecords();
@@ -1748,8 +1758,7 @@ import * as THREE from './assets/optics-three.min.js';
       updateSample(); pushSample(); updateReadouts(); drawChart(); drawMicro(0.016);
       return { t: state.t, Tt: state.Tt, Tw: state.Tw, phi: state.phi, soft: state.soft };
     },
-    statusText, meltFraction, shortState, renderRecords,
-    clearRecords() { state.records.length = 0; renderRecords(); },
+    statusText, meltFraction, shortState, renderRecords, clearRecords,
     setSubstance(k) {
       state.substance = k;
       document.querySelectorAll('[data-substance]').forEach((b) => b.classList.toggle('active', b.dataset.substance === k));
