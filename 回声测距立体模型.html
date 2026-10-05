@@ -1,0 +1,1669 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>回声测距 · 三维声呐实验台 - 物理虚拟实验</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="stylesheet" href="style.css">
+  <script src="auth-check.js"></script>
+  <style>
+    body { margin: 0; padding: 20px; min-width: 320px; }
+
+    .lab3d h1 { margin: 0; font-size: 19px; letter-spacing: .3px; }
+    .lab3d-sub { margin: 7px 0 16px; color: #93b4c4; font-size: 12.5px; line-height: 1.6; }
+    .lab3d-sub b { color: #a5f3fc; font-weight: 700; }
+
+    .lab3d-layout {
+      display: grid; grid-template-columns: minmax(0, 1fr) 340px;
+      gap: 16px; align-items: start; align-content: start;
+    }
+    /* 三块位置写死，DOM 顺序按【窄屏需要的顺序】排：舞台 → 侧栏 → 下半区。
+       宽屏用 grid 把「视角 / 算一算 / 数据记录」摆到舞台正下方（左列第二行），
+       侧栏跨两行 —— 两列高度接近，不会在舞台下面留一大片空白。 */
+    .lab3d-stage { grid-column: 1; grid-row: 1; }
+    .lab3d-sidebar { grid-column: 2; grid-row: 1 / span 2; }
+    .lab3d-lower {
+      grid-column: 1; grid-row: 2;
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(270px, 1fr));
+      gap: 14px; align-content: start; align-items: start; min-width: 0;
+    }
+
+    .lab3d-stage {
+      position: relative; overflow: hidden;
+      height: clamp(380px, 62vh, 640px);
+      border: 1px solid rgba(148, 163, 184, .18); border-radius: 16px;
+      background: #020617; box-shadow: 0 18px 46px rgba(2, 6, 23, .5);
+    }
+    .lab3d-stage canvas { display: block; touch-action: none; cursor: grab; }
+    .lab3d-stage canvas.pick { cursor: pointer; }
+    .lab3d-stage canvas.grabx { cursor: ew-resize; }
+    .lab3d-stage canvas.grabbing { cursor: grabbing; }
+
+    .lab3d-stage .stage-hint {
+      position: absolute; left: 12px; top: 12px; max-width: 62%;
+      padding: 7px 11px; border-radius: 8px; pointer-events: none;
+      border: 1px solid rgba(56, 189, 248, .28); background: rgba(2, 6, 23, .78);
+      color: #c3e8f5; font-size: 11px; line-height: 1.55;
+    }
+    .lab3d-stage .stage-hint b { color: #7dd3fc; }
+
+    .lab3d-stage .stage-tip {
+      position: absolute; left: 0; top: 0; padding: 5px 9px; border-radius: 7px;
+      background: rgba(2, 6, 23, .9); border: 1px solid rgba(148, 163, 184, .3);
+      color: #e2e8f0; font-size: 11px; white-space: nowrap;
+      pointer-events: none; opacity: 0; transition: opacity .12s;
+    }
+    .lab3d-stage .stage-tip.show { opacity: 1; }
+
+    /* 舞台底部那一条：左边按钮，右边操作提示。做成一条 flex 行是为了让它们
+       【永远不重叠】—— 各占一角的话，窄屏上提示文字会横穿底边压在按钮上。
+       按钮必须在舞台上：.lab3d-layout 在 ≤900px 折成一列后侧栏会被挤到舞台
+       【下面】，而「发射脉冲 / 记录这一组」恰恰是眼睛盯着画面时该按的。 */
+    .lab3d-stage .stage-bar {
+      position: absolute; left: 0; right: 0; bottom: 0;
+      display: flex; align-items: center; justify-content: space-between; gap: 8px;
+      padding: 0 12px 11px; pointer-events: none;
+    }
+    .lab3d-stage .bar-left { display: flex; align-items: center; gap: 7px; flex: none; pointer-events: auto; }
+    .lab3d-stage .stage-btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 8px 13px; border-radius: 10px; font-family: inherit;
+      font-size: 12px; font-weight: 800; cursor: pointer;
+      border: 1px solid rgba(148, 163, 184, .35); background: rgba(2, 6, 23, .88); color: #cbd5e1;
+      transition: background .2s, border-color .2s, color .2s, box-shadow .2s;
+    }
+    .lab3d-stage .stage-btn.go { border-color: rgba(56, 189, 248, .55); background: rgba(14, 116, 144, .3); color: #e0f2fe; }
+    .lab3d-stage .stage-btn.go:hover { background: rgba(14, 116, 144, .46); }
+    .lab3d-stage .stage-btn:disabled { opacity: .45; cursor: not-allowed; }
+    .lab3d-stage .stage-btn .cnt {
+      display: inline-grid; place-items: center; min-width: 17px; height: 17px; padding: 0 4px;
+      border-radius: 99px; font-size: 10px; font-weight: 800;
+      background: rgba(148, 163, 184, .22); color: #e2e8f0;
+    }
+    /* 收到回声、这组数据可以记了 —— 这一刻正是该按的时候，按钮自己亮起来 */
+    .lab3d-stage .stage-btn.ready {
+      border-color: rgba(52, 211, 153, .8); background: rgba(16, 185, 129, .24); color: #d1fae5;
+      box-shadow: 0 0 0 3px rgba(52, 211, 153, .14), 0 0 18px rgba(52, 211, 153, .3);
+    }
+    .lab3d-stage .stage-btn.ready .cnt { background: rgba(52, 211, 153, .32); color: #ecfdf5; }
+    .lab3d-stage .stage-help {
+      min-width: 0; pointer-events: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      color: #93b4c4; font-size: 11px; background: rgba(2, 6, 23, .72); padding: 6px 10px; border-radius: 7px;
+    }
+
+    .lab3d-stage .stage-toast {
+      position: absolute; left: 50%; transform: translateX(-50%); bottom: 96px;
+      padding: 8px 14px; border-radius: 10px; font-size: 12px; font-weight: 700;
+      background: rgba(2, 6, 23, .93); border: 1px solid rgba(148, 163, 184, .32); color: #e2e8f0;
+      opacity: 0; transition: opacity .18s, transform .18s; pointer-events: none; white-space: nowrap;
+      max-width: 90%; overflow: hidden; text-overflow: ellipsis;
+    }
+    .lab3d-stage .stage-toast.show { opacity: 1; }
+
+    .lab3d-stage .stage-flag {
+      position: absolute; left: 50%; transform: translateX(-50%); bottom: 58px;
+      padding: 7px 13px; border-radius: 99px; font-size: 12px; font-weight: 800;
+      background: rgba(6, 78, 59, .92); border: 1px solid rgba(52, 211, 153, .6); color: #d1fae5;
+      opacity: 0; transition: opacity .2s; pointer-events: none; white-space: nowrap;
+    }
+    .lab3d-stage .stage-flag.show { opacity: 1; }
+    .lab3d-stage .stage-flag.warn { background: rgba(120, 53, 15, .92); border-color: rgba(251, 191, 36, .6); color: #fef3c7; }
+
+    .lab3d-sidebar { display: flex; flex-direction: column; gap: 11px; min-width: 0; }
+    .panel {
+      border: 1px solid rgba(148, 163, 184, .17); border-radius: 13px;
+      background: rgba(9, 20, 35, .82); padding: 13px 14px;
+    }
+    .panel > h3 {
+      margin: 0 0 10px; font-size: 12px; font-weight: 800; color: #7dd3fc;
+      letter-spacing: .4px; display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    }
+    .panel > h3 .pill {
+      font-size: 10px; font-weight: 800; padding: 2px 8px; border-radius: 99px;
+      background: rgba(148, 163, 184, .18); color: #e2e8f0;
+    }
+    .panel > h3 .pill.live { background: rgba(248, 113, 113, .25); color: #fecaca; }
+    .panel > h3 .pill.ok { background: rgba(52, 211, 153, .22); color: #d1fae5; }
+    .fld { display: block; margin-bottom: 11px; }
+    .fld:last-child { margin-bottom: 0; }
+    .fld .row { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 5px; }
+    .fld .row span { color: #a9c2d2; font-size: 11.5px; }
+    .fld .row b { color: #e2e8f0; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+    .fld .note { margin: 6px 0 0; color: #8aa6b8; font-size: 11px; line-height: 1.55; }
+
+    .btn-row { display: flex; flex-wrap: wrap; gap: 7px; }
+    .btn-row button {
+      flex: 1 1 auto; min-width: 0; padding: 9px 11px; border-radius: 9px; cursor: pointer;
+      font-family: inherit; font-size: 12px; font-weight: 800;
+      border: 1px solid rgba(148, 163, 184, .3); background: rgba(30, 41, 59, .7); color: #cbd5e1;
+    }
+    .btn-row button.primary { border-color: rgba(56, 189, 248, .6); background: rgba(14, 116, 144, .42); color: #e0f2fe; }
+    .btn-row button.on { border-color: rgba(52, 211, 153, .65); background: rgba(6, 78, 59, .5); color: #d1fae5; }
+    .btn-row button:disabled { opacity: .45; cursor: not-allowed; }
+    .btn-row button:hover:not(:disabled) { border-color: rgba(125, 211, 252, .7); }
+
+    /* 秒表大数字 */
+    .sw {
+      padding: 9px 10px; border-radius: 10px; margin-bottom: 9px;
+      background: linear-gradient(180deg, #0b1a2a, #07131f); border: 1px solid rgba(56, 189, 248, .3);
+    }
+    .sw .cap { display: flex; justify-content: space-between; align-items: baseline; color: #5e8496; font-size: 10.5px; font-weight: 700; margin-bottom: 3px; }
+    .sw .val {
+      display: flex; align-items: baseline; justify-content: center; gap: 5px;
+    }
+    .sw .val .num {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 26px; font-weight: 800;
+      color: #a5f3fc; letter-spacing: .5px; font-variant-numeric: tabular-nums;
+      text-shadow: 0 0 12px rgba(56, 189, 248, .45);
+    }
+    .sw .val .unit { color: #5e8496; font-size: 13px; font-weight: 700; }
+    .sw.done { border-color: rgba(52, 211, 153, .5); }
+    .sw.done .val .num { color: #6ee7b7; text-shadow: 0 0 12px rgba(52, 211, 153, .45); }
+
+    .subst {
+      margin: 9px 0 0; padding: 8px 10px; border-radius: 9px;
+      background: rgba(2, 6, 23, .55); border: 1px solid rgba(148, 163, 184, .2);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; line-height: 1.8;
+      color: #a5f3fc; word-break: break-all;
+    }
+    .subst .dim { color: #6f8b9c; }
+    .subst b { color: #fde68a; }
+
+    .readouts { display: flex; flex-direction: column; gap: 5px; color: #a9c2d2; font-size: 11.5px; }
+    .readouts div { display: flex; justify-content: space-between; gap: 8px; }
+    .readouts b { color: #e2e8f0; font-variant-numeric: tabular-nums; }
+    .readouts .dim { color: #7d97a8; }
+
+    .badge {
+      display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 9px;
+      font-size: 12px; font-weight: 800; margin-top: 8px;
+    }
+    .badge.ok { background: rgba(6, 78, 59, .45); border: 1px solid rgba(52, 211, 153, .5); color: #d1fae5; }
+    .badge.warn { background: rgba(120, 53, 15, .45); border: 1px solid rgba(251, 191, 36, .5); color: #fef3c7; }
+    .badge.bad { background: rgba(127, 29, 29, .45); border: 1px solid rgba(248, 113, 113, .5); color: #fee2e2; }
+
+    table.rec { width: 100%; border-collapse: collapse; font-size: 11px; font-variant-numeric: tabular-nums; }
+    table.rec th, table.rec td { padding: 5px 3px; text-align: right; border-bottom: 1px solid rgba(148, 163, 184, .13); }
+    table.rec th { color: #8aa6b8; font-weight: 700; font-size: 10px; }
+    table.rec th:first-child, table.rec td:first-child { text-align: left; }
+    table.rec td { color: #dbe7f0; }
+    table.rec td.dim { color: #6f8b9c; }
+    table.rec td.err.ok { color: #6ee7b7; font-weight: 700; }
+    table.rec td.err.bad { color: #fca5a5; font-weight: 700; }
+
+    .analysis { color: #c8d8e4; font-size: 11.5px; line-height: 1.75; }
+    .analysis .line { display: flex; justify-content: space-between; gap: 8px; }
+    .analysis .line b { color: #e2e8f0; font-variant-numeric: tabular-nums; }
+    .analysis .line.sum { border-top: 1px dashed rgba(148, 163, 184, .3); margin-top: 5px; padding-top: 6px; }
+    .analysis .line.sum b { color: #a5f3fc; font-size: 13px; }
+    .analysis .line.off { color: #6f8b9c; }
+    .analysis .conc {
+      margin-top: 9px; padding: 8px 10px; border-radius: 8px; font-size: 11.5px; line-height: 1.65;
+      background: rgba(6, 78, 59, .35); border: 1px solid rgba(52, 211, 153, .4); color: #d1fae5;
+    }
+    .analysis .conc.warn { background: rgba(127, 29, 29, .35); border-color: rgba(248, 113, 113, .45); color: #fee2e2; }
+    .analysis .conc.info { background: rgba(12, 74, 110, .35); border-color: rgba(56, 189, 248, .4); color: #e0f2fe; }
+    .analysis .muted { color: #7d97a8; }
+
+    .info-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; margin-top: 16px; }
+    .info-card {
+      border: 1px solid rgba(148, 163, 184, .16); border-radius: 14px;
+      background: rgba(9, 20, 35, .7); padding: 15px 17px;
+    }
+    .info-card h4 { margin: 0 0 9px; font-size: 13px; color: #7dd3fc; }
+    .info-card ul { margin: 0; padding-left: 17px; color: #a9c2d2; font-size: 12px; line-height: 1.85; }
+    .info-card li b { color: #e2e8f0; }
+    .info-card .fml {
+      display: inline-block; margin: 3px 0; padding: 3px 9px; border-radius: 7px;
+      background: rgba(56, 189, 248, .13); color: #a5f3fc; font-weight: 700;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+
+    @media (max-width: 900px) {
+      .lab3d-layout { grid-template-columns: minmax(0, 1fr); }
+      .lab3d-stage, .lab3d-sidebar, .lab3d-lower { grid-column: 1; grid-row: auto; }
+      .lab3d-stage { height: clamp(340px, 54vh, 500px); }
+      .lab3d-sidebar { border-top: 1px solid rgba(148, 163, 184, .16); padding-top: 12px; }
+      .lab3d-lower { border-top: 1px solid rgba(148, 163, 184, .16); padding-top: 12px; }
+    }
+    @media (max-width: 620px) {
+      body { padding: 14px; }
+      .lab3d h1 { font-size: 16px; }
+      .lab3d-stage { height: 350px; }
+      .lab3d-stage .stage-hint { font-size: 10px; padding: 6px 9px; max-width: 66%; }
+      .lab3d-stage .stage-help { display: none; }
+      .lab3d-stage .stage-btn { padding: 7px 10px; font-size: 11px; gap: 5px; }
+      .lab3d-stage .stage-flag { bottom: 54px; font-size: 11px; padding: 6px 11px; }
+      .sw .val .num { font-size: 22px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="lab3d">
+    <h1>回声测距 · 三维声呐实验台</h1>
+    <p class="lab3d-sub">
+      左边是一台<b>收发一体的换能器</b>，右边立着一面<b>障碍物</b>。按一下「发射脉冲」，
+      声音以<b>球面波</b>向外扩散 —— 撞上障碍物后被反射回来，被换能器重新收到。
+      秒表量出的是<b>往返时间 t</b>，而波走的路是 <b>2s</b>（去一趟、回一趟），
+      所以 <b>s = v·t ÷ 2</b>。换一种介质，声速从 340 变到 5200 m/s，
+      同样的距离用时能差 15 倍。
+    </p>
+
+    <div class="lab3d-layout">
+      <div class="lab3d-stage">
+        <canvas id="ec-canvas"></canvas>
+
+        <div class="stage-hint" id="ec-hint"></div>
+        <div class="stage-tip" id="ec-tip"></div>
+        <div class="stage-toast" id="ec-toast"></div>
+        <div class="stage-flag" id="ec-flag"></div>
+
+        <div class="stage-bar">
+          <div class="bar-left">
+            <button type="button" class="stage-btn go" id="ec-emit">发射脉冲</button>
+            <button type="button" class="stage-btn" id="ec-record">
+              记录这一组<b class="cnt" id="ec-record-cnt">0</b>
+            </button>
+            <button type="button" class="stage-btn" id="ec-reset">重置</button>
+          </div>
+          <div class="stage-help">拖动空白处旋转 · 滚轮缩放 · 直接拖动右侧障碍物改距离</div>
+        </div>
+      </div>
+
+      <div class="lab3d-sidebar">
+        <div class="panel">
+          <h3>介质 <span class="pill" id="ec-med-pill">空气</span></h3>
+          <div class="btn-row">
+            <button type="button" data-med="air">空气</button>
+            <button type="button" data-med="water">水</button>
+            <button type="button" data-med="steel">铁</button>
+          </div>
+          <p class="note" id="ec-med-note" style="margin-top:9px;"></p>
+          <div class="readouts" style="margin-top:8px;">
+            <div><span>本介质声速 v</span><b id="ec-v">340 m/s</b></div>
+            <div><span>能分辨回声的最短距离</span><b id="ec-minres">17.0 m</b></div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h3>测量 <span class="pill" id="ec-phase-pill">等待发射</span></h3>
+          <div class="sw" id="ec-sw">
+            <div class="cap"><span>秒表 · 往返时间 t</span><span id="ec-sw-res">分辨率 1 ms</span></div>
+            <div class="val"><span class="num" id="ec-t">0.000</span><span class="unit">s</span></div>
+          </div>
+          <div class="fld">
+            <div class="row"><span>障碍物距离 s</span><b id="ec-s-num">60 m</b></div>
+            <input type="range" id="ec-s" min="10" max="120" step="1" value="60" style="width:100%">
+          </div>
+          <div class="subst" id="ec-subst"></div>
+          <div class="btn-row" style="margin-top:9px;">
+            <button type="button" class="primary" id="ec-emit2">发射脉冲</button>
+            <button type="button" id="ec-speed">慢放</button>
+            <button type="button" id="ec-sound">🔈 声音开</button>
+          </div>
+          <div id="ec-badge"></div>
+        </div>
+      </div>
+
+      <!-- 舞台正下方的第二行：视角、算一算、数据记录。
+           摆在左列（舞台下面）而不是全塞侧栏，是为了让两列高度相当。
+           窄屏时它排在侧栏之后（见 .lab3d-lower 的媒体查询）。 -->
+      <div class="lab3d-lower">
+        <div class="panel">
+          <h3>视角</h3>
+          <div class="btn-row">
+            <button type="button" data-view="perspective">默认</button>
+            <button type="button" data-view="front">正对全程</button>
+            <button type="button" data-view="axial">沿声轴</button>
+            <button type="button" data-view="top">俯视</button>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h3>算一算</h3>
+          <div class="analysis" id="ec-analysis"></div>
+        </div>
+
+        <div class="panel">
+          <h3>数据记录 <span class="pill" id="ec-rec-count">0 / 5 组</span></h3>
+          <div id="ec-rec-body"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="info-cards">
+      <div class="info-card">
+        <h4>实验原理</h4>
+        <ul>
+          <li>声音在介质中以<b>球面波</b>的形式向四面八方扩散。遇到障碍物会<b>反射</b>回来，
+              反射回来的声音就是<b>回声</b>。</li>
+          <li>测距时量的是<b>往返时间 t</b>：声音先走 <b>s</b> 到障碍物，再走 <b>s</b> 回来，
+              一共走了 <b>2s</b>。所以
+              <span class="fml">s = v · t ÷ 2</span>
+              这个 <b>÷2</b> 是最容易漏掉的一步 —— 漏了就整整多算一倍。</li>
+          <li>声速由<b>介质</b>决定：铁 5200 &gt; 水 1500 &gt; 空气 340（m/s）。
+              同一个距离，铁里用时只有空气里的 <b>1/15</b>。</li>
+          <li>回声要能被<b>人耳分辨</b>，往返时间至少 <b>0.1 s</b> ——
+              在空气中对应 <b>17 m</b> 以上。太近了，回声和原声混在一起，听不出来。</li>
+          <li>秒表读数有<b>分辨率极限</b>（这里是 1 ms）。在铁里往返时间只有几毫秒，
+              读数误差被放大到百分之几 —— 所以探伤仪要用专门的电子计时，不能靠秒表。</li>
+        </ul>
+      </div>
+      <div class="info-card">
+        <h4>操作指南</h4>
+        <ul>
+          <li>先选<b>介质</b>（空气 / 水 / 铁），再<b>拖动画面右侧的障碍物</b>或拉滑块改距离
+              （10 ~ 120 m）。</li>
+          <li>按<b>「发射脉冲」</b>：球面波前从换能器扩散出去，撞上障碍物后
+              <b>生出次级波前往回扫</b>。波前回到换能器的一瞬间，秒表停表 —— 这就是回声到达。</li>
+          <li>此时右侧会亮起 <b>s = v·t/2</b> 的代入式，按<b>「记录这一组」</b>存进表格。
+              没收到回声就按，会被拒绝并告诉你原因。</li>
+          <li>表格里同时给出<b>算出距离</b>和<b>真实距离</b>，误差超过 <b>1%</b> 标红。
+              多记几组就能发现：<b>同一个介质里，s 与 t 成正比，斜率就是 v/2</b>。</li>
+          <li>画面默认<b>慢放</b>（右上角标着倍率）—— 否则铁里的往返只有几毫秒，一闪就过去了。
+              点「慢放 / 实时」可以切换，切到实时就知道它到底有多快。</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <script>
+  (() => {
+    'use strict';
+
+    const canvas = document.getElementById('ec-canvas');
+    const stage = document.querySelector('.lab3d-stage');
+    if (!canvas || !stage) return;
+    const ctx = canvas.getContext('2d');
+
+    const PI2 = Math.PI * 2;
+    const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
+    const $ = id => document.getElementById(id);
+
+    /* ============================================================
+     * 向量工具（与站内其它三维页同一套约定）
+     * ============================================================ */
+    const add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+    const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+    const scl = (a, k) => [a[0] * k, a[1] * k, a[2] * k];
+    const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+    const vlen = a => Math.hypot(a[0], a[1], a[2]);
+    const vnorm = a => { const l = vlen(a) || 1; return [a[0] / l, a[1] / l, a[2] / l]; };
+    const rgba = (c, a) => 'rgba(' + Math.round(clamp(c[0], 0, 255)) + ',' +
+      Math.round(clamp(c[1], 0, 255)) + ',' + Math.round(clamp(c[2], 0, 255)) + ',' + a + ')';
+
+    /* ============================================================
+     * 介质
+     * ------------------------------------------------------------
+     * 三个数字是这一页的物理核心，【画面、读数、表格、自检】共用同一份。
+     * 抄两遍的话，改了一处另一处不跟着变，页面在动而数字对不上。
+     * ============================================================ */
+    const MEDIA = {
+      air: {
+        key: 'air', name: '空气', v: 340, accent: '#7dd3fc',
+        tint: ['#040b18', '#071527', '#02060f'], haze: 'rgba(56,120,180,.055)',
+        note: '空气中声速约 <b>340 m/s</b>。山谷回声、超声测距仪都靠它。'
+      },
+      water: {
+        key: 'water', name: '水', v: 1500, accent: '#38bdf8',
+        tint: ['#03101f', '#062436', '#010912'], haze: 'rgba(30,110,190,.14)',
+        note: '水中声速约 <b>1500 m/s</b>，是空气里的 4.4 倍 —— 声呐就在水里工作。'
+      },
+      steel: {
+        key: 'steel', name: '铁', v: 5200, accent: '#cbd5e1',
+        tint: ['#0a0e16', '#161d29', '#05080d'], haze: 'rgba(150,162,182,.13)',
+        note: '铁中声速约 <b>5200 m/s</b>，是空气里的 15 倍 —— 超声波探伤靠它。'
+      }
+    };
+    const M_ORDER = ['air', 'water', 'steel'];
+
+    /* ============================================================
+     * 场景常量
+     * ------------------------------------------------------------
+     * 世界坐标：y 向上，x 是【距离】（单位 = m），z 是进深。
+     * 1 世界单位 = 1 m，所以 x 轴上读到的数就是米 —— 地面的刻度尺是真的。
+     *
+     * 取景是【跟着 s 走的】：画面永远装下「声源 → 障碍物 → 镜像声源(2s)」这一整段。
+     * 所以同一段弧线在 s 小时显得大、s 大时显得小，而地面刻度尺会告诉你
+     * 它到底是多少米 —— 压缩感是诚实的，不是把横轴掰弯。
+     * ============================================================ */
+    const S_MIN = 10, S_MAX = 120, S_DEF = 60;
+    const ANIM_T = 1.60;      // 慢放时「一次完整往返」占用的墙上时间（s）
+    const RESOLVE_DT = 0.1;   // 人耳能分辨回声所需的最短时间间隔（s）
+    const T_QUANT = 0.001;    // 秒表读数分辨率 1 ms —— 表格里的误差就来自它
+    const MAX_REC = 5;
+
+    const CAMD_K = 1.52;      // 相机距离 = CAMD_K × 取景长度
+
+    const VIEWS = {
+      // [方位角, 俯仰角, 缩放]
+      //
+      // ★ 方位角要两头兼顾，实测出来的：
+      //   太小（-0.30）—— 相机几乎与障碍物【共面】，一面 80 m 宽的墙被透视
+      //     压成一根竖条，看着像一扇门；而且刻度尺整条被墙挡住。
+      //   太大（+0.62）—— eye.x 会甩到障碍物【后面】去，墙占满半个画面、
+      //     换能器被透视缩到看不见（相机到声源 168 m，到墙只有 130 m）。
+      //   -0.52 时：墙的屏幕宽度 0.31L ≈ 高度的 1.15 倍（终于像一面墙），
+      //     相机到声源 / 到墙的距离是 1.42L vs 1.59L（只差 13%，两端一样大）。
+      perspective: [-0.52, 0.42, 1],
+      front:       [0.00, 0.12, 1],
+      axial:       [-1.30, 0.32, 1],
+      top:         [-0.30, 1.10, 1]
+    };
+
+    const state = {
+      yaw: VIEWS.perspective[0], pitch: VIEWS.perspective[1], zoom: 1,
+      medium: 'air',
+      s: S_DEF,                 // 障碍物距离（m）—— 物理量
+      camS: S_DEF,              // 取景用的距离：拖动障碍物期间【冻结】
+      emitted: false, tp: 0, echoed: false, paused: false,
+      realtime: false,
+      soundOn: true,
+      flashWall: 0, flashEcho: 0,
+      marks: [],
+      t: 0,                     // 墙上时间，驱动弧线呼吸与闪烁
+      w: 1, h: 1, dpr: 0, dirty: true,
+      dragging: false, drag: null, downAt: null, dragYaw: 0, dragPitch: 0,
+      draggingWall: false, dragGrabX: 0,
+      hover: null, view: 'perspective',
+      drawn: {}
+    };
+
+    /* ============================================================
+     * 物理
+     * ------------------------------------------------------------
+     * 全部抽成纯函数 —— 渲染、读数、表格、自检共用同一份。
+     * ============================================================ */
+    const vNow = () => MEDIA[state.medium].v;
+    // 往返时间。★ 这个 2 就是整页的题眼：波走的是 2s，不是 s。
+    const tEcho = () => 2 * state.s / vNow();
+    const tHalf = () => state.s / vNow();
+    // 秒表【读得到】的那个数：分辨率 1 ms。表格里的误差全部来自这一句。
+    const tShown = () => Math.round(tEcho() / T_QUANT) * T_QUANT;
+    const tLive = () => Math.round(clamp(state.tp, 0, tEcho()) / T_QUANT) * T_QUANT;
+    // 用秒表读数反算距离 —— 学生手上做的就是这个
+    const sCalc = () => vNow() * tShown() / 2;
+    const errPct = () => Math.abs(sCalc() - state.s) / state.s * 100;
+    const resolvable = () => tEcho() >= RESOLVE_DT;
+    const minResolveS = () => vNow() * RESOLVE_DT / 2;   // 本介质下能分辨回声的最短距离
+    // 慢放倍率：一次往返固定占 ANIM_T 秒墙上时间。实时就是 1。
+    const rate = () => (state.realtime ? 1 : clamp(tEcho() / ANIM_T, 1 / 8000, 1));
+
+    function phaseNow() {
+      if (!state.emitted) return 'idle';
+      if (state.echoed) return 'done';
+      return state.tp < tHalf() ? 'fly' : 'back';
+    }
+
+    // 波前：去程以声源为心，回程以【镜像声源 2s】为心 ——
+    // 平面镜反射的精确图像：反射波就像从镜后的镜像声源发出来的一样。
+    // 半径都是 v·t（同一个球面，只是球心换到了镜后）。
+    function frontInfo() {
+      if (!state.emitted) return null;
+      const back = state.tp >= tHalf();
+      return {
+        r: vNow() * state.tp,
+        cx: back ? 2 * state.s : 0,
+        cy: Y0(),
+        back: back,
+        wall: state.s
+      };
+    }
+
+    /* ---------------------------- 取景几何 ---------------------------- */
+    // 取景长度：装下「声源 → 障碍物 → 镜像声源(2s)」这一整段，再留一点边。
+    // 用 camS 而不是 s，是为了拖动障碍物期间画面不跟着缩 ——
+    // 否则被拖的那个东西会「追不上手指」。
+    const CL = () => 2.0 * state.camS + 8;
+    const XA = () => -0.09 * CL();          // 取景左边界（声源左侧留出仪表的位置）
+    const XB = () => XA() + CL();           // 取景右边界
+    // 上边界必须约等于 L/2.25 —— 舞台画布是 ~2.25:1，取景盒子也按这个比例才
+    // 不浪费宽度（取景比画布「方」的话，焦距会被高度卡住，画面两侧各空一大块）。
+    const YT = () => 0.40 * CL();
+    const ZT = () => 0.30 * CL();           // 取景半深
+    const Y0 = () => 0.13 * CL();           // 声轴高度
+    // 器材尺度（示意比例）：真实超声测距仪只有几十厘米，而这里要看 120 m ——
+    // 同一个画面装不下，所以按取景尺寸缩放，信息卡里写明这是示意比例。
+    // 【不加绝对上限】：上限一加，s 大时器材就缩成一个小点；按取景比例走，
+    // 它在画面里的视觉大小才始终一致（恒为取景长度的 8.5%）。
+    const instR = () => 0.085 * CL();
+    // 障碍物顶必须落在取景上边界【以内】—— 高出 YT 的话，相机为了装下它
+    // 会把整个画面往上抬，地面刻度尺就被挤出画外，取景也跟着不自洽。
+    const wallH = () => 0.32 * CL();
+    const wallZW = () => 0.32 * CL();
+    const wallT = () => Math.min(0.030 * CL(), 3.5);
+    // 刻度尺铺在【障碍物跨度之外】的近端地面上（ZR > wallZW）—— 铺在里面的话，
+    // 恰好 x = s 那一格会被墙盖住，而那一格正是最该读的一个数。
+    const ZR = () => ZT() * 1.30;
+
+    /* ---------------------------- 相机 ---------------------------- */
+    // 取景包络 = 当前取景盒子 + 声源点。盒子本身不是实物（介质是无限的），
+    // 它只是「我们要看的那一块」，所以包络就是它。
+    function envelopePoints() {
+      const L = CL(), x0 = XA(), x1 = XB(), y1 = YT(), z1 = ZT();
+      return [
+        [x0, 0, -z1], [x1, 0, -z1], [x1, 0, z1], [x0, 0, z1],
+        [x0, y1, -z1], [x1, y1, -z1], [x1, y1, z1], [x0, y1, z1],
+        // 刻度尺铺在取景盒子【之外】（ZR > ZT）—— 不把它的两端算进包络的话，
+        // 尺子会被挤出画外，而它正是这一页唯一的「多少米」参照。
+        [x0, 0, ZR()], [x1, 0, ZR()],
+        [0, Y0(), 0], [state.s, wallH(), 0]
+      ];
+    }
+
+    function makeCam(q, w, h) {
+      const cy = Math.cos(state.yaw), sy = Math.sin(state.yaw);
+      const cp = Math.cos(state.pitch), sp = Math.sin(state.pitch);
+      const dir = [cp * sy, sp, cp * cy];
+      const L = CL();
+      const target = [0.5 * L + XA(), 0.19 * L, 0];
+      q.dist = CAMD_K * L / state.zoom;
+      q.eye = add(target, scl(dir, q.dist));
+      q.fwd = scl(dir, -1);
+      q.right = vnorm(cross(q.fwd, [0, 1, 0]));
+      q.up = cross(q.right, q.fwd);
+      const pts = envelopePoints();
+      let loR = 1e9, hiR = -1e9, loU = 1e9, hiU = -1e9;
+      for (const p of pts) {
+        const v = sub(p, q.eye);
+        const z = Math.max(0.05, dot(v, q.fwd));
+        const r = dot(v, q.right) / z, u = dot(v, q.up) / z;
+        loR = Math.min(loR, r); hiR = Math.max(hiR, r);
+        loU = Math.min(loU, u); hiU = Math.max(hiU, u);
+      }
+      const s = Math.min(w * 0.94 / Math.max(1e-6, hiR - loR),
+                         h * 0.90 / Math.max(1e-6, hiU - loU));
+      q.focal = s;
+      q.px = w * 0.5 - (loR + hiR) * 0.5 * s;
+      q.py = h * 0.5 + (loU + hiU) * 0.5 * s;
+      q.eyeDist = p => dot(sub(p, q.eye), q.fwd);
+      return q;
+    }
+    function project(p, q) {
+      const v = sub(p, q.eye);
+      const z = Math.max(0.05, dot(v, q.fwd));
+      const s = q.focal / z;
+      return { x: q.px + dot(v, q.right) * s, y: q.py - dot(v, q.up) * s, s: s, z: z };
+    }
+    // 屏幕点 → 世界射线与水平面 y = planeY 的交点
+    function unproject(sx, sy, q, planeY) {
+      const dx = (sx - q.px) / q.focal;
+      const dy = -(sy - q.py) / q.focal;
+      const d = add(add(q.fwd, scl(q.right, dx)), scl(q.up, dy));
+      if (Math.abs(d[1]) < 1e-6) return null;
+      const t = ((planeY === undefined ? 0 : planeY) - q.eye[1]) / d[1];
+      if (t <= 0) return null;
+      return add(q.eye, scl(d, t));
+    }
+
+    /* ============================================================
+     * 绘图小工具
+     * ============================================================ */
+    function polyPath(pts) {
+      ctx.beginPath();
+      pts.forEach((p, k) => k ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+      ctx.closePath();
+    }
+    function poly(pts, fill, stroke, lw) {
+      if (!pts || pts.length < 2) return;
+      polyPath(pts);
+      if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+      if (stroke) { ctx.lineWidth = lw || 1; ctx.strokeStyle = stroke; ctx.stroke(); }
+    }
+    function line(pts, color, lw, dash) {
+      if (!pts || pts.length < 2) return;
+      ctx.beginPath();
+      pts.forEach((p, k) => k ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+      ctx.setLineDash(dash || []);
+      ctx.lineWidth = lw; ctx.strokeStyle = color; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+      ctx.stroke(); ctx.setLineDash([]);
+    }
+    // 点列里可能夹着 null（被裁掉的部分），遇到 null 就断开成另一段
+    function segLine(pts, color, lw, dash) {
+      let cur = [];
+      for (const p of pts) {
+        if (p) cur.push(p);
+        else { if (cur.length > 1) line(cur, color, lw, dash); cur = []; }
+      }
+      if (cur.length > 1) line(cur, color, lw, dash);
+    }
+    function dot2(p, r, fill, stroke, lw) {
+      if (r <= 0.2) return;
+      ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, PI2);
+      if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+      if (stroke) { ctx.lineWidth = lw || 1; ctx.strokeStyle = stroke; ctx.stroke(); }
+    }
+    const rgb = (c, k) => {
+      const s = k === undefined ? 1 : k;
+      return 'rgb(' + Math.round(clamp(c[0] * s, 0, 255)) + ',' +
+                      Math.round(clamp(c[1] * s, 0, 255)) + ',' +
+                      Math.round(clamp(c[2] * s, 0, 255)) + ')';
+    };
+    const LIGHT = vnorm([-0.36, 0.84, 0.40]);
+    // 面的明暗：按面法线与光线的夹角给亮度。同一个颜色的盒子三个面必须读出
+    // 三种明度 —— 这是「像实物」而不是「像贴纸」的来源。
+    const shade = (base, n, amb) => rgb(base, (amb === undefined ? 0.50 : amb) + 0.62 * Math.max(0, dot(n, LIGHT)));
+
+    /* ---------------------------- 通用盒子 ----------------------------
+     * 六个面，顶点【从外面看逆时针】排列 —— 于是面法线可以直接由两条边
+     * 叉乘算出来（cross(v1−v0, v2−v1) 朝外），不必为每种朝向另抄一份法线表。
+     * 顶点编号：0..3 = 底面（x−z−, x+z−, x+z+, x−z+），4..7 = 顶面（同序）。
+     * ------------------------------------------------------------------ */
+    const HEX_FACES = [
+      [4, 7, 6, 5],   // 顶 (+y)
+      [0, 1, 2, 3],   // 底 (−y)
+      [3, 2, 6, 7],   // 前 (+z)
+      [1, 0, 4, 5],   // 后 (−z)
+      [2, 1, 5, 6],   // 右 (+x)
+      [0, 3, 7, 4]    // 左 (−x)
+    ];
+    // 八顶点凸体的公共部分：背面剔除 + 屏幕盒子 + 世界盒子。
+    // 世界盒子暴露出去，自检才能对着【实际画出去的几何】去量，
+    // 而不是对着源码里另抄一份常量。
+    function hexa(q, world, base, opts) {
+      const o = opts || {};
+      const P = world.map(p => project(p, q));
+      const amb = o.amb === undefined ? 0.50 : o.amb;
+      const box = {
+        x0: 1e9, x1: -1e9, y0: 1e9, y1: -1e9,
+        wx0: 1e9, wx1: -1e9, wy0: 1e9, wy1: -1e9, wz0: 1e9, wz1: -1e9
+      };
+      for (const p of world) {
+        box.wx0 = Math.min(box.wx0, p[0]); box.wx1 = Math.max(box.wx1, p[0]);
+        box.wy0 = Math.min(box.wy0, p[1]); box.wy1 = Math.max(box.wy1, p[1]);
+        box.wz0 = Math.min(box.wz0, p[2]); box.wz1 = Math.max(box.wz1, p[2]);
+      }
+      for (const idx of HEX_FACES) {
+        // 背面剔除：法线朝外的面才画。法线由顶点顺序算出 ——
+        // 顶点从外面看是逆时针的，所以这个叉乘朝外。
+        const v0 = world[idx[0]], v1 = world[idx[1]], v2 = world[idx[2]];
+        const n = vnorm(cross(sub(v1, v0), sub(v2, v1)));
+        const fc = [0, 0, 0];
+        for (const i of idx) { fc[0] += world[i][0] / 4; fc[1] += world[i][1] / 4; fc[2] += world[i][2] / 4; }
+        if (dot(n, sub(q.eye, fc)) <= 0) continue;
+        const quad = idx.map(i => P[i]);
+        poly(quad, o.flat ? rgb(base, o.k === undefined ? 1 : o.k) : shade(base, n, amb),
+             o.stroke, o.lw || 1);
+        for (const p of quad) {
+          box.x0 = Math.min(box.x0, p.x); box.x1 = Math.max(box.x1, p.x);
+          box.y0 = Math.min(box.y0, p.y); box.y1 = Math.max(box.y1, p.y);
+        }
+      }
+      return box;
+    }
+    function box3(q, cx, cy, cz, w, h, d, base, opts) {
+      const hw = w / 2, hd = d / 2;
+      return hexa(q, [
+        [cx - hw, cy, cz - hd], [cx + hw, cy, cz - hd], [cx + hw, cy, cz + hd], [cx - hw, cy, cz + hd],
+        [cx - hw, cy + h, cz - hd], [cx + hw, cy + h, cz - hd], [cx + hw, cy + h, cz + hd], [cx - hw, cy + h, cz + hd]
+      ], base, opts);
+    }
+    // 两头粗细不同的「盒」：做锥形的支架、收腰的机身。
+    // p0/p1 是两端【截面中心】，w 是 x 向宽、d 是 z 向宽。
+    function limb3(q, p0, p1, w0, d0, w1, d1, base, opts) {
+      const h0 = w0 / 2, g0 = d0 / 2, h1 = w1 / 2, g1 = d1 / 2;
+      return hexa(q, [
+        [p0[0] - h0, p0[1], p0[2] - g0], [p0[0] + h0, p0[1], p0[2] - g0],
+        [p0[0] + h0, p0[1], p0[2] + g0], [p0[0] - h0, p0[1], p0[2] + g0],
+        [p1[0] - h1, p1[1], p1[2] - g1], [p1[0] + h1, p1[1], p1[2] - g1],
+        [p1[0] + h1, p1[1], p1[2] + g1], [p1[0] - h1, p1[1], p1[2] + g1]
+      ], base, opts);
+    }
+
+    /* ---------------------------- 标签（带避让） ---------------------------- */
+    let frameBoxes = [];
+    function labelBox(p, text, size, align) {
+      ctx.font = '800 ' + size + 'px Inter, "Microsoft YaHei", sans-serif';
+      const wpx = ctx.measureText(text).width;
+      const pad = 4;
+      const half = size * 0.72 + pad * 0.5;
+      const wBox = wpx + pad * 2;
+      const EDGE = 8;
+      const y = clamp(p.y, half + EDGE, Math.max(half + EDGE, state.h - half - EDGE));
+      let bx = align === 'left' ? p.x - 4 - pad
+             : align === 'right' ? p.x + 4 - wpx - pad
+             : p.x - wpx / 2 - pad;
+      bx = clamp(bx, EDGE, Math.max(EDGE, state.w - wBox - EDGE));
+      return { x: bx, y: y - half, w: wBox, h: half * 2, cx: bx + wBox / 2, cy: y };
+    }
+    function label(p, text, color, size, align) {
+      ctx.font = '800 ' + size + 'px Inter, "Microsoft YaHei", sans-serif';
+      ctx.textAlign = align || 'center';
+      ctx.textBaseline = 'middle';
+      const pad = 4;
+      const wpx = ctx.measureText(text).width;
+      const b = labelBox(p, text, size, align);
+      const x = align === 'left' ? b.x + pad : align === 'right' ? b.x + wpx + pad : b.cx;
+      ctx.fillStyle = 'rgba(2,6,23,.76)';
+      ctx.fillRect(b.x, b.y, b.w, b.h);
+      ctx.fillStyle = color;
+      ctx.fillText(text, x, b.cy);
+      frameBoxes.push(b);
+      return b;
+    }
+    // 在一组候选落点里挑「与本帧已画盒子重叠面积最小」的那个。
+    function bestLabel(anchor, text, color, size, offs) {
+      let best = null, bestOv = 1e18;
+      for (const o of offs) {
+        const b = labelBox({ x: anchor.x + o[0], y: anchor.y + o[1] }, text, size, 'center');
+        let ov = 0;
+        for (const q of frameBoxes) {
+          const ox = Math.min(b.x + b.w, q.x + q.w) - Math.max(b.x, q.x);
+          const oy = Math.min(b.y + b.h, q.y + q.h) - Math.max(b.y, q.y);
+          if (ox > 0 && oy > 0) ov += ox * oy;
+        }
+        if (ov < bestOv) { bestOv = ov; best = { x: anchor.x + o[0], y: anchor.y + o[1] }; }
+      }
+      label(best, text, color, size, 'center');
+      return bestOv;
+    }
+    const AVOID = [[0, 0], [0, -16], [0, 16], [0, -32], [0, 32],
+                   [-46, -16], [46, -16], [-46, 16], [46, 16], [0, -48], [0, 48]];
+    const avoidLabel = (anchor, text, color, size) => bestLabel(anchor, text, color, size, AVOID);
+
+    /* ============================================================
+     * 声音（Web Audio）
+     * ------------------------------------------------------------
+     * 一次「滴」就是一个振荡器 + 一条指数衰减包络。
+     * ★★ 关键：每次新建 voice 时【立刻 connect(bus)】。上一个声学页面
+     *    （噪声控制）曾经一点声音都没有，原因就是链搭好了、gain 也按物理量
+     *    一帧一帧地动，但出口【悬空】—— 没接出去。所有查那个「数」的自检
+     *    全绿，而耳朵里一片死寂。「断言读什么，比断言断言什么更重要。」
+     * ============================================================ */
+    let AC = null, bus = null, muted = false;
+    const PING_F = 1500, PING_PEAK = 0.50, PING_DUR = 0.34;
+    const ECHO_F = 1150, ECHO_PEAK = 0.16, ECHO_DUR = 0.46;
+    // 撞墙那一下：又短又轻的一声「嗒」。它不是回声 —— 是画面慢放时
+    // 让你知道「波前到这里了」的提示音。音量必须明显小于发射音，
+    // 否则三个声音一样响，学生分不清哪个是回声。
+    const HIT_F = 2600, HIT_PEAK = 0.10, HIT_DUR = 0.09;
+
+    function ensureAudio() {
+      if (AC) { if (AC.state === 'suspended') AC.resume(); return AC; }
+      const Ctor = window.AudioContext || window.webkitAudioContext;
+      if (!Ctor) return null;
+      try { AC = new Ctor(); } catch (_) { AC = null; return null; }
+      // 新建的上下文有可能直接是 suspended（取决于浏览器/时机），补一次 resume
+      if (AC.state === 'suspended') AC.resume();
+      bus = AC.createGain();
+      bus.gain.value = 0.5;
+      // 两声「滴」可能叠在一起，加一级软削波（tanh）当限幅器，免得爆音
+      const shaper = AC.createWaveShaper();
+      const curve = new Float32Array(1024);
+      for (let i = 0; i < 1024; i++) curve[i] = Math.tanh(((i / 1023) * 2 - 1) * 1.6);
+      shaper.curve = curve;
+      bus.connect(shaper);
+      shaper.connect(AC.destination);
+      return AC;
+    }
+    function ping(freq, peak, dur, delay) {
+      if (!AC || muted || !state.soundOn) return null;
+      const t0 = AC.currentTime + (delay || 0);
+      const o = AC.createOscillator(); o.type = 'sine'; o.frequency.value = freq;
+      const g = AC.createGain();
+      g.gain.setValueAtTime(0, t0);
+      g.gain.linearRampToValueAtTime(peak, t0 + 0.006);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+      o.connect(g); g.connect(bus);          // ← 这一句就是「有没有声音」的分界线
+      o.start(t0); o.stop(t0 + dur + 0.05);
+      return { freq: freq, peak: peak, dur: dur, at: t0 };
+    }
+    const pingEmit = () => ping(PING_F, PING_PEAK, PING_DUR, 0);
+    const pingEcho = () => ping(ECHO_F, ECHO_PEAK, ECHO_DUR, 0);
+    const pingHit  = () => ping(HIT_F, HIT_PEAK, HIT_DUR, 0);
+
+    // 自动播放策略：第一次用户手势才允许创建 AudioContext。捕获阶段监听，
+    // 免得被别的 handler 的 preventDefault/stopPropagation 拦掉。
+    // 只挂一次、【不摘除】：浏览器可能把上下文重新挂起（切标签页、省电），
+    // 摘掉监听就再也唤不醒了。第二次以后只做一件事 —— 需要时 resume。
+    let audioKicked = false;
+    function kickAudio() {
+      if (!audioKicked) {
+        if (!ensureAudio()) return;
+        audioKicked = true;
+        syncUI();
+        return;
+      }
+      if (AC && AC.state === 'suspended') AC.resume();
+    }
+
+    /* ============================================================
+     * 场景绘制
+     * ============================================================ */
+    function drawBackdrop(w, h) {
+      const tint = MEDIA[state.medium].tint;
+      const g = ctx.createLinearGradient(0, 0, 0, h);
+      g.addColorStop(0, tint[0]);
+      g.addColorStop(0.55, tint[1]);
+      g.addColorStop(1, tint[2]);
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, w, h);
+    }
+
+    /* ---------------------------- 地面 + 刻度尺 ----------------------------
+     * 刻度尺是这一页的「诚实锚点」：取景会随 s 缩放，单看弧线大小判断不了
+     * 距离；把米数画在地上，压缩感才不会骗人。
+     * ------------------------------------------------------------------ */
+    function drawGround(q) {
+      const L = CL(), z1 = ZT();
+      const P = (x, y, z) => project([x, y, z], q);
+      // 地面：往两边各多铺一截，让它看起来「还在延伸」，而不是一个盒子
+      const gx0 = XA() - L * 0.35, gx1 = XB() + L * 0.35, gz1 = z1 * 2.1;
+      poly([P(gx0, 0, -gz1), P(gx1, 0, -gz1), P(gx1, 0, gz1), P(gx0, 0, gz1)],
+           'rgba(28,44,66,.96)', 'rgba(94,132,150,.28)', 1.2);
+      // 网格：x 向每 10 m 一条，z 向每 (L/8) 一条 —— 网格密度跟着取景走，
+      // 写死间距的话，s 小的时候会糊成一片、s 大的时候又只剩一条线。
+      const stepX = L > 150 ? 20 : 10;
+      for (let x = Math.ceil(gx0 / stepX) * stepX; x <= gx1; x += stepX) {
+        line([P(x, 0.004, -gz1), P(x, 0.004, gz1)], 'rgba(120,164,190,.17)', 1);
+      }
+      const stepZ = L / 8;
+      for (let z = -Math.floor(gz1 / stepZ) * stepZ; z <= gz1; z += stepZ) {
+        line([P(gx0, 0.004, z), P(gx1, 0.004, z)], 'rgba(120,164,190,.17)', 1);
+      }
+      // 声轴：地面上那条 z = 0 的亮线，读数全部以它为基准
+      line([P(0, 0.006, 0), P(state.s, 0.006, 0)], 'rgba(125,211,252,.34)', 1.6, [6, 5]);
+
+      // 刻度尺：铺在近端地面上。刻线每 10 m，数字每 labelStep。
+      const zr = ZR(), y = 0.008;
+      const labelStep = L > 150 ? 50 : (L > 70 ? 20 : 10);
+      line([P(0, y, zr), P(XB(), y, zr)], 'rgba(148,163,184,.42)', 1.6);
+      let ticks = 0, labels = 0;
+      for (let x = 0; x <= XB() + 1e-6; x += 10) {
+        const major = Math.abs(x / labelStep - Math.round(x / labelStep)) < 1e-6;
+        line([P(x, y, zr), P(x, y, zr + (major ? L * 0.016 : L * 0.008))],
+             major ? 'rgba(203,213,225,.7)' : 'rgba(148,163,184,.42)', major ? 2 : 1);
+        ticks++;
+        if (major && x > 0.5) {
+          // 数字落在刻线【外侧】（再往 +z 走一点），免得压在尺子上
+          const a = project([x, y, zr + L * 0.026], q);
+          avoidLabel({ x: a.x, y: a.y }, x + ' m', 'rgba(203,213,225,.85)', 10);
+          labels++;
+        }
+      }
+      state.drawn.ticks = ticks; state.drawn.tickLabels = labels;
+      state.drawn.rulerStep = labelStep;
+    }
+
+    /* ---------------------------- 波前 ----------------------------
+     * 球面波前画成【三个互相垂直的大圆】。只画一个圆的话，读出来的是
+     * 「一个环」；三个大圆叠在一起才读得出「一个球面」——
+     * 这正是这一页非要 3D 不可的理由（2D 里它只能是一个圆）。
+     * 三个圆统一裁到 y ≥ 0（介质在地面之上）和 x ≤ 障碍物（墙把波挡住）。
+     * ------------------------------------------------------------------ */
+    // 本帧【真正画出去】的波前点统计。自检要对着这个量，而不是对着源码里
+    // 另抄一份公式 —— 「裁剪有没有生效」只有看实际落笔的点才算数。
+    let frStat = null;
+    function frontArc(q, f, n, clip, color) {
+      const pts = [];
+      for (let k = 0; k <= n; k++) {
+        const p = f(k / n * PI2);
+        if (clip(p)) {
+          pts.push(project(p, q));
+          if (frStat) {
+            frStat.maxX = Math.max(frStat.maxX, p[0]);
+            frStat.minY = Math.min(frStat.minY, p[1]);
+            frStat.n++;
+          }
+        } else pts.push(null);
+      }
+      segLine(pts, color, 2.1);
+    }
+    function drawFront(q) {
+      const fi = frontInfo();
+      if (!fi) {
+        state.drawn.frontR = null; state.drawn.frontCX = null; state.drawn.frontMaxX = null;
+        state.drawn.frontPlotted = 0; state.drawn.frontMaxPlottedX = null; state.drawn.frontMinY = null;
+        return;
+      }
+      const { r, cx, cy } = fi;
+      const wall = state.s;
+      frStat = { maxX: -1e9, minY: 1e9, n: 0 };
+      // 裁剪：介质只在地面之上；障碍物把 x > s 的那部分波挡回去。
+      const clip = p => p[1] >= 0.004 && p[0] <= wall + 1e-6;
+      // 越接近终点越亮一点点 —— 静止的一帧里也读得出「它还在往外走」
+      const base = fi.back ? [251, 191, 36] : [125, 211, 252];
+      const glow = 0.30 + 0.12 * Math.sin(state.t * 3.4);
+
+      // 主圆：在 z = 0 的剖面上（正对镜头时就是一个完整的圆）
+      frontArc(q, th => [cx + r * Math.cos(th), cy + r * Math.sin(th), 0], 110, clip,
+               rgba(base, glow + 0.34));
+      // 赤道圆：在 y = 声轴 的水平面上
+      frontArc(q, th => [cx + r * Math.cos(th), cy, r * Math.sin(th)], 110, clip,
+               rgba(base, glow * 0.62));
+      // 子午圆：垂直于声轴的截面。回程时圆心在 2s > s，整圈都被裁掉 —— 正确。
+      frontArc(q, th => [cx, cy + r * Math.sin(th), r * Math.cos(th)], 90, clip,
+               rgba(base, glow * 0.62));
+
+      // 波前与声轴的交点：一个小小的亮点，「它走到哪儿了」一眼可见
+      const tipX = cx + (fi.back ? -r : r);
+      if (tipX >= XA() && tipX <= wall + 1e-6) {
+        const tp = project([tipX, cy, 0], q);
+        dot2(tp, 5.5, rgba(base, 0.95), 'rgba(2,6,23,.8)', 1.2);
+        state.drawn.tipPt = { x: tp.x, y: tp.y };
+      } else state.drawn.tipPt = null;
+
+      state.drawn.frontR = r;
+      state.drawn.frontCX = cx;
+      state.drawn.frontMaxX = cx + r;   // 最右端的世界 x（裁剪前）
+      state.drawn.frontWall = wall;
+      state.drawn.frontBack = fi.back;
+      state.drawn.frontPlotted = frStat.n;
+      state.drawn.frontMaxPlottedX = frStat.n ? frStat.maxX : null;
+      state.drawn.frontMinY = frStat.n ? frStat.minY : null;
+      frStat = null;
+    }
+
+    /* ---------------------------- 障碍物（反射面） ---------------------------- */
+    function drawWall(q) {
+      const s = state.s, t = wallT(), hgt = wallH(), zw = wallZW();
+      // 粗糙的岩面 / 反射板：一块厚板，正面用两道明暗错开的窄条做出「不平整」，
+      // 再加一条亮边标出【反射面】在哪一侧（波是从这一侧被挡回去的）。
+      const b = box3(q, s, 0, 0, t, hgt, zw * 2, [104, 116, 134],
+                     { stroke: 'rgba(2,6,23,.5)', lw: 1.1 });
+      const P = (x, y, z) => project([x, y, z], q);
+      const face = s - t / 2 - 1e-3;
+      // 正面上的横向岩层（画在迎波那一侧）
+      for (let k = 1; k < 7; k++) {
+        const y = hgt * k / 7;
+        line([P(face, y, -zw * 0.94), P(face, y, zw * 0.94)], 'rgba(2,6,23,.28)', 1.4);
+      }
+      // 反射面亮边：撞上的一瞬间会更亮（flashWall）
+      const hot = state.flashWall;
+      const col = hot > 0.01 ? 'rgba(251,191,36,' + (0.45 + 0.5 * hot).toFixed(3) + ')'
+                             : 'rgba(125,211,252,.55)';
+      line([P(face, 0, -zw * 0.94), P(face, 0, zw * 0.94)], col, 2.2);
+      line([P(face, 0, -zw * 0.94), P(face, hgt, -zw * 0.94)], col, 2.2);
+      line([P(face, 0, zw * 0.94), P(face, hgt, zw * 0.94)], col, 2.2);
+      line([P(face, hgt, -zw * 0.94), P(face, hgt, zw * 0.94)], col, 2.2);
+      // 剖切边（顶）：与站内其它 3D 页同一套制图惯例
+      line([P(s - t / 2, hgt, -zw), P(s - t / 2, hgt, zw)], 'rgba(125,211,252,.6)', 2.4);
+      line([P(s + t / 2, hgt, -zw), P(s + t / 2, hgt, zw)], 'rgba(125,211,252,.6)', 2.4);
+
+      // 撞墙的那一下：从撞击点向外扩一圈光晕
+      if (hot > 0.01) {
+        const cp = project([face, Y0(), 0], q);
+        const rr = (1 - hot) * 46 + 8;
+        dot2(cp, rr, null, 'rgba(251,191,36,' + (0.55 * hot).toFixed(3) + ')', 2.6);
+        dot2(cp, rr * 0.6, null, 'rgba(251,191,36,' + (0.32 * hot).toFixed(3) + ')', 1.8);
+      }
+      state.drawn.wallBox = b;
+      state.drawn.wallWorld = { x: s, t: t, h: hgt, zw: zw };
+    }
+
+    /* ---------------------------- 换能器（收发一体） ----------------------------
+     * 示意比例：真实超声测距仪的探头只有几厘米，而这里要看清 120 m ——
+     * 同一个画面里装不下，所以器材按取景尺寸缩放（上限 5 m），并在信息卡里写明。
+     * ------------------------------------------------------------------ */
+    function drawTransducer(q) {
+      const r = instR(), y0 = Y0();
+      const b0 = [126, 138, 156], b1 = [88, 100, 118], acc = [96, 165, 250];
+      let box = null;
+      const merge = b => {
+        if (!b) return;
+        if (!box) box = { x0: b.x0, x1: b.x1, y0: b.y0, y1: b.y1 };
+        else {
+          box.x0 = Math.min(box.x0, b.x0); box.x1 = Math.max(box.x1, b.x1);
+          box.y0 = Math.min(box.y0, b.y0); box.y1 = Math.max(box.y1, b.y1);
+        }
+      };
+      // 三脚架：三条外撇的细腿 + 中间的立柱
+      const foot = r * 0.62;
+      const top = y0 - r * 0.34;
+      for (let i = 0; i < 3; i++) {
+        const a = PI2 * i / 3 + 0.5;
+        merge(limb3(q, [0, top, 0], [Math.cos(a) * foot, 0, Math.sin(a) * foot],
+                    r * 0.10, r * 0.10, r * 0.06, r * 0.06, b1, { stroke: 'rgba(2,6,23,.45)' }));
+      }
+      merge(box3(q, 0, 0, 0, r * 0.22, r * 0.16, r * 0.22, b1, { stroke: 'rgba(2,6,23,.45)' }));
+      // 换能器壳体：一个沿 x 的短柱
+      merge(box3(q, 0, y0 - r * 0.34, 0, r * 0.80, r * 0.68, r * 0.68, b0,
+                 { stroke: 'rgba(2,6,23,.5)' }));
+      // 辐射面：朝 +x 的一个圆盘（在 y-z 平面上）
+      const fx = r * 0.40, cy = y0, rad = r * 0.30;
+      const face = [];
+      for (let k = 0; k <= 40; k++) {
+        const a = k / 40 * PI2;
+        face.push(project([fx, cy + rad * Math.sin(a), rad * Math.cos(a)], q));
+      }
+      poly(face, 'rgba(30,41,59,.95)', 'rgba(148,163,184,.6)', 1.2);
+      for (const k of [0.72, 0.46, 0.22]) {
+        const ring = [];
+        for (let i = 0; i <= 30; i++) {
+          const a = i / 30 * PI2;
+          ring.push(project([fx + 0.004, cy + rad * k * Math.sin(a), rad * k * Math.cos(a)], q));
+        }
+        segLine(ring, 'rgba(96,165,250,.55)', 1.2);
+      }
+      // 收发指示灯：收到回声时亮绿
+      const lit = state.flashEcho > 0.01;
+      const lp = project([fx + r * 0.02, cy + r * 0.44, 0], q);
+      dot2(lp, Math.max(2.2, r * 0.075), lit ? 'rgba(52,211,153,.98)' : 'rgba(248,113,113,.85)',
+           'rgba(2,6,23,.6)', 1);
+
+      // 主机 + 显示屏（摆在换能器左后方，避开波前扫过的区域）
+      const hx = XA() + CL() * 0.035, hw = r * 1.35, hh = r * 0.80, hd = r * 0.62;
+      merge(box3(q, hx, 0, -r * 1.55, hw, hh, hd, b1, { stroke: 'rgba(2,6,23,.5)' }));
+      const scr = project([hx, hh * 0.62, -r * 1.55 + hd / 2 + 0.004], q);
+      const tShow = state.echoed ? tShown() : tLive();
+      dot2(scr, Math.max(3, r * 0.34), 'rgba(6,24,34,.95)', 'rgba(125,211,252,.5)', 1);
+      avoidLabel({ x: scr.x, y: scr.y }, tShow.toFixed(3) + ' s',
+                 state.echoed ? '#6ee7b7' : '#a5f3fc', 10);
+
+      state.drawn.srcBox = box;
+    }
+
+    /* ---------------------------- 去 / 回 路径 ---------------------------- */
+    function arrowHead(a, b, col, size) {
+      const dx = b.x - a.x, dy = b.y - a.y, l = Math.hypot(dx, dy) || 1;
+      const ux = dx / l, uy = dy / l, px = -uy, py = ux;
+      poly([b,
+            { x: b.x - ux * size + px * size * 0.55, y: b.y - uy * size + py * size * 0.55 },
+            { x: b.x - ux * size - px * size * 0.55, y: b.y - uy * size - py * size * 0.55 }], col);
+    }
+    function drawPath(q) {
+      const y0 = Y0(), s = state.s, L = CL();
+      const P = (x, y, z) => project([x, y, z], q);
+      const ph = phaseNow();
+      // 底线：声源 → 障碍物
+      line([P(0, y0, 0), P(s, y0, 0)], 'rgba(148,163,184,.30)', 1.4, [7, 6]);
+      // 去程箭头（跟着波前走）
+      if (ph === 'fly') {
+        const a = P(Math.max(0, state.tp * vNow() - L * 0.10), y0, 0);
+        const b = P(state.tp * vNow(), y0, 0);
+        line([a, b], 'rgba(125,211,252,.9)', 2.4);
+        arrowHead(a, b, 'rgba(125,211,252,.95)', 9);
+      }
+      // 回程箭头（从障碍物往回）
+      if (ph === 'back' || ph === 'done') {
+        const x = 2 * s - state.tp * vNow();
+        const a = P(Math.min(s, x + L * 0.10), y0, 0);
+        const b = P(clamp(x, XA(), s), y0, 0);
+        line([a, b], 'rgba(251,191,36,.9)', 2.4);
+        arrowHead(a, b, 'rgba(251,191,36,.95)', 9);
+      }
+      // 距离标注：s 的实测值，压在轴下方（避让交给 avoidLabel）
+      const mid = P(s * 0.5, y0, 0);
+      avoidLabel({ x: mid.x, y: mid.y + 20 }, 's = ' + s.toFixed(0) + ' m', '#e2e8f0', 11);
+      // 2s 的提示：波一共要走两趟
+      const far = P(2 * s, y0, 0);
+      if (ph === 'back' || ph === 'done') {
+        avoidLabel({ x: far.x, y: far.y }, '镜像声源 2s', 'rgba(251,191,36,.8)', 10);
+      }
+    }
+
+    /* ============================================================
+     * render
+     * ============================================================ */
+    function render() {
+      const w = state.w, h = state.h;
+      ctx.setTransform(state.dpr, 0, 0, state.dpr, 0, 0);
+      frameBoxes = [];
+      state.drawn = {};
+      const q = {};
+      makeCam(q, w, h);
+
+      drawBackdrop(w, h);
+      drawGround(q);
+      drawFront(q);            // 波前先画 —— 器材要压在它上面，才看得出「谁在前」
+      drawTransducer(q);
+      drawWall(q);
+      drawPath(q);
+
+      // ── 标签（一律走避让）──
+      avoidLabel(project([0, Y0() + instR() * 0.9, 0], q), '换能器（收发一体）', '#a5f3fc', 11);
+      avoidLabel(project([state.s, wallH() * 0.86, 0], q), '障碍物 · 反射面', '#cbd5e1', 10);
+      const fi = frontInfo();
+      if (fi) {
+        const tpx = fi.cx + (fi.back ? -fi.r : fi.r);
+        const anchor = project([clamp(tpx, XA(), state.s), fi.cy + fi.r * 0.34, 0], q);
+        avoidLabel(anchor, fi.back ? '反射波前（回程）' : '入射波前（球面波）',
+                   fi.back ? '#fcd34d' : '#7dd3fc', 10);
+      }
+      // 区域名最后画（要挑一个不压住别的位置）
+      bestLabel(project([XA() + CL() * 0.16, 0.01, ZT() * 0.55], q),
+                '介质：' + MEDIA[state.medium].name + '（v = ' + vNow() + ' m/s）',
+                'rgba(165,243,252,.75)', 11, AVOID);
+
+      updateHint();
+      drawTip(q);
+      updateStageButtons();
+      // 本帧所有标签的屏幕盒子。暴露出去是为了让自检做像素差分时能把标签整块
+      // 排除 —— 标签的位置由避让算法挑，改一个参数就可能挪一格，不排除的话
+      // 差分量里混进来的是「文字搬家」而不是「波前变淡」。
+      state.drawn.labelBoxes = frameBoxes.map(b => ({ x0: b.x, x1: b.x + b.w, y0: b.y, y1: b.y + b.h }));
+    }
+
+    function drawTip(q) {
+      const tip = $('ec-tip');
+      if (!state.hover || state.dragging || state.draggingWall) { tip.classList.remove('show'); return; }
+      const p = state.hover === 'wall'
+        ? project([state.s, wallH() * 0.55, 0], q)
+        : project([0, Y0(), 0], q);
+      tip.textContent = state.hover === 'wall' ? '左右拖动障碍物改距离' : '点一下换能器可以发射脉冲';
+      tip.style.left = Math.round(p.x + 14) + 'px';
+      tip.style.top = Math.round(p.y - 14) + 'px';
+      tip.classList.add('show');
+    }
+
+    /* ============================================================
+     * UI 刷新
+     * ============================================================ */
+    function updateHint() {
+      const el = $('ec-hint');
+      const m = MEDIA[state.medium];
+      const ph = phaseNow();
+      const t = [];
+      if (ph === 'idle') {
+        t.push('<b>' + m.name + '</b>中声速 v = <b>' + m.v + ' m/s</b>，障碍物在 <b>' +
+               state.s.toFixed(0) + ' m</b> 外。按「发射脉冲」开始测。');
+      } else if (ph === 'fly') {
+        t.push('入射波前已经走了 <b>' + (state.tp * vNow()).toFixed(1) + ' m</b> —— ' +
+               '还要走 <b>' + (state.s - state.tp * vNow()).toFixed(1) + ' m</b> 才撞上障碍物。');
+      } else if (ph === 'back') {
+        t.push('波前撞上障碍物了！反射波正在往回扫，离换能器还有 <b>' +
+               Math.max(0, 2 * state.s - state.tp * vNow()).toFixed(1) + ' m</b>。');
+      } else {
+        t.push('回声已收到：往返时间 <b>t = ' + tShown().toFixed(3) + ' s</b>，' +
+               '所以 s = v·t÷2 = <b>' + sCalc().toFixed(2) + ' m</b>。可以记录了。');
+      }
+      if (!resolvable() && ph !== 'idle') {
+        t.push(' ⚠ 但 t &lt; 0.1 s，<b>人耳分辨不出回声</b>（要 ≥ ' + minResolveS().toFixed(0) + ' m 才行）。');
+      }
+      el.innerHTML = t.join('');
+    }
+
+    function updateStageButtons() {
+      const btn = $('ec-record');
+      const ok = state.echoed;
+      btn.classList.toggle('ready', ok);
+      $('ec-record-cnt').textContent = state.marks.length;
+      const ph = phaseNow();
+      const flag = $('ec-flag');
+      if (ph === 'done') {
+        flag.classList.toggle('warn', !resolvable());
+        flag.textContent = resolvable()
+          ? '收到回声 ✓ t = ' + tShown().toFixed(3) + ' s → s = ' + sCalc().toFixed(2) + ' m'
+          : '收到回声，但 t = ' + tShown().toFixed(3) + ' s < 0.1 s，人耳分不出（电子计时才行）';
+        flag.classList.add('show');
+      } else {
+        flag.classList.remove('show');
+      }
+    }
+
+    function updateReadouts() {
+      const m = MEDIA[state.medium];
+      const ph = phaseNow();
+      $('ec-med-pill').textContent = m.name;
+      $('ec-v').textContent = m.v + ' m/s';
+      $('ec-minres').textContent = minResolveS().toFixed(1) + ' m';
+      $('ec-s-num').textContent = state.s.toFixed(0) + ' m';
+
+      const pill = $('ec-phase-pill');
+      const label = { idle: '等待发射', fly: '脉冲在去程', back: '回声在回程', done: '已收到回声' }[ph];
+      pill.textContent = label;
+      pill.className = 'pill' + (ph === 'done' ? ' ok' : (ph === 'idle' ? '' : ' live'));
+
+      const sw = $('ec-sw');
+      sw.classList.toggle('done', ph === 'done');
+      $('ec-t').textContent = (state.echoed ? tShown() : tLive()).toFixed(3);
+
+      // 代入式：收到回声之前【不显示算出来的距离】——
+      // 半路上 v·t/2 得到的不是障碍物距离，把它写出来等于教错。
+      const sub = $('ec-subst');
+      if (state.echoed) {
+        sub.innerHTML = 's = v · t ÷ 2<br>' +
+          '<span class="dim">= </span>' + vNow() + ' × ' + tShown().toFixed(3) + ' ÷ 2<br>' +
+          '<span class="dim">= </span><b>' + sCalc().toFixed(2) + ' m</b>';
+      } else {
+        sub.innerHTML = '<span class="dim">收到回声后，这里会写出</span><br>' +
+          '<span class="dim">s = v · t ÷ 2 的完整代入过程</span>';
+      }
+
+      const bd = $('ec-badge');
+      if (ph === 'done') {
+        const e = errPct();
+        const cls = e > 1 ? 'bad' : 'ok';
+        bd.innerHTML = '<span class="badge ' + cls + '">' +
+          (e > 1 ? '⚠ 秒表读数误差 ' + e.toFixed(2) + '%（> 1%）' : '✓ 秒表读数误差 ' + e.toFixed(2) + '%') +
+          '</span>';
+      } else if (ph === 'idle') {
+        bd.innerHTML = '<span class="badge warn">还没发射脉冲 —— 先测，再记</span>';
+      } else {
+        bd.innerHTML = '';
+      }
+
+      $('ec-med-note').innerHTML = m.note;
+      $('ec-speed').textContent = state.realtime ? '实时（×1）' : '慢放（×' + (1 / rate()).toFixed(rate() < 0.05 ? 0 : 1) + '）';
+      $('ec-speed').classList.toggle('on', state.realtime);
+      $('ec-sound').textContent = state.soundOn ? '🔈 声音开' : '🔇 声音关';
+      $('ec-rec-count').textContent = state.marks.length + ' / ' + MAX_REC + ' 组';
+    }
+
+    function renderAnalysis() {
+      const el = $('ec-analysis');
+      const m = MEDIA[state.medium];
+      const ph = phaseNow();
+      const rows = [];
+      rows.push('<div class="line"><span>介质</span><b>' + m.name + '（v = ' + m.v + ' m/s）</b></div>');
+      rows.push('<div class="line"><span>真实距离 s</span><b>' + state.s.toFixed(1) + ' m</b></div>');
+      rows.push('<div class="line"><span>波走的总路程 2s</span><b>' + (2 * state.s).toFixed(1) + ' m</b></div>');
+      rows.push('<div class="line"><span>往返时间 2s ÷ v</span><b>' + tEcho().toFixed(4) + ' s</b></div>');
+      rows.push('<div class="line"><span>秒表读到的 t</span><b>' + tShown().toFixed(3) + ' s</b></div>');
+      if (state.echoed) {
+        rows.push('<div class="line sum"><span>算出距离 v·t÷2</span><b>' + sCalc().toFixed(2) + ' m</b></div>');
+      } else {
+        rows.push('<div class="line sum off"><span>算出距离 v·t÷2</span><b>等回声…</b></div>');
+      }
+      let conc = '';
+      if (ph === 'done') {
+        const e = errPct();
+        conc = e > 1
+          ? '<div class="conc warn">误差 ' + e.toFixed(2) + '% 偏大 —— ' + m.name +
+            '里往返只用了 ' + (tEcho() * 1000).toFixed(1) + ' ms，而秒表只能读到 1 ms。' +
+            '距离拉远一点，读数精度就够用了。</div>'
+          : '<div class="conc">误差 ' + e.toFixed(2) + '% ✓ 秒表读数足够精确，' +
+            's = v·t÷2 算出来的就是障碍物距离。</div>';
+      }
+      // 同介质记录 ≥ 2 条时，直接量 s/t 的比值 —— 它就是 v/2
+      const same = state.marks.filter(r => r.medium === m.name);
+      if (same.length >= 2) {
+        const r0 = same[0], r1 = same[same.length - 1];
+        const k = (r1.sc - r0.sc) / (r1.t - r0.t);
+        conc += '<div class="conc info">同一介质里 s 与 t 成正比：' +
+          '( ' + r1.sc.toFixed(1) + ' − ' + r0.sc.toFixed(1) + ' ) ÷ ( ' +
+          r1.t.toFixed(3) + ' − ' + r0.t.toFixed(3) + ' ) = <b>' + k.toFixed(1) +
+          ' m/s</b>，正是 v/2 = ' + (m.v / 2).toFixed(1) + ' m/s。</div>';
+        state.slope = k;
+      } else state.slope = null;
+      el.innerHTML = rows.join('') + conc;
+    }
+
+    function renderTable() {
+      const body = $('ec-rec-body');
+      const head = '<table class="rec"><thead><tr>' +
+        '<th>介质</th><th>真实 s</th><th>往返 t</th><th>算出 s</th><th>误差</th>' +
+        '</tr></thead><tbody>';
+      const rows = [];
+      for (let i = 0; i < MAX_REC; i++) {
+        const r = state.marks[i];
+        if (!r) {
+          rows.push('<tr><td class="dim">—</td><td class="dim">—</td><td class="dim">—</td>' +
+                    '<td class="dim">—</td><td class="dim">—</td></tr>');
+        } else {
+          const bad = r.err > 1;
+          rows.push('<tr><td>' + r.medium + '</td><td>' + r.s.toFixed(0) + ' m</td><td>' +
+                    r.t.toFixed(3) + ' s</td><td>' + r.sc.toFixed(2) + ' m</td>' +
+                    '<td class="err ' + (bad ? 'bad' : 'ok') + '">' + r.err.toFixed(2) + '%</td></tr>');
+        }
+      }
+      body.innerHTML = head + rows.join('') + '</tbody></table>' +
+        '<p class="note" style="margin:7px 0 0;color:#8aa6b8;font-size:11px;line-height:1.55;">' +
+        '误差全部来自秒表的 1 ms 分辨率 —— 在铁里往返只有几毫秒，同样的分辨率就被放大了几十倍。</p>';
+    }
+
+    function showToast(text) {
+      const el = $('ec-toast');
+      el.textContent = text;
+      el.classList.add('show');
+      clearTimeout(showToast._t);
+      showToast._t = setTimeout(() => el.classList.remove('show'), 2600);
+    }
+
+    // 滑块与 state.s 必须同步：拖动障碍物改了 s，滑块要跟着走。
+    // 放在 syncUI 末尾统一回写 —— 每个改 s 的入口各写一次的话，
+    // 漏掉一个入口，滑块和画面就会各说各话。
+    function syncUI() { updateReadouts(); renderAnalysis(); renderTable(); updateStageButtons(); syncSlider(); }
+
+    /* ============================================================
+     * 动作（侧栏与画面走同一份 —— 一个动作只留一个入口）
+     * ============================================================ */
+    // 参数一变，上一次测量就作废：读数对应的已经不是现在这个 s / 介质了。
+    // 不这么做的话，「不满足前置条件就拒绝记录」那条判据会被静默绕过。
+    function invalidate(silent) {
+      const had = state.emitted;
+      state.emitted = false; state.tp = 0; state.echoed = false; state.paused = false;
+      state.flashWall = 0; state.flashEcho = 0;
+      if (had && !silent) showToast('参数变了，上一次测量作废 —— 请重新发射脉冲');
+      state.dirty = true;
+    }
+
+    function emit() {
+      if (!ensureAudio() && state.soundOn) { /* 没有 Web Audio 也照样能测，只是没声音 */ }
+      state.emitted = true; state.tp = 0; state.echoed = false; state.paused = false;
+      state.flashWall = 0; state.flashEcho = 0;
+      state.dirty = true;
+      pingEmit();
+      syncUI();
+      return true;
+    }
+
+    // 自检 / 出图要能把波前【停】在某个进度上。没有它的话，tick 会在
+    // 两次 evaluate 之间把 tp 推走 —— 截图和断言看到的都不是你设的那个状态。
+    function holdAt(frac) {
+      state.emitted = true; state.paused = true;
+      state.tp = tEcho() * clamp(frac, 0, 1.15);
+      state.echoed = frac >= 1;
+      state.flashWall = (frac >= 0.5 && frac < 0.56) ? 0.9 : 0;
+      state.flashEcho = frac >= 1 ? 0.9 : 0;
+      state.dirty = true; syncUI();
+      return state.tp;
+    }
+    function pause(on) { state.paused = !!on; state.dirty = true; }
+
+    function setMedium(k) {
+      if (!MEDIA[k] || k === state.medium) return;
+      state.medium = k;
+      invalidate();
+      state.dirty = true; syncUI();
+    }
+    function setS(v, silent) {
+      const nv = clamp(Math.round(v), S_MIN, S_MAX);
+      if (nv === state.s) return;
+      state.s = nv;
+      if (!state.draggingWall) state.camS = nv;   // 拖动期间冻结取景
+      invalidate(silent);
+      state.dirty = true; syncUI();
+    }
+    function setRealtime(on) {
+      state.realtime = !!on; state.dirty = true; syncUI();
+    }
+    function setSound(on) {
+      state.soundOn = !!on;
+      if (on) { kickAudio(); showToast('声音已打开'); } else showToast('已静音');
+      syncUI();
+    }
+
+    function resetAll() {
+      state.medium = 'air'; state.s = S_DEF; state.camS = S_DEF;
+      state.marks = [];
+      state.realtime = false;
+      invalidate(true);
+      state.dirty = true; syncUI();
+    }
+
+    // 记录：唯一入口 —— 侧栏与画面都走它
+    function recordMark() {
+      if (!state.echoed) {
+        const ph = phaseNow();
+        showToast(ph === 'idle' ? '还没发射脉冲 —— 先测，再记'
+                 : '回声还没回来，这时候还没有 t 可用，不能记');
+        return false;
+      }
+      if (state.marks.length >= MAX_REC) { showToast('已经记满 ' + MAX_REC + ' 组了，先重置再记'); return false; }
+      state.marks.push({
+        medium: MEDIA[state.medium].name, v: vNow(),
+        s: state.s, t: tShown(), sc: sCalc(), err: errPct()
+      });
+      renderTable(); renderAnalysis(); updateStageButtons();
+      showToast('已记录：t = ' + tShown().toFixed(3) + ' s → s = ' + sCalc().toFixed(2) + ' m（误差 ' + errPct().toFixed(2) + '%）');
+      return true;
+    }
+
+    function applyView(name) {
+      if (!VIEWS[name]) return;
+      state.view = name;
+      state.yaw = VIEWS[name][0]; state.pitch = VIEWS[name][1];
+      state.zoom = VIEWS[name][2] || 1;
+      state.dirty = true;
+    }
+
+    /* ---------------------------- 命中测试 ---------------------------- */
+    function rectOf(b) {
+      if (!b) return null;
+      return { x0: b.x0, x1: b.x1, y0: b.y0, y1: b.y1, w: b.x1 - b.x0, h: b.y1 - b.y0 };
+    }
+    function hitTest(x, y, q) {
+      const wb = rectOf(state.drawn.wallBox);
+      const sb = rectOf(state.drawn.srcBox);
+      const near = (b, pad) => b && x >= b.x0 - pad && x <= b.x1 + pad && y >= b.y0 - pad && y <= b.y1 + pad;
+      // 障碍物优先：它是这一页最需要拖的东西，且体积最大
+      if (near(wb, 8)) return 'wall';
+      if (near(sb, 6)) return 'src';
+      return null;
+    }
+
+    /* ---------------------------- 拖动反解 ----------------------------
+     * 障碍物是【竖直面】，抓点可能在任意高度，射线与水平面求交解出的
+     * 世界 x 会随抓点变。所以：按下时记下「锚点投影 x − 光标 x」的偏移，
+     * 之后对【锚点投影 x】二分反解 s —— 零误差，不会「追不上手指」。
+     * ------------------------------------------------------------------ */
+    function wallAnchorX(q) { return project([state.s, wallH() * 0.5, 0], q).x; }
+    function sFromScreenX(target, q) {
+      let lo = S_MIN, hi = S_MAX;
+      for (let i = 0; i < 26; i++) {
+        const mid = (lo + hi) / 2;
+        const save = state.s;
+        state.s = mid;
+        const px = wallAnchorX(q);
+        state.s = save;
+        if (px < target) lo = mid; else hi = mid;
+      }
+      return (lo + hi) / 2;
+    }
+
+    /* ---------------------------- 事件 ---------------------------- */
+    function localXY(e) {
+      const r = canvas.getBoundingClientRect();
+      return { x: e.clientX - r.left, y: e.clientY - r.top };
+    }
+    function onDown(e) {
+      const p = localXY(e);
+      const q = {}; makeCam(q, state.w, state.h);
+      const hit = hitTest(p.x, p.y, q);
+      state.downAt = { x: p.x, y: p.y, hit: hit };
+      if (hit === 'wall') {
+        state.draggingWall = true;
+        state.dragGrabX = wallAnchorX(q) - p.x;
+        state.drag = null; state.dragging = false;
+        canvas.classList.add('grabx');
+        canvas.setPointerCapture && canvas.setPointerCapture(e.pointerId);
+        return;
+      }
+      if (hit === 'src') { state.dragging = false; return; }
+      state.dragging = true;
+      state.drag = { x: p.x, y: p.y };
+      state.dragYaw = state.yaw; state.dragPitch = state.pitch;
+      canvas.classList.add('grabbing');
+      canvas.setPointerCapture && canvas.setPointerCapture(e.pointerId);
+    }
+    function onMove(e) {
+      const p = localXY(e);
+      const q = {}; makeCam(q, state.w, state.h);
+      if (state.draggingWall) {
+        const target = p.x + state.dragGrabX;
+        setS(sFromScreenX(target, q), true);
+        return;
+      }
+      if (state.dragging && state.drag) {
+        state.yaw = state.dragYaw + (p.x - state.drag.x) * 0.0075;
+        state.pitch = clamp(state.dragPitch + (p.y - state.drag.y) * 0.0060, -0.25, 1.32);
+        state.view = 'custom';
+        state.dirty = true;
+        return;
+      }
+      const hit = hitTest(p.x, p.y, q);
+      state.hover = hit;
+      canvas.classList.toggle('pick', hit === 'src');
+      canvas.classList.toggle('grabx', hit === 'wall');
+      state.dirty = true;
+    }
+    function onUp(e) {
+      // 点击 vs 拖动：位移小于 6 px 才算「点了一下换能器」。
+      // 不判位移的话，转视角时正好按下又松在换能器上，就会误发射。
+      const d = state.downAt;
+      if (d && e) {
+        const p = localXY(e);
+        const moved = Math.hypot(p.x - d.x, p.y - d.y);
+        if (moved < 6) {
+          if (d.hit === 'src') emit();
+          else if (d.hit === 'wall') showToast('左右拖动障碍物可以改距离');
+        }
+      }
+      if (state.draggingWall) {
+        state.draggingWall = false;
+        state.camS = state.s;            // 松手才把取景交还给真实距离
+        state.dirty = true; syncUI();
+      }
+      state.dragging = false; state.drag = null; state.downAt = null;
+      canvas.classList.remove('grabbing'); canvas.classList.remove('grabx');
+    }
+    function onWheel(e) {
+      e.preventDefault();
+      state.zoom = clamp(state.zoom * (e.deltaY > 0 ? 0.92 : 1.087), 0.5, 3.0);
+      state.dirty = true;
+    }
+
+    /* ============================================================
+     * 尺寸 / 主循环
+     * ============================================================ */
+    function resize() {
+      const r = stage.getBoundingClientRect();
+      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      const w = Math.max(320, Math.round(r.width));
+      const h = Math.max(240, Math.round(r.height));
+      state.w = w; state.h = h; state.dpr = dpr;
+      canvas.width = Math.round(w * dpr);
+      canvas.height = Math.round(h * dpr);
+      canvas.style.width = w + 'px';
+      canvas.style.height = h + 'px';
+      state.dirty = true;
+    }
+    let lastTs = 0;
+    /* ★ 动画推进抽成纯函数 stepAnim(dt)：tick 调它、自检（window.__echo.stepAnim）
+     *   也调它。自检里另抄一份「tp += dt*rate()」的话，改了 tick 也拦不住回归 ——
+     *   「动画与自检必须走同一个函数」。另外，本机 headless 下 rAF 一次都不回调
+     *   （无 BeginFrame），只有把推进抽出来，自检才能在无 rAF 的环境里确定性验它。 */
+    function stepAnim(dt) {
+      state.t += dt;
+      if (state.flashWall > 0) state.flashWall = Math.max(0, state.flashWall - dt * 2.4);
+      if (state.flashEcho > 0) state.flashEcho = Math.max(0, state.flashEcho - dt * 1.4);
+      if (state.flashWall > 0 || state.flashEcho > 0) state.dirty = true;
+
+      if (state.emitted && !state.paused) {
+        const tE = tEcho();
+        const tHalfV = tHalf();
+        if (state.tp < tE * 1.15) {
+          // ★ 动画与自检走同一个 state.tp：这里推进它，frontInfo() 只读它。
+          const before = state.tp;
+          state.tp = Math.min(tE * 1.15, state.tp + dt * rate());
+          if (before < tHalfV && state.tp >= tHalfV) { state.flashWall = 1; pingHit(); }
+          if (!state.echoed && state.tp >= tE) {
+            state.echoed = true;
+            state.flashEcho = 1;
+            pingEcho();
+            syncUI();
+          }
+          state.dirty = true;
+        }
+      }
+    }
+    function tick(ts) {
+      const dt = lastTs ? Math.min(0.05, (ts - lastTs) / 1000) : 0;
+      lastTs = ts;
+      stepAnim(dt);
+      if (state.dirty) { render(); state.dirty = false; }
+      requestAnimationFrame(tick);
+    }
+
+    /* ============================================================
+     * 绑定
+     * ============================================================ */
+    canvas.addEventListener('pointerdown', onDown);
+    canvas.addEventListener('pointermove', onMove);
+    canvas.addEventListener('pointerup', onUp);
+    canvas.addEventListener('pointercancel', onUp);
+    canvas.addEventListener('pointerleave', () => {
+      state.hover = null; state.dragging = false; state.drag = null;
+      canvas.classList.remove('pick'); canvas.classList.remove('grabbing'); canvas.classList.remove('grabx');
+      state.dirty = true;
+    });
+    canvas.addEventListener('wheel', onWheel, { passive: false });
+
+    $('ec-emit').addEventListener('click', emit);
+    $('ec-emit2').addEventListener('click', emit);
+    $('ec-record').addEventListener('click', recordMark);
+    $('ec-reset').addEventListener('click', () => { resetAll(); showToast('已重置'); });
+    $('ec-speed').addEventListener('click', () => {
+      setRealtime(!state.realtime);
+      showToast(state.realtime ? '实时：这是它真正的速度' : '慢放：把一次往返拉长到 1.6 s 看清楚');
+    });
+    $('ec-sound').addEventListener('click', () => setSound(!state.soundOn));
+    document.querySelectorAll('[data-med]').forEach(b => {
+      b.addEventListener('click', () => setMedium(b.getAttribute('data-med')));
+    });
+    document.querySelectorAll('[data-view]').forEach(b => {
+      b.addEventListener('click', () => applyView(b.getAttribute('data-view')));
+    });
+    const sslider = $('ec-s');
+    sslider.addEventListener('input', () => setS(parseFloat(sslider.value)));
+    // 滑块与 state.s 必须同步：拖动障碍物改了 s，滑块要跟着走
+    // （用 setS 里统一 syncUI，这里只管把滑块的值推回去）
+    const syncSlider = () => { if (sslider.value !== String(state.s)) sslider.value = String(state.s); };
+
+    window.addEventListener('pointerdown', kickAudio, true);
+    window.addEventListener('keydown', kickAudio, true);
+
+    if (window.ResizeObserver) new ResizeObserver(() => resize()).observe(stage);
+    window.addEventListener('resize', resize);
+
+    resize();
+    syncUI();
+    requestAnimationFrame(tick);
+
+    /* ============================================================
+     * 自检钩子
+     * ------------------------------------------------------------
+     * 渲染、读数、表格、自检必须共用同一份物理函数。下面把这些原样暴露出去，
+     * 测试算出来的就是页面真正在用的值 —— 自检把公式重抄一遍只证明自检自洽。
+     * ============================================================ */
+    window.__echo = {
+      state: state,
+      consts: {
+        S_MIN: S_MIN, S_MAX: S_MAX, S_DEF: S_DEF,
+        ANIM_T: ANIM_T, RESOLVE_DT: RESOLVE_DT, T_QUANT: T_QUANT, MAX_REC: MAX_REC,
+        MEDIA: MEDIA, M_ORDER: M_ORDER, VIEWS: VIEWS,
+        PING_F: PING_F, PING_PEAK: PING_PEAK, PING_DUR: PING_DUR,
+        ECHO_F: ECHO_F, ECHO_PEAK: ECHO_PEAK, ECHO_DUR: ECHO_DUR,
+        CAMD_K: CAMD_K
+      },
+      makeCam: makeCam, project: project, unproject: unproject, envelopePoints: envelopePoints,
+      size: () => ({ w: state.w, h: state.h, dpr: state.dpr }),
+      // 物理：与页面同一份
+      vNow: vNow, tEcho: tEcho, tHalf: tHalf, tShown: tShown, tLive: tLive,
+      sCalc: sCalc, errPct: errPct, resolvable: resolvable, minResolveS: minResolveS,
+      rate: rate, phaseNow: phaseNow, frontInfo: frontInfo,
+      // 取景几何
+      CL: CL, XA: XA, XB: XB, YT: YT, ZT: ZT, Y0: Y0, ZR: ZR,
+      instR: instR, wallH: wallH, wallZW: wallZW, wallT: wallT,
+      // 动作：与按钮走同一份
+      emit: emit, setMedium: setMedium, setS: setS, setRealtime: setRealtime, setSound: setSound,
+      resetAll: resetAll, recordMark: recordMark, applyView: applyView,
+      holdAt: holdAt, pause: pause,
+      // 动画推进（tick 与自检共用的同一个函数）—— 无 rAF 的环境里靠它确定性推进
+      stepAnim: stepAnim,
+      // 走真实路径的拖动钩子 —— 直接写 state.s 会让「参数一变测量作废」
+      // 这条路径被绕过，测出来的行为跟用户手拖不是一回事。
+      dragWallTo: (worldX) => { setS(worldX, true); return state.s; },
+      sFromScreenX: sFromScreenX, wallAnchorX: wallAnchorX,
+      syncSlider: syncSlider, sliderValue: () => sslider.value,
+      render: render, hitTest: hitTest,
+      // 声音
+      audio: {
+        ctx: () => AC, bus: () => bus,
+        ensure: ensureAudio, kick: kickAudio,
+        emit: pingEmit, echo: pingEcho,
+        setMuted: m => { muted = !!m; },
+        muted: () => muted,
+        state: () => ({
+          ready: !!AC, ctxState: AC ? AC.state : null, kicked: audioKicked,
+          muted: muted, soundOn: state.soundOn
+        })
+      }
+    };
+  })();
+  </script>
+</body>
+</html>
