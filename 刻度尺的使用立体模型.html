@@ -21,7 +21,15 @@
 
     .lab3d-stage {
       position: relative; overflow: hidden;
-      height: clamp(360px, 60vh, 620px);
+      /* 【画布不能把读数记录顶出首屏】用户的原话：「我现在还是需要往下拉才能找到那个
+         读书记录」。原来只按 60vh 定高 —— 画布确实跟着视口缩，但「页头 133 + 画布 +
+         间隙 12 + 读数面板 + 下边距 20」在矮窗口里加起来就超了（实测 660 px 高时
+         「提交读数」的底边到了 672 px，正好要滚一下）。
+         所以再卡一条「画布以外至少留 345 px」：345 ≈ 页头 133 + 间隙 12 + 最高的
+         面板（累积法 222）+ 下边距 20 − 面板里「提交读数」以上那 42 px 的余量。
+         ≥915 px 高的窗口两条约束给出同一个值，所以常见分辨率下画布【没有变小】。
+         实测保证到 660 px 高的窗口（累积法下按钮底 641）；再矮就得滚了。 */
+      height: clamp(300px, min(60vh, calc(100vh - 345px)), 620px);
       border: 1px solid rgba(148, 163, 184, .18); border-radius: 16px;
       background: #020617; box-shadow: 0 18px 46px rgba(2, 6, 23, .5);
     }
@@ -214,6 +222,19 @@
     .sumline[hidden] { display: none; }
     .sumline b { font-family: ui-monospace, Menlo, monospace; font-size: 15px; color: #e0f2fe; }
 
+    /* 【读数记录挪到实验台正下方】左列 = 实验台 + 读数记录。
+       读刻度的时候眼睛盯着画布、手要同时够得到输入框 —— 原来它挂在右侧栏的底部，
+       画布下面空一大片，而输入框已经滚出首屏（用户实测「还得往下拉才找得到」）。
+       宽栏里把「填」和「看合计 + 提交」分成两列，否则三个输入框会被拉成一条超长的带子。 */
+    .lab3d-main { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+    .read-body {
+      display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
+      gap: 14px; align-items: start;
+    }
+    .read-fields .note { margin: 0; color: #8aa6b8; font-size: 11px; line-height: 1.55; }
+    .read-side { display: flex; flex-direction: column; gap: 8px; }
+    .read-side .sumline { margin-bottom: 0; }
+
     /* 「五会」评分 */
     .rubric { display: flex; flex-direction: column; gap: 6px; }
     .rubric .it {
@@ -262,6 +283,8 @@
       .lab3d-layout { grid-template-columns: minmax(0, 1fr); }
       .lab3d-stage { height: clamp(320px, 52vh, 480px); }
       .lab3d-sidebar { border-top: 1px solid rgba(148, 163, 184, .16); padding-top: 12px; }
+      /* 折成一列后左列已经很窄，读数面板不再分两栏 */
+      .read-body { grid-template-columns: 1fr; }
     }
     @media (max-width: 620px) {
       body { padding: 14px; }
@@ -285,10 +308,12 @@
       会选（分度值）、会放（零刻度线对齐）、会看（视线垂直于尺面）、会读（准确值 + 估读值）、会记（数值带单位）。
       全部做到，才算一次合格的测量。<br>
       有些长度<b>没法直接量</b> —— 细铜丝太细、硬币的直径端点找不到。切到
-      <b>累积法</b>（细铜丝绕 n 圈量总宽再除以 n）和<b>辅助法</b>（两块直角块把直径夹出来）看看该怎么办。
+      <b>累积法</b>（细铜丝绕 n 圈量总宽再除以 n）和<b>辅助法</b>（两块三角板把直径夹出来）看看该怎么办。
     </p>
 
     <div class="lab3d-layout">
+      <!-- 左列 = 实验台 + 读数记录（读数记录紧贴在画布下方，见 .lab3d-main 的注释） -->
+      <div class="lab3d-main">
       <div class="lab3d-stage">
         <canvas id="ruler-canvas"></canvas>
 
@@ -325,13 +350,51 @@
         </div>
       </div>
 
+      <div class="panel read-panel">
+        <h3>读数记录 <span class="pill" id="read-pill">待填写</span></h3>
+        <div class="read-body">
+          <div class="read-fields">
+            <div class="readrow">
+              <!-- 【为什么不是 type=number】number 输入按 HTML 的「取值净化算法」办事：
+                   "7." 不是合法浮点数，input.value 读回来就是空串（实测纯 DOM 里敲 "7"
+                   再敲 "."，value 仍是 "7"，敲 "3" 才变成 "7.3"）。本页每敲一键都 syncUI
+                   一次，于是 value 被当成 "7" 存进 state 又原样写回框里 —— 小数点被吞掉、
+                   光标还回到开头，实测「7 . 3」最后读出来是 "37"。
+                   type=text + inputmode=decimal：敲什么读回什么，手机上也还是数字键盘。 -->
+              <label><span class="cap">准确值</span><input type="text" inputmode="decimal" autocomplete="off" spellcheck="false" id="in-acc" placeholder="如 7.3"></label>
+              <label><span class="cap">估读值</span><input type="text" inputmode="decimal" autocomplete="off" spellcheck="false" id="in-est" placeholder="如 0.04"></label>
+              <label><span class="cap">单位</span>
+                <select id="in-unit"><option value="cm">cm</option><option value="mm">mm</option><option value="m">m</option></select>
+              </label>
+            </div>
+            <!-- 累积法专用：读到总长 L 之后还要自己除以圈数 n -->
+            <div class="readrow coilrow" id="row-diam" hidden>
+              <label><span class="cap">细铜丝直径 d = L ÷ n</span><input type="text" inputmode="decimal" autocomplete="off" spellcheck="false" id="in-diam" placeholder="自己算"></label>
+              <label><span class="cap">圈数 n</span><input type="text" id="in-turns" readonly tabindex="-1"></label>
+            </div>
+            <p class="note" id="read-note">
+              读数要写到<b>分度值的下一位</b>：分度值 1 mm 时读到 0.1 mm（即 0.01 cm），分度值 1 cm 时读到 0.1 cm。
+              记录必须写单位。
+            </p>
+          </div>
+          <div class="read-side">
+            <div class="sumline"><span id="sum-cap">读数 = 准确值 + 估读值</span><b id="read-sum">—</b></div>
+            <div class="sumline" id="sum-diam" hidden><span>直径 d = 总长 L ÷ 圈数 n</span><b>？</b></div>
+            <div class="btn-row">
+              <button type="button" class="primary" id="btn-check">提交读数</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      </div>
+
       <div class="lab3d-sidebar">
         <div class="panel">
           <h3>测量方式 <span class="pill" id="mode-pill">常规测量</span></h3>
           <div class="btn-row mode-row">
             <button type="button" class="primary" id="md-basic">常规测量<i>物体放稳，把尺子推过去直接量</i></button>
             <button type="button" id="md-coil">累积法 · 测细铜丝直径<i>量 n 圈的总宽，再除以 n</i></button>
-            <button type="button" id="md-coin">辅助法 · 测硬币直径<i>两块直角块把直径夹出来</i></button>
+            <button type="button" id="md-coin">辅助法 · 测硬币直径<i>两块三角板把直径夹出来</i></button>
           </div>
           <p class="note" id="mode-note"></p>
         </div>
@@ -366,37 +429,6 @@
             <button type="button" id="ruler-new2">换一题</button>
           </div>
           <p class="note" id="ruler-info"></p>
-        </div>
-
-        <div class="panel">
-          <h3>读数记录 <span class="pill" id="read-pill">待填写</span></h3>
-          <div class="readrow">
-            <!-- 【为什么不是 type=number】number 输入按 HTML 的「取值净化算法」办事：
-                 "7." 不是合法浮点数，input.value 读回来就是空串（实测纯 DOM 里敲 "7"
-                 再敲 "."，value 仍是 "7"，敲 "3" 才变成 "7.3"）。本页每敲一键都 syncUI
-                 一次，于是 value 被当成 "7" 存进 state 又原样写回框里 —— 小数点被吞掉、
-                 光标还回到开头，实测「7 . 3」最后读出来是 "37"。
-                 type=text + inputmode=decimal：敲什么读回什么，手机上也还是数字键盘。 -->
-            <label><span class="cap">准确值</span><input type="text" inputmode="decimal" autocomplete="off" spellcheck="false" id="in-acc" placeholder="如 7.3"></label>
-            <label><span class="cap">估读值</span><input type="text" inputmode="decimal" autocomplete="off" spellcheck="false" id="in-est" placeholder="如 0.04"></label>
-            <label><span class="cap">单位</span>
-              <select id="in-unit"><option value="cm">cm</option><option value="mm">mm</option><option value="m">m</option></select>
-            </label>
-          </div>
-          <!-- 累积法专用：读到总长 L 之后还要自己除以圈数 n -->
-          <div class="readrow coilrow" id="row-diam" hidden>
-            <label><span class="cap">细铜丝直径 d = L ÷ n</span><input type="text" inputmode="decimal" autocomplete="off" spellcheck="false" id="in-diam" placeholder="自己算"></label>
-            <label><span class="cap">圈数 n</span><input type="text" id="in-turns" readonly tabindex="-1"></label>
-          </div>
-          <div class="sumline"><span id="sum-cap">读数 = 准确值 + 估读值</span><b id="read-sum">—</b></div>
-          <div class="sumline" id="sum-diam" hidden><span>直径 d = 总长 L ÷ 圈数 n</span><b>？</b></div>
-          <div class="btn-row">
-            <button type="button" class="primary" id="btn-check">提交读数</button>
-          </div>
-          <p class="note" id="read-note">
-            读数要写到<b>分度值的下一位</b>：分度值 1 mm 时读到 0.1 mm（即 0.01 cm），分度值 1 cm 时读到 0.1 cm。
-            记录必须写单位。
-          </p>
         </div>
 
         <div class="panel">
@@ -439,7 +471,7 @@
               「紧密排绕」是前提：圈与圈之间有缝，量到的总宽就偏大，算出的直径也跟着偏大。</li>
           <li><b>辅助法 · 硬币直径</b>：圆上任意一点都可能是直径的端点，把尺子的零刻度线放在硬币边上，
               你并不知道对面那个点是不是<b>正对</b>的点，量到的往往是<b>弦</b>而不是直径。
-              用两块<b>直角块</b>从左右夹住硬币，两个内侧面之间的距离就<b>必然</b>是直径 —— 再把尺子推过去量这个距离。</li>
+              用两块<b>三角板</b>从左右夹住硬币，两个内侧面之间的距离就<b>必然</b>是直径 —— 再把尺子推过去量这个距离。</li>
           <li>两种方法都还是<b>同一套「五会」</b>：分度值要选对、零刻度线要对齐、视线要正对、读数要估读一位、记录要带单位。
               累积法多一步 <b>会算</b>：把总长除以圈数。</li>
         </ul>
@@ -513,7 +545,7 @@
     /* ---- 三种测量方式 ----------------------------------------------------
      * basic：物体放稳、尺子推过去直接量（上面四种物体）
      * coil ：累积法 —— 细铜丝在铅笔上密绕 n 圈，量线圈【总宽 L】，d = L / n
-     * coin ：辅助法 —— 两块直角块从左右夹住硬币，量两块【内侧面】之间的距离
+     * coin ：辅助法 —— 两块三角板从左右夹住硬币，量两块【内侧面】之间的距离
      * 【为什么要抽出一层 mode】「被测跨度」这件事在三种方式里是同一个量：
      * 左端世界 x、右端世界 x、长度、右端那个【遮挡视线的棱】的高度。
      * 尺子 / 眼睛 / 零刻度线 / 视差 / 读数判据全都只认这四个量，
@@ -526,7 +558,7 @@
     const MODE_TIP = {
       basic: '物体放稳，把尺子推过去直接量长度。',
       coil:  '细铜丝比尺的分度值还细，直接量一根读不出来 —— 在铅笔上密绕 n 圈，量总宽再除以 n。',
-      coin:  '硬币的直径端点找不到，用两块直角块从左右夹住，量两块内侧面之间的距离。'
+      coin:  '硬币的直径端点找不到，用两块三角板从左右夹住，量两块内侧面之间的距离。'
     };
     // 累积法：铅笔（绕线的芯棒）与线圈
     const PENCIL_R   = 0.035;                 // 铅笔半径（世界单位）→ 直径 7 mm
@@ -535,15 +567,20 @@
     const COIL_TURNS = [15, 25, 35, 45];      // 圈数候选
     const COIL_WIRE  = [3, 4, 5, 6, 7];       // 铜丝直径候选（0.01 cm → 0.3 ~ 0.7 mm）
     const COIL_L_LO  = 100, COIL_L_HI = 260;  // 线圈总宽限定在 1.00 ~ 2.60 cm
-    // 辅助法：硬币 + 两块直角块
-    // 【COIN_X0 比 OBJ_XL 靠右一点】硬币左边还要塞一块 2 cm 宽的直角块，贴着桌沿不好看；
+    // 辅助法：硬币 + 两块三角板（三角尺）
+    // 【COIN_X0 比 OBJ_XL 靠右一点】硬币左边还要塞一块 2 cm 宽的三角板，贴着桌沿不好看；
     // 代价是尺子的行程整体右移，取景包络必须按【三种方式跨度左端的并集】重算（见下）。
     // 这一挪还有一个作用：跨度左端真的随方式变了，「零刻度线要跟着 objXl 走」这件事
     // 才观测得到 —— 三种方式左端全一样的话，把那几处写死成 OBJ_XL 也照样全绿。
     const COIN_X0    = 0.22;                  // 硬币左端（世界单位）
     const COIN_U_LO  = 221, COIN_U_HI = 259;  // 硬币直径候选（2.21 ~ 2.59 cm）
     const COIN_T     = 0.018;                 // 硬币厚（1.8 mm）
-    const BLOCK_T    = 0.20, BLOCK_D = 0.22, BLOCK_H = 0.10;   // 直角块：宽 / 深 / 高
+    // 【三角板是【薄板】不是砖】三角面在 x-y 平面内（竖直角边贴住硬币、底边沿 x 向外伸、
+    // 斜边连起来），沿 z 只挤出 SET_D 厚 —— 一块 2 cm 厚的「板」看着就是积木，
+    // 一眼认不出是三角尺。SET_H 决定挡视线的棱有多高（视差大小由它定）。
+    // 【比例按 45° 三角尺取】两条直角边一样长（等腰直角三角形）才一眼认得出是三角板；
+    // 底边比高长的话看着像个楔子 / 帐篷。板厚也要够 —— 太薄会看成两片立着的纸。
+    const SET_L = 0.20, SET_H = 0.20, SET_D = 0.14;   // 三角板：底边长 / 高 / 板厚
     const D_TOL      = 0.002;                 // 「会算」容差：±0.002 cm = ±0.02 mm
 
     const wireR      = () => state.wireU / 2000;            // 铜丝半径（世界单位）
@@ -553,16 +590,16 @@
                             : state.mode === 'coin' ? '硬币' : objDef().name;
     // 跨度两端在题面上的叫法（评分 / 分析 / 提示三处共用一份措辞）
     const spanLeftWord  = () => state.mode === 'coil' ? '线圈第一圈的左边缘'
-                               : state.mode === 'coin' ? '左直角块的内侧面' : spanName() + '左端';
+                               : state.mode === 'coin' ? '左三角板的内侧面' : spanName() + '左端';
     const spanRightWord = () => state.mode === 'coil' ? '线圈最后一圈的右边缘'
-                               : state.mode === 'coin' ? '右直角块的内侧面' : spanName() + '右端';
+                               : state.mode === 'coin' ? '右三角板的内侧面' : spanName() + '右端';
     const spanSceneWord = () => state.mode === 'coil' ? '线圈'
-                               : state.mode === 'coin' ? '硬币（连同两块直角块）' : spanName();
+                               : state.mode === 'coin' ? '硬币（连同两块三角板）' : spanName();
     const scoreWord  = () => state.mode === 'coil' ? '六会' : '五会';
     // 物体顶面高 = 右端那个【遮挡视线的棱】的高度；眼睛在它之上 EYE_H
-    // （硬币本身只有 1.8 mm 厚，挡不住视线 —— 挡住的是右边那块直角块的顶棱）
+    // （硬币本身只有 1.8 mm 厚，挡不住视线 —— 挡住的是右边那块三角板的顶棱）
     const objTopY  = () => state.mode === 'coil' ? coilTopY()
-                          : state.mode === 'coin' ? BLOCK_H
+                          : state.mode === 'coin' ? SET_H
                           : objDef().h;
     const EYE_H    = 0.80;            // 眼睛在物体顶面之上 8 cm
     const eyeY     = () => objTopY() + EYE_H;
@@ -626,7 +663,7 @@
     // 跨度的近 / 远侧 z：近侧一律贴刻度边；远侧按器材的厚度取
     const spanZ1 = () => Z_FACE;
     const spanZ0 = () => state.mode === 'coil' ? Z_FACE - 2 * (PENCIL_R + wireR())
-                       : state.mode === 'coin' ? Z_FACE - Math.max(2 * coinR(), BLOCK_D)
+                       : state.mode === 'coin' ? Z_FACE - Math.max(2 * coinR(), SET_D)
                        : Z_FACE - objDef().d;
     // 【尺子可以动，所以换算依赖 state.rulerS】零刻度线的世界 x 由「跨度左端此刻
     // 对着的刻度值」反推：rulerS = 0 时零刻度线正好落在跨度左端。
@@ -694,18 +731,19 @@
     // 0.01 cm（跟 state.objU 同一套，objL() 里已经除过 100）—— 这里要再除 100。
     // 少除那一步的话跨度右端会算成 10~22（世界单位），包络被撑爆，整幅画面缩成一个点
     // （实测尺长从 409.5 px 掉到 0.7 px）。
-    // 【高度要按【那一种方式自己的眼睛高度】取，不能一律按最高的书本】累积法 / 辅助法
-    // 挡视线的棱比书本矮（线圈顶 0.0735、直角块顶 0.10，书本 0.15），眼睛跟着矮一截。
-    // 给所有 x 都用 0.95 的话，等于为了罩住一个【根本到不了的「又靠左又最高」的角】
-    // 把整幅画面缩小 8.7%（实测 1500px 宽下尺长 409.5 → 373.8 px）。
+    // 【高度要按【那一种方式自己的眼睛高度】取，不能一律按最高的那一档】三档的
+    // 「挡视线的棱」高矮各不相同：线圈顶 0.0735 < 书本 0.15 < 三角板 SET_H 0.20。
+    // 也就是说辅助法反而是最高的那一档，累积法最低 —— 一律按最高档算，等于为了罩住
+    // 一个【根本到不了的「又靠左又最高」的角】把整幅画面缩小 8.7%
+    // （实测 1500px 宽下尺长 409.5 → 373.8 px）。
     const COIL_TOP_MAX = 2 * PENCIL_R + Math.max.apply(null, COIL_WIRE) / 2000;
     const EYE_CORNERS = [
       [OBJ_XL + OBJ_LEN_MIN / U,        OBJ_H_MAX + EYE_H],   // 常规：橡皮（最短）
       [OBJ_XL + OBJ_LEN_MAX / U,        OBJ_H_MAX + EYE_H],   // 常规：书本（最长最高）
       [COIL_X0 + COIL_L_LO / 100 / U,   COIL_TOP_MAX + EYE_H],  // 累积法：最细 / 最粗的线圈
       [COIL_X0 + COIL_L_HI / 100 / U,   COIL_TOP_MAX + EYE_H],
-      [COIN_X0 + COIN_U_LO / 100 / U,   BLOCK_H + EYE_H],       // 辅助法：最小 / 最大的硬币
-      [COIN_X0 + COIN_U_HI / 100 / U,   BLOCK_H + EYE_H]
+      [COIN_X0 + COIN_U_LO / 100 / U,   SET_H + EYE_H],         // 辅助法：最小 / 最大的硬币
+      [COIN_X0 + COIN_U_HI / 100 / U,   SET_H + EYE_H]
     ];
 
     function envelopePoints() {
@@ -1016,7 +1054,7 @@
     const COPPER_D  = [126, 70, 28];     // 铜丝的暗侧 / 圈线
     const COIN_TOP  = [214, 219, 226];   // 硬币顶面：镍白
     const COIN_SIDE = [156, 163, 173];   // 硬币侧面（滚花边）
-    const STEEL     = [148, 156, 166];   // 直角块：钢灰
+    const STEEL     = [148, 156, 166];   // 三角板：钢灰
 
     function drawBackdrop(w, h) {
       const g = ctx.createRadialGradient(w * 0.46, h * 0.10, 12, w * 0.5, h * 0.55, Math.max(w, h) * 0.86);
@@ -1102,12 +1140,12 @@
       state.drawn.trueY = +pTrue.y.toFixed(1);
       // 跨度的屏幕包围盒：当成本帧障碍物推进 frameBoxes ——
       // 只把标签盒子当障碍的话，「视线落点」会稳稳压在器材上。
-      // 辅助法还要把两块直角块罩进去（它们比硬币高得多，挡视线也挡标签）。
+      // 辅助法还要把两块三角板罩进去（它们比硬币高得多，挡视线也挡标签）。
       const z0 = spanZ0(), z1 = spanZ1(), h = objTopY();
       const ob = [];
       for (const x of [xl, xr]) for (const yy of [yTick, h]) for (const zz of [z0, z1]) ob.push([x, yy, zz]);
       if (state.mode === 'coin') {
-        for (const x of [xl - BLOCK_T, xr + BLOCK_T]) for (const yy of [0, BLOCK_H]) ob.push([x, yy, z0], [x, yy, z1]);
+        for (const x of [xl - SET_L, xr + SET_L]) for (const yy of [0, SET_H]) ob.push([x, yy, z0], [x, yy, z1]);
       } else if (state.mode === 'coil') {
         for (const x of [PENCIL_X0, PENCIL_X1]) for (const yy of [0, 2 * PENCIL_R]) ob.push([x, yy, z0], [x, yy, z1]);
       }
@@ -1259,19 +1297,48 @@
       state.drawn.coilOuterR = +cR.toFixed(4);
     }
 
-    /* ---- 辅助法：两块直角块夹住硬币 ----------------------------------------
-     * 【为什么要两块直角块】圆上处处都可能是直径的端点，把零刻度线放在硬币边上，
-     * 你并不知道对面那个点是不是正对的点，量到的很可能是【弦】。用两块直角块从左右夹住，
-     * 两个内侧面之间的距离就【必然】是直径。
+    /* ---- 辅助法：两块【三角板】夹住硬币 ------------------------------------
+     * 【为什么要两块三角板】圆上处处都可能是直径的端点，把零刻度线放在硬币边上，
+     * 你并不知道对面那个点是不是正对的点，量到的很可能是【弦】。用两块三角板的
+     * 【竖直角边】从左右夹住硬币，两个内侧面之间的距离就【必然】是直径。
      * 两块内侧面分别落在 x = objXl() 与 x = objXr() —— 也就是被测跨度的两端，
      * 所以尺面上那两条参照线（灰 / 绿）正好压在两个内侧面上，不是另外画的。
      * ---------------------------------------------------------------------- */
+
+    // 一块三角板：三角面在 x-y 平面内，直角在 (xi, 0) ——
+    //   · 竖直角边在 x = xi 上（贴住硬币的那一条，也是挡视线的棱）
+    //   · 底边从 (xi,0) 沿 dir 方向伸出 SET_L
+    //   · 斜边把外下角 (xo,0) 与内上角 (xi,SET_H) 连起来
+    // 再沿 z 挤出 [z0,z1] 厚的【薄板】。五个面按到相机的距离从远到近画 ——
+    // 凸体用画家算法就够了（和 box3 同一套做法）。
+    // 【明度直接写死，不拿 shade() 现算法线】斜边的法线要按 dir 翻号，写错一个符号就是
+    // 「该亮的那面跑到背面去」—— 画面上只表现为「有点怪」，很难一眼看出来。
+    function triSet(xi, dir, z0, z1, q, base, stroke) {
+      const xo = xi + dir * SET_L;
+      const A = [xi, 0], B = [xo, 0], C = [xi, SET_H];
+      const W = [[A[0], A[1], z0], [B[0], B[1], z0], [C[0], C[1], z0],
+                 [A[0], A[1], z1], [B[0], B[1], z1], [C[0], C[1], z1]];
+      const P = W.map(p => project(p, q));
+      const F = [
+        { v: [0, 1, 2],    k: 0.34 },   // 远端三角面
+        { v: [3, 4, 5],    k: 0.82 },   // 近端三角面（正对相机，最亮）
+        { v: [0, 1, 4, 3], k: 0.26 },   // 底面 A→B
+        { v: [0, 2, 5, 3], k: 0.50 },   // 竖直角边那一面 A→C
+        { v: [1, 2, 5, 4], k: 1.04 }    // 斜面 B→C（受顶光）
+      ];
+      const order = F.map(f => ({ f: f, d: f.v.reduce((s, k) => s + q.eyeDist(W[k]), 0) / f.v.length }));
+      order.sort((a, b) => b.d - a.d);
+      for (const o of order) poly(o.f.v.map(k => P[k]), rgb(base, o.f.k), stroke || null, stroke ? 1 : 0);
+    }
+
     function drawCoinScene(q) {
       const xl = objXl(), xr = objXr();
       const R = coinR(), cx = (xl + xr) / 2;
       const cz = Z_FACE - R;                   // 硬币中心（z）：近侧与刻度边相切
-      const bz0 = Z_FACE - BLOCK_D, bz1 = Z_FACE;
-      const bz = (bz0 + bz1) / 2;
+      // 【三角板要摆在硬币中心那条线上】竖直角边贴住硬币最左 / 最右那一点，而那一
+      // 点的 z 正好是硬币中心 cz。板子摆偏了直角边就碰不到硬币 —— 看着像「两块板
+      // 立在那儿，硬币自己躺着」，学生看不出「夹住」这件事。
+      const sz0 = cz - SET_D / 2, sz1 = cz + SET_D / 2;
       // 硬币：平躺的圆盘。先画底圈再画顶面 —— 顶面盖掉大部分，剩下的一弯就是厚度。
       const disc = (yy, col, amb) => {
         const pts = [];
@@ -1298,28 +1365,29 @@
         state.drawn.coinText = faceText('1元', tA, tB, tC, tD, q,
                                         { color: 'rgba(96,104,118,.95)', scale: 0.88 });
       };
-      const blk = (bx0, bx1) => box3(bx0, bx1, 0, BLOCK_H, bz0, bz1, q, STEEL, 0.66, 'rgba(58,68,82,.65)');
+      const setSq = (xi, dir) => triSet(xi, dir, sz0, sz1, q, STEEL, 'rgba(58,68,82,.65)');
       // 【远的三件先画】相机在 +x 一侧，右边那块比硬币更靠近相机 ——
-      // 按到相机的距离从远到近画，才不会出现「近处的块被硬币压住」这种倒错。
+      // 按到相机的距离从远到近画，才不会出现「近处的板被硬币压住」这种倒错。
+      // 质心取三角形真正的重心 (xi + dir·L/3, H/3)，不是外接盒中心。
       const parts = [
         { id: 'coin', c: [cx, COIN_T * 0.5, cz], f: coin },
-        { id: 'blkL', c: [(xl - BLOCK_T + xl) / 2, BLOCK_H * 0.5, bz], f: () => blk(xl - BLOCK_T, xl) },
-        { id: 'blkR', c: [(xr + xr + BLOCK_T) / 2, BLOCK_H * 0.5, bz], f: () => blk(xr, xr + BLOCK_T) }
+        { id: 'setL', c: [xl - SET_L / 3, SET_H / 3, cz], f: () => setSq(xl, -1) },
+        { id: 'setR', c: [xr + SET_L / 3, SET_H / 3, cz], f: () => setSq(xr, +1) }
       ];
       parts.sort((a, b) => q.eyeDist(b.c) - q.eyeDist(a.c));
       for (const p of parts) p.f();
       // 【记名字而不是只记距离】只报一串距离的话，自检没法说「谁被画在了最后」——
-      // 「近处的块必须后画」这条就退化成一个自证「排序确实排过了」的恒等式。
-      // 记下 id 之后，「默认视角下最后画的是右块」才是一句能被证伪的话。
+      // 「近处的那块必须后画」这条就退化成一个自证「排序确实排过了」的恒等式。
+      // 记下 id 之后，「默认视角下最后画的是右板」才是一句能被证伪的话。
       state.drawn.paintOrder = parts.map(p => p.id);
       state.drawn.paintDist = parts.map(p => +q.eyeDist(p.c).toFixed(4));
       state.drawn.coinR = +R.toFixed(4);
       state.drawn.coinCx = +cx.toFixed(4);
-      state.drawn.blockInner = [+xl.toFixed(4), +xr.toFixed(4)];
-      state.drawn.blockH = BLOCK_H;
-      state.drawn.blockT = BLOCK_T;
-      state.drawn.blockD = BLOCK_D;
-      state.drawn.blockZ = [+bz0.toFixed(4), +bz1.toFixed(4)];
+      state.drawn.setInner = [+xl.toFixed(4), +xr.toFixed(4)];
+      state.drawn.setL = SET_L;
+      state.drawn.setH = SET_H;
+      state.drawn.setD = SET_D;
+      state.drawn.setZ = [+sz0.toFixed(4), +sz1.toFixed(4)];
     }
 
     // 零刻度线：横贯尺宽的一条醒目红线 —— 这是物体左端必须对齐的那条线。
@@ -1576,12 +1644,12 @@
     };
 
     // 【评分条目的措辞按模式走，判据本身不变】「会放」永远是「零刻度线对齐跨度左端」，
-    // 只是这个左端在常规测量里是物体左端、在累积法里是线圈第一圈、在辅助法里是左直角块内侧面。
+    // 只是这个左端在常规测量里是物体左端、在累积法里是线圈第一圈、在辅助法里是左三角板内侧面。
     // 措辞写准了，学生才知道自己该把尺子推到哪条线上。
     function rubricItems() {
       const left = spanLeftWord(), right = spanRightWord();
       const read = state.mode === 'coil' ? '读出线圈的【总宽度 L】'
-                 : state.mode === 'coin' ? '读两块直角块内侧面之间的距离（它就是直径）'
+                 : state.mode === 'coin' ? '读两块三角板内侧面之间的距离（它就是直径）'
                  : '准确值取整到分度值，估读值取到分度值下一位';
       const out = [
         { k: 'sel',   t: '会选 · 分度值', d: '题目要求精确到毫米，得拿分度值 1 mm 的尺' },
@@ -1667,10 +1735,10 @@
                fmt(wireWantCm() * 10, 2) + ' mm</b>。这一根铜丝比尺的分度值（1 mm）还细，' +
                '直接量一根是读不出来的 —— 这就是为什么要「累积」。';
       } else if (state.mode === 'coin') {
-        conc = '规范操作完成 ✓ 两块直角块内侧面之间的距离 <b>' + fmt(state.objU / 100, 2) +
+        conc = '规范操作完成 ✓ 两块三角板内侧面之间的距离 <b>' + fmt(state.objU / 100, 2) +
                ' cm</b>，这就是硬币的直径（换成毫米是 <b>' + fmt(state.objU / 10, 1) + ' mm</b>）。' +
                '把零刻度线直接放在硬币边上量是不行的 —— 圆上处处都可能是直径的端点，量到的很可能是<b>弦</b>；' +
-               '两块直角块一夹，量到的就必然是直径。';
+               '两块三角板一夹，量到的就必然是直径。';
       } else {
         conc = '规范操作完成 ✓ 读数 <b>' + fmt(state.objU / 100, 2) + ' cm</b> = 准确值 ' +
                fmt(acc, 2) + ' cm + 估读值 ' + fmt(est, 2) + ' cm。换成毫米就是 <b>' +
@@ -1749,7 +1817,7 @@
         ? '第一步：读<b>线圈的总宽度 L</b>，写到分度值的下一位。第二步：自己算<b>直径 d = L ÷ n</b>，' +
           '填到左边那一格（一根铜丝只有零点几毫米，d 要写到 0.001 cm 那一位）。'
         : state.mode === 'coin'
-        ? '读的是<b>两块直角块内侧面之间</b>的距离 —— 它就是硬币的直径。读数写到分度值的下一位，记录要带单位。'
+        ? '读的是<b>两块三角板内侧面之间</b>的距离 —— 它就是硬币的直径。读数写到分度值的下一位，记录要带单位。'
         : '读数要写到<b>分度值的下一位</b>：分度值 1 mm 时读到 0.1 mm（即 0.01 cm），分度值 1 cm 时读到 0.1 cm。' +
           '记录必须写单位。';
       const a = state.acc === '' ? NaN : +state.acc, e = state.est === '' ? NaN : +state.est;
@@ -1766,8 +1834,9 @@
           fmt(2 * PENCIL_R * U, 0) + ' mm，铜丝直径 <b>' + fmt(wireWantCm() * 10, 2) +
           ' mm</b> —— 比尺的分度值还小，直接量一根读不出来。'
         : state.mode === 'coin'
-        ? '两块直角块的内侧面正好卡在硬币的左右两个端点上，<b>内侧面之间的距离就是直径</b>。' +
-          '块高 ' + fmt(BLOCK_H * U, 1) + ' cm，硬币厚 ' + fmt(COIN_T * U * 10, 1) + ' mm。'
+        ? '两块三角板的内侧面正好卡在硬币的左右两个端点上，<b>内侧面之间的距离就是直径</b>。' +
+          '竖直角边高 ' + fmt(SET_H * U, 1) + ' cm（挡住视线的就是它），硬币厚 ' +
+          fmt(COIN_T * U * 10, 1) + ' mm。'
         : '当前尺：分度值 <b>' + (state.step === STEP_MM ? '1 mm' : '1 cm') +
           '</b>，量程 0 ~ ' + V_MAX + ' cm。' + nm + '长 <b>' + fmt(objL(), 2) + ' cm</b>，' +
           '眼睛在' + nm + '顶面之上 <b>' + fmt(EYE_H * U, 0) + ' cm</b> 处。';
@@ -2172,7 +2241,7 @@
         COIL_X0: COIL_X0, COIL_TURNS: COIL_TURNS, COIL_WIRE: COIL_WIRE,
         COIL_L_LO: COIL_L_LO, COIL_L_HI: COIL_L_HI,
         COIN_X0: COIN_X0, COIN_U_LO: COIN_U_LO, COIN_U_HI: COIN_U_HI, COIN_T: COIN_T,
-        BLOCK_T: BLOCK_T, BLOCK_D: BLOCK_D, BLOCK_H: BLOCK_H, D_TOL: D_TOL
+        SET_L: SET_L, SET_H: SET_H, SET_D: SET_D, D_TOL: D_TOL
       },
       makeCam: makeCam, project: project, size: () => ({ w: state.w, h: state.h, dpr: state.dpr }),
       envelopePoints: envelopePoints,
@@ -2295,7 +2364,7 @@
       spanInfo: () => ({
         mode: state.mode, name: spanName(), lenCm: objL(),
         xl: objXl(), xr: objXr(), z0: spanZ0(), z1: spanZ1(), topY: objTopY(),
-        blockInner: state.mode === 'coin' ? [+objXl().toFixed(6), +objXr().toFixed(6)] : null,
+        setInner: state.mode === 'coin' ? [+objXl().toFixed(6), +objXr().toFixed(6)] : null,
         coinR: state.mode === 'coin' ? coinR() : null,
         turns: state.mode === 'coil' ? state.turns : null,
         wireCm: state.mode === 'coil' ? wireWantCm() : null,
