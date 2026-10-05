@@ -1,0 +1,1628 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>声波的形成 · 三维疏密波实验台 - 物理虚拟实验</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="stylesheet" href="style.css">
+  <script src="auth-check.js"></script>
+  <style>
+    body { margin: 0; padding: 20px; min-width: 320px; }
+
+    .lab3d h1 { margin: 0; font-size: 19px; letter-spacing: .3px; }
+    .lab3d-sub { margin: 7px 0 16px; color: #93b4c4; font-size: 12.5px; line-height: 1.6; }
+    .lab3d-sub b { color: #a5f3fc; font-weight: 700; }
+
+    .lab3d-layout {
+      display: grid; grid-template-columns: minmax(0, 1fr) 340px;
+      gap: 16px; align-items: start; align-content: start;
+    }
+    /* 三块位置写死，DOM 顺序按【窄屏需要的顺序】排：舞台 → 侧栏 → 下半区。
+       宽屏用 grid 把「视角 / 显示 / 算一算」摆到舞台正下方（左列第二行），
+       侧栏跨两行 —— 两列高度接近，不会在舞台下面留一大片空白。 */
+    .lab3d-stage { grid-column: 1; grid-row: 1; }
+    .lab3d-sidebar { grid-column: 2; grid-row: 1 / span 2; }
+    .lab3d-lower {
+      grid-column: 1; grid-row: 2;
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(270px, 1fr));
+      gap: 14px; align-content: start; align-items: start; min-width: 0;
+    }
+
+    .lab3d-stage {
+      position: relative; overflow: hidden;
+      /* ★ 比站内其它三维页高一些（68vh）。这一页的场景是「横长」的
+       *   （x 方向 2.46 m，y 方向只有 0.78 m），画布太扁的话取景会被
+       *   【高度】卡住，管子只占画布宽度的一半 —— 微粒挤在一起，疏密就白做了。 */
+      height: clamp(400px, 68vh, 680px);
+      border: 1px solid rgba(148, 163, 184, .18); border-radius: 16px;
+      background: #020617; box-shadow: 0 18px 46px rgba(2, 6, 23, .5);
+    }
+    .lab3d-stage canvas { display: block; touch-action: none; cursor: grab; }
+    .lab3d-stage canvas.pick { cursor: pointer; }
+    .lab3d-stage canvas.grabbing { cursor: grabbing; }
+
+    .lab3d-stage .stage-hint {
+      position: absolute; left: 12px; top: 12px; max-width: 62%;
+      padding: 7px 11px; border-radius: 8px; pointer-events: none;
+      border: 1px solid rgba(56, 189, 248, .28); background: rgba(2, 6, 23, .78);
+      color: #c3e8f5; font-size: 11px; line-height: 1.55;
+    }
+    .lab3d-stage .stage-hint b { color: #7dd3fc; }
+
+    .lab3d-stage .stage-tip {
+      position: absolute; left: 0; top: 0; padding: 5px 9px; border-radius: 7px;
+      background: rgba(2, 6, 23, .9); border: 1px solid rgba(148, 163, 184, .3);
+      color: #e2e8f0; font-size: 11px; white-space: nowrap;
+      pointer-events: none; opacity: 0; transition: opacity .12s;
+    }
+    .lab3d-stage .stage-tip.show { opacity: 1; }
+
+    /* 舞台底部那一条：左边按钮，右边操作提示。做成一条 flex 行是为了让它们
+       【永远不重叠】—— 各占一角的话，窄屏上提示文字会横穿底边压在按钮上。
+       按钮必须在舞台上：.lab3d-layout 在 ≤900px 折成一列后侧栏会被挤到舞台
+       【下面】，而「播放 / 重新发声」恰恰是眼睛盯着画面时该按的。 */
+    .lab3d-stage .stage-bar {
+      position: absolute; left: 0; right: 0; bottom: 0;
+      display: flex; align-items: center; justify-content: space-between; gap: 8px;
+      padding: 0 12px 11px; pointer-events: none;
+    }
+    .lab3d-stage .bar-left { display: flex; align-items: center; gap: 7px; flex: none; pointer-events: auto; }
+    .lab3d-stage .stage-btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 8px 13px; border-radius: 10px; font-family: inherit;
+      font-size: 12px; font-weight: 800; cursor: pointer;
+      border: 1px solid rgba(148, 163, 184, .35); background: rgba(2, 6, 23, .88); color: #cbd5e1;
+      transition: background .2s, border-color .2s, color .2s, box-shadow .2s;
+    }
+    .lab3d-stage .stage-btn.go { border-color: rgba(56, 189, 248, .55); background: rgba(14, 116, 144, .3); color: #e0f2fe; }
+    .lab3d-stage .stage-btn.go:hover { background: rgba(14, 116, 144, .46); }
+    .lab3d-stage .stage-btn:disabled { opacity: .45; cursor: not-allowed; }
+    /* 波已经充满整根管子 —— 稳态建立，正是「看疏密」的时候，按钮自己亮起来 */
+    .lab3d-stage .stage-btn.ready {
+      border-color: rgba(52, 211, 153, .8); background: rgba(16, 185, 129, .24); color: #d1fae5;
+      box-shadow: 0 0 0 3px rgba(52, 211, 153, .14), 0 0 18px rgba(52, 211, 153, .3);
+    }
+    .lab3d-stage .stage-help {
+      min-width: 0; pointer-events: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      color: #93b4c4; font-size: 11px; background: rgba(2, 6, 23, .72); padding: 6px 10px; border-radius: 7px;
+    }
+
+    .lab3d-stage .stage-toast {
+      position: absolute; left: 50%; transform: translateX(-50%); bottom: 96px;
+      padding: 8px 14px; border-radius: 10px; font-size: 12px; font-weight: 700;
+      background: rgba(2, 6, 23, .93); border: 1px solid rgba(148, 163, 184, .32); color: #e2e8f0;
+      opacity: 0; transition: opacity .18s; pointer-events: none; white-space: nowrap;
+      max-width: 90%; overflow: hidden; text-overflow: ellipsis;
+    }
+    .lab3d-stage .stage-toast.show { opacity: 1; }
+
+    .lab3d-sidebar { display: flex; flex-direction: column; gap: 11px; min-width: 0; }
+    .panel {
+      border: 1px solid rgba(148, 163, 184, .17); border-radius: 13px;
+      background: rgba(9, 20, 35, .82); padding: 13px 14px;
+    }
+    .panel > h3 {
+      margin: 0 0 10px; font-size: 12px; font-weight: 800; color: #7dd3fc;
+      letter-spacing: .4px; display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    }
+    .panel > h3 .pill {
+      font-size: 10px; font-weight: 800; padding: 2px 8px; border-radius: 99px;
+      background: rgba(148, 163, 184, .18); color: #e2e8f0;
+    }
+    .panel > h3 .pill.live { background: rgba(248, 113, 113, .25); color: #fecaca; }
+    .panel > h3 .pill.ok { background: rgba(52, 211, 153, .22); color: #d1fae5; }
+    .fld { display: block; margin-bottom: 11px; }
+    .fld:last-child { margin-bottom: 0; }
+    .fld .row { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 5px; }
+    .fld .row span { color: #a9c2d2; font-size: 11.5px; }
+    .fld .row b { color: #e2e8f0; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+    .fld .note { margin: 6px 0 0; color: #8aa6b8; font-size: 11px; line-height: 1.55; }
+    input[type=range] { width: 100%; accent-color: #38bdf8; }
+
+    .btn-row { display: flex; flex-wrap: wrap; gap: 7px; }
+    .btn-row button {
+      flex: 1 1 auto; min-width: 0; padding: 9px 11px; border-radius: 9px; cursor: pointer;
+      font-family: inherit; font-size: 12px; font-weight: 800;
+      border: 1px solid rgba(148, 163, 184, .3); background: rgba(30, 41, 59, .7); color: #cbd5e1;
+    }
+    .btn-row button.primary { border-color: rgba(56, 189, 248, .6); background: rgba(14, 116, 144, .42); color: #e0f2fe; }
+    .btn-row button.on { border-color: rgba(52, 211, 153, .65); background: rgba(6, 78, 59, .5); color: #d1fae5; }
+    .btn-row button:disabled { opacity: .45; cursor: not-allowed; }
+    .btn-row button:hover:not(:disabled) { border-color: rgba(125, 211, 252, .7); }
+
+    .readouts { display: flex; flex-direction: column; gap: 5px; color: #a9c2d2; font-size: 11.5px; }
+    .readouts div { display: flex; justify-content: space-between; gap: 8px; }
+    .readouts b { color: #e2e8f0; font-variant-numeric: tabular-nums; }
+    .readouts .dim { color: #7d97a8; }
+
+    /* 追踪微粒的位移-时间曲线（侧栏小画布） */
+    .trace-box {
+      margin-top: 9px; border-radius: 10px; overflow: hidden;
+      border: 1px solid rgba(148, 163, 184, .22); background: rgba(2, 6, 23, .6);
+    }
+    .trace-box canvas { display: block; width: 100%; height: 96px; }
+
+    .analysis { color: #c8d8e4; font-size: 11.5px; line-height: 1.75; }
+    .analysis .line { display: flex; justify-content: space-between; gap: 8px; }
+    .analysis .line b { color: #e2e8f0; font-variant-numeric: tabular-nums; }
+    .analysis .conc {
+      margin-top: 9px; padding: 8px 10px; border-radius: 8px; font-size: 11.5px; line-height: 1.65;
+      background: rgba(6, 78, 59, .35); border: 1px solid rgba(52, 211, 153, .4); color: #d1fae5;
+    }
+    .analysis .conc.info { background: rgba(12, 74, 110, .35); border-color: rgba(56, 189, 248, .4); color: #e0f2fe; }
+
+    .info-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; margin-top: 16px; }
+    .info-card {
+      border: 1px solid rgba(148, 163, 184, .16); border-radius: 14px;
+      background: rgba(9, 20, 35, .7); padding: 15px 17px;
+    }
+    .info-card h4 { margin: 0 0 9px; font-size: 13px; color: #7dd3fc; }
+    .info-card ul { margin: 0; padding-left: 17px; color: #a9c2d2; font-size: 12px; line-height: 1.85; }
+    .info-card li b { color: #e2e8f0; }
+    .info-card .fml {
+      display: inline-block; margin: 3px 0; padding: 3px 9px; border-radius: 7px;
+      background: rgba(56, 189, 248, .13); color: #a5f3fc; font-weight: 700;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+
+    @media (max-width: 900px) {
+      .lab3d-layout { grid-template-columns: minmax(0, 1fr); }
+      .lab3d-stage, .lab3d-sidebar, .lab3d-lower { grid-column: 1; grid-row: auto; }
+      .lab3d-stage { height: clamp(340px, 54vh, 500px); }
+      .lab3d-sidebar { border-top: 1px solid rgba(148, 163, 184, .16); padding-top: 12px; }
+      .lab3d-lower { border-top: 1px solid rgba(148, 163, 184, .16); padding-top: 12px; }
+    }
+    @media (max-width: 620px) {
+      body { padding: 14px; }
+      .lab3d h1 { font-size: 16px; }
+      .lab3d-stage { height: 350px; }
+      .lab3d-stage .stage-hint { font-size: 10px; padding: 6px 9px; max-width: 66%; }
+      .lab3d-stage .stage-help { display: none; }
+      .lab3d-stage .stage-btn { padding: 7px 10px; font-size: 11px; gap: 5px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="lab3d">
+    <h1>声波的形成 · 三维疏密波实验台</h1>
+    <p class="lab3d-sub">
+      左边是一只<b>扬声器</b>，它的纸盆在前后振动；管子里那一大团小球是<b>空气微粒</b>。
+      按「播放」，看它们怎么动 —— 你会发现：<b>每一个微粒都只在自己原来的位置附近来回抖动，
+      谁也没有被推着往前走</b>；可它们之间<b>一会儿挤紧、一会儿松开</b>，
+      这种<b>疏密相间</b>的样子却一路向右传到了耳膜上。
+    </p>
+    <p class="lab3d-sub" style="margin-top:-9px;">
+      这就是声波：<b>它不是空气被吹过来，而是振动在空气里一个传一个</b>。
+      声音在空气中以 <b>c = 340 m/s</b> 前进，波长 <b>λ = c ÷ f</b>；
+      下方的紫色曲线是<b>空气密度</b>——曲线高的地方就是<b>密部</b>，低的地方是<b>疏部</b>，
+      它们和上方的微粒一一对应。
+    </p>
+
+    <div class="lab3d-layout">
+      <div class="lab3d-stage">
+        <canvas id="sw-canvas"></canvas>
+
+        <div class="stage-hint" id="sw-hint"></div>
+        <div class="stage-tip" id="sw-tip"></div>
+        <div class="stage-toast" id="sw-toast"></div>
+
+        <div class="stage-bar">
+          <div class="bar-left">
+            <button type="button" class="stage-btn go" id="sw-play">暂停</button>
+            <button type="button" class="stage-btn" id="sw-restart">重新发声</button>
+            <button type="button" class="stage-btn" id="sw-reset">重置</button>
+          </div>
+          <div class="stage-help">拖动旋转 · 滚轮缩放 · 点一下某个微粒把它锁定追踪</div>
+        </div>
+      </div>
+
+      <div class="lab3d-sidebar">
+        <div class="panel">
+          <h3>声源 <span class="pill" id="sw-src-pill">振动中</span></h3>
+          <div class="fld">
+            <div class="row"><span>频率 f</span><b id="sw-f-num">340 Hz</b></div>
+            <input type="range" id="sw-f" min="340" max="680" step="10" value="340">
+          </div>
+          <div class="fld">
+            <div class="row"><span>振幅 A（示意放大）</span><b id="sw-amp-num">2.83 cm</b></div>
+            <input type="range" id="sw-amp" min="5" max="42" step="1" value="34">
+          </div>
+          <p class="note" id="sw-src-note"></p>
+        </div>
+
+        <div class="panel">
+          <h3>播放 <span class="pill" id="sw-speed-pill">慢放 1/400</span></h3>
+          <div class="btn-row">
+            <button type="button" id="sw-slow" class="on">慢放 1/400</button>
+            <button type="button" id="sw-real">实时</button>
+          </div>
+          <div class="readouts" style="margin-top:9px;">
+            <div><span>波前已经走到</span><b id="sw-front">0.00 m</b></div>
+            <div><span>发声以来（物理时间）</span><b id="sw-ttot">0.000 ms</b></div>
+          </div>
+          <p class="note" id="sw-speed-note"></p>
+        </div>
+
+        <div class="panel">
+          <h3>读数 <span class="pill" id="sw-wave-pill">波在管内</span></h3>
+          <div class="readouts">
+            <div><span>声速 c</span><b>340 m/s</b></div>
+            <div><span>波长 λ = c ÷ f</span><b id="sw-lam">1.000 m</b></div>
+            <div><span>周期 T = 1 ÷ f</span><b id="sw-T">2.94 ms</b></div>
+            <div><span>每波长微粒数 k = λ ÷ Δx</span><b id="sw-k">12.0</b></div>
+            <div><span>管内波长数 L ÷ λ</span><b id="sw-nw">2.0</b></div>
+            <div><span>管内密部个数</span><b id="sw-nmax">2</b></div>
+            <div><span>微粒平衡间距 Δx</span><b id="sw-dx">8.33 cm</b></div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h3>追踪微粒 <span class="pill" id="sw-trk-pill">第 14 个</span></h3>
+          <div class="readouts">
+            <div><span>平衡位置 x₀</span><b id="sw-trk-x0">—</b></div>
+            <div><span>此刻位移 ξ</span><b id="sw-trk-xi">—</b></div>
+            <div><span>振动范围</span><b id="sw-trk-range">—</b></div>
+            <div><span>它一共前进了</span><b id="sw-trk-net">0.00 cm</b></div>
+          </div>
+          <div class="trace-box"><canvas id="sw-trace"></canvas></div>
+          <p class="note">曲线是<b>这个微粒</b>的位移随时间的变化 —— 它是一条<b>正弦曲线</b>，
+            说明微粒在做<b>简谐振动</b>，而且时间平均位移为 <b>0</b>：来回走，最后回到原处。</p>
+        </div>
+      </div>
+
+      <div class="lab3d-lower">
+        <div class="panel">
+          <h3>视角</h3>
+          <div class="btn-row">
+            <button type="button" data-view="perspective" class="on">默认</button>
+            <button type="button" data-view="side">侧视（看振动）</button>
+            <button type="button" data-view="axial">沿声轴</button>
+            <button type="button" data-view="top">俯视</button>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h3>显示</h3>
+          <div class="btn-row">
+            <button type="button" data-layer="curve" class="on">密度曲线</button>
+            <button type="button" data-layer="marks" class="on">密部标记</button>
+            <button type="button" data-layer="trace" class="on">微粒轨迹</button>
+            <button type="button" data-layer="memb" class="on">耳膜</button>
+          </div>
+          <p class="note" style="margin-top:9px;">把「微粒轨迹」关掉，只看球在抖 —— 它们<b>谁也没有往右跑</b>；
+            再把「密部标记」打开，看那几道亮带<b>整体向右平移</b>。两件事同时看，就懂了。</p>
+        </div>
+
+        <div class="panel">
+          <h3>算一算</h3>
+          <div class="analysis" id="sw-analysis"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="info-cards">
+      <div class="info-card">
+        <h4>实验原理：声波是疏密波（纵波）</h4>
+        <ul>
+          <li>声源（这里是一只扬声器的纸盆）在振动，它推动紧挨着它的那层空气；
+              这层空气又推动下一层 …… 振动就这样<b>一层传一层</b>地传出去，形成声波。</li>
+          <li><b>空气微粒本身并不跟着波跑</b>。它们只是在各自的平衡位置附近
+              <b>来回振动</b>，时间平均位移为 0。传出去的是<b>振动这种运动形式</b>，
+              不是空气本身。</li>
+          <li>因为微粒一会儿挤紧、一会儿松开，空气就出现了<b>疏密相间</b>的变化。
+              这种波叫<b>疏密波</b>，也叫<b>纵波</b> —— 微粒的振动方向与波的传播方向
+              <b>在同一条直线上</b>。</li>
+          <li>课本上把它和水波对比：水面上浮标只是上下动，波却横向传出去 ——
+              同一个道理，只不过声波里微粒是<b>左右动</b>。</li>
+        </ul>
+      </div>
+      <div class="info-card">
+        <h4>三个量：c、λ、f</h4>
+        <ul>
+          <li><b>声速 c</b>：声音在介质中传播的快慢。空气中约 <b>340 m/s</b>
+              （15 ℃）。它由<b>介质</b>决定，跟声音大小、频率都无关。</li>
+          <li><b>频率 f</b>：声源每秒振动多少次，单位 Hz。人耳能听到
+              <b>20 Hz ~ 20000 Hz</b>。</li>
+          <li><b>波长 λ</b>：一个完整疏密变化占的长度。
+              <span class="fml">λ = c ÷ f</span>
+              频率越高，波长越短。本页把 f 从 340 Hz 拉到 680 Hz，
+              λ 就从 1.00 m 缩到 0.50 m —— 数一数<b>管子里多了几个波</b>就看得出来。</li>
+          <li><b>周期 T</b>：振动一次用的时间，<span class="fml">T = 1 ÷ f</span>。
+              340 Hz 时只有 <b>2.94 ms</b> —— 快得肉眼根本看不清，所以本页默认
+              <b>慢放 1/400</b>。切到「实时」感受一下它到底有多快。</li>
+        </ul>
+      </div>
+      <div class="info-card">
+        <h4>操作指南</h4>
+        <ul>
+          <li>按<b>「播放」</b>看微粒振动。注意看：<b>每个球都在原地左右抖</b>，
+              没有谁一路向右飘。右侧小图是这个微粒的位移-时间曲线。</li>
+          <li>按<b>「重新发声」</b>：波从扬声器那里<b>重新出发</b>，你能看到它
+              以 340 m/s 向右推进，把还没被扰动的空气一段段「点亮」——
+              这就是<b>声音传出去需要时间</b>。</li>
+          <li>拖<b>「频率」</b>滑块：管长没变，但波长变了，管里的波<b>个数</b>跟着变
+              （340 Hz 时 2 个，680 Hz 时 4 个）。</li>
+          <li>拖<b>「振幅」</b>滑块：微粒抖得更厉害，密部更密、疏部更疏，
+              密度曲线也起伏得更大 —— 这就是<b>声音更响</b>。</li>
+          <li>直接<b>点画面里的某个微粒</b>就能把它锁定追踪；拖动空白处旋转视角，
+              切到<b>「侧视」</b>看振动最清楚，切到<b>「沿声轴」</b>能看见
+              密部像一圈圈圆环往前压。</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <script>
+  (() => {
+    'use strict';
+
+    const canvas = document.getElementById('sw-canvas');
+    const stage = document.querySelector('.lab3d-stage');
+    if (!canvas || !stage) return;
+    const ctx = canvas.getContext('2d');
+
+    const PI2 = Math.PI * 2;
+    const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
+    const $ = id => document.getElementById(id);
+
+    /* ============================================================
+     * 向量工具（与站内其它三维页同一套约定）
+     * ============================================================ */
+    const add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+    const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+    const scl = (a, k) => [a[0] * k, a[1] * k, a[2] * k];
+    const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+    const vlen = a => Math.hypot(a[0], a[1], a[2]);
+    const vnorm = a => { const l = vlen(a) || 1; return [a[0] / l, a[1] / l, a[2] / l]; };
+
+    /* ============================================================
+     * 物理常量 —— 整页唯一的真值来源
+     * ------------------------------------------------------------
+     * 画面、读数、曲线、自检全部读这里。抄第二遍的话，改一处另一处
+     * 不跟着变，页面在动而数字对不上。
+     *
+     * ★★ 这一页最难的不是公式，是【参数窗口】。要让「疏密」真的看得出来，
+     *    三个量被死死卡住，动手前先算过（见下方注释）：
+     *
+     *   ① 每波长微粒数 k = λ / Δx 必须落在 6 ~ 19
+     *      太小（k < 6）—— 一个波长里没几个球，看不出「波」的形状；
+     *      太大（k > 19）—— 相邻球本来就挤在一起，疏密变化淹没在噪声里。
+     *      本设计 Δx = 2.0/24 = 8.333 cm，λ 在 1.00 ~ 0.50 m，
+     *      于是 k 在 12（f = 340）~ 6（f = 680），正好在窗口里。
+     *
+     *   ② 振幅 / 间距 A / Δx 必须 ≤ 0.45
+     *      相邻两球最近时间距 = Δx − 2A，A = 0.5Δx 时刚好贴上，再大就穿越。
+     *      本设计上限 0.42（留 8% 余量），默认 0.30。
+     *
+     *   ③ 屏幕上微粒间距要 ≥ 25 px，否则球挤成一坨、疏密也看不出来。
+     *      管子占屏幕约 800 px → 间距 800/24 ≈ 33 px ✓
+     *
+     *   ④ 屏幕上振动幅度要 ≥ 8 px，否则「微粒在振动」这件事看不见。
+     *      A = 0.34Δx = 2.83 cm → 屏幕上 ±(2.83/200)×700 ≈ ±10 px ✓
+     *      （屏幕上的振幅 ≡ ampK × 屏幕上的间距，所以这两个指标是绑死的：
+     *        间距 29 px、ampK 0.34 → 振幅 9.9 px。要让振动更明显只能
+     *        加大 ampK，上限 0.42 就是 12 px。）
+     *
+     *   ⑤ 密部间距 / 疏部间距 要 ≥ 1.4，否则疏密不可辨。
+     *      比值 = (1 + s)/(1 − s)，s = A·2π/λ = ampK·2π/k。
+     *      k = 12、ampK = 0.30 → s = 0.157 → 1.37；k = 6 时 s = 0.314 → 1.92。
+     *      实际屏幕上是 1.6 ~ 2.6 倍（k 随 f 变小，s 变大）✓
+     *
+     * ★ 管长取【世界尺度固定】（L = 2.0 m），不随 f 变 —— 这样屏幕上波的
+     *   传播速度恒等于 c 的映射，不会让学生误以为「高频声波跑得快」；
+     *   同时频率一变，管里波的【个数】真的跟着变，波长变化看得见。
+     * ============================================================ */
+    const C_SOUND = 340;              // 空气中声速 m/s
+    const L_TUBE = 2.0;               // 空气柱长度 m
+    const NX = 25;                    // 沿声轴的微粒数
+    const DX = L_TUBE / (NX - 1);     // 平衡间距 = 8.3333 cm
+    const NY = 3, NZ = 3;             // 截面上的微粒层数（3×3 = 立体感）
+    const SPAN_Y = 0.230, SPAN_Z = 0.230;   // 截面 y / z 向的总跨度
+    const TUBE_HY = 0.170, TUBE_HZ = 0.170; // 管截面半高 / 半深
+    const TUBE_CY = 0.500;            // 管轴离地高度
+
+    const F_MIN = 340, F_MAX = 680, F_DEF = 340, F_STEP = 10;
+    const AMP_K_MAX = 0.42;           // A/Δx 上限（0.5 就穿越了）
+    const AMP_K_DEF = 0.34;
+    const AMP_K_MIN = 0.05;
+    const SLOW_N = 400;               // 慢放：物理时间 = 墙上时间 ÷ 400
+    const SLOW_R = 1 / SLOW_N;
+
+    const CURVE_Y0 = 0.055, CURVE_H = 0.215;   // 密度曲线的基线与高度
+    const MEMB_X = L_TUBE + 0.020, MEMB_T = 0.024;  // 耳膜位置 / 厚度
+    const SRC_BACK = -0.300;          // 扬声器背面
+    const TRACK_DEF = 13;             // 默认追踪第 14 个微粒（0 基）
+
+    const CAMD_K = 2.60;              // 相机距离（场景尺度固定，所以是常数）
+
+    const VIEWS = {
+      // [方位角, 俯仰角]
+      // ★ 俯仰角不能给大。包络的【竖直】跨度里有一大块是「x 轴长度 × sin(俯仰)」
+      //   贡献的（x 有 2.46 m，pitch=0.40 时光这一项就占掉 0.44 m 的投影高度），
+      //   俯仰一大，取景就被【高度】卡住，管子只占画布宽度的一半 —— 实测
+      //   pitch=0.40 时管长 511 px / 画布 1044 px，微粒间距只有 21 px。
+      //   压到 0.34 之后取景改成由【宽度】决定，管长 ~700 px、间距 ~29 px。
+      perspective: [-0.56, 0.34],
+      // 侧视：相机落在 +z 轴上正对 x-y 平面，x 横向铺开、y 竖直 ——
+      // 微粒的左右振动在屏幕上就是纯水平位移，最容易看清「原地抖」。
+      side:        [0.00, 0.05],
+      // 沿声轴：相机在 −x 侧顺着管轴看进去，密部会显示成一圈圈圆环。
+      axial:       [-1.45, 0.22],
+      top:         [-0.30, 1.12]
+    };
+
+    const state = {
+      yaw: VIEWS.perspective[0], pitch: VIEWS.perspective[1], zoom: 1,
+      f: F_DEF,                       // 声源频率 Hz
+      ampK: AMP_K_DEF,                // 振幅 ÷ 平衡间距（无量纲）
+      slow: true,                     // true = 慢放 1/400，false = 实时
+      playing: true,
+      tAnim: 0,                       // 声源开始振动以来的【物理时间】s
+      trackIdx: TRACK_DEF,            // 被锁定追踪的微粒序号
+      showCurve: true, showMarks: true, showTrace: true, showMemb: true,
+      w: 1, h: 1, dpr: 0, dirty: true,
+      dragging: false, drag: null, downAt: null, dragYaw: 0, dragPitch: 0,
+      hover: null, view: 'perspective',
+      drawn: {}
+    };
+
+    /* ============================================================
+     * 物理（全部纯函数 —— 渲染 / 读数 / 曲线 / 自检共用同一份）
+     * ============================================================ */
+    const freq = () => state.f;
+    const lam = () => C_SOUND / freq();          // 波长 λ = c / f
+    const period = () => 1 / freq();             // 周期 T = 1 / f
+    const kPerWave = () => lam() / DX;           // 每波长微粒数 k
+    const kwave = () => PI2 / lam();             // 角波数
+    const ampMax = () => AMP_K_MAX * DX;         // 振幅上限
+    const amp = () => state.ampK * DX;           // 当前振幅（m）
+    const slowR = () => (state.slow ? SLOW_R : 1);
+
+    const eqX = i => i * DX;                     // 第 i 个微粒的【平衡位置】
+    /* 位移场。★ 声源在 t = 0 开始振动，所以只有 x ≤ c·t 的空气被扰动了 ——
+     *   这一点让「波前」成为画面里真实存在的东西（不是装饰）。
+     *   在 x = c·t 处相位恰好是 0，sin(0) = 0，所以波前处【没有跳变】，
+     *   是连续地从「静止」过渡到「开始振动」。 */
+    function xiAt(x, t) {
+      if (t <= x / C_SOUND) return 0;
+      return amp() * Math.sin(PI2 * (freq() * t - x / lam()));
+    }
+    const posXi = (i, t) => eqX(i) + xiAt(eqX(i), t);
+
+    /* ★★ 局部空气密度必须由【相邻两微粒的实际间距】算出来，
+     *    不能把 1/(1 + ∂ξ/∂x) 这个公式重抄一遍 —— 那就成了「用公式验证公式」。
+     *    间距小了 → 密度大；间距大了 → 密度小。这是密度的定义本身。 */
+    function gapAt(i, t) { return posXi(i + 1, t) - posXi(i, t); }
+    function densOf(i, t) {
+      const j = Math.min(i, NX - 2);             // 最后一个微粒借左边那一段间距
+      return DX / gapAt(j, t);
+    }
+    /* 密度的理论极值（同一份物理推出的）—— 只用来把密度映射成 0~1 的色阶，
+     * 不做任何显示量的计算。 */
+    function densRange() {
+      const s = clamp(state.ampK * PI2 / kPerWave(), 0, 0.92);
+      return { lo: 1 / (1 + s), hi: 1 / (1 - s) };
+    }
+    function densT(d) {
+      const r = densRange();
+      return clamp((d - r.lo) / Math.max(1e-9, r.hi - r.lo), 0, 1);
+    }
+    /* 密度曲线的高度：把 (ρ−ρ₀) 按理论幅度归一化到 −1~1，再乘上
+     * 「当前振幅 / 最大振幅」—— 这样拖振幅滑块时曲线起伏真的会变。 */
+    function curveU(d) {
+      const ref = state.ampK * PI2 / kPerWave();
+      if (ref < 1e-6) return 0;
+      return clamp((d - 1) / ref, -1.6, 1.6);
+    }
+    function curveY(d) {
+      return CURVE_Y0 + CURVE_H * (0.5 + 0.5 * curveU(d) * (state.ampK / AMP_K_MAX));
+    }
+
+    const frontX = () => C_SOUND * state.tAnim;                  // 波前位置（世界 x）
+    const frontInTube = () => Math.min(frontX(), L_TUBE);
+    const frontActive = () => frontX() < L_TUBE;                 // 波还没充满整根管子
+    const steady = () => !frontActive();                         // 稳态建立
+
+    /* 密部中心的 x 坐标。密度最大处 cos(φ) = +1，即
+     *   2π(f·t − x/λ) = 2πn  →  x = λ(f·t − n)
+     * ★ 别写反：密度 ρ ∝ 1/(1 + ∂ξ/∂x)，而 ∂ξ/∂x = −A(2π/λ)cos(φ)，
+     *   所以「密度最大」对应 cos(φ) = +1（位移梯度最负 = 被压得最紧）。
+     *   cos(φ) = −1 那一处是【疏部】。写成 x = λ(ft − 0.5 − n) 就把
+     *   疏部当密部标出去了 —— 画面看着仍然「有标记在动」，只有跟
+     *   密度最大值对不上才看得出来（自检里专门钉了这条）。
+     * n 取遍所有让 x 落在 [0, L] 且【不超过波前 c·t】的整数 ——
+     * 于是「一队密部」同时出现，它们一起向右平移，不会出现
+     * 「一个标记跳回起点」的突兀感。 */
+    function densMaxXs(t) {
+      const out = [];
+      const lo = Math.max(0, Math.ceil(freq() * t - L_TUBE / lam()));
+      const hi = Math.floor(freq() * t);
+      for (let n = lo; n <= hi; n++) {
+        const x = lam() * (freq() * t - n);
+        if (x >= 0 && x <= L_TUBE) out.push(x);
+      }
+      return out;
+    }
+
+    /* 追踪微粒的位移极值范围 —— 理论上就是 ±A，但这里【按实际走过的范围】
+     * 报，自检拿它跟 ±amp() 比。 */
+    const trackXi = () => xiAt(eqX(state.trackIdx), state.tAnim);
+
+    /* ============================================================
+     * 取景几何
+     * ============================================================ */
+    const X_LO = SRC_BACK - 0.06;
+    const X_HI = MEMB_X + MEMB_T + 0.06;
+    /* ★ Y_HI 只留到「追踪微粒的振动范围箭头」之上一点点，不再多留。
+     *   包络的竖直跨度直接决定取景被不被高度卡住 —— 多留 0.1 m，
+     *   管子就少占几十像素宽。上方那些【标签】是屏幕空间的东西，
+     *   有避让算法 + 画布内钳位兜着，不需要在世界里留位置。 */
+    const Y_HI = TUBE_CY + TUBE_HY + 0.11;
+    const Z_HI = TUBE_HZ + 0.10;
+
+    function envelopePoints() {
+      return [
+        [X_LO, 0, -Z_HI], [X_HI, 0, -Z_HI], [X_HI, 0, Z_HI], [X_LO, 0, Z_HI],
+        [X_LO, Y_HI, -Z_HI], [X_HI, Y_HI, -Z_HI], [X_HI, Y_HI, Z_HI], [X_LO, Y_HI, Z_HI],
+        // 密度曲线在管子下方，也要算进包络，否则会被挤出画外
+        [X_LO, CURVE_Y0, 0], [X_HI, CURVE_Y0, 0]
+      ];
+    }
+
+    function makeCam(q, w, h) {
+      const cy = Math.cos(state.yaw), sy = Math.sin(state.yaw);
+      const cp = Math.cos(state.pitch), sp = Math.sin(state.pitch);
+      const dir = [cp * sy, sp, cp * cy];
+      const target = [0.5 * (X_LO + X_HI), 0.44, 0];
+      q.dist = CAMD_K / state.zoom;
+      q.eye = add(target, scl(dir, q.dist));
+      q.fwd = scl(dir, -1);
+      q.right = vnorm(cross(q.fwd, [0, 1, 0]));
+      q.up = cross(q.right, q.fwd);
+      const pts = envelopePoints();
+      let loR = 1e9, hiR = -1e9, loU = 1e9, hiU = -1e9;
+      for (const p of pts) {
+        const v = sub(p, q.eye);
+        const z = Math.max(0.05, dot(v, q.fwd));
+        const r = dot(v, q.right) / z, u = dot(v, q.up) / z;
+        loR = Math.min(loR, r); hiR = Math.max(hiR, r);
+        loU = Math.min(loU, u); hiU = Math.max(hiU, u);
+      }
+      const s = Math.min(w * 0.94 / Math.max(1e-6, hiR - loR),
+                         h * 0.90 / Math.max(1e-6, hiU - loU));
+      q.focal = s;
+      q.px = w * 0.5 - (loR + hiR) * 0.5 * s;
+      q.py = h * 0.5 + (loU + hiU) * 0.5 * s;
+      q.eyeDist = p => dot(sub(p, q.eye), q.fwd);
+      return q;
+    }
+    function project(p, q) {
+      const v = sub(p, q.eye);
+      const z = Math.max(0.05, dot(v, q.fwd));
+      const s = q.focal / z;
+      return { x: q.px + dot(v, q.right) * s, y: q.py - dot(v, q.up) * s, s: s, z: z };
+    }
+    // 屏幕点 → 世界射线与平面 y = planeY 的交点（点选微粒时用）
+    function unproject(sx, sy, q, planeY) {
+      const dx = (sx - q.px) / q.focal;
+      const dy = -(sy - q.py) / q.focal;
+      const d = add(add(q.fwd, scl(q.right, dx)), scl(q.up, dy));
+      if (Math.abs(d[1]) < 1e-6) return null;
+      const t = ((planeY === undefined ? 0 : planeY) - q.eye[1]) / d[1];
+      if (t <= 0) return null;
+      return add(q.eye, scl(d, t));
+    }
+
+    /* ============================================================
+     * 绘图小工具
+     * ============================================================ */
+    function polyPath(pts) {
+      ctx.beginPath();
+      pts.forEach((p, k) => k ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+      ctx.closePath();
+    }
+    function poly(pts, fill, stroke, lw) {
+      if (!pts || pts.length < 2) return;
+      polyPath(pts);
+      if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+      if (stroke) { ctx.lineWidth = lw || 1; ctx.strokeStyle = stroke; ctx.stroke(); }
+    }
+    function line(pts, color, lw, dash) {
+      if (!pts || pts.length < 2) return;
+      ctx.beginPath();
+      pts.forEach((p, k) => k ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+      ctx.setLineDash(dash || []);
+      ctx.lineWidth = lw; ctx.strokeStyle = color; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+      ctx.stroke(); ctx.setLineDash([]);
+    }
+    function dot2(p, r, fill, stroke, lw) {
+      if (r <= 0.2) return;
+      ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, PI2);
+      if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+      if (stroke) { ctx.lineWidth = lw || 1; ctx.strokeStyle = stroke; ctx.stroke(); }
+    }
+
+    /* 密度 → 颜色。疏（t=0）偏冷蓝，密（t=1）偏暖琥珀。
+     * 这是【伪彩色】：空气微粒本身没有颜色，颜色在这里表示局部密度，
+     * 画面右侧有图例说明。 */
+    function densRGB(t) {
+      return [Math.round(90 + 165 * t), Math.round(150 + 55 * t), Math.round(235 - 175 * t)];
+    }
+    const densColor = t => { const c = densRGB(t); return 'rgb(' + c[0] + ',' + c[1] + ',' + c[2] + ')'; };
+
+    /* 微粒球贴图：离屏画一次带高光的球，之后 drawImage 复用。
+     * 225 个球每帧各建一个 radialGradient 太贵，贴图把开销降到接近零。
+     * 色阶分 12 档，够密了。 */
+    const SPRITE_R = 24, SPRITE_DRAW = 10.5, DENS_LEVELS = 12;
+    const spriteCache = new Map();
+    function spriteFor(level) {
+      let c = spriteCache.get(level);
+      if (c) return c;
+      const t = level / (DENS_LEVELS - 1);
+      const col = densRGB(t);
+      c = document.createElement('canvas');
+      c.width = c.height = SPRITE_R * 2;
+      const g = c.getContext('2d');
+      const grd = g.createRadialGradient(SPRITE_R * 0.66, SPRITE_R * 0.62, SPRITE_R * 0.08,
+                                         SPRITE_R, SPRITE_R, SPRITE_R);
+      grd.addColorStop(0, 'rgba(255,255,255,.94)');
+      grd.addColorStop(0.34, 'rgba(' + col[0] + ',' + col[1] + ',' + col[2] + ',.96)');
+      grd.addColorStop(0.70, 'rgba(' + col[0] + ',' + col[1] + ',' + col[2] + ',.62)');
+      grd.addColorStop(1, 'rgba(' + col[0] + ',' + col[1] + ',' + col[2] + ',0)');
+      g.fillStyle = grd;
+      g.beginPath(); g.arc(SPRITE_R, SPRITE_R, SPRITE_R, 0, PI2); g.fill();
+      spriteCache.set(level, c);
+      return c;
+    }
+    const densSprite = d => spriteFor(Math.round(densT(d) * (DENS_LEVELS - 1)));
+
+    /* ============================================================
+     * 标签（带避让）—— 与站内其它三维页同一套
+     * ============================================================ */
+    let frameBoxes = [];     // 本帧已画的【标签】盒子
+    let frameSolids = [];    // 本帧已画的【实体】屏幕盒子（管子 / 扬声器 / 耳膜）
+    function labelBox(p, text, size, align) {
+      ctx.font = '800 ' + size + 'px Inter, "Microsoft YaHei", sans-serif';
+      const wpx = ctx.measureText(text).width;
+      const pad = 4;
+      const half = size * 0.72 + pad * 0.5;
+      const wBox = wpx + pad * 2;
+      const EDGE = 8;
+      const y = clamp(p.y, half + EDGE, Math.max(half + EDGE, state.h - half - EDGE));
+      let bx = align === 'left' ? p.x - 4 - pad
+             : align === 'right' ? p.x + 4 - wpx - pad
+             : p.x - wpx / 2 - pad;
+      bx = clamp(bx, EDGE, Math.max(EDGE, state.w - wBox - EDGE));
+      return { x: bx, y: y - half, w: wBox, h: half * 2, cx: bx + wBox / 2, cy: y };
+    }
+    function label(p, text, color, size, align) {
+      ctx.font = '800 ' + size + 'px Inter, "Microsoft YaHei", sans-serif';
+      ctx.textAlign = align || 'center';
+      ctx.textBaseline = 'middle';
+      const pad = 4;
+      const wpx = ctx.measureText(text).width;
+      const b = labelBox(p, text, size, align);
+      const x = align === 'left' ? b.x + pad : align === 'right' ? b.x + wpx + pad : b.cx;
+      ctx.fillStyle = 'rgba(2,6,23,.76)';
+      ctx.fillRect(b.x, b.y, b.w, b.h);
+      ctx.fillStyle = color;
+      ctx.fillText(text, x, b.cy);
+      frameBoxes.push(b);
+      /* 把【真正落笔】的标签盒子也记一份给自检 —— 只暴露 frameBoxes 的话，
+       * 自检看到的是「刻度 + 器材」的集合，量「标签有没有被实体盖住」时
+       * 对着空集合算，永远 0%。 */
+      if (state.drawn) {
+        (state.drawn.labels || (state.drawn.labels = [])).push({ text: text, box: b });
+      }
+      return b;
+    }
+    function bestLabel(anchor, text, color, size, offs) {
+      let best = null, bestOv = 1e18;
+      for (const o of offs) {
+        const b = labelBox({ x: anchor.x + o[0], y: anchor.y + o[1] }, text, size, 'center');
+        let ov = 0;
+        for (const q of frameBoxes.concat(frameSolids)) {
+          const ox = Math.min(b.x + b.w, q.x + q.w) - Math.max(b.x, q.x);
+          const oy = Math.min(b.y + b.h, q.y + q.h) - Math.max(b.y, q.y);
+          if (ox > 0 && oy > 0) ov += ox * oy;
+        }
+        if (ov < bestOv) { bestOv = ov; best = { x: anchor.x + o[0], y: anchor.y + o[1] }; }
+      }
+      label(best, text, color, size, 'center');
+      return bestOv;
+    }
+    const AVOID = [[0, 0], [0, -16], [0, 16], [0, -32], [0, 32],
+                   [-46, -16], [46, -16], [-46, 16], [46, 16], [0, -48], [0, 48]];
+    const avoidLabel = (anchor, text, color, size) => bestLabel(anchor, text, color, size, AVOID);
+
+    /* ============================================================
+     * 场景常量（世界盒子）
+     * ============================================================ */
+    const TUBE_X0 = 0, TUBE_X1 = L_TUBE;
+    const TUBE_Y0 = TUBE_CY - TUBE_HY, TUBE_Y1 = TUBE_CY + TUBE_HY;
+    const TUBE_Z0 = -TUBE_HZ, TUBE_Z1 = TUBE_HZ;
+    const LAYER_Y = [], LAYER_Z = [];
+    for (let j = 0; j < NY; j++) LAYER_Y.push((j - (NY - 1) / 2) * (SPAN_Y / (NY - 1)));
+    for (let k = 0; k < NZ; k++) LAYER_Z.push((k - (NZ - 1) / 2) * (SPAN_Z / (NZ - 1)));
+
+    const TUBE_W = [
+      [TUBE_X0, TUBE_Y0, TUBE_Z0], [TUBE_X1, TUBE_Y0, TUBE_Z0],
+      [TUBE_X1, TUBE_Y0, TUBE_Z1], [TUBE_X0, TUBE_Y0, TUBE_Z1],
+      [TUBE_X0, TUBE_Y1, TUBE_Z0], [TUBE_X1, TUBE_Y1, TUBE_Z0],
+      [TUBE_X1, TUBE_Y1, TUBE_Z1], [TUBE_X0, TUBE_Y1, TUBE_Z1]
+    ];
+    const TUBE_FACES = [
+      [4, 7, 6, 5], [0, 1, 2, 3], [3, 2, 6, 7], [1, 0, 4, 5], [2, 1, 5, 6], [0, 3, 7, 4]
+    ];
+    // 12 条棱（顶点编号对）
+    const TUBE_EDGES = [[0, 1], [1, 2], [2, 3], [3, 0], [4, 5], [5, 6], [6, 7], [7, 4], [0, 4], [1, 5], [2, 6], [3, 7]];
+
+    /* ============================================================
+     * 场景绘制
+     * ============================================================ */
+    function drawBackdrop(w, h) {
+      const g = ctx.createLinearGradient(0, 0, 0, h);
+      g.addColorStop(0, '#04101f');
+      g.addColorStop(0.55, '#020a15');
+      g.addColorStop(1, '#01050c');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, w, h);
+      // 一点极淡的径向光，给「管子里有空气」这件事一点纵深
+      const rg = ctx.createRadialGradient(w * 0.42, h * 0.44, 10, w * 0.42, h * 0.44, Math.max(w, h) * 0.72);
+      rg.addColorStop(0, 'rgba(56,120,180,.10)');
+      rg.addColorStop(1, 'rgba(2,6,23,0)');
+      ctx.fillStyle = rg;
+      ctx.fillRect(0, 0, w, h);
+    }
+
+    function drawGround(q) {
+      // 台面
+      const c = [
+        [X_LO, 0, -Z_HI * 1.5], [X_HI, 0, -Z_HI * 1.5],
+        [X_HI, 0, Z_HI * 1.5], [X_LO, 0, Z_HI * 1.5]
+      ].map(p => project(p, q));
+      poly(c, 'rgba(15,32,54,.72)', 'rgba(56,120,180,.20)', 1);
+      // 台面网格：每 0.25 m 一条，给一点尺度感
+      const gs = [];
+      for (let x = 0; x <= L_TUBE + 1e-9; x += 0.25) {
+        gs.push([project([x, 0, -Z_HI * 1.5], q), project([x, 0, Z_HI * 1.5], q)]);
+      }
+      for (const s of gs) line(s, 'rgba(56,120,180,.10)', 1);
+      // 两根支架，把管子托起来
+      for (const sx of [L_TUBE * 0.22, L_TUBE * 0.78]) {
+        const top = project([sx, TUBE_Y0, 0], q), bot = project([sx, 0, 0], q);
+        line([top, bot], 'rgba(148,163,184,.28)', 3);
+      }
+    }
+
+    /* 管子的六个面。返回背面的屏幕四边形（先画，让微粒盖在上面）与正面的
+     * 棱（后画，做出「微粒装在玻璃管里」的层次）。 */
+    function tubeSides(q) {
+      const P = TUBE_W.map(p => project(p, q));
+      const back = [], front = [];
+      for (const idx of TUBE_FACES) {
+        const v0 = TUBE_W[idx[0]], v1 = TUBE_W[idx[1]], v2 = TUBE_W[idx[2]];
+        const n = vnorm(cross(sub(v1, v0), sub(v2, v1)));
+        const fc = [0, 0, 0];
+        for (const i of idx) { fc[0] += TUBE_W[i][0] / 4; fc[1] += TUBE_W[i][1] / 4; fc[2] += TUBE_W[i][2] / 4; }
+        const quad = idx.map(i => P[i]);
+        if (dot(n, sub(q.eye, fc)) <= 0) back.push(quad); else front.push(quad);
+      }
+      return { P: P, back: back, front: front };
+    }
+
+    function drawTubeBack(q) {
+      const t = tubeSides(q);
+      for (const quad of t.back) poly(quad, 'rgba(125,211,252,.030)', null, 0);
+      for (const quad of t.front) poly(quad, 'rgba(125,211,252,.014)', null, 0);
+      // 背面的棱先画（会被微粒盖住）
+      for (const e of TUBE_EDGES) {
+        const a = t.P[e[0]], b = t.P[e[1]];
+        line([a, b], 'rgba(125,211,252,.16)', 1);
+      }
+      return t;
+    }
+    function drawTubeFront(q, t) {
+      for (const quad of t.front) {
+        poly(null, null, null, 0);
+        const pts = quad;
+        ctx.beginPath();
+        pts.forEach((p, k) => k ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+        ctx.closePath();
+        ctx.lineWidth = 1.2; ctx.strokeStyle = 'rgba(125,211,252,.34)'; ctx.stroke();
+      }
+    }
+
+    /* ---------------------------- 密度曲线 ---------------------------- */
+    function drawDensityCurve(q) {
+      const t = state.tAnim;
+      const pts = [];
+      const drawPts = [];
+      for (let i = 0; i < NX; i++) {
+        const d = densOf(i, t);
+        const w = [eqX(i), curveY(d), 0];
+        pts.push(w);
+        drawPts.push(project(w, q));
+      }
+      // 基线（密度 = 平衡密度）
+      const base = [project([0, CURVE_Y0 + CURVE_H * 0.5, 0], q),
+                    project([L_TUBE, CURVE_Y0 + CURVE_H * 0.5, 0], q)];
+      line(base, 'rgba(148,163,184,.22)', 1, [4, 4]);
+      // 曲线本体：先描一条粗的暗底，再压一条亮的，做出发光感
+      line(drawPts, 'rgba(83,74,183,.55)', 4.5);
+      line(drawPts, '#a5b4fc', 1.8);
+      // 竖直细线把曲线上的点跟上方微粒连起来（对应关系一眼可见）
+      for (let i = 0; i < NX; i += 2) {
+        const up = project([eqX(i), TUBE_Y0, 0], q);
+        line([drawPts[i], up], 'rgba(148,163,184,.10)', 1, [3, 4]);
+      }
+      state.drawn.curvePts = drawPts.map(p => ({ x: p.x, y: p.y }));
+      state.drawn.curveWorld = pts.map(p => p.slice());
+      state.drawn.curveDens = [];
+      for (let i = 0; i < NX; i++) state.drawn.curveDens.push(densOf(i, t));
+    }
+
+    /* ---------------------------- 微粒 ---------------------------- */
+    function buildParticles(t) {
+      const out = [];
+      for (let i = 0; i < NX; i++) {
+        const x = posXi(i, t);
+        const d = densOf(i, t);
+        for (let j = 0; j < NY; j++) {
+          for (let k = 0; k < NZ; k++) {
+            out.push({ i: i, j: j, k: k, x: x, y: TUBE_CY + LAYER_Y[j], z: LAYER_Z[k], dens: d });
+          }
+        }
+      }
+      return out;
+    }
+
+    function drawParticles(q, list) {
+      // 按相机距离从远到近画（远先画，近的盖上去）—— 立体感全靠这个顺序
+      const order = list.map((p, n) => ({ n: n, d: q.eyeDist([p.x, p.y, p.z]) }));
+      order.sort((a, b) => b.d - a.d);
+      const drawn = [];
+      for (const o of order) {
+        const p = list[o.n];
+        const s = project([p.x, p.y, p.z], q);
+        // 近的稍大、亮的稍亮 —— 透视压缩的补偿，不然整柱球看着是平的
+        const near = clamp(1.16 - (s.z - 2.0) * 0.10, 0.86, 1.20);
+        const r = SPRITE_DRAW * near;
+        ctx.drawImage(densSprite(p.dens), s.x - r, s.y - r, r * 2, r * 2);
+        drawn.push({ i: p.i, j: p.j, k: p.k, x: p.x, y: p.y, z: p.z, dens: p.dens, sx: s.x, sy: s.y, r: r });
+      }
+      return drawn;
+    }
+
+    /* ---------------------------- 扬声器 ---------------------------- */
+    function speakerConeX() {
+      // 纸盆随声源相位前后振动 —— 幅度取振幅的 1.6 倍，让「声源在振动」看得见
+      return state.tAnim <= 0 ? 0 : xiAt(0, state.tAnim) * 1.6;
+    }
+    function drawSpeaker(q) {
+      const xf = speakerConeX();
+      const front = SRC_BACK + 0.30 + xf;
+      const P = w => project(w, q);
+      // 磁体 + 后壳
+      const body = [
+        [SRC_BACK, TUBE_CY - 0.075, -0.075], [SRC_BACK + 0.14, TUBE_CY - 0.075, -0.075],
+        [SRC_BACK + 0.14, TUBE_CY - 0.075, 0.075], [SRC_BACK, TUBE_CY - 0.075, 0.075],
+        [SRC_BACK, TUBE_CY + 0.075, -0.075], [SRC_BACK + 0.14, TUBE_CY + 0.075, -0.075],
+        [SRC_BACK + 0.14, TUBE_CY + 0.075, 0.075], [SRC_BACK, TUBE_CY + 0.075, 0.075]
+      ];
+      const faces = [
+        [4, 7, 6, 5], [0, 1, 2, 3], [3, 2, 6, 7], [1, 0, 4, 5], [2, 1, 5, 6], [0, 3, 7, 4]
+      ];
+      const box = { x0: 1e9, x1: -1e9, y0: 1e9, y1: -1e9 };
+      for (const idx of faces) {
+        const v0 = body[idx[0]], v1 = body[idx[1]], v2 = body[idx[2]];
+        const n = vnorm(cross(sub(v1, v0), sub(v2, v1)));
+        const fc = [0, 0, 0];
+        for (const i of idx) { fc[0] += body[i][0] / 4; fc[1] += body[i][1] / 4; fc[2] += body[i][2] / 4; }
+        if (dot(n, sub(q.eye, fc)) <= 0) continue;
+        const quad = idx.map(i => P(body[i]));
+        const lum = 0.30 + 0.55 * Math.max(0, dot(n, vnorm([-0.36, 0.84, 0.40])));
+        poly(quad, 'rgba(' + Math.round(70 * lum + 24) + ',' + Math.round(84 * lum + 28) + ',' +
+             Math.round(104 * lum + 34) + ',1)', 'rgba(148,163,184,.35)', 1);
+        for (const p of quad) {
+          box.x0 = Math.min(box.x0, p.x); box.x1 = Math.max(box.x1, p.x);
+          box.y0 = Math.min(box.y0, p.y); box.y1 = Math.max(box.y1, p.y);
+        }
+      }
+      // 纸盆（喇叭口）：一个梯形，会跟着振动前后挪
+      const cone = [
+        [SRC_BACK + 0.14, TUBE_CY - 0.075, -0.075],
+        [front, TUBE_CY - 0.135, -0.135],
+        [front, TUBE_CY - 0.135, 0.135],
+        [SRC_BACK + 0.14, TUBE_CY - 0.075, 0.075]
+      ].map(p => P(p));
+      poly(cone, 'rgba(56,110,160,.42)', 'rgba(125,211,252,.45)', 1.2);
+      const cone2 = [
+        [SRC_BACK + 0.14, TUBE_CY + 0.075, -0.075],
+        [front, TUBE_CY + 0.135, -0.135],
+        [front, TUBE_CY + 0.135, 0.135],
+        [SRC_BACK + 0.14, TUBE_CY + 0.075, 0.075]
+      ].map(p => P(p));
+      poly(cone2, 'rgba(40,84,124,.38)', 'rgba(125,211,252,.32)', 1.2);
+      // 纸盆振动的方向：一根短箭头
+      const a0 = P([front, TUBE_CY, 0]);
+      const a1 = P([front + 0.10, TUBE_CY, 0]);
+      line([a0, a1], 'rgba(165,243,252,.65)', 1.6);
+      dot2(a1, 2.6, 'rgba(165,243,252,.85)');
+      for (const p of [a0, a1]) {
+        box.x0 = Math.min(box.x0, p.x); box.x1 = Math.max(box.x1, p.x);
+        box.y0 = Math.min(box.y0, p.y); box.y1 = Math.max(box.y1, p.y);
+      }
+      state.drawn.speakerBox = box;
+      state.drawn.coneX = front;
+      return box;
+    }
+
+    /* ---------------------------- 耳膜 ---------------------------- */
+    function drawMembrane(q) {
+      const t = state.tAnim;
+      // 耳膜跟着空气一起被推：位移取管内末端微粒的位移，放大 2.4 倍让它看得见
+      const d = xiAt(L_TUBE, t) * 2.4;
+      const x = MEMB_X + d;
+      const quad = [
+        [x, TUBE_Y0 + 0.02, -TUBE_HZ * 0.92], [x, TUBE_Y1 - 0.02, -TUBE_HZ * 0.92],
+        [x, TUBE_Y1 - 0.02, TUBE_HZ * 0.92], [x, TUBE_Y0 + 0.02, TUBE_HZ * 0.92]
+      ].map(p => project(p, q));
+      poly(quad, 'rgba(45,212,191,.30)', 'rgba(94,234,212,.75)', 1.4);
+      const box = { x0: 1e9, x1: -1e9, y0: 1e9, y1: -1e9 };
+      for (const p of quad) {
+        box.x0 = Math.min(box.x0, p.x); box.x1 = Math.max(box.x1, p.x);
+        box.y0 = Math.min(box.y0, p.y); box.y1 = Math.max(box.y1, p.y);
+      }
+      state.drawn.membBox = box;
+      state.drawn.membX = x;
+      return box;
+    }
+
+    /* ---------------------------- 密部标记 ---------------------------- */
+    function drawDensMarks(q) {
+      const xs = densMaxXs(state.tAnim);
+      state.drawn.marks = xs.slice();
+      if (!xs.length) return;
+      const rightmost = Math.max.apply(null, xs);
+      const yLo = TUBE_Y0 - 0.035, yHi = TUBE_Y1 + 0.035;
+      for (const x of xs) {
+        const isR = Math.abs(x - rightmost) < 1e-9;
+        /* 画成一整片【竖着的半透明挡板】横穿管子，而不是一条细线。
+         * 细线压在密集的球阵上只有几个像素的亮度差，学生根本注意不到；
+         * 而「这几道亮带整体向右平移」恰恰是这一页最想让人看见的东西。 */
+        const quad = [
+          [x, yLo, -TUBE_HZ], [x, yHi, -TUBE_HZ],
+          [x, yHi, TUBE_HZ], [x, yLo, TUBE_HZ]
+        ].map(p => project(p, q));
+        poly(quad, isR ? 'rgba(251,191,36,.15)' : 'rgba(251,191,36,.07)',
+             isR ? 'rgba(251,191,36,.50)' : 'rgba(251,191,36,.20)', 1.4);
+        // 中心再压一根亮线，让「密部到底在哪个位置」有一个精确的落点
+        const a = project([x, yLo, 0], q), b = project([x, yHi, 0], q);
+        line([a, b], isR ? 'rgba(253,224,71,.88)' : 'rgba(251,191,36,.38)', isR ? 2.6 : 1.8);
+      }
+      const a = project([rightmost, TUBE_Y1 + 0.035, 0], q);
+      state.drawn.markAnchor = { x: a.x, y: a.y - 14 };
+    }
+
+    /* ---------------------------- 波前 ---------------------------- */
+    function drawFrontMarker(q) {
+      if (!frontActive()) { state.drawn.frontMark = null; return; }
+      const x = frontInTube();
+      const a = project([x, TUBE_Y0 - 0.03, 0], q);
+      const b = project([x, TUBE_Y1 + 0.03, 0], q);
+      line([a, b], 'rgba(248,113,113,.85)', 2.2, [7, 5]);
+      const c = project([x, TUBE_Y1 + 0.03, -TUBE_HZ], q);
+      const d = project([x, TUBE_Y1 + 0.03, TUBE_HZ], q);
+      line([c, d], 'rgba(248,113,113,.45)', 1.6);
+      state.drawn.frontMark = { x: x, sx: a.x, sy: a.y };
+      state.drawn.frontAnchor = { x: b.x, y: b.y - 14 };
+    }
+
+    /* ---------------------------- 追踪微粒的标注 ---------------------------- */
+    function drawTrackAnno(q) {
+      const i = state.trackIdx;
+      const t = state.tAnim;
+      const x0 = eqX(i), x = posXi(i, t), A = amp();
+      // 平衡位置：一根竖虚线 + 一个地面小十字
+      const p0 = project([x0, TUBE_Y0 - 0.10, 0], q);
+      const p1 = project([x0, TUBE_Y1 + 0.06, 0], q);
+      line([p0, p1], 'rgba(165,243,252,.42)', 1.2, [4, 4]);
+      // 振动范围：一根横跨 2A 的双向箭头，画在管子【上方】，不压住球。
+      // 抬高量必须落在取景包络之内（Y_HI），否则相机不会把它框进来。
+      const yA = TUBE_Y1 + 0.055;
+      const q0 = project([x0 - A, yA, 0], q);
+      const q1 = project([x0 + A, yA, 0], q);
+      line([q0, q1], 'rgba(248,113,113,.85)', 2.0);
+      for (const p of [q0, q1]) {
+        const up = project([p === q0 ? x0 - A : x0 + A, yA + 0.020, 0], q);
+        const dn = project([p === q0 ? x0 - A : x0 + A, yA - 0.020, 0], q);
+        line([up, dn], 'rgba(248,113,113,.85)', 1.6);
+      }
+      // 从平衡位置拉到当前位置的位移箭头
+      const s0 = project([x0, TUBE_CY + 0.115, 0], q);
+      const s1 = project([x, TUBE_CY + 0.115, 0], q);
+      if (Math.abs(x - x0) > DX * 0.02) {
+        line([s0, s1], 'rgba(253,224,71,.9)', 2.2);
+        dot2(s1, 3.0, 'rgba(253,224,71,.95)');
+      }
+      // 高亮这个微粒（画一个环，3×3 层都套上）
+      const rings = [];
+      for (let j = 0; j < NY; j++) {
+        for (let k = 0; k < NZ; k++) {
+          const sp = project([x, TUBE_CY + LAYER_Y[j], LAYER_Z[k]], q);
+          rings.push(sp);
+          dot2(sp, 8.2, null, 'rgba(253,224,71,.72)', 1.6);
+        }
+      }
+      state.drawn.track = {
+        i: i, x0: x0, x: x, xi: x - x0, amp: A,
+        sx: rings[Math.floor(rings.length / 2)].x, sy: rings[Math.floor(rings.length / 2)].y,
+        rings: rings.map(r => ({ x: r.x, y: r.y })),
+        rangeA: { x: q0.x, y: q0.y }, rangeB: { x: q1.x, y: q1.y }
+      };
+    }
+
+    /* ============================================================
+     * render
+     * ============================================================ */
+    function render() {
+      const w = state.w, h = state.h;
+      ctx.setTransform(state.dpr, 0, 0, state.dpr, 0, 0);
+      frameBoxes = [];
+      frameSolids = [];
+      state.drawn = {};
+      const q = {};
+      makeCam(q, w, h);
+
+      drawBackdrop(w, h);
+      drawGround(q);
+      const tinfo = drawTubeBack(q);
+      if (state.showCurve) drawDensityCurve(q);
+      if (state.showMarks) drawDensMarks(q);
+
+      const list = buildParticles(state.tAnim);
+      const drawn = drawParticles(q, list);
+      state.drawn.particles = drawn;
+
+      drawFrontMarker(q);
+      drawTubeFront(q, tinfo);
+
+      const spk = drawSpeaker(q);
+      let memb = null;
+      if (state.showMemb) memb = drawMembrane(q);
+
+      if (state.showTrace) drawTrackAnno(q);
+
+      /* 实体避让集：管子整块的屏幕盒 + 扬声器 + 耳膜。
+       * 标签躲开它们，字就不会压在器材上。 */
+      const tP = tinfo.P;
+      let tb = { x0: 1e9, x1: -1e9, y0: 1e9, y1: -1e9 };
+      for (const p of tP) {
+        tb.x0 = Math.min(tb.x0, p.x); tb.x1 = Math.max(tb.x1, p.x);
+        tb.y0 = Math.min(tb.y0, p.y); tb.y1 = Math.max(tb.y1, p.y);
+      }
+      state.drawn.tubeBox = tb;
+      for (const b of [spk, memb, tb]) {
+        if (b) frameSolids.push({ x: b.x0, y: b.y0, w: b.x1 - b.x0, h: b.y1 - b.y0 });
+      }
+
+      // ── 标签（一律走避让，且必须在所有实体画完之后）──
+      avoidLabel(project([SRC_BACK + 0.15, TUBE_CY - 0.16, 0], q), '扬声器（声源）', '#a5f3fc', 11);
+      if (state.showMemb) {
+        avoidLabel(project([MEMB_X, TUBE_CY + TUBE_HY + 0.05, 0], q), '耳膜（接收）', '#5eead4', 10);
+      }
+      if (state.drawn.markAnchor && state.showMarks) {
+        avoidLabel(state.drawn.markAnchor, '密部 · 一起向右平移', '#fcd34d', 10);
+      }
+      if (state.drawn.frontAnchor) {
+        avoidLabel(state.drawn.frontAnchor,
+                   '波前 · 已走 ' + frontInTube().toFixed(2) + ' m', '#fca5a5', 10);
+      }
+      if (state.showTrace && state.drawn.track) {
+        const tr = state.drawn.track;
+        avoidLabel({ x: tr.sx, y: tr.sy - 20 },
+                   '① 这个微粒只在原地抖 ±' + (tr.amp * 100).toFixed(2) + ' cm', '#fde047', 10);
+      }
+      if (state.showCurve) {
+        avoidLabel(project([L_TUBE * 0.5, CURVE_Y0 + CURVE_H * 0.5, 0], q),
+                   '空气密度曲线（高 = 密部，低 = 疏部）', '#a5b4fc', 10);
+      }
+      // 区域名最后画（挑一个不压住别的位置）
+      bestLabel(project([L_TUBE * 0.5, TUBE_Y0 - 0.055, TUBE_HZ * 0.9], q),
+                '空气柱 L = 2.00 m　c = 340 m/s　f = ' + state.f + ' Hz　λ = ' + lam().toFixed(3) + ' m',
+                'rgba(165,243,252,.78)', 11, AVOID);
+
+      updateHint();
+      updateLiveReadouts();
+      updateAnalysis();
+      updateTraceCanvas();
+      drawTip(q);
+      updateStageButtons();
+      state.drawn.labelBoxes = frameBoxes.map(b => ({ x0: b.x, x1: b.x + b.w, y0: b.y, y1: b.y + b.h }));
+    }
+
+    function drawTip(q) {
+      const tip = $('sw-tip');
+      if (!state.hover || state.dragging) { tip.classList.remove('show'); return; }
+      const i = state.hover;
+      const p = project([posXi(i, state.tAnim), TUBE_CY + SPAN_Y * 0.5, 0], q);
+      tip.textContent = '点一下锁定第 ' + (i + 1) + ' 个微粒';
+      tip.style.left = Math.round(p.x + 14) + 'px';
+      tip.style.top = Math.round(p.y - 14) + 'px';
+      tip.classList.add('show');
+    }
+
+    /* ============================================================
+     * 侧栏小画布：追踪微粒的位移-时间曲线
+     * ============================================================ */
+    function updateTraceCanvas() {
+      const c = traceCv;
+      if (!c) return;
+      const w = c.clientWidth, h = c.clientHeight;
+      if (!w || !h) return;
+      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      if (c.width !== Math.round(w * dpr) || c.height !== Math.round(h * dpr)) {
+        c.width = Math.round(w * dpr); c.height = Math.round(h * dpr);
+      }
+      const g = traceCtx;
+      g.setTransform(dpr, 0, 0, dpr, 0, 0);
+      g.clearRect(0, 0, w, h);
+      g.fillStyle = 'rgba(2,6,23,.55)';
+      g.fillRect(0, 0, w, h);
+      const padL = 26, padR = 8, padT = 10, padB = 16;
+      const W = w - padL - padR, H = h - padT - padB;
+      const mid = padT + H / 2;
+      const A = amp();
+      const Amax = ampMax();
+      const T = period();
+      const span = 3 * T;                     // 显示最近 3 个周期
+      const t1 = state.tAnim, t0 = t1 - span;
+      // 零线
+      g.strokeStyle = 'rgba(148,163,184,.28)'; g.lineWidth = 1;
+      g.setLineDash([3, 3]);
+      g.beginPath(); g.moveTo(padL, mid); g.lineTo(padL + W, mid); g.stroke();
+      g.setLineDash([]);
+      // ±A 参考线
+      const yOf = xi => mid - (xi / Math.max(1e-9, Amax)) * (H / 2);
+      g.strokeStyle = 'rgba(248,113,113,.30)';
+      for (const s of [1, -1]) {
+        g.beginPath(); g.moveTo(padL, yOf(s * A)); g.lineTo(padL + W, yOf(s * A)); g.stroke();
+      }
+      // 曲线
+      g.beginPath();
+      for (let n = 0; n <= 96; n++) {
+        const tt = t0 + span * n / 96;
+        const xx = padL + W * n / 96;
+        const yy = yOf(tt <= 0 ? 0 : xiAt(eqX(state.trackIdx), tt));
+        n ? g.lineTo(xx, yy) : g.moveTo(xx, yy);
+      }
+      g.strokeStyle = '#fde047'; g.lineWidth = 2; g.stroke();
+      // 当前时刻的点
+      const cx = padL + W, cy = yOf(trackXi());
+      g.beginPath(); g.arc(cx, cy, 4, 0, PI2); g.fillStyle = '#fde047'; g.fill();
+      // 坐标注记
+      g.font = '700 10px Inter, "Microsoft YaHei", sans-serif';
+      g.fillStyle = 'rgba(125,151,168,.9)';
+      g.textAlign = 'right'; g.textBaseline = 'middle';
+      g.fillText('+' + (A * 100).toFixed(1), padL - 4, yOf(A));
+      g.fillText('0', padL - 4, mid);
+      g.fillText('−' + (A * 100).toFixed(1), padL - 4, yOf(-A));
+      g.textAlign = 'left'; g.textBaseline = 'bottom';
+      g.fillText('位移 ξ / cm', padL + 2, h - 3);
+      g.textAlign = 'right';
+      g.fillText('时间 →（最近 3 个周期）', w - padR, h - 3);
+    }
+
+    /* ============================================================
+     * UI 刷新
+     * ============================================================ */
+    function updateHint() {
+      const el = $('sw-hint');
+      const t = [];
+      if (state.tAnim <= 0) {
+        t.push('声源还没开始振动 —— 按「播放」或「重新发声」。');
+      } else if (frontActive()) {
+        t.push('声音正以 <b>c = ' + C_SOUND + ' m/s</b> 向右推进，波前已经走到 <b>' +
+               frontInTube().toFixed(2) + ' m</b>，管子还剩 <b>' +
+               (L_TUBE - frontInTube()).toFixed(2) + ' m</b> 没被扰动。');
+        t.push(' 波前右边那些微粒<b>一动也没动</b> —— 声音还没传到那儿。');
+      } else {
+        t.push('波已经充满整根管子（稳态）：管子里是 <b>' + (L_TUBE / lam()).toFixed(1) +
+               ' 个</b>完整波长，每个波长上有 <b>' + kPerWave().toFixed(1) + ' 个</b>微粒。');
+        t.push(' 盯住一个微粒看：它<b>只在原地左右抖</b>；而密部那几道亮带<b>整体向右平移</b>。');
+      }
+      if (!state.slow) {
+        t.push(' ⚠ 现在是<b>实时</b>：' + state.f + ' Hz 意味着每秒振动 ' + state.f +
+               ' 次，肉眼只能看到一片模糊 —— 这就是为什么需要慢放。');
+      }
+      el.innerHTML = t.join('');
+    }
+
+    /* 每帧都在动的量必须在 render() 里刷新 —— 只写在 syncUI() 里的话，
+     * syncUI 只在动作发生时被调，这些数字会一直停在起始值。 */
+    function updateLiveReadouts() {
+      $('sw-front').textContent = frontInTube().toFixed(2) + ' m' +
+        (frontActive() ? '' : '（已充满）');
+      $('sw-ttot').textContent = (state.tAnim * 1000).toFixed(3) + ' ms';
+      const tr = state.drawn.track;
+      if (tr) {
+        $('sw-trk-x0').textContent = (tr.x0 * 100).toFixed(2) + ' cm';
+        $('sw-trk-xi').textContent = (tr.xi >= 0 ? '+' : '−') + Math.abs(tr.xi * 100).toFixed(2) + ' cm';
+        $('sw-trk-range').textContent = '±' + (tr.amp * 100).toFixed(2) + ' cm';
+        $('sw-trk-net').textContent = (tr.x - tr.x0).toFixed(2) + ' cm';
+      }
+      const nmax = densMaxXs(state.tAnim).length;
+      $('sw-nmax').textContent = String(nmax);
+      const pill = $('sw-wave-pill');
+      pill.textContent = frontActive() ? '波在推进' : '稳态';
+      pill.className = 'pill' + (frontActive() ? ' live' : ' ok');
+      const sp = $('sw-src-pill');
+      sp.textContent = state.playing ? '振动中' : '已暂停';
+      sp.className = 'pill' + (state.playing ? ' ok' : '');
+    }
+
+    function updateAnalysis() {
+      const el = $('sw-analysis');
+      const t = state.tAnim;
+      const A = amp();
+      const tr = state.drawn.track;
+      const i = state.trackIdx;
+      const nmax = densMaxXs(t).length;
+      const line = (k, v) => '<div class="line"><span>' + k + '</span><b>' + v + '</b></div>';
+      let html = '';
+      html += line('声速 c（由介质决定）', C_SOUND + ' m/s');
+      html += line('频率 f', state.f + ' Hz');
+      html += line('波长 λ = c ÷ f', lam().toFixed(3) + ' m');
+      html += line('周期 T = 1 ÷ f', (period() * 1000).toFixed(2) + ' ms');
+      html += line('振幅 A（示意）', (A * 100).toFixed(2) + ' cm');
+      html += line('平衡间距 Δx', (DX * 100).toFixed(2) + ' cm');
+      html += line('每波长微粒数 k', kPerWave().toFixed(1) + ' 个');
+      html += line('管内波长数 L ÷ λ', (L_TUBE / lam()).toFixed(2) + ' 个');
+      html += line('管内密部个数', String(nmax) + ' 个');
+      if (tr) {
+        html += line('第 ' + (i + 1) + ' 个微粒此刻位移', (tr.xi * 100).toFixed(2) + ' cm');
+        html += line('它距平衡位置的距离', Math.abs(tr.xi * 100).toFixed(2) + ' cm');
+      }
+      const kk = kPerWave();
+      const s = state.ampK * PI2 / kk;
+      const ratio = (1 + s) / (1 - s);
+      html += line('密部间距 ÷ 疏部间距', ratio.toFixed(2) + ' 倍');
+      html += '<div class="conc info">疏密比 = (1+s)/(1−s)，其中 s = A·2π/λ。<b>k 越小、振幅越大，疏密越悬殊</b> —— ' +
+              '这就是「看得见的响度」。拖一下振幅滑块，看它怎么变。</div>';
+      html += '<div class="conc">★ 关键结论：<b>微粒原地振动（时间平均位移 0），疏密却以 c 向右传播</b>。' +
+              '传出去的是<b>振动这种运动形式</b>，不是空气本身。</div>';
+      el.innerHTML = html;
+    }
+
+    function updateStageButtons() {
+      const b = $('sw-play');
+      b.textContent = state.playing ? '暂停' : '播放';
+      b.className = 'stage-btn ' + (state.playing ? '' : 'go');
+      const r = $('sw-restart');
+      r.classList.toggle('ready', steady());
+    }
+
+    function showToast(msg) {
+      const el = $('sw-toast');
+      el.textContent = msg;
+      el.classList.add('show');
+      clearTimeout(showToast._t);
+      showToast._t = setTimeout(() => el.classList.remove('show'), 1900);
+    }
+
+    function syncUI() {
+      $('sw-f-num').textContent = state.f + ' Hz';
+      $('sw-amp-num').textContent = (amp() * 100).toFixed(2) + ' cm';
+      $('sw-lam').textContent = lam().toFixed(3) + ' m';
+      $('sw-T').textContent = (period() * 1000).toFixed(2) + ' ms';
+      $('sw-k').textContent = kPerWave().toFixed(1);
+      $('sw-nw').textContent = (L_TUBE / lam()).toFixed(2);
+      $('sw-dx').textContent = (DX * 100).toFixed(2) + ' cm';
+      $('sw-trk-pill').textContent = '第 ' + (state.trackIdx + 1) + ' 个';
+      $('sw-speed-pill').textContent = state.slow ? '慢放 1/400' : '实时';
+      $('sw-slow').classList.toggle('on', state.slow);
+      $('sw-real').classList.toggle('on', !state.slow);
+      const sn = $('sw-src-note');
+      sn.innerHTML = '波长 λ = c ÷ f = 340 ÷ ' + state.f + ' = <b>' + lam().toFixed(3) +
+        ' m</b>；管长 2.00 m 固定，所以管里有 <b>' + (L_TUBE / lam()).toFixed(1) +
+        ' 个</b>完整波长。' +
+        (state.f >= F_MAX - 1e-9 ? ' 已经是最高频 —— 波长最短、管里波最多。' : '');
+      const sp = $('sw-speed-note');
+      sp.innerHTML = state.slow
+        ? '慢放：墙上 1 秒 = 物理 1/400 秒。波前穿完整根管子要 2.35 s，微粒振动一次要 1.18 s，都看得清。'
+        : '实时：这就是它真正的速度 —— 每秒振动 ' + state.f + ' 次，只能看到一片模糊。';
+      document.querySelectorAll('[data-view]').forEach(b => {
+        b.classList.toggle('on', b.getAttribute('data-view') === state.view);
+      });
+      document.querySelectorAll('[data-layer]').forEach(b => {
+        const k = b.getAttribute('data-layer');
+        const on = k === 'curve' ? state.showCurve
+                 : k === 'marks' ? state.showMarks
+                 : k === 'trace' ? state.showTrace : state.showMemb;
+        b.classList.toggle('on', on);
+      });
+      syncSlider();
+    }
+
+    const syncSlider = () => {
+      const fs = $('sw-f'), as = $('sw-amp');
+      if (fs.value !== String(state.f)) fs.value = String(state.f);
+      if (as.value !== String(Math.round(state.ampK * 100))) as.value = String(Math.round(state.ampK * 100));
+    };
+
+    const invalidate = () => { state.dirty = true; };
+
+    /* ============================================================
+     * 动作（按钮与自检走同一份）
+     * ============================================================ */
+    function setF(v) {
+      const nf = clamp(Math.round(v / F_STEP) * F_STEP, F_MIN, F_MAX);
+      if (nf === state.f) return state.f;
+      state.f = nf;
+      syncUI(); invalidate();
+      return state.f;
+    }
+    function setAmpK(v) {
+      state.ampK = clamp(v, AMP_K_MIN, AMP_K_MAX);
+      syncUI(); invalidate();
+      return state.ampK;
+    }
+    function setSlow(on) { state.slow = !!on; syncUI(); invalidate(); }
+    function setPlaying(on) {
+      state.playing = !!on;
+      syncUI(); invalidate();
+      return state.playing;
+    }
+    function restartWave() {
+      state.tAnim = 0;
+      state.playing = true;
+      syncUI(); invalidate();
+      showToast('波从扬声器那里重新出发');
+    }
+    function resetAll() {
+      state.f = F_DEF; state.ampK = AMP_K_DEF;
+      state.slow = true; state.playing = true; state.tAnim = 0;
+      state.trackIdx = TRACK_DEF;
+      state.showCurve = state.showMarks = state.showTrace = state.showMemb = true;
+      state.yaw = VIEWS.perspective[0]; state.pitch = VIEWS.perspective[1];
+      state.zoom = 1; state.view = 'perspective';
+      syncUI(); invalidate();
+    }
+    function setTrack(i) {
+      const n = clamp(Math.round(i), 0, NX - 1);
+      state.trackIdx = n;
+      syncUI(); invalidate();
+      return n;
+    }
+    function applyView(name) {
+      const v = VIEWS[name];
+      if (!v) return state.view;
+      state.view = name;
+      state.yaw = v[0]; state.pitch = v[1]; state.zoom = 1;
+      syncUI(); invalidate();
+      return name;
+    }
+    function setLayer(name, on) {
+      if (name === 'curve') state.showCurve = !!on;
+      else if (name === 'marks') state.showMarks = !!on;
+      else if (name === 'trace') state.showTrace = !!on;
+      else if (name === 'memb') state.showMemb = !!on;
+      syncUI(); invalidate();
+    }
+    /* 自检用：把物理时间【直接拨到】某一刻并重画。
+     * 与 stepAnim 共用同一个 state.tAnim，不另抄一份推进逻辑。 */
+    function holdAt(t) {
+      state.tAnim = Math.max(0, t);
+      render();
+      state.dirty = false;
+    }
+
+    /* ============================================================
+     * 动画推进（tick 与自检共用的同一个函数）
+     * ============================================================ */
+    function stepAnim(dt) {
+      if (state.playing) {
+        state.tAnim += dt * slowR();
+        state.dirty = true;
+      }
+    }
+    let lastTs = 0;
+    function tick(ts) {
+      const dt = lastTs ? Math.min(0.05, (ts - lastTs) / 1000) : 0;
+      lastTs = ts;
+      stepAnim(dt);
+      if (state.dirty) { render(); state.dirty = false; }
+      requestAnimationFrame(tick);
+    }
+
+    /* ============================================================
+     * 交互
+     * ============================================================ */
+    const rectOf = () => canvas.getBoundingClientRect();
+    /* 点选微粒：把屏幕点投影到管轴上，找 x 最近的微粒。
+     * 命中半径按【投影后的屏幕距离】判，不按世界距离 —— 相机拉远时
+     * 世界距离会误判。 */
+    function hitTest(sx, sy, q) {
+      const q2 = q || (() => { const o = {}; makeCam(o, state.w, state.h); return o; })();
+      let best = null, bestD = 1e9;
+      for (let i = 0; i < NX; i++) {
+        const p = project([posXi(i, state.tAnim), TUBE_CY, 0], q2);
+        const d = Math.hypot(p.x - sx, p.y - sy);
+        if (d < bestD) { bestD = d; best = i; }
+      }
+      return bestD <= 60 ? best : null;
+    }
+
+    function onDown(e) {
+      const r = rectOf();
+      const sx = e.clientX - r.left, sy = e.clientY - r.top;
+      state.downAt = { x: sx, y: sy };
+      const q = {}; makeCam(q, state.w, state.h);
+      const hit = hitTest(sx, sy, q);
+      state.dragging = true;
+      state.drag = { mode: hit === null ? 'orbit' : 'pick', hit: hit };
+      state.dragYaw = state.yaw; state.dragPitch = state.pitch;
+      canvas.classList.add('grabbing');
+      canvas.setPointerCapture && canvas.setPointerCapture(e.pointerId);
+    }
+    function onMove(e) {
+      const r = rectOf();
+      const sx = e.clientX - r.left, sy = e.clientY - r.top;
+      if (!state.dragging) {
+        const q = {}; makeCam(q, state.w, state.h);
+        const hit = hitTest(sx, sy, q);
+        if (hit !== state.hover) {
+          state.hover = hit;
+          canvas.classList.toggle('pick', hit !== null);
+          state.dirty = true;
+        }
+        return;
+      }
+      if (state.drag && state.drag.mode === 'orbit') {
+        state.yaw = state.dragYaw + (sx - state.downAt.x) * 0.006;
+        state.pitch = clamp(state.dragPitch + (sy - state.downAt.y) * 0.005, -0.35, 1.45);
+        state.view = '';
+        syncUI();
+        invalidate();
+      }
+    }
+    function onUp(e) {
+      const r = rectOf();
+      const sx = e.clientX - r.left, sy = e.clientY - r.top;
+      const moved = state.downAt ? Math.hypot(sx - state.downAt.x, sy - state.downAt.y) : 99;
+      // 点击 vs 拖动：位移小于 6 px 才算点击 —— 否则一转视角就误锁微粒
+      if (state.dragging && state.drag && state.drag.mode === 'pick' && moved < 6 && state.drag.hit !== null) {
+        setTrack(state.drag.hit);
+        showToast('已锁定第 ' + (state.drag.hit + 1) + ' 个微粒');
+      }
+      state.dragging = false; state.drag = null; state.downAt = null;
+      canvas.classList.remove('grabbing');
+      invalidate();
+    }
+    function onWheel(e) {
+      e.preventDefault();
+      state.zoom = clamp(state.zoom * (e.deltaY > 0 ? 0.92 : 1.087), 0.5, 3.2);
+      invalidate();
+    }
+
+    /* ============================================================
+     * 尺寸
+     * ============================================================ */
+    let traceCv = null, traceCtx = null;
+    function resize() {
+      const r = stage.getBoundingClientRect();
+      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      const w = Math.max(320, Math.round(r.width));
+      const h = Math.max(240, Math.round(r.height));
+      const bw = Math.round(w * dpr), bh = Math.round(h * dpr);
+      /* ★ 改 canvas.width/height 会【清空画布】，而 ResizeObserver 在 observe()
+       *   之后【必然回调一次】。所以：① 只在尺寸真的变了时才动它；② 补画无条件
+       *   放在这里，绝不留到下一帧 —— rAF 一被推迟（headless / 后台标签页），
+       *   画布就永远是空的（看着像没加载）。 */
+      const changed = (canvas.width !== bw || canvas.height !== bh);
+      state.w = w; state.h = h; state.dpr = dpr;
+      if (changed) { canvas.width = bw; canvas.height = bh; }
+      canvas.style.width = w + 'px';
+      canvas.style.height = h + 'px';
+      render();
+      state.dirty = false;
+    }
+
+    /* ============================================================
+     * 绑定
+     * ============================================================ */
+    canvas.addEventListener('pointerdown', onDown);
+    canvas.addEventListener('pointermove', onMove);
+    canvas.addEventListener('pointerup', onUp);
+    canvas.addEventListener('pointercancel', onUp);
+    canvas.addEventListener('pointerleave', () => {
+      state.hover = null; state.dragging = false; state.drag = null;
+      canvas.classList.remove('pick'); canvas.classList.remove('grabbing');
+      state.dirty = true;
+    });
+    canvas.addEventListener('wheel', onWheel, { passive: false });
+
+    $('sw-play').addEventListener('click', () => {
+      setPlaying(!state.playing);
+      showToast(state.playing ? '继续振动' : '已暂停 —— 可以慢慢看这一刻的疏密');
+    });
+    $('sw-restart').addEventListener('click', restartWave);
+    $('sw-reset').addEventListener('click', () => { resetAll(); showToast('已重置'); });
+    $('sw-slow').addEventListener('click', () => {
+      setSlow(true); showToast('慢放 1/400：看得清微粒怎么抖');
+    });
+    $('sw-real').addEventListener('click', () => {
+      setSlow(false); showToast('实时：这才是它真正的速度');
+    });
+    $('sw-f').addEventListener('input', e => setF(parseFloat(e.target.value)));
+    $('sw-amp').addEventListener('input', e => setAmpK(parseFloat(e.target.value) / 100));
+    document.querySelectorAll('[data-view]').forEach(b => {
+      b.addEventListener('click', () => applyView(b.getAttribute('data-view')));
+    });
+    document.querySelectorAll('[data-layer]').forEach(b => {
+      const k = b.getAttribute('data-layer');
+      b.addEventListener('click', () => {
+        const cur = k === 'curve' ? state.showCurve
+                  : k === 'marks' ? state.showMarks
+                  : k === 'trace' ? state.showTrace : state.showMemb;
+        setLayer(k, !cur);
+      });
+    });
+
+    traceCv = $('sw-trace');
+    if (traceCv) traceCtx = traceCv.getContext('2d');
+
+    if (window.ResizeObserver) new ResizeObserver(() => resize()).observe(stage);
+    window.addEventListener('resize', resize);
+
+    resize();
+    syncUI();
+    requestAnimationFrame(tick);
+
+    /* ============================================================
+     * 自检钩子
+     * ------------------------------------------------------------
+     * 渲染、读数、曲线、自检必须共用同一份物理函数。下面把这些原样暴露出去，
+     * 测试算出来的就是页面真正在用的值 —— 自检把公式重抄一遍只证明自检自洽。
+     * ============================================================ */
+    window.__swave = {
+      state: state,
+      consts: {
+        C_SOUND: C_SOUND, L_TUBE: L_TUBE, NX: NX, DX: DX, NY: NY, NZ: NZ,
+        TUBE_CY: TUBE_CY, TUBE_HY: TUBE_HY, TUBE_HZ: TUBE_HZ,
+        F_MIN: F_MIN, F_MAX: F_MAX, F_DEF: F_DEF, F_STEP: F_STEP,
+        AMP_K_MAX: AMP_K_MAX, AMP_K_DEF: AMP_K_DEF, AMP_K_MIN: AMP_K_MIN,
+        SLOW_N: SLOW_N, SLOW_R: SLOW_R,
+        CURVE_Y0: CURVE_Y0, CURVE_H: CURVE_H,
+        MEMB_X: MEMB_X, MEMB_T: MEMB_T, SRC_BACK: SRC_BACK, TRACK_DEF: TRACK_DEF,
+        VIEWS: VIEWS, CAMD_K: CAMD_K, DENS_LEVELS: DENS_LEVELS
+      },
+      // 相机 / 投影
+      makeCam: makeCam, project: project, unproject: unproject, envelopePoints: envelopePoints,
+      size: () => ({ w: state.w, h: state.h, dpr: state.dpr }),
+      // 物理（与页面同一份）
+      freq: freq, lam: lam, period: period, kPerWave: kPerWave, kwave: kwave,
+      amp: amp, ampMax: ampMax, slowR: slowR,
+      eqX: eqX, xiAt: xiAt, posXi: posXi, gapAt: gapAt, densOf: densOf,
+      densRange: densRange, densT: densT, curveU: curveU, curveY: curveY,
+      densRGB: densRGB, densColor: densColor, densSprite: densSprite,
+      frontX: frontX, frontInTube: frontInTube, frontActive: frontActive, steady: steady,
+      densMaxXs: densMaxXs, trackXi: trackXi,
+      // 动作（与按钮同一份）
+      setF: setF, setAmpK: setAmpK, setSlow: setSlow, setPlaying: setPlaying,
+      restartWave: restartWave, resetAll: resetAll, setTrack: setTrack,
+      applyView: applyView, setLayer: setLayer, holdAt: holdAt,
+      // 动画推进（tick 与自检共用的同一个函数）
+      stepAnim: stepAnim,
+      render: render, hitTest: hitTest,
+      syncSlider: syncSlider,
+      fSliderValue: () => $('sw-f').value,
+      ampSliderValue: () => $('sw-amp').value
+    };
+  })();
+  </script>
+</body>
+</html>
