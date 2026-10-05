@@ -1,0 +1,1924 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>噪声的危害和控制 · 三维实验台 - 物理虚拟实验</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="stylesheet" href="style.css">
+  <script src="auth-check.js"></script>
+  <style>
+    body { margin: 0; padding: 20px; min-width: 320px; }
+
+    .lab3d h1 { margin: 0; font-size: 19px; letter-spacing: .3px; }
+    .lab3d-sub { margin: 7px 0 16px; color: #93b4c4; font-size: 12.5px; line-height: 1.6; }
+    .lab3d-sub b { color: #a5f3fc; font-weight: 700; }
+
+    .lab3d-layout {
+      display: grid; grid-template-columns: minmax(0, 1fr) 340px;
+      gap: 16px; align-items: start; align-content: start;
+    }
+    /* 三块的位置写死，DOM 顺序按【窄屏需要的顺序】排：舞台 → 侧栏 → 下半区。
+       宽屏用 grid 把「视角 / 降噪账本 / 数据记录」摆到舞台正下方（左列第二行），
+       侧栏跨两行 —— 两列高度接近，不会在舞台下面留一大片空白。 */
+    .lab3d-stage { grid-column: 1; grid-row: 1; }
+    .lab3d-sidebar { grid-column: 2; grid-row: 1 / span 2; }
+    .lab3d-lower {
+      grid-column: 1; grid-row: 2;
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(270px, 1fr));
+      gap: 14px; align-content: start; align-items: start; min-width: 0;
+    }
+
+    .lab3d-stage {
+      position: relative; overflow: hidden;
+      height: clamp(380px, 62vh, 640px);
+      border: 1px solid rgba(148, 163, 184, .18); border-radius: 16px;
+      background: #020617; box-shadow: 0 18px 46px rgba(2, 6, 23, .5);
+    }
+    .lab3d-stage canvas { display: block; touch-action: none; cursor: grab; }
+    .lab3d-stage canvas.pick { cursor: pointer; }
+    .lab3d-stage canvas.grabbing { cursor: grabbing; }
+
+    .lab3d-stage .stage-hint {
+      position: absolute; left: 12px; top: 12px; max-width: 62%;
+      padding: 7px 11px; border-radius: 8px; pointer-events: none;
+      border: 1px solid rgba(56, 189, 248, .28); background: rgba(2, 6, 23, .78);
+      color: #c3e8f5; font-size: 11px; line-height: 1.55;
+    }
+    .lab3d-stage .stage-hint b { color: #7dd3fc; }
+
+    .lab3d-stage .stage-tip {
+      position: absolute; left: 0; top: 0; padding: 5px 9px; border-radius: 7px;
+      background: rgba(2, 6, 23, .9); border: 1px solid rgba(148, 163, 184, .3);
+      color: #e2e8f0; font-size: 11px; white-space: nowrap;
+      pointer-events: none; opacity: 0; transition: opacity .12s;
+    }
+    .lab3d-stage .stage-tip.show { opacity: 1; }
+
+    /* 舞台底部那一条：左边按钮，右边操作提示。做成一条 flex 行是为了让它们
+       【永远不重叠】——各占一角的话，窄屏上提示文字会横穿底边压在按钮上。
+       按钮必须在舞台上：.lab3d-layout 在 ≤900px 折成一列后侧栏会被挤到舞台【下面】，
+       而「记录这一组」恰恰是眼睛盯着画面时该按的。 */
+    .lab3d-stage .stage-bar {
+      position: absolute; left: 0; right: 0; bottom: 0;
+      display: flex; align-items: center; justify-content: space-between; gap: 8px;
+      padding: 0 12px 11px; pointer-events: none;
+    }
+    .lab3d-stage .bar-left { display: flex; align-items: center; gap: 7px; flex: none; pointer-events: auto; }
+    .lab3d-stage .stage-btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 8px 13px; border-radius: 10px; font-family: inherit;
+      font-size: 12px; font-weight: 800; cursor: pointer;
+      border: 1px solid rgba(148, 163, 184, .35); background: rgba(2, 6, 23, .88); color: #cbd5e1;
+      transition: background .2s, border-color .2s, color .2s, box-shadow .2s;
+    }
+    .lab3d-stage .stage-btn.go { border-color: rgba(56, 189, 248, .55); background: rgba(14, 116, 144, .3); color: #e0f2fe; }
+    .lab3d-stage .stage-btn.go:hover { background: rgba(14, 116, 144, .46); }
+    .lab3d-stage .stage-btn.on { border-color: rgba(248, 113, 113, .7); background: rgba(127, 29, 29, .5); color: #fee2e2; }
+    .lab3d-stage .stage-btn:disabled { opacity: .45; cursor: not-allowed; }
+    .lab3d-stage .stage-btn .cnt {
+      display: inline-grid; place-items: center; min-width: 17px; height: 17px; padding: 0 4px;
+      border-radius: 99px; font-size: 10px; font-weight: 800;
+      background: rgba(148, 163, 184, .22); color: #e2e8f0;
+    }
+    /* 措施开齐、已经安静下来时按钮自己亮起来 —— 这一刻正是该记录的时候 */
+    .lab3d-stage .stage-btn.ready {
+      border-color: rgba(52, 211, 153, .8); background: rgba(16, 185, 129, .24); color: #d1fae5;
+      box-shadow: 0 0 0 3px rgba(52, 211, 153, .14), 0 0 18px rgba(52, 211, 153, .3);
+    }
+    .lab3d-stage .stage-btn.ready .cnt { background: rgba(52, 211, 153, .32); color: #ecfdf5; }
+    .lab3d-stage .stage-help {
+      min-width: 0; pointer-events: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      color: #93b4c4; font-size: 11px; background: rgba(2, 6, 23, .72); padding: 6px 10px; border-radius: 7px;
+    }
+
+    .lab3d-stage .stage-toast {
+      position: absolute; left: 50%; transform: translateX(-50%); bottom: 96px;
+      padding: 8px 14px; border-radius: 10px; font-size: 12px; font-weight: 700;
+      background: rgba(2, 6, 23, .93); border: 1px solid rgba(148, 163, 184, .32); color: #e2e8f0;
+      opacity: 0; transition: opacity .18s, transform .18s; pointer-events: none; white-space: nowrap;
+    }
+    .lab3d-stage .stage-toast.show { opacity: 1; }
+
+    .lab3d-stage .stage-flag {
+      position: absolute; left: 50%; transform: translateX(-50%); bottom: 58px;
+      padding: 7px 13px; border-radius: 99px; font-size: 12px; font-weight: 800;
+      background: rgba(6, 78, 59, .92); border: 1px solid rgba(52, 211, 153, .6); color: #d1fae5;
+      opacity: 0; transition: opacity .2s; pointer-events: none; white-space: nowrap;
+    }
+    .lab3d-stage .stage-flag.show { opacity: 1; }
+
+    .lab3d-sidebar { display: flex; flex-direction: column; gap: 11px; min-width: 0; }
+    .panel {
+      border: 1px solid rgba(148, 163, 184, .17); border-radius: 13px;
+      background: rgba(9, 20, 35, .82); padding: 13px 14px;
+    }
+    .panel > h3 {
+      margin: 0 0 10px; font-size: 12px; font-weight: 800; color: #7dd3fc;
+      letter-spacing: .4px; display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    }
+    .panel > h3 .pill {
+      font-size: 10px; font-weight: 800; padding: 2px 8px; border-radius: 99px;
+      background: rgba(148, 163, 184, .18); color: #e2e8f0;
+    }
+    .panel > h3 .pill.live { background: rgba(248, 113, 113, .25); color: #fecaca; }
+    .panel > h3 .pill.ok { background: rgba(52, 211, 153, .22); color: #d1fae5; }
+    .fld { display: block; margin-bottom: 11px; }
+    .fld:last-child { margin-bottom: 0; }
+    .fld .row { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 5px; }
+    .fld .row span { color: #a9c2d2; font-size: 11.5px; }
+    .fld .row b { color: #e2e8f0; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+    .fld .note { margin: 6px 0 0; color: #8aa6b8; font-size: 11px; line-height: 1.55; }
+
+    .btn-row { display: flex; flex-wrap: wrap; gap: 7px; }
+    .btn-row button {
+      flex: 1 1 auto; min-width: 0; padding: 9px 11px; border-radius: 9px; cursor: pointer;
+      font-family: inherit; font-size: 12px; font-weight: 800;
+      border: 1px solid rgba(148, 163, 184, .3); background: rgba(30, 41, 59, .7); color: #cbd5e1;
+    }
+    .btn-row button.primary { border-color: rgba(56, 189, 248, .6); background: rgba(14, 116, 144, .42); color: #e0f2fe; }
+    .btn-row button.on { border-color: rgba(248, 113, 113, .65); background: rgba(127, 29, 29, .5); color: #fee2e2; }
+    .btn-row button:disabled { opacity: .45; cursor: not-allowed; }
+    .btn-row button:hover:not(:disabled) { border-color: rgba(125, 211, 252, .7); }
+
+    /* 三条控制途径：每条一组，组头写着「这一处能降多少 dB」 */
+    .ctl { margin-bottom: 10px; }
+    .ctl:last-child { margin-bottom: 0; }
+    .ctl .head {
+      display: flex; align-items: center; justify-content: space-between; gap: 8px;
+      margin-bottom: 6px; font-size: 11px; font-weight: 800; color: #9fd7e8;
+    }
+    .ctl .head .tag {
+      font-size: 10px; font-weight: 800; padding: 2px 7px; border-radius: 99px;
+      background: rgba(148, 163, 184, .16); color: #93b4c4;
+    }
+    .ctl .head .tag.hot { background: rgba(52, 211, 153, .22); color: #d1fae5; }
+
+    /* 声级大数字 */
+    .gauge-num {
+      display: flex; align-items: baseline; justify-content: center; gap: 6px;
+      padding: 9px 8px; border-radius: 10px; margin-bottom: 9px;
+      background: linear-gradient(180deg, #0b1a2a, #07131f); border: 1px solid rgba(56, 189, 248, .3);
+    }
+    .gauge-num .num {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 27px; font-weight: 800;
+      color: #a5f3fc; letter-spacing: .5px; font-variant-numeric: tabular-nums;
+      text-shadow: 0 0 12px rgba(56, 189, 248, .45);
+    }
+    .gauge-num .unit { color: #5e8496; font-size: 13px; font-weight: 700; }
+
+    /* 分贝刻度条：底下一整条色带，上面一个游标 */
+    .scale { position: relative; height: 26px; margin: 4px 0 3px; }
+    .scale .band {
+      position: absolute; left: 0; right: 0; top: 7px; height: 11px; border-radius: 99px; overflow: hidden;
+      background: linear-gradient(90deg,
+        #22c55e 0%, #22c55e 25%, #a3e635 42%, #facc15 58%, #fb923c 75%, #ef4444 100%);
+      opacity: .82;
+    }
+    .scale .mark {
+      position: absolute; top: 0; width: 3px; height: 25px; border-radius: 2px;
+      background: #f8fafc; box-shadow: 0 0 8px rgba(248, 250, 252, .9), 0 0 0 1px rgba(2, 6, 23, .7);
+      transform: translateX(-1.5px); transition: left .1s linear;
+    }
+    .scale .tick { display: flex; justify-content: space-between; color: #6f8b9c; font-size: 9.5px; font-weight: 700; }
+
+    .lvl { margin-bottom: 9px; }
+    .lvl .cap { display: flex; justify-content: space-between; gap: 8px; font-size: 11px; color: #a9c2d2; margin-bottom: 4px; }
+    .lvl .cap b { color: #e2e8f0; font-variant-numeric: tabular-nums; }
+    .lvl .bar { height: 9px; border-radius: 99px; background: rgba(148, 163, 184, .16); overflow: hidden; }
+    .lvl .bar > i { display: block; height: 100%; border-radius: 99px; transition: width .12s linear; }
+    .lvl.snd .bar > i { background: linear-gradient(90deg, #f59e0b, #fbbf24); }
+    .lvl.cut .bar > i { background: linear-gradient(90deg, #22d3ee, #34d399); }
+
+    .readouts { display: flex; flex-direction: column; gap: 5px; color: #a9c2d2; font-size: 11.5px; }
+    .readouts div { display: flex; justify-content: space-between; gap: 8px; }
+    .readouts b { color: #e2e8f0; font-variant-numeric: tabular-nums; }
+    .readouts .dim { color: #7d97a8; }
+
+    .badge {
+      display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 9px;
+      font-size: 12px; font-weight: 800; margin-top: 8px;
+    }
+    .badge.ok { background: rgba(6, 78, 59, .45); border: 1px solid rgba(52, 211, 153, .5); color: #d1fae5; }
+    .badge.warn { background: rgba(120, 53, 15, .45); border: 1px solid rgba(251, 191, 36, .5); color: #fef3c7; }
+    .badge.bad { background: rgba(127, 29, 29, .45); border: 1px solid rgba(248, 113, 113, .5); color: #fee2e2; }
+
+    table.rec { width: 100%; border-collapse: collapse; font-size: 11.5px; font-variant-numeric: tabular-nums; }
+    table.rec th, table.rec td { padding: 5px 4px; text-align: right; border-bottom: 1px solid rgba(148, 163, 184, .13); }
+    table.rec th { color: #8aa6b8; font-weight: 700; font-size: 10.5px; }
+    table.rec th:first-child, table.rec td:first-child { text-align: left; }
+    table.rec td { color: #dbe7f0; }
+    table.rec td.dim { color: #7d97a8; text-align: left; }
+    table.rec td.lv { text-align: right; font-weight: 700; }
+    .rec-empty { color: #6f8b9c; font-size: 11.5px; padding: 6px 0; }
+
+    .analysis { color: #c8d8e4; font-size: 11.5px; line-height: 1.75; }
+    .analysis .line { display: flex; justify-content: space-between; gap: 8px; }
+    .analysis .line b { color: #e2e8f0; font-variant-numeric: tabular-nums; }
+    .analysis .line.cut b { color: #6ee7b7; }
+    .analysis .line.sum { border-top: 1px dashed rgba(148, 163, 184, .3); margin-top: 5px; padding-top: 6px; }
+    .analysis .line.sum b { color: #a5f3fc; font-size: 13px; }
+    .analysis .line.off { color: #6f8b9c; }
+    .analysis .conc {
+      margin-top: 9px; padding: 8px 10px; border-radius: 8px; font-size: 11.5px; line-height: 1.65;
+      background: rgba(6, 78, 59, .35); border: 1px solid rgba(52, 211, 153, .4); color: #d1fae5;
+    }
+    .analysis .conc.warn { background: rgba(127, 29, 29, .35); border-color: rgba(248, 113, 113, .45); color: #fee2e2; }
+    .analysis .conc.info { background: rgba(12, 74, 110, .35); border-color: rgba(56, 189, 248, .4); color: #e0f2fe; }
+    .analysis .muted { color: #7d97a8; }
+
+    .info-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; margin-top: 16px; }
+    .info-card {
+      border: 1px solid rgba(148, 163, 184, .16); border-radius: 14px;
+      background: rgba(9, 20, 35, .7); padding: 15px 17px;
+    }
+    .info-card h4 { margin: 0 0 9px; font-size: 13px; color: #7dd3fc; }
+    .info-card ul { margin: 0; padding-left: 17px; color: #a9c2d2; font-size: 12px; line-height: 1.85; }
+    .info-card li b { color: #e2e8f0; }
+    .info-card .fml {
+      display: inline-block; margin: 3px 0; padding: 3px 9px; border-radius: 7px;
+      background: rgba(56, 189, 248, .13); color: #a5f3fc; font-weight: 700;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+
+    @media (max-width: 900px) {
+      .lab3d-layout { grid-template-columns: minmax(0, 1fr); }
+      .lab3d-stage, .lab3d-sidebar, .lab3d-lower { grid-column: 1; grid-row: auto; }
+      .lab3d-stage { height: clamp(340px, 54vh, 500px); }
+      .lab3d-sidebar { border-top: 1px solid rgba(148, 163, 184, .16); padding-top: 12px; }
+      .lab3d-lower { border-top: 1px solid rgba(148, 163, 184, .16); padding-top: 12px; }
+    }
+    @media (max-width: 620px) {
+      body { padding: 14px; }
+      .lab3d h1 { font-size: 16px; }
+      .lab3d-stage { height: 350px; }
+      .lab3d-stage .stage-hint { font-size: 10px; padding: 6px 9px; max-width: 66%; }
+      .lab3d-stage .stage-help { display: none; }
+      .lab3d-stage .stage-btn { padding: 7px 10px; font-size: 11px; gap: 5px; }
+      .lab3d-stage .stage-flag { bottom: 54px; font-size: 11px; padding: 6px 11px; }
+      .gauge-num .num { font-size: 23px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="lab3d">
+    <h1>噪声的危害和控制 · 三维实验台</h1>
+    <p class="lab3d-sub">
+      左边房间是<b>噪声源</b>（电锯 / 冲击钻 / 音箱），中间一堵隔墙带一扇门，
+      右边房间里有人拿着<b>声级计</b>在读书。声音穿过隔墙传过来，
+      声级计上的<b>分贝数</b>就是隔壁吵到什么程度。
+      从<b>声源处</b>、<b>传播过程中</b>、<b>人耳处</b>三条途径动手，看看各能降多少分贝。
+    </p>
+
+    <div class="lab3d-layout">
+      <div class="lab3d-stage">
+        <canvas id="nz-canvas"></canvas>
+
+        <div class="stage-hint" id="nz-hint"></div>
+        <div class="stage-tip" id="nz-tip"></div>
+        <div class="stage-toast" id="nz-toast"></div>
+        <div class="stage-flag" id="nz-flag">三条途径都动手了 ✓ 隔壁已经安静下来</div>
+
+        <div class="stage-bar">
+          <div class="bar-left">
+            <button type="button" class="stage-btn go" id="nz-record">
+              记录这一组<b class="cnt" id="nz-record-cnt">0</b>
+            </button>
+            <button type="button" class="stage-btn" id="nz-reset">重置</button>
+          </div>
+          <div class="stage-help">拖动空白处旋转 · 滚轮缩放 · 点左侧声源可把它关掉</div>
+        </div>
+      </div>
+
+      <div class="lab3d-sidebar">
+        <div class="panel">
+          <h3>噪声源 <span class="pill" id="nz-src-state">电锯工作中</span></h3>
+          <div class="btn-row">
+            <button type="button" class="primary" data-src="saw">🪚 电锯</button>
+            <button type="button" data-src="drill">🔨 冲击钻</button>
+            <button type="button" data-src="speaker">🔊 音箱</button>
+          </div>
+          <div class="fld" style="margin-top:11px;">
+            <div class="row"><span>人与声源的距离</span><b id="nz-d-num">4.0 m</b></div>
+            <input type="range" id="nz-dist" min="2.4" max="4.5" step="0.1" value="4.0" style="width:100%">
+            <p class="note" id="nz-src-note">电锯在 1 m 处的声压级是 <b>105 dB</b>。</p>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h3>听到的声音 <span class="pill" id="nz-hear-pill">很吵</span></h3>
+          <div class="gauge-num" style="border-color:rgba(251,191,36,.35)">
+            <span class="num" id="nz-l-num" style="color:#fde68a;text-shadow:0 0 12px rgba(251,191,36,.45)">93.0</span>
+            <span class="unit">dB</span>
+          </div>
+          <div class="scale">
+            <div class="band"></div>
+            <div class="mark" id="nz-scale-mark" style="left:75%"></div>
+            <div class="tick"><span>0</span><span>30</span><span>50</span><span>70</span><span>90</span><span>120</span></div>
+          </div>
+          <div class="lvl cut" style="margin-top:8px;">
+            <div class="cap"><span>总降噪量</span><b id="nz-cut-num">0.0 dB</b></div>
+            <div class="bar"><i id="nz-cut-bar" style="width:0%"></i></div>
+          </div>
+          <div class="readouts">
+            <div><span>声源在 1 m 处</span><b id="nz-l-src">105.0 dB</b></div>
+            <div><span>距离衰减</span><b id="nz-l-dist">−12.5 dB</b></div>
+            <div><span>房间本底噪声</span><b>20 dB</b></div>
+          </div>
+          <div class="btn-row" style="margin-top:9px;">
+            <button type="button" id="btn-sound">🔈 点一下开声音</button>
+          </div>
+          <div id="nz-hear-badge"></div>
+        </div>
+
+        <div class="panel">
+          <h3>控制噪声 <span class="pill" id="nz-cut-pill">0 处</span></h3>
+          <div class="ctl">
+            <div class="head"><span>① 声源处</span><span class="tag" id="nz-tag-1">未动手</span></div>
+            <div class="btn-row">
+              <button type="button" id="btn-hood">给电锯加隔声罩</button>
+            </div>
+          </div>
+          <div class="ctl">
+            <div class="head"><span>② 传播过程中</span><span class="tag" id="nz-tag-2">未动手</span></div>
+            <div class="btn-row">
+              <button type="button" id="btn-door">把门换成隔声门</button>
+              <button type="button" id="btn-panel">墙上贴吸音板</button>
+            </div>
+          </div>
+          <div class="ctl">
+            <div class="head"><span>③ 人耳处</span><span class="tag" id="nz-tag-3">未动手</span></div>
+            <div class="btn-row">
+              <button type="button" id="btn-ear">戴上耳罩</button>
+            </div>
+          </div>
+          <p class="note">
+            隔声罩 <b>20 dB</b> · 隔声门 <b>12 dB</b> · 吸音板 <b>8 dB</b> · 耳罩 <b>25 dB</b>。
+            三处可以随便组合 —— 试试只动一处，和四处全开差多少。
+          </p>
+        </div>
+      </div>
+
+      <!-- 舞台正下方的第二行：视角、降噪账本、数据记录。
+           摆在左列（舞台下面）而不是全塞侧栏，是为了让两列高度相当。
+           窄屏时它排在侧栏之后（见 .lab3d-lower 的媒体查询）。 -->
+      <div class="lab3d-lower">
+        <div class="panel">
+          <h3>视角</h3>
+          <div class="btn-row">
+            <button type="button" data-view="perspective">默认</button>
+            <button type="button" data-view="front">正对隔墙</button>
+            <button type="button" data-view="side">看声源</button>
+            <button type="button" data-view="top">俯视</button>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h3>降噪账本</h3>
+          <div class="analysis" id="analysis"></div>
+        </div>
+
+        <div class="panel">
+          <h3>数据记录 <span class="pill" id="rec-count">0 组</span></h3>
+          <div id="rec-body"><p class="rec-empty">还没有记录。挑一处措施打开，再点「记录这一组」。</p></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="info-cards">
+      <div class="info-card">
+        <h4>实验原理</h4>
+        <ul>
+          <li><b>从物理学角度</b>：发声体做<b>无规则振动</b>时发出的声音叫噪声 —— 电锯、冲击钻就是。
+              <b>从环境保护角度</b>：凡是<b>妨碍</b>人们正常休息、学习和工作的声音都是噪声 ——
+              所以音箱里放的音乐，对正在读书的人来说也是噪声。</li>
+          <li>人刚能听到的最微弱声音是 <b>0 dB</b>；<b>30~40 dB</b> 是较理想的安静环境；
+              <b>70 dB</b> 以上会干扰谈话、影响工作效率；<b>90 dB</b> 以上长期生活会影响听力。</li>
+          <li>距离每<b>加倍</b>，声压级降低约 <b>6 dB</b>：
+              <span class="fml">ΔL = 20·lg(d / d₀)</span></li>
+          <li>隔声罩、隔声门、吸音板、耳罩的降噪量都用<b>分贝相减</b>：
+              <span class="fml">L = L₀ − ΔL<sub>距离</sub> − ΔL<sub>声源</sub> − ΔL<sub>传播</sub> − ΔL<sub>人耳</sub></span></li>
+        </ul>
+      </div>
+      <div class="info-card">
+        <h4>操作指南</h4>
+        <ul>
+          <li><b>先点一下页面任意处开启声音</b> —— 浏览器规定必须有一次点击才允许网页出声。</li>
+          <li>点<b>「记录这一组」</b>把当前的声源、距离、措施和分贝数存进表格，多记几组就能比出
+              <b>哪一处最有效</b>。</li>
+          <li>拖动<b>距离滑块</b>：人往后退，声级计上的数字会掉 —— 但房间就这么大，
+              光靠躲是躲不掉 30 dB 的。</li>
+          <li>三条途径<b>各降各的</b>：声源处（隔声罩）最彻底 —— 声音压根没发出来；
+              传播过程中（隔声门、吸音板）次之；人耳处（耳罩）只管自己，别人照样吵。</li>
+          <li>看地板上的<b>声波圈</b>：加隔声罩后，隔壁那间房的波圈会立刻变淡；
+              贴上吸音板、换隔声门，穿墙过来的波又淡一层。</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <script>
+  (() => {
+    'use strict';
+
+    const canvas = document.getElementById('nz-canvas');
+    const stage = document.querySelector('.lab3d-stage');
+    if (!canvas || !stage) return;
+    const ctx = canvas.getContext('2d');
+
+    const PI2 = Math.PI * 2;
+    const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
+    const $ = id => document.getElementById(id);
+
+    /* ============================================================
+     * 向量工具（与站内其它三维页同一套约定）
+     * ============================================================ */
+    const add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+    const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+    const scl = (a, k) => [a[0] * k, a[1] * k, a[2] * k];
+    const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+    const vlen = a => Math.hypot(a[0], a[1], a[2]);
+    const vnorm = a => { const l = vlen(a) || 1; return [a[0] / l, a[1] / l, a[2] / l]; };
+    const rgba = (c, a) => 'rgba(' + Math.round(clamp(c[0], 0, 255)) + ',' +
+      Math.round(clamp(c[1], 0, 255)) + ',' + Math.round(clamp(c[2], 0, 255)) + ',' + a + ')';
+
+    /* ============================================================
+     * 场景常量
+     * ------------------------------------------------------------
+     * 世界坐标：y 向上，x/z 水平。这里 1 世界单位 = 1 m（真实房间尺度），
+     * 与真空铃那种「1 单位 = 10 cm 的小器材」不同 —— 量级不同，相机距离也不同。
+     *
+     * 布局：两间房以隔墙（x = 0）分开。
+     *   左房 x ∈ [-4, 0]  —— 噪声源（电锯 / 冲击钻 / 音箱）
+     *   右房 x ∈ [ 0, 4]  —— 人 + 声级计
+     * 两间房都不画前墙、不画屋顶（半剖），这样一眼能看进屋里。
+     * ============================================================ */
+    const ROOM_L = -3.15, ROOM_R = 3.15;    // 地板横向范围
+    const ROOM_B = -2.00, ROOM_F = 2.00;    // 地板进深范围
+    const ROOM_H = 2.5;                     // 墙高
+    const WALL_T = 0.16;                    // 隔墙厚度
+    const WALL_X = 0.0;                     // 隔墙所在平面
+
+    // ── 门洞（隔墙正中的一扇门）──
+    const DOOR_Z0 = -0.50, DOOR_Z1 = 0.50, DOOR_H = 1.95;
+    const DOOR_CZ = (DOOR_Z0 + DOOR_Z1) / 2;
+
+    // ── 声源 ──
+    const SRC_X = -1.85, SRC_Z = 0.0;
+    const SRC = [SRC_X, 0, SRC_Z];
+    const HOOD_R = 0.78, HOOD_H = 1.15;     // 隔声罩：半径 / 高（世界单位 = m）
+
+    // ── 人 ──
+    const PERSON_Z = 0.0;
+    const PERSON_H = 1.72;                  // 身高 m
+    const METER_DX = 0.30, METER_DZ = 0.68; // 声级计相对人的位置（摆在人斜前方）
+
+    // ── 吸音板（贴在右房这侧的隔墙实心部分）──
+    const PANEL_Y0 = 0.50, PANEL_Y1 = 2.30;
+    const PANEL_D = 0.10;                   // 楔形块凸出墙面的厚度
+    const PANEL_SPAN = 0.42, PANEL_GAP = 0.04;
+
+    /* ---------------------------- 声学参数 ---------------------------- */
+    // 三个声源在【1 m 处】的声压级。音箱 85 dB 是「听得挺响的音乐」，
+    // 电锯 105 / 冲击钻 110 是真实装修现场的量级（冲击钻确实能到 110）。
+    const SOURCES = {
+      saw:     { key: 'saw',     name: '电锯',   L: 105, emoji: '🪚', note: '电锯在 1 m 处的声压级是 <b>105 dB</b>。' },
+      drill:   { key: 'drill',   name: '冲击钻', L: 110, emoji: '🔨', note: '冲击钻在 1 m 处的声压级是 <b>110 dB</b>，比电锯还吵。' },
+      speaker: { key: 'speaker', name: '音箱',   L: 85,  emoji: '🔊', note: '音箱在 1 m 处是 <b>85 dB</b> —— 声音本身不难听，可它照样妨碍别人读书。' }
+    };
+    const SRC_ORDER = ['saw', 'drill', 'speaker'];
+
+    // 各处措施的降噪量（dB）。这几个数字在【画面、读数、账本、自检】里是同一份。
+    const IL_HOOD  = 20;   // ① 声源处：隔声罩
+    const IL_DOOR  = 12;   // ② 传播过程中：隔声门
+    const IL_PANEL = 8;    // ② 传播过程中：吸音板
+    const IL_EAR   = 25;   // ③ 人耳处：耳罩
+
+    const D_REF = 1.0;     // 声压级的参考距离 1 m
+    // 滑块范围：房间就这么大（隔墙到右墙 3.15 m），人最多退到 4.5 m 外。
+    // 想演示「退后也躲不掉」够用了 —— 从 2.4 m 退到 4.5 m 只降 5.5 dB，
+    // 而戴一副耳罩就是 25 dB。这个对比正是这一节要讲的。
+    const D_MIN = 2.4, D_MAX = 4.5;
+    const D_DEFAULT = 4.0;
+    // 人的初始位置。初值只能在这里定义一次 —— 页面初始状态和「重置」都取它，
+    // 各写一个字面量的话，改了初值而忘了改重置，重置完人就会瞬移一下。
+    const PERSON_X0 = SRC_X + D_DEFAULT;
+    const L_FLOOR = 20;    // 房间本底噪声 dB（安静房间的底噪，读数不会低于它）
+    const L_REF_AUD = 88;  // 音频增益的参考声压级：88 dB 及以上按满音量
+    const AUD_THRESH = 25; // 低于这个声压级就彻底不出声
+
+    // 分贝等级（人教版的分档）
+    function levelOf(L) {
+      if (L >= 90) return { key: 'danger', text: '损伤听力', cls: 'bad', short: '危险' };
+      if (L >= 70) return { key: 'loud',   text: '很吵，干扰工作', cls: 'bad', short: '很吵' };
+      if (L >= 50) return { key: 'noisy',  text: '吵闹', cls: 'warn', short: '吵闹' };
+      if (L >= 30) return { key: 'calm',   text: '较安静', cls: 'ok', short: '较安静' };
+      return { key: 'quiet', text: '安静', cls: 'ok', short: '安静' };
+    }
+
+    const CAMD = 13.0;                      // 相机距离基准
+    const TARGET = [0.10, 0.70, 0];         // 轨道中心：两间房的交界处稍偏右
+
+    const VIEWS = {
+      // 默认：右前上方斜俯视。俯仰角是量出来的 ——
+      // 再平（0.5）隔墙就变成挡在画面正中的一块大黑板，左房的器材全被挡死；
+      // 抬到 0.82 rad（47°）墙缩成一条带，两间房的地面同时看得到，
+      // 又还看得出墙有高度、门有高度（再陡就成俯视图了）。
+      perspective: [0.50, 0.82],
+      front:       [0.06, 0.46],
+      side:        [-0.62, 0.78],
+      top:         [0.16, 1.10]
+    };
+
+    const state = {
+      yaw: VIEWS.perspective[0], pitch: VIEWS.perspective[1], zoom: 1,
+      src: 'saw',               // 当前声源
+      srcOn: true,              // 声源是否在工作
+      soundOn: true,            // 要不要真的出声（用户的静音开关）
+      personX: PERSON_X0,        // 人站在右房的哪个位置（m）
+      hoodOn: false,            // ① 隔声罩
+      doorOn: false,            // ② 隔声门
+      panelOn: false,           // ② 吸音板
+      earOn: false,             // ③ 耳罩
+      t: 0,                     // 动画时间（s），驱动声波与锯片
+      marks: [],
+      w: 1, h: 1, dpr: 0, dirty: true,
+      dragging: false, drag: null, downAt: null, dragYaw: 0, dragPitch: 0,
+      hover: null, view: 'perspective',
+      drawn: {}
+    };
+
+    /* ============================================================
+     * 声学模型
+     * ------------------------------------------------------------
+     * 全部抽成纯函数，渲染、读数、账本、自检共用同一份 —— 公式抄两遍的话，
+     * 改了一处另一处不跟着变，画面在动而数字对不上，自检还永远是绿的。
+     * ============================================================ */
+
+    // 距离衰减：点声源在自由场中距离加倍降 6 dB → ΔL = 20·lg(d/d₀)
+    const distDrop = d => 20 * Math.log10(Math.max(d, D_REF) / D_REF);
+    const distNow = () => clamp(state.personX - SRC_X, D_MIN, D_MAX);
+    const srcL = () => (state.srcOn ? SOURCES[state.src].L : 0);
+
+    // 三处措施各自贡献的降噪量。合成量 = 三者之和（工程上「插入损失」就是分贝相减）。
+    const ilSrc   = () => (state.hoodOn ? IL_HOOD : 0);
+    const ilPath  = () => (state.doorOn ? IL_DOOR : 0) + (state.panelOn ? IL_PANEL : 0);
+    const ilEar   = () => (state.earOn ? IL_EAR : 0);
+    const ilTotal = () => ilSrc() + ilPath() + ilEar();
+    // 不算本底的原始声压级
+    const Lraw = () => srcL() - distDrop(distNow()) - ilTotal();
+    // 声级计上真正显示的数：不会低于房间本底
+    const Lear = () => (state.srcOn ? Math.max(L_FLOOR, Lraw()) : L_FLOOR);
+    // 总降噪量（含距离衰减）—— 账本最后一行
+    const cutTotal = () => distDrop(distNow()) + ilTotal();
+
+    // 措施开了几处
+    const cutsOn = () => (state.hoodOn ? 1 : 0) + (state.doorOn ? 1 : 0) +
+                         (state.panelOn ? 1 : 0) + (state.earOn ? 1 : 0);
+
+    /* ---------------------------- 声波的可见强度 ----------------------------
+     * 分两个波场画：
+     *   左房 —— 以声源为中心；加了隔声罩，罩外只剩 10^(-20/20) = 0.1。
+     *   右房 —— 以门口为中心（惠更斯原理：门洞自己成了一个次级声源）；
+     *          幅度 = 左房到墙时的幅度 × 10^(-(隔声门+吸音板)/20)。
+     * 这样「声音被墙挡住多少」在画面里是看得见的，而不只是一个数字。
+     * -------------------------------------------------------------------- */
+    const R_MAX_L = 2.6, R_MAX_R = 3.2;     // 两个波场的最大半径（m）
+    const WAVE_N = 4, WAVE_T = 2.4;         // 同时存在的波环数 / 一圈的周期 s
+
+    // 波环的「随距离淡出」。用 0.55 次幂而不是线性 —— 线性淡出下，房间中段的
+    // 那几圈已经淡到看不见了，画面上就只剩紧贴声源的一两圈，
+    // 「声音一路传到隔壁」这件事反而读不出来。
+    const waveFade = (r, rMax) => Math.pow(clamp(1 - r / rMax, 0, 1), 0.55);
+
+    function waveAmpL(r) {
+      if (!state.srcOn) return 0;
+      let a = waveFade(r, R_MAX_L);
+      if (state.hoodOn && r > HOOD_R) a *= Math.pow(10, -IL_HOOD / 20);
+      return a;
+    }
+    function waveAmpR(r) {
+      if (!state.srcOn) return 0;
+      let a = waveFade(r, R_MAX_R);
+      a *= Math.pow(10, -ilPath() / 20);                        // 穿墙的透射损失
+      if (state.hoodOn) a *= Math.pow(10, -IL_HOOD / 20);
+      return a;
+    }
+
+    /* ============================================================
+     * 噪声的声音（Web Audio）
+     * ------------------------------------------------------------
+     * 声音不是装饰 —— 它是这个实验的主角：措施一开，耳朵里立刻安静下来。
+     * 音量由【不算本底的 Lraw】决定，于是「声级计上写着 30 dB」和
+     * 「耳机里确实很轻」是同一件事。
+     *
+     * 两条工程约束（与真空铃同源）：
+     *  ① 自动播放策略要求先有一次用户手势 → AudioContext 只在第一次
+     *     pointerdown / keydown 时创建（ensureAudio）。
+     *  ② 声音的开关【不用 AudioContext.currentTime 当时间轴】，而是由页面的 dt
+     *     推进（pumpAudio）。无头浏览器里音频时钟可能压根不走。
+     * ============================================================ */
+    // 听到的响度 → 线性振幅。88 dB 记满刻度，每降 20 dB 振幅降到 1/10。
+    function audioGain() {
+      if (!state.srcOn || !state.soundOn) return 0;
+      const L = Lraw();
+      if (L < AUD_THRESH) return 0;
+      return clamp(Math.pow(10, (L - L_REF_AUD) / 20), 0, 1);
+    }
+
+    let AC = null, nzBus = null, srcGain = {}, noiseBuf = null;
+    let audioGainLast = 0, audioKicked = false;
+
+    function ensureAudio() {
+      if (AC) { if (AC.state === 'suspended') AC.resume(); return AC; }
+      const Ctor = window.AudioContext || window.webkitAudioContext;
+      if (!Ctor) return null;
+      try { AC = new Ctor(); } catch (_) { AC = null; return null; }
+
+      nzBus = AC.createGain();
+      nzBus.gain.value = 0.30;              // 总线音量，与声压级无关
+      // 三条链叠起来会超过 1，加一级软削波（tanh）当限幅器，免得爆音
+      const shaper = AC.createWaveShaper();
+      const curve = new Float32Array(1024);
+      for (let i = 0; i < 1024; i++) curve[i] = Math.tanh(((i / 1023) * 2 - 1) * 1.5);
+      shaper.curve = curve;
+      nzBus.connect(shaper);
+      shaper.connect(AC.destination);
+
+      // 一段 2 s 的白噪声，三条链共用（循环播放）
+      const n = Math.floor(AC.sampleRate * 2);
+      noiseBuf = AC.createBuffer(1, n, AC.sampleRate);
+      const d = noiseBuf.getChannelData(0);
+      for (let i = 0; i < n; i++) d[i] = Math.random() * 2 - 1;
+
+      // ── 三条常驻链，靠各自的 gain 决定谁出声（切声源时不用重建图）──
+      // 电锯：宽带噪声 + 一个 95 Hz 的锯齿（马达的基频）
+      srcGain.saw = buildSaw();
+      // 冲击钻：窄带噪声 + 8 Hz 的冲击调制（「哒哒哒」）
+      srcGain.drill = buildDrill();
+      // 音箱：两个正弦，有明确的音调 —— 一听就知道「这不是噪声，但它照样吵」
+      srcGain.speaker = buildSpeaker();
+
+      for (const k of SRC_ORDER) srcGain[k].gain.value = 0;
+      return AC;
+    }
+
+    function noiseSource() {
+      const s = AC.createBufferSource();
+      s.buffer = noiseBuf; s.loop = true; s.start();
+      return s;
+    }
+    function buildSaw() {
+      const out = AC.createGain(); out.gain.value = 0;
+      const s = noiseSource();
+      const bp = AC.createBiquadFilter(); bp.type = 'bandpass';
+      bp.frequency.value = 1150; bp.Q.value = 0.55;
+      const ng = AC.createGain(); ng.gain.value = 0.85;
+      s.connect(bp); bp.connect(ng); ng.connect(out);
+      // 马达基频：锯齿波，低频、有「嗡嗡」的转动感
+      const o = AC.createOscillator(); o.type = 'sawtooth'; o.frequency.value = 95;
+      const lp = AC.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 420;
+      const og = AC.createGain(); og.gain.value = 0.28;
+      o.connect(lp); lp.connect(og); og.connect(out);
+      o.start();
+      return out;
+    }
+    function buildDrill() {
+      const out = AC.createGain(); out.gain.value = 0;
+      const s = noiseSource();
+      const bp = AC.createBiquadFilter(); bp.type = 'bandpass';
+      bp.frequency.value = 520; bp.Q.value = 1.15;
+      // 8 Hz 的冲击调制：gain 被 LFO 推着来回，就是「哒哒哒」的节奏
+      const lfo = AC.createOscillator(); lfo.type = 'square'; lfo.frequency.value = 8;
+      const lfoG = AC.createGain(); lfoG.gain.value = 0.42;
+      const car = AC.createGain(); car.gain.value = 0.58;
+      lfo.connect(lfoG); lfoG.connect(car.gain);
+      s.connect(bp); bp.connect(car); car.connect(out);
+      lfo.start();
+      return out;
+    }
+    function buildSpeaker() {
+      const out = AC.createGain(); out.gain.value = 0;
+      // 两个正弦（G4 + B4）—— 一个简单的大三度，听着「像音乐」
+      for (const [f, a] of [[392, 0.5], [493.9, 0.36], [587.3, 0.22]]) {
+        const o = AC.createOscillator(); o.type = 'sine'; o.frequency.value = f;
+        const g = AC.createGain(); g.gain.value = a;
+        o.connect(g); g.connect(out); o.start();
+      }
+      return out;
+    }
+
+    // 每帧把三条链的 gain 摆到位：只有当前声源那条有音量，音量由 audioGain() 定
+    function pumpAudio() {
+      audioGainLast = audioGain();
+      if (!AC || AC.state !== 'running') return;
+      for (const k of SRC_ORDER) {
+        const g = srcGain[k];
+        if (!g) continue;
+        // 用 setTargetAtTime 做 30 ms 的平滑，切声源/开关时不会有「咔」的一声
+        g.gain.setTargetAtTime(k === state.src ? audioGainLast : 0, AC.currentTime, 0.03);
+      }
+    }
+
+    function kickAudio() {
+      if (audioKicked) return;
+      if (!ensureAudio()) return;
+      audioKicked = true;
+      window.removeEventListener('pointerdown', kickAudio, true);
+      window.removeEventListener('keydown', kickAudio, true);
+      updateAudioUI();
+    }
+
+    /* ---------------------------- 派生几何 ---------------------------- */
+    const personPos = () => [state.personX, 0, PERSON_Z];
+    const meterPos = () => [state.personX + METER_DX, 0, PERSON_Z + METER_DZ];
+    // 门洞中心（右房那侧的波场就以它为圆心）
+    const doorMouth = () => [WALL_X, 0, DOOR_CZ];
+    // 声源到隔墙的直线距离 —— 左房波环越过它之后开始「穿墙」
+    const wallDist = () => Math.abs(WALL_X - SRC_X);
+
+    /* ---------------------------- 相机 ---------------------------- */
+    // 取景包络：用固定值而不是当前几何 —— 否则拖滑块改人的位置、开关隔声罩，
+    // 视野就一缩一放，晃得没法用。人取最右的极限位置，保证退到最远也不出画。
+    function envelopePoints() {
+      const pts = [];
+      // 地板四角全算进来 —— 这个场景的主体就是「两间房」，
+      // 把近端的角切掉会让地板伸到画外、看着像贴纸没贴平。
+      for (const x of [ROOM_L, ROOM_R]) for (const z of [ROOM_B, ROOM_F]) {
+        pts.push([x, 0, z]);
+      }
+      // 后墙顶（两个端点）
+      pts.push([ROOM_L, ROOM_H, ROOM_B], [ROOM_R, ROOM_H, ROOM_B]);
+      // 隔墙顶
+      pts.push([WALL_X, ROOM_H, ROOM_B], [WALL_X, ROOM_H, ROOM_F]);
+      // 声源 + 隔声罩的顶
+      pts.push([SRC_X, HOOD_H + 0.16, SRC_Z], [SRC_X - HOOD_R, 0, SRC_Z], [SRC_X + HOOD_R, 0, SRC_Z]);
+      // 人（取最右、最高的位置）
+      pts.push([D_MAX + SRC_X, PERSON_H + 0.16, PERSON_Z]);
+      pts.push([D_MAX + SRC_X + METER_DX, 1.30, PERSON_Z + METER_DZ]);
+      return pts;
+    }
+
+    function makeCam(q, w, h) {
+      const cy = Math.cos(state.yaw), sy = Math.sin(state.yaw);
+      const cp = Math.cos(state.pitch), sp = Math.sin(state.pitch);
+      const dir = [cp * sy, sp, cp * cy];
+      q.dist = CAMD / state.zoom;
+      q.eye = add(TARGET, scl(dir, q.dist));
+      q.fwd = scl(dir, -1);
+      q.right = vnorm(cross(q.fwd, [0, 1, 0]));
+      q.up = cross(q.right, q.fwd);
+      const pts = envelopePoints();
+      let loR = 1e9, hiR = -1e9, loU = 1e9, hiU = -1e9;
+      for (const p of pts) {
+        const v = sub(p, q.eye);
+        const z = Math.max(0.05, dot(v, q.fwd));
+        const r = dot(v, q.right) / z, u = dot(v, q.up) / z;
+        loR = Math.min(loR, r); hiR = Math.max(hiR, r);
+        loU = Math.min(loU, u); hiU = Math.max(hiU, u);
+      }
+      const s = Math.min(w * 0.94 / Math.max(1e-6, hiR - loR),
+                         h * 0.90 / Math.max(1e-6, hiU - loU));
+      q.focal = s;
+      q.px = w * 0.5 - (loR + hiR) * 0.5 * s;
+      q.py = h * 0.5 + (loU + hiU) * 0.5 * s;
+      q.eyeDist = p => dot(sub(p, q.eye), q.fwd);
+      return q;
+    }
+    function project(p, q) {
+      const v = sub(p, q.eye);
+      const z = Math.max(0.05, dot(v, q.fwd));
+      const s = q.focal / z;
+      return { x: q.px + dot(v, q.right) * s, y: q.py - dot(v, q.up) * s, s: s, z: z };
+    }
+    // 屏幕点 → 世界射线与水平面 y = planeY 的交点
+    function unproject(sx, sy, q, planeY) {
+      const dx = (sx - q.px) / q.focal;
+      const dy = -(sy - q.py) / q.focal;
+      const d = add(add(q.fwd, scl(q.right, dx)), scl(q.up, dy));
+      if (Math.abs(d[1]) < 1e-6) return null;
+      const t = ((planeY === undefined ? 0 : planeY) - q.eye[1]) / d[1];
+      if (t <= 0) return null;
+      return add(q.eye, scl(d, t));
+    }
+
+    /* ============================================================
+     * 绘图小工具
+     * ============================================================ */
+    function polyPath(pts) {
+      ctx.beginPath();
+      pts.forEach((p, k) => k ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+      ctx.closePath();
+    }
+    function poly(pts, fill, stroke, lw) {
+      if (!pts || pts.length < 2) return;
+      polyPath(pts);
+      if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+      if (stroke) { ctx.lineWidth = lw || 1; ctx.strokeStyle = stroke; ctx.stroke(); }
+    }
+    function line(pts, color, lw, dash) {
+      if (!pts || pts.length < 2) return;
+      ctx.beginPath();
+      pts.forEach((p, k) => k ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+      ctx.setLineDash(dash || []);
+      ctx.lineWidth = lw; ctx.strokeStyle = color; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+      ctx.stroke(); ctx.setLineDash([]);
+    }
+    // 点列里可能夹着 null（被裁掉的部分），遇到 null 就断开成另一段
+    function segLine(pts, color, lw, dash) {
+      let cur = [];
+      for (const p of pts) {
+        if (p) cur.push(p);
+        else { if (cur.length > 1) line(cur, color, lw, dash); cur = []; }
+      }
+      if (cur.length > 1) line(cur, color, lw, dash);
+    }
+    function dot2(p, r, fill, stroke, lw) {
+      if (r <= 0.2) return;
+      ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, PI2);
+      if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+      if (stroke) { ctx.lineWidth = lw || 1; ctx.strokeStyle = stroke; ctx.stroke(); }
+    }
+    const rgb = (c, k) => {
+      const s = k === undefined ? 1 : k;
+      return 'rgb(' + Math.round(clamp(c[0] * s, 0, 255)) + ',' +
+                      Math.round(clamp(c[1] * s, 0, 255)) + ',' +
+                      Math.round(clamp(c[2] * s, 0, 255)) + ')';
+    };
+    const LIGHT = vnorm([-0.36, 0.84, 0.40]);
+    // 面的明暗：按面法线与光线的夹角给亮度。同一个颜色的盒子三个面必须读出
+    // 三种明度 —— 这是「像实物」而不是「像贴纸」的来源。
+    const shade = (base, n, amb) => rgb(base, (amb === undefined ? 0.50 : amb) + 0.62 * Math.max(0, dot(n, LIGHT)));
+
+    /* ---------------------------- 通用盒子 ----------------------------
+     * 八个顶点、六个面，【背面剔除】后按任意顺序画都正确（凸体）。
+     * 不剔除的话，按相机距离排序是另一条路 —— 但盒子小、面多，
+     * 剔除比排序稳，也不会出现「整块顶面盖住轮子」那种排序事故。
+     * ------------------------------------------------------------------ */
+    const BOX_FACES = [
+      { idx: [4, 5, 6, 7], n: [0, 1, 0] },   // 顶
+      { idx: [0, 3, 2, 1], n: [0, -1, 0] },  // 底
+      { idx: [3, 2, 6, 7], n: [0, 0, 1] },   // 前 (+z)
+      { idx: [1, 0, 4, 5], n: [0, 0, -1] },  // 后 (−z)
+      { idx: [2, 1, 5, 6], n: [1, 0, 0] },   // 右 (+x)
+      { idx: [0, 3, 7, 4], n: [-1, 0, 0] }   // 左 (−x)
+    ];
+    function box3(q, cx, cy, cz, w, h, d, base, opts) {
+      const o = opts || {};
+      const hw = w / 2, hd = d / 2;
+      const world = [
+        [cx - hw, cy, cz - hd], [cx + hw, cy, cz - hd], [cx + hw, cy, cz + hd], [cx - hw, cy, cz + hd],
+        [cx - hw, cy + h, cz - hd], [cx + hw, cy + h, cz - hd], [cx + hw, cy + h, cz + hd], [cx - hw, cy + h, cz + hd]
+      ];
+      const P = world.map(p => project(p, q));
+      const center = [cx, cy + h / 2, cz];
+      const toEye = sub(q.eye, center);
+      const amb = o.amb === undefined ? 0.50 : o.amb;
+      // 除了屏幕盒子，还带一份【世界坐标盒子】出去。
+      // 有了它，「隔声罩有没有真的把声源罩住」这类判据才能对着【实际画出去的
+      // 几何】去量，而不是对着源码里另抄一份常量。
+      let box = {
+        x0: 1e9, x1: -1e9, y0: 1e9, y1: -1e9,
+        wx0: cx - hw, wx1: cx + hw, wy0: cy, wy1: cy + h, wz0: cz - hd, wz1: cz + hd
+      };
+      for (const f of BOX_FACES) {
+        // 背面剔除：法线朝外的面才画。底面的法线朝下，从上方看就被剔掉了。
+        const fc = [0, 0, 0];
+        for (const i of f.idx) { fc[0] += world[i][0] / 4; fc[1] += world[i][1] / 4; fc[2] += world[i][2] / 4; }
+        if (dot(f.n, sub(q.eye, fc)) <= 0) continue;
+        const quad = f.idx.map(i => P[i]);
+        poly(quad, o.flat ? rgb(base, o.k === undefined ? 1 : o.k) : shade(base, f.n, amb),
+             o.stroke, o.lw || 1);
+        for (const p of quad) {
+          box.x0 = Math.min(box.x0, p.x); box.x1 = Math.max(box.x1, p.x);
+          box.y0 = Math.min(box.y0, p.y); box.y1 = Math.max(box.y1, p.y);
+        }
+      }
+      return box;
+    }
+
+    /* ---------------------------- 标签（带避让） ---------------------------- */
+    let frameBoxes = [];
+    function labelBox(p, text, size, align) {
+      ctx.font = '800 ' + size + 'px Inter, "Microsoft YaHei", sans-serif';
+      const wpx = ctx.measureText(text).width;
+      const pad = 4;
+      const half = size * 0.72 + pad * 0.5;
+      const wBox = wpx + pad * 2;
+      const EDGE = 8;
+      const y = clamp(p.y, half + EDGE, Math.max(half + EDGE, state.h - half - EDGE));
+      let bx = align === 'left' ? p.x - 4 - pad
+             : align === 'right' ? p.x + 4 - wpx - pad
+             : p.x - wpx / 2 - pad;
+      bx = clamp(bx, EDGE, Math.max(EDGE, state.w - wBox - EDGE));
+      return { x: bx, y: y - half, w: wBox, h: half * 2, cx: bx + wBox / 2, cy: y };
+    }
+    function label(p, text, color, size, align) {
+      ctx.font = '800 ' + size + 'px Inter, "Microsoft YaHei", sans-serif';
+      ctx.textAlign = align || 'center';
+      ctx.textBaseline = 'middle';
+      const pad = 4;
+      const wpx = ctx.measureText(text).width;
+      const b = labelBox(p, text, size, align);
+      const x = align === 'left' ? b.x + pad : align === 'right' ? b.x + wpx + pad : b.cx;
+      ctx.fillStyle = 'rgba(2,6,23,.76)';
+      ctx.fillRect(b.x, b.y, b.w, b.h);
+      ctx.fillStyle = color;
+      ctx.fillText(text, x, b.cy);
+      frameBoxes.push(b);
+      return b;
+    }
+    // 在一组候选落点里挑「与本帧已画盒子重叠面积最小」的那个。
+    function bestLabel(anchor, text, color, size, offs) {
+      let best = null, bestOv = 1e18;
+      for (const o of offs) {
+        const b = labelBox({ x: anchor.x + o[0], y: anchor.y + o[1] }, text, size, 'center');
+        let ov = 0;
+        for (const q of frameBoxes) {
+          const ox = Math.min(b.x + b.w, q.x + q.w) - Math.max(b.x, q.x);
+          const oy = Math.min(b.y + b.h, q.y + q.h) - Math.max(b.y, q.y);
+          if (ox > 0 && oy > 0) ov += ox * oy;
+        }
+        if (ov < bestOv) { bestOv = ov; best = { x: anchor.x + o[0], y: anchor.y + o[1] }; }
+      }
+      label(best, text, color, size, 'center');
+      return bestOv;
+    }
+    const AVOID = [[0, 0], [0, -16], [0, 16], [0, -32], [0, 32],
+                   [-46, -16], [46, -16], [-46, 16], [46, 16], [0, -48], [0, 48]];
+    const avoidLabel = (anchor, text, color, size) => bestLabel(anchor, text, color, size, AVOID);
+
+    /* ============================================================
+     * 场景绘制
+     * ============================================================ */
+    function drawBackdrop(w, h) {
+      const g = ctx.createLinearGradient(0, 0, 0, h);
+      g.addColorStop(0, '#040b18');
+      g.addColorStop(0.55, '#061223');
+      g.addColorStop(1, '#02060f');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, w, h);
+    }
+
+    // 地砖：8×4.4 m 的地面，画成 0.5 m 的格子。两间房用同一种砖，
+    // 靠隔墙那条线把两间屋分开 —— 再刷两种底色反而显得是两个世界。
+    function drawFloor(q) {
+      const P = (x, y, z) => project([x, y, z], q);
+      poly([P(ROOM_L, 0, ROOM_B), P(ROOM_R, 0, ROOM_B), P(ROOM_R, 0, ROOM_F), P(ROOM_L, 0, ROOM_F)],
+           'rgba(22,34,52,.96)', 'rgba(94,132,150,.35)', 1.2);
+      // 格线
+      for (let x = ROOM_L; x <= ROOM_R + 1e-6; x += 0.5) {
+        line([P(x, 0.004, ROOM_B), P(x, 0.004, ROOM_F)], 'rgba(94,132,150,.17)', 1);
+      }
+      for (let z = ROOM_B; z <= ROOM_F + 1e-6; z += 0.5) {
+        line([P(ROOM_L, 0.004, z), P(ROOM_R, 0.004, z)], 'rgba(94,132,150,.17)', 1);
+      }
+      // 隔墙在地面上的投影线（让两间房的分界更清楚）
+      line([P(WALL_X, 0.006, ROOM_B), P(WALL_X, 0.006, ROOM_F)], 'rgba(125,211,252,.30)', 1.6, [5, 4]);
+    }
+
+    // 后墙（z = ROOM_B）：一块带踢脚线的竖面。不画前墙、不画屋顶 —— 半剖。
+    // 顶边画一条亮线：这是【剖切边】的建筑制图惯例，没有它，墙顶只是一条
+    // 与背景同色的暗边，「屋子被切开」这件事就读不出来。
+    function drawBackWall(q) {
+      const P = (x, y, z) => project([x, y, z], q);
+      poly([P(ROOM_L, 0, ROOM_B), P(ROOM_R, 0, ROOM_B), P(ROOM_R, ROOM_H, ROOM_B), P(ROOM_L, ROOM_H, ROOM_B)],
+           '#132238', 'rgba(94,132,150,.30)', 1.2);
+      // 踢脚线
+      poly([P(ROOM_L, 0, ROOM_B + 0.001), P(ROOM_R, 0, ROOM_B + 0.001),
+            P(ROOM_R, 0.18, ROOM_B + 0.001), P(ROOM_L, 0.18, ROOM_B + 0.001)],
+           'rgba(148,163,184,.14)');
+      // 一点墙面质感：横向的浅纹
+      for (let y = 0.45; y < ROOM_H; y += 0.45) {
+        line([P(ROOM_L, y, ROOM_B + 0.002), P(ROOM_R, y, ROOM_B + 0.002)], 'rgba(148,163,184,.06)', 1);
+      }
+      // 剖切边（顶）
+      line([P(ROOM_L, ROOM_H, ROOM_B), P(ROOM_R, ROOM_H, ROOM_B)], 'rgba(125,211,252,.65)', 2.6);
+      // 两侧的竖直剖切边
+      line([P(ROOM_L, 0, ROOM_B), P(ROOM_L, ROOM_H, ROOM_B)], 'rgba(125,211,252,.32)', 1.6);
+      line([P(ROOM_R, 0, ROOM_B), P(ROOM_R, ROOM_H, ROOM_B)], 'rgba(125,211,252,.32)', 1.6);
+    }
+
+    /* ---------------------------- 隔墙 + 门 ---------------------------- */
+    // 隔墙由「门洞左边那块」+「门洞右边那块」+「门楣」拼成。
+    // 一次画一块完整矩形再挖洞要绕 evenodd，而墙本来就只有三块，分开画更省事。
+    function wallPanels() {
+      return [
+        // [z0, z1, y0, y1]
+        [ROOM_B, DOOR_Z0, 0, ROOM_H],            // 门洞左侧
+        [DOOR_Z1, ROOM_F, 0, ROOM_H],            // 门洞右侧
+        [DOOR_Z0, DOOR_Z1, DOOR_H, ROOM_H]       // 门楣
+      ];
+    }
+    function drawDivider(q) {
+      const x0 = WALL_X - WALL_T / 2, x1 = WALL_X + WALL_T / 2;
+      const P = (x, y, z) => project([x, y, z], q);
+      const face = (n, base, amb) => shade(base, n, amb);
+
+      // 门洞内壁（先画，被两块墙夹着）
+      for (const [z0, z1, y0, y1] of wallPanels()) {
+        // 每块墙的六个面：背面剔除后画
+        const corners = [
+          [x0, y0, z0], [x1, y0, z0], [x1, y0, z1], [x0, y0, z1],
+          [x0, y1, z0], [x1, y1, z0], [x1, y1, z1], [x0, y1, z1]
+        ];
+        const faces = [
+          { i: [4, 5, 6, 7], n: [0, 1, 0] },
+          { i: [0, 3, 2, 1], n: [0, -1, 0] },
+          { i: [3, 2, 6, 7], n: [0, 0, 1] },
+          { i: [1, 0, 4, 5], n: [0, 0, -1] },
+          { i: [2, 1, 5, 6], n: [1, 0, 0] },
+          { i: [0, 3, 7, 4], n: [-1, 0, 0] }
+        ];
+        for (const f of faces) {
+          const fc = [0, 0, 0];
+          for (const i of f.i) { fc[0] += corners[i][0] / 4; fc[1] += corners[i][1] / 4; fc[2] += corners[i][2] / 4; }
+          if (dot(f.n, sub(q.eye, fc)) <= 0) continue;
+          poly(f.i.map(i => P.apply(null, corners[i])), face(f.n, [76, 92, 116], 0.48),
+               'rgba(148,163,184,.22)', 1);
+        }
+      }
+
+      // 门框（门洞里的一圈线脚）—— 没有它，门洞就是一个方窟窿
+      const fr = 'rgba(148,163,184,.55)';
+      for (const zz of [DOOR_Z0, DOOR_Z1]) {
+        line([P(x0 - 0.02, 0, zz), P(x0 - 0.02, DOOR_H + 0.06, zz)], fr, 2.4);
+        line([P(x1 + 0.02, 0, zz), P(x1 + 0.02, DOOR_H + 0.06, zz)], fr, 2.4);
+      }
+      line([P(x0 - 0.02, DOOR_H + 0.06, DOOR_Z0), P(x0 - 0.02, DOOR_H + 0.06, DOOR_Z1)], fr, 2.4);
+      line([P(x1 + 0.02, DOOR_H + 0.06, DOOR_Z0), P(x1 + 0.02, DOOR_H + 0.06, DOOR_Z1)], fr, 2.4);
+
+      // 隔墙的剖切边（顶）：和后墙同一条亮线，两堵墙才像同一张剖面图
+      line([P(x0, ROOM_H, ROOM_B), P(x0, ROOM_H, ROOM_F)], 'rgba(125,211,252,.65)', 2.6);
+      line([P(x1, ROOM_H, ROOM_B), P(x1, ROOM_H, ROOM_F)], 'rgba(125,211,252,.65)', 2.6);
+      line([P(x0, ROOM_H, ROOM_B), P(x1, ROOM_H, ROOM_B)], 'rgba(125,211,252,.5)', 2);
+      line([P(x0, ROOM_H, ROOM_F), P(x1, ROOM_H, ROOM_F)], 'rgba(125,211,252,.5)', 2);
+
+      state.drawn.wallPanels = 3;
+    }
+
+    // 门扇：关上时是「普通木门」（薄、浅色）；打开隔声门后换成「隔声门」
+    //（厚、深色、门缝里压着一圈密封条）。两态在画面上必须一眼分得出。
+    function drawDoor(q) {
+      const zc = DOOR_CZ, wz = DOOR_Z1 - DOOR_Z0;
+      const thick = state.doorOn ? 0.11 : 0.045;
+      const base = state.doorOn ? [96, 74, 58] : [176, 142, 96];
+      const xc = WALL_X;
+      const bx = box3(q, xc, 0, zc, thick, DOOR_H, wz - 0.04, base, { stroke: 'rgba(2,6,23,.45)', lw: 1 });
+      // 门把手（把手在右房那侧）
+      box3(q, xc + thick / 2 + 0.05, 1.02, zc + wz / 2 - 0.20, 0.10, 0.05, 0.05, [214, 196, 150]);
+      // 隔声门：门缝上压一圈密封条（画成一条亮边）
+      if (state.doorOn) {
+        const P = (x, y, z) => project([x, y, z], q);
+        const e = thick / 2 + 0.012;
+        line([P(xc + e, 0.03, zc - wz / 2 + 0.02), P(xc + e, DOOR_H - 0.03, zc - wz / 2 + 0.02)],
+             'rgba(52,211,153,.75)', 2.6);
+        line([P(xc + e, 0.03, zc + wz / 2 - 0.02), P(xc + e, DOOR_H - 0.03, zc + wz / 2 - 0.02)],
+             'rgba(52,211,153,.75)', 2.6);
+        line([P(xc + e, DOOR_H - 0.03, zc - wz / 2 + 0.02), P(xc + e, DOOR_H - 0.03, zc + wz / 2 - 0.02)],
+             'rgba(52,211,153,.75)', 2.6);
+        line([P(xc + e, 0.03, zc - wz / 2 + 0.02), P(xc + e, 0.03, zc + wz / 2 - 0.02)],
+             'rgba(52,211,153,.75)', 2.6);
+      }
+      state.drawn.doorBox = bx;
+      state.drawn.doorThick = thick;
+    }
+
+    /* ---------------------------- 吸音板 ----------------------------
+     * 一排金字塔吸音棉：每个是一块从墙面凸出的小楔形（用一个盒子近似），
+     * 交替用深灰 / 中灰 —— 纯色一片看不出是「棉」，有明暗交替才有材质感。
+     * ------------------------------------------------------------------ */
+    function panelCells() {
+      const cells = [];
+      const step = PANEL_SPAN + PANEL_GAP;
+      // 门洞两侧的实心墙各铺一片：从门边一直铺到房间尽头。
+      // 列数按实际可用宽度算 —— 写死列数的话，房间尺寸一改就会铺出门外或铺不满。
+      const sides = [[DOOR_Z1 + PANEL_GAP, ROOM_F - 0.10], [ROOM_B + 0.10, DOOR_Z0 - PANEL_GAP]];
+      for (const [z0, z1] of sides) {
+        const n = Math.floor((z1 - z0) / step);
+        if (n <= 0) continue;
+        const zc0 = z0 + (z1 - z0 - n * step + PANEL_GAP) / 2 + PANEL_SPAN / 2;
+        for (let c = 0; c < n; c++) {
+          for (let r = 0; ; r++) {
+            const y = PANEL_Y0 + r * step;
+            if (y + PANEL_SPAN > PANEL_Y1) break;
+            cells.push({ z: zc0 + c * step, y: y });
+          }
+        }
+      }
+      return cells;
+    }
+    function drawPanels(q) {
+      // 没贴就是没贴 —— 忘了这一句，吸音板会「永远贴在墙上」，
+      // 于是「贴吸音板」这个开关在画面上完全看不出区别。
+      if (!state.panelOn) {
+        state.drawn.panels = 0; state.drawn.panelCells = []; state.drawn.panelBox = null;
+        return;
+      }
+      const xc = WALL_X + WALL_T / 2 + PANEL_D / 2;
+      const cells = panelCells();
+      // 所有板子的屏幕包围盒并集 —— 像素自检要靠它把「板子自己那些像素」
+      // 从声波差分里剔出去。没有它的话，门+板那一帧里板子自身的像素会被
+      // 当成「声波变了」，给 dp 垫上一个恒定底数（实测 ~775 px），
+      // 于是「再贴吸音板 → 声波进一步变少」这条断言在声学失效时也可能混过去。
+      const pb = { x0: 1e9, x1: -1e9, y0: 1e9, y1: -1e9 };
+      for (const c of cells) {
+        // 明暗交替：纯色一片看不出是「棉」，有深浅格子才有材质感
+        const base = (Math.round(c.y * 10) + Math.round(c.z * 10)) % 2 === 0 ? [88, 98, 112] : [118, 130, 144];
+        const b = box3(q, xc, c.y, c.z, PANEL_D, PANEL_SPAN, PANEL_SPAN, base,
+                       { stroke: 'rgba(2,6,23,.45)', lw: 1, amb: 0.44 });
+        pb.x0 = Math.min(pb.x0, b.x0); pb.x1 = Math.max(pb.x1, b.x1);
+        pb.y0 = Math.min(pb.y0, b.y0); pb.y1 = Math.max(pb.y1, b.y1);
+      }
+      state.drawn.panels = cells.length;
+      // 实际画出去的位置（世界坐标）—— 自检量的是这个，不是源码里另抄一份常量
+      state.drawn.panelCells = cells;
+      state.drawn.panelX = xc;
+      state.drawn.panelBox = cells.length ? pb : null;
+    }
+
+    /* ---------------------------- 声源 ---------------------------- */
+    function drawSource(q) {
+      // 屏幕盒子与世界盒子都要清干净：声源关掉时自检读到的必须是「没有」，
+      // 留着上一次的值会让「关掉声源」这条断言永远绿。
+      if (!state.srcOn) {
+        state.drawn.srcBox = null; state.drawn.srcWorld = null;
+        state.drawn.sawTeeth = 0; state.drawn.drillBit = 0; state.drawn.speakerCones = 0;
+        return;
+      }
+      const k = state.src;
+      let box = null;
+      // 屏幕盒子（命中测试 / 像素排除）与世界盒子（「罩子罩住了吗」）一起攒。
+      const merge = b => {
+        if (!b) return;
+        if (!box) {
+          box = { x0: b.x0, x1: b.x1, y0: b.y0, y1: b.y1,
+                  wx0: b.wx0, wx1: b.wx1, wy0: b.wy0, wy1: b.wy1, wz0: b.wz0, wz1: b.wz1 };
+        } else {
+          box.x0 = Math.min(box.x0, b.x0); box.x1 = Math.max(box.x1, b.x1);
+          box.y0 = Math.min(box.y0, b.y0); box.y1 = Math.max(box.y1, b.y1);
+          box.wx0 = Math.min(box.wx0, b.wx0); box.wx1 = Math.max(box.wx1, b.wx1);
+          box.wy0 = Math.min(box.wy0, b.wy0); box.wy1 = Math.max(box.wy1, b.wy1);
+          box.wz0 = Math.min(box.wz0, b.wz0); box.wz1 = Math.max(box.wz1, b.wz1);
+        }
+      };
+      // 非盒子的部件（锯片、钻头、喇叭）自己报世界范围
+      const growWorld = (x0, x1, y0, y1, z0, z1) => {
+        merge({ x0: 1e9, x1: -1e9, y0: 1e9, y1: -1e9, wx0: x0, wx1: x1, wy0: y0, wy1: y1, wz0: z0, wz1: z1 });
+      };
+
+      if (k === 'saw') {
+        // 工作台 + 电锯机身 + 竖直圆锯片
+        merge(box3(q, SRC_X, 0, SRC_Z, 0.72, 0.50, 0.52, [92, 100, 112], { stroke: 'rgba(2,6,23,.5)' }));
+        merge(box3(q, SRC_X - 0.02, 0.50, SRC_Z, 0.56, 0.22, 0.34, [188, 92, 52], { stroke: 'rgba(2,6,23,.5)' }));
+        // 锯片：在 yz 平面上的带齿轮盘（法线沿 x），转速随 t
+        const R = 0.26, cx = SRC_X + 0.30, cy = 0.62, cz = SRC_Z;
+        const teeth = 16, spin = state.t * 9;
+        const pts = [];
+        for (let i = 0; i < teeth * 2; i++) {
+          const a = i / (teeth * 2) * PI2 + spin;
+          const rr = i % 2 === 0 ? R : R * 0.84;
+          pts.push(project([cx, cy + rr * Math.sin(a), cz + rr * Math.cos(a)], q));
+        }
+        poly(pts, 'rgba(203,213,225,.92)', 'rgba(71,85,105,.9)', 1.2);
+        // 轴心：半径按该点的投影缩放 p.s 换算（dot2 的 r 是像素，不是世界单位）
+        const hub = project([cx, cy, cz], q);
+        dot2(hub, 0.045 * hub.s, 'rgba(71,85,105,.95)');
+        growWorld(cx, cx, cy - R, cy + R, cz - R, cz + R);
+        state.drawn.sawTeeth = teeth;
+      } else if (k === 'drill') {
+        // 冲击钻：机身 + 向 −x 伸出的钻头
+        merge(box3(q, SRC_X, 0, SRC_Z, 0.78, 0.62, 0.56, [82, 96, 108], { stroke: 'rgba(2,6,23,.5)' }));
+        merge(box3(q, SRC_X - 0.22, 0.62, SRC_Z, 0.40, 0.24, 0.30, [216, 148, 42], { stroke: 'rgba(2,6,23,.5)' }));
+        // 钻头：沿 −x 的细圆柱（用一串点连成粗线近似）。
+        // 长度必须收在隔声罩半径以内 —— 钻头戳出罩子外面，看着就是「罩子没罩住」。
+        const segs = [];
+        for (let i = 0; i <= 7; i++) {
+          segs.push(project([SRC_X - 0.30 - i * 0.054, 0.74, SRC_Z], q));
+        }
+        line(segs, 'rgba(203,213,225,.95)', 5.5);
+        line(segs, 'rgba(100,116,139,.85)', 1.4, [4, 3]);
+        growWorld(SRC_X - 0.30 - 7 * 0.054, SRC_X + 0.42, 0.71, 0.77, SRC_Z - 0.04, SRC_Z + 0.04);
+        state.drawn.drillBit = segs.length;
+      } else {
+        // 音箱：箱体 + 两个同心圆喇叭
+        merge(box3(q, SRC_X, 0, SRC_Z, 0.60, 1.00, 0.52, [46, 52, 66], { stroke: 'rgba(2,6,23,.55)' }));
+        const cx = SRC_X + 0.31, cz = SRC_Z;
+        for (const [cy, R] of [[0.72, 0.20], [0.30, 0.15]]) {
+          const cp = project([cx, cy, cz], q);
+          dot2(cp, R * cp.s, 'rgba(15,20,30,.95)', 'rgba(148,163,184,.55)', 1.2);
+          dot2(cp, R * 0.55 * cp.s, 'rgba(56,66,84,.95)');
+        }
+        growWorld(cx, cx, 0.30 - 0.15, 0.72 + 0.20, cz - 0.20, cz + 0.20);
+        state.drawn.speakerCones = 2;
+      }
+
+      // 声源振动指示：几条随 t 抖动的短线，表示「正在发声」。
+      // 【故意不计入 srcWorld】—— 这是「声音在往外跑」的示意，不是声源的一部分；
+      // 计进去的话，「隔声罩有没有罩住声源」这条判据会被它顶穿（它本来就该伸到罩外）。
+      const jit = Math.sin(state.t * 22) * 0.02;
+      const top = k === 'speaker' ? 1.02 : (k === 'drill' ? 0.88 : 0.74);
+      for (let i = -1; i <= 1; i++) {
+        const a = project([SRC_X + 0.42 + jit, top + 0.10 + i * 0.09, SRC_Z], q);
+        const b = project([SRC_X + 0.62 + jit * 2, top + 0.10 + i * 0.09, SRC_Z], q);
+        line([a, b], 'rgba(248,113,113,' + (0.35 + 0.35 * Math.abs(Math.sin(state.t * 11))) + ')', 2);
+      }
+      state.drawn.srcBox = box;
+      state.drawn.srcWorld = box;
+    }
+
+    /* ---------------------------- 隔声罩 ----------------------------
+     * 半透明的罩子 + 内衬。用「顶面 + 四个侧面」的线框加淡填充表示 ——
+     * 实心罩会把声源整个盖住，学生就看不见里面是什么了。
+     * ------------------------------------------------------------------ */
+    function drawHood(q) {
+      if (!state.hoodOn) { state.drawn.hood = 0; state.drawn.hoodBox = null; return; }
+      const P = (x, y, z) => project([x, y, z], q);
+      const r = HOOD_R, hgt = HOOD_H;
+      const top = [[SRC_X - r, hgt, SRC_Z - r], [SRC_X + r, hgt, SRC_Z - r],
+                   [SRC_X + r, hgt, SRC_Z + r], [SRC_X - r, hgt, SRC_Z + r]];
+      const bot = [[SRC_X - r, 0.02, SRC_Z - r], [SRC_X + r, 0.02, SRC_Z - r],
+                   [SRC_X + r, 0.02, SRC_Z + r], [SRC_X - r, 0.02, SRC_Z + r]];
+      // 罩子的屏幕盒子：自检做像素差分时要把它整块排除 —— 罩子本身（以及它
+      // 盖住的那部分声源）会随开关变颜色，不排除的话差分量里混进来的是「罩子」
+      // 而不是「声波」。
+      let hb = null;
+      const grow = p => {
+        if (!hb) hb = { x0: p.x, x1: p.x, y0: p.y, y1: p.y };
+        else {
+          hb.x0 = Math.min(hb.x0, p.x); hb.x1 = Math.max(hb.x1, p.x);
+          hb.y0 = Math.min(hb.y0, p.y); hb.y1 = Math.max(hb.y1, p.y);
+        }
+      };
+      // 四个侧面（背面剔除）
+      for (let i = 0; i < 4; i++) {
+        const j = (i + 1) % 4;
+        const fc = [(top[i][0] + top[j][0]) / 2, (top[i][1] + bot[i][1]) / 2, (top[i][2] + top[j][2]) / 2];
+        const n = vnorm(sub(fc, [SRC_X, hgt / 2, SRC_Z]));
+        if (dot(n, sub(q.eye, fc)) <= 0) continue;
+        const quad = [P.apply(null, top[i]), P.apply(null, top[j]), P.apply(null, bot[j]), P.apply(null, bot[i])];
+        poly(quad, 'rgba(56,189,248,.13)', 'rgba(56,189,248,.55)', 1.4);
+        quad.forEach(grow);
+      }
+      // 顶面
+      const tq = top.map(p => P.apply(null, p));
+      poly(tq, 'rgba(56,189,248,.20)', 'rgba(56,189,248,.75)', 1.8);
+      tq.forEach(grow);
+      // 内衬：顶面里侧一圈虚线（吸音棉），表示罩子内壁是吸声的
+      const inner = [];
+      for (let i = 0; i < 4; i++) {
+        inner.push(project([SRC_X + (top[i][0] - SRC_X) * 0.86, hgt - 0.05, SRC_Z + (top[i][2] - SRC_Z) * 0.86], q));
+      }
+      line(inner.concat([inner[0]]), 'rgba(148,163,184,.65)', 1.2, [5, 4]);
+      state.drawn.hood = 1;
+      state.drawn.hoodBox = hb;
+    }
+
+    /* ---------------------------- 人 ---------------------------- */
+    function drawPerson(q) {
+      const [px, , pz] = personPos();
+      const skin = [226, 190, 160], cloth = [72, 118, 168], pants = [58, 68, 88];
+      let box = null;
+      const merge = b => {
+        if (!b) return;
+        if (!box) box = { x0: b.x0, x1: b.x1, y0: b.y0, y1: b.y1 };
+        else {
+          box.x0 = Math.min(box.x0, b.x0); box.x1 = Math.max(box.x1, b.x1);
+          box.y0 = Math.min(box.y0, b.y0); box.y1 = Math.max(box.y1, b.y1);
+        }
+      };
+      // 两条腿
+      for (const dz of [-0.10, 0.10]) {
+        merge(box3(q, px, 0, pz + dz, 0.13, 0.78, 0.15, pants, { stroke: 'rgba(2,6,23,.4)' }));
+      }
+      // 身体
+      merge(box3(q, px, 0.78, pz, 0.40, 0.56, 0.24, cloth, { stroke: 'rgba(2,6,23,.4)' }));
+      // 两条手臂（自然下垂，稍微分开）
+      for (const dz of [-0.26, 0.26]) {
+        merge(box3(q, px, 0.74, pz + dz, 0.11, 0.50, 0.12, cloth, { stroke: 'rgba(2,6,23,.4)', amb: 0.44 }));
+      }
+      // 头（球）
+      const headY = 1.50, headR = 0.135;
+      const hp = project([px, headY, pz], q);
+      const rr = headR * hp.s;
+      dot2(hp, rr, 'rgb(226,190,160)', 'rgba(2,6,23,.45)', 1.2);
+      // 头发（头顶一小片深色）
+      dot2(project([px, headY + 0.045, pz], q), rr * 0.86, 'rgba(38,32,30,.92)');
+      // 脸朝声源（−x）：在 −x 侧点两只眼睛
+      dot2(project([px - headR * 0.72, headY + 0.02, pz - 0.06], q), Math.max(1.2, rr * 0.11), 'rgba(20,20,26,.95)');
+      dot2(project([px - headR * 0.72, headY + 0.02, pz + 0.06], q), Math.max(1.2, rr * 0.11), 'rgba(20,20,26,.95)');
+      // 手里举着书（在胸前）
+      merge(box3(q, px - 0.02, 1.06, pz, 0.26, 0.18, 0.32, [238, 238, 228], { stroke: 'rgba(2,6,23,.35)' }));
+      state.drawn.person = box;
+      state.drawn.headPt = hp;
+
+      // 耳罩：头梁 + 两侧罩杯。只画两个圆片会读成「头上顶了个光环」，
+      // 加一条跨过头顶的梁才认得出是耳罩。
+      if (state.earOn) {
+        const band = [];
+        for (let k = 0; k <= 12; k++) {
+          const a = Math.PI * (k / 12);
+          band.push(project([px, headY + Math.sin(a) * (headR + 0.055),
+                                 pz + Math.cos(a) * (headR + 0.055)], q));
+        }
+        line(band, 'rgba(251,191,36,.95)', 3);
+        for (const dz of [-1, 1]) {
+          const ep = project([px, headY - 0.01, pz + dz * (headR + 0.075)], q);
+          dot2(ep, rr * 0.80, 'rgba(251,191,36,.95)', 'rgba(120,53,15,.95)', 1.6);
+          dot2(ep, rr * 0.34, 'rgba(120,53,15,.9)');
+        }
+        state.drawn.earMuffs = 2;
+      } else {
+        state.drawn.earMuffs = 0;
+      }
+    }
+
+    /* ---------------------------- 声级计 ---------------------------- */
+    function drawMeter(q) {
+      const [mx, , mz] = meterPos();
+      box3(q, mx, 0, mz, 0.055, 0.95, 0.055, [120, 132, 148], { stroke: 'rgba(2,6,23,.45)' });
+      const head = box3(q, mx, 0.95, mz, 0.34, 0.30, 0.20, [28, 34, 46], { stroke: 'rgba(148,163,184,.5)', lw: 1.2 });
+      // 屏幕：朝右房外侧（+z）的那一面上一块亮底
+      const P = (x, y, z) => project([x, y, z], q);
+      const face = [P(mx - 0.15, 1.00, mz + 0.101), P(mx + 0.15, 1.00, mz + 0.101),
+                    P(mx + 0.15, 1.20, mz + 0.101), P(mx - 0.15, 1.20, mz + 0.101)];
+      const lv = levelOf(Lear());
+      const col = lv.cls === 'bad' ? 'rgba(248,113,113,.85)' : (lv.cls === 'warn' ? 'rgba(251,191,36,.85)' : 'rgba(52,211,153,.85)');
+      poly(face, col, 'rgba(2,6,23,.6)', 1);
+      // 屏幕上的读数（挂在屏幕中心，不进避让 —— 它就长在表上）
+      const cp = project([mx, 1.10, mz + 0.105], q);
+      ctx.font = '800 12px ui-monospace, Menlo, monospace';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillStyle = 'rgba(2,6,23,.92)';
+      ctx.fillText(state.srcOn ? Lear().toFixed(1) : '--', cp.x, cp.y);
+      state.drawn.meterBox = head;
+      state.drawn.meterPt = cp;
+    }
+
+    /* ============================================================
+     * 渲染
+     * ============================================================ */
+    function render() {
+      const w = state.w, h = state.h;
+      ctx.setTransform(state.dpr, 0, 0, state.dpr, 0, 0);
+      frameBoxes = [];
+      state.drawn = {};
+      const q = {};
+      makeCam(q, w, h);
+
+      drawBackdrop(w, h);
+      drawFloor(q);
+      drawBackWaveFields(q);      // 左房的波在地面上 —— 先画，被墙压住是应该的
+      drawBackWall(q);
+
+      // 三组实体按【相机在哪一侧】排前后：墙永远夹在两间房中间。
+      // 不排序（把声源固定画在墙之后）的话，从右侧看过去，左房的电锯会
+      // 直接画在关着的门上 —— 看着像「电锯摆在了门口」。
+      const L = () => { drawHood(q); drawSource(q); };
+      const W = () => { drawDivider(q); drawPanels(q); drawDoor(q); };
+      const R = () => { drawPerson(q); drawMeter(q); };
+      for (const g of (q.eye[0] > 0 ? [L, W, R] : [R, W, L])) g();
+
+      drawFrontWaveFields(q);     // 右房的波画在墙之后，才不会被墙盖没
+
+      // ── 标签（一律走避让）──
+      const [px, , pz] = personPos();
+      avoidLabel(project([SRC_X, HOOD_H + 0.34, SRC_Z], q),
+                 state.srcOn ? SOURCES[state.src].name : '声源（已关闭）',
+                 state.srcOn ? '#fca5a5' : '#7d97a8', 11);
+      avoidLabel(project([px, 1.86, pz], q), '正在读书', '#a5f3fc', 11);
+      avoidLabel(project([meterPos()[0], 1.42, meterPos()[2]], q), '声级计', '#a5f3fc', 10);
+      avoidLabel(project([WALL_X, ROOM_H - 0.30, DOOR_CZ], q), '隔墙', '#cbd5e1', 10);
+      if (state.hoodOn) avoidLabel(project([SRC_X - HOOD_R - 0.10, HOOD_H * 0.6, SRC_Z + HOOD_R], q), '隔声罩', '#7dd3fc', 10);
+      if (state.panelOn) avoidLabel(project([WALL_X + 0.35, PANEL_Y1 - 0.12, 1.55], q), '吸音板', '#7dd3fc', 10);
+      if (state.earOn) avoidLabel(project([px + 0.30, 1.62, pz], q), '耳罩', '#fde68a', 10);
+      // 区域名最后画（要挑一个不压住别的位置）
+      bestLabel(project([ROOM_L + 0.55, 0.02, ROOM_F * 0.55], q), '噪声源房间', 'rgba(248,180,180,.75)', 11, AVOID);
+      bestLabel(project([ROOM_R - 0.85, 0.02, ROOM_F * 0.55], q), '安静房间', 'rgba(165,243,252,.75)', 11, AVOID);
+
+      updateHint();
+      drawTip(q);
+      updateStageButtons();
+      // 本帧所有标签的屏幕盒子。暴露出去是为了让自检做像素差分时能把标签整块
+      // 排除 —— 标签的位置由避让算法挑，开一个措施就可能挪一格，不排除的话
+      // 差分量里混进来的是「文字搬家」而不是「声波变淡」。
+      state.drawn.labelBoxes = frameBoxes.map(b => ({ x0: b.x, x1: b.x + b.w, y0: b.y, y1: b.y + b.h }));
+    }
+
+    // 地面波场分两次画：左房的波在墙之前画（会被墙压住，正是「墙挡住了声」），
+    // 右房的波在墙之后画 —— 它本来就在墙的另一侧，先画就被墙盖没了。
+    // 两个波场都画在【地面上】（y ≈ 0.02）：圆心放在地面而不是半空，
+    // 是为了不穿模、不挡器材 —— 像水波一样一圈圈铺开，
+    // 「声音从哪儿来、传到了哪儿、被挡掉多少」一眼就看明白。
+    function drawBackWaveFields(q) {
+      const cyc = (state.t / WAVE_T) % 1;
+      let nL = 0;
+      for (let i = 0; i < WAVE_N; i++) {
+        const r = ((cyc + i / WAVE_N) % 1) * R_MAX_L;
+        const a = waveAmpL(r);
+        if (r < 0.12 || a < 0.09) continue;
+        const pts = [];
+        for (let k = 0; k <= 72; k++) {
+          const th = k / 72 * PI2;
+          const x = SRC_X + r * Math.cos(th), z = SRC_Z + r * Math.sin(th);
+          pts.push(x <= WALL_X - 0.04 ? project([x, 0.02, z], q) : null);
+        }
+        segLine(pts, 'rgba(248,113,113,' + (0.58 * a).toFixed(3) + ')', 2.4);
+        nL++;
+      }
+      const rv = cyc * R_MAX_L, av = waveAmpL(rv);
+      if (rv > 0.2 && av > 0.09) {
+        const pts = [];
+        for (let k = 0; k <= 40; k++) {
+          const a = Math.PI * (k / 40);
+          pts.push(project([SRC_X + rv * Math.cos(a), 0.62 + rv * Math.sin(a), SRC_Z], q));
+        }
+        line(pts, 'rgba(248,113,113,' + (0.40 * av).toFixed(3) + ')', 2);
+      }
+      state.drawn.waveL = nL;
+    }
+    function drawFrontWaveFields(q) {
+      const cyc = (state.t / WAVE_T) % 1;
+      let nR = 0;
+      for (let i = 0; i < WAVE_N; i++) {
+        const r = ((cyc + i / WAVE_N) % 1) * R_MAX_R;
+        const a = waveAmpR(r);
+        if (r < 0.12 || a < 0.07) continue;
+        const pts = [];
+        for (let k = 0; k <= 72; k++) {
+          const th = k / 72 * PI2;
+          const x = WALL_X + r * Math.cos(th), z = DOOR_CZ + r * Math.sin(th);
+          pts.push(x >= WALL_X + 0.04 ? project([x, 0.02, z], q) : null);
+        }
+        segLine(pts, 'rgba(251,191,36,' + (0.58 * a).toFixed(3) + ')', 2.2);
+        nR++;
+      }
+      state.drawn.waveR = nR;
+    }
+
+    function drawTip(q) {
+      const tip = $('nz-tip');
+      if (!state.hover || state.dragging) { tip.classList.remove('show'); return; }
+      const p = project([SRC_X, HOOD_H + 0.10, SRC_Z], q);
+      tip.textContent = '点一下声源可以把它关掉';
+      tip.style.left = Math.round(p.x + 14) + 'px';
+      tip.style.top = Math.round(p.y - 14) + 'px';
+      tip.classList.add('show');
+    }
+
+    /* ============================================================
+     * UI 刷新
+     * ============================================================ */
+    function updateHint() {
+      const el = $('nz-hint');
+      const t = [];
+      if (!state.srcOn) {
+        t.push('<b>声源已关闭</b> —— 没有声源，隔壁自然安静（但这不是「控制噪声」，是停工）。');
+      } else {
+        const L = Lear(), lv = levelOf(L);
+        t.push('隔壁的' + SOURCES[state.src].name + '正在工作，你在 ' + distNow().toFixed(1) +
+               ' m 外读到 <b>' + L.toFixed(1) + ' dB</b> —— ' + lv.text + '。');
+      }
+      if (cutsOn() === 0) {
+        t.push('三处措施都还没动手，声音<b>一路无阻</b>地传过来。');
+      } else {
+        const parts = [];
+        if (state.hoodOn) parts.push('声源处');
+        if (state.doorOn || state.panelOn) parts.push('传播中');
+        if (state.earOn) parts.push('人耳处');
+        t.push('已经在 <b>' + parts.join(' / ') + '</b> 动手，一共降了 <b>' + ilTotal() + ' dB</b>。');
+      }
+      if (state.soundOn && !audioKicked) {
+        t.push('<b>🔈 点一下页面任意处开启声音</b>（浏览器要求先有一次点击）');
+      } else if (!state.soundOn) {
+        t.push('🔇 声音已静音，点右侧「声音」按钮可以打开。');
+      }
+      el.innerHTML = t.map(s => '<div>' + s + '</div>').join('');
+    }
+
+    function updateAudioUI() {
+      const b = $('btn-sound');
+      if (!b) return;
+      const live = state.soundOn && audioKicked && !!AC;
+      b.textContent = !state.soundOn ? '🔇 声音：已静音' : (live ? '🔊 声音：开' : '🔈 点一下开声音');
+      b.classList.toggle('on', !state.soundOn);
+    }
+
+    function updateStageButtons() {
+      const rec = $('nz-record');
+      // 措施开满（或者声源关掉）时按钮亮起来 —— 这一刻正是该记录的时候
+      const ready = cutsOn() >= 3 || !state.srcOn;
+      rec.classList.toggle('ready', ready);
+      $('nz-record-cnt').textContent = state.marks.length;
+    }
+
+    function updateReadouts() {
+      const L = Lear(), lv = levelOf(L);
+      $('nz-l-num').textContent = state.srcOn ? L.toFixed(1) : '--';
+      // 大数字跟着等级变色：绿（安静）→ 黄（吵闹）→ 红（伤听力）。
+      // 用成对的 [文字色, 光晕色] 写死，别在运行时去拆 rgba 字符串 ——
+      // 那种字符串手术既难读又容易在某个分支上炸掉整个读数刷新。
+      const PALETTE = {
+        bad:  ['#fca5a5', 'rgba(248,113,113,.45)'],
+        warn: ['#fde68a', 'rgba(251,191,36,.45)'],
+        ok:   ['#6ee7b7', 'rgba(52,211,153,.45)']
+      };
+      const pal = PALETTE[lv.cls] || PALETTE.ok;
+      const gn = $('nz-l-num');
+      gn.style.color = pal[0];
+      gn.style.textShadow = '0 0 12px ' + pal[1];
+      // 分贝刻度游标：0~120 dB 映射到 0~100%
+      $('nz-scale-mark').style.left = clamp(L / 120 * 100, 0, 100).toFixed(1) + '%';
+
+      const cut = cutTotal();
+      $('nz-cut-num').textContent = cut.toFixed(1) + ' dB';
+      $('nz-cut-bar').style.width = clamp(cut / 80 * 100, 0, 100).toFixed(1) + '%';
+
+      $('nz-l-src').textContent = state.srcOn ? SOURCES[state.src].L.toFixed(1) + ' dB' : '—';
+      $('nz-l-dist').textContent = '−' + distDrop(distNow()).toFixed(1) + ' dB';
+
+      const hp = $('nz-hear-pill');
+      hp.textContent = state.srcOn ? lv.short : '无声源';
+      hp.className = 'pill ' + (lv.cls === 'bad' ? 'live' : (lv.cls === 'ok' ? 'ok' : ''));
+
+      const sp = $('nz-src-state');
+      sp.textContent = state.srcOn ? SOURCES[state.src].name + '工作中' : '已关闭';
+      sp.className = 'pill ' + (state.srcOn ? 'live' : '');
+
+      const cp = $('nz-cut-pill');
+      cp.textContent = cutsOn() + ' 处';
+      cp.className = 'pill ' + (cutsOn() > 0 ? 'ok' : '');
+
+      // 三条途径的小标签
+      $('nz-tag-1').textContent = state.hoodOn ? '−' + IL_HOOD + ' dB' : '未动手';
+      $('nz-tag-1').className = 'tag' + (state.hoodOn ? ' hot' : '');
+      const p2 = ilPath();
+      $('nz-tag-2').textContent = p2 > 0 ? '−' + p2 + ' dB' : '未动手';
+      $('nz-tag-2').className = 'tag' + (p2 > 0 ? ' hot' : '');
+      $('nz-tag-3').textContent = state.earOn ? '−' + IL_EAR + ' dB' : '未动手';
+      $('nz-tag-3').className = 'tag' + (state.earOn ? ' hot' : '');
+
+      $('nz-src-note').innerHTML = SOURCES[state.src].note;
+      $('nz-d-num').textContent = distNow().toFixed(1) + ' m';
+
+      // 按钮态
+      $('btn-hood').classList.toggle('on', state.hoodOn);
+      $('btn-hood').textContent = state.hoodOn ? '✅ 隔声罩已装' : '给电锯加隔声罩';
+      $('btn-door').classList.toggle('on', state.doorOn);
+      $('btn-door').textContent = state.doorOn ? '✅ 已换隔声门' : '把门换成隔声门';
+      $('btn-panel').classList.toggle('on', state.panelOn);
+      $('btn-panel').textContent = state.panelOn ? '✅ 已贴吸音板' : '墙上贴吸音板';
+      $('btn-ear').classList.toggle('on', state.earOn);
+      $('btn-ear').textContent = state.earOn ? '✅ 已戴耳罩' : '戴上耳罩';
+      document.querySelectorAll('[data-src]').forEach(b => {
+        b.classList.toggle('primary', b.getAttribute('data-src') === state.src && state.srcOn);
+      });
+
+      // 听到的声音徽章
+      const bd = $('nz-hear-badge');
+      if (!state.srcOn) {
+        bd.innerHTML = '<span class="badge ok">声源已关闭 —— 声级计回到房间本底 20 dB</span>';
+      } else if (L >= 90) {
+        bd.innerHTML = '<span class="badge bad">超过 90 dB —— 长期在这种环境里会损伤听力</span>';
+      } else if (L >= 70) {
+        bd.innerHTML = '<span class="badge bad">70 dB 以上 —— 干扰谈话、影响工作效率</span>';
+      } else if (L >= 50) {
+        bd.innerHTML = '<span class="badge warn">50 dB 以上 —— 吵闹，需要动手降噪了</span>';
+      } else if (L >= 30) {
+        bd.innerHTML = '<span class="badge ok">30~40 dB —— 较理想的安静环境</span>';
+      } else {
+        bd.innerHTML = '<span class="badge ok">已经接近房间本底，安静了</span>';
+      }
+    }
+
+    /* ---------------------------- 降噪账本 ---------------------------- */
+    function renderAnalysis() {
+      const rows = [];
+      rows.push({ k: '声源（' + SOURCES[state.src].name + '，1 m 处）', v: state.srcOn ? SOURCES[state.src].L.toFixed(1) + ' dB' : '—', off: !state.srcOn });
+      rows.push({ k: '距离衰减（' + distNow().toFixed(1) + ' m）', v: '−' + distDrop(distNow()).toFixed(1) + ' dB', cut: true });
+      const cuts = [
+        ['① 声源处 · 隔声罩', state.hoodOn, IL_HOOD],
+        ['② 传播中 · 隔声门', state.doorOn, IL_DOOR],
+        ['② 传播中 · 吸音板', state.panelOn, IL_PANEL],
+        ['③ 人耳处 · 耳罩', state.earOn, IL_EAR]
+      ];
+      for (const [k, on, il] of cuts) {
+        rows.push({ k: k, v: on ? '−' + il.toFixed(1) + ' dB' : '未开', cut: on, off: !on });
+      }
+      let html = rows.map(r =>
+        '<div class="line' + (r.cut ? ' cut' : '') + (r.off ? ' off' : '') + '"><span>' + r.k + '</span><b>' + r.v + '</b></div>'
+      ).join('');
+      html += '<div class="line sum"><span>声级计读数</span><b>' + (state.srcOn ? Lear().toFixed(1) + ' dB' : '--') + '</b></div>';
+      html += '<div class="line"><span>总降噪量</span><b>' + cutTotal().toFixed(1) + ' dB</b></div>';
+
+      // 结论：自动指出「哪一处最有效」「还差多少」
+      const L = Lear();
+      const best = [['声源处的隔声罩', state.hoodOn, IL_HOOD],
+                    ['传播中的隔声门', state.doorOn, IL_DOOR],
+                    ['传播中的吸音板', state.panelOn, IL_PANEL],
+                    ['人耳处的耳罩', state.earOn, IL_EAR]];
+      let conc = '', cls = 'conc info';
+      if (!state.srcOn) {
+        conc = '声源关掉了，读数回到本底 20 dB。注意：<b>停止发声</b>当然能让房间安静，' +
+               '但这不叫控制噪声 —— 控制噪声是在<b>噪声还在发</b>的前提下让它传不过来。';
+        cls = 'conc info';
+      } else if (cutsOn() === 0) {
+        conc = '三处都没动手，' + L.toFixed(1) + ' dB 的' + SOURCES[state.src].name +
+               '声几乎原样传过来。先把<b>声源处</b>动手 —— 那里最彻底：声音压根没发出来。';
+        cls = 'conc warn';
+      } else {
+        const on = best.filter(b => b[1]).sort((a, b) => b[2] - a[2]);
+        conc = '已经降了 <b>' + cutTotal().toFixed(1) + ' dB</b>，声级计读到 <b>' + L.toFixed(1) + ' dB</b>（' + levelOf(L).text + '）。';
+        if (on.length) conc += '其中<b>' + on[0][0] + '</b>一项就贡献了 ' + on[0][2] + ' dB，最划算。';
+        if (L > 40) conc += ' 还想再安静些的话，' +
+          (!state.hoodOn ? '先试试<b>声源处的隔声罩</b>（20 dB，一处顶两处）。'
+                         : (!state.earOn ? '可以再戴上<b>耳罩</b>（25 dB，但只护得住自己）。'
+                                         : '距离也管用：往后站远一点。')) ;
+        cls = L <= 40 ? 'conc' : 'conc info';
+      }
+      html += '<div class="' + cls + '">' + conc + '</div>';
+      $('analysis').innerHTML = html;
+    }
+
+    function renderTable() {
+      const el = $('rec-body');
+      if (!state.marks.length) {
+        el.innerHTML = '<p class="rec-empty">还没有记录。挑一处措施打开，再点「记录这一组」。</p>';
+        $('rec-count').textContent = '0 组';
+        return;
+      }
+      const tags = m => {
+        const a = [];
+        if (m.hood) a.push('罩');
+        if (m.door) a.push('门');
+        if (m.panel) a.push('板');
+        if (m.ear) a.push('耳');
+        return a.length ? a.join('+') : '无';
+      };
+      let html = '<table class="rec"><thead><tr><th>#</th><th>声源</th><th>距离</th><th>措施</th><th>读数</th><th>等级</th></tr></thead><tbody>';
+      state.marks.forEach((m, i) => {
+        const lv = levelOf(m.L);
+        html += '<tr><td>' + (i + 1) + '</td>' +
+                '<td class="dim">' + m.src + '</td>' +
+                '<td>' + m.d.toFixed(1) + ' m</td>' +
+                '<td class="dim">' + tags(m) + '</td>' +
+                '<td>' + m.L.toFixed(1) + '</td>' +
+                '<td class="lv" style="color:' + (lv.cls === 'bad' ? '#fca5a5' : (lv.cls === 'warn' ? '#fde68a' : '#6ee7b7')) + '">' + lv.short + '</td></tr>';
+      });
+      html += '</tbody></table>';
+      el.innerHTML = html;
+      $('rec-count').textContent = state.marks.length + ' 组';
+    }
+
+    function syncUI() {
+      updateReadouts(); renderTable(); renderAnalysis(); updateStageButtons(); updateAudioUI();
+    }
+
+    let toastTimer = 0;
+    function showToast(text) {
+      const el = $('nz-toast');
+      el.textContent = text;
+      el.classList.add('show');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => el.classList.remove('show'), 1700);
+    }
+    let flagTimer = 0;
+    function flashFlag(on) {
+      const el = $('nz-flag');
+      el.classList.toggle('show', on);
+      clearTimeout(flagTimer);
+      if (on) flagTimer = setTimeout(() => el.classList.remove('show'), 3200);
+    }
+
+    /* ============================================================
+     * 动作
+     * ============================================================ */
+    function setSrc(k) {
+      if (!SOURCES[k]) return;
+      if (state.src === k && state.srcOn) { setSrcOn(false); return; }
+      state.src = k; state.srcOn = true;
+      state.dirty = true;
+      syncUI();
+    }
+    function setSrcOn(on) { state.srcOn = on; state.dirty = true; syncUI(); }
+    function setHood(on) { state.hoodOn = on; state.dirty = true; syncUI(); if (on) showToast('声源处：隔声罩已装，罩外只剩 1/10 的声压'); }
+    function setDoor(on) { state.doorOn = on; state.dirty = true; syncUI(); if (on) showToast('传播中：换上了隔声门，门缝压了密封条'); }
+    function setPanel(on) { state.panelOn = on; state.dirty = true; syncUI(); if (on) showToast('传播中：隔墙贴上了吸音板，反射声被吸掉'); }
+    function setEar(on) { state.earOn = on; state.dirty = true; syncUI(); if (on) showToast('人耳处：戴上耳罩，你自己安静了，别人还在吵'); }
+    function setSound(on) { state.soundOn = on; syncUI(); return on; }
+    // 滑块给的是【距离】，状态存的是【人的位置】—— 换算只在这一处发生，
+    // 免得两边都换算（那会静默地挪两倍）。
+    function setDist(v) {
+      state.personX = clamp(SRC_X + clamp(v, D_MIN, D_MAX), ROOM_L + 0.6, ROOM_R - 0.45);
+      state.dirty = true; syncUI();
+    }
+
+    function resetAll() {
+      state.src = 'saw'; state.srcOn = true; state.personX = PERSON_X0;
+      state.hoodOn = state.doorOn = state.panelOn = state.earOn = false;
+      state.marks = [];
+      state.dirty = true;
+      syncUI();
+    }
+
+    // 记录：唯一入口 —— 侧栏与画面都走它
+    function recordMark() {
+      if (!state.srcOn) { showToast('声源是关着的，这组数据没有意义'); return; }
+      state.marks.push({
+        src: SOURCES[state.src].name, d: distNow(), L: Lear(),
+        hood: state.hoodOn, door: state.doorOn, panel: state.panelOn, ear: state.earOn
+      });
+      renderTable(); updateStageButtons();
+      showToast('已记录：' + Lear().toFixed(1) + ' dB（' + levelOf(Lear()).short + '）');
+    }
+
+    function applyView(name) {
+      if (!VIEWS[name]) return;
+      state.view = name;
+      state.yaw = VIEWS[name][0]; state.pitch = VIEWS[name][1];
+      state.dirty = true;
+    }
+
+    /* ---------------------------- 命中测试 ---------------------------- */
+    function srcBox(q) {
+      const b = state.drawn.srcBox;
+      if (!b) return null;
+      return { x0: b.x0, x1: b.x1, y0: b.y0, y1: b.y1, w: b.x1 - b.x0, h: b.y1 - b.y0 };
+    }
+    function hitTest(x, y, q) {
+      const b = srcBox(q);
+      if (b && x >= b.x0 - 6 && x <= b.x1 + 6 && y >= b.y0 - 6 && y <= b.y1 + 6) return 'src';
+      return null;
+    }
+
+    /* ---------------------------- 事件 ---------------------------- */
+    function onDown(e) {
+      const r = canvas.getBoundingClientRect();
+      const x = e.clientX - r.left, y = e.clientY - r.top;
+      const q = {}; makeCam(q, state.w, state.h);
+      const hit = hitTest(x, y, q);
+      state.downAt = { x: x, y: y, hit: hit };
+      if (hit === 'src') { state.dragging = false; return; }
+      state.dragging = true;
+      state.drag = { x: x, y: y };
+      state.dragYaw = state.yaw; state.dragPitch = state.pitch;
+      canvas.classList.add('grabbing');
+      canvas.setPointerCapture && canvas.setPointerCapture(e.pointerId);
+    }
+    function onMove(e) {
+      const r = canvas.getBoundingClientRect();
+      const x = e.clientX - r.left, y = e.clientY - r.top;
+      if (state.dragging && state.drag) {
+        state.yaw = state.dragYaw + (x - state.drag.x) * 0.0075;
+        state.pitch = clamp(state.dragPitch + (y - state.drag.y) * 0.0060, -0.25, 1.32);
+        state.view = 'custom';
+        state.dirty = true;
+        return;
+      }
+      const q = {}; makeCam(q, state.w, state.h);
+      const hit = hitTest(x, y, q);
+      state.hover = hit;
+      canvas.classList.toggle('pick', !!hit);
+      state.dirty = true;
+    }
+    function onUp(e) {
+      // 点击 vs 拖动：位移小于 6 px 才算「点了一下声源」。
+      // 不判位移的话，转视角时正好按下又松在声源上，就会误关声源。
+      const d = state.downAt;
+      if (d && d.hit === 'src' && e) {
+        const r = canvas.getBoundingClientRect();
+        const moved = Math.hypot(e.clientX - r.left - d.x, e.clientY - r.top - d.y);
+        if (moved < 6) setSrcOn(!state.srcOn);
+      }
+      state.dragging = false; state.drag = null; state.downAt = null;
+      canvas.classList.remove('grabbing');
+    }
+    function onWheel(e) {
+      e.preventDefault();
+      state.zoom = clamp(state.zoom * (e.deltaY > 0 ? 0.92 : 1.087), 0.5, 3.0);
+      state.dirty = true;
+    }
+
+    /* ============================================================
+     * 尺寸 / 主循环
+     * ============================================================ */
+    function resize() {
+      const r = stage.getBoundingClientRect();
+      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      const w = Math.max(320, Math.round(r.width));
+      const h = Math.max(240, Math.round(r.height));
+      state.w = w; state.h = h; state.dpr = dpr;
+      canvas.width = Math.round(w * dpr);
+      canvas.height = Math.round(h * dpr);
+      canvas.style.width = w + 'px';
+      canvas.style.height = h + 'px';
+      state.dirty = true;
+    }
+    let lastTs = 0;
+    function tick(ts) {
+      const dt = lastTs ? Math.min(0.05, (ts - lastTs) / 1000) : 0;
+      lastTs = ts;
+      if (dt > 0) {
+        state.t += dt;
+        // 声波与锯片一直在动 —— 只要声源开着就得每帧重画
+        if (state.srcOn) state.dirty = true;
+      }
+      pumpAudio();
+      if (state.dirty) { render(); state.dirty = false; }
+      requestAnimationFrame(tick);
+    }
+
+    /* ============================================================
+     * 绑定
+     * ============================================================ */
+    canvas.addEventListener('pointerdown', onDown);
+    canvas.addEventListener('pointermove', onMove);
+    canvas.addEventListener('pointerup', onUp);
+    canvas.addEventListener('pointercancel', onUp);
+    canvas.addEventListener('pointerleave', () => {
+      state.hover = null; state.dragging = false; state.drag = null;
+      canvas.classList.remove('pick'); canvas.classList.remove('grabbing'); state.dirty = true;
+    });
+    canvas.addEventListener('wheel', onWheel, { passive: false });
+
+    $('nz-record').addEventListener('click', recordMark);
+    $('nz-reset').addEventListener('click', () => { resetAll(); showToast('已重置'); });
+    $('btn-hood').addEventListener('click', () => setHood(!state.hoodOn));
+    $('btn-door').addEventListener('click', () => setDoor(!state.doorOn));
+    $('btn-panel').addEventListener('click', () => setPanel(!state.panelOn));
+    $('btn-ear').addEventListener('click', () => setEar(!state.earOn));
+    $('btn-sound').addEventListener('click', () => {
+      const on = setSound(!state.soundOn);
+      showToast(on ? '声音已打开' : '已静音');
+    });
+    document.querySelectorAll('[data-src]').forEach(b => {
+      b.addEventListener('click', () => setSrc(b.getAttribute('data-src')));
+    });
+    document.querySelectorAll('[data-view]').forEach(b => {
+      b.addEventListener('click', () => applyView(b.getAttribute('data-view')));
+    });
+    const dslider = $('nz-dist');
+    dslider.addEventListener('input', () => setDist(parseFloat(dslider.value)));
+
+    // 自动播放策略：第一次用户手势才允许创建 AudioContext。捕获阶段监听，免得被别的
+    // handler 的 preventDefault/stopPropagation 拦掉。只挂一次，成功即摘。
+    window.addEventListener('pointerdown', kickAudio, true);
+    window.addEventListener('keydown', kickAudio, true);
+
+    if (window.ResizeObserver) new ResizeObserver(() => resize()).observe(stage);
+    window.addEventListener('resize', resize);
+
+    resize();
+    syncUI();
+    requestAnimationFrame(tick);
+
+    /* ============================================================
+     * 自检钩子
+     * ------------------------------------------------------------
+     * 渲染、读数、账本、自检必须共用同一份声学函数。下面把这些原样暴露出去，
+     * 测试算出来的就是页面真正在用的值 —— 自检把公式重抄一遍只证明自检自洽。
+     * ============================================================ */
+    window.__nz = {
+      state: state,
+      consts: {
+        ROOM_L: ROOM_L, ROOM_R: ROOM_R, ROOM_B: ROOM_B, ROOM_F: ROOM_F, ROOM_H: ROOM_H,
+        WALL_T: WALL_T, WALL_X: WALL_X,
+        DOOR_Z0: DOOR_Z0, DOOR_Z1: DOOR_Z1, DOOR_H: DOOR_H, DOOR_CZ: DOOR_CZ,
+        SRC_X: SRC_X, SRC_Z: SRC_Z, HOOD_R: HOOD_R, HOOD_H: HOOD_H,
+        PERSON_H: PERSON_H, PERSON_Z: PERSON_Z, METER_DX: METER_DX, METER_DZ: METER_DZ,
+        PANEL_Y0: PANEL_Y0, PANEL_Y1: PANEL_Y1, PANEL_D: PANEL_D,
+        PANEL_SPAN: PANEL_SPAN, PANEL_GAP: PANEL_GAP,
+        IL_HOOD: IL_HOOD, IL_DOOR: IL_DOOR, IL_PANEL: IL_PANEL, IL_EAR: IL_EAR,
+        D_REF: D_REF, D_MIN: D_MIN, D_MAX: D_MAX, D_DEFAULT: D_DEFAULT, PERSON_X0: PERSON_X0,
+        L_FLOOR: L_FLOOR,
+        L_REF_AUD: L_REF_AUD, AUD_THRESH: AUD_THRESH,
+        R_MAX_L: R_MAX_L, R_MAX_R: R_MAX_R, WAVE_N: WAVE_N, WAVE_T: WAVE_T,
+        SOURCES: SOURCES, SRC_ORDER: SRC_ORDER, VIEWS: VIEWS
+      },
+      makeCam: makeCam, project: project, unproject: unproject, envelopePoints: envelopePoints,
+      size: () => ({ w: state.w, h: state.h, dpr: state.dpr }),
+      // 声学：与页面同一份
+      distDrop: distDrop, distNow: distNow, srcL: srcL, ilSrc: ilSrc, ilPath: ilPath, ilEar: ilEar,
+      ilTotal: ilTotal, Lraw: Lraw, Lear: Lear, cutTotal: cutTotal, cutsOn: cutsOn,
+      levelOf: levelOf, waveAmpL: waveAmpL, waveAmpR: waveAmpR, waveFade: waveFade,
+      personPos: personPos, meterPos: meterPos, doorMouth: doorMouth, wallDist: wallDist,
+      // 声音
+      audioGain: audioGain, pumpAudio: pumpAudio, ensureAudio: ensureAudio, kickAudio: kickAudio,
+      audio: () => ({
+        ready: !!AC, ctxState: AC ? AC.state : null, kicked: audioKicked,
+        soundOn: state.soundOn, srcOn: state.srcOn, src: state.src,
+        gainLast: audioGainLast,
+        chainGains: SRC_ORDER.map(k => (srcGain[k] ? srcGain[k].gain.value : null))
+      }),
+      // 动作：与按钮走同一份
+      setSrc: setSrc, setSrcOn: setSrcOn, setHood: setHood, setDoor: setDoor,
+      setPanel: setPanel, setEar: setEar, setSound: setSound, setDist: setDist,
+      resetAll: resetAll, recordMark: recordMark, applyView: applyView,
+      render: render,
+      hitTest: hitTest
+    };
+  })();
+  </script>
+</body>
+</html>
