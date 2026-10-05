@@ -147,6 +147,16 @@
         .lab3d-field small { color: #64748b; font-size: 10px; line-height: 1.5; display: block; }
         .lab3d-segment { display: flex; gap: 5px; margin-top: 9px; }
         .lab3d-segment button { flex: 1; min-width: 0; padding: 7px 4px; font-size: 11px; }
+        /* 「单条可调」时才出现的那个滑块。必须显式写 [hidden] 规则：
+           .lab3d-field 自己不设 display，靠 UA 的 [hidden]{display:none} 也能关掉，
+           但只要以后有人给它加一句 display:block，隐藏就静默失效了。 */
+        .lab3d-field[hidden] { display: none; }
+        /* 单条光线模式下的读数条（方向角 / 入射角 / 反射角） */
+        .lab3d-angle-row {
+            display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 8px;
+            font-size: 11px; color: #9fb8c6;
+        }
+        .lab3d-angle-row b { color: #e0f2fe; font-weight: 700; }
         .lab3d-metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 12px; }
         .lab3d-metric {
             padding: 12px 13px; border: 1px solid rgba(56, 189, 248, .18); border-radius: 10px;
@@ -268,7 +278,7 @@
             <label><input id="sph-focus" type="checkbox" checked>显示焦点与球心</label>
             <label><input id="sph-axis" type="checkbox" checked>显示主光轴</label>
             <label><input id="sph-object" type="checkbox" checked>显示物与像</label>
-            <span class="legend">橙：入射光线　黄：反射光线　青：平行于主光轴的那条　紫虚线：反向延长线</span>
+            <span class="legend" id="sph-legend">橙：入射光线　黄：反射光线　青：平行于主光轴的那条　紫虚线：反向延长线</span>
           </div>
 
           <div class="lab3d-metrics" aria-live="polite">
@@ -302,6 +312,27 @@
             <small>「平行光束」用来看焦点：「点光源成像」用来看像</small>
           </div>
 
+          <div class="lab3d-field span-2">
+            <span class="field-label">光线显示 <output id="sph-rayset-name">全部光线</output></span>
+            <div class="lab3d-segment" id="sph-rayset" role="group" aria-label="选择显示哪些光线">
+              <button type="button" data-rayset="all" class="active">全部</button>
+              <button type="button" data-rayset="special">三条特殊</button>
+              <button type="button" data-rayset="single">单条可调</button>
+            </div>
+            <small id="sph-rayset-hint">青 / 粉 / 紫三条各对应一条规律，橙色是补充的扇形光线。嫌乱就切到「单条可调」。</small>
+          </div>
+
+          <div class="lab3d-field" id="sph-angle-field" hidden>
+            <label for="sph-angle"><span id="sph-angle-label">光线方向</span> <output id="sph-angle-value">3.8°</output></label>
+            <input id="sph-angle" type="range" min="0" max="100" value="50" step="0.5">
+            <small id="sph-angle-hint">拖动它，光线就沿镜面连续扫过，反射光跟着一起变 —— 两端正好停在镜面的边缘。</small>
+            <div class="lab3d-angle-row">
+              <span>入射角 <b id="sph-inc">0.0°</b></span>
+              <span>反射角 <b id="sph-ref">0.0°</b></span>
+              <span>落点（相对主轴）<b id="sph-rho">0.00 cm</b></span>
+            </div>
+          </div>
+
           <div class="lab3d-field">
             <label for="sph-R">曲率半径 R <output id="sph-R-value">12.0 cm</output></label>
             <input id="sph-R" type="range" min="8" max="16" value="12" step="0.5">
@@ -312,6 +343,15 @@
             <label for="sph-u">物距 u（物 → 镜面）<output id="sph-u-value">18.0 cm</output></label>
             <input id="sph-u" type="range" min="3" max="26" value="18" step="0.5">
             <small>也可以直接按住画面里的物体左右拖动</small>
+          </div>
+
+          <div class="lab3d-field span-2">
+            <span class="field-label">镜面样式 <output id="sph-mirror-name">示意图</output></span>
+            <div class="lab3d-segment" id="sph-mirror" role="group" aria-label="选择镜面的画法">
+              <button type="button" data-mirror="schematic" class="active">示意图</button>
+              <button type="button" data-mirror="real">真实质感</button>
+            </div>
+            <small>「示意图」用网格线把球面的弯曲画清楚；「真实质感」画成有金属光泽、能反出环境的真镜子。</small>
           </div>
 
           <div class="lab3d-field span-2">
@@ -403,6 +443,15 @@
       const state = {
         kind: 'concave',      // 'concave' 凹面镜 | 'convex' 凸面镜
         mode: 'image',        // 'image' 点光源成像 | 'parallel' 平行光束
+        // 光线显示三档。原来只有「全开」一种，七条线一起画太乱 —— 想看清一条光线
+        // 到底怎么反射的时候，需要能把它单独拎出来。
+        raySet: 'all',        // 'all' 全部 | 'special' 三条特殊 | 'single' 单条可调
+        // 单条光线的方向，归一化到 0..1：0 = 光线打到镜面的【下】边缘，1 = 【上】边缘。
+        // 用归一化而不是直接用角度，是因为「能打到镜面的角度范围」随 u 和 R 变化很大
+        // （u=26 时约 16°，u=3 时约 78°），归一化后滑块行程永远被用满，且拖到头
+        // 一定正好停在镜面边缘 —— 不会出现「拖到某个位置光线打不到镜子」。
+        rayT: 0.5,
+        mirrorStyle: 'schematic',   // 'schematic' 示意网格 | 'real' 真实金属质感
         R: R_DEF, u: U_DEF,
         yaw: VIEWS.perspective.yaw, pitch: VIEWS.perspective.pitch, zoom: 1,
         view: 'perspective',
@@ -758,11 +807,49 @@
         label([ENV.x1 - 2.4, 0.55, 0], '主光轴', 'rgba(203,213,225,.8)', 11, 'right', 'bottom', [ENV.x1 - 2.4, 0.55, 0]);
       }
 
+      // 场景主光：定的是「环境」—— 金属看到的是它反射的环境，所以主光管的是环境色
+      // 按法线 y 分量的渐变（天空在上、地面在下）+ 一个朗伯调制。
+      // **固定在世界里、不跟着相机转** —— 跟着相机转的话镜面永远是最亮的那一面，
+      // 就失去了「这是面镜子」的感觉。
+      const LIGHT = vnorm([-0.45, 0.78, 0.44]);
+
+      // 高光方向【必须另给一个】，不能拿 LIGHT 凑合：镜面朝 −x、视线也在 −x 这一侧，
+      // 想看到高光，光源就得落在【与视线同侧、且在轴线下方】（把视线方向关于镜面法线
+      // 做镜像就得到它）。拿 LIGHT（−x,+y,+z）算出的半程向量与镜面法线差 55°，
+      // pow(0.53, 48) ≈ 1e-13 —— 高光项【恒为 0】，是段永远不生效的死代码（实测把
+      // 它整个删掉，渲染出来的像素一模一样）。换成下面这个方向 + 更窄的瓣（指数 500），
+      // 镜面才会真的出现一小块亮点。
+      const GLINT = vnorm([-0.75, -0.30, -0.59]);
+      const GLINT_EXP = 500;
+
+      // 金属镜面的颜色。金属几乎不漫反射 —— 你看到的其实是它【反射的环境】，
+      // 所以主项是「环境色按法线的 y 分量取渐变」（天空在上、地面在下），
+      // 再叠一个 Blinn-Phong 高光和一个边缘菲涅尔。这三样凑起来才像镜子；
+      // 只做漫反射的话是「一块灰板」。
+      // 法线直接用球面的【精确】法线（球心 C 已知），不必从四边形顶点去估。
+      function metalColor(n, P, q) {
+        const v = vnorm(sub(q.eye, P));
+        const ndl = Math.max(0, dot(n, LIGHT));
+        const t = clamp(n[1] * 0.5 + 0.5, 0, 1);          // 0 = 朝下，1 = 朝上
+        const er = 40 + 190 * t, eg = 62 + 178 * t, eb = 88 + 160 * t;
+        const hv = vnorm(add(GLINT, v));
+        const spec = Math.pow(Math.max(0, dot(n, hv)), GLINT_EXP) * 235;
+        const fres = Math.pow(1 - Math.abs(dot(n, v)), 3) * 70;
+        const k = 0.40 + 0.60 * ndl;
+        return 'rgb(' + Math.round(clamp(er * k + spec + fres, 0, 255)) + ','
+                      + Math.round(clamp(eg * k + spec + fres, 0, 255)) + ','
+                      + Math.round(clamp(eb * k + spec + fres, 0, 255)) + ')';
+      }
+
       // 球面镜：绕主光轴的回转面。按 (ρ, θ) 打网格画四边形。
-      // 反射面朝向相机的用亮银蓝、背向的用暗色 —— 从任何角度看都还有东西，
-      // 不会出现「转过去镜面整个消失」。
+      // 「示意图」：网格线 + 半透明填充，把球面的弯曲讲清楚（这一档是给讲课用的）。
+      // 「真实质感」：逐格算金属光照，画成一面真镜子（这一档是给「镜面到底什么样」用的）。
+      // 两档都必须能看见反射面 —— 从背面看（front = false）画不透明的镜背，不做透明处理。
       function drawMirror(q, o) {
-        const NR = 6, NT = 20, RHO = o.aperture;
+        const real = (state.mirrorStyle === 'real');
+        // 真实质感必须把网格加密：6×20 只有 120 个四边形、每格一块纯色，
+        // 看上去是一圈一圈的色带（比示意图还假）。14×48 = 672 格才够平滑。
+        const NR = real ? 14 : 6, NT = real ? 48 : 20, RHO = o.aperture;
         const grid = [];
         for (let i = 0; i <= NR; i++) {
           const rho = RHO * i / NR, row = [];
@@ -775,29 +862,76 @@
             const P = [grid[i][j], grid[i][j + 1], grid[i + 1][j + 1], grid[i + 1][j]];
             if (P.some(s => s.z <= 0.01)) continue;
             const mid = mirrorPt(RHO * (i + 0.5) / NR, 2 * Math.PI * (j + 0.5) / NT);
-            const front = dot(vnorm(sub(q.eye, mid)), faceNormal(mid)) > 0;
-            quads.push({ P, front, depth: (P[0].z + P[1].z + P[2].z + P[3].z) / 4 });
+            const n = faceNormal(mid);
+            const front = dot(vnorm(sub(q.eye, mid)), n) > 0;
+            quads.push({ P, front, n, mid, depth: (P[0].z + P[1].z + P[2].z + P[3].z) / 4 });
           }
         }
         quads.sort((a, b) => b.depth - a.depth);   // 远 → 近
+
+        const rim = [];
+        for (let j = 0; j <= NT; j++) rim.push(project(mirrorPt(RHO, 2 * Math.PI * j / NT), q));
+        const rimOK = rim.every(p => p.z > 0.01);
+
+        if (real && rimOK) {
+          // ① 镜背（厚度）：把镜框那一圈沿【屏幕】法向外扩几像素再填实，
+          //    看起来镜子是有厚度的板子，而不是一张纸。
+          const c0 = project([0, 0, 0], q);
+          const outer = rim.map(p => {
+            const dx = p.x - c0.x, dy = p.y - c0.y, L = Math.hypot(dx, dy) || 1;
+            return { x: p.x + dx / L * 3.6, y: p.y + dy / L * 3.6, z: p.z };
+          });
+          ctx.beginPath();
+          ctx.moveTo(outer[0].x, outer[0].y);
+          for (let k = 1; k < outer.length; k++) ctx.lineTo(outer[k].x, outer[k].y);
+          ctx.closePath();
+          ctx.fillStyle = 'rgb(26,34,46)';
+          ctx.fill();
+          // ② 镜面底色：相邻四边形之间总有抗锯齿细缝，不先垫一层底色的话缝里会透出背景，
+          //    看上去像镜面裂成了网格。垫一个中间调，缝就看不出来了。
+          ctx.beginPath();
+          ctx.moveTo(rim[0].x, rim[0].y);
+          for (let k = 1; k < rim.length; k++) ctx.lineTo(rim[k].x, rim[k].y);
+          ctx.closePath();
+          ctx.fillStyle = 'rgb(86,102,124)';
+          ctx.fill();
+        }
+
         for (const qd of quads) {
           ctx.beginPath();
           ctx.moveTo(qd.P[0].x, qd.P[0].y);
           for (let k = 1; k < 4; k++) ctx.lineTo(qd.P[k].x, qd.P[k].y);
           ctx.closePath();
-          ctx.fillStyle = qd.front ? 'rgba(186,230,253,.20)' : 'rgba(71,85,105,.22)';
-          ctx.fill();
-          ctx.strokeStyle = qd.front ? 'rgba(125,211,252,.30)' : 'rgba(100,116,139,.22)';
-          ctx.lineWidth = 0.6;
-          ctx.stroke();
+          if (real) {
+            ctx.fillStyle = qd.front ? metalColor(qd.n, qd.mid, q) : 'rgb(46,56,72)';
+            ctx.fill();
+          } else {
+            ctx.fillStyle = qd.front ? 'rgba(186,230,253,.20)' : 'rgba(71,85,105,.22)';
+            ctx.fill();
+            ctx.strokeStyle = qd.front ? 'rgba(125,211,252,.30)' : 'rgba(100,116,139,.22)';
+            ctx.lineWidth = 0.6;
+            ctx.stroke();
+          }
         }
-        // 镜框：ρ = ρ_max 那一圈，加粗一点，让「镜面有多大」看得清
-        const rim = [];
-        for (let j = 0; j <= NT; j++) rim.push(project(mirrorPt(RHO, 2 * Math.PI * j / NT), q));
-        polyline(rim, 'rgba(147,197,253,.75)', 1.8);
+
+        // 镜框：ρ = ρ_max 那一圈。示意图一道细蓝线；真实质感是「暗的一圈（镜框）+ 亮的一圈
+        // （金属反光）」，两道的宽度差就是镜框的厚度。
+        if (real) {
+          polyline(rim, 'rgba(203,213,225,.32)', 5.0);
+          polyline(rim, 'rgba(241,245,249,.88)', 1.6);
+        } else {
+          polyline(rim, 'rgba(147,197,253,.75)', 1.8);
+        }
         // 镜面本体的障碍盒（标签不许压住镜子）
         bodyBox([grid[0][0], grid[NR][0], grid[NR][NT / 2], grid[0][NT / 2],
                  grid[0][NT / 4], grid[NR][NT / 4], grid[0][NT * 3 / 4], grid[NR][NT * 3 / 4]], '镜面');
+        // 把这一帧的镜面判据存进 state 给自检读（渲染里算出的判据要暴露出来，
+        // 别让自检在别处再算一套 —— 抄两遍的话改坏一处自检读的是另一处）。
+        state.lastMirror = {
+          real, nr: NR, nt: NT, quads: quads.length,
+          front: quads.filter(qd => qd.front).length,
+          back: quads.filter(qd => !qd.front).length
+        };
       }
 
       // 屏幕空间的竖直箭头（物 / 像）。y0 → y1 沿世界 y 方向。
@@ -882,8 +1016,60 @@
         parallel: { in: 'rgba(34,211,238,.95)', out: 'rgba(103,232,249,.95)', w: 2.1 },
         focus:    { in: 'rgba(244,114,182,.92)', out: 'rgba(249,168,212,.92)', w: 2.0 },
         center:   { in: 'rgba(167,139,250,.92)', out: 'rgba(196,181,253,.92)', w: 2.0 },
-        beam:     { in: 'rgba(251,146,60,.50)', out: 'rgba(253,224,71,.46)', w: 1.2 }
+        beam:     { in: 'rgba(251,146,60,.50)', out: 'rgba(253,224,71,.46)', w: 1.2 },
+        // 单条光线是这一档的主角：画得更粗更亮，一眼看得出「方向变了、反射光也跟着转」
+        single:   { in: 'rgba(251,146,60,.98)', out: 'rgba(253,224,71,.98)', w: 2.8 }
       };
+
+      // ===== 单条光线：方向连续可调 =====
+      // 从物点 A 发出的光线，方向由「与主光轴的夹角 θ」定。θ 的可达范围就是
+      // 「光线恰好打到镜面下边缘 … 上边缘」，用二分求 —— 球面求交的解析反解很啰嗦，
+      // 二分既短又稳。这个范围随 u 与 R 变化很大（实测 u=26 时约 16°，u=3 时约 78°），
+      // 所以滑块用【归一化】参数 state.rayT（0..1）映射进去：行程永远被用满，
+      // 而且拖到两头一定正好停在镜面边缘 —— 不会出现「拖到某个位置光线打不到镜子」，
+      // 那种光线画出来没有意义（而且会让「一条光线」这个演示突然空掉）。
+      function thetaBounds(o) {
+        const A = objectPoint(), AP = o.aperture;
+        const rhoAt = th => {
+          const h = hitMirror(A, [Math.cos(th), Math.sin(th), 0]);
+          return h ? h.P[1] : null;
+        };
+        const th0 = Math.atan2(-A[1], -A[0]);     // 指向顶点 O 的方向，一定命中镜面
+        const SPAN = 1.25;                        // 单侧扫描上限 ≈ 71.6°，覆盖全部参数范围
+        const solve = (sign) => {
+          const thOf = s => th0 + sign * SPAN * s;
+          const over = s => {                     // 已经越过镜面边缘（或干脆打不到）
+            const r = rhoAt(thOf(s));
+            return r === null || (sign > 0 ? r > AP : r < -AP);
+          };
+          if (!over(1)) return thOf(1);           // 极端参数下连 SPAN 都没越界
+          let lo = 0, hi = 1;
+          for (let i = 0; i < 44; i++) { const mid = (lo + hi) / 2; if (over(mid)) hi = mid; else lo = mid; }
+          return thOf(hi);
+        };
+        return { th0, lo: solve(-1), hi: solve(1) };
+      }
+
+      // 单条光线（点光源成像）：把 rayT 映射成夹角，再从物点射出去。
+      function raySingle(o) {
+        const A = objectPoint(), b = thetaBounds(o);
+        const th = b.lo + (b.hi - b.lo) * clamp(state.rayT, 0, 1);
+        const d = [Math.cos(th), Math.sin(th), 0];
+        const h = hitMirror(A, d);
+        if (!h) return [];
+        return [{ kind: 'single', A, P: h.P, d, d2: reflectDir(d, h.P), theta: th, bounds: b }];
+      }
+
+      // 单条光线（平行光束）：一条平行于主光轴的光，rayT 控制它离主光轴的高度。
+      // 平行光束模式【没有物点】，谈不上「方向角」，这里的自变量就是高度 ρ。
+      function raySingleBeam(o) {
+        const a = o.aperture * 0.94;
+        const rho = a * (2 * clamp(state.rayT, 0, 1) - 1);
+        const A = [ENV.x0 + 2.0, rho, 0], d = [1, 0, 0];
+        const h = hitMirror(A, d);
+        if (!h) return [];
+        return [{ kind: 'single', A, P: h.P, d, d2: reflectDir(d, h.P), rho0: rho }];
+      }
 
       // 点光源成像：从物点 A 发出的光线。其中三条是课本的【特殊光线】，各自单独配色：
       //   平行于主光轴的那条（ρ = 物高 h）→ 反射后过 F；
@@ -892,6 +1078,7 @@
       // 后两条不是任何时候都存在 —— 物点跑到 F 或 C 内侧时，「朝焦点/球心」的方向就背离镜面了，
       // 这时它们连镜面都打不到，自然不该画。所以先 hitMirror 试一次，打不到就跳过。
       function raysImage(o) {
+        if (state.raySet === 'single') return raySingle(o);
         const A = objectPoint(), RHO = o.aperture, out = [];
         const push = (kind, rho, dir) => {
           let d;
@@ -904,17 +1091,24 @@
         if (OBJ_H <= RHO) push('parallel', OBJ_H, [1, 0, 0]);          // 平行于主光轴
         push('focus', 0, sub([focalX(), 0, 0], A));                    // 过焦点 F
         push('center', 0, sub([centerX(), 0, 0], A));                  // 过球心 C
-        for (const k of [0.98, 0.62, -0.62, -0.98]) push('normal', RHO * k);
+        // 扇形那 4 条只是补充视角的，切到「三条特殊」就不画了
+        if (state.raySet === 'all') for (const k of [0.98, 0.62, -0.62, -0.98]) push('normal', RHO * k);
         return out;
       }
 
       // 平行光束：一组平行于主光轴的光，在 y-z 平面上按 9 个方向铺开 —— 这样才看得出
       // 凹面镜的会聚是【三维】的（太阳灶就是这个原理），而不是某一条线上的巧合。
       function raysParallel(o) {
+        if (state.raySet === 'single') return raySingleBeam(o);
         const a = o.aperture * 0.86, x0 = ENV.x0 + 2.0, out = [];
         const offs = [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1],
                       [0.72, 0.72], [-0.72, 0.72], [0.72, -0.72], [-0.72, -0.72]];
-        for (const [dy, dz] of offs) {
+        // 「三条特殊」档：只留 y 方向的三条（中央 + 上下），正好对着「凹面镜把平行光
+        // 会聚到焦点」那句话的三个高度。z 方向那几条是给三维铺开用的。
+        const use = (state.raySet === 'special')
+          ? offs.filter(([dy, dz]) => dz === 0 && Math.abs(dy) <= 1)
+          : offs;
+        for (const [dy, dz] of use) {
           const A = [x0, a * dy, a * dz], d = [1, 0, 0];
           const h = hitMirror(A, d);
           if (!h) continue;
@@ -1101,18 +1295,98 @@
       }
 
       // ================= 同步界面 =================
+      const raySetText = () => state.raySet === 'all' ? '全部光线'
+        : (state.raySet === 'special' ? '三条特殊光线' : '单条可调');
+
+      // 单条光线当前那条（两种模式各一个构造器）。UI 与自检都走这里，
+      // 不在别处另算一遍 —— 抄两遍的话改坏一处、自检读的是另一处。
+      const singleRay = o => (state.mode === 'image' ? raySingle(o) : raySingleBeam(o));
+
+      // 单条光线的方向读数。滑块本身是归一化值（0..100），给用户看的是【角度】；
+      // 角度的可达范围随 R、u 变化，所以每次都要重算，不能缓存上一次的。
+      function syncAngle() {
+        const o = optics();
+        const single = (state.raySet === 'single');
+        $('sph-angle-field').hidden = !single;
+        if (!single) return;
+        if (state.mode === 'image') {
+          const b = thetaBounds(o);
+          const th = b.lo + (b.hi - b.lo) * clamp(state.rayT, 0, 1);
+          $('sph-angle-label').textContent = '光线与主光轴的夹角';
+          $('sph-angle-value').textContent = (th * 180 / Math.PI).toFixed(1) + '°';
+          $('sph-angle-hint').textContent =
+            '拖动它，光线就沿镜面连续扫过，反射光跟着一起变 —— 两端正好停在镜面的边缘。';
+        } else {
+          const rho = o.aperture * 0.94 * (2 * clamp(state.rayT, 0, 1) - 1);
+          $('sph-angle-label').textContent = '光线离主光轴的高度';
+          $('sph-angle-value').textContent = (rho >= 0 ? '+' : '') + rho.toFixed(2) + ' cm';
+          $('sph-angle-hint').textContent =
+            '平行光束模式没有物点，谈不上方向角 —— 这条光线始终平行于主光轴，这里调的是它离主光轴的高度。';
+        }
+        $('sph-angle').value = String(clamp(state.rayT, 0, 1) * 100);
+      }
+
+      // 单条光线自身的读数：入射角 / 反射角 / 落点。三者都从【画出来的那条光线】上量，
+      // 不重算一套 —— 否则「拖动时读数在变」和「画面上那条线」可能对不上。
+      function updateSingleRayReadout() {
+        // 不是「单条可调」时这块面板是隐藏的，没必要算 —— 求 θ 范围的二分要跑约 88 次求交。
+        if (state.raySet !== 'single') return;
+        const r = singleRay(optics())[0];
+        if (!r) {
+          $('sph-inc').textContent = '—'; $('sph-ref').textContent = '—'; $('sph-rho').textContent = '—';
+          return;
+        }
+        const n = faceNormal(r.P);
+        const deg = v => Math.acos(clamp(Math.abs(v), 0, 1)) * 180 / Math.PI;
+        $('sph-inc').textContent = deg(dot(r.d, n)).toFixed(1) + '°';
+        $('sph-ref').textContent = deg(dot(r.d2, n)).toFixed(1) + '°';
+        $('sph-rho').textContent = (r.P[1] >= 0 ? '+' : '') + r.P[1].toFixed(2) + ' cm';
+      }
+
+      function syncLegend() {
+        $('sph-legend').textContent = (state.raySet === 'single')
+          ? '橙：入射光线　黄：反射光线　紫虚线：反向延长线'
+          : '橙：入射光线　黄：反射光线　青：平行于主光轴的那条　紫虚线：反向延长线';
+        $('sph-rayset-hint').textContent = state.raySet === 'all'
+          ? '青 / 粉 / 紫三条各对应一条规律，橙色是补充的扇形光线。嫌乱就切到「单条可调」。'
+          : (state.raySet === 'special'
+             ? '只留三条特殊光线：平行主轴、过焦点、过球心 —— 每条对应一条规律。'
+             : '画面里只剩一条光线，方向由下面的滑块连续调节，看反射光怎么跟着变。');
+      }
+
       function syncSliders() {
         $('sph-R').value = state.R;
         $('sph-R-value').textContent = state.R.toFixed(1) + ' cm';
         $('sph-u').value = state.u;
         $('sph-u-value').textContent = state.u.toFixed(1) + ' cm';
         $('sph-u').disabled = (state.mode !== 'image');
+        syncAngle();
+        updateSingleRayReadout();
       }
       function syncSegment() {
         document.querySelectorAll('#sph-kind button').forEach(b => b.classList.toggle('active', b.dataset.kind === state.kind));
         document.querySelectorAll('#sph-mode button').forEach(b => b.classList.toggle('active', b.dataset.mode === state.mode));
+        document.querySelectorAll('#sph-rayset button').forEach(b => b.classList.toggle('active', b.dataset.rayset === state.raySet));
+        document.querySelectorAll('#sph-mirror button').forEach(b => b.classList.toggle('active', b.dataset.mirror === state.mirrorStyle));
         $('sph-kind-name').textContent = kindText();
         $('sph-mode-name').textContent = state.mode === 'image' ? '点光源成像' : '平行光束';
+        $('sph-rayset-name').textContent = raySetText();
+        $('sph-mirror-name').textContent = state.mirrorStyle === 'real' ? '真实质感' : '示意图';
+      }
+
+      // 三个新档位的入口都收敛到这里，按钮与调试钩子共用（只留一个入口，
+      // 免得「按钮切了、钩子没切」两套行为 —— 自检也会因此读到假状态）。
+      function setRaySet(v) {
+        state.raySet = v;
+        syncSegment(); syncSliders(); syncLegend(); render(); updateReadout();
+      }
+      function setMirrorStyle(v) {
+        state.mirrorStyle = v;
+        syncSegment(); render();
+      }
+      function setRayT(v) {
+        state.rayT = clamp(v, 0, 1);
+        syncAngle(); render(); updateSingleRayReadout();
       }
       function syncViewButtons() {
         document.querySelectorAll('.lab3d-toolbar [data-view]').forEach(b => b.classList.toggle('active', b.dataset.view === state.view));
@@ -1196,6 +1470,15 @@
       document.querySelectorAll('#sph-mode button').forEach(b => b.addEventListener('click', () => {
         state.mode = b.dataset.mode; syncSegment(); syncSliders(); render(); updateReadout();
       }));
+      document.querySelectorAll('#sph-rayset button').forEach(b => b.addEventListener('click', () => {
+        setRaySet(b.dataset.rayset);
+      }));
+      document.querySelectorAll('#sph-mirror button').forEach(b => b.addEventListener('click', () => {
+        setMirrorStyle(b.dataset.mirror);
+      }));
+      // 拖动时只重画 + 更新角度读数：**不**调 updateReadout()（像距/放大率跟这条光线无关，
+      // 每次 input 都刷一遍是白做功，而且会让读数区在拖动时闪）。
+      $('sph-angle').addEventListener('input', e => setRayT(+e.target.value / 100));
       document.querySelectorAll('.lab3d-toolbar [data-view]').forEach(b => b.addEventListener('click', () => {
         applyView(b.dataset.view);
       }));
@@ -1222,6 +1505,7 @@
         state, VIEWS, optics, imagePoint, objectPoint, mirrorX, mirrorPt, faceNormal,
         hitMirror, reflectDir, sgn, aperture, centerX, focalX, vertexX, sphericalAberration,
         imageOffFrame, IMG_LIMIT, ENV, ENV_C, CAMD, ZOOM_MIN, ZOOM_MAX,
+        thetaBounds, raySingle, raySingleBeam, singleRay, metalColor, LIGHT, GLINT, GLINT_EXP,
         camNow, project: p => project(p, camNow()),
         rays: () => (state.mode === 'image' ? raysImage(optics()) : raysParallel(optics())),
         size: () => ({ w: state.w, h: state.h, dpr: canvas.width / Math.max(state.w, 1e-6) }),
@@ -1233,20 +1517,32 @@
         setU(v) { state.u = clamp(v, U_MIN, U_MAX); syncSliders(); render(); updateReadout(); },
         setKind(k) { state.kind = k; syncSegment(); render(); updateReadout(); },
         setMode(m) { state.mode = m; syncSegment(); syncSliders(); render(); updateReadout(); },
+        setRaySet, setMirrorStyle, setRayT,
         renderNow() { render(); },
         debug() {
           const o = optics();
+          const sr = singleRay(o)[0] || null;
+          const m = state.lastMirror || {};
           return {
             kind: state.kind, mode: state.mode, R: o.R, u: o.u, f: o.f, v: o.v, m: o.m,
             mag: o.mag, real: o.real, erect: o.erect, hp: o.hp, aperture: o.aperture,
             focalX: focalX(), centerX: centerX(), aberration: sphericalAberration(),
-            rayCount: (state.lastRays || []).length, view: state.view
+            rayCount: (state.lastRays || []).length, view: state.view,
+            raySet: state.raySet, rayT: state.rayT, mirrorStyle: state.mirrorStyle,
+            // 单条光线这一条自身的量（两种模式都从【画出来的那条】上取）
+            singleTheta: sr && sr.theta !== undefined ? sr.theta : null,
+            singleRho: sr ? sr.P[1] : null,
+            singleInc: sr ? Math.acos(clamp(Math.abs(dot(sr.d, faceNormal(sr.P))), 0, 1)) * 180 / Math.PI : null,
+            singleRef: sr ? Math.acos(clamp(Math.abs(dot(sr.d2, faceNormal(sr.P))), 0, 1)) * 180 / Math.PI : null,
+            bounds: state.mode === 'image' ? (() => { const b = thetaBounds(o); return { lo: b.lo, hi: b.hi }; })() : null,
+            mirrorQuads: m.quads || 0, mirrorFront: m.front || 0, mirrorBack: m.back || 0,
+            mirrorReal: !!m.real
           };
         }
       };
 
       // ================= 启动 =================
-      syncSliders(); syncSegment(); syncViewButtons(); renderRecords(); updateReadout();
+      syncSliders(); syncSegment(); syncViewButtons(); syncLegend(); renderRecords(); updateReadout();
       resize();
       window.addEventListener('resize', resize);
     })();
