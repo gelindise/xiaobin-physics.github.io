@@ -122,6 +122,18 @@
   .kv{display:grid;grid-template-columns:auto 1fr;gap:3px 10px;font-size:11.5px;color:var(--dim)}
   .kv b{color:#cbd5e1;font-weight:600;text-align:right}
 
+  /* 实物 ↔ 符号 对照。两边都用真渲染器画（沙盒的 drawComponent 与 circuit-schematic
+     的符号），所以永远不会和 3D 场景里、和沙盒页上的画法漂移。 */
+  .lgRow{margin-bottom:11px}
+  .lgRow:last-child{margin-bottom:0}
+  .lgIcons{display:flex;align-items:center;gap:7px;margin-bottom:4px}
+  .lgIcons canvas{display:block;background:#eef3f9;border:1px solid rgba(15,23,42,.16);
+    border-radius:7px;flex:0 0 auto}
+  .lgArrow{color:var(--dim2);font-size:13px;flex:0 0 auto;font-weight:700}
+  .lgTxt b{display:block;font-size:12px;color:#e2e8f0;margin-bottom:1px}
+  .lgTxt span{display:block;color:var(--dim);font-size:11.5px;line-height:1.5}
+  .lgTxt span.sym{color:#7dd3fc}
+
   @media (max-width:1180px){
     .lab3d-layout{grid-template-columns:minmax(0,1fr) 320px}
     .lab3d{max-width:1180px}
@@ -137,12 +149,23 @@
 </style>
 <script src="protect.js"></script>
 <script src="auth-check.js"></script>
+<!-- 器材与电路符号**不再自己另画一套**，直接用「电路实验沙盒」那三个模块：
+     circuit-draw.js 顶部写着全站统一的规范（端子固定在 ±HALF、材质只有金属/胶木陶瓷/
+     塑料/玻璃四种、接线柱一律走 drawBindingPost 红=正黑=负、光源统一左上方、
+     所有元件共用一套基础尺寸），circuit-schematic.js 负责国标符号。
+     本页只是把同一批器材摆到一张实验台上 —— 这样两个页面上的电流表、灯泡、
+     开关、电源永远长得一模一样，不会各画各的。 -->
+<script src="circuit-core.js"></script>
+<script src="circuit-draw.js"></script>
+<script src="circuit-schematic.js"></script>
 </head>
 <body>
 <div class="lab3d">
   <h1>串、并联电路中电流的规律 · 3D 电路实验台</h1>
   <p class="lab3d-sub">
-    同一套器材，两种接法。把电流表分别接在电路的三个位置，看看读数有什么规律：
+    一间实验室、一张实验台，台上摆着<b>电源、开关、小灯泡和电流表</b> ——
+    器材和电路符号都和「电路实验沙盒」共用同一套，台面上是实物、电路图里是国标符号（见页底对照）。
+    把电流表分别接在电路的三个位置，看看读数有什么规律：
     串联时三处读数<b>完全一样</b>，并联时干路读数<b>正好等于两条支路之和</b>。
     点一下<b>开关</b>可以通断电路，点一下<b>灯泡</b>能把它拧下来 —— 串联的灯一断全灭，
     并联的灯各亮各的。<span class="hl">黄色小点是电流的方向</span>，跑得越快表示电流越大。
@@ -207,6 +230,13 @@
 
     <div class="lab3d-lower">
       <div class="panel">
+        <h3>实物 ↔ 符号 对照 <span class="pill" id="cck-lgpill">本页器材</span></h3>
+        <div id="cck-legend"></div>
+        <p class="note">台面上摆的是实物，电路图里画的是国标符号 —— 两边都由同一套渲染器画出来，
+          所以和「电路实验沙盒」里看到的是同一只电流表、同一把闸刀。</p>
+      </div>
+
+      <div class="panel">
         <h3>视角</h3>
         <div class="btn-row" id="cck-views">
           <button type="button" data-view="default" class="on">默认</button>
@@ -254,7 +284,18 @@
 /* ==================================================================
    串、并联电路中电流的规律 · 3D 电路实验台
    世界坐标：x 向右、y 向上、z 朝观察者，单位 cm。桌面 y = 0。
-   后排元件 z = −16，前排元件 z = +16；导线走线高度 RUN = 1.5。
+   后排元件 z = −14，前排元件 z = +14；导线躺在台面上（RUN）。
+   ★ 器材【一律】用「电路实验沙盒」的 circuit-draw.js 画：
+       · 元件外形  = CD.drawComponent 画进离屏 canvas，当前脸贴图
+       · 元件尺寸  = CD.TERMINALS / CD.bodyBox / 量出来的墨迹包围盒
+       · 侧面顶面  = CD.MAT 的同一套渐变 + 本页的 shade() 打光
+       · 接线柱    = CD.POST_GRAD 的同一组色 + 本页的圆柱
+     本页只负责「把同一批器材摆到一张实验台上」，不另画一套器材。
+   ★ 极性（照 circuit-draw.js 的极性铁律）：
+       电源端子 0 = 「+」在【右端】→ 电流从右端出去，绕一圈回来
+       表头端子 0 = 「−」在【最左】，1 = 「0.6」量程柱（中间）
+       ⇒ 电流【从右往左】穿过顶排元件，进表头走量程柱、出表头走「−」柱。
+         所以三只表都接「中间的 0.6 柱」和「左边的 − 柱」。
    ★ 核心不变量：
      串联 → I_A ≡ I_B ≡ I_C（同一个 I）
      并联 → I_A ≡ I_B + I_C（干路由两支路【求和】得到，不是另外算的）
@@ -264,14 +305,17 @@
 var U_SRC   = 3.0;    // 电源电压 V
 var R1      = 10.0;   // L₁ 电阻 Ω
 var R2      = 15.0;   // L₂ 电阻 Ω
-var RANGE   = 0.6;    // 电流表量程 A
+var RANGE   = 0.6;    // 电流表量程 A（导线接表头的「0.6」柱）
 var DIV     = 0.02;   // 电流表分度值 A
-var RUN     = 1.5;    // 导线走线高度 cm
+var U2CM    = 0.078;  // 「沙盒元件局部单位」→ cm。器材尺寸一律由它换算
+var RUN     = 0.30;   // 导线躺在台面上的高度 cm
+var WIRE_R  = 0.15;   // 导线半径 cm
 var SPEED_K = 190;    // 粒子速度 cm/s（每安培）
 var SPACING = 7.0;    // 粒子间距 cm
-var LEVER_T = 0.30;   // 开关拨杆动作时间 s
 
-var ENV = {x0:-42, x1:60, y0:-3.4, y1:11.0, z0:-26, z1:29};
+// 台面：114 cm × 57 cm 的实验台（中学实验桌就是这个量级）
+var TABLE = {x0:-48, x1:66, z0:-27, z1:30, h:3.4, lip:1.1};
+var ENV = {x0:TABLE.x0, x1:TABLE.x1, y0:-0.2, y1:12.6, z0:TABLE.z0-1.2, z1:TABLE.z1+1.2};
 var ENV_PTS = (function(){
   var p=[], xs=[ENV.x0,ENV.x1], ys=[ENV.y0,ENV.y1], zs=[ENV.z0,ENV.z1];
   for(var i=0;i<2;i++)for(var j=0;j<2;j++)for(var k=0;k<2;k++) p.push([xs[i],ys[j],zs[k]]);
@@ -279,50 +323,152 @@ var ENV_PTS = (function(){
 })();
 
 var VIEWS = {
-  'default': {azim:-24, elev:36, zoom:1.00},
-  'top':     {azim:  0, elev:74, zoom:1.00},
-  'front':   {azim:-26, elev:19, zoom:1.02},
-  'side':    {azim:-60, elev:24, zoom:1.02}
+  'default': {azim:-26, elev:34, zoom:1.00},
+  'top':     {azim:  0, elev:64, zoom:1.00},
+  'front':   {azim:-13, elev:13, zoom:1.02},
+  'side':    {azim:-64, elev:22, zoom:1.02}
 };
+
+// ---------------- 器材：几何/材质全部取自「电路实验沙盒」 ----------------
+var CD = window.CircuitDraw;                 // 元件外形（也是本页 3D 里的前脸贴图）
+var CC = window.CircuitCore;                 // defaultParams 在它上面，不在 draw 上
+var CS = window.CircuitSchematic;            // 国标符号（对照面板用）
+var KIT = (function(){
+  if(!CD) return null;
+  var PAD = 132, TEX = 2, INK_A = 200;   // 墨迹判据：alpha ≥ 200 才算「实体」
+  var PARAMS = { battery:{emf:U_SRC, cells:2}, switch:{}, bulb:{}, ammeter:{range:RANGE} };
+  function mk(type){ return { type:type, x:PAD, y:PAD, rot:0, params:PARAMS[type] }; }
+  function render(type, rec, tex){
+    var cv = document.createElement('canvas');
+    cv.width = PAD*2*tex; cv.height = PAD*2*tex;
+    var g = cv.getContext('2d');
+    g.scale(tex, tex);
+    CD.drawComponent(g, mk(type), rec);
+    return cv;
+  }
+  // 量墨迹包围盒（局部坐标，沙盒单位，y 向下为正）；顺带记每行宽度，
+  // 用来找【瓷灯座口】—— 灯座 42 宽、螺口箍只有 29 宽，宽度一收就是分界。
+  function inkOf(type, rec){
+    var cv = render(type, rec, 1), g = cv.getContext('2d');
+    var d = g.getImageData(0, 0, cv.width, cv.height).data;
+    var x0=1e9,x1=-1e9,y0=1e9,y1=-1e9, rowW=[];
+    for(var y=0;y<cv.height;y++){
+      var lo=-1, hi=-1;
+      for(var x=0;x<cv.width;x++){
+        if(d[(y*cv.width+x)*4+3] >= INK_A){ if(lo<0) lo=x; hi=x; }
+      }
+      // rowW 以【canvas 行号】为索引（0..2*PAD-1），w(ly) 再减 PAD 取回局部 ly。
+      // 别写成 rowW[ly] —— 负 ly 会变成字符串属性，数组里留空槽，w() 永远读到 0。
+      rowW[y] = lo<0 ? 0 : (hi-lo+1);
+      if(lo>=0){ if(lo<x0)x0=lo; if(hi>x1)x1=hi; if(y<y0)y0=y; if(y>y1)y1=y; }
+    }
+    return { lx0:x0-PAD, ly0:y0-PAD, lx1:x1-PAD, ly1:y1-PAD, rowW:rowW,
+             w:function(ly){ return this.rowW[ly+PAD] || 0; } };
+  }
+  var ink = {
+    battery: inkOf('battery', {}),
+    switch:  inkOf('switch',  {closed:false}),
+    bulb:    inkOf('bulb',    {brightness:0}),
+    ammeter: inkOf('ammeter', {reading:0, range:RANGE})
+  };
+  // 瓷灯座口：从底板往上扫，宽度一直 ≥ 34 的最后一行就是灯座顶面
+  var sockLy = CD.PLATE.TOP - 1;
+  while(sockLy > -70 && ink.bulb.w(sockLy) >= 34) sockLy--;
+  sockLy += 1;
+  // ground = 局部 ly 落在台面上的那一行；bodyTop = 实心本体的顶（拨杆/玻璃泡不算）；
+  // faceTop = 前脸贴图的顶（拨杆、玻璃泡要画，所以比 bodyTop 高）。
+  var G = {
+    battery: { ground: ink.battery.ly1, bodyTop: ink.battery.ly0, faceTop: ink.battery.ly0,
+               hz:2.3, postOut:0.25, face:ink.battery },
+    switch:  { ground: ink.switch.ly1,  bodyTop: CD.PLATE.TOP,      faceTop: ink.switch.ly0,
+               hz:2.5, postOut:0.25, face:ink.switch },
+    bulb:    { ground: ink.bulb.ly1,    bodyTop: CD.PLATE.TOP,      faceTop: ink.bulb.ly0,
+               hz:2.2, postOut:0.25, face:ink.bulb, sockLy:sockLy },
+    ammeter: { ground: CD.MET.BASE_BOT,  bodyTop: ink.ammeter.ly0,  faceTop: ink.ammeter.ly0,
+               hz:3.0, postOut:0.75, face:ink.ammeter }
+  };
+  // 接线柱柱心的世界高度。前三种元件的柱长在本体上（前脸贴图里已画出来），
+  // 柱心就在沙盒端子的 ly 上；表头的柱在沙盒里垂到底座【下面】（POST_Y = 72
+  // > BASE_BOT = 60），3D 里改成「立在底座前面」，柱心离台面 0.9 cm。
+  var POST_Y_W = {
+    battery: (G.battery.ground - 0)*U2CM,
+    switch:  (G.switch.ground  - 0)*U2CM,
+    bulb:    (G.bulb.ground    - 0)*U2CM,
+    ammeter: 0.9
+  };
+  var POST_KIND = {   // 照 circuit-draw.js：电源 [pos,neg]；表头 [neg,pos,pos]
+    battery: ['pos','neg'],
+    switch:  ['neutral','neutral'],
+    bulb:    ['neutral','neutral'],
+    ammeter: ['neg','pos','pos']
+  };
+  var texCache = {}, texKeys = [];
+  // 贴图按【状态】缓存：读数/开关/亮度变了才重画，平时零开销
+  function texture(type, rec){
+    var k = type + '|' + (rec.closed?'1':'0') + '|' +
+            (rec.brightness==null?'':rec.brightness.toFixed(3)) + '|' +
+            (rec.reading==null?'':rec.reading.toFixed(4));
+    if(texCache[k]) return texCache[k];
+    var cv = render(type, rec, TEX);
+    texCache[k] = cv; texKeys.push(k);
+    if(texKeys.length > 24){ delete texCache[texKeys.shift()]; }
+    return cv;
+  }
+  return { PAD:PAD, TEX:TEX, ink:ink, G:G, POST_Y_W:POST_Y_W, POST_KIND:POST_KIND,
+           texture:texture, half:CD.HALF, PLATE:CD.PLATE, MET:CD.MET, SWEEP:CD.MET_SWEEP,
+           MAT:CD.MAT, POST_GRAD:CD.POST_GRAD, PALETTE:CD.PALETTE, version:CD.version };
+})();
 
 // ---------------- 元件表（唯一布局来源） ----------------
+// 电流方向：电源正极（右端）出去 → 绕到最右 → 从右往左穿过所有元件 → 回电源负极（左端）。
+// 所以后排从左到右是 bat, A, sw, L₁, B；前排从左到右是 C, L₂。
 var CMP = {
-  bat: {x:-26, z:-16, kind:'bat',  hx:10.0, hy:4.0, hz:4.4},
-  A:   {x: -6, z:-16, kind:'amm',  hx: 5.4, hy:4.2, hz:2.8, tag:'A'},
-  sw:  {x:  8, z:-16, kind:'sw',   hx: 6.0, hy:0.9, hz:3.2},
-  L1:  {x: 28, z:-16, kind:'lamp', hx: 4.4, hy:1.3, hz:3.6, tag:'L₁'},
-  B:   {x: 46, z:-16, kind:'amm',  hx: 5.4, hy:4.2, hz:2.8, tag:'B'},
-  L2:  {x: 46, z: 16, kind:'lamp', hx: 4.4, hy:1.3, hz:3.6, tag:'L₂'},
-  C:   {x: 24, z: 16, kind:'amm',  hx: 5.4, hy:4.2, hz:2.8, tag:'C'}
+  bat: {x:-28, z:-14, kind:'bat'},
+  A:   {x: -9, z:-14, kind:'amm', tag:'A'},
+  sw:  {x: 9.5, z:-14, kind:'sw'},
+  L1:  {x: 26, z:-14, kind:'lamp', tag:'L₁'},
+  B:   {x: 44, z:-14, kind:'amm', tag:'B'},
+  C:   {x: 22, z: 14, kind:'amm', tag:'C'},
+  L2:  {x: 44, z: 14, kind:'lamp', tag:'L₂'}
 };
-var S1 = [16, -16];    // 并联分流节点
-var S2 = [55, -16];    // 并联汇合节点
+var KIND = {   // CMP 的 id → 沙盒元件类型
+  bat:'battery', A:'ammeter', B:'ammeter', C:'ammeter', sw:'switch', L1:'bulb', L2:'bulb'
+};
+var TIDX = {   // CMP 的 id + 侧（-1 左 / 0 中 / 1 右）→ 沙盒端子序号
+  bat: {'-1':1, '1':0},          // 电源：端子 0 = 「+」在【右端】
+  sw:  {'-1':0, '1':1},
+  L1:  {'-1':0, '1':1},
+  L2:  {'-1':0, '1':1},
+  A:   {'-1':0, '0':1},          // 表头：端子 0 = 「−」在【最左】，1 = 「0.6」量程柱
+  B:   {'-1':0, '0':1},
+  C:   {'-1':0, '0':1}
+};
+// 导线通道（在元件正前方，谁也不会穿过谁）
+var LANE_B = [-9.8, -8.9, -8.0];
+var LANE_F = [18.2, 19.1];
+var S1 = [57, -14];    // 并联分流点（最右，干路在这里分成两股）
+var S2 = [17.75, -14]; // 并联汇合点（两股在这里合成干路）
+var JUNC_TY = 1.8;     // 节点柱顶高 cm
 
-// 端子：[位置, 出线点]（出线点在端子高度上、落在元件轮廓之外）
-var AMM_TY = 9.6, LAMP_TY = 3.8, SW_TY = 3.4, BAT_TY = 9.2;
-function termBat(sign){
-  var x = CMP.bat.x + (sign<0 ? -6 : 6);
-  return {p:[x, BAT_TY, CMP.bat.z], ex:[x + (sign<0 ? -5 : 5), BAT_TY, CMP.bat.z]};
+// 端子：p = 接在接线柱上的那一点；ex = 出线点（已经落到本排的导线通道上）
+function termOf(id, side, lane){
+  var o = CMP[id], type = KIND[id], g = KIT.G[type];
+  var ti = TIDX[id][String(side)];
+  var t = CD.TERMINALS[type][ti];
+  var px = o.x + t.x*U2CM, py = KIT.POST_Y_W[type];
+  var zf = o.z + g.hz;
+  return { p:[px, py, zf + g.postOut], ex:[px + side*0.9, py, lane],
+           lx:t.x, ly:t.y, ti:ti, zf:zf, kind:type };
 }
-function termAmm(id, side){
-  var c = CMP[id], x = c.x + (side<0 ? -3.8 : 3.8);
-  return {p:[x, AMM_TY, c.z], ex:[x + (side<0 ? -3.2 : 3.2), AMM_TY, c.z]};
+function termJunc(j, lane){
+  return { p:[j[0], JUNC_TY, j[1]], ex:[j[0], JUNC_TY, lane] };
 }
-function termLamp(id, side){
-  var c = CMP[id], x = c.x + (side<0 ? -3.8 : 3.8);
-  return {p:[x, LAMP_TY, c.z], ex:[x + (side<0 ? -2.8 : 2.8), LAMP_TY, c.z]};
-}
-function termSw(side){
-  var c = CMP.sw, x = c.x + (side<0 ? -4.8 : 4.8);
-  return {p:[x, SW_TY, c.z], ex:[x + (side<0 ? -2.7 : 2.7), SW_TY, c.z]};
-}
-function D(p){ return [p[0], RUN, p[2]]; }   // 降到走线高度
+function D(p){ return [p[0], RUN, p[2]]; }   // 降到台面（导线躺在桌上）
 
 // ---------------- 状态 ----------------
 var state = {
   mode: 'series',        // 'series' | 'parallel'
   swClosed: false,
-  swLerp: 0,             // 0 断开 → 1 闭合
   outL1: false,          // L₁ 被拧下
   outL2: false,
   paused: false,
@@ -635,6 +781,37 @@ function flushLabels(c){
 }
 
 // ---------------- 导线（唯一路径来源） ----------------
+// 真实实验的导线不是折线：拐角要倒圆，落笔才不像电路图。倒圆用二次贝塞尔
+// 采样成折线（不是圆弧），下游的「逐段画圆柱 / 沿路径找粒子」全都不用改。
+// 半径一律夹到相邻线段长的 0.45 倍以内 —— 不夹的话，接线柱上那 0.9 cm 的
+// 小段会被倒圆吃掉，导线就从柱子上脱开了。
+function roundCorners(pts, r){
+  if(pts.length < 3) return pts;
+  var out=[pts[0]];
+  for(var i=1;i<pts.length-1;i++){
+    var a=pts[i-1], b=pts[i], c2=pts[i+1];
+    var v1=sub(a,b), v2=sub(c2,b);
+    var l1=Math.hypot(v1[0],v1[1],v1[2]), l2=Math.hypot(v2[0],v2[1],v2[2]);
+    if(l1<1e-6 || l2<1e-6) continue;
+    var u1=scl(v1,1/l1), u2=scl(v2,1/l2);
+    // dot(u1,u2) 越接近 −1 表示【越接近一条直线】（u1 从 b 指回 a、u2 从 b 指向前方，
+    // 三点共线时两者正好反向）。转角 < 约 14° 就不倒圆。
+    // ⚠️ 这里【必须把这个点留下】—— 曾经写成 `continue` 直接跳过，等于用 a→c 的弦
+    // 顶替了 b：弦与 b 可以差好几厘米（实测一条近直线上 b 偏离弦 3.2 cm），
+    // 导线就凭空从器材旁边穿过去了，而端头断言（C02）完全看不出来。
+    if(clamp(dot(u1,u2),-1,1) < -0.97){ out.push(b); continue; }
+    var rad = Math.min(r, l1*0.45, l2*0.45);
+    var p1 = add(b, scl(u1, rad)), p2 = add(b, scl(u2, rad));
+    for(var k=0;k<=3;k++){
+      var t=k/3;
+      out.push(mix(mix(p1,b,t), mix(b,p2,t), t));
+    }
+  }
+  out.push(pts[pts.length-1]);
+  var clean=[];
+  for(var j=0;j<out.length;j++) if(j===0 || dist(out[j],out[j-1])>1e-6) clean.push(out[j]);
+  return clean;
+}
 function wirePath(a, mids, b){
   var out=[a.p, a.ex, D(a.ex)];
   for(var i=0;i<mids.length;i++) out.push(mids[i]);
@@ -643,54 +820,60 @@ function wirePath(a, mids, b){
   for(var j=0;j<out.length;j++){
     if(j===0 || dist(out[j], out[j-1]) > 1e-6) clean.push(out[j]);
   }
-  return clean;
-}
-function wireList(){
-  var L=[], m=state.mode;
-  var bP=termBat(+1), bN=termBat(-1);
-  var aL=termAmm('A',-1), aR=termAmm('A',+1);
-  var sL=termSw(-1), sR=termSw(+1);
-  var l1L=termLamp('L1',-1), l1R=termLamp('L1',+1);
-  var l2L=termLamp('L2',-1), l2R=termLamp('L2',+1);
-  var bL=termAmm('B',-1), bR=termAmm('B',+1);
-  var cL=termAmm('C',-1), cR=termAmm('C',+1);
-
-  L.push({pts: wirePath(bP, [], aL), key:'A', color:'#f43f5e'});
-  L.push({pts: wirePath(aR, [], sL), key:'A', color:'#f43f5e'});
-
-  if(m === 'series'){
-    L.push({pts: wirePath(sR, [], l1L), key:'A', color:'#f43f5e'});
-    L.push({pts: wirePath(l1R, [], bL), key:'A', color:'#f43f5e'});
-    L.push({pts: wirePath(bR, [[55,RUN,-16],[55,RUN,21],[39.4,RUN,21],[39.4,RUN,16]], l2L), key:'A', color:'#f43f5e'});
-    L.push({pts: wirePath(l2R, [[52.6,RUN,16],[52.6,RUN,24],[17.0,RUN,24],[17.0,RUN,16]], cL), key:'A', color:'#f43f5e'});
-    L.push({pts: wirePath(cR, [[31.0,RUN,16],[31.0,RUN,27],[-40,RUN,27],[-40,RUN,-16]], bN), key:'A', color:'#f43f5e'});
-  } else {
-    // 干路：电源+ → A → 开关 → 分流点
-    L.push({pts: wirePath(sR, [[S1[0],RUN,S1[1]]], {p:[S1[0],1.6,S1[1]], ex:[S1[0],1.6,S1[1]]}), key:'A', color:'#f43f5e'});
-    // 支路 1（后排）：分流点 → L₁ → B → 汇合点
-    L.push({pts: wirePath({p:[S1[0],1.6,S1[1]], ex:[S1[0],RUN,S1[1]]}, [[21.4,RUN,-16]], l1L), key:'B', color:'#34d399'});
-    L.push({pts: wirePath(l1R, [], bL), key:'B', color:'#34d399'});
-    L.push({pts: wirePath(bR, [[55,RUN,-16]], {p:[S2[0],1.6,S2[1]], ex:[S2[0],RUN,S2[1]]}), key:'B', color:'#34d399'});
-    // 支路 2（前排）：分流点 → C → L₂ → 汇合点
-    L.push({pts: wirePath({p:[S1[0],1.6,S1[1]], ex:[S1[0],RUN,S1[1]]}, [[S1[0],RUN,16],[17.0,RUN,16]], cL), key:'C', color:'#60a5fa'});
-    L.push({pts: wirePath(cR, [[31.0,RUN,16],[39.4,RUN,16]], l2L), key:'C', color:'#60a5fa'});
-    L.push({pts: wirePath(l2R, [[52.6,RUN,16],[52.6,RUN,21],[55,RUN,21]], {p:[S2[0],1.6,S2[1]], ex:[S2[0],RUN,S2[1]]}), key:'C', color:'#60a5fa'});
-    // 汇合点 → 电源−
-    L.push({pts: wirePath({p:[S2[0],1.6,S2[1]], ex:[S2[0],RUN,S2[1]]}, [[58,RUN,-16],[58,RUN,-24],[-40,RUN,-24],[-40,RUN,-16]], bN), key:'A', color:'#f43f5e'});
-  }
-  var out=[];
-  for(var i=0;i<L.length;i++){
-    var pts=L[i].pts, cum=[0], tot=0;
-    for(var k=1;k<pts.length;k++){ tot += dist(pts[k-1],pts[k]); cum.push(tot); }
-    if(tot < 1e-6) continue;
-    var prev = _wireCache[i];
-    out.push({pts:pts, cum:cum, len:tot, key:L[i].key, color:L[i].color,
-              off: (prev && prev.key===L[i].key) ? (prev.off % tot) : 0});
-  }
-  _wireCache = out;
-  return out;
+  return roundCorners(clean, 2.4);
 }
 var _wireCache = [];
+// 走线只有一处来源。电流方向 = 路径方向（a → b），所以每一段都必须按
+// 「电流真正往哪流」写：电源正极（右端）出去，绕到最右，再【从右往左】
+// 穿过所有元件，最后回电源负极（左端）。
+// 通道：后排 LANE_B / 前排 LANE_F，都在元件【正前方】，谁也不会穿过谁。
+function wireList(){
+  var L=[], m=state.mode;
+  var RED='#f43f5e', GRN='#34d399', BLU='#60a5fa';
+  function put(pts, key, color){
+    var cum=[0], tot=0;
+    for(var k=1;k<pts.length;k++){ tot += dist(pts[k-1],pts[k]); cum.push(tot); }
+    if(tot < 1e-6) return;
+    var prev = _wireCache[L.length];
+    L.push({pts:pts, cum:cum, len:tot, key:key, color:color,
+            off: (prev && prev.key===key) ? (prev.off % tot) : 0});
+  }
+  // 端子
+  var bP=termOf('bat', 1, LANE_B[0]), bN=termOf('bat',-1, LANE_B[2]);
+  var aC=termOf('A','0', LANE_B[1]), aL=termOf('A',-1, LANE_B[2]);
+  var sL=termOf('sw',-1, LANE_B[1]),  sR=termOf('sw', 1, LANE_B[1]);
+  var l1L=termOf('L1',-1, LANE_B[0]), l1R=termOf('L1', 1, LANE_B[2]);
+  var bC=termOf('B','0', LANE_B[2]),  bL=termOf('B',-1, LANE_B[2]);
+  var cC=termOf('C','0', LANE_F[1]),  cL=termOf('C',-1, LANE_F[0]);
+  var l2L=termOf('L2',-1, LANE_F[1]), l2R=termOf('L2', 1, LANE_F[0]);
+
+  if(m === 'series'){
+    // 电源+ →（绕到前排最右）→ L₂ → C → B → L₁ → 开关 → A →（绕回）电源−
+    put(wirePath(bP, [[bP.ex[0], RUN, LANE_F[0]]], l2R), 'A', RED);
+    put(wirePath(l2L, [], cC), 'A', RED);
+    put(wirePath(cL, [[12.5, RUN, LANE_F[0]], [12.5, RUN, LANE_B[1]]], bC), 'A', RED);
+    put(wirePath(bL, [], l1R), 'A', RED);
+    put(wirePath(l1L, [], sR), 'A', RED);
+    put(wirePath(sL, [], aC), 'A', RED);
+    put(wirePath(aL, [], bN), 'A', RED);
+  } else {
+    // 干路：电源+ →（绕到最右）→ 分流点 S₁；两条支路各走一趟；汇合点 S₂ → 开关 → A → 电源−
+    var j1b=termJunc(S1, LANE_B[1]), j1f=termJunc(S1, LANE_F[0]), j1c=termJunc(S1, LANE_B[2]);
+    var j2b=termJunc(S2, LANE_B[0]),  j2c=termJunc(S2, LANE_B[1]);
+    put(wirePath(bP, [[bP.ex[0], RUN, LANE_B[1]]], j1b), 'A', RED);
+    put(wirePath(j1c, [], bC), 'B', GRN);                 // 支路 1：分流点 → B → L₁
+    put(wirePath(bL, [], l1R), 'B', GRN);
+    put(wirePath(l1L, [], j2b), 'B', GRN);
+    put(wirePath(j1f, [], l2R), 'C', BLU);                // 支路 2：分流点 → L₂ → C
+    put(wirePath(l2L, [], cC), 'C', BLU);
+    put(wirePath(cL, [[12.5, RUN, LANE_F[0]], [12.5, RUN, LANE_B[0]]], j2b), 'C', BLU);
+    put(wirePath(j2c, [], sR), 'A', RED);                 // 汇合点 → 开关 → A → 电源−
+    put(wirePath(sL, [], aC), 'A', RED);
+    put(wirePath(aL, [], bN), 'A', RED);
+  }
+  _wireCache = L;
+  return L;
+}
 function wireCurrent(w){ var c = currents(); return c[w.key] || 0; }
 function pointAt(w, s){
   if(!(w.len > 0)) return w.pts[0];
@@ -708,38 +891,170 @@ function particleWorld(w){
 
 // ---------------- 场景绘制 ----------------
 var drawn = {};
-function drawBackdrop(c){
-  var g=c.createLinearGradient(0,0,0,H);
-  g.addColorStop(0,'#071227'); g.addColorStop(0.55,'#040b18'); g.addColorStop(1,'#02060f');
-  c.fillStyle=g; c.fillRect(0,0,W,H);
-  var rg=c.createRadialGradient(W*0.5,H*0.06,10,W*0.5,H*0.06,Math.max(W,H)*0.78);
-  rg.addColorStop(0,'rgba(56,189,248,.12)'); rg.addColorStop(1,'rgba(56,189,248,0)');
-  c.fillStyle=rg; c.fillRect(0,0,W,H);
+var PLASTIC_MID = '#c6d0dc';      // = CD.MAT.plastic 的中段色（浅灰注塑件）
+var CASE_LINE = 'rgba(51,65,85,.34)';
+
+// 实验室：地面 + 一堵后墙 + 墙面电源插座条，台面不再是黑空里浮着的一块板。
+// 两条硬约束（都是实测出来的，别凭感觉改）：
+//   ① 墙必须【挪到台子后面不远】：地平线在四个视角都在屏幕外（−994/−141/−3841/−691），
+//      「无限远的地面」占满整屏；墙放 z=−95 时墙脚已经只在 y=69，放 z=−55 才占到屏幕 1/3。
+//   ② 墙【不能画成三维面片】：相机能绕到背后，三维墙会插到台子和眼睛之间，
+//      可它在背景层里先落笔，就变成「台子透过墙」。所以墙脚用【3D 折线】定位（随相机正确
+//      转动），墙身用【屏幕空间】向上填色 —— 背景永远不遮挡场景。
+// 墙面架子放不了：z=−55 处 0.66 m 高的架子投影到屏幕外（y<0），这个取景容不下。
+var ROOM = { x0:-150, x1:170, z:-55, y:-TABLE.h, rail:30, tile:60 };
+var NEAR_D = 14;
+// 3D 线段裁到相机前方
+function clipFront(a, b, q){
+  var da=dot(sub(a,q.eye),q.fwd), db=dot(sub(b,q.eye),q.fwd);
+  if(da<NEAR_D && db<NEAR_D) return null;
+  var A=a, B=b;
+  if(da<NEAR_D) A=mix(a,b,(NEAR_D-da)/(db-da));
+  if(db<NEAR_D) B=mix(b,a,(NEAR_D-db)/(da-db));
+  return [A,B];
 }
-function drawTable(q,c){
-  boxSolid(9, -1.7, 1.5, 51, 1.7, 27.5, q, c, '#16243a', 'rgba(148,163,184,.18)', 1);
-  // 台面网格
+function roomLine(a, b, q, c, stroke, lw){
+  var s=clipFront(a,b,q); if(!s) return;
+  var pa=project(s[0],q), pb=project(s[1],q);
+  c.beginPath(); c.moveTo(pa.x,pa.y); c.lineTo(pb.x,pb.y);
+  c.strokeStyle=stroke; c.lineWidth=lw||1; c.stroke();
+}
+// 水平面的【地平线】在屏幕上的高度 —— 任何水平面共用同一条
+function horizonY(q){
+  var hx=q.fwd[0], hz=q.fwd[2], n=Math.hypot(hx,hz);
+  if(n < 1e-6) return -1e9;
+  var u=(q.up[0]*hx + q.up[2]*hz)/n, f=(q.fwd[0]*hx + q.fwd[2]*hz)/n;
+  if(f < 1e-6) return -1e9;
+  return q.cy - q.focal*u/f;
+}
+// 沿一条世界折线向上填满到屏幕顶（墙身）。任一点在相机后面就整帧不画，
+// 免得投影翻到屏幕另一侧糊出一片。
+function fillAboveLine(pts3, q, c, fill){
+  var pr=[];
+  for(var i=0;i<pts3.length;i++){
+    if(dot(sub(pts3[i],q.eye), q.fwd) < NEAR_D) return false;
+    pr.push(project(pts3[i],q));
+  }
+  c.beginPath();
+  c.moveTo(pr[0].x, -H);
+  for(var j=0;j<pr.length;j++) c.lineTo(pr[j].x, pr[j].y);
+  c.lineTo(pr[pr.length-1].x, -H);
+  c.closePath();
+  c.fillStyle=fill; c.fill();
+  return true;
+}
+function drawBackdrop(q,c){
+  var R=ROOM;
+  // 地面打底：整屏铺，近处深、远处亮（远处接近地平线，本来就更亮）
+  var gf=c.createLinearGradient(0,0,0,H);
+  gf.addColorStop(0,'#18262f'); gf.addColorStop(0.36,'#111c26'); gf.addColorStop(1,'#0b1520');
+  c.fillStyle=gf; c.fillRect(0,0,W,H);
+  // 地砖缝（60 cm 方砖，实验室标准）：只画到台子前后够用的范围，画多了像网格纸。
+  // 亮度别低于 10%：实测 8.5% 时整块地面在屏幕上就是一片纯色，「地面」读不出来。
   c.save();
-  c.strokeStyle='rgba(148,163,184,.09)'; c.lineWidth=1;
-  for(var x=-42;x<=60;x+=8){
-    var a=project([x,0.03,-26],q), b=project([x,0.03,29],q);
+  for(var gx=R.x0; gx<=R.x1; gx+=R.tile)
+    roomLine([gx,R.y,-30], [gx,R.y,130], q, c, 'rgba(148,163,184,.155)', 1);
+  for(var gz=-30; gz<=130; gz+=R.tile)
+    roomLine([R.x0,R.y,gz], [R.x1,R.y,gz], q, c, 'rgba(148,163,184,.115)', 1);
+  c.restore();
+  // 墙身：屏幕空间向上填（见顶部注释②）。用【竖向渐变】而不是一块平色：
+  // 平色时墙与墙脚处的地面亮度几乎相同（实测上下都是 32），整面墙等于没画；
+  // 越靠墙脚越亮（顶灯照到墙的下半段），墙和地面就分出来了。
+  var base=[[R.x0,R.y,R.z],[R.x1,R.y,R.z]];
+  var bLow=project([(R.x0+R.x1)/2, R.y, R.z], q).y;
+  var wf=c.createLinearGradient(0, 0, 0, Math.max(1, bLow));
+  wf.addColorStop(0,'#141f2b'); wf.addColorStop(0.55,'#1b2938'); wf.addColorStop(1,'#223346');
+  var painted = fillAboveLine(base, q, c, wf);
+  if(painted){
+    // 墙脚的环境光遮蔽：墙根往下压一道窄带，墙与地才有「交接」
+    c.save();
+    var pa=project([R.x0,R.y,R.z],q), pb=project([R.x1,R.y,R.z],q);
+    var ang=Math.atan2(pb.y-pa.y, pb.x-pa.x);
+    c.translate(pa.x, pa.y); c.rotate(ang);
+    var aoG=c.createLinearGradient(0,0,0,9);
+    aoG.addColorStop(0,'rgba(2,6,23,.46)'); aoG.addColorStop(1,'rgba(2,6,23,0)');
+    c.fillStyle=aoG; c.fillRect(0, 0, Math.hypot(pb.x-pa.x, pb.y-pa.y), 9);
+    c.restore();
+    // 墙面竖缝：3D 线，随相机正确转动
+    for(var wx=R.x0; wx<=R.x1; wx+=R.tile*1.5)
+      roomLine([wx,R.y,R.z], [wx,R.y+150,R.z], q, c, 'rgba(148,163,184,.030)', 1);
+    // 踢脚线：墙脚一条深色带 + 一道受光棱，房间立刻有「墙」的意思
+    c.save();
+    c.lineWidth=1.4; c.strokeStyle='rgba(125,211,252,.20)';
+    var pb0=project([R.x0,R.y,R.z],q), pb1=project([R.x1,R.y,R.z],q);
+    c.beginPath(); c.moveTo(pb0.x,pb0.y); c.lineTo(pb1.x,pb1.y); c.stroke();
+    c.restore();
+    // 墙面电源插座条：中学实验室墙上的标准配置，也是「这是实验室」最直接的信号
+    for(var sx=R.x0+40; sx<=R.x1-40; sx+=R.tile*1.9){
+      var s0=project([sx-9, R.rail, R.z], q), s1=project([sx+9, R.rail+18, R.z], q);
+      if(s0.z<1 || s1.z<1) continue;
+      c.fillStyle='rgba(203,213,225,.16)';
+      c.fillRect(s0.x, s0.y, s1.x-s0.x, s1.y-s0.y);
+      c.fillStyle='rgba(8,15,26,.85)';
+      c.fillRect(s0.x+(s1.x-s0.x)*0.22, s0.y+(s1.y-s0.y)*0.30, (s1.x-s0.x)*0.56, (s1.y-s0.y)*0.40);
+    }
+  }
+  // 台面周围的一团顶灯光池：器材是「被照着」的，不是自己发亮
+  var pool=project([(TABLE.x0+TABLE.x1)/2, 0, (TABLE.z0+TABLE.z1)/2], q);
+  var pg=c.createRadialGradient(pool.x, pool.y, 20, pool.x, pool.y, Math.max(W,H)*0.62);
+  pg.addColorStop(0,'rgba(186,230,253,.085)');
+  pg.addColorStop(0.42,'rgba(125,211,252,.030)');
+  pg.addColorStop(1,'rgba(56,189,248,0)');
+  c.fillStyle=pg; c.fillRect(0,0,W,H);
+  // 顶灯：两盏嵌顶日光灯盘。**别只画一根亮条** —— 那在画面顶上就是两段莫名其妙的横线
+  // （实测就是这样，看着像渲染残影）。要有灯壳 + 灯管面 + 上缘高光三层才读成「天花板上的灯」，
+  // 它同时也是「这是一间实验室」最省事的信号。
+  for(var i2=0;i2<2;i2++){
+    var lx = W*(0.30 + i2*0.42), ly = H*0.030;
+    var lg = c.createRadialGradient(lx, ly, 4, lx, ly, Math.max(W,H)*0.46);
+    lg.addColorStop(0,'rgba(186,230,253,.13)');
+    lg.addColorStop(0.30,'rgba(125,211,252,.050)');
+    lg.addColorStop(1,'rgba(56,189,248,0)');
+    c.fillStyle=lg; c.fillRect(0,0,W,H);
+    c.fillStyle='rgba(15,23,42,.62)';   c.fillRect(lx-64, ly-9,  128, 21);   // 灯壳
+    c.fillStyle='rgba(203,213,225,.12)'; c.fillRect(lx-64, ly-9,  128, 3);    // 灯壳上缘
+    c.fillStyle='rgba(226,240,254,.40)'; c.fillRect(lx-57, ly-5,  114, 13);   // 灯管面
+    c.fillStyle='rgba(255,255,255,.30)'; c.fillRect(lx-57, ly-5,  114, 4);    // 灯管高光
+  }
+}
+// 实验台：深色耐酸碱台面（中学实验室就是这个）+ 台面上一块橡胶垫。
+// 深色台面能把浅色器材衬出来，这也是真实实验台的样子。
+function drawTable(q,c){
+  var T=TABLE;
+  var cx=(T.x0+T.x1)/2, cz=(T.z0+T.z1)/2, hx=(T.x1-T.x0)/2, hz=(T.z1-T.z0)/2;
+  // 台子先在地面上落一片投影：不然它看着像浮在黑空里。用软边（硬边会读成一摊墨）
+  shadowSoft(cx, cz, hx*1.12, hz*1.10, q, c, 0.38, 6);
+  boxSolid(cx, -T.h/2, cz, hx, T.h/2, hz, q, c, '#1b2431', 'rgba(148,163,184,.14)', 1);
+  // 台面受光：顶灯在斜后上方，所以【后沿亮、前沿暗】。boxSolid 一个面只有一档
+  // 平涂色，出不来这个，所以单独再铺一层渐变上去。
+  var b0=project([cx,0,T.z0],q), b1=project([cx,0,T.z1],q);
+  var gt=c.createLinearGradient(b0.x,b0.y,b1.x,b1.y);
+  gt.addColorStop(0,'rgba(186,230,253,.090)');
+  gt.addColorStop(0.28,'rgba(148,163,184,.034)');
+  gt.addColorStop(1,'rgba(8,15,26,0)');
+  c.save();
+  polyPath([project([T.x0,0,T.z0],q), project([T.x1,0,T.z0],q),
+            project([T.x1,0,T.z1],q), project([T.x0,0,T.z1],q)], c);
+  c.fillStyle=gt; c.fill();
+  c.restore();
+  // 台面前缘的受光棱 + 左右两缘：台面才不是一张纸
+  seg(project([T.x0,0,T.z1],q), project([T.x1,0,T.z1],q), 'rgba(203,213,225,.30)', 1.7, c);
+  seg(project([T.x0,0,T.z1],q), project([T.x0,0,T.z0],q), 'rgba(203,213,225,.10)', 1, c);
+  seg(project([T.x1,0,T.z1],q), project([T.x1,0,T.z0],q), 'rgba(203,213,225,.07)', 1, c);
+  // 橡胶垫：比台面再深一档，器材都摆在垫子上
+  var mhx=hx-7.5, mhz=hz-5.5, mcx=cx, mcz=cz-0.5;
+  boxSolid(mcx, 0.05, mcz, mhx, 0.05, mhz, q, c, '#141d29', 'rgba(148,163,184,.09)', 1);
+  // 垫子上的细织纹（防静电台垫本来就有格纹）：只给到很淡，不抢导线
+  c.save();
+  c.strokeStyle='rgba(148,163,184,.05)'; c.lineWidth=1;
+  for(var x=Math.ceil((mcx-mhx)/8)*8; x<=mcx+mhx; x+=8){
+    var a=project([x,0.115,mcz-mhz],q), b=project([x,0.115,mcz+mhz],q);
     c.beginPath(); c.moveTo(a.x,a.y); c.lineTo(b.x,b.y); c.stroke();
   }
-  for(var z=-26;z<=29;z+=8){
-    var a2=project([-42,0.03,z],q), b2=project([60,0.03,z],q);
+  for(var z=Math.ceil((mcz-mhz)/8)*8; z<=mcz+mhz; z+=8){
+    var a2=project([mcx-mhx,0.115,z],q), b2=project([mcx+mhx,0.115,z],q);
     c.beginPath(); c.moveTo(a2.x,a2.y); c.lineTo(b2.x,b2.y); c.stroke();
   }
-  c.restore();
-  // 前排/后排的分界提示
-  c.save();
-  c.strokeStyle='rgba(56,189,248,.13)'; c.setLineDash([5,6]);
-  var p1=project([-42,0.05,0],q), p2=project([60,0.05,0],q);
-  c.beginPath(); c.moveTo(p1.x,p1.y); c.lineTo(p2.x,p2.y); c.stroke();
-  c.restore();
-  // 台面边缘的冷光
-  c.save();
-  var e1=project([-42,0.06,29],q), e2=project([60,0.06,29],q);
-  seg(e1,e2,'rgba(56,189,248,.22)',1.5,c);
   c.restore();
 }
 // 元件【本体】也要登记成障碍物，否则标签会稳稳压住它自己标注的那个东西。
@@ -764,7 +1079,7 @@ function shadowEllipse(cx, cz, rx, rz, q, c, alpha){
   var pts=[];
   for(var i=0;i<28;i++){
     var a=i/28*Math.PI*2;
-    pts.push(project([cx + rx*Math.cos(a), 0.02, cz + rz*Math.sin(a)], q));
+    pts.push(project([cx + rx*Math.cos(a), 0.13, cz + rz*Math.sin(a)], q));
   }
   c.save();
   c.beginPath();
@@ -773,151 +1088,174 @@ function shadowEllipse(cx, cz, rx, rz, q, c, alpha){
   c.fillStyle='rgba(0,0,0,'+(alpha||0.34)+')'; c.fill();
   c.restore();
 }
-function drawBat(q,c){
-  var o=CMP.bat;
-  shadowEllipse(o.x, o.z, 12.0, 6.2, q, c, 0.36);
-  drawn.body_bat = bodyBox(o.x, 4.6, o.z, o.hx, 4.6, o.hz, q, 8);
-  boxSolid(o.x, 4.0, o.z, o.hx, 4.0, o.hz, q, c, '#1e2a3d', 'rgba(148,163,184,.30)', 1.1);
-  // 正面红条 + 3V
-  var fz = o.z + o.hz + 0.02;
-  quadW([[o.x-9.4,1.0,fz],[o.x+9.4,1.0,fz],[o.x+9.4,3.0,fz],[o.x-9.4,3.0,fz]], 'rgba(244,63,94,.75)', null, 0, c);
-  textAt(project([o.x, 5.4, fz],q), '3 V', 'bold 15px -apple-system,PingFang SC,sans-serif', '#e2e8f0', c);
-  textAt(project([o.x, 6.9, fz],q), '电源', 'bold 10px -apple-system,PingFang SC,sans-serif', '#93b4c4', c);
-  // 接线柱
-  var neg = termBat(-1), pos = termBat(+1);
-  cylSolid(neg.p[0], 8.0, BAT_TY, neg.p[2], 0.8, q, c, '#0f172a', 'rgba(203,213,225,.6)', 1);
-  cylSolid(pos.p[0], 8.0, BAT_TY, pos.p[2], 0.8, q, c, '#dc2626', 'rgba(254,202,202,.6)', 1);
-  cylTop(neg.p[0], BAT_TY, neg.p[2], 0.8, q, c, '#334155', 'rgba(203,213,225,.55)', 1);
-  cylTop(pos.p[0], BAT_TY, pos.p[2], 0.8, q, c, '#ef4444', 'rgba(254,202,202,.6)', 1);
-  textAt(project([neg.p[0], BAT_TY+1.1, neg.p[2]],q), '−', 'bold 14px sans-serif', '#cbd5e1', c);
-  textAt(project([pos.p[0], BAT_TY+1.1, pos.p[2]],q), '+', 'bold 15px sans-serif', '#fca5a5', c);
-  drawn.batBox = project([o.x, 8.0, o.z], q);
-}
-function drawSwitch(q,c){
-  var o=CMP.sw;
-  shadowEllipse(o.x, o.z, 8.0, 5.0, q, c, 0.34);
-  drawn.body_sw = bodyBox(o.x, 1.7, o.z, o.hx, 1.7, o.hz, q, 6);
-  boxSolid(o.x, 0.9, o.z, o.hx, 0.9, o.hz, q, c, '#22304a', 'rgba(148,163,184,.32)', 1.1);
-  var l = termSw(-1), r = termSw(+1);
-  cylSolid(l.p[0], 1.8, SW_TY, l.p[2], 0.6, q, c, '#94a3b8', 'rgba(226,232,240,.5)', 1);
-  cylSolid(r.p[0], 1.8, SW_TY, r.p[2], 0.6, q, c, '#94a3b8', 'rgba(226,232,240,.5)', 1);
-  // 拨杆：绕左柱转动
-  var ang = (1-state.swLerp) * (44*Math.PI/180);
-  var len = 9.6;
-  var tip = [l.p[0] + len*Math.cos(ang), SW_TY + len*Math.sin(ang), l.p[2]];
-  cylBetween(l.p, tip, 0.46, q, c, '#b6c2d4', 'rgba(226,232,240,.5)', 1);
-  sphereAt(tip, 0.95, q, c, state.swLerp>0.6 ? '#a7f3d0' : '#e2e8f0', 'rgba(148,163,184,.7)', 1);
-  sphereAt(l.p, 0.68, q, c, '#94a3b8', null, 0);
-  // 底座上的通断指示
-  var fz = o.z + o.hz + 0.02;
-  quadW([[o.x-5.4,0.15,fz],[o.x+5.4,0.15,fz],[o.x+5.4,0.5,fz],[o.x-5.4,0.5,fz]],
-        state.swLerp>0.6 ? 'rgba(52,211,153,.85)' : 'rgba(248,113,113,.8)', null, 0, c);
-  drawn.swTip = project(tip, q);
-  drawn.swLerp = state.swLerp;
-}
-function drawAmmeter(id, q, c){
-  var o = CMP[id], I = currents()[id] || 0;
-  shadowEllipse(o.x, o.z, 7.4, 5.2, q, c, 0.38);
-  drawn['body_'+id] = bodyBox(o.x, 4.8, o.z, o.hx, 4.8, o.hz, q, 8);
-  boxSolid(o.x, 4.2, o.z, o.hx, 4.2, o.hz, q, c, '#18202f', 'rgba(148,163,184,.34)', 1.1);
-  var fz = o.z + o.hz + 0.02;
-  quadW([[o.x-o.hx,0,fz],[o.x+o.hx,0,fz],[o.x+o.hx,8.4,fz],[o.x-o.hx,8.4,fz]], '#0a1120', 'rgba(148,163,184,.24)', 1, c);
-  // 表盘
-  var cy = 4.35, R = 3.85;
-  var dial=[];
-  for(var i=0;i<48;i++){ var a=i/48*Math.PI*2; dial.push(project([o.x + R*Math.sin(a), cy + R*Math.cos(a), fz+0.01], q)); }
-  poly(dial, '#e9eff7', 'rgba(148,163,184,.5)', 1, c);
-  // 刻度（0~0.6 A，每 0.02 A 一格）
-  var nDiv = Math.round(RANGE/DIV);
-  for(var k=0;k<=nDiv;k++){
-    var frac = k/nDiv, ang = (-52 + 104*frac) * Math.PI/180;
-    var major = (k % 5 === 0);
-    var r0 = R*0.99, r1 = R*(major ? 0.80 : 0.89);
-    var p0 = project([o.x + r0*Math.sin(ang), cy + r0*Math.cos(ang), fz+0.02], q);
-    var p1 = project([o.x + r1*Math.sin(ang), cy + r1*Math.cos(ang), fz+0.02], q);
-    seg(p0, p1, major ? '#0f172a' : 'rgba(15,23,42,.62)', major ? 1.5 : 0.9, c);
+// 软边影子：一层硬边黑椭圆在深色地面上会读成「地上摊了一摊墨」（实测台子那片最明显）。
+// 用几层同心椭圆按 alpha/passes 叠出来 —— 中心叠满、外缘只有一层，就是一圈软边。
+function shadowSoft(cx, cz, rx, rz, q, c, alpha, passes){
+  var n = passes || 5;
+  for(var i=n;i>=1;i--){
+    var t=i/n;
+    shadowEllipse(cx, cz, rx*t, rz*t, q, c, alpha/n);
   }
-  // 指针
-  var na = (-52 + 104*clamp(I/RANGE,0,1.02)) * Math.PI/180;
-  var nc = project([o.x, cy, fz+0.03], q);
-  var nt = project([o.x + R*0.92*Math.sin(na), cy + R*0.92*Math.cos(na), fz+0.03], q);
-  seg(nc, nt, '#dc2626', 2.6, c);
-  dot2(nc, Math.max(1.2, 0.46*cam.focal/Math.max(nc.z,0.02)), '#dc2626', c);
-  // 玻璃反光
-  var g1=project([o.x-R*0.62, cy+R*0.55, fz+0.05], q), g2=project([o.x-R*0.30, cy+R*0.88, fz+0.05], q);
-  seg(g1, g2, 'rgba(255,255,255,.62)', 2.4, c);
-  textAt(project([o.x, cy-R*0.60, fz+0.02],q), 'A', 'bold 11px sans-serif', '#334155', c);
-  // 接线柱（左「+」右「−」，电流始终从左边流入）
-  var tl = termAmm(id,-1), tr = termAmm(id,+1);
-  cylSolid(tl.p[0], 8.4, AMM_TY, tl.p[2], 0.58, q, c, '#dc2626', 'rgba(254,202,202,.6)', 1);
-  cylSolid(tr.p[0], 8.4, AMM_TY, tr.p[2], 0.58, q, c, '#0f172a', 'rgba(203,213,225,.6)', 1);
-  textAt(project([tl.p[0], AMM_TY+0.95, tl.p[2]],q), '+', 'bold 11px sans-serif', '#fca5a5', c);
-  textAt(project([tr.p[0], AMM_TY+0.95, tr.p[2]],q), '−', 'bold 11px sans-serif', '#cbd5e1', c);
-  drawn['amm_'+id] = {ang:na, I:I, cx:o.x, cz:o.z, base:project([o.x, 0, fz], q), top:project([o.x, 8.4, fz], q)};
 }
-function drawLamp(id, q, c){
-  var o = CMP[id], out = (id==='L1') ? state.outL1 : state.outL2, br = lampBright(id);
-  shadowEllipse(o.x, o.z, 6.6, 5.2, q, c, 0.34);
-  drawn['body_'+id] = bodyBox(o.x, 5.4, o.z, o.hx, 5.4, o.hz, q, 8);
-  boxSolid(o.x, 1.3, o.z, o.hx, 1.3, o.hz, q, c, out ? '#1a2230' : '#26364d', 'rgba(148,163,184,.32)', 1.1);
-  if(out){
-    textAt(project([o.x, 4.2, o.z+o.hz+0.02],q), '已拧下', 'bold 11px sans-serif', '#94a3b8', c);
-    cylSolid(o.x, 2.6, 3.6, o.z, 1.1, q, c, '#3f3f46', 'rgba(148,163,184,.3)', 1);
-    drawn['glow_'+id] = {ctr:project([o.x,7.2,o.z],q), rad:0, br:0};
-    drawn['fil_'+id] = {p:project([o.x,6.6,o.z],q), col:'#4b5563', br:0};
-  } else {
-    cylSolid(o.x, 2.6, 4.2, o.z, 2.9, q, c, '#a9814a', 'rgba(253,230,138,.38)', 1);
-    var prof=[[4.2,2.90],[5.2,3.58],[6.4,3.88],[7.6,3.74],[8.8,3.02],[9.8,1.80],[10.5,0.55],[10.8,0.06]];
-    var sil = revolveSilhouette(o.x, o.z, prof, q);
-    // 光晕（屏幕空间径向渐变，画在玻璃壳之前）
-    if(br > 0.02){
-      var ctr = project([o.x, 7.2, o.z], q);
-      var rad = (3.4 + 9.5*br) * cam.focal/Math.max(ctr.z, 0.02);
-      var gg = c.createRadialGradient(ctr.x, ctr.y, 0, ctr.x, ctr.y, rad);
-      gg.addColorStop(0, 'rgba(254,240,138,'+(0.68*br).toFixed(3)+')');
-      gg.addColorStop(0.40,'rgba(251,191,36,'+(0.30*br).toFixed(3)+')');
-      gg.addColorStop(1, 'rgba(251,191,36,0)');
-      c.fillStyle = gg;
-      c.beginPath(); c.arc(ctr.x, ctr.y, rad, 0, Math.PI*2); c.fill();
-      drawn['glow_'+id] = {ctr:ctr, rad:rad, br:br};
-    } else {
-      drawn['glow_'+id] = {ctr:project([o.x,7.2,o.z],q), rad:0, br:0};
+// 元件在世界里的实心 AABB（自检的「导线不穿体」与标签避让共用这一处）
+function bodyAABB(id){
+  var o=CMP[id], g=KIT.G[KIND[id]], ink=g.face;
+  return { x0:o.x+ink.lx0*U2CM, x1:o.x+ink.lx1*U2CM,
+           y0:0, y1:(g.ground-g.bodyTop)*U2CM,
+           z0:o.z-g.hz, z1:o.z+g.hz };
+}
+// 可见范围（含开关刀片、灯泡玻璃泡）——点选与标签避让用这个，实心碰撞用上面那个
+function faceAABB(id){
+  var o=CMP[id], g=KIT.G[KIND[id]], ink=g.face, r=faceRect(id);
+  return { x0:o.x+ink.lx0*U2CM, x1:o.x+ink.lx1*U2CM,
+           y0:0, y1:(g.ground-r.ly0)*U2CM,
+           z0:o.z-g.hz, z1:o.z+g.hz };
+}
+
+// ---------------- 器材：前脸贴沙盒实物图 + 三维本体 ----------------
+// 前脸是 z = 常数的竖直平面，投影到屏幕是【精确仿射】（平面上每一点的 z 相同，
+// 比例 focal/z 就是常数）。所以 setTransform 贴图不会有任何透视误差 ——
+// 屏幕上那块就是沙盒里那只电流表，逐像素同一张图。
+function drawFrontFace(tex, sx, sy, sw, sh, x0w, x1w, yTopW, zf, q, c){
+  var sA=project([x0w, yTopW, zf], q), sB=project([x1w, yTopW, zf], q), sC=project([x0w, 0, zf], q);
+  c.save();
+  c.setTransform(DPR,0,0,DPR,0,0);
+  c.transform((sB.x-sA.x)/sw, (sB.y-sA.y)/sw, (sC.x-sA.x)/sh, (sC.y-sA.y)/sh, sA.x, sA.y);
+  c.imageSmoothingEnabled = true;
+  if('imageSmoothingQuality' in c) c.imageSmoothingQuality = 'high';
+  c.drawImage(tex, sx, sy, sw, sh, 0, 0, sw, sh);
+  c.restore();
+}
+// 沿 +z 的接线柱（表头的三根柱就是横着伸向观察者的）
+function diskAt(x,y,z,r,q,c,fill,stroke){
+  var pts=[];
+  for(var i=0;i<20;i++){ var a=i/20*Math.PI*2; pts.push(project([x+r*Math.cos(a), y+r*Math.sin(a), z], q)); }
+  polyPath(pts,c);
+  if(fill){ c.fillStyle=fill; c.fill(); }
+  if(stroke){ c.strokeStyle=stroke; c.lineWidth=0.8; c.stroke(); }
+}
+function postAlongZ(x, y, z0, len, r, kind, q, c){
+  var G = CD.POST_GRAD[kind] || CD.POST_GRAD.neutral;
+  var body=G[1][1], dark=G[0][1];
+  cylBetween([x,y,z0], [x,y,z0+len*0.66], r*0.72, q, c, dark, null, 0);   // 螺杆
+  cylBetween([x,y,z0+len*0.60], [x,y,z0+len], r, q, c, body, null, 0);     // 滚花螺母
+  diskAt(x, y, z0+len, r, q, c, shadeHex(body, 1.18), 'rgba(15,23,42,.5)');
+  diskAt(x, y, z0+len*0.60, r, q, c, shadeHex(body, 0.74), null);
+}
+// 元件当前状态 → 沙盒 drawComponent 的 rec（读数/开合/亮度都从这里进去）
+function compRec(id){
+  var type = KIND[id];
+  if(type==='switch') return { closed: state.swClosed };
+  if(type==='bulb')   return { brightness: isOut(id) ? 0 : lampBright(id) };
+  if(type==='ammeter')return { reading: currents()[id] || 0, range: RANGE };
+  return {};
+}
+function isOut(id){ return id==='L1' ? state.outL1 : (id==='L2' ? state.outL2 : false); }
+// 前脸贴图的有效范围。灯泡被拧下时，贴图只画到【瓷灯座口】——
+// 玻璃泡和螺口箍留在「地上」，画面里那盏灯就是真的空着了。
+function faceRect(id){
+  var g=KIT.G[KIND[id]];
+  var top = (KIND[id]==='bulb' && isOut(id)) ? g.sockLy : g.faceTop;
+  return { lx0:g.face.lx0, lx1:g.face.lx1, ly0:top, ly1:g.ground };
+}
+// 拧下来的那只灯泡，躺在台面上（不然「已拧下」只是一行字）
+function drawPulledBulb(id, q, c){
+  var o=CMP[id], bx=o.x+8.6, bz=o.z+7.4, r=1.45;
+  shadowEllipse(bx-r*0.4, bz, r*1.55, r*1.15, q, c, 0.34);
+  // 螺口箍（黄铜）在左、玻璃泡在右 —— 躺着的一只灯泡
+  cylBetween([bx-r*1.58, r, bz], [bx-r*0.30, r, bz], r*0.56, q, c,
+             shadeHex(CD.MAT.brass[2][1], 0.95), 'rgba(74,44,14,.7)', 0.8);
+  cylBetween([bx-r*1.66, r, bz], [bx-r*1.32, r, bz], r*0.60, q, c,
+             shadeHex(CD.MAT.brass[0][1], 1.0), 'rgba(74,44,14,.7)', 0.8);
+  sphereAt([bx, r, bz], r, q, c, 'rgba(186,222,255,.26)', 'rgba(186,222,255,.68)', 1.0);
+  var hp=project([bx-r*0.44, r*1.62, bz], q);
+  dot2(hp, Math.max(1, 0.42*cam.focal/Math.max(hp.z,0.02)), 'rgba(255,255,255,.55)', c);
+  bodyBox(bx-r*0.5, r, bz, r*2.1, r, r, q, 4);
+}
+// 一件器材：接触阴影 → 三维本体 → 前脸贴图（沙盒原图）→ 接线柱 → 附加件
+function drawComp(id, q, c){
+  var o=CMP[id], type=KIND[id], g=KIT.G[type], rect=faceRect(id);
+  var hx=(g.face.lx1-g.face.lx0)/2*U2CM;
+  var hy=(g.ground-g.bodyTop)*U2CM/2;
+  var hf=(g.ground-rect.ly0)*U2CM/2;      // 含拨杆 / 玻璃泡的可见半高
+  var zf=o.z+g.hz;
+  shadowSoft(o.x, o.z, hx*1.08, g.hz*1.30, q, c, 0.42, 4);
+  drawn['body_'+id] = bodyBox(o.x, hf, o.z, hx, hf, g.hz, q, 8);
+  boxSolid(o.x, hy, o.z, hx, hy, g.hz, q, c, PLASTIC_MID, CASE_LINE, 1.0);
+  var tex = KIT.texture(type, compRec(id));
+  drawFrontFace(tex, (rect.lx0+KIT.PAD)*KIT.TEX, (rect.ly0+KIT.PAD)*KIT.TEX,
+                (rect.lx1-rect.lx0)*KIT.TEX, (rect.ly1-rect.ly0)*KIT.TEX,
+                o.x+rect.lx0*U2CM, o.x+rect.lx1*U2CM, (g.ground-rect.ly0)*U2CM, zf, q, c);
+  // 表头：三根柱横着伸向观察者（沙盒里它们垂在底座下面，3D 里改成前面板上的柱）
+  if(type==='ammeter'){
+    var PY=KIT.POST_Y_W.ammeter, out=g.postOut;
+    for(var i=0;i<3;i++){
+      var t=CD.TERMINALS[type][i];
+      postAlongZ(o.x+t.x*U2CM, PY, zf, out, 0.26, KIT.POST_KIND[type][i], q, c);
     }
-    poly(sil, 'rgba(186,222,255,0.17)', 'rgba(186,222,255,0.62)', 1.3, c);
-    // 玻璃高光
-    var hp = [project([o.x-2.7, 7.6, o.z], q), project([o.x-1.5, 9.6, o.z], q)];
-    seg(hp[0], hp[1], 'rgba(255,255,255,.52)', 1.8, c);
-    // 灯丝
-    var fc1 = project([o.x, 6.6, o.z], q);
-    var col = br<0.02 ? '#4b5563' : 'rgba(255,'+Math.round(180+75*br)+','+Math.round(60+150*br)+',1)';
-    var zig=[];
-    for(var i=0;i<=8;i++){
-      var t=i/8, wx = o.x + (i%2? -0.85:0.85)*(1-Math.abs(t-0.5)*1.2);
-      zig.push(project([wx, 5.6 + t*2.0, o.z], q));
+    var d=currents()[id]||0;
+    var mag=Math.min(Math.abs(d)/(RANGE||1), 1.06);
+    drawn['amm_'+id] = { ang: KIT.SWEEP.A0 + (KIT.SWEEP.A1-KIT.SWEEP.A0)*mag,
+                         reading:d, range:RANGE, I:d,
+                         base:project([o.x, 0, zf], q), top:project([o.x, hy*2, zf], q) };
+  }
+  if(type==='bulb'){
+    var out2=isOut(id), br=out2?0:lampBright(id);
+    if(out2){
+      // 瓷灯座口：灯座上留一个黑洞（灯泡是真的被拧走了），旁边躺着那只灯泡
+      var yTop=(g.ground-g.sockLy)*U2CM;
+      cylSolid(o.x, yTop-0.62, yTop, o.z, 1.02, q, c, '#232830', 'rgba(15,23,42,.65)', 0.8);
+      cylTop(o.x, yTop, o.z, 1.02, q, c, '#161b22', 'rgba(15,23,42,.7)', 0.8);
+      drawPulledBulb(id, q, c);
     }
-    c.save(); c.beginPath();
-    for(var z=0;z<zig.length;z++){ if(z) c.lineTo(zig[z].x,zig[z].y); else c.moveTo(zig[z].x,zig[z].y); }
-    c.strokeStyle=col; c.lineWidth= br>0.05 ? 2.4 : 1.4; c.stroke(); c.restore();
-    if(br>0.05){ dot2(fc1, 1.4+4.0*br, 'rgba(255,244,180,'+(0.5+0.4*br)+')', c); }
-    drawn['fil_'+id] = {p:fc1, col:col, br:br};
+    var ctr=project([o.x, (g.ground-g.faceTop)*U2CM*0.80, o.z+g.hz+0.05], q);
+    var rad = br>0.02 ? (2.6+9.0*br)*cam.focal/Math.max(ctr.z,0.02) : 0;
+    if(rad>0){
+      var gg=c.createRadialGradient(ctr.x,ctr.y,0,ctr.x,ctr.y,rad);
+      gg.addColorStop(0,'rgba(254,240,138,'+(0.52*br).toFixed(3)+')');
+      gg.addColorStop(0.40,'rgba(251,191,36,'+(0.24*br).toFixed(3)+')');
+      gg.addColorStop(1,'rgba(251,191,36,0)');
+      c.fillStyle=gg; c.beginPath(); c.arc(ctr.x,ctr.y,rad,0,Math.PI*2); c.fill();
+    }
+    var fp=project([o.x, (g.ground-g.faceTop)*U2CM*0.72, o.z+g.hz+0.05], q);
+    var col = br<0.02 ? '#4b5563'
+      : 'rgba(255,'+Math.round(180+75*br)+','+Math.round(60+150*br)+',1)';
+    drawn['glow_'+id] = {ctr:ctr, rad:rad, br:br};
+    drawn['fil_'+id] = {p:fp, col:col, br:br};
+    drawn['lamp_'+id] = {x:o.x, z:o.z, out:out2, bright:br, base:project([o.x,0,o.z],q)};
   }
-  var tl = termLamp(id,-1), tr = termLamp(id,+1);
-  cylSolid(tl.p[0], 2.6, LAMP_TY, tl.p[2], 0.52, q, c, '#94a3b8', 'rgba(226,232,240,.45)', 1);
-  cylSolid(tr.p[0], 2.6, LAMP_TY, tr.p[2], 0.52, q, c, '#94a3b8', 'rgba(226,232,240,.45)', 1);
-  drawn['lamp_'+id] = {x:o.x, z:o.z, out:out, bright:br, base:project([o.x,0,o.z],q)};
-}
-function drawJunction(p, q, c, label){
-  shadowEllipse(p[0], p[1], 2.2, 2.2, q, c, 0.34);
-  cylSolid(p[0], 0, 1.6, p[1], 0.62, q, c, '#475569', 'rgba(203,213,225,.5)', 1);
-  sphereAt([p[0],1.7,p[1]], 0.8, q, c, '#cbd5e1', 'rgba(148,163,184,.7)', 1);
-  return project([p[0], 2.4, p[1]], q);
-}
-function drawWires(list, q, c){
-  for(var i=0;i<list.length;i++){
-    var w=list[i];
-    for(var k=1;k<w.pts.length;k++) cylBetween(w.pts[k-1], w.pts[k], 0.34, q, c, w.color, null, 0);
-    for(var j=1;j<w.pts.length-1;j++) sphereAt(w.pts[j], 0.36, q, c, w.color, null, 0);
+  if(type==='switch'){
+    drawn.swClosed = state.swClosed;
+    drawn.swTip = project([o.x, (g.ground-g.bodyTop)*U2CM, o.z+g.hz], q);
   }
+  if(type==='battery'){
+    drawn.batBox = project([o.x, (g.ground-g.bodyTop)*U2CM, o.z], q);
+  }
+}
+function drawJunction(p, q, c){
+  shadowEllipse(p[0], p[1], 2.3, 2.3, q, c, 0.38);
+  cylSolid(p[0], 0, JUNC_TY, p[1], 0.62, q, c, shadeHex(CD.MAT.steel[3][1],0.9), 'rgba(51,65,85,.6)', 0.8);
+  cylSolid(p[0], JUNC_TY-0.25, JUNC_TY, p[1], 0.86, q, c, shadeHex(CD.MAT.steel[1][1],1.0), 'rgba(51,65,85,.5)', 0.8);
+  sphereAt([p[0],JUNC_TY+0.30,p[1]], 0.72, q, c, shadeHex(CD.MAT.brass[3][1],0.95), 'rgba(74,44,14,.65)', 0.8);
+  return project([p[0], JUNC_TY+0.9, p[1]], q);
+}
+// 导线：一根塑料绝缘线，不是一根色带 —— 横截面要有明暗才有「圆管」的读法。
+// 一个四边形 + 一道横向渐变就够了，不必画两遍。
+function wireSeg(a, b, r, q, c, color){
+  var pa=project(a,q), pb=project(b,q);
+  var dx=pb.x-pa.x, dy=pb.y-pa.y, len=Math.hypot(dx,dy);
+  var ra=r*cam.focal/Math.max(pa.z,0.02), rb=r*cam.focal/Math.max(pb.z,0.02);
+  if(!(len > 0.3)){ dot2(pa, Math.max(0.6,ra), shadeHex(color,0.85), c); return; }
+  var nx=-dy/len, ny=dx/len;
+  var sgn = (nx*(-0.707)+ny*(-0.707)) >= 0 ? 1 : -1;
+  nx*=sgn; ny*=sgn;
+  var P0={x:pa.x+nx*ra,y:pa.y+ny*ra}, P1={x:pb.x+nx*rb,y:pb.y+ny*rb},
+      P2={x:pb.x-nx*rb,y:pb.y-ny*rb}, P3={x:pa.x-nx*ra,y:pa.y-ny*ra};
+  var g=c.createLinearGradient(P0.x,P0.y,P3.x,P3.y);
+  g.addColorStop(0,   shadeHex(color,1.26));
+  g.addColorStop(0.34,shadeHex(color,1.00));
+  g.addColorStop(1,   shadeHex(color,0.56));
+  poly([P0,P1,P2,P3], g, null, 0, c);
 }
 function drawParticles(list, q, c){
   var pts=[];
@@ -927,12 +1265,12 @@ function drawParticles(list, q, c){
     var pw = particleWorld(w);
     for(var k=0;k<pw.length;k++){
       var pr = project(pw[k], q);
-      var r = Math.max(1.1, 0.30*cam.focal/Math.max(pr.z,0.02));
-      var g = c.createRadialGradient(pr.x,pr.y,0,pr.x,pr.y,r*2.6);
+      var r = Math.max(1.0, 0.26*cam.focal/Math.max(pr.z,0.02));
+      var g = c.createRadialGradient(pr.x,pr.y,0,pr.x,pr.y,r*2.8);
       g.addColorStop(0,'rgba(254,240,138,.95)');
-      g.addColorStop(0.45,'rgba(250,204,21,.42)');
+      g.addColorStop(0.45,'rgba(250,204,21,.40)');
       g.addColorStop(1,'rgba(250,204,21,0)');
-      c.fillStyle=g; c.beginPath(); c.arc(pr.x,pr.y,r*2.6,0,Math.PI*2); c.fill();
+      c.fillStyle=g; c.beginPath(); c.arc(pr.x,pr.y,r*2.8,0,Math.PI*2); c.fill();
       dot2(pr, r, '#fef08a', c);
       pts.push({x:pr.x,y:pr.y});
     }
@@ -955,6 +1293,33 @@ function collectDomBoxes(){
   for(var j=0;j<domBoxList.length;j++) frameBoxes.push(domBoxList[j]);
 }
 
+// 相机距离：所有东西按它从远到近落笔（画家算法），从哪个角度看都不会前后颠倒。
+function depthOf(p, q){ return Math.hypot(q.eye[0]-p[0], q.eye[1]-p[1], q.eye[2]-p[2]); }
+// 器材的深度参照点 = 【8 个角里离眼睛最远】的那个。为什么不是中心、也不是最近角：
+// 躺在台面上的前排通道导线，必须判在它前面那只器材的【前面】。实测四个视角
+// （default/top/front/side）下，用盒子中心或底面最近角都会把前排导线判到器材后面
+// ——俯视时中心被抬高、斜视时最近角在另一侧——整段导线就被器材吃掉。
+// 取最远角两边都对：前排通道判在器材前、后排通道判在器材后。
+function compDepth(id, q){
+  var b=faceAABB(id), best=-Infinity;
+  for(var i=0;i<8;i++){
+    var d=depthOf([(i&1)?b.x1:b.x0, (i&2)?b.y1:b.y0, (i&4)?b.z1:b.z0], q);
+    if(d>best) best=d;
+  }
+  return best;
+}
+// 一条 70 cm 的长导线用一个中点代表，跨过好几个器材时排序必然出错 —— 先切碎再排。
+var SEG_MAX = 7.0;
+function pushSegJobs(jobs, pts, col, q){
+  for(var k=1;k<pts.length;k++){
+    var a=pts[k-1], b=pts[k];
+    var n=Math.max(1, Math.ceil(dist(a,b)/SEG_MAX));
+    for(var s=0;s<n;s++){
+      var p0=mix(a,b,s/n), p1=mix(a,b,(s+1)/n);
+      jobs.push({d:depthOf(mix(p0,p1,0.5), q), k:'seg', a:p0, b:p1, col:col});
+    }
+  }
+}
 function render(){
   if(!cam) buildCam();
   var q=cam, c=ctx;
@@ -962,35 +1327,38 @@ function render(){
   c.clearRect(0,0,W,H);
   c.setTransform(DPR,0,0,DPR,0,0);
   frameBoxes.length=0; labelQ.length=0; drawnLabels.length=0; drawn={};
-  drawBackdrop(c);
+  drawBackdrop(q,c);
   collectDomBoxes();
   drawTable(q,c);
 
-  // 元件（远的先画）
-  var order = ['bat','sw','L1','L2','A','B','C'];
-  var items=[];
-  for(var i=0;i<order.length;i++){
-    var o=CMP[order[i]];
-    items.push({id:order[i], d:Math.hypot(q.eye[0]-o.x, q.eye[1]-2, q.eye[2]-o.z)});
-  }
-  items.sort(function(a,b){ return b.d-a.d; });
-
   var list = wireList();
-  drawWires(list, q, c);
-
-  for(var k=0;k<items.length;k++){
-    var id=items[k].id;
-    if(id==='bat') drawBat(q,c);
-    else if(id==='sw') drawSwitch(q,c);
-    else if(id==='L1'||id==='L2') drawLamp(id,q,c);
-    else drawAmmeter(id,q,c);
+  var ids = ['bat','A','sw','L1','B','C','L2'];
+  // 一次排好：导线逐段 + 接线柱接头 + 器材本体 + 并联节点柱，全部按相机距离由远到近
+  var jobs=[];
+  for(var i=0;i<list.length;i++){
+    var w=list[i];
+    pushSegJobs(jobs, w.pts, w.color, q);
+    for(var j=1;j<w.pts.length-1;j++){
+      jobs.push({d:depthOf(w.pts[j], q), k:'joint', a:w.pts[j], col:w.color});
+    }
   }
-
+  for(var m=0;m<ids.length;m++){
+    jobs.push({d:compDepth(ids[m], q), k:'comp', id:ids[m]});
+  }
   if(state.mode==='parallel'){
-    var j1=drawJunction(S1,q,c), j2=drawJunction(S2,q,c);
-    drawn.j1=j1; drawn.j2=j2;
-    bestLabel(j1.x, j1.y-14, '分流点', 'bold 11px -apple-system,PingFang SC,sans-serif', '#7dd3fc', 3);
-    bestLabel(j2.x, j2.y-14, '汇合点', 'bold 11px -apple-system,PingFang SC,sans-serif', '#7dd3fc', 3);
+    jobs.push({d:depthOf([S1[0], JUNC_TY*0.5, S1[1]], q), k:'junc', p:S1});
+    jobs.push({d:depthOf([S2[0], JUNC_TY*0.5, S2[1]], q), k:'junc', p:S2});
+  }
+  jobs.sort(function(x,y){ return y.d - x.d; });
+  for(var t=0;t<jobs.length;t++){
+    var J=jobs[t];
+    if(J.k==='seg')        wireSeg(J.a, J.b, WIRE_R, q, c, J.col);
+    else if(J.k==='joint') sphereAt(J.a, WIRE_R*1.08, q, c, shadeHex(J.col,0.88), null, 0);
+    else if(J.k==='comp')  drawComp(J.id, q, c);
+    else {
+      var jp=drawJunction(J.p, q, c);
+      if(J.p===S1) drawn.j1=jp; else drawn.j2=jp;
+    }
   }
 
   drawParticles(list, q, c);
@@ -999,20 +1367,20 @@ function render(){
   var F='bold 12px -apple-system,PingFang SC,sans-serif';
   var cA=currents();
   ['A','B','C'].forEach(function(id){
-    var o=CMP[id], d=drawn['amm_'+id];
+    var d=drawn['amm_'+id];
     if(!d) return;
-    bestLabel(d.base.x, d.base.y+18, id+'：'+fmtI(cA[id])+' A', F, cA[id]>1e-9 ? '#fde68a' : '#94a3b8', 4);
+    bestLabel(d.base.x, d.base.y+20, id+'：'+fmtI(cA[id])+' A', F, cA[id]>1e-9 ? '#fde68a' : '#94a3b8', 4);
   });
   ['L1','L2'].forEach(function(id){
-    var o=CMP[id], d=drawn['lamp_'+id];
+    var d=drawn['lamp_'+id];
     if(!d) return;
-    var txt = id==='L1' ? 'L₁ 10 Ω' : 'L₂ 15 Ω';
-    bestLabel(d.base.x, d.base.y-14, txt, F, d.out ? '#94a3b8' : '#e2e8f0', 3);
+    var txt = (id==='L1' ? 'L₁ 10 Ω' : 'L₂ 15 Ω') + (d.out ? '（已拧下）' : '');
+    bestLabel(d.base.x, d.base.y-16, txt, F, d.out ? '#94a3b8' : '#e2e8f0', 3);
   });
-  var batTop = project([CMP.bat.x, 8.0, CMP.bat.z], q);
-  bestLabel(batTop.x, batTop.y-16, '电源 3 V', F, '#e2e8f0', 3);
-  var swTop = project([CMP.sw.x, 1.8, CMP.sw.z], q);
-  bestLabel(swTop.x, swTop.y-14, state.swClosed?'开关（已闭合）':'开关（断开）', F, state.swClosed?'#a7f3d0':'#fca5a5', 3);
+  var batT = project([CMP.bat.x, (KIT.G.battery.ground-KIT.G.battery.bodyTop)*U2CM, CMP.bat.z], q);
+  bestLabel(batT.x, batT.y-16, '电源 3 V', F, '#e2e8f0', 3);
+  var swT = project([CMP.sw.x, (KIT.G.switch.ground-KIT.G.switch.bodyTop)*U2CM, CMP.sw.z], q);
+  bestLabel(swT.x, swT.y-16, state.swClosed?'开关（已闭合）':'开关（断开）', F, state.swClosed?'#a7f3d0':'#fca5a5', 3);
 
   flushLabels(c);
   drawn.labelCount = drawnLabels.length;
@@ -1022,12 +1390,11 @@ function render(){
 }
 
 // ---------------- 动画推进（tick 与自检共用） ----------------
+// 开关的刀片由沙盒 drawComponent 按 rec.closed 画，和沙盒里一样是【瞬动】的
+// —— 真实的闸刀开关本来就「啪」一下合上，这里不额外插一段平滑插值。
 function stepAnim(dt){
   if(!(dt>0)) dt=0;
   state.t += dt;
-  var target = state.swClosed ? 1 : 0;
-  if(state.swLerp < target) state.swLerp = Math.min(target, state.swLerp + dt/LEVER_T);
-  else if(state.swLerp > target) state.swLerp = Math.max(target, state.swLerp - dt/LEVER_T);
   if(state.paused) return;
   var list = wireList();
   for(var i=0;i<list.length;i++){
@@ -1079,7 +1446,8 @@ var el = {
   pullL1: document.getElementById('cck-pullL1'),
   pullL2: document.getElementById('cck-pullL2'),
   recBtn: document.getElementById('cck-record'),
-  clearBtn: document.getElementById('cck-clear')
+  clearBtn: document.getElementById('cck-clear'),
+  legend: document.getElementById('cck-legend')
 };
 var toastTimer=null;
 function toast(msg){
@@ -1087,6 +1455,91 @@ function toast(msg){
   el.toast.textContent=msg; el.toast.classList.add('show');
   clearTimeout(toastTimer);
   toastTimer=setTimeout(function(){ el.toast.classList.remove('show'); }, 2000);
+}
+
+// ---------------- 「实物 ↔ 符号」对照面板 ----------------
+// 两边都走【真渲染器】：实物用 CD.drawComponent（和台面上、和沙盒页同一份代码），
+// 符号用 CircuitSchematic.build/draw（同一份国标符号）。这样对照图永远不和主画面漂移 ——
+// 手画一套小图标是「看着像」，这里是「本来就是同一个」。
+var LG_ICON = { w: 86, h: 58 };
+var LG_TYPES = ['battery','switch','bulb','ammeter'];
+// 参数要和台面上【一致】：电源画 2 节、电流表画 0.6 A 量程。不一致的对照图等于错的。
+var LG_PARAMS = { battery:{emf:U_SRC, cells:2}, switch:{}, bulb:{}, ammeter:{range:RANGE} };
+// 实物那一栏的取景框。电表的仪器本体全落在导线上方（表壳顶 −86、接线柱在 +72），
+// 取景框本来就不对称；照 bodyBox 的对称半高裁会把表切掉半截。
+var LG_VIEW = {
+  battery: { x0:-112, y0:-42, x1:112, y1: 42 },
+  switch:  { x0: -74, y0:-68, x1: 74, y1: 38 },
+  bulb:    { x0: -74, y0:-80, x1: 74, y1: 40 },
+  ammeter: { x0:-102, y0:-92, x1:102, y1: 82 }
+};
+function lgIconCanvas(){
+  var cv=document.createElement('canvas'), dpr=window.devicePixelRatio||1;
+  cv.width=Math.round(LG_ICON.w*dpr); cv.height=Math.round(LG_ICON.h*dpr);
+  cv.style.width=LG_ICON.w+'px'; cv.style.height=LG_ICON.h+'px';
+  var g=cv.getContext('2d');
+  g.setTransform(dpr,0,0,dpr,0,0);
+  g.fillStyle='#eef3f9'; g.fillRect(0,0,LG_ICON.w,LG_ICON.h);
+  return { cv:cv, g:g };
+}
+function lgComp(type){
+  return { id:'__lg__', type:type, x:0, y:0, rot:0, params:LG_PARAMS[type] };
+}
+function lgReal(type){
+  var ic=lgIconCanvas(), v=LG_VIEW[type];
+  var k=Math.min(LG_ICON.w/(v.x1-v.x0), LG_ICON.h/(v.y1-v.y0));
+  ic.g.save();
+  ic.g.translate(LG_ICON.w/2, LG_ICON.h/2);
+  ic.g.scale(k,k);
+  ic.g.translate(-(v.x0+v.x1)/2, -(v.y0+v.y1)/2);
+  CD.drawComponent(ic.g, lgComp(type), null);    // rec 传 null：只画器材外形，不带读数
+  ic.g.restore();
+  return ic.cv;
+}
+// 图例要给电表一个「已经接好线」的样子（不然圆圈的两根引线全是虚线，看着像坏了）。
+// 挂一根【不存在的元件】上的假导线：termHasWire 认它，build 的导线循环又会因为
+// 找不到那个元件直接跳过 —— 图例上不会真多出一根线。
+function lgStub(compId, termIdx){
+  return { a:{compId:compId, termIdx:termIdx}, b:{compId:'__lg__', termIdx:0} };
+}
+function lgSymbol(type){
+  var ic=lgIconCanvas();
+  var wires = (type==='ammeter') ? [lgStub('__lg__',0), lgStub('__lg__',1)] : [];
+  // pad 给到 18：符号包围盒正好贴到边时，电池最下面那根长线会被图标框裁掉。
+  // labels:false —— 86px 宽的图标里塞一个「A」正好压在圆上，反而不认识符号。
+  var m=CS.build({ comps:[lgComp(type)], wires:wires }, null,
+                 { draw:CD, core:CC, pad:18, values:false, labels:false });
+  var k=Math.min(LG_ICON.w/m.bounds.w, LG_ICON.h/m.bounds.h);
+  ic.g.save();
+  ic.g.translate(LG_ICON.w/2, LG_ICON.h/2);
+  ic.g.scale(k,k);
+  ic.g.translate(-(m.bounds.x+m.bounds.w/2), -(m.bounds.y+m.bounds.h/2));
+  CS.draw(ic.g, m, { draw:CD, values:false });
+  ic.g.restore();
+  return ic.cv;
+}
+function buildLegend(){
+  if(!el.legend) return;
+  if(!CS || !CS.LEGEND){ el.legend.innerHTML='<p class="note">符号模块没有加载。</p>'; return; }
+  el.legend.innerHTML='';
+  LG_TYPES.forEach(function(type){
+    var row=CS.LEGEND.filter(function(r){ return r.type===type; })[0];
+    if(!row) return;
+    var d=document.createElement('div'); d.className='lgRow'; d.setAttribute('data-type',type);
+    var ic=document.createElement('div'); ic.className='lgIcons';
+    ic.appendChild(lgReal(type));
+    var ar=document.createElement('div'); ar.className='lgArrow'; ar.textContent='→';
+    ic.appendChild(ar);
+    ic.appendChild(lgSymbol(type));
+    d.appendChild(ic);
+    var tx=document.createElement('div'); tx.className='lgTxt';
+    var b=document.createElement('b'); b.textContent=row.name;
+    var s1=document.createElement('span'); s1.textContent=row.from;
+    var s2=document.createElement('span'); s2.className='sym'; s2.textContent='符号：'+row.to;
+    tx.appendChild(b); tx.appendChild(s1); tx.appendChild(s2);
+    d.appendChild(tx);
+    el.legend.appendChild(d);
+  });
 }
 function setMode(m){
   if(state.mode===m) return;
@@ -1112,7 +1565,7 @@ function toggleLamp(id){
 }
 function setPaused(v){ state.paused=!!v; buildStageBar(); syncUI(); }
 function resetAll(){
-  state.swClosed=false; state.swLerp=0; state.outL1=false; state.outL2=false;
+  state.swClosed=false; state.outL1=false; state.outL2=false;
   state.paused=false; state.recs=[]; _wireCache=[];
   applyView('default');
   buildStageBar(); syncUI(); render();
@@ -1259,22 +1712,28 @@ function clearRecs(){ state.recs=[]; syncUI(); }
 
 // ---------------- 交互：旋转 / 缩放 / 点击元件 ----------------
 var drag=null;
-function hitTest(sx,sy){
-  var best=null, bestD=1e9;
-  var targets=[];
-  ['bat','sw','L1','L2','A','B','C'].forEach(function(id){
-    var o=CMP[id], top = o.kind==='bat'?BAT_TY:(o.kind==='amm'?AMM_TY:(o.kind==='sw'?SW_TY:10.8));
-    var c0=project([o.x, (o.kind==='lamp'?5.5:top*0.55), o.z]);
-    var c1=project([o.x, top, o.z]);
-    targets.push({id:id, a:c0, b:c1});
-  });
-  for(var i=0;i<targets.length;i++){
-    var t=targets[i];
-    var d = Math.min(Math.hypot(sx-t.a.x, sy-t.a.y), Math.hypot(sx-t.b.x, sy-t.b.y));
-    if(d<bestD){ bestD=d; best=t.id; }
+// 点选：把每件器材【可见范围】AABB 的 8 个角投到屏幕上取包围盒，命中取最近的一件。
+// 不再用「一根竖直中轴」近似 —— 电流表横着比电池宽一倍，中轴命中会把点击落到隔壁元件上。
+var HIT_PAD = 3;
+function screenBoxOf(id){
+  var b=faceAABB(id), x0=Infinity, x1=-Infinity, y0=Infinity, y1=-Infinity;
+  for(var i=0;i<8;i++){
+    var s=project([(i&1)?b.x1:b.x0, (i&2)?b.y1:b.y0, (i&4)?b.z1:b.z0]);
+    if(s.x<x0)x0=s.x; if(s.x>x1)x1=s.x;
+    if(s.y<y0)y0=s.y; if(s.y>y1)y1=s.y;
   }
-  if(bestD>34) return null;
-  if(best==='bat') return null;
+  return {x0:x0, x1:x1, y0:y0, y1:y1};
+}
+function hitTest(sx,sy){
+  var ids=['bat','A','sw','L1','B','C','L2'];
+  var best=null, bestD=1e9;
+  for(var i=0;i<ids.length;i++){
+    var id=ids[i], sb=screenBoxOf(id);
+    if(sx<sb.x0-HIT_PAD || sx>sb.x1+HIT_PAD || sy<sb.y0-HIT_PAD || sy>sb.y1+HIT_PAD) continue;
+    var d=Math.hypot(sx-(sb.x0+sb.x1)/2, sy-(sb.y0+sb.y1)/2);
+    if(d<bestD){ bestD=d; best=id; }
+  }
+  if(best==='bat') return null;   // 电源不做点击交互（本来也没有可切的状态）
   return best;
 }
 function onDown(e){
@@ -1336,6 +1795,7 @@ cvs.addEventListener('wheel', onWheel, {passive:false});
 window.addEventListener('resize', resize);
 if(window.ResizeObserver) new ResizeObserver(function(){ resize(); }).observe(stageEl);
 
+buildLegend();
 buildStageBar();
 resize();
 syncUI();
@@ -1345,19 +1805,35 @@ requestAnimationFrame(tick);
 // ---------------- 自检钩子 ----------------
 window.__CCK = {
   state: state,
-  CONST: {U_SRC:U_SRC, R1:R1, R2:R2, RANGE:RANGE, DIV:DIV, RUN:RUN, SPEED_K:SPEED_K,
-          SPACING:SPACING, LEVER_T:LEVER_T, ENV:ENV, VIEWS:VIEWS},
-  CMP: CMP, S1: S1, S2: S2, ENV_PTS: ENV_PTS,
+  CONST: {U_SRC:U_SRC, R1:R1, R2:R2, RANGE:RANGE, DIV:DIV, RUN:RUN, WIRE_R:WIRE_R,
+          SPEED_K:SPEED_K, SPACING:SPACING, U2CM:U2CM, TABLE:TABLE, ENV:ENV, VIEWS:VIEWS},
+  CMP: CMP, KIND: KIND, TIDX: TIDX, KIT: KIT,
+  S1: S1, S2: S2, JUNC_TY: JUNC_TY, LANE_B: LANE_B, LANE_F: LANE_F, ENV_PTS: ENV_PTS,
   currents: currents, lampCurrent: lampCurrent, lampPower: lampPower, lampVolt: lampVolt,
   lampBright: lampBright, totalRes: totalRes, verdictInfo: verdictInfo,
   wireList: wireList, wireCurrent: wireCurrent, pointAt: pointAt, particleWorld: particleWorld,
   setMode: setMode, setSwitch: setSwitch, toggleLamp: toggleLamp, setPaused: setPaused,
   resetAll: resetAll, applyView: applyView, recordNow: recordNow, clearRecs: clearRecs,
   buildCam: buildCam, project: project, render: render, resize: resize,
-  stepAnim: stepAnim, syncUI: syncUI, hitTest: hitTest,
+  stepAnim: stepAnim, syncUI: syncUI, hitTest: hitTest, screenBoxOf: screenBoxOf, HIT_PAD: HIT_PAD,
   bestLabel: bestLabel, clampBox: clampBox, overlapArea: overlapArea, bodyBox: bodyBox,
-  termBat: termBat, termAmm: termAmm, termLamp: termLamp, termSw: termSw,
-  AMM_TY: AMM_TY, LAMP_TY: LAMP_TY, SW_TY: SW_TY, BAT_TY: BAT_TY,
+  // 几何：3D 页与沙盒【同一套端子、同一套包围盒】
+  termOf: termOf, termJunc: termJunc, bodyAABB: bodyAABB, faceAABB: faceAABB, faceRect: faceRect,
+  compRec: compRec, isOut: isOut, depthOf: depthOf, compDepth: compDepth,
+  roundCorners: roundCorners, wirePath: wirePath,
+  // 背景/深度排序（自检要单独验「导线在前还是在后」时就调它们）
+  SEG_MAX: SEG_MAX, pushSegJobs: pushSegJobs, ROOM: ROOM, NEAR_D: NEAR_D,
+  horizonY: horizonY, clipFront: clipFront, roomLine: roomLine, fillAboveLine: fillAboveLine,
+  // 「实物 ↔ 符号」对照面板
+  buildLegend: buildLegend, lgReal: lgReal, lgSymbol: lgSymbol,
+  LG_ICON: LG_ICON, LG_TYPES: LG_TYPES, LG_PARAMS: LG_PARAMS, LG_VIEW: LG_VIEW,
+  // 三个沙盒模块本体：自检要【绕开页面】直接用它们重画一遍来比对（见 F02）
+  CD: CD, CC: CC, CS: CS,
+  // 绘制原语（自检要单独验「一根导线是圆管、一个接线柱有滚花」时就调它们）
+  drawComp: drawComp, drawPulledBulb: drawPulledBulb, drawJunction: drawJunction,
+  wireSeg: wireSeg, drawParticles: drawParticles, postAlongZ: postAlongZ, diskAt: diskAt,
+  drawFrontFace: drawFrontFace, drawBackdrop: drawBackdrop, drawTable: drawTable,
+  shadowEllipse: shadowEllipse, shadowSoft: shadowSoft, shadeHex: shadeHex, polyPath: polyPath,
   get drawn(){ return drawn; },
   get cam(){ return cam; },
   get frameBoxes(){ return frameBoxes; },

@@ -38,6 +38,16 @@
  *     2. posts() 传入的 kinds —— kinds[i] 对应【端子序号】，不是左右顺序：
  *        电源 ['pos','neg']，表头 ['neg','pos','pos']，
  *        变阻器 ['pos','pos','neutral','neutral']
+ *
+ * ── 对外导出面（别的页面要摆同一批器材时，只许从这里取）────────────
+ *   几何：HALF / TERMINALS / terminalWorld / bodyBox / batterySize / PLATE / RHEO
+ *   材质：PALETTE（四材质的代表色）/ MAT（同一套渐变 stop，立体件打光用）
+ *   表头：MET / MET_SWEEP（指针扫角 —— 页面要【自己算】指针角度就必须用它，
+ *         另写一个扫角等于把同一只表画成两个读数）
+ *   接线柱：drawBindingPost / POST_GRAD（柱身的横向渐变，3D 柱面着色用同一组色）
+ *   绘制：drawComponent（元件外形）/ drawWire
+ *   —— 3D 页面把 drawComponent 画进离屏 canvas 当【前脸贴图】，侧面/顶面用 MAT
+ *      打光，接线柱用 POST_GRAD 上色：三处同源，两个页面上的电流表才是同一只表。
  */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) module.exports = factory();
@@ -2437,6 +2447,8 @@
     drawBackground: drawBackground, drawBindingPost: drawBindingPost,
     resistorBands: resistorBands, roundRect: roundRect, softShadow: softShadow,
     batterySize: batterySize, bodyBox: bodyBox,
+    MAT: MAT, MET: MET, MET_SWEEP: MET_SWEEP, POST_GRAD: POST_GRAD,
+    BAND_COLORS: BAND_COLORS,
     version: '2.0.0',
   };
 });
