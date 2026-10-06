@@ -895,16 +895,24 @@ import * as THREE from './assets/optics-three.min.js';
           g.add(m);
         }
       } else {
-        head = new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.3, 2.0), frostPlateMat);
+        /* 结霜的玻璃片。
+           ★ 这里【不能】沿用霜场景那块不透明冷灰板（#5d6874）：在霜场景里它是主体、
+             深底才能衬出白霜；可搬到生活现象这一排，它被读成「一张深色小桌」——
+             判读题库里认不出是哪一件，就是缺陷。所以：浅一档的板 + 一层白霜面 + 更多霜晶。 */
+        const lifePlateMat = new THREE.MeshStandardMaterial({ color: '#96a3b0', roughness: 0.44, metalness: 0.32, envMapIntensity: 1.2 });
+        head = new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.3, 2.0), lifePlateMat);
         head.position.y = 1.5;
+        /* 白霜面：贴在板的上表面，四边各内缩 0.09，免得从侧面看见一圈白边 */
+        const frostTop = new THREE.Mesh(new THREE.BoxGeometry(2.42, 0.08, 1.82), frostMat);
+        frostTop.position.y = 1.69;
+        g.add(frostTop);
         const st = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.7, 1.4, 14), castIron);
         st.position.y = 0.7;
         g.add(st);
-        /* 结霜的玻璃片：片上得有霜，否则就是一块灰板 */
         const fr = mulberry32(2402 + i * 13);
-        for (let k = 0; k < 14; k++) {
-          const c2 = new THREE.Mesh(new THREE.OctahedronGeometry(0.10 + fr() * 0.09, 0), frostMat);
-          c2.position.set((fr() - 0.5) * 2.3, 1.68 + fr() * 0.12, (fr() - 0.5) * 1.7);
+        for (let k = 0; k < 24; k++) {
+          const c2 = new THREE.Mesh(new THREE.OctahedronGeometry(0.12 + fr() * 0.10, 0), frostMat);
+          c2.position.set((fr() - 0.5) * 2.3, 1.80 + fr() * 0.15, (fr() - 0.5) * 1.7);
           c2.rotation.set(fr() * 3, fr() * 3, fr() * 3);
           g.add(c2);
         }
@@ -1827,6 +1835,21 @@ import * as THREE from './assets/optics-three.min.js';
         mistOpacity: m0 ? +m0.material.opacity.toFixed(3) : 0,
         mistScale: m0 ? +m0.scale.x.toFixed(3) : 0,
         targets: lifeObjects.length
+      };
+    },
+    /* 第 i 件在【画布 CSS 像素】里的中心（原点在画布左上，和 sampleRegion 同一口径）。
+       用途：像素类断言 —— 「这一件在画面里到底看不看得见 / 是不是一块深色小板」。 */
+    lifeScreen(i) {
+      const o = lifeObjects[i];
+      if (!o) return null;
+      const r = renderer.domElement.getBoundingClientRect();
+      const p = o.position.clone();
+      o.getWorldPosition(p);
+      p.project(camera);
+      return {
+        x: (p.x * 0.5 + 0.5) * r.width,
+        y: (-p.y * 0.5 + 0.5) * r.height,
+        w: r.width, h: r.height
       };
     },
     /* 雾凇的霜晶必须真的挂在枝上：逐颗量「晶体中心 → 最近那条枝轴线段」的距离。
