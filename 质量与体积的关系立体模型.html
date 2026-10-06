@@ -450,8 +450,12 @@
     const AMAX = 3.51;                                // 所有模式里最大的边长（取景包络用）
 
     const SCALE_X = 2.02, SCALE_Z = 0.34;
-    const SCALE_W = 0.88, SCALE_D = 0.72, SCALE_H = 0.22;
-    const PLAT_T = 0.035;
+    // 秤的尺寸：秤盘要能【装下最大的那块】。最大边长 AMAX = 3.51 cm ⇒ 半边长 0.298 世界单位，
+    // 盘面四周各内缩 PLAT_INSET ⇒ W、D 都必须 ≥ 2 × (0.298 + PLAT_INSET)。
+    // 曾经 W=0.88 / D=0.72、而且盘面只占顶面后 62%（中心在 z≈0.13，物块却落在 z=0.34），
+    // 结果 3 cm 那块【半个身子挂在盘沿外】，看着像悬空称重。
+    const SCALE_W = 1.00, SCALE_D = 0.90, SCALE_H = 0.24;
+    const PLAT_T = 0.035, PLAT_INSET = 0.045;
     const PLAT_Y = SCALE_H + PLAT_T;                  // 秤台面高度：物块坐这儿
 
     const CAMD = 10.4;
@@ -659,8 +663,11 @@
       q.env = { loR: loR, hiR: hiR, loU: loU, hiU: hiU };
       return q;
     }
+    // 台面反射：MIRROR = true 时把世界点的 y 取负再投影（= 以台面 y=0 为镜面）。
+    // ⚠️ 只在 drawReflection 里临时置位、用 try/finally 复位 —— 忘了复位整幅画面都会翻。
+    let MIRROR = false;
     function project(p, q) {
-      const v = sub(p, q.eye);
+      const v = MIRROR ? [p[0] - q.eye[0], -p[1] - q.eye[1], p[2] - q.eye[2]] : sub(p, q.eye);
       const z = Math.max(0.05, dot(v, q.fwd));
       const s = q.focal / z;
       return { x: q.px + dot(v, q.right) * s, y: q.py - dot(v, q.up) * s, s: s, z: z };
@@ -708,25 +715,49 @@
                       Math.round(clamp(c[2] * s, 0, 255)) + ')';
     };
     const LIGHT = vnorm([-0.34, 0.86, 0.38]);
-    const shade = (base, n, amb) => rgb(base, (amb === undefined ? 0.52 : amb) + 0.60 * Math.max(0, dot(n, LIGHT)));
+    const shadeK = (n, amb) => (amb === undefined ? 0.52 : amb) + 0.60 * Math.max(0, dot(n, LIGHT));
+    const shade = (base, n, amb) => rgb(base, shadeK(n, amb));
+    const rgba = (c, k, a) => 'rgba(' + Math.round(clamp(c[0] * k, 0, 255)) + ',' +
+      Math.round(clamp(c[1] * k, 0, 255)) + ',' + Math.round(clamp(c[2] * k, 0, 255)) + ',' + a + ')';
 
     const BOX_FACES = [
       { i: [0, 1, 2, 3], n: [0, 0, -1] }, { i: [4, 5, 6, 7], n: [0, 0, 1] },
       { i: [0, 1, 5, 4], n: [0, -1, 0] }, { i: [3, 2, 6, 7], n: [0, 1, 0] },
       { i: [0, 3, 7, 4], n: [-1, 0, 0] }, { i: [1, 2, 6, 5], n: [1, 0, 0] }
     ];
+    const BOX_EDGES = [[0, 1], [1, 2], [2, 3], [3, 0], [4, 5], [5, 6], [6, 7], [7, 4], [0, 4], [1, 5], [2, 6], [3, 7]];
+    const BOX_TOP_EDGES = [[4, 5], [5, 6], [6, 7], [7, 4]];
     const BOX_V = (x0, y0, z0, x1, y1, z1) => [
       [x0, y0, z0], [x1, y0, z0], [x1, y1, z0], [x0, y1, z0],
       [x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1]
     ];
-    function box3(x0, y0, z0, x1, y1, z1, base, q, amb) {
+    // fade：给「台面倒影」用 —— 按【屏幕竖直方向】从贴近物体的一端往下淡出，
+    //       倒影就不是一块硬邦邦的贴纸。fade 为 undefined 时行为与原来逐像素一致。
+    // ⚠️ 渐变必须用【整个盒子】的屏幕 y 跨度，不能各面各算：凸盒的可见面互相拼成剪影，
+    //    各面按自己的跨度淡出 ⇒ 同一条共享边上两个面的 alpha 不一样 ⇒ 出现横条纹。
+    function box3(x0, y0, z0, x1, y1, z1, base, q, amb, fade) {
       const V = BOX_V(x0, y0, z0, x1, y1, z1);
       const P = V.map(v => project(v, q));
+      let gTop = 0, gBot = 0;
+      if (fade) {
+        gTop = 1e9; gBot = -1e9;
+        for (const p of P) { if (p.y < gTop) gTop = p.y; if (p.y > gBot) gBot = p.y; }
+      }
       for (const f of BOX_FACES) {
         const c = [0, 0, 0];
         for (const k of f.i) { c[0] += V[k][0] / 4; c[1] += V[k][1] / 4; c[2] += V[k][2] / 4; }
-        if (dot(f.n, sub(q.eye, c)) <= 0) continue;
-        poly(f.i.map(k => P[k]), shade(base, f.n, amb), null, 0);
+        const facing = dot(f.n, sub(q.eye, c));
+        // 镜像（台面反射）时可见面正好相反：顶面在镜子里是朝下的，不该画
+        if (MIRROR ? facing >= 0 : facing <= 0) continue;
+        const pts = f.i.map(k => P[k]);
+        if (!fade) { poly(pts, shade(base, f.n, amb), null, 0); continue; }
+        const k = shadeK(f.n, amb);
+        if (gBot - gTop < 0.5) { poly(pts, rgba(base, k, fade * 0.55), null, 0); continue; }
+        const g = ctx.createLinearGradient(0, gTop, 0, gBot);
+        g.addColorStop(0.00, rgba(base, k, fade));
+        g.addColorStop(0.55, rgba(base, k, fade * 0.42));
+        g.addColorStop(1.00, rgba(base, k, 0));
+        poly(pts, g, null, 0);
       }
       return P;
     }
@@ -809,54 +840,173 @@
       g.addColorStop(0, '#0d2035'); g.addColorStop(0.52, '#071626'); g.addColorStop(1, '#020a14');
       ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
     }
+    // 台面上的接地软阴影（椭圆 + 径向渐变）。
+    // 透视下的真实投影椭圆要解锥面，这里用「投影后的屏幕椭圆」近似 ——
+    // 阴影本来就是模糊的，这个近似在视觉上分不出来，但便宜得多。
+    // yPlane：承影面的高度。台面上的器材传 0（默认）；坐在秤盘上的那块要传 PLAT_Y，
+    //         否则影子会掉到台面上、被秤身挡住 —— 看着就是「块悬空、没有落影」。
+    function shadowOnTable(q, cx, cz, rx, rz, alpha, yPlane) {
+      const y = (yPlane === undefined) ? 0.002 : yPlane;
+      const c = project([cx, y, cz], q);
+      const ex = project([cx + rx, y, cz], q);
+      const ez = project([cx, y, cz + rz], q);
+      const Rx = Math.max(2, Math.abs(ex.x - c.x));
+      const Ry = Math.max(2, Math.abs(ez.y - c.y));
+      const R = Math.max(Rx, Ry) * 1.3;
+      const g = ctx.createRadialGradient(c.x, c.y, 0, c.x, c.y, R);
+      g.addColorStop(0.00, 'rgba(1,4,10,' + alpha + ')');
+      g.addColorStop(0.55, 'rgba(1,4,10,' + (alpha * 0.52) + ')');
+      g.addColorStop(1.00, 'rgba(1,4,10,0)');
+      ctx.save();
+      ctx.beginPath();
+      ctx.ellipse(c.x, c.y, Rx * 1.3, Ry * 1.3, 0, 0, PI2);
+      ctx.fillStyle = g; ctx.fill();
+      ctx.restore();
+    }
+
+    function tableCorners(q) {
+      const P = (x, z) => project([x, 0, z], q);
+      return [P(-TABLE_HW, -TABLE_HD), P(TABLE_HW, -TABLE_HD), P(TABLE_HW, TABLE_HD), P(-TABLE_HW, TABLE_HD)];
+    }
+
     function drawTable(q) {
       const P = (x, y, z) => project([x, y, z], q);
       const x0 = -TABLE_HW, x1 = TABLE_HW, z0 = -TABLE_HD, z1 = TABLE_HD;
-      poly([P(x0, 0, z0), P(x1, 0, z0), P(x1, 0, z1), P(x0, 0, z1)], '#141f2f', null, 0);
+      const CORN = [P(x0, 0, z0), P(x1, 0, z0), P(x1, 0, z1), P(x0, 0, z1)];
+      poly(CORN, '#0e1826', null, 0);
       ctx.save();
-      polyPath([P(x0, 0, z0), P(x1, 0, z0), P(x1, 0, z1), P(x0, 0, z1)]); ctx.clip();
+      polyPath(CORN); ctx.clip();
+      // ① 主材质：远端冷亮、近端压暗 —— 拉开纵深
       const a0 = P(x0, 0, z0), a1 = P(x1, 0, z1);
       const g = ctx.createLinearGradient(a0.x, a0.y, a1.x, a1.y);
-      g.addColorStop(0.00, 'rgba(152,201,255,.17)');
-      g.addColorStop(0.40, 'rgba(118,170,232,.06)');
-      g.addColorStop(0.72, 'rgba(4,10,22,.16)');
-      g.addColorStop(1.00, 'rgba(2,6,16,.44)');
+      g.addColorStop(0.00, 'rgba(158,205,255,.20)');
+      g.addColorStop(0.34, 'rgba(120,172,234,.07)');
+      g.addColorStop(0.66, 'rgba(5,12,24,.15)');
+      g.addColorStop(1.00, 'rgba(2,6,16,.48)');
       ctx.fillStyle = g; ctx.fillRect(0, 0, state.w, state.h);
-      ctx.restore();
-      for (let k = 1; k <= 4; k++) {
-        const zz = z0 + (z1 - z0) * (k / 5);
-        line([P(x0, 0.001, zz), P(x1, 0.001, zz)], 'rgba(6,12,24,.30)', 1);
+      // ② 远端一段环境柔光（像台面上方有一盏灯）
+      const b0 = P(0, 0, z0), b1 = P(0, 0, z0 + TABLE_HD * 0.85);
+      const hg = ctx.createLinearGradient(b0.x, b0.y, b1.x, b1.y);
+      hg.addColorStop(0, 'rgba(118,188,255,.15)');
+      hg.addColorStop(1, 'rgba(118,188,255,0)');
+      ctx.fillStyle = hg; ctx.fillRect(0, 0, state.w, state.h);
+      // ③ 台面拼缝（细而低对比）
+      for (let k = 1; k <= 7; k++) {
+        const zz = z0 + (z1 - z0) * (k / 8);
+        line([P(x0, 0.001, zz), P(x1, 0.001, zz)], 'rgba(8,16,30,.26)', 1);
       }
-      poly([P(x0, 0, z1), P(x1, 0, z1), P(x1, -TABLE_T, z1), P(x0, -TABLE_T, z1)], '#0b1523', null, 0);
-      line([P(x0, 0, z1), P(x1, 0, z1)], 'rgba(150,200,255,.22)', 1.4);
+      ctx.restore();
+      // ④ 台面倒角：远端一条亮边，两侧渐隐
+      line([P(x0, 0, z0), P(x1, 0, z0)], 'rgba(178,218,255,.34)', 1.6);
+      line([P(x0, 0, z0), P(x0, 0, z1)], 'rgba(150,200,255,.12)', 1.2);
+      line([P(x1, 0, z0), P(x1, 0, z1)], 'rgba(150,200,255,.12)', 1.2);
+      // ⑤ 台沿（近端侧板）+ 下方暗部 —— 让台面看着有厚度，而不是一张纸
+      poly([P(x0, 0, z1), P(x1, 0, z1), P(x1, -TABLE_T, z1), P(x0, -TABLE_T, z1)], '#0a1320', null, 0);
+      poly([P(x0, -TABLE_T, z1), P(x1, -TABLE_T, z1), P(x1, -TABLE_T * 2.1, z1), P(x0, -TABLE_T * 2.1, z1)], '#050b15', null, 0);
+      line([P(x0, 0, z1), P(x1, 0, z1)], 'rgba(150,200,255,.24)', 1.4);
     }
 
-    // 电子秤：机身 + 秤盘 + 前脸读数窗。
-    // 秤盘做在【后 62%】、读数窗占满前脸 —— 物块坐在盘上时永远盖不住读数。
-    function drawScale(q) {
+    // 台面反射：把器材按 y 取负再投影，裁在台面内、低透明度画一遍。
+    // ⚠️ 这里【只调 box3 / line】（纯绘制）。绝不能调 drawCube / drawScale ——
+    //    那两个函数会写 state.drawn（记账），重跑一遍会让「小球总数 = 各块分子数之和」
+    //    「drawn.cubes 长度」这些断言直接翻倍变红。
+    function drawReflection(q) {
+      ctx.save();
+      polyPath(tableCorners(q)); ctx.clip();
+      ctx.globalAlpha = 0.16;
+      MIRROR = true;
+      try {
+        const G = scaleGeom();
+        box3(G.x0, 0, G.zBack, G.x1, SCALE_H, G.zFront, [58, 70, 88], q, 0.50, 1);
+        box3(G.px0, SCALE_H, G.pz0, G.px1, PLAT_Y, G.pz1, [176, 186, 200], q, 0.58, 1);
+        for (let i = 0; i < cubesOf().length; i++) {
+          const Q = cubePose(i), h = Q.half;
+          if (state.molecules) {
+            // 分子模式只画镜像线框（小球太密，倒影里省掉）
+            const V = BOX_V(Q.cx - h, Q.y0, Q.cz - h, Q.cx + h, Q.y1, Q.cz + h).map(v => project(v, q));
+            for (const e of BOX_EDGES) line([V[e[0]], V[e[1]]], 'rgba(125,211,252,.55)', 1.1);
+          } else {
+            box3(Q.cx - h, Q.y0, Q.cz - h, Q.cx + h, Q.y1, Q.cz + h, MATS[cubeMat(i)].col, q, 0.50, 1);
+          }
+        }
+      } finally { MIRROR = false; }
+      ctx.restore();
+    }
+
+    // 电子秤几何的【唯一真源】。绘制与自检都读这里 —— 自检若把公式在测试里重抄一遍，
+    // 就是自指恒等式（页面改成什么样它都绿），那是「恒真断言」的第一种写法。
+    function scaleGeom() {
       const hw = SCALE_W / 2, hd = SCALE_D / 2;
       const zBack = SCALE_Z - hd, zFront = SCALE_Z + hd;
-      const zPlatFront = zFront - SCALE_D * 0.62;
-      box3(SCALE_X - hw, 0, zBack, SCALE_X + hw, SCALE_H, zFront, [58, 70, 88], q, 0.62);
-      // 秤盘（金属）：只铺后 62%
-      box3(SCALE_X - hw * 0.90, SCALE_H, zBack + 0.035, SCALE_X + hw * 0.90, PLAT_Y, zPlatFront, [176, 186, 200], q, 0.68);
-      // 秤盘前沿的一道亮边，让「盘」和「机身」分得开
+      return {
+        x0: SCALE_X - hw, x1: SCALE_X + hw,
+        zBack: zBack, zFront: zFront, zFace: zFront + 0.0016,
+        // 秤盘：顶面四周各内缩 PLAT_INSET —— 物块（含最大的 3.51 cm）坐在盘面正中，
+        // 四周都留得下，不会挂在盘沿外。
+        px0: SCALE_X - hw + PLAT_INSET, px1: SCALE_X + hw - PLAT_INSET,
+        pz0: zBack + PLAT_INSET, pz1: zFront - PLAT_INSET,
+        platY: PLAT_Y,
+        // 前脸读数窗（在 zFace 这张竖直面上）
+        wx0: SCALE_X - hw * 0.80, wx1: SCALE_X + hw * 0.80,
+        wy0: SCALE_H * 0.16, wy1: SCALE_H * 0.86
+      };
+    }
+
+    // 电子秤：机身（倒角高光 + 底部暗边）+ 不锈钢秤盘 + 前脸玻璃读数窗。
+    // 秤盘铺满秤顶面（四周各内缩 PLAT_INSET）、物块落在秤【中心】—— 两者对齐，
+    // 所以任何一块（含最大的 3.51 cm）都坐在盘面正中，不会挂在盘沿外。
+    // 读数窗在前脸的【竖直面】上，比顶面前沿低一整个机身高度，物块永远够不着它。
+    // 🔴 曾经的「两根横木」：秤脚 box3 沿 z 长 0.6（几乎整个机身深度）、而且画在机身【之后】，
+    //    投影出来就是两条斜跨前脸、压住读数窗的深色长条。真秤的脚从正面本来就看不见，
+    //    现在改成「接地软阴影」，不再有脚 —— 顺序上也不会再压住任何东西。
+    function drawScale(q) {
+      const G = scaleGeom();
       const P = (x, y, z) => project([x, y, z], q);
-      line([P(SCALE_X - hw * 0.90, PLAT_Y, zPlatFront), P(SCALE_X + hw * 0.90, PLAT_Y, zPlatFront)], 'rgba(226,238,252,.75)', 1.4);
-      // 前脸读数窗
-      const zf = zFront + 0.001;
-      const wx0 = SCALE_X - hw * 0.80, wx1 = SCALE_X + hw * 0.80;
-      const wy0 = SCALE_H * 0.16, wy1 = SCALE_H * 0.86;
-      poly([P(wx0, wy0, zf), P(wx1, wy0, zf), P(wx1, wy1, zf), P(wx0, wy1, zf)], '#07131f', 'rgba(56,189,248,.55)', 1.3);
+      const zFace = G.zFace;
+
+      // ② 机身（深炭灰）
+      box3(G.x0, 0, G.zBack, G.x1, SCALE_H, G.zFront, [44, 52, 64], q, 0.58);
+      // 顶沿倒角：一条更亮的窄带，让机身有「磨过的边」
+      poly([P(G.x0, SCALE_H - 0.018, zFace), P(G.x1, SCALE_H - 0.018, zFace),
+            P(G.x1, SCALE_H, zFace), P(G.x0, SCALE_H, zFace)], 'rgba(150,182,222,.26)', null, 0);
+      // 底边暗带：机身与台面的接触带，压住「浮起来」的感觉
+      poly([P(G.x0, 0, zFace), P(G.x1, 0, zFace),
+            P(G.x1, 0.020, zFace), P(G.x0, 0.020, zFace)], 'rgba(4,9,18,.55)', null, 0);
+      // 顶面压暗：秤盘没盖住的那一圈内缩边 —— 让盘面看着是「嵌」进机身里的
+      poly([P(G.x0, SCALE_H + 0.0012, G.zBack), P(G.x1, SCALE_H + 0.0012, G.zBack),
+            P(G.x1, SCALE_H + 0.0012, G.zFront), P(G.x0, SCALE_H + 0.0012, G.zFront)],
+        'rgba(6,12,22,.58)', null, 0);
+
+      // ③ 不锈钢秤盘：薄盒 + 顶面斜向渐变（高光感）+ 前沿亮边
+      box3(G.px0, SCALE_H, G.pz0, G.px1, PLAT_Y, G.pz1, [176, 186, 200], q, 0.66);
+      const t0 = P(G.px0, PLAT_Y + 0.0016, G.pz0), t1 = P(G.px1, PLAT_Y + 0.0016, G.pz1);
+      const pg = ctx.createLinearGradient(t0.x, t0.y, t1.x, t1.y);
+      pg.addColorStop(0.00, 'rgba(248,252,255,.95)');
+      pg.addColorStop(0.34, 'rgba(206,218,232,.88)');
+      pg.addColorStop(0.70, 'rgba(158,172,190,.84)');
+      pg.addColorStop(1.00, 'rgba(216,228,242,.92)');
+      poly([P(G.px0, PLAT_Y + 0.0016, G.pz0), P(G.px1, PLAT_Y + 0.0016, G.pz0),
+            P(G.px1, PLAT_Y + 0.0016, G.pz1), P(G.px0, PLAT_Y + 0.0016, G.pz1)], pg, null, 0);
+      line([P(G.px0, PLAT_Y, G.pz1), P(G.px1, PLAT_Y, G.pz1)], 'rgba(244,250,255,.88)', 1.5);
+
+      // ④ 前脸玻璃读数窗
+      poly([P(G.wx0, G.wy0, zFace), P(G.wx1, G.wy0, zFace), P(G.wx1, G.wy1, zFace), P(G.wx0, G.wy1, zFace)],
+        '#040d17', 'rgba(126,166,206,.34)', 1.2);
+      // 玻璃上的一道斜向反光（让它是「玻璃」而不是「黑块」）
+      const wq = G.wx1 - G.wx0;
+      poly([P(G.wx0 + wq * 0.04, G.wy1, zFace), P(G.wx0 + wq * 0.20, G.wy1, zFace),
+            P(G.wx0 + wq * 0.30, G.wy0, zFace), P(G.wx0 + wq * 0.14, G.wy0, zFace)],
+        'rgba(190,220,255,.07)', null, 0);
       const txt = (state.onScale === null) ? '0.0' : cubeM(state.onScale).toFixed(1);
-      const c = P(SCALE_X, (wy0 + wy1) * 0.52, zf);
-      const fs = clamp(Math.abs(P(SCALE_X, wy1, zf).y - P(SCALE_X, wy0, zf).y) * 0.52, 8, 17);
+      const c = P(SCALE_X, (G.wy0 + G.wy1) * 0.52, zFace);
+      const fs = clamp(Math.abs(P(SCALE_X, G.wy1, zFace).y - P(SCALE_X, G.wy0, zFace).y) * 0.52, 8, 17);
+      ctx.save();
       ctx.font = '800 ' + fs.toFixed(1) + 'px ui-monospace, Menlo, monospace';
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      ctx.fillStyle = '#a5f3fc';
+      ctx.shadowColor = 'rgba(34,211,238,.85)'; ctx.shadowBlur = 7;
+      ctx.fillStyle = '#b8f7ff';
       ctx.fillText(txt + ' g', c.x, c.y);
-      // 秤脚
-      for (const sx of [-1, 1]) box3(SCALE_X + sx * hw * 0.70 - 0.035, -0.030, zBack + 0.06, SCALE_X + sx * hw * 0.70 + 0.035, 0, zFront - 0.06, [36, 44, 56], q, 0.5);
+      ctx.restore();
     }
 
     // 分子点阵：透明线框 + 小球，按深度从远到近画
@@ -960,6 +1110,24 @@
       const q = makeCam({}, state.w, state.h);
 
       drawTable(q);
+
+      // 接地软阴影：秤 + 各物块在台面上的落影。
+      // 必须在【反射与器材之前】铺 —— 否则影子会盖在器材自己身上，看着像蒙了一层灰膜。
+      // 承影面用【物块自己的底面 Q.y0】：台面上的块 y0=0、秤上那块 y0=PLAT_Y，
+      // 同一个循环就都对（飞上秤的中间帧影子跟着块走，不会闪一下）。
+      ctx.save();
+      polyPath(tableCorners(q)); ctx.clip();
+      shadowOnTable(q, SCALE_X, SCALE_Z, SCALE_W * 0.60, SCALE_D * 0.56, 0.74);
+      for (let i = 0; i < cubesOf().length; i++) {
+        const Q = cubePose(i), h = Q.half;
+        shadowOnTable(q, Q.cx, Q.cz, h * 1.35, h * 1.35, 0.60, Q.y0 + 0.002);
+      }
+      ctx.restore();
+
+      // 台面反射：器材的倒影（低透明度、裁在台面内）。要在器材【之前】画，
+      // 否则倒影会浮在器材上面。它内部只调 box3/line，不写任何记账。
+      drawReflection(q);
+
       drawScale(q);
       // 器材本体也要进 frameBoxes，否则标签避让看不见它、正好落在读数窗上
       frameBoxes.push(scaleScreenBox(q));
@@ -1358,6 +1526,8 @@
       makeCam: makeCam, project: project, unproject: unproject, envelopePoints: envelopePoints,
       cm: cm, rhoOf: rhoOf, cubesOf: cubesOf, cubeMat: cubeMat, cubeA: cubeA, cubeV: cubeV, cubeM: cubeM,
       slotX: slotX, poseOf: poseOf, cubePose: cubePose, cubeScreenBox: cubeScreenBox, hitCube: hitCube,
+      // 电子秤几何的唯一真源（自检读它，别在测试里把公式重抄一遍）
+      scaleGeom: scaleGeom,
       latN: latN, moleculeCount: moleculeCount, latticeSpacing: latticeSpacing,
       unitConv: unitConv, chartPt: chartPt,
       // 绘图区实际尺寸（自检用来验「V 轴把整幅绘图区用满」—— 不导出的话测试只能把
