@@ -1,0 +1,1597 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>验证阿基米德原理 · 3D 立体实验台 - 物理虚拟实验</title>
+<!-- VIP 门禁：必须与 experiments.html 的卡片、以及本文件在 auth-check.js 的
+     VIP_EXPERIMENTS 名单【三处一致】。名单由本页 <head> 里同步执行的 auth-check.js 拦，
+     而 script.js 的 checkVip() 只判 VIP 状态、不查名单 —— 漏登记 = 直接输网址可绕过。 -->
+<script src="auth-check.js"></script>
+<style>
+  :root{
+    --bg:#020617; --bg2:#0b1224; --card:rgba(15,23,42,.72); --line:rgba(148,163,184,.16);
+    --ink:#e2e8f0; --dim:#94a3b8; --dim2:#64748b;
+    --blue:#38bdf8; --cyan:#22d3ee; --purple:#a78bfa; --green:#34d399;
+    --amber:#fbbf24; --red:#f87171; --pink:#f472b6;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{
+    background:
+      radial-gradient(1000px 560px at 12% -6%, rgba(56,189,248,.14), transparent 62%),
+      radial-gradient(860px 520px at 88% 2%, rgba(167,139,250,.12), transparent 60%),
+      var(--bg);
+    color:var(--ink);
+    font-family:"Inter","PingFang SC","Microsoft YaHei",system-ui,-apple-system,sans-serif;
+    -webkit-font-smoothing:antialiased;
+    min-height:100vh;
+  }
+  .wrap{max-width:1440px;margin:0 auto;padding:20px 20px 40px}
+  .top{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:14px}
+  .top h1{font-size:19px;margin:0;letter-spacing:-.01em;
+    background:linear-gradient(110deg,#e2e8f0 10%,#7dd3fc 52%,#c4b5fd 92%);
+    -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+  .top .kicker{font-size:11.5px;color:var(--cyan);border:1px solid rgba(34,211,238,.32);
+    border-radius:999px;padding:3px 11px;background:rgba(34,211,238,.07);white-space:nowrap}
+  .top .sp{flex:1}
+  .top a.back{font-size:12.5px;color:var(--dim);text-decoration:none;border:1px solid var(--line);
+    border-radius:9px;padding:5px 12px;transition:.2s}
+  .top a.back:hover{color:var(--ink);border-color:rgba(148,163,184,.4)}
+
+  /* align-items:stretch（默认）→ 左列高度 = 右列高度；左列内部舞台固定、说明卡 flex:1 吃掉剩余高度。
+     这样页面【中间不会留出大片空白】。 */
+  .app{display:grid;grid-template-columns:minmax(0,1fr) 330px;gap:16px;align-items:stretch}
+  /* 左列 = 舞台 + 说明卡（竖排）。说明卡就地填掉舞台下方那片空白。
+     ⚠️ 别把 .notes 直接当 .app 的第三个 grid item —— 那会新开一行，
+     被 row1 里更高的右侧栏顶到页面最下面，空白照样留在中间。 */
+  .col-left{display:flex;flex-direction:column;gap:16px;min-width:0}
+  .col-left > .stage{flex:0 0 auto}
+  /* ★ 折成一列后必须把【控制台】提到【说明卡】前面 —— 否则手机/窄屏上要划过
+     四整张说明卡才摸得到滑块，而滑块才是这个页面的操作入口。
+     display:contents 让 .col-left 的两个孩子直接变成 grid item，order 才生效。 */
+  @media(max-width:900px){
+    .app{grid-template-columns:1fr}
+    .col-left{display:contents}
+    .stage{order:0} .panel{order:1} .notes{order:2}
+  }
+
+  .stage{position:relative;background:var(--card);border:1px solid var(--line);border-radius:16px;
+    overflow:hidden;backdrop-filter:blur(9px);min-height:380px}
+  .stage canvas{display:block;width:100%;height:auto;touch-action:none;cursor:grab}
+  .stage canvas.dragging{cursor:grabbing}
+
+  .stage-hint{position:absolute;left:14px;top:12px;font-size:12px;color:var(--dim);
+    background:rgba(2,6,23,.66);border:1px solid var(--line);border-radius:9px;
+    padding:6px 11px;pointer-events:none;max-width:min(56%,420px);line-height:1.55}
+  .stage-hint b{color:#bae6fd}
+
+  .stage-bar{position:absolute;left:0;right:0;bottom:0;display:flex;justify-content:space-between;
+    align-items:flex-end;gap:10px;padding:10px 12px;pointer-events:none}
+  .stage-bar > div{display:flex;gap:8px;flex-wrap:wrap;pointer-events:auto}
+  .sbtn{font:inherit;font-size:12.5px;color:#cbd5e1;background:rgba(2,6,23,.72);
+    border:1px solid var(--line);border-radius:10px;padding:7px 12px;cursor:pointer;
+    transition:.18s;white-space:nowrap;backdrop-filter:blur(6px)}
+  .sbtn:hover{color:#e2e8f0;border-color:rgba(148,163,184,.42)}
+  .sbtn.on{color:#6ee7b7;border-color:rgba(52,211,153,.5);background:rgba(52,211,153,.13)}
+  .sbtn.ready{color:#6ee7b7;border-color:rgba(52,211,153,.55);background:rgba(52,211,153,.16);
+    box-shadow:0 0 0 1px rgba(52,211,153,.18),0 0 14px rgba(52,211,153,.22)}
+  .sbtn:disabled{opacity:.42;cursor:not-allowed}
+
+  .panel{display:flex;flex-direction:column;gap:12px}
+  .pcard{background:var(--card);border:1px solid var(--line);border-radius:15px;padding:14px 15px;
+    backdrop-filter:blur(9px)}
+  .pcard h3{margin:0 0 10px;font-size:13px;color:#cbd5e1;letter-spacing:.02em;font-weight:600}
+  .pcard h3 span{color:var(--dim2);font-weight:400;font-size:11.5px;margin-left:6px}
+
+  .seg{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+  .seg.two{grid-template-columns:1fr 1fr}
+  .seg.three{grid-template-columns:repeat(3,1fr)}
+  .seg button{font:inherit;font-size:12.5px;padding:8px 4px;border-radius:10px;cursor:pointer;
+    background:rgba(148,163,184,.09);border:1px solid var(--line);color:#cbd5e1;transition:.18s}
+  .seg button:hover{border-color:rgba(148,163,184,.4)}
+  .seg button.on{background:linear-gradient(140deg,rgba(56,189,248,.24),rgba(34,211,238,.16));
+    border-color:rgba(56,189,248,.5);color:#bae6fd;font-weight:600}
+  .seg button .rho{display:block;font-size:10.5px;color:var(--dim2);margin-top:1px}
+  .seg button.on .rho{color:#7dd3fc}
+
+  .slider-row{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:2px}
+  .slider-row .lab{font-size:12.5px;color:var(--dim)}
+  .slider-row .val{font-size:17px;font-weight:700;color:#7dd3fc;font-variant-numeric:tabular-nums}
+  .slider-row .val small{font-size:11px;color:var(--dim2);font-weight:400;margin-left:3px}
+  input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:26px;background:transparent;cursor:pointer}
+  input[type=range]::-webkit-slider-runnable-track{height:6px;border-radius:999px;
+    background:linear-gradient(90deg,#38bdf8,#a78bfa)}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;height:18px;border-radius:50%;
+    background:#e2e8f0;border:3px solid #38bdf8;margin-top:-6px;box-shadow:0 0 10px rgba(56,189,248,.5)}
+  input[type=range]::-moz-range-track{height:6px;border-radius:999px;background:linear-gradient(90deg,#38bdf8,#a78bfa)}
+  input[type=range]::-moz-range-thumb{width:14px;height:14px;border-radius:50%;background:#e2e8f0;
+    border:3px solid #38bdf8}
+  .ticks{display:flex;justify-content:space-between;font-size:10.5px;color:var(--dim2);margin-top:-4px}
+
+  .hero{border-radius:12px;padding:11px 13px;border:1px solid rgba(52,211,153,.42);
+    background:linear-gradient(120deg,rgba(52,211,153,.16),rgba(56,189,248,.08));margin-bottom:10px}
+  .hero .row{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
+  .hero .t{font-size:11.5px;color:#a7f3d0;letter-spacing:.02em}
+  .hero .big{font-size:20px;font-weight:800;letter-spacing:-.01em;font-variant-numeric:tabular-nums}
+  .hero .sub{font-size:11.5px;color:var(--dim);margin-top:3px}
+  .hero .sub b{color:#cbd5e1}
+
+  table.data{width:100%;border-collapse:collapse;font-size:12.5px}
+  table.data td{padding:5px 0;border-bottom:1px solid rgba(148,163,184,.10)}
+  table.data tr:last-child td{border-bottom:none}
+  table.data td:first-child{color:var(--dim);white-space:nowrap}
+  table.data td:last-child{text-align:right;font-variant-numeric:tabular-nums;color:#cbd5e1}
+  table.data td b{color:#e2e8f0}
+  table.data tr.hi td{background:rgba(52,211,153,.09)}
+  table.data tr.hi td:first-child{color:#a7f3d0}
+  .eq{display:inline-block;background:rgba(2,6,23,.6);border:1px solid rgba(148,163,184,.2);
+    border-radius:6px;padding:1px 7px;font-family:ui-monospace,Menlo,monospace;font-size:11.5px;color:#7dd3fc}
+
+  .steps{display:flex;flex-direction:column;gap:6px}
+  .step{display:flex;gap:9px;align-items:flex-start;padding:7px 9px;border-radius:10px;
+    border:1px solid var(--line);background:rgba(148,163,184,.05);transition:.22s}
+  .step .no{flex:0 0 auto;width:19px;height:19px;border-radius:50%;font-size:11px;font-weight:700;
+    display:flex;align-items:center;justify-content:center;background:rgba(148,163,184,.18);color:#cbd5e1}
+  .step .tx{font-size:12px;color:var(--dim);line-height:1.5}
+  .step .tx b{color:#cbd5e1;display:block;font-size:12.5px;font-weight:600}
+  .step.on{border-color:rgba(56,189,248,.5);background:rgba(56,189,248,.11)}
+  .step.on .no{background:rgba(56,189,248,.85);color:#04121f}
+  .step.on .tx{color:#bae6fd}
+  .step.done{border-color:rgba(52,211,153,.45);background:rgba(52,211,153,.10)}
+  .step.done .no{background:rgba(52,211,153,.85);color:#04231a}
+  .step.done .tx{color:#a7f3d0}
+
+  .toggles{display:flex;flex-direction:column;gap:7px}
+  .tg{display:flex;align-items:center;gap:9px;font-size:12.5px;color:#cbd5e1;cursor:pointer;
+    user-select:none;padding:5px 2px}
+  .tg input{appearance:none;-webkit-appearance:none;width:36px;height:20px;border-radius:999px;
+    background:rgba(148,163,184,.22);position:relative;cursor:pointer;transition:.2s;flex:0 0 auto;margin:0}
+  .tg input::after{content:"";position:absolute;left:3px;top:3px;width:14px;height:14px;border-radius:50%;
+    background:#cbd5e1;transition:.2s}
+  .tg input:checked{background:rgba(52,211,153,.5)}
+  .tg input:checked::after{left:19px;background:#ecfdf5}
+  .tgh{margin:9px 0 0;font-size:11.5px;color:var(--dim);line-height:1.6}
+  .tgh b{color:#cbd5e1}
+
+  /* 说明卡：2×2。列数固定 2（不用 auto-fit —— 1054 px 宽下 auto-fit 会排成 3 列，
+     每列太窄、卡反而被拉得更高更空）。 */
+  .notes{flex:1 1 auto;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));
+    gap:12px;align-content:stretch}
+  @media(max-width:820px){ .notes{grid-template-columns:1fr} }
+  .note{background:var(--card);border:1px solid var(--line);border-radius:15px;padding:15px 17px;
+    backdrop-filter:blur(9px);display:flex;flex-direction:column;justify-content:center}
+  .note h4{margin:0 0 8px;font-size:13.5px;color:#cbd5e1}
+  .note ul{margin:0;padding-left:18px}
+  .note li{font-size:12.5px;color:#94a3b8;margin:5px 0;line-height:1.65}
+  .note li b{color:#cbd5e1}
+  .note li + li{margin-top:9px}
+
+  /* 提示条锚在【舞台内部】的按钮条正上方（bottom:56px ≈ 按钮条 51px 高 + 5px 间隙）。
+     ⚠️ 别改回 position:fixed + bottom:34px —— 那会锚到视口底部，
+     而说明卡搬进左列后正好占据视口底部那一带，提示条会压住卡片文字。 */
+  .toast{position:absolute;left:50%;bottom:56px;transform:translateX(-50%) translateY(14px);
+    background:rgba(2,6,23,.92);border:1px solid rgba(52,211,153,.42);color:#a7f3d0;
+    border-radius:11px;padding:9px 18px;font-size:13px;opacity:0;pointer-events:none;
+    transition:.25s;z-index:60;white-space:nowrap}
+  .toast.on{opacity:1;transform:translateX(-50%) translateY(0)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <span class="kicker">人教版八年级下册 · 第十章 第 2 节</span>
+    <h1>验证阿基米德原理 · 3D 立体实验台</h1>
+    <span class="sp"></span>
+    <a class="back" href="experiments.html">← 返回实验列表</a>
+  </div>
+
+  <div class="app">
+    <!-- ================= 舞台 ================= -->
+    <!-- 左列 = 舞台 + 说明卡（竖排）：说明卡填掉舞台下方那片空白，不再甩到页面最底部 -->
+    <div class="col-left">
+    <div class="stage" id="stage">
+      <canvas id="simCanvas"></canvas>
+      <div class="stage-hint" id="hint"></div>
+      <div class="stage-bar">
+        <div class="bar-left">
+          <button class="sbtn" id="btnAuto">▶ 一键完成实验</button>
+          <button class="sbtn" id="btnReset">↺ 重置</button>
+        </div>
+        <div class="bar-right">
+          <button class="sbtn" id="btnArrows">力的箭头</button>
+          <button class="sbtn" id="btnView">换视角</button>
+        </div>
+      </div>
+      <!-- 提示条放在舞台【内部】（绝对定位）：fixed 到视口底部会压住说明卡文字 -->
+      <div class="toast" id="toast"></div>
+    </div>
+
+    <!-- ================= 说明（左列、舞台正下方） ================= -->
+    <div class="notes">
+      <div class="note">
+        <h4>实验四步（人教版）</h4>
+        <ul>
+          <li><b>① 测 G物：</b>物块悬在空气中，测力计示数就是 <span class="eq">G物</span>。</li>
+          <li><b>② 空桶置零：</b>小桶放电子秤上按「置零」，把桶重扣掉。</li>
+          <li><b>③ 浸入接水：</b>物块浸入溢水杯（水一直满到溢流口），<b>溢出的水全部流进小桶</b>。</li>
+          <li><b>④ 比较：</b><span class="eq">F浮 = G物 − F拉</span>，<span class="eq">G排 = m排·g</span>，比一比。</li>
+        </ul>
+      </div>
+
+      <div class="note">
+        <h4>本实验最漂亮的定量结论</h4>
+        <ul>
+          <li><b>F浮 = G排</b>（阿基米德原理）—— 上面两个数永远相等，这就是「原理」。</li>
+          <li>把它写开：<span class="eq">F浮 = G排 = ρ液·g·V排</span>。</li>
+          <li><b>与浸入深度无关：</b>只要没全浸没，V排 就是「浸在水里的那一块」；<b>全浸没后 V排 不再变，F浮 也就不再变</b>（再往下按也一样）。</li>
+          <li><b>与物块本身无关：</b>同一浸入体积，换铝块、塑料块，<b>F浮 一模一样</b> —— 它只认 ρ液 和 V排。</li>
+          <li><b>与液体有关：</b>换成酒精 F浮 变小、换成盐水 F浮 变大，但 <b>F浮 = G排 始终成立</b>。</li>
+        </ul>
+      </div>
+
+      <div class="note">
+        <h4>常见误区</h4>
+        <ul>
+          <li><b>「越深浮力越大」？</b>错。全浸没后 V排 不再变，<b>F浮 恒定</b>；感觉「越深越难按」是液体压强变大，不是浮力变大。</li>
+          <li><b>「重的物块浮力大」？</b>错。F浮 只跟 ρ液 和 V排 有关，跟物块多重、什么材料<b>无关</b>。</li>
+          <li><b>「溢水杯不用装满」？</b>必须满到溢流口。没装满时，水面要涨到溢流口<b>才开始溢</b>，这一段里 F浮 已经不为 0、G排 却还是 0，两边对不上 —— 那不是原理错了，是<b>实验做错了</b>。</li>
+          <li><b>「V排 就是物块体积」？</b>只有<b>全浸没</b>时才相等；部分浸入时 V排 &lt; V物。</li>
+        </ul>
+      </div>
+
+      <div class="note">
+        <h4>怎么玩（三个对比）</h4>
+        <ul>
+          <li><b>拖「浸入深度」滑块：</b>看 ③ 的两支箭头（F浮 ↑ 与 G排 ↓）<b>始终一样长</b>，全浸没后两支都停住不变。</li>
+          <li><b>换液体：</b>水 → 酒精 → 盐水，两支箭头一起变短、一起变长，比值仍是 1.000。</li>
+          <li><b>换物块：</b>塑料 / 陶瓷 / 铝，<b>G物 的箭头长短变了，F浮 的箭头纹丝不动</b> —— 这就是「与物块无关」。</li>
+          <li><b>勾掉「溢水杯装满」：</b>水没到溢流口之前不溢水，G排 一直是 0，而 F浮 已经有了 —— 一眼看出为什么<b>必须先装满</b>。</li>
+        </ul>
+      </div>
+    </div>
+    </div>
+
+    <!-- ================= 右侧控制台 ================= -->
+    <aside class="panel">
+      <div class="pcard">
+        <h3>实验步骤</h3>
+        <div class="steps" id="stepList">
+          <div class="step" data-step="0"><div class="no">1</div><div class="tx"><b>测物块重力 G物</b>物块悬在空气中</div></div>
+          <div class="step" data-step="1"><div class="no">2</div><div class="tx"><b>小桶置零</b>扣掉空桶的重</div></div>
+          <div class="step" data-step="2"><div class="no">3</div><div class="tx"><b>浸入并接住溢出的水</b></div></div>
+          <div class="step" data-step="3"><div class="no">4</div><div class="tx"><b>比较 F浮 与 G排</b></div></div>
+        </div>
+      </div>
+
+      <div class="pcard">
+        <h3>浸入深度 <span>拖动看两支箭头怎么变</span></h3>
+        <div class="slider-row">
+          <span class="lab">物块底面到液面的距离</span>
+          <span class="val" id="rdH">0.0<small>cm</small></span>
+        </div>
+        <input type="range" id="hRange" min="-4" max="5.5" step="0.1" value="-4">
+        <div class="ticks" id="hTicks"></div>
+      </div>
+
+      <div class="pcard">
+        <h3>读数 <span>F浮 与 G排 是同一支比例尺</span></h3>
+        <div class="hero">
+          <div class="row">
+            <span class="t">F浮 ／ G排</span>
+            <span class="big" id="rdRatio" style="color:#6ee7b7">—</span>
+          </div>
+          <div class="sub" id="rdHeroSub">把物块浸进水里，看这个比值</div>
+        </div>
+        <table class="data">
+          <tr><td>物块重力 G物</td><td><b id="rdG">—</b> N</td></tr>
+          <tr><td>测力计示数 F拉</td><td><b id="rdF">—</b> N</td></tr>
+          <tr class="hi"><td>浮力 F浮 = G物 − F拉</td><td><b id="rdFb">—</b> N</td></tr>
+          <tr><td>浸入体积 V排</td><td><span id="rdVsub">—</span> cm³</td></tr>
+          <tr><td>实际浸没深度</td><td><span id="rdSub">—</span> cm</td></tr>
+          <tr><td>电子秤读数</td><td><span id="rdScale">—</span> g</td></tr>
+          <tr><td>排开液体质量 m排</td><td><span id="rdM">—</span> g</td></tr>
+          <tr class="hi"><td>排开液体重 G排 = m排·g</td><td><b id="rdGp">—</b> N</td></tr>
+        </table>
+        <p class="tgh" id="rdNote"></p>
+      </div>
+
+      <div class="pcard">
+        <h3>液体 <span>ρ液 决定浮力</span></h3>
+        <div class="seg three" id="segLiq">
+          <button data-liq="water">水<span class="rho">1.0 g/cm³</span></button>
+          <button data-liq="alcohol">酒精<span class="rho">0.8 g/cm³</span></button>
+          <button data-liq="brine">盐水<span class="rho">1.2 g/cm³</span></button>
+        </div>
+      </div>
+
+      <div class="pcard">
+        <h3>物块 <span>换材质，看 F浮 变不变</span></h3>
+        <div class="seg" id="segMat">
+          <button data-mat="rubber">橡胶<span class="rho">1.3</span></button>
+          <button data-mat="plastic">塑料<span class="rho">1.5</span></button>
+          <button data-mat="ceramic">陶瓷<span class="rho">2.3</span></button>
+          <button data-mat="alu">铝<span class="rho">2.7</span></button>
+        </div>
+      </div>
+
+      <div class="pcard">
+        <h3>显示</h3>
+        <div class="toggles">
+          <label class="tg"><input type="checkbox" id="ckArrows" checked>力的箭头（F浮 / G物 / F拉 / G排）</label>
+          <label class="tg"><input type="checkbox" id="ckRuler" checked>溢水杯上的水位刻度</label>
+          <label class="tg"><input type="checkbox" id="ckFull" checked>溢水杯装满到溢流口</label>
+        </div>
+        <p class="tgh">勾掉「装满」可以看到：<b>水面涨到溢流口才开始溢水</b> —— 那一段里 F浮 已经不为 0，G排 却还是 0。</p>
+      </div>
+    </aside>
+  </div>
+</div>
+
+<script>
+(function(){
+'use strict';
+var $ = function(s){ return document.querySelector(s); };
+
+/* ============================================================
+   0. 常量
+   ============================================================ */
+var GRA = 10;                       // N/kg
+
+/* 物块：4 cm 立方体（V = 64 cm³）
+   ★ 材质只取 1.3 ~ 2.7 g/cm³ 这一段：ρ物 与 ρ液 同量级，
+   这样「G物 的箭头」与「F浮 的箭头」长度才可比、都看得清。
+   四种材质全部比最重的液体（盐水 1.2）重 ⇒ 物块总是下沉、细线总是绷紧。 */
+var A = 4;                          // 棱长 cm
+var V_OBJ = A*A*A;                  // 64 cm³
+/* ★ 四种材质的颜色必须【一眼能分开】：原先橡胶/塑料/陶瓷/铝分别是
+   [168,160,148] / [176,186,198] / [206,206,202] / [186,194,206] —— 塑料和铝只差
+   4% 亮度，换物块时画面上几乎看不出换了（而这正是本页三个教学动作之一）。
+   现在按【明度分级】拉开：橡胶最深 → 塑料偏琥珀 → 陶瓷最亮 → 铝居中偏冷。 */
+var MATS = {
+  rubber:  { name:'橡胶', rho:1300, rgb:[ 98, 94, 90], hi:[146,140,132], spec:[ 74, 70, 66] },
+  plastic: { name:'塑料', rho:1500, rgb:[202,162,106], hi:[240,214,172], spec:[150,112, 62] },
+  ceramic: { name:'陶瓷', rho:2300, rgb:[234,236,238], hi:[252,253,255], spec:[168,172,178] },
+  alu:     { name:'铝',   rho:2700, rgb:[150,164,186], hi:[224,234,248], spec:[104,116,136] }
+};
+var MAT_ORDER = ['rubber','plastic','ceramic','alu'];
+
+var LIQ = {
+  water:   { name:'水',   rho:1000, rgb:[ 58,132,196], top:[120,190,240], edge:[ 96,178,236] },
+  alcohol: { name:'酒精', rho: 800, rgb:[124,118,206], top:[184,178,248], edge:[160,152,236] },
+  brine:   { name:'盐水', rho:1200, rgb:[ 48,158,170], top:[128,216,218], edge:[ 92,206,214] }
+};
+var LIQ_ORDER = ['water','alcohol','brine'];
+
+/* 溢水杯：圆柱形玻璃杯（内半径 4.5、壁厚 0.5），内底到溢流口 11 cm，杯口 14.5 cm。
+   ★ 用圆柱不用方箱：溢水杯本来就是圆的；画成方杯身再套一个圆杯口，
+   两个形状互相打架（实测截图里就是「方盒子顶着一个椭圆圈」）。 */
+var CUP_R_IN = 4.5, CUP_WALL = 0.5, CUP_R_OUT = CUP_R_IN + CUP_WALL, CUP_H = 14, SPOUT_Y = 11;
+var CUP_AREA = Math.PI * CUP_R_IN * CUP_R_IN;      // 内腔横截面积 ≈ 63.62 cm²
+var CUP_CX = -1, CUP_CZ = 0;
+
+/* 溢流口（朝 +x 伸出） */
+var SPOUT_L = 3.5, SPOUT_W = 1.6, SPOUT_T = 0.5;
+
+/* 桌面与器材 */
+var TABLE_Y = 0;
+var WATER_Y = CUP_WALL + SPOUT_Y;           // 杯满时的液面世界高度 11.5
+var CUP_RIM = CUP_WALL + CUP_H;             // 杯口 14.5
+
+/* 电子秤（先定，小桶要坐在它的台面上） */
+var SCALE_W = 11, SCALE_D = 9, SCALE_H = 2;
+var PLATFORM_T = 0.22;                      // 不锈钢台面厚度
+
+/* 小桶：圆柱形（内半径 3.5、壁厚 0.35），高 7。
+   ★ 桶底 = 台面【上表面】：原先写 BKT_BOT = SCALE_H = 2，
+   而台面上表面在 SCALE_H + 0.22 ⇒ 桶沉进秤台 0.22 cm。 */
+var BKT_R_IN = 3.5, BKT_WALL = 0.35, BKT_R_OUT = BKT_R_IN + BKT_WALL, BKT_H = 7;
+var BKT_CX = 11, BKT_CZ = 0;                // 11：往右挪一点，场景比例更接近画布
+var BKT_BOT = SCALE_H + PLATFORM_T;         // 2.22
+var BKT_RIM = BKT_BOT + BKT_H;              // 9.22
+var BKT_AREA = Math.PI * BKT_R_IN * BKT_R_IN;      // ≈ 38.48 cm²
+
+/* 铁架台：★ 立柱高度直接决定「整个场景有多高」，而画布是 1.75:1 的横长方形 ——
+   立柱越高、取景越被高度卡住，器材就越小（实测立柱 37.5→40.6 之后，器材整体小了约 10%，
+   左右空出一大片）。所以立柱高度要贴着【两条硬约束】取最小值：
+     L1 深浸端：挂钩尖 = WATER_Y − H_MAX + A + THREAD 必须 ≥ 杯口（否则测力计插进杯口）；
+     L2 悬空端：立柱顶 ≥ WATER_Y − H_MIN + A + THREAD + SPR_HK + SPR_H + 2.4（横臂 + 夹头）。
+   原先 THREAD 只有 3.5，L1 是【不满足】的 —— 物块深浸时测力计下端确实扎进了杯口。 */
+var ROD_X = -14, ROD_W = 2.2, ROD_TOP = 38.4;
+var BASE_H = 1.2, BASE_W = 22, BASE_D = 16;
+
+/* 弹簧测力计：外壳长 9 cm，截面 2.6；量程 0 ~ 2 N；挂钩再往下伸出 1.6 cm
+   ★ 挂钩要单独算：细线是系在【挂钩下端尖】上的，挂钩再从那里往上升到外壳下沿。
+   原先 render 里 springTop = hookY + SPR_H，把挂钩整个漏掉了 —— 于是细线接在挂钩
+   【顶端】、挂钩倒挂在细线下面，而且挂钩尖比算出来的位置低 1.6 cm。 */
+var SPR_H = 9, SPR_W = 2.6, SPR_RANGE = 2, SPR_HK = 1.6;
+var THREAD = 5.5;                           // 细线长 5.5 cm（L1：再短测力计就插进杯口了）
+
+/* 物块悬点（在溢水杯正上方） */
+var BLK_X = CUP_CX, BLK_Z = CUP_CZ;
+
+/* 浸入深度范围：−4（悬空，物块底面比杯口高 1 cm）~ 5.5（全浸没后再深 1.5 cm）。
+   ★ 不能取 −3：那时物块底面恰好落在杯口高度（WATER_Y−(−3)=14.5=CUP_RIM），
+   画面上看着像「物块搁在杯口上」，不像悬在空气里。取 −4 留 1 cm。
+   ★ 也不能把 H_MAX 压到 4：那样「全浸没后 F浮 不再变」就没得演示了。 */
+var H_MIN = -4, H_MAX = 5.5;
+
+/* 力箭头：F浮 / G物 / F拉 / G排 共用【同一支比例尺】。
+   由「最重的物块」（铝 2.7）定标 —— 固定值，不随当前选择变，
+   这样「换物块 → G物 箭头变长」是真实可见的，而「F浮 与 G排 永远一样长」也成立。 */
+var RHO_MAX = 2700;
+var G_MAX = RHO_MAX * V_OBJ / 1e6 * GRA;    // 1.728 N
+var ARROW_LEN = 112;                        // G物 满量程时的屏幕长度 px
+var FSCALE = ARROW_LEN / G_MAX;             // px / N
+
+var CAMD = 96;                              // 相机距离基准
+var TARGET = [-2, 15, 0];                   // 注视点（场景横向偏左、纵向取中）
+
+/* ============================================================
+   1. 向量小工具
+   ============================================================ */
+function vsub(a,b){ return [a[0]-b[0], a[1]-b[1], a[2]-b[2]]; }
+function vadd(a,b){ return [a[0]+b[0], a[1]+b[1], a[2]+b[2]]; }
+function vmul(a,s){ return [a[0]*s, a[1]*s, a[2]*s]; }
+function vdot(a,b){ return a[0]*b[0] + a[1]*b[1] + a[2]*b[2]; }
+function vcross(a,b){ return [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]]; }
+function vlen(a){ return Math.sqrt(a[0]*a[0]+a[1]*a[1]+a[2]*a[2]); }
+function vnorm(a){ var l = vlen(a) || 1; return [a[0]/l, a[1]/l, a[2]/l]; }
+function clamp(v,a,b){ return v < a ? a : (v > b ? b : v); }
+function lerp(a,b,t){ return a + (b - a) * t; }
+function rgba(c,a){ return 'rgba(' + c[0] + ',' + c[1] + ',' + c[2] + ',' + a + ')'; }
+function shade(c,k){ return 'rgb(' + Math.min(255,Math.round(c[0]*k)) + ',' +
+                                       Math.min(255,Math.round(c[1]*k)) + ',' +
+                                       Math.min(255,Math.round(c[2]*k)) + ')'; }
+
+/* ============================================================
+   2. 物理内核
+   ============================================================ */
+function matRho(){ return MATS[state.mat].rho; }
+function liqRho(){ return LIQ[state.liquid].rho; }
+function Gobj(){ return matRho() * V_OBJ / 1e6 * GRA; }          // N
+
+/* ---------- ① 浸入体积 V排：把物块沿竖直方向切成 N 片，逐片【几何裁剪】 ----------
+   sub = 物块底面在液面下的深度（cm）。只累计落在液面以下的那一部分。
+   ★ 这是个真的「裁剪」循环，不是把闭式 A²·clamp(h,0,A) 抄一遍 ——
+   把 clamp 的上下界写错（例如漏掉 h>A 的封顶）这里就会露馅。 */
+function subVolAt(sub){
+  var N = 200, dy = A/N, V = 0, i;
+  for (i=0;i<N;i++){
+    var y0 = i*dy, y1 = y0 + dy;
+    var cut = Math.min(y1, Math.max(0, sub));
+    if (cut > y0) V += A*A*(cut - y0);
+  }
+  return V;                                   // cm³
+}
+/* 便利版：按「杯满」语义直接用深度 h（杯满时 sub 恒等于 clamp(h,0,A)） */
+function subVol(h){ return subVolAt(clamp(h, 0, A)); }
+
+/* ---------- ② 浮力：上下表面的【水压差】积分（浮力产生的原因） ----------
+   ★★ 这条路径【完全不引用 V排】。它按 p = ρ液·g·(深度) 逐片算「下表面压力 − 上表面压力」，
+   与 ③ 的溢水记账是两条独立的路 —— 两者相等是【结论】、不是构造，
+   「F浮 = G排」才是一条真能被证伪的断言。
+   （反例：原先 overflowVol 在杯满时代数上恰好化简成 subVol，比值恒等于 1，
+     把 subVol 改坏两条一起变 —— 那种断言永远是绿的。） */
+function buoyancyByPressure(sub){
+  var rhoL = liqRho();
+  var N = 400, dy = A/N, F = 0, i;
+  for (i=0;i<N;i++){
+    var yc   = (i + 0.5)*dy;                  // 片中心离物块底面的高度
+    var dBot = sub - yc + dy/2;               // 片【下表面】在水面下的深度
+    var dTop = sub - yc - dy/2;               // 片【上表面】在水面下的深度
+    var pBot = dBot > 0 ? rhoL*GRA*dBot/100 : 0;   // Pa = N/m²（露出水面则受空气压，取 0）
+    var pTop = dTop > 0 ? rhoL*GRA*dTop/100 : 0;
+    F += (pBot - pTop) * (A*A/1e4);           // × 横截面积 m²
+  }
+  return F;                                   // N（恒等于 ρ液·g·V排，但由另一条路算出）
+}
+
+/* ---------- ③ 溢水杯的水账：水位涨到溢流口才开始溢 ---------- */
+function cupWater0(){ return CUP_AREA * (state.cupFull ? SPOUT_Y : SPOUT_Y - 3.5); }
+function cupLevel(sub){                        // 杯内液面高度（cm，自杯内底算起）
+  return Math.min(SPOUT_Y, (cupWater0() + subVolAt(sub)) / CUP_AREA);
+}
+function overflowVol(sub){                     // 溢出到小桶里的体积 cm³
+  return Math.max(0, (cupWater0() + subVolAt(sub)) / CUP_AREA - SPOUT_Y) * CUP_AREA;
+}
+
+/* ★★ 物块位置 ↔ 水位的自洽解：物块把水挤高，抬高的水又让物块浸得更深。
+   「物块底面到杯满液面的距离」h 由滑块给出 ⇒ 物块底面世界高度 yb = WATER_Y − h。
+   杯满时水面钉在溢流口，sub 就是 clamp(h,0,A)；
+   没装满时水位随物块抬高，解 sub·(1−κ) = CUP_WALL + L0 − yb（κ = A²/CUP_AREA ≈ 0.25 < 1，收敛）。 */
+function subDepth(){
+  var yb = WATER_Y - state.h;
+  if (state.cupFull) return clamp(state.h, 0, A);
+  var kappa = A*A / CUP_AREA;
+  var L0 = cupWater0() / CUP_AREA;
+  return clamp((CUP_WALL + L0 - yb) / (1 - kappa), 0, A);
+}
+
+function readings(){
+  var rhoL = liqRho(), rhoS = matRho();
+  var sub  = subDepth();                            // 实际浸没深度
+  var Vsub = subVolAt(sub);                         // ① 几何裁剪
+  var Fb   = buoyancyByPressure(sub);               // ② 水压积分（不引用 Vsub）
+  var Vov  = overflowVol(sub);                      // ③ 杯子的水账
+  var G    = Gobj();
+  var Fp   = Math.max(0, G - Fb);                   // 测力计示数（细线绷紧时）
+  var mOv  = rhoL * Vov / 1000;                     // g（ρ[kg/m³] × V[cm³] / 1000）
+  var Gp   = mOv * GRA / 1000;                      // N
+  return {
+    h: state.h, sub: sub, level: cupLevel(sub),
+    rhoL: rhoL, rhoS: rhoS,
+    Vsub: Vsub, Vov: Vov,
+    G: G, Fb: Fb, Fp: Fp,
+    mBucket: 30,                                    // 空桶 30 g
+    mOv: mOv, Gp: Gp,
+    ratio: Gp > 1e-12 ? Fb / Gp : NaN,              // 核心比值
+    dF: Fb - Gp,
+    /* 读数（电子秤） */
+    mRead: state.tare ? mOv : (30 + mOv)
+  };
+}
+
+/* ============================================================
+   3. 相机与投影（自建，零依赖）
+   ============================================================ */
+var LIGHT = vnorm([-0.42, 0.80, 0.44]);
+
+function envelopePoints(){
+  var P = [], sx, sy, sz;
+  var x0 = ROD_X - BASE_W/2, x1 = BKT_CX + SCALE_W/2;
+  var z0 = -BASE_D/2, z1 = BASE_D/2;
+  for (sx=0; sx<=1; sx++) for (sy=0; sy<=1; sy++) for (sz=0; sz<=1; sz++)
+    P.push([sx?x1:x0, sy?ROD_TOP:0, sz?z1:z0]);
+  /* 溢流口探出去的那一段 */
+  P.push([CUP_CX + CUP_R_OUT + SPOUT_L, WATER_Y + 1.4, 0]);
+  return P;
+}
+
+function makeCam(q, w, h){
+  var yaw = q.yaw * Math.PI/180, pitch = q.pitch * Math.PI/180;
+  var dir = [Math.cos(pitch)*Math.sin(yaw), Math.sin(pitch), Math.cos(pitch)*Math.cos(yaw)];
+  var eye = vadd(TARGET, vmul(dir, q.dist));
+  var fwd = vnorm(vsub(TARGET, eye));
+  var right = vnorm(vcross(fwd, [0,1,0]));
+  var up = vcross(right, fwd);
+  q.eye = eye; q.fwd = fwd; q.right = right; q.up = up; q.w = w; q.h = h;
+
+  var loR=1e9, hiR=-1e9, loU=1e9, hiU=-1e9, E = envelopePoints(), i;
+  for (i=0;i<E.length;i++){
+    var d = vsub(E[i], eye);
+    var z = vdot(d, fwd);
+    if (z <= 0.05) continue;
+    var r = vdot(d, right)/z, u = vdot(d, up)/z;   // ★ 必须用【投影后】的 r、u
+    if (r<loR) loR=r; if (r>hiR) hiR=r;
+    if (u<loU) loU=u; if (u>hiU) hiU=u;
+  }
+  if (hiR - loR < 1e-6){ loR=-0.1; hiR=0.1; }
+  if (hiU - loU < 1e-6){ loU=-0.1; hiU=0.1; }
+  q.cR = q.look ? 0 : (loR + hiR)/2;
+  q.cU = q.look ? 0 : (loU + hiU)/2;
+  /* ★ zoom 必须乘在【算出来的焦距】上，不能只改相机距离 —— 距离会被包络反算抵消 */
+  q.focal = Math.min(w*0.94/(hiR-loR), h*0.92/(hiU-loU)) * (q.zoom || 1);
+  return q;
+}
+
+function project(p, q){
+  var d = vsub(p, q.eye);
+  var z = vdot(d, q.fwd);
+  if (z <= 1e-6) return { x:1e9, y:1e9, z:z };
+  var r = vdot(d, q.right)/z, u = vdot(d, q.up)/z;
+  return { x: q.w/2 + (r - q.cR)*q.focal, y: q.h/2 - (u - q.cU)*q.focal, z: z };
+}
+
+/* ============================================================
+   4. 绘制基元
+   ============================================================ */
+var ctx = null;
+
+function polyPath(P){
+  ctx.beginPath();
+  ctx.moveTo(P[0].x, P[0].y);
+  for (var i=1;i<P.length;i++) ctx.lineTo(P[i].x, P[i].y);
+  ctx.closePath();
+}
+function poly(P, fill, stroke, lw){
+  polyPath(P);
+  if (fill){ ctx.fillStyle = fill; ctx.fill(); }
+  if (stroke){ ctx.strokeStyle = stroke; ctx.lineWidth = lw || 1; ctx.stroke(); }
+}
+function lineSeg(a, b, color, lw, dash){
+  ctx.save();
+  ctx.strokeStyle = color; ctx.lineWidth = lw || 1;
+  if (dash) ctx.setLineDash(dash);
+  ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+  ctx.restore();
+}
+function dot2(p, r, fill, stroke, lw){
+  ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI*2);
+  if (fill){ ctx.fillStyle = fill; ctx.fill(); }
+  if (stroke){ ctx.strokeStyle = stroke; ctx.lineWidth = lw || 1; ctx.stroke(); }
+}
+function arrowSeg(a, b, color, lw, headPx){
+  var dx = b.x - a.x, dy = b.y - a.y, L = Math.hypot(dx, dy);
+  if (L < 1) return;
+  var ux = dx/L, uy = dy/L;
+  var h = Math.min(headPx || 11, L*0.6);
+  ctx.save();
+  ctx.strokeStyle = color; ctx.lineWidth = lw || 2.2; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x - ux*h*0.85, b.y - uy*h*0.85); ctx.stroke();
+  var px = -uy, py = ux, w = h*0.52;
+  ctx.beginPath();
+  ctx.moveTo(b.x, b.y);
+  ctx.lineTo(b.x - ux*h + px*w, b.y - uy*h + py*w);
+  ctx.lineTo(b.x - ux*h - px*w, b.y - uy*h - py*w);
+  ctx.closePath(); ctx.fillStyle = color; ctx.fill();
+  ctx.restore();
+}
+
+/* 凸箱体：背面剔除 + 单色明暗。返回可见面的屏幕多边形（自检要读） */
+var BOX_FACES = [
+  { i:[0,3,2,1], n:[0,0,-1] },   // z0 面
+  { i:[4,5,6,7], n:[0,0, 1] },   // z1 面
+  { i:[0,1,5,4], n:[0,-1,0] },   // 底面
+  { i:[3,7,6,2], n:[0, 1,0] },   // 顶面
+  { i:[0,4,7,3], n:[-1,0,0] },   // x0 面
+  { i:[1,2,6,5], n:[ 1,0,0] }    // x1 面
+];
+function box3(x0,y0,z0, x1,y1,z1, q, rgb, opt){
+  opt = opt || {};
+  var c = [[x0,y0,z0],[x1,y0,z0],[x1,y1,z0],[x0,y1,z0],
+           [x0,y0,z1],[x1,y0,z1],[x1,y1,z1],[x0,y1,z1]];
+  var P = [], i, k;
+  for (i=0;i<8;i++) P.push(project(c[i], q));
+  var vis = [];
+  for (k=0;k<BOX_FACES.length;k++){
+    var f = BOX_FACES[k];
+    var cx=0, cy=0, cz=0;
+    for (i=0;i<4;i++){ cx+=c[f.i[i]][0]; cy+=c[f.i[i]][1]; cz+=c[f.i[i]][2]; }
+    cx/=4; cy/=4; cz/=4;
+    /* 背面剔除：面法线与「面心→眼睛」同向 ⇒ 看不见 */
+    if (f.n[0]*(cx-q.eye[0]) + f.n[1]*(cy-q.eye[1]) + f.n[2]*(cz-q.eye[2]) >= 0) continue;
+    var Q = [P[f.i[0]], P[f.i[1]], P[f.i[2]], P[f.i[3]]];
+    var bad = false;
+    for (i=0;i<4;i++) if (Q[i].z <= 0) bad = true;
+    if (bad) continue;
+    var lam = f.n[0]*LIGHT[0] + f.n[1]*LIGHT[1] + f.n[2]*LIGHT[2];
+    var shadeK = 0.52 + 0.48 * Math.max(0, lam);
+    if (f.n[1] > 0.5) shadeK *= 1.14;              // 顶面提亮
+    if (f.n[1] < -0.5) shadeK *= 0.66;             // 底面压暗
+    var fill = (opt.alpha != null) ? rgba(rgb, opt.alpha)
+             : (opt.flat ? 'rgb(' + rgb[0] + ',' + rgb[1] + ',' + rgb[2] + ')' : shade(rgb, shadeK));
+    poly(Q, fill, opt.edge || null, opt.lw || 1);
+    vis.push({ n:f.n, pts:Q, k:shadeK });
+  }
+  return vis;
+}
+
+/* 四边形上的双线性取点（贴刻度 / 印数字用） */
+function quadPt(Q, u, v){
+  var a = { x: Q[0].x + (Q[1].x-Q[0].x)*u, y: Q[0].y + (Q[1].y-Q[0].y)*u };
+  var b = { x: Q[3].x + (Q[2].x-Q[3].x)*u, y: Q[3].y + (Q[2].y-Q[3].y)*u };
+  return { x: a.x + (b.x-a.x)*v, y: a.y + (b.y-a.y)*v };
+}
+
+/* ============================================================
+   4.5 圆柱体基元（溢水杯 / 小桶都是圆的）
+   ============================================================ */
+/* 竖直圆柱侧壁：一圈切 N 段，每段一个四边形，逐段背面剔除 + 按段法线做明暗
+   （所以柱面会有从亮到暗的渐变，一眼看出是圆的）。
+   which='back' 只画背对相机的半圈（透过玻璃看到的远侧内壁），
+   which='front' 只画朝向相机的半圈（近侧，通常给半透明）。
+   ★ 必须分两遍：整圈按 θ 顺序画的话，后画的那半圈会把先画的整个盖掉，
+   而「哪半圈在后」随相机转 —— 不分遍就会出现「转视角时杯子忽明忽暗」。 */
+function cylWall(cx, cz, r, y0, y1, q, rgb, which, opt){
+  opt = opt || {};
+  var N = opt.n || 40, vis = [], i, k;
+  for (i=0;i<N;i++){
+    var t0 = i/N*Math.PI*2, t1 = (i+1)/N*Math.PI*2, tm = (t0+t1)/2;
+    var nx = Math.cos(tm), nz = Math.sin(tm);
+    var mx = cx + r*nx, mz = cz + r*nz;
+    var front = (nx*(mx - q.eye[0]) + nz*(mz - q.eye[2])) < 0;
+    if (which === 'back' ? front : !front) continue;
+    var Q = [project([cx + r*Math.cos(t0), y1, cz + r*Math.sin(t0)], q),
+             project([cx + r*Math.cos(t1), y1, cz + r*Math.sin(t1)], q),
+             project([cx + r*Math.cos(t1), y0, cz + r*Math.sin(t1)], q),
+             project([cx + r*Math.cos(t0), y0, cz + r*Math.sin(t0)], q)];
+    for (k=0;k<4;k++) if (Q[k].z <= 0) return vis;
+    var lam = nx*LIGHT[0] + nz*LIGHT[2];
+    var kk  = 0.50 + 0.50*Math.max(0, lam);
+    var fill = (opt.alpha != null) ? rgba(rgb, opt.alpha)
+             : (opt.flat ? 'rgb(' + rgb[0] + ',' + rgb[1] + ',' + rgb[2] + ')' : shade(rgb, kk));
+    poly(Q, fill, null, 0);
+    vis.push({ t:tm, pts:Q, front:front, k:kk });
+  }
+  return vis;
+}
+/* 水平圆盘（杯内底 / 液面 / 桶内底）：圆上一圈点投影后直接填多边形 */
+function discPts(cx, cz, r, y, q, n){
+  var P = [], i, N = n || 40;
+  for (i=0;i<N;i++){
+    var t = i/N*Math.PI*2;
+    P.push(project([cx + r*Math.cos(t), y, cz + r*Math.sin(t)], q));
+  }
+  return P;
+}
+/* 水平圆环（杯口 / 桶口沿）：只描边不填 */
+function ringPath(cx, cz, r, y, q, n){
+  var P = discPts(cx, cz, r, y, q, n), i;
+  ctx.beginPath(); ctx.moveTo(P[0].x, P[0].y);
+  for (i=1;i<P.length;i++) ctx.lineTo(P[i].x, P[i].y);
+  ctx.closePath();
+  return P;
+}
+/* 柱面上的一点：θ 自 +x 轴起算、向 +z 为正 */
+function cylPt(cx, cz, r, th, y, q){
+  return project([cx + r*Math.cos(th), y, cz + r*Math.sin(th)], q);
+}
+/* 柱面上的一条竖高光带（玻璃的反光）：θ 起、跨 dth 的一段弧面，从上到下围成四边形。
+   ★ 没有它，玻璃杯就只剩一个纯色圆柱 —— 看不出是「杯子」。 */
+function glassStreak(q, cx, cz, r, y0, y1, th, dth, alpha, n){
+  var i, N = n || 7, P = [];
+  for (i=0;i<=N;i++) P.push(cylPt(cx, cz, r, th + dth*i/N, y1, q));
+  for (i=N;i>=0;i--) P.push(cylPt(cx, cz, r, th + dth*i/N, y0, q));
+  for (i=0;i<P.length;i++) if (P[i].z <= 0) return;
+  poly(P, 'rgba(226,240,252,' + alpha + ')', null, 0);
+}
+
+/* ============================================================
+   5. 标签系统（先入队，所有几何画完后统一落笔）
+   ============================================================ */
+var frameBoxes = [];      // 本帧已占用区域（UI 浮层 + 固定参照 + 已画标签）
+var fixedBoxes = [];      // 本帧的【固定参照】障碍（刻度数字等，位置不许挪）
+var pendingLabels = [];
+var drawnLabels = [];     // flushLabels 里【真正落笔】的那些（自检要读这一份）
+
+function uiBoxes(){
+  var out = [], ids = ['hint','btnAuto','btnReset','btnArrows','btnView'];
+  var cr = canvas.getBoundingClientRect();
+  for (var i=0;i<ids.length;i++){
+    var e = document.getElementById(ids[i]);
+    if (!e || !e.offsetParent) continue;
+    var r = e.getBoundingClientRect();
+    out.push({ x0:r.left-cr.left, y0:r.top-cr.top, x1:r.right-cr.left, y1:r.bottom-cr.top });
+  }
+  return out;
+}
+/* 标签盒子：**含内边距**（避让用这一份 —— 留出呼吸空间）。
+   ★ 同时返回【字身盒】gx0..gy1（= 文字真正占据的矩形，不含 padding）：
+   自检「任意两个标签不重叠」必须量字身盒 —— 含 padding 的盒子在物理上不可能零重叠
+   （电子秤读数窗只有 25 px 高，里面塞着 14 px 的数值和 9.5 px 的「已置零」，
+    两个盒子的内边距加起来就 16.5 px）。量错对象就会得到「永远差 0.1 px」的假红。 */
+function labelBox(p, text, size, align){
+  var pad = 5, w;
+  ctx.save(); ctx.font = '600 ' + size + 'px "Inter","PingFang SC",sans-serif';
+  w = ctx.measureText(text).width; ctx.restore();
+  var bx = align === 'left' ? p.x - 4 - pad
+         : align === 'right' ? p.x + 4 - w - pad
+         : p.x - w/2 - pad;
+  var by = p.y - size*0.72 - pad*0.55;
+  var gx0 = align === 'left' ? p.x
+          : align === 'right' ? p.x - w
+          : p.x - w/2;
+  return { x0:bx, y0:by, x1:bx + w + pad*2, y1:by + size*1.44 + pad*1.1, w:w, h:size*1.44,
+           gx0:gx0, gy0:p.y - size*0.72, gx1:gx0 + w, gy1:p.y + size*0.72 };
+}
+function boxOv(a, b){
+  var ox = Math.min(a.x1,b.x1) - Math.max(a.x0,b.x0);
+  var oy = Math.min(a.y1,b.y1) - Math.max(a.y0,b.y0);
+  return (ox > 0 && oy > 0) ? ox*oy : 0;
+}
+function fitBox(b, W, H){
+  var dx = 0, dy = 0;
+  if (b.x0 < 2) dx = 2 - b.x0; else if (b.x1 > W-2) dx = W-2 - b.x1;
+  if (b.y0 < 2) dy = 2 - b.y0; else if (b.y1 > H-2) dy = H-2 - b.y1;
+  if (dx) { b.x0 += dx; b.x1 += dx; }
+  if (dy) { b.y0 += dy; b.y1 += dy; }
+  return b;
+}
+/* 候选位：按离锚点距离升序 —— 数组序 = 距离序 ⇒ 选出来的是「最近的、真躲得开」的位置 */
+var AVOID = (function(){
+  var a = [[0,0]], i, j;
+  var dy = [16,32,48,64,86,110,136,164,196,232];
+  var dx = [44,62,86,116,150,190];
+  for (i=0;i<dy.length;i++){ a.push([0,-dy[i]]); a.push([0,dy[i]]); }
+  for (j=0;j<dx.length;j++){ a.push([-dx[j],0]); a.push([dx[j],0]); }
+  for (i=0;i<dy.length;i++) for (j=0;j<dx.length;j++){
+    a.push([-dx[j],-dy[i]]); a.push([dx[j],-dy[i]]);
+    a.push([-dx[j], dy[i]]); a.push([dx[j], dy[i]]);
+  }
+  a.sort(function(p,q){ return Math.hypot(p[0],p[1]) - Math.hypot(q[0],q[1]); });
+  return a;
+})();
+function label(p, text, color, size, align){
+  pendingLabels.push({ p:p, text:text, color:color, size:size||12.5, align:align||'center' });
+}
+/* 固定参照（刻度数字）：位置不许挪，但要登记成障碍物。
+   ★★ 必须【同时入队】—— tickLabel 原先只 push 到 fixedBoxes、不 push 到 pendingLabels，
+   于是刻度数字一个都没画出来（刻度线画了、数字没画），肉眼查图才发现。
+   fixed:true ⇒ flushLabels 只许用「留在原地」这一个候选位，不许挪。 */
+function tickLabel(p, text, size){
+  var b = labelBox(p, text, size || 11, 'center');
+  fixedBoxes.push(b);
+  pendingLabels.push({ p:p, text:text, color:'#8fa3bd', size:size || 11, align:'center', fixed:true });
+  return p;
+}
+/* 刻度数字的【疏密闸门】：只在与上一个数字的盒子不重叠时才画。
+   ★ 为什么必须这么做：俯视 / 高角度时整根刻度尺在画面上挤成一条，
+   8 个数字叠成一团（实测重叠 152 px²）。而刻度数字是【固定参照】、不许靠避让挪开，
+   所以只能在源头少画几个 —— 宁可只显示 0、6、12，也不要糊成一团。
+   st = { prev: 上一个已画数字的盒子 }。 */
+function tickLabelIfFree(p, text, size, st){
+  var b = labelBox(p, text, size || 11, 'center');
+  if (st.prev && boxOv(b, st.prev) > 0) return false;
+  st.prev = b;
+  return tickLabel(p, text, size);
+}
+function flushLabels(W, H){
+  var i, j, k;
+  for (i=0;i<pendingLabels.length;i++){
+    var L = pendingLabels[i];
+    var best = null, bestOv = 1e18;
+    for (k=0;k<AVOID.length;k++){
+      var q = { x: L.p.x + AVOID[k][0], y: L.p.y + AVOID[k][1] };
+      var b0 = labelBox(q, L.text, L.size, L.align);
+      var sx0 = b0.x0, sy0 = b0.y0;
+      var b = fitBox(b0, W, H);
+      var clamped = (Math.abs(b.x0 - sx0) > 0.01 || Math.abs(b.y0 - sy0) > 0.01);
+      /* 打分用【相对重叠率】= 重叠面积 / 两者中较小的盒子面积（量纲要和「挪一步的代价」对得上） */
+      var score = 0;
+      for (j=0;j<frameBoxes.length;j++){
+        var ov = boxOv(b, frameBoxes[j]);
+        if (ov <= 0) continue;
+        var ar = Math.min((b.x1-b.x0)*(b.y1-b.y0),
+                          (frameBoxes[j].x1-frameBoxes[j].x0)*(frameBoxes[j].y1-frameBoxes[j].y0));
+        score += ar > 0 ? ov / ar : 1;
+      }
+      /* 挪一步的代价从 0.03 降到 0.006：0.03 相当于「容忍 3% 的盒子重叠」，而那点重叠
+         正好落在标签内边距里，于是两个标签会【角对角贴住】（实测字身只剩 1.1 px 空隙）。
+         0.006 把最近间距拉到 5.6 px，而「拖视角时标签跳动次数」实测 49 → 47 次（几乎不变），
+         所以调小它没有副作用 —— 代价不是用来防抖的，只是防「为了半像素乱挪」。 */
+      if (k !== 0) score += 0.006 + 0.0002 * Math.hypot(AVOID[k][0], AVOID[k][1]);
+      if (score < bestOv){ bestOv = score; best = { q:q, b:b, k:k, clamped:clamped }; }
+      if (L.fixed) break;                  // 固定参照只试「留在原地」，不许挪
+    }
+    L.pos = best.q; L.box = best.b;
+    frameBoxes.push(best.b);
+    drawnLabels.push({ text: L.text, x0:best.b.x0, y0:best.b.y0, x1:best.b.x1, y1:best.b.y1,
+                       gx0:best.b.gx0, gy0:best.b.gy0, gx1:best.b.gx1, gy1:best.b.gy1,
+                       ax:L.p.x, ay:L.p.y, offx:best.q.x - L.p.x, offy:best.q.y - L.p.y,
+                       fixed:!!L.fixed, clamped:best.clamped, moved:best.k !== 0 });
+  }
+  state.drawn.labels = drawnLabels.slice();
+  for (i=0;i<pendingLabels.length;i++){
+    var M = pendingLabels[i];
+    ctx.save();
+    ctx.font = '600 ' + M.size + 'px "Inter","PingFang SC",sans-serif';
+    ctx.textAlign = M.align === 'left' ? 'left' : (M.align === 'right' ? 'right' : 'center');
+    ctx.textBaseline = 'middle';
+    ctx.lineWidth = 3.4; ctx.strokeStyle = 'rgba(2,6,23,.86)';
+    ctx.strokeText(M.text, M.pos.x, M.pos.y);
+    ctx.fillStyle = M.color; ctx.fillText(M.text, M.pos.x, M.pos.y);
+    ctx.restore();
+  }
+  pendingLabels.length = 0;
+}
+
+/* ============================================================
+   6. 场景绘制
+   ============================================================ */
+function drawBackdrop(w, h){
+  var g = ctx.createRadialGradient(w*0.42, h*0.24, 10, w*0.42, h*0.24, Math.max(w,h)*0.92);
+  g.addColorStop(0, '#0d1a30');
+  g.addColorStop(0.55, '#080f1f');
+  g.addColorStop(1, '#020617');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, w, h);
+}
+
+/* 桌面（水平大平面）：亮度主要由环境项决定，所以底色压暗、边缘给一点高光 */
+function drawTable(q){
+  var T = TABLE_Y;
+  var x0 = ROD_X - BASE_W/2 - 6, x1 = BKT_CX + SCALE_W/2 + 6;
+  var z0 = -BASE_D/2 - 4, z1 = BASE_D/2 + 4;
+  var P = [project([x0,T,z0],q), project([x1,T,z0],q), project([x1,T,z1],q), project([x0,T,z1],q)];
+  poly(P, '#0b1526', 'rgba(148,163,184,.16)', 1);
+  /* 台面反光带 */
+  var A0 = project([x0,T+0.02,z0],q), A1 = project([x1,T+0.02,z0],q);
+  var B0 = project([x0,T+0.02,z0+1.2],q), B1 = project([x1,T+0.02,z0+1.2],q);
+  poly([A0,A1,B1,B0], 'rgba(125,211,252,.10)', null, 0);
+}
+
+/* 铁架台：底座 + 立柱 + 横臂 + 铁夹 */
+function drawStand(q, armY){
+  /* 底座 */
+  box3(ROD_X-BASE_W/2, 0, -BASE_D/2, ROD_X+BASE_W/2, BASE_H, BASE_D/2, q, [58,68,86],
+       { edge:'rgba(148,163,184,.22)', lw:1 });
+  /* 立柱 */
+  box3(ROD_X-ROD_W/2, BASE_H, -ROD_W/2, ROD_X+ROD_W/2, ROD_TOP, ROD_W/2, q, [126,136,152],
+       { edge:'rgba(226,232,240,.20)', lw:1 });
+  /* 横臂：从立柱伸到物块正上方 */
+  var armTo = BLK_X + 1.6;
+  box3(ROD_X, armY-0.8, -0.9, armTo, armY+0.8, 0.9, q, [142,152,168],
+       { edge:'rgba(226,232,240,.20)', lw:1 });
+  /* 铁夹：立柱上一块夹子 + 臂端一个夹头 */
+  box3(ROD_X-2.1, armY-2.4, -1.5, ROD_X+2.1, armY+2.4, 1.5, q, [92,102,120],
+       { edge:'rgba(226,232,240,.16)', lw:1 });
+  box3(BLK_X-1.9, armY-1.6, -1.3, BLK_X+1.9, armY+0.6, 1.3, q, [92,102,120],
+       { edge:'rgba(226,232,240,.16)', lw:1 });
+}
+
+/* 弹簧测力计：外壳 + 正面刻度 + 指针 + 挂钩 */
+function drawSpring(q, topY, read){
+  var botY = topY - SPR_H, hw = SPR_W/2;
+  /* 挂钩（露出外壳下面一小段）—— 高度与 render 里的 SPR_HK 共用同一个常量 */
+  var hk = SPR_HK;
+  box3(BLK_X-0.35, botY-hk, -0.35, BLK_X+0.35, botY, 0.35, q, [188,196,208],
+       { edge:'rgba(226,232,240,.3)', lw:1 });
+  /* 外壳 */
+  box3(BLK_X-hw, botY, -hw, BLK_X+hw, topY, hw, q, [46,56,74],
+       { edge:'rgba(148,163,184,.34)', lw:1 });
+  /* 正面（+z）贴刻度 */
+  var Q = [project([BLK_X-hw,botY, hw],q), project([BLK_X+hw,botY, hw],q),
+           project([BLK_X+hw,topY, hw],q), project([BLK_X-hw,topY, hw],q)];
+  if (Q[0].z <= 0 || Q[2].z <= 0) return;
+  poly(Q, 'rgba(12,22,38,.94)', 'rgba(148,163,184,.34)', 1);
+  /* 刻度：★ 悬挂式弹簧测力计【0 在上、2 在下】—— 不挂东西时弹簧最短、指针在顶；
+     挂得越重弹簧拉得越长、指针越往下走。别按「0 在下」去改。 */
+  var u0 = 0.24, u1 = 0.76, vBot = 0.90, vTop = 0.10;
+  var i, n = SPR_RANGE * 5, st = { prev: null };
+  for (i=0;i<=n;i++){
+    var f = i / n;                                   // 0 ~ 1（力 / 量程）
+    var v = lerp(vBot, vTop, f);
+    var big = (i % 5 === 0);
+    var a = quadPt(Q, u0 + (big ? 0 : 0.10), v);
+    var b = quadPt(Q, u1 - (big ? 0 : 0.10), v);
+    lineSeg(a, b, big ? 'rgba(226,232,240,.62)' : 'rgba(148,163,184,.34)', big ? 1.2 : 0.9);
+    if (big) tickLabelIfFree(quadPt(Q, 0.12, v), String(i/5), 10.5, st);
+  }
+  /* 指针：读数越大越往下 */
+  var pf = clamp(read / SPR_RANGE, 0, 1);
+  var pv = lerp(vBot, vTop, pf);
+  var pa = quadPt(Q, 0.20, pv), pb = quadPt(Q, 0.80, pv);
+  lineSeg(pa, pb, '#f87171', 2.6);
+  /* 单位：贴在表盘【右上角】—— 放底部会跟「2」和 F拉 标签打架 */
+  label(quadPt(Q, 0.90, 0.93), 'N', '#94a3b8', 10, 'center');
+  return Q;
+}
+
+/* 溢水杯：远侧半圈（先画，随后被水盖住） */
+function drawCupBack(q){
+  cylWall(CUP_CX, CUP_CZ, CUP_R_OUT, 0, CUP_RIM, q, [44,60,82], 'back');          // 外壁远侧
+  cylWall(CUP_CX, CUP_CZ, CUP_R_IN, CUP_WALL, CUP_RIM, q, [66,88,116], 'back');   // 内壁远侧（亮一点，做出壁厚）
+  poly(discPts(CUP_CX, CUP_CZ, CUP_R_IN, CUP_WALL, q), 'rgb(52,68,88)',
+       'rgba(148,163,184,.14)', 1);                                               // 杯内底
+}
+
+/* 水：back = 远侧半圈 + 液面盘（不透明）；front = 近侧半圈（半透明，罩住物块）
+   ★ 液面高度必须走 r.level（真实水位），不能写死 WATER_Y ——
+   否则勾掉「溢水杯装满」后物理量变了、画面还满满一杯，两边对不上。 */
+function drawWater(q, which, r){
+  var L = LIQ[state.liquid];
+  var yb = CUP_WALL, yt = CUP_WALL + r.level;
+  if (yt - yb < 0.02) return;
+  if (which === 'back'){
+    cylWall(CUP_CX, CUP_CZ, CUP_R_IN, yb, yt, q, L.rgb, 'back', { flat:true });
+    poly(discPts(CUP_CX, CUP_CZ, CUP_R_IN, yt, q), rgba(L.top, .52), rgba(L.edge, .78), 1.3);
+    return;
+  }
+  cylWall(CUP_CX, CUP_CZ, CUP_R_IN, yb, yt, q, L.rgb, 'front', { alpha:.30 });
+}
+
+/* 玻璃近侧半圈 + 杯口 + 溢流口 */
+function drawCupGlass(q){
+  cylWall(CUP_CX, CUP_CZ, CUP_R_OUT, 0, CUP_RIM, q, [150,196,232], 'front', { alpha:.13 });
+  /* 两条竖直高光：玻璃的反光，让「这是个玻璃杯」一眼看出来 */
+  var thF = Math.atan2(q.eye[2] - CUP_CZ, q.eye[0] - CUP_CX);
+  glassStreak(q, CUP_CX, CUP_CZ, CUP_R_OUT+0.02, 0.4, CUP_RIM-0.3, thF-0.92, 0.24, .20);
+  glassStreak(q, CUP_CX, CUP_CZ, CUP_R_OUT+0.02, 1.0, CUP_RIM-1.0, thF+0.66, 0.16, .13);
+  glassStreak(q, CUP_CX, CUP_CZ, CUP_R_OUT+0.02, 0.4, CUP_RIM-0.3, thF+0.96, 0.10, .16);
+  ctx.save();
+  ctx.strokeStyle = 'rgba(186,222,246,.68)'; ctx.lineWidth = 1.9;
+  ringPath(CUP_CX, CUP_CZ, CUP_R_OUT, CUP_RIM, q); ctx.stroke();
+  ctx.strokeStyle = 'rgba(186,222,246,.32)'; ctx.lineWidth = 1.2;
+  ringPath(CUP_CX, CUP_CZ, CUP_R_IN, CUP_RIM, q); ctx.stroke();
+  ctx.restore();
+  /* 溢流口（朝 +x 伸出的槽） */
+  var sx0 = CUP_CX + CUP_R_OUT, sx1 = sx0 + SPOUT_L;
+  box3(sx0, WATER_Y-SPOUT_T, -SPOUT_W/2, sx1, WATER_Y+SPOUT_T*1.5, SPOUT_W/2, q,
+       [116,166,206], { edge:'rgba(186,222,246,.42)', lw:1.1 });
+}
+
+/* 溢水杯上的水位刻度：贴在外壁、绕到【正对相机那一侧的左边】（刻度是印在杯子上的，
+   随视角一起转是正常的）。★ 不能贴在「正对相机」的位置：柱面上正对相机的点
+   投影出来正好落在圆柱轮廓的【正中】，刻度会压在物块和力的箭头上。
+   θ 越大屏幕越靠左（屏幕横向偏移 ∝ R·cos(θ+相机方位)）。
+   刻度数字是【固定参照】—— 位置不许挪，但要登记成障碍物。 */
+function drawRuler(q, r){
+  var thF = Math.atan2(q.eye[2] - CUP_CZ, q.eye[0] - CUP_CX);
+  var i, st = { prev: null };
+  for (i=0;i<=CUP_H;i+=2){
+    var y = CUP_WALL + i;
+    var a = cylPt(CUP_CX, CUP_CZ, CUP_R_OUT+0.05, thF+0.66, y, q);
+    var b = cylPt(CUP_CX, CUP_CZ, CUP_R_OUT+0.05, thF+0.45, y, q);
+    if (a.z <= 0) continue;
+    lineSeg(a, b, i === SPOUT_Y ? 'rgba(52,211,153,.95)' : 'rgba(226,240,252,.58)',
+            i === SPOUT_Y ? 1.9 : 1.2);
+    tickLabelIfFree(cylPt(CUP_CX, CUP_CZ, CUP_R_OUT+0.05, thF+0.88, y, q), String(i), 10.5, st);
+  }
+  /* 水位标记线：一条绕柱面的短弧，画出「现在水面在哪」 */
+  var wy = CUP_WALL + r.level, arc = [], k;
+  for (k=0;k<=8;k++) arc.push(cylPt(CUP_CX, CUP_CZ, CUP_R_OUT+0.06, thF+0.45+k*0.028, wy, q));
+  ctx.save(); ctx.strokeStyle = rgba(LIQ[state.liquid].edge, .95); ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(arc[0].x, arc[0].y);
+  for (k=1;k<arc.length;k++) ctx.lineTo(arc[k].x, arc[k].y);
+  ctx.stroke(); ctx.restore();
+  /* 溢流口标注：锚在【溢流口本身】正上方（杯口右侧、杯子轮廓之外），
+     原先锚在杯内水面上，标签正好压在水面上 */
+  label(project([CUP_CX + CUP_R_OUT + SPOUT_L*0.55, WATER_Y + 2.4, 0], q),
+        '溢流口 ' + SPOUT_Y + ' cm', '#6ee7b7', 11, 'center');
+}
+
+/* 物块（含细线） */
+function drawBlock(q){
+  var r = readings();
+  var bot = WATER_Y - r.h;
+  var M = MATS[state.mat];
+  var x0 = BLK_X - A/2, x1 = BLK_X + A/2;
+  var z0 = BLK_Z - A/2, z1 = BLK_Z + A/2;
+  /* 细线：从物块顶到测力计挂钩 */
+  var topY = bot + A;
+  var hookY = topY + THREAD;
+  var t0 = project([BLK_X, topY, BLK_Z], q), t1 = project([BLK_X, hookY, BLK_Z], q);
+  lineSeg(t0, t1, 'rgba(226,232,240,.72)', 1.6);
+  /* 物块本体 */
+  var vis = box3(x0, bot, z0, x1, topY, z1, q, M.rgb, { edge:'rgba(2,6,23,.42)', lw:1 });
+  /* 顶面刻一圈高光，让「上表面」一眼可辨 */
+  var S = [project([x0,topY,z0],q), project([x1,topY,z0],q),
+           project([x1,topY,z1],q), project([x0,topY,z1],q)];
+  poly(S, rgba(M.hi, 0.20), null, 0);
+
+  /* ★ 浸在水里的那一段，单独罩一层水色。
+     为什么不能只靠「水体的近侧半圈」罩：水体近侧半圈是柱面，它的投影上边界是
+     水面的【前弧】；而物块顶面在水面下方 2 cm、又离相机更远，投影反而跑到那条弧
+     的【上方】去了 —— 实测物块顶面完全没被罩到，看着像「顶面露在水面上」。
+     所以按几何直接补：浸没部分 = 从 bot 到 min(顶面, 水面) 的那一小块长方体。 */
+  var surfY = CUP_WALL + r.level;
+  if (surfY > bot){
+    var cut = Math.min(topY, surfY);
+    box3(x0, bot, z0, x1, cut, z1, q, LIQ[state.liquid].rgb, { alpha:.30, flat:true });
+  }
+  return { vis:vis, bot:bot, top:topY, hook:hookY, surfY:surfY };
+}
+
+/* 水流：从溢流口落到小桶里 */
+function drawStream(q, r){
+  if (r.Vov <= 1e-6) return;
+  var sx = CUP_CX + CUP_R_OUT + SPOUT_L;
+  var sy = WATER_Y - 0.2;
+  var w = clamp(0.30 + 0.055 * r.Vov, 0.34, 0.95);     // 水越大越粗
+  var yTo = BKT_RIM - 0.4;
+  var pts = [], i, n = 10;
+  for (i=0;i<=n;i++){
+    var t = i/n;
+    var y = lerp(sy, yTo, t);
+    var x = lerp(sx, BKT_CX - 0.6, t*t*0.55);          // 先直后弯，落进桶中心
+    pts.push(project([x, y, BKT_CZ], q));
+  }
+  ctx.save();
+  ctx.strokeStyle = rgba(LIQ[state.liquid].edge, 0.72);
+  ctx.lineWidth = Math.max(1.4, w * 3.2);
+  ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(pts[0].x, pts[0].y);
+  for (i=1;i<pts.length;i++) ctx.lineTo(pts[i].x, pts[i].y);
+  ctx.stroke();
+  ctx.restore();
+}
+
+/* 小桶（圆柱，含桶里的水）+ 电子秤 */
+function drawBucket(q, r){
+  var L = LIQ[state.liquid];
+  var wy = BKT_BOT + (r.Vov / BKT_AREA);              // 桶内液面高度
+  /* ① 桶外壁远侧半圈 + 内壁远侧半圈 + 桶内底 */
+  cylWall(BKT_CX, BKT_CZ, BKT_R_OUT, BKT_BOT, BKT_RIM, q, [126,136,154], 'back');
+  cylWall(BKT_CX, BKT_CZ, BKT_R_IN, BKT_BOT+BKT_WALL, BKT_RIM, q, [158,168,186], 'back');
+  poly(discPts(BKT_CX, BKT_CZ, BKT_R_IN, BKT_BOT+BKT_WALL, q), 'rgb(118,128,146)',
+       'rgba(226,232,240,.18)', 1);
+  /* ② 桶内水（画在内底之上，随后被近侧桶壁罩住） */
+  if (r.Vov > 1e-6){
+    cylWall(BKT_CX, BKT_CZ, BKT_R_IN, BKT_BOT+BKT_WALL, wy, q, L.rgb, 'back', { flat:true });
+    poly(discPts(BKT_CX, BKT_CZ, BKT_R_IN, wy, q), rgba(L.top,.52), rgba(L.edge,.75), 1.2);
+    cylWall(BKT_CX, BKT_CZ, BKT_R_IN, BKT_BOT+BKT_WALL, wy, q, L.rgb, 'front', { alpha:.44 });
+  }
+  /* ③ 桶外壁近侧半圈（半透明，能看见里面的水）+ 桶口沿 + 一道竖向高光 */
+  cylWall(BKT_CX, BKT_CZ, BKT_R_OUT, BKT_BOT, BKT_RIM, q, [176,188,208], 'front', { alpha:.30 });
+  var thB = Math.atan2(q.eye[2] - BKT_CZ, q.eye[0] - BKT_CX);
+  glassStreak(q, BKT_CX, BKT_CZ, BKT_R_OUT+0.02, BKT_BOT+0.3, BKT_RIM-0.3, thB-0.88, 0.22, .22);
+  ctx.save();
+  ctx.strokeStyle = 'rgba(236,242,250,.72)'; ctx.lineWidth = 1.8;
+  ringPath(BKT_CX, BKT_CZ, BKT_R_OUT, BKT_RIM, q); ctx.stroke();
+  ctx.strokeStyle = 'rgba(236,242,250,.38)'; ctx.lineWidth = 1.2;
+  ringPath(BKT_CX, BKT_CZ, BKT_R_IN, BKT_RIM, q); ctx.stroke();
+  ctx.restore();
+
+  /* ④ 电子秤：机身 + 台面 + 数字读数（贴前面 +z）
+     ★ 台面顶 = SCALE_H + PLATFORM_T，桶底 BKT_BOT 与它齐平（不许沉进去） */
+  var sw = SCALE_W/2, sd = SCALE_D/2;
+  box3(BKT_CX-sw, 0, -sd, BKT_CX+sw, SCALE_H, sd, q, [36,44,58],
+       { edge:'rgba(148,163,184,.30)', lw:1 });
+  var pw = BKT_R_OUT + 1.0;
+  box3(BKT_CX-pw, SCALE_H, -pw, BKT_CX+pw, SCALE_H+PLATFORM_T, pw, q, [176,186,198],
+       { edge:'rgba(226,232,240,.34)', lw:1 });
+  /* 读数窗：★ 宽度收到 ±2.4，把右侧让给 G排 箭头（否则箭头正插在数字上） */
+  var Q = [project([BKT_CX-2.4,0.55, sd],q), project([BKT_CX+2.4,0.55, sd],q),
+           project([BKT_CX+2.4,1.55, sd],q), project([BKT_CX-2.4,1.55, sd],q)];
+  /* ★ 把读数窗的【世界坐标盒】暴露给自检：C13 要断言「G排 的箭杆不许穿过它」。
+     自检不能重抄这几个数字（改了窗口大小就该红），必须读这一份。 */
+  state.drawn.readout = { x0: BKT_CX-2.4, x1: BKT_CX+2.4, y0: 0.55, y1: 1.55, z: sd };
+  if (Q[0].z > 0 && Q[2].z > 0){
+    poly(Q, 'rgba(6,16,26,.96)', 'rgba(52,211,153,.45)', 1.2);
+    var txt = state.tare ? r.mOv.toFixed(1) : r.mRead.toFixed(1);
+    label(quadPt(Q, 0.5, 0.5), txt + ' g', '#7ef0c0', 14, 'center');
+    label(quadPt(Q, 0.5, 0.90),
+          state.tare ? '已置零' : (r.mOv > 1e-6 ? '空桶+水' : '空桶'),
+          '#94a3b8', 9.5, 'center');
+  }
+  return { cx:BKT_CX, rim:BKT_RIM, level:wy };
+}
+
+/* 力的箭头：F浮 / G物 / F拉 / G排 共用同一支比例尺 */
+function drawArrows(q, r, blk){
+  var D = state.drawn;
+  D.arrowSegs = [];
+  var cx = BLK_X, cz = BLK_Z;
+  var cy = blk.bot + A/2;                                  // 物块中心
+  var anchor = project([cx, cy, cz], q);
+  if (anchor.z <= 0) return;
+
+  /* F浮：从物块中心竖直向上（绿） */
+  if (r.Fb > 1e-6){
+    var fb = { x:anchor.x, y:anchor.y - r.Fb * FSCALE };
+    arrowSeg(anchor, fb, 'rgba(52,211,153,.96)', 2.8, 12);
+    D.arrowSegs.push({ kind:'F', force:r.Fb, ax:anchor.x, ay:anchor.y, bx:fb.x, by:fb.y, rgb:[52,211,153] });
+    label({ x:fb.x + 8, y:fb.y }, 'F浮 ' + r.Fb.toFixed(3) + ' N', '#6ee7b7', 12, 'left');
+  }
+  /* G物：从物块中心竖直向下（红） */
+  var gb = { x:anchor.x, y:anchor.y + r.G * FSCALE };
+  arrowSeg(anchor, gb, 'rgba(248,113,113,.96)', 2.4, 11);
+  D.arrowSegs.push({ kind:'G', force:r.G, ax:anchor.x, ay:anchor.y, bx:gb.x, by:gb.y, rgb:[248,113,113] });
+  label({ x:gb.x - 8, y:gb.y }, 'G物 ' + r.G.toFixed(3) + ' N', '#fca5a5', 12, 'right');
+
+  /* F拉：从物块【上表面】竖直向上（琥珀）—— 细线真正作用的地方。
+     标签挂【左侧】：F浮 的标签在右侧，两个都放右边会互相挤到别处去。 */
+  var tp = project([cx, blk.top, cz], q);
+  if (tp.z > 0 && r.Fp > 1e-6){
+    var fa = { x:tp.x, y:tp.y - r.Fp * FSCALE };
+    arrowSeg(tp, fa, 'rgba(251,191,36,.96)', 2.2, 10);
+    D.arrowSegs.push({ kind:'T', force:r.Fp, ax:tp.x, ay:tp.y, bx:fa.x, by:fa.y, rgb:[251,191,36] });
+    label({ x:fa.x - 8, y:fa.y }, 'F拉 ' + r.Fp.toFixed(3) + ' N', '#fcd34d', 12, 'right');
+  }
+
+  /* G排：从小桶内液面竖直向下（青）—— 与 F浮 用【同一支比例尺】，长度必须相等。
+     ★ 锚点横向偏到桶的右侧（+2.9 cm）、并且【往后挪 2 cm】：
+     电子秤的读数窗就在桶的正下方、朝 +z 那一面，只偏横向还不够 ——
+     在「从右前方看」这个视角里，读数窗被透视推到箭杆正下方，
+     箭尖会戳进「64.0 g」那一行（浓盐水深浸时深入约 9 px）。往后挪 2 cm
+     让锚点落在桶内壁的后右侧，五个视角 × 全部深度的最小净空 8.5 px。 */
+  if (r.Gp > 1e-6){
+    var wy = BKT_BOT + (r.Vov / BKT_AREA);
+    var sp = project([BKT_CX + 2.9, wy, BKT_CZ - 2], q);
+    if (sp.z > 0){
+      var gp = { x:sp.x, y:sp.y + r.Gp * FSCALE };
+      arrowSeg(sp, gp, 'rgba(34,211,238,.96)', 2.8, 12);
+      D.arrowSegs.push({ kind:'P', force:r.Gp, ax:sp.x, ay:sp.y, bx:gp.x, by:gp.y, rgb:[34,211,238] });
+      label({ x:gp.x + 8, y:gp.y }, 'G排 ' + r.Gp.toFixed(3) + ' N', '#67e8f9', 12, 'left');
+    }
+  }
+}
+
+/* ============================================================
+   7. 状态与主循环
+   ============================================================ */
+var canvas = document.getElementById('simCanvas');
+var stageEl = document.getElementById('stage');
+var state = {
+  liquid: 'water',
+  mat: 'plastic',
+  h: H_MIN,
+  tare: false,
+  cupFull: true,
+  arrows: true,
+  ruler: true,
+  auto: false,
+  autoT: 0,
+  /* ★ dist 必须与 VIEWS 联动（曾经 VIEWS 里写着 dist 而 render 里写死 CAMD，
+     那几行 dist 是【死配置】—— 改它一点作用都没有，是个坑）。 */
+  yaw: 26, pitch: 16, dist: CAMD, zoom: 1, look: false,
+  t: 0,
+  frozen: false,
+  drawn: {}
+};
+
+var VIEWS = {
+  'perspective': { yaw: 26, pitch: 16, dist: CAMD, zoom: 1,    look: false },
+  'front':       { yaw:  0, pitch:  6, dist: CAMD, zoom: 1,    look: false },
+  /* ★ 不用 yaw 90 的「正侧视」：那个方向整个场景的投影宽度只剩 z 向的 16 cm，
+     画布 1.75:1 里塞一根细长条、左右全空。换成高角度，能看进杯里。 */
+  'high':        { yaw: 24, pitch: 40, dist: CAMD, zoom: 1,    look: false },
+  /* ★ 也不用「俯视 top」（pitch 66）：从上往下看，水面正好把物块盖住、
+     8 个刻度数字和四支箭头全挤在杯子那一小块里，信息量最低。
+     换成【从右前方看】：前四个视角都在 yaw 0~26（左前方），这个方向唯一能看到
+     溢流口→水流→小桶这条路径，和其他视角互补。 */
+  'right':       { yaw: -42, pitch: 20, dist: CAMD, zoom: 1,   look: false },
+  /* ★ close 必须 look:true（居中于注视点）：包络一直顶到立柱顶，按包络居中时
+     器材本体必然被挤到画布下方（zoom 1.30 时器材下沿 y=743 > 画布 700）。
+     特写本来就是要裁掉立柱顶，所以居中于注视点、zoom 1.20 才是对的。
+     （另：dist 一定要留在 VIEWS 里，render 读 state.dist；曾经 render 写死 CAMD，
+      VIEWS 里的 dist 是死配置。） */
+  'close':       { yaw: 20, pitch: 12, dist: CAMD, zoom: 1.20, look: true  }
+};
+var VIEW_ORDER = ['perspective','front','high','right','close'];
+var viewIdx = 0;
+
+/* 当前处于第几步（0~3）：由状态自动推出，不做「点了就算过」 */
+function currentStep(){
+  var r = readings();
+  if (r.sub <= 1e-9) return 0;            // 物块还没碰到水（在空气中）
+  if (!state.tare) return 1;              // 还没扣空桶
+  if (r.Vov <= 1e-9) return 2;            // 溢水杯还没开始溢
+  return 3;                               // 已接住溢出的水
+}
+function stepDone(i){
+  var r = readings(), cur = currentStep();
+  if (i === 0) return cur > 0;
+  if (i === 1) return state.tare;
+  if (i === 2) return r.Vov > 1e-9;
+  return r.Vov > 1e-9 && r.Vsub >= A*A - 1e-9;   // 全浸没且接到了水
+}
+
+/* ============================================================
+   8. 渲染
+   ============================================================ */
+function recompute(){
+  var r = readings();
+  var D = {
+    liquid: state.liquid, mat: state.mat, h: state.h,
+    sub: r.sub, level: r.level, cupWater: r.level,
+    rhoL: r.rhoL, rhoS: r.rhoS,
+    Vsub: r.Vsub, Vov: r.Vov, G: r.G, Fb: r.Fb, Fp: r.Fp,
+    mOv: r.mOv, Gp: r.Gp, mRead: r.mRead, mBucket: r.mBucket,
+    ratio: r.ratio, dF: r.dF,
+    fscale: FSCALE, arrowLen: ARROW_LEN, Gmax: G_MAX,
+    step: currentStep(), tare: state.tare, cupFull: state.cupFull,
+    arrows: [], labels: []
+  };
+  state.drawn = D;
+  return D;
+}
+
+function render(){
+  if (!ctx) return;
+  var dpr = canvas.width / canvas.clientWidth;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  var w = canvas.clientWidth, h = canvas.clientHeight;
+
+  var D = recompute();
+  var r = readings();
+  fixedBoxes = []; drawnLabels = [];
+  var q = { yaw: state.yaw, pitch: state.pitch, dist: state.dist, zoom: state.zoom, look: state.look };
+  makeCam(q, w, h);
+  state._q = q;
+
+  drawBackdrop(w, h);
+  drawTable(q);
+
+  /* 弹簧测力计的高度：细线顶端 = 挂钩【下端尖】；再往上是挂钩、外壳 */
+  var bot = WATER_Y - r.h;
+  var hookY = bot + A + THREAD;
+  var springBot = hookY + SPR_HK;
+  var springTop = springBot + SPR_H;
+  var armY = springTop;
+  /* 供自检读取（C14/C15）：不许重抄公式 */
+  D.hookY = hookY; D.springBot = springBot; D.springTop = springTop;
+  D.cupRim = CUP_RIM; D.rodTop = ROD_TOP;
+
+  drawStand(q, armY);
+  drawCupBack(q);
+  drawWater(q, 'back', r);
+
+  var blk = drawBlock(q);
+
+  drawSpring(q, springTop, r.Fp);
+
+  drawWater(q, 'front', r);
+  drawCupGlass(q);
+  if (state.ruler) drawRuler(q, r);        // 刻度画在【玻璃之上】（印在外壁上的）
+
+  drawStream(q, r);
+  drawBucket(q, r);
+
+  /* 浮层 + 固定参照先占位（外扩 4 px，免得标签「刚好贴着」也算过） */
+  var ub = uiBoxes();
+  D.uiBoxes = ub.slice();
+  D.fixedBoxes = fixedBoxes.slice();
+  frameBoxes = ub.map(function(u){ return { x0:u.x0-4, y0:u.y0-4, x1:u.x1+4, y1:u.y1+4 }; })
+                .concat(fixedBoxes);
+  if (state.arrows) drawArrows(q, r, blk);
+
+  D.drew = true;
+  flushLabels(w, h);
+  D.labels = drawnLabels.slice();
+  D.arrows = (D.arrowSegs || []).slice();
+}
+
+/* ============================================================
+   9. 尺寸 / 循环
+   ============================================================ */
+function resize(){
+  var r = stageEl.getBoundingClientRect();
+  var dpr = Math.min(2, window.devicePixelRatio || 1);
+  var cssW = Math.max(320, Math.floor(r.width));
+  /* ★ 高度上限：整个场景（含铁架台立柱）投影出来接近正方形
+     （1052×700 的画布上，包络实测 663×644），而画布是 1.5:1 的横长方形 ——
+     高度卡得越低，器材就越小、左右空白越多。上限从 600 提到 700 后，
+     包络高度占到画布的 92%（宽度只能占到 63%，横向那 37% 是场景本身的长宽比决定的）。 */
+  var cssH = Math.round(clamp(cssW * 0.72, 340, 700));
+  canvas.style.height = cssH + 'px';
+  canvas.width = Math.round(cssW * dpr);
+  canvas.height = Math.round(cssH * dpr);
+  render();                      // ★ 首帧同步画，不等 rAF
+}
+
+var lastTs = 0;
+function stepSim(dt){
+  if (state.auto){
+    state.autoT += dt;
+    /* 自动演示：0~1.2 s 悬空 → 1.2~2.4 s 缓慢浸入 → 2.4~3.0 s 停在全浸没 */
+    var T = state.autoT;
+    if (T < 1.2) state.h = H_MIN;
+    else if (T < 3.4) state.h = lerp(H_MIN, H_MAX, (T - 1.2) / 2.2);
+    else { state.h = H_MAX; state.auto = false; syncUI(); }
+    if (T >= 1.6 && !state.tare) state.tare = true;
+    syncSlider();
+  }
+  state.t += dt;
+}
+
+function tick(ts){
+  try {
+    if (!lastTs) lastTs = ts;
+    var dt = Math.min(0.05, (ts - lastTs) / 1000);
+    lastTs = ts;
+    if (!state.frozen && dt > 0) stepSim(dt);
+    render();
+    syncUI();
+  } catch (e) {
+    if (window.console) console.warn('render error', e);
+  }
+  requestAnimationFrame(tick);
+}
+
+/* ============================================================
+   10. UI 同步
+   ============================================================ */
+var el = {};
+['hint','rdH','rdRatio','rdHeroSub','rdG','rdF','rdFb','rdVsub','rdSub','rdScale','rdM','rdGp','rdNote',
+ 'hRange','hTicks','ckArrows','ckRuler','ckFull','stepList','toast'].forEach(function(k){ el[k] = document.getElementById(k); });
+
+function showToast(t){
+  var e = el.toast;
+  e.textContent = t;
+  e.classList.add('on');
+  clearTimeout(showToast._t);
+  showToast._t = setTimeout(function(){ e.classList.remove('on'); }, 1600);
+}
+function syncSlider(){
+  el.hRange.value = String(state.h);
+  /* ★ 滑块范围与刻度文案【由常量生成】。原先这三处是硬编码的「min=-5 / max=6 /
+     −5 悬空 / 6」—— 一改 H_MIN/H_MAX 就自相矛盾（这个坑踩过一次）。 */
+  el.hRange.min = String(H_MIN); el.hRange.max = String(H_MAX);
+  if (el.hTicks) el.hTicks.innerHTML =
+    '<span>' + fmtH(H_MIN) + ' 悬空</span><span>0 刚接触</span>' +
+    '<span>' + A + ' 全浸没</span><span>' + fmtH(H_MAX) + '</span>';
+}
+function fmtH(v){ return String(v).replace('-', '\u2212'); }
+function syncUI(){
+  var r = readings();
+  el.hRange.value = String(state.h);
+  el.rdH.innerHTML = state.h.toFixed(1) + '<small>cm</small>';
+  el.rdG.textContent = r.G.toFixed(3);
+  el.rdF.textContent = r.Fp.toFixed(3);
+  el.rdFb.textContent = r.Fb.toFixed(3);
+  el.rdVsub.textContent = r.Vsub.toFixed(1);
+  el.rdSub.textContent = r.sub.toFixed(2);
+  el.rdScale.textContent = r.mRead.toFixed(1);
+  el.rdM.textContent = r.mOv.toFixed(1);
+  el.rdGp.textContent = r.Gp.toFixed(3);
+
+  var has = r.Vov > 1e-9;
+  if (!has){
+    /* 杯满时「物块一入水就溢」，所以走到这里只可能是「还没碰到水」；
+       只有勾掉「装满」才会出现「浸进去了但没溢」。 */
+    el.rdRatio.textContent = '—';
+    el.rdRatio.style.color = '#64748b';
+    el.rdHeroSub.innerHTML = r.sub <= 1e-9
+      ? '物块还在空气中 —— 拖滑块把它浸进水里'
+      : '水面还没涨到溢流口，<b>还不溢水</b>';
+  } else {
+    el.rdRatio.textContent = r.ratio.toFixed(3);
+    var ok = Math.abs(r.ratio - 1) < 5e-3;
+    el.rdRatio.style.color = ok ? '#6ee7b7' : '#fca5a5';
+    el.rdHeroSub.innerHTML = ok
+      ? 'F浮 = G排 <b>成立</b>：' + r.Fb.toFixed(3) + ' N = ' + r.Gp.toFixed(3) + ' N'
+      : '对不上（' + r.dF.toFixed(3) + ' N）—— 溢水杯没装满时会这样';
+  }
+
+  /* 步骤高亮 */
+  var cur = currentStep(), items = el.stepList.children, i;
+  for (i=0;i<items.length;i++){
+    var done = stepDone(i), on = (!done && i === cur);
+    items[i].className = 'step' + (done ? ' done' : (on ? ' on' : ''));
+  }
+
+  /* 提示条 */
+  el.hint.innerHTML = r.sub <= 1e-9
+    ? '物块悬在空气中 —— 此时测力计示数就是 <b>G物</b>'
+    : (r.Vsub >= A*A - 1e-9
+        ? '已<b>全浸没</b>：V排 不再变，<b>F浮 也不变了</b> —— 再往下按也一样'
+        : '部分浸入：V排 就是水里那一块，看 <b>F浮 与 G排 两支箭头一样长</b>');
+
+  var note = [];
+  if (!state.cupFull){
+    var gap = SPOUT_Y - r.level;
+    note.push('<b>溢水杯没装满</b>（水面比溢流口低 3.5 cm）：物块浸进去把水面抬高了 ' +
+              (r.level - (SPOUT_Y - 3.5)).toFixed(2) + ' cm，<b>离溢流口还差 ' +
+              gap.toFixed(2) + ' cm</b>，所以一滴都没溢出来 —— ' +
+              '这一段里 F浮 已经有值（' + r.Fb.toFixed(3) + ' N）、G排 还是 0。' +
+              '这不是原理错了，是<b>实验做错了</b>。');
+  }
+  if (r.Vsub >= A*A - 1e-9 && r.Vov > 1e-9)
+    note.push('全浸没后 V排 = V物 = ' + (A*A*A) + ' cm³，F浮 与浸入深度<b>无关</b>。');
+  el.rdNote.innerHTML = note.join(' ');
+
+  /* 开关态 */
+  el.ckArrows.checked = state.arrows;
+  el.ckRuler.checked = state.ruler;
+  el.ckFull.checked = state.cupFull;
+}
+
+/* ============================================================
+   11. 交互
+   ============================================================ */
+function setLiquid(k){ state.liquid = k; syncSegs(); render(); syncUI(); }
+function setMat(k){ state.mat = k; syncSegs(); render(); syncUI(); }
+function setH(v){ state.h = clamp(Number(v), H_MIN, H_MAX); state.auto = false; render(); syncUI(); }
+function setArrows(on){ state.arrows = !!on; render(); syncUI(); }
+function setRuler(on){ state.ruler = !!on; render(); syncUI(); }
+function setCupFull(on){ state.cupFull = !!on; render(); syncUI(); }
+function setTare(on){ state.tare = !!on; render(); syncUI(); }
+function applyView(name){
+  var v = VIEWS[name] || VIEWS.perspective;
+  state.yaw = v.yaw; state.pitch = v.pitch;
+  state.dist = v.dist || CAMD;
+  state.zoom = v.zoom; state.look = v.look;
+  render(); syncUI();
+}
+function nextView(){ viewIdx = (viewIdx + 1) % VIEW_ORDER.length; applyView(VIEW_ORDER[viewIdx]); }
+function syncSegs(){
+  var i, bs = document.querySelectorAll('#segLiq button');
+  for (i=0;i<bs.length;i++) bs[i].className = bs[i].getAttribute('data-liq') === state.liquid ? 'on' : '';
+  bs = document.querySelectorAll('#segMat button');
+  for (i=0;i<bs.length;i++) bs[i].className = bs[i].getAttribute('data-mat') === state.mat ? 'on' : '';
+}
+function resetAll(){
+  state.h = H_MIN; state.tare = false; state.auto = false; state.autoT = 0;
+  state.cupFull = true; state.arrows = true; state.ruler = true;
+  state.liquid = 'water'; state.mat = 'plastic';
+  syncSegs(); render(); syncUI();
+  showToast('已重置到初始状态');
+}
+function autoRun(){
+  state.auto = true; state.autoT = 0; state.tare = false; state.cupFull = true;
+  state.h = H_MIN;
+  showToast('自动演示：浸入 → 接水 → 比较');
+}
+
+var drag = null;
+function onDown(e){
+  drag = { x:e.clientX, y:e.clientY, yaw:state.yaw, pitch:state.pitch };
+  canvas.classList.add('dragging');
+  if (canvas.setPointerCapture) canvas.setPointerCapture(e.pointerId);
+}
+function onMove(e){
+  if (!drag) return;
+  state.yaw = drag.yaw + (e.clientX - drag.x) * 0.30;
+  state.pitch = clamp(drag.pitch - (e.clientY - drag.y) * 0.24, -14, 80);
+  state.look = false;
+  render();
+}
+function onUp(){
+  drag = null;
+  canvas.classList.remove('dragging');
+}
+
+function init(){
+  ctx = canvas.getContext('2d');
+  var i;
+  var lb = document.querySelectorAll('#segLiq button');
+  for (i=0;i<lb.length;i++) lb[i].addEventListener('click', function(){ setLiquid(this.getAttribute('data-liq')); });
+  var mb = document.querySelectorAll('#segMat button');
+  for (i=0;i<mb.length;i++) mb[i].addEventListener('click', function(){ setMat(this.getAttribute('data-mat')); });
+  el.hRange.addEventListener('input', function(){ setH(this.value); });
+  el.ckArrows.addEventListener('change', function(){ setArrows(this.checked); });
+  el.ckRuler.addEventListener('change', function(){ setRuler(this.checked); });
+  el.ckFull.addEventListener('change', function(){ setCupFull(this.checked); });
+  document.getElementById('btnAuto').addEventListener('click', autoRun);
+  document.getElementById('btnReset').addEventListener('click', resetAll);
+  document.getElementById('btnArrows').addEventListener('click', function(){
+    setArrows(!state.arrows); this.className = state.arrows ? 'sbtn on' : 'sbtn';
+  });
+  document.getElementById('btnView').addEventListener('click', nextView);
+  canvas.addEventListener('pointerdown', onDown);
+  canvas.addEventListener('pointermove', onMove);
+  canvas.addEventListener('pointerup', onUp);
+  canvas.addEventListener('pointercancel', onUp);
+  /* ★ 必须绑 resize：resize() 定义了却没人调用的话，窗口一变（或手机转屏）
+     画布还停在旧尺寸上 —— 宽了留一大片空白、窄了把器材切掉。 */
+  window.addEventListener('resize', resize);
+  window.addEventListener('orientationchange', resize);
+
+  syncSegs();
+  syncSlider();
+  document.getElementById('btnArrows').className = 'sbtn on';
+  resize();
+  requestAnimationFrame(tick);
+}
+
+/* ============================================================
+   12. 自检接口（全部走页面自己的入口，不重抄公式）
+   ============================================================ */
+window.__arch = {
+  consts: {
+    GRA:GRA, A:A, V_OBJ:V_OBJ,
+    CUP_R_IN:CUP_R_IN, CUP_WALL:CUP_WALL, CUP_R_OUT:CUP_R_OUT, CUP_H:CUP_H, SPOUT_Y:SPOUT_Y,
+    CUP_AREA:CUP_AREA, CUP_CX:CUP_CX, CUP_CZ:CUP_CZ, WATER_Y:WATER_Y, CUP_RIM:CUP_RIM,
+    BKT_R_IN:BKT_R_IN, BKT_WALL:BKT_WALL, BKT_R_OUT:BKT_R_OUT, BKT_H:BKT_H,
+    BKT_CX:BKT_CX, BKT_CZ:BKT_CZ, BKT_BOT:BKT_BOT, BKT_RIM:BKT_RIM, BKT_AREA:BKT_AREA,
+    SPOUT_L:SPOUT_L, SPOUT_W:SPOUT_W, SPOUT_T:SPOUT_T,
+    SCALE_W:SCALE_W, SCALE_D:SCALE_D, SCALE_H:SCALE_H, PLATFORM_T:PLATFORM_T,
+    ROD_X:ROD_X, ROD_TOP:ROD_TOP, BASE_W:BASE_W, BASE_H:BASE_H, BASE_D:BASE_D,
+    SPR_H:SPR_H, SPR_W:SPR_W, SPR_RANGE:SPR_RANGE, SPR_HK:SPR_HK, THREAD:THREAD,
+    BLK_X:BLK_X, BLK_Z:BLK_Z, H_MIN:H_MIN, H_MAX:H_MAX,
+    RHO_MAX:RHO_MAX, G_MAX:G_MAX, ARROW_LEN:ARROW_LEN, FSCALE:FSCALE, CAMD:CAMD
+  },
+  mats: MATS, liq: LIQ, state: state,
+  matRho: matRho, liqRho: liqRho, Gobj: Gobj,
+  /* 三条独立路径：① 几何裁剪 ② 水压积分 ③ 溢水杯水账 */
+  subVolAt: subVolAt, subVol: subVol,
+  buoyancyByPressure: buoyancyByPressure,
+  cupWater0: cupWater0, cupLevel: cupLevel, overflowVol: overflowVol,
+  subDepth: subDepth, readings: readings,
+  currentStep: currentStep, stepDone: stepDone,
+  makeCam: makeCam, project: project, envelopePoints: envelopePoints,
+  box3: box3, quadPt: quadPt, cylWall: cylWall, cylPt: cylPt, discPts: discPts,
+  setLiquid: setLiquid, setMat: setMat, setH: setH,
+  setArrows: setArrows, setRuler: setRuler, setCupFull: setCupFull, setTare: setTare,
+  applyView: applyView, nextView: nextView,
+  freeze: function(on){ state.frozen = !!on; render(); },
+  reset: resetAll, autoRun: autoRun,
+  run: function(sec){
+    var n = Math.round((sec || 1) * 60);
+    for (var i=0;i<n;i++) stepSim(1/60);
+    render(); return state.t;
+  },
+  uiBoxes: uiBoxes,
+  syncUI: syncUI, render: render, recompute: recompute,
+  drawn: function(){ return state.drawn; },
+  cam: function(){ return state._q; },
+  canvas: canvas
+};
+
+init();
+})();
+</script>
+</body>
+</html>
