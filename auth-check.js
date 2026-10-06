@@ -21,7 +21,15 @@
     "密度计.html",
     "javalab_浮力比较.html",
     "浮力产生的原因立体模型.html",
+    "物体的浮沉条件立体模型.html",
     "称重法测浮力.html",
+    // ⚠️ 下面三项曾经漏登记：experiments.html 里卡片标着「VIP专享」，但这份名单里没有。
+    //    checkVip() 只判 VIP 状态、根本不查名单，真正的拦截全靠本文件，
+    //    漏登记 = 直接输网址就能免费看。
+    //    维护约定：experiments.html 里凡是 VIP 卡对应的页面，这里必须有。
+    "排开液体体积.html",
+    "潜水艇沉浮原理.html",
+    "phet_浮力.html",
     "javalab_浮力实验.html","javalab_阿基米德王冠.html",
     "飞象_动滑轮定滑轮原理教学动画.html","javalab_电流表.html",
     "电阻的微观解释.html","javalab_磁场与磁感线.html",
