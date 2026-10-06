@@ -8,7 +8,7 @@ const MBD_APP_KEY = MBD_DEV_KEY || '';
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
 
-const PRICES = { '月度VIP': '9.90', '年度VIP': '99.00', '终身VIP': '199.00' };
+const PRICES = { '月度VIP': '9.90', '年度VIP': '99.00', '终身VIP': '299.00' };
 
 function md5(str) {
   return createHash('md5').update(str, 'utf8').digest('hex');
