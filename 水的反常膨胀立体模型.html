@@ -1,0 +1,1770 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>水的反常膨胀 · 3D 实验台 - 物理虚拟实验</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="stylesheet" href="style.css">
+  <script src="auth-check.js"></script>
+  <style>
+    body { margin: 0; padding: 20px; min-width: 320px; }
+
+    .lab3d h1 { margin: 0; font-size: 19px; letter-spacing: .3px; }
+    .lab3d-sub { margin: 7px 0 16px; color: #93b4c4; font-size: 12.5px; line-height: 1.6; }
+    .lab3d-sub b { color: #a5f3fc; font-weight: 700; }
+
+    .lab3d-layout {
+      display: grid; grid-template-columns: minmax(0, 1fr) 356px;
+      gap: 16px; align-items: start; align-content: start;
+    }
+    /* 三块的位置写死，DOM 顺序按【窄屏需要的顺序】排：舞台 → 侧栏 → 下半区。
+       宽屏把「视角 / 密度表 / 湖水分层 / 结论」摆到舞台正下方（左列第二行），侧栏跨两行。 */
+    .lab3d-stage { grid-column: 1; grid-row: 1; }
+    .lab3d-sidebar { grid-column: 2; grid-row: 1 / span 2; }
+    .lab3d-lower {
+      grid-column: 1; grid-row: 2;
+      display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px; align-content: start; align-items: stretch; min-width: 0;
+    }
+
+    .lab3d-stage {
+      position: relative; overflow: hidden;
+      height: clamp(400px, 60vh, 620px);
+      border: 1px solid rgba(148, 163, 184, .18); border-radius: 16px;
+      background: #020617; box-shadow: 0 18px 46px rgba(2, 6, 23, .5);
+    }
+    .lab3d-stage canvas { display: block; touch-action: none; cursor: grab; }
+    .lab3d-stage canvas.grabbing { cursor: grabbing; }
+
+    .lab3d-stage .stage-hint {
+      position: absolute; left: 12px; top: 12px; max-width: 64%;
+      padding: 7px 11px; border-radius: 8px; pointer-events: none;
+      border: 1px solid rgba(56, 189, 248, .28); background: rgba(2, 6, 23, .78);
+      color: #c3e8f5; font-size: 11px; line-height: 1.55;
+    }
+    .lab3d-stage .stage-hint b { color: #7dd3fc; }
+    .lab3d-stage .stage-hint em { color: #fde68a; font-style: normal; }
+
+    .lab3d-stage .stage-bar {
+      position: absolute; left: 0; right: 0; bottom: 0;
+      display: flex; align-items: center; justify-content: space-between; gap: 8px;
+      padding: 0 12px 11px; pointer-events: none;
+    }
+    .lab3d-stage .bar-left { display: flex; align-items: center; gap: 7px; flex: none; pointer-events: auto; }
+    .lab3d-stage .stage-btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 8px 13px; border-radius: 10px; font-family: inherit;
+      font-size: 12px; font-weight: 800; cursor: pointer;
+      border: 1px solid rgba(148, 163, 184, .35); background: rgba(2, 6, 23, .88); color: #cbd5e1;
+      transition: background .2s, border-color .2s, color .2s;
+    }
+    .lab3d-stage .stage-btn.go { border-color: rgba(56, 189, 248, .55); background: rgba(14, 116, 144, .3); color: #e0f2fe; }
+    .lab3d-stage .stage-btn.go:hover { background: rgba(14, 116, 144, .46); }
+    .lab3d-stage .stage-btn.ok { border-color: rgba(52, 211, 153, .55); background: rgba(6, 78, 59, .42); color: #d1fae5; }
+    .lab3d-stage .stage-btn.ok:hover { background: rgba(6, 78, 59, .62); }
+    .lab3d-stage .stage-btn.on { border-color: rgba(125, 211, 252, .85); background: rgba(12, 74, 110, .6); color: #e0f2fe; }
+    .lab3d-stage .stage-help {
+      min-width: 0; pointer-events: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      color: #93b4c4; font-size: 11px; background: rgba(2, 6, 23, .72); padding: 6px 10px; border-radius: 7px;
+    }
+    .lab3d-stage .stage-toast {
+      position: absolute; left: 50%; transform: translateX(-50%); bottom: 96px;
+      padding: 8px 14px; border-radius: 10px; font-size: 12px; font-weight: 700;
+      background: rgba(2, 6, 23, .93); border: 1px solid rgba(148, 163, 184, .32); color: #e2e8f0;
+      opacity: 0; transition: opacity .18s; pointer-events: none; white-space: nowrap;
+    }
+    .lab3d-stage .stage-toast.show { opacity: 1; }
+    /* 量程越界徽标：放大模式拖过 10 ℃ 时出现，说明液柱为什么顶住不动 */
+    .lab3d-stage .range-flag {
+      position: absolute; right: 12px; top: 12px; padding: 6px 11px; border-radius: 8px;
+      border: 1px solid rgba(251, 191, 36, .5); background: rgba(120, 53, 15, .78);
+      color: #fef3c7; font-size: 11px; font-weight: 700; line-height: 1.5;
+      pointer-events: none; display: none; max-width: 46%;
+    }
+    .lab3d-stage .range-flag.show { display: block; }
+
+    .lab3d-sidebar { display: flex; flex-direction: column; gap: 11px; min-width: 0; }
+    .panel {
+      border: 1px solid rgba(148, 163, 184, .17); border-radius: 13px;
+      background: rgba(9, 20, 35, .82); padding: 13px 14px;
+    }
+    .panel > h3 {
+      margin: 0 0 10px; font-size: 12px; font-weight: 800; color: #7dd3fc;
+      letter-spacing: .4px; display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    }
+    .panel > h3 .pill {
+      font-size: 10px; font-weight: 800; padding: 2px 8px; border-radius: 99px;
+      background: rgba(148, 163, 184, .18); color: #e2e8f0;
+    }
+    .panel > h3 .pill.ok { background: rgba(52, 211, 153, .22); color: #d1fae5; }
+    .panel > h3 .pill.warn { background: rgba(251, 191, 36, .22); color: #fef3c7; }
+
+    .gauge-num {
+      display: flex; align-items: baseline; justify-content: center; gap: 6px;
+      padding: 9px 8px; border-radius: 10px; margin-bottom: 9px;
+      background: linear-gradient(180deg, #0b1a2a, #07131f); border: 1px solid rgba(56, 189, 248, .3);
+    }
+    .gauge-num .num {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 26px; font-weight: 800;
+      color: #a5f3fc; letter-spacing: .5px; font-variant-numeric: tabular-nums;
+      text-shadow: 0 0 12px rgba(56, 189, 248, .45);
+    }
+    .gauge-num .unit { color: #5e8496; font-size: 13px; font-weight: 700; }
+
+    .readouts { display: flex; flex-direction: column; gap: 5px; color: #a9c2d2; font-size: 11.5px; }
+    .readouts div { display: flex; justify-content: space-between; gap: 8px; }
+    .readouts b { color: #e2e8f0; font-variant-numeric: tabular-nums; }
+    .readouts div.sum { border-top: 1px solid rgba(148, 163, 184, .16); padding-top: 6px; margin-top: 2px; }
+    .readouts div.sum b { color: #a5f3fc; font-size: 13px; }
+
+    .btn-row { display: flex; flex-wrap: wrap; gap: 7px; }
+    .btn-row button {
+      flex: 1 1 auto; min-width: 0; padding: 9px 10px; border-radius: 9px; cursor: pointer;
+      font-family: inherit; font-size: 12px; font-weight: 800;
+      border: 1px solid rgba(148, 163, 184, .3); background: rgba(30, 41, 59, .7); color: #cbd5e1;
+    }
+    .btn-row button.primary { border-color: rgba(56, 189, 248, .6); background: rgba(14, 116, 144, .42); color: #e0f2fe; }
+    .btn-row button.ok { border-color: rgba(52, 211, 153, .55); background: rgba(6, 78, 59, .45); color: #d1fae5; }
+    .btn-row button.on { border-color: rgba(125, 211, 252, .85); background: rgba(12, 74, 110, .6); color: #e0f2fe; }
+    .btn-row button:disabled { opacity: .45; cursor: not-allowed; }
+    .btn-row button:hover:not(:disabled) { border-color: rgba(125, 211, 252, .7); }
+
+    /* 快捷温度：6 个格子均分 —— flex 会让「100 ℃」把别人挤扁，用 grid 才齐 */
+    .keys { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 6px; margin-top: 8px; }
+    .keys button {
+      padding: 8px 2px; border-radius: 9px; cursor: pointer; font-family: inherit;
+      font-size: 11.5px; font-weight: 800; font-variant-numeric: tabular-nums;
+      border: 1px solid rgba(148, 163, 184, .3); background: rgba(30, 41, 59, .7); color: #cbd5e1;
+    }
+    .keys button.on { border-color: rgba(125, 211, 252, .85); background: rgba(12, 74, 110, .6); color: #e0f2fe; }
+    .keys button:hover { border-color: rgba(125, 211, 252, .7); }
+
+    /* 温度滑块 */
+    .t-slider { width: 100%; margin: 2px 0 0; }
+    .t-slider input[type=range] {
+      -webkit-appearance: none; appearance: none; width: 100%; height: 26px;
+      background: transparent; cursor: pointer; margin: 0;
+    }
+    .t-slider input[type=range]::-webkit-slider-runnable-track {
+      height: 7px; border-radius: 99px;
+      background: linear-gradient(90deg, #1e3a8a 0%, #0891b2 12%, #22d3ee 30%, #a3e635 62%, #f59e0b 84%, #ef4444 100%);
+      box-shadow: inset 0 0 0 1px rgba(2, 6, 23, .5);
+    }
+    .t-slider input[type=range]::-webkit-slider-thumb {
+      -webkit-appearance: none; appearance: none; width: 18px; height: 18px; margin-top: -5.5px;
+      border-radius: 50%; background: #e0f2fe; border: 2px solid #0891b2;
+      box-shadow: 0 0 9px rgba(34, 211, 238, .7);
+    }
+    .t-slider input[type=range]::-moz-range-track {
+      height: 7px; border-radius: 99px;
+      background: linear-gradient(90deg, #1e3a8a 0%, #0891b2 12%, #22d3ee 30%, #a3e635 62%, #f59e0b 84%, #ef4444 100%);
+    }
+    .t-slider input[type=range]::-moz-range-thumb {
+      width: 15px; height: 15px; border-radius: 50%; background: #e0f2fe; border: 2px solid #0891b2;
+    }
+    .t-scale { display: flex; justify-content: space-between; color: #5e8496; font-size: 10px; margin-top: 1px; }
+    /* 4 ℃ 那一格永远高亮 —— 它就是这个实验的答案 */
+    .t-scale b { color: #86efac; font-weight: 800; }
+
+    .chartwrap { position: relative; width: 100%; height: 210px; }
+    .chartwrap canvas { display: block; width: 100%; height: 210px; border-radius: 9px; background: rgba(2, 6, 23, .6); border: 1px solid rgba(56, 189, 248, .16); }
+
+    .ansrow { display: flex; gap: 7px; }
+    .ansrow input {
+      flex: 1 1 auto; min-width: 0; padding: 9px 10px; border-radius: 9px;
+      border: 1px solid rgba(148, 163, 184, .35); background: rgba(2, 6, 23, .72); color: #e2e8f0;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 14px; font-weight: 700;
+      font-variant-numeric: tabular-nums;
+    }
+    .ansrow input:focus { outline: none; border-color: rgba(56, 189, 248, .75); box-shadow: 0 0 0 3px rgba(56, 189, 248, .12); }
+    .ansrow button {
+      flex: none; padding: 9px 15px; border-radius: 9px; cursor: pointer; font-family: inherit;
+      font-size: 12px; font-weight: 800; border: 1px solid rgba(52, 211, 153, .6);
+      background: rgba(6, 78, 59, .5); color: #d1fae5;
+    }
+    .ansrow button:hover:not(:disabled) { background: rgba(6, 78, 59, .72); }
+    .ansrow button:disabled { opacity: .45; cursor: not-allowed; }
+    .ansrow input:disabled { opacity: .5; }
+
+    .fb { margin-top: 9px; padding: 9px 11px; border-radius: 9px; font-size: 11.5px; line-height: 1.7; display: none; }
+    .fb.show { display: block; }
+    .fb.ok { background: rgba(6, 78, 59, .45); border: 1px solid rgba(52, 211, 153, .5); color: #d1fae5; }
+    .fb.bad { background: rgba(127, 29, 29, .45); border: 1px solid rgba(248, 113, 113, .5); color: #fee2e2; }
+    .fb.warn { background: rgba(120, 53, 15, .45); border: 1px solid rgba(251, 191, 36, .5); color: #fef3c7; }
+
+    .analysis { color: #c8d8e4; font-size: 11.5px; line-height: 1.8; }
+    .analysis .line { display: flex; justify-content: space-between; gap: 8px; }
+    .analysis .line b { color: #e2e8f0; font-variant-numeric: tabular-nums; }
+    .analysis .conc {
+      margin-top: 9px; padding: 8px 10px; border-radius: 8px; font-size: 11.5px; line-height: 1.7;
+      background: rgba(6, 78, 59, .35); border: 1px solid rgba(52, 211, 153, .4); color: #d1fae5;
+    }
+    .analysis .conc.info { background: rgba(12, 74, 110, .35); border-color: rgba(56, 189, 248, .4); color: #e0f2fe; }
+
+    .dtab { width: 100%; border-collapse: collapse; font-size: 11.5px; color: #c8d8e4; }
+    .dtab th, .dtab td { padding: 4px 6px; text-align: left; border-bottom: 1px solid rgba(148, 163, 184, .12); }
+    .dtab th { color: #7d97a8; font-weight: 700; font-size: 10.5px; }
+    .dtab td.n { text-align: right; font-variant-numeric: tabular-nums; color: #a5f3fc; }
+    .dtab tr.hit td { background: rgba(6, 78, 59, .35); color: #d1fae5; }
+    .dtab tr.hit td.n { color: #a7f3d0; font-weight: 800; }
+
+    /* 三个关键数字 */
+    .big3 { display: flex; flex-direction: column; gap: 8px; }
+    .big3 .b3 {
+      display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 9px;
+      border: 1px solid rgba(148, 163, 184, .18); background: rgba(15, 27, 44, .66);
+    }
+    .big3 .b3 .v {
+      flex: none; font-family: ui-monospace, Menlo, monospace; font-size: 15px; font-weight: 800;
+      color: #a5f3fc; font-variant-numeric: tabular-nums; min-width: 74px; text-align: right;
+    }
+    .big3 .b3 .t { color: #a9c2d2; font-size: 11.5px; line-height: 1.5; }
+    .big3 .b3 .t b { color: #e2e8f0; }
+
+    .lakewrap { position: relative; width: 100%; height: 210px; }
+    .lakewrap canvas { display: block; width: 100%; height: 210px; border-radius: 9px; background: rgba(2, 6, 23, .6); border: 1px solid rgba(56, 189, 248, .16); }
+
+    .info-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; margin-top: 16px; }
+    .info-card {
+      border: 1px solid rgba(148, 163, 184, .16); border-radius: 14px;
+      background: rgba(9, 20, 35, .7); padding: 15px 17px;
+    }
+    .info-card h4 { margin: 0 0 9px; font-size: 13px; color: #7dd3fc; }
+    .info-card ul { margin: 0; padding-left: 17px; color: #a9c2d2; font-size: 12px; line-height: 1.85; }
+    .info-card li b { color: #e2e8f0; }
+    .info-card .fml {
+      display: inline-block; margin: 3px 0; padding: 3px 9px; border-radius: 7px;
+      background: rgba(56, 189, 248, .13); color: #a5f3fc; font-weight: 700;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+
+    @media (max-width: 900px) {
+      .lab3d-layout { grid-template-columns: minmax(0, 1fr); }
+      .lab3d-stage, .lab3d-sidebar, .lab3d-lower { grid-column: 1; grid-row: auto; }
+      .lab3d-stage { height: clamp(340px, 54vh, 500px); }
+      .lab3d-sidebar { border-top: 1px solid rgba(148, 163, 184, .16); padding-top: 12px; }
+      .lab3d-lower { border-top: 1px solid rgba(148, 163, 184, .16); padding-top: 12px; }
+    }
+    @media (max-width: 620px) {
+      body { padding: 14px; }
+      .lab3d h1 { font-size: 16px; }
+      .lab3d-stage { height: 350px; }
+      .lab3d-stage .stage-hint { font-size: 10px; padding: 6px 9px; max-width: 68%; }
+      .lab3d-stage .stage-help { display: none; }
+      .lab3d-stage .stage-btn { padding: 7px 10px; font-size: 11px; gap: 5px; }
+      .lab3d-stage .range-flag { font-size: 10px; padding: 5px 8px; }
+      .gauge-num .num { font-size: 23px; }
+      .keys button { font-size: 10.5px; padding: 7px 1px; }
+    }
+  
+/* === 紧凑版面补丁 v2 === */
+.lab3d-layout { align-items: start; align-content: start; }
+.lab3d-sidebar {
+  position: sticky; top: 16px; align-self: start;
+  max-height: calc(100vh - 104px);
+  overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin;
+}
+</style>
+</head>
+<body>
+  <div class="lab3d">
+    <h1>水的反常膨胀 · 3D 实验台</h1>
+    <p class="lab3d-sub">
+      一只装满水的<b>圆底烧瓶</b>坐在加热板上，瓶口插一根<b>细玻璃管</b>。水温一升，水就胀，
+      多出来的水把细管里的<b>液柱</b>顶上去 —— 这就是热胀冷缩。
+      可水的脾气怪：<b>4 ℃ 时它最重</b>（体积最小），0 ℃ 到 4 ℃ 之间加热，体积反而<b>缩小</b>。
+      拖一拖温度滑块，再用<b>「放大 0–10 ℃」</b>把液柱看清 —— 顺便看一眼<b>冬天的湖</b>为什么从水面结冰、鱼却冻不死。
+    </p>
+
+    <div class="lab3d-layout">
+      <div class="lab3d-stage">
+        <canvas id="wr-canvas"></canvas>
+
+        <div class="stage-hint" id="wr-hint"></div>
+        <div class="range-flag" id="wr-range">放大模式只到 10 ℃：液柱已顶到管口。<br>切回「全量程 0–100 ℃」看高温段。</div>
+        <div class="stage-toast" id="wr-toast"></div>
+
+        <div class="stage-bar">
+          <div class="bar-left">
+            <button type="button" class="stage-btn go" id="wr-zoom">🔍 放大 0–10 ℃</button>
+            <button type="button" class="stage-btn ok" id="wr-mol">⚛ 分子视图</button>
+            <button type="button" class="stage-btn" id="wr-reset">↺ 重置</button>
+          </div>
+          <div class="stage-help">拖动旋转 · 滚轮缩放 · 右侧滑块调温</div>
+        </div>
+      </div>
+
+      <div class="lab3d-sidebar">
+        <div class="panel">
+          <h3>水温 <span class="pill" id="wr-tpill">20 ℃</span></h3>
+          <div class="t-slider">
+            <input type="range" id="wr-temp" min="0" max="100" step="1" value="20"
+                   aria-label="水温（摄氏度）">
+            <div class="t-scale"><span>0</span><span>20</span><span><b>4 ℃</b></span><span>60</span><span>80</span><span>100</span></div>
+          </div>
+          <!-- 快捷温度：和下面的「不同温度下水的密度表」是同一组档位，
+               点一个就能在表里查到对应的 ρ，用来做「算一算」。 -->
+          <div class="keys" id="wr-keys"></div>
+        </div>
+
+        <div class="panel">
+          <h3>水的密度 <span class="pill" id="wr-rhopill">—</span></h3>
+          <div class="gauge-num">
+            <span class="num" id="wr-rho">0.9982</span><span class="unit">g/cm³</span>
+          </div>
+          <div class="readouts">
+            <div><span>体积 V（50 g 水）</span><b id="wr-rv">—</b></div>
+            <div><span>比 4 ℃ 胀出</span><b id="wr-rdv">—</b></div>
+            <div><span>细管液柱升高</span><b id="wr-rh">—</b></div>
+            <div class="sum"><span>分子平均间距</span><b id="wr-rs">—</b></div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h3>ρ–T 曲线 <span class="pill" id="wr-cpill">0–100 ℃</span></h3>
+          <div class="chartwrap"><canvas id="wr-chart"></canvas></div>
+          <p class="note" id="wr-chartnote"></p>
+        </div>
+
+        <div class="panel">
+          <h3>算一算 <span class="pill" id="wr-qpill">—</span></h3>
+          <p class="note" id="wr-question"></p>
+          <div class="ansrow">
+            <input type="number" id="wr-ans" placeholder="ρ（g/cm³）" step="0.00001">
+            <button type="button" id="wr-submit">提交</button>
+          </div>
+          <div class="fb" id="wr-fb"></div>
+        </div>
+      </div>
+
+      <div class="lab3d-lower">
+        <div class="panel">
+          <h3>视角</h3>
+          <div class="btn-row">
+            <button type="button" data-view="perspective">默认</button>
+            <button type="button" data-view="front">正面</button>
+            <button type="button" data-view="tube">看细管</button>
+            <button type="button" data-view="close">贴近</button>
+            <button type="button" data-view="top">俯视</button>
+          </div>
+          <p class="note" style="margin-top:9px;">细管里的液柱是<b>真的在动</b>：温度越高液柱越高。全量程下 0 ℃ 与 4 ℃ 只差 0.018 cm（约 1/3 个像素，根本看不见）—— 所以要用「放大 0–10 ℃」。</p>
+        </div>
+
+        <div class="panel">
+          <h3>不同温度下水的密度</h3>
+          <table class="dtab" id="wr-dtab"></table>
+          <p class="note">ρ 的单位是 g/cm³。注意 <b>4 ℃ 那一行最大</b>（0.99997），比 0 ℃ 和 100 ℃ 都大。</p>
+        </div>
+
+        <div class="panel">
+          <h3>冬天的湖为什么会这样 <span class="pill">湖水分层</span></h3>
+          <div class="lakewrap"><canvas id="wr-lake"></canvas></div>
+          <p class="note">4 ℃ 的水最重 ⇒ 沉在湖底；0 ℃ 的水最轻（还没结冰的那部分）⇒ 留在水面；<b>冰比水轻 9%</b> ⇒ 浮在水面上。水面先结冰、盖住下面的水，湖底一直是 4 ℃，鱼才冻不死。</p>
+        </div>
+
+        <div class="panel">
+          <h3>分析与结论</h3>
+          <div class="analysis" id="wr-analysis"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="info-cards">
+      <div class="info-card">
+        <h4>实验原理</h4>
+        <ul>
+          <li>一般物质都是<b>热胀冷缩</b>：温度升高，体积变大，密度变小。</li>
+          <li>水在 <b>0 ℃ ~ 4 ℃</b> 之间<b>反着来</b>：温度升高，体积反而<b>变小</b>、密度<b>变大</b>。</li>
+          <li>所以在 0 ℃ 到 100 ℃ 之间，水在 <b>4 ℃ 时密度最大</b>（0.99997 g/cm³ ≈ 1.0 g/cm³）。</li>
+          <li>微观原因：水分子之间有<b>氢键</b>，低温时分子被氢键撑成松散的「冰状骨架」；温度升高让骨架部分塌掉，分子反而能挤得更紧。再热下去，分子的热运动才重新占上风。</li>
+          <li>实验装置：装满水的<b>圆底烧瓶</b> + 一根<b>细玻璃管</b>。水一胀，多出来的那一点点体积全部涌进细管 ⇒ 把微小的体积变化<b>放大</b>成看得见的液柱升降。</li>
+        </ul>
+      </div>
+      <div class="info-card">
+        <h4>操作指南与易错点</h4>
+        <ul>
+          <li>拖右侧<b>水温滑块</b>（0–100 ℃），或点快捷温度按钮。</li>
+          <li>看液柱的<b>整体趋势</b>用「全量程」；看 <b>0–4 ℃ 那点反常</b>必须点「放大 0–10 ℃」。</li>
+          <li>细管上那道<b>绿色刻线</b>就是 4 ℃ 的液面位置 —— 液柱从这里<b>先降后升</b>。</li>
+          <li>易错：以为「水在 4 ℃ 时体积最大」。恰好相反 —— <b>4 ℃ 时体积最小、密度最大</b>。</li>
+          <li>易错：以为「水结冰体积变小」。冰比水<b>轻</b>，但体积比同质量的水<b>大 9%</b>，所以冰浮在水面上、还会把瓶子撑裂。</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <script>
+  (function () {
+    'use strict';
+
+    const $ = id => document.getElementById(id);
+    const PI2 = Math.PI * 2;
+    const clamp = (v, a, b) => v < a ? a : (v > b ? b : v);
+    const add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+    const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+    const scl = (a, k) => [a[0] * k, a[1] * k, a[2] * k];
+    const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+    const vlen = a => Math.sqrt(a[0] * a[0] + a[1] * a[1] + a[2] * a[2]);
+    const vnorm = a => { const l = vlen(a) || 1; return [a[0] / l, a[1] / l, a[2] / l]; };
+
+    /* ============================================================
+     * 单位：cm ↔ 世界单位
+     * ------------------------------------------------------------
+     * 【唯一换算点】。画布坐标、命中框、包络、标签全都走它 ——
+     * 两边各换算一次就是静默除两次（本站栽过）。
+     * ============================================================ */
+    const U = 0.17;                       // 1 cm = 0.17 世界单位
+    const cm = v => v * U;
+
+    /* ============================================================
+     * 物理 —— 页面、判分、自检共用这一份
+     * ------------------------------------------------------------
+     * 纯水密度 Kell (1975) 拟合式，g/cm³，1 atm，0–150 ℃ 有效。
+     * 实测与教材手写真值（0/4/10/15/20/25/30/40/50/60/70/80/90/100 ℃）
+     * 的最大偏差 1.9853e-5（在 90 ℃），0–100 ℃ 整点 argmax 恰好 = 4 ℃。
+     * ★ 这个「整点最大在 4 ℃」就是本实验全部现象的来源，自检直接卡它。
+     * ============================================================ */
+    function rho(t) {
+      const n = 999.83952 + 16.945176 * t - 7.9870401e-3 * t * t - 46.170461e-6 * t * t * t
+              + 105.56302e-9 * Math.pow(t, 4) - 280.54253e-12 * Math.pow(t, 5);
+      return n / (1 + 16.87985e-3 * t) / 1000;
+    }
+    const RHO_ICE = 0.9168;               // g/cm³，0 ℃ 的冰
+
+    // 烧瓶在 4 ℃ 时【刚好装满到瓶颈口】。V_BULB 就是这个容积。
+    const V_BULB = 50;                    // cm³
+    const RHO4 = rho(4);
+    const M_WATER = RHO4 * V_BULB;        // g，49.99860 g —— 水量固定，膨胀只能往细管里挤
+    const V4 = V_BULB;                    // V(4) 严格等于 V_BULB（M_WATER 就是这么定的）
+    const VofT = t => M_WATER / rho(t);   // cm³
+
+    // 细管标定：让 4 ℃ → 100 ℃ 的体积增量（4.3416% × 50 cm³ = 2.1708 cm³）
+    // 刚好对应 H_MAX = 6 cm 的液柱行程 ⇒ A_TUBE = 0.3618 cm²（内径 0.68 cm）。
+    const H_MAX = 6.0;                    // cm，细管有效刻度长度
+    const H_OFF = 0.9;                    // cm，4 ℃ 液面离细管底（= 瓶颈口）的高度
+    const TUBE_PAD = 0.7;                 // cm，管口留白
+    const TUBE_LEN = H_OFF + H_MAX + TUBE_PAD;   // 7.6 cm
+    const A_TUBE = (VofT(100) - V4) / H_MAX;
+
+    // 放大档：0–10 ℃ 铺满 H_MAX。放大倍数 = dV(4→100) / dV(4→10) ≈ 159.6 倍。
+    const T_ZOOM_MAX = 10;
+    const DV_ZOOM = VofT(T_ZOOM_MAX) - V4;
+    const ZOOM_K = (VofT(100) - V4) / DV_ZOOM;
+
+    const hFullRaw = t => (VofT(t) - V4) / A_TUBE;      // cm，全量程
+    const hZoomRaw = t => (VofT(t) - V4) / DV_ZOOM * H_MAX;  // cm，放大档（>10 ℃ 会超量程）
+    const tubeHRaw = t => (state.zoomMode ? hZoomRaw(t) : hFullRaw(t));
+    const tubeH = t => clamp(tubeHRaw(t), 0, H_MAX);    // cm，画面里真正用的
+    const liquidTop = t => H_OFF + tubeH(t);            // cm，液面离细管底
+    const overRange = t => tubeHRaw(t) > H_MAX + 1e-9;
+    const dvRel = t => (VofT(t) / V4 - 1) * 100;        // %
+    const spacingRel = t => Math.pow(RHO4 / rho(t), 1 / 3);   // 平均间距相对 4 ℃ 的倍数
+    const iceOver = RHO4 / RHO_ICE - 1;                 // 冰比 4 ℃ 水大出的体积比
+
+    /* ============================================================
+     * 场景几何
+     * ============================================================ */
+    const TABLE_HW = 2.85, TABLE_HD = 2.05, TABLE_T = 0.13;
+
+    // 加热板
+    const HOT_X = -0.10, HOT_Z = 0.05;
+    const HOT_W = 1.62, HOT_D = 1.30, HOT_H = 0.17;
+    const HOT_TOP = HOT_H;
+
+    // 圆底烧瓶（外径尺寸，画出来看的）
+    const BULB_R = 2.35;                  // cm，球部外半径
+    const NECK_R = 0.70;                  // cm，瓶颈外半径
+    const NECK_H = 3.20;                  // cm，瓶颈高
+    const TUBE_R = 0.34;                  // cm，细管外半径（内径 0.68 ⇒ 壁很薄，画的时候按外径）
+
+    const CAMD = 10.6;
+    const TARGET = [0, 0.95, 0];
+
+    const VIEWS = {
+      perspective: [0.40, 0.315, 1.00],
+      front:       [0.00, 0.16, 1.02],
+      tube:        [0.10, 0.20, 1.72],
+      close:       [0.30, 0.235, 1.46],
+      top:         [0.34, 1.05, 0.98]
+    };
+
+    const ANIM_DUR = 0.38;                // 秒，液柱追到新温度的时间
+
+    /* ---------------------------- 状态 ---------------------------- */
+    const state = {
+      temp: 20,             // 逻辑温度（整数 ℃）
+      tempShown: 20,        // 画面 / 读数用的温度（动画中间态）—— 两者必须同源
+      zoomMode: false,      // false = 全量程 0–100 ℃；true = 放大 0–10 ℃
+      molecules: false,
+      anim: [],             // [{from, to, t}]
+      solved: false,
+      answerT: null,        // 上一题问的温度
+      yaw: VIEWS.perspective[0], pitch: VIEWS.perspective[1], zoom: VIEWS.perspective[2],
+      w: 1, h: 1, dpr: 0, dirty: true,
+      // 🔴 uiDirty 单独一个标志：动画推进只改 tempShown，而侧栏（ρ / V / ΔV / 液柱读数 /
+      //    密度表 / 曲线 / 结论）读的全是 tempShown。只在 setTemp 里 syncUI 一次是不够的 ——
+      //    那一刻 tempShown 还是【旧值】，动画跑完再没人调 syncUI，侧栏就永远停在旧温度
+      //    （实测：点「100°」按钮后画面液柱到顶，侧栏 ρ 还是 0.99820 = ρ(20)）。
+      uiDirty: false,
+      dragging: false, drag: null, view: 'perspective',
+      drawn: {}
+    };
+
+    /* ============================================================
+     * 烧瓶 / 细管的几何 —— 绘制与自检共用的【唯一真源】
+     * ============================================================ */
+    function flaskGeom() {
+      const rB = cm(BULB_R), rN = cm(NECK_R), rT = cm(TUBE_R);
+      const cyB = HOT_TOP + rB;                 // 球心高度（球底贴在加热板顶面）
+      const yNeck0 = cyB + rB;                  // 瓶颈底 = 球顶
+      const yNeck1 = yNeck0 + cm(NECK_H);       // 瓶颈顶 = 细管底
+      const yTube0 = yNeck1;
+      const yTube1 = yTube0 + cm(TUBE_LEN);
+      return {
+        cx: HOT_X, cz: HOT_Z,
+        rBulb: rB, rNeck: rN, rTube: rT,
+        cyBulb: cyB,
+        yNeck0: yNeck0, yNeck1: yNeck1,
+        yTube0: yTube0, yTube1: yTube1,
+        // 细管刻线画在这个 z 平面上（管子正面），才不会陷进管壁里
+        zFace: HOT_Z + rT
+      };
+    }
+    // 液面 / 刻线在世界坐标里的高度
+    const liquidY = t => flaskGeom().yTube0 + cm(liquidTop(t));
+    const tickY = t => flaskGeom().yTube0 + cm(H_OFF + hFullRaw(t));
+
+    /* ============================================================
+     * 相机
+     * ============================================================ */
+    // 取景包络：只跟【放大档】走 —— 放大档要贴到细管上看，视野必须收进去；
+    // 全量程要能看见整只烧瓶 + 加热板 + 台面。
+    function envelopePoints() {
+      const pts = [];
+      const G = flaskGeom();
+      // 台面：只算远端与 80% 横向（近端那两条边本来就伸到画外）
+      for (const sx of [-1, 1]) {
+        pts.push([sx * TABLE_HW * 0.86, 0, -TABLE_HD * 0.96]);
+        pts.push([sx * TABLE_HW * 0.86, 0, TABLE_HD * 0.22]);
+      }
+      // 加热板 8 角
+      for (const sx of [-1, 1]) for (const sy of [0, 1]) for (const sz of [-1, 1]) {
+        pts.push([HOT_X + sx * HOT_W / 2, sy ? HOT_TOP : 0, HOT_Z + sz * HOT_D / 2]);
+      }
+      if (state.zoomMode) {
+        // 放大档：只要细管 + 一点烧瓶肩部。液柱顶 + 管口留白。
+        const yTop = G.yTube0 + cm(TUBE_LEN) + 0.04;
+        const yBot = G.yNeck0 - 0.05;
+        for (const sx of [-1, 1]) for (const sy of [0, 1]) for (const sz of [-1, 1]) {
+          pts.push([G.cx + sx * (G.rNeck + 0.06), sy ? yTop : yBot, G.cz + sz * (G.rNeck + 0.06)]);
+        }
+      } else {
+        // 全量程：整只烧瓶（球部到管口）
+        const yTop = G.yTube1 + 0.03;
+        const rWide = Math.max(G.rBulb, G.rNeck) + 0.02;
+        for (const sx of [-1, 1]) for (const sy of [0, 1]) for (const sz of [-1, 1]) {
+          pts.push([G.cx + sx * rWide, sy ? yTop : 0, G.cz + sz * rWide]);
+        }
+      }
+      return pts;
+    }
+    function makeCam(q, w, h) {
+      const cy = Math.cos(state.yaw), sy = Math.sin(state.yaw);
+      const cp = Math.cos(state.pitch), sp = Math.sin(state.pitch);
+      const dir = [cp * sy, sp, cp * cy];
+      q.dist = CAMD / state.zoom;
+      q.eye = add(TARGET, scl(dir, q.dist));
+      q.fwd = scl(dir, -1);
+      q.right = vnorm(cross(q.fwd, [0, 1, 0]));
+      q.up = cross(q.right, q.fwd);
+      const pts = envelopePoints();
+      let loR = 1e9, hiR = -1e9, loU = 1e9, hiU = -1e9;
+      for (const p of pts) {
+        const v = sub(p, q.eye);
+        const z = Math.max(0.05, dot(v, q.fwd));
+        const r = dot(v, q.right) / z, u = dot(v, q.up) / z;
+        loR = Math.min(loR, r); hiR = Math.max(hiR, r);
+        loU = Math.min(loU, u); hiU = Math.max(hiU, u);
+      }
+      const s = Math.min(w * 0.94 / Math.max(1e-6, hiR - loR),
+                         h * 0.90 / Math.max(1e-6, hiU - loU));
+      // 缩放必须乘在【算出来的焦距】上：只改 q.dist 的话焦距又被包络反算回来，缩放被抵消。
+      q.focal = s * state.zoom;
+      q.px = w * 0.5 - (loR + hiR) * 0.5 * s;
+      q.py = h * 0.5 + (loU + hiU) * 0.5 * s;
+      q.env = { loR: loR, hiR: hiR, loU: loU, hiU: hiU };
+      return q;
+    }
+    // 台面反射：MIRROR = true 时把世界点的 y 取负再投影（= 以台面 y=0 为镜面）。
+    // ⚠️ 只在 drawReflection 里临时置位、用 try/finally 复位 —— 忘了复位整幅画面都会翻。
+    let MIRROR = false;
+    function project(p, q) {
+      const v = MIRROR ? [p[0] - q.eye[0], -p[1] - q.eye[1], p[2] - q.eye[2]] : sub(p, q.eye);
+      const z = Math.max(0.05, dot(v, q.fwd));
+      const s = q.focal / z;
+      return { x: q.px + dot(v, q.right) * s, y: q.py - dot(v, q.up) * s, s: s, z: z };
+    }
+    function unproject(sx, sy, q, planeY) {
+      const dx = (sx - q.px) / q.focal;
+      const dy = -(sy - q.py) / q.focal;
+      const d = add(add(q.fwd, scl(q.right, dx)), scl(q.up, dy));
+      if (Math.abs(d[1]) < 1e-6) return null;
+      const t = ((planeY === undefined ? 0 : planeY) - q.eye[1]) / d[1];
+      if (t <= 0) return null;
+      return add(q.eye, scl(d, t));
+    }
+
+    /* ============================================================
+     * 绘图工具
+     * ============================================================ */
+    const canvas = $('wr-canvas');
+    const ctx = canvas.getContext('2d');
+    const stage = document.querySelector('.lab3d-stage');
+
+    function polyPath(pts) {
+      ctx.beginPath();
+      pts.forEach((p, k) => k ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+      ctx.closePath();
+    }
+    function poly(pts, fill, stroke, lw) {
+      if (!pts || pts.length < 2) return;
+      polyPath(pts);
+      if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+      if (stroke) { ctx.lineWidth = lw || 1; ctx.strokeStyle = stroke; ctx.stroke(); }
+    }
+    function line(pts, color, lw, dash) {
+      if (!pts || pts.length < 2) return;
+      ctx.beginPath();
+      pts.forEach((p, k) => k ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+      ctx.setLineDash(dash || []);
+      ctx.lineWidth = lw; ctx.strokeStyle = color; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+      ctx.stroke(); ctx.setLineDash([]);
+    }
+    const rgb = (c, k) => {
+      const s = k === undefined ? 1 : k;
+      return 'rgb(' + Math.round(clamp(c[0] * s, 0, 255)) + ',' +
+                      Math.round(clamp(c[1] * s, 0, 255)) + ',' +
+                      Math.round(clamp(c[2] * s, 0, 255)) + ')';
+    };
+    const LIGHT = vnorm([-0.34, 0.86, 0.38]);
+    const shadeK = (n, amb) => (amb === undefined ? 0.52 : amb) + 0.60 * Math.max(0, dot(n, LIGHT));
+    const shade = (base, n, amb) => rgb(base, shadeK(n, amb));
+
+    const BOX_FACES = [
+      { i: [0, 1, 2, 3], n: [0, 0, -1] }, { i: [4, 5, 6, 7], n: [0, 0, 1] },
+      { i: [0, 1, 5, 4], n: [0, -1, 0] }, { i: [3, 2, 6, 7], n: [0, 1, 0] },
+      { i: [0, 3, 7, 4], n: [-1, 0, 0] }, { i: [1, 2, 6, 5], n: [1, 0, 0] }
+    ];
+    const BOX_EDGES = [[0, 1], [1, 2], [2, 3], [3, 0], [4, 5], [5, 6], [6, 7], [7, 4], [0, 4], [1, 5], [2, 6], [3, 7]];
+    const BOX_V = (x0, y0, z0, x1, y1, z1) => [
+      [x0, y0, z0], [x1, y0, z0], [x1, y1, z0], [x0, y1, z0],
+      [x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1]
+    ];
+    // fade：给「台面倒影」用 —— 按【屏幕竖直方向】从贴近物体的一端往下淡出。
+    // ⚠️ 渐变必须用【整个盒子】的屏幕 y 跨度，不能各面各算：凸盒的可见面互相拼成剪影，
+    //    各面按自己的跨度淡出 ⇒ 同一条共享边上两个面的 alpha 不一样 ⇒ 出现横条纹。
+    function box3(x0, y0, z0, x1, y1, z1, base, q, amb, fade) {
+      const V = BOX_V(x0, y0, z0, x1, y1, z1);
+      const P = V.map(v => project(v, q));
+      let gTop = 0, gBot = 0;
+      if (fade) {
+        gTop = 1e9; gBot = -1e9;
+        for (const p of P) { if (p.y < gTop) gTop = p.y; if (p.y > gBot) gBot = p.y; }
+      }
+      for (const f of BOX_FACES) {
+        const c = [0, 0, 0];
+        for (const k of f.i) { c[0] += V[k][0] / 4; c[1] += V[k][1] / 4; c[2] += V[k][2] / 4; }
+        const facing = dot(f.n, sub(q.eye, c));
+        // 镜像（台面反射）时可见面正好相反：顶面在镜子里是朝下的，不该画
+        if (MIRROR ? facing >= 0 : facing <= 0) continue;
+        const pts = f.i.map(k => P[k]);
+        if (!fade) { poly(pts, shade(base, f.n, amb), null, 0); continue; }
+        const k = shadeK(f.n, amb);
+        if (gBot - gTop < 0.5) { poly(pts, rgba(base, k, fade * 0.55), null, 0); continue; }
+        const g = ctx.createLinearGradient(0, gTop, 0, gBot);
+        g.addColorStop(0.00, rgba(base, k, fade));
+        g.addColorStop(0.55, rgba(base, k, fade * 0.42));
+        g.addColorStop(1.00, rgba(base, k, 0));
+        poly(pts, g, null, 0);
+      }
+      return P;
+    }
+    const rgba = (c, k, a) => 'rgba(' + Math.round(clamp(c[0] * k, 0, 255)) + ',' +
+      Math.round(clamp(c[1] * k, 0, 255)) + ',' + Math.round(clamp(c[2] * k, 0, 255)) + ',' + a + ')';
+
+    /* 水平圆的屏幕椭圆近似。
+     * 圆在水平面上时，投影出来的椭圆：水平半轴 ≈ r·s，竖直半轴 ≈ r·s·sin(pitch)。
+     * pitch = 0（水平看）时圆退化成一条线 —— 这正是我们要的。 */
+    const ellV = r => Math.max(0.08, Math.sin(state.pitch)) * r;
+    function ellipseAt(p, r) {
+      ctx.beginPath();
+      ctx.ellipse(p.x, p.y, Math.max(0.6, r), Math.max(0.5, ellV(r)), 0, 0, PI2);
+    }
+    /* 竖直圆柱：上下两个水平圆 + 左右两条母线围成的侧面。
+     * 透视下母线不是竖直的 —— 用上下圆的左右极值点连线，视觉上足够准。 */
+    function cyl(q, cx, cz, r, y0, y1, base, amb) {
+      const c0 = project([cx, y0, cz], q);
+      const c1 = project([cx, y1, cz], q);
+      const r0 = Math.max(0.6, r * c0.s), r1 = Math.max(0.6, r * c1.s);
+      // 侧面（用竖直方向的假法线 [±1,0,0] 取明暗，让圆柱有圆柱感）
+      const left = [{ x: c0.x - r0, y: c0.y }, { x: c1.x - r1, y: c1.y }];
+      const right = [{ x: c0.x + r0, y: c0.y }, { x: c1.x + r1, y: c1.y }];
+      const kL = shadeK([-0.55, 0.0, 0.83], amb);
+      const kR = shadeK([0.55, 0.0, 0.83], amb);
+      ctx.beginPath();
+      ctx.moveTo(c0.x - r0, c0.y);
+      ctx.lineTo(c1.x - r1, c1.y);
+      ctx.lineTo(c1.x + r1, c1.y);
+      ctx.lineTo(c0.x + r0, c0.y);
+      ctx.closePath();
+      const g = ctx.createLinearGradient(c0.x - r0, c0.y, c0.x + r0, c0.y);
+      g.addColorStop(0.00, rgba(base, kL, 1));
+      g.addColorStop(0.42, rgba(base, (kL + kR) * 0.5, 1));
+      g.addColorStop(1.00, rgba(base, kR, 1));
+      ctx.fillStyle = g; ctx.fill();
+      // 上下圆
+      ellipseAt(c1, r1); ctx.fillStyle = rgba(base, shadeK([0, 1, 0], amb), 1); ctx.fill();
+      ellipseAt(c0, r0); ctx.fillStyle = rgba(base, shadeK([0, -1, 0], amb), 1); ctx.fill();
+      return { c0: c0, c1: c1, r0: r0, r1: r1, left: left, right: right };
+    }
+    // 竖直圆柱的【内腔】：只画上下圆 + 内侧母线，用于玻璃管里能看见的液体
+    function cylInner(q, cx, cz, r, y0, y1, col, alpha) {
+      const c0 = project([cx, y0, cz], q);
+      const c1 = project([cx, y1, cz], q);
+      const r0 = Math.max(0.4, r * c0.s), r1 = Math.max(0.4, r * c1.s);
+      ctx.beginPath();
+      ctx.moveTo(c0.x - r0, c0.y);
+      ctx.lineTo(c1.x - r1, c1.y);
+      ctx.lineTo(c1.x + r1, c1.y);
+      ctx.lineTo(c0.x + r0, c0.y);
+      ctx.closePath();
+      ctx.fillStyle = rgba(col, 1, alpha);
+      ctx.fill();
+      ellipseAt(c1, r1);
+      ctx.fillStyle = rgba(col, 1.18, alpha);
+      ctx.fill();
+      return { c0: c0, c1: c1, r0: r0, r1: r1 };
+    }
+
+    /* ---------------------------- 标签（带避让） ---------------------------- */
+    let frameBoxes = [];
+    function labelBox(p, text, size, align) {
+      ctx.font = '800 ' + size + 'px Inter, "Microsoft YaHei", sans-serif';
+      const wpx = ctx.measureText(text).width;
+      const pad = 4, half = size * 0.72 + pad * 0.5;
+      const wBox = wpx + pad * 2, EDGE = 8;
+      const y = clamp(p.y, half + EDGE, Math.max(half + EDGE, state.h - half - EDGE));
+      let bx = align === 'left' ? p.x - 4 - pad
+             : align === 'right' ? p.x + 4 - wpx - pad
+             : p.x - wpx / 2 - pad;
+      bx = clamp(bx, EDGE, Math.max(EDGE, state.w - wBox - EDGE));
+      return { x: bx, y: y - half, w: wBox, h: half * 2, cx: bx + wBox / 2, cy: y };
+    }
+    function label(p, text, color, size, align) {
+      ctx.font = '800 ' + size + 'px Inter, "Microsoft YaHei", sans-serif';
+      ctx.textAlign = align || 'center';
+      ctx.textBaseline = 'middle';
+      const pad = 4;
+      const wpx = ctx.measureText(text).width;
+      const b = labelBox(p, text, size, align);
+      const x = align === 'left' ? b.x + pad : align === 'right' ? b.x + wpx + pad : b.cx;
+      ctx.fillStyle = 'rgba(2,6,23,.76)';
+      ctx.fillRect(b.x, b.y, b.w, b.h);
+      ctx.fillStyle = color;
+      ctx.fillText(text, x, b.cy);
+      frameBoxes.push(b);
+      if (window.__wrLabelLog) window.__wrLabelLog.push({ text: text, x: b.x, y: b.y, w: b.w, h: b.h });
+      return b;
+    }
+    function bestLabel(anchor, text, color, size, offs) {
+      let best = null, bestOv = 1e18;
+      for (const o of offs) {
+        const b = labelBox({ x: anchor.x + o[0], y: anchor.y + o[1] }, text, size, 'center');
+        let ov = 0;
+        for (const q of frameBoxes) {
+          const ox = Math.min(b.x + b.w, q.x + q.w) - Math.max(b.x, q.x);
+          const oy = Math.min(b.y + b.h, q.y + q.h) - Math.max(b.y, q.y);
+          if (ox > 0 && oy > 0) ov += ox * oy;
+        }
+        if (ov < bestOv) { bestOv = ov; best = { x: anchor.x + o[0], y: anchor.y + o[1] }; }
+      }
+      return label(best, text, color, size, 'center');
+    }
+    const LBL_OFFS = [[0, -16], [0, -28], [0, 16], [-40, -16], [40, -16], [-40, 16], [40, 16], [0, 30], [0, -40]];
+
+    /* ---------------------------- 场景 ---------------------------- */
+    function drawBackdrop(w, h) {
+      const g = ctx.createRadialGradient(w * 0.44, h * 0.10, 12, w * 0.5, h * 0.55, Math.max(w, h) * 0.86);
+      g.addColorStop(0, '#0d2035'); g.addColorStop(0.52, '#071626'); g.addColorStop(1, '#020a14');
+      ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
+    }
+    // 台面上的接地软阴影（投影后的屏幕椭圆 + 径向渐变）。
+    // yPlane：承影面高度。台面上的器材传 0。
+    function shadowOnTable(q, cx, cz, rx, rz, alpha, yPlane) {
+      const y = (yPlane === undefined) ? 0.002 : yPlane;
+      const c = project([cx, y, cz], q);
+      const ex = project([cx + rx, y, cz], q);
+      const ez = project([cx, y, cz + rz], q);
+      const Rx = Math.max(2, Math.abs(ex.x - c.x));
+      const Ry = Math.max(2, Math.abs(ez.y - c.y));
+      const R = Math.max(Rx, Ry) * 1.3;
+      const g = ctx.createRadialGradient(c.x, c.y, 0, c.x, c.y, R);
+      g.addColorStop(0.00, 'rgba(1,4,10,' + alpha + ')');
+      g.addColorStop(0.55, 'rgba(1,4,10,' + (alpha * 0.52) + ')');
+      g.addColorStop(1.00, 'rgba(1,4,10,0)');
+      ctx.save();
+      ctx.beginPath();
+      ctx.ellipse(c.x, c.y, Rx * 1.3, Ry * 1.3, 0, 0, PI2);
+      ctx.fillStyle = g; ctx.fill();
+      ctx.restore();
+    }
+    function tableCorners(q) {
+      const P = (x, z) => project([x, 0, z], q);
+      return [P(-TABLE_HW, -TABLE_HD), P(TABLE_HW, -TABLE_HD), P(TABLE_HW, TABLE_HD), P(-TABLE_HW, TABLE_HD)];
+    }
+    function drawTable(q) {
+      const P = (x, y, z) => project([x, y, z], q);
+      const x0 = -TABLE_HW, x1 = TABLE_HW, z0 = -TABLE_HD, z1 = TABLE_HD;
+      const CORN = [P(x0, 0, z0), P(x1, 0, z0), P(x1, 0, z1), P(x0, 0, z1)];
+      poly(CORN, '#0e1826', null, 0);
+      ctx.save();
+      polyPath(CORN); ctx.clip();
+      const a0 = P(x0, 0, z0), a1 = P(x1, 0, z1);
+      const g = ctx.createLinearGradient(a0.x, a0.y, a1.x, a1.y);
+      g.addColorStop(0.00, 'rgba(158,205,255,.20)');
+      g.addColorStop(0.34, 'rgba(120,172,234,.07)');
+      g.addColorStop(0.66, 'rgba(5,12,24,.15)');
+      g.addColorStop(1.00, 'rgba(2,6,16,.48)');
+      ctx.fillStyle = g; ctx.fillRect(0, 0, state.w, state.h);
+      const b0 = P(0, 0, z0), b1 = P(0, 0, z0 + TABLE_HD * 0.85);
+      const hg = ctx.createLinearGradient(b0.x, b0.y, b1.x, b1.y);
+      hg.addColorStop(0, 'rgba(118,188,255,.15)');
+      hg.addColorStop(1, 'rgba(118,188,255,0)');
+      ctx.fillStyle = hg; ctx.fillRect(0, 0, state.w, state.h);
+      for (let k = 1; k <= 7; k++) {
+        const zz = z0 + (z1 - z0) * (k / 8);
+        line([P(x0, 0.001, zz), P(x1, 0.001, zz)], 'rgba(8,16,30,.26)', 1);
+      }
+      ctx.restore();
+      line([P(x0, 0, z0), P(x1, 0, z0)], 'rgba(178,218,255,.34)', 1.6);
+      line([P(x0, 0, z0), P(x0, 0, z1)], 'rgba(150,200,255,.12)', 1.2);
+      line([P(x1, 0, z0), P(x1, 0, z1)], 'rgba(150,200,255,.12)', 1.2);
+      poly([P(x0, 0, z1), P(x1, 0, z1), P(x1, -TABLE_T, z1), P(x0, -TABLE_T, z1)], '#0a1320', null, 0);
+      poly([P(x0, -TABLE_T, z1), P(x1, -TABLE_T, z1), P(x1, -TABLE_T * 2.1, z1), P(x0, -TABLE_T * 2.1, z1)], '#050b15', null, 0);
+      line([P(x0, 0, z1), P(x1, 0, z1)], 'rgba(150,200,255,.24)', 1.4);
+    }
+
+    /* 台面反射：把器材按 y 取负再投影，裁在台面内、低透明度画一遍。
+     * ⚠️ 只调 box3 / cyl / line（纯绘制），不写 state.drawn 的任何记账 ——
+     *    重跑一遍会让「画了几条刻度线」这类断言直接翻倍变红。 */
+    // ⚠️ 反射通道里【只许画几何】：文字会重影、标签框会污染 frameBoxes（把后面的
+    //    避让全算错）、记账会翻倍。所以再加一个 REFLECT 开关，跟 MIRROR 一起 try/finally 复位。
+    let REFLECT = false;
+    function drawReflection(q) {
+      ctx.save();
+      polyPath(tableCorners(q)); ctx.clip();
+      ctx.globalAlpha = 0.15;
+      MIRROR = true; REFLECT = true;
+      try {
+        const G = flaskGeom();
+        drawHotplate(q);
+        drawFlaskBody(q, G);
+        drawTube(q, G);
+      } finally { MIRROR = false; REFLECT = false; }
+      ctx.restore();
+    }
+
+    /* 加热板：机身 + 发热顶面（随温度变红）+ 正面小温度屏 */
+    function drawHotplate(q) {
+      const P = (x, y, z) => project([x, y, z], q);
+      const x0 = HOT_X - HOT_W / 2, x1 = HOT_X + HOT_W / 2;
+      const z0 = HOT_Z - HOT_D / 2, z1 = HOT_Z + HOT_D / 2;
+      box3(x0, 0, z0, x1, HOT_H, z1, [50, 58, 72], q, 0.56);
+      // 发热顶面：温度越高越红
+      const heat = clamp(state.tempShown / 100, 0, 1);
+      const c = P(HOT_X, HOT_H + 0.0016, HOT_Z);
+      const e = P(HOT_X + HOT_W / 2, HOT_H + 0.0016, HOT_Z);
+      const R = Math.max(3, Math.abs(e.x - c.x));
+      const g = ctx.createRadialGradient(c.x, c.y, 0, c.x, c.y, R * 1.5);
+      const warm = 'rgba(' + Math.round(60 + 195 * heat) + ',' +
+                            Math.round(70 + 60 * heat) + ',' +
+                            Math.round(86 - 30 * heat) + ',';
+      g.addColorStop(0.00, warm + (0.62 + 0.34 * heat) + ')');
+      g.addColorStop(0.55, warm + (0.30 + 0.30 * heat) + ')');
+      g.addColorStop(1.00, warm + '0.10)');
+      poly([P(x0, HOT_H + 0.0016, z0), P(x1, HOT_H + 0.0016, z0),
+            P(x1, HOT_H + 0.0016, z1), P(x0, HOT_H + 0.0016, z1)], g, null, 0);
+      // 顶沿亮边
+      line([P(x0, HOT_H, z1), P(x1, HOT_H, z1)], 'rgba(210,225,245,.5)', 1.4);
+      // 记账【必须跟着绘制走】：写在 render 开头的话，把发热面改成不画，
+      // hotHeat 照样等于温度 —— 自检会以为「发光跟着温度变了」，而画面上一片死灰。
+      if (!REFLECT) state.drawn.hotHeat = heat;
+      // 正面小温度屏（在 z1 竖直面上）—— 反射通道里不画字
+      if (REFLECT) return;
+      const zf = z1 + 0.0016;
+      const wx0 = HOT_X - HOT_W * 0.30, wx1 = HOT_X + HOT_W * 0.30;
+      poly([P(wx0, HOT_H * 0.20, zf), P(wx1, HOT_H * 0.20, zf),
+            P(wx1, HOT_H * 0.82, zf), P(wx0, HOT_H * 0.82, zf)],
+        '#040d17', 'rgba(126,166,206,.34)', 1.1);
+      const fs = clamp(Math.abs(P(HOT_X, HOT_H * 0.82, zf).y - P(HOT_X, HOT_H * 0.20, zf).y) * 0.62, 7, 15);
+      ctx.save();
+      ctx.font = '800 ' + fs.toFixed(1) + 'px ui-monospace, Menlo, monospace';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.shadowColor = 'rgba(251,146,60,.85)'; ctx.shadowBlur = 7;
+      ctx.fillStyle = '#ffd9a8';
+      ctx.fillText(state.tempShown.toFixed(0) + ' ℃', P(HOT_X, HOT_H * 0.51, zf).x, P(HOT_X, HOT_H * 0.51, zf).y);
+      ctx.restore();
+    }
+
+    /* 烧瓶本体：球部（玻璃壳 + 满水）+ 瓶颈（满水） */
+    function drawFlaskBody(q, G) {
+      const cB = project([G.cx, G.cyBulb, G.cz], q);
+      const RB = Math.max(2, G.rBulb * cB.s);
+      // ① 球里的水（玻璃是半透明的，水一直在球里满到瓶颈口）
+      ctx.save();
+      ctx.beginPath(); ctx.arc(cB.x, cB.y, RB * 0.965, 0, PI2); ctx.clip();
+      const wg = ctx.createLinearGradient(cB.x - RB, cB.y - RB, cB.x + RB, cB.y + RB);
+      wg.addColorStop(0.00, 'rgba(56,189,248,.62)');
+      wg.addColorStop(0.45, 'rgba(14,116,144,.58)');
+      wg.addColorStop(1.00, 'rgba(8,60,92,.66)');
+      ctx.fillStyle = wg; ctx.fillRect(cB.x - RB, cB.y - RB, RB * 2, RB * 2);
+      ctx.restore();
+      // ② 玻璃壳：径向渐变 + 边缘高光
+      const gg = ctx.createRadialGradient(cB.x - RB * 0.38, cB.y - RB * 0.42, RB * 0.05,
+                                          cB.x, cB.y, RB * 1.02);
+      gg.addColorStop(0.00, 'rgba(226,246,255,.34)');
+      gg.addColorStop(0.42, 'rgba(150,205,235,.10)');
+      gg.addColorStop(0.86, 'rgba(96,150,190,.14)');
+      gg.addColorStop(1.00, 'rgba(180,225,255,.42)');
+      ctx.beginPath(); ctx.arc(cB.x, cB.y, RB, 0, PI2);
+      ctx.fillStyle = gg; ctx.fill();
+      ctx.strokeStyle = 'rgba(190,230,255,.55)'; ctx.lineWidth = 1.6; ctx.stroke();
+      // ③ 一道高光（让球是「玻璃」而不是「蓝球」）
+      ctx.save();
+      ctx.beginPath(); ctx.arc(cB.x, cB.y, RB * 0.97, 0, PI2); ctx.clip();
+      ctx.beginPath();
+      ctx.ellipse(cB.x - RB * 0.40, cB.y - RB * 0.40, RB * 0.20, RB * 0.40, -0.62, 0, PI2);
+      ctx.fillStyle = 'rgba(255,255,255,.30)'; ctx.fill();
+      ctx.restore();
+      // ④ 瓶颈：从球顶到细管底。同样必须半透明 —— 否则里面的水一样看不见。
+      cylInner(q, G.cx, G.cz, G.rNeck * 0.90, G.yNeck0, G.yNeck1, [56, 189, 248], 0.74);
+      ctx.save();
+      ctx.globalAlpha = 0.30;
+      cyl(q, G.cx, G.cz, G.rNeck, G.yNeck0, G.yNeck1, [196, 228, 246], 0.72);
+      ctx.restore();
+      const nB = project([G.cx - G.rNeck, G.yNeck0, G.cz], q);
+      const nT = project([G.cx - G.rNeck, G.yNeck1, G.cz], q);
+      line([nB, nT], 'rgba(214,240,255,.55)', 1.2);
+    }
+
+    /* 细玻璃管 + 液柱 + 刻度。
+     * ⚠️ 液柱的顶端【必须】由 liquidY(state.tempShown) 算 —— 画面与侧栏读数同源，
+     *    绝不能在这里另写一套「按温度插值」的近似。 */
+    function drawTube(q, G) {
+      const t = state.tempShown;
+      const topY = G.yTube0 + cm(TUBE_LEN);
+      const yLiq = liquidY(t);
+      // ① 管内液柱（必须【先画】：玻璃管是半透明的，要能透过去看见它）
+      cylInner(q, G.cx, G.cz, G.rTube * 0.86, G.yTube0, yLiq, [34, 211, 238], 0.95);
+      // ② 玻璃管：🔴 只能画【半透明】的一层。
+      //    之前 cyl() 画的是不透明圆柱（内部 rgba 的 alpha 写死 1），液柱被整个盖住 ——
+      //    画面上就是「一根灰白的棒子，水温从 0 拖到 100 什么都不动」。
+      ctx.save();
+      ctx.globalAlpha = 0.26;
+      cyl(q, G.cx, G.cz, G.rTube, G.yTube0, topY, [206, 236, 252], 0.72);
+      ctx.restore();
+      // ③ 管壁母线：靠这两条线撑出「这是一根玻璃管」的轮廓
+      const lB = project([G.cx - G.rTube, G.yTube0, G.cz], q);
+      const lT = project([G.cx - G.rTube, topY, G.cz], q);
+      const rB = project([G.cx + G.rTube, G.yTube0, G.cz], q);
+      const rT = project([G.cx + G.rTube, topY, G.cz], q);
+      line([lB, lT], 'rgba(214,240,255,.62)', 1.2);
+      line([rB, rT], 'rgba(214,240,255,.40)', 1.0);
+      // ③ 液面：一道亮线 + 小弯月面
+      const lp = project([G.cx, yLiq, G.cz], q);
+      const lr = Math.max(1.4, G.rTube * 0.88 * lp.s);
+      ctx.beginPath();
+      ctx.ellipse(lp.x, lp.y, lr, Math.max(1, ellV(lr)), 0, 0, PI2);
+      ctx.fillStyle = 'rgba(165,243,252,.95)'; ctx.fill();
+      ctx.strokeStyle = 'rgba(240,253,255,.9)'; ctx.lineWidth = 1.2; ctx.stroke();
+
+      // 反射通道到此为止：刻度标签会污染 frameBoxes、记账会重复
+      if (REFLECT) return;
+
+      // ④ 刻度。
+      //    全量程：20/40/60/80/100 ℃ —— 屏幕间距 24/36/47/57 px，标签不会叠。
+      //    放大档：只标 0/2/4/10 ℃。⚠️ 千万别标 6 ℃：6 ℃ 的液柱比 4 ℃ 只高 0.163 cm
+      //    （屏幕上 4.6 px），两条刻线会糊在一起、标签打架 —— 这恰恰是反常膨胀本身，
+      //    不是画错了。用 0(2.92) → 2(1.37) → 4(0) → 10(6.00) 四个点讲「先降后升」最干净。
+      const ticks = state.zoomMode ? [0, 2, 4, 10] : [20, 40, 60, 80, 100];
+      const xA = G.cx - G.rTube * 2.9, xB = G.cx - G.rTube * 1.15;
+      let nTick = 0;
+      for (const tv of ticks) {
+        const y = G.yTube0 + cm(H_OFF + tubeH(tv));
+        const a = project([xA, y, G.zFace], q), b = project([xB, y, G.zFace], q);
+        const major = (tv % 20 === 0) || (tv === 10);
+        line([a, b], major ? 'rgba(203,225,245,.85)' : 'rgba(160,190,215,.6)', major ? 1.5 : 1.1);
+        bestLabel(a, tv + ' ℃', major ? '#dbeafe' : '#93b4c4', 10, LBL_OFFS);
+        nTick++;
+      }
+      // ⑤ 4 ℃ 基准刻线 —— 液柱最低处，本实验的答案就钉在这里
+      const y4 = G.yTube0 + cm(H_OFF);
+      const c4a = project([G.cx - G.rTube * 3.4, y4, G.zFace], q);
+      const c4b = project([G.cx + G.rTube * 1.2, y4, G.zFace], q);
+      line([c4a, c4b], 'rgba(134,239,172,.95)', 2.0);
+      bestLabel(c4a, '4 ℃ 液面最低', '#86efac', 10.5,
+        [[-50, -4], [-50, -18], [-50, 12], [0, -16], [0, 16], [-76, -4]]);
+      state.drawn.tube = {
+        ticks: nTick, tickList: ticks.slice(), temp: t, zoomMode: state.zoomMode,
+        liquidTopCm: liquidTop(t), liquidY: yLiq, base4Y: y4,
+        tubeY0: G.yTube0, tubeY1: topY, topCm: TUBE_LEN
+      };
+    }
+
+    /* 分子视图：球部水里的分子点阵。
+     * 间距 ∝ ρ^(-1/3) —— 密度越大分子越挤，4 ℃ 时最挤。
+     * ⚠️ 两个必须写清楚的地方：
+     *   ① 【间距变化要夸大】。真实的间距比 4→100 ℃ 只有 1.43%（屏幕上 0.9 个像素），
+     *      不夸大就是「看着一动不动」。MOL_EXAG = 20 把 1.43% 变成 28.6%，肉眼才看得见。
+     *      提示语里必须写明这是放大过的。
+     *   ② 【点阵整体必须落在球内】。若让点阵按温度自由缩放再按球面裁剪，球内的
+     *      分子数会随温度变，「固定颗数、只改间距」就不成立了。所以把 100 ℃ 时的
+     *      外接尺寸钉在 MOL_SPAN × 球半径，再反推 4 ℃ 的基准 —— 125 颗永远全在球内。 */
+    const MOL_N = 5;                 // 每边 5 个 ⇒ 125 颗
+    const MOL_EXAG = 20;             // 间距变化的视觉放大倍数（真实 1.43%）
+    const MOL_SPAN = 1.10;           // 100 ℃ 时点阵外接尺寸 / 球半径
+    const molSpacingVis = t => 1 + (spacingRel(t) - 1) * MOL_EXAG;
+    const MOL_SPAN_4 = MOL_SPAN / molSpacingVis(100);   // 4 ℃ 时的基准跨度
+    const molDWorld = (t, rBulb) => rBulb * MOL_SPAN_4 * molSpacingVis(t) / (MOL_N - 1);
+
+    function drawMolecules(q, G) {
+      const t = state.tempShown;
+      const cB = project([G.cx, G.cyBulb, G.cz], q);
+      const RB = Math.max(2, G.rBulb * cB.s);
+      // 球壳线框
+      ctx.save();
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath(); ctx.arc(cB.x, cB.y, RB * 0.94, 0, PI2);
+      ctx.strokeStyle = 'rgba(125,211,252,.42)'; ctx.lineWidth = 1.1; ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.restore();
+      const N = MOL_N;
+      const sp = molSpacingVis(t);
+      const dWorld = molDWorld(t, G.rBulb);
+      const balls = [];
+      for (let ix = 0; ix < N; ix++) for (let iy = 0; iy < N; iy++) for (let iz = 0; iz < N; iz++) {
+        const wx = G.cx + (ix - (N - 1) / 2) * dWorld;
+        const wy = G.cyBulb + (iy - (N - 1) / 2) * dWorld;
+        const wz = G.cz + (iz - (N - 1) / 2) * dWorld;
+        const p = project([wx, wy, wz], q);
+        // 只画落在球内的分子（阈值 0.96：100 ℃ 时最外的角点是 0.9526，留了余量）
+        const dx = p.x - cB.x, dy = p.y - cB.y;
+        if (dx * dx + dy * dy > (RB * 0.96) * (RB * 0.96)) continue;
+        balls.push({ p: p, z: p.z });
+      }
+      balls.sort((u, v) => v.z - u.z);
+      let nDrawn = 0;
+      for (const b of balls) {
+        // 半径必须明显小于半个间距，否则相邻分子叠在一起、整片糊成「一根根管子」。
+        // 间距 dWorld 换算到屏幕约 14 px ⇒ 半径取 3 px。
+        const rp = clamp(b.p.s * 0.018, 0.7, 9);
+        ctx.beginPath(); ctx.arc(b.p.x, b.p.y, rp, 0, PI2);
+        ctx.fillStyle = 'rgba(' + Math.round(120 + 60 * clamp(1 - b.z / 12, 0, 1)) + ',' +
+                                  Math.round(200 + 40 * clamp(1 - b.z / 12, 0, 1)) + ',252,' +
+                                  (0.62 + 0.34 * clamp(1 - b.z / 12, 0, 1)).toFixed(2) + ')';
+        ctx.fill();
+        nDrawn++;
+      }
+      // 记账跟着绘制走：写在循环外的话，把循环改成空数组它照样等于总数
+      state.drawn.molBalls = (state.drawn.molBalls || 0) + nDrawn;
+      state.drawn.mol = { n: N, total: N * N * N, drawn: nDrawn, spacingVis: sp,
+                          spacingReal: spacingRel(t), dWorld: dWorld, exag: MOL_EXAG };
+      return nDrawn;
+    }
+
+    /* ============================================================
+     * 渲染
+     * ============================================================ */
+    function render() {
+      if (!state.w) return;
+      frameBoxes = [];
+      if (window.__wrLabelLog) window.__wrLabelLog.length = 0;
+      state.drawn = { molBalls: 0, mol: null, tube: null, hotHeat: null };
+      ctx.clearRect(0, 0, state.w, state.h);
+      drawBackdrop(state.w, state.h);
+      const q = makeCam({}, state.w, state.h);
+      const G = flaskGeom();
+
+      drawTable(q);
+
+      // 接地软阴影：加热板 + 烧瓶球部（必须在器材【之前】铺，否则影子盖在器材上）
+      ctx.save();
+      polyPath(tableCorners(q)); ctx.clip();
+      shadowOnTable(q, HOT_X, HOT_Z, HOT_W * 0.52, HOT_D * 0.48, 0.72);
+      shadowOnTable(q, G.cx, G.cz, G.rBulb * 0.86, G.rBulb * 0.86, 0.62);
+      ctx.restore();
+
+      drawReflection(q);
+
+      drawHotplate(q);
+      drawFlaskBody(q, G);
+      if (state.molecules) drawMolecules(q, G);
+      drawTube(q, G);
+
+      // 标注：烧瓶 / 加热板 / 液柱高度
+      // ⚠️ 烧瓶标签的锚点用【球心】、候选优先往左右 —— 挂在球顶正上方时，
+      //    bestLabel 会挑到 "往上 40 px"，正好压在瓶颈上（图上就是一团糊）。
+      const bC = project([G.cx, G.cyBulb, G.cz], q);
+      const RBpx = Math.max(2, G.rBulb * bC.s);
+      // 🔴 烧瓶球必须进 frameBoxes，否则后面的标签「避让」根本看不见它 ——
+      //    实测「100 ℃ 加热板」就正好糊在球上。跟③把电子秤塞进去是同一个理由。
+      frameBoxes.push({ x: bC.x - RBpx, y: bC.y - RBpx, w: RBpx * 2, h: RBpx * 2 });
+      bestLabel(bC, '装 50 g 水的圆底烧瓶', '#cfe9f7', 10.5,
+        [[134, -34], [-134, -34], [134, -6], [-134, -6], [0, -86], [0, -98]]);
+      const hp = project([HOT_X - HOT_W * 0.74, HOT_TOP, HOT_Z + HOT_D * 0.5], q);
+      bestLabel(hp, state.tempShown.toFixed(0) + ' ℃ 加热板', '#fdba74', 10.5,
+        [[0, 18], [0, 32], [-40, 18], [40, 18], [-40, 32], [40, 32], [0, -18]]);
+
+      // 液柱高度标注（挂在液面右侧）
+      const yLiq = liquidY(state.tempShown);
+      const lp = project([G.cx + G.rTube * 1.2, yLiq, G.cz], q);
+      const dH = tubeH(state.tempShown);
+      // 🔴 放大档下这个数是【放大后的显示值】（真实液柱只升 0.018 cm），必须注明，
+      //    否则会被当成真实测量值读走。
+      bestLabel(lp, '液柱 +' + dH.toFixed(3) + ' cm' + (state.zoomMode ? '（放大）' : ''), '#a5f3fc', 11,
+        [[46, -12], [46, 12], [46, -24], [46, 24], [-46, -12], [-46, 12]]);
+
+      // 量程越界提示
+      $('wr-range').classList.toggle('show', state.zoomMode && overRange(state.tempShown));
+
+      // 舞台提示
+      $('wr-hint').innerHTML = state.molecules
+        ? '分子视图：小球代表水分子，间距 ∝ ρ<sup>-1/3</sup>，温度越高越挤开 —— <b>4 ℃ 时最挤</b>。'
+          + '<em>（真实的间距变化只有 1.4%，这里放大了 20 倍才看得见）</em>'
+        : (state.zoomMode
+            ? '放大档：<b>0–10 ℃</b> 铺满整根细管。绿色刻线是 <b>4 ℃</b>，液柱从这儿<b>先降后升</b> —— 这就是水的反常膨胀。'
+            : '全量程：<b>4 ℃ → 100 ℃</b> 液柱升 6.00 cm。<em>0 ℃ 与 4 ℃ 只差 0.018 cm（看不见）</em> —— 想看那点反常，点「放大 0–10 ℃」。');
+    }
+    /* ============================================================
+     * ρ–T 曲线（主图 0–100 ℃ + 0–4.6 ℃ 放大 inset）
+     * ------------------------------------------------------------
+     * ★ 为什么必须有 inset：0 ℃ 与 4 ℃ 的密度只差 0.013%，
+     *   在主图上（纵轴跨 0.045）这点差别只有 0.3 个像素 —— 曲线看上去就是
+     *   一条从左上滑到右下的斜线，「4 ℃ 最大」在图上【根本不存在】。
+     *   inset 把 0–4.6 ℃ 的 2.2e-4 铺开，那个峰才看得见。
+     * ============================================================ */
+    const CH_PAD = { l: 46, r: 10, t: 24, b: 26 };
+    const RHO_LO = 0.955, RHO_HI = 1.000;
+    const INSET_T_MAX = 4.6;
+    const INSET_LO = 0.99978, INSET_HI = 1.00000;
+
+    const chartCv = $('wr-chart');
+    const chartCtx = chartCv.getContext('2d');
+    let chartW = 300, chartH = 210;
+
+    function chartPt(T, R) {
+      const x = CH_PAD.l + (T / 100) * (chartW - CH_PAD.l - CH_PAD.r);
+      const y = chartH - CH_PAD.b - (R - RHO_LO) / (RHO_HI - RHO_LO) * (chartH - CH_PAD.t - CH_PAD.b);
+      return { x: x, y: y };
+    }
+    function insetBox() {
+      const w = Math.max(120, chartW * 0.46), h = Math.max(70, chartH * 0.44);
+      return { x0: chartW - CH_PAD.r - w - 2, y0: CH_PAD.t + 6, x1: chartW - CH_PAD.r - 2, y1: CH_PAD.t + 6 + h };
+    }
+    function insetPt(T, R) {
+      const B = insetBox();
+      // padL 必须放得下左边那两行 y 轴标签（"1.0000" 约 32 px）——
+      // 原来是 22，标签左半截直接跑到框外，看着像被裁掉了。
+      const padL = 38, padR = 8, padT = 14, padB = 16;
+      const x = B.x0 + padL + (T / INSET_T_MAX) * (B.x1 - B.x0 - padL - padR);
+      const y = B.y1 - padB - (R - INSET_LO) / (INSET_HI - INSET_LO) * (B.y1 - B.y0 - padT - padB);
+      return { x: x, y: y };
+    }
+    function resizeChart() {
+      const r = chartCv.getBoundingClientRect();
+      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      chartW = Math.max(180, Math.round(r.width));
+      chartH = Math.max(150, Math.round(r.height));
+      chartCv.width = Math.round(chartW * dpr);
+      chartCv.height = Math.round(chartH * dpr);
+      chartCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+    function drawChart() {
+      const c = chartCtx;
+      const t = state.tempShown;
+      c.clearRect(0, 0, chartW, chartH);
+      const x0 = CH_PAD.l, x1 = chartW - CH_PAD.r, y0 = chartH - CH_PAD.b, y1 = CH_PAD.t;
+
+      // 网格
+      c.strokeStyle = 'rgba(148,163,184,.14)'; c.lineWidth = 1;
+      for (let k = 0; k <= 5; k++) {
+        const p = chartPt(k * 20, RHO_LO);
+        c.beginPath(); c.moveTo(p.x, y0); c.lineTo(p.x, y1); c.stroke();
+      }
+      for (let k = 0; k <= 5; k++) {
+        const R = RHO_LO + k * 0.01;
+        const p = chartPt(0, R);
+        c.beginPath(); c.moveTo(x0, p.y); c.lineTo(x1, p.y); c.stroke();
+      }
+      // 轴
+      c.strokeStyle = 'rgba(148,163,184,.5)'; c.lineWidth = 1.2;
+      c.beginPath(); c.moveTo(x0, y0); c.lineTo(x1, y0); c.stroke();
+      c.beginPath(); c.moveTo(x0, y0); c.lineTo(x0, y1); c.stroke();
+      c.font = '700 9.5px Inter, "Microsoft YaHei", sans-serif';
+      c.fillStyle = '#7d97a8'; c.textAlign = 'center'; c.textBaseline = 'top';
+      for (let k = 0; k <= 5; k++) { const p = chartPt(k * 20, RHO_LO); c.fillText(String(k * 20), p.x, y0 + 5); }
+      c.textAlign = 'right'; c.textBaseline = 'middle';
+      for (let k = 0; k <= 5; k++) { const p = chartPt(0, RHO_LO + k * 0.01); c.fillText((RHO_LO + k * 0.01).toFixed(2), x0 - 5, p.y); }
+      c.textAlign = 'center'; c.textBaseline = 'top';
+      c.fillStyle = '#93b4c4'; c.fillText('T / ℃', (x0 + x1) / 2, chartH - 12);
+      c.save();
+      c.translate(10, (y0 + y1) / 2); c.rotate(-Math.PI / 2);
+      c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText('ρ / (g·cm⁻³)', 0, 0);
+      c.restore();
+
+      // 主曲线
+      c.beginPath();
+      for (let tt = 0; tt <= 100.0001; tt += 0.5) {
+        const p = chartPt(tt, rho(tt));
+        if (tt === 0) c.moveTo(p.x, p.y); else c.lineTo(p.x, p.y);
+      }
+      c.strokeStyle = '#22d3ee'; c.lineWidth = 2.2; c.stroke();
+
+      // 当前温度：竖直虚线 + 点 + 读数
+      const cp = chartPt(t, rho(t));
+      c.strokeStyle = 'rgba(251,191,36,.55)'; c.lineWidth = 1.2; c.setLineDash([4, 3]);
+      c.beginPath(); c.moveTo(cp.x, y0); c.lineTo(cp.x, cp.y); c.stroke();
+      c.setLineDash([]);
+      c.beginPath(); c.arc(cp.x, cp.y, 4.2, 0, PI2);
+      c.fillStyle = '#fde68a'; c.fill();
+      c.strokeStyle = '#020617'; c.lineWidth = 1.4; c.stroke();
+
+      // ── inset：0–4.6 ℃ 放大 ──
+      const B = insetBox();
+      c.fillStyle = 'rgba(2,10,22,.88)';
+      c.fillRect(B.x0, B.y0, B.x1 - B.x0, B.y1 - B.y0);
+      c.strokeStyle = 'rgba(56,189,248,.42)'; c.lineWidth = 1;
+      c.strokeRect(B.x0 + .5, B.y0 + .5, B.x1 - B.x0 - 1, B.y1 - B.y0 - 1);
+      c.font = '800 9.5px Inter, "Microsoft YaHei", sans-serif';
+      c.fillStyle = '#7dd3fc'; c.textAlign = 'left'; c.textBaseline = 'top';
+      c.fillText('0–4.6 ℃ 放大', B.x0 + 6, B.y0 + 3);
+      // inset 网格 + 刻度
+      c.strokeStyle = 'rgba(148,163,184,.16)'; c.lineWidth = 1;
+      for (let k = 0; k <= 4; k++) {
+        const p = insetPt(k * 1, INSET_LO);
+        c.beginPath(); c.moveTo(p.x, B.y1 - 16); c.lineTo(p.x, B.y0 + 14); c.stroke();
+      }
+      c.font = '700 8.5px Inter, "Microsoft YaHei", sans-serif';
+      c.fillStyle = '#7d97a8'; c.textAlign = 'center'; c.textBaseline = 'top';
+      for (let k = 0; k <= 4; k++) { const p = insetPt(k, INSET_LO); c.fillText(String(k), p.x, B.y1 - 13); }
+      c.textAlign = 'right'; c.textBaseline = 'middle';
+      c.fillText('1.0000', B.x0 + 32, insetPt(0, 1.00000).y);
+      c.fillText('0.9998', B.x0 + 32, insetPt(0, 0.99980).y);
+      // inset 曲线
+      c.beginPath();
+      for (let tt = 0; tt <= INSET_T_MAX + 1e-9; tt += 0.02) {
+        const p = insetPt(tt, rho(tt));
+        if (tt === 0) c.moveTo(p.x, p.y); else c.lineTo(p.x, p.y);
+      }
+      c.strokeStyle = '#22d3ee'; c.lineWidth = 1.9; c.stroke();
+      // 4 ℃ 峰
+      const pk = insetPt(4, rho(4));
+      c.strokeStyle = 'rgba(134,239,172,.9)'; c.lineWidth = 1.2; c.setLineDash([3, 3]);
+      c.beginPath(); c.moveTo(pk.x, pk.y); c.lineTo(pk.x, B.y1 - 16); c.stroke();
+      c.setLineDash([]);
+      c.beginPath(); c.arc(pk.x, pk.y, 3.4, 0, PI2);
+      c.fillStyle = '#86efac'; c.fill();
+      c.font = '800 9px Inter, "Microsoft YaHei", sans-serif';
+      c.fillStyle = '#86efac'; c.textAlign = 'center'; c.textBaseline = 'bottom';
+      c.fillText('4 ℃ 最大', pk.x, pk.y - 5);
+      // inset 里的当前温度点
+      if (t <= INSET_T_MAX) {
+        const ip = insetPt(t, rho(t));
+        c.beginPath(); c.arc(ip.x, ip.y, 3.2, 0, PI2);
+        c.fillStyle = '#fde68a'; c.fill();
+      }
+      // 主图与 inset 的呼应：4 ℃ 在主图上的位置
+      const m4 = chartPt(4, rho(4));
+      c.beginPath(); c.arc(m4.x, m4.y, 3.2, 0, PI2);
+      c.fillStyle = '#86efac'; c.fill();
+      c.strokeStyle = '#020617'; c.lineWidth = 1.2; c.stroke();
+    }
+
+    /* ============================================================
+     * 湖水分层示意图（2D 剖面）
+     * ============================================================ */
+    const lakeCv = $('wr-lake');
+    const lakeCtx = lakeCv.getContext('2d');
+    let lakeW = 460, lakeH = 210;
+    // 从湖底往上 6 层的温度：4 → 0 ℃。
+    // ⚠️ 数组顺序就是【从底往上】：k = 0 是最底层。4 ℃ 最重 ⇒ 沉底；0 ℃ 最轻 ⇒ 浮在
+    //    水面附近。写反了画面上就是「0 ℃ 的水沉在湖底、4 ℃ 浮在最上面」，和物理完全
+    //    相反 —— 而且颜色/刻度都跟着反，不逐帧核对根本看不出来。
+    const LAKE_T = [4.0, 3.2, 2.4, 1.6, 0.8, 0.0];
+    function resizeLake() {
+      const r = lakeCv.getBoundingClientRect();
+      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      lakeW = Math.max(200, Math.round(r.width));
+      lakeH = Math.max(150, Math.round(r.height));
+      lakeCv.width = Math.round(lakeW * dpr);
+      lakeCv.height = Math.round(lakeH * dpr);
+      lakeCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+    // 层色：越重（温度越高）越亮越青；0 ℃ 最轻 ⇒ 最深最蓝
+    const lakeCol = T => {
+      const k = clamp(T / 4, 0, 1);
+      return 'hsl(' + (226 - 36 * k).toFixed(1) + ',' + (62 + 22 * k).toFixed(0) + '%,' +
+             (26 + 20 * k).toFixed(0) + '%)';
+    };
+    function lakeGeom() {
+      const x0 = 54, x1 = lakeW - 12;
+      const iceT = 15;                                  // 冰盖厚度（px）
+      const yIceTop = 22, yWater = yIceTop + iceT;
+      const yBot = lakeH - 26;
+      return { x0: x0, x1: x1, yIceTop: yIceTop, yWater: yWater, yBot: yBot, iceT: iceT,
+               layerH: (yBot - yWater) / LAKE_T.length };
+    }
+    function drawLake() {
+      const c = lakeCtx;
+      const G = lakeGeom();
+      c.clearRect(0, 0, lakeW, lakeH);
+      // 天空
+      const sg = c.createLinearGradient(0, 0, 0, G.yIceTop);
+      sg.addColorStop(0, 'rgba(15,32,58,.9)'); sg.addColorStop(1, 'rgba(8,20,38,.9)');
+      c.fillStyle = sg; c.fillRect(0, 0, lakeW, G.yIceTop);
+      // 湖底（岩石）
+      c.fillStyle = '#1c1a16';
+      c.fillRect(0, G.yBot, lakeW, lakeH - G.yBot);
+      c.fillStyle = 'rgba(120,96,64,.5)';
+      c.fillRect(0, G.yBot, lakeW, 3);
+      // 水层：从下往上 4 → 0 ℃
+      for (let k = 0; k < LAKE_T.length; k++) {
+        const T = LAKE_T[k];
+        const yTop = G.yBot - (k + 1) * G.layerH;
+        c.fillStyle = lakeCol(T);
+        c.fillRect(G.x0, yTop, G.x1 - G.x0, G.layerH + 0.6);
+        c.strokeStyle = 'rgba(226,246,255,.10)'; c.lineWidth = 1;
+        c.beginPath(); c.moveTo(G.x0, yTop + 0.5); c.lineTo(G.x1, yTop + 0.5); c.stroke();
+      }
+      // 冰盖（浮在水面上，盖住下面的水）
+      const ig = c.createLinearGradient(0, G.yIceTop, 0, G.yWater);
+      ig.addColorStop(0, 'rgba(238,250,255,.96)');
+      ig.addColorStop(1, 'rgba(186,224,246,.86)');
+      c.fillStyle = ig;
+      c.fillRect(G.x0, G.yIceTop, G.x1 - G.x0, G.iceT);
+      c.strokeStyle = 'rgba(255,255,255,.9)'; c.lineWidth = 1.2;
+      c.strokeRect(G.x0 + .5, G.yIceTop + .5, G.x1 - G.x0 - 1, G.iceT - 1);
+      // 水体外框
+      c.strokeStyle = 'rgba(148,196,228,.34)'; c.lineWidth = 1.2;
+      c.strokeRect(G.x0 + .5, G.yIceTop + .5, G.x1 - G.x0 - 1, G.yBot - G.yIceTop - 1);
+      // 温度标尺（左侧）
+      c.font = '800 9.5px Inter, "Microsoft YaHei", sans-serif';
+      c.textAlign = 'right'; c.textBaseline = 'middle';
+      for (let k = 0; k < LAKE_T.length; k++) {
+        const yTop = G.yBot - (k + 1) * G.layerH;
+        const T = LAKE_T[k];
+        c.fillStyle = T >= 4 ? '#86efac' : (T <= 0.01 ? '#93c5fd' : '#a9c2d2');
+        c.fillText(T.toFixed(1) + '℃', G.x0 - 6, yTop + G.layerH / 2);
+      }
+      // 鱼（在湖底 4 ℃ 层）
+      const fishY = G.yBot - G.layerH * 0.55;
+      for (let k = 0; k < 3; k++) {
+        const fx = G.x0 + 60 + k * 78 + (k % 2) * 14, fy = fishY + (k % 2) * 13 - 6;
+        c.fillStyle = 'rgba(253,224,71,.9)';
+        c.beginPath(); c.ellipse(fx, fy, 9, 4.6, 0, 0, PI2); c.fill();
+        c.beginPath();
+        c.moveTo(fx - 8, fy); c.lineTo(fx - 15, fy - 4.6); c.lineTo(fx - 15, fy + 4.6);
+        c.closePath(); c.fill();
+        c.beginPath(); c.arc(fx + 5.4, fy - 1.2, 1.3, 0, PI2);
+        c.fillStyle = '#1e293b'; c.fill();
+      }
+      // 标注。
+      // 🔴 冰盖是接近白的，浅蓝字画在上面完全看不见 —— 必须用深色。
+      // 🔴 水体里【不要再写长句子】：和鱼、和温度刻度会糊成一片，而且下面的
+      //    <p class="note"> 已经把「4 ℃ 沉底 / 0 ℃ 在上 / 冰轻 9%」讲全了。
+      c.textAlign = 'left'; c.textBaseline = 'middle';
+      c.font = '800 10px Inter, "Microsoft YaHei", sans-serif';
+      c.fillStyle = '#0b3a55';
+      c.fillText('冰盖 · 浮在水面', G.x0 + 8, G.yIceTop + G.iceT / 2);
+      // 右侧竖直箭头：越往下越重（密度随深度增大）
+      const ax = G.x1 - 16;
+      line([{ x: ax, y: G.yWater + 16 }, { x: ax, y: G.yBot - 14 }], 'rgba(226,246,255,.46)', 1.5);
+      c.beginPath();
+      c.moveTo(ax, G.yBot - 7); c.lineTo(ax - 4.5, G.yBot - 16); c.lineTo(ax + 4.5, G.yBot - 16);
+      c.closePath(); c.fillStyle = 'rgba(226,246,255,.58)'; c.fill();
+      c.save();
+      c.translate(ax - 8, (G.yWater + G.yBot) / 2); c.rotate(-Math.PI / 2);
+      c.font = '800 9.5px Inter, "Microsoft YaHei", sans-serif';
+      c.fillStyle = 'rgba(226,246,255,.78)';
+      c.textAlign = 'center'; c.textBaseline = 'middle';
+      c.fillText('越往下越重', 0, 0);
+      c.restore();
+    }
+
+    /* ============================================================
+     * 密度表 / 算一算
+     * ============================================================ */
+    // 档位和快捷温度按钮一致 —— 用户点一个档位，就能在表里查到答案。
+    // ⚠️ 名字别叫 TABLE_T：那是台面厚度（见场景几何一节），重名会让整个脚本
+    //    在解析期就抛 "Identifier 'TABLE_T' has already been declared"，页面全白。
+    const TABLE_TS = [0, 4, 10, 20, 50, 100];
+    const DENSITY_ROWS = TABLE_TS.map(T => ({ T: T, rho: rho(T) }));
+    const ANS_TOL = 1.5e-4;
+
+    function questionFor(T) {
+      if (TABLE_TS.indexOf(T) < 0) return { ok: false, T: T };
+      return { ok: true, T: T, want: rho(T) };
+    }
+    function checkAnswer(v) {
+      const q = questionFor(state.temp);
+      if (!q.ok) return { ok: false, why: 'norow', want: NaN };
+      if (!isFinite(v)) return { ok: false, why: 'bad', want: q.want };
+      const d = Math.abs(v - q.want);
+      if (d <= ANS_TOL) return { ok: true, why: 'ok', want: q.want, diff: d };
+      return { ok: false, why: v > q.want ? 'high' : 'low', want: q.want, diff: d };
+    }
+
+    /* ============================================================
+     * 温度 / 量程 / 视图
+     * ============================================================ */
+    function setTemp(t, instant) {
+      t = clamp(Math.round(t), 0, 100);
+      if (t === state.temp) return false;
+      const from = state.tempShown;
+      state.temp = t;
+      if (instant) { state.tempShown = t; state.anim = []; }
+      else state.anim = [{ from: from, to: t, t: 0 }];
+      state.dirty = true;
+      syncUI();
+      return true;
+    }
+    // 唯一的动画推进入口：主循环与自检共用
+    function frameStep(dt) {
+      if (!state.anim.length) return false;
+      const a = state.anim[0];
+      a.t = Math.min(1, a.t + dt / ANIM_DUR);
+      const e = 1 - Math.pow(1 - a.t, 3);
+      state.tempShown = a.from + (a.to - a.from) * e;
+      if (a.t >= 1) { state.tempShown = a.to; state.anim = []; }
+      state.dirty = true;
+      state.uiDirty = true;   // 见 state.uiDirty 的注释：侧栏读的是 tempShown，必须跟着动
+      return true;
+    }
+    // ★ 主循环的【一帧】：推进动画 → 温度真动了就同步侧栏 → 需要时重画。
+    //   真实 rAF 与自检的 driveAnim 共用这一个函数 —— 只共用 frameStep 是不够的，
+    //   那样自检就会漏掉「动画推进后侧栏没跟着变」这类 bug。
+    function stepFrame(dt) {
+      const moved = frameStep(dt);
+      if (state.uiDirty) { syncUI(); state.uiDirty = false; }
+      if (state.dirty) { render(); state.dirty = false; }
+      return moved;
+    }
+    function driveAnim(sec, dt) {
+      const n = Math.max(1, Math.round(sec / dt));
+      for (let k = 0; k < n; k++) stepFrame(dt);
+      return n;
+    }
+    function setZoomMode(v) {
+      const b = !!v;
+      if (b === state.zoomMode) return false;
+      state.zoomMode = b;
+      state.dirty = true;
+      syncUI();
+      return true;
+    }
+    function applyView(k) {
+      if (!VIEWS[k]) return;
+      state.view = k;
+      state.yaw = VIEWS[k][0]; state.pitch = VIEWS[k][1]; state.zoom = VIEWS[k][2];
+      document.querySelectorAll('[data-view]').forEach(b =>
+        b.classList.toggle('on', b.getAttribute('data-view') === k));
+      state.dirty = true;
+    }
+    function resetAll() {
+      state.zoomMode = false;
+      state.molecules = false;
+      state.solved = false;
+      state.anim = [];
+      state.temp = 20; state.tempShown = 20;
+      $('wr-zoom').classList.remove('on');
+      $('wr-mol').classList.remove('on');
+      $('wr-fb').className = 'fb';
+      $('wr-ans').value = '';
+      applyView('perspective');
+      syncUI();
+    }
+
+    /* ============================================================
+     * UI 同步
+     * ------------------------------------------------------------
+     * ★ 所有「当前温度下的 ρ / V / 液柱」一律读 state.tempShown，
+     *   绝不混用 state.temp —— 否则动画中间态会出现「画面 16.4 cm、侧栏 14.3 cm」
+     *   这种两个数都对不上、断言却全绿的经典事故。
+     * ============================================================ */
+    function syncUI() {
+      const t = state.tempShown;
+      const R = rho(t);
+      const V = VofT(t);
+      const dV = dvRel(t);
+      const h = tubeH(t);
+
+      $('wr-tpill').textContent = state.temp.toFixed(0) + ' ℃';
+      $('wr-temp').value = String(state.temp);
+      // 🔴 必须 5 位小数：4 位的话 4 ℃ 会显示成 "1.0000"，看着像 1.0 ——
+      //    而 0.99997 才是「密度最大」那个数，一位都不能省。
+      $('wr-rho').textContent = R.toFixed(5);
+      $('wr-rhopill').textContent = (t <= 4.02 && t >= 3.98) ? '4 ℃ 最大' : (t < 4 ? '反常段' : '正常段');
+      $('wr-rhopill').className = 'pill ' + (t <= 4.02 && t >= 3.98 ? 'ok' : (t < 4 ? 'warn' : ''));
+      $('wr-rv').textContent = V.toFixed(4) + ' cm³';
+      $('wr-rdv').textContent = (dV >= 0 ? '+' : '') + dV.toFixed(4) + ' %';
+      $('wr-rh').textContent = h.toFixed(3) + ' cm' +
+        (state.zoomMode ? '（放大 ×' + Math.round(ZOOM_K) + '）' : '');
+      $('wr-rs').textContent = spacingRel(t).toFixed(6) + ' ×';
+
+      // 快捷温度
+      document.querySelectorAll('[data-key]').forEach(b =>
+        b.classList.toggle('on', +b.getAttribute('data-key') === state.temp));
+
+      // 曲线
+      $('wr-cpill').textContent = state.zoomMode ? '放大档 · 看 0–4 ℃' : '0–100 ℃';
+      $('wr-chartnote').innerHTML = (t > 3.98 && t < 4.02)
+        ? '现在正好在 <b>4 ℃</b>：曲线到顶了 —— 这是 0–100 ℃ 之间水的<b>密度最大值</b>。'
+        : (t < 4
+            ? '现在 ' + t.toFixed(0) + ' ℃，在 <b>0–4 ℃ 的反常段</b>：温度升、密度升（看右上角 inset 的峰）。'
+            : '现在 ' + t.toFixed(0) + ' ℃，在 <b>4 ℃ 以上的正常段</b>：温度升、密度降。');
+      drawChart();
+
+      // 密度表
+      const dt = $('wr-dtab');
+      dt.innerHTML = '<tr><th>温度</th><th style="text-align:right">ρ / (g·cm⁻³)</th></tr>' +
+        DENSITY_ROWS.map(r => {
+          const hit = Math.abs(t - r.T) < 0.5;
+          return '<tr' + (hit ? ' class="hit"' : '') + '><td>' + r.T + ' ℃</td><td class="n">' +
+            r.rho.toFixed(5) + '</td></tr>';
+        }).join('');
+
+      // 算一算
+      const q = questionFor(state.temp);
+      $('wr-qpill').textContent = q.ok ? (q.T + ' ℃') : '先选档位';
+      $('wr-question').innerHTML = q.ok
+        ? ('水温 <b>' + q.T + ' ℃</b> 时，水的密度是多少 g/cm³？<br>（查下面的「不同温度下水的密度」表，填 5 位小数）')
+        : '把水温调到 <b>0 / 4 / 10 / 20 / 50 / 100 ℃</b> 中的一个（点快捷温度），再来算。';
+      $('wr-ans').disabled = !q.ok;
+      $('wr-submit').disabled = !q.ok;
+
+      // 分析与结论
+      const an = $('wr-analysis');
+      let html = '';
+      html += '<div class="line"><span>水温</span><b>' + t.toFixed(1) + ' ℃</b></div>' +
+              '<div class="line"><span>水的密度 ρ</span><b>' + R.toFixed(5) + ' g/cm³</b></div>' +
+              '<div class="line"><span>50 g 水的体积 V</span><b>' + V.toFixed(4) + ' cm³</b></div>' +
+              '<div class="line"><span>比 4 ℃ 时胀出</span><b>' + (dV >= 0 ? '+' : '') + dV.toFixed(4) + ' %</b></div>' +
+              '<div class="line"><span>细管液柱升高</span><b>' + h.toFixed(3) + ' cm' +
+                (state.zoomMode ? '（放大显示）' : '') + '</b></div>';
+      if (t > 3.98 && t < 4.02) {
+        html += '<div class="conc">' + t.toFixed(0) + ' ℃ 是水的<b>密度最大点</b>：ρ = ' + R.toFixed(5) +
+                ' g/cm³，体积最小。往左（0 ℃）往右（100 ℃）密度都更小 —— 这就是<b>反常膨胀</b>。</div>';
+      } else if (t < 4) {
+        html += '<div class="conc info">现在在 <b>0–4 ℃ 的反常段</b>：温度升高时体积<b>反而缩小</b>' +
+                '（比 4 ℃ 只大 ' + dV.toFixed(4) + '%），密度<b>变大</b>。液柱比 4 ℃ 时高 ' +
+                h.toFixed(3) + ' cm —— 在<b>放大档</b>才看得清。</div>';
+      } else {
+        html += '<div class="conc info">现在在 <b>4 ℃ 以上</b>：恢复正常的<b>热胀冷缩</b>。' +
+                '从 4 ℃ 加热到 100 ℃，体积胀出 <b>' + dvRel(100).toFixed(4) + '%</b>' +
+                '（液柱升 ' + hFullRaw(100).toFixed(2) + ' cm）。</div>';
+      }
+      an.innerHTML = html;
+
+      state.dirty = true;
+    }
+
+    function showToast(t) {
+      const el = $('wr-toast');
+      el.textContent = t;
+      el.classList.add('show');
+      clearTimeout(showToast._t);
+      showToast._t = setTimeout(() => el.classList.remove('show'), 1700);
+    }
+
+    /* ============================================================
+     * 事件
+     * ============================================================ */
+    function onDown(ev) {
+      state.dragging = true;
+      state.drag = { x: ev.clientX, y: ev.clientY, yaw: state.yaw, pitch: state.pitch };
+      canvas.classList.add('grabbing');
+    }
+    function onMove(ev) {
+      if (!state.dragging || !state.drag) return;
+      const dx = ev.clientX - state.drag.x, dy = ev.clientY - state.drag.y;
+      state.yaw = state.drag.yaw + dx * 0.006;
+      state.pitch = clamp(state.drag.pitch + dy * 0.005, -0.25, 1.30);
+      state.dirty = true;
+    }
+    function onUp() { canvas.classList.remove('grabbing'); state.dragging = false; state.drag = null; }
+    function onWheel(ev) {
+      ev.preventDefault();
+      state.zoom = clamp(state.zoom * (ev.deltaY < 0 ? 1.08 : 1 / 1.08), 0.55, 2.6);
+      state.dirty = true;
+    }
+    canvas.addEventListener('pointerdown', onDown);
+    canvas.addEventListener('pointermove', onMove);
+    canvas.addEventListener('pointerup', onUp);
+    canvas.addEventListener('pointercancel', onUp);
+    canvas.addEventListener('wheel', onWheel, { passive: false });
+
+    $('wr-temp').addEventListener('input', ev => setTemp(+ev.target.value));
+    document.querySelectorAll('[data-key]').forEach(b =>
+      b.addEventListener('click', () => setTemp(+b.getAttribute('data-key'))));
+    $('wr-zoom').addEventListener('click', () => {
+      setZoomMode(!state.zoomMode);
+      $('wr-zoom').classList.toggle('on', state.zoomMode);
+      showToast(state.zoomMode ? '放大档：0–10 ℃ 铺满整根细管' : '全量程：0–100 ℃');
+    });
+    $('wr-mol').addEventListener('click', () => {
+      state.molecules = !state.molecules;
+      $('wr-mol').classList.toggle('on', state.molecules);
+      state.dirty = true;
+    });
+    $('wr-reset').addEventListener('click', () => { resetAll(); showToast('已重置'); });
+    document.querySelectorAll('[data-view]').forEach(b =>
+      b.addEventListener('click', () => applyView(b.getAttribute('data-view'))));
+    $('wr-submit').addEventListener('click', doSubmit);
+    $('wr-ans').addEventListener('keydown', ev => { if (ev.key === 'Enter') doSubmit(); });
+
+    function doSubmit() {
+      const v = parseFloat($('wr-ans').value);
+      const r = checkAnswer(v);
+      const fb = $('wr-fb');
+      if (r.why === 'norow') { fb.className = 'fb warn show'; fb.textContent = '先点一个快捷温度，再来算。'; return; }
+      if (r.why === 'bad') { fb.className = 'fb warn show'; fb.textContent = '请输入一个数字。'; return; }
+      if (r.ok) {
+        state.solved = true;
+        fb.className = 'fb ok show';
+        fb.textContent = '答对了 ✓ 水温 ' + state.temp + ' ℃ 时 ρ = ' + r.want.toFixed(5) +
+          ' g/cm³（查表一致）。';
+      } else {
+        fb.className = 'fb bad show';
+        fb.textContent = (r.why === 'high' ? '偏大了' : '偏小了') + '。查一下表里 ' + state.temp +
+          ' ℃ 那一行，正确值约 ' + r.want.toFixed(5) + ' g/cm³。';
+      }
+      syncUI();
+    }
+
+    /* ============================================================
+     * 尺寸 / 主循环
+     * ============================================================ */
+    function resize() {
+      const r = stage.getBoundingClientRect();
+      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      const w = Math.max(320, Math.round(r.width));
+      const h = Math.max(240, Math.round(r.height));
+      state.w = w; state.h = h; state.dpr = dpr;
+      canvas.width = Math.round(w * dpr);
+      canvas.height = Math.round(h * dpr);
+      canvas.style.width = w + 'px';
+      canvas.style.height = h + 'px';
+      // 画布位图是 w·dpr 宽，所有绘制都按 CSS px 写坐标 —— 必须补上变换，
+      // 否则 retina 屏上整个场景会缩成左上角四分之一。
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      resizeChart();
+      resizeLake();
+      // 🔴 改了位图尺寸就必须立刻重画，两个小画布都要。
+      //    不重画的后果：window.resize / ResizeObserver / 整页截图（puppeteer 的
+      //    fullPage 会临时改视口高度）一触发 resize()，位图就被清成空白，
+      //    而主画布因为走 rAF + dirty 会自动重画 —— 于是「舞台好好的、曲线没了」。
+      drawChart();
+      drawLake();
+      state.dirty = true;
+    }
+    let lastTs = 0;
+    function tick(ts) {
+      const dt = lastTs ? Math.min(0.05, (ts - lastTs) / 1000) : 0;
+      lastTs = ts;
+      stepFrame(dt);            // 与自检的 driveAnim 走同一个函数
+      requestAnimationFrame(tick);
+    }
+
+    // 快捷温度按钮（6 个格子，和密度表档位一一对应）
+    (function buildKeys() {
+      const box = $('wr-keys');
+      for (const T of TABLE_TS) {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.setAttribute('data-key', String(T));
+        b.textContent = T + '°';
+        b.addEventListener('click', () => setTemp(T));
+        box.appendChild(b);
+      }
+    })();
+
+    if (window.ResizeObserver) new ResizeObserver(() => resize()).observe(stage);
+    window.addEventListener('resize', resize);
+
+    resize();
+    applyView('perspective');
+    syncUI();
+    drawLake();
+    requestAnimationFrame(tick);
+
+    /* ============================================================
+     * 自检钩子 —— 渲染 / 判分 / 自检共用同一份物理
+     * ============================================================ */
+    window.__wr = {
+      state: state,
+      consts: {
+        U: U, V_BULB: V_BULB, M_WATER: M_WATER, V4: V4, RHO_ICE: RHO_ICE, RHO4: RHO4,
+        H_MAX: H_MAX, H_OFF: H_OFF, TUBE_LEN: TUBE_LEN, TUBE_PAD: TUBE_PAD, A_TUBE: A_TUBE,
+        T_ZOOM_MAX: T_ZOOM_MAX, DV_ZOOM: DV_ZOOM, ZOOM_K: ZOOM_K,
+        BULB_R: BULB_R, NECK_R: NECK_R, NECK_H: NECK_H, TUBE_R: TUBE_R,
+        HOT_X: HOT_X, HOT_Z: HOT_Z, HOT_W: HOT_W, HOT_D: HOT_D, HOT_H: HOT_H, HOT_TOP: HOT_TOP,
+        TABLE_HW: TABLE_HW, TABLE_HD: TABLE_HD, TABLE_T: TABLE_T,
+        CAMD: CAMD, TARGET: TARGET, VIEWS: VIEWS, ANIM_DUR: ANIM_DUR,
+        CH_PAD: CH_PAD, RHO_LO: RHO_LO, RHO_HI: RHO_HI,
+        INSET_T_MAX: INSET_T_MAX, INSET_LO: INSET_LO, INSET_HI: INSET_HI,
+        TABLE_T_LIST: TABLE_TS, DENSITY_ROWS: DENSITY_ROWS, ANS_TOL: ANS_TOL,
+        MOL_N: MOL_N, MOL_EXAG: MOL_EXAG, MOL_SPAN: MOL_SPAN, MOL_SPAN_4: MOL_SPAN_4,
+        LAKE_T: LAKE_T
+      },
+      size: () => ({ w: state.w, h: state.h, dpr: state.dpr }),
+      makeCam: makeCam, project: project, unproject: unproject, envelopePoints: envelopePoints, cm: cm,
+      rho: rho, VofT: VofT, hFullRaw: hFullRaw, hZoomRaw: hZoomRaw, tubeHRaw: tubeHRaw,
+      tubeH: tubeH, liquidTop: liquidTop, liquidY: liquidY, tickY: tickY, overRange: overRange,
+      dvRel: dvRel, spacingRel: spacingRel, iceOver: iceOver, flaskGeom: flaskGeom,
+      molSpacingVis: molSpacingVis, molDWorld: molDWorld,
+      chartPt: chartPt, insetPt: insetPt, insetBox: insetBox, lakeGeom: lakeGeom,
+      chartSize: () => ({ w: chartW, h: chartH }),
+      lakeSize: () => ({ w: lakeW, h: lakeH }),
+      questionFor: questionFor, checkAnswer: checkAnswer,
+      setTemp: setTemp, setZoomMode: setZoomMode, applyView: applyView, resetAll: resetAll,
+      frameStep: frameStep, stepFrame: stepFrame, driveAnim: driveAnim,
+      temp: () => state.temp,
+      tempShown: () => state.tempShown,
+      zoomMode: () => state.zoomMode,
+      molecules: () => state.molecules,
+      setMolecules: v => { state.molecules = !!v; state.dirty = true; },
+      setAnswer: v => { $('wr-ans').value = String(v); },
+      submit: doSubmit,
+      fbText: () => $('wr-fb').textContent,
+      fbClass: () => $('wr-fb').className,
+      rhoText: () => $('wr-rho').textContent,
+      dvText: () => $('wr-rdv').textContent,
+      hText: () => $('wr-rh').textContent,
+      tpillText: () => $('wr-tpill').textContent,
+      rangeShown: () => $('wr-range').classList.contains('show'),
+      hintText: () => $('wr-hint').textContent,
+      dtabRows: () => Array.prototype.map.call($('wr-dtab').querySelectorAll('tr'), tr =>
+        ({ t: tr.children[0].textContent, r: tr.children[1].textContent, hit: tr.className === 'hit' })),
+      keyStates: () => Array.prototype.map.call(document.querySelectorAll('[data-key]'), b =>
+        ({ k: b.getAttribute('data-key'), on: b.classList.contains('on') })),
+      render: render, syncUI: syncUI, drawChart: drawChart, drawLake: drawLake,
+      drawn: () => state.drawn,
+      labels: () => (window.__wrLabelLog || []).slice()
+    };
+    window.__wrLabelLog = [];
+  })();
+  </script>
+</body>
+</html>
