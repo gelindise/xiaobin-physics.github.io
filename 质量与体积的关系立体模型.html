@@ -122,6 +122,8 @@
     .btn-row button.on { border-color: rgba(125, 211, 252, .85); background: rgba(12, 74, 110, .6); color: #e0f2fe; }
     .btn-row button:disabled { opacity: .45; cursor: not-allowed; }
     .btn-row button:hover:not(:disabled) { border-color: rgba(125, 211, 252, .7); }
+    /* 材料选择行：「材料」二字自己占满一整行（flex-basis:100%），四个按钮均分下一行 */
+    .btn-row .matlab { flex: 0 0 100%; font-size: 10.5px; font-weight: 800; color: #94a3b8; letter-spacing: .3px; }
 
     /* 物块列表：材料色块 + 边长，点一下就送到电子秤上 */
     .cubes { display: flex; flex-direction: column; gap: 5px; }
@@ -260,6 +262,16 @@
             <button type="button" data-mode="mass">同质量比体积</button>
             <button type="button" data-mode="same">同种物质三组数据</button>
           </div>
+          <!-- 材料选择行：只在「同种物质三组数据」模式下出现（另两个模式的材料是写死的）。
+               三块物块的边长固定 1 / 2 / 3 cm，换材料就是整体换一种物质 —— 用户 2026-10-06 反馈
+               「只有一个铝块可以进行比较，可以增加木块、铜块、银块」。 -->
+          <div class="btn-row" id="den3-matrow" style="margin-top:7px;display:none;">
+            <span class="matlab">材料</span>
+            <button type="button" data-smat="alu">铝</button>
+            <button type="button" data-smat="wood">木块</button>
+            <button type="button" data-smat="copper">铜</button>
+            <button type="button" data-smat="silver">银</button>
+          </div>
           <p class="note" id="den3-modesub"></p>
         </div>
 
@@ -294,7 +306,7 @@
         <div class="panel">
           <h3>m–V 图像 <span class="pill" id="den3-fitpill">—</span></h3>
           <div class="chartwrap"><canvas id="den3-chart"></canvas></div>
-          <p class="note" id="den3-chartnote">横轴 V / cm³，纵轴 m / g。同种物质的点会连成一条<b>过原点</b>的直线，斜率就是密度。</p>
+          <p class="note" id="den3-chartnote">横轴 V / cm³，纵轴 m / g。同种物质的点会连成一条<b>过原点</b>的直线，斜率就是密度 —— 换成别的材料，斜率就换成另一个值。</p>
         </div>
 
         <div class="panel">
@@ -392,28 +404,37 @@
     const cm = v => v * U;
 
     /* ---------------------------- 材料 ---------------------------- */
-    // rho 单位 g/cm³。真实值（20 ℃）：木(松)≈0.5、冰 0.9、铝 2.7、铁 7.9、铜 8.9。
+    // rho 单位 g/cm³。真实值（20 ℃）：木(松)≈0.5、冰 0.9、铝 2.7、铁 7.9、铜 8.9、银 10.5。
     const MATS = {
       wood:   { name: '木块（松）', short: '木', rho: 0.50, col: [178, 138, 86] },
       ice:    { name: '冰',         short: '冰', rho: 0.90, col: [146, 204, 236] },
       alu:    { name: '铝',         short: '铝', rho: 2.70, col: [188, 196, 206] },
       iron:   { name: '铁',         short: '铁', rho: 7.90, col: [104, 116, 132] },
-      copper: { name: '铜',         short: '铜', rho: 8.90, col: [198, 124, 70] }
+      copper: { name: '铜',         short: '铜', rho: 8.90, col: [198, 124, 70] },
+      silver: { name: '银',         short: '银', rho: 10.50, col: [228, 234, 244] }
     };
-    const MAT_ORDER = ['wood', 'ice', 'alu', 'iron', 'copper'];
+    const MAT_ORDER = ['wood', 'ice', 'alu', 'iron', 'copper', 'silver'];
 
     // 密度表（教材常见值，g/cm³）
     const DENSITY_TABLE = [
       { name: '木（松）', rho: 0.5 }, { name: '酒精', rho: 0.8 }, { name: '冰', rho: 0.9 },
-      { name: '水', rho: 1.0 }, { name: '铝', rho: 2.7 }, { name: '铁', rho: 7.9 }, { name: '铜', rho: 8.9 }
+      { name: '水', rho: 1.0 }, { name: '铝', rho: 2.7 }, { name: '铁', rho: 7.9 },
+      { name: '铜', rho: 8.9 }, { name: '银', rho: 10.5 }
     ];
 
     /* ---------------------------- 三种模式 ----------------------------
-     * 每种模式给出一排物块（材料 + 边长 cm）。
+     * 每种模式给出一排物块。物块可以按【边长 a】(cm) 定义，也可以按【质量 M】(g) 定义 ——
+     * 按 M 时边长由 a = (M/ρ)^(1/3) 反算（见 cubeA），保证 ρ·a³ 严格等于 M。
      *  vol ：边长都是 2.0 cm（V = 8 cm³）—— 一样大，轻重差十几倍
-     *  mass：质量都约 21.6 g —— 一样重，个头差两倍多
-     *  same：同一材料三块（a = 1 / 2 / 3 cm），量 m 和 V 画 m–V 图
+     *  mass：质量都【严格等于】MASS_M —— 一样重，个头差 20 倍
+     *  same：同一材料三块（a = 1 / 2 / 3 cm），材料可在铝 / 木 / 铜 / 银之间换
      * ---------------------------------------------------------------- */
+    // 🔴 同质量比体积模式的目标质量。曾经是把 a 预先四舍五入到 2 位小数（1.34 / 2.88 / 3.51 …），
+    //    ρ·a³ 于是在 21.41~21.62 之间飘，电子秤读出来是 21.4 / 21.5 / 21.6 —— 用户直接反馈
+    //    「放到电子秤上会有一些 0.1 g 的误差」。改成按 M 反算边长后六块读数完全一致。
+    const MASS_M = 21.6;                       // g
+    const SAME_A = [1.0, 2.0, 3.0];            // cm，同种物质模式的三个边长
+    const SAME_MATS = ['alu', 'wood', 'copper', 'silver'];
     const MODES = {
       vol: {
         title: '同体积比质量',
@@ -425,16 +446,16 @@
       },
       mass: {
         title: '同质量比体积',
-        sub: '五块物块的质量都约 21.6 g —— 一样重，但个头能差两倍多。',
+        sub: '六块物块的质量【都是 21.6 g】—— 一样重，但个头能差 20 倍。',
         cubes: [
-          { mat: 'alu', a: 2.0 }, { mat: 'iron', a: 1.40 }, { mat: 'copper', a: 1.34 },
-          { mat: 'ice', a: 2.88 }, { mat: 'wood', a: 3.51 }
+          { mat: 'alu', M: MASS_M }, { mat: 'iron', M: MASS_M }, { mat: 'copper', M: MASS_M },
+          { mat: 'silver', M: MASS_M }, { mat: 'ice', M: MASS_M }, { mat: 'wood', M: MASS_M }
         ]
       },
       same: {
         title: '同种物质 · 三组数据',
-        sub: '三块都是铝，边长 1.00 / 2.00 / 3.00 cm。量出每块的 m 和 V，画到 m–V 图上看看。',
-        cubes: [{ mat: 'alu', a: 1.0 }, { mat: 'alu', a: 2.0 }, { mat: 'alu', a: 3.0 }]
+        sub: '三块都是同一种材料，边长 1.00 / 2.00 / 3.00 cm。量出每块的 m 和 V，画到 m–V 图上看看。',
+        mats: SAME_MATS, a: SAME_A
       }
     };
 
@@ -445,7 +466,11 @@
     // 【底面正好与秤盘顶面齐平】，看着像「物块已经放在秤上、读数却是 0.0」。
     // 后移到 -0.95 后两者在屏幕上明显拉开（深度差 1.29 世界单位）。
     const ROW_Z = -0.95;
-    const SLOT_X = [-2.25, -1.48, -0.71, 0.06, 0.83]; // 五槽（vol / mass 用）
+    const SLOT_X = [-2.25, -1.48, -0.71, 0.06, 0.83]; // 五槽（vol 用）
+    // 六槽（mass 用）。mass 模式最大的那块是木（a = cbrt(21.6/0.5) = 3.51 cm，半边长 0.298），
+    // 相邻两块半边长之和最大 0.543 ⇒ 槽距 0.70 还留 0.157 的空隙；最右一块的右沿 1.348
+    // 仍在电子秤左沿（SCALE_X − SCALE_W/2 = 1.52）以内。
+    const MASS_X = [-2.45, -1.75, -1.05, -0.35, 0.35, 1.05];
     const WIDE_X = [-1.50, 0.00, 1.50];               // 三槽（same 用）
     const AMAX = 3.51;                                // 所有模式里最大的边长（取景包络用）
 
@@ -474,6 +499,7 @@
     /* ---------------------------- 状态 ---------------------------- */
     const state = {
       mode: 'vol',
+      sameMat: SAME_MATS[0],  // 「同种物质」模式下当前选的材料
       onScale: null,          // 正在秤上的物块序号
       anim: [],               // [{i, t, fromScale}]
       recs: [],               // [{mat, a, V, m}]
@@ -490,13 +516,31 @@
      * 物理 —— 页面、判分、自检共用这一份
      * ============================================================ */
     const rhoOf = mat => MATS[mat].rho;
-    const cubesOf = () => MODES[state.mode].cubes;
+    // same 模式的物块由「当前材料 + 三个边长」生成。缓存一份 —— cubesOf() 在渲染循环里
+    // 被调很多次，每次 new 一个数组会白白产生垃圾。
+    let sameCache = null, sameCacheMat = null;
+    function cubesOf() {
+      if (state.mode !== 'same') return MODES[state.mode].cubes;
+      if (sameCacheMat !== state.sameMat) {
+        sameCacheMat = state.sameMat;
+        sameCache = SAME_A.map(a => ({ mat: state.sameMat, a: a }));
+      }
+      return sameCache;
+    }
     const cubeMat = i => cubesOf()[i].mat;
-    const cubeA = i => cubesOf()[i].a;                       // cm
+    // 物块可以按边长 a（cm）定义，也可以按质量 M（g）定义。按 M 时由 ρ 反算边长：
+    //   a = (M/ρ)^(1/3)  ⇒  ρ·a³ = M（浮点意义下严格相等）
+    // 这就是「同质量比体积」模式里六块读数完全一致的唯一保证。
+    function cubeA(i) {
+      const c = cubesOf()[i];
+      return c.a !== undefined ? c.a : Math.cbrt(c.M / rhoOf(c.mat));
+    }
     const cubeV = i => cubeA(i) * cubeA(i) * cubeA(i);       // cm³
     const cubeM = i => rhoOf(cubeMat(i)) * cubeV(i);         // g = ρV
 
-    const slotX = i => (state.mode === 'same' ? WIDE_X[i] : SLOT_X[i]);
+    // 每个模式一套槽位：vol 五槽 / mass 六槽 / same 三槽（WIDE_X）
+    const slotX = i => state.mode === 'same' ? WIDE_X[i]
+                      : state.mode === 'mass' ? MASS_X[i] : SLOT_X[i];
 
     // 单位换算：g/cm³ → kg/m³ 就是乘 1000
     const unitConv = r => r * 1000;
@@ -618,14 +662,15 @@
         pts.push([sx * TABLE_HW * 0.82, 0, -TABLE_HD * 0.97]);
         pts.push([sx * TABLE_HW * 0.82, 0, TABLE_HD * 0.20]);
       }
-      const xs = state.mode === 'same' ? WIDE_X : SLOT_X;
       const hA = cm(AMAX) / 2, tA = cm(AMAX);
       // 每个槽位取【8 个角全取】。投影是线性分式，r/u 的极值确实落在角上，
       // 但【哪两个角】随相机变 —— 只取「左下前 + 右上后」两个角时，front 视角下
       // 最高的那块（mass 模式的木块，a = AMAX）的【后上角】会漏在包络外
       // （实测超 u 0.0025），取景就罩不住物块。
+      // 槽位走 slotX(k)：三个模式各自一套（vol 五槽 / mass 六槽 / same 三槽），
+      // 写死 SLOT_X 会让 mass 模式第 6 块、same 模式的槽位完全没进包络。
       for (let k = 0; k < cubesOf().length; k++) {
-        const x = xs[k];
+        const x = slotX(k);
         for (const sx of [-1, 1]) for (const sy of [0, 1]) for (const sz of [-1, 1]) {
           pts.push([x + sx * hA, sy ? tA : 0, ROW_Z + sz * hA]);
         }
@@ -1165,7 +1210,25 @@
     /* ============================================================
      * m–V 图
      * ============================================================ */
-    const CH_V_MAX = 48, CH_M_MAX = 80;
+    // 坐标轴上限【跟着当前物块走】。同种物质模式换材料时 m 的跨度差 21 倍
+    // （木 3 cm 才 13.5 g，银 3 cm 是 283.5 g）：写死 80 会让银的点冲到画布外、
+    // 写死 320 又会让木的点全部挤在横轴上。档位都取「能被 4 整除」的值 ⇒ 每档 5 条刻度、
+    // 刻度值全是整数，标签不会出现 7.5 这种。档位要【密】一些：稀疏的话「比最大点大一点点」
+    // 的那个档位会远高于最大点，点全挤在下方（mass 模式 21.6 g 曾经跳到 40 档 ⇒ 只到 54% 高）。
+    const AXIS_V = [12, 16, 20, 24, 28, 32, 40, 48, 60, 80, 100];
+    const AXIS_M = [12, 16, 20, 24, 28, 32, 40, 48, 60, 80, 100, 120, 160, 200, 240, 280, 320, 400, 500];
+    let CH_V_MAX = 48, CH_M_MAX = 80;
+    let CH_V_STEP = 12, CH_M_STEP = 20;
+    function syncAxis() {
+      let V = 0, m = 0;
+      const cs = cubesOf();
+      for (let i = 0; i < cs.length; i++) { V = Math.max(V, cubeV(i)); m = Math.max(m, cubeM(i)); }
+      for (const r of state.recs) { V = Math.max(V, r.V); m = Math.max(m, r.m); }
+      const pick = (arr, need) => { for (const v of arr) if (v >= need) return v; return Math.ceil(need / 100) * 100; };
+      CH_V_MAX = pick(AXIS_V, V * 1.06);
+      CH_M_MAX = pick(AXIS_M, m * 1.06);
+      CH_V_STEP = CH_V_MAX / 4; CH_M_STEP = CH_M_MAX / 4;
+    }
     const CH_PAD = { l: 36, r: 12, t: 12, b: 26 };
     const chartCv = $('den3-chart');
     const chartCtx = chartCv.getContext('2d');
@@ -1187,16 +1250,17 @@
     }
     function drawChart() {
       const c = chartCtx;
+      syncAxis();                       // 轴上限跟当前物块走，每次重画都对齐一次
       c.clearRect(0, 0, chartW, chartH);
       const x0 = CH_PAD.l, x1 = chartW - CH_PAD.r, y0 = chartH - CH_PAD.b, y1 = CH_PAD.t;
-      // 网格
+      // 网格（每档 5 条：0 / ¼ / ½ / ¾ / 1）
       c.strokeStyle = 'rgba(148,163,184,.14)'; c.lineWidth = 1;
-      for (let V = 0; V <= CH_V_MAX; V += 12) {
-        const p = chartPt(V, 0);
+      for (let k = 0; k <= 4; k++) {
+        const p = chartPt(k * CH_V_STEP, 0);
         c.beginPath(); c.moveTo(p.x, y0); c.lineTo(p.x, y1); c.stroke();
       }
-      for (let m = 0; m <= CH_M_MAX; m += 20) {
-        const p = chartPt(0, m);
+      for (let k = 0; k <= 4; k++) {
+        const p = chartPt(0, k * CH_M_STEP);
         c.beginPath(); c.moveTo(x0, p.y); c.lineTo(x1, p.y); c.stroke();
       }
       // 轴
@@ -1205,9 +1269,9 @@
       c.beginPath(); c.moveTo(x0, y0); c.lineTo(x0, y1); c.stroke();
       c.font = '700 10px Inter, "Microsoft YaHei", sans-serif';
       c.fillStyle = '#7d97a8'; c.textAlign = 'center'; c.textBaseline = 'top';
-      for (let V = 0; V <= CH_V_MAX; V += 12) { const p = chartPt(V, 0); c.fillText(String(V), p.x, y0 + 5); }
+      for (let k = 0; k <= 4; k++) { const p = chartPt(k * CH_V_STEP, 0); c.fillText(String(k * CH_V_STEP), p.x, y0 + 5); }
       c.textAlign = 'right'; c.textBaseline = 'middle';
-      for (let m = 0; m <= CH_M_MAX; m += 20) { const p = chartPt(0, m); c.fillText(String(m), x0 - 5, p.y); }
+      for (let k = 0; k <= 4; k++) { const p = chartPt(0, k * CH_M_STEP); c.fillText(String(k * CH_M_STEP), x0 - 5, p.y); }
       c.textAlign = 'center'; c.textBaseline = 'top';
       c.fillStyle = '#93b4c4'; c.fillText('V / cm³', (x0 + x1) / 2, chartH - 12);
       c.save();
@@ -1240,10 +1304,22 @@
      * ============================================================ */
     function syncUI() {
       const M = MODES[state.mode];
-      $('den3-modepill').textContent = M.title;
-      $('den3-modesub').textContent = M.sub;
+      syncAxis();                       // 物块 / 记录一变，m–V 图的轴上限就跟着重算
+      $('den3-modepill').textContent = state.mode === 'same'
+        ? (MATS[state.sameMat].short + ' 三组数据') : M.title;
+      // 「同种物质」模式的说明要跟着当前材料走 —— 写死「铝」的话换成银就自相矛盾了
+      $('den3-modesub').textContent = state.mode === 'same'
+        ? ('三块都是' + MATS[state.sameMat].name + '，ρ = ' + MATS[state.sameMat].rho.toFixed(2) +
+           ' g/cm³，边长 1.00 / 2.00 / 3.00 cm。量出每块的 m 和 V，画到 m–V 图上 —— ' +
+           '换个材料，直线的斜率就换成另一个密度。')
+        : M.sub;
       document.querySelectorAll('[data-mode]').forEach(b =>
         b.classList.toggle('on', b.getAttribute('data-mode') === state.mode));
+      // 材料选择器只在「同种物质」模式下出现（另外两个模式的材料是写死的）
+      const mrow = $('den3-matrow');
+      mrow.style.display = state.mode === 'same' ? '' : 'none';
+      document.querySelectorAll('[data-smat]').forEach(b =>
+        b.classList.toggle('on', b.getAttribute('data-smat') === state.sameMat));
 
       const i = state.onScale;
       const has = i !== null && i !== undefined;
@@ -1266,8 +1342,13 @@
         b.className = 'cb' + (state.onScale === k ? ' sel' : '');
         b.setAttribute('data-cube', String(k));
         const col = MATS[c.mat].col;
+        // 🔴 不能写 c.a —— 「同质量比体积」模式的物块是按 M 定义的，c.a 是 undefined
+        //    （原来这一行会直接 TypeError）。按 a 定义的就显示边长，按 M 定义的就显示质量：
+        //    mass 模式六行全读「m = 21.6 g」，用户一眼就能看出六块真的一样重。
         b.innerHTML = '<i style="background:' + rgb(col, 1) + '"></i>' +
-          '<span>' + MATS[c.mat].name + '</span><b>a = ' + c.a.toFixed(2) + ' cm</b>';
+          '<span>' + MATS[c.mat].name + '</span><b>' +
+          (c.a !== undefined ? 'a = ' + cubeA(k).toFixed(2) + ' cm'
+                             : 'm = ' + cubeM(k).toFixed(1) + ' g') + '</b>';
         b.addEventListener('click', () => { if (placeOnScale(k)) { syncUI(); } });
         list.appendChild(b);
       });
@@ -1297,7 +1378,7 @@
       $('den3-chartnote').innerHTML = (fit.n >= 2 && isFinite(fit.slope))
         ? ('同种物质（' + MATS[fit.mat].short + '）的 ' + fit.n + ' 个点连成一条<b>过原点</b>的直线，斜率 ' +
            fit.slope.toFixed(2) + ' = 该物质的<b>密度</b>（' + fit.rho.toFixed(2) + ' g/cm³）。')
-        : '横轴 V / cm³，纵轴 m / g。同种物质的点会连成一条<b>过原点</b>的直线，斜率就是密度。';
+        : '横轴 V / cm³，纵轴 m / g。同种物质的点会连成一条<b>过原点</b>的直线，斜率就是密度 —— 换成别的材料，斜率就换成另一个值。';
 
       // 密度表
       const dt = $('den3-dtab');
@@ -1311,18 +1392,28 @@
       // 分析与结论
       const an = $('den3-analysis');
       const fit2 = lineFit();
+      // 下面这些数字全部【由当前物块算出来】，不写死 —— 加了银、改了物块数量之后，
+      // 写死的「五块 / 2.4 cm³ ~ 43.2 cm³」立刻就错了。
+      const cs2 = cubesOf();
+      let mMn = Infinity, mMx = -Infinity, vMn = Infinity, vMx = -Infinity;
+      for (let k = 0; k < cs2.length; k++) {
+        const m = cubeM(k), v = cubeV(k);
+        mMn = Math.min(mMn, m); mMx = Math.max(mMx, m);
+        vMn = Math.min(vMn, v); vMx = Math.max(vMx, v);
+      }
       let html = '';
       if (state.mode === 'vol') {
-        html += '<div class="line"><span>五块体积</span><b>都是 8.00 cm³</b></div>' +
-                '<div class="line"><span>质量范围</span><b>4.0 g ~ 71.2 g</b></div>' +
+        html += '<div class="line"><span>' + cs2.length + ' 块体积</span><b>都是 ' + cubeV(0).toFixed(2) + ' cm³</b></div>' +
+                '<div class="line"><span>质量范围</span><b>' + mMn.toFixed(1) + ' g ~ ' + mMx.toFixed(1) + ' g</b></div>' +
                 '<div class="conc info">体积相同的不同物质，<b>质量一般不同</b> —— 差得越多，说明它们的密度相差越大。</div>';
       } else if (state.mode === 'mass') {
-        html += '<div class="line"><span>五块质量</span><b>都约 21.6 g</b></div>' +
-                '<div class="line"><span>体积范围</span><b>2.4 cm³ ~ 43.2 cm³</b></div>' +
+        html += '<div class="line"><span>' + cs2.length + ' 块质量</span><b>都严格等于 ' + MASS_M.toFixed(1) + ' g</b></div>' +
+                '<div class="line"><span>体积范围</span><b>' + vMn.toFixed(2) + ' cm³ ~ ' + vMx.toFixed(2) + ' cm³</b></div>' +
                 '<div class="conc info">质量相同的不同物质，<b>体积一般不同</b> —— 密度大的那块个头小。</div>';
       } else {
-        html += '<div class="line"><span>材料</span><b>铝 ρ = 2.70 g/cm³</b></div>' +
-                '<div class="line"><span>已记录</span><b>' + state.recs.length + ' / 3 组</b></div>';
+        html += '<div class="line"><span>材料</span><b>' + MATS[state.sameMat].name +
+                ' ρ = ' + MATS[state.sameMat].rho.toFixed(2) + ' g/cm³</b></div>' +
+                '<div class="line"><span>已记录</span><b>' + state.recs.length + ' / ' + cs2.length + ' 组</b></div>';
         if (fit2.n >= 2 && isFinite(fit2.slope)) {
           html += '<div class="line"><span>m–V 直线斜率</span><b>' + fit2.slope.toFixed(3) + ' g/cm³</b></div>' +
                   '<div class="line"><span>截距</span><b>' + fit2.intercept.toFixed(3) + ' g</b></div>' +
@@ -1358,6 +1449,22 @@
       state.solved = false;
       $('den3-fb').className = 'fb';
       syncUI();
+      state.dirty = true;
+    }
+    // 「同种物质」模式换材料：三块物块整体换成另一种物质（边长仍是 1/2/3 cm）。
+    // 摆位变了 ⇒ 和 setMode 一样清掉已记数据，否则新旧材料的点会混在同一张 m–V 图上，
+    // 而拟合函数只认第一种材料（fitRecs），图会自相矛盾。
+    function setSameMat(m) {
+      if (SAME_MATS.indexOf(m) < 0) return;
+      if (state.sameMat === m) return;
+      state.sameMat = m;
+      state.onScale = null;
+      state.anim = [];
+      clearRecords();
+      state.solved = false;
+      $('den3-fb').className = 'fb';
+      syncUI();
+      state.dirty = true;
     }
     function applyView(k) {
       if (!VIEWS[k]) return;
@@ -1446,6 +1553,9 @@
     });
     document.querySelectorAll('[data-mode]').forEach(b =>
       b.addEventListener('click', () => setMode(b.getAttribute('data-mode'))));
+    // 材料选择（只在「同种物质三组数据」模式下可见）
+    document.querySelectorAll('[data-smat]').forEach(b =>
+      b.addEventListener('click', () => setSameMat(b.getAttribute('data-smat'))));
     document.querySelectorAll('[data-view]').forEach(b =>
       b.addEventListener('click', () => applyView(b.getAttribute('data-view'))));
     $('den3-submit').addEventListener('click', doSubmit);
@@ -1517,10 +1627,18 @@
       state: state,
       consts: {
         U: U, MATS: MATS, MODES: MODES, MAT_ORDER: MAT_ORDER, DENSITY_TABLE: DENSITY_TABLE,
-        SLOT_X: SLOT_X, WIDE_X: WIDE_X, ROW_Z: ROW_Z, AMAX: AMAX,
+        SLOT_X: SLOT_X, WIDE_X: WIDE_X, MASS_X: MASS_X, ROW_Z: ROW_Z, AMAX: AMAX,
+        MASS_M: MASS_M, SAME_A: SAME_A, SAME_MATS: SAME_MATS, AXIS_V: AXIS_V, AXIS_M: AXIS_M,
         SCALE_X: SCALE_X, SCALE_Z: SCALE_Z, SCALE_W: SCALE_W, SCALE_D: SCALE_D, SCALE_H: SCALE_H, PLAT_Y: PLAT_Y,
         TABLE_HW: TABLE_HW, TABLE_HD: TABLE_HD, CAMD: CAMD, TARGET: TARGET, VIEWS: VIEWS,
-        ANIM_DUR: ANIM_DUR, CH_V_MAX: CH_V_MAX, CH_M_MAX: CH_M_MAX, CH_PAD: CH_PAD, LAT_K: LAT_K, LAT_MIN: LAT_MIN, LAT_MAX: LAT_MAX
+        ANIM_DUR: ANIM_DUR, CH_PAD: CH_PAD, LAT_K: LAT_K, LAT_MIN: LAT_MIN, LAT_MAX: LAT_MAX,
+        // 🔴 轴上限是【每次重画都会变的 let】，必须用 getter 导出。写成 CH_V_MAX: CH_V_MAX
+        //    只会在建对象那一刻快照一个 48，之后 syncAxis() 改了它也永远是 48 —— 测试读到的
+        //    是死值，等于什么都没验。
+        get CH_V_MAX() { return CH_V_MAX; },
+        get CH_M_MAX() { return CH_M_MAX; },
+        get CH_V_STEP() { return CH_V_STEP; },
+        get CH_M_STEP() { return CH_M_STEP; }
       },
       size: () => ({ w: state.w, h: state.h, dpr: state.dpr }),
       makeCam: makeCam, project: project, unproject: unproject, envelopePoints: envelopePoints,
@@ -1535,11 +1653,24 @@
       chartSize: () => ({ w: chartW, h: chartH }),
       fitRecs: fitRecs, lineFit: lineFit, submitRho: submitRho,
       placeOnScale: placeOnScale, addRecord: addRecord, clearRecords: clearRecords,
-      setMode: setMode, applyView: applyView, resetAll: resetAll,
+      setMode: setMode, setSameMat: setSameMat, applyView: applyView, resetAll: resetAll,
+      syncAxis: syncAxis,
+      sameMat: () => state.sameMat,
+      // 当前轴设置（syncAxis 算出来的），自检用它验「换材料 / 换模式后轴上限真的跟着变」
+      axis: () => ({ V: CH_V_MAX, m: CH_M_MAX, vStep: CH_V_STEP, mStep: CH_M_STEP }),
       frameStep: frameStep, driveAnim: driveAnim,
-      setOnScale: k => { state.onScale = (k === null ? null : +k); state.anim = []; syncUI(); },
+      setOnScale: k => { state.onScale = (k === null ? null : +k); state.anim = []; state.dirty = true; syncUI(); },
       setMolecules: v => { state.molecules = !!v; state.dirty = true; },
-      pushRecord: (mat, a) => { state.recs.push({ key: mat + '|' + a.toFixed(2), mat: mat, a: a, V: a * a * a, m: rhoOf(mat) * a * a * a }); syncUI(); },
+      // pushRecord(mat, a)      按边长 a(cm) 定义一块
+      // pushRecord(mat, a, M)   第三参给了就按质量 M(g) 定义 —— 边长由 a = cbrt(M/ρ) 反算，
+      //                         和页面里「同质量比体积」模式的 cubeA 走同一条公式
+      pushRecord: (mat, a, M) => {
+        const aa = (M === undefined) ? a : Math.cbrt(M / rhoOf(mat));
+        state.recs.push({ key: mat + '|' + aa.toFixed(2), mat: mat, a: aa, V: aa * aa * aa, m: rhoOf(mat) * aa * aa * aa });
+        syncUI();
+      },
+      // 电子秤上那串读数（用户真正看到的字），断言直接读它，别读 cubeM 的中间量
+      scaleText: () => $('den3-mnum').textContent,
       render: render, syncUI: syncUI, drawChart: drawChart,
       drawn: () => state.drawn,
       labels: () => (window.__den3LabelLog || []).slice()
