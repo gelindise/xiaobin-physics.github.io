@@ -105,7 +105,6 @@
     "javalab_相机光学.html",
     "javalab_近视远视矫正.html",
     "托盘天平的使用.html",
-    "水的反常膨胀.html",
     "phet_弹簧弹力.html",
     "phet_胡克定律.html",
     "phet_重力轨道.html",
