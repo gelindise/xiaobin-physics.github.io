@@ -70,6 +70,15 @@ import * as THREE from './assets/optics-three.min.js';
   const TW_MAX = 100;                                // 标准大气压下水浴上限
   const M_SAMPLE = 0.02;                             // 试样 20 g
 
+  /* --- 凝固（冷却）方向：把同一台仪器反过来用 ---
+     撤走酒精灯、把烧杯里的水换成冰水。冰没化完之前冰水浴温度钉在 0 ℃，
+     试样传给它的热量全部用来化冰 —— 这样水浴一直比试样冷，热流方向才稳定。 */
+  const FREEZE_T0 = 65;                              // 凝固实验的起点温度（刚熔化完的液态海波）
+  const T_ICE = 0;                                   // 冰水浴温度（冰没化完时恒定）
+  const M_ICE = 0.12;                                // 冰水浴里的冰 120 g
+  const L_ICE = 3.34e5;                              // 冰的熔化热 J/kg
+  const T_STOP_COLD = 10;                            // 降到 10 ℃ 判定凝固实验结束
+
   const SUBSTANCES = {
     hypo: {
       name: '海波', crystal: true, tm: 48,
@@ -86,9 +95,11 @@ import * as THREE from './assets/optics-three.min.js';
   /* ------------------------------ 状态 ------------------------------ */
   const state = {
     substance: 'hypo',
+    direction: 'melt',   // 'melt' = 熔化（水浴加热）；'freeze' = 凝固（冰水浴冷却）
     running: false,
     speed: 4,
     t: 0, Tt: AMB, Tw: AMB, phi: 0, soft: 0,
+    iceLeft: 0,          // 冰水浴里剩下的冰（kg）；0 = 没在用冰水浴
     finished: false,
     step: 0,
     records: [],
@@ -96,7 +107,9 @@ import * as THREE from './assets/optics-three.min.js';
     thAnim: 1,           // 动画用的平滑值（默认就是装好的状态，点「提起」才看得到动作）
     xray: true           // 透视：试样半透明，能看见里面的玻璃泡
   };
-  const toggles = { bath: true, melt: true, micro: true };
+  /* plot = 「手动描点」模式：把学生自己记下的那几组 (t, T) 标到图上；
+     plotLink = 学生自己把点连成折线。两个都是开关，不参与物理推进。 */
+  const toggles = { bath: true, melt: true, micro: true, plot: false, plotLink: false };
 
   const VIEWS = {
     front: { yaw: -0.08, pitch: 0.10, dist: 85, ty: 22.5 },
@@ -775,6 +788,31 @@ import * as THREE from './assets/optics-three.min.js';
   waterTop.position.set(0, WATER_TOP, 0);
   beaker.add(waterTop);
 
+  /* --- 冰水浴的碎冰：只有「凝固」方向才显示 ---
+     半透明的冰块漂在水面上，是为了让「烧杯里的水已经不是热水了」一眼可见 ——
+     否则两个方向在画面上只差一盏酒精灯，学生分不清自己在做哪个实验。 */
+  const iceGroup = new THREE.Group();
+  beaker.add(iceGroup);
+  const iceMat = new THREE.MeshPhysicalMaterial({
+    color: '#eef8ff', roughness: 0.20, metalness: 0.0, transparent: true,
+    opacity: 0.74, clearcoat: 1.0, clearcoatRoughness: 0.12, envMapIntensity: 1.7
+  });
+  const ices = [];
+  (() => {
+    const rndI = mulberry32(31337);
+    for (let i = 0; i < 15; i++) {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), iceMat);
+      const sc = 0.52 + rndI() * 0.6;
+      m.scale.set(sc * (0.82 + rndI() * 0.5), sc * (0.58 + rndI() * 0.44), sc * (0.82 + rndI() * 0.5));
+      const a = rndI() * 6.28, rr = (0.18 + rndI() * 0.78) * (BK_R - 0.95);
+      m.position.set(Math.cos(a) * rr, WATER_TOP - 0.26 - rndI() * 0.55, Math.sin(a) * rr);
+      m.rotation.set(rndI() * 0.8, rndI() * 6.28, rndI() * 0.8);
+      m.userData = { ph: rndI() * 6.28, y0: m.position.y, spin: (rndI() - 0.5) * 0.4 };
+      iceGroup.add(m); ices.push(m);
+    }
+  })();
+  iceGroup.visible = false;
+
   /* --- 试管 --- */
   const tube = new THREE.Group();
   scene.add(tube);
@@ -1021,24 +1059,42 @@ import * as THREE from './assets/optics-three.min.js';
     if (state.substance === 'hypo') {
       const s = sub.hypo;
       if (state.phi > 0 && state.phi < 1) {
-        state.phi = Math.min(1, state.phi + q / (M_SAMPLE * s.L) * dt);
+        /* 平台：q > 0 吸热熔化（φ 增），q < 0 放热凝固（φ 减）。
+           两个方向都把试样温度钉在 s.tm —— 这是「凝固点 = 熔点」在代码里的唯一出处，
+           不是两处各写一遍常量（那样两边的数就可能不一致）。 */
+        state.phi = clamp(state.phi + q / (M_SAMPLE * s.L) * dt, 0, 1);
         state.Tt = s.tm;
       } else if (state.phi >= 1) {
         state.Tt += q / (M_SAMPLE * s.cl) * dt;
+        if (state.Tt <= s.tm) { state.Tt = s.tm; state.phi = 1 - 1e-6; }   // 液态降到熔点 → 开始凝固
       } else {
         state.Tt += q / (M_SAMPLE * s.cs) * dt;
-        if (state.Tt >= s.tm) { state.Tt = s.tm; state.phi = 1e-6; }
+        if (state.Tt >= s.tm) { state.Tt = s.tm; state.phi = 1e-6; }       // 固态升到熔点 → 开始熔化
       }
     } else {
       state.Tt += q / (M_SAMPLE * cEffParaffin(state.Tt)) * dt;
       state.soft = clamp((state.Tt - 44) / 16, 0, 1);
     }
-    if (state.Tw < TW_MAX) {
+
+    if (state.direction === 'freeze') {
+      /* 冰水浴：冰没化完 → 温度恒为 0 ℃，吸进来的热全部变成化冰的潜热。
+         两项都要算：从试样吸走的热（−q，q<0 时为正）+ 从环境漏进来的热。 */
+      if (state.iceLeft > 0) {
+        state.Tw = T_ICE;
+        const inQ = Math.max(0, -q) + Math.max(0, K_LOSS * (AMB - state.Tw));
+        state.iceLeft = Math.max(0, state.iceLeft - inQ / L_ICE * dt);
+      } else {
+        state.Tw += (-q - K_LOSS * (state.Tw - AMB)) / (M_WATER * C_WATER) * dt;
+        if (state.Tw > AMB) state.Tw = AMB;
+      }
+    } else if (state.Tw < TW_MAX) {
       state.Tw += (P_LAMP - q - K_LOSS * (state.Tw - AMB)) / (M_WATER * C_WATER) * dt;
       if (state.Tw > TW_MAX) state.Tw = TW_MAX;
     }
+
     state.t += dt;
-    if (state.Tt >= 96) state.finished = true;
+    if (state.direction === 'freeze') { if (state.Tt <= T_STOP_COLD) state.finished = true; }
+    else if (state.Tt >= 96) state.finished = true;
   }
 
   function stepSim(dtReal) {
@@ -1052,9 +1108,19 @@ import * as THREE from './assets/optics-three.min.js';
   }
 
   function resetSim() {
-    state.t = 0; state.Tt = AMB; state.Tw = AMB;
-    state.phi = 0; state.soft = 0; state.finished = false;
+    state.t = 0; state.finished = false;
     series.length = 0;
+    if (state.direction === 'freeze') {
+      /* 凝固实验的起点不是室温固态，而是「刚熔化完的液态」——
+         学生先在熔化方向把海波化开，再切到这里看它怎么冻回去。
+         海波：φ = 1（全液态）；石蜡：soft = 1（全软化），都没有晶格。 */
+      state.Tt = FREEZE_T0; state.Tw = T_ICE; state.iceLeft = M_ICE;
+      state.phi = state.substance === 'hypo' ? 1 : 0;
+      state.soft = state.substance === 'hypo' ? 0 : 1;
+    } else {
+      state.Tt = AMB; state.Tw = AMB; state.iceLeft = 0;
+      state.phi = 0; state.soft = 0;
+    }
     pushSample();
   }
 
@@ -1073,6 +1139,23 @@ import * as THREE from './assets/optics-three.min.js';
     mushMesh.visible = isHypo;
     waxMesh.visible = !isHypo;
     waxTop.visible = !isHypo;
+  }
+
+  /* 实验方向决定器材形态：熔化 = 酒精灯点着、水浴加热；凝固 = 撤走酒精灯、换上冰水浴。
+     画面量（灯在不在、冰在不在）一并记进 state.drawn，供自检直接读 ——
+     否则「灯到底撤了没有」只能靠猜，材质和布尔值都可能是装饰。 */
+  function updateDirectionVisual() {
+    const freeze = state.direction === 'freeze';
+    lamp.visible = !freeze;              // 酒精灯连同灯焰、灯焰光源一起撤走
+    flameGroup.visible = !freeze;
+    flameLight.visible = !freeze;
+    iceGroup.visible = freeze;
+    waterMat.color.set(freeze ? '#a9dff2' : '#8ed3ea');
+    state.drawn = state.drawn || {};
+    state.drawn.direction = state.direction;
+    state.drawn.lampVisible = lamp.visible;
+    state.drawn.iceVisible = iceGroup.visible;
+    requestRender();
   }
 
   function updateSample() {
@@ -1165,10 +1248,72 @@ import * as THREE from './assets/optics-three.min.js';
     if (series.length > 3000) series.splice(0, 1000);
   }
 
-  function drawChart() {
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  /* 曲线图与「手动描点」共用【同一套】坐标映射。
+     两处各算一遍的话，描点层和真值曲线会各自落在不同的横轴上 ——
+     看着都「画出来了」，其实错位，而单看任一层的断言都发现不了。 */
+  function chartGeom() {
     const W = chartCanvas.clientWidth || 640;
     const H = chartCanvas.clientHeight || 232;
+    const padL = 42, padR = 16, padT = 14, padB = 26;
+    const pw = W - padL - padR, ph = H - padT - padB;
+    // 凝固过程只有 60 s 左右，用 300 s 的横轴会把整条曲线挤在左边一小段里
+    const tFloor = state.direction === 'freeze' ? 120 : 300;
+    const tMax = Math.max(tFloor, Math.ceil((state.t + 20) / 60) * 60);
+    const T0 = 10, T1 = 110;
+    return {
+      W, H, padL, padR, padT, padB, pw, ph, tMax, T0, T1,
+      X: (t) => padL + (t / tMax) * pw,
+      Y: (T) => padT + (T1 - T) / (T1 - T0) * ph
+    };
+  }
+
+  /* 真值曲线在任意时刻的读数（线性插值）。描点的偏差、图上画的那段竖线、
+     自检算的「描点离真值多远」都走这一个函数 —— 一处定义、三处同源。 */
+  function truthAt(t) {
+    if (!series.length) return NaN;
+    if (series.length === 1 || t <= series[0][0]) return series[0][1];
+    const lastP = series[series.length - 1];
+    if (t >= lastP[0]) return lastP[1];
+    for (let i = 1; i < series.length; i++) {
+      const a = series[i - 1], b = series[i];
+      if (t <= b[0]) {
+        const span = b[0] - a[0];
+        return span <= 0 ? b[1] : a[1] + (b[1] - a[1]) * (t - a[0]) / span;
+      }
+    }
+    return lastP[1];
+  }
+
+  /* 学生描的点 = 他自己按「记录数据」记下的那几组 (t, 试样温度)。
+     ★ 只取【当前实验方向】的记录：熔化方向记的点拿去和凝固的真值曲线比，
+       会凭空出现几十摄氏度的「偏差」—— 那不是误差，是拿错了曲线。
+     直接取自 state.records，不另存一份，否则「表里 5 条、图上 6 个点」查不出来。 */
+  function plotDots() {
+    const G = chartGeom();
+    return state.records
+      .filter((r) => r.direction === state.direction)
+      .map((r) => ({ t: r.t, T: r.Tt, x: G.X(r.t), y: G.Y(r.Tt) }));
+  }
+
+  /* 描点层的全部可读量都从这里出 —— 画面、侧栏文案、自检读的是同一份数据。 */
+  function plotStats() {
+    const dots = plotDots();
+    const devs = dots.map((d) => {
+      const Tt = truthAt(d.t);
+      return isFinite(Tt) ? d.T - Tt : NaN;
+    });
+    const abs = devs.filter((v) => isFinite(v)).map(Math.abs);
+    return {
+      dots, devs, n: dots.length,
+      devMax: abs.length ? Math.max.apply(null, abs) : NaN,
+      devMean: abs.length ? abs.reduce((a, v) => a + v, 0) / abs.length : NaN
+    };
+  }
+
+  function drawChart() {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const G = chartGeom();
+    const { W, H, padL, padR, padT, padB, ph, tMax, X, Y } = G;
     if (chartCanvas.width !== Math.round(W * dpr) || chartCanvas.height !== Math.round(H * dpr)) {
       chartCanvas.width = Math.round(W * dpr);
       chartCanvas.height = Math.round(H * dpr);
@@ -1177,12 +1322,8 @@ import * as THREE from './assets/optics-three.min.js';
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
     g.clearRect(0, 0, W, H);
 
-    const padL = 42, padR = 16, padT = 14, padB = 26;
-    const pw = W - padL - padR, ph = H - padT - padB;
-    const tMax = Math.max(300, Math.ceil((state.t + 20) / 60) * 60);
-    const T0 = 10, T1 = 110;
-    const X = (t) => padL + (t / tMax) * pw;
-    const Y = (T) => padT + (T1 - T) / (T1 - T0) * ph;
+    state.drawn = state.drawn || {};
+    state.drawn.chartTMax = tMax;      // 供自检直接读：凝固方向的横轴不该按熔化那 300 s 走
 
     g.fillStyle = '#0a1a2b';
     g.fillRect(0, 0, W, H);
@@ -1279,6 +1420,49 @@ import * as THREE from './assets/optics-three.min.js';
       g.lineWidth = 2;
       g.beginPath(); g.arc(X(last[0]), Y(last[1]), 8, 0, 7); g.stroke();
     }
+
+    /* --- 手动描点层：学生自己记下的点、自己连的折线、与真值曲线的偏差 ---
+       画在真值曲线【之后】才不会被曲线盖住；用紫红色，和橙色真值曲线一眼分得开。 */
+    const PS = plotStats();
+    if (toggles.plot && PS.n) {
+      if (series.length > 1) {
+        g.strokeStyle = 'rgba(232,121,249,0.55)';
+        g.lineWidth = 1.2;
+        g.setLineDash([3, 3]);
+        for (let i = 0; i < PS.dots.length; i++) {
+          const d = PS.dots[i], dev = PS.devs[i];
+          if (!isFinite(dev)) continue;
+          const yt = d.y - dev * (Y(0) - Y(1));       // 偏差换算成像素：每 1 ℃ 的像素高
+          if (Math.abs(yt - d.y) < 0.8) continue;     // 几乎重合就不画，免得糊成一团
+          g.beginPath(); g.moveTo(d.x, d.y); g.lineTo(d.x, yt); g.stroke();
+        }
+        g.setLineDash([]);
+      }
+      if (toggles.plotLink && PS.n > 1) {
+        g.strokeStyle = '#e879f9';
+        g.lineWidth = 2;
+        g.setLineDash([7, 4]);
+        g.beginPath();
+        PS.dots.forEach((d, i) => (i ? g.lineTo(d.x, d.y) : g.moveTo(d.x, d.y)));
+        g.stroke();
+        g.setLineDash([]);
+      }
+      for (const d of PS.dots) {
+        g.fillStyle = '#f5d0fe';
+        g.strokeStyle = '#a21caf';
+        g.lineWidth = 1.4;
+        g.beginPath(); g.arc(d.x, d.y, 3.6, 0, 7); g.fill(); g.stroke();
+      }
+    }
+
+    /* 画面量落进 state.drawn —— 自检直接读这几个数，
+       而不是去数画布上有几个紫点（那要靠像素猜，且「点了按钮没重画」也照样绿）。 */
+    state.drawn.plotMode = !!toggles.plot;
+    state.drawn.plotLinked = !!(toggles.plot && toggles.plotLink);
+    state.drawn.plotDots = PS.dots.map((d) => ({ t: d.t, T: d.T, x: d.x, y: d.y }));
+    state.drawn.plotSegs = (toggles.plot && toggles.plotLink && PS.n > 1) ? PS.n - 1 : 0;
+    state.drawn.plotDevMax = PS.devMax;
+    state.drawn.plotDevMean = PS.devMean;
   }
 
   /* ==========================================================================
@@ -1372,11 +1556,14 @@ import * as THREE from './assets/optics-three.min.js';
     g.fillText(isHypo ? '蓝＝晶格内 · 橙＝已挣脱' : '石蜡分子本来就不规则排列', 8, 7);
 
     if (isHypo) {
+      const freezing = state.direction === 'freeze';
       microText.textContent = frac <= 0.001
-        ? '分子规则排列在晶格上，只在小范围振动'
+        ? (freezing ? '分子已全部排回晶格，凝固完成（固态）' : '分子规则排列在晶格上，只在小范围振动')
         : frac >= 0.999
-          ? '晶格全部瓦解，分子可以自由移动（液态）'
-          : `晶格正在瓦解（${(frac * 100).toFixed(0)}%），但温度不变 → 分子平均动能不变`;
+          ? (freezing ? '分子在液态里自由移动，温度正在下降' : '晶格全部瓦解，分子可以自由移动（液态）')
+          : (freezing
+            ? `晶格正在重建（已凝固 ${((1 - frac) * 100).toFixed(0)}%）：分子排进晶格要放出热量，放出的热正好补住散失的热 → 温度不变`
+            : `晶格正在瓦解（${(frac * 100).toFixed(0)}%），但温度不变 → 分子平均动能不变`);
     } else {
       microText.textContent = frac <= 0.02
         ? '分子排列不规则，靠得很紧，只能在原位振动'
@@ -1390,6 +1577,7 @@ import * as THREE from './assets/optics-three.min.js';
   const els = {
     sample: $('metricSample'), bath: $('metricBath'), state: $('metricState'),
     time: $('metricTime'), melt: $('metricMelt'),
+    bathLabel: $('metricBathLabel'), meltLabel: $('metricMeltLabel'), timeLabel: $('metricTimeLabel'),
     hudSample: $('hudSample'), hudBath: $('hudBath'),
     finding: $('finding'),
     runBtn: $('runBtn'), pauseBtn: $('pauseBtn'), resetBtn: $('resetBtn')
@@ -1397,32 +1585,35 @@ import * as THREE from './assets/optics-three.min.js';
 
   function statusText() {
     const s = sub[state.substance];
+    const freeze = state.direction === 'freeze';
     if (state.substance === 'hypo') {
-      if (state.phi <= 0.001) return state.Tt < s.tm ? '固态 · 升温中' : '即将熔化';
-      if (state.phi >= 0.999) return '液态 · 升温中';
-      return '固液共存 · 正在熔化';
+      if (state.phi <= 0.001) return freeze ? '固态 · 降温中' : (state.Tt < s.tm ? '固态 · 升温中' : '即将熔化');
+      if (state.phi >= 0.999) return freeze ? '液态 · 降温中' : '液态 · 升温中';
+      return freeze ? '固液共存 · 正在凝固' : '固液共存 · 正在熔化';
     }
-    if (state.soft <= 0.02) return '固态 · 升温中';
-    if (state.soft >= 0.985) return '已熔化成液态';
-    return '逐渐变软 · 无固定熔点';
+    if (state.soft <= 0.02) return freeze ? '已凝固成固态' : '固态 · 升温中';
+    if (state.soft >= 0.985) return freeze ? '液态 · 降温中' : '已熔化成液态';
+    return freeze ? '逐渐变硬 · 无固定凝固点' : '逐渐变软 · 无固定熔点';
   }
 
   /* 右侧窄表格里的短状态，四个字以内才排得下一行 */
   function shortState() {
     const f = meltFraction();
+    const freeze = state.direction === 'freeze';
     if (state.substance === 'hypo') {
       if (f <= 0.001) return '固态';
       if (f >= 0.999) return '液态';
-      return '熔化中';
+      return freeze ? '凝固中' : '熔化中';
     }
     if (f <= 0.02) return '固态';
     if (f >= 0.985) return '液态';
-    return '软化中';
+    return freeze ? '变硬中' : '软化中';
   }
 
   function updateReadouts() {
     const s = sub[state.substance];
     const frac = meltFraction();
+    const freeze = state.direction === 'freeze';
     els.sample.textContent = `${state.Tt.toFixed(1)} ℃`;
     els.bath.textContent = `${state.Tw.toFixed(1)} ℃`;
     els.state.textContent = statusText();
@@ -1430,15 +1621,34 @@ import * as THREE from './assets/optics-three.min.js';
     els.melt.textContent = `${(frac * 100).toFixed(0)}%`;
     els.hudSample.textContent = state.Tt.toFixed(1);
     els.hudBath.textContent = state.Tw.toFixed(1);
+    if (els.meltLabel) els.meltLabel.textContent = freeze ? '凝固 / 变硬程度' : '熔化 / 软化程度';
+    if (els.bathLabel) els.bathLabel.textContent = freeze ? '冰水浴温度' : '水浴温度';
+    if (els.timeLabel) els.timeLabel.textContent = freeze ? '冷却时间' : '加热时间';
 
     let hint;
     if (state.substance === 'hypo') {
-      if (state.phi <= 0.001) {
+      if (freeze) {
+        if (state.phi >= 0.999) {
+          hint = `冰水浴正在把热量吸走：液态海波从 ${FREEZE_T0} ℃ 开始下降。留意它会不会一路降下去 —— 上一轮加热时它在 48 ℃ 停过一次。`;
+        } else if (state.phi > 0.001) {
+          hint = `凝固中：温度又一次钉在 ${s.tm} ℃ 不动了，而冰水浴还在不断吸热。这段时间放出的热量用来让分子重新排回晶格 —— 凝固过程要持续放热，温度才保持不变。`;
+        } else {
+          hint = `已全部凝固：变成固态后温度又开始下降。凝固时那个不变的 ${s.tm} ℃ 就是海波的凝固点 —— 和它的熔点一模一样。`;
+        }
+      } else if (state.phi <= 0.001) {
         hint = `加热中：海波是晶体，温度升到 ${s.tm} ℃ 之前一直是固态。留意水浴温度比试样高多少 —— 水浴法让它升得慢、受热匀。`;
       } else if (state.phi < 0.999) {
         hint = `熔化中：温度死死钉在 ${s.tm} ℃，而水浴已经升到 ${state.Tw.toFixed(1)} ℃。这段时间吸收的热量全部用来破坏晶格，温度不变 —— 这就是晶体有固定熔点的原因。`;
       } else {
-        hint = `已全部熔化：变成液态后温度又开始上升。整个熔化过程中，温度${s.tm} ℃始终没变。`;
+        hint = `已全部熔化：变成液态后温度又开始上升。整个熔化过程中，温度${s.tm} ℃始终没变。现在把「实验方向」切到凝固，看它怎么冻回去。`;
+      }
+    } else if (freeze) {
+      if (state.soft >= 0.985) {
+        hint = '冰水浴降温中：石蜡从液态开始变凉。它同样没有固定的凝固温度，留意温度会不会像海波那样停住。';
+      } else if (state.soft > 0.02) {
+        hint = '正在变硬：石蜡越来越稠、越来越硬，但温度一直在下降，曲线只是拐弯，始终没有平台 —— 非晶体也没有固定的凝固点。';
+      } else {
+        hint = '已完全凝固：整条降温曲线从头到尾都在下降，从来没有出现过水平平台。';
       }
     } else {
       if (state.soft <= 0.02) {
@@ -1453,11 +1663,13 @@ import * as THREE from './assets/optics-three.min.js';
   }
 
   function refreshAll(dt) {
+    updateDirectionVisual();
     applySubstanceVisual();
     updateSample();
     drawChart();
     drawMicro(dt || 0.016);
     updateReadouts();
+    syncPlotUI();          // 切方向 / 重置之后，描点与按钮状态跟着刷新（此刻 drawChart 已跑完）
     requestRender();
   }
 
@@ -1470,13 +1682,25 @@ import * as THREE from './assets/optics-three.min.js';
 
   function animateParts(dt) {
     clock += dt;
-    // 火焰摇曳
+    // 火焰摇曳（凝固方向酒精灯已撤走，整组不画，也就没必要再算摇曳）
     const wob = Math.sin(clock * 7.3) * 0.5 + Math.sin(clock * 11.7 + 1.3) * 0.3 + Math.sin(clock * 3.1) * 0.2;
     const wob2 = Math.sin(clock * 9.1 + 0.7);
-    flameGroup.scale.set(1 + wob * 0.055, 1 + wob2 * 0.045, 1 + wob * 0.05);
-    flameGroup.position.x = wob * 0.11;
-    flameGroup.rotation.z = wob * 0.035;
-    flameLight.intensity = 3.2 + wob * 0.5;
+    if (flameGroup.visible) {
+      flameGroup.scale.set(1 + wob * 0.055, 1 + wob2 * 0.045, 1 + wob * 0.05);
+      flameGroup.position.x = wob * 0.11;
+      flameGroup.rotation.z = wob * 0.035;
+      flameLight.intensity = 3.2 + wob * 0.5;
+    }
+
+    // 碎冰随水轻轻起伏、慢慢转（凝固方向才有）
+    if (iceGroup.visible) {
+      for (const m of ices) {
+        const u = m.userData;
+        u.ph += dt * 0.9;
+        m.position.y = u.y0 + Math.sin(u.ph) * 0.045;
+        m.rotation.y += u.spin * dt;
+      }
+    }
 
     // 温度计插入 / 拔出：指数平滑跟随目标，动作看得见（支架横臂与细线一起上下滑）
     state.thAnim += (state.thDepth - state.thAnim) * Math.min(1, dt * 3.6);
@@ -1588,12 +1812,27 @@ import * as THREE from './assets/optics-three.min.js';
     });
   });
 
+  /* --- 实验方向：熔化（水浴加热）/ 凝固（冰水浴冷却） ---
+     同一台仪器、同一套热平衡方程，只是把热流方向反过来 ——
+     所以两个方向的平台温度必然相同，这正是「凝固点 = 熔点」的证据。 */
+  function setDirection(k) {
+    state.direction = k;
+    document.querySelectorAll('[data-direction]').forEach((b) => b.classList.toggle('active', b.dataset.direction === k));
+    resetSim();
+    setRunning(false);          // 停表 + 按钮文案跟着方向换（「开始加热」/「开始冷却」）
+    refreshAll();
+  }
+  document.querySelectorAll('[data-direction]').forEach((btn) => {
+    btn.addEventListener('click', () => setDirection(btn.dataset.direction));
+  });
+
   /* --- 运行控制 --- */
   function setRunning(v) {
     state.running = v;
     els.runBtn.disabled = v;
     els.pauseBtn.disabled = !v;
-    els.runBtn.textContent = state.t > 0 ? '继续加热' : '开始加热';
+    const verb = state.direction === 'freeze' ? '冷却' : '加热';
+    els.runBtn.textContent = state.t > 0 ? `继续${verb}` : `开始${verb}`;
     els.pauseBtn.textContent = '暂停';
   }
   els.runBtn.addEventListener('click', () => {
@@ -1646,7 +1885,10 @@ import * as THREE from './assets/optics-three.min.js';
     { name: '02 水浴加热', text: '<strong>为什么要把试管泡在水里：</strong>火焰直接加热试管，受热不均匀、温度升得太快，来不及记录。用水浴加热，试管里的物质受热<b>均匀</b>、升温<b>缓慢</b>，而且最高只会接近 100 ℃，安全又便于观察。' },
     { name: '03 海波熔化', text: '<strong>找熔点：</strong>选海波开始加热。温度升到 <b>48 ℃</b> 时注意看 —— 温度计的液柱停住了，但酒精灯还在烧，物质还在吸热。这个不变的温度就是海波的<b>熔点</b>。' },
     { name: '04 石蜡对照', text: '<strong>换石蜡：</strong>换成石蜡重新加热。石蜡没有固定熔点：它先变软、再变稀，温度<b>一直在升高</b>，曲线只有“拐弯”，没有平台。这就是晶体和非晶体最本质的区别。' },
-    { name: '05 记录归纳', text: '<strong>记录归纳：</strong>把海波“开始熔化 / 熔化一半 / 刚好熔化完”三个时刻记下来，你会发现三个温度都是 48 ℃。再记录石蜡同一阶段的温度，结论就出来了。' }
+    { name: '05 海波凝固', text: '<strong>反过来做一次：</strong>把「实验方向」切到<b>凝固</b> —— 酒精灯撤走、烧杯里的热水换成<b>冰水</b>。液态海波从 65 ℃ 开始降温，降到 <b>48 ℃</b> 时温度又停住了：这次它<b>继续放热</b>（把热量交给冰水），温度却保持不变，直到全部凝固成固态，温度才接着下降。' },
+    { name: '06 凝固点=熔点', text: '<strong>把两张图叠起来看：</strong>熔化时的平台和凝固时的平台都在 <b>48 ℃</b>。同一种晶体，<b>凝固点等于熔点</b> —— 温度降下来到 48 ℃ 才开始凝固，升上去到 48 ℃ 才开始熔化，同一个温度。在右侧「③ 记录数据」里两个方向各记三组，表格会替你算出两个平台到底差多少。' },
+    { name: '07 记录归纳', text: '<strong>记录归纳：</strong>把海波“开始熔化 / 熔化一半 / 刚好熔化完”三个时刻记下来，你会发现三个温度都是 48 ℃；凝固方向再记三组，凝固平台同样是 48 ℃。最后记录石蜡同一阶段的温度，结论就出来了。' },
+    { name: '08 描点画图', text: '<strong>自己画一遍图：</strong>真实的实验报告里，图是自己<b>描点</b>画出来的，不是电脑替你画的。点右侧「③ 记录数据」里的<b>「描点画图」</b>，你刚才记下的每一组数据都会变成图上的一个<b>紫点</b>；再点<b>「连成折线」</b>，用直线把这些点依次连起来 —— 这就是手工描点得到的图像。把它和橙色的真值曲线叠在一起比：折线的拐弯处和曲线对得上吗？点记得太稀，就会把 <b>48 ℃ 的平台</b>连成一条斜线，看不出“温度不变”。所以实验时要在<b>温度快变化的地方多记几组</b>。' }
   ];
   const stepButtons = Array.from(document.querySelectorAll('[data-step]'));
   const stepDetail = $('stepDetail');
@@ -1669,8 +1911,11 @@ import * as THREE from './assets/optics-three.min.js';
   /* 清空记录（「重置」按钮和调试钩子共用同一个入口） */
   function clearRecords() {
     state.records.length = 0;
+    toggles.plotLink = false;     // 点没了，折线也没有意义
     renderRecords();
     recordHint.textContent = HINT_READY;
+    drawChart();
+    syncPlotUI();
   }
 
   function renderRecords() {
@@ -1683,7 +1928,7 @@ import * as THREE from './assets/optics-three.min.js';
     }
     recordBody.innerHTML = state.records.map((r) => `
       <tr>
-        <td>${r.substance}</td><td>${r.t.toFixed(0)} s</td><td>${r.Tt.toFixed(1)} ℃</td>
+        <td>${r.substance}${r.direction === 'freeze' ? ' · 凝固' : ''}</td><td>${r.t.toFixed(0)} s</td><td>${r.Tt.toFixed(1)} ℃</td>
         <td>${r.Tw.toFixed(1)} ℃</td><td>${r.state}</td><td>${(r.frac * 100).toFixed(0)}%</td>
       </tr>`).join('');
     recordBodySide.innerHTML = state.records.map((r, i) => `
@@ -1692,17 +1937,25 @@ import * as THREE from './assets/optics-three.min.js';
         <td>${r.Tt.toFixed(1)} ℃</td><td>${r.short}</td>
       </tr>`).join('');
 
-    const hypo = state.records.filter((r) => r.crystal && r.frac > 0.01 && r.frac < 0.99);
+    /* 平台期记录按【方向】分开统计 —— 熔化一个平台、凝固一个平台，
+       两边都记够两组时直接给出「两个平台相等」的结论（凝固点 = 熔点）。 */
+    const plateauOf = (dir) => state.records.filter((r) => r.crystal && r.direction === dir && r.frac > 0.01 && r.frac < 0.99);
+    const meltP = plateauOf('melt'), freezP = plateauOf('freeze');
+    const meanOf = (rs) => rs.reduce((a, r) => a + r.Tt, 0) / rs.length;
+    const spreadOf = (rs) => Math.max(...rs.map((r) => r.Tt)) - Math.min(...rs.map((r) => r.Tt));
     let text;
-    if (hypo.length >= 2) {
-      const ts = hypo.map((r) => r.Tt);
-      const spread = Math.max(...ts) - Math.min(...ts);
-      text = `熔化过程的 ${hypo.length} 次记录中，试样温度最大只差 ${spread.toFixed(1)} ℃ —— 晶体熔化时温度确实不变。`;
+    if (meltP.length >= 2 && freezP.length >= 2) {
+      const a = meanOf(meltP), b = meanOf(freezP);
+      text = `熔化平台 ${a.toFixed(1)} ℃、凝固平台 ${b.toFixed(1)} ℃，两者相差 ${Math.abs(a - b).toFixed(1)} ℃ —— 海波的凝固点就是它的熔点。`;
+    } else if (freezP.length >= 2) {
+      text = `凝固过程的 ${freezP.length} 次记录中，试样温度最大只差 ${spreadOf(freezP).toFixed(1)} ℃ —— 晶体凝固时温度同样不变。切回熔化方向再记几组，就能比较两个平台是否相等。`;
+    } else if (meltP.length >= 2) {
+      text = `熔化过程的 ${meltP.length} 次记录中，试样温度最大只差 ${spreadOf(meltP).toFixed(1)} ℃ —— 晶体熔化时温度确实不变。切到凝固方向再记几组，看凝固平台是不是同一个温度。`;
     } else {
       const paras = state.records.filter((r) => !r.crystal);
       if (paras.length >= 2) {
         const ts = paras.map((r) => r.Tt);
-        text = `石蜡的 ${paras.length} 次记录温度从 ${Math.min(...ts).toFixed(1)} ℃ 一直升到 ${Math.max(...ts).toFixed(1)} ℃，始终没有停下来。`;
+        text = `石蜡的 ${paras.length} 次记录温度从 ${Math.min(...ts).toFixed(1)} ℃ 一直变到 ${Math.max(...ts).toFixed(1)} ℃，始终没有停下来。`;
       } else {
         text = `已记录 ${state.records.length} 组。再补几组不同阶段的记录，才能比较温度是否改变。`;
       }
@@ -1715,6 +1968,7 @@ import * as THREE from './assets/optics-three.min.js';
     state.records.push({
       substance: sub[state.substance].name,
       crystal: sub[state.substance].crystal,
+      direction: state.direction,
       t: state.t, Tt: state.Tt, Tw: state.Tw,
       state: statusText(), short: shortState(), frac
     });
@@ -1726,15 +1980,84 @@ import * as THREE from './assets/optics-three.min.js';
     void recordBtn.offsetWidth;                    // 强制重排，动画才能连点连放
     recordBtn.classList.add('hit');
     recordHint.textContent = HINT_DONE;
+    drawChart();          // 记录一变，描点也要立刻跟着变（无头环境没有 rAF）
+    syncPlotUI();
     requestRender();
   });
   renderRecords();
+
+  /* ==========================================================================
+     十一之二、手动描点：把记录变成图上的点，让学生自己连线再和真值曲线比
+     ========================================================================== */
+  /* 描点层的「按钮状态 + 文案 + 汇总数字」全部读 state.drawn（drawChart 刚写好的那份），
+     所以调用顺序必须是【先 drawChart、再 syncPlotUI】—— 反过来会读到上一帧的旧数。 */
+  function syncPlotUI() {
+    const btnOn = $('plotToggle'), btnLink = $('plotLink'), hint = $('plotHint'), sum = $('plotSum');
+    const D = state.drawn || {};
+    const n = (D.plotDots || []).length;
+    if (btnOn) {
+      btnOn.classList.toggle('active', !!toggles.plot);
+      btnOn.setAttribute('aria-pressed', toggles.plot ? 'true' : 'false');
+      btnOn.textContent = toggles.plot ? '收起描点　只看真值曲线' : '描点画图　把记录点标到图上';
+    }
+    if (btnLink) {
+      btnLink.disabled = !toggles.plot || n < 2;
+      btnLink.classList.toggle('active', !!(toggles.plotLink && toggles.plot));
+      btnLink.textContent = (toggles.plotLink && toggles.plot)
+        ? '取消连线'
+        : `连成折线（${n} 点 → ${Math.max(0, n - 1)} 段）`;
+    }
+    if (hint) {
+      hint.textContent = toggles.plot
+        ? '紫点 = 你自己记下的（时刻，温度）；紫虚线 = 你连的折线；细虚线 = 每个描点离真值曲线差多少。'
+        : '先点几下「记录数据」，再打开描点 —— 你自己记下的点会变成图上的紫点。';
+    }
+    if (sum) {
+      const other = state.records.length - n;
+      const tail = other > 0 ? `（另有 ${other} 条记录属于另一个实验方向，切回去才能看到它们的描点。）` : '';
+      if (!toggles.plot) {
+        sum.textContent = '点「描点画图」把表格里的记录标到图上，再自己连成折线，和真值曲线比一比。';
+      } else if (n === 0) {
+        sum.textContent = `当前方向还没有记录 —— 先加热（或冷却）、点「记录数据」。${tail}`;
+      } else {
+        const devTxt = isFinite(D.plotDevMax)
+          ? `与真值曲线最大相差 ${D.plotDevMax.toFixed(2)} ℃（平均 ${D.plotDevMean.toFixed(2)} ℃）`
+          : '真值曲线还没有第二个采样点，暂时算不出偏差';
+        const segTxt = D.plotSegs
+          ? `你连的折线共 ${D.plotSegs} 段，叠在真值曲线上 —— 折线是「点连出来的」，真值曲线是连续算出来的。`
+          : '再点「连成折线」，把点连起来和真值曲线比一比。';
+        sum.textContent = `当前方向描了 ${n} 个点；${devTxt}。${segTxt}${tail}`;
+      }
+    }
+  }
+
+  /* 两个开关都【同步】重画曲线图：requestRender 只置脏，
+     无头环境里没有 rAF，只置脏的话 state.drawn 会一直停在上一次的样子，
+     自检读到的就是旧值 —— 点了按钮却什么都没发生，也会全绿。 */
+  function setPlotMode(on) {
+    toggles.plot = !!on;
+    if (!toggles.plot) toggles.plotLink = false;   // 收起描点时连线一并取消，免得下次打开状态错乱
+    drawChart();
+    syncPlotUI();
+    requestRender();
+  }
+  function setPlotLink(on) {
+    toggles.plotLink = !!on;
+    drawChart();
+    syncPlotUI();
+    requestRender();
+  }
+  const plotToggleBtn = $('plotToggle'), plotLinkBtn = $('plotLink');
+  if (plotToggleBtn) plotToggleBtn.addEventListener('click', () => setPlotMode(!toggles.plot));
+  if (plotLinkBtn) plotLinkBtn.addEventListener('click', () => setPlotLink(!toggles.plotLink));
+  syncPlotUI();
 
   /* ==========================================================================
      十二、启动
      ========================================================================== */
   canvas.style.cursor = 'grab';
   applySubstanceVisual();
+  updateDirectionVisual();
   resetSim();
   updateSample();
   updateReadouts();
@@ -1764,6 +2087,7 @@ import * as THREE from './assets/optics-three.min.js';
       drawChart();
       drawMicro(Math.max(dt, 0.016));
       updateReadouts();
+      syncPlotUI();        // 描点的偏差随仿真推进实时更新
       dirty = true;
     }
     if (dirty) {
@@ -1819,7 +2143,23 @@ import * as THREE from './assets/optics-three.min.js';
         thLift: thermometer.position.y, supportY: thSupport.position.y
       };
     },
-    statusText, meltFraction, shortState, renderRecords, clearRecords,
+    statusText, meltFraction, shortState, renderRecords, clearRecords, setDirection,
+    /* 手动描点：映射、取点、统计、开关，全部从这几个入口走 ——
+       自检不自己重抄一遍 X/Y，也不靠数画布上的紫点。 */
+    chartGeom, truthAt, plotDots, plotStats, setPlotMode, setPlotLink, syncPlotUI,
+    plotDrawn() {
+      const D = state.drawn || {};
+      return {
+        mode: !!D.plotMode, linked: !!D.plotLinked, segs: D.plotSegs || 0,
+        dots: (D.plotDots || []).map((d) => ({ t: d.t, T: d.T, x: d.x, y: d.y })),
+        devMax: D.plotDevMax, devMean: D.plotDevMean
+      };
+    },
+    /* 凝固方向的常量与画面量，供自检直接读（别在脚本里重抄一遍常量） */
+    freezeT0: FREEZE_T0, tIce: T_ICE, mIce: M_ICE, lIce: L_ICE, tStopCold: T_STOP_COLD,
+    /* 图像横轴上限：由 drawChart 每次重画时写入，切方向必须跟着变 */
+    chartTMax() { return (state.drawn && state.drawn.chartTMax) || NaN; },
+    lamp, flameGroup, flameLight, iceGroup, ices,
     setSubstance(k) {
       state.substance = k;
       document.querySelectorAll('[data-substance]').forEach((b) => b.classList.toggle('active', b.dataset.substance === k));
