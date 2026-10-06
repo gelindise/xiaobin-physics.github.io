@@ -313,8 +313,18 @@ var K_WALL  = 100000;                                  // 器壁 / 活塞的软�
 var GAMMA_OF= {solid:5.0, liquid:6.5, gas:6.0};        // 朗之万阻尼 /s
 var V_REF   = 11.0;                                    // 20 ℃ 的方均根速率 cm/s（示意）
 var T_REF   = 20;                                      // 参考温度 ℃
-var T_MIN   = 0, T_MAX = 100;                          // 温度滑块范围 ℃
-var C_MAX   = 0.30;                                    // 压缩滑块上限（相对样品自然高度的压缩量）
+// 🔴 温度范围必须给足，否则「温度低不剧烈 / 温度高剧烈」根本看不出来：
+//    v ∝ √T（T 取【开尔文】），原来的 0~100 ℃ 只让速率变 √(373/273) = 1.17 倍 ——
+//    每帧位移只差 17%，肉眼几乎不可辨。改取 100 K ~ 1000 K（−173 ℃ ~ 727 ℃），
+//    速率跨度 √10 ≈ 3.16 倍，一眼可辨；公式本身仍然是严格的 v ∝ √T。
+var T_MIN   = -173, T_MAX = 727;                       // 温度滑块范围 ℃（= 100 K ~ 1000 K）
+var GAMMA_M1 = 2/3;                                    // 单原子理想气体的 γ−1（绝热压缩用）
+// 压缩滑块上限按物态分档：气体能压到 1/4 体积，固体几乎压不动。
+// 🔴 这同时也是「压缩 → 运动更剧烈」的幅度来源：绝热压缩 T ∝ (1/(1−c))^(γ−1)，
+//    气体档 0.75 ⇒ T 变 2.52 倍、速率变 1.59 倍；沿用旧的 0.30 只有 1.11 倍，看不出来。
+var COMP_MAX_OF = {solid:0.30, liquid:0.35, gas:0.75};
+var C_MAX   = COMP_MAX_OF.gas;                         // 兼容旧名 = 最大那一档
+function compMaxOf(ph){ return COMP_MAX_OF[ph] || COMP_MAX_OF.gas; }
 var SUB     = 10;                                      // 物理子步下限
 // 🔴 子步长上限。分子间斥力 K_REP=1.2e5 在 r≈R_REP 附近给出的等效 ω ≈ 850 rad/s，
 // 半隐式欧拉 + 朗之万要求 ωh ≲ 1，否则会【数值加热】：实测 h=1/600 时实测 rms
@@ -382,6 +392,13 @@ function gauss(){ // Box–Muller
 
 // 温度 → 分子方均根速率（cm/s）。这是全页【唯一】的温度→速率换算点。
 function vrmsOf(tC){ return V_REF * Math.sqrt((tC+273.15)/(T_REF+273.15)); }
+// 绝热压缩：压缩活塞对气体做功 ⇒ 气体内能增加 ⇒ 温度升高。
+//   T·V^(γ−1) = const，而 V ∝ (1−c) ⇒ T(c) = T₀·(1−c)^(−(γ−1))。
+//   滑块上的「温度 T」是【初始/储温】；真正决定分子速率的是这里算出来的【气体温度】。
+//   🔴 这是「压缩活塞 → 分子运动更剧烈」唯一的物理来源 —— 等温压缩只提高碰撞频率、不改速率。
+function gasTempKOf(c){ return (state.temp+273.15)*Math.pow(1/(1-c), GAMMA_M1); }
+function gasTempK(){ return gasTempKOf(state.comp); }
+function gasTempC(){ return gasTempK()-273.15; }
 // 分子间作用力（①）：>0 为斥力。<b>molStep 与自检都走这一个函数</b>，避免两处各写各的。
 function pairForceOf(r, phase){
   var ph = phase || state.phase;
@@ -692,7 +709,7 @@ function curPistonY(){ return pistonY(state.phase, state.comp); }
 function initMolecules(){
   var cfg = cellOf(state.phase), n = LAT_N;
   var p=[], v=[], site=[], i;
-  var vr = vrmsOf(state.temp), sg = vr/Math.sqrt(3);
+  var vr = vrmsOf(gasTempC()), sg = vr/Math.sqrt(3);   // 初始速率也按【气体温度】（含绝热升温）
   for(i=0;i<N_MOL;i++){
     var ix=i%(n*n), iy=Math.floor(i/(n*n)), iz=Math.floor(ix/n); ix=ix%n;
     var half=(n-1)/2, x, y, z, lx, ly, lz;
@@ -732,7 +749,8 @@ function molStep(h){
   var i,j, N=N_MOL;
   var yTop = curPistonY();
   var g = GAMMA_OF[state.phase] || 6;
-  var vr = vrmsOf(state.temp), sg = vr/Math.sqrt(3);
+  // 热浴的目标速率用【气体温度】：绝热压缩会让气体比滑块温度更热 ⇒ 分子动得更剧烈。
+  var vr = vrmsOf(gasTempC()), sg = vr/Math.sqrt(3);
   var damp = Math.exp(-g*h);
   var nk = Math.sqrt(Math.max(0,1-damp*damp))*sg;
   for(i=0;i<N;i++) m.f[i]=[0,0,0];
@@ -814,8 +832,9 @@ function molStats(){
   var vol=1;
   for(k=0;k<3;k++) vol *= Math.max(2*R_MOL, (hi[k]-lo[k])+2*R_MOL);
   var sp = Math.pow(vol/N, 1/3);
-  return {v_rms:v_rms, v_avg:v_avg, vTarget:vrmsOf(state.temp), nn:sp, nnRatio:sp/D_MOL, bboxVol:vol,
-          plateF:m.plateFavg, cell:cellOf(state.phase), pistonY:curPistonY()};
+  return {v_rms:v_rms, v_avg:v_avg, vTarget:vrmsOf(gasTempC()), nn:sp, nnRatio:sp/D_MOL, bboxVol:vol,
+          plateF:m.plateFavg, cell:cellOf(state.phase), pistonY:curPistonY(),
+          gasT:gasTempC(), gasK:gasTempK()};
 }
 
 // 分子按深度排序后画（远→近）
@@ -1071,22 +1090,47 @@ function dotInit(){
     var inTop = (i%2===0);
     var y = inTop ? BOTTLE_H+GAP_Y+rnd()*BOTTLE_H : rnd()*BOTTLE_H;
     var sp = inTop ? (state.no2Top?1:0) : (state.no2Top?0:1);
-    d.push({y:y, sp:sp});
+    // 🔴 每只分子必须有【自己的】x、z，而且它们也要参与随机游走。
+    //    原来只存 y、x/z 由下标算死（`ang=i*2.39996`）⇒ 每只分子被钉在一条竖直线上下抖动，
+    //    看着就是「上下振动」而不是无规则运动（用户直接反馈）。
+    var rr = BOTTLE_R*0.94*Math.sqrt(rnd()), aa = rnd()*Math.PI*2;
+    d.push({x:Math.cos(aa)*rr, y:y, z:Math.sin(aa)*rr, sp:sp});
   }
   state.dots=d;
 }
+// 观测粒子的三维无规则运动（与浓度场共用同一个 D 的蒙特卡洛解法，只作视觉线索）
 function dotStep(dt){
   var d=state.dots; if(!d) return;
   var D=dEff(), sg=Math.sqrt(2*D*dt);
+  var rMax = BOTTLE_R-0.06;              // 侧壁（留一点分子半径）
+  var yLo = 0.02, yHi = H_COL-0.02;      // 上下端面
+  var plateLo = BOTTLE_H, plateHi = BOTTLE_H+GAP_Y;
   for(var i=0;i<d.length;i++){
-    var o=d[i];
-    if(state.settleOnly){ if(o.sp===1) o.y -= V_SETTLE*dt; }
-    else o.y += gauss()*sg;
-    // 板子挡着：不许跨越
-    if(state.plate){
-      if(o.y>BOTTLE_H && o.y<BOTTLE_H+GAP_Y) o.y = (o.y<BOTTLE_H+GAP_Y/2)?BOTTLE_H:GAP_Y+BOTTLE_H;
+    var o=d[i], yPrev=o.y;
+    if(state.settleOnly){
+      // 对照模式：假设分子不动、只有重的二氧化氮往下掉
+      if(o.sp===1) o.y -= V_SETTLE*dt;
+    } else {
+      // 三个方向【同样】随机游走 ⇒ 无规则运动（不是上下振动）
+      o.x += gauss()*sg;
+      o.y += gauss()*sg;
+      o.z += gauss()*sg;
     }
-    o.y = clamp(o.y, 0.02, H_COL-0.02);
+    // 侧壁：径向反弹
+    var rr=Math.hypot(o.x,o.z);
+    if(rr>rMax){ var k=rMax/rr; o.x*=k; o.z*=k; }
+    // 玻璃板：按【这一步之前在哪一侧】判断，整块板都不许穿过。
+    // 🔴 原来写的是「落点落在板厚区间内就推回去」—— 步子稍大（2σ 就有 0.16 > 板厚 0.10）
+    //    就会一步【跳过】整个板厚区间，判据根本不触发 ⇒ 分子照样穿板。
+    //    正确做法是拿上一步的位置定侧、越界就按镜面弹回。
+    if(state.plate){
+      if(yPrev<=plateLo){ if(o.y>plateLo) o.y = 2*plateLo-o.y; }
+      else if(yPrev>=plateHi){ if(o.y<plateHi) o.y = 2*plateHi-o.y; }
+      else { o.y = (yPrev<plateLo+GAP_Y/2) ? plateLo : plateHi; }
+    }
+    if(o.y<yLo) o.y = 2*yLo-o.y;
+    if(o.y>yHi) o.y = 2*yHi-o.y;
+    o.y = clamp(o.y, yLo, yHi);
   }
 }
 // 浓度 → 颜色
@@ -1159,9 +1203,9 @@ function drawBottle(cx,y0,y1,r,q,c){
     for(i3=0;i3<d.length;i3++){
       var o=d[i3];
       if(o.y<y0-0.02 || o.y>y1+0.02) continue;
-      var ang=(i3*2.39996)%(Math.PI*2);
-      var rr2=r*0.86*Math.sqrt(((i3*37)%100)/100);
-      var pp=project([cx+Math.cos(ang)*rr2, o.y, Math.sin(ang)*rr2], q);
+      // 用分子【自己的】x / z（它们和 y 一样在随机游走）。原来按下标算死 x/z，
+      // 每只分子被钉在一条竖直线上下抖动 ⇒ 画面上是「上下振动」而不是无规则运动。
+      var pp=project([cx+o.x, o.y, o.z], q);
       arr.push({x:pp.x, y:pp.y, z:pp.z, sp:o.sp});
     }
     arr.sort(function(a,b){ return b.z-a.z; });          // 远的先画
@@ -1331,16 +1375,20 @@ function buildCtl(){
   if(state.mode==='gas'){
     ctlEl.appendChild(el('div','lab','物质状态'));
     ctlEl.appendChild(segRow([{v:'solid',t:'固态'},{v:'liquid',t:'液态'},{v:'gas',t:'气态'}], state.phase, setPhase));
-    var s1=sliderRow('温度 T', T_MIN, T_MAX, 1, state.temp, function(v){ return v.toFixed(0)+' ℃'; },
+    var s1=sliderRow('温度 T', T_MIN, T_MAX, 1, state.temp,
+      function(v){ return v.toFixed(0)+' ℃ = '+(v+273.15).toFixed(0)+' K'; },
       function(v){ state.temp=v; });
     s1.style.marginTop='12px';
     ctlEl.appendChild(s1);
-    var s2=sliderRow('压缩活塞', 0, C_MAX, 0.01, state.comp, function(v){ return (v*100).toFixed(0)+' %'; },
+    var s2=sliderRow('压缩活塞', 0, compMaxOf(state.phase), 0.01, state.comp,
+      function(v){ return (v*100).toFixed(0)+' %'; },
       function(v){ state.comp=v; syncSites(); });
     ctlEl.appendChild(s2);
     ctlEl.appendChild(el('p','note',
-      '温度滑块改变的是<b>分子平均速率</b>（0 ℃ → 100 ℃ 约 1.14 倍，绝对温度比）。'+
-      '压缩滑块把活塞往下压，读数里的「活塞受力」是<b>从分子撞击里统计出来的</b>，不是套公式。'));
+      '<b>温度</b>：速率 ∝ √(绝对温度)，所以滑块两端（100 K ↔ 1000 K）速率相差 <b>3.2 倍</b> —— '+
+      '低温柔缓、高温猛烈，一眼可辨。<br>'+
+      '<b>压缩</b>：压缩活塞对气体做功 ⇒ 气体内能增加、温度升高（绝热压缩 T ∝ (1−c)<sup>−2/3</sup>）'+
+      '⇒ 分子动得更剧烈；同时体积变小、撞击活塞更频繁，所以「活塞受力」涨得比速率还快。'));
   } else if(state.mode==='force'){
     var s3=sliderRow('分子间距 r', R_NEAR, R_FAR, 0.005, state.r,
       function(v){ return v.toFixed(2)+' cm = '+(v/R0).toFixed(2)+' r₀'; },
@@ -1369,8 +1417,8 @@ function buildActs(){
   }
   if(state.mode==='gas'){
     btn('复位','', function(){ state.comp=0; state.temp=20; initMolecules(); syncUI(); toast('已复位'); });
-    btn('升温到 100 ℃','primary', function(){ state.temp=100; buildCtl(); syncUI(); toast('温度 → 100 ℃'); });
-    btn('降温到 0 ℃','', function(){ state.temp=0; buildCtl(); syncUI(); toast('温度 → 0 ℃'); });
+    btn('高温 1000 K','primary', function(){ state.temp=T_MAX; buildCtl(); syncUI(); toast('温度 → 727 ℃ = 1000 K'); });
+    btn('低温 100 K','', function(){ state.temp=T_MIN; buildCtl(); syncUI(); toast('温度 → −173 ℃ = 100 K'); });
   } else if(state.mode==='force'){
     btn('推到最近','', function(){ state.r=R_NEAR; buildCtl(); syncUI(); });
     btn('刚好 r₀','primary', function(){ state.r=R0; buildCtl(); syncUI(); });
@@ -1401,9 +1449,9 @@ function buildBarLeft(){
   function b(t, cls, fn){ var e=el('button','stage-btn '+(cls||''), t); e.type='button';
     e.addEventListener('click', fn); barLeftEl.appendChild(e); return e; }
   if(state.mode==='gas'){
-    b('升温 +20 ℃','go', function(){ state.temp=clamp(state.temp+20,T_MIN,T_MAX); buildCtl(); syncUI(); });
-    b('降温 −20 ℃','', function(){ state.temp=clamp(state.temp-20,T_MIN,T_MAX); buildCtl(); syncUI(); });
-    b('压缩','go', function(){ state.comp=clamp(state.comp+0.10,0,C_MAX); syncSites(); buildCtl(); syncUI(); });
+    b('升温 +200 K','go', function(){ state.temp=clamp(state.temp+200,T_MIN,T_MAX); buildCtl(); syncUI(); });
+    b('降温 −200 K','', function(){ state.temp=clamp(state.temp-200,T_MIN,T_MAX); buildCtl(); syncUI(); });
+    b('压缩','go', function(){ state.comp=clamp(state.comp+0.15,0,compMaxOf(state.phase)); syncSites(); buildCtl(); syncUI(); });
     b('松开','', function(){ state.comp=0; syncSites(); buildCtl(); syncUI(); });
   } else if(state.mode==='force'){
     b('拉近','go', function(){ state.r=clamp(state.r-0.08,R_NEAR,R_FAR); buildCtl(); syncUI(); });
@@ -1424,11 +1472,17 @@ function verdictGas(){
   var items=[], ok=true;
   var ratio = st.v_avg/st.vTarget;
   var a1 = Math.abs(ratio-1)<0.14;
-  items.push({ok:a1, t:'实测平均速率 '+st.v_avg.toFixed(2)+' cm/s，与 '+state.temp.toFixed(0)+
+  items.push({ok:a1, t:'实测平均速率 '+st.v_avg.toFixed(2)+' cm/s，与气体温度 '+st.gasT.toFixed(0)+
     ' ℃ 对应的理论值 '+st.vTarget.toFixed(2)+' cm/s 相差 '+(Math.abs(ratio-1)*100).toFixed(1)+'%'});
   if(!a1) ok=false;
-  items.push({ok:true, t:'温度 0 ℃ → 100 ℃：平均速率 '+vrmsOf(0).toFixed(2)+' → '+vrmsOf(100).toFixed(2)+
-    ' cm/s（温度越高，分子热运动越剧烈）'});
+  items.push({ok:true, t:'温度滑块两端（100 K ↔ 1000 K）：平均速率 '+vrmsOf(T_MIN).toFixed(2)+' → '+
+    vrmsOf(T_MAX).toFixed(2)+' cm/s，相差 '+(vrmsOf(T_MAX)/vrmsOf(T_MIN)).toFixed(2)+
+    ' 倍（温度越高，分子热运动越剧烈）'});
+  if(state.comp>0.004){
+    items.push({ok:true, t:'绝热压缩 '+(state.comp*100).toFixed(0)+'%：气体温度 '+state.temp.toFixed(0)+
+      ' ℃ → '+st.gasT.toFixed(0)+' ℃，速率 '+vrmsOf(state.temp).toFixed(2)+' → '+st.vTarget.toFixed(2)+
+      ' cm/s（压缩做功 ⇒ 内能增加 ⇒ 分子动得更剧烈）'});
+  }
   items.push({ok:true, t:'当前状态：'+({solid:'固态',liquid:'液态',gas:'气态'})[state.phase]+
     '，平均分子间距 = '+st.nnRatio.toFixed(2)+' 倍分子直径'});
   // 三态间距对比（都看过才判）
@@ -1522,12 +1576,16 @@ function syncUI(){
   // 读数
   rdEl.innerHTML='';
   if(state.mode==='gas'){
-    var st=molStats() || {v_rms:0,vTarget:vrmsOf(state.temp),nn:0,nnRatio:0,plateF:0,pistonY:0};
+    var st=molStats() || {v_rms:0,vTarget:vrmsOf(state.temp),nn:0,nnRatio:0,plateF:0,pistonY:0,gasT:state.temp};
     var cfg=cellOf(state.phase);
     forceCache[state.phase]=st.plateF;
     nnCache[state.phase]=st.nnRatio;
     var vol=4*cfg.hx*cfg.hz*st.pistonY;
-    rdEl.appendChild(el('div',null,'<span>温度 T</span><b>'+state.temp.toFixed(0)+' ℃</b>'));
+    rdEl.appendChild(el('div',null,'<span>温度 T</span><b>'+state.temp.toFixed(0)+' ℃ = '+(state.temp+273.15).toFixed(0)+' K</b>'));
+    if(state.comp>0.004){
+      // 绝热压缩后气体比滑块温度更热 —— 这是「压得越狠、分子动得越剧烈」的来源，必须显式给出
+      rdEl.appendChild(el('div','wide','<span>气体温度（压缩后）</span><b>'+st.gasT.toFixed(0)+' ℃</b>'));
+    }
     rdEl.appendChild(el('div',null,'<span>分子数</span><b>'+N_MOL+'</b>'));
     rdEl.appendChild(el('div',null,'<span>平均速率 v</span><b>'+st.v_avg.toFixed(2)+'</b>'));
     rdEl.appendChild(el('div',null,'<span>理论 √(3kT/m)</span><b>'+st.vTarget.toFixed(2)+'</b>'));
@@ -1774,7 +1832,7 @@ window.__mtm = {
     N_MOL:N_MOL, LAT_N:LAT_N, CELL_OF:CELL_OF, D_MOL:D_MOL, R_MOL:R_MOL,
     S_SOLID:S_SOLID, S_LIQUID:S_LIQUID, R_CUT:R_CUT, R_REP:R_REP, K_REP:K_REP, K_ATT:K_ATT, K_LAT:K_LAT,
     K_WALL:K_WALL, GAMMA_OF:GAMMA_OF, V_REF:V_REF, T_REF:T_REF,
-    T_MIN:T_MIN, T_MAX:T_MAX, C_MAX:C_MAX, SUB:SUB,
+    T_MIN:T_MIN, T_MAX:T_MAX, C_MAX:C_MAX, SUB:SUB, COMP_MAX_OF:COMP_MAX_OF, GAMMA_M1:GAMMA_M1,
     R0:R0, FA:FA, FB:FB, R_NEAR:R_NEAR, R_FAR:R_FAR, BIG_R:BIG_R,
     NB_CELLS:NB_CELLS, BOTTLE_R:BOTTLE_R, BOTTLE_H:BOTTLE_H, GAP_Y:GAP_Y, H_COL:H_COL,
     DZ:DZ, GAP_K0:GAP_K0, GAP_K1:GAP_K1, D_DIFF:D_DIFF, V_SETTLE:V_SETTLE, D_T_K:D_T_K,
@@ -1783,7 +1841,8 @@ window.__mtm = {
   MODES:MODES, VIEWS:VIEWS, ENV_OF:ENV_OF,
   get ENV(){ return ENV; },
   get ENV_PTS(){ return ENV_PTS; },
-  vrmsOf:vrmsOf, fRepOf:fRepOf, fAttOf:fAttOf, fNetOf:fNetOf, arrowLenOf:arrowLenOf,
+  vrmsOf:vrmsOf, gasTempK:gasTempK, gasTempC:gasTempC, gasTempKOf:gasTempKOf, compMaxOf:compMaxOf,
+  fRepOf:fRepOf, fAttOf:fAttOf, fNetOf:fNetOf, arrowLenOf:arrowLenOf,
   pairForceOf:pairForceOf, setSeed:setSeed, rnd:rnd, gauss:gauss, natTopOf:natTopOf,
   cellOf:cellOf, pistonY:pistonY, curPistonY:curPistonY, syncSites:syncSites,
   molStep:molStep, molStats:molStats, molReset:molReset,
