@@ -141,6 +141,9 @@
     "javalab_卫星机械能.html",
     "javalab_斜面弹簧能量转化.html",
     "javalab_熵.html",
+    // 第十一章第3节「动能和势能」的新创 3D 页：沙盘陷坑测重力势能。
+    // experiments.html 里是 card lock + 「VIP专享」，按维护约定必须登记在这里。
+    "探究重力势能大小的影响因素立体模型.html",
     "杠杆平衡条件.html",
     "杠杆自重平衡.html",
     "phet_杠杆平衡.html",
