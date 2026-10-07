@@ -1,0 +1,1429 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>机翼升力与流线 · 3D 立体模型 - 物理虚拟实验</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="auth-check.js"></script>
+  <style>
+    *{box-sizing:border-box}
+    html,body{margin:0}
+    body{background:var(--bg-darker,#020617);color:var(--text-main,#e2e8f0);overflow-x:hidden;
+      font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif;
+      padding-top:57px}
+    /* 🔴 style.css 的 .header 自带 padding:1.25rem 2rem（上下各 20px）⇒ 页头实际高 97px，
+       而 body 只留 56px ⇒ 固定页头把 <h1> 整行盖住。padding 必须归零。 */
+    .header{position:fixed!important;top:0;left:0;right:0;z-index:60;padding:0!important;
+      transition:transform .35s cubic-bezier(.4,0,.2,1);will-change:transform}
+    .header.hidden{transform:translateY(-100%)}
+    .wrap{max-width:1680px;margin:0 auto;padding:18px 22px 40px}
+    h1{margin:0 0 6px;font-size:21px;letter-spacing:.3px}
+    .sub{margin:0 0 16px;color:#8aa6b8;font-size:12.5px;line-height:1.6}
+
+    /* 控制台与画面【左右并排】，读数与记录在下面横铺 */
+    .lab3d-layout{display:grid;gap:14px;align-items:start;
+      grid-template-columns:302px minmax(0,1fr);
+      grid-template-rows:auto auto auto;
+      grid-template-areas:"ctl scene" "lower lower" "read read"}
+    .lab3d-ctl{grid-area:ctl;display:flex;flex-direction:column;gap:11px;min-width:0;align-self:start}
+    .lab3d-stage{grid-area:scene;position:relative;align-self:stretch;
+      min-height:clamp(300px,42vh,560px);
+      border-radius:16px;border:1px solid rgba(148,163,184,.16);
+      background:linear-gradient(180deg,#0a1424,#060d18);overflow:hidden}
+    .lab3d-stage canvas{position:absolute;left:0;top:0;display:block;width:100%;height:100%;
+      touch-action:none;cursor:grab}
+    .lab3d-stage canvas.grabbing{cursor:grabbing}
+    .lab3d-read{grid-area:read;display:grid;gap:11px;min-width:0;align-items:start;
+      grid-template-columns:repeat(auto-fit,minmax(232px,1fr))}
+    .lab3d-lower{grid-area:lower;display:grid;
+      grid-template-columns:minmax(0,1.25fr) minmax(0,1fr) minmax(0,1fr);gap:11px;align-items:start}
+
+    .panel{background:rgba(15,23,42,.72);border:1px solid rgba(148,163,184,.16);
+      border-radius:14px;padding:12px 13px;min-width:0}
+    .panel>h3{margin:0 0 9px;font-size:12.5px;font-weight:800;color:#bae6fd;
+      display:flex;align-items:center;justify-content:space-between;gap:8px}
+    .panel>h3 .pill{font-size:10px;font-weight:800;padding:2px 8px;border-radius:99px;
+      background:rgba(56,189,248,.16);color:#bae6fd;white-space:nowrap}
+    .panel>h3 .pill.ok{background:rgba(52,211,153,.22);color:#d1fae5}
+    .panel>h3 .pill.warn{background:rgba(248,113,113,.22);color:#fecaca}
+    .note{margin:8px 0 0;font-size:11px;line-height:1.6;color:#8aa6b8}
+    .note b{color:#cbd5e1}
+    .note.warn{color:#fcd34d}
+    .note.good{color:#6ee7b7}
+
+    .btn-row{display:flex;flex-wrap:wrap;gap:6px}
+    .btn-row button{flex:1 1 auto;min-width:0;padding:8px 9px;border-radius:9px;cursor:pointer;
+      border:1px solid rgba(148,163,184,.22);background:rgba(30,41,59,.72);color:#cbd5e1;
+      font-size:11.5px;font-weight:700;font-family:inherit;transition:border-color .15s,background .15s}
+    .btn-row button.primary{border-color:rgba(56,189,248,.6);background:rgba(14,116,144,.42);color:#e0f2fe}
+    .btn-row button:hover:not(:disabled){border-color:rgba(125,211,252,.7)}
+    .btn-row button:disabled{opacity:.4;cursor:not-allowed}
+    .btn-row.tiny button{padding:6px 4px;font-size:10.5px}
+
+    .slider{display:block;margin:9px 0 0;font-size:11px;color:#8aa6b8}
+    .slider b{color:#bae6fd;font-variant-numeric:tabular-nums}
+    .slider input{width:100%;margin-top:6px;accent-color:#38bdf8}
+
+    .kv{display:flex;flex-direction:column;gap:7px}
+    .kv>div{display:flex;align-items:baseline;justify-content:space-between;gap:8px;
+      font-size:11.5px;color:#8aa6b8}
+    .kv>div>b{color:#e2e8f0;font-variant-numeric:tabular-nums;font-size:13px}
+    .kv>div>b.hi{color:#7dd3fc}
+    .kv>div>b.good{color:#6ee7b7}
+    .kv>div>b.warn{color:#fca5a5}
+
+    table.rec{width:100%;border-collapse:collapse;font-size:11px;
+      font-variant-numeric:tabular-nums;white-space:nowrap;word-break:keep-all}
+    table.rec th,table.rec td{padding:5px 3px;text-align:right;
+      border-bottom:1px solid rgba(148,163,184,.13)}
+    table.rec th{color:#8aa6b8;font-weight:700;font-size:10.5px}
+    table.rec td:first-child,table.rec th:first-child{text-align:left}
+    #wl-rec-body{overflow-x:auto}
+
+    .bars{display:flex;align-items:flex-end;gap:9px;height:132px;margin-top:4px}
+    .bars .b{flex:1 1 0;min-width:0;display:flex;flex-direction:column;justify-content:flex-end;
+      align-items:center;gap:5px;height:100%}
+    .bars .b .val{font-size:10.5px;font-weight:800;color:#cbd5e1;font-variant-numeric:tabular-nums}
+    .bars .b .col{width:100%;border-radius:6px 6px 2px 2px;min-height:3px}
+    .bars .b .cap{font-size:10px;color:#8aa6b8;white-space:nowrap}
+
+    .analysis{font-size:11.5px;line-height:1.75;color:#a7bccd}
+    .analysis .line{display:flex;justify-content:space-between;gap:8px;
+      padding:4px 0;border-bottom:1px solid rgba(148,163,184,.12)}
+    .analysis .line b{color:#e2e8f0;font-variant-numeric:tabular-nums}
+    .analysis .conc{margin-top:8px;padding:8px 10px;border-radius:10px;
+      background:rgba(14,116,144,.18);border:1px solid rgba(56,189,248,.24);
+      color:#cbeafe;font-size:11.5px;line-height:1.7}
+    .analysis .conc b{color:#7dd3fc}
+    .analysis .conc.info{background:rgba(30,41,59,.6);border-color:rgba(148,163,184,.2);color:#a7bccd}
+
+    .legend{display:flex;flex-wrap:wrap;gap:10px;margin-top:8px;font-size:10.5px;color:#8aa6b8}
+    .legend i{display:inline-block;width:22px;height:9px;border-radius:3px;vertical-align:-1px;margin-right:4px}
+
+    /* 窄屏折列后「数据记录」整块被挤到舞台【下面】⇒ 眼睛盯着舞台时想按的
+       「记录一组」得先往下滚。舞台里必须也有一份。
+       放在【右下】：左下角是「迎角 α」指示器，放左边会压住它。整条做成一行 flex。 */
+    .stage-hud{position:absolute;right:10px;bottom:10px;display:none;align-items:center;gap:8px;z-index:3}
+    .stage-hud button{flex:0 0 auto;padding:7px 12px;border-radius:9px;cursor:pointer;
+      border:1px solid rgba(56,189,248,.6);background:rgba(14,116,144,.78);color:#e0f2fe;
+      font-size:11.5px;font-weight:700;font-family:inherit}
+    .stage-hud .cnt{font-size:10.5px;color:#8aa6b8;font-variant-numeric:tabular-nums}
+
+    .info-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));
+      gap:14px;margin-top:16px}
+    .info-cards .card{background:rgba(15,23,42,.66);border:1px solid rgba(148,163,184,.16);
+      border-radius:14px;padding:14px 16px}
+    .info-cards .card h3{margin:0 0 8px;font-size:13px;color:#bae6fd}
+    .info-cards .card p,.info-cards .card li{font-size:11.5px;line-height:1.8;color:#a7bccd}
+    .info-cards .card ul{margin:0;padding-left:18px}
+
+    @media (max-width:1180px){
+      .lab3d-lower{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+      .lab3d-read{grid-template-columns:repeat(auto-fit,minmax(220px,1fr))}
+    }
+    @media (max-width:820px){
+      .wrap{padding:12px 12px 32px}
+      .lab3d-layout{grid-template-columns:minmax(0,1fr);grid-template-rows:auto;
+        grid-template-areas:"ctl" "scene" "lower" "read"}
+      .lab3d-stage{min-height:0;aspect-ratio:2 / 1}
+      .lab3d-lower{grid-template-columns:minmax(0,1fr)}
+      .lab3d-read{grid-template-columns:minmax(0,1fr)}
+      .stage-hud{display:flex}
+    }
+  </style>
+</head>
+<body>
+<header class="header">
+  <div style="max-width:1680px;margin:0 auto;padding:0 22px;height:56px;display:flex;align-items:center;gap:22px">
+    <a href="index.html" style="color:#e2e8f0;text-decoration:none;font-weight:800;font-size:15px">物理虚拟实验</a>
+    <nav style="display:flex;gap:16px;font-size:13px">
+      <a href="index.html" style="color:#8aa6b8;text-decoration:none">首页</a>
+      <a href="experiments.html" style="color:#8aa6b8;text-decoration:none">实验库</a>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap">
+  <h1>机翼升力与流线</h1>
+  <p class="sub">机翼上表面弯曲、流管变窄，气流<b>走得更快</b>；流速快的地方压强小，于是下表面的高压把机翼<b>托</b>了起来。</p>
+
+  <div class="lab3d-layout">
+    <!-- ============ 控制台（左） ============ -->
+    <aside class="lab3d-ctl">
+      <div class="panel">
+        <h3>探究模式 <span class="pill" id="wl-mode-pill">自由探究</span></h3>
+        <div class="btn-row" id="wl-modes">
+          <button data-mode="free">自由</button>
+          <button data-mode="speed">只改风速</button>
+          <button data-mode="angle">只改迎角</button>
+        </div>
+        <p class="note" id="wl-mode-note"></p>
+      </div>
+
+      <div class="panel">
+        <h3>来流与姿态</h3>
+        <label class="slider">风速 v<sub>∞</sub> <b id="wl-v-out">30 m/s</b>
+          <input type="range" id="wl-v" min="10" max="60" step="1" value="30">
+        </label>
+        <label class="slider">迎角 α <b id="wl-a-out">8.0°</b>
+          <input type="range" id="wl-a" min="-4" max="24" step="0.5" value="8">
+        </label>
+        <div class="btn-row">
+          <button id="wl-reset">复位</button>
+          <button id="wl-stall-demo">试试失速</button>
+        </div>
+        <p class="note" id="wl-state-note"></p>
+      </div>
+
+      <div class="panel">
+        <h3>视角</h3>
+        <div class="btn-row tiny" id="wl-views">
+          <button data-view="side">正侧</button>
+          <button data-view="perspective">立体</button>
+          <button data-view="close">贴近</button>
+        </div>
+        <div class="legend">
+          <span><i style="background:linear-gradient(90deg,#3b82f6,#7dd3fc)"></i>压强高</span>
+          <span><i style="background:linear-gradient(90deg,#fbbf24,#ef4444)"></i>压强低</span>
+        </div>
+      </div>
+    </aside>
+
+    <!-- ============ 画面（中） ============ -->
+    <section class="lab3d-stage"><canvas id="wl-canvas"></canvas>
+      <div class="stage-hud">
+        <span class="cnt" id="wl-hud-count">0 组</span>
+        <button id="wl-record-hud">记录一组</button>
+      </div>
+    </section>
+
+    <!-- ============ 读数（右） ============ -->
+    <aside class="lab3d-read">
+      <div class="panel">
+        <h3>升力 <span class="pill ok" id="wl-lift-pill">正常</span></h3>
+        <div class="kv" id="wl-lift-kv"></div>
+      </div>
+      <div class="panel">
+        <h3>上下表面比一比</h3>
+        <div class="bars" id="wl-bars"></div>
+        <p class="note" id="wl-bars-note"></p>
+      </div>
+      <div class="panel">
+        <h3>分析与结论</h3>
+        <div class="analysis" id="wl-analysis"></div>
+      </div>
+      <div class="panel">
+        <h3>操作提示</h3>
+        <p class="note" id="wl-hint"></p>
+      </div>
+    </aside>
+
+    <!-- ============ 下方三块 ============ -->
+    <div class="lab3d-lower">
+      <div class="panel">
+        <h3>数据记录 <span class="pill" id="wl-rec-count">0 组</span></h3>
+        <div id="wl-rec-body">
+          <table class="rec">
+            <thead><tr><th>组别</th><th>风速/(m/s)</th><th>迎角/°</th><th>C<sub>L</sub></th><th>升力/(N/m)</th><th>v<sub>上</sub>/v<sub>下</sub></th></tr></thead>
+            <tbody id="wl-rec"></tbody>
+          </table>
+        </div>
+        <div class="btn-row" style="margin-top:9px">
+          <button id="wl-record">记录一组</button>
+          <button id="wl-clear">清空</button>
+        </div>
+      </div>
+      <div class="panel">
+        <h3>流线上的速度</h3>
+        <div class="bars" id="wl-flow-bars"></div>
+        <p class="note" id="wl-flow-note"></p>
+      </div>
+      <div class="panel">
+        <h3>升力与风速</h3>
+        <div class="analysis" id="wl-law"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="info-cards">
+    <div class="card">
+      <h3>实验原理</h3>
+      <ul>
+        <li><b>流线密的地方流速大</b>：流体不可压缩，同一条流管里「截面积 × 流速」不变。流线挤在一起 = 流管变窄 = 流速变大。</li>
+        <li><b>流速大处压强小</b>（伯努利）：<span class="eq">p + ½ρv² = 常量</span>。所以机翼上表面流速大、压强小，下表面流速小、压强大。</li>
+        <li><b>压强差就是升力</b>：上表面被「吸」、下表面被「托」，合力向上。<span class="eq">L = ρ v<sub>∞</sub> Γ</span>（库塔-儒可夫斯基）。</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>为什么会失速</h3>
+      <ul>
+        <li>迎角不太大时，升力随迎角<b>线性增大</b>（每 1° 约增 0.11 C<sub>L</sub>）。</li>
+        <li>迎角超过约 <b>15°</b> 后，上表面气流开始<b>脱离</b>翼面（边界层分离），环量反而下降。</li>
+        <li>升力骤降、阻力猛增 —— 这就是<b>失速</b>。真实机翼靠襟翼、缝翼把失速迎角推后。</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>操作指南</h3>
+      <ul>
+        <li><b>拖动空白处</b>：旋转视角；<b>滚轮</b>：缩放。</li>
+        <li>选「只改风速」锁住迎角，看升力怎么随风速变；选「只改迎角」锁住风速，看升力怎么随迎角变。</li>
+        <li>点「试试失速」直接把迎角推到 20°，对比升力读数。</li>
+      </ul>
+    </div>
+  </div>
+</main>
+
+<script>
+(function () {
+  'use strict';
+  const $ = function (id) { return document.getElementById(id); };
+
+  /* ============================================================
+   * 数学
+   * ============================================================ */
+  const clamp = function (n, a, b) { return Math.max(a, Math.min(b, n)); };
+  const lerp = function (a, b, t) { return a + (b - a) * t; };
+  const sub = function (a, b) { return [a[0] - b[0], a[1] - b[1], a[2] - b[2]]; };
+  const add = function (a, b) { return [a[0] + b[0], a[1] + b[1], a[2] + b[2]]; };
+  const scl = function (a, k) { return [a[0] * k, a[1] * k, a[2] * k]; };
+  const dot = function (a, b) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; };
+  const cross = function (a, b) {
+    return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+  };
+  const vlen = function (a) { return Math.hypot(a[0], a[1], a[2]); };
+  const vnorm = function (a) { const l = vlen(a) || 1; return [a[0] / l, a[1] / l, a[2] / l]; };
+  const rgb = function (c, k) {
+    const s = k === undefined ? 1 : k;
+    return 'rgb(' + Math.round(clamp(c[0] * s, 0, 255)) + ',' +
+      Math.round(clamp(c[1] * s, 0, 255)) + ',' + Math.round(clamp(c[2] * s, 0, 255)) + ')';
+  };
+  const rgba = function (c, a) {
+    return 'rgba(' + Math.round(clamp(c[0], 0, 255)) + ',' +
+      Math.round(clamp(c[1], 0, 255)) + ',' + Math.round(clamp(c[2], 0, 255)) + ',' + a + ')';
+  };
+  const D2R = Math.PI / 180;
+
+  /* ============================================================
+   * 世界常量
+   * ------------------------------------------------------------
+   * 弦长 c = 2.4 世界单位，翼型在 x ∈ [-1.2, 1.2]。
+   * 真实弦长 CHORD_M = 1.5 m、空气密度 1.29 —— 升力按【每米翼展】给（二维流场）。
+   * ============================================================ */
+  const C_LEN = 2.4;
+  const CHORD_M = 1.5;
+  const RHO_AIR = 1.29;
+  const XQC = -0.25 * C_LEN;          // 1/4 弦点（俯仰中心）
+  const NACA = { m: 0.02, p: 0.40, t: 0.12 };   // NACA 2412
+  /* 🔴 迎角的「唯一真源」。原来钳位写死在 setAlpha 里（-4, 24）、滑块 min/max 又写死在 HTML 里、
+     失速衰减终点是 ALPHA_MAX —— 三处各写一遍 24。改一处另两处不动，界面允许的范围与
+     物理用的范围就会悄悄分叉（实测：把 ALPHA_MAX 改到 30°，滑块和钳位仍停在 24°）。 */
+  const ALPHA_STALL_DEG = 15;
+  const ALPHA_MIN_DEG = -4, ALPHA_MAX_DEG = 24;
+  const ALPHA_STALL = ALPHA_STALL_DEG * D2R;
+  const ALPHA_MAX = ALPHA_MAX_DEG * D2R;
+  const NVORT = 72;                   // 涡片离散个数
+  const NSRC = 56;                    // 厚度源汇离散个数
+  const CORE = 0.045;                 // 涡核半径（Rankine），避免前缘奇点
+  const FLOW_X0 = -3.20, FLOW_X1 = 3.20;
+  const FLOW_Y0 = -1.50, FLOW_Y1 = 1.50;
+  const NLINE = 31;                   // 流线条数（翼型附近要够密才看得出「上密下疏」）
+  const SPAN = 0.34;                  // 翼展半宽（z 方向挤出）
+  const CAMD = 26;
+  const VMIN = 10, VMAX = 60;
+  const V_DEF = 30;                   // 默认风速（唯一真源：state 初值 / 复位 / 启动 都取它）
+  const ALPHA_REF = 8;                // 默认迎角（也是升力箭头满量程的参考工况）
+
+  const VIEWS = {
+    side:        { yaw:  0.00, pitch: 0.10, zoom: 1.00, tgt: [0, 0.10, 0], look: false },
+    perspective: { yaw: -0.42, pitch: 0.30, zoom: 1.00, tgt: [0, 0.05, 0], look: false },
+    close:       { yaw: -0.26, pitch: 0.14, zoom: 1.75, tgt: [-0.30, 0.20, 0], look: true }
+  };
+
+  const C_WING  = [122, 176, 226];
+  const C_WING2 = [ 78, 122, 176];
+  const C_FLOW  = [148, 210, 246];
+  const C_LIFT  = [ 74, 222, 128];
+
+  /* 升力箭头的满量程 = 「默认迎角 ALPHA_REF + 最大风速 VMAX」时的升力。
+     🔴 箭头长度必须对 L 【严格线性】且【在主线演示里不饱和】——
+        原来写的是 clamp(L / 900 * 1.5, 0.08, 1.55)，而默认风速 30 m/s 时
+        L 已经 962 ⇒ L/600 = 1.60 早就顶到上限：把风速从 30 拖到 60，
+        箭头长度【一点都不变】，而「风速翻倍 ⇒ 升力变 4 倍」正是本页要教的规律。
+     为什么参考工况取 (ALPHA_REF, VMAX) 而不是「失速角 + VMAX」的全局最大：
+        后者是默认工况升力的 6.15 倍 ⇒ 默认那一档只用掉量程的 16%，
+        「只改风速」这条主线演示在低风速段几乎看不出箭头在动。取 (8°, 60 m/s)
+        后，风速扫描 10→60 正好铺满整条量程且全程不饱和。 */
+  const L_FULL = 0.5 * RHO_AIR * VMAX * VMAX * CHORD_M * liftModel(ALPHA_REF * D2R).CL;
+  const ARROW_MAX = 1.65;
+
+  /* ============================================================
+   * 状态
+   * ============================================================ */
+  const state = {
+    mode: 'free',
+    yaw: VIEWS.side.yaw, pitch: VIEWS.side.pitch, zoom: VIEWS.side.zoom,
+    tgt: VIEWS.side.tgt.slice(), look: !!VIEWS.side.look,
+    vinf: V_DEF,          // m/s
+    alphaDeg: ALPHA_REF, // 迎角
+    t: 0,                // 动画时间（虚线相位）
+    liftShown: 0,        // 箭头平滑
+    drag: null,
+    w: 0, h: 0, dpr: 1, dirty: true
+  };
+  const records = [];
+
+  /* ============================================================
+   * NACA 2412 几何
+   * ============================================================ */
+  function camber(xn) {
+    const m = NACA.m, p = NACA.p;
+    return xn < p
+      ? m / (p * p) * (2 * p * xn - xn * xn)
+      : m / ((1 - p) * (1 - p)) * ((1 - 2 * p) + 2 * p * xn - xn * xn);
+  }
+  function camberSlope(xn) {
+    const m = NACA.m, p = NACA.p;
+    return xn < p ? 2 * m / (p * p) * (p - xn) : 2 * m / ((1 - p) * (1 - p)) * (p - xn);
+  }
+  function thick(xn) {
+    const t = NACA.t, x = Math.max(0, xn);
+    return t / 0.2 * (0.2969 * Math.sqrt(x) - 0.1260 * x - 0.3516 * x * x
+      + 0.2843 * x * x * x - 0.1036 * x * x * x * x);
+  }
+  function thickSlope(xn) {
+    const t = NACA.t, x = Math.max(1e-4, xn);
+    return t / 0.2 * (0.2969 / (2 * Math.sqrt(x)) - 0.1260 - 0.7032 * x
+      + 0.8529 * x * x - 0.4144 * x * x * x);
+  }
+
+  /* ============================================================
+   * 薄翼理论：A0 / A1 → 环量 Γ、升力系数 C_L
+   * ------------------------------------------------------------
+   * A0 = α − (1/π)∫(dy_c/dx)dθ ，A1 = (2/π)∫(dy_c/dx)cosθ dθ
+   * Γ = π c v∞ (A0 + A1/2) ，C_L = 2π(A0 + A1/2)
+   * ============================================================ */
+  function thinAirfoil(alpha) {
+    const N = 240;
+    let I0 = 0, I1 = 0;
+    for (let i = 0; i < N; i++) {
+      const th = (i + 0.5) / N * Math.PI;
+      const xn = (1 - Math.cos(th)) / 2;
+      const s = camberSlope(xn);
+      I0 += s;
+      I1 += s * Math.cos(th);
+    }
+    I0 *= Math.PI / N; I1 *= Math.PI / N;
+    const A0 = alpha - I0 / Math.PI;
+    const A1 = 2 * I1 / Math.PI;
+    return { A0: A0, A1: A1 };
+  }
+  /* 升力模型：线性段 + 失速衰减。返回 C_L 与环量 Γ（世界单位下的 v∞ 取 1） */
+  function liftModel(alpha) {
+    const th = thinAirfoil(alpha);
+    const CLpot = 2 * Math.PI * (th.A0 + th.A1 / 2);
+    let k = 1;
+    if (alpha > ALPHA_STALL) {
+      k = Math.max(0.30, 1 - 0.66 * (alpha - ALPHA_STALL) / (ALPHA_MAX - ALPHA_STALL));
+    }
+    return { A0: th.A0, A1: th.A1, CLpot: CLpot, k: k, CL: CLpot * k, stall: alpha > ALPHA_STALL };
+  }
+
+  /* 环量分布形状：cot(θ/2) 在前缘发散 ⇒ 用 (1−e^(−θ/θc)) 正则化，
+     归一化后保证 ∫γ dx 严格等于 Γ。 */
+  const THETA_C = 0.16;
+  function gammaShape(th) {
+    const s2 = Math.max(1e-9, Math.sin(th / 2));
+    return (Math.cos(th / 2) / s2) * (1 - Math.exp(-th / THETA_C));
+  }
+
+  /* ============================================================
+   * 奇点分布（涡片 + 厚度源汇）—— 每帧参数变化时重建
+   * ============================================================ */
+  let VORT = [];   // {x,y,g} 顺时针为正（产生正升力）
+  let SRCS = [];   // {x,y,q}
+  let GAMMA = 0;   // 总环量（世界单位，v∞ 归一化为 1）
+  let CL_NOW = 0, STALL_NOW = false;
+  let CA = 1, SA = 0;   // 当前迎角的 cos/sin（insideWing 每步都要用，缓存下来）
+
+  function rotPt(x, y, ca, sa) {
+    const dx = x - XQC;
+    return [XQC + dx * ca + y * sa, -dx * sa + y * ca];
+  }
+
+  function buildSingularities() {
+    const alpha = state.alphaDeg * D2R;
+    const lm = liftModel(alpha);
+    CL_NOW = lm.CL; STALL_NOW = lm.stall;
+    const ca = Math.cos(alpha), sa = Math.sin(alpha);
+    CA = ca; SA = sa;
+
+    /* --- 涡片：沿中弧线，强度按 gammaShape 归一化到 Γ --- */
+    GAMMA = Math.PI * C_LEN * (lm.A0 + lm.A1 / 2) * lm.k;
+    let S = 0;
+    const ths = [], shp = [];
+    for (let i = 0; i < NVORT; i++) {
+      const th = (i + 0.5) / NVORT * Math.PI;
+      const s = gammaShape(th);
+      ths.push(th); shp.push(s);
+      S += s * Math.sin(th) * (Math.PI / NVORT);
+    }
+    VORT = [];
+    for (let i = 0; i < NVORT; i++) {
+      const th = ths[i];
+      const xn = (1 - Math.cos(th)) / 2;
+      const g = GAMMA * shp[i] * Math.sin(th) * (Math.PI / NVORT) / Math.max(1e-12, S);
+      const p = rotPt((xn - 0.5) * C_LEN, camber(xn) * C_LEN, ca, sa);
+      VORT.push({ x: p[0], y: p[1], g: g });
+    }
+
+    /* --- 厚度源汇：q ∝ d(厚度)/dx，∫q dx = 0 ⇒ 总源强为零（质量守恒） --- */
+    SRCS = [];
+    const qs = [];
+    let QSUM = 0;
+    for (let i = 0; i < NSRC; i++) {
+      const xn = (i + 0.5) / NSRC;
+      const q = thickSlope(xn) * C_LEN / NSRC;
+      qs.push(q); QSUM += q;
+    }
+    const qbar = QSUM / NSRC;
+    for (let i = 0; i < NSRC; i++) {
+      const xn = (i + 0.5) / NSRC;
+      const p = rotPt((xn - 0.5) * C_LEN, camber(xn) * C_LEN, ca, sa);
+      SRCS.push({ x: p[0], y: p[1], q: (qs[i] - qbar) * 0.85 });
+    }
+  }
+
+  /* ============================================================
+   * 速度场：均匀流 + 涡片 + 源汇（全部解析、严格无散度）
+   * ============================================================ */
+  function velAt(px, py) {
+    let u = 1, v = 0;                       // v∞ 归一化为 1
+    const rc2 = CORE * CORE;
+    for (let i = 0; i < VORT.length; i++) {
+      const s = VORT[i];
+      const dx = px - s.x, dy = py - s.y;
+      const r2 = dx * dx + dy * dy;
+      const k = s.g / (2 * Math.PI * (r2 < rc2 ? rc2 : r2));
+      u += k * dy; v += -k * dx;
+    }
+    for (let i = 0; i < SRCS.length; i++) {
+      const s = SRCS[i];
+      const dx = px - s.x, dy = py - s.y;
+      const r2 = dx * dx + dy * dy;
+      const k = s.q / (2 * Math.PI * (r2 < rc2 ? rc2 : r2));
+      u += k * dx; v += k * dy;
+    }
+    return [u, v];
+  }
+  const speedAt = function (px, py) { const t = velAt(px, py); return Math.hypot(t[0], t[1]); };
+
+  /* 沿流线做 RK4 追踪（按时间步推进 ⇒ 快的地方步长大，流线自然拉长） */
+  /* 翼型内部判定（几何坐标）。返回 null = 在外面；否则给出把点推回表面所需的信息。
+     🔴 薄翼涡片只保证「法向速度≈0」在【中弧线】上，厚度靠源汇近似 ——
+     实测仍有 2.7% 的流线点钻进翼型（最小到 0.70 半厚）。
+     所以追踪时做一次【表面避让】：钻进内部就沿法向推到表面外侧，
+     切向速度仍在 ⇒ 流线自然沿着表面滑过去（这才是绕流的真实样子）。 */
+  /* 世界 → 翼型几何坐标 (u, v)。u 是【绝对】弦向坐标（±C_LEN/2，中点 0），
+     v 是相对弦线的法向。rotPt 绕 1/4 弦点 (XQC, 0) 旋转，所以反解里
+     【必须把 XQC 加回来】—— 这一点很容易看错成多余项。
+     🔴 真正写错的是【推出】那一步：它拿 `px − XQC` 当弦向偏移用，
+        而弦向偏移是 `u − XQC`（两者差一个旋转过的 XQC）。现已改为
+        用 rotPt 自己算回去，绝不再手写一遍逆变换。 */
+  function toGeom(px, py) {
+    const A = px - XQC, B = py;
+    return [XQC + A * CA - B * SA, A * SA + B * CA];
+  }
+  function insideWing(px, py) {
+    const g = toGeom(px, py);
+    const xn = g[0] / C_LEN + 0.5;
+    if (xn < 0.004 || xn > 0.996) return null;
+    const yc = camber(xn) * C_LEN, yt = thick(xn) * C_LEN;
+    const d = g[1] - yc;
+    if (Math.abs(d) < yt) return { u: g[0], yc: yc, yt: yt, d: d, side: d >= 0 ? 1 : -1 };
+    return null;
+  }
+  function traceStreamline(x0, y0) {
+    const pts = [[x0, y0]];
+    const dt = 0.006;
+    let x = x0, y = y0, stalled = 0;
+    for (let n = 0; n < 1400; n++) {
+      const a = velAt(x, y);
+      /* 🔴 步长必须按【弧长】归一化，不能按时间：驻点附近速度趋 0，
+         定步长会让那条流线在驻点区爬不完 —— 实测 31 条里有 1 条
+         （正好是驻点线）用完 1400 步只走到屏幕 x=324（其余都到 914），
+         画面上一眼看得出「少了一条」。归一化后每步前进 ≈ dt 弧长。 */
+      const sp = Math.hypot(a[0], a[1]);
+      const h = dt / Math.max(0.25, sp);
+      const xPrev = x, yPrev = y;
+      const b = velAt(x + a[0] * h * 0.5, y + a[1] * h * 0.5);
+      const c = velAt(x + b[0] * h * 0.5, y + b[1] * h * 0.5);
+      const d = velAt(x + c[0] * h, y + c[1] * h);
+      x += (a[0] + 2 * b[0] + 2 * c[0] + d[0]) / 6 * h;
+      y += (a[1] + 2 * b[1] + 2 * c[1] + d[1]) / 6 * h;
+      if (!Number.isFinite(x) || !Number.isFinite(y)) break;
+      const hit = insideWing(x, y);
+      if (hit) {
+        /* 沿法向推到表面外侧：用 rotPt 自己算回去，绝不再手写一遍逆变换 */
+        const w = rotPt(hit.u, hit.yc + hit.side * hit.yt * 1.02, CA, SA);
+        x = w[0]; y = w[1];
+      }
+      pts.push([x, y]);
+      /* 驻点：这条流线物理上就终止在驻点上（流线不能跨过驻点继续走）。
+         不判这个会白跑满 1400 步，末点还像是「凭空断掉」。 */
+      if (Math.hypot(x - xPrev, y - yPrev) < 1e-5) { if (++stalled >= 3) break; }
+      else stalled = 0;
+      if (x > FLOW_X1 + 0.6 || Math.abs(y) > FLOW_Y1 + 1.2) break;
+    }
+    return pts;
+  }
+
+  /* ============================================================
+   * 翼型轮廓（几何坐标 → 世界坐标）
+   * ============================================================ */
+  function wingOutline(alpha) {
+    const ca = Math.cos(alpha), sa = Math.sin(alpha);
+    const N = 34, up = [], lo = [];
+    for (let i = 0; i <= N; i++) {
+      const xn = (1 - Math.cos(i / N * Math.PI)) / 2;
+      const yc = camber(xn), yt = thick(xn);
+      up.push(rotPt((xn - 0.5) * C_LEN, (yc + yt) * C_LEN, ca, sa));
+      lo.push(rotPt((xn - 0.5) * C_LEN, (yc - yt) * C_LEN, ca, sa));
+    }
+    return { up: up, lo: lo, outline: up.concat(lo.slice().reverse()) };
+  }
+
+  /* ============================================================
+   * 相机（自建，零依赖）
+   * ============================================================ */
+  function envelopePoints() {
+    return [
+      [FLOW_X0 - 0.25, FLOW_Y0 - 0.20, 0],
+      [FLOW_X0 - 0.25, FLOW_Y1 + 0.30, 0],
+      [FLOW_X1 + 0.25, FLOW_Y1 + 0.30, 0],
+      [FLOW_X1 + 0.25, FLOW_Y0 - 0.20, 0]
+    ];
+  }
+  function makeCam(q, w, h) {
+    const cy = Math.cos(state.yaw), sy = Math.sin(state.yaw);
+    const cp = Math.cos(state.pitch), sp = Math.sin(state.pitch);
+    const dir = [cp * sy, sp, cp * cy];
+    const tgt = state.tgt;
+    q.dist = CAMD;
+    q.eye = add(tgt, scl(dir, q.dist));
+    q.fwd = scl(dir, -1);
+    q.right = vnorm(cross(q.fwd, [0, 1, 0]));
+    q.up = cross(q.right, q.fwd);
+    const pts = envelopePoints();
+    let loR = 1e9, hiR = -1e9, loU = 1e9, hiU = -1e9;
+    for (const p of pts) {
+      const v = sub(p, q.eye);
+      const z = Math.max(0.05, dot(v, q.fwd));
+      const r = dot(v, q.right) / z, u = dot(v, q.up) / z;
+      loR = Math.min(loR, r); hiR = Math.max(hiR, r);
+      loU = Math.min(loU, u); hiU = Math.max(hiU, u);
+    }
+    const s = Math.min(w * 0.92 / Math.max(1e-6, hiR - loR),
+                       h * 0.88 / Math.max(1e-6, hiU - loU)) * state.zoom;
+    q.focal = s;
+    if (state.look) {
+      const tv = sub(tgt, q.eye);
+      const tz = Math.max(0.05, dot(tv, q.fwd));
+      q.px = w * 0.5 - (dot(tv, q.right) / tz) * s;
+      q.py = h * 0.5 + (dot(tv, q.up) / tz) * s;
+    } else {
+      q.px = w * 0.5 - (loR + hiR) * 0.5 * s;
+      q.py = h * 0.5 + (loU + hiU) * 0.5 * s;
+    }
+    return q;
+  }
+  function project(p, q) {
+    const v = sub(p, q.eye);
+    const z = Math.max(0.05, dot(v, q.fwd));
+    const s = q.focal / z;
+    return { x: q.px + dot(v, q.right) * s, y: q.py - dot(v, q.up) * s, s: s, z: z };
+  }
+
+  /* ============================================================
+   * 绘图小工具
+   * ============================================================ */
+  const canvas = $('wl-canvas');
+  const ctx = canvas.getContext('2d');
+  const LBOX = [];
+  const GEO_BOX = [];
+  const frameBoxes = [];
+
+  function polyPath(pts) {
+    ctx.beginPath();
+    pts.forEach(function (p, k) { k ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y); });
+    ctx.closePath();
+  }
+  function poly(pts, fill, stroke, lw) {
+    if (!pts || pts.length < 2) return;
+    polyPath(pts);
+    if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+    if (stroke) { ctx.lineWidth = lw || 1; ctx.strokeStyle = stroke; ctx.stroke(); }
+  }
+  function line(pts, color, lw, dash) {
+    if (!pts || pts.length < 2) return;
+    ctx.beginPath();
+    pts.forEach(function (p, k) { k ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y); });
+    ctx.setLineDash(dash || []);
+    ctx.lineWidth = lw; ctx.strokeStyle = color; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    ctx.stroke(); ctx.setLineDash([]);
+  }
+  const LIGHT = vnorm([-0.34, 0.86, 0.38]);
+  const shade = function (base, n, amb) {
+    return rgb(base, (amb === undefined ? 0.55 : amb) + 0.60 * Math.max(0, dot(n, LIGHT)));
+  };
+  function convexHull(pts) {
+    if (pts.length < 3) return pts.slice();
+    const P = pts.slice().sort(function (a, b) { return a.x - b.x || a.y - b.y; });
+    const cr = function (o, a, b) { return (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x); };
+    const lo = [];
+    for (const p of P) {
+      while (lo.length >= 2 && cr(lo[lo.length - 2], lo[lo.length - 1], p) <= 0) lo.pop();
+      lo.push(p);
+    }
+    const up = [];
+    for (let i = P.length - 1; i >= 0; i--) {
+      const p = P[i];
+      while (up.length >= 2 && cr(up[up.length - 2], up[up.length - 1], p) <= 0) up.pop();
+      up.push(p);
+    }
+    lo.pop(); up.pop();
+    return lo.concat(up);
+  }
+
+  /* ---------------- 标注 ---------------- */
+  function labelBox(p, text, size, align) {
+    ctx.font = '800 ' + size + 'px Inter, "Microsoft YaHei", sans-serif';
+    const wpx = ctx.measureText(text).width;
+    const pad = 4;
+    const half = size * 0.72 + pad * 0.5;
+    const wBox = wpx + pad * 2;
+    const EDGE = 8;
+    const y = clamp(p.y, half + EDGE, Math.max(half + EDGE, state.h - half - EDGE));
+    let bx = align === 'left' ? p.x - 4 - pad
+      : align === 'right' ? p.x + 4 - wpx - pad
+        : p.x - wpx / 2 - pad;
+    bx = clamp(bx, EDGE, Math.max(EDGE, state.w - wBox - EDGE));
+    return { x: bx, y: y - half, w: wBox, h: half * 2, cx: bx + wBox / 2, cy: y };
+  }
+  function label(p, text, color, size, align) {
+    ctx.font = '800 ' + size + 'px Inter, "Microsoft YaHei", sans-serif';
+    ctx.textAlign = align || 'center';
+    ctx.textBaseline = 'middle';
+    const pad = 4;
+    const wpx = ctx.measureText(text).width;
+    const b = labelBox(p, text, size, align);
+    const x = align === 'left' ? b.x + pad : align === 'right' ? b.x + wpx + pad : b.cx;
+    ctx.fillStyle = 'rgba(2,6,23,.78)';
+    ctx.fillRect(b.x, b.y, b.w, b.h);
+    ctx.fillStyle = color;
+    ctx.fillText(text, x, b.cy);
+    b.txt = text;
+    LBOX.push(b);
+    frameBoxes.push(b);
+    return b;
+  }
+  function tickText(p, text, color, size, align) {
+    ctx.font = '700 ' + size + 'px Inter, "Microsoft YaHei", sans-serif';
+    ctx.textAlign = align || 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = color;
+    ctx.fillText(text, p.x, p.y);
+    const wpx = ctx.measureText(text).width;
+    const half = size * 0.72;
+    const x0 = align === 'right' ? p.x - wpx : align === 'center' ? p.x - wpx / 2 : p.x;
+    const b = { x: x0 - 1, y: p.y - half, w: wpx + 2, h: half * 2, txt: text, tick: true };
+    GEO_BOX.push(b); frameBoxes.push(b);
+    return b;
+  }
+  function bestLabel(anchor, text, color, size, offs) {
+    let best = null, bestOv = 1e18;
+    for (const o of offs) {
+      const b = labelBox({ x: anchor.x + o[0], y: anchor.y + o[1] }, text, size, 'center');
+      let ov = 0;
+      for (const q of frameBoxes) {
+        const ox = Math.min(b.x + b.w, q.x + q.w) - Math.max(b.x, q.x);
+        const oy = Math.min(b.y + b.h, q.y + q.h) - Math.max(b.y, q.y);
+        if (ox > 0 && oy > 0) ov += ox * oy;
+      }
+      if (ov < bestOv) { bestOv = ov; best = { x: anchor.x + o[0], y: anchor.y + o[1] }; }
+    }
+    label(best, text, color, size, 'center');
+    return bestOv;
+  }
+  const AVOID = [[0, 0], [0, -20], [0, 20], [0, -40], [0, 40], [-62, -20], [62, -20],
+    [-62, 20], [62, 20], [0, -60], [0, 60], [-112, 0], [112, 0], [-112, -40], [112, -40],
+    [-112, 40], [112, 40], [0, -80], [0, 80]];
+  const AVOID_UP = [[-72, -26], [-72, -48], [72, -26], [0, -56], [-108, -26], [108, -26]];
+  const AVOID_DN = [[0, 26], [-56, 22], [56, 22], [0, 50], [-96, 26], [96, 26]];
+
+  /* ============================================================
+   * 画面【实际画出来】的量 —— 自检只读这些
+   * ============================================================ */
+  let WING_DRAWN = null;        // 翼型屏幕盒 + 世界包围盒
+  let FLOW_DRAWN = [];          // 每条流线的屏幕点（用于量间距）
+  let LIFT_DRAWN = null;        // 升力箭头
+  let ALPHA_DRAWN = null;       // 迎角指示
+  let BAND_DRAWN = [];          // 压强色带取样（上/下表面各若干点）
+  let SURF_SAMPLES = null;      // 上/下表面速度与压强采样（世界量）
+
+  /* ============================================================
+   * 表面采样：上/下表面各取 M 个点，算速度与压强
+   * ============================================================ */
+  const NSAMP = 21;
+  function surfaceSamples() {
+    const alpha = state.alphaDeg * D2R;
+    const ca = Math.cos(alpha), sa = Math.sin(alpha);
+    const up = [], lo = [];
+    for (let i = 0; i < NSAMP; i++) {
+      const xn = 0.04 + (0.94 - 0.04) * i / (NSAMP - 1);
+      const yc = camber(xn), yt = thick(xn);
+      const pu = rotPt((xn - 0.5) * C_LEN, (yc + yt) * C_LEN, ca, sa);
+      const pl = rotPt((xn - 0.5) * C_LEN, (yc - yt) * C_LEN, ca, sa);
+      // 采样点从表面【往外】挪一小段，避开涡核
+      const nu = vnorm([0, 1, 0]);
+      const upOff = [pu[0] + 0.045 * ca, pu[1] + 0.045, pu[2]];
+      const loOff = [pl[0] + 0.045 * ca, pl[1] - 0.045, pl[2]];
+      const vu = speedAt(upOff[0], upOff[1]);
+      const vl = speedAt(loOff[0], loOff[1]);
+      up.push({ xn: xn, x: pu[0], y: pu[1], v: vu, Cp: 1 - vu * vu });
+      lo.push({ xn: xn, x: pl[0], y: pl[1], v: vl, Cp: 1 - vl * vl });
+    }
+    let su = 0, sl = 0;
+    for (let i = 0; i < NSAMP; i++) { su += up[i].v; sl += lo[i].v; }
+    return {
+      up: up, lo: lo,
+      vUp: su / NSAMP, vLo: sl / NSAMP,
+      cpUp: up.reduce(function (s, p) { return s + p.Cp; }, 0) / NSAMP,
+      cpLo: lo.reduce(function (s, p) { return s + p.Cp; }, 0) / NSAMP,
+      maxSpeed: Math.max.apply(null, up.map(function (p) { return p.v; }))
+    };
+  }
+
+  /* ============================================================
+   * 场景绘制
+   * ============================================================ */
+  function drawBackdrop(w, h, q) {
+    const g = ctx.createLinearGradient(0, 0, 0, h);
+    g.addColorStop(0, '#0a1424'); g.addColorStop(1, '#050b14');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
+    // 来流参考线（水平网格，帮助看出流线被抬弯）
+    for (let yy = -1.5; yy <= 1.51; yy += 0.5) {
+      const a = project([FLOW_X0, yy, 0], q), b = project([FLOW_X1, yy, 0], q);
+      line([a, b], 'rgba(148,163,184,.075)', 1);
+    }
+  }
+
+  /* 压强 → 颜色：蓝 = 高压、红 = 低压（与图例一致）
+     🔴 不能用「hue 从 212 线性转到 0」：Cp 的中段（±0.5）正好落在 hue≈120 的绿色区，
+     实测上表面 Cp≈−0.56 画出来是【绿】、下表面 Cp≈+0.34 是【青】，冷暖差只有 48° ——
+     用户根本分不出上下表面。改成【冷暖双色向中性灰插值】：Cp<0 往红走、Cp>0 往蓝走，
+     |Cp| 越大越饱和。实测上表面偏红、下表面偏蓝，一眼就能看出压差。 */
+  function cpColor(cp) {
+    const k = clamp(Math.abs(cp) / 1.4, 0, 1);
+    const base = cp < 0 ? [239, 68, 68] : [56, 189, 248];
+    const mid = [148, 163, 184];
+    const a = 0.30 + 0.70 * k;
+    return 'rgb(' + Math.round(lerp(mid[0], base[0], a)) + ',' +
+      Math.round(lerp(mid[1], base[1], a)) + ',' +
+      Math.round(lerp(mid[2], base[2], a)) + ')';
+  }
+
+  /* 流线：世界坐标缓存（只依赖迎角），屏幕投影每帧重算。
+     🔴 原来每帧都跑一遍 RK4（31 条 × 1400 步 × 4 阶 × 128 个奇点 ≈ 2200 万次运算/帧），
+     页面会卡；而迎角不变时结果完全一样 —— 缓存后每帧只剩投影。 */
+  let FLOW_WORLD = [], FLOW_ALPHA = null;
+  /* 真正跑过 RK4 的流线条数 —— 自检用它证明「缓存确实生效」：
+     同一迎角连续 render 两次，这个数【不许增加】。 */
+  let FLOW_TRACES = 0;
+  function ensureFlowWorld() {
+    if (FLOW_ALPHA === state.alphaDeg && FLOW_WORLD.length === NLINE) return;
+    FLOW_ALPHA = state.alphaDeg;
+    FLOW_WORLD = [];
+    for (let i = 0; i < NLINE; i++) {
+      const y0 = FLOW_Y0 + (FLOW_Y1 - FLOW_Y0) * i / (NLINE - 1);
+      FLOW_WORLD.push(traceStreamline(FLOW_X0, y0));
+      FLOW_TRACES++;
+    }
+  }
+  /* 虚线 + lineDashOffset 表示「气流的流动」，风速越大相位跑得越快 */
+  function drawStreamlines(q) {
+    FLOW_DRAWN = [];
+    ensureFlowWorld();
+    const off = -state.t * 46;
+    for (let i = 0; i < FLOW_WORLD.length; i++) {
+      const W = FLOW_WORLD[i];
+      if (!W || W.length < 2) { FLOW_DRAWN.push(null); continue; }
+      const S = W.map(function (p) { return project([p[0], p[1], 0], q); });
+      ctx.beginPath();
+      S.forEach(function (p, k) { k ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y); });
+      ctx.setLineDash([7, 9]);
+      ctx.lineDashOffset = off;
+      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = 'rgba(186,230,253,.72)';
+      ctx.lineCap = 'round';
+      ctx.stroke();
+      ctx.setLineDash([]); ctx.lineDashOffset = 0;
+      FLOW_DRAWN.push(S);
+    }
+  }
+
+  function drawWing(q) {
+    const alpha = state.alphaDeg * D2R;
+    const o = wingOutline(alpha);
+    const front = o.outline.map(function (p) { return project([p[0], p[1], SPAN], q); });
+    const back = o.outline.map(function (p) { return project([p[0], p[1], -SPAN], q); });
+    // 侧面（凸包）→ 顶面 → 轮廓
+    poly(convexHull(front.concat(back)), 'rgba(56,88,130,.72)', 'rgba(148,196,236,.5)', 1.2);
+    poly(front, rgba(C_WING, .92), 'rgba(186,224,246,.85)', 1.6);
+    poly(back, 'rgba(38,62,94,.85)', 'rgba(120,160,200,.4)', 1);
+
+    const all = front.concat(back);
+    let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
+    all.forEach(function (p) {
+      x0 = Math.min(x0, p.x); x1 = Math.max(x1, p.x);
+      y0 = Math.min(y0, p.y); y1 = Math.max(y1, p.y);
+    });
+    let wx0 = 1e9, wx1 = -1e9, wy0 = 1e9, wy1 = -1e9;
+    o.outline.forEach(function (p) {
+      wx0 = Math.min(wx0, p[0]); wx1 = Math.max(wx1, p[0]);
+      wy0 = Math.min(wy0, p[1]); wy1 = Math.max(wy1, p[1]);
+    });
+    WING_DRAWN = {
+      sx: x0, sy: y0, sw: x1 - x0, sh: y1 - y0,
+      wx0: wx0, wx1: wx1, wy0: wy0, wy1: wy1,
+      chordY0: o.outline[0][1], chordY1: o.outline[o.outline.length - 1][1]
+    };
+  }
+
+  /* 压强色带：沿上下表面各画一条粗线，颜色由 Cp 决定 */
+  function drawPressureBands(q, S) {
+    BAND_DRAWN = [];
+    const seg = function (arr, zoff, lw) {
+      for (let i = 0; i < arr.length - 1; i++) {
+        const a = project([arr[i].x, arr[i].y, zoff], q);
+        const b = project([arr[i + 1].x, arr[i + 1].y, zoff], q);
+        const c = cpColor((arr[i].Cp + arr[i + 1].Cp) / 2);
+        ctx.beginPath();
+        ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
+        ctx.lineWidth = lw; ctx.strokeStyle = c; ctx.lineCap = 'round';
+        ctx.stroke();
+        BAND_DRAWN.push({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, cp: (arr[i].Cp + arr[i + 1].Cp) / 2, side: arr === S.up ? 'up' : 'lo' });
+      }
+    };
+    seg(S.up, SPAN + 0.005, 9);
+    seg(S.lo, SPAN + 0.005, 9);
+  }
+
+  function drawLiftArrow(q) {
+    const alpha = state.alphaDeg * D2R;
+    const ca = Math.cos(alpha), sa = Math.sin(alpha);
+    // 锚点取弦长 45% 处（1/4 弦点是俯仰中心，再往后一点才不会压住「上表面」标注）
+    const c0 = rotPt((0.45 - 0.5) * C_LEN, camber(0.45) * C_LEN, ca, sa);
+    const cx = c0[0], cy = c0[1];
+    const L = Math.abs(state.liftShown);
+    const len = clamp(L / L_FULL * ARROW_MAX, 0.05, ARROW_MAX) * (state.liftShown < 0 ? -1 : 1);
+    const a = project([cx, cy, 0], q);
+    const b = project([cx, cy + len, 0], q);
+    const up = len >= 0;
+    const col = up ? 'rgba(74,222,128,.95)' : 'rgba(248,113,113,.95)';
+    line([a, b], col, 4.5);
+    // 箭头
+    const dir = { x: b.x - a.x, y: b.y - a.y };
+    const dl = Math.hypot(dir.x, dir.y) || 1;
+    const ux = dir.x / dl, uy = dir.y / dl;
+    const hx = -uy, hy = ux;
+    poly([
+      { x: b.x, y: b.y },
+      { x: b.x - ux * 15 + hx * 7, y: b.y - uy * 15 + hy * 7 },
+      { x: b.x - ux * 15 - hx * 7, y: b.y - uy * 15 - hy * 7 }
+    ], col, null, 0);
+    LIFT_DRAWN = { ax: a.x, ay: a.y, bx: b.x, by: b.y, len: len, up: up };
+  }
+
+  function drawAlphaIndicator(q) {
+    const alpha = state.alphaDeg * D2R;
+    const ca = Math.cos(alpha), sa = Math.sin(alpha);
+    const ax = FLOW_X0 + 0.30, ay = FLOW_Y0 + 0.34;
+    // 来流方向（水平向右）
+    const f0 = project([ax, ay, 0], q), f1 = project([ax + 0.90, ay, 0], q);
+    line([f0, f1], 'rgba(125,211,252,.9)', 2.2);
+    // 弦线方向（相对来流转了 α）
+    const c1 = project([ax + 0.90 * ca, ay + 0.90 * sa, 0], q);
+    line([f0, c1], 'rgba(251,191,36,.9)', 2.2, [5, 4]);
+    ALPHA_DRAWN = { ax: f0.x, ay: f0.y, bx: c1.x, by: c1.y, fx: f1.x, fy: f1.y, deg: state.alphaDeg };
+  }
+
+  function render() {
+    const w = state.w, h = state.h;
+    ctx.setTransform(state.dpr, 0, 0, state.dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+    LBOX.length = 0; GEO_BOX.length = 0; frameBoxes.length = 0;
+    WING_DRAWN = null; FLOW_DRAWN = []; LIFT_DRAWN = null; ALPHA_DRAWN = null;
+    BAND_DRAWN = []; SURF_SAMPLES = null;
+    if (w < 2 || h < 2) return;
+
+    buildSingularities();
+    SURF_SAMPLES = surfaceSamples();
+
+    const q = {};
+    makeCam(q, w, h);
+    drawBackdrop(w, h, q);
+    drawStreamlines(q);
+    drawWing(q);
+    drawPressureBands(q, SURF_SAMPLES);
+    drawLiftArrow(q);
+    drawAlphaIndicator(q);
+
+    /* ---- 标注 ---- */
+    const S = SURF_SAMPLES;
+    const wp = WING_DRAWN;
+    /* 🔴 静态标注必须先画：bestLabel 只避让【已经进 frameBoxes 的盒子】。
+       原来这行 tickText 排在所有 bestLabel 之后 ⇒ 避让算法看不见它 ⇒
+       实测 α=0° / α=8° / 立体视角三张图里「NACA 2412 翼型」都和
+       「下表面 … v∞」叠在一起。顺序一换，bestLabel 自己会绕开。 */
+    /* 窄屏的舞台浮层（「记录一组」）是 DOM 元素、不进 frameBoxes ⇒
+       实测它会和「下表面 … v∞」标签横向叠上。把它的屏幕矩形也塞进避让表。
+       宽屏时浮层 display:none，直接跳过（不做无谓的布局读取）。 */
+    if (window.matchMedia('(max-width:820px)').matches) {
+      const cr = canvas.getBoundingClientRect();
+      const hr = document.querySelector('.stage-hud').getBoundingClientRect();
+      frameBoxes.push({ x: hr.left - cr.left, y: hr.top - cr.top, w: hr.width, h: hr.height, txt: 'HUD' });
+    }
+    tickText({ x: wp.sx + wp.sw / 2, y: wp.sy + wp.sh + 16 }, 'NACA 2412 翼型', '#8aa6b8', 10.5, 'center');
+    const midUp = project([S.up[Math.floor(NSAMP / 2)].x, S.up[Math.floor(NSAMP / 2)].y, SPAN], q);
+    const midLo = project([S.lo[Math.floor(NSAMP / 2)].x, S.lo[Math.floor(NSAMP / 2)].y, SPAN], q);
+    bestLabel(midUp, '上表面 ' + (S.vUp).toFixed(2) + ' v∞', '#fca5a5', 11, AVOID_UP);
+    bestLabel(midLo, '下表面 ' + (S.vLo).toFixed(2) + ' v∞', '#7dd3fc', 11, AVOID_DN);
+    if (LIFT_DRAWN) {
+      bestLabel({ x: LIFT_DRAWN.bx, y: LIFT_DRAWN.by }, '升力 ' + Math.abs(state.liftShown).toFixed(0) + ' N/m', '#6ee7b7', 11.5, AVOID);
+    }
+    const am = ALPHA_DRAWN;
+    bestLabel({ x: (am.ax + am.bx) / 2, y: (am.ay + am.by) / 2 },
+      '迎角 ' + state.alphaDeg.toFixed(1) + '°', '#fbbf24', 11, AVOID);
+    state.dirty = false;
+  }
+
+  /* ============================================================
+   * 动作
+   * ============================================================ */
+  function refreshAll() {
+    render();      // 先渲染：SURF_SAMPLES / WING_DRAWN 都是 render 里更新的，侧栏要读它们
+    renderReadout(); renderBars(); renderFlowBars(); renderRecord(); renderLaw();
+    renderAnalysis(); renderHint(); renderButtons();
+  }
+  function setVinf(v) {
+    state.vinf = clamp(+v, VMIN, VMAX);
+    $('wl-v').value = String(state.vinf);
+    $('wl-v-out').textContent = state.vinf.toFixed(0) + ' m/s';
+    refreshAll();
+  }
+  function setAlpha(a) {
+    state.alphaDeg = clamp(+a, ALPHA_MIN_DEG, ALPHA_MAX_DEG);
+    $('wl-a').value = String(state.alphaDeg);
+    $('wl-a-out').textContent = state.alphaDeg.toFixed(1) + '°';
+    refreshAll();
+  }
+  function setMode(m) {
+    state.mode = m;
+    const lock = m === 'speed';
+    $('wl-a').disabled = lock;
+    const lockA = m === 'angle';
+    $('wl-v').disabled = lockA;
+    $('wl-mode-pill').textContent = m === 'free' ? '自由探究' : (m === 'speed' ? '只改风速' : '只改迎角');
+    $('wl-mode-note').textContent = m === 'free'
+      ? '风速与迎角都可以拖。注意迎角超过 15° 之后升力会掉下来。'
+      : (m === 'speed' ? '迎角被锁住（控制变量）—— 只看升力怎么随风速变。'
+        : '风速被锁住（控制变量）—— 只看升力怎么随迎角变。');
+    $('wl-modes').querySelectorAll('button').forEach(function (b) {
+      b.classList.toggle('primary', b.dataset.mode === m);
+    });
+    refreshAll();
+  }
+  function resetAll() {
+    state.vinf = V_DEF; state.alphaDeg = ALPHA_REF; state.t = 0; state.liftShown = 0;
+    $('wl-v').value = String(V_DEF); $('wl-v-out').textContent = V_DEF + ' m/s';
+    $('wl-a').value = String(ALPHA_REF); $('wl-a-out').textContent = ALPHA_REF.toFixed(1) + '°';
+    setMode('free');
+  }
+  function applyView(v) {
+    const V = VIEWS[v] || VIEWS.side;
+    state.yaw = V.yaw; state.pitch = V.pitch; state.zoom = V.zoom;
+    state.tgt = V.tgt.slice(); state.look = !!V.look;
+    $('wl-views').querySelectorAll('button').forEach(function (b) {
+      b.classList.toggle('primary', b.dataset.view === v);
+    });
+    render();
+  }
+  /* 升力（N/m）：L' = ½ ρ v∞² c C_L，C_L 由薄翼理论给出 */
+  function liftPerMeter() {
+    const alpha = state.alphaDeg * D2R;
+    const lm = liftModel(alpha);
+    return 0.5 * RHO_AIR * state.vinf * state.vinf * CHORD_M * lm.CL;
+  }
+  /* 由环量算的升力（库塔-儒可夫斯基，独立路径）：L' = ρ v∞ Γ_real */
+  function liftByKJ() {
+    const alpha = state.alphaDeg * D2R;
+    const lm = liftModel(alpha);
+    const GammaReal = Math.PI * CHORD_M * state.vinf * (lm.A0 + lm.A1 / 2) * lm.k;
+    return RHO_AIR * state.vinf * GammaReal;
+  }
+
+  function advance(dt) {
+    state.t += dt * (state.vinf / 30);
+    const target = liftPerMeter();
+    state.liftShown += (target - state.liftShown) * Math.min(1, dt * 7);
+    if (Math.abs(target - state.liftShown) < 0.05) state.liftShown = target;
+  }
+  function driveAnim(sec, dt) {
+    const d = dt || 1 / 60;
+    const n = Math.max(1, Math.round(sec / d));
+    for (let i = 0; i < n; i++) advance(d);
+    render();
+  }
+
+  /* ============================================================
+   * 侧栏
+   * ============================================================ */
+  function renderReadout() {
+    const L = liftPerMeter(), LK = liftByKJ();
+    const alpha = state.alphaDeg * D2R;
+    const lm = liftModel(alpha);
+    const S = SURF_SAMPLES || { vUp: 1, vLo: 1, cpUp: 0, cpLo: 0 };
+    const kv = $('wl-lift-kv');
+    const dp = (S.cpLo - S.cpUp) * 0.5 * RHO_AIR * state.vinf * state.vinf;
+    kv.innerHTML =
+      row('升力系数 C<sub>L</sub>', lm.CL.toFixed(3), 'hi') +
+      row('升力 L′', L.toFixed(0) + ' N/m', 'good') +
+      row('环量路径 ρv<sub>∞</sub>Γ', LK.toFixed(0) + ' N/m', '') +
+      row('上表面平均流速', S.vUp.toFixed(2) + ' v∞', 'warn') +
+      row('下表面平均流速', S.vLo.toFixed(2) + ' v∞', 'hi') +
+      row('上下压强差', dp.toFixed(0) + ' Pa', 'good');
+    const pill = $('wl-lift-pill');
+    pill.textContent = lm.stall ? '已失速' : '正常';
+    pill.className = 'pill ' + (lm.stall ? 'warn' : 'ok');
+    $('wl-state-note').innerHTML = lm.stall
+      ? '<b>失速！</b>迎角 ' + state.alphaDeg.toFixed(1) + '° 超过约 15°，上表面气流已经脱离翼面 —— 环量下降、升力骤减。'
+      : (state.alphaDeg < 0 ? '负迎角：上下表面反过来，升力向下。' : '迎角在安全范围内，升力随风速与迎角一起增大。');
+    $('wl-state-note').className = 'note' + (lm.stall ? ' warn' : '');
+  }
+  function row(k, v, cls) {
+    return '<div><span>' + k + '</span><b class="' + (cls || '') + '">' + v + '</b></div>';
+  }
+  function renderBars() {
+    const S = SURF_SAMPLES; if (!S) return;
+    const mx = Math.max(S.vUp, S.vLo, 1.6);
+    const bar = function (name, v, color) {
+      return '<div class="b"><div class="val">' + v.toFixed(2) + '</div>' +
+        '<div class="col" style="height:' + (v / mx * 100).toFixed(1) + '%;background:' + color + '"></div>' +
+        '<div class="cap">' + name + '</div></div>';
+    };
+    $('wl-bars').innerHTML =
+      bar('上表面', S.vUp, 'linear-gradient(180deg,#fca5a5,#ef4444)') +
+      bar('下表面', S.vLo, 'linear-gradient(180deg,#7dd3fc,#2563eb)');
+    const d = ((S.vUp - S.vLo) / Math.max(1e-9, S.vLo) * 100);
+    $('wl-bars-note').innerHTML = '上表面比下表面快 <b>' + d.toFixed(0) + '%</b>' +
+      '（单位 v<sub>∞</sub>）—— 这就是流线「上密下疏」的原因，也是压强差的来源。';
+  }
+  function renderFlowBars() {
+    // 沿流线量「流管宽度」：取翼型正上方 / 正下方各一组相邻流线
+    if (!FLOW_DRAWN.length) return;
+    const mid = Math.floor(FLOW_DRAWN.length / 2);
+    const gapAt = function (i, j) {
+      const A = FLOW_DRAWN[i], B = FLOW_DRAWN[j];
+      if (!A || !B) return null;
+      // 找两条流线在 x ≈ 0（翼型中段）处的屏幕 y 差
+      const pick = function (S) {
+        let best = null, bd = 1e9;
+        for (const p of S) { const d = Math.abs(p.x - (state.w / 2)); if (d < bd) { bd = d; best = p; } }
+        return best;
+      };
+      const a = pick(A), b = pick(B);
+      if (!a || !b) return null;
+      return Math.abs(a.y - b.y);
+    };
+    const gUp = gapAt(mid + 2, mid + 3), gDn = gapAt(mid - 2, mid - 3);
+    const el = $('wl-flow-bars');
+    if (!gUp || !gDn) { el.innerHTML = ''; return; }
+    const mx = Math.max(gUp, gDn);
+    const bar = function (name, g, color) {
+      return '<div class="b"><div class="val">' + g.toFixed(0) + '</div>' +
+        '<div class="col" style="height:' + (g / mx * 100).toFixed(1) + '%;background:' + color + '"></div>' +
+        '<div class="cap">' + name + '</div></div>';
+    };
+    el.innerHTML = bar('翼型上方', gUp, 'linear-gradient(180deg,#fca5a5,#ef4444)') +
+      bar('翼型下方', gDn, 'linear-gradient(180deg,#7dd3fc,#2563eb)');
+    $('wl-flow-note').innerHTML = '上方流线间距只有下方的 <b>' + (gUp / gDn * 100).toFixed(0) + '%</b>' +
+      ' ⇒ 流管更窄 ⇒ 流速更大（质量守恒）。';
+  }
+  function renderLaw() {
+    const L = liftPerMeter();
+    const v2 = state.vinf * state.vinf;
+    $('wl-law').innerHTML =
+      '<div class="line"><span>风速 v<sub>∞</sub></span><b>' + state.vinf.toFixed(0) + ' m/s</b></div>' +
+      '<div class="line"><span>v<sub>∞</sub>²</span><b>' + v2.toFixed(0) + '</b></div>' +
+      '<div class="line"><span>L′ / v<sub>∞</sub>²</span><b>' + (L / v2).toFixed(3) + '</b></div>' +
+      '<div class="conc">升力 <b>∝ v<sub>∞</sub>²</b>：风速翻倍，升力变 <b>4 倍</b>。' +
+      '右边这个比值只要迎角不变就<b>恒定</b> —— 这就是判据。</div>';
+  }
+  function renderRecord() {
+    const tb = $('wl-rec');
+    tb.innerHTML = records.map(function (r, i) {
+      return '<tr><td>' + (i + 1) + '</td><td>' + r.v.toFixed(0) + '</td><td>' + r.a.toFixed(1) +
+        '</td><td>' + r.cl.toFixed(3) + '</td><td>' + r.L.toFixed(0) +
+        '</td><td>' + r.ratio.toFixed(2) + '</td></tr>';
+    }).join('');
+    $('wl-rec-count').textContent = records.length + ' 组';
+    $('wl-hud-count').textContent = records.length + ' 组';
+  }
+  function renderButtons() {
+    $('wl-reset').disabled = false;
+  }
+  function renderAnalysis() {
+    const S = SURF_SAMPLES;
+    if (!S) { $('wl-analysis').innerHTML = ''; return; }
+    const q = 0.5 * RHO_AIR * state.vinf * state.vinf;
+    const faster = S.vUp > S.vLo;
+    $('wl-analysis').innerHTML =
+      '<div class="line"><span>上表面流速</span><b>' + S.vUp.toFixed(2) + ' v∞</b></div>' +
+      '<div class="line"><span>下表面流速</span><b>' + S.vLo.toFixed(2) + ' v∞</b></div>' +
+      '<div class="line"><span>上表面压强（相对）</span><b>' + (S.cpUp * q).toFixed(0) + ' Pa</b></div>' +
+      '<div class="line"><span>下表面压强（相对）</span><b>' + (S.cpLo * q).toFixed(0) + ' Pa</b></div>' +
+      '<div class="conc' + (faster ? '' : ' info') + '">' + (faster
+        ? '上表面流速是下表面的 <b>' + (S.vUp / Math.max(1e-9, S.vLo)).toFixed(2) +
+          ' 倍</b> ⇒ 上表面压强更低 ⇒ 下表面把机翼往上 <b>托</b>。'
+        : '迎角为负：上下表面反过来了 —— 上表面流速反而更小，升力方向朝下。') + '</div>';
+  }
+  function renderHint() {
+    const lm = liftModel(state.alphaDeg * D2R);
+    let h = '拖动「风速」与「迎角」两个滑块，盯住画面里的<b>流线疏密</b>、<b>色带颜色</b>与<b>绿色升力箭头</b>。';
+    if (lm.stall) h = '已经失速了 —— 把迎角拖回 <b>15° 以下</b>，看升力怎么回来。';
+    else if (state.alphaDeg > 12) h = '快到失速迎角了（15°）—— 再往上拖，升力反而会掉下来。';
+    else if (state.vinf >= 55) h = '风速已经拉满 —— 注意升力是按 <b>v∞²</b> 长的。';
+    else if (state.alphaDeg < 0) h = '负迎角：上下表面互换，升力朝下 —— 这就是「倒飞也要低头」的原因。';
+    $('wl-hint').innerHTML = h;
+  }
+
+  /* ============================================================
+   * 画布尺寸 / 主循环
+   * ============================================================ */
+  function resize() {
+    const r = canvas.getBoundingClientRect();
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    state.w = r.width; state.h = r.height; state.dpr = dpr;
+    canvas.width = Math.max(1, Math.round(r.width * dpr));
+    canvas.height = Math.max(1, Math.round(r.height * dpr));
+    render();
+  }
+  let last = 0, rafId = 0;
+  function loop(ts) {
+    const dt = last ? Math.min(0.05, (ts - last) / 1000) : 0.016;
+    last = ts;
+    advance(dt);
+    render();
+    if (Math.abs(liftPerMeter() - state.liftShown) > 0.5) renderReadout();
+    rafId = requestAnimationFrame(loop);
+  }
+
+  /* ============================================================
+   * 交互
+   * ============================================================ */
+  canvas.addEventListener('pointerdown', function (e) {
+    canvas.setPointerCapture(e.pointerId);
+    state.drag = { x: e.clientX, y: e.clientY };
+    canvas.classList.add('grabbing');
+  });
+  canvas.addEventListener('pointermove', function (e) {
+    if (!state.drag) return;
+    const dx = e.clientX - state.drag.x, dy = e.clientY - state.drag.y;
+    state.drag.x = e.clientX; state.drag.y = e.clientY;
+    state.yaw = clamp(state.yaw + dx * 0.006, -1.25, 1.25);
+    state.pitch = clamp(state.pitch - dy * 0.005, -0.30, 1.10);
+    render();
+  });
+  function endDrag() { state.drag = null; canvas.classList.remove('grabbing'); }
+  canvas.addEventListener('pointerup', endDrag);
+  canvas.addEventListener('pointercancel', endDrag);
+  canvas.addEventListener('wheel', function (e) {
+    e.preventDefault();
+    state.zoom = clamp(state.zoom * (e.deltaY > 0 ? 0.92 : 1.086), 0.55, 3.0);
+    render();
+  }, { passive: false });
+
+  $('wl-modes').addEventListener('click', function (e) {
+    const b = e.target.closest('button'); if (b) setMode(b.dataset.mode);
+  });
+  $('wl-views').addEventListener('click', function (e) {
+    const b = e.target.closest('button'); if (b) applyView(b.dataset.view);
+  });
+  $('wl-v').addEventListener('input', function (e) { setVinf(e.target.value); });
+  $('wl-a').addEventListener('input', function (e) { setAlpha(e.target.value); });
+  $('wl-reset').addEventListener('click', resetAll);
+  $('wl-stall-demo').addEventListener('click', function () {
+    setMode('free'); setAlpha(20);
+  });
+  /* 记录一组：侧栏按钮与舞台浮层按钮共用同一段逻辑（绝不复写第二遍） */
+  function doRecord() {
+    const lm = liftModel(state.alphaDeg * D2R);
+    const S = SURF_SAMPLES || { vUp: 1, vLo: 1 };
+    records.push({
+      v: state.vinf, a: state.alphaDeg, cl: lm.CL,
+      L: liftPerMeter(), ratio: S.vUp / Math.max(1e-9, S.vLo)
+    });
+    if (records.length > 12) records.shift();
+    renderRecord();
+  }
+  $('wl-record').addEventListener('click', doRecord);
+  $('wl-record-hud').addEventListener('click', doRecord);
+  $('wl-clear').addEventListener('click', function () { records.length = 0; renderRecord(); });
+
+  (function () {
+    const hd = document.querySelector('.header');
+    if (!hd) return;
+    let ly = window.scrollY;
+    window.addEventListener('scroll', function () {
+      const y = window.scrollY;
+      if (y > ly && y > 80) hd.classList.add('hidden'); else hd.classList.remove('hidden');
+      ly = y;
+    }, { passive: true });
+  })();
+
+  window.addEventListener('resize', function () { resize(); });
+
+  /* ============================================================
+   * 自检钩子
+   * ============================================================ */
+  window.__wl = {
+    state: state,
+    consts: {
+      C_LEN: C_LEN, CHORD_M: CHORD_M, RHO_AIR: RHO_AIR, XQC: XQC, NACA: NACA,
+      ALPHA_STALL: ALPHA_STALL, ALPHA_MAX: ALPHA_MAX, NVORT: NVORT, NSRC: NSRC,
+      CORE: CORE, FLOW_X0: FLOW_X0, FLOW_X1: FLOW_X1, FLOW_Y0: FLOW_Y0, FLOW_Y1: FLOW_Y1,
+      NLINE: NLINE, SPAN: SPAN, NSAMP: NSAMP, THETA_C: THETA_C,
+      VMIN: VMIN, VMAX: VMAX, L_FULL: L_FULL, ARROW_MAX: ARROW_MAX, ALPHA_REF: ALPHA_REF
+    },
+    setVinf: setVinf, setAlpha: setAlpha, setMode: setMode, resetAll: resetAll, applyView: applyView,
+    makeCam: makeCam, project: project, driveAnim: driveAnim, advance: advance, render: render, resize: resize,
+    camber: camber, thick: thick, thinAirfoil: thinAirfoil, liftModel: liftModel,
+    rotPt: rotPt, toGeom: toGeom,
+    gammaShape: gammaShape, velAt: velAt, speedAt: speedAt, traceStreamline: traceStreamline,
+    surfaceSamples: surfaceSamples, liftPerMeter: liftPerMeter, liftByKJ: liftByKJ,
+    vortices: function () { return VORT.map(function (v) { return { x: v.x, y: v.y, g: v.g }; }); },
+    sources: function () { return SRCS.map(function (s) { return { x: s.x, y: s.y, q: s.q }; }); },
+    gamma: function () { return GAMMA; },
+    size: function () { return { w: state.w, h: state.h, dpr: state.dpr }; },
+    drawn: function () {
+      return {
+        wing: WING_DRAWN ? {
+          sx: WING_DRAWN.sx, sy: WING_DRAWN.sy, sw: WING_DRAWN.sw, sh: WING_DRAWN.sh,
+          wx0: WING_DRAWN.wx0, wx1: WING_DRAWN.wx1, wy0: WING_DRAWN.wy0, wy1: WING_DRAWN.wy1
+        } : null,
+        lines: FLOW_DRAWN.map(function (S) {
+          if (!S) return null;
+          return { n: S.length, x0: S[0].x, y0: S[0].y, xn: S[S.length - 1].x, yn: S[S.length - 1].y };
+        }),
+        lineCount: FLOW_DRAWN.filter(Boolean).length,
+        lift: LIFT_DRAWN ? { ax: LIFT_DRAWN.ax, ay: LIFT_DRAWN.ay, bx: LIFT_DRAWN.bx, by: LIFT_DRAWN.by, len: LIFT_DRAWN.len, up: LIFT_DRAWN.up } : null,
+        alpha: ALPHA_DRAWN ? { ax: ALPHA_DRAWN.ax, ay: ALPHA_DRAWN.ay, bx: ALPHA_DRAWN.bx, by: ALPHA_DRAWN.by, deg: ALPHA_DRAWN.deg } : null,
+        bandCount: BAND_DRAWN.length,
+        bandCpUp: BAND_DRAWN.filter(function (b) { return b.side === 'up'; }).map(function (b) { return b.cp; }),
+        bandCpLo: BAND_DRAWN.filter(function (b) { return b.side === 'lo'; }).map(function (b) { return b.cp; }),
+        bands: BAND_DRAWN.map(function (b) { return { x: b.x, y: b.y, cp: b.cp, side: b.side }; }),
+        samples: SURF_SAMPLES ? {
+          vUp: SURF_SAMPLES.vUp, vLo: SURF_SAMPLES.vLo,
+          cpUp: SURF_SAMPLES.cpUp, cpLo: SURF_SAMPLES.cpLo,
+          maxSpeed: SURF_SAMPLES.maxSpeed,
+          up: SURF_SAMPLES.up.map(function (p) { return { xn: p.xn, x: p.x, y: p.y, v: p.v, Cp: p.Cp }; }),
+          lo: SURF_SAMPLES.lo.map(function (p) { return { xn: p.xn, x: p.x, y: p.y, v: p.v, Cp: p.Cp }; })
+        } : null,
+        frameCount: frameBoxes.length,
+        tickCount: frameBoxes.filter(function (b) { return b.tick; }).length,
+        labelCount: LBOX.length,
+        lift: LIFT_DRAWN ? { ax: LIFT_DRAWN.ax, ay: LIFT_DRAWN.ay, bx: LIFT_DRAWN.bx, by: LIFT_DRAWN.by, len: LIFT_DRAWN.len, up: LIFT_DRAWN.up } : null,
+        liftShown: state.liftShown, clNow: CL_NOW, stallNow: STALL_NOW, gamma: GAMMA
+      };
+    },
+    labels: function () {
+      return LBOX.map(function (b) { return { x: b.x, y: b.y, w: b.w, h: b.h, txt: b.txt }; });
+    },
+    /* 避让集合全集（含 tickText 与窄屏浮层）——「两两不重叠」要在这上面判 */
+    allBoxes: function () {
+      return frameBoxes.map(function (b) {
+        return { x: b.x, y: b.y, w: b.w, h: b.h, txt: b.txt, tick: !!b.tick };
+      });
+    },
+    insideWing: insideWing,
+    /* 沿所有流线逐点查「有没有点落在翼型内部」——自检用它证明流线不穿翼 */
+    wingPenetration: function () {
+      let n = 0, total = 0, worst = 0;
+      for (let i = 0; i < NLINE; i++) {
+        const y0 = FLOW_Y0 + (FLOW_Y1 - FLOW_Y0) * i / (NLINE - 1);
+        const W = traceStreamline(FLOW_X0, y0);
+        for (let k = 0; k < W.length; k++) {
+          total++;
+          const h = insideWing(W[k][0], W[k][1]);
+          if (h) { n++; worst = Math.max(worst, Math.abs(h.d) / Math.max(1e-9, h.yt)); }
+        }
+      }
+      return { inside: n, total: total, worst: worst };
+    },
+    /* 数值环量 ∮v·dl（绕 1/4 弦点的大圆）—— 独立于 Γ 的解析式 */
+    circulation: function (r) {
+      const R = r || 2.0;
+      const N = 720;
+      let s = 0;
+      for (let i = 0; i < N; i++) {
+        const t0 = i / N * 2 * Math.PI, t1 = (i + 1) / N * 2 * Math.PI;
+        const x0 = XQC + R * Math.cos(t0), y0 = R * Math.sin(t0);
+        const x1 = XQC + R * Math.cos(t1), y1 = R * Math.sin(t1);
+        const vm = velAt((x0 + x1) / 2, (y0 + y1) / 2);
+        s += vm[0] * (x1 - x0) + vm[1] * (y1 - y0);
+      }
+      return s;
+    },
+    /* 数值散度（速度场严格无散度的独立检查） */
+    divergence: function (x, y) {
+      const h = 1e-4;
+      const a = velAt(x + h, y), b = velAt(x - h, y);
+      const c = velAt(x, y + h), d2 = velAt(x, y - h);
+      return (a[0] - b[0]) / (2 * h) + (c[1] - d2[1]) / (2 * h);
+    },
+    flowTraces: function () { return FLOW_TRACES; },
+    flowAlpha: function () { return FLOW_ALPHA; },
+    /* 每条流线的【世界】末点 —— 自检用它证明「末点都跑到出口」，
+       以及「没跑到出口的那条是终止在机翼驻点上、不是凭空断掉」 */
+    flowEnds: function () {
+      return FLOW_WORLD.map(function (W) {
+        return W && W.length ? { n: W.length, x: W[W.length - 1][0], y: W[W.length - 1][1] } : null;
+      });
+    },
+    views: function () { return VIEWS; },
+    camState: function () {
+      return { yaw: state.yaw, pitch: state.pitch, zoom: state.zoom, tgt: state.tgt.slice(), look: !!state.look };
+    },
+    records: function () { return records.slice(); }
+  };
+
+  /* ============================================================
+   * 启动
+   * ============================================================ */
+  /* 滑块的 min/max 从同一份参数表写进去（HTML 里也写着同样的数，但那只是首屏占位，
+     启动时一律以常量覆盖 ⇒ 滑块范围与钳位范围永远是同一个源） */
+  $('wl-v').min = String(VMIN); $('wl-v').max = String(VMAX);
+  $('wl-a').min = String(ALPHA_MIN_DEG); $('wl-a').max = String(ALPHA_MAX_DEG);
+  setVinf(V_DEF);
+  setAlpha(ALPHA_REF);
+  setMode('free');
+  applyView('side');
+  resize();
+  refreshAll();
+  state.liftShown = liftPerMeter();
+  rafId = requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
