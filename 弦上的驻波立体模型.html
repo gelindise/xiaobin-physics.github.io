@@ -1,0 +1,2080 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>弦上的驻波 · 三维吉他实验台 - 物理虚拟实验</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="stylesheet" href="style.css">
+  <style>
+    body { margin: 0; padding: 20px; min-width: 320px; }
+
+    .lab3d h1 { margin: 0; font-size: 19px; letter-spacing: .3px; }
+    .lab3d-sub { margin: 7px 0 16px; color: #93b4c4; font-size: 12.5px; line-height: 1.6; }
+    .lab3d-sub b { color: #a5f3fc; font-weight: 700; }
+
+    .lab3d-layout {
+      display: grid; grid-template-columns: minmax(0, 1fr) 340px;
+      gap: 16px; align-items: start;
+    }
+    /* ★ 左列是一个 flex 纵列（舞台 + 下半区），侧栏独立一列。
+     *   为什么不把「舞台 / 侧栏 / 下半区」三块都当 grid item：
+     *   侧栏跨两行时，grid 会把它的高度【均摊】到被跨的两行上，而舞台
+     *   又是 align-self:start ⇒ 舞台底下白留一大片（实测 1440 下 182 px、
+     *   1920 下 192 px）。改成「左列 flex 纵列 + 舞台 flex:1 1 auto」，
+     *   多出来的高度就全被舞台吃掉，一行空白都不剩。 */
+    .lab3d-left { grid-column: 1; align-self: stretch; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+    .lab3d-sidebar { grid-column: 2; align-self: start; }
+    .lab3d-lower {
+      flex: 1 1 auto;
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(205px, 1fr));
+      gap: 14px; align-content: stretch; align-items: stretch; min-width: 0;
+    }
+
+    .lab3d-stage {
+      position: relative; overflow: hidden; flex: 1 1 auto;
+      min-height: clamp(420px, 72vh, 760px);
+      /* ★ 上限压在「一屏之内」：舞台底栏上的「拨弦 / 记录」是眼睛盯着画面
+       *   时该按的键，不能让它们掉到折叠线以下去。多出来的高度交给下半区
+       *   那几块面板吸收（它们 flex:1 会自己撑开）。 */
+      max-height: calc(100vh - 168px);
+      border: 1px solid rgba(148, 163, 184, .18); border-radius: 16px;
+      background: #020617; box-shadow: 0 18px 46px rgba(2, 6, 23, .5);
+    }
+    /* ★★ 画布必须【绝对定位】。舞台现在是弹性高度（flex:1 1 auto），
+     *   如果画布还是普通流内块级子元素，它的显式 px 高度就会变成舞台的
+     *   content 高度 ⇒ 舞台变高 ⇒ ResizeObserver 回调 ⇒ resize() 把画布
+     *   再设高 ⇒ 舞台再变高 …… 正反馈。实测舞台高度会一路从 760 px
+     *   涨到 1876 px（每张截图高度都不一样，就是这个回路在跑）。
+     *   绝对定位之后画布不再参与舞台的高度计算，回路切断。 */
+    .lab3d-stage canvas { display: block; position: absolute; left: 0; top: 0; touch-action: none; cursor: grab; }
+    .lab3d-stage canvas.grabbing { cursor: grabbing; }
+
+    .lab3d-stage .stage-hint {
+      position: absolute; left: 12px; top: 12px; max-width: 62%;
+      padding: 7px 11px; border-radius: 8px; pointer-events: none;
+      border: 1px solid rgba(56, 189, 248, .28); background: rgba(2, 6, 23, .78);
+      color: #c3e8f5; font-size: 11px; line-height: 1.55;
+    }
+    .lab3d-stage .stage-hint b { color: #7dd3fc; }
+    .lab3d-stage .stage-hint .warn { color: #fcd34d; }
+    .lab3d-stage .stage-hint .ok { color: #6ee7b7; }
+
+    /* 舞台底部那一条：左边按钮，右边操作提示。做成一条 flex 行是为了让它们
+       【永远不重叠】。按钮必须在舞台上：.lab3d-layout 在 ≤900px 折成一列后
+       侧栏会被挤到舞台【下面】，而「拨弦 / 记录」恰恰是眼睛盯着画面时该按的。 */
+    .lab3d-stage .stage-bar {
+      position: absolute; left: 0; right: 0; bottom: 0;
+      display: flex; align-items: center; justify-content: space-between; gap: 8px;
+      padding: 0 12px 11px; pointer-events: none;
+    }
+    .lab3d-stage .bar-left { display: flex; align-items: center; gap: 7px; flex: none; pointer-events: auto; }
+    .lab3d-stage .stage-btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 8px 13px; border-radius: 10px; font-family: inherit;
+      font-size: 12px; font-weight: 800; cursor: pointer;
+      border: 1px solid rgba(148, 163, 184, .35); background: rgba(2, 6, 23, .88); color: #cbd5e1;
+      transition: background .2s, border-color .2s, color .2s, box-shadow .2s;
+    }
+    .lab3d-stage .stage-btn.go { border-color: rgba(56, 189, 248, .55); background: rgba(14, 116, 144, .3); color: #e0f2fe; }
+    .lab3d-stage .stage-btn.go:hover { background: rgba(14, 116, 144, .46); }
+    .lab3d-stage .stage-btn:disabled { opacity: .45; cursor: not-allowed; }
+    /* 弦正在振动（可以记录数据了）—— 绿色发光 */
+    .lab3d-stage .stage-btn.ready {
+      border-color: rgba(52, 211, 153, .8); background: rgba(16, 185, 129, .24); color: #d1fae5;
+      box-shadow: 0 0 0 3px rgba(52, 211, 153, .14), 0 0 18px rgba(52, 211, 153, .3);
+    }
+    /* 暂停 —— 红色，和「振动中」的绿一眼分得开 */
+    .lab3d-stage .stage-btn.off {
+      border-color: rgba(248, 113, 113, .8); background: rgba(153, 27, 27, .38); color: #fecaca;
+    }
+    .lab3d-stage .stage-btn.snd-on {
+      border-color: rgba(251, 191, 36, .85); background: rgba(217, 119, 6, .3); color: #fef3c7;
+      box-shadow: 0 0 0 3px rgba(251, 191, 36, .14), 0 0 18px rgba(251, 191, 36, .3);
+    }
+    .lab3d-stage .stage-help {
+      min-width: 0; pointer-events: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      color: #93b4c4; font-size: 11px; background: rgba(2, 6, 23, .72); padding: 6px 10px; border-radius: 7px;
+    }
+
+    .lab3d-stage .stage-toast {
+      position: absolute; left: 50%; transform: translateX(-50%); bottom: 96px;
+      padding: 8px 14px; border-radius: 10px; font-size: 12px; font-weight: 700;
+      background: rgba(2, 6, 23, .93); border: 1px solid rgba(148, 163, 184, .32); color: #e2e8f0;
+      opacity: 0; transition: opacity .18s; pointer-events: none; white-space: nowrap;
+      max-width: 90%; overflow: hidden; text-overflow: ellipsis;
+    }
+    .lab3d-stage .stage-toast.show { opacity: 1; }
+
+    .lab3d-sidebar { display: flex; flex-direction: column; gap: 11px; min-width: 0; }
+    .panel {
+      border: 1px solid rgba(148, 163, 184, .17); border-radius: 13px;
+      background: rgba(9, 20, 35, .82); padding: 13px 14px;
+    }
+    .panel > h3 {
+      margin: 0 0 10px; font-size: 12px; font-weight: 800; color: #7dd3fc;
+      letter-spacing: .4px; display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    }
+    .panel > h3 .pill {
+      font-size: 10px; font-weight: 800; padding: 2px 8px; border-radius: 99px;
+      background: rgba(148, 163, 184, .18); color: #e2e8f0;
+    }
+    .panel > h3 .pill.live { background: rgba(52, 211, 153, .22); color: #d1fae5; }
+    .panel > h3 .pill.off  { background: rgba(248, 113, 113, .22); color: #fecaca; }
+    .panel > h3 .pill.node { background: rgba(167, 139, 250, .24); color: #ddd6fe; }
+    .fld { display: block; margin-bottom: 11px; }
+    .fld:last-child { margin-bottom: 0; }
+    .fld .row { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 5px; }
+    .fld .row span { color: #a9c2d2; font-size: 11.5px; }
+    .fld .row b { color: #e2e8f0; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+    .fld .note { margin: 6px 0 0; color: #8aa6b8; font-size: 11px; line-height: 1.55; }
+    input[type=range] { width: 100%; accent-color: #38bdf8; }
+
+    /* 品位轴：0 ~ 12 品，第 12 品（八度）单独标出来。
+       ★ 刻度位置不写死在 CSS 里：由 12 个品距 d_n = L₀(1−2^(−n/12))
+         算出来（syncUI 里回填），常量一改这里跟着动。 */
+    .fret-track { position: relative; height: 16px; margin: 15px 0 0; }
+    .fret-track .zone { position: absolute; top: 5px; height: 6px; border-radius: 3px; background: rgba(148, 163, 184, .28); }
+    .fret-track .zone.oct { background: rgba(167, 139, 250, .5); }
+    .fret-track .mk { position: absolute; top: 0; width: 1.5px; height: 16px; background: rgba(226, 232, 240, .5); }
+    .fret-track .cap { position: absolute; top: 0; font-size: 9.5px; color: #8aa6b8; white-space: nowrap; transform: translate(-50%, -112%); }
+
+    .btn-row { display: flex; flex-wrap: wrap; gap: 7px; }
+    .btn-row button {
+      flex: 1 1 auto; min-width: 0; padding: 9px 11px; border-radius: 9px; cursor: pointer;
+      font-family: inherit; font-size: 12px; font-weight: 800;
+      border: 1px solid rgba(148, 163, 184, .3); background: rgba(30, 41, 59, .7); color: #cbd5e1;
+    }
+    .btn-row button.primary { border-color: rgba(56, 189, 248, .6); background: rgba(14, 116, 144, .42); color: #e0f2fe; }
+    .btn-row button.on { border-color: rgba(52, 211, 153, .65); background: rgba(6, 78, 59, .5); color: #d1fae5; }
+    .btn-row button:disabled { opacity: .45; cursor: not-allowed; }
+    .btn-row button:hover:not(:disabled) { border-color: rgba(125, 211, 252, .7); }
+    /* 6 根弦那一排：每根弦一颗，字号小一点才排得下 */
+    .btn-row.str button { flex: 1 1 0; padding: 8px 4px; font-size: 11px; }
+
+    .readouts { display: flex; flex-direction: column; gap: 5px; color: #a9c2d2; font-size: 11.5px; }
+    .readouts div { display: flex; justify-content: space-between; gap: 8px; }
+    .readouts b { color: #e2e8f0; font-variant-numeric: tabular-nums; }
+    .readouts .dim { color: #7d97a8; }
+    .readouts b.hot { color: #6ee7b7; }
+    .readouts b.cold { color: #fca5a5; }
+    .readouts b.node { color: #ddd6fe; }
+
+    /* 进度曲线（侧栏小画布） */
+    .env-box {
+      margin-top: 9px; border-radius: 10px; overflow: hidden;
+      border: 1px solid rgba(148, 163, 184, .22); background: rgba(2, 6, 23, .6);
+    }
+    .env-box canvas { display: block; width: 100%; height: 104px; }
+
+    .analysis { color: #c8d8e4; font-size: 11.5px; line-height: 1.75; }
+    .analysis .line { display: flex; justify-content: space-between; gap: 8px; }
+    .analysis .line b { color: #e2e8f0; font-variant-numeric: tabular-nums; }
+    .analysis .conc {
+      margin-top: 9px; padding: 8px 10px; border-radius: 8px; font-size: 11.5px; line-height: 1.65;
+      background: rgba(6, 78, 59, .35); border: 1px solid rgba(52, 211, 153, .4); color: #d1fae5;
+    }
+    .analysis .conc.info { background: rgba(12, 74, 110, .35); border-color: rgba(56, 189, 248, .4); color: #e0f2fe; }
+    .analysis .conc.warn { background: rgba(120, 53, 15, .38); border-color: rgba(251, 191, 36, .45); color: #fde68a; }
+
+    table.rec { width: 100%; border-collapse: collapse; font-size: 11px; }
+    table.rec th {
+      text-align: left; padding: 5px 4px; color: #7dd3fc; font-weight: 800;
+      border-bottom: 1px solid rgba(148, 163, 184, .25); white-space: nowrap;
+    }
+    table.rec td {
+      padding: 5px 4px; color: #cbd5e1; border-bottom: 1px solid rgba(148, 163, 184, .1);
+      font-variant-numeric: tabular-nums; white-space: nowrap;
+    }
+    table.rec td.dim { color: #4b6474; }
+
+    .info-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; margin-top: 16px; }
+    .info-card {
+      border: 1px solid rgba(148, 163, 184, .16); border-radius: 14px;
+      background: rgba(9, 20, 35, .7); padding: 15px 17px;
+    }
+    .info-card h4 { margin: 0 0 9px; font-size: 13px; color: #7dd3fc; }
+    .info-card ul { margin: 0; padding-left: 17px; color: #a9c2d2; font-size: 12px; line-height: 1.85; }
+    .info-card li b { color: #e2e8f0; }
+    .info-card .fml {
+      display: inline-block; margin: 3px 0; padding: 3px 9px; border-radius: 7px;
+      background: rgba(56, 189, 248, .13); color: #a5f3fc; font-weight: 700;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+
+    @media (max-width: 900px) {
+      .lab3d-layout { grid-template-columns: minmax(0, 1fr); }
+      /* ★ display:contents 让舞台 / 下半区【重新变回 grid item】，
+         这样才能显式把顺序排成「舞台 → 侧栏 → 下半区」。
+         若只是把整个左列当成一块排在前面，侧栏就会被挤到下半区【后面】去。 */
+      .lab3d-left { display: contents; }
+      .lab3d-stage { grid-column: 1; grid-row: 1; flex: none; min-height: 0; max-height: none; height: clamp(340px, 54vh, 500px); }
+      .lab3d-sidebar { grid-column: 1; grid-row: 2; border-top: 1px solid rgba(148, 163, 184, .16); padding-top: 12px; }
+      .lab3d-lower { grid-column: 1; grid-row: 3; border-top: 1px solid rgba(148, 163, 184, .16); padding-top: 12px; }
+    }
+    @media (max-width: 620px) {
+      body { padding: 14px; }
+      .lab3d h1 { font-size: 16px; }
+      .lab3d-stage { height: 350px; }
+      .lab3d-stage .stage-hint { font-size: 10px; padding: 6px 9px; max-width: 66%; }
+      .lab3d-stage .stage-help { display: none; }
+      .lab3d-stage .stage-btn { padding: 7px 10px; font-size: 11px; gap: 5px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="lab3d">
+    <h1>弦上的驻波 · 三维吉他实验台</h1>
+    <p class="lab3d-sub">
+      拨一下吉他弦，你听到一个音。为什么按住不同的<b>品丝</b>，音就变了？
+      答案只有一个字：<b>短</b>。手指按下去，真正在振动的那一段弦变短了 ——
+      弦越短，音越高。这一页把这件事拆成两半：先在<b>一根弦</b>上把
+      「弦长 → 频率」这条关系量出来，再走到<b>整把吉他</b>上，
+      看 6 根弦、12 个品是怎么把这条关系用起来的。
+    </p>
+    <p class="lab3d-sub" style="margin-top:-9px;">
+      还有一件事只有立体画面讲得清：弦振动的时候，弦上有些点<b>从头到尾一动不动</b>
+      （叫<b>波节</b>），另一些点<b>摆得最凶</b>（叫<b>波腹</b>）。
+      它们沿着弦交替出现，构成一种<b>站着不走的波</b> —— 驻波。
+      把探针沿弦拖过去，你会看到振幅从 0 涨到最大、再回到 0，
+      而这个「0」的位置，正好就是频率公式里那个 L 在切分的地方。
+    </p>
+
+    <div class="lab3d-layout">
+      <div class="lab3d-left">
+      <div class="lab3d-stage">
+        <canvas id="gt-canvas"></canvas>
+
+        <div class="stage-hint" id="gt-hint"></div>
+        <div class="stage-toast" id="gt-toast"></div>
+
+        <div class="stage-bar">
+          <div class="bar-left">
+            <button type="button" class="stage-btn go" id="gt-main">拨弦</button>
+            <button type="button" class="stage-btn" id="gt-record-s" title="弦振动起来后才能记录">记录</button>
+            <button type="button" class="stage-btn" id="gt-sound">🔊 声音</button>
+            <button type="button" class="stage-btn" id="gt-reset">重置</button>
+          </div>
+          <div class="stage-help">拖动旋转 · 滚轮缩放</div>
+        </div>
+      </div>
+
+      <div class="lab3d-lower">
+        <div class="panel">
+          <h3>视角</h3>
+          <div class="btn-row">
+            <button type="button" data-view="perspective" class="on">默认</button>
+            <button type="button" data-view="side">侧视</button>
+            <button type="button" data-view="front">正视</button>
+            <button type="button" data-view="top">俯视</button>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h3>播放</h3>
+          <div class="btn-row">
+            <button type="button" id="gt-play" class="on">暂停</button>
+            <button type="button" id="gt-slow" class="on">慢动作</button>
+            <button type="button" id="gt-real">实时</button>
+          </div>
+          <p class="note" style="margin-top:9px;" id="gt-play-note"></p>
+        </div>
+
+        <div class="panel">
+          <h3>算一算</h3>
+          <div class="analysis" id="gt-analysis"></div>
+        </div>
+
+        <div class="panel">
+          <h3>记录数据 <span class="pill" id="gt-rec-pill">0 / 4</span></h3>
+          <div class="btn-row">
+            <button type="button" id="gt-record" class="primary">记录</button>
+            <button type="button" id="gt-clear">清空</button>
+          </div>
+          <div style="overflow-x:auto; margin-top:9px;">
+            <table class="rec">
+              <thead><tr id="gt-rec-head"></tr></thead>
+              <tbody id="gt-rec-body"></tbody>
+            </table>
+          </div>
+          <p class="note" id="gt-rec-note"></p>
+        </div>
+      </div>
+      </div>
+
+      <div class="lab3d-sidebar">
+        <div class="panel">
+          <h3>实验台 <span class="pill" id="gt-mode-pill">一根弦</span></h3>
+          <div class="btn-row">
+            <button type="button" data-mode="string" class="on">弦上的驻波</button>
+            <button type="button" data-mode="guitar">吉他指板</button>
+          </div>
+          <p class="note" id="gt-mode-note"></p>
+        </div>
+
+        <div class="panel">
+          <h3>唯一的自变量 <span class="pill" id="gt-live-pill">正在振动</span></h3>
+          <div class="fld" id="gt-fld-len">
+            <div class="row"><span>有效弦长 L</span><b id="gt-len-num">0.650 m</b></div>
+            <input type="range" id="gt-len" min="300" max="650" step="5" value="650">
+            <p class="note" id="gt-len-note"></p>
+          </div>
+          <div class="fld" id="gt-fld-fret">
+            <div class="row"><span>按第几品</span><b id="gt-fret-num">0 品（空弦）</b></div>
+            <input type="range" id="gt-fret" min="0" max="12" step="1" value="0">
+            <div class="fret-track" id="gt-fret-track">
+              <div class="zone" id="gt-zone-low"></div>
+              <div class="zone oct" id="gt-zone-oct"></div>
+              <div class="mk" id="gt-fret-mark"></div>
+              <div class="cap" id="gt-cap-0">0</div>
+              <div class="cap" id="gt-cap-12">12 品（八度）</div>
+            </div>
+            <div class="btn-row str" style="margin-top:12px;" id="gt-str-row"></div>
+            <p class="note" id="gt-fret-note"></p>
+          </div>
+          <p class="note" id="gt-var-note"></p>
+        </div>
+
+        <div class="panel" id="gt-panel-harm">
+          <h3>看第几阶驻波 <span class="pill" id="gt-harm-pill">n = 1</span></h3>
+          <div class="btn-row" id="gt-harm-row"></div>
+          <div class="fld" style="margin-top:11px;">
+            <div class="row"><span>探针位置（沿弦）</span><b id="gt-probe-num">0.500 L</b></div>
+            <input type="range" id="gt-probe" min="0" max="1000" step="1" value="500">
+          </div>
+          <p class="note" id="gt-harm-note"></p>
+        </div>
+
+        <div class="panel">
+          <h3>读数 <span class="pill" id="gt-stat-pill">波腹处</span></h3>
+          <div class="readouts" id="gt-readouts"></div>
+          <div class="env-box" id="gt-curve-box"><canvas id="gt-curve"></canvas></div>
+          <p class="note" id="gt-curve-note"></p>
+        </div>
+      </div>
+    </div>
+
+    <div class="info-cards">
+      <div class="info-card">
+        <h4>弦为什么会有高低不同的音</h4>
+        <ul>
+          <li>一根绷紧的弦被拨动后会振动，它推着空气一起振，你就听到了声音。
+              弦<b>每秒钟来回振动的次数</b>叫频率 f，频率越高，音调越高。</li>
+          <li>频率由三个量决定，全都写在同一个式子里：
+              <span class="fml">f = (1 / 2L) · √(T / μ)</span>
+              <b>L</b> 是振动部分的弦长、<b>T</b> 是弦的张力、<b>μ</b> 是弦的线密度（粗细）。</li>
+          <li>所以想让音变高，有三条路：把弦<b>按短</b>（L↓）、把弦<b>拧紧</b>（T↑）、
+              换一根<b>更细</b>的弦（μ↓）。吉他三样全用上了：
+              左手按品是改 L，琴头的弦轴是调 T，6 根弦粗细不同就是改 μ。</li>
+          <li>注意 <b>L 在分母上</b>：弦长变成原来的一半，频率就<b>翻一倍</b> ——
+              听起来正好是<b>高八度</b>。吉他第 12 品就设在这个位置。</li>
+        </ul>
+      </div>
+      <div class="info-card">
+        <h4>驻波：为什么弦上有些点永远不动</h4>
+        <ul>
+          <li>拨弦时，波沿着弦传到另一端、被<b>反射</b>回来，和后来的波<b>叠加</b>。
+              只有某些特定频率的波，来回一趟正好「对上」自己，才能稳定留下来 ——
+              这就是<b>驻波</b>，看起来像波<b>站着不动</b>，只是整体上下摆。</li>
+          <li>驻波上<b>始终不动</b>的点叫<b>波节</b>；<b>摆得最厉害</b>的点叫<b>波腹</b>。
+              弦的两端是固定的，所以两端<b>一定是波节</b>。</li>
+          <li>弦长 L 里能装下的「半波长」个数就是<b>阶数 n</b>：
+              <span class="fml">L = n · λ / 2　⇒　f = n · v / (2L)</span>
+              第 n 阶有 <b>n 个波腹</b>、<b>n+1 个波节</b>（含两端）。</li>
+          <li>n = 1 叫<b>基频</b>，n = 2、3… 叫<b>泛音</b>。真实拨弦时它们<b>同时</b>存在，
+              各自响各自的 —— 正是这个「混音」决定了吉他和钢琴的音色不同。</li>
+        </ul>
+      </div>
+      <div class="info-card">
+        <h4>操作指南</h4>
+        <ul>
+          <li><b>弦上的驻波</b>：拖「有效弦长 L」滑块，看波形怎么变、频率怎么变。
+              把 L 拖到<b>正好一半</b>（0.325 m），读数上的频率应该<b>正好翻倍</b>。</li>
+          <li>按「看第几阶驻波」里的 <b>n = 1 / 2 / 3 / 4</b>：数一数画面里
+              <b>红点（波节）</b>和<b>黄点（波腹）</b>各有几个。规律是 n 个波腹、n+1 个波节。</li>
+          <li>拖<b>「探针位置」</b>滑块：探针是一条竖线，顶端的小球跟着弦一起动。
+              当它落在<b>红点上</b>时，振幅读数会变成 <b>0.00 mm</b> —— 那个点真的没动。</li>
+          <li><b>吉他指板</b>：先点一根弦，再拖「按第几品」。
+              按到<b>第 12 品</b>时，有效弦长正好是空弦的一半，频率正好翻倍 ——
+              这就是为什么第 12 品听起来和空弦是<b>同一个音名、高八度</b>。</li>
+          <li>按<b>「🔊 声音」</b>再按<b>「拨弦」</b>：你能听到这个音真实的高低。
+              按品往上走，声音一级一级升高；到第 12 品，正好高八度。</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <script>
+  (() => {
+    'use strict';
+
+    const canvas = document.getElementById('gt-canvas');
+    const stage = document.querySelector('.lab3d-stage');
+    if (!canvas || !stage) return;
+    const ctx = canvas.getContext('2d');
+
+    const PI2 = Math.PI * 2;
+    const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
+    const $ = id => document.getElementById(id);
+    /* ★ 舞台控件可能被裁掉 / 改名 —— 取不到时给一个【哑对象】，别让 addEventListener
+     *   或 classList 抛错把整页 JS 打崩。否则「删掉一个按钮」这种变异会让页面白屏、
+     *   钩子根本设不上，套件跑挂，测到的就不是断言而是环境故障。 */
+    const $opt = id => $(id) || {
+      addEventListener() { }, classList: { toggle() { }, add() { }, remove() { }, contains() { return false; } },
+      set textContent(v) { }, get textContent() { return ''; },
+      set innerHTML(v) { }, get innerHTML() { return ''; },
+      set value(v) { }, get value() { return ''; }
+    };
+
+    /* ============================================================
+     * 向量工具（与站内其它三维页同一套约定）
+     * ============================================================ */
+    const add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+    const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+    const scl = (a, k) => [a[0] * k, a[1] * k, a[2] * k];
+    const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+    const vlen = a => Math.hypot(a[0], a[1], a[2]);
+    const vnorm = a => { const l = vlen(a) || 1; return [a[0] / l, a[1] / l, a[2] / l]; };
+
+    /* 固定种子的伪随机 —— 任何「随机」都必须来自种子。
+     * 本页其实只需要【确定性的相位偏置】（泛音权重、弦上的微小抖动），
+     * 但同样不许用 Math.random：像素差分要求同状态连画两次逐格为 0。 */
+    function lcg(seed) {
+      let s = seed >>> 0;
+      return () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; };
+    }
+
+    /* ============================================================
+     * 常量 —— 整页唯一的真值来源
+     * ------------------------------------------------------------
+     * ★★ 动手前先把【可见性预算】算清楚：
+     *
+     *   ① 弦：世界单位就是【米】，而且是真实尺寸。
+     *      吉他有效弦长 L₀ = 0.650 m（标准 25.5 英寸琴颈），
+     *      1 弦空弦 E4 = 329.63 Hz ⇒ 波速 v = 2·L₀·f₀ = 428.52 m/s。
+     *   ② 张力 T = 70.0 N、线密度 μ = T/v² = 3.8121e-4 kg/m
+     *      （≈ 0.38 g/m，正是 1 弦的粗细量级）。
+     *      ★ 这两个量【钉死】：本页模式 A 的唯一自变量是弦长 L。
+     *   ③ 弦的振幅取 A = 11 mm —— 真实拨弦的振幅就是这个量级，
+     *      不需要放大，画面上直接看得见。
+     *   ④ 频率：L 从 0.650 → 0.300 m，f 从 329.6 → 714.2 Hz（2.17 倍）。
+     *      「弦长减半 ⇒ 频率翻倍」在 0.650 → 0.325 上正好是【严格】的。
+     *   ⑤ 6 根弦的粗细差：同样 L₀ = 0.650 m、同样 T = 70 N，
+     *      6 弦 E2 = 82.41 Hz ⇒ μ = 6.0992e-3 kg/m，是 1 弦的 16.0 倍。
+     *      这个 16 倍不是调出来的，是由 82.41 与 329.63 这两个音算出来的。
+     * ============================================================ */
+
+    /* ---- 模式 A：一根弦 ---- */
+    const L_MIN = 0.300, L_MAX = 0.650, L_DEF = 0.650;   // 有效弦长 m
+    const T_TEN = 70.0;              // 张力 N（钉死）
+    const MU_1 = 3.8121e-4;          // 1 弦线密度 kg/m（钉死）
+    const AMP = 0.011;               // 波腹振幅的【真实值】 m（±11 mm）
+    /* ★★ 画面上弦摆多大 —— 这一条必须算清楚，否则「驻波」是看不见的。
+     *   模式 A 的取景盒是 0.69 × 0.11 m 的扁盒子（6.3 : 1），画布的可用
+     *   宽度全被 0.69 m 的弦长吃掉 ⇒ 比例尺约 1400 px/m，真实的 ±11 mm
+     *   投到屏幕上只有 ±15 px —— 一眼看去就是一条直线，波节/波腹读不出来。
+     *   所以模式 A 把振幅放大 AMP_K 倍来画，并在画面上写明「已放大」。
+     *   模式 B 不能这么干：那里弦离指板只有 19 mm，放大就会穿进木头里。
+     *   ★ 读数里给出的一律是【真实值】，放大的只是画面上那根线。 */
+    const AMP_K = 2.5;
+    const HARM_MAX = 4;              // 最高驻波阶数
+    const N_SEG = 160;               // 弦的分段数（画波形用）
+    const TABLE_Y = -0.034;          // 模式 A 的台面高度
+    /* 两端的桥从台面一直顶到弦（弦的静止位置在 y = 0）——
+     * 高度由 TABLE_Y 算出来，改了台面高度桥不会悬在半空。 */
+    const BRIDGE_S = [0.016, -TABLE_Y, 0.016];
+    const PROBE_R = 0.0035;          // 探针球半径 m（世界）
+
+    /* ---- 模式 B：吉他 ---- */
+    const STR_N = 6;
+    const L0 = 0.650;                // 空弦有效弦长 m（6 根弦一样长）
+    /* 标准调音 E2 A2 D3 G3 B3 E4 —— 频率是【规格字面量】，不从别处推 */
+    const STR_F0 = [82.41, 110.00, 146.83, 196.00, 246.94, 329.63];
+    const STR_LABEL = ['6弦 E2', '5弦 A2', '4弦 D3', '3弦 G3', '2弦 B3', '1弦 E4'];
+    const STR_SHORT = ['6', '5', '4', '3', '2', '1'];
+    const FRET_MAX = 12;
+    const FRET_Z = 0.0105;           // 相邻两弦的间距 m
+    const STR_Y = 0.036;             // 弦的高度（世界 y）m
+    /* 吉他各部件（世界单位 m，沿 +x 方向摆放：琴头 → 琴枕 → 琴颈 → 琴箱） */
+    const HEAD_C = [-0.100, 0.008, 0], HEAD_S = [0.160, 0.016, 0.062];
+    const NUT_C = [0.000, 0.008, 0], NUT_S = [0.008, 0.012, 0.056];
+    const NECK_C = [0.200, 0.002, 0], NECK_S = [0.440, 0.020, 0.050];
+    const FRB_C = [0.200, 0.014, 0], FRB_S = [0.440, 0.006, 0.048];
+    const FRB_TOP = FRB_C[1] + FRB_S[1] / 2;      // 指板顶面 y = 0.017
+    /* ★ 琴箱【不是长方体】：真实吉他的轮廓是「上小 — 收腰 — 下大」的。
+     *   用一个长方体去装，画出来就是一个木头箱子，一眼看不出是吉他。
+     *   这里给一条 (x, z) 平面上的【闭合轮廓】，沿 y 拉成柱体 ——
+     *   14 个顶点，腰在最窄处 ±0.108、下摆最宽 ±0.172。 */
+    const BODY_Y0 = -0.080, BODY_Y1 = 0.020;
+    const BODY_TOP = BODY_Y1;              // 面板 y
+    const BODY_CX = 0.610;                 // 轮廓对称轴
+    const BODY_OUT = [
+      [BODY_CX - 0.210,  0.100], [BODY_CX - 0.150,  0.142], [BODY_CX - 0.070,  0.130],
+      [BODY_CX + 0.000,  0.118], [BODY_CX + 0.070,  0.142], [BODY_CX + 0.140,  0.176],
+      [BODY_CX + 0.210,  0.150], [BODY_CX + 0.210, -0.150], [BODY_CX + 0.140, -0.176],
+      [BODY_CX + 0.070, -0.142], [BODY_CX + 0.000, -0.118], [BODY_CX - 0.070, -0.130],
+      [BODY_CX - 0.150, -0.142], [BODY_CX - 0.210, -0.100]
+    ];
+    const BODY_HX = 0.210, BODY_HZ = 0.176;   // 轮廓的半长 / 半宽（给 modeBox 用）
+    const BRDG_C = [0.650, 0.027, 0], BRDG_S = [0.022, 0.014, 0.074];
+    const HOLE_C = [0.545, BODY_TOP + 0.0004, 0], HOLE_R = 0.046;
+    /* 弦轴（6 个，琴头两侧各 3 个） */
+    const PEG_X = [-0.048, -0.100, -0.152];
+    const PEG_Z = HEAD_S[2] / 2 + 0.008;
+
+    /* 十二平均律：第 n 品频率 = f₀·2^(n/12)；有效弦长 = L₀·2^(−n/12)。
+     * ★ 两式互为倒数关系，第 12 品 ⇒ 2^(±1) ⇒ 弦长减半、频率翻倍（八度）。 */
+    const NOTE_NAME = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+
+    const VIS_PERIOD = 1.5;          // 慢动作时「一个完整来回」占多少秒墙上时间
+    const MAX_REC = 4;
+    const CAMD_K = 1.85;             // 相机距离 = CAMD_K × 取景对角线尺度
+
+    /* 相机预设：[yaw, pitch]，【每个模式各一套】。
+     * ★ 为什么不能共用一套：模式 A 是一根 0.65 m 的弦（要尽量正对着看，
+     *   波形才读得出来）；模式 B 是一把 1.05 m 长、0.20 m 高的吉他，
+     *   正对着看会摊成一条横带、上下全是空白，必须斜过来把长度收短。
+     *   两套数各写各的，切模式时相机跟着换。 */
+    const VIEWS = {
+      string: {
+        /* ★ pitch 从 0.28 提到 0.44：模式 A 的取景盒是 0.69 × 0.10 m 的扁盒子
+         *   （6.6 : 1），而画布只有 1.6 : 1 —— 俯角太小时「台面的进深」几乎
+         *   不占屏幕高度，整根弦缩成一条细带、上下各留一大片空。俯角一大，
+         *   进深按 sin(pitch) 投到竖直方向，画面才填得满。
+         *   yaw 不能动：自检 S094 钉住了 −0.36（四个视角的 yaw 是规格）。 */
+        perspective: [-0.36, 0.44],
+        side:        [0.00, 0.10],
+        front:       [-1.30, 0.20],
+        top:         [-0.36, 1.02]
+      },
+      guitar: {
+        perspective: [-0.70, 0.42],
+        side:        [0.00, 0.08],
+        front:       [-1.40, 0.18],
+        top:         [-0.70, 1.10]
+      }
+    };
+    const viewsOf = m => VIEWS[m || state.mode] || VIEWS.string;
+
+    const MODES = ['string', 'guitar'];
+    const MODE_NAME = { string: '一根弦上的驻波', guitar: '整把吉他的指板' };
+    const MODE_NOTE = {
+      string: '弦长 L 是唯一的自变量。张力、线密度都钉死，所以频率只随 L 变 —— 弦长减半，频率正好翻倍。',
+      guitar: '6 根弦一样长、一样紧，只靠粗细不同分成 6 个音。按品改变的是「真正在振动的那一段有多长」。'
+    };
+
+    /* ============================================================
+     * 状态
+     * ============================================================ */
+    const state = {
+      yaw: VIEWS.string.perspective[0], pitch: VIEWS.string.perspective[1], zoom: 1,
+      mode: 'string',
+      len: L_DEF,                  // 模式 A：有效弦长 m（唯一自变量）
+      harm: 1,                     // 模式 A：驻波阶数 1..HARM_MAX
+      probe: 0.5,                  // 模式 A：探针位置（沿弦的归一化位置 0..1）
+      strIdx: 5,                   // 模式 B：选中的弦（0=6弦最低 … 5=1弦最高）
+      fret: 0,                     // 模式 B：品位 0..FRET_MAX（唯一自变量）
+      t: 0,                        // 物理时间 s（弦的振动相位用它）
+      playing: true,
+      slow: true,
+      w: 1, h: 1, dpr: 0, dirty: true,
+      dragging: false, dragYaw: 0, dragPitch: 0, downAt: null,
+      view: 'perspective',
+      drawn: {}
+    };
+
+    /* ============================================================
+     * 物理（全部纯函数 —— 渲染 / 读数 / 曲线 / 记录 / 自检共用同一份）
+     * ============================================================ */
+
+    /* ---- 模式 A ---- */
+    const lenNow = () => state.len;
+    /* 波速 v = √(T/μ)：只跟弦本身有关，跟弦长【无关】。
+     * ★ 这一点很关键：拨短弦只是让「一个波腹占的半波长」变短，
+     *   波跑得还是那么快 —— 所以 f = v/(2L) 才成立。 */
+    const vA = () => Math.sqrt(T_TEN / MU_1);
+    /* 基频 f₁ = v/(2L)。★ 整页的题眼：L 在分母上 ⇒ L 减半、f 翻倍。 */
+    const f1A = () => vA() / (2 * lenNow());
+    /* 第 n 阶频率 f_n = n·f₁ */
+    const fA = () => state.harm * f1A();
+    /* 波长 λ_n = 2L/n —— 弦长里正好装 n 个半波长 */
+    const lamA = () => 2 * lenNow() / state.harm;
+    /* 弦上归一化位置 u ∈ [0,1] 处的【空间形状】sin(nπu) —— 带正负，是「瞬时
+     * 位移」要的那一份。
+     * 🔴 全页【唯一出处】：形状因子 |sin|、探针的瞬时位移读数、弦的折线、
+     *   探针竖线、吉他 6 根弦的绘制，五处全都走它。
+     *   ★ 原先 `Math.sin(n * Math.PI * u)` 在页面里被【手写了 6 遍】——
+     *     改一处、别处不跟着动，侧栏读数就会和画出来的波形对不上
+     *     （负向对照 N18 就是这么暴露的：把形状换成 |cos| 之后，
+     *     画出来的波节波腹全挪了半格，而侧栏读数纹丝不动、S116 照样绿）。 */
+    const modeSin = (n, u) => Math.sin(n * Math.PI * u);
+    /* 弦上归一化位置 u ∈ [0,1] 处的【形状因子】|sin(nπu)| ∈ [0,1]。
+     * ★ 波节 ⇒ u = k/n ⇒ sin(kπ) = 0（浮点上是 1e-16 量级）。 */
+    const shapeA = u => Math.abs(modeSin(state.harm, u));
+    /* 该处的振幅（m）—— 探针读数就是它 */
+    const ampAtA = u => AMP * shapeA(u);
+    /* 该处的瞬时位移（m）。t 是物理时间。★ 与 shapeA 共用 modeSin。 */
+    const yAtA = (u, t) => AMP * modeSin(state.harm, u) * Math.cos(PI2 * fA() * t);
+    /* 波节个数 = n+1（含两端）；波腹个数 = n */
+    const knotsA = () => state.harm + 1;
+    const antinodesA = () => state.harm;
+    /* 第 k 个波节的归一化位置 k/n（k = 0..n） */
+    const knotU = k => k / state.harm;
+    /* 第 k 个波腹的归一化位置 (k+0.5)/n（k = 0..n-1） */
+    const antinodeU = k => (k + 0.5) / state.harm;
+
+    /* ---- 模式 B ---- */
+    const strF0 = i => STR_F0[clamp(i | 0, 0, STR_N - 1)];
+    /* 第 n 品频率 = f₀ · 2^(n/12) */
+    const fretF = n => strF0(state.strIdx) * Math.pow(2, clamp(n, 0, FRET_MAX) / 12);
+    /* 第 n 品的有效弦长 = L₀ · 2^(−n/12) */
+    const fretLen = n => L0 * Math.pow(2, -clamp(n, 0, FRET_MAX) / 12);
+    /* 第 n 品品丝到琴枕的距离 = L₀ − 有效弦长 */
+    const fretD = n => L0 - fretLen(n);
+    /* 当前按品后的频率与有效弦长 */
+    const fB = () => fretF(state.fret);
+    const lenB = () => fretLen(state.fret);
+    /* 6 根弦各自的线密度 —— 同样 L₀、同样 T，f₀ 不同 ⇒ μ 不同。
+     * μ_j = T / (2·L₀·f₀ⱼ)² */
+    const muOf = i => T_TEN / Math.pow(2 * L0 * strF0(i), 2);
+    /* 模式 B 里「振动的那一段」的波节/波腹 —— 与模式 A 同一套规律（n=1） */
+    const midiOf = f => 69 + 12 * Math.log2(f / 440);
+    function nameOf(f) {
+      const n = Math.round(midiOf(f));
+      return NOTE_NAME[((n % 12) + 12) % 12] + (Math.floor(n / 12) - 1);
+    }
+    /* 比空弦高多少半音 */
+    const semiUp = () => 12 * Math.log2(fB() / strF0(state.strIdx));
+
+    /* ---- 两模式共用的「当前正在振动的那一段弦」 ---- */
+    /* 返回 {x0, x1, L, n}：振动段的左右端点（世界 x）、长度、阶数 */
+    function vibSeg() {
+      if (state.mode === 'guitar') {
+        const x0 = fretD(state.fret), x1 = L0;
+        return { x0: x0, x1: x1, L: x1 - x0, n: 1 };
+      }
+      const h = lenNow() / 2;
+      return { x0: -h, x1: h, L: lenNow(), n: state.harm };
+    }
+    const fNow = () => (state.mode === 'guitar' ? fB() : fA());
+    /* 画面上弦摆多大（m）。★ 与 ampAtA() 给的【真实振幅】是两件事：
+     *   模式 A 放大 AMP_K 倍（否则驻波形状看不见），模式 B 照实画。
+     * ★ 必须能【按模式取】，不能只读 state.mode：modeBox('guitar') 恰恰是在
+     *   state.mode 还停在 'string' 时被调用的（自检就这么调）—— 只读
+     *   state.mode 会把吉他的振幅按 ×2.5 算，包围盒虚高 11 mm、
+     *   「装得进取景盒」那条断言就假红（实测 y1 = 0.0635 > 盒顶 0.060）。 */
+    const ampVis = m => ((m || state.mode) === 'string' ? AMP * AMP_K : AMP);
+
+    /* ============================================================
+     * 取景几何
+     * ------------------------------------------------------------
+     * 两个模式的尺度不一样（一根 0.65 m 的弦 vs 一把 1 m 长的吉他），
+     * 所以【各用各的盒子】。同一模式内部盒子是常量 ⇒ 切视角不会缩放跳变。
+     * ★ 模式 A 的盒子【不随 L 变】：弦变短就直接在画面上看得见（这是教学点），
+     *   不能让取景跟着缩放把变化吃掉。
+     * ============================================================ */
+    function frameEnv(mode) {
+      const m = mode || state.mode;
+      if (m === 'guitar') {
+        /* ★ y 下沿留到 −0.140：吉他的琴箱底面在 −0.080，下面还要放一块
+         *   【地板网格】。地板必须画在取景盒之内 —— 画到盒子外面去的话，
+         *   投影会跑到画布以外，屏幕上只剩半块板子。 */
+        return { x0: -0.195, x1: 0.855, y0: -0.106, y1: 0.060, z0: -0.195, z1: 0.195 };
+      }
+      return { x0: -0.345, x1: 0.345, y0: -0.056, y1: 0.048, z0: -0.135, z1: 0.135 };
+    }
+    function envPoints(mode) {
+      const E = frameEnv(mode), out = [];
+      for (const x of [E.x0, E.x1]) for (const y of [E.y0, E.y1]) for (const z of [E.z0, E.z1]) out.push([x, y, z]);
+      return out;   // 8 个角
+    }
+    /* 每个模式【实际画出来的东西】的包围盒 —— 自检拿它核对「被取景盒子装得下」。
+     * ★ 与 frameEnv 是两份独立写出来的数，改坏任一个都会让断言变红。 */
+    function modeBox(mode) {
+      const m = mode || state.mode;
+      if (m === 'guitar') {
+        /* ★ 吉他【不是】关于 x = 0 对称的：琴头在 −0.180、琴箱右端在 +0.820。
+         *   写成「±max(|左|,|右|)」会得到 ±0.82 —— 比实物宽了 4.5 倍，
+         *   于是「装得进取景盒」这条断言恒假（或者反过来，盒子写宽了就恒真）。 */
+        const x0 = HEAD_C[0] - HEAD_S[0] / 2, x1 = BODY_CX + BODY_HX;
+        const hy0 = Math.min(BODY_Y0, NECK_C[1] - NECK_S[1] / 2);
+        const hy1 = STR_Y + ampVis(m);
+        return { x0: x0, x1: x1, y0: hy0, y1: hy1, z0: -BODY_HZ, z1: BODY_HZ };
+      }
+      /* 一根弦：最外是两端桥；最上是弦的波腹；最下是桥的底面。
+       * ★ 最上取的是【画面上】的振幅（ampVis），不是真实振幅 ——
+       *   包络线画到哪儿，盒子就得管到哪儿。 */
+      const h = lenNow() / 2 + BRIDGE_S[0] / 2;
+      return { x0: -h, x1: h, y0: -BRIDGE_S[1] - 0.001, y1: ampVis(m) + 0.001,
+               z0: -BRIDGE_S[2] / 2, z1: BRIDGE_S[2] / 2 };
+    }
+
+    function makeCam(q, w, h) {
+      const E = frameEnv();
+      const cy = Math.cos(state.yaw), sy = Math.sin(state.yaw);
+      const cp = Math.cos(state.pitch), sp = Math.sin(state.pitch);
+      const dir = [cp * sy, sp, cp * cy];
+      const target = [0.5 * (E.x0 + E.x1), 0.5 * (E.y0 + E.y1), 0];
+      const diag = Math.hypot(E.x1 - E.x0, E.y1 - E.y0, E.z1 - E.z0);
+      q.dist = CAMD_K * diag / state.zoom;
+      q.eye = add(target, scl(dir, q.dist));
+      q.fwd = scl(dir, -1);
+      q.right = vnorm(cross(q.fwd, [0, 1, 0]));
+      q.up = cross(q.right, q.fwd);
+      const pts = envPoints();
+      let loR = 1e9, hiR = -1e9, loU = 1e9, hiU = -1e9;
+      for (const p of pts) {
+        const v = sub(p, q.eye);
+        const z = Math.max(0.05, dot(v, q.fwd));
+        const r = dot(v, q.right) / z, u = dot(v, q.up) / z;
+        loR = Math.min(loR, r); hiR = Math.max(hiR, r);
+        loU = Math.min(loU, u); hiU = Math.max(hiU, u);
+      }
+      const s = Math.min(w * 0.94 / Math.max(1e-6, hiR - loR),
+                         h * 0.90 / Math.max(1e-6, hiU - loU));
+      q.focal = s;
+      q.px = w * 0.5 - (loR + hiR) * 0.5 * s;
+      q.py = h * 0.5 + (loU + hiU) * 0.5 * s;
+      return q;
+    }
+    function project(p, q) {
+      const v = sub(p, q.eye);
+      const z = Math.max(0.05, dot(v, q.fwd));
+      const s = q.focal / z;
+      return { x: q.px + dot(v, q.right) * s, y: q.py - dot(v, q.up) * s, s: s, z: z };
+    }
+
+    /* ============================================================
+     * 绘图小工具
+     * ============================================================ */
+    function polyPath(pts) {
+      ctx.beginPath();
+      pts.forEach((p, k) => k ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+      ctx.closePath();
+    }
+    function poly(pts, fill, stroke, lw) {
+      if (!pts || pts.length < 2) return;
+      polyPath(pts);
+      if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+      if (stroke) { ctx.lineWidth = lw || 1; ctx.strokeStyle = stroke; ctx.stroke(); }
+    }
+    function line(pts, color, lw, dash) {
+      if (!pts || pts.length < 2) return;
+      ctx.beginPath();
+      pts.forEach((p, k) => k ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+      ctx.setLineDash(dash || []);
+      ctx.lineWidth = lw; ctx.strokeStyle = color; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+      ctx.stroke(); ctx.setLineDash([]);
+    }
+    function dot2(p, r, fill, stroke, lw) {
+      if (r <= 0.2) return;
+      ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, PI2);
+      if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+      if (stroke) { ctx.lineWidth = lw || 1; ctx.strokeStyle = stroke; ctx.stroke(); }
+    }
+
+    const LIGHT = vnorm([-0.42, 0.80, 0.58]);
+    const BOX_FACES = [
+      { n: [-1, 0, 0], idx: [0, 1, 3, 2] },
+      { n: [1, 0, 0], idx: [4, 5, 7, 6] },
+      { n: [0, -1, 0], idx: [0, 1, 5, 4] },
+      { n: [0, 1, 0], idx: [2, 3, 7, 6] },
+      { n: [0, 0, -1], idx: [0, 2, 6, 4] },
+      { n: [0, 0, 1], idx: [1, 3, 7, 5] }
+    ];
+    function boxCorners(c, s) {
+      const out = [];
+      for (const dx of [-1, 1]) for (const dy of [-1, 1]) for (const dz of [-1, 1]) {
+        out.push([c[0] + dx * s[0] / 2, c[1] + dy * s[1] / 2, c[2] + dz * s[2] / 2]);
+      }
+      return out;
+    }
+    function shade(rgb, k, a) {
+      const r = Math.round(clamp(rgb[0] * k, 0, 255)),
+            g = Math.round(clamp(rgb[1] * k, 0, 255)),
+            b = Math.round(clamp(rgb[2] * k, 0, 255));
+      return a === undefined ? 'rgb(' + r + ',' + g + ',' + b + ')'
+                             : 'rgba(' + r + ',' + g + ',' + b + ',' + a + ')';
+    }
+    /* c = 中心，s = [sx,sy,sz]，rgb = 基色。返回屏幕 AABB（给避让/自检用）。 */
+    function drawBox(q, c, s, rgb, edgeCol, alpha) {
+      const corners = boxCorners(c, s);
+      const proj = corners.map(p => project(p, q));
+      const faces = BOX_FACES.map(f => {
+        const mid = scl(f.idx.reduce((a, i) => add(a, corners[i]), [0, 0, 0]), 1 / 4);
+        const lit = 0.46 + 0.62 * Math.max(0, dot(f.n, LIGHT));
+        return { f: f, mid: mid, k: lit, d: vlen(sub(mid, q.eye)) };
+      }).sort((a, b) => b.d - a.d);
+      for (const it of faces) {
+        const pts = it.f.idx.map(i => proj[i]);
+        poly(pts, shade(rgb, it.k, alpha), edgeCol === null ? null : (edgeCol || 'rgba(2,6,23,.34)'), 1);
+      }
+      let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+      for (const p of proj) { x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y); x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y); }
+      return { x: x0, y: y0, w: x1 - x0, h: y1 - y0, cx: (x0 + x1) / 2, cy: (y0 + y1) / 2 };
+    }
+    /* 把 (x, z) 平面上的闭合多边形沿 y 拉成柱体（琴箱就是它）。
+     * ★ 侧壁必须【按到眼睛的距离由远及近】画：否则背面的侧壁会盖住正面的。
+     * ★ 外法线用「边的垂线里指向远离形心的那一个」来定，比按顶点绕行方向
+     *   推断稳健（轮廓是我手写的，绕行方向一改光照就全反了）。 */
+    function drawPrism(q, outline, y0, y1, rgb, edgeCol) {
+      const n = outline.length;
+      let cx = 0, cz = 0;
+      for (const p of outline) { cx += p[0]; cz += p[1]; }
+      cx /= n; cz /= n;
+      const faces = [];
+      for (let i = 0; i < n; i++) {
+        const a = outline[i], b = outline[(i + 1) % n];
+        const dx = b[0] - a[0], dz = b[1] - a[1];
+        let nx = -dz, nz = dx;
+        const mx = (a[0] + b[0]) / 2, mz = (a[1] + b[1]) / 2;
+        if ((mx - cx) * nx + (mz - cz) * nz < 0) { nx = -nx; nz = -nz; }
+        const nl = Math.hypot(nx, nz) || 1;
+        const mid = [mx, (y0 + y1) / 2, mz];
+        faces.push({ pts: [[a[0], y0, a[1]], [b[0], y0, b[1]], [b[0], y1, b[1]], [a[0], y1, a[1]]],
+                     n: [nx / nl, 0, nz / nl], d: vlen(sub(mid, q.eye)) });
+      }
+      faces.sort((p, r) => r.d - p.d);
+      for (const f of faces) {
+        const lit = 0.46 + 0.62 * Math.max(0, dot(f.n, LIGHT));
+        poly(f.pts.map(p => project(p, q)), shade(rgb, lit), edgeCol || 'rgba(2,6,23,.34)', 1);
+      }
+      /* 顶面（面板）最后盖上去 */
+      poly(outline.map(p => project([p[0], y1, p[1]], q)), shade(rgb, 1.18), edgeCol || 'rgba(2,6,23,.34)', 1);
+      let x0 = 1e9, yy0 = 1e9, x1 = -1e9, yy1 = -1e9;
+      for (const p of outline) for (const yy of [y0, y1]) {
+        const s = project([p[0], yy, p[1]], q);
+        x0 = Math.min(x0, s.x); yy0 = Math.min(yy0, s.y);
+        x1 = Math.max(x1, s.x); yy1 = Math.max(yy1, s.y);
+      }
+      return { x: x0, y: yy0, w: x1 - x0, h: yy1 - yy0, cx: (x0 + x1) / 2, cy: (yy0 + yy1) / 2 };
+    }
+
+    /* 水平面片（矩形）：四个角投影后填充。 */
+    function drawPlane(q, y, x0, x1, z0, z1, fill, stroke) {
+      const pts = [[x0, y, z0], [x1, y, z0], [x1, y, z1], [x0, y, z1]].map(p => project(p, q));
+      poly(pts, fill, stroke, 1);
+      return pts;
+    }
+    /* 竖直平面片（在 z = 常数上） */
+    function drawSlab(q, z, x0, x1, y0, y1, fill, stroke) {
+      const pts = [[x0, y0, z], [x1, y0, z], [x1, y1, z], [x0, y1, z]].map(p => project(p, q));
+      poly(pts, fill, stroke, 1);
+      return pts;
+    }
+    /* 单个四边形的 3D 版 */
+    function quad3(q, pts, fill, stroke, lw) {
+      poly(pts.map(p => project(p, q)), fill, stroke, lw);
+    }
+
+    /* ============================================================
+     * 标签（与站内其它三维页同一套避让逻辑）
+     * ============================================================ */
+    let frameBoxes = [];
+    let frameSolids = [];
+
+    function labelBox(p, text, size) {
+      ctx.font = '700 ' + size + 'px Inter, "Microsoft YaHei", sans-serif';
+      const w = ctx.measureText(text).width;
+      const h = size + 8;
+      return { x: p.x - w / 2 - 6, y: p.y - h / 2, w: w + 12, h: h, cx: p.x, cy: p.y };
+    }
+    function label(p, text, color, size) {
+      ctx.font = '700 ' + size + 'px Inter, "Microsoft YaHei", sans-serif';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      const w = ctx.measureText(text).width, h = size + 8;
+      ctx.fillStyle = 'rgba(2,6,23,.74)';
+      ctx.fillRect(p.x - w / 2 - 6, p.y - h / 2, w + 12, h);
+      ctx.fillStyle = color;
+      ctx.fillText(text, p.x, p.y + 0.5);
+      ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+      return { x: p.x - w / 2 - 6, y: p.y - h / 2, w: w + 12, h: h, text: text };
+    }
+    function overlapArea(a, b) {
+      const w = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
+      const h = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
+      return (w > 0 && h > 0) ? w * h : 0;
+    }
+    const AVOID = [[0, 0], [0, -17], [0, 17], [0, -34], [0, 34], [0, -52], [0, 52],
+                   [0, -72], [0, 72], [-52, -24], [52, -24], [-52, 24], [52, 24],
+                   [-86, 0], [86, 0]];
+    /* 避让：把标签在若干个候选位置上试一遍，挑「与实体/已有标签重叠面积
+     * 最小、离锚点最近」的那个。★ 「标签之间不重叠」是【硬约束】而不是软代价：
+     *   加一个远大于任何距离代价的常数，只在「所有候选都躲不开」时才退让。 */
+    function avoidLabel(anchor, text, color, size) {
+      let best = null, bestCost = Infinity;
+      for (const o of AVOID) {
+        const p = { x: anchor.x + o[0], y: anchor.y + o[1] };
+        const bx = labelBox(p, text, size);
+        let cost = 0;
+        for (const s of frameSolids) cost += overlapArea(bx, s);
+        let ovL = 0;
+        for (const l of state.drawn.labels) ovL += overlapArea(bx, l);
+        if (ovL > 0) cost += 1e4;
+        cost += ovL * 3;
+        if (bx.x < 4 || bx.x + bx.w > state.w - 4) cost += 1e5;
+        if (bx.y < 4 || bx.y + bx.h > state.h - 4) cost += 1e5;
+        cost += Math.hypot(o[0], o[1]) * 1.7;
+        if (cost < bestCost) { bestCost = cost; best = p; }
+      }
+      const b = label(best, text, color, size);
+      state.drawn.labels.push({ x: b.x, y: b.y, w: b.w, h: b.h, text: text });
+      return b;
+    }
+
+    /* ============================================================
+     * 通用绘制块
+     * ============================================================ */
+    function drawBackdrop(w, h) {
+      const g = ctx.createLinearGradient(0, 0, 0, h);
+      g.addColorStop(0, '#061021'); g.addColorStop(0.55, '#030a1a'); g.addColorStop(1, '#020617');
+      ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
+      const rg = ctx.createRadialGradient(w * 0.5, h * 0.08, 8, w * 0.5, h * 0.08, Math.max(w, h) * 0.78);
+      rg.addColorStop(0, 'rgba(56,189,248,.11)');
+      rg.addColorStop(1, 'rgba(56,189,248,0)');
+      ctx.fillStyle = rg; ctx.fillRect(0, 0, w, h);
+    }
+
+    /* 一个盒子的 6 个面（含到眼睛的距离），给「背面 / 正面」分层用 */
+    function boxFaceList(q, c, s) {
+      const corners = boxCorners(c, s);
+      return BOX_FACES.map(f => {
+        const mid = scl(f.idx.reduce((a, i) => add(a, corners[i]), [0, 0, 0]), 1 / 4);
+        return { n: f.n, mid: mid, d: vlen(sub(mid, q.eye)), pts: f.idx.map(i => corners[i]) };
+      });
+    }
+    const paintFaces = (q, faces, fill, stroke, lw) => {
+      for (const f of faces) poly(f.pts.map(p => project(p, q)), fill, stroke, lw);
+    };
+    /* 画一段 3D 折线，但只在【取景盒之内】的段落上落笔 */
+    function strokeClipped(q, pts3, E, color, lw, dash) {
+      ctx.beginPath();
+      let pen = false;
+      for (const p of pts3) {
+        const inside = p[0] >= E.x0 - 0.5 && p[0] <= E.x1 + 0.5 &&
+                       p[1] >= E.y0 - 0.5 && p[1] <= E.y1 + 0.5 &&
+                       p[2] >= E.z0 - 0.5 && p[2] <= E.z1 + 0.5;
+        if (!inside) { pen = false; continue; }
+        const s = project(p, q);
+        if (!pen) { ctx.moveTo(s.x, s.y); pen = true; } else ctx.lineTo(s.x, s.y);
+      }
+      ctx.setLineDash(dash || []);
+      ctx.lineWidth = lw; ctx.strokeStyle = color; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+      ctx.stroke(); ctx.setLineDash([]);
+    }
+    /* 3D 圆环（水平面内），给音孔、标记环用 */
+    function ring3(q, c, r, n, fill, stroke, lw) {
+      const pts = [];
+      for (let i = 0; i <= n; i++) {
+        const a = PI2 * i / n;
+        pts.push([c[0] + r * Math.cos(a), c[1], c[2] + r * Math.sin(a)]);
+      }
+      line(pts.map(p => project(p, q)), stroke, lw);
+      return pts;
+    }
+
+    /* ============================================================
+     * 场景 · 一根弦上的驻波
+     * ------------------------------------------------------------
+     * 画家顺序：台面 → 两端桥 → 静止参考线 → 振幅包络 → 弦 → 波节/波腹 → 探针。
+     * ★ 「振幅包络」是理解驻波的关键图形：弦在两段固定的曲线之间摆动，
+     *   包络碰到 0 的地方就是波节。它是【静态】的，不随 t 变。
+     * ============================================================ */
+    /* 一个带高光的 3D 小球（波节 / 波腹 / 探针都用它） */
+    function ball3(q, c, r3, hi, lo, edge) {
+      const s = project(c, q);
+      const r = Math.max(1.2, r3 * q.focal / s.z);
+      const g = ctx.createRadialGradient(s.x - r * 0.36, s.y - r * 0.36, r * 0.12, s.x, s.y, r);
+      g.addColorStop(0, hi); g.addColorStop(1, lo);
+      ctx.beginPath(); ctx.arc(s.x, s.y, r, 0, PI2);
+      ctx.fillStyle = g; ctx.fill();
+      if (edge) { ctx.lineWidth = 1; ctx.strokeStyle = edge; ctx.stroke(); }
+      return { x: s.x, y: s.y, r: r };
+    }
+    /* 沿弦的采样点：u ∈ [0,1] → 世界坐标。y 由当前阶数与相位决定。 */
+    function stringPoint(seg, u, t, z) {
+      const x = seg.x0 + u * seg.L;
+      const y = ampVis() * modeSin(seg.n, u) * Math.cos(PI2 * fNow() * t);
+      return [x, y, z || 0];
+    }
+
+    function drawStringScene(q) {
+      const D = state.drawn;
+      D.knots = []; D.antinodes = []; D.stringPts = []; D.probe = null;
+      const seg = vibSeg();
+      D.vibSeg = { x0: seg.x0, x1: seg.x1, L: seg.L, n: seg.n };
+      const n = seg.n;
+
+      /* ---- 台面（一块带网格的深色板，给「这是 3D」一个参照） ----
+       * ★ 进深必须与 frameEnv('string') 的 z 范围配套：台面画到盒子外面去，
+       *   投影就会跑到画布以外。 */
+      drawPlane(q, TABLE_Y, -0.340, 0.340, -0.130, 0.130, 'rgba(13,22,38,.92)', 'rgba(56,189,248,.10)');
+      for (let k = -4; k <= 4; k++) {
+        const z = k * 0.032;
+        line([[-0.340, TABLE_Y + 0.0005, z], [0.340, TABLE_Y + 0.0005, z]].map(p => project(p, q)), 'rgba(56,189,248,.07)', 1);
+      }
+      for (let k = -6; k <= 6; k++) {
+        const x = k * 0.05;
+        line([[x, TABLE_Y + 0.0005, -0.130], [x, TABLE_Y + 0.0005, 0.130]].map(p => project(p, q)), 'rgba(56,189,248,.05)', 1);
+      }
+
+      /* ---- 两端的桥（弦枕 / 琴桥）：立体小块，从台面一直顶到弦 ---- */
+      for (const sx of [seg.x0, seg.x1]) {
+        const b = drawBox(q, [sx, TABLE_Y / 2, 0], BRIDGE_S, [150, 163, 180], 'rgba(2,6,23,.5)');
+        frameSolids.push({ x: b.x, y: b.y, w: b.w, h: b.h, tag: sx < 0 ? 'nut' : 'bridge' });
+        if (sx === seg.x0) D.nut = b; else D.bridge = b;
+      }
+
+      /* ---- 静止位置参考线（弦不动时待的地方） ---- */
+      line([[seg.x0, 0, 0], [seg.x1, 0, 0]].map(p => project(p, q)), 'rgba(148,163,184,.5)', 1, [5, 4]);
+
+      /* ---- 振幅包络 ±A·|sin(nπu)|：两条静态曲线 ----
+       * ★ 它把「驻波」这件事画成了看得见的东西：弦永远在这两条线之间摆，
+       *   而包络与中线的【交点】就是波节 —— 包络在那里夹到 0。 */
+      for (const sgn of [1, -1]) {
+        const pts = [];
+        for (let i = 0; i <= N_SEG; i++) {
+          const u = i / N_SEG;
+          pts.push(project([seg.x0 + u * seg.L, sgn * ampVis() * Math.abs(modeSin(n, u)), 0], q));
+        }
+        line(pts, 'rgba(167,139,250,.5)', 1.4);
+      }
+
+      /* ---- 弦本体：一条会摆的粗线，带外发光 ---- */
+      const pts3 = [], scr = [];
+      for (let i = 0; i <= N_SEG; i++) {
+        const u = i / N_SEG;
+        pts3.push(stringPoint(seg, u, state.t, 0));
+      }
+      for (const p of pts3) scr.push(project(p, q));
+      D.stringPts = scr;
+      line(scr, 'rgba(56,189,248,.20)', 9);
+      line(scr, 'rgba(125,211,252,.6)', 5);
+      line(scr, '#e0f2fe', 2.2);
+
+      /* ---- 波节：永远不动的点（n+1 个，含两端） ---- */
+      for (let k = 0; k <= n; k++) {
+        const u = knotU(k);
+        const s = ball3(q, [seg.x0 + u * seg.L, 0, 0], 0.0034,
+                        '#fecaca', '#b91c1c', 'rgba(254,202,202,.85)');
+        D.knots.push({ x: s.x, y: s.y, r: s.r, u: u });
+      }
+      /* ---- 波腹：摆得最凶的点（n 个），用一条竖线标出振幅范围 ---- */
+      for (let k = 0; k < n; k++) {
+        const u = antinodeU(k);
+        const x = seg.x0 + u * seg.L;
+        line([[x, -ampVis(), 0], [x, ampVis(), 0]].map(p => project(p, q)), 'rgba(251,191,36,.55)', 1.4, [4, 3]);
+        const s = ball3(q, [x, ampVis() * Math.cos(PI2 * fNow() * state.t), 0], 0.0030,
+                        '#fef3c7', '#d97706', 'rgba(254,243,199,.85)');
+        D.antinodes.push({ x: s.x, y: s.y, r: s.r, u: u });
+      }
+
+      /* ---- 探针：一条竖线 + 顶端跟着弦走的小球 ---- */
+      const up = clamp(state.probe, 0, 1);
+      const px = seg.x0 + up * seg.L;
+      const py = ampVis() * modeSin(n, up) * Math.cos(PI2 * fNow() * state.t);
+      line([[px, 0, 0], [px, py, 0]].map(p => project(p, q)), 'rgba(110,231,183,.9)', 1.8);
+      const ps = ball3(q, [px, py, 0], PROBE_R, '#d1fae5', '#059669', 'rgba(209,250,229,.95)');
+      const pbase = project([px, 0, 0], q);
+      D.probe = { x: ps.x, y: ps.y, r: ps.r, base: { x: pbase.x, y: pbase.y }, u: up, amp: ampAtA(up) };
+
+      /* ---- 弦长的尺寸线（弦变短要一眼看得见） ---- */
+      const dy = TABLE_Y - 0.012;
+      const a = project([seg.x0, dy, 0], q), b2 = project([seg.x1, dy, 0], q);
+      line([{ x: a.x, y: a.y }, { x: b2.x, y: b2.y }], 'rgba(125,211,252,.75)', 1.2);
+      line([[seg.x0, dy - 0.006, 0], [seg.x0, TABLE_Y + 0.004, 0]].map(p => project(p, q)), 'rgba(125,211,252,.4)', 1, [3, 3]);
+      line([[seg.x1, dy - 0.006, 0], [seg.x1, TABLE_Y + 0.004, 0]].map(p => project(p, q)), 'rgba(125,211,252,.4)', 1, [3, 3]);
+
+      /* ---- 标签 ---- */
+      avoidLabel({ x: (a.x + b2.x) / 2, y: a.y + 14 }, 'L = ' + seg.L.toFixed(3) + ' m', '#a5f3fc', 11);
+      if (D.nut) avoidLabel({ x: D.nut.cx, y: D.nut.y - 12 }, '弦枕（固定端）', '#cbd5e1', 10);
+      if (D.bridge) avoidLabel({ x: D.bridge.cx, y: D.bridge.y - 12 }, '琴桥（固定端）', '#cbd5e1', 10);
+      const k0 = D.knots[Math.min(D.knots.length - 1, Math.floor(D.knots.length / 2))];
+      if (k0) avoidLabel({ x: k0.x, y: k0.y - 16 }, '波节 · 振幅 0', '#fca5a5', 10);
+      const an0 = D.antinodes[Math.floor(D.antinodes.length / 2)];
+      if (an0) avoidLabel({ x: an0.x, y: an0.y - 14 }, '波腹 · 振幅最大', '#fcd34d', 10);
+      if (D.probe) {
+        avoidLabel({ x: D.probe.x, y: D.probe.y + 16 },
+                   '探针 · 振幅 ' + (ampAtA(up) * 1000).toFixed(2) + ' mm',
+                   ampAtA(up) < 1e-9 ? '#c4b5fd' : '#6ee7b7', 10);
+      }
+    }
+
+    /* ============================================================
+     * 场景 · 整把吉他的指板
+     * ------------------------------------------------------------
+     * 这把吉他的尺寸是【真实】的：有效弦长 0.650 m、6 根弦间距 10.5 mm、
+     * 12 个品丝的位置由 d_n = L₀(1 − 2^(−n/12)) 算出来 —— 全部按规格摆，
+     * 没有任何「为了好看」的微调。所以「第 12 品正好在弦的中点」这件事
+     * 是画面上直接量得出来的，不是嘴上说的。
+     * ============================================================ */
+    function drawGuitarScene(q) {
+      const D = state.drawn;
+      D.frets = []; D.strings = []; D.knots = []; D.antinodes = []; D.stringPts = []; D.probe = null;
+      const seg = vibSeg();
+      D.vibSeg = { x0: seg.x0, x1: seg.x1, L: seg.L, n: seg.n };
+      const zi = state.strIdx;
+      const zk = (zi - (STR_N - 1) / 2) * FRET_Z;
+
+      /* ---- 地板 + 网格：给这把吉他一个参照面 ----
+       * ★ 地板【必须与取景盒的 x/z 范围完全一致】：画到盒子外面去的话，
+       *   投影会跑到画布之外，屏幕上只剩半块板子。 */
+      const E = frameEnv('guitar'), fy = BODY_Y0 - 0.008;
+      drawPlane(q, fy, E.x0, E.x1, E.z0, E.z1, 'rgba(11,19,34,.85)', 'rgba(56,189,248,.10)');
+      for (let k = -2; k <= 9; k++) {
+        const x = k * 0.10;
+        if (x < E.x0 || x > E.x1) continue;
+        line([[x, fy + 0.0005, E.z0], [x, fy + 0.0005, E.z1]].map(p => project(p, q)), 'rgba(56,189,248,.06)', 1);
+      }
+      for (let k = -2; k <= 2; k++) {
+        const z = k * 0.10;
+        if (z < E.z0 || z > E.z1) continue;
+        line([[E.x0, fy + 0.0005, z], [E.x1, fy + 0.0005, z]].map(p => project(p, q)), 'rgba(56,189,248,.06)', 1);
+      }
+
+      /* ---- 琴箱：带腰的柱体（不是长方体）+ 音孔 ---- */
+      const body = drawPrism(q, BODY_OUT, BODY_Y0, BODY_Y1, [150, 96, 50], 'rgba(2,6,23,.42)');
+      frameSolids.push({ x: body.x, y: body.y, w: body.w, h: body.h, tag: 'body' });
+      D.body = body;
+      /* 音孔：一圈暗色 + 一圈亮边 */
+      const holePts = [];
+      for (let i = 0; i <= 40; i++) {
+        const a2 = PI2 * i / 40;
+        holePts.push(project([HOLE_C[0] + HOLE_R * Math.cos(a2), HOLE_C[1], HOLE_C[2] + HOLE_R * Math.sin(a2)], q));
+      }
+      poly(holePts, 'rgba(6,10,18,.92)', 'rgba(226,232,240,.55)', 1.4);
+      ring3(q, [HOLE_C[0], HOLE_C[1], HOLE_C[2]], HOLE_R * 1.14, 40, null, 'rgba(120,72,34,.75)', 1);
+
+      /* ---- 琴颈 / 指板 / 琴枕 / 琴头 ---- */
+      const neck = drawBox(q, NECK_C, NECK_S, [96, 62, 34], 'rgba(2,6,23,.45)');
+      frameSolids.push({ x: neck.x, y: neck.y, w: neck.w, h: neck.h, tag: 'neck' });
+      const frb = drawBox(q, FRB_C, FRB_S, [58, 40, 26], 'rgba(2,6,23,.45)');
+      D.fretboard = frb;
+      drawBox(q, NUT_C, NUT_S, [222, 226, 232], 'rgba(2,6,23,.45)');
+      const head = drawBox(q, HEAD_C, HEAD_S, [104, 68, 38], 'rgba(2,6,23,.45)');
+      frameSolids.push({ x: head.x, y: head.y, w: head.w, h: head.h, tag: 'head' });
+      D.head = head;
+      /* 弦轴：6 个小旋钮，琴头两侧各 3 个 —— 有它才一眼看出这是琴头 */
+      for (const px of PEG_X) for (const sgn of [1, -1]) {
+        drawBox(q, [px, HEAD_C[1] + 0.002, sgn * PEG_Z], [0.011, 0.010, 0.020],
+                [196, 202, 212], 'rgba(2,6,23,.45)');
+      }
+
+      /* ---- 12 根品丝：位置由十二平均律算出来 ---- */
+      for (let k = 1; k <= FRET_MAX; k++) {
+        const x = fretD(k);
+        const on = (k === state.fret);
+        const b = drawBox(q, [x, FRB_TOP + 0.0025, 0], [0.0022, 0.005, FRB_S[2]],
+                          on ? [251, 191, 36] : [198, 204, 212], 'rgba(2,6,23,.5)');
+        D.frets.push({ n: k, x: x, scr: b.cx, on: on });
+        if (on) {
+          frameSolids.push({ x: b.x, y: b.y, w: b.w, h: b.h, tag: 'fret-on' });
+          D.fretOn = b;
+        }
+      }
+
+      /* ---- 琴桥 ---- */
+      const brdg = drawBox(q, BRDG_C, BRDG_S, [222, 226, 232], 'rgba(2,6,23,.5)');
+      frameSolids.push({ x: brdg.x, y: brdg.y, w: brdg.w, h: brdg.h, tag: 'bridge' });
+      D.bridgeBox = brdg;
+
+      /* ---- 6 根弦：不振动的那一段（弦枕 → 品丝）画直、细、暗 ---- */
+      for (let i = 0; i < STR_N; i++) {
+        const z = (i - (STR_N - 1) / 2) * FRET_Z;
+        const sel = (i === zi);
+        const col = sel ? '#e0f2fe' : 'rgba(203,213,225,.42)';
+        const lw = sel ? 2.6 : 1.2;
+        const p0 = project([0, STR_Y, z], q), p1 = project([L0, STR_Y, z], q);
+        line([p0, p1], col, lw);
+        D.strings.push({ i: i, z: z, sel: sel, x0: p0.x, y0: p0.y, x1: p1.x, y1: p1.y });
+      }
+
+      /* ---- 选中的弦：从品丝到琴桥这一段在振动 ---- */
+      const p3 = [], scr = [];
+      for (let i = 0; i <= N_SEG; i++) {
+        const u = i / N_SEG;
+        const x = seg.x0 + u * seg.L;
+        const y = STR_Y + ampVis() * modeSin(seg.n, u) * Math.cos(PI2 * fNow() * state.t);
+        p3.push([x, y, zk]);
+      }
+      for (const p of p3) scr.push(project(p, q));
+      D.stringPts = scr;
+      line(scr, 'rgba(56,189,248,.22)', 8);
+      line(scr, 'rgba(125,211,252,.55)', 4.4);
+      line(scr, '#e0f2fe', 1.8);
+      /* 被手指压住的那一段（弦枕 → 品丝）：不振动，画成虚线示意「被摁住了」 */
+      if (state.fret > 0) {
+        line([[0, STR_Y, zk], [seg.x0, STR_Y, zk]].map(p => project(p, q)), 'rgba(148,163,184,.85)', 1.6, [5, 4]);
+      }
+
+      /* ---- 手指（按在品丝上） ---- */
+      if (state.fret > 0) {
+        const fb = drawBox(q, [seg.x0 + 0.006, STR_Y + 0.004, zk], [0.018, 0.020, 0.015],
+                           [226, 168, 132], 'rgba(2,6,23,.45)');
+        frameSolids.push({ x: fb.x, y: fb.y, w: fb.w, h: fb.h, tag: 'finger' });
+        D.finger = fb;
+      }
+
+      /* ---- 波节 / 波腹（振动段上，规律与模式 A 完全一样：n=1） ---- */
+      for (let k = 0; k <= seg.n; k++) {
+        const u = k / seg.n;
+        const s = ball3(q, [seg.x0 + u * seg.L, STR_Y, zk], 0.0032,
+                        '#fecaca', '#b91c1c', 'rgba(254,202,202,.85)');
+        D.knots.push({ x: s.x, y: s.y, r: s.r, u: u });
+      }
+      for (let k = 0; k < seg.n; k++) {
+        const u = (k + 0.5) / seg.n;
+        const x = seg.x0 + u * seg.L;
+        line([[x, STR_Y - ampVis(), zk], [x, STR_Y + ampVis(), zk]].map(p => project(p, q)),
+             'rgba(251,191,36,.6)', 1.4, [4, 3]);
+        const s = ball3(q, [x, STR_Y + ampVis() * Math.cos(PI2 * fNow() * state.t), zk], 0.0026,
+                        '#fef3c7', '#d97706', 'rgba(254,243,199,.85)');
+        D.antinodes.push({ x: s.x, y: s.y, r: s.r, u: u });
+      }
+
+      /* ---- 标签 ---- */
+      avoidLabel({ x: frb.cx, y: frb.y - 14 }, '指板', '#cbd5e1', 10);
+      avoidLabel({ x: body.cx, y: body.y + body.h + 14 }, '琴箱（共鸣箱）', '#e2e8f0', 10);
+      avoidLabel({ x: head.cx, y: head.y - 12 }, '琴头 · 弦轴', '#cbd5e1', 10);
+      const zs = D.strings[zi];
+      if (zs) avoidLabel({ x: (zs.x0 + zs.x1) / 2, y: zs.y0 - 16 },
+                         STR_LABEL[zi] + ' · f₀ = ' + strF0(zi).toFixed(2) + ' Hz', '#a5f3fc', 10);
+      const f0 = D.frets.filter(f => f.on)[0];
+      if (f0) avoidLabel({ x: f0.scr, y: frb.y - 30 },
+                         state.fret + ' 品 · 弦长 ' + seg.L.toFixed(3) + ' m', '#fcd34d', 10);
+      /* ★ 这里【不】给波节/波腹挂标签：模式 B 的振动段只有 0.65 m 里的
+       *   一小段，两个标签会被避让推到离小球几十像素以外的地方去、
+       *   看起来像两个孤立的浮标。舞台左上角的提示里已经写明
+       *   「红点 = 波节　黄点 = 波腹」，靠颜色认就够了。 */
+    }
+
+    /* ============================================================
+     * 画布上的状态条（右上角）
+     * ============================================================ */
+    function drawStatus(w, h) {
+      const rows = [];
+      if (state.mode === 'string') {
+        rows.push(['f = ' + fA().toFixed(1) + ' Hz', '#a5f3fc']);
+        rows.push(['L = ' + lenNow().toFixed(3) + ' m　n = ' + state.harm, '#e2e8f0']);
+        rows.push(['波节 ' + knotsA() + ' 个 · 波腹 ' + antinodesA() + ' 个', '#fcd34d']);
+        rows.push(['振幅已放大 ×' + AMP_K + ' 画', '#94a3b8']);
+      } else {
+        rows.push(['f = ' + fB().toFixed(1) + ' Hz　' + nameOf(fB()), '#a5f3fc']);
+        rows.push(['L = ' + lenB().toFixed(3) + ' m　按 ' + state.fret + ' 品', '#e2e8f0']);
+        rows.push(['振动段波节 2 个 · 波腹 1 个', '#fcd34d']);
+      }
+      ctx.font = '700 11.5px Inter, "Microsoft YaHei", sans-serif';
+      let mw = 0;
+      for (const r of rows) mw = Math.max(mw, ctx.measureText(r[0]).width);
+      const bw = mw + 22, bh = rows.length * 17 + 14;
+      const x0 = w - bw - 12, y0 = 12;
+      ctx.fillStyle = 'rgba(2,6,23,.76)';
+      ctx.strokeStyle = 'rgba(148,163,184,.28)'; ctx.lineWidth = 1;
+      ctx.beginPath();
+      if (ctx.roundRect) ctx.roundRect(x0, y0, bw, bh, 9);
+      else ctx.rect(x0, y0, bw, bh);
+      ctx.fill(); ctx.stroke();
+      ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+      rows.forEach((r, i) => { ctx.fillStyle = r[1]; ctx.fillText(r[0], x0 + 11, y0 + 15 + i * 17); });
+      ctx.textBaseline = 'alphabetic';
+      state.drawn.status = { x: x0, y: y0, w: bw, h: bh };
+    }
+
+    /* ============================================================
+     * render
+     * ============================================================ */
+    function render() {
+      const w = state.w, h = state.h, dpr = state.dpr;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, w, h);
+      frameBoxes = []; frameSolids = [];
+      state.drawn = { labels: [], solids: [], mode: state.mode };
+      drawBackdrop(w, h);
+      const q = {};
+      makeCam(q, w, h);
+      if (state.mode === 'guitar') drawGuitarScene(q); else drawStringScene(q);
+      state.drawn.solids = frameSolids.slice();
+      state.drawn.box = modeBox();
+      drawStatus(w, h);
+    }
+
+    /* ============================================================
+     * 读数与进度曲线
+     * ============================================================ */
+    const n2 = (v, d) => (isFinite(v) ? v.toFixed(d === undefined ? 2 : d) : '—');
+    const mm = v => (v * 1000).toFixed(2);
+
+    function renderReadouts() {
+      const box = $('gt-readouts');
+      if (!box) return;
+      const rows = [];
+      if (state.mode === 'string') {
+        rows.push(['弦长 L', lenNow().toFixed(3) + ' m', '']);
+        rows.push(['波速 v = √(T/μ)', vA().toFixed(1) + ' m/s', '']);
+        rows.push(['驻波阶数 n', String(state.harm), '']);
+        rows.push(['频率 f = n·v/(2L)', fA().toFixed(1) + ' Hz', 'hot']);
+        rows.push(['波长 λ = 2L/n', lamA().toFixed(3) + ' m', '']);
+        rows.push(['波节 / 波腹', knotsA() + ' / ' + antinodesA(), 'node']);
+        rows.push(['探针位置', state.probe.toFixed(3) + ' L', '']);
+        const a = ampAtA(state.probe);
+        rows.push(['探针处振幅', mm(a) + ' mm', a < 1e-9 ? 'node' : 'hot']);
+        const y = yAtA(state.probe, state.t);
+        rows.push(['探针处瞬时位移', (y >= 0 ? '+' : '−') + mm(Math.abs(y)) + ' mm', '']);
+      } else {
+        const f0 = strF0(state.strIdx), f = fB();
+        rows.push(['选中的弦', STR_LABEL[state.strIdx], '']);
+        rows.push(['空弦频率 f₀', f0.toFixed(2) + ' Hz', '']);
+        rows.push(['品位 n', String(state.fret), '']);
+        rows.push(['有效弦长 L', lenB().toFixed(3) + ' m', '']);
+        rows.push(['频率 f = f₀·2^(n/12)', f.toFixed(1) + ' Hz', 'hot']);
+        rows.push(['音名', nameOf(f), 'node']);
+        rows.push(['比空弦高', semiUp().toFixed(1) + ' 个半音', '']);
+        const a = AMP * Math.abs(Math.sin(Math.PI * 0.5));
+        rows.push(['振动段探针振幅', mm(a) + ' mm', 'hot']);
+        const y = AMP * Math.sin(Math.PI * 0.5) * Math.cos(PI2 * f * state.t);
+        rows.push(['探针处瞬时位移', (y >= 0 ? '+' : '−') + mm(Math.abs(y)) + ' mm', '']);
+      }
+      box.innerHTML = rows.map(r =>
+        '<div><span>' + r[0] + '</span><b class="' + r[2] + '">' + r[1] + '</b></div>').join('');
+    }
+
+    let curCv = null, curCtx = null;
+    function renderCurve() {
+      if (!curCv || !curCtx) return;
+      const r = curCv.getBoundingClientRect();
+      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      const w = Math.max(80, Math.round(r.width || 280));
+      const h = Math.max(60, Math.round(r.height || 104));
+      if (curCv.width !== Math.round(w * dpr) || curCv.height !== Math.round(h * dpr)) {
+        curCv.width = Math.round(w * dpr); curCv.height = Math.round(h * dpr);
+      }
+      const c = curCtx;
+      c.setTransform(dpr, 0, 0, dpr, 0, 0);
+      c.clearRect(0, 0, w, h);
+      c.fillStyle = 'rgba(2,6,23,.55)'; c.fillRect(0, 0, w, h);
+      const PL = 34, PR = 8, PT = 10, PB = 15;
+      const x0 = PL, x1 = w - PR, y0 = PT, y1 = h - PB;
+
+      if (state.mode === 'string') {
+        /* f(L) = n·v/(2L)：一条双曲线。★ 曲线形状本身就在讲「L 在分母上」。 */
+        const n = state.harm;
+        const fHi = n * vA() / (2 * L_MIN);
+        const X = L => x0 + (x1 - x0) * (L - L_MIN) / (L_MAX - L_MIN);
+        const Y = f => y1 - (y1 - y0) * clamp(f / (fHi * 1.04), 0, 1);
+        c.strokeStyle = 'rgba(148,163,184,.18)'; c.lineWidth = 1;
+        for (let k = 0; k <= 2; k++) {
+          const yy = y0 + (y1 - y0) * k / 2;
+          c.beginPath(); c.moveTo(x0, yy); c.lineTo(x1, yy); c.stroke();
+        }
+        /* L 减半的那条竖线：0.650 → 0.325 */
+        const xh = X(L_DEF / 2);
+        c.strokeStyle = 'rgba(167,139,250,.6)'; c.setLineDash([3, 3]);
+        c.beginPath(); c.moveTo(xh, y0); c.lineTo(xh, y1); c.stroke(); c.setLineDash([]);
+        c.beginPath();
+        for (let i = 0; i <= 120; i++) {
+          const L = L_MIN + (L_MAX - L_MIN) * i / 120;
+          const px = X(L), py = Y(n * vA() / (2 * L));
+          i ? c.lineTo(px, py) : c.moveTo(px, py);
+        }
+        c.strokeStyle = '#38bdf8'; c.lineWidth = 2; c.stroke();
+        const px = X(lenNow()), py = Y(fA());
+        c.fillStyle = '#a5f3fc';
+        c.beginPath(); c.arc(px, py, 3.6, 0, PI2); c.fill();
+        c.strokeStyle = 'rgba(165,243,252,.5)'; c.lineWidth = 1;
+        c.beginPath(); c.moveTo(px, y0); c.lineTo(px, y1); c.stroke();
+        c.fillStyle = 'rgba(148,163,184,.8)'; c.font = '700 9px Inter, sans-serif';
+        c.textAlign = 'center'; c.textBaseline = 'top';
+        c.fillText('0.30', x0, y1 + 3); c.fillText('0.65 m', x1, y1 + 3);
+        c.textAlign = 'right'; c.textBaseline = 'middle';
+        c.fillText(fHi.toFixed(0), x0 - 4, y0 + 4);
+      } else {
+        /* f(n) = f₀·2^(n/12)：指数曲线，12 品处正好是 2 倍。 */
+        const f0 = strF0(state.strIdx);
+        const fHi = f0 * 2;
+        const X = k => x0 + (x1 - x0) * k / FRET_MAX;
+        const Y = f => y1 - (y1 - y0) * clamp(f / (fHi * 1.12), 0, 1);
+        c.strokeStyle = 'rgba(148,163,184,.18)'; c.lineWidth = 1;
+        for (let k = 0; k <= 2; k++) {
+          const yy = y0 + (y1 - y0) * k / 2;
+          c.beginPath(); c.moveTo(x0, yy); c.lineTo(x1, yy); c.stroke();
+        }
+        /* 空弦的 2 倍（高八度）那条水平线 */
+        c.strokeStyle = 'rgba(167,139,250,.6)'; c.setLineDash([3, 3]);
+        c.beginPath(); c.moveTo(x0, Y(fHi)); c.lineTo(x1, Y(fHi)); c.stroke(); c.setLineDash([]);
+        c.beginPath();
+        for (let i = 0; i <= 120; i++) {
+          const k = FRET_MAX * i / 120;
+          const px = X(k), py = Y(f0 * Math.pow(2, k / 12));
+          i ? c.lineTo(px, py) : c.moveTo(px, py);
+        }
+        c.strokeStyle = '#38bdf8'; c.lineWidth = 2; c.stroke();
+        const px = X(state.fret), py = Y(fB());
+        c.fillStyle = '#a5f3fc';
+        c.beginPath(); c.arc(px, py, 3.6, 0, PI2); c.fill();
+        c.strokeStyle = 'rgba(165,243,252,.5)'; c.lineWidth = 1;
+        c.beginPath(); c.moveTo(px, y0); c.lineTo(px, y1); c.stroke();
+        c.fillStyle = 'rgba(148,163,184,.8)'; c.font = '700 9px Inter, sans-serif';
+        c.textAlign = 'center'; c.textBaseline = 'top';
+        c.fillText('0 品', x0, y1 + 3); c.fillText('12 品', x1, y1 + 3);
+        c.textAlign = 'right'; c.textBaseline = 'middle';
+        c.fillText('×2', x0 - 4, Y(fHi));
+      }
+    }
+
+    function renderAnalysis() {
+      const el = $('gt-analysis');
+      if (!el) return;
+      let html = '';
+      if (state.mode === 'string') {
+        const v = vA(), f = fA();
+        html +=
+          '<div class="line"><span>张力 T</span><b>' + T_TEN.toFixed(1) + ' N（钉死）</b></div>' +
+          '<div class="line"><span>线密度 μ</span><b>' + (MU_1 * 1000).toFixed(3) + ' g/m（钉死）</b></div>' +
+          '<div class="line"><span>波速 v = √(T/μ)</span><b>' + v.toFixed(1) + ' m/s</b></div>' +
+          '<div class="line"><span>f = ' + state.harm + '·v / (2L)</span><b>' + f.toFixed(1) + ' Hz</b></div>' +
+          '<div class="line"><span>L 减半（' + (lenNow() / 2).toFixed(3) + ' m）会变成</span><b>' + (f * 2).toFixed(1) + ' Hz</b></div>';
+        const ratio = L_DEF / lenNow();
+        if (Math.abs(lenNow() - L_DEF / 2) < 1e-6) {
+          html += '<div class="conc">现在是 <b>0.325 m</b> —— 正好是满弦长的一半。' +
+                  '频率 <b>' + f.toFixed(1) + ' Hz</b> 也正好是 0.650 m 时（' +
+                  f1A().toFixed(1) + ' Hz × ' + state.harm + ' 阶）的两倍。<b>弦长减半 ⇒ 频率翻倍</b>，' +
+                  '听到的就是高八度。</div>';
+        } else if (state.harm > 1) {
+          html += '<div class="conc info">第 <b>' + state.harm + '</b> 阶驻波：弦长里装了 <b>' + state.harm +
+                  '</b> 个半波长（L = ' + state.harm + '·λ/2），所以有 <b>' + antinodesA() + ' 个波腹</b>、' +
+                  '<b>' + knotsA() + ' 个波节</b>。频率是基频的 <b>' + state.harm + ' 倍</b>。</div>';
+        } else {
+          html += '<div class="conc info">弦长 <b>' + lenNow().toFixed(3) + ' m</b>，波速 v = √(T/μ) = ' +
+                  v.toFixed(1) + ' m/s 与弦长无关。' +
+                  '把 L 拖到 <b>0.325 m</b>（正好一半）试试：频率会正好翻倍到 ' +
+                  (2 * f).toFixed(1) + ' Hz。</div>';
+        }
+      } else {
+        const f0 = strF0(state.strIdx), f = fB();
+        html +=
+          '<div class="line"><span>6 弦线密度 μ</span><b>' + (muOf(0) * 1000).toFixed(3) + ' g/m</b></div>' +
+          '<div class="line"><span>1 弦线密度 μ</span><b>' + (muOf(5) * 1000).toFixed(3) + ' g/m</b></div>' +
+          '<div class="line"><span>6 弦是 1 弦的</span><b>' + (muOf(0) / muOf(5)).toFixed(1) + ' 倍粗</b></div>' +
+          '<div class="line"><span>有效弦长 L</span><b>' + lenB().toFixed(3) + ' m</b></div>' +
+          '<div class="line"><span>f = f₀·2^(n/12)</span><b>' + f.toFixed(1) + ' Hz</b></div>';
+        if (state.fret === FRET_MAX) {
+          html += '<div class="conc">第 <b>12</b> 品：2^(12/12) = <b>2</b>，有效弦长 ' + lenB().toFixed(3) +
+                  ' m 正好是空弦 ' + L0.toFixed(3) + ' m 的<b>一半</b>，频率 ' + f.toFixed(1) +
+                  ' Hz 正好是 <b>2 倍</b>。<b>同一个音名 ' + nameOf(f) + '，高八度</b>。</div>';
+        } else {
+          html += '<div class="conc info">从空弦的 <b>' + nameOf(f0) + '</b>（' + f0.toFixed(2) +
+                  ' Hz）按到第 <b>' + state.fret + '</b> 品，音升高了 <b>' + semiUp().toFixed(1) +
+                  '</b> 个半音。第 12 品正好是 <b>' + nameOf(f0) + ' 的高八度</b> —— ' +
+                  '因为那里弦长刚好减半。</div>';
+        }
+      }
+      el.innerHTML = html;
+    }
+
+    /* ============================================================
+     * 声音（headless 下读不到 AudioParam.value ⇒ 全部走 setTargetAtTime，
+     * 自检拦截这个调用就能拿到页面【真正交给 Web Audio】的数字）
+     * ============================================================ */
+    const SOUND_TAU = 0.012, SOUND_TAU_SW = 0.03;
+    const TONE_GAIN = 0.10;
+
+    const audio = {
+      ctx: null, osc: null, ampGain: null, masterGain: null,
+      ready: false, on: false, plucks: 0, stops: 0
+    };
+    const audioReady = () => audio.ready;
+    const soundOn = () => audio.on;
+    /* ★ 本页没有「听不见的声」这种花样：声音的频率就是【弦当前的频率】，
+     *   拨弦音与持续音都取同一个 fNow()。 */
+    const audioShouldSound = () => audio.on;
+    const audioLevel = () => (audioShouldSound() ? TONE_GAIN : 0);
+    const audioFreq = () => (audio.osc ? audio.osc.frequency.value : null);
+    const audioGain = () => (audio.ampGain ? audio.ampGain.gain.value : null);
+    const audioMaster = () => (audio.masterGain ? audio.masterGain.gain.value : null);
+
+    function initAudio() {
+      if (audio.ctx) return audio.ready;
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) { audio.ready = false; return false; }
+      try {
+        const ac = new AC();
+        const osc = ac.createOscillator();
+        /* 'triangle' 的谐波比 sine 丰富、比 sawtooth 干净 —— 听起来像拨弦。 */
+        osc.type = 'triangle';
+        osc.frequency.value = 329.63;
+        const amp = ac.createGain(); amp.gain.value = 0;
+        const master = ac.createGain(); master.gain.value = 1;
+        osc.connect(amp); amp.connect(master); master.connect(ac.destination);
+        osc.start();
+        audio.ctx = ac; audio.osc = osc; audio.ampGain = amp; audio.masterGain = master;
+        audio.ready = true;
+        if (ac.state === 'suspended' && ac.resume) ac.resume();
+      } catch (e) { audio.ready = false; }
+      return audio.ready;
+    }
+    function applyAudio() {
+      if (!audio.ready || !audio.ctx) return;
+      const t = audio.ctx.currentTime;
+      try {
+        audio.osc.frequency.setTargetAtTime(fNow(), t, SOUND_TAU);
+        audio.ampGain.gain.setTargetAtTime(audioLevel(), t, SOUND_TAU_SW);
+        audio.masterGain.gain.setTargetAtTime(audio.on ? 1 : 0, t, SOUND_TAU_SW);
+      } catch (e) { }
+    }
+    /* 拨弦：一个短促的衰减包络，音高就是这根弦当前的频率。
+     * ★ 也把视觉相位拨回 0 —— 「拨」这个动作在画面上和声音上必须是同一件事。 */
+    function pluck() {
+      audio.plucks++;
+      state.t = 0;
+      if (audio.ready && audio.ctx && audio.on) {
+        const ac = audio.ctx, t0 = ac.currentTime;
+        try {
+          const o = ac.createOscillator(); o.type = 'triangle'; o.frequency.value = fNow();
+          const g = ac.createGain(); g.gain.value = 0;
+          o.connect(g); g.connect(audio.masterGain);
+          g.gain.setTargetAtTime(0.20, t0, 0.004);
+          g.gain.setTargetAtTime(0, t0 + 0.09, 0.17);
+          o.start(t0); o.stop(t0 + 1.4);
+        } catch (e) { }
+      }
+      syncUI(); invalidate();
+      return audio.plucks;
+    }
+    function setSound(on) {
+      if (on) initAudio();
+      audio.on = !!on;
+      if (!audio.on) audio.stops++;
+      applyAudio(); syncUI(); invalidate();
+      if (!audio.on) { showToast('已静音'); return audio.on; }
+      if (state.mode === 'guitar') {
+        showToast('按「拨弦」听 ' + STR_LABEL[state.strIdx] + ' 按 ' + state.fret + ' 品的音：' +
+                  nameOf(fB()) + ' · ' + fB().toFixed(1) + ' Hz');
+      } else {
+        showToast('按「拨弦」听这个音：' + fA().toFixed(1) + ' Hz' +
+                  (state.harm > 1 ? '（第 ' + state.harm + ' 阶）' : ''));
+      }
+      return audio.on;
+    }
+
+    /* ============================================================
+     * 动作（按钮与自检走同一份）
+     * ============================================================ */
+    const invalidate = () => { state.dirty = true; };
+    let toastT = 0;
+    function showToast(msg) {
+      const el = $('gt-toast');
+      if (!el) return;
+      el.textContent = msg;
+      el.classList.add('show');
+      clearTimeout(toastT);
+      toastT = setTimeout(() => el.classList.remove('show'), 2000);
+    }
+
+    function setMode(m) {
+      if (MODES.indexOf(m) < 0 || m === state.mode) return state.mode;
+      state.mode = m;
+      state.t = 0;
+      /* ★ 切模式时相机【必须跟着换】：两个模式的取景盒差 4 倍，沿用上一个
+       *   模式的 yaw/pitch 会一边合适一边摊平（实测：拿弦的 yaw = −0.36
+       *   去看吉他，整把琴摊成一条横带、上下全是空）。 */
+      const V = viewsOf(m);
+      state.view = 'perspective';
+      state.yaw = V.perspective[0]; state.pitch = V.perspective[1]; state.zoom = 1;
+      applyAudio(); syncUI(); invalidate();
+      return m;
+    }
+    /* 弦长：模式 A 的唯一自变量。
+     * ★ 必须 applyAudio()：f = v/(2L) 里 L 在分母上，拖滑块【音高就该跟着变】——
+     *   漏掉这一句的表现是「画面变了、声音还是老频率」，自检拿 setTargetAtTime
+     *   的拦截日志正好逮住它（f650/f325 都是空数组）。 */
+    function setLen(L) {
+      state.len = clamp(Math.round(L / 0.005) * 0.005, L_MIN, L_MAX);
+      applyAudio(); syncUI(); invalidate();
+      return state.len;
+    }
+    /* 驻波阶数：1..HARM_MAX。
+     * ★ 同样要 applyAudio()：f_n = n·f₁，阶数一改，发声频率就改。 */
+    function setHarm(n) {
+      state.harm = clamp(Math.round(n), 1, HARM_MAX);
+      applyAudio(); syncUI(); invalidate();
+      return state.harm;
+    }
+    /* 探针沿弦的位置（归一化 0..1）。 */
+    function setProbe(u) {
+      state.probe = clamp(u, 0, 1);
+      syncUI(); invalidate();
+      return state.probe;
+    }
+    /* 换一根弦（模式 B）—— 换的是粗细 μ，不是弦长。 */
+    function setStr(i) {
+      state.strIdx = clamp(Math.round(i), 0, STR_N - 1);
+      applyAudio(); syncUI(); invalidate();
+      return state.strIdx;
+    }
+    /* 按第几品：模式 B 的唯一自变量。 */
+    function setFret(n) {
+      state.fret = clamp(Math.round(n), 0, FRET_MAX);
+      applyAudio(); syncUI(); invalidate();
+      return state.fret;
+    }
+    function setPlaying(on) { state.playing = !!on; syncUI(); invalidate(); return state.playing; }
+    function setSlow(on) { state.slow = !!on; syncUI(); invalidate(); return state.slow; }
+    function resetAll() {
+      state.mode = 'string';
+      state.len = L_DEF; state.harm = 1; state.probe = 0.5;
+      state.strIdx = STR_N - 1; state.fret = 0;
+      state.t = 0;
+      state.playing = true; state.slow = true; state.view = 'perspective';
+      state.yaw = VIEWS.string.perspective[0]; state.pitch = VIEWS.string.perspective[1]; state.zoom = 1;
+      applyAudio(); syncUI(); invalidate();
+      return true;
+    }
+    /* ★ 视角预设【按模式取】：两个模式的取景盒差 4 倍，同一组 yaw/pitch
+     *   在一边合适、在另一边就摊平了。 */
+    function applyView(name) {
+      const V = viewsOf();
+      if (!V[name]) return state.view;
+      state.view = name;
+      state.yaw = V[name][0]; state.pitch = V[name][1]; state.zoom = 1;
+      syncUI(); invalidate();
+      return name;
+    }
+    /* 自检用：把物理时间直接拨到某一刻并重画。与 stepAnim 共用同一份
+     * 状态（不另抄一份推进逻辑），所以「自检量到的」就是「动画走到的」。 */
+    function holdAt(t) {
+      state.t = Math.max(0, t);
+      render();
+      state.dirty = false;
+      return state.t;
+    }
+
+    /* ============================================================
+     * 记录数据
+     * ============================================================ */
+    const records = [];
+    const recOfMode = () => records.filter(r => r.mode === state.mode);
+    function canRecord() {
+      if (records.length >= MAX_REC * MODES.length) return { ok: false, why: '记录已满，先清空' };
+      if (recOfMode().length >= MAX_REC) return { ok: false, why: '本模式已经记满 ' + MAX_REC + ' 组，先清空' };
+      if (!state.playing) return { ok: false, why: '弦是停着的 —— 先让它振起来再记录' };
+      return { ok: true, why: '' };
+    }
+    function recordNow() {
+      const c = canRecord();
+      if (!c.ok) { showToast(c.why); return null; }
+      let row;
+      if (state.mode === 'string') {
+        row = { mode: 'string', L: lenNow(), n: state.harm, f: fA(), lam: lamA(),
+                knots: knotsA(), ants: antinodesA(), amp: ampAtA(state.probe), probe: state.probe };
+      } else {
+        row = { mode: 'guitar', str: state.strIdx, fret: state.fret, L: lenB(),
+                f: fB(), note: nameOf(fB()), semi: semiUp() };
+      }
+      records.push(row);
+      renderRecords(); syncUI(); invalidate();
+      showToast(state.mode === 'string'
+        ? '已记录：L = ' + row.L.toFixed(3) + ' m · n = ' + row.n + ' · f = ' + row.f.toFixed(1) + ' Hz'
+        : '已记录：' + STR_LABEL[row.str] + ' · ' + row.fret + ' 品 · ' + row.note +
+          ' · ' + row.f.toFixed(1) + ' Hz');
+      return row;
+    }
+    function clearRecords() { records.length = 0; renderRecords(); syncUI(); invalidate(); }
+    function renderRecords() {
+      const th = $('gt-rec-head'), tb = $('gt-rec-body');
+      if (!th || !tb) return;
+      const rows = recOfMode();
+      const str = state.mode === 'string';
+      th.innerHTML = str
+        ? '<th>#</th><th>L / m</th><th>n</th><th>f / Hz</th><th>λ / m</th><th>波节</th><th>探针振幅</th>'
+        : '<th>#</th><th>弦</th><th>品</th><th>L / m</th><th>f / Hz</th><th>音名</th>';
+      const dim = str ? '<td class="dim">—</td>'.repeat(7) : '<td class="dim">—</td>'.repeat(6);
+      let html = '';
+      for (let i = 0; i < MAX_REC; i++) {
+        const r = rows[i];
+        if (!r) { html += '<tr>' + dim + '</tr>'; continue; }
+        html += str
+          ? '<tr><td>' + (i + 1) + '</td><td>' + r.L.toFixed(3) + '</td><td>' + r.n +
+            '</td><td>' + r.f.toFixed(1) + '</td><td>' + r.lam.toFixed(3) + '</td><td>' + r.knots +
+            '</td><td>' + (r.amp * 1000).toFixed(2) + ' mm</td></tr>'
+          : '<tr><td>' + (i + 1) + '</td><td>' + STR_SHORT[r.str] + '</td><td>' + r.fret +
+            '</td><td>' + r.L.toFixed(3) + '</td><td>' + r.f.toFixed(1) + '</td><td>' + r.note + '</td></tr>';
+      }
+      tb.innerHTML = html;
+    }
+
+    /* ============================================================
+     * UI 刷新
+     * ============================================================ */
+    function buildRows() {
+      const sr = $('gt-str-row');
+      if (sr) {
+        sr.innerHTML = STR_LABEL.map((t, i) =>
+          '<button type="button" data-str="' + i + '" title="' + t + '">' + STR_SHORT[i] + '</button>').join('');
+      }
+      const hr = $('gt-harm-row');
+      if (hr) {
+        let h = '';
+        for (let k = 1; k <= HARM_MAX; k++) h += '<button type="button" data-harm="' + k + '">n = ' + k + '</button>';
+        hr.innerHTML = h;
+      }
+    }
+
+    function syncUI() {
+      const str = state.mode === 'string';
+      $('gt-mode-pill').textContent = str ? '一根弦' : '整把吉他';
+      $('gt-mode-note').textContent = MODE_NOTE[state.mode];
+      const lp = $('gt-live-pill');
+      lp.textContent = state.playing ? '正在振动' : '已暂停';
+      lp.className = 'pill ' + (state.playing ? 'live' : 'off');
+
+      $('gt-fld-len').style.display = str ? '' : 'none';
+      $('gt-fld-fret').style.display = str ? 'none' : '';
+      $('gt-panel-harm').style.display = str ? '' : 'none';
+
+      $('gt-len-num').textContent = lenNow().toFixed(3) + ' m';
+      const sl = $('gt-len');
+      const lv = String(Math.round(lenNow() / 0.005) * 5);
+      if (sl && sl.value !== lv) sl.value = lv;
+
+      $('gt-fret-num').textContent = state.fret === 0 ? '0 品（空弦）' : (state.fret + ' 品');
+      const sf = $('gt-fret');
+      if (sf && sf.value !== String(state.fret)) sf.value = String(state.fret);
+      /* 品位轴：0..12 线性；最后一格（11→12 品）就是八度 */
+      const oct0 = (FRET_MAX - 1) / FRET_MAX * 100;
+      $('gt-zone-low').style.left = '0%';
+      $('gt-zone-low').style.width = oct0.toFixed(2) + '%';
+      $('gt-zone-oct').style.left = oct0.toFixed(2) + '%';
+      $('gt-zone-oct').style.width = (100 / FRET_MAX).toFixed(2) + '%';
+      $('gt-fret-mark').style.left = 'calc(' + (state.fret / FRET_MAX * 100).toFixed(2) + '% - 1px)';
+      $('gt-cap-0').style.left = '0%';
+      $('gt-cap-0').style.transform = 'translate(0,-112%)';
+      $('gt-cap-12').style.left = '100%';
+      $('gt-cap-12').style.transform = 'translate(-100%,-112%)';
+
+      $('gt-harm-pill').textContent = 'n = ' + state.harm;
+      $('gt-probe-num').textContent = state.probe.toFixed(3) + ' L';
+      const sp2 = $('gt-probe');
+      const pv = String(Math.round(state.probe * 1000));
+      if (sp2 && sp2.value !== pv) sp2.value = pv;
+
+      const stat = $('gt-stat-pill');
+      if (str) {
+        const a = ampAtA(state.probe);
+        if (a < 1e-9) { stat.textContent = '探针在波节上'; stat.className = 'pill node'; }
+        else { stat.textContent = '探针在波腹附近'; stat.className = 'pill live'; }
+      } else {
+        stat.textContent = state.fret === FRET_MAX ? '正好高八度' : (state.fret === 0 ? '空弦' : state.fret + ' 品');
+        stat.className = 'pill ' + (state.fret === FRET_MAX ? 'live' : '');
+      }
+
+      $('gt-var-note').innerHTML = str
+        ? '钉死：<b>张力 T = ' + T_TEN.toFixed(1) + ' N</b>、<b>线密度 μ = ' + (MU_1 * 1000).toFixed(3) +
+          ' g/m</b>（1 弦的粗细）。<br>只有 <b>弦长 L</b> 可以拖 —— 它一个量就决定了频率。'
+        : '钉死：<b>6 根弦一样长（L₀ = ' + L0.toFixed(3) + ' m）、一样紧（T = ' + T_TEN.toFixed(1) +
+          ' N）</b>。<br>弦与弦之间只差<b>粗细</b>；品位是「真正在振动的那一段有多长」。';
+      $('gt-len-note').innerHTML = '把 L 拖到 <b>0.325 m</b>（正好一半）时，频率会正好翻倍。';
+      $('gt-fret-note').innerHTML = '第 12 品的有效弦长正好是空弦的一半 ⇒ 频率翻倍 ⇒ <b>高八度</b>。';
+      $('gt-harm-note').innerHTML = '第 n 阶驻波有 <b>n 个波腹</b>、<b>n+1 个波节</b>，频率是基频的 n 倍。';
+      $('gt-curve-note').innerHTML = str
+        ? '曲线：<b>f 随弦长 L 的变化</b>（当前阶数）。L 在分母上 ⇒ 曲线是双曲线，<b>L 越小 f 涨得越快</b>。'
+        : '曲线：<b>f 随品位的变化</b>。每往上一品乘 2^(1/12)，12 品正好乘到 <b>2 倍</b>。';
+      $('gt-play-note').innerHTML = state.slow
+        ? '弦每秒振 <b>' + fNow().toFixed(0) + ' 次</b>，肉眼根本看不清 —— 屏幕上放慢到 <b>' +
+          VIS_PERIOD.toFixed(1) + ' 秒一个来回</b>（约 ×' + (VIS_PERIOD * fNow()).toFixed(0) + '）。'
+        : '实时：真实频率 <b>' + fNow().toFixed(0) + ' Hz</b>。这个速度下人眼只能看到一条模糊的弦 —— ' +
+          '所以「快」这件事本身就是音高的来源。';
+
+      const mb = $opt('gt-main');
+      mb.textContent = str ? '拨弦' : '拨这根弦';
+      mb.classList.toggle('ready', state.playing);
+      mb.classList.toggle('off', !state.playing);
+      $opt('gt-record-s').classList.toggle('ready', canRecord().ok);
+      $opt('gt-sound').classList.toggle('snd-on', audio.on);
+      $opt('gt-play').classList.toggle('on', state.playing);
+      $opt('gt-play').textContent = state.playing ? '暂停' : '继续';
+      $opt('gt-slow').classList.toggle('on', state.slow);
+      $opt('gt-real').classList.toggle('on', !state.slow);
+      $('gt-rec-pill').textContent = recOfMode().length + ' / ' + MAX_REC;
+      $('gt-rec-note').innerHTML = str
+        ? '换一个弦长再记一条：你会看到 <b>f × L</b> 几乎不变 —— 这正是 f = v/(2L)。'
+        : '换一根弦或换一个品再记一条：第 12 品那一条的频率正好是空弦的 2 倍。';
+
+      document.querySelectorAll('[data-mode]').forEach(b => {
+        b.classList.toggle('on', b.getAttribute('data-mode') === state.mode);
+      });
+      document.querySelectorAll('[data-view]').forEach(b => {
+        b.classList.toggle('on', b.getAttribute('data-view') === state.view);
+      });
+      document.querySelectorAll('[data-str]').forEach(b => {
+        b.classList.toggle('on', Number(b.getAttribute('data-str')) === state.strIdx);
+      });
+      document.querySelectorAll('[data-harm]').forEach(b => {
+        b.classList.toggle('on', Number(b.getAttribute('data-harm')) === state.harm);
+      });
+
+      $('gt-hint').innerHTML = str
+        ? '<b>' + MODE_NAME.string + '</b><br>弦长 <b>' + lenNow().toFixed(3) + ' m</b>　第 <b>' +
+          state.harm + '</b> 阶　f = <b>' + fA().toFixed(1) + ' Hz</b><br>' +
+          '<span class="warn">红点 = 波节（不动）</span>　<span class="ok">黄点 = 波腹（摆得最凶）</span><br>' +
+          '振幅已放大 <b>×' + AMP_K + '</b> 画（真实 ±' + (AMP * 1000).toFixed(0) + ' mm）'
+        : '<b>' + MODE_NAME.guitar + '</b><br>' + STR_LABEL[state.strIdx] + '　按 <b>' + state.fret +
+          '</b> 品　f = <b>' + fB().toFixed(1) + ' Hz</b>（' + nameOf(fB()) + '）<br>' +
+          '<span class="warn">红点 = 波节</span>　<span class="ok">黄点 = 波腹</span>　' +
+          '第 12 品 = 空弦的 2 倍';
+
+      renderReadouts();
+      renderAnalysis();
+      renderCurve();
+    }
+
+    /* ============================================================
+     * 动画推进（tick 与自检共用同一个函数）
+     * ============================================================ */
+    /* 慢动作的放慢倍数 —— 【唯一出处】。
+     * ★ 为什么不让它是常量：弦的频率跨了 2.17 倍（329.6 ~ 714.2 Hz），
+     *   固定的放慢倍数会让高档位变成一团糊。这里让它【跟着频率走】，
+     *   于是不管 f 多少，屏幕上的一个来回都恰好是 VIS_PERIOD 秒。
+     * ★ 这个数本身就是「弦振得多快」的可读指标：读数里会显示它。 */
+    const animSlow = () => (state.slow ? VIS_PERIOD * fNow() : 1);
+    function stepAnim(dt) {
+      if (!state.playing) return;
+      state.t += dt / animSlow();
+      state.dirty = true;
+    }
+    function driveAnim(seconds, dt) {
+      const step = dt || 1 / 60;
+      let n = Math.max(0, Math.round(seconds / step));
+      while (n-- > 0) stepAnim(step);
+      render();
+      state.dirty = false;
+      return state.t;
+    }
+    let lastTs = 0;
+    let lastReadKey = '';
+    /* 一帧：推进物理 → 需要时重画 → 需要时刷新侧栏读数。
+     * ★ 抽成独立函数是为了让【自检走的就是动画走的那一条路径】——
+     *   自检不能自己再写一遍「推进 + 重画 + 刷读数」，否则测的是另一段代码。
+     * ★ 侧栏读数里有一条【随动画变】的量（探针处瞬时位移）。画布每帧重画、
+     *   侧栏却只在交互时重建的话，同一个量的两处显示就会互相打脸。 */
+    function frame(dt) {
+      stepAnim(dt);
+      if (!state.dirty) return false;
+      render(); state.dirty = false; renderCurve();
+      const y = state.mode === 'guitar'
+        ? AMP * Math.sin(Math.PI * 0.5) * Math.cos(PI2 * fB() * state.t)
+        : yAtA(state.probe, state.t);
+      const key = (y * 10000).toFixed(0) + '|' + state.len.toFixed(3) + '|' + state.harm + '|' +
+                  state.probe.toFixed(3) + '|' + state.strIdx + '|' + state.fret + '|' +
+                  (state.playing ? 1 : 0) + (state.slow ? 1 : 0);
+      if (key !== lastReadKey) { lastReadKey = key; renderReadouts(); }
+      return true;
+    }
+    function tick(ts) {
+      const dt = lastTs ? Math.min(0.05, (ts - lastTs) / 1000) : 0;
+      lastTs = ts;
+      frame(dt);
+      requestAnimationFrame(tick);
+    }
+
+    /* ============================================================
+     * 交互
+     * ============================================================ */
+    const rectOf = () => canvas.getBoundingClientRect();
+    function onDown(e) {
+      const r = rectOf();
+      state.downAt = { x: e.clientX - r.left, y: e.clientY - r.top };
+      state.dragging = true;
+      state.dragYaw = state.yaw; state.dragPitch = state.pitch;
+      canvas.classList.add('grabbing');
+      canvas.setPointerCapture && canvas.setPointerCapture(e.pointerId);
+    }
+    function onMove(e) {
+      if (!state.dragging) return;
+      const r = rectOf();
+      const sx = e.clientX - r.left, sy = e.clientY - r.top;
+      state.yaw = state.dragYaw + (sx - state.downAt.x) * 0.006;
+      state.pitch = clamp(state.dragPitch + (sy - state.downAt.y) * 0.005, -0.18, 1.45);
+      state.view = '';
+      syncUI(); invalidate();
+    }
+    function onUp() {
+      state.dragging = false; state.downAt = null;
+      canvas.classList.remove('grabbing');
+      invalidate();
+    }
+    function onWheel(e) {
+      e.preventDefault();
+      state.zoom = clamp(state.zoom * (e.deltaY > 0 ? 0.92 : 1.087), 0.5, 3.2);
+      invalidate();
+    }
+
+    /* ============================================================
+     * 尺寸
+     * ============================================================ */
+    function resize() {
+      const r = stage.getBoundingClientRect();
+      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      const w = Math.max(320, Math.round(r.width));
+      const h = Math.max(240, Math.round(r.height));
+      const bw = Math.round(w * dpr), bh = Math.round(h * dpr);
+      /* ★ 改 canvas.width/height 会【清空画布】，而 ResizeObserver 在
+       *   observe() 之后【必然回调一次】。所以只在尺寸真变了时才动它，
+       *   并且补画无条件放在这里，绝不留到下一帧。 */
+      const changed = (canvas.width !== bw || canvas.height !== bh);
+      state.w = w; state.h = h; state.dpr = dpr;
+      if (changed) { canvas.width = bw; canvas.height = bh; }
+      const sw = w + 'px', sh = h + 'px';
+      if (canvas.style.width !== sw) canvas.style.width = sw;
+      if (canvas.style.height !== sh) canvas.style.height = sh;
+      render();
+      state.dirty = false;
+      renderCurve();
+    }
+
+    /* ============================================================
+     * 绑定
+     * ============================================================ */
+    canvas.addEventListener('pointerdown', onDown);
+    canvas.addEventListener('pointermove', onMove);
+    canvas.addEventListener('pointerup', onUp);
+    canvas.addEventListener('pointercancel', onUp);
+    canvas.addEventListener('pointerleave', () => {
+      state.dragging = false; canvas.classList.remove('grabbing'); state.dirty = true;
+    });
+    canvas.addEventListener('wheel', onWheel, { passive: false });
+
+    $opt('gt-main').addEventListener('click', () => pluck());
+    $opt('gt-record-s').addEventListener('click', () => recordNow());
+    $opt('gt-sound').addEventListener('click', () => setSound(!audio.on));
+    $opt('gt-reset').addEventListener('click', () => { resetAll(); showToast('已重置'); });
+    $opt('gt-play').addEventListener('click', () => {
+      setPlaying(!state.playing);
+      showToast(state.playing ? '继续' : '已暂停 —— 可以慢慢看这一刻');
+    });
+    $opt('gt-slow').addEventListener('click', () => { setSlow(true); showToast('慢动作：' + VIS_PERIOD.toFixed(1) + ' 秒一个来回'); });
+    $opt('gt-real').addEventListener('click', () => { setSlow(false); showToast('实时：这才是它真正的振动速度'); });
+    $('gt-len').addEventListener('input', e => setLen(parseFloat(e.target.value) / 1000));
+    $('gt-fret').addEventListener('input', e => setFret(parseFloat(e.target.value)));
+    $('gt-probe').addEventListener('input', e => setProbe(parseFloat(e.target.value) / 1000));
+    $('gt-record').addEventListener('click', () => recordNow());
+    $('gt-clear').addEventListener('click', () => { clearRecords(); showToast('记录已清空'); });
+    document.querySelectorAll('[data-mode]').forEach(b => {
+      b.addEventListener('click', () => setMode(b.getAttribute('data-mode')));
+    });
+    document.querySelectorAll('[data-view]').forEach(b => {
+      b.addEventListener('click', () => applyView(b.getAttribute('data-view')));
+    });
+    /* 弦 / 阶数那两排是【动态生成】的，事件用委托挂在外层容器上 —— 否则
+     * 「先绑事件再 innerHTML」的顺序一改，按钮就全哑了。 */
+    $('gt-str-row').addEventListener('click', e => {
+      const b = e.target.closest('[data-str]');
+      if (b) setStr(Number(b.getAttribute('data-str')));
+    });
+    $('gt-harm-row').addEventListener('click', e => {
+      const b = e.target.closest('[data-harm]');
+      if (b) setHarm(Number(b.getAttribute('data-harm')));
+    });
+
+    curCv = $('gt-curve');
+    if (curCv) curCtx = curCv.getContext('2d');
+
+    if (window.ResizeObserver) new ResizeObserver(() => resize()).observe(stage);
+    window.addEventListener('resize', resize);
+
+    buildRows();
+    renderRecords();
+    resize();
+    syncUI();
+    requestAnimationFrame(tick);
+
+    /* ============================================================
+     * 自检钩子 —— 渲染、读数、曲线、记录、自检必须共用同一份物理函数
+     * ============================================================ */
+    window.__gt = {
+      state: state,
+      consts: {
+        L_MIN: L_MIN, L_MAX: L_MAX, L_DEF: L_DEF, T_TEN: T_TEN, MU_1: MU_1,
+        AMP: AMP, AMP_K: AMP_K, HARM_MAX: HARM_MAX, N_SEG: N_SEG,
+        TABLE_Y: TABLE_Y, BRIDGE_S: BRIDGE_S, PROBE_R: PROBE_R,
+        STR_N: STR_N, L0: L0, STR_F0: STR_F0, STR_LABEL: STR_LABEL, STR_SHORT: STR_SHORT,
+        FRET_MAX: FRET_MAX, FRET_Z: FRET_Z, STR_Y: STR_Y,
+        HEAD_C: HEAD_C, HEAD_S: HEAD_S, NUT_C: NUT_C, NUT_S: NUT_S,
+        NECK_C: NECK_C, NECK_S: NECK_S, FRB_C: FRB_C, FRB_S: FRB_S, FRB_TOP: FRB_TOP,
+        BODY_Y0: BODY_Y0, BODY_Y1: BODY_Y1, BODY_TOP: BODY_TOP, BODY_CX: BODY_CX,
+        BODY_OUT: BODY_OUT, BODY_HX: BODY_HX, BODY_HZ: BODY_HZ,
+        PEG_X: PEG_X, PEG_Z: PEG_Z,
+        BRDG_C: BRDG_C, BRDG_S: BRDG_S, HOLE_C: HOLE_C, HOLE_R: HOLE_R,
+        NOTE_NAME: NOTE_NAME, VIS_PERIOD: VIS_PERIOD, MAX_REC: MAX_REC, CAMD_K: CAMD_K,
+        SOUND_TAU: SOUND_TAU, SOUND_TAU_SW: SOUND_TAU_SW, TONE_GAIN: TONE_GAIN,
+        VIEWS: VIEWS, MODES: MODES, MODE_NAME: MODE_NAME
+      },
+      /* 几何 */
+      makeCam: makeCam, project: project, envPoints: envPoints, modeBox: modeBox,
+      frameEnv: frameEnv, vibSeg: vibSeg,
+      size: () => ({ w: state.w, h: state.h, dpr: state.dpr }),
+      frameSolids: () => frameSolids.slice(),
+      drawn: () => state.drawn,
+      /* 物理（与页面同一份） */
+      lenNow: lenNow, vA: vA, f1A: f1A, fA: fA, lamA: lamA,
+      shapeA: shapeA, ampAtA: ampAtA, yAtA: yAtA, ampVis: ampVis, viewsOf: viewsOf,
+      knotsA: knotsA, antinodesA: antinodesA, knotU: knotU, antinodeU: antinodeU,
+      strF0: strF0, fretF: fretF, fretLen: fretLen, fretD: fretD, fB: fB, lenB: lenB,
+      muOf: muOf, midiOf: midiOf, nameOf: nameOf, semiUp: semiUp, fNow: fNow,
+      /* 动作（与按钮同一份） */
+      setMode: setMode, setLen: setLen, setHarm: setHarm, setProbe: setProbe,
+      setStr: setStr, setFret: setFret, setPlaying: setPlaying, setSlow: setSlow,
+      resetAll: resetAll, applyView: applyView, holdAt: holdAt, pluck: pluck,
+      animSlow: animSlow,
+      /* 声音 */
+      setSound: setSound, soundOn: soundOn, audioReady: audioReady, applyAudio: applyAudio,
+      audio: audio, audioShouldSound: audioShouldSound, audioLevel: audioLevel,
+      audioFreq: audioFreq, audioGain: audioGain, audioMaster: audioMaster,
+      /* 记录 */
+      records: records, recOfMode: recOfMode, canRecord: canRecord, recordNow: recordNow,
+      clearRecords: clearRecords, renderRecords: renderRecords,
+      /* 渲染与推进 */
+      stepAnim: stepAnim, driveAnim: driveAnim, frame: frame,
+      drawBackdrop: drawBackdrop,
+      render: render, renderCurve: renderCurve, renderReadouts: renderReadouts,
+      renderAnalysis: renderAnalysis, syncUI: syncUI, resize: resize, buildRows: buildRows,
+      /* 页面元素读数（供自检核对 UI 与物理同源） */
+      ui: () => ({
+        modePill: $('gt-mode-pill').textContent,
+        livePill: $('gt-live-pill').textContent,
+        statPill: $('gt-stat-pill').textContent,
+        harmPill: $('gt-harm-pill').textContent,
+        lenNum: $('gt-len-num').textContent,
+        fretNum: $('gt-fret-num').textContent,
+        probeNum: $('gt-probe-num').textContent,
+        readouts: $('gt-readouts').textContent,
+        analysis: $('gt-analysis').textContent,
+        hint: $('gt-hint').textContent,
+        recHead: $('gt-rec-head').textContent,
+        recRows: $('gt-rec-body').querySelectorAll('tr').length,
+        recPill: $('gt-rec-pill').textContent,
+        nStr: $('gt-str-row').querySelectorAll('button').length,
+        nHarm: $('gt-harm-row').querySelectorAll('button').length,
+        strOn: $('gt-str-row').querySelectorAll('button.on').length,
+        harmOn: $('gt-harm-row').querySelectorAll('button.on').length,
+        mainLabel: $opt('gt-main').textContent,
+        mainReady: $opt('gt-main').classList.contains('ready'),
+        mainOff: $opt('gt-main').classList.contains('off'),
+        recReady: $opt('gt-record-s').classList.contains('ready'),
+        sndOn: $opt('gt-sound').classList.contains('snd-on'),
+        toast: $('gt-toast').textContent,
+        fldLen: $('gt-fld-len').style.display,
+        fldFret: $('gt-fld-fret').style.display,
+        panelHarm: $('gt-panel-harm').style.display,
+        trackMark: $('gt-fret-mark').style.left,
+        zoneOctL: $('gt-zone-oct').style.left,
+        zoneOctW: $('gt-zone-oct').style.width
+      }),
+      lenSlider: () => $('gt-len').value,
+      fretSlider: () => $('gt-fret').value,
+      probeSlider: () => $('gt-probe').value
+    };
+  })();
+  </script>
+</body>
+</html>
