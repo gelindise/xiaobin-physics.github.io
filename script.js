@@ -17,29 +17,35 @@
   } catch (_) {}
 })();
 
-// ========== 获取所有用户（仅缓存非敏感信息） ==========
+// ========== 获取【当前登录用户】的信息 ==========
+// 🔴 安全整改：原来这里调 action:'getUsers' 把整张用户表（含所有人邮箱）拉下来写进 localStorage，
+//    那是个无鉴权的全表枚举接口。现在只查【自己】那一条，并合并进本地缓存。
+//    函数名保留，是因为下面 getCurrentUser / toggleProfile / window.onload 三处都在用它，
+//    语义仍是「拿到 {用户名: {vip, expire, email}} 这张表」，只是表里只有自己。
 async function getUsersFromTable() {
+  var cached = {};
+  try { cached = JSON.parse(localStorage.getItem("users") || "{}") || {}; } catch (_) { cached = {}; }
+  var name = localStorage.getItem("currentUser");
+  if (!name) return cached;
   try {
     var resp = await fetch('/api/proxy-user', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'getUsers' }),
+      body: JSON.stringify({ action: 'getUserPublic', username: name }),
     });
     var result = await resp.json();
-    if (!result.success) throw new Error(result.error);
-    let users = {};
-    for (const row of result.users) {
-      users[row.username] = {
-        vip: row.vip || "普通用户",
-        expire: row.expire || "",
-        email: row.email || "",
-      };
-    }
-    localStorage.setItem("users", JSON.stringify(users));
-    return users;
+    if (!result.success || !result.user) throw new Error(result.error || '用户不存在');
+    cached[name] = {
+      vip: result.user.vip || "普通用户",
+      expire: result.user.expire || "",
+      // 公开接口不再返回邮箱，保留缓存里已有的（登录时写入的是本人邮箱）
+      email: (cached[name] && cached[name].email) || "",
+    };
+    localStorage.setItem("users", JSON.stringify(cached));
+    return cached;
   } catch (e) {
     console.warn("[系统] 读取用户失败:", e.message);
-    return JSON.parse(localStorage.getItem("users") || "{}");
+    return cached;
   }
 }
 
@@ -180,116 +186,27 @@ async function simulatePaySuccess(user, type, code) {
   // 规范化：去空格、转大写、去分隔符
   const cleanCode = code.toString().trim().toUpperCase().replace(/[\s-]/g, '');
 
-  // 通过 proxy-user 查询激活码
-  let codeRecord = null;
-  try {
-    var resp = await fetch('/api/proxy-user', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'getActivationCode', code: cleanCode }),
-    });
-    var result = await resp.json();
-    if (result.success && result.codes && result.codes.length > 0) codeRecord = result.codes[0];
-  } catch (e) {
-    console.warn('[激活] 查询激活码失败:', e.message);
-  }
+  // 🔴 安全整改：整个兑换过程改由服务端 redeemCode 原子完成。
+  //    原来这里是「查激活码 → 改 users → 改 activation_codes」三个【无鉴权】接口各写一次，
+  //    等于把「改任意用户 VIP」「改任意激活码状态」的能力直接开放给了浏览器。
+  var redeem = await fetch('/api/proxy-user', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'redeemCode', username: user, code: cleanCode, vipType: type }),
+  }).then(function (r) { return r.json(); }).catch(function (e) {
+    console.error('[激活] 请求失败:', e.message);
+    return null;
+  });
 
-  if (codeRecord) {
-    // 有激活码记录
-    if (codeRecord.status !== 'unused') {
-      alert('❌ 此激活码已被使用（' + (codeRecord.used_by || '?') + '）');
-      return false;
-    }
-    if (codeRecord.vip_type !== type) {
-      alert('❌ 此激活码是"' + codeRecord.vip_type + '"专用，与您选择的"' + type + '"不匹配');
-      return false;
-    }
+  if (!redeem) { alert('❌ 网络错误，请稍后重试'); return false; }
+  if (!redeem.success) { alert('❌ ' + (redeem.error || '激活失败')); return false; }
 
-    // 计算到期日期
-    let expireDate = '';
-    const now = new Date();
-    if (type === '月度VIP') { now.setDate(now.getDate() + 30); expireDate = now.toISOString().split('T')[0]; }
-    else if (type === '年度VIP') { now.setDate(now.getDate() + 365); expireDate = now.toISOString().split('T')[0]; }
-    else { expireDate = '永久'; }
-
-    // 通过 proxy-user 更新用户 VIP
-    try {
-      await fetch('/api/proxy-user', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'updateUser', username: user, data: { vip: type, expire: expireDate } }),
-      });
-      await fetch('/api/proxy-user', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'updateActivationCode', id: codeRecord.id, data: { status: 'used', used_by: user, used_at: new Date().toISOString() } }),
-      });
-    } catch (e) {
-      console.error('[激活] 更新失败:', e.message);
-      alert('❌ 激活更新失败，请重试');
-      return false;
-    }
-
-    // 同步本地缓存
-    const cached = JSON.parse(localStorage.getItem('users') || '{}');
-    if (cached[user]) { cached[user].vip = type; cached[user].expire = expireDate; localStorage.setItem('users', JSON.stringify(cached)); }
-    localStorage.setItem('currentUser', user);
-
-    console.log('[激活] SUCCESS:', user, '->', type, expireDate, '码:', code);
-    return true;
-  }
-
-  // 方案二：回退到旧版 per-user authCode（兼容旧数据）
-  console.log('[激活] activation_codes 未匹配，尝试旧版 authCode...');
-  let userData = null;
-  try {
-    var resp = await fetch('/api/proxy-user', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'getUserPublic', username: user }),
-    });
-    var result = await resp.json();
-    if (result.success && result.user) userData = result.user;
-  } catch (e) {
-    console.warn('[激活] 查询用户失败:', e.message);
-  }
-
-  if (!userData) {
-    alert('❌ 未找到用户 [' + user + ']，请确认已注册');
-    return false;
-  }
-
-  const tableCode = (userData.authCode || '').toString().trim();
-  const inputCode = cleanCode;
-
-  if (!tableCode || tableCode !== inputCode) {
-    alert('❌ 激活失败！您输入的激活码无效。\n\n提示：\n1. 请确认已付款\n2. 请检查激活码是否输入正确（注意大小写）\n3. 联系管理员获取有效激活码');
-    return false;
-  }
-
-  // 计算到期日期
-  let expireDate = '';
-  const now = new Date();
-  if (type === '月度VIP') { now.setDate(now.getDate() + 30); expireDate = now.toISOString().split('T')[0]; }
-  else if (type === '年度VIP') { now.setDate(now.getDate() + 365); expireDate = now.toISOString().split('T')[0]; }
-  else { expireDate = '永久'; }
-
-  try {
-    await fetch('/api/proxy-user', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'updateUser', username: user, data: { vip: type, expire: expireDate } }),
-    });
-  } catch (e) {
-    console.error('[激活] 更新失败:', e.message);
-    alert('❌ 激活更新失败，请重试');
-    return false;
-  }
-
+  // 同步本地缓存
   const cached = JSON.parse(localStorage.getItem('users') || '{}');
-  if (cached[user]) { cached[user].vip = type; cached[user].expire = expireDate; localStorage.setItem('users', JSON.stringify(cached)); }
+  if (cached[user]) { cached[user].vip = redeem.vip; cached[user].expire = redeem.expire; localStorage.setItem('users', JSON.stringify(cached)); }
   localStorage.setItem('currentUser', user);
 
+  console.log('[激活] SUCCESS:', user, '->', redeem.vip, redeem.expire, '码:', code);
   return true;
 }
 
@@ -578,16 +495,8 @@ window.onload = async function() {
           if (tag) { tag.innerText = "已解锁"; tag.style.background = "rgba(34, 197, 94, 0.2)"; tag.style.color = "#4ade80"; }
         });
       }
-      // 更新在线状态（静默，不阻塞页面）
-      if (uName) {
-        try {
-          fetch('/api/proxy-user', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action: 'updateUser', username: uName, data: { last_seen: new Date().toISOString() } }),
-          });
-        } catch(e) {}
-      }
+      // 在线状态（last_seen）改由 checkSession 的服务端刷新负责
+      // —— 原来这里公开调用 updateUser 写 last_seen，等于开放「改任意用户字段」的入口
     }
 
     // 单设备登录：每 30 秒校验 session token

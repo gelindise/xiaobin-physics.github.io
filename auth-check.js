@@ -9,6 +9,10 @@
     // 第五章第1节「透镜」的新创 3D 页：真 Snell 光线追迹 + 球面回转体镜片 + 像方主平面 + 球差。
     // experiments.html 里是 card lock + 「VIP专享」，按维护约定必须登记。
     "透镜对光的作用立体模型.html",
+    // 第五章第2节「生活中的透镜」的新创 3D 页：同一片凸透镜 + 光具座，
+    // 照相机 / 投影仪 / 放大镜三种应用靠【物距区间】切换；像由两条真实折射光线的交点定出。
+    // experiments.html 里是 card lock + 「VIP专享」，按维护约定必须登记。
+    "生活中的透镜立体模型.html",
     // ⚠️ 补登记（历史遗漏）：自行车尾灯原理.html 在 experiments.html 里是 card lock
     //    （第2节、第3节各挂了一张），但这份名单一直漏了它 —— 直接输网址就能免费看。
     //    按本文件末尾的维护约定「凡是 card lock 的页面，这里必须有」补上。
@@ -35,20 +39,20 @@
     "飞象_飞机升力.html","飞象_生成浮力产生原因教学动画.html",
     "密度计.html",
     "javalab_浮力比较.html",
+    "加水浮力模型.html",
     "浮力产生的原因立体模型.html",
     "物体的浮沉条件立体模型.html",
     // 第十章第2节的旗舰 3D 页：溢水杯 + 弹簧测力计 + 电子秤，F浮 与 G排 走三条独立路径。
     "验证阿基米德原理立体模型.html",
     "称重法测浮力.html",
-    // ⚠️ 下面三项曾经漏登记：experiments.html 里卡片标着「VIP专享」，但这份名单里没有。
-    //    checkVip() 只判 VIP 状态、根本不查名单，真正的拦截全靠本文件，
-    //    漏登记 = 直接输网址就能免费看。
-    //    维护约定：experiments.html 里凡是 VIP 卡对应的页面，这里必须有。
+    // ⚠️ 下面三项曾经漏登记：experiments.html 里卡片是 class="card lock" + 「VIP专享」，
+    //    但这份名单里没有 → checkVip() 只判 VIP 状态、根本不查名单，
+    //    真正的拦截全靠本文件，漏登记 = 【直接输网址就能免费看】。
+    //    维护约定：experiments.html 里凡是 card lock 的页面，这里必须有。
     "排开液体体积.html",
     "潜水艇沉浮原理立体模型.html",
     // 第十章第3节应用层的新创 3D 页：钢为什么能造船（空心法）、吃水线与载重线。
     "轮船与吃水线立体模型.html",
-
     // 第十章第3节应用层的第三张新创 3D 页：把阿基米德原理从液体推广到气体 ——
     // 氢气球 / 热气球 / 飞艇的升空条件 + 空气密度随高度衰减 ⇒ 升限。
     // experiments.html 里是 card lock + 「VIP专享」，按维护约定必须登记。
@@ -68,7 +72,6 @@
     "影子的形成立体模型.html",
     "日食和月食立体模型.html",
     "分子热运动立体模型.html",
-
     "比热容立体模型.html",
     "改变内能的方式立体模型.html",
     "能量的转化和守恒立体模型.html",
@@ -109,10 +112,9 @@
     // ⇒ 直接输网址就能免费看。按本文件末尾的维护约定登记。
     "密度与物质鉴别立体模型.html",
     "凸面镜与凹面镜立体模型.html",
-    "潜望镜立体模型.html",
+    "温度计的使用立体模型.html",
     "永动机立体模型.html",
     "滚球永动机立体模型.html",
-    "温度计的使用立体模型.html",
     "串并联电路中电流的规律立体模型.html",
     "电路的连接与电流表的使用立体模型.html",
     "超声波测速立体模型.html",
@@ -235,7 +237,15 @@
   var page;
   try { page = decodeURIComponent(raw) || 'experiments.html'; }
   catch (_) { page = raw || 'experiments.html'; }
-  var isFreeTrial = window.location.search.indexOf('trial=1') !== -1;
+  // 🔴 安全整改：trial=1 只在本机生效（localhost / 127.0.0.1 / file://）。
+  //    它本来是本地验收用的开关，但写在【公开源码】里 ⇒ 公网上任意 VIP 页
+  //    只要在地址后面加 ?trial=1 就能绕过登录直接进。
+  var isLocalHost = window.location.protocol === 'file:' ||
+    window.location.hostname === 'localhost' ||
+    window.location.hostname === '127.0.0.1' ||
+    window.location.hostname === '::1' ||
+    window.location.hostname === '';
+  var isFreeTrial = isLocalHost && window.location.search.indexOf('trial=1') !== -1;
 
   // 非 VIP 实验无需登录，直接放行
   if (isFreeTrial || VIP_EXPERIMENTS.indexOf(page) === -1) return;

@@ -290,28 +290,25 @@
   <script src="script.js"></script>
   <script>
     // 封装 proxy-user 调用
+    // 🔴 安全整改：管理类接口必须携带管理员令牌。口令【不再】写死在前端源码里，
+    //    而是由服务端保存的 PBKDF2 哈希校验；令牌只存在本标签页的 sessionStorage。
+    const AUTH_SESSION_KEY = 'admin_authed';
+    const ADMIN_TOKEN_KEY = 'admin_token';
+
+    function getAdminToken() {
+      return sessionStorage.getItem(ADMIN_TOKEN_KEY) || '';
+    }
+
     function proxy(action, data) {
       return fetch('/api/proxy-user', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'x-admin-token': getAdminToken() },
         body: JSON.stringify(Object.assign({ action: action }, data)),
       }).then(function(r) { return r.json(); });
     }
 
-    // ========== 管理员密码（默认 zxb0523，可在后台底部修改） ==========
-    const ADMIN_PWD_KEY = 'admin_pwd_hash';
-    const AUTH_SESSION_KEY = 'admin_authed';
-
-    function getAdminPwd() {
-      return localStorage.getItem(ADMIN_PWD_KEY) || 'zxb0523';
-    }
-
-    function setAdminPwd(newPwd) {
-      localStorage.setItem(ADMIN_PWD_KEY, newPwd);
-    }
-
     function checkAdminAuth() {
-      return sessionStorage.getItem(AUTH_SESSION_KEY) === 'true';
+      return sessionStorage.getItem(AUTH_SESSION_KEY) === 'true' && !!getAdminToken();
     }
 
     function adminLogin() {
@@ -322,37 +319,56 @@
         hint.textContent = '⚠️ 请输入密码';
         return;
       }
+      hint.className = 'pwd-hint';
+      hint.textContent = '⏳ 验证中...';
 
-      // 如果当前是修改密码模式，直接设置为新密码
-      if (window._changingPwd) {
-        setAdminPwd(input);
-        window._changingPwd = false;
-        hint.className = 'pwd-hint success';
-        hint.textContent = '✅ 密码已修改';
-        sessionStorage.setItem(AUTH_SESSION_KEY, 'true');
-        setTimeout(() => {
+      const changing = !!window._changingPwd;
+      const payload = changing ? { action: 'setAdminPassword', newPassword: input }
+                               : { action: 'verifyAdmin' };
+      fetch('/api/proxy-user', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-admin-token': changing ? getAdminToken() : input },
+        body: JSON.stringify(payload),
+      })
+        .then(function(r) { return r.json().then(function(j) { return { status: r.status, body: j }; }); })
+        .then(function(res) {
+          if (!res.body || !res.body.success) {
+            hint.className = 'pwd-hint error';
+            var msg = (res.body && res.body.error) || '验证失败';
+            if (res.status === 503) msg += '（需先在数据库执行 app_settings 建表脚本）';
+            hint.textContent = '❌ ' + msg;
+            return;
+          }
+          if (changing) {
+            sessionStorage.setItem(ADMIN_TOKEN_KEY, input);
+            window._changingPwd = false;
+            hint.className = 'pwd-hint success';
+            hint.textContent = '✅ 密码已修改';
+            sessionStorage.setItem(AUTH_SESSION_KEY, 'true');
+            setTimeout(function() {
+              document.getElementById('adminOverlay').classList.add('hidden');
+              hint.textContent = '';
+              loadStats();
+            }, 800);
+            return;
+          }
+          sessionStorage.setItem(ADMIN_TOKEN_KEY, input);
+          sessionStorage.setItem(AUTH_SESSION_KEY, 'true');
           document.getElementById('adminOverlay').classList.add('hidden');
+          hint.className = 'pwd-hint';
           hint.textContent = '';
+          document.getElementById('adminPwd').value = '';
           loadStats();
-        }, 800);
-        return;
-      }
-
-      if (input === getAdminPwd()) {
-        sessionStorage.setItem(AUTH_SESSION_KEY, 'true');
-        document.getElementById('adminOverlay').classList.add('hidden');
-        hint.className = 'pwd-hint';
-        hint.textContent = '';
-        document.getElementById('adminPwd').value = '';
-        loadStats();
-      } else {
-        hint.className = 'pwd-hint error';
-        hint.textContent = '❌ 密码错误';
-      }
+        })
+        .catch(function() {
+          hint.className = 'pwd-hint error';
+          hint.textContent = '❌ 网络错误，请稍后重试';
+        });
     }
 
     function adminLogout() {
       sessionStorage.removeItem(AUTH_SESSION_KEY);
+      sessionStorage.removeItem(ADMIN_TOKEN_KEY);
       location.reload();
     }
 
@@ -361,13 +377,13 @@
       overlay.classList.remove('hidden');
       const input = document.getElementById('adminPwd');
       input.value = '';
-      input.placeholder = '输入新密码';
+      input.placeholder = '输入新密码（至少 6 位）';
       input.focus();
       sessionStorage.removeItem(AUTH_SESSION_KEY);
       window._changingPwd = true;
       const hint = document.getElementById('adminPwdHint');
       hint.className = 'pwd-hint';
-      hint.innerHTML = '💡 输入新密码后点"验证身份"即可修改';
+      hint.innerHTML = '💡 输入新密码后点"验证身份"即可修改（口令由服务端保存，不再存在浏览器里）';
     }
 
     // 页面加载时检查登录状态
@@ -481,7 +497,7 @@
       const tip = document.getElementById('queryTip');
       if (!user) { tip.className = 'admin-tip error'; tip.textContent = '⚠️ 请输入用户名'; return; }
       try {
-        var r = await proxy('getUserPublic', { username: user });
+        var r = await proxy('getUser', { username: user });
         if (!r.success || !r.user) { tip.className = 'admin-tip error'; tip.textContent = '❌ 用户不存在'; return; }
         var d = r.user;
         tip.className = 'admin-tip success';
@@ -525,7 +541,7 @@
           html += '<br>👤 使用者：' + c.used_by +
                   (c.used_at ? '<br>🕒 使用时间：' + new Date(c.used_at).toLocaleString() : '');
           try {
-            var ur = await proxy('getUserPublic', { username: c.used_by });
+            var ur = await proxy('getUser', { username: c.used_by });
             if (ur.success && ur.user) {
               var d = ur.user;
               html += '<hr style="border-color:var(--glass-border);margin:0.5rem 0;">' +
