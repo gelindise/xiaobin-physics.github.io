@@ -885,11 +885,12 @@
       // 「导线夹在柱子上」会被误判成「导线穿过元件」。
       case 'switch': return { hw: 70, hh: 62 };          // 底板 ±70，手柄抬起后顶到 −62
       case 'bulb': return { hw: 70, hh: 74 };            // 底板 ±70，玻璃泡顶 y = −71.5
-      // 三个新元件都横躺在导线上，本体不超过接线柱的 ±70 —— 盒子的 hh 只要
-      // 盖住本体：一超过 70，接线柱就被圈回盒子里，「导线夹在柱子上」会被
-      // 误判成「导线穿过元件」（和表头那条注释是同一个坑）。
-      case 'led': return { hw: 52, hh: 22 };             // 管身 x ∈ [−46, +46]，直径 34
-      case 'motor': return { hw: 62, hh: 30 };           // 含飞轮，外壳 ±56、飞轮到 +54
+      // 三个新元件都是「示教板」：和开关 / 灯泡同一块底板（±70），本体长在板面上方。
+      // 所以 hw 给 70（板宽），hh 只要盖住本体到板面这一截 —— 一超过 70，
+      // 钉在 ±70 的接线柱就被圈回盒子里，「导线夹在柱子上」会被误判成
+      // 「导线穿过元件」（和表头那条注释是同一个坑）。
+      case 'led': return { hw: 70, hh: 46 };             // 底板 ±70，管身顶 y = −45
+      case 'motor': return { hw: 70, hh: 60 };           // 底板 ±70，机身/螺旋桨顶 y = −58
       case 'bell': return { hw: 70, hh: 60 };            // 底板 ±70，铃碗顶 y = −36
       // 表头：整台仪器的包围盒（表壳 + 底座）。接线柱在 POST_Y，
       // 故意落在盒子【外面】——导线夹在柱子上，不该被当成穿体。
@@ -2433,7 +2434,93 @@
   }
 
   // ============================================================
-  // 发光二极管（5mm 直插式，横躺在导线上）
+  // 示教底板上的丝印（二极管 / 电动机 / 电铃共用）
+  // ------------------------------------------------------------
+  // 真实的教学仪器，底座正面一定印着两样东西：极性（或「无极性」）标记，
+  // 和这台仪器在电路图上的那个【符号】。学生把实物翻过来看板子，就能对上
+  // 电路图里那一笔 —— 「实物 ↔ 符号」这件事必须在同一个画面里看得见。
+  // 所以三个新元件都在底板正面印自己的符号，不往机身上贴大字
+  //（上一版电动机把「M 直流电动机」印在金属筒上，读出来是一张贴纸）。
+  // ============================================================
+  var SILK_INK = '#475569';
+  // 元件自己的【引脚】：从本体伸出来、折下、沿板面走到接线柱底下。
+  // 它是裸金属（镀锡铜），不是带皮的导线 —— 所以不能用导线的粗灰色，
+  // 得用细一号的金属色 + 一道高光，否则接线柱附近会糊成一条灰带。
+  // ⚠️ pts 是 [x, y] 的数组，不是 {x, y} 的对象 —— 所以这里自己起路径，
+  // 不能借 strokePath()（它读 pts[i].x，喂数组进去会拿到 undefined，
+  // moveTo(undefined) 是静默 no-op：引脚一根都画不出来，页面上毫无报错）。
+  function plateLead(ctx, pts, w) {
+    function path() {
+      ctx.beginPath();
+      ctx.moveTo(pts[0][0], pts[0][1]);
+      for (var i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+      ctx.stroke();
+    }
+    ctx.save();
+    ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    ctx.strokeStyle = 'rgba(56,68,84,0.6)'; ctx.lineWidth = w + 1.8; path();
+    ctx.strokeStyle = '#93a2b3'; ctx.lineWidth = w; path();
+    ctx.strokeStyle = 'rgba(246,250,253,0.9)'; ctx.lineWidth = w * 0.30; path();
+    ctx.restore();
+  }
+  // 二极管的小符号：实心三角（尖端指向横线）+ 阴极横线 + 两个发光箭头。
+  function plateSymLed(ctx, cx, cy, k) {
+    ctx.save();
+    ctx.translate(cx, cy); ctx.scale(k, k);
+    ctx.fillStyle = SILK_INK; ctx.strokeStyle = SILK_INK;
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    ctx.beginPath();
+    ctx.moveTo(-8, -6); ctx.lineTo(-8, 6); ctx.lineTo(7, 0);
+    ctx.closePath(); ctx.fill();
+    ctx.lineWidth = 1.7;
+    ctx.beginPath(); ctx.moveTo(7, -7); ctx.lineTo(7, 7); ctx.stroke();
+    ctx.lineWidth = 1.2;
+    [[-3, -8.5], [4.5, -8.5]].forEach(function (a) {
+      ctx.beginPath();
+      ctx.moveTo(a[0], a[1]); ctx.lineTo(a[0] + 5.5, a[1] - 5.5); ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(a[0] + 5.5, a[1] - 5.5); ctx.lineTo(a[0] + 5.5, a[1] - 1.8);
+      ctx.lineTo(a[0] + 1.8, a[1] - 5.5);
+      ctx.closePath(); ctx.fill();
+    });
+    ctx.restore();
+  }
+  // 电动机的小符号：一个圆里写 M。
+  function plateSymMotor(ctx, cx, cy, k) {
+    ctx.save();
+    ctx.translate(cx, cy); ctx.scale(k, k);
+    ctx.strokeStyle = SILK_INK; ctx.lineWidth = 1.7;
+    ctx.beginPath(); ctx.arc(0, 0, 9, 0, 6.284); ctx.stroke();
+    ctx.fillStyle = SILK_INK;
+    ctx.font = 'bold 12px Georgia,"Times New Roman",serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('M', 0, 0.5);
+    ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+    ctx.restore();
+  }
+  // 电铃的小符号：半圆拱（开口向下）+ 底边 + 中央铃舌。
+  function plateSymBell(ctx, cx, cy, k) {
+    ctx.save();
+    ctx.translate(cx, cy); ctx.scale(k, k);
+    ctx.strokeStyle = SILK_INK; ctx.lineWidth = 1.7;
+    ctx.beginPath();
+    ctx.arc(0, -2, 8, Math.PI, 0);
+    ctx.closePath(); ctx.stroke();
+    ctx.lineWidth = 1.4;
+    ctx.beginPath(); ctx.moveTo(0, -2); ctx.lineTo(0, 5.5); ctx.stroke();
+    ctx.restore();
+  }
+  // 底板正面的丝印排版：左「＋」、中间一枚符号、右「－」。
+  // 极性文字用红/黑（和接线柱同色），符号用深灰 —— 真实板子就是这么印的。
+  function plateFace(ctx, sym, posText, negText) {
+    var halo = 'rgba(255,255,255,0.72)';
+    silk(ctx, posText, -46, 16.5, 13, '#b91c1c', halo);
+    silk(ctx, negText, 46, 16.5, 13, '#0f172a', halo);
+    sym(ctx, 0, 16, 1);
+  }
+
+  // ============================================================
+  // 发光二极管（示教板：底座 + 标准红黑接线柱 + 抬起的管身）
   // ------------------------------------------------------------
   // 实物上认正负靠三处，少一处它就只是一颗彩色珠子：
   //   ① 一端是【半球透镜】、另一端是【法兰盘】—— 第一眼特征；
@@ -2442,13 +2529,24 @@
   //      金线把它引到阳极 —— 这正是「单向导电」在实物里的样子。
   // 发光只在 rec.on（真的正向导通）时出现。反向截止时管子是全暗的，
   // 连一点余光都不给 —— 这一点必须画对，不然单向导电性在画面上就打了对折。
+  //
+  // 这一版把裸管改成【示教板】：和闸刀开关 / 小灯泡共用同一块 PLATE 底板，
+  // 管身抬到板面之上、由自己的两根引脚撑着，两个接线柱钉在板角（±HALF）。
+  // 三个理由：
+  //   ① 真实器材就是装在板子上的，裸管浮在导线中间不像实验室里的东西；
+  //   ② 引脚折下来沿板面走到柱子上，柱子就【露在导线外面】——上一版端子锚点
+  //      与管轴同高、柱子又矮，整根被导线盖住，学生根本点不到；
+  //   ③ 底板正面印极性标记和电路图符号，实物与符号在同一个画面里对上。
   // ============================================================
   var LED_GEO = {
     domeCx: -26, r: 16,                 // 半球透镜：球心与半径（左端 = 阳极侧）
     cylX1: 34,                          // 圆柱段右端
     flangeX: 34, flangeW: 8, flangeR: 19,   // 右端法兰盘（阴极侧）
     cupX: 24, cupR: 7,                  // 芯片杯（靠阴极那一头）
-    leadX0: -70, leadX1: 70,
+    leadX0: -70, leadX1: 70,            // （旧版水平引脚的两端，留档）
+    y: -26,                             // 管轴高度：管身最低点 = y+flangeR = −7（贴着板面）
+    turnX: 52,                          // 引脚折下处的横坐标（在管身之外）
+    leadY: -8,                          // 引脚沿板面走的高度（正好落在柱脚上）
   };
   function drawLed(ctx, comp, rec, opts) {
     var G = LED_GEO;
@@ -2459,9 +2557,24 @@
     var rgb = (rec && rec.rgb) || [255, 62, 62];
     var base = rgbaStr(rgb, 1), dim = rgbaStr(rgb, 0.55);
     var sc = ctxScale(ctx);
+    var rad = (comp.rot || 0) * Math.PI / 180;
+
+    // ① 底板 + 板面丝印（＋ / 符号 / －）。底板和开关、灯泡同一块。
     ctx.save();
-    ctx.translate(comp.x, comp.y);
-    ctx.rotate((comp.rot || 0) * Math.PI / 180);
+    ctx.translate(comp.x, comp.y); ctx.rotate(rad);
+    basePlate(ctx, PLATE.HW, PLATE.TOP, PLATE.FACE, PLATE.BOT);
+    plateFace(ctx, plateSymLed, '＋', '－');
+    // ② 两根引脚：从管身两端水平伸出 → 折下 → 沿板面走到接线柱底下。
+    //    这两段就是管子的支撑，板子上没有别的支架 —— 真实的示教板也是这样，
+    //    管子是靠自己的腿立在板上的。
+    plateLead(ctx, [[G.domeCx - 2, G.y], [-G.turnX, G.y], [-G.turnX, G.leadY], [-HALF, G.leadY]], 3.4);
+    plateLead(ctx, [[G.flangeX + G.flangeW + 4, G.y], [G.turnX, G.y], [G.turnX, G.leadY], [HALF, G.leadY]], 3.4);
+    ctx.restore();
+
+    // ③ 管身：把坐标系抬到管轴高度 G.y，下面这段沿用管轴 y=0 的局部坐标。
+    ctx.save();
+    ctx.translate(comp.x, comp.y); ctx.rotate(rad);
+    ctx.translate(0, G.y);
 
     // 管身的轮廓路径：左半圆（透镜）+ 矩形（管身）。后面反复用到，抽出来。
     function bodyPath() {
@@ -2472,24 +2585,7 @@
       ctx.closePath();
     }
 
-    // ① 两根引脚。先画，管身压在上面 —— 实物上引脚就是从管子两头伸出来的。
-    ctx.save();
-    ctx.lineCap = 'round';
-    ctx.strokeStyle = 'rgba(90,104,120,0.9)'; ctx.lineWidth = 4.4;
-    ctx.beginPath();
-    ctx.moveTo(G.leadX0, 0); ctx.lineTo(G.domeCx - 2, 0);
-    ctx.moveTo(G.cylX1 + 6, 0); ctx.lineTo(G.leadX1, 0);
-    ctx.stroke();
-    ctx.strokeStyle = linGrad(ctx, 0, -2.2, 0, 2.2,
-      [[0, '#f2f6fa'], [0.42, '#c3cfdb'], [1, '#7d8b9b']]);
-    ctx.lineWidth = 2.6;
-    ctx.beginPath();
-    ctx.moveTo(G.leadX0, 0); ctx.lineTo(G.domeCx - 2, 0);
-    ctx.moveTo(G.cylX1 + 6, 0); ctx.lineTo(G.leadX1, 0);
-    ctx.stroke();
-    ctx.restore();
-
-    // ② 发光光晕。压在本体【底下】画：压在管身上就会把管子糊成一片亮斑，
+    // ④ 发光光晕。压在本体【底下】画：压在管身上就会把管子糊成一片亮斑，
     //    看不出「管子本身是半透明的彩色塑料」这件事。
     if (on) {
       var bg = Math.pow(Math.min(bright, 1.3) / 1.3, 1.15);
@@ -2502,7 +2598,7 @@
       ctx.beginPath(); ctx.arc(4, 0, haloR, 0, 6.284); ctx.fill();
     }
 
-    // ③ 管身：半透明彩色塑料。竖向渐变（上亮下暗）= 一根圆柱；
+    // ⑤ 管身：半透明彩色塑料。竖向渐变（上亮下暗）= 一根圆柱；
     //    颜色随亮度往「白热」偏（真实 LED 过流时管芯发白）。
     var lit = on ? Math.min(bright, 1.3) / 1.3 : 0;
     var cTop = mixRgb(rgb, [255, 255, 255], 0.42 + 0.40 * lit);
@@ -2537,7 +2633,7 @@
     bodyPath();
     ctx.strokeStyle = 'rgba(70,86,104,0.45)'; ctx.lineWidth = 1; ctx.stroke();
 
-    // ④ 管芯：小杯 + 芯片 + 金线。这三件是「二极管」三个字的实物出处，
+    // ⑥ 管芯：小杯 + 芯片 + 金线。这三件是「二极管」三个字的实物出处，
     //    所以哪怕只有几像素也画出来（缩得很小时金线会省掉，见 sc 判据）。
     ctx.save();
     bodyPath(); ctx.clip();
@@ -2570,7 +2666,7 @@
     }
     ctx.restore();
 
-    // ⑤ 法兰盘（阴极侧）。实物上它比管身粗一圈，颜色也更实 ——
+    // ⑦ 法兰盘（阴极侧）。实物上它比管身粗一圈，颜色也更实 ——
     //    因为管身是透光的、法兰是不透光的环氧。这道粗细差就是认阴极的第二眼。
     ctx.fillStyle = linGrad(ctx, 0, -G.flangeR, 0, G.flangeR,
       [[0, rgbaStr(mixRgb(rgb, [255, 255, 255], 0.30 + 0.30 * lit), 1)],
@@ -2595,33 +2691,45 @@
     ctx.lineTo(G.flangeX + G.flangeW - 1, G.flangeR * 0.94);
     ctx.stroke();
 
-    // ⑥ 极性丝印。柱子本身已经是红/黑，但把「＋ / −」印在引脚旁边，
-    //    学生就不用去记「红的是正还是负」——直接照管子上的字接。
-    silk(ctx, '＋', G.domeCx - 26, -15, 13, '#b91c1c', true);
-    silk(ctx, '－', G.flangeX + 22, -15, 13, '#0f172a', true);
-
-    // ⑦ 接线柱：0 号是「+」（红），1 号是「−」（黑）。
-    posts(ctx, comp, ['pos', 'neg']);
     ctx.restore();
+
+    // ⑧ 接线柱：0 号是「+」（红），1 号是「−」（黑）。
+    //    ⚠️ 必须在【已经退出 translate(comp.x, comp.y)】的上下文里调 posts()：
+    //    它内部走 terminalWorld()，那里会再加一次 comp.x/comp.y。写在 translate
+    //    里面等于平移叠了两遍，柱子被画到两倍坐标处 —— 元件在 x=800 时柱子跑到
+    //    1600，屏幕上只剩两根孤零零的柱子飘在画布另一头（元件附近一根都没有），
+    //    学生点不到、也看不出导线接在哪儿。开关/灯泡/两只表都是写在 translate
+    //    外面的，这三个新元件当初漏了这一步。
+    posts(ctx, comp, ['pos', 'neg'], 1.4, 8);
   }
 
   // ============================================================
-  // 直流电动机（永磁小电机 + 轴上的飞轮）
+  // 直流电动机（示教板：底板 + 两个支撑 + 抬起的机身 + 轴端螺旋桨）
   // ------------------------------------------------------------
-  // 画面上必须能看出两件事，否则这个元件就白加了：
-  //   ① 它【在转】—— 飞轮的三根辐条按转子角扫过，正转顺时针、反转逆时针；
-  //   ② 它【发烫】—— 堵转时线圈电流是空载的好几倍，P = I²R 大十几倍，
+  // 画面上必须能看出三件事，否则这个元件就白加了：
+  //   ① 它【在转】—— 螺旋桨的三片叶子按转子角扫过，正转顺时针、反转逆时针；
+  //   ② 它【往哪边转】—— 接线反了叶子就反着扫，这是「电流方向决定转向」
+  //      在实物上的样子；
+  //   ③ 它【发烫】—— 堵转时线圈电流是空载的好几倍，P = I²R 大十几倍，
   //      外壳就真的往红里偏。学生看见外壳变红，再回头看电流表的数字，
   //      「电机卡住会烧」这件事就不用讲了。
   // 转速在画面上是【慢放】的（真实 2300 r/min 在 60fps 下每帧转 0.64 圈，
-  // 直接画出来只会糊成一片乱转的辐条）；真实转速写在读数框里。
+  // 直接画出来只会糊成一片乱转的叶子）；真实转速写在读数框里。
+  //
+  // 这一版把「一根浮在导线上的金属筒、筒身上贴一张 M 直流电动机」改成示教板：
+  // 底板 + 两根支撑柱 + 抬起的机身 + 轴端螺旋桨；铭牌不贴机身，改印底板正面。
+  // 另外修掉两处：① 引脚几何里 x0/x1/leadX0/leadX1 与实际字段名对不上，
+  // 算出 NaN，左引线根本没画出来；② 接线柱写在 translate 里，被画到两倍坐标。
   // ============================================================
   var MOT_GEO = {
-    x0: -56, x1: 26, hh: 26,             // 外壳
-    capCx: 26, capRx: 9,                 // 右端面（椭圆）
-    shaftX0: 30, shaftX1: 58, shaftR: 4,
-    flyCx: 46, flyRx: 8, flyRy: 19,      // 飞轮：近侧视的椭圆
-    leadY: 20, leadX: 62,                // 右引线的绕行高度与立线位置
+    x0: -52, x1: 30, hh: 17,             // 外壳：中心 y = bodyY，半径 hh
+    bodyY: -40,                          // 机身轴线高度（机身最低点 = −23）
+    capCx: 30, capRx: 8,                 // 右端面（椭圆）
+    shaftX0: 34, shaftX1: 58, shaftR: 3.4,
+    flyCx: 46, flyRx: 10, flyRy: 20,     // 螺旋桨：近侧视的椭圆（rx 小 = 几乎侧看）
+    saddX: [-30, 22], saddHW: 5,         // 两根支撑柱：从板面升到机身下沿
+    leadX: -14, leadX2: 8,               // 两根引线从机身底部下来的位置
+    leadY: -8,                           // 引线沿板面走的高度（正好落在柱脚上）
   };
   // 画面转速 = 真实转速 × 这个系数（见上面的注释）
   var MOT_SLOW = 0.03;
@@ -2632,143 +2740,169 @@
     // 发热归一：空载约 0.05W、堵转约 1.3W，取 1.5W 当满标。
     var heat = rec ? Math.max(0, Math.min((rec.pHeat || 0) / 1.5, 1)) : 0;
     var stalled = !!(rec && rec.stalled && !rec.isolated);
-    ctx.save();
-    ctx.translate(comp.x, comp.y);
-    ctx.rotate((comp.rot || 0) * Math.PI / 180);
+    var rad = (comp.rot || 0) * Math.PI / 180;
+    var BY = G.bodyY, R = G.hh, BOT = BY + R;    // 机身轴线 / 半径 / 下沿
 
-    // ① 引线。右引线绕到外壳【底下】再进去 —— 直着走过去会横穿飞轮，
-    //    看着像导线扎在飞轮上。绕行高度 leadY 刚好在飞轮下沿（19）之下。
+    // ① 底板 + 板面丝印（＋ / 符号 M / －）
     ctx.save();
-    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-    ctx.strokeStyle = 'rgba(90,104,120,0.9)'; ctx.lineWidth = 4.6;
-    ctx.beginPath();
-    ctx.moveTo(G.leadX0 - 0, 0); ctx.lineTo(G.x0 + 4, 0);
-    ctx.moveTo(G.leadX1, 0); ctx.lineTo(G.leadX, 0);
-    ctx.lineTo(G.leadX, G.leadY); ctx.lineTo(6, G.leadY);
-    ctx.stroke();
-    ctx.strokeStyle = linGrad(ctx, 0, -2.4, 0, 2.4,
-      [[0, '#f2f6fa'], [0.42, '#c3cfdb'], [1, '#7d8b9b']]);
-    ctx.lineWidth = 2.8;
-    ctx.beginPath();
-    ctx.moveTo(G.leadX0 - 0, 0); ctx.lineTo(G.x0 + 4, 0);
-    ctx.moveTo(G.leadX1, 0); ctx.lineTo(G.leadX, 0);
-    ctx.lineTo(G.leadX, G.leadY); ctx.lineTo(6, G.leadY);
-    ctx.stroke();
+    ctx.translate(comp.x, comp.y); ctx.rotate(rad);
+    basePlate(ctx, PLATE.HW, PLATE.TOP, PLATE.FACE, PLATE.BOT);
+    plateFace(ctx, plateSymMotor, '＋', '－');
     ctx.restore();
 
-    // ② 外壳：横躺的金属圆筒。左端圆、右端留出端面椭圆。
-    softShadow(ctx, G.x0, -G.hh, G.x1 - G.x0, G.hh * 2, 14, 12);
-    contactShadow(ctx, 0, G.hh + 2, (G.x1 - G.x0) * 0.42, 5, 0.28);
+    // ② 支撑柱 + 引线（都画在机身【之前】，机身压上来就是「坐在支架上」）
+    ctx.save();
+    ctx.translate(comp.x, comp.y); ctx.rotate(rad);
+    G.saddX.forEach(function (sx) {
+      var w = G.saddHW * 2;
+      ctx.save();
+      ctx.beginPath();
+      roundRect(ctx, sx - G.saddHW, BOT, w, PLATE.TOP - BOT + 2, 2.5);
+      ctx.clip();
+      ctx.fillStyle = linGrad(ctx, sx - G.saddHW, 0, sx + G.saddHW, 0,
+        [[0, '#f7fafc'], [0.16, '#dde5ed'], [0.42, '#aebbc9'],
+         [0.70, '#8493a3'], [1, '#5f6e7e']]);
+      ctx.fillRect(sx - G.saddHW, BOT, w, PLATE.TOP - BOT + 2);
+      ctx.restore();
+      roundRect(ctx, sx - G.saddHW, BOT, w, PLATE.TOP - BOT + 2, 2.5);
+      ctx.strokeStyle = 'rgba(51,65,85,0.55)'; ctx.lineWidth = 1; ctx.stroke();
+      // 支撑柱顶面的一道受光棱：柱子才「托住」机身，而不是插进机身里
+      ctx.fillStyle = 'rgba(255,255,255,0.55)';
+      roundRect(ctx, sx - G.saddHW + 1, BOT + 0.6, w - 2, 1.4, 0.7); ctx.fill();
+      // 底脚螺钉（把支架拧在板上）
+      if (sc >= 1) screwHead(ctx, sx, PLATE.TOP - 6, 3.2, 'slot', sc);
+    });
+    // 两根引线：从机身【底部】下来，再沿板面走到接线柱底下。
+    // 走机身底下而不是两头，是为了不横穿螺旋桨（叶子就扫在那儿）。
+    plateLead(ctx, [[G.leadX, BOT], [G.leadX, G.leadY], [-HALF, G.leadY]], 3.6);
+    plateLead(ctx, [[G.leadX2, BOT], [G.leadX2, G.leadY], [HALF, G.leadY]], 3.6);
+    ctx.restore();
+
+    // ③ 机身：把坐标系抬到轴线高度 BY，下面这段沿用轴线 y=0 的局部坐标。
+    ctx.save();
+    ctx.translate(comp.x, comp.y); ctx.rotate(rad);
+    ctx.translate(0, BY);
+
+    // 外壳：横躺的金属圆筒。左端圆、右端留出端面椭圆。
+    softShadow(ctx, G.x0, -R, G.x1 - G.x0, R * 2, 14, 12);
+    contactShadow(ctx, 0, BOT - BY + 2, (G.x1 - G.x0) * 0.42, 5, 0.28);
+    // ⚠️ 最后那个 true（逆时针）不能省：canvas 的 arc 默认【顺时针】扫角，
+    //    从 −π/2 到 +π/2 会经过 0°，画出来是【右】半圆 —— 于是圆柱左端整块
+    //    没有填色，露出底下的 softShadow 白矩形，机身看着就是「一个白方块上
+    //    贴了一张 M 的图」。逆时针才是经过 180° 的左半圆，才是圆柱的端面。
     function shellPath() {
       ctx.beginPath();
-      ctx.moveTo(G.x1, -G.hh);
-      ctx.lineTo(G.x0 + G.hh, -G.hh);
-      ctx.arc(G.x0 + G.hh, 0, G.hh, -Math.PI / 2, Math.PI / 2);
-      ctx.lineTo(G.x1, G.hh);
+      ctx.moveTo(G.x1, -R);
+      ctx.lineTo(G.x0 + R, -R);
+      ctx.arc(G.x0 + R, 0, R, -Math.PI / 2, Math.PI / 2, true);
+      ctx.lineTo(G.x1, R);
       ctx.closePath();
     }
     shellPath();
-    ctx.fillStyle = linGrad(ctx, 0, -G.hh, 0, G.hh, MAT.steel);
+    ctx.fillStyle = linGrad(ctx, 0, -R, 0, R, MAT.steel);
     ctx.fill();
     // 外壳上的两道环形凹槽：圆柱体上的凹槽投影成两条竖着的暗线 + 亮线，
     // 有它们才读得出「这是一根筒」，不然只是一块金属色的方板。
     ctx.save(); shellPath(); ctx.clip();
-    [-40, 4].forEach(function (gx) {
+    [-38, 2].forEach(function (gx) {
       ctx.strokeStyle = 'rgba(40,52,68,0.34)'; ctx.lineWidth = 3;
-      ctx.beginPath(); ctx.moveTo(gx, -G.hh); ctx.lineTo(gx, G.hh); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(gx, -R); ctx.lineTo(gx, R); ctx.stroke();
       ctx.strokeStyle = 'rgba(255,255,255,0.42)'; ctx.lineWidth = 1.2;
-      ctx.beginPath(); ctx.moveTo(gx + 2.4, -G.hh); ctx.lineTo(gx + 2.4, G.hh); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(gx + 2.4, -R); ctx.lineTo(gx + 2.4, R); ctx.stroke();
     });
     // 发热：外壳整体往红橙偏。压在外壳里，不溢出轮廓。
     if (heat > 0.01) {
       ctx.fillStyle = 'rgba(220,58,16,' + (0.46 * heat) + ')';
-      ctx.fillRect(G.x0 - 2, -G.hh - 2, G.x1 - G.x0 + 6, G.hh * 2 + 4);
+      ctx.fillRect(G.x0 - 2, -R - 2, G.x1 - G.x0 + 6, R * 2 + 4);
     }
     // 顶面的一道宽高光：金属筒受光的那一条
     ctx.fillStyle = 'rgba(255,255,255,0.30)';
-    roundRect(ctx, G.x0 + 14, -G.hh + 3.5, G.x1 - G.x0 - 22, 7, 3.5); ctx.fill();
+    roundRect(ctx, G.x0 + 14, -R + 3.5, G.x1 - G.x0 - 22, 7, 3.5); ctx.fill();
     ctx.restore();
     shellPath();
     ctx.strokeStyle = 'rgba(70,84,100,0.5)'; ctx.lineWidth = 1.1; ctx.stroke();
 
-    // ③ 右端面：一个椭圆（3/4 视角下看得见的那一圈端盖）
+    // 右端面：一个椭圆（3/4 视角下看得见的那一圈端盖）
     ctx.fillStyle = linGrad(ctx, G.capCx - G.capRx, 0, G.capCx + G.capRx, 0,
       [[0, '#8fa0b2'], [0.5, '#6c7d90'], [1, '#4a5a6c']]);
     ctx.beginPath();
-    ctx.ellipse(G.capCx, 0, G.capRx, G.hh, 0, 0, 6.284);
+    ctx.ellipse(G.capCx, 0, G.capRx, R, 0, 0, 6.284);
     ctx.fill();
     ctx.strokeStyle = 'rgba(40,52,68,0.55)'; ctx.lineWidth = 1; ctx.stroke();
     ctx.strokeStyle = 'rgba(255,255,255,0.22)'; ctx.lineWidth = 1.2;
     ctx.beginPath();
-    ctx.ellipse(G.capCx - 1.5, 0, G.capRx * 0.55, G.hh * 0.9, 0, Math.PI * 0.62, Math.PI * 1.38);
+    ctx.ellipse(G.capCx - 1.5, 0, G.capRx * 0.55, R * 0.9, 0, Math.PI * 0.62, Math.PI * 1.38);
     ctx.stroke();
 
-    // ④ 轴
+    // ④ 转轴
     ctx.fillStyle = linGrad(ctx, 0, -G.shaftR, 0, G.shaftR,
       [[0, '#f2f6fa'], [0.35, '#c9d4e0'], [0.72, '#93a2b2'], [1, '#5f7086']]);
     roundRect(ctx, G.shaftX0, -G.shaftR, G.shaftX1 - G.shaftX0, G.shaftR * 2, 2);
     ctx.fill();
     ctx.strokeStyle = 'rgba(60,74,90,0.45)'; ctx.lineWidth = 0.9; ctx.stroke();
 
-    // ⑤ 飞轮：椭圆盘 + 三根辐条。辐条按转子角扫过椭圆 —— 这就是
+    // ⑤ 螺旋桨：三片叶子 + 桨毂。叶子按转子角扫过椭圆 —— 这就是
     //    「在转」和「往哪边转」两件事的全部信息来源。
-    //    堵转时辐条停住不动（spin 不推进），并且旁边顶着一个红挡块。
-    var flyGrad = ctx.createRadialGradient(G.flyCx - G.flyRx * 0.4, -G.flyRy * 0.4, 2,
-                                           G.flyCx, 0, G.flyRy);
-    flyGrad.addColorStop(0, '#e8eef5');
-    flyGrad.addColorStop(0.55, '#b0bdcc');
-    flyGrad.addColorStop(1, '#67788b');
-    ctx.beginPath();
-    ctx.ellipse(G.flyCx, 0, G.flyRx, G.flyRy, 0, 0, 6.284);
-    ctx.fillStyle = flyGrad; ctx.fill();
-    ctx.strokeStyle = 'rgba(45,58,74,0.6)'; ctx.lineWidth = 1.2; ctx.stroke();
-    // 轮缘
-    ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.lineWidth = 1.1;
-    ctx.beginPath();
-    ctx.ellipse(G.flyCx, 0, G.flyRx * 0.78, G.flyRy * 0.80, 0, 0, 6.284);
-    ctx.stroke();
+    //    画法：先把椭圆【拉成圆】，在圆里画标准形状的叶片，再拉回来，
+    //    省掉椭圆上那一堆切向量换算；叶片在圆里是标准的，投影自然就对。
+    //    堵转时叶子停住不动（spin 不推进），旁边顶着一个红挡块。
     ctx.save();
-    ctx.beginPath(); ctx.ellipse(G.flyCx, 0, G.flyRx, G.flyRy, 0, 0, 6.284); ctx.clip();
-    ctx.strokeStyle = 'rgba(52,66,84,0.72)';
-    ctx.lineWidth = Math.max(1.4, Math.min(2.6, sc * 1.5));
-    ctx.lineCap = 'round';
+    ctx.translate(G.flyCx, 0);
+    ctx.scale(1, G.flyRy / G.flyRx);
+    var FR = G.flyRx;
+    var blade = ctx.createRadialGradient(0, 0, FR * 0.12, 0, 0, FR);
+    blade.addColorStop(0, '#f4f8fc');
+    blade.addColorStop(0.5, '#cbd6e2');
+    blade.addColorStop(1, '#8d9cad');
     for (var k = 0; k < 3; k++) {
       var a = spin + k * 2 * Math.PI / 3;
+      var ca = Math.cos(a), sa = Math.sin(a);
+      var px = -sa, py = ca;                       // 切向单位向量
+      var r0 = FR * 0.18, r1 = FR * 0.96;          // 叶根 / 叶梢半径
+      var w0 = FR * 0.22, w1 = FR * 0.46;          // 叶根 / 叶梢的弦宽（叶片要宽，细了就成辐条）
       ctx.beginPath();
-      ctx.moveTo(G.flyCx, 0);
-      ctx.lineTo(G.flyCx + Math.cos(a) * G.flyRx * 0.86, Math.sin(a) * G.flyRy * 0.86);
+      ctx.moveTo(ca * r0 + px * w0, sa * r0 + py * w0);
+      ctx.lineTo(ca * r1 + px * w1, sa * r1 + py * w1);
+      ctx.quadraticCurveTo(ca * r1 * 1.16, sa * r1 * 1.16,
+                           ca * r1 - px * w1, sa * r1 - py * w1);
+      ctx.lineTo(ca * r0 - px * w0, sa * r0 - py * w0);
+      ctx.closePath();
+      ctx.fillStyle = blade; ctx.fill();
+      ctx.strokeStyle = 'rgba(45,58,74,0.5)';
+      ctx.lineWidth = 0.9 / (G.flyRy / G.flyRx);
       ctx.stroke();
     }
     ctx.restore();
-    // 轮毂
-    ctx.fillStyle = '#8b9aab';
-    ctx.beginPath(); ctx.ellipse(G.flyCx, 0, 2.6, 3.4, 0, 0, 6.284); ctx.fill();
+    // 桨毂：比叶片亮一档的金属小帽，压在三片叶子的交点上
+    var hub = ctx.createRadialGradient(G.flyCx - 1.4, -1.4, 0.6, G.flyCx, 0, 6);
+    hub.addColorStop(0, '#f7fafc'); hub.addColorStop(0.55, '#b7c4d2'); hub.addColorStop(1, '#68788b');
+    ctx.fillStyle = hub;
+    ctx.beginPath(); ctx.ellipse(G.flyCx, 0, 3.6, 5.0, 0, 0, 6.284); ctx.fill();
     ctx.strokeStyle = 'rgba(45,58,74,0.6)'; ctx.lineWidth = 0.8; ctx.stroke();
 
-    // 堵转：飞轮右下方顶一个红挡块，辐条停住。这是「卡住」这件事在
-    // 画面上唯一的证据 —— 只看飞轮的话，停住和「电流太小转不动」
+    // 堵转：螺旋桨右下方顶一个红挡块，叶子停住。这是「卡住」这件事在
+    // 画面上唯一的证据 —— 只看螺旋桨的话，停住和「电流太小转不动」
     // 长得一模一样，而这两件事的电流差着一个量级。
-    if (stalled) {
+    // ⚠️ 必须同时要求【有电流】：电路没接通时内核也把 stalled 报成 true
+    //    （没有电流当然转不动），但那种情况下顶个「卡住了」的红挡块是错的 ——
+    //    学生看到的是「线还没接完」，不是「电机被人捏住了」。
+    if (stalled && Math.abs((rec && rec.i) || 0) > 1e-9) {
       ctx.save();
       ctx.fillStyle = '#b91c1c';
       ctx.strokeStyle = 'rgba(90,12,12,0.8)'; ctx.lineWidth = 1;
       ctx.beginPath();
       ctx.moveTo(G.flyCx + G.flyRx + 1, G.flyRy * 0.30);
-      ctx.lineTo(G.flyCx + G.flyRx + 11, G.flyRy * 0.05);
-      ctx.lineTo(G.flyCx + G.flyRx + 11, G.flyRy * 0.72);
+      ctx.lineTo(G.flyCx + G.flyRx + 10, G.flyRy * 0.05);
+      ctx.lineTo(G.flyCx + G.flyRx + 10, G.flyRy * 0.72);
       ctx.closePath();
       ctx.fill(); ctx.stroke();
       ctx.restore();
     }
-
-    // ⑥ 铭牌与极性丝印
-    silk(ctx, 'M', -15, 0, 22, 'rgba(38,50,64,0.72)', false);
-    if (sc >= 0.85) silk(ctx, '直流电动机', -15, 17, 9, 'rgba(38,50,64,0.6)', false);
-    silk(ctx, '＋', -40, -15, 13, '#b91c1c', true);
-    silk(ctx, '－', 40, -15, 13, '#0f172a', true);
-
-    posts(ctx, comp, ['pos', 'neg']);
     ctx.restore();
+
+    // ⑥ 接线柱：0 号是「+」（红），1 号是「−」（黑）。
+    //    必须在【已经退出 translate】的上下文里调 —— 见发光二极管那一节的长注释。
+    posts(ctx, comp, ['pos', 'neg'], 1.4, 8);
   }
 
   // ============================================================
@@ -2809,6 +2943,12 @@
     ctx.rotate((comp.rot || 0) * Math.PI / 180);
 
     basePlate(ctx, PLATE.HW, PLATE.TOP, PLATE.FACE, PLATE.BOT);
+    // 板面丝印：电铃没有极性（两个柱都是金属色），所以正面不印 ＋/－，
+    // 只印【电路图符号】和名字。符号是半圆拱 + 底边 + 中央铃舌 ——
+    // 「一个圆里画一只铃」是蜂鸣器那一类发声器件的通用画法，人教版电路图里
+    // 的电铃是半圆那一支。实物和符号必须对得上，学生才敢照着图连线。
+    plateSymBell(ctx, -30, 16, 1);
+    silk(ctx, '电铃', 24, 17, 11, SILK_INK, 'rgba(255,255,255,0.72)');
 
     // ① U 形铁芯：两根立柱 + 底部横梁，连成一体的软铁。先画铁芯再画线圈，
     //    线圈压在柱子上 —— 实物就是漆包线绕在铁芯外面。
@@ -2939,9 +3079,12 @@
       ctx.restore();
     }
 
-    // ⑥ 接线柱：两个都是金属色（无极性）。见本节的标题注释。
-    posts(ctx, comp, ['neutral', 'neutral'], 1.4, 8);
     ctx.restore();
+
+    // ⑥ 接线柱：两个都是金属色（无极性）。见本节的标题注释。
+    //    必须在【已经退出 translate(comp.x, comp.y)】的上下文里调 ——
+    //    见发光二极管那一节的长注释（写在里面柱子会被画到两倍坐标处）。
+    posts(ctx, comp, ['neutral', 'neutral'], 1.4, 8);
   }
 
   // ============================================================
@@ -2997,6 +3140,6 @@
     batterySize: batterySize, bodyBox: bodyBox,
     MAT: MAT, MET: MET, MET_SWEEP: MET_SWEEP, POST_GRAD: POST_GRAD,
     BAND_COLORS: BAND_COLORS,
-    version: '2.1.0',
+    version: '2.2.0',
   };
 });

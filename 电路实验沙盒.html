@@ -303,11 +303,11 @@
      会出现「说明写了电子逆流、小球却还顺着流」这种自相矛盾）。改脚本时
      把这个 build 号 +1 即可。 -->
 <script src="circuit-core.js?build=15"></script>
-<script src="circuit-draw.js?build=18"></script>
-<script src="circuit-editor.js?build=15"></script>
+<script src="circuit-draw.js?build=19"></script>
+<script src="circuit-editor.js?build=16"></script>
 <!-- 电路图（实物图 → 标准符号）。独立成第四块内核：沙盒和欧姆定律页共用同一份，
      免得各写一套符号，两边的图画法迟早不一样。三个老内核一行没动，build 号不升。 -->
-<script src="circuit-schematic.js?build=10"></script>
+<script src="circuit-schematic.js?build=11"></script>
 <script>
 // ---- 访问保护：仅允许站内跳转（与站内其它实验页一致）----
 (function(){
@@ -392,8 +392,10 @@ function bh0(n){ return n*18 + 8; }
 // 否则会压在自己的接线柱上。
 // 读数框的竖向落点 = 元件重心到本体下沿的距离。开关和灯泡现在都有一块
 // 铺到导线下方 y=+30 的底板，所以从 30/32 提到 38，不然读数框会压在板上。
+// 二极管 / 电动机 / 电铃这一版也改成了同一块底板（板底同样是 y=+30），
+// 所以三个数一起抬到 38 —— 原来是按裸管/裸筒的厚度给的 24 / 34。
 var DROP = {battery:40, ammeter:80, voltmeter:80, resistor:22, bulb:38, rheostat:46, switch:38,
-            led:24, motor:34, bell:38};
+            led:38, motor:38, bell:38};
 
 // 元件旁边那个读数框里写哪几行，返回 null 表示这个元件不飘框（开关写在底座上了）。
 // 单独抽成函数是为了让测试能直接断言文字：反接这种「读数框里该写什么」的判断
@@ -452,11 +454,27 @@ function readoutLines(c, r){
       lines.push('低于 ' + r.Vf.toFixed(1) + 'V · 不亮');
     }
   } else if (c.type === 'motor') {
-    // 堵转和「电流太小推不动」都会显示 n = 0，必须分开写：前者的电流是后者的
-    // 十几倍，而画面上两个飞轮都是静止的，只有这行字能把它俩区分开。
-    if (r.stalled) lines.push(r.stallSwitch ? '堵转 · 不转' : '推不动 · 不转');
-    else lines.push('n = ' + Math.abs(r.rpm).toFixed(0) + ' r/min' + (r.reversed ? ' 反转' : ''));
-    lines.push('I = ' + Math.abs(r.i).toFixed(3) + 'A');
+    // 「不转」有四种原因，和发光二极管、电铃同一个道理，必须分开说 ——
+    // 一律按内核的 stalled 写，就会在【一根线都没接】和【开关断开】时也印出
+    // 「推不动 · 不转 / I = 0.000A」：线都没接、开关都没合，谈何「推不动」？
+    //   ① 一根线都没接                  → 未接入电路；
+    //   ② 接了线、但回路不通（开关断开）  → 没有电流；
+    //   ③ 真有电流、只是转矩不够（电压低到连自身摩擦都推不动）→ 推不动 · 不转；
+    //   ④ 真有电流、转子被人卡住（勾了堵转）                → 堵转 · 不转。
+    // ③④ 才是「推不动」与「堵转」的分野：画面都是一动不动，只有电流差一个量级、
+    // 只有这行字能把它们分开。①② 的电流同样是 0，但【一个电流数字都不印】——
+    // 印「I = 0.000A」看着像一个有效读数，学生会当成「这段就是没电流」。
+    if (r.isolated) {
+      lines.push('未接入电路');
+    } else if (Math.abs(r.i) < 1e-9) {
+      lines.push('没有电流');
+      lines.push('不转');
+    } else {
+      lines.push(r.stalled
+        ? (r.stallSwitch ? '堵转 · 不转' : '推不动 · 不转')
+        : 'n = ' + Math.abs(r.rpm).toFixed(0) + ' r/min' + (r.reversed ? ' 反转' : ''));
+      lines.push('I = ' + Math.abs(r.i).toFixed(3) + 'A');
+    }
   } else if (c.type === 'bell') {
     // 同理：「没接线」和「接上了但磁动势不够」是两件事。以前按电流判，
     // 开关一断开就写「未接入电路」—— 线明明接得好好的。
@@ -1250,8 +1268,11 @@ var LG_VIEW = {
   // 三件新器材的取景框。少了它们，只要电路里出现二极管/电动机/电铃，
   // 图例这一栏就会读 undefined 的 x1 直接抛异常 —— 整个电路图浮层打不开，
   // 而报错信息指向的是一行取景框算术，跟「我加了个二极管」八竿子打不着。
-  led:       { x0: -78, y0: -28, x1: 78, y1: 28 },
-  motor:     { x0: -78, y0: -34, x1: 78, y1: 34 },
+  // 三件器材这一版都改成了示教板：本体抬到板面【上方】（管身顶 −45、机身与
+  // 螺旋桨顶 −58），板底在 +30。取景框的 y0 跟着抬，否则图例里会把管子和
+  // 螺旋桨的上半截裁掉 —— 图例正是用来「认清这件器材长什么样」的那一栏。
+  led:       { x0: -78, y0: -52, x1: 78, y1: 36 },
+  motor:     { x0: -78, y0: -64, x1: 78, y1: 36 },
   bell:      { x0: -78, y0: -66, x1: 78, y1: 42 },
 };
 // 图例要给电表/变阻器一个「已经接好线」的样子（不然圆圈的两根引线全是虚线，

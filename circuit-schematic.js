@@ -220,7 +220,9 @@
       // 框住它们导线才不会从箭头上穿过去。
       case 'led': return { x0: -22, y0: -30, x1: 26, y1: 18 };
       case 'motor': return { x0: -24, y0: -24, x1: 24, y1: 24 };
-      case 'bell': return { x0: -24, y0: -24, x1: 24, y1: 24 };
+      // 电铃：拱顶到 y=−18，底边在 0，铃舌垂到 y≈12。框要罩住铃舌，
+      // 导线才不会从铃舌上穿过去。
+      case 'bell': return { x0: -22, y0: -22, x1: 22, y1: 14 };
       case 'ammeter': case 'voltmeter': {
         var m = it.meta;
         // 就画到圆周为止。空着的那根量程柱**不再画虚脚**（原来往下多留 26px），
@@ -1668,26 +1670,24 @@
         ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
         break;
       }
-      // 电铃：一个圆里画一只铃（半圆碗 + 碗沿 + 铃舌）。两个接线柱不分正负，
-      // 符号里也不画任何方向标记 —— 这就是「电铃没有单向导电性」。
+      // 电铃：国标 / 人教版初中电路图里的画法 —— 半圆拱（开口向下）坐在底边上，
+      // 中央垂下一小段【铃舌】，两根导线从底边两端水平引出。
+      // 这里刻意【不画圆圈】：圆圈里画一只铃是「发声器件」的通用画法
+      // （蜂鸣器、喇叭那一类都这么画），初中电学里那个符号是半圆这一支。
+      // 它不分正负极，电流任意方向流过都响，所以符号里也没有任何方向标记。
       case 'bell': {
-        lead(ctx, T[0], -22); lead(ctx, T[1], 22);
-        ctx.beginPath(); ctx.arc(0, 0, 22, 0, Math.PI * 2);
+        var br = 18;
+        lead(ctx, T[0], -br); lead(ctx, T[1], br);
+        ctx.beginPath();
+        ctx.arc(0, 0, br, Math.PI, 0, false);   // 上半圆 = 拱；closePath 补出底边
+        ctx.closePath();
         ctx.fillStyle = COLOR.paper; ctx.fill();
         ctx.strokeStyle = COLOR.wire; ctx.lineWidth = 2.4; ctx.stroke();
-        // 碗：上半圆
+        // 铃舌：底边正中垂下来的一小段（这就是「蘑菇」的那个柄）
         ctx.beginPath();
-        ctx.arc(0, -2, 10, Math.PI, 0);
+        ctx.moveTo(0, 0); ctx.lineTo(0, 9);
         ctx.stroke();
-        // 碗沿
-        ctx.beginPath();
-        ctx.moveTo(-13, -2); ctx.lineTo(13, -2);
-        ctx.stroke();
-        // 铃舌
-        ctx.beginPath();
-        ctx.moveTo(0, -2); ctx.lineTo(0, 7);
-        ctx.stroke();
-        ctx.beginPath(); ctx.arc(0, 9, 2.6, 0, Math.PI * 2);
+        ctx.beginPath(); ctx.arc(0, 10.6, 1.8, 0, Math.PI * 2);
         ctx.fillStyle = COLOR.wire; ctx.fill();
         break;
       }
@@ -1795,12 +1795,12 @@
       to: '一个圆里写 A，串在电路里；用到的两根柱各引一根线，空着那根不画' },
     { type: 'voltmeter', name: '电压表',          from: '三个接线柱的指针表',
       to: '一个圆里写 V，并接在被测元件的两端' },
-    { type: 'led',      name: '发光二极管',       from: '一端半球透镜、一端带平边的彩色小管',
+    { type: 'led',      name: '发光二极管',       from: '示教板上的彩色小管：一端半球透镜、一端带平边',
       to: '实心三角加一条横线：三角尖端指向横线，电流只许这么流（单向导电性）。右上两个小箭头表示发光' },
-    { type: 'motor',    name: '电动机',           from: '金属外壳的小电机，轴头上带一只飞轮',
-      to: '一个圆里写 M，串在电路里；接线反了转子就反转' },
-    { type: 'bell',     name: '电铃',             from: '电磁铁、衔铁加一只铃碗',
-      to: '一个圆里画一只铃。它不分正负 —— 电流从哪边进都响，这是它和二极管最要紧的区别' },
+    { type: 'motor',    name: '电动机',           from: '示教板上的直流电动机：机身架在两个支撑上，轴端带螺旋桨',
+      to: '一个圆里写 M，串在电路里；接线反了螺旋桨就反转' },
+    { type: 'bell',     name: '电铃',             from: '示教板上的电磁电铃：铁芯线圈、簧片衔铁与金属铃碗',
+      to: '半圆拱加一条底边、中央垂下一小段铃舌：导线由底边两端引出。它不分正负 —— 电流从哪边进都响，这是它和二极管最要紧的区别' },
   ];
 
   return {
@@ -1814,6 +1814,6 @@
     // 规整化/走线的常量：测试要断言「位移 ≤ MOVE_MAX」，从这里取，
     // 免得内核改了上限、测试还按老数字断（那就成了自证）
     MOVE_MAX: MOVE_MAX,
-    version: '3.7.0',
+    version: '3.8.0',
   };
 });
