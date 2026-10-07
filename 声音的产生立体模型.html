@@ -1,0 +1,1669 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>声音的产生 · 三维转换法实验台 - 物理虚拟实验</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="stylesheet" href="style.css">
+  <style>
+    body { margin: 0; padding: 20px; min-width: 320px; }
+
+    .lab3d h1 { margin: 0; font-size: 19px; letter-spacing: .3px; }
+    .lab3d-sub { margin: 7px 0 16px; color: #93b4c4; font-size: 12.5px; line-height: 1.6; }
+    .lab3d-sub b { color: #a5f3fc; font-weight: 700; }
+
+    .lab3d-layout {
+      display: grid; grid-template-columns: minmax(0, 1fr) 340px;
+      gap: 16px; align-items: start; align-content: start;
+    }
+    /* 三块位置写死，DOM 顺序按【窄屏需要的顺序】排：舞台 → 侧栏 → 下半区。
+       宽屏用 grid 把「视角 / 显示 / 算一算」摆到舞台正下方（左列第二行），
+       侧栏跨两行 —— 两列高度接近，不会在舞台下面留一大片空白。 */
+    .lab3d-stage { grid-column: 1; grid-row: 1; }
+    .lab3d-sidebar { grid-column: 2; grid-row: 1 / span 2; }
+    .lab3d-lower {
+      grid-column: 1; grid-row: 2;
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(270px, 1fr));
+      gap: 14px; align-content: start; align-items: start; min-width: 0;
+    }
+
+    .lab3d-stage {
+      position: relative; overflow: hidden;
+      height: clamp(400px, 66vh, 660px);
+      border: 1px solid rgba(148, 163, 184, .18); border-radius: 16px;
+      background: #020617; box-shadow: 0 18px 46px rgba(2, 6, 23, .5);
+    }
+    .lab3d-stage canvas { display: block; touch-action: none; cursor: grab; }
+    .lab3d-stage canvas.grabbing { cursor: grabbing; }
+
+    .lab3d-stage .stage-hint {
+      position: absolute; left: 12px; top: 12px; max-width: 62%;
+      padding: 7px 11px; border-radius: 8px; pointer-events: none;
+      border: 1px solid rgba(56, 189, 248, .28); background: rgba(2, 6, 23, .78);
+      color: #c3e8f5; font-size: 11px; line-height: 1.55;
+    }
+    .lab3d-stage .stage-hint b { color: #7dd3fc; }
+    .lab3d-stage .stage-hint .warn { color: #fcd34d; }
+
+    /* 舞台底部那一条：左边按钮，右边操作提示。做成一条 flex 行是为了让它们
+       【永远不重叠】。按钮必须在舞台上：.lab3d-layout 在 ≤900px 折成一列后
+       侧栏会被挤到舞台【下面】，而「敲击 / 按住 / 记录」恰恰是眼睛盯着画面时该按的
+       —— 记录按钮在侧栏里时，桌面 1440 也要滚 336 px、手机 390 要滚 824 px
+       （舞台整块离开视口），「敲一下 → 记录」这个循环就得来回滚。 */
+    .lab3d-stage .stage-bar {
+      position: absolute; left: 0; right: 0; bottom: 0;
+      display: flex; align-items: center; justify-content: space-between; gap: 8px;
+      padding: 0 12px 11px; pointer-events: none;
+    }
+    .lab3d-stage .bar-left { display: flex; align-items: center; gap: 7px; flex: none; pointer-events: auto; }
+    .lab3d-stage .stage-btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 8px 13px; border-radius: 10px; font-family: inherit;
+      font-size: 12px; font-weight: 800; cursor: pointer;
+      border: 1px solid rgba(148, 163, 184, .35); background: rgba(2, 6, 23, .88); color: #cbd5e1;
+      transition: background .2s, border-color .2s, color .2s, box-shadow .2s;
+    }
+    .lab3d-stage .stage-btn.go { border-color: rgba(56, 189, 248, .55); background: rgba(14, 116, 144, .3); color: #e0f2fe; }
+    .lab3d-stage .stage-btn.go:hover { background: rgba(14, 116, 144, .46); }
+    .lab3d-stage .stage-btn:disabled { opacity: .45; cursor: not-allowed; }
+    /* 正在振动 —— 绿色发光：这是「该记录数据」的时刻 */
+    .lab3d-stage .stage-btn.ready {
+      border-color: rgba(52, 211, 153, .8); background: rgba(16, 185, 129, .24); color: #d1fae5;
+      box-shadow: 0 0 0 3px rgba(52, 211, 153, .14), 0 0 18px rgba(52, 211, 153, .3);
+    }
+    /* 被按住 —— 红色，和「振动中」的绿一眼分得开 */
+    .lab3d-stage .stage-btn.held {
+      border-color: rgba(248, 113, 113, .85); background: rgba(153, 27, 27, .42); color: #fecaca;
+      box-shadow: 0 0 0 3px rgba(248, 113, 113, .14), 0 0 18px rgba(248, 113, 113, .3);
+    }
+    .lab3d-stage .stage-btn.snd-on {
+      border-color: rgba(251, 191, 36, .85); background: rgba(217, 119, 6, .3); color: #fef3c7;
+      box-shadow: 0 0 0 3px rgba(251, 191, 36, .14), 0 0 18px rgba(251, 191, 36, .3);
+    }
+    .lab3d-stage .stage-help {
+      min-width: 0; pointer-events: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      color: #93b4c4; font-size: 11px; background: rgba(2, 6, 23, .72); padding: 6px 10px; border-radius: 7px;
+    }
+
+    .lab3d-stage .stage-toast {
+      position: absolute; left: 50%; transform: translateX(-50%); bottom: 96px;
+      padding: 8px 14px; border-radius: 10px; font-size: 12px; font-weight: 700;
+      background: rgba(2, 6, 23, .93); border: 1px solid rgba(148, 163, 184, .32); color: #e2e8f0;
+      opacity: 0; transition: opacity .18s; pointer-events: none; white-space: nowrap;
+      max-width: 90%; overflow: hidden; text-overflow: ellipsis;
+    }
+    .lab3d-stage .stage-toast.show { opacity: 1; }
+
+    .lab3d-sidebar { display: flex; flex-direction: column; gap: 11px; min-width: 0; }
+    .panel {
+      border: 1px solid rgba(148, 163, 184, .17); border-radius: 13px;
+      background: rgba(9, 20, 35, .82); padding: 13px 14px;
+    }
+    .panel > h3 {
+      margin: 0 0 10px; font-size: 12px; font-weight: 800; color: #7dd3fc;
+      letter-spacing: .4px; display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    }
+    .panel > h3 .pill {
+      font-size: 10px; font-weight: 800; padding: 2px 8px; border-radius: 99px;
+      background: rgba(148, 163, 184, .18); color: #e2e8f0;
+    }
+    .panel > h3 .pill.live { background: rgba(52, 211, 153, .22); color: #d1fae5; }
+    .panel > h3 .pill.off  { background: rgba(248, 113, 113, .22); color: #fecaca; }
+    .fld { display: block; margin-bottom: 11px; }
+    .fld:last-child { margin-bottom: 0; }
+    .fld .row { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 5px; }
+    .fld .row span { color: #a9c2d2; font-size: 11.5px; }
+    .fld .row b { color: #e2e8f0; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+    .fld .note { margin: 6px 0 0; color: #8aa6b8; font-size: 11px; line-height: 1.55; }
+    input[type=range] { width: 100%; accent-color: #38bdf8; }
+
+    .btn-row { display: flex; flex-wrap: wrap; gap: 7px; }
+    .btn-row button {
+      flex: 1 1 auto; min-width: 0; padding: 9px 11px; border-radius: 9px; cursor: pointer;
+      font-family: inherit; font-size: 12px; font-weight: 800;
+      border: 1px solid rgba(148, 163, 184, .3); background: rgba(30, 41, 59, .7); color: #cbd5e1;
+    }
+    .btn-row button.primary { border-color: rgba(56, 189, 248, .6); background: rgba(14, 116, 144, .42); color: #e0f2fe; }
+    .btn-row button.on { border-color: rgba(52, 211, 153, .65); background: rgba(6, 78, 59, .5); color: #d1fae5; }
+    .btn-row button:disabled { opacity: .45; cursor: not-allowed; }
+    .btn-row button:hover:not(:disabled) { border-color: rgba(125, 211, 252, .7); }
+
+    .readouts { display: flex; flex-direction: column; gap: 5px; color: #a9c2d2; font-size: 11.5px; }
+    .readouts div { display: flex; justify-content: space-between; gap: 8px; }
+    .readouts b { color: #e2e8f0; font-variant-numeric: tabular-nums; }
+    .readouts .dim { color: #7d97a8; }
+    .readouts b.hot { color: #6ee7b7; }
+    .readouts b.cold { color: #fca5a5; }
+
+    /* 振动包络曲线（侧栏小画布） */
+    .env-box {
+      margin-top: 9px; border-radius: 10px; overflow: hidden;
+      border: 1px solid rgba(148, 163, 184, .22); background: rgba(2, 6, 23, .6);
+    }
+    .env-box canvas { display: block; width: 100%; height: 104px; }
+
+    .analysis { color: #c8d8e4; font-size: 11.5px; line-height: 1.75; }
+    .analysis .line { display: flex; justify-content: space-between; gap: 8px; }
+    .analysis .line b { color: #e2e8f0; font-variant-numeric: tabular-nums; }
+    .analysis .conc {
+      margin-top: 9px; padding: 8px 10px; border-radius: 8px; font-size: 11.5px; line-height: 1.65;
+      background: rgba(6, 78, 59, .35); border: 1px solid rgba(52, 211, 153, .4); color: #d1fae5;
+    }
+    .analysis .conc.info { background: rgba(12, 74, 110, .35); border-color: rgba(56, 189, 248, .4); color: #e0f2fe; }
+
+    table.rec { width: 100%; border-collapse: collapse; font-size: 11px; }
+    table.rec th {
+      text-align: left; padding: 5px 4px; color: #7dd3fc; font-weight: 800;
+      border-bottom: 1px solid rgba(148, 163, 184, .25); white-space: nowrap;
+    }
+    table.rec td {
+      padding: 5px 4px; color: #cbd5e1; border-bottom: 1px solid rgba(148, 163, 184, .1);
+      font-variant-numeric: tabular-nums; white-space: nowrap;
+    }
+    table.rec td.dim { color: #4b6474; }
+
+    .info-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; margin-top: 16px; }
+    .info-card {
+      border: 1px solid rgba(148, 163, 184, .16); border-radius: 14px;
+      background: rgba(9, 20, 35, .7); padding: 15px 17px;
+    }
+    .info-card h4 { margin: 0 0 9px; font-size: 13px; color: #7dd3fc; }
+    .info-card ul { margin: 0; padding-left: 17px; color: #a9c2d2; font-size: 12px; line-height: 1.85; }
+    .info-card li b { color: #e2e8f0; }
+    .info-card .fml {
+      display: inline-block; margin: 3px 0; padding: 3px 9px; border-radius: 7px;
+      background: rgba(56, 189, 248, .13); color: #a5f3fc; font-weight: 700;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+
+    @media (max-width: 900px) {
+      .lab3d-layout { grid-template-columns: minmax(0, 1fr); }
+      .lab3d-stage, .lab3d-sidebar, .lab3d-lower { grid-column: 1; grid-row: auto; }
+      .lab3d-stage { height: clamp(340px, 54vh, 500px); }
+      .lab3d-sidebar { border-top: 1px solid rgba(148, 163, 184, .16); padding-top: 12px; }
+      .lab3d-lower { border-top: 1px solid rgba(148, 163, 184, .16); padding-top: 12px; }
+    }
+    @media (max-width: 620px) {
+      body { padding: 14px; }
+      .lab3d h1 { font-size: 16px; }
+      .lab3d-stage { height: 350px; }
+      .lab3d-stage .stage-hint { font-size: 10px; padding: 6px 9px; max-width: 66%; }
+      .lab3d-stage .stage-help { display: none; }
+      .lab3d-stage .stage-btn { padding: 7px 10px; font-size: 11px; gap: 5px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="lab3d">
+    <h1>声音的产生 · 三维转换法实验台</h1>
+    <p class="lab3d-sub">
+      敲响音叉，它能发出很响的声音 —— 可你<b>看得见音叉在振动吗</b>？看不见。
+      音叉叉股一次只来回移动零点几毫米，比头发丝还细。
+      所以物理上要用一个办法：<b>拿一个又轻又小的东西去「探」它</b> ——
+      小球被弹开、纸屑跳起来、水花溅出来，这些<b>看得见的位移</b>就替我们把
+      「<b>看不见的振动</b>」说了出来。这个办法叫<b>转换法</b>。
+    </p>
+    <p class="lab3d-sub" style="margin-top:-9px;">
+      三张卡用三个不同的器材，做的是同一件事。每张卡<b>只改一个量</b>（敲击力度），
+      另外两个量（频率、器材）钉死 —— 这样你才能看清楚<b>到底是谁决定了谁</b>。
+      另外：不管力度多大，音叉的<b>频率始终是 440 Hz</b>，所以<b>音调不变</b>，
+      变的只是响度。
+    </p>
+
+    <div class="lab3d-layout">
+      <div class="lab3d-stage">
+        <canvas id="gt-canvas"></canvas>
+
+        <div class="stage-hint" id="gt-hint"></div>
+        <div class="stage-toast" id="gt-toast"></div>
+
+        <div class="stage-bar">
+          <div class="bar-left">
+            <button type="button" class="stage-btn go" id="gt-strike">敲击</button>
+            <button type="button" class="stage-btn" id="gt-hold">按住</button>
+            <!-- ★ 「记录」必须在舞台上：它和「敲击」是同一个循环里的两步。
+                 侧栏那份（#gt-record）保留 —— 它挨着数据表和「清空」。 -->
+            <button type="button" class="stage-btn" id="gt-record-s" title="振动中才能记录">记录</button>
+            <button type="button" class="stage-btn" id="gt-sound">🔊 声音</button>
+            <button type="button" class="stage-btn" id="gt-reset">重置</button>
+          </div>
+          <div class="stage-help">拖动旋转 · 滚轮缩放</div>
+        </div>
+      </div>
+
+      <div class="lab3d-sidebar">
+        <div class="panel">
+          <h3>器材 <span class="pill" id="gt-mode-pill">音叉 · 泡沫球</span></h3>
+          <div class="btn-row">
+            <button type="button" data-mode="fork" class="on">音叉 + 泡沫球</button>
+            <button type="button" data-mode="drum">鼓面 + 纸屑</button>
+            <button type="button" data-mode="water">音叉 + 水面</button>
+          </div>
+          <p class="note" id="gt-probe-note"></p>
+        </div>
+
+        <div class="panel">
+          <h3>唯一的自变量 <span class="pill" id="gt-snd-pill">振动中</span></h3>
+          <div class="fld">
+            <div class="row"><span>敲击力度</span><b id="gt-hit-num">60 %</b></div>
+            <input type="range" id="gt-hit" min="10" max="100" step="5" value="60">
+          </div>
+          <div class="fld">
+            <div class="row"><span>频率 f（钉死）</span><b>440 Hz</b></div>
+            <input type="range" min="440" max="440" step="1" value="440" disabled>
+          </div>
+          <p class="note">频率滑块是<b>故意锁死</b>的：转换法探究的是「力度 → 振幅 → 响度」，
+            如果把频率也放开，就分不清读数变化是谁引起的了。</p>
+        </div>
+
+        <div class="panel">
+          <h3>读数 <span class="pill" id="gt-live-pill">实时</span></h3>
+          <div class="readouts">
+            <div><span>叉股振幅 A（真实）</span><b id="gt-amp">0.72 mm</b></div>
+            <div><span id="gt-vis-name">小球被弹开</span><b id="gt-vis">4.32 cm</b></div>
+            <div><span>响度级</span><b id="gt-db">70 dB</b></div>
+            <div><span>频率 f</span><b>440 Hz</b></div>
+            <div><span>敲击以来</span><b id="gt-t">0.00 s</b></div>
+          </div>
+          <div class="env-box"><canvas id="gt-env"></canvas></div>
+          <p class="note">曲线是<b>振幅随时间</b>的变化：敲一下之后振动会慢慢衰减，
+            衰减到看不见时声音也就没了 —— 这就是<b>「振动停止，发声也停止」</b>。
+            按「按住」是<b>立刻</b>停，不是慢慢停。</p>
+        </div>
+
+        <div class="panel">
+          <h3>记录数据 <span class="pill" id="gt-rec-pill">0 / 4</span></h3>
+          <div class="btn-row">
+            <button type="button" id="gt-record" class="primary">记录</button>
+            <button type="button" id="gt-clear">清空</button>
+          </div>
+          <div style="overflow-x:auto; margin-top:9px;">
+            <table class="rec">
+              <thead><tr><th>器材</th><th>力度</th><th>振幅</th><th>可见量</th><th>响度</th></tr></thead>
+              <tbody id="gt-rec-body"></tbody>
+            </table>
+          </div>
+          <p class="note" id="gt-rec-note">正在振动时才能记录 —— 停了就没有数据了。</p>
+        </div>
+      </div>
+
+      <div class="lab3d-lower">
+        <div class="panel">
+          <h3>视角</h3>
+          <div class="btn-row">
+            <button type="button" data-view="perspective" class="on">默认</button>
+            <button type="button" data-view="side">侧视</button>
+            <button type="button" data-view="front">正视</button>
+            <button type="button" data-view="top">俯视</button>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h3>播放</h3>
+          <div class="btn-row">
+            <button type="button" id="gt-play" class="on">暂停</button>
+            <button type="button" id="gt-slow" class="on">慢放 1/400</button>
+            <button type="button" id="gt-real">实时</button>
+          </div>
+          <p class="note" style="margin-top:9px;">音叉是 <b>440 Hz</b> —— 每秒来回 440 次，
+            肉眼绝对看不清。所以画面默认<b>慢放 1/400</b>（变成大约每秒 1 次）。
+            真实速度请点「实时」感受一下。</p>
+        </div>
+
+        <div class="panel">
+          <h3>算一算</h3>
+          <div class="analysis" id="gt-analysis"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="info-cards">
+      <div class="info-card">
+        <h4>核心结论：一切发声的物体都在振动</h4>
+        <ul>
+          <li><b>声源</b>就是「正在发声的物体」。音叉、鼓面、声带、扬声器纸盆 …… 它们发声时
+              无一例外<b>都在振动</b>。</li>
+          <li><b>振动停止，发声也停止。</b> 本页按「按住」就是做这件事：手一按住音叉，
+              叉股立刻不动 —— 小球马上落回原位、声音同时消失。<b>不是先停声再停振动，
+              是同一件事</b>。</li>
+          <li>反过来：<b>物体不振动就不发声</b>。所以判断一个东西是不是声源，
+              就看它<b>此刻</b>在不在振动。</li>
+          <li>注意区分：<b>振动停止 = 发声停止</b>，但<b>已经发出的声音还会继续传播</b>
+              （这一点在「声波的形成」那一页里有）。</li>
+        </ul>
+      </div>
+      <div class="info-card">
+        <h4>转换法：把看不见的振动「放大」成看得见的位移</h4>
+        <ul>
+          <li>音叉叉股 440 Hz 时的真实振幅只有 <b>0.1 ~ 1.2 mm</b>，肉眼根本看不见。
+              于是我们请一个<b>又轻又小</b>的「探子」来帮忙。</li>
+          <li>本页三张卡就是三种探子：
+              <b>悬挂泡沫小球</b>（被弹开）、<b>鼓面上的纸屑</b>（跳起来）、
+              <b>水槽里的水面</b>（溅出水花）。</li>
+          <li>它们做的是同一件事：<b>把「叉股/鼓面在振动」这个看不见的事实，
+              变成一个能读数的长度</b>。这就是转换法。</li>
+          <li><span class="fml">可见位移 ∝ 振幅</span>
+              力度越大 → 振幅越大 → 探子被推得越远。所以探子的位移可以<b>当刻度用</b>。</li>
+          <li>转换法的关键要求：探子必须<b>足够轻</b>，否则它自己会拖慢振动，
+              量出来的就不是原来的振动了。</li>
+        </ul>
+      </div>
+      <div class="info-card">
+        <h4>操作指南</h4>
+        <ul>
+          <li>按<b>「敲击」</b>：音叉开始振动，小球被弹开、纸屑跳起或水花溅起。
+              叉股的振动在画面里被<b>放大了约 20 倍</b>才看得见，画面左上角有标注。</li>
+          <li>拖<b>「敲击力度」</b>滑块：<b>只有振幅和读数变，频率不动</b>。
+              看侧栏「可见位移」和「响度级」跟着变，而「频率」那两行纹丝不动。</li>
+          <li>按<b>「按住」</b>：这是本页最重要的一个按钮。按下的瞬间 ——
+              叉股停、小球落、声音消失，三件事<b>同时</b>发生。
+              再按一次「敲击」恢复。</li>
+          <li>看侧栏那条<b>包络曲线</b>：敲一下之后振幅按指数衰减，
+              大约 6 秒后完全静止。这就是<b>声音为什么会自己停</b>。</li>
+          <li>换器材（三张卡）：<b>换的是探子，不是物理</b>。三个读数都和振幅成正比，
+              比例系数不同 —— 因为探子不一样，但被测量的东西是同一个。</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <script>
+  (() => {
+    'use strict';
+
+    const canvas = document.getElementById('gt-canvas');
+    const stage = document.querySelector('.lab3d-stage');
+    if (!canvas || !stage) return;
+    const ctx = canvas.getContext('2d');
+
+    const PI2 = Math.PI * 2;
+    const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
+    const $ = id => document.getElementById(id);
+    /* ★ 舞台控件可能被裁掉 / 改名 —— 取不到时给一个【哑对象】，别让 addEventListener
+     *   或 classList 抛错把整页 JS 打崩。负向对照 N68 实测：删掉「按住」按钮后
+     *   $('gt-hold') 是 null ⇒ 整段绑定抛 TypeError ⇒ window.__gen 根本没设上、页面白屏。
+     *   那是页面不够结实，不是断言该报的事 —— 控件缺失本身仍由 §11 的 S154 负责抓。 */
+    const $opt = id => $(id) || {
+      addEventListener() { }, classList: { toggle() { }, add() { }, remove() { } },
+      set textContent(v) { }, get textContent() { return ''; },
+      set value(v) { }, get value() { return ''; }
+    };
+
+    /* ============================================================
+     * 向量工具（与站内其它三维页同一套约定）
+     * ============================================================ */
+    const add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+    const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+    const scl = (a, k) => [a[0] * k, a[1] * k, a[2] * k];
+    const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+    const vlen = a => Math.hypot(a[0], a[1], a[2]);
+    const vnorm = a => { const l = vlen(a) || 1; return [a[0] / l, a[1] / l, a[2] / l]; };
+
+    /* ============================================================
+     * 常量 —— 整页唯一的真值来源
+     * ------------------------------------------------------------
+     * 画面、读数、包络曲线、记录表、自检全部读这里。抄第二遍的话，
+     * 改一处另一处不跟着变，页面在动而数字对不上。
+     *
+     * ★★ 这一页最难的不是公式，是【可见性预算】。动手前先把数算清楚：
+     *
+     *   ① 音叉真实振幅。440 Hz 音叉叉股单边振幅约 0.1 ~ 1.2 mm。
+     *      取 AMP_MAX_MM = 1.20 mm 为「满力度」的振幅。
+     *      屏幕上直接画 1.2 mm 会不到 1 px —— 这正是【要转换法】的理由。
+     *
+     *   ② 叉股的画面位移必须放大。VIS_K = 0.030 m/mm ⇒ 满力度 0.036 m，
+     *      相对 1.20 mm 真实值放大【30 倍】。放大倍数由
+     *      VIS_K × 1000 直接算出（0.030 × 1000 = 30），不写第二个常量。
+     *      画面左上角必须标注这个倍数 —— 否则学生会以为音叉真的在晃 3.6 cm。
+     *
+     *   ③ 三个「探子」的可见位移都要落在【屏幕上 25 ~ 90 px】这段窗口：
+     *      太小看不见（等于没转换），太大就变成「探子自己在动」而不是
+     *      「探子在报告振幅」。以满力度、实测 focal ≈ 1327 px/m、物体深度 z ≈ 2.5 估算：
+     *        · 小球：BALL_K 9.0 cm/mm × 1.2 mm = 10.8 cm = 0.108 m → 57 px ✓
+     *        · 纸屑：CHIP_K 12 mm/mm × 0.90 mm = 10.8 mm = 0.0108 m → 5.7 px ✗
+     *          ⇒ 真实跳高在屏幕上太浅，再乘 CHIP_VIS_K = 3.2 → 18 px ✓
+     *        · 水花：SPLASH_K 5.0 cm/mm × 1.2 mm = 6.0 cm = 0.060 m → 32 px ✓
+     *      叉股本身：VIS_K 0.030 × 1.2 mm = 0.036 m → 19 px ✓（够看出「在开合」）
+     *
+     *   ④ ★ 小球与叉股【不会互相穿模】这条是算出来的，不是调出来的：
+     *      小球静止时球心取在「刚好碰到叉股外缘」，即
+     *        BALL_X0 = FORK_PX + FORK_W/2 + BALL_R
+     *      之后叉股外缘最远到 FORK_PX+FORK_W/2 + VIS_K·A，
+     *      小球左缘到 BALL_X0 + BALL_K/100·A − BALL_R。
+     *      要小球永远跑在前面，只需 BALL_K/100 ≥ VIS_K，即 0.090 ≥ 0.030 ✓。
+     *      所以振幅越大、小球被推得越远 —— 画面读起来就是「叉股一撞，小球就飞出去」。
+     *
+     *   ⑤ 鼓面中心下陷 DRUM_H_MAX = 0.90 mm 是【真实尺度】，
+     *      而纸屑跳起是【被弹飞】—— 跳得比鼓面位移大一个量级是物理上对的
+     *      （像跳板把人弹起来）。所以纸屑的「真实跳高」用 CHIP_K = 12 倍，
+     *      屏幕上再乘 CHIP_VIS_K 放大，两件事分开写，注释里说清楚。
+     *
+     *   ⑥ 慢放倍数：440 Hz 直接看就是一片模糊。SLOW_N = 400 ⇒
+     *      视觉频率 440/400 = 1.10 Hz，大约每秒一个来回，正好看得清。
+     * ============================================================ */
+    const F_TINE = 440;                 // Hz —— 三张卡共用的【钉死量】
+    const AMP_MAX_MM = 1.20;            // 满力度时叉股单边振幅（真实值）mm
+    const VIS_K = 0.030;                // m per mm —— 画面把叉股振动放大约 30 倍
+    const BALL_K = 9.0;                 // 小球被弹开距离 cm ÷ 振幅 mm
+    const DRUM_H_MAX = 0.90;            // 鼓面中心满力度下陷（真实值）mm
+    const CHIP_K = 12.0;                // 纸屑跳起高度 mm ÷ 鼓面中心下陷 mm
+    const CHIP_VIS_K = 3.2;             // 纸屑画面位移再放大（真实跳高在屏幕上只有 5.7 px）
+    const SPLASH_K = 5.0;               // 水花高度 cm ÷ 振幅 mm
+    const DB_LO = 40, DB_HI = 90;       // 响度级区间 dB
+
+    const HIT_MIN = 0.10, HIT_MAX = 1.00, HIT_DEF = 0.60, HIT_STEP = 0.05;
+    const TAU_DECAY = 0.90;             // 敲一下之后的衰减时间常数 s
+    const TAU_STOP = TAU_DECAY * 6.9;   // 衰减到 1e-3 以下 ⇒ 判定「完全停止」
+    const SLOW_N = 400;                 // 慢放 1/400
+    const SLOW_R = 1 / SLOW_N;
+
+    /* 器材几何（世界单位 m）。三个模式的【最高点】都压在 0.60 以内 ——
+     * ENV.y1 是取景的硬约束，竖直方向多留 0.1 m，屏幕上所有器材就小一圈。 */
+    const FORK_PX = 0.048;              // 叉股中心线离轴距离
+    const FORK_W = 0.024, FORK_T = 0.020;   // 叉股截面
+    const FORK_Y0 = 0.28, FORK_Y1 = 0.54;   // 叉股下端 / 上端
+    const STEM_W = 0.028, STEM_Y0 = 0.03, STEM_Y1 = 0.29;
+    const BASE_W = 0.11, BASE_H = 0.03;
+    const BALL_R = 0.021;
+    /* ★ 静止时小球【刚好碰到】叉股外缘 —— 这样「一敲就飞出去」的因果读得出来。
+     *   且 BALL_K/100 (0.090) ≥ VIS_K (0.030)，所以振幅再大也不会穿模。 */
+    const BALL_X0 = FORK_PX + FORK_W / 2 + BALL_R;   // 小球静止时的球心 x
+    const BALL_Y = 0.42;
+    const POST_X = 0.28, POST_Z = 0, POST_Y1 = 0.58;
+    const ARM_Y = 0.56;
+
+    const DRUM_R = 0.19, DRUM_H = 0.15, DRUM_Y = 0.15;
+    const DRUM_RIM_R = DRUM_R + 0.012;  // 鼓圈半径（比鼓身粗一圈）
+    const CHIP_SIZE = 0.011;            // 一片纸屑的半边长
+
+    const TANK_X = 0.22, TANK_Z = 0.15, TANK_H = 0.22, WATER_Y = 0.14;
+    const WALL_T = 0.012;               // 玻璃壁厚
+    /* 支架的杆宽 / 底座宽 —— drawPost 与 modeBox 共用同一份，
+     * 免得「画出去的」与「自检以为的」两套数（本站踩过这种不一致）。 */
+    const POST_W = 0.030, POST_BASE_W = 0.070;
+    const WFORK_Y0 = 0.08, WFORK_Y1 = 0.34;   // 倒立音叉的叉股下端 / 上端
+    const WSTEM_Y0 = 0.34, WSTEM_Y1 = 0.52;
+    const WPOST_X = 0.28;
+
+    /* 取景 —— 三个模式【共用同一个包络】。
+     * ★ 不按模式分别取景：切模式时相机一动不动，视觉上才稳；
+     *   而且「包络必须覆盖所有模式」这条要求，共用包络是【结构上】满足的，
+     *   不是靠调参数凑出来的。自检里仍然逐模式核对几何是否落在包络盒内。
+     * ★ 盒子必须【贴着实物】。实测原来 x 向多留了 0.29 m 空白、
+     *   y 向多留 0.12 m，取景被高度卡住，所有器材整体小了一圈 ——
+     *   而俯仰角会把 x 向的富余「折进」竖直方向，两个方向一起放大。 */
+    const ENV = { x0: -0.24, x1: 0.33, y0: 0, y1: 0.62, z0: -0.22, z1: 0.22 };
+    const CAMD_K = 1.85;
+
+    const VIEWS = {
+      perspective: [-0.62, 0.30],
+      side:        [0.00, 0.06],
+      front:       [-1.57, 0.14],
+      top:         [-0.62, 1.08]
+    };
+
+    const MODES = ['fork', 'drum', 'water'];
+    const MODE_NAME = { fork: '音叉 · 泡沫球', drum: '鼓面 · 纸屑', water: '音叉 · 水面' };
+    const MODE_PROBE = {
+      fork: '探子是【悬挂的泡沫小球】—— 它又轻又软，被叉股一碰就弹开，几乎不拖慢音叉。',
+      drum: '探子是【鼓面上的纸屑】—— 纸屑跳起来就说明鼓面在振动。注意看：越靠鼓心跳得越高。',
+      water: '探子是【水面】—— 叉股反复击水，水花溅起多高，就说明叉股振得多厉害。'
+    };
+    const MODE_VISNAME = { fork: '小球被弹开', drum: '纸屑跳起', water: '水花溅起' };
+    const MODE_UNIT = { fork: 'cm', drum: 'mm', water: 'cm' };
+
+    const state = {
+      yaw: VIEWS.perspective[0], pitch: VIEWS.perspective[1], zoom: 1,
+      mode: 'fork',
+      hit: HIT_DEF,                     // 唯一的自变量：敲击力度
+      strikeT: -1,                      // 敲击以来的物理时间 s；<0 = 没在振动
+      held: false,                      // 被手指按住
+      phase: 0,                         // 叉股振动相位（【累加】，不重算）
+      playing: true,                    // 画面是否推进
+      slow: true,
+      everHeard: false,
+      w: 1, h: 1, dpr: 0, dirty: true,
+      dragging: false, dragYaw: 0, dragPitch: 0, downAt: null,
+      view: 'perspective',
+      drawn: {}
+    };
+
+    /* ============================================================
+     * 物理（全部纯函数 —— 渲染 / 读数 / 曲线 / 记录 / 自检共用同一份）
+     * ============================================================ */
+    const freq = () => F_TINE;                     // 钉死
+    const ampFullMm = () => AMP_MAX_MM * state.hit;  // 刚敲下那一刻的振幅 mm
+    /* 衰减包络：0 = 完全静止。held 直接把它钉到 0 ——「按住」是【立刻】停。 */
+    function envOf() {
+      if (state.held) return 0;
+      if (state.strikeT < 0) return 0;
+      return Math.exp(-state.strikeT / TAU_DECAY);
+    }
+    const ampMm = () => ampFullMm() * envOf();      // 此刻振幅 mm
+    const forkDispM = () => VIS_K * ampMm();        // 叉股此刻的画面位移 m
+    const visScale = () => VIS_K * 1000;            // 画面放大倍数（= 20）
+
+    /* 三个探子。★ 三个都【正比于振幅】—— 这正是「转换」这件事的内容：
+     *   被测量是同一个（振幅），只是三个探子的刻度不同。 */
+    const ballCm = () => BALL_K * ampMm();
+    const drumDipFullMm = () => DRUM_H_MAX * state.hit;
+    const drumDipMm = () => drumDipFullMm() * envOf();       // 鼓面中心此刻下陷 mm
+    /* 鼓面沿半径的振幅分布：中心最大、边缘为 0（鼓面边缘被鼓圈卡住） */
+    const drumModeU = u => Math.cos(Math.PI * 0.5 * clamp(u, 0, 1));
+    const chipMm = () => CHIP_K * drumDipMm();               // 纸屑跳起高度 mm（真实）
+    const splashCm = () => SPLASH_K * ampMm();
+    const visibleVal = () => state.mode === 'drum' ? chipMm()
+                           : state.mode === 'water' ? splashCm() : ballCm();
+    const visibleUnit = () => MODE_UNIT[state.mode];
+    const visibleName = () => MODE_VISNAME[state.mode];
+    const sounding = () => envOf() > 1e-3;
+    /* 响度级：正比于「此刻振幅 / 满振幅」，线性映射到 40 ~ 90 dB。
+     * ★ 用 hit × envOf() 而不是 ampMm()/AMP_MAX_MM —— 两者数值相同，
+     *   但前者不依赖「AMP_MAX_MM 恰好是满力度振幅」这个隐含前提。 */
+    const dbNow = () => sounding() ? DB_LO + (DB_HI - DB_LO) * state.hit * envOf() : 0;
+
+    /* ============================================================
+     * 取景几何
+     * ============================================================ */
+    function envPoints() {
+      const E = ENV, out = [];
+      for (const x of [E.x0, E.x1]) for (const y of [E.y0, E.y1]) for (const z of [E.z0, E.z1]) out.push([x, y, z]);
+      return out;   // 8 个角
+    }
+    /* 每个模式【实际用到的】几何包围盒 —— 自检拿它核对「被 ENV 装得下」。
+     * ★ 这不是自指：ENV 是取景用的常量，这里是【画出来的东西】的范围，
+     *   两边是各自独立写出来的，改坏任一个都会让断言变红。
+     * ★★ 名字必须避开 envOf()（衰减包络）—— 本站踩过：两个同名函数声明，
+     *    后声明的把先声明的整个顶掉，envOf() 变成返回一个对象，
+     *    于是 ampFullMm() * 对象 = NaN，画布直接白屏。 */
+    function modeBox(mode) {
+      const m = mode || state.mode;
+      /* 竖直杆件（支架杆 / 底座 / 叉股 / 立柱）的最大半厚 —— 用来定 z 向边界。
+       * 取最大值而不是逐个模式写死，改任何一根杆的粗细这里都跟着走。 */
+      const zPad = Math.max(POST_W, POST_BASE_W, STEM_W, FORK_W, FORK_T, BASE_W) / 2;
+      if (m === 'drum') {
+        /* 纸屑会被弹到鼓面之上：鼓面中心下陷最多 DRUM_H_MAX，
+         * 纸屑真实跳高 CHIP_K 倍、画面再乘 CHIP_VIS_K ⇒ 上界必须把它算进去，
+         * 否则「画出来的东西」真的会顶出这个盒子（不是留余量，是漏算了）。 */
+        const chipTop = CHIP_K * DRUM_H_MAX / 1000 * CHIP_VIS_K + CHIP_SIZE;
+        return { x0: -DRUM_RIM_R, x1: DRUM_RIM_R, y0: 0, y1: DRUM_Y + chipTop,
+                 z0: -DRUM_RIM_R, z1: DRUM_RIM_R };
+      }
+      if (m === 'water') {
+        const x1 = Math.max(WPOST_X + POST_BASE_W / 2, TANK_X + WALL_T);
+        return { x0: -(TANK_X + WALL_T), x1: x1, y0: 0, y1: WSTEM_Y1 + 0.02,
+                 z0: -(TANK_Z + WALL_T), z1: TANK_Z + WALL_T };
+      }
+      /* 音叉卡：左边界取「叉股最左 + 画面放大位移」，右边界取支架底座 ——
+       * ★ 不写成 Math.min(-0.06, ENV.x0)，那等于把 ENV 抄进来，断言就成了自指。 */
+      return { x0: -(FORK_PX + FORK_W / 2 + VIS_K * AMP_MAX_MM),
+               x1: POST_X + POST_BASE_W / 2,
+               y0: 0, y1: POST_Y1,
+               z0: -zPad, z1: zPad };
+    }
+
+    function makeCam(q, w, h) {
+      const cy = Math.cos(state.yaw), sy = Math.sin(state.yaw);
+      const cp = Math.cos(state.pitch), sp = Math.sin(state.pitch);
+      const dir = [cp * sy, sp, cp * cy];
+      const target = [0.5 * (ENV.x0 + ENV.x1), 0.42, 0];
+      q.dist = CAMD_K / state.zoom;
+      q.eye = add(target, scl(dir, q.dist));
+      q.fwd = scl(dir, -1);
+      q.right = vnorm(cross(q.fwd, [0, 1, 0]));
+      q.up = cross(q.right, q.fwd);
+      const pts = envPoints();
+      let loR = 1e9, hiR = -1e9, loU = 1e9, hiU = -1e9;
+      for (const p of pts) {
+        const v = sub(p, q.eye);
+        const z = Math.max(0.05, dot(v, q.fwd));
+        const r = dot(v, q.right) / z, u = dot(v, q.up) / z;
+        loR = Math.min(loR, r); hiR = Math.max(hiR, r);
+        loU = Math.min(loU, u); hiU = Math.max(hiU, u);
+      }
+      const s = Math.min(w * 0.94 / Math.max(1e-6, hiR - loR),
+                         h * 0.90 / Math.max(1e-6, hiU - loU));
+      q.focal = s;
+      q.px = w * 0.5 - (loR + hiR) * 0.5 * s;
+      q.py = h * 0.5 + (loU + hiU) * 0.5 * s;
+      return q;
+    }
+    function project(p, q) {
+      const v = sub(p, q.eye);
+      const z = Math.max(0.05, dot(v, q.fwd));
+      const s = q.focal / z;
+      return { x: q.px + dot(v, q.right) * s, y: q.py - dot(v, q.up) * s, s: s, z: z };
+    }
+
+    /* ============================================================
+     * 绘图小工具
+     * ============================================================ */
+    function polyPath(pts) {
+      ctx.beginPath();
+      pts.forEach((p, k) => k ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+      ctx.closePath();
+    }
+    function poly(pts, fill, stroke, lw) {
+      if (!pts || pts.length < 2) return;
+      polyPath(pts);
+      if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+      if (stroke) { ctx.lineWidth = lw || 1; ctx.strokeStyle = stroke; ctx.stroke(); }
+    }
+    function line(pts, color, lw, dash) {
+      if (!pts || pts.length < 2) return;
+      ctx.beginPath();
+      pts.forEach((p, k) => k ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+      ctx.setLineDash(dash || []);
+      ctx.lineWidth = lw; ctx.strokeStyle = color; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+      ctx.stroke(); ctx.setLineDash([]);
+    }
+    function dot2(p, r, fill, stroke, lw) {
+      if (r <= 0.2) return;
+      ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, PI2);
+      if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+      if (stroke) { ctx.lineWidth = lw || 1; ctx.strokeStyle = stroke; ctx.stroke(); }
+    }
+
+    /* ------------------------------------------------------------
+     * 长方体：8 个角投影后按【画家算法】画面（远 → 近）。
+     * 面法线 · 光照方向 决定明暗 —— 三个模式共用这一套，
+     * 免得每个器材各写一份「伪 3D」而亮度规则互相打架。
+     * ------------------------------------------------------------ */
+    const LIGHT = vnorm([-0.42, 0.80, 0.58]);
+    const BOX_FACES = [
+      { n: [-1, 0, 0], idx: [0, 1, 3, 2] },
+      { n: [1, 0, 0], idx: [4, 5, 7, 6] },
+      { n: [0, -1, 0], idx: [0, 1, 5, 4] },
+      { n: [0, 1, 0], idx: [2, 3, 7, 6] },
+      { n: [0, 0, -1], idx: [0, 2, 6, 4] },
+      { n: [0, 0, 1], idx: [1, 3, 7, 5] }
+    ];
+    function boxCorners(c, s) {
+      const out = [];
+      for (const dx of [-1, 1]) for (const dy of [-1, 1]) for (const dz of [-1, 1]) {
+        out.push([c[0] + dx * s[0] / 2, c[1] + dy * s[1] / 2, c[2] + dz * s[2] / 2]);
+      }
+      return out;
+    }
+    function shade(rgb, k, a) {
+      const r = Math.round(clamp(rgb[0] * k, 0, 255)),
+            g = Math.round(clamp(rgb[1] * k, 0, 255)),
+            b = Math.round(clamp(rgb[2] * k, 0, 255));
+      return a === undefined ? 'rgb(' + r + ',' + g + ',' + b + ')'
+                             : 'rgba(' + r + ',' + g + ',' + b + ',' + a + ')';
+    }
+    /* c = 中心，s = [sx,sy,sz]，rgb = 基色。返回屏幕 AABB（给避让/自检用）。
+     * 每个面加一道极暗的棱线 —— 没有它，相邻面亮度接近时整个器材糊成一团。 */
+    function drawBox(q, c, s, rgb, edgeCol, alpha) {
+      const corners = boxCorners(c, s);
+      const proj = corners.map(p => project(p, q));
+      const faces = BOX_FACES.map(f => {
+        const mid = scl(f.idx.reduce((a, i) => add(a, corners[i]), [0, 0, 0]), 1 / 4);
+        const lit = 0.46 + 0.62 * Math.max(0, dot(f.n, LIGHT));
+        return { f: f, mid: mid, k: lit, d: vlen(sub(mid, q.eye)) };
+      }).sort((a, b) => b.d - a.d);
+      for (const it of faces) {
+        const pts = it.f.idx.map(i => proj[i]);
+        poly(pts, shade(rgb, it.k, alpha), edgeCol === null ? null : (edgeCol || 'rgba(2,6,23,.34)'), 1);
+      }
+      let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+      for (const p of proj) { x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y); x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y); }
+      return { x: x0, y: y0, w: x1 - x0, h: y1 - y0, cx: (x0 + x1) / 2, cy: (y0 + y1) / 2 };
+    }
+    /* 地面软阴影：物体正下方压一个椭圆。纯装饰，但少了它器材像浮在空中。 */
+    function drawShadow(q, cx, cz, rx, rz, alpha) {
+      const N = 28, pts = [];
+      for (let i = 0; i < N; i++) {
+        const a = PI2 * i / N;
+        pts.push(project([cx + rx * Math.cos(a), 0.0015, cz + rz * Math.sin(a)], q));
+      }
+      poly(pts, 'rgba(2,6,23,' + (alpha || 0.34) + ')', null, 0);
+    }
+    /* 在 x-z 平面上画一个圆（椭圆的投影），用于鼓面 / 水面 */
+    function circlePts(q, cx, cz, r, yFn, n) {
+      const out = [];
+      const N = n || 48;
+      for (let i = 0; i < N; i++) {
+        const a = PI2 * i / N;
+        out.push(project([cx + r * Math.cos(a), yFn(r), cz + r * Math.sin(a)], q));
+      }
+      return out;
+    }
+    /* 圆柱：侧面按深度排序逐片画（画家算法），顶/底面由调用者另画。
+     * ★ 鼓身【必须是圆柱】—— 拿长方体当鼓身，鼓面那个圆就变成「方盒里
+     *   嵌一个圆」，一眼就不是鼓。 */
+    function drawCylinder(q, cx, cz, r, y0, y1, rgb, segs) {
+      const N = segs || 40;
+      const quads = [];
+      for (let i = 0; i < N; i++) {
+        const a0 = PI2 * i / N, a1 = PI2 * (i + 1) / N;
+        const x0 = cx + r * Math.cos(a0), z0 = cz + r * Math.sin(a0);
+        const x1 = cx + r * Math.cos(a1), z1 = cz + r * Math.sin(a1);
+        const mx = (x0 + x1) / 2, mz = (z0 + z1) / 2;
+        const nrm = vnorm([mx - cx, 0, mz - cz]);
+        quads.push({
+          pts: [[x0, y1, z0], [x1, y1, z1], [x1, y0, z1], [x0, y0, z0]],
+          k: 0.46 + 0.62 * Math.max(0, dot(nrm, LIGHT)),
+          d: vlen(sub([mx, (y0 + y1) / 2, mz], q.eye))
+        });
+      }
+      quads.sort((a, b) => b.d - a.d);
+      let xa = 1e9, ya = 1e9, xb = -1e9, yb = -1e9;
+      for (const it of quads) {
+        const pts = it.pts.map(p => project(p, q));
+        poly(pts, shade(rgb, it.k), null, 0);
+        for (const p of pts) { xa = Math.min(xa, p.x); ya = Math.min(ya, p.y); xb = Math.max(xb, p.x); yb = Math.max(yb, p.y); }
+      }
+      return { x: xa, y: ya, w: xb - xa, h: yb - ya, cx: (xa + xb) / 2, cy: (ya + yb) / 2 };
+    }
+
+    /* ============================================================
+     * 标签（带避让）—— 与站内其它三维页同一套
+     * ============================================================ */
+    let frameBoxes = [];
+    let frameSolids = [];
+    function labelBox(p, text, size, align) {
+      ctx.font = '800 ' + size + 'px Inter, "Microsoft YaHei", sans-serif';
+      const wpx = ctx.measureText(text).width;
+      const pad = 4;
+      const half = size * 0.72 + pad * 0.5;
+      const wBox = wpx + pad * 2;
+      const EDGE = 8;
+      const y = clamp(p.y, half + EDGE, Math.max(half + EDGE, state.h - half - EDGE));
+      let bx = align === 'left' ? p.x - 4 - pad
+             : align === 'right' ? p.x + 4 - wpx - pad
+             : p.x - wpx / 2 - pad;
+      bx = clamp(bx, EDGE, Math.max(EDGE, state.w - wBox - EDGE));
+      return { x: bx, y: y - half, w: wBox, h: half * 2, cx: bx + wBox / 2, cy: y };
+    }
+    function label(p, text, color, size, align) {
+      ctx.font = '800 ' + size + 'px Inter, "Microsoft YaHei", sans-serif';
+      ctx.textAlign = align || 'center';
+      ctx.textBaseline = 'middle';
+      const pad = 4;
+      const wpx = ctx.measureText(text).width;
+      const b = labelBox(p, text, size, align);
+      const x = align === 'left' ? b.x + pad : align === 'right' ? b.x + wpx + pad : b.cx;
+      ctx.fillStyle = 'rgba(2,6,23,.76)';
+      ctx.fillRect(b.x, b.y, b.w, b.h);
+      ctx.fillStyle = color;
+      ctx.fillText(text, x, b.cy);
+      frameBoxes.push(b);
+      if (state.drawn) {
+        (state.drawn.labels || (state.drawn.labels = [])).push({ text: text, box: b });
+      }
+      return b;
+    }
+    function bestLabel(anchor, text, color, size, offs) {
+      let best = null, bestOv = 1e18;
+      for (const o of offs) {
+        const b = labelBox({ x: anchor.x + o[0], y: anchor.y + o[1] }, text, size, 'center');
+        let ov = 0;
+        for (const q of frameBoxes.concat(frameSolids)) {
+          const ox = Math.min(b.x + b.w, q.x + q.w) - Math.max(b.x, q.x);
+          const oy = Math.min(b.y + b.h, q.y + q.h) - Math.max(b.y, q.y);
+          if (ox > 0 && oy > 0) ov += ox * oy;
+        }
+        if (ov < bestOv) { bestOv = ov; best = { x: anchor.x + o[0], y: anchor.y + o[1] }; }
+      }
+      label(best, text, color, size, 'center');
+      return bestOv;
+    }
+    const AVOID = [[0, 0], [0, -16], [0, 16], [0, -32], [0, 32],
+                   [-52, -16], [52, -16], [-52, 16], [52, 16], [0, -48], [0, 48]];
+    const AVOID_NARROW = [[0, 0], [0, -20], [0, 20], [0, -42], [0, 42], [0, -64], [0, 64],
+                          [0, -86], [0, 86], [-72, -20], [72, -20], [-72, 20], [72, 20],
+                          [-72, -42], [72, -42], [-72, 42], [72, 42]];
+    const avoidLabel = (anchor, text, color, size) =>
+      bestLabel(anchor, text, color, size, state.w < 620 ? AVOID_NARROW : AVOID);
+
+    /* ============================================================
+     * 场景绘制
+     * ============================================================ */
+    function drawBackdrop(w, h) {
+      const g = ctx.createLinearGradient(0, 0, 0, h);
+      g.addColorStop(0, '#04101f');
+      g.addColorStop(0.55, '#020a15');
+      g.addColorStop(1, '#01050c');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, w, h);
+      const rg = ctx.createRadialGradient(w * 0.44, h * 0.42, 10, w * 0.44, h * 0.42, Math.max(w, h) * 0.72);
+      rg.addColorStop(0, 'rgba(56,120,180,.10)');
+      rg.addColorStop(1, 'rgba(2,6,23,0)');
+      ctx.fillStyle = rg;
+      ctx.fillRect(0, 0, w, h);
+    }
+
+    function drawGround(q) {
+      const c = [
+        [ENV.x0 - 0.06, 0, ENV.z0 * 1.7], [ENV.x1 + 0.06, 0, ENV.z0 * 1.7],
+        [ENV.x1 + 0.06, 0, ENV.z1 * 1.7], [ENV.x0 - 0.06, 0, ENV.z1 * 1.7]
+      ].map(p => project(p, q));
+      poly(c, 'rgba(15,32,54,.72)', 'rgba(56,120,180,.20)', 1);
+    }
+
+    /* 音叉：正立 / 倒立共用。dip = 叉股此刻的画面位移（带正负号）。
+     * ★ 叉股位移只作用在【两根叉股的 x 中心】上 —— 柄和底座不动，
+     *   这样「放大的只有振动」这件事在画面上是看得出来的。 */
+    function drawTine(q, opts) {
+      const o = opts || {};
+      const y0 = o.y0 !== undefined ? o.y0 : FORK_Y0;
+      const y1 = o.y1 !== undefined ? o.y1 : FORK_Y1;
+      const sy0 = o.stemY0 !== undefined ? o.stemY0 : STEM_Y0;
+      const sy1 = o.stemY1 !== undefined ? o.stemY1 : STEM_Y1;
+      const d = o.disp || 0;
+      const cols = { steel: [176, 190, 205], stem: [150, 164, 180] };
+      const boxes = [];
+      /* 底座（只在正立时画） */
+      if (!o.flip) {
+        boxes.push(drawBox(q, [0, BASE_H / 2, 0], [BASE_W, BASE_H, BASE_W], [92, 106, 124]));
+      }
+      /* 柄 */
+      boxes.push(drawBox(q, [0, (sy0 + sy1) / 2, 0], [STEM_W, sy1 - sy0, STEM_W], cols.stem));
+      /* U 形底横梁 */
+      const barY = o.flip ? y1 : y0;
+      boxes.push(drawBox(q, [0, barY + (o.flip ? -0.012 : 0.012), 0],
+                         [2 * FORK_PX + FORK_W, 0.026, FORK_T], cols.steel));
+      /* 两根叉股 —— 位移在这里。
+       * ★★ 两股必须【反向】移动（一根往外、另一根往里）：音叉基频是一个
+       *    【反对称】模态，两股同时张开、同时合拢。写成同向（都 +d）画面
+       *    看着「也在动」，但那是整体平动，不是音叉的振动 —— 而且柄会跟着抖。 */
+      const tineBoxes = [];
+      const prongX = [];                     // 两根叉股【画出来的】屏幕中心 x（自检用）
+      for (const s of [-1, 1]) {
+        const bx = drawBox(q, [s * (FORK_PX + d), (y0 + y1) / 2, 0],
+                           [FORK_W, y1 - y0, FORK_T], cols.steel);
+        tineBoxes.push(bx);
+        /* ★ 取【盒子本身】的中心，不另写一遍 project(s*(FORK_PX+d)) ——
+         *   另写一遍的话，改了画盒子的那行、这里却纹丝不动，自检就成了自指。 */
+        prongX.push(bx.x + bx.w / 2);
+      }
+      const mid = project([0, (y0 + y1) / 2, 0], q);
+      return { boxes: boxes.concat(tineBoxes), tineX: mid.x, tineY: mid.y, disp: d,
+               prongX: prongX };
+    }
+
+    /* 悬挂泡沫小球：静止位置 + 弹开位移。★ 小球【不跟着振动抖】——
+     *   它是被弹开的，所以只用一个位置表示「被推出去多远」。 */
+    function drawBall(q) {
+      const off = BALL_K / 100 * ampMm();          // cm → m
+      const cx = BALL_X0 + off;
+      const c = project([cx, BALL_Y, 0], q);
+      const r0 = project([BALL_X0, BALL_Y, 0], q);
+      const rp = Math.max(6, BALL_R * (c.s + r0.s) / 2);
+      /* 细线：从横臂垂到球心 */
+      const top = project([cx, ARM_Y, 0], q);
+      line([top, c], 'rgba(226,232,240,.78)', 1.5);
+      /* 静止位置的虚影 —— 学生一眼看出「被推开了多远」 */
+      const gh = project([BALL_X0, BALL_Y, 0], q);
+      ctx.save();
+      ctx.setLineDash([4, 4]);
+      ctx.strokeStyle = 'rgba(148,163,184,.45)'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.arc(gh.x, gh.y, rp, 0, PI2); ctx.stroke();
+      ctx.restore();
+      /* 位移标注 */
+      if (off > 1e-4) {
+        const a = project([BALL_X0, BALL_Y - BALL_R - 0.022, 0], q);
+        const b = project([cx, BALL_Y - BALL_R - 0.022, 0], q);
+        line([a, b], 'rgba(110,231,183,.85)', 1.6);
+      }
+      /* 球体：径向渐变 */
+      const g = ctx.createRadialGradient(c.x - rp * 0.34, c.y - rp * 0.36, rp * 0.08, c.x, c.y, rp);
+      g.addColorStop(0, '#ffffff');
+      g.addColorStop(0.36, '#f1f5f9');
+      g.addColorStop(1, '#94a3b8');
+      dot2(c, rp, g, 'rgba(15,23,42,.5)', 1);
+      return { x: c.x, y: c.y, r: rp, off: off, ghostX: gh.x, ghostY: gh.y };
+    }
+
+    function drawPost(q, x, z, yTop, armToX, armY) {
+      const out = [];
+      out.push(drawBox(q, [x, yTop / 2, z], [POST_W, yTop, POST_W], [88, 100, 116]));
+      out.push(drawBox(q, [x, 0.012, z], [POST_BASE_W, 0.024, POST_BASE_W], [78, 90, 106]));
+      if (armToX !== undefined) {
+        const cx = (x + armToX) / 2, len = Math.abs(x - armToX);
+        out.push(drawBox(q, [cx, armY, z], [len, 0.020, 0.020], [96, 110, 126]));
+      }
+      return out;
+    }
+
+    /* 鼓：圆柱鼓身 + 变形的鼓面 + 纸屑 */
+    function drawDrum(q) {
+      const boxes = [];
+      boxes.push(drawCylinder(q, 0, 0, DRUM_R, 0.008, DRUM_H, [124, 74, 52]));
+      /* 鼓圈：比鼓身略粗一圈的金属环 */
+      boxes.push(drawCylinder(q, 0, 0, DRUM_RIM_R, DRUM_H, DRUM_H + 0.016, [92, 108, 126]));
+      /* 鼓面：中心下陷。★ 0.9 mm 的下陷在屏幕上不到 1 px，光描个轮廓等于没画 ——
+       *   改用【等值线 + 亮度】把「中间陷得最深」这件事画出来：
+       *   从外到内逐层填色，越靠中心越亮，读起来就是一张下陷的热力图。 */
+      const surfY = r => DRUM_Y - drumDipMm() / 1000 * drumModeU(r / DRUM_R);
+      const rim = circlePts(q, 0, 0, DRUM_R, surfY, 56);
+      poly(rim, 'rgba(203,213,225,.20)', 'rgba(226,232,240,.85)', 1.6);
+      for (let k = 3; k >= 1; k--) {
+        const rr = DRUM_R * k / 3;
+        const dep = drumDipMm() * drumModeU(k / 3);
+        const t = clamp(dep / Math.max(1e-6, DRUM_H_MAX), 0, 1);
+        poly(circlePts(q, 0, 0, rr, surfY, 44),
+             'rgba(125,211,252,' + (0.05 + 0.17 * t).toFixed(3) + ')',
+             'rgba(148,163,184,' + (0.32 + 0.5 * t).toFixed(3) + ')', 1.1);
+      }
+      /* 纸屑：撒在鼓面上的小纸片（扁四边形，不是圆球 —— 圆球看着像乒乓球） */
+      const chips = [];
+      const CHIP_POS = [
+        [0.00, 0.00], [0.34, 0.30], [0.34, 2.40], [0.68, 0.90], [0.68, 2.30], [0.68, 4.10],
+        [0.94, 0.30], [0.94, 2.60], [0.94, 4.70]
+      ];
+      const CS = CHIP_SIZE;
+      for (const cp of CHIP_POS) {
+        const u = cp[0];
+        const r = u * DRUM_R;
+        const a = cp[1];
+        const jump = CHIP_K * drumDipMm() * drumModeU(u) / 1000 * CHIP_VIS_K;
+        const px = r * Math.cos(a), pz = r * Math.sin(a);
+        const py = surfY(r) + jump;
+        const quad = [[-CS, -CS * 0.62], [CS, -CS * 0.62], [CS, CS * 0.62], [-CS, CS * 0.62]]
+          .map(o => project([px + o[0], py, pz + o[1]], q));
+        poly(quad, 'rgba(250,240,214,.95)', 'rgba(120,100,60,.55)', 0.7);
+        let mx = 0, my = 0;
+        for (const p of quad) { mx += p.x; my += p.y; }
+        chips.push({ x: mx / 4, y: my / 4, r: CS * quad[0].s, u: u, jump: jump });
+      }
+      return { boxes: boxes, chips: chips, surfY: surfY };
+    }
+
+    /* 水槽 —— 拆成「后壳 / 前壳」两半，中间夹着音叉与水面。
+     * ★ 玻璃壁是不透明的长方体，如果整槽一次画完再把音叉画上去，
+     *   叉股就永远浮在【前面的玻璃】之上 —— 看上去像贴在缸外。
+     *   拆两半之后遮挡关系是结构上对的（画家顺序），不靠调透明度凑。 */
+    function drawTankShell(q, which) {
+      const boxes = [];
+      const wall = WALL_T;
+      /* 玻璃：半透明 + 不加棱线（棱线一画就成「铁皮箱」） */
+      const GLASS = [150, 196, 222], GA = 0.34;
+      if (which === 'back') {
+        boxes.push(drawBox(q, [0, TANK_H / 2, -TANK_Z], [2 * TANK_X, TANK_H, wall], GLASS, null, GA));
+        boxes.push(drawBox(q, [-TANK_X, TANK_H / 2, 0], [wall, TANK_H, 2 * TANK_Z], GLASS, null, GA));
+        boxes.push(drawBox(q, [TANK_X, TANK_H / 2, 0], [wall, TANK_H, 2 * TANK_Z], GLASS, null, GA));
+        boxes.push(drawBox(q, [0, 0.008, 0], [2 * TANK_X, 0.016, 2 * TANK_Z], [96, 112, 130], null, 0.95));
+        /* 水体 */
+        const body = [
+          [-TANK_X, 0.016, -TANK_Z], [TANK_X, 0.016, -TANK_Z],
+          [TANK_X, WATER_Y, -TANK_Z], [-TANK_X, WATER_Y, -TANK_Z]
+        ].map(p => project(p, q));
+        poly(body, 'rgba(56,132,189,.34)', 'rgba(125,211,252,.30)', 1);
+        /* 水面 */
+        const surfQuad = [
+          [-TANK_X, WATER_Y, -TANK_Z], [TANK_X, WATER_Y, -TANK_Z],
+          [TANK_X, WATER_Y, TANK_Z], [-TANK_X, WATER_Y, TANK_Z]
+        ].map(p => project(p, q));
+        poly(surfQuad, 'rgba(125,211,252,.26)', 'rgba(165,243,252,.55)', 1.2);
+      } else {
+        boxes.push(drawBox(q, [0, TANK_H / 2, TANK_Z], [2 * TANK_X, TANK_H, wall], GLASS, null, GA));
+        /* 缸口一圈高光 —— 玻璃靠这条边才立得住 */
+        const rim = [
+          [-TANK_X, TANK_H, TANK_Z], [TANK_X, TANK_H, TANK_Z],
+          [TANK_X, TANK_H, -TANK_Z], [-TANK_X, TANK_H, -TANK_Z]
+        ].map(p => project(p, q));
+        poly(rim, null, 'rgba(186,230,253,.55)', 1.6);
+      }
+      return boxes;
+    }
+
+    /* 水花：两股叉股击水处向上溅起 + 波纹 */
+    function drawSplash(q) {
+      const amp = ampMm();
+      const hM = SPLASH_K / 100 * amp;              // cm → m
+      const drops = [];
+      for (const s of [-1, 1]) {
+        const bx = s * FORK_PX;
+        const base = project([bx, WATER_Y, 0], q);
+        if (hM > 1e-5) {
+          const top = project([bx, WATER_Y + hM, 0], q);
+          line([base, top], 'rgba(165,243,252,.8)', 3);
+          for (let k = 0; k < 5; k++) {
+            const f = (k + 1) / 5;
+            const p = project([bx + (k % 2 ? 0.020 : -0.020) * f, WATER_Y + hM * (1.3 - 0.55 * f), 0], q);
+            const rr = Math.max(2, 0.0095 * p.s);
+            dot2(p, rr, 'rgba(186,230,253,.9)');
+            drops.push({ x: p.x, y: p.y });
+          }
+        }
+        /* 波纹：三圈同心椭圆，透明度跟振幅走 */
+        for (let k = 1; k <= 3; k++) {
+          const rr = 0.026 * k * (1 + 0.5 * clamp(amp / AMP_MAX_MM, 0, 1));
+          const pts = [];
+          for (let i = 0; i <= 36; i++) {
+            const a = PI2 * i / 36;
+            pts.push(project([bx + rr * Math.cos(a), WATER_Y, rr * Math.sin(a)], q));
+          }
+          line(pts, 'rgba(125,211,252,' + (0.42 * (1 - (k - 1) / 3) * clamp(amp / AMP_MAX_MM + 0.08, 0, 1)) + ')', 1);
+        }
+      }
+      return { base: project([0, WATER_Y, 0], q), h: hM, drops: drops };
+    }
+
+    /* ============================================================
+     * render
+     * ============================================================ */
+    function render() {
+      const w = state.w, h = state.h, dpr = state.dpr;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, w, h);
+      frameBoxes = []; frameSolids = [];
+      state.drawn = { labels: [], solids: [] };
+
+      drawBackdrop(w, h);
+      const q = {};
+      makeCam(q, w, h);
+      drawGround(q);
+      /* 地面软阴影（按模式各摆一份）—— 让器材「站」在台面上而不是浮着 */
+      if (state.mode === 'drum') {
+        drawShadow(q, 0, 0, DRUM_R * 1.06, DRUM_R * 1.06, 0.42);
+      } else if (state.mode === 'water') {
+        drawShadow(q, 0, 0, TANK_X * 1.08, TANK_Z * 1.10, 0.34);
+        drawShadow(q, WPOST_X, 0, 0.055, 0.055, 0.34);
+      } else {
+        drawShadow(q, 0, 0, BASE_W * 0.62, BASE_W * 0.62, 0.42);
+        drawShadow(q, POST_X, POST_Z, 0.052, 0.052, 0.36);
+      }
+
+      const solids = [];
+      const d = forkDispM() * Math.sin(state.phase);
+      let ball = null, chips = [], splash = null, tineX = 0, tineY = 0, tineProngX = null;
+
+      if (state.mode === 'drum') {
+        const dm = drawDrum(q);
+        solids.push.apply(solids, dm.boxes);
+        chips = dm.chips;
+      } else if (state.mode === 'water') {
+        /* 后壳 → 音叉/支架 → 水花 → 前壳：画家顺序就是遮挡关系 */
+        solids.push.apply(solids, drawTankShell(q, 'back'));
+        const t = drawTine(q, { y0: WFORK_Y0, y1: WFORK_Y1, stemY0: WSTEM_Y0, stemY1: WSTEM_Y1, flip: true, disp: d });
+        solids.push.apply(solids, t.boxes);
+        tineX = t.tineX; tineY = t.tineY; tineProngX = t.prongX;
+        solids.push.apply(solids, drawPost(q, WPOST_X, 0, WSTEM_Y1 + 0.02, 0, WSTEM_Y1));
+        const sp = drawSplash(q);
+        splash = { x: sp.base.x, y: sp.base.y, h: sp.h };
+        solids.push.apply(solids, drawTankShell(q, 'front'));
+      } else {
+        const t = drawTine(q, { disp: d });
+        solids.push.apply(solids, t.boxes);
+        tineX = t.tineX; tineY = t.tineY; tineProngX = t.prongX;
+        solids.push.apply(solids, drawPost(q, POST_X, POST_Z, POST_Y1, BALL_X0, ARM_Y));
+        ball = drawBall(q);
+      }
+
+      frameSolids = solids.map(b => ({ x: b.x, y: b.y, w: b.w, h: b.h }));
+      state.drawn.solids = frameSolids.slice();
+      state.drawn.ball = ball;
+      state.drawn.chips = chips;
+      state.drawn.splash = splash;
+      state.drawn.tine = { x: tineX, y: tineY, disp: d, prongX: tineProngX };
+
+      /* ---- 标签 ---- */
+      if (state.mode === 'drum') {
+        if (chips.length) {
+          const c0 = chips[0];
+          avoidLabel({ x: c0.x, y: c0.y }, '纸屑（转换的「探子」）', '#fcd34d', 11);
+        }
+        const rimP = project([DRUM_R, DRUM_Y, 0], q);
+        avoidLabel({ x: rimP.x, y: rimP.y }, '鼓面', '#e2e8f0', 11);
+      } else if (state.mode === 'water') {
+        const s0 = splash;
+        if (s0) avoidLabel({ x: s0.x, y: s0.y - 26 }, '水花（转换的「探子」）', '#7dd3fc', 11);
+        avoidLabel(project([0, WSTEM_Y1 + 0.06, 0], q), '叉股（振动已放大约 ' + Math.round(visScale()) + ' 倍）', '#a5f3fc', 11);
+      } else {
+        /* 锚点放在叉股【上方】，别落在实体中间 —— 落在实体里的话，
+         * 避让算法再怎么挪也躲不开，量出来永远是大面积重叠。 */
+        avoidLabel(project([0, FORK_Y1 + 0.06, 0], q), '叉股（振动已放大约 ' + Math.round(visScale()) + ' 倍）', '#a5f3fc', 11);
+        if (ball) {
+          avoidLabel({ x: ball.x, y: ball.y - 18 }, '泡沫小球（转换的「探子」）', '#fcd34d', 11);
+        }
+      }
+      /* 右上角：状态角标 —— 一眼看出「在振 / 停了 / 被按住」 */
+      const st = state.held ? '已按住 · 振动停止 · 无声'
+               : sounding() ? '振动中 · 发声'
+               : '已静止 · 无声';
+      const stCol = state.held ? '#fca5a5' : sounding() ? '#6ee7b7' : '#94a3b8';
+      ctx.font = '800 12px Inter, "Microsoft YaHei", sans-serif';
+      ctx.textAlign = 'right'; ctx.textBaseline = 'top';
+      const stW = ctx.measureText(st).width;
+      ctx.fillStyle = 'rgba(2,6,23,.78)';
+      ctx.fillRect(w - stW - 26, 12, stW + 16, 24);
+      ctx.fillStyle = stCol;
+      ctx.fillText(st, w - 18, 18);
+      ctx.textAlign = 'left';
+    }
+
+    /* ============================================================
+     * 侧栏包络曲线：振幅随时间
+     * ============================================================ */
+    let envCv = null, envCtx = null;
+    const ENV_WIN = 6.0;                    // 横轴 0 ~ 6 s
+    function renderEnv() {
+      if (!envCv || !envCtx) return;
+      const r = envCv.getBoundingClientRect();
+      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      const w = Math.max(80, Math.round(r.width || 280));
+      const h = Math.max(60, Math.round(r.height || 104));
+      if (envCv.width !== Math.round(w * dpr) || envCv.height !== Math.round(h * dpr)) {
+        envCv.width = Math.round(w * dpr); envCv.height = Math.round(h * dpr);
+      }
+      const c = envCtx;
+      c.setTransform(dpr, 0, 0, dpr, 0, 0);
+      c.clearRect(0, 0, w, h);
+      c.fillStyle = 'rgba(2,6,23,.55)'; c.fillRect(0, 0, w, h);
+      const PAD_L = 30, PAD_R = 8, PAD_T = 10, PAD_B = 16;
+      const x0 = PAD_L, x1 = w - PAD_R, y0 = PAD_T, y1 = h - PAD_B;
+      const X = t => x0 + (x1 - x0) * clamp(t / ENV_WIN, 0, 1);
+      const Y = a => y1 - (y1 - y0) * clamp(a / AMP_MAX_MM, 0, 1);
+      /* 网格 */
+      c.strokeStyle = 'rgba(148,163,184,.18)'; c.lineWidth = 1;
+      for (let k = 0; k <= 2; k++) {
+        const yy = y0 + (y1 - y0) * k / 2;
+        c.beginPath(); c.moveTo(x0, yy); c.lineTo(x1, yy); c.stroke();
+      }
+      c.fillStyle = 'rgba(148,163,184,.75)';
+      c.font = '700 9px Inter, sans-serif'; c.textAlign = 'right'; c.textBaseline = 'middle';
+      c.fillText(AMP_MAX_MM.toFixed(1), x0 - 4, y0);
+      c.fillText('0', x0 - 4, y1);
+      c.textAlign = 'center'; c.textBaseline = 'top';
+      c.fillText('0', x0, y1 + 3); c.fillText(ENV_WIN.toFixed(0) + ' s', x1, y1 + 3);
+      /* 包络曲线：满力度那一条（淡）+ 当前力度那一条（亮） */
+      const curve = (hit, col, lw) => {
+        c.beginPath();
+        for (let i = 0; i <= 120; i++) {
+          const t = ENV_WIN * i / 120;
+          const a = AMP_MAX_MM * hit * Math.exp(-t / TAU_DECAY);
+          const px = X(t), py = Y(a);
+          i ? c.lineTo(px, py) : c.moveTo(px, py);
+        }
+        c.strokeStyle = col; c.lineWidth = lw; c.stroke();
+      };
+      curve(1.0, 'rgba(148,163,184,.30)', 1);
+      curve(state.hit, '#38bdf8', 2);
+      /* 当前时刻游标 */
+      const tCur = state.strikeT >= 0 ? state.strikeT : (state.held ? 0 : -1);
+      if (tCur >= 0) {
+        const px = X(tCur), py = Y(AMP_MAX_MM * state.hit * envOf());
+        c.strokeStyle = state.held ? 'rgba(248,113,113,.9)' : 'rgba(110,231,183,.85)';
+        c.lineWidth = 1; c.beginPath(); c.moveTo(px, y0); c.lineTo(px, y1); c.stroke();
+        c.fillStyle = state.held ? '#fca5a5' : '#6ee7b7';
+        c.beginPath(); c.arc(px, py, 3.2, 0, PI2); c.fill();
+        if (state.held) {
+          c.fillStyle = '#fca5a5'; c.textAlign = 'left'; c.textBaseline = 'top';
+          c.fillText('按住', px + 5, y0 + 2);
+        }
+      }
+    }
+
+    /* ============================================================
+     * UI 刷新
+     * ============================================================ */
+    function syncUI() {
+      const on = sounding();
+      $('gt-mode-pill').textContent = MODE_NAME[state.mode];
+      $('gt-probe-note').textContent = MODE_PROBE[state.mode];
+      $('gt-hit-num').textContent = Math.round(state.hit * 100) + ' %';
+      /* ★ 滑块要【双向】一致：原来只做了「滑块 → state」，
+       *   于是按「重置」把 state.hit 拨回 60 % 时，滑块还停在原处 ——
+       *   画面是 60 %、滑块指 100 %，学生一定以为程序坏了。 */
+      const hs = $('gt-hit');
+      const hv = String(Math.round(state.hit * 100));
+      if (hs && hs.value !== hv) hs.value = hv;
+      $('gt-amp').textContent = ampMm().toFixed(3) + ' mm';
+      $('gt-vis-name').textContent = visibleName();
+      $('gt-vis').textContent = visibleVal().toFixed(2) + ' ' + visibleUnit();
+      $('gt-db').textContent = on ? dbNow().toFixed(0) + ' dB' : '— dB';
+      $('gt-t').textContent = (state.strikeT >= 0 ? state.strikeT : 0).toFixed(2) + ' s';
+      const dbEl = $('gt-db');
+      dbEl.className = on ? 'hot' : 'cold';
+      const pill = $('gt-snd-pill');
+      pill.textContent = state.held ? '被按住' : on ? '振动中' : '已静止';
+      pill.className = 'pill ' + (state.held || !on ? 'off' : 'live');
+      const lv = $('gt-live-pill');
+      lv.textContent = state.playing ? '实时' : '已暂停';
+      /* 舞台按钮自己报状态 */
+      const sb = $opt('gt-strike');
+      sb.classList.toggle('ready', on && !state.held);
+      const hb = $opt('gt-hold');
+      hb.classList.toggle('held', state.held);
+      hb.textContent = state.held ? '已按住' : '按住';
+      /* 舞台「记录」按钮自己报状态：前置条件满足（振动中 ∧ 没记满）才变绿发光，
+         和「敲击」那颗的绿光是同一个时刻。不满足时不置灰 —— 点下去 recordNow()
+         会 showToast 说清原因（「现在没有声音 —— 先按『敲击』」）。 */
+      $opt('gt-record-s').classList.toggle('ready', canRecord().ok);
+      const snd = $opt('gt-sound');
+      snd.classList.toggle('snd-on', audio.on);
+      $opt('gt-play').classList.toggle('on', state.playing);
+      $opt('gt-play').textContent = state.playing ? '暂停' : '继续';
+      $opt('gt-slow').classList.toggle('on', state.slow);
+      $opt('gt-real').classList.toggle('on', !state.slow);
+      $('gt-rec-pill').textContent = records.length + ' / ' + REC_MAX;
+      document.querySelectorAll('[data-mode]').forEach(b => {
+        b.classList.toggle('on', b.getAttribute('data-mode') === state.mode);
+      });
+      document.querySelectorAll('[data-view]').forEach(b => {
+        b.classList.toggle('on', b.getAttribute('data-view') === state.view);
+      });
+      $('gt-hint').innerHTML =
+        '<b>' + MODE_NAME[state.mode] + '</b> · 力度 ' + Math.round(state.hit * 100) + ' %<br>' +
+        '叉股振动在画面里已放大约 <b>' + Math.round(visScale()) + ' 倍</b>' +
+        '<span class="warn">（真实振幅只有 ' + ampMm().toFixed(2) + ' mm）</span>';
+      renderAnalysis();
+      renderEnv();
+    }
+
+    function renderAnalysis() {
+      const on = sounding();
+      const hit = state.hit;
+      const a = ampMm();
+      let h = '';
+      h += '<div class="line"><span>敲击力度</span><b>' + Math.round(hit * 100) + ' %</b></div>';
+      h += '<div class="line"><span>叉股振幅 A</span><b>' + a.toFixed(3) + ' mm</b></div>';
+      h += '<div class="line"><span>' + visibleName() + '</span><b>' + visibleVal().toFixed(2) + ' ' + visibleUnit() + '</b></div>';
+      h += '<div class="line"><span>转换系数（可见量 ÷ A）</span><b>' +
+           (a > 1e-6 ? (visibleVal() / a).toFixed(2) : '—') + ' ' + visibleUnit() + '/mm</b></div>';
+      h += '<div class="line"><span>响度级</span><b>' + (on ? dbNow().toFixed(0) + ' dB' : '—') + '</b></div>';
+      h += '<div class="line"><span>频率 f</span><b>440 Hz（钉死）</b></div>';
+      h += '<div class="conc ' + (on ? '' : 'info') + '">' +
+        (state.held ? '已经<b>按住</b>音叉：叉股不动 → 探子立刻落回 → 声音同时消失。<b>振动停止，发声也停止。</b>'
+         : on ? '振幅 ' + a.toFixed(2) + ' mm 是<b>看不见的</b>，但探子把它变成了 ' +
+                visibleVal().toFixed(2) + ' ' + visibleUnit() + ' 的<b>可见位移</b> —— 这就是转换法。' +
+                '<br>把力度从 10 % 拖到 100 %，振幅变 <b>' + (AMP_MAX_MM / (AMP_MAX_MM * HIT_MIN)).toFixed(1) +
+                ' 倍</b>，而频率<b>一点没变</b>：力度只决定响度，不决定音调。'
+         : '现在没有声音 —— 因为音叉<b>没有在振动</b>。按「敲击」让它振动起来。') +
+        '</div>';
+      $('gt-analysis').innerHTML = h;
+    }
+
+    /* ============================================================
+     * 声音 —— 一条真实的音频链：osc(440) → ampGain → masterGain → 输出
+     * ★ 频率永远 440 Hz（钉死）；gain 跟「力度 × 衰减包络」走。
+     * ★ 所有参数变化走 setTargetAtTime（不是直接赋值）。
+     * ============================================================ */
+    const SOUND_TAU = 0.02, SOUND_TAU_SW = 0.05;
+    const GAIN_LO = 0.05, GAIN_HI = 0.26;
+
+    const audio = {
+      ctx: null, osc: null, ampGain: null, masterGain: null,
+      on: false, ready: false,
+      targetF: F_TINE, appliedGain: 0, targetMaster: 0
+    };
+    const audioReady = () => audio.ready;
+    const soundOn = () => audio.on;
+    const audioFreq = () => (audio.osc ? audio.osc.frequency.value : null);
+    const audioGain = () => (audio.ampGain ? audio.ampGain.gain.value : null);
+    const audioMaster = () => (audio.masterGain ? audio.masterGain.gain.value : null);
+
+    function ampToGain() {
+      const t = clamp((state.hit - HIT_MIN) / (HIT_MAX - HIT_MIN), 0, 1);
+      return GAIN_LO + (GAIN_HI - GAIN_LO) * Math.pow(t, 0.75);
+    }
+    function initAudio() {
+      if (audio.ctx) return audio.ready;
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return false;
+      try {
+        audio.ctx = new AC();
+        audio.osc = audio.ctx.createOscillator();
+        audio.osc.type = 'sine';
+        audio.osc.frequency.value = F_TINE;
+        audio.ampGain = audio.ctx.createGain(); audio.ampGain.gain.value = 0;
+        audio.masterGain = audio.ctx.createGain(); audio.masterGain.gain.value = 0;
+        audio.osc.connect(audio.ampGain);
+        audio.ampGain.connect(audio.masterGain);
+        audio.masterGain.connect(audio.ctx.destination);
+        audio.osc.start();
+        audio.ready = true;
+      } catch (e) { audio.ready = false; }
+      return audio.ready;
+    }
+    const audioShouldSound = () => audio.on && sounding();
+    function applyAudio() {
+      audio.targetF = F_TINE;
+      audio.appliedGain = ampToGain();
+      audio.targetMaster = audioShouldSound() ? 1 : 0;
+      if (!audio.ready) return;
+      const t = audio.ctx.currentTime;
+      audio.osc.frequency.setTargetAtTime(audio.targetF, t, SOUND_TAU);
+      audio.ampGain.gain.setTargetAtTime(audio.appliedGain, t, SOUND_TAU);
+      audio.masterGain.gain.setTargetAtTime(audio.targetMaster, t, SOUND_TAU_SW);
+    }
+    function setSound(on) {
+      audio.on = !!on;
+      if (audio.on) {
+        if (!initAudio()) {
+          audio.on = false; syncUI();
+          showToast('这个浏览器不支持播放声音');
+          return false;
+        }
+        if (audio.ctx.state === 'suspended') { try { audio.ctx.resume(); } catch (e) { } }
+        applyAudio();
+        state.everHeard = true;
+        showToast('声音开了：440 Hz 的纯音 —— 音叉的标准音');
+      } else {
+        applyAudio();
+        showToast('已静音');
+      }
+      syncUI();
+      return audio.on;
+    }
+
+    const invalidate = () => { state.dirty = true; };
+    let toastT = 0;
+    function showToast(msg) {
+      const el = $('gt-toast');
+      if (!el) return;
+      el.textContent = msg;
+      el.classList.add('show');
+      clearTimeout(toastT);
+      toastT = setTimeout(() => el.classList.remove('show'), 1900);
+    }
+
+    /* ============================================================
+     * 动作（按钮与自检走同一份）
+     * ============================================================ */
+    function setMode(m) {
+      if (MODES.indexOf(m) < 0 || m === state.mode) return state.mode;
+      state.mode = m;
+      state.strikeT = -1;             // 换器材 = 换一支音叉/一面鼓，重新开始
+      state.held = false;
+      state.phase = 0;
+      applyAudio();
+      syncUI(); invalidate();
+      return m;
+    }
+    function setHit(v) {
+      const nv = clamp(Math.round(v / HIT_STEP) * HIT_STEP, HIT_MIN, HIT_MAX);
+      state.hit = nv;
+      applyAudio();                   // ★ 响度跟着变（频率不动）
+      syncUI(); invalidate();
+      return nv;
+    }
+    function strike() {
+      state.strikeT = 0;
+      state.held = false;
+      state.everHeard = true;
+      applyAudio();
+      syncUI(); invalidate();
+      showToast('敲击：力度 ' + Math.round(state.hit * 100) + ' % —— 听响度，看探子被推多远');
+      return state.strikeT;
+    }
+    /* 按住：振动【立刻】停止（不是衰减）。这是「振动停止，发声也停止」的演示。 */
+    function setHeld(on) {
+      state.held = !!on;
+      if (state.held) state.strikeT = -1;
+      applyAudio();
+      syncUI(); invalidate();
+      showToast(state.held ? '按住音叉 —— 振动停止，发声也停止'
+                           : '松开了，按「敲击」重新让它振动');
+      return state.held;
+    }
+    function setPlaying(on) {
+      state.playing = !!on;
+      syncUI(); invalidate();
+      return state.playing;
+    }
+    function setSlow(on) { state.slow = !!on; syncUI(); invalidate(); return state.slow; }
+    function resetAll() {
+      state.mode = 'fork';
+      state.hit = HIT_DEF;
+      state.strikeT = -1; state.held = false; state.phase = 0;
+      state.playing = true; state.slow = true;
+      state.view = 'perspective';
+      state.yaw = VIEWS.perspective[0]; state.pitch = VIEWS.perspective[1]; state.zoom = 1;
+      applyAudio(); syncUI(); invalidate();
+    }
+    function applyView(name) {
+      if (!VIEWS[name]) return state.view;
+      state.view = name;
+      state.yaw = VIEWS[name][0]; state.pitch = VIEWS[name][1]; state.zoom = 1;
+      syncUI(); invalidate();
+      return name;
+    }
+    /* 自检用：把「敲击以来的时间」直接拨到某一刻并重画。
+     * 与 stepAnim 共用同一个 state.strikeT，不另抄一份推进逻辑。 */
+    function holdAt(t) {
+      state.strikeT = Math.max(0, t);
+      state.held = false;
+      render();
+      state.dirty = false;
+    }
+
+    /* ============================================================
+     * 记录数据（前置条件不满足就拒绝，并说明原因）
+     * ============================================================ */
+    const REC_MAX = 4;
+    const records = [];
+    function canRecord() {
+      if (state.held) return { ok: false, why: '音叉被按住了 —— 没有振动，也就没有数据' };
+      if (!sounding()) return { ok: false, why: '现在没有声音 —— 先按「敲击」让它振动起来' };
+      if (records.length >= REC_MAX) return { ok: false, why: '已经记满 ' + REC_MAX + ' 组，先清空' };
+      return { ok: true, why: '' };
+    }
+    function recordNow() {
+      const c = canRecord();
+      if (!c.ok) { showToast(c.why); return null; }
+      const row = {
+        mode: state.mode, label: MODE_NAME[state.mode],
+        hit: state.hit, amp: ampMm(),
+        vis: visibleVal(), unit: visibleUnit(), name: visibleName(),
+        db: dbNow(), f: freq()
+      };
+      records.push(row);
+      renderRecords(); syncUI(); invalidate();
+      showToast('已记录：' + row.label + ' · 力度 ' + Math.round(row.hit * 100) + ' % · ' +
+                row.vis.toFixed(2) + ' ' + row.unit);
+      return row;
+    }
+    function clearRecords() { records.length = 0; renderRecords(); syncUI(); invalidate(); }
+    function renderRecords() {
+      const tb = $('gt-rec-body');
+      if (!tb) return;
+      let html = '';
+      for (let i = 0; i < REC_MAX; i++) {
+        const r = records[i];
+        if (r) {
+          html += '<tr><td>' + r.label + '</td><td>' + Math.round(r.hit * 100) + ' %</td><td>' +
+                  r.amp.toFixed(3) + ' mm</td><td>' + r.vis.toFixed(2) + ' ' + r.unit +
+                  '</td><td>' + r.db.toFixed(0) + ' dB</td></tr>';
+        } else {
+          html += '<tr><td class="dim">—</td><td class="dim">—</td><td class="dim">—</td><td class="dim">—</td><td class="dim">—</td></tr>';
+        }
+      }
+      tb.innerHTML = html;
+    }
+
+    /* ============================================================
+     * 动画推进（tick 与自检共用的同一个函数）
+     * ============================================================ */
+    function stepAnim(dt) {
+      if (!state.playing) return;
+      if (state.strikeT >= 0) {
+        state.strikeT += dt;
+        if (state.strikeT > TAU_STOP) {          // 衰减到听不见 ⇒ 振动真的停了
+          state.strikeT = -1;
+          applyAudio(); syncUI();
+        }
+        state.dirty = true;
+      }
+      if (sounding()) {
+        /* ★ 相位【累加】而不是 f·t 重算 —— 改参数时相位不会跳变。 */
+        state.phase += PI2 * freq() * dt * (state.slow ? SLOW_R : 1);
+        state.dirty = true;
+      }
+    }
+    /* 自检用：把动画推进固定秒数（headless 里 rAF 不一定回调）。
+     * 与 tick 走的是同一个 stepAnim。 */
+    function driveAnim(seconds, dt) {
+      const step = dt || 1 / 60;
+      let n = Math.max(0, Math.round(seconds / step));
+      while (n-- > 0) stepAnim(step);
+      render();
+      state.dirty = false;
+      return state.strikeT;
+    }
+    let lastTs = 0;
+    function tick(ts) {
+      const dt = lastTs ? Math.min(0.05, (ts - lastTs) / 1000) : 0;
+      lastTs = ts;
+      stepAnim(dt);
+      if (state.dirty) { render(); state.dirty = false; renderEnv(); }
+      requestAnimationFrame(tick);
+    }
+
+    /* ============================================================
+     * 交互
+     * ============================================================ */
+    const rectOf = () => canvas.getBoundingClientRect();
+    function onDown(e) {
+      const r = rectOf();
+      state.downAt = { x: e.clientX - r.left, y: e.clientY - r.top };
+      state.dragging = true;
+      state.dragYaw = state.yaw; state.dragPitch = state.pitch;
+      canvas.classList.add('grabbing');
+      canvas.setPointerCapture && canvas.setPointerCapture(e.pointerId);
+    }
+    function onMove(e) {
+      if (!state.dragging) return;
+      const r = rectOf();
+      const sx = e.clientX - r.left, sy = e.clientY - r.top;
+      state.yaw = state.dragYaw + (sx - state.downAt.x) * 0.006;
+      state.pitch = clamp(state.dragPitch + (sy - state.downAt.y) * 0.005, -0.20, 1.42);
+      state.view = '';
+      syncUI(); invalidate();
+    }
+    function onUp() {
+      state.dragging = false; state.downAt = null;
+      canvas.classList.remove('grabbing');
+      invalidate();
+    }
+    function onWheel(e) {
+      e.preventDefault();
+      state.zoom = clamp(state.zoom * (e.deltaY > 0 ? 0.92 : 1.087), 0.5, 3.2);
+      invalidate();
+    }
+
+    /* ============================================================
+     * 尺寸
+     * ============================================================ */
+    function resize() {
+      const r = stage.getBoundingClientRect();
+      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      const w = Math.max(320, Math.round(r.width));
+      const h = Math.max(240, Math.round(r.height));
+      const bw = Math.round(w * dpr), bh = Math.round(h * dpr);
+      /* ★ 改 canvas.width/height 会【清空画布】，而 ResizeObserver 在 observe()
+       *   之后【必然回调一次】。所以：① 只在尺寸真的变了时才动它；② 补画无条件
+       *   放在这里，绝不留到下一帧。 */
+      const changed = (canvas.width !== bw || canvas.height !== bh);
+      state.w = w; state.h = h; state.dpr = dpr;
+      if (changed) { canvas.width = bw; canvas.height = bh; }
+      canvas.style.width = w + 'px';
+      canvas.style.height = h + 'px';
+      render();
+      state.dirty = false;
+      renderEnv();
+    }
+
+    /* ============================================================
+     * 绑定
+     * ============================================================ */
+    canvas.addEventListener('pointerdown', onDown);
+    canvas.addEventListener('pointermove', onMove);
+    canvas.addEventListener('pointerup', onUp);
+    canvas.addEventListener('pointercancel', onUp);
+    canvas.addEventListener('pointerleave', () => {
+      state.dragging = false; canvas.classList.remove('grabbing'); state.dirty = true;
+    });
+    canvas.addEventListener('wheel', onWheel, { passive: false });
+
+    $opt('gt-strike').addEventListener('click', () => strike());
+    $opt('gt-hold').addEventListener('click', () => setHeld(!state.held));
+    /* 舞台与侧栏两个「记录」走同一个入口 recordNow() —— 只有一份逻辑 */
+    $opt('gt-record-s').addEventListener('click', () => recordNow());
+    $opt('gt-sound').addEventListener('click', () => setSound(!audio.on));
+    $opt('gt-reset').addEventListener('click', () => { resetAll(); showToast('已重置'); });
+    $opt('gt-play').addEventListener('click', () => {
+      setPlaying(!state.playing);
+      showToast(state.playing ? '继续' : '已暂停 —— 可以慢慢看这一刻');
+    });
+    $opt('gt-slow').addEventListener('click', () => { setSlow(true); showToast('慢放 1/400：看得清叉股怎么开合'); });
+    $opt('gt-real').addEventListener('click', () => { setSlow(false); showToast('实时：这才是它真正的速度'); });
+    $('gt-hit').addEventListener('input', e => setHit(parseFloat(e.target.value) / 100));
+    $('gt-record').addEventListener('click', () => recordNow());
+    $('gt-clear').addEventListener('click', () => { clearRecords(); showToast('记录已清空'); });
+    document.querySelectorAll('[data-mode]').forEach(b => {
+      b.addEventListener('click', () => setMode(b.getAttribute('data-mode')));
+    });
+    document.querySelectorAll('[data-view]').forEach(b => {
+      b.addEventListener('click', () => applyView(b.getAttribute('data-view')));
+    });
+
+    envCv = $('gt-env');
+    if (envCv) envCtx = envCv.getContext('2d');
+
+    if (window.ResizeObserver) new ResizeObserver(() => resize()).observe(stage);
+    window.addEventListener('resize', resize);
+
+    renderRecords();
+    resize();
+    syncUI();
+    requestAnimationFrame(tick);
+
+    /* ============================================================
+     * 自检钩子 —— 渲染、读数、包络曲线、记录、自检必须共用同一份物理函数
+     * ============================================================ */
+    window.__gen = {
+      state: state,
+      consts: {
+        F_TINE: F_TINE, AMP_MAX_MM: AMP_MAX_MM, VIS_K: VIS_K,
+        BALL_K: BALL_K, DRUM_H_MAX: DRUM_H_MAX, CHIP_K: CHIP_K, CHIP_VIS_K: CHIP_VIS_K,
+        SPLASH_K: SPLASH_K, DB_LO: DB_LO, DB_HI: DB_HI,
+        HIT_MIN: HIT_MIN, HIT_MAX: HIT_MAX, HIT_DEF: HIT_DEF, HIT_STEP: HIT_STEP,
+        TAU_DECAY: TAU_DECAY, TAU_STOP: TAU_STOP, SLOW_N: SLOW_N, SLOW_R: SLOW_R,
+        FORK_PX: FORK_PX, FORK_W: FORK_W, FORK_Y0: FORK_Y0, FORK_Y1: FORK_Y1,
+        BALL_X0: BALL_X0, BALL_Y: BALL_Y, BALL_R: BALL_R,
+        DRUM_R: DRUM_R, DRUM_H: DRUM_H, DRUM_Y: DRUM_Y, DRUM_RIM_R: DRUM_RIM_R,
+        CHIP_SIZE: CHIP_SIZE, WALL_T: WALL_T, POST_W: POST_W, POST_BASE_W: POST_BASE_W,
+        TANK_X: TANK_X, TANK_Z: TANK_Z, WATER_Y: WATER_Y,
+        WFORK_Y0: WFORK_Y0, WFORK_Y1: WFORK_Y1, WSTEM_Y1: WSTEM_Y1,
+        ENV: ENV, CAMD_K: CAMD_K, VIEWS: VIEWS, MODES: MODES, MODE_NAME: MODE_NAME,
+        REC_MAX: REC_MAX, ENV_WIN: ENV_WIN,
+        SOUND_TAU: SOUND_TAU, SOUND_TAU_SW: SOUND_TAU_SW,
+        GAIN_LO: GAIN_LO, GAIN_HI: GAIN_HI
+      },
+      makeCam: makeCam, project: project, envPoints: envPoints, modeBox: modeBox,
+      size: () => ({ w: state.w, h: state.h, dpr: state.dpr }),
+      frameBoxes: () => frameBoxes.slice(),
+      frameSolids: () => frameSolids.slice(),
+      // 物理（与页面同一份）
+      freq: freq, ampFullMm: ampFullMm, envOf: envOf, ampMm: ampMm,
+      forkDispM: forkDispM, visScale: visScale,
+      ballCm: ballCm, drumDipFullMm: drumDipFullMm, drumDipMm: drumDipMm,
+      drumModeU: drumModeU, chipMm: chipMm, splashCm: splashCm,
+      visibleVal: visibleVal, visibleUnit: visibleUnit, visibleName: visibleName,
+      sounding: sounding, dbNow: dbNow,
+      // 动作（与按钮同一份）
+      setMode: setMode, setHit: setHit, strike: strike, setHeld: setHeld,
+      setPlaying: setPlaying, setSlow: setSlow, resetAll: resetAll, applyView: applyView,
+      holdAt: holdAt,
+      // 声音（与「🔊 声音」按钮同一份）
+      setSound: setSound, soundOn: soundOn, audioReady: audioReady, applyAudio: applyAudio,
+      audio: audio, ampToGain: ampToGain, audioShouldSound: audioShouldSound,
+      audioFreq: audioFreq, audioGain: audioGain, audioMaster: audioMaster,
+      // 记录
+      records: records, canRecord: canRecord, recordNow: recordNow, clearRecords: clearRecords,
+      renderRecords: renderRecords,
+      // 动画推进（tick 与自检共用）
+      stepAnim: stepAnim, driveAnim: driveAnim,
+      render: render, renderEnv: renderEnv, syncUI: syncUI, resize: resize,
+      hitSlider: () => $('gt-hit').value
+    };
+  })();
+  </script>
+</body>
+</html>
