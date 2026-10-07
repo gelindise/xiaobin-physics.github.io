@@ -412,6 +412,11 @@ var CAM_DY = 2.45;                   // 凸轮轴心相对缸盖底面的高度
 var SPR_DY0 = 0.50, SPR_TURNS = 5;   // 弹簧下端相对缸盖底面
 var PORT_R = 0.62, PORT_X1 = 5.10, PORT_ELB = 0.30;   // 进 / 排气管（末端翘起 PORT_ELB）
 var PORT_XTOT = PORT_X1 + PORT_ELB + PORT_R*0.92;     // 管子在最外侧的真正边界
+/* 气道（缸盖【内部】的那一段）：从缸盖外壁弯下去、落在气门轴线上 ——
+   这样「进气管 → 进气门 → 气缸」在几何上必然接得上，不是画上去凑的。
+   PORT_YC 是气道中心线相对缸盖底面的高度；PORT_RIN 是气门座附近的喇叭口半径。 */
+var PORT_YC  = 0.72, PORT_RIN = 0.76, PORT_N = 10;
+var SEAT_R   = VALVE_R + 0.17;   // 气门座圈外半径（> 气门盘 ⇒ 座圈才露得出来）
 /* 曲轴轴线沿 z（曲柄销在 x-y 平面里绕 (CX,CRK_Y) 转），飞轮装在【后方】z 负侧，
    这样曲轴与连杆不会被飞轮挡住；飞轮半径 > 曲轴箱半径，所以露在箱外看得见 */
 var SHAFT_Z0 = -4.00, SHAFT_Z1 = 2.20, SHAFT_R = 0.40;
@@ -605,6 +610,79 @@ function ignitionFlash(th){
   var n = norm4(th) - burnAt();
   if(n < 0 || n > 0.42) return 0;
   return 1 - n/0.42;
+}
+
+/* ---------------- 气道中心线（唯一出处：画面与自检读的是同一条） ----------------
+   从缸盖外壁 (x = ±HEAD_R) 水平伸进来，再折下去落在【气门轴线】上。
+   终点 x 恒等于 portX(isIntake)，所以「管子 → 气门 → 气缸」几何上必然连通。 */
+function portX(isIntake){ return isIntake ? CAM_XI : CAM_XE; }
+function portPath(isIntake){
+  var s = isIntake ? -1 : 1;
+  var x0 = s*HEAD_R,           y0 = deckY() + PORT_YC;   // 缸盖外壁
+  var x1 = portX(isIntake),    y1 = deckY() + 0.06;      // 气门座（就在气门正上方）
+  var cx = x1, cy = y0;                                  // 控制点：先水平、再下折
+  var out = [], N = PORT_N;
+  for(var i=0;i<=N;i++){
+    var t = i/N, u = 1-t;
+    out.push([u*u*x0 + 2*u*t*cx + t*t*x1, u*u*y0 + 2*u*t*cy + t*t*y1, 0]);
+  }
+  return out;
+}
+// 气道半径沿程（外段细、靠气门座处张开成喇叭口）
+function portRadAt(t){ return PORT_R + (PORT_RIN - PORT_R)*t; }
+
+/* ---------------- 柴油机喷油：雾状柴油 ----------------
+   喷油【提前角】内起喷（TDC 之前就喷），到 TDC 之后再收油 —— 这是柴油机「压燃」的关键。 */
+var INJ_LEAD = 0.62, INJ_TAIL = 0.55;   // 曲轴转角 rad：提前量 / 延续到 TDC 之后
+var SPRAY_NJ = 8, SPRAY_NK = 11;        // 喷孔数 / 每束油滴数（油滴少了是一串珠子，多了才成「雾」）
+/* 喷孔是【广角】的（真实柴油机包角 140°~160°）：锥角窄了，薄燃烧室里只会缩成一个圆点，
+   看不出「雾」。锥角一宽，油束就贴着活塞顶横向铺开，才像一团油雾。 */
+var SPRAY_CONE = 1.22, SPRAY_LEN = 2.35; // 喷雾锥半角（rad，≈70° ⇒ 包角 140°）/ 满喷射程上限（世界单位）
+var SPRAY_SCAT = 0.26, SPRAY_AZ = 0.30;  // 雾化散射：极角只【向外】偏 / 方位角散布（rad）
+var SPRAY_TIP_UP = 0.06;                 // 喷孔比缸盖底面低出的那一小截（喷嘴伸进燃烧室）
+function hash01(i){ var x = Math.sin(i*12.9898 + 78.233)*43758.5453; return x - Math.floor(x); }
+// 喷油强度 0~1（梯形：起喷快、收油慢）。非柴油机恒为 0。
+function sprayAmt(th){
+  if(!isDiesel()) return 0;
+  var n = norm4(th) - burnAt();
+  if(n <= -INJ_LEAD || n >= INJ_TAIL) return 0;
+  var t = (n + INJ_LEAD)/(INJ_LEAD + INJ_TAIL);
+  return Math.max(0, Math.min(1, t/0.26, (1-t)/0.34));
+}
+function sprayTip(){ return [CX, deckY() + SPRAY_TIP_UP, 0]; }
+// 各喷孔的油束（纯函数：只依赖曲轴角 ⇒ 出图与自检可复现）
+function sprayJets(th){
+  var amt = sprayAmt(th), out = [];
+  if(amt <= 0) return out;
+  var tip = sprayTip();
+  // ⚠️ 射程要按【缸内可用高度】反推：油束的竖直分量 = L·cos(锥角)，它必须 ≤ 余隙，
+  //    否则 2.35 的射程会把油滴一路穿进活塞里（柴油机 ε=17 时 TDC 余隙只有 0.25）。
+  var avail = Math.max(0.10, deckY() - pistonTopY(th) - SPRAY_TIP_UP);
+  var Lmax = Math.min(SPRAY_LEN, avail*0.94/Math.cos(SPRAY_CONE));
+  for(var j=0;j<SPRAY_NJ;j++){
+    var az = j/SPRAY_NJ*PI*2 + 0.35;
+    var dir = [Math.sin(SPRAY_CONE)*Math.cos(az), -Math.cos(SPRAY_CONE), Math.sin(SPRAY_CONE)*Math.sin(az)];
+    var side = [-Math.sin(az), 0, Math.cos(az)];   // 水平面内 ⊥ 射束（画锥面扇形用）
+    var L = Lmax*(0.82 + 0.18*hash01(j*3+1))*amt;
+    var drops = [];
+    for(var k=0;k<SPRAY_NK;k++){
+      var t = (k+0.5)/SPRAY_NK;
+      // 🔴 极角只往【外】偏（th2 ≥ SPRAY_CONE）⇒ 每颗油滴的竖直分量只减不增，
+      //    「射程按余隙反推」这条保证对【每一颗】油滴都成立（若允许向内偏就会穿活塞）。
+      var th2 = SPRAY_CONE + SPRAY_SCAT*hash01(j*53 + k*11);
+      var az2 = az + (hash01(j*97 + k*29) - 0.5)*2*SPRAY_AZ;
+      var d2 = [Math.sin(th2)*Math.cos(az2), -Math.cos(th2), Math.sin(th2)*Math.sin(az2)];
+      var rr = L*(0.52 + 0.48*t);
+      drops.push({
+        p:[tip[0]+d2[0]*rr, tip[1]+d2[1]*rr, tip[2]+d2[2]*rr],
+        r:0.026 + 0.040*hash01(j*17 + k*3),        // 细油滴 ⇒ 读成「雾」而不是「珠子」
+        a:amt*(1 - 0.42*t)                          // 越远越稀
+      });
+    }
+    out.push({az:az, dir:dir, side:side, L:L, drops:drops,
+              end:[tip[0]+dir[0]*L, tip[1]+dir[1]*L, tip[2]+dir[2]*L]});
+  }
+  return out;
 }
 
 /* ==================================================================
@@ -847,6 +925,45 @@ function tube3(a,b,r,q,c,fill,stroke,lw,n){
   if(fill){ c.fillStyle=fill; c.fill(); }
   if(stroke){ c.strokeStyle=stroke; c.lineWidth=lw||1; c.stroke(); }
 }
+// 沿【折线中心线】画一条变宽的带（气道用）：逐点取屏幕法向偏移 ±r·s ⇒ 弯头处自动连续、不会断
+function tubeBand(path, rOf, q, c, fill, stroke, lw){
+  var A=[], B=[], n = path.length, i;
+  for(i=0;i<n;i++){
+    var p = project(path[i], q);
+    var a = path[Math.max(0,i-1)], b = path[Math.min(n-1,i+1)];
+    var pa = project(a, q), pb = project(b, q);
+    var dx = pb.x-pa.x, dy = pb.y-pa.y, L = Math.sqrt(dx*dx+dy*dy) || 1;
+    var w = rOf(i/(n-1)) * p.s;
+    A.push({x:p.x - dy/L*w, y:p.y + dx/L*w});
+    B.push({x:p.x + dy/L*w, y:p.y - dx/L*w});
+  }
+  B.reverse();
+  poly(A.concat(B), fill, stroke, lw, c);
+}
+// 水平圆环带（气门座圈）：外圈正向 + 内圈反向 ⇒ nonzero 填充下中间自动挖空
+function ringBand(cx,cz,y,rIn,rOut,q,c,fill,stroke,lw){
+  var po = ringAt(cx,cz,y,rOut,q,48);
+  var pi = ringAt(cx,cz,y,rIn,q,48).slice().reverse();
+  poly(po.concat(pi), fill, stroke, lw, c);
+}
+// 气道上的箭头（钉在中心线 t 处，朝向 dirSign：进气 +1 指向气门、排气 −1 指向缸盖外）
+// 作用：即使气门关着（没有气流亮点），「进气管 → 气道 → 气门 → 气缸」这条通路也一眼可读。
+function portArrow(path, t, dirSign, col, q, c){
+  var n = path.length-1, fi = t*n;
+  var i0 = Math.max(0, Math.min(n-1, Math.floor(fi))), fr = fi - i0;
+  var px = path[i0][0] + (path[i0+1][0]-path[i0][0])*fr;
+  var py = path[i0][1] + (path[i0+1][1]-path[i0][1])*fr;
+  var dx = (path[i0+1][0]-path[i0][0])*dirSign, dy = (path[i0+1][1]-path[i0][1])*dirSign;
+  var L = Math.sqrt(dx*dx+dy*dy) || 1; dx /= L; dy /= L;
+  var nx = -dy, ny = dx;
+  var HL = 0.46, HW = 0.26;                      // 箭头长 / 半宽（世界单位，要能塞进气道内）
+  var a = project([px + dx*HL*0.5, py + dy*HL*0.5, 0], q);
+  var b = project([px - dx*HL*0.5 + nx*HW, py - dy*HL*0.5 + ny*HW, 0], q);
+  var e = project([px - dx*HL*0.5 - nx*HW, py - dy*HL*0.5 - ny*HW, 0], q);
+  poly([a,b,e], rgba(col, 0.42), rgba(col, 0.90), 1.1, c);
+  // 返回【世界坐标】的箭尖 / 箭尾，供自检核对「到底指没指对方向」
+  return {tip:[px + dx*HL*0.5, py + dy*HL*0.5], base:[px - dx*HL*0.5, py - dy*HL*0.5]};
+}
 // 六面体（P0..P3 一个面按序，P4..P7 对应另一面）：按平均深度从远到近铺
 var HEX_FACES = [[0,1,2,3],[4,5,6,7],[0,1,5,4],[1,2,6,5],[2,3,7,6],[3,0,4,7]];
 function hexa(P,q,c,fill,stroke,lw){
@@ -1023,6 +1140,8 @@ function rgba(c,a){ return 'rgba('+Math.round(c[0])+','+Math.round(c[1])+','+Mat
 function rgb(c){ return 'rgb('+Math.round(c[0])+','+Math.round(c[1])+','+Math.round(c[2])+')'; }
 var FONT_L = '700 12px system-ui, -apple-system, "PingFang SC", sans-serif';
 var drawn = {};
+// 绘制顺序留痕（自检用）：只记录，不影响画面
+function mark(tag){ if(drawn && drawn.order) drawn.order.push(tag); }
 
 // 圆柱面上的「母线」：让半透明筒身读起来是一个曲面，而不是一片空白
 // （只画线、不加筒身不透明度，所以里面的活塞照样看得见）
@@ -1170,6 +1289,7 @@ function drawGas(){
   drawn.gas = {y0:y0, y1:y1, T:T, color:c, p:gasP(th)};
 }
 function drawCylinder(){
+  mark('cylinder');
   // 外壁（半透明 ⇒ 看得见里面的活塞与气体）
   cylSolid(CX,0, CYL_Y0, deckY(), CYL_R+CYL_WALL, cam, ctx, C.body, C.edge, 1.7);
   genLines(CX, 0, CYL_Y0+0.06, deckY()-0.06, CYL_R+CYL_WALL, 8, 0.34);
@@ -1190,6 +1310,7 @@ function drawCylinder(){
   drawn.cyl = {r:CYL_R, wall:CYL_WALL, y0:CYL_Y0, y1:deckY(), fins:FIN_Y.slice()};
 }
 function drawHead(){
+  mark('head');
   var d = deckY(), t = headTopY();
   cylSolid(CX,0, d, t, HEAD_R, cam, ctx, C.head, C.edgeHi, 1.6);
   cylTop(CX,0, t, HEAD_R, cam, ctx, 'rgba(71,85,105,.60)', C.edgeHi, 1.3);
@@ -1211,19 +1332,26 @@ function drawSpring(cx, y0, y1){
   ctx.strokeStyle='rgba(148,163,184,.85)'; ctx.lineWidth=1.7; ctx.stroke();
 }
 function drawValve(isIntake){
+  mark(isIntake ? 'valveIn' : 'valveEx');
   var th = state.crank;
   var x = isIntake ? CAM_XI : CAM_XE;
   var d = deckY();
   var drop = valveDrop(th, isIntake);
   var hdY = d - drop;
   var c = isIntake ? C.intake : C.exhaust;
+  // 气门一开，座圈与气门盘之间就出现一圈【环缝】—— 染成气道颜色，一眼看出「门开了、气从这儿进出」
+  if(drop > 0.02){
+    cylSolid(x,0, hdY, d, VALVE_R*1.01, cam, ctx,
+      rgba(c, 0.14 + 0.30*Math.min(1, drop/CAM_LIFT)), rgba(c,0.80), 1.2);
+  }
   cylSolid(x,0, hdY-VALVE_HEAD_T, hdY, VALVE_R, cam, ctx, 'rgba(148,163,184,.92)', rgba(c,0.9), 1.4);
   cylTop(x,0, hdY, VALVE_R, cam, ctx, 'rgba(203,213,225,.95)', rgba(c,0.85), 1.3);
   var stemTop = valveTopY(th, isIntake);
   cylSolid(x,0, hdY, stemTop, VALVE_STEM_R, cam, ctx, '#cbd5e1', 'rgba(226,232,240,.65)', 1.0);
   drawSpring(x, d + SPR_DY0, stemTop - 0.05);
   drawn.valves[isIntake ? 'intake' : 'exhaust'] =
-    {drop:drop, lift:liftOf(th,isIntake), headY:hdY, topY:stemTop, x:x, r:VALVE_R};
+    {drop:drop, lift:liftOf(th,isIntake), headY:hdY, topY:stemTop, x:x, r:VALVE_R,
+     seatR:SEAT_R, seatX:portX(isIntake)};
 }
 function drawCam(isIntake){
   var th = state.crank;
@@ -1243,43 +1371,147 @@ function drawCam(isIntake){
   drawn.cams[isIntake ? 'intake' : 'exhaust'] = {r:camTopR(th,isIntake), beta:beta, x:x, y:cy};
 }
 function drawIgniter(){
+  mark('igniter');
   var t = headTopY(), d = deckY();
   var diesel = isDiesel();
   var c = diesel ? [251,191,36] : [226,232,240];
   cylSolid(CX,0, t, t+IGN_H, IGN_R, cam, ctx, '#cbd5e1', 'rgba(226,232,240,.85)', 1.3);
   cylTop(CX,0, t+IGN_H, IGN_R*1.35, cam, ctx, '#94a3b8', 'rgba(226,232,240,.8)', 1.1);
   cylSolid(CX,0, d+0.10, t, IGN_R*0.46, cam, ctx, '#94a3b8', null, 0);
-  if(diesel){   // 喷油嘴：下方一圈喷孔
-    cylSolid(CX,0, d+0.02, d+0.16, IGN_R*0.72, cam, ctx, '#a16207', rgba(c,0.9), 1.0);
-  } else {      // 火花塞：电极
-    cylSolid(CX,0, d+0.02, d+0.26, IGN_R*0.28, cam, ctx, '#cbd5e1', rgba(c,0.8), 1.0);
+  if(diesel){
+    // 喷油嘴：针阀体（粗）+ 针阀偶件（细，一直伸到缸盖底面以下）+ 底端一圈【多孔】喷孔
+    cylSolid(CX,0, d+0.12, d+0.36, IGN_R*0.74, cam, ctx, '#a16207', rgba(c,0.9), 1.1);
+    cylSolid(CX,0, d+SPRAY_TIP_UP-0.04, d+0.12, IGN_R*0.44, cam, ctx, '#854d0e', rgba(c,0.85), 1.0);
+    for(var h=0;h<SPRAY_NJ;h++){
+      var az = h/SPRAY_NJ*PI*2 + 0.35;
+      var hp = project([CX + IGN_R*0.36*Math.cos(az), d+SPRAY_TIP_UP, IGN_R*0.36*Math.sin(az)], cam);
+      dot2(hp, Math.max(1.0, 0.045*hp.s), 'rgba(69,26,3,.95)', ctx);
+    }
+  } else {
+    // 火花塞：中心电极 + 侧电极（L 形搭铁）—— 跳火发生在两者的间隙里
+    cylSolid(CX,0, d+0.02, d+0.30, IGN_R*0.28, cam, ctx, '#cbd5e1', rgba(c,0.8), 1.0);
+    tube3([CX+IGN_R*1.55, d+0.30, 0],[CX+IGN_R*1.55, d+0.72, 0], 0.075, cam, ctx,
+          '#94a3b8', 'rgba(226,232,240,.7)', 1.0, 12);
+    tube3([CX+IGN_R*1.55, d+0.30, 0],[CX+IGN_R*0.30, d+0.30, 0], 0.075, cam, ctx,
+          '#94a3b8', 'rgba(226,232,240,.7)', 1.0, 12);
   }
+  /* ---- 先画燃烧辉光（背景），再画油雾（前景）----
+     ⚠️ 顺序反了的话，TDC 那一刻 0.92 不透明度的火光会把【雾状柴油】整个吃掉。 */
   var f = ignitionFlash(state.crank);
+  var p = project([CX, d+0.34, 0], cam);
   if(f > 0.01){
-    var p = project([CX, d+0.34, 0], cam);
-    var rr = Math.max(4, 0.72*(cam.focal/p.z));
-    var g = ctx.createRadialGradient(p.x,p.y,1,p.x,p.y,rr*3.2);
-    g.addColorStop(0, diesel ? 'rgba(253,224,71,.92)' : 'rgba(226,232,240,.92)');
-    g.addColorStop(0.38,'rgba(251,146,60,.42)');
-    g.addColorStop(1,'rgba(251,146,60,0)');
-    ctx.beginPath(); ctx.arc(p.x,p.y,rr*3.2,0,PI*2); ctx.fillStyle=g; ctx.fill();
-    drawn.ignition = {x:p.x, y:p.y, r:rr*3.2, f:f, kind:diesel?'diesel':'gasoline'};
+    if(diesel){
+      // 柴油机：油雾被压燃 ⇒ 火从喷孔往外铺开
+      var rr = Math.max(5, 1.05*p.s);
+      var g = ctx.createRadialGradient(p.x,p.y,1,p.x,p.y,rr*3.2);
+      g.addColorStop(0, 'rgba(253,224,71,.92)');
+      g.addColorStop(0.38,'rgba(251,146,60,.42)');
+      g.addColorStop(1,'rgba(251,146,60,0)');
+      ctx.beginPath(); ctx.arc(p.x,p.y,rr*3.2,0,PI*2); ctx.fillStyle=g; ctx.fill();
+      drawn.ignition = {x:p.x, y:p.y, r:rr*3.2, f:f, kind:'diesel'};
+    } else {
+      // 汽油机：火花塞【跳火】—— 间隙里一条锯齿电弧 + 紧贴电极的冷白色小光晕
+      // 🔴 电弧抖动幅度必须按【世界坐标的电极间隙】给，不能按 p.s 给：
+      //    按 p.s 给的话，一放大（zoom 3）电弧就抖成一道横跨整个燃烧室的闪电。
+      var gapW = IGN_R*0.30;                     // 电极间隙（世界单位）
+      var e0 = project([CX, d+0.30, 0], cam), e1 = project([CX+gapW, d+0.30, 0], cam);
+      var rr2 = Math.max(2.5, 0.34*p.s);         // 光晕半径（世界 ≈0.34，只裹住火花塞头部）
+      var g2 = ctx.createRadialGradient(p.x,p.y,1,p.x,p.y,rr2*2.0);
+      g2.addColorStop(0, 'rgba(240,249,255,.95)');
+      g2.addColorStop(0.45,'rgba(147,197,253,.40)');
+      g2.addColorStop(1, 'rgba(147,197,253,0)');
+      ctx.beginPath(); ctx.arc(p.x,p.y,rr2*2.0,0,PI*2); ctx.fillStyle=g2; ctx.fill();
+      ctx.beginPath();
+      var arcW = [];
+      for(var z=0;z<=4;z++){
+        var tz = z/4, jz = (z>0 && z<4);
+        var wx = CX + gapW*tz + (jz ? (hash01(z*7+f*13)-0.5)*2*(gapW*0.30) : 0);
+        var wy = d+0.30 + (jz ? (hash01(z*11+f*29)-0.5)*2*(gapW*0.55) : 0);
+        var wz = (jz ? (hash01(z*3+f*5)-0.5)*2*(gapW*0.30) : 0);
+        var qz = project([wx,wy,wz], cam);
+        arcW.push([wx-(CX+gapW*tz), wy-(d+0.30), wz]);   // 相对【理想直线】的抖动，供自检核对幅度
+        if(z) ctx.lineTo(qz.x,qz.y); else ctx.moveTo(qz.x,qz.y);
+      }
+      ctx.strokeStyle = 'rgba(224,242,254,' + (0.55+0.45*f).toFixed(2) + ')';
+      ctx.lineWidth = Math.max(1.3, gapW*0.42*p.s); ctx.stroke();
+      drawn.ignition = {x:p.x, y:p.y, r:rr2*2.0, f:f, kind:'gasoline', gap:gapW,
+                        arc:arcW, e0:[e0.x,e0.y], e1:[e1.x,e1.y]};
+    }
   } else drawn.ignition = null;
+  /* ---- 雾状柴油：锥形油雾 + 细油滴（只在喷油窗口内，且【TDC 之前就起喷】） ---- */
+  var amt = sprayAmt(state.crank);
+  var jets = sprayJets(state.crank);
+  drawn.spray = {amt:amt, jets:jets, tip:sprayTip(), lead:INJ_LEAD, tail:INJ_TAIL,
+                 cone:SPRAY_CONE, nj:SPRAY_NJ, nk:SPRAY_NK};
+  if(jets.length){
+    var tip = sprayTip(), tp = project(tip, cam);
+    // ① 每束油雾画成一片半透明扇形（锥面）：8 片叠起来 = 一蓬从喷孔放射出去的雾
+    for(var j1=0;j1<jets.length;j1++){
+      var J1 = jets[j1], w = J1.L*0.42;
+      var pa = project([J1.end[0]+J1.side[0]*w, J1.end[1], J1.end[2]+J1.side[2]*w], cam);
+      var pb = project([J1.end[0]-J1.side[0]*w, J1.end[1], J1.end[2]-J1.side[2]*w], cam);
+      poly([tp, pa, pb], 'rgba(253,224,71,' + (0.055 + 0.10*amt).toFixed(3) + ')', null, 0, ctx);
+    }
+    // ② 油滴：细而多，越远越稀 ⇒ 读成「雾状柴油」而不是「一串珠子」
+    for(var j2=0;j2<jets.length;j2++){
+      var D = jets[j2].drops;
+      for(var k2=0;k2<D.length;k2++){
+        var q2 = project(D[k2].p, cam);
+        if(!(q2.z > 0.2)) continue;
+        dot2(q2, Math.max(0.9, D[k2].r*q2.s), 'rgba(254,240,138,' + (0.20 + 0.54*D[k2].a).toFixed(2) + ')', ctx);
+      }
+    }
+    // ③ 喷孔根部那一小团最浓的油雾（软边光晕，别做成一个硬边大圆点）
+    var rr0 = Math.max(2.2, 0.085*tp.s);
+    var g0 = ctx.createRadialGradient(tp.x, tp.y, 1, tp.x, tp.y, rr0);
+    g0.addColorStop(0, 'rgba(254,243,199,' + (0.55 + 0.35*amt).toFixed(2) + ')');
+    g0.addColorStop(1, 'rgba(253,224,71,0)');
+    ctx.beginPath(); ctx.arc(tp.x, tp.y, rr0, 0, PI*2); ctx.fillStyle = g0; ctx.fill();
+  }
   drawn.igniter = {kind:diesel?'喷油嘴':'火花塞', y0:t, y1:t+IGN_H, x:CX};
 }
 function drawPorts(){
-  var d = deckY() + HEAD_H*0.5;
-  // 进气管（青）—— 从缸盖左侧水平伸出，末端再翘起一点
-  tube3([CX-(CYL_R+CYL_WALL), d, 0],[CX-PORT_X1, d, 0], PORT_R, cam, ctx,
-        'rgba(34,211,238,.34)', 'rgba(34,211,238,.92)', 1.6, 20);
-  tube3([CX-PORT_X1, d, 0],[CX-PORT_X1-0.30, d+0.85, 0], PORT_R*0.92, cam, ctx,
-        'rgba(34,211,238,.30)', 'rgba(34,211,238,.85)', 1.5, 18);
-  // 排气管（红）—— 从缸盖右侧水平伸出，末端再翘起一点
-  tube3([CX+(CYL_R+CYL_WALL), d, 0],[CX+PORT_X1, d, 0], PORT_R, cam, ctx,
-        'rgba(248,113,113,.34)', 'rgba(248,113,113,.92)', 1.6, 20);
-  tube3([CX+PORT_X1, d, 0],[CX+PORT_X1+0.30, d+0.85, 0], PORT_R*0.92, cam, ctx,
-        'rgba(248,113,113,.30)', 'rgba(248,113,113,.85)', 1.5, 18);
-  drawn.ports = {y:d, x1:PORT_X1};
+  mark('ports');
+  var d = deckY();
+  var yc = d + PORT_YC;                 // 气道中心线高度 == 外管轴线高度（同一根管子）
+  var info = [];
+  var sides = [{it:true,  s:-1, col:C.intake},
+               {it:false, s: 1, col:C.exhaust}];
+  for(var k=0;k<2;k++){
+    var it = sides[k].it, s = sides[k].s, col = sides[k].col;
+    var path = portPath(it);
+    var lift = liftOf(state.crank, it);
+    // ① 缸盖【内部】的气道：沿中心线画一条变宽带，终点正好落在气门正上方
+    tubeBand(path, portRadAt, cam, ctx, rgba(col, 0.30), rgba(col, 0.88), 1.6);
+    // ② 缸盖外壁 → 外管：起点就是气道的起点（同一个点 ⇒ 接缝不可能错开）
+    tube3(path[0], [s*PORT_X1, yc, 0], PORT_R, cam, ctx, rgba(col,0.32), rgba(col,0.92), 1.6, 20);
+    tube3([s*PORT_X1, yc, 0], [s*(PORT_X1+PORT_ELB), yc+0.85, 0], PORT_R*0.92, cam, ctx,
+          rgba(col,0.28), rgba(col,0.85), 1.5, 18);
+    // ③ 气门座圈：缸盖底面上的一圈开口，气道就落在这里（内径 < 气门盘 ⇒ 座圈露在盘外）
+    ringBand(portX(it), 0, d, VALVE_R*0.99, SEAT_R, cam, ctx, rgba(col, 0.34), rgba(col,0.92), 1.3);
+    // ④ 方向箭头（常驻）：进气 外→内、排气 内→外 ⇒ 通路与流向一眼可读
+    //   ⚠️ 中心线【永远】是从缸盖外壁画向气门的，所以进气的流向 = 沿中心线(+1)，
+    //      排气的流向 = 逆中心线(−1)。这里若误用 sides[k].s（±1 是左右侧号），两条箭头会同时指反。
+    var arrows = [portArrow(path, 0.28, it ? 1 : -1, col, cam, ctx),
+                  portArrow(path, 0.68, it ? 1 : -1, col, cam, ctx)];
+    // ⑤ 气流：沿气道跑的小亮点（只在气门真开着时出现），相位跟着曲轴 ⇒ 出图可复现
+    if(lift > 0.05){
+      var n = path.length - 1;
+      for(var m=0;m<3;m++){
+        var t = (((state.crank/(2*PI)*1.5 + m/3) % 1) + 1) % 1;
+        if(!it) t = 1 - t;
+        var fi = t*n, i0 = Math.min(n-1, Math.floor(fi)), fr = fi - i0;
+        var px = path[i0][0] + (path[i0+1][0]-path[i0][0])*fr;
+        var py = path[i0][1] + (path[i0+1][1]-path[i0][1])*fr;
+        var pp = project([px, py, 0], cam);
+        dot2(pp, Math.max(1.8, 0.15*pp.s), rgba(col, 0.30 + 0.60*lift), ctx);
+      }
+    }
+    info.push({intake:it, s:s, path:path, seatX:portX(it), seatY:d, rOut:SEAT_R, lift:lift,
+               x0:path[0][0], y0:path[0][1], x1:path[path.length-1][0], y1:path[path.length-1][1],
+               arrows:arrows});
+  }
+  drawn.ports = {y:yc, x1:PORT_X1, seatY:d, seatR:SEAT_R, rIn:PORT_RIN, rOut0:PORT_R, sides:info};
 }
 function drawEnergyBars(){
   var v = barVals();
@@ -1339,12 +1571,14 @@ function renderBody(){
   drawGas();
   drawCylinder();
   drawHead();
+  // ⚠️ 气道必须画在【缸盖之后、气门之前】：画在缸盖上 ⇒ 读作「剖开缸盖露出的气道」；
+  //    画在气门之前 ⇒ 气门杆从气道里穿过去，而不是把气门杆盖住。
+  drawPorts();
   drawValve(true);
   drawValve(false);
   drawCam(true);
   drawCam(false);
   drawIgniter();
-  drawPorts();
   // 器材屏幕盒先进避让表（标签不许盖在器材上）
   equipBoxes().forEach(function(b){ frameBoxes.push(b); });
   drawEnergyBars();
@@ -1352,7 +1586,11 @@ function renderBody(){
 }
 function render(){
   if(!cam) buildCam();
-  drawn = {valves:{}, cams:{}, bars:[], gas:null};   // gas 每帧先置空：drawGas 退化时不留下上一帧的旧值
+  // ★ HiDPI：画布 backing store 是 (W·DPR) × (H·DPR)，但所有绘制都用 CSS 像素坐标 ⇒
+  //    每帧必须把变换钉回 (DPR,0,0,DPR,0,0)。少了这一行，Retina 屏上整个场景会缩到
+  //    画布左上角的 1/DPR（实测 DPR=2 时着墨区域只占画布 40% × 48%）。
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+  drawn = {valves:{}, cams:{}, bars:[], gas:null, spray:null, ignition:null, order:[]};   // gas/spray 每帧先置空
   drawn.stroke = strokeOf(state.crank);
   drawn.vals = barVals();
   drawn.etab = energyTable();
@@ -1757,10 +1995,14 @@ window.__eng = {
     CX:CX, CRK_Y:CRK_Y, R_CRK:R_CRK, L_ROD:L_ROD, STROKE:STROKE,
     PIST_H:PIST_H, PIST_R:PIST_R, CYL_R:CYL_R, CYL_WALL:CYL_WALL, CYL_Y0:CYL_Y0,
     FIN_Y:FIN_Y.slice(), FIN_R:FIN_R, FIN_TH:FIN_TH,
-    CASE_R:CASE_R, CASE_Y0:CASE_Y0, CASE_Y1:CASE_Y1, HEAD_H:HEAD_H,
+    CASE_R:CASE_R, CASE_Y0:CASE_Y0, CASE_Y1:CASE_Y1, HEAD_H:HEAD_H, HEAD_R:HEAD_R,
     CAM_XI:CAM_XI, CAM_XE:CAM_XE, VALVE_R:VALVE_R, VALVE_HEAD_T:VALVE_HEAD_T, VALVE_STEM_R:VALVE_STEM_R,
     CAM_R:CAM_R, CAM_LIFT:CAM_LIFT, CAM_DY:CAM_DY, SPR_DY0:SPR_DY0, SPR_TURNS:SPR_TURNS,
-    PORT_R:PORT_R, PORT_X1:PORT_X1,
+    PORT_R:PORT_R, PORT_X1:PORT_X1, PORT_ELB:PORT_ELB, PORT_XTOT:PORT_XTOT,
+    PORT_YC:PORT_YC, PORT_RIN:PORT_RIN, SEAT_R:SEAT_R,
+    INJ_LEAD:INJ_LEAD, INJ_TAIL:INJ_TAIL, SPRAY_NJ:SPRAY_NJ, SPRAY_NK:SPRAY_NK,
+    SPRAY_CONE:SPRAY_CONE, SPRAY_LEN:SPRAY_LEN,
+    SPRAY_SCAT:SPRAY_SCAT, SPRAY_AZ:SPRAY_AZ, SPRAY_TIP_UP:SPRAY_TIP_UP,
     SHAFT_Z0:SHAFT_Z0, SHAFT_Z1:SHAFT_Z1, SHAFT_R:SHAFT_R,
     FLY_Z:FLY_Z, FLY_R:FLY_R, FLY_TH:FLY_TH,
     IGN_R:IGN_R, IGN_H:IGN_H, CRK_Z:CRK_Z, CRK_ARM_TH:CRK_ARM_TH,
@@ -1785,6 +2027,8 @@ window.__eng = {
   etaIdeal: etaIdeal, etaIdealClosed: etaIdealClosed,
   liftOf: liftOf, camPhase: camPhase, camBeta: camBeta, camProfileR: camProfileR,
   camTopR: camTopR, valveTopY: valveTopY, valveDrop: valveDrop, ignitionFlash: ignitionFlash,
+  portX: portX, portPath: portPath, portRadAt: portRadAt, portArrow: portArrow, mark: mark,
+  sprayAmt: sprayAmt, sprayJets: sprayJets, sprayTip: sprayTip, hash01: hash01,
   strokeDelta: strokeDelta, strokeEnergyText: strokeEnergyText, energyTable: energyTable,
   barMech: barMech, barInt: barInt, barVals: barVals, gasColor: gasColor,
   // 相机与绘制
