@@ -1,0 +1,1341 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>连通器与船闸 · 3D 立体模型 - 物理虚拟实验</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="auth-check.js"></script>
+  <style>
+    *{box-sizing:border-box}
+    html,body{margin:0}
+    body{background:var(--bg-darker,#020617);color:var(--text-main,#e2e8f0);overflow-x:hidden;
+      font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif;
+      padding-top:57px}
+    /* 🔴 style.css 里 .header 自带 padding:1.25rem 2rem（上下各 20px）⇒ 页头实际高 97px，
+       而 body 只留了 56px ⇒ 固定页头把 <h1>「连通器与船闸」整行盖住（截图才看出来）。
+       必须把 padding 归零，让页头正好等于里面那层 56px + 1px 边框。 */
+    .header{position:fixed!important;top:0;left:0;right:0;z-index:60;padding:0!important;
+      transition:transform .35s cubic-bezier(.4,0,.2,1);will-change:transform}
+    .header.hidden{transform:translateY(-100%)}
+    .wrap{max-width:1680px;margin:0 auto;padding:18px 22px 40px}
+    h1{margin:0 0 6px;font-size:21px;letter-spacing:.3px}
+    .sub{margin:0 0 16px;color:#8aa6b8;font-size:12.5px;line-height:1.6}
+
+    /* ---------- 三栏：控制台 | 画面 | 读数（左右并排，绝不上下堆叠） ---------- */
+    /* 🔴 本页场景的世界包络是【扁的】：宽 8.36 × 高 3.05 ≈ 2.7:1。
+       三栏版式（ctl | scene | read）下画面列只有 ~600px 宽，相机按【宽】取景，
+       于是画布上下各空 180px —— 实测 fillH 只有 0.30（70% 是空白，用户明确禁止）。
+       把读数栏挪到下面、让画面横跨两列 ⇒ 画面列宽 920(1280)~1320(1680)px，
+       fillH 升到 0.65~0.88。控制台仍与画面【左右并排】（用户的硬要求）。 */
+    .lab3d-layout{display:grid;gap:14px;align-items:start;
+      grid-template-columns:302px minmax(0,1fr);
+      grid-template-rows:auto auto auto;
+      grid-template-areas:"ctl scene" "lower lower" "read read"}
+    .lab3d-ctl{grid-area:ctl;display:flex;flex-direction:column;gap:11px;min-width:0;align-self:start}
+    .lab3d-stage{grid-area:scene;position:relative;align-self:stretch;
+      min-height:clamp(300px,42vh,560px);
+      border-radius:16px;border:1px solid rgba(148,163,184,.16);
+      background:linear-gradient(180deg,#0a1424,#060d18);overflow:hidden}
+    /* canvas 必须绝对定位：写 height:100% 会让 canvas 的内在高度变成 stage 的 max-content，
+       落点随内容变化（1280 与 1920 会落到不同高度）。 */
+    .lab3d-stage canvas{position:absolute;left:0;top:0;display:block;width:100%;height:100%;
+      touch-action:none;cursor:grab}
+    .lab3d-stage canvas.grabbing{cursor:grabbing}
+    .lab3d-read{grid-area:read;display:grid;gap:11px;min-width:0;align-items:start;
+      grid-template-columns:repeat(auto-fit,minmax(232px,1fr))}
+    .lab3d-lower{grid-area:lower;display:grid;
+      grid-template-columns:minmax(0,1.22fr) minmax(0,1fr) minmax(0,1fr);gap:11px;align-items:start}
+
+    .panel{background:rgba(15,23,42,.72);border:1px solid rgba(148,163,184,.16);
+      border-radius:14px;padding:12px 13px;min-width:0}
+    .panel>h3{margin:0 0 9px;font-size:12.5px;font-weight:800;color:#bae6fd;
+      display:flex;align-items:center;justify-content:space-between;gap:8px}
+    .panel>h3 .pill{font-size:10px;font-weight:800;padding:2px 8px;border-radius:99px;
+      background:rgba(56,189,248,.16);color:#bae6fd;white-space:nowrap}
+    .panel>h3 .pill.ok{background:rgba(52,211,153,.22);color:#d1fae5}
+    .note{margin:8px 0 0;font-size:11px;line-height:1.6;color:#8aa6b8}
+    .note b{color:#cbd5e1}
+    .note.warn{color:#fcd34d}
+    .note.good{color:#6ee7b7}
+
+    .btn-row{display:flex;flex-wrap:wrap;gap:6px}
+    .btn-row button{flex:1 1 auto;min-width:0;padding:8px 9px;border-radius:9px;cursor:pointer;
+      border:1px solid rgba(148,163,184,.22);background:rgba(30,41,59,.72);color:#cbd5e1;
+      font-size:11.5px;font-weight:700;font-family:inherit;transition:border-color .15s,background .15s}
+    .btn-row button.primary{border-color:rgba(56,189,248,.6);background:rgba(14,116,144,.42);color:#e0f2fe}
+    .btn-row button:hover:not(:disabled){border-color:rgba(125,211,252,.7)}
+    .btn-row button:disabled{opacity:.4;cursor:not-allowed}
+    .btn-row.tiny button{padding:6px 4px;font-size:10.5px}
+
+    .slider{display:block;margin:9px 0 0;font-size:11px;color:#8aa6b8}
+    .slider b{color:#bae6fd;font-variant-numeric:tabular-nums}
+    .slider input{width:100%;margin-top:6px;accent-color:#38bdf8}
+
+    .kv{display:flex;flex-direction:column;gap:7px}
+    .kv>div{display:flex;align-items:baseline;justify-content:space-between;gap:8px;
+      font-size:11.5px;color:#8aa6b8}
+    .kv>div>b{color:#e2e8f0;font-variant-numeric:tabular-nums;font-size:13px}
+    .kv>div>b.hi{color:#7dd3fc}
+    .kv>div>b.good{color:#6ee7b7}
+
+    table.rec{width:100%;border-collapse:collapse;font-size:11px;
+      font-variant-numeric:tabular-nums;white-space:nowrap;word-break:keep-all}
+    table.rec th,table.rec td{padding:5px 3px;text-align:right;
+      border-bottom:1px solid rgba(148,163,184,.13)}
+    table.rec th{color:#8aa6b8;font-weight:700;font-size:10.5px}
+    table.rec td:first-child,table.rec th:first-child{text-align:left}
+    #cv-rec-body{overflow-x:auto}
+
+    .bars{display:flex;align-items:flex-end;gap:9px;height:132px;margin-top:4px}
+    .bars .b{flex:1 1 0;min-width:0;display:flex;flex-direction:column;justify-content:flex-end;
+      align-items:center;gap:5px;height:100%}
+    .bars .b .val{font-size:10.5px;font-weight:800;color:#cbd5e1;font-variant-numeric:tabular-nums}
+    .bars .b .col{width:100%;border-radius:6px 6px 2px 2px;min-height:3px}
+    .bars .b .cap{font-size:10px;color:#8aa6b8;white-space:nowrap}
+
+    .analysis{font-size:11.5px;line-height:1.75;color:#a7bccd}
+    .analysis .line{display:flex;justify-content:space-between;gap:8px;
+      padding:4px 0;border-bottom:1px solid rgba(148,163,184,.12)}
+    .analysis .line b{color:#e2e8f0;font-variant-numeric:tabular-nums}
+    .analysis .conc{margin-top:8px;padding:8px 10px;border-radius:10px;
+      background:rgba(14,116,144,.18);border:1px solid rgba(56,189,248,.24);
+      color:#cbeafe;font-size:11.5px;line-height:1.7}
+    .analysis .conc b{color:#7dd3fc}
+    .analysis .conc.info{background:rgba(30,41,59,.6);border-color:rgba(148,163,184,.2);color:#a7bccd}
+
+    .info-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));
+      gap:14px;margin-top:16px}
+    .info-cards .card{background:rgba(15,23,42,.66);border:1px solid rgba(148,163,184,.16);
+      border-radius:14px;padding:14px 16px}
+    .info-cards .card h3{margin:0 0 8px;font-size:13px;color:#bae6fd}
+    .info-cards .card p,.info-cards .card li{font-size:11.5px;line-height:1.8;color:#a7bccd}
+    .info-cards .card ul{margin:0;padding-left:18px}
+
+    @media (max-width:1180px){
+      .lab3d-lower{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+      .lab3d-read{grid-template-columns:repeat(auto-fit,minmax(220px,1fr))}
+    }
+    @media (max-width:820px){
+      .wrap{padding:12px 12px 32px}
+      .lab3d-layout{grid-template-columns:minmax(0,1fr);grid-template-rows:auto;
+        grid-template-areas:"ctl" "scene" "lower" "read"}
+      .lab3d-stage{min-height:0;aspect-ratio:2 / 1}
+      .lab3d-lower{grid-template-columns:minmax(0,1fr)}
+      .lab3d-read{grid-template-columns:minmax(0,1fr)}
+    }
+  </style>
+</head>
+<body>
+<header class="header">
+  <div style="max-width:1680px;margin:0 auto;padding:0 22px;height:56px;display:flex;align-items:center;gap:22px">
+    <a href="index.html" style="color:#e2e8f0;text-decoration:none;font-weight:800;font-size:15px">物理虚拟实验</a>
+    <nav style="display:flex;gap:16px;font-size:13px">
+      <a href="index.html" style="color:#8aa6b8;text-decoration:none">首页</a>
+      <a href="experiments.html" style="color:#8aa6b8;text-decoration:none">实验库</a>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap">
+  <h1>连通器与船闸</h1>
+  <p class="sub">上端开口、下部连通的容器叫<b>连通器</b>：静止时各容器的液面总在同一水平面上。船闸就是这条原理最大的工程应用。</p>
+
+  <div class="lab3d-layout">
+    <!-- ============ 控制台（左） ============ -->
+    <aside class="lab3d-ctl">
+      <div class="panel">
+        <h3>探究模式 <span class="pill" id="cv-mode-pill">连通器</span></h3>
+        <div class="btn-row" id="cv-modes">
+          <button data-mode="connect">① 连通器</button>
+          <button data-mode="lock">② 船闸</button>
+        </div>
+        <p class="note" id="cv-mode-note"></p>
+      </div>
+
+      <div class="panel" id="cv-panel-connect">
+        <h3>往哪一组倒水</h3>
+        <div class="btn-row tiny" id="cv-targets">
+          <button data-target="0">U 形管</button>
+          <button data-target="1">茶壶</button>
+          <button data-target="2">水位计</button>
+          <button data-target="3">涵洞</button>
+        </div>
+        <label class="slider">一次倒水量 <b id="cv-amt-out">0.60 L</b>
+          <input type="range" id="cv-amt" min="0.2" max="1.6" step="0.1" value="0.6">
+        </label>
+        <div class="btn-row">
+          <button id="cv-pour" class="primary">倒水</button>
+          <button id="cv-drain">排水</button>
+          <button id="cv-reset">复位</button>
+        </div>
+        <p class="note" id="cv-pour-note">倒水时只有被倒的那一组先涨，随后<b>四组液面一起找平</b>。</p>
+      </div>
+
+      <div class="panel" id="cv-panel-lock" hidden>
+        <h3>船闸操作 <span class="pill" id="cv-step-pill">1 / 6</span></h3>
+        <div class="btn-row">
+          <button id="cv-step" class="primary">下一步 ▶</button>
+          <button id="cv-step-reset">重来</button>
+        </div>
+        <p class="note" id="cv-step-note"></p>
+      </div>
+
+      <div class="panel">
+        <h3>视角</h3>
+        <div class="btn-row tiny" id="cv-views">
+          <button data-view="side">正侧（等高）</button>
+          <button data-view="perspective">立体</button>
+          <button data-view="top">俯视</button>
+          <button data-view="close">贴近</button>
+        </div>
+      </div>
+    </aside>
+
+    <!-- ============ 画面（中） ============ -->
+    <section class="lab3d-stage"><canvas id="cv-canvas"></canvas></section>
+
+    <!-- ============ 读数（右） ============ -->
+    <aside class="lab3d-read">
+      <div class="panel">
+        <h3>液面高度 <span class="pill ok" id="cv-equal-pill">四组等高</span></h3>
+        <div class="kv" id="cv-levels"></div>
+      </div>
+      <div class="panel">
+        <h3>各组分到的水量</h3>
+        <div class="bars" id="cv-bars"></div>
+        <p class="note" id="cv-bars-note"></p>
+      </div>
+      <div class="panel">
+        <h3>分析与结论</h3>
+        <div class="analysis" id="cv-analysis"></div>
+      </div>
+      <div class="panel">
+        <h3>操作提示</h3>
+        <p class="note" id="cv-hint"></p>
+      </div>
+    </aside>
+
+    <!-- ============ 下方三块 ============ -->
+    <div class="lab3d-lower">
+      <div class="panel">
+        <h3>数据记录 <span class="pill" id="cv-rec-count">0 组</span></h3>
+        <div id="cv-rec-body">
+          <table class="rec">
+            <thead><tr><th>组别</th><th>倒水位置</th><th>总水量/L</th><th>液面高度/cm</th><th>最大液面差/cm</th></tr></thead>
+            <tbody id="cv-rec"></tbody>
+          </table>
+        </div>
+        <div class="btn-row" style="margin-top:9px">
+          <button id="cv-record">记录一组</button>
+          <button id="cv-clear">清空</button>
+        </div>
+      </div>
+      <div class="panel">
+        <h3>各容器截面积</h3>
+        <div class="bars" id="cv-area-bars"></div>
+        <p class="note">截面积大的容器分到的水多，但<b>液面高度完全一样</b> —— 这就是连通器的结论。</p>
+      </div>
+      <div class="panel">
+        <h3>船闸分步</h3>
+        <div class="analysis" id="cv-steps"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="info-cards">
+    <div class="card">
+      <h3>实验原理</h3>
+      <ul>
+        <li><b>连通器</b>：上端开口、下部互相连通的容器。静止时，各容器中的液面总保持在同一水平面上。</li>
+        <li>若各容器装的<b>是同种液体</b>且液体不流动，则各液面必然等高 —— 与容器形状、粗细、倾斜都无关。</li>
+        <li>数学上：公共底以上，各处压强 <b>p = ρgh</b> 必须相等，因此 <b>h 必须相等</b>。</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>船闸：连通器的应用</h3>
+      <ul>
+        <li>闸室与上游（或下游）之间的<b>阀门</b>打开后，两者就构成一个连通器，水面会自动齐平。</li>
+        <li>只有水面齐平时，闸门才推得开（否则水压把闸门死死顶住）。</li>
+        <li>船就这样一级一级地「走台阶」，跨越高低水位。</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>操作指南</h3>
+      <ul>
+        <li><b>拖动空白处</b>：旋转视角；<b>滚轮</b>：缩放。</li>
+        <li><b>连通器模式</b>：选一组 → 调倒水量 → 点「倒水」，看四组液面一起找平。</li>
+        <li><b>船闸模式</b>：点「下一步」按真实操作顺序走一遍，注意<b>闸门只有齐平后才能开</b>。</li>
+      </ul>
+    </div>
+  </div>
+</main>
+
+<script>
+(function () {
+  'use strict';
+  const $ = function (id) { return document.getElementById(id); };
+
+  /* ============================================================
+   * 数学
+   * ============================================================ */
+  const clamp = function (n, a, b) { return Math.max(a, Math.min(b, n)); };
+  const lerp = function (a, b, t) { return a + (b - a) * t; };
+  const sub = function (a, b) { return [a[0] - b[0], a[1] - b[1], a[2] - b[2]]; };
+  const add = function (a, b) { return [a[0] + b[0], a[1] + b[1], a[2] + b[2]]; };
+  const scl = function (a, k) { return [a[0] * k, a[1] * k, a[2] * k]; };
+  const dot = function (a, b) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; };
+  const cross = function (a, b) {
+    return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+  };
+  const vlen = function (a) { return Math.hypot(a[0], a[1], a[2]); };
+  const vnorm = function (a) { const l = vlen(a) || 1; return [a[0] / l, a[1] / l, a[2] / l]; };
+  const rgb = function (c, k) {
+    const s = k === undefined ? 1 : k;
+    return 'rgb(' + Math.round(clamp(c[0] * s, 0, 255)) + ',' +
+      Math.round(clamp(c[1] * s, 0, 255)) + ',' + Math.round(clamp(c[2] * s, 0, 255)) + ')';
+  };
+  const rgba = function (c, a) {
+    return 'rgba(' + Math.round(clamp(c[0], 0, 255)) + ',' +
+      Math.round(clamp(c[1], 0, 255)) + ',' + Math.round(clamp(c[2], 0, 255)) + ',' + a + ')';
+  };
+
+  /* ============================================================
+   * 世界常量
+   * ------------------------------------------------------------
+   * 长度单位统一取 1 世界单位 = 1 dm（10 cm）。
+   * 于是「截面积」的单位是 dm²、「液面高度」是 dm、「水量」就是 L ——
+   * 三者的换算在数值上直接成立（水量 = 截面积 × 高度），不用再乘系数。
+   * ============================================================ */
+  const YBASE = 0;          // 四组容器的公共底
+  // 🔴 HMAX 是【液面】上限，不是场景高度 —— 两者原来被写成同一个量（HMAX + 0.30 当包络顶），
+  //    结果 HMAX 只能跟着最高的玻璃管（2.75）走，液面一超过茶壶口（1.72）茶壶就被 Math.min
+  //    截住、不再跟着涨 ⇒「四组等高」当场破功。现在拆成两个常量。
+  const HMAX = 1.30;        // 液面最高（dm）；必须 ≤ 最矮那一组的容器口
+  const SCENE_TOP = 3.05;   // 取景包络上沿：盖住最高玻璃管 2.75 + 余量
+  const CAMD = 26;
+  const TARGET = [0.50, 1.22, 0];
+  const CM_PER_UNIT = 10;   // 1 世界单位 = 10 cm
+  const VOL0 = 2.83;        // 默认总水量 (L) ⇒ 液面 2.83/2.825 = 1.00 dm = 10.0 cm
+
+  // 默认给【正侧】：yaw=0 时四组液面落在同一屏幕高度，「等高」一眼就能看出来。
+  // perspective 保留给想看立体感的人 —— 但透视下同一条世界水平线在屏幕上必然有倾斜。
+  const VIEWS = {
+    side:        { yaw:  0.00, pitch: 0.10, zoom: 1.02, tgt: [0.50, 1.22, 0], look: false },
+    perspective: { yaw: -0.34, pitch: 0.16, zoom: 1.00, tgt: [0.50, 1.22, 0], look: false },
+    top:         { yaw: -0.28, pitch: 0.60, zoom: 1.06, tgt: [0.50, 1.22, 0], look: false },
+    close:       { yaw: -0.30, pitch: 0.14, zoom: 1.70, tgt: [-0.20, 0.90, 0], look: true }
+  };
+
+  const C_GLASS = [168, 212, 236];
+  const C_WATER = [ 92, 172, 224];
+  const C_BENCH = [ 46,  54,  68];
+  const C_SOIL  = [ 96,  84,  70];
+  const C_GATE  = [176, 188, 202];
+  const C_HULL  = [214, 158,  86];
+
+  /* ============================================================
+   * 四组连通器示例
+   * ------------------------------------------------------------
+   * area 是【截面积】(dm²)，只用来决定「水量怎么分」；
+   * 液面高度由【总水量 ÷ 总面积】给出 —— 四组必然等高。
+   * ============================================================ */
+  const VESSELS = [
+    { key: 'u',     name: 'U 形管',      area: 0.304, x0: -3.50, x1: -1.50, tint: C_WATER },
+    { key: 'pot',   name: '茶壶',        area: 0.981, x0: -1.25, x1:  0.55, tint: [126, 200, 232] },
+    { key: 'gauge', name: '锅炉水位计',  area: 0.868, x0:  0.95, x1:  2.30, tint: [ 96, 196, 212] },
+    { key: 'cul',   name: '涵洞',        area: 0.672, x0:  2.60, x1:  4.50, tint: [140, 190, 220] }
+  ];
+  const AREA_SUM = VESSELS.reduce(function (s, v) { return s + v.area; }, 0);
+
+  /* 船闸三段（世界 x 范围与水位，单位 dm） */
+  const LOCK = {
+    up: { x0: -3.75, x1: -1.80, y: 2.30, name: '上游' },
+    ch: { x0: -1.35, x1:  1.35, y: 0.70, name: '闸室' },
+    dn: { x0:  1.80, x1:  3.75, y: 0.70, name: '下游' }
+  };
+  const GATE_T = 0.13;      // 闸门厚度（半宽）
+
+  /* ============================================================
+   * 状态
+   * ============================================================ */
+  const state = {
+    mode: 'connect',
+    yaw: VIEWS.side.yaw, pitch: VIEWS.side.pitch, zoom: VIEWS.side.zoom,
+    tgt: VIEWS.side.tgt.slice(), look: !!VIEWS.side.look,
+    target: 0,             // 往哪一组倒水
+    amount: 0.6,           // 一次倒水量 (L)
+    totalVol: VOL0,        // 当前总水量 (L)
+    boost: 0,              // 倒水动画：目标组的额外抬升 (dm)
+    boostT: 0,             // 动画计时
+    // 船闸
+    step: 0,
+    chY: LOCK.dn.y,        // 闸室水位（dm）
+    chTarget: LOCK.dn.y,   // 闸室水位目标
+    boatX: -2.75, boatY: LOCK.up.y,
+    boatTargetX: -2.75, boatTargetY: LOCK.up.y,
+    gateUp: false, gateDn: false,     // 闸门是否打开
+    drag: null, hover: false,
+    w: 0, h: 0, dpr: 1, dirty: true, t: 0
+  };
+
+  const records = [];
+
+  /* ============================================================
+   * 物理 —— 全部读数都从下面这几个纯函数来
+   * ------------------------------------------------------------
+   * 【关键】levelH() 里【没有】state.target / state.boost ——
+   * 「静止时四组液面等高」是结构上必然成立，不是四组各算一遍。
+   * ============================================================ */
+  const levelH = function () { return clamp(state.totalVol / AREA_SUM, 0, HMAX); };  // dm
+  const levelY = function () { return YBASE + levelH(); };                            // 世界 y
+  const volOf = function (i) { return VESSELS[i].area * levelH(); };                   // L
+  const levelOf = function (i) {
+    // 倒水动画期间，只有被倒的那一组临时高出一截；boost 衰减到 0 后四组必然相等。
+    // 🔴 必须再按【本组容器口】截断：否则画面上的水被 drawPot 的 Math.min 截住，
+    //    而 LEVELS_DRAWN 记的是没截断的值 ⇒ 标注浮在水面之上的空气里。
+    //    （把画出来的量与报出来的量绑成同一个值，是这里唯一的正确做法。）
+    const lv = levelY() + (i === state.target && state.boost > 0 ? state.boost : 0);
+    return Math.min(lv, VTOP[i]);
+  };
+  const maxSpread = function () {
+    const ys = VESSELS.map(function (v, i) { return levelOf(i); });
+    return Math.max.apply(null, ys) - Math.min.apply(null, ys);
+  };
+
+  /* 船闸：闸室与某一侧连通后水位趋同（连通器原理），用一阶弛豫过渡 */
+  const chLevel = function () { return state.chY; };
+  const lockSpread = function (side) {
+    return Math.abs(state.chY - (side === 'up' ? LOCK.up.y : LOCK.dn.y));
+  };
+
+  /* ============================================================
+   * 相机（自建，零依赖）
+   * ============================================================ */
+  function envelopePoints() {
+    const pts = [];
+    if (state.mode === 'connect') {
+      for (const v of VESSELS) {
+        pts.push([v.x0 - 0.18, 0, -0.62]);
+        pts.push([v.x0 - 0.18, SCENE_TOP, -0.62]);
+        pts.push([v.x1 + 0.18, SCENE_TOP, 0.62]);
+        pts.push([v.x1 + 0.18, 0, 0.62]);
+      }
+      // 右侧「同一水平面」引线与它的标签留出的余量
+      pts.push([VESSELS[3].x1 + 1.35, levelY() + 0.35, 0]);
+      pts.push([VESSELS[0].x0 - 0.95, levelY(), 0]);
+    } else {
+      pts.push([LOCK.up.x0 - 0.30, 0, -0.70]);
+      pts.push([LOCK.up.x0 - 0.30, LOCK.up.y + 0.85, -0.70]);
+      pts.push([LOCK.dn.x1 + 0.30, LOCK.dn.y + 0.85, 0.70]);
+      pts.push([LOCK.dn.x1 + 0.30, 0, 0.70]);
+      // 船（水面 2.30 + 吃水/舱室 ≈ 0.40）上方要留出来，但别留太多 ——
+      // 多留的每一分都会变成画布上下两端的空白（实测原来多留了 0.20 dm）。
+      pts.push([LOCK.up.x0 - 0.30, LOCK.up.y + 0.72, 0]);
+      pts.push([LOCK.dn.x1 + 0.30, LOCK.dn.y + 0.55, 0]);
+    }
+    return pts;
+  }
+
+  function makeCam(q, w, h) {
+    const cy = Math.cos(state.yaw), sy = Math.sin(state.yaw);
+    const cp = Math.cos(state.pitch), sp = Math.sin(state.pitch);
+    const dir = [cp * sy, sp, cp * cy];
+    const tgt = state.tgt || TARGET;
+    // 【别把 dist 也除以 zoom】—— 小角近似下屏幕尺寸 ≈ w·0.92·zoom，与 dist 无关：
+    // 改 dist 只改透视畸变，而自动取景又把焦距算回去，两个效应几乎完全抵消
+    // （zoom 1→2 时屏幕尺寸只变 1.7%，滚轮缩放与 close 视角全废）。dist 固定、zoom 只乘焦距。
+    q.dist = CAMD;
+    q.eye = add(tgt, scl(dir, q.dist));
+    q.fwd = scl(dir, -1);
+    q.right = vnorm(cross(q.fwd, [0, 1, 0]));
+    q.up = cross(q.right, q.fwd);
+    const pts = envelopePoints();
+    let loR = 1e9, hiR = -1e9, loU = 1e9, hiU = -1e9;
+    for (const p of pts) {
+      const v = sub(p, q.eye);
+      const z = Math.max(0.05, dot(v, q.fwd));
+      const r = dot(v, q.right) / z, u = dot(v, q.up) / z;
+      loR = Math.min(loR, r); hiR = Math.max(hiR, r);
+      loU = Math.min(loU, u); hiU = Math.max(hiU, u);
+    }
+    const s = Math.min(w * 0.90 / Math.max(1e-6, hiR - loR),
+                       h * 0.88 / Math.max(1e-6, hiU - loU)) * state.zoom;
+    q.focal = s;
+    if (state.look) {
+      const tv = sub(tgt, q.eye);
+      const tz = Math.max(0.05, dot(tv, q.fwd));
+      q.px = w * 0.5 - (dot(tv, q.right) / tz) * s;
+      q.py = h * 0.5 + (dot(tv, q.up) / tz) * s;
+    } else {
+      q.px = w * 0.5 - (loR + hiR) * 0.5 * s;
+      q.py = h * 0.5 + (loU + hiU) * 0.5 * s;
+    }
+    return q;
+  }
+  function project(p, q) {
+    const v = sub(p, q.eye);
+    const z = Math.max(0.05, dot(v, q.fwd));
+    const s = q.focal / z;
+    return { x: q.px + dot(v, q.right) * s, y: q.py - dot(v, q.up) * s, s: s, z: z };
+  }
+
+  /* ============================================================
+   * 绘图小工具
+   * ============================================================ */
+  const canvas = $('cv-canvas');
+  const ctx = canvas.getContext('2d');
+  const LBOX = [];        // 标注（会打架的那些）
+  const GEO_BOX = [];     // 器材自带的刻度/引线文字（不参与避让，但要进 frameBoxes）
+  const frameBoxes = [];  // 避让集合：标注落笔后要把自己并进来
+
+  function polyPath(pts) {
+    ctx.beginPath();
+    pts.forEach(function (p, k) { k ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y); });
+    ctx.closePath();
+  }
+  function poly(pts, fill, stroke, lw) {
+    if (!pts || pts.length < 2) return;
+    polyPath(pts);
+    if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+    if (stroke) { ctx.lineWidth = lw || 1; ctx.strokeStyle = stroke; ctx.stroke(); }
+  }
+  function line(pts, color, lw, dash) {
+    if (!pts || pts.length < 2) return;
+    ctx.beginPath();
+    pts.forEach(function (p, k) { k ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y); });
+    ctx.setLineDash(dash || []);
+    ctx.lineWidth = lw; ctx.strokeStyle = color; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    ctx.stroke(); ctx.setLineDash([]);
+  }
+  const LIGHT = vnorm([-0.34, 0.86, 0.38]);
+  const shade = function (base, n, amb) {
+    return rgb(base, (amb === undefined ? 0.55 : amb) + 0.60 * Math.max(0, dot(n, LIGHT)));
+  };
+
+  // 凸包（单调链）：圆管侧面若「上下两环直接连线」在 nonzero 环绕规则下会自交相消，
+  // 中段整块不被填充 —— 必须取凸包。
+  function convexHull(pts) {
+    if (pts.length < 3) return pts.slice();
+    const P = pts.slice().sort(function (a, b) { return a.x - b.x || a.y - b.y; });
+    const cr = function (o, a, b) { return (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x); };
+    const lo = [];
+    for (const p of P) {
+      while (lo.length >= 2 && cr(lo[lo.length - 2], lo[lo.length - 1], p) <= 0) lo.pop();
+      lo.push(p);
+    }
+    const up = [];
+    for (let i = P.length - 1; i >= 0; i--) {
+      const p = P[i];
+      while (up.length >= 2 && cr(up[up.length - 2], up[up.length - 1], p) <= 0) up.pop();
+      up.push(p);
+    }
+    lo.pop(); up.pop();
+    return lo.concat(up);
+  }
+
+  /* ---------------- 三维图元 ---------------- */
+  function vRing(cx, cz, r, y, q, N) {
+    const out = [];
+    for (let i = 0; i < N; i++) {
+      const a = i / N * Math.PI * 2;
+      out.push(project([cx + Math.cos(a) * r, y, cz + Math.sin(a) * r], q));
+    }
+    return out;
+  }
+  // 竖直圆柱（沿 y 轴）
+  function vCyl(cx, cz, r, y0, y1, q, fill, stroke, lw, capFill) {
+    const N = 20;
+    const b = vRing(cx, cz, r, y0, q, N);
+    const t = vRing(cx, cz, r, y1, q, N);
+    poly(convexHull(b.concat(t)), fill, stroke, lw);
+    if (capFill) poly(convexHull(t), capFill, stroke, lw);
+  }
+  // 水平圆柱（沿 x 轴）
+  function hCyl(x0, x1, cz, r, cy, q, fill, stroke, lw) {
+    const N = 18;
+    const ringAt = function (x) {
+      const out = [];
+      for (let i = 0; i < N; i++) {
+        const a = i / N * Math.PI * 2;
+        out.push(project([x, cy + Math.cos(a) * r, cz + Math.sin(a) * r], q));
+      }
+      return out;
+    };
+    poly(convexHull(ringAt(x0).concat(ringAt(x1))), fill, stroke, lw);
+  }
+  // 长方体：整体凸包 + 顶面 + 前脸棱线（够用且不会画错遮挡）
+  function box3(x0, x1, z0, z1, y0, y1, q, fill, stroke, lw, capFill) {
+    const P = function (x, y, z) { return project([x, y, z], q); };
+    const v = [
+      P(x0, y0, z0), P(x1, y0, z0), P(x1, y0, z1), P(x0, y0, z1),
+      P(x0, y1, z0), P(x1, y1, z0), P(x1, y1, z1), P(x0, y1, z1)
+    ];
+    poly(convexHull(v), fill, stroke, lw);
+    if (capFill) {
+      poly([v[4], v[5], v[6], v[7]], capFill, stroke, lw);
+      line([v[5], v[6]], stroke || 'rgba(0,0,0,0)', lw || 1);
+    }
+  }
+  // 折线管（壶嘴 / 连接管）：用屏幕线宽近似世界半径
+  function tube(pts, r, q, color, alpha, lwMin) {
+    const S = pts.map(function (p) { return project(p, q); });
+    const wpx = r * 2 * (S[0].s || 1);
+    line(S, rgba(color, alpha === undefined ? 1 : alpha), Math.max(lwMin || 2, wpx));
+  }
+
+  /* ---------------- 标注 ---------------- */
+  function labelBox(p, text, size, align) {
+    ctx.font = '800 ' + size + 'px Inter, "Microsoft YaHei", sans-serif';
+    const wpx = ctx.measureText(text).width;
+    const pad = 4;
+    const half = size * 0.72 + pad * 0.5;
+    const wBox = wpx + pad * 2;
+    const EDGE = 8;
+    const y = clamp(p.y, half + EDGE, Math.max(half + EDGE, state.h - half - EDGE));
+    let bx = align === 'left' ? p.x - 4 - pad
+      : align === 'right' ? p.x + 4 - wpx - pad
+        : p.x - wpx / 2 - pad;
+    bx = clamp(bx, EDGE, Math.max(EDGE, state.w - wBox - EDGE));
+    return { x: bx, y: y - half, w: wBox, h: half * 2, cx: bx + wBox / 2, cy: y };
+  }
+  function label(p, text, color, size, align) {
+    ctx.font = '800 ' + size + 'px Inter, "Microsoft YaHei", sans-serif';
+    ctx.textAlign = align || 'center';
+    ctx.textBaseline = 'middle';
+    const pad = 4;
+    const wpx = ctx.measureText(text).width;
+    const b = labelBox(p, text, size, align);
+    const x = align === 'left' ? b.x + pad : align === 'right' ? b.x + wpx + pad : b.cx;
+    ctx.fillStyle = 'rgba(2,6,23,.78)';
+    ctx.fillRect(b.x, b.y, b.w, b.h);
+    ctx.fillStyle = color;
+    ctx.fillText(text, x, b.cy);
+    b.txt = text;
+    LBOX.push(b);
+    // 【落完笔必须把自己并进避让集合】否则后面的标注看不见前面的，两个可以正正叠在一起。
+    frameBoxes.push(b);
+    return b;
+  }
+  // 器材自带的文字（刻度、水位标注）：不参与避让，但要进 frameBoxes 供别人避让
+  function tickText(p, text, color, size, align) {
+    ctx.font = '700 ' + size + 'px Inter, "Microsoft YaHei", sans-serif';
+    ctx.textAlign = align || 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = color;
+    ctx.fillText(text, p.x, p.y);
+    const wpx = ctx.measureText(text).width;
+    const half = size * 0.72;
+    const x0 = align === 'right' ? p.x - wpx : align === 'center' ? p.x - wpx / 2 : p.x;
+    const b = { x: x0 - 1, y: p.y - half, w: wpx + 2, h: half * 2, txt: text, tick: true };
+    GEO_BOX.push(b);
+    frameBoxes.push(b);
+    return b;
+  }
+  function bestLabel(anchor, text, color, size, offs) {
+    let best = null, bestOv = 1e18;
+    for (const o of offs) {
+      const b = labelBox({ x: anchor.x + o[0], y: anchor.y + o[1] }, text, size, 'center');
+      let ov = 0;
+      for (const q of frameBoxes) {
+        const ox = Math.min(b.x + b.w, q.x + q.w) - Math.max(b.x, q.x);
+        const oy = Math.min(b.y + b.h, q.y + q.h) - Math.max(b.y, q.y);
+        if (ox > 0 && oy > 0) ov += ox * oy;
+      }
+      if (ov < bestOv) { bestOv = ov; best = { x: anchor.x + o[0], y: anchor.y + o[1] }; }
+    }
+    label(best, text, color, size, 'center');
+    return bestOv;
+  }
+  const AVOID = [[0, 0], [0, -18], [0, 18], [0, -36], [0, 36], [0, -54], [0, 54],
+    [-58, -18], [58, -18], [-58, 18], [58, 18], [-104, 0], [104, 0],
+    [-104, -36], [104, -36], [-104, 36], [104, 36], [0, -72], [0, 72],
+    [-156, 0], [156, 0], [-156, -36], [156, -36], [-156, 36], [156, 36]];
+  // 液面高度标注：贴着画面右侧的等高线，只许往右、往上下挪（往左会压住涵洞）
+  const AVOID_LV = [[0, 0], [34, 0], [34, -20], [34, 20], [0, -22], [0, 22],
+    [70, 0], [70, -20], [70, 20], [0, -44], [0, 44], [108, 0], [108, -24], [108, 24],
+    [0, -66], [0, 66], [146, 0], [146, -26], [146, 26]];
+  // 船闸水位标注：只在【水域正上方】小范围挪，别飘到闸门上
+  const AVOID_CH = [[0, 0], [0, -20], [0, 20], [-30, -18], [30, -18], [0, -40], [0, 40]];
+  // 上游/下游水位标注：船会停在上游或下游的正中央，所以必须允许往两侧挪开（原来是写死的）
+  const AVOID_UP = [[30, -14], [30, -36], [66, -14], [30, 22], [66, 22], [-24, -36], [102, -14]];
+  const AVOID_DN = [[-30, 16], [-30, -14], [-66, 16], [-30, 38], [-66, -14], [26, 16], [-102, 16]];
+
+  /* ============================================================
+   * 画面【实际画出来】的量 —— 自检只读这些，不去重算公式
+   * ============================================================ */
+  let EQUAL_LINE = null;        // 横贯四组的等高线（屏幕两端点 + 世界高度）
+  let LEVELS_DRAWN = [];        // 各容器液面的屏幕落点（按对象身份，不按数组下标猜）
+  let GATE_DRAWN = { up: null, dn: null };   // 闸门屏幕盒
+  let BOAT_DRAWN = null;        // 船体屏幕盒
+  let LOCK_LINES = [];          // 船闸三条水位线的屏幕 y
+
+  /* ============================================================
+   * 场景绘制
+   * ============================================================ */
+  function drawBackdrop(w, h, q) {
+    const g = ctx.createLinearGradient(0, 0, 0, h);
+    g.addColorStop(0, '#0a1424'); g.addColorStop(1, '#050b14');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
+    // 台面（y = 0 平面，从 z=0 铺到相机这一侧）
+    const P = function (x, z) { return project([x, 0, z], q); };
+    poly([P(-9.5, 0), P(9.5, 0), P(9.5, 3.4), P(-9.5, 3.4)],
+      'rgba(46,54,68,.5)', 'rgba(148,163,184,.16)', 1);
+  }
+
+  /* ---------- 四组连通器 ---------- */
+  // 各组【开口面】所在的 x（液面标在这里）：茶壶取壶身中心，别取壶嘴口
+  const FACE_X = [-1.85, -0.30, 2.06, 4.25];
+  const TOP_U = 2.75, TOP_POT = 1.72, TOP_GAUGE = 2.42, TOP_CUL = 2.10;
+  // 每组容器口的高度：levelOf() 用它截断 ⇒「画出来的水面」与「标注报的水面」是同一个值
+  const VTOP = [TOP_U, TOP_POT, TOP_GAUGE, TOP_CUL];
+
+  function drawU(q, lv) {
+    const XL = -3.15, XR = -1.85, R = 0.22;
+    // 液体
+    vCyl(XL, 0, R, 0, Math.min(lv, TOP_U), q, rgba(C_WATER, .80), null, 0, rgba(C_WATER, .94));
+    vCyl(XR, 0, R, 0, Math.min(lv, TOP_U), q, rgba(C_WATER, .80), null, 0, rgba(C_WATER, .94));
+    if (lv > 0.05) hCyl(XL, XR, 0, R, R, q, rgba(C_WATER, .86), null, 0);
+    // 玻璃管
+    vCyl(XL, 0, R, 0, TOP_U, q, 'rgba(150,205,238,.09)', 'rgba(186,224,246,.55)', 1.3);
+    vCyl(XR, 0, R, 0, TOP_U, q, 'rgba(150,205,238,.09)', 'rgba(186,224,246,.55)', 1.3);
+    hCyl(XL, XR, 0, R, R, q, null, 'rgba(186,224,246,.42)', 1.2);
+  }
+
+  function drawPot(q, lv) {
+    // 🔴 壶嘴与壶把原来【都在右侧】，而且壶嘴从壶身底部斜穿上来 ⇒ 画面上挤成一团，
+    //    截图里根本读不出是茶壶。现在壶身收小一点（R 0.55→0.46），
+    //    【壶嘴在右、壶把在左】分开摆。
+    const CX = -0.30, R = 0.46, TOP = TOP_POT;
+    // 壶嘴折线：从壶身【侧面中部】斜向上伸出（真茶壶就是这样，水才流得出去）
+    const SPOUT = [[CX + 0.34, 0.70, 0], [CX + 0.66, 1.02, 0], [CX + 0.80, 1.42, 0], [CX + 0.76, 1.66, 0]];
+    const SPOUT_TOP = 1.66;   // 壶嘴口【低于壶口 1.72】—— 真茶壶如此，水才不会从壶嘴溢出去
+    // 壶嘴半径要够细：tube() 的线宽 = 世界直径 × 每单位像素数，
+    // 0.13 在贴近视角下画成 35px 宽 ⇒ 整根壶嘴成了一坨，读不出是壶嘴。
+    const SPOUT_R = 0.085;
+    // 壶把：两端都接在壶身【左侧】，做成侧提环 —— 原来两端跨到壶口正上方，
+    // 远的那一端悬在壶盖上方，看着像一根凭空吊着的钩子。
+    const HANDLE = [[CX - R + 0.02, 0.92, 0], [CX - R - 0.40, 1.18, 0],
+                    [CX - R - 0.36, 1.56, 0], [CX - R + 0.04, 1.70, 0]];
+    // 液体
+    vCyl(CX, 0, R, 0, Math.min(lv, TOP), q, rgba(C_WATER, .80), null, 0, rgba(C_WATER, .94));
+    // 壶嘴里的水【截断到同一个液面 lv】—— 这正是「连通器」在茶壶上的体现
+    tubeUpTo(SPOUT, Math.min(lv, SPOUT_TOP), SPOUT_R * 0.66, q, C_WATER, .92);
+    // 壶身 + 壶盖
+    vCyl(CX, 0, R, 0, TOP, q, 'rgba(150,205,238,.09)', 'rgba(186,224,246,.55)', 1.3);
+    vCyl(CX, 0, R * 1.09, TOP, TOP + 0.09, q, 'rgba(168,212,236,.16)', 'rgba(206,236,252,.6)', 1.2);
+    // 壶嘴（外管）
+    tube(SPOUT, SPOUT_R, q, C_GLASS, .42, 2.5);
+    // 壶把（在另一侧）
+    tube(HANDLE, 0.075, q, C_GLASS, .42, 2.4);
+  }
+
+  function drawGauge(q, lv) {
+    const BX = 1.28, BR = 0.52, BTOP = 1.62;
+    const GX = 2.06, GR = 0.075, GTOP = TOP_GAUGE;
+    // 液体
+    vCyl(BX, 0, BR, 0, Math.min(lv, BTOP), q, rgba(C_WATER, .80), null, 0, rgba(C_WATER, .94));
+    vCyl(GX, 0, GR, 0, Math.min(lv, GTOP), q, rgba(C_WATER, .88), null, 0, rgba(C_WATER, .96));
+    if (lv > 0.05) hCyl(BX, GX, 0, 0.075, 0.075, q, rgba(C_WATER, .9), null, 0);
+    // 锅炉 + 水位计玻璃管
+    vCyl(BX, 0, BR, 0, BTOP, q, 'rgba(150,205,238,.10)', 'rgba(186,224,246,.55)', 1.3);
+    vCyl(GX, 0, GR, 0, GTOP, q, 'rgba(150,205,238,.14)', 'rgba(206,236,252,.7)', 1.2);
+    hCyl(BX, GX, 0, 0.075, 0.075, q, null, 'rgba(186,224,246,.5)', 1.1);
+  }
+
+  function drawCul(q, lv) {
+    const LX0 = 2.60, LX1 = 3.10, RX0 = 4.00, RX1 = 4.50;
+    const CX0 = 3.10, CX1 = 4.00, DZ = 0.42, CDZ = 0.26, CTOP = 0.52, DTOP = 1.95;
+    // 两侧水塘的液体 + 涵洞里的水
+    box3(LX0, LX1, -DZ, DZ, 0, Math.min(lv, TOP_CUL), q, rgba(C_WATER, .80), null, 0, rgba(C_WATER, .94));
+    box3(RX0, RX1, -DZ, DZ, 0, Math.min(lv, TOP_CUL), q, rgba(C_WATER, .80), null, 0, rgba(C_WATER, .94));
+    if (lv > 0.05) box3(CX0, CX1, -CDZ, CDZ, 0, Math.min(lv, CTOP), q, rgba(C_WATER, .86), null, 0);
+    // 路堤（土坡）
+    box3(CX0, CX1, -0.62, 0.62, CTOP, DTOP, q, rgba(C_SOIL, .62), rgba(C_SOIL, .95), 1.2,
+      rgb(C_SOIL, .78));
+    // 水塘池壁（上端开口）
+    box3(LX0, LX1, -DZ - 0.03, DZ + 0.03, 0, TOP_CUL, q, null, 'rgba(186,224,246,.42)', 1.2);
+    box3(RX0, RX1, -DZ - 0.03, DZ + 0.03, 0, TOP_CUL, q, null, 'rgba(186,224,246,.42)', 1.2);
+    box3(CX0, CX1, -CDZ - 0.02, CDZ + 0.02, 0, CTOP, q, null, 'rgba(186,224,246,.32)', 1.1);
+  }
+
+  const CONNECT_DRAWERS = [drawU, drawPot, drawGauge, drawCul];
+
+  function drawConnectScene(q) {
+    const lv = levelY();
+    // 1) 先画四组器材本体（液面都在同一世界高度 lv 上）
+    for (let i = 0; i < VESSELS.length; i++) CONNECT_DRAWERS[i](q, levelOf(i));
+    // 2) 横贯四组的等高线 —— 本页最核心的一眼结论
+    const xs = VESSELS[0].x0 - 0.62, xe = VESSELS[3].x1 + 0.62;
+    const A = project([xs, lv, 0], q), B = project([xe, lv, 0], q);
+    line([A, B], 'rgba(125,211,252,.52)', 1.5, [8, 5]);
+    EQUAL_LINE = { a: { x: A.x, y: A.y }, b: { x: B.x, y: B.y }, worldY: lv };
+    // 3) 各组液面的屏幕落点（按对象身份记录，自检不按下标猜）
+    LEVELS_DRAWN = VESSELS.map(function (v, i) {
+      const p = project([FACE_X[i], levelOf(i), 0], q);
+      return { key: v.key, name: v.name, x: p.x, y: p.y, worldY: levelOf(i) };
+    });
+    // 4) 标注：位置写死的先放（等高线标签要占住右侧那一带）
+    label({ x: B.x + 46, y: B.y - 15 }, '同一水平面', 'rgba(186,230,253,.98)', 12, 'center');
+    for (let i = 0; i < VESSELS.length; i++) {
+      const v = VESSELS[i];
+      const anchor = project([FACE_X[i], 0.02, 0], q);
+      bestLabel({ x: anchor.x, y: anchor.y + 22 }, v.name, 'rgba(226,240,255,.96)', 11.5, AVOID);
+    }
+    // 5) 被倒的那一组给个高亮提示
+    if (state.boost > 0.02) {
+      const p = project([FACE_X[state.target], levelOf(state.target), 0], q);
+      label({ x: p.x, y: p.y - 26 }, '↑ 刚倒进来的水', 'rgba(253,224,71,.98)', 11, 'center');
+    }
+  }
+
+  /* ---------- 船闸 ---------- */
+  function drawGate(x, q) {
+    const box = { x0: x - GATE_T, x1: x + GATE_T, y0: 0, y1: 2.46, z0: -0.74, z1: 0.74 };
+    box3(box.x0, box.x1, box.z0, box.z1, box.y0, box.y1, q,
+      rgba(C_GATE, .30), rgba(C_GATE, .85), 1.3, rgba(C_GATE, .48));
+    // 闸墩也要进避让集合，否则水位标注会压在闸门上
+    const pts = [];
+    for (const X of [box.x0, box.x1]) for (const Y of [box.y0, box.y1]) for (const Z of [box.z0, box.z1]) pts.push(project([X, Y, Z], q));
+    let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
+    for (const p of pts) { x0 = Math.min(x0, p.x); x1 = Math.max(x1, p.x); y0 = Math.min(y0, p.y); y1 = Math.max(y1, p.y); }
+    frameBoxes.push({ x: x0, y: y0, w: x1 - x0, h: y1 - y0, txt: '闸门', tick: true });
+  }
+  const DRAFT = 0.09;       // 吃水：船底沉到水面【以下】多少 (dm)
+  const FREEBOARD = 0.17;   // 干舷：船帮露出水面多少 (dm)
+  function drawBoat(q) {
+    const bx = state.boatX, by = state.boatY;
+    // 🔴 船底必须【沉到水面以下】。原来船底正好压在水线上（b0 = by），
+    //    整条船看着像浮在空中 —— 断言全绿、只有截图能看出来。
+    const b0 = by - DRAFT, b1 = by + FREEBOARD;
+    box3(bx - 0.46, bx + 0.46, -0.34, 0.34, b0, b1, q,
+      rgba(C_HULL, .92), rgba(C_HULL, 1), 1.2, rgb(C_HULL, 1.08));
+    box3(bx - 0.20, bx + 0.22, -0.22, 0.22, b1, b1 + 0.24, q,
+      'rgba(226,240,255,.88)', 'rgba(226,240,255,.95)', 1.1, 'rgba(240,248,255,.95)');
+    // 屏幕盒（供标注避让 + 自检读）。
+    // 🔴 原来存的是【世界坐标】bx/by，自检拿它当屏幕坐标算重叠 ⇒ 恒为 0、永远绿。
+    const pts = [];
+    for (const X of [bx - 0.46, bx + 0.46])
+      for (const Y of [b0, b1 + 0.24])
+        for (const Z of [-0.34, 0.34]) pts.push(project([X, Y, Z], q));
+    let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
+    for (const p of pts) { x0 = Math.min(x0, p.x); x1 = Math.max(x1, p.x); y0 = Math.min(y0, p.y); y1 = Math.max(y1, p.y); }
+    BOAT_DRAWN = { x: bx, y: by, bottomY: b0, waterY: by, sx: x0, sy: y0, sw: x1 - x0, sh: y1 - y0 };
+    // 🔴 bottomY / waterY 是【画出来的那两个世界高度】（box3 用的就是 b0）：
+    //    自检拿 bottomY 与 waterY 之差去验「有吃水」，而不是自己拿常量 DRAFT 重算一遍
+    //    —— 重算的话把 `b0 = by - DRAFT` 改成 `b0 = by` 自检也看不出来（实测 M41 踩过）。
+    // 船体进避让集合：不推的话「闸室水位」标注会正好落在船上（实测 cv-07 被压住）
+    frameBoxes.push({ x: x0, y: y0, w: x1 - x0, h: y1 - y0, txt: '船', tick: true });
+  }
+  function drawLockScene(q) {
+    const chY = state.chY;
+    const parts = [
+      { seg: LOCK.up, y: LOCK.up.y, tint: [ 92, 172, 224] },
+      { seg: LOCK.ch, y: chY,        tint: [126, 200, 232] },
+      { seg: LOCK.dn, y: LOCK.dn.y,  tint: [ 96, 196, 212] }
+    ];
+    // 水体
+    for (const p of parts) {
+      if (p.y > 0.02) box3(p.seg.x0, p.seg.x1, -0.70, 0.70, 0, p.y, q,
+        rgba(p.tint, .80), null, 0, rgba(p.tint, .94));
+    }
+    // 池壁与闸墩（上端开口）
+    for (const p of parts) {
+      box3(p.seg.x0, p.seg.x1, -0.74, 0.74, 0, 2.52, q, null, 'rgba(186,224,246,.34)', 1.2);
+    }
+    // 闸门（关着才画）
+    GATE_DRAWN = { up: null, dn: null };
+    if (!state.gateUp) { drawGate(LOCK.up.x1 + GATE_T + 0.02, q); GATE_DRAWN.up = { x: LOCK.up.x1 + GATE_T + 0.02 }; }
+    if (!state.gateDn) { drawGate(LOCK.dn.x0 - GATE_T - 0.02, q); GATE_DRAWN.dn = { x: LOCK.dn.x0 - GATE_T - 0.02 }; }
+    // 船
+    drawBoat(q);
+    // 三条水位线（画在各自水域中点的上方一点）
+    LOCK_LINES = parts.map(function (p) {
+      const cx = (p.seg.x0 + p.seg.x1) / 2;
+      const A = project([p.seg.x0 + 0.12, p.y, 0.72], q), B = project([p.seg.x1 - 0.12, p.y, 0.72], q);
+      line([A, B], 'rgba(125,211,252,.55)', 1.4, [7, 5]);
+      return { name: p.seg.name, y: p.y, sx: A.x, sy: A.y, ex: B.x, ey: B.y, cx: cx };
+    });
+    // 标注：先放写死位置的（水位读数），再放容器名
+    bestLabel({ x: LOCK_LINES[0].sx + 30, y: LOCK_LINES[0].sy - 14 },
+      '上游水位 ' + (LOCK.up.y * CM_PER_UNIT).toFixed(0) + ' cm', 'rgba(186,230,253,.98)', 11, AVOID_UP);
+    bestLabel({ x: LOCK_LINES[2].ex - 30, y: LOCK_LINES[2].ey + 16 },
+      '下游水位 ' + (LOCK.dn.y * CM_PER_UNIT).toFixed(0) + ' cm', 'rgba(186,230,253,.98)', 11, AVOID_DN);
+    const chLine = LOCK_LINES[1];
+    bestLabel({ x: (chLine.sx + chLine.ex) / 2, y: chLine.sy - 20 },
+      '闸室水位 ' + (chY * CM_PER_UNIT).toFixed(0) + ' cm', 'rgba(253,224,71,.98)', 11.5, AVOID_CH);
+    for (const p of parts) {
+      const anchor = project([(p.seg.x0 + p.seg.x1) / 2, 0.02, 0], q);
+      bestLabel({ x: anchor.x, y: anchor.y + 22 }, p.seg.name, 'rgba(226,240,255,.96)', 11.5, AVOID);
+    }
+  }
+
+  /* ============================================================
+   * 渲染
+   * ============================================================ */
+  function render() {
+    const w = state.w, h = state.h;
+    ctx.setTransform(state.dpr, 0, 0, state.dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+    LBOX.length = 0; GEO_BOX.length = 0; frameBoxes.length = 0;
+    EQUAL_LINE = null; LEVELS_DRAWN = []; GATE_DRAWN = { up: null, dn: null };
+    BOAT_DRAWN = null; LOCK_LINES = [];
+    if (w < 2 || h < 2) return;
+    const q = {};
+    makeCam(q, w, h);
+    drawBackdrop(w, h, q);
+    if (state.mode === 'connect') drawConnectScene(q); else drawLockScene(q);
+    state.dirty = false;
+  }
+
+  /* 沿折线画管、但只画到世界高度 yTop（壶嘴里的水就靠它截断） */
+  function tubeUpTo(pts, yTop, r, q, color, alpha) {
+    const out = [];
+    for (let i = 0; i < pts.length; i++) {
+      const p = pts[i];
+      if (p[1] <= yTop) { out.push(p); continue; }
+      const prev = out[out.length - 1];
+      if (prev) {
+        const t = (yTop - prev[1]) / Math.max(1e-6, p[1] - prev[1]);
+        out.push([lerp(prev[0], p[0], t), yTop, lerp(prev[2], p[2], t)]);
+      }
+      break;
+    }
+    if (out.length >= 2) tube(out, r, q, color, alpha, 2);
+  }
+
+  /* ============================================================
+   * 船闸分步（每一步只改【状态】，画面上的水位靠弛豫自己走过去）
+   * ============================================================ */
+  const STEPS = [
+    { name: '船在上游，闸室水位与下游齐平',
+      note: '船在上游等待。此时闸室水位与下游齐平，所以下游闸门是可以打开的。',
+      apply: function (s) { s.chTarget = LOCK.dn.y; s.gateDn = true; s.gateUp = false; s.boatTargetX = -2.75; } },
+    { name: '关下游闸门，打开上游阀门',
+      note: '关上下游闸门后打开上游阀门 —— 闸室与上游就成了一个连通器，水从上游流进闸室，闸室水位慢慢升高。',
+      apply: function (s) { s.gateDn = false; s.gateUp = false; s.chTarget = LOCK.up.y; s.boatTargetX = -2.75; } },
+    { name: '水位齐平，打开上游闸门',
+      note: '只有水位齐平，闸门才推得开（否则水压把闸门死死顶住）。打开上游闸门，船可以驶入闸室。',
+      apply: function (s) { s.chTarget = LOCK.up.y; s.gateUp = true; } },
+    { name: '船驶入闸室，关上游闸门',
+      note: '船开进闸室后关上游闸门 —— 船被「关」在闸室里，接下来要把它送下去。',
+      apply: function (s) { s.gateUp = false; s.boatTargetX = 0; } },
+    { name: '打开下游阀门，闸室水位下降',
+      note: '打开下游阀门 —— 闸室与下游又构成连通器，闸室水位降到与下游齐平，船跟着一起下降。',
+      apply: function (s) { s.gateDn = false; s.chTarget = LOCK.dn.y; s.boatTargetX = 0; } },
+    { name: '水位齐平，打开下游闸门，船驶出',
+      note: '水位齐平后打开下游闸门，船驶向下游 —— 一次过闸完成。船闸就这样一级一级地「走台阶」。',
+      apply: function (s) { s.gateDn = true; s.boatTargetX = 2.75; } }
+  ];
+
+  /* ============================================================
+   * 动作
+   * ============================================================ */
+  function setMode(m) {
+    state.mode = m;
+    if (m === 'connect') {
+      state.totalVol = VOL0; state.boost = 0; state.target = 0;
+    } else {
+      state.step = 0;
+      state.chY = LOCK.dn.y; state.chTarget = LOCK.dn.y;
+      state.boatX = -2.75; state.boatTargetX = -2.75;
+      state.gateUp = false; state.gateDn = false;
+      STEPS[0].apply(state);
+    }
+    $('cv-panel-connect').hidden = (m !== 'connect');
+    $('cv-panel-lock').hidden = (m === 'connect');
+    $('cv-mode-pill').textContent = m === 'connect' ? '连通器' : '船闸';
+    $('cv-mode-note').textContent = m === 'connect'
+      ? '四组连通器同屏。往任意一组倒水，看四组液面是不是一起找平。'
+      : '按真实操作顺序走一遍：关闸门 → 开阀门 → 水位齐平 → 开闸门 → 船通过。';
+    $('cv-modes').querySelectorAll('button').forEach(function (b) {
+      b.classList.toggle('primary', b.dataset.mode === m);
+    });
+    refreshAll();
+  }
+  function setTarget(i) {
+    state.target = clamp(i | 0, 0, VESSELS.length - 1);
+    $('cv-targets').querySelectorAll('button').forEach(function (b) {
+      b.classList.toggle('primary', +b.dataset.target === state.target);
+    });
+    refreshAll();
+  }
+  function setAmount(a) {
+    state.amount = clamp(+a, 0.2, 1.6);
+    $('cv-amt-out').textContent = state.amount.toFixed(2) + ' L';
+    refreshAll();
+  }
+  function pour() {
+    if (state.mode !== 'connect') return;
+    state.totalVol = clamp(state.totalVol + state.amount, 0, HMAX * AREA_SUM);
+    // 上限 0.38：液面上限 1.30 + 0.38 = 1.68 < 茶壶口 1.72，倒水瞬间也不会被 VTOP 截断
+    state.boost = Math.min(0.38, state.amount * 0.50);
+    state.boostT = 0;
+    refreshAll();
+  }
+  function drain() {
+    if (state.mode !== 'connect') return;
+    state.totalVol = clamp(state.totalVol - state.amount, 0, HMAX * AREA_SUM);
+    state.boost = 0;
+    refreshAll();
+  }
+  function resetAll() {
+    state.totalVol = VOL0; state.boost = 0; state.boostT = 0; state.target = 0; state.amount = 0.60;
+    state.step = 0; state.chY = LOCK.dn.y; state.chTarget = LOCK.dn.y;
+    state.boatX = -2.75; state.boatTargetX = -2.75;
+    state.gateUp = false; state.gateDn = false;
+    $('cv-amt').value = '0.6';
+    $('cv-amt-out').textContent = '0.60 L';
+    setMode(state.mode);
+  }
+  function applyView(v) {
+    const V = VIEWS[v];
+    if (!V) return;
+    state.yaw = V.yaw; state.pitch = V.pitch; state.zoom = V.zoom;
+    state.tgt = V.tgt.slice(); state.look = !!V.look;
+    $('cv-views').querySelectorAll('button').forEach(function (b) {
+      b.classList.toggle('primary', b.dataset.view === v);
+    });
+    refreshAll();
+  }
+  /* 闸门只有水位齐平才推得开 —— 这是船闸唯一一条硬约束 */
+  function gateReady(side) {
+    return Math.abs(state.chY - (side === 'up' ? LOCK.up.y : LOCK.dn.y)) < 0.03;
+  }
+  function stepReady() {
+    if (state.mode !== 'lock') return true;
+    // 🔴 要卡的是【即将进入】的那一步，不是当前这一步。
+    //    原来写 state.step === 2 —— 于是站在第 2 步（开上游闸门）时水位还没齐平、
+    //    按钮却是可点的，点下去 STEPS[2] 直接把 gateUp 置 true：闸门在水位没齐平时就开了。
+    //    「水位没齐平闸门推不开」这条硬约束当时是【一步迟到】的，页面上完全看不出来。
+    const next = state.step + 1;
+    if (next === 2) return gateReady('up');   // 开上游闸门
+    if (next === 5) return gateReady('dn');   // 开下游闸门
+    return true;
+  }
+  function stepNext() {
+    if (state.mode !== 'lock') return;
+    if (!stepReady()) return;              // 水位没齐平，闸门推不开
+    if (state.step >= STEPS.length - 1) return;
+    state.step++;
+    STEPS[state.step].apply(state);
+    refreshAll();
+  }
+  function setStep(i) {
+    state.step = clamp(i | 0, 0, STEPS.length - 1);
+    state.chY = LOCK.dn.y; state.chTarget = LOCK.dn.y;
+    state.boatX = -2.75; state.boatTargetX = -2.75;
+    state.gateUp = false; state.gateDn = false;
+    for (let k = 0; k <= state.step; k++) STEPS[k].apply(state);
+    refreshAll();
+  }
+  function boatWaterY(x) {
+    if (x < LOCK.up.x1 - 0.05) return LOCK.up.y;
+    if (x > LOCK.dn.x0 + 0.05) return LOCK.dn.y;
+    return state.chY;                      // 在闸室里 —— 水位变，船跟着升降
+  }
+
+  /* ============================================================
+   * 每帧推进（动画与自检走【同一个】函数）
+   * ============================================================ */
+  function advance(dt) {
+    state.t += dt;
+    if (state.boost > 0) {
+      state.boostT += dt;
+      state.boost *= Math.exp(-dt / 1.05);        // 一阶衰减：先局部高，再被其余三组「追平」
+      if (state.boost < 0.004) state.boost = 0;
+    }
+    // 船闸水位弛豫（连通器原理的过渡过程）
+    if (Math.abs(state.chY - state.chTarget) > 0.002) {
+      state.chY += (state.chTarget - state.chY) * (1 - Math.exp(-dt / 0.85));
+    } else {
+      state.chY = state.chTarget;
+    }
+    // 船
+    if (Math.abs(state.boatX - state.boatTargetX) > 0.004) {
+      state.boatX += (state.boatTargetX - state.boatX) * (1 - Math.exp(-dt / 0.9));
+    } else {
+      state.boatX = state.boatTargetX;
+    }
+    state.boatY = boatWaterY(state.boatX);
+  }
+  // 给自检用：不依赖 rAF，把动画按固定步长推到底
+  function driveAnim(sec, dt) {
+    const step = dt || 1 / 60;
+    const n = Math.max(1, Math.round(sec / step));
+    for (let i = 0; i < n; i++) advance(step);
+    render();
+  }
+
+  /* ============================================================
+   * 侧栏
+   * ============================================================ */
+  function renderLevels() {
+    const host = $('cv-levels');
+    if (state.mode === 'connect') {
+      const spread = maxSpread();
+      host.innerHTML = VESSELS.map(function (v, i) {
+        return '<div><span>' + v.name + '</span><b class="hi">' +
+          (levelOf(i) * CM_PER_UNIT).toFixed(1) + ' cm</b></div>';
+      }).join('') +
+        '<div><span>最大液面差</span><b class="' + (spread < 1e-6 ? 'good' : '') + '">' +
+        (spread * CM_PER_UNIT).toFixed(2) + ' cm</b></div>';
+      $('cv-equal-pill').textContent = spread < 1e-6 ? '四组等高' : '正在找平…';
+      $('cv-equal-pill').className = 'pill' + (spread < 1e-6 ? ' ok' : '');
+    } else {
+      host.innerHTML = ['上游', '闸室', '下游'].map(function (nm, i) {
+        const y = [LOCK.up.y, state.chY, LOCK.dn.y][i];
+        return '<div><span>' + nm + '水位</span><b class="hi">' +
+          (y * CM_PER_UNIT).toFixed(1) + ' cm</b></div>';
+      }).join('') +
+        '<div><span>闸室与目标水位差</span><b class="' + (gateReady(state.chTarget === LOCK.up.y ? 'up' : 'dn') ? 'good' : '') + '">' +
+        (Math.abs(state.chY - state.chTarget) * CM_PER_UNIT).toFixed(2) + ' cm</b></div>';
+      $('cv-equal-pill').textContent = gateReady('up') ? '与上游齐平' : gateReady('dn') ? '与下游齐平' : '过渡中';
+      $('cv-equal-pill').className = 'pill' + (gateReady('up') || gateReady('dn') ? ' ok' : '');
+    }
+  }
+  function renderBars() {
+    const host = $('cv-bars');
+    if (state.mode === 'connect') {
+      const vols = VESSELS.map(function (v, i) { return volOf(i); });
+      const mx = Math.max(1e-6, Math.max.apply(null, vols));
+      host.innerHTML = VESSELS.map(function (v, i) {
+        const hPct = clamp(vols[i] / mx * 100, 3, 100);
+        const on = (i === state.target) ? 'outline:2px solid rgba(125,211,252,.75);outline-offset:1px;' : '';
+        return '<div class="b"><div class="val">' + vols[i].toFixed(2) + '</div>' +
+          '<div class="col" style="height:' + hPct.toFixed(1) + '%;background:linear-gradient(180deg,' +
+          rgba(v.tint, .95) + ',' + rgba(v.tint, .45) + ');' + on + '"></div>' +
+          '<div class="cap">' + v.name + '</div></div>';
+      }).join('');
+      $('cv-bars-note').textContent = '液面高度 ' + (levelH() * CM_PER_UNIT).toFixed(1) +
+        ' cm 时，截面积越大的组分到的水越多 —— 但四组液面高度完全一样。';
+    } else {
+      const vals = [LOCK.up.y, state.chY, LOCK.dn.y];
+      const mx = Math.max(1e-6, Math.max.apply(null, vals));
+      host.innerHTML = ['上游', '闸室', '下游'].map(function (nm, i) {
+        const hPct = clamp(vals[i] / mx * 100, 3, 100);
+        return '<div class="b"><div class="val">' + (vals[i] * CM_PER_UNIT).toFixed(0) + '</div>' +
+          '<div class="col" style="height:' + hPct.toFixed(1) + '%;background:linear-gradient(180deg,' +
+          'rgba(125,211,252,.95),rgba(125,211,252,.4))"></div>' +
+          '<div class="cap">' + nm + '</div></div>';
+      }).join('');
+      $('cv-bars-note').textContent = '闸室水位' + (gateReady('up') ? '已与上游齐平' :
+        gateReady('dn') ? '已与下游齐平' : '正在过渡') + '。';
+    }
+  }
+  function renderAnalysis() {
+    const el = $('cv-analysis');
+    if (state.mode === 'connect') {
+      const spread = maxSpread() * CM_PER_UNIT;
+      el.innerHTML =
+        '<div class="line"><span>总水量</span><b>' + state.totalVol.toFixed(2) + ' L</b></div>' +
+        '<div class="line"><span>四组截面积之和</span><b>' + AREA_SUM.toFixed(3) + ' dm²</b></div>' +
+        '<div class="line"><span>液面高度 = 总水量 ÷ 总面积</span><b>' + (levelH() * CM_PER_UNIT).toFixed(1) + ' cm</b></div>' +
+        '<div class="line"><span>四组液面高度差</span><b>' + spread.toFixed(3) + ' cm</b></div>' +
+        '<div class="conc' + (spread < 0.05 ? '' : ' info') + '">' +
+        (spread < 0.05
+          ? '四组液面高度<b>完全相等</b>：连通器静止时，各容器液面总在同一水平面上 —— 与容器形状、粗细无关。'
+          : '水还在流动：刚倒进去的那一组暂时高一些，<b>等它静下来就会和其余三组齐平</b>。') +
+        '</div>';
+    } else {
+      el.innerHTML =
+        '<div class="line"><span>上游水位</span><b>' + (LOCK.up.y * CM_PER_UNIT).toFixed(0) + ' cm</b></div>' +
+        '<div class="line"><span>闸室水位</span><b>' + (state.chY * CM_PER_UNIT).toFixed(1) + ' cm</b></div>' +
+        '<div class="line"><span>下游水位</span><b>' + (LOCK.dn.y * CM_PER_UNIT).toFixed(0) + ' cm</b></div>' +
+        '<div class="line"><span>闸室水位差</span><b>' + (Math.abs(state.chY - state.chTarget) * CM_PER_UNIT).toFixed(2) + ' cm</b></div>' +
+        '<div class="conc">闸室和哪一侧的<b>阀门打开</b>，就和那一侧构成连通器，水位必然趋于齐平；' +
+        '<b>只有齐平了闸门才推得开</b>。</div>';
+    }
+  }
+  function renderRecord() {
+    $('cv-rec-count').textContent = records.length + ' 组';
+    $('cv-rec').innerHTML = records.map(function (r, i) {
+      return '<tr><td>' + (i + 1) + '</td><td>' + r.where + '</td><td>' + r.vol.toFixed(2) +
+        '</td><td>' + (r.level * CM_PER_UNIT).toFixed(1) + '</td><td>' + (r.spread * CM_PER_UNIT).toFixed(2) + '</td></tr>';
+    }).join('');
+  }
+  function renderSteps() {
+    $('cv-step-pill').textContent = (state.step + 1) + ' / ' + STEPS.length;
+    $('cv-step-note').textContent = STEPS[state.step].note;
+    $('cv-steps').innerHTML = STEPS.map(function (s, i) {
+      const cls = i < state.step ? 'color:#6ee7b7' : i === state.step ? 'color:#7dd3fc;font-weight:700' : 'color:#64748b';
+      return '<div style="' + cls + ';padding:3px 0;font-size:11.5px">' +
+        (i < state.step ? '✓ ' : i === state.step ? '▶ ' : '○ ') + (i + 1) + '. ' + s.name + '</div>';
+    }).join('');
+  }
+  function renderButtons() {
+    const ok = stepReady();
+    $('cv-step').disabled = (state.mode !== 'lock') || !ok || state.step >= STEPS.length - 1;
+    $('cv-step').textContent = state.step >= STEPS.length - 1 ? '已完成' : (ok ? '下一步 ▶' : '等水位齐平…');
+    $('cv-hint').innerHTML = state.mode === 'connect'
+      ? '选中一组后点「倒水」：<b>只有那一组先涨</b>，随后水会流过去，四组一起找平。再点「记录一组」把数据记下来。'
+      : '依次点「下一步」。注意第 3 步和第 6 步：<b>水位没齐平之前按钮是点不动的</b> —— 因为闸门根本推不开。';
+  }
+  function refreshAll() {
+    renderLevels(); renderBars(); renderAnalysis(); renderRecord(); renderSteps(); renderButtons();
+    render();
+  }
+
+  /* ============================================================
+   * 画布尺寸 / 主循环
+   * ============================================================ */
+  function resize() {
+    const r = canvas.getBoundingClientRect();
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    state.w = r.width; state.h = r.height; state.dpr = dpr;
+    canvas.width = Math.max(1, Math.round(r.width * dpr));
+    canvas.height = Math.max(1, Math.round(r.height * dpr));
+    render();
+  }
+  let last = 0, rafId = 0;
+  function loop(ts) {
+    const dt = last ? Math.min(0.05, (ts - last) / 1000) : 0.016;
+    last = ts;
+    advance(dt);
+    render();
+    // 动画停了就把侧栏刷新一次（避免每帧都动 DOM）
+    if (state.boost > 0 || Math.abs(state.chY - state.chTarget) > 0.002 ||
+        Math.abs(state.boatX - state.boatTargetX) > 0.004) {
+      renderLevels(); renderBars(); renderButtons();
+    }
+    rafId = requestAnimationFrame(loop);
+  }
+
+  /* ============================================================
+   * 交互
+   * ============================================================ */
+  canvas.addEventListener('pointerdown', function (e) {
+    canvas.setPointerCapture(e.pointerId);
+    state.drag = { x: e.clientX, y: e.clientY };
+    canvas.classList.add('grabbing');
+  });
+  canvas.addEventListener('pointermove', function (e) {
+    if (!state.drag) return;
+    const dx = e.clientX - state.drag.x, dy = e.clientY - state.drag.y;
+    state.drag.x = e.clientX; state.drag.y = e.clientY;
+    state.yaw = clamp(state.yaw + dx * 0.006, -1.25, 1.25);
+    state.pitch = clamp(state.pitch - dy * 0.005, -0.12, 1.05);
+    render();
+  });
+  function endDrag() { state.drag = null; canvas.classList.remove('grabbing'); }
+  canvas.addEventListener('pointerup', endDrag);
+  canvas.addEventListener('pointercancel', endDrag);
+  canvas.addEventListener('wheel', function (e) {
+    e.preventDefault();
+    state.zoom = clamp(state.zoom * (e.deltaY > 0 ? 0.92 : 1.086), 0.55, 3.0);
+    render();
+  }, { passive: false });
+
+  $('cv-modes').addEventListener('click', function (e) {
+    const b = e.target.closest('button'); if (b) setMode(b.dataset.mode);
+  });
+  $('cv-targets').addEventListener('click', function (e) {
+    const b = e.target.closest('button'); if (b) setTarget(+b.dataset.target);
+  });
+  $('cv-views').addEventListener('click', function (e) {
+    const b = e.target.closest('button'); if (b) applyView(b.dataset.view);
+  });
+  $('cv-amt').addEventListener('input', function (e) { setAmount(e.target.value); });
+  $('cv-pour').addEventListener('click', pour);
+  $('cv-drain').addEventListener('click', drain);
+  $('cv-reset').addEventListener('click', resetAll);
+  $('cv-step').addEventListener('click', stepNext);
+  $('cv-step-reset').addEventListener('click', function () { setStep(0); });
+  $('cv-record').addEventListener('click', function () {
+    if (state.mode !== 'connect') return;
+    records.push({
+      where: VESSELS[state.target].name,
+      vol: state.totalVol,
+      level: levelH(),
+      spread: maxSpread()
+    });
+    if (records.length > 12) records.shift();
+    renderRecord();
+  });
+  $('cv-clear').addEventListener('click', function () { records.length = 0; renderRecord(); });
+
+  // 自动隐藏页头（标记必须是 <header class="header">，否则 querySelector 得 null 整段抛错）
+  (function () {
+    const hd = document.querySelector('.header');
+    if (!hd) return;
+    let ly = window.scrollY;
+    window.addEventListener('scroll', function () {
+      const y = window.scrollY;
+      if (y > ly && y > 80) hd.classList.add('hidden'); else hd.classList.remove('hidden');
+      ly = y;
+    }, { passive: true });
+  })();
+
+  window.addEventListener('resize', function () { resize(); });
+
+  /* ============================================================
+   * 自检钩子
+   * ============================================================ */
+  window.__cv = {
+    state: state,
+    consts: {
+      YBASE: YBASE, HMAX: HMAX, SCENE_TOP: SCENE_TOP, VOL0: VOL0,
+      CAMD: CAMD, CM_PER_UNIT: CM_PER_UNIT,
+      VESSELS: VESSELS, LOCK: LOCK, AREA_SUM: AREA_SUM, GATE_T: GATE_T, FACE_X: FACE_X,
+      TOP_U: TOP_U, TOP_POT: TOP_POT, TOP_GAUGE: TOP_GAUGE, TOP_CUL: TOP_CUL, VTOP: VTOP,
+      DRAFT: DRAFT, FREEBOARD: FREEBOARD, STEPS: STEPS
+    },
+    setMode: setMode, setTarget: setTarget, setAmount: setAmount,
+    pour: pour, drain: drain, resetAll: resetAll, applyView: applyView,
+    setStep: setStep, stepNext: stepNext, gateReady: gateReady, stepReady: stepReady,
+    makeCam: makeCam, project: project, driveAnim: driveAnim, advance: advance,
+    levelH: levelH, levelY: levelY, levelOf: levelOf, volOf: volOf, maxSpread: maxSpread,
+    chLevel: chLevel, boatWaterY: boatWaterY,
+    size: function () { return { w: state.w, h: state.h, dpr: state.dpr }; },
+    // 画面【实际画出来】的量（每次调用现取，不是建对象那一刻的快照）
+    drawn: function () {
+      return {
+        mode: state.mode,
+        equalLine: EQUAL_LINE ? {
+          ax: EQUAL_LINE.a.x, ay: EQUAL_LINE.a.y,
+          bx: EQUAL_LINE.b.x, by: EQUAL_LINE.b.y, worldY: EQUAL_LINE.worldY
+        } : null,
+        levels: LEVELS_DRAWN.map(function (l) {
+          return { key: l.key, name: l.name, x: l.x, y: l.y, worldY: l.worldY };
+        }),
+        gateUp: GATE_DRAWN.up ? { x: GATE_DRAWN.up.x } : null,
+        gateDn: GATE_DRAWN.dn ? { x: GATE_DRAWN.dn.x } : null,
+        boat: BOAT_DRAWN ? {
+          x: BOAT_DRAWN.x, y: BOAT_DRAWN.y,
+          bottomY: BOAT_DRAWN.bottomY, waterY: BOAT_DRAWN.waterY,
+          sx: BOAT_DRAWN.sx, sy: BOAT_DRAWN.sy, sw: BOAT_DRAWN.sw, sh: BOAT_DRAWN.sh
+        } : null,
+        // 避让集合的构成：label() 落笔后必须把自己 push 进来（tick 的那些是器材自带文字）。
+        // 自检用它验「后面的标注看得见前面的」——只比重叠面积抓不住（实测 M66/M67）。
+        frameCount: frameBoxes.length,
+        tickCount: frameBoxes.filter(function (b) { return b.tick; }).length,
+        lockLines: LOCK_LINES.map(function (l) {
+          return { name: l.name, y: l.y, sx: l.sx, sy: l.sy, ex: l.ex, ey: l.ey };
+        }),
+        labelCount: LBOX.length,
+        boost: state.boost, totalVol: state.totalVol,
+        chY: state.chY, step: state.step,
+        boatX: state.boatX, boatY: state.boatY
+      };
+    },
+    labels: function () {
+      return LBOX.map(function (b) { return { x: b.x, y: b.y, w: b.w, h: b.h, txt: b.txt }; });
+    },
+    records: function () { return records.slice(); },
+    render: render, resize: resize, refreshAll: refreshAll
+  };
+
+  /* ============================================================
+   * 启动
+   * ============================================================ */
+  setAmount(0.6);
+  setTarget(0);
+  setMode('connect');
+  applyView('side');
+  resize();
+  refreshAll();
+  rafId = requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
