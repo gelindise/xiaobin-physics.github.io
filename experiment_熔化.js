@@ -50,23 +50,57 @@ import * as THREE from './assets/optics-three.min.js';
      刻度是贴在圆柱管壁上的（FrontSide），贴图的 u 决定它落在管子的哪一侧；
      画在背面 = 相机永远看不到（实测四个默认视角里刻度条只有 3~12 px 宽，等于没画）。
      默认视角的相机方位角在 −0.08 ~ −0.55 rad（≈ −4.6° ~ −31.5°），所以让刻度条正对 −25°。
-     转多少不手估：makeThermoScale() 画完直接量出刻度条在贴图里占的水平范围再反算。 */
-  const SCALE_TEX_W = 160, SCALE_TEX_H = 1024;
+     转多少不手估：makeThermoScale() 画完直接量出刻度条在贴图里占的水平范围再反算。
+
+     ★ 贴图尺寸 160×1024 → 320×2048（宽高【一起】翻倍，不是只翻高）：
+       刻度条贴在半径 0.248 cm 的管壁上，整圈周长 1.558 cm，而 0~100 ℃ 占 10.3 cm 高。
+       物理长宽比 ≈ 1 : 6.6，贴图 160 : 1024 ≈ 1 : 6.4 —— 两者对齐，数字才不会被拉伸。
+       只把高翻倍会让长宽比变成 1 : 12.8，字会被竖向拉长一倍。
+       翻倍后 1 ℃ = 20 贴图像素，短刻度线才画得清（原来 2 ℃ = 10 px）。 */
+  const SCALE_TEX_W = 320, SCALE_TEX_H = 2048;
   const SCALE_FACE_DEG = -25;
-  const SCALE_TICK_X = 71;                           // 主刻度右端（贴图 x）
-  const SCALE_NUM_X = 75;                            // 数字左端（贴图 x）
-  const SCALE_NUM_FONT = 20;                         // 数字字号（贴图 px）
+  const SCALE_TICK_X = 142;                          // 主刻度右端（贴图 x）
+  const SCALE_NUM_X = 150;                           // 数字左端（贴图 x）
+  const SCALE_NUM_FONT = 40;                         // 数字字号（贴图 px）
+  const SCALE_STEP = 1;                              // 分度值 ℃ —— 1 ℃ 一条刻度
   let scaleU0 = 0, scaleU1 = 1;                      // 由 makeThermoScale() 实测填入
 
   const MAX_WEIGHTS_UNUSED = 0;                      // （占位，保持常量区整齐）
 
   /* ------------------------------ 物理参数 ------------------------------ */
+  /* ★ 为什么 M_WATER 从 0.25 改成 0.12、并新增 Q_TUBE —— 这一组数不是凑出来的，
+     它们由「图上两条斜率必须不一样陡」这个教学目标反推出来，推导如下：
+
+     原来 q = K_COUPLE·(Tw − Tt) 是无上限的线性传热。水浴 250 g 比试样 20 g 大 12.5 倍，
+     稳态下 Tw − Tt 收敛到一个常数，于是 dTt/dt ≈ dTw/dt —— 试样的斜率被水浴「锁住」，
+     跟自己的比热容无关，固态液态自然一样陡。数值复现：液态段中斜率 0.591 K/s，
+     反而是固态段 0.243 K/s 的 2.4 倍，跟课本图正好相反。
+
+     改法：给试管热流加一个饱和上限 Q_TUBE（热量要穿过试管壁再进试样内部，热流有上限）。
+     于是试样拿到近似恒定的热流，dTt/dt ≈ Q_TUBE/(M_SAMPLE·c) —— 斜率终于由 c 决定，
+     斜率比 = c_固/c_液 = 1700/2400 = 0.708，正是课本的形状。
+
+     但「恒定热流」要成立，还有一个必要条件：水浴必须始终跑在试样前面，即
+         P/(M_WATER·C_WATER) > Q_TUBE/(M_SAMPLE·c_固)
+         0.60 K/s            >  0.44 K/s            ✓
+     水浴一旦跑不到前面，q 就够不到上限、试样又被锁回去。实测：M_WATER=0.15/Q=16 时
+     比值掉到 0.83；M_WATER=0.25/Q=18 时掉到 0.80 并开始反向 —— 这就是 M_WATER 必须减半的原因。
+
+     K_COUPLE 从 2.2 提到 4：让热流在温差 3.75 K（= Q_TUBE/K_COUPLE）时就到达上限。
+     否则固态段前 25 s 都在爬升，段平均斜率被稀释到 0.386，跟液态段的 0.313 只差 1.23 倍，
+     肉眼还是「差不多」。提到 4 之后段平均 0.410 vs 0.313，差 1.31 倍。
+
+     实测（node 复现页面积分器，h=0.005 与 0.05 结果一致）：
+       改前 固态 127 s(0.243) / 平台 122 s / 液态 179 s(0.591) / 总 428 s / 段中比 2.44 ✗
+       改后 固态  68 s(0.441) / 平台 267 s / 液态 154 s(0.313) / 总 489 s / 段中比 0.708 ✓
+     凝固方向同一行代码自动对称（q 为负时取 −Q_TUBE 下限），比值同样是 0.708。 */
   const AMB = 20;                                    // 室温 ℃
-  const M_WATER = 0.25;                              // 水浴质量 kg
+  const M_WATER = 0.12;                              // 水浴质量 kg（原 0.25 —— 保证水浴升温率 0.60 K/s）
   const C_WATER = 4200;                              // 水的比热容
   const P_LAMP = 300;                                // 酒精灯有效功率 W
   const K_LOSS = 2.0;                                // 水浴向环境散热 W/K
-  const K_COUPLE = 2.2;                              // 水浴→试管 的传热系数 W/K
+  const K_COUPLE = 4;                                // 水浴→试管 的传热系数 W/K（原 2.2）
+  const Q_TUBE = 15;                                 // 试管壁灌进试样的最大热流 W（新增）
   const TW_MAX = 100;                                // 标准大气压下水浴上限
   const M_SAMPLE = 0.02;                             // 试样 20 g
 
@@ -97,7 +131,7 @@ import * as THREE from './assets/optics-three.min.js';
     substance: 'hypo',
     direction: 'melt',   // 'melt' = 熔化（水浴加热）；'freeze' = 凝固（冰水浴冷却）
     running: false,
-    speed: 4,
+    speed: 10,
     t: 0, Tt: AMB, Tw: AMB, phi: 0, soft: 0,
     iceLeft: 0,          // 冰水浴里剩下的冰（kg）；0 = 没在用冰水浴
     finished: false,
@@ -105,17 +139,34 @@ import * as THREE from './assets/optics-three.min.js';
     records: [],
     thDepth: 1,          // 温度计插入程度：0 = 提起（感温泡离开试样），1 = 插到底
     thAnim: 1,           // 动画用的平滑值（默认就是装好的状态，点「提起」才看得到动作）
-    xray: true           // 透视：试样半透明，能看见里面的玻璃泡
+    xray: true,          // 透视：试样半透明，能看见里面的玻璃泡
+    /* 组装进度：已经按「自下而上」的顺序装好几件。0 = 全部散放在台面上（页面初始状态）。
+       这个数只由 assembledCount() 从器材的实际位姿算出来，不手工加减 ——
+       否则「点了一下但器材没动」也会让计数 +1。 */
+    assembled: 0
   };
   /* plot = 「手动描点」模式：把学生自己记下的那几组 (t, T) 标到图上；
      plotLink = 学生自己把点连成折线。两个都是开关，不参与物理推进。 */
-  const toggles = { bath: true, melt: true, micro: true, plot: false, plotLink: false };
+  const toggles = { bath: true, melt: true, micro: true, loupe: false, plot: false, plotLink: false };
 
   const VIEWS = {
     front: { yaw: -0.08, pitch: 0.10, dist: 85, ty: 22.5 },
     angle: { yaw: -0.55, pitch: 0.16, dist: 87, ty: 22.5 },
     top:   { yaw: -0.50, pitch: 0.86, dist: 82, ty: 20 },
-    close: { yaw: -0.42, pitch: 0.06, dist: 30, ty: 22.5 }
+    close: { yaw: -0.42, pitch: 0.06, dist: 30, ty: 22.5 },
+    /* 组装视角 = 俯视「零件托盘」：
+       散件摊在台面上要占一大片，默认 45° 斜视（dist 87）根本框不下。
+       俯角取 0.82 rad（≈47°）不是随便挑的 —— 台面在画面里映射成一个【斜菱形】，
+       俯角小的时候这个菱形很扁：实测 pitch 0.40 时台面只占画面中段 470 px 高的一条带，
+       上下两头全是背景，而且菱形被压得又窄又长。压到 0.82 以后台面几乎铺满整个画框，
+       十个零件才排得开（见 melt-asm-autolayout 的搜索结果）。
+
+       dist 取 158：屏幕上的水平偏移只跟舞台【像素高】成正比
+       （pixel_x = W/2 + H·x_cam/(2·z·tan(fov/2))），而舞台高在 1280~1920 之间
+       只从 640 变到 660 —— dist 一定，散件占的像素宽度就基本不变。
+       摆位是在 1440（舞台 GL 1044×658）上搜出来的，横向铺开约 840 px；
+       1280 时舞台只有约 882 px 宽 ⇒ dist 必须够大才装得下。 */
+    assemble: { yaw: -0.58, pitch: 0.82, dist: 158, ty: 0 }
   };
   const view = { ...VIEWS.angle };
 
@@ -146,6 +197,29 @@ import * as THREE from './assets/optics-three.min.js';
     g.arcTo(x, y, x + w, y, r);
     g.closePath();
   };
+
+  /* ------------------------------ 计时器 ------------------------------
+     读数就是 state.t（仿真时间），不是 performance.now()。
+     理由：曲线图的横轴用的也是 state.t，两处必须同源 —— 否则一调倍速，
+     秒表读数和图像横轴就对不上；暂停时秒表也得跟着停。
+     三处显示（3D 屏幕 / 侧栏卡片 / 舞台 HUD）全部从这三个函数取，不各写一遍。 */
+  const RECORD_EVERY = 30;                 // 每 30 s 该记录一组
+  function formatMMSS(sec) {
+    const s = Math.max(0, Math.floor(sec + 1e-9));
+    return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+  }
+  /* 距下一次该记录还有多少秒：t=29.9 → 0.1；t=30.1 → 29.9 */
+  function nextRecordIn() {
+    return Math.max(0, Math.ceil((state.t + 1e-9) / RECORD_EVERY) * RECORD_EVERY - state.t);
+  }
+  /* 「该记录数据了」的窗口 = 跨过节拍后的前 3 s。
+     用「离最近一次节拍过了多久」判定，而不是一个布尔开关：
+     布尔开关在暂停/重置时容易忘了清，而且靠 setTimeout 收尾的闪烁在无头环境里不可复现。 */
+  const DUE_WINDOW = 3;
+  function timerDue() {
+    if (state.t < RECORD_EVERY - 1e-9) return false;
+    return state.t - Math.floor(state.t / RECORD_EVERY) * RECORD_EVERY < DUE_WINDOW;
+  }
 
   /* ==========================================================================
      一、程序化贴图
@@ -501,27 +575,30 @@ import * as THREE from './assets/optics-three.min.js';
     arm.position.set(0, y, ROD_Z + armLen / 2 + 0.9);
     arm.castShadow = true;
     stand.add(arm);
-    return { sleeve, arm };
+    return { sleeve, screw, arm };
   }
 
-  makeBoss(RING_Y, 3.6);
+  /* 两个 boss 头（铁圈用 / 试管夹用）的句柄要留着 —— 组装时它们各自跟着铁圈、试管夹走 */
+  const bossRing = makeBoss(RING_Y, 3.6);
   const ring = new THREE.Mesh(new THREE.TorusGeometry(5.3, 0.26, 12, 40), darkSteel);
   ring.rotation.x = Math.PI / 2;
   ring.position.set(0, RING_Y, -0.35);
   ring.castShadow = true;
   stand.add(ring);
 
-  makeBoss(CLAMP_Y, 3.4);
+  const bossClamp = makeBoss(CLAMP_Y, 3.4);
   const clampArm = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.9, 4.4), darkSteel);
   clampArm.position.set(0, CLAMP_Y, -2.6);
   clampArm.castShadow = true;
   stand.add(clampArm);
+  const jaws = [];
   for (const s of [-1, 1]) {
     const jaw = new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.36, 0.5), darkSteel);
     jaw.position.set(s * 1.55, CLAMP_Y, 0.55);
     jaw.rotation.z = s * 0.16;
     jaw.castShadow = true;
     stand.add(jaw);
+    jaws.push(jaw);
   }
   const clampPad = new THREE.Mesh(new THREE.TorusGeometry(1.62, 0.16, 8, 24, Math.PI), darkSteel);
   clampPad.rotation.y = Math.PI / 2;
@@ -680,6 +757,10 @@ import * as THREE from './assets/optics-three.min.js';
   const flameGroup = new THREE.Group();
   flameGroup.position.set(0, LAMP_TOP, 0);
   scene.add(flameGroup);
+  /* 摇曳只写在 flameWob 这一层，flameGroup 的本体位姿保持精确 ——
+     否则「组装后世界坐标必须逐位等于基准」这条硬闸门会被一朵火苗的抖动顶掉。 */
+  const flameWob = new THREE.Group();
+  flameGroup.add(flameWob);
 
   const flameAlpha = makeFlameAlpha();
   const flameLayers = [];
@@ -699,7 +780,7 @@ import * as THREE from './assets/optics-three.min.js';
       blending: s.blend, depthWrite: false, side: THREE.DoubleSide, fog: false
     }));
     m.position.y = s.h / 2;
-    flameGroup.add(m);
+    flameWob.add(m);
     flameLayers.push({ mesh: m, base: s });
   }
   // 外圈柔和辉光：把锥体的硬轮廓“糊”开（太亮会把火焰整个冲成白色，压到 0.4）
@@ -709,7 +790,7 @@ import * as THREE from './assets/optics-three.min.js';
   }));
   flameGlow.scale.set(5.4, 7.2, 1);
   flameGlow.position.set(0, FLAME_H * 0.40, 0);
-  flameGroup.add(flameGlow);
+  flameWob.add(flameGlow);
   const flameLight = new THREE.PointLight('#ff9a3c', 3.4, 60, 2);
   flameLight.position.set(0, LAMP_TOP + FLAME_H * 0.45, 0);
   scene.add(flameLight);
@@ -847,21 +928,46 @@ import * as THREE from './assets/optics-three.min.js';
   solidBump.needsUpdate = true;
 
   // 固相偏暖哑光、液相偏冷高光：熔化界面靠「色调 + 光泽」两级差读出来，不靠几何缝隙
+  /* 固相 vs 液相的区分靠【三级差】叠起来，不靠一个参数：
+       ① 明度：固相近纯白（海波晶体本来就是很白的固体），液相是极浅的冷白；
+       ② 透明：固相不透明，液相明显透光（熔融海波是澄清液体）；
+       ③ 光泽：固相哑光颗粒感（强 bump），液相是强高光的镜面液面。
+     原来固相 #f7ead0（暖奶油）配液相 #d5ebef（浅蓝白），两者都是浅色半透明，
+     在深色背景上只差一点色温 —— 实测看不出「白色晶体」和「澄清液体」。 */
   const solidMat = new THREE.MeshStandardMaterial({
-    map: solidTex, bumpMap: solidBump, bumpScale: 0.05, color: '#f7ead0', roughness: 0.62, metalness: 0.02
+    map: solidTex, bumpMap: solidBump, bumpScale: 0.10, color: '#ffffff', roughness: 0.58, metalness: 0.02
   });
   const liquidMat = new THREE.MeshPhysicalMaterial({
-    color: '#d5ebef', transparent: true, opacity: 0.78, roughness: 0.05, metalness: 0,
-    clearcoat: 1, clearcoatRoughness: 0.03, envMapIntensity: 1.9, depthWrite: false
+    color: '#eaf6fa', transparent: true, opacity: 0.40, roughness: 0.03, metalness: 0,
+    clearcoat: 1, clearcoatRoughness: 0.02, envMapIntensity: 2.2, depthWrite: false
   });
-  const mushMat = new THREE.MeshStandardMaterial({ color: '#f0e2c8', roughness: 0.9, metalness: 0 });
+  /* 固液共存带：白晶体 + 澄清液混在一起，比固相透、比液相「有颗粒」 */
+  const mushMat = new THREE.MeshStandardMaterial({ color: '#fbf8f2', roughness: 0.86, metalness: 0 });
 
   const solidMesh = new THREE.Mesh(unitCyl, solidMat);
   const liquidMesh = new THREE.Mesh(unitCyl, liquidMat);
   const liquidTopMesh = new THREE.Mesh(unitDisk, liquidMat);
   liquidTopMesh.rotation.x = -Math.PI / 2;
   const mushMesh = new THREE.Mesh(unitCyl, mushMat);
-  for (const m of [solidMesh, liquidMesh, liquidTopMesh, mushMesh]) {
+
+  /* 固相顶面：一个压扁的半球，读起来是「一堆白色晶体」而不是「切平的白圆柱」。
+     高度写死 0.30 cm，只跟固相柱顶走，不参与任何物理量。 */
+  const DOME_H = 0.30;
+  const solidDome = new THREE.Mesh(
+    new THREE.SphereGeometry(SAMPLE_R, 28, 10, 0, Math.PI * 2, 0, Math.PI / 2),
+    solidMat
+  );
+  solidDome.scale.set(1, DOME_H / SAMPLE_R, 1);
+
+  /* 液相弯月面：液面边缘那一圈微微翘起的环 —— 液体和「切平的白圆柱」最直观的区别。
+     它只是给液相加一个可辨认的特征，位置永远跟着液面走。 */
+  const meniscus = new THREE.Mesh(
+    new THREE.TorusGeometry(SAMPLE_R - 0.05, 0.06, 10, 36),
+    liquidMat
+  );
+  meniscus.rotation.x = -Math.PI / 2;
+
+  for (const m of [solidMesh, liquidMesh, liquidTopMesh, mushMesh, solidDome, meniscus]) {
     m.castShadow = false; m.receiveShadow = false;
     tube.add(m);
   }
@@ -903,15 +1009,18 @@ import * as THREE from './assets/optics-three.min.js';
     g.clearRect(0, 0, W, H);
     g.strokeStyle = 'rgba(38,50,60,0.95)';
     g.fillStyle = 'rgba(28,40,50,0.98)';
-    g.lineWidth = 2;
-    g.beginPath(); g.moveTo(SCALE_TICK_X, 6); g.lineTo(SCALE_TICK_X, H - 6); g.stroke();
+    g.lineWidth = 4;
+    g.beginPath(); g.moveTo(SCALE_TICK_X, 12); g.lineTo(SCALE_TICK_X, H - 12); g.stroke();
     g.font = `bold ${SCALE_NUM_FONT}px "Helvetica Neue", Arial, sans-serif`;
     g.textAlign = 'left'; g.textBaseline = 'middle';
-    for (let T = 0; T <= 100; T += 2) {
+    /* 分度值 1 ℃：10 ℃ 长刻度 + 数字，5 ℃ 中刻度，其余 1 ℃ 短刻度。
+       三级长度差要够大（32 / 22 / 10），否则在管壁上缩到亚像素时三级糊成一片。 */
+    for (let T = 0; T <= 100; T += SCALE_STEP) {
       const y = scaleCanvasY(T);
       const major = T % 10 === 0;
-      const len = major ? 16 : 7;
-      g.lineWidth = major ? 2.4 : 1.6;
+      const mid = !major && T % 5 === 0;
+      const len = major ? 32 : mid ? 22 : 10;
+      g.lineWidth = major ? 5 : mid ? 3.6 : 3;
       g.beginPath(); g.moveTo(SCALE_TICK_X - len, y); g.lineTo(SCALE_TICK_X, y); g.stroke();
       if (major) g.fillText(String(T), SCALE_NUM_X, y);
     }
@@ -925,9 +1034,29 @@ import * as THREE from './assets/optics-three.min.js';
       }
     }
     scaleU0 = x0 / W; scaleU1 = (x1 + 1) / W;
+    scaleCanvas = c;                                 // 留给自检「从贴图像素里数刻度条数」
     const t = new THREE.CanvasTexture(c);
     t.colorSpace = THREE.SRGBColorSpace;
     return t;
+  }
+
+  /* 从【贴图像素】里数刻度线，而不是从代码常量数 ——
+     把 SCALE_STEP 从 1 改回 2 时，常量还是写着「每 1 ℃」也照样被抓出来。
+     在 x = SCALE_TICK_X − 6 这一列竖着扫：三级刻度（长 32 / 中 22 / 短 10）
+     都覆盖这一列，而刻度之间的空白是透明的 ⇒ 有多少段连续暗像素就有多少条刻度。 */
+  let scaleCanvas = null;
+  function countScaleTicks() {
+    if (!scaleCanvas) return -1;
+    const W = scaleCanvas.width, H = scaleCanvas.height;
+    const d = scaleCanvas.getContext('2d').getImageData(0, 0, W, H).data;
+    const col = SCALE_TICK_X - 6;
+    let n = 0, inRun = false;
+    for (let y = 0; y < H; y++) {
+      const on = d[(y * W + col) * 4 + 3] > 8;
+      if (on && !inRun) n++;
+      inRun = on;
+    }
+    return n;
   }
 
   /* 刻度 T 画在贴图的哪一行 —— 印刷刻度与液柱映射共用这一个式子，两边不可能再对不上 */
@@ -1016,6 +1145,88 @@ import * as THREE from './assets/optics-three.min.js';
   stir.rotation.z = 0.045;
   scene.add(stir);
 
+  /* --- 台面计时器（数码计时器） ---
+     位置 (x = 20, z = 12)：铁架台底座只占 x∈[-13,13]、z∈[-8.5,8.5]，所以它完全不压器材。
+     这个坐标不是估的 —— 用 screenRectOf() 对 5×4 个候选位置扫过一遍屏幕包围盒重叠率，
+     只有 x ≥ 20 这一档能做到「与底座 / 立柱 / 烧杯 / 试管 / 四个舞台浮层全部 0 重叠」，
+     且整块落在舞台内（x=14~16 那几档会掉出下边界）。
+
+     朝向：屏幕法线（局部 +z）正对默认相机的方位角、并向后仰 20.7°。
+     两个角由「计时器位置 → 默认相机位置」的连线反算，不是手估：
+       相机在 (−44.9, 36.4, 73.2)，计时器在 (20, ~2.7, 12)
+       ⇒ 视线方向 (−0.680, 0.354, 0.642)
+       ⇒ rotation.y = atan2(−0.680, 0.642) = −0.814，rotation.x = −asin(0.354) = −0.362
+     屏幕正对相机 ⇒ 数字不被透视压扁（cos α = 1），这是「很好的显示」的前提。
+
+     ★ 读数就是 state.t（仿真时间），不是墙上时钟：
+       曲线图的横轴用的也是 state.t，两处必须同源，否则一调倍速就对不上。 */
+  const TIMER_POS = { x: 20, z: 12 };
+  const TIMER_YAW = -0.814, TIMER_PITCH = -0.362;
+  const TIMER_W = 7.2, TIMER_H = 4.6, TIMER_D = 0.8;
+  const timerUnit = new THREE.Group();
+  timerUnit.position.set(TIMER_POS.x, 0, TIMER_POS.z);
+
+  const timerShellMat = new THREE.MeshStandardMaterial({ color: '#2b3440', roughness: 0.5, metalness: 0.35 });
+  const timerScreenMat = new THREE.MeshBasicMaterial({ fog: false });
+
+  const timerStand = new THREE.Mesh(new THREE.BoxGeometry(TIMER_W + 1.2, 0.36, 3.4), timerShellMat);
+  timerStand.position.set(0, 0.18, 0.5);
+  timerUnit.add(timerStand);
+
+  const timerBody = new THREE.Group();
+  timerBody.rotation.order = 'YXZ';
+  timerBody.rotation.y = TIMER_YAW;
+  timerBody.rotation.x = TIMER_PITCH;
+  timerUnit.add(timerBody);
+
+  const timerShell = new THREE.Mesh(new THREE.BoxGeometry(TIMER_W, TIMER_H, TIMER_D), timerShellMat);
+  timerBody.add(timerShell);
+  // 屏幕：一块贴在壳前面的平面，用 MeshBasicMaterial（不受光照）—— 数字才不会被阴影糊掉
+  const timerScreen = new THREE.Mesh(new THREE.PlaneGeometry(TIMER_W - 0.9, TIMER_H - 1.0), timerScreenMat);
+  timerScreen.position.set(0, 0, TIMER_D / 2 + 0.02);
+  timerBody.add(timerScreen);
+  // 顶上一个小按钮，一眼看出这是「可以按的计时器」
+  const timerBtn = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.34, 0.26, 16), timerShellMat);
+  timerBtn.position.set(TIMER_W / 2 - 0.9, TIMER_H / 2 + 0.12, 0);
+  timerBody.add(timerBtn);
+  // 壳底那点高度算准：把整体抬到「最低点正好落在底座上」，别悬空也别插进台面。
+  // 局部 (lx,ly,lz) 绕 x 转 θ 后世界 y = ly·cosθ + lz·sinθ ⇒ 半高 = (H/2)cosθ + (D/2)sinθ
+  timerBody.position.y = 0.36 + (TIMER_H / 2) * Math.cos(TIMER_PITCH) + (TIMER_D / 2) * Math.abs(Math.sin(TIMER_PITCH));
+  scene.add(timerUnit);
+
+  const TIMER_TEX_W = 512, TIMER_TEX_H = 320;
+  const timerCanvas = newCanvas(TIMER_TEX_W, TIMER_TEX_H);
+  const timerCtx = timerCanvas.getContext('2d');
+  const timerTex = new THREE.CanvasTexture(timerCanvas);
+  timerTex.colorSpace = THREE.SRGBColorSpace;
+  timerTex.anisotropy = MAX_ANISO;
+  timerScreenMat.map = timerTex;
+  let timerDrawnSec = -1, timerDrawnDue = null;
+  /* 只在「显示的秒」或「该记录」状态变化时才重画贴图 —— 每帧重画会白白拖慢帧率 */
+  function drawTimerFace(sec, due) {
+    const s = Math.max(0, Math.floor(sec + 1e-9));
+    if (s === timerDrawnSec && due === timerDrawnDue) return false;
+    timerDrawnSec = s; timerDrawnDue = due;
+    const g = timerCtx, W = TIMER_TEX_W, H = TIMER_TEX_H;
+    g.fillStyle = '#08131f'; g.fillRect(0, 0, W, H);
+    // 屏幕边框：到点变橙，和侧栏卡片、记录按钮同一个信号
+    g.strokeStyle = due ? '#fb923c' : '#1f3b52';
+    g.lineWidth = 12; g.strokeRect(6, 6, W - 12, H - 12);
+    g.font = 'bold 34px ui-monospace, SFMono-Regular, Menlo, monospace';
+    g.textAlign = 'left'; g.textBaseline = 'top';
+    g.fillStyle = '#5f7c93';
+    g.fillText(due ? '该记录数据了' : '计时器 t / s', 30, 26);
+    g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.font = 'bold 168px ui-monospace, SFMono-Regular, Menlo, monospace';
+    g.fillStyle = due ? '#fdba74' : '#7dd3fc';
+    g.fillText(formatMMSS(s), W / 2, H / 2 + 14);
+    g.font = 'bold 30px ui-monospace, SFMono-Regular, Menlo, monospace';
+    g.fillStyle = '#8ea6b7';
+    g.fillText(`${s} s · 每 30 s 记一组`, W / 2, H - 34);
+    timerTex.needsUpdate = true;
+    return true;
+  }
+
   /* --- 气泡与蒸汽 --- */
   const bubbleMat = new THREE.MeshPhysicalMaterial({ color: '#ffffff', transparent: true, opacity: 0.5, roughness: 0.05, metalness: 0, envMapIntensity: 1.4, depthWrite: false });
   const bubbles = [];
@@ -1055,7 +1266,12 @@ import * as THREE from './assets/optics-three.min.js';
   }
 
   function integrate(dt) {
-    const q = K_COUPLE * (state.Tw - state.Tt);
+    /* 试管热流：先按温差算，再卡饱和上限。
+       上限是「图上两条斜率不一样陡」的唯一来源 —— 没有它，试样又被水浴锁住，
+       固态液态一样陡（详见物理参数区的推导）。Math.max/min 对负号同样成立，
+       所以凝固方向（q < 0）自动对称，不用另写一份。 */
+    let q = K_COUPLE * (state.Tw - state.Tt);
+    q = Math.max(-Q_TUBE, Math.min(Q_TUBE, q));
     if (state.substance === 'hypo') {
       const s = sub.hypo;
       if (state.phi > 0 && state.phi < 1) {
@@ -1125,6 +1341,387 @@ import * as THREE from './assets/optics-three.min.js';
   }
 
   /* ==========================================================================
+     四之二、器材组装：散放 → 自下而上装成水浴装置
+     ==========================================================================
+     教学点：真实实验里这套装置不是现成的，要一层层从下往上搭 ——
+     底座立柱 → 酒精灯（先定火焰高度）→ 铁圈 + 石棉网 → 烧杯 + 水
+     → 试管夹 + 试管 → 温度计。上面每一层的高度都由下面那一层决定。
+
+     ★ 硬闸门：装好之后每件器材的世界坐标必须【逐位等于】升级前的基准位姿。
+       做法不是「另写一套组装好的坐标」，而是：初始化时把基准 position / rotation
+       存进 PART_BASE；散放 = 基准 + 增量；组装 = 增量归零。
+       增量归零时 getWorldPosition 与基准的差恒为 0 —— 没有「抄错常量」的余地。
+
+     ★ 动画必须走 frameStep（真实 rAF 与 driveAnim 共用同一段代码）。
+       无头环境 rAF 不触发，验收只能靠 driveAnim 推；若组装自己另写一套推进逻辑，
+       把这里改坏照样全绿 —— 这是本仓库反复踩过的坑。 */
+
+  const PART_BASE = new Map();     // obj -> 基准位姿（升级前的原样，只写一次）
+  const PART_POSE = new Map();     // obj -> 散放增量 { dx, dy, dz, rx, ry, rz }
+  const PART_T = new Map();        // obj -> 0..1（0 = 装好、1 = 散放）
+  const ASM_KEY_OF = new Map();    // obj -> 它属于哪个 part key（自检反查用）
+
+  function basePose(o) {
+    let b = PART_BASE.get(o);
+    if (!b) { b = { pos: o.position.clone(), rot: o.rotation.clone() }; PART_BASE.set(o, b); }
+    return b;
+  }
+
+  /* 唯一写器材位姿的入口。extraY 给「在基准之上再叠一点」用（温度计升降）。
+     散放、组装、tween 的每一帧、animateParts 全都走它 ——
+     别处再直接写 position 就会和 tween 打架（写回旧值 ⇒ 动画被吃掉）。 */
+  function poseNow(o, extraY = 0) {
+    const b = basePose(o), p = PART_POSE.get(o), t = p ? (PART_T.get(o) || 0) : 0;
+    o.position.set(
+      b.pos.x + (p ? p.dx * t : 0),
+      b.pos.y + (p ? p.dy * t : 0) + extraY,
+      b.pos.z + (p ? p.dz * t : 0)
+    );
+    if (p) o.rotation.set(b.rot.x + p.rx * t, b.rot.y + p.ry * t, b.rot.z + p.rz * t);
+    else o.rotation.copy(b.rot);
+  }
+
+  /* 九件散件。steps 只管教学语义与先后，parts 只管画面 —— 两边分开写，
+     所以「铁圈 + 石棉网」可以是一个步骤（两件一起装），
+     「试管夹 + 试管」也是（夹子先夹住，试管才有地方待）。 */
+  const ASM_PARTS = [
+    { key: 'stand',  label: '铁架台底座',        objs: [base, baseTop] },
+    { key: 'rod',    label: '镀铬立柱',          objs: [rod] },
+    { key: 'lamp',   label: '酒精灯',            objs: [lamp, flameGroup, flameLight] },
+    { key: 'ring',   label: '铁圈',              objs: [bossRing.sleeve, bossRing.screw, bossRing.arm, ring] },
+    { key: 'net',    label: '石棉网',            objs: [netMesh, pad] },
+    { key: 'beaker', label: '烧杯 + 水',         objs: [beaker] },
+    { key: 'clamp',  label: '试管夹',            objs: [bossClamp.sleeve, bossClamp.screw, bossClamp.arm, clampArm, jaws[0], jaws[1], clampPad] },
+    { key: 'tube',   label: '试管 + 试样',       objs: [tube, stir] },
+    { key: 'thermo', label: '温度计',            objs: [thermometer] },
+    { key: 'arm',    label: '温度计横臂',        objs: [thSupport] }
+  ];
+  const ASM_STEPS = [
+    { key: 'base',   parts: ['stand', 'rod'],
+      name: '铁架台底座 + 立柱', hint: '先把最下面的铸铁底座放稳，立柱才立得住 —— 上面所有器材都挂在它上面。' },
+    { key: 'lamp',   parts: ['lamp'],
+      name: '酒精灯', hint: '放酒精灯。铁圈要照它的火焰高度来定，所以先摆灯、后定圈。' },
+    { key: 'ring',   parts: ['ring', 'net'],
+      name: '铁圈 + 石棉网', hint: '铁圈套在立柱上，高度让外焰刚好舔到石棉网；石棉网再铺在铁圈上。' },
+    { key: 'beaker', parts: ['beaker'],
+      name: '烧杯 + 水', hint: '烧杯坐在石棉网上。水面要没过试管里的试样，水浴才能包住它。' },
+    { key: 'clamp',  parts: ['clamp', 'tube'],
+      name: '试管夹 + 试管', hint: '试管夹从上面夹住试管，让试管浸在水里 —— 不碰杯底、也不碰杯壁。' },
+    { key: 'thermo', parts: ['thermo', 'arm'],
+      name: '温度计', hint: '最后装温度计：横臂挂在立柱上，感温泡浸在试样里、不碰管壁。' }
+  ];
+
+  /* 散放位姿：水平位移 + 绕轴转角。dy 不手填 —— 由「整件器材最低点落到台面」
+     反算（见下面 buildScatter），这样以后改了尺寸或转角也不会突然浮起来 / 插进台面。
+
+     ★ dx / dz 是【搜出来的】，不是估的：脚本 melt-asm-autolayout 在 (x, z) 平面上
+       扫 2.5 cm 网格，对每件器材挑「屏幕包围盒完整落在舞台内（留 8 px）+
+       世界包围盒完整落在台面上（|x|≤96、|z|≤62）+ 与已放好的散件和四个舞台浮层、
+       计时器都不重叠（< 0.005）」的落点里离目标槽位最近的那个。
+       结果：横向铺开 842 px、纵向 530 px，两两重叠 0、压浮层 0。
+       换尺寸 / 换相机参数后【重跑一遍脚本】，别手调这几个数。 */
+  const ASM_POSE = {
+    stand:  { dx: -22.5, dz: -35,   ry: 0.55 },
+    rod:    { dx: 25,    dz: -20,   ry: 0.0, rz: Math.PI / 2 },
+    lamp:   { dx: 12.5,  dz: 37.5,  ry: -0.28 },
+    ring:   { dx: 35,    dz: 25,    ry: 0.85, rx: Math.PI / 2 },
+    net:    { dx: 2.5,   dz: 2.5,   ry: -0.45 },
+    beaker: { dx: -40,   dz: 0,     ry: 0.32 },
+    clamp:  { dx: -5,    dz: 52.5,  ry: 1.05, rx: Math.PI / 2 },
+    tube:   { dx: -37.5, dz: 30,    ry: 0.30, rz: -Math.PI / 2 },
+    thermo: { dx: 0,     dz: 50,    ry: 0.22, rz: -Math.PI / 2 },
+    arm:    { dx: -55,   dz: 12.5,  ry: 0.70 }
+  };
+
+  /* 整件器材在【当前位姿】下的最低点（世界 y）。逐 mesh 量，不用整组 AABB：
+     绕轴转过以后 AABB 会把角点撑出去，算出来的台面高度会偏高。 */
+  const _asmBox = new THREE.Box3();
+  function lowestY(objs) {
+    let minY = Infinity;
+    for (const root of objs) {
+      root.updateMatrixWorld(true);
+      root.traverse((o) => {
+        if (!o.isMesh) return;
+        _asmBox.setFromObject(o, true);
+        if (!_asmBox.isEmpty() && _asmBox.min.y < minY) minY = _asmBox.min.y;
+      });
+    }
+    return minY;
+  }
+
+  /* ★ 一件器材里可能有多个物体（试管 + 搅拌棒、铁圈 + boss 头、灯 + 火焰）。
+     它们必须【作为刚体一起动】：绕同一个支点转，而不是各自绕自己的原点转。
+     各自转会把相对位置扯散 —— 实测「试管 + 搅拌棒」被甩开 15 cm，
+     整件的投影包围盒从 18 cm 宽涨到 38 cm 宽（一眼假）。 */
+  const _asmV = new THREE.Vector3();
+  const _asmM = new THREE.Matrix4();
+  const _asmE = new THREE.Euler();
+  function partPivot(p) { return p.pivot || basePose(p.objs[0]).pos; }
+
+  function layoutPart(p, spec) {
+    const pivot = partPivot(p);
+    _asmM.makeRotationFromEuler(_asmE.set(spec.rx || 0, spec.ry || 0, spec.rz || 0, 'XYZ'));
+    for (const o of p.objs) {
+      const b = basePose(o);
+      // 绕支点转完该在哪：R·(p − pivot) + pivot。存进 PART_POSE 的仍是「基准 + 增量」，
+      // 所以增量归零时物体【逐位回到基准】这条不变量不受影响。
+      _asmV.copy(b.pos).sub(pivot).applyMatrix4(_asmM).add(pivot).sub(b.pos);
+      PART_POSE.set(o, {
+        dx: spec.dx + _asmV.x, dy: _asmV.y, dz: spec.dz + _asmV.z,
+        rx: spec.rx || 0, ry: spec.ry || 0, rz: spec.rz || 0
+      });
+    }
+  }
+
+  /* 把整件抬到「最低点正好落在台面」—— dy 不手填：改了尺寸或转角也不会浮起来 / 插进台面。
+     台面是平面 ⇒ 这个抬升量只由【转角】决定，跟水平位移无关，
+     所以算一次就能缓存：摆位搜索要对同一个零件试上千个 (dx, dz)，
+     每次都重量一遍最低点会慢两个数量级。 */
+  const PART_REST = new Map();
+  function restPart(p) {
+    for (const o of p.objs) { PART_T.set(o, 1); poseNow(o); }
+    const rest = -lowestY(p.objs) - PART_POSE.get(p.objs[0]).dy;
+    PART_REST.set(p.key, rest);
+    for (const o of p.objs) { PART_POSE.get(o).dy += rest; poseNow(o); }
+    return rest;
+  }
+
+  /* 只改水平位移、复用已缓存的抬升量 —— 摆位搜索走这条快路 */
+  function placePart(p, dx, dz) {
+    ASM_POSE[p.key].dx = dx; ASM_POSE[p.key].dz = dz;
+    layoutPart(p, ASM_POSE[p.key]);
+    const rest = PART_REST.get(p.key) || 0;
+    for (const o of p.objs) { PART_POSE.get(o).dy += rest; poseNow(o); }
+  }
+
+  (function buildScatter() {
+    for (const p of ASM_PARTS) {
+      for (const o of p.objs) { ASM_KEY_OF.set(o, p.key); basePose(o); }
+      layoutPart(p, ASM_POSE[p.key]);
+      restPart(p);
+    }
+  })();
+
+  function partOf(key) { return ASM_PARTS.find((p) => p.key === key); }
+  function partProgress(key) {
+    const p = partOf(key);
+    return p ? (PART_T.get(p.objs[0]) || 0) : 0;
+  }
+  function setPartT(key, t) {
+    const p = partOf(key);
+    if (!p) return;
+    for (const o of p.objs) { PART_T.set(o, t); poseNow(o); }
+  }
+
+  /* 「已经装好几件」= 从第 ① 件开始连续数下去，遇到第一件没装好的就停。
+     用前缀而不是计数：乱序把第 ④ 件装了不该让计数变成 1。 */
+  function assembledCount() {
+    let n = 0;
+    for (const s of ASM_STEPS) {
+      if (s.parts.every((k) => partProgress(k) < 1e-6)) n++; else break;
+    }
+    return n;
+  }
+  function assemblyReady() { return assembledCount() >= ASM_STEPS.length; }
+
+  const ASM_DUR = 0.75;            // 单步组装动画时长（秒）
+  let asmTween = null;             // { parts:[key], from, to, k }
+  let asmQueue = [];               // 一键组装时排队等着的步骤下标
+  let asmNote = '';                // 给侧栏的提示文案（乱序点击等）
+  let asmNoteBad = false;
+
+  function asmSay(text, bad) { asmNote = text || ''; asmNoteBad = !!bad; }
+
+  function assembleStep(i, force) {
+    if (asmTween) { asmSay('正在装…等这一步动完', true); return false; }
+    const done = assembledCount();
+    if (i < done) { asmSay('这一步已经装好了', false); return false; }
+    if (i > done && !force) {
+      asmSay('顺序不对：装置要【自下而上】搭 —— 先装好「' + ASM_STEPS[done].name + '」', true);
+      return false;
+    }
+    const st = ASM_STEPS[i];
+    if (!st) return false;
+    asmSay('正在装：' + st.name, false);
+    asmTween = { parts: st.parts.slice(), from: 1, to: 0, k: 0, step: i };
+    return true;
+  }
+
+  function autoAssemble() {
+    const done = assembledCount();
+    if (done >= ASM_STEPS.length) { asmSay('已经装好了', false); return false; }
+    asmQueue = [];
+    for (let i = done; i < ASM_STEPS.length; i++) asmQueue.push(i);
+    if (!asmTween) {
+      const next = asmQueue.shift();
+      asmTween = { parts: ASM_STEPS[next].parts.slice(), from: 1, to: 0, k: 0, step: next };
+      asmSay('一键组装中：' + ASM_STEPS[next].name, false);
+    }
+    return true;
+  }
+
+  function scatterAll() {
+    asmQueue = [];
+    if (asmTween) {                       // 正在动就先落定，再往回散
+      for (const k of asmTween.parts) setPartT(k, asmTween.to);
+      asmTween = null;
+    }
+    const all = ASM_PARTS.map((p) => p.key);
+    asmTween = { parts: all, from: 0, to: 1, k: 0, step: -1 };
+    asmSay('器材已散放到台面上，重新按顺序装一次', false);
+    return true;
+  }
+
+  /* 立刻落定（不播动画）：给验收脚本做前置状态用，也方便自检把画面推到稳态 */
+  function finishAll(to) {
+    asmQueue = []; asmTween = null;
+    for (const p of ASM_PARTS) setPartT(p.key, to);
+    asmSay(to === 0 ? '器材已装好' : '器材已散放', false);
+    afterAsmChange();
+    return assembledCount();
+  }
+
+  function advanceAsm(dt) {
+    const tw = asmTween;
+    tw.k = Math.min(1, tw.k + dt / ASM_DUR);
+    const e = tw.k * tw.k * (3 - 2 * tw.k);          // smoothstep，起步/收尾都不生硬
+    const t = tw.from + (tw.to - tw.from) * e;
+    for (const k of tw.parts) setPartT(k, t);
+    if (tw.k >= 1) {
+      for (const k of tw.parts) setPartT(k, tw.to);
+      asmTween = null;
+      afterAsmChange();
+      if (asmQueue.length) {
+        const next = asmQueue.shift();
+        asmTween = { parts: ASM_STEPS[next].parts.slice(), from: 1, to: 0, k: 0, step: next };
+        asmSay('一键组装中：' + ASM_STEPS[next].name, false);
+      } else {
+        asmSay(tw.to === 0 ? '器材装好了，可以开始加热' : '器材已散放', false);
+      }
+    }
+    dirty = true;
+  }
+
+  /* 组装状态一变就要做三件事：灯焰要不要点着、侧栏清单要不要刷新、开始按钮能不能点 */
+  function afterAsmChange() {
+    state.assembled = assembledCount();
+    updateDirectionVisual();
+    updateAsmUI();
+    updateReadouts();
+    /* 装好的那一刻把镜头拉回常规 45° 斜视：组装视角（dist 132、俯角 23°）是为了
+       看清摊开的一桌散件，装置立起来以后用它取景就太远太扁了。 */
+    if (assemblyReady() && viewIsAssemble()) {
+      Object.assign(view, VIEWS.angle);
+      document.querySelectorAll('[data-view]').forEach((b) => b.classList.toggle('active', b.dataset.view === 'angle'));
+      updateCamera();
+    }
+    requestRender();
+  }
+
+  function updateAsmUI() {
+    const done = assembledCount(), total = ASM_STEPS.length;
+    const list = $('asmList');
+    if (list) {
+      const items = list.querySelectorAll('[data-asm]');
+      items.forEach((li, i) => {
+        li.classList.toggle('done', i < done);
+        li.classList.toggle('next', i === done);
+        li.classList.toggle('busy', !!asmTween && asmTween.step === i);
+        li.setAttribute('aria-disabled', i === done ? 'false' : 'true');
+      });
+    }
+    const bar = $('asmBar');
+    if (bar) bar.style.width = (done / total * 100).toFixed(1) + '%';
+    const cnt = $('asmCount');
+    if (cnt) cnt.textContent = done + ' / ' + total;
+    const hint = $('asmHint');
+    if (hint) {
+      const nextStep = ASM_STEPS[done];
+      hint.textContent = asmNote || (nextStep
+        ? `下一步：${nextStep.name} —— ${nextStep.hint}`
+        : '六件都装好了。这套装置是【自下而上】搭起来的：底座→灯→圈网→烧杯→试管→温度计。');
+      hint.classList.toggle('bad', asmNoteBad);
+    }
+    const auto = $('asmAuto');
+    if (auto) {
+      auto.disabled = done >= total || !!asmTween;
+      auto.textContent = done >= total ? '✓ 已装好' : (done > 0 ? '⚡ 一键装完剩下的' : '⚡ 一键自动组装');
+    }
+    const scat = $('asmScatter');
+    if (scat) scat.disabled = done === 0 && !asmTween;
+    const gate = $('runGate');
+    if (gate) gate.hidden = assemblyReady();
+    /* 开始按钮的门禁：没装好就不给点。用 $('runBtn') 而不是 els.runBtn ——
+       本模块在源码里排在 els 之前，直接读 els 会撞上 TDZ（const 未初始化）。 */
+    const run = $('runBtn');
+    if (run) run.disabled = state.running || !assemblyReady();
+  }
+
+  function viewIsAssemble() {
+    const b = document.querySelector('[data-view="assemble"]');
+    return !!(b && b.classList.contains('active'));
+  }
+  function gotoAssembleView() {
+    Object.assign(view, VIEWS.assemble);
+    document.querySelectorAll('[data-view]').forEach((b) => b.classList.toggle('active', b.dataset.view === 'assemble'));
+    updateCamera();
+  }
+
+  /* ---- 屏幕包围盒（GL 像素，原点在左下，与 bulbRect() 同向）----
+     摆位断言全靠它：「散件两两不重叠」「每件都完整落在舞台内」「计时器不压器材」
+     都必须是【量出来的】，不是估的。 */
+  const _rectBox = new THREE.Box3();
+  function rectFromBox(box) {
+    const gl = renderer.getContext();
+    const W = gl.drawingBufferWidth, H = gl.drawingBufferHeight;
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    const v = new THREE.Vector3();
+    for (let i = 0; i < 8; i++) {
+      v.set(i & 1 ? box.max.x : box.min.x, i & 2 ? box.max.y : box.min.y, i & 4 ? box.max.z : box.min.z);
+      v.project(camera);
+      const sx = (v.x * 0.5 + 0.5) * W, sy = (v.y * 0.5 + 0.5) * H;
+      x0 = Math.min(x0, sx); x1 = Math.max(x1, sx);
+      y0 = Math.min(y0, sy); y1 = Math.max(y1, sy);
+    }
+    return { x: x0, y: y0, w: x1 - x0, h: y1 - y0, W, H };
+  }
+  function screenRectOf(obj) {
+    obj.updateMatrixWorld(true);
+    return rectFromBox(_rectBox.setFromObject(obj));
+  }
+  function screenRectOfMany(objs) {
+    const box = new THREE.Box3();
+    for (const o of objs) { o.updateMatrixWorld(true); box.expandByObject(o); }
+    return rectFromBox(box);
+  }
+  /* 世界位姿快照：每件器材的每个物体 → [x,y,z, qx,qy,qz,qw]。
+     useBase=true 时用的是 PART_BASE（基准 = 升级前原样），
+     否则读实际 matrixWorld。两者逐位相等 ⇔ 组装没把原来的摆位挪掉。 */
+  function poseSnapshot(useBase) {
+    const out = {};
+    const v = new THREE.Vector3(), q = new THREE.Quaternion(), s = new THREE.Vector3();
+    const m = new THREE.Matrix4(), r = new THREE.Matrix4();
+    for (const p of ASM_PARTS) {
+      out[p.key] = p.objs.map((o) => {
+        if (useBase) {
+          const b = basePose(o);
+          /* 只更新【祖先链】：这里要的只是 o.parent.matrixWorld。
+             写成 updateMatrixWorld(true) 会把整棵子树重算一遍，24 个物体就是 24 遍全场景遍历 ——
+             自检要连着调好几轮快照，本机 swap 打满时会被拖成换页风暴。 */
+          o.parent.updateWorldMatrix(true, false);
+          m.compose(b.pos, q.setFromEuler(b.rot), s.set(1, 1, 1)).premultiply(o.parent.matrixWorld);
+          m.decompose(v, q, s);
+        } else {
+          o.updateMatrixWorld(true);
+          o.matrixWorld.decompose(v, q, s);
+        }
+        return [v.x, v.y, v.z, q.x, q.y, q.z, q.w];
+      });
+    }
+    return out;
+  }
+
+  /* ==========================================================================
      五、随状态更新器材
      ========================================================================== */
   function meltFraction() {
@@ -1137,6 +1734,8 @@ import * as THREE from './assets/optics-three.min.js';
     liquidMesh.visible = isHypo;
     liquidTopMesh.visible = isHypo;
     mushMesh.visible = isHypo;
+    solidDome.visible = isHypo;
+    meniscus.visible = isHypo;
     waxMesh.visible = !isHypo;
     waxTop.visible = !isHypo;
   }
@@ -1147,13 +1746,17 @@ import * as THREE from './assets/optics-three.min.js';
   function updateDirectionVisual() {
     const freeze = state.direction === 'freeze';
     lamp.visible = !freeze;              // 酒精灯连同灯焰、灯焰光源一起撤走
-    flameGroup.visible = !freeze;
-    flameLight.visible = !freeze;
+    /* 灯焰只在「整套装置装好之后」才点着 —— 散放在台面上的酒精灯是没点的。
+       不这样卡的话，散件状态下一朵火焰飘在半空中，一眼就假。 */
+    const lit = !freeze && assemblyReady();
+    flameGroup.visible = lit;
+    flameLight.visible = lit;
     iceGroup.visible = freeze;
     waterMat.color.set(freeze ? '#a9dff2' : '#8ed3ea');
     state.drawn = state.drawn || {};
     state.drawn.direction = state.direction;
     state.drawn.lampVisible = lamp.visible;
+    state.drawn.flameVisible = flameGroup.visible;
     state.drawn.iceVisible = iceGroup.visible;
     requestRender();
   }
@@ -1165,13 +1768,22 @@ import * as THREE from './assets/optics-three.min.js';
       const liquidH = Math.max(0, SAMPLE_H - solidH);
       const showSolid = solidH > 0.02;
 
+      /* 固相 = 圆柱 + 顶上一个压扁的半球，两者合起来才是 solidH 高 ——
+         顶面因此是「一堆白晶体」而不是「切平的白圆柱」，总高度不变。
+         固相太薄时（快熔完）退回纯圆柱，免得出现负高度。 */
+      const domeOn = showSolid && solidH > DOME_H * 1.6;
+      const cylH = domeOn ? solidH - DOME_H : solidH;
+
       solidMesh.visible = showSolid;
       if (showSolid) {
-        solidMesh.scale.set(1, solidH, 1);
-        solidMesh.position.set(0, TT_Y0 + 0.12 + solidH / 2, 0);
-        solidTex.repeat.set(2.2, Math.max(0.05, solidH * 1.55));
+        solidMesh.scale.set(1, cylH, 1);
+        solidMesh.position.set(0, TT_Y0 + 0.12 + cylH / 2, 0);
+        solidTex.repeat.set(2.2, Math.max(0.05, cylH * 1.55));
         solidBump.repeat.copy(solidTex.repeat);
       }
+      solidDome.visible = domeOn;
+      if (domeOn) solidDome.position.set(0, TT_Y0 + 0.12 + solidH - DOME_H, 0);
+
       mushMesh.visible = showSolid && state.phi > 0.01 && state.phi < 0.99;
       if (mushMesh.visible) {
         const mh = 0.34;
@@ -1185,6 +1797,11 @@ import * as THREE from './assets/optics-three.min.js';
         liquidMesh.scale.set(1, lh, 1);
         liquidMesh.position.set(0, liqBottom + lh / 2, 0);
         liquidTopMesh.position.set(0, liqBottom + lh + 0.005, 0);
+        // 弯月面：液面边缘那圈微微翘起的环，跟着液面一起走
+        meniscus.visible = true;
+        meniscus.position.set(0, liqBottom + lh - 0.01, 0);
+      } else {
+        meniscus.visible = false;
       }
     } else {
       // 石蜡：先变软、再变稀；体积基本不变，顶部略有塌陷
@@ -1216,8 +1833,18 @@ import * as THREE from './assets/optics-three.min.js';
   /* 透视开关：试样（固 / 糊 / 蜡）变半透明，好让插在里面的感温泡看得见。
      关键：半透明时必须 depthWrite=false，否则后面那个不透明的红色玻璃泡
      会被试样写下的深度值剔除掉 —— 看上去就是「泡不见了」。
-     不透明度取「能看清泡」和「试样本身还像个实物」的折中：0.34 太透，试样会化掉；
-     0.62 以上玻璃泡就被吃掉了。实测 0.48 附近两边都成立。 */
+
+     ★ 不透明度不是「能看清泡就行」的单一取舍，它同时要满足【两个方向相反的】判据：
+       (a) 固态要比液态【亮】够多（用户诉求③：一眼看出白晶体 vs 澄清液体）；
+       (b) 透视打开后，泡在液相里要比关着时【更红】够多（透视这个功能本身要有效）。
+     泡在 φ=0 时埋进固相、φ=0.5 时落在液相（固相只长到 3.40 cm，泡在 4.00 cm），
+     所以 (a) 由 solidMat 定、(b) 由 liquidMat 定，两者可以分开调。
+     实测（1440×1000，6 个 16×16 取样块的平均亮度）：
+       固相 0.48→155.8  0.72→167.1  1.00→178.8
+       液相 0.42→153.9  0.34→150.7  0.26→145.9  0.20→144.0
+     取「固 0.72 / 液 0.20」：透视开 Δlum = −23.1（判据 |Δ| > 18）；
+     关透视「固 1.0 / 液 0.42」Δlum = −24.9；φ=0.5 处泡偏红 49.2 vs 34.3（判据 > +8）。
+     旧值 0.48/0.34 在透视开时 Δlum 只有 −6.6 —— 固液几乎同亮，正是「看不出区别」的来源。 */
   function applyXray() {
     const on = state.xray;
     const setMat = (mat, onOp, offOp) => {
@@ -1227,11 +1854,14 @@ import * as THREE from './assets/optics-three.min.js';
       if (mat.transparent !== tr) { mat.transparent = tr; mat.needsUpdate = true; }
       if (mat.depthWrite === tr) mat.depthWrite = !tr;
     };
-    setMat(solidMat, 0.48, 1.0);
-    setMat(mushMat, 0.56, 1.0);
-    // 液相要压得比固相还透：感温泡在熔化中后期泡在熔液里，液相若比固相实，
-    // 泡反而在最需要看见的时候消失（实测 0.70 时红色信号只剩 1/6）。真实的熔融海波本来就是澄清液体。
-    liquidMat.opacity = on ? 0.50 : 0.78;
+    // 固相：透视开着也要留住「白」，只降到 0.72（还能看见里面淡淡的泡），不降到 0.48
+    setMat(solidMat, 0.72, 1.0);
+    /* 固液共存带做成「半透的白糊」：白晶体 + 澄清液混在一起本来就是半透的，
+       而且它下面压着固相的白顶，透出来才有「冰渣泡在液体里」的层次。 */
+    setMat(mushMat, 0.46, 0.74);
+    // 液相：熔融海波本来就是澄清液体，压到 0.20 才既像液体、又把亮度让给固相。
+    // 不透视时留 0.42（比透视时更实）—— 方向与固相一致：透视开 ⇒ 整体更透。
+    liquidMat.opacity = on ? 0.20 : 0.42;
     liquidMat.depthWrite = false;
     // 石蜡：既有「软化变透明」又有「透视」，两者相乘
     setMat(waxMat, 0.50 * (1 - 0.55 * smoothstep(0.05, 0.95, state.soft)), 1 - 0.62 * smoothstep(0.05, 0.95, state.soft));
@@ -1572,16 +2202,89 @@ import * as THREE from './assets/optics-three.min.js';
   }
 
   /* ==========================================================================
+     七之二、放大镜：把感温泡附近的刻度放大来读
+     ========================================================================== */
+  /* 为什么必须有它：温度计分度值是 1 ℃，而模型上 1 ℃ ≈ 1.04 mm。
+     整机视角下整支温度计只有 300 来 px、11.5 cm ⇒ 约 26 px/cm ⇒ 1 ℃ 只有 2.7 px，
+     相邻两条刻度在屏幕上直接糊成一条灰带 —— 3D 里本来就读不出来。
+
+     ★ 同源要求：放大镜不是另画一把尺子，而是把【同一把尺子】局部放大 ——
+       竖直映射唯一真源是 scaleYOf()（「温度 → 世界高度」，液柱顶端和印刷刻度也用它）。
+       所以放大镜里的刻度位置和 3D 里印的刻度永远对得上，不可能各说各话。 */
+  const loupeCanvas = $('loupeCanvas');
+  const loupeRead = $('loupeRead');
+  const LOUPE_SPAN = 12;                       // 竖直方向显示 ±6 ℃
+  let loupeDrawn = { T: NaN, redY: NaN, ticks: [] };   // 记【实际画出去】的几何，供自检直接读
+  function drawLoupe() {
+    if (!loupeCanvas) return;
+    const W = loupeCanvas.width, H = loupeCanvas.height;
+    const g = loupeCanvas.getContext('2d');
+    const Tc = state.Tt;
+    const lo = Tc - LOUPE_SPAN / 2, hi = Tc + LOUPE_SPAN / 2;
+    const pad = H * 0.05;
+    /* 世界高度 → 画布行。canvas y 向下增大，而温度越高世界 y 越大，所以取负号。 */
+    const yW0 = scaleYOf(lo), yW1 = scaleYOf(hi);
+    const yOf = (T) => H - pad - (scaleYOf(T) - yW0) / (yW1 - yW0) * (H - 2 * pad);
+
+    g.fillStyle = '#08131f'; g.fillRect(0, 0, W, H);
+    const ticks = [];
+    g.textBaseline = 'middle';
+    for (let T = Math.ceil(lo); T <= Math.floor(hi); T++) {
+      const y = yOf(T);
+      const major = T % 10 === 0, mid = !major && T % 5 === 0;
+      const len = major ? W * 0.30 : mid ? W * 0.20 : W * 0.10;
+      g.strokeStyle = major ? '#dbeafe' : mid ? '#9fb6c9' : '#5f7c93';
+      g.lineWidth = major ? 4 : mid ? 3 : 2;
+      g.beginPath(); g.moveTo(24, y); g.lineTo(24 + len, y); g.stroke();
+      if (major) {
+        g.fillStyle = '#dbeafe';
+        g.font = 'bold 34px ui-monospace, SFMono-Regular, Menlo, monospace';
+        g.textAlign = 'left';
+        g.fillText(`${T}`, 24 + len + 12, y);
+      }
+      ticks.push({ T, y: +y.toFixed(2), major, mid, len: +len.toFixed(1) });
+    }
+    /* 红线 = 现在的读数。位置同样由 scaleYOf(Tc) 给出 —— 和上面的刻度同一个式子。 */
+    const redY = yOf(Tc);
+    g.strokeStyle = '#f43f5e'; g.lineWidth = 4;
+    g.beginPath(); g.moveTo(12, redY); g.lineTo(W - 12, redY); g.stroke();
+    g.fillStyle = '#f43f5e';
+    g.beginPath(); g.moveTo(W - 12, redY); g.lineTo(W - 30, redY - 9); g.lineTo(W - 30, redY + 9); g.closePath(); g.fill();
+
+    loupeDrawn = { T: Tc, redY: +redY.toFixed(2), ticks };
+    if (loupeRead) loupeRead.textContent = `${Tc.toFixed(1)} ℃`;
+  }
+
+  /* ==========================================================================
      八、界面刷新
      ========================================================================== */
   const els = {
     sample: $('metricSample'), bath: $('metricBath'), state: $('metricState'),
     time: $('metricTime'), melt: $('metricMelt'),
     bathLabel: $('metricBathLabel'), meltLabel: $('metricMeltLabel'), timeLabel: $('metricTimeLabel'),
-    hudSample: $('hudSample'), hudBath: $('hudBath'),
+    hudSample: $('hudSample'), hudBath: $('hudBath'), hudTimer: $('hudTimer'),
     finding: $('finding'),
+    stateDot: $('stateDot'), stateChip: $('stateChip'), stateNote: $('stateNote'),
+    timerCard: $('recTimerCard'), timerMMSS: $('timerMMSS'), timerState: $('timerState'), timerNext: $('timerNext'),
+    recordBtn: $('recordBtn'),
     runBtn: $('runBtn'), pauseBtn: $('pauseBtn'), resetBtn: $('resetBtn')
   };
+
+  /* 舞台左上角的状态灯：白＝固态晶体 / 橙＝固液共存 / 青＝澄清液体。
+     和侧栏「状态」指标卡读同一份 state（meltFraction + direction），不另存一份 ——
+     否则「画面写着固液共存、侧栏写着熔化中」这种自相矛盾查不出来。 */
+  function sampleStateChip() {
+    const f = meltFraction();
+    const freeze = state.direction === 'freeze';
+    if (state.substance === 'hypo') {
+      if (f <= 0.001) return { text: '固态', note: '白色晶体', color: '#ffffff' };
+      if (f >= 0.999) return { text: '液态', note: '澄清液体', color: '#7dd3fc' };
+      return { text: '固液共存', note: '白晶体 + 澄清液', color: '#fdba74' };
+    }
+    if (f <= 0.02) return { text: '固态', note: '乳白蜡质', color: '#ffffff' };
+    if (f >= 0.985) return { text: '液态', note: '澄清液体', color: '#7dd3fc' };
+    return { text: freeze ? '变硬中' : '软化中', note: '没有固定熔点', color: '#fdba74' };
+  }
 
   function statusText() {
     const s = sub[state.substance];
@@ -1596,14 +2299,17 @@ import * as THREE from './assets/optics-three.min.js';
     return freeze ? '逐渐变硬 · 无固定凝固点' : '逐渐变软 · 无固定熔点';
   }
 
-  /* 右侧窄表格里的短状态，四个字以内才排得下一行 */
+  /* 右侧窄表格里的短状态，四个字以内才排得下一行。
+     ★ 晶体在熔化 / 凝固过程中，课本用的词是【固液共存】——
+       这里不能按方向拆成「熔化中 / 凝固中」：那两种叫法都漏掉了
+       「固态和液态同时存在」这个关键事实，而它正是平台期温度不变的原因。 */
   function shortState() {
     const f = meltFraction();
     const freeze = state.direction === 'freeze';
     if (state.substance === 'hypo') {
       if (f <= 0.001) return '固态';
       if (f >= 0.999) return '液态';
-      return freeze ? '凝固中' : '熔化中';
+      return '固液共存';
     }
     if (f <= 0.02) return '固态';
     if (f >= 0.985) return '液态';
@@ -1621,6 +2327,32 @@ import * as THREE from './assets/optics-three.min.js';
     els.melt.textContent = `${(frac * 100).toFixed(0)}%`;
     els.hudSample.textContent = state.Tt.toFixed(1);
     els.hudBath.textContent = state.Tw.toFixed(1);
+
+    const chip = sampleStateChip();
+    if (els.stateDot) {
+      els.stateDot.style.background = chip.color;
+      els.stateDot.style.boxShadow = `0 0 0 3px ${chip.color}22`;
+    }
+    if (els.stateChip) els.stateChip.textContent = chip.text;
+    if (els.stateNote) els.stateNote.textContent = chip.note;
+
+    /* 计时器：三处（3D 屏幕 / 侧栏卡片 / 舞台 HUD）同源读 state.t。
+       侧栏「距下次记录」与 3D 屏幕上的秒数也走同一份计算 —— 只要有一处对不上，
+       就说明有人又另写了一遍映射。 */
+    const due = timerDue();
+    if (els.timerMMSS) els.timerMMSS.textContent = formatMMSS(state.t);
+    if (els.hudTimer) els.hudTimer.textContent = formatMMSS(state.t);
+    if (els.timerNext) els.timerNext.textContent = nextRecordIn().toFixed(1);
+    if (els.timerState) {
+      els.timerState.textContent = due ? '该记录数据了'
+        : state.running ? '计时中' : (state.t > 0 ? '已暂停' : '未开始');
+    }
+    if (els.timerCard) els.timerCard.classList.toggle('due', due);
+    if (els.recordBtn) els.recordBtn.classList.toggle('due', due);
+    drawTimerFace(state.t, due);
+    /* 放大镜只在打开时重画（关着时它是 hidden 的，画了也没人看） */
+    if (toggles.loupe) drawLoupe();
+
     if (els.meltLabel) els.meltLabel.textContent = freeze ? '凝固 / 变硬程度' : '熔化 / 软化程度';
     if (els.bathLabel) els.bathLabel.textContent = freeze ? '冰水浴温度' : '水浴温度';
     if (els.timeLabel) els.timeLabel.textContent = freeze ? '冷却时间' : '加热时间';
@@ -1631,16 +2363,16 @@ import * as THREE from './assets/optics-three.min.js';
         if (state.phi >= 0.999) {
           hint = `冰水浴正在把热量吸走：液态海波从 ${FREEZE_T0} ℃ 开始下降。留意它会不会一路降下去 —— 上一轮加热时它在 48 ℃ 停过一次。`;
         } else if (state.phi > 0.001) {
-          hint = `凝固中：温度又一次钉在 ${s.tm} ℃ 不动了，而冰水浴还在不断吸热。这段时间放出的热量用来让分子重新排回晶格 —— 凝固过程要持续放热，温度才保持不变。`;
+          hint = `固液共存：温度又一次钉在 ${s.tm} ℃ 不动了，而冰水浴还在不断吸热。这段时间放出的热量用来让分子重新排回晶格 —— 凝固过程要持续放热，温度才保持不变。`;
         } else {
           hint = `已全部凝固：变成固态后温度又开始下降。凝固时那个不变的 ${s.tm} ℃ 就是海波的凝固点 —— 和它的熔点一模一样。`;
         }
       } else if (state.phi <= 0.001) {
         hint = `加热中：海波是晶体，温度升到 ${s.tm} ℃ 之前一直是固态。留意水浴温度比试样高多少 —— 水浴法让它升得慢、受热匀。`;
       } else if (state.phi < 0.999) {
-        hint = `熔化中：温度死死钉在 ${s.tm} ℃，而水浴已经升到 ${state.Tw.toFixed(1)} ℃。这段时间吸收的热量全部用来破坏晶格，温度不变 —— 这就是晶体有固定熔点的原因。`;
+        hint = `固液共存：温度死死钉在 ${s.tm} ℃，而水浴已经升到 ${state.Tw.toFixed(1)} ℃。这段时间吸收的热量全部用来破坏晶格，温度不变 —— 这就是晶体有固定熔点的原因。`;
       } else {
-        hint = `已全部熔化：变成液态后温度又开始上升。整个熔化过程中，温度${s.tm} ℃始终没变。现在把「实验方向」切到凝固，看它怎么冻回去。`;
+        hint = `已全部熔化：变成液态后温度又开始上升，但比固态时升得慢 —— 液态海波的比热容更大。整个熔化过程中，温度 ${s.tm} ℃ 始终没变。现在把「实验方向」切到凝固，看它怎么冻回去。`;
       }
     } else if (freeze) {
       if (state.soft >= 0.985) {
@@ -1686,9 +2418,9 @@ import * as THREE from './assets/optics-three.min.js';
     const wob = Math.sin(clock * 7.3) * 0.5 + Math.sin(clock * 11.7 + 1.3) * 0.3 + Math.sin(clock * 3.1) * 0.2;
     const wob2 = Math.sin(clock * 9.1 + 0.7);
     if (flameGroup.visible) {
-      flameGroup.scale.set(1 + wob * 0.055, 1 + wob2 * 0.045, 1 + wob * 0.05);
-      flameGroup.position.x = wob * 0.11;
-      flameGroup.rotation.z = wob * 0.035;
+      flameWob.scale.set(1 + wob * 0.055, 1 + wob2 * 0.045, 1 + wob * 0.05);
+      flameWob.position.x = wob * 0.11;
+      flameWob.rotation.z = wob * 0.035;
       flameLight.intensity = 3.2 + wob * 0.5;
     }
 
@@ -1706,8 +2438,11 @@ import * as THREE from './assets/optics-three.min.js';
     state.thAnim += (state.thDepth - state.thAnim) * Math.min(1, dt * 3.6);
     if (Math.abs(state.thDepth - state.thAnim) < 0.002) state.thAnim = state.thDepth;
     const thLift = (1 - state.thAnim) * TH_LIFT;
-    thermometer.position.y = thLift;
-    thSupport.position.y = thLift;
+    /* ★ 不能直接写 .position.y = thLift —— 散放时温度计在台面上躺着，
+       直接赋值会把它瞬间拽回原位，组装动画被吃掉。
+       poseNow(o, extraY) 才是唯一入口：基准 + 散放增量 + 这一帧的抬升。 */
+    poseNow(thermometer, thLift);
+    poseNow(thSupport, thLift);
     if (Math.abs(state.thDepth - state.thAnim) > 5e-4) dirty = true;   // 只有还在动的时候才要求重绘
 
     // 气泡
@@ -1802,6 +2537,16 @@ import * as THREE from './assets/optics-three.min.js';
     });
   });
 
+  /* --- 器材组装：清单逐条点、一键组装、重新散放 --- */
+  document.querySelectorAll('[data-asm]').forEach((li) => {
+    li.addEventListener('click', () => { assembleStep(Number(li.dataset.asm)); updateAsmUI(); });
+  });
+  const asmAutoBtn = $('asmAuto'), asmScatterBtn = $('asmScatter');
+  if (asmAutoBtn) asmAutoBtn.addEventListener('click', () => { autoAssemble(); updateAsmUI(); });
+  if (asmScatterBtn) asmScatterBtn.addEventListener('click', () => { scatterAll(); updateAsmUI(); });
+  /* 页面初始是散放状态 ⇒ 直接用组装视角取景：默认 45° 斜视（dist 87）框不下摊开的一桌器材 */
+  if (!assemblyReady()) gotoAssembleView();
+
   /* --- 物质 --- */
   document.querySelectorAll('[data-substance]').forEach((btn) => {
     btn.addEventListener('click', () => {
@@ -1829,13 +2574,20 @@ import * as THREE from './assets/optics-three.min.js';
   /* --- 运行控制 --- */
   function setRunning(v) {
     state.running = v;
-    els.runBtn.disabled = v;
+    /* 没装好就不给点「开始加热」—— 门禁与侧栏清单读同一份状态（assemblyReady），
+       不另存一个布尔，免得清单说装好了、按钮还点不动。 */
+    els.runBtn.disabled = v || !assemblyReady();
     els.pauseBtn.disabled = !v;
     const verb = state.direction === 'freeze' ? '冷却' : '加热';
     els.runBtn.textContent = state.t > 0 ? `继续${verb}` : `开始${verb}`;
     els.pauseBtn.textContent = '暂停';
   }
   els.runBtn.addEventListener('click', () => {
+    if (!assemblyReady()) {
+      asmSay('还没装好器材：按 ①→⑥ 的顺序装，或者点「一键自动组装」', true);
+      updateAsmUI();
+      return;
+    }
     if (state.finished) resetSim();
     setRunning(true);
   });
@@ -1876,6 +2628,19 @@ import * as THREE from './assets/optics-three.min.js';
     if (box) box.style.display = toggles.micro ? '' : 'none';
     requestRender();
   });
+  /* --- 放大镜开关（舞台浮层 + 侧栏按钮状态一起切） --- */
+  const loupeBtn = $('toggleLoupe'), loupeInset = $('loupeInset');
+  function setLoupe(v) {
+    toggles.loupe = !!v;
+    if (loupeInset) loupeInset.hidden = !toggles.loupe;
+    if (loupeBtn) {
+      loupeBtn.classList.toggle('active', toggles.loupe);
+      loupeBtn.setAttribute('aria-pressed', String(toggles.loupe));
+    }
+    if (toggles.loupe) drawLoupe();
+    requestRender();
+  }
+  if (loupeBtn) loupeBtn.addEventListener('click', () => setLoupe(!toggles.loupe));
 
   /* ==========================================================================
      十一、步骤与记录
@@ -2065,12 +2830,14 @@ import * as THREE from './assets/optics-three.min.js';
   drawMicro(0.016);
   updateCamera();
   resize();
+  updateAsmUI();          // 初始：清单 0/6、开始按钮锁住、提示「先装器材」
 
   /* 单帧推进。真实 rAF 循环与验收用的驱动钩子走【同一段】代码 ——
      无头沙箱里 requestAnimationFrame 可能一帧都不触发，
      若验收自己另抄一遍推进逻辑，改坏这里照样全绿。 */
   let uiAcc = 0;
   function frameStep(dt) {
+    if (asmTween) advanceAsm(dt);      // 组装动画与真实循环共用这一处推进
     animateParts(dt);
 
     if (state.running && !state.finished) {
@@ -2143,7 +2910,7 @@ import * as THREE from './assets/optics-three.min.js';
         thLift: thermometer.position.y, supportY: thSupport.position.y
       };
     },
-    statusText, meltFraction, shortState, renderRecords, clearRecords, setDirection,
+    statusText, meltFraction, shortState, sampleStateChip, renderRecords, clearRecords, setDirection,
     /* 手动描点：映射、取点、统计、开关，全部从这几个入口走 ——
        自检不自己重抄一遍 X/Y，也不靠数画布上的紫点。 */
     chartGeom, truthAt, plotDots, plotStats, setPlotMode, setPlotLink, syncPlotUI,
@@ -2159,7 +2926,103 @@ import * as THREE from './assets/optics-three.min.js';
     freezeT0: FREEZE_T0, tIce: T_ICE, mIce: M_ICE, lIce: L_ICE, tStopCold: T_STOP_COLD,
     /* 图像横轴上限：由 drawChart 每次重画时写入，切方向必须跟着变 */
     chartTMax() { return (state.drawn && state.drawn.chartTMax) || NaN; },
-    lamp, flameGroup, flameLight, iceGroup, ices,
+    lamp, flameGroup, flameLight, flameWob, iceGroup, ices,
+    /* 台面计时器：读数 = state.t，和曲线图横轴同源。
+       导出的是【算读数用的那几个函数本身】，不是快照 —— 自检若自己另抄一遍
+       formatMMSS/nextRecordIn，把页面里的改坏了照样全绿。 */
+    timer: {
+      every: RECORD_EVERY, dueWindow: DUE_WINDOW,
+      formatMMSS, nextRecordIn, timerDue,
+      readout: () => formatMMSS(state.t),
+      faceText: () => formatMMSS(timerDrawnSec < 0 ? state.t : timerDrawnSec),
+      faceDrawn: () => ({ sec: timerDrawnSec, due: timerDrawnDue }),
+      nextIn: () => nextRecordIn(),
+      due: () => timerDue()
+    },
+    timerUnit, timerBody, timerScreen,
+    /* 任意场景物体的屏幕包围盒（GL 坐标，原点在左下，与 bulbRect() 同向）。
+       摆位断言用它 —— 「散件不重叠」「计时器不压器材」都必须是量出来的，不是估的。 */
+    screenRectOf,
+    /* ---- 器材组装 ---------------------------------------------------------
+       导出的都是【算这些量的函数本身】，不是快照：
+       自检若自己另抄一遍 assembledCount / poseNow，把页面里改坏了照样全绿。 */
+    asm: {
+      steps: ASM_STEPS.map((s) => ({ key: s.key, name: s.name, parts: s.parts.slice(), hint: s.hint })),
+      parts: ASM_PARTS.map((p) => ({ key: p.key, label: p.label })),
+      total: ASM_STEPS.length,
+      count: assembledCount,
+      ready: assemblyReady,
+      progress: partProgress,
+      busy: () => !!asmTween,
+      queued: () => asmQueue.length,
+      note: () => ({ text: asmNote, bad: asmNoteBad }),
+      /* 散放增量（含由「最低点落台面」反算出来的 dy），供自检核对「散件真的摊开了」 */
+      poseOf(key) { const p = PART_POSE.get((partOf(key) || {}).objs?.[0]); return p ? Object.assign({}, p) : null; },
+      specOf(key) { const s = ASM_POSE[key]; return s ? Object.assign({}, s) : null; },
+      /* 摆位调参 / 摆位搜索用：只改水平位移，抬升量复用缓存（跟 dx/dz 无关） */
+      setPose(key, dx, dz) {
+        const p = partOf(key); if (!p) return null;
+        placePart(p, dx, dz);
+        return { dx, dz, dy: +PART_POSE.get(p.objs[0]).dy.toFixed(2) };
+      },
+      /* 整件器材的世界包围盒（含 y）—— 用来卡「必须落在实验台范围内」。
+         precise=false 走 AABB 快路（摆位搜索要用上千次）；自检断言用 precise=true，
+         否则转过 90° 的圆环会被 AABB 撑大，量出来的「最低点」是假的。 */
+      worldOf(key, precise) {
+        const p = partOf(key); if (!p) return null;
+        const box = new THREE.Box3();
+        for (const o of p.objs) { o.updateMatrixWorld(true); box.expandByObject(o, !!precise); }
+        return { min: [box.min.x, box.min.y, box.min.z], max: [box.max.x, box.max.y, box.max.z] };
+      },
+      /* 屏幕包围盒：整件器材（多件物体取并集） */
+      rectOf(key) { const p = partOf(key); return p ? screenRectOfMany(p.objs) : null; },
+      /* 世界位姿快照。useBase=true 给的是【基准】（= 升级前原样），
+         另一个给的是当前实际位姿 —— 两者逐位相等才说明「组装没把摆位挪掉」。 */
+      snapshot(useBase) { return poseSnapshot(!!useBase); },
+      /* ★ 导出的入口必须与「点清单 / 点按钮」【同一条路径】。
+         assembleStep / autoAssemble / scatterAll 内部只调 asmSay() 写两个模块变量，
+         真正的刷新（提示文案、.bad 标红、清单 done/next 高亮）发生在【点击处理里】的
+         updateAsmUI()。直接调导出函数就会看到【陈旧侧栏】——「拒绝乱序」的提示一个字都不显示，
+         于是「画面没变」会被误读成「功能没生效」（实测：出图脚本直接调 asm.assembleStep(4)，
+         前后两张截图 md5 完全相同）。
+         这里补一层刷新，让探针绕过 DOM 也拿到与用户所见一致的结果。
+         finishAll 不用包 —— 它内部走 afterAsmChange()，本来就会刷新。 */
+      assembleStep: (i, force) => { const r = assembleStep(i, force); updateAsmUI(); return r; },
+      autoAssemble: () => { const r = autoAssemble(); updateAsmUI(); return r; },
+      scatterAll: () => { const r = scatterAll(); updateAsmUI(); return r; },
+      finishAll,
+      view: () => ({ ...VIEWS.assemble }),
+      gotoView: gotoAssembleView
+    },
+    base, beaker, tube, netMesh, stand, stir,
+    /* 温度计刻度与放大镜 —— 供自检「从贴图像素数刻度条数」「红线与真值同源」用。
+       ★ 数刻度必须数【贴图像素】，不能读 SCALE_STEP 常量：
+         把步长从 1 改回 2 时，常量照样写着 1，只有像素会变。
+       （scaleYOf / stemY0 / stemY1 / scaleTexH 上面已经导出过，这里不重复。） */
+    scaleTickCount: countScaleTicks,
+    scaleTexW: SCALE_TEX_W, scaleStep: SCALE_STEP,
+    loupe: {
+      span: LOUPE_SPAN,
+      readout: () => (loupeRead ? loupeRead.textContent : ''),
+      drawn: () => ({ T: loupeDrawn.T, redY: loupeDrawn.redY, ticks: loupeDrawn.ticks.map((t) => Object.assign({}, t)) }),
+      /* 把红线换算回温度：拿【实际画出去的两条相邻刻度】线性插值。
+         这里【不引用 state.Tt】—— 否则「红线画错温度」就成了自指恒等式，永远查不出来。 */
+      redTempFromTicks() {
+        const ts = loupeDrawn.ticks;
+        if (ts.length < 2 || !isFinite(loupeDrawn.redY)) return NaN;
+        for (let i = 1; i < ts.length; i++) {
+          const a = ts[i - 1], b = ts[i];
+          const lo = Math.min(a.y, b.y), hi = Math.max(a.y, b.y);
+          if (loupeDrawn.redY >= lo - 1e-9 && loupeDrawn.redY <= hi + 1e-9) {
+            return a.T + (loupeDrawn.redY - a.y) / (b.y - a.y) * (b.T - a.T);
+          }
+        }
+        return NaN;
+      }
+    },
+    setLoupe,
+    /* 试样外观：固相顶上的晶堆半球 + 液相弯月面（供像素/几何断言直接读，不靠数像素猜） */
+    solidDome, meniscus, domeH: DOME_H,
     setSubstance(k) {
       state.substance = k;
       document.querySelectorAll('[data-substance]').forEach((b) => b.classList.toggle('active', b.dataset.substance === k));
