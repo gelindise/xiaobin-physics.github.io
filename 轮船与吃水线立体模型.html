@@ -1,0 +1,1625 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>轮船与吃水线 · 3D 立体实验台 - 物理虚拟实验</title>
+<!-- VIP 门禁：必须与 experiments.html 的卡片、以及本文件在 auth-check.js 的
+     VIP_EXPERIMENTS 名单【三处一致】。名单由本页 <head> 里同步执行的 auth-check.js 拦，
+     而 script.js 的 checkVip() 只判状态、不查名单 —— 漏登记 = 直接输网址可绕过。 -->
+<script src="auth-check.js"></script>
+<style>
+  :root{
+    --bg:#020617; --bg2:#0b1224; --card:rgba(15,23,42,.72); --line:rgba(148,163,184,.16);
+    --ink:#e2e8f0; --dim:#94a3b8; --dim2:#64748b;
+    --blue:#38bdf8; --cyan:#22d3ee; --purple:#a78bfa; --green:#34d399;
+    --amber:#fbbf24; --red:#f87171; --pink:#f472b6;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{
+    background:
+      radial-gradient(1000px 560px at 12% -6%, rgba(56,189,248,.14), transparent 62%),
+      radial-gradient(860px 520px at 88% 2%, rgba(167,139,250,.12), transparent 60%),
+      var(--bg);
+    color:var(--ink);
+    font-family:"Inter","PingFang SC","Microsoft YaHei",system-ui,-apple-system,sans-serif;
+    -webkit-font-smoothing:antialiased;
+    min-height:100vh;
+  }
+  .wrap{max-width:1440px;margin:0 auto;padding:20px 20px 40px}
+  .top{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:14px}
+  .top h1{font-size:19px;margin:0;letter-spacing:-.01em;
+    background:linear-gradient(110deg,#e2e8f0 10%,#7dd3fc 52%,#c4b5fd 92%);
+    -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+  .top .kicker{font-size:11.5px;color:var(--cyan);border:1px solid rgba(34,211,238,.32);
+    border-radius:999px;padding:3px 11px;background:rgba(34,211,238,.07);white-space:nowrap}
+  .top .sp{flex:1}
+  .top a.back{font-size:12.5px;color:var(--dim);text-decoration:none;border:1px solid var(--line);
+    border-radius:9px;padding:5px 12px;transition:.2s}
+  .top a.back:hover{color:var(--ink);border-color:rgba(148,163,184,.4)}
+
+  /* align-items:stretch（默认）→ 左列高度 = 右列高度；左列内部舞台固定、说明卡 flex:1 吃掉剩余高度。 */
+  .app{display:grid;grid-template-columns:minmax(0,1fr) 330px;gap:16px;align-items:stretch}
+  .col-left{display:flex;flex-direction:column;gap:16px;min-width:0}
+  .col-left > .stage{flex:0 0 auto}
+  @media(max-width:900px){
+    .app{grid-template-columns:1fr}
+    .col-left{display:contents}
+    .stage{order:0} .panel{order:1} .notes{order:2}
+  }
+
+  /* ★ 不能给 .stage 设 min-height：窄屏下 canvas 只有 260 px 高，min-height:380 会在
+     画布【下面】空出 120 px 一条（按钮条是绝对定位、本来就应该压在画布下沿上）。 */
+  .stage{position:relative;background:var(--card);border:1px solid var(--line);border-radius:16px;
+    overflow:hidden;backdrop-filter:blur(9px);min-height:0}
+  .stage canvas{display:block;width:100%;height:auto;touch-action:none;cursor:grab}
+  .stage canvas.dragging{cursor:grabbing}
+
+  .stage-hint{position:absolute;left:14px;top:12px;font-size:12px;color:var(--dim);
+    background:rgba(2,6,23,.66);border:1px solid var(--line);border-radius:9px;
+    padding:6px 11px;pointer-events:none;max-width:min(56%,420px);line-height:1.55}
+  .stage-hint b{color:#bae6fd}
+  /* ★ 窄屏：提示条要「更宽 + 字更小」而不是「更窄」。窄条会把同一句话折成 4~5 行，
+     高度涨到 70 px，正好压住船身上那排吃水刻度数字（刻度数字是对齐实物的参照物、
+     不许挪，按约定冲突时挪浮层）。放宽到 88% 后只折 2 行、高度 ~42 px，刻度数字让开了。 */
+  @media(max-width:900px){
+    .stage-hint{font-size:11px;max-width:min(88%,420px);padding:5px 9px;line-height:1.45}
+  }
+
+  .stage-bar{position:absolute;left:0;right:0;bottom:0;display:flex;justify-content:space-between;
+    align-items:flex-end;gap:10px;padding:10px 12px;pointer-events:none}
+  .stage-bar > div{display:flex;gap:8px;flex-wrap:wrap;pointer-events:auto}
+  .sbtn{font:inherit;font-size:12.5px;color:#cbd5e1;background:rgba(2,6,23,.72);
+    border:1px solid var(--line);border-radius:10px;padding:7px 12px;cursor:pointer;
+    transition:.18s;white-space:nowrap;backdrop-filter:blur(6px)}
+  .sbtn:hover{color:#e2e8f0;border-color:rgba(148,163,184,.42)}
+  .sbtn.on{color:#6ee7b7;border-color:rgba(52,211,153,.5);background:rgba(52,211,153,.13)}
+  .sbtn.ready{color:#6ee7b7;border-color:rgba(52,211,153,.55);background:rgba(52,211,153,.16);
+    box-shadow:0 0 0 1px rgba(52,211,153,.18),0 0 14px rgba(52,211,153,.22)}
+  .sbtn:disabled{opacity:.42;cursor:not-allowed}
+
+  .panel{display:flex;flex-direction:column;gap:12px}
+  .pcard{background:var(--card);border:1px solid var(--line);border-radius:15px;padding:14px 15px;
+    backdrop-filter:blur(9px)}
+  .pcard h3{margin:0 0 10px;font-size:13px;color:#cbd5e1;letter-spacing:.02em;font-weight:600}
+  .pcard h3 span{color:var(--dim2);font-weight:400;font-size:11.5px;margin-left:6px}
+
+  .seg{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+  .seg.two{grid-template-columns:1fr 1fr}
+  .seg.three{grid-template-columns:repeat(3,1fr)}
+  .seg button{font:inherit;font-size:12.5px;padding:8px 4px;border-radius:10px;cursor:pointer;
+    background:rgba(148,163,184,.09);border:1px solid var(--line);color:#cbd5e1;transition:.18s}
+  .seg button:hover{border-color:rgba(148,163,184,.4)}
+  .seg button.on{background:linear-gradient(140deg,rgba(56,189,248,.24),rgba(34,211,238,.16));
+    border-color:rgba(56,189,248,.5);color:#bae6fd;font-weight:600}
+  .seg button .rho{display:block;font-size:10.5px;color:var(--dim2);margin-top:1px}
+  .seg button.on .rho{color:#7dd3fc}
+
+  .slider-row{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:2px}
+  .slider-row .lab{font-size:12.5px;color:var(--dim)}
+  .slider-row .val{font-size:17px;font-weight:700;color:#7dd3fc;font-variant-numeric:tabular-nums}
+  .slider-row .val small{font-size:11px;color:var(--dim2);font-weight:400;margin-left:3px}
+  input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:26px;background:transparent;cursor:pointer}
+  input[type=range]::-webkit-slider-runnable-track{height:6px;border-radius:999px;
+    background:linear-gradient(90deg,#38bdf8,#a78bfa)}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;height:18px;border-radius:50%;
+    background:#e2e8f0;border:3px solid #38bdf8;margin-top:-6px;box-shadow:0 0 10px rgba(56,189,248,.5)}
+  input[type=range]::-moz-range-track{height:6px;border-radius:999px;background:linear-gradient(90deg,#38bdf8,#a78bfa)}
+  input[type=range]::-moz-range-thumb{width:14px;height:14px;border-radius:50%;background:#e2e8f0;
+    border:3px solid #38bdf8}
+  .ticks{display:flex;justify-content:space-between;font-size:10.5px;color:var(--dim2);margin-top:-4px}
+
+  .hero{border-radius:12px;padding:11px 13px;border:1px solid rgba(52,211,153,.42);
+    background:linear-gradient(120deg,rgba(52,211,153,.16),rgba(56,189,248,.08));margin-bottom:10px}
+  .hero .row{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
+  .hero .t{font-size:11.5px;color:#a7f3d0;letter-spacing:.02em}
+  .hero .big{font-size:20px;font-weight:800;letter-spacing:-.01em;font-variant-numeric:tabular-nums}
+  .hero .sub{font-size:11.5px;color:var(--dim);margin-top:3px}
+  .hero .sub b{color:#cbd5e1}
+
+  table.data{width:100%;border-collapse:collapse;font-size:12.5px}
+  table.data td{padding:5px 0;border-bottom:1px solid rgba(148,163,184,.10)}
+  table.data tr:last-child td{border-bottom:none}
+  table.data td:first-child{color:var(--dim);white-space:nowrap}
+  table.data td:last-child{text-align:right;font-variant-numeric:tabular-nums;color:#cbd5e1}
+  table.data td b{color:#e2e8f0}
+  table.data tr.hi td{background:rgba(52,211,153,.09)}
+  table.data tr.hi td:first-child{color:#a7f3d0}
+  .eq{display:inline-block;background:rgba(2,6,23,.6);border:1px solid rgba(148,163,184,.2);
+    border-radius:6px;padding:1px 7px;font-family:ui-monospace,Menlo,monospace;font-size:11.5px;color:#7dd3fc}
+
+  .steps{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px}
+  @media(max-width:900px){ .steps{grid-template-columns:repeat(2,minmax(0,1fr))} }
+  @media(max-width:560px){ .steps{grid-template-columns:1fr} }
+  .step{display:flex;gap:9px;align-items:flex-start;padding:8px 10px;border-radius:10px;
+    border:1px solid var(--line);background:rgba(148,163,184,.05);transition:.22s}
+  .step .no{flex:0 0 auto;width:19px;height:19px;border-radius:50%;font-size:11px;font-weight:700;
+    display:flex;align-items:center;justify-content:center;background:rgba(148,163,184,.18);color:#cbd5e1}
+  .step .tx{font-size:12px;color:var(--dim);line-height:1.5}
+  .step .tx b{color:#cbd5e1;display:block;font-size:12.5px;font-weight:600}
+  .step.on{border-color:rgba(56,189,248,.5);background:rgba(56,189,248,.11)}
+  .step.on .no{background:rgba(56,189,248,.85);color:#04121f}
+  .step.on .tx{color:#bae6fd}
+  .step.done{border-color:rgba(52,211,153,.45);background:rgba(52,211,153,.10)}
+  .step.done .no{background:rgba(52,211,153,.85);color:#04231a}
+  .step.done .tx{color:#a7f3d0}
+
+  .toggles{display:flex;flex-direction:column;gap:7px}
+  .tg{display:flex;align-items:center;gap:9px;font-size:12.5px;color:#cbd5e1;cursor:pointer;
+    user-select:none;padding:5px 2px}
+  .tg input{appearance:none;-webkit-appearance:none;width:36px;height:20px;border-radius:999px;
+    background:rgba(148,163,184,.22);position:relative;cursor:pointer;transition:.2s;flex:0 0 auto;margin:0}
+  .tg input::after{content:"";position:absolute;left:3px;top:3px;width:14px;height:14px;border-radius:50%;
+    background:#cbd5e1;transition:.2s}
+  .tg input:checked{background:rgba(52,211,153,.5)}
+  .tg input:checked::after{left:19px;background:#ecfdf5}
+  .tgh{margin:9px 0 0;font-size:11.5px;color:var(--dim);line-height:1.6}
+  .tgh b{color:#cbd5e1}
+
+  /* 吃水对照表：三行，当前液体高亮 */
+  table.draft{width:100%;border-collapse:collapse;font-size:12px}
+  table.draft th{font-size:11px;color:var(--dim2);font-weight:500;text-align:right;padding:0 0 5px}
+  table.draft th:first-child{text-align:left}
+  table.draft td{padding:5px 0;border-bottom:1px solid rgba(148,163,184,.10);
+    text-align:right;font-variant-numeric:tabular-nums;color:#cbd5e1}
+  table.draft td:first-child{text-align:left;color:var(--dim);white-space:nowrap}
+  table.draft tr.cur td{background:rgba(56,189,248,.10);color:#bae6fd}
+  table.draft tr.cur td:first-child{color:#7dd3fc;font-weight:600}
+  table.draft tr:last-child td{border-bottom:none}
+
+  .notes{flex:1 1 auto;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));
+    gap:12px;align-content:stretch}
+  @media(max-width:820px){ .notes{grid-template-columns:1fr} }
+  .note{background:var(--card);border:1px solid var(--line);border-radius:15px;padding:15px 17px;
+    backdrop-filter:blur(9px);display:flex;flex-direction:column;justify-content:center}
+  .note h4{margin:0 0 8px;font-size:13.5px;color:#cbd5e1}
+  .note ul{margin:0;padding-left:18px}
+  .note li{font-size:12.5px;color:#94a3b8;margin:5px 0;line-height:1.65}
+  .note li b{color:#cbd5e1}
+  .note li + li{margin-top:9px}
+
+  /* 提示条锚在【舞台内部】的按钮条正上方（bottom:56px ≈ 按钮条 51px 高 + 5px 间隙）。 */
+  .toast{position:absolute;left:50%;bottom:56px;transform:translateX(-50%) translateY(14px);
+    background:rgba(2,6,23,.92);border:1px solid rgba(52,211,153,.42);color:#a7f3d0;
+    border-radius:11px;padding:9px 18px;font-size:13px;opacity:0;pointer-events:none;
+    transition:.25s;z-index:60;white-space:nowrap}
+  .toast.on{opacity:1;transform:translateX(-50%) translateY(0)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <span class="kicker">人教版八年级下册 · 第十章 第 3 节</span>
+    <h1>轮船与吃水线 · 3D 立体实验台</h1>
+    <span class="sp"></span>
+    <a class="back" href="experiments.html">← 返回实验列表</a>
+  </div>
+
+  <div class="app">
+    <div class="col-left">
+    <!-- ================= 舞台 ================= -->
+    <div class="stage" id="stage">
+      <canvas id="simCanvas"></canvas>
+      <div class="stage-hint" id="hint">空船漂浮：<b>ρ液·g·V排 = G总</b> —— 拖载重看吃水线往下走，两支箭头<b>永远一样长</b></div>
+      <div class="stage-bar">
+        <div class="bar-left">
+          <button class="sbtn" id="btnAuto">▶ 一键演示</button>
+          <button class="sbtn" id="btnReset">↺ 重置</button>
+        </div>
+        <div class="bar-right">
+          <button class="sbtn" id="btnArrows">力的箭头</button>
+          <button class="sbtn" id="btnView">换视角</button>
+        </div>
+      </div>
+      <div class="toast" id="toast"></div>
+    </div>
+
+    <!-- ================= 实验步骤（横向 4 格，紧贴舞台） ================= -->
+    <div class="note">
+      <h4>实验步骤 —— 跟着走一遍，四个现象（做完一格变绿，正在做的是蓝的）</h4>
+      <div class="steps" id="stepList">
+        <div class="step"><span class="no">1</span><span class="tx"><b>空船漂浮</b>无载重：F浮 = G船，船浮在水面不下沉。</span></div>
+        <div class="step"><span class="no">2</span><span class="tx"><b>加载 → 吃水加深</b>拖「载重」滑块，白色吃水线一节节下移。</span></div>
+        <div class="step"><span class="no">3</span><span class="tx"><b>换液体 → 吃水变浅</b>切海水 / 浓盐水，同一艘船浮得更高。</span></div>
+        <div class="step"><span class="no">4</span><span class="tx"><b>超载 → 沉没</b>拖过载重线，F浮 封顶也托不住 G总。</span></div>
+      </div>
+    </div>
+
+    <!-- ================= 说明 ================= -->
+    <div class="notes">
+      <div class="note">
+        <h4>为什么钢能造船</h4>
+        <ul>
+          <li>钢的密度 <b>7.8 g/cm³</b>，是水的 7.8 倍 —— 一块<b>实心</b>钢丢进水里，一定沉底。</li>
+          <li>把它做成<b>空心</b>的船：钢材体积没变，可它「占据」的体积变成了 <span class="eq">V船 = 2320.5 cm³</span>（本模型）。</li>
+          <li>整艘船的平均密度 = 总质量 ÷ 船的体积。<b>空心把分母做大了</b>，平均密度就能小于水 —— 于是浮起来。</li>
+          <li>点「空心 / 实心」切换看这一屏：<b>同一块钢</b>，实心是一小块沉在槽底，做成船就能浮。</li>
+        </ul>
+      </div>
+
+      <div class="note">
+        <h4>吃水深度怎么来的</h4>
+        <ul>
+          <li>船浮着时，<b>浮力 = 总重力</b>：<span class="eq">ρ液·g·V排 = G总</span>。</li>
+          <li>于是 <span class="eq">V排 = G总 / (ρ液·g)</span> —— <b>排开多少体积，由总重和液体密度一起决定</b>。</li>
+          <li>V排 又由船体形状决定：<span class="eq">V排 = ∫₀ʰ L(y)·W dy</span>（本页把它切成 240 片真积分）。</li>
+          <li>两式联立解出 <b>h（吃水深度）</b>。船越重、液体越轻，h 越大 —— 这就是「吃水线」。</li>
+        </ul>
+      </div>
+
+      <div class="note">
+        <h4>常见误区</h4>
+        <ul>
+          <li><b>「船重所以浮力大」？</b>反了。是<b>船重决定了需要排开多少水</b>；浮力大小由 V排 和 ρ液 决定，两者在漂浮时恰好相等。</li>
+          <li><b>「船从河里开到海里，会沉一点」？</b>正好相反 —— 海水密度大，<b>同样的船排开更少的体积就够了，吃水变浅</b>（船舷离水面更高）。</li>
+          <li><b>「装得越多越好」？</b>总重超过最大排水量（<span class="eq">ρ液·g·V船</span>）就浮不起来 —— 那正是<b>载重线</b>存在的意义。</li>
+          <li><b>「船底越深浮力越大」？</b>漂浮时 V排 只由总重定；船自己会停在那个深度，不随你按它而变。</li>
+        </ul>
+      </div>
+
+      <div class="note">
+        <h4>怎么玩（三个对比）</h4>
+        <ul>
+          <li><b>拖「载重」滑块：</b>船缓缓下沉，吃水线跟着往下走，两支箭头<b>始终一样长</b>。拖到超过最大排水量，船直接沉底。</li>
+          <li><b>换液体：</b>淡水 → 海水 → 浓盐水，<b>同一艘船吃水一次比一次浅</b>（右表三行数值并排比）。</li>
+          <li><b>切「实心钢块」：</b>同一块钢，实心时 <span class="eq">F浮 &lt; G</span> 沉在槽底；做成空心船就浮起来了。</li>
+          <li><b>看船身上的吃水线：</b>白实线是<b>当前液体</b>的吃水位置，彩色虚线是另外两种液体 —— <b>海水与淡水几乎重合</b>（ρ 只差 3%，吃水只差 0.08 cm，肉眼分不出），<b>浓盐水那条明显更高</b>。精确数值看右表。</li>
+        </ul>
+      </div>
+    </div>
+    </div>
+
+    <!-- ================= 右侧控制台 ================= -->
+    <aside class="panel">
+      <div class="pcard">
+        <h3>船体 <span>同一块钢，两种做法</span></h3>
+        <div class="seg two" id="segMode">
+          <button data-mode="hollow">空心船<span class="rho">浮起来</span></button>
+          <button data-mode="solid">实心钢块<span class="rho">沉底</span></button>
+        </div>
+      </div>
+
+      <div class="pcard">
+        <h3>载重 <span>拖到超过最大排水量就沉</span></h3>
+        <div class="slider-row">
+          <span class="lab">船上装载的货物质量</span>
+          <span class="val" id="rdCargo">0<small>g</small></span>
+        </div>
+        <input type="range" id="cargoRange" min="0" max="2000" step="20" value="0">
+        <div class="ticks" id="cargoTicks"></div>
+        <p class="tgh">中间那格是<b>载重线</b> —— 该液体下这条船还能再装的质量，拖过它船就沉底。</p>
+      </div>
+
+      <div class="pcard">
+        <h3>读数 <span>F浮 与 G总 是同一支比例尺</span></h3>
+        <div class="hero">
+          <div class="row">
+            <span class="t">F浮 ／ G总</span>
+            <span class="big" id="rdRatio" style="color:#6ee7b7">—</span>
+          </div>
+          <div class="sub" id="rdHeroSub">拖载重滑块，看这个比值</div>
+        </div>
+        <table class="data">
+          <tr><td>钢材体积 V钢</td><td><span id="rdVsteel">—</span> cm³</td></tr>
+          <tr><td>船体自重 G船</td><td><span id="rdGsteel">—</span> N</td></tr>
+          <tr><td>货物重 G货</td><td><span id="rdGcargo">—</span> N</td></tr>
+          <tr><td>总重力 G总</td><td><b id="rdGtot">—</b> N</td></tr>
+          <tr><td>船体外形体积 V船</td><td><span id="rdVhull">—</span> cm³</td></tr>
+          <tr class="hi"><td>排水体积 V排</td><td><b id="rdVsub">—</b> cm³</td></tr>
+          <tr class="hi"><td>吃水深度 h</td><td><b id="rdDraft">—</b> cm</td></tr>
+          <tr><td>排开液体重 G排 = ρ液·g·V排</td><td><span id="rdGp">—</span> N</td></tr>
+          <tr class="hi"><td>浮力 F浮（船底+侧壁水压积分）</td><td><b id="rdFb">—</b> N</td></tr>
+        </table>
+        <p class="tgh" id="rdNote"></p>
+      </div>
+
+      <div class="pcard">
+        <h3>液体 <span>ρ液 越大，吃水越浅</span></h3>
+        <div class="seg three" id="segLiq">
+          <button data-liq="fresh">淡水<span class="rho">1.00</span></button>
+          <button data-liq="sea">海水<span class="rho">1.03</span></button>
+          <button data-liq="brine">浓盐水<span class="rho">1.20</span></button>
+        </div>
+        <table class="draft" id="draftTable">
+          <thead><tr><th>液体</th><th>ρ / (g·cm⁻³)</th><th>V排 / cm³</th><th>吃水 h / cm</th></tr></thead>
+          <tbody id="draftBody"></tbody>
+        </table>
+        <p class="tgh" id="draftNote"></p>
+      </div>
+
+      <div class="pcard">
+        <h3>显示</h3>
+        <div class="toggles">
+          <label class="tg"><input type="checkbox" id="ckArrows" checked>力的箭头（F浮 / G总）</label>
+          <label class="tg"><input type="checkbox" id="ckMarks" checked>船身上的吃水线与刻度</label>
+          <label class="tg"><input type="checkbox" id="ckCut" checked>沿中线剖开水槽（看船体截面）</label>
+        </div>
+        <p class="tgh"><b>默认就是剖开状态</b>：近侧的水体与玻璃不画，能直接看到船体水下那一段与水面之间的位置关系。关掉它，水槽恢复成完整的一缸水。</p>
+      </div>
+    </aside>
+  </div>
+</div>
+
+<script>
+(function(){
+'use strict';
+var $ = function(s){ return document.querySelector(s); };
+
+/* ============================================================
+   0. 常量
+   ============================================================ */
+var GRA = 10;                        // N/kg
+
+/* ---------- 船体：一个「上宽下窄」的棱台（船底窄、甲板宽） ----------
+   为什么不做成直壁长方体：真实船体就是上宽下窄；而且斜壁会让
+   「底面压力」与「侧壁压力的竖直分量」两项都非零，
+   ★ ② 水压面元积分 才不是「面积 × 压强」一句就完（那样太容易和 ① 同源）。 */
+var LD = 30;                         // 甲板长（外）cm
+var LB = 21;                         // 船底长（外）cm
+var W  = 14;                         // 船宽（外，沿 z 恒定）cm
+var H  = 6.5;                        // 船高（船底外底面 → 甲板面）cm
+var T  = 0.25;                       // 船体钢板厚 cm（2.5 mm 模型板）
+/* ★ 板厚决定「空船有多重」，进而决定两支箭头在满量程里占多长：
+   V钢 ≈ 2T·(L+W)·H（薄壁环截面），而 V船 ∝ L·W·H。
+   T = 1 mm 时空船只有 393 g、占满量程的 13%，箭头画出来只有 17 px，
+   几乎看不出是一支箭头。改成 2.5 mm 后空船 983 g、占满量程 33%，
+   空载箭头 39 px —— 而且「空心把平均密度降到 0.42 g/cm³」这条结论照样成立。 */
+
+/* 钢材密度 7.8 g/cm³ = 7800 kg/m³ */
+var RHO_STEEL = 7800;
+
+/* ---------- 水槽：长方体玻璃缸 ---------- */
+var TANK_IX = 66, TANK_IZ = 40, TANK_IH = 22;   // 内腔长/宽/高 cm
+var TANK_T  = 0.8;                              // 玻璃厚
+var TANK_OX = TANK_IX/2 + TANK_T, TANK_OZ = TANK_IZ/2 + TANK_T;
+var WATER_Y = 16;                               // 水深（水面世界高度）cm
+var TX = TANK_IX/2, TZ = TANK_IZ/2;
+
+/* ---------- 载重 ----------
+   ★ CARGO_MAX 必须【大于浓盐水里的沉没点】= ρ盐水·V船 − 钢材质量 ≈ 1802 g。
+   否则滑块拖到头船还在浮着，第 4 步「超载沉没」永远走不到（原先取 1800 就正好卡在这里）。 */
+var CARGO_MIN = 0, CARGO_MAX = 2000, CARGO_STEP = 20;   // g
+
+/* ---------- 液体 ----------
+   ★ 三种液体必须【一眼能分开】：色相蓝 → 青 → 青绿，亮度 196 → 170 → 130。
+   海水与淡水的密度只差 3%，吃水差 0.06 cm —— 靠肉眼分不出来，
+   所以页面上给了「三液体吃水对照表」把这件事【用数字说清楚】。 */
+var LIQ = {
+  fresh: { name:'淡水',   rho:1000, rgb:[ 58,132,196], top:[120,190,240], edge:[ 96,178,236] },
+  sea:   { name:'海水',   rho:1030, rgb:[ 40,158,170], top:[104,200,214], edge:[ 76,190,208] },
+  brine: { name:'浓盐水', rho:1200, rgb:[ 30,170,130], top:[118,224,206], edge:[ 86,214,196] }
+};
+var LIQ_ORDER = ['fresh','sea','brine'];
+
+/* 钢的配色 */
+var STEEL = { rgb:[152,166,188], hi:[214,226,242], dark:[ 92,104,124] };
+
+/* ---------- 力箭头：F浮 / G总 共用同一支比例尺 ----------
+   满量程取「最重的可能总重」= 钢材自重 + 滑块最大载重 = 983 + 2000 = 2983 g ≈ 29.83 N。
+   ★ 比例尺是【固定值】，不随当前状态变 —— 否则「载重变大、G总 箭头变长」
+   这件事会被自动缩放抵消掉。
+   ★ 箭头【长度】则按画布自适应：窄屏画布矮，定长 120 px 的 F浮 箭头从水线往上会顶出上沿。
+   自适应只改 ARROW_LEN，两支箭头同乘一个系数，「一样长」这个结论不受影响。 */
+var FMAX = 30;                       // N（覆盖到最重的组合）
+var ARROW_LEN_WANT = 150;            // px（宽屏用这个；窄屏会被 fitArrowLen 按余量压下来）
+var ARROW_LEN = 150;
+var FSCALE = ARROW_LEN / FMAX;
+
+var CAMD = 118;
+var TARGET = [0, 9.5, 0];
+
+/* ============================================================
+   1. 向量小工具
+   ============================================================ */
+function vsub(a,b){ return [a[0]-b[0], a[1]-b[1], a[2]-b[2]]; }
+function vadd(a,b){ return [a[0]+b[0], a[1]+b[1], a[2]+b[2]]; }
+function vmul(a,s){ return [a[0]*s, a[1]*s, a[2]*s]; }
+function vdot(a,b){ return a[0]*b[0] + a[1]*b[1] + a[2]*b[2]; }
+function vcross(a,b){ return [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]]; }
+function vlen(a){ return Math.sqrt(a[0]*a[0]+a[1]*a[1]+a[2]*a[2]); }
+function vnorm(a){ var l = vlen(a) || 1; return [a[0]/l, a[1]/l, a[2]/l]; }
+function clamp(v,a,b){ return v < a ? a : (v > b ? b : v); }
+function lerp(a,b,t){ return a + (b - a) * t; }
+function rgba(c,a){ return 'rgba(' + c[0] + ',' + c[1] + ',' + c[2] + ',' + a + ')'; }
+function shade(c,k){ return 'rgb(' + Math.min(255,Math.round(c[0]*k)) + ',' +
+                                       Math.min(255,Math.round(c[1]*k)) + ',' +
+                                       Math.min(255,Math.round(c[2]*k)) + ')'; }
+
+/* ============================================================
+   2. 物理内核 —— ★★ 三条【互不引用】的独立路径
+   ------------------------------------------------------------
+   ① dispVolSlices(h)    排水体积：把船体沿竖直方向切成 240 片，逐片几何裁剪
+   ② buoyancyByFaces(h)  浮力：按【船体浸在水下的外表面】逐面元积分水压的竖直分量
+   ③ steelVol()/质量记账  重量：钢材体积 × ρ钢 + 载重
+   h（吃水深度）由 ① 与 ③ 二分联立求出（漂浮平衡）；
+   然后 ② 【独立地】算出 F浮 —— 它与 G总 相等是【结论】，不是构造。
+   反例：若 ② 直接调用 ① 的结果（或直接写 ρgV），把 ① 改坏两边一起变，
+   「F浮 = G总」就成了一条永远绿的断言。所以还配了一条【源码级静态守卫】。
+   ============================================================ */
+
+/* 高度 y（自船底外底面起算）处的船体外形长度 */
+function hullLenAt(y){ return LB + (LD - LB) * clamp(y, 0, H) / H; }
+
+/* ---------- ① 排水体积（竖直切片几何裁剪） ---------- */
+function dispVolSlices(h){
+  var N = 240, dy = H / N, V = 0, i;
+  var hh = clamp(h, 0, H);
+  for (i = 0; i < N; i++){
+    var y0 = i * dy, y1 = y0 + dy;
+    var cut = Math.min(y1, hh);
+    if (cut <= y0) continue;                       // 这一片整个在水面之上
+    var ym = (y0 + cut) / 2;                       // 片中心
+    V += hullLenAt(ym) * W * (cut - y0);
+  }
+  return V;                                        // cm³
+}
+/* 船体外形的总体积（h = H） */
+function hullVolOut(){ return dispVolSlices(H); }
+
+/* ---------- ② 浮力：船体浸在水下的【外表面】逐面元积分水压的竖直分量 ----------
+   ★★ 这条路径【不引用排水体积】、也不调用 hullLenAt ——
+   它自己沿高度切段，用「面元法线的竖直分量 × 面元面积 × 该处压强」累加。
+   底面：水平矩形，法线竖直，压力 = ρg·h·A底
+   前后两个斜面（沿 x 外扩）：法线竖直分量 |n_y| = (LD−LB)/2 / S，
+        面元面积 dA = W · ds = W · (S/H) · dy   ⇒ 竖直分力 = p · (LD−LB)/(2H) · W · dy
+   （左右两个面是竖直矩形，法线水平，竖直分量恒为 0 —— 对浮力没有贡献。） */
+function buoyancyByFaces(h){
+  var rhoL = liqRho();
+  var hh = clamp(h, 0, H);
+  var F = 0;
+  /* 底面 */
+  F += rhoL * GRA * (hh / 100) * (LB * W / 1e4);
+  /* 前后斜面 */
+  var N = 240, dy = H / N, i;
+  for (i = 0; i < N; i++){
+    var ym = (i + 0.5) * dy;
+    if (ym >= hh) continue;
+    var p = rhoL * GRA * ((hh - ym) / 100);        // Pa
+    F += 2 * p * ((LD - LB) / (2 * H)) * (W * dy) / 1e4;
+  }
+  return F;                                        // N
+}
+
+/* ---------- 实心钢块：立方体，只有底面受压（侧面竖直 ⇒ 竖直分量 0） ---------- */
+function solidDims(){
+  var V = steelVol();
+  var a = Math.pow(V, 1/3);
+  return { a:a, V:V, A:a*a };
+}
+function buoyancySolid(h){
+  var rhoL = liqRho();
+  var a = solidDims();
+  return rhoL * GRA * (clamp(h, 0, a.a) / 100) * (a.A / 1e4);
+}
+
+/* ---------- ③ 重量记账：钢材体积 ----------
+   内腔从 y = T 起（船底钢板厚 T），截面按 (L(y)−2T) × (W−2T) 缩小。 */
+function steelVol(){
+  var N = 240, dy = H / N, V = 0, i;
+  for (i = 0; i < N; i++){
+    var y0 = i * dy, y1 = y0 + dy;
+    var yb = Math.max(y0, T), yt = y1;
+    if (yt <= yb) continue;
+    var ym = (yb + yt) / 2;
+    var Lo = hullLenAt(ym), Wo = W;
+    var Li = Math.max(0, Lo - 2*T), Wi = Math.max(0, Wo - 2*T);
+    V += (Lo*Wo - Li*Wi) * (yt - yb);
+  }
+  return V;                                        // cm³
+}
+
+function liqRho(){ return LIQ[state.liquid].rho; }
+function matRho(){ return RHO_STEEL; }
+
+/* 船体钢材质量（g）：ρ[kg/m³] × V[cm³] / 1000 */
+function steelMass(){ return steelVol() * RHO_STEEL / 1000; }
+
+/* 总质量（g） */
+function totalMass(){
+  return steelMass() + (state.mode === 'hollow' ? state.cargo : 0);
+}
+
+/* ---------- 漂浮平衡：解 V(h) = V需要  ----------
+   ρ液[kg/m³] · V[m³] = m[kg]  ⇒  V[cm³] = m[g] · 1000 / ρ液   （淡水时恰好 V = m）
+   二分 60 次（V(h) 单调），精度远超显示位数。 */
+function draftFor(mass){
+  var Vneed = mass * 1000 / liqRho();
+  var Vmax = hullVolOut();
+  if (Vneed >= Vmax - 1e-9) return H;              // 需求超过船体容积 ⇒ 全浸
+  var lo = 0, hi = H, i;
+  for (i = 0; i < 60; i++){
+    var mid = (lo + hi) / 2;
+    if (dispVolSlices(mid) < Vneed) lo = mid; else hi = mid;
+  }
+  return (lo + hi) / 2;
+}
+/* 指定液体下的吃水（不改 state）—— 吃水对照表用它 */
+function draftInLiquid(liqKey, mass){
+  var rho = LIQ[liqKey].rho;
+  var Vneed = mass * 1000 / rho, Vmax = hullVolOut();
+  if (Vneed >= Vmax - 1e-9) return H;
+  var lo = 0, hi = H, i;
+  for (i = 0; i < 60; i++){
+    var mid = (lo + hi) / 2;
+    if (dispVolSlices(mid) < Vneed) lo = mid; else hi = mid;
+  }
+  return (lo + hi) / 2;
+}
+
+function readings(){
+  var rhoL = liqRho();
+  var Vsteel = steelVol();
+  var mSteel = steelMass();
+  var solid = (state.mode === 'solid');
+  var mCargo = solid ? 0 : state.cargo;
+  var mTotal = mSteel + mCargo;
+  var Vout = hullVolOut();
+
+  var h, Vsub, Fb, sunk, Vneed = mTotal * 1000 / rhoL;
+  if (solid){
+    var sd = solidDims();
+    h = sd.a;                                       // 全浸（块高远小于水深）
+    Vsub = sd.V;
+    Fb = buoyancySolid(h);
+    sunk = true;                                    // 钢块一定沉底
+  } else {
+    sunk = Vneed >= Vout - 1e-9;
+    h = draftFor(mTotal);
+    Vsub = dispVolSlices(h);                        // ① 几何切片
+    Fb = buoyancyByFaces(h);                        // ② 水压面元积分（独立路径）
+  }
+  var G  = mTotal / 1000 * GRA;                     // N
+  var Gp = rhoL * GRA * Vsub / 1e6;                 // 排开液体重 N
+  var Gsteel = mSteel / 1000 * GRA;
+  var Gcargo = mCargo / 1000 * GRA;
+  /* 船底的世界高度：漂浮时水面下 h；沉没时坐到槽底 */
+  var botY = solid ? 0 : (sunk ? 0 : WATER_Y - h);
+  return {
+    mode: state.mode, liquid: state.liquid, rhoL: rhoL,
+    Vsteel: Vsteel, mSteel: mSteel, mCargo: mCargo, mTotal: mTotal,
+    Vout: Vout, Vneed: Vneed,
+    h: h, Vsub: Vsub, Fb: Fb, G: G, Gp: Gp,
+    Gsteel: Gsteel, Gcargo: Gcargo,
+    sunk: sunk, botY: botY,
+    /* ★ 核心比值：漂浮时应当恰好等于 1 */
+    ratio: G > 1e-12 ? Fb / G : NaN,
+    dF: Fb - G,
+    /* 还能再装多少（g）—— 到船体全浸为止 */
+    headroom: Math.max(0, Vout * rhoL / 1000 - mTotal),
+    /* 最大可载（总质量上限） */
+    mMax: Vout * rhoL / 1000
+  };
+}
+
+/* ============================================================
+   3. 相机与投影（自建，零依赖）
+   ============================================================ */
+var LIGHT = vnorm([-0.40, 0.82, 0.42]);
+
+function envelopePoints(){
+  var P = [], sx, sy, sz;
+  var x0 = -TANK_OX, x1 = TANK_OX, z0 = -TANK_OZ, z1 = TANK_OZ;
+  for (sx=0; sx<=1; sx++) for (sy=0; sy<=1; sy++) for (sz=0; sz<=1; sz++)
+    P.push([sx?x1:x0, sy?TANK_IH:0, sz?z1:z0]);
+  return P;
+}
+
+function makeCam(q, w, h){
+  var yaw = q.yaw * Math.PI/180, pitch = q.pitch * Math.PI/180;
+  var dir = [Math.cos(pitch)*Math.sin(yaw), Math.sin(pitch), Math.cos(pitch)*Math.cos(yaw)];
+  var eye = vadd(TARGET, vmul(dir, q.dist));
+  var fwd = vnorm(vsub(TARGET, eye));
+  var right = vnorm(vcross(fwd, [0,1,0]));
+  var up = vcross(right, fwd);
+  q.eye = eye; q.fwd = fwd; q.right = right; q.up = up; q.w = w; q.h = h;
+
+  var loR=1e9, hiR=-1e9, loU=1e9, hiU=-1e9, E = envelopePoints(), i;
+  for (i=0;i<E.length;i++){
+    var d = vsub(E[i], eye);
+    var z = vdot(d, fwd);
+    if (z <= 0.05) continue;
+    var r = vdot(d, right)/z, u = vdot(d, up)/z;   // ★ 必须用【投影后】的 r、u
+    if (r<loR) loR=r; if (r>hiR) hiR=r;
+    if (u<loU) loU=u; if (u>hiU) hiU=u;
+  }
+  if (hiR - loR < 1e-6){ loR=-0.1; hiR=0.1; }
+  if (hiU - loU < 1e-6){ loU=-0.1; hiU=0.1; }
+  q.cR = q.look ? 0 : (loR + hiR)/2;
+  q.cU = q.look ? 0 : (loU + hiU)/2;
+  /* ★ zoom 必须乘在【算出来的焦距】上，不能只改相机距离 —— 距离会被包络反算抵消。
+     zoomBase 是【随画布尺寸】给的基础放大（窄屏专用，见 resize()），与用户按的视角
+     缩放 state.zoom 相乘，两者互不干扰。 */
+  q.focal = Math.min(w*0.94/(hiR-loR), h*0.92/(hiU-loU)) * (q.zoom || 1) * (q.zoomBase || 1);
+  q.envW = hiR - loR; q.envU = hiU - loU;
+  return q;
+}
+
+function project(p, q){
+  var d = vsub(p, q.eye);
+  var z = vdot(d, q.fwd);
+  if (z <= 1e-6) return { x:1e9, y:1e9, z:z };
+  var r = vdot(d, q.right)/z, u = vdot(d, q.up)/z;
+  return { x: q.w/2 + (r - q.cR)*q.focal, y: q.h/2 - (u - q.cU)*q.focal, z: z };
+}
+
+/* ============================================================
+   4. 绘制基元
+   ============================================================ */
+var ctx = null;
+
+function polyPath(P){
+  ctx.beginPath();
+  ctx.moveTo(P[0].x, P[0].y);
+  for (var i=1;i<P.length;i++) ctx.lineTo(P[i].x, P[i].y);
+  ctx.closePath();
+}
+function poly(P, fill, stroke, lw){
+  polyPath(P);
+  if (fill){ ctx.fillStyle = fill; ctx.fill(); }
+  if (stroke){ ctx.strokeStyle = stroke; ctx.lineWidth = lw || 1; ctx.stroke(); }
+}
+function lineSeg(a, b, color, lw, dash){
+  ctx.save();
+  ctx.strokeStyle = color; ctx.lineWidth = lw || 1;
+  if (dash) ctx.setLineDash(dash);
+  ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+  ctx.restore();
+}
+function polyline(pts, color, lw, dash){
+  if (!pts || pts.length < 2) return;
+  ctx.save();
+  ctx.strokeStyle = color; ctx.lineWidth = lw || 1;
+  if (dash) ctx.setLineDash(dash);
+  ctx.beginPath(); ctx.moveTo(pts[0].x, pts[0].y);
+  for (var i=1;i<pts.length;i++) ctx.lineTo(pts[i].x, pts[i].y);
+  ctx.stroke();
+  ctx.restore();
+}
+function dot2(p, r, fill, stroke, lw){
+  ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI*2);
+  if (fill){ ctx.fillStyle = fill; ctx.fill(); }
+  if (stroke){ ctx.strokeStyle = stroke; ctx.lineWidth = lw || 1; ctx.stroke(); }
+}
+function arrowSeg(a, b, color, lw, headPx){
+  var dx = b.x - a.x, dy = b.y - a.y, L = Math.hypot(dx, dy);
+  if (L < 1) return;
+  var ux = dx/L, uy = dy/L;
+  var h = Math.min(headPx || 11, L*0.6);
+  ctx.save();
+  ctx.strokeStyle = color; ctx.lineWidth = lw || 2.2; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x - ux*h*0.85, b.y - uy*h*0.85); ctx.stroke();
+  var px = -uy, py = ux, w = h*0.52;
+  ctx.beginPath();
+  ctx.moveTo(b.x, b.y);
+  ctx.lineTo(b.x - ux*h + px*w, b.y - uy*h + py*w);
+  ctx.lineTo(b.x - ux*h - px*w, b.y - uy*h - py*w);
+  ctx.closePath(); ctx.fillStyle = color; ctx.fill();
+  ctx.restore();
+}
+
+/* ---------- 通用多面体：8 顶点 + 面表 + 背面剔除 ----------
+   faces[i] = { i:[顶点下标], n:[外法线] }；返回可见面的屏幕多边形（自检要读）。 */
+function hullFaces(verts, faces, q, rgb, opt){
+  opt = opt || {};
+  var P = [], i, k;
+  for (i=0;i<verts.length;i++) P.push(project(verts[i], q));
+  var vis = [];
+  for (k=0;k<faces.length;k++){
+    var f = faces[k];
+    var cx=0, cy=0, cz=0;
+    for (i=0;i<f.i.length;i++){ cx+=verts[f.i[i]][0]; cy+=verts[f.i[i]][1]; cz+=verts[f.i[i]][2]; }
+    var m = f.i.length;
+    cx/=m; cy/=m; cz/=m;
+    /* 背面剔除：外法线与「面心→眼睛」同向 ⇒ 看不见 */
+    if (f.n[0]*(cx-q.eye[0]) + f.n[1]*(cy-q.eye[1]) + f.n[2]*(cz-q.eye[2]) >= 0) continue;
+    var Q = [];
+    var bad = false;
+    for (i=0;i<m;i++){ var pp = P[f.i[i]]; if (pp.z <= 0) { bad = true; break; } Q.push(pp); }
+    if (bad) continue;
+    var lam = f.n[0]*LIGHT[0] + f.n[1]*LIGHT[1] + f.n[2]*LIGHT[2];
+    var shadeK = 0.52 + 0.48 * Math.max(0, lam);
+    if (f.n[1] > 0.5) shadeK *= 1.14;              // 顶面提亮
+    if (f.n[1] < -0.5) shadeK *= 0.66;             // 底面压暗
+    var fill = (opt.alpha != null) ? rgba(rgb, opt.alpha)
+             : (opt.flat ? 'rgb(' + rgb[0] + ',' + rgb[1] + ',' + rgb[2] + ')' : shade(rgb, shadeK));
+    poly(Q, fill, opt.edge || null, opt.lw || 1);
+    vis.push({ n:f.n, pts:Q, k:shadeK });
+  }
+  return vis;
+}
+
+/* 凸箱体（水槽 / 钢块都用它） */
+var BOX_FACES = [
+  { i:[0,3,2,1], n:[0,0,-1] },
+  { i:[4,5,6,7], n:[0,0, 1] },
+  { i:[0,1,5,4], n:[0,-1,0] },
+  { i:[3,7,6,2], n:[0, 1,0] },
+  { i:[0,4,7,3], n:[-1,0,0] },
+  { i:[1,2,6,5], n:[ 1,0,0] }
+];
+function boxVerts(x0,y0,z0, x1,y1,z1){
+  return [[x0,y0,z0],[x1,y0,z0],[x1,y1,z0],[x0,y1,z0],
+          [x0,y0,z1],[x1,y0,z1],[x1,y1,z1],[x0,y1,z1]];
+}
+function box3(x0,y0,z0, x1,y1,z1, q, rgb, opt){
+  return hullFaces(boxVerts(x0,y0,z0,x1,y1,z1), BOX_FACES, q, rgb, opt);
+}
+
+/* 四边形上的双线性取点 */
+function quadPt(Q, u, v){
+  var a = { x: Q[0].x + (Q[1].x-Q[0].x)*u, y: Q[0].y + (Q[1].y-Q[0].y)*u };
+  var b = { x: Q[3].x + (Q[2].x-Q[3].x)*u, y: Q[3].y + (Q[2].y-Q[3].y)*u };
+  return { x: a.x + (b.x-a.x)*v, y: a.y + (b.y-a.y)*v };
+}
+
+/* ============================================================
+   5. 标签系统（先入队，所有几何画完后统一落笔）
+   ============================================================ */
+var frameBoxes = [];
+var fixedBoxes = [];
+var pendingLabels = [];
+var drawnLabels = [];
+
+function uiBoxes(){
+  var out = [], ids = ['hint','btnAuto','btnReset','btnArrows','btnView','toast'];
+  var cr = canvas.getBoundingClientRect();
+  for (var i=0;i<ids.length;i++){
+    var e = document.getElementById(ids[i]);
+    if (!e || !e.offsetParent) continue;
+    /* 提示条（toast）平时是 opacity:0，只有弹出时才算障碍 ——
+       否则会在舞台中下部留一块【永久禁区】，把标签无谓地挤走。 */
+    if (ids[i] === 'toast' && !e.classList.contains('on')) continue;
+    var r = e.getBoundingClientRect();
+    out.push({ x0:r.left-cr.left, y0:r.top-cr.top, x1:r.right-cr.left, y1:r.bottom-cr.top });
+  }
+  return out;
+}
+/* 标签盒子：**含内边距**（避让用这一份）＋【字身盒】gx0..gy1（自检判重叠用这一份） */
+function labelBox(p, text, size, align){
+  var pad = 5, w;
+  ctx.save(); ctx.font = '600 ' + size + 'px "Inter","PingFang SC",sans-serif';
+  w = ctx.measureText(text).width; ctx.restore();
+  var bx = align === 'left' ? p.x - 4 - pad
+         : align === 'right' ? p.x + 4 - w - pad
+         : p.x - w/2 - pad;
+  var by = p.y - size*0.72 - pad*0.55;
+  var gx0 = align === 'left' ? p.x
+          : align === 'right' ? p.x - w
+          : p.x - w/2;
+  return { x0:bx, y0:by, x1:bx + w + pad*2, y1:by + size*1.44 + pad*1.1, w:w, h:size*1.44,
+           gx0:gx0, gy0:p.y - size*0.72, gx1:gx0 + w, gy1:p.y + size*0.72 };
+}
+function boxOv(a, b){
+  var ox = Math.min(a.x1,b.x1) - Math.max(a.x0,b.x0);
+  var oy = Math.min(a.y1,b.y1) - Math.max(a.y0,b.y0);
+  return (ox > 0 && oy > 0) ? ox*oy : 0;
+}
+function fitBox(b, W, H){
+  var dx = 0, dy = 0;
+  if (b.x0 < 2) dx = 2 - b.x0; else if (b.x1 > W-2) dx = W-2 - b.x1;
+  if (b.y0 < 2) dy = 2 - b.y0; else if (b.y1 > H-2) dy = H-2 - b.y1;
+  if (dx) { b.x0 += dx; b.x1 += dx; }
+  if (dy) { b.y0 += dy; b.y1 += dy; }
+  return b;
+}
+var AVOID = (function(){
+  var a = [[0,0]], i, j;
+  var dy = [16,32,48,64,86,110,136,164,196,232];
+  var dx = [44,62,86,116,150,190];
+  for (i=0;i<dy.length;i++){ a.push([0,-dy[i]]); a.push([0,dy[i]]); }
+  for (j=0;j<dx.length;j++){ a.push([-dx[j],0]); a.push([dx[j],0]); }
+  for (i=0;i<dy.length;i++) for (j=0;j<dx.length;j++){
+    a.push([-dx[j],-dy[i]]); a.push([dx[j],-dy[i]]);
+    a.push([-dx[j], dy[i]]); a.push([dx[j], dy[i]]);
+  }
+  a.sort(function(p,q){ return Math.hypot(p[0],p[1]) - Math.hypot(q[0],q[1]); });
+  return a;
+})();
+function label(p, text, color, size, align){
+  pendingLabels.push({ p:p, text:text, color:color, size:size||12.5, align:align||'center' });
+}
+function tickLabel(p, text, size){
+  var b = labelBox(p, text, size || 11, 'center');
+  fixedBoxes.push(b);
+  pendingLabels.push({ p:p, text:text, color:'#8fa3bd', size:size || 11, align:'center', fixed:true });
+  return p;
+}
+/* 刻度数字的疏密闸门：只在与上一个数字的盒子不重叠时才画 */
+function tickLabelIfFree(p, text, size, st){
+  var b = labelBox(p, text, size || 11, 'center');
+  if (st.prev && boxOv(b, st.prev) > 0) return false;
+  st.prev = b;
+  return tickLabel(p, text, size);
+}
+function flushLabels(W, H){
+  var i, j, k;
+  for (i=0;i<pendingLabels.length;i++){
+    var L = pendingLabels[i];
+    var best = null, bestOv = 1e18;
+    for (k=0;k<AVOID.length;k++){
+      var q = { x: L.p.x + AVOID[k][0], y: L.p.y + AVOID[k][1] };
+      var b0 = labelBox(q, L.text, L.size, L.align);
+      var sx0 = b0.x0, sy0 = b0.y0;
+      var b = fitBox(b0, W, H);
+      var clamped = (Math.abs(b.x0 - sx0) > 0.01 || Math.abs(b.y0 - sy0) > 0.01);
+      var score = 0;
+      for (j=0;j<frameBoxes.length;j++){
+        var ov = boxOv(b, frameBoxes[j]);
+        if (ov <= 0) continue;
+        var ar = Math.min((b.x1-b.x0)*(b.y1-b.y0),
+                          (frameBoxes[j].x1-frameBoxes[j].x0)*(frameBoxes[j].y1-frameBoxes[j].y0));
+        score += ar > 0 ? ov / ar : 1;
+      }
+      if (k !== 0) score += 0.006 + 0.0002 * Math.hypot(AVOID[k][0], AVOID[k][1]);
+      if (score < bestOv){ bestOv = score; best = { q:q, b:b, k:k, clamped:clamped }; }
+      if (L.fixed) break;
+    }
+    L.pos = best.q; L.box = best.b;
+    frameBoxes.push(best.b);
+    drawnLabels.push({ text: L.text, x0:best.b.x0, y0:best.b.y0, x1:best.b.x1, y1:best.b.y1,
+                       gx0:best.b.gx0, gy0:best.b.gy0, gx1:best.b.gx1, gy1:best.b.gy1,
+                       ax:L.p.x, ay:L.p.y, offx:best.q.x - L.p.x, offy:best.q.y - L.p.y,
+                       fixed:!!L.fixed, clamped:best.clamped, moved:best.k !== 0 });
+  }
+  state.drawn.labels = drawnLabels.slice();
+  for (i=0;i<pendingLabels.length;i++){
+    var M = pendingLabels[i];
+    ctx.save();
+    ctx.font = '600 ' + M.size + 'px "Inter","PingFang SC",sans-serif';
+    ctx.textAlign = M.align === 'left' ? 'left' : (M.align === 'right' ? 'right' : 'center');
+    ctx.textBaseline = 'middle';
+    ctx.lineWidth = 3.4; ctx.strokeStyle = 'rgba(2,6,23,.86)';
+    ctx.strokeText(M.text, M.pos.x, M.pos.y);
+    ctx.fillStyle = M.color; ctx.fillText(M.text, M.pos.x, M.pos.y);
+    ctx.restore();
+  }
+  pendingLabels.length = 0;
+}
+
+/* ============================================================
+   6. 场景绘制
+   ============================================================ */
+function drawBackdrop(w, h){
+  var g = ctx.createRadialGradient(w*0.42, h*0.22, 10, w*0.42, h*0.22, Math.max(w,h)*0.92);
+  g.addColorStop(0, '#0d1a30');
+  g.addColorStop(0.55, '#080f1f');
+  g.addColorStop(1, '#020617');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, w, h);
+}
+
+/* 水槽内腔的【远侧内壁 + 内底】：船与水都画在它之上 */
+function drawTankBack(q){
+  var backX = q.eye[0] > 0 ? -TX : TX;
+  var backZ = q.eye[2] > 0 ? -TZ : TZ;
+  /* 内底 */
+  poly([project([-TX,0,-TZ],q), project([TX,0,-TZ],q),
+        project([TX,0, TZ],q), project([-TX,0, TZ],q)], 'rgb(12,22,38)', null, 0);
+  /* 远侧内壁（两面）：画成一块整板，颜色略亮于底 */
+  var a = project([backX, 0, -TZ], q), b = project([backX, 0, TZ], q),
+      c = project([backX, TANK_IH, TZ], q), d = project([backX, TANK_IH, -TZ], q);
+  poly([a,b,c,d], 'rgb(17,30,50)', null, 0);
+  a = project([-TX, 0, backZ], q); b = project([TX, 0, backZ], q);
+  c = project([TX, TANK_IH, backZ], q); d = project([-TX, TANK_IH, backZ], q);
+  poly([a,b,c,d], 'rgb(15,27,46)', null, 0);
+}
+
+/* 水体：远侧面 + 底面（不透明），水面（半透明盘），近侧面（半透明，最后画） */
+function drawWater(q, which, r){
+  var L = LIQ[state.liquid];
+  var yt = WATER_Y;
+  var backX = q.eye[0] > 0 ? -TX : TX;
+  var backZ = q.eye[2] > 0 ? -TZ : TZ;
+  var frontX = -backX, frontZ = -backZ;
+  if (which === 'back'){
+    /* 底面 */
+    poly([project([-TX,0,-TZ],q), project([TX,0,-TZ],q),
+          project([TX,0, TZ],q), project([-TX,0, TZ],q)], rgba(L.rgb, .82), null, 0);
+    /* 远侧两面 */
+    poly([project([backX,0,-TZ],q), project([backX,0,TZ],q),
+          project([backX,yt,TZ],q), project([backX,yt,-TZ],q)], rgba(L.rgb, .78), null, 0);
+    poly([project([-TX,0,backZ],q), project([TX,0,backZ],q),
+          project([TX,yt,backZ],q), project([-TX,yt,backZ],q)], rgba(L.rgb, .72), null, 0);
+    /* 水面 */
+    poly([project([-TX,yt,-TZ],q), project([TX,yt,-TZ],q),
+          project([TX,yt, TZ],q), project([-TX,yt, TZ],q)],
+         rgba(L.top, .34), rgba(L.edge, .72), 1.4);
+    return;
+  }
+  /* 近侧两面：半透明，罩住船体在水下的部分 */
+  poly([project([frontX,0,-TZ],q), project([frontX,0,TZ],q),
+        project([frontX,yt,TZ],q), project([frontX,yt,-TZ],q)], rgba(L.rgb, .30), null, 0);
+  poly([project([-TX,0,frontZ],q), project([TX,0,frontZ],q),
+        project([TX,yt,frontZ],q), project([-TX,yt,frontZ],q)], rgba(L.rgb, .26), null, 0);
+}
+
+/* 玻璃槽：外壁近侧两面 + 上沿口 + 竖向高光
+   skipNear = true（剖开模式）：跳过近侧玻璃与高光，只留槽口上沿。 */
+function drawTankGlass(q, skipNear){
+  var backX = q.eye[0] > 0 ? -TX : TX;
+  var backZ = q.eye[2] > 0 ? -TZ : TZ;
+  var frontX = -backX, frontZ = -backZ;
+  var gx0 = -TANK_OX, gx1 = TANK_OX, gz0 = -TANK_OZ, gz1 = TANK_OZ;
+  if (!skipNear){
+    /* 近侧两面玻璃 */
+    poly([project([frontX,0,gz0],q), project([frontX,0,gz1],q),
+          project([frontX,TANK_IH,gz1],q), project([frontX,TANK_IH,gz0],q)],
+         'rgba(150,196,232,.10)', null, 0);
+    poly([project([gx0,0,frontZ],q), project([gx1,0,frontZ],q),
+          project([gx1,TANK_IH,frontZ],q), project([gx0,TANK_IH,frontZ],q)],
+         'rgba(150,196,232,.13)', null, 0);
+  }
+  /* 上沿口（四条边） */
+  var ring = [project([gx0,TANK_IH,gz0],q), project([gx1,TANK_IH,gz0],q),
+              project([gx1,TANK_IH,gz1],q), project([gx0,TANK_IH,gz1],q)];
+  ctx.save();
+  ctx.strokeStyle = 'rgba(186,222,246,.62)'; ctx.lineWidth = 2.2;
+  polyPath(ring); ctx.stroke();
+  /* 外沿再描一圈，做出壁厚 */
+  var ring2 = [project([gx0-TANK_T,TANK_IH,gz0-TANK_T],q), project([gx1+TANK_T,TANK_IH,gz0-TANK_T],q),
+               project([gx1+TANK_T,TANK_IH,gz1+TANK_T],q), project([gx0-TANK_T,TANK_IH,gz1+TANK_T],q)];
+  ctx.strokeStyle = 'rgba(186,222,246,.30)'; ctx.lineWidth = 1.4;
+  polyPath(ring2); ctx.stroke();
+  ctx.restore();
+  if (skipNear) return;
+  /* 近侧玻璃上的一道竖向高光 */
+  var thF = frontX;
+  poly([project([thF-0.02,1.2,gz0+2.5],q), project([thF-0.02,1.2,gz0+4.2],q),
+        project([thF-0.02,TANK_IH-1.6,gz0+4.2],q), project([thF-0.02,TANK_IH-1.6,gz0+2.5],q)],
+       'rgba(226,240,252,.10)', null, 0);
+}
+
+/* ---------- 船体（棱台） ---------- */
+/* 通用棱台：Lb/Ld = 底面/顶面长度（沿 x），Wk = 宽度（沿 z，恒定），y0/y1 = 下/上高度。
+   返回 8 顶点 + 5 个面（底面 + 4 侧面，顶面留空 —— 船体顶部是开口）。 */
+function frustumFaces(Lb, Ld, y0, y1, Wk){
+  var verts = [
+    [-Lb/2, y0, -Wk/2], [ Lb/2, y0, -Wk/2], [ Lb/2, y0,  Wk/2], [-Lb/2, y0,  Wk/2],
+    [-Ld/2, y1, -Wk/2], [ Ld/2, y1, -Wk/2], [ Ld/2, y1,  Wk/2], [-Ld/2, y1,  Wk/2]
+  ];
+  var hy = y1 - y0, hx = (Ld - Lb) / 2;
+  var S = Math.hypot(hy, hx) || 1;
+  var faces = [
+    { i:[0,1,2,3], n:[0,-1,0] },                 // 底面
+    { i:[0,4,5,1], n:[0,0,-1] },                 // z− 面（竖直矩形）
+    { i:[3,2,6,7], n:[0,0, 1] },                 // z+ 面
+    { i:[0,3,7,4], n:[-hy/S, -hx/S, 0] },        // x− 斜面（外法线朝 −x、朝下）
+    { i:[1,5,6,2], n:[ hy/S, -hx/S, 0] }         // x+ 斜面
+  ];
+  return { verts: verts, faces: faces, S: S };
+}
+function hullOuterFaces(y0){ return frustumFaces(LB, LD, y0, y0 + H, W); }
+/* 内腔（空腔）：把外法线取反 = 内法线；底面改成朝上 */
+function hullInnerFaces(y0){
+  var Lbi = Math.max(0.1, LB - 2*T), Ldi = Math.max(0.1, LD - 2*T);
+  var Wi = Math.max(0.1, W - 2*T);
+  var f = frustumFaces(Lbi, Ldi, y0 + T, y0 + H, Wi);
+  var faces = [
+    { i:[0,1,2,3], n:[0, 1,0] },                 // 内底（朝上）
+    { i:[0,4,5,1], n:[0,0, 1] },                 // z− 内壁（朝 +z）
+    { i:[3,2,6,7], n:[0,0,-1] },                 // z+ 内壁（朝 −z）
+    { i:[0,3,7,4], n:[-f.faces[3].n[0], -f.faces[3].n[1], 0] },
+    { i:[1,5,6,2], n:[-f.faces[4].n[0], -f.faces[4].n[1], 0] }
+  ];
+  return { verts: f.verts, faces: faces };
+}
+/* 甲板环：外顶矩形 − 内顶矩形（evenodd 挖洞） */
+function drawDeckRing(q, y0, opt){
+  opt = opt || {};
+  var y1 = y0 + H;
+  var Ldi = Math.max(0.1, LD - 2*T), Wi = Math.max(0.1, W - 2*T);
+  var outer = [project([-LD/2,y1,-W/2],q), project([LD/2,y1,-W/2],q),
+               project([ LD/2,y1, W/2],q), project([-LD/2,y1, W/2],q)];
+  var inner = [project([-Ldi/2,y1,-Wi/2],q), project([Ldi/2,y1,-Wi/2],q),
+               project([ Ldi/2,y1, Wi/2],q), project([-Ldi/2,y1, Wi/2],q)];
+  for (var i=0;i<4;i++) if (outer[i].z <= 0 || inner[i].z <= 0) return null;
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(outer[0].x, outer[0].y);
+  for (i=1;i<4;i++) ctx.lineTo(outer[i].x, outer[i].y);
+  ctx.closePath();
+  ctx.moveTo(inner[0].x, inner[0].y);
+  for (i=1;i<4;i++) ctx.lineTo(inner[i].x, inner[i].y);
+  ctx.closePath();
+  ctx.fillStyle = opt.flat ? shade(STEEL.hi, 1.02) : shade(STEEL.hi, 1.0);
+  ctx.fill('evenodd');
+  if (opt.edge){ ctx.strokeStyle = opt.edge; ctx.lineWidth = 1; ctx.stroke(); }
+  ctx.restore();
+  return { outer:outer, inner:inner };
+}
+
+function drawHull(q, r){
+  var y0 = r.botY;
+  var out = hullOuterFaces(y0);
+  /* ① 内腔（钢灰，先画）。★ 不能取近黑（原先 [10,20,34]）——
+     俯视时看到的几乎全是内腔，一片死黑会让整条船读成「一个黑洞加一圈亮边」。
+     用钢灰 + 不 flat（让内底与内壁的明暗差把「这是个开口的盒子」说清楚）。 */
+  var inn = hullInnerFaces(y0);
+  var ivis = hullFaces(inn.verts, inn.faces, q, [74, 88, 112], { edge:'rgba(148,163,184,.20)', lw:1 });
+  /* ② 外表面远侧 + 近侧（hullFaces 已做背面剔除，一次画完） */
+  var ovis = hullFaces(out.verts, out.faces, q, STEEL.rgb, { edge:'rgba(2,6,23,.45)', lw:1 });
+  /* ③ 甲板环 */
+  var deck = drawDeckRing(q, y0, { edge:'rgba(2,6,23,.4)' });
+  /* ④ 浸在水下的那一段单独罩一层水色（近侧水体的半透明不够 ——
+     船体在水面之下、又离相机更近，投影可能落在水面弧的上方） */
+  var surfY = WATER_Y;
+  if (surfY > y0){
+    var cut = Math.min(y0 + H, surfY);
+    /* ★ 罩色必须跟着棱台走：水面附近的船体长度只剩 hullLenAt(cut−y0)，
+       用直壁 box3 罩会横着伸到船体轮廓之外（船底 21、甲板 30，越往上越宽）。 */
+    var sub = frustumFaces(hullLenAt(0), hullLenAt(cut - y0), y0, cut, W);
+    /* ★ 把【实际画出去的那块几何】的横向半宽交给自检 —— 不是把「意图用的长度」
+       再抄一遍（抄意图值的话，把 frustumFaces 换成直壁箱也照样对得上）。
+       从 sub.verts 里量，换任何基元都能测出来。 */
+    var txs = 0, i9;
+    for (i9 = 0; i9 < sub.verts.length; i9++) txs = Math.max(txs, Math.abs(sub.verts[i9][0]));
+    state.drawn.tint = { y0:y0, y1:cut, halfSpan:txs };
+    hullFaces(sub.verts, sub.faces, q, LIQ[state.liquid].rgb, { alpha:.30, flat:true });
+  } else {
+    state.drawn.tint = null;
+  }
+  return { y0:y0, y1:y0+H, outer:ovis, inner:ivis, deck:deck, surfY:surfY };
+}
+
+/* 实心钢块 */
+function drawSolidBlock(q, r){
+  var sd = solidDims();
+  var a = sd.a, half = a/2;
+  var vis = box3(-half, 0, -half, half, a, half, q, STEEL.rgb,
+                 { edge:'rgba(2,6,23,.45)', lw:1 });
+  return { a:a, vis:vis, top:a };
+}
+
+/* ---------- 吃水线 + 船体上的刻度 ----------
+   画在 z+ 面（朝 +z 的竖直矩形）上 —— 它最容易被看到。
+   三条彩色虚线 = 三种液体各自的吃水位置（同一载重），白实线 = 当前液体。
+   ★ 船沉底后「吃水」已经没有意义（船不在水面上、h 被 draftFor 钳到 H），
+   这时三条彩线与白线【全部不画】，只留侧壁刻度尺 —— 否则会在甲板处画出一条
+   悬在半空的水线，比不画更误导。 */
+function drawDraftMarks(q, r){
+  var D = state.drawn;
+  D.draftMarks = [];
+  D.curLine = null;
+  if (state.mode !== 'hollow') return;
+  var y0 = r.botY;
+  var mTotal = r.mTotal;
+  var keys = LIQ_ORDER, i, k;
+  var lines = [];
+  if (!r.sunk){
+    /* 三种液体的吃水位置 */
+    for (i=0;i<keys.length;i++){
+      var hh = draftInLiquid(keys[i], mTotal);
+      if (hh >= H - 1e-9) continue;                 // 该液体下已经全浸，画不出来
+      var y = y0 + hh;
+      var Lh = hullLenAt(hh);
+      var a = project([-Lh/2, y, W/2 + 0.01], q);
+      var b = project([ Lh/2, y, W/2 + 0.01], q);
+      if (a.z <= 0 || b.z <= 0) continue;
+      var col = keys[i] === 'fresh' ? 'rgba(125,211,252,.92)'
+              : keys[i] === 'sea'   ? 'rgba(110,231,183,.92)'
+              :                       'rgba(253,224,71,.92)';
+      lineSeg(a, b, col, keys[i] === state.liquid ? 2.6 : 1.6, keys[i] === state.liquid ? null : [6,4]);
+      lines.push({ liq:keys[i], h:hh, y:y, ax:a.x, ay:a.y, bx:b.x, by:b.y });
+    }
+    D.draftMarks = lines;
+    /* 当前水线：白线，压在彩色线之上 */
+    var yc = y0 + r.h;
+    var Lc = hullLenAt(r.h);
+    var ca = project([-Lc/2, yc, W/2 + 0.02], q);
+    var cb = project([ Lc/2, yc, W/2 + 0.02], q);
+    if (ca.z > 0 && cb.z > 0){
+      lineSeg(ca, cb, 'rgba(248,250,252,.95)', 2.2);
+      D.curLine = { h:r.h, y:yc, ax:ca.x, ay:ca.y, bx:cb.x, by:cb.y };
+    }
+  }
+  /* 船体侧面的吃水刻度（每 1 cm 一格），只在侧壁确实朝相机时画 */
+  var st = { prev: null };
+  for (k = 0; k <= H; k++){
+    var yy = y0 + k;
+    var Lk = hullLenAt(k);
+    var ta = project([-Lk/2, yy, W/2 + 0.01], q);
+    var tb = project([-Lk/2 + 1.1, yy, W/2 + 0.01], q);
+    if (ta.z <= 0 || tb.z <= 0) continue;
+    lineSeg(ta, tb, 'rgba(226,240,252,.50)', k % 2 === 0 ? 1.3 : 0.9);
+    if (k % 2 === 0) tickLabelIfFree(project([-Lk/2 - 0.9, yy, W/2 + 0.01], q), String(k), 10, st);
+  }
+  /* 只给「当前液体」的那条线贴标签（三条都贴会叠在一起） */
+  var cur = null;
+  for (i=0;i<lines.length;i++) if (lines[i].liq === state.liquid) cur = lines[i];
+  if (cur) label(project([LD/2 + 1.6, cur.y, W/2], q),
+                 '吃水 ' + cur.h.toFixed(2) + ' cm', '#f8fafc', 11.5, 'left');
+}
+
+/* ---------- 力的箭头：F浮（上） / G总（下），共用同一支比例尺 ---------- */
+/* ★ 箭头长度自适应：按「锚点往上 / 往下还剩多少」把长度压到刚好放得下。
+   两支箭头同乘一个系数，所以「永远一样长」不受影响。
+   两个上界都用【可达的最长值】：F浮 封顶 = ρ浓盐水·g·V船（全浸），G总 最大 = 钢材 + 滑块上限。 */
+function fitArrowLen(w, h, q){
+  var anchorY = (state.mode === 'hollow') ? WATER_Y : solidDims().a / 2;
+  var a = project([0, anchorY, 0], q);
+  if (!(a.z > 0)){ ARROW_LEN = ARROW_LEN_WANT; FSCALE = ARROW_LEN / FMAX; return; }
+  var Fdraw = LIQ.brine.rho * GRA * hullVolOut() / 1e6;
+  var Gdraw = (steelMass() + CARGO_MAX) / 1000 * GRA;
+  var up = Math.max(24, a.y - 8), down = Math.max(24, h - 8 - a.y);
+  ARROW_LEN = Math.round(Math.max(40, Math.min(ARROW_LEN_WANT,
+                          up * FMAX / Fdraw, down * FMAX / Gdraw)));
+  FSCALE = ARROW_LEN / FMAX;
+}
+function drawArrows(q, r){
+  var D = state.drawn;
+  D.arrowSegs = [];
+  /* 锚点：空心船取水线面中心；实心块取块中心 */
+  var anchorY, ax = 0, az = 0;
+  if (state.mode === 'hollow'){ anchorY = WATER_Y; }
+  else { var sd = solidDims(); anchorY = sd.a / 2; }
+  var anchor = project([ax, anchorY, az], q);
+  if (anchor.z <= 0) return;
+
+  if (r.Fb > 1e-6){
+    var fb = { x:anchor.x, y:anchor.y - r.Fb * FSCALE };
+    arrowSeg(anchor, fb, 'rgba(52,211,153,.96)', 2.8, 12);
+    D.arrowSegs.push({ kind:'F', force:r.Fb, ax:anchor.x, ay:anchor.y, bx:fb.x, by:fb.y, rgb:[52,211,153] });
+    /* ★ 标签至少离锚点 15 px —— 实心块那一档 F浮 只有 4.9 px 长（1.22 N / 30 N 满量程），
+       不推开的话「F浮 1.224 N」会正好压在钢块上。 */
+    label({ x:fb.x + 8, y:Math.min(fb.y, anchor.y - 15) }, 'F浮 ' + r.Fb.toFixed(3) + ' N', '#6ee7b7', 12, 'left');
+  }
+  var gb = { x:anchor.x, y:anchor.y + r.G * FSCALE };
+  arrowSeg(anchor, gb, 'rgba(248,113,113,.96)', 2.6, 11);
+  D.arrowSegs.push({ kind:'G', force:r.G, ax:anchor.x, ay:anchor.y, bx:gb.x, by:gb.y, rgb:[248,113,113] });
+  label({ x:gb.x - 8, y:Math.max(gb.y, anchor.y + 15) }, 'G总 ' + r.G.toFixed(3) + ' N', '#fca5a5', 12, 'right');
+}
+
+/* 水面高度标注 + 槽底标注 */
+function drawSceneLabels(q, r){
+  label(project([-TANK_OX + 2.2, WATER_Y + 0.8, -TANK_OZ + 2.2], q),
+        '水面', '#7dd3fc', 11.5, 'left');
+  if (state.mode === 'hollow' && r.sunk)
+    label(project([0, r.botY + H/2, 0], q), '已沉底', '#fca5a5', 13, 'center');
+}
+
+/* ============================================================
+   7. 状态与主循环
+   ============================================================ */
+var canvas = document.getElementById('simCanvas');
+var stageEl = document.getElementById('stage');
+var state = {
+  mode: 'hollow',
+  liquid: 'fresh',
+  cargo: 0,
+  arrows: true,
+  marks: true,
+  cut: true,
+  auto: false, autoT: 0,
+  /* ★ 初始视角【不在这儿写死】—— 下面 VIEWS 定义完之后统一从 VIEWS[0] 拷过来。
+     原先这里硬编码 yaw:30/pitch:20，而 VIEWS.perspective 是 30/26：
+     同一件事写两遍，于是【首屏】和点过「换视角」之后的画面不一样。 */
+  yaw: 0, pitch: 0, dist: CAMD, zoom: 1, zoomBase: 1, look: false,
+  t: 0, frozen: false, drawn: {}
+};
+
+var VIEWS = {
+  /* ★ pitch 从 20 抬到 26：20° 时船身近侧那面（带着 0/2/4/6 刻度）几乎被压成一条线，
+     甲板开口也读不出「这是个开口的盒子」。26° 下开口、近侧船身、三条吃水线同时看得清，
+     再抬到 32° 近侧船身又被压扁、舞台下方留白变大。 */
+  'perspective': { yaw: 30, pitch: 26, dist: CAMD, zoom: 1,    look: false },
+  /* ★ front 取 yaw 0（沿 z 看，屏幕横向 = 水槽长边 67.6）—— 这是唯一能同时看到
+     【整条船身 + 吃水线 + 三色对照线】的视角，是本页最有用的一个。
+     代价：包络投影长宽比 ≈ 2.3，画布纵向只用到一半（其余四个视角都接近 1.7）。 */
+  'front':       { yaw:  0, pitch: 24, dist: CAMD, zoom: 1,    look: false },
+  'high':        { yaw: 26, pitch: 44, dist: CAMD, zoom: 1,    look: false },
+  'right':       { yaw: -48, pitch: 18, dist: CAMD, zoom: 1,   look: false },
+  /* close 是「特写」，本来就允许裁掉水槽两端的边角；zoom 1.35 时横向溢出 27%，
+     水槽左右两端被切得太多，收到 1.15（横向溢出约 8%）刚好是「凑近看」的感觉。 */
+  'close':       { yaw: 24, pitch: 14, dist: CAMD, zoom: 1.15, look: true  }
+};
+var VIEW_ORDER = ['perspective','front','high','right','close'];
+var viewIdx = 0;
+/* ★ 初始视角 = VIEWS 的第一项（唯一真源）。自检 D11/D12 会钉住这条一致性：
+   首屏与点过「换视角」之后必须是同一个视角。 */
+(function(){
+  var v0 = VIEWS[VIEW_ORDER[0]];
+  state.yaw = v0.yaw; state.pitch = v0.pitch; state.dist = v0.dist;
+  state.zoom = v0.zoom; state.look = v0.look;
+})();
+
+/* 步骤卡（右栏 #stepList，4 格）：
+   0 空船漂浮 → 1 加载（吃水加深）→ 2 换液体（吃水变浅）→ 3 超载沉没
+   ★ 进度只用一个单调量 progressIndex() 表达：「做完的」= i < p，「正在做的」= i === p。
+   四个格子于是【永远恰好有一个是蓝的】。原先分开写 currentStep() 与 stepDone(i) 两套
+   判据，会出现「既没有蓝的、也没有绿的」空档（例：空载 + 已换成海水）。 */
+function progressIndex(){
+  if (state.mode === 'solid') return 3;                 // 实心块直接落在最后一步
+  if (readings().sunk) return 3;
+  if (state.cargo > 1e-9 && state.liquid !== 'fresh') return 2;
+  if (state.cargo > 1e-9) return 1;
+  return 0;
+}
+function currentStep(){ return progressIndex(); }
+function stepDone(i){ return i < progressIndex(); }
+
+/* ============================================================
+   8. 渲染
+   ============================================================ */
+function recompute(){
+  var r = readings();
+  var D = {
+    mode: state.mode, liquid: state.liquid,
+    rhoL: r.rhoL, Vsteel: r.Vsteel, mSteel: r.mSteel, mCargo: r.mCargo, mTotal: r.mTotal,
+    Vout: r.Vout, Vneed: r.Vneed, h: r.h, Vsub: r.Vsub, Fb: r.Fb, G: r.G, Gp: r.Gp,
+    Gsteel: r.Gsteel, Gcargo: r.Gcargo, sunk: r.sunk, botY: r.botY,
+    ratio: r.ratio, dF: r.dF, headroom: r.headroom, mMax: r.mMax,
+    fscale: FSCALE, arrowLen: ARROW_LEN, Fmax: FMAX,
+    waterY: WATER_Y, tankH: TANK_IH, tankX: TANK_OX, tankZ: TANK_OZ,
+    step: currentStep(),
+    arrows: [], labels: [], draftMarks: [], curLine: null
+  };
+  state.drawn = D;
+  return D;
+}
+
+function render(){
+  if (!ctx) return;
+  var dpr = canvas.width / canvas.clientWidth;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  var w = canvas.clientWidth, h = canvas.clientHeight;
+
+  var D = recompute();
+  var r = readings();
+  fixedBoxes = []; drawnLabels = [];
+  var q = { yaw: state.yaw, pitch: state.pitch, dist: state.dist, zoom: state.zoom,
+            zoomBase: state.zoomBase, look: state.look };
+  makeCam(q, w, h);
+  state._q = q;
+  fitArrowLen(w, h, q);            // ★ 必须在 makeCam 之后（要用 q.eye/fwd）
+
+  drawBackdrop(w, h);
+  drawTankBack(q);
+  drawWater(q, 'back', r);
+
+  var hull = null, blk = null;
+  if (state.mode === 'hollow') hull = drawHull(q, r);
+  else blk = drawSolidBlock(q, r);
+
+  /* ★ 近侧水体 + 近侧玻璃：「剖开」模式下【不画】。
+     否则一大片半透明蓝会把船体水下那一段整个糊住 —— 而那一层正是本实验要看的东西。
+     （原先这个开关只画了一条虚线，剖不剖画面完全一样，是个假开关。） */
+  if (state.cut){
+    drawTankGlass(q, true);            // 剖开时仍要留槽口上沿，否则水槽「没有顶」
+  } else {
+    drawWater(q, 'front', r);
+    drawTankGlass(q, false);
+  }
+
+  /* 剖切面标记：水面处沿 z = 0 的一条虚线 */
+  if (state.cut){
+    var c0 = project([-TX, WATER_Y, 0], q), c1 = project([TX, WATER_Y, 0], q);
+    if (c0.z > 0 && c1.z > 0) lineSeg(c0, c1, 'rgba(186,222,246,.40)', 1.2, [7,5]);
+  }
+
+  if (state.marks && state.mode === 'hollow') drawDraftMarks(q, r);
+  drawSceneLabels(q, r);
+
+  var ub = uiBoxes();
+  D.uiBoxes = ub.slice();
+  D.fixedBoxes = fixedBoxes.slice();
+  frameBoxes = ub.map(function(u){ return { x0:u.x0-4, y0:u.y0-4, x1:u.x1+4, y1:u.y1+4 }; })
+                .concat(fixedBoxes);
+  if (state.arrows) drawArrows(q, r);
+
+  /* ★ 甲板环的屏幕多边形要交给自检：判「开口真的通到内腔」必须按它采样，
+     不能让自检自己拿 LD/W/T 重算一遍（重算 = 又一份可能走样的常数）。 */
+  D.hull = hull ? { y0:hull.y0, y1:hull.y1, surfY:hull.surfY,
+                    deck: hull.deck ? { outer:hull.deck.outer, inner:hull.deck.inner } : null } : null;
+  D.block = blk ? { a:blk.a, top:blk.top } : null;
+  D.drew = true;
+  flushLabels(w, h);
+  D.labels = drawnLabels.slice();
+  D.arrows = (D.arrowSegs || []).slice();
+}
+
+/* ============================================================
+   9. 尺寸 / 循环
+   ============================================================ */
+function resize(){
+  var rr = stageEl.getBoundingClientRect();
+  var dpr = Math.min(2, window.devicePixelRatio || 1);
+  var cssW = Math.max(320, Math.floor(rr.width));
+  /* ★ 画布高度系数：0.58 是【五个视角里最差填充率最大】的那个值 ——
+     变高会压 front 的纵向（0.94/(2.269·f)），变矮会压 high/perspective 的横向（1.227f / 1.452f），
+     两者在 f = 0.581 相交，交点处 front 与 high 同时取到 0.713（实测 1440 宽：
+     perspective .843 / front .713 / high .713 / right .877 / close .897）。
+     别再按「默认视角两条约束同时咬住」去推 —— 那个 f 是 0.6475，会让 front 掉到 0.640。 */
+  var cssH = Math.round(clamp(cssW * 0.58, 260, 660));
+  canvas.style.height = cssH + 'px';
+  canvas.width = Math.round(cssW * dpr);
+  canvas.height = Math.round(cssH * dpr);
+
+  /* ★ 窄屏基础放大：380 px 宽的舞台里整个水槽只有 4.5 px/cm，船高 6.5 cm 才 29 px，
+     三条吃水线挤成一条、看不出「ρ液 越大吃水越浅」。给窄屏一个随宽度递减的基础放大，
+     宽屏（≥1000 px）保持 1 倍。上限取 1.35：再大水槽两端就被裁得太狠了。 */
+  state.zoomBase = clamp(1000 / cssW, 1, 1.35);
+
+  render();                      // ★ 首帧同步画，不等 rAF（render 里会自适应箭头长度）
+}
+
+var lastTs = 0;
+function stepSim(dt){
+  if (state.auto){
+    state.autoT += dt;
+    var Tt = state.autoT;
+    /* 0~1.0 空船 → 1.0~3.6 加货到 900 g → 3.6~5.4 切浓盐水 → 5.4~7.6 超载沉没 */
+    if (Tt < 1.0){ state.cargo = 0; state.liquid = 'fresh'; state.mode = 'hollow'; }
+    else if (Tt < 3.6){ state.cargo = Math.round(lerp(0, 900, (Tt-1.0)/2.6)/CARGO_STEP)*CARGO_STEP; state.liquid = 'fresh'; }
+    else if (Tt < 5.4){ state.cargo = 900; state.liquid = 'brine'; }
+    else if (Tt < 7.6){ state.liquid = 'brine'; state.cargo = Math.round(lerp(900, CARGO_MAX, (Tt-5.4)/2.2)/CARGO_STEP)*CARGO_STEP; }
+    else { state.cargo = CARGO_MAX; state.auto = false; syncSegs(); syncUI(); }
+    syncSlider();
+  }
+  state.t += dt;
+}
+
+function tick(ts){
+  try {
+    if (!lastTs) lastTs = ts;
+    var dt = Math.min(0.05, (ts - lastTs) / 1000);
+    lastTs = ts;
+    if (!state.frozen && dt > 0) stepSim(dt);
+    render();
+    syncUI();
+  } catch (e) {
+    if (window.console) console.warn('render error', e);
+  }
+  requestAnimationFrame(tick);
+}
+
+/* ============================================================
+   10. UI 同步
+   ============================================================ */
+var el = {};
+['hint','rdCargo','rdRatio','rdHeroSub','rdVsteel','rdGsteel','rdGcargo','rdGtot',
+ 'rdVhull','rdVsub','rdDraft','rdGp','rdFb','rdNote','cargoRange','cargoTicks',
+ 'ckArrows','ckMarks','ckCut','draftBody','draftNote','toast','stepList'].forEach(function(k){
+  el[k] = document.getElementById(k);
+});
+
+function showToast(t){
+  var e = el.toast;
+  e.textContent = t;
+  e.classList.add('on');
+  clearTimeout(showToast._t);
+  showToast._t = setTimeout(function(){ e.classList.remove('on'); }, 1600);
+}
+function fmtN(v){ return String(v).replace('-', '\u2212'); }
+function syncSlider(){
+  el.cargoRange.value = String(state.cargo);
+  el.cargoRange.min = String(CARGO_MIN); el.cargoRange.max = String(CARGO_MAX);
+  el.cargoRange.step = String(CARGO_STEP);
+  var mMax = readings().mMax;
+  if (el.cargoTicks) el.cargoTicks.innerHTML =
+    '<span>' + CARGO_MIN + ' 空船</span>' +
+    '<span>' + Math.round(mMax - steelMass()) + ' 载重线</span>' +
+    '<span>' + CARGO_MAX + ' g</span>';
+}
+function syncUI(){
+  var r = readings();
+  el.rdCargo.innerHTML = state.cargo + '<small>g</small>';
+  el.rdVsteel.textContent = r.Vsteel.toFixed(2);
+  el.rdGsteel.textContent = r.Gsteel.toFixed(3);
+  el.rdGcargo.textContent = r.Gcargo.toFixed(3);
+  el.rdGtot.textContent = r.G.toFixed(3);
+  el.rdVhull.textContent = r.Vout.toFixed(1);
+  el.rdVsub.textContent = r.Vsub.toFixed(1);
+  el.rdDraft.textContent = r.h.toFixed(3);
+  el.rdGp.textContent = r.Gp.toFixed(3);
+  el.rdFb.textContent = r.Fb.toFixed(3);
+
+  var ok = Math.abs(r.ratio - 1) < 5e-3;
+  el.rdRatio.textContent = r.ratio.toFixed(4);
+  el.rdRatio.style.color = ok ? '#6ee7b7' : '#fca5a5';
+  if (state.mode === 'solid'){
+    el.rdHeroSub.innerHTML = '实心钢块：<b>F浮 &lt; G</b>，' + r.Fb.toFixed(3) + ' N &lt; ' + r.G.toFixed(3) + ' N ⇒ 沉底';
+  } else if (r.sunk){
+    el.rdHeroSub.innerHTML = '<b>超载沉没</b>：需要排水 ' + r.Vneed.toFixed(0) +
+      ' cm³，可船体只有 ' + r.Vout.toFixed(0) + ' cm³ ⇒ F浮 到顶也只有 ' + r.Fb.toFixed(3) + ' N &lt; G总 ' + r.G.toFixed(3) + ' N';
+  } else {
+    el.rdHeroSub.innerHTML = ok
+      ? 'F浮 = G总 <b>成立</b>：' + r.Fb.toFixed(3) + ' N = ' + r.G.toFixed(3) + ' N'
+      : '对不上（' + r.dF.toFixed(3) + ' N）';
+  }
+
+  /* 步骤高亮：第 p 格之前全绿、第 p 格蓝 */
+  var p = progressIndex(), items = el.stepList.children, i;
+  for (i=0;i<items.length;i++)
+    items[i].className = 'step' + (i < p ? ' done' : (i === p ? ' on' : ''));
+
+  /* 提示条 */
+  if (state.mode === 'solid')
+    el.hint.innerHTML = '同一块钢做成<b>实心块</b> —— 平均密度 7.8 g/cm³ &gt; ρ水，<b>一定沉底</b>';
+  else if (r.sunk)
+    el.hint.innerHTML = '<b>超载</b>：船体全浸也只能排开 ' + r.Vout.toFixed(0) +
+      ' cm³，浮力封顶 ' + r.Fb.toFixed(2) + ' N &lt; G总 ' + r.G.toFixed(2) + ' N';
+  else if (state.cargo <= 1e-9)
+    el.hint.innerHTML = '空船漂浮：<b>ρ液·g·V排 = G总</b> —— 拖载重看吃水线往下走，两支箭头<b>永远一样长</b>';
+  else
+    el.hint.innerHTML = '漂浮平衡：<b>ρ液·g·V排 = G总</b> —— 拖载重看吃水线往下走，两支箭头<b>永远一样长</b>';
+
+  /* 备注 */
+  var note = [];
+  if (state.mode === 'hollow' && !r.sunk)
+    note.push('还能再装 <b>' + r.headroom.toFixed(0) + ' g</b>（总重上限 ' + r.mMax.toFixed(0) + ' g）。');
+  note.push('② 的 F浮 是<b>独立算出来的</b>：按船底与侧壁的水压逐面元积分，'
+          + '<b>完全没有用 V排</b> —— 它和 G总 相等是结论。');
+  el.rdNote.innerHTML = note.join(' ');
+
+  /* 吃水对照表 */
+  var rows = '', mTot = r.mTotal;
+  for (i=0;i<LIQ_ORDER.length;i++){
+    var k = LIQ_ORDER[i], L = LIQ[k];
+    var Vn = mTot * 1000 / L.rho;
+    var hh = draftInLiquid(k, mTot);
+    var over = Vn >= r.Vout - 1e-9;
+    rows += '<tr class="' + (k === state.liquid ? 'cur' : '') + '">' +
+            '<td>' + L.name + '</td><td>' + (L.rho/1000).toFixed(2) + '</td>' +
+            '<td>' + (over ? '＞' + r.Vout.toFixed(0) : Vn.toFixed(1)) + '</td>' +
+            '<td>' + (over ? '沉没' : hh.toFixed(3)) + '</td></tr>';
+  }
+  el.draftBody.innerHTML = rows;
+  if (state.mode === 'solid')
+    el.draftNote.innerHTML = '实心钢块不适用 —— 它沉底，V排 恒等于钢块自身体积。';
+  else
+    el.draftNote.innerHTML = '同一艘船：<b>ρ液 越大，需要的 V排 越小，吃水越浅</b>。' +
+      '船从河里开到海里，吃水变浅就是这个道理。';
+
+  el.ckArrows.checked = state.arrows;
+  el.ckMarks.checked = state.marks;
+  el.ckCut.checked = state.cut;
+}
+
+/* ============================================================
+   11. 交互
+   ============================================================ */
+function setMode(k){ state.mode = k; syncSegs(); render(); syncUI(); }
+/* ★ 换液体要连滑块刻度一起刷 —— 「载重线」那一格 = ρ液·V船 − 钢材质量，随液体变 */
+function setLiquid(k){ state.liquid = k; syncSegs(); syncSlider(); render(); syncUI(); }
+function setCargo(v){ state.cargo = clamp(Math.round(Number(v)/CARGO_STEP)*CARGO_STEP, CARGO_MIN, CARGO_MAX);
+                      state.auto = false; render(); syncUI(); }
+function setArrows(on){ state.arrows = !!on; render(); syncUI(); }
+function setMarks(on){ state.marks = !!on; render(); syncUI(); }
+function setCut(on){ state.cut = !!on; render(); syncUI(); }
+function applyView(name){
+  var v = VIEWS[name] || VIEWS.perspective;
+  state.yaw = v.yaw; state.pitch = v.pitch;
+  state.dist = v.dist || CAMD;
+  state.zoom = v.zoom; state.look = v.look;
+  render(); syncUI();
+}
+function nextView(){ viewIdx = (viewIdx + 1) % VIEW_ORDER.length; applyView(VIEW_ORDER[viewIdx]); }
+function syncSegs(){
+  var i, bs = document.querySelectorAll('#segLiq button');
+  for (i=0;i<bs.length;i++) bs[i].className = bs[i].getAttribute('data-liq') === state.liquid ? 'on' : '';
+  bs = document.querySelectorAll('#segMode button');
+  for (i=0;i<bs.length;i++) bs[i].className = bs[i].getAttribute('data-mode') === state.mode ? 'on' : '';
+}
+function resetAll(){
+  state.mode = 'hollow'; state.liquid = 'fresh'; state.cargo = 0;
+  state.arrows = true; state.marks = true; state.cut = true;
+  state.auto = false; state.autoT = 0;
+  syncSegs(); syncSlider(); render(); syncUI();
+  showToast('已重置到初始状态');
+}
+function autoRun(){
+  state.auto = true; state.autoT = 0;
+  state.mode = 'hollow'; state.liquid = 'fresh'; state.cargo = 0;
+  syncSegs(); syncSlider();
+  showToast('演示：加载 → 换浓盐水 → 超载沉没');
+}
+
+var drag = null;
+function onDown(e){
+  drag = { x:e.clientX, y:e.clientY, yaw:state.yaw, pitch:state.pitch };
+  canvas.classList.add('dragging');
+  /* try/catch：合成事件（自检里 dispatchEvent 造的 PointerEvent）没有真实指针，
+     setPointerCapture 会抛 NotFoundError。不加保护的话自检会看到一个假 pageerror。 */
+  if (canvas.setPointerCapture) { try { canvas.setPointerCapture(e.pointerId); } catch (_) {} }
+}
+function onMove(e){
+  if (!drag) return;
+  state.yaw = drag.yaw + (e.clientX - drag.x) * 0.30;
+  state.pitch = clamp(drag.pitch - (e.clientY - drag.y) * 0.24, -6, 82);
+  state.look = false;
+  render();
+}
+function onUp(){
+  drag = null;
+  canvas.classList.remove('dragging');
+}
+
+function init(){
+  ctx = canvas.getContext('2d');
+  var i;
+  var lb = document.querySelectorAll('#segLiq button');
+  for (i=0;i<lb.length;i++) lb[i].addEventListener('click', function(){ setLiquid(this.getAttribute('data-liq')); });
+  var mb = document.querySelectorAll('#segMode button');
+  for (i=0;i<mb.length;i++) mb[i].addEventListener('click', function(){ setMode(this.getAttribute('data-mode')); });
+  el.cargoRange.addEventListener('input', function(){ setCargo(this.value); });
+  el.ckArrows.addEventListener('change', function(){ setArrows(this.checked); });
+  el.ckMarks.addEventListener('change', function(){ setMarks(this.checked); });
+  el.ckCut.addEventListener('change', function(){ setCut(this.checked); });
+  document.getElementById('btnAuto').addEventListener('click', autoRun);
+  document.getElementById('btnReset').addEventListener('click', resetAll);
+  document.getElementById('btnArrows').addEventListener('click', function(){
+    setArrows(!state.arrows); this.className = state.arrows ? 'sbtn on' : 'sbtn';
+  });
+  document.getElementById('btnView').addEventListener('click', nextView);
+  canvas.addEventListener('pointerdown', onDown);
+  canvas.addEventListener('pointermove', onMove);
+  canvas.addEventListener('pointerup', onUp);
+  canvas.addEventListener('pointercancel', onUp);
+  window.addEventListener('resize', resize);
+  window.addEventListener('orientationchange', resize);
+
+  syncSegs();
+  syncSlider();
+  document.getElementById('btnArrows').className = 'sbtn on';
+  resize();
+  requestAnimationFrame(tick);
+}
+
+/* ============================================================
+   12. 自检接口（全部走页面自己的入口，不重抄公式）
+   ============================================================ */
+window.__ship = {
+  consts: {
+    GRA:GRA, LD:LD, LB:LB, W:W, H:H, T:T, RHO_STEEL:RHO_STEEL,
+    TANK_IX:TANK_IX, TANK_IZ:TANK_IZ, TANK_IH:TANK_IH, TANK_T:TANK_T,
+    TANK_OX:TANK_OX, TANK_OZ:TANK_OZ, WATER_Y:WATER_Y, TX:TX, TZ:TZ,
+    CARGO_MIN:CARGO_MIN, CARGO_MAX:CARGO_MAX, CARGO_STEP:CARGO_STEP,
+    FMAX:FMAX, ARROW_LEN:ARROW_LEN, FSCALE:FSCALE, CAMD:CAMD,
+    TARGET_X:TARGET[0], TARGET_Y:TARGET[1], TARGET_Z:TARGET[2]
+  },
+  /* ★ 随画布尺寸自适应的量用【取值函数】导出，别导快照 ——
+     自检若读到页面刚加载时的 ARROW_LEN=120，窄屏下会跟实际画出来的箭头对不上。 */
+  live: {
+    arrowLen: function(){ return ARROW_LEN; },
+    fscale:   function(){ return FSCALE; },
+    zoomBase: function(){ return state.zoomBase; },
+    canvasW:  function(){ return canvas.clientWidth; },
+    canvasH:  function(){ return canvas.clientHeight; }
+  },
+  liq: LIQ, steel: STEEL, state: state,
+  liqRho: liqRho, steelVol: steelVol, steelMass: steelMass, totalMass: totalMass,
+  /* 三条独立路径 */
+  dispVolSlices: dispVolSlices, hullVolOut: hullVolOut, hullLenAt: hullLenAt,
+  buoyancyByFaces: buoyancyByFaces,
+  solidDims: solidDims, buoyancySolid: buoyancySolid,
+  draftFor: draftFor, draftInLiquid: draftInLiquid,
+  readings: readings, currentStep: currentStep, stepDone: stepDone, progressIndex: progressIndex,
+  frustumFaces: frustumFaces, hullOuterFaces: hullOuterFaces, hullInnerFaces: hullInnerFaces,
+  makeCam: makeCam, project: project, envelopePoints: envelopePoints,
+  /* ★ 视角表要交给自检：判「首屏视角 == 点过换视角之后的视角」必须拿同一份真源去比。 */
+  VIEWS: VIEWS, VIEW_ORDER: VIEW_ORDER,
+  fitArrowLen: fitArrowLen,
+  box3: box3, quadPt: quadPt, hullFaces: hullFaces,
+  setMode: setMode, setLiquid: setLiquid, setCargo: setCargo,
+  setArrows: setArrows, setMarks: setMarks, setCut: setCut,
+  applyView: applyView, nextView: nextView,
+  freeze: function(on){ state.frozen = !!on; render(); },
+  reset: resetAll, autoRun: autoRun,
+  run: function(sec){
+    var n = Math.round((sec || 1) * 60);
+    for (var i=0;i<n;i++) stepSim(1/60);
+    render(); return state.t;
+  },
+  uiBoxes: uiBoxes,
+  syncUI: syncUI, render: render, recompute: recompute,
+  drawn: function(){ return state.drawn; },
+  cam: function(){ return state._q; },
+  canvas: canvas
+};
+
+init();
+})();
+</script>
+</body>
+</html>

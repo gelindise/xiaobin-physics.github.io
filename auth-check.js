@@ -40,6 +40,8 @@
     //    维护约定：experiments.html 里凡是 VIP 卡对应的页面，这里必须有。
     "排开液体体积.html",
     "潜水艇沉浮原理.html",
+    // 第十章第3节应用层的新创 3D 页：钢为什么能造船（空心法）、吃水线与载重线。
+    "轮船与吃水线立体模型.html",
     "phet_浮力.html",
     "javalab_浮力实验.html","javalab_阿基米德王冠.html",
     "飞象_动滑轮定滑轮原理教学动画.html","javalab_电流表.html",
