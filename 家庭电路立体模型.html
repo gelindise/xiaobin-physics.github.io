@@ -1,0 +1,1517 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>家庭电路 · 3D 配电箱与接线解剖台 — 物理虚拟实验</title>
+<style>
+  :root{
+    --bg:#020617; --panel:rgba(15,23,42,.72); --line:rgba(148,163,184,.16);
+    --ink:#e2e8f0; --dim:#94a3b8; --dim2:#64748b;
+    --blue:#38bdf8; --cyan:#22d3ee; --purple:#a78bfa; --green:#34d399;
+    --amber:#fbbf24; --red:#f87171; --rose:#f43f5e;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{
+    background:
+      radial-gradient(1100px 620px at 12% -8%, rgba(56,189,248,.14), transparent 62%),
+      radial-gradient(900px 560px at 88% 4%, rgba(167,139,250,.13), transparent 60%),
+      radial-gradient(760px 520px at 50% 108%, rgba(244,63,94,.09), transparent 60%),
+      var(--bg);
+    color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Segoe UI",Roboto,sans-serif;
+    -webkit-font-smoothing:antialiased; line-height:1.62; min-height:100vh;
+  }
+  .lab3d{max-width:1500px;margin:0 auto;padding:20px 18px 40px}
+  .lab3d h1{margin:0;font-size:19px;letter-spacing:.3px;
+    background:linear-gradient(120deg,#e2e8f0 10%,#7dd3fc 52%,#c4b5fd 92%);
+    -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+  .lab3d-sub{margin:7px 0 16px;color:#93b4c4;font-size:12.5px;line-height:1.65;max-width:1180px}
+  .lab3d-sub b{color:#a5f3fc;font-weight:700}
+  .lab3d-sub .hl{color:#fcd34d;font-weight:700}
+
+  .lab3d-layout{display:grid;grid-template-columns:minmax(0,1fr) 372px;gap:14px;align-items:start}
+  .lab3d-stage{grid-column:1;grid-row:1;position:relative;height:clamp(480px,76vh,740px);
+    border:1px solid var(--line);border-radius:16px;overflow:hidden;background:#040a16}
+  .lab3d-sidebar{grid-column:2;grid-row:1 / span 2;display:flex;flex-direction:column;gap:11px;min-width:0}
+  /* 画面下面那一排面板。
+     ★ 这里【不能用 grid + auto-fit】：1280/1440 下左列只有 3 列宽，
+       4 个面板会折成「3 + 1」—— 第二行右边空出两格，正是用户点名的
+       「列尾空白」。flex-wrap + flex-grow 会让【最后一行自动撑满】。 */
+  .lab3d-lower{grid-column:1;grid-row:2;display:flex;flex-wrap:wrap;gap:11px;align-content:flex-start}
+  .lab3d-lower > .panel{flex:1 1 258px;min-width:0;align-self:stretch}
+
+  .lab3d-stage canvas{display:block;width:100%;height:100%;touch-action:none;cursor:default}
+  .lab3d-stage canvas.hot{cursor:pointer}
+  .lab3d-stage canvas.moving{cursor:grabbing}
+
+  .stage-hint{position:absolute;left:12px;top:12px;max-width:64%;padding:7px 11px;border-radius:9px;
+    background:rgba(2,6,23,.74);border:1px solid rgba(148,163,184,.22);color:#cbd5e1;font-size:11.5px;
+    line-height:1.6;backdrop-filter:blur(6px);pointer-events:none}
+  .stage-hint b{color:#7dd3fc}
+  .stage-toast{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);padding:10px 18px;border-radius:12px;
+    background:rgba(2,6,23,.92);border:1px solid rgba(56,189,248,.45);color:#e0f2fe;font-size:13px;font-weight:600;
+    opacity:0;transition:opacity .22s;pointer-events:none;max-width:78%;text-align:center}
+  .stage-toast.show{opacity:1}
+  .stage-toast.bad{border-color:rgba(248,113,113,.6);color:#fecaca}
+  .stage-toast.good{border-color:rgba(52,211,153,.6);color:#a7f3d0}
+
+  .stage-bar{position:absolute;left:0;right:0;bottom:0;display:flex;align-items:flex-end;justify-content:space-between;
+    gap:10px;padding:10px 12px;pointer-events:none}
+  .stage-bar .bar-left{display:flex;align-items:center;gap:7px;flex-wrap:wrap;pointer-events:auto}
+  .stage-bar .stage-help{font-size:11px;color:#7b93a6;text-align:right;max-width:46%;line-height:1.5}
+  .stage-btn{padding:8px 13px;border-radius:10px;border:1px solid rgba(148,163,184,.3);
+    background:rgba(15,23,42,.88);color:#cbd5e1;font-size:12px;font-weight:600;cursor:pointer;
+    font-family:inherit;transition:all .18s;display:inline-flex;align-items:center;gap:6px}
+  .stage-btn:hover{background:rgba(30,41,59,.95);color:#e2e8f0}
+  .stage-btn.on{border-color:rgba(56,189,248,.6);background:linear-gradient(135deg,rgba(56,189,248,.3),rgba(34,211,238,.2));color:#e0f2fe}
+  .stage-btn.hot{border-color:rgba(249,115,22,.6);background:rgba(124,45,18,.5);color:#fed7aa}
+  .stage-btn:disabled{opacity:.42;cursor:not-allowed}
+
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:13px 15px;
+    backdrop-filter:blur(8px);min-width:0}
+  .panel h3{margin:0 0 9px;font-size:13px;color:#cbd5e1;display:flex;align-items:center;gap:8px;font-weight:700}
+  .panel h3 .pill{margin-left:auto}
+  .pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700;
+    background:rgba(148,163,184,.14);border:1px solid rgba(148,163,184,.28);color:#cbd5e1;white-space:nowrap}
+  .pill.ok{background:rgba(52,211,153,.15);border-color:rgba(52,211,153,.4);color:#6ee7b7}
+  .pill.bad{background:rgba(248,113,113,.16);border-color:rgba(248,113,113,.42);color:#fca5a5}
+  .pill.warn{background:rgba(251,191,36,.14);border-color:rgba(251,191,36,.36);color:#fcd34d}
+  .pill.vip{background:rgba(167,139,250,.16);border-color:rgba(167,139,250,.42);color:#c4b5fd}
+
+  .btn-row{display:flex;gap:7px;flex-wrap:wrap;margin-top:9px}
+  .btn-row button{flex:1;min-width:64px;padding:8px 10px;border-radius:10px;border:1px solid var(--line);
+    background:rgba(255,255,255,.04);color:#cbd5e1;font-size:12px;font-weight:600;cursor:pointer;
+    font-family:inherit;transition:all .18s}
+  .btn-row button:hover{background:rgba(255,255,255,.09);color:#e2e8f0}
+  .btn-row button.on{background:linear-gradient(135deg,rgba(56,189,248,.28),rgba(34,211,238,.22));
+    border-color:rgba(56,189,248,.5);color:#e0f2fe}
+  .btn-row button.danger.on{background:linear-gradient(135deg,rgba(249,115,22,.3),rgba(244,63,94,.22));
+    border-color:rgba(249,115,22,.55);color:#fed7aa}
+  .btn-row button:disabled{opacity:.4;cursor:not-allowed}
+
+  .readouts{display:grid;grid-template-columns:repeat(3,1fr);gap:7px}
+  .readouts > div{background:rgba(255,255,255,.035);border-radius:9px;padding:6px 8px;text-align:center}
+  .readouts span{display:block;font-size:10.5px;color:var(--dim2)}
+  .readouts b{font-size:15px;font-weight:800;letter-spacing:-.01em;font-variant-numeric:tabular-nums}
+  .readouts .zero b{color:#64748b}
+  .readouts .live b{color:#fca5a5}
+  .readouts .warn b{color:#fcd34d}
+
+  .datagrid{display:grid;grid-template-columns:1fr 1fr;gap:7px}
+  .datagrid > div{background:rgba(255,255,255,.035);border-radius:9px;padding:6px 8px}
+  .datagrid span{display:block;font-size:10.5px;color:var(--dim2)}
+  .datagrid b{font-size:13.5px;font-weight:800;font-variant-numeric:tabular-nums}
+
+  .note{margin:9px 0 0;font-size:11.5px;color:var(--dim);line-height:1.6}
+  .note b{color:#cbd5e1}
+  .note.warn{border-left:2px solid rgba(251,191,36,.6);padding-left:9px;color:#fcd34d}
+  .note.bad{border-left:2px solid rgba(248,113,113,.65);padding-left:9px;color:#fca5a5}
+  .note.good{border-left:2px solid rgba(52,211,153,.6);padding-left:9px;color:#6ee7b7}
+
+  .chk{list-style:none;margin:0;padding:0;font-size:12px}
+  .chk li{display:flex;gap:8px;align-items:flex-start;padding:4px 0;color:#cbd5e1;line-height:1.55}
+  .chk li.no{color:#fca5a5}
+  .chk li.yes{color:#a7f3d0}
+  .chk li.wait{color:#94a3b8}
+  .chk li .mk{flex:0 0 auto;font-weight:800}
+
+  .eq{display:inline-block;background:rgba(2,6,23,.62);border:1px solid rgba(148,163,184,.2);
+    border-radius:7px;padding:1px 8px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+    font-size:12px;color:#7dd3fc}
+
+  .probes{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:8px}
+  .probes button{padding:7px 8px;border-radius:9px;border:1px solid var(--line);background:rgba(255,255,255,.04);
+    color:#cbd5e1;font-size:11.5px;font-weight:600;cursor:pointer;font-family:inherit;text-align:left;transition:all .18s}
+  .probes button:hover{background:rgba(255,255,255,.09);color:#e2e8f0}
+  .probes button.on{border-color:rgba(56,189,248,.55);background:linear-gradient(135deg,rgba(56,189,248,.24),rgba(34,211,238,.18));color:#e0f2fe}
+
+  .task{display:flex;gap:9px;align-items:flex-start;padding:8px 0;border-bottom:1px solid rgba(148,163,184,.11)}
+  .task:last-child{border-bottom:none}
+  .task .num{flex:0 0 auto;width:20px;height:20px;border-radius:6px;display:flex;align-items:center;justify-content:center;
+    font-size:11px;font-weight:800;background:rgba(148,163,184,.14);border:1px solid rgba(148,163,184,.3);color:#cbd5e1}
+  .task.on .num{background:linear-gradient(135deg,rgba(56,189,248,.34),rgba(34,211,238,.24));
+    border-color:rgba(56,189,248,.6);color:#e0f2fe}
+  .task.done .num{background:rgba(52,211,153,.2);border-color:rgba(52,211,153,.5);color:#6ee7b7}
+  .task .tb{flex:1;min-width:0}
+  .task .tb b{display:block;font-size:12px;color:#e2e8f0}
+  .task .tb span{display:block;font-size:11px;color:var(--dim);line-height:1.5}
+
+  @media (max-width:1180px){
+    .lab3d-layout{grid-template-columns:minmax(0,1fr) 326px}
+    .lab3d{max-width:1180px}
+  }
+  @media (max-width:900px){
+    .lab3d-layout{grid-template-columns:minmax(0,1fr)}
+    .lab3d-stage,.lab3d-sidebar,.lab3d-lower{grid-column:1;grid-row:auto}
+    .lab3d-stage{height:clamp(390px,60vh,500px)}
+    .lab3d-sidebar{border-top:1px solid var(--line);padding-top:12px}
+    .stage-bar .stage-help{display:none}
+    .lab3d h1{font-size:16px}
+  }
+
+  /* 紧凑版面补丁 :: sticky 侧栏 */
+  .lab3d-sidebar{
+    position:sticky; top:16px; align-self:start;
+    max-height:calc(100vh - 104px);
+    overflow-y:auto; overscroll-behavior:contain; scrollbar-width:thin;
+  }
+</style>
+<script src="protect.js"></script>
+<script src="auth-check.js"></script>
+<!-- 电气部分【不自己重写求解器】，直接用「电路实验沙盒」那条电学产线的内核：
+     circuit-core.js = 改进节点法（MNA）电路求解器，纯逻辑、无 DOM。
+     它的注释里明确写着「自环电压源支路携带内阻，正好是『电源被短路』的正确解」，
+     而本页要讲的「火线零线短路」正是同一件事。
+     ★ 本页【不用】 circuit-draw.js：那套元件是给「俯视实验台」画的 2D 器材图
+       （端子固定在 ±HALF 的平面网格上），而家庭电路的器材是【装在墙上的立体固定件】，
+       朝向、比例、观察方式都不一样，硬套会把两种风格缝在一起。所以本页的器材
+       用与旗舰页同一套真三维原语（boxSolid / cylSolid / cylBetween）建模。 -->
+<script src="circuit-core.js"></script>
+</head>
+<body>
+<div class="lab3d">
+  <h1>家庭电路 · 3D 配电箱与接线解剖台</h1>
+  <p class="lab3d-sub">
+    这是你家墙上那套东西的<b>立体解剖图</b>：进户线从墙外进来，先过<b>电能表</b>，再过<b>总开关</b>与<b>空气开关</b>，
+    然后分成两路 —— 一路去<b>墙上的三孔插座</b>，一路经<b>墙上的开关</b>去<b>天花板的灯</b>。
+    <span class="hl">点「剖开墙面」能把墙剖开</span>，看见那三根线到底走在哪、接在哪个孔上。
+    拿<span class="hl">试电笔</span>点任何一个触点，氖管该亮的亮、该灭的灭 —— 它是真的在读那一点的电位，
+    不是写死的结论。再把<span class="hl">开关改接到零线</span>上试试：灯照样能亮，
+    但换灯泡的时候灯座的螺旋套上还带着 220 V。
+  </p>
+
+  <div class="lab3d-layout">
+    <div class="lab3d-stage" id="jt-stage">
+      <canvas id="jt-canvas"></canvas>
+      <div class="stage-hint" id="jt-hint"></div>
+      <div class="stage-toast" id="jt-toast"></div>
+      <div class="stage-bar">
+        <div class="bar-left" id="jt-barleft">
+          <button type="button" class="stage-btn" id="jt-bar-cut">装回墙面</button>
+          <button type="button" class="stage-btn" id="jt-bar-reset">恢复初始</button>
+        </div>
+        <div class="stage-help">点触点 = 用试电笔测这一点 · 点开关 = 通断<br>拖空白 = 转视角 · 滚轮 = 缩放</div>
+      </div>
+    </div>
+
+    <div class="lab3d-sidebar">
+      <div class="panel">
+        <h3>场景 <span class="pill" id="jt-scenepill">剖开墙面</span></h3>
+        <div class="btn-row">
+          <button type="button" id="jt-cut">剖开墙面</button>
+          <button type="button" id="jt-reset">恢复初始</button>
+        </div>
+        <p class="note" id="jt-scenenote">现在看到的是<b>把墙剖开</b>的样子：三根线（火线红 / 零线蓝 / 地线黄绿）走在墙里。</p>
+      </div>
+
+      <div class="panel">
+        <h3>试电笔 <span class="pill" id="jt-penpill">未测</span></h3>
+        <div class="probes" id="jt-probes"></div>
+        <p class="note" id="jt-pennote">点一个触点，或者直接点画面里的触点 —— 氖管亮 = 这一点是<b>火线</b>。</p>
+      </div>
+
+      <div class="panel">
+        <h3>开关接在哪根线上 <span class="pill" id="jt-modepill">接火线（规范）</span></h3>
+        <div class="btn-row">
+          <button type="button" id="jt-modeL" class="on">开关接火线</button>
+          <button type="button" id="jt-modeN" class="danger">开关接零线</button>
+        </div>
+        <ul class="chk" id="jt-modelist" style="margin-top:8px"></ul>
+        <p class="note" id="jt-modenote"></p>
+      </div>
+
+      <div class="panel">
+        <h3>实时读数 <span class="pill" id="jt-rpill">—</span></h3>
+        <div class="readouts" id="jt-readouts"></div>
+        <div class="datagrid" id="jt-data" style="margin-top:8px"></div>
+        <p class="note" id="jt-datanote"></p>
+      </div>
+
+      <div class="panel">
+        <h3>回路通断</h3>
+        <div class="btn-row" id="jt-switches"></div>
+        <p class="note" id="jt-swnote"></p>
+      </div>
+    </div>
+
+    <div class="lab3d-lower">
+      <div class="panel">
+        <h3>家庭电路的组成 <span class="pill" id="jt-ordpill">进户 → 用电器</span></h3>
+        <ul class="chk">
+          <li class="yes"><span class="mk">①</span><span><b>进户线</b>：火线与零线，之间 220 V；零线在进户处<b>接地</b>，所以零线对地电压 ≈ 0。</span></li>
+          <li class="yes"><span class="mk">②</span><span><b>电能表</b>：串在<b>火线</b>上，测整户消耗的电能（转盘转得越快 = 用电功率越大）。</span></li>
+          <li class="yes"><span class="mk">③</span><span><b>总开关 + 空气开关</b>：控制全屋通断；电流过大时自动跳闸（第 2 节细讲）。</span></li>
+          <li class="yes"><span class="mk">④</span><span><b>用电器与插座</b>：彼此<b>并联</b>接在火线与零线之间；开关与它控制的用电器<b>串联</b>。</span></li>
+          <li class="yes"><span class="mk">⑤</span><span><b>地线</b>：接在用电器金属外壳上，直接入地。外壳漏电时电流走地线入地，人碰到也不会触电。</span></li>
+        </ul>
+      </div>
+
+      <div class="panel">
+        <h3>三孔插座：左零 右火 上接地 <span class="pill" id="jt-sockpill">—</span></h3>
+        <ul class="chk" id="jt-socklist"></ul>
+        <p class="note">把三脚插头插进去：<b>最长的那个脚是地线脚</b>，保证外壳<b>先接地、后通电</b>；
+          拔出来时正好反过来，<b>先断电、后离地</b>。</p>
+      </div>
+
+      <div class="panel">
+        <h3>为什么开关必须接在火线上 <span class="pill bad">必记</span></h3>
+        <p class="note" style="margin-top:0">
+          换灯泡时人是<b>拧下螺旋套</b>。开关接在<b>火线</b>上，断开后灯座的两个接线柱<b>对地电压都是 0</b>，
+          怎么碰都安全；开关接在<b>零线</b>上，断开后火线仍然直通灯座 ——
+          螺旋套上还带着 <span class="eq">220 V</span>，人一碰就触电。
+          <b>判据就一条：开关断开后，灯座两个接线柱对地电压都必须 ≈ 0。</b>
+        </p>
+      </div>
+
+      <div class="panel">
+        <h3>视角</h3>
+        <div class="btn-row" id="jt-views">
+          <button type="button" data-view="default" class="on">默认</button>
+          <button type="button" data-view="front">正视</button>
+          <button type="button" data-view="top">俯视</button>
+          <button type="button" data-view="box">配电箱特写</button>
+        </div>
+        <p class="note">正视看接线关系最清楚；俯视看导线从配电箱到插座、到灯座怎么走；特写读配电箱里的三个器件。</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+'use strict';
+
+/* ==================================================================
+   家庭电路 · 3D 配电箱与接线解剖台
+   ----------------------------------------------------------------
+   世界坐标：x 向右、y 向上、z 朝观察者，单位 cm。墙面在 z = 0 平面。
+   ★ 电气真值全部来自 circuit-core.js 的 MNA 求解，画面与侧栏读数同源。
+   ★ 交流 220 V / 50 Hz 在本页【按有效值做直流等效】—— 欧姆定律、功率、
+     电流在有效值下全部成立。这条假设在页面上必须写明，见 §交流等效。
+   ★ 「对地电位」= 该节点电位 − 零线节点电位（零线在进户处接地，取为 0 V）。
+   ================================================================== */
+
+// ---------------- 电气内核 ----------------
+var CC = window.CircuitCore;
+
+// ---------------- 常量（唯一来源） ----------------
+var MAINS_V   = 220;      // 交流有效值 V
+var PEN_LIT_V = 100;      // 试电笔氖管起辉阈值 V（远高于 0、远低于 220）
+var BODY_R    = 2000;     // 人体电阻 Ω
+var LEAK_R    = 100;      // 外壳漏电电阻 Ω（绝缘损坏到比较严重的地步）
+var LOAD_R    = 48.4;     // 插座上的 1000 W 用电器：220²/1000
+var LAMP_SPEC = { V: 220, W: 100 };
+var SOURCE_R  = 0.35;     // 进户电源内阻 Ω（短路电流因此有限）
+
+// 颜色（火线 / 零线 / 地线 按国标）
+var COL = {
+  L : '#f43f5e',   // 火线 红
+  N : '#60a5fa',   // 零线 蓝
+  PE: '#a3e635',   // 地线 黄绿
+  BODY:'#c084fc',  // 人体（触电电流通路，不是导线）
+  metal:'#9aa8b8', ceramic:'#e7e2d6', plastic:'#cfd6de',
+  dark:'#1e293b', wall:'#7c8798', ceil:'#8a94a4', glass:'#bfe3f5'
+};
+
+// ---------------- 场景几何 ----------------
+var SC = {
+  wall : {x0:-78, x1:52, y0:0,  y1:96, z0:-5, z1:0},
+  ceil : {x0:-78, x1:52, y0:96, y1:101, z0:-5, z1:40},
+  box  : {cx:-40, cy:68, hx:19, hy:15, hz:4.5},        // 配电箱 z: 0 .. 9
+  mount: 1.4,                                          // 箱内安装面 z
+  meter: {cx:-50, cy:74, hx:5,   hy:6,   hz:1.8},       // 电能表
+  msw  : {cx:-38, cy:74, hx:3.5, hy:6,   hz:1.6},       // 总开关
+  asw  : {cx:-28, cy:74, hx:3,   hy:6.5, hz:1.8},       // 空气开关
+  sock : {cx:24,  cy:30, hx:7,   hy:7,   hz:1.2},       // 三孔插座面板
+  wsock: {cx:0,   cy:40, hx:4.5, hy:4.5, hz:0.9},       // 墙面开关
+  lamp : {x:30, z:30, yBase:96}                          // 灯座吊在天花板下
+};
+
+// 配电箱内的器件与接线柱（z = mount）
+var POSTS = {
+  meterL:[-55, 74, SC.mount],   // 电能表 进线
+  meterR:[-45, 74, SC.mount],   // 电能表 出线
+  mainA :[-42.5,74, SC.mount],  // 总开关 进线柱
+  mainB :[-33.5,74, SC.mount],  // 总开关 出线柱
+  airA  :[-32, 74, SC.mount],   // 空气开关 进线柱
+  airB  :[-24, 74, SC.mount]    // 空气开关 出线柱（= 火线母线右端）
+};
+var BUS = {
+  n : {cx:-40, cy:66, hx:16, hy:1.1, hz:0.9},   // 零线母线（x ∈ [-56,-24]）
+  pe: {cx:-40, cy:60, hx:16, hy:1.1, hz:0.9},   // 地线母线
+  n0:[-56,66,SC.mount], n1:[-24,66,SC.mount],
+  p0:[-56,60,SC.mount], p1:[-24,60,SC.mount]
+};
+// 用电器金属外壳（三孔插座上挂的电器外壳）与站在地上的人
+var CASE = {cx:44, cy:27, cz:8, hx:5, hy:6.5, hz:4};
+var HUMAN = {x:52, z:11};
+
+// 灯座端子世界坐标：0 = 中心触点（顶端），1 = 螺旋套（侧面）
+function lampTermPos(i){
+  return i === 0 ? [SC.lamp.x, 94.6, SC.lamp.z]
+                 : [SC.lamp.x + 5.2, 92.0, SC.lamp.z];
+}
+// 插座三个孔（面板前表面 z = SC.sock.hz*2 = 2.4）
+function sockHolePos(which){
+  var c = SC.sock, fz = c.hz*2;
+  if(which === 'L') return [c.cx - 3.2, c.cy - 1.6, fz];   // 左孔 = 零线
+  if(which === 'R') return [c.cx + 3.2, c.cy - 1.6, fz];   // 右孔 = 火线
+  return [c.cx, c.cy + 3.6, fz];                            // 上孔 = 接地
+}
+
+// ---------------- 相机 / 包络 ----------------
+var ENV = {x0:-84, x1:60, y0:-7, y1:105, z0:-8, z1:46};
+var ENV_PTS = (function(){
+  var p = [], c = ENV;
+  [[0,0,0],[1,0,0],[0,1,0],[1,1,0],[0,0,1],[1,0,1],[0,1,1],[1,1,1]].forEach(function(b){
+    p.push([b[0]?c.x1:c.x0, b[1]?c.y1:c.y0, b[2]?c.z1:c.z0]);
+  });
+  // 再补几个「内部关键点」，让取景别把配电箱或灯座切出去
+  p.push([SC.box.cx, SC.box.cy, 9]);
+  p.push([SC.lamp.x, 82, SC.lamp.z]);
+  p.push([SC.sock.cx, SC.sock.cy, 3]);
+  return p;
+})();
+
+var VIEWS = {
+  default:{azim:-22, elev:14, zoom:1.00, label:'默认'},
+  front  :{azim:0,   elev:6,  zoom:1.02, label:'正视'},
+  top    :{azim:-10, elev:58, zoom:1.00, label:'俯视'},
+  box    :{azim:-16, elev:8,  zoom:1.00, label:'配电箱特写'}
+};
+
+var cvs = document.getElementById('jt-canvas');
+var ctx = cvs.getContext('2d');
+var W = 900, H = 600, DPR = 1, cam = null;
+
+function clamp(v,a,b){ return v<a?a:(v>b?b:v); }
+function add(a,b){ return [a[0]+b[0],a[1]+b[1],a[2]+b[2]]; }
+function sub(a,b){ return [a[0]-b[0],a[1]-b[1],a[2]-b[2]]; }
+function scl(a,s){ return [a[0]*s,a[1]*s,a[2]*s]; }
+function dot(a,b){ return a[0]*b[0]+a[1]*b[1]+a[2]*b[2]; }
+function cross(a,b){ return [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]]; }
+function norm(a){ var L=Math.hypot(a[0],a[1],a[2])||1; return [a[0]/L,a[1]/L,a[2]/L]; }
+function mid(a,b){ return [(a[0]+b[0])/2,(a[1]+b[1])/2,(a[2]+b[2])/2]; }
+function fmt(v,n){ return (v==null||!isFinite(v))?'—':v.toFixed(n==null?3:n); }
+
+function envelopePoints(pts,q){
+  var loR=Infinity,hiR=-Infinity,loU=Infinity,hiU=-Infinity;
+  for(var i=0;i<pts.length;i++){
+    var d=sub(pts[i],q.eye), r=dot(d,q.right), u=dot(d,q.up);
+    if(r<loR)loR=r; if(r>hiR)hiR=r; if(u<loU)loU=u; if(u>hiU)hiU=u;
+  }
+  return {loR:loR,hiR:hiR,loU:loU,hiU:hiU};
+}
+function project(p,q){
+  q = q || cam;
+  var d = sub(p, q.eye);
+  var z = Math.max(dot(d,q.fwd), 0.02);
+  var s = q.focal / z;
+  return {x: q.cx + dot(d,q.right)*s, y: q.cy - dot(d,q.up)*s, z: z, s: s};
+}
+function buildCam(){
+  var q = {};
+  q.azim = state.azim; q.elev = clamp(state.elev,-85,85);
+  q.cx = W/2; q.cy = H/2;
+  var az = q.azim*Math.PI/180, el = q.elev*Math.PI/180;
+  var dir = [Math.cos(el)*Math.sin(az), Math.sin(el), Math.cos(el)*Math.cos(az)];
+  // 取景中心：特写时收到配电箱，其余看整个房间一角
+  var focus = (state.view === 'box')
+    ? [SC.box.cx, SC.box.cy, 6]
+    : [ (ENV.x0+ENV.x1)/2, (ENV.y0+ENV.y1)/2 - 6, (ENV.z0+ENV.z1)/2 ];
+  q.dist = (state.view === 'box') ? 150 : 320;
+  q.eye = add(focus, scl(dir,q.dist));
+  q.fwd = scl(dir,-1);
+  q.right = norm(cross(q.fwd,[0,1,0]));
+  q.up = cross(q.right,q.fwd);
+  var pts = (state.view === 'box') ? ENV_PTS.filter(function(p){
+      return p[0] > SC.box.cx-30 && p[0] < SC.box.cx+30 && p[1] > SC.box.cy-26 && p[1] < SC.box.cy+26;
+    })
+    // ★ 取景包络里要放【配电箱的 8 个真实角】，不能只放对角两个点：
+    //   只给两个对角点的话，剩下 6 个角（尤其是 z 大的那四个）投影出去更靠外，
+    //   自动取景收敛完之后箱子的左边缘还是会被画布切掉（特写里实测能看到）。
+    .concat(boxCorners(SC.box.cx, SC.box.cy, SC.box.hz, SC.box.hx, SC.box.hy, SC.box.hz))
+    : ENV_PTS;
+  var e = envelopePoints(pts,q);
+  q.focal = Math.min( W*0.965/Math.max(0.001,e.hiR-e.loR), H*0.945/Math.max(0.001,e.hiU-e.loU) ) * q.dist;
+  for(var it=0; it<3; it++){
+    var x0=Infinity,x1=-Infinity,y0=Infinity,y1=-Infinity;
+    for(var i=0;i<pts.length;i++){
+      var s2=project(pts[i],q);
+      if(s2.x<x0)x0=s2.x; if(s2.x>x1)x1=s2.x;
+      if(s2.y<y0)y0=s2.y; if(s2.y>y1)y1=s2.y;
+    }
+    q.cx += W/2 - (x0+x1)/2;
+    q.cy += H/2 - (y0+y1)/2;
+    var k = Math.min( W*0.965/Math.max(1,x1-x0), H*0.945/Math.max(1,y1-y0) );
+    if(Math.abs(k-1) < 1e-9) break;
+    q.focal *= k;
+  }
+  q.focal *= state.zoom;
+  cam = q;
+  return q;
+}
+
+// ---------------- 绘制工具 ----------------
+var LIGHT = norm([-0.50, 0.78, 0.36]);
+function shadeHex(hex,f){
+  var n=parseInt(hex.slice(1),16);
+  function ch(v){ return Math.max(0, Math.min(255, Math.round(v*f))); }
+  return 'rgb('+ch((n>>16)&255)+','+ch((n>>8)&255)+','+ch(n&255)+')';
+}
+function shade(fill,n){
+  if(typeof fill!=='string' || fill.charAt(0)!=='#') return fill;
+  return shadeHex(fill, 0.62 + 0.42*Math.max(0, dot(n,LIGHT)));
+}
+function polyPath(pts,c){
+  c.beginPath();
+  for(var i=0;i<pts.length;i++){ if(i) c.lineTo(pts[i].x,pts[i].y); else c.moveTo(pts[i].x,pts[i].y); }
+  c.closePath();
+}
+function poly(pts,fill,stroke,lw,c){
+  if(pts.length<2) return;
+  polyPath(pts,c);
+  if(fill){ c.fillStyle=fill; c.fill(); }
+  if(stroke){ c.strokeStyle=stroke; c.lineWidth=lw||1; c.stroke(); }
+}
+function dot2(p,r,fill,c){ c.beginPath(); c.arc(p.x,p.y,Math.max(0.4,r),0,Math.PI*2); c.fillStyle=fill; c.fill(); }
+function ringPts(cx,y,cz,r,q,n){
+  n=n||48; var out=[];
+  for(var i=0;i<n;i++){ var a=i/n*Math.PI*2; out.push(project([cx+r*Math.cos(a), y, cz+r*Math.sin(a)], q)); }
+  return out;
+}
+function ringExtremes(pts){
+  var iL=0,iR=0;
+  for(var i=1;i<pts.length;i++){ if(pts[i].x<pts[iL].x)iL=i; if(pts[i].x>pts[iR].x)iR=i; }
+  return [iL,iR];
+}
+function frontArc(c,pts,iA,iB,moveFirst){
+  var N=pts.length, pathA=[], pathB=[], i;
+  for(i=iA;;i=(i+1)%N){ pathA.push(i); if(i===iB) break; }
+  for(i=iA;;i=(i-1+N)%N){ pathB.push(i); if(i===iB) break; }
+  function avgZ(p){ var s=0; for(var k=0;k<p.length;k++) s+=pts[p[k]].z; return s/p.length; }
+  var path = avgZ(pathA)<=avgZ(pathB) ? pathA : pathB;
+  if(moveFirst) c.moveTo(pts[path[0]].x, pts[path[0]].y);
+  else c.lineTo(pts[path[0]].x, pts[path[0]].y);
+  for(var k=1;k<path.length;k++) c.lineTo(pts[path[k]].x, pts[path[k]].y);
+  return path;
+}
+function cylSolid(cx,y0,y1,cz,r,q,c,fill,stroke,lw){
+  var p0=ringPts(cx,y0,cz,r,q), p1=ringPts(cx,y1,cz,r,q);
+  var e0=ringExtremes(p0), e1=ringExtremes(p1);
+  c.beginPath();
+  frontArc(c,p1,e1[0],e1[1],true);
+  c.lineTo(p0[e0[1]].x, p0[e0[1]].y);
+  frontArc(c,p0,e0[1],e0[0],false);
+  c.closePath();
+  if(fill){ c.fillStyle=fill; c.fill(); }
+  if(stroke){ c.strokeStyle=stroke; c.lineWidth=lw||1; c.stroke(); }
+}
+function cylTop(cx,y,cz,r,q,c,fill,stroke,lw){
+  var p=ringPts(cx,y,cz,r,q); polyPath(p,c);
+  if(fill){ c.fillStyle=fill; c.fill(); }
+  if(stroke){ c.strokeStyle=stroke; c.lineWidth=lw||1; c.stroke(); }
+}
+function cylBetween(a,b,r,q,c,fill,stroke,lw){
+  var pa=project(a,q), pb=project(b,q);
+  var dx=pb.x-pa.x, dy=pb.y-pa.y, len=Math.hypot(dx,dy);
+  if(!(len>0.01)){ dot2(pa, r*q.focal/Math.max(pa.z,0.02), fill, c); return; }
+  var nx=-dy/len, ny=dx/len;
+  var ra=r*q.focal/Math.max(pa.z,0.02), rb=r*q.focal/Math.max(pb.z,0.02);
+  poly([
+    {x:pa.x+nx*ra,y:pa.y+ny*ra},{x:pb.x+nx*rb,y:pb.y+ny*rb},
+    {x:pb.x-nx*rb,y:pb.y-ny*rb},{x:pa.x-nx*ra,y:pa.y-ny*ra}
+  ], fill, stroke, lw, c);
+}
+function sphereAt(p,r,q,c,fill,stroke,lw){
+  var pr=project(p,q), R=r*q.focal/Math.max(pr.z,0.02);
+  var g=c.createRadialGradient(pr.x-R*0.3,pr.y-R*0.35,R*0.08,pr.x,pr.y,R);
+  g.addColorStop(0,fill); g.addColorStop(1,shadeHex(fill,0.62));
+  dot2(pr, R, g, c);
+  if(stroke){ c.beginPath(); c.arc(pr.x,pr.y,Math.max(0.4,R),0,Math.PI*2); c.strokeStyle=stroke; c.lineWidth=lw||1; c.stroke(); }
+}
+function boxSolid(cx,cy,cz,hx,hy,hz,q,c,fill,stroke,lw){
+  var V=[];
+  for(var i=0;i<8;i++) V.push([cx+((i&1)?hx:-hx), cy+((i&2)?hy:-hy), cz+((i&4)?hz:-hz)]);
+  var F=[
+    {idx:[0,1,3,2], n:[0,0,-1]}, {idx:[4,5,7,6], n:[0,0,1]},
+    {idx:[0,1,5,4], n:[0,-1,0]}, {idx:[2,3,7,6], n:[0,1,0]},
+    {idx:[0,2,6,4], n:[-1,0,0]}, {idx:[1,3,7,5], n:[1,0,0]}
+  ];
+  var vis=[];
+  for(var k=0;k<F.length;k++){
+    var f=F[k], fc=[0,0,0];
+    for(var m=0;m<4;m++) fc=add(fc,V[f.idx[m]]);
+    fc=scl(fc,0.25);
+    if(dot(f.n, sub(q.eye,fc)) <= 0) continue;
+    vis.push({f:f, z:dot(sub(fc,q.eye),q.fwd)});
+  }
+  vis.sort(function(a,b){ return b.z-a.z; });
+  for(var j=0;j<vis.length;j++){
+    var pts=[];
+    for(var t=0;t<4;t++) pts.push(project(V[vis[j].f.idx[t]],q));
+    poly(pts, shade(fill, vis[j].f.n), stroke, lw, c);
+  }
+}
+// 半透明箱体（剖开墙面时用）
+function boxGhost(cx,cy,cz,hx,hy,hz,q,c,rgba,stroke,lw){
+  var V=[];
+  for(var i=0;i<8;i++) V.push([cx+((i&1)?hx:-hx), cy+((i&2)?hy:-hy), cz+((i&4)?hz:-hz)]);
+  var F=[
+    {idx:[0,1,3,2], n:[0,0,-1]}, {idx:[4,5,7,6], n:[0,0,1]},
+    {idx:[0,1,5,4], n:[0,-1,0]}, {idx:[2,3,7,6], n:[0,1,0]},
+    {idx:[0,2,6,4], n:[-1,0,0]}, {idx:[1,3,7,5], n:[1,0,0]}
+  ];
+  for(var k=0;k<F.length;k++){
+    var f=F[k], pts=[];
+    for(var t=0;t<4;t++) pts.push(project(V[f.idx[t]],q));
+    poly(pts, rgba, stroke, lw, c);
+  }
+}
+function textAt(p,txt,font,color,c,align,baseline){
+  c.font=font; c.fillStyle=color; c.textAlign=align||'center'; c.textBaseline=baseline||'middle';
+  c.fillText(txt,p.x,p.y);
+}
+// 标签避让：候选位按「与已放置盒子的重叠面积」挑最小的
+function bestLabel(ax,ay,text,font,color,weight,placed){
+  var c = ctx;
+  c.font = font;
+  var tw = c.measureText(text).width, th = 15;
+  var pad = 5, w = tw + pad*2, h = th + pad*2;
+  var cand = [[0,-18],[0,18],[26,-14],[-26,-14],[26,16],[-26,16],[0,-36],[0,36],[46,0],[-46,0]];
+  var best = null, bestCost = Infinity;
+  for(var i=0;i<cand.length;i++){
+    var x = ax + cand[i][0], y = ay + cand[i][1];
+    var box = {x:x-w/2, y:y-h/2, w:w, h:h};
+    var cost = 0;
+    for(var j=0;j<placed.length;j++){
+      var o = placed[j];
+      var ox = Math.min(box.x+box.w, o.x+o.w) - Math.max(box.x, o.x);
+      var oy = Math.min(box.y+box.h, o.y+o.h) - Math.max(box.y, o.y);
+      if(ox>0 && oy>0) cost += ox*oy;
+    }
+    // 出画布的代价极高
+    if(box.x < 4 || box.y < 4 || box.x+box.w > W-4 || box.y+box.h > H-4) cost += 1e7;
+    // 越近越好（轻微惩罚），同代价取更靠上的
+    cost += Math.abs(cand[i][0])*0.6 + Math.abs(cand[i][1])*0.5 + i*0.4;
+    if(cost < bestCost){ bestCost = cost; best = {x:x,y:y,box:box}; }
+  }
+  placed.push(best.box);
+  // 引线 + 底板 + 文字
+  c.save();
+  c.strokeStyle = 'rgba(148,163,184,.5)'; c.lineWidth = 1;
+  c.beginPath(); c.moveTo(ax,ay); c.lineTo(best.x, best.y); c.stroke();
+  c.fillStyle = 'rgba(2,6,23,.82)';
+  c.strokeStyle = 'rgba(148,163,184,.28)';
+  c.beginPath();
+  var r=5, x0=best.box.x, y0=best.box.y, x1=x0+w, y1=y0+h;
+  c.moveTo(x0+r,y0); c.lineTo(x1-r,y0); c.arcTo(x1,y0,x1,y0+r,r);
+  c.lineTo(x1,y1-r); c.arcTo(x1,y1,x1-r,y1,r);
+  c.lineTo(x0+r,y1); c.arcTo(x0,y1,x0,y1-r,r);
+  c.lineTo(x0,y0+r); c.arcTo(x0,y0,x0+r,y0,r); c.closePath();
+  c.fill(); c.stroke();
+  c.font = font; c.fillStyle = color; c.textAlign='center'; c.textBaseline='middle';
+  c.fillText(text, best.x, best.y);
+  c.restore();
+  return best.box;
+}
+
+// ---------------- 电气：元件与接线（唯一真值处） ----------------
+function compsOf(){
+  return [
+    // 进户电源：交流 220 V，按【有效值】做直流等效
+    {id:'src',    type:'battery',  params:{cells:1, emfPerCell:MAINS_V, rPerCell:SOURCE_R}},
+    {id:'main',   type:'switch',   params:{closed:true}},      // 总开关
+    {id:'air',    type:'switch',   params:{closed:true}},      // 空气开关
+    // 零线 / 地线母线。真实母线也有极小电阻，用 0.005 Ω 表示 ——
+    // 这样它们就有【真正的端子】，导线可以挂上去，而不是画一根「没进网表」的假线。
+    {id:'busN',   type:'resistor', params:{R:0.005}},
+    {id:'busPE',  type:'resistor', params:{R:0.005}},
+    {id:'lsw',    type:'switch',   params:{closed:false}},     // 墙面开关
+    // lamp:0 = 中心触点，lamp:1 = 螺旋套。不计温度影响 ⇒ 定值电阻 484 Ω
+    {id:'lamp',   type:'bulb',     params:{ratedV:LAMP_SPEC.V, ratedW:LAMP_SPEC.W, tempDependent:false}},
+    {id:'sockSw', type:'switch',   params:{closed:false}},     // 插座上有没有插用电器
+    {id:'load',   type:'resistor', params:{R:LOAD_R}},
+    {id:'leakSw', type:'switch',   params:{closed:false}},     // 绝缘损坏（漏电）发生
+    {id:'leak',   type:'resistor', params:{R:LEAK_R}},         // 外壳与火线之间的漏电电阻
+    {id:'peSw',   type:'switch',   params:{closed:true}},      // 地线接上了没有
+    {id:'touch',  type:'switch',   params:{closed:false}},     // 手有没有碰到外壳
+    {id:'body',   type:'resistor', params:{R:BODY_R}}          // 人体电阻
+  ];
+}
+// 导线：既给求解器（a/b 端子），又给渲染（pts 三维折线）。
+// ★ 铁律：每一根画出来的线都必须是网表里真实存在的线 —— 否则就会出现
+//   「画面上有电流在跑、电学上根本没有这条支路」的假象。
+function wiresOf(){
+  var modeN = (state.swMode === 'N');
+  var M = SC.mount;
+  // 火线母线右端（= 空气开关出线柱）
+  var LB = POSTS.airB;
+  // 「配电箱 → 灯座螺旋套」这根线，在两种接法下【颜色与来源互换】：
+  //   规范（开关接火线）：零线 → 螺旋套
+  //   错误（开关接零线）：火线 → 螺旋套
+  var toLamp = modeN
+    ? {role:'L', a:['air',1],  b:['lamp',1], head:LB}
+    : {role:'N', a:['busN',1], b:['lamp',1], head:BUS.n1};
+  // 「配电箱 → 墙面开关」这根线同理互换
+  var toSwitch = modeN
+    ? {role:'N', a:['src',1],  b:['lsw',0], head:BUS.n1}
+    : {role:'L', a:['air',1],  b:['lsw',0], head:LB};
+
+  return [
+    // ① 进户火线：墙外 → 穿过电能表 → 总开关进线柱
+    {role:'L', a:['src',0], b:['main',0],
+     pts:[[-78,50,-2.5],[-66,50,-2.5],[-66,74,-2.5],[-50,74,-2.5],[-50,74,M],
+          [-50,80.5,M],[-42.5,80.5,M],[-42.5,74,M]]},
+    // ② 进户零线：墙外 → 零线母线左端
+    {role:'N', a:['src',1], b:['busN',0],
+     pts:[[-78,44,-2.5],[-70,44,-2.5],[-70,66,-2.5],[-56,66,-2.5],BUS.n0]},
+    // ③ 箱内：总开关 → 空气开关
+    {role:'L', a:['main',1], b:['air',0],
+     pts:[[-33.5,74,M],[-33.5,80.5,M],[-32,80.5,M],[-32,74,M]]},
+    // ④ 共地：零线母线 → 出箱 → 下到地面（接地符号）→ 上来 → 地线母线
+    {role:'PE', a:['busN',0], b:['busPE',0],
+     pts:[BUS.n0,[-56,66,-2.5],[-64,66,-2.5],[-64,-3,-2.5],[-74,-3,-2.5],
+          [-74,60,-2.5],[-56,60,-2.5],BUS.p0]},
+    // ⑤ 配电箱 → 墙面开关（接法决定颜色与来源）
+    {role:toSwitch.role, a:toSwitch.a, b:toSwitch.b,
+     pts:[toSwitch.head,[-24,toSwitch.head[1],-2.5],[-24,48,-2.5],[0,48,-2.5],[0,44.5,1.8]]},
+    // ⑥ 墙面开关 → 灯座中心触点
+    {role:'L', a:['lsw',1], b:['lamp',0],
+     pts:[[0,35.5,1.8],[0,34,-3.6],[30,34,-3.6],[30,98.5,-3.6],[30,98.5,30],
+          [30,96,30],[30,94.6,30]]},
+    // ⑦ 配电箱 → 灯座螺旋套（接法决定颜色与来源）
+    {role:toLamp.role, a:toLamp.a, b:toLamp.b,
+     pts:[toLamp.head,[-18,toLamp.head[1],-2.5],[-18,98.5,-2.5],[34,98.5,-2.5],
+          [34,98.5,30],[34,92,30],[35.2,92,30]]},
+    // ⑧ 火线母线 → 插座右孔
+    {role:'L', a:['air',1], b:['sockSw',0],
+     pts:[LB,[-24,74,-2.5],[-24,26,-2.5],[26.8,26,-2.5],[26.8,28.4,-2.5],[26.8,28.4,0.4]]},
+    // ⑨ 插座右孔 → 用电器
+    {role:'L', a:['sockSw',1], b:['load',0], pts:[[26.8,28.4,0.4],[29.6,28.4,2.6]]},
+    // ⑩ 用电器 → 零线母线
+    {role:'N', a:['load',1], b:['busN',1],
+     pts:[[18,28.4,2.6],[20.8,28.4,0.4],[20.8,28.4,-2.5],[20.8,20,-2.5],
+          [-30,20,-2.5],[-30,66,-2.5],BUS.n1]},
+    // ⑪ 地线母线 → 插座上孔
+    {role:'PE', a:['busPE',1], b:['peSw',0],
+     pts:[BUS.p1,[-24,60,-2.5],[-34,60,-2.5],[-34,14,-2.5],[24,14,-2.5],
+          [24,33.6,-2.5],[24,33.6,0.4]]},
+    // ⑫ 插座上孔 → 用电器金属外壳
+    {role:'PE', a:['peSw',1], b:['leak',1],
+     pts:[[24,33.6,0.4],[24,36,2.4],[28,36,4],[CASE.cx-CASE.hx,CASE.cy+2,CASE.cz]]},
+    // ⑬ 火线母线 → 漏电开关（绝缘损坏）。gate = 故障不存在时这根线【也不该被画出来】
+    {role:'L', gate:'leakSw', a:['air',1], b:['leakSw',0],
+     pts:[LB,[-24,74,-2.5],[12,74,-2.5],[12,42,-2.5],[CASE.cx-4,CASE.cy+9,CASE.cz-2]]},
+    // ⑭ 漏电开关 → 漏电电阻
+    {role:'L', gate:'leakSw', a:['leakSw',1], b:['leak',0],
+     pts:[[CASE.cx-4,CASE.cy+9,CASE.cz-2],[CASE.cx-2,CASE.cy+7,CASE.cz-1]]},
+    // ⑮ 外壳 → 手。⑮⑯⑰ 是【人体】通路：人没碰外壳时这三根线在物理上根本不存在，
+    //   所以 gate:'touch' —— 不能出现「人没碰到、画面上却有一根线连着他」。
+    {role:'BODY', gate:'touch', a:['leak',1], b:['touch',0],
+     pts:[[CASE.cx+CASE.hx,CASE.cy,CASE.cz],[CASE.cx+CASE.hx+2,CASE.cy+2,CASE.cz]]},
+    // ⑯ 手 → 人体
+    {role:'BODY', gate:'touch', a:['touch',1], b:['body',0],
+     pts:[[CASE.cx+CASE.hx+2,CASE.cy+2,CASE.cz],[HUMAN.x,22,HUMAN.z]]},
+    // ⑰ 人体 → 大地（人站在地上，脚与大地同电位）
+    {role:'BODY', gate:'touch', a:['body',1], b:['busPE',0],
+     pts:[[HUMAN.x,22,HUMAN.z],[HUMAN.x,0,HUMAN.z]]}
+  ];
+}
+
+// ---------------- 状态 ----------------
+var state = {
+  azim: VIEWS.default.azim, elev: VIEWS.default.elev, zoom: 1, view:'default',
+  cut: true,              // 剖开墙面
+  swMode: 'L',            // 'L' 开关接火线（规范） / 'N' 开关接零线（错误）
+  pen: null,              // 试电笔当前测的触点 id
+  penLit: false,
+  sw: {main:true, air:true, lsw:false, sockSw:false, leakSw:false, peSw:true, touch:false},
+  comps: [], wires: [], res: null, flow: [],
+  t: 0,                   // 动画时间（s）
+  drawn: {},              // 自检：实际画出去的几何
+  toast: ''
+};
+
+// 试电笔测点：每个点指向一个【元件端子】，电位从求解结果读。
+// ★ 端子必须指向「这一点真正的那个节点」，不能用「电位碰巧相同的别的节点」代替 ——
+//   比如插座上孔要指向 peSw:1（插座上孔与外壳是同一个节点），指向 src:1 的话
+//   「地线没接」时读数仍然是 0 V，这条判据就变成了恒真。
+var PROBES = [
+  {id:'inL',   name:'进户火线',        term:['src',0]},
+  {id:'inN',   name:'进户零线',        term:['src',1]},
+  {id:'PE',    name:'地线',            term:['busPE',0]},
+  {id:'sockR', name:'插座 右孔(火)',   term:['air',1]},
+  {id:'sockL', name:'插座 左孔(零)',   term:['busN',1]},
+  {id:'sockPE',name:'插座 上孔(地)',   term:['peSw',1]},
+  {id:'lamp0', name:'灯座 中心触点',   term:['lamp',0]},
+  {id:'lamp1', name:'灯座 螺旋套',     term:['lamp',1]},
+  {id:'swA',   name:'开关 进线柱',     term:['lsw',0]},
+  {id:'swB',   name:'开关 出线柱',     term:['lsw',1]},
+  {id:'case',  name:'用电器金属外壳',  term:['leak',1]}
+];
+function probePos(p){
+  switch(p.id){
+    case 'inL':   return [-66,50,-2.5];
+    case 'inN':   return [-70,44,-2.5];
+    case 'PE':    return [-74,20,-2.5];
+    case 'sockR': return sockHolePos('R');
+    case 'sockL': return sockHolePos('L');
+    case 'sockPE':return sockHolePos('PE');
+    case 'lamp0': return lampTermPos(0);
+    case 'lamp1': return lampTermPos(1);
+    case 'swA':   return [SC.wsock.cx, SC.wsock.cy + 2.6, 1.8];
+    case 'case':  return [CASE.cx - CASE.hx, CASE.cy + 4, CASE.cz + CASE.hz];
+    default:      return [SC.wsock.cx, SC.wsock.cy - 2.6, 1.8];
+  }
+}
+function probeById(id){ for(var i=0;i<PROBES.length;i++) if(PROBES[i].id===id) return PROBES[i]; return null; }
+
+function rebuild(){
+  state.comps = compsOf();
+  state.comps.forEach(function(c){
+    if(c.id === 'main' || c.id === 'air' || c.id === 'peSw'){
+      c.params.closed = state.sw[c.id] !== false;
+    }
+    if(c.id === 'lsw' || c.id === 'sockSw' || c.id === 'leakSw' || c.id === 'touch'){
+      c.params.closed = !!state.sw[c.id];
+    }
+  });
+  state.wires = wiresOf();
+}
+
+// ---------------- 求解 ----------------
+function nodeOf(compId, ti){
+  var res = state.res;
+  if(!res || !res.terminalNode) return null;
+  return res.terminalNode[compId+':'+ti];
+}
+function vOfNode(nd){
+  var res = state.res;
+  if(!res || nd == null) return null;
+  var v = res.nodeV[nd];
+  return (typeof v === 'number' && isFinite(v)) ? v : null;
+}
+// 对地电位：零线在进户处接地，所以【零线节点 = 0 V 基准】
+function groundNode(){ return nodeOf('src',1); }
+function vGround(compId, ti){
+  var nd = nodeOf(compId, ti);
+  var v = vOfNode(nd), g = vOfNode(groundNode());
+  if(v == null || g == null) return null;
+  return v - g;
+}
+function solveNow(){
+  rebuild();
+  var comps = state.comps.map(function(c){ return {id:c.id, type:c.type, params:c.params}; });
+  var wires = state.wires.map(function(w){
+    return {a:{compId:w.a[0], termIdx:w.a[1]}, b:{compId:w.b[0], termIdx:w.b[1]}};
+  });
+  // shortCurrent 必须按本页电源定：220 V / 0.35 Ω 真短路时约 628 A，
+  // 远高于正常工作的 0.45 A。用内核默认 10 A 会把「真短路」静默判成 ok。
+  var res = CC.solve(comps, wires, {shortCurrent: 5});
+  state.res = res;
+  var fl = CC.wireCurrents({comps:comps, wires:wires}, res);
+  state.flow = fl.slice();
+  // 试电笔：氖管亮 ⟺ 该点对地电位 ≥ 阈值
+  var lit = false;
+  if(state.pen){
+    var pr = probeById(state.pen);
+    if(pr){
+      var v = vGround(pr.term[0], pr.term[1]);
+      lit = (v != null) && (v >= PEN_LIT_V);
+    }
+  }
+  state.penLit = lit;
+  return res;
+}
+function compRec(id){
+  var res = state.res;
+  return (res && res.components && res.components[id]) || null;
+}
+function isShorted(){ return !!(state.res && state.res.status === 'shorted'); }
+function lampBright(){
+  var r = compRec('lamp');
+  if(!r) return 0;
+  return Math.max(0, Math.min((r.p||0) / LAMP_SPEC.W, 1.25));
+}
+
+// ---------------- 场景绘制 ----------------
+var labels = [], obstacles = [];
+function reg(x0,y0,x1,y1){
+  if(x1<x0){ var t=x0; x0=x1; x1=t; }
+  if(y1<y0){ var t2=y0; y0=y1; y1=t2; }
+  obstacles.push({x:x0,y:y0,w:x1-x0,h:y1-y0});
+}
+function screenBoxOf(corners,q){
+  var x0=Infinity,x1=-Infinity,y0=Infinity,y1=-Infinity;
+  corners.forEach(function(c){
+    var p = project(c,q);
+    if(p.x<x0)x0=p.x; if(p.x>x1)x1=p.x; if(p.y<y0)y0=p.y; if(p.y>y1)y1=p.y;
+  });
+  return {x0:x0,y0:y0,x1:x1,y1:y1};
+}
+function boxCorners(cx,cy,cz,hx,hy,hz){
+  var out=[];
+  for(var i=0;i<8;i++) out.push([cx+((i&1)?hx:-hx), cy+((i&2)?hy:-hy), cz+((i&4)?hz:-hz)]);
+  return out;
+}
+
+function drawWires(q){
+  var segs = 0;
+  state.drawn.wireDrawn = 0; state.drawn.gatedDrawn = 0;
+  // 记下【真正画出去的是哪几根】—— 自检要拿它跟原始几何比「墙内的线一根都没画」，
+  // 只给一个计数的话测试只能自己猜有几根，猜错就变成一条问错问题的断言。
+  state.drawn.wireDrawnIdx = [];
+  for(var i=0;i<state.wires.length;i++){
+    var w = state.wires[i], pts = w.pts;
+    var col = COL[w.role] || COL.L;
+    // 条件支路：故障/接触没发生时，这根线在物理上不存在，不能画
+    if(w.gate && !state.sw[w.gate]) continue;
+    // 墙内的线：没剖开时藏起来（这正是「剖开」的意义）
+    var inside = pts.some(function(p){ return p[2] < -0.2; });
+    if(inside && !state.cut) continue;
+    state.drawn.wireDrawn++; if(w.gate) state.drawn.gatedDrawn++;
+    state.drawn.wireDrawnIdx.push(i);
+    var I = Math.abs(state.flow[i] || 0);
+    var live = I > 1e-4;
+    for(var k=0;k<pts.length-1;k++){
+      cylBetween(pts[k], pts[k+1], 0.55, q, ctx, shade(col,[0,1,0]), 'rgba(2,6,23,.5)', 0.8);
+      segs++;
+    }
+    // 电流粒子：速度 ∝ 电流；方向按电流正负
+    if(live){
+      for(var k2=0;k2<pts.length-1;k2++){
+        var a=pts[k2], b=pts[k2+1];
+        var len=Math.hypot(b[0]-a[0],b[1]-a[1],b[2]-a[2]);
+        var n = Math.max(1, Math.floor(len/7));
+        for(var m=0;m<n;m++){
+          var frac = ((m/n) + state.t*(0.10+0.5*Math.min(I,2))*(state.flow[i]>0?1:-1)) % 1;
+          if(frac<0) frac += 1;
+          var p = [a[0]+(b[0]-a[0])*frac, a[1]+(b[1]-a[1])*frac, a[2]+(b[2]-a[2])*frac];
+          var sp = project(p,q);
+          dot2(sp, Math.max(1.4, 0.34*sp.s), 'rgba(255,255,255,.92)', ctx);
+        }
+      }
+    }
+  }
+  state.drawn.wireSegs = segs;
+}
+
+function drawWall(q){
+  var w = SC.wall, c = SC.ceil;
+  // 天花板
+  boxSolid((c.x0+c.x1)/2, (c.y0+c.y1)/2, (c.z0+c.z1)/2,
+           (c.x1-c.x0)/2, (c.y1-c.y0)/2, (c.z1-c.z0)/2, q, ctx, COL.ceil, 'rgba(2,6,23,.45)', 1);
+  // 墙：剖开时半透明，好让墙里的线透出来
+  if(state.cut){
+    boxGhost((w.x0+w.x1)/2, (w.y0+w.y1)/2, (w.z0+w.z1)/2,
+             (w.x1-w.x0)/2, (w.y1-w.y0)/2, (w.z1-w.z0)/2, q, ctx,
+             'rgba(124,135,152,.16)', 'rgba(148,163,184,.22)', 1);
+  }else{
+    boxSolid((w.x0+w.x1)/2, (w.y0+w.y1)/2, (w.z0+w.z1)/2,
+             (w.x1-w.x0)/2, (w.y1-w.y0)/2, (w.z1-w.z0)/2, q, ctx, COL.wall, 'rgba(2,6,23,.45)', 1);
+  }
+  // 接地符号（共地那根线的入地点）
+  var g=[-69,-3,-2.5], gp=project(g,q);
+  for(var i=0;i<3;i++){
+    var hw = 6-i*1.7, y = gp.y + i*5;
+    ctx.beginPath(); ctx.moveTo(gp.x-hw, y); ctx.lineTo(gp.x+hw, y);
+    ctx.strokeStyle = COL.PE; ctx.lineWidth = 2.4; ctx.stroke();
+  }
+  state.drawn.wallCut = !!state.cut;
+  state.drawn.groundScreen = {x:gp.x, y:gp.y};
+}
+
+function drawDistributionBox(q){
+  var b = SC.box, M = SC.mount;
+  // 箱体（门开着，看到里面）
+  boxSolid(b.cx, b.cy, b.hz/2, b.hx, b.hy, b.hz/2, q, ctx, '#c9d2dc', 'rgba(2,6,23,.5)', 1.2);
+  // 箱内背板
+  boxSolid(b.cx, b.cy, 0.5, b.hx-1.5, b.hy-1.5, 0.5, q, ctx, '#eef2f7', 'rgba(2,6,23,.28)', 0.8);
+
+  // 电能表：本体 + 转盘（有电流时转）
+  var m = SC.meter;
+  boxSolid(m.cx, m.cy, M + m.hz, m.hx, m.hy, m.hz, q, ctx, COL.plastic, 'rgba(2,6,23,.5)', 1);
+  var discC = [m.cx, m.cy + 1.6, M + m.hz*2 + 0.05];
+  var dp = project(discC,q), dR = 2.4*dp.s;
+  dot2(dp, dR, '#0f172a', ctx);
+  var totalI = Math.abs((compRec('src')||{}).i || 0);
+  var ang = state.t * (0.4 + 3.2*Math.min(totalI,2));
+  ctx.beginPath();
+  ctx.moveTo(dp.x, dp.y);
+  ctx.lineTo(dp.x + Math.cos(ang)*dR*0.82, dp.y + Math.sin(ang)*dR*0.82);
+  ctx.strokeStyle = '#f87171'; ctx.lineWidth = Math.max(1, dR*0.22); ctx.stroke();
+
+  // 总开关（闸刀）：本体 + 刀片
+  var s = SC.msw;
+  boxSolid(s.cx, s.cy, M + s.hz, s.hx, s.hy, s.hz, q, ctx, '#d8dee6', 'rgba(2,6,23,.5)', 1);
+  var bladeA = [s.cx - 1.6, s.cy - 4.2, M + s.hz*2 + 0.2];
+  var bladeB = state.sw.main ? [s.cx + 1.6, s.cy - 4.2, M + s.hz*2 + 0.2]
+                             : [s.cx - 1.2, s.cy + 1.0, M + s.hz*2 + 2.2];
+  cylBetween(bladeA, bladeB, 0.5, q, ctx, COL.metal, 'rgba(2,6,23,.45)', 0.8);
+
+  // 空气开关：本体 + 手柄
+  var a = SC.asw;
+  boxSolid(a.cx, a.cy, M + a.hz, a.hx, a.hy, a.hz, q, ctx, '#e3e8ee', 'rgba(2,6,23,.5)', 1);
+  var lvY = state.sw.air ? a.cy + 1.2 : a.cy - 1.2;
+  boxSolid(a.cx, lvY, M + a.hz*2 + 0.8, 1.1, 2.4, 0.9, q, ctx,
+           state.sw.air ? '#34d399' : '#f87171', 'rgba(2,6,23,.5)', 0.8);
+
+  // 零线母线 / 地线母线（真实的金属排）
+  [['n',COL.N],['pe',COL.PE]].forEach(function(pair){
+    var bb = BUS[pair[0]];
+    boxSolid(bb.cx, bb.cy, M + bb.hz, bb.hx, bb.hy, bb.hz, q, ctx,
+             shadeHex(COL.metal,1.05), 'rgba(2,6,23,.5)', 0.9);
+    // 母线左端的进线色标
+    cylBetween([bb.cx-bb.hx, bb.cy, M+bb.hz*2], [bb.cx-bb.hx+4, bb.cy, M+bb.hz*2],
+               0.6, q, ctx, pair[1], null, 0);
+  });
+
+  // 接线柱（沿 z 方向立起来的短柱）
+  var postKeys = Object.keys(POSTS);
+  postKeys.forEach(function(k){
+    var p = POSTS[k];
+    cylBetween([p[0],p[1],M], [p[0],p[1],M+1.7], 0.85, q, ctx, COL.metal, 'rgba(2,6,23,.5)', 0.7);
+    cylBetween([p[0],p[1],M+1.7], [p[0],p[1],M+2.0], 1.05, q, ctx, shadeHex(COL.metal,1.2), 'rgba(2,6,23,.45)', 0.6);
+  });
+  var bb2 = screenBoxOf(boxCorners(b.cx,b.cy,0,b.hx,b.hy,b.hz),q);
+  reg(bb2.x0,bb2.y0,bb2.x1,bb2.y1);
+  state.drawn.boxScreen = bb2;
+  state.drawn.postCount = postKeys.length;
+  state.drawn.busCount = 2;
+}
+
+// 用电器金属外壳（挂在三孔插座上）与站在地上的人
+function drawCaseAndHuman(q){
+  var C = CASE, live = false;
+  var v = vGround('leak',1);
+  live = (v != null && v >= PEN_LIT_V);
+  // 外壳
+  boxSolid(C.cx, C.cy, C.cz, C.hx, C.hy, C.hz, q, ctx,
+           live ? '#fca5a5' : '#cbd5e1', 'rgba(2,6,23,.5)', 1);
+  if(live){
+    var cp = project([C.cx, C.cy, C.cz+C.hz], q), cr = 9*cp.s;
+    var g = ctx.createRadialGradient(cp.x,cp.y,cr*0.2,cp.x,cp.y,cr*2.4);
+    g.addColorStop(0,'rgba(248,113,113,.55)'); g.addColorStop(1,'rgba(248,113,113,0)');
+    dot2(cp, cr*2.4, g, ctx);
+  }
+  // 三脚插头（连到插座）
+  cylBetween([C.cx-C.hx, C.cy+2, C.cz], [sockHolePos('PE')[0]+1.6, sockHolePos('PE')[1]-1.6, 2.6],
+             0.55, q, ctx, '#e2e8f0', 'rgba(2,6,23,.45)', 0.7);
+  // 人（只在「手碰外壳」打开时出现）
+  if(state.sw.touch){
+    var H = HUMAN, y0 = 0, y1 = 26;
+    cylSolid(H.x, y0, y1-5, H.z, 2.6, q, ctx, '#8fb3d9', 'rgba(2,6,23,.45)', 0.9);
+    sphereAt([H.x, y1-2.6, H.z], 3.0, q, ctx, '#f5d0a9', 'rgba(2,6,23,.4)', 0.8);
+    // 伸向外壳的手臂
+    cylBetween([H.x, y1-8, H.z], [C.cx+C.hx+2, C.cy+2, C.cz], 1.0, q, ctx, '#8fb3d9', 'rgba(2,6,23,.45)', 0.8);
+    state.drawn.humanDrawn = true;
+  } else {
+    state.drawn.humanDrawn = false;
+  }
+  state.drawn.caseLive = live;
+  state.drawn.caseScreen = screenBoxOf(boxCorners(C.cx,C.cy,C.cz-C.hz,C.hx,C.hy,C.hz),q);
+}
+
+function drawSocket(q){
+  var s = SC.sock, fz = s.hz*2;
+  boxSolid(s.cx, s.cy, s.hz, s.hx, s.hy, s.hz, q, ctx, '#f2f4f7', 'rgba(2,6,23,.5)', 1.2);
+  // 三个孔（左零 / 右火 / 上接地），孔内是金属触点
+  ['L','R','PE'].forEach(function(k){
+    var h = sockHolePos(k);
+    var hp = project([h[0], h[1], h[2]+0.05], q);
+    dot2(hp, 1.35*hp.s, '#0b1220', ctx);
+    dot2(hp, 0.62*hp.s, shadeHex(COL.metal,1.15), ctx);
+  });
+  // 面板上的丝印：L / N / ⏚
+  ['L','R','PE'].forEach(function(k){
+    var h = sockHolePos(k);
+    var hp = project([h[0], h[1], h[2]+0.05], q);
+    var tag = k==='L' ? 'N' : (k==='R' ? 'L' : '⏚');
+    textAt({x:hp.x, y:hp.y - 1.6*hp.s}, tag, '700 ' + Math.max(7, 1.5*hp.s) + 'px -apple-system,sans-serif',
+           'rgba(30,41,59,.75)', ctx);
+  });
+  // 登记插座面板的屏幕盒（标签避让的障碍物之一）
+  var bb = screenBoxOf(boxCorners(s.cx,s.cy,0,s.hx,s.hy,fz),q);
+  reg(bb.x0,bb.y0,bb.x1,bb.y1);
+  state.drawn.sockScreen = bb;
+  state.drawn.sockHoles = 3;
+}
+
+function drawWallSwitch(q){
+  var s = SC.wsock, fz = s.hz*2;
+  boxSolid(s.cx, s.cy, s.hz, s.hx, s.hy, s.hz, q, ctx, '#f2f4f7', 'rgba(2,6,23,.5)', 1.2);
+  // 翘板
+  var rockerY = state.sw.lsw ? s.cy + 0.9 : s.cy - 0.9;
+  boxSolid(s.cx, rockerY, fz + 0.5, 2.2, 2.6, 0.5, q, ctx, '#e6ebf1', 'rgba(2,6,23,.45)', 0.8);
+  // 两个接线柱：沿 z 朝面板外伸出的小金属柱。
+  // ⚠️ 这里原来写的是 cylSolid(p[0], fz, p[1], 1.8, 0.75, …)。
+  //    cylSolid 是【沿 y 轴】的竖圆柱，签名是 (cx, y0, y1, cz, r) ——
+  //    于是「接线柱」变成了两根从地面(y=1.8)戳到开关(y=42.6)的金属长杆，
+  //    画面上就是开关下面挂着一根竖杆。沿 z 伸出的柱子必须用 cylBetween。
+  //    （自检全绿、只有出图复看才发现的这一类。）
+  [[s.cx, s.cy+2.6],[s.cx, s.cy-2.6]].forEach(function(p){
+    cylBetween([p[0], p[1], fz], [p[0], p[1], fz+1.7], 0.8, q, ctx, COL.metal, 'rgba(2,6,23,.5)', 0.8);
+  });
+  var bb = screenBoxOf(boxCorners(s.cx,s.cy,0,s.hx,s.hy,fz),q);
+  reg(bb.x0,bb.y0,bb.x1,bb.y1);
+  state.drawn.wsockScreen = bb;
+}
+
+function drawLamp(q){
+  var L = SC.lamp, y = L.yBase;
+  // 灯座外壳（陶瓷）
+  cylSolid(L.x, y-5.0, y, L.z, 5.5, q, ctx, COL.ceramic, 'rgba(2,6,23,.5)', 1);
+  cylTop(L.x, y, L.z, 5.5, q, ctx, shadeHex(COL.ceramic,1.15), null, 0);
+  // 螺旋套（金属，端子 1）
+  cylSolid(L.x, y-5.6, y-4.2, L.z, 5.15, q, ctx, COL.metal, 'rgba(2,6,23,.5)', 0.8);
+  // 中心触点（端子 0）
+  cylSolid(L.x, y-6.6, y-5.4, L.z, 1.4, q, ctx, shadeHex(COL.metal,1.2), 'rgba(2,6,23,.5)', 0.6);
+  // 灯泡（玻璃 + 灯丝）
+  var bp = [L.x, y-13.6, L.z], b = lampBright();
+  sphereAt(bp, 6.8, q, ctx, b>0.02 ? '#fde68a' : COL.glass, 'rgba(2,6,23,.42)', 1);
+  if(b>0.02){
+    var sp = project(bp,q), R = 6.8*sp.s;
+    var g = ctx.createRadialGradient(sp.x,sp.y,R*0.1,sp.x,sp.y,R*1.75);
+    g.addColorStop(0,'rgba(253,224,71,'+Math.min(0.85,0.30+0.55*b)+')');
+    g.addColorStop(1,'rgba(253,224,71,0)');
+    dot2(sp, R*1.75, g, ctx);
+  }
+  // 灯泡玻璃颈
+  cylSolid(L.x, y-8.4, y-6.6, L.z, 3.1, q, ctx, b>0.02?'#fde68a':COL.glass, 'rgba(2,6,23,.35)', 0.7);
+  // 两根灯丝引线
+  cylBetween(lampTermPos(0), [L.x, y-10.4, L.z], 0.35, q, ctx, COL.metal, null, 0);
+  cylBetween([L.x+2.0, y-6.2, L.z], [L.x+1.2, y-10.4, L.z], 0.3, q, ctx, COL.metal, null, 0);
+
+  var bb = screenBoxOf([[L.x-7,y-21,L.z-7],[L.x+7,y,L.z+7]], q);
+  reg(bb.x0,bb.y0,bb.x1,bb.y1);
+  state.drawn.lampScreen = bb;
+  state.drawn.lampBright = +b.toFixed(4);
+}
+
+// 试电笔：笔身 + 氖管 + 笔尖，尖端落在被测点上
+function drawPen(q){
+  if(!state.pen){ state.drawn.penDrawn = false; return; }
+  var pr = probeById(state.pen);
+  if(!pr){ state.drawn.penDrawn = false; return; }
+  var tip = probePos(pr);
+  // 笔身朝右上方伸出去，避免挡住被测点
+  var dir = norm([0.72, 0.55, 0.42]);
+  var tail = add(tip, scl(dir, 17));
+  var bodyA = add(tip, scl(dir, 2.2));
+  cylBetween(tip, bodyA, 0.5, q, ctx, shadeHex(COL.metal,1.2), 'rgba(2,6,23,.5)', 0.7);
+  cylBetween(bodyA, add(tip, scl(dir, 12.6)), 1.15, q, ctx, '#e2e8f0', 'rgba(2,6,23,.5)', 0.8);
+  // 氖管：亮 = 橙红发光
+  var neonA = add(tip, scl(dir, 12.6)), neonB = add(tip, scl(dir, 15.6));
+  var lit = state.penLit;
+  cylBetween(neonA, neonB, 1.05, q, ctx, lit ? '#fb923c' : '#64748b', 'rgba(2,6,23,.5)', 0.7);
+  if(lit){
+    var np = project(mid(neonA,neonB), q), nr = 1.05*np.s;
+    var g = ctx.createRadialGradient(np.x,np.y,nr*0.2,np.x,np.y,nr*3.4);
+    g.addColorStop(0,'rgba(251,146,60,.85)'); g.addColorStop(1,'rgba(251,146,60,0)');
+    dot2(np, nr*3.4, g, ctx);
+  }
+  cylBetween(add(tip, scl(dir, 15.6)), tail, 0.95, q, ctx, '#cbd5e1', 'rgba(2,6,23,.5)', 0.8);
+  state.drawn.penDrawn = true;
+  state.drawn.penLit = lit;
+  state.drawn.penTipScreen = project(tip,q);
+}
+
+function drawLabels(q){
+  labels = [];
+  var placed = obstacles.slice();
+  function lab(p3, text, color, dy){
+    var p = project(p3,q);
+    return bestLabel(p.x, p.y + (dy||0), text, '600 11.5px -apple-system,"PingFang SC",sans-serif', color, 600, placed);
+  }
+  var out = {};
+  // 配电箱内的三个器件：锚点放在【箱底】那一排，让标签向下方扇形展开
+  out.meter = lab([SC.meter.cx, 53, SC.mount+3], '电能表', '#cbd5e1');
+  out.main  = lab([SC.msw.cx,   53, SC.mount+3], '总开关', '#cbd5e1');
+  out.air   = lab([SC.asw.cx,   53, SC.mount+3], '空气开关', '#cbd5e1');
+  out.box   = lab([SC.box.cx, SC.box.cy + SC.box.hy + 1, SC.mount+2], '配电箱', '#e2e8f0');
+  out.sock  = lab([SC.sock.cx, SC.sock.cy - SC.sock.hy - 3, 3], '三孔插座', '#cbd5e1');
+  out.lamp  = lab([SC.lamp.x, 74, SC.lamp.z], '灯座 + 灯泡', '#cbd5e1');
+  out.wsock = lab([SC.wsock.cx - SC.wsock.hx - 2, SC.wsock.cy, 3], '开关', '#cbd5e1');
+  out.case  = lab([CASE.cx, CASE.cy + CASE.hy + 2, CASE.cz], '用电器金属外壳', '#cbd5e1');
+  if(state.cut){
+    out.inL = lab([-66,52,-2.5], '火线 220 V', COL.L);
+    out.inN = lab([-70,42,-2.5], '零线 0 V', COL.N);
+    out.PE  = lab([-76,24,-2.5], '地线（入地）', COL.PE);
+  }
+  // 插座三个孔的极性标注：锚点拉到面板【下方】与【右侧】，避免压住孔本身
+  if(state.cut && (state.view==='default' || state.view==='front' || state.view==='top')){
+    lab([sockHolePos('L')[0]-1.6, 18, 2.4], '左·零', COL.N);
+    lab([sockHolePos('R')[0]+1.6, 18, 2.4], '右·火', COL.L);
+    lab([sockHolePos('PE')[0]+13, sockHolePos('PE')[1]+2.4, 2.4], '上·接地', COL.PE);
+  }
+  state.drawn.labels = out;
+  state.drawn.labelCount = placed.length - obstacles.length;
+}
+
+function render(){
+  if(!cam) buildCam();
+  var q = cam;
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+  ctx.clearRect(0,0,W,H);
+  // 背景
+  var g = ctx.createLinearGradient(0,0,0,H);
+  g.addColorStop(0,'#061024'); g.addColorStop(1,'#030814');
+  ctx.fillStyle = g; ctx.fillRect(0,0,W,H);
+  obstacles = [];
+  drawWall(q);
+  drawDistributionBox(q);
+  drawSocket(q);
+  drawWallSwitch(q);
+  drawLamp(q);
+  drawCaseAndHuman(q);
+  drawWires(q);
+  drawPen(q);
+  drawLabels(q);
+  state.drawn.w = W; state.drawn.h = H;
+  state.drawn.view = state.view;
+}
+
+// ---------------- 动画 ----------------
+function frameStep(dt){
+  state.t += dt;
+  if(state.t > 1e6) state.t = 0;
+}
+function driveAnim(seconds, dt){
+  dt = dt || 1/60;
+  var n = Math.max(1, Math.round(seconds/dt));
+  for(var i=0;i<n;i++) frameStep(dt);
+}
+
+// ---------------- UI ----------------
+function el(id){ return document.getElementById(id); }
+var toastTimer = null;
+function showToast(msg, kind){
+  var t = el('jt-toast');
+  t.textContent = msg;
+  t.className = 'stage-toast show' + (kind ? ' ' + kind : '');
+  if(toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(function(){ t.className = 'stage-toast'; }, 2400);
+}
+function syncUI(){
+  var res = state.res;
+  var modeL = state.swMode === 'L';
+  // 场景
+  el('jt-cut').className = state.cut ? 'on' : '';
+  el('jt-cut').textContent = state.cut ? '装回墙面' : '剖开墙面';
+  el('jt-bar-cut').textContent = state.cut ? '装回墙面' : '剖开墙面';
+  el('jt-bar-cut').className = 'stage-btn' + (state.cut ? ' on' : '');
+  el('jt-scenepill').textContent = state.cut ? '已剖开' : '墙面完整';
+  el('jt-scenenote').innerHTML = state.cut
+    ? '现在看到的是<b>把墙剖开</b>的样子：三根线（火线红 / 零线蓝 / 地线黄绿）走在墙里。'
+    : '墙面装回去了 —— 现实里你只能看到配电箱、插座、开关和灯，<b>看不到里面的线</b>。点「剖开墙面」看看里面。';
+
+  // 试电笔
+  var pp = el('jt-penpill');
+  if(!state.pen){ pp.textContent = '未测'; pp.className = 'pill'; }
+  else if(state.penLit){ pp.textContent = '氖管发光 → 火线'; pp.className = 'pill bad'; }
+  else { pp.textContent = '氖管不亮'; pp.className = 'pill ok'; }
+  if(state.pen){
+    var pr = probeById(state.pen);
+    var v = vGround(pr.term[0], pr.term[1]);
+    el('jt-pennote').innerHTML = '正在测 <b>'+pr.name+'</b>：对地电压 <b>'+fmt(v,1)+' V</b> —— '
+      + (state.penLit ? '氖管<b>发光</b>，这一点是<b>火线</b>，碰不得。' : '氖管<b>不亮</b>，这一点对地电压很低。');
+  }else{
+    el('jt-pennote').innerHTML = '点一个触点，或者直接点画面里的触点 —— 氖管亮 = 这一点是<b>火线</b>。';
+  }
+  // 试电笔按钮态
+  Array.prototype.forEach.call(el('jt-probes').children, function(b){
+    b.className = (b.getAttribute('data-probe') === state.pen) ? 'on' : '';
+  });
+
+  // 开关接在哪
+  el('jt-modeL').className = modeL ? 'on' : '';
+  el('jt-modeN').className = 'danger' + (modeL ? '' : ' on');
+  el('jt-modepill').textContent = modeL ? '接火线（规范）' : '接零线（错误）';
+  el('jt-modepill').className = 'pill ' + (modeL ? 'ok' : 'bad');
+  var v0 = vGround('lamp',0), v1 = vGround('lamp',1);
+  var safe = (v0 != null && v1 != null && Math.abs(v0) < 1 && Math.abs(v1) < 1);
+  el('jt-modelist').innerHTML =
+    '<li class="'+(modeL?'yes':'no')+'"><span class="mk">'+(modeL?'✓':'✗')+'</span><span>开关串在<b>火线</b>上：火线 → 开关 → 灯座中心触点；螺旋套直接接零线。</span></li>'
+    + '<li class="'+(safe?'yes':'no')+'"><span class="mk">'+(safe?'✓':'✗')+'</span><span>开关断开后，灯座两端对地电压：<span class="eq">'+fmt(v0,1)+' V</span> / <span class="eq">'+fmt(v1,1)+' V</span> —— '+(safe?'<b>都 ≈ 0，换灯泡安全</b>':'<b>还带 220 V，换灯泡会触电！</b>')+'</span></li>';
+  el('jt-modenote').innerHTML = modeL
+    ? '开关断开的只是<b>火线</b>，灯座整段都被切在零线一侧，怎么碰都不带电。'
+    : '<b>灯照样能亮</b>（火线经螺旋套直接到灯座），但开关断开的只是零线 —— 灯座与螺旋套仍然直通火线。现实里这样接线，换灯泡时人手一碰螺旋套就触电。';
+
+  // 实时读数
+  var r = el('jt-readouts');
+  function ro(label, val, cls){
+    return '<div class="'+(cls||'')+'"><span>'+label+'</span><b>'+val+'</b></div>';
+  }
+  var srcRec = compRec('src') || {};
+  var totalI = Math.abs(srcRec.i || 0);
+  var lampRec = compRec('lamp') || {};
+  r.innerHTML =
+    ro('总电流', fmt(totalI,3)+' A', totalI>1e-4?'live':'zero')
+    + ro('灯座·中心触点', fmt(v0,1)+' V', (v0!=null&&v0>=PEN_LIT_V)?'live':'zero')
+    + ro('灯座·螺旋套', fmt(v1,1)+' V', (v1!=null&&v1>=PEN_LIT_V)?'live':'zero');
+  var d = el('jt-data');
+  d.innerHTML =
+    '<div><span>灯的实际功率</span><b>'+fmt(lampRec.p||0,1)+' W</b></div>'
+    + '<div><span>灯的亮度</span><b>'+Math.round(lampBright()*100)+' %</b></div>'
+    + '<div><span>插座对地电压</span><b>'+fmt(vGround('air',1),1)+' V</b></div>'
+    + '<div><span>外壳对地电压</span><b>'+fmt(vGround('leak',1),1)+' V</b></div>';
+  el('jt-rpill').textContent = isShorted() ? '短路' : (totalI>1e-4 ? '有电流' : '开路');
+  el('jt-rpill').className = 'pill ' + (isShorted() ? 'bad' : (totalI>1e-4 ? 'warn' : ''));
+  var dn = [];
+  dn.push('灯按「不计温度对电阻的影响」处理 ⇒ <span class="eq">R = U额²/P额 = '+ (LAMP_SPEC.V*LAMP_SPEC.V/LAMP_SPEC.W).toFixed(0) +' Ω</span>。');
+  dn.push('交流 220 V 在本页<b>按有效值做直流等效</b>（欧姆定律与功率在有效值下成立）。');
+  el('jt-datanote').innerHTML = dn.join('<br>');
+
+  // 三孔插座
+  var vL = vGround('busN',1), vR = vGround('air',1), vP = vGround('peSw',1);
+  var peOK = (vP != null && Math.abs(vP) < 1);
+  el('jt-sockpill').textContent = '右孔 '+fmt(vR,0)+' V';
+  el('jt-socklist').innerHTML =
+    '<li class="yes"><span class="mk">左</span><span>接<b>零线</b> —— 对地 '+fmt(vL,0)+' V</span></li>'
+    + '<li class="no"><span class="mk">右</span><span>接<b>火线</b> —— 对地 '+fmt(vR,0)+' V</span></li>'
+    + '<li class="'+(peOK?'yes':'no')+'"><span class="mk">上</span><span>接<b>地线</b>（外壳）—— 对地 '+fmt(vP,0)+' V'
+    + (peOK ? '' : ' —— <b>地线没接上，外壳悬空了</b>') + '</span></li>';
+
+  // 回路通断按钮
+  var swBox = el('jt-switches');
+  var defs = [
+    ['main','总开关'], ['air','空气开关'], ['lsw','灯的开关'],
+    ['sockSw','插座插电器'], ['leakSw','外壳漏电'], ['peSw','地线接上'], ['touch','手碰外壳']
+  ];
+  swBox.innerHTML = defs.map(function(dd){
+    var on = !!state.sw[dd[0]];
+    return '<button type="button" data-sw="'+dd[0]+'" class="'+(on?'on':'')+'">'+dd[1]+'</button>';
+  }).join('');
+  var notes = [];
+  if(state.sw.leakSw && !state.sw.peSw){
+    notes.push('<b>地线没接</b>：外壳漏电的电流无路可走，外壳对地电压升到 <span class="eq">'+fmt(vGround('leak',1),0)+' V</span>。');
+    if(state.sw.touch){
+      var bi = Math.abs(((compRec('body')||{}).i)||0);
+      notes.push('手一碰外壳，人体电流 <span class="eq">'+fmt(bi*1000,1)+' mA</span> —— '
+        + (bi>0.03 ? '<b>远超 30 mA，会致命</b>' : '低于 30 mA'));
+    }
+  }
+  if(state.sw.leakSw && state.sw.peSw){
+    notes.push('<b>地线接上了</b>：漏电电流走地线入地，外壳被钳在 <span class="eq">'+fmt(vGround('leak',1),0)+' V</span>，人碰到也不会有电流经过身体。');
+  }
+  el('jt-swnote').innerHTML = notes.length ? notes.join('<br>')
+    : '把「外壳漏电」打开，再对比「地线接上 / 没接」两种情况下外壳的对地电压。';
+}
+
+function applyView(name){
+  var v = VIEWS[name] || VIEWS.default;
+  state.view = name in VIEWS ? name : 'default';
+  state.azim = v.azim; state.elev = v.elev; state.zoom = v.zoom;
+  Array.prototype.forEach.call(el('jt-views').children, function(b){
+    b.className = (b.getAttribute('data-view') === state.view) ? 'on' : '';
+  });
+  buildCam();
+}
+
+// ---------------- 交互 ----------------
+function pickProbeAt(sx, sy){
+  var best = null, bd = 26;
+  for(var i=0;i<PROBES.length;i++){
+    var p = probePos(PROBES[i]);
+    var s = project(p, cam);
+    var dd = Math.hypot(s.x-sx, s.y-sy);
+    if(dd < bd){ bd = dd; best = PROBES[i]; }
+  }
+  return best;
+}
+// 「点开关 = 通断」：拾取场景里【看得见】的三个开关（总开关 / 空气开关 / 墙面开关）。
+// 其余四个（插座插电器 / 外壳漏电 / 地线接上 / 手碰外壳）在画面里没有实体，只能用按钮。
+// 判定半径取得比测点小：点开关本体中心 = 通断，点它两端的接线柱 = 测电位。
+var SWITCH_HOT = [
+  {id:'main', r:14, at:function(){ return [SC.msw.cx,   SC.msw.cy,   SC.mount + SC.msw.hz*2 + 1.2]; }},
+  {id:'air',  r:14, at:function(){ return [SC.asw.cx,   SC.asw.cy,   SC.mount + SC.asw.hz*2 + 1.2]; }},
+  {id:'lsw',  r:13, at:function(){ return [SC.wsock.cx, SC.wsock.cy, SC.wsock.hz*2 + 0.8]; }}
+];
+function pickSwitchAt(sx, sy){
+  var best = null, bd = Infinity;
+  for(var i=0;i<SWITCH_HOT.length;i++){
+    var s = project(SWITCH_HOT[i].at(), cam);
+    var d = Math.hypot(s.x-sx, s.y-sy);
+    if(d <= SWITCH_HOT[i].r && d < bd){ bd = d; best = SWITCH_HOT[i]; }
+  }
+  return best;
+}
+function setPen(id){
+  state.pen = id;
+  solveNow();
+  syncUI();
+}function setCut(b){ state.cut = !!b; solveNow(); syncUI(); }
+function setSwMode(m){
+  state.swMode = (m === 'N') ? 'N' : 'L';
+  solveNow(); syncUI();
+}
+function setSwitch(id, closed){
+  if(!(id in state.sw)) return;
+  state.sw[id] = !!closed;
+  solveNow(); syncUI();
+}
+function resetAll(){
+  state.cut = true;
+  state.swMode = 'L';
+  state.pen = null;
+  state.sw = {main:true, air:true, lsw:false, sockSw:false, leakSw:false, peSw:true, touch:false};
+  state.t = 0;
+  applyView('default');
+  solveNow(); syncUI();
+}
+
+var drag = {active:false, moved:false, x:0, y:0};
+function onDown(sx, sy){
+  drag.active = true; drag.moved = false; drag.x = sx; drag.y = sy;
+}
+function onMove(sx, sy){
+  if(!drag.active) return;
+  var dx = sx - drag.x, dy = sy - drag.y;
+  if(Math.abs(dx)+Math.abs(dy) > 2) drag.moved = true;
+  state.azim = clamp(state.azim + dx*0.35, -85, 85);
+  state.elev = clamp(state.elev + dy*0.28, -80, 80);
+  drag.x = sx; drag.y = sy;
+  buildCam(); render();
+}
+function onUp(sx, sy){
+  if(drag.active && !drag.moved){
+    // 开关优先（它的判定半径更小、且落在器件正中心）；没有开关命中才当测点
+    var sw = pickSwitchAt(sx, sy);
+    if(sw){ setSwitch(sw.id, !state.sw[sw.id]); }
+    else {
+      var p = pickProbeAt(sx, sy);
+      if(p) setPen(p.id);
+    }
+  }
+  drag.active = false;
+}
+
+// ---------------- 尺寸 / 事件绑定 ----------------
+function resize(){
+  var r = cvs.parentNode.getBoundingClientRect();
+  W = Math.max(320, Math.round(r.width));
+  H = Math.max(320, Math.round(r.height));
+  DPR = Math.min(2, window.devicePixelRatio || 1);
+  cvs.width = Math.round(W*DPR); cvs.height = Math.round(H*DPR);
+  cvs.style.width = W+'px'; cvs.style.height = H+'px';
+  buildCam();
+}
+function bind(){
+  // 试电笔按钮
+  el('jt-probes').innerHTML = PROBES.map(function(p){
+    return '<button type="button" data-probe="'+p.id+'">'+p.name+'</button>';
+  }).join('');
+  el('jt-probes').addEventListener('click', function(e){
+    var b = e.target.closest('button[data-probe]');
+    if(b) setPen(b.getAttribute('data-probe'));
+  });
+  el('jt-cut').addEventListener('click', function(){ setCut(!state.cut); });
+  el('jt-reset').addEventListener('click', resetAll);
+  // 舞台浮层里那两颗：与侧栏那两颗走【同一个入口函数】。
+  // 两栏在 ≤900px 折成一列后侧栏被挤到画面【下面】，而「剖开墙面」正是
+  // 眼睛盯着画面时才想按的那颗 —— 画布里必须也有一份。
+  el('jt-bar-cut').addEventListener('click', function(){ setCut(!state.cut); });
+  el('jt-bar-reset').addEventListener('click', resetAll);
+  el('jt-modeL').addEventListener('click', function(){ setSwMode('L'); });
+  el('jt-modeN').addEventListener('click', function(){ setSwMode('N'); });
+  el('jt-switches').addEventListener('click', function(e){
+    var b = e.target.closest('button[data-sw]');
+    if(!b) return;
+    var id = b.getAttribute('data-sw');
+    setSwitch(id, !state.sw[id]);
+  });
+  el('jt-views').addEventListener('click', function(e){
+    var b = e.target.closest('button[data-view]');
+    if(b) applyView(b.getAttribute('data-view'));
+  });
+  cvs.addEventListener('pointerdown', function(e){
+    cvs.setPointerCapture && cvs.setPointerCapture(e.pointerId);
+    var r = cvs.getBoundingClientRect();
+    onDown(e.clientX-r.left, e.clientY-r.top);
+  });
+  cvs.addEventListener('pointermove', function(e){
+    var r = cvs.getBoundingClientRect();
+    onMove(e.clientX-r.left, e.clientY-r.top);
+  });
+  cvs.addEventListener('pointerup', function(e){
+    var r = cvs.getBoundingClientRect();
+    onUp(e.clientX-r.left, e.clientY-r.top);
+  });
+  cvs.addEventListener('wheel', function(e){
+    e.preventDefault();
+    state.zoom = clamp(state.zoom * (e.deltaY>0 ? 0.92 : 1.08), 0.55, 3.2);
+    buildCam(); render();
+  }, {passive:false});
+  window.addEventListener('resize', function(){ resize(); render(); });
+}
+
+// ---------------- 启动 ----------------
+var rafOn = false, lastT = 0;
+function loop(ts){
+  var dt = lastT ? Math.min(0.05, (ts-lastT)/1000) : 0;
+  lastT = ts;
+  frameStep(dt);
+  render();
+  if(rafOn) requestAnimationFrame(loop);
+}
+function boot(){
+  bind();
+  resize();
+  solveNow();
+  syncUI();
+  el('jt-hint').innerHTML = '点触点 = 用<b>试电笔</b>测这一点 · 点空白拖动 = 转视角 · 滚轮 = 缩放';
+  render();
+  rafOn = true;
+  requestAnimationFrame(loop);
+  window.__JTC_READY = true;
+}
+
+// ============================================================
+// 自检钩子：把「画出来的几何」与「求解出来的电位」原样交出去。
+// 断言一律读这里的值，不许在测试里重抄一遍公式（那样只证明自洽）。
+// ============================================================
+window.__JTC = {
+  version: '1.0.0',
+  // ★ 本页在 auth-check.js 的 VIP_EXPERIMENTS 名单里的【登记名】。
+  //   自检不许用 location.pathname 去推：变异页的名字是 __jtcneg_xxx.html，
+  //   用 URL 推的话每一条变异都会「名单里查不到」而误红（闸门那条断言就成了噪声）。
+  //   改名时这个常量与名单两处必须一起改 —— 自检有一条静态守卫盯着它们是否一致。
+  PAGE_FILE: '家庭电路立体模型.html',
+  MAINS_V: MAINS_V, PEN_LIT_V: PEN_LIT_V, BODY_R: BODY_R, LEAK_R: LEAK_R,
+  LOAD_R: LOAD_R, LAMP_SPEC: LAMP_SPEC, SOURCE_R: SOURCE_R,
+  TYPES: CC.TYPES,                 // 元件的端子数：自检靠它判「端子下标越界」
+  SC: SC, POSTS: POSTS, PROBES: PROBES, VIEWS: VIEWS, ENV: ENV,
+  state: state,
+  get cam(){ return cam; },
+  get drawn(){ return state.drawn; },
+  get obstacles(){ return obstacles; },
+  get flow(){ return state.flow; },
+  get penLit(){ return state.penLit; },
+  get res(){ return state.res; },
+  get swMode(){ return state.swMode; },
+  get cut(){ return state.cut; },
+  get pen(){ return state.pen; },
+  compsOf: compsOf, wiresOf: wiresOf, rebuild: rebuild, solveNow: solveNow,
+  nodeOf: nodeOf, vGround: vGround, groundNode: groundNode,
+  compRec: compRec, isShorted: isShorted, lampBright: lampBright,
+  lampTermPos: lampTermPos, sockHolePos: sockHolePos, probePos: probePos, probeById: probeById,
+  drawWires: drawWires, render: render, buildCam: buildCam, project: project,
+  resize: resize, applyView: applyView, syncUI: syncUI,
+  setPen: setPen, setCut: setCut, setSwMode: setSwMode, setSwitch: setSwitch, resetAll: resetAll,
+  frameStep: frameStep, driveAnim: driveAnim,
+  onDown: onDown, onMove: onMove, onUp: onUp, pickProbeAt: pickProbeAt,
+  pickSwitchAt: pickSwitchAt, SWITCH_HOT: SWITCH_HOT,
+  get dragging(){ return {active:drag.active, moved:drag.moved}; },
+  CC: CC
+};
+
+if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
+else boot();
+
+})();
+</script>
+</body>
+</html>

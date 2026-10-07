@@ -198,6 +198,11 @@
     "javalab_交流发电机.html",
     "phet_法拉第电磁实验室.html",
     "javalab_扬声器与麦克风.html",
+    // 第十九章第1节「家庭电路」的旗舰 3D 页：进户线 → 电能表 → 总开关 → 空气开关
+    // → 三孔插座 / 墙面开关 → 灯，全屋用 circuit-core.js 的 MNA 真求解。
+    // experiments.html 里是 card lock + 「VIP专享」，按维护约定必须登记。
+    // 漏登记 = checkVip() 只判 VIP 状态、不查名单 ⇒ 直接输网址就能免费看。
+    "家庭电路立体模型.html",
   ];
 
   // ⚠️ 必须 decodeURIComponent。浏览器的 location.pathname 对中文文件名给的是【百分号编码】
