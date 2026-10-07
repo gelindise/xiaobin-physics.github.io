@@ -59,6 +59,43 @@
       // 两个阶段，这个开关就是那两步之间的门，别把默认改掉。
       defaults: { ratedV: 2.5, ratedW: 0.75, tempDependent: true },
     },
+    // ── 发光二极管：单向导电性 ────────────────────────────────
+    // 全站唯一一个「电流方向不对就不导通」的元件，也是初中讲单向导电性时
+    // 唯一的实物载体。模型只取两态，不去解肖克利方程的指数段：
+    //   正向导通：两端压降几乎恒为 Vf，多出来的电压全落在电路的其它部分上
+    //             ⇒ 一条「电压源 Vf 串一个很小的体电阻 Rs」的支路；
+    //   反向截止：几乎不导电（真实漏电是 nA 级，初中直接当断路）
+    //             ⇒ 不产生任何支路。
+    // 两态之间怎么切由 solve() 的迭代判（见 ledConducts）。千万别把它做成
+    // 「正向一个小电阻、反向一个大电阻」——那样正向压降会随电流乱跑
+    // （3V 电源下红管能算出 2.4V），而且「换一根蓝管子就不亮了」这个
+    // 最有教学价值的现象会整个消失。
+    led: {
+      label: '发光二极管', terminals: 2, termNames: ['+', '-'],
+      defaults: { color: 'red' },
+    },
+    // ── 直流电动机 ────────────────────────────────────────────
+    // 真实的永磁小直流电机转动时线圈切割磁感线、产生反电动势 ε，
+    // 于是 I = (U − ε)/R线圈 ——【转起来以后电流反而很小】；
+    // 把转子卡住（堵转）时 ω = 0、ε = 0，电流就是 U/R线圈，能大好几倍，
+    // 线圈发热 I²R 更是大十几倍 —— 现实中「电机卡住会烧」就是这个原因。
+    // 所以它【不是】一个定值电阻，学生拿欧姆定律算不出它的电流；
+    // 但它把「电能 → 机械能」算得明明白白：输入功率 U·I 分成机械功率 ε·I
+    // 和线圈发热 I²R 两份（见回填里的 pMech / pHeat）。
+    motor: {
+      label: '电动机', terminals: 2, termNames: ['+', '-'],
+      defaults: { Rcoil: 5, noLoadI: 0.05, rpmPerV: 800, stall: false },
+    },
+    // ── 电铃 ─────────────────────────────────────────────────
+    // 电磁铁 + 衔铁 + 断续触点：通电吸下衔铁、锤击铃碗，同时把触点顶开、
+    // 电流断掉、弹簧把衔铁拉回、触点重新闭合 —— 于是嗡嗡地响。
+    // ⚠️ 它对电流方向【不敏感】：软铁衔铁不管是 N 极还是 S 极都被吸引，
+    // 所以这里是纯电阻，不是二极管。别把单向导电性安到它头上 ——
+    // 那会让学生以为「用电器都分正负」，比不教更坏。
+    bell: {
+      label: '电铃', terminals: 2, termNames: ['a', 'b'],
+      defaults: { Rcoil: 20, turns: 800 },
+    },
     battery: {
       label: '电源', terminals: 2, termNames: ['+', '-'],
       defaults: { cells: 2, emfPerCell: 1.5, rPerCell: 0.5 },
@@ -84,6 +121,55 @@
       defaults: { range: 3, rInternal: null },
     },
   };
+
+  // ── 发光二极管的颜色 → 正向压降 ──────────────────────────────
+  // 真实的 LED 是按【颜色分规格】的，不是按电压卖：红光 1.8~2.0V、
+  // 绿光 2.0~2.2V、蓝/白光 3.0~3.2V。这个差别在课堂上极有用：两节干电池
+  // （3.0V）点得亮红管、绿管，点不亮蓝管 —— 学生换一根管子就不亮了，
+  // 比讲十遍「额定电压」都直观。
+  // 蓝管取 3.1V 而不是 3.0V：正好等于电源电动势时，导通判定会在临界上来回
+  // 切，画面一闪一闪的 —— 那不是物理，是数值噪声。
+  var LED_COLORS = {
+    red:   { label: '红色', Vf: 1.8, rgb: [255,  62,  62] },
+    green: { label: '绿色', Vf: 2.1, rgb: [ 58, 226, 122] },
+    blue:  { label: '蓝色', Vf: 3.1, rgb: [ 92, 152, 255] },
+  };
+  // 二极管的体电阻（Ω）：真实管子零点几欧到几十欧，取 10 是「20mA 时多出
+  // 0.2V 压降」的量级 —— 既不理想化到假，也不会让读数难算。
+  var LED_RS = 10;
+  var LED_I_RATED = 0.020;    // 指示用 LED 的典型工作电流 20 mA（亮度按它归一化）
+  var LED_I_MAX = 0.025;      // 超过它真实管子会烧（这里只报警告 + 画面发白）
+
+  // ── 直流电动机的铭牌常数 ────────────────────────────────────
+  //   rpmPerV  空载转速常数（每伏特每分钟多少转）：3V 下 2400 r/min，
+  //            正是 130 型小电机的量级；
+  //   noLoadI  空载电流（A）：空载时只需克服自身摩擦矩，电流很小，
+  //            而且【基本不随电压变】—— 真实空载电机的电流就是几乎恒定的；
+  //   I_RATIO  额定点电流 / 空载电流，用来给粘性摩擦定标（见 motorState）。
+  // 这三个数只用来定标，不是面板参数；面板给的是线圈电阻、空载电流、
+  // 转速常数 —— 学生调得到的都写在铭牌上，调不到的是电机型号。
+  var MOTOR = { rpmPerV: 800, noLoadI: 0.05, I_RATIO: 2, URATED: 3, R_DEF: 5 };
+
+  // ── 电铃的吸合磁动势下限（安匝 = 电流 × 匝数）──────────────
+  // 低于它，电磁铁的吸力顶不动弹簧片，铃【不响】—— 这正是「电磁铁磁性强弱
+  // 跟电流、匝数有关」那句话的直接后果：电压调低、线圈电阻调大、匝数调少，
+  // 铃就不响了。所以这个数不是随手写的阈值，是那条规律的落地点。
+  //
+  // ⚠️ 这个数【必须落在旋钮够得着的地方】，否则「磁动势不足·不响」这一支
+  //    学生一辈子碰不到，等于没做。默认那台（3V、线圈 20Ω、800 匝）是
+  //    0.15A × 800 = 120 安匝，门槛取 60 → 2 倍余量，铃响得很干脆；
+  //    而只要把【任一个】旋钮拧到弱端就能让它停：
+  //      匝数 800 → 300（45 安匝）不响；
+  //      线圈电阻 20Ω → 60Ω（0.05A×800 = 40 安匝）不响；
+  //      或者串一个 100Ω 限流电阻（0.025A×800 = 20 安匝）也不响。
+  //    曾经取 16，结果最低匝数 200 配 3V 还有 30 安匝，照样响 ——
+  //    这一支就成了永远不执行的死代码（探针实测）。
+  var BELL_MAG_MIN = 60;
+
+  function ledColorOf(P) {
+    var c = LED_COLORS[P && P.color];
+    return c || LED_COLORS.red;
+  }
 
   function defaultParams(type) {
     var t = TYPES[type];
@@ -221,7 +307,7 @@
   // R / LAMP 自环（p===q）→ 丢弃（电流恒 0，与不存在等效）
   // V 自环【不丢】→ 携带内阻信息，正是「电源被短路」的解
   // ============================================================
-  function describeComponent(comp, termNode, lampR, tap) {
+  function describeComponent(comp, termNode, lampR, tap, st) {
     var out = [];
     var P = paramsOf(comp);
     var N = function (i) { return termNode[comp.id + ':' + i]; };
@@ -273,6 +359,36 @@
         if (P.closed) out.push({ kind: 'V', comp: comp, p: N(0), q: N(1), V: 0, Rs: 0 });
         break;                                             // 断开 → 无支路，自然消失
 
+      // 发光二极管。导通时是「电压源 Vf 串体电阻」的一条支路；截止时
+      // 【一条支路都不产生】= 断路 —— 这样反向时整条回路就断了，串在里面的
+      // 灯泡也跟着不亮，正是「单向导电性」在实验里最该看到的那一幕。
+      // p === q（被导线短路）时照样给支路：方程退化成 0 = Vf + Rs·I ⇒ I < 0，
+      // 迭代下一步就判它截止，不用在这里特判。
+      case 'led': {
+        var lc = ledColorOf(P);
+        if (st && st.ledOn && st.ledOn.get(comp.id)) {
+          out.push({ kind: 'V', comp: comp, p: N(0), q: N(1),
+                     V: lc.Vf, Rs: LED_RS, passive: true });
+        }
+        break;
+      }
+
+      // 直流电动机：反电动势 ε 串线圈电阻。ε 由 solve() 的迭代定（初值 0
+      // = 刚通电、转子还没转起来的瞬间，那一刻的电流就是启动电流，最大）。
+      case 'motor': {
+        var Rc = num(P.Rcoil, MOTOR.R_DEF);
+        if (Rc <= EPS) Rc = EPS;              // 线圈电阻为 0 就退化成理想电压源，不物理
+        var eps = (st && st.motorEps && st.motorEps.get(comp.id)) || 0;
+        out.push({ kind: 'V', comp: comp, p: N(0), q: N(1),
+                   V: eps, Rs: Rc, passive: true });
+        break;
+      }
+
+      // 电铃：线圈就是一个电阻。通电就响，与电流方向无关（见 TYPES.bell）。
+      case 'bell':
+        addR(N(0), N(1), num(P.Rcoil, 20));
+        break;
+
       case 'battery':
         var cells = P.cells != null ? P.cells : 1;
         var emf = P.emf != null ? P.emf : cells * (P.emfPerCell != null ? P.emfPerCell : 1.5);
@@ -294,6 +410,88 @@
   }
 
   function clamp01(x) { x = +x; if (!isFinite(x)) return 0; return x < 0 ? 0 : (x > 1 ? 1 : x); }
+  // 参数取值：非数就退回默认值。参数面板是滑出来的数，但存档是手改得动的
+  // JSON —— 一个字符串参数流进来，下面整条计算链会静默变成 NaN。
+  function num(v, d) { v = +v; return isFinite(v) ? v : d; }
+
+  // ============================================================
+  // 发光二极管：此刻是正向导通还是反向截止
+  // ------------------------------------------------------------
+  // 判据分两种情形，因为「导通」这件事本身会改变电路拓扑 ——
+  // 导通时有支路、截止时没有，所以不能只看一个量：
+  //   · 当前假设【导通】（支路在）→ 看这条支路的电流。电流为负 = 电流想从
+  //     「−」往「+」流，可二极管不让它过 ⇒ 截止。
+  //   · 当前假设【截止】（支路不在）→ 看两端开路电压。只有超过正向压降 Vf
+  //     才谈得上导通。低于 Vf 时即使正偏也几乎不导电（真实管子就是这样），
+  //     所以判据不是「正偏就导通」。
+  // 不做「部分导通」的中间态：真实的 LED 要么正向导通（压降几乎恒为 Vf）、
+  // 要么反向截止（漏电 nA 级，初中当断路），中间那段只在击穿区附近才出现。
+  function ledConducts(P, branch, sol, comp, termNode) {
+    var lc = ledColorOf(P);
+    if (branch) return bI(sol, branch) > -1e-9;
+    var U = nV(sol, termNode[comp.id + ':0']) - nV(sol, termNode[comp.id + ':1']);
+    return U > lc.Vf + 1e-9;
+  }
+
+  // ============================================================
+  // 直流电动机的稳态工作点
+  // ------------------------------------------------------------
+  // 两条方程联立（稳态，转子不再加速）：
+  //   机械：kT·I = T0 + b·ω        库仑摩擦 T0 加粘性摩擦 b·ω
+  //   电气：U = kE·ω + I·R线圈
+  // 三个常数（kE、kT、b）用铭牌上的三个数定标，这样面板上调的每一个数
+  // 都是真实电机铭牌上印得出来的量：
+  //   ω额 = rpmPerV·U额            额定电压下的空载转速
+  //   T0  = kT·I0                  空载时电磁力矩只需克服库仑摩擦 ⇒ 空载电流 I0
+  //   额定点电流 = I_RATIO·I0      于是 U额 = kE·ω额 + I_RATIO·I0·R线圈
+  // 解出来：
+  //   ω = (|U| − I0·R) / (kE + (I_RATIO−1)·I0·R/ω额)
+  //   ε = kE·ω（符号跟 U 走）
+  // 两个极限都对得上现实：U = U额 时 ω = ω额、I = I_RATIO·I0；
+  // 堵转（ω = 0）时 ε = 0、I = U/R线圈 —— 比空载大一个量级。
+  // 返回 { eps, omega, stalled }：omega 单位 rad/s，符号就是转向。
+  function motorState(P, U) {
+    var M = MOTOR;
+    var R  = Math.max(1e-6, num(P.Rcoil, M.R_DEF));
+    var I0 = Math.max(1e-9, num(P.noLoadI, M.noLoadI));
+    var rpv = Math.max(1, num(P.rpmPerV, M.rpmPerV));
+    var stopped = { eps: 0, omega: 0, stalled: true };
+    if (P.stall) return stopped;                    // 转子被卡住：ω = 0 ⇒ 没有反电动势
+    // 铭牌自相矛盾（额定电流 × 线圈电阻 已经超过额定电压）时，这种规格的电机
+    // 在额定电压下根本转不起来。参数面板的范围已经把它挡在外面，这里再兜一层：
+    // 当成停转，而不是让 kE 变成负数、转速反着算出来。
+    var k1num = M.URATED - M.I_RATIO * I0 * R;
+    if (k1num <= 1e-6) return stopped;
+    if (Math.abs(U) <= I0 * R) return stopped;      // 电压低到连自身摩擦都推不动
+    var wRated = rpv * M.URATED * 2 * Math.PI / 60; // 额定电压下的空载角速度
+    var k1 = k1num / wRated;                        // kE（V·s/rad）
+    var k2 = (M.I_RATIO - 1) * I0 * R / wRated;     // 粘性摩擦项折算到 ω 上
+    var w = (Math.abs(U) - I0 * R) / (k1 + k2);
+    var s = U < 0 ? -1 : 1;
+    return { eps: s * k1 * w, omega: s * w, stalled: false };
+  }
+
+  // 电动机在给定端电压下的稳态电流（幅值）。和 motorState 同一套方程，
+  // 只是这里要的是电流：I = (U − ε)/R线圈，由解出来的支路电流给出。
+  // 转速从 ω 换成面板和读数框用的 r/min。
+  function rpmOf(omega) { return omega * 60 / (2 * Math.PI); }
+
+  // 电铃的磁动势（安匝）与「响不响」。安匝 = 电流 × 匝数，这是电磁铁磁性强弱
+  // 的标准量法；低于吸合下限就顶不动弹簧片，铃不响。方向不参与 —— 软铁衔铁
+  // 不管铁芯是 N 极还是 S 极都被吸引（这正是「电铃没有单向导电性」的原因）。
+  function bellState(P, I) {
+    var turns = Math.max(1, num(P.turns, 800));
+    var mag = Math.abs(fin(I, 0)) * turns;
+    return {
+      turns: turns,
+      mag: mag,
+      rings: mag >= BELL_MAG_MIN,
+      // 响度（0~1）：刚过吸合线时是轻响，磁动势越大锤得越狠。
+      // 用 1 − min/实际 的比值而不是线性归一，是为了让「刚好响」和「很响」
+      // 在画面上分得开 —— 线性归一的话 16 到 120 安匝全挤在最右端一小段里。
+      volume: Math.max(0, Math.min(1, 1 - BELL_MAG_MIN / Math.max(mag, BELL_MAG_MIN))),
+    };
+  }
 
   // 矩阵奇异时用来分辨「短路」还是「接错线」。
   // 只看理想电压源支路（Rs≈0：理想电源、闭合开关、理想电流表）：
@@ -336,7 +534,13 @@
     }
     var islands = [];
     byRoot.forEach(function (bs) {
-      var hasSource = bs.some(function (b) { return b.kind === 'V' && Math.abs(b.V) > EPS; });
+      // ⚠️ 「有源」只认【真电源】。发光二极管的正向压降和电动机的反电动势
+      // 都是电压源支路，但它们是无源元件内部的等效源，不是给电路供电的电源：
+      // 把它们算成有源岛，一个孤零零摆在台上的二极管会被判成「已接入电路」，
+      // 状态行也会从「还没有接电源」变成「电路导通」—— 全错。
+      var hasSource = bs.some(function (b) {
+        return b.kind === 'V' && Math.abs(b.V) > EPS && !b.passive;
+      });
       islands.push({ branches: bs, hasSource: hasSource });
     });
     return { islands: islands, islandOfBranch: islandOfBranch };
@@ -402,8 +606,12 @@
   function solveIsland(island) {
     var Vb = island.branches.filter(function (b) { return b.kind === 'V'; });
 
-    // 接地：优先取幅值最大电源的负极，使多数节点电压为正、读数符合直觉
-    var main = Vb
+    // 接地：优先取幅值最大【真电源】的负极，使多数节点电压为正、读数符合直觉。
+    // 只在真电源里挑（passive 的等效源不算），否则一个 2.5V 反电动势的电动机
+    // 可能把 3V 的电池挤掉，接地点落到电动机的端子上 —— 读数就全反了。
+    // 一个真电源都没有（理论上进不来：无源岛在上面就被整岛归零了）时退回老办法。
+    var realVb = Vb.filter(function (b) { return !b.passive; });
+    var main = (realVb.length ? realVb : Vb)
       .filter(function (b) { return Math.abs(b.V) > EPS; })
       .sort(function (a, b) { return Math.abs(b.V) - Math.abs(a.V); })[0];
     var ground = main ? main.q : island.branches[0].p;
@@ -532,11 +740,27 @@
     var lampR = new Map();
     lamps.forEach(function (c) { lampR.set(c.id, lampInitR(c)); });
 
+    // 发光二极管先一律按【正向导通】起步。选这个初值不是随便挑的：
+    // 导通时那条支路把 LED 两端的节点连了起来，解出来的电位都是有依托的；
+    // 反过来先按截止起步，LED 那两点就是悬空的，拿「悬空节点的幽灵 0V」
+    // 去判它正偏还是反偏，结果会随电路形状乱变。
+    var leds = components.filter(function (c) { return c.type === 'led'; });
+    var ledOn = new Map();
+    leds.forEach(function (c) { ledOn.set(c.id, true); });
+
+    // 电动机的反电动势初值取 0 = 刚通电、转子还没转起来的那一瞬间，
+    // 此刻的电流就是启动电流（也是全过程中最大的那一个）。
+    var motors = components.filter(function (c) { return c.type === 'motor'; });
+    var motorEps = new Map();
+    motors.forEach(function (c) { motorEps.set(c.id, 0); });
+
+    var st = { ledOn: ledOn, motorEps: motorEps };
+
     function assemble() {
       var branches = [];
       components.forEach(function (c) {
         var tap = meterTaps[c.id];                       // {idx, conflict} 或 undefined
-        describeComponent(c, topo.termNode, lampR.get(c.id), tap ? tap.idx : null)
+        describeComponent(c, topo.termNode, lampR.get(c.id), tap ? tap.idx : null, st)
           .forEach(function (b) { branches.push(b); });
       });
       return branches;
@@ -549,8 +773,18 @@
     var sol = solveAllIslands(islands);
     var usedBranches = branches;
 
-    // ---- 灯泡阻尼不动点迭代 ----
-    if (sol.ok && lamps.length > 0) {
+    // ---- 统一阻尼不动点迭代（灯泡 / 电动机 / 发光二极管）------------
+    // 三类元件的非线性程度完全不同，但都是「先用上一轮的解反推元件自己的
+    // 等效参数、再重解一遍」：
+    //   灯泡    连续量（灯丝电阻随功率变），走阻尼迭代；
+    //   电动机  连续量（反电动势随转速变），同一套阻尼；
+    //   二极管  开关量（导通 / 截止），一变就得把整条支路装上或拆掉重解。
+    // 合成一个循环而不是三段串起来，是因为它们在同一个回路里会互相牵制：
+    // 二极管一截止，电动机的端电压就变了，反电动势得跟着重算。
+    // ⚠️ 只有灯泡时，下面这段的执行路径和旧版【逐字一致】（二极管、电动机
+    // 的数组都是空的，maxDelta 与 omega 的更新一模一样）—— 这是回归的底线。
+    var ledFlips = 0, LED_FLIP_MAX = 4;
+    if (sol.ok && (lamps.length + leds.length + motors.length) > 0) {
       var omega = opts.lampOmega;
       var prevMax = Infinity;
       var converged = false;
@@ -568,14 +802,47 @@
           targets.set(lc.id, Rnew);
           maxDelta = Math.max(maxDelta, Math.abs(Rnew - R) / R);
         }
-        if (maxDelta < opts.lampTolR) { converged = true; usedBranches = branches; break; }
 
-        if (maxDelta > prevMax * 1.05) omega = Math.max(omega * 0.5, 0.05);
+        // 电动机：拿当前端电压算稳态反电动势，作为这一轮的目标值。
+        // 收敛判据要归一化 —— 反电动势是几伏的量级，跟灯丝电阻的「相对变化」
+        // 不能直接比大小，否则要么永远不收敛、要么一步就「收敛」。
+        var mTargets = new Map();
+        for (var mi = 0; mi < motors.length; mi++) {
+          var mc = motors[mi];
+          var mb = branches.filter(function (b) { return b.comp === mc; })[0];
+          var mu = mb ? (nV(sol, mb.p) - nV(sol, mb.q)) : 0;
+          var mnew = motorState(paramsOf(mc), mu).eps;
+          mTargets.set(mc.id, mnew);
+          var mold = motorEps.get(mc.id);
+          maxDelta = Math.max(maxDelta, Math.abs(mnew - mold) / Math.max(0.5, Math.abs(mu)));
+        }
+
+        // 发光二极管：导通 / 截止是一个开关量，切了就整支路重装。
+        // 翻转次数封顶：两个二极管互相牵制时可能出现「我切你就切回来」的
+        // 极限环，封顶保证一定停得下来（停下来的状态仍然自洽，只是未必是
+        // 全局最合理的那个 —— 这种接法本来就没有唯一解，报不收敛更诚实）。
+        var flipped = false;
+        for (var di = 0; di < leds.length; di++) {
+          var dc = leds[di];
+          if (ledFlips >= LED_FLIP_MAX * leds.length) break;
+          var db = branches.filter(function (b) { return b.comp === dc; })[0];
+          var want = ledConducts(paramsOf(dc), db, sol, dc, topo.termNode);
+          if (want !== ledOn.get(dc.id)) { ledOn.set(dc.id, want); flipped = true; ledFlips++; }
+        }
+
+        if (maxDelta < opts.lampTolR && !flipped) { converged = true; usedBranches = branches; break; }
+
+        if (flipped) omega = Math.min(omega * 1.4, 1.0);   // 结构性变化，别拖泥带水
+        else if (maxDelta > prevMax * 1.05) omega = Math.max(omega * 0.5, 0.05);
         else omega = Math.min(omega * 1.1, 1.0);
         prevMax = maxDelta;
 
         lamps.forEach(function (lc) {
           lampR.set(lc.id, lampR.get(lc.id) + omega * (targets.get(lc.id) - lampR.get(lc.id)));
+        });
+        motors.forEach(function (mc) {
+          motorEps.set(mc.id, motorEps.get(mc.id) +
+            omega * (mTargets.get(mc.id) - motorEps.get(mc.id)));
         });
 
         branches = assemble();
@@ -587,7 +854,47 @@
       }
       out.iterations = iter + 1;
       if (!converged && sol.ok) {
-        warnings.push({ code: 'LAMP_NOT_CONVERGED', message: '灯泡工作点未收敛，结果可能不准' });
+        warnings.push({ code: 'LAMP_NOT_CONVERGED', message: '元件工作点未收敛，结果可能不准' });
+      }
+
+      // ---- 零电流二极管的收尾（只能放在收敛【之后】）------------------
+      // 收敛后会出现这样一种状态：二极管按「导通」建了支路，可整条回路因为
+      // 别处断开（开关拉开、线只接了一半）根本没有电流。支路把管子两端硬撑在
+      // Vf 上，于是读数框会印出「U = 1.80V」，而管子一点电流都没有 ——
+      // 学生拿电压表去量这只管子，量到的是「开关上那 3V 之外剩下的那点」，
+      // 近似 0，不是 1.80V。这条读数错得还很像对的（数字干净、正好等于 Vf）。
+      //
+      // 判据：把这条支路【真拆掉再解一次】，看管子两端会被抬到多高 ——
+      //   抬不过 Vf → 它就是不该导通，接受这次解（管子两端近似 0V）；
+      //   抬过 Vf   → 它确实卡在门槛上（例如两只红管串在 3V 上），还原回去。
+      // 每个零电流二极管最多多解两次，与电路规模无关。
+      // ⚠️ 判据不能简化成「电流为 0 就当截止」：那样「两只红管串在 3V 上」
+      //    会变成「拆掉→抬过 Vf→装回→电流又是 0→再拆掉」的极限环，
+      //    最后报不收敛，而那个电路本来是好好的、只是不亮。
+      if (sol.ok) {
+        leds.forEach(function (dc) {
+          if (!ledOn.get(dc.id)) return;
+          var db = branches.filter(function (b) { return b.comp === dc; })[0];
+          if (!db || Math.abs(bI(sol, db)) > 1e-9) return;    // 有电流就不是这回事
+          var saved = { branches: branches, islands: islands,
+                        islandOfBranch: islandOfBranch, sol: sol };
+          ledOn.set(dc.id, false);
+          branches = assemble();
+          ig = buildIslands(branches);
+          islands = ig.islands; islandOfBranch = ig.islandOfBranch;
+          sol = solveAllIslands(islands);
+          var Uopen = sol.ok
+            ? (nV(sol, topo.termNode[dc.id + ':0']) - nV(sol, topo.termNode[dc.id + ':1']))
+            : Infinity;
+          if (sol.ok && Uopen <= ledColorOf(paramsOf(dc)).Vf + 1e-9) {
+            usedBranches = branches;                          // 接受：管子判为截止
+          } else {
+            ledOn.set(dc.id, true);                           // 还原：真的卡在门槛上
+            branches = saved.branches; islands = saved.islands;
+            islandOfBranch = saved.islandOfBranch; sol = saved.sol;
+            usedBranches = branches;
+          }
+        });
       }
     }
 
@@ -691,6 +998,101 @@
             rec.i = 0;
           }
           rec.p = rec.v * rec.i;
+          break;
+        }
+
+        // 发光二极管。on 是「此刻真的在导通」，跟「假设它导通」是两件事：
+        // 假设导通、但电流为负时，迭代已经把它翻成截止了，所以正常情况下
+        // on === (支路存在)。留 on 这个字段是给绘制和读数用的单一真值。
+        case 'led': {
+          var lc2 = ledColorOf(P);
+          rec.color = P.color || 'red';
+          rec.colorLabel = lc2.label;
+          rec.rgb = lc2.rgb;
+          rec.Vf = lc2.Vf;
+          rec.Rs = LED_RS;
+          rec.IRated = LED_I_RATED;
+          rec.IMax = LED_I_MAX;
+          if (bs.length) {
+            var lbr = bs[0];
+            rec.i = bI(sol, lbr);                        // 从「+」流入为正
+            rec.v = nV(sol, lbr.p) - nV(sol, lbr.q);
+            rec.on = rec.i > 1e-6;
+            // 只有【真的在导通】才报体电阻。摆在台上没接线、或者接着但正偏
+            // 电压不够（蓝管接 3V）时，两端是一条断路的管子，写「R = 10Ω」
+            // 会让学生以为它是个 10Ω 的电阻 —— 那正好是单向导电性最不该
+            // 被误解成的东西。
+            rec.R = rec.on ? LED_RS : null;
+          } else {
+            // 反向截止：没有支路。电压照样算得出来（两端节点的电位差），
+            // 而且必须算 —— 读数框要写「反向 3.0V 截止」，那 3.0V 就是这个数。
+            rec.i = 0;
+            rec.v = nV(sol, N(0)) - nV(sol, N(1));
+            rec.R = null;                                // 反向电阻无穷大
+            rec.on = false;
+          }
+          rec.p = rec.v * rec.i;
+          // 亮度按额定电流 20mA 归一：真实 LED 的亮度大致正比于电流，
+          // 所以调到额定电流才「满亮」，过流会亮到发白（然后烧）。
+          rec.brightness = Math.max(0, Math.min(rec.i / LED_I_RATED, 1.3));
+          rec.overload = rec.i > LED_I_MAX;
+          if (rec.overload) {
+            warnings.push({ code: 'LED_OVER_CURRENT',
+              message: '发光二极管电流超过 ' + (LED_I_MAX * 1000).toFixed(0) +
+                       'mA，实际会烧掉 —— 串联一只限流电阻', componentIds: [c.id] });
+          }
+          break;
+        }
+
+        // 直流电动机。三个功率必须同时给出，因为「电能 → 机械能」这件事
+        // 全靠它们的分配说清楚：输入 U·I = 机械 ε·I + 线圈发热 I²R。
+        case 'motor': {
+          var mbr = bs[0];
+          var mp = paramsOf(c);
+          rec.R = num(mp.Rcoil, MOTOR.R_DEF);
+          rec.i = mbr ? bI(sol, mbr) : 0;               // 从「+」流入为正
+          rec.v = mbr ? (nV(sol, mbr.p) - nV(sol, mbr.q)) : 0;
+          var ms = motorState(mp, rec.v);
+          rec.eps = mbr ? mbr.V : 0;                    // 迭代收敛后的反电动势
+          rec.omega = ms.omega;                         // rad/s，符号 = 转向
+          rec.rpm = rpmOf(ms.omega);
+          rec.stalled = ms.stalled;
+          rec.spinning = !ms.stalled && Math.abs(rec.i) > 1e-9;
+          // 堵转开关是人为指定的，和「电压太低自己停转」要分开说：
+          // 前者是「转子被卡住」，后者是「推不动」，读数框里写的字不一样。
+          rec.stallSwitch = !!mp.stall;
+          rec.p = rec.v * rec.i;                        // 输入电功率
+          rec.pMech = rec.eps * rec.i;                  // 转成机械能的功率（≥0）
+          rec.pHeat = rec.i * rec.i * rec.R;            // 线圈发热
+          // 反接 = 反转。用「反转」而不是电表那套「反接」：电动机接反不是
+          // 接错了线，是转子往反方向转 —— 这正是「通电导线在磁场中受力方向
+          // 跟电流方向有关」那句话在实物上的样子。
+          rec.reversed = rec.i < -1e-9;
+          rec.reverseLabel = '反转';
+          break;
+        }
+
+        // 电铃：纯电阻。方向不进任何一处 —— 这正是「电铃没有单向导电性」。
+        case 'bell': {
+          var bbr = bs[0];
+          rec.R = num(P.Rcoil, 20);
+          // ⚠️ 电阻支路的电流【必须用 v/R 算】，不能读 bI()：MNA 里 bI 只有
+          // 电压源支路才有值，电阻支路一律回填 0（它们的电流是靠节点电位差
+          // 隐含的）。照 bI 读的话，电铃的电流永远是 0、磁动势永远是 0、
+          // 铃永远不响 —— 而且画面上电压读数还是对的，很难看出哪里错了。
+          rec.v = bbr ? (nV(sol, bbr.p) - nV(sol, bbr.q)) : 0;
+          rec.i = bbr ? rec.v / bbr.R : 0;
+          rec.p = rec.v * rec.i;
+          var bst = bellState(P, rec.i);
+          rec.turns = bst.turns;
+          rec.mag = bst.mag;                            // 磁动势（安匝）
+          rec.rings = bst.rings;
+          rec.volume = bst.volume;
+          if (!bst.rings && Math.abs(rec.i) > 1e-9) {
+            warnings.push({ code: 'BELL_TOO_WEAK',
+              message: '电铃磁动势不足（' + bst.mag.toFixed(0) + ' 安匝 < ' +
+                       BELL_MAG_MIN + '），衔铁吸不动、铃不响', componentIds: [c.id] });
+          }
           break;
         }
 
@@ -1129,6 +1531,20 @@
     // 「这个端子往节点里注入多少电流」。导出是为了让测试能独立验 KCL，
     // 从而钉死每根导线的电流方向（画面上电流粒子往哪边跑全靠它）。
     terminalInjection: terminalInjection,
-    version: '1.0.0',
+    // 三个新元件的物理常量与状态函数。导出是给测试用的：断言要能拿【同一份】
+    // 正向压降、吸合磁动势去对账，而不是在测试里再抄一遍数字 —— 抄一份就等于
+    // 把「实现改了、测试还绿」这个洞留着。
+    LED_COLORS: LED_COLORS,
+    LED_RS: LED_RS,
+    LED_I_RATED: LED_I_RATED,
+    LED_I_MAX: LED_I_MAX,
+    ledColorOf: ledColorOf,
+    ledConducts: ledConducts,
+    MOTOR: MOTOR,
+    motorState: motorState,
+    rpmOf: rpmOf,
+    BELL_MAG_MIN: BELL_MAG_MIN,
+    bellState: bellState,
+    version: '1.1.0',
   };
 });

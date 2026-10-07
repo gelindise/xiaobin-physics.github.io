@@ -406,6 +406,15 @@
     battery: [{ x: HALF, y: 0 }, { x: -HALF, y: 0 }],   // 0 = 正极（右）
     switch: [{ x: -HALF, y: 0 }, { x: HALF, y: 0 }],
     bulb: [{ x: -HALF, y: 0 }, { x: HALF, y: 0 }],
+    // 二极管和电动机是【有极性】的，0 号端子一律是「+」（左边那个红柱）。
+    // 和电池的「+在右」不一样是有意的：电池的 + 在右是干电池实物上碳棒那
+    // 一头的位置，二极管/电动机的 + 在左只是本页的摆法 —— 学生认哪边是正，
+    // 靠的是柱子颜色和丝印，不是左右。
+    led: [{ x: -HALF, y: 0 }, { x: HALF, y: 0 }],       // 0 = 「+」（阳极）
+    motor: [{ x: -HALF, y: 0 }, { x: HALF, y: 0 }],     // 0 = 「+」
+    // 电铃两个柱子都是金属色（neutral）—— 它没有极性，这不是省事，
+    // 就是「通电就响、与电流方向无关」这件事在实物上的样子。
+    bell: [{ x: -HALF, y: 0 }, { x: HALF, y: 0 }],
     // 三柱表头：0 = 「−」柱（黑，最左），1/2 = 两个量程柱（红，往右排）。
     // 外侧两个柱仍钉在 ±HALF，保持全站网格约定，只有 y 落到底座下面。
     ammeter: [{ x: -HALF, y: MET.POST_Y }, { x: 0, y: MET.POST_Y }, { x: HALF, y: MET.POST_Y }],
@@ -876,6 +885,12 @@
       // 「导线夹在柱子上」会被误判成「导线穿过元件」。
       case 'switch': return { hw: 70, hh: 62 };          // 底板 ±70，手柄抬起后顶到 −62
       case 'bulb': return { hw: 70, hh: 74 };            // 底板 ±70，玻璃泡顶 y = −71.5
+      // 三个新元件都横躺在导线上，本体不超过接线柱的 ±70 —— 盒子的 hh 只要
+      // 盖住本体：一超过 70，接线柱就被圈回盒子里，「导线夹在柱子上」会被
+      // 误判成「导线穿过元件」（和表头那条注释是同一个坑）。
+      case 'led': return { hw: 52, hh: 22 };             // 管身 x ∈ [−46, +46]，直径 34
+      case 'motor': return { hw: 62, hh: 30 };           // 含飞轮，外壳 ±56、飞轮到 +54
+      case 'bell': return { hw: 70, hh: 60 };            // 底板 ±70，铃碗顶 y = −36
       // 表头：整台仪器的包围盒（表壳 + 底座）。接线柱在 POST_Y，
       // 故意落在盒子【外面】——导线夹在柱子上，不该被当成穿体。
       // 所以 hh 有【上限 70】：表壳为了放下大量程那排数字往上长到了 −86（见 MET），
@@ -1506,6 +1521,15 @@
   }
   function rgbaStr(c, a) {
     return 'rgba(' + c[0] + ',' + c[1] + ',' + c[2] + ',' + a + ')';
+  }
+  // 两个颜色按 t 混合（0 = 全 a，1 = 全 b）。LED 的管身颜色全靠它：
+  // 同一支红管，通电时是「红往白热偏」，不通电时是「红往暗里压」——
+  // 两端各混一次，比写死两套色值不容易漂。
+  function mixRgb(a, b, t) {
+    t = t < 0 ? 0 : (t > 1 ? 1 : t);
+    return [Math.round(a[0] + (b[0] - a[0]) * t),
+            Math.round(a[1] + (b[1] - a[1]) * t),
+            Math.round(a[2] + (b[2] - a[2]) * t)];
   }
   function drawBulb(ctx, comp, rec) {
     var bright = rec ? Math.max(0, Math.min(rec.brightness || 0, 1.3)) : 0;
@@ -2409,20 +2433,541 @@
   }
 
   // ============================================================
+  // 发光二极管（5mm 直插式，横躺在导线上）
+  // ------------------------------------------------------------
+  // 实物上认正负靠三处，少一处它就只是一颗彩色珠子：
+  //   ① 一端是【半球透镜】、另一端是【法兰盘】—— 第一眼特征；
+  //   ② 法兰上有一道【平边】（cathode flat），实物上就是拿它认阴极的；
+  //   ③ 管子里有一只【小杯 + 芯片 + 一根金线】：芯片坐在杯里（杯连阴极），
+  //      金线把它引到阳极 —— 这正是「单向导电」在实物里的样子。
+  // 发光只在 rec.on（真的正向导通）时出现。反向截止时管子是全暗的，
+  // 连一点余光都不给 —— 这一点必须画对，不然单向导电性在画面上就打了对折。
+  // ============================================================
+  var LED_GEO = {
+    domeCx: -26, r: 16,                 // 半球透镜：球心与半径（左端 = 阳极侧）
+    cylX1: 34,                          // 圆柱段右端
+    flangeX: 34, flangeW: 8, flangeR: 19,   // 右端法兰盘（阴极侧）
+    cupX: 24, cupR: 7,                  // 芯片杯（靠阴极那一头）
+    leadX0: -70, leadX1: 70,
+  };
+  function drawLed(ctx, comp, rec, opts) {
+    var G = LED_GEO;
+    var bright = rec ? Math.max(0, Math.min(rec.brightness || 0, 1.3)) : 0;
+    var on = !!(rec && rec.on) && bright > 0.001;
+    // 颜色：从内核的 LED_COLORS 来（rec.rgb）。rec 为 null 时是图例在画外形，
+    // 按红管给色 —— 图例要的是「长什么样」，不是「这一刻亮不亮」。
+    var rgb = (rec && rec.rgb) || [255, 62, 62];
+    var base = rgbaStr(rgb, 1), dim = rgbaStr(rgb, 0.55);
+    var sc = ctxScale(ctx);
+    ctx.save();
+    ctx.translate(comp.x, comp.y);
+    ctx.rotate((comp.rot || 0) * Math.PI / 180);
+
+    // 管身的轮廓路径：左半圆（透镜）+ 矩形（管身）。后面反复用到，抽出来。
+    function bodyPath() {
+      ctx.beginPath();
+      ctx.arc(G.domeCx, 0, G.r, Math.PI / 2, -Math.PI / 2);
+      ctx.lineTo(G.cylX1, -G.r);
+      ctx.lineTo(G.cylX1, G.r);
+      ctx.closePath();
+    }
+
+    // ① 两根引脚。先画，管身压在上面 —— 实物上引脚就是从管子两头伸出来的。
+    ctx.save();
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = 'rgba(90,104,120,0.9)'; ctx.lineWidth = 4.4;
+    ctx.beginPath();
+    ctx.moveTo(G.leadX0, 0); ctx.lineTo(G.domeCx - 2, 0);
+    ctx.moveTo(G.cylX1 + 6, 0); ctx.lineTo(G.leadX1, 0);
+    ctx.stroke();
+    ctx.strokeStyle = linGrad(ctx, 0, -2.2, 0, 2.2,
+      [[0, '#f2f6fa'], [0.42, '#c3cfdb'], [1, '#7d8b9b']]);
+    ctx.lineWidth = 2.6;
+    ctx.beginPath();
+    ctx.moveTo(G.leadX0, 0); ctx.lineTo(G.domeCx - 2, 0);
+    ctx.moveTo(G.cylX1 + 6, 0); ctx.lineTo(G.leadX1, 0);
+    ctx.stroke();
+    ctx.restore();
+
+    // ② 发光光晕。压在本体【底下】画：压在管身上就会把管子糊成一片亮斑，
+    //    看不出「管子本身是半透明的彩色塑料」这件事。
+    if (on) {
+      var bg = Math.pow(Math.min(bright, 1.3) / 1.3, 1.15);
+      var haloR = G.r * (2.0 + 2.6 * bg);
+      var glow = ctx.createRadialGradient(4, 0, 2, 4, 0, haloR);
+      glow.addColorStop(0, rgbaStr(rgb, 0.80 * bg));
+      glow.addColorStop(0.35, rgbaStr(rgb, 0.34 * bg));
+      glow.addColorStop(1, rgbaStr(rgb, 0));
+      ctx.fillStyle = glow;
+      ctx.beginPath(); ctx.arc(4, 0, haloR, 0, 6.284); ctx.fill();
+    }
+
+    // ③ 管身：半透明彩色塑料。竖向渐变（上亮下暗）= 一根圆柱；
+    //    颜色随亮度往「白热」偏（真实 LED 过流时管芯发白）。
+    var lit = on ? Math.min(bright, 1.3) / 1.3 : 0;
+    var cTop = mixRgb(rgb, [255, 255, 255], 0.42 + 0.40 * lit);
+    var cMid = mixRgb(rgb, [255, 255, 255], 0.06 + 0.55 * lit);
+    var cBot = mixRgb(rgb, [20, 24, 34], 0.34 - 0.18 * lit);
+    bodyPath();
+    ctx.save(); ctx.clip();
+    ctx.fillStyle = linGrad(ctx, 0, -G.r, 0, G.r,
+      [[0, rgbaStr(cTop, 1)], [0.34, rgbaStr(cMid, 1)], [0.72, rgbaStr(rgb, 0.92)], [1, rgbaStr(cBot, 1)]]);
+    ctx.fillRect(-44, -G.r - 1, 80, G.r * 2 + 2);
+    // 玻璃的两道反光：一条宽斜带（左上）+ 右下一条窄的。
+    // 只画渐变不画反光，管子会读成一块实心塑料，不是玻璃封装的管子。
+    ctx.fillStyle = 'rgba(255,255,255,' + (0.30 + 0.34 * lit) + ')';
+    ctx.beginPath();
+    ctx.moveTo(G.domeCx - 12, G.r * 1.05);
+    ctx.lineTo(G.domeCx + 6, -G.r * 1.05);
+    ctx.lineTo(G.domeCx + 14, -G.r * 1.05);
+    ctx.lineTo(G.domeCx - 4, G.r * 1.05);
+    ctx.closePath(); ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,' + (0.12 + 0.16 * lit) + ')';
+    ctx.beginPath();
+    ctx.moveTo(14, G.r * 1.05); ctx.lineTo(24, G.r * 0.15);
+    ctx.lineTo(30, G.r * 0.22); ctx.lineTo(20, G.r * 1.05);
+    ctx.closePath(); ctx.fill();
+    // 边缘聚暗：真玻璃的「边」是暗的，缺了它管子会平得像一张贴纸。
+    var rim = ctx.createRadialGradient(0, 0, G.r * 0.5, 0, 0, G.r * 1.5);
+    rim.addColorStop(0, 'rgba(86,104,124,0)');
+    rim.addColorStop(1, 'rgba(60,76,96,0.34)');
+    ctx.fillStyle = rim;
+    ctx.fillRect(-44, -G.r - 1, 80, G.r * 2 + 2);
+    ctx.restore();
+    bodyPath();
+    ctx.strokeStyle = 'rgba(70,86,104,0.45)'; ctx.lineWidth = 1; ctx.stroke();
+
+    // ④ 管芯：小杯 + 芯片 + 金线。这三件是「二极管」三个字的实物出处，
+    //    所以哪怕只有几像素也画出来（缩得很小时金线会省掉，见 sc 判据）。
+    ctx.save();
+    bodyPath(); ctx.clip();
+    // 小杯：阴极引线的顶端做成的凹槽，芯片就坐在里面
+    ctx.fillStyle = linGrad(ctx, G.cupX - G.cupR, 0, G.cupX + G.cupR, 0,
+      [[0, '#e9eef4'], [0.5, '#9fb0c2'], [1, '#5d6d7e']]);
+    ctx.beginPath();
+    ctx.moveTo(G.cupX - G.cupR, -G.cupR * 0.9);
+    ctx.lineTo(G.cupX + G.cupR, -G.cupR * 0.55);
+    ctx.lineTo(G.cupX + G.cupR, G.cupR * 0.95);
+    ctx.lineTo(G.cupX - G.cupR, G.cupR * 0.75);
+    ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = 'rgba(40,52,68,0.45)'; ctx.lineWidth = 0.8; ctx.stroke();
+    // 芯片（die）：不通电时是一小块深色硅片，导通时自己发亮 —— 管子里
+    // 最亮的那一点就是它，这跟实物上一模一样。
+    var die = on ? mixRgb(rgb, [255, 255, 255], 0.55 + 0.35 * lit) : [70, 60, 66];
+    ctx.fillStyle = rgbaStr(die, 1);
+    ctx.fillRect(G.cupX - 2.6, -2.6, 5.2, 5.2);
+    ctx.strokeStyle = 'rgba(20,26,36,0.5)'; ctx.lineWidth = 0.7;
+    ctx.strokeRect(G.cupX - 2.6, -2.6, 5.2, 5.2);
+    // 金线：从芯片顶上一路引到阳极那一头。它细得只有 1px，
+    // 缩小到 0.9 以下就整根省掉 —— 留一根糊掉的金线不如不留。
+    if (sc >= 0.9) {
+      ctx.strokeStyle = 'rgba(226,182,90,0.95)';
+      ctx.lineWidth = Math.max(0.7, Math.min(1.3, sc * 0.7));
+      ctx.beginPath();
+      ctx.moveTo(G.cupX - 1, -2.6);
+      ctx.quadraticCurveTo(-4, -G.r * 0.72, G.domeCx + 4, -G.r * 0.58);
+      ctx.stroke();
+    }
+    ctx.restore();
+
+    // ⑤ 法兰盘（阴极侧）。实物上它比管身粗一圈，颜色也更实 ——
+    //    因为管身是透光的、法兰是不透光的环氧。这道粗细差就是认阴极的第二眼。
+    ctx.fillStyle = linGrad(ctx, 0, -G.flangeR, 0, G.flangeR,
+      [[0, rgbaStr(mixRgb(rgb, [255, 255, 255], 0.30 + 0.30 * lit), 1)],
+       [0.30, rgbaStr(mixRgb(rgb, [255, 255, 255], 0.02 + 0.40 * lit), 1)],
+       [0.70, rgbaStr(rgb, 1)],
+       [1, rgbaStr(mixRgb(rgb, [20, 24, 34], 0.40), 1)]]);
+    roundRect(ctx, G.flangeX, -G.flangeR, G.flangeW, G.flangeR * 2, 3);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(60,72,88,0.5)'; ctx.lineWidth = 1; ctx.stroke();
+    // 法兰外沿的一道亮棱：没有它，法兰看着和管身一样厚。
+    ctx.strokeStyle = 'rgba(255,255,255,0.35)'; ctx.lineWidth = 0.9;
+    ctx.beginPath();
+    ctx.moveTo(G.flangeX + G.flangeW + 0.5, -G.flangeR + 3);
+    ctx.lineTo(G.flangeX + G.flangeW + 0.5, G.flangeR - 3);
+    ctx.stroke();
+    // 平边（cathode flat）：法兰下缘被削平的那一小段。这是实物上
+    // 【不用看引脚长短】就能认出阴极的那个标记，所以位置固定在右下。
+    ctx.strokeStyle = 'rgba(24,32,44,0.85)';
+    ctx.lineWidth = 2.2; ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(G.flangeX + G.flangeW - 1, G.flangeR * 0.34);
+    ctx.lineTo(G.flangeX + G.flangeW - 1, G.flangeR * 0.94);
+    ctx.stroke();
+
+    // ⑥ 极性丝印。柱子本身已经是红/黑，但把「＋ / −」印在引脚旁边，
+    //    学生就不用去记「红的是正还是负」——直接照管子上的字接。
+    silk(ctx, '＋', G.domeCx - 26, -15, 13, '#b91c1c', true);
+    silk(ctx, '－', G.flangeX + 22, -15, 13, '#0f172a', true);
+
+    // ⑦ 接线柱：0 号是「+」（红），1 号是「−」（黑）。
+    posts(ctx, comp, ['pos', 'neg']);
+    ctx.restore();
+  }
+
+  // ============================================================
+  // 直流电动机（永磁小电机 + 轴上的飞轮）
+  // ------------------------------------------------------------
+  // 画面上必须能看出两件事，否则这个元件就白加了：
+  //   ① 它【在转】—— 飞轮的三根辐条按转子角扫过，正转顺时针、反转逆时针；
+  //   ② 它【发烫】—— 堵转时线圈电流是空载的好几倍，P = I²R 大十几倍，
+  //      外壳就真的往红里偏。学生看见外壳变红，再回头看电流表的数字，
+  //      「电机卡住会烧」这件事就不用讲了。
+  // 转速在画面上是【慢放】的（真实 2300 r/min 在 60fps 下每帧转 0.64 圈，
+  // 直接画出来只会糊成一片乱转的辐条）；真实转速写在读数框里。
+  // ============================================================
+  var MOT_GEO = {
+    x0: -56, x1: 26, hh: 26,             // 外壳
+    capCx: 26, capRx: 9,                 // 右端面（椭圆）
+    shaftX0: 30, shaftX1: 58, shaftR: 4,
+    flyCx: 46, flyRx: 8, flyRy: 19,      // 飞轮：近侧视的椭圆
+    leadY: 20, leadX: 62,                // 右引线的绕行高度与立线位置
+  };
+  // 画面转速 = 真实转速 × 这个系数（见上面的注释）
+  var MOT_SLOW = 0.03;
+  function drawMotor(ctx, comp, rec, opts) {
+    var G = MOT_GEO;
+    var sc = ctxScale(ctx);
+    var spin = (opts && opts.spin) || 0;         // 转子角（弧度），由宿主累积
+    // 发热归一：空载约 0.05W、堵转约 1.3W，取 1.5W 当满标。
+    var heat = rec ? Math.max(0, Math.min((rec.pHeat || 0) / 1.5, 1)) : 0;
+    var stalled = !!(rec && rec.stalled && !rec.isolated);
+    ctx.save();
+    ctx.translate(comp.x, comp.y);
+    ctx.rotate((comp.rot || 0) * Math.PI / 180);
+
+    // ① 引线。右引线绕到外壳【底下】再进去 —— 直着走过去会横穿飞轮，
+    //    看着像导线扎在飞轮上。绕行高度 leadY 刚好在飞轮下沿（19）之下。
+    ctx.save();
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    ctx.strokeStyle = 'rgba(90,104,120,0.9)'; ctx.lineWidth = 4.6;
+    ctx.beginPath();
+    ctx.moveTo(G.leadX0 - 0, 0); ctx.lineTo(G.x0 + 4, 0);
+    ctx.moveTo(G.leadX1, 0); ctx.lineTo(G.leadX, 0);
+    ctx.lineTo(G.leadX, G.leadY); ctx.lineTo(6, G.leadY);
+    ctx.stroke();
+    ctx.strokeStyle = linGrad(ctx, 0, -2.4, 0, 2.4,
+      [[0, '#f2f6fa'], [0.42, '#c3cfdb'], [1, '#7d8b9b']]);
+    ctx.lineWidth = 2.8;
+    ctx.beginPath();
+    ctx.moveTo(G.leadX0 - 0, 0); ctx.lineTo(G.x0 + 4, 0);
+    ctx.moveTo(G.leadX1, 0); ctx.lineTo(G.leadX, 0);
+    ctx.lineTo(G.leadX, G.leadY); ctx.lineTo(6, G.leadY);
+    ctx.stroke();
+    ctx.restore();
+
+    // ② 外壳：横躺的金属圆筒。左端圆、右端留出端面椭圆。
+    softShadow(ctx, G.x0, -G.hh, G.x1 - G.x0, G.hh * 2, 14, 12);
+    contactShadow(ctx, 0, G.hh + 2, (G.x1 - G.x0) * 0.42, 5, 0.28);
+    function shellPath() {
+      ctx.beginPath();
+      ctx.moveTo(G.x1, -G.hh);
+      ctx.lineTo(G.x0 + G.hh, -G.hh);
+      ctx.arc(G.x0 + G.hh, 0, G.hh, -Math.PI / 2, Math.PI / 2);
+      ctx.lineTo(G.x1, G.hh);
+      ctx.closePath();
+    }
+    shellPath();
+    ctx.fillStyle = linGrad(ctx, 0, -G.hh, 0, G.hh, MAT.steel);
+    ctx.fill();
+    // 外壳上的两道环形凹槽：圆柱体上的凹槽投影成两条竖着的暗线 + 亮线，
+    // 有它们才读得出「这是一根筒」，不然只是一块金属色的方板。
+    ctx.save(); shellPath(); ctx.clip();
+    [-40, 4].forEach(function (gx) {
+      ctx.strokeStyle = 'rgba(40,52,68,0.34)'; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.moveTo(gx, -G.hh); ctx.lineTo(gx, G.hh); ctx.stroke();
+      ctx.strokeStyle = 'rgba(255,255,255,0.42)'; ctx.lineWidth = 1.2;
+      ctx.beginPath(); ctx.moveTo(gx + 2.4, -G.hh); ctx.lineTo(gx + 2.4, G.hh); ctx.stroke();
+    });
+    // 发热：外壳整体往红橙偏。压在外壳里，不溢出轮廓。
+    if (heat > 0.01) {
+      ctx.fillStyle = 'rgba(220,58,16,' + (0.46 * heat) + ')';
+      ctx.fillRect(G.x0 - 2, -G.hh - 2, G.x1 - G.x0 + 6, G.hh * 2 + 4);
+    }
+    // 顶面的一道宽高光：金属筒受光的那一条
+    ctx.fillStyle = 'rgba(255,255,255,0.30)';
+    roundRect(ctx, G.x0 + 14, -G.hh + 3.5, G.x1 - G.x0 - 22, 7, 3.5); ctx.fill();
+    ctx.restore();
+    shellPath();
+    ctx.strokeStyle = 'rgba(70,84,100,0.5)'; ctx.lineWidth = 1.1; ctx.stroke();
+
+    // ③ 右端面：一个椭圆（3/4 视角下看得见的那一圈端盖）
+    ctx.fillStyle = linGrad(ctx, G.capCx - G.capRx, 0, G.capCx + G.capRx, 0,
+      [[0, '#8fa0b2'], [0.5, '#6c7d90'], [1, '#4a5a6c']]);
+    ctx.beginPath();
+    ctx.ellipse(G.capCx, 0, G.capRx, G.hh, 0, 0, 6.284);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(40,52,68,0.55)'; ctx.lineWidth = 1; ctx.stroke();
+    ctx.strokeStyle = 'rgba(255,255,255,0.22)'; ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.ellipse(G.capCx - 1.5, 0, G.capRx * 0.55, G.hh * 0.9, 0, Math.PI * 0.62, Math.PI * 1.38);
+    ctx.stroke();
+
+    // ④ 轴
+    ctx.fillStyle = linGrad(ctx, 0, -G.shaftR, 0, G.shaftR,
+      [[0, '#f2f6fa'], [0.35, '#c9d4e0'], [0.72, '#93a2b2'], [1, '#5f7086']]);
+    roundRect(ctx, G.shaftX0, -G.shaftR, G.shaftX1 - G.shaftX0, G.shaftR * 2, 2);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(60,74,90,0.45)'; ctx.lineWidth = 0.9; ctx.stroke();
+
+    // ⑤ 飞轮：椭圆盘 + 三根辐条。辐条按转子角扫过椭圆 —— 这就是
+    //    「在转」和「往哪边转」两件事的全部信息来源。
+    //    堵转时辐条停住不动（spin 不推进），并且旁边顶着一个红挡块。
+    var flyGrad = ctx.createRadialGradient(G.flyCx - G.flyRx * 0.4, -G.flyRy * 0.4, 2,
+                                           G.flyCx, 0, G.flyRy);
+    flyGrad.addColorStop(0, '#e8eef5');
+    flyGrad.addColorStop(0.55, '#b0bdcc');
+    flyGrad.addColorStop(1, '#67788b');
+    ctx.beginPath();
+    ctx.ellipse(G.flyCx, 0, G.flyRx, G.flyRy, 0, 0, 6.284);
+    ctx.fillStyle = flyGrad; ctx.fill();
+    ctx.strokeStyle = 'rgba(45,58,74,0.6)'; ctx.lineWidth = 1.2; ctx.stroke();
+    // 轮缘
+    ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.lineWidth = 1.1;
+    ctx.beginPath();
+    ctx.ellipse(G.flyCx, 0, G.flyRx * 0.78, G.flyRy * 0.80, 0, 0, 6.284);
+    ctx.stroke();
+    ctx.save();
+    ctx.beginPath(); ctx.ellipse(G.flyCx, 0, G.flyRx, G.flyRy, 0, 0, 6.284); ctx.clip();
+    ctx.strokeStyle = 'rgba(52,66,84,0.72)';
+    ctx.lineWidth = Math.max(1.4, Math.min(2.6, sc * 1.5));
+    ctx.lineCap = 'round';
+    for (var k = 0; k < 3; k++) {
+      var a = spin + k * 2 * Math.PI / 3;
+      ctx.beginPath();
+      ctx.moveTo(G.flyCx, 0);
+      ctx.lineTo(G.flyCx + Math.cos(a) * G.flyRx * 0.86, Math.sin(a) * G.flyRy * 0.86);
+      ctx.stroke();
+    }
+    ctx.restore();
+    // 轮毂
+    ctx.fillStyle = '#8b9aab';
+    ctx.beginPath(); ctx.ellipse(G.flyCx, 0, 2.6, 3.4, 0, 0, 6.284); ctx.fill();
+    ctx.strokeStyle = 'rgba(45,58,74,0.6)'; ctx.lineWidth = 0.8; ctx.stroke();
+
+    // 堵转：飞轮右下方顶一个红挡块，辐条停住。这是「卡住」这件事在
+    // 画面上唯一的证据 —— 只看飞轮的话，停住和「电流太小转不动」
+    // 长得一模一样，而这两件事的电流差着一个量级。
+    if (stalled) {
+      ctx.save();
+      ctx.fillStyle = '#b91c1c';
+      ctx.strokeStyle = 'rgba(90,12,12,0.8)'; ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(G.flyCx + G.flyRx + 1, G.flyRy * 0.30);
+      ctx.lineTo(G.flyCx + G.flyRx + 11, G.flyRy * 0.05);
+      ctx.lineTo(G.flyCx + G.flyRx + 11, G.flyRy * 0.72);
+      ctx.closePath();
+      ctx.fill(); ctx.stroke();
+      ctx.restore();
+    }
+
+    // ⑥ 铭牌与极性丝印
+    silk(ctx, 'M', -15, 0, 22, 'rgba(38,50,64,0.72)', false);
+    if (sc >= 0.85) silk(ctx, '直流电动机', -15, 17, 9, 'rgba(38,50,64,0.6)', false);
+    silk(ctx, '＋', -40, -15, 13, '#b91c1c', true);
+    silk(ctx, '－', 40, -15, 13, '#0f172a', true);
+
+    posts(ctx, comp, ['pos', 'neg']);
+    ctx.restore();
+  }
+
+  // ============================================================
+  // 电铃（电磁铁 + 衔铁 + 断续触点 + 铃碗）
+  // ------------------------------------------------------------
+  // 通电的链条是：线圈通电 → U 形铁芯变成电磁铁 → 吸下衔铁 →
+  // 衔铁上的锤敲响铃碗 → 同时把弹簧片上的触点顶开 → 电流断掉 →
+  // 弹簧把衔铁拉回、触点重新闭合 → 再吸…… 于是嗡嗡地响。
+  // 画面上能看见的就是这条链条的后半段：衔铁上下振、锤敲碗、碗发亮起波纹。
+  // ⚠️ 两个接线柱都画成【金属色】，不画正负 —— 这不是偷懒，是
+  //    「电铃没有单向导电性」这件事在画面上唯一的表达方式。
+  //    电流方向只影响铁芯的 N/S，而软铁衔铁不管 N 极还是 S 极都被吸引。
+  // ============================================================
+  var BEL_GEO = {
+    coreX: [-50, -14], coreTop: -48, coreR: 5,   // U 形铁芯的两根立柱
+    yokeY: -12, yokeH: 9, yokeX0: -56, yokeX1: -8,
+    coilTop: -44, coilBot: -18, coilHalfW: 10,
+    armY: -58, armH: 7, armX0: -58, armX1: -4,   // 衔铁（横杆）
+    bowlCx: 30, bowlCy: -4, bowlR: 30,           // 铃碗（开口朝下的半球壳）
+    hamX: 2, hamY: -30, hamR: 6.5,               // 锤头
+    pullMax: 5,                                  // 衔铁被吸下的最大位移
+  };
+  // 画面上的敲击频率。真实电铃约 25~40 Hz —— 60fps 下画 30 Hz 只会糊成
+  // 一片重影，所以画面按 8 Hz 慢放，真实频率写在读数框里。
+  var BEL_HZ = 8;
+  function drawBell(ctx, comp, rec, opts) {
+    var G = BEL_GEO;
+    var sc = ctxScale(ctx);
+    var rings = !!(rec && rec.rings);
+    var vol = rec ? Math.max(0, Math.min(rec.volume || 0, 1)) : 0;
+    var t = (opts && opts.t) || 0;
+    // 吸合位移：0（松开）→ pullMax（吸到底）。用 (1−cos)/2 而不是 |sin|：
+    // 真实衔铁是被吸过去、被弹簧拉回，一头一尾各停一下，不是正弦摆动。
+    var pull = rings ? (0.5 - 0.5 * Math.cos(2 * Math.PI * BEL_HZ * t)) * (0.55 + 0.45 * vol) : 0;
+    var dy = G.pullMax * pull;
+    ctx.save();
+    ctx.translate(comp.x, comp.y);
+    ctx.rotate((comp.rot || 0) * Math.PI / 180);
+
+    basePlate(ctx, PLATE.HW, PLATE.TOP, PLATE.FACE, PLATE.BOT);
+
+    // ① U 形铁芯：两根立柱 + 底部横梁，连成一体的软铁。先画铁芯再画线圈，
+    //    线圈压在柱子上 —— 实物就是漆包线绕在铁芯外面。
+    ctx.fillStyle = linGrad(ctx, 0, G.yokeY, 0, G.yokeY + G.yokeH,
+      [[0, '#7a8797'], [0.35, '#5d6a7a'], [1, '#3c4756']]);
+    roundRect(ctx, G.yokeX0, G.yokeY, G.yokeX1 - G.yokeX0, G.yokeH, 3);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(28,36,48,0.55)'; ctx.lineWidth = 1; ctx.stroke();
+    G.coreX.forEach(function (cx) {
+      ctx.fillStyle = linGrad(ctx, cx - G.coreR, 0, cx + G.coreR, 0,
+        [[0, '#4d5968'], [0.3, '#8b98a8'], [0.5, '#b6c2cf'], [0.75, '#6d7a8a'], [1, '#3f4a58']]);
+      roundRect(ctx, cx - G.coreR, G.coreTop, G.coreR * 2, G.yokeY - G.coreTop + 2, 2.5);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(28,36,48,0.5)'; ctx.lineWidth = 0.9; ctx.stroke();
+    });
+    // 铁芯顶端的两极：通电时它们就是电磁铁的 N/S 极，各画一道亮口
+    if (rings) {
+      ctx.fillStyle = 'rgba(120,170,255,' + (0.30 + 0.45 * pull) + ')';
+      G.coreX.forEach(function (cx) {
+        roundRect(ctx, cx - G.coreR, G.coreTop - 1.5, G.coreR * 2, 3.5, 1.5); ctx.fill();
+      });
+    }
+
+    // ② 两组线圈（绕在两根立柱上）
+    var coilStops = [[0, '#5f4310'], [0.16, '#a8832f'], [0.34, '#e3c473'],
+                     [0.50, '#fbf0c0'], [0.68, '#c9a24a'], [0.88, '#8a6524'], [1, '#4e360c']];
+    G.coreX.forEach(function (cx) {
+      ctx.save();
+      ctx.translate(cx, (G.coilTop + G.coilBot) / 2);
+      ctx.rotate(-Math.PI / 2);
+      coil(ctx, -(G.coilBot - G.coilTop) / 2, (G.coilBot - G.coilTop) / 2,
+           -G.coilHalfW, G.coilHalfW, 14, coilStops, sc);
+      ctx.restore();
+    });
+
+    // ③ 断续触点：一根从衔铁下来的弹簧片 + 铁芯之间那个固定触点螺钉。
+    //    它才是「铃会响而不是吸住不动」的原因，必须画出来。
+    ctx.strokeStyle = '#c9a24a'; ctx.lineWidth = 2.6; ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(-30, G.armY + dy);
+    ctx.lineTo(-30, -26 + dy * 0.6);
+    ctx.stroke();
+    ctx.fillStyle = linGrad(ctx, -34, 0, -26, 0,
+      [[0, '#5f4310'], [0.4, '#e3c473'], [0.6, '#fbf0c0'], [1, '#8a6524']]);
+    roundRect(ctx, -34, -26, 8, 6, 2); ctx.fill();
+    ctx.strokeStyle = 'rgba(40,28,8,0.6)'; ctx.lineWidth = 0.9; ctx.stroke();
+
+    // ④ 衔铁（软铁横杆）+ 弹簧片。整根跟着 pull 一起下移 —— 锤也就跟着
+    //    敲到碗上，这是「一次吸合 = 一次敲击」在画面上的对应关系。
+    ctx.save();
+    ctx.translate(0, dy);
+    ctx.fillStyle = linGrad(ctx, 0, G.armY, 0, G.armY + G.armH,
+      [[0, '#b6c2cf'], [0.28, '#8794a4'], [0.62, '#5d6a7a'], [1, '#39424f']]);
+    roundRect(ctx, G.armX0, G.armY, G.armX1 - G.armX0, G.armH, 3);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(28,36,48,0.6)'; ctx.lineWidth = 1; ctx.stroke();
+    // 弹簧片：从衔铁左端斜下到底板。画成一条细的弯钢片。
+    ctx.strokeStyle = '#9fb0c2'; ctx.lineWidth = 3.4; ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(G.armX0 + 2, G.armY + G.armH - 1);
+    ctx.quadraticCurveTo(G.armX0 - 6, -30, G.armX0 + 4, PLATE.TOP + 1);
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(255,255,255,0.4)'; ctx.lineWidth = 1.1;
+    ctx.beginPath();
+    ctx.moveTo(G.armX0 + 1, G.armY + G.armH - 2);
+    ctx.quadraticCurveTo(G.armX0 - 7, -30, G.armX0 + 3, PLATE.TOP);
+    ctx.stroke();
+    // 锤杆 + 锤头
+    ctx.strokeStyle = linGrad(ctx, 0, G.armY, 0, G.hamY,
+      [[0, '#c3cfdb'], [0.5, '#8794a4'], [1, '#5d6a7a']]);
+    ctx.lineWidth = 4.2; ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(G.armX1 - 3, G.armY + G.armH * 0.5);
+    ctx.lineTo(G.hamX, G.hamY);
+    ctx.stroke();
+    var hg = ctx.createRadialGradient(G.hamX - 2, G.hamY - 2, 1, G.hamX, G.hamY, G.hamR);
+    hg.addColorStop(0, '#eef3f8'); hg.addColorStop(0.5, '#a8b6c4'); hg.addColorStop(1, '#5b6c7d');
+    ctx.fillStyle = hg;
+    ctx.beginPath(); ctx.arc(G.hamX, G.hamY, G.hamR, 0, 6.284); ctx.fill();
+    ctx.strokeStyle = 'rgba(40,52,68,0.55)'; ctx.lineWidth = 1; ctx.stroke();
+    ctx.restore();
+
+    // ⑤ 铃碗：开口朝下的半球壳，坐在底板上。碗口留一道厚边（真实铃碗
+    //    的卷边），没有它这个半圆会读成「一顶帽子」。
+    var bowlPath = function () {
+      ctx.beginPath();
+      ctx.arc(G.bowlCx, G.bowlCy, G.bowlR, Math.PI, 0);
+      ctx.lineTo(G.bowlCx + G.bowlR, G.bowlCy + 7);
+      ctx.arc(G.bowlCx, G.bowlCy + 7, G.bowlR, 0, Math.PI, true);
+      ctx.closePath();
+    };
+    bowlPath();
+    var bg = ctx.createLinearGradient(G.bowlCx - G.bowlR, 0, G.bowlCx + G.bowlR, 0);
+    bg.addColorStop(0, '#8fa0b2'); bg.addColorStop(0.28, '#e8eef5');
+    bg.addColorStop(0.52, '#c3cfdb'); bg.addColorStop(0.78, '#8794a4');
+    bg.addColorStop(1, '#5b6c7d');
+    ctx.fillStyle = bg; ctx.fill();
+    ctx.strokeStyle = 'rgba(45,58,74,0.6)'; ctx.lineWidth = 1.1; ctx.stroke();
+    ctx.save(); bowlPath(); ctx.clip();
+    // 碗身上的一道竖向高光（金属球面的受光带）
+    ctx.fillStyle = 'rgba(255,255,255,0.34)';
+    ctx.beginPath();
+    ctx.ellipse(G.bowlCx - G.bowlR * 0.30, G.bowlCy - G.bowlR * 0.30,
+                G.bowlR * 0.17, G.bowlR * 0.72, 0.28, 0, 6.284);
+    ctx.fill();
+    ctx.restore();
+    // 敲击的瞬间：碗被照亮 + 碗外两圈扩散的振动弧。
+    // 弧的相位用 t 直接推，频率是敲击频率的 3 倍 —— 一次敲击荡出三圈。
+    if (rings) {
+      var flash = Math.pow(pull, 3);
+      if (flash > 0.02) {
+        ctx.save(); bowlPath(); ctx.clip();
+        ctx.fillStyle = 'rgba(255,255,255,' + (0.55 * flash) + ')';
+        ctx.fillRect(G.bowlCx - G.bowlR, G.bowlCy - G.bowlR, G.bowlR * 2, G.bowlR * 2);
+        ctx.restore();
+      }
+      ctx.save();
+      ctx.strokeStyle = 'rgba(120,140,165,0.55)';
+      for (var q = 0; q < 3; q++) {
+        var ph = ((t * BEL_HZ * 3 + q / 3) % 1);
+        var rr = G.bowlR + 3 + ph * 20;
+        ctx.globalAlpha = (1 - ph) * 0.5 * (0.4 + 0.6 * vol);
+        ctx.lineWidth = 2.2 - 1.4 * ph;
+        ctx.beginPath();
+        ctx.arc(G.bowlCx, G.bowlCy, rr, Math.PI * 1.10, Math.PI * 1.90);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+
+    // ⑥ 接线柱：两个都是金属色（无极性）。见本节的标题注释。
+    posts(ctx, comp, ['neutral', 'neutral'], 1.4, 8);
+    ctx.restore();
+  }
+
+  // ============================================================
   // 统一入口
   // ============================================================
-  function drawComponent(ctx, comp, rec) {
+  // opts 是【可选】的第 4 个参数，只有会动的元件用得到（电动机的转子角、
+  // 电铃的振动相位）。不传就一律按静止画 —— 放大镜、图例、电路图那边
+  // 都是三参数调用，它们要的是「这一刻的静态外形」，不该被动画污染。
+  function drawComponent(ctx, comp, rec, opts) {
     switch (comp.type) {
       case 'resistor': drawResistor(ctx, comp, rec); break;
       case 'battery': drawBattery(ctx, comp, rec); break;
       case 'switch': drawSwitch(ctx, comp, rec); break;
       case 'bulb': drawBulb(ctx, comp, rec); break;
+      case 'led': drawLed(ctx, comp, rec, opts); break;
+      case 'motor': drawMotor(ctx, comp, rec, opts); break;
+      case 'bell': drawBell(ctx, comp, rec, opts); break;
       case 'ammeter': drawMeter(ctx, comp, rec, false); break;
       case 'voltmeter': drawMeter(ctx, comp, rec, true); break;
       case 'rheostat': drawRheostat(ctx, comp, rec); break;
       default: throw new Error('未知元件类型: ' + comp.type);
     }
   }
+  // 「这个元件会不会自己动」——宿主靠它决定哪些元件必须每帧重画，
+  // 不能扔进静态缓存层。开关的刀片、灯泡的亮度都只跟状态走，不算「会动」。
+  function isAnimated(type) { return type === 'motor' || type === 'bell'; }
 
   function drawBackground(ctx, W, H) {
     ctx.fillStyle = PALETTE.bench;
@@ -2443,12 +2988,15 @@
     slideOf: slideOf,
     drawComponent: drawComponent, drawWire: drawWire, electronShift: electronShift,
     currentShift: currentShift,
+    isAnimated: isAnimated,
+    LED_GEO: LED_GEO, MOT_GEO: MOT_GEO, BEL_GEO: BEL_GEO,
+    MOT_SLOW: MOT_SLOW, BEL_HZ: BEL_HZ, mixRgb: mixRgb,
     FLOW_PX_PER_PHASE: FLOW_PX_PER_PHASE, polyLen: polyLen, pointAt: pointAt, pointDirAt: pointDirAt,
     drawBackground: drawBackground, drawBindingPost: drawBindingPost,
     resistorBands: resistorBands, roundRect: roundRect, softShadow: softShadow,
     batterySize: batterySize, bodyBox: bodyBox,
     MAT: MAT, MET: MET, MET_SWEEP: MET_SWEEP, POST_GRAD: POST_GRAD,
     BAND_COLORS: BAND_COLORS,
-    version: '2.0.0',
+    version: '2.1.0',
   };
 });

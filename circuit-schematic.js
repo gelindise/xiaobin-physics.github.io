@@ -216,6 +216,11 @@
         // 断开的刀片抬到 y ≈ −20，梢上还有个实心圆，盒子得够高
         return { x0: -26, y0: -26, x1: 26, y1: 6 };
       case 'bulb': return { x0: -24, y0: -24, x1: 24, y1: 24 };
+      // 二极管的框要高一点：符号右上方还有两个表示发光的箭头，
+      // 框住它们导线才不会从箭头上穿过去。
+      case 'led': return { x0: -22, y0: -30, x1: 26, y1: 18 };
+      case 'motor': return { x0: -24, y0: -24, x1: 24, y1: 24 };
+      case 'bell': return { x0: -24, y0: -24, x1: 24, y1: 24 };
       case 'ammeter': case 'voltmeter': {
         var m = it.meta;
         // 就画到圆周为止。空着的那根量程柱**不再画虚脚**（原来往下多留 26px），
@@ -541,7 +546,10 @@
     // 能翻的只有「端子都落在轴线上」的元件。变阻器（滑片杆在顶上）和电表
     // （三个柱全在下方）翻了就头朝下，所以不翻——它们的接线柱本来就在轴线两侧
     // 或正下方，路由够得着。
-    var FLIPPABLE = ['switch', 'bulb', 'resistor'];
+    // 二极管和电动机【必须】能翻：它们是有极性的，翻面不只是为了走线好看，
+    // 还是「这根管子是正着接还是反着接」在电路图上的表达。翻面是左右镜像，
+    // 符号跟着一起镜像，所以三角形的朝向永远和实物一致。
+    var FLIPPABLE = ['switch', 'bulb', 'resistor', 'led', 'motor'];
     function flipOf(e, dir) {
       var it = byId[e.compId], T = D.TERMINALS[it.type];
       if (FLIPPABLE.indexOf(it.type) < 0) return false;
@@ -1105,6 +1113,23 @@
         // 接线由导线本身表示，图上不重复印 B-C 等调试信息；保留教学需要的滑片位置。
         return '最大 ' + num(mx) + ' Ω · 滑片 ' + num(it.meta.slide);
       }
+      // 二极管的铭牌是【颜色】而不是电压 —— 真实管子就是按颜色分规格卖的，
+      // 正向压降是那个颜色的属性。把两个数一起印出来，学生才知道「3V 点不亮
+      // 蓝管」不是巧合，是 3.1V 的压降摆在那儿。
+      case 'led': {
+        var lc = core && core.ledColorOf ? core.ledColorOf(P) : { label: '红色', Vf: 1.8 };
+        return lc.label + ' · 正向 ' + lc.Vf.toFixed(1) + ' V';
+      }
+      case 'motor': {
+        var rc = (rec && rec.R != null) ? +rec.R : (P.Rcoil != null ? +P.Rcoil : 5);
+        var st = rec ? !!rec.stalled : !!P.stall;
+        return '线圈 ' + num(rc) + ' Ω' + (st ? ' · 堵转' : '');
+      }
+      case 'bell': {
+        var bc = (rec && rec.R != null) ? +rec.R : (P.Rcoil != null ? +P.Rcoil : 20);
+        var tn = (rec && rec.turns != null) ? +rec.turns : (P.turns != null ? +P.turns : 800);
+        return '线圈 ' + num(bc) + ' Ω · ' + num(tn) + ' 匝';
+      }
       default: return '';
     }
   }
@@ -1117,6 +1142,11 @@
   // 不接线的箭头只会以为图画错了。
   function hintOf(it) {
     if (it.type === 'rheostat' && it.meta.stemDashed) return '滑片未接入 · 相当于定值电阻';
+    // 二极管接反时【一条支路都没有】——求解器里它就是断路，读数全是 0。
+    // 光看符号看不出「图是对的、电路不导电」，必须写一句，否则学生会以为
+    // 是软件算错了（0.000A 和「管子没导通」是两件事）。
+    if (it.type === 'led' && it.rec && !it.rec.on && !it.rec.isolated) return '反向截止 · 不导电';
+    if (it.type === 'bell' && it.rec && !it.rec.rings && !it.rec.isolated) return '磁动势不足 · 铃不响';
     return '';
   }
 
@@ -1588,11 +1618,83 @@
         ctx.stroke();
         break;
       }
+      // 发光二极管：教材上的二极管符号（实心三角 + 一条横线）再补两个发光箭头。
+      // 三角的【尖端指向横线】，也就是阳极指向阴极 —— 电流只许这么流。
+      // 这两笔的朝向不能反：反了就成了「只许反向导电」，比不画还坏。
+      case 'led': {
+        lead(ctx, T[0], -16); lead(ctx, T[1], 16);
+        ctx.beginPath();
+        ctx.moveTo(-16, -15); ctx.lineTo(-16, 15); ctx.lineTo(14, 0);
+        ctx.closePath();
+        ctx.fillStyle = COLOR.wire; ctx.fill();
+        // 阴极横线：画得比导线粗一点，它才是「单向」的那个「单」
+        ctx.lineWidth = 3.4;
+        ctx.beginPath();
+        ctx.moveTo(14, -17); ctx.lineTo(14, 17);
+        ctx.stroke();
+        ctx.lineWidth = 2.4;
+        // 两个发光箭头：从左下往右上射出（离开管子的方向）
+        ctx.lineWidth = 2;
+        [[-2, -12], [9, -12]].forEach(function (a) {
+          ctx.beginPath();
+          ctx.moveTo(a[0], a[1]); ctx.lineTo(a[0] + 11, a[1] - 11);
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.moveTo(a[0] + 11, a[1] - 11);
+          ctx.lineTo(a[0] + 11, a[1] - 4.5);
+          ctx.lineTo(a[0] + 4.5, a[1] - 11);
+          ctx.closePath();
+          ctx.fillStyle = COLOR.wire; ctx.fill();
+        });
+        ctx.lineWidth = 2.4;
+        break;
+      }
+      // 电动机：一个圆里写 M。极性和二极管一样靠翻面表达，字母本身始终正立。
+      case 'motor': {
+        lead(ctx, T[0], -22); lead(ctx, T[1], 22);
+        ctx.beginPath(); ctx.arc(0, 0, 22, 0, Math.PI * 2);
+        ctx.fillStyle = COLOR.paper; ctx.fill();
+        ctx.strokeStyle = COLOR.wire; ctx.lineWidth = 2.4; ctx.stroke();
+        ctx.fillStyle = COLOR.wire;
+        ctx.font = 'bold 24px Georgia,"Times New Roman",serif';
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        // 支路从右往左时元件会被转 180°，字母仍须正立可读（和电表同一处理）。
+        ctx.save();
+        if ((c.rot || 0) % 360 === 180) {
+          ctx.translate(0, 0); ctx.rotate(Math.PI);
+        }
+        ctx.fillText('M', 0, 1);
+        ctx.restore();
+        ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+        break;
+      }
+      // 电铃：一个圆里画一只铃（半圆碗 + 碗沿 + 铃舌）。两个接线柱不分正负，
+      // 符号里也不画任何方向标记 —— 这就是「电铃没有单向导电性」。
+      case 'bell': {
+        lead(ctx, T[0], -22); lead(ctx, T[1], 22);
+        ctx.beginPath(); ctx.arc(0, 0, 22, 0, Math.PI * 2);
+        ctx.fillStyle = COLOR.paper; ctx.fill();
+        ctx.strokeStyle = COLOR.wire; ctx.lineWidth = 2.4; ctx.stroke();
+        // 碗：上半圆
+        ctx.beginPath();
+        ctx.arc(0, -2, 10, Math.PI, 0);
+        ctx.stroke();
+        // 碗沿
+        ctx.beginPath();
+        ctx.moveTo(-13, -2); ctx.lineTo(13, -2);
+        ctx.stroke();
+        // 铃舌
+        ctx.beginPath();
+        ctx.moveTo(0, -2); ctx.lineTo(0, 7);
+        ctx.stroke();
+        ctx.beginPath(); ctx.arc(0, 9, 2.6, 0, Math.PI * 2);
+        ctx.fillStyle = COLOR.wire; ctx.fill();
+        break;
+      }
       case 'ammeter': case 'voltmeter': {
         var m = it.meta;
         // 引线：从柱子水平引到圆周。没接线的那两根画虚线（悬空）。
-        hLead(ctx, T[0], m.cx - m.r, m.posWired);
-        if (m.tap) hLead(ctx, T[m.tap], m.cx + m.r, true);
+        hLead(ctx, T[0], m.cx - m.r, m.posWired);        if (m.tap) hLead(ctx, T[m.tap], m.cx + m.r, true);
         // 空着的那根量程柱**不画虚脚**：那根短脚固定在离圆心 100px 外，
         // 画出来是画面正中凭空一根小竖线，反倒像根走错路的导线。
         ctx.beginPath(); ctx.arc(m.cx, m.cy, m.r, 0, Math.PI * 2);
@@ -1693,6 +1795,12 @@
       to: '一个圆里写 A，串在电路里；用到的两根柱各引一根线，空着那根不画' },
     { type: 'voltmeter', name: '电压表',          from: '三个接线柱的指针表',
       to: '一个圆里写 V，并接在被测元件的两端' },
+    { type: 'led',      name: '发光二极管',       from: '一端半球透镜、一端带平边的彩色小管',
+      to: '实心三角加一条横线：三角尖端指向横线，电流只许这么流（单向导电性）。右上两个小箭头表示发光' },
+    { type: 'motor',    name: '电动机',           from: '金属外壳的小电机，轴头上带一只飞轮',
+      to: '一个圆里写 M，串在电路里；接线反了转子就反转' },
+    { type: 'bell',     name: '电铃',             from: '电磁铁、衔铁加一只铃碗',
+      to: '一个圆里画一只铃。它不分正负 —— 电流从哪边进都响，这是它和二极管最要紧的区别' },
   ];
 
   return {
@@ -1706,6 +1814,6 @@
     // 规整化/走线的常量：测试要断言「位移 ≤ MOVE_MAX」，从这里取，
     // 免得内核改了上限、测试还按老数字断（那就成了自证）
     MOVE_MAX: MOVE_MAX,
-    version: '3.6.0',
+    version: '3.7.0',
   };
 });

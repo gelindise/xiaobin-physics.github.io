@@ -214,6 +214,7 @@
   <h1>电路实验沙盒</h1>
   <div class="sub">自由拖拽元件、拉线搭电路，读数由 <code>circuit-core.js</code>（MNA 改进节点法）实时求解 —— 接成什么样，就算出什么样。</div>
   <div class="sub legend">导线上的<b>琥珀色小球</b>是自由电子、<b>红色箭头</b>是电流方向，两者<b>反向</b>跑（金属导体中规定正电荷定向移动的方向为电流方向）：电子从电源负极出发回到正极，电流从正极出发回到负极。两个动画可以单独开关，也可以同时开着一比就明白。点击电表<b>表盘</b>可放大读数。</div>
+  <div class="sub legend">新加的三件器材各有一条只有它才有的规律：<b>发光二极管</b>单向导电 —— 三角尖端指向横线的那一头才通，接反了整条回路都不导电（蓝管 3.1V，两节干电池点不亮）；<b>电动机</b>转动时会产生反电动势，所以转起来电流很小，把转子<b>卡住</b>电流骤增、线圈发烫；<b>电铃</b>没有正负，电流从哪边进都响，但磁动势（电流 × 匝数）不够就吸不动衔铁。</div>
 
   <div class="bar" id="palette"></div>
 
@@ -301,12 +302,12 @@
      改了内核而 HTML 没变的话，老访客会拿缓存里的旧脚本跑新页面（画面上就
      会出现「说明写了电子逆流、小球却还顺着流」这种自相矛盾）。改脚本时
      把这个 build 号 +1 即可。 -->
-<script src="circuit-core.js?build=14"></script>
-<script src="circuit-draw.js?build=17"></script>
-<script src="circuit-editor.js?build=14"></script>
+<script src="circuit-core.js?build=15"></script>
+<script src="circuit-draw.js?build=18"></script>
+<script src="circuit-editor.js?build=15"></script>
 <!-- 电路图（实物图 → 标准符号）。独立成第四块内核：沙盒和欧姆定律页共用同一份，
      免得各写一套符号，两边的图画法迟早不一样。三个老内核一行没动，build 号不升。 -->
-<script src="circuit-schematic.js?build=9"></script>
+<script src="circuit-schematic.js?build=10"></script>
 <script>
 // ---- 访问保护：仅允许站内跳转（与站内其它实验页一致）----
 (function(){
@@ -391,7 +392,8 @@ function bh0(n){ return n*18 + 8; }
 // 否则会压在自己的接线柱上。
 // 读数框的竖向落点 = 元件重心到本体下沿的距离。开关和灯泡现在都有一块
 // 铺到导线下方 y=+30 的底板，所以从 30/32 提到 38，不然读数框会压在板上。
-var DROP = {battery:40, ammeter:80, voltmeter:80, resistor:22, bulb:38, rheostat:46, switch:38};
+var DROP = {battery:40, ammeter:80, voltmeter:80, resistor:22, bulb:38, rheostat:46, switch:38,
+            led:24, motor:34, bell:38};
 
 // 元件旁边那个读数框里写哪几行，返回 null 表示这个元件不飘框（开关写在底座上了）。
 // 单独抽成函数是为了让测试能直接断言文字：反接这种「读数框里该写什么」的判断
@@ -421,6 +423,55 @@ function readoutLines(c, r){
   } else if (c.type === 'battery') {
     lines.push('E = ' + r.emf.toFixed(1) + 'V');
     lines.push('U = ' + Math.abs(r.v).toFixed(2) + 'V');
+  } else if (c.type === 'led') {
+    // 「不亮」有三种完全不同的原因，读数框必须把它们分开说 —— 混成一句
+    // 「不导电」，学生就分不清是【管子接反了】还是【电压不够】。
+    //   ① 没接线；
+    //   ② 阳极电位比阴极低（接反了）→ 反向截止，整条回路都没有电流；
+    //   ③ 方向对但两端电压低于正向压降（蓝管接 3V 电源、或者开关断开时
+    //      管子两端只有 0V）→ 电压不够。这一支【绝不能】写成「反向截止」：
+    //      断开开关本该看到「电压掉到 0」，写成接反就是把一个正确的操作判成了错误。
+    // 另外，截止时【一个电流数字都不印】：印「I = 0.000A」看着像一个有效读数，
+    // 学生会当成「这段没电流」，而真正该看到的是「管子不让电流过」。
+    if (r.isolated) {
+      lines.push('未接入电路');
+    } else if (r.on) {
+      lines.push('I = ' + (r.i * 1000).toFixed(1) + 'mA');
+      lines.push('U = ' + Math.abs(r.v).toFixed(2) + 'V');
+    } else if (r.v < -0.05) {
+      lines.push('反向截止');
+      lines.push('不导电');
+    } else if (r.v >= r.Vf - 1e-9) {
+      // 卡在门槛上：正向偏置刚好等于 Vf、一点电流都没有（两只红管串在 3V 上
+      // 就是这种）。这时【不能】写「低于 1.8V」—— 读数框上一行就印着 1.80V，
+      // 上下两行自相矛盾，学生只会怀疑仪器坏了。
+      lines.push('U = ' + Math.abs(r.v).toFixed(2) + 'V');
+      lines.push('未导通 · 不亮');
+    } else {
+      lines.push('U = ' + Math.abs(r.v).toFixed(2) + 'V');
+      lines.push('低于 ' + r.Vf.toFixed(1) + 'V · 不亮');
+    }
+  } else if (c.type === 'motor') {
+    // 堵转和「电流太小推不动」都会显示 n = 0，必须分开写：前者的电流是后者的
+    // 十几倍，而画面上两个飞轮都是静止的，只有这行字能把它俩区分开。
+    if (r.stalled) lines.push(r.stallSwitch ? '堵转 · 不转' : '推不动 · 不转');
+    else lines.push('n = ' + Math.abs(r.rpm).toFixed(0) + ' r/min' + (r.reversed ? ' 反转' : ''));
+    lines.push('I = ' + Math.abs(r.i).toFixed(3) + 'A');
+  } else if (c.type === 'bell') {
+    // 同理：「没接线」和「接上了但磁动势不够」是两件事。以前按电流判，
+    // 开关一断开就写「未接入电路」—— 线明明接得好好的。
+    if (r.isolated) {
+      lines.push('未接入电路');
+    } else if (r.rings) {
+      lines.push('通电 · 铃响');
+      lines.push('I = ' + Math.abs(r.i).toFixed(3) + 'A');
+    } else if (Math.abs(r.i) < 1e-9) {
+      lines.push('没有电流');
+      lines.push('不响');
+    } else {
+      lines.push('磁动势不足');
+      lines.push('不响 · ' + Math.abs(r.i).toFixed(3) + 'A');
+    }
   } else {
     lines.push('R = ' + (r.R || 0).toFixed(1) + 'Ω');
     lines.push('U = ' + Math.abs(r.v).toFixed(2) + 'V');
@@ -434,7 +485,12 @@ function drawForeground(){
   f.clearRect(0,0,W,H);
   if (!results) return;
   var recs = results.components;
-  scene.comps.forEach(function(c){ D.drawComponent(f, c, recs[c.id]); });
+  // 会动的元件（电动机的飞轮、电铃的衔铁）不进缓存层 —— 进了缓存就得每帧
+  // 重建整层，等于把分层白做了。它们由 drawMotion() 每帧单独画在主画布上。
+  scene.comps.forEach(function(c){
+    if (D.isAnimated(c.type)) return;
+    D.drawComponent(f, c, recs[c.id]);
+  });
   scene.comps.forEach(function(c){
     var r = recs[c.id]; if (!r) return;
     var lines = readoutLines(c, r);
@@ -455,6 +511,46 @@ function drawForeground(){
     f.fillStyle = '#334155';
     lines.forEach(function(l,i){ f.fillText(l, bx, by - bh/2 + 4 + 9 + i*18); });
     f.restore();
+  });
+}
+
+// ── 会动的元件：每帧重画 ────────────────────────────────────
+// 电动机的转子角与电铃的振动相位都记在页面这边，不进内核 ——
+// 内核算的是【稳态】（转速多少、响不响），「转到了哪个角度」是纯显示状态，
+// 存进求解结果只会让每次重算都把角度清零、飞轮一顿一顿的。
+var animT = 0;          // 动画时钟（秒），电铃的振动相位直接用它
+var spinAng = {};       // 元件 id → 转子角（弧度，已按慢放系数折算过）
+function spinOf(id){ return spinAng[id] || 0; }
+
+// 推进一帧。返回「画面上有没有东西在动」—— 调用方靠它决定要不要重绘。
+// ⚠️ 这一步和「电子流动 / 电流方向」两个开关【无关】：那两个开关管的是
+//    导线上的粒子（一种示意图），而飞轮在转、铃在响是器材本身的状态。
+//    关掉粒子就把电动机也停住，学生只会以为电机坏了。
+function stepMotion(dt){
+  if (!results || !results.components) return false;
+  var moving = false;
+  scene.comps.forEach(function(c){
+    var r = results.components[c.id];
+    if (!r) return;
+    if (c.type === 'motor') {
+      if (r.spinning) {
+        // 真实角速度太大（2300 r/min ≈ 240 rad/s，60fps 下每帧转 4 弧度），
+        // 直接积分只会得到一团糊。乘慢放系数，读数框里照旧写真实转速。
+        spinAng[c.id] = spinOf(c.id) + r.omega * D.MOT_SLOW * dt;
+        moving = true;
+      }
+    } else if (c.type === 'bell' && r.rings) {
+      moving = true;
+    }
+  });
+  return moving;
+}
+
+function drawMotion(){
+  if (!results || !results.components) return;
+  scene.comps.forEach(function(c){
+    if (!D.isAnimated(c.type)) return;
+    D.drawComponent(ctx, c, results.components[c.id], { spin: spinOf(c.id), t: animT });
   });
 }
 
@@ -479,6 +575,7 @@ function drawFrame(){
                                     electrons: showFlow, current: showCurrent });
     });
     ctx.drawImage(fgLayer, 0, 0, W, H);
+    drawMotion();                           // 会动的元件压在缓存层之上
   }
   if (editor) editor.drawOverlay(ctx);      // 选中框 / 拉线预览，永远在最上层
 }
@@ -487,9 +584,13 @@ var lastT = 0;
 function tick(t){
   var dt = lastT ? Math.min((t - lastT)/1000, 0.06) : 0;
   lastT = t;
-  // 两个动画都关就完全空转：画面是静止的，只在编辑操作时重绘。
-  if (!showFlow && !showCurrent) { requestAnimationFrame(tick); return; }
-  if (results && results.status === 'ok') phase += dt;
+  var anim = showFlow || showCurrent;
+  // 粒子只在电路真的导通时才走（断路/短路时导线上的小球停住，这本身就是信息）。
+  if (anim && results && results.status === 'ok') phase += dt;
+  animT += dt;
+  var moving = stepMotion(dt);
+  // 粒子关着、也没有器材在动 → 画面是静止的，完全空转（只在编辑操作时重绘）。
+  if (!anim && !moving) { requestAnimationFrame(tick); return; }
   drawFrame();
   requestAnimationFrame(tick);
 }
@@ -525,20 +626,41 @@ var PARAM_UI = {
   bulb:      [{k:'ratedV', t:'range', label:'额定电压', unit:'V', min:1.5, max:6, step:0.5},
               {k:'ratedW', t:'range', label:'额定功率', unit:'W', min:0.2, max:3, step:0.1},
               {k:'tempDependent', t:'check', wide:1, label:'灯丝电阻随温度升高而增大'}],
+  // 二极管的「颜色」不是一个装饰参数，它就是规格本身：换一根管子等于换一个
+  // 正向压降。所以下拉框里把压降一起写出来（labels），学生换到蓝管时看得见
+  // 「3.1V」这个数 —— 再看一眼电源只有 3V，就知道为什么它不亮。
+  led:       [{k:'color', t:'select', label:'颜色',
+               options:['red','green','blue'],
+               labels:{red:'红色 1.8V', green:'绿色 2.1V', blue:'蓝色 3.1V'}}],
+  // 电动机的三项都是【铭牌上印得出来的数】：线圈电阻、空载电流、转速常数。
+  // 空载电流单独给一格，是因为「转起来电流反而很小」这件事全看它 ——
+  // 学生把它调大调小，再对照堵转那一挡，这条规律就自己浮出来了。
+  motor:     [{k:'Rcoil', t:'range', label:'线圈电阻', unit:'Ω', min:1, max:12, step:0.5},
+              {k:'noLoadI', t:'range', label:'空载电流', unit:'A', min:0.02, max:0.1, step:0.01},
+              {k:'rpmPerV', t:'range', label:'转速常数', unit:'转/V', min:300, max:1400, step:100},
+              {k:'stall', t:'check', wide:1, label:'卡住转子（堵转）'}],
+  // 电铃只有两个旋钮，但它们正好就是「电磁铁磁性强弱跟什么有关」的两个答案：
+  // 电流（由线圈电阻和电压定）与匝数。调小任何一个，磁动势掉到吸合线以下，
+  // 衔铁就吸不动、铃不响了。
+  bell:      [{k:'Rcoil', t:'range', label:'线圈电阻', unit:'Ω', min:5, max:60, step:5},
+              {k:'turns', t:'range', label:'线圈匝数', unit:'匝', min:200, max:1200, step:100}],
 };
 var TYPE_LABEL = {battery:'电源', resistor:'定值电阻', switch:'开关',
-  ammeter:'电流表', voltmeter:'电压表', rheostat:'滑动变阻器', bulb:'小灯泡'};
+  ammeter:'电流表', voltmeter:'电压表', rheostat:'滑动变阻器', bulb:'小灯泡',
+  led:'发光二极管', motor:'电动机', bell:'电铃'};
 
 // 无极性元件的电流/电压要显示大小，不能显示符号。
 // 内核里 rec.i 记的是「从 0 号端子流向 1 号端子」，而 0 号端子在元件的哪一侧
 // 只是绘制时的朝向——电阻转 180° 接进回路还是同一个电阻。直接把带符号的
 // 数印出来，串联回路里的开关就会显示 −0.1000A，学生只会以为电路接反了。
-// 只有极性本身就承载信息的元件（电表接反要报错、电源充电放电是两回事）才带符号。
-var POLAR = {ammeter:1, voltmeter:1, battery:1};
+// 只有极性本身就承载信息的元件（电表接反要报错、电源充电放电是两回事、
+// 二极管和电动机接反是「不导电」和「反转」两件不同的事）才带符号。
+var POLAR = {ammeter:1, voltmeter:1, battery:1, led:1, motor:1};
 function dispI(c, r){
   var s = POLAR[c.type] ? r.i : Math.abs(r.i);
   var tag = '';
-  if (r.reversed) tag = '<span class="tag">反接</span>';
+  // 电动机的「反接」要写成「反转」：接反不是接错了线，是转子往反方向转。
+  if (r.reversed) tag = '<span class="tag">' + (r.reverseLabel || '反接') + '</span>';
   else if (c.type === 'battery' && r.i < -1e-9) tag = '<span class="tag">充电</span>';
   return s.toFixed(4) + tag;
 }
@@ -576,6 +698,16 @@ function syncCheckPanel(){
     hint.textContent = (c.type === 'bulb' && pval(c, 'tempDependent') === false)
       ? '恒为 ' + C.lampParams(c).Rhot.toFixed(1) + 'Ω' : '';
   }
+  // 电动机的「卡住转子」也一样：勾上以后右边直接写当前电流，学生一眼就能
+  // 和没勾时的数对上 —— 这个对比（差一个量级）正是这个勾选框存在的理由。
+  var sh = document.getElementById('pv_stall');
+  if (sh) {
+    var mrec = (results && results.components) ? results.components[c.id] : null;
+    sh.textContent = (c.type !== 'motor') ? ''
+      : (pval(c, 'stall')
+          ? (mrec ? 'I = ' + Math.abs(mrec.i).toFixed(3) + 'A · 线圈发烫' : '线圈发烫')
+          : '转起来电流小');
+  }
 }
 function renderParams(sel){
   var box = document.getElementById('paramPanel');
@@ -602,9 +734,12 @@ function renderParams(sel){
         '<input class="chk" type="checkbox" data-k="' + sp.k + '"' + (v?' checked':'') + '>' +
         (sp.wide ? '<span class="hint" id="pv_' + sp.k + '"></span>' : '') + '</div>';
     } else if (sp.t === 'select') {
+      // labels 是可选的：值的 key 和给人看的文字不一样时才用（二极管存的是
+      // 'red'，面板上要写「红色 1.8V」）。没有 labels 就照旧印值本身。
       html += '<div class="prow"><label>' + sp.label + '</label><select data-k="' + sp.k + '">' +
         sp.options.map(function(o){
-          return '<option value="' + o + '"' + (o === v ? ' selected' : '') + '>' + o + (sp.unit||'') + '</option>';
+          var txt = (sp.labels && sp.labels[o]) || o;
+          return '<option value="' + o + '"' + (o === v ? ' selected' : '') + '>' + txt + (sp.unit||'') + '</option>';
         }).join('') + '</select></div>';
     } else if (sp.t === 'tap') {
       // 亮着的那一挡 = 【线当下真的接在哪个量程柱上】（内核按接线解出来的），
@@ -627,7 +762,11 @@ function renderParams(sel){
   box.querySelectorAll('input,select').forEach(function(el){
     function apply(){
       var k = el.dataset.k;
-      var val = el.type === 'checkbox' ? el.checked : parseFloat(el.value);
+      // 下拉框给的是字符串（二极管存 'red' 这种 key），不能走 parseFloat ——
+      // parseFloat('red') 是 NaN，存进去以后求解器会静默按红色默认值算，
+      // 而面板上显示的是「蓝色」：图和数就此对不上，还查不出来。
+      var val = el.tagName === 'SELECT' ? el.value
+              : el.type === 'checkbox' ? el.checked : parseFloat(el.value);
       editor.setParam(c.id, k, val);
       if (el.type === 'range') {
         var sp = specs.filter(function(s){ return s.k === k; })[0];
@@ -1108,6 +1247,12 @@ var LG_VIEW = {
   ammeter:   { x0: -102, y0: -92, x1: 102, y1: 82 },
   voltmeter: { x0: -102, y0: -92, x1: 102, y1: 82 },
   rheostat:  { x0: -94, y0: -46, x1: 94, y1: 54 },
+  // 三件新器材的取景框。少了它们，只要电路里出现二极管/电动机/电铃，
+  // 图例这一栏就会读 undefined 的 x1 直接抛异常 —— 整个电路图浮层打不开，
+  // 而报错信息指向的是一行取景框算术，跟「我加了个二极管」八竿子打不着。
+  led:       { x0: -78, y0: -28, x1: 78, y1: 28 },
+  motor:     { x0: -78, y0: -34, x1: 78, y1: 34 },
+  bell:      { x0: -78, y0: -66, x1: 78, y1: 42 },
 };
 // 图例要给电表/变阻器一个「已经接好线」的样子（不然圆圈的两根引线全是虚线，
 // 看着像坏了）。给一根挂在【不存在的元件】上的假导线：termHasWire 认它，
@@ -1131,7 +1276,10 @@ function iconCanvas(w, h){
   return { cv: cv, g: g };
 }
 function drawRealIcon(type){
-  var ic = iconCanvas(LG_ICON.w, LG_ICON.h), v = LG_VIEW[type];
+  // 取景框缺一个类型就整栏崩（下面那句要读 v.x1）。给一个兜底框：将来再加器材
+  // 时最坏也只是缩得小一点，不会连累整个电路图浮层打不开。
+  var ic = iconCanvas(LG_ICON.w, LG_ICON.h);
+  var v = LG_VIEW[type] || { x0: -80, y0: -80, x1: 80, y1: 80 };
   var comp = { id:'__lg__', type:type, x:0, y:0, rot:0, params: C.defaultParams(type) };
   var k = Math.min(LG_ICON.w/(v.x1-v.x0), LG_ICON.h/(v.y1-v.y0));
   ic.g.save();
@@ -1224,7 +1372,8 @@ window.addEventListener('keydown', function(ev){
 }, true);
 
 // 元件栏
-var PAL = ['battery','switch','resistor','rheostat','bulb','ammeter','voltmeter'];
+var PAL = ['battery','switch','resistor','rheostat','bulb','ammeter','voltmeter',
+           'led','motor','bell'];
 var bar = document.getElementById('palette');
 PAL.forEach(function(t){
   var b = document.createElement('button');
@@ -1578,6 +1727,65 @@ window.__btnCurrent = function(){ return btnCurrent; };
 window.__pathOf = function(wr){ return pathOf(wr); };
 window.__readout = function(c, r){ return readoutLines(c, r); };
 window.__btnFlow = function(){ return btnFlow; };
+// 动画：本机 headless 常常一帧 rAF 都不回调，凡是「随时间推进」的断言必须走
+// driveAnim —— 它和真实循环 tick 共用 stepMotion / drawFrame，只是把 dt 喂进去，
+// 不另开一条动画通路（另开的话就变成「测的是另一份代码」）。
+window.__animT = function(){ return animT; };
+window.__spinOf = function(id){ return spinOf(id); };
+window.__isAnimated = function(t){ return D.isAnimated(t); };
+window.__stepMotion = function(dt){ return stepMotion(dt); };
+window.__driveAnim = function(seconds, dt){
+  dt = dt || 1/60;
+  var n = Math.max(1, Math.round((seconds || 0) / dt));
+  var moved = false;
+  for (var i = 0; i < n; i++) { animT += dt; if (stepMotion(dt)) moved = true; }
+  drawFrame();
+  return { frames: n, moving: moved, animT: animT };
+};
+window.__resetAnim = function(){ animT = 0; spinAng = {}; drawFrame(); };
+window.__drawMotion = function(){ drawMotion(); };
+// 像素层：断言「灯真的亮了」「飞轮真的在转」只能靠像素。坐标一律用【逻辑坐标】
+// （画布内部宽高 W/H），由这里乘 dpr 换算 —— 调用方不用管设备像素比。
+// 分三层给：主画布（bg+导线+缓存层+会动的元件）、缓存层 fgLayer、背景层 bgLayer。
+// 之所以要单独给 fgLayer，是为了断言「会动的元件没被塞进静态缓存层」：
+// 主画布上看得见、缓存层对应位置必须【一个不透明像素都没有】。
+function pixStatsOn(cv, x, y, w, h){
+  var dpr = window.devicePixelRatio || 1;
+  var W2 = Math.max(1, Math.round(w*dpr)), H2 = Math.max(1, Math.round(h*dpr));
+  var X = Math.max(0, Math.min(cv.width - 1, Math.round(x*dpr)));
+  var Y = Math.max(0, Math.min(cv.height - 1, Math.round(y*dpr)));
+  W2 = Math.min(W2, cv.width - X); H2 = Math.min(H2, cv.height - Y);
+  var d = cv.getContext('2d').getImageData(X, Y, W2, H2).data;
+  var n = d.length/4, sr=0, sg=0, sb=0, sa=0, lum=0, opaque=0, maxLum=0;
+  for (var i = 0; i < d.length; i += 4){
+    sr += d[i]; sg += d[i+1]; sb += d[i+2]; sa += d[i+3];
+    if (d[i+3] > 8) opaque++;
+    var l = 0.299*d[i] + 0.587*d[i+1] + 0.114*d[i+2];
+    lum += l; if (l > maxLum) maxLum = l;
+  }
+  return { n:n, r:sr/n, g:sg/n, b:sb/n, a:sa/n, lum:lum/n, maxLum:maxLum, opaque:opaque, box:[X,Y,W2,H2] };
+}
+window.__pix = function(x, y, w, h){ return pixStatsOn(canvas, x, y, w, h); };
+window.__fgPix = function(x, y, w, h){ return pixStatsOn(fgLayer, x, y, w, h); };
+window.__bgPix = function(x, y, w, h){ return pixStatsOn(bgLayer, x, y, w, h); };
+// 抓一帧的原始像素，之后再和「同一块区域」比对 —— 用来验「在转 / 没转」。
+window.__pixSnap = function(x, y, w, h){
+  var dpr = window.devicePixelRatio || 1;
+  var X = Math.round(x*dpr), Y = Math.round(y*dpr);
+  var W2 = Math.min(Math.round(w*dpr), canvas.width - X);
+  var H2 = Math.min(Math.round(h*dpr), canvas.height - Y);
+  return Array.prototype.slice.call(ctx.getImageData(X, Y, W2, H2).data);
+};
+// 返回「每个像素每个通道的平均变化量」（0~255）。0 = 这一块一个像素都没变。
+window.__pixDiff = function(snap, x, y, w, h){
+  var now = window.__pixSnap(x, y, w, h);
+  var n = Math.min(snap.length, now.length), s = 0;
+  for (var i = 0; i < n; i += 4){
+    s += Math.abs(snap[i]-now[i]) + Math.abs(snap[i+1]-now[i+1]) + Math.abs(snap[i+2]-now[i+2]);
+  }
+  return n ? s/(n/4)/3 : 0;
+};
+window.__pixelRatio = function(){ return window.devicePixelRatio || 1; };
 // 存档：测试要能直接读写删每一份、问「自动恢复会挑哪个」、还要能单独问一句
 // 「这份存档我认不认」——校验那一关断在 validScene 上，比塞一份坏存档再去猜
 // 渲染结果稳得多。__savePanel 给 DOM 级断言用（名字框的值、元信息、行内链接、
