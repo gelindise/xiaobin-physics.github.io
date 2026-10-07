@@ -1979,11 +1979,28 @@
       return state.mode === 'clean' ? state.cleanT : state.tp;
     }
     let lastTs = 0;
+    let lastReadKey = '';
+    /* 一帧：推进物理 → 需要时重画 → 需要时刷新侧栏读数。
+     * ★ 抽成独立函数是为了让【自检走的就是动画走的那一条路径】——
+     *   自检不能自己再写一遍「推进 + 重画 + 刷读数」，否则测的是另一段代码。
+     * ★ 侧栏读数表必须跟着动画一起走。原来这里只 render + renderCurve：
+     *   画面上的「工件（污渍 79 / 96）」在变，侧栏的「剩余污渍 / 已洗掉 /
+     *   累计清洗」却永远停在进入页面那一刻 —— 同一个量的两处显示互相打脸
+     *   （实测：cleanT 已到 1.104 s、dirtN = 58.41，侧栏还写 96 / 0.0 % / 0.00 s）。
+     *   按「真正会随动画变的几个量」做签名，只在变了才重建 DOM，免得每帧动表格。 */
+    function frame(dt) {
+      stepAnim(dt);
+      if (!state.dirty) return false;
+      render(); state.dirty = false; renderCurve();
+      const key = Math.round(state.dirtN) + '|' + state.cleanT.toFixed(2) + '|' +
+                  state.tp.toFixed(4) + '|' + state.flakes.length + '|' + (state.trd ? 1 : 0);
+      if (key !== lastReadKey) { lastReadKey = key; renderReadouts(); }
+      return true;
+    }
     function tick(ts) {
       const dt = lastTs ? Math.min(0.05, (ts - lastTs) / 1000) : 0;
       lastTs = ts;
-      stepAnim(dt);
-      if (state.dirty) { render(); state.dirty = false; renderCurve(); }
+      frame(dt);
       requestAnimationFrame(tick);
     }
 
@@ -2144,7 +2161,7 @@
       records: records, recOfMode: recOfMode, canRecord: canRecord, recordNow: recordNow,
       clearRecords: clearRecords, renderRecords: renderRecords,
       /* 渲染与推进 */
-      stepAnim: stepAnim, driveAnim: driveAnim,
+      stepAnim: stepAnim, driveAnim: driveAnim, frame: frame,
       render: render, renderCurve: renderCurve, renderReadouts: renderReadouts,
       renderAnalysis: renderAnalysis, syncUI: syncUI, resize: resize,
       /* 页面元素读数（供自检核对 UI 与物理同源） */
