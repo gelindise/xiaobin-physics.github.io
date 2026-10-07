@@ -1188,7 +1188,14 @@ function drawRhoColumn(q, r){
      h = 0 时气球停在地面上，虚线却指向「它将要到达的高度」，正好把升限说清楚。 */
   if (D.rhoCross){
     var pc2 = project([0, craftCenterY(r.hEq), 0], q);
-    if (pc2.z > 0) lineSeg({ x:D.rhoCross.sx, y:D.rhoCross.sy }, pc2, 'rgba(52,211,153,.34)', 1.1, [6,5]);
+    if (pc2.z > 0){
+      lineSeg({ x:D.rhoCross.sx, y:D.rhoCross.sy }, pc2, 'rgba(52,211,153,.34)', 1.1, [6,5]);
+      /* ★ 给这条虚线配一个自己的标签 —— 只有「虚线 + 绿点」时，
+         读者得回到右侧读数表才知道那条线是什么；标上「升限」它才自解释。
+         锚在虚线中点上方，具体落点交给避让系统（它会把「热气球 / 飞艇」让开）。 */
+      label({ x:(D.rhoCross.sx + pc2.x)/2, y:(D.rhoCross.sy + pc2.y)/2 - 15 },
+            '升限 ' + fmtH(r.hEq), '#34d399', 11.5, 'center');
+    }
   }
   /* ★ 曲线标签锚在【曲线顶端】而不是 ρ0 虚线上 —— 锚在 ρ0 处时，
      ρ平均 竖线一旦接近 ρ0（装得接近满载），两条线加两个标签会叠在一起。 */
@@ -1226,18 +1233,35 @@ function drawCraft(q, r){
     if (hp.z > 0) dot2(hp, R*0.42, 'rgba(255,255,255,.30)', null, 0);
   } else {
     /* 飞艇：长椭球 + 尾翼 + 吊舱
-       ★ 横向拉伸系数从 1.7 收到 1.35：1.7 时窄屏（canvas 378 宽）飞艇的
-         【鼻尖压住「1.8 km」刻度标签】、【尾巴顶到 ρ 柱的左边缘】——
-         刻度数字是与实物对齐的参照物不许挪，只能让飞艇收窄。
-         实测（420 视口）横向像素半宽：1.7→94.3 px（两侧都撞），
-         1.45→80.4 px（只剩 1.6 px 余量），1.35→74.9 px（两侧各留 7~9 px）。
-         拉伸比 1.35 : 0.6 = 2.25（真实飞艇 4.13，本来就是示意）。 */
+       ★ 拉伸比保持 1.7 : 0.6（≈2.83 : 1，像飞艇；试过 1.35，胖成一个橄榄球）。
+         窄屏「鼻尖压住「1.8 km」刻度 / 尾巴顶到 ρ 柱」是靠【尺寸上限 20 → 16】让路的，
+         不是靠收窄拉伸比 —— 这两件事别搞混。 */
     var ra = R*AIR_STRETCH, rb = R*AIR_FLAT;
+    /* ★ 尾翼必须画成【翼面】而不是两条线 ——
+       原来只有两条 lineSeg 斜着甩出去，默认视角下看着像两根胡须，不像尾翼。
+       现在三片：一片竖立的上翼（z = 0 平面）+ 两片水平的侧翼（±z）。
+       ★ 三片都画在【椭球之前】：翼根（x = −0.60ra、y = 0.55rb）落在艇身轮廓【里面】，
+         先画就会被艇身盖住，看上去正是「从艇身长出来」；
+         画在之后则翼根会浮在艇身上，反而假。 */
+    (function(){
+      function finQuad(pts){
+        var pj = pts.map(function(p){ return project(p, q); });
+        if (pj.some(function(p){ return !(p.z > 0); })) return;
+        poly(pj, 'rgba(214,222,232,.94)', 'rgba(2,6,23,.34)', 1);
+      }
+      function sideFin(sgn){
+        finQuad([[-ra*0.60, yc + rb*0.10, sgn*rb*0.42],
+                 [-ra*1.00, yc + rb*0.10, sgn*rb*0.50],
+                 [-ra*1.00, yc + rb*0.06, sgn*rb*1.28],
+                 [-ra*0.71, yc + rb*0.06, sgn*rb*1.28]]);
+      }
+      sideFin( 1); sideFin(-1);
+      finQuad([[-ra*0.60, yc + rb*0.55, 0],
+               [-ra*1.00, yc + rb*0.62, 0],
+               [-ra*1.00, yc + rb*1.42, 0],
+               [-ra*0.71, yc + rb*1.42, 0]]);
+    })();
     vis = drawEllipsoid(q, 0, yc, 0, ra, rb, rb, c.skin, { nth:20, nph:32 });
-    var fA = project([-ra*0.62, yc + rb*0.78, 0], q), fB = project([-ra*0.95, yc + rb*0.95, 0], q);
-    var fC = project([-ra*0.62, yc - rb*0.78, 0], q), fD = project([-ra*0.95, yc - rb*0.95, 0], q);
-    if (fA.z > 0 && fB.z > 0) lineSeg(fA, fB, 'rgba(206,216,228,.88)', 3.4);
-    if (fC.z > 0 && fD.z > 0) lineSeg(fC, fD, 'rgba(206,216,228,.88)', 3.4);
   }
   /* 吊舱 / 吊篮 / 小球 */
   var rig = c.rig, yTop = (c.shape === 'sphere') ? yc - R : yc - R*0.6;
@@ -1258,7 +1282,10 @@ function drawCraft(q, r){
      否则「F浮 36.15 kN」这类箭头标签会正好压在气球上（热气球半径 16.9 时实测如此）。 */
   var cp = project([0, yc, 0], q);
   var rx = (c.shape === 'sphere') ? R : R*AIR_STRETCH;
-  var ry = (c.shape === 'sphere') ? R : R*AIR_FLAT;
+  /* ★ 飞艇的纵向半高要算上【上翼】—— 上翼顶到 rb*1.42，
+     不把它算进包围盒的话，落在翼尖上的标签不会被 C37（标签压球囊）拦下。
+     横向不用改：侧翼只伸到 ±0.77R，比艇身自己的 1.7R 小。 */
+  var ry = (c.shape === 'sphere') ? R : R*AIR_FLAT*1.42;
   var px = project([rx, yc, 0], q), py = project([0, yc + ry, 0], q);
   D.craftScreen = {
     x:cp.x, y:cp.y, z:cp.z,
@@ -1542,8 +1569,15 @@ function syncSlider(){
   el.tempRange.disabled = !hot;
   el.tempRange.value = String(state.temp);
   el.rdTemp.innerHTML = state.temp + '<small>°C</small>';
-  el.tempTicks.innerHTML = '<span>' + c.tempMin + ' °C</span><span>' +
-                           Math.round((c.tempMin+c.tempMax)/2) + '</span><span>' + c.tempMax + ' °C</span>';
+  /* ★ 刻度标签的取值源必须与滑块自己的量程同源。
+     原来这里用 c.tempMin / c.tempMax，而 balloon / airship 两档【没有这两个字段】
+     ⇒ 切到非热气球档时刻度直接显示成「undefined °C / NaN / undefined °C」。
+     自检当时一条都没报（没人断言刻度文本），是出图复看抓出来的。
+     温度只有热气球会用到、量程恒为热气球那一档 ⇒ 取值源固定为 CRAFT.hotair。 */
+  var tc = CRAFT.hotair;
+  el.tempRange.min = String(tc.tempMin); el.tempRange.max = String(tc.tempMax);
+  el.tempTicks.innerHTML = '<span>' + tc.tempMin + ' °C</span><span>' +
+                           Math.round((tc.tempMin + tc.tempMax) / 2) + '</span><span>' + tc.tempMax + ' °C</span>';
   var rhoT = gasRhoOf(CRAFT.hotair, state.temp);
   el.tempNote.innerHTML = hot
     ? '加热后球囊内空气密度 <b>' + rhoT.toFixed(3) + ' kg/m³</b>（外界 ' + RHO0 +
