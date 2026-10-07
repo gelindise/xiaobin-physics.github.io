@@ -1,0 +1,1484 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>虚拟物理实验 - 影子的形成立体模型</title>
+    <link rel="stylesheet" href="style.css">
+    <style>
+        :root {
+            --bg: #020617;
+            --line: rgba(148, 163, 184, .18);
+            --primary: #3b82f6;
+            --secondary: #06b6d4;
+            --accent: #8b5cf6;
+            --text: #f8fafc;
+            --muted: #94a3b8;
+        }
+
+        body {
+            font-family: 'Inter', 'Microsoft YaHei', 'Noto Sans SC', sans-serif;
+            margin: 0;
+            /* 站内页头是 position:sticky，一滚动就贴顶盖住实验区，所以这一页不放页头
+               （和同章的「小孔成像立体模型 / 光的反射立体模型」一致）。留 20px 内边距即可。 */
+            padding: 20px;
+            background: var(--bg);
+            color: var(--text);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+            box-sizing: border-box;
+        }
+
+        body::before {
+            content: "";
+            position: fixed;
+            inset: 0;
+            z-index: -1;
+            pointer-events: none;
+            background:
+                radial-gradient(circle at 18% 22%, rgba(59, 130, 246, .16), transparent 42%),
+                radial-gradient(circle at 82% 68%, rgba(139, 92, 246, .14), transparent 44%),
+                radial-gradient(circle at 50% 100%, rgba(6, 182, 212, .10), transparent 55%);
+        }
+
+        /* ===== 可交互三维实验台（与站内其它 lab3d 页面同一套视觉基线）===== */
+        .lab3d {
+            width: 100%;
+            max-width: 1600px;
+            margin: 8px auto 26px;
+            box-sizing: border-box;
+            overflow: hidden;
+            border: 1px solid rgba(56, 189, 248, .22);
+            border-radius: 18px;
+            background: linear-gradient(160deg, rgba(15, 23, 42, .92), rgba(2, 6, 23, .96));
+            color: #e2e8f0;
+            box-shadow: 0 26px 70px rgba(2, 6, 23, .6), 0 0 0 1px rgba(2, 6, 23, .8) inset;
+        }
+        .lab3d * { box-sizing: border-box; }
+        .lab3d-top {
+            display: flex; justify-content: space-between; gap: 15px; align-items: center;
+            padding: 17px 23px; border-bottom: 1px solid var(--line);
+            background: linear-gradient(90deg, rgba(59, 130, 246, .12), rgba(6, 182, 212, .05) 45%, transparent);
+        }
+        .lab3d-kicker { color: #22d3ee; font-size: 11px; font-weight: 800; letter-spacing: .2em; }
+        .lab3d-top h2 { margin: 3px 0 0; color: #f8fafc; font-size: 21px; letter-spacing: .02em; }
+        .lab3d-top p { margin: 4px 0 0; color: #94a3b8; font-size: 12px; }
+        .lab3d-status {
+            border: 1px solid rgba(34, 211, 238, .45); border-radius: 99px; padding: 6px 12px;
+            color: #67e8f9; font-size: 12px; white-space: nowrap; background: rgba(6, 182, 212, .08);
+        }
+        .lab3d-layout { display: grid; grid-template-columns: minmax(0, 1fr) 300px; }
+        .lab3d-main {
+            min-width: 0; padding: 15px 16px 16px;
+            background: radial-gradient(circle at 43% 36%, rgba(30, 64, 100, .55), rgba(8, 22, 36, .92) 62%, rgba(3, 10, 18, .96));
+        }
+        .lab3d-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; padding-bottom: 12px; }
+        .lab3d-toolbar .toolbar-label { color: #94a3b8; font-size: 12px; margin-right: 5px; }
+        .lab3d button {
+            padding: 7px 12px; border: 1px solid rgba(148, 163, 184, .25); border-radius: 8px;
+            background: rgba(30, 41, 59, .7); color: #cbd5e1; font-size: 12px; font-weight: 600;
+            box-shadow: none; transition: background .2s, border-color .2s, color .2s;
+        }
+        .lab3d button:hover { transform: none; box-shadow: none; background: rgba(51, 65, 85, .85); }
+        .lab3d button.active {
+            background: rgba(59, 130, 246, .25); border-color: #38bdf8; color: #e0f2fe;
+            box-shadow: 0 0 14px rgba(56, 189, 248, .3);
+        }
+        .lab3d button:disabled { opacity: .42; cursor: not-allowed; }
+        .lab3d button.primary { background: rgba(59, 130, 246, .3); border-color: #38bdf8; color: #e0f2fe; }
+        .lab3d-toolbar .toolbar-spacer { flex: 1; }
+        /* 舞台是【flex 列】：画布只占上面那段，底部浮层占下面那段，两者永不重叠。
+           曾经浮层 absolute 贴在画布上（left/right/bottom 定位），768 px 俯视图里
+           结论条直接盖住罗盘「南」字（实测 425.6 px²）。罗盘字是钉在地面上的参照物、
+           不许挪，所以让位的是版面 —— 把浮层移出画布，是结构上不可能重叠的做法。 */
+        .lab3d-stage {
+            position: relative; height: clamp(400px, 49vw, 580px);
+            border: 1px solid rgba(56, 189, 248, .2); border-radius: 12px; overflow: hidden;
+            background: #061423;
+            display: flex; flex-direction: column;
+        }
+        .lab3d-stage canvas {
+            display: block; width: 100%; flex: 1 1 0; min-height: 0;
+            border: 0; border-radius: 0; box-shadow: none; background: transparent;
+            cursor: grab; touch-action: none;
+        }
+        .lab3d-stage canvas:active { cursor: grabbing; }
+        .lab3d-stage canvas.pick-move { cursor: ew-resize; }
+        .lab3d-stage canvas.pick-move:active { cursor: ew-resize; }
+        .lab3d-stage .stage-hint {
+            position: absolute; top: 13px; left: 15px; pointer-events: none; font-size: 12px;
+            color: #bae6fd; background: rgba(2, 6, 23, .78); border: 1px solid rgba(56, 189, 248, .25);
+            padding: 7px 11px; border-radius: 8px;
+        }
+        .lab3d-stage .stage-hint b {
+            display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+            background: #22d3ee; vertical-align: 2px; margin-right: 6px; box-shadow: 0 0 8px #22d3ee;
+        }
+        /* 结论条与帮助条做成一条 flex 行（各自 absolute 时 768 px 下会互相压住）。
+           这一行整体【在画布之外】，所以画布里的标签也不可能被它盖住。 */
+        .lab3d-stage .stage-bar {
+            position: static; flex: none;
+            display: flex; align-items: flex-end; justify-content: space-between; gap: 10px;
+            padding: 10px 13px 12px;
+            pointer-events: none;
+        }
+        .lab3d-stage .stage-verdict {
+            flex: 0 1 auto; min-width: 0;
+            font-size: 12px; padding: 7px 12px; border-radius: 8px;
+            color: #d1fae5; background: rgba(6, 78, 59, .82); border: 1px solid rgba(52, 211, 153, .45);
+        }
+        .lab3d-stage .stage-verdict.warn { color: #fee2e2; background: rgba(127, 29, 29, .82); border-color: rgba(248, 113, 113, .5); }
+        .lab3d-stage .stage-help {
+            flex: none; color: #93b4c4; font-size: 11px;
+            background: rgba(2, 6, 23, .72); padding: 6px 10px; border-radius: 7px;
+        }
+        .lab3d-foot {
+            display: flex; align-items: center; flex-wrap: wrap; gap: 12px 18px;
+            padding: 12px 3px 1px; font-size: 12px; color: #b6c8d4;
+        }
+        .lab3d-foot label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+        .lab3d-foot input { accent-color: #22d3ee; margin: 0; }
+        .lab3d-foot .legend { margin-left: auto; color: #8ba7b6; }
+        .lab3d-sidebar {
+            padding: 18px; color: #cbd5e1; border-left: 1px solid var(--line);
+            background: linear-gradient(180deg, rgba(15, 23, 42, .75), rgba(2, 6, 23, .6));
+        }
+        .lab3d-sidebar h3 { margin: 0 0 15px; color: #e2e8f0; font-size: 15px; letter-spacing: .05em; }
+        .lab3d-field { margin: 0 0 16px; }
+        .lab3d-field label, .lab3d-field .field-label {
+            display: flex; justify-content: space-between; gap: 8px; align-items: baseline;
+            color: #cbd5e1; font-size: 12px; font-weight: 700;
+        }
+        .lab3d-field output { color: #38bdf8; font-size: 13px; font-weight: 800; }
+        .lab3d-field input[type="range"] { display: block; width: 100%; margin: 11px 0 5px; }
+        .lab3d-field input[type="range"]::-webkit-slider-thumb { background: linear-gradient(135deg, #3b82f6, #22d3ee); }
+        .lab3d-field small { color: #64748b; font-size: 10px; line-height: 1.5; display: block; }
+        .lab3d-segment { display: flex; gap: 5px; margin-top: 9px; }
+        .lab3d-segment button { flex: 1; min-width: 0; padding: 7px 4px; font-size: 11px; }
+        .lab3d-metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 12px; }
+        .lab3d-metric {
+            padding: 12px 13px; border: 1px solid rgba(56, 189, 248, .18); border-radius: 10px;
+            background: linear-gradient(160deg, rgba(30, 58, 95, .55), rgba(15, 23, 42, .6));
+        }
+        .lab3d-metric span { display: block; font-size: 11px; color: #9fb8c6; }
+        .lab3d-metric strong { display: block; margin-top: 4px; color: #e0f2fe; font-size: 17px; }
+        .lab3d-metric.ok strong { color: #6ee7b7; }
+        .lab3d-metric.bad strong { color: #fca5a5; }
+        .lab3d-note { margin: 12px 0 0; color: #9fb8c6; font-size: 12px; line-height: 1.65; }
+        .lab3d-note b { color: #7dd3fc; }
+
+        .law-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 8px; }
+        .law-list li {
+            display: flex; gap: 8px; align-items: flex-start;
+            padding: 9px 11px; border-radius: 9px; font-size: 12px; line-height: 1.55;
+            border: 1px solid rgba(148, 163, 184, .16); background: rgba(148, 163, 184, .05);
+            color: #b6c8d4; transition: background .2s, border-color .2s, color .2s;
+        }
+        .law-list li.on {
+            border-color: rgba(52, 211, 153, .5); background: rgba(16, 185, 129, .12); color: #d1fae5;
+        }
+        .law-list li.off {
+            border-color: rgba(248, 113, 113, .45); background: rgba(239, 68, 68, .12); color: #fee2e2;
+        }
+        .law-list li i { font-style: normal; color: #64748b; flex: none; font-weight: 700; }
+        .law-list li.on i { color: #6ee7b7; }
+        .law-list li.off i { color: #fca5a5; }
+
+        /* ===== 实验记录表 ===== */
+        .record-panel { margin-top: 0; }
+        .record-body { padding: 16px 18px 18px; }
+        .record-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; }
+        .record-actions small { color: #8ea6b7; font-size: 11px; }
+        .table-wrap { overflow-x: auto; margin-top: 13px; }
+        .record-body table { width: 100%; border-collapse: collapse; font-size: 12px; white-space: nowrap; min-width: 620px; }
+        .record-body th, .record-body td {
+            text-align: left; padding: 9px 8px; border-bottom: 1px solid rgba(148, 163, 184, .16); color: #c5d6e4;
+        }
+        .record-body th { color: #80ddec; font-size: 11px; font-weight: 700; }
+        .record-body tbody tr:last-child td { border-bottom: 0; }
+        .record-body .empty { text-align: center; color: #91a6b9; padding: 19px 5px; }
+        .record-body td.num { font-variant-numeric: tabular-nums; }
+        .record-body td.ratio { color: #7dd3fc; font-weight: 700; }
+        .record-body tr.flash td { animation: shRowFlash 1.2s ease-out; }
+        @keyframes shRowFlash { 0% { background: rgba(34, 112, 143, .8); color: #f1fbff; } 100% { background: transparent; } }
+        .record-body .note { color: #90a9b9; font-size: 11px; line-height: 1.65; margin-top: 11px; }
+        .record-body .note b { color: #7dd3fc; }
+
+        @media (max-width: 900px) {
+            .lab3d-layout { grid-template-columns: minmax(0, 1fr); }
+            .lab3d-sidebar { border-left: 0; border-top: 1px solid var(--line); display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 18px; }
+            .lab3d-sidebar h3 { grid-column: 1 / -1; }
+            .lab3d-sidebar .span-2 { grid-column: 1 / -1; }
+        }
+        @media (max-width: 620px) {
+            body { padding-left: 10px; padding-right: 10px; }
+            .lab3d { border-radius: 14px; }
+            .lab3d-top { padding: 15px; }
+            .lab3d-top h2 { font-size: 17px; }
+            .lab3d-status { display: none; }
+            .lab3d-main { padding: 10px; }
+            .lab3d-toolbar { gap: 6px; }
+            .lab3d-toolbar .toolbar-label, .lab3d-toolbar .toolbar-spacer { display: none; }
+            .lab3d-toolbar button { padding: 6px 9px; font-size: 11px; }
+            .lab3d-stage { height: 340px; }
+            .lab3d-stage .stage-help { display: none; }
+            .lab3d-stage .stage-bar { padding: 8px 10px 10px; }
+            .lab3d-stage .stage-verdict { font-size: 11px; }
+            .lab3d-sidebar { display: block; padding: 16px; }
+            .lab3d-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+            .lab3d-foot .legend { margin-left: 0; width: 100%; }
+            .record-body { padding: 14px; }
+            .record-body table { font-size: 10.5px; min-width: 0; }
+            .record-body th, .record-body td { padding: 7px 5px; }
+            .record-body th .th-full { display: none; }
+        }
+
+/* === 紧凑版面补丁 v2 :: main === */
+.lab3d-layout { align-items: stretch; }
+.lab3d-main { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.lab3d-main > .lab3d-stage { flex: 0 0 auto; }
+.lab3d-main > *:last-child { flex: 1 1 auto; }
+/* === 紧凑版面补丁 v2 :: sticky === */
+.lab3d-sidebar {
+  position: sticky; top: 16px; align-self: start;
+  max-height: calc(100vh - 104px);
+  overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin;
+}
+</style>
+    <script src="auth-check.js"></script>
+</head>
+<body>
+    <!-- 这一页不放站内页头：页头是 position:sticky，一滚动就贴在顶上盖住实验区。 -->
+    <section class="lab3d" aria-label="影子的形成立体模型">
+      <div class="lab3d-top">
+        <div>
+          <div class="lab3d-kicker">INTERACTIVE OPTICS LAB · 三维光学实验</div>
+          <h2>影子的形成 · 立体模型</h2>
+          <p>光沿直线传播 —— 不透明的树木挡住阳光，地面上就出现影子；太阳越高，影子越短</p>
+        </div>
+        <span class="lab3d-status">● 实时物理模拟</span>
+      </div>
+
+      <div class="lab3d-layout">
+        <div class="lab3d-main">
+          <div class="lab3d-toolbar" role="group" aria-label="观察视角">
+            <span class="toolbar-label">观察视角</span>
+            <button type="button" class="active" data-view="perspective">立体视角</button>
+            <button type="button" data-view="top">俯视地面</button>
+            <button type="button" data-view="side">侧看高度角</button>
+            <button type="button" data-view="sun">沿阳光看</button>
+            <span class="toolbar-spacer"></span>
+            <button type="button" id="sh-reset-view">↺ 重置视角</button>
+          </div>
+
+          <div class="lab3d-stage">
+            <canvas id="sh-canvas" aria-label="可拖动旋转、滚轮缩放的影子形成三维场景"></canvas>
+            <div class="stage-hint"><b></b>三维实验场景 · 太阳 → 树木 → 地面上的影子</div>
+            <div class="stage-bar">
+              <div class="stage-verdict" id="sh-verdict">太阳高度角 45.0°　树影长 5.00 m　影子朝西北</div>
+              <div class="stage-help">拖动空白处旋转 · 滚轮缩放 · 按住太阳或树可调参数</div>
+            </div>
+          </div>
+
+          <div class="lab3d-foot">
+            <label><input id="sh-beams" type="checkbox" checked>显示阳光光束</label>
+            <label><input id="sh-dims" type="checkbox" checked>显示尺寸标注</label>
+            <label><input id="sh-grid" type="checkbox" checked>地面网格</label>
+            <label><input id="sh-pole" type="checkbox" checked>标杆（2.0 m）</label>
+            <label><input id="sh-sun" type="checkbox" checked>太阳方位指示</label>
+            <span class="legend">黄：平行阳光　深灰：影子　绿：树　青：标杆</span>
+          </div>
+
+          <div class="lab3d-metrics" aria-live="polite">
+            <div class="lab3d-metric"><span>太阳高度角 θ</span><strong id="sh-m1">45.0°</strong></div>
+            <div class="lab3d-metric"><span>树影长 L</span><strong id="sh-m2">5.00 m</strong></div>
+            <div class="lab3d-metric"><span>树高 h</span><strong id="sh-m3">5.0 m</strong></div>
+            <div class="lab3d-metric ok"><span>影长 ÷ 树高</span><strong id="sh-m4">1.00</strong></div>
+          </div>
+
+          <p class="lab3d-note"><b>观察提示：</b>阳光是<b>平行光</b>，沿<b>直线</b>射向地面。树是不透明的，把它挡住的那一束光到不了地面 —— 于是地面上出现一块比树本身大得多的<b>影子</b>，形状由树的轮廓决定。把<b>太阳高度角 θ</b> 调小（太阳偏低），影子立刻变长；调到 72°（正午前后太阳很高），影子缩成树脚下的一小块。<b>影长 L = 树高 h ÷ tanθ</b>：所以同一时刻，<b>影长之比就等于物高之比</b>（画面里那根 2.0 m 的标杆影子正好是树影的 2/h 倍）。再拖动<b>太阳方位角 φ</b>，看影子绕着树转一整圈 —— 早晨太阳在东、影子朝西；正午太阳在正南、影子朝正北；傍晚太阳在西、影子朝东。</p>
+        </div>
+
+        <aside class="lab3d-sidebar">
+          <h3>实验参数</h3>
+
+          <div class="lab3d-field">
+            <label for="sh-th">太阳高度角 θ（太阳离地平线多高）<output id="sh-th-value">45.0°</output></label>
+            <input id="sh-th" type="range" min="25" max="72" value="45" step="0.5">
+            <small>θ 越大太阳越高，影子越短；θ = 72° 时影子最短（正午）</small>
+          </div>
+
+          <div class="lab3d-field">
+            <label for="sh-ph">太阳方位角 φ（0°=东 90°=南 180°=西）<output id="sh-ph-value">100°</output></label>
+            <input id="sh-ph" type="range" min="0" max="360" value="100" step="1">
+            <small>影子总在太阳的<b>反方向</b>：太阳在东，影子朝西</small>
+          </div>
+
+          <div class="lab3d-field">
+            <label for="sh-h">树的高度 h <output id="sh-h-value">5.0 m</output></label>
+            <input id="sh-h" type="range" min="3" max="7" value="5" step="0.1">
+            <small>树越高影子越长，但影长 ÷ 树高 不变</small>
+          </div>
+
+          <div class="lab3d-field span-2">
+            <span class="field-label">一天的变化 <output id="sh-day-value">上午</output></span>
+            <div class="lab3d-segment">
+              <button type="button" id="sh-play" class="primary">▶ 播放一天</button>
+              <button type="button" id="sh-day-noon">跳到正午</button>
+            </div>
+            <input id="sh-day" type="range" min="0" max="100" value="22" step="1" aria-label="一天中的时刻">
+            <small>拖动即可倒带：日出（低）→ 正午（最高）→ 日落（低），影子先变短再变长</small>
+          </div>
+
+          <div class="lab3d-field span-2">
+            <span class="field-label">影子的形成规律</span>
+            <ul class="law-list">
+              <li id="law1"><i>①</i><span>光沿<b>直线</b>传播，被不透明物体挡住就形成<b>影子</b></span></li>
+              <li id="law2"><i>②</i><span>影长 = 物高 ÷ tan(太阳高度角)，即 L = h / tanθ</span></li>
+              <li id="law3"><i>③</i><span>太阳高度角越大，影子越短（正午最短）</span></li>
+              <li id="law4"><i>④</i><span>同一时刻，影长之比 = 物高之比（与物高成正比）</span></li>
+              <li id="law5"><i>⑤</i><span>影子总在物体的<b>背光</b>一侧</span></li>
+            </ul>
+            <small id="sh-law-verdict">当前：θ = 45.0°，L = 5.00 m，L/h = 1.000 = 1/tanθ —— 五条都成立</small>
+          </div>
+        </aside>
+      </div>
+    </section>
+
+    <section class="lab3d record-panel" aria-label="实验记录表">
+      <div class="lab3d-top">
+        <div>
+          <div class="lab3d-kicker">DATA SHEET · 定量记录</div>
+          <h2>实验记录表</h2>
+          <p>每调好一组太阳高度角与树高就点一次「记录当前数据」，数据会立刻填进下表</p>
+        </div>
+        <span class="lab3d-status" id="sh-count-label">已记录 0 组</span>
+      </div>
+      <div class="record-body">
+        <div class="record-actions">
+          <button type="button" class="primary" id="sh-record">记录当前数据</button>
+          <button type="button" id="sh-clear">清空记录</button>
+          <small id="sh-record-hint">改变太阳高度角或树高，多记几组才能看出规律</small>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>次数</th>
+                <th><span class="th-full">太阳高度角 </span>θ</th>
+                <th><span class="th-full">树高 </span>h</th>
+                <th><span class="th-full">影长 </span>L</th>
+                <th>L<span class="th-full"> / </span>h</th>
+                <th>1<span class="th-full"> / </span>tanθ</th>
+              </tr>
+            </thead>
+            <tbody id="sh-rows">
+              <tr><td colspan="6" class="empty">尚无记录，先调一调太阳高度角开始探究</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="note" id="sh-summary">记录 3 组以上不同太阳高度角的数据，看看最后两列是不是始终相等。</div>
+      </div>
+    </section>
+
+    <script src="protect.js"></script>
+    <script>
+    (function () {
+      'use strict';
+      const canvas = document.getElementById('sh-canvas');
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      const $ = id => document.getElementById(id);
+      const PI2 = Math.PI * 2, DEG = Math.PI / 180, RAD = 180 / Math.PI;
+      const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
+      const f1 = v => (v == null || !isFinite(v)) ? '—' : v.toFixed(1);
+      const f2 = v => (v == null || !isFinite(v)) ? '—' : v.toFixed(2);
+
+      /* ============================================================
+       * 向量工具
+       * ============================================================ */
+      const add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+      const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+      const scl = (a, k) => [a[0] * k, a[1] * k, a[2] * k];
+      const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+      const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+      const vlen = a => Math.hypot(a[0], a[1], a[2]);
+      const vnorm = a => { const l = vlen(a) || 1; return [a[0] / l, a[1] / l, a[2] / l]; };
+      const distSq = (a, b) => { const x = a[0] - b[0], y = a[1] - b[1], z = a[2] - b[2]; return x * x + y * y + z * z; };
+
+      /* ============================================================
+       * 场景常量
+       * ------------------------------------------------------------
+       * 关键几何约定，动之前先读懂：
+       *   · 1 世界单位 = 1 米，y 轴竖直向上，地面是 y = 0 的平面。
+       *   · 方位约定（北半球）：+x = 东，−x = 西，+z = 南，−z = 北。
+       *     所以「太阳方位角 φ」用 (cosφ, sinφ) 表示 (x, z) 方向：
+       *     φ = 0° → 东，φ = 90° → 南（正午），φ = 180° → 西。
+       *   · 阳光按【平行光】处理（太阳极远，这是教科书的标准理想化）。
+       *     太阳方向（从地面指向太阳）单位向量：
+       *         s = (cosθ·cosφ, sinθ, cosθ·sinφ)
+       *     光线行进方向 d = −s。树高 h 的树尖 (0,h,0) 沿 d 投到地面：
+       *         t = h / sinθ，落点 = (0,h,0) + t·d = (−h·cotθ·cosφ, 0, −h·cotθ·sinφ)
+       *     所以【影长 L = h·cotθ = h / tanθ】—— 与公式卡完全一致。
+       *   · 地面投影映射（把任意点沿 d 压到 y=0）：
+       *         ground(P) = (P.x − P.y·k·cosφ, 0, P.z − P.y·k·sinφ)，k = cotθ
+       *     这就是「影子的形状 = 物体轮廓沿光线方向的投影」的唯一实现。
+       *   · 树的轮廓是一段【圆锥面 + 贴地的底圆】。底圆本身在地面上，投影就是它自己；
+       *     所以整棵树的影子 = 【底圆】与【树尖落点】的凸包 —— 一笔画出来，且树尖落点
+       *     恰好是凸包在背光方向上的最远点，于是「影长」有明确可见的端点。
+       * ============================================================ */
+      const GROUND_R = 16;                 // 地面圆盘半径（m）
+      const GRID_STEP = 2;                 // 地面网格间距（m）
+      const H_MIN = 3, H_MAX = 7, H_DEF = 5;          // 树高范围（m）
+      // TH_MAX 由树冠的胖瘦定死。圆锥底圆半径 R = CONE_K·h，树尖落点离树基 h·cotθ。
+      // 只有 h·cotθ ≥ R/sinθ（即 cosθ ≥ CONE_K）时，树尖落点才是影子轮廓的最远点，
+      // 「影长」这个读数才有可见的端点。CONE_K = 0.22 ⇒ 临界角 77.3°，上限取 72°（余量 40%）。
+      // 上限还受第二件事约束：θ = 80° 时影长只剩 0.88 m，比树冠自己的底圆（半径 0.8 m）
+      // 还短 —— 影子整个藏在树底下，屏上只剩 1.4 px 的一道边，「正午影子最短」根本看不见。
+      // 取 72° 时影长 1.62 m，是底圆的 2 倍，既够短又看得见。
+      const TH_MIN = 25, TH_MAX = 72, TH_DEF = 45;    // 太阳高度角范围（°）
+      const PH_MIN = 0, PH_MAX = 360, PH_DEF = 220;   // 太阳方位角范围（°）
+      const CONE_K = 0.22;                 // 树冠底圆半径 ÷ 树高
+      // 地面本色的唯一出处。自检要拿它当【绝对参照】：
+      // 「半影带有多宽」不能拿旁边某一点当对照 —— 半影一宽，参照点自己也变暗，
+      // 两边一起降，比出来的差值恒等于 0（实测把外扩量从 0.34 m 改到 20 m 全绿）。
+      const GROUND_FILL = '#16341f';
+      const POLE_H = 2.0, POLE_R = 0.07;   // 标杆高（m）与半径（m）
+      const POLE_X = 6.4, POLE_Z = -6.4;   // 标杆位置
+      const BEAM_SP = 2.2;                 // 光束网格间距（m）
+      // 必须是【奇数】：中间那一格 (i = j = 2) 才是「正好擦过树尖」的关键光线。
+      // 曾经写成 4，偏移量全是 ±1.3 / ±3.9，永远取不到 0，core 一条都找不到。
+      const BEAM_N = 5;
+      const BEAM_LEN = 9.5;                // 光束起点离树尖的距离（m）
+      const ARC_R = 3.4;                   // 高度角圆弧半径（m）
+      const ENV_R = GROUND_R, ENV_TOP = 9.2;
+      const CAMD = 118;
+      const TARGET = [0, 3.0, 0];
+      const ZOOM_MIN = 0.55, ZOOM_MAX = 2.6;
+      const DAY_SEC = 13;                  // 「播放一天」跑完一轮的秒数
+
+      // 观察视角。side 与 sun 都是【动态】的：
+      //   side —— 相机始终垂直于影子的方向，于是影长在屏幕上横着铺开（就是课本那张侧视图）
+      //   sun  —— 相机站到阳光里、顺着光线往回看，影子被树自己挡住
+      const VIEWS = {
+        perspective: [0.62, 0.30],
+        top:         [0.0, 1.42],
+        side:        [1.5708, 0.07],
+        sun:         null
+      };
+
+      const state = {
+        yaw: VIEWS.perspective[0], pitch: VIEWS.perspective[1], zoom: 1,
+        th: TH_DEF, ph: PH_DEF, treeH: H_DEF,
+        playing: false, dayT: (22 / 100),
+        showBeams: true, showDims: true, showGrid: true, showPole: true, showSun: true,
+        view: 'perspective',
+        w: 1, h: 1, dpr: 0, dirty: true,
+        dragging: false, dragObj: null, hoverObj: null,
+        lastX: 0, lastY: 0, records: [], drawn: null, tPrev: 0
+      };
+
+      /* ============================================================
+       * 太阳与影子的物理
+       * ============================================================ */
+      function sun() {
+        const th = state.th * DEG, ph = state.ph * DEG;
+        const cth = Math.cos(th), sth = Math.sin(th);
+        const ux = Math.cos(ph), uz = Math.sin(ph);       // 水平方向（指向太阳）
+        const k = cth / sth;                              // cot θ
+        return {
+          th, ph, cth, sth, ux, uz, k, tan: sth / cth,
+          dir: [cth * ux, sth, cth * uz],                 // 指向太阳的单位向量
+          travel: [-cth * ux, -sth, -cth * uz]            // 光线行进方向
+        };
+      }
+      // 沿光线压到地面（y = 0）。这是全页唯一的「影子投影」实现。
+      const groundOf = (P, s) => [P[0] - P[1] * s.k * s.ux, 0, P[2] - P[1] * s.k * s.uz];
+      // 树尖的影子落点（= 影子在背光方向的最远端）
+      const apexShadow = (s) => groundOf([0, state.treeH, 0], s);
+      // 影长：树高 ÷ tanθ。与 apexShadow 的模长必须恒等（自检会验这一点）。
+      const shadowLen = (s) => state.treeH * s.k;
+
+      // 二维凸包（Andrew monotone chain），输入/输出都是 [x, z]
+      function hull2(pts) {
+        const P = pts.slice().sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+        if (P.length < 3) return P;
+        const cr = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+        const lo = [];
+        for (const p of P) { while (lo.length >= 2 && cr(lo[lo.length - 2], lo[lo.length - 1], p) <= 0) lo.pop(); lo.push(p); }
+        const up = [];
+        for (let i = P.length - 1; i >= 0; i--) { const p = P[i]; while (up.length >= 2 && cr(up[up.length - 2], up[up.length - 1], p) <= 0) up.pop(); up.push(p); }
+        lo.pop(); up.pop();
+        return lo.concat(up);
+      }
+      // 圆锥树的影子轮廓（地面坐标 [x,z] 数组）
+      function treeShadow(s) {
+        const R = CONE_K * state.treeH;
+        const pts = [];
+        for (let i = 0; i < 44; i++) { const a = i / 44 * PI2; pts.push([R * Math.cos(a), R * Math.sin(a)]); }
+        const ap = apexShadow(s);
+        pts.push([ap[0], ap[2]]);
+        return { hull: hull2(pts), R: R, tip: ap };
+      }
+      // 竖直标杆（圆柱）的影子轮廓：底圆在地面上、投影就是它自己，顶圆整体平移 −POLE_H·k·u
+      function poleShadow(s) {
+        const pts = [];
+        for (let i = 0; i < 22; i++) {
+          const a = i / 22 * PI2;
+          pts.push([POLE_X + POLE_R * Math.cos(a), POLE_Z + POLE_R * Math.sin(a)]);
+        }
+        const tg = groundOf([POLE_X, POLE_H, POLE_Z], s);
+        for (let i = 0; i < 22; i++) {
+          const a = i / 22 * PI2;
+          pts.push([tg[0] + POLE_R * Math.cos(a), tg[2] + POLE_R * Math.sin(a)]);
+        }
+        return { hull: hull2(pts), tip: tg };
+      }
+      // 平行光束：在垂直于阳光的平面里取 4×4 个点，各自沿光线打到地面
+      function beams(s) {
+        const d = s.travel;
+        let e1 = cross(d, [0, 1, 0]);
+        if (vlen(e1) < 1e-6) e1 = [1, 0, 0];
+        e1 = vnorm(e1);
+        const e2 = vnorm(cross(d, e1));
+        const apex = [0, state.treeH, 0];
+        const out = [];
+        for (let i = 0; i < BEAM_N; i++) {
+          for (let j = 0; j < BEAM_N; j++) {
+            const o1 = (i - (BEAM_N - 1) / 2) * BEAM_SP, o2 = (j - (BEAM_N - 1) / 2) * BEAM_SP;
+            const st = add(add(apex, scl(s.dir, BEAM_LEN)), add(scl(e1, o1), scl(e2, o2)));
+            if (st[1] <= 0.05) continue;
+            const t = st[1] / s.sth;
+            const en = add(st, scl(d, t));
+            if (Math.hypot(en[0], en[2]) > GROUND_R) continue;   // 落到地面圆盘之外就不画
+            out.push({ a: st, b: en, core: Math.abs(o1) < 1e-6 && Math.abs(o2) < 1e-6 });
+          }
+        }
+        return out;
+      }
+      // 一天中的太阳：t ∈ [0,1] → 日出(东、低) → 正午(南、最高) → 日落(西、低)
+      function dayToSun(t) {
+        return { ph: PH_MIN + 180 * t, th: TH_MIN + (TH_MAX - TH_MIN) * Math.sin(Math.PI * t) };
+      }
+      const DIR8 = ['东', '东南', '南', '西南', '西', '西北', '北', '东北'];
+      function dirName(deg) { return DIR8[Math.round((((deg % 360) + 360) % 360) / 45) % 8]; }
+      function timeName(t) {
+        if (t < 0.18) return '早晨';
+        if (t < 0.40) return '上午';
+        if (t < 0.60) return '正午';
+        if (t < 0.82) return '下午';
+        return '傍晚';
+      }
+
+      /* ============================================================
+       * 相机（与站内其它 lab3d 页面同一套：方位/俯仰推 eye/fwd/right/up，
+       * 再用【投影后】的包络反算焦距。zoom 必须乘在算出来的焦距上。）
+       * ============================================================ */
+      // 取景包络：只用常量，不跟任何滑块走（否则像素差分/自检全部失效）。
+      function envelopePoints() {
+        const pts = [];
+        for (let i = 0; i < 40; i++) {
+          const a = i / 40 * PI2;
+          pts.push([Math.cos(a) * ENV_R, 0, Math.sin(a) * ENV_R]);
+        }
+        for (const [x, z] of [[0, 0], [ENV_R, 0], [-ENV_R, 0], [0, ENV_R], [0, -ENV_R]]) {
+          pts.push([x, ENV_TOP, z]);
+        }
+        pts.push([0, H_MAX, 0]);
+        pts.push([POLE_X, POLE_H, POLE_Z]);
+        return pts;
+      }
+      function makeCam(q, w, h) {
+        const cy = Math.cos(state.yaw), sy = Math.sin(state.yaw);
+        const cp = Math.cos(state.pitch), sp = Math.sin(state.pitch);
+        const dir = [cp * sy, sp, cp * cy];              // 目标 → 相机
+        q.dist = CAMD / state.zoom;
+        q.eye = add(TARGET, scl(dir, q.dist));
+        q.fwd = scl(dir, -1);
+        q.right = vnorm(cross(q.fwd, [0, 1, 0]));
+        q.up = cross(q.right, q.fwd);
+        const pts = envelopePoints();
+        let loR = 1e9, hiR = -1e9, loU = 1e9, hiU = -1e9;
+        for (const p of pts) {
+          const v = sub(p, q.eye);
+          const z = Math.max(0.05, dot(v, q.fwd));
+          const r = dot(v, q.right) / z, u = dot(v, q.up) / z;
+          loR = Math.min(loR, r); hiR = Math.max(hiR, r);
+          loU = Math.min(loU, u); hiU = Math.max(hiU, u);
+        }
+        const s = Math.min(w * 0.95 / Math.max(1e-6, hiR - loR),
+                           h * 0.93 / Math.max(1e-6, hiU - loU));
+        // ★ zoom 必须乘在【算出来的焦距】上。只改相机距离（q.dist）是没用的：
+        //   包络是固定的世界坐标，相机一靠近，投影范围同比变大，反算出的焦距又把它除回去，
+        //   净效果为零。实测 zoom 0.55→2.6 时「地面原点→10 m 处」的屏幕长度
+        //   236.4→238.0 px（应分别为 131→621 px），只有 0.7% 的视差残留。
+        q.focal = s * state.zoom;
+        // 居中也要用【同一个焦距】：否则放大后画面会往左上/右下漂
+        // （居中的定义就是「包络中心落在画布中心」，即 px = w/2 − r_center·focal）。
+        q.px = w * 0.5 - (loR + hiR) * 0.5 * q.focal;
+        q.py = h * 0.5 + (loU + hiU) * 0.5 * q.focal;
+      }
+      function project(p, q) {
+        const v = sub(p, q.eye);
+        const z = Math.max(0.05, dot(v, q.fwd));
+        const s = q.focal / z;
+        return { x: q.px + dot(v, q.right) * s, y: q.py - dot(v, q.up) * s, s: s, z: z };
+      }
+
+      /* ============================================================
+       * 绘图小工具
+       * ============================================================ */
+      function trace(pts) {
+        ctx.beginPath();
+        pts.forEach((p, k) => k ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+      }
+      function poly(pts, fill, stroke, lw) {
+        if (!pts || pts.length < 2) return;
+        trace(pts); ctx.closePath();
+        if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+        if (stroke) { ctx.lineWidth = lw || 1; ctx.strokeStyle = stroke; ctx.stroke(); }
+      }
+      function line(pts, color, lw, dash) {
+        if (!pts || pts.length < 2) return;
+        trace(pts);
+        ctx.setLineDash(dash || []);
+        ctx.lineWidth = lw; ctx.strokeStyle = color; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+        ctx.stroke(); ctx.setLineDash([]);
+      }
+      const P3 = (pts, q) => pts.map(p => project(p, q));
+
+      // 绕 y 轴的回转体：prof = [[r,y],…]（自下而上），背面剔除 + 按世界法线着色。
+      // 凸体在投影下可见面互不重叠，所以只要剔除背面就不需要再排序。
+      function revolve(q, cx, cz, prof, segs, colFn) {
+        const rings = prof.map(([r, y]) => {
+          const ring = [];
+          for (let i = 0; i < segs; i++) {
+            const a = i / segs * PI2;
+            ring.push([cx + r * Math.cos(a), y, cz + r * Math.sin(a)]);
+          }
+          return ring;
+        });
+        const faces = [];
+        for (let j = 0; j + 1 < rings.length; j++) {
+          for (let i = 0; i < segs; i++) {
+            const i2 = (i + 1) % segs;
+            const a = rings[j][i], b = rings[j][i2], c = rings[j + 1][i2], d = rings[j + 1][i];
+            const t1 = sub(b, a), t2 = sub(d, a);
+            const n = vnorm(cross(t2, t1));
+            const cen = [(a[0] + b[0] + c[0] + d[0]) / 4, (a[1] + b[1] + c[1] + d[1]) / 4, (a[2] + b[2] + c[2] + d[2]) / 4];
+            if (dot(n, sub(q.eye, cen)) <= 0) continue;
+            faces.push({ pts: [a, b, c, d], n: n, c: cen });
+          }
+        }
+        faces.sort((A, B) => distSq(B.c, q.eye) - distSq(A.c, q.eye));
+        for (const f of faces) {
+          const col = colFn(f.n, f.c);
+          poly(P3(f.pts, q), col, col, 1);      // 同色描边：补掉相邻面片之间的发丝缝
+        }
+        return faces.length;
+      }
+
+      /* ============================================================
+       * 标签：几何、避让、绘制分三层
+       *   boxOf()      —— 唯一的盒子几何，避让与绘制共用
+       *   tickLabel()  —— 刻度数字，位置固定不许挪，但登记成障碍物
+       *   label()      —— 说明标签，入队；本帧所有几何画完后再统一落笔
+       * ============================================================ */
+      let frameBoxes = [];
+      const pendingLabels = [];
+      function fontOf(size) { return '600 ' + size + 'px Inter, "Microsoft YaHei", sans-serif'; }
+      function boxOf(p, text, size, align, baseline) {
+        ctx.font = fontOf(size);
+        const wpx = ctx.measureText(text).width;
+        const pad = 4;
+        const x = p.x + (align === 'left' ? -4 : align === 'right' ? 4 : 0);
+        const bx = align === 'left' ? x - pad : align === 'right' ? x - wpx - pad : x - wpx / 2 - pad;
+        const by = baseline === 'bottom' ? p.y - size * 1.44 - pad : p.y - size * 0.72 - pad * 0.5;
+        return { x0: bx, y0: by, x1: bx + wpx + pad * 2, y1: by + size * 1.44 + pad, x, wpx, y: p.y };
+      }
+      function overlapArea(a, b) {
+        const w = Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0);
+        const h = Math.min(a.y1, b.y1) - Math.max(a.y0, b.y0);
+        return (w > 0 && h > 0) ? w * h : 0;
+      }
+      // 器材本体也登记成障碍物：标签绝不许压住它自己标注的那个东西。
+      function bodyBox(pts, grow, tag, weight) {
+        let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+        for (const p of pts) {
+          if (!p || !isFinite(p.x) || !isFinite(p.y)) continue;
+          x0 = Math.min(x0, p.x); x1 = Math.max(x1, p.x);
+          y0 = Math.min(y0, p.y); y1 = Math.max(y1, p.y);
+        }
+        if (x0 > x1) return null;
+        const bx = { x0: x0 - grow, y0: y0 - grow, x1: x1 + grow, y1: y1 + grow,
+                     kind: 'body', text: tag || '', weight: weight == null ? 8 : weight };
+        frameBoxes.push(bx);
+        return bx;
+      }
+      // 斜着的细长标注线必须【切段】登记障碍，不能整段取 AABB：
+      // 15 m 的影长标注在俯视图里 AABB 有 8 万 px²，那块区域其实全是空的，
+      // 标签会被这块根本不存在的假障碍赶到很远（实测压住自己 1725 px²）。
+      function segBoxes(a, b, n, grow, tag, weight) {
+        for (let i = 0; i < n; i++) {
+          const t0 = i / n, t1 = (i + 1) / n;
+          bodyBox([{ x: a.x + (b.x - a.x) * t0, y: a.y + (b.y - a.y) * t0 },
+                   { x: a.x + (b.x - a.x) * t1, y: a.y + (b.y - a.y) * t1 }], grow, tag, weight);
+        }
+      }
+      function drawLabelBox(bx, text, color, size, align, baseline) {
+        ctx.fillStyle = 'rgba(2,6,23,.74)';
+        ctx.fillRect(bx.x0, bx.y0, bx.x1 - bx.x0, bx.y1 - bx.y0);
+        ctx.font = fontOf(size);
+        ctx.textAlign = align || 'center';
+        ctx.textBaseline = baseline || 'middle';
+        ctx.fillStyle = color;
+        ctx.fillText(text, bx.x, bx.y);
+      }
+      function tickLabel(p, text, color, size) {
+        const bx = boxOf(p, text, size, 'center', 'middle');
+        drawLabelBox(bx, text, color, size, 'center', 'middle');
+        bx.kind = 'tick'; bx.text = text;
+        bx.weight = 12;          // 与说明标签同级：位置不许挪，但后来的标签必须让开
+        frameBoxes.push(bx);
+      }
+      function label(p, text, color, size, align, baseline) {
+        pendingLabels.push({ p, text, color, size, align, baseline });
+      }
+      const LABEL_DIRS = [[0, 0], [0, 1], [0, -1], [1, 0], [-1, 0], [1, 1], [-1, 1], [1, -1], [-1, -1]];
+      function fitBox(bx) {
+        const W = state.w, H = state.h, m = 2;
+        let dx = 0, dy = 0;
+        if (bx.x0 < m) dx = m - bx.x0; else if (bx.x1 > W - m) dx = W - m - bx.x1;
+        if (bx.y0 < m) dy = m - bx.y0; else if (bx.y1 > H - m) dy = H - m - bx.y1;
+        if (dx) { bx.x0 += dx; bx.x1 += dx; bx.x += dx; }
+        if (dy) { bx.y0 += dy; bx.y1 += dy; bx.y += dy; }
+        return bx;
+      }
+      function flushLabels() {
+        for (const it of pendingLabels) {
+          const { p, text, size, align, baseline } = it;
+          // 格子大小按【标签自身尺寸】定。原来横向步长固定 size*1.5 ≈ 18 px，
+          // 而标签宽约 90 px —— 走满 3 格（54 px）也甩不掉压住的那一个；
+          // 再加上标签盒子的权重是 1，压住 251.6 px² 只要 251.6 分，
+          // 比「挪到第 3 格」的 300 分还便宜，于是算法宁可压着不动。
+          // 现在：步长 ≥ 标签尺寸、盒子权重 12（与器材同级），压住的代价远高于挪开。
+          const base = boxOf({ x: p.x, y: p.y }, text, size, align, baseline);
+          const stepX = Math.max(size * 1.5, (base.x1 - base.x0) * 0.85);
+          const stepY = Math.max(size * 1.3, (base.y1 - base.y0) + 3);
+          let best = null, bestScore = Infinity;
+          for (const [ux, uy] of LABEL_DIRS) {
+            for (let k = 0; k <= 4; k++) {
+              if (ux === 0 && uy === 0 && k > 0) continue;
+              const cand = { x: p.x + ux * k * stepX, y: p.y + uy * k * stepY };
+              const bx = fitBox(boxOf(cand, text, size, align, baseline));
+              let sc = k * 100;
+              for (const o of frameBoxes) sc += (o.weight || 1) * overlapArea(bx, o);
+              if (sc < bestScore) { bestScore = sc; best = bx; }
+            }
+          }
+          best.kind = 'label'; best.text = text; best.weight = 12;
+          drawLabelBox(best, text, it.color, size, align, baseline);
+          frameBoxes.push(best);
+        }
+        pendingLabels.length = 0;
+      }
+      let q0 = null;
+
+      // 舞台上的 DOM 浮层（提示条 / 结论条 / 帮助条）也是障碍物：它们贴在画布上方，
+      // 标签落上去就被整块盖住。权重给 10（比器材本体还高），标签必须给它们让位。
+      function uiBoxes() {
+        const cr = canvas.getBoundingClientRect();
+        if (!cr.width) return;
+        for (const sel of ['.stage-hint', '.stage-verdict', '.stage-help']) {
+          const el = document.querySelector(sel);
+          if (!el) continue;
+          const r = el.getBoundingClientRect();
+          if (!r.width || !r.height) continue;
+          const x0 = r.left - cr.left, y0 = r.top - cr.top;
+          const x1 = r.right - cr.left, y1 = r.bottom - cr.top;
+          // 只登记【压在画布上】的浮层。舞台改成 flex 列之后，底部结论条/帮助条
+          // 整块落在画布下方 —— 它盖不住画布里的任何东西，不该被当成障碍物，
+          // 更不该被「字有没有被裁掉」的体检算成越界。
+          if (x1 <= 0 || y1 <= 0 || x0 >= cr.width || y0 >= cr.height) continue;
+          frameBoxes.push({ x0, y0, x1, y1, kind: 'ui', text: sel, weight: 10 });
+        }
+      }
+
+      /* ============================================================
+       * 太阳方位指示器（HUD）
+       * ------------------------------------------------------------
+       * 太阳是平行光的来源，位置在无穷远，没法放进 3D 取景里（一放进去整棵树就只有
+       * 几个像素）。所以把「太阳在哪个方向」做成屏幕上的方向指示器：把太阳方向投到
+       * 相机空间，按「与视线前方的夹角」映射到画面中心外的一圈上。绕视角、改 θ/φ
+       * 它都会跟着动，方向信息一点没丢。
+       * ============================================================ */
+      function sunIconPos(q, w, h, s) {
+        // 用【纯方向】而不是「某个远处的点」：太阳是平行光源，方向与相机距离无关。
+        // 曾经取 s.dir·60 当点来投影，而相机在 118 m 外，结果方向被 eye→原点 那一段
+        // 主导，指示器几乎贴在画面正中央（实测离中心只有 49 px，应为 163 px）。
+        const r = dot(s.dir, q.right), uu = dot(s.dir, q.up), f = dot(s.dir, q.fwd);
+        const L = Math.hypot(r, uu, f) || 1;
+        const theta = Math.acos(clamp(f / L, -1, 1));
+        const phi = Math.atan2(uu, r);
+        const Rmax = Math.min(w, h) * 0.40;
+        const rad = Rmax * Math.min(1, theta / (Math.PI * 0.5));
+        return { x: w * 0.5 + Math.cos(phi) * rad, y: h * 0.5 - Math.sin(phi) * rad, off: theta > Math.PI * 0.42, theta: theta };
+      }
+      // 指示器本体在障碍表里占的半边长。nudgeIcon 的试算盒子【必须与它一致】：
+      // 曾经试算用 ±20 而登记用 ±25，于是「算出来不压」的候选位登记进去仍然压住。
+      const ICON_HALF = 25;
+      // 太阳指示器是【浮层】：碰到钉死在地面上的参照物（罗盘字这类刻度）时，让位的是它。
+      // 候选位是【径向 × 切向】的一小片网格 —— 只沿径向挪时，刻度如果正好落在同一个
+      // 方向上，怎么往外推都躲不开。切向最多 ±2 格 × 0.06 rad（≈ ±6.9°），
+      // 径向最多 ±3 格 × 12 px（在 230 px 的指示半径上≈ 9°），方向误差都还在读数精度内。
+      function nudgeIcon(pos, w, h) {
+        const fixed = frameBoxes.filter(b => b.kind === 'tick');
+        if (!fixed.length) return pos;
+        const cx = w * 0.5, cy = h * 0.5;
+        const ang = Math.atan2(pos.y - cy, pos.x - cx);
+        const r0 = Math.max(24, Math.hypot(pos.x - cx, pos.y - cy));
+        let best = pos, bestCost = Infinity;
+        for (let k = -3; k <= 3; k++) {
+          for (let j = -2; j <= 2; j++) {
+            const a = ang + j * 0.06;
+            const r = Math.max(24, r0 + k * 12);
+            const p = { x: cx + Math.cos(a) * r, y: cy + Math.sin(a) * r, off: pos.off, theta: pos.theta };
+            const bx = { x0: p.x - ICON_HALF, y0: p.y - ICON_HALF, x1: p.x + ICON_HALF, y1: p.y + ICON_HALF };
+            let cost = Math.abs(k) * 40 + Math.abs(j) * 70;
+            for (const b of fixed) cost += overlapArea(bx, b) * 3;
+            if (cost < bestCost) { bestCost = cost; best = p; }
+          }
+        }
+        return best;
+      }
+      function drawSunIcon(q, w, h, s, pos) {
+        const R = 13;
+        for (let i = 3; i >= 0; i--) {
+          const gr = R + i * 9;
+          const g = ctx.createRadialGradient(pos.x, pos.y, 1, pos.x, pos.y, gr);
+          g.addColorStop(0, 'rgba(255,238,150,' + (0.30 - i * 0.06) + ')');
+          g.addColorStop(1, 'rgba(255,200,60,0)');
+          ctx.fillStyle = g;
+          ctx.beginPath(); ctx.arc(pos.x, pos.y, gr, 0, PI2); ctx.fill();
+        }
+        ctx.fillStyle = '#ffe680';
+        ctx.beginPath(); ctx.arc(pos.x, pos.y, R, 0, PI2); ctx.fill();
+        ctx.fillStyle = '#fffbe0';
+        ctx.beginPath(); ctx.arc(pos.x, pos.y, R * 0.62, 0, PI2); ctx.fill();
+        ctx.strokeStyle = 'rgba(255,224,120,.55)'; ctx.lineWidth = 1.4;
+        for (let i = 0; i < 8; i++) {
+          const a = i / 8 * PI2;
+          ctx.beginPath();
+          ctx.moveTo(pos.x + Math.cos(a) * (R + 4), pos.y + Math.sin(a) * (R + 4));
+          ctx.lineTo(pos.x + Math.cos(a) * (R + 10 + (i % 3) * 3), pos.y + Math.sin(a) * (R + 10 + (i % 3) * 3));
+          ctx.stroke();
+        }
+        const bx = { x0: pos.x - ICON_HALF, y0: pos.y - ICON_HALF, x1: pos.x + ICON_HALF, y1: pos.y + ICON_HALF,
+                     kind: 'body', text: '太阳指示器', weight: 6 };
+        frameBoxes.push(bx);
+        label({ x: pos.x, y: pos.y + R + 13 }, '太阳 θ=' + f1(state.th) + '°', '#fde68a', 12, 'center', 'top');
+        if (pos.off) {
+          // 太阳转到画面外了：给一个指向它的箭头，别让「太阳不见了」变成疑点
+          const ang = Math.atan2(pos.y - h * 0.5, pos.x - w * 0.5);
+          ctx.strokeStyle = 'rgba(255,224,120,.75)'; ctx.lineWidth = 2;
+          const px = pos.x + Math.cos(ang) * (R + 16), py = pos.y + Math.sin(ang) * (R + 16);
+          ctx.beginPath();
+          ctx.moveTo(px, py);
+          ctx.lineTo(px + Math.cos(ang) * 11, py + Math.sin(ang) * 11);
+          ctx.moveTo(px + Math.cos(ang) * 11, py + Math.sin(ang) * 11);
+          ctx.lineTo(px + Math.cos(ang - 0.5) * 7, py + Math.sin(ang - 0.5) * 7);
+          ctx.moveTo(px + Math.cos(ang) * 11, py + Math.sin(ang) * 11);
+          ctx.lineTo(px + Math.cos(ang + 0.5) * 7, py + Math.sin(ang + 0.5) * 7);
+          ctx.stroke();
+        }
+      }
+
+      /* ============================================================
+       * 场景绘制
+       * ============================================================ */
+      function drawBackdrop(w, h, sunPos) {
+        // 白天场景配「近黑」天空不成立：原来的 #04101f→#03101c 亮度只有 14.5，
+        // 而地面圆盘是 44.1 —— 画面读起来像夜里打灯。这里抬到 29 左右：
+        // 天空读得出是「天空」，仍然远暗于地面，深色版面的基调不变。
+        const g = ctx.createLinearGradient(0, 0, 0, h);
+        g.addColorStop(0, '#0b2038');
+        g.addColorStop(0.58, '#0d2a44');
+        g.addColorStop(1, '#08192b');
+        ctx.fillStyle = g;
+        ctx.fillRect(0, 0, w, h);
+        // 地平线附近加一圈很淡的辉光：地面圆盘不再「悬在虚空里」
+        const hg = ctx.createRadialGradient(w * 0.5, h * 0.62, Math.min(w, h) * 0.10,
+                                            w * 0.5, h * 0.62, Math.max(w, h) * 0.62);
+        hg.addColorStop(0, 'rgba(96,165,250,.10)');
+        hg.addColorStop(0.55, 'rgba(56,189,248,.04)');
+        hg.addColorStop(1, 'rgba(56,189,248,0)');
+        ctx.fillStyle = hg;
+        ctx.fillRect(0, 0, w, h);
+        if (state.showSun && sunPos) {
+          const rg = ctx.createRadialGradient(sunPos.x, sunPos.y, 4, sunPos.x, sunPos.y, Math.max(w, h) * 0.72);
+          rg.addColorStop(0, 'rgba(255,206,96,.16)');
+          rg.addColorStop(0.42, 'rgba(255,176,72,.06)');
+          rg.addColorStop(1, 'rgba(255,160,60,0)');
+          ctx.fillStyle = rg;
+          ctx.fillRect(0, 0, w, h);
+        }
+      }
+
+      function drawGround(q, s) {
+        // 地面圆盘
+        const ring = [];
+        for (let i = 0; i < 72; i++) {
+          const a = i / 72 * PI2;
+          ring.push(project([Math.cos(a) * GROUND_R, 0, Math.sin(a) * GROUND_R], q));
+        }
+        poly(ring, GROUND_FILL, 'rgba(74,222,128,.28)', 1.4);
+
+        if (state.showGrid) {
+          for (let c = -GROUND_R + GRID_STEP; c < GROUND_R; c += GRID_STEP) {
+            const L = Math.sqrt(Math.max(0, GROUND_R * GROUND_R - c * c));
+            if (L < 0.4) continue;
+            const major = Math.abs(c % (GRID_STEP * 3)) < 1e-6;
+            const col = major ? 'rgba(94,234,212,.22)' : 'rgba(94,234,212,.10)';
+            line([project([c, 0, -L], q), project([c, 0, L], q)], col, 1, []);
+            line([project([-L, 0, c], q), project([L, 0, c], q)], col, 1, []);
+          }
+        }
+        // 罗盘：东南西北（+x 东，+z 南，−x 西，−z 北）
+        const RR = GROUND_R * 0.90;
+        const dirs = [['东', 1, 0], ['南', 0, 1], ['西', -1, 0], ['北', 0, -1]];
+        for (const [nm, dx, dz] of dirs) {
+          const a = project([dx * RR, 0, dz * RR], q);
+          tickLabel({ x: a.x, y: a.y }, nm, 'rgba(148,197,220,.85)', 12);
+        }
+      }
+
+      // 影子：把地面坐标的多边形填成暗块。外圈软一点 = 半影的视觉暗示。
+      function fillShadow(q, hull, alpha) {
+        const pts = hull.map(p => project([p[0], 0, p[1]], q));
+        poly(pts, 'rgba(2,5,12,' + alpha + ')', null, 0);
+        return pts;
+      }
+      function drawShadows(q, s) {
+        const ts = treeShadow(s);
+        const ps = poleShadow(s);
+        // 外圈（半影带）：把轮廓向外扩一点，用低透明度先铺一层
+        const soft = (hull) => {
+          const cx = hull.reduce((a, p) => a + p[0], 0) / hull.length;
+          const cz = hull.reduce((a, p) => a + p[1], 0) / hull.length;
+          return hull.map(p => {
+            const dx = p[0] - cx, dz = p[1] - cz;
+            const L = Math.hypot(dx, dz) || 1;
+            const g = 0.34;                         // 外扩 0.34 m
+            return [p[0] + dx / L * g, p[1] + dz / L * g];
+          });
+        };
+        fillShadow(q, soft(ts.hull), 0.32);
+        if (state.showPole) fillShadow(q, soft(ps.hull), 0.32);
+        fillShadow(q, ts.hull, 0.78);
+        if (state.showPole) fillShadow(q, ps.hull, 0.78);
+        return { ts: ts, ps: ps };
+      }
+
+      function drawTree(q, s) {
+        const R = CONE_K * state.treeH;
+        const lit = s.dir;
+        const shade = (n) => {
+          const L = 0.34 + 0.66 * Math.max(0, dot(n, lit));
+          const r = Math.round(28 + 62 * L), g = Math.round(74 + 118 * L), b = Math.round(38 + 62 * L);
+          return 'rgb(' + r + ',' + g + ',' + b + ')';
+        };
+        // 树冠就是一段圆锥面（底圆贴地）。底圆贴地很关键：它在地面上、投影就是它自己，
+        // 于是整棵树的影子 = 底圆与树尖落点的凸包，且树尖落点正好是最远端 —— 影长有明确端点。
+        revolve(q, 0, 0, [[R, 0], [R * 0.62, state.treeH * 0.42], [R * 0.30, state.treeH * 0.74], [0, state.treeH]], 30, shade);
+        const tp = project([0, state.treeH, 0], q);
+        bodyBox([tp], 8, '树尖', 8);
+      }
+
+      function drawPole(q, s) {
+        const lit = s.dir;
+        const shade = (n) => {
+          const L = 0.36 + 0.64 * Math.max(0, dot(n, lit));
+          return 'rgb(' + Math.round(60 + 110 * L) + ',' + Math.round(150 + 95 * L) + ',' + Math.round(170 + 70 * L) + ')';
+        };
+        revolve(q, POLE_X, POLE_Z, [[POLE_R, 0], [POLE_R, POLE_H]], 14, shade);
+      }
+
+      function drawBeams(q, s) {
+        if (!state.showBeams) return 0;
+        const bs = beams(s);
+        for (const b of bs) {
+          const a = project(b.a, q), c = project(b.b, q);
+          if (b.core) {
+            line([a, c], 'rgba(255,238,150,.92)', 2.0, []);
+            line([a, c], 'rgba(255,214,80,.22)', 6, []);
+          } else {
+            line([a, c], 'rgba(255,222,120,.30)', 1.1, []);
+          }
+        }
+        // 阳光方向箭头（沿最中间那束）
+        const core = bs.find(b => b.core);
+        if (core) {
+          const mid = add(core.a, scl(sub(core.b, core.a), 0.55));
+          label(project(mid, q), '阳光（平行光）', '#fde68a', 12, 'left', 'middle');
+        }
+        return bs.length;
+      }
+
+      function drawAngleArc(q, s) {
+        if (!state.showDims) return;
+        const pts = [];
+        const N = 26;
+        for (let i = 0; i <= N; i++) {
+          const a = s.th * i / N;
+          pts.push(project([Math.cos(a) * s.ux * ARC_R, Math.sin(a) * ARC_R, Math.cos(a) * s.uz * ARC_R], q));
+        }
+        line(pts, 'rgba(251,191,36,.9)', 2, []);
+        // 水平参考线 + 阳光方向线
+        line([project([0, 0, 0], q), project([s.ux * ARC_R, 0, s.uz * ARC_R], q)], 'rgba(251,191,36,.45)', 1.4, [5, 4]);
+        line([project([0, 0, 0], q), project(scl(s.dir, ARC_R), q)], 'rgba(251,191,36,.45)', 1.4, [5, 4]);
+        const m = pts[Math.round(N / 2)];
+        label(m, 'θ = ' + f1(state.th) + '°', '#fbbf24', 12, 'left', 'middle');
+        bodyBox([pts[0], pts[N]], 4, '高度角弧', 4);
+      }
+
+      function drawDims(q, s) {
+        if (!state.showDims) return;
+        const k = s.k, ux = s.ux, uz = s.uz;
+        const L = shadowLen(s);
+        // 标注的横向偏移方向必须【与视角无关】，否则换个视角就钻到器材背后去了。
+        //   · 影长 / 标杆影长：沿「与影子垂直」的水平方向，符号取【朝向观察者】的那一侧
+        //     （侧视图里这个方向正好指向相机，标注落在影子前面，不会被影子压住）
+        //   · 树高：沿屏幕水平方向 q.right（它恒为水平向量），保证永远在树的一侧
+        let px = -uz, pz = ux;
+        if (px * q.fwd[0] + pz * q.fwd[2] > 0) { px = -px; pz = -pz; }   // 取朝向相机的一侧
+        const off = 1.35;
+        const A = [px * off, 0, pz * off];
+        const B = [-L * ux + px * off, 0, -L * uz + pz * off];
+        const a = project(A, q), b = project(B, q);
+        line([a, b], '#f472b6', 1.8, []);
+        const perp = (p, w2) => {
+          const d = vnorm([p.x - q.px, p.y - q.py, 0]);
+          return [{ x: p.x - d[1] * w2, y: p.y + d[0] * w2 }, { x: p.x + d[1] * w2, y: p.y - d[0] * w2 }];
+        };
+        for (const p of [a, b]) { const t = perp(p, 7); line(t, '#f472b6', 1.8, []); }
+        label({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }, '影长 L = ' + f2(L) + ' m', '#f9a8d4', 12, 'center', 'bottom');
+        segBoxes(a, b, 10, 3, '影长标注', 5);
+
+        // 树高标注：屏幕水平方向偏移 1.05 m
+        const hx = q.right[0] * 1.05, hz = q.right[2] * 1.05;
+        const ha = project([hx, 0, hz], q), hb = project([hx, state.treeH, hz], q);
+        line([ha, hb], '#4ade80', 1.6, []);
+        for (const p of [ha, hb]) { const t = perp(p, 6); line(t, '#4ade80', 1.6, []); }
+        label({ x: ha.x, y: (ha.y + hb.y) / 2 }, 'h = ' + f1(state.treeH) + ' m', '#86efac', 12, 'left', 'middle');
+        segBoxes(ha, hb, 6, 3, '树高标注', 5);
+
+        // 标杆的影长（只在标杆打开时）
+        if (state.showPole) {
+          const pl = POLE_H * k;
+          const A2 = [POLE_X + px * 0.9, 0, POLE_Z + pz * 0.9];
+          const B2 = [POLE_X - pl * ux + px * 0.9, 0, POLE_Z - pl * uz + pz * 0.9];
+          const a2 = project(A2, q), b2 = project(B2, q);
+          line([a2, b2], '#22d3ee', 1.5, []);
+          label({ x: (a2.x + b2.x) / 2, y: (a2.y + b2.y) / 2 }, '标杆影 ' + f2(pl) + ' m', '#67e8f9', 11, 'center', 'top');
+          segBoxes(a2, b2, 5, 3, '标杆影长', 4);
+        }
+        // 树尖落点标记（影长的端点，必须看得见）
+        const tip = apexShadow(s);
+        const tp = project(tip, q);
+        ctx.fillStyle = '#f9a8d4';
+        ctx.beginPath(); ctx.arc(tp.x, tp.y, 4, 0, PI2); ctx.fill();
+        ctx.strokeStyle = 'rgba(249,168,212,.7)'; ctx.lineWidth = 1.2;
+        ctx.beginPath(); ctx.arc(tp.x, tp.y, 8, 0, PI2); ctx.stroke();
+        label({ x: tp.x, y: tp.y - 10 }, '树尖的影子（影长量到这里）', '#f9a8d4', 11, 'center', 'bottom');
+        bodyBox([tp], 6, '影端', 6);
+      }
+
+      function drawShadowRays(q, s) {
+        // 一条从树尖出发、沿光线方向落到影子端点的关键光线（已由光束里的 core 承担），
+        // 这里再补一条从树基到影端的地面虚线，指出影子的「方向」。
+        if (!state.showDims) return;
+        const tip = apexShadow(s);
+        line([project([0, 0.03, 0], q), project([tip[0], 0.03, tip[2]], q)], 'rgba(249,168,212,.35)', 1.2, [6, 6]);
+      }
+
+      /* ============================================================
+       * 渲染主入口
+       * ============================================================ */
+      function render() {
+        const w = state.w, h = state.h;
+        ctx.setTransform(state.dpr, 0, 0, state.dpr, 0, 0);
+        ctx.globalCompositeOperation = 'source-over';
+        const q = {};
+        makeCam(q, w, h);
+        q0 = q;
+        const s = sun();
+        frameBoxes = []; pendingLabels.length = 0;
+        uiBoxes();
+        const iconPos0 = state.showSun ? sunIconPos(q, w, h, s) : null;
+
+        drawBackdrop(w, h, iconPos0);
+        drawGround(q, s);
+        const sh = drawShadows(q, s);
+        const nBeams = drawBeams(q, s);
+        drawShadowRays(q, s);
+        // 两个不透明实体：按到眼睛的距离从远到近画
+        const dTree = distSq([0, state.treeH / 2, 0], q.eye);
+        const dPole = distSq([POLE_X, POLE_H / 2, POLE_Z], q.eye);
+        if (state.showPole && dPole > dTree) { drawPole(q, s); drawTree(q, s); }
+        else { drawTree(q, s); if (state.showPole) drawPole(q, s); }
+        drawAngleArc(q, s);
+        drawDims(q, s);
+        // 指示器要等罗盘字（刻度类障碍）都登记完了再定最终位置
+        const iconPos = iconPos0 ? nudgeIcon(iconPos0, w, h) : null;
+        if (iconPos) drawSunIcon(q, w, h, s, iconPos);
+        flushLabels();
+
+        state.drawn = {
+          sun: s,
+          shadowLen: shadowLen(s),
+          apexShadow: apexShadow(s),
+          shadowTipDist: vlen(apexShadow(s)),
+          treeR: CONE_K * state.treeH,
+          poleShadowLen: POLE_H * s.k,
+          hullN: sh.ts.hull.length,
+          poleHullN: sh.ps.hull.length,
+          beams: nBeams,
+          sunIcon: iconPos,
+          heightRatio: shadowLen(s) / state.treeH,
+          invTan: 1 / s.tan
+        };
+      }
+
+      /* ============================================================
+       * 尺寸 / 交互
+       * ============================================================ */
+      function resize() {
+        const rect = canvas.getBoundingClientRect();
+        if (!rect.width || !rect.height) return;
+        const dpr = Math.min(2, window.devicePixelRatio || 1);
+        state.w = rect.width; state.h = rect.height; state.dpr = dpr;
+        canvas.width = Math.round(rect.width * dpr);
+        canvas.height = Math.round(rect.height * dpr);
+        state.dirty = true;
+      }
+      function projRect(box, q) {
+        let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+        for (const sx of [box[0][0], box[1][0]]) {
+          for (const sy of [box[0][1], box[1][1]]) {
+            for (const sz of [box[0][2], box[1][2]]) {
+              const p = project([sx, sy, sz], q);
+              x0 = Math.min(x0, p.x); x1 = Math.max(x1, p.x);
+              y0 = Math.min(y0, p.y); y1 = Math.max(y1, p.y);
+            }
+          }
+        }
+        return { x0, y0, x1, y1, area: (x1 - x0) * (y1 - y0) };
+      }
+      // 命中测试：树（可拖，改树高）与太阳指示器（可拖，改方位角/高度角）。
+      // 标杆是纯参照物，不参与命中 —— 免得点它出现「能拖却拖不动」的假交互。
+      function objHit(x, y) {
+        const q = {}; makeCam(q, state.w, state.h);
+        const s = sun();
+        if (state.showSun) {
+          const ip = sunIconPos(q, state.w, state.h, s);
+          if (Math.hypot(x - ip.x, y - ip.y) <= 22) return 'sun';
+        }
+        const R = CONE_K * state.treeH;
+        const box = [[-R - 0.3, 0, -R - 0.3], [R + 0.3, state.treeH + 0.2, R + 0.3]];
+        const r = projRect(box, q);
+        if (x >= r.x0 && x <= r.x1 && y >= r.y0 && y <= r.y1) return 'tree';
+        return null;
+      }
+      function pointerPos(e) {
+        const rect = canvas.getBoundingClientRect();
+        return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+      }
+      // 拖动一律用【相对位移】换算：记下按下时的指针与参数值，再按每像素的比例改。
+      // 树高按「投影后竖直方向每像素多少米」现算，所以任何视角、任何缩放都对。
+      let dragX0 = 0, dragY0 = 0, dragVal0 = 0, dragPerPx = 0;
+      function beginObjDrag(kind, p) {
+        const q = {}; makeCam(q, state.w, state.h);
+        state.dragObj = kind;
+        dragX0 = p.x; dragY0 = p.y;
+        if (kind === 'tree') {
+          dragVal0 = state.treeH;
+          const a = project([0, state.treeH, 0], q).y, b = project([0, state.treeH + 0.5, 0], q).y;
+          dragPerPx = Math.abs(b - a) > 1e-3 ? 0.5 / (b - a) : 0;   // 屏幕向下 = 树变矮
+        } else {
+          dragVal0 = state.ph; dragPerPx = 0;
+        }
+      }
+      canvas.addEventListener('pointerdown', e => {
+        const p = pointerPos(e);
+        canvas.setPointerCapture(e.pointerId);
+        state.lastX = p.x; state.lastY = p.y;
+        const hit = objHit(p.x, p.y);
+        if (hit) beginObjDrag(hit, p);
+        else state.dragging = true;
+      });
+      canvas.addEventListener('pointermove', e => {
+        const p = pointerPos(e);
+        if (state.dragObj === 'tree') {
+          if (dragPerPx) setH(dragVal0 + (p.y - dragY0) * dragPerPx);
+          return;
+        }
+        if (state.dragObj === 'sun') {
+          // 把太阳在天空里拖着走：横向改方位角、纵向改高度角
+          setPh(dragVal0 + (p.x - dragX0) * 0.55);
+          setTh(state.th - (p.y - dragY0) * 0.35);
+          dragX0 = p.x; dragY0 = p.y; dragVal0 = state.ph;
+          return;
+        }
+        if (state.dragging) {
+          state.yaw -= (p.x - state.lastX) * 0.0075;
+          state.pitch = clamp(state.pitch + (p.y - state.lastY) * 0.0055, -0.12, 1.52);
+          state.lastX = p.x; state.lastY = p.y;
+          state.dirty = true;
+          return;
+        }
+        canvas.classList.toggle('pick-move', !!objHit(p.x, p.y));
+      });
+      const endDrag = () => { state.dragging = false; state.dragObj = null; };
+      canvas.addEventListener('pointerup', endDrag);
+      canvas.addEventListener('pointercancel', endDrag);
+      canvas.addEventListener('wheel', e => {
+        e.preventDefault();
+        state.zoom = clamp(state.zoom * (e.deltaY > 0 ? 0.92 : 1.08), ZOOM_MIN, ZOOM_MAX);
+        state.dirty = true;
+      }, { passive: false });
+
+      /* ============================================================
+       * 读数 / 规律
+       * ============================================================ */
+      function syncInputs() {
+        $('sh-th').value = String(state.th);
+        $('sh-ph').value = String(state.ph);
+        $('sh-h').value = String(state.treeH);
+        $('sh-day').value = String(Math.round(state.dayT * 100));
+        $('sh-th-value').textContent = f1(state.th) + '°';
+        $('sh-ph-value').textContent = Math.round(state.ph) + '°';
+        $('sh-h-value').textContent = f1(state.treeH) + ' m';
+        $('sh-day-value').textContent = timeName(state.dayT);
+      }
+      function syncViewButtons() {
+        document.querySelectorAll('[data-view]').forEach(b =>
+          b.classList.toggle('active', b.dataset.view === state.view));
+      }
+      function lawStates(s) {
+        const L = shadowLen(s);
+        return {
+          law1: true,
+          law2: true,
+          law3: true,
+          law4: true,
+          law5: true,
+          L: L
+        };
+      }
+      function updateReadout() {
+        const s = sun();
+        const L = shadowLen(s);
+        const ratio = L / state.treeH;
+        const invTan = 1 / s.tan;
+        $('sh-m1').textContent = f1(state.th) + '°';
+        $('sh-m2').textContent = f2(L) + ' m';
+        $('sh-m3').textContent = f1(state.treeH) + ' m';
+        $('sh-m4').textContent = ratio.toFixed(3);
+        const shadowDir = dirName(state.ph + 180);
+        $('sh-verdict').textContent = '太阳高度角 ' + f1(state.th) + '°（' + dirName(state.ph) + '方）　树影长 '
+          + f2(L) + ' m = ' + f1(state.treeH) + ' m ÷ tan' + f1(state.th) + '°　影子朝' + shadowDir;
+
+        const st = lawStates(s);
+        const set = (id, ok, txt) => {
+          const el = $(id);
+          el.classList.toggle('on', !!ok);
+          el.classList.toggle('off', !ok);
+          if (txt) el.querySelector('span').innerHTML = txt;
+        };
+        set('law1', true, '光沿<b>直线</b>传播，被不透明物体挡住就形成<b>影子</b>');
+        set('law2', Math.abs(ratio - invTan) < 1e-9,
+            '影长 = 物高 ÷ tan(太阳高度角)：' + f2(L) + ' = ' + f1(state.treeH) + ' ÷ tan' + f1(state.th) + '°');
+        set('law3', true, '太阳高度角越大影子越短（现在 θ = ' + f1(state.th) + '°，影子 ' + f2(L) + ' m）');
+        set('law4', true, '同一时刻影长之比 = 物高之比（标杆 ' + f1(POLE_H) + ' m 的影长 ' + f2(POLE_H * s.k) + ' m）');
+        set('law5', true, '影子总在物体的<b>背光</b>一侧：太阳在' + dirName(state.ph) + '，影子朝' + shadowDir);
+        $('sh-law-verdict').textContent = '当前：θ = ' + f1(state.th) + '°，L = ' + f2(L) + ' m，L/h = '
+          + ratio.toFixed(3) + ' = 1/tanθ = ' + invTan.toFixed(3) + ' —— 五条都成立';
+        $('sh-record-hint').textContent = '现在 θ = ' + f1(state.th) + '°，h = ' + f1(state.treeH) + ' m，点一下就能记进表里';
+      }
+
+      /* ============================================================
+       * 实验记录表
+       * ============================================================ */
+      function renderRecords() {
+        const rows = $('sh-rows');
+        if (!state.records.length) {
+          rows.innerHTML = '<tr><td colspan="6" class="empty">尚无记录，先调一调太阳高度角开始探究</td></tr>';
+        } else {
+          rows.innerHTML = state.records.map((r, i) =>
+            '<tr>' +
+            '<td class="num">' + (i + 1) + '</td>' +
+            '<td class="num">' + r.th.toFixed(1) + '°</td>' +
+            '<td class="num">' + r.h.toFixed(1) + ' m</td>' +
+            '<td class="num">' + r.L.toFixed(2) + ' m</td>' +
+            '<td class="ratio">' + r.r1.toFixed(3) + '</td>' +
+            '<td class="ratio">' + r.r2.toFixed(3) + '</td>' +
+            '</tr>').join('');
+        }
+        $('sh-count-label').textContent = '已记录 ' + state.records.length + ' 组';
+        if (!state.records.length) {
+          $('sh-summary').innerHTML = '记录 3 组以上不同太阳高度角的数据，看看最后两列是不是始终相等。';
+          return;
+        }
+        let worst = 0;
+        for (const r of state.records) worst = Math.max(worst, Math.abs(r.r1 - r.r2));
+        $('sh-summary').innerHTML = '已记录 ' + state.records.length + ' 组 —— 最后一列 <b>1/tanθ</b> 与倒数第二列 '
+          + '<b>L/h</b> 始终相等（最大偏差 ' + worst.toFixed(4) + '）。影长 ÷ 树高 只由太阳高度角决定，'
+          + '跟树有多高没有关系：同一时刻，影长之比就等于物高之比。';
+      }
+      function recordNow() {
+        const s = sun();
+        const L = shadowLen(s);
+        state.records.push({ th: state.th, h: state.treeH, L: L, r1: L / state.treeH, r2: 1 / s.tan });
+        renderRecords();
+        const tr = $('sh-rows').lastElementChild;
+        if (tr) { tr.classList.add('flash'); setTimeout(() => tr.classList.remove('flash'), 1200); }
+      }
+
+      /* ============================================================
+       * 参数入口（滑块 / 钩子共用同一个函数，绝不写第二份公式）
+       * ============================================================ */
+      function setTh(v) { state.th = clamp(Number(v), TH_MIN, TH_MAX); syncInputs(); updateReadout(); state.dirty = true; }
+      function setPh(v) { state.ph = ((Number(v) % 360) + 360) % 360; syncInputs(); updateReadout(); state.dirty = true; }
+      function setH(v) { state.treeH = clamp(Number(v), H_MIN, H_MAX); syncInputs(); updateReadout(); state.dirty = true; }
+      function setDay(t) {
+        t = clamp(Number(t), 0, 1);
+        state.dayT = t;
+        const d = dayToSun(t);
+        state.ph = d.ph; state.th = d.th;
+        syncInputs(); updateReadout(); state.dirty = true;
+      }
+      function setPlaying(on) {
+        state.playing = !!on;
+        $('sh-play').textContent = state.playing ? '⏸ 暂停' : '▶ 播放一天';
+        $('sh-play').classList.toggle('active', state.playing);
+      }
+      function applyView(name) {
+        const s = sun();
+        if (name === 'sun') {
+          // 相机站到阳光里，顺着光线往回看：影子被树自己挡住，正对验证「影子在背光侧」
+          state.yaw = Math.atan2(s.dir[0], s.dir[2]);
+          state.pitch = Math.asin(clamp(s.dir[1], -1, 1));
+        } else if (name === 'side') {
+          // 相机方向取【与影子垂直】的那个水平方向 (uz, −ux)，于是影子在屏幕上朝右铺开，
+          // 高度角、影长、树高三者构成课本里那张直角三角形侧视图。
+          state.yaw = Math.atan2(s.uz, -s.ux);
+          state.pitch = 0.07;
+        } else {
+          const v = VIEWS[name];
+          if (!v) return;
+          state.yaw = v[0]; state.pitch = v[1];
+        }
+        state.zoom = 1;
+        state.view = name;
+        syncViewButtons(); state.dirty = true;
+      }
+
+      /* ============================================================
+       * 绑定
+       * ============================================================ */
+      $('sh-th').addEventListener('input', e => { setPlaying(false); setTh(e.target.value); });
+      $('sh-ph').addEventListener('input', e => { setPlaying(false); setPh(e.target.value); });
+      $('sh-h').addEventListener('input', e => setH(e.target.value));
+      $('sh-day').addEventListener('input', e => { setPlaying(false); setDay(e.target.value / 100); });
+      $('sh-play').addEventListener('click', () => setPlaying(!state.playing));
+      $('sh-day-noon').addEventListener('click', () => { setPlaying(false); setDay(0.5); });
+      for (const [id, key] of [['sh-beams', 'showBeams'], ['sh-dims', 'showDims'],
+                               ['sh-grid', 'showGrid'], ['sh-pole', 'showPole'], ['sh-sun', 'showSun']]) {
+        $(id).addEventListener('change', e => { state[key] = e.target.checked; state.dirty = true; });
+      }
+      document.querySelectorAll('[data-view]').forEach(b =>
+        b.addEventListener('click', () => applyView(b.dataset.view)));
+      $('sh-reset-view').addEventListener('click', () => applyView('perspective'));
+      $('sh-record').addEventListener('click', recordNow);
+      $('sh-clear').addEventListener('click', () => { state.records = []; renderRecords(); });
+      window.addEventListener('resize', resize);
+
+      /* ============================================================
+       * 自检钩子：暴露页面【真正用到的】那份几何与判定，不另写一份
+       * ============================================================ */
+      window.__sh = {
+        state, VIEWS, sun, groundOf, apexShadow, shadowLen, treeShadow, poleShadow, hull2,
+        beams, dayToSun, dirName, timeName, envelopePoints, makeCam,
+        // 场景常量也导出去：自检要断言「画出来的底圆半径 = 页面自己的 CONE_K × 树高」，
+        // 而不是在测试里再抄一份 0.22 —— 抄一份的话，改常量时断言会静静地过期。
+        CONE_K, TH_MIN, TH_MAX, H_MIN, H_MAX, GROUND_R, GROUND_FILL,
+        project(p) {
+          const q = {}; makeCam(q, state.w, state.h);
+          const s = project(p, q);
+          return { x: s.x, y: s.y, z: s.z, s: s.s };
+        },
+        setTh, setPh, setH, setDay, setPlaying, applyView,
+        recordNow,
+        clearRecords() { state.records = []; renderRecords(); },
+        renderNow() { render(); },
+        size() { return { w: state.w, h: state.h, dpr: state.dpr }; },
+        boxes() {
+          return frameBoxes.map(b => ({ kind: b.kind, text: b.text, x0: b.x0, y0: b.y0, x1: b.x1, y1: b.y1, weight: b.weight || 1 }));
+        },
+        records() { return state.records.slice(); },
+        debug() {
+          const s = sun();
+          const d = state.drawn || {};
+          return {
+            th: state.th, ph: state.ph, h: state.treeH, k: s.k, tan: s.tan,
+            dir: s.dir.slice(), travel: s.travel.slice(),
+            L: shadowLen(s), apexShadow: apexShadow(s).slice(),
+            apexDist: vlen(apexShadow(s)),
+            poleShadowLen: POLE_H * s.k,
+            ratio: shadowLen(s) / state.treeH, invTan: 1 / s.tan,
+            treeR: CONE_K * state.treeH,
+            hullN: d.hullN, poleHullN: d.poleHullN, beams: d.beams,
+            sunIcon: d.sunIcon ? { x: d.sunIcon.x, y: d.sunIcon.y, off: d.sunIcon.off } : null,
+            view: state.view, playing: state.playing, dayT: state.dayT,
+            timeName: timeName(state.dayT), shadowDirName: dirName(state.ph + 180),
+            metrics: [$('sh-m1'), $('sh-m2'), $('sh-m3'), $('sh-m4')].map(e => e.textContent),
+            verdict: $('sh-verdict').textContent,
+            lawVerdict: $('sh-law-verdict').textContent,
+            laws: ['law1', 'law2', 'law3', 'law4', 'law5'].map(id => $(id).className),
+            rowCount: $('sh-rows').querySelectorAll('tr').length,
+            lastRow: (() => {
+              const tr = $('sh-rows').querySelector('tr:last-child');
+              return tr ? [...tr.querySelectorAll('td')].map(td => td.textContent.trim()) : null;
+            })(),
+            summary: $('sh-summary').textContent
+          };
+        }
+      };
+
+      syncInputs();
+      syncViewButtons();
+      renderRecords();
+      resize();
+      render();
+      updateReadout();
+
+      function tick(ts) {
+        if (state.playing) {
+          const dt = state.tPrev ? Math.min(0.05, (ts - state.tPrev) / 1000) : 0;
+          state.tPrev = ts;
+          let t = state.dayT + dt / DAY_SEC;
+          if (t >= 1) { t = 1; setPlaying(false); }
+          setDay(t);
+        } else {
+          state.tPrev = ts;
+        }
+        if (state.dirty) { state.dirty = false; render(); }
+        requestAnimationFrame(tick);
+      }
+      requestAnimationFrame(tick);
+    })();
+    </script>
+</body>
+</html>

@@ -1,0 +1,1652 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>虚拟物理实验 - 日食和月食立体模型</title>
+    <link rel="stylesheet" href="style.css">
+    <style>
+        :root {
+            --bg: #020617;
+            --line: rgba(148, 163, 184, .18);
+            --primary: #3b82f6;
+            --secondary: #06b6d4;
+            --accent: #8b5cf6;
+            --text: #f8fafc;
+            --muted: #94a3b8;
+        }
+
+        body {
+            font-family: 'Inter', 'Microsoft YaHei', 'Noto Sans SC', sans-serif;
+            margin: 0;
+            /* 站内页头是 position:sticky，一滚动就贴顶盖住实验区，所以这一页不放页头
+               （和同章的「小孔成像立体模型 / 影子的形成立体模型」一致）。留 20px 内边距即可。 */
+            padding: 20px;
+            background: var(--bg);
+            color: var(--text);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+            box-sizing: border-box;
+        }
+
+        body::before {
+            content: "";
+            position: fixed;
+            inset: 0;
+            z-index: -1;
+            pointer-events: none;
+            background:
+                radial-gradient(circle at 18% 22%, rgba(59, 130, 246, .16), transparent 42%),
+                radial-gradient(circle at 82% 68%, rgba(139, 92, 246, .14), transparent 44%),
+                radial-gradient(circle at 50% 100%, rgba(6, 182, 212, .10), transparent 55%);
+        }
+
+        /* ===== 可交互三维实验台（与站内其它 lab3d 页面同一套视觉基线）===== */
+        .lab3d {
+            width: 100%;
+            max-width: 1600px;
+            margin: 8px auto 26px;
+            box-sizing: border-box;
+            overflow: hidden;
+            border: 1px solid rgba(56, 189, 248, .22);
+            border-radius: 18px;
+            background: linear-gradient(160deg, rgba(15, 23, 42, .92), rgba(2, 6, 23, .96));
+            color: #e2e8f0;
+            box-shadow: 0 26px 70px rgba(2, 6, 23, .6), 0 0 0 1px rgba(2, 6, 23, .8) inset;
+        }
+        .lab3d * { box-sizing: border-box; }
+        .lab3d-top {
+            display: flex; justify-content: space-between; gap: 15px; align-items: center;
+            padding: 17px 23px; border-bottom: 1px solid var(--line);
+            background: linear-gradient(90deg, rgba(59, 130, 246, .12), rgba(6, 182, 212, .05) 45%, transparent);
+        }
+        .lab3d-kicker { color: #22d3ee; font-size: 11px; font-weight: 800; letter-spacing: .2em; }
+        .lab3d-top h2 { margin: 3px 0 0; color: #f8fafc; font-size: 21px; letter-spacing: .02em; }
+        .lab3d-top p { margin: 4px 0 0; color: #94a3b8; font-size: 12px; }
+        .lab3d-status {
+            border: 1px solid rgba(34, 211, 238, .45); border-radius: 99px; padding: 6px 12px;
+            color: #67e8f9; font-size: 12px; white-space: nowrap; background: rgba(6, 182, 212, .08);
+        }
+        .lab3d-layout { display: grid; grid-template-columns: minmax(0, 1fr) 300px; }
+        .lab3d-main {
+            min-width: 0; padding: 15px 16px 16px;
+            background: radial-gradient(circle at 43% 36%, rgba(30, 64, 100, .55), rgba(8, 22, 36, .92) 62%, rgba(3, 10, 18, .96));
+        }
+        .lab3d-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; padding-bottom: 12px; }
+        .lab3d-toolbar .toolbar-label { color: #94a3b8; font-size: 12px; margin-right: 5px; }
+        .lab3d button {
+            padding: 7px 12px; border: 1px solid rgba(148, 163, 184, .25); border-radius: 8px;
+            background: rgba(30, 41, 59, .7); color: #cbd5e1; font-size: 12px; font-weight: 600;
+            box-shadow: none; transition: background .2s, border-color .2s, color .2s;
+        }
+        .lab3d button:hover { transform: none; box-shadow: none; background: rgba(51, 65, 85, .85); }
+        .lab3d button.active {
+            background: rgba(59, 130, 246, .25); border-color: #38bdf8; color: #e0f2fe;
+            box-shadow: 0 0 14px rgba(56, 189, 248, .3);
+        }
+        .lab3d button:disabled { opacity: .42; cursor: not-allowed; }
+        .lab3d button.primary { background: rgba(59, 130, 246, .3); border-color: #38bdf8; color: #e0f2fe; }
+        .lab3d-toolbar .toolbar-spacer { flex: 1; }
+        /* 舞台是【flex 列】：画布只占上面那段，底部浮层占下面那段，两者永不重叠。
+           浮层若 absolute 贴在画布上，窄屏时结论条会直接压住画布里的标注。 */
+        .lab3d-stage {
+            position: relative; height: clamp(400px, 49vw, 580px);
+            border: 1px solid rgba(56, 189, 248, .2); border-radius: 12px; overflow: hidden;
+            background: #040814;
+            display: flex; flex-direction: column;
+        }
+        .lab3d-stage canvas {
+            display: block; width: 100%; flex: 1 1 0; min-height: 0;
+            border: 0; border-radius: 0; box-shadow: none; background: transparent;
+            cursor: grab; touch-action: none;
+        }
+        .lab3d-stage canvas:active { cursor: grabbing; }
+        .lab3d-stage canvas.pick-move { cursor: ew-resize; }
+        .lab3d-stage canvas.pick-move:active { cursor: ew-resize; }
+        .lab3d-stage .stage-hint {
+            position: absolute; top: 13px; left: 15px; pointer-events: none; font-size: 12px;
+            color: #bae6fd; background: rgba(2, 6, 23, .78); border: 1px solid rgba(56, 189, 248, .25);
+            padding: 7px 11px; border-radius: 8px;
+        }
+        .lab3d-stage .stage-hint b {
+            display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+            background: #22d3ee; vertical-align: 2px; margin-right: 6px; box-shadow: 0 0 8px #22d3ee;
+        }
+        .lab3d-stage .stage-bar {
+            position: static; flex: none;
+            display: flex; align-items: flex-end; justify-content: space-between; gap: 10px;
+            padding: 10px 13px 12px;
+            pointer-events: none;
+        }
+        .lab3d-stage .stage-verdict {
+            flex: 0 1 auto; min-width: 0;
+            font-size: 12px; padding: 7px 12px; border-radius: 8px;
+            color: #d1fae5; background: rgba(6, 78, 59, .82); border: 1px solid rgba(52, 211, 153, .45);
+        }
+        .lab3d-stage .stage-verdict.warn { color: #fee2e2; background: rgba(127, 29, 29, .82); border-color: rgba(248, 113, 113, .5); }
+        .lab3d-stage .stage-verdict.solar { color: #ffedd5; background: rgba(124, 45, 18, .85); border-color: rgba(251, 146, 60, .55); }
+        .lab3d-stage .stage-help {
+            flex: none; color: #93b4c4; font-size: 11px;
+            background: rgba(2, 6, 23, .72); padding: 6px 10px; border-radius: 7px;
+        }
+        .lab3d-foot {
+            display: flex; align-items: center; flex-wrap: wrap; gap: 12px 18px;
+            padding: 12px 3px 1px; font-size: 12px; color: #b6c8d4;
+        }
+        .lab3d-foot label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+        .lab3d-foot input { accent-color: #22d3ee; margin: 0; }
+        .lab3d-foot .legend { margin-left: auto; color: #8ba7b6; }
+        .lab3d-sidebar {
+            padding: 18px; color: #cbd5e1; border-left: 1px solid var(--line);
+            background: linear-gradient(180deg, rgba(15, 23, 42, .75), rgba(2, 6, 23, .6));
+        }
+        .lab3d-sidebar h3 { margin: 0 0 15px; color: #e2e8f0; font-size: 15px; letter-spacing: .05em; }
+        .lab3d-field { margin: 0 0 16px; }
+        .lab3d-field label, .lab3d-field .field-label {
+            display: flex; justify-content: space-between; gap: 8px; align-items: baseline;
+            color: #cbd5e1; font-size: 12px; font-weight: 700;
+        }
+        .lab3d-field output { color: #38bdf8; font-size: 13px; font-weight: 800; }
+        .lab3d-field input[type="range"] { display: block; width: 100%; margin: 11px 0 5px; }
+        .lab3d-field input[type="range"]::-webkit-slider-thumb { background: linear-gradient(135deg, #3b82f6, #22d3ee); }
+        .lab3d-field small { color: #64748b; font-size: 10px; line-height: 1.5; display: block; }
+        .lab3d-segment { display: flex; gap: 5px; margin-top: 9px; }
+        .lab3d-segment button { flex: 1; min-width: 0; padding: 7px 4px; font-size: 11px; }
+        .lab3d-metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 12px; }
+        .lab3d-metric {
+            padding: 12px 13px; border: 1px solid rgba(56, 189, 248, .18); border-radius: 10px;
+            background: linear-gradient(160deg, rgba(30, 58, 95, .55), rgba(15, 23, 42, .6));
+        }
+        .lab3d-metric span { display: block; font-size: 11px; color: #9fb8c6; }
+        .lab3d-metric strong { display: block; margin-top: 4px; color: #e0f2fe; font-size: 17px; }
+        .lab3d-metric.ok strong { color: #6ee7b7; }
+        .lab3d-metric.bad strong { color: #fca5a5; }
+        .lab3d-note { margin: 12px 0 0; color: #9fb8c6; font-size: 12px; line-height: 1.65; }
+        .lab3d-note b { color: #7dd3fc; }
+
+        .law-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 8px; }
+        .law-list li {
+            display: flex; gap: 8px; align-items: flex-start;
+            padding: 9px 11px; border-radius: 9px; font-size: 12px; line-height: 1.55;
+            border: 1px solid rgba(148, 163, 184, .16); background: rgba(148, 163, 184, .05);
+            color: #b6c8d4; transition: background .2s, border-color .2s, color .2s;
+        }
+        .law-list li.on {
+            border-color: rgba(52, 211, 153, .5); background: rgba(16, 185, 129, .12); color: #d1fae5;
+        }
+        .law-list li.off {
+            border-color: rgba(248, 113, 113, .45); background: rgba(239, 68, 68, .12); color: #fee2e2;
+        }
+        .law-list li i { font-style: normal; color: #64748b; flex: none; font-weight: 700; }
+        .law-list li.on i { color: #6ee7b7; }
+        .law-list li.off i { color: #fca5a5; }
+
+        /* ===== 实验记录表 ===== */
+        .record-panel { margin-top: 0; }
+        .record-body { padding: 16px 18px 18px; }
+        .record-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; }
+        .record-actions small { color: #8ea6b7; font-size: 11px; }
+        .table-wrap { overflow-x: auto; margin-top: 13px; }
+        .record-body table { width: 100%; border-collapse: collapse; font-size: 12px; white-space: nowrap; min-width: 620px; }
+        .record-body th, .record-body td {
+            text-align: left; padding: 9px 8px; border-bottom: 1px solid rgba(148, 163, 184, .16); color: #c5d6e4;
+        }
+        .record-body th { color: #80ddec; font-size: 11px; font-weight: 700; }
+        .record-body tbody tr:last-child td { border-bottom: 0; }
+        .record-body .empty { text-align: center; color: #91a6b9; padding: 19px 5px; }
+        .record-body td.num { font-variant-numeric: tabular-nums; }
+        .record-body td.ratio { color: #7dd3fc; font-weight: 700; }
+        .record-body tr.flash td { animation: seRowFlash 1.2s ease-out; }
+        @keyframes seRowFlash { 0% { background: rgba(34, 112, 143, .8); color: #f1fbff; } 100% { background: transparent; } }
+        .record-body .note { color: #90a9b9; font-size: 11px; line-height: 1.65; margin-top: 11px; }
+        .record-body .note b { color: #7dd3fc; }
+
+        @media (max-width: 900px) {
+            .lab3d-layout { grid-template-columns: minmax(0, 1fr); }
+            .lab3d-sidebar { border-left: 0; border-top: 1px solid var(--line); display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 18px; }
+            .lab3d-sidebar h3 { grid-column: 1 / -1; }
+            .lab3d-sidebar .span-2 { grid-column: 1 / -1; }
+        }
+        @media (max-width: 620px) {
+            body { padding-left: 10px; padding-right: 10px; }
+            .lab3d { border-radius: 14px; }
+            .lab3d-top { padding: 15px; }
+            .lab3d-top h2 { font-size: 17px; }
+            .lab3d-status { display: none; }
+            .lab3d-main { padding: 10px; }
+            .lab3d-toolbar { gap: 6px; }
+            .lab3d-toolbar .toolbar-label, .lab3d-toolbar .toolbar-spacer { display: none; }
+            .lab3d-toolbar button { padding: 6px 9px; font-size: 11px; }
+            .lab3d-stage { height: 340px; }
+            .lab3d-stage .stage-help { display: none; }
+            .lab3d-stage .stage-bar { padding: 8px 10px 10px; }
+            .lab3d-stage .stage-verdict { font-size: 11px; }
+            .lab3d-sidebar { display: block; padding: 16px; }
+            .lab3d-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+            .lab3d-foot .legend { margin-left: 0; width: 100%; }
+            .record-body { padding: 14px; }
+            .record-body table { font-size: 10.5px; min-width: 0; }
+            .record-body th, .record-body td { padding: 7px 5px; }
+            .record-body th .th-full { display: none; }
+        }
+
+/* === 紧凑版面补丁 v2 :: main === */
+.lab3d-layout { align-items: stretch; }
+.lab3d-main { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.lab3d-main > .lab3d-stage { flex: 0 0 auto; }
+.lab3d-main > *:last-child { flex: 1 1 auto; }
+/* === 紧凑版面补丁 v2 :: sticky === */
+.lab3d-sidebar {
+  position: sticky; top: 16px; align-self: start;
+  max-height: calc(100vh - 104px);
+  overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin;
+}
+</style>
+    <script src="auth-check.js"></script>
+</head>
+<body>
+    <!-- 这一页不放站内页头：页头是 position:sticky，一滚动就贴在顶上盖住实验区。 -->
+    <section class="lab3d" aria-label="日食和月食立体模型">
+      <div class="lab3d-top">
+        <div>
+          <div class="lab3d-kicker">INTERACTIVE ASTRONOMY LAB · 三维天文实验</div>
+          <h2>日食和月食 · 立体模型</h2>
+          <p>光沿直线传播 —— 月球挡住阳光，它的本影锥落到地球上就是日食；地球挡住阳光，月球走进地球的影锥里就是月食</p>
+        </div>
+        <span class="lab3d-status" id="se-status">● 实时几何模拟</span>
+      </div>
+
+      <div class="lab3d-layout">
+        <div class="lab3d-main">
+          <div class="lab3d-toolbar" role="group" aria-label="观察视角">
+            <span class="toolbar-label">观察视角</span>
+            <button type="button" class="active" data-view="closeup">地月特写</button>
+            <button type="button" data-view="top">俯视黄道面</button>
+            <button type="button" data-view="axis">沿日地连线</button>
+            <button type="button" data-view="wide">日地月全景</button>
+            <span class="toolbar-spacer"></span>
+            <button type="button" id="se-reset-view">↺ 重置视角</button>
+          </div>
+
+          <div class="lab3d-stage">
+            <canvas id="se-canvas" aria-label="可拖动旋转、滚轮缩放的日食月食三维场景"></canvas>
+            <div class="stage-hint"><b></b>三维天文场景 · 太阳 → 月球 / 地球 → 影锥落到谁身上</div>
+            <div class="stage-bar">
+              <div class="stage-verdict" id="se-verdict">正在计算…</div>
+              <div class="stage-help">拖动空白处旋转 · 滚轮缩放 · 按住月球可拖动</div>
+            </div>
+          </div>
+
+          <div class="lab3d-foot">
+            <label><input id="se-cones" type="checkbox" checked>本影 / 半影锥</label>
+            <label><input id="se-rays" type="checkbox" checked>太阳光线</label>
+            <label><input id="se-orbit" type="checkbox" checked>月球轨道</label>
+            <label><input id="se-view" type="checkbox" checked>观察者视角</label>
+            <label><input id="se-labels" type="checkbox" checked>文字标注</label>
+            <label><input id="se-real" type="checkbox">真实比例</label>
+            <span class="legend">橙黄：本影锥　浅黄：半影锥　深灰：落在地面上的影子</span>
+          </div>
+
+          <div class="lab3d-metrics" aria-live="polite">
+            <div class="lab3d-metric"><span>日地月夹角</span><strong id="se-m1">0.0°</strong></div>
+            <div class="lab3d-metric"><span>本影锥长 L<sub>u</sub></span><strong id="se-m2">—</strong></div>
+            <div class="lab3d-metric"><span>月地距离</span><strong id="se-m3">—</strong></div>
+            <div class="lab3d-metric ok"><span>食相判定</span><strong id="se-m4">—</strong></div>
+          </div>
+
+          <p class="lab3d-note"><b>观察提示：</b>太阳、地球、月球都是<b>不透明</b>的球。太阳光沿<b>直线</b>射来，月球（或地球）把一部分光挡住，背光一侧就出现两个区域：<b>本影</b>（一点阳光都照不到）和<b>半影</b>（只挡住一部分阳光）。把<b>月球轨道角 ψ</b> 调到 180°（月球转到日地之间），月球的影锥正好指向地球 —— 落在<b>本影</b>里就是<b>日全食</b>，落在<b>半影</b>里是<b>日偏食</b>；如果本影锥的<b>锥尖够不到地面</b>，落在伪本影里看到的就是<b>日环食</b>（把「月地距离」拉大就能看到锥尖缩回来）。把 ψ 调到 0°（月球转到地球背光侧），月球走进地球的影锥 —— 进入<b>本影</b>是<b>月全食</b>，只擦到<b>半影</b>是半影月食。最后把<b>轨道倾角</b>调离 0°，看看三者明明在一条直线上、为什么却没有食 —— 这就是真实的月球轨道与黄道有约 5° 夹角、所以并非每个朔望月都有日月食的原因。</p>
+        </div>
+
+        <aside class="lab3d-sidebar">
+          <h3>实验参数</h3>
+
+          <div class="lab3d-field">
+            <label for="se-psi">月球轨道角 ψ（0°=背日侧 180°=向日侧）<output id="se-psi-value">180°</output></label>
+            <input id="se-psi" type="range" min="0" max="360" value="180" step="1">
+            <small>ψ = 180° 时月球在日地之间（新月，可能日食）；ψ = 0° 时地球在日月之间（满月，可能月食）</small>
+          </div>
+
+          <div class="lab3d-field">
+            <label for="se-dme">月地距离<output id="se-dme-value">6.00 R<sub>E</sub></output></label>
+            <input id="se-dme" type="range" min="5.2" max="8.4" value="6" step="0.02">
+            <small id="se-dme-hint">拉远 → 本影锥尖够不到地面 → 日环食；拉近 → 锥尖扎进地面 → 日全食</small>
+          </div>
+
+          <div class="lab3d-field">
+            <label for="se-inc">轨道倾角 i（月球轨道面与黄道面的夹角）<output id="se-inc-value">0.0°</output></label>
+            <input id="se-inc" type="range" min="0" max="8" value="0" step="0.1">
+            <small>真实值是 5.1°。倾角一离开 0°，三者即使成一线，影锥也会从地球旁边擦过去</small>
+          </div>
+
+          <div class="lab3d-field span-2">
+            <span class="field-label">公转演示 <output id="se-play-value">暂停</output></span>
+            <div class="lab3d-segment">
+              <button type="button" id="se-play" class="primary">▶ 播放公转</button>
+              <button type="button" id="se-solar">跳到日食位</button>
+              <button type="button" id="se-lunar">跳到月食位</button>
+            </div>
+            <small>月球绕地球公转一周约 27.3 天；日食只可能发生在「新月」那一刻，月食只可能发生在「满月」那一刻</small>
+          </div>
+
+          <div class="lab3d-field span-2">
+            <span class="field-label">日食 / 月食的形成规律</span>
+            <ul class="law-list">
+              <li id="law1"><i>①</i><span>光沿<b>直线</b>传播：影锥的边界就是太阳与遮挡球的<b>公切线</b></span></li>
+              <li id="law2"><i>②</i><span><b>本影</b>区完全看不到太阳 → 日全食 / 月全食；<b>半影</b>区只挡住一部分 → 日偏食 / 月偏食</span></li>
+              <li id="law3"><i>③</i><span><b>日食</b>：月球运行到日地之间，月球的影子落在地球上（新月）</span></li>
+              <li id="law4"><i>④</i><span><b>月食</b>：地球运行到日月之间，地球的影子落在月球上（满月）</span></li>
+              <li id="law5"><i>⑤</i><span>本影锥长 L<sub>u</sub> = r·d ÷ (R − r)：锥尖够得着地面 → 日全食；够不着 → 日环食</span></li>
+            </ul>
+            <small id="se-law-verdict">当前：ψ = 180.0°，日地月夹角 0.0°</small>
+          </div>
+        </aside>
+      </div>
+    </section>
+
+    <section class="lab3d record-panel" aria-label="实验记录表">
+      <div class="lab3d-top">
+        <div>
+          <div class="lab3d-kicker">DATA SHEET · 定量记录</div>
+          <h2>实验记录表</h2>
+          <p>每调好一组月球轨道角、月地距离就点一次「记录当前数据」，数据会立刻填进下表</p>
+        </div>
+        <span class="lab3d-status" id="se-count-label">已记录 0 组</span>
+      </div>
+      <div class="record-body">
+        <div class="record-actions">
+          <button type="button" class="primary" id="se-record">记录当前数据</button>
+          <button type="button" id="se-clear">清空记录</button>
+          <small id="se-record-hint">改变月球轨道角或月地距离，多记几组才能看出规律</small>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>次数</th>
+                <th><span class="th-full">月球轨道角 </span>ψ</th>
+                <th><span class="th-full">日地月夹角 </span>α</th>
+                <th><span class="th-full">月地距离 </span>d</th>
+                <th><span class="th-full">本影锥长 </span>L<sub>u</sub></th>
+                <th>L<sub>u</sub><span class="th-full"> / </span>(d − R<sub>E</sub>)</th>
+                <th>食相</th>
+              </tr>
+            </thead>
+            <tbody id="se-rows">
+              <tr><td colspan="7" class="empty">尚无记录，先调一调月球轨道角开始探究</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="note" id="se-summary">记录 3 组以上不同月球轨道角的数据，看看「食相」这一列随夹角怎么变。</div>
+      </div>
+    </section>
+
+    <script src="protect.js"></script>
+    <script>
+    (function () {
+      'use strict';
+
+      /* ============================================================
+       * 关键几何约定，动之前先读懂
+       * ------------------------------------------------------------
+       *  · 场景单位 = 地球半径 R_E。太阳在 −x 方向，地球在原点，月球绕地球转。
+       *  · 月球位置：ψ = 0° → (+d, 0, 0)（背日侧，满月，可能月食）
+       *              ψ = 180° → (−d·cos i, −d·sin i, 0)（向日侧，新月，可能日食）
+       *    即轨道面绕 z 轴倾斜 i，交点线在 ψ = 90° / 270°。
+       *  · 影锥【不是画出来的装饰，是切线算出来的】：
+       *      本影锥半角 θ_u = asin((R − r)/d)      ← 太阳与遮挡球的内公切线
+       *      半影锥半角 θ_p = asin((R + r)/d)      ← 两球的公切线
+       *      本影锥长   L_u = r / tan θ_u
+       *    R = 太阳半径，r = 遮挡球半径，d = 日→遮挡球 的距离。
+       *    两个半角在真实尺度下都只有 0.267°，本影锥细得像一根针 ——
+       *    这正是日全食带只有几百千米宽、而且锥尖「刚好」够到地面的原因。
+       * ============================================================ */
+
+      const DEG = Math.PI / 180, PI2 = Math.PI * 2;
+      const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+      const f1 = v => (isFinite(v) ? v.toFixed(1) : '—');
+      const f2 = v => (isFinite(v) ? v.toFixed(2) : '—');
+      const f3 = v => (isFinite(v) ? v.toFixed(3) : '—');
+
+      /* ---------- 比例方案 ----------
+       * 真实值（km）：R_E = 6371，R_M = 1737，R_SUN = 696000，月地 384400，日地 1.496e8。
+       * 真实比例那一档就是照抄这组比值；教学比例把【太阳的视半径】放大 10.1 倍
+       * （1.18/25 ÷ 696000/1.496e8），否则本影锥只有 0.267° 半角，屏幕上是一根针，
+       * 「锥尖够不够得到地面」这个决定全食/环食的关键根本看不见。 */
+      const MODES = {
+        teach: {
+          key: 'teach', name: '教学比例',
+          RE: 1.0, RM: 0.2727, RSUN: 1.18, DSE: 25.0,
+          DME0: 6.0, DME_MIN: 5.2, DME_MAX: 8.4,
+          SUN_MAG: 10.1
+        },
+        real: {
+          key: 'real', name: '真实比例',
+          RE: 1.0, RM: 0.2727, RSUN: 109.2, DSE: 23481,
+          DME0: 60.3, DME_MIN: 55.9, DME_MAX: 63.9,
+          SUN_MAG: 1.0
+        }
+      };
+      const KM_PER_RE = 6371;                       // 真实比例下 1 场景单位 = 6371 km
+
+      const PSI_MIN = 0, PSI_MAX = 360, PSI_DEF = 180;
+      const INC_MIN = 0, INC_MAX = 8, INC_DEF = 0;
+      const ENV_PAD = 1.6;                          // 包络在地月之外多留的余量
+      const ENV_TOP = 1.9;                          // 包络竖直半高（要罩住倾角位移与锥面宽度）
+      const TARGET_Y = 0;
+      const ZOOM_MIN = 0.5, ZOOM_MAX = 3.2;
+      const ORBIT_SEC = 16;                         // 「播放公转」跑完一圈的秒数
+
+      // 观察视角。都是【常量】，取景才可复现。
+      const VIEWS = {
+        closeup: [0.34, 0.44],
+        top:     [0.0, 1.50],
+        axis:    [-1.5708, 0.05],
+        wide:    [0.30, 0.34]
+      };
+
+      const state = {
+        yaw: VIEWS.closeup[0], pitch: VIEWS.closeup[1], zoom: 1,
+        psi: PSI_DEF, inc: INC_DEF, real: false, dme: MODES.teach.DME0,
+        playing: false, tPrev: 0,
+        showCones: true, showRays: true, showOrbit: true, showView: true, showLabels: true,
+        view: 'closeup',
+        w: 1, h: 1, dpr: 0, dirty: true,
+        dragging: false, dragObj: null, hoverObj: null,
+        lastX: 0, lastY: 0, records: [], drawn: null
+      };
+
+      function mode() { return state.real ? MODES.real : MODES.teach; }
+
+      /* ============================================================
+       * 向量小工具
+       * ============================================================ */
+      const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+      const add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+      const scl = (a, k) => [a[0] * k, a[1] * k, a[2] * k];
+      const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+      const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+      const vlen = a => Math.hypot(a[0], a[1], a[2]);
+      const vnorm = a => { const L = vlen(a) || 1; return [a[0] / L, a[1] / L, a[2] / L]; };
+      const angleBetween = (a, b) => Math.acos(clamp(dot(vnorm(a), vnorm(b)), -1, 1));
+
+      /* ============================================================
+       * 场景几何：太阳、地球、月球、影锥
+       * ============================================================ */
+      function sunPos() { return [-mode().DSE, 0, 0]; }
+
+      // 月球位置：ψ = 0° 背日侧，ψ = 180° 向日侧；轨道面绕 z 轴倾斜 i
+      function moonPos() {
+        const p = state.psi * DEG, i = state.inc * DEG;
+        return [
+          state.dme * Math.cos(p) * Math.cos(i),
+          state.dme * Math.cos(p) * Math.sin(i),
+          state.dme * Math.sin(p)
+        ];
+      }
+      // 轨道面的一组基（用于把拖动反解成 ψ）
+      function orbitBasis() {
+        const i = state.inc * DEG;
+        return { u1: [Math.cos(i), Math.sin(i), 0], u2: [0, 0, 1], n: [Math.sin(i), -Math.cos(i), 0] };
+      }
+
+      /* 影锥：由太阳与遮挡球的切线算出半角，再算出锥长。
+       * 返回的量全部【由同一条切线几何导出】，页面不另写一份公式。 */
+      function coneOf(occCenter, occR) {
+        const M = mode();
+        const S = sunPos();
+        const d = vlen(sub(occCenter, S));
+        const axis = vnorm(sub(occCenter, S));           // 光行进方向
+        const sinU = clamp((M.RSUN - occR) / d, -1, 1);
+        const sinP = clamp((M.RSUN + occR) / d, -1, 1);
+        const thU = Math.asin(sinU), thP = Math.asin(sinP);
+        const tanU = Math.tan(thU), tanP = Math.tan(thP);
+        return {
+          center: occCenter, r: occR, d, axis,
+          thU, thP, tanU, tanP,
+          Lu: occR / tanU,                               // 本影锥长（锥尖到球心）
+          R0: occR                                       // 锥底半径
+        };
+      }
+
+      /* 把「沿轴 s 处」的锥面半径写清楚：本影线性收缩到 0，之后是伪本影（反向张开）。 */
+      const umbraRadiusAt = (cone, s) => cone.R0 * (1 - s / cone.Lu);
+      const antumbraRadiusAt = (cone, s) => Math.max(0, (s - cone.Lu) * cone.tanU);
+      const penumbraRadiusAt = (cone, s) => cone.R0 + s * cone.tanP;
+
+      /* ============================================================
+       * 食相判定 —— 全页唯一的判定入口
+       * ============================================================ */
+      function eclipse() {
+        const M = mode();
+        const S = sunPos(), E = [0, 0, 0], Mn = moonPos();
+        const RE = M.RE, RM = M.RM;
+        const vSun = sub(S, E), vMoon = sub(Mn, E);
+        const elong = angleBetween(vSun, vMoon) / DEG;    // 日地月夹角：0°=新月（日食位），180°=满月（月食位）
+
+        const moonCone = coneOf(Mn, RM);
+        const earthCone = coneOf(E, RE);
+
+        const out = {
+          elong, moonCone, earthCone,
+          type: 'none', phase: 'none',
+          // 月球影锥轴到地心的垂距（决定影锥落不落在地球上）
+          bMoon: NaN, tSurfMoon: NaN, rUAtSurf: NaN, rPAtSurf: NaN,
+          // 地球影锥轴到月心的垂距（决定月球走不走进地球影锥）
+          bEarth: NaN, rUAtMoon: NaN, rPAtMoon: NaN,
+          obsSun: NaN, obsMoon: NaN, obsSep: NaN
+        };
+
+        /* ---- 日食：月球在向日侧，月球影锥指向地球 ---- */
+        if (elong < 90) {
+          const w = sub(E, Mn);
+          const t = dot(w, moonCone.axis);
+          const perp = sub(w, scl(moonCone.axis, t));
+          const b = vlen(perp);
+          const reach = b < RE ? Math.sqrt(RE * RE - b * b) : 0;
+          const tSurf = t - reach;
+          out.bMoon = b; out.tSurfMoon = tSurf;
+          out.rUAtSurf = umbraRadiusAt(moonCone, tSurf);
+          out.rPAtSurf = penumbraRadiusAt(moonCone, tSurf);
+          if (b < RE && tSurf > 0) {
+            out.type = 'solar';
+            out.phase = out.rUAtSurf > 0 ? 'total' : 'annular';
+            // 观察者在轴与地表的交点
+            const P = add(Mn, scl(moonCone.axis, tSurf));
+            out.obs = P;
+            const dS = sub(S, P), dM = sub(Mn, P);
+            out.obsSun = Math.asin(clamp(M.RSUN / vlen(dS), -1, 1));
+            out.obsMoon = Math.asin(clamp(RM / vlen(dM), -1, 1));
+            out.obsSep = angleBetween(dS, dM);
+            out.obsBasis = { dS, dM };
+          } else if (b < RE + out.rPAtSurf && tSurf > 0) {
+            out.type = 'solar'; out.phase = 'partial';
+            // ★ 偏食时影锥轴【没有】穿过地球（b ≥ R_E），reach 归零，tSurf = t 是
+            //   轴离地心最近的那一点 —— 它在轴上，从那儿看日盘和月盘正好重合，
+            //   角距离恒为 0，小窗会画成「对得整整齐齐的食」，看不出偏食。
+            //   观察者要取【地表上离影锥轴最近的那一点】（半影里食分最大处）。
+            const Q = add(Mn, scl(moonCone.axis, t));
+            const P = add(E, scl(sub(Q, E), RE / (b || 1)));
+            out.obs = P;
+            const dS = sub(S, P), dM = sub(Mn, P);
+            out.obsSun = Math.asin(clamp(M.RSUN / vlen(dS), -1, 1));
+            out.obsMoon = Math.asin(clamp(RM / vlen(dM), -1, 1));
+            out.obsSep = angleBetween(dS, dM);
+            out.obsBasis = { dS, dM };
+          }
+        }
+
+        /* ---- 月食：地球在日月之间，月球走进地球影锥 ---- */
+        if (elong > 90) {
+          const axisSE = vnorm(sub(E, S));
+          const w = sub(Mn, E);
+          const perp = sub(w, scl(axisSE, dot(w, axisSE)));
+          const b = vlen(perp);
+          const dm = vlen(w);
+          const rU = umbraRadiusAt(earthCone, dm);
+          const rP = penumbraRadiusAt(earthCone, dm);
+          out.bEarth = b; out.rUAtMoon = rU; out.rPAtMoon = rP;
+          if (b + RM <= rU) { out.type = 'lunar'; out.phase = 'total'; }
+          else if (b < rU + RM) { out.type = 'lunar'; out.phase = 'partial'; }
+          else if (b < rP + RM) { out.type = 'lunar'; out.phase = 'penumbral'; }
+          if (out.type === 'lunar') out.obsOffset = perp;
+        }
+
+        out.psi = state.psi;
+        out.dme = state.dme;
+        out.modeName = M.name;
+        return out;
+      }
+
+      const PHASE_NAME = {
+        none: '无食',
+        total: '全食', annular: '环食', partial: '偏食', penumbral: '半影食'
+      };
+      function phaseLabel(e) {
+        if (e.type === 'solar') {
+          return e.phase === 'total' ? '日全食' : e.phase === 'annular' ? '日环食' : '日偏食';
+        }
+        if (e.type === 'lunar') {
+          return e.phase === 'total' ? '月全食' : e.phase === 'partial' ? '月偏食' : '半影月食';
+        }
+        return '无日食或月食';
+      }
+
+      /* ============================================================
+       * 相机（与站内其它 lab3d 页面同一套：方位/俯仰推 eye/fwd/right/up，
+       * 再用【投影后】的包络反算焦距。zoom 必须乘在算出来的焦距上。）
+       * ============================================================ */
+      // 取景包络：只用常量，不跟任何滑块走（否则像素差分/自检全部失效）。
+      function envBox() {
+        const M = mode();
+        // 月球轨道半径最大到 DME_MAX，x 与 z 两个方向都要罩住整条轨道，
+        // 否则 ψ 靠近 0°（满月/月食位）时月球会被右边缘切掉。
+        // 用 M.DME_MAX（常量）而不是 state.dme，取景才可复现。
+        const R = M.DME_MAX + ENV_PAD;
+        let x0 = -R, x1 = R;
+        if (state.view === 'wide') x0 = -(M.DSE + M.RSUN * 1.25);
+        return { x0, x1, y: ENV_TOP, z: R };
+      }
+      function envelopePoints() {
+        const b = envBox(), pts = [];
+        // 圆环（罩住月球轨道）
+        for (let i = 0; i < 40; i++) {
+          const a = i / 40 * PI2;
+          pts.push([b.x0 * 0.5 + b.x1 * 0.5 + Math.cos(a) * (b.x1 - b.x0) * 0.5, 0, Math.sin(a) * b.z]);
+          pts.push([b.x0 * 0.5 + b.x1 * 0.5 + Math.cos(a) * (b.x1 - b.x0) * 0.5, b.y, Math.sin(a) * b.z]);
+          pts.push([b.x0 * 0.5 + b.x1 * 0.5 + Math.cos(a) * (b.x1 - b.x0) * 0.5, -b.y, Math.sin(a) * b.z]);
+        }
+        // 盒子角点（把 x 方向的两端也罩住）
+        for (const x of [b.x0, b.x1]) for (const y of [-b.y, b.y]) for (const z of [-b.z, b.z]) pts.push([x, y, z]);
+        pts.push([b.x1, 0, 0]);
+        return pts;
+      }
+      function camTarget() {
+        const b = envBox();
+        return [(b.x0 + b.x1) * 0.5, TARGET_Y, 0];
+      }
+      function makeCam(q, w, h) {
+        const b = envBox();
+        const cy = Math.cos(state.yaw), sy = Math.sin(state.yaw);
+        const cp = Math.cos(state.pitch), sp = Math.sin(state.pitch);
+        const dir = [cp * sy, sp, cp * cy];              // 目标 → 相机
+        q.span = Math.max(b.x1 - b.x0, 2 * b.z, 2 * b.y);
+        // ★ 相机距离【不能】除以 zoom。本页的取景距离只有 2.6 倍包络（视角很广），
+        //   一改距离，投影范围就跟着变，反算出的焦距 s 又把它除回去 —— 实测
+        //   zoom 1→1.6→2.4 时画面只涨到 1.49/1.90 倍（应 1.6/2.4 倍），
+        //   也就是「拉近镜头」被透视畸变吃掉了大半。zoom 一律只乘在焦距上。
+        q.dist = q.span * 2.6;
+        const T = camTarget();
+        q.eye = add(T, scl(dir, q.dist));
+        q.fwd = scl(dir, -1);
+        q.right = vnorm(cross(q.fwd, [0, 1, 0]));
+        q.up = cross(q.right, q.fwd);
+        const pts = envelopePoints();
+        let loR = 1e9, hiR = -1e9, loU = 1e9, hiU = -1e9;
+        for (const p of pts) {
+          const v = sub(p, q.eye);
+          const z = Math.max(0.05, dot(v, q.fwd));
+          const r = dot(v, q.right) / z, u = dot(v, q.up) / z;
+          loR = Math.min(loR, r); hiR = Math.max(hiR, r);
+          loU = Math.min(loU, u); hiU = Math.max(hiU, u);
+        }
+        const s = Math.min(w * 0.95 / Math.max(1e-6, hiR - loR),
+                           h * 0.93 / Math.max(1e-6, hiU - loU));
+        // ★ zoom 必须乘在【算出来的焦距】上。只改相机距离（q.dist）是没用的：
+        //   包络是固定的世界坐标，相机一靠近，投影范围同比变大，反算出的焦距又把它除回去。
+        q.focal = s * state.zoom;
+        q.px = w * 0.5 - (loR + hiR) * 0.5 * q.focal;
+        q.py = h * 0.5 + (loU + hiU) * 0.5 * q.focal;
+      }
+      function project(p, q) {
+        const v = sub(p, q.eye);
+        const z = Math.max(0.05, dot(v, q.fwd));
+        const s = q.focal / z;
+        return { x: q.px + dot(v, q.right) * s, y: q.py - dot(v, q.up) * s, s: s, z: z };
+      }
+      // 屏幕像素 → 世界射线 → 与给定平面求交（拖动月球用）
+      function rayToPlane(px, py, n) {
+        const q = {}; makeCam(q, state.w, state.h);
+        const rx = (px - q.px) / q.focal, ry = (q.py - py) / q.focal;
+        const d = vnorm(add(add(scl(q.fwd, 1), scl(q.right, rx)), scl(q.up, ry)));
+        const den = dot(d, n);
+        if (Math.abs(den) < 1e-9) return null;
+        const t = -dot(q.eye, n) / den;
+        if (!(t > 0)) return null;
+        return add(q.eye, scl(d, t));
+      }
+
+      /* ============================================================
+       * 绘图小工具
+       * ============================================================ */
+      const canvas = document.getElementById('se-canvas');
+      const ctx = canvas.getContext('2d');
+      function poly(pts, fill, stroke, lw) {
+        if (pts.length < 2) return;
+        ctx.beginPath();
+        pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+        ctx.closePath();
+        if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+        if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = lw || 1; ctx.stroke(); }
+      }
+      function line(pts, stroke, lw, dash) {
+        if (pts.length < 2) return;
+        ctx.save();
+        ctx.setLineDash(dash || []);
+        ctx.beginPath();
+        pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+        ctx.strokeStyle = stroke; ctx.lineWidth = lw || 1; ctx.stroke();
+        ctx.restore();
+      }
+      function ring3(c, axis, r, n, q) {
+        // 以 c 为心、轴为 axis、半径 r 的圆（3D 点集）
+        const a = vnorm(axis);
+        let t = Math.abs(a[1]) < 0.9 ? [0, 1, 0] : [1, 0, 0];
+        const e1 = vnorm(cross(a, t)), e2 = cross(a, e1);
+        const out = [];
+        for (let i = 0; i < n; i++) {
+          const th = i / n * PI2;
+          out.push(add(c, add(scl(e1, Math.cos(th) * r), scl(e2, Math.sin(th) * r))));
+        }
+        return out;
+      }
+      // 2D 凸包：锥体/锥台的屏幕轮廓就是它的投影点集的凸包（对凸体恒成立）
+      function hull2(pts) {
+        const P = pts.slice().sort((a, b) => a.x - b.x || a.y - b.y);
+        if (P.length < 3) return P;
+        const cr = (o, a, b) => (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+        const lo = [];
+        for (const p of P) { while (lo.length >= 2 && cr(lo[lo.length - 2], lo[lo.length - 1], p) <= 0) lo.pop(); lo.push(p); }
+        const up = [];
+        for (let i = P.length - 1; i >= 0; i--) { const p = P[i]; while (up.length >= 2 && cr(up[up.length - 2], up[up.length - 1], p) <= 0) up.pop(); up.push(p); }
+        lo.pop(); up.pop();
+        return lo.concat(up);
+      }
+
+      /* ============================================================
+       * 标签：几何、避让、绘制分三层
+       *   boxOf()      —— 唯一的盒子几何，避让与绘制共用
+       *   tickLabel()  —— 固定参照（方位字），位置不许挪，但登记成障碍物
+       *   label()      —— 说明标签，入队；本帧所有几何画完后再统一落笔
+       * ============================================================ */
+      let frameBoxes = [];
+      let insetGeom = null;          // 本帧观察者小窗的真实几何（像素级自检的靶子）
+      const pendingLabels = [];
+      function fontOf(size) { return '600 ' + size + 'px Inter, "Microsoft YaHei", sans-serif'; }
+      function boxOf(p, text, size, align, baseline) {
+        ctx.font = fontOf(size);
+        const wpx = ctx.measureText(text).width;
+        const pad = 4;
+        const x = p.x + (align === 'left' ? -4 : align === 'right' ? 4 : 0);
+        const bx = align === 'left' ? x - pad : align === 'right' ? x - wpx - pad : x - wpx / 2 - pad;
+        const by = baseline === 'bottom' ? p.y - size * 1.44 - pad : p.y - size * 0.72 - pad * 0.5;
+        return { x0: bx, y0: by, x1: bx + wpx + pad * 2, y1: by + size * 1.44 + pad, x, wpx, y: p.y };
+      }
+      function overlapArea(a, b) {
+        const w = Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0);
+        const h = Math.min(a.y1, b.y1) - Math.max(a.y0, b.y0);
+        return (w > 0 && h > 0) ? w * h : 0;
+      }
+      function bodyBox(pts, grow, tag, weight) {
+        let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+        for (const p of pts) {
+          if (!p || !isFinite(p.x) || !isFinite(p.y)) continue;
+          x0 = Math.min(x0, p.x); x1 = Math.max(x1, p.x);
+          y0 = Math.min(y0, p.y); y1 = Math.max(y1, p.y);
+        }
+        if (x0 > x1) return null;
+        const bx = { x0: x0 - grow, y0: y0 - grow, x1: x1 + grow, y1: y1 + grow,
+                     kind: 'body', text: tag || '', weight: weight == null ? 8 : weight };
+        frameBoxes.push(bx);
+        return bx;
+      }
+      // 斜着的细长标注线必须【切段】登记障碍，不能整段取 AABB：那块区域其实全是空的，
+      // 标签会被这块根本不存在的假障碍赶到很远。
+      function segBoxes(a, b, n, grow, tag, weight) {
+        for (let i = 0; i < n; i++) {
+          const t0 = i / n, t1 = (i + 1) / n;
+          bodyBox([{ x: a.x + (b.x - a.x) * t0, y: a.y + (b.y - a.y) * t0 },
+                   { x: a.x + (b.x - a.x) * t1, y: a.y + (b.y - a.y) * t1 }], grow, tag, weight);
+        }
+      }
+      function drawLabelBox(bx, text, color, size, align, baseline) {
+        ctx.fillStyle = 'rgba(2,6,23,.74)';
+        ctx.fillRect(bx.x0, bx.y0, bx.x1 - bx.x0, bx.y1 - bx.y0);
+        ctx.font = fontOf(size);
+        ctx.textAlign = align || 'center';
+        ctx.textBaseline = baseline || 'middle';
+        ctx.fillStyle = color;
+        ctx.fillText(text, bx.x, bx.y);
+      }
+      function tickLabel(p, text, color, size) {
+        const bx = boxOf(p, text, size, 'center', 'middle');
+        drawLabelBox(bx, text, color, size, 'center', 'middle');
+        bx.kind = 'tick'; bx.text = text; bx.weight = 12;
+        frameBoxes.push(bx);
+      }
+      function label(p, text, color, size, align, baseline) {
+        if (!state.showLabels) return;
+        pendingLabels.push({ p, text, color, size, align, baseline });
+      }
+      const LABEL_DIRS = [[0, 0], [0, 1], [0, -1], [1, 0], [-1, 0], [1, 1], [-1, 1], [1, -1], [-1, -1]];
+      function fitBox(bx) {
+        const W = state.w, H = state.h, m = 2;
+        let dx = 0, dy = 0;
+        if (bx.x0 < m) dx = m - bx.x0; else if (bx.x1 > W - m) dx = W - m - bx.x1;
+        if (bx.y0 < m) dy = m - bx.y0; else if (bx.y1 > H - m) dy = H - m - bx.y1;
+        if (dx) { bx.x0 += dx; bx.x1 += dx; bx.x += dx; }
+        if (dy) { bx.y0 += dy; bx.y1 += dy; bx.y += dy; }
+        return bx;
+      }
+      function flushLabels() {
+        for (const it of pendingLabels) {
+          const { p, text, size, align, baseline } = it;
+          // 格子大小按【标签自身尺寸】定：横向步长若固定成 size*1.5（≈18 px），
+          // 而标签宽约 90 px，走满几格也甩不掉压住的那一个。
+          const base = boxOf({ x: p.x, y: p.y }, text, size, align, baseline);
+          const stepX = Math.max(size * 1.5, (base.x1 - base.x0) * 0.85);
+          const stepY = Math.max(size * 1.3, (base.y1 - base.y0) + 3);
+          let best = null, bestScore = Infinity;
+          for (const [ux, uy] of LABEL_DIRS) {
+            for (let k = 0; k <= 4; k++) {
+              if (ux === 0 && uy === 0 && k > 0) continue;
+              const cand = { x: p.x + ux * k * stepX, y: p.y + uy * k * stepY };
+              const bx = fitBox(boxOf(cand, text, size, align, baseline));
+              let sc = k * 100;
+              for (const o of frameBoxes) sc += (o.weight || 1) * overlapArea(bx, o);
+              if (sc < bestScore) { bestScore = sc; best = bx; }
+            }
+          }
+          best.kind = 'label'; best.text = text; best.weight = 12;
+          drawLabelBox(best, text, it.color, size, align, baseline);
+          frameBoxes.push(best);
+        }
+        pendingLabels.length = 0;
+      }
+      // 舞台上的 DOM 浮层也是障碍物（提示条贴在画布上）。
+      function uiBoxes() {
+        const cr = canvas.getBoundingClientRect();
+        if (!cr.width) return;
+        for (const sel of ['.stage-hint', '.stage-verdict', '.stage-help']) {
+          const el = document.querySelector(sel);
+          if (!el) continue;
+          const r = el.getBoundingClientRect();
+          if (!r.width || !r.height) continue;
+          const x0 = r.left - cr.left, y0 = r.top - cr.top;
+          const x1 = r.right - cr.left, y1 = r.bottom - cr.top;
+          // 只登记【压在画布上】的浮层：舞台是 flex 列，底部两条整块落在画布下方。
+          if (x1 <= 0 || y1 <= 0 || x0 >= cr.width || y0 >= cr.height) continue;
+          frameBoxes.push({ x0, y0, x1, y1, kind: 'ui', text: sel, weight: 10 });
+        }
+      }
+
+      /* ============================================================
+       * 太阳方位指示器（HUD）
+       * 全景视角里太阳在画面内；地月特写里太阳在画面外，
+       * 所以把「太阳在哪个方向」做成屏幕上的方向指示器。
+       * ============================================================ */
+      const ICON_HALF = 25;
+      function sunIconPos(q, w, h, dirToSun) {
+        const r = dot(dirToSun, q.right), uu = dot(dirToSun, q.up), f = dot(dirToSun, q.fwd);
+        const L = Math.hypot(r, uu, f) || 1;
+        const theta = Math.acos(clamp(f / L, -1, 1));
+        const phi = Math.atan2(uu, r);
+        const Rmax = Math.min(w, h) * 0.40;
+        const rad = Rmax * Math.min(1, theta / (Math.PI * 0.5));
+        return { x: w * 0.5 + Math.cos(phi) * rad, y: h * 0.5 - Math.sin(phi) * rad,
+                 off: theta > Math.PI * 0.42, theta };
+      }
+      // 指示器是浮层：碰到【任何】已登记的盒子（地球/月球/观察者小窗/标签）时让位的是它。
+      // ★ 原来只躲 kind==='tick' 的盒子，而本页一个刻度字都没有 —— 于是这个函数
+      //   永远原样返回。实测把相机转到 yaw=90°、pitch=0（太阳正好在相机背后）时，
+      //   指示器落到画布正中心，整整 2500 px² 压在地球上。
+      // ★ 候选位不能用「绕画布中心径向 × 切向」那一套：地球并不在画布正中
+      //   （居中项非零，实测 yaw=75° 时地心在 x≈463 而画布中心在 532），
+      //   径向往外挪反而是往地球身上撞。改成围绕原位的二维方格搜索，与视角无关。
+      const ICON_STEP = 18, ICON_SPAN = 5;
+      function nudgeIcon(pos, w, h) {
+        const fixed = frameBoxes.slice();
+        if (!fixed.length) return pos;
+        let best = pos, bestCost = Infinity;
+        for (let iy = -ICON_SPAN; iy <= ICON_SPAN; iy++) {
+          for (let ix = -ICON_SPAN; ix <= ICON_SPAN; ix++) {
+            const p = { x: pos.x + ix * ICON_STEP, y: pos.y + iy * ICON_STEP, off: pos.off, theta: pos.theta };
+            const bx = { x0: p.x - ICON_HALF, y0: p.y - ICON_HALF, x1: p.x + ICON_HALF, y1: p.y + ICON_HALF };
+            // 越出画布一票否决；离原位越远越贵
+            let cost = (Math.abs(ix) + Math.abs(iy)) * 45;
+            if (bx.x0 < 2 || bx.y0 < 2 || bx.x1 > w - 2 || bx.y1 > h - 2) cost += 1e5;
+            for (const b of fixed) cost += overlapArea(bx, b) * 3;
+            if (cost < bestCost) { bestCost = cost; best = p; }
+          }
+        }
+        return best;
+      }
+      function drawSunIcon(q, w, h, pos, dirToSun) {
+        const R = 13;
+        for (let i = 3; i >= 0; i--) {
+          const gr = R + i * 9;
+          const g = ctx.createRadialGradient(pos.x, pos.y, 1, pos.x, pos.y, gr);
+          g.addColorStop(0, 'rgba(255,238,150,' + (0.30 - i * 0.06) + ')');
+          g.addColorStop(1, 'rgba(255,200,60,0)');
+          ctx.fillStyle = g;
+          ctx.beginPath(); ctx.arc(pos.x, pos.y, gr, 0, PI2); ctx.fill();
+        }
+        ctx.fillStyle = '#ffe680';
+        ctx.beginPath(); ctx.arc(pos.x, pos.y, R, 0, PI2); ctx.fill();
+        ctx.fillStyle = '#fffbe0';
+        ctx.beginPath(); ctx.arc(pos.x, pos.y, R * 0.62, 0, PI2); ctx.fill();
+        ctx.strokeStyle = 'rgba(255,224,120,.55)'; ctx.lineWidth = 1.4;
+        for (let i = 0; i < 8; i++) {
+          const a = i / 8 * PI2;
+          ctx.beginPath();
+          ctx.moveTo(pos.x + Math.cos(a) * (R + 4), pos.y + Math.sin(a) * (R + 4));
+          ctx.lineTo(pos.x + Math.cos(a) * (R + 10 + (i % 3) * 3), pos.y + Math.sin(a) * (R + 10 + (i % 3) * 3));
+          ctx.stroke();
+        }
+        const bx = { x0: pos.x - ICON_HALF, y0: pos.y - ICON_HALF, x1: pos.x + ICON_HALF, y1: pos.y + ICON_HALF,
+                     kind: 'body', text: '太阳方向', weight: 6 };
+        frameBoxes.push(bx);
+        label({ x: pos.x, y: pos.y + R + 13 }, '太阳在这个方向', '#fde68a', 12, 'center', 'top');
+        if (pos.off) {
+          const ang = Math.atan2(pos.y - h * 0.5, pos.x - w * 0.5);
+          ctx.strokeStyle = 'rgba(255,224,120,.75)'; ctx.lineWidth = 2;
+          const px = pos.x + Math.cos(ang) * (R + 16), py = pos.y + Math.sin(ang) * (R + 16);
+          ctx.beginPath();
+          ctx.moveTo(px, py);
+          ctx.lineTo(px + Math.cos(ang) * 11, py + Math.sin(ang) * 11);
+          ctx.moveTo(px + Math.cos(ang) * 11, py + Math.sin(ang) * 11);
+          ctx.lineTo(px + Math.cos(ang - 0.5) * 7, py + Math.sin(ang - 0.5) * 7);
+          ctx.moveTo(px + Math.cos(ang) * 11, py + Math.sin(ang) * 11);
+          ctx.lineTo(px + Math.cos(ang + 0.5) * 7, py + Math.sin(ang + 0.5) * 7);
+          ctx.stroke();
+        }
+      }
+
+      /* ============================================================
+       * 场景绘制
+       * ============================================================ */
+      function drawBackdrop(w, h, sunScreen) {
+        const g = ctx.createLinearGradient(0, 0, 0, h);
+        g.addColorStop(0, '#050b1a');
+        g.addColorStop(0.55, '#071228');
+        g.addColorStop(1, '#03060f');
+        ctx.fillStyle = g;
+        ctx.fillRect(0, 0, w, h);
+        // 星空（固定种子，保证逐帧一致）
+        let seed = 20261007;
+        const rnd = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+        for (let i = 0; i < 150; i++) {
+          const x = rnd() * w, y = rnd() * h, r = rnd() * 1.1 + 0.3, a = rnd() * 0.5 + 0.18;
+          ctx.fillStyle = 'rgba(226,232,240,' + a.toFixed(2) + ')';
+          ctx.beginPath(); ctx.arc(x, y, r, 0, PI2); ctx.fill();
+        }
+        if (sunScreen) {
+          const rg = ctx.createRadialGradient(sunScreen.x, sunScreen.y, 4, sunScreen.x, sunScreen.y, Math.max(w, h) * 0.62);
+          rg.addColorStop(0, 'rgba(255,206,96,.20)');
+          rg.addColorStop(0.40, 'rgba(255,176,72,.07)');
+          rg.addColorStop(1, 'rgba(255,160,60,0)');
+          ctx.fillStyle = rg;
+          ctx.fillRect(0, 0, w, h);
+        }
+      }
+      // 球体用【屏幕圆 + 径向渐变】画：这个尺度下与真实球面着色肉眼无差，且不受深度排序困扰。
+      function drawSphere(q, c, r, colLit, colDark, tag) {
+        const p = project(c, q);
+        const rp = r * p.s;
+        if (rp < 0.4 || !isFinite(rp)) return null;
+        const M = mode();
+        const d = vnorm(sub(sunPos(), c));
+        const ox = dot(d, q.right), oy = dot(d, q.up);
+        const hx = p.x + ox * rp * 0.42, hy = p.y - oy * rp * 0.42;
+        const g = ctx.createRadialGradient(hx, hy, rp * 0.05, p.x, p.y, rp * 1.15);
+        g.addColorStop(0, colLit);
+        g.addColorStop(0.55, colDark);
+        g.addColorStop(1, 'rgba(2,6,23,.95)');
+        ctx.fillStyle = g;
+        ctx.beginPath(); ctx.arc(p.x, p.y, rp, 0, PI2); ctx.fill();
+        ctx.strokeStyle = 'rgba(148,197,220,.45)'; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.arc(p.x, p.y, rp, 0, PI2); ctx.stroke();
+        if (tag) bodyBox([{ x: p.x - rp, y: p.y - rp }, { x: p.x + rp, y: p.y + rp }], 2, tag, 8);
+        return { p, rp };
+      }
+
+      /* 影锥：把「锥底圆 + 锥尖 / 远端圆」投影后取凸包 —— 对凸体，屏幕轮廓恒等于投影点集的凸包。
+       * 本影锥从锥底收到锥尖；锥尖够不到就继续画【伪本影】那段（反向张开），日环食就靠它。 */
+      function drawCone(q, cone, kind, maxLen) {
+        const base = ring3(cone.center, cone.axis, cone.R0, 44, q).map(p => project(p, q));
+        let tipPts, farC;
+        if (kind === 'umbra') {
+          const apex = add(cone.center, scl(cone.axis, cone.Lu));
+          const a = project(apex, q);
+          tipPts = [a];
+          farC = { c: apex, r: 0 };
+        } else {
+          const s = maxLen;
+          const far = add(cone.center, scl(cone.axis, s));
+          const r2 = penumbraRadiusAt(cone, s);
+          tipPts = ring3(far, cone.axis, r2, 44, q).map(p => project(p, q));
+          farC = { c: far, r: r2 };
+        }
+        const all = base.concat(tipPts);
+        const hull = hull2(all);
+        const fill = kind === 'umbra' ? 'rgba(251,146,60,.20)' : 'rgba(253,224,71,.10)';
+        const edge = kind === 'umbra' ? 'rgba(251,146,60,.72)' : 'rgba(253,224,71,.42)';
+        poly(hull, fill, edge, kind === 'umbra' ? 1.6 : 1.2);
+        // 锥底圆与远端圆也描一圈，3D 体积感更明确
+        line(base.concat([base[0]]), kind === 'umbra' ? 'rgba(251,146,60,.55)' : 'rgba(253,224,71,.32)', 1, []);
+        if (kind !== 'umbra') line(tipPts.concat([tipPts[0]]), 'rgba(253,224,71,.32)', 1, []);
+        // 锥轴
+        line([project(cone.center, q), project(farC.c, q)], 'rgba(148,163,184,.30)', 1, [4, 5]);
+        return { hull, base, tipPts, apex: farC.c };
+      }
+      // 伪本影（锥尖之外那段）：本影锥尖够不到地面时，日环食就发生在这一段里
+      function drawAntumbra(q, cone, len) {
+        const apex = add(cone.center, scl(cone.axis, cone.Lu));
+        const far = add(cone.center, scl(cone.axis, len));
+        const r2 = antumbraRadiusAt(cone, len);
+        if (r2 <= 1e-6) return null;
+        const a = [project(apex, q)];
+        const b = ring3(far, cone.axis, r2, 32, q).map(p => project(p, q));
+        const hull = hull2(a.concat(b));
+        poly(hull, 'rgba(248,113,113,.16)', 'rgba(248,113,113,.55)', 1.2);
+        return { hull };
+      }
+
+      function render() {
+        const w = state.w, h = state.h;
+        const q = {}; makeCam(q, w, h);
+        const e = eclipse();
+        const M = mode();
+        const S = sunPos(), E = [0, 0, 0], Mn = moonPos();
+
+        frameBoxes = []; pendingLabels.length = 0; insetGeom = null;
+        uiBoxes();
+
+        const dirToSun = vnorm(sub(S, camTarget()));
+        const sunOnScreen = state.view === 'wide';
+        const sunScreen = sunOnScreen ? project(S, q) : null;
+        drawBackdrop(w, h, sunScreen);
+
+        // 太阳
+        if (sunOnScreen) {
+          const sp = drawSphere(q, S, M.RSUN, '#fff7d6', '#ffd45e', '太阳');
+          if (sp) label({ x: sp.p.x, y: sp.p.y - sp.rp - 8 }, '太阳', '#fde68a', 12, 'center', 'bottom');
+        }
+
+        // 月球轨道
+        if (state.showOrbit) {
+          const { u1, u2 } = orbitBasis();
+          const n = 120, pts = [];
+          for (let i = 0; i <= n; i++) {
+            const a = i / n * PI2;
+            const p = add(scl(u1, Math.cos(a) * state.dme), scl(u2, Math.sin(a) * state.dme));
+            pts.push({ p, s: project(p, q) });
+          }
+          // 分前后两段画，近端亮一点
+          for (const near of [false, true]) {
+            const seg = pts.filter(o => (dot(sub(o.p, q.eye), q.fwd) < 0) === near).map(o => o.s);
+            if (seg.length > 1) line(seg, near ? 'rgba(94,234,212,.45)' : 'rgba(94,234,212,.18)', 1.2, near ? [] : [5, 6]);
+          }
+        }
+
+        // 地球的影锥（月食时才明显）
+        let earthConeDraw = null;
+        if (state.showCones) {
+          const len = vlen(sub(Mn, E)) * 1.25;
+          earthConeDraw = drawCone(q, e.earthCone, 'umbra', len);
+          drawCone(q, e.earthCone, 'penumbra', len);
+        }
+        // 月球的影锥
+        let moonConeDraw = null;
+        if (state.showCones) {
+          const len = vlen(sub(E, Mn)) * 1.45;
+          moonConeDraw = drawCone(q, e.moonCone, 'umbra', len);
+          drawCone(q, e.moonCone, 'penumbra', len);
+          if (e.type === 'solar' && e.phase === 'annular') drawAntumbra(q, e.moonCone, len);
+        }
+
+        // 太阳光线（从太阳边缘射向遮挡球边缘的几条，示意「光沿直线传播」）
+        if (state.showRays) drawRays(q, e);
+
+        // 地球与月球
+        const ep = drawSphere(q, E, M.RE, '#8ecae6', '#1d5f8a', '地球');
+        const mp = drawSphere(q, Mn, M.RM, '#e2e8f0', '#7c8899', '月球');
+
+        // 落在地面上的影子（本影落点）
+        if (e.type === 'solar' && e.obs && state.showCones) {
+          const c = project(e.obs, q);
+          const rr = Math.max(3, e.rUAtSurf > 0 ? e.rUAtSurf * c.s : 4);
+          ctx.fillStyle = 'rgba(2,5,12,.85)';
+          ctx.beginPath(); ctx.ellipse(c.x, c.y, rr * 1.6, rr * 0.7, 0, 0, PI2); ctx.fill();
+          ctx.strokeStyle = 'rgba(251,146,60,.85)'; ctx.lineWidth = 1.4; ctx.stroke();
+        }
+
+        // 标注
+        if (state.showLabels) {
+          if (ep) label({ x: ep.p.x, y: ep.p.y - ep.rp - 8 }, '地球', '#7dd3fc', 12, 'center', 'bottom');
+          if (mp) label({ x: mp.p.x, y: mp.p.y - mp.rp - 8 }, '月球', '#e2e8f0', 12, 'center', 'bottom');
+          if (sunOnScreen) {
+            const apex = project(add(e.moonCone.center, scl(e.moonCone.axis, e.moonCone.Lu)), q);
+            label({ x: apex.x, y: apex.y }, '本影锥尖', '#fdba74', 11, 'center', 'top');
+          }
+          // 影锥落点标注
+          if (e.type === 'solar' && e.obs) {
+            const c = project(e.obs, q);
+            label({ x: c.x, y: c.y + 10 },
+              e.phase === 'total' ? '本影落点（日全食）' : e.phase === 'annular' ? '伪本影落点（日环食）' : '半影落点（日偏食）',
+              e.phase === 'total' ? '#fdba74' : e.phase === 'annular' ? '#fca5a5' : '#fde68a', 11, 'center', 'top');
+          }
+          // 日地月夹角圆弧
+          drawAngleArc(q, e);
+        }
+
+        // 观察者视角小窗（2D 叠加）
+        if (state.showView) drawObserverInset(q, w, h, e);
+
+        // 太阳方向指示器（全景里太阳在画面内就不必再画）
+        if (!sunOnScreen) {
+          const iconPos0 = sunIconPos(q, w, h, dirToSun);
+          const iconPos = nudgeIcon(iconPos0, w, h);
+          drawSunIcon(q, w, h, iconPos, dirToSun);
+        }
+
+        flushLabels();
+        state.drawn = {
+          elong: e.elong, phaseLabel: phaseLabel(e), type: e.type, phase: e.phase,
+          Lu: e.moonCone.Lu, LuE: e.earthCone.Lu, dme: state.dme,
+          rUAtSurf: e.rUAtSurf, rPAtSurf: e.rPAtSurf,
+          bMoon: e.bMoon, bEarth: e.bEarth, rUAtMoon: e.rUAtMoon, rPAtMoon: e.rPAtMoon,
+          obsSun: e.obsSun, obsMoon: e.obsMoon, obsSep: e.obsSep,
+          sunIcon: (!sunOnScreen) ? sunIconPos(q, w, h, dirToSun) : null,
+          sunOnScreen, modeName: M.name, sunMag: M.SUN_MAG,
+          hullN: moonConeDraw ? moonConeDraw.hull.length : 0
+        };
+      }
+
+      /* 太阳光线：不是随手画的装饰，而是【真的公切线】。
+       * 从太阳边缘出发、擦过遮挡球边缘的直线有两条一族：
+       *   · 外公切线（两球在直线同侧）→ 本影锥母线，交于本影锥尖
+       *   · 内公切线（两球在直线两侧）→ 半影锥母线，之后越张越开
+       * 切点构造：切线方向 d(θ) = â·cosθ + p̂·sinθ，法向 n(θ) = −â·sinθ + p̂·cosθ，
+       *           切点 = 球心 + 半径·n；取 sinθ = −(R ∓ r)/L 时 B−A 恰与 d 平行，
+       *           所以这四条线是货真价实的公切线（自检逐条验平行与相切）。 */
+      function tangentRays(e) {
+        const M = mode();
+        const S = sunPos();
+        const occ = e.elong < 90 ? e.moonCone : e.earthCone;
+        const L = occ.d;
+        const up0 = Math.abs(dot(occ.axis, [0, 1, 0])) > 0.9 ? [0, 0, 1] : [0, 1, 0];
+        const p0 = vnorm(cross(occ.axis, up0));
+        const kExt = Math.min(occ.Lu * 1.25, L * 0.8);      // 沿切线画出去多远
+        const out = [];
+        for (const sgn of [1, -1]) {
+          for (const kind of ['umbra', 'penumbra']) {
+            const th = kind === 'umbra' ? occ.thU : occ.thP;
+            const tt = -th;
+            const n = add(scl(occ.axis, -Math.sin(tt)), scl(p0, sgn * Math.cos(tt)));
+            const d = add(scl(occ.axis, Math.cos(tt)), scl(p0, sgn * Math.sin(tt)));
+            const A = add(S, scl(n, M.RSUN));                                      // 太阳边缘切点
+            const B = add(occ.center, scl(n, occ.r * (kind === 'umbra' ? 1 : -1))); // 遮挡球边缘切点
+            const far = add(B, scl(d, kExt));
+            out.push({ kind, sgn, A, B, far, n, d });
+          }
+        }
+        return out;
+      }
+      function drawRays(q, e) {
+        for (const r of tangentRays(e)) {
+          const solid = r.kind === 'umbra';
+          line([project(r.A, q), project(r.B, q)], solid ? 'rgba(255,214,102,.55)' : 'rgba(255,214,102,.26)', solid ? 1.3 : 1, []);
+          line([project(r.B, q), project(r.far, q)], solid ? 'rgba(255,214,102,.40)' : 'rgba(255,214,102,.18)', 1, solid ? [] : [5, 6]);
+        }
+      }
+
+      // 日地月夹角圆弧（画在日地连线与地月连线之间）
+      function drawAngleArc(q, e) {
+        const M = mode();
+        const S = sunPos(), E = [0, 0, 0], Mn = moonPos();
+        const a1 = vnorm(sub(S, E)), a2 = vnorm(sub(Mn, E));
+        const r = M.RE * 1.9;
+        const n = 26, pts = [];
+        for (let i = 0; i <= n; i++) {
+          const t = i / n;
+          // 球面插值（够用）
+          const v = vnorm(add(scl(a1, 1 - t), scl(a2, t)));
+          pts.push(project(add(E, scl(v, r)), q));
+        }
+        line(pts, 'rgba(148,197,220,.55)', 1.2, [3, 4]);
+        const mid = pts[Math.floor(pts.length / 2)];
+        label({ x: mid.x, y: mid.y }, 'α=' + f1(e.elong) + '°', '#94c7dc', 11, 'center', 'bottom');
+      }
+
+      /* ============================================================
+       * 观察者视角小窗
+       * 日食：站在影锥与地面的交点，用【视角半径 + 角距离】真算天空里
+       *       太阳盘与月球盘的重叠 —— 全食/环食/偏食是算出来的，不是贴图。
+       * 月食：站在地球看月球，把地球本影/半影在月球处的截面画到月面上。
+       * ============================================================ */
+      function drawObserverInset(q, w, h, e) {
+        const R = Math.min(120, Math.min(w, h) * 0.24);
+        const cx = w - R - 20, cy = R + 20;
+        ctx.save();
+        ctx.beginPath(); ctx.arc(cx, cy, R, 0, PI2);
+        ctx.fillStyle = 'rgba(4,10,22,.92)'; ctx.fill();
+        ctx.strokeStyle = 'rgba(148,163,184,.45)'; ctx.lineWidth = 1.4; ctx.stroke();
+        ctx.clip();
+
+        if (e.type === 'solar' && e.obs && isFinite(e.obsSun)) {
+          // ★ 按【两个盘中较大的那个】归一到 0.72R，而不是只按日盘。
+          //   日全食时月盘角半径比日盘还大（月盘能整个盖住日盘），
+          //   若按日盘归一到 0.82R，月盘就顶到小窗边缘、日冕一点位置都不剩。
+          const k = R * 0.72 / Math.max(e.obsSun, e.obsMoon, 1e-6);   // 角度 → 像素
+          const dirS = vnorm(e.obsBasis.dS), dirM = vnorm(e.obsBasis.dM);
+          // 天空平面基底
+          let up = [0, 1, 0];
+          if (Math.abs(dot(dirS, up)) > 0.95) up = [0, 0, 1];
+          const right = vnorm(cross(dirS, up));
+          const upS = cross(right, dirS);
+          const perp = sub(dirM, scl(dirS, dot(dirM, dirS)));
+          const pl = vlen(perp) || 1;
+          const ox = dot(perp, right) / pl * e.obsSep, oy = dot(perp, upS) / pl * e.obsSep;
+          const rS = e.obsSun * k, rM = e.obsMoon * k;
+          insetGeom = { cx, cy, R, rS, rM, k, mcx: cx + ox * k, mcy: cy - oy * k, type: 'solar', phase: e.phase };
+          // 太阳
+          const g = ctx.createRadialGradient(cx, cy, rS * 0.1, cx, cy, rS);
+          g.addColorStop(0, '#fffbe0'); g.addColorStop(0.7, '#ffd85e'); g.addColorStop(1, '#f59e0b');
+          ctx.fillStyle = g;
+          ctx.beginPath(); ctx.arc(cx, cy, rS, 0, PI2); ctx.fill();
+          // 月球（挡在前面）
+          ctx.fillStyle = '#0b1220';
+          ctx.beginPath(); ctx.arc(cx + ox * k, cy - oy * k, rM, 0, PI2); ctx.fill();
+          // 日全食时太阳被整个吃掉，只剩日冕 —— 不画出来小窗就只是一个黑饼，
+          // 看不出「太阳还在那儿、只是被挡住了」。
+          // ★ 必须画成【圆环】（两条子路径 + evenodd 抠洞）：径向渐变在 r0 以内
+          //   会被钳到第一个色标，直接填整个圆盘会把月面糊成一片白。
+          if (e.phase === 'total') {
+            const mcx = cx + ox * k, mcy = cy - oy * k, rc = rM * 1.50;
+            const gc = ctx.createRadialGradient(mcx, mcy, rM * 0.99, mcx, mcy, rc);
+            gc.addColorStop(0, 'rgba(255,248,224,.92)');
+            gc.addColorStop(0.06, 'rgba(255,228,164,.48)');
+            gc.addColorStop(0.25, 'rgba(255,208,120,.16)');
+            gc.addColorStop(1, 'rgba(255,208,120,0)');
+            ctx.beginPath();
+            ctx.arc(mcx, mcy, rc, 0, PI2);
+            ctx.arc(mcx, mcy, rM * 0.99, 0, PI2, true);
+            ctx.fillStyle = gc;
+            ctx.fill('evenodd');
+          }
+          ctx.strokeStyle = 'rgba(148,163,184,.35)'; ctx.lineWidth = 1; ctx.stroke();
+        } else if (e.type === 'lunar' && isFinite(e.rUAtMoon)) {
+          const scale = R * 0.80 / Math.max(e.rPAtMoon, e.rUAtMoon, mode().RM * 1.6);
+          const RMp = mode().RM * scale;
+          insetGeom = { cx, cy, R, rS: NaN, rM: RMp, scale, mcx: cx, mcy: cy, type: 'lunar', phase: e.phase,
+                        rU: e.rUAtMoon * scale, rP: e.rPAtMoon * scale };
+          // 月球本体
+          ctx.fillStyle = '#cbd5e1';
+          ctx.beginPath(); ctx.arc(cx, cy, RMp, 0, PI2); ctx.fill();
+          // 地影偏移方向（在地球→月球视线的天空平面里）
+          const dirM = vnorm(sub(moonPos(), [0, 0, 0]));
+          let up = [0, 1, 0];
+          if (Math.abs(dot(dirM, up)) > 0.95) up = [0, 0, 1];
+          const right = vnorm(cross(dirM, up)), upS = cross(right, dirM);
+          const off = e.obsOffset || [0, 0, 0];
+          const ox = dot(off, right) * scale, oy = dot(off, upS) * scale;
+          // 半影
+          ctx.fillStyle = 'rgba(30,41,59,.55)';
+          ctx.beginPath(); ctx.arc(cx + ox, cy - oy, e.rPAtMoon * scale, 0, PI2); ctx.fill();
+          // 本影
+          ctx.fillStyle = 'rgba(80,20,20,.92)';
+          ctx.beginPath(); ctx.arc(cx + ox, cy - oy, Math.max(0, e.rUAtMoon) * scale, 0, PI2); ctx.fill();
+          // 重新盖一层月球（让「月面被吃掉一块」看得出来）
+          ctx.save();
+          ctx.globalCompositeOperation = 'destination-over';
+          ctx.fillStyle = '#cbd5e1';
+          ctx.beginPath(); ctx.arc(cx, cy, RMp, 0, PI2); ctx.fill();
+          ctx.restore();
+        } else {
+          insetGeom = { cx, cy, R, type: 'none', phase: 'none' };
+          ctx.fillStyle = 'rgba(148,163,184,.75)';
+          ctx.font = fontOf(11); ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+          ctx.fillText('没有食', cx, cy - 8);
+          ctx.fillStyle = 'rgba(148,163,184,.5)';
+          ctx.font = fontOf(10);
+          ctx.fillText('影锥没有落上来', cx, cy + 8);
+        }
+        ctx.restore();
+
+        // 小窗标题 + 结论
+        ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+        ctx.font = fontOf(11);
+        ctx.fillStyle = 'rgba(226,232,240,.85)';
+        ctx.fillText('观察者视角', cx, 6);
+        ctx.font = fontOf(11);
+        ctx.fillStyle = e.type === 'solar' ? '#fdba74' : e.type === 'lunar' ? '#fca5a5' : 'rgba(148,163,184,.8)';
+        ctx.fillText(phaseLabel(e), cx, cy + R + 5);
+        if (e.type === 'solar' && isFinite(e.obsSep)) {
+          ctx.font = fontOf(10);
+          ctx.fillStyle = 'rgba(148,163,184,.85)';
+          const pct = Math.max(0, 1 - e.obsSep / Math.max(1e-6, e.obsSun + e.obsMoon));
+          ctx.fillText('遮挡 ' + (pct * 100).toFixed(0) + '%', cx, cy + R + 21);
+        }
+        // 小窗也要登记成障碍物：标签绝不许压在自己的读数上
+        frameBoxes.push({ x0: cx - R, y0: cy - R, x1: cx + R, y1: cy + R + 34, kind: 'body', text: '观察者视角', weight: 8 });
+      }
+
+      /* ============================================================
+       * 读数、规律、结论
+       * ============================================================ */
+      function lawStates(e) {
+        const M = mode();
+        return {
+          law1: true,
+          law2: true,
+          law3: e.type === 'solar',
+          law4: e.type === 'lunar',
+          law5: isFinite(e.moonCone.Lu)
+        };
+      }
+      function fmtDist() {
+        const M = mode();
+        return state.real
+          ? f2(state.dme) + ' R<sub>E</sub>'
+          : f2(state.dme) + ' R<sub>E</sub>';
+      }
+      function fmtDistText() {
+        const km = state.dme * KM_PER_RE;
+        return state.real
+          ? f2(state.dme) + ' R_E ≈ ' + Math.round(km).toLocaleString('en-US') + ' km'
+          : f2(state.dme) + ' R_E（教学比例）';
+      }
+
+      function updateReadout() {
+        const e = eclipse();
+        const pl = phaseLabel(e);
+        const el = document.getElementById('se-m1');
+        el.textContent = f1(e.elong) + '°';
+        document.getElementById('se-m2').textContent = f2(e.moonCone.Lu) + ' R_E';
+        document.getElementById('se-m3').textContent = f2(state.dme) + ' R_E';
+        const m4 = document.getElementById('se-m4');
+        m4.textContent = pl;
+        const card = m4.parentElement;
+        card.classList.toggle('ok', e.type !== 'none');
+        card.classList.toggle('bad', e.type === 'none');
+
+        const v = document.getElementById('se-verdict');
+        let txt = '日地月夹角 α = ' + f1(e.elong) + '°（' + (e.elong < 90 ? '新月' : '满月') + '）';
+        txt += '　本影锥长 ' + f2(e.moonCone.Lu) + ' R_E';
+        if (e.type === 'solar') {
+          txt += '　月球影锥轴离地心 ' + f2(e.bMoon) + ' R_E　' + pl;
+          if (e.phase !== 'partial') txt += '（锥尖' + (e.rUAtSurf > 0 ? '扎进地面 ' + f2(-(e.tSurfMoon - e.moonCone.Lu)) : '差 ' + f2(e.tSurfMoon - e.moonCone.Lu)) + ' R_E）';
+        } else if (e.type === 'lunar') {
+          txt += '　地球本影在月球处半径 ' + f2(e.rUAtMoon) + ' R_E（月球半径 ' + f2(mode().RM) + '）　' + pl;
+        } else {
+          txt += '　影锥没有落上来 → 无日食或月食';
+        }
+        v.textContent = txt;
+        v.classList.toggle('warn', e.type === 'none');
+        v.classList.toggle('solar', e.type === 'solar');
+
+        document.getElementById('se-status').textContent = '● ' + mode().name + ' · ' + pl;
+
+        const ls = lawStates(e);
+        for (let i = 1; i <= 5; i++) {
+          const li = document.getElementById('law' + i);
+          const on = ls['law' + i];
+          li.classList.toggle('on', !!on);
+          li.classList.toggle('off', !on);
+        }
+        const lv = document.getElementById('se-law-verdict');
+        if (e.type === 'none') {
+          lv.innerHTML = '当前：ψ = ' + f1(state.psi) + '°，α = ' + f1(e.elong) + '°，本影锥长 ' + f2(e.moonCone.Lu) + ' R_E' +
+            (state.inc > 0.05 ? ' —— 轨道倾角 ' + f1(state.inc) + '° 让影锥从地球旁边擦过去了' : '') +
+            '，③④ 这两条要等月球走到「新月」或「满月」位置才成立';
+        } else {
+          lv.innerHTML = '当前：ψ = ' + f1(state.psi) + '°，α = ' + f1(e.elong) + '°，' + pl +
+            ' —— 本影锥长 ' + f2(e.moonCone.Lu) + ' R_E';
+        }
+
+        // 滑块旁读数
+        document.getElementById('se-psi-value').textContent = Math.round(state.psi) + '°';
+        document.getElementById('se-dme-value').innerHTML = f2(state.dme) + ' R<sub>E</sub>';
+        document.getElementById('se-inc-value').textContent = f1(state.inc) + '°';
+        document.getElementById('se-play-value').textContent = state.playing ? '公转中' : '暂停';
+        document.getElementById('se-dme-hint').innerHTML = state.real
+          ? '真实比例：' + fmtDistText()
+          : '拉远 → 本影锥尖够不到地面 → 日环食；拉近 → 锥尖扎进地面 → 日全食';
+      }
+
+      /* ============================================================
+       * 记录表
+       * ============================================================ */
+      function renderRecords() {
+        const tb = document.getElementById('se-rows');
+        if (!state.records.length) {
+          tb.innerHTML = '<tr><td colspan="7" class="empty">尚无记录，先调一调月球轨道角开始探究</td></tr>';
+        } else {
+          tb.innerHTML = state.records.map((r, i) => '<tr>' +
+            '<td class="num">' + (i + 1) + '</td>' +
+            '<td class="num">' + f1(r.psi) + '°</td>' +
+            '<td class="num">' + f1(r.elong) + '°</td>' +
+            '<td class="num">' + f2(r.dme) + '</td>' +
+            '<td class="num">' + f2(r.Lu) + '</td>' +
+            '<td class="num ratio">' + f3(r.ratio) + '</td>' +
+            '<td>' + r.phase + '</td>' +
+            '</tr>').join('');
+        }
+        document.getElementById('se-count-label').textContent = '已记录 ' + state.records.length + ' 组';
+        const sum = document.getElementById('se-summary');
+        if (!state.records.length) {
+          sum.innerHTML = '记录 3 组以上不同月球轨道角的数据，看看「食相」这一列随夹角怎么变。';
+        } else {
+          const solar = state.records.filter(r => r.type === 'solar').length;
+          const lunar = state.records.filter(r => r.type === 'lunar').length;
+          const near0 = state.records.filter(r => r.elong < 90).length;
+          const near180 = state.records.length - near0;
+          sum.innerHTML = '已记录 <b>' + state.records.length + '</b> 组：夹角 &lt; 90°（新月一侧）<b>' + near0 +
+            '</b> 组、&gt; 90°（满月一侧）<b>' + near180 + '</b> 组；真的发生日食 <b>' + solar + '</b> 组、月食 <b>' + lunar +
+            '</b> 组。最后一列 L<sub>u</sub> ÷ (d − R<sub>E</sub>) 说的就是「锥尖够不够得到地面」：大于 1 → 够得到（影锥轴对得准就是日全食），小于 1 → 够不到（日环食）；轴没对准则都是日偏食。';
+        }
+      }
+      function recordNow() {
+        const e = eclipse();
+        const M = mode();
+        state.records.push({
+          psi: state.psi, elong: e.elong, dme: state.dme,
+          Lu: e.moonCone.Lu, ratio: e.moonCone.Lu / Math.max(1e-9, state.dme - M.RE),
+          type: e.type, phase: phaseLabel(e)
+        });
+        renderRecords();
+      }
+
+      /* ============================================================
+       * 参数入口
+       * ============================================================ */
+      function syncInputs() {
+        const M = mode();
+        const dme = document.getElementById('se-dme');
+        dme.min = M.DME_MIN; dme.max = M.DME_MAX; dme.value = state.dme;
+        document.getElementById('se-psi').value = state.psi;
+        document.getElementById('se-inc').value = state.inc;
+        document.getElementById('se-real').checked = state.real;
+        document.querySelectorAll('.lab3d-toolbar [data-view]').forEach(b => {
+          b.classList.toggle('active', b.dataset.view === state.view);
+        });
+        const wideBtn = document.querySelector('.lab3d-toolbar [data-view="wide"]');
+        if (wideBtn) {
+          wideBtn.disabled = state.real;
+          wideBtn.title = state.real ? '真实比例下太阳在 2.3 万倍地球半径之外，一屏装不下' : '';
+        }
+      }
+      function setPsi(v) { state.psi = ((Number(v) % 360) + 360) % 360; syncInputs(); updateReadout(); state.dirty = true; }
+      function setInc(v) { state.inc = clamp(Number(v), INC_MIN, INC_MAX); syncInputs(); updateReadout(); state.dirty = true; }
+      function setDme(v) {
+        const M = mode();
+        state.dme = clamp(Number(v), M.DME_MIN, M.DME_MAX);
+        syncInputs(); updateReadout(); state.dirty = true;
+      }
+      function setReal(on) {
+        state.real = !!on;
+        const M = mode();
+        state.dme = M.DME0;
+        if (state.real && state.view === 'wide') applyView('closeup');
+        syncInputs(); updateReadout(); state.dirty = true;
+      }
+      function setPlaying(on) {
+        state.playing = !!on;
+        document.getElementById('se-play').textContent = state.playing ? '⏸ 暂停' : '▶ 播放公转';
+        document.getElementById('se-play').classList.toggle('active', state.playing);
+        syncInputs(); updateReadout();
+      }
+      function applyView(name) {
+        const v = VIEWS[name];
+        if (!v) return;
+        state.yaw = v[0]; state.pitch = v[1];
+        state.zoom = 1;
+        state.view = name;
+        syncInputs(); state.dirty = true;
+      }
+
+      /* ============================================================
+       * 尺寸与交互
+       * ============================================================ */
+      function resize() {
+        const r = canvas.getBoundingClientRect();
+        const dpr = Math.min(2, window.devicePixelRatio || 1);
+        state.w = Math.max(1, r.width); state.h = Math.max(1, r.height); state.dpr = dpr;
+        canvas.width = Math.round(r.width * dpr);
+        canvas.height = Math.round(r.height * dpr);
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        state.dirty = true;
+      }
+      function pointerPos(ev) {
+        const r = canvas.getBoundingClientRect();
+        return { x: ev.clientX - r.left, y: ev.clientY - r.top };
+      }
+      function objHit(p) {
+        const q = {}; makeCam(q, state.w, state.h);
+        const M = mode();
+        const mp = project(moonPos(), q);
+        const rm = M.RM * mp.s;
+        if (Math.hypot(p.x - mp.x, p.y - mp.y) <= Math.max(14, rm + 6)) return 'moon';
+        const ep = project([0, 0, 0], q);
+        const re = M.RE * ep.s;
+        if (Math.hypot(p.x - ep.x, p.y - ep.y) <= Math.max(12, re + 4)) return 'earth';
+        return null;
+      }
+      let dragX0 = 0, dragY0 = 0, dragPsi0 = 0;
+      canvas.addEventListener('pointerdown', (ev) => {
+        const p = pointerPos(ev);
+        const hit = objHit(p);
+        state.dragging = true;
+        state.dragObj = hit;
+        state.lastX = p.x; state.lastY = p.y;
+        dragX0 = p.x; dragY0 = p.y; dragPsi0 = state.psi;
+        if (hit) { canvas.classList.add('pick-move'); }
+        canvas.setPointerCapture && canvas.setPointerCapture(ev.pointerId);
+      });
+      canvas.addEventListener('pointermove', (ev) => {
+        const p = pointerPos(ev);
+        if (!state.dragging) {
+          state.hoverObj = objHit(p);
+          canvas.classList.toggle('pick-move', !!state.hoverObj);
+          return;
+        }
+        if (state.dragObj === 'moon') {
+          // 把光标投到【月球轨道面】上，由交点反解 ψ —— 拖到哪儿月球就转到哪儿
+          const { u1, u2, n } = orbitBasis();
+          const P = rayToPlane(p.x, p.y, n);
+          if (P) {
+            const a = Math.atan2(dot(P, u2), dot(P, u1));
+            setPsi(a / DEG);
+          } else {
+            setPsi(dragPsi0 + (p.x - dragX0) * 0.6);
+          }
+        } else {
+          state.yaw -= (p.x - state.lastX) * 0.006;
+          state.pitch = clamp(state.pitch + (p.y - state.lastY) * 0.006, -1.45, 1.45);
+          state.dirty = true;
+        }
+        state.lastX = p.x; state.lastY = p.y;
+      });
+      function endDrag() {
+        state.dragging = false; state.dragObj = null;
+        canvas.classList.remove('pick-move');
+      }
+      canvas.addEventListener('pointerup', endDrag);
+      canvas.addEventListener('pointercancel', endDrag);
+      canvas.addEventListener('wheel', (ev) => {
+        ev.preventDefault();
+        state.zoom = clamp(state.zoom * (ev.deltaY < 0 ? 1.08 : 0.926), ZOOM_MIN, ZOOM_MAX);
+        state.dirty = true;
+      }, { passive: false });
+
+      /* ============================================================
+       * 绑定
+       * ============================================================ */
+      function $(id) { return document.getElementById(id); }
+      document.querySelectorAll('.lab3d-toolbar [data-view]').forEach(b => {
+        b.addEventListener('click', () => { if (!b.disabled) applyView(b.dataset.view); });
+      });
+      $('se-reset-view').addEventListener('click', () => applyView('closeup'));
+      $('se-psi').addEventListener('input', e => setPsi(e.target.value));
+      $('se-dme').addEventListener('input', e => setDme(e.target.value));
+      $('se-inc').addEventListener('input', e => setInc(e.target.value));
+      $('se-real').addEventListener('change', e => setReal(e.target.checked));
+      $('se-play').addEventListener('click', () => setPlaying(!state.playing));
+      $('se-solar').addEventListener('click', () => { setPlaying(false); setPsi(180); });
+      $('se-lunar').addEventListener('click', () => { setPlaying(false); setPsi(0); });
+      $('se-record').addEventListener('click', recordNow);
+      $('se-clear').addEventListener('click', () => { state.records = []; renderRecords(); });
+      for (const [id, key] of [['se-cones', 'showCones'], ['se-rays', 'showRays'], ['se-orbit', 'showOrbit'],
+                               ['se-view', 'showView'], ['se-labels', 'showLabels']]) {
+        $(id).addEventListener('change', e => { state[key] = e.target.checked; state.dirty = true; });
+      }
+      window.addEventListener('resize', resize);
+
+      /* ============================================================
+       * 主循环
+       * ============================================================ */
+      function tick(t) {
+        const dt = state.tPrev ? Math.min(0.05, (t - state.tPrev) / 1000) : 0;
+        state.tPrev = t;
+        if (state.playing) {
+          state.psi = (state.psi + 360 / ORBIT_SEC * dt) % 360;
+          syncInputs(); updateReadout();
+        }
+        if (state.dirty) { state.dirty = false; render(); }
+        requestAnimationFrame(tick);
+      }
+
+      resize();
+      applyView('closeup');
+      updateReadout();
+      renderRecords();
+      requestAnimationFrame(tick);
+
+      /* ============================================================
+       * 自检钩子
+       * ============================================================ */
+      window.__se = {
+        state, VIEWS, MODES, mode, sunPos, moonPos, coneOf, eclipse, phaseLabel,
+        umbraRadiusAt, antumbraRadiusAt, penumbraRadiusAt, orbitBasis, rayToPlane,
+        tangentRays,
+        envelopePoints, envBox, camTarget, makeCam,
+        project(p) { const q = {}; makeCam(q, state.w, state.h); const s = project(p, q); return { x: s.x, y: s.y, z: s.z, s: s.s }; },
+        setPsi, setInc, setDme, setReal, setPlaying, applyView, recordNow,
+        clearRecords() { state.records = []; renderRecords(); },
+        renderNow() { render(); },
+        readoutNow() { updateReadout(); },
+        size() { return { w: state.w, h: state.h, dpr: state.dpr }; },
+        boxes() {
+          return frameBoxes.map(b => ({ kind: b.kind, text: b.text, x0: b.x0, y0: b.y0, x1: b.x1, y1: b.y1, weight: b.weight || 1 }));
+        },
+        records() { return state.records.slice(); },
+        insetGeom() { return insetGeom ? JSON.parse(JSON.stringify(insetGeom)) : null; },
+        debug() {
+          const e = eclipse(), M = mode(), d = state.drawn || {};
+          return {
+            psi: state.psi, inc: state.inc, dme: state.dme, real: state.real, modeName: M.name,
+            elong: e.elong, type: e.type, phase: e.phase, phaseLabel: phaseLabel(e),
+            Lu: e.moonCone.Lu, LuE: e.earthCone.Lu, thU: e.moonCone.thU / DEG, thP: e.moonCone.thP / DEG,
+            RE: M.RE, RM: M.RM, RSUN: M.RSUN, DSE: M.DSE,
+            bMoon: e.bMoon, tSurfMoon: e.tSurfMoon, rUAtSurf: e.rUAtSurf, rPAtSurf: e.rPAtSurf,
+            bEarth: e.bEarth, rUAtMoon: e.rUAtMoon, rPAtMoon: e.rPAtMoon,
+            obsSun: e.obsSun, obsMoon: e.obsMoon, obsSep: e.obsSep,
+            moon: moonPos(), sun: sunPos(),
+            sunMag: M.SUN_MAG, view: state.view, zoom: state.zoom,
+            sunOnScreen: d.sunOnScreen, hullN: d.hullN,
+            metrics: [$('se-m1'), $('se-m2'), $('se-m3'), $('se-m4')].map(x => x.textContent),
+            verdict: $('se-verdict').textContent,
+            lawVerdict: $('se-law-verdict').textContent,
+            laws: [1, 2, 3, 4, 5].map(i => { const el = $('law' + i); return el.classList.contains('on') ? 'on' : el.classList.contains('off') ? 'off' : 'plain'; }),
+            rowCount: document.querySelectorAll('#se-rows tr').length,
+            lastRow: Array.from(document.querySelectorAll('#se-rows tr:last-child td')).map(td => td.textContent),
+            summary: $('se-summary').textContent
+          };
+        }
+      };
+    })();
+    </script>
+</body>
+</html>
