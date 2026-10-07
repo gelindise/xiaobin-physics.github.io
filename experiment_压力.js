@@ -39,6 +39,10 @@ import * as THREE from './assets/optics-three.min.js';
     pine:   { name: '松木', sigma: 7.0e4, dmax: 0.004, note: '较硬，形变不明显' }
   };
 
+  /* 形变深度模型 —— 主实验与「生活实例」共用同一个函数（同源，不许各写一份）。
+     σ 是受压物的“抗压软硬”参数：p 远大于 σ 时形变饱和，表示材料已被压到极限。 */
+  function dentDepth(p, sigma, dmax) { return dmax * (1 - Math.exp(-p / sigma)); }
+
   /* ------------------------------ 状态 ------------------------------ */
   const state = {
     material: 'sand',
@@ -74,6 +78,7 @@ import * as THREE from './assets/optics-three.min.js';
     const es = String(e).split('').map((c) => SUP[c]).join('');
     return `${m.toFixed(d)}×10${es}`;
   };
+  const supNum = (n) => String(n).split('').map((c) => SUP[c] || c).join('');
   const fmtPressure = (p) => {
     if (p < 1000) return `${p.toFixed(0)} Pa`;
     if (p < 1e5) return `${(p / 1000).toFixed(1)} kPa`;
@@ -435,8 +440,10 @@ import * as THREE from './assets/optics-three.min.js';
 
   const camera = new THREE.PerspectiveCamera(36, 1, 1, 900);
 
-  /* --- 用程序化“柔光箱”生成环境贴图，让金属砝码有可信的反射 --- */
-  function studioEnv() {
+  /* --- 用程序化“柔光箱”生成环境贴图，让金属砝码有可信的反射 ---
+     🔴 必须传 renderer：PMREM 贴图是【某个 WebGL 上下文】里的 GPU 资源，
+        两个上下文不能共用同一张 environment（共用 ⇒ 第二个场景里的金属件全黑）。 */
+  function studioEnv(rend) {
     const W = 1024, H = 512;
     const c = newCanvas(W, H), g = c.getContext('2d');
     const grad = g.createLinearGradient(0, 0, 0, H);
@@ -463,12 +470,12 @@ import * as THREE from './assets/optics-three.min.js';
     const tex = new THREE.CanvasTexture(c);
     tex.mapping = THREE.EquirectangularReflectionMapping;
     tex.colorSpace = THREE.SRGBColorSpace;
-    const pmrem = new THREE.PMREMGenerator(renderer);
+    const pmrem = new THREE.PMREMGenerator(rend);
     const env = pmrem.fromEquirectangular(tex).texture;
     pmrem.dispose(); tex.dispose();
     return env;
   }
-  scene.environment = studioEnv();
+  scene.environment = studioEnv(renderer);
 
   /* --- 光照：主光 + 天光 + 冷补光 + 轮廓光 --- */
   scene.add(new THREE.HemisphereLight('#e9f1fa', '#4a4238', 0.42));
@@ -775,7 +782,7 @@ import * as THREE from './assets/optics-three.min.js';
     const S = state.inverted ? S_INVERT : S_UPRIGHT;
     const p = F / S;
     const m = MATERIALS[state.material];
-    const depthM = m.dmax * (1 - Math.exp(-p / m.sigma));
+    const depthM = dentDepth(p, m.sigma, m.dmax);
     const depth = depthM * 100;                         // cm
     let support;
     if (state.inverted) {
@@ -1129,7 +1136,8 @@ import * as THREE from './assets/optics-three.min.js';
     { name: '02 改变压力', text: '<strong>控制受力面积不变：</strong>保持正放，用 − / + 逐个增减砝码。压力 F = G<sub>桌</sub> + G<sub>砝码</sub> 从 2.0 N 一路加到 14.0 N，观察细沙上压痕的深浅。' },
     { name: '03 改变受力面积', text: '<strong>控制压力不变：</strong>砝码数保持不变，把「正放」切换成「倒放」。压力一点没变，受力面积却从 1.44×10⁻⁴ m² 变成 1.92×10⁻² m²，压强骤降，压痕几乎消失。' },
     { name: '04 换材质对比', text: '<strong>换材质再看一遍：</strong>海绵最软、细沙居中、松木最硬。同样的器材、同样的压力，换成硬材料后形变明显变小 —— 所以“压力作用效果”既跟压力和受力面积有关，也跟受压材料有关，实验时要<b>控制材质一致</b>。' },
-    { name: '05 记录归纳', text: '<strong>记录归纳：</strong>把每种组合的 F、S、p 和下陷深度记到表里。比较数据可以得出：<b>受力面积相同时，压力越大，压力作用效果越明显；压力相同时，受力面积越小，压力作用效果越明显。</b>' }
+    { name: '05 记录归纳', text: '<strong>记录归纳：</strong>把每种组合的 F、S、p 和下陷深度记到表里。比较数据可以得出：<b>受力面积相同时，压力越大，压力作用效果越明显；压力相同时，受力面积越小，压力作用效果越明显。</b>' },
+    { name: '06 增大/减小压强', text: '<strong>用到生活里：</strong>同一压力下，受力面积越小压强越大 —— 图钉的尖、磨薄的刀刃、高跟鞋的细跟都在<b>增大压强</b>；受力面积越大压强越小 —— 宽书包带、履带、滑雪板、铁轨下的枕木都在<b>减小压强</b>。下面这一节把四种生活实例摆成左右对照，红色的“压力箭头”两边一样长，看看接触面大小和压痕深浅差多少。' }
   ];
 
   const stepButtons = Array.from(document.querySelectorAll('[data-step]'));
@@ -1138,6 +1146,10 @@ import * as THREE from './assets/optics-three.min.js';
     state.step = i;
     stepButtons.forEach((b, k) => b.classList.toggle('active', k === i));
     stepDetail.innerHTML = STEPS[i].text;
+    if (i === 5) {
+      const panel = $('instPanel');
+      if (panel && panel.scrollIntoView) panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
   }
   stepButtons.forEach((b, i) => b.addEventListener('click', () => showStep(i)));
   showStep(0);
@@ -1177,7 +1189,703 @@ import * as THREE from './assets/optics-three.min.js';
   renderRecords();
 
   /* ==========================================================================
-     十一、启动
+     十一、生活实例：增大压强 / 减小压强（第二套 3D 场景）
+     --------------------------------------------------------------------------
+     教学点：同一个压力 F，作用在不同大小的受力面积 S 上，压强 p = F/S 相差很多倍。
+     三条硬约束：
+       ① 深度模型与主实验共用 dentDepth()（画面与读数同源，不许各写一份）；
+       ② 3D 里接触面按【真实线性尺寸比】k = √(S大/S小) 绘制，只做整体缩放，
+          所以画面里的相对大小是真实的；缩放关系写在页面上；
+       ③ 受力面积一律由几何尺寸算出（S_circ / S_rect），不许手填数字。
+     ========================================================================== */
+
+  /* --- 受力面积：直径 mm / 长宽 mm → m² --- */
+  const S_circ = (dmm) => Math.PI * (dmm / 2000) ** 2;
+  const S_rect = (wmm, lmm) => (wmm / 1000) * (lmm / 1000);
+
+  /* --- 3D 接触面示意宽度：大的一侧固定 INST_BIG_W，小的一侧按真实线性比缩小 --- */
+  const INST_BIG_W = 9.0, INST_SMALL_MIN = 0.38, INST_DMAX = 3.0;
+  function instWidths(Ssmall, Sbig) {
+    const k = Math.sqrt(Sbig / Ssmall);
+    return { k, wSmall: Math.max(INST_SMALL_MIN, INST_BIG_W / k), wBig: INST_BIG_W };
+  }
+
+  const INSTANCES = [
+    {
+      id: 'pin', icon: '📌', name: '图钉', F: 20, sigma: 2.0e6, round: true,
+      low: { label: '钉尖朝下', S: S_circ(0.5), desc: '尖端直径 0.5 mm', footD: 0 },
+      high: { label: '钉帽朝下', S: S_circ(10), desc: '钉帽直径 10 mm', footD: 0 },
+      q: '同一枚图钉、同样的按压力，为什么钉尖能扎进木板，手指顶住钉帽却不疼？',
+      a: '钉尖的受力面积只有钉帽的 1/400，压强却是钉帽的 400 倍 —— 一端足以压穿木板，另一端手指却毫无痛感。'
+    },
+    {
+      id: 'knife', icon: '🔪', name: '刀', F: 100, sigma: 1.5e6, round: false,
+      low: { label: '刀刃朝下', S: S_rect(0.05, 100), desc: '刃口宽 0.05 mm × 刃长 100 mm', footD: 10 },
+      high: { label: '刀背朝下', S: S_rect(3, 100), desc: '刀背厚 3 mm × 刃长 100 mm', footD: 10 },
+      q: '切菜时为什么要把刀刃磨得很薄，而不能拿刀背去切？',
+      a: '刀刃的受力面积只有刀背的 1/60，压强却是刀背的 60 倍 —— 所以刀刃能轻松切开蔬菜，刀背按下去只会把菜压扁。'
+    },
+    {
+      id: 'bag', icon: '🎒', name: '书包带', F: 60, sigma: 8.0e4, round: false,
+      low: { label: '细书包带', S: S_rect(15, 60), desc: '带宽 15 mm × 肩接触长 60 mm', footD: 11 },
+      high: { label: '宽书包带', S: S_rect(50, 60), desc: '带宽 50 mm × 肩接触长 60 mm', footD: 11 },
+      q: '同样重的书包，为什么换一副宽带子就不那么勒肩了？',
+      a: '压力一点没变，宽带的受力面积是细带的 3.3 倍，压强就降到 1/3.3 —— 宽书包带、宽提手做的都是同一件事：增大受力面积。'
+    },
+    {
+      id: 'snow', icon: '🎿', name: '雪地行走', F: 500, sigma: 2.0e5, round: true,
+      low: { label: '高跟鞋', S: S_rect(10, 10), desc: '跟底 10 mm × 10 mm', footD: 0 },
+      high: { label: '滑雪板', S: S_rect(100, 1600), desc: '板宽 100 mm × 板长 1600 mm', footD: 14 },
+      q: '同一个人在雪地上，穿高跟鞋会陷下去，踩上滑雪板却站得住，为什么？',
+      a: '体重完全相同，滑雪板的受力面积是高跟的 1600 倍，压强只有 1/1600 —— 坦克用履带、骆驼有宽脚掌、铁轨下垫枕木，都是这个道理。'
+    }
+  ];
+
+  /* --- 派生量：S / p / 下陷深度 / 3D 宽度，全部由上面那张表算出来 --- */
+  function instDerive(ins) {
+    const { k, wSmall, wBig } = instWidths(ins.low.S, ins.high.S);
+    const pSmall = ins.F / ins.low.S, pBig = ins.F / ins.high.S;
+    return {
+      k, wSmall, wBig, pSmall, pBig,
+      SSmall: ins.low.S, SBig: ins.high.S,
+      footDSmall: ins.low.footD || wSmall,
+      footDBig: ins.high.footD || wBig,
+      dSmall: dentDepth(pSmall, ins.sigma, INST_DMAX),
+      dBig: dentDepth(pBig, ins.sigma, INST_DMAX),
+      ratio: ins.high.S / ins.low.S
+    };
+  }
+  const INST_DERIVED = {};
+  INSTANCES.forEach((i) => { INST_DERIVED[i.id] = instDerive(i); });
+
+  /* --- 对数刻度范围（跨实例固定，切换实例时坐标轴不跳） --- */
+  const ALL_S = INSTANCES.flatMap((i) => [i.low.S, i.high.S]);
+  const ALL_P = INSTANCES.flatMap((i) => [i.F / i.low.S, i.F / i.high.S]);
+  const LOG_S0 = Math.floor(Math.log10(Math.min(...ALL_S)));
+  const LOG_S1 = Math.ceil(Math.log10(Math.max(...ALL_S)));
+  const LOG_P0 = Math.floor(Math.log10(Math.min(...ALL_P)));
+  const LOG_P1 = Math.ceil(Math.log10(Math.max(...ALL_P)));
+
+  /* --- 松软地面贴图（中性浅灰米色 + 斑驳 + 细颗粒，四个实例共用） --- */
+  function makeGroundMap() {
+    const S = 512, rnd = mulberry32(70707);
+    const c = newCanvas(S, S), g = c.getContext('2d');
+    const b = newCanvas(S, S), gb = b.getContext('2d');
+    g.fillStyle = '#b8b1a4'; g.fillRect(0, 0, S, S);
+    gb.fillStyle = '#8e8e8e'; gb.fillRect(0, 0, S, S);
+    for (let i = 0; i < 150; i++) {
+      const x = rnd() * S, y = rnd() * S, r = 16 + rnd() * 92;
+      const grd = g.createRadialGradient(x, y, 0, x, y, r);
+      grd.addColorStop(0, `hsla(${34 + rnd() * 16},${6 + rnd() * 12}%,${rnd() < 0.5 ? 58 + rnd() * 16 : 40 + rnd() * 12}%,0.14)`);
+      grd.addColorStop(1, 'hsla(0,0%,0%,0)');
+      g.fillStyle = grd; g.beginPath(); g.arc(x, y, r, 0, 7); g.fill();
+    }
+    for (let i = 0; i < 5200; i++) {
+      const x = rnd() * S, y = rnd() * S, r = 0.6 + rnd() * 1.9;
+      const v = Math.round(clamp(128 + (rnd() - 0.5) * 190, 40, 235));
+      g.fillStyle = `rgba(${v},${v - 4},${v - 14},${0.16 + rnd() * 0.34})`;
+      g.beginPath(); g.arc(x, y, r, 0, 7); g.fill();
+      const bv = Math.round(clamp(128 + (rnd() - 0.5) * 200, 30, 240));
+      gb.fillStyle = `rgb(${bv},${bv},${bv})`;
+      gb.beginPath(); gb.arc(x, y, r * 0.9, 0, 7); gb.fill();
+    }
+    const map = new THREE.CanvasTexture(c);
+    map.colorSpace = THREE.SRGBColorSpace;
+    map.wrapS = map.wrapT = THREE.RepeatWrapping;
+    const bump = new THREE.CanvasTexture(b);
+    bump.wrapS = bump.wrapT = THREE.RepeatWrapping;
+    return { map, bump };
+  }
+
+  /* --- 实例专用材质（steel / 烤漆砝码材质与主场景共用） --- */
+  const instMats = {
+    blade: new THREE.MeshStandardMaterial({ color: '#eef3f8', roughness: 0.30, metalness: 0.82, envMapIntensity: 1.5 }),
+    handle: new THREE.MeshStandardMaterial({ color: '#4a3627', roughness: 0.56, metalness: 0.04 }),
+    strap: new THREE.MeshStandardMaterial({ color: '#2f4f7a', roughness: 0.74, metalness: 0.02 }),
+    board: new THREE.MeshStandardMaterial({ color: '#e8b93a', roughness: 0.42, metalness: 0.06 }),
+    sole: new THREE.MeshStandardMaterial({ color: '#22262d', roughness: 0.46, metalness: 0.08 }),
+    boot: new THREE.MeshStandardMaterial({ color: '#7c2d3a', roughness: 0.62, metalness: 0.02 })
+  };
+  const CONTACT_COLOR = { small: 0xf87171, big: 0x38bdf8 };
+  /* 接触面高亮片的厚度：压头「坐在」这片薄片上，所以压头整体比凹陷底部高 CONTACT_T */
+  const CONTACT_T = 0.22;
+
+  /* --- 梯形棱柱：截面在 xy（下宽 wb、上宽 wt、高 h），沿 z 挤出 L --- */
+  function trapPrism(wb, wt, h, L) {
+    const s = new THREE.Shape();
+    s.moveTo(-wb / 2, 0); s.lineTo(wb / 2, 0); s.lineTo(wt / 2, h); s.lineTo(-wt / 2, h); s.closePath();
+    const g = new THREE.ExtrudeGeometry(s, { depth: L, bevelEnabled: false });
+    g.translate(0, 0, -L / 2);
+    return g;
+  }
+
+  /* --- 四种压头造型。约定：压头局部 y = 0 就是它的接触平面。 --- */
+  function buildPin(tip, w) {
+    const g = new THREE.Group();
+    if (tip) {
+      const cone = new THREE.Mesh(new THREE.ConeGeometry(w / 2, w * 2.8, 26), steelMat);
+      cone.rotation.x = Math.PI;                       // 尖端朝下，落在 y = 0
+      cone.position.y = w * 1.4;
+      g.add(cone);
+      const rs = clamp(w * 0.5, 0.11, 0.6);
+      const shaft = new THREE.Mesh(new THREE.CylinderGeometry(rs, rs, 6.2, 22), steelMat);
+      shaft.position.y = w * 2.8 + 3.1;
+      g.add(shaft);
+      const cap = new THREE.Mesh(new THREE.CylinderGeometry(1.85, 1.85, 0.65, 30), enamelCapMat);
+      cap.position.y = w * 2.8 + 6.5;
+      g.add(cap);
+    } else {
+      const cap = new THREE.Mesh(new THREE.CylinderGeometry(w / 2, w / 2, 0.65, 44), enamelCapMat);
+      cap.position.y = 0.325;
+      g.add(cap);
+      const rs = clamp(w * 0.09, 0.3, 0.7);
+      const shaft = new THREE.Mesh(new THREE.CylinderGeometry(rs, rs, 6.4, 22), steelMat);
+      shaft.position.y = 3.85;
+      g.add(shaft);
+      const cone = new THREE.Mesh(new THREE.ConeGeometry(rs, 1.5, 22), steelMat);
+      cone.position.y = 7.8;
+      g.add(cone);
+    }
+    return g;
+  }
+
+  function buildKnife(edge, w) {
+    const g = new THREE.Group();
+    const L = 10, H = edge ? 5.0 : 3.4;
+    const wb = w;                                       // 下缘 = 接触面
+    const wt = edge ? Math.max(2.3, w * 0.9) : w * 0.86;  // 刃口薄、刀背厚，都按 w 缩放
+    g.add(new THREE.Mesh(trapPrism(wb, wt, H, L), instMats.blade));
+    const hd = new THREE.Mesh(new THREE.BoxGeometry(2.7, 1.5, 6.2), instMats.handle);
+    hd.position.set(0, H * 0.62, L / 2 + 2.6);
+    g.add(hd);
+    return g;
+  }
+
+  function buildStrap(wide, w) {
+    const g = new THREE.Group();
+    const L = 11;
+    const band = new THREE.Mesh(new THREE.BoxGeometry(w, 0.45, L), instMats.strap);
+    band.position.y = 0.225;
+    g.add(band);
+    const arc = new THREE.Mesh(
+      new THREE.TorusGeometry(3.4, Math.max(0.3, Math.min(w, 4) * 0.11), 10, 26, Math.PI),
+      instMats.strap);
+    arc.rotation.y = Math.PI / 2;
+    arc.position.set(0, 0.225, -L / 2 + 0.4);
+    g.add(arc);
+    const sh = new THREE.Mesh(new THREE.CylinderGeometry(1.9, 1.9, 6.4, 20), instMats.boot);
+    sh.rotation.z = Math.PI / 2;
+    sh.position.set(0, 4.5, -L / 2 + 3.0);
+    g.add(sh);
+    return g;
+  }
+
+  function buildBoot(heel, w) {
+    const g = new THREE.Group();
+    if (heel) {
+      const h = new THREE.Mesh(new THREE.CylinderGeometry(w / 2, w * 0.44, 4.2, 26), instMats.sole);
+      h.position.y = 2.1;
+      g.add(h);
+      const sole = new THREE.Mesh(new THREE.BoxGeometry(3.4, 0.7, 7.6), instMats.sole);
+      sole.position.set(0, 4.55, 1.1);
+      g.add(sole);
+      const upper = new THREE.Mesh(new THREE.BoxGeometry(3.1, 2.7, 5.2), instMats.boot);
+      upper.position.set(0, 6.25, 1.5);
+      g.add(upper);
+    } else {
+      const L = 14;
+      const bd = new THREE.Mesh(new THREE.BoxGeometry(w, 0.55, L), instMats.board);
+      bd.position.y = 0.275;
+      g.add(bd);
+      const tip = new THREE.Mesh(new THREE.BoxGeometry(w, 0.5, 3.2), instMats.board);
+      tip.position.set(0, 1.05, -L / 2 - 0.9);
+      tip.rotation.x = -0.52;
+      g.add(tip);
+      const boot = new THREE.Mesh(new THREE.BoxGeometry(3.7, 3.0, 4.8), instMats.boot);
+      boot.position.set(0, 2.05, 1.0);
+      g.add(boot);
+    }
+    return g;
+  }
+
+  /* --- 第二套渲染器：独立画布。已在本机无头环境验证两上下文可共存。 --- */
+  const instCanvas = $('instCanvas');
+  const instStage = $('instStage');
+  const instBars = $('instBars');
+  const instState = { id: 'pin' };
+  let instRenderer = null, instScene = null, instCamera = null;
+  let instReady = false, instDirty = true, instFrames = 0;
+  const requestInstRender = () => { instDirty = true; };
+  const instPads = {}, instPressers = {}, instArrows = {};
+
+  const PAD_W = 20, PAD_D = 16, PAD_H = 4.4, PAD_X = 11.5;
+  const PAD_SEG_X = 68, PAD_SEG_Z = 54;
+  /* 第二套场景的内存预算刻意压得很低：本机常年 swap 打满，
+     两个 WebGL 上下文 + 2048² 阴影贴图会把进程直接 OOM 掉（exit 137）。
+     这里用 1024² 阴影 + 粗网格，观感几乎不变、峰值内存降一个档。 */
+  const INST_SHADOWS = true, INST_SHADOW_SIZE = 1024;
+
+  function buildInstScene() {
+    if (!instCanvas || !instStage) return false;
+    try {
+      instRenderer = new THREE.WebGLRenderer({ canvas: instCanvas, antialias: true, alpha: false, powerPreference: 'high-performance' });
+    } catch (_) {
+      const n = document.createElement('div');
+      n.className = 'no-webgl';
+      n.textContent = '当前浏览器无法启动三维渲染，生活实例场景不可用。请开启硬件加速后重试。';
+      instStage.appendChild(n);
+      return false;
+    }
+    instRenderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    instRenderer.outputColorSpace = THREE.SRGBColorSpace;
+    instRenderer.toneMapping = THREE.ACESFilmicToneMapping;
+    instRenderer.toneMappingExposure = 0.9;
+    instRenderer.shadowMap.enabled = INST_SHADOWS;
+    instRenderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+    instScene = new THREE.Scene();
+    instScene.background = new THREE.Color('#d7dbe0');
+    instScene.fog = new THREE.Fog('#cfd4da', 190, 420);
+    instScene.environment = studioEnv(instRenderer);   // 每个上下文各一份，不能共用
+
+    instCamera = new THREE.PerspectiveCamera(30, 1, 1, 900);
+
+    instScene.add(new THREE.HemisphereLight('#e9f1fa', '#4a4238', 0.44));
+    instScene.add(new THREE.AmbientLight('#ffffff', 0.10));
+    const k2 = new THREE.DirectionalLight('#fff2dd', 1.9);
+    k2.position.set(-38, 58, 36);
+    k2.castShadow = INST_SHADOWS;
+    k2.shadow.mapSize.set(INST_SHADOW_SIZE, INST_SHADOW_SIZE);
+    k2.shadow.camera.left = -34; k2.shadow.camera.right = 34;
+    k2.shadow.camera.top = 30; k2.shadow.camera.bottom = -30;
+    k2.shadow.camera.near = 20; k2.shadow.camera.far = 200;
+    k2.shadow.bias = -0.0006; k2.shadow.normalBias = 0.03;
+    instScene.add(k2); instScene.add(k2.target);
+    k2.target.position.set(0, 2, 0);
+    const f2 = new THREE.DirectionalLight('#dce9f8', 0.6);
+    f2.position.set(46, 28, 22);
+    instScene.add(f2);
+
+    const bd = new THREE.Mesh(
+      new THREE.PlaneGeometry(560, 400),
+      new THREE.MeshBasicMaterial({ map: makeBackdropMap(), fog: false })
+    );
+    bd.position.set(0, 130, -120);
+    instScene.add(bd);
+
+    const benchMap2 = makeBenchMap();
+    sharpen(benchMap2);
+    const bench2 = new THREE.Mesh(
+      new THREE.BoxGeometry(300, 7, 200),
+      new THREE.MeshStandardMaterial({ map: benchMap2, bumpMap: benchMap2, bumpScale: 0.05, roughness: 0.74, metalness: 0.02 })
+    );
+    bench2.position.set(0, -PAD_H - 3.5, 0);
+    bench2.receiveShadow = true;
+    instScene.add(bench2);
+
+    const gm = makeGroundMap();
+    gm.map.repeat.set(3.0, 2.4); gm.bump.repeat.set(3.0, 2.4);
+    sharpen(gm.map); sharpen(gm.bump);
+    const groundSideMat = new THREE.MeshStandardMaterial({ map: gm.map, bumpMap: gm.bump, bumpScale: 0.14, roughness: 0.94, metalness: 0 });
+    /* 顶面单独一份材质：开 vertexColors，用来做「陷得越深越暗」的顶点遮蔽，
+       否则斜光下压痕几乎读不出来（与主实验 deformSurface 同一套做法）。 */
+    const groundTopMat = new THREE.MeshStandardMaterial({ map: gm.map, bumpMap: gm.bump, bumpScale: 0.14, roughness: 0.94, metalness: 0, vertexColors: true });
+    const sideGeo2 = (() => {
+      const g = new THREE.BoxGeometry(PAD_W, PAD_H, PAD_D);
+      const idx = g.getIndex(), keep = [];
+      for (let i = 0; i < idx.count; i++) if (i < 12 || i >= 18) keep.push(idx.getX(i));
+      g.setIndex(keep);
+      return g;
+    })();
+
+    for (const side of ['small', 'big']) {
+      const sx = side === 'small' ? -PAD_X : PAD_X;
+      const box = new THREE.Mesh(sideGeo2, groundSideMat);
+      box.position.set(sx, -PAD_H / 2, 0);
+      box.castShadow = true; box.receiveShadow = true;
+      instScene.add(box);
+
+      const geo = new THREE.PlaneGeometry(PAD_W, PAD_D, PAD_SEG_X, PAD_SEG_Z);
+      geo.rotateX(-Math.PI / 2);
+      geo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(geo.attributes.position.count * 3).fill(1), 3));
+      const mesh = new THREE.Mesh(geo, groundTopMat);
+      mesh.position.set(sx, 0, 0);
+      mesh.receiveShadow = true;
+      instScene.add(mesh);
+      instPads[side] = { geo, mesh, x: sx };
+    }
+
+    /* 压头：8 个一次建好，切换实例只改 visible 与接触面尺寸 */
+    const CONTACT_MAT = {
+      small: new THREE.MeshStandardMaterial({ color: CONTACT_COLOR.small, roughness: 0.5, metalness: 0.05, transparent: true, opacity: 0.55 }),
+      big: new THREE.MeshStandardMaterial({ color: CONTACT_COLOR.big, roughness: 0.5, metalness: 0.05, transparent: true, opacity: 0.55 })
+    };
+    for (const ins of INSTANCES) {
+      const dv = INST_DERIVED[ins.id];
+      for (const side of ['small', 'big']) {
+        const w = side === 'small' ? dv.wSmall : dv.wBig;
+        let g;
+        if (ins.id === 'pin') g = buildPin(side === 'small', w);
+        else if (ins.id === 'knife') g = buildKnife(side === 'small', w);
+        else if (ins.id === 'bag') g = buildStrap(side === 'big', w);
+        else g = buildBoot(side === 'small', w);
+        g.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+
+        // 接触面高亮块：尺寸就是 w × footD（细带 / 刀刃 / 滑雪板沿 z 更长），
+        // 既标出“受力面积”落在哪儿，也是自检唯一可量的真实几何（不是意图值）
+        const footD = (side === 'small' ? ins.low.footD : ins.high.footD) || w;
+        const patch = new THREE.Mesh(new THREE.BoxGeometry(w, CONTACT_T, footD), CONTACT_MAT[side]);
+        patch.position.y = -CONTACT_T / 2;
+        patch.userData.contact = true;
+        patch.castShadow = false; patch.receiveShadow = false;
+        g.add(patch);
+
+        g.position.set(side === 'small' ? -PAD_X : PAD_X, 0, 0);
+        g.visible = false;
+        instScene.add(g);
+        instPressers[side + ':' + ins.id] = g;
+      }
+    }
+
+    /* 压力箭头：两侧等长（同一个压力 F），长度不随实例变 */
+    for (const side of ['small', 'big']) {
+      const sx = side === 'small' ? -PAD_X : PAD_X;
+      const a = new THREE.ArrowHelper(new THREE.Vector3(0, -1, 0), new THREE.Vector3(sx, 0, 0), 7.0, 0xe11d48, 2.3, 1.35);
+      instScene.add(a);
+      instArrows[side] = a;
+    }
+
+    instReady = true;
+    return true;
+  }
+
+  /* --- 软垫顶面下陷：与主实验 deformHeight 同族（平底 + 边缘堆料） --- */
+  function padDent(x, z, w, d, round) {
+    if (d <= 1e-6) return 0;
+    const r = Math.max(w / 2, 1e-3);
+    const t = round ? Math.hypot(x, z) / r : Math.max(Math.abs(x), Math.abs(z)) / r;
+    let off = -d * (1 - smoothstep(0.86, 1.62, t));
+    const rim = Math.max(0, 1 - Math.abs(t - 1.95) / 0.95);
+    off += d * 0.17 * rim * rim;
+    return off;
+  }
+  const padBase = (x, z) => 0.045 * Math.sin(x * 0.42) * Math.cos(z * 0.5);
+
+  function deformInstPad(side, w, d, round) {
+    const p = instPads[side];
+    if (!p) return;
+    const pos = p.geo.attributes.position;
+    const col = p.geo.attributes.color;
+    const inv = d > 1e-6 ? 1 / d : 0;
+    for (let i = 0; i < pos.count; i++) {
+      const x = pos.getX(i), z = pos.getZ(i);
+      const off = padDent(x, z, w, d, round);
+      pos.setY(i, padBase(x, z) + off);
+      // 顶点环境光遮蔽：陷得越深越暗、边缘堆料略亮，让压痕在斜光下也读得出来
+      const dn = clamp(-off * inv, 0, 1);
+      const s = clamp(1 - 0.55 * Math.pow(dn, 0.65), 0.34, 1.06);
+      col.setXYZ(i, s, s, s);
+    }
+    pos.needsUpdate = true;
+    col.needsUpdate = true;
+    p.geo.computeVertexNormals();
+    p.geo.computeBoundingSphere();
+  }
+
+  /* --- 数值格式 --- */
+  const fmtAreaI = (S) => {
+    const mm2 = S * 1e6;
+    if (mm2 < 100) return `${mm2.toFixed(2)} mm²`;
+    if (S < 1e-2) return `${(S * 1e4).toFixed(2)} cm²`;
+    return `${(S * 1e4).toFixed(0)} cm²`;
+  };
+  const fmtPressI = (p) => {
+    if (p < 1e4) return `${(p / 1000).toFixed(2)} kPa`;
+    if (p < 1e6) return `${(p / 1000).toFixed(0)} kPa`;
+    if (p < 1e9) return `${(p / 1e6).toFixed(1)} MPa`;
+    return `${fmtSci(p, 2)} Pa`;
+  };
+
+  /* --- 对数条形图（横轴 log10，跨实例固定量程，两行互为镜像） --- */
+  function drawInstBars(ins, dv) {
+    if (!instBars) return;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const W = instBars.clientWidth || 300, H = instBars.clientHeight || 116;
+    if (instBars.width !== Math.round(W * dpr) || instBars.height !== Math.round(H * dpr)) {
+      instBars.width = Math.round(W * dpr); instBars.height = Math.round(H * dpr);
+    }
+    const g = instBars.getContext('2d');
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    g.clearRect(0, 0, W, H);
+    g.fillStyle = 'rgba(9,22,38,0.72)';
+    g.fillRect(0, 0, W, H);
+
+    const padL = 40, padR = 8, padT = 8, rowH = (H - padT - 8) / 2;
+    const trackW = W - padL - padR;
+    const rows = [
+      { key: 'S', label: '受力面积', lo: LOG_S0, hi: LOG_S1, a: ins.low.S, b: ins.high.S, unit: fmtAreaI },
+      { key: 'p', label: '压强', lo: LOG_P0, hi: LOG_P1, a: dv.pSmall, b: dv.pBig, unit: fmtPressI }
+    ];
+    g.font = '9px "Helvetica Neue", Arial, sans-serif';
+    for (let r = 0; r < rows.length; r++) {
+      const row = rows[r];
+      const yTop = padT + r * rowH;
+      g.fillStyle = 'rgba(150,180,205,0.9)';
+      g.textAlign = 'left'; g.textBaseline = 'top';
+      g.fillText(row.label, 4, yTop + 2);
+      const span = row.hi - row.lo;
+      const len = (v) => clamp((Math.log10(v) - row.lo) / span, 0, 1) * trackW;
+      const barH = rowH * 0.30;
+      for (const [k, v, col, name] of [[0, row.a, '#f87171', '左'], [1, row.b, '#38bdf8', '右']]) {
+        const y = yTop + 4 + k * (barH + 3);
+        g.fillStyle = 'rgba(148,178,205,0.16)';
+        g.fillRect(padL, y, trackW, barH);
+        g.fillStyle = col;
+        g.fillRect(padL, y, Math.max(1.5, len(v)), barH);
+        g.fillStyle = 'rgba(226,240,250,0.95)';
+        g.textBaseline = 'middle';
+        g.fillText(row.unit(v), padL + len(v) + 4 > W - padR - 46 ? padL + 4 : padL + len(v) + 4, y + barH / 2);
+        g.textBaseline = 'top';
+      }
+      g.fillStyle = 'rgba(140,170,195,0.75)';
+      g.textAlign = 'right'; g.textBaseline = 'bottom';
+      g.fillText(`10${supNum(row.lo)} ~ 10${supNum(row.hi)}`, W - padR, yTop + rowH - 1);
+      g.textAlign = 'left';
+    }
+  }
+
+  /* --- 刷新实例面板 --- */
+  const instEls = {
+    tagL: $('instTagL'), tagR: $('instTagR'),
+    labL: $('iLabL'), labR: $('iLabR'),
+    fL: $('iFL'), fR: $('iFR'),
+    sL: $('iSL'), sR: $('iSR'),
+    pL: $('iPL'), pR: $('iPR'),
+    dL: $('iDL'), dR: $('iDR'),
+    q: $('instQ'), a: $('instA'), verdict: $('instVerdict'),
+    scale: $('instScale'), cards: $('instCards')
+  };
+
+  function refreshInst() {
+    const ins = INSTANCES.find((i) => i.id === instState.id) || INSTANCES[0];
+    const dv = INST_DERIVED[ins.id];
+
+    for (const side of ['small', 'big']) {
+      const d = side === 'small' ? dv.dSmall : dv.dBig;
+      const w = side === 'small' ? dv.wSmall : dv.wBig;
+      deformInstPad(side, w, d, ins.round);
+    }
+    for (const ins2 of INSTANCES) {
+      for (const side of ['small', 'big']) {
+        instPressers[side + ':' + ins2.id].visible = ins2.id === ins.id;
+      }
+    }
+    for (const side of ['small', 'big']) {
+      const d = side === 'small' ? dv.dSmall : dv.dBig;
+      const g = instPressers[side + ':' + ins.id];
+      g.position.y = -d + CONTACT_T;                   // 压头坐在接触面薄片上
+      // 箭头从压头顶上方向下指；长度两侧恒定（同一个压力），位置随压头高度走但有上限
+      const box = new THREE.Box3().setFromObject(g);
+      const topY = Math.max(box.max.y, 6);
+      const a = instArrows[side];
+      a.position.set(g.position.x, Math.min(topY + 4.2, 12.2), 0);
+      a.setLength(3.8, 1.6, 1.0);
+    }
+
+    if (instEls.tagL) instEls.tagL.textContent = ins.low.label;
+    if (instEls.tagR) instEls.tagR.textContent = ins.high.label;
+    instEls.labL.textContent = ins.low.label;
+    instEls.labR.textContent = ins.high.label;
+    instEls.fL.textContent = `${ins.F} N`;
+    instEls.fR.textContent = `${ins.F} N`;
+    instEls.sL.textContent = fmtAreaI(dv.SSmall);
+    instEls.sR.textContent = fmtAreaI(dv.SBig);
+    instEls.pL.textContent = fmtPressI(dv.pSmall);
+    instEls.pR.textContent = fmtPressI(dv.pBig);
+    instEls.dL.textContent = `${(dv.dSmall * 10).toFixed(2)} mm`;
+    instEls.dR.textContent = `${(dv.dBig * 10).toFixed(2)} mm`;
+    instEls.q.textContent = ins.q;
+    instEls.a.textContent = ins.a;
+    instEls.verdict.innerHTML =
+      `同一个压力 <b>${ins.F} N</b>：右边受力面积是左边的 <b>${dv.ratio.toFixed(dv.ratio < 10 ? 2 : 0)} 倍</b>，` +
+      `压强就只有左边的 <b>1/${dv.ratio.toFixed(dv.ratio < 10 ? 2 : 0)}</b>，下陷深度从 ` +
+      `<b>${(dv.dSmall * 10).toFixed(2)} mm</b> 变成 <b>${(dv.dBig * 10).toFixed(2)} mm</b>。`;
+    if (instEls.scale) {
+      instEls.scale.textContent =
+        `3D 中接触面按真实线性尺寸比 √${dv.ratio.toFixed(dv.ratio < 10 ? 2 : 0)} ≈ ${dv.k.toFixed(1)} 倍绘制` +
+        (dv.wSmall <= INST_SMALL_MIN + 1e-9 ? `（左边已缩到显示下限 ${INST_SMALL_MIN} cm）` : '') +
+        `，左侧接触面 ${dv.wSmall.toFixed(2)} cm、右侧 ${dv.wBig.toFixed(2)} cm。`;
+    }
+
+    // 卡片高亮
+    if (instEls.cards) {
+      Array.from(instEls.cards.querySelectorAll('[data-inst]')).forEach((b) => {
+        b.classList.toggle('active', b.dataset.inst === ins.id);
+      });
+    }
+    drawInstBars(ins, dv);
+    requestInstRender();
+  }
+
+  function setInstance(id) {
+    if (!INSTANCES.some((i) => i.id === id)) return;
+    instState.id = id;
+    refreshInst();
+  }
+
+  /* --- 实例面板交互 --- */
+  if (instEls.cards) {
+    instEls.cards.addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-inst]');
+      if (btn) setInstance(btn.dataset.inst);
+    });
+  }
+
+  /* --- 实例场景相机与尺寸 --- */
+  const instView = { yaw: -0.14, pitch: 0.37, zoom: 1 };
+  /* 相机距离按画布宽高比自动求：竖屏 / 窄屏时自动退远，保证左右两块软垫都在画面内
+     （不写死距离 —— 写死会让窄屏把两侧裁掉，那正是本页最要紧的对比）。 */
+  const SCENE_HALF_W = PAD_X + PAD_W / 2 + 2.5;
+  const SCENE_HALF_H = 10.5;
+  function fitInstDist() {
+    if (!instCamera) return 46;
+    const vHalf = Math.tan(instCamera.fov * Math.PI / 360);
+    const aspect = Math.max(instCamera.aspect || 1, 0.30);
+    return Math.min(150, Math.max(SCENE_HALF_W / (vHalf * aspect), SCENE_HALF_H / vHalf));
+  }
+  function updateInstCamera() {
+    if (!instCamera) return;
+    const t = new THREE.Vector3(0, 3.0, 0);
+    const d = fitInstDist() * instView.zoom;
+    const cp = Math.cos(instView.pitch), sp = Math.sin(instView.pitch);
+    instCamera.position.set(
+      t.x + d * cp * Math.sin(instView.yaw),
+      t.y + d * sp,
+      t.z + d * cp * Math.cos(instView.yaw)
+    );
+    instCamera.lookAt(t);
+    requestInstRender();
+  }
+
+  function resizeInst() {
+    if (!instReady || !instStage) return;
+    const w = instStage.clientWidth, h = instStage.clientHeight;
+    if (!w || !h) return;
+    instRenderer.setSize(w, h, false);
+    instCamera.aspect = w / h;
+    instCamera.updateProjectionMatrix();
+    updateInstCamera();                                 // 距离随宽高比重算
+    requestInstRender();
+  }
+
+  /* --- 实例场景环绕交互 --- */
+  if (instCanvas) {
+    let idrag = false, ilx = 0, ily = 0;
+    instCanvas.style.cursor = 'grab';
+    instCanvas.addEventListener('pointerdown', (e) => {
+      idrag = true; ilx = e.clientX; ily = e.clientY;
+      try { instCanvas.setPointerCapture(e.pointerId); } catch (_) { /* ignore */ }
+      instCanvas.style.cursor = 'grabbing';
+    });
+    instCanvas.addEventListener('pointermove', (e) => {
+      if (!idrag) return;
+      const dx = (e.clientX - ilx) / Math.max(instCanvas.clientWidth, 1);
+      const dy = (e.clientY - ily) / Math.max(instCanvas.clientHeight, 1);
+      ilx = e.clientX; ily = e.clientY;
+      instView.yaw -= dx * 2.6;
+      instView.pitch = clamp(instView.pitch + dy * 2.0, 0.02, 1.20);
+      updateInstCamera();
+    });
+    const iend = (e) => {
+      idrag = false;
+      instCanvas.style.cursor = 'grab';
+      try { instCanvas.releasePointerCapture(e.pointerId); } catch (_) { /* ignore */ }
+    };
+    instCanvas.addEventListener('pointerup', iend);
+    instCanvas.addEventListener('pointercancel', iend);
+    instCanvas.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      instView.zoom = clamp(instView.zoom * (1 + Math.sign(e.deltaY) * 0.08), 0.45, 3.0);
+      updateInstCamera();
+    }, { passive: false });
+  }
+
+  /* --- 实例场景自检取样：一律读【真实画出去的几何】，不重算意图值 --- */
+  function instPadSample(side, x, z) {
+    const p = instPads[side];
+    if (!p) return NaN;
+    const pos = p.geo.attributes.position;
+    let best = Infinity, by = NaN;
+    for (let i = 0; i < pos.count; i++) {
+      const dx = pos.getX(i) - x, dz = pos.getZ(i) - z;
+      const d2 = dx * dx + dz * dz;
+      if (d2 < best) { best = d2; by = pos.getY(i); }
+    }
+    return by;
+  }
+  function instContactBox(side) {
+    const g = instPressers[side + ':' + instState.id];
+    if (!g) return null;
+    let mesh = null;
+    g.traverse((o) => { if (o.isMesh && o.userData && o.userData.contact) mesh = o; });
+    if (!mesh) return null;
+    mesh.geometry.computeBoundingBox();
+    const bb = mesh.geometry.boundingBox;
+    return { w: bb.max.x - bb.min.x, d: bb.max.z - bb.min.z, y: g.position.y };
+  }
+
+  /* --- 画面快照（自检用）：WebGL 画布在合成后会被清空，所以必须在【render 的同一个 rAF】
+     里把画面搬到一张 2D 画布上，之后再读像素才可靠。 --- */
+  const instShots = {};
+  let instShotReq = null;
+  const SHOT_MAX_W = 420;                 // 快照降采样上限：整张读 ImageData 在本机太贵
+  function takeInstShot(key) {
+    const cv = instCanvas;
+    const sc = Math.min(1, SHOT_MAX_W / Math.max(cv.clientWidth, 1));
+    const w = Math.max(2, Math.round(cv.clientWidth * sc));
+    const h = Math.max(2, Math.round(cv.clientHeight * sc));
+    let c2 = instShots[key];
+    if (!c2 || c2.width !== w || c2.height !== h) { c2 = newCanvas(w, h); instShots[key] = c2; }
+    const g = c2.getContext('2d');
+    g.clearRect(0, 0, w, h);
+    g.drawImage(cv, 0, 0, w, h);
+    return true;
+  }
+  function shotStats(key, x0, y0, x1, y1, thr) {
+    const c2 = instShots[key];
+    if (!c2) return { dark: -1, nonBg: -1, mean: -1, n: 0 };
+    const cv = instCanvas;
+    const sc = c2.width / Math.max(cv.clientWidth, 1);
+    const X0 = Math.max(0, Math.round(x0 * sc)), X1 = Math.min(c2.width, Math.round(x1 * sc));
+    const Y0 = Math.max(0, Math.round(y0 * sc)), Y1 = Math.min(c2.height, Math.round(y1 * sc));
+    if (X1 - X0 < 2 || Y1 - Y0 < 2) return { dark: -1, nonBg: -1, mean: -1, n: 0 };
+    const d = c2.getContext('2d').getImageData(X0, Y0, X1 - X0, Y1 - Y0).data;
+    let dark = 0, nonBg = 0, tot = 0, sum = 0;
+    for (let i = 0; i < d.length; i += 4) {
+      tot++;
+      const lum = (0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]) / 255;
+      const sat = Math.max(d[i], d[i + 1], d[i + 2]) - Math.min(d[i], d[i + 1], d[i + 2]);
+      sum += lum;
+      if (lum < thr) dark++;
+      if (lum * 255 < 178 || sat > 22) nonBg++;
+    }
+    return { dark: dark / tot, nonBg: nonBg / tot, mean: sum / tot, n: tot };
+  }
+  function shotDiff(a, b) {
+    const A = instShots[a], B = instShots[b];
+    if (!A || !B || A.width !== B.width || A.height !== B.height) return -1;
+    const da = A.getContext('2d').getImageData(0, 0, A.width, A.height).data;
+    const db = B.getContext('2d').getImageData(0, 0, B.width, B.height).data;
+    let n = 0;
+    const tot = da.length / 4;
+    for (let i = 0; i < da.length; i += 4) {
+      if (Math.abs(da[i] - db[i]) + Math.abs(da[i + 1] - db[i + 1]) + Math.abs(da[i + 2] - db[i + 2]) > 30) n++;
+    }
+    return n / tot;
+  }
+
+  /* ==========================================================================
+     十二、启动
      ========================================================================== */
   canvas.style.cursor = 'grab';
   refresh();
@@ -1188,10 +1896,28 @@ import * as THREE from './assets/optics-three.min.js';
   window.addEventListener('resize', () => { resize(); drawProfile(computeState()); });
   resize();
 
+  /* --- 生活实例场景启动（失败不拖累主实验） --- */
+  if (buildInstScene()) {
+    refreshInst();
+    updateInstCamera();
+    resizeInst();
+    const ro2 = new ResizeObserver(() => { resizeInst(); });
+    ro2.observe(instStage);
+    window.addEventListener('resize', () => { resizeInst(); });
+  } else {
+    instReady = false;
+  }
+
   (function loop() {
     if (dirty) {
       renderer.render(scene, camera);
       dirty = false;
+    }
+    if (instReady && instDirty) {
+      instRenderer.render(instScene, instCamera);
+      instDirty = false;
+      instFrames++;
+      if (instShotReq) { takeInstShot(instShotReq); instShotReq = null; }
     }
     requestAnimationFrame(loop);
   })();
@@ -1202,6 +1928,88 @@ import * as THREE from './assets/optics-three.min.js';
     setWeights, refresh, updateCamera, VIEWS,
     set(mut) { Object.assign(state, mut); refresh(); },
     setToggle(k, v) { toggles[k] = !!v; if (k === 'arrow') arrow.visible = toggles.arrow; if (k === 'refs') refGroup.visible = toggles.refs; requestRender(); },
-    camera, renderer, scene
+    camera, renderer, scene,
+    inst: {
+      ready: () => instReady,
+      list: () => INSTANCES.map((i) => {
+        const d = INST_DERIVED[i.id];
+        return {
+          id: i.id, name: i.name, F: i.F, round: !!i.round,
+          lowLabel: i.low.label, highLabel: i.high.label,
+          lowDesc: i.low.desc, highDesc: i.high.desc,
+          SSmall: d.SSmall, SBig: d.SBig,
+          pSmall: d.pSmall, pBig: d.pBig,
+          dSmall: d.dSmall, dBig: d.dBig,
+          wSmall: d.wSmall, wBig: d.wBig, k: d.k, ratio: d.ratio,
+          footDSmall: d.footDSmall, footDBig: d.footDBig,
+          sigma: i.sigma
+        };
+      }),
+      current: () => instState.id,
+      set: (id) => setInstance(id),
+      refresh: () => refreshInst(),
+      frames: () => instFrames,
+      dirty: () => instDirty,
+      capture: (key) => { instShotReq = key; requestInstRender(); return true; },
+      shotStats: (key, x0, y0, x1, y1, thr) => shotStats(key, x0, y0, x1, y1, thr),
+      shotDiff: (a, b) => shotDiff(a, b),
+      shotSize: (key) => (instShots[key] ? { w: instShots[key].width, h: instShots[key].height } : null),
+      contact: (side) => instContactBox(side),
+      pressers: () => {
+        const out = {};
+        for (const k in instPressers) out[k] = instPressers[k].visible;
+        return out;
+      },
+      padSample: (side, x, z) => instPadSample(side, x, z),
+      padDent: (x, z, w, d, round) => padDent(x, z, w, d, round),
+      dentDepth: (p, sigma, dmax) => dentDepth(p, sigma, dmax),
+      widths: (Ss, Sb) => instWidths(Ss, Sb),
+      constants: () => ({ INST_BIG_W, INST_SMALL_MIN, INST_DMAX, CONTACT_T, PAD_W, PAD_D, PAD_H, PAD_X, PAD_SEG_X, PAD_SEG_Z }),
+      padBox: (side) => {
+        const p = instPads[side];
+        if (!p) return null;
+        p.geo.computeBoundingBox();
+        const bb = p.geo.boundingBox;
+        return { w: bb.max.x - bb.min.x, d: bb.max.z - bb.min.z, x: p.x };
+      },
+      presserTop: (side) => {
+        const g = instPressers[side + ':' + instState.id];
+        if (!g) return NaN;
+        return new THREE.Box3().setFromObject(g).max.y;
+      },
+      arrowLen: (side) => (instArrows[side] ? instArrows[side].position.y : NaN),
+      // 箭头【实际画出去】的尖端 y（读真实几何，不是「打算用的长度」）
+      arrowTip: (side) => {
+        const a = instArrows[side];
+        if (!a) return NaN;
+        return new THREE.Box3().setFromObject(a).min.y;
+      },
+      camera: () => instCamera,
+      view: instView,
+      setView: (v) => { Object.assign(instView, v); updateInstCamera(); },
+      resize: () => resizeInst(),
+      scene: () => instScene,
+      renderer: () => instRenderer,
+      // 两个上下文各自的 environment —— 用来钉住「没有退化成共用同一个对象」
+      envMaps: () => ({ main: scene.environment, inst: instScene.environment }),
+      /* 顶点遮蔽 AO 的【实际取值】—— 读真正上传给 GPU 的 color 属性，
+         不是「打算用的系数」（拿像素猜会把几何/光照的差异误当成 AO）。 */
+      aoStats: (side) => {
+        const p = instPads[side];
+        if (!p || !p.geo.attributes.color) return null;
+        const pos = p.geo.attributes.position, col = p.geo.attributes.color;
+        let mn = Infinity, mx = -Infinity, mnI = -1, nDark = 0;
+        for (let i = 0; i < col.count; i++) {
+          const v = col.getX(i);
+          if (v < mn) { mn = v; mnI = i; }
+          if (v > mx) mx = v;
+          if (v <= 0.9) nDark++;
+        }
+        return {
+          min: mn, max: mx, n: col.count, darkFrac: nDark / col.count,
+          atMin: { x: pos.getX(mnI), z: pos.getZ(mnI) }
+        };
+      }
+    }
   };
 })();
