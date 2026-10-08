@@ -19,7 +19,7 @@ import * as THREE from './assets/optics-three.min.js';
     f: 10, objP: 35, lensP: 65, scrP: 80,
     sourceY: 12, secondY: 8, second: false, source: 'candle',
     screenRemoved: false, autoScreen: false, observing: false, lastNeedsOff: false,
-    rays: false, virtual: true, labels: false, yaw: -.42, pitch: .21, zoom: 1.06,
+    rays: false, virtual: true, labels: false, rayMode: 'all', yaw: -.42, pitch: .21, zoom: 1.06,
     step: 0, records: {},
     // Written by updateGhost() each frame: whether the image is currently in the eye's view.
     imageVisible: false, imageOnObjectSide: false,
@@ -55,7 +55,10 @@ import * as THREE from './assets/optics-three.min.js';
     const crisp = u > f && !state.screenRemoved && v <= 75 && Math.abs(v-state.sd) <= .45;
     // A real image can only be received while the screen is on the bench.
     return { kind, v, real: u > f, crisp, needsScreenOff: u <= f };
-  };
+  }
+  // 接第 4 节「眼睛和眼镜」：镜片的度数 = 100 / f(m)。本页焦距用 cm，所以 度 = 10000 / f。
+  // 公式与眼睛页是同一份（那边 f 用 m），cm → m 的换算只在这一处发生。
+  const diopterOf = fCm => 100 / (fCm / 100);
   // The letter F is the classic object for showing that a real image is inverted in both
   // directions. Strokes are listed in world (z, y). The lit face points at the lens (+x), and
   // an eye on that side sees screen-right along -z, so the upright bar has to sit at z > 0 for
@@ -443,6 +446,9 @@ import * as THREE from './assets/optics-three.min.js';
 
   function imageY(sourceY,v){return 12-(sourceY-12)*v/state.u;}
   const rays=new THREE.Group();scene.add(rays);
+  // 玻璃镜片的半口径（glassCap 里 R = 5.65）。特殊光线若落在它外面就不画，
+  // 否则会画出一条从镜片旁边飘过去的「光线」，看着像穿模。
+  const LENS_AP=5.65;
   // A ray leaves an object point, bends once in the lens plane and then travels straight.
   // Both transverse axes obey the same rule, so the fan stays correct for the planar F.
   function traceRay(src,LX,stopX,shiftY,shiftZ,color,opacity){
@@ -455,8 +461,29 @@ import * as THREE from './assets/optics-three.min.js';
     lineSegment(rays,hit,V(stopX,YL+sy*dx,ZL+sz*dx),color,opacity+.05);
     return {hit,YL,ZL,sy,sz};
   }
+  // 光线的两种取法：
+  //  · 'all'     —— 物点发出的一束光里取三条等间距采样（看得出会聚/发散，就是「光路」本身）
+  //  · 'special' —— 教材的三条特殊光线作图。每条都能用薄透镜公式独立验证：
+  //      ① 平行主轴入射 ⇒ 打在透镜高度 YL = y0 ⇒ 出射斜率 sy = −(y0−12)/f（过像方焦点 F′）
+  //      ② 过光心入射   ⇒ YL = 12        ⇒ sy = (12−y0)/u（不偏折）
+  //      ③ 过物方焦点 F ⇒ YL = (f·y0 − 12u)/(f − u) ⇒ sy = 0（出射平行主轴）
+  //    u = f 时第 ③ 条的落点发散（分母 → 0），此时不画它。
+  function rayShiftsFor(y0){
+    if(state.rayMode!=='special')return [[-3.7,0],[0,0],[3.7,0]];
+    const u=state.u,f=state.f;
+    const list=[[y0-12,0],[0,0]];
+    const den=f-u;
+    if(Math.abs(den)>1e-6){
+      const YL=(f*y0-12*u)/den;
+      if(Math.abs(YL-12)<=LENS_AP)list.push([YL-12,0]);
+    }
+    return list;
+  }
+  // 自检用：本轮【实际追迹出去】的每条光线（物点、镜面落点、出射斜率）。
+  // 导出这个而不是让自检自己重算 sy —— 自己重算等于拿页面自己的公式验自己。
+  let lastRayTraces=[];
   function refreshRays(){
-    clear(rays);clear(ghostLabels);
+    clear(rays);clear(ghostLabels);lastRayTraces=[];
     const info=status();
     const LX=wx(state.lensP),u=state.u,f=state.f;
     const v=info.v;
@@ -466,13 +493,16 @@ import * as THREE from './assets/optics-three.min.js';
     const seen=updateGhost();
     if(!state.rays)return;
     const stopX=state.screenRemoved?LX+88:wx(state.scrP);
-    const lensShifts=[[-3.7,0],[0,0],[3.7,0]];
-    const active=state.source==='f'
+    // 三条特殊光线是【子午面作图】，所以起点一律投影到 z = 0 的平面上。
+    const special=state.rayMode==='special';
+    const active=(state.source==='f'
       ? F_POINTS.map(p=>({y:p.y,z:p.z,c:'#c98c46'}))
-      : (state.second?[{y:state.sourceY,z:0,c:'#d99a48'},{y:state.secondY,z:0,c:'#4b8fc4'}]:[{y:state.sourceY,z:0,c:'#d99a48'}]);
+      : (state.second?[{y:state.sourceY,z:0,c:'#d99a48'},{y:state.secondY,z:0,c:'#4b8fc4'}]:[{y:state.sourceY,z:0,c:'#d99a48'}]))
+      .map(s=>special?{y:s.y,z:0,c:s.c}:s);
     for(const src of active){
-      for(const [shiftY,shiftZ] of lensShifts){
+      for(const [shiftY,shiftZ] of rayShiftsFor(src.y)){
         const r=traceRay([src.y,src.z],LX,stopX,shiftY,shiftZ,src.c,.85);
+        lastRayTraces.push({src:{y:src.y,z:src.z},shiftY,shiftZ,YL:r.YL,ZL:r.ZL,sy:r.sy,sz:r.sz});
         // Behind the lens the extensions meet again where the upright virtual image is. They are
         // a construction aid rather than the observation itself, so they answer to their own
         // switch, and they are only drawn while that image is genuinely in view.
@@ -840,6 +870,17 @@ import * as THREE from './assets/optics-three.min.js';
     $('metricState').textContent=info.kind==='focus'?'无有限像':info.kind==='near'?'正立虚像'
       :state.screenRemoved?'空中的实像':info.crisp?'清晰实像':'实像未合焦';
     $('metricState').className=info.crisp?'good':info.kind==='near'||info.kind==='focus'?'warn':'';
+    // 第五格：把这个透镜当眼镜镜片用的度数（接第 4 节「眼睛和眼镜」）。焦距越短度数越大。
+    $('metricDiopter').textContent=diopterOf(state.f).toFixed(0)+' 度';
+    // 光路模式按钮：只在「显示光路」打开时可用 —— 否则点了没反应，会让人以为坏了。
+    const special=state.rayMode==='special';
+    for(const b of $('rayMode').querySelectorAll('button[data-mode]')){
+      b.classList.toggle('active',b.dataset.mode===state.rayMode);
+      b.disabled=!state.rays;
+    }
+    $('rayLegend').textContent=special
+      ?'三条特殊光线：平行主轴 → 过 F′ ｜ 过光心 → 不偏折 ｜ 过物方焦点 → 出射平行主轴'
+      :'金色 / 蓝色：一号 / 二号发光点的光路';
     $('autoFocus').disabled=!info.real||info.v>75;
     const blocked=info.real&&!state.screenRemoved&&!info.crisp;
     $('recordBtn').disabled=blocked;
@@ -886,6 +927,12 @@ import * as THREE from './assets/optics-three.min.js';
   $('secondSource').addEventListener('change',e=>{state.second=e.target.checked;update();});
   for(const [id,key] of [['showRays','rays'],['showVirtual','virtual'],['showLabels','labels']])
     $(id).addEventListener('change',e=>{state[key]=e.target.checked;update();});
+  // 光路显示方式：与「显示光路」开关分开，这样开关本身仍然是原来的 checkbox（老行为不变），
+  // 只是打开之后多一个「看全部光线 / 只看三条特殊光线」的选择。
+  $('rayMode').addEventListener('click',e=>{
+    const b=e.target.closest('button[data-mode]');if(!b)return;
+    state.rayMode=b.dataset.mode;state.step=Math.max(state.step,2);update();
+  });
   $('presets').addEventListener('click',e=>{
     const b=e.target.closest('button[data-case]');if(!b)return;
     const c=CASES.find(x=>x.id===b.dataset.case);
@@ -922,6 +969,16 @@ import * as THREE from './assets/optics-three.min.js';
     state.observing=true;state.screenRemoved=true;state.autoScreen=false;
     state.yaw=1.50;state.pitch=.12;state.zoom=1.4;update();
   });
+  // 记录表导出：拼成可以直接粘进表格软件 / 文档的制表符文本（首行是表头）。
+  // 没记录的行照样导出、单元格留空 —— 粘出来仍是一张 5 行的完整表，缺哪几行一眼可见。
+  function recordsTable(){
+    const head=['物距区域','物距 u / cm','像距 v / cm','像的性质','放大率','光屏能否承接'];
+    const rows=CASES.map(c=>{
+      const r=state.records[c.id];
+      return [c.name,r?r.u:'',r?r.v:'',r?r.nature:'',r?r.mag:'',r?r.onScreen:''];
+    });
+    return [head,...rows].map(r=>r.join('\t')).join('\n');
+  }
   // One row per object-distance region, always present, so the shape of the finished table is
   // visible before anything has been recorded and the student can see what is still missing.
   function renderRecords(){
@@ -963,10 +1020,28 @@ import * as THREE from './assets/optics-three.min.js';
   $('clearRecords').addEventListener('click',()=>{
     state.records={};renderRecords();update();
   });
+  // 复制为表格：优先用剪贴板 API；file:// 或没有权限时退回临时 textarea + execCommand。
+  $('copyRecords').addEventListener('click',async()=>{
+    const text=recordsTable();
+    let ok=false;
+    try{await navigator.clipboard.writeText(text);ok=true;}
+    catch(_){
+      const ta=document.createElement('textarea');ta.value=text;
+      ta.style.position='fixed';ta.style.left='-9999px';document.body.appendChild(ta);
+      ta.select();
+      try{ok=document.execCommand('copy');}catch(__){ok=false;}
+      ta.remove();
+    }
+    const n=Object.keys(state.records).length;
+    $('recordNote').textContent=ok
+      ?`已复制 ${n} / 5 行到剪贴板，可直接粘进表格或文档`
+      :`复制被浏览器拦下，请手动选择表格复制（当前 ${n} / 5 行有数据）`;
+    setTimeout(()=>{$('recordNote').textContent='共 5 类物距，未记录的行显示为 —';},2600);
+  });
   $('resetAll').addEventListener('click',()=>{
     Object.assign(state,{f:10,objP:35,lensP:65,scrP:80,sourceY:12,secondY:8,second:false,
       source:'candle',screenRemoved:false,autoScreen:false,observing:false,lastNeedsOff:false,
-      rays:false,virtual:true,labels:false,yaw:-.42,pitch:.21,zoom:1.06,step:0,records:{}});
+      rays:false,virtual:true,labels:false,rayMode:'all',yaw:-.42,pitch:.21,zoom:1.06,step:0,records:{}});
     for(const [id,checked] of [['showRays',false],['showVirtual',true],['showLabels',false]])$(id).checked=checked;
     renderRecords();
     update();
@@ -1098,10 +1173,13 @@ import * as THREE from './assets/optics-three.min.js';
   window.addEventListener('resize',resize);
   if(window.ResizeObserver)new ResizeObserver(resize).observe(canvas);
   window.__lensLab={state,status,project,imageY,wx,setScreen,update,render,resize,
+    rayShiftsFor,diopterOf,recordsTable,LENS_AP,
+    get lastRayTraces(){return lastRayTraces;},
     debug:()=>{const i=status();return {objP:state.objP,lensP:state.lensP,scrP:state.scrP,u:state.u,sd:state.sd,
       kind:i.kind,v:Number.isFinite(i.v)?i.v:null,crisp:i.crisp,real:i.real,screenRemoved:state.screenRemoved,
       source:state.source,candle:candle.position.x,lens:lens.position.x,screen:screen.position.x,
       sources:lightSources.map(g=>g.position.y),rayCount:rays.children.length,
+      rayMode:state.rayMode,diopter:diopterOf(state.f),
       ghost:ghostObject.visible,ghostX:ghostObject.position.x,ghostScale:ghostObject.scale.x,
       imageVisible:state.imageVisible,imageOnObjectSide:state.imageOnObjectSide,
       frameFrozen:!framed,records:Object.keys(state.records),
