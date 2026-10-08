@@ -1,0 +1,2033 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>功与不做功 · 推箱子立体实验室 - 物理虚拟实验</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="stylesheet" href="style.css">
+  <script src="auth-check.js"></script>
+  <style>
+    :root{
+      --bg:#020617; --panel:rgba(15,23,42,.72); --line:rgba(148,163,184,.16);
+      --ink:#e2e8f0; --dim:#94a3b8; --dim2:#64748b;
+      --blue:#38bdf8; --cyan:#22d3ee; --purple:#a78bfa; --green:#34d399;
+      --amber:#fbbf24; --red:#f87171; --rose:#f43f5e;
+    }
+    *{box-sizing:border-box}
+    html,body{margin:0}
+    body{
+      margin:0; padding:20px; min-width:320px;
+      background:
+        radial-gradient(1100px 620px at 12% -8%, rgba(56,189,248,.14), transparent 62%),
+        radial-gradient(900px 560px at 88% 4%, rgba(167,139,250,.13), transparent 60%),
+        radial-gradient(760px 520px at 50% 108%, rgba(34,211,238,.09), transparent 60%),
+        var(--bg);
+      color:var(--ink);
+      font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Segoe UI",Roboto,sans-serif;
+      -webkit-font-smoothing:antialiased; line-height:1.62;
+    }
+    .lab3d{max-width:1520px;margin:0 auto}
+    .lab3d h1{margin:0;font-size:19px;letter-spacing:.3px;
+      background:linear-gradient(120deg,#e2e8f0 10%,#7dd3fc 52%,#c4b5fd 92%);
+      -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+    .lab3d-sub{margin:7px 0 16px;color:#93b4c4;font-size:12.5px;line-height:1.65}
+    .lab3d-sub b{color:#a5f3fc;font-weight:700}
+    .lab3d-sub .hl{color:#fcd34d;font-weight:700}
+
+    /* 三栏：控制台 | 场景 | 读数 —— 控制台与实验画面【左右并排】，绝不放在画面下面 */
+    .lab3d-layout{display:grid;gap:14px;align-items:start;
+      grid-template-columns:306px minmax(0,1fr) 306px;
+      grid-template-rows:auto auto;
+      grid-template-areas:"ctl scene read" "ctl lower read"}
+    .lab3d-ctl{grid-area:ctl;display:flex;flex-direction:column;gap:11px;min-width:0;align-self:stretch}
+    /* 🔴 舞台必须给【固定高度】、且 align-self:start —— 不能只写 min-height + stretch。
+       控制台/读数栏都跨两行，它们的【内容高度】会参与行尺寸分配；行高写成 1fr 时，
+       那一行会把控制栏多出来的高度全吃掉 ⇒ 舞台被拉成 700 px 高（1280 下画布 600×700，
+       宽高比 0.86，整块画面变成竖柱子）。给了固定高度后三栏各自独立，互不牵扯。
+       上限 510 px 是画布宽高比的下限反推出来的：1280 下中栏 600 px ⇒ 600/510 = 1.18 > 1.15。 */
+    .lab3d-stage{grid-area:scene;position:relative;align-self:start;
+      height:clamp(430px,56vh,510px);
+      border:1px solid var(--line);border-radius:16px;overflow:hidden;overflow:clip;background:#050b18;
+      box-shadow:0 18px 46px rgba(2,6,23,.5)}
+    /* 下排两个面板【等高】：曲线画布给足高度（190 px），数据记录跟着拉到同样高。
+       下排的自然高度直接决定中栏的高度 —— 中栏要跟左右两栏（各约 805 px）齐平，
+       否则中栏下方又是一块空白。 */
+    .lab3d-lower{grid-area:lower;display:grid;
+      grid-template-columns:minmax(0,1fr) minmax(0,1fr);
+      gap:11px;align-items:stretch}
+    /* 全宽自测区：8 道题在宽栏里铺成多列。原来挤在中栏 1/3 宽（188 px）的栏里，
+       只能竖着堆 —— 那一行因此被撑到 911 px，左栏下方留出 620 px 空白。 */
+    .lab3d-quizwrap{margin-top:14px}
+    .lab3d-quizwrap .quiz{display:grid;grid-template-columns:repeat(auto-fit,minmax(288px,1fr));gap:8px}
+    .lab3d-sidebar{grid-area:read;display:flex;flex-direction:column;gap:11px;min-width:0;
+      position:sticky;top:16px;align-self:start;
+      max-height:calc(100vh - 44px);overflow-y:auto;overscroll-behavior:contain;
+      scrollbar-width:thin}
+
+    /* 画布必须【绝对定位】，否则它的内在高度会变成舞台的 max-content 高度，自反馈。 */
+    .lab3d-stage canvas{position:absolute;left:0;top:0;display:block;width:100%;height:100%;
+      touch-action:none;cursor:grab}
+    .lab3d-stage canvas.grabbing{cursor:grabbing}
+    .lab3d-stage canvas.pick{cursor:pointer}
+
+    .stage-hint{position:absolute;left:12px;top:12px;max-width:58%;padding:8px 11px;border-radius:9px;
+      background:rgba(2,6,23,.76);border:1px solid rgba(148,163,184,.22);color:#cbd5e1;font-size:11.5px;
+      line-height:1.55;backdrop-filter:blur(6px);pointer-events:none}
+    .stage-hint b{color:#7dd3fc}
+    .stage-flag{position:absolute;left:50%;transform:translateX(-50%);bottom:56px;padding:7px 14px;border-radius:999px;
+      font-size:12px;font-weight:700;background:rgba(6,78,59,.78);border:1px solid rgba(52,211,153,.6);
+      color:#d1fae5;opacity:0;transition:opacity .22s;pointer-events:none;white-space:nowrap;max-width:88%;
+      overflow:hidden;text-overflow:ellipsis}
+    .stage-flag.show{opacity:1}
+    .stage-flag.warn{background:rgba(120,53,15,.8);border-color:rgba(251,191,36,.6);color:#fef3c7}
+    .stage-toast{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);padding:10px 18px;border-radius:12px;
+      background:rgba(2,6,23,.9);border:1px solid rgba(56,189,248,.45);color:#e0f2fe;font-size:13px;font-weight:600;
+      opacity:0;transition:opacity .22s;pointer-events:none;max-width:78%;text-align:center}
+    .stage-toast.show{opacity:1}
+
+    /* 常驻图例：说明四种颜色的箭头各代表什么，并给出 F∥ / F⊥ 的实时数值。
+       放在这里而不是画布标注里 —— 画布上 θ = 0°/90° 时 F 与分量完全重合，
+       四五个标注挤在 70 px 内必然互相压住（实测被挤到画布边缘）。 */
+    .stage-legend{position:absolute;right:12px;top:12px;padding:8px 10px;border-radius:9px;
+      background:rgba(2,6,23,.78);border:1px solid rgba(148,163,184,.22);backdrop-filter:blur(6px);
+      pointer-events:none;font-size:11px;line-height:1.55;color:#cbd5e1}
+    .stage-legend div{display:flex;align-items:center;gap:6px;white-space:nowrap}
+    .stage-legend i{display:inline-block;width:17px;height:0;border-top:3px solid #888;flex:0 0 auto}
+    .stage-legend i.dash{border-top-style:dashed}
+    .stage-legend b{color:#e2e8f0;font-variant-numeric:tabular-nums;margin-left:auto;padding-left:8px}
+
+    .stage-bar{position:absolute;left:0;right:0;bottom:0;display:flex;align-items:flex-end;justify-content:space-between;
+      gap:10px;padding:10px 12px;pointer-events:none}
+    .stage-bar .bar-left{display:flex;align-items:center;gap:7px;flex-wrap:wrap;pointer-events:auto}
+    .stage-bar .stage-help{font-size:11px;color:#7b93a6;text-align:right;max-width:44%;line-height:1.5}
+    .stage-btn{padding:8px 13px;border-radius:10px;border:1px solid rgba(148,163,184,.3);
+      background:rgba(15,23,42,.88);color:#cbd5e1;font-family:inherit;font-size:12px;font-weight:800;cursor:pointer;
+      display:inline-flex;align-items:center;gap:6px;transition:background .2s,border-color .2s,color .2s}
+    .stage-btn:hover{border-color:rgba(125,211,252,.7)}
+    .stage-btn.go{border-color:rgba(56,189,248,.55);background:rgba(14,116,144,.32);color:#e0f2fe}
+    .stage-btn .cnt{display:inline-grid;place-items:center;min-width:17px;height:17px;padding:0 4px;border-radius:99px;
+      font-size:10px;font-weight:800;background:rgba(148,163,184,.22);color:#e2e8f0}
+
+    .panel{border:1px solid var(--line);border-radius:13px;background:var(--panel);padding:11px 12px}
+    .panel > h3{margin:0 0 8px;font-size:12px;font-weight:800;color:#7dd3fc;letter-spacing:.4px;
+      display:flex;align-items:center;justify-content:space-between;gap:8px}
+    .panel > h3 .pill{font-size:10px;font-weight:800;padding:2px 8px;border-radius:99px;
+      background:rgba(148,163,184,.18);color:#e2e8f0;white-space:nowrap}
+    .panel > h3 .pill.ok{background:rgba(52,211,153,.22);color:#d1fae5}
+    .panel > h3 .pill.warn{background:rgba(251,191,36,.22);color:#fef3c7}
+    .panel > h3 .pill.red{background:rgba(248,113,113,.22);color:#fee2e2}
+    .panel > .note{margin:8px 0 0;color:#8aa6b8;font-size:10.5px;line-height:1.5}
+
+    .btn-row{display:flex;flex-wrap:wrap;gap:6px}
+    .btn-row button{flex:1 1 auto;min-width:0;padding:8px 9px;border-radius:9px;cursor:pointer;
+      font-family:inherit;font-size:11.5px;font-weight:800;
+      border:1px solid rgba(148,163,184,.3);background:rgba(30,41,59,.7);color:#cbd5e1}
+    .btn-row button.primary{border-color:rgba(56,189,248,.6);background:rgba(14,116,144,.42);color:#e0f2fe}
+    .btn-row button:hover:not(:disabled){border-color:rgba(125,211,252,.7)}
+    .btn-row button:disabled{opacity:.4;cursor:not-allowed}
+    .btn-row.tiny button{padding:6px 4px;font-size:10.5px}
+    .btn-row.stack button{flex:1 1 100%;text-align:left;justify-content:flex-start}
+    /* 情景速选：两列网格。5 个按钮竖排要占 270 px，把「力与位移」的滑块顶到画布下沿之外
+       （1280×860 实测 F 滑块 y = 583、画布只到 580）—— 学生拖滑块得先往下滚。
+       按钮文字因此只留情景名，θ 与判定交给下面的 note 说清楚。 */
+    .btn-row.grid2{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+    .btn-row.grid2 button{width:100%;padding:7px 6px;font-size:11px;text-align:center}
+    .btn-row.grid2 button:nth-child(5){grid-column:1 / -1}
+
+    .fld{display:block;margin-bottom:9px}
+    .fld:last-child{margin-bottom:0}
+    .fld input[type=range]{width:100%;accent-color:#38bdf8}
+    .fld input[type=range]:disabled{opacity:.35;cursor:not-allowed}
+
+    /* 控制栏里的三个参数行压成【单行】：标签 | 滑轨 | 读数。
+       原来每行是「标签行 20 + 滑轨 16 + 一行小字 22 + 行距」= 72 px，三行 216 px，
+       整块「力与位移」286 px ⇒ 1280×860 下 F 滑块落在 y = 583，而画布只到 580，
+       学生拖滑块得先往下滚（滚到控制条时画面已出视口）。
+       压成单行后每行 ≈ 30 px，锁状态改由 .lock 类（标签后挂 🔒、读数转琥珀色）
+       + 面板级一行提示表达 —— 锁的是哪个量、锁在多少，提示里直接写出来，信息不丢。 */
+    .lab3d-ctl > .panel{padding:9px 11px}
+    .lab3d-ctl > .panel > h3{margin-bottom:7px}
+    .lab3d-ctl .fld{display:grid;grid-template-columns:44px minmax(0,1fr) 58px;
+      align-items:center;gap:8px;margin-bottom:7px}
+    .lab3d-ctl .fld .lb{color:#a9c2d2;font-size:11.5px;white-space:nowrap;overflow:hidden}
+    .lab3d-ctl .fld .vv{color:#e2e8f0;font-size:12px;font-weight:800;text-align:right;
+      font-variant-numeric:tabular-nums;white-space:nowrap}
+    .lab3d-ctl .fld input[type=range]{margin:0;height:16px}
+    .lab3d-ctl .fld.lock .lb::after{content:' 🔒';font-size:10px}
+    .lab3d-ctl .fld.lock .vv{color:#fcd34d}
+
+    .tasks{margin:0;padding-left:17px;color:#a9c2d2;font-size:11.5px;line-height:1.55}
+    .tasks li{margin-bottom:4px}
+    .tasks li:last-child{margin-bottom:0}
+
+    .gauge-num{display:flex;align-items:baseline;justify-content:center;gap:6px;
+      padding:7px 8px;border-radius:10px;margin-bottom:8px;
+      background:linear-gradient(180deg,#0b1a2a,#07131f);border:1px solid rgba(56,189,248,.3)}
+    .gauge-num .num{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:27px;font-weight:800;
+      color:#a5f3fc;letter-spacing:.5px;font-variant-numeric:tabular-nums;
+      text-shadow:0 0 12px rgba(56,189,248,.45)}
+    .gauge-num .unit{color:#5e8496;font-size:13px;font-weight:700}
+    .gauge-num.zero{border-color:rgba(251,191,36,.55)}
+    .gauge-num.zero .num{color:#fde68a;text-shadow:0 0 12px rgba(251,191,36,.5)}
+
+    .readouts{display:flex;flex-direction:column;gap:4px;color:#a9c2d2;font-size:11.5px}
+    .readouts div{display:flex;justify-content:space-between;gap:8px}
+    .readouts b{color:#e2e8f0;font-variant-numeric:tabular-nums}
+    .readouts .dim{color:#7d97a8}
+
+    #wk-rec-body{overflow-x:auto}
+    table.rec{width:100%;border-collapse:collapse;font-size:11px;font-variant-numeric:tabular-nums;
+      white-space:nowrap;word-break:keep-all}
+    table.rec th,table.rec td{padding:5px 3px;text-align:right;border-bottom:1px solid rgba(148,163,184,.13)}
+    table.rec th{color:#8aa6b8;font-weight:700;font-size:10.5px}
+    table.rec th:first-child,table.rec td:first-child{text-align:left}
+    table.rec td{color:#dbe7f0}
+    .rec-empty{color:#6f8b9c;font-size:11.5px;padding:6px 0;margin:0}
+
+    .analysis{color:#c8d8e4;font-size:11.5px;line-height:1.75}
+    .analysis .line{display:flex;justify-content:space-between;gap:8px}
+    .analysis .line b{color:#e2e8f0;font-variant-numeric:tabular-nums}
+    .analysis .conc{margin-top:9px;padding:8px 10px;border-radius:8px;font-size:11.5px;line-height:1.65;
+      background:rgba(6,78,59,.35);border:1px solid rgba(52,211,153,.4);color:#d1fae5}
+    .analysis .conc.info{background:rgba(12,74,110,.35);border-color:rgba(56,189,248,.4);color:#e0f2fe}
+    .analysis .conc.warn{background:rgba(120,53,15,.35);border-color:rgba(251,191,36,.45);color:#fef3c7}
+    .analysis .conc.red{background:rgba(127,29,29,.4);border-color:rgba(248,113,113,.45);color:#fee2e2}
+    .analysis .muted{color:#7d97a8}
+
+    /* 判断题 */
+    .quiz{display:flex;flex-direction:column;gap:7px}
+    .quiz .q{border:1px solid rgba(148,163,184,.16);border-radius:9px;padding:7px 9px;
+      background:rgba(15,23,42,.5)}
+    .quiz .q .qt{font-size:11.5px;color:#c8d8e4;line-height:1.55;margin-bottom:6px}
+    .quiz .q .qt i{color:#7d97a8;font-style:normal;font-weight:800;margin-right:4px}
+    .quiz .q .qb{display:flex;gap:6px;align-items:center}
+    .quiz .q .qb button{flex:0 0 auto;padding:5px 11px;border-radius:8px;cursor:pointer;font-family:inherit;
+      font-size:11px;font-weight:800;border:1px solid rgba(148,163,184,.3);
+      background:rgba(30,41,59,.7);color:#cbd5e1}
+    .quiz .q .qb button:hover:not(:disabled){border-color:rgba(125,211,252,.7)}
+    .quiz .q .qb button:disabled{cursor:default}
+    .quiz .q .qb button.picked-ok{border-color:rgba(52,211,153,.75);background:rgba(6,78,59,.6);color:#d1fae5}
+    .quiz .q .qb button.picked-no{border-color:rgba(248,113,113,.75);background:rgba(127,29,29,.55);color:#fee2e2}
+    .quiz .q .fb{font-size:10.5px;line-height:1.5;margin-top:5px;color:#7d97a8}
+    .quiz .q .fb.ok{color:#6ee7b7}
+    .quiz .q .fb.no{color:#fca5a5}
+    .quiz .q .fb b{color:#e2e8f0}
+
+    .bars{display:flex;align-items:flex-end;justify-content:space-around;gap:8px;height:104px;margin-top:4px}
+    .bars .b{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:4px;min-width:0}
+    .bars .b .col{width:100%;border-radius:5px 5px 0 0;min-height:2px;transition:height .2s}
+    .bars .b .cap{font-size:10.5px;color:#a9c2d2;white-space:nowrap}
+    .bars .b .val{font-size:10.5px;color:#e2e8f0;font-variant-numeric:tabular-nums;font-weight:700}
+
+    .info-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:14px;margin-top:16px}
+    .info-card{border:1px solid var(--line);border-radius:14px;background:rgba(9,20,35,.7);padding:15px 17px}
+    .info-card h4{margin:0 0 9px;font-size:13px;color:#7dd3fc}
+    .info-card ul{margin:0;padding-left:17px;color:#a9c2d2;font-size:12px;line-height:1.85}
+    .info-card li b{color:#e2e8f0}
+    .info-card .fml{display:inline-block;margin:3px 0;padding:3px 9px;border-radius:7px;
+      background:rgba(56,189,248,.13);color:#a5f3fc;font-weight:700;
+      font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+    .info-card table{width:100%;border-collapse:collapse;font-size:11.5px;margin-top:4px}
+    .info-card table th,.info-card table td{padding:5px 6px;text-align:left;
+      border-bottom:1px solid rgba(148,163,184,.14)}
+    .info-card table th{color:#8aa6b8;font-weight:700}
+    .info-card table td{color:#c8d8e4}
+    .info-card table td b{color:#e2e8f0}
+
+    @media (max-width:1180px){
+      .lab3d-layout{grid-template-columns:306px minmax(0,1fr);grid-template-rows:1fr auto auto;
+        grid-template-areas:"ctl scene" "ctl lower" "read read"}
+      .lab3d-sidebar{position:static;max-height:none;overflow:visible;
+        display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));align-items:start}
+    }
+    @media (max-width:820px){
+      body{padding:14px}
+      .lab3d-layout{grid-template-columns:minmax(0,1fr);grid-template-rows:auto;
+        grid-template-areas:"ctl" "scene" "lower" "read"}
+      .lab3d h1{font-size:16px}
+      .lab3d-stage{height:400px}
+      .lab3d-lower{grid-template-columns:minmax(0,1fr)}
+      .stage-hint{font-size:10px;padding:6px 9px;max-width:70%}
+      .stage-bar .stage-help{display:none}
+      .gauge-num .num{font-size:23px}
+    }
+
+    /* ── 实拍视频区（站点形态：上半屏虚拟实验 + 底部实拍视频，缺一不可） ──────
+       本页是【深色】主题（--bg #020617）⇒ 直接用页面自己的 --panel / --line / --dim
+       变量即可，不必像浅色页那样另起一块深色卡片。
+       宽度对齐 .lab3d 的 1520px（视频区在 .lab3d 之外，靠 margin:auto 居中）。 */
+    .video-section{max-width:1520px;margin:26px auto 0}
+    .video-section .section-title{font-size:20px;font-weight:bold;color:#f8fafc;margin-bottom:16px}
+    .video-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:18px}
+    .video-card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px 20px}
+    .video-card h3{margin:0 0 12px;font-size:15px;line-height:1.5;color:#f8fafc;border-bottom:1px solid var(--line);padding-bottom:10px;display:flex;align-items:flex-start;gap:8px}
+    .video-card h3 .live-badge{font-size:11px;background:rgba(239,68,68,.15);color:#f87171;padding:2px 8px;border-radius:6px;font-weight:600;white-space:nowrap;flex-shrink:0}
+    .video-container{position:relative;width:100%;padding-bottom:56.25%;height:0;border-radius:12px;overflow:hidden;background:#000}
+    .video-container iframe{position:absolute;top:0;left:0;width:100%;height:100%;border:0}
+    .video-desc{font-size:13px;color:var(--dim);line-height:1.7;margin-top:10px}
+    .video-desc b{color:#a5f3fc;font-weight:700}
+    .video-fullscreen-btn{position:absolute;top:10px;right:10px;z-index:10;width:36px;height:36px;display:flex;align-items:center;justify-content:center;border:none;border-radius:8px;background:rgba(0,0,0,.55);color:#fff;cursor:pointer;transition:background .2s ease}
+    .video-fullscreen-btn:hover{background:rgba(59,130,246,.85)}
+    .video-container:fullscreen,.video-container:-webkit-full-screen{width:100%;height:100%;padding-bottom:0;border-radius:0}
+  </style>
+</head>
+<body>
+  <div class="lab3d">
+    <h1>功与不做功 · 推箱子立体实验室</h1>
+    <p class="lab3d-sub">
+      有力，也移动了距离，就<b>一定</b>做功吗？不一定。真正决定功的大小的，是<b>力在位移方向上的分量</b>：
+      <span class="hl">W = F·s·cosθ</span>（θ 是力与位移的夹角）。
+      于是三种「不做功」各有各的理由 —— <b>有力无距离</b>（举着不动，s = 0）、
+      <b>有距离无力</b>（惯性滑行，F = 0）、<b>力与距离垂直</b>（提箱水平走，θ = 90°）。
+      立体视角的价值就在这里：只有把<b>力箭头</b>和<b>位移箭头</b>摆进同一个空间，
+      才看得清它们到底成多少度。
+    </p>
+
+    <div class="lab3d-layout">
+      <!-- ============ 控制台（左栏） ============ -->
+      <div class="lab3d-ctl">
+        <div class="panel">
+          <h3>探究模式 <span class="pill" id="wk-mode-pill">力的方向 θ</span></h3>
+          <div class="btn-row">
+            <button type="button" class="primary" id="wk-m-theta">① 力的方向 θ</button>
+            <button type="button" id="wk-m-dist">② 位移 s</button>
+            <button type="button" id="wk-m-free">③ 自由探究</button>
+          </div>
+          <p class="note" id="wk-mode-note">控制变量：力锁在 40 N、位移锁在 1.6 m，只改力的方向。</p>
+        </div>
+
+        <div class="panel">
+          <h3>情景速选 <span class="pill" id="wk-preset-pill">水平推箱</span></h3>
+          <div class="btn-row grid2" id="wk-presets">
+            <button type="button" data-preset="push" class="primary">① 水平推箱</button>
+            <button type="button" data-preset="pull">② 斜向上拉</button>
+            <button type="button" data-preset="carry">③ 提箱水平走</button>
+            <button type="button" data-preset="hold">④ 举着不动</button>
+            <button type="button" data-preset="slide">⑤ 惯性滑行</button>
+          </div>
+          <p class="note" id="wk-preset-note">力水平、位移水平，θ = 0° —— 做功，W = F·s。</p>
+        </div>
+
+        <div class="panel">
+          <h3>力与位移 <span class="pill" id="wk-lock-pill">θ 可调</span></h3>
+          <div class="fld">
+            <span class="lb">力 F</span>
+            <input type="range" id="wk-F" min="0" max="80" step="5" value="40">
+            <b class="vv" id="wk-F-num">40 N</b>
+          </div>
+          <div class="fld">
+            <span class="lb">夹角 θ</span>
+            <input type="range" id="wk-th" min="0" max="180" step="1" value="0">
+            <b class="vv" id="wk-th-num">0°</b>
+          </div>
+          <div class="fld">
+            <span class="lb">距离 s</span>
+            <input type="range" id="wk-s" min="0" max="2.5" step="0.1" value="1.6">
+            <b class="vv" id="wk-s-num">1.60 m</b>
+          </div>
+          <p class="note" id="wk-lock-note">三项都可调；F = 0 表示已经撒手。</p>
+        </div>
+
+        <div class="panel">
+          <h3>地面 <span class="pill" id="wk-ground-pill">光滑</span></h3>
+          <div class="btn-row">
+            <button type="button" class="primary" data-ground="smooth">光滑（f = 0）</button>
+            <button type="button" data-ground="rough">粗糙（f ≠ 0）</button>
+          </div>
+          <p class="note" id="wk-ground-note">光滑地面上没有摩擦力；粗糙地面上还要额外<b>克服摩擦做功</b> f·s。</p>
+        </div>
+
+        <div class="panel">
+          <h3>视角</h3>
+          <div class="btn-row">
+            <button type="button" data-view="perspective">默认</button>
+            <button type="button" data-view="front">正前</button>
+            <button type="button" data-view="top">俯视</button>
+            <button type="button" data-view="close">贴近箱子</button>
+          </div>
+          <p class="note">「正前」看 θ 是不是真的 90°；「俯视」看清箱子走过的路；「贴近箱子」把镜头推到箱边。</p>
+        </div>
+
+        <!-- 观察任务：给学生的三步动手清单。放在控制台末尾而不是只写在页尾说明卡里 ——
+             学生是在这里拖滑块的，任务清单要跟滑块在同一视野内。 -->
+        <div class="panel">
+          <h3>观察任务</h3>
+          <ol class="tasks">
+            <li>拖 θ，找出 W 恰好为 0 的角度</li>
+            <li>把 s 拖到 0，W 变成多少？</li>
+            <li>把 F 拖到 0，W 变成多少？</li>
+          </ol>
+        </div>
+      </div>
+
+      <!-- ============ 实验画面（中栏） ============ -->
+      <div class="lab3d-stage">
+        <canvas id="wk-canvas"></canvas>
+
+        <div class="stage-hint" id="wk-hint"></div>
+        <div class="stage-legend">
+          <div><i style="border-top-color:#34d399"></i>F 合力<b id="wk-lg-F">40 N</b></div>
+          <div><i style="border-top-color:#38bdf8"></i>F∥ = F·cosθ<b id="wk-lg-par">40.0 N</b></div>
+          <div><i class="dash" style="border-top-color:#fbbf24"></i>F⊥ = F·sinθ<b id="wk-lg-perp">0.0 N</b></div>
+          <div><i style="border-top-color:#a78bfa"></i>位移 s<b id="wk-lg-s">1.60 m</b></div>
+        </div>
+        <div class="stage-toast" id="wk-toast"></div>
+        <!-- 占位文本留空：flashFlag() 每次都会写入真实文案。
+             别在这里写死任何具体的功数值 —— 万一哪条路径漏了覆盖，画面会显示一个假结果。 -->
+        <div class="stage-flag" id="wk-flag"></div>
+
+        <div class="stage-bar">
+          <div class="bar-left">
+            <button type="button" class="stage-btn go" id="wk-push">▶ 推箱子</button>
+            <button type="button" class="stage-btn" id="wk-reset">⟲ 复位</button>
+            <button type="button" class="stage-btn" id="wk-record">记录这一组 <b class="cnt" id="wk-rec-cnt">0</b></button>
+          </div>
+          <div class="stage-help" id="wk-help">拖动空白处旋转 · 滚轮缩放 · 拖动箱子改距离 · 拖动力的箭头尖端改 θ</div>
+        </div>
+      </div>
+
+      <!-- ============ 读数（右栏） ============ -->
+      <div class="lab3d-sidebar">
+        <div class="panel">
+          <h3>功的读数 <span class="pill" id="wk-live">待测</span></h3>
+          <div class="gauge-num" id="wk-gauge"><span class="num" id="wk-W-num">0.0</span><span class="unit">J</span></div>
+          <div class="readouts">
+            <div><span>力做的功 W（实测）</span><b id="wk-W-out">0.0 J</b></div>
+            <div><span>这一组应做的功 F·s·cosθ</span><b id="wk-W-tgt">0.0 J</b></div>
+            <div><span>沿位移方向的分量 F<sub>∥</sub> = F·cosθ</span><b id="wk-fpar-out">40.0 N</b></div>
+            <div><span>垂直位移的分量 F<sub>⊥</sub> = F·sinθ</span><b id="wk-fperp-out">0.0 N</b></div>
+            <div><span>cosθ</span><b id="wk-cos-out">1.000</b></div>
+          </div>
+          <p class="note" id="wk-gauge-note">F<sub>⊥</sub> 再大也不做功 —— 它的方向上一寸都没移动。按「推箱子」后大数字才变成实测值，之前是 0.0。</p>
+        </div>
+
+        <div class="panel">
+          <h3>当前条件</h3>
+          <div class="readouts">
+            <div><span>力 F</span><b id="wk-F-out">40 N</b></div>
+            <div><span>夹角 θ</span><b id="wk-th-out">0°</b></div>
+            <div><span>位移 s</span><b id="wk-s-out">1.60 m</b></div>
+            <div><span>地面</span><b id="wk-gr-out">光滑</b></div>
+            <div><span>摩擦力 f</span><b id="wk-fric-out">0 N</b></div>
+            <div><span>克服摩擦做的功 f·s</span><b id="wk-wfric-out">0.0 J</b></div>
+            <div><span>状态</span><b id="wk-phase-out">待推</b></div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h3>判断与结论 <span class="pill" id="wk-verdict-pill">做功</span></h3>
+          <div class="analysis" id="wk-analysis"></div>
+        </div>
+      </div>
+
+      <!-- ============ 场景下方（中栏第 2 行）：数据记录 | W–θ 曲线 ============ -->
+      <div class="lab3d-lower">
+        <div class="panel">
+          <h3>数据记录 <span class="pill" id="wk-rec-pill">0 组</span></h3>
+          <div id="wk-rec-body"><p class="rec-empty">还没有记录。改一次条件，点「记录这一组」。</p></div>
+        </div>
+
+        <div class="panel">
+          <h3>W – θ 曲线 <span class="pill" id="wk-curve-pill">F = 40 N · s = 1.60 m</span></h3>
+          <canvas id="wk-curve" style="width:100%;height:190px;display:block"></canvas>
+          <p class="note" id="wk-curve-note">余弦曲线：θ = 90° 时穿过零点，超过 90° 变成负功。</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ 课堂检测：全宽，放在三栏布局【下方】 ============
+         原来它挤在中栏第 2 行的 1/3 宽栏里（1280 下只有 188 px），8 道题竖着堆到 911 px 高 ——
+         既把那一行撑得极高（左栏因此留下 620 px 空白），每道题的选项也被压得换行。
+         改成全宽多列后只要 2 行，题目也读得顺。 -->
+    <section class="lab3d-quizwrap">
+      <div class="panel">
+        <h3>做功判断 · 自测 <span class="pill" id="wk-quiz-pill">0 / 8</span></h3>
+        <div class="quiz" id="wk-quiz"></div>
+      </div>
+    </section>
+
+    <div class="info-cards">
+      <div class="info-card">
+        <h4>实验原理</h4>
+        <ul>
+          <li>力学里说「做功」，必须同时满足<b>两个必要因素</b>：作用在物体上的<b>力</b>，
+              以及物体<b>在力的方向上</b>移动的<b>距离</b>。缺一个都不算做功。</li>
+          <li>把力 F 沿位移方向分解：沿位移方向的分量 <span class="fml">F<sub>∥</sub> = F·cosθ</span> 做功，
+              垂直位移的分量 <span class="fml">F<sub>⊥</sub> = F·sinθ</span> <b>不做功</b>。所以
+              <span class="fml">W = F<sub>∥</sub>·s = F·s·cosθ</span>。</li>
+          <li>θ = 90° 时 cosθ 恰好为 0 —— W 不是「很小」，而是<b>精确的 0</b>。
+              θ &gt; 90° 时 W 为负，表示力在阻碍运动（例如摩擦力做的功）。</li>
+          <li>功的单位是<b>焦耳（J）</b>，1 J = 1 N·m。本页所有读数（大数字、表格、柱状图、曲线、
+              判断题答案）都由<b>同一个</b> <span class="fml">W = F·s·cosθ</span> 算出来，不是各写一遍。</li>
+          <li>注意：真实推箱子时力往往在变、方向也在变，本页让 F 与 θ 在整段位移中<b>保持不变</b>，
+              这样才能把「功只由 F、s、θ 决定」这条规律看得清清楚楚。</li>
+        </ul>
+      </div>
+      <div class="info-card">
+        <h4>操作指南</h4>
+        <ul>
+          <li>模式①「力的方向 θ」：力锁在 40 N、位移锁在 1.6 m，只拖动 θ 滑块。
+              从 0° 拉到 180°，看 W 怎样从 +64 J 一路降到 <b>0 J</b>（正好 90°），再变成负值。</li>
+          <li>模式②「位移 s」：θ 锁在 0°，只改 s。看 W 与 s 成正比。</li>
+          <li>模式③「自由探究」：全都解锁。也可以直接用左栏的<b>情景速选</b>一键跳到五种典型情形。</li>
+          <li><b>拖动空白处</b>旋转视角，<b>滚轮</b>缩放；<b>直接拖动画面里的箱子</b>可以改位移，
+              <b>拖动绿色力箭头的尖端</b>可以连续改 θ（箭头会自己吸附到 90° 附近）。</li>
+          <li>换一次条件点一次<b>「记录这一组」</b>；「复位」把箱子送回起点。</li>
+          <li>右栏「判断与结论」会自动判定这一组属于<b>做功</b>还是<b>三种不做功</b>里的哪一种，
+              并说明理由；页面下方的「做功判断 · 自测」有 8 道题可以自测。</li>
+        </ul>
+      </div>
+      <div class="info-card">
+        <h4>三种不做功，一句话记住</h4>
+        <table>
+          <tr><th>情况</th><th>例子</th><th>为什么不做功</th></tr>
+          <tr><td><b>有力无距离</b></td><td>举着箱子站着不动</td><td>F ≠ 0，但 s = 0</td></tr>
+          <tr><td><b>有距离无力</b></td><td>冰壶被推出后继续滑</td><td>s ≠ 0，但 F = 0（已撒手）</td></tr>
+          <tr><td><b>力与距离垂直</b></td><td>提着箱子水平走</td><td>F ≠ 0、s ≠ 0，但 θ = 90°，cosθ = 0</td></tr>
+        </table>
+        <ul>
+          <li>第三种最容易错：<b>「提着重物走了一段路」听着像很累</b>，
+              但累不累是<b>生理</b>问题，做不做功是<b>物理</b>问题 —— 提力的方向上一寸也没移动。</li>
+          <li>这也是本页必须做成三维的原因：只有把力箭头和位移箭头摆在同一个空间里，
+              才看得出它们到底成 90° 还是 89°。</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 实拍视频区（站点形态：虚拟实验 + 实拍视频） ============ -->
+  <div class="video-section">
+    <div class="section-title">🎬 实拍视频 · 从虚拟实验到真实世界</div>
+    <div class="video-grid">
+      <div class="video-card">
+        <h3>不做功的三种情况 · 有力无距离 / 有距离无力 / 力与位移垂直<span class="live-badge">原理演示</span></h3>
+        <div class="video-container">
+          <iframe src="//player.bilibili.com/player.html?bvid=BV1ZY411v71F&page=1&autoplay=0&loop=1&danmaku=0&high_quality=1"
+                  scrolling="no" frameborder="no" framespacing="0" allowfullscreen="true"></iframe>
+          <button class="video-fullscreen-btn" title="全屏播放" aria-label="全屏播放">
+            <svg class="fs-expand" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M16 3h3a2 2 0 0 1 2 2v3"/><path d="M8 21H5a2 2 0 0 1-2-2v-3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
+            <svg class="fs-compress" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none"><path d="M8 3v3a2 2 0 0 1-2 2H3"/><path d="M16 3v3a2 2 0 0 0 2 2h3"/><path d="M8 21v-3a2 2 0 0 0-2-2H3"/><path d="M16 21v-3a2 2 0 0 1 2-2h3"/></svg>
+          </button>
+        </div>
+        <div class="video-desc">
+          视频把「不做功」拆成三种讲：<b>举着箱子站着不动</b>（F ≠ 0，但 s = 0）、
+          <b>冰壶被推出后继续滑</b>（s ≠ 0，但 F = 0，已经撒手）、
+          <b>提着箱子水平走</b>（F ≠ 0、s ≠ 0，但 θ = 90°，cosθ 精确为 0）。
+          这正是上方虚拟实验「情景速选」里的 <b>③④⑤</b> 三个按钮 ——
+          在虚拟实验里把 θ 拖到 90°，你会看到大数字 <b>W 精确地变成 0 J</b>（不是「很小」）。
+        </div>
+      </div>
+      <div class="video-card">
+        <h3>爬楼梯是什么力做功？· 夹角越过 90°，功就变成负的<span class="live-badge">实拍+讲解</span></h3>
+        <div class="video-container">
+          <iframe src="//player.bilibili.com/player.html?bvid=BV1N8411B7XC&page=1&autoplay=0&loop=1&danmaku=0&high_quality=1"
+                  scrolling="no" frameborder="no" framespacing="0" allowfullscreen="true"></iframe>
+          <button class="video-fullscreen-btn" title="全屏播放" aria-label="全屏播放">
+            <svg class="fs-expand" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M16 3h3a2 2 0 0 1 2 2v3"/><path d="M8 21H5a2 2 0 0 1-2-2v-3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
+            <svg class="fs-compress" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none"><path d="M8 3v3a2 2 0 0 1-2 2H3"/><path d="M16 3v3a2 2 0 0 0 2 2h3"/><path d="M8 21v-3a2 2 0 0 0-2-2H3"/><path d="M16 21v-3a2 2 0 0 1 2-2h3"/></svg>
+          </button>
+        </div>
+        <div class="video-desc">
+          上楼时<b>重力竖直向下</b>，而位移沿着楼梯<b>向上</b> —— 两者的夹角大于 90°。
+          按页面上方那条 <b>W = F·s·cosθ</b>，cosθ 为负 ⇒ <b>重力做的是负功</b>；
+          这也正是虚拟实验里把 θ 从 90° 继续往 180° 拖时，大数字变成负值的那一段。
+          视频用「爬楼梯」这件每天都在做的事，把「<b>功有正负、夹角是关键</b>」讲透 ——
+          和页面右侧「判断与结论」里给的理由是同一个判据。
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+  (() => {
+    'use strict';
+    const canvas = document.getElementById('wk-canvas');
+    const stage = document.querySelector('.lab3d-stage');
+    if (!canvas || !stage) return;
+    const ctx = canvas.getContext('2d');
+    const PI2 = Math.PI * 2;
+    const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
+    const $ = id => document.getElementById(id);
+
+    /* ============================================================
+     * 向量工具（与站内其它三维页同一套约定）
+     * ============================================================ */
+    const add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+    const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+    const scl = (a, k) => [a[0] * k, a[1] * k, a[2] * k];
+    const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+    const vlen = a => Math.hypot(a[0], a[1], a[2]);
+    const vnorm = a => { const l = vlen(a) || 1; return [a[0] / l, a[1] / l, a[2] / l]; };
+    const rgba = (c, a) => 'rgba(' + Math.round(clamp(c[0], 0, 255)) + ',' +
+      Math.round(clamp(c[1], 0, 255)) + ',' + Math.round(clamp(c[2], 0, 255)) + ',' + a + ')';
+
+    /* ============================================================
+     * 场景常量
+     * ------------------------------------------------------------
+     * 世界坐标：y 向上，x 向右（= 位移方向），z 朝向观众。
+     * 【1 世界单位 = 1 m】—— 位移 s 直接用米，读数与几何同一个数。
+     * ============================================================ */
+    const U = 1;                 // 1 世界单位 = 1 m
+    const G = 9.8;               // m/s²
+
+    const F_MIN = 0, F_MAX = 80, F_DEF = 40;       // 力（N）
+    const TH_MIN = 0, TH_MAX = 180, TH_DEF = 0;    // 力与位移的夹角（°）
+    const S_MIN = 0, S_MAX = 2.5, S_DEF = 1.6;     // 位移（m）
+
+    const BOX_S = 0.95, BOX_H = 0.95;   // 箱子的边长与高（m）
+    const BOX_Z = 0;
+    const ARROW_K = 0.0130;             // 世界单位 / N —— F_MAX(80 N) → 1.04 m
+    const PRO_R = 0.95;                 // 量角器半径（m）
+    const DISP_Z = 1.00;                // 位移箭头贴地画在箱子前方
+    // 刻度尺放在【前景】(z = +2.05，箱子与位移箭头之前)：
+    // 原来放在 z = −2.45（箱后），读数带屏幕 y 95~133 正好压在箱体包围盒 y 102~240 里，
+    // 箱子推到远端时必然盖住「2」刻度；而且「s / m」单位标注会紧贴 W 标注。
+    // 挪到前景后读数带落在 y 327~371，与箱体 / 位移箭头 / s 标注全不冲突。
+    const SCALE_Z = 2.05;               // 地面刻度尺
+
+    // 【地面为什么做得这么深】：这一页的场景天生「宽而扁」（横向要放下箱子走过的路，
+    // 纵向只有箱子和力箭头）。纵深是「竖直撑满画布」的主要来源 ——
+    // 实测纵深 3.4 m 时竖直占比 0.88~0.90；砍到 2.6 m 就掉到 0.85、2.2 m 掉到 0.75。
+    const GROUND = { x0: -1.25, x1: 3.75, z0: -3.40, z1: 3.40 };
+    const MU = { smooth: 0, rough: 0.30 };
+    const BOX_M = 20;                   // 箱子质量 20 kg（只用来算摩擦力）
+    const GRID = 0.5;                   // 地面网格间距（m）
+
+    const PUSH_TIME = 0.85;             // 推箱子动画时长（秒）
+    const TH_SNAP = 1.2;                // θ 吸附窗口（°）—— 拖到 90° 附近自动咬住
+
+    const CAMD = 17;
+    const TARGET = [1.25, 0.81, 0];
+    // 视角：俯角是权衡出来的 —— 太低则竖直撑不满（0.44 时无解），
+    // 太高会把「θ 所在的竖直面」压扁（表观直角变钝）。
+    // 「正前」用 yaw = 0，屏幕上的 +x 与 +y 恰好是 90°，专门用来核「是不是真的垂直」。
+    const VIEWS = {
+      perspective: { yaw: -0.26, pitch: 0.60, zoom: 1.00, tgt: [1.25, 0.81, 0], look: false },
+      front:       { yaw:  0.00, pitch: 0.56, zoom: 1.02, tgt: [1.25, 0.81, 0], look: false },
+      top:         { yaw: -0.34, pitch: 0.92, zoom: 1.04, tgt: [1.25, 0.81, 0], look: false },
+      close:       { yaw: -0.24, pitch: 0.46, zoom: 1.80, look: true,
+                     tgtFn: () => [state.sNow + BOX_S / 2, 0.57, 0] }
+    };
+
+    const C_BOX   = [196, 154,  96];   // 木箱
+    const C_BOX_D = [118,  86,  44];
+    const C_GHOST = [148, 163, 184];
+    const C_F     = [ 52, 211, 153];   // 力（绿）
+    const C_FPAR  = [ 56, 189, 248];   // 沿位移分量（蓝）
+    const C_FPERP = [251, 191,  36];   // 垂直分量（琥珀）
+    const C_DISP  = [167, 139, 250];   // 位移（紫）
+    const C_ARC   = [125, 211, 252];
+    // 【地面不能太暗】—— 原来取 [18,36,58]，与背景渐变（#0a1626）几乎同色，
+    // 画面上看不出地面铺到哪儿，读起来像「一大片空白」。提到 [30,58,92] 才分得开。
+    const C_GROUND_S = [ 30,  58,  92];
+    const C_GROUND_R = [ 74,  68,  58];
+
+    /* ============================================================
+     * 物理 —— 全部读数都从下面这几个纯函数来
+     * ------------------------------------------------------------
+     * 渲染、侧栏、记录表、柱状图、曲线、判断题答案、自检共用同一份。
+     * 【关键 1】workOf(F, s, θ) 是全页【唯一】的做功公式：
+     *   力做的功、摩擦力的功、合力的功、判断题的答案，全部调它，
+     *   没有任何一处把 F·s·cosθ 再写一遍。
+     * 【关键 2】cosOf / sinOf 带数值卫生：Math.cos(π/2) 在浮点下是
+     *   6.12e-17，物理上却是【精确的 0】。不夹这一下，θ = 90° 时
+     *   读数会显示成 1.5e-14 J，而且「W 逐位等于 0」永远不可能成立。
+     * 【关键 3】这些函数里【没有】state.phase / state.sNow / 视角 ——
+     *   「功只由 F、s、θ 决定」是结构上必然成立，不是几处各写一遍。
+     * ============================================================ */
+    function cosOf(deg) {
+      const c = Math.cos(deg * Math.PI / 180);
+      return Math.abs(c) < 1e-9 ? 0 : c;
+    }
+    function sinOf(deg) {
+      const s = Math.sin(deg * Math.PI / 180);
+      return Math.abs(s) < 1e-9 ? 0 : s;
+    }
+    // ★ 全页唯一的做功公式
+    const workOf = (F, s, deg) => F * s * cosOf(deg);
+
+    const F_N   = () => state.F;                 // N
+    const s_M   = () => state.s;                 // m（目标位移）
+    const thDeg = () => state.theta;             // °
+    const cosT  = () => cosOf(thDeg());
+    const sinT  = () => sinOf(thDeg());
+    const fPar  = () => F_N() * cosT();          // 沿位移方向的分量（N）
+    const fPerp = () => F_N() * sinT();          // 垂直位移的分量（N）
+    const workJ = () => workOf(F_N(), s_M(), thDeg());   // J —— 这一组应做的功
+    const fricN = () => MU[state.ground] * BOX_M * G;    // 摩擦力（N）
+    const workFricJ = () => fricN() * s_M();             // 克服摩擦做的功（J，恒 ≥ 0）
+
+    // 【实际已做的功】—— 由动画推出来的那个量，和 workJ()（静止值/预期值）分得清清楚楚。
+    // 大数字读数、画面上的 W 标注、进度条三处都读它，保证「看到多少就是多少」。
+    const wNowJ = () => workOf(F_N(), state.sNow, thDeg());
+
+    // 三维向量形式：力与位移都在世界里，夹角是【量出来的】而不是另存一份
+    const forceVec = () => [F_N() * cosT(), F_N() * sinT(), 0];
+    const dispVec  = () => [state.sNow, 0, 0];
+    const cosFromVec = () => {
+      const a = vnorm(forceVec()), b = vnorm(dispVec());
+      return dot(a, b);
+    };
+
+    // 不做功的三种情况 —— 全页唯一的判定入口（右栏结论、记录表、自检共用）
+    const KIND = {
+      work:     { label: '做功',   cls: 'ok',   why: '有力、有距离，且两者不垂直 —— 两个必要因素都满足。' },
+      perp:     { label: '不做功', cls: 'warn', why: '力与位移垂直（θ = 90°，cosθ 精确为 0）—— 力的方向上一寸也没移动。' },
+      noDist:   { label: '不做功', cls: 'warn', why: '有力，但没有移动距离（s = 0）—— 举着不动，缺「距离」这个因素。' },
+      noForce:  { label: '不做功', cls: 'warn', why: '有距离，但没有力（F = 0）—— 惯性滑行，缺「力」这个因素。' },
+      negative: { label: '做负功', cls: 'red',  why: '夹角大于 90°：力在位移方向上的分量是反向的，做负功。' },
+      none:     { label: '无意义', cls: 'dim',  why: '力和距离都为零，谈不上做功。' }
+    };
+    function noWorkKind(F, s, deg) {
+      if (F <= 0 && s <= 0) return 'none';
+      if (F <= 0) return 'noForce';
+      if (s <= 0) return 'noDist';
+      const c = cosOf(deg);
+      if (c === 0) return 'perp';
+      return c > 0 ? 'work' : 'negative';
+    }
+    const verdict = () => noWorkKind(F_N(), s_M(), thDeg());
+
+    /* ============================================================
+     * 状态
+     * ============================================================ */
+    const state = {
+      yaw: VIEWS.perspective.yaw, pitch: VIEWS.perspective.pitch, zoom: VIEWS.perspective.zoom,
+      tgt: VIEWS.perspective.tgt.slice(), look: !!VIEWS.perspective.look, tgtFn: null,
+      mode: 'theta',
+      preset: 'push',
+      F: F_DEF,
+      theta: TH_DEF,
+      s: S_DEF,
+      ground: 'smooth',
+      phase: 'ready',      // ready | pushing | done
+      animT: 0,
+      sNow: 0,             // 当前箱子已经移动的实际距离（m）
+      drag: null, hover: false,
+      w: 0, h: 0, dpr: 1, dirty: true, t: 0, drawn: {}
+    };
+
+    const records = [];
+    const quiz = { answers: [], order: [] };
+
+    const MODES = {
+      theta: { name: '力的方向 θ', lock: { F: true,  theta: false, s: true  },
+               note: '控制变量：力锁在 40 N、位移锁在 1.6 m，只改力的方向。' },
+      dist:  { name: '位移 s',     lock: { F: true,  theta: true,  s: false },
+               note: '控制变量：力锁在 40 N、方向锁在 0°，只改移动的距离。' },
+      free:  { name: '自由探究',   lock: { F: false, theta: false, s: false },
+               note: '全部解锁：力、方向、距离随便改，自己设计对照实验。' }
+    };
+    const MODE_DEF = {
+      theta: { F: 40, theta: 0, s: 1.6 },
+      dist:  { F: 40, theta: 0, s: 1.6 },
+      free:  null
+    };
+    const PHASE_NAME = { ready: '待推', pushing: '正在推', done: '已推到位' };
+
+    // 五种典型情景：一键把 (F, θ, s) 摆到教材上的经典位置上
+    const PRESETS = {
+      push:  { name: '水平推箱',   F: 40, theta: 0,   s: 1.6,
+               note: '力水平、位移水平，θ = 0° —— 做功，W = F·s。' },
+      pull:  { name: '斜向上拉',   F: 40, theta: 45,  s: 1.6,
+               note: 'θ = 45°，只有沿位移方向的分量做功：W = F·s·cos45°。' },
+      carry: { name: '提箱水平走', F: 40, theta: 90,  s: 1.6,
+               note: '提力竖直向上、位移水平，θ = 90° —— 力与距离垂直，不做功。' },
+      hold:  { name: '举着不动',   F: 40, theta: 90,  s: 0,
+               note: '有力，但 s = 0 —— 有力无距离，不做功。' },
+      slide: { name: '惯性滑行',   F: 0,  theta: 0,   s: 1.6,
+               note: '已经撒手，F = 0 —— 有距离无力，不做功。' }
+    };
+
+    /* ============================================================
+     * 相机
+     * ============================================================ */
+    function envelopePoints() {
+      const pts = [];
+      const K = ARROW_K, tipY = BOX_H * 0.5;
+      // 地面四角（含 z 方向的纵深 —— 这一项撑着竖直取景）
+      for (const sx of [GROUND.x0, GROUND.x1]) for (const sz of [GROUND.z0, GROUND.z1]) pts.push([sx, 0, sz]);
+      // 箱子的两个极端位置（各 8 角）
+      for (const bx of [S_MIN, S_MAX]) {
+        for (const dx of [-BOX_S / 2, BOX_S / 2]) for (const dy of [0, BOX_H]) for (const dz of [-BOX_S / 2, BOX_S / 2]) {
+          pts.push([bx + dx, dy, dz]);
+        }
+      }
+      // 力箭头的三个极端：θ = 0（最右）、θ = 180（最左）、θ = 90（最高），F 都取最大。
+      // 竖直极端在【两个】横向端点各取一次 —— 只取中点的话，箱子推到远端时箭头会出画。
+      pts.push([S_MAX + BOX_S / 2 + F_MAX * K + 0.10, tipY, 0]);
+      pts.push([S_MIN - BOX_S / 2 - F_MAX * K - 0.10, tipY, 0]);
+      for (const bx of [S_MIN, S_MAX]) pts.push([bx, tipY + F_MAX * K + 0.10, 0]);
+      // 量角器（在箱心所在的竖直平面里，半径 PRO_R）
+      pts.push([S_MAX + BOX_S / 2 + PRO_R, tipY, 0]);
+      pts.push([S_MIN - BOX_S / 2 - PRO_R, tipY, 0]);
+      for (const bx of [S_MIN, S_MAX]) pts.push([bx, tipY + PRO_R, 0]);
+      // 位移箭头（贴地、画在最前）
+      pts.push([S_MAX + 0.14, 0.03, DISP_Z]);
+      pts.push([S_MIN - 0.14, 0.03, DISP_Z]);
+      // 地面刻度尺
+      pts.push([S_MAX + 0.10, 0.06, SCALE_Z]);
+      return pts;
+    }
+
+    function makeCam(q, w, h) {
+      const cy = Math.cos(state.yaw), sy = Math.sin(state.yaw);
+      const cp = Math.cos(state.pitch), sp = Math.sin(state.pitch);
+      const dir = [cp * sy, sp, cp * cy];
+      const tgt = state.tgt || TARGET;
+      // 【别把 dist 也除以 zoom】—— 自动取景会把焦距算回去，缩放就失效。
+      q.dist = CAMD;
+      q.eye = add(tgt, scl(dir, q.dist));
+      q.fwd = scl(dir, -1);
+      q.right = vnorm(cross(q.fwd, [0, 1, 0]));
+      q.up = cross(q.right, q.fwd);
+      const pts = envelopePoints();
+      let loR = 1e9, hiR = -1e9, loU = 1e9, hiU = -1e9;
+      for (const p of pts) {
+        const v = sub(p, q.eye);
+        const z = Math.max(0.05, dot(v, q.fwd));
+        const r = dot(v, q.right) / z, u = dot(v, q.up) / z;
+        loR = Math.min(loR, r); hiR = Math.max(hiR, r);
+        loU = Math.min(loU, u); hiU = Math.max(hiU, u);
+      }
+      const s = Math.min(w * 0.92 / Math.max(1e-6, hiR - loR),
+                         h * 0.90 / Math.max(1e-6, hiU - loU)) * state.zoom;
+      q.focal = s;
+      q.loR = loR; q.hiR = hiR; q.loU = loU; q.hiU = hiU;
+      if (state.look) {
+        const tv = sub(tgt, q.eye);
+        const tz = Math.max(0.05, dot(tv, q.fwd));
+        q.px = w * 0.5 - (dot(tv, q.right) / tz) * s;
+        q.py = h * 0.5 + (dot(tv, q.up) / tz) * s;
+      } else {
+        q.px = w * 0.5 - (loR + hiR) * 0.5 * s;
+        q.py = h * 0.5 + (loU + hiU) * 0.5 * s;
+      }
+      return q;
+    }
+    function project(p, q) {
+      const v = sub(p, q.eye);
+      const z = Math.max(0.05, dot(v, q.fwd));
+      const s = q.focal / z;
+      return { x: q.px + dot(v, q.right) * s, y: q.py - dot(v, q.up) * s, s: s, z: z };
+    }
+    // 屏幕上某个 y 对应的世界 y（沿一条竖直线反解，二分 26 次）
+    function worldYAtScreen(sy, wx, wz, q) {
+      let lo = -2, hi = 12;
+      for (let i = 0; i < 26; i++) {
+        const mid = (lo + hi) / 2;
+        if (project([wx, mid, wz], q).y > sy) lo = mid; else hi = mid;
+      }
+      return (lo + hi) / 2;
+    }
+
+    /* ============================================================
+     * 绘图小工具
+     * ============================================================ */
+    function polyPath(pts) {
+      ctx.beginPath();
+      pts.forEach((p, k) => k ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+      ctx.closePath();
+    }
+    function poly(pts, fill, stroke, lw) {
+      if (!pts || pts.length < 2) return;
+      polyPath(pts);
+      if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+      if (stroke) { ctx.lineWidth = lw || 1; ctx.strokeStyle = stroke; ctx.stroke(); }
+    }
+    function line(pts, color, lw, dash) {
+      if (!pts || pts.length < 2) return;
+      ctx.beginPath();
+      pts.forEach((p, k) => k ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+      ctx.setLineDash(dash || []);
+      ctx.lineWidth = lw; ctx.strokeStyle = color; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+      ctx.stroke(); ctx.setLineDash([]);
+    }
+    const rgb = (c, k) => {
+      const s = k === undefined ? 1 : k;
+      return 'rgb(' + Math.round(clamp(c[0] * s, 0, 255)) + ',' +
+                      Math.round(clamp(c[1] * s, 0, 255)) + ',' +
+                      Math.round(clamp(c[2] * s, 0, 255)) + ')';
+    };
+    const LIGHT = vnorm([-0.34, 0.86, 0.38]);
+    const shade = (base, n, amb) => rgb(base, (amb === undefined ? 0.55 : amb) + 0.60 * Math.max(0, dot(n, LIGHT)));
+
+    function convexHull(pts) {
+      if (pts.length < 3) return pts.slice();
+      const P = pts.slice().sort((a, b) => a.x - b.x || a.y - b.y);
+      const cr = (o, a, b) => (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+      const lo = [];
+      for (const p of P) { while (lo.length >= 2 && cr(lo[lo.length - 2], lo[lo.length - 1], p) <= 0) lo.pop(); lo.push(p); }
+      const up = [];
+      for (let i = P.length - 1; i >= 0; i--) {
+        const p = P[i];
+        while (up.length >= 2 && cr(up[up.length - 2], up[up.length - 1], p) <= 0) up.pop();
+        up.push(p);
+      }
+      lo.pop(); up.pop();
+      return lo.concat(up);
+    }
+
+    /* ---------------------------- 标签（带避让） ---------------------------- */
+    let LBOX = [];          // 真正落笔的标签
+    let UI_BOX = [];        // DOM 浮层
+    let GEO_BOX = [];       // 器材包围盒
+    let DRAWN_LABELS = [];  // 供自检读「画面真画了什么」
+    let DRAWN_ANCHORS = []; // 供自检读「标注被避让推离锚点多远」
+
+    const pushBox = (x0, y0, x1, y1, tag) => {
+      const b = { x: Math.min(x0, x1), y: Math.min(y0, y1), w: Math.abs(x1 - x0), h: Math.abs(y1 - y0) };
+      if (b.w > 0.5 && b.h > 0.5) { if (tag) b.txt = tag; GEO_BOX.push(b); }
+      return b;
+    };
+    const boxOfPts = (pts, tag) => {
+      let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+      for (const p of pts) { x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y); x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y); }
+      return pushBox(x0, y0, x1, y1, tag);
+    };
+    function uiBoxes() {
+      const out = [];
+      const cr = canvas.getBoundingClientRect();
+      for (const sel of ['.stage-hint', '.stage-legend', '.stage-flag', '.bar-left', '.stage-help']) {
+        const e = stage.querySelector(sel);
+        if (!e) continue;
+        if (+getComputedStyle(e).opacity < 0.05) continue;
+        const b = e.getBoundingClientRect();
+        if (b.width < 2 || b.height < 2) continue;
+        out.push({ x: b.left - cr.left, y: b.top - cr.top, w: b.width, h: b.height });
+      }
+      return out;
+    }
+    function labelBox(p, text, size, align) {
+      ctx.font = '800 ' + size + 'px Inter, "Microsoft YaHei", sans-serif';
+      const wpx = ctx.measureText(text).width;
+      const pad = 4;
+      const half = size * 0.72 + pad * 0.5;
+      const wBox = wpx + pad * 2;
+      const EDGE = 8;
+      const y = clamp(p.y, half + EDGE, Math.max(half + EDGE, state.h - half - EDGE));
+      let bx = align === 'left' ? p.x - 4 - pad
+             : align === 'right' ? p.x + 4 - wpx - pad
+             : p.x - wpx / 2 - pad;
+      bx = clamp(bx, EDGE, Math.max(EDGE, state.w - wBox - EDGE));
+      return { x: bx, y: y - half, w: wBox, h: half * 2, cx: bx + wBox / 2, cy: y };
+    }
+    function label(p, text, color, size, align) {
+      ctx.font = '800 ' + size + 'px Inter, "Microsoft YaHei", sans-serif';
+      ctx.textAlign = align || 'center';
+      ctx.textBaseline = 'middle';
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = 'rgba(2,6,23,.82)';
+      ctx.strokeText(text, p.x, p.y);
+      ctx.fillStyle = color;
+      ctx.fillText(text, p.x, p.y);
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'alphabetic';
+    }
+    // 候选位：以锚点为中心的「环」，由近及远。
+    // 本页读数标签比 ① 更多（F、F∥、F⊥、θ、s、W、刻度数字），
+    // 环形候选位给出更细的落点，实测 0 px² 重叠（把候选位砍成只剩锚点本身就会被负向对照改红）。
+    const LABEL_RINGS = (() => {
+      const out = [[0, 0]];
+      for (const r of [18, 32, 48, 66, 88, 112, 140, 172]) {
+        for (const [dx, dy] of [[0, -1], [0, 1], [1, 0], [-1, 0], [0.71, -0.71], [0.71, 0.71], [-0.71, -0.71], [-0.71, 0.71]]) {
+          out.push([Math.round(r * dx), Math.round(r * dy)]);
+        }
+      }
+      return out;
+    })();
+    // 各类「器材」对标签的排斥权重：刻度数字是【读数】，绝不能被压住。
+    // 【地面必须是 0】—— 它的包围盒几乎覆盖整张画布（实测 8 个场景都是「命中地面」），
+    // 权重 1 × 上万像素的面积 远大于 0.4/px 的就近正则 ⇒ 变成一块「看不见的大墙」，
+    // 把 W / θ / F 三条标注一路推到画布顶边 y = 8。标签本身带深色描边，
+    // 浮在平地上完全正常（注释里原本就写着「标签浮在它上面完全正常」，只是权重给错了）。
+    const AVOID_W = { tick: 50, protractor: 12, box: 8, ghost: 5, disp: 3, ground: 0 };
+    const boxW = (q) => (q.txt && AVOID_W[q.txt] !== undefined ? AVOID_W[q.txt] : 1);
+    // 标签带避让：候选位先就近、再由近及远；只跟【真实落笔】的标签与器材/浮层比
+    function placeLabel(anchor, text, color, size, offs) {
+      const cands = offs || LABEL_RINGS;
+      const boxes = LBOX.concat(GEO_BOX, UI_BOX);
+      let best = null, bestCost = Infinity, bestHit = null;
+      // 【硬约束优先】先在「零重叠」的候选位里挑最近的；一个都没有时才退回软代价。
+      // 只有软代价的话，5~8 px² 的压边会被当成「比多挪 18 px 更划算」而留下来
+      // （实测 perspective θ=90° / 120° / 150°、top θ=150° 四处各残留 5~8 px²）。
+      let clean = null, cleanCost = Infinity;
+      for (const o of cands) {
+        const p = { x: anchor.x + o[0], y: anchor.y + o[1] };
+        const b = labelBox(p, text, size, 'center');
+        let cost = 0, hit = null;
+        for (const q of boxes) {
+          const ox = Math.min(b.x + b.w, q.x + q.w) - Math.max(b.x, q.x);
+          const oy = Math.min(b.y + b.h, q.y + q.h) - Math.max(b.y, q.y);
+          if (ox > 0 && oy > 0) {
+            const a = ox * oy * boxW(q);
+            cost += a;
+            if (!hit || a > hit.a) hit = { a: a, tag: q.txt || 'label', x: Math.round(q.x), y: Math.round(q.y) };
+          }
+        }
+        const pen = Math.abs(o[0]) * 0.4 + Math.abs(o[1]) * 0.4;
+        if (cost <= 0.5 && pen < cleanCost) { cleanCost = pen; clean = p; }
+        if (cost + pen < bestCost) { bestCost = cost + pen; best = p; bestHit = hit; }
+      }
+      const p = clean || best || anchor;
+      const cleanHit = clean ? null : bestHit;
+      label(p, text, color, size, 'center');
+      const b = labelBox(p, text, size, 'center');
+      b.txt = text;
+      LBOX.push(b);
+      DRAWN_LABELS.push({ x: b.x, y: b.y, w: b.w, h: b.h, txt: text });
+      // 诊断：锚点原位（候选位 [0,0]）压住了谁 —— 用于定位「标注被推走」的真凶
+      const b0 = labelBox(anchor, text, size, 'center');
+      const ov0 = [];
+      for (const q of boxes) {
+        const ox = Math.min(b0.x + b0.w, q.x + q.w) - Math.max(b0.x, q.x);
+        const oy = Math.min(b0.y + b0.h, q.y + q.h) - Math.max(b0.y, q.y);
+        if (ox > 0 && oy > 0) ov0.push((q.txt || 'label') + ':' + Math.round(ox * oy) + 'x' + boxW(q));
+      }
+      DRAWN_ANCHORS.push({ txt: text, ax: anchor.x, ay: anchor.y, x: p.x, y: p.y,
+                           cost: bestCost, hit: cleanHit, clean: !!clean, ov0: ov0 });
+    }
+
+    /* ============================================================
+     * 场景绘制
+     * ============================================================ */
+    function drawBackdrop(w, h) {
+      const g = ctx.createLinearGradient(0, 0, 0, h);
+      g.addColorStop(0, '#071120');
+      g.addColorStop(0.62, '#0a1626');
+      g.addColorStop(1, '#050b16');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, w, h);
+    }
+
+    // 地面：一张大四边形。光滑 = 深蓝玻璃，粗糙 = 灰砂
+    function drawGround(q) {
+      const G0 = GROUND;
+      const far  = [project([G0.x0, 0, G0.z0], q), project([G0.x1, 0, G0.z0], q)];
+      const near = [project([G0.x1, 0, G0.z1], q), project([G0.x0, 0, G0.z1], q)];
+      const base = state.ground === 'rough' ? C_GROUND_R : C_GROUND_S;
+      const yFar = (far[0].y + far[1].y) / 2, yNear = (near[0].y + near[1].y) / 2;
+      const g = ctx.createLinearGradient(0, yFar, 0, yNear);
+      g.addColorStop(0, rgb(base, state.ground === 'rough' ? 0.70 : 0.58));
+      g.addColorStop(0.55, rgb(base, 1.0));
+      g.addColorStop(1, rgb(base, 1.42));
+      poly([far[0], far[1], near[0], near[1]], g, null, 0);
+      boxOfPts([far[0], far[1], near[0], near[1]], 'ground');
+      line([far[0], far[1]], 'rgba(148,163,184,.30)', 1);
+      // 近边描一道亮线，让「地面铺到画布底」这件事看得出来
+      line([near[0], near[1]], 'rgba(148,163,184,.16)', 1);
+    }
+
+    function drawGrid(q) {
+      const G0 = GROUND, rough = state.ground === 'rough';
+      // 沿 x 的线（横线，等 z）
+      for (let z = G0.z0; z <= G0.z1 + 1e-6; z += GRID) {
+        const major = Math.abs(z / 1 - Math.round(z / 1)) < 1e-6;
+        line([project([G0.x0, 0, z], q), project([G0.x1, 0, z], q)],
+             rough ? 'rgba(214,196,160,' + (major ? .14 : .08) + ')' : 'rgba(148,163,184,' + (major ? .20 : .11) + ')',
+             major ? 1.1 : 0.8);
+      }
+      // 沿 z 的线（竖线，等 x）—— 每 0.5 m 一条，与位移刻度对齐
+      for (let x = Math.ceil(G0.x0 / GRID) * GRID; x <= G0.x1 + 1e-6; x += GRID) {
+        const major = Math.abs(x / 1 - Math.round(x / 1)) < 1e-6;
+        line([project([x, 0, G0.z0], q), project([x, 0, G0.z1], q)],
+             rough ? 'rgba(214,196,160,' + (major ? .15 : .09) + ')' : 'rgba(148,163,184,' + (major ? .21 : .12) + ')',
+             major ? 1.1 : 0.8);
+      }
+      if (rough) {
+        // 粗糙地面：在每个网格交点上撒一小撮斜线，让「粗糙」看得出来
+        for (let x = Math.ceil(G0.x0 / GRID) * GRID; x <= G0.x1 + 1e-6; x += GRID) {
+          for (let z = G0.z0; z <= G0.z1 + 1e-6; z += GRID) {
+            const p = project([x, 0, z], q);
+            line([{ x: p.x - 3, y: p.y + 2 }, { x: p.x + 3, y: p.y - 2 }], 'rgba(214,196,160,.26)', 1);
+          }
+        }
+      }
+    }
+
+    // 地面刻度尺（沿 z = SCALE_Z）：读数类器材，数字必须登记成 'tick'
+    function drawGroundScale(q) {
+      const z = SCALE_Z;
+      const a = project([S_MIN, 0.02, z], q), b = project([S_MAX, 0.02, z], q);
+      line([a, b], 'rgba(226,240,255,.55)', 1.4);
+      let nTick = 0;
+      for (let cm = 0; cm <= S_MAX * 10 + 1e-6; cm += 5) {
+        const m = cm / 10;
+        const p = project([m, 0.02, z], q);
+        const major = (cm % 10 === 0);
+        const len = major ? 11 : 6;
+        line([{ x: p.x, y: p.y }, { x: p.x, y: p.y + len }],
+             major ? 'rgba(226,240,255,.85)' : 'rgba(148,163,184,.55)', major ? 1.5 : 1);
+        if (major) {
+          const txt = String(Math.round(m));
+          label({ x: p.x, y: p.y + len + 8 }, txt, 'rgba(226,240,255,.92)', 10.5, 'center');
+          // 【刻度数字也要登记成「器材」】—— 不登记的话 placeLabel 看不见它们，
+          // s 标注的候选位就会选中压在数字上的那个。
+          ctx.font = '800 10.5px Inter, "Microsoft YaHei", sans-serif';
+          const tw = ctx.measureText(txt).width;
+          pushBox(p.x - tw / 2 - 2, p.y + len, p.x + tw / 2 + 2, p.y + len + 18, 'tick');
+          nTick++;
+        }
+      }
+      label({ x: b.x + 18, y: b.y + 8 }, 's / m', 'rgba(148,163,184,.8)', 10, 'center');
+      state.drawn.scaleTicks = nTick;
+    }
+
+    // 起点虚影：箱子原来在哪
+    function drawGhostBox(q) {
+      drawBoxAt(q, S_MIN, 0.30, 'ghost', 'ghost');
+    }
+
+    // 箱子：轴对齐立方体，背面剔除 + 画家排序
+    function boxFaces(cx) {
+      const h = BOX_S / 2, H = BOX_H;
+      const P = (dx, dy, dz) => [cx + dx, dy, dz];
+      return [
+        { n: [0, 0, 1],  c: [cx, H / 2, h],  p: [P(-h, 0, h), P(h, 0, h), P(h, H, h), P(-h, H, h)] },
+        { n: [0, 0, -1], c: [cx, H / 2, -h], p: [P(h, 0, -h), P(-h, 0, -h), P(-h, H, -h), P(h, H, -h)] },
+        { n: [1, 0, 0],  c: [cx + h, H / 2, 0], p: [P(h, 0, h), P(h, 0, -h), P(h, H, -h), P(h, H, h)] },
+        { n: [-1, 0, 0], c: [cx - h, H / 2, 0], p: [P(-h, 0, -h), P(-h, 0, h), P(-h, H, h), P(-h, H, -h)] },
+        { n: [0, 1, 0],  c: [cx, H, 0], p: [P(-h, H, h), P(h, H, h), P(h, H, -h), P(-h, H, -h)] },
+        { n: [0, -1, 0], c: [cx, 0, 0], p: [P(-h, 0, -h), P(h, 0, -h), P(h, 0, h), P(-h, 0, h)] }
+      ];
+    }
+    function drawBoxAt(q, cx, amb, tag, kind) {
+      const eye = q.eye;
+      const list = [];
+      for (const f of boxFaces(cx)) {
+        const toCam = sub(eye, f.c);
+        if (dot(f.n, toCam) <= 0) continue;          // 背面剔除
+        const sp = f.p.map(p => project(p, q));
+        const dep = sp.reduce((a, p) => a + p.z, 0) / sp.length;
+        list.push({ f: f, sp: sp, dep: dep });
+      }
+      list.sort((A, B) => B.dep - A.dep);            // 远 → 近
+      const ghost = kind === 'ghost';
+      const base = ghost ? C_GHOST : C_BOX;
+      for (const it of list) {
+        const c = shade(base, it.f.n, amb);
+        poly(it.sp, ghost ? rgba(C_GHOST, 0.10) : c, ghost ? 'rgba(148,163,184,.55)' : 'rgba(15,23,42,.55)', ghost ? 1.4 : 1);
+        if (ghost) { /* 虚影只描边 */ }
+      }
+      // 木箱的板缝：只画正面那两条，让立方体读起来像箱子
+      if (!ghost) {
+        const h = BOX_S / 2, H = BOX_H;
+        for (const y of [H * 0.34, H * 0.68]) {
+          const s1 = project([cx - h, y, h], q), s2 = project([cx + h, y, h], q);
+          line([s1, s2], 'rgba(80,54,24,.45)', 1.2);
+        }
+        const s1 = project([cx, 0, h], q), s2 = project([cx, H, h], q);
+        line([s1, s2], 'rgba(80,54,24,.35)', 1);
+      }
+      // 【包围盒必须取 8 个投影角点】—— 只取两个对角点的话，斜视下盒子在屏幕上
+      // 远大于这个矩形，placeLabel 看不见它 ⇒ 文字直接压在箱子上（实测压 40% 画面高）。
+      const corners = [];
+      for (const dx of [-BOX_S / 2, BOX_S / 2]) for (const dy of [0, BOX_H]) for (const dz of [-BOX_S / 2, BOX_S / 2]) {
+        corners.push(project([cx + dx, dy, dz], q));
+      }
+      return boxOfPts(corners, tag);
+    }
+
+    // 量角器：在箱心所在的竖直平面（x–y）里，0° 指向 +x（位移方向）
+    function drawProtractor(q, cx) {
+      const cy = BOX_H / 2;
+      const N = 72, pts = [];
+      for (let i = 0; i <= N; i++) {
+        const a = Math.PI * i / N;
+        pts.push(project([cx + PRO_R * Math.cos(a), cy + PRO_R * Math.sin(a), 0], q));
+      }
+      const c0 = project([cx, cy, 0], q);
+      line(pts, 'rgba(125,211,252,.42)', 1.3, [5, 5]);
+      // 基准边（沿 +x）—— θ 就是从这里量起的
+      line([c0, pts[0]], 'rgba(125,211,252,.5)', 1.3, [5, 5]);
+      let n = 0;
+      for (let deg = 0; deg <= 180; deg += 15) {
+        const a = Math.PI * deg / 180;
+        const r0 = PRO_R * 0.955, r1 = PRO_R * (deg % 45 === 0 ? 0.86 : 0.905);
+        const p0 = project([cx + r0 * Math.cos(a), cy + r0 * Math.sin(a), 0], q);
+        const p1 = project([cx + r1 * Math.cos(a), cy + r1 * Math.sin(a), 0], q);
+        line([p0, p1], deg % 45 === 0 ? 'rgba(165,243,252,.8)' : 'rgba(148,163,184,.5)', deg % 45 === 0 ? 1.4 : 1);
+        n++;
+      }
+      state.drawn.proTicks = n;
+      // 【只标 90°】—— 0° / 180° 的方向由位移箭头自己说明；全标的话
+      // 0° 那个数字正好落在 F 标注的位置上、90° 那个正好落在 W 标注的位置上（实测互压）。
+      // 90° 是本节唯一「W 恰为 0」的角度，值得单独钉住；半径推到 0.94 倍，让开箱顶。
+      {
+        const a = Math.PI / 2;
+        const r = PRO_R * 0.94;
+        const p0 = project([cx + r * Math.cos(a), cy + r * Math.sin(a), 0], q);
+        // 【数字要沿弧往左让开】—— θ = 90° 时力的箭头正好指向 90° 刻度，
+        // 竖直的绿箭头会把数字整个盖掉（实测 carry90 / front-view 两处都是）。
+        const p = { x: p0.x - 17, y: p0.y - 2 };
+        label(p, '90°', '#fde68a', 11.5, 'center');
+        ctx.font = '800 11.5px Inter, "Microsoft YaHei", sans-serif';
+        const tw = ctx.measureText('90°').width;
+        pushBox(p.x - tw / 2 - 2, p.y - 8, p.x + tw / 2 + 2, p.y + 8, 'protractor');
+      }
+      // 【不要把整块量角器登记成障碍】—— 它的包围盒是个大半圆矩形，内部其实是空的，
+      // 登记上去等于用一块 184×93 px 的「看不见的墙」把周围标签全推到画布边缘
+      // （实测 θ / F / W 三个标注被挤到 y = 8 并互相重叠）。
+      // 真正要保护的只有上面那几个刻度数字，它们各自登记了。
+      state.drawn.proBox = pts;
+    }
+
+    // 位移箭头：贴地画在箱子前方；虚线是这一组的目标 s，实线是已经走过的
+    function drawDispArrow(q) {
+      const z = DISP_Z;
+      const sNow = state.sNow, sTgt = s_M();
+      const y = 0.035;
+      const o = project([0, y, z], q);
+      const tNow = project([sNow, y, z], q);
+      const tTgt = project([sTgt, y, z], q);
+      // 目标（虚线）
+      if (sTgt > 0.01) {
+        line([o, tTgt], 'rgba(167,139,250,.42)', 1.4, [6, 5]);
+        const ang = Math.atan2(tTgt.y - o.y, tTgt.x - o.x), hl = 10;
+        poly([{ x: tTgt.x, y: tTgt.y },
+              { x: tTgt.x - hl * Math.cos(ang - 0.42), y: tTgt.y - hl * Math.sin(ang - 0.42) },
+              { x: tTgt.x - hl * Math.cos(ang + 0.42), y: tTgt.y - hl * Math.sin(ang + 0.42) }],
+             'rgba(167,139,250,.42)', null, 0);
+      }
+      // 实际（实线）
+      if (sNow > 0.02) {
+        const ang = Math.atan2(tNow.y - o.y, tNow.x - o.x), hl = 13;
+        line([o, tNow], rgb(C_DISP, 1.0), 3.2);
+        poly([{ x: tNow.x, y: tNow.y },
+              { x: tNow.x - hl * Math.cos(ang - 0.42), y: tNow.y - hl * Math.sin(ang - 0.42) },
+              { x: tNow.x - hl * Math.cos(ang + 0.42), y: tNow.y - hl * Math.sin(ang + 0.42) }],
+             rgb(C_DISP, 1.0), null, 0);
+        boxOfPts([o, tNow], 'disp');
+      }
+      state.drawn.disp = { s: sNow, sTgt: sTgt, o: o, t: tNow };
+      // 【返回对象里必须也带上 s】—— 只写进 state.drawn 的话，调用方读 disp.s
+      // 得到 undefined，`disp.s > 0.05` 恒为 false ⇒ 「s = …」标注永远不画。
+      return { s: sNow, sTgt: sTgt, o: o, t: tNow, tTgt: tTgt };
+    }
+
+    // 画一根屏幕空间的箭头（可选虚线）
+    function arrowAt(a, b, color, lw, head, dash) {
+      if (!a || !b || Math.hypot(b.x - a.x, b.y - a.y) < 1.5) return;
+      line([a, b], color, lw, dash);
+      const ang = Math.atan2(b.y - a.y, b.x - a.x), hl = head || 12;
+      poly([{ x: b.x, y: b.y },
+            { x: b.x - hl * Math.cos(ang - 0.42), y: b.y - hl * Math.sin(ang - 0.42) },
+            { x: b.x - hl * Math.cos(ang + 0.42), y: b.y - hl * Math.sin(ang + 0.42) }], color, null, 0);
+    }
+
+    // 力的作用点：从箱心沿力的方向推到【箱面】。
+    // 【必须推到箱面】—— 起点留在箱心的话，θ = 0° 时整根 0.4 m 的箭头
+    // （箱子半宽就有 0.475 m）全埋在箱子里，画面上只剩一个绿点。
+    // 轴对齐正方形在方向 (c, s) 上的边界距离 = (BOX_S/2) / max(|c|, |s|)。
+    function forceOrigin3(cx) {
+      const c = cosT(), s = sinT();
+      const m = Math.max(Math.abs(c), Math.abs(s)) || 1;
+      const r = BOX_S / 2 / m;
+      return [cx + r * c, BOX_H / 2 + r * s, 0];
+    }
+
+    // 力的分解：F（绿） = F∥（蓝，沿位移） + F⊥（琥珀，垂直位移）
+    // 画法：F 先画（最粗），F∥ / F⊥ 后画（细）—— 这样在 θ = 0° 与 θ = 90°
+    // 这两个【最要紧】的角度上，分量箭头不会正好被合箭头盖掉。
+    function drawForceArrows(q, cx) {
+      const o3 = forceOrigin3(cx);
+      const c = project(o3, q);
+      const K = ARROW_K;
+      const tip  = project([o3[0] + fPar() * K, o3[1] + fPerp() * K, 0], q);
+      const pPar = project([o3[0] + fPar() * K, o3[1], 0], q);
+      const pPer = project([o3[0], o3[1] + fPerp() * K, 0], q);
+
+      // 分解平行四边形（虚线）—— 先画，压在最底下
+      if (F_N() > 0.5) {
+        line([c, pPar], 'rgba(56,189,248,.45)', 1.2, [4, 4]);
+        line([pPar, tip], 'rgba(251,191,36,.45)', 1.2, [4, 4]);
+        line([c, pPer], 'rgba(251,191,36,.45)', 1.2, [4, 4]);
+        line([pPer, tip], 'rgba(56,189,248,.45)', 1.2, [4, 4]);
+      }
+      // F：合力（绿，最粗，先画当底）
+      if (F_N() > 0.5) arrowAt(c, tip, rgb(C_F, 1.1), 5.5, 15);
+      // F∥：沿位移方向的分量（只有它做功）
+      if (Math.abs(fPar()) > 0.5) {
+        arrowAt(c, pPar, rgb(C_FPAR, 1.1), 3.2, 12);
+        boxOfPts([c, pPar], 'fpar');
+      }
+      // F⊥：垂直位移的分量（再大也不做功）—— 虚线，压在 F 上也看得见
+      if (Math.abs(fPerp()) > 0.5) {
+        arrowAt(c, pPer, rgb(C_FPERP, 1.05), 2.8, 12, [6, 4]);
+        boxOfPts([c, pPer], 'fperp');
+      }
+      // 作用点
+      ctx.beginPath(); ctx.arc(c.x, c.y, 3.6, 0, PI2);
+      ctx.fillStyle = 'rgba(226,240,255,.9)'; ctx.fill();
+
+      state.drawn.force = {
+        c: c, tip: tip, pPar: pPar, pPer: pPer, o3: o3,
+        fPar: fPar(), fPerp: fPerp(), F: F_N(), theta: thDeg(),
+        tipLen: Math.hypot(tip.x - c.x, tip.y - c.y)
+      };
+      return { c: c, tip: tip, pPar: pPar, pPer: pPer };
+    }
+
+    function drawAnnotations(q, cx, arrows, disp) {
+      const c = arrows.c, tip = arrows.tip;
+      // ── 力的方向 θ：画一段从 +x 转到力方向的弧 ──
+      const cy = BOX_H / 2, arcR = PRO_R * 0.62;
+      const N = Math.max(2, Math.round(thDeg() / 4));
+      const arc = [];
+      for (let i = 0; i <= N; i++) {
+        const a = Math.PI * thDeg() / 180 * (i / N);
+        arc.push(project([cx + arcR * Math.cos(a), cy + arcR * Math.sin(a), 0], q));
+      }
+      if (arc.length >= 2) line(arc, rgb(C_ARC, 1.05), 2.4);
+      // 直角标记：θ = 90° 时明确画一个方角（这是本节最容易被看漏的一处）
+      if (cosT() === 0) {
+        const e = PRO_R * 0.20;
+        const q1 = project([cx + e, cy, 0], q), q2 = project([cx + e, cy + e, 0], q), q3 = project([cx, cy + e, 0], q);
+        line([q1, q2, q3], rgb(C_ARC, 1.15), 2.2);
+      }
+      // 【θ 标注不能落在 +x 射线上】—— θ = 0° 时弧的中点方向就是 +x，也就是力的方向，
+      // 于是「θ = 0°」和「F = …」两个标注锚在同一条射线上必然相撞。
+      // 把标注方向夹在离位移轴至少 25° 的地方。
+      const aMid = Math.PI * thDeg() / 180 / 2;
+      const aLab = clamp(aMid, 25 * Math.PI / 180, 155 * Math.PI / 180);
+      const pTh = project([cx + arcR * 1.42 * Math.cos(aLab), cy + arcR * 1.42 * Math.sin(aLab), 0], q);
+
+      /* 标注按【重要度】依次落笔 —— 先落笔的先挑位置，后面的只能避让。
+       * 顺序：W（本节结论）→ θ（本节判分点）→ F → F∥ / F⊥ → s。
+       * 另外：θ = 0° 时 F 与 F∥ 是同一个向量、θ = 90° 时 F 与 F⊥ 是同一个向量，
+       * 这时【合并成一条标注】—— 分开写必然抢同一个锚点，两条会被挤到画布边缘。 */
+      const wv = wNowJ();
+      // 【W 锚在箱顶左角，不能锚在箱心正上方】—— θ = 90° 时力的箭头正好从箱顶竖直往上走，
+      // 锚在箱心正上方的 W 会被箭头整条穿过（front-view 实测文字被绿箭头压住）。
+      const top = project([cx - BOX_S / 2 - 0.28, BOX_H + 0.16, 0], q);
+      placeLabel({ x: top.x, y: top.y - 10 },
+                 'W = ' + wv.toFixed(1) + ' J', wv === 0 ? '#fde68a' : (wv > 0 ? '#6ee7b7' : '#fca5a5'), 13.5);
+      state.drawn.wLabel = { x: top.x, y: top.y - 10, v: wv };
+
+      if (F_N() > 0.5) placeLabel(pTh, 'θ = ' + thDeg() + '°', '#bae6fd', 12);
+
+      const samePar = Math.abs(fPar() - F_N()) < 0.5;    // θ = 0°：F 与 F∥ 是同一个向量
+      const samePerp = Math.abs(fPerp() - F_N()) < 0.5;  // θ = 90°：F 与 F⊥ 是同一个向量
+      if (F_N() > 0.5) {
+        // 【锚在箭头尖端、沿力的方向再往外 24 px】—— 锚在中点会和 θ 弧的标注抢位置。
+        // 重合时合并成一条：θ = 0° / 90° 下两个标注锚在同一点，分开写必被挤到画布边缘。
+        const dx = tip.x - c.x, dy = tip.y - c.y, L = Math.hypot(dx, dy) || 1;
+        const anchor = { x: tip.x + dx / L * 24, y: tip.y + dy / L * 24 };
+        const txt = samePar ? ('F = F∥ = ' + F_N().toFixed(1) + ' N')
+                  : samePerp ? ('F = F⊥ = ' + F_N().toFixed(1) + ' N')
+                  : ('F = ' + F_N().toFixed(0) + ' N');
+        placeLabel(anchor, txt, '#6ee7b7', 12);
+      } else {
+        // F = 0 时画面上没有箭头，也要留一句话，否则「惯性滑行」看着像页面坏了
+        const o = forceOrigin3(cx);
+        placeLabel(project([o[0], o[1] + 0.12, 0], q), 'F = 0 N（已撒手）', '#6ee7b7', 12);
+      }
+      // 位移 s：锚在箭头【下方】。锚在箭头正上方会卡进「箱体包围盒底 240 / 位移箭头包围盒顶 260」
+      // 之间那条只有 20 px 的缝里，标注（23 px 高）塞不下，被避让顶到 y = 309；
+      // 锚在起点下方又会一路贴到画布底边压住按钮。下方是空的，直接落位。
+      if (disp.s > 0.05) {
+        placeLabel({ x: (disp.o.x + disp.t.x) / 2, y: (disp.o.y + disp.t.y) / 2 + 30 },
+                   's = ' + disp.s.toFixed(2) + ' m', '#c4b5fd', 12);
+      }
+    }
+
+    /* ============================================================
+     * 主渲染
+     * ============================================================ */
+    function render() {
+      if (!state.w || !state.h) return;
+      const w = state.w, h = state.h;
+      // 【跟随视角】把 target 绑到箱子当前位置（贴近箱子用）
+      if (state.tgtFn) state.tgt = state.tgtFn();
+      const q = {};
+      state.q = q;
+      makeCam(q, w, h);
+      LBOX = []; GEO_BOX = []; DRAWN_LABELS = []; DRAWN_ANCHORS = [];
+      UI_BOX = uiBoxes();
+      state.drawn = {};
+
+      drawBackdrop(w, h);
+      drawGround(q);
+      drawGrid(q);
+      drawGroundScale(q);
+      drawProtractor(q, state.sNow);
+      drawGhostBox(q);
+      const disp = drawDispArrow(q);
+      drawBoxAt(q, state.sNow, 0.52, 'box', 'box');
+      const arrows = drawForceArrows(q, state.sNow);
+      drawAnnotations(q, state.sNow, arrows, disp);
+
+      state.drawn.cam = { focal: q.focal, px: q.px, py: q.py, loR: q.loR, hiR: q.hiR, loU: q.loU, hiU: q.hiU };
+      state.drawn.env = { vertFrac: (q.hiU - q.loU) * q.focal / h, cxOff: ((q.loR + q.hiR) * 0.5) * q.focal };
+      state.drawn.box = { cx: state.sNow, screen: project([state.sNow, BOX_H / 2, 0], q) };
+      state.drawn.work = { wNow: wNowJ(), wTgt: workJ(), sNow: state.sNow, sTgt: s_M() };
+    }
+
+    /* ============================================================
+     * 读数 / 记录表 / 曲线 / 判断题 / 结论
+     * ============================================================ */
+    function renderReadouts() {
+      const wNow = wNowJ(), wTgt = workJ();
+      // 【大数字必须是「实际已做的功」】—— 箱子还没推就该是 0.0 J，
+      // 不能把 workJ()（预期值）当实测显示。预期值单列一行。
+      $('wk-W-num').textContent = wNow.toFixed(1);
+      $('wk-gauge').className = 'gauge-num' + (wNow === 0 ? ' zero' : '');
+      $('wk-W-out').textContent = wNow.toFixed(1) + ' J';
+      $('wk-W-tgt').textContent = wTgt.toFixed(1) + ' J';
+      $('wk-fpar-out').textContent = fPar().toFixed(1) + ' N';
+      $('wk-fperp-out').textContent = fPerp().toFixed(1) + ' N';
+      $('wk-cos-out').textContent = cosT().toFixed(3);
+      // 图例（常驻）：分量数值给在这里，画布上不再重复标
+      $('wk-lg-F').textContent = F_N().toFixed(0) + ' N';
+      $('wk-lg-par').textContent = fPar().toFixed(1) + ' N';
+      $('wk-lg-perp').textContent = fPerp().toFixed(1) + ' N';
+      $('wk-lg-s').textContent = s_M().toFixed(2) + ' m';
+      $('wk-live').textContent = state.phase === 'done' ? '实测' : '待测';
+      $('wk-live').className = 'pill' + (state.phase === 'done' ? ' ok' : '');
+
+      $('wk-F-out').textContent = F_N().toFixed(0) + ' N';
+      $('wk-th-out').textContent = thDeg() + '°';
+      $('wk-s-out').textContent = s_M().toFixed(2) + ' m';
+      $('wk-gr-out').textContent = state.ground === 'rough' ? '粗糙' : '光滑';
+      $('wk-fric-out').textContent = fricN().toFixed(1) + ' N';
+      $('wk-wfric-out').textContent = workFricJ().toFixed(1) + ' J';
+      $('wk-phase-out').textContent = PHASE_NAME[state.phase];
+
+      $('wk-F-num').textContent = F_N().toFixed(0) + ' N';
+      $('wk-th-num').textContent = thDeg() + '°';
+      $('wk-s-num').textContent = s_M().toFixed(2) + ' m';
+      $('wk-mode-pill').textContent = MODES[state.mode].name;
+      $('wk-preset-pill').textContent = PRESETS[state.preset].name;
+      $('wk-ground-pill').textContent = state.ground === 'rough' ? '粗糙' : '光滑';
+      $('wk-curve-pill').textContent = 'F = ' + F_N().toFixed(0) + ' N · s = ' + s_M().toFixed(2) + ' m';
+
+      // 滑块与锁定状态：三个参数行压成单行后，锁状态由 .lock 类 + 面板级一行提示表达
+      const lock = MODES[state.mode].lock;
+      $('wk-F').disabled = !!lock.F;
+      $('wk-th').disabled = !!lock.theta;
+      $('wk-s').disabled = !!lock.s;
+      const freeNames = [];
+      if (!lock.F) freeNames.push('F');
+      if (!lock.theta) freeNames.push('θ');
+      if (!lock.s) freeNames.push('s');
+      $('wk-lock-pill').textContent = freeNames.length === 3 ? '全部可调' : (freeNames.join('、') + ' 可调');
+      const locked = [];
+      if (lock.F) locked.push('F = ' + F_N().toFixed(0) + ' N');
+      if (lock.theta) locked.push('θ = ' + thDeg() + '°');
+      if (lock.s) locked.push('s = ' + s_M().toFixed(2) + ' m');
+      $('wk-lock-note').textContent = locked.length
+        ? ('🔒 锁定（控制变量）：' + locked.join('、'))
+        : '三项都可调；F = 0 即已撒手（不做功）。';
+      $('wk-F').closest('.fld').classList.toggle('lock', !!lock.F);
+      $('wk-th').closest('.fld').classList.toggle('lock', !!lock.theta);
+      $('wk-s').closest('.fld').classList.toggle('lock', !!lock.s);
+      $('wk-mode-note').textContent = MODES[state.mode].note;
+      $('wk-preset-note').textContent = PRESETS[state.preset].note;
+      $('wk-ground-note').innerHTML = state.ground === 'rough'
+        ? '粗糙地面上还要额外<b>克服摩擦做功</b>：f·s = ' + workFricJ().toFixed(1) + ' J。'
+        : '光滑地面上没有摩擦力，不需要额外克服摩擦做功。';
+      document.querySelectorAll('#wk-presets button').forEach(b => {
+        b.className = state.preset === b.getAttribute('data-preset') ? 'primary' : '';
+      });
+      document.querySelectorAll('[data-ground]').forEach(b => {
+        b.className = state.ground === b.getAttribute('data-ground') ? 'primary' : '';
+      });
+      // 判定 pill
+      const K = KIND[verdict()];
+      const pill = $('wk-verdict-pill');
+      pill.textContent = K.label;
+      pill.className = 'pill' + (K.cls === 'ok' ? ' ok' : K.cls === 'dim' ? '' : ' ' + K.cls);
+    }
+
+    function renderTable() {
+      const body = $('wk-rec-body');
+      $('wk-rec-pill').textContent = records.length + ' 组';
+      $('wk-rec-cnt').textContent = records.length;
+      if (!records.length) {
+        body.innerHTML = '<p class="rec-empty">还没有记录。改一次条件，点「记录这一组」。</p>';
+        return;
+      }
+      let html = '<table class="rec"><thead><tr><th>#</th><th>F/N</th><th>θ/°</th><th>s/m</th>' +
+                 '<th>cosθ</th><th>W/J</th><th>判断</th></tr></thead><tbody>';
+      records.forEach((r, i) => {
+        html += '<tr><td>' + (i + 1) + '</td><td>' + r.F.toFixed(0) + '</td><td>' + r.theta +
+                '</td><td>' + r.s.toFixed(2) + '</td><td>' + cosOf(r.theta).toFixed(3) +
+                '</td><td>' + r.w.toFixed(1) + '</td><td>' + KIND[r.kind].label + '</td></tr>';
+      });
+      html += '</tbody></table>';
+      body.innerHTML = html;
+    }
+
+    // W–θ 曲线：余弦曲线，θ = 90° 穿过零点，> 90° 变负功
+    function renderCurve() {
+      const cv = $('wk-curve');
+      if (!cv) return;
+      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      const W = Math.max(120, Math.round(cv.getBoundingClientRect().width));
+      // 高度【从 CSS 读】而不是写死：画布高度由样式决定（下排等高要靠它），
+      // 这里再写一个常数就会和样式悄悄分家 —— 曲线会被画在错误的比例里。
+      const H = Math.max(96, Math.round(cv.getBoundingClientRect().height) || 190);
+      cv.width = Math.round(W * dpr);
+      cv.height = Math.round(H * dpr);
+      const c2 = cv.getContext('2d');
+      c2.setTransform(dpr, 0, 0, dpr, 0, 0);
+      c2.clearRect(0, 0, W, H);
+      const padL = 36, padR = 10, padT = 12, padB = 20;
+      const F = F_N(), s = s_M();
+      const wMax = Math.max(1e-6, F * s);
+      const X = deg => padL + deg / 180 * (W - padL - padR);
+      const Y = w => H / 2 - clamp(w / wMax, -1.06, 1.06) * (H / 2 - padT);
+      // 坐标轴
+      c2.strokeStyle = 'rgba(148,163,184,.22)';
+      c2.lineWidth = 1;
+      c2.beginPath(); c2.moveTo(padL, padT - 4); c2.lineTo(padL, H - padB); c2.lineTo(W - padR, H - padB); c2.stroke();
+      // W = 0 的水平线
+      c2.setLineDash([4, 4]);
+      c2.beginPath(); c2.moveTo(padL, Y(0)); c2.lineTo(W - padR, Y(0)); c2.stroke();
+      // θ = 90° 的竖直警戒线（W 恰为 0 的地方）
+      c2.beginPath(); c2.moveTo(X(90), padT - 4); c2.lineTo(X(90), H - padB); c2.stroke();
+      c2.setLineDash([]);
+      c2.fillStyle = 'rgba(148,163,184,.75)';
+      c2.font = '9px Inter, sans-serif';
+      for (const t of [0, 90, 180]) c2.fillText(String(t), X(t) - 6, H - 7);
+      c2.fillText('θ/°', W - padR - 22, H - 7);
+      c2.fillText('+' + wMax.toFixed(0), 2, Y(wMax) + 8);
+      c2.fillText('0', 22, Y(0) + 3);
+      c2.fillText('-' + wMax.toFixed(0), 2, Y(-wMax) + 2);
+      // 余弦曲线
+      c2.beginPath();
+      for (let d = 0; d <= 180; d += 2) {
+        const x = X(d), y = Y(workOf(F, s, d));
+        if (d === 0) c2.moveTo(x, y); else c2.lineTo(x, y);
+      }
+      c2.strokeStyle = '#38bdf8';
+      c2.lineWidth = 2;
+      c2.stroke();
+      // 记录点（同一组 F、s 才画）
+      records.forEach(r => {
+        if (Math.abs(r.F - F) > 1e-9 || Math.abs(r.s - s) > 1e-9) return;
+        c2.beginPath();
+        c2.arc(X(clamp(r.theta, 0, 180)), Y(r.w), 3.2, 0, PI2);
+        c2.fillStyle = '#fbbf24';
+        c2.fill();
+      });
+      // 当前点
+      c2.beginPath();
+      c2.arc(X(thDeg()), Y(workJ()), 4, 0, PI2);
+      c2.fillStyle = '#a5f3fc';
+      c2.fill();
+    }
+
+    /* ---------------------------- 判断题 ---------------------------- */
+    const QOPT = ['做功', '有力无距离', '有距离无力', '力与距离垂直'];
+    const QUIZ = [
+      { id: 'q1', ans: 1, text: '小明双手托着一箱书，原地站着不动 10 s。他对书做功了吗？',
+        why: '托力向上、箱子没动 ⇒ s = 0，<b>有力无距离</b>。' },
+      { id: 'q2', ans: 2, text: '冰壶被推出后，在冰面上继续滑行 8 m。手对冰壶做功了吗？',
+        why: '已经撒手 ⇒ F = 0，<b>有距离无力</b>。' },
+      { id: 'q3', ans: 3, text: '小华提着水桶在水平路面上走了 15 m。她对水桶做功了吗？',
+        why: '提力竖直向上、位移水平，θ = 90° ⇒ <b>力与距离垂直</b>。' },
+      { id: 'q4', ans: 0, text: '小刚用 50 N 的水平推力，把箱子沿水平地面推动了 2 m。他做功了吗？',
+        why: '有力、有距离，且方向相同（θ = 0°）⇒ <b>做功</b>，W = 50×2 = 100 J。' },
+      { id: 'q5', ans: 1, text: '运动员把杠铃举在头顶保持 3 s 不动。举力对杠铃做功了吗？',
+        why: 's = 0 ⇒ <b>有力无距离</b>。举着很累，但累是生理问题，做功是物理问题。' },
+      { id: 'q6', ans: 2, text: '汽车关闭发动机后，靠惯性在水平路面上滑行 20 m。牵引力做功了吗？',
+        why: '牵引力为 0 ⇒ <b>有距离无力</b>。' },
+      { id: 'q7', ans: 3, text: '吊车吊着货物沿水平方向匀速移动 5 m。钢索的拉力对货物做功了吗？',
+        why: '拉力竖直向上、位移水平，θ = 90° ⇒ <b>力与距离垂直</b>。' },
+      { id: 'q8', ans: 0, text: '电梯匀速上升时，钢索的拉力对电梯厢做功了吗？',
+        why: '拉力向上、位移也向上，θ = 0° ⇒ <b>做功</b>。' }
+    ];
+    const quizPicks = {};      // id -> 选项下标
+    function answerQuiz(id, idx) {
+      if (quizPicks[id] !== undefined) return;      // 答过就不改，避免反复试出答案
+      const Q = QUIZ.filter(q => q.id === id)[0];
+      if (!Q) return;
+      quizPicks[id] = idx;
+      renderQuiz();
+      flashFlag(idx === Q.ans ? '答对了 ✓' : '再想想 —— 看右栏的「判断与结论」', idx !== Q.ans);
+    }
+    const quizScore = () => QUIZ.filter(q => quizPicks[q.id] === q.ans).length;
+    const quizDone = () => QUIZ.filter(q => quizPicks[q.id] !== undefined).length;
+    function renderQuiz() {
+      const box = $('wk-quiz');
+      $('wk-quiz-pill').textContent = quizScore() + ' / ' + QUIZ.length;
+      $('wk-quiz-pill').className = 'pill' + (quizDone() === QUIZ.length && quizScore() === QUIZ.length ? ' ok' : '');
+      box.innerHTML = QUIZ.map((q, n) => {
+        const pick = quizPicks[q.id];
+        const done = pick !== undefined;
+        const ok = done && pick === q.ans;
+        const btns = QOPT.map((t, i) => {
+          let cls = '';
+          if (done) {
+            if (i === q.ans) cls = ' picked-ok';
+            else if (i === pick) cls = ' picked-no';
+          }
+          return '<button type="button" data-q="' + q.id + '" data-i="' + i + '"' +
+                 (done ? ' disabled' : '') + ' class="' + cls.trim() + '">' + t + '</button>';
+        }).join('');
+        return '<div class="q"><div class="qt"><i>' + (n + 1) + '.</i>' + q.text + '</div>' +
+               '<div class="qb">' + btns + '</div>' +
+               (done ? '<div class="fb ' + (ok ? 'ok' : 'no') + '">' +
+                       (ok ? '✓ 答对了。' : '✗ 正确答案是「' + QOPT[q.ans] + '」。') + q.why + '</div>' : '') +
+               '</div>';
+      }).join('');
+    }
+
+    function renderAnalysis() {
+      const box = $('wk-analysis');
+      const k = verdict(), K = KIND[k];
+      const lines = [];
+      lines.push('<div class="line"><span>力 F</span><b>' + F_N().toFixed(0) + ' N</b></div>');
+      lines.push('<div class="line"><span>位移 s</span><b>' + s_M().toFixed(2) + ' m</b></div>');
+      lines.push('<div class="line"><span>夹角 θ</span><b>' + thDeg() + '°（cosθ = ' + cosT().toFixed(3) + '）</b></div>');
+      lines.push('<div class="line"><span>W = F·s·cosθ</span><b>' + workJ().toFixed(1) + ' J</b></div>');
+      lines.push('<div class="line"><span>已记录</span><b>' + records.length + ' 组</b></div>');
+
+      const cls = K.cls === 'ok' ? '' : (K.cls === 'dim' ? ' info' : ' ' + K.cls);
+      let conc = '<div class="conc' + cls + '"><b>' + K.label + '</b>：' + K.why + '</div>';
+
+      // 同一组 F、s 下只改 θ 的记录 ⇒ 直接给出「W 随 θ 变化」的对照
+      const same = records.filter(r => Math.abs(r.F - F_N()) < 1e-9 && Math.abs(r.s - s_M()) < 1e-9);
+      if (same.length >= 2) {
+        const sorted = same.slice().sort((a, b) => a.theta - b.theta);
+        const mono = sorted.every((r, i) => i === 0 || r.w <= sorted[i - 1].w + 1e-9);
+        const zero = sorted.filter(r => r.w === 0).map(r => r.theta);
+        conc += '<div class="conc' + (mono ? '' : ' warn') + '">同一组 F、s 下（' + F_N().toFixed(0) + ' N · ' +
+                s_M().toFixed(2) + ' m），θ 从 ' + sorted[0].theta + '° 到 ' + sorted[sorted.length - 1].theta +
+                '°，W 从 ' + sorted[0].w.toFixed(1) + ' J 变到 ' + sorted[sorted.length - 1].w.toFixed(1) + ' J —— ' +
+                '<b>' + (mono ? 'θ 越大，W 越小' : '数据不自洽，检查是否只改了 θ') + '</b>' +
+                (zero.length ? '；其中 θ = ' + zero.join('、') + '° 时 W 恰为 0。' : '。') + '</div>';
+      } else {
+        conc += '<div class="conc info">还差对照组。用「记录这一组」把<b>同一组 F、s 下的不同 θ</b>各记一遍' +
+                '（θ 取 0° / 45° / 90° / 135°），这里就会给出「W 随 θ 怎么变」的结论。</div>';
+      }
+      box.innerHTML = lines.join('') + conc;
+    }
+
+    function refreshAll() { renderReadouts(); renderTable(); renderCurve(); renderQuiz(); renderAnalysis(); }
+
+    /* ============================================================
+     * 提示
+     * ============================================================ */
+    let toastT = 0, flagT = 0;      // 【单位：秒】—— tickHud 用秒递减，别混毫秒
+    function showToast(text, ms) {
+      const e = $('wk-toast');
+      e.textContent = text;
+      e.classList.add('show');
+      toastT = (ms || 1500) / 1000;
+    }
+    function flashFlag(text, warn) {
+      const e = $('wk-flag');
+      e.textContent = text;
+      e.className = 'stage-flag show' + (warn ? ' warn' : '');
+      flagT = 1.8;
+    }
+    // 【提示条必须自己退场】：只赋值不倒计时 ⇒ 条子永远挂在画面上。
+    // 真实 rAF 与自检共用这一个入口，自检才能把倒计时推到底。
+    function tickHud(dt) {
+      if (!(dt > 0)) return;
+      if (toastT > 0) {
+        toastT -= dt;
+        if (toastT <= 0) { toastT = 0; $('wk-toast').classList.remove('show'); }
+      }
+      if (flagT > 0) {
+        flagT -= dt;
+        if (flagT <= 0) { flagT = 0; $('wk-flag').classList.remove('show'); }
+      }
+    }
+    const hud = () => ({ toastT: toastT, flagT: flagT });
+    function setHint() {
+      $('wk-hint').innerHTML = '拖动空白处旋转 · <b>拖动箱子</b>改距离 · ' +
+        '<b>拖动绿色力箭头尖端</b>改 θ · 滚轮缩放';
+    }
+
+    /* ============================================================
+     * 动作（按钮与自检走同一条路）
+     * ------------------------------------------------------------
+     * 【条件锁在入口】：被锁住的量，setX() 直接 return、且零副作用。
+     * ============================================================ */
+    function setMode(k) {
+      if (!MODES[k]) return;
+      state.mode = k;
+      const d = MODE_DEF[k];
+      if (d) { state.F = d.F; state.theta = d.theta; state.s = d.s; }
+      resetSim();
+      refreshAll();
+      flashFlag('切到「' + MODES[k].name + '」');
+    }
+    function applyPreset(k) {
+      const P = PRESETS[k];
+      if (!P) return;
+      state.preset = k;
+      // 情景速选是「自由探究」里的快捷方式 —— 它要摆的位置可能和当前模式的锁冲突，
+      // 所以先把模式切到自由探究，再落值。
+      state.mode = 'free';
+      state.F = P.F; state.theta = P.theta; state.s = P.s;
+      resetSim();
+      refreshAll();
+      flashFlag('情景：' + P.name);
+    }
+    function setF(v) {
+      if (MODES[state.mode].lock.F) return;
+      state.F = clamp(Math.round(v / 5) * 5, F_MIN, F_MAX);
+      resetSim(); state.dirty = true; refreshAll();
+    }
+    function setTheta(v) {
+      if (MODES[state.mode].lock.theta) return;
+      let d = clamp(Math.round(v), TH_MIN, TH_MAX);
+      // 吸附：拖到 90°（或 0° / 180°）附近自动咬住 —— 90° 是本节的判分点，
+      // 差 1° 就会让「W 恰为 0」变成「W ≈ 3.5 J」，必须让学生能精确落到 90°。
+      for (const key of [0, 90, 180]) if (Math.abs(d - key) <= TH_SNAP) d = key;
+      state.theta = d;
+      resetSim(); state.dirty = true; refreshAll();
+    }
+    function setS(v) {
+      if (MODES[state.mode].lock.s) return;
+      state.s = clamp(Math.round(v * 10) / 10, S_MIN, S_MAX);
+      resetSim(); state.dirty = true; refreshAll();
+    }
+    function setGround(g) {
+      if (!MU.hasOwnProperty(g)) return;
+      state.ground = g;
+      resetSim(); state.dirty = true; refreshAll();
+      flashFlag(g === 'rough' ? '换成粗糙地面（f = ' + fricN().toFixed(1) + ' N）' : '换成光滑地面（f = 0）');
+    }
+    function push() {
+      if (state.phase === 'pushing') return;
+      if (s_M() <= 0) {
+        showToast('位移 s = 0 —— 有力无距离，推也推不动，不做功', 2200);
+        flashFlag('有力无距离 ⇒ 不做功', true);
+        return;
+      }
+      state.sNow = 0; state.animT = 0; state.phase = 'pushing';
+      state.dirty = true;
+      refreshAll();
+      if (F_N() <= 0) flashFlag('F = 0 —— 箱子靠惯性滑行，有距离无力', true);
+      else flashFlag('开始推 —— 箱子走 ' + s_M().toFixed(2) + ' m');
+    }
+    function resetSim() {
+      state.phase = 'ready';
+      state.animT = 0;
+      state.sNow = 0;
+      state.dirty = true;
+    }
+    // 【复位 = 真的回到初始状态】—— 只清记录 + 退动画是不够的：
+    // 学生按了「复位」，箱子回起点了、记录清空了，可滑块还停在 θ = 135°、s = 2.2 m，
+    // 画面和控件自相矛盾。这里把实验条件也一并恢复到与页面初值完全一致。
+    // （视角【不】复位：那是学生自己摆的观察角度，不属于实验条件。）
+    function resetAll() {
+      records.length = 0;
+      for (const k of Object.keys(quizPicks)) delete quizPicks[k];   // 判断题也回到可重做
+      state.mode = 'theta'; state.preset = 'push'; state.ground = 'smooth';
+      const d = MODE_DEF.theta;
+      state.F = d.F; state.theta = d.theta; state.s = d.s;
+      resetSim();
+      refreshAll();
+      flashFlag('已复位');
+    }
+    function recordMark() {
+      const key = F_N().toFixed(0) + '|' + thDeg() + '|' + s_M().toFixed(2);
+      if (records.some(r => r.key === key)) { showToast('这一组已经记过了'); return; }
+      // 【记录 = 记下这组条件的结果】先把箱子推到位，表格里的 W 与画面上的读数才对得上。
+      if (state.phase !== 'done') settleNow();
+      records.push({ key: key, F: F_N(), theta: thDeg(), s: s_M(), w: workJ(), kind: verdict(), ground: state.ground });
+      refreshAll();
+      flashFlag('已记录第 ' + records.length + ' 组');
+    }
+    function applyView(name) {
+      const V = VIEWS[name];
+      if (!V) return;
+      state.yaw = V.yaw; state.pitch = V.pitch; state.zoom = V.zoom;
+      state.look = !!V.look;
+      state.tgtFn = V.tgtFn || null;
+      state.tgt = (V.tgt || TARGET).slice();
+      state.dirty = true;
+      document.querySelectorAll('[data-view]').forEach(b => {
+        b.className = b.getAttribute('data-view') === name ? 'primary' : '';
+      });
+    }
+
+    /* ============================================================
+     * 动画（真实 rAF 与自检共用 stepAnim）
+     * ============================================================ */
+    function stepAnim(dt) {
+      if (state.phase !== 'pushing') return false;
+      state.animT += dt;
+      const p = clamp(state.animT / PUSH_TIME, 0, 1);
+      const e = 1 - Math.pow(1 - p, 3);          // ease-out
+      state.sNow = s_M() * e;
+      if (p >= 1) { state.sNow = s_M(); state.phase = 'done'; }
+      state.dirty = true;
+      return state.dirty;
+    }
+    /* 【唯一的一帧推进入口】—— 真实 rAF（tick）与自检（driveAnim）都调它，
+     * 保证「侧栏读数在推箱过程中跟着涨」这件事两边都真的发生，
+     * 而不是只在页面里发生、自检读到的却是旧值。 */
+    function frameStep(dt) {
+      state.t += dt;
+      tickHud(dt);
+      // refreshAll 只在按钮/滑块回调里调；不在这里补一次的话，
+      // 「做功 W」大数字会一直停在 0.0，直到推到位才跳到 64.0 ——
+      // 学生就看不到「功是力在位移上的累积」这个过程。
+      if (stepAnim(dt)) { state.dirty = true; renderReadouts(); }
+      if (state.dirty) { render(); state.dirty = false; }
+    }
+    function driveAnim(seconds, dt) {
+      const step = dt || 1 / 60;
+      let n = Math.max(1, Math.round(seconds / step));
+      while (n-- > 0) frameStep(step);
+      refreshAll();
+    }
+    function settleNow() {   // 直接把动画推到底（自检与「立刻看结果」用）
+      state.phase = 'done';
+      state.sNow = s_M();
+      state.animT = 0;
+      state.dirty = true;
+      render();
+      refreshAll();
+    }
+
+    /* ============================================================
+     * 交互
+     * ============================================================ */
+    let dragStart = null;
+    function localXY(e) {
+      const r = canvas.getBoundingClientRect();
+      return { x: e.clientX - r.left, y: e.clientY - r.top };
+    }
+    // 屏幕点 → θ：在 0~180° 里搜「箭头尖端离鼠标最近」的那个角度
+    function thetaAtScreen(p, cx) {
+      const cy = BOX_H / 2, r = Math.max(0.05, F_N() * ARROW_K);
+      let best = thDeg(), bd = Infinity;
+      for (let d = 0; d <= 180; d++) {
+        const a = Math.PI * d / 180;
+        const s = project([cx + r * Math.cos(a), cy + r * Math.sin(a), 0], state.q);
+        const dd = (s.x - p.x) * (s.x - p.x) + (s.y - p.y) * (s.y - p.y);
+        if (dd < bd) { bd = dd; best = d; }
+      }
+      return best;
+    }
+    // 屏幕点 → s：沿箱子中心那条线搜最近的位置
+    function sAtScreen(p) {
+      let best = s_M(), bd = Infinity;
+      for (let v = S_MIN; v <= S_MAX + 1e-6; v += 0.02) {
+        const s = project([v, BOX_H / 2, 0], state.q);
+        const dd = (s.x - p.x) * (s.x - p.x) + (s.y - p.y) * (s.y - p.y);
+        if (dd < bd) { bd = dd; best = v; }
+      }
+      return best;
+    }
+    function boxHit(p) {
+      const q = state.q;
+      if (!q || !q.focal) return false;
+      const c = project([state.sNow, BOX_H / 2, 0], q);
+      return Math.abs(p.x - c.x) < BOX_S / 2 * c.s + 6 && Math.abs(p.y - c.y) < BOX_H / 2 * c.s + 6;
+    }
+    function tipHit(p) {
+      const q = state.q;
+      if (!q || !q.focal || F_N() <= 0.5) return false;
+      const c = project([state.sNow, BOX_H / 2, 0], q);
+      const r = F_N() * ARROW_K;
+      const a = Math.PI * thDeg() / 180;
+      const t = project([state.sNow + r * Math.cos(a), BOX_H / 2 + r * Math.sin(a), 0], q);
+      return Math.hypot(p.x - t.x, p.y - t.y) < 16;
+    }
+    function onDown(e) {
+      const p = localXY(e);
+      if (tipHit(p)) {
+        if (MODES[state.mode].lock.theta) { showToast('本模式下方向被锁住（控制变量）', 1500); return; }
+        state.drag = { kind: 'theta' };
+        canvas.setPointerCapture && canvas.setPointerCapture(e.pointerId);
+        return;
+      }
+      if (boxHit(p)) {
+        if (MODES[state.mode].lock.s) { showToast('本模式下位移被锁住（控制变量）', 1500); return; }
+        state.drag = { kind: 'box' };
+        canvas.setPointerCapture && canvas.setPointerCapture(e.pointerId);
+        return;
+      }
+      state.drag = { kind: 'orbit' };
+      dragStart = { x: p.x, y: p.y, yaw: state.yaw, pitch: state.pitch };
+      canvas.classList.add('grabbing');
+    }
+    function onMove(e) {
+      const p = localXY(e);
+      if (!state.drag) {
+        canvas.classList.toggle('pick', !!(tipHit(p) || boxHit(p)));
+        return;
+      }
+      if (state.drag.kind === 'theta') {
+        setTheta(thetaAtScreen(p, state.sNow));
+      } else if (state.drag.kind === 'box') {
+        setS(sAtScreen(p));
+      } else {
+        const dx = p.x - dragStart.x, dy = p.y - dragStart.y;
+        state.yaw = dragStart.yaw - dx * 0.006;
+        state.pitch = clamp(dragStart.pitch + dy * 0.005, -0.06, 1.15);
+        state.dirty = true;
+      }
+    }
+    function onUp() {
+      if (state.drag && state.drag.kind === 'theta') flashFlag('θ = ' + thDeg() + '°');
+      if (state.drag && state.drag.kind === 'box') flashFlag('s = ' + s_M().toFixed(2) + ' m');
+      state.drag = null; dragStart = null;
+      canvas.classList.remove('grabbing');
+    }
+    function onWheel(e) {
+      e.preventDefault();
+      state.zoom = clamp(state.zoom * (e.deltaY > 0 ? 0.92 : 1.087), 0.5, 3.0);
+      state.dirty = true;
+    }
+
+    /* ============================================================
+     * 尺寸 / 主循环
+     * ============================================================ */
+    function resize() {
+      const r = stage.getBoundingClientRect();
+      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      const w = Math.max(320, Math.round(r.width));
+      const h = Math.max(240, Math.round(r.height));
+      state.w = w; state.h = h; state.dpr = dpr;
+      canvas.width = Math.round(w * dpr);
+      canvas.height = Math.round(h * dpr);
+      canvas.style.width = w + 'px';
+      canvas.style.height = h + 'px';
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      state.dirty = true;
+    }
+    let lastNow = 0;
+    function tick(now) {
+      const t = (now || 0) / 1000;
+      const dt = lastNow ? Math.min(0.1, Math.max(0, t - lastNow)) : 0;
+      lastNow = t;
+      frameStep(dt);
+      requestAnimationFrame(tick);
+    }
+
+    canvas.addEventListener('pointerdown', onDown);
+    canvas.addEventListener('pointermove', onMove);
+    canvas.addEventListener('pointerup', onUp);
+    canvas.addEventListener('pointercancel', onUp);
+    canvas.addEventListener('pointerleave', () => {
+      state.drag = null; dragStart = null; canvas.classList.remove('pick', 'grabbing');
+    });
+    canvas.addEventListener('wheel', onWheel, { passive: false });
+
+    $('wk-m-theta').addEventListener('click', () => setMode('theta'));
+    $('wk-m-dist').addEventListener('click', () => setMode('dist'));
+    $('wk-m-free').addEventListener('click', () => setMode('free'));
+    document.querySelectorAll('#wk-presets button').forEach(b => {
+      b.addEventListener('click', () => applyPreset(b.getAttribute('data-preset')));
+    });
+    $('wk-F').addEventListener('input', e => setF(+e.target.value));
+    $('wk-th').addEventListener('input', e => setTheta(+e.target.value));
+    $('wk-s').addEventListener('input', e => setS(+e.target.value));
+    document.querySelectorAll('[data-ground]').forEach(b => {
+      b.addEventListener('click', () => setGround(b.getAttribute('data-ground')));
+    });
+    $('wk-push').addEventListener('click', push);
+    $('wk-reset').addEventListener('click', resetAll);
+    $('wk-record').addEventListener('click', recordMark);
+    document.querySelectorAll('[data-view]').forEach(b => {
+      b.addEventListener('click', () => applyView(b.getAttribute('data-view')));
+    });
+    // 判断题用事件委托 —— renderQuiz 每次都重建 DOM，逐个绑会漏
+    $('wk-quiz').addEventListener('click', e => {
+      const b = e.target.closest ? e.target.closest('button[data-q]') : null;
+      if (!b) return;
+      answerQuiz(b.getAttribute('data-q'), +b.getAttribute('data-i'));
+    });
+
+    if (window.ResizeObserver) new ResizeObserver(() => resize()).observe(stage);
+    window.addEventListener('resize', resize);
+
+    /* 全屏按钮（底部实拍视频区）—— 与 测速雷达原理立体模型.html 同一份实现 */
+    document.querySelectorAll('.video-fullscreen-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const c = btn.closest('.video-container');
+        if (!c) return;
+        if (document.fullscreenElement) document.exitFullscreen();
+        else if (c.requestFullscreen) c.requestFullscreen();
+      });
+    });
+    document.addEventListener('fullscreenchange', () => {
+      const on = !!document.fullscreenElement;
+      document.querySelectorAll('.video-fullscreen-btn').forEach(b => {
+        const ex = b.querySelector('.fs-expand'), cp = b.querySelector('.fs-compress');
+        if (ex) ex.style.display = on ? 'none' : '';
+        if (cp) cp.style.display = on ? '' : 'none';
+        b.title = on ? '退出全屏' : '全屏播放';
+      });
+    });
+
+    resize();
+    setHint();
+    applyView('perspective');
+    resetSim();
+    refreshAll();
+    render();
+    requestAnimationFrame(tick);
+
+    /* ============================================================
+     * 自检钩子
+     * ------------------------------------------------------------
+     * 【注意】凡是「页面里会变的量」都必须写成 get 访问器 ——
+     * 写成 `F_MAX: F_MAX` 那种快照，测试读到的是死值。
+     * ============================================================ */
+    window.__wk = {
+      state: state,
+      consts: {
+        get U() { return U; }, get G() { return G; },
+        get F_MIN() { return F_MIN; }, get F_MAX() { return F_MAX; }, get F_DEF() { return F_DEF; },
+        get TH_MIN() { return TH_MIN; }, get TH_MAX() { return TH_MAX; }, get TH_DEF() { return TH_DEF; },
+        get S_MIN() { return S_MIN; }, get S_MAX() { return S_MAX; }, get S_DEF() { return S_DEF; },
+        get BOX_S() { return BOX_S; }, get BOX_H() { return BOX_H; },
+        get ARROW_K() { return ARROW_K; }, get PRO_R() { return PRO_R; },
+        get DISP_Z() { return DISP_Z; }, get SCALE_Z() { return SCALE_Z; },
+        get PUSH_TIME() { return PUSH_TIME; }, get TH_SNAP() { return TH_SNAP; },
+        get BOX_M() { return BOX_M; },
+        GROUND: GROUND, MU: MU, VIEWS: VIEWS, MODES: MODES, PRESETS: PRESETS, KIND: KIND, QUIZ: QUIZ, QOPT: QOPT
+      },
+      makeCam: makeCam, project: project, envelopePoints: envelopePoints, worldYAtScreen: worldYAtScreen,
+      size: () => ({ w: state.w, h: state.h, dpr: state.dpr }),
+      // 物理：与页面同一份
+      cosOf: cosOf, sinOf: sinOf, workOf: workOf,
+      F_N: F_N, s_M: s_M, thDeg: thDeg, cosT: cosT, sinT: sinT,
+      fPar: fPar, fPerp: fPerp, workJ: workJ, wNowJ: wNowJ,
+      fricN: fricN, workFricJ: workFricJ,
+      forceVec: forceVec, dispVec: dispVec, cosFromVec: cosFromVec,
+      noWorkKind: noWorkKind, verdict: verdict,
+      // 动作：与按钮走同一条路
+      setMode: setMode, applyPreset: applyPreset, setF: setF, setTheta: setTheta, setS: setS,
+      setGround: setGround, push: push, resetSim: resetSim, resetAll: resetAll, recordMark: recordMark,
+      applyView: applyView, answerQuiz: answerQuiz,
+      stepAnim: stepAnim, driveAnim: driveAnim, frameStep: frameStep, settleNow: settleNow,
+      showToast: showToast, flashFlag: flashFlag, tickHud: tickHud, hud: hud,
+      thetaAtScreen: thetaAtScreen, sAtScreen: sAtScreen, boxHit: boxHit, tipHit: tipHit,
+      records: () => records.slice(),
+      quizPicks: () => Object.assign({}, quizPicks),
+      quizScore: quizScore, quizDone: quizDone,
+      render: render, refreshAll: refreshAll, renderCurve: renderCurve,
+      drawn: () => state.drawn,
+      labels: () => DRAWN_LABELS.map(b => ({ x: b.x, y: b.y, w: b.w, h: b.h, txt: b.txt })),
+      anchors: () => DRAWN_ANCHORS.map(a => ({ txt: a.txt, ax: a.ax, ay: a.ay, x: a.x, y: a.y,
+                                               cost: a.cost, hit: a.hit, clean: a.clean, ov0: a.ov0 })),
+      geoBoxes: () => GEO_BOX.map(b => ({ x: b.x, y: b.y, w: b.w, h: b.h, txt: b.txt })),
+      uiBoxes: () => UI_BOX,
+      layoutBoxes: () => {
+        const out = {};
+        for (const [k, sel] of [['ctl', '.lab3d-ctl'], ['stage', '.lab3d-stage'], ['read', '.lab3d-sidebar'],
+                                ['lower', '.lab3d-lower'], ['layout', '.lab3d-layout']]) {
+          const e = document.querySelector(sel);
+          if (e) { const r = e.getBoundingClientRect(); out[k] = { x: r.left, y: r.top, w: r.width, h: r.height, bottom: r.bottom, right: r.right }; }
+        }
+        return out;
+      }
+    };
+  })();
+  </script>
+</body>
+</html>
