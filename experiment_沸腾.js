@@ -1858,7 +1858,7 @@ import * as THREE from './assets/optics-three.min.js';
 
   /* --- 供无头验收脚本读取 --- */
   window.__boilLab = {
-    state, view, VIEWS, PRESSURES, toggles, series,
+    state, view, VIEWS, PRESSURES, toggles, series, STEPS,
     camera, renderer, scene,
     thermometer, thSupport, lamp, flameGroup, thScale, mercury,
     bubbles, steams, waterTop, flameLayers, lid, lidDrops,
