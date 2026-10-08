@@ -1,0 +1,1305 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>镜面反射与漫反射立体模型 — 物理虚拟实验</title>
+<meta name="description" content="同一束平行光打在光滑面与粗糙面上的三维对照仿真：光滑面所有面元法线一致，反射光仍是平行光，只在特定方向刺眼；粗糙面每个小面元各自遵守反射定律，但法线朝向在三维里散开，反射光便撒向四面八方。可拖观察者绕一圈、连续调粗糙度，观察漫反射如何连续退化成镜面反射。">
+<link rel="stylesheet" href="style.css">
+<style>        :root {
+            --bg: #020617;
+            --line: rgba(148, 163, 184, .18);
+            --primary: #3b82f6;
+            --secondary: #06b6d4;
+            --accent: #8b5cf6;
+            --text: #f8fafc;
+            --muted: #94a3b8;
+        }
+
+        body {
+            font-family: 'Inter', 'Microsoft YaHei', 'Noto Sans SC', sans-serif;
+            margin: 0;
+            /* 站内页头是 position:sticky，一滚动就贴顶盖住实验区，所以这一页不放页头
+               （和同章的「光的反射立体模型」一致）。留 20px 内边距即可。 */
+            padding: 20px;
+            background: var(--bg);
+            color: var(--text);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+            box-sizing: border-box;
+        }
+
+        /* 科技风背景光晕 */
+        body::before {
+            content: "";
+            position: fixed;
+            inset: 0;
+            z-index: -1;
+            pointer-events: none;
+            background:
+                radial-gradient(circle at 18% 22%, rgba(59, 130, 246, .16), transparent 42%),
+                radial-gradient(circle at 82% 68%, rgba(139, 92, 246, .14), transparent 44%),
+                radial-gradient(circle at 50% 100%, rgba(6, 182, 212, .10), transparent 55%);
+        }
+
+        /* ===== 可交互三维实验台（与站内其它 lab3d 页面同一套视觉基线）===== */
+        .lab3d {
+            width: 100%;
+            max-width: 1600px;
+            margin: 8px auto 26px;
+            box-sizing: border-box;
+            overflow: hidden;
+            border: 1px solid rgba(56, 189, 248, .22);
+            border-radius: 18px;
+            background: linear-gradient(160deg, rgba(15, 23, 42, .92), rgba(2, 6, 23, .96));
+            color: #e2e8f0;
+            box-shadow: 0 26px 70px rgba(2, 6, 23, .6), 0 0 0 1px rgba(2, 6, 23, .8) inset;
+        }
+        .lab3d * { box-sizing: border-box; }
+        .lab3d-top {
+            display: flex; justify-content: space-between; gap: 15px; align-items: center;
+            padding: 17px 23px; border-bottom: 1px solid var(--line);
+            background: linear-gradient(90deg, rgba(59, 130, 246, .12), rgba(6, 182, 212, .05) 45%, transparent);
+        }
+        .lab3d-kicker { color: #22d3ee; font-size: 11px; font-weight: 800; letter-spacing: .2em; }
+        .lab3d-top h2 { margin: 3px 0 0; color: #f8fafc; font-size: 21px; letter-spacing: .02em; }
+        .lab3d-top p { margin: 4px 0 0; color: #94a3b8; font-size: 12px; }
+        .lab3d-status {
+            border: 1px solid rgba(34, 211, 238, .45); border-radius: 99px; padding: 6px 12px;
+            color: #67e8f9; font-size: 12px; white-space: nowrap; background: rgba(6, 182, 212, .08);
+        }
+        .lab3d-layout { display: grid; grid-template-columns: minmax(0, 1fr) 300px; }
+        .lab3d-main {
+            min-width: 0; padding: 15px 16px 16px;
+            background: radial-gradient(circle at 43% 36%, rgba(30, 64, 100, .55), rgba(8, 22, 36, .92) 62%, rgba(3, 10, 18, .96));
+        }
+        .lab3d-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; padding-bottom: 12px; }
+        .lab3d-toolbar .toolbar-label { color: #94a3b8; font-size: 12px; margin-right: 5px; }
+        .lab3d button {
+            padding: 7px 12px; border: 1px solid rgba(148, 163, 184, .25); border-radius: 8px;
+            background: rgba(30, 41, 59, .7); color: #cbd5e1; font-size: 12px; font-weight: 600;
+            box-shadow: none; transition: background .2s, border-color .2s, color .2s;
+        }
+        .lab3d button:hover { transform: none; box-shadow: none; background: rgba(51, 65, 85, .85); }
+        .lab3d button.active {
+            background: rgba(59, 130, 246, .25); border-color: #38bdf8; color: #e0f2fe;
+            box-shadow: 0 0 14px rgba(56, 189, 248, .3);
+        }
+        .lab3d button:disabled { opacity: .42; cursor: not-allowed; }
+        .lab3d button.primary { background: rgba(59, 130, 246, .3); border-color: #38bdf8; color: #e0f2fe; }
+        .lab3d-toolbar .toolbar-spacer { flex: 1; }
+        .lab3d-stage {
+            position: relative; height: clamp(400px, 49vw, 580px);
+            border: 1px solid rgba(56, 189, 248, .2); border-radius: 12px; overflow: hidden;
+            background: #061423;
+        }
+        .lab3d-stage canvas {
+            display: block; width: 100%; height: 100%;
+            border: 0; border-radius: 0; box-shadow: none; background: transparent;
+            cursor: grab; touch-action: none;
+        }
+        .lab3d-stage canvas:active { cursor: grabbing; }
+        /* 指针落在激光笔上时换成转动光标（放在 :active 之后才能覆盖它） */
+        .lab3d-stage canvas.pick-laser { cursor: ew-resize; }
+        .lab3d-stage canvas.pick-laser:active { cursor: ew-resize; }
+        .lab3d-stage .stage-hint {
+            position: absolute; top: 13px; left: 15px; pointer-events: none; font-size: 12px;
+            color: #bae6fd; background: rgba(2, 6, 23, .78); border: 1px solid rgba(56, 189, 248, .25);
+            padding: 7px 11px; border-radius: 8px;
+        }
+        .lab3d-stage .stage-hint b {
+            display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+            background: #22d3ee; vertical-align: 2px; margin-right: 6px; box-shadow: 0 0 8px #22d3ee;
+        }
+        .lab3d-stage .stage-help {
+            position: absolute; right: 14px; bottom: 13px; pointer-events: none;
+            color: #93b4c4; font-size: 11px; background: rgba(2, 6, 23, .72); padding: 6px 10px; border-radius: 7px;
+        }
+        /* 舞台内的观察结论条：眼睛盯着装置时也要能看见（侧栏在窄屏会被挤到下面） */
+        .lab3d-stage .stage-verdict {
+            position: absolute; left: 15px; bottom: 13px; pointer-events: none;
+            font-size: 12px; padding: 7px 12px; border-radius: 8px;
+            color: #d1fae5; background: rgba(6, 78, 59, .82); border: 1px solid rgba(52, 211, 153, .45);
+        }
+        .lab3d-stage .stage-verdict.warn { color: #fee2e2; background: rgba(127, 29, 29, .82); border-color: rgba(248, 113, 113, .5); }
+        .lab3d-foot {
+            display: flex; align-items: center; flex-wrap: wrap; gap: 12px 18px;
+            padding: 12px 3px 1px; font-size: 12px; color: #b6c8d4;
+        }
+        .lab3d-foot label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+        .lab3d-foot input { accent-color: #22d3ee; margin: 0; }
+        .lab3d-foot .legend { margin-left: auto; color: #8ba7b6; }
+        .lab3d-sidebar {
+            padding: 18px; color: #cbd5e1; border-left: 1px solid var(--line);
+            background: linear-gradient(180deg, rgba(15, 23, 42, .75), rgba(2, 6, 23, .6));
+        }
+        .lab3d-sidebar h3 { margin: 0 0 15px; color: #e2e8f0; font-size: 15px; letter-spacing: .05em; }
+        .lab3d-field { margin: 0 0 16px; }
+        .lab3d-field label, .lab3d-field .field-label {
+            display: flex; justify-content: space-between; gap: 8px; align-items: baseline;
+            color: #cbd5e1; font-size: 12px; font-weight: 700;
+        }
+        .lab3d-field output { color: #38bdf8; font-size: 13px; font-weight: 800; }
+        .lab3d-field input[type="range"] { display: block; width: 100%; margin: 11px 0 5px; }
+        .lab3d-field input[type="range"]::-webkit-slider-thumb { background: linear-gradient(135deg, #3b82f6, #22d3ee); }
+        .lab3d-field small { color: #64748b; font-size: 10px; line-height: 1.5; display: block; }
+        .lab3d-segment { display: flex; gap: 5px; margin-top: 9px; }
+        .lab3d-segment button { flex: 1; min-width: 0; padding: 7px 4px; font-size: 11px; }
+        .lab3d-metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 12px; }
+        .lab3d-metric {
+            padding: 12px 13px; border: 1px solid rgba(56, 189, 248, .18); border-radius: 10px;
+            background: linear-gradient(160deg, rgba(30, 58, 95, .55), rgba(15, 23, 42, .6));
+        }
+        .lab3d-metric span { display: block; font-size: 11px; color: #9fb8c6; }
+        .lab3d-metric strong { display: block; margin-top: 4px; color: #e0f2fe; font-size: 17px; }
+        .lab3d-metric.ok strong { color: #6ee7b7; }
+        .lab3d-metric.bad strong { color: #fca5a5; }
+        .lab3d-note { margin: 12px 0 0; color: #9fb8c6; font-size: 12px; line-height: 1.65; }
+        .lab3d-note b { color: #7dd3fc; }
+
+        /* 结论卡：四条折射规律，逐条点亮 */
+        .law-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 8px; }
+        .law-list li {
+            display: flex; gap: 8px; align-items: flex-start;
+            padding: 9px 11px; border-radius: 9px; font-size: 12px; line-height: 1.55;
+            border: 1px solid rgba(148, 163, 184, .16); background: rgba(148, 163, 184, .05);
+            color: #b6c8d4; transition: background .2s, border-color .2s, color .2s;
+        }
+        .law-list li.on {
+            border-color: rgba(52, 211, 153, .5); background: rgba(16, 185, 129, .12); color: #d1fae5;
+        }
+        .law-list li.off {
+            border-color: rgba(248, 113, 113, .45); background: rgba(239, 68, 68, .12); color: #fee2e2;
+        }
+        .law-list li i { font-style: normal; color: #64748b; flex: none; font-weight: 700; }
+        .law-list li.on i { color: #6ee7b7; }
+        .law-list li.off i { color: #fca5a5; }
+
+        /* ===== 实验记录表：就放在实验台正下方，做完一次就能点记录 ===== */
+        .record-panel { margin-top: 0; }
+        .record-body { padding: 16px 18px 18px; }
+        .record-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; }
+        .record-actions small { color: #8ea6b7; font-size: 11px; }
+        .table-wrap { overflow-x: auto; margin-top: 13px; }
+        .record-body table { width: 100%; border-collapse: collapse; font-size: 12px; white-space: nowrap; min-width: 640px; }
+        .record-body th, .record-body td {
+            text-align: left; padding: 9px 8px; border-bottom: 1px solid rgba(148, 163, 184, .16); color: #c5d6e4;
+        }
+        .record-body th { color: #80ddec; font-size: 11px; font-weight: 700; }
+        .record-body tbody tr:last-child td { border-bottom: 0; }
+        .record-body .empty { text-align: center; color: #91a6b9; padding: 19px 5px; }
+        .record-body td.num { font-variant-numeric: tabular-nums; }
+        .record-body td.ratio { color: #7dd3fc; font-weight: 700; }
+        /* 刚记录的那一行闪一下：视线还停在装置上，也知道数据落到了哪一行 */
+        .record-body tr.flash td { animation: refrRowFlash 1.2s ease-out; }
+        @keyframes refrRowFlash { 0% { background: rgba(34, 112, 143, .8); color: #f1fbff; } 100% { background: transparent; } }
+        .record-body .note { color: #90a9b9; font-size: 11px; line-height: 1.65; margin-top: 11px; }
+        .record-body .note b { color: #7dd3fc; }
+
+        @media (max-width: 900px) {
+            .lab3d-layout { grid-template-columns: minmax(0, 1fr); }
+            .lab3d-sidebar { border-left: 0; border-top: 1px solid var(--line); display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 18px; }
+            .lab3d-sidebar h3 { grid-column: 1 / -1; }
+            .lab3d-sidebar .span-2 { grid-column: 1 / -1; }
+        }
+        @media (max-width: 620px) {
+            body { padding-left: 10px; padding-right: 10px; }
+            .lab3d { border-radius: 14px; }
+            .lab3d-top { padding: 15px; }
+            .lab3d-top h2 { font-size: 17px; }
+            .lab3d-status { display: none; }
+            .lab3d-main { padding: 10px; }
+            .lab3d-toolbar { gap: 6px; }
+            .lab3d-toolbar .toolbar-label, .lab3d-toolbar .toolbar-spacer { display: none; }
+            .lab3d-toolbar button { padding: 6px 9px; font-size: 11px; }
+            .lab3d-stage { height: 340px; }
+            .lab3d-stage .stage-help { display: none; }
+            .lab3d-stage .stage-verdict { left: 10px; right: 10px; bottom: 10px; font-size: 11px; }
+            .lab3d-sidebar { display: block; padding: 16px; }
+            .lab3d-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+            .lab3d-foot .legend { margin-left: 0; width: 100%; }
+            .record-body { padding: 14px; }
+            /* 窄屏上 7 列会被挤到横向滚动里，而最后一列 sinθ₁/sinθ₂ 正是这张表的结论。
+               缩字号 + 收紧内边距 + 隐藏表头里的「入射角/折射角」前缀，让 7 列全部看得见。 */
+            .record-body table { font-size: 10.5px; min-width: 0; }
+            .record-body th, .record-body td { padding: 7px 5px; }
+            .record-body th .th-full { display: none; }
+        }
+        /* ===== 本页专用（其余 .lab3d 样式与站内 3D 页共用同一份）===== */
+        /* .lab3d-field label 默认是 space-between，长句子会把复选框甩到最左，
+           这里改回「勾选 + 文字」贴在一起。 */
+        .lab3d-field label.check-line { justify-content: flex-start; align-items: center; gap: 7px; }
+        .lab3d-field label.check-line input { flex: none; margin: 0; accent-color: #38bdf8; }
+    </style>
+    <script src="auth-check.js"></script>
+</head>
+<body>
+    <!-- 这一页不放站内页头：页头是 position:sticky，一滚动就贴在顶上盖住实验区。 -->
+    <section class="lab3d" aria-label="镜面反射与漫反射立体模型">
+      <div class="lab3d-top">
+        <div>
+          <div class="lab3d-kicker">INTERACTIVE OPTICS LAB · 三维光学实验</div>
+          <h2>镜面反射与漫反射 · 立体模型</h2>
+          <p>同样的平行光，打在光滑面上反射光还是平行的、只在特定方向刺眼；打在粗糙面上却散向四面八方 —— 可从哪个角度都看得见</p>
+        </div>
+        <span class="lab3d-status">● 实时物理模拟</span>
+      </div>
+
+      <div class="lab3d-layout">
+        <div class="lab3d-main">
+          <div class="lab3d-toolbar" role="group" aria-label="观察视角">
+            <span class="toolbar-label">观察视角</span>
+            <button type="button" class="active" data-view="iso">立体视角</button>
+            <button type="button" data-view="face">正看光路</button>
+            <button type="button" data-view="top">俯视装置</button>
+            <button type="button" data-view="eye">站在观察者处</button>
+            <button type="button" data-view="macro">面元特写</button>
+            <span class="toolbar-spacer"></span>
+            <button type="button" id="mir-reset-view">↺ 重置视角</button>
+          </div>
+
+          <div class="lab3d-stage">
+            <canvas id="mir-canvas" aria-label="可拖动旋转、滚轮缩放的镜面反射与漫反射三维装置"></canvas>
+            <div class="stage-hint"><b></b>三维实验场景 · 平行光 → 光滑面 / 粗糙面 → 观察者</div>
+            <div class="stage-verdict" id="mir-verdict">镜面亮度 1.00　粗糙面亮度 0.06　一圈比 0.00 / 0.21</div>
+            <div class="stage-help">拖动空白处旋转 · 滚轮缩放 · 拖观察者绕圈</div>
+          </div>
+
+          <div class="lab3d-foot">
+            <label><input id="mir-rays" type="checkbox" checked>显示反射光线</label>
+            <label><input id="mir-normal" type="checkbox" checked>显示法线</label>
+            <label><input id="mir-facet-n" type="checkbox">逐面元法线</label>
+            <label><input id="mir-observer" type="checkbox" checked>显示观察者</label>
+            <label><input id="mir-glint" type="checkbox" checked>面元反光</label>
+            <span class="legend">白：入射平行光　亮：把光送进眼睛的面元　虚线：法线　橙圈：观察者轨道</span>
+          </div>
+
+          <div class="lab3d-metrics" aria-live="polite">
+            <div class="lab3d-metric"><span>入射角 θ</span><strong id="mir-m1">40.0°</strong></div>
+            <div class="lab3d-metric"><span>观察者 方位 / 仰角</span><strong id="mir-m2">0° / 50°</strong></div>
+            <div class="lab3d-metric ok"><span>镜面亮度（观察者处）</span><strong id="mir-m3">1.00</strong></div>
+            <div class="lab3d-metric ok"><span>粗糙面亮度（观察者处）</span><strong id="mir-m4">0.06</strong></div>
+          </div>
+
+          <p class="lab3d-note"><b>观察提示：</b>两块板收到的是<b>同一束平行光</b>。左边光滑面是一整块平面，所有面元的法线<b>朝向一致</b>，反射光仍然是一束平行光 —— 只有眼睛正好落在这束光里才刺眼，偏一点点就<b>全黑</b>。右边粗糙面上每个小面元<b>各自守反射定律</b>（反射角永远等于入射角），但它们的<b>法线朝向各不相同</b>，于是反射光被撒向四面八方，你从哪儿看都能看到一点亮。<b>漫反射不是「乱反射」</b>—— 它一样遵守反射定律，只是面元朝向在三维里散开了。拖动「观察者方位角」绕一圈：镜面亮度会在一处冲到 1、其余全是 0；粗糙面亮度则一直非零。把「表面粗糙度」拖到 0，粗糙面就退化成镜面了。</p>
+        </div>
+
+        <aside class="lab3d-sidebar">
+          <h3>实验参数</h3>
+
+          <div class="lab3d-field">
+            <label for="mir-theta">入射角 θ <output id="mir-theta-value">40.0°</output></label>
+            <input id="mir-theta" type="range" min="0" max="75" value="40" step="1">
+            <small>平行光与<b>表面法线</b>的夹角 · 0° – 75°。θ = 0 时光垂直打在表面上，反射光原路返回</small>
+          </div>
+
+          <div class="lab3d-field">
+            <label for="mir-rough">表面粗糙度 <output id="mir-rough-value">0.55</output></label>
+            <input id="mir-rough" type="range" min="0" max="1" value="0.55" step="0.01">
+            <small>粗糙面上每个小面元的凹凸幅度。拖到 <b>0</b> 时粗糙面变成一整块平面，和左边的光滑面一模一样</small>
+          </div>
+
+          <div class="lab3d-field">
+            <label for="mir-phi">观察者方位角 φ <output id="mir-phi-value">0°</output></label>
+            <input id="mir-phi" type="range" min="0" max="359" value="0" step="1">
+            <small>观察者绕表面转圈 · 0° – 359°。转到 180° 附近，镜面亮度会掉到 0</small>
+          </div>
+
+          <div class="lab3d-field">
+            <label for="mir-psi">观察者仰角 ψ <output id="mir-psi-value">50.0°</output></label>
+            <input id="mir-psi" type="range" min="3" max="87" value="50" step="0.5">
+            <small>观察者离表面的高度角。镜面要刺眼，ψ 必须正好等于<b>反射光的仰角</b></small>
+          </div>
+
+          <div class="lab3d-field span-2">
+            <label class="check-line"><input id="mir-follow" type="checkbox" checked>观察者跟随反射方向（ψ = 90° − θ，φ = 0°）</label>
+            <small>勾上以后，拖「入射角」时观察者会自动挪到反射光的方向上 —— 这样才能一直看到镜面在刺眼</small>
+          </div>
+
+          <div class="lab3d-field span-2">
+            <span class="field-label">显示 <output id="mir-mode-name">并排对照</output></span>
+            <div class="lab3d-segment" id="mir-mode" role="group" aria-label="显示哪块板">
+              <button type="button" data-mode="both" class="active">并排对照</button>
+              <button type="button" data-mode="mirror">只看镜面</button>
+              <button type="button" data-mode="rough">只看粗糙面</button>
+            </div>
+            <small>「只看镜面」把粗糙面藏起来，「只看粗糙面」反之。并排时两块板收到的是同一束平行光</small>
+          </div>
+
+          <div class="lab3d-field span-2">
+            <span class="field-label">反射定律</span>
+            <ul class="law-list">
+              <li id="law1"><i>①</i><span>反射光线、入射光线、法线<b>三线共面</b>，反射光线与入射光线分居法线两侧</span></li>
+              <li id="law2"><i>②</i><span><b>反射角等于入射角</b> —— 粗糙面上每一个小面元都单独成立</span></li>
+              <li id="law3"><i>③</i><span>镜面反射：面元法线一致 ⇒ 反射光<b>仍然平行</b>，亮度<b>非黑即白</b>（要么全亮要么全黑）</span></li>
+              <li id="law4"><i>④</i><span>漫反射：面元法线朝向各异 ⇒ 反射光<b>散向各方向</b>（张角远大于 0°），观察者处总有光</span></li>
+              <li id="law5"><i>⑤</i><span>粗糙度 → 0 时，粗糙面的法线<b>连续变齐</b>，漫反射退化成镜面反射</span></li>
+            </ul>
+            <small id="mir-law-verdict">当前：θ = 40.0°，粗糙度 = 0.55 —— 五条都成立</small>
+          </div>
+        </aside>
+      </div>
+    </section>
+
+    <section class="lab3d record-panel" aria-label="实验记录表">
+      <div class="lab3d-top">
+        <div>
+          <div class="lab3d-kicker">DATA SHEET · 定量记录</div>
+          <h2>实验记录表</h2>
+          <p>实验台就在上面：每调好一组参数就点一次「记录当前数据」，数据会立刻填进下表</p>
+        </div>
+        <span class="lab3d-status" id="mir-count">已记录 0 组</span>
+      </div>
+      <div class="record-body">
+        <div class="record-actions">
+          <button type="button" class="primary" id="mir-record">记录当前数据</button>
+          <button type="button" id="mir-clear">清空记录</button>
+          <small id="mir-record-hint">绕一圈多记几组，看看「一圈内最小/最大亮度比」在两种表面上差多少</small>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>次数</th>
+                <th><span class="th-full">入射角 </span>θ</th>
+                <th><span class="th-full">粗糙度 </span>r</th>
+                <th>φ</th>
+                <th>ψ</th>
+                <th>镜面<span class="th-full">亮度</span></th>
+                <th>粗糙面<span class="th-full">亮度</span></th>
+                <th>镜面<span class="th-full">一圈 min/max</span></th>
+                <th>粗糙面<span class="th-full">一圈 min/max</span></th>
+              </tr>
+            </thead>
+            <tbody id="mir-rows">
+              <tr><td colspan="9" class="empty">尚无记录，先调一组参数开始探究</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="note" id="mir-summary">记录 3 组以上数据，看看「粗糙度」和「一圈内亮度比」之间的关系。</p>
+      </div>
+    </section>
+
+    <script src="protect.js"></script>
+    <script>
+(function () {
+  'use strict';
+  const $ = (id) => document.getElementById(id);
+  const PI2 = Math.PI * 2, DEG = Math.PI / 180, RAD = 180 / Math.PI;
+  const clamp = (v, a, b) => (v < a ? a : (v > b ? b : v));
+  const num = (v, n) => (v == null || !isFinite(v)) ? '—' : (+v).toFixed(n);
+
+  /* ============================================================
+   * 三维向量（本页的面元法线活在三维里，必须用 3D）
+   * ============================================================ */
+  const v3add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+  const v3sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+  const v3scl = (a, s) => [a[0] * s, a[1] * s, a[2] * s];
+  const v3dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  const v3cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+  const v3len = (a) => Math.sqrt(v3dot(a, a));
+  const v3norm = (a) => { const L = v3len(a) || 1; return [a[0] / L, a[1] / L, a[2] / L]; };
+  const ang = (a, b) => Math.acos(clamp(v3dot(a, b), -1, 1));
+
+  /* ============================================================
+   * 场景常量
+   * ============================================================ */
+  const PW = 16, PD = 14;            // 每块板的宽（x）与深（z），cm
+  const GAP = 3;                     // 两块板之间的缝
+  const MX0 = -(GAP / 2 + PW), MX1 = -GAP / 2;    // 左：光滑面
+  const RX0 = GAP / 2, RX1 = GAP / 2 + PW;        // 右：粗糙面
+  const Z0 = -PD / 2, Z1 = PD / 2;
+  const NX = 28, NZ = 20;            // 面元网格（物理与绘制共用同一份）
+  const CW = PW / NX, CD = PD / NZ;
+  const ROUGH_AMP = 2.6;             // 粗糙度 = 1 时的高度起伏幅度（cm）
+  const FREQ = 0.9;                  // 空间频率缩放
+  const ACC = 17 * DEG;              // 观察者/仪器的接收半角
+  const COS_ACC = Math.cos(ACC);
+  const ORBIT_R = 17;                // 观察者轨道半径
+  const BEAM_LEN = 10, RAY_LEN = 11; // 入射光 / 反射光的线段长度
+  const SWEEP_N = 36;                // 「绕一圈」采样点数
+  const CAMD = 110;
+  const TARGET = [0, 3, 0];
+
+  const TH_MIN = 0, TH_MAX = 75, TH_DEF = 40;
+  const RG_MIN = 0, RG_MAX = 1, RG_DEF = 0.55;
+  const PSI_MIN = 3, PSI_MAX = 87;
+
+  // 取景包络：由【常量 + 固定参数】算出的点云，绝不跟滑块联动
+  // （否则一拖滑块画面就重取景，像素差分自检直接失效）。
+  // 用「真实内容点」而不是一个大盒子：盒子会把 z 撑到 ±24，俯视图里
+  // 竖直方向被撑爆、整台装置缩成一小块。
+  const ENV_PTS = (function () {
+    const P = [], d0 = lightDir(TH_DEF), R0 = reflDir(d0, [0, 1, 0]);
+    for (const x of [MX0, RX1]) {
+      for (const z of [Z0, Z1]) {
+        for (const y of [-ROUGH_AMP, ROUGH_AMP]) P.push([x, y, z]);   // 板（含最大起伏）
+        P.push(v3sub([x, 0, z], v3scl(d0, BEAM_LEN)));                // 入射平行光起点
+        P.push(v3add([x, 0, z], v3scl(R0, RAY_LEN)));                 // 镜面反射光末端
+        for (let k = 0; k < 8; k++) {                                 // 粗糙面反射光可达范围
+          const a = k * Math.PI / 4;
+          P.push([x + Math.cos(a) * RAY_LEN, 0, z + Math.sin(a) * RAY_LEN]);
+        }
+        P.push([x, RAY_LEN * 0.7, z]);
+      }
+    }
+    for (const psi of [PSI_MIN, 50, PSI_MAX]) {                       // 观察者轨道（固定仰角）
+      for (let k = 0; k < 12; k++) P.push(v3scl(viewDir(k * 30, psi), ORBIT_R));
+    }
+    P.push([MX0 + PW / 2, 14, 0]);                                    // 法线 + 标签余量
+    return P;
+  })();
+  const ENV = (function () {
+    let x0 = 1e9, y0 = 1e9, z0 = 1e9, x1 = -1e9, y1 = -1e9, z1 = -1e9;
+    for (const p of ENV_PTS) {
+      if (p[0] < x0) x0 = p[0]; if (p[0] > x1) x1 = p[0];
+      if (p[1] < y0) y0 = p[1]; if (p[1] > y1) y1 = p[1];
+      if (p[2] < z0) z0 = p[2]; if (p[2] > z1) z1 = p[2];
+    }
+    return { x0: x0, x1: x1, y0: y0, y1: y1, z0: z0, z1: z1 };
+  })();
+
+  const VIEWS = {
+    iso:   { yaw: 0.62, pitch: 0.34, zoom: 1.00 },
+    face:  { yaw: 0.00, pitch: 0.07, zoom: 1.06 },
+    top:   { yaw: 0.10, pitch: 1.32, zoom: 1.00 },
+    eye:   { follow: true, zoom: 1.04, dist: 46 },
+    // macro 是「贴近看面元」的视角：放大后必须居中于【注视点】，
+    // 若仍居中于包络，放大会围绕整个场景的几何中心，等于没贴近（站内多页踩过）。
+    macro: { yaw: 0.45, pitch: 0.30, zoom: 2.30, look: true, target: [RX0 + PW * 0.35, 0, 0] }
+  };
+
+  const state = {
+    yaw: VIEWS.iso.yaw, pitch: VIEWS.iso.pitch, zoom: VIEWS.iso.zoom,
+    theta: TH_DEF, rough: RG_DEF, phi: 0, psi: 50, follow: true,
+    mode: 'both',
+    showRays: true, showNormal: true, showFacetN: false, showObserver: true, showGlint: true,
+    view: 'iso',
+    w: 1, h: 1, dpr: 0, dirty: true,
+    dragging: false, dragObserver: false, lastX: 0, lastY: 0, records: []
+  };
+
+  /* ============================================================
+   * 物理：高度场 → 面元法线 → 反射方向
+   * ------------------------------------------------------------
+   * 高度场是【纯解析式、不含随机数】：三个正弦倍频叠加。
+   * 这比「固定种子 PRNG」更硬 —— 不是「每次刷新一样」，而是根本不存在随机量，
+   * 逐位可复现（像素差分自检才有意义）。
+   * 面元法线由【解析梯度】给出，与画出来的网格几何同源。
+   * ============================================================ */
+  function heightAt(x, z, r) {
+    const A = r * ROUGH_AMP, S = FREQ;
+    return A * (0.52 * Math.sin(0.62 * S * x + 1.3) * Math.cos(0.71 * S * z + 0.4)
+              + 0.31 * Math.sin(1.13 * S * x + 2.7) * Math.cos(0.97 * S * z + 1.9)
+              + 0.17 * Math.sin(1.87 * S * x + 0.6) * Math.cos(1.71 * S * z + 2.2));
+  }
+  function gradAt(x, z, r) {
+    const A = r * ROUGH_AMP, S = FREQ;
+    const hx = A * S * (0.52 * 0.62 * Math.cos(0.62 * S * x + 1.3) * Math.cos(0.71 * S * z + 0.4)
+                      + 0.31 * 1.13 * Math.cos(1.13 * S * x + 2.7) * Math.cos(0.97 * S * z + 1.9)
+                      + 0.17 * 1.87 * Math.cos(1.87 * S * x + 0.6) * Math.cos(1.71 * S * z + 2.2));
+    const hz = A * S * (-0.52 * 0.71 * Math.sin(0.62 * S * x + 1.3) * Math.sin(0.71 * S * z + 0.4)
+                      - 0.31 * 0.97 * Math.sin(1.13 * S * x + 2.7) * Math.sin(0.97 * S * z + 1.9)
+                      - 0.17 * 1.71 * Math.sin(1.87 * S * x + 0.6) * Math.sin(1.71 * S * z + 2.2));
+    return [hx, hz];
+  }
+  function normalAt(x, z, r) {
+    const g = gradAt(x, z, r);
+    return v3norm([-g[0], 1, -g[1]]);
+  }
+
+  // 入射方向：在 x–y 平面内，指向【表面】（θ 是与表面法线的夹角）
+  function lightDir(th) { const t = th * DEG; return [Math.sin(t), -Math.cos(t), 0]; }
+  // 观察方向：从表面指向观察者
+  function viewDir(phi, psi) {
+    const p = phi * DEG, s = psi * DEG, cs = Math.cos(s);
+    return [cs * Math.cos(p), Math.sin(s), cs * Math.sin(p)];
+  }
+  // 镜面反射：d 指向表面、n 朝外 ⇒ R = d − 2(d·n)n
+  function reflDir(d, n) {
+    const k = 2 * v3dot(d, n);
+    return v3norm([d[0] - k * n[0], d[1] - k * n[1], d[2] - k * n[2]]);
+  }
+
+  /* 面元表：两块板各一份 */
+  function buildFacets(x0, r) {
+    const out = [];
+    for (let i = 0; i < NX; i++) {
+      for (let j = 0; j < NZ; j++) {
+        const x = x0 + (i + 0.5) * CW, z = Z0 + (j + 0.5) * CD;
+        out.push({ i: i, j: j, x: x, z: z, y: heightAt(x, z, r), n: normalAt(x, z, r) });
+      }
+    }
+    return out;
+  }
+  function buildHeights(x0, r) {
+    const h = [];
+    for (let i = 0; i <= NX; i++) {
+      const col = [];
+      for (let j = 0; j <= NZ; j++) col.push(heightAt(x0 + i * CW, Z0 + j * CD, r));
+      h.push(col);
+    }
+    return h;
+  }
+
+  /* 预算出「每条面元的反射方向 + 是否被照亮」，与观察方向无关 ⇒ 每个 θ 只算一次 */
+  function prep(facets, d) {
+    const back = [-d[0], -d[1], -d[2]];
+    const Rspec = reflDir(d, [0, 1, 0]);
+    const out = [];
+    let spread = 0;
+    for (const f of facets) {
+      const R = reflDir(d, f.n);
+      spread = Math.max(spread, ang(R, Rspec));
+      out.push({ n: f.n, R: R, lit: v3dot(f.n, back) > 0 });
+    }
+    return { list: out, Rspec: Rspec, spread: spread * RAD };
+  }
+  /* 观察者方向上的亮度 = 被照亮、且朝向观察者、且把光正好送进接收锥的面元占比 */
+  function brightnessAt(P, V) {
+    let lit = 0, glint = 0;
+    for (const p of P) {
+      if (!p.lit) continue;
+      if (p.n[0] * V[0] + p.n[1] * V[1] + p.n[2] * V[2] <= 0) continue;
+      lit++;
+      if (p.R[0] * V[0] + p.R[1] * V[1] + p.R[2] * V[2] > COS_ACC) glint++;
+    }
+    return lit ? glint / lit : 0;
+  }
+  /* 沿方位绕一圈（固定仰角 ψ），返回最小/最大亮度与它们的比 */
+  function sweepAt(P, psi) {
+    let lo = Infinity, hi = -Infinity, loPhi = 0, hiPhi = 0;
+    for (let k = 0; k < SWEEP_N; k++) {
+      const ph = k * 360 / SWEEP_N;
+      const B = brightnessAt(P, viewDir(ph, psi));
+      if (B < lo) { lo = B; loPhi = ph; }
+      if (B > hi) { hi = B; hiPhi = ph; }
+    }
+    return { lo: lo, hi: hi, loPhi: loPhi, hiPhi: hiPhi, ratio: hi > 1e-12 ? lo / hi : 0 };
+  }
+  /* 面元法线相对竖直方向的偏角统计（粗糙度的几何度量） */
+  function tiltStats(facets) {
+    let mx = 0, sum = 0;
+    for (const f of facets) { const a = ang(f.n, [0, 1, 0]); if (a > mx) mx = a; sum += a; }
+    return { max: mx * RAD, mean: sum / facets.length * RAD };
+  }
+
+  /* ============================================================
+   * 缓存：面元/高度表只跟粗糙度有关；反射方向只跟 θ 有关
+   * ============================================================ */
+  const cache = { rKey: '', tKey: '', fM: null, fR: null, hM: null, hR: null, pM: null, pR: null, d: null, tiltM: null, tiltR: null, spreadM: 0, spreadR: 0 };
+  function facetsNow() {
+    const key = state.rough.toFixed(4);
+    if (cache.rKey !== key) {
+      cache.rKey = key;
+      cache.fM = buildFacets(MX0, 0); cache.hM = buildHeights(MX0, 0);
+      cache.fR = buildFacets(RX0, state.rough); cache.hR = buildHeights(RX0, state.rough);
+      cache.tiltM = tiltStats(cache.fM); cache.tiltR = tiltStats(cache.fR);
+      cache.tKey = '';                       // 面元变了 ⇒ 反射方向必须重算
+    }
+    return cache;
+  }
+  function prepNow() {
+    facetsNow();
+    const key = state.theta.toFixed(4) + '|' + state.rough.toFixed(4);
+    if (cache.tKey !== key) {
+      cache.tKey = key;
+      cache.d = lightDir(state.theta);
+      cache.pM = prep(cache.fM, cache.d);
+      cache.pR = prep(cache.fR, cache.d);
+      cache.spreadM = cache.pM.spread; cache.spreadR = cache.pR.spread;
+    }
+    return cache;
+  }
+
+  /* ============================================================
+   * 读数汇总：渲染与自检共用同一个函数
+   * ============================================================ */
+  function readout() {
+    const c = prepNow();
+    const V = viewDir(state.phi, state.psi);
+    const bM = brightnessAt(c.pM.list, V), bR = brightnessAt(c.pR.list, V);
+    const swM = sweepAt(c.pM.list, state.psi), swR = sweepAt(c.pR.list, state.psi);
+    return {
+      d: c.d, V: V, Rspec: c.pM.Rspec,
+      specPsi: 90 - state.theta, specPhi: 0,
+      bM: bM, bR: bR, swM: swM, swR: swR,
+      tiltM: c.tiltM, tiltR: c.tiltR,
+      spreadM: c.spreadM, spreadR: c.spreadR,
+      facetCount: c.fM.length,
+      P: c
+    };
+  }
+
+  /* ============================================================
+   * 五条判据
+   * ------------------------------------------------------------
+   * ★ 这五条是【页面报给学生看的】，必须做到「正常怎么调都成立、真出问题才变红」。
+   *   所以每条都先在 (θ × 粗糙度 × ψ) 网格上量过一遍，只保留【没有反例】的写法。
+   *   实测被否掉的写法：
+   *     · 「绕一圈最小亮度 > 0」——粗糙度 0.55、θ ≥ 50° 时确有方位亮度为 0（掠射），
+   *       这不是 bug 而是真实现象，拿它当判据会让清单在大入射角下无故变红；
+   *     · 「镜面绕一圈最小/最大 = 0」——θ = 0 垂直入射时反射光竖直向上，
+   *       任何方位角都能看到，该比值为 1。改判「亮度非黑即白」才在所有 θ 下成立。
+   * ============================================================ */
+  function lawStates() {
+    const ro = readout();
+    const c = prepNow();
+    const list = c.pR.list;
+    let coplanar = 0, sideOK = 0, maxEq = 0;
+    for (const p of list) {
+      // cr 必须先归一化：|cross(n,d)| 在 n∥d 时会趋 0，
+      // 直接拿未归一化的 cr 去点乘，会变成「两边都趋 0 所以恒成立」的假断言。
+      const cr = v3norm(v3cross(p.n, ro.d));
+      if (Math.abs(v3dot(p.R, cr)) < 1e-9) coplanar++;
+      if (v3dot(ro.d, p.n) < 0 && v3dot(p.R, p.n) > 0) sideOK++;
+      maxEq = Math.max(maxEq, Math.abs(ang([-ro.d[0], -ro.d[1], -ro.d[2]], p.n) - ang(p.R, p.n)));
+    }
+    // 镜面：整块平面 ⇒ 所有面元反射方向相同 ⇒ 亮度只可能是 0 或 1
+    const bmBin = (ro.bM === 0 || ro.bM === 1);
+    // 退化性（判分点③）：粗糙度 = 0 时两块板必须【读数逐位相同】；
+    // 粗糙度 > 0 时粗糙面法线必须【真的不再一致】。
+    // 两条都要写 —— 只写前者会在粗糙度 > 0 时恒真，只写后者会在粗糙度 = 0 时恒真。
+    const flat = state.rough <= 1e-9;
+    const degen = ro.tiltR.max < 1e-9;
+    const same = ro.bM === ro.bR && ro.swM.ratio === ro.swR.ratio;
+    return [
+      { id: 'law1', ok: coplanar === list.length && sideOK === list.length,
+        detail: '共面 ' + coplanar + '/' + list.length + '，分居两侧 ' + sideOK + '/' + list.length },
+      { id: 'law2', ok: maxEq < 1e-9, detail: '最大偏差 ' + num(maxEq, 12) + ' rad' },
+      { id: 'law3', ok: ro.spreadM < 1e-9 && bmBin,
+        detail: '反射光张角 ' + num(ro.spreadM, 10) + '°，观察者处亮度 ' + num(ro.bM, 2) + '（只取 0 或 1）' },
+      { id: 'law4', ok: ro.spreadR > 15 && ro.bR > 1e-9,
+        detail: '反射光张角 ' + num(ro.spreadR, 1) + '°，观察者处亮度 ' + num(ro.bR, 3) },
+      { id: 'law5', ok: flat ? (degen && same) : !degen,
+        detail: flat ? ('粗糙度 = 0：法线最大偏角 ' + num(ro.tiltR.max, 12) + '°，两面读数' + (same ? '完全一致' : '不一致'))
+                    : ('粗糙度 = ' + num(state.rough, 2) + '：法线最大偏角 ' + num(ro.tiltR.max, 1)
+                       + '°，平均 ' + num(ro.tiltR.mean, 1) + '°') }
+    ];
+  }
+
+  /* ============================================================
+   * 相机：轨道 + 透视投影
+   * ============================================================ */
+  function envelopePoints() { return ENV_PTS; }
+  function camAngles() {
+    const V = VIEWS[state.view] || {};
+    if (V.follow) {
+      const phi = state.phi * DEG, psi = state.psi * DEG;
+      return { yaw: Math.atan2(Math.cos(phi), Math.sin(phi)), pitch: psi };
+    }
+    return { yaw: state.yaw, pitch: state.pitch };
+  }
+  function makeCam(q, w, h) {
+    const A = camAngles();
+    const cy = Math.cos(A.yaw), sy = Math.sin(A.yaw);
+    const cp = Math.cos(A.pitch), sp = Math.sin(A.pitch);
+    const dir = [cp * sy, sp, cp * cy];
+    const V = VIEWS[state.view] || {};
+    const T = V.target || TARGET;
+    // 「站在观察者处」若还用 CAMD = 110，相机比观察者本身远 6 倍，
+    // 视角效果和「沿视线看」没区别 —— 该视角要单独把相机拉近。
+    q.dist = V.dist || CAMD;
+    q.eye = v3add(T, v3scl(dir, q.dist));
+    q.fwd = v3scl(dir, -1);
+    q.right = v3norm(v3cross(q.fwd, [0, 1, 0]));
+    q.up = v3cross(q.right, q.fwd);
+    let loR = 1e9, hiR = -1e9, loU = 1e9, hiU = -1e9;
+    for (const p of envelopePoints()) {
+      const v = v3sub(p, q.eye);
+      const z = Math.max(0.05, v3dot(v, q.fwd));
+      const r = v3dot(v, q.right) / z, u = v3dot(v, q.up) / z;
+      loR = Math.min(loR, r); hiR = Math.max(hiR, r);
+      loU = Math.min(loU, u); hiU = Math.max(hiU, u);
+    }
+    const s = Math.min(w * 0.94 / Math.max(1e-6, hiR - loR),
+                       h * 0.90 / Math.max(1e-6, hiU - loU));
+    q.focal = s * state.zoom;                      // ★ zoom 只乘焦距，绝不另外缩相机距离
+    // 注视点 T 恒投影到画布正中（它在相机空间里 right/up 分量都为 0），
+    // 所以「居中于注视点」= 直接把画布中心当原点；「居中于包络」才用包络中点。
+    const cR = V.look ? 0 : (loR + hiR) * 0.5;
+    const cU = V.look ? 0 : (loU + hiU) * 0.5;
+    q.px = w * 0.5 - cR * q.focal;
+    q.py = h * 0.5 + cU * q.focal;
+  }
+  function project(p, q) {
+    const v = v3sub(p, q.eye);
+    const z = Math.max(0.05, v3dot(v, q.fwd));
+    const s = q.focal / z;
+    return { x: q.px + v3dot(v, q.right) * s, y: q.py - v3dot(v, q.up) * s, s: s, z: z };
+  }
+
+  /* ============================================================
+   * 绘图小工具
+   * ============================================================ */
+  function trace(pts) {
+    ctx.beginPath();
+    pts.forEach((p, k) => k ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+  }
+  function poly(pts, fill, stroke, lw) {
+    if (!pts || pts.length < 2) return;
+    trace(pts); ctx.closePath();
+    if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+    if (stroke) { ctx.lineWidth = lw || 1; ctx.strokeStyle = stroke; ctx.stroke(); }
+  }
+  function seg(a, b, color, lw, dash, alpha) {
+    if (!a || !b) return;
+    ctx.save();
+    if (alpha != null) ctx.globalAlpha = alpha;
+    ctx.beginPath(); ctx.setLineDash(dash || []);
+    ctx.lineWidth = lw || 1; ctx.strokeStyle = color;
+    ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+    ctx.restore();
+  }
+  function glowSeg(a, b, color, lw, alpha) {
+    if (!a || !b) return;
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.beginPath();
+    ctx.lineWidth = lw * 3.2; ctx.strokeStyle = color; ctx.globalAlpha = (alpha == null ? .14 : alpha);
+    ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+    ctx.beginPath();
+    ctx.lineWidth = lw; ctx.strokeStyle = color; ctx.globalAlpha = 1;
+    ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+    ctx.restore();
+  }
+  function disc(p, r, fill, stroke, lw) {
+    if (!p || !isFinite(p.x) || !isFinite(p.y)) return;
+    ctx.beginPath(); ctx.arc(p.x, p.y, Math.max(0.6, r), 0, PI2);
+    if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+    if (stroke) { ctx.lineWidth = lw || 1; ctx.strokeStyle = stroke; ctx.stroke(); }
+  }
+
+  /* ============================================================
+   * 标签：先入队，等所有几何画完之后统一落笔
+   * ============================================================ */
+  let frameBoxes = [];
+  let frameLabels = [];      // 只装【标签】盒子（frameBoxes 里还有舞台浮层等障碍物）
+  let uiObstacles = [];      // 舞台 DOM 浮层：压住它们的代价要单独加大
+  let labelQ = [];
+  function boxOf(pts) {
+    let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+    for (const p of pts) { x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y); x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y); }
+    return { x0: x0, y0: y0, x1: x1, y1: y1 };
+  }
+  function overlapArea(a, b) {
+    const w = Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0);
+    const h = Math.min(a.y1, b.y1) - Math.max(a.y0, b.y0);
+    return (w > 0 && h > 0) ? w * h : 0;
+  }
+  function fitBox(b, w, h) {
+    let dx = 0, dy = 0;
+    if (b.x0 < 2) dx = 2 - b.x0;
+    else if (b.x1 > w - 2) dx = (w - 2) - b.x1;
+    if (b.y0 < 2) dy = 2 - b.y0;
+    else if (b.y1 > h - 2) dy = (h - 2) - b.y1;
+    return { x0: b.x0 + dx, y0: b.y0 + dy, x1: b.x1 + dx, y1: b.y1 + dy };
+  }
+  /* 第二段避让：锚点远在画布之外时，fitBox 会把【每一个】候选都推到同一个角上，
+     光靠加大候选位移是挪不出来的（位移全被钳位吃掉）。所以被钳完之后再沿浮层边界推开。 */
+  function nudgeOutOfUI(b, w, h) {
+    for (let it = 0; it < 4; it++) {
+      let hit = null;
+      for (const u of uiObstacles) { if (overlapArea(b, u) > 0) { hit = u; break; } }
+      if (!hit) return b;
+      const moves = [
+        { dx: 0, dy: hit.y1 + 4 - b.y0 },      // 挪到浮层下方
+        { dx: 0, dy: hit.y0 - 4 - b.y1 },      // 挪到浮层上方
+        { dx: hit.x1 + 4 - b.x0, dy: 0 },      // 挪到浮层右侧
+        { dx: hit.x0 - 4 - b.x1, dy: 0 }       // 挪到浮层左侧
+      ];
+      const ok = [];
+      for (const m of moves) {
+        const nb = { x0: b.x0 + m.dx, y0: b.y0 + m.dy, x1: b.x1 + m.dx, y1: b.y1 + m.dy };
+        if (nb.x0 >= 2 && nb.y0 >= 2 && nb.x1 <= w - 2 && nb.y1 <= h - 2) {
+          ok.push({ nb: nb, c: Math.abs(m.dx) + Math.abs(m.dy) });
+        }
+      }
+      if (!ok.length) return b;                // 画布内实在挪不开，保持原样
+      ok.sort((p, q) => p.c - q.c);
+      b = ok[0].nb;
+    }
+    return b;
+  }
+  function label(text, world, color, opt) {
+    opt = opt || {};
+    labelQ.push({ text: text, world: world, color: color, dx: opt.dx || 0, dy: opt.dy || 0, size: opt.size || 12, bold: !!opt.bold });
+  }
+  function flushLabels(q, w, h) {
+    ctx.textBaseline = 'middle';
+    for (const L of labelQ) {
+      const p = project(L.world, q);
+      if (!isFinite(p.x) || !isFinite(p.y)) continue;
+      ctx.font = (L.bold ? '700 ' : '') + L.size + 'px Inter, "PingFang SC", "Microsoft YaHei", sans-serif';
+      const tw = ctx.measureText(L.text).width;
+      const bw = tw + 12, bh = L.size + 10;
+      // 候选位要够远：macro 视角里锚点常落在画布外，fitBox 会把每个候选都推回同一个角落，
+      // 只有位移足够大的候选才能把标签挪出左上角那条提示浮层。
+      const cands = [[0, 0], [1, 0], [-1, 0], [0, -1], [0, 1], [1, -1], [-1, -1], [1, 1], [-1, 1],
+                     [2, 0], [-2, 0], [0, -2], [0, 2], [3, 0], [-3, 0], [0, -3], [0, 3]];
+      let best = null, bestCost = 1e9;
+      for (let i = 0; i < cands.length; i++) {
+        const cx = p.x + L.dx + cands[i][0] * (bw * 0.5 + 6);
+        const cy = p.y + L.dy + cands[i][1] * (bh * 0.5 + 5);
+        let b = { x0: cx - bw / 2, y0: cy - bh / 2, x1: cx + bw / 2, y1: cy + bh / 2 };
+        b = nudgeOutOfUI(fitBox(b, w, h), w, h);
+        let ov = 0, uov = 0;
+        for (const o of frameBoxes) ov += overlapArea(b, o);
+        // 浮层（提示条/读数条/帮助条）是【实心文字块】，压上去等于把字盖没了；
+        // 板面这类障碍压上去只是不好看。权重必须分开，否则 macro 视角里
+        // 标签会宁可压住浮层（因为板面盒子几乎铺满画布，压哪儿都一样）。
+        for (const u of uiObstacles) uov += overlapArea(b, u);
+        const cost = ov * 3 + uov * 12 + (Math.abs(cands[i][0]) + Math.abs(cands[i][1])) * 34 + i * 0.6;
+        if (cost < bestCost) { bestCost = cost; best = { b: b }; }
+      }
+      if (!best) continue;
+      const b = best.b;
+      ctx.fillStyle = 'rgba(2,6,23,.80)';
+      ctx.strokeStyle = 'rgba(148,163,184,.30)';
+      ctx.lineWidth = 1;
+      const rr = 6, x0 = b.x0, y0 = b.y0, x1 = b.x1, y1 = b.y1;
+      ctx.beginPath();
+      ctx.moveTo(x0 + rr, y0); ctx.lineTo(x1 - rr, y0); ctx.quadraticCurveTo(x1, y0, x1, y0 + rr);
+      ctx.lineTo(x1, y1 - rr); ctx.quadraticCurveTo(x1, y1, x1 - rr, y1);
+      ctx.lineTo(x0 + rr, y1); ctx.quadraticCurveTo(x0, y1, x0, y1 - rr);
+      ctx.lineTo(x0, y0 + rr); ctx.quadraticCurveTo(x0, y0, x0 + rr, y0);
+      ctx.closePath(); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = L.color || '#e2e8f0';
+      ctx.textAlign = 'left';
+      ctx.fillText(L.text, b.x0 + 6, (b.y0 + b.y1) / 2 + 0.5);
+      frameBoxes.push(b);
+      frameLabels.push(b);
+    }
+  }
+
+  /* 舞台上的 DOM 浮层也是障碍物（标签不许压上去） */
+  function uiBoxes() {
+    const r = canvas.getBoundingClientRect();
+    const out = [];
+    for (const sel of ['.stage-hint', '#mir-verdict', '.stage-help']) {
+      const el = document.querySelector(sel);
+      if (!el) continue;
+      const b = el.getBoundingClientRect();
+      if (b.width < 1 || b.height < 1) continue;
+      out.push({ x0: b.left - r.left, y0: b.top - r.top, x1: b.right - r.left, y1: b.bottom - r.top });
+    }
+    return out;
+  }
+
+  /* ============================================================
+   * 场景绘制
+   * ============================================================ */
+  function drawBackdrop(w, h) {
+    const g = ctx.createLinearGradient(0, 0, 0, h);
+    g.addColorStop(0, '#08131f'); g.addColorStop(.55, '#061423'); g.addColorStop(1, '#030b14');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
+  }
+
+  /* 一块板：逐面元网格 + 反光。cell 收进共享数组，两块板一起排序（否则相机到另一侧就前后颠倒） */
+  function collectPlate(cells, q, facets, hTab, x0, ro, P) {
+    for (const f of facets) {
+      const i = f.i, j = f.j;
+      const quad = [
+        [x0 + i * CW, hTab[i][j], Z0 + j * CD],
+        [x0 + (i + 1) * CW, hTab[i + 1][j], Z0 + j * CD],
+        [x0 + (i + 1) * CW, hTab[i + 1][j + 1], Z0 + (j + 1) * CD],
+        [x0 + i * CW, hTab[i][j + 1], Z0 + (j + 1) * CD]
+      ];
+      const pp = quad.map(p => project(p, q));
+      const zc = (pp[0].z + pp[1].z + pp[2].z + pp[3].z) * 0.25;
+      let glint = 0;
+      if (state.showGlint && P) {
+        const p2 = P[i * NZ + j];
+        if (p2 && p2.lit && v3dot(p2.n, ro.V) > 0 && v3dot(p2.R, ro.V) > COS_ACC) glint = 1;
+      }
+      const lam = clamp(v3dot(f.n, [-ro.d[0], -ro.d[1], -ro.d[2]]), 0, 1);
+      let R, G, B;
+      if (glint) { R = 234; G = 244; B = 255; }
+      else {
+        // 基色要够亮才看得见板的轮廓：原来 0.05+0.13·lam 最深只到 rgb(28,40,64)，
+        // 和背景 rgb(6,20,35) 几乎糊在一起，粗糙面的形状读不出来。
+        const lum = 0.10 + 0.22 * lam;
+        R = Math.round(14 + 255 * lum * 0.55); G = Math.round(22 + 255 * lum * 0.72); B = Math.round(38 + 255 * lum);
+      }
+      cells.push({ z: zc, pts: pp, fill: 'rgb(' + clamp(R, 0, 255) + ',' + clamp(G, 0, 255) + ',' + clamp(B, 0, 255) + ')', glint: glint });
+    }
+  }
+  function plateOutline(q, hTab, x0) {
+    const c = (i, j) => project([x0 + i * CW, hTab[i][j], Z0 + j * CD], q);
+    const out = [c(0, 0), c(NX, 0), c(NX, NZ), c(0, NZ)];
+    poly(out, null, 'rgba(148,163,184,.40)', 1.2);
+    frameBoxes.push(boxOf(out));
+  }
+
+  function drawBeam(q, ro) {
+    const d = ro.d;
+    const cols = [];
+    const span = (RX1 - MX0), n = 7;
+    for (let b = 0; b < n; b++) {
+      const x = MX0 + 1.2 + (b + 0.5) * (span - 2.4) / n;
+      if (x > MX1 && x < RX0) continue;
+      cols.push(x);
+    }
+    for (const x of cols) {
+      for (let a = -1; a <= 1; a++) {
+        const z = a * 4.6;
+        const r = (x <= MX1) ? 0 : state.rough;
+        const hit = [x, heightAt(x, z, r), z];
+        const start = v3sub(hit, v3scl(d, BEAM_LEN));
+        glowSeg(project(start, q), project(hit, q), '#ffffff', 1.5, .13);
+      }
+    }
+  }
+
+  function drawReflRays(q, facets, x0, ro, P) {
+    const step = 4;   // 只画【抽样】面元的反射光线，否则 560 条线糊成一团
+    for (let i = 2; i < NX; i += step) {
+      for (let j = 2; j < NZ; j += step) {
+        const p2 = P[i * NZ + j];
+        if (!p2 || !p2.lit) continue;
+        const f = facets[i * NZ + j];
+        const a = project([f.x, f.y, f.z], q);
+        const b = project(v3add([f.x, f.y, f.z], v3scl(p2.R, RAY_LEN)), q);
+        const gl = (v3dot(p2.n, ro.V) > 0 && v3dot(p2.R, ro.V) > COS_ACC);
+        glowSeg(a, b, gl ? '#fde68a' : '#7dd3fc', gl ? 1.8 : 1.2, gl ? .26 : .11);
+      }
+    }
+  }
+
+  function drawFacetNormals(q, facets) {
+    const step = 4, L = 2.4;
+    for (let i = 2; i < NX; i += step) {
+      for (let j = 2; j < NZ; j += step) {
+        const f = facets[i * NZ + j];
+        seg(project([f.x, f.y, f.z], q), project(v3add([f.x, f.y, f.z], v3scl(f.n, L)), q),
+            'rgba(226,232,240,.55)', 1, null, .8);
+      }
+    }
+  }
+
+  function drawObserver(q, ro) {
+    const pos = v3scl(ro.V, ORBIT_R);
+    const pp = project(pos, q);
+    const ring = [];
+    for (let k = 0; k <= 64; k++) ring.push(project(v3scl(viewDir(k / 64 * 360, state.psi), ORBIT_R), q));
+    trace(ring); ctx.setLineDash([4, 4]); ctx.lineWidth = 1.2;
+    ctx.strokeStyle = 'rgba(251,146,60,.45)'; ctx.stroke(); ctx.setLineDash([]);
+    seg(pp, project([MX0 + PW / 2, 0, 0], q), 'rgba(251,146,60,.32)', 1, [5, 5]);
+    seg(pp, project([RX0 + PW / 2, 0, 0], q), 'rgba(251,146,60,.32)', 1, [5, 5]);
+    disc(pp, 7, '#fb923c', 'rgba(255,255,255,.75)', 1.6);
+    disc(pp, 2.6, '#1e293b', null, 0);
+    label('观察者', v3add(pos, [0, 3.4, 0]), '#fdba74', { size: 12, bold: true });
+    frameBoxes.push({ x0: pp.x - 8, y0: pp.y - 8, x1: pp.x + 8, y1: pp.y + 8 });
+    return pp;
+  }
+
+  function drawAngleArc(q, O, dirA, dirB, r, color, text) {
+    const a0 = Math.atan2(dirA[1], dirA[0]), a1 = Math.atan2(dirB[1], dirB[0]);
+    let dd = a1 - a0;
+    while (dd > Math.PI) dd -= PI2;
+    while (dd < -Math.PI) dd += PI2;
+    const n = 22, pts = [];
+    for (let i = 0; i <= n; i++) {
+      const a = a0 + dd * i / n;
+      pts.push(project([O[0] + Math.cos(a) * r, O[1] + Math.sin(a) * r, 0], q));
+    }
+    trace(pts); ctx.lineWidth = 1.4; ctx.strokeStyle = color; ctx.stroke();
+    if (text) {
+      const am = a0 + dd * 0.5;
+      label(text, [O[0] + Math.cos(am) * (r + 2.2), O[1] + Math.sin(am) * (r + 2.2), 0], color, { size: 11, bold: true });
+    }
+  }
+
+  function render() {
+    const q = {};
+    const W = state.w, H = state.h;
+    ctx.setTransform(state.dpr, 0, 0, state.dpr, 0, 0);
+    ctx.clearRect(0, 0, W, H);
+    frameBoxes = uiBoxes(); frameLabels = []; labelQ = [];
+    uiObstacles = frameBoxes.slice();     // 浮层单独留一份，给 flushLabels 加大权重用
+    drawBackdrop(W, H);
+    makeCam(q, W, H);
+
+    const ro = readout();
+    const c = prepNow();
+    const showM = state.mode !== 'rough';
+    const showR = state.mode !== 'mirror';
+
+    if (state.showRays) drawBeam(q, ro);
+    const cells = [];
+    if (showM) collectPlate(cells, q, c.fM, c.hM, MX0, ro, c.pM.list);
+    if (showR) collectPlate(cells, q, c.fR, c.hR, RX0, ro, c.pR.list);
+    cells.sort((a, b) => b.z - a.z);        // 远 → 近
+    for (const cell of cells) poly(cell.pts, cell.fill, null, 0);
+    if (showM) plateOutline(q, c.hM, MX0);
+    if (showR) plateOutline(q, c.hR, RX0);
+    if (state.showRays) {
+      if (showM) drawReflRays(q, c.fM, MX0, ro, c.pM.list);
+      if (showR) drawReflRays(q, c.fR, RX0, ro, c.pR.list);
+    }
+    if (state.showFacetN) {
+      if (showM) drawFacetNormals(q, c.fM);
+      if (showR) drawFacetNormals(q, c.fR);
+    }
+    if (state.showNormal) {
+      const cx = MX0 + PW / 2, L = 12;
+      seg(project([cx, 0, 0], q), project([cx, L, 0], q), 'rgba(226,232,240,.55)', 1.3, [6, 5]);
+      label('法线', [cx, L + 1.4, 0], '#cbd5e1', { size: 11 });
+      drawAngleArc(q, [cx, 0, 0], [0, 1], [ro.d[0], ro.d[1]], 5.4, '#fbbf24', 'θ');
+    }
+    if (state.showObserver) drawObserver(q, ro);
+
+    label('入射平行光', v3sub([MX0 + PW * 0.30, 0, 0], v3scl(ro.d, BEAM_LEN * 0.72)), '#f8fafc', { size: 12, bold: true });
+    if (showM) label('光滑面 · 镜面反射', [MX0 + PW / 2, 0, Z1 + 1.4], '#bae6fd', { size: 12, bold: true });
+    if (showR) label('粗糙面 · 漫反射', [RX0 + PW / 2, 0, Z1 + 1.4], '#fcd34d', { size: 12, bold: true });
+    flushLabels(q, W, H);
+  }
+
+  /* ============================================================
+   * 尺寸 / 主循环
+   * ============================================================ */
+  const canvas = $('mir-canvas');
+  const ctx = canvas.getContext('2d');
+  function resize() {
+    const r = canvas.getBoundingClientRect();
+    const w = Math.max(1, Math.round(r.width)), h = Math.max(1, Math.round(r.height));
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    state.w = w; state.h = h; state.dpr = dpr;
+    canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr);
+    state.dirty = true;
+  }
+  function renderNow() { render(); }
+  function tick() {
+    if (state.dirty) { state.dirty = false; render(); }
+    requestAnimationFrame(tick);
+  }
+
+  /* ============================================================
+   * 交互
+   * ============================================================ */
+  function applyView(name) {
+    const V = VIEWS[name]; if (!V) return;
+    state.view = name;
+    if (!V.follow) { state.yaw = V.yaw; state.pitch = V.pitch; state.zoom = V.zoom; }
+    else { state.zoom = V.zoom; }
+    document.querySelectorAll('.lab3d-toolbar button[data-view]').forEach(b => b.classList.toggle('active', b.dataset.view === name));
+    state.dirty = true;
+  }
+
+  function setTheta(v) {
+    state.theta = clamp(v, TH_MIN, TH_MAX);
+    if (state.follow) { state.psi = clamp(90 - state.theta, PSI_MIN, PSI_MAX); state.phi = 0; }
+    syncInputs(); updateReadout();
+  }
+  function setRough(v) { state.rough = clamp(v, RG_MIN, RG_MAX); syncInputs(); updateReadout(); }
+  function setPhi(v) { state.phi = ((v % 360) + 360) % 360; syncInputs(); updateReadout(); }
+  function setPsi(v) { state.psi = clamp(v, PSI_MIN, PSI_MAX); syncInputs(); updateReadout(); }
+
+  function syncInputs() {
+    $('mir-theta').value = state.theta;
+    $('mir-theta-value').textContent = state.theta.toFixed(1) + '°';
+    $('mir-rough').value = state.rough;
+    $('mir-rough-value').textContent = state.rough.toFixed(2);
+    $('mir-phi').value = state.phi;
+    $('mir-phi-value').textContent = Math.round(state.phi) + '°';
+    $('mir-psi').value = state.psi;
+    $('mir-psi-value').textContent = state.psi.toFixed(1) + '°';
+    $('mir-follow').checked = state.follow;
+    $('mir-mode-name').textContent = state.mode === 'both' ? '并排对照' : (state.mode === 'mirror' ? '只看镜面' : '只看粗糙面');
+    document.querySelectorAll('#mir-mode button').forEach(b => b.classList.toggle('active', b.dataset.mode === state.mode));
+  }
+
+  function updateReadout() {
+    const ro = readout();
+    $('mir-m1').textContent = state.theta.toFixed(1) + '°';
+    $('mir-m2').textContent = Math.round(state.phi) + '° / ' + state.psi.toFixed(0) + '°';
+    $('mir-m3').textContent = num(ro.bM, 2);
+    $('mir-m4').textContent = num(ro.bR, 2);
+    $('mir-verdict').textContent = '镜面亮度 ' + num(ro.bM, 2) + '　粗糙面亮度 ' + num(ro.bR, 2)
+      + '　一圈 min/max ' + num(ro.swM.ratio, 2) + ' / ' + num(ro.swR.ratio, 2);
+    const ls = lawStates();
+    // ★ 样式块里的类名是 .law-list li.on / li.off（不是 .ok）——
+    //   站内多页的 .law-list 都是从同一份样式块抄来的，类名写错时【页面毫无迹象】
+    //   （只是不高亮），只有对着 CSS 核对才发现。
+    ls.forEach(l => {
+      const el = $(l.id);
+      if (el) { el.classList.toggle('on', l.ok); el.classList.toggle('off', !l.ok); }
+    });
+    const bad = ls.filter(l => !l.ok);
+    $('mir-law-verdict').textContent = '当前：θ = ' + state.theta.toFixed(1) + '°，粗糙度 = ' + state.rough.toFixed(2)
+      + ' —— ' + (bad.length ? '有 ' + bad.length + ' 条不成立（' + bad.map(l => l.id.slice(-1)).join('/') + '）' : '五条都成立');
+    // 观察者正好不在反射方向上时，镜面确实全黑 —— 主动说明，免得学生以为页面坏了
+    const vEl = $('mir-verdict');
+    const blind = (state.mode !== 'rough') && ro.bM < 1e-9;
+    vEl.classList.toggle('warn', blind);
+    vEl.textContent = '镜面亮度 ' + num(ro.bM, 2) + '　粗糙面亮度 ' + num(ro.bR, 2)
+      + '　一圈 min/max ' + num(ro.swM.ratio, 2) + ' / ' + num(ro.swR.ratio, 2)
+      + (blind ? '　（观察者此刻不在反射方向上，镜面全黑是应该的）' : '');
+    state.dirty = true;
+  }
+
+  function recordNow() {
+    const ro = readout();
+    state.records.push({
+      theta: state.theta, rough: state.rough, phi: state.phi, psi: state.psi,
+      bM: ro.bM, bR: ro.bR, rM: ro.swM.ratio, rR: ro.swR.ratio
+    });
+    renderRecords();
+    const trs = $('mir-rows').querySelectorAll('tr');
+    const last = trs[trs.length - 1];
+    if (last) { last.classList.add('flash'); setTimeout(() => last.classList.remove('flash'), 1300); }
+  }
+  function clearRecords() { state.records.length = 0; renderRecords(); }
+  function renderRecords() {
+    const tb = $('mir-rows');
+    const rs = state.records;
+    $('mir-count').textContent = '已记录 ' + rs.length + ' 组';
+    if (!rs.length) {
+      tb.innerHTML = '<tr><td colspan="9" class="empty">尚无记录，先调一组参数开始探究</td></tr>';
+      $('mir-summary').textContent = '记录 3 组以上数据，看看「粗糙度」和「一圈内亮度比」之间的关系。';
+      return;
+    }
+    tb.innerHTML = rs.map((r, i) =>
+      '<tr>' +
+      '<td class="num">' + (i + 1) + '</td>' +
+      '<td class="num">' + r.theta.toFixed(0) + '°</td>' +
+      '<td class="num">' + r.rough.toFixed(2) + '</td>' +
+      '<td class="num">' + Math.round(r.phi) + '°</td>' +
+      '<td class="num">' + r.psi.toFixed(0) + '°</td>' +
+      '<td class="num">' + r.bM.toFixed(2) + '</td>' +
+      '<td class="num">' + r.bR.toFixed(2) + '</td>' +
+      '<td class="num ratio">' + r.rM.toFixed(2) + '</td>' +
+      '<td class="num ratio">' + r.rR.toFixed(2) + '</td>' +
+      '</tr>').join('');
+    const ok = rs.filter(r => r.rR > 0);
+    if (ok.length >= 2) {
+      const mx = ok.reduce((a, b) => b.rR > a.rR ? b : a);
+      $('mir-summary').textContent = '已记录 ' + rs.length + ' 组。粗糙面「一圈内最小/最大亮度比」最大的一组是第 '
+        + (rs.indexOf(mx) + 1) + ' 组（粗糙度 = ' + mx.rough.toFixed(2) + '，比 = ' + mx.rR.toFixed(2)
+        + '）。镜面那一列几乎全是 0 —— 因为只要观察者不在反射方向上，镜面亮度就是 0。';
+    } else {
+      $('mir-summary').textContent = '再多记几组（换换粗糙度、绕观察者转几圈），就能看出「粗糙度越大，一圈内的亮度越均匀」。';
+    }
+  }
+
+  /* ---------- 事件绑定 ---------- */
+  document.querySelectorAll('.lab3d-toolbar button[data-view]').forEach(b => {
+    b.addEventListener('click', () => applyView(b.dataset.view));
+  });
+  $('mir-reset-view').addEventListener('click', () => { applyView('iso'); });
+  $('mir-theta').addEventListener('input', e => setTheta(+e.target.value));
+  $('mir-rough').addEventListener('input', e => setRough(+e.target.value));
+  $('mir-phi').addEventListener('input', e => setPhi(+e.target.value));
+  $('mir-psi').addEventListener('input', e => setPsi(+e.target.value));
+  $('mir-follow').addEventListener('change', e => {
+    state.follow = e.target.checked;
+    if (state.follow) { state.psi = clamp(90 - state.theta, PSI_MIN, PSI_MAX); state.phi = 0; }
+    syncInputs(); updateReadout();
+  });
+  document.querySelectorAll('#mir-mode button').forEach(b => {
+    b.addEventListener('click', () => { state.mode = b.dataset.mode; syncInputs(); state.dirty = true; });
+  });
+  [['mir-rays', 'showRays'], ['mir-normal', 'showNormal'], ['mir-facet-n', 'showFacetN'],
+   ['mir-observer', 'showObserver'], ['mir-glint', 'showGlint']].forEach(function (pair) {
+    $(pair[0]).addEventListener('change', e => { state[pair[1]] = e.target.checked; state.dirty = true; });
+  });
+  $('mir-record').addEventListener('click', recordNow);
+  $('mir-clear').addEventListener('click', clearRecords);
+
+  /* 指针：拖观察者绕圈 / 拖空白转相机 */
+  function localPos(e) {
+    const r = canvas.getBoundingClientRect();
+    return { x: e.clientX - r.left, y: e.clientY - r.top };
+  }
+  function observerScreen() {
+    const q = {}; makeCam(q, state.w, state.h);
+    return project(v3scl(viewDir(state.phi, state.psi), ORBIT_R), q);
+  }
+  canvas.addEventListener('pointerdown', e => {
+    const p = localPos(e);
+    const op = observerScreen();
+    state.dragging = true;
+    state.dragObserver = state.showObserver && Math.hypot(p.x - op.x, p.y - op.y) < 18;
+    state.lastX = e.clientX; state.lastY = e.clientY;
+    if (canvas.setPointerCapture) canvas.setPointerCapture(e.pointerId);
+  });
+  canvas.addEventListener('pointermove', e => {
+    if (!state.dragging) return;
+    const dx = e.clientX - state.lastX, dy = e.clientY - state.lastY;
+    state.lastX = e.clientX; state.lastY = e.clientY;
+    if (state.dragObserver) {
+      state.follow = false;
+      setPhi(state.phi + dx * 0.6);
+      setPsi(state.psi - dy * 0.35);
+    } else {
+      state.yaw -= dx * 0.006;
+      state.pitch = clamp(state.pitch + dy * 0.005, -0.25, 1.45);
+      state.dirty = true;
+    }
+  });
+  const endDrag = () => { state.dragging = false; state.dragObserver = false; };
+  canvas.addEventListener('pointerup', endDrag);
+  canvas.addEventListener('pointercancel', endDrag);
+  canvas.addEventListener('pointerleave', endDrag);
+  canvas.addEventListener('wheel', e => {
+    e.preventDefault();
+    state.zoom = clamp(state.zoom * (e.deltaY > 0 ? 0.92 : 1.08), 0.5, 4.0);
+    state.dirty = true;
+  }, { passive: false });
+  window.addEventListener('resize', function () { resize(); });
+  // 容器自身尺寸变化（≤900px 折成一列等）不一定伴随 window.resize，必须单独观察
+  if (window.ResizeObserver) new ResizeObserver(() => { resize(); }).observe(canvas);
+
+  /* ---------- 调试钩子 ---------- */
+  window.__mir = {
+    state: state, VIEWS: VIEWS, ENV: ENV,
+    constants: {
+      PW: PW, PD: PD, GAP: GAP, NX: NX, NZ: NZ, CW: CW, CD: CD,
+      ROUGH_AMP: ROUGH_AMP, FREQ: FREQ, ACC: ACC, ORBIT_R: ORBIT_R,
+      BEAM_LEN: BEAM_LEN, RAY_LEN: RAY_LEN, SWEEP_N: SWEEP_N, CAMD: CAMD,
+      TH_MIN: TH_MIN, TH_MAX: TH_MAX, RG_MIN: RG_MIN, RG_MAX: RG_MAX,
+      PSI_MIN: PSI_MIN, PSI_MAX: PSI_MAX, MX0: MX0, MX1: MX1, RX0: RX0, RX1: RX1, Z0: Z0, Z1: Z1,
+      TARGET: TARGET, CAMD_EYE: VIEWS.eye.dist
+    },
+    heightAt: heightAt, gradAt: gradAt, normalAt: normalAt,
+    lightDir: lightDir, viewDir: viewDir, reflDir: reflDir,
+    buildFacets: buildFacets, prep: prep, brightnessAt: brightnessAt, sweepAt: sweepAt, tiltStats: tiltStats,
+    facetsNow: facetsNow, prepNow: prepNow,
+    readout: readout, lawStates: lawStates,
+    envelopePoints: envelopePoints, makeCam: makeCam, project: project,
+    size: () => ({ w: state.w, h: state.h, dpr: state.dpr }),
+    boxes: () => frameBoxes.slice(),
+    labelBoxes: () => frameLabels.slice(),
+    applyView: applyView, setTheta: setTheta, setRough: setRough, setPhi: setPhi, setPsi: setPsi,
+    setFollow: v => {
+      state.follow = !!v;
+      if (state.follow) { state.psi = clamp(90 - state.theta, PSI_MIN, PSI_MAX); state.phi = 0; }
+      syncInputs(); updateReadout();
+    },
+    setMode: m => { state.mode = m; syncInputs(); state.dirty = true; },
+    setFlag: (k, v) => { state[k] = !!v; syncInputs(); state.dirty = true; },
+    reset: () => {
+      state.theta = TH_DEF; state.rough = RG_DEF; state.phi = 0; state.psi = 50; state.follow = true; state.mode = 'both';
+      state.showRays = true; state.showNormal = true; state.showFacetN = false; state.showObserver = true; state.showGlint = true;
+      applyView('iso'); syncInputs(); updateReadout();
+    },
+    recordNow: recordNow, clearRecords: clearRecords, renderNow: renderNow,
+    readoutNow: () => readout(),
+    get records() { return state.records; }
+  };
+
+  syncInputs();
+  resize();
+  updateReadout();
+  render();
+  requestAnimationFrame(tick);
+})();
+    </script>
+
+    <script src="supabase.js"></script>
+    <script src="script.js"></script>
+
+</body>
+</html>
