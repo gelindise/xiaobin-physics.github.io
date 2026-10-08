@@ -192,6 +192,36 @@ import * as THREE from './assets/optics-three.min.js';
   }
 
   /* --- 本页的主计算：给定当前状态，算出全部光学量 --- */
+  /* 🔴 倍数与张角的【唯一真源】。
+     optics()（真正渲染的那份）与 __microLab.viewMag()（自检扫参数用的纯函数版）都调它 ——
+     以前这两处各写了一份同样的公式，于是「改 optics 那份」的变异对断言毫无影响
+     （负向对照 M11~M14 全绿：断言读的是 viewMag 那份）。
+     参数 m1 / v2 / hFinal 由调用方按自己的路径算好传进来；
+     lastSlope 只在「像距不是有限数」时才用得上（追迹那条路给得出，纯函数那条路给 null）。 */
+  function magOf(mode, fObj, fEye, u1, d, hObj, m1, v2, hFinal, lastSlope) {
+    const u2 = d - imgDist(u1, fObj);
+    const Mobj = Math.abs(m1);                    // 物镜把物体放大了几倍
+    const Meye = D_NEAR / fEye;                   // 目镜上刻的那个数（明视距离口径）
+    // 🔴 教材口径【按仪器分开】：显微镜 M物×M目；望远镜 f物/f目（人教版）。
+    const Mprod = mode === 'micro' ? Mobj * Meye : fObj / fEye;
+    const corrK = mode === 'micro' ? 1 : u1 / (u1 - fObj);
+    // 直接看的张角：显微镜把物体放到明视距离；望远镜就在原处看
+    const tanRaw = mode === 'micro' ? hObj / D_NEAR : hObj / u1;
+    // 用仪器看的张角：闭式（= |m1|·h物 / u2）与追迹（虚像张角 / 出射光斜率）两条
+    const tanViewCF = Math.abs(m1) * hObj / u2;
+    const tanViewTR = Number.isFinite(v2)
+      ? Math.abs(hFinal) / Math.abs(v2)
+      : (lastSlope === null || lastSlope === undefined ? null : Math.abs(lastSlope));
+    return {
+      u2, Mobj, Meye, Mprod, corrK, tanRaw, tanViewCF, tanViewTR,
+      // 实际视角放大率（按图上这套有限物距的几何算）
+      Mview: tanViewCF / tanRaw,
+      MviewTR: tanViewTR === null ? null : tanViewTR / tanRaw,
+      // 两个口径由一条【可被独立验证】的恒等式联系：Mview = Mprod · corrK · f目 / u2
+      MviewPred: Mprod * corrK * fEye / u2
+    };
+  }
+
   function optics() {
     const M = modeOf();
     const p = cur();
@@ -246,22 +276,11 @@ import * as THREE from './assets/optics-three.min.js';
           · 若把望远镜也硬写成 |m1| × 250/f目，u1 = 3f物 时得 0.5 × 8.33 = 4.17，
             和教材公式 f物/f目 = 4 只差 4% 纯属巧合（u1 − f物 = 240 ≈ 250），
             换个 uRatio 就露馅 —— 所以这里必须按仪器分开写。 */
-    const Mobj = Math.abs(m1);                    // 物镜把物体放大了几倍
-    const Meye = D_NEAR / fEye;                   // 目镜上刻的那个数（明视距离口径）
-    const Mprod = state.mode === 'micro' ? Mobj * Meye : fObj / fEye;
-    const corrK = state.mode === 'micro' ? 1 : u1 / (u1 - fObj);
-    // 直接看的张角：显微镜把物体放到明视距离；望远镜就在原处看
-    const tanRaw = state.mode === 'micro' ? hObj / D_NEAR : hObj / u1;
-    // 用仪器看的张角：闭式（= |m1|·h物 / u2）与追迹（虚像张角 / 出射光斜率）两条
-    const tanViewCF = Math.abs(m1) * hObj / u2;
-    const tanViewTR = Number.isFinite(v2)
-      ? Math.abs(hFinal) / Math.abs(v2)
-      : Math.abs(rays[rays.length - 1].s);
-    // 实际视角放大率（按图上这套有限物距的几何算）
-    const Mview = tanViewCF / tanRaw;
-    const MviewTR = tanViewTR / tanRaw;
-    // 两个口径由一条【可被独立验证】的恒等式联系：Mview = Mprod · corrK · f目 / u2
-    const MviewPred = Mprod * corrK * fEye / u2;
+    /* 🔴 倍数与张角全部交给 magOf()（唯一真源）。以前这里与 __microLab.viewMag() 各写了一份
+       同样的公式 ⇒ 「改这一份」的变异对断言毫无影响（负向对照 M11~M14 全绿：断言读的是 viewMag）。 */
+    const mag = magOf(state.mode, fObj, fEye, u1, d, hObj, m1, v2, hFinal,
+      Number.isFinite(v2) ? null : rays[rays.length - 1].s);
+    const { Mobj, Meye, Mprod, corrK, tanRaw, tanViewCF, tanViewTR, Mview, MviewTR, MviewPred } = mag;
 
     return {
       M, p, fObj, fEye, d, u1, hObj, xObj, xObjLens, xEyeLens,
@@ -1294,22 +1313,15 @@ import * as THREE from './assets/optics-three.min.js';
       };
     },
     // 实际视角放大率（追迹口径）：给参数直接算，供与闭式口径对照
+    // 给参数直接算（自检扫参数空间用）。公式【全部走 magOf】—— 不再自己抄一份，
+    // 否则「改渲染那份」的变异抓不住（M11~M14 全绿就是这么来的）。
     viewMag: (mode, fObj, fEye, u1, d, hObj) => {
       const M = MODES[mode];
       const h = hObj === undefined ? M.hObj : hObj;
       const v1 = imgDist(u1, fObj), m1 = v1 / u1;
       const u2 = d - v1, v2 = imgDist(u2, fEye);
       const hFinal = Number.isFinite(v2) ? (v2 / u2) * m1 * h : NaN;
-      const tanRaw = mode === 'micro' ? h / D_NEAR : h / u1;
-      const tanViewCF = Math.abs(m1) * h / u2;
-      const tanViewTR = Number.isFinite(v2) ? Math.abs(hFinal) / Math.abs(v2) : null;
-      // 🔴 教材口径【按仪器分开】：显微镜 M物×M目；望远镜 f物/f目。
-      //    这里必须与 optics() 里那条同一个规则，否则套件量的是另一套东西。
-      const Mprod = mode === 'micro' ? Math.abs(m1) * D_NEAR / fEye : fObj / fEye;
-      const corrK = mode === 'micro' ? 1 : u1 / (u1 - fObj);
-      return { tanRaw, tanViewCF, tanViewTR, Mprod, corrK,
-               Mview: tanViewCF / tanRaw, MviewPred: Mprod * corrK * fEye / u2,
-               MviewTR: tanViewTR === null ? null : tanViewTR / tanRaw };
+      return magOf(mode, fObj, fEye, u1, d, h, m1, v2, hFinal, null);
     },
     setMode: (k) => setMode(k),
     setFObj: (v) => setFObj(v),
