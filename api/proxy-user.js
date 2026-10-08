@@ -75,6 +75,16 @@ function svcHeaders(extra) {
 function sbFetch(path, opts) {
   return fetch(SUPABASE_URL + '/rest/v1/' + path, opts || {});
 }
+// PostgREST 单次请求默认最多返回 1000 行，直接数返回数组长度会在 1000 处封顶。
+// 需要真实总数时用 count=exact，从响应的 Content-Range（形如 0-0/1234）里取总数。
+// 空结果集时 PostgREST 会回 416 + "Content-Range: */0"，同样从这里取到 0；
+// 真出错（无 Content-Range）返回 null，由调用方决定如何提示，不要伪装成 0。
+async function sbCount(path) {
+  var r = await sbFetch(path, { headers: svcHeaders({ Prefer: 'count=exact', Range: '0-0' }) });
+  var cr = r.headers.get('content-range') || '';
+  var n = parseInt(cr.split('/')[1], 10);
+  return isNaN(n) ? null : n;
+}
 
 // ========== 管理员口令 ==========
 var _adminHashCache = { value: undefined, at: 0 };
@@ -593,19 +603,18 @@ module.exports = async (req, res) => {
     // ========== 管理员统计数据（仅管理员） ==========
     if (action === 'getAdminStats') {
       var todayStr = new Date().toISOString().split('T')[0];
-      var q1 = await sbFetch('users?select=id,vip', { headers: svcHeaders({ Prefer: undefined }) });
-      if (!q1.ok) return res.status(502).json({ error: '查询失败' });
-      var allUsers = await q1.json();
-      var total = (allUsers || []).length;
-      var vipCount = (allUsers || []).filter(function(u) { return u.vip && u.vip !== '普通用户'; }).length;
-
-      var q2 = await sbFetch('visits?select=id&created_at=gte.' + todayStr + 'T00:00:00', { headers: svcHeaders({ Prefer: undefined }) });
-      var visitsToday = q2.ok ? (await q2.json()).length : 0;
-
-      var q3 = await sbFetch('users?select=id&created_at=gte.' + todayStr + 'T00:00:00', { headers: svcHeaders({ Prefer: undefined }) });
-      var newUsersToday = q3.ok ? (await q3.json()).length : 0;
-
-      return res.json({ success: true, stats: { totalUsers: total, vipCount: vipCount, visitsToday: visitsToday, newUsersToday: newUsersToday } });
+      var since = todayStr + 'T00:00:00';
+      var results = await Promise.all([
+        sbCount('users?select=id'),
+        sbCount('users?select=id&vip=not.is.null&vip=neq.' + encodeURIComponent('普通用户')),
+        sbCount('visits?select=id&created_at=gte.' + since),
+        sbCount('users?select=id&created_at=gte.' + since),
+      ]);
+      if (results.some(function(x) { return x === null; })) return res.status(502).json({ error: '查询失败' });
+      return res.json({ success: true, stats: {
+        totalUsers: results[0], vipCount: results[1],
+        visitsToday: results[2], newUsersToday: results[3],
+      } });
     }
 
     return res.status(400).json({ error: '未知 action: ' + action });
