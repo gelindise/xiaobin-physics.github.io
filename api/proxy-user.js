@@ -20,7 +20,7 @@ var ADMIN_PASSWORD_KEY = 'admin_password';
 
 var PUBLIC_ACTIONS = [
   'login', 'createUser', 'getUserPublic', 'checkSession', 'logout',
-  'findByEmail', 'redeemCode', 'verifyAdmin',
+  'findByEmail', 'redeemCode', 'resetPasswordByCode', 'verifyAdmin',
 ];
 var ADMIN_ACTIONS = [
   'getUser', 'getUsers', 'updateUser', 'updateVIP', 'deleteUser',
@@ -424,6 +424,64 @@ module.exports = async (req, res) => {
       if (!pRes.ok) return res.status(502).json({ error: 'VIP 更新失败: ' + (await pRes.text()) });
 
       return res.json({ success: true, vip: vipType, expire: exp });
+    }
+
+    // ========== 凭激活码重置密码（公开；身份凭证 = 邮箱 + 该账号已兑换过的激活码） ==========
+    //   链路：邮箱 → 账号名 → 激活码绑定账号 → 二者必须是同一账号 → 才允许改密。
+    //   激活码的 used_by 就是当初兑换它的账号，天然与账号对应（见 redeemCode）。
+    if (action === 'resetPasswordByCode') {
+      var rpIp = clientIp(req);
+      if (rateLimited('resetByCode:' + rpIp, 10, 10 * 60 * 1000)) {
+        return res.status(429).json({ error: '操作过于频繁，请稍后再试' });
+      }
+      var rpEmail = String((req.body && req.body.email) || '').trim();
+      var rpCode = String((req.body && req.body.code) || '').trim().toUpperCase().replace(/[\s-]/g, '');
+      var rpPwd = String((req.body && req.body.newPassword) || '');
+      if (!rpEmail || !rpCode) return res.status(400).json({ error: '缺少 email 或 code' });
+      if (rpPwd.length < 6) return res.status(400).json({ error: '新密码至少需要 6 位' });
+
+      // 1) 邮箱 → 账号（一个邮箱可能关联多个账号）
+      var ruRes = await sbFetch('users?email=eq.' + encodeURIComponent(rpEmail) + '&select=username,authCode', {
+        headers: svcHeaders({ Prefer: undefined }),
+      });
+      if (!ruRes.ok) return res.status(502).json({ error: '查询失败: ' + (await ruRes.text()) });
+      var ruRows = (await ruRes.json()) || [];
+      if (!ruRows.length) return res.status(404).json({ error: '该邮箱没有关联的账号' });
+      var emailUsers = ruRows.map(function(x) { return x.username; });
+
+      // 2) 激活码 → 绑定的账号（只认「已被兑换」的码；未兑换的码没有主人）
+      var rcRes = await sbFetch('activation_codes?code=eq.' + encodeURIComponent(rpCode) + '&select=code,status,used_by', {
+        headers: svcHeaders({ Prefer: undefined }),
+      });
+      var rcRows = rcRes.ok ? await rcRes.json() : [];
+      var boundTo = null;
+      if (rcRows && rcRows.length) {
+        if (rcRows[0].status !== 'used' || !rcRows[0].used_by) {
+          return res.status(409).json({ error: '此激活码尚未被任何账号兑换，无法用于找回密码' });
+        }
+        boundTo = rcRows[0].used_by;
+      } else {
+        // 兼容旧数据：users.authCode（该列不存在时会自然走到「无效」）
+        var legacy = ruRows.filter(function(x) {
+          return String(x.authCode || '').trim().toUpperCase().replace(/[\s-]/g, '') === rpCode;
+        });
+        boundTo = legacy.length ? legacy[0].username : null;
+      }
+
+      // 3) 两道信息必须指向同一账号（防止拿别人的码改自己的密码，或反之）
+      if (!boundTo || emailUsers.indexOf(boundTo) === -1) {
+        return res.status(403).json({ error: '激活码无效，或与该邮箱不匹配' });
+      }
+
+      // 4) 写入新密码，并把 session_token 换成一个谁都不持有的新值 → 旧设备下次校验即被踢下线
+      var rpRes = await sbFetch('users?username=eq.' + encodeURIComponent(boundTo), {
+        method: 'PATCH',
+        headers: svcHeaders({ Prefer: 'return=minimal' }),
+        body: JSON.stringify({ password: hashPassword(rpPwd), session_token: generateSessionToken() }),
+      });
+      if (!rpRes.ok) return res.status(502).json({ error: '重置失败: ' + (await rpRes.text()) });
+
+      return res.json({ success: true, username: boundTo });
     }
 
     // ========== 更新用户（仅管理员） ==========
