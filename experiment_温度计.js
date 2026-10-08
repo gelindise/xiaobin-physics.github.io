@@ -170,10 +170,22 @@ import * as THREE from './assets/optics-three.min.js';
     down:  { name: '俯视',         short: '俯视', dy: EYE_DY },
     up:    { name: '仰视',         short: '仰视', dy: -EYE_DY }
   };
-  /* 两支温度计：量程、分度值、长刻度间隔、数字间隔、缩口 */
+  /* 两支温度计：量程、分度值、长刻度间隔、数字间隔、缩口、管上刻度是否由物理式给出。
+     physScale —— 管身上那套刻度是不是【按本页的物理式画出来的】：
+       lab  = true。量程 −20 ~ 110 ℃、内孔 0.30 mm，液柱高由 h = V₀·β·ΔT / A 现算，
+              与印在管上的刻度长度自洽（差 0.7%），所以「物理式 ↔ 刻度」可以互相验。
+       body = false。量程只有 35 ~ 42 ℃。真实体温计能把这 7 ℃ 铺满整根管，靠的是把内孔
+              做到 0.1 mm 量级；本页为了和上方 3D 管身共用同一根管子，是把 35 ~ 42 ℃
+              【重新映射】到同一段刻度上 —— 这是画法，不是那套物理式算出来的。
+              ★ 标成 false 之后 calInfo().relErr 报 null。不标的话，拿 100 ℃ 去问体温计，
+                scaleYOf 会一路外推到 75.30 cm（管身刻度才 8.2 cm），面板上就会印出
+                「差 99.4%」这种假误差 —— 顺序 5 上线后实测到的就是这个。
+              ★ 同理，摄氏温度的定标（冰水 0 ℃ / 沸水 100 ℃）只在 lab 上成立：
+                两个定标点都落在体温计量程之外，标在它身上是误导 ⇒ calibrate / divideCal
+                对非 physScale 的量程一律拒绝，UI 也一起禁用。 */
   const KINDS = {
-    lab:  { name: '实验室温度计', TMin: -20, TMax: 110, div: 1,   longStep: 5,   numStep: 10, dec: 0, neck: false },
-    body: { name: '体温计',       TMin: 35,  TMax: 42,  div: 0.1, longStep: 0.5, numStep: 1,  dec: 1, neck: true }
+    lab:  { name: '实验室温度计', TMin: -20, TMax: 110, div: 1,   longStep: 5,   numStep: 10, dec: 0, neck: false, physScale: true },
+    body: { name: '体温计',       TMin: 35,  TMax: 42,  div: 0.1, longStep: 0.5, numStep: 1,  dec: 1, neck: true,  physScale: false }
   };
 
   /* ==========================================================================
@@ -1033,10 +1045,13 @@ import * as THREE from './assets/optics-three.min.js';
     mercuryBulb.position.set(0, bulbLocalY, 0);
 
     /* 定标记号：位置直接取 state.cal 里记下的高度（那边是唯一真源），
-       这里只负责把它摆到管身上。没打记号就隐藏。 */
+       这里只负责把它摆到管身上。没打记号就隐藏。
+       ★ 还要求【这个量程上定标成立】：体温计（35 ~ 42 ℃）装不下 0 ℃ 与 100 ℃ 两个
+         定标点，把上一支温度计标出来的金环留在它身上，等于给体温计印上「100 ℃」。 */
+    const calOn = KINDS[state.kind].physScale;
     const c0 = state.cal.mark0, c1 = state.cal.mark100;
-    calRings[0].visible = !!c0;
-    calRings[1].visible = !!c1;
+    calRings[0].visible = calOn && !!c0;
+    calRings[1].visible = calOn && !!c1;
     if (c0) calRings[0].position.set(0, c0.y, 0);
     if (c1) calRings[1].position.set(0, c1.y, 0);
   }
@@ -1061,10 +1076,18 @@ import * as THREE from './assets/optics-three.min.js';
      ① 先把水换成该定标点规定的那杯水（冰水混合物 / 沸水）——
         不是随便一杯，0 ℃ 和 100 ℃ 各自有严格规定；
      ② 记号打在【当前示数】的高度上。示数还没稳定就点，记号就是偏的 ——
-        面板会提示「标早了」，这就是这一步要教的：定标必须等示数稳定。 */
+        面板会提示「标早了」，这就是这一步要教的：定标必须等示数稳定。
+     ★ 门禁在函数里，不只在按钮上：量程装不下定标点的温度计（体温计 35 ~ 42 ℃）
+       一律拒绝。只禁用按钮的话，直接调函数就能绕过去 —— 而且「定标 0 ℃」标在
+       一支量程 35 ~ 42 ℃ 的温度计上，本身就是错的，不是「钳一下就没事」。 */
   function calibrate(i) {
     const pt = CAL_POINTS[i];
     const k = KINDS[state.kind];
+    /* ★ 门禁在函数里，不只在按钮上：量程装不下定标点的温度计（体温计 35 ~ 42 ℃）
+       一律拒绝，返回 null。只禁用按钮的话，直接调函数就能绕过去 —— 而且「标定 0 ℃」
+       标在一支量程 35 ~ 42 ℃ 的温度计上本身就是错的，不是「钳一下就没事」。
+       提示文案由 syncCalUI() 统一给（那里也是从同一个 physScale 现算的）。 */
+    if (!k.physScale) return null;
     state.water = pt.water;
     state.Tw = WATERS[pt.water].T;
     state.TwVis = state.Tw;
@@ -1088,10 +1111,12 @@ import * as THREE from './assets/optics-three.min.js';
   }
 
   /* 把 0 ℃ 与 100 ℃ 两个记号之间等分 100 份。
-     门禁：两个记号都得打过、而且都必须在示数稳定时打的 ——
-     拿一个标偏的记号去等分，分出来的刻度全是错的。 */
+     门禁：① 这个量程得是「按物理式画的」那一支（体温计量程装不下两个定标点）；
+          ② 两个记号都得打过、而且都必须在示数稳定时打的 ——
+             拿一个标偏的记号去等分，分出来的刻度全是错的。 */
   function divideCal() {
     const c = state.cal;
+    if (!KINDS[state.kind].physScale) return false;
     if (!c.mark0 || !c.mark100) return false;
     if (!c.mark0.settled || !c.mark100.settled) return false;
     c.divided = true;
@@ -1101,18 +1126,29 @@ import * as THREE from './assets/optics-three.min.js';
   }
 
   /* 定标与剖面要报给面板 / 自检的全部量。
-     ★ relErr 是【两条独立路径】的对账：物理式 columnH(100) 与本页印刷刻度 scaleYOf(100)。
-       细管内孔半径 BORE_R 是按真实性独立选的（0.60 mm），不是从刻度长度反推的，
-       所以这个相对误差是真检查 —— 它一旦超过 2% 就说明细管粗细与刻度长度不自洽了。 */
+     ★ relErr 是【两条独立路径】的对账，基准必须是【这个量程自己的一整段】：
+         物理式 columnH(TMax) —— 从 TMin 一路升到 TMax，液柱该升多高；
+         管上刻度 SCALE_Y1 − SCALE_Y0 —— 印出来的刻度占多长。
+       细管内孔半径 BORE_R 是按真实性独立选的（0.60 mm 直径），不是从刻度长度反推的，
+       所以这个相对误差是真检查 —— 超过 2% 就说明细管粗细与刻度长度不自洽了。
+     ★ 为什么不用 100 ℃ 当基准：那是实验室温度计的定标点，不是「量程的上端」。
+       拿它去问体温计（量程 35 ~ 42 ℃），scaleYOf 会把 100 ℃ 外推到 75.30 cm
+       —— 管身刻度才 8.2 cm，于是报出 99.4% 的假误差。量程装不下这个温度时，
+       正确的做法是【不报这个数】（relErr = null），而不是报一个外推出来的数。 */
   function calInfo() {
     const k = KINDS[state.kind];
     const c = state.cal;
-    const colH100 = columnH(100, state.kind);
-    const scaleH100 = scaleYOf(100, k);
+    const spanCm = SCALE_Y1 - SCALE_Y0;
+    const colHFull = columnH(k.TMax, state.kind);
+    const relErr = k.physScale
+      ? +(Math.abs(colHFull - spanCm) / spanCm).toFixed(6)
+      : null;
     const span = (c.mark0 && c.mark100) ? +(c.mark100.y - c.mark0.y).toFixed(4) : null;
     const perDiv = span == null ? null : +(span / 100).toFixed(6);
     return {
       kind: state.kind,
+      physScale: k.physScale,
+      tMin: k.TMin, tMax: k.TMax, div: k.div,
       mark0Y: c.mark0 ? c.mark0.y : null,
       mark100Y: c.mark100 ? c.mark100.y : null,
       mark0T: c.mark0 ? c.mark0.T : null,
@@ -1125,13 +1161,13 @@ import * as THREE from './assets/optics-three.min.js';
       cmPerDeg: +cmPerDeg(k).toFixed(6),
       exp0Y: +calYOf(0, state.kind).toFixed(4),
       exp100Y: +calYOf(100, state.kind).toFixed(4),
-      colH100: +colH100.toFixed(4),
-      scaleH100: +scaleH100.toFixed(4),
-      relErr: +Math.abs(colH100 - scaleH100) / scaleH100,
+      colHFull: +colHFull.toFixed(4),
+      scaleHSpan: +spanCm.toFixed(4),
+      relErr,
       boreR: BORE_R, aBore: +A_BORE.toFixed(6),
       vBulb: +V_BULB.toFixed(6), beta: BETA_APP,
       rLiqBulb: R_LIQ_BULB,
-      canDivide: !!(c.mark0 && c.mark100 && c.mark0.settled && c.mark100.settled),
+      canDivide: !!(k.physScale && c.mark0 && c.mark100 && c.mark0.settled && c.mark100.settled),
       nDiv: calNDiv(state.kind),
       /* 等分线在剖面里的高度（管身局部坐标 cm），共 nDiv+1 条（含两端） */
       divLines: c.divided && c.mark0 && c.mark100
@@ -1202,9 +1238,16 @@ import * as THREE from './assets/optics-three.min.js';
     g.fillStyle = 'rgba(255,132,140,0.9)';
     g.fillRect(cx - halfBore, Y(colTopCm), borePx, 2);
 
-    /* 两个定标记号：金环画成横线；「标早了」的记号画成虚线，一眼能看出它不作数 */
+    /* 两个定标记号：金环画成横线；「标早了」的记号画成虚线，一眼能看出它不作数。
+       ★ 只在【定标真的成立】的量程上画：体温计（35 ~ 42 ℃）装不下 0 ℃ 与 100 ℃，
+         标在它身上就是误导 —— 而上一支温度计标出来的记号本来就已经被清掉了，
+         这里再拦一道，免得以后又冒出一条「记号跟着仪器走」的路径。 */
+    const calOn = k.physScale;
+    /* markDrawn 数的是【真正画出去的金环条数】—— 不能写成「calOn ? 2 : 0」，
+       那是意图值：把 drawMark 里的 return 条件改坏，账本照样报 2。 */
+    let markDrawn = 0;
     const drawMark = (m, txt) => {
-      if (!m) return;
+      if (!m || !calOn) return;
       const y = Y(m.y);
       g.save();
       g.strokeStyle = m.settled ? '#fbbf24' : '#fb7185';
@@ -1216,6 +1259,7 @@ import * as THREE from './assets/optics-three.min.js';
       g.textAlign = 'right'; g.textBaseline = 'middle';
       g.fillStyle = m.settled ? '#fbbf24' : '#fb7185';
       g.fillText(txt + (m.settled ? '' : ' 标早了'), tubeL - 30, y);
+      markDrawn++;
     };
     drawMark(state.cal.mark0, '0 ℃');
     drawMark(state.cal.mark100, '100 ℃');
@@ -1224,7 +1268,7 @@ import * as THREE from './assets/optics-three.min.js';
        ★ divDrawn 数的是【真正画出去的行数】—— 不能写成「divided ? 101 : 0」，
        那是意图值：把循环上界改成 50，账本照样报 101，自检全绿。 */
     let divDrawn = 0;
-    if (state.cal.divided && state.cal.mark0 && state.cal.mark100) {
+    if (calOn && state.cal.divided && state.cal.mark0 && state.cal.mark100) {
       const y0 = state.cal.mark0.y, y1 = state.cal.mark100.y;
       for (let i = 0; i <= calNDiv(); i++) {
         const yy = Y(y0 + (y1 - y0) * i / calNDiv());
@@ -1264,6 +1308,7 @@ import * as THREE from './assets/optics-three.min.js';
       mark0Px: state.cal.mark0 ? +Y(state.cal.mark0.y).toFixed(2) : null,
       mark100Px: state.cal.mark100 ? +Y(state.cal.mark100.y).toFixed(2) : null,
       divLineCount: divDrawn,
+      markDrawn,
       Tshow: +Tshow.toFixed(3),
       kind: state.kind
     };
@@ -1275,9 +1320,19 @@ import * as THREE from './assets/optics-three.min.js';
         + ' · 内孔半径 <b>' + (ci.boreR * 10).toFixed(2) + ' mm</b>';
     }
     if (prText) {
-      prText.textContent = '示数 ' + Tshow.toFixed(1) + ' ℃ ⇒ 液柱比 0 ℃ 高 ' + colTopCm.toFixed(2)
-        + ' cm。100 ℃ 处：物理式 h = ' + ci.colH100.toFixed(2) + ' cm，管上刻度 ' + ci.scaleH100.toFixed(2)
-        + ' cm，差 ' + (ci.relErr * 100).toFixed(1) + '%（内孔粗细是按真实值选的，不是照刻度反推的）。';
+      /* ★ 文案必须跟着量程走。写成「比 0 ℃ 高」「100 ℃ 处」的话，换到体温计
+         （35 ~ 42 ℃）就全是错的：0 ℃ 与 100 ℃ 都不在量程里，而且 scaleYOf(100)
+         会被一路外推到 75 cm，于是印出「差 99.4%」这种假误差（顺序 5 上线后实测到的）。 */
+      prText.textContent = '示数 ' + Tshow.toFixed(1) + ' ℃ ⇒ 液柱比 ' + k.TMin + ' ℃ 高 '
+        + colTopCm.toFixed(2) + ' cm。'
+        + (k.physScale
+          ? '升到 ' + k.TMax + ' ℃ 时：物理式 h = ' + ci.colHFull.toFixed(2) + ' cm，管上刻度 '
+            + ci.scaleHSpan.toFixed(2) + ' cm，差 ' + (ci.relErr * 100).toFixed(1)
+            + '%（内孔粗细是按真实值选的，不是照刻度反推的）。'
+          : '体温计的量程只有 ' + k.TMin + ' ~ ' + k.TMax + ' ℃、分度值 ' + k.div + ' ℃ —— '
+            + '同一根管子上要容下 ' + (k.TMax - k.TMin) + ' ℃ 的刻度，真实体温计靠的是把内孔'
+            + '做到 0.1 mm 量级（比实验室温度计细得多）。本剖面为了与上方 3D 管身共用'
+            + '同一比例尺，不在这里报「物理式对刻度」的误差。');
     }
   }
 
@@ -1742,14 +1797,23 @@ import * as THREE from './assets/optics-three.min.js';
   }
 
   /* 定标面板的界面状态：按钮可用性与提示文案。
-     一律从 state.cal 现算 —— 不另存一份「能不能点」的布尔量，否则两边会不同步。 */
+     一律从 state.cal 与 KINDS[kind].physScale 现算 —— 不另存一份「能不能点」的布尔量，
+     否则两边会不同步（只禁用按钮而不在函数里拦，就是「测试能过、直接调能绕」）。
+     ★ 体温计（量程 35 ~ 42 ℃）装不下 0 ℃ 与 100 ℃ 两个定标点 ⇒ 三个按钮全禁用，
+       并说清「为什么不能标」，而不是留一组点了没反应的按钮。 */
   function syncCalUI() {
     const ci = calInfo();
+    const k = KINDS[state.kind];
     if (calMsg) {
-      calMsg.textContent = ci.msg || '先点「标定 0 ℃」—— 冰水混合物就是摄氏温度的 0 ℃ 定标点。';
+      calMsg.textContent = !k.physScale
+        ? `${k.name}的量程只有 ${k.TMin} ~ ${k.TMax} ℃，装不下 0 ℃ 与 100 ℃ 两个定标点`
+          + `—— 摄氏温度的定标要在实验室温度计上做，先切回去。`
+        : (ci.msg || '先点「标定 0 ℃」—— 冰水混合物就是摄氏温度的 0 ℃ 定标点。');
       const bad = (ci.mark0 && !ci.mark0Settled) || (ci.mark100 && !ci.mark100Settled);
       calMsg.className = bad ? 'callout warn' : 'callout';
     }
+    if (cal0Btn) cal0Btn.disabled = !k.physScale;
+    if (cal100Btn) cal100Btn.disabled = !k.physScale;
     if (calDivBtn) {
       calDivBtn.disabled = !ci.canDivide;
       calDivBtn.textContent = ci.divided
@@ -2057,6 +2121,13 @@ import * as THREE from './assets/optics-three.min.js';
   document.querySelectorAll('[data-kind]').forEach((btn) => {
     btn.addEventListener('click', () => {
       state.kind = btn.dataset.kind;
+      /* ★ 换温度计 = 换了一支仪器，上一支管身上的定标记号不能跟着走。
+         记号记的是「管身局部高度」，那是相对【那支温度计的刻度】量的；
+         搬到量程完全不同的另一支上，同一个高度代表的温度完全不同 ——
+         顺序 5 上线后实测：切到体温计，实验室温度计标出来的 0 ℃ / 100 ℃
+         金环还挂在管上，而体温计的量程只有 35 ~ 42 ℃。 */
+      state.cal.mark0 = null; state.cal.mark100 = null;
+      state.cal.divided = false; state.cal.msg = '';
       applyScale(state.kind);
       resetRun();
       syncButtons(); refreshAll();
@@ -2307,7 +2378,7 @@ import * as THREE from './assets/optics-three.min.js';
     /* 摄氏温度的定标 + 原理剖面（顺序 5） */
     CAL_POINTS, CAL_TOL, BETA_APP, BORE_R, A_BORE, V_BULB, R_LIQ_BULB,
     columnH, calYOf, calNDiv, calibrate, divideCal, calInfo, drawPrinciple, syncCalUI,
-    prCanvas, calMsg, calDivBtn, cal0Btn, cal100Btn,
+    prCanvas, prText, prLegend, calMsg, calDivBtn, cal0Btn, cal100Btn,
     updateCamera, resize, syncViewToPlace, viewFollow: () => followRead,
     /* 直接推进仿真（不依赖真实时间）。走的是与真实循环同一个 stepSim。 */
     advance(seconds) {
