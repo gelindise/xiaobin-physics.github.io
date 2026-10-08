@@ -304,10 +304,13 @@
      把这个 build 号 +1 即可。 -->
 <script src="circuit-core.js?build=15"></script>
 <script src="circuit-draw.js?build=19"></script>
-<script src="circuit-editor.js?build=16"></script>
+<script src="circuit-editor.js?build=17"></script>
 <!-- 电路图（实物图 → 标准符号）。独立成第四块内核：沙盒和欧姆定律页共用同一份，
      免得各写一套符号，两边的图画法迟早不一样。三个老内核一行没动，build 号不升。 -->
 <script src="circuit-schematic.js?build=11"></script>
+<!-- 音效引擎。全部音色现场合成，不带音频素材；AudioContext 懒创建，
+     等第一次真实手势才建。它只读状态、只出声，不碰物理也不碰画面。 -->
+<script src="circuit-sound.js?build=1"></script>
 <script>
 // ---- 访问保护：仅允许站内跳转（与站内其它实验页一致）----
 (function(){
@@ -340,9 +343,14 @@ var results = null, flows = [], phase = 0;
 // 定向移动方向相反」这句话就不用讲了，看一眼就明白。选择记在 localStorage。
 var FLOW_KEY = 'circuit_sandbox_flow';
 var CUR_KEY = 'circuit_sandbox_current';
-var showFlow = true, showCurrent = false;
+var SOUND_KEY = 'circuit_sandbox_sound';
+var showFlow = true, showCurrent = false, showSound = true;
 try { showFlow = localStorage.getItem(FLOW_KEY) !== '0'; } catch (e) {}
 try { showCurrent = localStorage.getItem(CUR_KEY) === '1'; } catch (e) {}
+try { showSound = localStorage.getItem(SOUND_KEY) !== '0'; } catch (e) {}
+// 音效引擎。声明在这里、装配在下面（和两个动画开关并排），但 render/renderSoft
+// 里的 syncSound() 靠它判断——先声明成 null，函数里判空，装配顺序就不影响正确性。
+var sound = null;
 
 function w(a, ai, b, bi, via, auto){
   return { a:{compId:a,termIdx:ai}, b:{compId:b,termIdx:bi}, via:via||[], auto:auto !== false };
@@ -372,6 +380,26 @@ function byId(id){
 function solveNow(){
   results = C.solve(scene.comps, scene.wires.map(function(x){ return {a:x.a, b:x.b}; }));
   flows = C.wireCurrents(scene, results);
+  syncSound();
+}
+
+// 把「电路现在该不该响」告诉音效引擎。挂在 solveNow 里面，是因为全页面只有
+// render / renderSoft 两处重算电路，而它们都从这里出去 —— 放在这里，就不存在
+// 「某条路径改了电路却忘了同步音效」这种漏法。
+// 只传两个布尔量，引擎拿不到 scene 也拿不到 results：音效坏了，物理照旧。
+// 电铃的响与不响【与两个粒子开关无关】—— 粒子是示意图，铃在响是器材本身的状态。
+function syncSound(){
+  if (!sound) return;
+  var rings = false;
+  if (results && results.components){
+    for (var i = 0; i < scene.comps.length; i++){
+      var c = scene.comps[i];
+      if (c.type !== 'bell') continue;
+      var r = results.components[c.id];
+      if (r && r.rings){ rings = true; break; }
+    }
+  }
+  sound.setState({ bell: rings, shorted: !!(results && results.status === 'shorted') });
 }
 
 // ── 渲染：元件与标注进离屏层，只有导线每帧重绘（电流粒子要动）──
@@ -926,6 +954,9 @@ editor = E.create({
     var l = D.toLocal(c, p.x, p.y);
     if (dialHit(l.x, l.y)) openZoom(c);
   },
+  // 编辑器报「发生了一件值得出声的事」，页面转手交给音效引擎。
+  // 页面不判断该不该响、响什么 —— 那是引擎的事；这里只做一次转发。
+  onEvent: function(name, data){ if (sound) sound.trigger(name, data); },
 });
 
 // ── 表盘放大镜 ────────────────────────────────────────────
@@ -1681,16 +1712,18 @@ function renderSaveHint(flash){
 
 toolBtn('💾 保存电路', openSavePanel);
 
-// ── 两个动画开关 ──────────────────────────────────────────
-// 各自一个按钮、各自可开可关，两个同时开也允许：那时同一条导线上
+// ── 三个开关 ──────────────────────────────────────────────
+// 各自一个按钮、各自可开可关，两个动画开关同时开也允许：那时同一条导线上
 // 琥珀色小球和红色箭头对着走，「电子定向移动方向与电流方向相反」不用讲。
 // 做成「三态循环按钮」就买不到这个对比了，所以是两个独立按钮。
-function animToggle(label, key, initial, apply){
+// offLabel 可选：音效关掉时连图标一起换（🔊 → 🔇），光看「：关」两个字
+// 容易和旁边那两个开关混。
+function animToggle(label, key, initial, apply, offLabel){
   var on = initial;
   var btn = toolBtn('', function(){ set(!on); });
   function set(v){
     on = !!v;
-    btn.textContent = label + '：' + (on ? '开' : '关');
+    btn.textContent = (on ? label : (offLabel || label)) + '：' + (on ? '开' : '关');
     btn.className = on ? 'on' : 'off';
     try { localStorage.setItem(key, on ? '1' : '0'); } catch (e) {}
     apply(on);
@@ -1701,10 +1734,34 @@ function animToggle(label, key, initial, apply){
 }
 var flowAnim = animToggle('⚡ 电子流动', FLOW_KEY, showFlow, function(v){ showFlow = v; });
 var curAnim  = animToggle('➡ 电流方向', CUR_KEY, showCurrent, function(v){ showCurrent = v; });
-var btnFlow = flowAnim.btn, btnCurrent = curAnim.btn;
-var setFlow = flowAnim.set, setCurrent = curAnim.set;
 
-// 存档状态行挂在元件栏最右边（两个动画按钮之后），这样它不会夹在
+// ── 音效 ──────────────────────────────────────────────────
+// 引擎在这里才建（而不是在页面顶部）：它要读 localStorage 里的开关状态，
+// 而 AudioContext 本身是懒创建的 —— 载入时不建，等第一次真实手势才建
+// （见下面的 unlockOnGesture）。所以这里建出来只是「准备好引擎」，
+// 一个音频节点都还没有，不影响首屏。
+sound = (window.CircuitSound && window.CircuitSound.create)
+  ? window.CircuitSound.create({ enabled: showSound }) : null;
+var soundAnim = animToggle('🔊 音效', SOUND_KEY, showSound, function(v){
+  showSound = v;
+  if (sound) sound.setEnabled(v);
+}, '🔇 音效');
+// 开关本身也走「手势」这条路：点它的时候顺手把 AudioContext 解出来，
+// 不然学生第一次点「音效：开」这一下是听不见任何反馈的。
+soundAnim.btn.addEventListener('pointerdown', function(){ if (sound) sound.unlock(); });
+
+// 浏览器自动播放策略：AudioContext 必须在【真实手势】里创建/唤醒。
+// unlock() 幂等：没建就建，建了但被挂起就 resume。监听器不摘 ——
+// AudioContext 被系统挂起（长时间无操作、来电）之后，还得靠下一次手势救回来。
+// 捕获阶段注册，免得被画布上的 pointerdown 抢了。
+function unlockOnGesture(){ if (sound) sound.unlock(); }
+window.addEventListener('pointerdown', unlockOnGesture, true);
+window.addEventListener('keydown', unlockOnGesture, true);
+
+var btnFlow = flowAnim.btn, btnCurrent = curAnim.btn, btnSound = soundAnim.btn;
+var setFlow = flowAnim.set, setCurrent = curAnim.set, setSound = soundAnim.set;
+
+// 存档状态行挂在元件栏最右边（三个开关之后），这样它不会夹在
 // 「＋元件」和「撤销/清空」中间拆散那一排工具按钮。
 var saveHintEl = document.createElement('span');
 saveHintEl.className = 'hint'; saveHintEl.id = 'saveHint';
@@ -1729,6 +1786,8 @@ window.__showFlow = function(){ return showFlow; };
 window.__setFlow = function(v){ setFlow(v); };
 window.__showCurrent = function(){ return showCurrent; };
 window.__setCurrent = function(v){ setCurrent(v); };
+window.__showSound = function(){ return showSound; };
+window.__setSound = function(v){ setSound(v); };
 // 放大镜：测试要能问「现在开着没」「开的是哪只表」「浮层的字写了什么」，
 // 还得能在不点鼠标的情况下直接开一只表（点表盘那一路另有 pixel 断言守着）。
 window.__zoom = function(){
@@ -1748,6 +1807,15 @@ window.__btnCurrent = function(){ return btnCurrent; };
 window.__pathOf = function(wr){ return pathOf(wr); };
 window.__readout = function(c, r){ return readoutLines(c, r); };
 window.__btnFlow = function(){ return btnFlow; };
+// 音效：自检不能靠耳朵。给三样东西 ——
+//   ① 引擎本身（stats() 里 actions / plays / last / bellRunning / strikes 分得开
+//      「没触发」和「触发了但没排声」）；
+//   ② 按钮，验「点一下真的换了状态、写进了 localStorage」；
+//   ③ syncSound，验「改完电路之后铃的状态跟着走」，不必依赖 rAF 或真实点击。
+window.__sound = function(){ return sound; };
+window.__btnSound = function(){ return btnSound; };
+window.__syncSound = function(){ syncSound(); return sound ? sound.stats() : null; };
+window.__soundKey = function(){ return SOUND_KEY; };
 // 动画：本机 headless 常常一帧 rAF 都不回调，凡是「随时间推进」的断言必须走
 // driveAnim —— 它和真实循环 tick 共用 stepMotion / drawFrame，只是把 dt 喂进去，
 // 不另开一条动画通路（另开的话就变成「测的是另一份代码」）。

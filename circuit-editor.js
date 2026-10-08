@@ -68,6 +68,18 @@
     // 编辑器不知道宿主拿这一下干什么（沙盒用它开表盘放大镜），所以只报事件。
     var onTap = opts.onTap || function () {};
 
+    // 「发生了一件值得出声的事」——接上线、拔掉线、通断开关、放上/拿走元件、
+    // 撤销。和 onTap 同一条路子：编辑器只报事件，不替宿主决定要不要响、响什么。
+    // 音效必须挂在【动作真的发生的那一行】上，不能靠每帧比对场景猜：比对分不出
+    // 「接了一根线」和「挪了一个元件」，也分不出「撤销回上一状态」和「手动改回去」。
+    var onEvent = opts.onEvent || function () {};
+    function report(name, data) {
+      // 音效是锦上添花，绝不能因为它的回调抛异常就把编辑操作卡死 ——
+      // 这里每处调用都排在场景已经改完之后，抛出去会跳过 changed()，
+      // 画面就停在旧状态，看着像页面卡住了。
+      try { onEvent(name, data); } catch (e) {}
+    }
+
     var selected = null;      // {kind:'comp'|'wire', id} 或 {kind:'wire', index}
     var hover = null;         // {kind:'term', compId, termIdx} | {kind:'comp'|'wire', ...}
     var moving = null;        // 拖元件 {id, dx, dy}
@@ -357,6 +369,8 @@
       hit.w.via = routeTo(D.terminalWorld(a, hit.w.a.termIdx),
                           D.terminalWorld(b, hit.w.b.termIdx), -1).via;
       changed();
+      // 实物上「换量程」就是拔下来插到另一个柱子上，一声「咔」是对的。
+      report('plug', { compId: compId, tap: tapIdx });
       return true;
     }
 
@@ -373,6 +387,7 @@
       s.comps.push(c);
       select({ kind: 'comp', id: id });
       changed();
+      report('place', { comp: c });
       return c;
     }
     function removeSelected() {
@@ -380,12 +395,16 @@
       pushUndo();
       var s = getScene();
       if (selected.kind === 'comp') {
+        var gone = byId(selected.id);
         s.comps = s.comps.filter(function (c) { return c.id !== selected.id; });
         s.wires = s.wires.filter(function (w) {
           return w.a.compId !== selected.id && w.b.compId !== selected.id;
         });
+        report('remove', { comp: gone });
       } else {
+        var dead = s.wires[selected.index];
         s.wires.splice(selected.index, 1);
+        report('unplug', { wire: dead });
       }
       selected = null;
       changed();
@@ -395,10 +414,15 @@
       var c = byId(id); if (!c) return;
       pushUndo();
       c.params = c.params || {};
+      // 「值真的变了没有」必须在写进去之前问。参数面板上勾选框会连着发
+      // input 和 change 两个事件，同一句话调两次 setParam —— 不判这一下，
+      // 拨一次开关会响两声。
+      var differs = (c.params[key] !== val);
       c.params[key] = val;
       // 元件的几何没变但导线可能要走新路，重算一遍 via
       rerouteAll();
       changed();
+      if (differs && key === 'closed') report('switch', { comp: c, closed: !!val });
     }
     function rotateSelected() {
       if (!selected || selected.kind !== 'comp') return;
@@ -470,6 +494,7 @@
       s.comps = st.comps; s.wires = st.wires;
       selected = null;
       changed();
+      report('undo', {});
       return true;
     }
 
@@ -498,6 +523,7 @@
           getScene().wires.splice(selected.index, 1);
           selected = null;
           changed();
+          report('unplug', { wire: delWr });   // 拔掉一根线，和 delete 键同一种声音
         }
         return;
       }
@@ -646,6 +672,9 @@
                 // 原始形状留一份，元件拖走时按它重新贴合，见 refitManual
                 base: { ends: [[p0.x, p0.y], [p1.x, p1.y]], via: via.map(function (v) { return [v[0], v[1]]; }) },
               });
+              // 真的接上了才报。上面 dup / rangeConflict 那两条拦截路径不报 ——
+              // 接不上却「咔」一声，学生只会以为接好了。
+              report('plug', { a: a, b: b });
             }
           }
         }
@@ -663,6 +692,10 @@
           commitEdit();
           mc.params = mc.params || {};
           mc.params.closed = !mc.params.closed;
+          // 通断是开关唯一的事，必须出声。放在这里而不是 onTap 里：onTap 是
+          // 「点了一下」的通用出口，宿主按类型过滤；开关这一下编辑器自己就知道
+          // 是什么意思，没必要让宿主再判一次类型。
+          report('switch', { comp: mc, closed: !!mc.params.closed });
         } else discardEdit();       // 单纯点选，不留撤销记录
         // 没拖动 = 单击，报给宿主。开关在上面已经就地翻转了，这里照样报一声：
         // 宿主按类型自己过滤，编辑器不替它决定「哪些元件值得点」。
