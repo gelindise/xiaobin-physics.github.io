@@ -176,6 +176,42 @@ import * as THREE from './assets/optics-three.min.js';
     body: { name: '体温计',       TMin: 35,  TMax: 42,  div: 0.1, longStep: 0.5, numStep: 1,  dec: 1, neck: true }
   };
 
+  /* ==========================================================================
+     三点五、摄氏温度的定标 & 温度计原理剖面
+     --------------------------------------------------------------------------
+     课本上「摄氏温度」不是天生的，是【规定】出来的，规定的方式就是两个定标点：
+       冰水混合物 = 0 ℃，标准大气压下的沸水 = 100 ℃，中间等分 100 份。
+     本页把这两个点做成可操作的动作 —— 把温度计放进对应水温、等示数稳定、
+     再在管身上打一个记号。学生能亲眼看到「刻度是标出来的」。
+
+     原理剖面要回答的是「为什么管要做得极细」：
+       泡里那团液体受热膨胀，多出来的体积 V_BULB·β·ΔT 全部要摊到细管里，
+       液柱升高 h = V_BULB·β·ΔT / A。A 越小，同样一点点膨胀就顶得越高。
+     ========================================================================== */
+  /* 示数与水温差多少才算「稳定」—— 标定必须在稳定之后打记号，否则记号是偏的 */
+  const CAL_TOL = 0.05;
+  /* 两个定标点。water 指向既有的水温档，不是另写一份温度。 */
+  const CAL_POINTS = [
+    { T: 0,   water: '0',   name: '冰水混合物',        label: '0 ℃' },
+    { T: 100, water: '100', name: '标准大气压下的沸水', label: '100 ℃' }
+  ];
+  /* 液体【视膨胀系数】β（液体膨胀 − 玻璃膨胀），单位 1/℃。
+     红液（酒精 + 红色染料）约 1.0×10⁻³；水银只有约 1.8×10⁻⁴。 */
+  const BETA_APP = 1.0e-3;
+  /* 玻璃泡里那团液体的半径 —— 取【真正画出来的】那团（mercuryBulb 比玻璃泡小 0.07） */
+  const R_LIQ_BULB = TH_BULB_R - 0.07;
+  const V_BULB = (4 / 3) * Math.PI * R_LIQ_BULB * R_LIQ_BULB * R_LIQ_BULB;   // cm³
+  /* 细管内孔半径（cm）。★ 这是一个【独立的、按真实性选的】常数，不是从刻度长度反推的：
+     真实实验室温度计的内孔直径 0.5 ~ 0.8 mm，取 0.60 mm。
+     它与本页刻度长度是否自洽，由 `calInfo()` 里的 relErr 现算并断言（误差 < 2%）。 */
+  const BORE_R = 0.030;
+  const A_BORE = Math.PI * BORE_R * BORE_R;                                  // cm²
+  /* 液柱高出泡口的高度（cm）—— 纯物理式：膨胀出的体积除以细管截面积 */
+  function columnH(T, key) {
+    const k = KINDS[key];
+    return V_BULB * BETA_APP * (clamp(T, k.TMin, k.TMax) - k.TMin) / A_BORE;
+  }
+
   /* ------------------------------ 状态 ------------------------------ */
   const state = {
     /* 默认用【热水】而不是常温水：本页不加热，三种错放的偏差都正比于「水温 − 室温」。
@@ -201,6 +237,12 @@ import * as THREE from './assets/optics-three.min.js';
     step: 0,
     /* 放大镜是否收起。纯界面状态：不参与仿真，reset 也不会把它弹开 */
     magCollapsed: false,
+    /* 摄氏温度的定标进度。
+       mark0 / mark100 = 打过的记号：{ T 打记号时的示数, y 管身局部高度 cm, settled 当时稳没稳 }，
+       null = 还没打。divided = 有没有把两点之间等分 100 份。
+       ★ 记号的高度记的是【当时的示数】，不是直接写 0 / 100 ——
+       示数没稳定就点，记号就是偏的，这正是这一步要教的东西。 */
+    cal: { mark0: null, mark100: null, divided: false, msg: '' },
     /* 画面上【真正画出来】的量（坐标 / 像素间距 …）留给自检读。
        自检若自己重算一遍公式，就是自指 —— 页面画错了它照样绿。 */
     drawn: {}
@@ -607,16 +649,23 @@ import * as THREE from './assets/optics-three.min.js';
     color: '#e0212c', emissive: '#a5121d', emissiveIntensity: 1.15, roughness: 0.26, metalness: 0.05
   });
 
+  /* ★ scaleYOf / cmPerDeg 的第二个参数是【量程对象】（要用 k.TMin / k.TMax）。
+     曾经有三处把「键名」传了进来（'lab'）—— 'lab'.TMin === undefined ⇒ 整条算式变 NaN：
+     记号高度、cmPerDeg、exp0Y / exp100Y、relErr 全成 NaN，而自检那边
+     Math.abs(null − null) === 0 又让几条断言「照样绿」（NaN 跨 page.evaluate 会变 null）。
+     这里统一收口：传键名或传对象都接受，一处解析 ⇒ 别处不可能再传错。 */
+  const kindOf = (k) => (typeof k === 'string' ? KINDS[k] : k);
   /* 刻度 T 画在贴图的哪一行 —— 印刷刻度与液柱映射共用这一个式子，两边不可能再对不上 */
   function scaleCanvasY(T, k) {
     return SCALE_TEX_H - 6 - ((T - k.TMin) / (k.TMax - k.TMin)) * (SCALE_TEX_H - 12);
   }
   /* CanvasTexture 默认 flipY：贴图 v = 1 − y/H。刻度 T 在管身局部坐标系里的高度由这里唯一给出。 */
   function scaleYOf(T, k) {
-    return SCALE_Y0 + (1 - scaleCanvasY(T, k) / SCALE_TEX_H) * (SCALE_Y1 - SCALE_Y0);
+    const kk = kindOf(k);
+    return SCALE_Y0 + (1 - scaleCanvasY(T, kk) / SCALE_TEX_H) * (SCALE_Y1 - SCALE_Y0);
   }
   /* 每 1 ℃ 对应多少 cm —— 视差从「cm」换算成「℃」就靠它 */
-  function cmPerDeg(k) { return (SCALE_Y1 - SCALE_Y0) / (k.TMax - k.TMin); }
+  function cmPerDeg(k) { const kk = kindOf(k); return (SCALE_Y1 - SCALE_Y0) / (kk.TMax - kk.TMin); }
 
   /* 画一支温度计的印刷刻度，并量出刻度条真正占的水平范围（含数字），供旋转角使用 */
   function makeScale(key) {
@@ -685,6 +734,20 @@ import * as THREE from './assets/optics-three.min.js';
   const mercuryBulb = new THREE.Mesh(new THREE.SphereGeometry(TH_BULB_R - 0.07, 18, 12), thRedMat);
   thermometer.add(mercury);
   thermometer.add(mercuryBulb);
+
+  /* 定标记号：管身上套一圈金色细环。两个记号是两个独立的环，
+     位置由 updateThermo() 按 state.cal 里的高度实时摆 —— 打没打记号、打在哪儿
+     都从同一个地方来，画面上不会和面板上的数字各说各话。 */
+  const calRingMat = new THREE.MeshBasicMaterial({
+    color: '#fbbf24', transparent: true, opacity: 0.95, side: THREE.DoubleSide, depthWrite: false
+  });
+  const calRings = [0, 1].map(() => {
+    const m = new THREE.Mesh(new THREE.TorusGeometry(TH_TUBE_R + 0.035, 0.03, 8, 44), calRingMat);
+    m.rotation.x = Math.PI / 2;          // 环面水平（管是竖直的）
+    m.visible = false;
+    thermometer.add(m);
+    return m;
+  });
 
   /* 把刻度条转到正对相机的那半边管壁。
      贴图里刻度条中心在 u = (u0+u1)/2（CylinderGeometry 的 u=0 在 +z，θ = 360°·u），
@@ -903,6 +966,10 @@ import * as THREE from './assets/optics-three.min.js';
     state.Tw = WATERS[state.water].T; state.TwVis = state.Tw;
     state.Td = AMB;
     applyScale('lab');
+    /* 定标记号也一起清掉：重置 = 回到「一个记号都没打」的初始状态。
+       记号的高度是按当时那支温度计的刻度算出来的，换了温度计就不作数了。 */
+    state.cal.mark0 = null; state.cal.mark100 = null;
+    state.cal.divided = false; state.cal.msg = '';
     snapThermo();                                      // 温度计直接回到台面上，不留中间姿态
     resetRun();
     syncViewToPlace();                                 // 放法复位成「全部浸入」，特写也跟着回位
@@ -964,6 +1031,254 @@ import * as THREE from './assets/optics-three.min.js';
     mercury.scale.set(1, colH, 1);
     mercury.position.set(0, bulbLocalY + colH / 2, 0);
     mercuryBulb.position.set(0, bulbLocalY, 0);
+
+    /* 定标记号：位置直接取 state.cal 里记下的高度（那边是唯一真源），
+       这里只负责把它摆到管身上。没打记号就隐藏。 */
+    const c0 = state.cal.mark0, c1 = state.cal.mark100;
+    calRings[0].visible = !!c0;
+    calRings[1].visible = !!c1;
+    if (c0) calRings[0].position.set(0, c0.y, 0);
+    if (c1) calRings[1].position.set(0, c1.y, 0);
+  }
+
+  /* ==========================================================================
+     六点五、摄氏温度的定标（顺序 5 新增）
+     ========================================================================== */
+  /* 定标点规定的水温对应的液柱高度 —— 与 3D 印刷刻度【同一个】映射函数 */
+  function calYOf(T, key) {
+    const k = KINDS[key];
+    return scaleYOf(clamp(T, k.TMin, k.TMax), k);
+  }
+  /* 两个定标点之间分多少份 —— 由【温差 ÷ 分度值】给出，不是写死的 100：
+     0 ℃ 到 100 ℃ 差 100 ℃，实验室温度计分度值 1 ℃ ⇒ 100 份（101 条线）。
+     换成体温计（分度值 0.1 ℃）就是 1000 份 —— 刻度越细，份数越多。 */
+  function calNDiv(key) {
+    const k = KINDS[key || state.kind];
+    return Math.max(1, Math.round((CAL_POINTS[1].T - CAL_POINTS[0].T) / k.div));
+  }
+
+  /* 在管身上打一个定标记号。
+     ① 先把水换成该定标点规定的那杯水（冰水混合物 / 沸水）——
+        不是随便一杯，0 ℃ 和 100 ℃ 各自有严格规定；
+     ② 记号打在【当前示数】的高度上。示数还没稳定就点，记号就是偏的 ——
+        面板会提示「标早了」，这就是这一步要教的：定标必须等示数稳定。 */
+  function calibrate(i) {
+    const pt = CAL_POINTS[i];
+    const k = KINDS[state.kind];
+    state.water = pt.water;
+    state.Tw = WATERS[pt.water].T;
+    state.TwVis = state.Tw;
+    resetRun();
+    const settled = immersed() && Math.abs(state.Td - state.Tw) <= CAL_TOL;
+    const mark = {
+      T: +state.Td.toFixed(4),
+      y: +calYOf(state.Td, state.kind).toFixed(4),
+      settled
+    };
+    state.cal[i === 0 ? 'mark0' : 'mark100'] = mark;
+    state.cal.divided = false;          /* 记号一动，之前的等分就作废 */
+    /* 三种情况分得清清楚楚，各自有各自的补救办法 —— 不要合成一句「再试试」 */
+    state.cal.msg = !immersed()
+      ? `温度计还不在水里（${state.grip === 'bench' ? '横在台面上' : '被提起来了'}）—— 先把它放进烧杯，等示数稳定再标定。`
+      : settled
+        ? `已在 ${pt.label}（${pt.name}）处打好记号 —— 此时示数 ${state.Td.toFixed(1)} ℃，稳定。`
+        : `标早了！此时示数只有 ${state.Td.toFixed(1)} ℃，还没跟到 ${pt.T} ℃ —— 记号打偏了。等读数不动了再标一次。`;
+    refreshAll();
+    return mark;
+  }
+
+  /* 把 0 ℃ 与 100 ℃ 两个记号之间等分 100 份。
+     门禁：两个记号都得打过、而且都必须在示数稳定时打的 ——
+     拿一个标偏的记号去等分，分出来的刻度全是错的。 */
+  function divideCal() {
+    const c = state.cal;
+    if (!c.mark0 || !c.mark100) return false;
+    if (!c.mark0.settled || !c.mark100.settled) return false;
+    c.divided = true;
+    c.msg = '两个定标点之间等分 100 份，每份就是 1 ℃。';
+    refreshAll();
+    return true;
+  }
+
+  /* 定标与剖面要报给面板 / 自检的全部量。
+     ★ relErr 是【两条独立路径】的对账：物理式 columnH(100) 与本页印刷刻度 scaleYOf(100)。
+       细管内孔半径 BORE_R 是按真实性独立选的（0.60 mm），不是从刻度长度反推的，
+       所以这个相对误差是真检查 —— 它一旦超过 2% 就说明细管粗细与刻度长度不自洽了。 */
+  function calInfo() {
+    const k = KINDS[state.kind];
+    const c = state.cal;
+    const colH100 = columnH(100, state.kind);
+    const scaleH100 = scaleYOf(100, k);
+    const span = (c.mark0 && c.mark100) ? +(c.mark100.y - c.mark0.y).toFixed(4) : null;
+    const perDiv = span == null ? null : +(span / 100).toFixed(6);
+    return {
+      kind: state.kind,
+      mark0Y: c.mark0 ? c.mark0.y : null,
+      mark100Y: c.mark100 ? c.mark100.y : null,
+      mark0T: c.mark0 ? c.mark0.T : null,
+      mark100T: c.mark100 ? c.mark100.T : null,
+      mark0Settled: c.mark0 ? c.mark0.settled : null,
+      mark100Settled: c.mark100 ? c.mark100.settled : null,
+      divided: c.divided,
+      msg: c.msg,
+      span, perDiv,
+      cmPerDeg: +cmPerDeg(k).toFixed(6),
+      exp0Y: +calYOf(0, state.kind).toFixed(4),
+      exp100Y: +calYOf(100, state.kind).toFixed(4),
+      colH100: +colH100.toFixed(4),
+      scaleH100: +scaleH100.toFixed(4),
+      relErr: +Math.abs(colH100 - scaleH100) / scaleH100,
+      boreR: BORE_R, aBore: +A_BORE.toFixed(6),
+      vBulb: +V_BULB.toFixed(6), beta: BETA_APP,
+      rLiqBulb: R_LIQ_BULB,
+      canDivide: !!(c.mark0 && c.mark100 && c.mark0.settled && c.mark100.settled),
+      nDiv: calNDiv(state.kind),
+      /* 等分线在剖面里的高度（管身局部坐标 cm），共 nDiv+1 条（含两端） */
+      divLines: c.divided && c.mark0 && c.mark100
+        ? Array.from({ length: calNDiv(state.kind) + 1 }, (_, i) =>
+          +(c.mark0.y + span * i / calNDiv(state.kind)).toFixed(4))
+        : []
+    };
+  }
+
+  /* ==========================================================================
+     六点六、温度计原理剖面（顺序 5 新增）
+     --------------------------------------------------------------------------
+     剖面要讲清一件事：泡里那团液体受热膨胀，多出来的体积挤进细管，液柱才升高。
+         h(T) = V_BULB · β · (T − TMin) / A_BORE
+     纵轴的 cm → px 是【同一个比例尺】，液柱顶端与 3D 管身上的刻度严格同源（都走 scaleYOf）。
+     玻璃泡在图上按真实比例只有 8 px，看不见 ⇒ 放大画，倍数记进 state.drawn.pr 供自检核对；
+     液柱高度【不放大】，所以「h 与刻度同源」这件事在图上仍然成立。
+     ========================================================================== */
+  const prCanvas = $('prCanvas');
+  const prText = $('prText');
+  const prLegend = $('prLegend');
+  const cal0Btn = $('cal0Btn');
+  const cal100Btn = $('cal100Btn');
+  const calDivBtn = $('calDivBtn');
+  const calMsg = $('calMsg');
+  function drawPrinciple() {
+    if (!prCanvas) return;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const W = prCanvas.clientWidth || 320;
+    const H = prCanvas.clientHeight || 236;
+    if (prCanvas.width !== Math.round(W * dpr) || prCanvas.height !== Math.round(H * dpr)) {
+      prCanvas.width = Math.round(W * dpr);
+      prCanvas.height = Math.round(H * dpr);
+    }
+    const g = prCanvas.getContext('2d');
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    g.clearRect(0, 0, W, H);
+    g.fillStyle = '#0a1a2b'; g.fillRect(0, 0, W, H);
+
+    const k = KINDS[state.kind];
+    const padT = 16, padB = 15;
+    /* ★ 唯一的纵向比例尺：把管身的 [SCALE_Y0, SCALE_Y1] 铺满可用高度 */
+    const pxPerCm = (H - padT - padB) / (SCALE_Y1 - SCALE_Y0);
+    const Y = (cm) => H - padB - cm * pxPerCm;
+    const cx = Math.round(W * 0.42);
+    const borePx = Math.max(9, Math.round(W * 0.030));
+    const halfBore = borePx / 2;
+    const bulbRTrue = pxPerCm * R_LIQ_BULB;
+    const bulbR = Math.max(15, Math.round(bulbRTrue * 2.6));
+    const bulbMag = bulbR / bulbRTrue;
+    const bulbCy = Y(0) + bulbR + 3;
+
+    const tubeL = cx - halfBore - 5, tubeR = cx + halfBore + 5;
+    const tubeTop = Y(SCALE_Y1) - 6, tubeH = Y(0) - tubeTop + 9;
+    g.fillStyle = 'rgba(210,236,250,0.13)'; g.fillRect(tubeL, tubeTop, tubeR - tubeL, tubeH);
+    g.strokeStyle = 'rgba(190,225,245,0.55)'; g.lineWidth = 1.2;
+    g.strokeRect(tubeL, tubeTop, tubeR - tubeL, tubeH);
+    g.beginPath(); g.arc(cx, bulbCy, bulbR, 0, 7);
+    g.fillStyle = 'rgba(210,236,250,0.16)'; g.fill();
+    g.strokeStyle = 'rgba(190,225,245,0.6)'; g.stroke();
+
+    /* 液体：泡里那团 + 管里的液柱。液柱顶端 = scaleYOf(示数) —— 与 3D 同源。 */
+    const Tshow = clamp(state.Td, k.TMin, k.TMax);
+    const colTopCm = scaleYOf(Tshow, k);
+    g.fillStyle = '#e0212c';
+    g.beginPath(); g.arc(cx, bulbCy, Math.max(2, bulbR - 2.4), 0, 7); g.fill();
+    g.fillRect(cx - halfBore, Y(colTopCm), borePx, Math.max(0, Y(0) - Y(colTopCm)));
+    g.fillStyle = 'rgba(255,132,140,0.9)';
+    g.fillRect(cx - halfBore, Y(colTopCm), borePx, 2);
+
+    /* 两个定标记号：金环画成横线；「标早了」的记号画成虚线，一眼能看出它不作数 */
+    const drawMark = (m, txt) => {
+      if (!m) return;
+      const y = Y(m.y);
+      g.save();
+      g.strokeStyle = m.settled ? '#fbbf24' : '#fb7185';
+      g.lineWidth = 2;
+      g.setLineDash(m.settled ? [] : [5, 4]);
+      g.beginPath(); g.moveTo(tubeL - 26, y); g.lineTo(tubeR + 8, y); g.stroke();
+      g.restore();
+      g.font = '700 10.5px "Helvetica Neue", Arial, sans-serif';
+      g.textAlign = 'right'; g.textBaseline = 'middle';
+      g.fillStyle = m.settled ? '#fbbf24' : '#fb7185';
+      g.fillText(txt + (m.settled ? '' : ' 标早了'), tubeL - 30, y);
+    };
+    drawMark(state.cal.mark0, '0 ℃');
+    drawMark(state.cal.mark100, '100 ℃');
+
+    /* 等分：101 条细线（每 10 份加粗），画在两个记号之间。
+       ★ divDrawn 数的是【真正画出去的行数】—— 不能写成「divided ? 101 : 0」，
+       那是意图值：把循环上界改成 50，账本照样报 101，自检全绿。 */
+    let divDrawn = 0;
+    if (state.cal.divided && state.cal.mark0 && state.cal.mark100) {
+      const y0 = state.cal.mark0.y, y1 = state.cal.mark100.y;
+      for (let i = 0; i <= calNDiv(); i++) {
+        const yy = Y(y0 + (y1 - y0) * i / calNDiv());
+        const major = i % 10 === 0;
+        g.strokeStyle = major ? 'rgba(251,191,36,0.88)' : 'rgba(251,191,36,0.32)';
+        g.lineWidth = major ? 1.3 : 0.7;
+        g.beginPath(); g.moveTo(tubeL, yy); g.lineTo(tubeR, yy); g.stroke();
+        divDrawn++;
+      }
+    }
+
+    /* 液柱高度 h 的标注 */
+    if (colTopCm > 0.3) {
+      g.strokeStyle = 'rgba(125,211,252,0.9)'; g.lineWidth = 1;
+      const xr = tubeR + 15;
+      g.beginPath(); g.moveTo(xr, Y(0)); g.lineTo(xr, Y(colTopCm)); g.stroke();
+      g.beginPath(); g.moveTo(xr - 5, Y(0)); g.lineTo(xr + 5, Y(0)); g.stroke();
+      g.beginPath(); g.moveTo(xr - 5, Y(colTopCm)); g.lineTo(xr + 5, Y(colTopCm)); g.stroke();
+      g.font = '700 10.5px "Helvetica Neue", Arial, sans-serif';
+      g.textAlign = 'left'; g.textBaseline = 'middle';
+      g.fillStyle = '#7dd3fc';
+      g.fillText('h = ' + colTopCm.toFixed(2) + ' cm', xr + 8, (Y(0) + Y(colTopCm)) / 2);
+    }
+    g.font = '10px "Helvetica Neue", Arial, sans-serif';
+    g.textAlign = 'left'; g.textBaseline = 'bottom';
+    g.fillStyle = 'rgba(160,190,215,0.9)';
+    g.fillText('玻璃泡放大 ' + bulbMag.toFixed(1) + '× 画 · 液柱不放大', 6, H - 3);
+
+    /* 画出去的几何记账（自检只读这里，不自己重算） */
+    state.drawn.pr = {
+      pxPerCm: +pxPerCm.toFixed(5),
+      colTopCm: +colTopCm.toFixed(4),
+      colTopPx: +Y(colTopCm).toFixed(2),
+      y0Px: +Y(0).toFixed(2),
+      bulbRpx: bulbR,
+      bulbMag: +bulbMag.toFixed(3),
+      mark0Px: state.cal.mark0 ? +Y(state.cal.mark0.y).toFixed(2) : null,
+      mark100Px: state.cal.mark100 ? +Y(state.cal.mark100.y).toFixed(2) : null,
+      divLineCount: divDrawn,
+      Tshow: +Tshow.toFixed(3),
+      kind: state.kind
+    };
+
+    const ci = calInfo();
+    if (prLegend) {
+      prLegend.innerHTML = '泡容积 <b>V₀ = ' + ci.vBulb.toFixed(3) + ' cm³</b>'
+        + ' · 视膨胀系数 <b>β = 1.0×10⁻³ /℃</b>'
+        + ' · 内孔半径 <b>' + (ci.boreR * 10).toFixed(2) + ' mm</b>';
+    }
+    if (prText) {
+      prText.textContent = '示数 ' + Tshow.toFixed(1) + ' ℃ ⇒ 液柱比 0 ℃ 高 ' + colTopCm.toFixed(2)
+        + ' cm。100 ℃ 处：物理式 h = ' + ci.colH100.toFixed(2) + ' cm，管上刻度 ' + ci.scaleH100.toFixed(2)
+        + ' cm，差 ' + (ci.relErr * 100).toFixed(1) + '%（内孔粗细是按真实值选的，不是照刻度反推的）。';
+    }
   }
 
   /* 水色 / 冰块 / 白气：让「水温」在画面上也看得见 */
@@ -1420,8 +1735,27 @@ import * as THREE from './assets/optics-three.min.js';
     updateWater();
     drawChart();
     drawMag();
+    drawPrinciple();
+    syncCalUI();
     updateReadouts();
     requestRender();
+  }
+
+  /* 定标面板的界面状态：按钮可用性与提示文案。
+     一律从 state.cal 现算 —— 不另存一份「能不能点」的布尔量，否则两边会不同步。 */
+  function syncCalUI() {
+    const ci = calInfo();
+    if (calMsg) {
+      calMsg.textContent = ci.msg || '先点「标定 0 ℃」—— 冰水混合物就是摄氏温度的 0 ℃ 定标点。';
+      const bad = (ci.mark0 && !ci.mark0Settled) || (ci.mark100 && !ci.mark100Settled);
+      calMsg.className = bad ? 'callout warn' : 'callout';
+    }
+    if (calDivBtn) {
+      calDivBtn.disabled = !ci.canDivide;
+      calDivBtn.textContent = ci.divided
+        ? '已等分 100 份（每份 1 ℃）'
+        : '把 0 ℃ 与 100 ℃ 之间等分 100 份';
+    }
   }
 
   /* ==========================================================================
@@ -1743,6 +2077,14 @@ import * as THREE from './assets/optics-three.min.js';
       shake();
       syncButtons();
     });
+    /* 摄氏温度的定标（顺序 5）。两个标定按钮走同一个 calibrate()，
+       下标 0 / 1 就是 CAL_POINTS 的两个定标点 —— 不各写一份。 */
+    cal0Btn.addEventListener('click', () => { calibrate(0); syncButtons(); });
+    cal100Btn.addEventListener('click', () => { calibrate(1); syncButtons(); });
+    calDivBtn.addEventListener('click', () => {
+      if (!divideCal()) return;                 // 门禁没过就什么都不做
+      syncCalUI();
+    });
 
   const toggleMap = {
     toggleSight: 'sight', toggleEye: 'eye', toggleTrue: 'trueLine', toggleSteam: 'steam'
@@ -1786,7 +2128,18 @@ import * as THREE from './assets/optics-three.min.js';
         + '玻璃泡上方有一段很细的<b>缩口</b>，水银通过时被挤上去，离开人体后却退不回来，所以可以'
         + '<b>离开人体读数</b>。先把温度计放进烧杯，再点「提起温度计」（泡还横在台面上时这个按钮是灰的），'
         + '你会看到示数<b>冻结不动</b>；换回实验室温度计做同样的动作，示数立刻往室温回落。'
-        + '用前要拿着体温计<b>甩一甩</b>，把水银甩回玻璃泡。' }
+        + '用前要拿着体温计<b>甩一甩</b>，把水银甩回玻璃泡。' },
+    { name: '06 摄氏温度的定标',
+      text: '<strong>摄氏温度不是天生的，是规定出来的。</strong>规定的方式就是两个定标点：'
+        + '把温度计放进<b>冰水混合物</b>，液柱停住的地方记作 <b>0 ℃</b>；'
+        + '放进<b>标准大气压下的沸水</b>，液柱停住的地方记作 <b>100 ℃</b>；'
+        + '再把这两点之间<b>等分 100 份</b>，每一份就是 1 ℃。'
+        + '点右边「标定 0 ℃」和「标定 100 ℃」各打一个记号（管身上会出现一圈金环）。'
+        + '<b>必须在示数稳定之后再打</b> —— 示数还在爬的时候打，记号就是偏的，面板会提示「标早了」。'
+        + '两点都标好，再点「等分 100 份」。'
+        + '剖面图里那个 h 是算出来的：泡里的液体受热膨胀，多出来的体积 V·β·ΔT 全部摊进细管，'
+        + '所以 h = V·β·ΔT / A。管的内孔只有 0.6 mm 粗，就是为了让这么小的膨胀量也能把液柱顶高一大截 —— '
+        + '正因为 h 与温度<b>成正比</b>，刻度才能均匀地等分。' }
   ];
   const stepButtons = [...document.querySelectorAll('[data-step]')];
   const stepDetail = $('stepDetail');
@@ -1882,6 +2235,8 @@ import * as THREE from './assets/optics-three.min.js';
   updateReadouts();
   drawChart();
   drawMag();
+  drawPrinciple();
+  syncCalUI();
   updateCamera();
   resize();
 
@@ -1902,6 +2257,8 @@ import * as THREE from './assets/optics-three.min.js';
       updateWater();
       drawChart();
       drawMag();
+      drawPrinciple();
+      syncCalUI();
       updateReadouts();
       dirty = true;
     }
@@ -1922,15 +2279,15 @@ import * as THREE from './assets/optics-three.min.js';
     frameStep(dt);
   })(last);
 
-  const ro = new ResizeObserver(() => { resize(); drawChart(); drawMag(); });
+  const ro = new ResizeObserver(() => { resize(); drawChart(); drawMag(); drawPrinciple(); });
   ro.observe(stage);
-  window.addEventListener('resize', () => { resize(); drawChart(); drawMag(); });
+  window.addEventListener('resize', () => { resize(); drawChart(); drawMag(); drawPrinciple(); });
 
   /* --- 供无头验收脚本读取 --- */
   window.__thLab = {
     state, view, VIEWS, WATERS, PLACES, SIGHTS, KINDS, toggles, series,
     camera, renderer, scene,
-    thermometer, thSupport, thScale, thScaleBack, mercury, mercuryBulb, thNeck,
+    thermometer, thSupport, thScale, thScaleBack, mercury, mercuryBulb, thNeck, calRings,
     eyeGroup, sightLine, sightDot, ices, steams, waterTop, beaker, stand,
     jaws, clampBar, clampHead, pickProxy,
     scaleTex, scaleYOf, scaleCanvasY, cmPerDeg, applyScale,
@@ -1947,12 +2304,17 @@ import * as THREE from './assets/optics-three.min.js';
     shake,
     resetSim, resetRun, refreshAll, syncButtons, updateThermo, drawMag, drawChart,
     setMagCollapsed, magBox, magToggle, magBody, magLegend,
+    /* 摄氏温度的定标 + 原理剖面（顺序 5） */
+    CAL_POINTS, CAL_TOL, BETA_APP, BORE_R, A_BORE, V_BULB, R_LIQ_BULB,
+    columnH, calYOf, calNDiv, calibrate, divideCal, calInfo, drawPrinciple, syncCalUI,
+    prCanvas, calMsg, calDivBtn, cal0Btn, cal100Btn,
     updateCamera, resize, syncViewToPlace, viewFollow: () => followRead,
     /* 直接推进仿真（不依赖真实时间）。走的是与真实循环同一个 stepSim。 */
     advance(seconds) {
       let left = seconds;
       while (left > 0) { const d = Math.min(0.2, left); stepSim(d); left -= d; }
       updateThermo(); updateWater(); pushSample(); updateReadouts(); drawChart(); drawMag();
+      drawPrinciple(); syncCalUI();
       return { t: state.t, Td: state.Td, Tw: state.Tw, read: reading(), readText: readingText(), err: reading() - state.Tw };
     },
     /* 模拟一次「拿起来 → 放到 (x, y) → 松手」。走的判定与真实鼠标松手完全同一段代码
