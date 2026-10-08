@@ -6,7 +6,13 @@
 <title>电路实验沙盒</title>
 <style>
   :root{--bg:#eef2f7;--card:#fff;--line:#dbe3ec;--text:#1e293b;--dim:#64748b;
-        --accent:#ea580c;--ok:#16a34a;--warn:#dc2626;}
+        --accent:#ea580c;--ok:#16a34a;--warn:#dc2626;
+        /* 画布要不要【按高度】卡住（0 = 不卡，只按宽度铺满）。
+           桌面和竖屏手机都不卡：画布比屏幕高就往下滚，是正常的长页面。
+           但横屏手机不行 —— 844×390 的屏幕里按宽度铺满会算出 617px 高，
+           整张电路图大半在屏幕外面。由下面的媒体查询改成 1，
+           layout() 读【同一个变量】，不在 JS 里再抄一遍条件。 */
+        --cv-cap:0;}
   *{box-sizing:border-box;margin:0;padding:0}
   body{background:var(--bg);color:var(--text);
        font:14px/1.5 -apple-system,"PingFang SC","Microsoft YaHei",sans-serif;padding:16px}
@@ -28,9 +34,16 @@
      禁用态看起来还像个能点的按钮。 */
   .bar button.repair{background:#fef2f2;border-color:#fecaca;color:#b91c1c;font-weight:600}
   .bar button.repair:hover{background:#fee2e2}
+  /* 三套预设电路。用靛蓝，和「＋元件」的橙、「全部修复」的红都拉开 —— 这三个
+     按钮是上课的入口，得一眼能找到，又不能看着像「危险操作」。 */
+  .bar button.preset{background:#eef2ff;border-color:#c7d2fe;color:#4338ca;font-weight:600}
+  .bar button.preset:hover{background:#e0e7ff}
   .bar button:disabled{background:#f1f5f9;border-color:var(--line);color:var(--dim);
     opacity:.5;cursor:default}
   .bar .sep{width:1px;height:22px;background:var(--line);margin:0 4px}
+  /* 「⋯ 更多」和它收起的那一批（.opt）。宽屏放得下，两者都不参与；
+     窄屏的规则在下面的 @media 里 —— 只有切 class，按钮位置一个不动。 */
+  .bar button.moreToggle{display:none}
   /* 「＋ 增加元件 ▾」：只在全屏下出现，替掉那一整排 10 个元件按钮。
      非全屏时元件栏本来就够放，多一层下拉只是多一次点击。 */
   .addWrap{position:relative;display:none}
@@ -125,6 +138,15 @@
   .cv{flex:1 1 700px;min-width:0;background:var(--card);border:1px solid var(--line);
       border-radius:12px;padding:8px}
   canvas{width:100%;display:block;border-radius:8px;touch-action:none}
+  /* ★ 电路画布的【宽度上限】。layout() 是往 canvas.style.width 写内联值的，
+     CSS 的 width:100% 会被它压掉 —— 于是一旦写进去一个比容器大的数
+     （视口刚收窄、resize 那一刻量到的还是旧盒子宽度），画布就会撑宽文档。
+     手机模拟下更糟：内容比视口宽时 Chrome 会「缩小以适应」，把整页缩小塞进去，
+     于是 innerWidth 自己变成了那个大值（实测 390 的模拟视口里读到 1087），
+     媒体查询全部按大屏判定，页面【再也收不回来】。max-width 优先于内联 width，
+     所以这一条是「无论 layout() 算出什么都不会撑宽文档」的硬保证。
+     只圈 .cv 里的那一张：图例小图标、电路图画布另有各自主的尺寸规则。 */
+  .cv > canvas{max-width:100%}
   .side{flex:0 0 360px;display:flex;flex-direction:column;gap:10px}
   .side h3{font-size:13px;margin-bottom:8px;color:var(--dim);font-weight:600}
   .prow{display:flex;align-items:center;gap:9px;margin:9px 0;font-size:12.5px}
@@ -284,8 +306,77 @@
     cursor:pointer;text-decoration:none}
   .saveRow .saveActs a:hover{text-decoration:underline}
   .saveRow .saveActs a.dim{color:#b91c1c}
-  @media (max-width:760px){
+  /* ── 手机端 ────────────────────────────────────────────────
+     拆成【两块】，因为它们的触发条件不一样：
+
+     ① 紧凑顶栏 —— 宽窄【或】矮屏。矮屏那一支是给【横屏手机】的：
+        844×390 的 iPhone 横过来仍然是个手机，但宽度过了 760px，
+        只按宽度判会让它套用桌面规则，顶栏 124px 吃掉 32% 高度。
+        「矮」的判据取 520px（横屏手机最高 430px，桌面窗口很少这么矮）。
+
+     ② 竖排布局 —— 只按宽度。窄屏才需要把「画布 + 360px 侧栏」两栏折成
+        一栏；横屏手机上强行竖排反而会把电路图的图例挤到画布下面。
+
+     为什么顶栏是重灾区：十几个按钮在 358px 里折成 15 行、吃掉 343px
+     （屏幕的 41%），画布只剩 270px 高。 */
+  @media (max-width:760px), (max-width:960px) and (max-height:520px){
+    body{padding:8px}
+    h1{font-size:16px;margin-bottom:6px}
+    .bar{gap:6px;margin-bottom:8px}
+    .bar button{padding:6px 9px;font-size:12px;border-radius:7px}
+    /* 分隔条是给宽屏「分组」用的；窄屏折行后它自己占一格，纯属浪费 */
+    .bar .sep{display:none}
+    /* 10 个元件按钮收进「＋ 元件 ▾」下拉 —— 复用全屏那套，不再多一套 UI */
+    .bar button.pal{display:none}
+    .addWrap{display:block}
+    /* 不常用的一批收进「⋯ 更多」：窄屏下顶栏从 4 行降到 2 行（157px → 71px）。
+       常驻的是【上课要用、手机上又没别的入口】的那几个：＋元件 / 撤销 /
+       预设1-3 / 转成电路图 / 全屏。 */
+    .bar button.opt{display:none}
+    .bar.more button.opt{display:inline-block}
+    .bar button.moreToggle{display:inline-block}
+    /* 存档那行（份数 + 恢复/清除）：桌面靠 margin-left:auto 顶到最右，
+       窄屏折行后那个 auto 会把它单独推一行，去掉让它跟着按钮排。 */
+    .bar .hint{font-size:11px;gap:8px;padding-left:0;margin-left:0}
+    /* 点按钮不要触发双击缩放，顺带干掉 300ms 点击延迟 */
+    .bar button,.pop button,.prow .tap,.warn .fix,
+    .schHead button,.saveHead button,.zoomHead button{touch-action:manipulation}
+
+    /* ── 全屏 + 手机：顶栏再瘦一圈 ───────────────────────────
+       全屏的意义就是把屏幕给画布，顶栏还占 217px（26%）说不过去。
+       存档那行（份数 + 恢复/清除）在非全屏里能用，全屏下先让位。
+       「全部修复」必须留着 —— 全屏下侧栏被藏了，那是唯一能修烧断导线的地方。 */
+    body.full{padding:0}
+    body.full .wrap{padding:5px;gap:5px}
+    body.full .bar{gap:5px}
+    body.full .bar button{padding:5px 8px;font-size:11.5px}
+    body.full .bar .hint{display:none}
     .sch{padding:8px}
+  }
+
+  /* ── 矮视口（横屏手机）：非全屏也卡画布高度 ──────────────────
+     按宽度铺满会算出 617px 高，而屏幕只有 390 —— 整张电路图大半在屏幕外。
+     --cv-cap 是 layout() 读的那个开关；max-height 是同一条件的 CSS 侧表达，
+     两者必须一起改。⚠️ 这条【不能】并进上面那块：上面是按宽度【或】高度
+     触发，并进去的话竖屏手机（390×844）也会被卡成 196px 高。
+     ⚠️ 必须写 body:not(.full)：全屏下 .cv 的高度由 flex:1 撑满，
+     再叠一条 max-height 会把刚抢回来的高度又砍掉 60px。 */
+  @media (max-width:960px) and (max-height:520px){
+    :root{--cv-cap:1}
+    body:not(.full) .cv{max-height:calc(100vh - 96px);overflow:hidden;
+        display:flex;align-items:center;justify-content:center}
+  }
+
+  /* ── 竖排布局（只按宽度）────────────────────────────────── */
+  @media (max-width:760px){
+    /* 侧栏桌面写死 360px，手机屏只有 375 —— 收成整行，否则贴着右边缘 */
+    .side{flex:1 1 100%;width:100%;min-width:0}
+    .cv{flex:1 1 100%}
+    /* 参数浮层 286px 在 390px 屏上还算合适；再窄就贴边，别越出视口 */
+    .pop{width:min(286px,calc(100vw - 16px))}
+    table{font-size:12px}
+    th,td{padding:4px 5px}
+    .keys{font-size:11px}
     /* 窄屏一行横排会把名字框挤没，改成竖排：名字框占满一行，元信息和链接跟到下面。 */
     .save{padding:10px}
     .saveRow{flex-direction:column;align-items:stretch;gap:7px}
@@ -300,6 +391,17 @@
     .schBody{flex-direction:column}
     .schLegend{flex:1 1 auto;max-height:170px;width:100%;
       border-left:0;border-top:1px solid var(--line);padding-left:0;padding-top:9px}
+  }
+  /* 竖屏全屏的「横过来更清楚」提示。只在【全屏 + 窄屏 + 竖屏】三条件同时成立
+     时出现 —— 桌面上不存在这个问题（屏幕够宽），横屏手机上已经是最优姿态了。
+     竖屏全屏必然有上下两条空白：世界宽高比锁死 1000:740（铁律①），
+     而手机竖屏是 390:844，画布只能按宽度铺满；横过来能大 15%。 */
+  .fsRotate{display:none;position:fixed;right:14px;bottom:14px;z-index:44;
+    align-items:center;gap:7px;background:rgba(255,255,255,.95);
+    border:1px solid var(--line);border-radius:9px;padding:6px 11px;font-size:12.5px;
+    font-weight:600;color:var(--dim);box-shadow:0 6px 20px rgba(15,23,42,.18)}
+  @media (max-width:760px) and (orientation:portrait){
+    body.full .fsRotate{display:flex}
   }
     /* ===== 实拍视频区（站点形态：上半屏虚拟实验 + 底部实拍视频，两者缺一不可） ===== */
     /* ⚠️ 本页是【浅色】主题 ⇒ .video-section 必须自带深色卡片，
@@ -347,6 +449,11 @@
 <!-- 全屏下侧栏整块让位给画布，状态和损坏件数挪到左下角这枚小胶囊里。
      没有它的话，全屏时短路了、导线熔断了，画面上一点提示都没有。 -->
 <div class="fsStatus" id="fsStatus"><span class="dot" id="fsDot"></span><span id="fsText">—</span></div>
+
+<!-- 手机竖屏全屏时右下角的一句提示。世界宽高比锁死 1000:740，竖屏只能按宽度
+     铺满，上下必然空出两条；横过来画布能大 15%。只在【全屏 + 竖屏 + 窄屏】时
+     显示（见 CSS），桌面上不出现。 -->
+<div class="fsRotate" id="fsRotate">↻ 横过来更清楚</div>
 
 <!-- 点元件弹出的浮动参数面板。它和右侧「元件参数」面板【共用同一份生成逻辑】
      （paramRowsHTML），两处各写一套的话，以后给某个元件加一档参数，
@@ -478,23 +585,131 @@ var sound = null;
 function w(a, ai, b, bi, via, auto){
   return { a:{compId:a,termIdx:ai}, b:{compId:b,termIdx:bi}, via:via||[], auto:auto !== false };
 }
-function seed(){
-  scene.comps = [
-    {id:'E',  type:'battery',  x:280, y:600, params:{emf:3, rInt:0}},
-    {id:'S1', type:'switch',   x:720, y:600, params:{closed:true}},
-    {id:'R1', type:'resistor', x:340, y:160, params:{R:10}},
-    {id:'R2', type:'resistor', x:660, y:160, params:{R:20}},
-  ];
-  // 电源的「+」接线柱在【右侧】(350,600)，「−」在左侧 (210,600)。
-  // 所以从 + 出来的线往右走去开关，回来的线沿左边的立线进 −——
-  // 接反了导线会横穿电池盒，看着像根扎进去的线头。
-  scene.wires = [
-    w('E',0,'S1',0,[]),                        // + → 开关（一段直线）
-    w('S1',1,'R2',1,[[880,600],[880,160]]),     // 开关 → 右边立线上去 → R2 右端
-    w('R2',0,'R1',1,[]),                       // 顶上：R2 左端 → R1 右端
-    w('R1',0,'E',1,[[120,160],[120,600]]),      // 左边立线下来 → 回到 −
-  ];
+// ── 预设电路（三套）───────────────────────────────────────────
+// 用户要求：预设改成三个 —— ① 两盏灯串联（默认）② 两盏灯并联
+// ③ 伏安法测小灯泡电阻。点一下就能上课：电源接好、开关闭合，进来就有读数。
+//
+// 坐标全部落在 GRID(20) 的网格上。手写歪了 snap() 会把元件拽回网格，而 via
+// 拐点【不会跟着走】—— 于是导线和接线柱差开一截，看着像没插上（其实接上了）。
+//
+// 导线只写「必须的」via 拐点，其余交给 routeTo。三套都刻意避开两件事：
+//   ① 导线压在别的元件的接线柱上 —— 看着像插上去了，其实没接。这是最坑人的
+//      一种画面：读数是对的，学生照着画面却看不懂为什么；
+//   ② 两条导线重叠或交叉 —— 重叠看着像一根线分叉，交叉看着像接上了。
+//
+// 两只表的接线柱【全在底座下面】（MET.POST_Y = 72），所以从柱子上出来的线
+// 只能【往下】走：往上会撞表壳。柱子在底座横向 ±70 处、表壳却到 ±88，所以
+// 从中间那根柱子上出来的线得先绕出表壳再拐。第三套里那几处绕行就是这个原因，
+// 不是画着玩 —— 绕开的是「表壳」和「另一根量程柱」。
+var PRESETS = [
+  {
+    name: '两盏灯串联',
+    tag: '串联',
+    build: function(){
+      return {
+        comps: [
+          { id:'E1', type:'battery', x:280, y:600, params:{cells:2, emfPerCell:1.5, rPerCell:0.5} },
+          { id:'S1', type:'switch',  x:720, y:600, params:{closed:true} },
+          { id:'L1', type:'bulb',    x:340, y:160 },
+          { id:'L2', type:'bulb',    x:660, y:160 },
+        ],
+        // 电源的「+」在【右侧】(350,600)、「−」在左侧 (210,600)。所以从 +
+        // 出来的线往右走去开关，回来的线沿左边的立线进 − —— 接反了导线会横穿
+        // 电池盒，看着像根扎进去的线头。
+        wires: [
+          w('E1',0,'S1',0,[]),                       // + → 开关（一段直线）
+          w('S1',1,'L2',1,[[880,600],[880,160]]),    // 开关 → 右边立线上去 → L2 右端
+          w('L2',0,'L1',1,[]),                       // 顶上：L2 左端 → L1 右端
+          w('L1',0,'E1',1,[[120,160],[120,600]]),    // 左边立线下来 → 回到 −
+        ],
+      };
+    },
+  },
+  {
+    name: '两盏灯并联',
+    tag: '并联',
+    build: function(){
+      return {
+        comps: [
+          { id:'E1', type:'battery', x:500, y:620, params:{cells:2, emfPerCell:1.5, rPerCell:0.5} },
+          { id:'S1', type:'switch',  x:820, y:620, params:{closed:true} },
+          { id:'L1', type:'bulb',    x:500, y:180 },
+          { id:'L2', type:'bulb',    x:500, y:380 },
+        ],
+        // 两盏灯【上下叠着放】，左边两个端子用一根竖线连起来、右边同样 —— 这
+        // 就是「并联」在实物图上的样子。竖线接在 L1 的端子上，L1 再连到电源和
+        // 开关，于是两盏灯各自得到一条完整的支路（各分到一半电流）。
+        wires: [
+          w('L2',0,'L1',0,[]),                       // 左侧竖线（两条支路共这个端）
+          w('L2',1,'L1',1,[]),                       // 右侧竖线
+          w('L1',0,'E1',1,[[240,180],[240,620]]),    // L1 左端 → 左边立线下来 → 电源 −
+          w('E1',0,'S1',0,[]),                       // 电源 + → 开关
+          w('S1',1,'L1',1,[[930,620],[930,180]]),    // 开关 → 右边立线上去 → L1 右端
+        ],
+      };
+    },
+  },
+  {
+    name: '伏安法测小灯泡电阻',
+    tag: '伏安法',
+    build: function(){
+      return {
+        comps: [
+          { id:'E1',  type:'battery',   x:300, y:660, params:{cells:2, emfPerCell:1.5, rPerCell:0.5} },
+          { id:'S1',  type:'switch',    x:560, y:660, params:{closed:true} },
+          { id:'RH1', type:'rheostat',  x:800, y:634, params:{Rmax:20, slide:0.15} },
+          { id:'A1',  type:'ammeter',   x:280, y:228, params:{range:0.6} },
+          { id:'L1',  type:'bulb',      x:600, y:300 },
+          { id:'V1',  type:'voltmeter', x:790, y:420, params:{range:3} },
+        ],
+        // 主回路：电源 + → 开关 → 滑动变阻器(A→D，一上一下) → 灯泡 → 电流表
+        // （从「0.6」柱进、从「−」柱出）→ 回到电源 −。电压表并在灯泡两端。
+        //
+        // 电流表那根线为什么要先往下绕一圈：灯泡的左端子和电流表的「0.6」
+        // 柱子都在 y=300 上，直着过去会正好压在「3」柱上 —— 画面上像是插在
+        // 3 A 柱上却又接着灯泡，谁都看不懂。所以往下绕到 y=350 再拐上来。
+        // 电压表两根线同理：「−」柱那根直接往右拉到柱子上；「3」柱那根先往下
+        // 到 y=480 再横过去，为的是不压在「−」柱那根线上（两线不许交叉）。
+        wires: [
+          w('E1',0,'S1',0,[]),                              // 电源 + → 开关
+          w('S1',1,'RH1',0,[]),                             // 开关 → 变阻器 A 柱
+          w('RH1',3,'L1',1,[[940,608],[940,300]]),          // 变阻器 D 柱 → 右边立线上去 → 灯泡右端
+          w('L1',0,'A1',1,[[490,300],[490,350],[280,350]]), // 灯泡左端 → 从电流表下面绕过去 → 「0.6」柱
+          w('A1',0,'E1',1,[[130,300],[130,660]]),           // 电流表「−」柱 → 左边立线下来 → 电源 −
+          w('L1',0,'V1',0,[[530,492]]),                     // 电压表「−」柱 并在灯泡左端
+          w('L1',1,'V1',1,[[670,480],[790,480]]),           // 电压表「3」柱 并在灯泡右端
+        ],
+      };
+    },
+  },
+];
+// 换一套预设 = 换整个场景。comps/wires 每次都从 build() 现造一份新的 —— 场景里
+// 的元件会被拖动、被改参数、被打上 fault 标记，共用同一批对象的话，第二次点
+// 同一个预设就会带出上一次的伤。
+function loadPreset(i){
+  var p = PRESETS[i];
+  if (!p) return false;
+  var s = p.build();
+  scene.comps = s.comps;
+  scene.wires = s.wires;
+  // ⚠️ 预设的走线是【手画】的，必须按手绘导线登记，不能走 auto。
+  // auto 的导线在 rerouteAll()（改任何参数、转个方向都会调）里会被 routeTo()
+  // 整个重算，把这里精心绕开表壳、绕开另一根量程柱的拐点全部抹掉，换成一条
+  // 直愣愣的 Z 形 —— 那条 Z 会横穿元件，画面上就成了「导线扎进表壳里」。
+  // 手绘导线走 refitManual()：拖动元件时拐点按比例重新分布，而不是原地不动。
+  scene.wires.forEach(function(x){
+    var a = byId(x.a.compId), b = byId(x.b.compId);
+    if (!a || !b) return;
+    var p0 = D.terminalWorld(a, x.a.termIdx), p1 = D.terminalWorld(b, x.b.termIdx);
+    x.auto = false;
+    x.base = { ends: [[p0.x, p0.y], [p1.x, p1.y]],
+               via: x.via.map(function(v){ return [v[0], v[1]]; }) };
+  });
+  faultLog.length = 0;
+  shortSeen = null;
+  return true;
 }
+function seed(){ loadPreset(0); }
 
 function byId(id){
   for (var i=0;i<scene.comps.length;i++) if (scene.comps[i].id===id) return scene.comps[i];
@@ -651,6 +866,11 @@ function syncSound(){
 // ── 渲染：元件与标注进离屏层，只有导线每帧重绘（电流粒子要动）──
 var bgLayer = document.createElement('canvas');
 var fgLayer = document.createElement('canvas');
+// 导线的实际走线 = 两个接线柱 + 拐点，再把直角抹圆（D.roundPath）。
+// 抹圆这一步【必须在这里做，不能只在画的时候做】：这条折线同时是
+//   ① drawWire 的绘制路径；② 电流粒子 / 电流箭头的跑道；③ 编辑器 hitWire
+//   逐段量距离的命中判据（编辑器那份 pathOf 调的是同一个 roundPath）。
+// 只在绘制里抹圆、命中判据还用尖角，就会出现「看得见却点不着」。
 function pathOf(wire){
   var a = byId(wire.a.compId), b = byId(wire.b.compId);
   if (!a || !b) return [];
@@ -658,10 +878,9 @@ function pathOf(wire){
   var pts = [{x:p0.x, y:p0.y}];
   (wire.via||[]).forEach(function(v){ pts.push({x:v[0], y:v[1]}); });
   pts.push({x:p1.x, y:p1.y});
-  return pts;
+  return D.roundPath(pts);
 }
-function bh0(n){ return n*18 + 8; }
-// 读数框落在元件下方多远。两只表的三个接线柱是从底座底下探出来的
+// 标注牌落在元件下方多远。两只表的三个接线柱是从底座底下探出来的
 // （局部 y = 72，柱子自身还往下伸到 ~75），所以读数框要比别的元件让得更低，
 // 否则会压在自己的接线柱上。
 // 读数框的竖向落点 = 元件重心到本体下沿的距离。开关和灯泡现在都有一块
@@ -772,6 +991,60 @@ function readoutLines(c, r){
   return lines;
 }
 
+// ── 画布上的元件标注：只标【符号】，不标参数 ──────────────────
+// 用户要求：元件旁边那堆「R = 10.0Ω / U = 3.00V / I = 0.300A」太占地方，
+// 画布上只留一个符号（L1 / R2 / E1 …），要看详细参数点一下元件 —— 浮层里那条
+// 读数条、侧栏那张 I/U/R/P 表都还在，一个数字都没少。
+//
+// 但【状态提示】必须留在画布上：「指针反偏」「反向截止」「未接入电路」「堵转」
+// 这些不是参数，是「这里出事了」的提示。全砍掉的话，学生点开元件之前根本看不
+// 出哪里不对 —— 一只接反的电流表和一只正常的表长得一模一样，而「接反」恰恰
+// 是这一页最该被一眼看见的错。
+//
+// 判据用一条正则，不另抄一份「哪几句是提示」的清单：参数行的形状只有一种
+// （`字母 = 数值`），以后内核新增任何一句提示都自动算状态，不会漏。
+var PARAM_LINE = /^[A-Za-z]\s*=/;
+function stateLinesOf(c, r){
+  var lines = readoutLines(c, r);
+  if (!lines) return [];
+  return lines.filter(function(l){ return !PARAM_LINE.test(l); });
+}
+var TAG_ID_H = 17, TAG_ST_H = 15;
+// 每帧把【实际画出去】的标签几何记在这里。断言读它，不读 stateLinesOf ——
+// 读 stateLinesOf 等于量的是「算的那一步」，把 drawCompTag 里改成用
+// readoutLines（参数又飘回画布上）这个改坏照样全绿。
+var tagDrawn = [];
+function drawCompTag(f, c, r){
+  var st = stateLinesOf(c, r);
+  f.save();
+  f.textAlign = 'center'; f.textBaseline = 'middle';
+  f.font = 'bold 12.5px -apple-system,"PingFang SC",sans-serif';
+  var w = f.measureText(c.id).width;
+  f.font = '11.5px -apple-system,"PingFang SC",sans-serif';
+  st.forEach(function(l){ w = Math.max(w, f.measureText(l).width); });
+  var bw = w + 16, bh = TAG_ID_H + st.length * TAG_ST_H;
+  var bx = c.x, by;
+  if (c.rot === 90 || c.rot === 270) { bx = c.x + 86; by = c.y - (bh - TAG_ID_H) / 2; }
+  else by = c.y + (DROP[c.type] || 24) + 8 + bh / 2;
+
+  f.fillStyle = 'rgba(255,255,255,0.94)';
+  D.roundRect(f, bx - bw / 2, by - bh / 2, bw, bh, 7); f.fill();
+  f.strokeStyle = 'rgba(148,163,184,0.55)'; f.lineWidth = 1; f.stroke();
+  f.fillStyle = '#334155';
+  f.font = 'bold 12.5px -apple-system,"PingFang SC",sans-serif';
+  f.fillText(c.id, bx, by - bh / 2 + 4 + TAG_ID_H / 2);
+  if (st.length){
+    f.font = '11.5px -apple-system,"PingFang SC",sans-serif';
+    f.fillStyle = '#b91c1c';
+    st.forEach(function(l, i){
+      f.fillText(l, bx, by - bh / 2 + 4 + TAG_ID_H + TAG_ST_H / 2 + i * TAG_ST_H);
+    });
+  }
+  f.restore();
+  tagDrawn.push({ id:c.id, type:c.type, lines:st.slice(),
+                  w:bw, h:bh, x:bx, y:by });
+}
+
 function drawForeground(){
   var f = fgLayer.getContext('2d');
   f.clearRect(0,0,W,H);
@@ -783,26 +1056,10 @@ function drawForeground(){
     if (D.isAnimated(c.type)) return;
     D.drawComponent(f, c, recs[c.id]);
   });
+  tagDrawn.length = 0;                    // 和这一层的清屏同步：一次重建一批
   scene.comps.forEach(function(c){
     var r = recs[c.id]; if (!r) return;
-    var lines = readoutLines(c, r);
-    if (!lines) return;
-    var bx = c.x, by;
-    if (c.rot === 90 || c.rot === 270) { bx = c.x + 86; by = c.y - (lines.length-1)*8; }
-    else by = c.y + (DROP[c.type] || 24) + 8 + bh0(lines.length)/2;
-
-    f.save();
-    f.font = 'bold 12.5px -apple-system,"PingFang SC",sans-serif';
-    f.textAlign = 'center'; f.textBaseline = 'middle';
-    var wmax = 0;
-    lines.forEach(function(l){ wmax = Math.max(wmax, f.measureText(l).width); });
-    var bw = wmax + 16, bh = bh0(lines.length);
-    f.fillStyle = 'rgba(255,255,255,0.94)';
-    D.roundRect(f, bx - bw/2, by - bh/2, bw, bh, 7); f.fill();
-    f.strokeStyle = 'rgba(148,163,184,0.55)'; f.lineWidth = 1; f.stroke();
-    f.fillStyle = '#334155';
-    lines.forEach(function(l,i){ f.fillText(l, bx, by - bh/2 + 4 + 9 + i*18); });
-    f.restore();
+    drawCompTag(f, c, r);
   });
 }
 
@@ -909,12 +1166,32 @@ function tick(t){
 //  ② 全屏时宽、高两个方向都要卡，取小的那个。只按宽度铺满的话，宽而矮的屏幕上
 //     1000×740 会算出比视口还高的高度，下半截直接跑到屏幕外面 —— 那不叫全屏，
 //     叫「只能看见半张电路图」。
+function capByHeight(){
+  // 条件只有 CSS 那一份（:root 上的 --cv-cap）。在 JS 里再写一遍
+  // 「宽度 < 960 且高度 < 520」的话，两边迟早会走偏。
+  var v = getComputedStyle(document.documentElement).getPropertyValue('--cv-cap');
+  return String(v).trim() === '1';
+}
 function layout(){
   var dpr = window.devicePixelRatio || 1;
   var box = canvas.parentElement;                 // .cv
   var pad = isFull ? 12 : 16;                     // .cv 的 padding（全屏下是 6px×2）
+  // ★ 量之前先把画布自己的内联尺寸摘掉，让它退回 CSS 的 width:100%。
+  //   不摘的话：上一轮（更宽的视口）写下的 style.width 会把 .cv 撑住，
+  //   量到的 clientWidth 是【旧值】而不是视口收窄后的真值 —— 再写回去还是那个
+  //   大宽度，文档最小宽度被顶到 1087，手机模拟下 Chrome 于是「缩小以适应」，
+  //   innerWidth 自己变成 1087、媒体查询全部失效，页面再也收不回来。
+  //   摘掉之后浏览器必须重排，.cv 立刻回到真实宽度，量到的就是真值。
+  //   ⚠️ 两道修法里【被负向对照钉住的是 CSS 那条 max-width】—— 只要它在，
+  //      这里摘不摘内联尺寸量到的都是真盒子，所以这一行单独改坏是「恒等」的，
+  //      没法单独验。留着它是为了「万一哪天有人把那条 CSS 删了」还能挡住。
+  canvas.style.width = '';
+  canvas.style.height = '';
   var availW = box.clientWidth - pad;
-  var availH = isFull ? box.clientHeight - pad : 0;
+  // 非全屏默认【不】按高度卡：画布比屏幕高就往下滚，是正常的长页面（桌面上
+  // 一直都这样）。只有矮视口（横屏手机）才卡 —— 那时 CSS 把 .cv 的
+  // max-height 和 --cv-cap 一起置上了，这里读的是同一个开关。
+  var availH = (isFull || capByHeight()) ? box.clientHeight - pad : 0;
   var cssW = availW;
   if (availH > 0) cssW = Math.min(cssW, availH * W / H);
   if (!(cssW > 0)) cssW = 1;                      // 还没布局出来（clientWidth 是 0）
@@ -1384,7 +1661,7 @@ var popEl = document.getElementById('compPop');
 var popBody = document.getElementById('popBody');
 var popTitle = document.getElementById('popTitle');
 var popId = null;          // 浮层现在跟着哪个元件（null = 没开）
-var POP_W = 286;           // 和 CSS 里的 .pop{width} 一致，定位要按它算
+var POP_W = 286;           // 兜底宽度：还没量到实际盒子时用它（和 CSS 的默认 .pop{width} 一致）
 var popFaultKey = '';      // 上一次渲染时元件的 fault —— 变了才重建（见 syncPop）
 
 function popAnchor(c){
@@ -1406,6 +1683,10 @@ function placePop(c){
   }
   popEl.style.visibility = '';
   var h = popEl.offsetHeight || 240;
+  // 宽度必须【量】出来，不能用常量：窄屏上 CSS 把 .pop 收成了
+  // min(286px, 100vw - 16px)，写死 286 的话「翻到左边」的判据算错，
+  // 浮层会贴着右边缘甚至越出视口。
+  var pw = popEl.offsetWidth || POP_W;
   // 让开元件【本身】再留一点空：偏移量按元件的命中半宽算，不能写死一个 80 ——
   // 灯泡比电阻宽得多，写死的话窄元件旁边留一大块空、宽元件照样被盖住。
   // bodyHalf 是编辑器命中判定用的同一组数（D.BODY），所以「点得到」和
@@ -1414,8 +1695,8 @@ function placePop(c){
   var gap = (hb[0] + 16) * a.k;
   // 默认长在元件右边；右边放不下就翻到左边；再放不下就钳进视口。
   var left = a.x + gap;
-  if (left + POP_W > window.innerWidth - 8) left = a.x - gap - POP_W;
-  left = Math.max(8, Math.min(left, window.innerWidth - POP_W - 8));
+  if (left + pw > window.innerWidth - 8) left = a.x - gap - pw;
+  left = Math.max(8, Math.min(left, window.innerWidth - pw - 8));
   var top = Math.max(8, Math.min(a.y - h / 2, window.innerHeight - h - 8));
   popEl.style.left = Math.round(left) + 'px';
   popEl.style.top = Math.round(top) + 'px';
@@ -1630,10 +1911,70 @@ function schPlacedCount(){
   return n;
 }
 
+// 接线点在电路图上【不画成一个元件】—— 它就是图上那个实心结点。
+// 转换前先把它「化掉」：一个接线点上挂着 k 根导线，两两接成一根，于是图上
+// 剩下的还是普通的两端导线，只是多了一个三岔口。电气上完全等价 ——
+// 接线点的两个端子内部就是短路的（见 core 的 internalShort）。
+//
+// 不化掉的话，接线点会以「两个端子重合的两端元件」的身份进布局器，长度为零：
+// 布局算不出来，转出来的图挂一串「走线需核对」的警告。
+function mergeJunctions(src){
+  var js = {}, has = false;
+  src.comps.forEach(function(c){ if (c.type === 'junction') { js[c.id] = c; has = true; } });
+  if (!has) return src;
+  // 接线点之间也可能直接连着（J1—J2）。先用并查集把它们并成一组，
+  // 否则合并出来的导线会指向另一个接线点，绕回自己。
+  var par = {};
+  Object.keys(js).forEach(function(k){ par[k] = k; });
+  function find(x){ return par[x] === x ? x : (par[x] = find(par[x])); }
+  src.wires.forEach(function(w){
+    if (js[w.a.compId] && js[w.b.compId]) par[find(w.a.compId)] = find(w.b.compId);
+  });
+  var grp = {};
+  Object.keys(js).forEach(function(k){
+    var r = find(k);
+    (grp[r] = grp[r] || []).push(k);
+  });
+  // 一根导线从接线点出发时，它的 via 已经是从那个点往外的顺序；从另一端出发
+  // 就翻过来。合并后的导线按「另一端 → 接线点 → 另一端」拼。
+  function ptsFrom(w, jid){
+    var v = (w.via || []).map(function(q){ return [q[0], q[1]]; });
+    return (w.a.compId === jid) ? v : v.reverse();
+  }
+  var wires = src.wires.filter(function(w){
+    return !js[w.a.compId] && !js[w.b.compId];
+  });
+  Object.keys(grp).forEach(function(r){
+    var ids = grp[r], j0 = js[ids[0]], inc = [];
+    src.wires.forEach(function(w){
+      var jid = js[w.a.compId] ? w.a.compId : (js[w.b.compId] ? w.b.compId : null);
+      if (!jid || ids.indexOf(jid) < 0) return;
+      var other = (js[w.a.compId] ? w.b : w.a);
+      if (js[other.compId]) return;               // 另一头也是接线点：由并查集管了
+      inc.push({ e: other, pts: ptsFrom(w, jid) });
+    });
+    for (var i = 1; i < inc.length; i++){
+      var via = inc[0].pts.slice().reverse().concat([[j0.x, j0.y]], inc[i].pts);
+      // 去掉连续重复的点：接线点两侧的拐点常常正好重合（两边都在同一个点上），
+      // 留着零长度的段会让电路图的「走线冲突」检查报出莫名其妙的警告。
+      via = via.filter(function(z, k){
+        return k === 0 || Math.hypot(z[0] - via[k-1][0], z[1] - via[k-1][1]) > 0.5;
+      });
+      wires.push({
+        a: { compId: inc[0].e.compId, termIdx: inc[0].e.termIdx },
+        b: { compId: inc[i].e.compId, termIdx: inc[i].e.termIdx },
+        via: via, auto: false,
+      });
+    }
+  });
+  return { comps: src.comps.filter(function(c){ return c.type !== 'junction'; }),
+           wires: wires };
+}
+
 function schModel(opts){
   var o = { draw: D, core: C, values: schValues.checked, canonical: true, place: schPlace };
   if (opts) for (var k in opts) o[k] = opts[k];
-  return SC.build(scene, results, o);
+  return SC.build(mergeJunctions(scene), results, o);
 }
 
 function openSchematic(){ schOpen = true; schEl.hidden = false; schView = null; drawSchematic(); }
@@ -2029,36 +2370,75 @@ document.addEventListener('pointerdown', function(ev){
   closeAddMenu();
 }, true);
 
-function toolBtn(text, fn, cls){
+// 顶栏按钮。opt=1 的按钮属于「不常用的一批」：宽屏照常显示，窄屏收进
+// 「⋯ 更多」后面（见 CSS 的 .bar button.opt）。手机上这十几个按钮折成 4 行、
+// 吃掉 157px，收起来只剩 2 行。没有用 reparent（把 DOM 搬来搬去）——
+// 那会在切回宽屏时打乱按钮顺序，而这里只要切一个 class。
+function toolBtn(text, fn, cls, opt){
   var b = document.createElement('button');
-  b.textContent = text; b.onclick = fn; if (cls) b.className = cls;
+  b.textContent = text; b.onclick = fn;
+  b.className = (cls ? cls : '') + (opt ? ' opt' : '');
   bar.appendChild(b); return b;
 }
 var sep = document.createElement('div'); sep.className = 'sep'; bar.appendChild(sep);
 toolBtn('↺ 撤销', function(){ editor.undo(); render(); });
-toolBtn('🗑 删除选中', function(){ editor.removeSelected(); render(); }, 'danger');
+// 「删除选中」放 opt：手机上没有 Delete 键，但点元件弹出的浮层里自带「删除」，
+// 所以它不是唯一的删除入口。
+toolBtn('🗑 删除选中', function(){ editor.removeSelected(); render(); }, 'danger', 1);
 // 「修复」：把场上所有坏掉的器材一次修好。文案里带件数、没坏的时候禁用 ——
 // 没有坏的时候点它什么都不会发生，写着「全部修复」会让学生以为按钮坏了。
 // 亮不亮由 updateSide() 每帧同步（那里本来就知道有几件坏的）。
-var btnRepair = toolBtn('🔧 全部修复', function(){ repairAll(); }, 'repair');
+var btnRepair = toolBtn('🔧 全部修复', function(){ repairAll(); }, 'repair', 1);
 toolBtn('清空画布', function(){
   editor.pushUndo();
   scene.comps = []; scene.wires = [];
   editor.select(null); render();
-}, 'danger');
-toolBtn('示例电路', function(){
-  editor.pushUndo(); seed(); editor.select(null); render();
+}, 'danger', 1);
+// 三套预设电路（串联 / 并联 / 伏安法）。三个按钮走同一条「换场景」路径，所以
+// 统一在这里 pushUndo —— 点错了 ⌘Z 能退回上一张电路，不会把学生刚连好的图冲掉。
+// 文案是「预设N + 短标签」，完整名字放在 title 里（悬停才显示，不占宽度）。
+var presetBtns = PRESETS.map(function(p, i){
+  var b = toolBtn('预设' + (i + 1) + ' ' + p.tag, function(){
+    editor.pushUndo(); loadPreset(i); editor.select(null); render();
+  }, 'preset');
+  b.title = '加载预设' + (i + 1) + '：' + p.name;
+  return b;
 });
 // 把眼前这张实物图折成标准符号的电路图。不推进撤销栈——它只读不写，
 // 什么都没改，⌘Z 不该为看一眼电路图回退一步。
 toolBtn('📐 转成电路图', openSchematic);
-// ⛶ 全屏：画布铺满整个视口。放在最后，因为它是「改看的方式」，不改电路。
+// ⛶ 全屏：把整个屏幕都给画布。放在最后，因为它是「改看的方式」，不改电路。
 var btnFull = toolBtn('⛶ 全屏', function(){ setFull(!isFull); });
 
-// 「伪全屏」：给 body 加一个 class，让 CSS 把画布铺满视口。不用 Fullscreen API ——
-// 预览用的 iframe 没给 allowfullscreen，requestFullscreen 会被直接拒掉；而且真
-// 全屏会把浏览器界面和工具栏一起吃掉，学生就没法再加元件、也没法退出来了。
-function setFull(v){
+// ⛶ 全屏：把【整个屏幕】都给画布 —— 浏览器地址栏、标签页、书签栏一起让出去。
+// 以前只给 body 加个 class（"伪全屏"）：页头是没了，可浏览器自己的界面还在，
+// 屏幕上仍然横着一条不属于画布的东西，画布只在「窗口里」铺满 —— 用户要的不是
+// 这个，是【真全屏】。所以现在先要真全屏，要不到才退回 CSS 那一套。
+//
+// 两条路都落到 applyFull()，「按钮文案 / 布局 / 浮层重算」只有一份真源。
+var fsEl = function(){
+  return document.fullscreenElement || document.webkitFullscreenElement || null;
+};
+// 真全屏那一步。返回「有没有发出请求」——被拒（iframe 没 allowfullscreen、
+// 或不是用户手势）时返回的 promise 会 reject，吞掉它，让 CSS 兜底。
+function requestFs(){
+  var el = document.documentElement;
+  var fn = el.requestFullscreen || el.webkitRequestFullscreen;
+  if (!fn) return false;
+  try {
+    var r = fn.call(el);
+    if (r && r.catch) r.catch(function(){});
+    return true;
+  } catch (e) { return false; }
+}
+function exitFs(){
+  var fn = document.exitFullscreen || document.webkitExitFullscreen;
+  if (!fn || !fsEl()) return false;
+  try { var r = fn.call(document); if (r && r.catch) r.catch(function(){}); return true; }
+  catch (e) { return false; }
+}
+// 只改「页面这一侧」的状态：class、按钮文案、重算布局与浮层。
+function applyFull(v){
   isFull = !!v;
   document.body.classList.toggle('full', isFull);
   btnFull.textContent = isFull ? '⛶ 退出全屏' : '⛶ 全屏';
@@ -2069,6 +2449,21 @@ function setFull(v){
   refreshSchematic();
   if (popId) syncPop();
 }
+function setFull(v){
+  v = !!v;
+  if (v) requestFs(); else exitFs();
+  applyFull(v);
+}
+// 进出全屏的【最终】状态以浏览器为准：用户按 Esc / F11 退出时，浏览器把那个按键
+// 吃掉了，页面收不到 keydown，只能靠这个事件把布局收回来。判据用 fsEl() 而不是
+// isFull —— 我们自己调 requestFullscreen 时 applyFull 已经先跑过了，这里再跑是
+// 幂等的；反过来若真全屏被拒（没事件），也就不会白跑一趟。
+['fullscreenchange', 'webkitfullscreenchange'].forEach(function(ev){
+  document.addEventListener(ev, function(){
+    var on = !!fsEl();
+    if (on !== isFull) applyFull(on);
+  });
+});
 window.addEventListener('keydown', function(ev){
   if (!isFull) return;
   if (ev.key !== 'Escape' && ev.key !== 'Esc') return;
@@ -2324,7 +2719,7 @@ function renderSaveHint(flash){
   el.appendChild(m);
 }
 
-toolBtn('💾 保存电路', openSavePanel);
+toolBtn('💾 保存电路', openSavePanel, '', 1);
 
 // ── 三个开关 ──────────────────────────────────────────────
 // 各自一个按钮、各自可开可关，两个动画开关同时开也允许：那时同一条导线上
@@ -2332,13 +2727,16 @@ toolBtn('💾 保存电路', openSavePanel);
 // 做成「三态循环按钮」就买不到这个对比了，所以是两个独立按钮。
 // offLabel 可选：音效关掉时连图标一起换（🔊 → 🔇），光看「：关」两个字
 // 容易和旁边那两个开关混。
-function animToggle(label, key, initial, apply, offLabel){
+function animToggle(label, key, initial, apply, offLabel, opt){
   var on = initial;
-  var btn = toolBtn('', function(){ set(!on); });
+  var optCls = opt ? ' opt' : '';
+  var btn = toolBtn('', function(){ set(!on); }, '', opt);
   function set(v){
     on = !!v;
     btn.textContent = (on ? label : (offLabel || label)) + '：' + (on ? '开' : '关');
-    btn.className = on ? 'on' : 'off';
+    // className 只在这一处写全 —— 漏掉 optCls 的话，手机上一切换开关状态，
+    // 这个按钮就会从「更多」里跳回主行（class 被覆盖了）。
+    btn.className = (on ? 'on' : 'off') + optCls;
     try { localStorage.setItem(key, on ? '1' : '0'); } catch (e) {}
     apply(on);
     drawFrame();          // 关了要立刻把粒子擦掉，开了要立刻画出来
@@ -2346,8 +2744,8 @@ function animToggle(label, key, initial, apply, offLabel){
   set(on);
   return { btn: btn, set: set, isOn: function(){ return on; } };
 }
-var flowAnim = animToggle('⚡ 电子流动', FLOW_KEY, showFlow, function(v){ showFlow = v; });
-var curAnim  = animToggle('➡ 电流方向', CUR_KEY, showCurrent, function(v){ showCurrent = v; });
+var flowAnim = animToggle('⚡ 电子流动', FLOW_KEY, showFlow, function(v){ showFlow = v; }, null, 1);
+var curAnim  = animToggle('➡ 电流方向', CUR_KEY, showCurrent, function(v){ showCurrent = v; }, null, 1);
 
 // ── 音效 ──────────────────────────────────────────────────
 // 引擎在这里才建（而不是在页面顶部）：它要读 localStorage 里的开关状态，
@@ -2359,7 +2757,7 @@ sound = (window.CircuitSound && window.CircuitSound.create)
 var soundAnim = animToggle('🔊 音效', SOUND_KEY, showSound, function(v){
   showSound = v;
   if (sound) sound.setEnabled(v);
-}, '🔇 音效');
+}, '🔇 音效', 1);
 // 开关本身也走「手势」这条路：点它的时候顺手把 AudioContext 解出来，
 // 不然学生第一次点「音效：开」这一下是听不见任何反馈的。
 soundAnim.btn.addEventListener('pointerdown', function(){ if (sound) sound.unlock(); });
@@ -2374,6 +2772,17 @@ window.addEventListener('keydown', unlockOnGesture, true);
 
 var btnFlow = flowAnim.btn, btnCurrent = curAnim.btn, btnSound = soundAnim.btn;
 var setFlow = flowAnim.set, setCurrent = curAnim.set, setSound = soundAnim.set;
+
+// 「⋯ 更多」：窄屏下把上面标了 opt 的那一批收起来，顶栏从 4 行降到 2 行。
+// 宽屏放得下，这个按钮根本不出现（.moreToggle{display:none}）。展开状态只是
+// bar 上的一个 class，按钮位置一个都不动。
+var btnMore = toolBtn('⋯ 更多', function(){
+  var open = !bar.classList.contains('more');
+  bar.classList.toggle('more', open);
+  btnMore.classList.toggle('on', open);
+}, 'moreToggle');
+btnMore.id = 'moreBtn';
+btnMore.title = '显示不常用的按钮';
 
 // 存档状态行挂在元件栏最右边（三个开关之后），这样它不会夹在
 // 「＋元件」和「撤销/清空」中间拆散那一排工具按钮。
@@ -2396,9 +2805,28 @@ requestAnimationFrame(tick);
 
 // 给自动化验证留的钩子
 window.__scene = function(){ return scene; };
+window.__presets = function(){
+  return PRESETS.map(function(p){ return { name: p.name, tag: p.tag }; });
+};
+// 走【按钮那条路】而不是直接改场景：按钮里还有 pushUndo / select(null) / render。
+// 验证要断的是「点这个按钮会发生什么」，绕过按钮就等于绕过被测入口。
+window.__presetButtons = function(){
+  return [].slice.call(bar.querySelectorAll('button.preset')).map(function(b){
+    return { text: b.textContent, title: b.title };
+  });
+};
+window.__clickPreset = function(i){
+  var bs = bar.querySelectorAll('button.preset');
+  if (!bs[i]) return false;
+  bs[i].click();
+  return true;
+};
 window.__results = function(){ return results; };
 window.__flows = function(){ return flows.slice(); };
 window.__editor = function(){ return editor; };
+// 场景被【外部钩子】改过以后要重算读数/重画时用。页面自己那条路是 onUp 末尾
+// 统一 render()，钩子绕过了 onUp，就得显式补一脚。
+window.__render = function(){ render(); };
 window.__showFlow = function(){ return showFlow; };
 window.__setFlow = function(v){ setFlow(v); };
 window.__showCurrent = function(){ return showCurrent; };
@@ -2464,6 +2892,25 @@ window.__closePop = function(){ closePop(); };
 // 直接走「点元件」那一路（页面自己的 onTapComp）。自检要能验「点表盘开的是
 // 放大镜、点别处开的是参数面板」这个分岔 —— 绕开它去调 openPop 就测不到了。
 window.__tapComp = function(id, wx, wy){ var c = editor.byId(id); if (c) onTapComp(c, {x:wx, y:wy}); };
+// 「从接线柱往导线中间连线」：吸附判据和落线动作分开给。
+//   __nearestOnWire(x,y) = 纯查询：这个点会吸到哪根导线的哪个位置（不改场景）
+//   __dropOnWire(...)    = 走编辑器里那条真路（改场景：断线 + 长接线点 + 接新线）
+// 只给后者的话，「吸到哪」和「接成什么样」混在一起，红了也说不清是哪一步错。
+window.__nearestOnWire = function(x, y){
+  var h = editor.nearestOnWire({ x:x, y:y });
+  return h ? { index:h.index, q:{ x:h.q.x, y:h.q.y }, d:h.d } : null;
+};
+window.__dropOnWire = function(fromCompId, fromTermIdx, x, y){
+  var ok = editor.connectToWireMid({
+    from: { compId: fromCompId, termIdx: fromTermIdx },
+    cur: { x: x, y: y }, trail: [{ x: x, y: y }], to: null,
+  });
+  // connectToWireMid 只改场景（真实那条路是 onUp 末尾统一 render 的），
+  // 所以这里必须自己补一次 —— 否则 __results() 还是接之前的旧解，读数看着
+  // 「接了等于没接」，而实际上场景已经变了。这个坑我在探针里踩过一次。
+  if (ok) render();
+  return ok;
+};
 // 元件参数的规格条数（浮层和侧栏必须一样多）
 window.__paramRows = function(type){ return (PARAM_UI[type] || []).length; };
 // 侧栏那块参数面板现在写的是谁。浮层和侧栏要「同一个元件的两个视图」，
@@ -2491,6 +2938,12 @@ window.__btnFull = function(){ return btnFull; };
 // 全屏。__layoutBox 里同时给 CSS 尺寸和内在尺寸 —— 「比例没被拉歪」这条
 // 断言要靠 canvas.width / canvas.height（内在）和 style 宽高（显示）两组数。
 window.__full = function(){ return isFull; };
+// 「真全屏到底有没有生效」只能问浏览器：document.fullscreenElement 非空才算。
+// body.full 那个 class 是两条路都会打的，光看它分不出「真全屏」和「CSS 兜底」。
+window.__fsEl = function(){ return fsEl() ? (fsEl().tagName || '?') : null; };
+window.__fsSupported = function(){
+  return !!(document.fullscreenEnabled || document.webkitFullscreenEnabled);
+};
 window.__setFull = function(v){ setFull(v); };
 window.__layoutBox = function(){
   var r = canvas.getBoundingClientRect();
@@ -2537,6 +2990,89 @@ window.__dialHit = function(lx, ly){ return dialHit(lx, ly); };
 window.__btnCurrent = function(){ return btnCurrent; };
 window.__pathOf = function(wr){ return pathOf(wr); };
 window.__readout = function(c, r){ return readoutLines(c, r); };
+// 画布上那一小块标注：断言要读【实际画出去】的那一份（含几何），
+// 不是再算一遍 stateLinesOf。
+window.__tagDrawn = function(){
+  return tagDrawn.map(function(t){
+    return { id:t.id, type:t.type, lines:t.lines.slice(), w:t.w, h:t.h, x:t.x, y:t.y };
+  });
+};
+window.__tagHeights = function(){ return { id:TAG_ID_H, st:TAG_ST_H }; };
+// 编辑器那份 pathOf（命中用）和页面那份（绘制用）必须是同一串点，
+// 否则「看得见却点不着」。两边各导一个，测试直接逐点比。
+window.__hitPathOf = function(wr){ return editor.pathOf(wr); };
+// 窄屏顶栏：断言读的是【屏幕几何】（谁真的看得见、顶栏多高），
+// 不是读 class 名 —— 读 class 的话，CSS 没生效也照样全绿。
+window.__barMetrics = function(){
+  var vis = function(b){ return b.offsetParent !== null; };
+  var r = bar.getBoundingClientRect();
+  var kids = [].slice.call(bar.children);
+  var rows = {};
+  kids.forEach(function(b){
+    if (getComputedStyle(b).display === 'none') return;
+    var q = b.getBoundingClientRect();
+    if (q.height < 1) return;
+    rows[Math.round(q.top)] = 1;
+  });
+    return {
+      h: r.height, rows: Object.keys(rows).length,
+      // 顶栏宽 + 可见按钮的文案：「112px 高、6 行」到底是折了行还是量到了别的状态，
+      // 看文案和宽度一眼就分得出来，不用再跑一次去猜。
+      w: r.width,
+      texts: kids.filter(function(b){ return getComputedStyle(b).display !== 'none'; })
+                 .map(function(b){ return String(b.textContent || '').slice(0, 10); }),
+      moreShown: btnMore.offsetParent !== null,
+    moreOpen: bar.classList.contains('more'),
+    palVisible: kids.filter(function(b){
+      return b.className && /(^| )pal( |$)/.test(b.className) && vis(b); }).length,
+    palTotal: bar.querySelectorAll('button.pal').length,
+    optVisible: [].slice.call(bar.querySelectorAll('button.opt')).filter(vis).length,
+    optTotal: bar.querySelectorAll('button.opt').length,
+    addShown: getComputedStyle(addWrap).display !== 'none',
+  };
+};
+window.__clickMore = function(){ btnMore.click(); return bar.classList.contains('more'); };
+// 手机版式的三条判据：横向不许溢出、侧栏宽度要跟容器一致、浮层不许越出视口。
+window.__pageMetrics = function(){
+  var de = document.documentElement;
+  var side = document.querySelector('.side');
+  var pop = document.getElementById('compPop');
+  var pr = pop.getBoundingClientRect();
+  var cv = document.querySelector('.cv').getBoundingClientRect();
+  var ca = canvas.getBoundingClientRect();
+  // 谁把文档撑宽了？只看 overflowX 会漏 —— 手机模拟下 Chrome 先做「缩小以适应」：
+  // 内容比视口宽时它把整页缩小塞进去，于是 scrollWidth == innerWidth、overflowX == 0，
+  // 但 innerWidth 自己已经变成了那个大值（实测 390 的模拟视口里 innerW 读到 1087）。
+  // 所以要把「比视口还宽的元素」直接列出来，才看得出是谁撑的。
+  var wide = [];
+  [].forEach.call(document.querySelectorAll('body *'), function(e){
+    var q = e.getBoundingClientRect();
+    if (q.width > window.innerWidth + 1) {
+      wide.push({ tag: e.tagName.toLowerCase(),
+                  cls: String(e.className || '').slice(0, 24),
+                  w: Math.round(q.width) });
+    }
+  });
+  wide.sort(function(a, b){ return b.w - a.w; });
+  return {
+    innerW: window.innerWidth, innerH: window.innerHeight,
+    scrollW: de.scrollWidth, scrollH: de.scrollHeight,
+    overflowX: de.scrollWidth - window.innerWidth,
+    docClientW: de.clientWidth,
+    wide: wide.slice(0, 4),
+    sideW: side.getBoundingClientRect().width,
+    sideShown: getComputedStyle(side).display !== 'none',
+    popHidden: pop.hidden,
+    popRect: { x:pr.x, y:pr.y, w:pr.width, h:pr.height },
+    popFits: pr.left >= -0.5 && pr.right <= window.innerWidth + 0.5 &&
+             pr.top >= -0.5 && pr.bottom <= window.innerHeight + 0.5,
+    cv: { h: cv.height, w: cv.width },
+    canvas: { w: ca.width, h: ca.height,
+              x: ca.x, y: ca.y, fitsW: ca.width <= window.innerWidth + 0.5 },
+    capByHeight: capByHeight(),
+    fsRotate: getComputedStyle(document.getElementById('fsRotate')).display,
+  };
+};
 window.__btnFlow = function(){ return btnFlow; };
 // 音效：自检不能靠耳朵。给三样东西 ——
 //   ① 引擎本身（stats() 里 actions / plays / last / bellRunning / strikes 分得开

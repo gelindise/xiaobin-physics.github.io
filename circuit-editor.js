@@ -29,6 +29,9 @@
     resistor: 'R', battery: 'E', switch: 'S',
     ammeter: 'A', voltmeter: 'V', rheostat: 'RH', bulb: 'L',
     led: 'D', motor: 'M', bell: 'B',
+    // 接线点（导线中间自动长出来的结点）。它【不在元件栏里】—— 学生不是
+    // 「放一个接线点」，而是从接线柱往导线中间连线时它自己冒出来。
+    junction: 'J',
   };
 
   // 元件外形半宽 / 半高，用于点选。数值必须和 circuit-draw.js 里实际画的一致，
@@ -54,6 +57,8 @@
     ammeter:   [100, 70],
     voltmeter: [100, 70],
     rheostat:  [78, 31],
+    // 接线点：小圆点。命中框贴着它给 —— 给大了会从邻居元件那里抢走点击。
+    junction:  [9, 9],
   };
 
   function create(opts) {
@@ -193,7 +198,10 @@
       }
       return -1;
     }
-    function pathOf(wr) {
+    // 导线的【原始折线】：两个接线柱 + 拐点，没有抹圆。
+    // 抹圆后的路径（pathOf）只是同一根线的另一种画法 —— 拆分导线要在原始折线上
+    // 做，拿抹圆后的点去切 via 数组对不上号（多出来的采样点会变成假拐点）。
+    function rawPathOf(wr) {
       var a = byId(wr.a.compId), b = byId(wr.b.compId);
       if (!a || !b) return [];
       var p0 = D.terminalWorld(a, wr.a.termIdx), p1 = D.terminalWorld(b, wr.b.termIdx);
@@ -201,6 +209,43 @@
       (wr.via || []).forEach(function (v) { pts.push({ x: v[0], y: v[1] }); });
       pts.push({ x: p1.x, y: p1.y });
       return pts;
+    }
+    function pathOf(wr) {
+      var pts = rawPathOf(wr);
+      if (pts.length < 2) return pts;
+      // 和页面那份 pathOf 走【同一个】圆角函数。这里是命中判据（hitWire 逐段
+      // 量距离、delButtonPos 取中点），那边是绘制路径 —— 两边形状必须一模一样，
+      // 否则「看得见却点不着」。首尾两点 roundPath 原样保留，所以导线不会
+      // 从接线柱上掉下来。
+      return D.roundPath(pts);
+    }
+
+    // 鼠标点离【导线的中间】最近的那一点。返回 { index, seg, q, pts, d }。
+    // 判据用 WIRE_HIT（9px），和「点选导线」同一个数：能点中的地方就能接。
+    // 落点取【线段上的最近点】而不是鼠标位置 —— 否则导线会从旁边 8px 处擦过去，
+    // 看着像没接上。
+    function nearestOnWire(p) {
+      var ws = getScene().wires, best = null;
+      for (var i = 0; i < ws.length; i++) {
+        var pts = rawPathOf(ws[i]);
+        for (var j = 1; j < pts.length; j++) {
+          var a = pts[j - 1], b = pts[j];
+          var vx = b.x - a.x, vy = b.y - a.y, L2 = vx * vx + vy * vy;
+          if (L2 < 1e-9) continue;
+          var t = ((p.x - a.x) * vx + (p.y - a.y) * vy) / L2;
+          t = Math.max(0, Math.min(1, t));
+          var q = { x: a.x + vx * t, y: a.y + vy * t };
+          var d = Math.hypot(p.x - q.x, p.y - q.y);
+          if (d >= WIRE_HIT) continue;
+          // 落点离两头接线柱太近就不值当长结点：那等于把线接在柱子边上，
+          // 拆出来的一截只有几个像素，画面上是个疙瘩。
+          var near = Math.min(Math.hypot(q.x - pts[0].x, q.y - pts[0].y),
+                              Math.hypot(q.x - pts[pts.length - 1].x, q.y - pts[pts.length - 1].y));
+          if (near < 18) continue;
+          if (!best || d < best.d) best = { index: i, seg: j - 1, q: q, pts: pts, d: d };
+        }
+      }
+      return best;
     }
 
     // ---------- 手绘走线 ----------
@@ -578,6 +623,10 @@
         // 学生会以为是软件坏了。
         wiring.blocked = !!(wiring.to && rangeConflict(wiring.from, wiring.to));
         if (wiring.blocked) wiring.to = null;
+        // 没落在接线柱上 → 看看能不能吸附到某根导线的【中间】，并给一个预览点。
+        // 预览点取最近点而不是鼠标位置：让「会吸到哪里」看得见，否则学生只能
+        // 松手以后才知道接上没有。
+        wiring.snap = (!wiring.to && !wiring.blocked) ? nearestOnWire(p) : null;
         onChange();
         return;
       }
@@ -629,6 +678,86 @@
       if (changedHover) onChange();
     }
 
+    // ---------- 落到导线上：自动长一个接线点 ----------
+    // 用户要的：「从接线柱往一根导线的中间连一颗线」，落点上自动吸附出一个节点。
+    //
+    // ⚠️ 必须真的造一个【元件】（junction），不能只把那根导线拆成两截了事：
+    // 求解器认的是【端子】—— 两根导线只有在共用一个端子时才算同一个节点。
+    // 拆开的两截谁也不接到第三根线上，三根线就只是「画在一起」，读数上毫无
+    // 关系。那比不做更坏：学生看着线接上了，表却不动。
+    function connectToWireMid(wiring) {
+      if (!wiring.cur) return false;
+      var hit = nearestOnWire(wiring.cur);
+      if (!hit) return false;
+      var s = getScene(), W = s.wires[hit.index], from = wiring.from;
+      // 接到「起点自己那根线」上等于没接（同一个节点），还会凭空多一个结点
+      if ((W.a.compId === from.compId && W.a.termIdx === from.termIdx) ||
+          (W.b.compId === from.compId && W.b.termIdx === from.termIdx)) return false;
+      // 量程冲突：起点在某只表的量程柱上，而目标导线也接着同一只表的量程柱 ——
+      // 接上去等于把两个量程柱短接，读数就废了。
+      if (rangeConflict(from, W.a) || rangeConflict(from, W.b)) return false;
+
+      pushUndo();
+      var pts = hit.pts, q = hit.q;
+      // 从落点把原导线切成两截。落点正好压在某个拐点上时，那个拐点就是新结点
+      // 本身，不能既当 via 又当端点 —— 判据是「距离 ≈ 0」，不是「下标相等」。
+      var viaA = pts.slice(1, hit.seg + 1).map(function (z) { return [z.x, z.y]; });
+      var viaB = pts.slice(hit.seg + 1, pts.length - 1).map(function (z) { return [z.x, z.y]; });
+      while (viaA.length && Math.hypot(viaA[viaA.length - 1][0] - q.x,
+                                       viaA[viaA.length - 1][1] - q.y) < 1) viaA.pop();
+      while (viaB.length && Math.hypot(viaB[0][0] - q.x, viaB[0][1] - q.y) < 1) viaB.shift();
+
+      var n = 1;
+      while (byId(ID_PREFIX.junction + n)) n++;
+      var jc = { id: ID_PREFIX.junction + n, type: 'junction',
+                 x: q.x, y: q.y, params: {} };
+      s.comps.push(jc);
+
+      // 新导线从起点划到【结点】为止。末端就是结点本身（junction 的端子在
+      // (0,0)），所以不用再往 via 尾巴上补一个落点 —— 补了会和端点重合，
+      // 变成零长度段（mkWire 会过滤掉，但不如一开始就别写）。
+      var cp = D.terminalWorld(byId(from.compId), from.termIdx);
+      var viaNew = simplify(wiring.trail.slice(1), TRAIL_TOL)
+        .filter(function (z) { return Math.hypot(z.x - cp.x, z.y - cp.y) > 1; })
+        .slice(0, VIA_MAX - 1)
+        .map(function (z) { return [z.x, z.y]; });
+
+      var tA = { compId: W.a.compId, termIdx: W.a.termIdx };
+      var tB = { compId: W.b.compId, termIdx: W.b.termIdx };
+      s.wires.splice(hit.index, 1);
+      s.wires.push(mkWire(tA, { compId: jc.id, termIdx: 0 }, viaA));
+      s.wires.push(mkWire({ compId: jc.id, termIdx: 1 }, tB, viaB));
+      s.wires.push(mkWire(from, { compId: jc.id, termIdx: 0 }, viaNew));
+      report('plug', { a: from, b: { compId: jc.id, termIdx: 0 } });
+      return true;
+    }
+    // 造一根【手绘】导线，顺便把「原始形状」记下来 —— refitManual 靠 base
+    // 在元件被拖走时按比例重新分布拐点。缺了 base 拐点会原地不动，导线就从
+    // 元件身上脱开了。
+    function mkWire(a, b, via) {
+      var p0 = D.terminalWorld(byId(a.compId), a.termIdx);
+      var p1 = D.terminalWorld(byId(b.compId), b.termIdx);
+      // 过滤「与两端点重合」和「与前一个拐点重合」的点。它们在 rawPathOf 里
+      // 是零长度段 —— 画面上看不见，但电路图布局会把它当成一个多余的拐点，
+      // 报「第 N 根导线布局需核对」。接线点的两个端子都落在 (0,0)，最容易踩到。
+      var v = [];
+      via.forEach(function (z) {
+        if (Math.hypot(z[0] - p0.x, z[1] - p0.y) < 1) return;
+        if (Math.hypot(z[0] - p1.x, z[1] - p1.y) < 1) return;
+        if (v.length) {
+          var last = v[v.length - 1];
+          if (Math.hypot(z[0] - last[0], z[1] - last[1]) < 1) return;
+        }
+        v.push([z[0], z[1]]);
+      });
+      return {
+        a: { compId: a.compId, termIdx: a.termIdx },
+        b: { compId: b.compId, termIdx: b.termIdx },
+        via: v, auto: false,
+        base: { ends: [[p0.x, p0.y], [p1.x, p1.y]], via: v.map(function (z) { return [z[0], z[1]]; }) },
+      };
+    }
+
     function onUp() {
       if (slider) {
         // 拨动了就已经入过栈；只按一下没动，就是普通点选，不留撤销记录
@@ -677,6 +806,10 @@
               report('plug', { a: a, b: b });
             }
           }
+        } else {
+          // 落点不在任何接线柱上 —— 试试是不是落在某根导线的【中间】。
+          // 是的话就在那里长一个接线点，把三根线接到一起。
+          connectToWireMid(wiring);
         }
         wiring = null;
         changed();
@@ -807,15 +940,18 @@
         var ca = byId(wiring.from.compId);
         if (ca) {
           var p0 = D.terminalWorld(ca, wiring.from.termIdx);
-          var p1 = wiring.to ? { x: wiring.to.x, y: wiring.to.y } : wiring.cur;
+          var p1 = wiring.to ? { x: wiring.to.x, y: wiring.to.y }
+                   : (wiring.snap ? wiring.snap.q : wiring.cur);
           var trail = wiring.trail.slice(1);
           var endGap = trail.length ? Math.hypot(
             trail[trail.length-1].x - p1.x, trail[trail.length-1].y - p1.y) : 0;
           if (endGap < TRAIL_MIN * 2) trail.pop();
           var prev = simplify(trail, TRAIL_TOL);
           ctx.save();
-          // 绿 = 能接、橙 = 悬空、红 = 这个落点不让接（见 rangeConflict）
-          var wc = wiring.blocked ? '#dc2626' : (wiring.to ? '#16a34a' : '#f59e0b');
+          // 绿 = 能接（落在接线柱上，或吸到了某根导线的中间）、橙 = 悬空、
+          // 红 = 这个落点不让接（见 rangeConflict）
+          var wc = wiring.blocked ? '#dc2626'
+                 : (wiring.to || wiring.snap) ? '#16a34a' : '#f59e0b';
           ctx.strokeStyle = wc;
           ctx.lineWidth = 3; ctx.setLineDash([9, 6]);
           ctx.beginPath();
@@ -826,6 +962,14 @@
           ctx.setLineDash([]);
           ctx.fillStyle = wc;
           ctx.beginPath(); ctx.arc(p1.x, p1.y, 6, 0, 6.284); ctx.fill();
+          // 吸到导线上时，把「这里会生出一个接线点」直接画出来
+          if (wiring.snap) {
+            var sq = wiring.snap.q;
+            ctx.strokeStyle = '#16a34a'; ctx.lineWidth = 2;
+            ctx.beginPath(); ctx.arc(sq.x, sq.y, 11, 0, 6.284); ctx.stroke();
+            ctx.beginPath(); ctx.arc(sq.x, sq.y, 4.5, 0, 6.284);
+            ctx.fillStyle = '#16a34a'; ctx.fill();
+          }
           if (wiring.blocked) {
             // 光变红还不够，得说清为什么，否则学生只会反复试
             ctx.fillStyle = '#dc2626';
@@ -859,6 +1003,14 @@
       getSelected: function () { return describeSelection(); },
       pushUndo: pushUndo,
       delButtonPos: delButtonPos,
+      // 「往导线中间连线」那一条路的两半，分开导出：
+      //   nearestOnWire   = 吸附判据（纯函数，喂一个逻辑坐标进去看它吸到哪）；
+      //   connectToWireMid= 落线动作（会改场景）。
+      // 分开是为了能单独验「吸附点算得对不对」和「接上以后拓扑对不对」——
+      // 混在一起只能靠截图猜。
+      rawPathOf: rawPathOf,
+      nearestOnWire: nearestOnWire,
+      connectToWireMid: connectToWireMid,
       // 滑片中心的逻辑坐标。测试和外部代码都用它，别自己按 RHEO 常数猜。
       knobPos: function (id) {
         var c = byId(id);

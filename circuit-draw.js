@@ -419,6 +419,9 @@
     // 外侧两个柱仍钉在 ±HALF，保持全站网格约定，只有 y 落到底座下面。
     ammeter: [{ x: -HALF, y: MET.POST_Y }, { x: 0, y: MET.POST_Y }, { x: HALF, y: MET.POST_Y }],
     voltmeter: [{ x: -HALF, y: MET.POST_Y }, { x: 0, y: MET.POST_Y }, { x: HALF, y: MET.POST_Y }],
+    // 接线点：两个端子【在同一个点上】（它就是导线中间的一个结点）。
+    // 两根导线各接一个端子、画出来落点完全重合，看上去就是一整根线。
+    junction: [{ x: 0, y: 0 }, { x: 0, y: 0 }],
     rheostat: [
       // 编号照人教版图16.4-2 的实物位置：下面两个柱是 A/B（电阻丝两端），
       // 上面两个柱是 C/D（金属杆两端）。改这四个点的【顺序】等于改内核语义，
@@ -625,6 +628,51 @@
     ctx.moveTo(pts[0].x, pts[0].y);
     for (var i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
     ctx.stroke();
+  }
+
+  // ── 把折线的直角抹圆 ────────────────────────────────────────
+  // 真实导线不会拐出尖角：它是【弯】过去的。原来 strokePath 一路 lineTo，
+  // 于是整张图看着像用尺子比着画出来的折线 —— 用户要的「自然弯曲」就是这个。
+  //
+  // 只动【中间的拐点】，首尾两点一个字节都不动 —— 那两个点是接线柱，挪一下
+  // 导线就从柱子上掉下来了（画面上看不出，读数却变了）。
+  //
+  // 半径 = min(rad, 相邻两条边各自的一半)：边太短时自动缩小，两个圆角不会
+  // 互相吃掉对方那一段。
+  //
+  // ⚠️ 采样点要够密。这条折线【同时】是绘制路径、命中判据（hitWire 逐段量
+  // 距离）和电流粒子的跑道 —— 采样太疏等于把圆角又变成一串新折线，白改。
+  // 反过来也不能太密：单根导线的点数会被 simplify 的 VIA_MAX 记账。
+  var CORNER_SEG = 6;
+  function roundPath(pts, rad) {
+    if (!pts || pts.length < 2) return (pts || []).map(function (p) { return { x: p.x, y: p.y }; });
+    if (pts.length === 2) return [{ x: pts[0].x, y: pts[0].y }, { x: pts[1].x, y: pts[1].y }];
+    var R = rad == null ? 30 : rad;
+    var out = [{ x: pts[0].x, y: pts[0].y }];
+    for (var i = 1; i < pts.length - 1; i++) {
+      var p0 = pts[i - 1], p1 = pts[i], p2 = pts[i + 1];
+      var d0 = Math.hypot(p1.x - p0.x, p1.y - p0.y);
+      var d1 = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+      // 共线（中间点其实在直线上）→ 这个「拐点」不是拐点，别给它加采样点
+      var cross = (p1.x - p0.x) * (p2.y - p1.y) - (p1.y - p0.y) * (p2.x - p1.x);
+      if (d0 < 1e-6 || d1 < 1e-6 || Math.abs(cross) < 1e-6 * d0 * d1) {
+        out.push({ x: p1.x, y: p1.y });
+        continue;
+      }
+      var r = Math.min(R, d0 / 2, d1 / 2);
+      if (r < 1) { out.push({ x: p1.x, y: p1.y }); continue; }
+      var ax = p1.x + (p0.x - p1.x) * r / d0, ay = p1.y + (p0.y - p1.y) * r / d0;
+      var bx = p1.x + (p2.x - p1.x) * r / d1, by = p1.y + (p2.y - p1.y) * r / d1;
+      for (var k = 0; k <= CORNER_SEG; k++) {
+        var t = k / CORNER_SEG, u = 1 - t;
+        out.push({
+          x: u * u * ax + 2 * u * t * p1.x + t * t * bx,
+          y: u * u * ay + 2 * u * t * p1.y + t * t * by,
+        });
+      }
+    }
+    out.push({ x: pts[pts.length - 1].x, y: pts[pts.length - 1].y });
+    return out;
   }
 
   // 画布上跑的小球是【自由电子】，返回它沿导线 a→b 的有符号位移（px）。
@@ -939,6 +987,9 @@
       case 'led': return { hw: 70, hh: 46 };             // 底板 ±70，管身顶 y = −45
       case 'motor': return { hw: 70, hh: 60 };           // 底板 ±70，机身/螺旋桨顶 y = −58
       case 'bell': return { hw: 70, hh: 60 };            // 底板 ±70，铃碗顶 y = −36
+      // 接线点：就是一个小圆点，盒子贴着它给 —— 给大了会抢邻居元件的点击，
+      // 也会让「导线穿过元件」的检查把它当成障碍。
+      case 'junction': return { hw: 9, hh: 9 };
       // 表头：整台仪器的包围盒（表壳 + 底座）。接线柱在 POST_Y，
       // 故意落在盒子【外面】——导线夹在柱子上，不该被当成穿体。
       // 所以 hh 有【上限 70】：表壳为了放下大量程那排数字往上长到了 −86（见 MET），
@@ -3333,6 +3384,25 @@
   // opts 是【可选】的第 4 个参数，只有会动的元件用得到（电动机的转子角、
   // 电铃的振动相位）。不传就一律按静止画 —— 放大镜、图例、电路图那边
   // 都是三参数调用，它们要的是「这一刻的静态外形」，不该被动画污染。
+  // 接线点：一个实心小圆点 + 一圈深色描边 —— 电路图上那个「三岔口」的结点。
+  // 它是【自动长出来】的（从接线柱往导线中间连线时），所以画得越不起眼越好：
+  // 学生要看的是电路，不是这个点。半径 7 和导线的墨宽（W+2 ≈ 9）刚好相称，
+  // 两根导线接在同一个点上、点又盖在它们上面，看上去就是一整根线拐了个岔。
+  var JUNC_R = 7;
+  function drawJunction(ctx, comp) {
+    ctx.save();
+    ctx.translate(comp.x, comp.y);
+    ctx.rotate((comp.rot || 0) * Math.PI / 180);
+    ctx.beginPath();
+    ctx.arc(0, 0, JUNC_R, 0, Math.PI * 2);
+    ctx.fillStyle = PALETTE.wire;
+    ctx.fill();
+    ctx.lineWidth = 1.6;
+    ctx.strokeStyle = PALETTE.metalDark;
+    ctx.stroke();
+    ctx.restore();
+  }
+
   function drawComponent(ctx, comp, rec, opts) {
     switch (comp.type) {
       case 'resistor': drawResistor(ctx, comp, rec); break;
@@ -3345,6 +3415,7 @@
       case 'ammeter': drawMeter(ctx, comp, rec, false); break;
       case 'voltmeter': drawMeter(ctx, comp, rec, true); break;
       case 'rheostat': drawRheostat(ctx, comp, rec); break;
+      case 'junction': drawJunction(ctx, comp); break;
       default: throw new Error('未知元件类型: ' + comp.type);
     }
   }
@@ -3371,6 +3442,7 @@
     slideOf: slideOf,
     drawComponent: drawComponent, drawWire: drawWire, electronShift: electronShift,
     currentShift: currentShift,
+    roundPath: roundPath, CORNER_SEG: CORNER_SEG,
     isAnimated: isAnimated,
     LED_GEO: LED_GEO, MOT_GEO: MOT_GEO, BEL_GEO: BEL_GEO,
     MOT_SLOW: MOT_SLOW, BEL_HZ: BEL_HZ, mixRgb: mixRgb,
