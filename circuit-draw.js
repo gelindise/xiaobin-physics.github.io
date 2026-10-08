@@ -601,6 +601,24 @@
     var q = pointDirAt(pts, d);
     return { x: q.x, y: q.y };
   }
+  // 折线的【一段子折线】：弧长 d0 到 d1 之间的部分。熔断的导线要靠它把中间
+  // 那截【真的去掉】—— 在整根线上盖一个「断开」标记是不行的：那样画面上
+  // 导线还是连着的，只是多贴了一张标签。
+  function subPath(pts, d0, d1) {
+    if (d1 <= d0) return null;
+    var out = [], acc = 0;
+    for (var i = 0; i < pts.length - 1; i++) {
+      var seg = Math.hypot(pts[i+1].x - pts[i].x, pts[i+1].y - pts[i].y);
+      var a = acc, b = acc + seg;
+      if (b >= d0 && a <= d1) {
+        if (a <= d0 && d0 <= b) out.push(pointAt(pts, d0));
+        if (a > d0 && a < d1) out.push({ x: pts[i].x, y: pts[i].y });
+        if (a < d1 && d1 <= b) out.push(pointAt(pts, d1));
+      }
+      acc = b;
+    }
+    return out.length >= 2 ? out : null;
+  }
 
   function strokePath(ctx, pts) {
     ctx.beginPath();
@@ -646,21 +664,50 @@
     opts = opts || {};
     var W = opts.width || 6;
 
+    // 熔断的导线：中间【真的缺一段】。不是画个「断开」标记压在整根线上 ——
+    // 那样画面上导线还是通的，只是多贴了一张标签，和「断了」是两回事。
+    var segs = [pts];
+    if (opts.broken) {
+      var Lb = polyLen(pts);
+      if (Lb > 1) {
+        var gap = Math.min(28, Lb * 0.4);
+        segs = [subPath(pts, 0, Lb / 2 - gap / 2), subPath(pts, Lb / 2 + gap / 2, Lb)]
+          .filter(function (s) { return !!s; });
+      }
+    }
+
     ctx.save();
     ctx.lineJoin = 'round'; ctx.lineCap = 'round';
-    // 外描边（导线外皮）
-    ctx.strokeStyle = 'rgba(100,116,139,0.35)';
-    ctx.lineWidth = W + 2;
-    strokePath(ctx, pts);
-    // 主体
-    ctx.strokeStyle = opts.color || PALETTE.wire;
-    ctx.lineWidth = W;
-    strokePath(ctx, pts);
-    // 顶部高光
-    ctx.strokeStyle = 'rgba(255,255,255,0.35)';
-    ctx.lineWidth = W * 0.3;
-    strokePath(ctx, pts);
+    segs.forEach(function (sp) {
+      // 外描边（导线外皮）
+      ctx.strokeStyle = 'rgba(100,116,139,0.35)';
+      ctx.lineWidth = W + 2;
+      strokePath(ctx, sp);
+      // 主体
+      ctx.strokeStyle = opts.color || PALETTE.wire;
+      ctx.lineWidth = W;
+      strokePath(ctx, sp);
+      // 顶部高光
+      ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+      ctx.lineWidth = W * 0.3;
+      strokePath(ctx, sp);
+    });
     ctx.restore();
+
+    // 断口：两截铜丝各留一个焦黑的圆头，中间空着。断掉的导线是【事故现场】，
+    // 没有它，学生只看到「线短了一截」，不知道那是烧断的。
+    if (opts.broken && segs.length === 2) {
+      var Lc = polyLen(pts);
+      [Lc / 2 - Math.min(28, Lc * 0.4) / 2, Lc / 2 + Math.min(28, Lc * 0.4) / 2].forEach(function (d) {
+        var q = pointAt(pts, Math.max(0, Math.min(d, Lc)));
+        ctx.beginPath();
+        ctx.fillStyle = '#3f3f46';
+        ctx.arc(q.x, q.y, W * 0.62, 0, 6.284); ctx.fill();
+        ctx.beginPath();
+        ctx.fillStyle = 'rgba(120,113,108,0.85)';
+        ctx.arc(q.x, q.y, W * 0.34, 0, 6.284); ctx.fill();
+      });
+    }
 
     // 自由电子小球：间距按实际长度均分，位置沿【弧长】排布，
     // 所以速度是「每秒多少像素」，串联回路里长导线和短导线一样快。
@@ -1249,6 +1296,32 @@
     // 端子 0 = 正极，在 TERMINALS 里落在 +HALF（右侧），所以这里仍是 ['pos','neg']：
     // kinds[i] 对应的是【端子序号】，不是左右顺序，改了 TERMINALS 就不用动这里。
     posts(ctx, comp, ['pos', 'neg']);
+
+    // ── 烧坏的电源 ──────────────────────────────────────────
+    // 压在最后（连同接线柱一起熏黑），再加一道裂口：真实的电池过流会鼓包、
+    // 外壳开裂、冒烟。只把颜色调暗是不够的 —— 那读起来像「电池旧了」。
+    if (rec && rec.fault === 'burnt') {
+      ctx.save();
+      ctx.translate(comp.x, comp.y);
+      ctx.rotate((comp.rot || 0) * Math.PI / 180);
+      soot(ctx, 0, 0, boxW * 0.54, boxH * 0.62, 1);
+      // 外壳裂口：一条折线从盒沿劈进去，两侧错开一点，读得出「裂了」
+      ctx.strokeStyle = 'rgba(12,10,9,0.85)'; ctx.lineWidth = 2.2;
+      ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+      ctx.beginPath();
+      ctx.moveTo(-boxW * 0.16, -boxH / 2 + 1);
+      ctx.lineTo(-boxW * 0.05, -boxH * 0.12);
+      ctx.lineTo(-boxW * 0.13, boxH * 0.06);
+      ctx.lineTo(-boxW * 0.02, boxH / 2 - 1);
+      ctx.stroke();
+      ctx.strokeStyle = 'rgba(255,180,120,0.5)'; ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(-boxW * 0.16, -boxH / 2 + 1);
+      ctx.lineTo(-boxW * 0.05, -boxH * 0.12);
+      ctx.stroke();
+      faultTag(ctx, 0, -boxH / 2 - 13, '电源烧坏', 1);
+      ctx.restore();
+    }
   }
 
   // ============================================================
@@ -1532,7 +1605,73 @@
             Math.round(a[1] + (b[1] - a[1]) * t),
             Math.round(a[2] + (b[2] - a[2]) * t)];
   }
+
+  // ============================================================
+  // 损坏的公共外观
+  // ------------------------------------------------------------
+  // 三件东西共用：焦黑（soot）、红底「已损坏」小牌（faultTag）、青烟（drawSmoke）。
+  // 抽出来是因为「损坏」这件事必须【一眼可辨】：灯泡断丝、电源烧黑、表打弯，
+  // 三种外观要能被同一个记号统一读成「这件器材坏了，要修」。
+  // ============================================================
+
+  // 一层焦黑：从中心往外淡出。用叠加而不是直接填色 —— 底下的金属、塑料
+  // 纹理还得透出来一点，全盖住就成了一个黑块，读不出「这是被烧过的那台」。
+  function soot(ctx, cx, cy, rx, ry, a) {
+    var g = ctx.createRadialGradient(cx, cy, 1, cx, cy, Math.max(rx, ry));
+    g.addColorStop(0, 'rgba(24,20,18,' + (0.88 * a) + ')');
+    g.addColorStop(0.55, 'rgba(45,38,34,' + (0.62 * a) + ')');
+    g.addColorStop(1, 'rgba(60,52,46,0)');
+    ctx.save();
+    ctx.translate(cx, cy); ctx.scale(1, ry / Math.max(rx, ry)); ctx.translate(-cx, -cy);
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(cx, cy, Math.max(rx, ry), 0, 6.284); ctx.fill();
+    ctx.restore();
+  }
+
+  // 「已损坏」小牌。挂在器材本体上（不遮读数面板），红底白字。
+  function faultTag(ctx, x, y, text, sc) {
+    var k = (sc || 1);
+    ctx.save();
+    ctx.font = 'bold ' + (10.5 * k) + 'px -apple-system,"PingFang SC",sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    var w = ctx.measureText(text).width + 13 * k, h = 15.5 * k;
+    ctx.fillStyle = '#b91c1c';
+    roundRect(ctx, x - w / 2, y - h / 2, w, h, h / 2); ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.75)'; ctx.lineWidth = 1; ctx.stroke();
+    ctx.fillStyle = '#fff';
+    ctx.fillText(text, x, y + 0.5 * k);
+    ctx.restore();
+  }
+
+  // 青烟：几团上升并逐渐散开、变淡的圆。t 是秒，调用方每帧传页面自己的
+  // 动画时钟（不要用 Date.now —— 那样截图会截到随机相位，出图不可复现）。
+  function drawSmoke(ctx, x, y, t, opts) {
+    opts = opts || {};
+    var n = opts.count || 5, scale = opts.scale || 1;
+    var rise = (opts.rise || 34) * scale, spread = (opts.spread || 13) * scale;
+    ctx.save();
+    for (var i = 0; i < n; i++) {
+      // 每一团的相位错开，整体看起来是连续的烟柱而不是一串珠子
+      var ph = ((t * (opts.speed || 0.55) + i / n) % 1);
+      var cy = y - rise * ph;
+      var cx = x + Math.sin((t * 1.7 + i * 2.1)) * spread * (0.35 + ph);
+      var r = (3.2 + 6.4 * ph) * scale;
+      var a = (1 - ph) * 0.34 * (opts.alpha == null ? 1 : opts.alpha);
+      var g = ctx.createRadialGradient(cx, cy, 0.5, cx, cy, r);
+      g.addColorStop(0, 'rgba(90,92,96,' + a + ')');
+      g.addColorStop(1, 'rgba(140,142,148,0)');
+      ctx.fillStyle = g;
+      ctx.beginPath(); ctx.arc(cx, cy, r, 0, 6.284); ctx.fill();
+    }
+    ctx.restore();
+  }
+
   function drawBulb(ctx, comp, rec) {
+    // 损坏状态（内核回传）。'removed' = 灯泡被拧下来了，'burned' = 灯丝烧断。
+    // 两者在电路上都是断路，但【画面上必须看得出区别】：一个是「这里本来就没
+    // 灯泡」，一个是「灯泡还在，但里面断了」—— 学生要靠这个区别判断是缺件
+    // 还是烧了。
+    var fault = (rec && rec.fault) || null;
     var bright = rec ? Math.max(0, Math.min(rec.brightness || 0, 1.3)) : 0;
     // lit 以下当没通电。bg 是归一化强度，做 1.15 次幂把低亮度压一压，
     // 让 0.1~0.7 这段（学生真正在调的那段）拉得开，而不是一上来就满。
@@ -1614,6 +1753,32 @@
     ctx.fill();
     ctx.strokeStyle = 'rgba(120,118,106,0.4)'; ctx.lineWidth = 0.9; ctx.stroke();
 
+    // ── 灯泡被拧下来了：到此为止 ─────────────────────────────
+    // 剩下一个【空灯座】。玻璃泡、灯丝、螺口箍全都不画 —— 这不是「把灯泡
+    // 画淡一点」就能表达的：拧下来以后那个位置就是空的，灯座口看得见。
+    if (fault === 'removed') {
+      // 螺口内圈（灯座里那个金属螺纹孔），空着的时候才看得见
+      ctx.fillStyle = linGrad(ctx, -SOCK_HW_T, 0, SOCK_HW_T, 0,
+        [[0, '#6b7280'], [0.45, '#cbd5e1'], [1, '#4b5563']]);
+      ctx.beginPath();
+      ctx.ellipse(0, SOCK_TOP + 0.5, SOCK_HW_T - 1.5, 3.4, 0, 0, 6.284);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(51,65,85,0.6)'; ctx.lineWidth = 1; ctx.stroke();
+      ctx.fillStyle = 'rgba(30,41,59,0.75)';    // 孔里是暗的
+      ctx.beginPath();
+      ctx.ellipse(0, SOCK_TOP + 1.6, SOCK_HW_T - 4.2, 2.2, 0, 0, 6.284);
+      ctx.fill();
+      // ⚠️ 牌子必须在 restore() 【之前】画 —— faultTag 收的是【元件自身的局部坐标】。
+      //    挪到 restore 之后就变成世界坐标 (0, CY+…) 那一带，直接飞出画布左上角：
+      //    屏幕上什么也看不见（实测扫遍画布，红像素只剩两根接线柱的 560 个，
+      //    牌子一个像素都没有）。两只表、电源、二极管都是「牌在 restore 之前」，
+      //    只有这里当初写反了。
+      faultTag(ctx, 0, CY + R * 0.1, '灯泡已取下', 1);
+      ctx.restore();
+      posts(ctx, comp, ['pos', 'pos'], 1.4, 8);
+      return;
+    }
+
     // ── 玻璃泡 ──────────────────────────────────────────────
     // 先画，螺口箍【后画】压住它下半圈——实物上玻璃就是拧进箍里的，
     // 所以泡的轮廓线到箍口就断了，不是完整的一个圆。
@@ -1653,13 +1818,21 @@
     ctx.strokeStyle = 'rgba(148,163,184,' + (0.75 - 0.5 * bg) + ')';
     ctx.lineWidth = 1; ctx.stroke();
 
+    // 熏黑：灯丝烧断的那一瞬间会在泡壁上留一层黑。压在玻璃【之上】——
+    // 泡壁被熏黑是表面的事，画在玻璃底下会被那层高光洗掉，看着只是有点脏。
+    if (fault === 'burned') {
+      soot(ctx, 0, CY + 1, R * 0.96, R * 0.92, 1);
+      // 熏黑之后再补一道玻璃的反光，泡才有「黑是黑在里面」的层次
+      glassShell(ctx, 0, CY, R, { rim: 0.35, hi: 0.34 });
+    }
+
     // ── 灯丝 ────────────────────────────────────────────────
     // 两根引线从螺口里升上来，顶端折向中间，中间挂一段螺旋丝。
     // 真灯泡的灯丝是【螺旋】的，而且靠两根支架丝撑着；老画法是一条折线，
     // 读出来是「一根歪线」。引线起点埋在箍里，箍一盖就只剩露在玻璃中的那截。
     // 灯丝本身就是那条色温曲线：微亮是暗红的丝，额定是暖白，过载近白。
     // 辉光（shadowBlur）也随亮度连续长，不再靠 0.15 这一刀切白或切灭。
-    var leadCol = lit ? rgbaStr(heat, 1) : '#8a6a3a';
+    var leadCol = lit ? rgbaStr(heat, 1) : (fault === 'burned' ? '#4a3b2c' : '#8a6a3a');
     ctx.strokeStyle = leadCol;
     ctx.lineCap = 'round';
     if (lit) { ctx.shadowColor = rgbaStr(heat, 0.9); ctx.shadowBlur = 3 + 13 * bg; }
@@ -1680,15 +1853,32 @@
     // 「锯条」；圆角接头才读得出「这是一根被反复折过的钨丝」。
     ctx.lineWidth = 1.5;
     ctx.lineJoin = 'round';
-    ctx.beginPath();
-    ctx.moveTo(-4.2, CY - 1.4);
+    // 烧断的灯丝：整段螺旋从中间断开，两截各留一个熔融的小圆头。
+    // 不是「画一根完整的丝再叠一个记号」—— 断就是断，中间那截不画。
+    var broken = (fault === 'burned');
     var turns = 6, span = 8.4;
-    for (var fi = 0; fi <= turns; fi++) {
-      var fx = -4.2 + span * (fi / turns);
-      ctx.lineTo(fx, CY - 1.4 + (fi % 2 ? 1.5 : -1.5));
+    var BRK = 1.5;                      // 断口半宽（灯丝中点在 CY − 1.4）
+    function spiral(x0, x1) {
+      var n = Math.max(1, Math.round(turns * Math.abs(x1 - x0) / span));
+      ctx.beginPath();
+      ctx.moveTo(x0, CY - 1.4);
+      for (var k = 1; k <= n; k++) {
+        var fx = x0 + (x1 - x0) * (k / n);
+        ctx.lineTo(fx, CY - 1.4 + (k % 2 ? 1.5 : -1.5));
+      }
+      ctx.lineTo(x1, CY - 1.4);
+      ctx.stroke();
     }
-    ctx.lineTo(4.2, CY - 1.4);
-    ctx.stroke();
+    if (broken) {
+      spiral(-4.2, -BRK);
+      spiral(BRK, 4.2);
+      ctx.fillStyle = '#4b4038';
+      [-BRK, BRK].forEach(function (bx) {
+        ctx.beginPath(); ctx.arc(bx, CY - 1.4, 1.35, 0, 6.284); ctx.fill();
+      });
+    } else {
+      spiral(-4.2, 4.2);
+    }
     ctx.shadowBlur = 0;
 
     // ── 螺口（银色金属箍）────────────────────────────────────
@@ -1730,6 +1920,11 @@
       ctx.moveTo(-CAP_HW + 2, SOCK_TOP - 3.8); ctx.lineTo(CAP_HW - 2, SOCK_TOP - 3.8);
       ctx.stroke();
     }
+    // 「已损坏」牌挂在瓷灯座上（不是泡中央）：泡中央那截断了的灯丝本身就是
+    // 证据，牌子压上去等于把证据盖掉。
+    // ⚠️ 同样必须在 restore() 【之前】画：牌子用的是局部坐标，restore 之后上下文
+    //    已经回到世界坐标，再传 (0, SOCK_TOP+2) 就等于把牌子画到画布左上角去。
+    if (fault === 'burned') faultTag(ctx, 0, SOCK_TOP + 2, '灯丝烧断', 1);
     ctx.restore();
 
     // 两端柱子照参考图给红的：实物上这两件器材的接线柱都是红的。
@@ -1939,6 +2134,10 @@
     var frac = rev ? -0.085 : mag;
     var na = SW.A0 + (SW.A1 - SW.A0) * frac;
     var alert = over || rev;                       // 超量程 / 反接都用红针
+    // 损坏（内核回传的闩锁状态，与「此刻正超量程」不是一回事）：指针【被打弯了】。
+    // 真表过载打表之后就是这样 —— 针顶到限位钉上，力再大一点就把它折弯，
+    // 之后无论怎么接都回不到零。所以损坏的表用一根折了的针来画，一眼可辨。
+    var bent = !!(rec && (rec.fault === 'over' || rec.fault === 'rev'));
     ctx.save();
     ctx.translate(M.PIVOT.x, M.PIVOT.y);
     ctx.rotate(na);
@@ -1949,20 +2148,40 @@
     ctx.strokeStyle = alert ? '#b91c1c' : '#111827'; ctx.lineWidth = 3.0;
     ctx.beginPath(); ctx.moveTo(-17, 0); ctx.lineTo(-7, 0); ctx.stroke();
     ctx.lineCap = 'round';
-    ctx.strokeStyle = 'rgba(15,23,42,0.18)'; ctx.lineWidth = 3.4;
-    ctx.beginPath(); ctx.moveTo(-8, 1.6); ctx.lineTo(M.RT1 - 14, 1.6); ctx.stroke();
+    if (!bent) {
+      ctx.strokeStyle = 'rgba(15,23,42,0.18)'; ctx.lineWidth = 3.4;
+      ctx.beginPath(); ctx.moveTo(-8, 1.6); ctx.lineTo(M.RT1 - 14, 1.6); ctx.stroke();
+    }
     // 指针杆保持 2.2 宽【不能变细】：反接时针尖要打进零刻度线左边那一小格，
     // 那里是像素级断言在盯着（细杆在那一格里数不够墨，测试会红）。
     // 真实的锥形指针在这里用「针尖三角」表达，杆保持等宽。
-    ctx.strokeStyle = alert ? '#b91c1c' : '#111827'; ctx.lineWidth = 2.2;
-    ctx.beginPath(); ctx.moveTo(-8, 0); ctx.lineTo(M.RT1 - 14, 0); ctx.stroke();
-    // 针尖：细长的三角，不是等腰三角 —— 真指针的尖是刀刃形的
-    ctx.fillStyle = alert ? '#b91c1c' : '#111827';
-    ctx.beginPath();
-    ctx.moveTo(M.RT0 + 3, 0);
-    ctx.lineTo(M.RT0 - 6, -2.8);
-    ctx.lineTo(M.RT0 - 6, 2.8);
-    ctx.closePath(); ctx.fill();
+    var rodCol = alert ? '#b91c1c' : '#111827';
+    if (bent) {
+      // 折弯：杆在中段折一下，针尖歪到弧的内侧去。
+      var kx = (M.RT1 - 14) * 0.52, tipX = M.RT1 - 15, tipY = -5.6;
+      ctx.strokeStyle = rodCol; ctx.lineWidth = 2.2;
+      ctx.beginPath();
+      ctx.moveTo(-8, 0); ctx.lineTo(kx, 0); ctx.lineTo(tipX, tipY);
+      ctx.stroke();
+      ctx.save();
+      ctx.translate(tipX, tipY);
+      ctx.rotate(Math.atan2(tipY, tipX - kx));
+      ctx.fillStyle = rodCol;
+      ctx.beginPath();
+      ctx.moveTo(3, 0); ctx.lineTo(-6, -2.8); ctx.lineTo(-6, 2.8);
+      ctx.closePath(); ctx.fill();
+      ctx.restore();
+    } else {
+      ctx.strokeStyle = rodCol; ctx.lineWidth = 2.2;
+      ctx.beginPath(); ctx.moveTo(-8, 0); ctx.lineTo(M.RT1 - 14, 0); ctx.stroke();
+      // 针尖：细长的三角，不是等腰三角 —— 真指针的尖是刀刃形的
+      ctx.fillStyle = rodCol;
+      ctx.beginPath();
+      ctx.moveTo(M.RT0 + 3, 0);
+      ctx.lineTo(M.RT0 - 6, -2.8);
+      ctx.lineTo(M.RT0 - 6, 2.8);
+      ctx.closePath(); ctx.fill();
+    }
     ctx.restore();
     // 限位钉：零刻度线外侧立着的一根小柱子，指针回到零就顶在它上面。
     // 位置取在刻度左端（A0 = −150°）之外一点 —— 正好落在「反接窗口」的【上方】，
@@ -2053,6 +2272,9 @@
     // 必须先把表壳那一套 translate/rotate 还回去：posts() 按【世界坐标】
     // 落柱子，漏掉这个 restore 会把三根柱子整体平移一个元件的位置
     // （画面上就是右下角凭空多出三根柱子，而本体上没有）。
+    // 「已损坏」牌挂在表壳上沿（表盘之上）——压在表盘中央会把刻度盖掉，
+    // 而学生正需要对照「针打到哪儿了」来判断是超量程还是接反。
+    if (bent) faultTag(ctx, 0, M.CASE_TOP + 7, '已损坏', 1);
     ctx.restore();
     // kind 按【端子序号】给：0 号是「−」柱（黑），1/2 号是两个量程柱（红）。
     posts(ctx, comp, ['neg', 'pos', 'pos']);
@@ -2701,6 +2923,24 @@
     //    学生点不到、也看不出导线接在哪儿。开关/灯泡/两只表都是写在 translate
     //    外面的，这三个新元件当初漏了这一步。
     posts(ctx, comp, ['pos', 'neg'], 1.4, 8);
+
+    // ⑨ 烧毁的管子：过流（>25mA）烧掉以后管身熏黑、透镜上留一道裂。
+    //    管子在电路上已经是断路了，画面上也必须看得出「这根管子完了」，
+    //    否则学生只会以为是自己没接对线，反复拔插。
+    if (rec && rec.fault === 'burned') {
+      ctx.save();
+      ctx.translate(comp.x, comp.y); ctx.rotate(rad);
+      soot(ctx, (G.domeCx + G.cylX1) / 2, G.y, 40, 24, 1);
+      ctx.strokeStyle = 'rgba(12,10,9,0.8)'; ctx.lineWidth = 1.8;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(G.domeCx - G.r * 0.5, G.y - G.r * 0.62);
+      ctx.lineTo(G.domeCx + 2, G.y + 1);
+      ctx.lineTo(G.domeCx - 5, G.y + G.r * 0.5);
+      ctx.stroke();
+      faultTag(ctx, 0, G.y - G.r - 12, '已烧毁', 1);
+      ctx.restore();
+    }
   }
 
   // ============================================================
@@ -3135,11 +3375,15 @@
     LED_GEO: LED_GEO, MOT_GEO: MOT_GEO, BEL_GEO: BEL_GEO,
     MOT_SLOW: MOT_SLOW, BEL_HZ: BEL_HZ, mixRgb: mixRgb,
     FLOW_PX_PER_PHASE: FLOW_PX_PER_PHASE, polyLen: polyLen, pointAt: pointAt, pointDirAt: pointDirAt,
+    subPath: subPath,
+    // 损坏外观的公共基元。drawSmoke 必须由宿主每帧调（它要一个连续推进的
+    // 时钟）：冒烟是唯一一件「坏了还在动」的事，塞进静态缓存层就成了一张图。
+    soot: soot, faultTag: faultTag, drawSmoke: drawSmoke,
     drawBackground: drawBackground, drawBindingPost: drawBindingPost,
     resistorBands: resistorBands, roundRect: roundRect, softShadow: softShadow,
     batterySize: batterySize, bodyBox: bodyBox,
     MAT: MAT, MET: MET, MET_SWEEP: MET_SWEEP, POST_GRAD: POST_GRAD,
     BAND_COLORS: BAND_COLORS,
-    version: '2.2.0',
+    version: '2.3.0',
   };
 });

@@ -138,7 +138,68 @@
   // 0.2V 压降」的量级 —— 既不理想化到假，也不会让读数难算。
   var LED_RS = 10;
   var LED_I_RATED = 0.020;    // 指示用 LED 的典型工作电流 20 mA（亮度按它归一化）
-  var LED_I_MAX = 0.025;      // 超过它真实管子会烧（这里只报警告 + 画面发白）
+  var LED_I_MAX = 0.025;      // 【过载提示】门槛：超过它就报 LED_OVER_CURRENT
+  // 【烧毁】门槛，和上面那个过载门槛【必须分开】。合成一个的话，「过载提示」
+  // 这条永远看不到 —— 同一帧里既报过载又烧掉，最终解里管子已经断路，警告跟着
+  // 没了。而且 LED 从 20mA 的额定到真烧断本来就有个区间（真实管子能短时过载），
+  // 取 3 倍 ≈ 75mA：24mA 的绿管 + 100Ω 那种正常接法活得下来，3V 直连红管
+  // （120mA）当场烧断 —— 两端都够得着，中间的过载提示也看得见。
+  var LED_BURN_I = 0.075;
+
+  // ============================================================
+  // 故障（损坏）模型
+  // ------------------------------------------------------------
+  // 真实实验里「接错线」和「接坏器材」是两件事：前者改接线就好，后者要换器材。
+  // 这里把后者建模成元件上的一个【闩锁】字段 comp.fault（导线是 wire.broken）：
+  // 一旦发生就一直保持，直到调用方显式清掉（界面上的「修复」按钮）。
+  //
+  // ⚠️ 判定与执行分开：本内核只负责「读 fault 改电路」+「给一个纯函数判据
+  //    faultsOf()」，【什么时候真的写进场景】由宿主决定。这样判定可以单独
+  //    测、也可以单独改坏做负向对照，不必拖上界面。
+  // ============================================================
+  var FAULT_LABEL = {
+    burned:  '灯丝烧断',
+    removed: '灯泡已取下',
+    burnt:   '烧坏',
+    over:    '超量程损坏',
+    rev:     '接反打表损坏',
+  };  // 「这个故障让元件变成断路吗」——灯泡断丝、灯泡取下、烧毁的管子/电源都是断路；
+  // 两只表【不是】：真实的表打表以后电路照样通，只是读数不能信了（指针顶在
+  // 端点）。把它们也断掉的话，「反接指针左偏」这一幕就永远看不到了 ——
+  // 而那正是用户点名要看的现象。
+  var OPEN_FAULTS = { burned: 1, removed: 1, burnt: 1 };
+  function isOpenFault(comp) {
+    return !!(comp && comp.fault && OPEN_FAULTS[comp.fault]);
+  }
+  // 「这个故障叫什么」——给用户看的字。
+  // ⚠️ 第二个参数（元件本身）不是可有可无的：小灯泡和发光二极管在内核里【共用】
+  //    burned 这个故障码（电路上都是断路），但两者的名字必须分开 —— 二极管里
+  //    根本没有灯丝。画布上那块牌子写的是「已烧毁」（见 drawLed），状态栏 /
+  //    警告列表 / 浮层这三处也要跟着一致，否则同一件事在两处叫两个名字。
+  function faultLabel(f, comp) {
+    if (f === 'burned' && comp && comp.type === 'led') return '已烧毁';
+    return FAULT_LABEL[f] || '损坏';
+  }
+
+  // ── 小灯泡烧断的门槛 ─────────────────────────────────────────
+  // 用【实际功率 / 额定功率】的倍数，而不是电压倍数：灯泡的灯丝电阻随功率
+  // 上升（见 lampRAt），所以「电压超一点」和「功率超一点」不是同一件事，
+  // 而灯丝是被 I²R 烧断的，功率才是那个物理量。
+  //
+  // 1.5 这个数不是拍的，它把课本上最常见的那组搭配分在了两边：
+  //   2.5V/0.75W 的灯泡（R热 8.33Ω）
+  //     接两节干电池 3.0V（内阻 1Ω）→ I≈0.32A，P≈0.86W = 1.15 P额 → 不烧；
+  //     接三节干电池 4.5V（内阻 1.5Ω）→ I≈0.46A，P≈1.75W = 2.33 P额 → 烧断。
+  //   即「两节电池正常发光、再加一节就烧了」—— 正是学生真做过的那件事。
+  var BULB_BURN_K = 1.5;
+
+  // ── 短路时电源能扛住的电流 ───────────────────────────────────
+  // 短路电流 I = E/r（外电路被短接，只剩内阻）。所以「电源会不会烧」取决于
+  // 内阻：内阻大 = 自己限流 = 只烧导线（导线就是那根保险丝）；内阻小 = 电流
+  // 全砸在自己身上 = 电源炸。默认那台电源 3V/1Ω → 3A，够不着 5A，于是
+  // 默认场景短路时【断的是导线】，电源保得住 —— 这正好是保险丝的原理，
+  // 学生把内阻拧到 0.5Ω 以下才会看到电源烧坏。
+  var BATT_MAX_I = 5;
 
   // ── 直流电动机的铭牌常数 ────────────────────────────────────
   //   rpmPerV  空载转速常数（每伏特每分钟多少转）：3V 下 2400 r/min，
@@ -224,6 +285,10 @@
     }
     for (i = 0; i < (wires || []).length; i++) {
       var w = wires[i];
+      // 熔断的导线【不做合并】：它的两个端子回到各自的电气节点上，整条支路
+      // 就此断开。只在绘制时画个断口是不够的 —— 那样画面上看着断了，
+      // 求解器却还当成一根完好的导线，读数会继续骗人。
+      if (w && w.broken) continue;
       dsu.union(w.a.compId + ':' + w.a.termIdx, w.b.compId + ':' + w.b.termIdx);
     }
 
@@ -310,6 +375,10 @@
   function describeComponent(comp, termNode, lampR, tap, st) {
     var out = [];
     var P = paramsOf(comp);
+    // 断掉的元件【一条支路都不产生】—— 和「反向截止的二极管」走同一条路：
+    // 元件还在台上、还接着线，但电路已经从这里断了。必须在这一层拦，不能
+    // 只在绘制层画个断口：那样画面上看着断了、求解器却照旧算通，读数骗人。
+    if (isOpenFault(comp)) return out;
     var N = function (i) { return termNode[comp.id + ':' + i]; };
     // 表头的公共端（「−」柱）。两端元件没有这一项，取 1 就退化成老行为。
     var NC = function () {
@@ -697,6 +766,43 @@
   }
 
   // ============================================================
+  // 短路（拓扑判据）
+  // ------------------------------------------------------------
+  // 不用「电流超过某个数」来判短路，那个阈值永远拍不准：默认那台电源
+  // （3V / 内阻 1Ω）被一根导线短接时电流只有 3A，按 10A 的阈值判它「正常导通」，
+  // 而学生看到的明明是一次短路事故。
+  //
+  // 本质判据是【拓扑】的：电源两极之间存在一条「零阻通路」。
+  // 零阻通路 = 导线（并查集已把两端并成同一个电气节点）+ 闭合开关 +
+  // 理想电流表 + 0Ω 电阻/变阻器 C-D 接法。把后者这些支路单独并一次查集，
+  // 再看电源两极的节点在不在同一个集合里。
+  //
+  // ⚠️ 电源自己的支路【不能算进这条通路】：Rs=0 的理想电源也是 kind:'V'，
+  //    把它算进去就成了「电源自己把自己短路」，任何一台理想电源都恒短路。
+  // ============================================================
+  function shortedBatteryIds(components, branches, termNode) {
+    var dsu = createDSU();
+    var seen = {};                                       // createDSU 没有 has()，自己记一份
+    branches.forEach(function (b) {
+      if (b.kind !== 'V' || Math.abs(b.Rs) > 1e-9) return;
+      if (b.comp && b.comp.type === 'battery') return;   // 见上面那条警告
+      if (b.p === b.q) return;
+      dsu.add(b.p); dsu.add(b.q); dsu.union(b.p, b.q);
+      seen[b.p] = 1; seen[b.q] = 1;
+    });
+    var ids = [];
+    components.forEach(function (c) {
+      if (c.type !== 'battery' || isOpenFault(c)) return;
+      var n0 = termNode[c.id + ':0'], n1 = termNode[c.id + ':1'];
+      if (n0 == null || n1 == null) return;
+      // 两极同节点 = 被导线直接短接；否则看零阻元件有没有把它们连通。
+      if (n0 === n1) { ids.push(c.id); return; }
+      if (seen[n0] && seen[n1] && dsu.find(n0) === dsu.find(n1)) ids.push(c.id);
+    });
+    return ids;
+  }
+
+  // ============================================================
   // 主求解入口
   // ============================================================
   function solve(components, wires, options) {
@@ -906,6 +1012,10 @@
       //   以为自己接错了线，其实是短路了。
       var shorted = isShortedByIdealLoop(branches);
       out.status = shorted ? 'shorted' : 'singular';
+      // 无解这一支也要给短路信息：理想电源（内阻 0）被零阻通路短接时电流是
+      // 无穷大，方程根本解不出来 —— 这恰恰是【最严重】的短路，不给的话
+      // 后面「熔断导线 / 烧电源」的判定会把最该处理的这一种漏掉。
+      out.shortCircuit = { compIds: shortedBatteryIds(components, usedBranches, topo.termNode) };
       warnings.push(shorted
         ? { code: 'SHORT_CIRCUIT', message: '电源被导线或闭合开关直接短接，电流会过大' }
         : { code: 'SINGULAR', message: '电路存在矛盾约束，请检查接线' });
@@ -936,6 +1046,10 @@
       var tapIdx = tp ? tp.idx : null;
       var bs = usedBranches.filter(function (b) { return b.comp === c; });
       var rec = { type: c.type, v: 0, i: 0, p: 0, R: null, isolated: false };
+      // 损坏原样回传：绘制层（画灯丝断口、指针打表、电源冒烟）和读数框
+      // 都靠它，页面不必再去场景里翻 comp.fault —— 一份真值，两条路都用它。
+      rec.fault = c.fault || null;
+      rec.faultLabel = c.fault ? faultLabel(c.fault, c) : '';
       // 表头的「−」柱（公共端）接没接线。两端元件没有这一项，恒 true。
       // 必须在这里、算读数之前定下来：读数要靠它决定「表到底在不在电路里」。
       rec.commonWired = (TI.commonTerm == null) ? true : wired.has(c.id + ':' + TI.commonTerm);
@@ -1122,6 +1236,19 @@
 
         case 'battery': {
           var bb = bs[0];
+          // 烧坏的电源没有支路（describeComponent 提前返回了），bs 是空的。
+          // 不判空的话这里会读 undefined.p 把整个求解器带崩 —— 而且崩在
+          // 【修好之前】的每一帧上，页面直接白屏，看不出是电源坏了。
+          if (!bb) {
+            var P0 = paramsOf(c);
+            rec.i = 0; rec.v = 0; rec.p = 0; rec.R = null;
+            rec.emf = P0.emf != null ? P0.emf : 0;
+            rec.rInternal = P0.rInt != null ? P0.rInt : 0;
+            rec.cells = P0.cells;
+            rec.iInternal = 0; rec.pTotal = 0; rec.pInternal = 0; rec.vDrop = 0;
+            rec.reading = 0; rec.reversed = false;
+            break;
+          }
           rec.i = -bI(sol, bb);                            // Ik 是充电方向；放电 = −Ik
           rec.v = nV(sol, bb.p) - nV(sol, bb.q);
           rec.emf = bb.V;
@@ -1197,6 +1324,12 @@
       });
       return { hasSource: is.hasSource, nodeIds: nodes, componentIds: ids };
     });
+
+    // ---- 短路（拓扑判据，见 shortedBatteryIds）----
+    // 放在这里而不是 status 判定里：status 只回答「电路通不通」，而短路是
+    // 「通得太厉害」——两者要分开报。status 的计算逻辑一个字没动，
+    // 短路另开一个字段，免得动摇了既有的用例。
+    out.shortCircuit = { compIds: shortedBatteryIds(components, usedBranches, topo.termNode) };
 
     // ---- 状态判定 ----
     if (shorted) out.status = 'shorted';
@@ -1521,6 +1654,88 @@
     return flow;
   }
 
+  // ============================================================
+  // 损坏判定（纯函数）
+  // ------------------------------------------------------------
+  // 输入【当前这一帧的解】，输出【本帧应当新发生的损坏】。不写场景、不碰界面，
+  // 所以可以单独测、也可以单独改坏 —— 这是把「什么时候坏」和「坏了怎么显示」
+  // 分成两件事：绘制层只管照着 comp.fault 画，判据全在这里。
+  //
+  // 返回 { comps: [{id, fault, why}], wires: [导线下标] }。
+  // ⚠️ 调用方拿到结果【写进场景后必须重新求解】：灯丝一断、导线一熔，电路
+  //    拓扑就变了，下一轮的判定要基于新的解。所以这一步要迭代着做
+  //    （见页面 checkDamage），而且要有迭代上限 —— 否则可能自己咬自己。
+  // ============================================================
+  function faultsOf(components, wires, results, flows) {
+    var outC = [], outW = [];
+    if (!results || !results.components) return { comps: outC, wires: outW };
+    components = components || []; wires = wires || [];
+
+    components.forEach(function (c) {
+      if (c.fault) return;                       // 已经坏了，不重复报
+      var r = results.components[c.id];
+      if (!r) return;
+      if (c.type === 'bulb') {
+        // 灯丝是被 I²R 烧断的，所以判据用【实际功率 / 额定功率】的倍数，
+        // 而不是电压倍数（灯丝电阻随功率涨，两个倍数不是一回事）。
+        // ⚠️ 不能用 r.overload：内核里那个门槛是 1.3 倍，只是提示「过载」，
+        //    比烧断低 —— 拿它当烧断判据，灯泡会在该亮的时候提前断。
+        if (r.ratedW > 0 && r.p > BULB_BURN_K * r.ratedW) {
+          outC.push({ id: c.id, fault: 'burned',
+            why: '实际功率 ' + r.p.toFixed(2) + 'W 超过额定 ' + r.ratedW +
+                 'W 的 ' + BULB_BURN_K + ' 倍，灯丝烧断' });
+        }
+      } else if (c.type === 'led') {
+        // 用【烧毁门槛】而不是 r.overload：那是 25mA 的过载提示门槛，比烧断低，
+        // 拿它当烧断判据的话，正常接法（绿管 + 100Ω 在 6V 上 35mA）也会烧。
+        // 原因里带上烧毁前的那个电流 —— 烧掉之后 rec.i 已经是 0，那个数再也
+        // 读不回来了，而它正是「过流多少才烧」这个问题的答案。
+        if (Math.abs(r.i) > LED_BURN_I) {
+          outC.push({ id: c.id, fault: 'burned',
+            why: '电流 ' + (Math.abs(r.i) * 1000).toFixed(1) + 'mA 超过烧毁门槛 ' +
+                 (LED_BURN_I * 1000).toFixed(0) + 'mA（额定 ' +
+                 (LED_I_MAX * 1000).toFixed(0) + 'mA 的三倍），管子烧毁' });
+        }
+      } else if (c.type === 'ammeter' || c.type === 'voltmeter') {
+        // 只对【真的接进电路】的表判：没接线的表读数恒 0，谈不上超量程或反接。
+        if (!r.wired) return;
+        if (r.overRange) {
+          outC.push({ id: c.id, fault: 'over',
+            why: '读数超过量程 ' + r.range + (c.type === 'ammeter' ? 'A' : 'V') +
+                 '，指针向右打表损坏' });
+        } else if (r.reversed) {
+          outC.push({ id: c.id, fault: 'rev', why: '正负接线柱接反，指针向左打表损坏' });
+        }
+      }
+    });
+
+    // ── 短路：熔断导线 + 烧坏电源 ─────────────────────────────
+    // 真实的短路保护就靠这个顺序：导线（保险丝）先断，电源保住；导线粗到
+    // 扛住了，电流就全砸在电源上。所以这里不是「二选一」，而是两条各自成立
+    // 的判据 —— 默认那台电源（3V/1Ω → 3A）够不着 5A，于是断的只是导线。
+    var sc = results.shortCircuit;
+    if (sc && sc.compIds && sc.compIds.length) {
+      var best = -1, bestI = 0;
+      for (var i = 0; i < wires.length; i++) {
+        if (wires[i].broken) continue;
+        var a = Math.abs((flows && flows[i]) || 0);
+        if (a > bestI) { bestI = a; best = i; }
+      }
+      // 熔断【电流最大的那一根】。真实电路里先断的就是它（保险丝、最细那段），
+      // 而且这么选有唯一答案 —— 可断言，不是「随便挑一根」。
+      if (best >= 0) outW.push(best);
+      // 电流大到电源自己扛不住 → 烧电源。!results.ok 是【理想电源被短接】：
+      // 电流无穷大，方程解不出来，那是最严重的一种，同样要烧。
+      if (!results.ok || bestI > BATT_MAX_I) {
+        sc.compIds.forEach(function (id) {
+          if (outC.some(function (x) { return x.id === id; })) return;
+          outC.push({ id: id, fault: 'burnt', why: '被短路，电流过大烧坏' });
+        });
+      }
+    }
+    return { comps: outC, wires: outW };
+  }
+
   return {
     TYPES: TYPES,
     defaultParams: defaultParams,
@@ -1538,6 +1753,7 @@
     LED_RS: LED_RS,
     LED_I_RATED: LED_I_RATED,
     LED_I_MAX: LED_I_MAX,
+    LED_BURN_I: LED_BURN_I,
     ledColorOf: ledColorOf,
     ledConducts: ledConducts,
     MOTOR: MOTOR,
@@ -1545,6 +1761,14 @@
     rpmOf: rpmOf,
     BELL_MAG_MIN: BELL_MAG_MIN,
     bellState: bellState,
-    version: '1.1.0',
+    // 损坏模型：常量 + 判定。页面只写场景、不写判据 —— 判据留在这里才能
+    // 单独测（也可以在负向对照里单独改坏）。
+    faultsOf: faultsOf,
+    FAULT_LABEL: FAULT_LABEL,
+    faultLabel: faultLabel,
+    isOpenFault: isOpenFault,
+    BULB_BURN_K: BULB_BURN_K,
+    BATT_MAX_I: BATT_MAX_I,
+    version: '1.2.0',
   };
 });
