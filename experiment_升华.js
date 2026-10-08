@@ -764,17 +764,51 @@ import * as THREE from './assets/optics-three.min.js';
        只放正例的话，学生容易把「冒白气」一律当成升华 —— 那正是本页要打掉的错误前概念。
      ========================================================================== */
   const LIFE = [
-    { key: 'dryice', name: '干冰', ans: '升华（固→气）· 吸热。注意它周围的白雾不是二氧化碳，而是空气中的水蒸气遇冷液化' },
-    { key: 'camphor', name: '樟脑丸', ans: '升华（固→气）· 吸热。衣柜里的樟脑丸越来越小，全程没有液体' },
-    { key: 'bulb', name: '白炽灯泡', ans: '钨丝升华（固→气）+ 在玻璃泡内壁凝华（气→固）· 先吸热后放热' },
-    { key: 'frost', name: '结霜的玻璃片', ans: '凝华（气→固）· 放热。水蒸气直接变成霜，不经过液态' },
-    { key: 'rime', name: '雾凇', ans: '凝华（气→固）· 放热。空气中的水蒸气直接在树枝上结成冰晶，和霜是同一个机制' },
-    { key: 'popsicle', name: '冰棍冒白气', ans: '【液化】（气→液）· 放热。白气是空气中的水蒸气遇冷【变成了小水珠】—— 这里出现了液态，和升华、凝华【不是一回事】' }
+    { key: 'dryice', name: '干冰', ans: '升华（固→气）· 吸热。注意它周围的白雾不是二氧化碳，而是空气中的水蒸气遇冷液化',
+      q: '干冰本身发生了什么物态变化？', kind: 'sub', heat: 'absorb',
+      hot: { dy: 1.0, sx: 3.0, sy: 2.4, sz: 2.6 },
+      why: '干冰是固态二氧化碳，直接变成二氧化碳气体 —— <b>升华</b>（固→气），吸热。'
+        + '注意它周围的白雾<b>不是</b>二氧化碳，而是空气中的水蒸气遇冷<b>液化</b>成的小水珠。' },
+    { key: 'camphor', name: '樟脑丸', ans: '升华（固→气）· 吸热。衣柜里的樟脑丸越来越小，全程没有液体',
+      q: '樟脑丸越来越小，发生了什么物态变化？', kind: 'sub', heat: 'absorb',
+      hot: { dy: 1.2, sx: 3.0, sy: 2.6, sz: 3.0 },
+      why: '樟脑丸由固态直接变成气体，衣柜里闻到的气味就是它 —— <b>升华</b>（固→气），吸热。'
+        + '整件东西<b>始终没有出现液体</b>。' },
+    { key: 'bulb', name: '白炽灯泡', ans: '钨丝升华（固→气）+ 在玻璃泡内壁凝华（气→固）· 先吸热后放热',
+      q: '用久的灯泡：钨丝变细、玻璃泡内壁发黑，钨丝发生了什么物态变化？', kind: 'sub', heat: 'absorb',
+      hot: { dy: 3.2, sx: 3.0, sy: 3.0, sz: 3.0 },
+      why: '钨丝先<b>升华</b>（固→气，吸热）变成钨蒸气，钨蒸气碰到较冷的玻璃泡内壁又<b>凝华</b>'
+        + '（气→固，放热）成固态钨 —— 所以钨丝变细、内壁发黑。这一件里两种变化都发生了。' },
+    { key: 'frost', name: '结霜的玻璃片', ans: '凝华（气→固）· 放热。水蒸气直接变成霜，不经过液态',
+      q: '玻璃片上结出霜，发生了什么物态变化？', kind: 'depo', heat: 'release',
+      hot: { dy: 1.86, sx: 2.8, sy: 0.7, sz: 2.2 },
+      why: '空气中的水蒸气直接变成固态的霜，<b>不经过液态</b> —— <b>凝华</b>（气→固），放热。' },
+    { key: 'rime', name: '雾凇', ans: '凝华（气→固）· 放热。空气中的水蒸气直接在树枝上结成冰晶，和霜是同一个机制',
+      q: '树枝上挂满雾凇，发生了什么物态变化？', kind: 'depo', heat: 'release',
+      hot: { dy: 2.2, sx: 2.9, sy: 3.3, sz: 1.7 },
+      why: '雾凇和霜是同一个机制：空气中的水蒸气直接在树枝上<b>凝华</b>（气→固）成冰晶，放热。' },
+    { key: 'popsicle', name: '冰棍冒白气', ans: '【液化】（气→液）· 放热。白气是空气中的水蒸气遇冷【变成了小水珠】—— 这里出现了液态，和升华、凝华【不是一回事】',
+      q: '冰棍周围的白气是什么？发生了什么物态变化？', kind: 'liq', heat: 'release',
+      hot: { dy: 2.8, sx: 2.4, sy: 3.0, sz: 2.4 },
+      why: '白气是空气中的水蒸气遇冷<b>液化</b>（气→液）成的小水珠 —— 这里<b>出现了液态</b>，'
+        + '和升华、凝华<b>不是一回事</b>。这一件是本页唯一的反例，它<b>放热</b>。' }
   ];
+
+  /* 判读题的作答状态。键与 LIFE 一一对应（用 LIFE.length 建，不写死 6）：
+       kind[i] / heat[i] —— 这一题选中的选项（没选 = null，不是 ''）；
+       graded[i]          —— 是否已提交判分；
+       ok[i]              —— 两问是否都对。 */
+  state.quiz = {
+    kind: LIFE.map(() => null),
+    heat: LIFE.map(() => null),
+    graded: LIFE.map(() => false),
+    ok: LIFE.map(() => false)
+  };
   const lifeGroup = new THREE.Group();
   lifeGroup.visible = false;
   rig.add(lifeGroup);
   const lifeObjects = [];
+  const lifeSlots = [];         // 第 i 件对应的 Group（见下面「不按下标取」的注释）
   const lifeMist = [];          // 冰棍白气的 Sprite（唯一需要逐帧动的生活物件）
   {
     const rnd = mulberry32(6060);
@@ -923,6 +957,10 @@ import * as THREE from './assets/optics-three.min.js';
       target.userData.lifeIndex = i;
       g.userData.lifeIndex = i;
       lifeGroup.add(g);
+      /* ★ 另存一份「第 i 件是哪个 Group」。原来靠 lifeGroup.children[lifePick] 取，
+         那是【按下标假设】的：往 lifeGroup 里再加任何一个东西（高亮盒、坐标轴…），
+         只要加在前面，全部错位 —— 而画面上完全看不出来。 */
+      lifeSlots.push(g);
       lifeObjects.push(target);
     });
   }
@@ -933,6 +971,193 @@ import * as THREE from './assets/optics-three.min.js';
   lifeRing.rotation.x = Math.PI / 2;
   lifeRing.visible = false;
   lifeGroup.add(lifeRing);
+
+  /* 判完之后高亮的那个【部位】—— 不是整件东西。
+     「变化发生在哪里」正是这几件东西的分歧点：灯泡的升华在钨丝、凝华在内壁；
+     冰棍的白气在冰棍【外面】。整件一起亮等于什么都没说。 */
+  const lifeHot = new THREE.Mesh(
+    new THREE.BoxGeometry(1, 1, 1),
+    new THREE.MeshBasicMaterial({ color: '#facc15', transparent: true, opacity: 0.2,
+      depthWrite: false, side: THREE.DoubleSide })
+  );
+  lifeHot.visible = false;
+  lifeGroup.add(lifeHot);
+
+  /* ==========================================================================
+     六点五、生活现象判读：可作答 + 判分 + 高亮（顺序 7）
+     --------------------------------------------------------------------------
+     这一排 6 件东西原本是「点一下就念答案」。升级成一道【两问】的判读题：
+       ① 这一件里发生了哪种物态变化？② 吸热还是放热？
+     两问都选了才能提交；提交后判分、给出解释，并在 3D 场景里高亮【发生变化的那个部位】。
+     ★ 选项表 CHANGES / HEATS 是【独立写死】的，不从 LIFE 里推：从 LIFE 推的话，
+       「某一件的正确答案根本不在选项里」这种错会被自动掩盖（选项跟着答案一起长）。
+       六种物态变化全在选项里，第 2/3/4 节的应用层就是靠「在六个里挑对那一个」串起来的。
+     ========================================================================== */
+  const CHANGES = [
+    { key: 'melt',   name: '熔化', sub: '固→液' },
+    { key: 'freeze', name: '凝固', sub: '液→固' },
+    { key: 'vap',    name: '汽化', sub: '液→气' },
+    { key: 'liq',    name: '液化', sub: '气→液' },
+    { key: 'sub',    name: '升华', sub: '固→气' },
+    { key: 'depo',   name: '凝华', sub: '气→固' }
+  ];
+  const HEATS = [
+    { key: 'absorb',  name: '吸热' },
+    { key: 'release', name: '放热' }
+  ];
+  const QUIZ_EL = {
+    group: $('quizGroup'), q: $('quizQ'), kinds: $('quizKinds'), heats: $('quizHeats'),
+    submit: $('quizSubmit'), clear: $('quizClear'), result: $('quizResult'),
+    score: $('quizScore'), total: $('quizTotal')
+  };
+  const nameOfChange = (k) => { const c = CHANGES.find((x) => x.key === k); return c ? c.name : String(k); };
+  const nameOfHeat = (k) => { const h = HEATS.find((x) => x.key === k); return h ? h.name : String(k); };
+
+  /* 选项按钮由 CHANGES / HEATS 现建 —— 页面里不写死，改选项表就自动同步。
+     ★ 只在【空】的时候建：重复调用会越建越多，而画面上只是「多了一排一样的按钮」。 */
+  function buildQuizChoices() {
+    if (QUIZ_EL.kinds && !QUIZ_EL.kinds.children.length) {
+      CHANGES.forEach((c) => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.dataset.change = c.key;
+        b.innerHTML = c.name + '<small>' + c.sub + '</small>';
+        b.addEventListener('click', () => pickChange(c.key));
+        QUIZ_EL.kinds.appendChild(b);
+      });
+    }
+    if (QUIZ_EL.heats && !QUIZ_EL.heats.children.length) {
+      HEATS.forEach((h) => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.dataset.heat = h.key;
+        b.textContent = h.name;
+        b.addEventListener('click', () => pickHeat(h.key));
+        QUIZ_EL.heats.appendChild(b);
+      });
+    }
+  }
+
+  const quizScore = () => state.quiz.ok.filter(Boolean).length;
+  const quizAnswered = () => state.quiz.graded.filter(Boolean).length;
+
+  function pickChange(k) {
+    const i = state.lifePick;
+    if (i < 0 || state.quiz.graded[i]) return false;   /* 判过分的题不许再改答案 */
+    state.quiz.kind[i] = k;
+    syncQuizUI(); requestRender();
+    return true;
+  }
+  function pickHeat(k) {
+    const i = state.lifePick;
+    if (i < 0 || state.quiz.graded[i]) return false;
+    state.quiz.heat[i] = k;
+    syncQuizUI(); requestRender();
+    return true;
+  }
+  /* 两问都选了才判。返回判分结果（true / false），没交上去返回 null ——
+     三种结果分得清楚，自检才分得清「没提交」和「提交了但答错」。 */
+  function submitQuiz() {
+    const i = state.lifePick;
+    if (i < 0) return null;
+    const q = state.quiz;
+    if (q.graded[i]) return q.ok[i];
+    if (!q.kind[i] || !q.heat[i]) return null;
+    q.graded[i] = true;
+    q.ok[i] = (q.kind[i] === LIFE[i].kind && q.heat[i] === LIFE[i].heat);
+    syncQuizUI(); updateVisibility(); updateReadouts(); requestRender();
+    return q.ok[i];
+  }
+  /* 重做本题：只清当前这一件，其余几件的成绩保留 */
+  function clearQuiz() {
+    const i = state.lifePick;
+    if (i < 0) return false;
+    const q = state.quiz;
+    q.kind[i] = null; q.heat[i] = null; q.graded[i] = false; q.ok[i] = false;
+    syncQuizUI(); updateVisibility(); updateReadouts(); requestRender();
+    return true;
+  }
+  function resetQuiz() {
+    state.quiz.kind = LIFE.map(() => null);
+    state.quiz.heat = LIFE.map(() => null);
+    state.quiz.graded = LIFE.map(() => false);
+    state.quiz.ok = LIFE.map(() => false);
+  }
+
+  /* 面板显隐 / 按钮态 / 文案 / 记分 —— 一律从 state.quiz 现算，不另存一份「能不能点」 */
+  function syncQuizUI() {
+    if (!QUIZ_EL.group) return;
+    QUIZ_EL.group.hidden = state.scene !== 'life';
+    const i = state.lifePick;
+    const graded = i >= 0 && state.quiz.graded[i];
+    if (QUIZ_EL.total) QUIZ_EL.total.textContent = String(LIFE.length);
+    if (QUIZ_EL.score) QUIZ_EL.score.textContent = String(quizScore());
+    if (QUIZ_EL.kinds) {
+      Array.from(QUIZ_EL.kinds.children).forEach((b) => {
+        const k = b.dataset.change;
+        b.classList.toggle('active', i >= 0 && state.quiz.kind[i] === k);
+        b.classList.remove('ok', 'bad');
+        if (graded) {
+          /* 判完之后：正确答案标绿，学生选错的那一个标红 —— 两个方向都标出来，
+             只标对的那个的话，学生看不出自己错在哪一项。 */
+          if (k === LIFE[i].kind) b.classList.add('ok');
+          else if (k === state.quiz.kind[i]) b.classList.add('bad');
+        }
+        b.disabled = i < 0 || graded;
+      });
+    }
+    if (QUIZ_EL.heats) {
+      Array.from(QUIZ_EL.heats.children).forEach((b) => {
+        const k = b.dataset.heat;
+        b.classList.toggle('active', i >= 0 && state.quiz.heat[i] === k);
+        b.classList.remove('ok', 'bad');
+        if (graded) {
+          if (k === LIFE[i].heat) b.classList.add('ok');
+          else if (k === state.quiz.heat[i]) b.classList.add('bad');
+        }
+        b.disabled = i < 0 || graded;
+      });
+    }
+    if (QUIZ_EL.submit) {
+      QUIZ_EL.submit.disabled = i < 0 || graded
+        || !state.quiz.kind[i] || !state.quiz.heat[i];
+    }
+    if (QUIZ_EL.q) {
+      QUIZ_EL.q.innerHTML = i < 0
+        ? '点击台面上的任意一个物件，开始判读。<b>其中有一个不是升华也不是凝华</b> —— 找出来。'
+        : '<b>' + LIFE[i].name + '</b>：' + LIFE[i].q;
+    }
+    if (QUIZ_EL.result) {
+      QUIZ_EL.result.innerHTML = i < 0
+        ? '两问都选了才能提交。'
+        : !state.quiz.graded[i]
+          ? (state.quiz.kind[i] && state.quiz.heat[i]
+            ? '两问都选好了，点「提交判读」。'
+            : '两问都选了才能提交。')
+          : (state.quiz.ok[i]
+            ? '✓ 答对了。' + LIFE[i].why
+            : '✗ 再想想：你选的是「' + nameOfChange(state.quiz.kind[i]) + ' · '
+              + nameOfHeat(state.quiz.heat[i]) + '」，正确是「' + nameOfChange(LIFE[i].kind)
+              + ' · ' + nameOfHeat(LIFE[i].heat) + '」。' + LIFE[i].why);
+    }
+  }
+
+  /* 判完之后高亮的那个部位 —— 位置/尺寸全部来自 LIFE[i].hot（每件单独给，
+     不按「整件东西的包围盒」算：灯泡要亮的是钨丝、冰棍要亮的是它外面的白气）。 */
+  function syncLifeHot() {
+    const i = state.lifePick;
+    const on = state.scene === 'life' && i >= 0 && state.quiz.graded[i];
+    const hot = on ? LIFE[i].hot : null;
+    const g = i >= 0 ? lifeSlots[i] : null;
+    lifeHot.visible = !!hot && !!g;
+    if (lifeHot.visible) {
+      lifeHot.position.set(g.position.x, hot.dy, g.position.z);
+      lifeHot.scale.set(hot.sx, hot.sy, hot.sz);
+    }
+    state.drawn.hotOn = lifeHot.visible;
+    state.drawn.hotIndex = lifeHot.visible ? i : -1;
+    state.drawn.hotDy = hot ? hot.dy : 0;
+  }
 
   /* ==========================================================================
      七、物理
@@ -1030,6 +1255,9 @@ import * as THREE from './assets/optics-three.min.js';
     state.dryIce = DRY_ICE_M0; state.fogAmt = 0; state.frost = 0;
     state.finished = false;
     state.lifePick = -1;
+    /* ★ 判读题的成绩跟着「重置」一起清 —— 与记录表同一个约定（用户明确要求过
+       「重置按钮点击之后记录数据这个表格应该清空」）。 */
+    resetQuiz();
     series.length = 0;
     pushSample();
     updateAll();
@@ -1192,10 +1420,12 @@ import * as THREE from './assets/optics-three.min.js';
     /* 铁架台只在碘锤/干冰两个场景里有用；霜与生活现象场景里它挡视线又没有意义 */
     rod.visible = base.visible = (sc === 'iodine' || sc === 'dryice');
     lifeRing.visible = state.scene === 'life' && state.lifePick >= 0;
-    if (state.lifePick >= 0) {
-      const g = lifeGroup.children[state.lifePick];
-      if (g) lifeRing.position.set(g.position.x, 0.12, g.position.z);
-    }
+    /* ★ 取第 i 件的 Group 走 lifeSlots，不走 lifeGroup.children[i]：
+       后者是「按下标假设」的写法，往 lifeGroup 里再加任何东西都可能让它错位。 */
+    const slot = lifeSlots[state.lifePick];
+    if (slot) lifeRing.position.set(slot.position.x, 0.12, slot.position.z);
+    syncLifeHot();
+    syncQuizUI();
     state.drawn.scene = sc;
   }
 
@@ -1403,9 +1633,11 @@ import * as THREE from './assets/optics-three.min.js';
 
     let hint;
     if (state.scene === 'life') {
-      hint = state.lifePick < 0
+      const i = state.lifePick;
+      hint = i < 0
         ? '点击台面上的任意一个物件，判断它属于哪种物态变化、是吸热还是放热。<b>其中有一个不是升华也不是凝华</b> —— 找出来，说说为什么。'
-        : `<b>${LIFE[state.lifePick].name}</b>：${LIFE[state.lifePick].ans}。`;
+        : `<b>${LIFE[i].name}</b>：${LIFE[i].q} 在右边「⑦ 现象判读」里选答案，两问都选了才能提交。`
+          + (state.quiz.graded[i] ? `<br>${LIFE[i].ans}。` : '');
     } else if (state.scene === 'dryice') {
       hint = state.dryIce <= 1e-3
         ? '干冰已经全部升华完。注意白雾一直<b>贴着台面往下沉</b> —— 因为二氧化碳比空气重，而且它升华时吸走了周围的热，让空气中的水蒸气液化成小水珠，所以白雾不是二氧化碳本身。'
@@ -1457,6 +1689,18 @@ import * as THREE from './assets/optics-three.min.js';
 
   function animateParts(dt) {
     clock += dt;
+    /* 判读高亮盒：缓慢呼吸。不呼吸的话，一个半透明的黄盒子贴在深色器材上
+       很容易被当成「材质渲染错了」；呼吸起来才一眼看出是「这里在闪」。
+       ★ 记进 state.drawn —— 自检读的是【真正画出去的那个透明度】，不是意图值。 */
+    if (lifeHot.visible) {
+      lifeHot.material.opacity = 0.16 + 0.14 * (0.5 + 0.5 * Math.sin(clock * 3.4));
+      state.drawn.hotOpacity = +lifeHot.material.opacity.toFixed(4);
+      /* 生活场景里酒精灯是关的，没有别的东西会把画面标脏 ⇒ 呼吸就看不见了。
+         自己标脏，保证每帧都重画。 */
+      dirty = true;
+    } else {
+      state.drawn.hotOpacity = 0;
+    }
     const wantLamp = (state.lampOn && (state.scene === 'iodine' || state.scene === 'dryice')) ? 1 : 0;
     state.lampAnim += (wantLamp - state.lampAnim) * clamp(dt * 3.4, 0, 1);
     const on = state.lampAnim > 0.02;
@@ -1664,6 +1908,12 @@ import * as THREE from './assets/optics-three.min.js';
   tgl('toggleGuide', 'guide');
   tgl('toggleMicro', 'micro');
 
+  /* 现象判读：选项按钮由 CHANGES / HEATS 现建；提交 / 重做两个动作走函数，不走按钮文案 */
+  buildQuizChoices();
+  if (QUIZ_EL.submit) QUIZ_EL.submit.addEventListener('click', () => { submitQuiz(); });
+  if (QUIZ_EL.clear) QUIZ_EL.clear.addEventListener('click', () => { clearQuiz(); });
+  syncQuizUI();
+
   /* ==========================================================================
      十四、步骤与记录
      ========================================================================== */
@@ -1673,7 +1923,7 @@ import * as THREE from './assets/optics-three.min.js';
     { name: '03 凝华：长在最冷面', text: '<strong>凝华：</strong>把<b>冷玻璃片</b>插进锤内。蒸气遇到最冷的那个面，就直接变回固态、长出有光泽的<b>晶体</b> —— 这是<b>凝华</b>（气→固），同样<b>不经过液态</b>。把冷片从<b>球泡上部</b>挪到<b>锤底</b>，看晶体跟着谁走：晶体永远长在<b>最冷</b>的面上。' },
     { name: '04 干冰与白雾', text: '<strong>干冰：</strong>切到「干冰」场景。干冰是固态二氧化碳，常温下直接升华成气体。<b>白雾往下沉</b>，不是往上飘 —— 因为二氧化碳比空气重；而且白雾是干冰<b>吸热</b>把空气中水蒸气液化出来的小水珠，<b>不是二氧化碳本身</b>。' },
     { name: '05 霜与凝华放热', text: '<strong>霜：</strong>切到「霜」场景。空气中的水蒸气直接在冷玻璃片上<b>凝华</b>成霜，<b>从边缘和划痕开始长</b>（那里最先冷下来），枝晶朝里伸。霜、雾凇、雪都是这样形成的；凝华和升华相反，是<b>放热</b>的。' },
-    { name: '06 生活现象判读', text: '<strong>判读：</strong>切到「生活现象」场景，六件东西一件件点过去。干冰、樟脑丸、白炽灯泡、结霜的玻璃片、雾凇，都是<b>升华</b>或<b>凝华</b>（固⇄气直来直去，全程没有液体）。<b>但「冰棍冒白气」不是</b> —— 那是空气中的水蒸气遇到冰棍<b>液化</b>成的小水珠，中间<b>出现了液态</b>。把「冒白气」一律当成升华，是最常见的前概念错误。' }
+    { name: '06 生活现象判读', text: '<strong>判读（要作答）：</strong>切到「生活现象」场景，六件东西一件件点过去，在右边「⑦ 现象判读」里各选<b>两问</b>：这一件属于<b>六种物态变化里的哪一种</b>、是<b>吸热还是放热</b>。两问都选了才能提交，提交后会在 3D 场景里<b>高亮发生变化的那个部位</b>（灯泡亮的是钨丝，冰棍亮的是它外面的白气）。<br>干冰、樟脑丸、白炽灯泡是<b>升华</b>（固→气，吸热），结霜的玻璃片、雾凇是<b>凝华</b>（气→固，放热）。<b>但「冰棍冒白气」不是</b> —— 那是空气中的水蒸气遇到冰棍<b>液化</b>成的小水珠，中间<b>出现了液态</b>。把「冒白气」一律当成升华，是最常见的前概念错误。' }
   ];
   const stepButtons = Array.from(document.querySelectorAll('[data-step]'));
   const stepDetail = $('stepDetail');
@@ -1820,6 +2070,51 @@ import * as THREE from './assets/optics-three.min.js';
     setRunning, setScene, setLampOn, resetSim, updateAll, updateVisibility, updateCamera, setView,
     clearRecords, renderRecords, drawChart, drawMicro, microStats, updateReadouts,
     statusText, shortState, pickLife,
+    /* 现象判读（顺序 7）：选项表、判分、高亮盒 —— 全部原样交出去，
+       自检不自己重抄一份选项表或正确答案（自抄一份就变成「两边各写一遍」的盲点）。 */
+    CHANGES, HEATS, lifeSlots, lifeHot,
+    pickChange, pickHeat, submitQuiz, clearQuiz, resetQuiz, syncQuizUI, syncLifeHot,
+    quizScore, quizAnswered, buildQuizChoices, QUIZ_EL,
+    quizInfo() {
+      const i = state.lifePick;
+      const kids = QUIZ_EL.kinds ? Array.from(QUIZ_EL.kinds.children) : [];
+      const hts = QUIZ_EL.heats ? Array.from(QUIZ_EL.heats.children) : [];
+      const keysOf = (arr, cls) => arr.filter((b) => b.classList.contains(cls))
+        .map((b) => b.dataset.change || b.dataset.heat);
+      return {
+        n: LIFE.length,
+        changes: CHANGES.map((c) => c.key),
+        heats: HEATS.map((h) => h.key),
+        /* 每件的正确答案 —— 从 LIFE 现取，自检那边另抄一份就抓不住「答案被改错」 */
+        correct: LIFE.map((x) => ({ kind: x.kind, heat: x.heat, hot: !!x.hot })),
+        picked: state.lifePick,
+        kind: i >= 0 ? state.quiz.kind[i] : null,
+        heat: i >= 0 ? state.quiz.heat[i] : null,
+        graded: i >= 0 ? state.quiz.graded[i] : false,
+        ok: i >= 0 ? state.quiz.ok[i] : false,
+        score: quizScore(),
+        answered: quizAnswered(),
+        gradedAll: state.quiz.graded.slice(),
+        okAll: state.quiz.ok.slice(),
+        /* 高亮盒读的是【画出去的那个量】：位置 / 尺寸 / 透明度 / 开关 */
+        hotOn: state.drawn.hotOn === true,
+        hotIndex: state.drawn.hotIndex,
+        hotDy: state.drawn.hotDy,
+        hotOpacity: state.drawn.hotOpacity || 0,
+        hotPos: [+lifeHot.position.x.toFixed(3), +lifeHot.position.y.toFixed(3), +lifeHot.position.z.toFixed(3)],
+        hotScale: [+lifeHot.scale.x.toFixed(3), +lifeHot.scale.y.toFixed(3), +lifeHot.scale.z.toFixed(3)],
+        optionButtons: { kinds: kids.length, heats: hts.length },
+        panelHidden: QUIZ_EL.group ? QUIZ_EL.group.hidden : null,
+        submitDisabled: QUIZ_EL.submit ? QUIZ_EL.submit.disabled : null,
+        disabledKinds: kids.filter((b) => b.disabled).length,
+        disabledHeats: hts.filter((b) => b.disabled).length,
+        okKinds: keysOf(kids, 'ok'), badKinds: keysOf(kids, 'bad'),
+        okHeats: keysOf(hts, 'ok'), badHeats: keysOf(hts, 'bad'),
+        qText: QUIZ_EL.q ? QUIZ_EL.q.textContent : '',
+        resultText: QUIZ_EL.result ? QUIZ_EL.result.textContent : '',
+        hintText: els.finding ? els.finding.textContent : ''
+      };
+    },
     /* 生活现象判读：把「有几件、分别叫什么、答案是什么」原样交出来。
        冰棍那一项是本页唯一【故意放进来的反例】，答案必须是液化 —— 写错的话
        整排就从「纠错题库」变成「错误示范」，而画面上完全看不出来。 */
