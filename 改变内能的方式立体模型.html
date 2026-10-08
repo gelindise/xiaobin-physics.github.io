@@ -313,7 +313,7 @@ var state = {
   // 引火仪
   c:1, cTarget:1, T:T0K, cottonBurnt:false, ignT:null, pressT:0, auto:null,
   // 打气瓶
-  p:0, Tb:T0K, corkOff:false, corkY:0, corkVy:0, corkX:0, corkVx:0, corkGone:false, corkT:null, mist:0, pumps:0, pumpRod:0,
+  p:0, Tb:T0K, corkOff:false, corkY:0, corkVy:0, corkX:0, corkVx:0, corkGone:false, corkT:null, mist:0, pumps:0, pumpRod:1,
   // 两块金属
   T1:353.15, T2:T0K, x2:BLOCK2_X0, touched:false, tTouch:null, qFlow:0,
   view:'default', azim:VIEWS['default'].azim, elev:VIEWS['default'].elev, zoom:VIEWS['default'].zoom,
@@ -440,6 +440,29 @@ function cylTop(cx,y,r,q,c,fill,stroke,lw){
   if(fill){ c.fillStyle=fill; c.fill(); }
   if(stroke){ c.strokeStyle=stroke; c.lineWidth=lw||1; c.stroke(); }
 }
+// 任意方向的圆柱 / 圆台（竖直以外的管件：打气筒下部的出气口接头、软管分段）。
+// ring() 只能画水平圆，画不了这些；这里自建一组垂直于轴的正交基 u/v，
+// 侧面轮廓仍复用 frustumSolid 那套 frontArc（按投影深度选近侧母线）。
+function solidBetween(p0,p1,r0,r1,q,c,fill,stroke,lw){
+  var ax = norm(sub(p1,p0));
+  var ref = Math.abs(ax[1])>0.9 ? [1,0,0] : [0,1,0];
+  var u = norm(cross(ax,ref)), v = norm(cross(ax,u));
+  function ringAt(p,r,n){
+    n=n||44; var out=[];
+    for(var i=0;i<n;i++){ var a=i/n*Math.PI*2;
+      out.push(project(add(p, add(scl(u,r*Math.cos(a)), scl(v,r*Math.sin(a)))), q)); }
+    return out;
+  }
+  var A=ringAt(p0,r0), B=ringAt(p1,r1);
+  var eA=ringExtremes(A), eB=ringExtremes(B);
+  c.beginPath();
+  frontArc(c,B,eB[0],eB[1],true);
+  c.lineTo(A[eA[1]].x, A[eA[1]].y);
+  frontArc(c,A,eA[1],eA[0],false);
+  c.closePath();
+  if(fill){ c.fillStyle=fill; c.fill(); }
+  if(stroke){ c.strokeStyle=stroke; c.lineWidth=lw||1; c.stroke(); }
+}
 // 长方体：背面剔除 + 可见面按深度排序
 function boxSolid(cx,cy,cz,hx,hy,hz,q,c,fill,stroke,lw){
   var V=[];
@@ -518,7 +541,10 @@ function flushLabels(c){
 // 活塞底面高度：唯一的换算点。拖动反解、绘制、自检全部走它，不再各写一遍公式。
 function pistonYAt(c){ return CIN0 + (CIN1-CIN0)/clamp(c,1,C_MAX); }
 function pistonBottomY(){ return pistonYAt(state.c); }
-function corkRestY(){ return 11.40; }
+// 瓶塞静止位置：塞底要【插进瓶口】里（瓶口顶 = N_Y1），不能悬在瓶口上方 ——
+// 旧值 11.40 让塞子浮在瓶口顶之上 0.30，看起来像「根本没塞紧」；
+// 而塞不紧就漏气、气压升不上去，这个实验根本做不成。
+function corkRestY(){ return N_Y1 - 0.62; }
 function touching(){ return Math.abs(state.x2 - BLOCK1_X) <= 2*BOX_HX + TOUCH_GAP; }
 
 function stepPhysics(dt){
@@ -700,6 +726,75 @@ function drawCompress(q,c){
 }
 // ---- 装置 2：打气瓶与瓶塞 ----
 var B_Y0=1.20, B_Y1=8.60, B_R=2.65, N_Y1=11.10, N_R=1.02;
+// 打气筒几何。出气口必须落在筒身【下部】——旧版把导管接到筒身顶部（y=6.10）是错的。
+var P_X = 6.2;                            // 打气筒轴心
+var P_BASE0 = 1.20, P_BASE1 = 1.46, P_BASE_R = 1.26;   // 底座圆盘
+var P_TUBE0 = 1.46, P_TUBE1 = 6.70, P_TUBE_R = 0.85;   // 筒身
+var P_CAP1  = 6.94, P_CAP_R  = 0.92;                   // 顶盖
+var P_OUT_Y = 2.55;                       // 出气口高度（筒身下部，不是顶部）
+var P_OUT_X = P_X - 1.34;                 // 出气口外端（朝瓶子一侧伸出）
+var CORK_H = 1.30, CORK_R = N_R*1.06;     // 塞高 / 塞半径（略大于瓶口内径 → 气密）
+var HOSE_JOINT_DY = 0.80;                 // 软管接口在瓶塞侧面、距塞底的高度
+var HOSE_R = 0.115;                       // 软管半径（世界单位）
+
+// 软管中心线的 3D 控制点：打气筒【下部】出气口 → 绕过瓶身外侧 → 接到【瓶塞侧面】。
+// 旧实现是「瓶口正上方 → 打气筒上部」的一条细线，两端都接错了地方。
+// 瓶塞飞出后整条软管跟着瓶塞平移 —— 它插在塞子上，塞子被冲出来时会把管子一起拽出来。
+function hosePoints(){
+  var jy = corkRestY() + HOSE_JOINT_DY;
+  var rest = [
+    [P_OUT_X,   P_OUT_Y,   0    ],   // 出气口外端
+    [4.55,      2.62,      0.34 ],
+    [3.72,      4.70,      0.52 ],
+    [3.22,      7.30,      0.40 ],
+    [2.70,      9.70,      0.16 ],
+    [1.86,     10.86,      0.02 ],
+    [1.00,      jy,        0    ]    // 插进瓶塞侧面
+  ];
+  if(!state.corkOff) return rest;
+  // 瓶塞飞出：软管插在塞子上、被一起拽走；另一端从打气筒接口脱开。
+  // 🔴 软管是柔性的 —— 不能保持原形状整体平移：那样它的下端会悬到打气筒【上方】，
+  //    看起来像从筒顶钻出来。真实情形是它【挂在塞子上向下垂】。
+  // 🔴 下标必须与 rest 对齐：rest[0] 是【出气口端】、rest[6] 是【瓶塞接口端】。
+  //    脱开后 rest[0] 变成自由端（挂在塞子下方），rest[6] 跟着瓶塞走。
+  var bx = state.corkX, by = state.corkY, N = 7, free = [];
+  for(var i=0;i<N;i++){
+    var u = i/(N-1);                                  // 0 = 自由端，1 = 塞子接口端
+    free.push([
+      (bx+0.90)*(1-u) + (1.00+bx)*u,
+      jy + by - 7.00*Math.pow(1-u, 1.25),              // 垂足长度按软管原长（≈10）取，避免脱开后「缩水」
+      0.80*Math.sin(u*Math.PI)                         // 侧向摆
+    ]);
+  }
+  var t = clamp(state.corkY/1.8, 0, 1);               // 刚被拽起 → 完全垂下
+  for(var i=0;i<N;i++){ for(var j=0;j<3;j++) rest[i][j] = rest[i][j]*(1-t) + free[i][j]*t; }
+  return rest;
+}
+// 画软管：3D 控制点 → 投影 → 二次贝塞尔平滑 → 三层描边（暗轮廓 / 管身 / 高光）
+function drawHose(q,c,pts){
+  var sp = pts.map(function(p){ return project(p,q); });
+  var zAvg = 0; for(var i=0;i<sp.length;i++) zAvg += sp[i].z; zAvg /= sp.length;
+  var w0 = Math.max(2.5, 2*HOSE_R*q.focal/zAvg);     // 屏幕管径（下限给到 2.5px，不能再高：
+                                                     // 4px 的下限会把「细管」兜成 4px，让自检的可见性判据恒真）
+  function strokeLine(width, color){
+    c.beginPath();
+    c.moveTo(sp[0].x, sp[0].y);
+    for(var i=1;i<sp.length-1;i++){
+      var mx=(sp[i].x+sp[i+1].x)/2, my=(sp[i].y+sp[i+1].y)/2;
+      c.quadraticCurveTo(sp[i].x, sp[i].y, mx, my);
+    }
+    c.lineTo(sp[sp.length-1].x, sp[sp.length-1].y);
+    c.strokeStyle=color; c.lineWidth=width;
+    c.lineCap='round'; c.lineJoin='round'; c.stroke();
+  }
+  strokeLine(w0*1.30, 'rgba(15,23,42,.92)');         // 外轮廓（暗）
+  strokeLine(w0*1.00, 'rgba(120,134,155,.98)');      // 管身
+  strokeLine(w0*0.34, 'rgba(226,240,252,.55)');      // 高光
+  drawn.hose = sp;
+  drawn.hosePts = pts;
+  drawn.hoseWidth = w0;
+  return sp;
+}
 function drawBottle(q,c){
   var pT = clamp(state.p/P_POP,0,1.2);
   // 瓶身
@@ -730,28 +825,48 @@ function drawBottle(q,c){
     g2.addColorStop(0,'rgba(251,191,36,'+(0.20*pT)+')'); g2.addColorStop(1,'rgba(251,191,36,0)');
     c.fillStyle=g2; c.beginPath(); c.arc(cp.x,cp.y,rad2,0,Math.PI*2); c.fill();
   }
-  // 瓶塞（飞出画面后不再画）
+  // 瓶塞：塞进瓶口里（外径略大于瓶口内径 → 靠橡胶弹性密封），只露出上面一段。
+  // 飞出画面之后就不再画它 —— 现实里它确实是飞走了。
   var corkY = corkRestY() + state.corkY, corkX = state.corkX;
   if(!state.corkGone){
-    cylSolid(corkX, corkY, corkY+1.30, N_R*0.96, q, c, '#b98a54', 'rgba(230,200,160,.7)', 1.2);
-    cylTop(corkX, corkY+1.30, N_R*0.96, q, c, '#cfa26a', 'rgba(240,214,178,.8)', 1.2);
+    cylSolid(corkX, corkY, corkY+CORK_H, CORK_R, q, c, '#b98a54', 'rgba(230,200,160,.7)', 1.2);
+    cylTop(corkX, corkY+CORK_H, CORK_R, q, c, '#cfa26a', 'rgba(240,214,178,.8)', 1.2);
   }
-  // 打气筒
-  var px = 6.2;
-  cylSolid(px, 1.20, 6.40, 0.85, q, c, '#6b7789', 'rgba(190,215,235,.5)', 1.1);
-  cylTop(px, 6.40, 0.85, q, c, '#8593a8', 'rgba(200,225,245,.6)', 1.1);
-  var pumpTop = 6.40 + state.pumpRod*3.2;
-  cylSolid(px, 6.40, pumpTop, 0.24, q, c, '#7f8ca0', 'rgba(210,228,244,.5)', 1);
-  var pp = project([px,pumpTop,0],q);
-  var hw2 = Math.max(8, q.focal*1.20/pp.z);
+  // ---- 打气筒（底座 → 筒身 → 顶盖 → 活塞杆 → T 形手柄；出气口在【下部】）----
+  frustumSolid(P_X, P_BASE0, P_BASE1, P_BASE_R, P_BASE_R-0.10, q, c, '#48566b', 'rgba(190,215,235,.42)', 1.1);
+  cylTop(P_X, P_BASE1, P_BASE_R-0.10, q, c, '#5a6a80', 'rgba(200,225,245,.5)', 1);
+  cylSolid(P_X, P_TUBE0, P_TUBE1, P_TUBE_R, q, c, '#6b7789', 'rgba(190,215,235,.5)', 1.1);
+  frustumSolid(P_X, P_TUBE1, P_CAP1, P_TUBE_R+0.16, P_CAP_R, q, c, '#9aa8bd', 'rgba(210,232,248,.75)', 1.2);
+  cylTop(P_X, P_CAP1, P_CAP_R, q, c, '#aab7c8', 'rgba(226,240,252,.8)', 1.2);
+  // 活塞杆：必须看得见 —— 旧值半径 0.22 + 暗色，画出来几乎是一条看不见的线
+  var pumpTop = P_CAP1 + state.pumpRod*3.4;
+  cylSolid(P_X, P_CAP1, pumpTop, 0.27, q, c, '#a3b0c2', 'rgba(226,240,252,.85)', 1.2);
+  // T 形手柄：横杆 + 两端球头
+  var pp = project([P_X,pumpTop,0],q);
+  var hw2 = Math.max(8, q.focal*1.05/pp.z);
   c.beginPath(); c.moveTo(pp.x-hw2,pp.y); c.lineTo(pp.x+hw2,pp.y);
-  c.strokeStyle='rgba(251,191,36,.9)'; c.lineWidth=Math.max(4,hw2*0.32); c.lineCap='round'; c.stroke(); c.lineCap='butt';
-  // 导管
-  var a1=project([0, N_Y1+0.35, 0],q), a2=project([px, 6.10, 0],q);
-  c.beginPath(); c.moveTo(a1.x,a1.y);
-  c.bezierCurveTo(a1.x, a1.y-26, a2.x, a2.y-30, a2.x, a2.y);
-  c.strokeStyle='rgba(203,213,225,.5)'; c.lineWidth=3; c.stroke();
+  c.strokeStyle='rgba(251,191,36,.9)'; c.lineWidth=Math.max(4,hw2*0.30); c.lineCap='round'; c.stroke(); c.lineCap='butt';
+  dot2({x:pp.x-hw2,y:pp.y}, Math.max(2.5,hw2*0.18), 'rgba(251,191,36,.95)', c);
+  dot2({x:pp.x+hw2,y:pp.y}, Math.max(2.5,hw2*0.18), 'rgba(251,191,36,.95)', c);
+  // 出气口接头：从筒身【下部】朝瓶子一侧伸出
+  solidBetween([P_X-0.72, P_OUT_Y, 0], [P_OUT_X, P_OUT_Y, 0], 0.21, 0.17, q, c, '#8593a8', 'rgba(200,225,245,.6)', 1.1);
   drawn.pump = pp;
+  drawn.pumpBody = {x:P_X, base0:P_BASE0, base1:P_BASE1, baseR:P_BASE_R,
+                    tube0:P_TUBE0, tube1:P_TUBE1, tubeR:P_TUBE_R, cap1:P_CAP1,
+                    outY:P_OUT_Y, outX:P_OUT_X};
+  // ---- 软管：下部出气口 → 绕过瓶身外侧 → 瓶塞侧面（瓶塞飞出时挂在塞子上一起走）----
+  if(!state.corkGone){
+    drawHose(q, c, hosePoints());
+    // 接口卡箍：让「软管插进瓶塞」这件事一眼可读
+    var jy = corkRestY() + HOSE_JOINT_DY;
+    solidBetween([1.30+corkX, jy+state.corkY, 0], [0.88+corkX, jy+state.corkY, 0],
+                 0.155, 0.155, q, c, '#9aa8bd', 'rgba(226,240,252,.7)', 1.1);
+  } else {
+    drawn.hoseGone = true;
+  }
+  drawn.corkBase = [corkX, corkY, 0];
+  drawn.corkR = CORK_R;
+  drawn.corkTop = corkY + CORK_H;
   return {corkY:corkY, corkX:corkX};
 }
 // ---- 装置 3：两块金属 ----
@@ -913,7 +1028,7 @@ function resetMode(){
   } else if(state.mode==='bottle'){
     state.p=0; state.Tb=T0K; state.corkOff=false; state.corkY=0; state.corkVy=0;
     state.corkX=0; state.corkVx=0; state.corkGone=false; state.corkT=null; state.mist=0; state.pumps=0;
-    state.pumpRod=0;
+    state.pumpRod=1;
   } else {
     state.T1=353.15; state.T2=T0K; state.x2=BLOCK2_X0; state.touched=false; state.tTouch=null; state.qFlow=0;
   }
@@ -945,7 +1060,7 @@ function pumpOnce(){
   state.pumps++;
   state.p = Math.min(state.p + P_PUMP, P_POP);
   state.Tb += T_PUMP;
-  state.pumpRod = 1;
+  state.pumpRod = 0;   // 手柄压到底（真实打气筒：按下时杆缩进筒里，松开才弹回）
   state.lastEvent = 'pump';
   if(state.p >= P_POP - 1e-9){
     // 瓶塞飞出：气体对外做功，内能减少
@@ -1245,7 +1360,9 @@ function stepAuto(dt){
   // 手动下压：只在活塞【还在动】的时候计时，停下就不再累加
   // （否则干等一会儿 pressT 会一直涨，「压得够快」这条判定会自己翻成 false）
   if(state.mode==='compress' && !state.auto && !drag && state.c < state.cTarget - 1e-3) state.pressT += dt;
-  if(state.pumpRod>0) state.pumpRod = Math.max(0, state.pumpRod - dt*3.2);
+  // 打气杆回弹：pumpRod 0 = 压到底，1 = 回到最高位。
+  // 真实打气筒是「按下 → 弹回」；旧实现写反了（越打气杆伸得越长）。
+  if(state.pumpRod<1) state.pumpRod = Math.min(1, state.pumpRod + dt*1.9);
 }
 function stepFrame(dt){ stepAuto(dt); stepPhysics(dt); }
 
@@ -1287,7 +1404,9 @@ window.__ice = {
     BOX_HX:BOX_HX, BOX_HY:BOX_HY, BOX_HZ:BOX_HZ, TOUCH_GAP:TOUCH_GAP, TABLE:TABLE, CONTACT:CONTACT,
     BLOCK1_X:BLOCK1_X, BLOCK2_X0:BLOCK2_X0, BLOCK2_X1:BLOCK2_X1,
     CY0:CY0, CY1:CY1, CIN0:CIN0, CIN1:CIN1, R_OUT:R_OUT, R_IN:R_IN,
-    B_Y0:B_Y0, B_Y1:B_Y1, B_R:B_R, N_Y1:N_Y1, N_R:N_R, CORK_REST_Y:corkRestY()
+    B_Y0:B_Y0, B_Y1:B_Y1, B_R:B_R, N_Y1:N_Y1, N_R:N_R, CORK_REST_Y:corkRestY(),
+    CORK_R:CORK_R, CORK_H:CORK_H, P_X:P_X, P_TUBE0:P_TUBE0, P_TUBE1:P_TUBE1, P_TUBE_R:P_TUBE_R,
+    P_OUT_Y:P_OUT_Y, P_OUT_X:P_OUT_X, P_BASE_R:P_BASE_R, HOSE_JOINT_DY:HOSE_JOINT_DY, HOSE_R:HOSE_R
   },
   MODES: MODES, VIEWS: VIEWS, ENV_OF: ENV_OF,
   get ENV(){ return ENV; },
