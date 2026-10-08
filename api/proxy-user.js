@@ -144,7 +144,7 @@ module.exports = async (req, res) => {
       var stored = await getAdminHash();
       if (!stored) {
         return res.status(503).json({
-          error: '服务端尚未配置管理员密码：请在数据库执行 app_settings 建表脚本，或设置环境变量 ADMIN_PASSWORD 后重新部署',
+          error: '服务端尚未配置管理员密码。二选一：① 执行 outputs/security-hardening.sql 建 app_settings 表（推荐，同时会关闭激活码与用户列表的匿名可读）；② 在 Vercel 设置环境变量 ADMIN_PASSWORD 后重新部署（无需建表）',
         });
       }
       if (!adminTokenOk(readToken(req), stored)) {
@@ -157,7 +157,7 @@ module.exports = async (req, res) => {
       var s = await getAdminHash();
       if (!s) {
         return res.status(503).json({
-          error: '服务端尚未配置管理员密码：请在数据库执行 app_settings 建表脚本，或设置环境变量 ADMIN_PASSWORD 后重新部署',
+          error: '服务端尚未配置管理员密码。二选一：① 执行 outputs/security-hardening.sql 建 app_settings 表（推荐，同时会关闭激活码与用户列表的匿名可读）；② 在 Vercel 设置环境变量 ADMIN_PASSWORD 后重新部署（无需建表）',
         });
       }
       if (!adminTokenOk(readToken(req), s)) {
