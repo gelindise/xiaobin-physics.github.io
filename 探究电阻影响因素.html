@@ -1,0 +1,725 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>探究影响电阻大小的因素</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="stylesheet" href="style.css">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif; background: #f1f5f9; }
+    .exp-wrap { max-width: 1200px; margin: 0 auto; padding: 0 16px 40px; }
+    .exp-wrap h2 { color: #1e293b; font-size: 24px; margin-bottom: 4px; }
+    .exp-wrap .sub { color: #64748b; font-size: 14px; margin-bottom: 20px; }
+    .main-card { background: #fff; border-radius: 14px; padding: 16px; border: 1px solid #e2e8f0; box-shadow: 0 1px 3px rgba(0,0,0,0.06); margin-bottom: 16px; }
+    .canvas-wrap { position: relative; display: block; border-radius: 8px; overflow: hidden; border: 1px solid #e2e8f0; line-height: 0; background: #fafafa; }
+    .canvas-wrap canvas { display: block; width: 100%; height: auto; cursor: pointer; }
+
+    .ctrl-bar { display: flex; gap: 10px; margin-top: 12px; flex-wrap: wrap; align-items: center; }
+    .ctrl-bar button { padding: 8px 18px; border: 1px solid #cbd5e1; border-radius: 8px; background: #fff; color: #1e293b; font-size: 13px; cursor: pointer; transition: all 0.15s; font-weight: 500; }
+    .ctrl-bar button:hover { background: #f1f5f9; }
+    .ctrl-bar button.active { background: #fef3c7; border-color: #f59e0b; color: #92400e; }
+
+    .info-group { display: flex; gap: 20px; margin-left: auto; align-items: center; }
+    .info-item { display: flex; align-items: center; gap: 6px; }
+    .info-item .label { color: #64748b; font-size: 12px; }
+    .info-item .value { font-family: 'SF Mono', 'Consolas', monospace; font-size: 18px; font-weight: 700; color: #2563eb; min-width: 40px; text-align: right; }
+    .info-item .unit { color: #64748b; font-size: 12px; }
+
+    .status-row { display: flex; gap: 16px; margin-top: 12px; font-size: 13px; color: #475569; align-items: center; flex-wrap: wrap; }
+    .status-badge { display: flex; align-items: center; gap: 6px; padding: 4px 12px; border-radius: 12px; font-weight: 600; font-size: 12px; }
+    .status-badge.on { background: rgba(22,163,74,0.1); color: #16a34a; }
+    .status-badge.off { background: rgba(239,68,68,0.1); color: #dc2626; }
+    .status-badge .dot { width: 8px; height: 8px; border-radius: 50%; }
+    .status-badge.on .dot { background: #16a34a; box-shadow: 0 0 6px #16a34a; }
+    .status-badge.off .dot { background: #dc2626; }
+
+    .tips-box { background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 10px; padding: 12px 16px; margin-top: 12px; }
+    .tips-box h4 { color: #1e40af; font-size: 14px; margin-bottom: 6px; }
+    .tips-box ul { color: #3b82f6; font-size: 13px; padding-left: 20px; line-height: 1.8; }
+    .tips-box li { margin-bottom: 2px; }
+
+    .header { position: fixed !important; top: 0; left: 0; right: 0; transition: transform 0.35s; will-change: transform; z-index: 100; }
+    .header.hidden { transform: translateY(-100%); }
+    body { padding-top: 56px; transition: padding-top 0.35s; }
+    body.header-hidden { padding-top: 0; }
+  </style>
+  <script src="protect.js"></script>
+  <script src="auth-check.js"></script>
+</head>
+<body>
+  <header class="header">
+    <div class="logo">物理虚拟实验平台</div>
+    <nav class="nav">
+      <a href="experiments.html">实验目录</a>
+      <a href="index.html">首页</a>
+    </nav>
+  </header>
+
+  <div class="exp-wrap">
+    <h2>探究影响电阻大小的因素</h2>
+    <p class="sub">点击开关闭合/断开电路 | 点击电阻丝切换材料 | 观察小灯泡亮度变化</p>
+
+    <div class="main-card">
+      <div class="canvas-wrap">
+        <canvas id="simCanvas"></canvas>
+      </div>
+
+      <div class="ctrl-bar">
+        <button id="btnSwitch" onclick="toggleSwitch()">🔌 开关</button>
+        <button id="btnCopper" class="active" onclick="selectWire('copper')">🟡 铜丝</button>
+        <button id="btnNickel" onclick="selectWire('nickel')">⚫ 镍铬合金丝</button>
+        <button onclick="toggleFullscreen()">⛶ 全屏</button>
+
+        <div class="info-group">
+          <div class="info-item">
+            <span class="label">电流</span>
+            <span class="value" id="valCurrent">0.00</span>
+            <span class="unit">A</span>
+          </div>
+          <div class="info-item">
+            <span class="label">电阻</span>
+            <span class="value" id="valResistance">0.0</span>
+            <span class="unit">Ω</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="status-row">
+        <span class="status-badge off" id="statusBulb"><span class="dot"></span>小灯泡：熄灭</span>
+        <span class="status-badge off" id="statusSwitch"><span class="dot"></span>开关：断开</span>
+        <span style="margin-left:auto;color:#64748b;">💡 提示：铜丝电阻小，灯泡亮；镍铬合金丝电阻大，灯泡暗</span>
+      </div>
+
+      <div class="tips-box">
+        <h4>📚 实验原理</h4>
+        <ul>
+          <li><strong>控制变量法</strong>：保持电压不变，改变电阻丝材料，观察电流和灯泡亮度变化</li>
+          <li><strong>欧姆定律</strong>：I = U / R，电压一定时，电阻越大，电流越小</li>
+          <li><strong>结论</strong>：导体的电阻与材料有关，铜的导电性比镍铬合金好</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <script src="supabase.js"></script>
+  <script src="script.js"></script>
+
+<script>
+(function() {
+  // ============ Canvas 设置 ============
+  var canvas = document.getElementById('simCanvas');
+  var ctx = canvas.getContext('2d');
+  var CANVAS_W = 1000, CANVAS_H = 550;
+  canvas.width = CANVAS_W; canvas.height = CANVAS_H;
+
+  // ============ 配色方案 ============
+  var C = {
+    BENCH: '#f0ebe3', BENCH_D: '#e5dfd7',
+    CELL_TOP: '#fef9c3', CELL_MID: '#facc15', CELL_BOT: '#d97706',
+    CELL_BORDER: '#92400e',
+    BRASS: '#c4943a', BRASS_DARK: '#8b6914', BRASS_HI: '#e8c866',
+    HOLDER: '#94a3b8', HOLDER_B: '#64748b',
+    POST_RED: '#dc2626', POST_RED_HI: '#f87171',
+    POST_BLUE: '#1e40af', POST_BLUE_HI: '#60a5fa',
+    POST_SHAFT: '#64748b',
+    FILAMENT_ON: '#fbbf24', FILAMENT_OFF: '#64748b',
+    GLASS_SEAL: '#94a3b8',
+    CERAMIC: '#ede8dc', CERAMIC_B: '#b8b0a0',
+    BLADE: '#bcc5d0', BLADE_B: '#7d8a96',
+    HANDLE: '#3b82f6', HANDLE_HI: '#60a5fa',
+    HINGE: '#475569', HINGE_HI: '#94a3b8',
+    PANEL: '#fdfcf7', PANEL_B: '#cbd5e1', DIVIDER: '#e2e8f0',
+    COPPER_WIRE: '#f59e0b', COPPER_GLOW: 'rgba(251,191,36,0.25)',
+    NICHROME: '#334155', NICHROME_GLOW: 'rgba(71,85,105,0.15)',
+    WIRE: '#d4a017', JOINT_OUT: '#d4a017', JOINT_IN: '#fde047'
+  };
+
+  // ============ 物理参数 ============
+  var VOLTAGE = 3.0;
+  var RESISTANCE_COPPER = 1.0, RESISTANCE_NICKEL = 10.0, BULB_RESISTANCE = 5.0;
+
+  // ============ 状态变量 ============
+  var switchClosed = false, selectedWire = 'copper', current = 0;
+  var bulbBrightness = 0, targetBrightness = 0;
+  var particles = [], particleSpeed = 0;
+  var hoverSwitch = false, hoverWire = null;
+
+  // ============ 元件坐标 ============
+  var battery = { x: 50, y: 120, w: 270, h: 130 };
+  var bulb = { x: 320, y: 385, r: 42 };
+  var switchObj = { x: 500, y: 375, w: 130, h: 70 };
+  var wirePanel = { x: 650, y: 60, w: 300, h: 195 };
+
+  // ============ 接线柱坐标预计算 ============
+  function getPC() {
+    var wY = selectedWire === 'copper' ? 95 : 220;
+    return {
+      batN: {x:38,y:185}, batP: {x:332,y:185},
+      bulL: {x:255,y:437}, bulR: {x:385,y:437},
+      swL: {x:515,y:437}, swR: {x:615,y:437},
+      pnL: {x:705,y:wY}, pnR: {x:895,y:wY},
+      flL: {x:310,y:399}, flR: {x:330,y:399}
+    };
+  }
+
+  // ============ 交互检测 ============
+  function isInSwitch(x, y) {
+    return x > 480 && x < 650 && y > 340 && y < 480;
+  }
+  function getClickedWire(x, y) {
+    if (y > 75 && y < 115 && x > 690 && x < 910) return 'copper';
+    if (y > 200 && y < 240 && x > 690 && x < 910) return 'nickel';
+    return null;
+  }
+
+  // ============ 事件处理 ============
+  canvas.addEventListener('click', function(e) {
+    var rect = canvas.getBoundingClientRect();
+    var sx = canvas.width / rect.width, sy = canvas.height / rect.height;
+    var x = (e.clientX - rect.left) * sx, y = (e.clientY - rect.top) * sy;
+    if (isInSwitch(x, y)) { toggleSwitch(); return; }
+    var w = getClickedWire(x, y);
+    if (w) { selectWire(w); return; }
+  });
+  canvas.addEventListener('mousemove', function(e) {
+    var rect = canvas.getBoundingClientRect();
+    var sx = canvas.width / rect.width, sy = canvas.height / rect.height;
+    var x = (e.clientX - rect.left) * sx, y = (e.clientY - rect.top) * sy;
+    hoverSwitch = isInSwitch(x, y);
+    hoverWire = getClickedWire(x, y);
+    canvas.style.cursor = (hoverSwitch || hoverWire) ? 'pointer' : 'default';
+  });
+
+  // ============ 公共API ============
+  window.toggleSwitch = function() { switchClosed = !switchClosed; updatePhysics(); updateUI(); };
+  window.selectWire = function(w) {
+    selectedWire = w; updatePhysics(); updateUI();
+    document.getElementById('btnCopper').classList.toggle('active', w === 'copper');
+    document.getElementById('btnNickel').classList.toggle('active', w === 'nickel');
+  };
+
+  // ============ 物理计算 ============
+  function updatePhysics() {
+    if (switchClosed) {
+      var wr = selectedWire === 'copper' ? RESISTANCE_COPPER : RESISTANCE_NICKEL;
+      current = VOLTAGE / (wr + BULB_RESISTANCE);
+      targetBrightness = Math.min(current / (VOLTAGE / (RESISTANCE_COPPER + BULB_RESISTANCE)), 1);
+      particleSpeed = current * 30;
+    } else { current = 0; targetBrightness = 0; particleSpeed = 0; }
+  }
+
+  // ============ UI更新 ============
+  function updateUI() {
+    document.getElementById('valCurrent').textContent = current.toFixed(2);
+    var wr = selectedWire === 'copper' ? RESISTANCE_COPPER : RESISTANCE_NICKEL;
+    document.getElementById('valResistance').textContent = wr.toFixed(1);
+    var ss = document.getElementById('statusSwitch');
+    if (switchClosed) {
+      ss.className = 'status-badge on'; ss.innerHTML = '<span class="dot"></span>开关：闭合';
+    } else {
+      ss.className = 'status-badge off'; ss.innerHTML = '<span class="dot"></span>开关：断开';
+    }
+    var bs = document.getElementById('statusBulb');
+    if (switchClosed && targetBrightness > 0.1) {
+      bs.className = 'status-badge on';
+      bs.innerHTML = targetBrightness > 0.5 ? '<span class="dot"></span>小灯泡：明亮' : '<span class="dot"></span>小灯泡：较暗';
+    } else {
+      bs.className = 'status-badge off'; bs.innerHTML = '<span class="dot"></span>小灯泡：熄灭';
+    }
+  }
+
+  // ============ 工具函数 ============
+  function drawRoundRect(x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.lineTo(x + w - r, y);
+    ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+    ctx.lineTo(x + w, y + h - r);
+    ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+    ctx.lineTo(x + r, y + h);
+    ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+    ctx.lineTo(x, y + r);
+    ctx.quadraticCurveTo(x, y, x + r, y);
+    ctx.closePath();
+  }
+
+  function drawBindingPost(bx, by, color, label) {
+    var mc = color === 'red' ? C.POST_RED : C.POST_BLUE;
+    var hc = color === 'red' ? C.POST_RED_HI : C.POST_BLUE_HI;
+    ctx.fillStyle = C.POST_SHAFT;
+    ctx.fillRect(bx - 3, by - 6, 6, 12);
+    ctx.fillStyle = mc;
+    ctx.beginPath(); ctx.arc(bx, by, 9, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = hc;
+    ctx.beginPath(); ctx.arc(bx - 2, by - 3, 4, 0, Math.PI * 2); ctx.fill();
+    if (label) {
+      ctx.fillStyle = '#fff'; ctx.font = 'bold 10px Arial';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(label, bx, by + 1);
+    }
+  }
+
+  // ============ 绘制函数 ============
+
+  // 电池组
+  function drawBattery() {
+    var x = battery.x, y = battery.y, w = battery.w, h = battery.h;
+    var midY = y + h/2, cellW = 110, cellH = h - 38, cellY2 = y + 10, cellGap = 6;
+
+    // 底座
+    ctx.fillStyle = C.HOLDER;
+    drawRoundRect(x - 6, y + h - 24, w + 12, 26, 6); ctx.fill();
+    ctx.strokeStyle = C.HOLDER_B; ctx.lineWidth = 1.5;
+    drawRoundRect(x - 6, y + h - 24, w + 12, 26, 6); ctx.stroke();
+
+    // 两节电池
+    var cell0Left = x + 20, cell0Right = cell0Left + cellW;
+    for (var i = 0; i < 2; i++) {
+      var cx2 = x + 20 + i * (cellW + cellGap);
+      var grad = ctx.createLinearGradient(cx2, cellY2, cx2, cellY2 + cellH);
+      grad.addColorStop(0, C.CELL_TOP); grad.addColorStop(0.4, C.CELL_MID); grad.addColorStop(1, C.CELL_BOT);
+      ctx.fillStyle = grad;
+      drawRoundRect(cx2, cellY2, cellW, cellH, 8); ctx.fill();
+      ctx.strokeStyle = C.CELL_BORDER; ctx.lineWidth = 1.5;
+      drawRoundRect(cx2, cellY2, cellW, cellH, 8); ctx.stroke();
+      // 正极帽
+      ctx.fillStyle = C.HOLDER;
+      ctx.fillRect(cx2 + cellW - 2, cellY2 + 4, 6, cellH - 8);
+      ctx.fillStyle = '#cbd5e1';
+      ctx.fillRect(cx2 + cellW - 1, cellY2 + 6, 4, cellH - 12);
+      // 负极端
+      ctx.fillStyle = C.HOLDER;
+      ctx.fillRect(cx2 - 6, midY - 7, 8, 14);
+      // 符号
+      ctx.fillStyle = C.POST_RED; ctx.font = 'bold 20px Arial';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('+', cx2 + cellW - 16, midY);
+      ctx.fillStyle = C.POST_BLUE;
+      ctx.fillText('−', cx2 + 16, midY);
+    }
+
+    // 串联桥
+    ctx.fillStyle = C.BRASS;
+    ctx.fillRect(cell0Right, midY - 7, cellGap, 14);
+    ctx.strokeStyle = C.BRASS_DARK; ctx.lineWidth = 1.5;
+    ctx.strokeRect(cell0Right, midY - 7, cellGap, 14);
+    ctx.fillStyle = C.BRASS_HI;
+    ctx.fillRect(cell0Right + 1, midY - 5, cellGap - 2, 3);
+
+    // 左连接片
+    ctx.fillStyle = C.BRASS;
+    ctx.fillRect(x + 3, midY - 6, cell0Left - (x + 3), 12);
+    ctx.strokeStyle = C.BRASS_DARK; ctx.lineWidth = 1.5;
+    ctx.strokeRect(x + 3, midY - 6, cell0Left - (x + 3), 12);
+    ctx.fillStyle = C.BRASS_HI;
+    ctx.fillRect(x + 5, midY - 4, cell0Left - (x + 5), 2);
+
+    // 右连接片
+    var rightS = cell0Right + cellGap + cellW; // cell1Right
+    ctx.fillStyle = C.BRASS;
+    ctx.fillRect(rightS, midY - 6, x + w - rightS, 12);
+    ctx.strokeStyle = C.BRASS_DARK; ctx.lineWidth = 1.5;
+    ctx.strokeRect(rightS, midY - 6, x + w - rightS, 12);
+    ctx.fillStyle = C.BRASS_HI;
+    ctx.fillRect(rightS + 2, midY - 4, x + w - rightS - 4, 2);
+
+    // 接线柱
+    drawBindingPost(38, midY, 'blue', '−');
+    drawBindingPost(332, midY, 'red', '+');
+  }
+
+  // 灯泡（无底座：玻璃泡 + 灯丝 + 引线）
+  function drawBulb() {
+    var cx = bulb.x, cy = bulb.y, r = bulb.r;
+    var filY1 = cy + 14, filY2 = cy - 18, on = bulbBrightness > 0.01;
+
+    // 外发光
+    if (on) {
+      var gg = ctx.createRadialGradient(cx, cy, r*0.3, cx, cy, r*2.8);
+      gg.addColorStop(0, 'rgba(255,230,100,' + (bulbBrightness*0.6) + ')');
+      gg.addColorStop(0.5, 'rgba(255,200,50,' + (bulbBrightness*0.2) + ')');
+      gg.addColorStop(1, 'rgba(255,180,0,0)');
+      ctx.fillStyle = gg; ctx.beginPath();
+      ctx.arc(cx, cy, r*2.8, 0, Math.PI*2); ctx.fill();
+    }
+
+    // 玻璃泡
+    var bg = ctx.createRadialGradient(cx-12, cy-18, 5, cx, cy, r);
+    if (on) {
+      var bv = 150 + bulbBrightness*105;
+      bg.addColorStop(0, 'rgba(255,' + bv + ',50,0.9)');
+      bg.addColorStop(0.7, 'rgba(255,' + (bv-30) + ',30,0.65)');
+      bg.addColorStop(1, 'rgba(255,200,50,0.2)');
+    } else {
+      bg.addColorStop(0, 'rgba(255,255,255,0.9)');
+      bg.addColorStop(0.7, 'rgba(240,240,240,0.65)');
+      bg.addColorStop(1, 'rgba(200,200,200,0.15)');
+    }
+    ctx.fillStyle = bg; ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI*2); ctx.fill();
+    ctx.strokeStyle = '#94a3b8'; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI*2); ctx.stroke();
+
+    // 高光
+    ctx.fillStyle = 'rgba(255,255,255,0.45)';
+    ctx.beginPath(); ctx.ellipse(cx-13, cy-18, 7, 11, -0.3, 0, Math.PI*2); ctx.fill();
+
+    // 灯丝发光
+    var filOn = bulbBrightness > 0.3;
+    if (filOn) {
+      ctx.strokeStyle = 'rgba(255,230,100,' + bulbBrightness + ')';
+      ctx.lineWidth = 5; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+      ctx.beginPath();
+      ctx.moveTo(cx-10, filY1); ctx.lineTo(cx-5, filY2);
+      ctx.lineTo(cx, filY1-3); ctx.lineTo(cx+5, filY2+3); ctx.lineTo(cx+10, filY1);
+      ctx.stroke();
+    }
+
+    // 灯丝主体
+    ctx.strokeStyle = filOn ? C.FILAMENT_ON : C.FILAMENT_OFF;
+    ctx.lineWidth = 2.5; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    ctx.beginPath();
+    ctx.moveTo(cx-10, filY1); ctx.lineTo(cx-5, filY2);
+    ctx.lineTo(cx, filY1-3); ctx.lineTo(cx+5, filY2+3); ctx.lineTo(cx+10, filY1);
+    ctx.stroke();
+
+    // 引线
+    ctx.strokeStyle = C.FILAMENT_OFF; ctx.lineWidth = 2.5; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(cx-10, filY1);
+    ctx.lineTo(cx-10, cy+r+5); ctx.lineTo(cx-65, cy+r+10); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(cx+10, filY1);
+    ctx.lineTo(cx+10, cy+r+5); ctx.lineTo(cx+65, cy+r+10); ctx.stroke();
+
+    // 密封点
+    ctx.fillStyle = C.GLASS_SEAL;
+    ctx.beginPath(); ctx.arc(cx, cy+r-2, 5, 0, Math.PI*2); ctx.fill();
+
+    // 接线柱
+    drawBindingPost(cx-65, cy+r+10, 'red', '');
+    drawBindingPost(cx+65, cy+r+10, 'red', '');
+  }
+
+  // 开关（闸刀式）
+  function drawSwitch() {
+    var sx = switchObj.x, sy = switchObj.y, sw = switchObj.w, sh = switchObj.h;
+    var baseY = sy + sh - 20, bladeLen = sw - 55;
+    var leftPX = sx + 25, rightPX = sx + sw - 25;
+
+    // 悬停高亮
+    if (hoverSwitch) {
+      ctx.fillStyle = 'rgba(59,130,246,0.07)';
+      ctx.beginPath(); ctx.arc(sx+sw/2, sy+sh/2, 55, 0, Math.PI*2); ctx.fill();
+    }
+
+    // 陶瓷底板
+    ctx.fillStyle = C.CERAMIC;
+    drawRoundRect(sx-5, baseY, sw+10, 20, 4); ctx.fill();
+    ctx.strokeStyle = C.CERAMIC_B; ctx.lineWidth = 1.5;
+    drawRoundRect(sx-5, baseY, sw+10, 20, 4); ctx.stroke();
+    // 阴影
+    ctx.fillStyle = '#e2e8f0';
+    ctx.fillRect(sx+5, baseY+16, sw-10, 5);
+
+    // 左接线柱+铰链
+    drawBindingPost(leftPX, baseY+5, 'red', '');
+    ctx.fillStyle = C.HINGE;
+    ctx.fillRect(leftPX-4, baseY-22, 8, 20);
+    ctx.fillStyle = C.HINGE_HI;
+    ctx.fillRect(leftPX-3, baseY-20, 6, 16);
+    ctx.fillStyle = C.HINGE;
+    ctx.beginPath(); ctx.arc(leftPX, baseY-22, 4, 0, Math.PI*2); ctx.fill();
+
+    // 右接线柱+触点
+    drawBindingPost(rightPX, baseY+5, 'red', '');
+    ctx.fillStyle = C.HOLDER;
+    ctx.beginPath(); ctx.arc(rightPX, baseY, 5, 0, Math.PI*2); ctx.fill();
+    if (switchClosed) {
+      ctx.fillStyle = 'rgba(22,163,74,0.2)';
+      ctx.beginPath(); ctx.arc(rightPX, baseY, 9, 0, Math.PI*2); ctx.fill();
+    }
+
+    // 闸刀
+    ctx.save();
+    ctx.translate(leftPX, baseY-22);
+    ctx.rotate(switchClosed ? 0.08 : -0.65);
+
+    // 刀片主体
+    ctx.fillStyle = C.BLADE;
+    ctx.beginPath();
+    ctx.moveTo(0, -4);
+    ctx.quadraticCurveTo(bladeLen/2, -6, bladeLen+3, -1);
+    ctx.lineTo(bladeLen+3, 3);
+    ctx.quadraticCurveTo(bladeLen/2, 0, 0, 4);
+    ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = C.BLADE_B; ctx.lineWidth = 1.2;
+    ctx.stroke();
+
+    // 刀片高光
+    ctx.strokeStyle = 'rgba(255,255,255,0.35)'; ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(3, -2);
+    ctx.quadraticCurveTo(bladeLen/2, -3, bladeLen-2, 0);
+    ctx.stroke();
+
+    // 手柄
+    var hx = bladeLen * 0.65;
+    ctx.fillStyle = C.HANDLE;
+    ctx.beginPath(); ctx.arc(hx, -3, 9, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = C.HANDLE_HI;
+    ctx.beginPath(); ctx.arc(hx-3, -6, 4, 0, Math.PI*2); ctx.fill();
+
+    ctx.restore();
+  }
+
+  // 电阻丝面板
+  function drawWirePanel() {
+    var px = wirePanel.x, py = wirePanel.y, pw = wirePanel.w, ph = wirePanel.h;
+    var isCu = selectedWire === 'copper', isNi = selectedWire === 'nickel';
+    var closed = switchClosed;
+
+    // 面板背景
+    ctx.fillStyle = C.PANEL;
+    drawRoundRect(px, py, pw, ph, 10); ctx.fill();
+    ctx.strokeStyle = C.PANEL_B; ctx.lineWidth = 2;
+    drawRoundRect(px, py, pw, ph, 10); ctx.stroke();
+
+    // 分隔线
+    ctx.strokeStyle = C.DIVIDER; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(px+20, py+ph/2); ctx.lineTo(px+pw-20, py+ph/2); ctx.stroke();
+
+    // 铜丝（上半部分）
+    drawWireSection(px, pw, py+35, '铜丝', isCu, closed, true);
+    // 镍铬合金丝（下半部分）
+    drawWireSection(px, pw, py+ph-35, '镍铬合金丝', isNi, closed, false);
+  }
+
+  function drawWireSection(px, pw, wy, label, isSel, closed, isCopper) {
+    var lx = px + 55, rx = px + pw - 55;
+
+    // 标签
+    ctx.fillStyle = isSel ? '#1e293b' : '#64748b';
+    ctx.font = 'bold 15px "Microsoft YaHei", sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+    ctx.fillText(label, px + pw/2, wy - 20);
+
+    // 接线柱
+    drawBindingPost(lx, wy, 'red', '');
+    drawBindingPost(rx, wy, 'red', '');
+
+    // 电阻丝
+    if (isCopper) {
+      var wireColor = isSel ? C.COPPER_WIRE : '#d4a843';
+      var lw = isSel && closed ? 5 : 3.5;
+      ctx.strokeStyle = wireColor; ctx.lineWidth = lw; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(lx, wy); ctx.lineTo(rx, wy); ctx.stroke();
+      if (isSel && closed) {
+        ctx.strokeStyle = C.COPPER_GLOW; ctx.lineWidth = 9;
+        ctx.beginPath(); ctx.moveTo(lx, wy); ctx.lineTo(rx, wy); ctx.stroke();
+      }
+    } else {
+      var nc = isSel ? C.NICHROME : '#64748b';
+      var nlw = isSel && closed ? 5 : 3.5;
+      ctx.strokeStyle = nc; ctx.lineWidth = nlw; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+      var waves = 14, amp = 7, seg = (rx - lx) / waves;
+      ctx.beginPath(); ctx.moveTo(lx, wy);
+      for (var i = 1; i <= waves; i++) {
+        var px2 = lx + i*seg, py2 = wy + (i%2===0 ? -amp : amp);
+        ctx.lineTo(px2, py2);
+      }
+      ctx.stroke();
+      if (isSel && closed) {
+        ctx.strokeStyle = C.NICHROME_GLOW; ctx.lineWidth = 9;
+        ctx.beginPath(); ctx.moveTo(lx, wy);
+        for (var i = 1; i <= waves; i++) {
+          ctx.lineTo(lx + i*seg, wy + (i%2===0 ? -amp : amp));
+        }
+        ctx.stroke();
+      }
+    }
+  }
+
+  // 导线
+  function drawWires() {
+    var pc = getPC();
+    ctx.strokeStyle = C.WIRE; ctx.lineWidth = 4;
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+
+    // 电池负极 → 灯泡左
+    ctx.beginPath();
+    ctx.moveTo(pc.batN.x, pc.batN.y);
+    ctx.lineTo(pc.batN.x, pc.bulL.y);
+    ctx.lineTo(pc.bulL.x, pc.bulL.y);
+    ctx.stroke();
+
+    // 灯泡右 → 开关左
+    ctx.beginPath();
+    ctx.moveTo(pc.bulR.x, pc.bulR.y);
+    ctx.lineTo(pc.swL.x, pc.swL.y);
+    ctx.stroke();
+
+    // 开关右 → 面板右
+    ctx.beginPath();
+    ctx.moveTo(pc.swR.x, pc.swR.y);
+    ctx.quadraticCurveTo(
+      (pc.swR.x + pc.pnR.x)/2, (pc.swR.y + pc.pnR.y)/2 - 60,
+      pc.pnR.x, pc.pnR.y
+    );
+    ctx.stroke();
+
+    // 面板左 → 电池正极
+    ctx.beginPath();
+    ctx.moveTo(pc.pnL.x, pc.pnL.y);
+    ctx.quadraticCurveTo(
+      (pc.pnL.x + pc.batP.x)/2, Math.min(pc.pnL.y, pc.batP.y) - 50,
+      pc.batP.x, pc.batP.y
+    );
+    ctx.stroke();
+
+    // 灯泡内部引线
+    ctx.beginPath();
+    ctx.moveTo(pc.bulL.x, pc.bulL.y);
+    ctx.lineTo(pc.flL.x, pc.bulL.y);
+    ctx.lineTo(pc.flL.x, pc.flL.y);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(pc.flR.x, pc.flR.y);
+    ctx.lineTo(pc.flR.x, pc.bulR.y);
+    ctx.lineTo(pc.bulR.x, pc.bulR.y);
+    ctx.stroke();
+  }
+
+  // 连接节点
+  function drawWireJoints() {
+    var pc = getPC();
+    function j(x, y) {
+      ctx.fillStyle = C.JOINT_OUT;
+      ctx.beginPath(); ctx.arc(x, y, 5, 0, Math.PI*2); ctx.fill();
+      ctx.fillStyle = C.JOINT_IN;
+      ctx.beginPath(); ctx.arc(x, y, 3, 0, Math.PI*2); ctx.fill();
+    }
+    j(pc.batN.x, pc.batN.y); j(pc.batP.x, pc.batP.y);
+    j(pc.bulL.x, pc.bulL.y); j(pc.bulR.x, pc.bulR.y);
+    j(pc.swL.x, pc.swL.y); j(pc.swR.x, pc.swR.y);
+    j(pc.pnL.x, pc.pnL.y); j(pc.pnR.x, pc.pnR.y);
+    j(pc.flL.x, pc.flL.y); j(pc.flR.x, pc.flR.y);
+  }
+
+  // ============ 粒子系统 ============
+  function getWirePath() {
+    var pc = getPC();
+    var isCu = selectedWire === 'copper';
+    var path = [
+      pc.batN, {x:pc.batN.x, y:pc.bulL.y}, pc.bulL,
+      {x:pc.flL.x, y:pc.bulL.y}, pc.flL,
+      {x:bulb.x-5, y:bulb.y-18},
+      {x:bulb.x, y:bulb.y+11},
+      {x:bulb.x+5, y:bulb.y-15},
+      pc.flR, {x:pc.flR.x, y:pc.bulR.y}, pc.bulR,
+      pc.swL, pc.swR,
+      {x:(pc.swR.x+pc.pnR.x)/2, y:(pc.swR.y+pc.pnR.y)/2 - 60},
+      pc.pnR
+    ];
+    // 电阻丝部分
+    if (isCu) {
+      path.push(pc.pnL);
+    } else {
+      var waves = 14, amp = 7, seg = (pc.pnR.x - pc.pnL.x) / waves;
+      for (var i = waves; i >= 0; i--) {
+        path.push({x: pc.pnL.x + i*seg, y: pc.pnL.y + (i%2===0 ? -amp : amp)});
+      }
+    }
+    path.push({x:(pc.pnL.x+pc.batP.x)/2, y:Math.min(pc.pnL.y,pc.batP.y)-50});
+    path.push(pc.batP);
+    return path;
+  }
+
+  function initParticles() {
+    particles = [];
+    for (var i = 0; i < 20; i++) {
+      particles.push({ progress: Math.random(), speed: 0.002 + Math.random()*0.002 });
+    }
+  }
+
+  function getPointOnPath(progress) {
+    var pts = getWirePath();
+    var total = 0, lens = [];
+    for (var i = 0; i < pts.length-1; i++) {
+      var dx = pts[i+1].x - pts[i].x, dy = pts[i+1].y - pts[i].y;
+      lens.push(Math.sqrt(dx*dx + dy*dy)); total += lens[lens.length-1];
+    }
+    var target = progress * total, acc = 0;
+    for (var i = 0; i < lens.length; i++) {
+      if (acc + lens[i] >= target) {
+        var t = (target - acc) / lens[i];
+        return { x: pts[i].x + (pts[i+1].x-pts[i].x)*t, y: pts[i].y + (pts[i+1].y-pts[i].y)*t };
+      }
+      acc += lens[i];
+    }
+    return pts[pts.length-1];
+  }
+
+  function updateParticles() {
+    if (!switchClosed) return;
+    for (var i = 0; i < particles.length; i++) {
+      particles[i].progress += particles[i].speed * particleSpeed * 0.1;
+      if (particles[i].progress > 1) particles[i].progress = 0;
+    }
+  }
+
+  function drawParticles() {
+    if (!switchClosed || bulbBrightness < 0.05) return;
+    for (var i = 0; i < particles.length; i++) {
+      var p = getPointOnPath(particles[i].progress);
+      var g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, 8);
+      g.addColorStop(0, 'rgba(255,200,50,' + bulbBrightness + ')');
+      g.addColorStop(1, 'rgba(255,150,0,0)');
+      ctx.fillStyle = g;
+      ctx.beginPath(); ctx.arc(p.x, p.y, 8, 0, Math.PI*2); ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,200,' + bulbBrightness + ')';
+      ctx.beginPath(); ctx.arc(p.x, p.y, 3, 0, Math.PI*2); ctx.fill();
+    }
+  }
+
+  // ============ 主循环 ============
+  function draw() {
+    ctx.clearRect(0, 0, CANVAS_W, CANVAS_H);
+    ctx.fillStyle = C.BENCH;
+    ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+
+    drawWires();
+    drawWirePanel();
+    drawBattery();
+    drawSwitch();
+    drawBulb();
+    drawWireJoints();
+    drawParticles();
+  }
+
+  function animate() {
+    bulbBrightness += (targetBrightness - bulbBrightness) * 0.08;
+    updateParticles();
+    draw();
+    requestAnimationFrame(animate);
+  }
+
+  // ============ 全屏 ============
+  window.toggleFullscreen = function() {
+    if (!document.fullscreenElement) {
+      canvas.requestFullscreen().catch(function(){});
+    } else {
+      document.exitFullscreen();
+    }
+  };
+
+  // ============ 初始化 ============
+  initParticles();
+  updatePhysics();
+  updateUI();
+  animate();
+})();
+
+</script>
+</body>
+</html>

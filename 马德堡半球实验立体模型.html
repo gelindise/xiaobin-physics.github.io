@@ -239,6 +239,14 @@
       .lab3d-stage .stage-btn { padding: 7px 10px; font-size: 11px; gap: 5px; }
       .gauge-num .num { font-size: 23px; }
     }
+  
+
+/* === 紧凑版面补丁 v2 :: sticky === */
+.lab3d-sidebar {
+  position: sticky; top: 16px; align-self: start;
+  max-height: calc(100vh - 104px);
+  overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin;
+}
     /* ===== 实拍视频区（站点形态：上半屏虚拟实验 + 底部实拍视频，两者缺一不可） ===== */
     .video-section { max-width: 1200px; margin: 24px auto 40px; padding: 0 16px; }
     .video-section .section-title { font-size: 20px; font-weight: bold; color: #f8fafc; margin-bottom: 16px; }
@@ -288,6 +296,7 @@
             <button type="button" class="stage-btn go" id="mdb-fbd">受力分析：开</button>
             <button type="button" class="stage-btn go" id="mdb-lens">放大镜：开</button>
             <button type="button" class="stage-btn" id="mdb-reset">⟲ 重来</button>
+          <button type="button" class="stage-btn go" id="mdb-cine" style="display:none">🎬 特写中 · 回到全景</button>
           </div>
           <div class="stage-help" id="mdb-help">拖动空白处旋转 · 滚轮缩放 · 侧栏里压泵抽气、给马队套上绳索</div>
         </div>
@@ -497,6 +506,10 @@
       // 顺着拉轴看过去，右半球会把左半球挡掉）。
       close: { yaw: 0.72, pitch: 0.11, zoom: 1.0, dist: 9.0, tgt: [0.05, 1.02, 0.0], look: false, env: 'close' },
       pump: { yaw: 0.42, pitch: 0.13, zoom: 1.0, dist: 4.6, tgt: [2.05, 1.30, 1.20], look: false, env: 'pump' },
+      // 拉动特写（进入「拉」这一步时自动切过来）：机位抬到 ~5 m 的「摇臂」高度、
+      // 俯角 ~16° —— 平视机位会落在近景看客（z ∈ [5.4, 9.6]）背后，观众把画面挡光。
+      // 画面左边是两个半球、右边是最近那匹马的头肩，中间一根绷直的拉绳。
+      pull:  { yaw: 0.18, pitch: 0.17, zoom: 1.0, dist: 15.0, tgt: [3.80, 1.15, 0.0], look: false, env: 'pull' },
       side:  { yaw: 0.03, pitch: 0.11, zoom: 1.0, dist: 48, tgt: [0, 2.8, -4.0], look: false, env: 'plaza' },
       top:   { yaw: 0.40, pitch: 1.02, zoom: 1.0, dist: 78, tgt: [0, 0.5, -1.0], look: false, env: 'plaza' }
     };
@@ -507,6 +520,16 @@
       const pts = [];
       if (state.view === 'close') {
         // 半球本体 + 阀门 + 吊环 + 木架顶（真空泵另开一档视角，不挤进特写）
+        // 分开之后两个半球飞到 x = ±0.92、落到 y = 0.30，包络必须跟着放宽，
+        // 否则它们会飞出画幅（实测分开后每个半球只剩半个在画面里）。
+        if (state.sep > 0.02) {
+          const ox = state.sep * 0.92 + 0.30;
+          for (const sx of [-ox, ox]) for (const sz of [-0.45, 0.48]) {
+            pts.push([sx, 0.02, sz]);
+            pts.push([sx, 1.34, sz]);
+          }
+          return pts;
+        }
         for (const sx of [-0.48, 0.58]) for (const sz of [-0.45, 0.48]) {
           pts.push([sx, 0.42, sz]);
           pts.push([sx, 1.62, sz]);
@@ -514,10 +537,20 @@
         return pts;
       }
       if (state.view === 'pump') {
-        // 真空泵整体（泵台 x ∈ [0.40, 2.20]、杠杆立柱 x = 1.25、杠杆伸到 x ≈ 2.75）
-        for (const sx of [1.10, 2.95]) for (const sz of [0.50, 1.90]) {
-          pts.push([sx, 0.40, sz]);
-          pts.push([sx, 2.40, sz]);
+        // 真空泵整体：工作台 x ∈ [0.96, 2.74]、杠杆立柱 x = 1.25、
+        // 铜缸 φ0.17（x = 2.30 ± 0.085）、排气阀盒伸到 x ≈ 2.48
+        for (const sx of [0.92, 2.52]) for (const sz of [0.78, 1.62]) {
+          pts.push([sx, 0.10, sz]);
+          pts.push([sx, 2.34, sz]);
+        }
+        return pts;
+      }
+      if (state.view === 'pull') {
+        // 拉动特写：左边两个半球与木架、右边最近两排马的头肩，中间绷直的拉绳。
+        // 下沿留到 y = 0.05（含一点地面）以免器材被裁掉脚。
+        for (const sx of [-0.85, 9.10]) for (const sz of [-1.05, 1.05]) {
+          pts.push([sx, 0.05, sz]);
+          pts.push([sx, 2.45, sz]);
         }
         return pts;
       }
@@ -614,6 +647,12 @@
                       Math.round(clamp(c[1] * s, 0, 255)) + ',' +
                       Math.round(clamp(c[2] * s, 0, 255)) + ')';
     };
+    const rgbA = (c, k, a) => {
+      const s = k === undefined ? 1 : k;
+      return 'rgba(' + Math.round(clamp(c[0] * s, 0, 255)) + ',' +
+                       Math.round(clamp(c[1] * s, 0, 255)) + ',' +
+                       Math.round(clamp(c[2] * s, 0, 255)) + ',' + a + ')';
+    };
     const LIGHT = vnorm([-0.34, 0.86, 0.38]);
     const shade = (base, n, amb) => rgb(base, (amb === undefined ? 0.52 : amb) + 0.60 * Math.max(0, dot(n, LIGHT)));
 
@@ -622,7 +661,7 @@
     // 本帧【实际画出去】的远景元素计数（房屋 / 人 / 马）。
     // 近景视角要整批剔除远景，但「画面变了」不等于「远景真的没画」——
     // 所以直接数绘制调用次数，自检才能盯住这件事。
-    let nHouse = 0, nPerson = 0, nHorse = 0, nPump = 0, nLens = 0;
+    let nHouse = 0, nPerson = 0, nHorse = 0, nPump = 0, nLens = 0, nCrowdFront = 0, nDust = 0;
     function uiBoxes() {
       const out = [];
       const cr = canvas.getBoundingClientRect();
@@ -677,15 +716,18 @@
       const oy = Math.min(b.y + b.h, q.y + q.h) - Math.max(b.y, q.y);
       return (ox > 0 && oy > 0) ? ox * oy : 0;
     }
-    function bestLabel(anchor, text, color, size, offs) {
+    // 带避让的标签：在候选偏移里挑「与已有盒子重叠最小」的那个位置。
+    // align 可选（left/right/center）—— 受力分析那几条箭头标签要靠它贴在箭头上。
+    function bestLabel(anchor, text, color, size, offs, align) {
+      const al = align || 'center';
       let best = null, bestOv = 1e18;
       for (const o of offs) {
-        const b = labelBox({ x: anchor.x + o[0], y: anchor.y + o[1] }, text, size, 'center');
+        const b = labelBox({ x: anchor.x + o[0], y: anchor.y + o[1] }, text, size, al);
         let ov = 0;
         for (const q of frameBoxes) ov += (q.weight || 1) * overlapArea(b, q);
         if (ov < bestOv) { bestOv = ov; best = { x: anchor.x + o[0], y: anchor.y + o[1] }; }
       }
-      label(best, text, color, size, 'center');
+      label(best, text, color, size, al);
       return bestOv;
     }
     const AVOID = [[0, 0], [0, -20], [0, 20], [0, -40], [0, 40], [-58, -20], [58, -20],
@@ -816,93 +858,422 @@
       return near;
     }
 
-    // 一匹挽马（挤出薄板 + 四条腿 + 尾巴 + 耳朵）—— u 沿拉绳方向（马头朝 +u），v 是高度
-    // 头要【长而略平】（原版头是个圆疙瘩、脖子又厚，一排马看着像摇椅）。
-    const HORSE_PROF = [
-      [-1.05, 0.78], [-1.08, 1.32], [-0.84, 1.58], [0.06, 1.56], [0.34, 1.62],
-      [0.62, 1.74], [0.84, 1.98], [1.02, 2.06], [1.26, 2.02], [1.52, 1.82],
-      [1.46, 1.68], [1.16, 1.66], [0.92, 1.58], [0.74, 1.42], [0.60, 1.16],
-      [0.50, 0.78], [0.28, 0.84], [-0.24, 0.86], [-0.44, 0.78]
-    ];
-    const LEGS = [[0.44, -0.24], [0.36, 0.24], [-0.60, -0.24], [-0.68, 0.24]];
-    function drawHorse(x, z, dir, q, col, lean) {
-      nHorse++;
-      const org = [x, 0, z];
-      const prof = HORSE_PROF.map(([u, v]) => [u + (lean || 0) * v * 0.10, v]);
-      // 描一圈深边：一排三匹挤在一起时，没有轮廓就糊成一团褐色
-      const near = drawSlab(org, dir, prof, 0.30, q, col,
-                            { box: true, weight: 2, txt: '马', stroke: 'rgba(18,12,8,.55)', lw: 1 });
-      // 四条腿：细一点、略带前后分叉 —— 太粗时一排马会读成「摇椅」
-      for (const [lu, lz] of LEGS) {
-        const a = project([x + dir * (lu + (lean || 0) * 0.06), 0.80, z + lz], q);
-        const b = project([x + dir * (lu + (lean || 0) * 0.02), 0.0, z + lz], q);
-        line([a, b], rgb(col, 0.58), Math.max(1.3, q.focal * 0.048 / a.z), []);
-      }
-      // 尾巴：没有尾巴时马屁股会读成椅背
-      const t0 = project([x - dir * 1.00, 1.42, z], q);
-      const t1 = project([x - dir * 1.34, 0.42, z], q);
-      line([t0, t1], rgb([46, 34, 26], 0.92), Math.max(1.4, q.focal * 0.062 / t0.z), []);
-      // 鬃毛
-      const m0 = project([x + dir * 0.74, 1.72, z - 0.16], q);
-      const m1 = project([x + dir * 1.04, 2.04, z - 0.16], q);
-      line([m0, m1], rgb([42, 32, 26], 1), Math.max(1.3, q.focal * 0.062 / m0.z), []);
-      // 耳朵：一根短竖线就能把「马」和「摇椅」区分开
-      const e0 = project([x + dir * 0.96, 2.02, z - 0.12], q);
-      const e1 = project([x + dir * 1.00, 2.19, z - 0.12], q);
-      line([e0, e1], rgb([40, 30, 24], 1), Math.max(1.3, q.focal * 0.055 / e0.z), []);
-      return near;
+    /* ============================================================
+     * 体积图元（马 / 人 / 泵 / 半球共用）
+     * ------------------------------------------------------------
+     * drawSlab 是「一块有厚度的板」—— 画马画人必然像纸片（用户原话）。
+     * 下面这几个是【真正的三维体块】：半径沿世界折线变化、屏幕法线由真实
+     * 投影算出来，所以从任何角度看都是立体的，而不是一张朝向相机的剪影。
+     * ============================================================ */
+    // 颜色既可以是 [r,g,b] 数组，也可以是已经格式化好的 'rgb(...)' 字符串 ——
+    // 但凡是内部还要按明暗系数重新缩放的图元（drawCyl / drawSpine / drawTaper），
+    // 都必须先归一化成数组。踩坑：某处传了字符串，rgb() 取 c[0] = 'r' → NaN →
+    // 半宽 < 3px 的分支只写 fillStyle（不抛异常、静默画错颜色），
+    // 半宽 ≥ 3px 的分支进 addColorStop 则直接抛异常把整页打死。
+    function toRGB(c) {
+      if (Array.isArray(c)) return c;
+      const m = /rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)/.exec(String(c));
+      return m ? [+m[1], +m[2], +m[3]] : [128, 128, 128];
     }
 
-    // 一位观礼市民（面向相机的立牌：1 次投影 + 屏幕空间造型）
+    // 锥形管：半径从 r0 线性变到 r1。三遍画法（体 → 圆端帽 → 左上高光条）
+    function drawTaper(pts, r0, r1, q, base, opts) {
+      if (!pts || pts.length < 2) return null;
+      base = toRGB(base);
+      const o = opts || {};
+      const n = pts.length;
+      const P = pts.map(p => project(p, q));
+      const L = [], R = [], hw = [];
+      for (let i = 0; i < n; i++) {
+        const a = P[Math.max(0, i - 1)], b = P[Math.min(n - 1, i + 1)];
+        let dx = b.x - a.x, dy = b.y - a.y;
+        const l = Math.hypot(dx, dy) || 1;
+        const nx = -dy / l, ny = dx / l;
+        const rw = r0 + (r1 - r0) * (i / (n - 1));
+        const h = Math.max(o.minW === undefined ? 0.7 : o.minW, q.focal * rw / P[i].z);
+        hw.push(h);
+        L.push({ x: P[i].x + nx * h, y: P[i].y + ny * h });
+        R.push({ x: P[i].x - nx * h, y: P[i].y - ny * h });
+      }
+      const body = rgb(base, 0.92);
+      poly(L.concat(R.reverse()), body, o.stroke, o.lw);
+      // 圆端帽（后画，盖住平断口 —— 马屁股 / 关节处最明显）
+      if (o.cap !== false) {
+        dot2(P[0], hw[0], body, null);
+        dot2(P[n - 1], hw[n - 1], body, null);
+      }
+      // 左上高光条：宽度 0.40 倍、整体朝光源方向偏一点，立体感全靠它
+      const HL = [], HR = [];
+      for (let i = 0; i < n; i++) {
+        const a = P[Math.max(0, i - 1)], b = P[Math.min(n - 1, i + 1)];
+        let dx = b.x - a.x, dy = b.y - a.y;
+        const l = Math.hypot(dx, dy) || 1;
+        const nx = -dy / l, ny = dx / l;
+        const h = hw[i] * 0.40, ox = -hw[i] * 0.30, oy = -hw[i] * 0.26;
+        HL.push({ x: P[i].x + nx * h + ox, y: P[i].y + ny * h + oy });
+        HR.push({ x: P[i].x - nx * h + ox, y: P[i].y - ny * h + oy });
+      }
+      poly(HL.concat(HR.reverse()), rgbA(base, 1.72, 0.42));
+      if (o.box) bodyBox(P, o.weight || 1, 'taper', o.txt);
+      return P;
+    }
+
+    // 球（头 / 关节 / 铆钉头）：径向渐变 + 高光点
+    function drawSphere3(c, rw, q, base, opts) {
+      const o = opts || {};
+      const P = project(c, q);
+      if (P.z < 0.4) return null;
+      const r = pxRadius(c, rw, q);
+      if (r < 0.5) return null;
+      const g = ctx.createRadialGradient(P.x - r * 0.42, P.y - r * 0.46, r * 0.05,
+                                         P.x, P.y, r * 1.10);
+      g.addColorStop(0, rgb(base, 1.62));
+      g.addColorStop(0.44, rgb(base, 1.10));
+      g.addColorStop(0.82, rgb(base, 0.68));
+      g.addColorStop(1, rgb(base, 0.42));
+      dot2(P, r, g, o.stroke || rgb(base, 0.32), o.lw || 1);
+      if (r > 3.5) dot2({ x: P.x - r * 0.40, y: P.y - r * 0.44 }, r * 0.19, 'rgba(255,246,228,.55)', null);
+      if (o.box) bodyBox([P], o.weight || 1, 'sphere', o.txt);
+      return { c: P, r: r };
+    }
+
+    // 世界平面上的一圈圆（法线沿 axis）：帽檐 / 蹄 / 法兰 / 帽筒都用它
+    function ringPts(c, axis, r, n, q) {
+      const ax = vnorm(axis);
+      const seed = Math.abs(ax[1]) > 0.9 ? [1, 0, 0] : [0, 1, 0];
+      const u = vnorm(cross(ax, seed)), v = vnorm(cross(ax, u));
+      const out = [];
+      for (let k = 0; k <= n; k++) {
+        const t = k / n * PI2;
+        out.push(project(add(c, add(scl(u, r * Math.cos(t)), scl(v, r * Math.sin(t)))), q));
+      }
+      return out;
+    }
+    // 圆盘 / 圆环：世界圆投影后填充（r2 给第二轴半径即为椭圆；hole 给内半径即画环）
+    function drawDisc(c, axis, r, q, fill, opts) {
+      const o = opts || {};
+      const ax = vnorm(axis);
+      const seed = Math.abs(ax[1]) > 0.9 ? [1, 0, 0] : [0, 1, 0];
+      const u = vnorm(cross(ax, seed)), v = vnorm(cross(ax, u));
+      const N = o.n || 26, r2 = o.r2 === undefined ? r : o.r2;
+      const mk = (rr, rr2) => {
+        const out = [];
+        for (let k = 0; k <= N; k++) {
+          const t = k / N * PI2;
+          out.push(project(add(c, add(scl(u, rr * Math.cos(t)), scl(v, rr2 * Math.sin(t)))), q));
+        }
+        return out;
+      };
+      const outer = mk(r, r2);
+      if (o.hole) {
+        // 圆环【必须两条子路径 + evenodd】：单条路径首尾连起来会填成「钥匙孔」
+        const inner = mk(o.hole, o.hole * (r2 / r));
+        ctx.beginPath();
+        outer.forEach((p, k) => k ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+        ctx.closePath();
+        inner.forEach((p, k) => k ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+        ctx.closePath();
+        if (fill) { ctx.fillStyle = fill; ctx.fill('evenodd'); }
+        if (o.stroke) { ctx.lineWidth = o.lw || 1; ctx.strokeStyle = o.stroke; ctx.stroke(); }
+        return outer;
+      }
+      poly(outer, fill, o.stroke, o.lw);
+      return outer;
+    }
+
+    // 直圆柱：屏幕法线外扩成四边形，填充用【垂直于轴】的线性渐变。
+    // 金属圆柱的明暗就发生在垂直于轴的那个方向上 —— 只在轴心画一条亮线（同心叠管）
+    // 得到的是「一根塑料管」，金属要有从受光边到背光边的连续过渡。
+    function drawCyl(a, b, rw, q, col, opts) {
+      const o = opts || {};
+      col = toRGB(col);
+      const A = project(a, q), B = project(b, q);
+      const dx = B.x - A.x, dy = B.y - A.y;
+      const l = Math.hypot(dx, dy) || 1;
+      const nx = -dy / l, ny = dx / l;
+      const hA = Math.max(o.minW || 0.6, q.focal * rw / A.z);
+      const hB = Math.max(o.minW || 0.6, q.focal * rw / B.z);
+      const P = [{ x: A.x + nx * hA, y: A.y + ny * hA }, { x: B.x + nx * hB, y: B.y + ny * hB },
+                 { x: B.x - nx * hB, y: B.y - ny * hB }, { x: A.x - nx * hA, y: A.y - ny * hA }];
+      const hw = (hA + hB) * 0.5;
+      const mid = { x: (A.x + B.x) * 0.5, y: (A.y + B.y) * 0.5 };
+      // 光源在屏幕上的方向（屏幕 y 向下，所以 up 分量取负）
+      const lx = dot(LIGHT, q.right), ly = -dot(LIGHT, q.up);
+      const sg = (lx * nx + ly * ny) >= 0 ? 1 : -1;
+      const k = o.k === undefined ? 1 : o.k;
+      // 屏幕上半宽不到 3 px 的小件（远马的腿、人的胳膊）不值得建渐变 —— 直接平色，
+      // 一条 2 px 宽的线看不出渐变，却要为它建一次 gradient 对象。
+      if (hw < 3) {
+        poly(P, rgb(col, (sg > 0 ? 0.98 : 0.46) * k), o.stroke, o.lw);
+      } else {
+        const g = ctx.createLinearGradient(mid.x + nx * hw * sg, mid.y + ny * hw * sg,
+                                           mid.x - nx * hw * sg, mid.y - ny * hw * sg);
+        g.addColorStop(0.00, rgb(col, clamp(1.62 * k, 0, 2.6)));
+        g.addColorStop(0.26, rgb(col, clamp(1.10 * k, 0, 2.6)));
+        g.addColorStop(0.72, rgb(col, clamp(0.58 * k, 0, 2.6)));
+        g.addColorStop(1.00, rgb(col, clamp(0.30 * k, 0, 2.6)));
+        poly(P, g, o.stroke, o.lw);
+      }
+      if (o.box) bodyBox(P, o.weight || 1, 'cyl', o.txt);
+      return P;
+    }
+
+    // 体积化：广义圆柱（脊柱 + 椭圆截面）。
+    // 【为什么不是「把每片椭圆都填一遍」】：每片各自成一个封闭图形，片与片之间就
+    // 一定留下月牙缝 —— 实测整排马变成一串叠起来的鸡蛋（后画的片盖不住前一片的边）。
+    // 正确做法是解析求【母线】：每个截面上法线与视线垂直的那两点，沿脊柱连成上下
+    // 两条母线，再补两端的端盖弧 —— 一次填充拿到整根躯干的剪影，没有任何接缝。
+    // 轮廓（深色描边）也用同一条剪影放大一点铺一遍，于是它是一圈连续的深边，
+    // 而不是每片各描一圈。
+    // 每片：{ c:[x,y,z], a1:[单位向量], a2:[单位向量], r1, r2 }
+    function ringPt(s, t, k1, k2, q) {
+      const c1 = Math.cos(t), s1 = Math.sin(t);
+      return project([s.c[0] + s.a1[0] * s.r1 * k1 * c1 + s.a2[0] * s.r2 * k2 * s1,
+                      s.c[1] + s.a1[1] * s.r1 * k1 * c1 + s.a2[1] * s.r2 * k2 * s1,
+                      s.c[2] + s.a1[2] * s.r1 * k1 * c1 + s.a2[2] * s.r2 * k2 * s1], q);
+    }
+    // 母线参数：截面上切线平行于视线投影的那个 t
+    function ringSilT(s, q) {
+      const np = vnorm(cross(s.a1, s.a2));
+      const f = sub(q.fwd, scl(np, dot(q.fwd, np)));
+      const al = dot(f, s.a1), be = dot(f, s.a2);
+      const den = Math.hypot(al / s.r1, be / s.r2) || 1e-6;
+      return Math.atan2(-al / (s.r1 * den), be / (s.r2 * den));
+    }
+    function spineSilhouette(slices, q, k1, k2) {
+      const M = slices.length, up = [], dn = [];
+      for (const s of slices) {
+        const t0 = ringSilT(s, q);
+        up.push({ p: ringPt(s, t0, k1, k2, q), t: t0, s: s });
+        dn.push({ p: ringPt(s, t0 + Math.PI, k1, k2, q), t: t0 + Math.PI, s: s });
+      }
+      const path = [];
+      for (const a of up) path.push(a.p);
+      // 端盖：从 up[末] 绕【远离躯干】的那半圈走到 dn[末]
+      const capArc = (a, b, outward, n) => {
+        const d = normA(b.t - a.t), dp = normA(outward - a.t);
+        const ccw = dp < d, span = ccw ? d : d - PI2;
+        for (let k = 1; k < n; k++) path.push(ringPt(a.s, a.t + span * (k / n), k1, k2, q));
+      };
+      const tOfDir = (s, vec) => Math.atan2(dot(vec, s.a2) / s.r2, dot(vec, s.a1) / s.r1);
+      const last = slices[M - 1], prev = slices[Math.max(0, M - 2)];
+      capArc(up[M - 1], dn[M - 1], tOfDir(last, sub(last.c, prev.c)), 6);
+      for (let i = M - 1; i >= 0; i--) path.push(dn[i].p);
+      const first = slices[0], next = slices[Math.min(M - 1, 1)];
+      capArc(dn[0], up[0], tOfDir(first, sub(first.c, next.c)), 6);
+      return path;
+    }
+    function drawSpine(slices, q, col, opts) {
+      const o = opts || {};
+      if (!slices || slices.length < 2) return;
+      col = toRGB(col);
+      const kk = o.k === undefined ? 1 : o.k;
+      if (o.outline) poly(spineSilhouette(slices, q, 1.05, 1.085), o.outline);
+      const lp = project(o.lit, q), dp = project(o.dark, q);
+      let fill;
+      if (Math.hypot(lp.x - dp.x, lp.y - dp.y) < 1.4) fill = rgb(col, kk);
+      else {
+        fill = ctx.createLinearGradient(lp.x, lp.y, dp.x, dp.y);
+        fill.addColorStop(0.00, rgb(col, clamp(1.20 * kk, 0, 2.6)));
+        fill.addColorStop(0.40, rgb(col, clamp(1.00 * kk, 0, 2.6)));
+        fill.addColorStop(1.00, rgb(col, clamp(0.46 * kk, 0, 2.6)));
+      }
+      poly(spineSilhouette(slices, q, 1, 1), fill);
+    }
+
+    /* ---------------------------- 挽马 ----------------------------
+     * 马体 = 沿体轴堆叠的椭圆截面：躯干 / 颈 / 头各一段，半径沿轴变化。
+     * 截面表：[u（沿马身，马头朝 +u）, 截面中心高 y, 上下半径 ry, 左右半径 rz]
+     * 原版是一张 19 点的挤出薄板：正侧看还行，一转到 3/4 角就是两块错位的
+     * 剪影叠在一起，整排马像一排木板。
+     */
+    const HORSE_BODY = [
+      [-1.08, 1.14, 0.19, 0.16], [-0.94, 1.23, 0.28, 0.24], [-0.72, 1.27, 0.32, 0.28],
+      [-0.44, 1.25, 0.34, 0.30], [-0.14, 1.22, 0.34, 0.31], [0.16, 1.22, 0.34, 0.30],
+      [0.42, 1.28, 0.33, 0.28], [0.62, 1.40, 0.25, 0.20], [0.74, 1.50, 0.19, 0.155]
+    ];
+    const HORSE_NECK = [
+      [0.74, 1.50, 0.19, 0.150], [0.90, 1.64, 0.165, 0.130], [1.04, 1.79, 0.140, 0.105]
+    ];
+    const HORSE_HEAD = [
+      [1.04, 1.81, 0.130, 0.098], [1.24, 1.84, 0.115, 0.090],
+      [1.43, 1.79, 0.096, 0.080], [1.57, 1.72, 0.078, 0.066]
+    ];
+    const LEGS = [[0.44, -0.23], [0.38, 0.23], [-0.60, -0.23], [-0.68, 0.23]];
+    // 马腿不是一根等粗的线：上段（肘）粗、下段（管骨）细、末端有蹄。
+    function drawLeg(ax, az, bx, bz, q, col, k) {
+      const a = project([ax, 0.90, az], q), m = project([(ax + bx) / 2, 0.46, (az + bz) / 2], q),
+            b = project([bx, 0.075, bz], q);
+      drawCyl([ax, 0.90, az], [(ax + bx) / 2, 0.46, (az + bz) / 2], 0.072, q, col, { k: k });
+      drawCyl([(ax + bx) / 2, 0.46, (az + bz) / 2], [bx, 0.075, bz], 0.042, q, col, { k: k * 1.05 });
+      const h = Math.max(1.6, q.focal * 0.055 / b.z);
+      ctx.beginPath(); ctx.ellipse(b.x, b.y + h * 0.25, h * 1.15, h * 0.8, 0, 0, PI2);
+      ctx.fillStyle = rgb([30, 24, 20], 1); ctx.fill();
+    }
+    // 地面投影：接触影 + 朝背光方向甩出去的投影（光来自 LIGHT，影朝 −LIGHT 的水平分量）
+    const SHADOW_DIR = (() => {
+      const l = Math.hypot(LIGHT[0], LIGHT[2]) || 1;
+      return [LIGHT[0] / l, LIGHT[2] / l];
+    })();
+    function groundShadow(cx, cz, hw, hd, hgt, q) {
+      // 影子的方向与长短由光决定（光在 LIGHT，影朝 −LIGHT 的水平分量甩出去）。
+      // 【别画成矩形】：矩形硬边在广场地砖上会读成「每个人脚下铺了一块黑垫子」，
+      // 而且影长不随光变。改成地面平面里的椭圆（按真实透视投影）+ 一层接触影。
+      const ux = -SHADOW_DIR[0], uz = -SHADOW_DIR[1];
+      const vx = -uz, vz = ux;
+      const L = hgt * 0.46;
+      const ring = (ccx, ccz, a, b) => {
+        const out = [];
+        for (let k = 0; k < 16; k++) {
+          const t = k / 16 * PI2, ca = Math.cos(t), sa = Math.sin(t);
+          out.push(project([ccx + ux * a * ca + vx * b * sa, 0.006, ccz + uz * a * ca + vz * b * sa], q));
+        }
+        return out;
+      };
+      poly(ring(cx + ux * L * 0.5, cz + uz * L * 0.5, hw + L * 0.5, hd), 'rgba(4,8,16,.26)');
+      poly(ring(cx, cz, hw, hd), 'rgba(2,5,12,.40)');
+    }
+    function drawHorse(x, z, dir, q, col, lean) {
+      nHorse++;
+      const L = lean || 0;
+      const a1 = [0, 1, 0], a2 = [0, 0, 1];
+      const mk = ([u, y, ry, rz]) => {
+        // 使劲时前倾：越高的部位前移越多（马把重心压到前腿上）
+        const uu = u + L * y * 0.085;
+        return { c: [x + dir * uu, y, z], a1: a1, a2: a2, r1: ry, r2: rz };
+      };
+      groundShadow(x + dir * 0.1, z, 1.15, 0.40, 1.7, q);
+      // 四条腿：远侧那对先画（暗），躯干压在中间，近侧那对后画（亮）——
+      // 这样一排马才分得清「哪条腿在前」，而不是四条一样粗的竖线。
+      const near = (q.eye[2] > z) ? 1 : -1;
+      const far = LEGS.filter(p => p[1] * near < 0), close = LEGS.filter(p => p[1] * near > 0);
+      const drawPair = (arr, k) => {
+        for (const [lu, lz] of arr) {
+          const uu = lu + L * 0.06;
+          drawLeg(x + dir * uu, z + lz, x + dir * (uu + 0.03), z + lz, q, col, k);
+        }
+      };
+      drawPair(far, 0.52);
+      // 尾巴：从臀后甩下来（没有尾巴时马屁股会读成椅背）
+      const t = [];
+      for (let k2 = 0; k2 <= 5; k2++) {
+        const u = k2 / 5;
+        t.push([x - dir * (1.04 + 0.34 * u), 1.48 - 1.02 * u * u - 0.30 * u, z + 0.06 * u]);
+      }
+      drawTube(t, 0.052, q, rgb([44, 32, 24], 1), { minW: 1.2 });
+      const body = HORSE_BODY.concat(HORSE_NECK).concat(HORSE_HEAD).map(mk);
+      // 明暗轴提到【体级】：从马背（1.62）到蹄上（0.78）一条轴，整根躯干共用 ——
+      // 每片各自建轴会在片间留下月牙缝。深色轮廓同样只铺一次。
+      drawSpine(body, q, col, {
+        lit: [x, 1.66, z], dark: [x, 0.74, z], outline: 'rgba(16,10,6,.50)'
+      });
+      // 鬃毛：沿颈背一条深色脊
+      const man = [];
+      for (let k2 = 0; k2 <= 4; k2++) {
+        const u = k2 / 4;
+        man.push([x + dir * (0.74 + 0.36 * u + L * 0.12), 1.62 + 0.20 * u, z + 0.11 - 0.04 * u]);
+      }
+      drawTube(man, 0.050, q, rgb([38, 28, 22], 1), { minW: 1.4 });
+      // 耳朵：两根短锥，把「马」和「摇椅」彻底分开
+      for (const dz of [-0.06, 0.06]) {
+        drawCyl([x + dir * 1.08, 1.94, z + dz], [x + dir * 1.12, 2.13, z + dz], 0.034, q,
+                [40, 30, 24], { minW: 1.2 });
+      }
+      drawPair(close, 0.72);
+      const b = body[3];
+      return { x: b.c[0], y: b.c[1], z: b.c[2] };
+    }
+
+    /* ---------------------------- 观礼市民 ----------------------------
+     * 原来是一块纯屏幕空间的立牌（梯形长袍 + 圆头），所以人像纸片。
+     * 改成【有朝向的竖直圆柱体】：朝向 = 面向广场中央的器材（史料里所有人都在看
+     * 这场演示）再加一点随机偏角。关键收益是「肩宽随视角变」——
+     * 正对镜头时看到的是身体的厚度，侧对镜头时看到的是肩宽，立牌做不到这件事。
+     */
+    const PERSON_PROF = [
+      { y: 0.98, w: 0.145, d: 0.115 },
+      { y: 1.18, w: 0.150, d: 0.118 },
+      { y: 1.36, w: 0.175, d: 0.138 },
+      { y: 1.50, w: 0.175, d: 0.132 }
+    ];
     function drawPerson(x, z, q, tone, hat, ph) {
       const base = project([x, 0, z], q);
       if (base.z < 0.5) return null;
       const H = q.focal * 1.72 / base.z;              // 身高像素
       if (H < 3) return null;
       nPerson++;                                      // 只有真画出去才算
-      const cx = base.x, by = base.y;
-      const sway = Math.sin(ph || 0) * H * 0.010;
-      const top = by - H;
-      const headR = H * 0.062;                        // 头半径（别按 0.085 画成大头针）
-      const headY = top + headR * 1.15;
-      const shoulderY = headY + headR * 1.75;
-      const hipY = by - H * 0.47;
-      const w = H * 0.155;                            // 肩半宽
+      // 朝向：面向广场中央（器材在原点），再按 ph 加一点偏角
+      let fx = -x, fz = -z;
+      const fl = Math.hypot(fx, fz) || 1; fx /= fl; fz /= fl;
+      const r = (ph || 0) * 0.5 - 0.9;
+      const cr = Math.cos(r), sr = Math.sin(r);
+      const nx = fx * cr - fz * sr, nz = fx * sr + fz * cr;
+      fx = nx; fz = nz;
+      const lx = -fz, lz = fx;                        // 左右方向（水平）
+      const P = (y, dw, dd) => project([x + lx * dw + fx * dd, y, z + lz * dw + fz * dd], q);
+      const sway = Math.sin(ph || 0) * 0.012;
       // 地面投影
-      ctx.beginPath();
-      ctx.ellipse(cx, by, H * 0.115, H * 0.026, 0, 0, PI2);
-      ctx.fillStyle = 'rgba(0,0,0,.30)'; ctx.fill();
-      // 两条腿
-      poly([{ x: cx - w * 0.70, y: by }, { x: cx - w * 0.22, y: by },
-            { x: cx - w * 0.14, y: hipY }, { x: cx - w * 0.74, y: hipY }], rgb(tone, 0.70));
-      poly([{ x: cx + w * 0.70, y: by }, { x: cx + w * 0.22, y: by },
-            { x: cx + w * 0.14, y: hipY }, { x: cx + w * 0.74, y: hipY }], rgb(tone, 0.70));
-      // 长袍 / 斗篷
-      poly([{ x: cx - w * 1.10 + sway, y: hipY + H * 0.05 },
-            { x: cx - w * 0.92 + sway, y: shoulderY },
-            { x: cx + w * 0.92 + sway, y: shoulderY },
-            { x: cx + w * 1.10 + sway, y: hipY + H * 0.05 }], rgb(tone, 1));
-      poly([{ x: cx - w * 1.10 + sway, y: hipY + H * 0.05 },
-            { x: cx - w * 0.92 + sway, y: shoulderY },
-            { x: cx - w * 0.40 + sway, y: shoulderY },
-            { x: cx - w * 0.52 + sway, y: hipY + H * 0.05 }], rgb(tone, 1.28));
-      // 脖子 + 头
-      poly([{ x: cx - w * 0.26 + sway, y: shoulderY }, { x: cx + w * 0.26 + sway, y: shoulderY },
-            { x: cx + w * 0.22 + sway, y: headY + headR * 0.7 }, { x: cx - w * 0.22 + sway, y: headY + headR * 0.7 }],
-           rgb([196, 164, 134], 1));
-      dot2({ x: cx + sway, y: headY }, headR, rgb([206, 172, 140], 1));
-      if (hat) {
-        const hr = headR * 2.15;
-        ctx.beginPath();
-        ctx.ellipse(cx + sway, headY - headR * 0.35, hr, hr * 0.26, 0, 0, PI2);
-        ctx.fillStyle = rgb([40, 34, 30], 1); ctx.fill();
-        ctx.beginPath();
-        ctx.ellipse(cx + sway, headY - headR * 0.85, hr * 0.40, hr * 0.28, 0, 0, PI2);
-        ctx.fillStyle = rgb([56, 46, 40], 1); ctx.fill();
+      groundShadow(x, z, 0.24, 0.20, 1.2, q);
+      // 腿
+      for (const s of [-1, 1]) {
+        drawCyl([x + lx * 0.070 * s, 0.96, z + lz * 0.070 * s],
+                [x + lx * 0.085 * s, 0.10, z + lz * 0.085 * s], 0.058, q,
+                tone, { minW: 1, k: 0.60 });
       }
-      const bw = w * 2.2;
-      const b = { x0: cx - bw / 2, y0: top, x1: cx + bw / 2, y1: by,
-                  x: cx - bw / 2, y: top, w: bw, h: H, weight: 1, kind: 'person', txt: '人' };
+      // 躯干：轮廓取「胯 → 肩」两侧的投影点，填充沿【左右方向】的渐变
+      // （竖直圆柱的明暗就发生在左右方向上，跟 drawCyl 同一个道理）
+      const sil = [];
+      for (const p of PERSON_PROF) sil.push(P(p.y, p.w, p.d));
+      for (let i = PERSON_PROF.length - 1; i >= 0; i--) {
+        const p = PERSON_PROF[i]; sil.push(P(p.y, -p.w, p.d));
+      }
+      const lp = project([x + lx * 0.30, 1.28, z + lz * 0.30], q);
+      const dp = project([x - lx * 0.30, 1.28, z - lz * 0.30], q);
+      const sgn = ((lp.x - dp.x) * dot(LIGHT, q.right) + (lp.y - dp.y) * (-dot(LIGHT, q.up))) >= 0 ? 1 : -1;
+      const A = sgn > 0 ? lp : dp, B = sgn > 0 ? dp : lp;
+      const g = ctx.createLinearGradient(A.x, A.y, B.x, B.y);
+      g.addColorStop(0.00, rgb(tone, 1.42));
+      g.addColorStop(0.30, rgb(tone, 1.08));
+      g.addColorStop(0.78, rgb(tone, 0.66));
+      g.addColorStop(1.00, rgb(tone, 0.42));
+      poly(sil, g);
+      // 手臂
+      for (const s of [-1, 1]) {
+        drawCyl([x + lx * 0.185 * s, 1.44, z + lz * 0.185 * s],
+                [x + lx * 0.215 * s + fx * 0.05, 1.02, z + lz * 0.215 * s + fz * 0.05], 0.048, q,
+                tone, { minW: 1, k: 0.88 });
+      }
+      // 脖子 + 头（球：用径向渐变，别用一块平色圆片）
+      // headR 是【世界半径 0.115 m】。原来写成 H*0.062（H 是像素高），再喂给
+      // focal*headR/z 就等于把像素当米又乘了一次焦距 —— 远crowd 会变成一串巨球。
+      const headR = 0.115, headY = 1.615 + sway;
+      const hc = project([x + fx * 0.01, headY, z + fz * 0.01], q);
+      drawCyl([x, 1.46, z], [x, 1.56, z], 0.062, q, [176, 146, 118], { minW: 1 });
+      const hp = Math.max(1.5, q.focal * headR / hc.z);
+      const hg = ctx.createRadialGradient(hc.x - hp * 0.36, hc.y - hp * 0.42, hp * 0.10,
+                                          hc.x, hc.y, hp * 1.06);
+      hg.addColorStop(0, rgb([224, 190, 156], 1));
+      hg.addColorStop(0.55, rgb([190, 156, 126], 1));
+      hg.addColorStop(1, rgb([118, 92, 70], 1));
+      dot2(hc, hp, hg);
+      if (hat) {
+        const hr = hp * 2.05;
+        ctx.beginPath();
+        ctx.ellipse(hc.x, hc.y - hp * 0.30, hr, hr * 0.30, 0, 0, PI2);
+        ctx.fillStyle = rgb([36, 30, 26], 1); ctx.fill();
+        ctx.beginPath();
+        ctx.ellipse(hc.x, hc.y - hp * 0.80, hr * 0.42, hr * 0.30, 0, 0, PI2);
+        ctx.fillStyle = rgb([58, 48, 40], 1); ctx.fill();
+        ctx.beginPath();
+        ctx.ellipse(hc.x - hr * 0.14, hc.y - hp * 1.02, hr * 0.24, hr * 0.14, 0, 0, PI2);
+        ctx.fillStyle = rgb([86, 72, 58], 1); ctx.fill();
+      }
+      // 标签障碍框：按真实投影的四角，不是屏幕上的一个方块
+      const cs = [P(0.98, 0.20, 0.16), P(1.56, 0.22, 0.16), P(1.56, -0.22, 0.16), P(0.98, -0.20, 0.16)];
+      let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+      for (const p of cs) { x0 = Math.min(x0, p.x); x1 = Math.max(x1, p.x); y0 = Math.min(y0, p.y); y1 = Math.max(y1, p.y); }
+      const b = { x0: x0, y0: y0, x1: x1, y1: y1, x: x0, y: y0, w: Math.max(1, x1 - x0), h: Math.max(1, y1 - y0),
+                  weight: 1, kind: 'person', txt: '人' };
       frameBoxes.push(b);
       return b;
     }
@@ -925,6 +1296,8 @@
       jitter: 0,           // 拉不开时的抖动相位
       step: 0,             // 0 合拢 / 1 抽气 / 2 套马 / 3 拉 / 4 开阀
       anim: null,
+      cine: false,         // 是否正处在「拉动特写」自动切镜头里
+      viewBefore: null,    // 切特写之前用户看的视角（退出时还原）
       showFBD: true, showLens: true,
       w: 0, h: 0, dpr: 1, dirty: true, t: 0, drag: null, q: null
     };
@@ -975,61 +1348,134 @@
         a => project([cx, cy + R_BALL * Math.cos(a), cz + R_BALL * Math.sin(a)], q), path);
       return path;
     }
+    // 半个铜球 —— 金属材质。
+    // 五层叠出来（都 clip 在剪影里）：① 漫反射底 ② 环境反射带（上半映天空、下半映地面）
+    // ③ 旋压纹纬圈 ④ 斜椭圆镜面高光 ⑤ 方向性边缘光。
+    // 分开之后还要画出【壁厚环 + 内腔碗面】—— 两个半球扣在一起时看不见。
     function drawHemisphere(cx, cy, cz, dir, q, col, opts) {
       const o = opts || {};
       const path = hemiOutline(cx, cy, cz, dir, q);
-      // 分开之后才看得见的【切口圆面】
-      if (state.sep > 0.02 && -dir * (q.eye[0] - cx) > 0) {
-        const disc = [];
-        for (let k = 0; k <= 30; k++) {
-          const a = k / 30 * PI2;
-          disc.push(project([cx, cy + R_BALL * Math.cos(a), cz + R_BALL * Math.sin(a)], q));
-        }
-        poly(disc, rgb(col, 0.46), rgb(col, 0.28), 1);
-      }
       const cS = project([cx, cy, cz], q);
       const rpx = pxRadius([cx, cy, cz], R_BALL, q);
-      const g = ctx.createRadialGradient(cS.x - rpx * 0.38, cS.y - rpx * 0.44, rpx * 0.08,
-                                         cS.x, cS.y, rpx * 1.18);
-      // 亮端别压得太暗：两个半球共用同一个球心渐变，后半球整片落在暗端时
-      // 会「看不见」（实测右半球只剩一团黑），所以暗端抬到 0.58 并收窄范围。
-      g.addColorStop(0, rgb(col, 1.78));
-      g.addColorStop(0.34, rgb(col, 1.36));
+      const facing = -dir * (q.eye[0] - cx) > 0;          // 切口朝向相机
+      // ---- 切口（分开后才看得见）：壁厚环 + 内腔 ----
+      if (state.sep > 0.02 && facing) {
+        const cc = [cx, cy, cz];
+        drawDisc(cc, [1, 0, 0], R_BALL * 1.005, q, rgb(col, 0.86),
+                 { hole: R_BALL * 0.895, n: 34 });
+        const ig = ctx.createRadialGradient(cS.x + rpx * 0.12, cS.y - rpx * 0.18, rpx * 0.04,
+                                            cS.x, cS.y, rpx * 0.96);
+        ig.addColorStop(0, rgb(col, 0.86));
+        ig.addColorStop(0.42, rgb(col, 0.52));
+        ig.addColorStop(1, rgb(col, 0.26));
+        drawDisc(cc, [1, 0, 0], R_BALL * 0.895, q, ig, { n: 34 });
+        drawDisc(cc, [1, 0, 0], R_BALL * 0.895, q, null,
+                 { n: 34, stroke: rgb([26, 15, 9], 1), lw: 1.3 });
+      }
+      // ---- 球面材质 ----
+      ctx.save();
+      polyPath(path); ctx.clip();
+      const X0 = cS.x - rpx * 1.4, Y0 = cS.y - rpx * 1.4, WW = rpx * 2.8, HH = rpx * 2.8;
+      const g = ctx.createRadialGradient(cS.x - rpx * 0.42, cS.y - rpx * 0.48, rpx * 0.04,
+                                         cS.x, cS.y, rpx * 1.24);
+      // 暗端别压太死：两个半球共用同一套光照，后半球整片落在暗端时会「看不见」
+      g.addColorStop(0, rgb(col, 1.76));
+      g.addColorStop(0.34, rgb(col, 1.34));
       g.addColorStop(0.70, rgb(col, 0.92));
-      g.addColorStop(1, rgb(col, 0.58));
-      poly(path, g, rgb(col, 0.34), 1.1);
+      g.addColorStop(1, rgb(col, 0.54));
+      ctx.fillStyle = g; ctx.fillRect(X0, Y0, WW, HH);
+      // 环境反射带 —— 金属之所以是金属，靠的就是这两条：上冷（天）下暖（地）
+      const eg = ctx.createLinearGradient(0, cS.y - rpx * 1.06, 0, cS.y + rpx * 1.06);
+      eg.addColorStop(0.00, 'rgba(146,192,232,.28)');
+      eg.addColorStop(0.30, 'rgba(198,224,246,.15)');
+      eg.addColorStop(0.46, 'rgba(255,240,210,.17)');
+      eg.addColorStop(0.58, 'rgba(66,40,22,.34)');
+      eg.addColorStop(1.00, 'rgba(20,12,8,.48)');
+      ctx.fillStyle = eg; ctx.fillRect(X0, Y0, WW, HH);
+      // 旋压纹：几道很淡的纬圈（铜器是旋压成型的）
+      if (rpx > 16) {
+        for (const t of [0.34, 0.56, 0.76]) {
+          const rr = Math.sqrt(Math.max(0, 1 - t * t)) * R_BALL;
+          drawDisc([cx + dir * R_BALL * t, cy, cz], [1, 0, 0], rr, q, null,
+                   { n: 30, stroke: 'rgba(255,246,226,.11)', lw: 1 });
+        }
+      }
+      // 镜面高光斑：压成斜椭圆（光源在左上）
+      ctx.save();
+      ctx.translate(cS.x - rpx * 0.36, cS.y - rpx * 0.42);
+      ctx.rotate(-0.62); ctx.scale(1, 0.44);
+      const hg = ctx.createRadialGradient(0, 0, 0, 0, 0, rpx * 0.74);
+      hg.addColorStop(0, 'rgba(255,252,244,.84)');
+      hg.addColorStop(0.40, 'rgba(255,238,204,.30)');
+      hg.addColorStop(1, 'rgba(255,234,196,0)');
+      ctx.fillStyle = hg;
+      ctx.beginPath(); ctx.arc(0, 0, rpx * 0.74, 0, PI2); ctx.fill();
+      ctx.restore();
+      // 方向性边缘光：描在剪影上，clip 只露内半边
+      const rg = ctx.createLinearGradient(cS.x - rpx, cS.y - rpx, cS.x + rpx, cS.y + rpx);
+      rg.addColorStop(0, 'rgba(255,246,224,.94)');
+      rg.addColorStop(0.40, 'rgba(255,226,178,.34)');
+      rg.addColorStop(1, 'rgba(88,48,20,.38)');
+      polyPath(path);
+      ctx.lineWidth = Math.max(1.4, rpx * 0.055);
+      ctx.strokeStyle = rg; ctx.stroke();
+      ctx.restore();
+      line(path, rgb(col, 0.24), 1.1);
       if (o.box !== false) bodyBox(path, o.weight || 6, 'ball', o.txt || '半球');
       return { c: cS, r: rpx };
     }
 
-    // 接缝处的铁箍 + 涂油皮革垫圈
-    function drawSeamRing(cx, cy, cz, q, sep) {
-      const R = R_BALL * 1.055;
-      const pts = [];
-      for (let k = 0; k <= 40; k++) {
-        const a = k / 40 * PI2;
-        pts.push(project([cx, cy + R * Math.cos(a), cz + R * Math.sin(a)], q));
+    // 接缝：带铆钉的铜法兰 + 涂油皮革垫圈（居里克就是靠这个才封得住气）
+    function drawSeamRing(cx, cy, cz, q, sep, col) {
+      const cc = [cx, cy, cz];
+      const fg = ctx.createLinearGradient(0, cy - R_BALL * 1.12, 0, cy + R_BALL * 1.12);
+      fg.addColorStop(0, rgb(col, 1.62));
+      fg.addColorStop(0.40, rgb(col, 1.06));
+      fg.addColorStop(1, rgb(col, 0.56));
+      drawDisc(cc, [1, 0, 0], R_BALL * 1.075, q, fg, { hole: R_BALL * 1.000, n: 40 });
+      drawDisc(cc, [1, 0, 0], R_BALL * 1.075, q, null, { n: 40, stroke: rgb(col, 0.38), lw: 1 });
+      drawDisc(cc, [1, 0, 0], R_BALL * 1.000, q, null, { n: 40, stroke: rgb(col, 0.32), lw: 1 });
+      // 铆钉：按「外法线是否朝向相机」剔除背面，否则背面的铆钉会透出来。
+      // 环太小（放大镜里）就不画 —— 20 个 0.7px 的点只会变成一圈噪点。
+      const camD = vnorm(sub(q.eye, cc));
+      const NR = R_BALL * 1.040, rv = R_BALL * 0.028;
+      if (pxRadius(cc, R_BALL, q) < 26) return;
+      for (let k = 0; k < 20; k++) {
+        const a = k / 20 * PI2;
+        const nrm = [0, Math.cos(a), Math.sin(a)];
+        if (dot(nrm, camD) < 0.10) continue;
+        const p = [cx, cy + NR * Math.cos(a), cz + NR * Math.sin(a)];
+        const pp = project(p, q);
+        const rr = Math.max(0.7, pxRadius(p, rv, q));
+        dot2(pp, rr, rgb(col, 1.55), rgb(col, 0.34), 1);
+        if (rr > 2.2) dot2({ x: pp.x - rr * 0.34, y: pp.y - rr * 0.34 }, rr * 0.34, 'rgba(255,250,236,.6)', null);
       }
-      line(pts, rgb(IRON, 0.62), Math.max(1.1, pxRadius([cx, cy, cz], 0.020, q) * 2));
-      line(pts, rgb([52, 42, 30], 1), Math.max(0.7, pxRadius([cx, cy, cz], 0.011, q) * 2));
+      // 涂油皮革垫圈：分开时露在法兰内侧
+      if (sep > 0.02) {
+        drawDisc(cc, [1, 0, 0], R_BALL * 1.042, q, rgbA([78, 54, 30], 1, 0.95),
+                 { hole: R_BALL * 0.996, n: 36 });
+      }
     }
 
-    // 极点上的铁吊环
+    // 极点上的铁吊环（挂拉绳用）：座 + 环（深铁 + 内侧亮线）
     function drawEyeRing(cx, cy, cz, dir, q) {
       const pole = [cx + dir * R_BALL, cy, cz];
+      const R0 = 0.062, off = dir * 0.050;
       const pts = [];
-      for (let k = 0; k <= 24; k++) {
-        const a = k / 24 * PI2;
-        pts.push(project([pole[0] + dir * (0.055 + 0.080 * Math.cos(a)),
-                          pole[1] + 0.080 * Math.sin(a), pole[2]], q));
+      for (let k = 0; k <= 26; k++) {
+        const a = k / 26 * PI2;
+        pts.push(project([pole[0] + off + dir * R0 * Math.cos(a), pole[1] + R0 * Math.sin(a), pole[2]], q));
       }
-      line(pts, rgb(IRON, 1.02), Math.max(1.4, pxRadius(pole, 0.018, q) * 2));
-      const b = project([pole[0] + dir * 0.030, pole[1], pole[2]], q);
-      const b2 = project([pole[0], pole[1], pole[2]], q);
-      line([b2, b], rgb(IRON, 0.8), Math.max(1.4, pxRadius(pole, 0.020, q) * 2));
+      // 座：把环接到球面上（先画，被环压住一点）
+      const b = project([pole[0] + dir * 0.026, pole[1], pole[2]], q);
+      const b2 = project([pole[0] - dir * 0.010, pole[1], pole[2]], q);
+      line([b2, b], rgb([54, 60, 68], 1), Math.max(1.8, pxRadius(pole, 0.028, q) * 2));
+      // 环：深铁色描一遍 + 内侧亮线一遍 = 有厚度
+      line(pts, rgb([56, 62, 70], 1), Math.max(1.4, pxRadius(pole, 0.016, q) * 2));
+      line(pts, rgb(IRON, 1.30), Math.max(0.7, pxRadius(pole, 0.008, q) * 2));
     }
 
-    // 木支架：四条腿 + 两道横档 + 皮革托
+    // 木支架：四条腿 + 两道横档 + 两块鞍座（球真的坐在鞍座上）+ 两条细皮带
     function drawStand(q) {
       for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
         drawBox([sx * 0.34, 0.30, sz * 0.32], [0.045, 0.30, 0.045], 0, q, WOOD_D);
@@ -1038,76 +1484,152 @@
       drawBox([0, 0.60, 0.32], [0.40, 0.045, 0.045], 0, q, WOOD);
       drawBox([-0.34, 0.66, 0], [0.045, 0.045, 0.34], 0, q, WOOD);
       drawBox([0.34, 0.66, 0], [0.045, 0.045, 0.34], 0, q, WOOD);
-      // 托住球的两条皮带：贴着球面下方（半径 0.27，球心 y = HC）
-      for (const sz of [-0.30, 0.30]) {
+      // 鞍座 + 皮革垫：球底在 y = HC − R = 0.81，鞍座顶面正好托住它
+      for (const sz of [-0.26, 0.26]) {
+        drawBox([0, 0.755, sz], [0.30, 0.055, 0.052], 0, q, WOOD);
+        drawBox([0, 0.818, sz], [0.255, 0.010, 0.046], 0, q, [70, 52, 36]);
+      }
+      // 两条细皮带翻过球面下缘（原来半径 0.27 / 宽 5.6cm，看着像两只角）
+      for (const sz of [-0.26, 0.26]) {
         const pts = [];
-        for (let k = 0; k <= 16; k++) {
-          const phi = -0.95 + 1.90 * k / 16;
-          pts.push(project([0.27 * Math.sin(phi), HC - 0.27 * Math.cos(phi), sz], q));
+        for (let k = 0; k <= 14; k++) {
+          const phi = -0.72 + 1.44 * k / 14;
+          pts.push(project([0.262 * Math.sin(phi), HC - 0.262 * Math.cos(phi), sz], q));
         }
-        line(pts, rgb([74, 58, 42], 1), Math.max(2.5, pxRadius([0, 0.9, 0], 0.028, q) * 2));
+        drawTube(pts, 0.012, q, rgb([64, 46, 30], 1), { stroke: rgb([32, 22, 14], 1), lw: 1 });
       }
       bodyBox([project([-0.40, 0, -0.36], q), project([0.40, 0, -0.36], q),
-               project([0.40, 0.80, 0.36], q), project([-0.40, 0.80, 0.36], q)], 3, 'stand', '木架');
+               project([0.40, 0.86, 0.36], q), project([-0.40, 0.86, 0.36], q)], 3, 'stand', '木架');
     }
 
-    // 格里克的活塞式真空泵：木架 + 铜缸 + 活塞杆 + 杠杆手柄 + 立柱
+    // 格里克 1650 年那台活塞式真空泵（世界第一台）。
+    // 结构：木工作台（台面 + 压条 + 四条腿 + 两道横档 + 两条斜撑）
+    //       → 铜缸（上下法兰 + 三道箍 + 缸顶填料函压盖与螺栓）
+    //       → 侧面排气阀盒与出气口、缸底吸入口
+    //       → 活塞杆 → 十字头与导轨 → 杠杆（U 形支座 + 销轴 + 木柄）
     const PUMP = [2.30, 1.20];
     function drawPump(q) {
       nPump++;
       const px = PUMP[0], pz = PUMP[1];
       const st = state.strokePh;
-      // 工作台（1.8 × 0.8 m —— 再大在「真空泵」视角里整块桌面就占满画面）
-      drawBox([px - 0.45, 0.50, pz], [0.90, 0.05, 0.40], 0, q, WOOD);
+      const rC = 0.085, yB = 0.55, yT = 1.60;      // 缸身：φ0.17 × 1.05 m
+      /* ---------- 木工作台 ---------- */
+      drawBox([px - 0.45, 0.500, pz], [0.90, 0.05, 0.40], 0, q, WOOD);
+      for (const sz of [-0.375, 0.375]) drawBox([px - 0.45, 0.546, pz + sz], [0.90, 0.014, 0.026], 0, q, WOOD_D);
       for (const sx of [-1.30, 0.42]) for (const sz of [-0.32, 0.32]) {
         drawBox([px + sx, 0.25, pz + sz], [0.045, 0.25, 0.045], 0, q, WOOD_D);
       }
-      // 活塞杆【先画】：杆子在铜缸里面，铜缸要把它盖住，只留伸出缸口的那一段。
-      // 反过来画（缸在前、杆在后）会让杆子整根压在缸面上，铜缸看着像空心的。
-      const rodTopY = 2.18 - 0.44 * st;
+      for (const sz of [-0.32, 0.32]) drawBox([px - 0.45, 0.155, pz + sz], [0.86, 0.026, 0.026], 0, q, WOOD_D);
+      // 两条斜撑（原来只有直腿，像个光板桌子）
+      drawTube([[px - 1.28, 0.15, pz - 0.30], [px + 0.40, 0.46, pz - 0.30]], 0.015, q, rgb(WOOD_D, 0.92));
+      drawTube([[px - 1.28, 0.15, pz + 0.30], [px + 0.40, 0.46, pz + 0.30]], 0.015, q, rgb(WOOD_D, 0.92));
+      /* ---------- 活塞杆（先画：铜缸要盖住缸内那一段）---------- */
+      const rodTopY = 2.16 - 0.44 * st;
       const pistonY = 0.92 + (1 - st) * 0.40;
-      drawTube([[px, pistonY, pz], [px, rodTopY, pz]], 0.020, q, rgb(IRON, 1.1), { stroke: rgb(IRON, 0.6), lw: 1 });
-      // 铜缸（1.05 m 高）
-      drawTube([[px, 0.55, pz], [px, 1.60, pz]], 0.085, q, rgb(BRASS, 1.15), { stroke: rgb(BRASS, 0.55), lw: 1 });
-      drawTube([[px, 0.55, pz], [px, 1.60, pz]], 0.050, q, rgb(BRASS, 0.70));
-      drawBox([px, 0.56, pz], [0.105, 0.035, 0.105], 0, q, rgb(BRASS, 0.85));
-      // 杠杆：绕立柱顶点转动，活塞杆顶端是杠杆上的滑块
+      drawCyl([px, pistonY, pz], [px, rodTopY, pz], 0.019, q, IRON, { stroke: rgb(IRON, 0.48), lw: 1 });
+      /* ---------- 铜缸 ---------- */
+      // 缸身用 drawCyl 的【轴向渐变】而不是 drawTube 的平色 —— 一根铜柱的立体感全在这条渐变上
+      drawCyl([px, yB, pz], [px, yT, pz], rC, q, BRASS, { stroke: rgb(BRASS, 0.40), lw: 1 });
+      // 上下法兰 + 三道箍
+      for (const [y, wide] of [[yB - 0.018, 1], [yT + 0.018, 1], [yB + 0.26, 0], [yB + 0.52, 0], [yB + 0.78, 0]]) {
+        const rr = wide ? rC * 1.30 : rC * 1.11;
+        drawCyl([px, y - 0.013, pz], [px, y + 0.013, pz], rr, q, BRASS, { minW: 1 });
+        drawDisc([px, y + 0.014, pz], [0, 1, 0], rr, q, rgb(BRASS, 0.74),
+                 { n: 20, stroke: rgb(BRASS, 0.38), lw: 1 });
+      }
+      // 缸顶填料函：压盖 + 四颗螺栓
+      drawCyl([px, yT + 0.02, pz], [px, yT + 0.10, pz], 0.050, q, BRASS,
+              { minW: 1, stroke: rgb(BRASS, 0.40), lw: 1 });
+      drawBox([px, yT + 0.116, pz], [0.062, 0.016, 0.062], 0, q, rgb(BRASS, 1.06),
+              { stroke: rgb(BRASS, 0.40), lw: 1 });
+      for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+        dot2(project([px + sx * 0.046, yT + 0.116, pz + sz * 0.046], q),
+             Math.max(0.9, pxRadius([px, yT + 0.12, pz], 0.006, q)), rgb(IRON, 1.16), rgb(IRON, 0.45), 1);
+      }
+      // 侧面排气阀盒 + 出气口（抽气时能看见"出气"这一段）
+      const vx = px + rC + 0.048;
+      drawBox([vx, yT - 0.13, pz], [0.044, 0.052, 0.052], 0, q, rgb(BRASS, 1.06),
+              { stroke: rgb(BRASS, 0.40), lw: 1 });
+      drawCyl([vx, yT - 0.07, pz], [vx, yT + 0.10, pz], 0.019, q, BRASS,
+              { minW: 1, stroke: rgb(BRASS, 0.40), lw: 1 });
+      drawDisc([vx, yT + 0.104, pz], [0, 1, 0], 0.032, q, rgb(BRASS, 1.20),
+               { n: 16, stroke: rgb(BRASS, 0.44), lw: 1 });
+      // 吸入口：缸身下部朝 −z 的水平接管（走台面上方，别从台面下钻出来）
+      drawCyl([px, yB + 0.17, pz], [px, yB + 0.17, pz - 0.155], 0.037, q, BRASS,
+              { minW: 1, stroke: rgb(BRASS, 0.40), lw: 1 });
+      drawDisc([px, yB + 0.17, pz - 0.160], [0, 0, 1], 0.045, q, rgb(BRASS, 0.82),
+               { n: 16, stroke: rgb(BRASS, 0.40), lw: 1 });
+      /* ---------- 十字头 + 导轨 + 杠杆 ---------- */
+      drawBox([px, rodTopY, pz], [0.052, 0.024, 0.044], 0, q, rgb(IRON, 0.98),
+              { stroke: rgb(IRON, 0.44), lw: 1 });
+      for (const sz of [-0.060, 0.060]) {
+        const mid = (yT + 0.17 + rodTopY) / 2;
+        drawBox([px, mid, pz + sz], [0.014, Math.max(0.01, (rodTopY - yT - 0.17) / 2), 0.013], 0, q, rgb(IRON, 0.72));
+      }
       const P = [px - 1.05, 1.95, pz];
       const A = [px, rodTopY, pz];
+      // 立柱做成两根（中间夹住杠杆），比原来一根独柱像真泵
+      for (const sz of [-0.05, 0.05]) {
+        drawBox([P[0], (0.55 + P[1]) / 2, P[2] + sz], [0.026, (P[1] - 0.55) / 2, 0.020], 0, q, rgb(WOOD_D, 1.0));
+      }
       const d = vnorm(sub(A, P));
-      const grip = add(A, scl(d, 0.45));
-      drawTube([P, grip], 0.032, q, rgb(WOOD, 1.30), { stroke: rgb(WOOD_D, 1), lw: 1 });
-      drawTube([[P[0], 0.55, P[2]], P], 0.040, q, rgb(WOOD_D, 1.0));
-      drawBox(P, [0.060, 0.050, 0.060], 0, q, rgb(IRON, 0.9));
-      bodyBox([project(P, q), project(grip, q), project([px, 0.55, pz], q), project([px + 0.1, 1.60, pz], q)],
-              3, 'pump', '真空泵');
+      const grip = add(A, scl(d, 0.52));
+      drawCyl(P, grip, 0.028, q, WOOD, { stroke: rgb(WOOD_D, 0.9), lw: 1 });
+      drawCyl(add(A, scl(d, 0.32)), grip, 0.033, q, [104, 74, 46], { minW: 1 });   // 手握的那一段
+      drawSphere3(grip, 0.036, q, WOOD, {});
+      // 杠杆上的滑块 + 销轴 + 枢轴销
+      drawBox(A, [0.046, 0.026, 0.038], 0, q, rgb(IRON, 0.94), { stroke: rgb(IRON, 0.42), lw: 1 });
+      dot2(project(A, q), Math.max(1.4, pxRadius(A, 0.015, q)), rgb(IRON, 1.22), rgb(IRON, 0.42), 1);
+      dot2(project(P, q), Math.max(1.6, pxRadius(P, 0.020, q)), rgb(IRON, 1.22), rgb(IRON, 0.42), 1);
+      bodyBox([project(P, q), project(grip, q), project([px - 1.32, 0.12, pz - 0.36], q),
+               project([px + 0.20, yT + 0.14, pz + 0.36], q)], 3, 'pump', '真空泵');
     }
 
-    // 从泵到阀门的铜管
+    // 从泵的吸入口到球顶阀门的铜管（一路走台面上方）。
+    // 末端要【跟着阀门走】—— 半球分开后阀门跟着半球移开，管子留在原地会变成一截悬空的管子。
     function drawPipe(q) {
       const px = PUMP[0], pz = PUMP[1];
+      const A = ballCenter(1);
+      const ox = A[0], oy = A[1] - HC;
       const path = [
-        [px - 0.16, 0.70, pz],
-        [px - 0.42, 1.02, pz - 0.34],
-        [1.15, 1.14, 0.44],
+        [px, 0.72, pz - 0.16],
+        [px - 0.28, 0.86, pz - 0.48],
+        [1.18, 1.14, 0.42],
         [0.54, 1.22, 0.14],
-        [0.20, 1.26, 0.02]
+        [0.20 + ox, 1.26 + oy, 0.02]
       ];
       drawTube(path, 0.022, q, rgb(COPPER, 1.05), { stroke: rgb(COPPER, 0.5), lw: 1, box: true, weight: 3, txt: '铜管' });
     }
 
-    // 阀门：球顶上的小铜旋塞，开阀时手柄转 90°
-    function drawValve(q) {
-      // 阀座要埋进球面里（球面在 x = 0.18 处 y ≈ 1.234），否则会看着"浮在球顶"
-      const base = [0.18, 1.20, 0.02];
-      drawTube([base, [0.18, 1.44, 0.02]], 0.030, q, rgb(BRASS, 1.25), { stroke: rgb(BRASS, 0.6), lw: 1 });
-      drawBox([0.18, 1.43, 0.02], [0.055, 0.020, 0.055], 0, q, rgb(BRASS, 0.95));
+    // 阀门：球顶上的铜旋塞（阀座埋在球里 → 阀体 → 压盖与螺栓 → 阀杆 → 横手柄 + 指位小球）
+    // 【必须跟着所在半球走】：原来用固定世界坐标，两个半球一分开阀门就浮在半空。
+    // (ox, oy, oz) = 该半球中心相对「合拢时球心 (0, HC, 0)」的位移。
+    function drawValve(q, ox, oy, oz) {
+      ox = ox || 0; oy = oy || 0; oz = oz || 0;
+      const V = (x, y, z) => [x + ox, y + oy, z + oz];
+      const bx = 0.18, bz = 0.02;
+      // 球面在 x = 0.18 处的 y ≈ 1.234，阀座从 1.18 起 —— 埋进球面里，不会"浮在球顶"
+      drawTube([V(bx, 1.18, bz), V(bx, 1.27, bz)], 0.040, q, rgb(BRASS, 1.06), { stroke: rgb(BRASS, 0.45), lw: 1 });
+      drawDisc(V(bx, 1.268, bz), [0, 1, 0], 0.048, q, rgb(BRASS, 1.22), { n: 20, stroke: rgb(BRASS, 0.48), lw: 1 });
+      // 阀体
+      drawBox(V(bx, 1.306, bz), [0.040, 0.036, 0.040], 0, q, rgb(BRASS, 1.10), { stroke: rgb(BRASS, 0.44), lw: 1 });
+      // 填料压盖 + 两颗螺栓
+      drawBox(V(bx, 1.352, bz), [0.030, 0.011, 0.030], 0, q, rgb(BRASS, 0.92));
+      for (const sx of [-1, 1]) {
+        dot2(project(V(bx + sx * 0.023, 1.352, bz), q),
+             Math.max(0.9, pxRadius(V(bx, 1.35, bz), 0.0055, q)), rgb(IRON, 1.15), rgb(IRON, 0.5), 1);
+      }
+      // 阀杆
+      drawTube([V(bx, 1.34, bz), V(bx, 1.462, bz)], 0.012, q, rgb(IRON, 1.18), { stroke: rgb(IRON, 0.52), lw: 1 });
+      // 横手柄：随开阀进度转 90°
       const a = state.valveT * Math.PI / 2;   // 关：手柄横在 z 向；开：转到 x 向
-      const h = 0.10;
-      const p0 = project([0.18 - h * Math.cos(a), 1.46, 0.02 - h * Math.sin(a)], q);
-      const p1 = project([0.18 + h * Math.cos(a), 1.46, 0.02 + h * Math.sin(a)], q);
-      line([p0, p1], rgb(IRON, 1.05), Math.max(2, pxRadius(base, 0.018, q) * 2));
-      bodyBox([project([0.10, 1.16, -0.09], q), project([0.26, 1.50, 0.13], q)], 3, 'valve', '阀门');
+      const h = 0.082;
+      const p0 = V(bx - h * Math.cos(a), 1.478, bz - h * Math.sin(a));
+      const p1 = V(bx + h * Math.cos(a), 1.478, bz + h * Math.sin(a));
+      drawTube([p0, p1], 0.013, q, rgb(IRON, 1.10), { stroke: rgb(IRON, 0.48), lw: 1 });
+      drawSphere3(p0, 0.019, q, IRON, {});
+      drawSphere3(p1, 0.019, q, IRON, {});
+      bodyBox([project(V(bx - 0.08, 1.16, bz - 0.08), q), project(V(bx + 0.08, 1.53, bz + 0.08), q)], 3, 'valve', '阀门');
     }
 
     /* ============================================================
@@ -1295,6 +1817,7 @@
         list.push({ p: p, d: dist });
       }
       list.sort((a, b) => b.d - a.d);
+      if (front) nCrowdFront += list.length;
       for (const it of list) drawPerson(it.p.x, it.p.z, q, it.p.tone, it.p.hat, it.p.ph + state.t * 0.6);
     }
 
@@ -1323,11 +1846,27 @@
       const sorted = all.map(h => ({ h: h, d: dot(sub([h.x, 0, h.z], q.eye), q.fwd) }))
         .sort((a, b) => b.d - a.d);
       const lean = state.pull * (state.sep > 0.02 ? 0.25 : 1.0);
+      // 使劲时蹄下起尘（拉不开才会持续使劲，拉开了就不必再扬尘）
+      const dust = (state.pull > 0.15 && state.sep < 0.02) ? state.pull : 0;
       for (const it of sorted) {
         const h = it.h;
         const wob = state.pull > 0.02 && state.sep < 0.02
           ? Math.sin(state.t * 7.5 + h.u * 1.7) * 0.028 * state.pull : 0;
         drawHorse(h.x + h.dir * wob, h.z, h.dir, q, h.tone, lean + wob * 0.5);
+        if (dust > 0) drawDust(h.x - h.dir * 0.50, h.z, q, dust);
+      }
+    }
+
+    // 马蹄下的尘烟：位置用相位推，不用随机数（自检才可比）
+    function drawDust(x, z, q, amt) {
+      for (let k = 0; k < 3; k++) {
+        const ph = (state.t * 1.5 + k * 0.34 + Math.abs(x) * 0.11) % 1;
+        const px = x - Math.sign(x || 1) * ph * 0.50;
+        const py = 0.03 + ph * 0.26;
+        const c = project([px, py, z + Math.cos(ph * 6.0 + k) * 0.18 * ph], q);
+        const rr = Math.max(0.6, pxRadius([px, py, z], 0.09 + 0.20 * ph, q));
+        nDust++;
+        dot2(c, rr, 'rgba(152,140,120,' + (0.22 * amt * (1 - ph)).toFixed(3) + ')', null);
       }
     }
 
@@ -1335,10 +1874,18 @@
       if (state.hitched < 0.02) return;
       const taut = clamp(state.hitched * 0.55 + state.pull * 0.45, 0, 1);
       const sag = 0.62 * (1 - taut);
+      // 使劲时绳子绷紧并【高频颤动】—— 特写镜头里全靠这根绳的抖动传达"正在拉"。
+      // 相位用点的序号，不用随机数（自检才可比）。
+      const vib = state.pull > 0.05 ? state.pull : 0;
+      const wob = (t, amp) => vib * amp * Math.sin(state.t * 42 + t * 5.1);
       for (const dir of [1, -1]) {
         const ring = [dir * (R_BALL + 0.10), HC, 0];
         const hitch = [dir * HITCH, 0.92, 0];
-        drawTube(ropePts(ring, hitch, sag * 1.35, 12), 0.030, q, rgb([124, 100, 64], 1.0),
+        const mp = ropePts(ring, hitch, sag * 1.35, 12);
+        for (let k = 0; k < mp.length; k++) {
+          mp[k] = [mp[k][0], mp[k][1] + wob(k * 0.6, 0.030), mp[k][2] + wob(k * 0.6 + 2.3, 0.020)];
+        }
+        drawTube(mp, 0.030, q, rgb([124, 100, 64], 1.0),
                  { stroke: rgb([70, 56, 34], 1), lw: 1, box: true, weight: 3, txt: '主绳' });
         // 横担
         const bar = [];
@@ -1348,8 +1895,11 @@
         const team = teamOf(dir);
         for (const h of team) {
           const collar = [h.x - dir * 0.62, 1.16, h.z];
-          drawTube(ropePts([dir * HITCH, 0.92, h.z], collar, sag * 0.55, 6), 0.013, q,
-                   rgb([96, 78, 50], 1.0), { minW: 0.45 });
+          const sp = ropePts([dir * HITCH, 0.92, h.z], collar, sag * 0.55, 6);
+          for (let k = 0; k < sp.length; k++) {
+            sp[k] = [sp[k][0], sp[k][1] + wob(k * 0.9 + h.u, 0.016), sp[k][2]];
+          }
+          drawTube(sp, 0.013, q, rgb([96, 78, 50], 1.0), { minW: 0.45 });
         }
       }
     }
@@ -1376,11 +1926,12 @@
       const order = dA > dB ? [[A, 1], [B, -1]] : [[B, -1], [A, 1]];
       for (const [c, dir] of order) {
         drawHemisphere(c[0], c[1], c[2], dir, q, COPPER, { weight: 6, txt: dir > 0 ? '右半球' : '左半球' });
+        // 法兰跟着各自半球走：分开后每个半球都有自己的那片带铆钉的法兰
+        drawSeamRing(c[0], c[1], c[2], q, state.sep, COPPER);
       }
-      drawSeamRing(A[0], A[1], A[2], q, state.sep);
       drawEyeRing(A[0], A[1], A[2], 1, q);
       drawEyeRing(B[0], B[1], B[2], -1, q);
-      drawValve(q);
+      drawValve(q, A[0], A[1] - HC, 0);
       // 分开之后镜头要对准【两个半球的中间】，否则放大镜里只剩一个
       state.sepOn = state.sep > 0.02;
       state.ballFocus = state.sepOn ? [(A[0] + B[0]) / 2, (A[1] + B[1]) / 2, 0] : [A[0], A[1], A[2]];
@@ -1411,11 +1962,14 @@
       const kN = (fN / 1000).toFixed(1);
       const open = state.valveT > 0.98 || state.sep > 0.02;
       // 马队的拉力：两边各一支朝外的箭头
+      // 受力分析的标签也走【避让】：用 label() 直贴时，在拉动特写里球位于画面左下角，
+      // 几条标签会正好压到左上角的步骤卡与左下角的按钮条上（实测 F 组抓到 1 处）。
       if (!open) {
         arrow2({ x: c.x + R * 0.55, y: c.y - R * 0.95 }, { x: c.x + R * 2.35, y: c.y - R * 0.95 }, 'rgba(251,146,60,.95)', 2.6, 10);
         arrow2({ x: c.x - R * 0.55, y: c.y - R * 0.95 }, { x: c.x - R * 2.35, y: c.y - R * 0.95 }, 'rgba(251,146,60,.95)', 2.6, 10);
-        label({ x: c.x + R * 2.5, y: c.y - R * 0.95 }, '马队拉力 ' + (horseForce() / 1000).toFixed(1) + ' kN', '#fdba74', 11, 'left');
-        label({ x: c.x - R * 2.5, y: c.y - R * 0.95 }, '马队拉力 ' + (horseForce() / 1000).toFixed(1) + ' kN', '#fdba74', 11, 'right');
+        const fTxt = '马队拉力 ' + (horseForce() / 1000).toFixed(1) + ' kN';
+        bestLabel({ x: c.x + R * 2.5, y: c.y - R * 0.95 }, fTxt, '#fdba74', 11, AVOID, 'left');
+        bestLabel({ x: c.x - R * 2.5, y: c.y - R * 0.95 }, fTxt, '#fdba74', 11, AVOID, 'right');
       }
       // 大气压把球往里压 / 球内气压往外顶
       const pin = pIn() / 1000, p0 = P0 / 1000;
@@ -1427,15 +1981,17 @@
       if (sh > 0.03) {
         arrow2({ x: c.x + R * 1.55, y: c.y }, { x: c.x + R * 1.55 - inLen, y: c.y }, 'rgba(56,189,248,.95)', 2.4, 9);
         arrow2({ x: c.x - R * 1.55, y: c.y }, { x: c.x - R * 1.55 + inLen, y: c.y }, 'rgba(56,189,248,.95)', 2.4, 9);
-        label({ x: c.x + R * 1.62, y: c.y - 2 }, '大气压 ' + p0.toFixed(0) + ' kPa', '#7dd3fc', 11, 'left');
+        bestLabel({ x: c.x + R * 1.62, y: c.y - 2 }, '大气压 ' + p0.toFixed(0) + ' kPa', '#7dd3fc', 11, AVOID, 'left');
       }
-      label({ x: c.x, y: c.y + R * 1.32 }, '球内 ' + pin.toFixed(1) + ' kPa' + (open ? '（已通大气）' : ''), open ? '#a7f3d0' : '#fde68a', 11, 'center');
-      if (!open && fN > 1) label({ x: c.x, y: c.y - R * 1.55 }, '需要 ' + kN + ' kN 才拉得开', '#fca5a5', 11.5, 'center');
+      bestLabel({ x: c.x, y: c.y + R * 1.32 }, '球内 ' + pin.toFixed(1) + ' kPa' + (open ? '（已通大气）' : ''), open ? '#a7f3d0' : '#fde68a', 11, AVOID_DN);
+      if (!open && fN > 1) bestLabel({ x: c.x, y: c.y - R * 1.55 }, '需要 ' + kN + ' kN 才拉得开', '#fca5a5', 11.5, AVOID_UP);
     }
 
     // 全景里球太小 → 挂一枚放大镜（引线指向真身，镜内用同一套绘制函数）
     function drawLens(q) {
       if (!state.showLens) return;
+      // 拉动特写【保留】放大镜：这一档是宽画幅（球只有 ~30 px），
+      // 镜内正好补上「金属半球被大气压死死压住」的近景 —— 一格里既有全景又有特写。
       const bs = state.ballScreen;
       // 判据只有一个：球在屏幕上小到看不清才挂镜。
       // （原来还写过一条「近景两档直接 return」，实测是死代码 —— 特写球 108 px、
@@ -1468,11 +2024,11 @@
       const nearA = vlen(sub([A2[0] + 0.12, A2[1], 0], q2.eye)) < vlen(sub([B2[0] - 0.12, B2[1], 0], q2.eye));
       for (const [cc, dd] of (nearA ? [[B2, -1], [A2, 1]] : [[A2, 1], [B2, -1]])) {
         drawHemisphere(cc[0], cc[1], cc[2], dd, q2, COPPER, { box: false });
+        drawSeamRing(cc[0], cc[1], cc[2], q2, state.sep, COPPER);
       }
-      drawSeamRing(A2[0], A2[1], A2[2], q2, state.sep);
       drawEyeRing(A2[0], A2[1], A2[2], 1, q2);
       drawEyeRing(B2[0], B2[1], B2[2], -1, q2);
-      drawValve(q2);
+      drawValve(q2, A2[0], A2[1] - HC, 0);
       ctx.restore();
       ctx.beginPath(); ctx.arc(lc.x, lc.y, LR, 0, PI2);
       ctx.lineWidth = 2.4; ctx.strokeStyle = 'rgba(148,163,184,.62)'; ctx.stroke();
@@ -1505,15 +2061,19 @@
       if (onScreen(pp, 70)) {
         bestLabel({ x: pp.x, y: pp.y - 13 }, big ? '格里克真空泵' : '真空泵', '#a5f3fc', big ? 11.5 : 11, AVOID_UP);
       }
-      // 近景两档里马队与人群根本没画，标签自然也不该出现（否则会被钳到边缘变浮字）
+      // 近景两档里马队与人群根本没画，标签自然也不该出现（否则会被钳到边缘变浮字）。
+      // 每一条都要过 onScreen：锚点在画外时 labelBox 会把它钳到 (8,8)，
+      // 于是「广场喷泉」这种画外标签会正好压在左上角的步骤卡上（实测 F 组抓到）。
       if (state.view !== 'close' && state.view !== 'pump') {
         const e = project([-HALF_SPAN * 0.72, 1.9, 0.6], q);
         const t1 = state.scene === 'reg' ? '两队各 15 匹马' : '两队各 8 匹马';
-        bestLabel({ x: e.x, y: e.y - 16 }, t1, '#fdba74', 12, AVOID);
+        if (onScreen(e, 46)) bestLabel({ x: e.x, y: e.y - 16 }, t1, '#fdba74', 12, AVOID);
         const c2 = project([HALF_SPAN * 0.70, 1.9, 0.6], q);
-        bestLabel({ x: c2.x, y: c2.y - 16 }, state.scene === 'reg' ? '皇帝与议员观礼' : '市民围观', '#c4b5fd', 11.5, AVOID);
+        if (onScreen(c2, 46)) {
+          bestLabel({ x: c2.x, y: c2.y - 16 }, state.scene === 'reg' ? '皇帝与议员观礼' : '市民围观', '#c4b5fd', 11.5, AVOID);
+        }
         const f = project([-12.6, 3.2, -10.5], q);
-        bestLabel({ x: f.x, y: f.y - 14 }, '广场喷泉', '#93c5fd', 11, AVOID_UP);
+        if (onScreen(f, 46)) bestLabel({ x: f.x, y: f.y - 14 }, '广场喷泉', '#93c5fd', 11, AVOID_UP);
       }
       label({ x: state.w - 14, y: 22 }, state.scene === 'reg' ? '雷根斯堡 · 帝国议会广场 · 1654 年 5 月 8 日' : '马德堡 · 1656 年',
             'rgba(196,181,253,.92)', 11.5, 'right');
@@ -1526,7 +2086,7 @@
       const w = state.w, h = state.h;
       ctx.setTransform(state.dpr, 0, 0, state.dpr, 0, 0);
       frameBoxes = []; LBOX = []; LQUEUE = []; drawnLabels = [];
-      nHouse = 0; nPerson = 0; nHorse = 0; nPump = 0; nLens = 0;
+      nHouse = 0; nPerson = 0; nHorse = 0; nPump = 0; nLens = 0; nCrowdFront = 0; nDust = 0;
       const q = makeCam({}, w, h);
       state.q = q;
       UI_BOX = uiBoxes();
@@ -1542,7 +2102,9 @@
       if (!isNear) { drawCrowd(q, false); drawTeams(q); }
       drawRopes(q);
       drawApparatus(q);
-      if (!isNear) drawCrowd(q, true);
+      // 拉动特写：不画「近景看客」那一批 —— 他们正好站在相机与器材之间
+      // （机位在 z ≈ 13 m、看客在 z ∈ [5.4, 9.6]），整幅画面会被后脑勺挡光。
+      if (!isNear && state.view !== 'pull') drawCrowd(q, true);
       drawFBD(q);
       if (state.view !== 'close') drawLens(q);
       drawSceneLabels(q);
@@ -1551,7 +2113,8 @@
         ballPx: state.ballPx, ballScreen: state.ballScreen,
         labels: drawnLabels.length, obstacles: frameBoxes.length,
         horses: SCENES[state.scene].horses, view: state.view,
-        houses: nHouse, persons: nPerson, horsesDrawn: nHorse, pump: nPump, lens: nLens
+        houses: nHouse, persons: nPerson, horsesDrawn: nHorse, pump: nPump, lens: nLens,
+        crowdFront: nCrowdFront, dust: nDust
       };
     }
 
@@ -1671,6 +2234,7 @@
     }
 
     function resetAll() {
+      if (state.cine) exitCine();                 // 特写模式下按「重来」要还原到原来的视角
       state.strokes = 0; state.auto = false; state.strokePh = 0;
       state.valve = false; state.valveT = 0;
       state.hitched = 0; state.pull = 0; state.sep = 0;
@@ -1679,7 +2243,9 @@
       updateReadouts(); renderAnalysis();
     }
 
-    function applyView(name) {
+    // 真正切视角的动作。enterCine/exitCine 也走它 —— 所以「用户手动换视角」与
+    // 「自动切特写」不会互相把对方的标记清掉（谁先设标记谁负责清）。
+    function applyViewRaw(name) {
       const v = VIEWS[name];
       if (!v) return;
       state.view = name;
@@ -1688,6 +2254,31 @@
       state.dirty = true;
       document.querySelectorAll('[data-view]').forEach(b => b.classList.toggle('on', b.getAttribute('data-view') === name));
       updateReadouts();
+    }
+    // 用户自己换视角 = 退出特写模式（否则镜头会被特写锁住、点了视角按钮没反应）
+    function applyView(name) {
+      if (state.cine && name !== 'pull') { state.cine = false; state.viewBefore = null; syncCineBtn(); }
+      applyViewRaw(name);
+    }
+    // 拉动特写：进入「拉」这一步时自动切过来，离开这一步时还原
+    function enterCine() {
+      if (state.cine) return;
+      state.viewBefore = state.view;
+      state.cine = true;
+      applyViewRaw('pull');
+      syncCineBtn();
+      showToast('切到特写 —— 看两队马怎么使劲');
+    }
+    function exitCine() {
+      if (!state.cine) return;
+      const back = state.viewBefore || 'plaza';
+      state.cine = false; state.viewBefore = null;
+      applyViewRaw(back);
+      syncCineBtn();
+    }
+    function syncCineBtn() {
+      const b = document.getElementById('mdb-cine');
+      if (b) b.style.display = state.cine ? '' : 'none';
     }
 
     function setScene(key) {
@@ -1745,6 +2336,9 @@
       }
       const fwd = n > state.step;
       applyStep(n, fwd);
+      // 特写镜头：在「拉」这一步自动切到 pull 档，离开就还原（前后来回切都成立）
+      if (n === 3) enterCine();
+      else if (state.cine) exitCine();
       if (n === 2 && fwd) showToast('两队马套上绳索 —— 每边 ' + SCENES[state.scene].perSide + ' 匹');
       if (n === 3 && fwd) {
         flashFlag(canPull()
@@ -1947,6 +2541,7 @@
       showToast('已直接跳到「用力拉」：抽了 ' + state.strokes + ' 次，球内约 ' + (pInAt(state.strokes) / 1000).toFixed(1) + ' kPa');
     });
     $('mdb-reset').addEventListener('click', () => { resetAll(); applyView('plaza'); showToast('回到第一步'); });
+    $('mdb-cine').addEventListener('click', () => { exitCine(); showToast('回到全景视角'); });
     $('mdb-fbd').addEventListener('click', () => {
       state.showFBD = !state.showFBD;
       $('mdb-fbd').classList.toggle('go', state.showFBD);
@@ -1992,6 +2587,7 @@
       teamSlots: teamSlots, teamOf: teamOf, ballCenter: ballCenter,
       hemiOutline: hemiOutline, drawHemisphere: drawHemisphere,
       applyStep: applyStep, goStep: goStep, startPump: startPump, openValve: openValve, autoPump: autoPump,
+      applyViewRaw: applyViewRaw, enterCine: enterCine, exitCine: exitCine, syncCineBtn: syncCineBtn,
       resetAll: resetAll, setScene: setScene, applyView: applyView, recordMark: recordMark,
       stepAnim: stepAnim, render: render, showToast: showToast, flashFlag: flashFlag,
       // 自检用：推进动画到结束（确定性，不依赖真实时钟）

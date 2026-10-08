@@ -1,0 +1,1780 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>功率的测量 · 3D 爬楼计时台 - 物理虚拟实验</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="stylesheet" href="style.css">
+  <script src="auth-check.js"></script>
+  <style>
+    :root{
+      --bg:#020617; --panel:rgba(15,23,42,.72); --line:rgba(148,163,184,.16);
+      --ink:#e2e8f0; --dim:#94a3b8; --dim2:#64748b;
+      --blue:#38bdf8; --cyan:#22d3ee; --purple:#a78bfa; --green:#34d399;
+      --amber:#fbbf24; --red:#f87171; --rose:#f43f5e;
+    }
+    *{box-sizing:border-box}
+    html,body{margin:0}
+    body{
+      margin:0; padding:20px; min-width:320px;
+      background:
+        radial-gradient(1100px 620px at 12% -8%, rgba(56,189,248,.14), transparent 62%),
+        radial-gradient(900px 560px at 88% 4%, rgba(167,139,250,.13), transparent 60%),
+        radial-gradient(760px 520px at 50% 108%, rgba(34,211,238,.09), transparent 60%),
+        var(--bg);
+      color:var(--ink);
+      font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Segoe UI",Roboto,sans-serif;
+      -webkit-font-smoothing:antialiased; line-height:1.62;
+    }
+    .lab3d{max-width:1520px;margin:0 auto}
+    .lab3d h1{margin:0;font-size:19px;letter-spacing:.3px;
+      background:linear-gradient(120deg,#e2e8f0 10%,#7dd3fc 52%,#c4b5fd 92%);
+      -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+    .lab3d-sub{margin:7px 0 16px;color:#93b4c4;font-size:12.5px;line-height:1.65}
+    .lab3d-sub b{color:#a5f3fc;font-weight:700}
+    .lab3d-sub .hl{color:#fcd34d;font-weight:700}
+
+    /* 三栏：控制台 | 场景 | 读数 —— 控制台与实验画面【左右并排】，绝不放在画面下面 */
+    .lab3d-layout{display:grid;gap:14px;align-items:start;
+      grid-template-columns:302px minmax(0,1fr) 308px;
+      grid-template-rows:1fr auto;
+      grid-template-areas:"ctl scene read" "ctl lower read"}
+    .lab3d-ctl{grid-area:ctl;display:flex;flex-direction:column;gap:11px;min-width:0;align-self:stretch}
+    .lab3d-stage{grid-area:scene;position:relative;align-self:stretch;
+      min-height:clamp(430px,54vh,600px);
+      border:1px solid var(--line);border-radius:16px;overflow:hidden;overflow:clip;background:#050b18;
+      box-shadow:0 18px 46px rgba(2,6,23,.5)}
+    .lab3d-lower{grid-area:lower;display:grid;
+      grid-template-columns:minmax(0,1.30fr) minmax(0,1fr) minmax(0,1fr);
+      gap:11px;align-items:start}
+    .lab3d-sidebar{grid-area:read;display:flex;flex-direction:column;gap:11px;min-width:0;
+      position:sticky;top:16px;align-self:start;
+      max-height:calc(100vh - 120px);overflow-y:auto;overscroll-behavior:contain;
+      scrollbar-width:thin}
+
+    /* 画布必须【绝对定位】，否则它的内在高度会变成舞台的 max-content 高度，自反馈。 */
+    .lab3d-stage canvas{position:absolute;left:0;top:0;display:block;width:100%;height:100%;
+      touch-action:none;cursor:grab}
+    .lab3d-stage canvas.grabbing{cursor:grabbing}
+    .lab3d-stage canvas.pick{cursor:pointer}
+
+    .stage-hint{position:absolute;left:12px;top:12px;max-width:56%;padding:8px 11px;border-radius:9px;
+      background:rgba(2,6,23,.76);border:1px solid rgba(148,163,184,.22);color:#cbd5e1;font-size:11.5px;
+      line-height:1.55;backdrop-filter:blur(6px);pointer-events:none}
+    .stage-hint b{color:#7dd3fc}
+    .stage-flag{position:absolute;left:50%;transform:translateX(-50%);bottom:56px;padding:7px 14px;border-radius:999px;
+      font-size:12px;font-weight:700;background:rgba(6,78,59,.78);border:1px solid rgba(52,211,153,.6);
+      color:#d1fae5;opacity:0;transition:opacity .22s;pointer-events:none;white-space:nowrap;max-width:88%;
+      overflow:hidden;text-overflow:ellipsis}
+    .stage-flag.show{opacity:1}
+    .stage-flag.warn{background:rgba(120,53,15,.8);border-color:rgba(251,191,36,.6);color:#fef3c7}
+    .stage-toast{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);padding:10px 18px;border-radius:12px;
+      background:rgba(2,6,23,.9);border:1px solid rgba(56,189,248,.45);color:#e0f2fe;font-size:13px;font-weight:600;
+      opacity:0;transition:opacity .22s;pointer-events:none;max-width:78%;text-align:center}
+    .stage-toast.show{opacity:1}
+
+    /* 秒表：真实秒表的读数就贴在舞台上（功率读数在右栏） */
+    .stage-clock{position:absolute;right:12px;top:12px;min-width:132px;padding:9px 12px 10px;border-radius:12px;
+      background:linear-gradient(180deg,rgba(8,20,34,.94),rgba(4,12,22,.94));
+      border:1px solid rgba(56,189,248,.36);box-shadow:0 8px 26px rgba(2,6,23,.55);pointer-events:none}
+    .stage-clock .ck-lab{font-size:10px;letter-spacing:.16em;color:#5e8496;font-weight:800}
+    .stage-clock .ck-num{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:27px;font-weight:800;
+      color:#a5f3fc;letter-spacing:.5px;font-variant-numeric:tabular-nums;line-height:1.14;
+      text-shadow:0 0 12px rgba(56,189,248,.4)}
+    .stage-clock .ck-unit{font-size:11px;color:#5e8496;font-weight:700}
+    .stage-clock.run{border-color:rgba(52,211,153,.6)}
+    .stage-clock.run .ck-num{color:#6ee7b7;text-shadow:0 0 12px rgba(52,211,153,.45)}
+
+    .stage-bar{position:absolute;left:0;right:0;bottom:0;display:flex;align-items:flex-end;justify-content:space-between;
+      gap:10px;padding:10px 12px;pointer-events:none}
+    .stage-bar .bar-left{display:flex;align-items:center;gap:7px;flex-wrap:wrap;pointer-events:auto}
+    .stage-bar .stage-help{font-size:11px;color:#7b93a6;text-align:right;max-width:44%;line-height:1.5}
+    .stage-btn{padding:8px 13px;border-radius:10px;border:1px solid rgba(148,163,184,.3);
+      background:rgba(15,23,42,.88);color:#cbd5e1;font-family:inherit;font-size:12px;font-weight:800;cursor:pointer;
+      display:inline-flex;align-items:center;gap:6px;transition:background .2s,border-color .2s,color .2s}
+    .stage-btn:hover{border-color:rgba(125,211,252,.7)}
+    .stage-btn.go{border-color:rgba(56,189,248,.55);background:rgba(14,116,144,.32);color:#e0f2fe}
+    .stage-btn .cnt{display:inline-grid;place-items:center;min-width:17px;height:17px;padding:0 4px;border-radius:99px;
+      font-size:10px;font-weight:800;background:rgba(148,163,184,.22);color:#e2e8f0}
+
+    .panel{border:1px solid var(--line);border-radius:13px;background:var(--panel);padding:11px 12px}
+    .panel > h3{margin:0 0 8px;font-size:12px;font-weight:800;color:#7dd3fc;letter-spacing:.4px;
+      display:flex;align-items:center;justify-content:space-between;gap:8px}
+    .panel > h3 .pill{font-size:10px;font-weight:800;padding:2px 8px;border-radius:99px;
+      background:rgba(148,163,184,.18);color:#e2e8f0}
+    .panel > h3 .pill.ok{background:rgba(52,211,153,.22);color:#d1fae5}
+    .panel > .note{margin:8px 0 0;color:#8aa6b8;font-size:10.5px;line-height:1.5}
+
+    .btn-row{display:flex;flex-wrap:wrap;gap:6px}
+    .btn-row button{flex:1 1 auto;min-width:0;padding:8px 9px;border-radius:9px;cursor:pointer;
+      font-family:inherit;font-size:11.5px;font-weight:800;
+      border:1px solid rgba(148,163,184,.3);background:rgba(30,41,59,.7);color:#cbd5e1}
+    .btn-row button.primary{border-color:rgba(56,189,248,.6);background:rgba(14,116,144,.42);color:#e0f2fe}
+    .btn-row button:hover:not(:disabled){border-color:rgba(125,211,252,.7)}
+    .btn-row button:disabled{opacity:.4;cursor:not-allowed}
+    .btn-row.tiny button{padding:6px 4px;font-size:10.5px}
+
+    .fld{display:block;margin-bottom:9px}
+    .fld:last-child{margin-bottom:0}
+    .fld .row{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:4px}
+    .fld .row span{color:#a9c2d2;font-size:11.5px}
+    .fld .row b{color:#e2e8f0;font-size:12.5px;font-variant-numeric:tabular-nums}
+    .fld input[type=range]{width:100%;accent-color:#38bdf8}
+    .fld input[type=range]:disabled{opacity:.35;cursor:not-allowed}
+    .fld .mini-note{margin-top:5px;font-size:10.5px;font-weight:800;color:#8aa6b8}
+    .fld .mini-note.lock{color:#fcd34d}
+
+    .gauge-num{display:flex;align-items:baseline;justify-content:center;gap:6px;
+      padding:7px 8px;border-radius:10px;margin-bottom:8px;
+      background:linear-gradient(180deg,#0b1a2a,#07131f);border:1px solid rgba(56,189,248,.3)}
+    .gauge-num .num{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:27px;font-weight:800;
+      color:#a5f3fc;letter-spacing:.5px;font-variant-numeric:tabular-nums;
+      text-shadow:0 0 12px rgba(56,189,248,.45)}
+    .gauge-num .unit{color:#5e8496;font-size:13px;font-weight:700}
+
+    .readouts{display:flex;flex-direction:column;gap:4px;color:#a9c2d2;font-size:11.5px}
+    .readouts div{display:flex;justify-content:space-between;gap:8px}
+    .readouts b{color:#e2e8f0;font-variant-numeric:tabular-nums}
+
+    #pw-rec-body{overflow-x:auto}
+    table.rec{width:100%;border-collapse:collapse;font-size:11px;font-variant-numeric:tabular-nums;
+      white-space:nowrap;word-break:keep-all}
+    table.rec th,table.rec td{padding:5px 3px;text-align:right;border-bottom:1px solid rgba(148,163,184,.13)}
+    table.rec th{color:#8aa6b8;font-weight:700;font-size:10.5px}
+    table.rec th:first-child,table.rec td:first-child{text-align:left}
+    table.rec td{color:#dbe7f0}
+    .rec-empty{color:#6f8b9c;font-size:11.5px;padding:6px 0;margin:0}
+
+    .analysis{color:#c8d8e4;font-size:11.5px;line-height:1.75}
+    .analysis .line{display:flex;justify-content:space-between;gap:8px}
+    .analysis .line b{color:#e2e8f0;font-variant-numeric:tabular-nums}
+    .analysis .conc{margin-top:9px;padding:8px 10px;border-radius:8px;font-size:11.5px;line-height:1.65;
+      background:rgba(6,78,59,.35);border:1px solid rgba(52,211,153,.4);color:#d1fae5}
+    .analysis .conc.info{background:rgba(12,74,110,.35);border-color:rgba(56,189,248,.4);color:#e0f2fe}
+    .analysis .conc.warn{background:rgba(120,53,15,.35);border-color:rgba(251,191,36,.45);color:#fef3c7}
+
+    .bars{display:flex;align-items:flex-end;justify-content:space-around;gap:8px;height:104px;margin-top:4px}
+    .bars .b{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:4px;min-width:0}
+    .bars .b .col{width:100%;border-radius:5px 5px 0 0;min-height:2px;transition:height .2s}
+    .bars .b .cap{font-size:10.5px;color:#a9c2d2;white-space:nowrap}
+    .bars .b .val{font-size:10.5px;color:#e2e8f0;font-variant-numeric:tabular-nums;font-weight:700}
+
+    .info-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px;margin-top:16px}
+    .info-card{border:1px solid var(--line);border-radius:14px;background:rgba(9,20,35,.7);padding:15px 17px}
+    .info-card h4{margin:0 0 9px;font-size:13px;color:#7dd3fc}
+    .info-card ul{margin:0;padding-left:17px;color:#a9c2d2;font-size:12px;line-height:1.85}
+    .info-card li b{color:#e2e8f0}
+    .info-card .fml{display:inline-block;margin:3px 0;padding:3px 9px;border-radius:7px;
+      background:rgba(56,189,248,.13);color:#a5f3fc;font-weight:700;
+      font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+
+    @media (max-width:1180px){
+      .lab3d-layout{grid-template-columns:302px minmax(0,1fr);grid-template-rows:1fr auto auto;
+        grid-template-areas:"ctl scene" "ctl lower" "read read"}
+      .lab3d-sidebar{position:static;max-height:none;overflow:visible;
+        display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));align-items:start}
+    }
+    @media (max-width:820px){
+      body{padding:14px}
+      .lab3d-layout{grid-template-columns:minmax(0,1fr);grid-template-rows:auto;
+        grid-template-areas:"ctl" "scene" "lower" "read"}
+      .lab3d h1{font-size:16px}
+      .lab3d-stage{min-height:400px}
+      .lab3d-lower{grid-template-columns:minmax(0,1fr)}
+      .stage-hint{font-size:10px;padding:6px 9px;max-width:70%}
+      .stage-bar .stage-help{display:none}
+      .gauge-num .num{font-size:23px}
+      .stage-clock{min-width:104px;padding:7px 9px}
+      .stage-clock .ck-num{font-size:21px}
+    }
+
+    /* ── 实拍视频区（站点形态：上半屏虚拟实验 + 底部实拍视频，缺一不可） ──────
+       本页是【深色】主题（--bg #020617）⇒ 直接用页面自己的 --panel / --line / --dim
+       变量即可，不必像浅色页那样另起一块深色卡片。
+       宽度对齐 .lab3d 的 1520px（视频区在 .lab3d 之外，靠 margin:auto 居中）。 */
+    .video-section{max-width:1520px;margin:26px auto 0}
+    .video-section .section-title{font-size:20px;font-weight:bold;color:#f8fafc;margin-bottom:16px}
+    .video-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:18px}
+    .video-card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px 20px}
+    .video-card h3{margin:0 0 12px;font-size:15px;line-height:1.5;color:#f8fafc;border-bottom:1px solid var(--line);padding-bottom:10px;display:flex;align-items:flex-start;gap:8px}
+    .video-card h3 .live-badge{font-size:11px;background:rgba(239,68,68,.15);color:#f87171;padding:2px 8px;border-radius:6px;font-weight:600;white-space:nowrap;flex-shrink:0}
+    .video-container{position:relative;width:100%;padding-bottom:56.25%;height:0;border-radius:12px;overflow:hidden;background:#000}
+    .video-container iframe{position:absolute;top:0;left:0;width:100%;height:100%;border:0}
+    .video-desc{font-size:13px;color:var(--dim);line-height:1.7;margin-top:10px}
+    .video-desc b{color:#a5f3fc;font-weight:700}
+    .video-fullscreen-btn{position:absolute;top:10px;right:10px;z-index:10;width:36px;height:36px;display:flex;align-items:center;justify-content:center;border:none;border-radius:8px;background:rgba(0,0,0,.55);color:#fff;cursor:pointer;transition:background .2s ease}
+    .video-fullscreen-btn:hover{background:rgba(59,130,246,.85)}
+    .video-container:fullscreen,.video-container:-webkit-full-screen{width:100%;height:100%;padding-bottom:0;border-radius:0}
+  </style>
+</head>
+<body>
+  <div class="lab3d">
+    <h1>功率的测量 · 3D 爬楼计时台</h1>
+    <p class="lab3d-sub">
+      「做功快慢」不能只看做了多少功，也不能只看用了多少时间 —— 要比的是<b>功与时间之比</b>。
+      爬楼就是最好的例子：<b>上楼要克服重力做功</b>，<span class="hl">W = Gh = mgh</span>；
+      而快慢由 <span class="hl">P = W / t</span> 决定。把式子里的 h 换成 vt，就得到推导式
+      <span class="hl">P = Fv</span> —— 这也正是汽车爬坡要<b>降速</b>的原因：
+      功率一定时，速度越小，能拿出来的牵引力才越大。按<b>秒表</b>让小人自己爬上螺旋楼梯，
+      秒表与功率读数会一起跳。
+    </p>
+
+    <div class="lab3d-layout">
+      <!-- ============ 控制台（左栏） ============ -->
+      <div class="lab3d-ctl">
+        <div class="panel">
+          <h3>比较做功快慢 <span class="pill" id="pw-mode-pill">相同时间 · 比功</span></h3>
+          <div class="btn-row">
+            <button type="button" class="primary" id="pw-m-t">① 相同时间比功</button>
+            <button type="button" id="pw-m-w">② 相同功比时</button>
+            <button type="button" id="pw-m-free">③ 自由探究</button>
+          </div>
+          <p class="note" id="pw-mode-note">时间锁在 8.0 s，只改体重或楼层数，比谁做的功多。</p>
+        </div>
+
+        <div class="panel">
+          <h3>情境 <span class="pill" id="pw-act-pill">爬楼</span></h3>
+          <div class="btn-row">
+            <button type="button" class="primary" id="pw-act-stairs">🧗 爬楼</button>
+            <button type="button" id="pw-act-rope">🪢 跳绳</button>
+          </div>
+          <p class="note" id="pw-act-note">爬楼：上升高度 h = 楼层数 × 3.0 m。跳绳：h = 跳跃次数 × 6 cm。</p>
+        </div>
+
+        <div class="panel">
+          <h3>体重 m <span class="pill" id="pw-mass-pill">50 kg</span></h3>
+          <div class="fld">
+            <div class="row"><span>人的质量 m</span><b id="pw-mass-num">50 kg</b></div>
+            <input type="range" id="pw-mass" min="30" max="80" step="1" value="50">
+          </div>
+          <div class="btn-row tiny" id="pw-mass-presets">
+            <button type="button" data-mass="40">40 kg</button>
+            <button type="button" data-mass="50">50 kg</button>
+            <button type="button" data-mass="60">60 kg</button>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h3>上升高度 <span class="pill" id="pw-h-pill">6.0 m</span></h3>
+          <div class="fld" id="pw-floors-fld">
+            <div class="row"><span id="pw-hu-lab">楼层数</span><b id="pw-floors-num">2 层</b></div>
+            <input type="range" id="pw-floors" min="1" max="4" step="1" value="2">
+            <div class="mini-note" id="pw-floors-note">也可以直接点画面右侧的楼层牌</div>
+          </div>
+          <div class="btn-row tiny" id="pw-floors-presets">
+            <button type="button" data-hu="1">1 层</button>
+            <button type="button" data-hu="2">2 层</button>
+            <button type="button" data-hu="3">3 层</button>
+            <button type="button" data-hu="4">4 层</button>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h3>爬楼时间 <span class="pill" id="pw-t-pill">8.0 s</span></h3>
+          <div class="fld">
+            <div class="row"><span>从楼下到楼上用时 t</span><b id="pw-time-num">8.0 s</b></div>
+            <input type="range" id="pw-time" min="4" max="16" step="0.5" value="8">
+            <div class="mini-note" id="pw-time-note">按秒表后小人按这个速度爬完</div>
+          </div>
+          <div class="btn-row tiny" id="pw-time-presets">
+            <button type="button" data-t="4">4 s</button>
+            <button type="button" data-t="8">8 s</button>
+            <button type="button" data-t="16">16 s</button>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h3>视角</h3>
+          <div class="btn-row">
+            <button type="button" data-view="perspective">默认</button>
+            <button type="button" data-view="front">正面</button>
+            <button type="button" data-view="side">侧面</button>
+            <button type="button" data-view="follow">跟随小人</button>
+          </div>
+          <p class="note">「正面」看楼层，「侧面」看上升高度，「跟随小人」把镜头贴到人身上。</p>
+        </div>
+      </div>
+
+      <!-- ============ 实验画面（中栏） ============ -->
+      <div class="lab3d-stage">
+        <canvas id="pw-canvas"></canvas>
+
+        <div class="stage-hint" id="pw-hint"></div>
+        <div class="stage-toast" id="pw-toast"></div>
+        <div class="stage-flag" id="pw-flag">已到顶 ✓</div>
+
+        <div class="stage-clock" id="pw-clock">
+          <div class="ck-lab">秒表</div>
+          <div class="ck-num" id="pw-clock-num">0.00</div>
+          <div class="ck-unit">s（用时）</div>
+        </div>
+
+        <div class="stage-bar">
+          <div class="bar-left">
+            <button type="button" class="stage-btn go" id="pw-start">⏱ 按秒表开始</button>
+            <button type="button" class="stage-btn" id="pw-reset">⟲ 复位</button>
+            <button type="button" class="stage-btn" id="pw-record">记录这一组 <b class="cnt" id="pw-rec-cnt">0</b></button>
+          </div>
+          <div class="stage-help" id="pw-help">拖动空白处旋转 · 滚轮缩放 · 点楼层牌改楼层 · 点小人也能开始</div>
+        </div>
+      </div>
+
+      <!-- ============ 读数（右栏） ============ -->
+      <div class="lab3d-sidebar">
+        <div class="panel">
+          <h3>功率读数 <span class="pill ok" id="pw-live">待测</span></h3>
+          <div class="gauge-num"><span class="num" id="pw-p-num">0.00</span><span class="unit">W</span></div>
+          <div class="readouts">
+            <div><span>功率 P（实测，W/t）</span><b id="pw-p-out">0.00 W</b></div>
+            <div><span>预期功率 P = mgh/t</span><b id="pw-p-exp">367.5 W</b></div>
+            <div><span>克服重力做功 W = mgh</span><b id="pw-w-out">2940 J</b></div>
+            <div><span>推导式 P = F·v̄（F = mg）</span><b id="pw-pfv-out">367.5 W</b></div>
+            <div><span>换算成千瓦（1 kW = 1000 W）</span><b id="pw-kw-out">0.368 kW</b></div>
+          </div>
+          <p class="note" id="pw-gauge-note">g 取 9.8 m/s²。按「秒表」后大数字才变成实测值；爬楼过程中「已上升高度」「已做功」会一起实时增长。</p>
+        </div>
+
+        <div class="panel">
+          <h3>当前条件</h3>
+          <div class="readouts">
+            <div><span>质量 m</span><b id="pw-mass-out">50 kg</b></div>
+            <div><span>上升高度 h</span><b id="pw-hh-out">6.0 m</b></div>
+            <div><span>用时 t</span><b id="pw-tt-out">8.0 s</b></div>
+            <div><span>平均速度 v̄ = h/t</span><b id="pw-v-out">0.75 m/s</b></div>
+            <div><span>已上升高度</span><b id="pw-hnow-out">0.0 m</b></div>
+            <div><span>状态</span><b id="pw-phase-out">待测</b></div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h3>分析与结论</h3>
+          <div class="analysis" id="pw-analysis"></div>
+        </div>
+      </div>
+
+      <!-- ============ 场景下方（中栏第 2 行） ============ -->
+      <div class="lab3d-lower">
+        <div class="panel">
+          <h3>数据记录 <span class="pill" id="pw-rec-pill">0 组</span></h3>
+          <div id="pw-rec-body"><p class="rec-empty">还没有记录。改一次条件，点「记录这一组」。</p></div>
+        </div>
+
+        <div class="panel">
+          <h3>功率对比 <span class="pill" id="pw-bars-pill">相同时间 8.0 s</span></h3>
+          <div class="bars" id="pw-bars"></div>
+          <p class="note" id="pw-bars-note">时间相同时，做的功越多，功率越大。</p>
+        </div>
+
+        <div class="panel">
+          <h3>P – t 曲线 <span class="pill" id="pw-curve-pill">W = 2940 J</span></h3>
+          <canvas id="pw-curve" style="width:100%;height:118px;display:block"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <div class="info-cards">
+      <div class="info-card">
+        <h4>实验原理</h4>
+        <ul>
+          <li><b>功率</b>表示做功的快慢，等于<b>功与时间之比</b>：
+              <span class="fml">P = W / t</span>，单位是瓦特（W），<b>1 W = 1 J/s</b>。</li>
+          <li>常用单位还有<b>千瓦（kW）</b>：<span class="fml">1 kW = 1000 W</span>。
+              右栏「功率读数」里给了一个<b>实时换算</b>——例如 50 kg 爬 2 层（h = 6 m）用 8 s，
+              P = 367.5 W = <b>0.368 kW</b>；改一次条件，两边一起变。</li>
+          <li>人上楼时要克服重力做功。人上升了 h，重力做的负功是 mgh，所以人做的功
+              <span class="fml">W = Gh = mgh</span>（G = mg 是人的重力）。</li>
+          <li>把 <b>h = v̄t</b> 代进去：<span class="fml">P = W/t = mgh/t = mg·v̄</span>，
+              也就是推导式 <span class="fml">P = F·v</span>（F = mg 是克服重力所需的力）。</li>
+          <li>本页的「功率 P」和「P = F·v̄」是<b>同一个式子的两条写法</b>：
+              P 由 W/t 现算，P = F·v̄ 由 mg·(h/t) 现算，两者必须<b>逐位相等</b>，
+              不是各存一份数。</li>
+          <li>比较做功快慢有三种办法：<b>①相同时间比做功</b>（做功多的快）、
+              <b>②做相同的功比时间</b>（时间短的快）、<b>③直接比 W/t</b>。前两种是铺垫，第三种才是定义。</li>
+        </ul>
+      </div>
+      <div class="info-card">
+        <h4>操作指南</h4>
+        <ul>
+          <li><b>拖动空白处</b>旋转视角，<b>滚轮</b>缩放；<b>点画面右侧的楼层牌</b>可以直接改楼层数，
+              也可以<b>点小人</b>开始计时。</li>
+          <li>模式①「相同时间比功」：时间锁在 8 s，依次改<b>体重</b>或<b>楼层</b>。
+              时间一样，谁做的功多，谁的功率就大。</li>
+          <li>模式②「相同功比时」：体重与楼层被锁住（功 W 固定），只改<b>用时 t</b>。
+              P–t 曲线会告诉你：时间减半，功率<b>恰好翻倍</b>。</li>
+          <li>模式③「自由探究」：全部解锁，自己设计对照实验。</li>
+          <li>换一次条件点一次<b>「记录这一组」</b>；「复位」把秒表与小人放回楼下。</li>
+          <li>⚠️ 本页的爬楼是<b>匀速上升</b>（高度与时间成正比），所以爬楼过程中功率读数<b>恒定不变</b> ——
+              这说明 <b>P = W/t 算的是平均功率</b>；真实上楼有快有慢，那是瞬时功率。</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 实拍视频区（站点形态：虚拟实验 + 实拍视频） ============ -->
+  <div class="video-section">
+    <div class="section-title">🎬 实拍视频 · 从虚拟实验到真实世界</div>
+    <div class="video-grid">
+      <div class="video-card">
+        <h3>爬楼梯的功率有多大？· 用体重和秒表就能测<span class="live-badge">实拍+讲解</span></h3>
+        <div class="video-container">
+          <iframe src="//player.bilibili.com/player.html?bvid=BV1N8411B7XC&page=1&autoplay=0&loop=1&danmaku=0&high_quality=1"
+                  scrolling="no" frameborder="no" framespacing="0" allowfullscreen="true"></iframe>
+          <button class="video-fullscreen-btn" title="全屏播放" aria-label="全屏播放">
+            <svg class="fs-expand" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M16 3h3a2 2 0 0 1 2 2v3"/><path d="M8 21H5a2 2 0 0 1-2-2v-3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
+            <svg class="fs-compress" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none"><path d="M8 3v3a2 2 0 0 1-2 2H3"/><path d="M16 3v3a2 2 0 0 0 2 2h3"/><path d="M8 21v-3a2 2 0 0 0-2-2H3"/><path d="M16 21v-3a2 2 0 0 1 2-2h3"/></svg>
+          </button>
+        </div>
+        <div class="video-desc">
+          真实测爬楼功率只需要三样东西：<b>体重</b>（换算成重力 G = mg）、<b>楼层高度</b>（h）、
+          <b>秒表</b>（t）。视频里算出的 <b>W = mgh</b> 与 <b>P = W/t</b>，
+          正是上方虚拟实验右栏「克服重力做功 W」和「功率 P」两行读数的来源 ——
+          把体重、楼层、用时换成视频里的数，读数应该一一对上。
+        </div>
+      </div>
+      <div class="video-card">
+        <h3>跳绳的功率 · 每一次起跳都是一段 mgh<span class="live-badge">原理演示</span></h3>
+        <div class="video-container">
+          <iframe src="//player.bilibili.com/player.html?bvid=BV1ZY411v71F&page=1&autoplay=0&loop=1&danmaku=0&high_quality=1"
+                  scrolling="no" frameborder="no" framespacing="0" allowfullscreen="true"></iframe>
+          <button class="video-fullscreen-btn" title="全屏播放" aria-label="全屏播放">
+            <svg class="fs-expand" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M16 3h3a2 2 0 0 1 2 2v3"/><path d="M8 21H5a2 2 0 0 1-2-2v-3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
+            <svg class="fs-compress" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none"><path d="M8 3v3a2 2 0 0 1-2 2H3"/><path d="M16 3v3a2 2 0 0 0 2 2h3"/><path d="M8 21v-3a2 2 0 0 0-2-2H3"/><path d="M16 21v-3a2 2 0 0 1 2-2h3"/></svg>
+          </button>
+        </div>
+        <div class="video-desc">
+          跳绳时人每次都把自己举起一小段高度，<b>跳 n 次做的功 W = n·mgh₀</b>（h₀ 是每次起跳的高度）。
+          把左栏「情境」切到<b>跳绳</b>，就得到同一套公式的第二组数据 ——
+          <b>做功的方式换了，P = W/t 这条判据没换</b>。
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+  (() => {
+    'use strict';
+
+    const canvas = document.getElementById('pw-canvas');
+    const stage = document.querySelector('.lab3d-stage');
+    if (!canvas || !stage) return;
+    const ctx = canvas.getContext('2d');
+    const PI2 = Math.PI * 2;
+    const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
+    const $ = id => document.getElementById(id);
+
+    /* ============================================================
+     * 向量工具（与站内其它三维页同一套约定）
+     * ============================================================ */
+    const add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+    const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+    const scl = (a, k) => [a[0] * k, a[1] * k, a[2] * k];
+    const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+    const vlen = a => Math.hypot(a[0], a[1], a[2]);
+    const vnorm = a => { const l = vlen(a) || 1; return [a[0] / l, a[1] / l, a[2] / l]; };
+    const rgba = (c, a) => 'rgba(' + Math.round(clamp(c[0], 0, 255)) + ',' +
+      Math.round(clamp(c[1], 0, 255)) + ',' + Math.round(clamp(c[2], 0, 255)) + ',' + a + ')';
+
+    /* ============================================================
+     * 场景常量
+     * ------------------------------------------------------------
+     * 世界坐标：y 向上，x 向右，z 朝向观众。1 世界单位 = 1 m（本页直接以米为世界单位）。
+     * 中间是一座【螺旋楼梯】：绕中柱转一圈 = 上升一层楼（3.0 m）。
+     * 左边是高度刻度尺（看上升高度 h），右边是楼层牌（看爬了几层）。
+     * ============================================================ */
+    const G = 9.8;                    // m/s²
+
+    const FLOOR_H   = 3.0;            // 每层楼高 (m)
+    const STEPS_PER_FLOOR = 20;       // 每层 20 级台阶
+    const STEP_RISE = FLOOR_H / STEPS_PER_FLOOR;   // 0.15 m
+    const STEP_ANG  = PI2 / STEPS_PER_FLOOR;       // 18°
+
+    const R_IN = 0.46, R_OUT = 1.62;  // 螺旋楼梯内 / 外半径
+    const R_WALK = 1.02;              // 小人沿中线走
+    const COL_R = 0.40;               // 中柱半径
+    const N_MIN = 1, N_MAX = 4, N_DEF = 2;
+
+    const T_MIN = 4, T_MAX = 16, T_DEF = 8;        // 爬楼用时范围 (s)
+    const JUMP_H = 0.06;                           // 跳绳：每次起跳高度 6 cm
+    const JP_MIN = 10, JP_MAX = 60, JP_DEF = 30;   // 跳绳次数范围
+
+    const SCALE_X = -2.80, PLATE_X = 2.80;         // 刻度尺 / 楼层牌的横向位置
+    const ROPE_X = 0.72;                           // 跳绳时小人的 x
+    const ROPE_BAR_X = -1.32;                      // 跳绳时「累计上升柱」的 x
+
+    const VIEWS = {
+      perspective: { yaw: -0.62, pitch: 0.34, zoom: 1.00, look: false },
+      front:       { yaw: -0.06, pitch: 0.30, zoom: 1.04, look: false },
+      side:        { yaw: -1.24, pitch: 0.22, zoom: 1.04, look: false },
+      follow:      { yaw: -0.70, pitch: 0.24, zoom: 1.62, look: true }
+    };
+
+    const C_COL   = [128, 138, 152];
+    const C_STEP  = [176, 188, 202];
+    const C_SCALE = [214, 226, 238];
+    const C_PLATE = [150, 160, 174];
+    const C_SKIN  = [232, 190, 158];
+    const C_SHIRT = [86, 168, 232];
+    const C_PANTS = [58, 78, 112];
+    const C_ROPE  = [244, 196, 88];
+
+    // 三档「预设体重」—— 滑块是连续的，预设只是快捷方式
+    const MASSES = { m40: 40, m50: 50, m60: 60 };
+    const MASS_ORDER = ['m40', 'm50', 'm60'];
+
+    /* ============================================================
+     * 物理 —— 全部读数都从下面这几个纯函数来
+     * ------------------------------------------------------------
+     * 渲染、侧栏、记录表、柱状图、曲线、自检共用同一份。
+     * 【关键】workJ()/powerW() 里【没有】state.phase / 视角 / 秒表进度 ——
+     * 「功率只由 m、h、t 决定」是结构上必然成立，不是几处各写一遍。
+     * 「相同时间比功」与「相同功比时」也来自同一个 P = W/t，
+     * 不是两条各写一遍的结论 —— 这正是比较做功快慢要验的东西。
+     * ============================================================ */
+    const massKg   = () => state.mass;                                   // kg
+    const hTargetM = () => state.activity === 'stairs'
+                          ? state.floors * FLOOR_H
+                          : state.jumps * JUMP_H;                        // m
+    const timeS    = () => state.timeS;                                  // s
+    const workJ    = () => massKg() * G * hTargetM();                    // J  W = mgh
+    const powerW   = () => workJ() / timeS();                            // W  P = W/t
+    const forceN   = () => massKg() * G;                                 // N  F = mg
+    const speedMps = () => hTargetM() / timeS();                         // m/s  v̄ = h/t
+    const powerFvW = () => forceN() * speedMps();                        // W  P = F·v̄
+
+    // 动画中：已上升高度 / 已做功 / 当前平均功率
+    const hProgM    = () => hTargetM() * clamp(state.progress, 0, 1);     // 沿螺旋线，高度线性增长
+    const workProgJ = () => massKg() * G * hProgM();
+    const powerNowW = () => state.animT > 1e-6 ? workProgJ() / state.animT : 0;
+
+    // 小人当前所在位置（楼梯：沿螺旋；跳绳：原地起跳）
+    function personPos() {
+      const u = clamp(state.progress, 0, 1);
+      if (state.activity === 'stairs') {
+        const th = PI2 * state.floors * u;
+        return { x: R_WALK * Math.cos(th), y: hTargetM() * u, z: R_WALK * Math.sin(th), th: th, walk: th * 3.2 };
+      }
+      const arc = Math.abs(Math.sin(Math.PI * state.jumps * u)) * JUMP_H * 1.45;
+      return { x: R_WALK, y: arc, z: 0, th: 0, walk: Math.PI * state.jumps * u * 2 };
+    }
+
+    /* ============================================================
+     * 状态
+     * ============================================================ */
+    const state = {
+      yaw: VIEWS.perspective.yaw, pitch: VIEWS.perspective.pitch, zoom: VIEWS.perspective.zoom,
+      look: !!VIEWS.perspective.look,
+      mode: 't',                 // t = 相同时间比功 / w = 相同功比时 / free
+      activity: 'stairs',        // stairs = 爬楼 / rope = 跳绳
+      mass: 50,                  // kg
+      floors: N_DEF,
+      jumps: JP_DEF,
+      timeS: T_DEF,
+      phase: 'ready',            // ready | climbing | done
+      animT: 0,                  // 秒表读数（s）
+      progress: 0,               // 0~1
+      drag: null, hover: false,
+      w: 0, h: 0, dpr: 1, dirty: true, t: 0, drawn: {}
+    };
+
+    const records = [];
+
+    const MODES = {
+      t:    { name: '相同时间 · 比功', lock: { time: true,  hu: false, mass: false },
+              note: '时间锁在 8.0 s，只改体重或楼层数，比谁做的功多。' },
+      w:    { name: '相同功 · 比时', lock: { time: false, hu: true,  mass: true },
+              note: '体重与楼层被锁住（功 W 固定），只改用时 t —— 时间越短功率越大。' },
+      free: { name: '自由探究', lock: { time: false, hu: false, mass: false },
+              note: '全部解锁：体重、高度、用时随便改，自己设计对照实验。' }
+    };
+    const MODE_DEF = {
+      t:    { mass: 50, floors: N_DEF, jumps: JP_DEF, timeS: T_DEF },
+      w:    { mass: 50, floors: N_DEF, jumps: JP_DEF, timeS: T_DEF },
+      free: null
+    };
+    const PHASE_NAME = { ready: '待测', climbing: '正在爬楼', done: '已到顶' };
+
+    /* ============================================================
+     * 相机
+     * ============================================================ */
+    // 场景内容的上边界：爬楼 = 目标楼层顶 + 余量；跳绳 = 按累计高度给一个够用的高度
+    function contentTopY() {
+      return state.activity === 'stairs' ? hTargetM() + 0.9
+                                         : Math.max(2.6, hTargetM() + 0.9);
+    }
+
+    function envelopePoints() {
+      const pts = [];
+      const top = contentTopY();
+      const isStairs = state.activity === 'stairs';
+      if (isStairs) {
+        // 中柱
+        for (let i = 0; i < 8; i++) {
+          const a = PI2 * i / 8;
+          pts.push([COL_R * Math.cos(a), top, COL_R * Math.sin(a)]);
+          pts.push([COL_R * Math.cos(a), 0, COL_R * Math.sin(a)]);
+        }
+        // 螺旋楼梯外缘（当前楼层数决定高度）
+        const turns = state.floors;
+        const H = state.floors * FLOOR_H;
+        for (let i = 0; i <= 24; i++) {
+          const a = PI2 * turns * i / 24;
+          const y = H * i / 24;
+          pts.push([R_OUT * Math.cos(a), y + 0.1, R_OUT * Math.sin(a)]);
+          pts.push([R_IN * Math.cos(a), y + 0.1, R_IN * Math.sin(a)]);
+        }
+        // 刻度尺（含左侧双箭头）
+        pts.push([SCALE_X - 0.72, 0, 0]); pts.push([SCALE_X + 0.30, top, 0]);
+        // 楼层牌
+        for (let f = 1; f <= N_MAX; f++) {
+          pts.push([PLATE_X + 0.62, f * FLOOR_H + 0.22, 0]);
+          pts.push([PLATE_X - 0.20, f * FLOOR_H - 0.22, 0]);
+        }
+        pts.push([-3.2, 0, -3.2]); pts.push([3.2, 0, 3.2]);
+      } else {
+        // 跳绳：小人 + 累计上升柱（地面只是背景，不进包络 —— 否则会把场景撑宽、柱子贴到画布边）
+        // 【柱子顶端必须取 contentTopY()】—— 柱子在 drawRopeBar 里就是画到 contentTopY() 的。
+        // 曾经这里写成 hTargetM() + 0.30（= 0.6+0.3 = 0.9，而柱子实画到 2.6）⇒
+        // 包络比实画几何矮一大截，柱子顶端被顶出画布；而相机断言当时只扫爬楼，跳绳是盲区。
+        pts.push([ROPE_BAR_X - 0.38, 0, 0]);
+        pts.push([ROPE_BAR_X + 0.38, contentTopY(), 0]);
+      }
+      // 小人（头顶 / 脚底）
+      const pp = personPos();
+      pts.push([pp.x + 0.34, pp.y + 1.86, pp.z + 0.34]);
+      pts.push([pp.x - 0.34, pp.y - 0.05, pp.z - 0.34]);
+      return pts;
+    }
+
+    // 「跟随小人」视角：按「小人 + 周围一小圈」取景（不按整个场景）⇒ 才是真的中近景特写
+    function personFramePoints() {
+      const pp = personPos();
+      return [[pp.x + 1.25, pp.y + 2.45, pp.z + 1.25], [pp.x - 1.25, pp.y - 0.60, pp.z - 1.25]];
+    }
+
+    function makeCam(q, w, h) {
+      const cy = Math.cos(state.yaw), sy = Math.sin(state.yaw);
+      const cp = Math.cos(state.pitch), sp = Math.sin(state.pitch);
+      const dir = [cp * sy, sp, cp * cy];
+      const pp = personPos();
+      const tgt = state.look ? [pp.x, pp.y + 0.95, pp.z] : [0, contentTopY() * 0.5, 0];
+      // 【别把 dist 也除以 zoom】—— 自动取景会把焦距算回去，缩放就失效。
+      // dist 随场景高度自适应：爬 1 层（约 4 m）与爬 4 层（约 13 m）都要有合理的透视，
+      // 固定 dist 会让小场景变成「长焦平面图」、大场景又太广角。
+      q.dist = clamp(contentTopY() * 2.35, 7, 30);
+      if (state.look) q.dist = 6.2;   // 中近景：距离近一点，透视更有立体感
+      q.eye = add(tgt, scl(dir, q.dist));
+      q.fwd = scl(dir, -1);
+      q.right = vnorm(cross(q.fwd, [0, 1, 0]));
+      q.up = cross(q.right, q.fwd);
+      const pts = state.look ? personFramePoints() : envelopePoints();
+      let loR = 1e9, hiR = -1e9, loU = 1e9, hiU = -1e9;
+      for (const p of pts) {
+        const v = sub(p, q.eye);
+        const z = Math.max(0.05, dot(v, q.fwd));
+        const r = dot(v, q.right) / z, u = dot(v, q.up) / z;
+        loR = Math.min(loR, r); hiR = Math.max(hiR, r);
+        loU = Math.min(loU, u); hiU = Math.max(hiU, u);
+      }
+      const s = Math.min(w * 0.92 / Math.max(1e-6, hiR - loR),
+                         h * 0.90 / Math.max(1e-6, hiU - loU)) * state.zoom;
+      q.focal = s;
+      if (state.look) {
+        const tv = sub(tgt, q.eye);
+        const tz = Math.max(0.05, dot(tv, q.fwd));
+        q.px = w * 0.5 - (dot(tv, q.right) / tz) * s;
+        q.py = h * 0.5 + (dot(tv, q.up) / tz) * s;
+      } else {
+        q.px = w * 0.5 - (loR + hiR) * 0.5 * s;
+        q.py = h * 0.5 + (loU + hiU) * 0.5 * s;
+      }
+      return q;
+    }
+    function project(p, q) {
+      const v = sub(p, q.eye);
+      const z = Math.max(0.05, dot(v, q.fwd));
+      const s = q.focal / z;
+      return { x: q.px + dot(v, q.right) * s, y: q.py - dot(v, q.up) * s, s: s, z: z };
+    }
+
+    /* ============================================================
+     * 绘图小工具
+     * ============================================================ */
+    function polyPath(pts) {
+      ctx.beginPath();
+      pts.forEach((p, k) => k ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+      ctx.closePath();
+    }
+    function poly(pts, fill, stroke, lw) {
+      if (!pts || pts.length < 2) return;
+      polyPath(pts);
+      if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+      if (stroke) { ctx.lineWidth = lw || 1; ctx.strokeStyle = stroke; ctx.stroke(); }
+    }
+    function line(pts, color, lw, dash) {
+      if (!pts || pts.length < 2) return;
+      ctx.beginPath();
+      pts.forEach((p, k) => k ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+      ctx.setLineDash(dash || []);
+      ctx.lineWidth = lw; ctx.strokeStyle = color; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+      ctx.stroke(); ctx.setLineDash([]);
+    }
+    const rgb = (c, k) => {
+      const s = k === undefined ? 1 : k;
+      return 'rgb(' + Math.round(clamp(c[0] * s, 0, 255)) + ',' +
+                      Math.round(clamp(c[1] * s, 0, 255)) + ',' +
+                      Math.round(clamp(c[2] * s, 0, 255)) + ')';
+    };
+    const LIGHT = vnorm([-0.34, 0.86, 0.38]);
+    const shade = (base, n, amb) => rgb(base, (amb === undefined ? 0.55 : amb) + 0.60 * Math.max(0, dot(n, LIGHT)));
+
+    function convexHull(pts) {
+      if (pts.length < 3) return pts.slice();
+      const P = pts.slice().sort((a, b) => a.x - b.x || a.y - b.y);
+      const cr = (o, a, b) => (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+      const lo = [];
+      for (const p of P) { while (lo.length >= 2 && cr(lo[lo.length - 2], lo[lo.length - 1], p) <= 0) lo.pop(); lo.push(p); }
+      const up = [];
+      for (let i = P.length - 1; i >= 0; i--) {
+        const p = P[i];
+        while (up.length >= 2 && cr(up[up.length - 2], up[up.length - 1], p) <= 0) up.pop();
+        up.push(p);
+      }
+      lo.pop(); up.pop();
+      return lo.concat(up);
+    }
+
+    /* ---------------------------- 标签（带避让） ---------------------------- */
+    let LBOX = [];          // 真正落笔的标签
+    let UI_BOX = [];        // DOM 浮层
+    let GEO_BOX = [];       // 器材包围盒
+    let DRAWN_LABELS = [];  // 供自检读「画面真画了什么」
+
+    const pushBox = (x0, y0, x1, y1, tag) => {
+      const b = { x: Math.min(x0, x1), y: Math.min(y0, y1), w: Math.abs(x1 - x0), h: Math.abs(y1 - y0) };
+      if (b.w > 0.5 && b.h > 0.5) { if (tag) b.txt = tag; GEO_BOX.push(b); }
+      return b;
+    };
+    const boxOfPts = (pts, tag) => {
+      let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+      for (const p of pts) { x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y); x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y); }
+      return pushBox(x0, y0, x1, y1, tag);
+    };
+    function uiBoxes() {
+      const out = [];
+      const cr = canvas.getBoundingClientRect();
+      for (const sel of ['.stage-hint', '.stage-flag', '.bar-left', '.stage-help', '.stage-clock']) {
+        const e = stage.querySelector(sel);
+        if (!e) continue;
+        if (+getComputedStyle(e).opacity < 0.05) continue;
+        const b = e.getBoundingClientRect();
+        if (b.width < 2 || b.height < 2) continue;
+        // txt='__ui' ⇒ placeLabel 里按 AVOID_W.__ui 计权重（浮层被压住的代价远高于压住器材）
+        out.push({ x: b.left - cr.left, y: b.top - cr.top, w: b.width, h: b.height, txt: '__ui' });
+      }
+      return out;
+    }
+    function labelBox(p, text, size, align) {
+      ctx.font = '800 ' + size + 'px Inter, "Microsoft YaHei", sans-serif';
+      const wpx = ctx.measureText(text).width;
+      const pad = 4;
+      const half = size * 0.72 + pad * 0.5;
+      const wBox = wpx + pad * 2;
+      const EDGE = 8;
+      const y = clamp(p.y, half + EDGE, Math.max(half + EDGE, state.h - half - EDGE));
+      let bx = align === 'left' ? p.x - 4 - pad
+             : align === 'right' ? p.x + 4 - wpx - pad
+             : p.x - wpx / 2 - pad;
+      bx = clamp(bx, EDGE, Math.max(EDGE, state.w - wBox - EDGE));
+      return { x: bx, y: y - half, w: wBox, h: half * 2, cx: bx + wBox / 2, cy: y };
+    }
+    function label(p, text, color, size, align) {
+      ctx.font = '800 ' + size + 'px Inter, "Microsoft YaHei", sans-serif';
+      ctx.textAlign = align || 'center';
+      ctx.textBaseline = 'middle';
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = 'rgba(2,6,23,.82)';
+      ctx.strokeText(text, p.x, p.y);
+      ctx.fillStyle = color;
+      ctx.fillText(text, p.x, p.y);
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'alphabetic';
+    }
+    // 候选位：以锚点为中心的「环」，由近及远（更细的落点，实测 0 px² 重叠）
+    const LABEL_RINGS = (() => {
+      const out = [[0, 0]];
+      for (const r of [18, 32, 48, 66, 88]) {
+        for (const [dx, dy] of [[0, -1], [0, 1], [1, 0], [-1, 0], [0.71, -0.71], [0.71, 0.71], [-0.71, -0.71], [-0.71, 0.71]]) {
+          out.push([Math.round(r * dx), Math.round(r * dy)]);
+        }
+      }
+      return out;
+    })();
+    // 各类「器材」对标签的排斥权重：刻度数字 / 楼层数字是【读数】，绝不能被压住。
+    const AVOID_W = { __ui: 12, tick: 50, floorlab: 50, plate: 10, scaleplate: 10, ropebar: 10, arrow: 20, arrowhead: 20, col: 6, person: 2, rope: 2, step: 1 };
+    const boxW = (q) => (q.txt && AVOID_W[q.txt] !== undefined ? AVOID_W[q.txt] : 1);
+    function placeLabel(anchor, text, color, size, offs) {
+      const cands = offs || LABEL_RINGS;
+      const boxes = LBOX.concat(GEO_BOX, UI_BOX);
+      const costAt = (p) => {
+        const b = labelBox(p, text, size, 'center');
+        let cost = 0;
+        for (const q of boxes) {
+          const ox = Math.min(b.x + b.w, q.x + q.w) - Math.max(b.x, q.x);
+          const oy = Math.min(b.y + b.h, q.y + q.h) - Math.max(b.y, q.y);
+          if (ox > 0 && oy > 0) cost += ox * oy * boxW(q);
+        }
+        return cost;
+      };
+      // 【锚点先拉进画布】—— 否则锚点在画布外时，labelBox 会把环上所有候选位钳成
+      // 同一个盒子（自由度 = 0），搜索必然退回第一个候选、把读数压住。
+      // 「跟随小人」视角下，被跟随的器材（如跳绳的累计上升柱）常常整个跑到画布外，
+      // 就是踩的这个坑。锚点本来就在画布内时，clamp 是恒等操作，不影响既有排布。
+      const half = size * 0.72 + 2;
+      const ax = clamp(anchor.x, half + 10, Math.max(half + 10, state.w - half - 10));
+      const ay = clamp(anchor.y, half + 10, Math.max(half + 10, state.h - half - 10));
+      let best = null, bestCost = Infinity;
+      for (const o of cands) {
+        const p = { x: ax + o[0], y: ay + o[1] };
+        const cost = costAt(p) + (Math.abs(o[0]) + Math.abs(o[1])) * 0.4;
+        if (cost < bestCost) { bestCost = cost; best = p; }
+      }
+      // 【第二段：以锚点为圆心的粗扫】环上仍有重叠（如候选位被钳位压成同一个盒子）时，
+      // 找半径内最近的干净位。位移代价系数与环一致（0.4/px）⇒ 只有「真能消掉重叠」
+      // 才会搬家，且取最近解，不会把标签甩到画布另一头。
+      if (bestCost > 0) {
+        const R0 = 240, GSTEP = 12;
+        for (let dy = -R0; dy <= R0; dy += GSTEP)
+          for (let dx = -R0; dx <= R0; dx += GSTEP) {
+            const d = Math.hypot(dx, dy);
+            if (d > R0) continue;
+            const cost = costAt({ x: ax + dx, y: ay + dy }) + d * 0.4;
+            if (cost < bestCost) { bestCost = cost; best = { x: ax + dx, y: ay + dy }; }
+          }
+      }
+      // 【下笔位置 = 钳位盒子的中心】—— labelBox 会把盒子钳进画布，但以前这里
+      // 是拿【未钳的 p】下笔的 ⇒ 记录进 DRAWN_LABELS 的是钳后的盒子、画出去的却
+      // 被画布边缘裁掉，于是「标签不出画布」这条断言变成恒真（读记账量不读实画几何）。
+      // labelBox 未触发钳位时 cx === p.x，所以这一改对画布内的标签是恒等的。
+      const p = best || { x: ax, y: ay };
+      const b = labelBox(p, text, size, 'center');
+      label({ x: b.cx, y: b.cy }, text, color, size, 'center');
+      b.txt = text;
+      LBOX.push(b);
+      DRAWN_LABELS.push({ x: b.x, y: b.y, w: b.w, h: b.h, txt: text });
+    }
+
+    /* ============================================================
+     * 场景绘制
+     * ============================================================ */
+    function drawBackdrop(w, h) {
+      const g = ctx.createLinearGradient(0, 0, 0, h);
+      g.addColorStop(0, '#071120');
+      g.addColorStop(0.62, '#0a1626');
+      g.addColorStop(1, '#050b16');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, w, h);
+      const q = state.q;
+      // 地面：用【屏幕空间向上填色】+ 3D 折线定位，别画三维面片
+      const far = [project([-8, 0, -8], q), project([8, 0, -8], q)];
+      const near = [project([8, 0, 8], q), project([-8, 0, 8], q)];
+      poly([far[0], far[1], near[0], near[1]], '#0b1424', null, 0);
+      // 地面网格
+      for (let i = -3; i <= 3; i++) {
+        line([project([i * 1.6, 0, -4.8], q), project([i * 1.6, 0, 4.8], q)], 'rgba(148,163,184,.07)', 1);
+        line([project([-4.8, 0, i * 1.6], q), project([4.8, 0, i * 1.6], q)], 'rgba(148,163,184,.07)', 1);
+      }
+      line([far[0], far[1]], 'rgba(148,163,184,.13)', 1);
+    }
+
+    // 中柱
+    function drawColumn(q) {
+      const top = contentTopY();
+      const N = 20, bot = [], tp = [];
+      for (let i = 0; i < N; i++) {
+        const a = PI2 * i / N;
+        const dx = Math.cos(a) * COL_R, dz = Math.sin(a) * COL_R;
+        bot.push(project([dx, 0, dz], q));
+        tp.push(project([dx, top, dz], q));
+      }
+      const hull = convexHull(bot.concat(tp));
+      poly(hull, rgb(C_COL, 0.62), 'rgba(15,23,42,.55)', 1);
+      boxOfPts(hull, 'col');
+      // 高光窄带
+      const a = -0.9;
+      line([project([Math.cos(a) * COL_R * 0.45, 0, Math.sin(a) * COL_R * 0.45], q),
+            project([Math.cos(a) * COL_R * 0.45, top, Math.sin(a) * COL_R * 0.45], q)], 'rgba(226,240,255,.18)', 2.4);
+    }
+
+    // 螺旋楼梯：每一级台阶 = 一块踏板（顶面）+ 一块踢面
+    function drawStairs(q) {
+      const nFloor = state.activity === 'stairs' ? state.floors : 0;
+      const total = nFloor * STEPS_PER_FLOOR;
+      const quads = [];
+      for (let i = 0; i < total; i++) {
+        const a0 = i * STEP_ANG, a1 = (i + 1) * STEP_ANG;
+        const yTop = (i + 1) * STEP_RISE;
+        const yBot = i * STEP_RISE;
+        const p = (r, y, a) => project([r * Math.cos(a), y, r * Math.sin(a)], q);
+        const tread = [p(R_IN, yTop, a0), p(R_OUT, yTop, a0), p(R_OUT, yTop, a1), p(R_IN, yTop, a1)];
+        const riser = [p(R_IN, yBot, a1), p(R_OUT, yBot, a1), p(R_OUT, yTop, a1), p(R_IN, yTop, a1)];
+        const dep = (tread[0].z + tread[1].z + tread[2].z + tread[3].z) / 4;
+        quads.push({ tread: tread, riser: riser, dep: dep, y: yTop });
+      }
+      quads.sort((A, B) => B.dep - A.dep);   // 远 → 近
+      for (const Q of quads) {
+        const nrm = vnorm([0, 1, 0]);
+        const c = shade(C_STEP, nrm, 0.50);
+        poly(Q.tread, c, 'rgba(15,23,42,.45)', 1);
+        poly(Q.riser, rgb(C_STEP, 0.34), 'rgba(15,23,42,.35)', 1);
+      }
+      state.drawn.steps = total;
+    }
+
+    // 高度刻度尺（看上升高度 h）
+    function drawScale(q) {
+      const top = contentTopY();
+      const a = project([SCALE_X, 0, 0], q), b = project([SCALE_X, top, 0], q);
+      line([a, b], rgb(C_SCALE, 0.90), 1.6);
+      const tl = project([SCALE_X - 0.30, top, 0], q), br = project([SCALE_X + 0.30, 0, 0], q);
+      const plate = [{ x: Math.min(tl.x, br.x) - 6, y: Math.min(tl.y, br.y) - 8 },
+                     { x: Math.max(tl.x, br.x) + 6, y: Math.min(tl.y, br.y) - 8 },
+                     { x: Math.max(tl.x, br.x) + 6, y: Math.max(tl.y, br.y) + 4 },
+                     { x: Math.min(tl.x, br.x) - 6, y: Math.max(tl.y, br.y) + 4 }];
+      poly(plate, 'rgba(10,22,38,.80)', 'rgba(148,163,184,.35)', 1);
+      boxOfPts(plate, 'scaleplate');
+      let nTick = 0;
+      for (let m = 0; m <= top; m += 1) {
+        const p = project([SCALE_X, m, 0], q);
+        const major = (m % 3 === 0);
+        const len = (major ? 12 : 7);
+        line([{ x: p.x - len, y: p.y }, { x: p.x, y: p.y }], major ? 'rgba(226,240,255,.85)' : 'rgba(148,163,184,.55)', major ? 1.6 : 1);
+        if (major) {
+          const tx = p.x - len - 6;
+          const txt = String(m);
+          label({ x: tx, y: p.y }, txt, 'rgba(226,240,255,.92)', 10.5, 'right');
+          // 【刻度数字也要登记成「器材」】—— 不登记的话 placeLabel 看不见它们，h 标注就会压上去。
+          ctx.font = '800 10.5px Inter, "Microsoft YaHei", sans-serif';
+          const tw = ctx.measureText(txt).width;
+          pushBox(tx - tw - 2, p.y - 8, tx + 2, p.y + 8, 'tick');
+          nTick++;
+        }
+      }
+      state.drawn.scaleTicks = nTick;
+      // 已上升高度：从 0 到当前高度的一条高亮
+      const yh = hProgM();
+      if (yh > 0.01) {
+        line([project([SCALE_X, 0, 0], q), project([SCALE_X, yh, 0], q)], 'rgba(52,211,153,.95)', 3.2);
+      }
+    }
+
+    // 楼层牌（看爬了几层）—— 可点，用来改楼层数（只有爬楼情境才画）
+    function drawPlates(q) {
+      const out = [];
+      if (state.activity !== 'stairs') { state.plates = out; state.drawn.floorLabs = 0; return; }
+      for (let f = 1; f <= N_MAX; f++) {
+        const y = f * FLOOR_H;
+        const c = project([PLATE_X, y, 0], q);
+        const w = 0.62 * c.s, h = 0.30 * c.s;
+        const on = (state.activity === 'stairs' && f <= state.floors);
+        const box = [{ x: c.x - w, y: c.y - h }, { x: c.x + w, y: c.y - h },
+                     { x: c.x + w, y: c.y + h }, { x: c.x - w, y: c.y + h }];
+        poly(box, on ? 'rgba(14,116,144,.55)' : 'rgba(15,23,42,.55)',
+             on ? 'rgba(56,189,248,.85)' : 'rgba(148,163,184,.4)', on ? 2 : 1);
+        const txt = f + ' 层';
+        label({ x: c.x, y: c.y + 1 }, txt, on ? '#e0f2fe' : '#94a3b8', 12, 'center');
+        ctx.font = '800 12px Inter, "Microsoft YaHei", sans-serif';
+        const tw = ctx.measureText(txt).width;
+        pushBox(c.x - tw / 2 - 3, c.y - 9, c.x + tw / 2 + 3, c.y + 9, 'floorlab');
+        // 与刻度尺之间的连线
+        line([project([PLATE_X - 0.20, y, 0], q), project([COL_R + 0.05, y, 0], q)], 'rgba(148,163,184,.18)', 1, [5, 5]);
+        out.push({ f: f, x: c.x, y: c.y, w: w, h: h });
+      }
+      state.plates = out;
+      state.drawn.floorLabs = out.length;      // 自检用：楼层数字的【实画数】（登记数必须等于它）
+    }
+
+    // 小人（3D 锚定的火柴人 + 走路摆臂）
+    function drawPerson(q, pp, tag) {
+      const P = (dx, dy, dz) => project([pp.x + dx, pp.y + dy, pp.z + dz], q);
+      // 爬楼：摆腿幅度随「已走过的弧长」周期变化（像在走）。
+      // 跳绳：原地起跳 ⇒ 用固定分腿。不能沿用 sin(walk)：跳绳 walk = 2π×次数×进度，
+      // 次数为整数时 sin 恒为 0 ⇒ 两条腿完全重合，看着只有一条腿。
+      const sw = state.activity === 'rope' ? 0.17 : Math.sin(pp.walk) * 0.20;
+      const hip = P(0, 0.90, 0), sh = P(0, 1.38, 0), head = P(0, 1.62, 0);
+      const footA = P(sw * 0.9, 0.02, 0), footB = P(-sw * 0.9, 0.02, 0);
+      const handA = P(-sw * 1.5, 1.06, 0), handB = P(sw * 1.5, 1.06, 0);
+      const lw = Math.max(2.2, 0.075 * hip.s);
+      // 腿
+      line([hip, footA], rgb(C_PANTS, 0.95), lw * 0.9);
+      line([hip, footB], rgb(C_PANTS, 0.75), lw * 0.9);
+      // 躯干
+      line([hip, sh], rgb(C_SHIRT, 1.0), lw * 1.9);
+      // 手臂
+      line([sh, handA], rgb(C_SHIRT, 0.82), lw * 0.78);
+      line([sh, handB], rgb(C_SHIRT, 0.68), lw * 0.78);
+      // 头
+      const hr = Math.max(3.2, 0.115 * head.s);
+      const g = ctx.createRadialGradient(head.x - hr * 0.34, head.y - hr * 0.38, hr * 0.1, head.x, head.y, hr * 1.05);
+      g.addColorStop(0, '#f8dcc0');
+      g.addColorStop(0.6, rgb(C_SKIN, 1));
+      g.addColorStop(1, '#b07c52');
+      ctx.beginPath(); ctx.arc(head.x, head.y, hr, 0, PI2); ctx.fillStyle = g; ctx.fill();
+      ctx.lineWidth = 1; ctx.strokeStyle = 'rgba(2,6,23,.5)'; ctx.stroke();
+      // 碰撞盒（可点：点头部/躯干 = 开始计时）
+      boxOfPts([{ x: head.x - hr, y: head.y - hr }, { x: footA.x + lw, y: footA.y }], tag || 'person');
+      state.drawn.legs = sw;          // 分腿幅度（自检用：0 = 两条腿完全重合）
+      return { head: head, hip: hip, foot: footA, s: hip.s };
+    }
+
+    // 跳绳：绳子是一个从两手垂到脚下方的 U 形弧（每次起跳时从脚下滑过）
+    function drawRope(q, pp) {
+      if (state.activity !== 'rope') return;
+      const handY = pp.y + 1.06;
+      const botY = Math.max(0.03, pp.y - 0.03);
+      const pts = [];
+      for (let i = 0; i <= 18; i++) {
+        const t = i / 18;
+        const x = pp.x + (t - 0.5) * 1.9;
+        const y = handY - (handY - botY) * Math.sin(Math.PI * t);
+        pts.push(project([x, y, pp.z], q));
+      }
+      line(pts, rgb(C_ROPE, 1.0), 2.2);
+      boxOfPts(pts, 'rope');
+    }
+
+    // 跳绳：累计上升柱（h 是各次起跳之和，不是小人的瞬时位置 ⇒ 用柱状而不是刻度尺）
+    function drawRopeBar(q) {
+      const top = contentTopY();
+      const w = 0.34;
+      const h = hProgM();
+      // 底槽
+      const a = project([ROPE_BAR_X - w, 0, 0], q), b = project([ROPE_BAR_X + w, 0, 0], q);
+      const c = project([ROPE_BAR_X + w, top, 0], q), d = project([ROPE_BAR_X - w, top, 0], q);
+      poly([a, b, c, d], 'rgba(10,22,38,.72)', 'rgba(148,163,184,.35)', 1);
+      boxOfPts([a, b, c, d], 'ropebar');
+      // 填充
+      const hh = Math.max(0.001, h);
+      const f0 = project([ROPE_BAR_X - w + 0.03, 0, 0], q), f1 = project([ROPE_BAR_X + w - 0.03, 0, 0], q);
+      const f2 = project([ROPE_BAR_X + w - 0.03, hh, 0], q), f3 = project([ROPE_BAR_X - w + 0.03, hh, 0], q);
+      poly([f0, f1, f2, f3], 'rgba(52,211,153,.85)', null, 0);
+      // 刻度：每 0.6 m 一格（刻度线从柱子右缘往外画，避免被读成负号）
+      let nTick = 0;
+      for (let m = 0; m <= top + 1e-6; m += 0.6) {
+        const p = project([ROPE_BAR_X + w, m, 0], q);
+        const major = (Math.abs(m / 1.2 - Math.round(m / 1.2)) < 1e-9);
+        const len = (major ? 10 : 6);
+        line([{ x: p.x, y: p.y }, { x: p.x + len, y: p.y }], major ? 'rgba(226,240,255,.85)' : 'rgba(148,163,184,.5)', major ? 1.5 : 1);
+        if (major) {
+          const txt = m.toFixed(1);
+          label({ x: p.x + len + 8, y: p.y }, txt, 'rgba(226,240,255,.92)', 10.5, 'left');
+          ctx.font = '800 10.5px Inter, "Microsoft YaHei", sans-serif';
+          const tw = ctx.measureText(txt).width;
+          pushBox(p.x + len + 6, p.y - 8, p.x + len + 8 + tw + 2, p.y + 8, 'tick');
+          nTick++;
+        }
+      }
+      state.drawn.scaleTicks = nTick;
+      state.drawn.ropeBar = { h: h, top: top };
+      // 累计高度标注（放在柱子右缘，避免贴到画布左边）
+      const yT = Math.max(h, 0.001);
+      const sp = project([ROPE_BAR_X + w, yT, 0], q);
+      placeLabel({ x: sp.x, y: sp.y }, '累计 h = ' + h.toFixed(2) + ' m', '#6ee7b7', 12,
+                 [[16, 0], [16, -18], [16, 18], [34, 0], [16, -36], [52, 0]]);
+    }
+
+    // 跳绳：跳跃计数器（贴在人身旁）
+    function drawJumpCounter(q, pp) {
+      const done = Math.min(state.jumps, Math.floor(clamp(state.progress, 0, 1) * state.jumps + 1e-9));
+      const p = project([pp.x, pp.y + 2.02, pp.z], q);
+      placeLabel({ x: p.x, y: p.y }, '第 ' + done + ' / ' + state.jumps + ' 次', '#a5f3fc', 11.5,
+                 [[0, -16], [0, 16], [34, -16], [-34, -16], [0, -32], [52, 0], [-52, 0]]);
+    }
+
+    function drawAnnotations(q) {
+      const pp = personPos();
+      const isStairs = state.activity === 'stairs';
+      if (isStairs) {
+        // ── 上升高度 h：从地面拉到当前小人脚下的水平虚线到刻度尺 ──
+        const yh = hProgM();
+        if (yh > 0.01) {
+          const a = project([SCALE_X, yh, 0], q);
+          const b = project([pp.x, yh, pp.z], q);
+          line([a, b], 'rgba(52,211,153,.85)', 1.4, [6, 5]);
+          poly([{ x: a.x + 1, y: a.y }, { x: a.x + 11, y: a.y - 5 }, { x: a.x + 11, y: a.y + 5 }], '#34d399', null, 0);
+        }
+        // h 的总量标注（目标高度）——钉在【目标楼层】上，不跟着小人走
+        const yT = hTargetM();
+        const sp = project([SCALE_X, yT, 0], q);
+        // 【竖直双箭头（0 → h）必须画在「h = …」标注【之前】】——
+        // placeLabel 只认【已经登记进 GEO_BOX 的器材】。原来箭头画在标注之后，
+        // 标注搜索时根本看不见箭头（后登记 = 当时还不存在）⇒ 「h = 12.0 m」直接压在箭头上。
+        //
+        // 【为什么偏移发生在屏幕空间】刻度数字右对齐、贴着刻度尺左侧画（最宽的「12」
+        // 左缘在刻度尺左约 33 px）。最早箭头放在世界 x 偏 0.62（≈25 px），三角头正好
+        // 压在「12」的「1」上 —— 出图复看时最高刻度读成「2」，而当时所有断言都是绿的。
+        // 改成世界坐标偏 1.05 后透视/正面视角干净了，但【侧视角】是沿 x 轴看的，
+        // 世界 x 上的偏移几乎全落在深度方向 ⇒ 屏幕上只挪开 19 px，三角又压上「12」。
+        // 所以偏移必须发生在【屏幕空间】：像技术制图的尺寸线一样，恒定让开刻度数字。
+        const a0 = project([SCALE_X, 0, 0], q), a1 = project([SCALE_X, yT, 0], q);
+        const ARROW_OFF = 46;                      // 屏幕像素：三角右缘距刻度数字左缘 ≥ 8 px
+        const g0 = { x: a0.x - ARROW_OFF, y: a0.y }, g1 = { x: a1.x - ARROW_OFF, y: a1.y };
+        line([g0, g1], 'rgba(52,211,153,.85)', 1.8);
+        const ah = 5;
+        const hd0 = [{ x: g0.x, y: g0.y + 1 }, { x: g0.x - ah, y: g0.y + 1 + ah * 1.6 }, { x: g0.x + ah, y: g0.y + 1 + ah * 1.6 }];
+        const hd1 = [{ x: g1.x, y: g1.y - 1 }, { x: g1.x - ah, y: g1.y - 1 - ah * 1.6 }, { x: g1.x + ah, y: g1.y - 1 - ah * 1.6 }];
+        poly(hd0, '#34d399', null, 0);
+        poly(hd1, '#34d399', null, 0);
+        // 【登记要分两件】箭头线（细长）与三角头（小块）分开登记：
+        // 合成一个大盒子的话，侧视角下箭头线是斜的、包围盒很宽，
+        // 「三角有没有压刻度数字」就会被中间那段线误判成压住。
+        pushBox(Math.min(g0.x, g1.x) - 2, Math.min(g0.y, g1.y), Math.max(g0.x, g1.x) + 2, Math.max(g0.y, g1.y), 'arrow');
+        boxOfPts(hd0, 'arrowhead');
+        boxOfPts(hd1, 'arrowhead');
+        placeLabel({ x: sp.x - 26, y: sp.y }, 'h = ' + yT.toFixed(1) + ' m', '#6ee7b7', 12);
+        // 已上升高度（跟着小人走 —— 爬楼过程中实时增长）
+        const head = project([pp.x, pp.y + 1.92, pp.z], q);
+        placeLabel({ x: head.x, y: head.y }, '已升 ' + yh.toFixed(1) + ' m', '#a5f3fc', 11.5,
+                   [[0, -18], [0, 18], [30, -18], [-30, -18], [46, 0], [-46, 0], [0, -34]]);
+        // 人的质量
+        placeLabel({ x: head.x, y: head.y + 30 }, 'm = ' + massKg().toFixed(0) + ' kg', '#fde68a', 11.5,
+                   [[0, 20], [0, -20], [34, 20], [-34, 20], [52, 0], [-52, 0], [0, 38]]);
+        // 楼层牌高度线
+        const pl = project([PLATE_X, yT, 0], q);
+        line([project([COL_R + 0.05, yT, 0], q), pl], 'rgba(56,189,248,.5)', 1.2, [5, 4]);
+        state.drawn.hLine = { y: yT, yNow: yh };
+      } else {
+        // 跳绳：累计高度柱自己带标注；这里只补「人」的质量标注
+        const head = project([pp.x, pp.y + 1.92, pp.z], q);
+        placeLabel({ x: head.x, y: head.y }, 'm = ' + massKg().toFixed(0) + ' kg', '#fde68a', 11.5,
+                   [[0, -20], [0, 20], [34, -20], [-34, -20], [52, 0], [-52, 0]]);
+        state.drawn.hLine = { y: hTargetM(), yNow: hProgM() };
+      }
+    }
+
+    /* ============================================================
+     * 主渲染
+     * ============================================================ */
+    function render() {
+      if (!state.w || !state.h) return;
+      const w = state.w, h = state.h;
+      const q = {};
+      state.q = q;
+      makeCam(q, w, h);
+      LBOX = []; GEO_BOX = []; DRAWN_LABELS = [];
+      UI_BOX = uiBoxes();
+      state.drawn = {};
+
+      drawBackdrop(w, h);
+      if (state.activity === 'stairs') {
+        drawColumn(q);
+        drawStairs(q);
+        drawScale(q);
+        drawPlates(q);
+      } else {
+        drawRopeBar(q);
+      }
+
+      const pp = personPos();
+      drawRope(q, pp);
+      drawPerson(q, pp, 'person');
+      if (state.activity === 'rope') drawJumpCounter(q, pp);
+
+      drawAnnotations(q);
+      state.drawn.person = { x: pp.x, y: pp.y, z: pp.z, wy: pp.y, th: pp.th };
+    }
+
+    /* ============================================================
+     * 读数 / 记录表 / 柱状图 / 曲线
+     * ============================================================ */
+    function renderReadouts() {
+      // 【大数字必须是「实测功率」】—— 未开始就该是 0.00，
+      // 不能把 powerW()（预期值）当实测显示。预期值单列一行。
+      $('pw-p-num').textContent = powerNowW().toFixed(2);
+      $('pw-p-out').textContent = powerNowW().toFixed(2) + ' W';
+      $('pw-p-exp').textContent = powerW().toFixed(2) + ' W';
+      $('pw-pfv-out').textContent = powerFvW().toFixed(2) + ' W';
+      // 单位换算读数：与 powerW() 同源（P/1000），不是另存一份数
+      $('pw-kw-out').textContent = (powerW() / 1000).toFixed(3) + ' kW';
+      $('pw-w-out').textContent = workJ().toFixed(0) + ' J';
+      $('pw-live').textContent = state.phase === 'done' ? '实测' : '待测';
+      $('pw-live').className = 'pill' + (state.phase === 'done' ? ' ok' : '');
+      $('pw-mass-out').textContent = massKg().toFixed(0) + ' kg';
+      $('pw-hh-out').textContent = hTargetM().toFixed(1) + ' m';
+      $('pw-tt-out').textContent = timeS().toFixed(1) + ' s';
+      $('pw-v-out').textContent = speedMps().toFixed(3) + ' m/s';
+      $('pw-hnow-out').textContent = hProgM().toFixed(1) + ' m';
+      $('pw-phase-out').textContent = PHASE_NAME[state.phase];
+      $('pw-clock-num').textContent = state.animT.toFixed(2);
+      $('pw-clock').className = 'stage-clock' + (state.phase === 'climbing' ? ' run' : '');
+      $('pw-mass-num').textContent = massKg().toFixed(0) + ' kg';
+      $('pw-mass-pill').textContent = massKg().toFixed(0) + ' kg';
+      $('pw-h-pill').textContent = hTargetM().toFixed(1) + ' m';
+      $('pw-t-pill').textContent = timeS().toFixed(1) + ' s';
+      $('pw-time-num').textContent = timeS().toFixed(1) + ' s';
+      $('pw-mode-pill').textContent = MODES[state.mode].name;
+      $('pw-act-pill').textContent = state.activity === 'stairs' ? '爬楼' : '跳绳';
+      $('pw-hu-lab').textContent = state.activity === 'stairs' ? '楼层数' : '跳跃次数';
+      $('pw-floors-num').textContent = state.activity === 'stairs' ? (state.floors + ' 层') : (state.jumps + ' 次');
+      $('pw-curve-pill').textContent = 'W = ' + workJ().toFixed(0) + ' J';
+      $('pw-bars-pill').textContent = state.mode === 'w' ? ('相同功 W = ' + workJ().toFixed(0) + ' J')
+                                                          : ('相同时间 ' + timeS().toFixed(1) + ' s');
+      // 滑块与锁定状态
+      const lock = MODES[state.mode].lock;
+      $('pw-time').disabled = !!lock.time;
+      $('pw-time-note').textContent = lock.time ? '本模式下用时被锁住（控制变量）' : '按秒表后小人按这个速度爬完';
+      $('pw-time-note').className = 'mini-note' + (lock.time ? ' lock' : '');
+      // 【量程随情境切换】—— 爬楼是 1~4 层，跳绳是 10~60 次，共用一个滑块但量程不同
+      const huS = $('pw-floors');
+      if (state.activity === 'stairs') {
+        huS.min = N_MIN; huS.max = N_MAX; huS.step = 1; huS.value = String(state.floors);
+      } else {
+        huS.min = JP_MIN; huS.max = JP_MAX; huS.step = 5; huS.value = String(state.jumps);
+      }
+      huS.disabled = !!lock.hu;
+      $('pw-mass').disabled = !!lock.mass;
+      $('pw-floors-note').textContent = lock.hu ? '本模式下高度被锁住（控制变量）' : '也可以直接点画面右侧的楼层牌';
+      $('pw-floors-note').className = 'mini-note' + (lock.hu ? ' lock' : '');
+      document.querySelectorAll('#pw-mass-presets button').forEach(b => {
+        b.disabled = !!lock.mass;
+        b.className = (Math.abs(massKg() - (+b.getAttribute('data-mass'))) < 0.5) ? 'primary' : '';
+      });
+      const huPresets = state.activity === 'stairs' ? [1, 2, 3, 4] : [15, 30, 45, 60];
+      const huNow = state.activity === 'stairs' ? state.floors : state.jumps;
+      document.querySelectorAll('#pw-floors-presets button').forEach((b, i) => {
+        b.disabled = !!lock.hu;
+        b.setAttribute('data-hu', String(huPresets[i]));
+        b.textContent = state.activity === 'stairs' ? (huPresets[i] + ' 层') : (huPresets[i] + ' 次');
+        b.className = (huNow === huPresets[i]) ? 'primary' : '';
+      });
+      document.querySelectorAll('#pw-time-presets button').forEach(b => {
+        b.disabled = !!lock.time;
+        b.className = (Math.abs(timeS() - (+b.getAttribute('data-t'))) < 0.26) ? 'primary' : '';
+      });
+      $('pw-mode-note').textContent = MODES[state.mode].note;
+      $('pw-act-note').textContent = state.activity === 'stairs'
+        ? '爬楼：上升高度 h = 楼层数 × 3.0 m。' : '跳绳：上升高度 h = 跳跃次数 × 6 cm。';
+    }
+
+    function renderTable() {
+      const body = $('pw-rec-body');
+      $('pw-rec-pill').textContent = records.length + ' 组';
+      $('pw-rec-cnt').textContent = records.length;
+      if (!records.length) {
+        body.innerHTML = '<p class="rec-empty">还没有记录。改一次条件，点「记录这一组」。</p>';
+        return;
+      }
+      let html = '<table class="rec"><thead><tr><th>#</th><th>m/kg</th><th>h/m</th><th>t/s</th><th>W/J</th><th>P/W</th></tr></thead><tbody>';
+      records.forEach((r, i) => {
+        html += '<tr><td>' + (i + 1) + '</td><td>' + r.m + '</td><td>' + r.h.toFixed(1) + '</td><td>' +
+                r.t.toFixed(1) + '</td><td>' + r.w.toFixed(0) + '</td><td>' + r.p.toFixed(2) + '</td></tr>';
+      });
+      html += '</tbody></table>';
+      body.innerHTML = html;
+    }
+
+    // 柱状图：当前模式下要对比的取值
+    function barData() {
+      if (state.mode === 'w') {
+        return [4, 8, 12, 16].map(v => ({
+          cap: v + ' s', val: workJ() / v, cur: Math.abs(v - timeS()) < 0.26
+        }));
+      }
+      return MASS_ORDER.map(k => {
+        const m = MASSES[k];
+        return { cap: m + ' kg', val: m * G * hTargetM() / timeS(), cur: Math.abs(m - massKg()) < 0.5 };
+      });
+    }
+    function renderBars() {
+      const data = barData();
+      const mx = Math.max.apply(null, data.map(d => d.val)) || 1;
+      const box = $('pw-bars');
+      box.innerHTML = data.map(d => {
+        const hpx = Math.max(3, Math.round(d.val / mx * 88));
+        const col = d.cur ? 'linear-gradient(180deg,#7dd3fc,#0ea5e9)' : 'rgba(148,163,184,.42)';
+        return '<div class="b"><div class="val">' + d.val.toFixed(1) + '</div>' +
+               '<div class="col" style="height:' + hpx + 'px;background:' + col + '"></div>' +
+               '<div class="cap">' + d.cap + '</div></div>';
+      }).join('');
+      $('pw-bars-note').textContent = state.mode === 'w'
+        ? '做相同的功，用时越短，功率越大（P 与 t 成反比）。'
+        : '时间相同时，做的功越多，功率越大。';
+    }
+
+    // P–t 曲线：固定 W 的双曲线，外加已记录的点
+    // 自检用：把 P–t 曲线的【实画几何】报出来。
+    // 只查「画布上有没有墨迹」抓不到「把 P = W/t 画成 P = W×t」——
+    // 形状反了照样有墨迹。所以必须把采样点坐标本身报出来，由断言在 node 侧
+    // 按硬编码的 W/t 重新对账（曲线点 + 当前状态点）。
+    let lastCurve = null;
+    function renderCurve() {
+      const cv = $('pw-curve');
+      if (!cv) return;
+      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      const W = Math.max(120, Math.round(cv.getBoundingClientRect().width));
+      const H = 118;
+      cv.width = Math.round(W * dpr);
+      cv.height = Math.round(H * dpr);
+      const c2 = cv.getContext('2d');
+      c2.setTransform(dpr, 0, 0, dpr, 0, 0);
+      c2.clearRect(0, 0, W, H);
+      const padL = 40, padR = 10, padT = 10, padB = 20;
+      const pMax = workJ() / T_MIN;                       // t 最小时功率最大
+      const X = t => padL + (t - T_MIN) / (T_MAX - T_MIN) * (W - padL - padR);
+      const Y = p => H - padB - clamp(p / pMax, 0, 1) * (H - padT - padB);
+      c2.strokeStyle = 'rgba(148,163,184,.22)';
+      c2.lineWidth = 1;
+      c2.beginPath(); c2.moveTo(padL, padT); c2.lineTo(padL, H - padB); c2.lineTo(W - padR, H - padB); c2.stroke();
+      c2.fillStyle = 'rgba(148,163,184,.75)';
+      c2.font = '9px Inter, sans-serif';
+      for (const t of [T_MIN, 8, T_MAX]) c2.fillText(String(t), X(t) - 5, H - 7);
+      c2.fillText('t/s', W - padR - 22, H - 7);
+      c2.fillText(pMax.toFixed(0), 3, Y(pMax) + 3);
+      c2.fillText('0', 3, H - padB + 3);
+      // 理论双曲线 P = W/t
+      const curvePts = [];
+      c2.beginPath();
+      for (let i = 0; i <= 80; i++) {
+        const t = T_MIN + (T_MAX - T_MIN) * i / 80;
+        const p = workJ() / t;
+        const x = X(t), y = Y(p);
+        if (i === 0) c2.moveTo(x, y); else c2.lineTo(x, y);
+        curvePts.push({ t: t, p: p, x: x, y: y });
+      }
+      c2.strokeStyle = '#38bdf8';
+      c2.lineWidth = 2;
+      c2.stroke();
+      // 记录点（只画功相同的）
+      records.forEach(r => {
+        if (Math.abs(r.w - workJ()) > 1e-6) return;
+        c2.beginPath();
+        c2.arc(X(clamp(r.t, T_MIN, T_MAX)), Y(r.p), 3.2, 0, PI2);
+        c2.fillStyle = '#fbbf24';
+        c2.fill();
+      });
+      // 当前状态点
+      const dotT = timeS(), dotP = powerW();
+      c2.beginPath();
+      c2.arc(X(dotT), Y(dotP), 3.6, 0, PI2);
+      c2.fillStyle = '#a5f3fc';
+      c2.fill();
+      lastCurve = { pts: curvePts, dot: { t: dotT, p: dotP, x: X(dotT), y: Y(dotP) },
+                    pMax: pMax, workJ: workJ(), cw: W, ch: H,
+                    padL: padL, padR: padR, padT: padT, padB: padB,
+                    tMin: T_MIN, tMax: T_MAX };
+    }
+
+    // 分析与结论：检查记录里有没有做到「只改一个量」
+    function renderAnalysis() {
+      const box = $('pw-analysis');
+      const sameT = records.filter(r => Math.abs(r.t - timeS()) < 0.26);
+      const sameW = records.filter(r => Math.abs(r.w - workJ()) < 1e-6);
+      const lines = [];
+      lines.push('<div class="line"><span>已记录</span><b>' + records.length + ' 组</b></div>');
+      lines.push('<div class="line"><span>同时用（' + timeS().toFixed(1) + ' s）已有</span><b>' +
+                 new Set(sameT.map(r => r.m + '|' + r.h)).size + ' 种条件</b></div>');
+      lines.push('<div class="line"><span>同做功（' + workJ().toFixed(0) + ' J）已有</span><b>' +
+                 new Set(sameW.map(r => r.t.toFixed(1))).size + ' 种用时</b></div>');
+
+      let conc = '';
+      const tSet = new Set(sameT.map(r => r.w));
+      if (tSet.size >= 2) {
+        const sorted = sameT.slice().sort((a, b) => a.w - b.w);
+        const mono = sorted.every((r, i) => i === 0 || r.p >= sorted[i - 1].p - 1e-9);
+        conc += '<div class="conc' + (mono ? '' : ' warn') + '">用时都是 ' + timeS().toFixed(1) +
+                ' s 时，做功从 ' + sorted[0].w.toFixed(0) + ' J 增到 ' + sorted[sorted.length - 1].w.toFixed(0) +
+                ' J，功率从 ' + sorted[0].p.toFixed(2) + ' W 增到 ' + sorted[sorted.length - 1].p.toFixed(2) +
+                ' W —— <b>' + (mono ? '相同时间，做功越多功率越大' : '数据不自洽，检查是否只改了功') + '</b>。</div>';
+      }
+      const wSet = new Set(sameW.map(r => r.t.toFixed(1)));
+      if (wSet.size >= 2) {
+        const sorted = sameW.slice().sort((a, b) => a.t - b.t);
+        const prod = sorted.map(r => r.p * r.t);
+        const mono = sorted.every((r, i) => i === 0 || r.p <= sorted[i - 1].p + 1e-9);
+        const constW = prod.every(v => Math.abs(v - prod[0]) < 1e-6);
+        conc += '<div class="conc' + (mono && constW ? '' : ' warn') + '">做功都是 ' + workJ().toFixed(0) +
+                ' J 时，用时从 ' + sorted[0].t.toFixed(1) + ' s 变到 ' + sorted[sorted.length - 1].t.toFixed(1) +
+                ' s，功率从 ' + sorted[0].p.toFixed(2) + ' W 变到 ' + sorted[sorted.length - 1].p.toFixed(2) +
+                ' W —— <b>' + (mono && constW ? '做相同的功，用时越短功率越大' : '数据不自洽，检查是否只改了用时') + '</b>。</div>';
+      }
+      if (!conc) {
+        conc = '<div class="conc info">还差对照组。用「记录这一组」把<b>相同用时的不同做功</b>' +
+               '（或<b>相同做功的不同用时</b>）各记一遍，这里就会给出结论。</div>';
+      }
+      box.innerHTML = lines.join('') + conc;
+    }
+
+    function refreshAll() { renderReadouts(); renderTable(); renderBars(); renderCurve(); renderAnalysis(); }
+
+    /* ============================================================
+     * 提示
+     * ============================================================ */
+    let toastT = 0, flagT = 0;      // 【单位：秒】—— tickHud 用秒递减，别混毫秒
+    function showToast(text, ms) {
+      const e = $('pw-toast');
+      e.textContent = text;
+      e.classList.add('show');
+      toastT = (ms || 1400) / 1000;
+    }
+    function flashFlag(text, warn) {
+      const e = $('pw-flag');
+      e.textContent = text;
+      e.className = 'stage-flag show' + (warn ? ' warn' : '');
+      flagT = 1.7;
+    }
+    // 【提示条必须自己退场】：只赋值不倒计时 ⇒ 条子永远挂在画面上。
+    // 真实 rAF 与自检共用这一个入口，自检才能把倒计时推到底。
+    function tickHud(dt) {
+      if (!(dt > 0)) return;
+      if (toastT > 0) {
+        toastT -= dt;
+        if (toastT <= 0) { toastT = 0; $('pw-toast').classList.remove('show'); }
+      }
+      if (flagT > 0) {
+        flagT -= dt;
+        if (flagT <= 0) { flagT = 0; $('pw-flag').classList.remove('show'); }
+      }
+    }
+    const hud = () => ({ toastT: toastT, flagT: flagT });
+    function setHint() {
+      $('pw-hint').innerHTML = '按<b>秒表</b>让小人爬楼 · 点右侧<b>楼层牌</b>改楼层 · ' +
+        '拖动空白处转视角';
+    }
+
+    /* ============================================================
+     * 动作（按钮与自检走同一条路）
+     * ============================================================ */
+    function huVal() { return state.activity === 'stairs' ? state.floors : state.jumps; }
+    function setHu(v) {
+      const lock = MODES[state.mode].lock;
+      if (lock.hu) return;
+      if (state.activity === 'stairs') state.floors = clamp(Math.round(v), N_MIN, N_MAX);
+      else state.jumps = clamp(Math.round(v / 5) * 5, JP_MIN, JP_MAX);
+      resetSim();
+      refreshAll();
+    }
+    function setMass(v) {
+      if (MODES[state.mode].lock.mass) return;
+      state.mass = clamp(Math.round(v), 30, 80);
+      resetSim();
+      refreshAll();
+    }
+    function setTime(v) {
+      if (MODES[state.mode].lock.time) return;
+      state.timeS = clamp(Math.round(v * 2) / 2, T_MIN, T_MAX);
+      resetSim();
+      refreshAll();
+    }
+    function setMode(k) {
+      if (!MODES[k]) return;
+      state.mode = k;
+      const d = MODE_DEF[k];
+      if (d) { state.mass = d.mass; state.floors = d.floors; state.jumps = d.jumps; state.timeS = d.timeS; }
+      resetSim();
+      refreshAll();
+      flashFlag('切到「' + MODES[k].name + '」');
+    }
+    function setActivity(k) {
+      if (k !== 'stairs' && k !== 'rope') return;
+      state.activity = k;
+      if (k === 'rope' && state.jumps < JP_MIN) state.jumps = JP_DEF;
+      resetSim();
+      refreshAll();
+      flashFlag(k === 'stairs' ? '情境：爬楼' : '情境：跳绳');
+    }
+    function startTimer() {
+      if (state.phase === 'climbing') return;
+      state.animT = 0;
+      state.progress = 0;
+      state.phase = 'climbing';
+      state.dirty = true;
+      refreshAll();
+      flashFlag('秒表开始 —— 小人往上爬');
+    }
+    function resetSim() {
+      state.phase = 'ready';
+      state.animT = 0;
+      state.progress = 0;
+      state.dirty = true;
+    }
+    function resetAll() {
+      records.length = 0;
+      resetSim();
+      refreshAll();
+      flashFlag('秒表与记录都已复位');
+    }
+    function recordMark() {
+      const key = massKg() + '|' + hTargetM().toFixed(2) + '|' + timeS().toFixed(1);
+      const dup = records.some(r => r.key === key);
+      if (dup) { showToast('这一组已经记过了'); return; }
+      // 【记录 = 记下这组条件的结果】先爬到顶，表格里的 W 与 P 才和画面上的读数对得上。
+      if (state.phase !== 'done') settleNow();
+      records.push({ key: key, m: massKg(), h: hTargetM(), t: timeS(), w: workJ(), p: powerW() });
+      refreshAll();
+      flashFlag('已记录第 ' + records.length + ' 组');
+    }
+    function applyView(name) {
+      const V = VIEWS[name];
+      if (!V) return;
+      state.yaw = V.yaw; state.pitch = V.pitch; state.zoom = V.zoom; state.look = !!V.look;
+      state.dirty = true;
+      document.querySelectorAll('[data-view]').forEach(b => {
+        b.className = b.getAttribute('data-view') === name ? 'primary' : '';
+      });
+    }
+
+    /* ============================================================
+     * 动画（真实 rAF 与自检共用 stepAnim）
+     * ============================================================ */
+    const TIME_SCALE = 1.0;      // 秒表是【真秒表】，不做慢动作
+    function stepAnim(dt) {
+      if (state.phase === 'climbing') {
+        state.animT += dt / TIME_SCALE;
+        const T = timeS();
+        if (state.animT >= T) {
+          // 【动画终点必须与静止值同源】：p=1 时 progress 恰好等于 1、animT 恰好等于 T
+          state.animT = T;
+          state.progress = 1;
+          state.phase = 'done';
+        } else {
+          state.progress = state.animT / T;
+        }
+        state.dirty = true;
+      }
+      return state.dirty;
+    }
+    function driveAnim(seconds, dt) {
+      const step = dt || 1 / 60;
+      let n = Math.max(1, Math.round(seconds / step));
+      while (n-- > 0) { stepAnim(step); tickHud(step); state.t += step; }
+      if (state.dirty) { render(); state.dirty = false; }
+      refreshAll();
+    }
+    function settleNow() {   // 直接把动画推到底（自检与「立刻看结果」用）
+      state.phase = 'done';
+      state.animT = timeS();
+      state.progress = 1;
+      state.dirty = true;
+      render();
+      refreshAll();
+    }
+
+    /* ============================================================
+     * 交互
+     * ============================================================ */
+    let dragStart = null;
+    function localXY(e) {
+      const r = canvas.getBoundingClientRect();
+      return { x: e.clientX - r.left, y: e.clientY - r.top };
+    }
+    function plateHit(p) {
+      if (!state.plates) return null;
+      for (const pl of state.plates) {
+        if (Math.abs(p.x - pl.x) < pl.w + 6 && Math.abs(p.y - pl.y) < pl.h + 6) return pl.f;
+      }
+      return null;
+    }
+    function personHit(p) {
+      const q = state.q;
+      if (!q || !q.focal) return false;
+      const pp = personPos();
+      const c = project([pp.x, pp.y + 0.95, pp.z], q);
+      return Math.hypot(p.x - c.x, p.y - c.y) < 0.42 * c.s + 10;
+    }
+    function onDown(e) {
+      const p = localXY(e);
+      const f = plateHit(p);
+      if (f) {
+        if (MODES[state.mode].lock.hu) { showToast('本模式下高度被锁住（控制变量）', 1500); return; }
+        if (state.activity === 'rope') { showToast('跳绳情境下请用左栏的跳跃次数', 1500); return; }
+        setHu(f);
+        flashFlag('改成 ' + f + ' 层');
+        return;
+      }
+      if (personHit(p)) {
+        startTimer();
+        return;
+      }
+      state.drag = { kind: 'orbit' };
+      dragStart = { x: p.x, y: p.y, yaw: state.yaw, pitch: state.pitch };
+      canvas.classList.add('grabbing');
+    }
+    function onMove(e) {
+      const p = localXY(e);
+      if (!state.drag) {
+        canvas.classList.toggle('pick', !!(plateHit(p) || personHit(p)));
+        return;
+      }
+      const dx = p.x - dragStart.x, dy = p.y - dragStart.y;
+      state.yaw = dragStart.yaw - dx * 0.006;
+      state.pitch = clamp(dragStart.pitch + dy * 0.005, -0.06, 1.15);
+      state.dirty = true;
+    }
+    function onUp() {
+      state.drag = null; dragStart = null;
+      canvas.classList.remove('grabbing');
+    }
+    function onWheel(e) {
+      e.preventDefault();
+      state.zoom = clamp(state.zoom * (e.deltaY > 0 ? 0.92 : 1.087), 0.5, 3.0);
+      state.dirty = true;
+    }
+
+    /* ============================================================
+     * 尺寸 / 主循环
+     * ============================================================ */
+    function resize() {
+      const r = stage.getBoundingClientRect();
+      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      const w = Math.max(320, Math.round(r.width));
+      const h = Math.max(240, Math.round(r.height));
+      state.w = w; state.h = h; state.dpr = dpr;
+      canvas.width = Math.round(w * dpr);
+      canvas.height = Math.round(h * dpr);
+      canvas.style.width = w + 'px';
+      canvas.style.height = h + 'px';
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      state.dirty = true;
+    }
+    let lastNow = 0;
+    function tick(now) {
+      const t = (now || 0) / 1000;
+      const dt = lastNow ? Math.min(0.1, Math.max(0, t - lastNow)) : 0;
+      lastNow = t;
+      stepAnim(dt);          // 【必须在这里推进物理】—— 实时循环漏了这行，按秒表后小人不动
+      tickHud(dt);
+      if (state.dirty) { render(); state.dirty = false; }
+      requestAnimationFrame(tick);
+    }
+
+    canvas.addEventListener('pointerdown', onDown);
+    canvas.addEventListener('pointermove', onMove);
+    canvas.addEventListener('pointerup', onUp);
+    canvas.addEventListener('pointercancel', onUp);
+    canvas.addEventListener('pointerleave', () => {
+      state.drag = null; dragStart = null; canvas.classList.remove('pick', 'grabbing');
+    });
+    canvas.addEventListener('wheel', onWheel, { passive: false });
+
+    $('pw-m-t').addEventListener('click', () => setMode('t'));
+    $('pw-m-w').addEventListener('click', () => setMode('w'));
+    $('pw-m-free').addEventListener('click', () => setMode('free'));
+    $('pw-act-stairs').addEventListener('click', () => setActivity('stairs'));
+    $('pw-act-rope').addEventListener('click', () => setActivity('rope'));
+    $('pw-mass').addEventListener('input', e => setMass(+e.target.value));
+    document.querySelectorAll('#pw-mass-presets button').forEach(b => {
+      b.addEventListener('click', () => { setMass(+b.getAttribute('data-mass')); flashFlag('体重 ' + massKg().toFixed(0) + ' kg'); });
+    });
+    $('pw-floors').addEventListener('input', e => setHu(+e.target.value));
+    document.querySelectorAll('#pw-floors-presets button').forEach(b => {
+      b.addEventListener('click', () => {
+        const v = +b.getAttribute('data-hu');
+        setHu(v);
+        flashFlag(state.activity === 'stairs' ? ('改成 ' + state.floors + ' 层')
+                                              : ('跳跃 ' + state.jumps + ' 次'));
+      });
+    });
+    $('pw-time').addEventListener('input', e => setTime(+e.target.value));
+    document.querySelectorAll('#pw-time-presets button').forEach(b => {
+      b.addEventListener('click', () => { setTime(+b.getAttribute('data-t')); flashFlag('用时 ' + timeS().toFixed(1) + ' s'); });
+    });
+    $('pw-start').addEventListener('click', startTimer);
+    $('pw-reset').addEventListener('click', resetAll);
+    $('pw-record').addEventListener('click', recordMark);
+    document.querySelectorAll('[data-view]').forEach(b => {
+      b.addEventListener('click', () => applyView(b.getAttribute('data-view')));
+    });
+
+    /* 底部实拍视频区：全屏按钮 —— 与 功与不做功立体模型.html 同一份实现 */
+    document.querySelectorAll('.video-fullscreen-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const c = btn.closest('.video-container');
+        if (!c) return;
+        if (document.fullscreenElement) document.exitFullscreen();
+        else if (c.requestFullscreen) c.requestFullscreen();
+      });
+    });
+    document.addEventListener('fullscreenchange', () => {
+      const on = !!document.fullscreenElement;
+      document.querySelectorAll('.video-fullscreen-btn').forEach(b => {
+        const ex = b.querySelector('.fs-expand'), cp = b.querySelector('.fs-compress');
+        if (ex) ex.style.display = on ? 'none' : '';
+        if (cp) cp.style.display = on ? '' : 'none';
+        b.title = on ? '退出全屏' : '全屏播放';
+      });
+    });
+
+    if (window.ResizeObserver) new ResizeObserver(() => resize()).observe(stage);
+    window.addEventListener('resize', resize);
+
+    resize();
+    setHint();
+    applyView('perspective');
+    resetSim();
+    refreshAll();
+    render();
+    requestAnimationFrame(tick);
+
+    /* ============================================================
+     * 自检钩子
+     * ------------------------------------------------------------
+     * 【注意】凡是「页面里会变的量」都必须写成 get 访问器 ——
+     * 写成 `T_MAX: T_MAX` 那种快照，测试读到的是死值。
+     * ============================================================ */
+    window.__pw = {
+      state: state,
+      consts: {
+        get G() { return G; }, get FLOOR_H() { return FLOOR_H; },
+        get STEPS_PER_FLOOR() { return STEPS_PER_FLOOR; },
+        get STEP_RISE() { return STEP_RISE; }, get STEP_ANG() { return STEP_ANG; },
+        get R_IN() { return R_IN; }, get R_OUT() { return R_OUT; }, get R_WALK() { return R_WALK; },
+        get N_MIN() { return N_MIN; }, get N_MAX() { return N_MAX; },
+        get T_MIN() { return T_MIN; }, get T_MAX() { return T_MAX; },
+        get JUMP_H() { return JUMP_H; }, get JP_MIN() { return JP_MIN; }, get JP_MAX() { return JP_MAX; },
+        get SCALE_X() { return SCALE_X; }, get PLATE_X() { return PLATE_X; },
+        get TIME_SCALE() { return TIME_SCALE; },
+        MASSES: MASSES, MASS_ORDER: MASS_ORDER, MODES: MODES, VIEWS: VIEWS
+      },
+      makeCam: makeCam, project: project, envelopePoints: envelopePoints,
+      size: () => ({ w: state.w, h: state.h, dpr: state.dpr }),
+      // 物理：与页面同一份
+      massKg: massKg, hTargetM: hTargetM, timeS: timeS, workJ: workJ, powerW: powerW,
+      forceN: forceN, speedMps: speedMps, powerFvW: powerFvW,
+      hProgM: hProgM, workProgJ: workProgJ, powerNowW: powerNowW,
+      personPos: personPos, contentTopY: contentTopY,
+      tickHud: tickHud, hud: hud,
+      // 动作：与按钮走同一条路
+      setMode: setMode, setActivity: setActivity, setMass: setMass, setHu: setHu, setTime: setTime,
+      startTimer: startTimer, resetSim: resetSim, resetAll: resetAll, recordMark: recordMark,
+      applyView: applyView, stepAnim: stepAnim, driveAnim: driveAnim, settleNow: settleNow,
+      showToast: showToast, flashFlag: flashFlag,
+      records: () => records.slice(),
+      render: render, refreshAll: refreshAll, renderCurve: renderCurve, renderBars: renderBars,
+      barData: barData,
+      curveGeo: () => (lastCurve ? { pts: lastCurve.pts.map(p => ({ t: p.t, p: p.p, x: p.x, y: p.y })),
+                                     dot: { t: lastCurve.dot.t, p: lastCurve.dot.p, x: lastCurve.dot.x, y: lastCurve.dot.y },
+                                     pMax: lastCurve.pMax, workJ: lastCurve.workJ,
+                                     cw: lastCurve.cw, ch: lastCurve.ch,
+                                     padL: lastCurve.padL, padR: lastCurve.padR,
+                                     padT: lastCurve.padT, padB: lastCurve.padB,
+                                     tMin: lastCurve.tMin, tMax: lastCurve.tMax } : null),
+      drawn: () => state.drawn,
+      labels: () => DRAWN_LABELS.map(b => ({ x: b.x, y: b.y, w: b.w, h: b.h, txt: b.txt })),
+      geoBoxes: () => GEO_BOX.map(b => ({ x: b.x, y: b.y, w: b.w, h: b.h, txt: b.txt })),
+      uiBoxes: () => UI_BOX,
+      plates: () => (state.plates || []).map(p => ({ f: p.f, x: p.x, y: p.y, w: p.w, h: p.h })),
+      layoutBoxes: () => {
+        const out = {};
+        for (const [k, sel] of [['ctl', '.lab3d-ctl'], ['stage', '.lab3d-stage'], ['read', '.lab3d-sidebar'],
+                                ['lower', '.lab3d-lower'], ['layout', '.lab3d-layout']]) {
+          const e = document.querySelector(sel);
+          if (e) { const r = e.getBoundingClientRect(); out[k] = { x: r.left, y: r.top, w: r.width, h: r.height, bottom: r.bottom, right: r.right }; }
+        }
+        return out;
+      }
+    };
+  })();
+  </script>
+</body>
+</html>

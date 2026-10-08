@@ -75,6 +75,20 @@ import * as THREE from './assets/optics-three.min.js';
   const BOIL_HOLD = 180;                             // 沸腾平台维持这么久（模拟秒）才算做完
   const MASS_MIN = 0.55;                             // 水量降到初始值的这个比例就收工（别把水烧干）
 
+  /* ---- 「液化放热」的两个参数 ------------------------------------------------
+     水面上跑出去的水蒸气碰到温度较低的硬纸盖与杯壁，会在上面【液化】成小水珠。
+     液化是汽化的逆过程：汽化时吸走的潜热，液化时【原样放回来】—— 这些热又传回水里。
+     这正是「盖上盖子水开得更快」的物理原因，也是本节要补的最后一条知识点。
+       · 加盖：蒸气从盖中央的孔缝跑掉一部分，另一部分在盖底 / 杯壁上液化回流；
+       · 敞口：水面直接暴露，蒸发 + 对流带走更多热（散热系数放大），且没有任何回流。 */
+  const COND_BACK = 0.35;                            // 加盖时汽化的水有 35% 液化回流
+  /* 敞口时散热系数放大到 1.8 倍：水面直接暴露，蒸发带走的热大约再多一倍。
+     ★ 为什么不是 1.2 / 1.35：那样「加盖开得更快」在曲线上只差 3%，肉眼看不出来，
+       教学上等于没说。1.8 倍对应的差别是「同一时刻水温差 3 ~ 4 ℃、到沸点差 20 多秒」，
+       画在温度—时间图上是两条明显分开的曲线。这个倍数由 K_LOSS 一处派生，不另写数值。 */
+  const LID_LOSS_K = 1.8;
+  const DROP_FULL_G = 3.0;                           // 回流 3 g 水珠就长满（画面上「越积越多」的满标）
+
   /* 气压环境：沸点不写死，用 Antoine 方程从气压算出来 —— 面板上标多少就真算多少 */
   const PRESSURES = {
     std:   { name: '标准大气压', p: 101.3, place: '平原地区' },
@@ -94,6 +108,12 @@ import * as THREE from './assets/optics-three.min.js';
     flameAnim: 1,            // 火焰强度 0~1（撤去时淡出）
     boilStart: -1,           // 开始沸腾的时刻（-1 = 还没沸腾）
     boilTime: 0,             // 已沸腾的时长（模拟秒）
+    lidOn: true,             // 是否盖着硬纸盖（加盖 → 蒸气在盖底 / 杯壁上液化回流放热）
+    lidAnim: 1,              // 0 = 盖子已抬走（敞口），1 = 盖在杯口
+    evapG: 0,                // 累计汽化的水量 g（从水面跑掉的水蒸气）
+    condG: 0,                // 累计液化、又流回水里的水量 g
+    heatBack: 0,             // 累计液化放热回给水的热量 J
+    drawn: { lidDrops: 0, lidLift: 0 },   // 真正画出去的盖底水珠行数（记账，不记意图）
     finished: false,
     step: 0,
     records: [],
@@ -906,6 +926,34 @@ import * as THREE from './assets/optics-three.min.js';
     steams.push(m);
   }
 
+  /* --- 杯壁 / 盖底的水珠：白气液化成的小水珠（「液化放热」的现场证据）------------
+     水蒸气碰到温度较低的杯壁上部与盖沿，就在那里液化 —— 液化时把汽化吸走的潜热
+     原样放回来，这些热又传回水里，所以加盖时水开得更快。
+     ★ 为什么挂在【杯壁内侧水面上方那一段】而不是盖子的下表面：
+       默认视角是从斜上方看的，盖子的下表面被盖板自己挡住，画在那里等于没画。
+       杯壁上这一段隔着透明玻璃任何视角都看得见，而且真实实验里最先看到的水珠
+       也正是在这里。水珠跟着水位走（水位随汽化下降，水珠始终在水面以上）。 */
+  const lidDrops = [];
+  for (let i = 0; i < 18; i++) {
+    const m = new THREE.Mesh(
+      new THREE.SphereGeometry(1, 10, 8),
+      new THREE.MeshPhysicalMaterial({
+        color: '#e8f6ff', transparent: true, opacity: 0.80, roughness: 0.03,
+        metalness: 0, clearcoat: 1, clearcoatRoughness: 0.02, envMapIntensity: 2.2
+      })
+    );
+    m.userData = {
+      a: rndB() * Math.PI * 2,              // 绕杯轴的方位角
+      rad: BK_R - 0.07,                     // 贴着杯壁内侧
+      hFrac: rndB(),                        // 在水面 ~ 盖底之间的归一化高度
+      k: 0.60 + rndB() * 0.85,              // 个体大小系数
+      sp: 0.6 + rndB() * 1.6                // 轻微晃动的相位速度（水珠不是硬邦邦的球）
+    };
+    m.visible = false;
+    beaker.add(m);                          // 挂在烧杯上：杯壁上的水珠
+    lidDrops.push(m);
+  }
+
   /* ==========================================================================
      四、物理积分
      --------------------------------------------------------------------------
@@ -914,6 +962,8 @@ import * as THREE from './assets/optics-three.min.js';
      一旦 T 到达沸点 Tb，温度就锁在 Tb，多出来的净功率全部变成汽化潜热：
        dm/dt = −(P − k·(Tb − T₀)) / L_v
      撤去酒精灯（P = 0）后水开始降温，沸腾立刻停止 —— 这正是「沸腾需要继续吸热」。
+     散热系数 k 由【加盖 / 敞口】决定；加盖时汽化的水有一部分在盖底 / 杯壁上液化，
+     质量与潜热一起回流（液化放热），所以加盖时水开得更快、也更省酒精。
      ========================================================================== */
 
   /* 沸点由气压决定：Antoine 方程（水的常用参数，1~100 ℃ 内误差 < 0.1 ℃）。
@@ -959,14 +1009,27 @@ import * as THREE from './assets/optics-three.min.js';
     return WATER_H * (state.mass / M_WATER);
   }
 
+  /* 散热系数：敞口时水面直接暴露，蒸发 + 对流带走的热更多。
+     这是「加盖开得更快」的一半原因，另一半是盖底液化放热回流（见 integrate）。 */
+  function lossK() {
+    return state.lidOn ? K_LOSS : K_LOSS * LID_LOSS_K;
+  }
+
   function integrate(dt) {
     const P = state.lampOn ? P_LAMP : 0;
-    const net = P - K_LOSS * (state.T - AMB);
+    const net = P - lossK() * (state.T - AMB);
 
     if (state.T >= state.Tb - 1e-9 && net > 0) {
       // 沸腾：温度锁死，净功率全部用于汽化，水量缓慢减少
       state.T = state.Tb;
-      state.mass = Math.max(0, state.mass - net / LV_WATER * dt);
+      const dmEvap = net / LV_WATER * dt;            // 这一步汽化掉的水（kg）
+      /* 加盖时，跑出去的水蒸气有一部分在盖底 / 杯壁上液化，质量【和潜热】一起回到水里。
+         回流比例只在 COND_BACK 一处给出 —— 质量与热量不许各算一个数，否则两边会漂。 */
+      const dmBack = state.lidOn ? COND_BACK * dmEvap : 0;
+      state.mass = Math.max(0, state.mass - (dmEvap - dmBack));
+      state.evapG += dmEvap * 1000;
+      state.condG += dmBack * 1000;
+      state.heatBack += dmBack * LV_WATER;           // 液化放热：潜热原样放回来
       if (state.boilStart < 0) state.boilStart = state.t;
       state.boilTime += dt;
     } else {
@@ -996,18 +1059,30 @@ import * as THREE from './assets/optics-three.min.js';
     if (state.T > state.Tb) state.T = state.Tb;
   }
 
+  /* 加盖 / 敞口：只改实验条件，【不】清掉已经积累的读数 ——
+     读数记录的是「已经真实发生过的事」，跟换气压环境一样，不因为换条件而消失。 */
+  function setLid(on) {
+    state.lidOn = !!on;
+  }
+
   function resetSim() {
     state.t = 0;
     state.T = AMB;
     state.mass = M_WATER;
     state.boilStart = -1;
     state.boilTime = 0;
+    state.evapG = 0;
+    state.condG = 0;
+    state.heatBack = 0;
     state.finished = false;
     setLamp(true);            // 「重置」= 回到初始状态：撤走的酒精灯也放回来（否则重置后永远烧不开）
     // 灯的位移与火焰强度是平滑量，重置时必须直接归位；否则重置后头 0.3 s
     // boilnessVis() 还是 0，气泡/白气会「先不出来」再慢慢浮现。
     state.lampAnim = 1;
     state.flameAnim = 1;
+    // 盖子同理：重置后不该看到盖子「从旁边慢慢飘回来」。盖子盖不盖是实验条件，
+    // 与气压一样【不随重置改变】—— 但动画值必须立刻对齐，免得残留一段过渡。
+    state.lidAnim = state.lidOn ? 1 : 0;
     setPressure(state.pressure);
     series.length = 0;
     pushSample();
@@ -1293,7 +1368,7 @@ import * as THREE from './assets/optics-three.min.js';
      ========================================================================== */
   const els = {
     temp: $('metricTemp'), boil: $('metricBoil'), state: $('metricState'),
-    time: $('metricTime'), mass: $('metricMass'),
+    time: $('metricTime'), mass: $('metricMass'), heat: $('metricHeat'),
     hudTemp: $('hudTemp'), hudBoil: $('hudBoil'), hudLamp: $('hudLamp'),
     finding: $('finding'),
     runBtn: $('runBtn'), pauseBtn: $('pauseBtn'), resetBtn: $('resetBtn'), lampBtn: $('lampBtn')
@@ -1320,6 +1395,8 @@ import * as THREE from './assets/optics-three.min.js';
     els.state.textContent = statusText();
     els.time.textContent = `${state.t.toFixed(0)} s`;
     els.mass.textContent = `${(state.mass * 1000).toFixed(0)} g`;
+    /* 液化放热：累计回流的水蒸气液化时放回水里的热量（读数走 state.heatBack，不另算一遍） */
+    els.heat.textContent = `${(state.heatBack / 1000).toFixed(2)} kJ`;
     els.hudTemp.textContent = state.T.toFixed(1);
     els.hudBoil.textContent = state.Tb.toFixed(1);
     if (els.hudLamp) els.hudLamp.textContent = state.lampOn ? '加热中' : '已撤去';
@@ -1336,6 +1413,9 @@ import * as THREE from './assets/optics-three.min.js';
       hint = `快开了：气泡明显变多变大，却还没到水面就消失了。因为上层水温还低于沸点，泡里的水蒸气遇冷又液化。`;
     } else {
       hint = `正在沸腾：温度死死停在 ${state.Tb.toFixed(1)} ℃，酒精灯还在烧，水还在吸热。气泡一路上升一路<b>变大</b>，到水面破裂放出水蒸气 —— 这些水蒸气遇冷液化成小水珠，就是我们看到的白气。`
+        + (state.lidOn
+          ? `这些水蒸气碰到温度较低的杯壁和纸盖，就在那里<b>液化</b>成小水珠 —— 液化是汽化的<b>逆过程</b>，汽化时吸走的潜热在这里<b>放热</b>还给了水：到目前为止已经有 <b>${state.condG.toFixed(1)} g</b> 水蒸气液化回流，放回 <b>${(state.heatBack / 1000).toFixed(2)} kJ</b> 热。这正是<b>加盖比敞口开得快</b>的原因。`
+          : `<b>现在是敞口</b>：水蒸气一出来就散进空气，没有机会液化回流；水面还直接暴露，蒸发和对流带走更多热 —— 所以敞口比加盖开得慢。切到「盖上硬纸盖」再比一比同一段时间的水温。`)
         + (lowP ? `注意：这里的气压只有 ${PRESSURES[state.pressure].p.toFixed(1)} kPa，所以沸点不是 100 ℃ 而是 ${state.Tb.toFixed(1)} ℃ —— 气压越低，沸点越低。` : '');
     }
     els.finding.innerHTML = hint;
@@ -1386,6 +1466,15 @@ import * as THREE from './assets/optics-three.min.js';
     }
     flameLight.intensity = (3.2 + wob * 0.5) * fa;
 
+    /* 硬纸盖：加盖时盖在杯口，敞口时整块抬走（连挂在盖子上的东西一起）。
+       ★ 抬走只动 lid.position.y，LID_Y 这个【常量】不变 ——
+         「水面没有超过杯口」「温度计穿过盖孔」那类几何判据仍然按常量算，不受影响。 */
+    const lidTarget = state.lidOn ? 1 : 0;
+    state.lidAnim += (lidTarget - state.lidAnim) * Math.min(1, dt * 2.4);
+    if (Math.abs(lidTarget - state.lidAnim) < 0.002) state.lidAnim = lidTarget;
+    lid.position.y = (1 - state.lidAnim) * 16;
+    if (Math.abs(lidTarget - state.lidAnim) > 5e-4) dirty = true;
+
     /* 温度计插入 / 提起：指数平滑跟随目标，铁夹带着它一起上下滑 */
     state.thAnim += (state.thDepth - state.thAnim) * Math.min(1, dt * 3.6);
     if (Math.abs(state.thDepth - state.thAnim) < 0.002) state.thAnim = state.thDepth;
@@ -1423,19 +1512,45 @@ import * as THREE from './assets/optics-three.min.js';
       m.scale.setScalar(sc);
     }
 
-    /* 白气：从纸盖的孔里冒出来。孔被温度计占着，所以水蒸气是从孔壁那一圈缝隙喷出的。 */
+    /* 白气：加盖时从纸盖的孔里冒出来（孔被温度计占着，蒸气从孔壁那圈缝隙喷出）；
+       敞口时盖子抬走了，蒸气直接从水面升起。 */
+    const steamY0 = state.lidOn ? LID_Y + 0.30 : BK_Y0 + depth + 0.15;
+    const steamSpan = state.lidOn ? 8.6 : 9.6;
     for (const m of steams) {
       const u = m.userData;
       m.visible = toggles.steam && b > 0.16;
       if (!m.visible) continue;
       u.ph += dt * u.spd;
       const cyc = u.ph % 1;
-      const y = LID_Y + 0.30 + cyc * 8.6;
+      const y = steamY0 + cyc * steamSpan;
       const spread = u.rad + cyc * 1.55;
       m.position.set(Math.cos(u.a) * spread, y, Math.sin(u.a) * spread);
       m.scale.setScalar(u.r0 + cyc * 1.5);
       m.material.opacity = 0.30 * b * Math.sin(cyc * Math.PI) * (1 - cyc * 0.55);
     }
+
+    /* 杯壁 / 盖底的水珠：白气液化的现场证据，越积越多、越积越大。
+       水珠始终待在【当前水面以上】那一段杯壁上 —— 水位随汽化下降，水珠跟着往下走。
+       ★ state.drawn.lidDrops 记的是【真正 visible 的行数】，不是「打算画几个」。 */
+    const sat = clamp(state.condG / DROP_FULL_G, 0, 1);   // 回流满 DROP_FULL_G 克就长满
+    const wt = BK_Y0 + depth;
+    const bandLo = wt + 0.15, bandHi = LID_Y - 0.14;
+    let dropsDrawn = 0;
+    for (const m of lidDrops) {
+      const u = m.userData;
+      const s = u.k * 0.055 * (0.22 + 0.78 * sat);
+      m.visible = state.lidOn && sat > 0.02;
+      if (!m.visible) continue;
+      m.position.set(
+        Math.cos(u.a) * u.rad,
+        bandLo + u.hFrac * Math.max(0.05, bandHi - bandLo),
+        Math.sin(u.a) * u.rad
+      );
+      m.scale.set(s, s * (0.74 + 0.26 * Math.sin(clock * u.sp + u.a)), s);
+      dropsDrawn++;
+    }
+    state.drawn.lidDrops = dropsDrawn;
+    state.drawn.lidLift = lid.position.y;
 
     /* 水面：沸腾时明显翻腾，平时只有极轻微的起伏 */
     waterTop.position.y = BK_Y0 + depth + Math.sin(clock * (1.6 + 3.4 * b)) * (0.010 + 0.052 * b);
@@ -1523,6 +1638,24 @@ import * as THREE from './assets/optics-three.min.js';
   });
   applyPressureUI();
 
+  /* --- 杯口加盖 / 敞口（顺序 6：「液化放热」）---------------------------------
+     加盖 → 一部分水蒸气在盖底 / 杯壁上液化回流，质量与潜热一起还给水；
+     敞口 → 没有回流，且水面直接暴露、散热更多。两条一起作用，所以加盖开得更快。
+     与气压环境一样：这是【实验条件】，重置时不清零已经积累的读数。 */
+  function applyLidUI() {
+    document.querySelectorAll('[data-lid]').forEach((b) => {
+      b.classList.toggle('active', (b.dataset.lid === '1') === state.lidOn);
+    });
+  }
+  document.querySelectorAll('[data-lid]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      setLid(btn.dataset.lid === '1');
+      applyLidUI();
+      refreshAll();
+    });
+  });
+  applyLidUI();
+
   /* --- 运行控制 --- */
   function setRunning(v) {
     state.running = v;
@@ -1586,7 +1719,8 @@ import * as THREE from './assets/optics-three.min.js';
     { name: '02 加热升温', text: '<strong>开始加热：</strong>点“开始加热”，看着温度计的液柱一路上升，同时记下几个时刻的水温。这一步先不着急下结论，只把“升温”这段曲线画出来。' },
     { name: '03 观察气泡', text: '<strong>水开之前先看气泡：</strong>杯底冒出小气泡，可它<b>越往上升越小</b>，还没到水面就没了。原因是上层水温还低于沸点，泡里的水蒸气遇冷又液化成水。' },
     { name: '04 水沸腾了', text: '<strong>到沸点：</strong>温度升到 <b>100 ℃</b>（标准大气压）就不再上升了，但酒精灯还在烧。这时气泡<b>越往上升越大</b>，到水面破裂，放出大量水蒸气。水面上方的“白气”是水蒸气遇冷液化成的<b>小水珠</b>，不是水蒸气本身。' },
-    { name: '05 撤去酒精灯', text: '<strong>撤去酒精灯：</strong>点右侧的“撤去酒精灯”。水明明还是 100 ℃，却<b>立刻停止沸腾</b> —— 说明沸腾必须同时满足两个条件：<b>温度达到沸点</b>、<b>继续吸热</b>，缺一不可。' }
+    { name: '05 撤去酒精灯', text: '<strong>撤去酒精灯：</strong>点右侧的“撤去酒精灯”。水明明还是 100 ℃，却<b>立刻停止沸腾</b> —— 说明沸腾必须同时满足两个条件：<b>温度达到沸点</b>、<b>继续吸热</b>，缺一不可。' },
+    { name: '06 加盖还是敞口', text: '<strong>加盖还是敞口：</strong>水蒸气跑出水面后碰到温度较低的杯壁和纸盖，会<b>液化</b>成小水珠（看杯壁上越积越多的水珠）。液化是汽化的<b>逆过程</b> —— 汽化吸走多少潜热，液化就<b>放回</b>多少，这些热又传回水里；加上盖子本身挡掉了向空气的散热，所以<b>加盖时水开得更快</b>。点右侧「④ 杯口加盖」在<b>加盖</b>与<b>敞口</b>之间来回切，比一比同一段时间里水温升到多少。' }
   ];
   const stepButtons = Array.from(document.querySelectorAll('[data-step]'));
   const stepDetail = $('stepDetail');
@@ -1727,12 +1861,14 @@ import * as THREE from './assets/optics-three.min.js';
     state, view, VIEWS, PRESSURES, toggles, series,
     camera, renderer, scene,
     thermometer, thSupport, lamp, flameGroup, thScale, mercury,
-    bubbles, steams, waterTop, flameLayers,
+    bubbles, steams, waterTop, flameLayers, lid, lidDrops,
     thermometerX: TH_X, thBulbY: TH_BULB_Y, thLiftMax: TH_LIFT, thTubeH: TH_TUBE_H,
     stemY0: STEM_Y0, stemY1: STEM_Y1, updateCamera,
     scaleU0, scaleU1, scaleYOf, scaleCanvasY, scaleTexH: SCALE_TEX_H, scaleFaceDeg: SCALE_FACE_DEG,
     rodTop: BASE_H + ROD_H, clampY: CLAMP_Y, sleeveHalf: 1.15,
     lidY: LID_Y, bkY0: BK_Y0, bkR: BK_R, waterH: WATER_H, bulbR: TH_BULB_R,
+    /* 「液化放热」用到的常量与入口：判据一律读这里报出来的值，不自己重抄公式 */
+    COND_BACK, LID_LOSS_K, DROP_FULL_G, lossK,
     mats: { glassMat, waterMat, thGlassMat, thRedMat, cardMat },
     setRunning, resetSim, refreshAll, setLamp, applyPressureUI,
     step(dt) { stepSim(dt); updateWater(); pushSample(); updateReadouts(); drawChart(); drawMicro(dt); requestRender(); },
@@ -1743,7 +1879,10 @@ import * as THREE from './assets/optics-three.min.js';
         stepSim(d); left -= d;
       }
       updateWater(); pushSample(); updateReadouts(); drawChart(); drawMicro(0.016);
-      return { t: state.t, T: state.T, Tb: state.Tb, mass: state.mass, boiling: isBoiling(), boil: boilness() };
+      return {
+        t: state.t, T: state.T, Tb: state.Tb, mass: state.mass, boiling: isBoiling(), boil: boilness(),
+        lidOn: state.lidOn, evapG: state.evapG, condG: state.condG, heatBack: state.heatBack
+      };
     },
     /* 无头环境没有 rAF：按固定步长喂帧，走的是与真实循环同一个 frameStep。
        指数平滑（温度计升降、酒精灯移动、火焰淡出）与气泡/白气的逐帧运动靠它才能推进。 */
@@ -1755,12 +1894,16 @@ import * as THREE from './assets/optics-three.min.js';
         frames: n,
         thDepth: state.thDepth, thAnim: state.thAnim, thLift: thermometer.position.y,
         lampAnim: state.lampAnim, flameAnim: state.flameAnim,
-        lampX: lamp.position.x, flameVisible: flameGroup.visible
+        lampX: lamp.position.x, flameVisible: flameGroup.visible,
+        /* 盖子与盖底水珠：lidLift 是盖子真正被抬走的高度，lidDrops 是【真正画出去】的行数 */
+        lidAnim: state.lidAnim, lidLift: lid.position.y, lidDrops: state.drawn.lidDrops
       };
     },
     statusText, shortState, renderRecords, clearRecords, microStats,
     boilness, boilnessVis, isBoiling, bubbleScale, waterDepth, boilingPoint,
     setPressure(key) { setPressure(key); applyPressureUI(); refreshAll(); },
+    /* 加盖 / 敞口：对外只暴露这一个入口，UI 高亮与重绘一起做 */
+    setLid(on) { setLid(on); applyLidUI(); refreshAll(); },
     /* 温度计当前实际抬升量（世界单位 cm），走的是渲染用的同一份位置 */
     thLift() { return thermometer.position.y; },
     /* 感温泡在 GL 缓冲区里的落点，供像素探针采样（GL 原点在左下，与 NDC 同向） */

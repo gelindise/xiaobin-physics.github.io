@@ -1,0 +1,494 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>电池交互实验</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="stylesheet" href="style.css">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif; background: #f1f5f9; }
+    .exp-wrap { max-width: 1200px; margin: 0 auto; padding: 0 16px 40px; }
+    .exp-wrap h2 { color: #1e293b; font-size: 24px; margin-bottom: 4px; }
+    .exp-wrap .sub { color: #64748b; font-size: 14px; margin-bottom: 20px; }
+    .main-card { background: #fff; border-radius: 14px; padding: 16px; border: 1px solid #e2e8f0; box-shadow: 0 1px 3px rgba(0,0,0,0.06); margin-bottom: 16px; }
+    .canvas-wrap { position: relative; display: block; border-radius: 8px; overflow: hidden; border: 1px solid #e2e8f0; line-height: 0; }
+    .canvas-wrap canvas { display: block; width: 100%; height: auto; }
+
+    .ctrl-bar { display: flex; gap: 10px; margin-top: 12px; flex-wrap: wrap; align-items: center; }
+    .ctrl-bar button { padding: 8px 18px; border: 1px solid #cbd5e1; border-radius: 8px; background: #fff; color: #1e293b; font-size: 13px; cursor: pointer; transition: all 0.15s; font-weight: 500; }
+    .ctrl-bar button:hover { background: #f1f5f9; }
+    .ctrl-bar button.active { background: #fef3c7; border-color: #f59e0b; color: #92400e; }
+    .ctrl-bar button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    .volt-group { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+    .volt-group .label { color: #64748b; font-size: 12px; }
+    .volt-group .value { font-family: 'SF Mono', 'Consolas', monospace; font-size: 22px; font-weight: 700; color: #2563eb; min-width: 50px; text-align: center; }
+    .volt-group .unit { color: #64748b; font-size: 12px; }
+
+    .status-row { display: flex; gap: 16px; margin-top: 8px; font-size: 13px; color: #475569; align-items: center; }
+    .post-status { display: flex; align-items: center; gap: 6px; padding: 4px 12px; border-radius: 12px; font-weight: 600; font-size: 12px; }
+    .post-status.connected { background: rgba(22,163,74,0.1); color: #16a34a; }
+    .post-status.disconnected { background: rgba(239,68,68,0.1); color: #dc2626; }
+    .post-status .dot { width: 8px; height: 8px; border-radius: 50%; }
+    .post-status.connected .dot { background: #16a34a; box-shadow: 0 0 6px #16a34a; }
+    .post-status.disconnected .dot { background: #dc2626; }
+
+    .cal-hint { background: #fef3c7; color: #92400e; padding: 8px 14px; border-radius: 8px; font-size: 12px; margin-top: 8px; display: none; }
+    .cal-hint.show { display: block; }
+
+    .header { position: fixed !important; top: 0; left: 0; right: 0; transition: transform 0.35s; will-change: transform; z-index: 100; }
+    .header.hidden { transform: translateY(-100%); }
+    body { padding-top: 56px; transition: padding-top 0.35s; }
+    body.header-hidden { padding-top: 0; }
+  </style>
+  <script src="protect.js"></script>
+  <script src="auth-check.js"></script>
+</head>
+<body>
+  <header class="header">
+    <div class="logo">物理虚拟实验平台</div>
+    <nav class="nav">
+      <a href="experiments.html">实验目录</a>
+      <a href="index.html">首页</a>
+    </nav>
+  </header>
+
+  <div class="exp-wrap">
+    <h2>电池组件 — 交互测试</h2>
+    <p class="sub">点击 +/− 增减电池节数（每节1.5V）| 点击接线柱接通/断开导线</p>
+
+    <div class="cal-hint" id="calHint">校准模式：点击任意位置查看坐标</div>
+
+    <div class="main-card">
+      <div class="canvas-wrap">
+        <canvas id="simCanvas"></canvas>
+      </div>
+
+      <div class="ctrl-bar">
+        <button id="btnCal" onclick="toggleCalibrate()">校准模式</button>
+        <button onclick="toggleFullscreen()">全屏</button>
+
+        <div class="volt-group">
+          <button id="btnMinus" onclick="adjCells(-1)">−</button>
+          <span class="label">电压</span>
+          <span class="value" id="valV">3.0</span>
+          <span class="unit">V</span>
+          <button id="btnPlus" onclick="adjCells(+1)">+</button>
+        </div>
+      </div>
+
+      <div class="status-row">
+        <span class="post-status connected" id="statusPos"><span class="dot"></span>正极：已接线</span>
+        <span class="post-status connected" id="statusNeg"><span class="dot"></span>负极：已接线</span>
+        <span style="margin-left:auto;color:#64748b;">电流 I = <strong id="valI" style="color:#2563eb;">0.000</strong> A</span>
+        <span style="color:#64748b;">节数 <strong id="valCells" style="color:#d97706;">2</strong> 节</span>
+      </div>
+    </div>
+  </div>
+
+  <script src="supabase.js"></script>
+  <script src="script.js"></script>
+
+<script>
+(function() {
+var IMG_PATH = 'images/circuit-resistance-experiment.png';
+var IMG_W = 1164, IMG_H = 540;
+
+// ============ 坐标 ============
+var POST_POS = { x: 117, y: 148 };
+var POST_NEG = { x: 602, y: 148 };
+var BULB = { x: 409, y: 365, r: 22 };
+// 原图电池区域（需要用背景色覆盖）
+var BAT_COVER = { x: 99, y: 62, w: 510, h: 115 };
+// Canvas绘制的电池中心位置
+var BAT_X = 353, BAT_Y = 130;
+
+// ============ 状态 ============
+var canvas = document.getElementById('simCanvas'), ctx = canvas.getContext('2d');
+var bgImage = null;
+var calibrateMode = false;
+var lastClickPhys = null;
+
+var cellCount = 2;        // 电池节数
+var voltage = 3.0;
+var posConnected = true;
+var negConnected = true;
+var rBulb = 3;
+var currentI = 0;
+var glowAlpha = 0;
+var glowTarget = 0;
+
+function calcCircuit() {
+  if (posConnected && negConnected && voltage > 0) {
+    currentI = voltage / rBulb;
+  } else {
+    currentI = 0;
+  }
+}
+function updateVoltage() {
+  voltage = cellCount * 1.5;
+  document.getElementById('valV').textContent = voltage.toFixed(1);
+  document.getElementById('valCells').textContent = cellCount;
+  document.getElementById('btnMinus').disabled = (cellCount <= 1);
+  document.getElementById('btnPlus').disabled = (cellCount >= 6);
+}
+
+// ============ 缩放 ============
+function resize() {
+  var container = canvas.parentElement;
+  var maxW = Math.min(container.clientWidth - 4, 1164);
+  var dpr = window.devicePixelRatio || 1;
+  canvas.width = maxW * dpr;
+  canvas.height = Math.round(IMG_H * maxW / IMG_W) * dpr;
+  canvas.style.width = maxW + 'px';
+  canvas.style.height = Math.round(IMG_H * maxW / IMG_W) + 'px';
+}
+function pxScale() {
+  return canvas.width / (IMG_W * (window.devicePixelRatio || 1));
+}
+function eventToPhys(e) {
+  var rect = canvas.getBoundingClientRect();
+  var s = pxScale();
+  return { x: Math.round((e.clientX - rect.left) / s), y: Math.round((e.clientY - rect.top) / s) };
+}
+
+// ============ 辅助函数 ============
+function roundRect(x, y, w, h, r) {
+  if (ctx.roundRect) { ctx.roundRect(x, y, w, h, r); return; }
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.arcTo(x + w, y, x + w, y + r, r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
+  ctx.lineTo(x + r, y + h);
+  ctx.arcTo(x, y + h, x, y + h - r, r);
+  ctx.lineTo(x, y + r);
+  ctx.arcTo(x, y, x + r, y, r);
+  ctx.closePath();
+}
+
+function coverWithBg(x, y, w, h) {
+  ctx.drawImage(bgImage, 5, 5, w, h, x, y, w, h);
+}
+
+// ============ 圆柱光照模型 ============
+function cylShade(t, baseR, baseG, baseB, contrast) {
+  var amb = 0.12;
+  var diff = Math.cos((t - 0.55) * Math.PI * 0.85);
+  diff = Math.max(-0.1, diff);
+  var spec = Math.exp(-Math.pow((t - 0.30) / 0.06, 2));
+  var light = amb + diff * 0.55 + spec * 0.7;
+  light = Math.max(0.08, Math.min(1.2, light * contrast));
+  var r = Math.round(Math.max(0, Math.min(255, baseR * light)));
+  var g = Math.round(Math.max(0, Math.min(255, baseG * light)));
+  var b = Math.round(Math.max(0, Math.min(255, baseB * light)));
+  return 'rgb(' + r + ',' + g + ',' + b + ')';
+}
+
+// ============ 单节干电池绘制 ============
+function drawBatteryCell(x, y, cellW, cellH) {
+  var bx = x - cellW/2, by = y - cellH/2;
+  var bodyR = 7, strips = 36, stripW = cellW / strips;
+
+  // 地面阴影
+  ctx.fillStyle = 'rgba(0,0,0,0.12)';
+  ctx.beginPath(); ctx.ellipse(x, by + cellH + 3, cellW*0.6, 5, 0, 0, Math.PI*2); ctx.fill();
+
+  // 金属圆柱体
+  for (var s = 0; s < strips; s++) {
+    var t = (s + 0.5) / strips;
+    ctx.fillStyle = cylShade(t, 155, 160, 168, 1.15);
+    ctx.fillRect(bx + s * stripW, by, stripW + 0.5, cellH);
+  }
+  ctx.strokeStyle = '#999'; ctx.lineWidth = 0.6;
+  roundRect(bx, by, cellW, cellH, bodyR); ctx.stroke();
+
+  // 顶部椭圆
+  var topEy = by + 1.5, topERx = cellW/2 - 1, topERy = 5.5;
+  ctx.fillStyle = '#8a8d95';
+  ctx.beginPath(); ctx.ellipse(x, topEy, topERx, topERy, 0, 0, Math.PI*2); ctx.fill();
+  ctx.save();
+  ctx.beginPath(); ctx.ellipse(x, topEy - 0.5, topERx - 2, topERy - 1.5, 0, 0, Math.PI*2); ctx.clip();
+  for (var s = 0; s < strips; s++) {
+    var t = (s + 0.5) / strips;
+    ctx.fillStyle = cylShade(t, 195, 200, 208, 1.0);
+    ctx.fillRect(bx + s * stripW, topEy - 3, stripW + 0.5, topERy + 3);
+  }
+  ctx.restore();
+
+  // 标签带
+  var labelTop = by + topERy * 2 + 2, labelBot = by + cellH - 10, labelH = labelBot - labelTop;
+  for (var s = 0; s < strips; s++) {
+    var t = (s + 0.5) / strips;
+    ctx.fillStyle = cylShade(t, 28, 30, 40, 0.9);
+    ctx.fillRect(bx + s * stripW + 1, labelTop, stripW + 0.5, labelH);
+  }
+  // 铜色段
+  var copperTop = labelTop + 5, copperH = labelH * 0.3;
+  for (var s = 0; s < strips; s++) {
+    var t = (s + 0.5) / strips;
+    ctx.fillStyle = cylShade(t, 160, 100, 35, 1.0);
+    ctx.fillRect(bx + s * stripW + 1, copperTop, stripW + 0.5, copperH);
+  }
+  // 银色细条
+  var silvTop = copperTop + copperH, silvH = labelH * 0.1;
+  for (var s = 0; s < strips; s++) {
+    var t = (s + 0.5) / strips;
+    ctx.fillStyle = cylShade(t, 170, 170, 175, 1.1);
+    ctx.fillRect(bx + s * stripW + 1, silvTop, stripW + 0.5, silvH);
+  }
+  // 黑色底部
+  var blkTop = silvTop + silvH;
+  for (var s = 0; s < strips; s++) {
+    var t = (s + 0.5) / strips;
+    ctx.fillStyle = cylShade(t, 22, 24, 34, 0.85);
+    ctx.fillRect(bx + s * stripW + 1, blkTop, stripW + 0.5, labelBot - blkTop);
+  }
+  // 金色横线
+  ctx.fillStyle = '#c8a850';
+  ctx.fillRect(bx + 2, labelTop + 1, cellW - 4, 1.5);
+  ctx.fillRect(bx + 2, labelBot - 2.5, cellW - 4, 1.5);
+  // "1.5V" 文字
+  ctx.fillStyle = '#d8d0c0'; ctx.font = 'bold 10px sans-serif'; ctx.textAlign = 'center';
+  ctx.fillText('1.5V', x, blkTop + (labelBot - blkTop) * 0.55);
+
+  // 底部金属
+  var metalBotH = by + cellH - labelBot;
+  for (var s = 0; s < strips; s++) {
+    var t = (s + 0.5) / strips;
+    ctx.fillStyle = cylShade(t, 148, 153, 160, 1.1);
+    ctx.fillRect(bx + s * stripW + 1, labelBot, stripW + 0.5, metalBotH);
+  }
+
+  // 黄铜正极帽
+  var capW = cellW * 0.35, capH = 11;
+  var capX = x - capW/2, capY = topEy - capH - 1.5;
+  ctx.fillStyle = 'rgba(0,0,0,0.22)';
+  ctx.beginPath(); ctx.ellipse(x, topEy + 0.5, capW/2 + 2.5, 3.5, 0, 0, Math.PI*2); ctx.fill();
+  var capStrips = 18, capStripW = capW / capStrips;
+  for (var s = 0; s < capStrips; s++) {
+    var t = (s + 0.5) / capStrips;
+    ctx.fillStyle = cylShade(t, 175, 135, 30, 1.2);
+    ctx.fillRect(capX + s * capStripW, capY, capStripW + 0.5, capH);
+  }
+  ctx.strokeStyle = '#705010'; ctx.lineWidth = 0.6;
+  roundRect(capX, capY, capW, capH, 2.5); ctx.stroke();
+  ctx.fillStyle = '#e8d068';
+  ctx.beginPath(); ctx.ellipse(x, capY, capW/2, capH*0.28, 0, 0, Math.PI*2); ctx.fill();
+
+  // 负极锌底
+  var botW = cellW * 0.44, botH = 8;
+  var botX = x - botW/2, botY2 = by + cellH - 1;
+  for (var s = 0; s < capStrips; s++) {
+    var t = (s + 0.5) / capStrips;
+    ctx.fillStyle = cylShade(t, 140, 145, 150, 1.05);
+    ctx.fillRect(botX + s * (botW / capStrips), botY2, botW / capStrips + 0.5, botH);
+  }
+  ctx.strokeStyle = '#777'; ctx.lineWidth = 0.5;
+  roundRect(botX, botY2, botW, botH, 2); ctx.stroke();
+  ctx.fillStyle = '#b8bcc0';
+  ctx.beginPath(); ctx.ellipse(x, botY2 + botH, botW/2, botH*0.25, 0, 0, Math.PI*2); ctx.fill();
+
+  // 红色正极接线柱（左侧上方）
+  var postX = x - cellW * 0.25, postY = capY - 4;
+  ctx.fillStyle = '#c0392b';
+  ctx.beginPath(); ctx.arc(postX, postY, 6, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#e74c3c';
+  ctx.beginPath(); ctx.arc(postX - 1, postY - 1, 4, 0, Math.PI*2); ctx.fill();
+  ctx.strokeStyle = '#922b21'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.arc(postX, postY, 6, 0, Math.PI*2); ctx.stroke();
+
+  // 银色负极接线柱（右侧上方）
+  var negPostX = x + cellW * 0.25, negPostY = capY - 4;
+  ctx.fillStyle = '#c0c4c8';
+  ctx.beginPath(); ctx.arc(negPostX, negPostY, 5.5, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#e8eaef';
+  ctx.beginPath(); ctx.arc(negPostX - 1, negPostY - 1, 3.5, 0, Math.PI*2); ctx.fill();
+  ctx.strokeStyle = '#888'; ctx.lineWidth = 0.8;
+  ctx.beginPath(); ctx.arc(negPostX, negPostY, 5.5, 0, Math.PI*2); ctx.stroke();
+}
+
+// ============ 电池组绘制 ============
+function drawBatteries() {
+  var cells = cellCount;
+  var cellW = 46, cellH = 66, gap = 10;
+  var totalW = cells * cellW + (cells - 1) * gap;
+  var startX = BAT_X - totalW / 2 + cellW / 2;
+  var cellY = BAT_Y;
+
+  // 电池间串联导线
+  for (var c = 0; c < cells - 1; c++) {
+    var cx1 = startX + c * (cellW + gap);
+    var cx2 = startX + (c + 1) * (cellW + gap);
+    ctx.strokeStyle = '#94a3b8'; ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(cx1, cellY + cellH/2);
+    ctx.lineTo(cx1, cellY + cellH/2 + 8);
+    ctx.lineTo(cx2, cellY - cellH/2 - 8);
+    ctx.lineTo(cx2, cellY - cellH/2);
+    ctx.stroke();
+    ctx.fillStyle = '#64748b';
+    ctx.beginPath(); ctx.arc(cx1, cellY + cellH/2 + 8, 2.5, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(cx2, cellY - cellH/2 - 8, 2.5, 0, Math.PI*2); ctx.fill();
+  }
+
+  for (var c = 0; c < cells; c++) {
+    var cx = startX + c * (cellW + gap);
+    drawBatteryCell(cx, cellY, cellW, cellH);
+  }
+
+  // 更新接线柱位置
+  var firstX = startX, lastX = startX + (cells - 1) * (cellW + gap);
+  POST_POS.x = firstX - cellW * 0.25;
+  POST_POS.y = cellY - cellH/2 - 15;
+  POST_NEG.x = lastX + cellW * 0.25;
+  POST_NEG.y = cellY - cellH/2 - 15;
+
+  // 总电压标注
+  var centerX = startX + (cells - 1) * (cellW + gap) / 2;
+  ctx.fillStyle = '#d97706'; ctx.font = 'bold 14px sans-serif'; ctx.textAlign = 'center';
+  ctx.fillText(voltage.toFixed(1) + 'V', centerX, cellY - cellH/2 - 34);
+}
+
+// ============ 主渲染 ============
+function drawAll() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  var s = pxScale();
+  ctx.save();
+  ctx.scale(s, s);
+
+  // 第1层：原图背景
+  ctx.drawImage(bgImage, 0, 0, IMG_W, IMG_H);
+
+  // 第2层：覆盖原图电池区域
+  coverWithBg(BAT_COVER.x, BAT_COVER.y, BAT_COVER.w, BAT_COVER.h);
+
+  // 第3层：绘制动态电池组
+  drawBatteries();
+
+  // 第4层：灯泡发光
+  if (glowAlpha > 0.01) {
+    var gg = ctx.createRadialGradient(BULB.x, BULB.y, 3, BULB.x, BULB.y, BULB.r + 15);
+    gg.addColorStop(0, 'rgba(255,240,120,' + (glowAlpha*0.9) + ')');
+    gg.addColorStop(0.4, 'rgba(255,220,60,' + (glowAlpha*0.5) + ')');
+    gg.addColorStop(0.7, 'rgba(255,180,20,' + (glowAlpha*0.2) + ')');
+    gg.addColorStop(1, 'rgba(255,150,20,0)');
+    ctx.fillStyle = gg;
+    ctx.beginPath(); ctx.arc(BULB.x, BULB.y, BULB.r + 15, 0, Math.PI*2); ctx.fill();
+  }
+
+  // 校准模式
+  if (calibrateMode) {
+    ctx.setLineDash([4, 4]);
+    ctx.strokeStyle = 'rgba(255,0,0,0.5)'; ctx.lineWidth = 1.5;
+    ctx.strokeRect(BAT_COVER.x, BAT_COVER.y, BAT_COVER.w, BAT_COVER.h);
+    ctx.setLineDash([]);
+    ctx.fillStyle = '#ff0000'; ctx.beginPath(); ctx.arc(POST_POS.x, POST_POS.y, 5, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#0000ff'; ctx.beginPath(); ctx.arc(POST_NEG.x, POST_NEG.y, 5, 0, Math.PI*2); ctx.fill();
+    if (lastClickPhys) {
+      ctx.fillStyle = 'rgba(255,0,0,0.8)';
+      ctx.beginPath(); ctx.arc(lastClickPhys.x, lastClickPhys.y, 6, 0, Math.PI*2); ctx.fill();
+      ctx.fillStyle = '#000'; ctx.font = 'bold 13px monospace'; ctx.textAlign = 'left';
+      ctx.fillText('(' + lastClickPhys.x + ', ' + lastClickPhys.y + ')',
+        Math.min(lastClickPhys.x + 14, IMG_W - 120), lastClickPhys.y + 5);
+    }
+  }
+
+  ctx.restore();
+}
+
+// ============ 动画循环 ============
+function animate() {
+  calcCircuit();
+  var maxI = 9 / rBulb;
+  glowTarget = currentI > 0.001 ? Math.min(currentI / maxI, 1) : 0;
+  glowAlpha += (glowTarget - glowAlpha) * 0.12;
+  if (bgImage) drawAll();
+  document.getElementById('valI').textContent = currentI.toFixed(3);
+  requestAnimationFrame(animate);
+}
+
+// ============ 点击接线柱 ============
+canvas.addEventListener('click', function(e) {
+  var pos = eventToPhys(e);
+  if (calibrateMode) { lastClickPhys = pos; return; }
+  if (Math.hypot(pos.x - POST_POS.x, pos.y - POST_POS.y) < 14) {
+    posConnected = !posConnected;
+    updateStatusUI();
+    return;
+  }
+  if (Math.hypot(pos.x - POST_NEG.x, pos.y - POST_NEG.y) < 14) {
+    negConnected = !negConnected;
+    updateStatusUI();
+    return;
+  }
+});
+
+function updateStatusUI() {
+  var sp = document.getElementById('statusPos');
+  var sn = document.getElementById('statusNeg');
+  if (posConnected) { sp.className = 'post-status connected'; sp.innerHTML = '<span class="dot"></span>正极：已接线'; }
+  else { sp.className = 'post-status disconnected'; sp.innerHTML = '<span class="dot"></span>正极：已断线'; }
+  if (negConnected) { sn.className = 'post-status connected'; sn.innerHTML = '<span class="dot"></span>负极：已接线'; }
+  else { sn.className = 'post-status disconnected'; sn.innerHTML = '<span class="dot"></span>负极：已断线'; }
+}
+
+// ============ 电池节数调节 ============
+window.adjCells = function(d) {
+  cellCount = Math.max(1, Math.min(6, cellCount + d));
+  updateVoltage();
+};
+
+// ============ 校准 ============
+window.toggleCalibrate = function() {
+  calibrateMode = !calibrateMode;
+  var btn = document.getElementById('btnCal');
+  var hint = document.getElementById('calHint');
+  if (calibrateMode) { btn.textContent = '退出校准'; btn.classList.add('active'); hint.classList.add('show'); }
+  else { btn.textContent = '校准模式'; btn.classList.remove('active'); hint.classList.remove('show'); }
+};
+
+// ============ 全屏 ============
+window.toggleFullscreen = function() {
+  if (!document.fullscreenElement) document.documentElement.requestFullscreen().catch(function(){});
+  else document.exitFullscreen();
+};
+
+// ============ 加载 ============
+function loadImage() {
+  bgImage = new Image();
+  bgImage.onload = function() {
+    IMG_W = bgImage.naturalWidth;
+    IMG_H = bgImage.naturalHeight;
+    resize();
+    updateVoltage();
+    animate();
+  };
+  bgImage.src = IMG_PATH;
+}
+
+window.addEventListener('resize', function() { resize(); });
+loadImage();
+})();
+</script>
+
+<script>
+(function() {
+  var header = document.querySelector('.header');
+  var hideTimer = null, HIDE_DELAY = 800;
+  function show() { clearTimeout(hideTimer); header.classList.remove('hidden'); document.body.classList.remove('header-hidden'); }
+  function hide() { hideTimer = setTimeout(function() { header.classList.add('hidden'); document.body.classList.add('header-hidden'); }, HIDE_DELAY); }
+  document.addEventListener('mousemove', function(e) {
+    if (e.clientY <= 60) show();
+    else if (e.clientY > header.offsetHeight + 20 && !header.classList.contains('hidden')) hide();
+  });
+  header.addEventListener('mouseenter', show);
+  header.addEventListener('mouseleave', hide);
+  hideTimer = setTimeout(function() { header.classList.add('hidden'); document.body.classList.add('header-hidden'); }, 2000);
+})();
+</script>
+</body>
+</html>
