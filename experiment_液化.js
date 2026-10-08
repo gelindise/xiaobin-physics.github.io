@@ -103,10 +103,16 @@ import * as THREE from './assets/optics-three.min.js';
   }
   /* 筒内【实际】压强：一旦开始液化就钉在饱和蒸气压上，不再随体积上升 */
   function pActualAt(xp, T) { return Math.min(pIdeal(xp, T), pSatEther(T)); }
-  /* 已液化的物质的量（mol）：p ≤ p_sat 时恒为 0 */
+  /* 已液化的物质的量（mol）。★ 判据只有一处：下面的钳位本身就是
+     「达到饱和蒸气压才液化」——
+       n_liq = N·(1 − V/V_thr)，取正部，而 V/V_thr = p_ideal/p_sat，
+     所以 n_liq > 0 ⟺ p_ideal > p_sat，与「p ≤ p_sat 时恒为 0」完全等价。
+     曾经这里还写了一句 `if (pIdeal(xp,T) <= ps) return 0;` —— 那是【死代码】：
+     它返回 0 的那些输入，下面的钳位也一定返回 0。等价写法放两处会形成盲点
+     （负向对照里把它改成 ps*0.9 / ps*0.7 都测不出任何差别，因为真正生效的
+     是钳位），所以只留钳位这一处。 */
   function nLiqAt(xp, T) {
     const ps = pSatEther(T);
-    if (pIdeal(xp, T) <= ps) return 0;
     const V = gasVolCm3(xp) * 1e-6;
     return Math.max(0, N_MOL - ps * 1000 * V / (R_GAS * (T + 273.15)));
   }
