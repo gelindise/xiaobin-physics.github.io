@@ -1,0 +1,1853 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>光路的可逆性立体模型 — 物理虚拟实验</title>
+<meta name="description" content="光路的可逆性三维仿真：光在界面上一分为二（反射 + 折射），点「一键反向」让它沿原路倒着走回去 —— 反向那条折线不是把正向取负，而是把出射方向掉头、两侧介质对调后【重新追迹】得到，然后逐点比对坐标差（实测上确界 8.9e-14 m，判据 1e-9）。可以绕法线转方位角，看反射角、折射角一个数都不变（三线共面的直接证据）；切到「水 → 空气」把入射角拖过临界角，折射线整条消失，反向折射光路同样不存在。含六种视角（入射面内 / 垂直于入射面 / 沿法线俯视 / 反向光第一人称）、五条结论实时判定、记录表与实拍视频。">
+<link rel="stylesheet" href="style.css">
+<style>        :root {
+            --bg: #020617;
+            --line: rgba(148, 163, 184, .18);
+            --primary: #3b82f6;
+            --secondary: #06b6d4;
+            --accent: #8b5cf6;
+            --text: #f8fafc;
+            --muted: #94a3b8;
+        }
+
+        body {
+            font-family: 'Inter', 'Microsoft YaHei', 'Noto Sans SC', sans-serif;
+            margin: 0;
+            /* 站内页头是 position:sticky，一滚动就贴顶盖住实验区，所以这一页不放页头
+               （和同章的「光的反射立体模型」一致）。留 20px 内边距即可。 */
+            padding: 20px;
+            background: var(--bg);
+            color: var(--text);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+            box-sizing: border-box;
+        }
+
+        /* 科技风背景光晕 */
+        body::before {
+            content: "";
+            position: fixed;
+            inset: 0;
+            z-index: -1;
+            pointer-events: none;
+            background:
+                radial-gradient(circle at 18% 22%, rgba(59, 130, 246, .16), transparent 42%),
+                radial-gradient(circle at 82% 68%, rgba(139, 92, 246, .14), transparent 44%),
+                radial-gradient(circle at 50% 100%, rgba(6, 182, 212, .10), transparent 55%);
+        }
+
+        /* ===== 可交互三维实验台（与站内其它 lab3d 页面同一套视觉基线）===== */
+        .lab3d {
+            width: 100%;
+            max-width: 1600px;
+            margin: 8px auto 26px;
+            box-sizing: border-box;
+            overflow: hidden;
+            border: 1px solid rgba(56, 189, 248, .22);
+            border-radius: 18px;
+            background: linear-gradient(160deg, rgba(15, 23, 42, .92), rgba(2, 6, 23, .96));
+            color: #e2e8f0;
+            box-shadow: 0 26px 70px rgba(2, 6, 23, .6), 0 0 0 1px rgba(2, 6, 23, .8) inset;
+        }
+        .lab3d * { box-sizing: border-box; }
+        .lab3d-top {
+            display: flex; justify-content: space-between; gap: 15px; align-items: center;
+            padding: 17px 23px; border-bottom: 1px solid var(--line);
+            background: linear-gradient(90deg, rgba(59, 130, 246, .12), rgba(6, 182, 212, .05) 45%, transparent);
+        }
+        .lab3d-kicker { color: #22d3ee; font-size: 11px; font-weight: 800; letter-spacing: .2em; }
+        .lab3d-top h2 { margin: 3px 0 0; color: #f8fafc; font-size: 21px; letter-spacing: .02em; }
+        .lab3d-top p { margin: 4px 0 0; color: #94a3b8; font-size: 12px; }
+        .lab3d-status {
+            border: 1px solid rgba(34, 211, 238, .45); border-radius: 99px; padding: 6px 12px;
+            color: #67e8f9; font-size: 12px; white-space: nowrap; background: rgba(6, 182, 212, .08);
+        }
+        .lab3d-layout { display: grid; grid-template-columns: minmax(0, 1fr) 300px; }
+        .lab3d-main {
+            min-width: 0; padding: 15px 16px 16px;
+            background: radial-gradient(circle at 43% 36%, rgba(30, 64, 100, .55), rgba(8, 22, 36, .92) 62%, rgba(3, 10, 18, .96));
+        }
+        .lab3d-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; padding-bottom: 12px; }
+        .lab3d-toolbar .toolbar-label { color: #94a3b8; font-size: 12px; margin-right: 5px; }
+        .lab3d button {
+            padding: 7px 12px; border: 1px solid rgba(148, 163, 184, .25); border-radius: 8px;
+            background: rgba(30, 41, 59, .7); color: #cbd5e1; font-size: 12px; font-weight: 600;
+            box-shadow: none; transition: background .2s, border-color .2s, color .2s;
+        }
+        .lab3d button:hover { transform: none; box-shadow: none; background: rgba(51, 65, 85, .85); }
+        .lab3d button.active {
+            background: rgba(59, 130, 246, .25); border-color: #38bdf8; color: #e0f2fe;
+            box-shadow: 0 0 14px rgba(56, 189, 248, .3);
+        }
+        .lab3d button:disabled { opacity: .42; cursor: not-allowed; }
+        .lab3d button.primary { background: rgba(59, 130, 246, .3); border-color: #38bdf8; color: #e0f2fe; }
+        .lab3d-toolbar .toolbar-spacer { flex: 1; }
+        .lab3d-stage {
+            position: relative; height: clamp(400px, 49vw, 580px);
+            border: 1px solid rgba(56, 189, 248, .2); border-radius: 12px; overflow: hidden;
+            background: #061423;
+        }
+        .lab3d-stage canvas {
+            display: block; width: 100%; height: 100%;
+            border: 0; border-radius: 0; box-shadow: none; background: transparent;
+            cursor: grab; touch-action: none;
+        }
+        .lab3d-stage canvas:active { cursor: grabbing; }
+        /* 指针落在激光笔上时换成转动光标（放在 :active 之后才能覆盖它） */
+        .lab3d-stage canvas.pick-laser { cursor: ew-resize; }
+        .lab3d-stage canvas.pick-laser:active { cursor: ew-resize; }
+        .lab3d-stage .stage-hint {
+            position: absolute; top: 13px; left: 15px; pointer-events: none; font-size: 12px;
+            color: #bae6fd; background: rgba(2, 6, 23, .78); border: 1px solid rgba(56, 189, 248, .25);
+            padding: 7px 11px; border-radius: 8px;
+        }
+        .lab3d-stage .stage-hint b {
+            display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+            background: #22d3ee; vertical-align: 2px; margin-right: 6px; box-shadow: 0 0 8px #22d3ee;
+        }
+        .lab3d-stage .stage-help {
+            position: absolute; right: 14px; bottom: 13px; pointer-events: none;
+            color: #93b4c4; font-size: 11px; background: rgba(2, 6, 23, .72); padding: 6px 10px; border-radius: 7px;
+        }
+        /* 舞台内的观察结论条：眼睛盯着装置时也要能看见（侧栏在窄屏会被挤到下面） */
+        .lab3d-stage .stage-verdict {
+            position: absolute; left: 15px; bottom: 13px; pointer-events: none;
+            font-size: 12px; padding: 7px 12px; border-radius: 8px;
+            color: #d1fae5; background: rgba(6, 78, 59, .82); border: 1px solid rgba(52, 211, 153, .45);
+        }
+        .lab3d-stage .stage-verdict.warn { color: #fee2e2; background: rgba(127, 29, 29, .82); border-color: rgba(248, 113, 113, .5); }
+        .lab3d-foot {
+            display: flex; align-items: center; flex-wrap: wrap; gap: 12px 18px;
+            padding: 12px 3px 1px; font-size: 12px; color: #b6c8d4;
+        }
+        .lab3d-foot label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+        .lab3d-foot input { accent-color: #22d3ee; margin: 0; }
+        .lab3d-foot .legend { margin-left: auto; color: #8ba7b6; }
+        .lab3d-sidebar {
+            padding: 18px; color: #cbd5e1; border-left: 1px solid var(--line);
+            background: linear-gradient(180deg, rgba(15, 23, 42, .75), rgba(2, 6, 23, .6));
+        }
+        .lab3d-sidebar h3 { margin: 0 0 15px; color: #e2e8f0; font-size: 15px; letter-spacing: .05em; }
+        .lab3d-field { margin: 0 0 16px; }
+        .lab3d-field label, .lab3d-field .field-label {
+            display: flex; justify-content: space-between; gap: 8px; align-items: baseline;
+            color: #cbd5e1; font-size: 12px; font-weight: 700;
+        }
+        .lab3d-field output { color: #38bdf8; font-size: 13px; font-weight: 800; }
+        .lab3d-field input[type="range"] { display: block; width: 100%; margin: 11px 0 5px; }
+        .lab3d-field input[type="range"]::-webkit-slider-thumb { background: linear-gradient(135deg, #3b82f6, #22d3ee); }
+        .lab3d-field small { color: #64748b; font-size: 10px; line-height: 1.5; display: block; }
+        .lab3d-segment { display: flex; gap: 5px; margin-top: 9px; }
+        .lab3d-segment button { flex: 1; min-width: 0; padding: 7px 4px; font-size: 11px; }
+        .lab3d-metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 12px; }
+        .lab3d-metric {
+            padding: 12px 13px; border: 1px solid rgba(56, 189, 248, .18); border-radius: 10px;
+            background: linear-gradient(160deg, rgba(30, 58, 95, .55), rgba(15, 23, 42, .6));
+        }
+        .lab3d-metric span { display: block; font-size: 11px; color: #9fb8c6; }
+        .lab3d-metric strong { display: block; margin-top: 4px; color: #e0f2fe; font-size: 17px; }
+        .lab3d-metric.ok strong { color: #6ee7b7; }
+        .lab3d-metric.bad strong { color: #fca5a5; }
+        .lab3d-note { margin: 12px 0 0; color: #9fb8c6; font-size: 12px; line-height: 1.65; }
+        .lab3d-note b { color: #7dd3fc; }
+
+        /* 结论卡：四条折射规律，逐条点亮 */
+        .law-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 8px; }
+        .law-list li {
+            display: flex; gap: 8px; align-items: flex-start;
+            padding: 9px 11px; border-radius: 9px; font-size: 12px; line-height: 1.55;
+            border: 1px solid rgba(148, 163, 184, .16); background: rgba(148, 163, 184, .05);
+            color: #b6c8d4; transition: background .2s, border-color .2s, color .2s;
+        }
+        .law-list li.on {
+            border-color: rgba(52, 211, 153, .5); background: rgba(16, 185, 129, .12); color: #d1fae5;
+        }
+        .law-list li.off {
+            border-color: rgba(248, 113, 113, .45); background: rgba(239, 68, 68, .12); color: #fee2e2;
+        }
+        .law-list li i { font-style: normal; color: #64748b; flex: none; font-weight: 700; }
+        .law-list li.on i { color: #6ee7b7; }
+        .law-list li.off i { color: #fca5a5; }
+
+        /* ===== 实验记录表：就放在实验台正下方，做完一次就能点记录 ===== */
+        .record-panel { margin-top: 0; }
+        .record-body { padding: 16px 18px 18px; }
+        .record-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; }
+        .record-actions small { color: #8ea6b7; font-size: 11px; }
+        .table-wrap { overflow-x: auto; margin-top: 13px; }
+        .record-body table { width: 100%; border-collapse: collapse; font-size: 12px; white-space: nowrap; min-width: 640px; }
+        .record-body th, .record-body td {
+            text-align: left; padding: 9px 8px; border-bottom: 1px solid rgba(148, 163, 184, .16); color: #c5d6e4;
+        }
+        .record-body th { color: #80ddec; font-size: 11px; font-weight: 700; }
+        .record-body tbody tr:last-child td { border-bottom: 0; }
+        .record-body .empty { text-align: center; color: #91a6b9; padding: 19px 5px; }
+        .record-body td.num { font-variant-numeric: tabular-nums; }
+        .record-body td.ratio { color: #7dd3fc; font-weight: 700; }
+        /* 刚记录的那一行闪一下：视线还停在装置上，也知道数据落到了哪一行 */
+        .record-body tr.flash td { animation: refrRowFlash 1.2s ease-out; }
+        @keyframes refrRowFlash { 0% { background: rgba(34, 112, 143, .8); color: #f1fbff; } 100% { background: transparent; } }
+        .record-body .note { color: #90a9b9; font-size: 11px; line-height: 1.65; margin-top: 11px; }
+        .record-body .note b { color: #7dd3fc; }
+
+        @media (max-width: 900px) {
+            .lab3d-layout { grid-template-columns: minmax(0, 1fr); }
+            .lab3d-sidebar { border-left: 0; border-top: 1px solid var(--line); display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 18px; }
+            .lab3d-sidebar h3 { grid-column: 1 / -1; }
+            .lab3d-sidebar .span-2 { grid-column: 1 / -1; }
+        }
+        @media (max-width: 620px) {
+            body { padding-left: 10px; padding-right: 10px; }
+            .lab3d { border-radius: 14px; }
+            .lab3d-top { padding: 15px; }
+            .lab3d-top h2 { font-size: 17px; }
+            .lab3d-status { display: none; }
+            .lab3d-main { padding: 10px; }
+            .lab3d-toolbar { gap: 6px; }
+            .lab3d-toolbar .toolbar-label, .lab3d-toolbar .toolbar-spacer { display: none; }
+            .lab3d-toolbar button { padding: 6px 9px; font-size: 11px; }
+            .lab3d-stage { height: 340px; }
+            .lab3d-stage .stage-help { display: none; }
+            .lab3d-stage .stage-verdict { left: 10px; right: 10px; bottom: 10px; font-size: 11px; }
+            .lab3d-sidebar { display: block; padding: 16px; }
+            .lab3d-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+            .lab3d-foot .legend { margin-left: 0; width: 100%; }
+            .record-body { padding: 14px; }
+            /* 窄屏上 7 列会被挤到横向滚动里，而最后一列 sinθ₁/sinθ₂ 正是这张表的结论。
+               缩字号 + 收紧内边距 + 隐藏表头里的「入射角/折射角」前缀，让 7 列全部看得见。 */
+            .record-body table { font-size: 10.5px; min-width: 0; }
+            .record-body th, .record-body td { padding: 7px 5px; }
+            .record-body th .th-full { display: none; }
+        }
+    /* ===== 实拍视频区（站点形态：上半屏虚拟实验 + 底部实拍视频，两者缺一不可） ===== */
+    .video-section { max-width: 1200px; margin: 24px auto 40px; padding: 0 16px; }
+    .video-section .section-title { font-size: 20px; font-weight: bold; color: #f8fafc; margin-bottom: 16px; }
+    .video-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 18px; }
+    .video-card { background: #1e293b; border: 1px solid rgba(255,255,255,0.12); border-radius: 12px; padding: 18px 20px; }
+    .video-card h3 { margin: 0 0 12px; font-size: 15px; line-height: 1.5; color: #f8fafc; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 10px; display: flex; align-items: flex-start; gap: 8px; }
+    .video-card h3 .live-badge { font-size: 11px; background: rgba(239,68,68,0.15); color: #ef4444; padding: 2px 8px; border-radius: 6px; font-weight: 600; white-space: nowrap; flex-shrink: 0; }
+    .video-container { position: relative; width: 100%; padding-bottom: 56.25%; height: 0; border-radius: 12px; overflow: hidden; background: #000; }
+    .video-container iframe { position: absolute; top: 0; left: 0; width: 100%; height: 100%; border: 0; }
+    .video-desc { font-size: 13px; color: #94a3b8; line-height: 1.7; margin-top: 10px; }
+    .video-fullscreen-btn { position: absolute; top: 10px; right: 10px; z-index: 10; width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; border: none; border-radius: 8px; background: rgba(0,0,0,0.55); color: #fff; cursor: pointer; transition: background 0.2s ease; }
+    .video-fullscreen-btn:hover { background: rgba(59,130,246,0.85); }
+    .video-container:fullscreen, .video-container:-webkit-full-screen { width: 100%; height: 100%; padding-bottom: 0; border-radius: 0; }
+        /* ===== 本页专用（其余 .lab3d 样式与站内 3D 页共用同一份）===== */
+        /* 工具栏这一页多了「一键反向」，窄屏要允许折行，否则按钮被挤成一条 */
+        .lab3d-toolbar { flex-wrap: wrap; row-gap: 6px; }
+        .rev-presets { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; margin-top: 9px; }
+        .rev-presets button { padding: 7px 4px; font-size: 11px; }
+        .rev-panels { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 13px; margin-top: 13px; }
+        .rev-card { border: 1px solid var(--line); border-radius: 12px; background: rgba(8, 17, 31, .62); padding: 12px 13px; min-width: 0; }
+        .rev-card h4 { margin: 0 0 5px; color: #e2e8f0; font-size: 13px; }
+        .rev-card p.sub { margin: 0 0 9px; color: #64748b; font-size: 10.5px; line-height: 1.55; }
+        .rev-card p.sub b { color: #7dd3fc; }
+        #rev-chart { display: block; width: 100%; height: 178px; border-radius: 8px; background: #04070f; }
+        .rev-cmp { margin-top: 9px; display: grid; gap: 5px; }
+        .rev-cmp .row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: baseline; font-size: 11px; color: #94a3b8; }
+        .rev-cmp .row .k { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .rev-cmp .row b { color: #e2e8f0; font-variant-numeric: tabular-nums; white-space: nowrap; }
+        .rev-cmp .row.hl b { color: #6ee7b7; }
+        .rev-cmp .row.warn b { color: #fca5a5; }
+        .rev-cmp .row .k em { font-style: normal; color: #64748b; font-size: 10px; }
+        .rev-verdict { margin-top: 10px; padding: 8px 10px; border-radius: 8px; background: rgba(15, 23, 42, .75); border: 1px solid var(--line); color: #cbd5e1; font-size: 11px; line-height: 1.65; }
+        .rev-verdict b.ok { color: #6ee7b7; }
+        .rev-verdict b.no { color: #fca5a5; }
+        /* 「反向」按钮：正向走完才开始能按，按了之后自己报状态（不靠外部解释） */
+        #rev-flip { position: relative; }
+        #rev-flip::after { content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; }
+        #rev-flip.ready { color: #6ee7b7; border-color: rgba(110, 231, 183, .55); box-shadow: 0 0 0 1px rgba(110, 231, 183, .25) inset; }
+        #rev-flip.running { color: #fcd34d; border-color: rgba(252, 211, 77, .55); }
+        #rev-flip.done { color: #7dd3fc; border-color: rgba(125, 211, 252, .55); }
+        @media (max-width: 900px) { .rev-panels { grid-template-columns: minmax(0, 1fr); } }
+        @media (max-width: 620px) {
+            .rev-presets { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+            /* 记录表 7 列，比共用规则假设的 7 列正好持平 —— 再收紧一档，避免横向滚动条 */
+            .record-body table { font-size: 9.5px; min-width: 0; }
+            .record-body th, .record-body td { padding: 6px 3px; }
+        }
+  </style>
+    <script src="auth-check.js"></script>
+</head>
+<body>
+    <!-- 这一页不放站内页头：页头是 position:sticky，一滚动就贴在顶上盖住实验区。 -->
+    <section class="lab3d" aria-label="光路的可逆性立体模型">
+      <div class="lab3d-top">
+        <div>
+          <div class="lab3d-kicker">INTERACTIVE OPTICS LAB · 三维光学实验</div>
+          <h2>光路的可逆性 · 立体模型</h2>
+          <p>把光线掉个头，它会不会沿着原来那条路走回来？绕到侧面看清楚：正反两条折线不是「对称的两条」，而是<b>同一条</b></p>
+        </div>
+        <span class="lab3d-status">● 实时物理模拟</span>
+      </div>
+
+      <div class="lab3d-layout">
+        <div class="lab3d-main">
+          <div class="lab3d-toolbar" role="group" aria-label="观察视角">
+            <span class="toolbar-label">观察视角</span>
+            <button type="button" class="active" data-view="iso">立体视角</button>
+            <button type="button" data-view="side">入射面内</button>
+            <button type="button" data-view="edge">垂直于入射面</button>
+            <button type="button" data-view="top">沿法线俯视</button>
+            <button type="button" data-view="rev">反向光视角</button>
+            <button type="button" data-view="close">界面点特写</button>
+            <span class="toolbar-spacer"></span>
+            <button type="button" id="rev-flip" title="让光沿原路倒着走回去">↩ 一键反向</button>
+            <button type="button" id="rev-reset-view">↺ 重置视角</button>
+          </div>
+
+          <div class="lab3d-stage">
+            <canvas id="rev-canvas" aria-label="可拖动旋转、滚轮缩放的光路可逆性三维实验装置"></canvas>
+            <div class="stage-hint"><b></b>三维实验场景 · 入射光 → 界面（反射 + 折射）→ 反向射回</div>
+            <div class="stage-verdict" id="rev-verdict">—</div>
+            <div class="stage-help">拖动空白处旋转 · 滚轮缩放 · 拖入射光起点改入射角与方位角</div>
+          </div>
+
+          <div class="lab3d-foot">
+            <label><input id="rev-fwd" type="checkbox" checked>正向光路</label>
+            <label><input id="rev-rev" type="checkbox" checked>反向光路</label>
+            <label><input id="rev-normal" type="checkbox" checked>法线与角弧</label>
+            <label><input id="rev-plane" type="checkbox" checked>入射面</label>
+            <label><input id="rev-match" type="checkbox" checked>叠合检测</label>
+            <span class="legend">实线 = 正向光路　虚线 = 反向光路　⊙ = 逐点比对的位置</span>
+          </div>
+
+          <div class="lab3d-metrics" aria-live="polite">
+            <div class="lab3d-metric"><span id="rev-m1-label">入射角 θ₁</span><strong id="rev-m1">0.00°</strong></div>
+            <div class="lab3d-metric"><span id="rev-m2-label">反射角 θ₁′</span><strong id="rev-m2">0.00°</strong></div>
+            <div class="lab3d-metric"><span id="rev-m3-label">折射角 θ₂</span><strong id="rev-m3">0.00°</strong></div>
+            <div class="lab3d-metric ok"><span id="rev-m4-label">正反折线最大坐标差</span><strong id="rev-m4">—</strong></div>
+          </div>
+
+          <div class="rev-panels">
+            <div class="rev-card">
+              <h4 id="rev-chart-title">① 角度关系随入射角怎么变</h4>
+              <p class="sub" id="rev-chart-sub">横轴是<b>入射角 θ₁</b>，纵轴是<b>出射角</b>。绿线是<b>反射角</b> —— 它和 45° 那条虚线完全重合，说明反射角恒等于入射角；蓝线是<b>折射角 θ₂</b>。当前状态在曲线上的位置用圆点标出。</p>
+              <canvas id="rev-chart" aria-label="出射角随入射角变化的曲线"></canvas>
+              <div class="rev-cmp" id="rev-cmp"></div>
+            </div>
+
+            <div class="rev-card">
+              <h4>② 正反两条折线 · 逐点对账</h4>
+              <p class="sub">反向那条折线<b>不是把正向折线取负</b>得到的 —— 它把出射方向掉头、把两侧介质对调，<b>重新追迹一遍</b>。然后拿正向折线的第 <i>i</i> 个点去比反向折线的第 <i>n−1−i</i> 个点，差值应该只来自浮点舍入。</p>
+              <div class="rev-cmp" id="rev-cmp2"></div>
+              <div class="rev-verdict" id="rev-cmp-verdict">—</div>
+            </div>
+          </div>
+
+          <p class="lab3d-note"><b>观察提示：</b>先看默认状态：一束光从空气斜射到水面，在入射点<b>一分为二</b> —— 一部分反射回空气（绿），一部分折射进水（蓝）。两条出射光线与入射光线、法线<b>都在同一个平面里</b>（切到「垂直于入射面」看，它们会塌成一条线，这就是「三线共面」最直接的证据）。<br>点<b>「↩ 一键反向」</b>：光从出射端出发，沿原路<b>倒着走</b>回去。注意它回去的路径与来时的路径<b>完全叠在一起</b>，而不是旁边多出一条对称的路 —— 切到「反向光视角」用光自己的眼睛看，它回到的正是原来那个起点。<br>把<b>「绕法线方位角」</b>从 0° 拖到 360°，整个入射面绕法线转了一圈，但反射角、折射角<b>一个数都不变</b> —— 这只有在三维里才看得出来（2D 图上根本没有「入射面」这个概念）。<br>切到<b>「水 → 空气」</b>再把入射角拖过临界角（<b id="rev-crit">48.61°</b>）：折射线<b>整条消失</b>（全反射），这时右侧的「反向折射」也一并消失 —— 可逆性只在光路真的存在时才谈得上。</p>
+        </div>
+
+        <aside class="lab3d-sidebar">
+          <h3>实验条件</h3>
+
+          <div class="lab3d-field span-2">
+            <span class="field-label">光从哪边射来 <output id="rev-dir-name">空气 → 水</output></span>
+            <div class="lab3d-segment" id="rev-dir" role="group" aria-label="选择光的传播方向">
+              <button type="button" data-dir="air2water" class="active">空气 → 水</button>
+              <button type="button" data-dir="water2air">水 → 空气</button>
+            </div>
+            <small>界面上下两侧的介质不换，只把光的传播方向掉过来 —— 这样才能对照「同一条路反过来走」</small>
+          </div>
+
+          <div class="lab3d-field span-2">
+            <span class="field-label">显示哪几支光线 <output id="rev-branch-name">反射 + 折射</output></span>
+            <div class="lab3d-segment" id="rev-branch" role="group" aria-label="选择要显示的光线分支">
+              <button type="button" data-branch="both" class="active">反射 + 折射</button>
+              <button type="button" data-branch="refl">只反射</button>
+              <button type="button" data-branch="refr">只折射</button>
+            </div>
+            <small>只显示一支时，正向与反向的比对就只针对那一支 —— 用来单独验反射侧和折射侧的可逆性</small>
+          </div>
+
+          <div class="lab3d-field span-2">
+            <span class="field-label">快速预设</span>
+            <div class="rev-presets" id="rev-presets" role="group" aria-label="实验条件预设">
+              <button type="button" data-preset="both" class="active">两者都有</button>
+              <button type="button" data-preset="reflOnly">只反射</button>
+              <button type="button" data-preset="refrOnly">只折射</button>
+              <button type="button" data-preset="fromWater">水 → 空气</button>
+              <button type="button" data-preset="tir">全反射</button>
+              <button type="button" data-preset="normal">垂直入射</button>
+            </div>
+            <small>「垂直入射」把入射角压到 0°：反射光沿原路返回，这是可逆性最直观的特例；「全反射」把折射线整条关掉</small>
+          </div>
+
+          <div class="lab3d-field">
+            <label for="rev-theta">入射角 θ₁ <output id="rev-theta-value">48.0°</output></label>
+            <input id="rev-theta" type="range" min="0" max="89.5" value="48" step="0.1">
+            <small>入射光线与法线之间的夹角。拖到 0° 就是垂直入射，拖到上限 89.5° 就是接近掠射（上限不再往 89.9° 靠：越贴近掠射，<b>cos 的浮点抵消</b>越严重 —— 89.999° 时正反折线的坐标差会放大到 1e-11，89.5° 时只有 1e-14 量级）</small>
+          </div>
+
+          <div class="lab3d-field">
+            <label for="rev-phi">绕法线方位角 φ <output id="rev-phi-value">30°</output></label>
+            <input id="rev-phi" type="range" min="0" max="360" value="30" step="5">
+            <small>让整个入射面绕法线转一圈。<b>反射角与折射角都不随它改变</b> —— 拖动它验证「三线共面」与「角度只由 θ₁ 决定」</small>
+          </div>
+
+          <div class="lab3d-field">
+            <label for="rev-n">水的折射率 n <output id="rev-n-value">1.333</output></label>
+            <input id="rev-n" type="range" min="1" max="1.6" value="1.333" step="0.001">
+            <small>空气取 1.000。把 n 拖到 1.000，界面就等于不存在：折射光与入射光<b>方向完全一致</b>，而可逆性照样成立</small>
+          </div>
+
+          <div class="lab3d-field span-2">
+            <span class="field-label">结论</span>
+            <ul class="law-list">
+              <li id="rev-law1"><i>①</i><span><b>反射角恒等于入射角</b> —— 不论光从哪一侧射来、入射面绕法线转到哪个方位，两个角一个数都不差</span></li>
+              <li id="rev-law2"><i>②</i><span>折射时 <b>n₁sinθ₁ = n₂sinθ₂</b>，并且<b>入射光线、反射光线、折射光线与法线四线共面</b>（这个面就是入射面）</span></li>
+              <li id="rev-law3"><i>③</i><span><b>把光路反向，光线沿原路返回</b>：正反两条折线逐点重合（坐标差只来自浮点舍入），是<b>同一条路</b>而不是两条对称的路</span></li>
+              <li id="rev-law4"><i>④</i><span>光从水射向空气时，入射角超过<b>临界角 θc = asin(1/n)</b> 就没有折射光线（全反射）—— 这时反向折射光路<b>同样不存在</b></span></li>
+              <li id="rev-law5"><i>⑤</i><span><b>垂直入射（θ₁ = 0°）</b>时光线不改变方向：反射光沿原路返回，折射光继续沿原方向前进 —— 可逆性最直观的特例</span></li>
+            </ul>
+            <small id="rev-law-verdict">当前：—</small>
+          </div>
+        </aside>
+      </div>
+    </section>
+
+    <section class="lab3d record-panel" aria-label="实验记录表">
+      <div class="lab3d-top">
+        <div>
+          <div class="lab3d-kicker">DATA SHEET · 定量记录</div>
+          <h2>实验记录表</h2>
+          <p>每改一次入射角就点一次「记录当前数据」：把入射角、反射角、折射角和正反折线的最大坐标差一起存下来 —— 「反射角 = 入射角」这条规律在表里是两列逐行相同的数</p>
+        </div>
+        <span class="lab3d-status" id="rev-count">已记录 0 组</span>
+      </div>
+      <div class="record-body">
+        <div class="record-actions">
+          <button type="button" class="primary" id="rev-record">记录当前数据</button>
+          <button type="button" id="rev-clear">清空记录</button>
+          <small id="rev-record-hint">建议依次记录：垂直入射 → 30° → 45° → 60° → 接近掠射，看「反射角」那一列与「入射角」那一列怎么一路相等，而「最大坐标差」那一列怎么一路保持在 1e-15 量级</small>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>次数</th>
+                <th><span class="th-full">入射角 </span>θ₁</th>
+                <th><span class="th-full">反射角 </span>θ₁′</th>
+                <th><span class="th-full">折射角 </span>θ₂</th>
+                <th><span class="th-full">光路 </span>光路</th>
+                <th>最大坐标差</th>
+                <th>判定</th>
+              </tr>
+            </thead>
+            <tbody id="rev-rows">
+              <tr><td colspan="7" class="empty">尚无记录，先摆好一种情形再点「记录当前数据」</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="note" id="rev-summary">先记「垂直入射」那一行：反射角应该正好等于 0°。再把入射角一档一档加大，看反射角那一列与入射角那一列始终逐位相同。</div>
+      </div>
+    </section>
+    <script src="protect.js"></script>
+    <script>
+/* ============================================================================
+ * 「光路的可逆性立体模型」物理内核 —— 纯函数，无 DOM 依赖。
+ *   ★ 这份文件有两个消费者：
+ *       ① /tmp/mk-rev.js 把它【原样内联】进页面（保持单文件）；
+ *       ② /tmp/rev-phys.js 直接 require 它来【先量后断言】。
+ *     同一份源码 ⇒ 量出来的阈值与页面跑的公式不可能分叉。
+ *   ★ 坐标约定：界面 y = 0；法线 N = (0,1,0)（由下指上，水在下、空气在上）。
+ *     入射面由方位角 φ 决定：面内水平方向 u = (cosφ, 0, sinφ)，面外方向 w = (−sinφ, 0, cosφ)。
+ *   ★ 关键纪律：反向那条折线必须由【第二次独立追迹】得到，
+ *     绝不允许把正向折线取负/镜像来充数（那就是自指恒等式）。
+ * ==========================================================================*/
+
+/* ---------------- 向量 ---------------- */
+function vadd(a, b) { return [a[0] + b[0], a[1] + b[1], a[2] + b[2]]; }
+function vsub(a, b) { return [a[0] - b[0], a[1] - b[1], a[2] - b[2]]; }
+function vscl(a, s) { return [a[0] * s, a[1] * s, a[2] * s]; }
+function vdot(a, b) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
+function vcross(a, b) {
+  return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+}
+function vlen(a) { return Math.sqrt(vdot(a, a)); }
+function vnorm(a) { const L = vlen(a); return L > 0 ? vscl(a, 1 / L) : [0, 0, 0]; }
+function clamp(x, lo, hi) { return x < lo ? lo : (x > hi ? hi : x); }
+
+const N_UP = [0, 1, 0];              // 法线（由下指上）
+
+/* ---------------- 入射方向 ----------------
+   θ = 与法线的夹角（度）；φ = 绕法线的方位角（度）。
+   fromAbove = true ⇒ 光从上方（空气）射来，d_y < 0。 */
+function incidentDir(thetaDeg, phiDeg, fromAbove) {
+  const t = thetaDeg * Math.PI / 180, p = phiDeg * Math.PI / 180;
+  const st = Math.sin(t), ct = Math.cos(t);
+  return [st * Math.cos(p), fromAbove ? -ct : ct, st * Math.sin(p)];
+}
+
+/* 与法线的夹角（度），取 |d_y| —— 对反射线/折射线同样适用 */
+function angleToNormal(d) { return Math.acos(clamp(Math.abs(d[1]), -1, 1)) * 180 / Math.PI; }
+
+/* ---------------- 反射：关于 y = 0 镜像 ---------------- */
+function reflectDir(d) { return [d[0], -d[1], d[2]]; }
+
+/* ---------------- 折射（矢量 Snell）----------------
+   返回 null = 全反射（无折射线）。
+   取【与入射方向相对】的那一侧法线 m，保证 d·m < 0、c = −d·m > 0。 */
+function refractDir(d, n1, n2) {
+  if (!(n1 > 0) || !(n2 > 0)) return null;
+  const eta = n1 / n2;
+  const m = d[1] > 0 ? [0, -1, 0] : [0, 1, 0];
+  const c = -vdot(d, m);
+  if (!(c > 0)) return null;                       // 入射方向与界面平行/背离 ⇒ 无解
+  const k = 1 - eta * eta * (1 - c * c);
+  if (k < 0) return null;                          // 全反射
+  return vnorm(vadd(vscl(d, eta), vscl(m, eta * c - Math.sqrt(k))));
+}
+
+/* ---------------- 一次追迹 ----------------
+   从 O（原点）沿 −d 退回 L_in 得到入射起点 A；
+   再沿各分支方向前进 L_out 得到出射终点。
+   ★ 这是【唯一】的追迹入口：正向、反向都调它，不另写公式。 */
+function traceOne(d, n1, n2, L_in, L_out, wantRefl, wantRefr) {
+  const r = {
+    A: vscl(d, -L_in), O: [0, 0, 0], d: d.slice(), n1: n1, n2: n2,
+    theta1: angleToNormal(d), refl: null, refr: null
+  };
+  if (wantRefl) {
+    const rd = reflectDir(d);
+    r.refl = { dir: rd, end: vscl(rd, L_out), theta: angleToNormal(rd) };
+  }
+  if (wantRefr) {
+    const td = refractDir(d, n1, n2);
+    if (td) r.refr = { dir: td, end: vscl(td, L_out), theta: angleToNormal(td) };
+  }
+  return r;
+}
+
+/* 正向光路：光从【介质 1】射向界面 */
+function forwardTrace(thetaDeg, phiDeg, fromAbove, nWater, L_in, L_out) {
+  const d = incidentDir(thetaDeg, phiDeg, fromAbove);
+  const n1 = fromAbove ? 1 : nWater;              // 光来自的那一侧
+  const n2 = fromAbove ? nWater : 1;              // 光要去的那一侧
+  return traceOne(d, n1, n2, L_in, L_out, true, true);
+}
+
+/* ★★ 反向光路：从正向某条分支的【末端】沿该分支反向射回 O，再重新追迹。
+   绝不用「把正向折线取负」的办法 —— 那是自指恒等式，负向对照永远打不红。 */
+function reverseTrace(fwd, branch, L_in, L_out) {
+  const b = fwd[branch];
+  if (!b) return null;                            // 正向就没有这条分支（如全反射）
+  const dRev = vscl(b.dir, -1);                   // 从末端指回 O
+  const rt = traceOne(dRev, fwd.n2, fwd.n1, L_out, L_in, true, true);   // 介质对调
+  const back = (branch === 'refl') ? rt.refl : rt.refr;                 // 沿原路返回的那一支
+  if (!back) return null;                         // 反向也被全反射挡住 ⇒ 光路不存在
+  return { trace: rt, back: back, poly: [b.end.slice(), [0, 0, 0], back.end.slice()] };
+}
+
+/* 正向某分支的折线（三点：入射起点 → O → 出射终点） */
+function branchPolyline(fwd, branch) {
+  const b = fwd[branch];
+  if (!b) return null;
+  return [fwd.A.slice(), [0, 0, 0], b.end.slice()];
+}
+
+/* ★ 逐点坐标差：正向折线第 i 点 与 反向折线第 (n−1−i) 点 对齐比较。
+   返回 { max, pts }，pts 是每对的差值（用于面板显示）。 */
+function pathDiff(fwdPoly, revPoly) {
+  if (!fwdPoly || !revPoly || fwdPoly.length !== revPoly.length) return null;
+  const n = fwdPoly.length, pts = [];
+  let max = 0;
+  for (let i = 0; i < n; i++) {
+    const a = fwdPoly[i], b = revPoly[n - 1 - i];
+    const dd = vlen(vsub(a, b));
+    pts.push(dd);
+    if (dd > max) max = dd;
+  }
+  return { max: max, pts: pts };
+}
+
+/* ---------------- 共面性（三线共面）----------------
+   入射面内水平方向 u、面外方向 w；入射/反射/折射三条线与法线在 w 上的分量都应为 0。 */
+function inPlaneResidual(fwd) {
+  const p = fwd.d;
+  const horiz = [p[0], 0, p[2]];
+  if (vlen(horiz) < 1e-12) return { w: [1, 0, 0], d: 0, r: 0, t: 0, max: 0 };  // 垂直入射：入射面未定义
+  const w = vnorm(vcross(N_UP, horiz));           // 面外方向（与入射面垂直）
+  const out = {
+    w: w,
+    d: Math.abs(vdot(fwd.d, w)),
+    r: fwd.refl ? Math.abs(vdot(fwd.refl.dir, w)) : 0,
+    t: fwd.refr ? Math.abs(vdot(fwd.refr.dir, w)) : 0
+  };
+  out.max = Math.max(out.d, out.r, out.t);
+  return out;
+}
+
+/* ---------------- 临界角 ---------------- */
+function critAngle(nWater) {
+  if (!(nWater > 1)) return 90;                    // n ≤ 1 时不会全反射
+  return Math.asin(clamp(1 / nWater, -1, 1)) * 180 / Math.PI;
+}
+
+/* ---------------- 汇总（页面与断言共用的一份读数） ---------------- */
+function solveAll(st, geo) {
+  const L_in = geo.L_in, L_out = geo.L_out;
+  const fwd = forwardTrace(st.theta, st.phi, st.fromAbove, st.n, L_in, L_out);
+  const reflRev = reverseTrace(fwd, 'refl', L_in, L_out);
+  const refrRev = reverseTrace(fwd, 'refr', L_in, L_out);
+  const dRefl = pathDiff(branchPolyline(fwd, 'refl'), reflRev ? reflRev.poly : null);
+  const dRefr = pathDiff(branchPolyline(fwd, 'refr'), refrRev ? refrRev.poly : null);
+  const plane = inPlaneResidual(fwd);
+  const crit = critAngle(st.n);
+
+  /* 反射角与入射角之差（应当恒为 0） */
+  const reflErr = fwd.refl ? Math.abs(fwd.refl.theta - fwd.theta1) : 0;
+  /* Snell 残差 */
+  const snell = fwd.refr ? (fwd.n1 * Math.sin(fwd.theta1 * Math.PI / 180) -
+    fwd.n2 * Math.sin(fwd.refr.theta * Math.PI / 180)) : 0;
+
+  return {
+    fwd: fwd, reflRev: reflRev, refrRev: refrRev,
+    dRefl: dRefl, dRefr: dRefr, plane: plane,
+    theta1: fwd.theta1,
+    theta2: fwd.refr ? fwd.refr.theta : null,
+    thetaR: fwd.refl ? fwd.refl.theta : null,
+    reflErr: reflErr, snell: snell,
+    crit: crit,
+    tir: !fwd.refr,
+    maxDiff: Math.max(dRefl ? dRefl.max : 0, dRefr ? dRefr.max : 0),
+    segFwd: (fwd.refl ? 2 : 0) + (fwd.refr ? 2 : 0),
+    segRev: (reflRev ? 2 : 0) + (refrRev ? 2 : 0),
+    fromAbove: !!st.fromAbove
+  };
+}
+
+/* ============================================================================
+ * 「光路的可逆性立体模型」页面脚本
+ *   ★ 物理内核（/tmp/rev-core.js）由 mk-rev.js 拼在本文件【之前】，
+ *     与 /tmp/rev-phys.js 量阈值时 require 的是同一份源码。
+ *   ★ 相机 / 自动取景 / 标签避让沿用站内 3D 页的同一套约定：
+ *       - zoom 只乘在【算出来的焦距】上（不再动相机距离，否则被自动取景抵消）
+ *       - look 视角按注视点居中，其余按包络居中
+ *       - 标签最后落笔；障碍物 = 几何盒 + 已放标签 + 舞台上的 DOM 浮层
+ * ==========================================================================*/
+
+/* ================= 1. 常量与量程 ================= */
+const GEO = { L_in: 2.4, L_out: 2.4 };
+const TH_MIN = 0, TH_MAX = 89.5, TH_DEF = 48;
+const PHI_MIN = 0, PHI_MAX = 360, PHI_DEF = 30;
+const NW_MIN = 1.0, NW_MAX = 1.6, NW_DEF = 1.333;
+const SURF = 2.6;                 // 界面（水面）半边长
+const WATER_BOT = -2.2;           // 水体底面
+const CAMD = 9.4;                 // 相机距离
+const TARGET = [0, 0, 0];
+const D2R = Math.PI / 180, R2D = 180 / Math.PI;
+/* ★ 判据阈值：先量后定。全域 26208 组（θ ≤ 89.5°）实测 maxDiff 上确界 8.948e-14，
+   取 1e-9 有 1.1e4 倍余量；负向对照靶子（反射角偏 0.01°）实测 4.189e-4，放大 1.9e12 倍。 */
+const DIFF_TOL = 1e-9;
+const ANG_TOL = 1e-9;
+
+/* ================= 2. 场景几何 ================= */
+function fromAboveNow() { return state.dir === 'air2water'; }
+function showReflBranch() { return state.branch !== 'refr'; }
+function showRefrBranch() { return state.branch !== 'refl'; }
+
+function sceneGeom() {
+  const r = solveAll({ theta: state.theta, phi: state.phi, fromAbove: fromAboveNow(), n: state.n }, GEO);
+  const u = vnorm([Math.cos(state.phi * D2R), 0, Math.sin(state.phi * D2R)]);
+  return {
+    r: r,
+    A: r.fwd.A, O: [0, 0, 0],
+    d: r.fwd.d,
+    reflEnd: r.fwd.refl ? r.fwd.refl.end : null,
+    refrEnd: r.fwd.refr ? r.fwd.refr.end : null,
+    reflDir: r.fwd.refl ? r.fwd.refl.dir : null,
+    refrDir: r.fwd.refr ? r.fwd.refr.dir : null,
+    revRefl: r.reflRev ? r.reflRev.poly : null,
+    revRefr: r.refrRev ? r.refrRev.poly : null,
+    u: u, w: r.plane.w
+  };
+}
+
+/* ================= 3. 相机 ================= */
+const VIEWS = {
+  iso:   { yaw: 0.62, pitch: 0.40, zoom: 1.00 },
+  /* 入射面内：视线沿【面外方向 w】⇒ 入射面正对镜头，就是课本上那张 2D 图 */
+  side:  { yaw: Math.PI, pitch: 0.05, zoom: 1.15, yawFromPhi: true },
+  /* 垂直于入射面：视线落在【入射面内】⇒ 三条光线塌成一条，三线共面的直接证据 */
+  edge:  { yaw: Math.PI / 2, pitch: 0.02, zoom: 1.20, yawFromPhi: true },
+  top:   { yaw: Math.PI / 2, pitch: 1.45, zoom: 1.05, yawFromPhi: true },
+  rev:   { eyeAt: 'rayEnd', zoom: 1.00, look: true },
+  close: { yaw: 0.95, pitch: 0.30, zoom: 2.60, targetKind: 'O', look: true }
+};
+const VIEW_NAMES = ['iso', 'side', 'edge', 'top', 'rev', 'close'];
+
+/* 取景包络：只由常量构造，绝不读滑块（否则像素差分与「与滑块无关」都失效） */
+function envelopePoints() {
+  const out = [];
+  for (const sx of [-SURF, SURF]) for (const sz of [-SURF, SURF]) for (const y of [WATER_BOT, 0]) out.push([sx, y, sz]);
+  out.push([0, -2.0, 0], [0, 2.1, 0]);
+  const R = GEO.L_in * 1.06;                       // 所有光线端点都落在半径 L_in 的球面上
+  for (let i = 0; i < 6; i++) for (let j = 0; j < 12; j++) {
+    const t = (i + 0.5) * Math.PI / 6, p = j * Math.PI / 6;
+    out.push([R * Math.sin(t) * Math.cos(p), R * Math.cos(t), R * Math.sin(t) * Math.sin(p)]);
+  }
+  return out;
+}
+
+function makeCam(q, w, h) {
+  const V = VIEWS[state.view] || VIEWS.iso;
+  const tgt = (V.targetKind === 'O') ? [0, 0, 0] : TARGET;
+  let eye, fwd, right, up;
+  if (V.eyeAt === 'rayEnd') {
+    const g = sceneGeom();
+    let end = (state.branch === 'refl' && g.reflEnd) ? g.reflEnd : (g.refrEnd || g.reflEnd);
+    if (!end) end = [0, -GEO.L_out, 0];
+    const dirOut = vnorm(end);
+    /* ★ 必须侧向让开一点：正对光线看时 A / O / R 全投影到同一个点上，
+       标签会叠成一堆（实测 rev 视角最大重叠 133.9 px²、压住关键几何 324 px²）。
+       侧移 0.95 m 换成「从光线的肩膀后面看」⇒ 光线成了一条能读出方向的线。 */
+    let perp = vcross(dirOut, [0, 1, 0]);
+    if (vlen(perp) < 1e-4) perp = vcross(dirOut, [0, 0, 1]);
+    perp = vnorm(perp);
+    eye = vadd(vscl(dirOut, vlen(end) * 1.15), vscl(perp, 0.95));
+    fwd = vnorm(vsub([0, 0, 0], eye));
+    let rr = vcross(fwd, [0, 1, 0]);
+    if (vlen(rr) < 1e-5) rr = vcross(fwd, [0, 0, 1]);   // 近垂直入射时退化，换参考轴
+    right = vnorm(rr); up = vcross(right, fwd);
+  } else {
+    let yaw = V.yaw + state.camYawOff;
+    if (V.yawFromPhi) yaw = V.yaw - state.phi * D2R + state.camYawOff;
+    const pitch = clamp(V.pitch + state.camPitchOff, -1.45, 1.45);
+    const dir = [Math.cos(pitch) * Math.sin(yaw), Math.sin(pitch), Math.cos(pitch) * Math.cos(yaw)];
+    eye = vadd(tgt, vscl(dir, CAMD));
+    fwd = vscl(dir, -1);
+    right = vnorm(vcross(fwd, [0, 1, 0]));
+    up = vcross(right, fwd);
+  }
+  let loR = Infinity, hiR = -Infinity, loU = Infinity, hiU = -Infinity;
+  for (const p of envelopePoints()) {
+    const v = vsub(p, eye);
+    const z = vdot(v, fwd);
+    if (!(z > 1e-3)) continue;
+    const rr = vdot(v, right), uu = vdot(v, up);
+    if (rr < loR) loR = rr; if (rr > hiR) hiR = rr;
+    if (uu < loU) loU = uu; if (uu > hiU) hiU = uu;
+  }
+  if (!isFinite(loR)) { loR = -1; hiR = 1; loU = -1; hiU = 1; }
+  const focal = Math.min(w * 0.94 / Math.max(hiR - loR, 1e-3), h * 0.90 / Math.max(hiU - loU, 1e-3));
+  /* ★★ zoom 必须乘在【算出来的焦距】上；而且视图自带的 V.zoom 也要乘 ——
+     漏掉 V.zoom 会让「界面点特写」与「立体视角」的焦距几乎相同（实测 91 vs 87.3），
+     看起来是换了个角度，其实根本没有特写。 */
+  q.focal = focal * (V.zoom || 1) * state.zoom;
+  const cR = V.look ? 0 : (loR + hiR) * 0.5;
+  const cU = V.look ? 0 : (loU + hiU) * 0.5;
+  q.eye = eye; q.fwd = fwd; q.right = right; q.up = up;
+  q.cx = w / 2 - cR * q.focal;
+  q.cy = h / 2 + cU * q.focal;
+  q.dist = vlen(vsub(eye, tgt));
+  return q;
+}
+
+function project(p, q) {
+  const v = vsub(p, q.eye);
+  const z = vdot(v, q.fwd);
+  const s = q.focal / Math.max(z, 1e-6);
+  return { x: q.cx + vdot(v, q.right) * s, y: q.cy - vdot(v, q.up) * s, z: z, s: s };
+}
+
+/* ================= 4. 状态 ================= */
+const state = {
+  view: 'iso',
+  theta: TH_DEF, phi: PHI_DEF, n: NW_DEF,
+  dir: 'air2water', branch: 'both', preset: 'both',
+  showFwd: true, showRev: true, showNormal: true, showPlane: true, showMatch: true,
+  camYawOff: 0, camPitchOff: 0, zoom: 1,
+  animT: 0, animRun: false, animDone: false,
+  records: [],
+  w: 900, ch: 520, dpr: 1,
+  lastX: 0, lastY: 0, dragging: false, dragKind: null, dragMoved: 0,
+  hint: ''
+};
+
+let ctx = null;
+let geomBoxes = [], frameLabels = [], labelQueue = [], frameBoxes = [];
+let drawnCache = { ok: false, F: { x: 0, y: 0 }, rayCount: 0, labelCount: 0, animPts: [], boxCount: 0 };
+
+function $(id) { return document.getElementById(id); }
+
+/* ================= 5. 图元 ================= */
+function polyline(c2, pts, q, style) {
+  c2.save();
+  c2.strokeStyle = style.color;
+  c2.lineWidth = style.width || 2;
+  if (style.dash) c2.setLineDash(style.dash);
+  c2.lineCap = 'round';
+  c2.beginPath();
+  let started = false;
+  for (const p of pts) {
+    const s = project(p, q);
+    if (!isFinite(s.x) || !isFinite(s.y)) continue;
+    if (!started) { c2.moveTo(s.x, s.y); started = true; } else c2.lineTo(s.x, s.y);
+  }
+  if (started) c2.stroke();
+  c2.restore();
+}
+function seg(c2, a, b, q, style) { polyline(c2, [a, b], q, style); }
+function disc(c2, p, q, r, fill, stroke) {
+  const s = project(p, q);
+  if (!isFinite(s.x) || !isFinite(s.y)) return;
+  c2.save();
+  c2.beginPath(); c2.arc(s.x, s.y, r, 0, Math.PI * 2);
+  if (fill) { c2.fillStyle = fill; c2.fill(); }
+  if (stroke) { c2.strokeStyle = stroke; c2.lineWidth = 1.6; c2.stroke(); }
+  c2.restore();
+}
+function ring(c2, p, q, r, stroke) {
+  const s = project(p, q);
+  if (!isFinite(s.x) || !isFinite(s.y)) return;
+  c2.save();
+  c2.beginPath(); c2.arc(s.x, s.y, r, 0, Math.PI * 2);
+  c2.strokeStyle = stroke; c2.lineWidth = 1.6; c2.setLineDash([]); c2.stroke();
+  c2.restore();
+}
+/* 箭头：画在屏幕空间，长度固定为像素，避免远近大小不一 */
+function arrowAt(c2, from, to, q, color, size) {
+  const a = project(from, q), b = project(to, q);
+  if (!isFinite(a.x) || !isFinite(b.x)) return;
+  const dx = b.x - a.x, dy = b.y - a.y, L = Math.hypot(dx, dy);
+  if (!(L > 1e-3)) return;
+  const ux = dx / L, uy = dy / L;
+  const s = size || 11;
+  c2.save();
+  c2.beginPath();
+  c2.moveTo(b.x, b.y);
+  c2.lineTo(b.x - ux * s + uy * s * 0.5, b.y - uy * s - ux * s * 0.5);
+  c2.lineTo(b.x - ux * s - uy * s * 0.5, b.y - uy * s + ux * s * 0.5);
+  c2.closePath();
+  c2.fillStyle = color; c2.fill();
+  c2.restore();
+}
+
+/* ================= 6. 标签避让 ================= */
+/* ★ 候选位必须够远：两个 100+ px 宽的标签锚在同一点时，±52 px 的候选位【无论怎么挑都分不开】
+   （实测会留下 1298 px² 的重叠），所以补上 ±86 px 的一圈。 */
+const CAND_OFF = [
+  [0, -22], [0, 22], [28, 0], [-28, 0],
+  [24, -20], [-24, -20], [24, 20], [-24, 20],
+  [0, -42], [0, 42], [52, 0], [-52, 0],
+  [48, -34], [-48, -34], [48, 34], [-48, 34],
+  [86, 0], [-86, 0], [86, -34], [-86, -34], [86, 34], [-86, 34],
+  [0, -64], [0, 0]
+];
+function boxOf(cx, cy, text, size) {
+  const w = text.length * size * 0.66 + 12, h = size * 1.5 + 7;
+  return { x0: cx - w / 2, y0: cy - h / 2, x1: cx + w / 2, y1: cy + h / 2 };
+}
+function overlapArea(a, b) {
+  const w = Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0);
+  const h = Math.min(a.y1, b.y1) - Math.max(a.y0, b.y0);
+  return (w > 0 && h > 0) ? w * h : 0;
+}
+function fitBox(b, w, h) {
+  const bw = b.x1 - b.x0, bh = b.y1 - b.y0;
+  let x0 = b.x0, y0 = b.y0;
+  if (x0 < 2) x0 = 2;
+  if (x0 + bw > w - 2) x0 = Math.max(2, w - 2 - bw);
+  if (y0 < 2) y0 = 2;
+  if (y0 + bh > h - 2) y0 = Math.max(2, h - 2 - bh);
+  return { x0: x0, y0: y0, x1: x0 + bw, y1: y0 + bh };
+}
+/* 把标签推出 DOM 浮层（提示条 / 结论条 / 帮助条） */
+function nudgeOutOfUI(b, ui, w, h) {
+  let out = b;
+  for (const o of ui) {
+    if (overlapArea(out, o) <= 0) continue;
+    const cands = [
+      { x0: o.x0 - (out.x1 - out.x0) - 6, y0: out.y0 },
+      { x0: o.x1 + 6, y0: out.y0 },
+      { x0: out.x0, y0: o.y0 - (out.y1 - out.y0) - 6 },
+      { x0: out.x0, y0: o.y1 + 6 }
+    ].map(c => ({ x0: c.x0, y0: c.y0, x1: c.x0 + (out.x1 - out.x0), y1: c.y0 + (out.y1 - out.y0) }));
+    let best = null, bestOv = Infinity;
+    for (const c of cands) {
+      const f = fitBox(c, w, h);
+      let ov = 0;
+      for (const oo of ui) ov += overlapArea(f, oo);
+      if (ov < bestOv) { bestOv = ov; best = f; }
+    }
+    if (best) out = best;
+  }
+  return out;
+}
+function label(text, world, q, opts) {
+  labelQueue.push({ text: text, world: world, q: q, opts: opts || {} });
+}
+function flushLabels(c2, w, h) {
+  const ui = uiBoxes();
+  for (const it of labelQueue) {
+    const p = project(it.world, it.q);
+    if (!isFinite(p.x) || !isFinite(p.y) || !(p.z > 0)) continue;
+    /* ★ 锚点远在画布之外就别画了：硬夹回边缘只会让一堆标签挤在同一条边上
+       （实测 rev 视角就是这样叠起来的）。只对「刚出界一点点」的端点做夹回。 */
+    const M = 0.16;
+    if (p.x < -w * M || p.x > w * (1 + M) || p.y < -h * M || p.y > h * (1 + M)) continue;
+    const size = it.opts.size || 11;
+    const base = boxOf(p.x, p.y, it.text, size);
+    let best = null, bestCost = Infinity;
+    for (const off of CAND_OFF) {
+      const raw = { x0: base.x0 + off[0], y0: base.y0 + off[1], x1: base.x1 + off[0], y1: base.y1 + off[1] };
+      let b = fitBox(raw, w, h);
+      const clampMoved = Math.abs(b.x0 - raw.x0) + Math.abs(b.y0 - raw.y0);
+      b = nudgeOutOfUI(b, ui, w, h);
+      const uiMoved = Math.abs(b.x0 - raw.x0) + Math.abs(b.y0 - raw.y0);
+      b = fitBox(b, w, h);
+      let cost = 0;
+      for (const o of geomBoxes) cost += overlapArea(b, o) * 3;
+      for (const o of frameLabels) cost += overlapArea(b, o) * 12;
+      for (const o of ui) cost += overlapArea(b, o) * 12;
+      /* 挪一步的代价 ≈ 半个字的面积，太小会乱跳、太大会宁可压住 */
+      cost += (Math.abs(off[0]) + Math.abs(off[1])) * 0.30;
+      /* 被夹回画布 / 被浮层推走也是代价：宁可自己挪远一点，也别贴着边 */
+      cost += clampMoved * 4 + uiMoved * 1.5;
+      if (cost < bestCost) { bestCost = cost; best = b; }
+    }
+    if (!best) continue;
+    const cx = (best.x0 + best.x1) / 2, cy = (best.y0 + best.y1) / 2;
+    c2.save();
+    c2.font = '600 ' + size + 'px Inter, "Microsoft YaHei", sans-serif';
+    c2.textAlign = 'center'; c2.textBaseline = 'middle';
+    const tw = c2.measureText(it.text).width;
+    c2.fillStyle = 'rgba(2, 6, 23, .74)';
+    c2.beginPath();
+    if (c2.roundRect) c2.roundRect(best.x0, best.y0, best.x1 - best.x0, best.y1 - best.y0, 6);
+    else c2.rect(best.x0, best.y0, best.x1 - best.x0, best.y1 - best.y0);
+    c2.fill();
+    c2.fillStyle = it.opts.color || '#e2e8f0';
+    c2.fillText(it.text, cx, cy + 0.5);
+    c2.restore();
+    frameLabels.push({ x0: best.x0, y0: best.y0, x1: best.x1, y1: best.y1, text: it.text });
+  }
+  labelQueue = [];
+}
+function uiBoxes() {
+  const c = $('rev-canvas');
+  if (!c || !c.getBoundingClientRect) return [];
+  const cr = c.getBoundingClientRect();
+  const out = [];
+  for (const sel of ['.stage-hint', '.stage-verdict', '.stage-help']) {
+    const el = document.querySelector('.lab3d-stage ' + sel);
+    if (!el || !el.getBoundingClientRect) continue;
+    const r = el.getBoundingClientRect();
+    if (r.width < 2 || r.height < 2) continue;
+    out.push({ x0: r.left - cr.left, y0: r.top - cr.top, x1: r.right - cr.left, y1: r.bottom - cr.top });
+  }
+  return out;
+}
+
+/* ================= 7. 场景绘制 ================= */
+const C_IN = '#fbbf24';        // 入射光（琥珀）
+const C_REFL = '#34d399';      // 反射光（绿）
+const C_REFR = '#60a5fa';      // 折射光（蓝）
+const C_REV = '#f472b6';       // 反向光（粉，虚线）
+const C_NORM = '#94a3b8';
+
+function pushBox(c2, p, q, r) {
+  const s = project(p, q);
+  if (!isFinite(s.x) || !isFinite(s.y) || !(s.z > 0)) return;
+  geomBoxes.push({ x0: s.x - r, y0: s.y - r, x1: s.x + r, y1: s.y + r });
+}
+
+function drawBackdrop(c2, q, w, h) {
+  const g = c2.createRadialGradient(w * 0.46, h * 0.34, 20, w * 0.46, h * 0.34, Math.max(w, h) * 0.78);
+  g.addColorStop(0, 'rgba(30, 64, 100, .55)');
+  g.addColorStop(0.62, 'rgba(8, 22, 36, .5)');
+  g.addColorStop(1, 'rgba(3, 10, 18, .62)');
+  c2.save(); c2.fillStyle = g; c2.fillRect(0, 0, w, h); c2.restore();
+}
+
+function drawInterface(c2, q, g) {
+  const S = SURF;
+  const corners = [[-S, 0, -S], [S, 0, -S], [S, 0, S], [-S, 0, S]];
+  const pr = corners.map(p => project(p, q));
+  if (pr.every(p => isFinite(p.x) && isFinite(p.y))) {
+    c2.save();
+    c2.beginPath();
+    c2.moveTo(pr[0].x, pr[0].y);
+    for (let i = 1; i < 4; i++) c2.lineTo(pr[i].x, pr[i].y);
+    c2.closePath();
+    const gg = c2.createLinearGradient(pr[0].x, pr[0].y, pr[2].x, pr[2].y);
+    gg.addColorStop(0, 'rgba(37, 99, 235, .26)');
+    gg.addColorStop(1, 'rgba(6, 182, 212, .18)');
+    c2.fillStyle = gg; c2.fill();
+    c2.strokeStyle = 'rgba(125, 211, 252, .55)'; c2.lineWidth = 1.6; c2.stroke();
+    c2.restore();
+  }
+  /* 界面上的网格：让「水平面」这件事在 3D 里读得出来 */
+  const step = 1.3;
+  for (let x = -S + step; x < S - 1e-6; x += step) seg(c2, [x, 0, -S], [x, 0, S], q, { color: 'rgba(125, 211, 252, .14)', width: 1 });
+  for (let z = -S + step; z < S - 1e-6; z += step) seg(c2, [-S, 0, z], [S, 0, z], q, { color: 'rgba(125, 211, 252, .14)', width: 1 });
+
+  /* 水体：只在界面上方视角看得到的那几块侧壁（固定顺序画，不做排序） */
+  const B = WATER_BOT;
+  const walls = [
+    [[-S, 0, -S], [S, 0, -S], [S, B, -S], [-S, B, -S]],
+    [[-S, 0, S], [S, 0, S], [S, B, S], [-S, B, S]],
+    [[-S, 0, -S], [-S, 0, S], [-S, B, S], [-S, B, -S]],
+    [[S, 0, -S], [S, 0, S], [S, B, S], [S, B, -S]]
+  ];
+  for (const wl of walls) {
+    const pp = wl.map(p => project(p, q));
+    if (!pp.every(p => isFinite(p.x) && isFinite(p.y))) continue;
+    c2.save();
+    c2.beginPath(); c2.moveTo(pp[0].x, pp[0].y);
+    for (let i = 1; i < 4; i++) c2.lineTo(pp[i].x, pp[i].y);
+    c2.closePath();
+    c2.fillStyle = 'rgba(14, 116, 144, .13)';
+    c2.fill();
+    c2.strokeStyle = 'rgba(34, 211, 238, .16)'; c2.lineWidth = 1; c2.stroke();
+    c2.restore();
+  }
+  /* ★ 水面【不】登记成障碍盒：它是一整块背景，登记进去会把所有标签都挤到画布边缘。
+     真正要避开的「关键几何」是 A / O / R / T 这几个点（在 drawRays / drawMarkers 里登记）。 */
+}
+
+function drawPlane(c2, q, g) {
+  const u = g.u;
+  const S = 2.45, TOP = 2.0, BOT = -2.0;
+  const corners = [
+    vadd(vscl(u, -S), [0, BOT, 0]), vadd(vscl(u, -S), [0, TOP, 0]),
+    vadd(vscl(u, S), [0, TOP, 0]), vadd(vscl(u, S), [0, BOT, 0])
+  ];
+  const pp = corners.map(p => project(p, q));
+  if (pp.every(p => isFinite(p.x) && isFinite(p.y))) {
+    c2.save();
+    c2.beginPath(); c2.moveTo(pp[0].x, pp[0].y);
+    for (let i = 1; i < 4; i++) c2.lineTo(pp[i].x, pp[i].y);
+    c2.closePath();
+    c2.fillStyle = 'rgba(139, 92, 246, .10)';
+    c2.fill();
+    c2.strokeStyle = 'rgba(167, 139, 250, .45)'; c2.lineWidth = 1.4; c2.stroke();
+    c2.restore();
+  }
+  label('入射面', vadd(vscl(u, S * 0.92), [0, TOP * 0.86, 0]), q, { color: '#c4b5fd', size: 11 });
+}
+
+function drawNormal(c2, q, g) {
+  const N0 = [0, -1.85, 0], N1 = [0, 1.95, 0];
+  seg(c2, N0, N1, q, { color: C_NORM, width: 1.8, dash: [7, 6] });
+  disc(c2, N1, q, 3.2, C_NORM, null);
+  pushBox(c2, [0, 0, 0], q, 9);
+  label('法线', [0, 2.08, 0], q, { color: '#cbd5e1', size: 11 });
+}
+
+function drawRays(c2, q, g) {
+  const O = g.O, A = g.A;
+  let n = 0;
+  /* ---- 正向光路（实线）---- */
+  if (state.showFwd) {
+    if (showReflBranch() && g.reflEnd) {
+      seg(c2, A, O, q, { color: C_IN, width: 3.2 });
+      seg(c2, O, g.reflEnd, q, { color: C_REFL, width: 3.2 });
+      arrowAt(c2, O, g.reflEnd, q, C_REFL, 12);
+      n += 2;
+    }
+    if (showRefrBranch() && g.refrEnd) {
+      if (!(showReflBranch() && g.reflEnd)) { seg(c2, A, O, q, { color: C_IN, width: 3.2 }); n += 1; }
+      seg(c2, O, g.refrEnd, q, { color: C_REFR, width: 3.2 });
+      arrowAt(c2, O, g.refrEnd, q, C_REFR, 12);
+      n += 1;
+    }
+    /* 入射光若两支都隐藏则单独画 */
+    if (!(showReflBranch() && g.reflEnd) && !(showRefrBranch() && g.refrEnd)) {
+      seg(c2, A, O, q, { color: C_IN, width: 3.2 }); n += 1;
+    }
+    if (showReflBranch() && g.reflEnd) arrowAt(c2, A, O, q, C_IN, 12);
+    pushBox(c2, A, q, 10);
+    pushBox(c2, O, q, 10);
+    if (g.reflEnd) pushBox(c2, g.reflEnd, q, 9);
+    if (g.refrEnd) pushBox(c2, g.refrEnd, q, 9);
+  }
+  /* ---- 反向光路（虚线，箭头朝回）---- */
+  if (state.showRev) {
+    if (showReflBranch() && g.revRefl) {
+      polyline(c2, g.revRefl, q, { color: C_REV, width: 2.2, dash: [9, 7] });
+      arrowAt(c2, g.revRefl[1], g.revRefl[2], q, C_REV, 11);
+      n += 2;
+    }
+    if (showRefrBranch() && g.revRefr) {
+      polyline(c2, g.revRefr, q, { color: '#fb7185', width: 2.2, dash: [9, 7] });
+      arrowAt(c2, g.revRefr[1], g.revRefr[2], q, '#fb7185', 11);
+      n += 2;
+    }
+  }
+  return n;
+}
+
+function drawArcs(c2, q, g) {
+  const R = 0.78;
+  const u = g.u;
+  const specs = [];
+  const push = (dir, color, txt) => {
+    if (!dir) return;
+    const hh = [dir[0], 0, dir[2]];
+    if (vlen(hh) < 1e-9) return;                       // 垂直入射：入射面未定义，不画弧
+    const vy = dir[1] > 0 ? 1 : -1;
+    const ang = Math.acos(clamp(Math.abs(dir[1]), -1, 1));
+    const pts = [];
+    const M = 26;
+    for (let i = 0; i <= M; i++) {
+      const a = ang * i / M;
+      pts.push([Math.sin(a) * u[0] * R, vy * Math.cos(a) * R, Math.sin(a) * u[2] * R]);
+    }
+    polyline(c2, pts, q, { color: color, width: 1.8 });
+    const mid = [Math.sin(ang * 0.5) * u[0] * (R + 0.20), vy * Math.cos(ang * 0.5) * (R + 0.20), Math.sin(ang * 0.5) * u[2] * (R + 0.20)];
+    specs.push({ p: mid, txt: txt, color: color });
+  };
+  push(g.d, C_IN, 'θ₁ ' + g.r.theta1.toFixed(1) + '°');
+  push(g.reflDir, C_REFL, 'θ₁′ ' + (g.r.thetaR === null ? '—' : g.r.thetaR.toFixed(1) + '°'));
+  push(g.refrDir, C_REFR, 'θ₂ ' + (g.r.theta2 === null ? '—' : g.r.theta2.toFixed(1) + '°'));
+  for (const s of specs) label(s.txt, s.p, q, { color: s.color, size: 11 });
+}
+
+function drawMarkers(c2, q, g) {
+  /* 逐点比对：正向折线第 i 点 ↔ 反向折线第 n−1−i 点 */
+  const jobs = [];
+  if (showReflBranch() && g.reflEnd && g.revRefl) jobs.push({ d: g.r.dRefl, name: '反射支', end: g.reflEnd });
+  if (showRefrBranch() && g.refrEnd && g.revRefr) jobs.push({ d: g.r.dRefr, name: '折射支', end: g.refrEnd });
+  if (!jobs.length) return;
+  /* 两支共用的两个点只画一次，否则同一个位置会叠两圈 */
+  ring(c2, g.A, q, 7, 'rgba(244, 114, 182, .85)'); pushBox(c2, g.A, q, 8);
+  ring(c2, g.O, q, 7, 'rgba(244, 114, 182, .85)'); pushBox(c2, g.O, q, 8);
+  for (const j of jobs) {
+    ring(c2, j.end, q, 7, 'rgba(244, 114, 182, .85)');
+    pushBox(c2, j.end, q, 8);
+    if (!j.d) continue;
+    let mx = 0;
+    for (const v of j.d.pts) if (v > mx) mx = v;
+    /* ★ 锚在【本支自己的出射端】：两支都锚在 A 附近时，两个 100+ px 宽的标签
+       挤在同一处，候选位再远也分不开（实测残留 1298 px² 重叠）。 */
+    label(j.name + ' Δ ' + mx.toExponential(1), vadd(j.end, [0, 0.30, 0]), q, { color: '#f9a8d4', size: 10 });
+  }
+}
+
+/* ---- 动画：光沿原路掉头 ---- */
+function activePathEnds() {
+  const g = sceneGeom();
+  const out = [];
+  if (showReflBranch() && g.reflEnd) out.push({ branch: 'refl', A: g.A, O: g.O, end: g.reflEnd });
+  if (showRefrBranch() && g.refrEnd) out.push({ branch: 'refr', A: g.A, O: g.O, end: g.refrEnd });
+  return out;
+}
+/* 折线上按弧长比例取点（A→O→end） */
+function pointOnPath(A, O, end, t) {
+  const L1 = vlen(vsub(O, A)), L2 = vlen(vsub(end, O)), L = L1 + L2;
+  if (!(L > 1e-9)) return A.slice();
+  const s = clamp(t, 0, 1) * L;
+  if (s <= L1) return vadd(A, vscl(vnorm(vsub(O, A)), s));
+  return vadd(O, vscl(vnorm(vsub(end, O)), s - L1));
+}
+function animPoints() {
+  const ends = activePathEnds();
+  if (!ends.length) return [];
+  const t = clamp(state.animT, 0, 1);
+  const e = t * t * (3 - 2 * t);                 // 平滑缓动，单调 ⇒ 仍可确定性验证
+  const out = [];
+  for (const b of ends) {
+    if (e <= 0.5) out.push({ branch: b.branch, t: e / 0.5, p: pointOnPath(b.A, b.O, b.end, e / 0.5), dir: 'fwd' });
+    else out.push({ branch: b.branch, t: 1 - (e - 0.5) / 0.5, p: pointOnPath(b.A, b.O, b.end, 1 - (e - 0.5) / 0.5), dir: 'rev' });
+  }
+  return out;
+}
+function drawAnim(c2, q, g) {
+  const pts = animPoints();
+  if (!pts.length) return;
+  for (const it of pts) {
+    const col = it.dir === 'fwd' ? '#fde68a' : '#f9a8d4';
+    disc(c2, it.p, q, 5.4, col, 'rgba(2, 6, 23, .9)');
+    const s = project(it.p, q);
+    if (isFinite(s.x)) {
+      c2.save();
+      c2.beginPath(); c2.arc(s.x, s.y, 12, 0, Math.PI * 2);
+      c2.fillStyle = it.dir === 'fwd' ? 'rgba(253, 230, 138, .16)' : 'rgba(249, 168, 212, .18)';
+      c2.fill();
+      c2.restore();
+    }
+    pushBox(c2, it.p, q, 7);
+  }
+}
+
+/* ================= 8. render ================= */
+function render() {
+  const c = $('rev-canvas');
+  if (!c || !ctx) return;
+  const w = state.w, h = state.ch;
+  ctx.setTransform(state.dpr, 0, 0, state.dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  geomBoxes = []; frameLabels = []; labelQueue = []; frameBoxes = [];
+  const q = {};
+  makeCam(q, w, h);
+  const g = sceneGeom();
+  drawBackdrop(ctx, q, w, h);
+  drawInterface(ctx, q, g);
+  if (state.showPlane) drawPlane(ctx, q, g);
+  if (state.showNormal) drawNormal(ctx, q, g);
+  const rays = drawRays(ctx, q, g);
+  if (state.showNormal) drawArcs(ctx, q, g);
+  if (state.showMatch) drawMarkers(ctx, q, g);
+  drawAnim(ctx, q, g);
+  flushLabels(ctx, w, h);
+  const O = project([0, 0, 0], q);
+  drawnCache = {
+    ok: true,
+    F: { x: O.x, y: O.y },
+    rayCount: rays,
+    labelCount: frameLabels.length,
+    boxCount: geomBoxes.length,
+    animPts: animPoints().map(a => ({ branch: a.branch, dir: a.dir, x: a.p[0], y: a.p[1], z: a.p[2] })),
+    camEye: q.eye.slice()
+  };
+  frameBoxes = geomBoxes.concat(frameLabels);
+}
+function renderNow() { render(); }
+function tick() {
+  const now = performance.now();
+  const dt = Math.min(0.05, (now - (tick.last || now)) / 1000);
+  tick.last = now;
+  stepAnim(dt);
+  render();
+  requestAnimationFrame(tick);
+}
+
+/* ================= 9. 动画推进（tick 与调试钩子走同一段） ================= */
+function stepAnim(dt) {
+  if (!state.animRun) return;
+  state.animT = Math.min(1, state.animT + dt * 0.9);
+  if (state.animT >= 1) { state.animRun = false; state.animDone = true; }
+}
+function startFlip() {
+  if (!state.showFwd && !state.showRev) {
+    state.hint = '先打开「正向光路」或「反向光路」—— 两条都关掉就看不到光走回去';
+    syncFlipBtn(); updateReadout(); return false;
+  }
+  state.animT = 0; state.animRun = true; state.animDone = false;
+  state.hint = '';
+  syncFlipBtn(); updateReadout();
+  return true;
+}
+function setAnim(t) {
+  state.animT = clamp(t, 0, 1);
+  state.animRun = false;
+  state.animDone = state.animT >= 1;
+  syncFlipBtn(); updateReadout(); renderNow();
+}
+function finishFlip() {           // 调试钩子：走【同一个】stepAnim，不另写一遍公式
+  state.animRun = true;
+  let guard = 0;
+  while (state.animRun && guard++ < 100000) stepAnim(1 / 60);
+  syncFlipBtn(); updateReadout(); renderNow();
+}
+
+/* ================= 10. 视角 / 预设 ================= */
+function applyView(v) {
+  if (!VIEWS[v]) return false;
+  state.view = v;
+  state.camYawOff = 0; state.camPitchOff = 0;
+  document.querySelectorAll('.lab3d-toolbar [data-view]').forEach(b => b.classList.toggle('active', b.getAttribute('data-view') === v));
+  renderNow();
+  return true;
+}
+function setZoom(z) { state.zoom = clamp(z, 0.35, 3.2); renderNow(); }
+
+const PRESETS = {
+  both:      { dir: 'air2water', theta: 48, phi: 30, n: 1.333, branch: 'both', nm: '两者都有' },
+  reflOnly:  { dir: 'air2water', theta: 48, phi: 30, n: 1.333, branch: 'refl', nm: '只反射' },
+  refrOnly:  { dir: 'air2water', theta: 48, phi: 30, n: 1.333, branch: 'refr', nm: '只折射' },
+  fromWater: { dir: 'water2air', theta: 30, phi: 30, n: 1.333, branch: 'both', nm: '水 → 空气' },
+  tir:       { dir: 'water2air', theta: 60, phi: 30, n: 1.333, branch: 'both', nm: '全反射' },
+  normal:    { dir: 'air2water', theta: 0,  phi: 30, n: 1.333, branch: 'both', nm: '垂直入射' }
+};
+function applyPreset(k) {
+  const p = PRESETS[k];
+  if (!p) return false;
+  state.dir = p.dir; state.theta = p.theta; state.phi = p.phi; state.n = p.n; state.branch = p.branch;
+  state.preset = k;
+  state.animT = 0; state.animDone = false; state.animRun = false;
+  syncInputs(); syncFlipBtn(); renderNow(); updateReadout();
+  return true;
+}
+function markPreset(k) {
+  state.preset = k;
+  document.querySelectorAll('#rev-presets button').forEach(b => b.classList.toggle('active', b.getAttribute('data-preset') === k));
+}
+function setDir(d) {
+  if (d !== 'air2water' && d !== 'water2air') return false;
+  state.dir = d; markPreset(''); syncInputs(); renderNow(); updateReadout(); return true;
+}
+function setBranch(b) {
+  if (['both', 'refl', 'refr'].indexOf(b) < 0) return false;
+  state.branch = b; markPreset(''); syncInputs(); renderNow(); updateReadout(); return true;
+}
+function setTheta(v) { state.theta = clamp(+v, TH_MIN, TH_MAX); markPreset(''); syncInputs(); renderNow(); updateReadout(); }
+function setPhi(v) { state.phi = clamp(+v, PHI_MIN, PHI_MAX); markPreset(''); syncInputs(); renderNow(); updateReadout(); }
+function setN(v) { state.n = clamp(+v, NW_MIN, NW_MAX); markPreset(''); syncInputs(); renderNow(); updateReadout(); }
+
+const TOGGLE_ID = {
+  showFwd: 'rev-fwd', showRev: 'rev-rev', showNormal: 'rev-normal',
+  showPlane: 'rev-plane', showMatch: 'rev-match'
+};
+function setToggle(k, v) {
+  if (!(k in TOGGLE_ID)) return false;
+  state[k] = !!v;
+  const el = $(TOGGLE_ID[k]);
+  if (el) el.checked = !!v;
+  renderNow(); updateReadout();
+  return true;
+}
+
+/* ================= 11. 交互：拖动 ================= */
+function rayStartPoint() { return sceneGeom().A; }
+/* 拖入射光起点改 θ：屏幕上找使 A(θ) 最靠近指针的那个 θ（粗扫 + 三分细化）。
+   ★ 不反解 φ —— 那几个视角的相机方位本身就跟着 φ 转，φ 的雅可比会退化。 */
+function dragRayTo(clientX, clientY) {
+  const c = $('rev-canvas');
+  if (!c) return false;
+  const r = c.getBoundingClientRect();
+  const px = clientX - r.left, py = clientY - r.top;
+  const q = {}; makeCam(q, state.w, state.ch);
+  const cost = (th) => {
+    const save = state.theta; state.theta = th;
+    const p = project(rayStartPoint(), q);
+    state.theta = save;
+    if (!isFinite(p.x)) return 1e9;
+    return Math.hypot(p.x - px, p.y - py);
+  };
+  let bestTh = state.theta, bestC = Infinity;
+  for (let i = 0; i <= 90; i++) {
+    const th = TH_MIN + (TH_MAX - TH_MIN) * i / 90;
+    const cc = cost(th);
+    if (cc < bestC) { bestC = cc; bestTh = th; }
+  }
+  let lo = Math.max(TH_MIN, bestTh - (TH_MAX - TH_MIN) / 90);
+  let hi = Math.min(TH_MAX, bestTh + (TH_MAX - TH_MIN) / 90);
+  for (let i = 0; i < 24; i++) {
+    const m1 = lo + (hi - lo) / 3, m2 = hi - (hi - lo) / 3;
+    if (cost(m1) < cost(m2)) hi = m2; else lo = m1;
+  }
+  setTheta((lo + hi) / 2);
+  return true;
+}
+function overRay(clientX, clientY) {
+  const c = $('rev-canvas');
+  if (!c) return false;
+  const r = c.getBoundingClientRect();
+  const q = {}; makeCam(q, state.w, state.ch);
+  const p = project(rayStartPoint(), q);
+  return Math.hypot(p.x - (clientX - r.left), p.y - (clientY - r.top)) < 24;
+}
+
+/* ================= 12. 记录表 ================= */
+function ro() {
+  const g = sceneGeom();
+  const r = g.r;
+  return {
+    theta1: r.theta1, thetaR: r.thetaR, theta2: r.theta2,
+    crit: r.crit, tir: r.tir, maxDiff: r.maxDiff,
+    dRefl: r.dRefl, dRefr: r.dRefr,
+    reflErr: r.reflErr, snell: r.snell, plane: r.plane.max,
+    segFwd: r.segFwd, segRev: r.segRev,
+    dir: state.dir, branch: state.branch, phi: state.phi, n: state.n,
+    A: g.A, reflEnd: g.reflEnd, refrEnd: g.refrEnd,
+    reflDir: g.reflDir, refrDir: g.refrDir, d: g.d,
+    revRefl: g.revRefl, revRefr: g.revRefr
+  };
+}
+function f2(v) { return (v == null || !isFinite(v)) ? '—' : v.toFixed(2); }
+function f1(v) { return (v == null || !isFinite(v)) ? '—' : v.toFixed(1); }
+function sci(v) { return (v == null || !isFinite(v)) ? '—' : v.toExponential(1); }
+function dirName() { return state.dir === 'air2water' ? '空气 → 水' : '水 → 空气'; }
+function branchName() { return state.branch === 'both' ? '反射 + 折射' : (state.branch === 'refl' ? '只反射' : '只折射'); }
+
+function recordNow() {
+  const R = ro();
+  state.records.push({
+    theta1: R.theta1, thetaR: R.thetaR, theta2: R.theta2,
+    dir: dirName(), maxDiff: R.maxDiff,
+    ok: (R.reflErr < ANG_TOL) && (R.maxDiff < DIFF_TOL) && (R.theta2 === null || Math.abs(R.snell) < ANG_TOL)
+  });
+  renderRecords();
+}
+function clearRecords() { state.records.length = 0; renderRecords(); }
+function renderRecords() {
+  const tb = $('rev-rows');
+  const cnt = $('rev-count');
+  if (!tb) return;
+  if (!state.records.length) {
+    tb.innerHTML = '<tr><td colspan="7" class="empty">尚无记录，先摆好一种情形再点「记录当前数据」</td></tr>';
+  } else {
+    tb.innerHTML = state.records.map((r, i) => '<tr' + (i === state.records.length - 1 ? ' class="flash"' : '') + '>' +
+      '<td class="num">' + (i + 1) + '</td>' +
+      '<td class="num">' + f1(r.theta1) + '°</td>' +
+      '<td class="num">' + f1(r.thetaR) + '°</td>' +
+      '<td class="num">' + (r.theta2 === null ? '全反射' : f1(r.theta2) + '°') + '</td>' +
+      '<td>' + r.dir + '</td>' +
+      '<td class="num">' + sci(r.maxDiff) + '</td>' +
+      '<td>' + (r.ok ? '✅ 重合' : '⚠️ 待查') + '</td>' +
+      '</tr>').join('');
+  }
+  if (cnt) cnt.textContent = '已记录 ' + state.records.length + ' 组';
+  const sum = $('rev-summary');
+  if (sum) {
+    if (!state.records.length) {
+      sum.innerHTML = '先记「垂直入射」那一行：反射角应该正好等于 0°。再把入射角一档一档加大，看反射角那一列与入射角那一列始终逐位相同。';
+    } else {
+      const ds = state.records.map(r => r.maxDiff);
+      const mx = Math.max.apply(null, ds);
+      const allEq = state.records.every(r => Math.abs(r.thetaR - r.theta1) < 1e-9);
+      sum.innerHTML = '已记 <b>' + state.records.length + '</b> 组：反射角与入射角的差<b>最大 ' +
+        sci(Math.max.apply(null, state.records.map(r => Math.abs(r.thetaR - r.theta1)))) +
+        '</b>' + (allEq ? '（每一行都逐位相同）' : '') +
+        '；正反折线的最大坐标差 <b>' + sci(mx) + '</b> —— 这就是「同一条路」被量化后的样子。';
+    }
+  }
+}
+
+/* ================= 13. 结论 ================= */
+function lawStates(R) {
+  const airMode = (R.dir === 'air2water');
+  const out = [];
+  out.push({
+    ok: R.reflErr < ANG_TOL, na: false,
+    txt: '反射角与入射角之差 ' + sci(R.reflErr) + '°'
+  });
+  out.push({
+    ok: (R.theta2 === null) ? (R.plane < 1e-12) : (Math.abs(R.snell) < ANG_TOL && R.plane < 1e-12),
+    na: false,
+    txt: (R.theta2 === null ? '全反射：无折射线，只核共面残差 ' + sci(R.plane)
+      : 'Snell 残差 ' + sci(R.snell) + '；共面残差 ' + sci(R.plane))
+  });
+  out.push({
+    ok: R.maxDiff < DIFF_TOL, na: false,
+    txt: '正反折线最大坐标差 ' + sci(R.maxDiff) + ' m（判据 < 1e-9）'
+  });
+  out.push({
+    ok: airMode ? true : (R.theta1 > R.crit ? R.tir === true : R.tir === false),
+    na: airMode,
+    txt: airMode ? '空气 → 水不存在临界角' :
+      ('θ₁=' + f1(R.theta1) + '° 对 θc=' + f1(R.crit) + '°：' + (R.tir ? '已全反射' : '仍有折射线'))
+  });
+  out.push({
+    ok: R.theta1 < 0.05 ? (R.reflDir && vdot(R.reflDir, vscl(R.d, -1)) > 1 - 1e-9) : true,
+    na: R.theta1 >= 0.05,
+    txt: R.theta1 < 0.05 ? '垂直入射：反射线沿原路返回' : '当前 θ₁=' + f1(R.theta1) + '°，非垂直入射'
+  });
+  return out;
+}
+
+/* ================= 14. DOM 同步 ================= */
+function syncInputs() {
+  const set = (id, v) => { const e = $(id); if (e) e.value = v; };
+  const txt = (id, v) => { const e = $(id); if (e) e.textContent = v; };
+  set('rev-theta', state.theta); txt('rev-theta-value', f1(state.theta) + '°');
+  set('rev-phi', state.phi); txt('rev-phi-value', Math.round(state.phi) + '°');
+  set('rev-n', state.n); txt('rev-n-value', state.n.toFixed(3));
+  txt('rev-dir-name', dirName());
+  txt('rev-branch-name', branchName());
+  txt('rev-crit', f2(critAngle(state.n)) + '°');
+  document.querySelectorAll('#rev-dir button').forEach(b => b.classList.toggle('active', b.getAttribute('data-dir') === state.dir));
+  document.querySelectorAll('#rev-branch button').forEach(b => b.classList.toggle('active', b.getAttribute('data-branch') === state.branch));
+  if (state.preset) markPreset(state.preset);
+  else document.querySelectorAll('#rev-presets button').forEach(b => b.classList.remove('active'));
+  for (const k in TOGGLE_ID) { const e = $(TOGGLE_ID[k]); if (e) e.checked = !!state[k]; }
+}
+function syncFlipBtn() {
+  const b = $('rev-flip');
+  if (!b) return;
+  b.classList.remove('ready', 'running', 'done');
+  if (state.animRun) { b.classList.add('running'); b.textContent = '↩ 反向中…'; }
+  else if (state.animDone) { b.classList.add('done'); b.textContent = '↩ 再走一遍'; }
+  else if (state.animT > 0) { b.classList.add('done'); b.textContent = '↩ 再走一遍'; }
+  else { b.classList.add('ready'); b.textContent = '↩ 一键反向'; }
+}
+function updateReadout() {
+  const R = ro();
+  const txt = (id, v) => { const e = $(id); if (e) e.textContent = v; };
+  txt('rev-m1', f2(R.theta1) + '°');
+  txt('rev-m2', f2(R.thetaR) + '°');
+  txt('rev-m3', R.theta2 === null ? '全反射' : f2(R.theta2) + '°');
+  txt('rev-m4', sci(R.maxDiff) + ' m');
+  const m4 = $('rev-m4');
+  if (m4 && m4.parentNode) m4.parentNode.classList.toggle('bad', !(R.maxDiff < DIFF_TOL));
+
+  /* 结论列表 */
+  const L = lawStates(R);
+  L.forEach((s, i) => {
+    const el = $('rev-law' + (i + 1));
+    if (!el) return;
+    el.classList.toggle('on', !!s.ok && !s.na);
+    el.classList.toggle('off', s.ok === false && !s.na);
+    const small = el.querySelector('small');
+    if (!small) {
+      const sp = document.createElement('small');
+      sp.style.cssText = 'display:block;color:#7c93a5;font-size:10px;margin-top:3px';
+      el.querySelector('span').appendChild(sp);
+    }
+    el.querySelector('span small').textContent = (s.na ? '（当前状态不适用）' : '') + s.txt;
+  });
+  const lv = $('rev-law-verdict');
+  if (lv) {
+    const bad = L.filter(s => s.ok === false && !s.na).length;
+    lv.textContent = '当前：' + (bad ? (bad + ' 条不成立') : '五条结论全部成立');
+  }
+
+  /* 面板②：逐点对账 */
+  const c2 = $('rev-cmp2');
+  if (c2) {
+    const rows = [];
+    const add = (k, v, cls) => rows.push('<div class="row ' + (cls || '') + '"><span class="k">' + k + '</span><b>' + v + '</b></div>');
+    add('正向折线（反射支）', R.reflEnd ? 'A → O → R' : '—');
+    add('反向折线（反射支）', R.revRefl ? 'R → O → A′' : '—');
+    if (R.dRefl) R.dRefl.pts.forEach((d, i) => add('&nbsp;&nbsp;第 ' + (i + 1) + ' 对点坐标差', sci(d) + ' m', d < DIFF_TOL ? 'hl' : 'warn'));
+    if (R.reflEnd) add('折射支最大坐标差', R.dRefr ? sci(R.dRefr.max) + ' m' : '—', R.dRefr && R.dRefr.max < DIFF_TOL ? 'hl' : '');
+    add('光线段数 正向 / 反向', R.segFwd + ' / ' + R.segRev, R.segFwd === R.segRev ? 'hl' : 'warn');
+    add('反射角 − 入射角', sci(R.reflErr) + '°', R.reflErr < ANG_TOL ? 'hl' : 'warn');
+    if (R.theta2 === null) {
+      add('n₁sinθ₁ / n₂sinθ₂', '（全反射，无折射线）');
+    } else {
+      const l1 = (state.dir === 'air2water' ? 1 : state.n) * Math.sin(R.theta1 * D2R);
+      const l2 = (state.dir === 'air2water' ? state.n : 1) * Math.sin(R.theta2 * D2R);
+      add('n₁sinθ₁ / n₂sinθ₂', l1.toFixed(12) + ' / ' + l2.toFixed(12),
+        Math.abs(l1 - l2) < ANG_TOL ? 'hl' : 'warn');
+    }
+    c2.innerHTML = rows.join('');
+  }
+  const cv = $('rev-cmp-verdict');
+  if (cv) {
+    const good = R.maxDiff < DIFF_TOL && R.reflErr < ANG_TOL;
+    cv.innerHTML = good
+      ? '<b class="ok">正反两条折线逐点重合</b>：最大坐标差 ' + sci(R.maxDiff) +
+      ' m。反向那条折线是把出射方向掉头、两侧介质对调后<b>重新追迹</b>出来的，' +
+      '不是把正向折线取负 —— 所以这个「重合」是有信息量的。'
+      : '<b class="no">重合判定未通过</b>：最大坐标差 ' + sci(R.maxDiff) + ' m。';
+  }
+  /* 舞台上的结论条（窄屏侧栏会被挤到下面，眼睛盯着装置时也要看得见） */
+  const vd = $('rev-verdict');
+  if (vd) {
+    const bad = L.filter(s => s.ok === false && !s.na).length;
+    vd.className = 'stage-verdict' + (bad ? ' warn' : '');
+    vd.textContent = state.hint ? state.hint
+      : (bad ? ('⚠️ ' + bad + ' 条结论不成立') : ('✓ 正反折线重合 ' + sci(R.maxDiff) + ' m · 反射角 = 入射角'));
+  }
+
+  /* 面板①：曲线 */
+  drawChart();
+}
+
+/* ---- 面板① 曲线：出射角随入射角 ---- */
+function drawChart() {
+  const c = $('rev-chart');
+  if (!c || !c.getContext) return;
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const w = c.clientWidth || 420, h = c.clientHeight || 178;
+  if (c.width !== Math.round(w * dpr) || c.height !== Math.round(h * dpr)) {
+    c.width = Math.round(w * dpr); c.height = Math.round(h * dpr);
+  }
+  const g2 = c.getContext('2d');
+  g2.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g2.clearRect(0, 0, w, h);
+  const padL = 34, padR = 10, padT = 12, padB = 22;
+  const X = th => padL + (w - padL - padR) * (th - TH_MIN) / (TH_MAX - TH_MIN);
+  const Y = a => h - padB - (h - padT - padB) * clamp(a, 0, 90) / 90;
+  /* 网格 */
+  g2.strokeStyle = 'rgba(148,163,184,.16)'; g2.lineWidth = 1;
+  for (let a = 0; a <= 90; a += 30) {
+    g2.beginPath(); g2.moveTo(padL, Y(a)); g2.lineTo(w - padR, Y(a)); g2.stroke();
+    g2.fillStyle = '#64748b'; g2.font = '9px Inter, sans-serif'; g2.textAlign = 'right'; g2.textBaseline = 'middle';
+    g2.fillText(a + '°', padL - 5, Y(a));
+  }
+  for (let t = 0; t <= TH_MAX; t += 15) {
+    g2.beginPath(); g2.moveTo(X(t), padT); g2.lineTo(X(t), h - padB); g2.stroke();
+    g2.fillStyle = '#64748b'; g2.textAlign = 'center'; g2.textBaseline = 'top';
+    g2.fillText(t + '°', X(t), h - padB + 5);
+  }
+  /* 45° 参考线（反射角 = 入射角） */
+  g2.save(); g2.setLineDash([5, 4]); g2.strokeStyle = 'rgba(226,232,240,.45)'; g2.lineWidth = 1.2;
+  g2.beginPath(); g2.moveTo(X(0), Y(0)); g2.lineTo(X(90), Y(90)); g2.stroke(); g2.restore();
+  /* 反射角曲线（就是 45° 线，单独描一遍以示「它落在参考线上」） */
+  g2.strokeStyle = '#34d399'; g2.lineWidth = 2.2;
+  g2.beginPath(); g2.moveTo(X(0), Y(0)); g2.lineTo(X(90), Y(90)); g2.stroke();
+  /* 折射角曲线 */
+  const airMode = (state.dir === 'air2water');
+  const n1 = airMode ? 1 : state.n, n2 = airMode ? state.n : 1;
+  g2.strokeStyle = '#60a5fa'; g2.lineWidth = 2.2;
+  g2.beginPath();
+  let started = false;
+  for (let i = 0; i <= 180; i++) {
+    const th = TH_MAX * i / 180;
+    const s2 = n1 * Math.sin(th * D2R) / n2;
+    if (s2 > 1) break;
+    const a2 = Math.asin(clamp(s2, -1, 1)) * R2D;
+    if (!started) { g2.moveTo(X(th), Y(a2)); started = true; } else g2.lineTo(X(th), Y(a2));
+  }
+  g2.stroke();
+  /* 临界角竖线（水 → 空气） */
+  if (!airMode) {
+    const tc = critAngle(state.n);
+    g2.save(); g2.setLineDash([4, 4]); g2.strokeStyle = 'rgba(248,113,113,.7)'; g2.lineWidth = 1.2;
+    g2.beginPath(); g2.moveTo(X(tc), padT); g2.lineTo(X(tc), h - padB); g2.stroke(); g2.restore();
+    g2.fillStyle = '#fca5a5'; g2.font = '9px Inter, sans-serif'; g2.textAlign = 'left'; g2.textBaseline = 'top';
+    g2.fillText('θc ' + tc.toFixed(1) + '°', X(tc) + 3, padT);
+  }
+  /* 当前点 */
+  const R = ro();
+  g2.fillStyle = '#fbbf24';
+  g2.beginPath(); g2.arc(X(R.theta1), Y(R.theta1), 4, 0, Math.PI * 2); g2.fill();
+  if (R.theta2 !== null) {
+    g2.fillStyle = '#93c5fd';
+    g2.beginPath(); g2.arc(X(R.theta1), Y(R.theta2), 4, 0, Math.PI * 2); g2.fill();
+  }
+  const c1 = $('rev-cmp');
+  if (c1) {
+    const add = (k, v, cls) => '<div class="row ' + (cls || '') + '"><span class="k">' + k + '</span><b>' + v + '</b></div>';
+    c1.innerHTML =
+      add('绿线 = 反射角 θ₁′', R.thetaR === null ? '—' : f2(R.thetaR) + '°', 'hl') +
+      add('蓝线 = 折射角 θ₂', R.theta2 === null ? '全反射' : f2(R.theta2) + '°') +
+      add('参考线（45°）', '反射角 = 入射角') +
+      add('入射面方位 φ', Math.round(R.phi) + '°（不影响两个角）');
+  }
+}
+
+/* ================= 15. 尺寸 ================= */
+function resize() {
+  const c = $('rev-canvas');
+  if (!c) return;
+  const r = c.getBoundingClientRect();
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  state.w = Math.max(320, Math.round(r.width || 900));
+  state.ch = Math.max(260, Math.round(r.height || 520));
+  state.dpr = dpr;
+  c.width = Math.round(state.w * dpr);
+  c.height = Math.round(state.ch * dpr);
+  renderNow();
+  drawChart();
+}
+
+/* ================= 16. 事件绑定 ================= */
+function bindEvents() {
+  const c = $('rev-canvas');
+  if (c) {
+    c.addEventListener('pointerdown', e => {
+      const r = c.getBoundingClientRect();
+      state.dragging = true;
+      state.dragMoved = 0;
+      state.dragKind = overRay(e.clientX, e.clientY) ? 'ray' : 'cam';
+      state.lastX = e.clientX; state.lastY = e.clientY;
+      try { c.setPointerCapture(e.pointerId); } catch (err) { }
+      c.classList.toggle('pick-ray', state.dragKind === 'ray');
+    });
+    c.addEventListener('pointermove', e => {
+      if (!state.dragging) {
+        c.classList.toggle('pick-ray', overRay(e.clientX, e.clientY));
+        return;
+      }
+      state.dragMoved += Math.abs(e.clientX - state.lastX) + Math.abs(e.clientY - state.lastY);
+      if (state.dragKind === 'ray') {
+        dragRayTo(e.clientX, e.clientY);
+      } else {
+        state.camYawOff += (e.clientX - state.lastX) * 0.0065;
+        state.camPitchOff = clamp(state.camPitchOff + (e.clientY - state.lastY) * 0.0055, -1.4, 1.4);
+        renderNow();
+      }
+      state.lastX = e.clientX; state.lastY = e.clientY;
+    });
+    const up = e => {
+      if (state.dragging && state.dragMoved < 6 && state.dragKind === 'cam') {
+        /* 位移 < 6px 才算「点击」，这里没有点击动作，只做收尾 */
+      }
+      state.dragging = false; state.dragKind = null;
+      c.classList.remove('pick-ray');
+      try { c.releasePointerCapture(e.pointerId); } catch (err) { }
+    };
+    c.addEventListener('pointerup', up);
+    c.addEventListener('pointercancel', up);
+    c.addEventListener('wheel', e => {
+      e.preventDefault();
+      setZoom(state.zoom * (e.deltaY < 0 ? 1.09 : 1 / 1.09));
+    }, { passive: false });
+  }
+  document.querySelectorAll('.lab3d-toolbar [data-view]').forEach(b => {
+    b.addEventListener('click', () => applyView(b.getAttribute('data-view')));
+  });
+  const rv = $('rev-reset-view');
+  if (rv) rv.addEventListener('click', () => { state.zoom = 1; applyView('iso'); });
+  const fl = $('rev-flip');
+  if (fl) fl.addEventListener('click', () => startFlip());
+  document.querySelectorAll('#rev-dir button').forEach(b => b.addEventListener('click', () => setDir(b.getAttribute('data-dir'))));
+  document.querySelectorAll('#rev-branch button').forEach(b => b.addEventListener('click', () => setBranch(b.getAttribute('data-branch'))));
+  document.querySelectorAll('#rev-presets button').forEach(b => b.addEventListener('click', () => applyPreset(b.getAttribute('data-preset'))));
+  const th = $('rev-theta'); if (th) th.addEventListener('input', () => setTheta(th.value));
+  const ph = $('rev-phi'); if (ph) ph.addEventListener('input', () => setPhi(ph.value));
+  const nn = $('rev-n'); if (nn) nn.addEventListener('input', () => setN(nn.value));
+  for (const k in TOGGLE_ID) {
+    const e = $(TOGGLE_ID[k]);
+    if (e) e.addEventListener('change', () => setToggle(k, e.checked));
+  }
+  const rc = $('rev-record'); if (rc) rc.addEventListener('click', recordNow);
+  const cl = $('rev-clear'); if (cl) cl.addEventListener('click', clearRecords);
+  window.addEventListener('resize', resize);
+}
+
+/* ================= 17. 对外钩子 ================= */
+window.__rev = {
+  state: state,
+  constants: {
+    TH_MIN: TH_MIN, TH_MAX: TH_MAX, TH_DEF: TH_DEF,
+    PHI_MIN: PHI_MIN, PHI_MAX: PHI_MAX, PHI_DEF: PHI_DEF,
+    N_MIN: NW_MIN, N_MAX: NW_MAX, N_DEF: NW_DEF,
+    GEO: GEO, SURF: SURF, WATER_BOT: WATER_BOT, CAMD: CAMD,
+    DIFF_TOL: DIFF_TOL, ANG_TOL: ANG_TOL
+  },
+  VIEWS: VIEWS,
+  PRESETS: PRESETS,
+  makeCam: makeCam, project: project, envelopePoints: envelopePoints,
+  renderNow: renderNow, resize: resize,
+  sceneGeom: sceneGeom,
+  solveNow: function () { return ro(); },
+  opticsOf: function (theta, phi, fromAbove, n) {
+    const r = solveAll({ theta: theta, phi: phi, fromAbove: fromAbove, n: n }, GEO);
+    return {
+      theta1: r.theta1, theta2: r.theta2, thetaR: r.thetaR,
+      reflErr: r.reflErr, snell: r.snell, crit: r.crit, tir: r.tir,
+      maxDiff: r.maxDiff, plane: r.plane.max,
+      dRefl: r.dRefl ? r.dRefl.pts.slice() : null,
+      dRefr: r.dRefr ? r.dRefr.pts.slice() : null,
+      segFwd: r.segFwd, segRev: r.segRev,
+      n1: r.fwd.n1, n2: r.fwd.n2,
+      A: r.fwd.A.slice(), O: [0, 0, 0],
+      R: r.fwd.refl ? r.fwd.refl.end.slice() : null,
+      T: r.fwd.refr ? r.fwd.refr.end.slice() : null,
+      d: r.fwd.d.slice(),
+      rdir: r.fwd.refl ? r.fwd.refl.dir.slice() : null,
+      tdir: r.fwd.refr ? r.fwd.refr.dir.slice() : null,
+      revR: r.reflRev ? r.reflRev.poly.map(function (p) { return p.slice(); }) : null,
+      revT: r.refrRev ? r.refrRev.poly.map(function (p) { return p.slice(); }) : null,
+      w: r.plane.w.slice()
+    };
+  },
+  drawn: function () { return drawnCache; },
+  boxes: function () { return frameBoxes.slice(); },
+  labelBoxes: function () { return frameLabels.slice(); },
+  geomBoxes: function () { return geomBoxes.slice(); },
+  uiBoxes: uiBoxes,
+  readoutNow: function () { return { ro: ro(), laws: lawStates(ro()) }; },
+  lawsNow: function () { return lawStates(ro()); },
+  setTheta: setTheta, setPhi: setPhi, setN: setN,
+  setDir: setDir, setBranch: setBranch, setPreset: applyPreset, setToggle: setToggle,
+  applyView: applyView, setZoom: setZoom,
+  dragRayTo: dragRayTo, overRay: overRay,
+  startFlip: startFlip, setAnim: setAnim, finishFlip: finishFlip,
+  recordNow: recordNow, clearRecords: clearRecords,
+  get records() { return state.records; },
+  get animT() { return state.animT; },
+  /* 便于断言做独立对账的纯函数 */
+  critAngle: critAngle, pathDiff: pathDiff, branchPolyline: branchPolyline,
+  forwardTrace: forwardTrace, reverseTrace: reverseTrace,
+  vdot: vdot, vsub: vsub, vlen: vlen, vnorm: vnorm, vscl: vscl
+};
+
+/* ================= 18. 启动 ================= */
+function boot() {
+  const c = $('rev-canvas');
+  if (!c) return;
+  ctx = c.getContext('2d');
+  bindEvents();
+  syncInputs();
+  syncFlipBtn();
+  renderRecords();
+  resize();
+  applyView('iso');
+  updateReadout();
+  if (!tick.started) { tick.started = true; requestAnimationFrame(tick); }
+}
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
+else boot();
+    </script>
+    <script src="supabase.js"></script>
+    <script src="script.js"></script>
+  <!-- 实拍视频区（站点形态：上半屏虚拟实验 + 底部实拍视频，两者缺一不可）
+       素材为站外检索（选片标准：真人真器材实拍，非纯动画讲解）。
+       🔴 徽章必须逐条按【封面实拍内容】判断，不凭标题猜 —— 三张封面都逐一看过：
+          BV1Sm411R78E 封面是真人（白大褂）+ 真半圆光具盘 + 红激光的两条光线 ⇒ 实拍；
+          BV1XG411e7HE 封面是真实玻璃罩里红绿两条激光 ⇒ 实拍；
+          BV1qnBqYBEyL 封面是暗室里真激光打进真半圆玻璃砖 ⇒ 实拍。
+       另：候选里的 BV123411g7Hs 封面是卡通 PPT 幻灯片 ⇒ 弃用；
+           BV1yJ4m1u7T6 / BV1XY411o7VZ 站内别处已用过 ⇒ 弃用。 -->
+  <div class="video-section">
+    <div class="section-title">🎬 实拍视频 · 从虚拟实验到真实世界</div>
+    <div class="video-grid">
+      <div class="video-card">
+        <h3>探究 4 · 光路可逆<span class="live-badge">实拍</span></h3>
+        <div class="video-container">
+          <iframe src="//player.bilibili.com/player.html?bvid=BV1Sm411R78E&page=1&autoplay=0&loop=1&danmaku=0&high_quality=1" scrolling="no" frameborder="no" framespacing="0" allowfullscreen="true"></iframe>
+          <button class="video-fullscreen-btn" title="全屏播放" aria-label="全屏播放">
+            <svg class="fs-expand" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"/></svg>
+            <svg class="fs-compress" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:none"><path stroke-linecap="round" stroke-linejoin="round" d="M8 3v3a2 2 0 01-2 2H3m18 0h-3a2 2 0 01-2-2V3m0 18v-3a2 2 0 012-2h3M3 16h3a2 2 0 012 2v3"/></svg>
+          </button>
+        </div>
+        <div class="video-desc">真人在真实的<b>半圆光具盘</b>上做：一支红色激光笔沿着盘面射向圆心，盘上同时出现<b>入射光线</b>和<b>反射光线</b>两条亮线，老师把激光笔从一侧慢慢转到另一侧，两条光线始终对称于中间那条法线。盘上那一圈刻度就是上方实验台里的「角弧」—— 把它和页里的读数对照：不管怎么转，<b>反射角那一格永远和入射角那一格相同</b>。看完再回上方把「绕法线方位角 φ」拖一圈，验证这个关系<b>与方位无关</b>。</div>
+      </div>
+      <div class="video-card">
+        <h3>光的反射 · 三线共面（玻璃罩里的红绿双激光）<span class="live-badge">实拍</span></h3>
+        <div class="video-container">
+          <iframe src="//player.bilibili.com/player.html?bvid=BV1XG411e7HE&page=1&autoplay=0&loop=1&danmaku=0&high_quality=1" scrolling="no" frameborder="no" framespacing="0" allowfullscreen="true"></iframe>
+          <button class="video-fullscreen-btn" title="全屏播放" aria-label="全屏播放">
+            <svg class="fs-expand" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"/></svg>
+            <svg class="fs-compress" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:none"><path stroke-linecap="round" stroke-linejoin="round" d="M8 3v3a2 2 0 01-2 2H3m18 0h-3a2 2 0 01-2-2V3m0 18v-3a2 2 0 012-2h3M3 16h3a2 2 0 012 2v3"/></svg>
+          </button>
+        </div>
+        <div class="video-desc">真实的玻璃罩里插着两面小镜子和两支激光（红 + 绿），两条光线在罩子里画出<b>一个平面</b>：入射光线、反射光线、法线，谁也没有跑出这个平面。把摄像头绕到侧面看，三条线<b>会塌成一条</b> —— 这就是上方实验台里「垂直于入射面」那个视角在做的事。先在上方点开「入射面」开关，让那层半透明平面显出来，再看视频：罩子里光线所在的那个面，就是页里这层半透明平面。</div>
+      </div>
+      <div class="video-card">
+        <h3>光学实验 018 · 光的折射与光路可逆<span class="live-badge">实拍</span></h3>
+        <div class="video-container">
+          <iframe src="//player.bilibili.com/player.html?bvid=BV1qnBqYBEyL&page=1&autoplay=0&loop=1&danmaku=0&high_quality=1" scrolling="no" frameborder="no" framespacing="0" allowfullscreen="true"></iframe>
+          <button class="video-fullscreen-btn" title="全屏播放" aria-label="全屏播放">
+            <svg class="fs-expand" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"/></svg>
+            <svg class="fs-compress" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:none"><path stroke-linecap="round" stroke-linejoin="round" d="M8 3v3a2 2 0 01-2 2H3m18 0h-3a2 2 0 01-2-2V3m0 18v-3a2 2 0 012-2h3M3 16h3a2 2 0 012 2v3"/></svg>
+          </button>
+        </div>
+        <div class="video-desc">暗室里的真激光射进一块真实的<b>半圆玻璃砖</b>：在圆心处它一分为二 —— 一部分反射回去，一部分折射进玻璃。老师把激光笔掉个头、从玻璃那一侧射回来，出射光线<b>回到原来那条入射线上</b>，一点没偏。这正是上方实验台里点「↩ 一键反向」看到的：反向那条折线不是旁边的对称线，而是<b>压在原来那条线上</b>。注意上方切到「水 → 空气」时折射线会随入射角<b>整条消失</b>（全反射），视频里把角度压到很斜时也是同样的现象。</div>
+      </div>
+    </div>
+  </div>
+  <script>
+  (function() {
+    var btns = document.querySelectorAll('.video-fullscreen-btn');
+    if (!btns.length) return;
+    btns.forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        var container = btn.closest('.video-container');
+        if (!container) return;
+        if (document.fullscreenElement === container) { document.exitFullscreen(); }
+        else { if (container.requestFullscreen) container.requestFullscreen(); else if (container.webkitRequestFullscreen) container.webkitRequestFullscreen(); }
+      });
+    });
+    document.addEventListener('fullscreenchange', function() {
+      var fsEl = document.fullscreenElement;
+      btns.forEach(function(btn) {
+        var container = btn.closest('.video-container');
+        var on = fsEl === container;
+        var ex = btn.querySelector('.fs-expand'), cp = btn.querySelector('.fs-compress');
+        if (ex) ex.style.display = on ? 'none' : '';
+        if (cp) cp.style.display = on ? '' : 'none';
+        btn.title = on ? '退出全屏' : '全屏播放';
+        btn.setAttribute('aria-label', btn.title);
+      });
+    });
+  })();
+  </script>
+</body>
+</html>
