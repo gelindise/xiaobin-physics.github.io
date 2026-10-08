@@ -1,0 +1,1274 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>三棱镜色散与光谱立体模型 — 物理虚拟实验</title>
+<meta name="description" content="白光经三棱镜分解成光谱的三维仿真：七条色光各按柯西色散公式 n(λ)=A+B/λ² 走真 Snell 定律，红偏得少、紫偏得多。可拖顶角、入射角与屏距，含教学模式与真实冕牌玻璃对照。">
+<link rel="stylesheet" href="style.css">
+<style>
+        :root {
+            --bg: #020617;
+            --line: rgba(148, 163, 184, .18);
+            --primary: #3b82f6;
+            --secondary: #06b6d4;
+            --accent: #8b5cf6;
+            --text: #f8fafc;
+            --muted: #94a3b8;
+        }
+
+        body {
+            font-family: 'Inter', 'Microsoft YaHei', 'Noto Sans SC', sans-serif;
+            margin: 0;
+            /* 站内页头是 position:sticky，一滚动就贴顶盖住实验区，所以这一页不放页头
+               （和同章的「光的反射立体模型」一致）。留 20px 内边距即可。 */
+            padding: 20px;
+            background: var(--bg);
+            color: var(--text);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+            box-sizing: border-box;
+        }
+
+        /* 科技风背景光晕 */
+        body::before {
+            content: "";
+            position: fixed;
+            inset: 0;
+            z-index: -1;
+            pointer-events: none;
+            background:
+                radial-gradient(circle at 18% 22%, rgba(59, 130, 246, .16), transparent 42%),
+                radial-gradient(circle at 82% 68%, rgba(139, 92, 246, .14), transparent 44%),
+                radial-gradient(circle at 50% 100%, rgba(6, 182, 212, .10), transparent 55%);
+        }
+
+        /* ===== 可交互三维实验台（与站内其它 lab3d 页面同一套视觉基线）===== */
+        .lab3d {
+            width: 100%;
+            max-width: 1600px;
+            margin: 8px auto 26px;
+            box-sizing: border-box;
+            overflow: hidden;
+            border: 1px solid rgba(56, 189, 248, .22);
+            border-radius: 18px;
+            background: linear-gradient(160deg, rgba(15, 23, 42, .92), rgba(2, 6, 23, .96));
+            color: #e2e8f0;
+            box-shadow: 0 26px 70px rgba(2, 6, 23, .6), 0 0 0 1px rgba(2, 6, 23, .8) inset;
+        }
+        .lab3d * { box-sizing: border-box; }
+        .lab3d-top {
+            display: flex; justify-content: space-between; gap: 15px; align-items: center;
+            padding: 17px 23px; border-bottom: 1px solid var(--line);
+            background: linear-gradient(90deg, rgba(59, 130, 246, .12), rgba(6, 182, 212, .05) 45%, transparent);
+        }
+        .lab3d-kicker { color: #22d3ee; font-size: 11px; font-weight: 800; letter-spacing: .2em; }
+        .lab3d-top h2 { margin: 3px 0 0; color: #f8fafc; font-size: 21px; letter-spacing: .02em; }
+        .lab3d-top p { margin: 4px 0 0; color: #94a3b8; font-size: 12px; }
+        .lab3d-status {
+            border: 1px solid rgba(34, 211, 238, .45); border-radius: 99px; padding: 6px 12px;
+            color: #67e8f9; font-size: 12px; white-space: nowrap; background: rgba(6, 182, 212, .08);
+        }
+        .lab3d-layout { display: grid; grid-template-columns: minmax(0, 1fr) 300px; }
+        .lab3d-main {
+            min-width: 0; padding: 15px 16px 16px;
+            background: radial-gradient(circle at 43% 36%, rgba(30, 64, 100, .55), rgba(8, 22, 36, .92) 62%, rgba(3, 10, 18, .96));
+        }
+        .lab3d-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; padding-bottom: 12px; }
+        .lab3d-toolbar .toolbar-label { color: #94a3b8; font-size: 12px; margin-right: 5px; }
+        .lab3d button {
+            padding: 7px 12px; border: 1px solid rgba(148, 163, 184, .25); border-radius: 8px;
+            background: rgba(30, 41, 59, .7); color: #cbd5e1; font-size: 12px; font-weight: 600;
+            box-shadow: none; transition: background .2s, border-color .2s, color .2s;
+        }
+        .lab3d button:hover { transform: none; box-shadow: none; background: rgba(51, 65, 85, .85); }
+        .lab3d button.active {
+            background: rgba(59, 130, 246, .25); border-color: #38bdf8; color: #e0f2fe;
+            box-shadow: 0 0 14px rgba(56, 189, 248, .3);
+        }
+        .lab3d button:disabled { opacity: .42; cursor: not-allowed; }
+        .lab3d button.primary { background: rgba(59, 130, 246, .3); border-color: #38bdf8; color: #e0f2fe; }
+        .lab3d-toolbar .toolbar-spacer { flex: 1; }
+        .lab3d-stage {
+            position: relative; height: clamp(400px, 49vw, 580px);
+            border: 1px solid rgba(56, 189, 248, .2); border-radius: 12px; overflow: hidden;
+            background: #061423;
+        }
+        .lab3d-stage canvas {
+            display: block; width: 100%; height: 100%;
+            border: 0; border-radius: 0; box-shadow: none; background: transparent;
+            cursor: grab; touch-action: none;
+        }
+        .lab3d-stage canvas:active { cursor: grabbing; }
+        /* 指针落在激光笔上时换成转动光标（放在 :active 之后才能覆盖它） */
+        .lab3d-stage canvas.pick-laser { cursor: ew-resize; }
+        .lab3d-stage canvas.pick-laser:active { cursor: ew-resize; }
+        .lab3d-stage .stage-hint {
+            position: absolute; top: 13px; left: 15px; pointer-events: none; font-size: 12px;
+            color: #bae6fd; background: rgba(2, 6, 23, .78); border: 1px solid rgba(56, 189, 248, .25);
+            padding: 7px 11px; border-radius: 8px;
+        }
+        .lab3d-stage .stage-hint b {
+            display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+            background: #22d3ee; vertical-align: 2px; margin-right: 6px; box-shadow: 0 0 8px #22d3ee;
+        }
+        .lab3d-stage .stage-help {
+            position: absolute; right: 14px; bottom: 13px; pointer-events: none;
+            color: #93b4c4; font-size: 11px; background: rgba(2, 6, 23, .72); padding: 6px 10px; border-radius: 7px;
+        }
+        /* 舞台内的观察结论条：眼睛盯着装置时也要能看见（侧栏在窄屏会被挤到下面） */
+        .lab3d-stage .stage-verdict {
+            position: absolute; left: 15px; bottom: 13px; pointer-events: none;
+            font-size: 12px; padding: 7px 12px; border-radius: 8px;
+            color: #d1fae5; background: rgba(6, 78, 59, .82); border: 1px solid rgba(52, 211, 153, .45);
+        }
+        .lab3d-stage .stage-verdict.warn { color: #fee2e2; background: rgba(127, 29, 29, .82); border-color: rgba(248, 113, 113, .5); }
+        .lab3d-foot {
+            display: flex; align-items: center; flex-wrap: wrap; gap: 12px 18px;
+            padding: 12px 3px 1px; font-size: 12px; color: #b6c8d4;
+        }
+        .lab3d-foot label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+        .lab3d-foot input { accent-color: #22d3ee; margin: 0; }
+        .lab3d-foot .legend { margin-left: auto; color: #8ba7b6; }
+        .lab3d-sidebar {
+            padding: 18px; color: #cbd5e1; border-left: 1px solid var(--line);
+            background: linear-gradient(180deg, rgba(15, 23, 42, .75), rgba(2, 6, 23, .6));
+        }
+        .lab3d-sidebar h3 { margin: 0 0 15px; color: #e2e8f0; font-size: 15px; letter-spacing: .05em; }
+        .lab3d-field { margin: 0 0 16px; }
+        .lab3d-field label, .lab3d-field .field-label {
+            display: flex; justify-content: space-between; gap: 8px; align-items: baseline;
+            color: #cbd5e1; font-size: 12px; font-weight: 700;
+        }
+        .lab3d-field output { color: #38bdf8; font-size: 13px; font-weight: 800; }
+        .lab3d-field input[type="range"] { display: block; width: 100%; margin: 11px 0 5px; }
+        .lab3d-field input[type="range"]::-webkit-slider-thumb { background: linear-gradient(135deg, #3b82f6, #22d3ee); }
+        .lab3d-field small { color: #64748b; font-size: 10px; line-height: 1.5; display: block; }
+        .lab3d-segment { display: flex; gap: 5px; margin-top: 9px; }
+        .lab3d-segment button { flex: 1; min-width: 0; padding: 7px 4px; font-size: 11px; }
+        .lab3d-metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 12px; }
+        .lab3d-metric {
+            padding: 12px 13px; border: 1px solid rgba(56, 189, 248, .18); border-radius: 10px;
+            background: linear-gradient(160deg, rgba(30, 58, 95, .55), rgba(15, 23, 42, .6));
+        }
+        .lab3d-metric span { display: block; font-size: 11px; color: #9fb8c6; }
+        .lab3d-metric strong { display: block; margin-top: 4px; color: #e0f2fe; font-size: 17px; }
+        .lab3d-metric.ok strong { color: #6ee7b7; }
+        .lab3d-metric.bad strong { color: #fca5a5; }
+        .lab3d-note { margin: 12px 0 0; color: #9fb8c6; font-size: 12px; line-height: 1.65; }
+        .lab3d-note b { color: #7dd3fc; }
+
+        /* 结论卡：四条折射规律，逐条点亮 */
+        .law-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 8px; }
+        .law-list li {
+            display: flex; gap: 8px; align-items: flex-start;
+            padding: 9px 11px; border-radius: 9px; font-size: 12px; line-height: 1.55;
+            border: 1px solid rgba(148, 163, 184, .16); background: rgba(148, 163, 184, .05);
+            color: #b6c8d4; transition: background .2s, border-color .2s, color .2s;
+        }
+        .law-list li.on {
+            border-color: rgba(52, 211, 153, .5); background: rgba(16, 185, 129, .12); color: #d1fae5;
+        }
+        .law-list li.off {
+            border-color: rgba(248, 113, 113, .45); background: rgba(239, 68, 68, .12); color: #fee2e2;
+        }
+        .law-list li i { font-style: normal; color: #64748b; flex: none; font-weight: 700; }
+        .law-list li.on i { color: #6ee7b7; }
+        .law-list li.off i { color: #fca5a5; }
+
+        /* ===== 实验记录表：就放在实验台正下方，做完一次就能点记录 ===== */
+        .record-panel { margin-top: 0; }
+        .record-body { padding: 16px 18px 18px; }
+        .record-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; }
+        .record-actions small { color: #8ea6b7; font-size: 11px; }
+        .table-wrap { overflow-x: auto; margin-top: 13px; }
+        .record-body table { width: 100%; border-collapse: collapse; font-size: 12px; white-space: nowrap; min-width: 640px; }
+        .record-body th, .record-body td {
+            text-align: left; padding: 9px 8px; border-bottom: 1px solid rgba(148, 163, 184, .16); color: #c5d6e4;
+        }
+        .record-body th { color: #80ddec; font-size: 11px; font-weight: 700; }
+        .record-body tbody tr:last-child td { border-bottom: 0; }
+        .record-body .empty { text-align: center; color: #91a6b9; padding: 19px 5px; }
+        .record-body td.num { font-variant-numeric: tabular-nums; }
+        .record-body td.ratio { color: #7dd3fc; font-weight: 700; }
+        /* 刚记录的那一行闪一下：视线还停在装置上，也知道数据落到了哪一行 */
+        .record-body tr.flash td { animation: refrRowFlash 1.2s ease-out; }
+        @keyframes refrRowFlash { 0% { background: rgba(34, 112, 143, .8); color: #f1fbff; } 100% { background: transparent; } }
+        .record-body .note { color: #90a9b9; font-size: 11px; line-height: 1.65; margin-top: 11px; }
+        .record-body .note b { color: #7dd3fc; }
+
+        @media (max-width: 900px) {
+            .lab3d-layout { grid-template-columns: minmax(0, 1fr); }
+            .lab3d-sidebar { border-left: 0; border-top: 1px solid var(--line); display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 18px; }
+            .lab3d-sidebar h3 { grid-column: 1 / -1; }
+            .lab3d-sidebar .span-2 { grid-column: 1 / -1; }
+        }
+        @media (max-width: 620px) {
+            body { padding-left: 10px; padding-right: 10px; }
+            .lab3d { border-radius: 14px; }
+            .lab3d-top { padding: 15px; }
+            .lab3d-top h2 { font-size: 17px; }
+            .lab3d-status { display: none; }
+            .lab3d-main { padding: 10px; }
+            .lab3d-toolbar { gap: 6px; }
+            .lab3d-toolbar .toolbar-label, .lab3d-toolbar .toolbar-spacer { display: none; }
+            .lab3d-toolbar button { padding: 6px 9px; font-size: 11px; }
+            .lab3d-stage { height: 340px; }
+            .lab3d-stage .stage-help { display: none; }
+            .lab3d-stage .stage-verdict { left: 10px; right: 10px; bottom: 10px; font-size: 11px; }
+            .lab3d-sidebar { display: block; padding: 16px; }
+            .lab3d-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+            .lab3d-foot .legend { margin-left: 0; width: 100%; }
+            .record-body { padding: 14px; }
+            /* 窄屏上 7 列会被挤到横向滚动里，而最后一列 sinθ₁/sinθ₂ 正是这张表的结论。
+               缩字号 + 收紧内边距 + 隐藏表头里的「入射角/折射角」前缀，让 7 列全部看得见。 */
+            .record-body table { font-size: 10.5px; min-width: 0; }
+            .record-body th, .record-body td { padding: 7px 5px; }
+            .record-body th .th-full { display: none; }
+        }
+    </style>
+    <script src="auth-check.js"></script>
+</head>
+<body>
+    <!-- 这一页不放站内页头：页头是 position:sticky，一滚动就贴在顶上盖住实验区。 -->
+    <section class="lab3d" aria-label="三棱镜色散与光谱立体模型">
+      <div class="lab3d-top">
+        <div>
+          <div class="lab3d-kicker">INTERACTIVE OPTICS LAB · 三维光学实验</div>
+          <h2>三棱镜色散 · 立体模型</h2>
+          <p>一束白光穿过三棱镜，为什么会摊成一条彩虹？七条光线各自按自己的折射率走 Snell 定律，红偏得少、紫偏得多</p>
+        </div>
+        <span class="lab3d-status">● 实时物理模拟</span>
+      </div>
+
+      <div class="lab3d-layout">
+        <div class="lab3d-main">
+          <div class="lab3d-toolbar" role="group" aria-label="观察视角">
+            <span class="toolbar-label">观察视角</span>
+            <button type="button" class="active" data-view="iso">立体视角</button>
+            <button type="button" data-view="face">正对光路</button>
+            <button type="button" data-view="top">俯视装置</button>
+            <button type="button" data-view="side">沿光路看</button>
+            <button type="button" data-view="spec">光谱特写</button>
+            <span class="toolbar-spacer"></span>
+            <button type="button" id="disp-reset-view">↺ 重置视角</button>
+          </div>
+
+          <div class="lab3d-stage">
+            <canvas id="disp-canvas" aria-label="可拖动旋转、滚轮缩放的三棱镜色散三维装置"></canvas>
+            <div class="stage-hint"><b></b>三维实验场景 · 白光 → 三棱镜 → 光谱带</div>
+            <div class="stage-verdict" id="disp-verdict">δ红 = 31.7°　δ紫 = 37.7°　Δδ = 6.0°</div>
+            <div class="stage-help">拖动空白处旋转 · 滚轮缩放 · 拖棱镜改入射角</div>
+          </div>
+
+          <div class="lab3d-foot">
+            <label><input id="disp-rays" type="checkbox" checked>显示光线</label>
+            <label><input id="disp-normal" type="checkbox" checked>显示法线</label>
+            <label><input id="disp-angles" type="checkbox" checked>显示角度</label>
+            <label><input id="disp-band" type="checkbox" checked>显示屏上光谱</label>
+            <label><input id="disp-glass" type="checkbox" checked>玻璃体</label>
+            <span class="legend">白：入射白光　彩：七色光谱　白虚线：法线　灰板：光屏</span>
+          </div>
+
+          <div class="lab3d-metrics" aria-live="polite">
+            <div class="lab3d-metric"><span>入射角 i₁</span><strong id="disp-m1">40.0°</strong></div>
+            <div class="lab3d-metric"><span>偏向角 δ（黄光）</span><strong id="disp-m2">33.2°</strong></div>
+            <div class="lab3d-metric ok"><span>色散张角 δ紫 − δ红</span><strong id="disp-m3">6.0°</strong></div>
+            <div class="lab3d-metric"><span>屏上光谱宽度</span><strong id="disp-m4">3.1 cm</strong></div>
+          </div>
+
+          <p class="lab3d-note"><b>观察提示：</b>白光在<b>第一个面上折射一次</b>，七种颜色的光因为折射率不同而分开一点点；走到<b>第二个面再折射一次</b>，分开的差距被放大成屏上那条彩带。<b>不是棱镜给光「染了色」</b>—— 它本来就有这些颜色，只是各自偏折的角度不一样。把入射角拖到接近<b>最小偏向角</b>的位置，彩带最干净；把顶角调大或者入射角调小，<b>紫光会先在出射面上发生全反射</b>，屏上就缺一段。切到<b>「真实冕牌玻璃」</b>看看真实的色散有多小（张角只有 1.5° 左右），再切回教学模式看放大后的效果。</p>
+        </div>
+
+        <aside class="lab3d-sidebar">
+          <h3>实验参数</h3>
+
+          <div class="lab3d-field">
+            <label for="disp-apex">棱镜顶角 A <output id="disp-apex-value">50°</output></label>
+            <input id="disp-apex" type="range" min="35" max="56" value="50" step="1">
+            <small>等腰棱镜的顶角 · 35° – 56°。顶角越大，偏向角与色散张角都变大；顶角太大时紫光会先在出射面全反射</small>
+          </div>
+
+          <div class="lab3d-field">
+            <label for="disp-i1">入射角 i₁ <output id="disp-i1-value">40.0°</output></label>
+            <input id="disp-i1" type="range" min="22" max="58" value="40" step="0.5">
+            <small>入射光线与第一个面法线的夹角。棱镜会自动转到这个角度</small>
+          </div>
+
+          <div class="lab3d-field">
+            <label for="disp-dist">光屏距离 <output id="disp-dist-value">16 cm</output></label>
+            <input id="disp-dist" type="range" min="10" max="22" value="16" step="1">
+            <small>光屏沿<b>中央光线</b>方向摆放并与之垂直 —— 真实实验里也是这样把屏摆正来接光谱的</small>
+          </div>
+
+          <div class="lab3d-field span-2">
+            <span class="field-label">光源 <output id="disp-mono-name">白光</output></span>
+            <div class="lab3d-segment" id="disp-mono" role="group" aria-label="选择光源">
+              <button type="button" data-mono="all" class="active">白光</button>
+              <button type="button" data-mono="0">红</button>
+              <button type="button" data-mono="3">绿</button>
+              <button type="button" data-mono="6">紫</button>
+            </div>
+            <small>换成单色光，屏上就只剩一个光点 —— 说明「分开」这件事是<b>多种颜色之间</b>的差别</small>
+          </div>
+
+          <div class="lab3d-field span-2">
+            <span class="field-label">棱镜材料 <output id="disp-mode-name">教学演示（色散放大 5×）</output></span>
+            <div class="lab3d-segment" id="disp-mode" role="group" aria-label="选择材料">
+              <button type="button" data-mode="teach" class="active">教学演示</button>
+              <button type="button" data-mode="real">真实冕牌玻璃</button>
+            </div>
+            <small>折射率按柯西公式 <code>n(λ) = A + B/λ²</code> 算。教学模式把色散系数 B 放大 5 倍，否则屏上的彩带太窄看不清</small>
+          </div>
+
+          <div class="lab3d-field span-2">
+            <span class="field-label">色散规律</span>
+            <ul class="law-list">
+              <li id="law1"><i>①</i><span>白光经三棱镜后分解成按「红→紫」排列的彩色光带（色散）</span></li>
+              <li id="law2"><i>②</i><span>同一入射角下，紫光偏折得比红光多：δ<sub>紫</sub> &gt; δ<sub>红</sub></span></li>
+              <li id="law3"><i>③</i><span>屏上彩带的顺序，正是按偏向角从小到大排出来的（红最小、紫最大）</span></li>
+              <li id="law4"><i>④</i><span>七种色光都能从出射面射出来（没有发生全反射）</span></li>
+              <li id="law5"><i>⑤</i><span>材料色散越强（Δn 越大），屏上彩带越宽</span></li>
+            </ul>
+            <small id="disp-law-verdict">当前：A = 50°，i₁ = 40.0° —— 五条都成立</small>
+          </div>
+        </aside>
+      </div>
+    </section>
+
+    <section class="lab3d record-panel" aria-label="实验记录表">
+      <div class="lab3d-top">
+        <div>
+          <div class="lab3d-kicker">DATA SHEET · 定量记录</div>
+          <h2>实验记录表</h2>
+          <p>实验台就在上面：每调好一组参数就点一次「记录当前数据」，数据会立刻填进下表</p>
+        </div>
+        <span class="lab3d-status" id="disp-count">已记录 0 组</span>
+      </div>
+      <div class="record-body">
+        <div class="record-actions">
+          <button type="button" class="primary" id="disp-record">记录当前数据</button>
+          <button type="button" id="disp-clear">清空记录</button>
+          <small id="disp-record-hint">改一改顶角或入射角，多记几组才能看出规律</small>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>次数</th>
+                <th><span class="th-full">顶角 </span>A</th>
+                <th><span class="th-full">入射角 </span>i₁</th>
+                <th>n<span class="th-full">(红)</span></th>
+                <th>n<span class="th-full">(紫)</span></th>
+                <th>Δn</th>
+                <th>δ<span class="th-full">(红)</span></th>
+                <th>δ<span class="th-full">(紫)</span></th>
+                <th>Δδ</th>
+                <th><span class="th-full">屏上宽度 </span>w</th>
+              </tr>
+            </thead>
+            <tbody id="disp-rows">
+              <tr><td colspan="10" class="empty">尚无记录，先调一组参数开始探究</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="note" id="disp-summary">记录 3 组以上数据，看看「顶角 A 变大时 Δδ 怎么变」、「换成真实冕牌玻璃后 Δδ 掉到多少」。</div>
+      </div>
+    </section>
+
+    <script src="protect.js"></script>
+    <script>
+    (function () {
+      'use strict';
+      const canvas = document.getElementById('disp-canvas');
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      const $ = id => document.getElementById(id);
+      const PI2 = Math.PI * 2, DEG = Math.PI / 180, RAD = 180 / Math.PI;
+      const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
+      const f1 = v => (v == null || !isFinite(v)) ? '—' : v.toFixed(1);
+      const f2 = v => (v == null || !isFinite(v)) ? '—' : v.toFixed(2);
+
+      /* ============================================================
+       * 向量工具（二维就够了：整个光路都在 z = 0 那一层里）
+       * ============================================================ */
+      const add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+      const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+      const scl = (a, k) => [a[0] * k, a[1] * k, a[2] * k];
+      const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+      const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+      const vlen = a => Math.hypot(a[0], a[1], a[2]);
+      const vnorm = a => { const l = vlen(a) || 1; return [a[0] / l, a[1] / l, a[2] / l]; };
+      const d2 = (a, b) => a[0] * b[0] + a[1] * b[1];
+      const norm2 = a => { const l = Math.hypot(a[0], a[1]) || 1; return [a[0] / l, a[1] / l]; };
+      const angOf = a => Math.atan2(a[1], a[0]) * RAD;
+
+      /* ============================================================
+       * 场景常量（单位 cm，+y 向上）
+       * ------------------------------------------------------------
+       * 关键几何约定，动之前先读懂：
+       *   · 棱镜是一根【竖直立着的三棱柱】：等腰三角形的横截面躺在 x–y 平面里，
+       *     柱轴沿 z 方向，厚度 H_PR。所以顶角 A 在截面内、z 方向是均匀的。
+       *   · 入射光线【永远是水平的】（+x 方向），棱镜绕自己的形心转 φ = A/2 − i₁。
+       *     这样「改入射角」在真实实验里就是「转动棱镜」，而不是把灯搬来搬去。
+       *     推导：左面内法线的方向角 = φ − A/2，与水平入射光的夹角 |φ − A/2| = i₁。
+       *   · 棱镜被【平移】到「左面中点 = 原点」，于是入射点恒在原点、入射光恒沿 y = 0。
+       *     换 A 或 i₁ 时棱镜会挪一点，这是对的 —— 真实实验里换棱镜也要重新对光。
+       *   · 光屏【垂直于中央色光的方向】摆在距离 D 处。真实实验里就是转屏去接光谱，
+       *     好处是无论偏向角多大，彩带都稳稳落在屏中央，不用把屏做到几米高。
+       * ============================================================ */
+      const L_SIDE = 13;                 // 棱镜等腰三角形的腰长
+      const H_PR   = 7;                  // 棱镜沿 z 的厚度
+      const L_IN   = 22;                 // 入射光线长度
+      const SCR_HH = 9;                  // 光屏半高（沿 eu，垂直于光线）
+      const SCR_HW = 8;                  // 光屏半宽（沿 z）
+      const CAMD   = 96;
+      const TARGET = [2, -4, 0];
+
+      const A_MIN = 35, A_MAX = 56, A_DEF = 50;
+      const I1_MIN = 22, I1_MAX = 58, I1_DEF = 40;
+      const D_MIN = 10, D_MAX = 22, D_DEF = 16;
+
+      // 取景包络：只由【常量】搭成（覆盖参数全范围的最坏情形），绝不跟滑块联动。
+      const ENV = { x0: -(L_IN + 2), x1: 28, y0: -25, y1: 15, z: 14 };
+
+      const MODES = {
+        teach: { id: 'teach', A: 1.5046, B: 21000, label: '教学演示（色散放大 5×）', tag: '教学' },
+        real:  { id: 'real',  A: 1.5046, B: 4200,  label: '真实冕牌玻璃 K9', tag: '真实' }
+      };
+
+      // 七色光。λ 单位 nm；hex 是这一色在屏上的显示色。
+      const COLORS = [
+        { name: '红', lam: 700, hex: '#ff3b3b' },
+        { name: '橙', lam: 620, hex: '#ff8c1a' },
+        { name: '黄', lam: 580, hex: '#ffe14d' },
+        { name: '绿', lam: 530, hex: '#5cf06a' },
+        { name: '青', lam: 490, hex: '#3fd8e8' },
+        { name: '蓝', lam: 460, hex: '#4d7dff' },
+        { name: '紫', lam: 400, hex: '#a35cff' }
+      ];
+      const MID_IDX = 2;   // 用「黄」当中央色光（定光屏方向）
+
+      const VIEWS = {
+        iso:  { yaw: 0.62, pitch: 0.30, zoom: 1.00 },
+        face: { yaw: 0.00, pitch: 0.02, zoom: 1.06 },
+        top:  { yaw: 0.12, pitch: 1.28, zoom: 1.00 },
+        side: { yaw: 1.50, pitch: 0.10, zoom: 1.00 },
+        spec: { yaw: 0.40, pitch: 0.16, zoom: 2.40, target: [19, -14, 0] }
+      };
+
+      const state = {
+        yaw: VIEWS.iso.yaw, pitch: VIEWS.iso.pitch, zoom: VIEWS.iso.zoom,
+        apex: A_DEF, i1: I1_DEF, dist: D_DEF,
+        mode: 'teach', mono: null,
+        showRays: true, showNormal: true, showAngles: true, showBand: true, showGlass: true,
+        view: 'iso',
+        w: 1, h: 1, dpr: 0, dirty: true,
+        dragging: false, dragPrism: false, hoverPrism: false,
+        lastX: 0, lastY: 0, records: []
+      };
+
+      /* ============================================================
+       * 物理：柯西色散公式 + 真 Snell 折射
+       * ------------------------------------------------------------
+       * n(λ) = A + B/λ²（λ 用 nm）。冕牌玻璃 K9 实测 A ≈ 1.5046、B ≈ 4200 nm²，
+       * 代进去 n(589 nm) ≈ 1.517，与手册值一致。
+       * 教学模式把 B 放大 5 倍 —— 这不是「假物理」，只是把材料的色散本领调大，
+       * 让屏上的彩带看得清；页面里明写这一点。
+       * ============================================================ */
+      function nOf(lam) {
+        const M = MODES[state.mode];
+        return M.A + M.B / (lam * lam);
+      }
+
+      // GLSL 式折射：I 指向界面、N 在【入射侧】、eta = n_入射 / n_出射。返回 null 表示全反射。
+      function refract2(I, N, eta) {
+        const cosi = clamp(-(I[0] * N[0] + I[1] * N[1]), -1, 1);
+        const k = 1 - eta * eta * (1 - cosi * cosi);
+        if (k < 0) return null;
+        const c = eta * cosi - Math.sqrt(k);
+        return norm2([eta * I[0] + c * N[0], eta * I[1] + c * N[1]]);
+      }
+
+      // 线段求交：P + t·d = Q0 + s·(Q1−Q0)，要求 t > 0、s ∈ [0,1]
+      function segHit(P, d, Q0, Q1) {
+        const ex = Q1[0] - Q0[0], ey = Q1[1] - Q0[1];
+        const D = ex * d[1] - d[0] * ey;
+        if (Math.abs(D) < 1e-12) return null;
+        const rx = Q0[0] - P[0], ry = Q0[1] - P[1];
+        const t = (-rx * ey + ex * ry) / D;
+        const s = (d[0] * ry - d[1] * rx) / D;
+        if (!(t > 1e-9) || s < -1e-9 || s > 1 + 1e-9) return null;
+        return { t: t, s: s, pt: [P[0] + d[0] * t, P[1] + d[1] * t] };
+      }
+
+      /* 棱镜几何：形心在局部原点、顶点逆时针排列，再整体转 φ、平移使左面中点落在原点。
+         顶点顺序 [apex, baseL, baseR] 是逆时针（叉积 > 0），
+         于是外法线 = (dy, −dx) 归一化 —— 顺序写反法线会整体朝里，全反射判定立刻全错。 */
+      function prismGeom() {
+        const A = state.apex * DEG;
+        const a = L_SIDE * Math.cos(A / 2);   // 三角形高
+        const w = L_SIDE * Math.sin(A / 2);   // 半底宽
+        const phi = A / 2 - state.i1 * DEG;   // 棱镜转角（让水平入射光的入射角恰为 i₁）
+        const cp = Math.cos(phi), sp = Math.sin(phi);
+        const rot = p => [p[0] * cp - p[1] * sp, p[0] * sp + p[1] * cp];
+        const apex0 = rot([0, 2 * a / 3]);
+        const baseL0 = rot([-w, -a / 3]);
+        const baseR0 = rot([w, -a / 3]);
+        const mid = [(apex0[0] + baseL0[0]) / 2, (apex0[1] + baseL0[1]) / 2];
+        const T = p => [p[0] - mid[0], p[1] - mid[1]];
+        const nL = rot([-Math.cos(A / 2), Math.sin(A / 2)]);   // 左面外法线
+        const nR = rot([Math.cos(A / 2), Math.sin(A / 2)]);    // 右面外法线
+        return {
+          A: A, a: a, w: w, phi: phi,
+          apex: T(apex0), baseL: T(baseL0), baseR: T(baseR0),
+          nL: nL, nR: nR, z: H_PR / 2
+        };
+      }
+
+      /* 追一条色光。返回每一步的中间量，自检直接读这些值（不是从画面上反推）。 */
+      function traceOne(g, lam) {
+        const n = nOf(lam);
+        const dIn = [1, 0];
+        const P0 = [-L_IN, 0], P1 = [0, 0];
+        const cosI1 = clamp(-d2(dIn, g.nL), -1, 1);
+        const i1 = Math.acos(cosI1);
+        const d1 = refract2(dIn, g.nL, 1 / n);
+        if (!d1) return { lam: lam, n: n, i1: i1, P0: P0, P1: P1, tirEntry: true };
+        // 从入射点沿 d1 找出口：右面（baseR→apex）与底面（baseL→baseR）取最近的
+        const cands = [];
+        const hR = segHit(P1, d1, g.baseR, g.apex);
+        if (hR) cands.push({ t: hR.t, pt: hR.pt, face: 'right', nrm: [-g.nR[0], -g.nR[1]] });
+        const hB = segHit(P1, d1, g.baseL, g.baseR);
+        if (hB) cands.push({ t: hB.t, pt: hB.pt, face: 'base', nrm: [0, 1] });
+        if (!cands.length) return { lam: lam, n: n, i1: i1, P0: P0, P1: P1, d1: d1, miss: true };
+        cands.sort((u, v) => u.t - v.t);
+        const ex = cands[0];
+        const r2 = Math.acos(clamp(-d2(d1, ex.nrm), -1, 1));
+        const dOut = refract2(d1, ex.nrm, n / 1);
+        if (!dOut) {
+          // 全反射：光出不去，被出射面弹回棱镜内。这一步必须真的算出来，
+          // 否则画面上「光到这儿就没了」，学生看不出发生了什么。
+          const nn = ex.nrm, dn = d1[0] * nn[0] + d1[1] * nn[1];
+          const dRefl = norm2([d1[0] - 2 * dn * nn[0], d1[1] - 2 * dn * nn[1]]);
+          return { lam: lam, n: n, i1: i1, P0: P0, P1: P1, d1: d1, P2: ex.pt, face: ex.face, r2: r2, tirExit: true, dRefl: dRefl };
+        }
+        const outN = [-ex.nrm[0], -ex.nrm[1]];
+        const i2 = Math.acos(clamp(d2(dOut, outN), -1, 1));
+        const dev = Math.acos(clamp(d2(dIn, dOut), -1, 1)) * RAD;
+        // r₁ 是【棱镜内】折射光线与左面内法线的夹角（d1 指向棱镜内、nL 朝外 ⇒ 点积为负）
+        const r1 = Math.acos(clamp(-d2(d1, g.nL), -1, 1));
+        return {
+          lam: lam, n: n, i1: i1, i2: i2, r1: r1,
+          P0: P0, P1: P1, d1: d1, P2: ex.pt, face: ex.face, r2: r2, dOut: dOut,
+          nrmOut: outN, dev: dev, pathIn: ex.t, tir: false
+        };
+      }
+
+      function traceAll() {
+        const g = prismGeom();
+        const list = state.mono == null ? COLORS : [COLORS[state.mono]];
+        const rays = list.map(c => { const t = traceOne(g, c.lam); t.color = c; return t; });
+        return { g: g, rays: rays };
+      }
+
+      /* 光屏：垂直于「中央色光」的方向，摆在距离 D 处。
+         eu 是屏面内垂直于光线的方向（屏的「上」），ez 就是 z 轴（屏的「宽」）。 */
+      function screenGeom(tr) {
+        const mid = tr.rays.find(r => r.color === COLORS[MID_IDX]) || tr.rays[tr.rays.length - 1];
+        const ok = mid && mid.dOut && mid.P2;
+        const dM = ok ? mid.dOut : [1, 0];
+        const P2 = ok ? mid.P2 : [0, 0];
+        const eu = [-dM[1], dM[0]];
+        const C = [P2[0] + dM[0] * state.dist, P2[1] + dM[1] * state.dist];
+        return { dMid: dM, P2: P2, eu: eu, C: C, ok: ok };
+      }
+
+      // 一条出射光线打在屏上的落点（二维坐标）。屏面法线就是 dMid。
+      function hitScreen(sc, r) {
+        if (!r || !r.dOut || !r.P2) return null;
+        const den = d2(r.dOut, sc.dMid);
+        if (Math.abs(den) < 1e-9) return null;
+        const t = (d2([sc.C[0] - r.P2[0], sc.C[1] - r.P2[1]], sc.dMid)) / den;
+        if (!(t > 0)) return null;
+        const H = [r.P2[0] + r.dOut[0] * t, r.P2[1] + r.dOut[1] * t];
+        const rel = [H[0] - sc.C[0], H[1] - sc.C[1]];
+        const u = d2(rel, sc.eu);          // 沿屏高
+        return { pt: H, u: u, t: t, inside: Math.abs(u) <= SCR_HH };
+      }
+
+      /* 读数汇总：渲染与自检共用同一个函数，绝不在两处各写一遍公式 */
+      function readout() {
+        const tr = traceAll();
+        const sc = screenGeom(tr);
+        const red = tr.rays.find(r => r.color === COLORS[0]);
+        const vio = tr.rays.find(r => r.color === COLORS[6]);
+        const mid = tr.rays.find(r => r.color === COLORS[MID_IDX]);
+        const dRed = red && isFinite(red.dev) ? red.dev : NaN;
+        const dVio = vio && isFinite(vio.dev) ? vio.dev : NaN;
+        const dMid = mid && isFinite(mid.dev) ? mid.dev : NaN;
+        const spread = (isFinite(dRed) && isFinite(dVio)) ? dVio - dRed : NaN;
+        const hRed = hitScreen(sc, red), hVio = hitScreen(sc, vio);
+        const width = (hRed && hVio) ? Math.abs(hVio.u - hRed.u) : NaN;
+        const tirCount = tr.rays.filter(r => r.tirExit || r.tirEntry).length;
+        const reached = tr.rays.filter(r => hitScreen(sc, r)).length;
+        // 「屏上的顺序」用一条【独立于偏向角】的路径算：按偏向角升序排出来的落点 u，
+        // 必须是严格递减的（偏折越少 ⇒ 在屏上越高）。这就是「两条互不引用的路径对得上」。
+        let orderOK = false;
+        if (state.mono == null) {
+          const rows = tr.rays.map(r => { const h = hitScreen(sc, r); return h ? { d: r.dev, u: h.u } : null; });
+          if (rows.length === COLORS.length && rows.every(r => r && isFinite(r.u) && isFinite(r.d))) {
+            const byD = rows.slice().sort((a, b) => a.d - b.d).map(r => r.u);
+            let dec = true;
+            for (let i = 1; i < byD.length; i++) if (!(byD[i] < byD[i - 1] - 1e-9)) dec = false;
+            orderOK = dec;
+          }
+        }
+        return {
+          g: tr.g, rays: tr.rays, sc: sc,
+          i1: tr.rays.length ? tr.rays[0].i1 : NaN,
+          dRed: dRed, dVio: dVio, dMid: dMid, spread: spread,
+          nRed: nOf(700), nVio: nOf(400), dn: nOf(400) - nOf(700),
+          hRed: hRed, hVio: hVio, width: width,
+          tirCount: tirCount, reached: reached,
+          // 「红在屏上比紫高」——这是 ordered 的正确定义（偏折少的在上面）
+          ordered: (hRed && hVio) ? (hRed.u > hVio.u) : false,
+          orderOK: orderOK
+        };
+      }
+
+      /* ============================================================
+       * 相机：轨道 + 透视投影
+       * ============================================================ */
+      // 包络 = 固定长方体的 8 个角。这个场景三个方向的尺寸是同量级的
+      // （宽 52 / 高 38 / 深 28），不像扁平器件那样会退化，所以用盒子比用球面更「省画幅」。
+      function envelopePoints() {
+        const E = ENV, out = [];
+        for (const x of [E.x0, E.x1]) for (const y of [E.y0, E.y1]) for (const z of [-E.z, E.z]) out.push([x, y, z]);
+        return out;
+      }
+
+      function makeCam(q, w, h) {
+        const cy = Math.cos(state.yaw), sy = Math.sin(state.yaw);
+        const cp = Math.cos(state.pitch), sp = Math.sin(state.pitch);
+        const dir = [cp * sy, sp, cp * cy];              // 目标 → 相机
+        const V = VIEWS[state.view] || {};
+        const T = V.target || TARGET;
+        q.dist = CAMD;                                   // ★ 不除 zoom
+        q.eye = add(T, scl(dir, q.dist));
+        q.fwd = scl(dir, -1);
+        q.right = vnorm(cross(q.fwd, [0, 1, 0]));
+        q.up = cross(q.right, q.fwd);
+        let loR = 1e9, hiR = -1e9, loU = 1e9, hiU = -1e9;
+        for (const p of envelopePoints()) {
+          const v = sub(p, q.eye);
+          const z = Math.max(0.05, dot(v, q.fwd));
+          const r = dot(v, q.right) / z, u = dot(v, q.up) / z;
+          loR = Math.min(loR, r); hiR = Math.max(hiR, r);
+          loU = Math.min(loU, u); hiU = Math.max(hiU, u);
+        }
+        const s = Math.min(w * 0.94 / Math.max(1e-6, hiR - loR),
+                           h * 0.90 / Math.max(1e-6, hiU - loU));
+        q.focal = s * state.zoom;                        // ★ zoom 只乘焦距
+        q.px = w * 0.5 - (loR + hiR) * 0.5 * q.focal;
+        q.py = h * 0.5 + (loU + hiU) * 0.5 * q.focal;
+      }
+      function project(p, q) {
+        const v = sub(p, q.eye);
+        const z = Math.max(0.05, dot(v, q.fwd));
+        const s = q.focal / z;
+        return { x: q.px + dot(v, q.right) * s, y: q.py - dot(v, q.up) * s, s: s, z: z };
+      }
+
+      /* ============================================================
+       * 绘图小工具
+       * ============================================================ */
+      function trace(pts) {
+        ctx.beginPath();
+        pts.forEach((p, k) => k ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+      }
+      function poly(pts, fill, stroke, lw) {
+        if (!pts || pts.length < 2) return;
+        trace(pts); ctx.closePath();
+        if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+        if (stroke) { ctx.lineWidth = lw || 1; ctx.strokeStyle = stroke; ctx.stroke(); }
+      }
+      function seg(a, b, color, lw, dash) {
+        if (!a || !b) return;
+        ctx.beginPath();
+        ctx.setLineDash(dash || []);
+        ctx.lineWidth = lw || 1; ctx.strokeStyle = color;
+        ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+        ctx.setLineDash([]);
+      }
+      function glowSeg(a, b, color, lw, alpha) {
+        if (!a || !b) return;
+        ctx.save();
+        ctx.globalCompositeOperation = 'lighter';
+        ctx.beginPath();
+        ctx.lineWidth = lw * 3.4; ctx.strokeStyle = color; ctx.globalAlpha = (alpha == null ? .16 : alpha);
+        ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+        ctx.beginPath();
+        ctx.lineWidth = lw; ctx.strokeStyle = color; ctx.globalAlpha = 1;
+        ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+        ctx.restore();
+      }
+      function disc(p, r, fill, stroke, lw) {
+        if (!p || !isFinite(p.x) || !isFinite(p.y)) return;
+        ctx.beginPath(); ctx.arc(p.x, p.y, Math.max(0.6, r), 0, PI2);
+        if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+        if (stroke) { ctx.lineWidth = lw || 1; ctx.strokeStyle = stroke; ctx.stroke(); }
+      }
+      const P3 = (p2, z) => [p2[0], p2[1], z == null ? 0 : z];
+
+      /* ============================================================
+       * 标签：先入队，等所有几何画完之后统一落笔（否则会被后画的器材压住）
+       * ============================================================ */
+      let frameBoxes = [];
+      let frameLabels = [];     // 只装【标签】盒子（frameBoxes 里还有光屏这类场景障碍物，不能混为一谈）
+      let labelQ = [];
+      function boxOf(pts) {
+        let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+        for (const p of pts) { x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y); x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y); }
+        return { x0: x0, y0: y0, x1: x1, y1: y1 };
+      }
+      function overlapArea(a, b) {
+        const w = Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0);
+        const h = Math.min(a.y1, b.y1) - Math.max(a.y0, b.y0);
+        return (w > 0 && h > 0) ? w * h : 0;
+      }
+      function fitBox(b, w, h) {
+        let dx = 0, dy = 0;
+        if (b.x0 < 2) dx = 2 - b.x0;
+        else if (b.x1 > w - 2) dx = (w - 2) - b.x1;
+        if (b.y0 < 2) dy = 2 - b.y0;
+        else if (b.y1 > h - 2) dy = (h - 2) - b.y1;
+        return { x0: b.x0 + dx, y0: b.y0 + dy, x1: b.x1 + dx, y1: b.y1 + dy };
+      }
+      function label(text, world, color, opt) {
+        opt = opt || {};
+        labelQ.push({ text: text, world: world, color: color, dx: opt.dx || 0, dy: opt.dy || 0, size: opt.size || 12, bold: !!opt.bold, anchor: opt.anchor || 'center' });
+      }
+      function flushLabels(q, w, h) {
+        ctx.textBaseline = 'middle';
+        for (const L of labelQ) {
+          const p = project(L.world, q);
+          if (!isFinite(p.x) || !isFinite(p.y)) continue;
+          ctx.font = (L.bold ? '700 ' : '') + L.size + 'px Inter, "PingFang SC", "Microsoft YaHei", sans-serif';
+          const tw = ctx.measureText(L.text).width;
+          const bw = tw + 12, bh = L.size + 10;
+          const cands = [[0, 0], [1, 0], [-1, 0], [0, -1], [0, 1], [1, -1], [-1, -1], [1, 1], [-1, 1]];
+          let best = null, bestCost = 1e9;
+          for (let i = 0; i < cands.length; i++) {
+            const cx = p.x + L.dx + cands[i][0] * (bw * 0.5 + 6) + (L.anchor === 'left' ? bw * 0.5 : 0);
+            const cy = p.y + L.dy + cands[i][1] * (bh * 0.5 + 5);
+            let b = { x0: cx - bw / 2, y0: cy - bh / 2, x1: cx + bw / 2, y1: cy + bh / 2 };
+            b = fitBox(b, w, h);
+            let ov = 0;
+            for (const o of frameBoxes) ov += overlapArea(b, o);
+            const cost = ov * 3 + (Math.abs(cands[i][0]) + Math.abs(cands[i][1])) * 34 + i * 0.6;
+            if (cost < bestCost) { bestCost = cost; best = { b: b, cx: cx, cy: cy }; }
+          }
+          if (!best) continue;
+          const b = best.b;
+          ctx.fillStyle = 'rgba(2,6,23,.80)';
+          ctx.strokeStyle = 'rgba(148,163,184,.30)';
+          ctx.lineWidth = 1;
+          const rr = 6, x0 = b.x0, y0 = b.y0, x1 = b.x1, y1 = b.y1;
+          ctx.beginPath();
+          ctx.moveTo(x0 + rr, y0); ctx.lineTo(x1 - rr, y0); ctx.quadraticCurveTo(x1, y0, x1, y0 + rr);
+          ctx.lineTo(x1, y1 - rr); ctx.quadraticCurveTo(x1, y1, x1 - rr, y1);
+          ctx.lineTo(x0 + rr, y1); ctx.quadraticCurveTo(x0, y1, x0, y1 - rr);
+          ctx.lineTo(x0, y0 + rr); ctx.quadraticCurveTo(x0, y0, x0 + rr, y0);
+          ctx.closePath(); ctx.fill(); ctx.stroke();
+          ctx.fillStyle = L.color || '#e2e8f0';
+          ctx.textAlign = 'left';
+          ctx.fillText(L.text, b.x0 + 6, (b.y0 + b.y1) / 2 + 0.5);
+          frameBoxes.push(b);
+          frameLabels.push(b);
+        }
+      }
+
+      /* ============================================================
+       * 场景绘制
+       * ============================================================ */
+      function drawBackdrop(w, h) {
+        const g = ctx.createLinearGradient(0, 0, 0, h);
+        g.addColorStop(0, '#08131f'); g.addColorStop(.55, '#061423'); g.addColorStop(1, '#030b14');
+        ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
+      }
+
+      // 桌面：一块大平板（y = −18），给整个装置一个「放在实验台上」的落脚点
+      function drawTable(q) {
+        const Y = -18, HX = 40, HZ = 22;
+        const pts = [
+          project([TARGET[0] - HX, Y, -HZ], q), project([TARGET[0] + HX, Y, -HZ], q),
+          project([TARGET[0] + HX, Y, HZ], q), project([TARGET[0] - HX, Y, HZ], q)
+        ];
+        poly(pts, 'rgba(30,41,59,.55)', 'rgba(100,116,139,.30)', 1);
+        // 网格线
+        ctx.save(); ctx.globalAlpha = .16; ctx.strokeStyle = '#64748b'; ctx.lineWidth = 1;
+        for (let i = -4; i <= 4; i++) {
+          const a = project([TARGET[0] + i * 10, Y, -HZ], q), b = project([TARGET[0] + i * 10, Y, HZ], q);
+          ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+          const c = project([TARGET[0] - HX, Y, i * 5.5], q), d = project([TARGET[0] + HX, Y, i * 5.5], q);
+          ctx.beginPath(); ctx.moveTo(c.x, c.y); ctx.lineTo(d.x, d.y); ctx.stroke();
+        }
+        ctx.restore();
+      }
+
+      // 棱镜的三个侧面（挤出体的侧壁）。按深度从远到近画，避免「近的壁被远的盖住」。
+      function prismFaces(g) {
+        const zB = -H_PR / 2, zF = H_PR / 2;
+        const V = [g.apex, g.baseL, g.baseR];
+        const NRM = [g.nL, [0, -1], g.nR];       // 与边 [apex→baseL, baseL→baseR, baseR→apex] 一一对应
+        const faces = [];
+        const edges = [[0, 1], [1, 2], [2, 0]];
+        for (let i = 0; i < 3; i++) {
+          const [a, b] = edges[i];
+          faces.push({
+            nrm: NRM[i],
+            c3: [(V[a][0] + V[b][0]) / 2, (V[a][1] + V[b][1]) / 2, 0],
+            quad: [P3(V[a], zB), P3(V[b], zB), P3(V[b], zF), P3(V[a], zF)]
+          });
+        }
+        return faces;
+      }
+
+      function drawPrism(q, g, back) {
+        const zB = -H_PR / 2, zF = H_PR / 2;
+        const tri = z => [P3(g.apex, z), P3(g.baseL, z), P3(g.baseR, z)];
+        const faces = prismFaces(g);
+        const eye = q.eye;
+        for (const f of faces) {
+          const toEye = [eye[0] - f.c3[0], eye[1] - f.c3[1], eye[2] - f.c3[2]];
+          const front = dot(f.nrm, toEye) > 0;
+          if (back ? front : !front) continue;
+          const pts = f.quad.map(p => project(p, q));
+          poly(pts, back ? 'rgba(56,189,248,.055)' : 'rgba(125,211,252,.115)', 'rgba(125,211,252,.30)', 1);
+        }
+        // 背面 / 正面两个三角形
+        const tp = tri(back ? zB : zF).map(p => project(p, q));
+        poly(tp, back ? 'rgba(15,23,42,.55)' : 'rgba(125,211,252,.10)', back ? 'rgba(125,211,252,.20)' : 'rgba(186,230,253,.55)', back ? 1 : 1.4);
+      }
+
+      function drawScreen(q, sc) {
+        const eu = sc.eu, C = sc.C;
+        const c3 = (su, sz) => [C[0] + eu[0] * su, C[1] + eu[1] * su, sz];
+        const quad = [c3(SCR_HH, -SCR_HW), c3(SCR_HH, SCR_HW), c3(-SCR_HH, SCR_HW), c3(-SCR_HH, -SCR_HW)];
+        const pts = quad.map(p => project(p, q));
+        poly(pts, 'rgba(226,232,240,.10)', 'rgba(203,213,225,.45)', 1.2);
+        // 边框加粗一点，让「屏」这个平面在立体里认得出来
+        ctx.save(); ctx.globalAlpha = .5;
+        seg(pts[0], pts[1], '#cbd5e1', 2); seg(pts[1], pts[2], '#cbd5e1', 2);
+        seg(pts[2], pts[3], '#cbd5e1', 2); seg(pts[3], pts[0], '#cbd5e1', 2);
+        ctx.restore();
+        frameBoxes.push(boxOf(pts));
+        return pts;
+      }
+
+      // 屏上的光谱带：七色落点之间用 canvas 渐变填一条带
+      function drawBand(q, ro) {
+        if (!ro.hRed || !ro.hVio) return;
+        const eu = ro.sc.eu, C = ro.sc.C;
+        const half = 1.5;
+        const ptOf = (h, dz) => [h.pt[0], h.pt[1], dz];
+        const A = project(ptOf(ro.hVio, -half), q), B = project(ptOf(ro.hVio, half), q);
+        const Dp = project(ptOf(ro.hRed, half), q), Cp = project(ptOf(ro.hRed, -half), q);
+        const gr = ctx.createLinearGradient(A.x, A.y, Cp.x, Cp.y);
+        const stops = COLORS.map((c, i) => ({ o: i / (COLORS.length - 1), c: c.hex }));
+        // 紫在 A/B 端、红在 C/D 端
+        for (const s of stops) gr.addColorStop(clamp(1 - s.o, 0, 1), s.c);
+        poly([A, B, Dp, Cp], gr, null, 0);
+        // 七个落点各画一个小亮斑，让「一条一条」看得见
+        for (const r of ro.rays) {
+          const h = hitScreen(ro.sc, r);
+          if (!h) continue;
+          const p = project([h.pt[0], h.pt[1], 0], q);
+          disc(p, 3.0, r.color.hex, 'rgba(255,255,255,.5)', 1);
+        }
+      }
+
+      function drawNormals(q, ro) {
+        const g = ro.g, L = 7.5;
+        const draw = (P, N, label_) => {
+          const a = project(P3([P[0] + N[0] * L, P[1] + N[1] * L]), q);
+          const b = project(P3([P[0] - N[0] * L, P[1] - N[1] * L]), q);
+          seg(a, b, 'rgba(226,232,240,.62)', 1.2, [5, 4]);
+          return { a: a, b: b };
+        };
+        const n1 = draw([0, 0], g.nL);
+        label('法线', P3([g.nL[0] * L * 1.15, g.nL[1] * L * 1.15]), '#cbd5e1', { size: 11 });
+        const mid = ro.rays.find(r => r.color === COLORS[MID_IDX]);
+        if (mid && mid.P2) {
+          draw(mid.P2, [-g.nR[0], -g.nR[1]]);
+          label('法线', P3([mid.P2[0] - g.nR[0] * L * 1.15, mid.P2[1] - g.nR[1] * L * 1.15]), '#cbd5e1', { size: 11 });
+        }
+        return n1;
+      }
+
+      function drawAngleArc(q, O, dirA, dirB, r, color, text) {
+        const a0 = Math.atan2(dirA[1], dirA[0]), a1 = Math.atan2(dirB[1], dirB[0]);
+        let d = a1 - a0;
+        while (d > Math.PI) d -= PI2;
+        while (d < -Math.PI) d += PI2;
+        const n = 22;
+        const pts = [];
+        for (let i = 0; i <= n; i++) {
+          const a = a0 + d * i / n;
+          pts.push(project(P3([O[0] + Math.cos(a) * r, O[1] + Math.sin(a) * r]), q));
+        }
+        trace(pts); ctx.lineWidth = 1.4; ctx.strokeStyle = color; ctx.stroke();
+        if (text) {
+          const am = a0 + d * 0.5;
+          label(text, P3([O[0] + Math.cos(am) * (r + 2.4), O[1] + Math.sin(am) * (r + 2.4)]), color, { size: 11, bold: true });
+        }
+      }
+
+      function render() {
+        const q = {};
+        const W = state.w, H = state.h;
+        ctx.setTransform(state.dpr, 0, 0, state.dpr, 0, 0);
+        ctx.clearRect(0, 0, W, H);
+        frameBoxes = []; frameLabels = []; labelQ = [];
+        drawBackdrop(W, H);
+        makeCam(q, W, H);
+        drawTable(q);
+
+        const ro = readout();
+        const g = ro.g;
+
+        // 光屏（先画：它在光路的末端，后面的光线会「落」在它上面）
+        const scPts = drawScreen(q, ro.sc);
+        if (state.showBand) drawBand(q, ro);
+
+        // 棱镜背面 → 光线 → 棱镜正面
+        if (state.showGlass) drawPrism(q, g, true);
+
+        if (state.showRays) {
+          // 入射白光（整条，从 P0 到入射点）
+          const p0 = project(P3([-L_IN, 0]), q), p1 = project(P3([0, 0]), q);
+          glowSeg(p0, p1, '#ffffff', 3.4, .22);
+          // 棱镜内部：七条色光从入射点散开
+          for (const r of ro.rays) {
+            if (!r.d1) continue;
+            const a = project(P3(r.P1), q), b = project(P3(r.P2 || r.P1), q);
+            glowSeg(a, b, r.color.hex, 2.2, .18);
+          }
+          // 出射：从出射点到屏
+          for (const r of ro.rays) {
+            if (!r.dOut) continue;
+            const a = project(P3(r.P2), q);
+            const h = hitScreen(ro.sc, r);
+            const endPt = h ? h.pt : [r.P2[0] + r.dOut[0] * 40, r.P2[1] + r.dOut[1] * 40];
+            const b = project(P3(endPt), q);
+            glowSeg(a, b, r.color.hex, 2.6, .20);
+          }
+          // 全反射：从出射面弹回棱镜内，画到它撞上的那条边为止
+          for (const r of ro.rays) {
+            if (!r.tirExit || !r.dRefl) continue;
+            const cands2 = [
+              segHit(r.P2, r.dRefl, g.apex, g.baseL),
+              segHit(r.P2, r.dRefl, g.baseL, g.baseR),
+              segHit(r.P2, r.dRefl, g.baseR, g.apex)
+            ];
+            let best2 = null;
+            for (const h of cands2) if (h && (!best2 || h.t < best2.t)) best2 = h;
+            const endPt = best2 ? best2.pt : [r.P2[0] + r.dRefl[0] * 14, r.P2[1] + r.dRefl[1] * 14];
+            glowSeg(project(P3(r.P2), q), project(P3(endPt), q), r.color.hex, 2.2, .20);
+          }
+        }
+
+        if (state.showGlass) drawPrism(q, g, false);
+
+        if (state.showNormal) drawNormals(q, ro);
+
+        if (state.showAngles) {
+          const mid = ro.rays.find(r => r.color === COLORS[MID_IDX]);
+          drawAngleArc(q, [0, 0], [1, 0], [-g.nL[0], -g.nL[1]], 4.6, '#fbbf24', 'i₁');
+          if (mid && mid.P2 && mid.d1) {
+            drawAngleArc(q, mid.P2, [-mid.d1[0], -mid.d1[1]], [g.nR[0], g.nR[1]], 4.0, '#f472b6', 'i₂');
+          }
+        }
+
+        // 标签
+        label('入射白光', P3([-L_IN * 0.72, 2.6]), '#f8fafc', { size: 12, bold: true });
+        label('三棱镜', P3([g.apex[0] * 0.35, g.apex[1] * 0.62 + 2.2]), '#bae6fd', { size: 12, bold: true });
+        label('光屏', P3([ro.sc.C[0] + ro.sc.eu[0] * (SCR_HH + 2.6), ro.sc.C[1] + ro.sc.eu[1] * (SCR_HH + 2.6)]), '#e2e8f0', { size: 12, bold: true });
+        if (isFinite(ro.dRed) && ro.dVio > ro.dRed) {
+          const mid = ro.rays.find(r => r.color === COLORS[MID_IDX]);
+          if (mid && mid.dOut) {
+            label('偏向角 δ', P3([mid.P2[0] + mid.dOut[0] * state.dist * 0.55 + 2, mid.P2[1] + mid.dOut[1] * state.dist * 0.55 - 3]), '#fcd34d', { size: 11, bold: true });
+          }
+          label('红', P3([ro.hRed.pt[0], ro.hRed.pt[1]]), '#ff8080', { size: 11, bold: true, dx: 0, dy: 0 });
+          label('紫', P3([ro.hVio.pt[0], ro.hVio.pt[1]]), '#c4b5fd', { size: 11, bold: true, dx: 0, dy: 0 });
+        }
+        if (ro.tirCount > 0) {
+          label('⚠ 出射面全反射（' + ro.tirCount + ' 色）', P3([4, -6]), '#fca5a5', { size: 12, bold: true });
+        }
+        flushLabels(q, W, H);
+      }
+
+      /* ============================================================
+       * 尺寸 / 主循环
+       * ============================================================ */
+      function resize() {
+        const r = canvas.getBoundingClientRect();
+        const w = Math.max(1, Math.round(r.width)), h = Math.max(1, Math.round(r.height));
+        const dpr = Math.min(2, window.devicePixelRatio || 1);
+        state.w = w; state.h = h; state.dpr = dpr;
+        canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr);
+        state.dirty = true;
+      }
+      function renderNow() { render(); }
+      function tick() {
+        if (state.dirty) { state.dirty = false; render(); }
+        requestAnimationFrame(tick);
+      }
+
+      /* ============================================================
+       * 交互
+       * ============================================================ */
+      function applyView(name) {
+        const V = VIEWS[name]; if (!V) return;
+        state.view = name; state.yaw = V.yaw; state.pitch = V.pitch; state.zoom = V.zoom;
+        document.querySelectorAll('.lab3d-toolbar button[data-view]').forEach(b => b.classList.toggle('active', b.dataset.view === name));
+        state.dirty = true;
+      }
+
+      function syncInputs() {
+        $('disp-apex').value = state.apex;
+        $('disp-apex-value').textContent = state.apex.toFixed(0) + '°';
+        $('disp-i1').value = state.i1;
+        $('disp-i1-value').textContent = state.i1.toFixed(1) + '°';
+        $('disp-dist').value = state.dist;
+        $('disp-dist-value').textContent = state.dist.toFixed(0) + ' cm';
+        $('disp-mono-name').textContent = state.mono == null ? '白光' : (COLORS[state.mono].name + '光 单色');
+        $('disp-mode-name').textContent = MODES[state.mode].label;
+        document.querySelectorAll('#disp-mono button').forEach(b => b.classList.toggle('active', b.dataset.mono === (state.mono == null ? 'all' : String(state.mono))));
+        document.querySelectorAll('#disp-mode button').forEach(b => b.classList.toggle('active', b.dataset.mode === state.mode));
+      }
+
+      function lawStates(ro) {
+        const white = state.mono == null;
+        const sep = white && isFinite(ro.spread) && ro.spread > 0.05;
+        const s1 = white ? sep : true;                       // 白光才谈「分解」
+        const s2 = !white || (isFinite(ro.spread) && ro.spread > 1e-6);  // δ紫 > δ红
+        // ③ 要求「按偏向角排」与「按屏上位置排」两条独立路径给出一致结论
+        const s3 = white ? (isFinite(ro.dVio) && isFinite(ro.dRed) && ro.dVio > ro.dRed && ro.ordered && ro.orderOK) : true;
+        const s4 = ro.tirCount === 0;
+        const s5 = isFinite(ro.spread) ? ro.spread > 0 : false;
+        return [
+          { on: s1, warn: false },
+          { on: s2, warn: false },
+          { on: s3, warn: false },
+          { on: s4, warn: !s4 },
+          { on: s5, warn: false }
+        ];
+      }
+
+      function updateReadout() {
+        const ro = readout();
+        $('disp-m1').textContent = f1(ro.i1 * RAD) + '°';
+        $('disp-m2').textContent = f1(ro.dMid) + '°';
+        $('disp-m3').textContent = f1(ro.spread) + '°';
+        $('disp-m4').textContent = f1(ro.width) + ' cm';
+        const m4 = $('disp-m4').parentElement;
+        m4.classList.toggle('bad', ro.tirCount > 0);
+
+        const v = $('disp-verdict');
+        if (state.mono == null) {
+          v.textContent = 'δ红 = ' + f1(ro.dRed) + '°　δ紫 = ' + f1(ro.dVio) + '°　Δδ = ' + f1(ro.spread) + '°　屏宽 = ' + f1(ro.width) + ' cm';
+        } else {
+          v.textContent = COLORS[state.mono].name + '光（λ = ' + COLORS[state.mono].lam + ' nm）　n = ' + f2(ro.rays[0] && ro.rays[0].n) + '　δ = ' + f1(ro.rays[0] && ro.rays[0].dev) + '°';
+        }
+        v.classList.toggle('warn', ro.tirCount > 0);
+
+        const st = lawStates(ro);
+        for (let i = 0; i < 5; i++) {
+          const el = $('law' + (i + 1));
+          el.classList.toggle('on', st[i].on && !st[i].warn);
+          el.classList.toggle('off', !st[i].on || st[i].warn);
+        }
+        $('disp-law-verdict').textContent =
+          '当前：A = ' + state.apex.toFixed(0) + '°，i₁ = ' + f1(ro.i1 * RAD) + '°' +
+          '，n红 = ' + f2(ro.nRed) + '、n紫 = ' + f2(ro.nVio) + '（Δn = ' + f2(ro.dn) + '）' +
+          (ro.tirCount ? '　—— 有 ' + ro.tirCount + ' 种色光在出射面全反射，第 ④ 条不成立' : '　—— 五条都成立');
+        state.dirty = true;
+      }
+
+      function recordNow() {
+        const ro = readout();
+        state.records.push({
+          apex: state.apex, i1: ro.i1 * RAD, mode: state.mode, mono: state.mono,
+          nRed: ro.nRed, nVio: ro.nVio, dn: ro.dn,
+          dRed: ro.dRed, dVio: ro.dVio, spread: ro.spread, width: ro.width, tir: ro.tirCount
+        });
+        renderRecords();
+        const tr = $('disp-rows').querySelector('tr.flash');
+        if (tr) tr.classList.remove('flash');
+        const rows = $('disp-rows').querySelectorAll('tr');
+        const last = rows[rows.length - 1];
+        if (last) { last.classList.add('flash'); setTimeout(() => last.classList.remove('flash'), 1300); }
+      }
+      function clearRecords() { state.records.length = 0; renderRecords(); }
+      function renderRecords() {
+        const tb = $('disp-rows');
+        const rs = state.records;
+        $('disp-count').textContent = '已记录 ' + rs.length + ' 组';
+        if (!rs.length) {
+          tb.innerHTML = '<tr><td colspan="10" class="empty">尚无记录，先调一组参数开始探究</td></tr>';
+          $('disp-summary').textContent = '记录 3 组以上数据，看看「顶角 A 变大时 Δδ 怎么变」、「换成真实冕牌玻璃后 Δδ 掉到多少」。';
+          return;
+        }
+        tb.innerHTML = rs.map((r, i) =>
+          '<tr>' +
+          '<td class="num">' + (i + 1) + '</td>' +
+          '<td class="num">' + r.apex.toFixed(0) + '°</td>' +
+          '<td class="num">' + f1(r.i1) + '°</td>' +
+          '<td class="num">' + f2(r.nRed) + '</td>' +
+          '<td class="num">' + f2(r.nVio) + '</td>' +
+          '<td class="num ratio">' + f2(r.dn) + '</td>' +
+          '<td class="num">' + f1(r.dRed) + '°</td>' +
+          '<td class="num">' + f1(r.dVio) + '°</td>' +
+          '<td class="num ratio">' + f1(r.spread) + '°</td>' +
+          '<td class="num">' + (r.tir ? '缺 ' + r.tir + ' 色' : f1(r.width) + ' cm') + '</td>' +
+          '</tr>').join('');
+        const last = rs[rs.length - 1];
+        const withSpread = rs.filter(r => isFinite(r.spread));
+        if (withSpread.length >= 2) {
+          const mx = withSpread.reduce((a, b) => b.spread > a.spread ? b : a);
+          $('disp-summary').textContent =
+            '已记录 ' + rs.length + ' 组。其中色散张角最大的一组是第 ' + (rs.indexOf(mx) + 1) +
+            ' 组（A = ' + mx.apex.toFixed(0) + '°、i₁ = ' + f1(mx.i1) + '°、Δδ = ' + f1(mx.spread) + '°）。' +
+            '比一比不同材料那几行的 Δn 与 Δδ —— Δn 越大，Δδ 越大。';
+        } else {
+          $('disp-summary').textContent = '再多记几组（换换顶角、换换材料），就能看出 Δn 与 Δδ 的对应关系。';
+        }
+      }
+
+      /* ============================================================
+       * 事件绑定
+       * ============================================================ */
+      const monoGroup = $('disp-mono');
+      if (monoGroup) monoGroup.addEventListener('click', e => {
+        const b = e.target.closest('button[data-mono]'); if (!b) return;
+        state.mono = b.dataset.mono === 'all' ? null : +b.dataset.mono;
+        syncInputs(); updateReadout();
+      });
+      const modeGroup = $('disp-mode');
+      if (modeGroup) modeGroup.addEventListener('click', e => {
+        const b = e.target.closest('button[data-mode]'); if (!b) return;
+        state.mode = b.dataset.mode;
+        syncInputs(); updateReadout();
+      });
+      document.querySelectorAll('.lab3d-toolbar button[data-view]').forEach(b =>
+        b.addEventListener('click', () => applyView(b.dataset.view)));
+      $('disp-reset-view').addEventListener('click', () => applyView('iso'));
+
+      $('disp-apex').addEventListener('input', e => { state.apex = +e.target.value; syncInputs(); updateReadout(); });
+      $('disp-i1').addEventListener('input', e => { state.i1 = +e.target.value; syncInputs(); updateReadout(); });
+      $('disp-dist').addEventListener('input', e => { state.dist = +e.target.value; syncInputs(); updateReadout(); });
+
+      const cb = (id, key) => { const el = $(id); if (el) el.addEventListener('change', e => { state[key] = e.target.checked; state.dirty = true; }); };
+      cb('disp-rays', 'showRays'); cb('disp-normal', 'showNormal'); cb('disp-angles', 'showAngles');
+      cb('disp-band', 'showBand'); cb('disp-glass', 'showGlass');
+
+      $('disp-record').addEventListener('click', recordNow);
+      $('disp-clear').addEventListener('click', clearRecords);
+
+      // 拖动：空白处转视角；落在棱镜上则改入射角
+      function ptr(e) {
+        const r = canvas.getBoundingClientRect();
+        return { x: e.clientX - r.left, y: e.clientY - r.top };
+      }
+      function overPrism(e) {
+        const p = ptr(e), q = {};
+        makeCam(q, state.w, state.h);
+        const g = prismGeom();
+        const poly3 = [P3(g.apex), P3(g.baseL), P3(g.baseR)].map(v => project(v, q));
+        // 点在三角形内（叉积同号）
+        let sgn = 0, hit = true;
+        for (let i = 0; i < 3; i++) {
+          const a = poly3[i], b = poly3[(i + 1) % 3];
+          const cr = (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x);
+          if (Math.abs(cr) < 1e-9) continue;
+          const s = Math.sign(cr);
+          if (sgn === 0) sgn = s; else if (s !== sgn) { hit = false; break; }
+        }
+        return hit;
+      }
+      canvas.addEventListener('pointerdown', e => {
+        canvas.setPointerCapture(e.pointerId);
+        state.dragging = true; state.dragPrism = overPrism(e);
+        state.lastX = e.clientX; state.lastY = e.clientY;
+      });
+      canvas.addEventListener('pointermove', e => {
+        if (!state.dragging) {
+          const h = overPrism(e);
+          if (h !== state.hoverPrism) { state.hoverPrism = h; canvas.classList.toggle('pick-laser', h); }
+          return;
+        }
+        const dx = e.clientX - state.lastX, dy = e.clientY - state.lastY;
+        state.lastX = e.clientX; state.lastY = e.clientY;
+        if (state.dragPrism) {
+          state.i1 = clamp(state.i1 + dx * 0.12, I1_MIN, I1_MAX);
+          syncInputs(); updateReadout();
+        } else {
+          state.yaw += dx * 0.008;
+          state.pitch = clamp(state.pitch + dy * 0.006, -1.35, 1.45);
+          state.dirty = true;
+        }
+      });
+      const endDrag = () => { state.dragging = false; state.dragPrism = false; };
+      canvas.addEventListener('pointerup', endDrag);
+      canvas.addEventListener('pointercancel', endDrag);
+      canvas.addEventListener('wheel', e => {
+        e.preventDefault();
+        state.zoom = clamp(state.zoom * (e.deltaY > 0 ? 0.92 : 1.087), 0.5, 3.2);
+        state.dirty = true;
+      }, { passive: false });
+
+      window.addEventListener('resize', () => { resize(); state.dirty = true; });
+      if (window.ResizeObserver) new ResizeObserver(() => { resize(); state.dirty = true; }).observe(canvas);
+
+      /* ============================================================
+       * 自检钩子（探针必须走被测入口，不能绕过）
+       * ============================================================ */
+      window.__disp = {
+        state: state, COLORS: COLORS, MODES: MODES, VIEWS: VIEWS, ENV: ENV,
+        constants: { L_SIDE: L_SIDE, H_PR: H_PR, L_IN: L_IN, SCR_HH: SCR_HH, SCR_HW: SCR_HW, CAMD: CAMD, A_MIN: A_MIN, A_MAX: A_MAX, I1_MIN: I1_MIN, I1_MAX: I1_MAX, D_MIN: D_MIN, D_MAX: D_MAX },
+        nOf: nOf, refract2: refract2, segHit: segHit, prismGeom: prismGeom,
+        traceOne: traceOne, traceAll: traceAll, screenGeom: screenGeom, hitScreen: hitScreen,
+        readout: readout, lawStates: lawStates,
+        envelopePoints: envelopePoints, makeCam: makeCam, project: project,
+        size: () => ({ w: state.w, h: state.h, dpr: state.dpr }),
+        boxes: () => frameBoxes.slice(),
+        labelBoxes: () => frameLabels.slice(),
+        applyView: applyView, setApex: v => { state.apex = clamp(v, A_MIN, A_MAX); syncInputs(); updateReadout(); },
+        setI1: v => { state.i1 = clamp(v, I1_MIN, I1_MAX); syncInputs(); updateReadout(); },
+        setDist: v => { state.dist = clamp(v, D_MIN, D_MAX); syncInputs(); updateReadout(); },
+        setMode: m => { state.mode = m; syncInputs(); updateReadout(); },
+        setMono: i => { state.mono = (i == null ? null : +i); syncInputs(); updateReadout(); },
+        reset: () => { state.apex = A_DEF; state.i1 = I1_DEF; state.dist = D_DEF; state.mode = 'teach'; state.mono = null; syncInputs(); updateReadout(); },
+        recordNow: recordNow, clearRecords: clearRecords, renderNow: renderNow,
+        readoutNow: () => readout(),
+        get records() { return state.records; }
+      };
+
+      /* 启动 */
+      resize();
+      syncInputs();
+      updateReadout();
+      applyView('iso');
+      requestAnimationFrame(tick);
+    })();
+    </script>
+
+    <script src="supabase.js"></script>
+    <script src="script.js"></script>
+
+</body>
+</html>
