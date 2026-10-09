@@ -98,7 +98,15 @@
     },
     battery: {
       label: '电源', terminals: 2, termNames: ['+', '-'],
-      defaults: { cells: 2, emfPerCell: 1.5, rPerCell: 0.5 },
+      // 默认 = 【两节干电池串联的 3V 理想电源】：电动势 3V、内阻 0（初中
+      // 「不计电源内阻」的标准模型）。
+      // 键取 emf / rInt：参数面板上那两根滑块（电动势、内阻）用的就是它们，
+      // 求解器也直接读（见 buildBranches 的 battery 分支）。cells / emfPerCell
+      // / rPerCell 是老键，求解器与绘制仍然认，但默认不再写它们 —— 写成
+      // 「2 节 × 1.5V」的话面板上会查不到 emf、两根滑块停在未定义值上。
+      // 画面上的节数由 drawBattery 从电动势反推（emf / 1.5 = 2 节），
+      // 所以「2 节 1.5V 的干电池」这个外观一点没变。
+      defaults: { emf: 3, rInt: 0 },
     },
     switch: {
       label: '开关', terminals: 2, termNames: ['a', 'b'],

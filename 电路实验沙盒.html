@@ -135,7 +135,7 @@
   .bar .hint a{color:var(--accent);font-weight:600;cursor:pointer;text-decoration:none}
   .bar .hint a:hover{text-decoration:underline}
   .stage{display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap}
-  .cv{flex:1 1 700px;min-width:0;background:var(--card);border:1px solid var(--line);
+  .cv{position:relative;flex:1 1 700px;min-width:0;background:var(--card);border:1px solid var(--line);
       border-radius:12px;padding:8px}
   canvas{width:100%;display:block;border-radius:8px;touch-action:none}
   /* ★ 电路画布的【宽度上限】。layout() 是往 canvas.style.width 写内联值的，
@@ -147,6 +147,33 @@
      所以这一条是「无论 layout() 算出什么都不会撑宽文档」的硬保证。
      只圈 .cv 里的那一张：图例小图标、电路图画布另有各自主的尺寸规则。 */
   .cv > canvas{max-width:100%}
+  /* ── 画笔：盖在实验画布正上方的一层标注画布 ──────────────
+     开着的时候它接管【全部】指针事件（pointer-events:auto），下层的实验
+     画布一个事件都收不到 —— 不用去和编辑器抢事件，也就不会出现「想圈一下
+     灯泡，结果把灯泡拖走了」。关掉时 display:none，一切照旧。
+     位置和尺寸由 layout() 里的 penPlace() 逐帧对齐到实验画布（含全屏、
+     手机端、缩放三种版式），所以这里不写 left/top/width。 */
+  #penCanvas{position:absolute;display:none;z-index:6;border-radius:8px;
+    touch-action:none;cursor:crosshair}
+  body.penOn #penCanvas{display:block}
+  /* 画笔工具条：贴着画布左下角。放在画布【里面】而不是顶栏里 ——
+     老师写字时眼睛在图上，颜色和粗细不该跑去顶栏找。 */
+  .penBar{position:absolute;left:12px;bottom:12px;z-index:7;display:none;
+    align-items:center;gap:6px;padding:6px 9px;border-radius:11px;
+    background:rgba(255,255,255,0.95);border:1px solid var(--line);
+    box-shadow:0 6px 18px rgba(15,23,42,0.16)}
+  body.penOn .penBar{display:flex}
+  .penBar .sw{width:20px;height:20px;border-radius:50%;border:2px solid #fff;
+    box-shadow:0 0 0 1px var(--line);cursor:pointer;padding:0}
+  .penBar .sw.on{box-shadow:0 0 0 2px var(--accent)}
+  .penBar .wd{width:26px;height:22px;border-radius:7px;border:1px solid var(--line);
+    background:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0}
+  .penBar .wd.on{border-color:var(--accent);background:#eff6ff}
+  .penBar .wd i{display:block;border-radius:50%;background:#334155}
+  .penBar .txt{background:#fff;border:1px solid var(--line);border-radius:7px;
+    padding:3px 8px;font-size:12px;cursor:pointer;font-family:inherit;color:inherit}
+  .penBar .txt:hover{background:#f1f5f9}
+  .penBar .txt:disabled{opacity:.45;cursor:default}
   .side{flex:0 0 360px;display:flex;flex-direction:column;gap:10px}
   .side h3{font-size:13px;margin-bottom:8px;color:var(--dim);font-weight:600}
   .prow{display:flex;align-items:center;gap:9px;margin:9px 0;font-size:12.5px}
@@ -427,7 +454,10 @@
   <div class="bar" id="palette"></div>
 
   <div class="stage">
-    <div class="cv"><canvas id="simCanvas"></canvas></div>
+    <!-- 画笔：penCanvas 是盖在实验画布正上方的标注层，penBar 是它的工具条。
+         两个都在 .cv 里面，位置由 layout() → penPlace() 逐帧对齐。 -->
+    <div class="cv"><canvas id="simCanvas"></canvas><canvas id="penCanvas"></canvas>
+      <div class="penBar" id="penBar"></div></div>
     <div class="side">
       <div class="panel" id="paramPanel"></div>
       <div class="panel">
@@ -608,7 +638,7 @@ var PRESETS = [
     build: function(){
       return {
         comps: [
-          { id:'E1', type:'battery', x:280, y:600, params:{cells:2, emfPerCell:1.5, rPerCell:0.5} },
+          { id:'E1', type:'battery', x:280, y:600, params:{emf:3, rInt:0} },
           { id:'S1', type:'switch',  x:720, y:600, params:{closed:true} },
           { id:'L1', type:'bulb',    x:340, y:160 },
           { id:'L2', type:'bulb',    x:660, y:160 },
@@ -631,7 +661,7 @@ var PRESETS = [
     build: function(){
       return {
         comps: [
-          { id:'E1', type:'battery', x:500, y:620, params:{cells:2, emfPerCell:1.5, rPerCell:0.5} },
+          { id:'E1', type:'battery', x:500, y:620, params:{emf:3, rInt:0} },
           { id:'S1', type:'switch',  x:820, y:620, params:{closed:true} },
           { id:'L1', type:'bulb',    x:500, y:180 },
           { id:'L2', type:'bulb',    x:500, y:380 },
@@ -655,7 +685,7 @@ var PRESETS = [
     build: function(){
       return {
         comps: [
-          { id:'E1',  type:'battery',   x:300, y:660, params:{cells:2, emfPerCell:1.5, rPerCell:0.5} },
+          { id:'E1',  type:'battery',   x:300, y:660, params:{emf:3, rInt:0} },
           { id:'S1',  type:'switch',    x:560, y:660, params:{closed:true} },
           { id:'RH1', type:'rheostat',  x:800, y:634, params:{Rmax:20, slide:0.15} },
           { id:'A1',  type:'ammeter',   x:280, y:228, params:{range:0.6} },
@@ -1056,10 +1086,18 @@ function drawForeground(){
     if (D.isAnimated(c.type)) return;
     D.drawComponent(f, c, recs[c.id]);
   });
-  tagDrawn.length = 0;                    // 和这一层的清屏同步：一次重建一批
+}
+
+// 元件标签（符号 + 状态提示行）不进缓存层，每帧画在【导线之上】：
+// 导线现在压在元件上面（真实情况就是导线从表盘上跨过去），标签是 UI 注解，
+// 被导线划掉就白写了。每件器材只有一个小圆角框，每帧重画的代价可以忽略。
+function drawTags(g){
+  tagDrawn.length = 0;                    // 和这一帧同步：一次画一批
+  if (!results) return;
+  var recs = results.components;
   scene.comps.forEach(function(c){
     var r = recs[c.id]; if (!r) return;
-    drawCompTag(f, c, r);
+    drawCompTag(g, c, r);
   });
 }
 
@@ -1117,6 +1155,9 @@ function drawFrame(){
   ctx.clearRect(0,0,W,H);
   ctx.drawImage(bgLayer, 0, 0, W, H);
   if (results) {
+    ctx.drawImage(fgLayer, 0, 0, W, H);     // 元件本体（静态层）
+    // 导线画在【元件之上】：线从电流表 / 电压表上面经过时就该压在表上
+    // （盖住一部分正是实际情况），而不是从表背后穿过去。
     scene.wires.forEach(function(wr,i){
       // phase 直接传秒数，由 drawWire 换算成像素行程；两个开关都关时传 null，
       // drawWire 就不画任何东西。current 只决定画不画箭头，小球照旧。
@@ -1124,9 +1165,12 @@ function drawFrame(){
                                     electrons: showFlow, current: showCurrent,
                                     broken: !!wr.broken });
     });
-    ctx.drawImage(fgLayer, 0, 0, W, H);
+    // 接线柱补回最上层：它是交互点，不能被导线压掉。柱子用绝对坐标画，
+    // 和元件本身无关（会动的元件的柱子由 drawMotion 画，这里补画是幂等的）。
+    scene.comps.forEach(function(c){ D.drawTerminals(ctx, c); });
     drawMotion();                           // 会动的元件压在缓存层之上
     drawSmokeLayer();                       // 烧坏的东西在冒烟（唯一「坏了还在动」的事）
+    drawTags(ctx);                          // 标签在最上层，不被导线划掉
   }
   if (editor) editor.drawOverlay(ctx);      // 选中框 / 拉线预览，永远在最上层
 }
@@ -1200,7 +1244,162 @@ function layout(){
   canvas.style.height = (cssW*H/W) + 'px';
   ctx.setTransform(dpr,0,0,dpr,0,0);
   buildLayers();
+  penPlace();                                     // 标注层跟着实验画布一起对齐
 }
+
+// ── 画笔：在实验画面上手写标注 ────────────────────────────────
+// 老师讲课时要在图上圈一圈、写几个字。做法是【在实验画布正上方盖一层自己的
+// 画布】：开着的时候它接管全部指针事件（pointer-events:auto），下层实验画布
+// 一个事件都收不到 —— 不必去和编辑器抢事件，也就不会出现「想圈一下灯泡，
+// 结果把灯泡拖走了」这种事。关掉时 display:none，一切照旧。
+// 笔迹存的是【画布逻辑坐标】(W×H)，所以全屏 / 手机端 / 换设备像素比都不走样。
+var penCanvas = document.getElementById('penCanvas');
+var penCtx = penCanvas.getContext('2d');
+var penBarEl = document.getElementById('penBar');
+var PEN_COLORS = ['#ef4444', '#2563eb', '#111827', '#eab308'];
+var PEN_WIDTHS = [2.5, 4.5, 7];
+var PEN_WLABEL = ['细', '中', '粗'];
+var pen = { on: false, color: PEN_COLORS[0], width: PEN_WIDTHS[1], strokes: [], cur: null };
+
+// 画一笔（「只点了一下」= 一个圆点）。绘制只有这一个出口，所以屏幕上看到的
+// 和存下来的永远同源 —— 断言读像素和读 strokes 不会打架。
+function penDrawStroke(g, s){
+  var pts = s.pts;
+  if (!pts || !pts.length) return;
+  g.save();
+  g.strokeStyle = s.color; g.fillStyle = s.color;
+  g.lineWidth = s.width; g.lineCap = 'round'; g.lineJoin = 'round';
+  if (pts.length === 1) {
+    g.beginPath(); g.arc(pts[0].x, pts[0].y, s.width / 2, 0, Math.PI * 2); g.fill();
+  } else {
+    g.beginPath(); g.moveTo(pts[0].x, pts[0].y);
+    for (var i = 1; i < pts.length; i++) g.lineTo(pts[i].x, pts[i].y);
+    g.stroke();
+  }
+  g.restore();
+}
+function penRedraw(){
+  var dpr = window.devicePixelRatio || 1;
+  penCtx.setTransform(1, 0, 0, 1, 0, 0);
+  penCtx.clearRect(0, 0, penCanvas.width, penCanvas.height);
+  penCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  pen.strokes.forEach(function(s){ penDrawStroke(penCtx, s); });
+  if (pen.cur) penDrawStroke(penCtx, pen.cur);
+}
+// 把标注层对齐到实验画布：尺寸和位置都跟着它。layout() 每次算完调一遍，
+// 全屏 / 手机端 / 窗口缩放三种版式自动跟上。
+function penPlace(){
+  var dpr = window.devicePixelRatio || 1;
+  var box = canvas.parentElement;                       // .cv
+  var cr = canvas.getBoundingClientRect(), br = box.getBoundingClientRect();
+  penCanvas.width = W * dpr; penCanvas.height = H * dpr;
+  penCanvas.style.width = cr.width + 'px';
+  penCanvas.style.height = cr.height + 'px';
+  // 绝对定位的包含块是 .cv 的【padding box】，而 getBoundingClientRect 含边框 ⇒
+  // 减掉 border 宽度（clientLeft/Top）。再加滚动量，画布滚动时两者一起走。
+  penCanvas.style.left = (cr.left - br.left - box.clientLeft + box.scrollLeft) + 'px';
+  penCanvas.style.top  = (cr.top  - br.top  - box.clientTop  + box.scrollTop ) + 'px';
+  penRedraw();
+}
+function penClientToLocal(e){
+  var r = penCanvas.getBoundingClientRect();
+  return { x: (e.clientX - r.left) / (r.width || 1) * W,
+           y: (e.clientY - r.top) / (r.height || 1) * H };
+}
+function penSyncUI(){
+  Array.prototype.forEach.call(penBarEl.querySelectorAll('.sw'), function(el){
+    el.classList.toggle('on', el.dataset.color === pen.color);
+  });
+  Array.prototype.forEach.call(penBarEl.querySelectorAll('.wd'), function(el){
+    el.classList.toggle('on', +el.dataset.width === pen.width);
+  });
+  var u = penBarEl.querySelector('#penUndo');
+  if (u) u.disabled = pen.strokes.length === 0;
+  var c = penBarEl.querySelector('#penClear');
+  if (c) c.disabled = pen.strokes.length === 0;
+}
+function penSetOn(v){
+  pen.on = !!v;
+  document.body.classList.toggle('penOn', pen.on);
+  pen.cur = null;
+  penPlace();               // display 从 none 变 block，位置要立刻对齐一次
+  penSyncUI();
+  return pen.on;
+}
+function penUndo(){ pen.strokes.pop(); penRedraw(); penSyncUI(); return pen.strokes.length; }
+function penClear(){ pen.strokes.length = 0; pen.cur = null; penRedraw(); penSyncUI(); return 0; }
+
+// 工具条：颜色 / 粗细 / 撤销 / 清空。按钮在这里生成，HTML 里只留一个空容器。
+(function buildPenBar(){
+  PEN_COLORS.forEach(function(c){
+    var b = document.createElement('button');
+    b.type = 'button'; b.className = 'sw'; b.dataset.color = c;
+    b.style.background = c; b.title = '画笔颜色';
+    b.onclick = function(){ pen.color = c; penSyncUI(); };
+    penBarEl.appendChild(b);
+  });
+  var sep = document.createElement('span');
+  sep.style.cssText = 'width:2px;height:18px;background:var(--line)';
+  penBarEl.appendChild(sep);
+  PEN_WIDTHS.forEach(function(w, i){
+    var b = document.createElement('button');
+    b.type = 'button'; b.className = 'wd'; b.dataset.width = w;
+    b.title = '笔迹：' + PEN_WLABEL[i];
+    var dot = document.createElement('i');
+    var d = 4 + i * 4;
+    dot.style.cssText = 'width:' + d + 'px;height:' + d + 'px';
+    b.appendChild(dot);
+    b.onclick = function(){ pen.width = w; penSyncUI(); };
+    penBarEl.appendChild(b);
+  });
+  var bu = document.createElement('button');
+  bu.type = 'button'; bu.className = 'txt'; bu.id = 'penUndo'; bu.textContent = '↩ 撤销';
+  bu.onclick = penUndo; penBarEl.appendChild(bu);
+  var bc = document.createElement('button');
+  bc.type = 'button'; bc.className = 'txt'; bc.id = 'penClear'; bc.textContent = '🧽 清空';
+  bc.onclick = penClear; penBarEl.appendChild(bc);
+})();
+penSyncUI();
+
+// 指针事件全挂在标注层上（不是实验画布上）：画笔开着时事件根本到不了下层。
+penCanvas.addEventListener('pointerdown', function(e){
+  if (!pen.on) return;
+  e.preventDefault();
+  if (penCanvas.setPointerCapture) { try { penCanvas.setPointerCapture(e.pointerId); } catch (err) {} }
+  pen.cur = { color: pen.color, width: pen.width, pts: [penClientToLocal(e)] };
+  penRedraw();
+});
+penCanvas.addEventListener('pointermove', function(e){
+  if (!pen.on || !pen.cur) return;
+  e.preventDefault();
+  var p = penClientToLocal(e), last = pen.cur.pts[pen.cur.pts.length - 1];
+  // 移动小于 1px 的点不记：手抖出来的重复点会让折线变胖、也白占内存。
+  if (Math.abs(p.x - last.x) < 1 && Math.abs(p.y - last.y) < 1) return;
+  pen.cur.pts.push(p);
+  penRedraw();
+});
+function penEnd(e){
+  if (!pen.on || !pen.cur) return;
+  if (penCanvas.releasePointerCapture && e && e.pointerId != null) {
+    try { penCanvas.releasePointerCapture(e.pointerId); } catch (err) {}
+  }
+  pen.strokes.push(pen.cur);
+  pen.cur = null;
+  penRedraw(); penSyncUI();
+}
+penCanvas.addEventListener('pointerup', penEnd);
+penCanvas.addEventListener('pointercancel', penEnd);
+
+// 画笔开着时 ⌘Z / Ctrl+Z 撤销【笔迹】，而不是撤销电路编辑。
+// 捕获阶段注册：window 是传播路径的头，捕获监听先于编辑器那个冒泡监听跑，
+// stopPropagation 一拦，编辑器的撤销就收不到这一下。
+window.addEventListener('keydown', function(e){
+  if (!pen.on) return;
+  var k = e.key ? e.key.toLowerCase() : '';
+  if (k === 'z' && (e.metaKey || e.ctrlKey)) {
+    e.preventDefault(); e.stopPropagation(); penUndo();
+  }
+}, true);
 
 // ── 参数面板 ──────────────────────────────────────────────
 // 每类元件能调什么，写在这里；面板由它生成，不写死 HTML。
@@ -1454,9 +1653,12 @@ function updateSide(){
     singular:['接线矛盾，无法求解','bad'], empty:['画布是空的','idle']};
   var m = map[results.status] || ['未知状态','idle'];
   // 短路单独压过 status。两条来路：
-  //  ① 拓扑判据 results.shortCircuit —— 默认那台电源（3V/1Ω）被导线短接时电流
-  //     只有 3A，够不着内核那个 10A 的 status 门槛，于是 status 还是 'ok'，
-  //     学生看到「电路导通」，而眼前明明是一次短路事故。
+  //  ① 拓扑判据 results.shortCircuit —— 短路是「通得太厉害」，和 status（通不通）
+  //     是两件事。默认那台电源是 3V/0Ω 的理想电源，被导线短接时矩阵直接奇异、
+  //     status 会报 'shorted'；可学生一旦在面板上把内阻拧大（那根滑块是给
+  //     「电源有内阻」那节课用的），短路电流可能只有 3A，够不着内核那个 10A 的
+  //     status 门槛 —— 于是 status 又变回 'ok'，学生看到「电路导通」，而眼前
+  //     明明是一次短路事故。所以短路必须另有一条不依赖电流大小的判据。
   //  ② shortSeen —— 短路【只存在一帧】：导线会在同一帧里被熔断，熔断之后
   //     拓扑就不再是短路了。所以这里读本轮第一次看到的短路，不然这条永远不显示。
   //     「导线已熔断」几个字必须写出来：学生眼前是断掉的导线，状态栏要是只说
@@ -1639,6 +1841,11 @@ function onTapComp(c, p){
     var l = D.toLocal(c, p.x, p.y);
     if (dialHit(l.x, l.y)) { openZoom(c); return; }
   }
+  // 开关不弹浮层：点一下它【已经通断】了（编辑器在 pointerup 里翻的 params，
+  // 见 circuit-editor 那段「点一下就通断」）。再弹一块只写着一个「闭合」勾选框
+  // 的浮层，等于给同一件事开两个入口 —— 学生点完开关还得动手把它关掉。
+  // 选中照旧发生，所以右侧「元件参数」里那份勾选框还在，要看细的往那儿看。
+  if (c.type === 'switch') return;
   openPop(c.id);
 }
 
@@ -2407,6 +2614,24 @@ var presetBtns = PRESETS.map(function(p, i){
 // 把眼前这张实物图折成标准符号的电路图。不推进撤销栈——它只读不写，
 // 什么都没改，⌘Z 不该为看一眼电路图回退一步。
 toolBtn('📐 转成电路图', openSchematic);
+// ✏️ 画笔：在实验画面上手写标注（圈重点、写批注）。开着时画布上会盖一层标注
+// 画布，元件拖动 / 拉线暂时让位 —— 见 penSetOn。放在「转成电路图」和「全屏」
+// 中间：这三个都是「改看的方式」，不改电路本身。
+// opt=1：归到「不常用的一批」。宽屏照常显示（老师用的就是大屏），窄屏收进
+// 「⋯ 更多」—— 手机上用手指写字本来就不实用，而它多占一格会把顶栏顶到 4 行，
+// 竖屏全屏下顶栏就从 90px 涨到 96px（M6 那条 ≤90 的判据实测抓到过）。
+var btnPen = toolBtn('✏️ 画笔：关', function(){ setPen(!pen.on); }, '', 1);
+btnPen.title = '在实验画面上写字画画（圈重点、写批注）';
+function setPen(v){
+  var on = penSetOn(v);
+  btnPen.textContent = '✏️ 画笔：' + (on ? '开' : '关');
+  // ⚠️ 这里【必须】把 opt 带上。直接写 className = 'on' 会把 toolBtn 加的
+  //    ' opt' 一起抹掉 —— 后果是「点过一次画笔以后，窄屏下这个按钮就再也不收
+  //    进⋯更多了」，顶栏悄悄长回 4 行；而且 __barMetrics 的 optTotal 会从 8
+  //    掉回 7，是一条只在「先点过画笔」之后才现形的隐性回归。
+  btnPen.className = (on ? 'on' : 'off') + ' opt';
+  return on;
+}
 // ⛶ 全屏：把整个屏幕都给画布。放在最后，因为它是「改看的方式」，不改电路。
 var btnFull = toolBtn('⛶ 全屏', function(){ setFull(!isFull); });
 
@@ -3132,6 +3357,33 @@ function pixStatsOn(cv, x, y, w, h){
 window.__pix = function(x, y, w, h){ return pixStatsOn(canvas, x, y, w, h); };
 window.__fgPix = function(x, y, w, h){ return pixStatsOn(fgLayer, x, y, w, h); };
 window.__bgPix = function(x, y, w, h){ return pixStatsOn(bgLayer, x, y, w, h); };
+// 画笔（标注层）。它是一张【独立的 DOM 画布】，所以「画上去了没有」必须量它，
+// 不能量实验画布 —— 那正是这一层存在的意义：笔迹不污染实验画面。
+window.__pen = function(){
+  var pr = penCanvas.getBoundingClientRect(), cr = canvas.getBoundingClientRect();
+  var cs = getComputedStyle(penCanvas);
+  return { on: pen.on, count: pen.strokes.length, color: pen.color, width: pen.width,
+           pts: pen.strokes.map(function(s){ return s.pts.length; }),
+           drawing: !!pen.cur,
+           display: cs.display, pe: cs.pointerEvents,
+           rect: { x: pr.x, y: pr.y, w: pr.width, h: pr.height },
+           canvasRect: { x: cr.x, y: cr.y, w: cr.width, h: cr.height },
+           barShown: getComputedStyle(penBarEl).display !== 'none' };
+};
+window.__penSet = function(v){ return setPen(v); };
+window.__penColor = function(c){ pen.color = c; penSyncUI(); return pen.color; };
+window.__penWidth = function(w){ pen.width = w; penSyncUI(); return pen.width; };
+window.__penUndo = function(){ return penUndo(); };
+window.__penClear = function(){ return penClear(); };
+// 直接在标注层上补一笔（逻辑坐标，[[x,y],…]）—— 给断言用，省得每次都合成
+// 一串指针事件；真实交互那一档仍然走真指针（见 N 组）。
+window.__penStroke = function(pts){
+  pen.strokes.push({ color: pen.color, width: pen.width,
+                     pts: pts.map(function(p){ return { x: p[0], y: p[1] }; }) });
+  penRedraw(); penSyncUI();
+  return pen.strokes.length;
+};
+window.__penPix = function(x, y, w, h){ return pixStatsOn(penCanvas, x, y, w, h); };
 // 抓一帧的原始像素，之后再和「同一块区域」比对 —— 用来验「在转 / 没转」。
 window.__pixSnap = function(x, y, w, h){
   var dpr = window.devicePixelRatio || 1;

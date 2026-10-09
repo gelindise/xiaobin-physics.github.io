@@ -571,10 +571,32 @@
 
   // 两端元件统一收尾：画端子引线 + 接线柱
   function posts(ctx, comp, kinds, scale, neck) {
+    // 记下这一件器材的柱子规格：宿主把导线画在元件【之上】以后（真实情况就是
+    // 导线从表盘上面跨过去），柱子会被导线压住 —— 接线柱是交互点，必须留在
+    // 最上层，由 drawTerminals() 在导线之后补画一次。
+    // 定义成【非枚举】属性：JSON.stringify / 深拷贝都看不见它，存档往返和
+    // 撤销快照不会因为多出这个字段而对不上。
+    try {
+      Object.defineProperty(comp, '__posts', {
+        value: { kinds: kinds, scale: scale, neck: neck },
+        writable: true, enumerable: false, configurable: true
+      });
+    } catch (e) {
+      comp.__posts = { kinds: kinds, scale: scale, neck: neck };
+    }
     for (var i = 0; i < kinds.length; i++) {
       var p = terminalWorld(comp, i);
       drawBindingPost(ctx, p.x, p.y, kinds[i], scale, neck);
     }
+  }
+
+  // 补画一件器材的接线柱（导线画完之后调用）。柱子走 terminalWorld()，拿到的
+  // 是含 comp.x/y、含旋转的绝对坐标 ⇒ 这个函数必须在外层变换【之外】调用，
+  // 和 posts() 的约束完全一样（见 drawSwitch 里那段注释）。
+  function drawTerminals(ctx, comp) {
+    var s = comp.__posts;
+    if (!s) return;
+    posts(ctx, comp, s.kinds, s.scale, s.neck);
   }
 
   // ============================================================
@@ -2096,23 +2118,6 @@
     ctx.fillRect(M.DIAL.x, M.DIAL.y, 3.5, M.DIAL.h);
     ctx.restore();
 
-    // ── 防视差镜面带 ────────────────────────────────────────
-    // 真表（J0407/J0408）在刻度弧【内侧】镀了一圈镜面：读数时让指针和它的
-    // 倒影重合，眼睛就不偏了。这里画成一条很淡的灰带 —— 它不是主体，
-    // 画重了会和刻度线抢注意力。半径取在刻度内端（RT0=50）里面一点。
-    ctx.save();
-    ctx.strokeStyle = 'rgba(148,163,184,0.42)';
-    ctx.lineWidth = 4.5; ctx.lineCap = 'butt';
-    ctx.beginPath();
-    ctx.arc(M.PIVOT.x, M.PIVOT.y, M.RT0 - 4.5, SW.A0, SW.A1);
-    ctx.stroke();
-    ctx.strokeStyle = 'rgba(255,255,255,0.5)';    // 镜面带上沿的一道反光
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.arc(M.PIVOT.x, M.PIVOT.y, M.RT0 - 6.4, SW.A0, SW.A1);
-    ctx.stroke();
-    ctx.restore();
-
     // ── 刻度弧 ──────────────────────────────────────────────
     // 三档线长，和真表一致：
     //   大格（带数字）3 段 × 每段 10 小格 —— 0.6A 量程一大格 0.2A、小格 0.02A；
@@ -3441,6 +3446,7 @@
     sliderLocalX: sliderLocalX, slideFromLocalX: slideFromLocalX,
     slideOf: slideOf,
     drawComponent: drawComponent, drawWire: drawWire, electronShift: electronShift,
+    drawTerminals: drawTerminals,
     currentShift: currentShift,
     roundPath: roundPath, CORNER_SEG: CORNER_SEG,
     isAnimated: isAnimated,

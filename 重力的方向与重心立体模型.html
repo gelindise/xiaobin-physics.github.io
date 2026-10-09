@@ -755,19 +755,32 @@ function envelopePoints() { return ENV_PTS; }
       ctx.textAlign = 'left';
       ctx.textBaseline = 'alphabetic';
     }
+    /* 🔴 候选位姿：半径 × 16 个方向（每 22.5°）。
+     *    半径必须够密 —— 倾角 0° 时「重力」与「垂直斜面」两个箭头端点【重合】，
+     *    三条标签的锚点是同一个点，只靠 8 个方向分不开 ~200 px 宽的标签。 */
+    const LABEL_RADII = [18, 32, 48, 66, 88, 112, 140, 158, 176, 200, 228];
     const LABEL_RINGS = (() => {
       const out = [[0, 0]];
-      for (const r of [18, 32, 48, 66, 88, 112, 140, 172]) {
-        for (const [dx, dy] of [[0, -1], [0, 1], [1, 0], [-1, 0], [0.71, -0.71], [0.71, 0.71], [-0.71, -0.71], [-0.71, 0.71]]) {
-          out.push([Math.round(r * dx), Math.round(r * dy)]);
+      for (const r of LABEL_RADII) {
+        for (let k = 0; k < 16; k++) {
+          const a = (k * Math.PI) / 8;
+          out.push([Math.round(r * Math.sin(a)), Math.round(r * Math.cos(a))]);
         }
       }
       return out;
     })();
+    /* 🔴 第 5 个参数是【候选位姿】，不是对齐方式 —— 传字符串（'below'）会让 o[0] 变成
+     *    字符、坐标相加得 NaN，解算器挑不出任何位置 ⇒ 每条标签都落在锚点上、必然叠字。
+     *    这里把「下方 / 右侧」做成【候选顺序偏好】：只改顺序，不改集合，
+     *    真正有没有遮挡仍然由 cost 决定。 */
+    const RINGS_BELOW = LABEL_RINGS.filter((o) => o[1] >= 0).concat(LABEL_RINGS.filter((o) => o[1] < 0));
+    const RINGS_RIGHT = LABEL_RINGS.filter((o) => o[0] >= 0).concat(LABEL_RINGS.filter((o) => o[0] < 0));
     const AVOID_W = { tick: 50, ground: 0, door: 9, block: 8, ball: 6, arrow: 4, text: 3 };
     const boxW = (q) => (q.txt && AVOID_W[q.txt] !== undefined ? AVOID_W[q.txt] : 1);
     function placeLabel(anchor, text, color, size, offs) {
-      const cands = offs || LABEL_RINGS;
+      const cands = offs === 'below' ? RINGS_BELOW
+                  : offs === 'right' ? RINGS_RIGHT
+                  : (Array.isArray(offs) ? offs : LABEL_RINGS);
       const boxes = LBOX.concat(GEO_BOX, UI_BOX);
       let best = null, bestCost = Infinity, bestHit = null;
       let clean = null, cleanCost = Infinity;
