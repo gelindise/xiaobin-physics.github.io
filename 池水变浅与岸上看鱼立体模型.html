@@ -306,7 +306,8 @@
             <label><input id="pool-rays" type="checkbox" checked>真实光线</label>
             <label><input id="pool-ext" type="checkbox" checked>反向延长线</label>
             <label><input id="pool-normal" type="checkbox" checked>法线与角弧</label>
-            <label><input id="pool-ruler" type="checkbox" checked>深度标尺</label>
+            <label><input id="pool-ruler" type="checkbox">深度标尺</label>
+            <label><input id="pool-window" type="checkbox">斯涅尔窗</label>
             <span class="legend">实线 = 光真正走的路　虚线 = 眼睛以为光走的路　空心鱼 = 看到的像</span>
           </div>
 
@@ -920,38 +921,48 @@
       function drawWalls(q) {
         for (const wq of wallQuads()) {
           const pts = wq.pts.map(p => project(p, q));
-          poly(pts, 'rgba(20,52,74,.72)', 'rgba(56,189,248,.22)', 1);
+          poly(pts, 'rgba(20,52,74,.30)', 'rgba(56,189,248,.14)', 1);
         }
       }
       function drawBottom(q) {
         const K = POOL_HW, y = -state.h;
         const pts = [[-K, y, -K], [K, y, -K], [K, y, K], [-K, y, K]].map(p => project(p, q));
         poly(pts, 'rgba(12,34,52,.92)', 'rgba(56,189,248,.30)', 1);
-        // 网格
+        // 网格（淡一些：网格只是池底质感，不能抢光线的注意力）
         for (let v = -K + 0.6; v < K - 0.01; v += 0.6) {
-          seg3([v, y, -K], [v, y, K], 'rgba(56,189,248,.16)', 1);
-          seg3([-K, y, v], [K, y, v], 'rgba(56,189,248,.16)', 1);
+          seg3([v, y, -K], [v, y, K], 'rgba(56,189,248,.10)', 1);
+          seg3([-K, y, v], [K, y, v], 'rgba(56,189,248,.10)', 1);
         }
       }
       function drawWater(q) {
         const K = POOL_HW;
         const pts = [[-K, 0, -K], [K, 0, -K], [K, 0, K], [-K, 0, K]].map(p => project(p, q));
-        poly(pts, 'rgba(56,189,248,.20)', 'rgba(125,211,252,.55)', 1.2);
+        // 水面蒙层尽量透明（0.20 → 0.08）：鱼和水下光线要一眼看清，不能被水面压暗
+        poly(pts, 'rgba(56,189,248,.08)', 'rgba(125,211,252,.75)', 1.4);
+        // 水波细线：几条浅色短横线提示「这是水面」，但不挡视线
+        ctx.strokeStyle = 'rgba(125,211,252,.30)'; ctx.lineWidth = 1;
+        ctx.setLineDash([10, 14]);
+        for (let i = -2; i <= 2; i++) {
+          seg3([-K + 0.4, 0, i * 0.9], [K - 0.4, 0, i * 0.9], 'rgba(125,211,252,.28)', 1);
+        }
+        ctx.setLineDash([]);
       }
       function drawFish(q, F, ghost) {
         const S = fishOutline();
-        const k = 0.72;
+        const k = ghost ? 0.95 : 1.0;   // 真鱼放大到 1.0，一眼可见
         const body = billboard(F, S.body, q, k);
         const tail = billboard(F, S.tail, q, k);
         if (ghost) {
-          poly(body, 'rgba(148,163,184,.10)', 'rgba(226,232,240,.85)', 1.4);
-          ctx.setLineDash([4, 4]); ctx.strokeStyle = 'rgba(226,232,240,.85)'; ctx.lineWidth = 1.4;
+          // 虚像鱼：清晰白色虚线轮廓 + 浅填充，必须一眼能认出「这是像」
+          poly(body, 'rgba(255,255,255,.14)', 'rgba(255,255,255,.95)', 2.0);
+          ctx.setLineDash([5, 4]); ctx.strokeStyle = 'rgba(255,255,255,.95)'; ctx.lineWidth = 2.0;
           pathOf(tail); ctx.closePath(); ctx.stroke(); ctx.setLineDash([]);
         } else {
-          poly(body, '#f59e0b', 'rgba(255,237,213,.95)', 1.4);
-          poly(tail, '#f59e0b', 'rgba(255,237,213,.95)', 1.4);
+          // 真鱼：亮橙色实心 + 白描边 + 黑眼睛，和水下深蓝背景形成强对比
+          poly(body, '#fbbf24', 'rgba(255,255,255,.9)', 1.8);
+          poly(tail, '#fbbf24', 'rgba(255,255,255,.9)', 1.8);
           const eye = billboard(F, [[0.28, 0.11]], q, k)[0];
-          disc(project(eye, q), 2.0, '#0b1220', null, 0);
+          disc(project(eye, q), 2.6, '#0b1220', null, 0);
         }
       }
       function drawObserver(q, E, ro) {
@@ -1010,8 +1021,8 @@
         poly3(arcOf(ro.t2, +1), null, '#7dd3fc', 1.6);
         // θ₁（物体侧，法线向下）
         poly3(arcOf(ro.t1, -1), null, '#f59e0b', 1.6);
-        // 法线
-        seg3([P[0], P[1] + R * 1.9, P[2]], [P[0], P[1] - R * 1.9, P[2]], 'rgba(148,163,184,.6)', 1.1, [5, 4]);
+        // 法线（淡：它只是角弧的参照，不能和光线抢视觉）
+        seg3([P[0], P[1] + R * 1.9, P[2]], [P[0], P[1] - R * 1.9, P[2]], 'rgba(148,163,184,.4)', 1, [5, 4]);
       }
       function drawRaySet(q, G) {
         const ro = G.ro, F = G.F, E = G.E, P = G.P, I = G.I;
@@ -1100,8 +1111,10 @@
         batch.push({ d: depthOf(G.I, q) - 0.01, fn: () => drawFish(q, G.I, true) });
         if (state.showRuler) batch.push({ d: depthOf([0, -state.h / 2, 0], q) - 0.02, fn: () => drawRuler(q, G) });
         if (state.showNormal) batch.push({ d: depthOf(G.P, q) - 0.03, fn: () => drawAngles(q, G) });
-        // 斯涅尔窗：只要有一点在水下就画（air 模式是鱼、water 模式是观察者）
-        batch.push({ d: depthOf([0, 0, 0], q) - 0.04, fn: () => drawWindow(q, G) });
+        // 斯涅尔窗：默认关闭（默认视图是干净的折射剖面），勾选「斯涅尔窗」才显示
+        if (state.showWindow) {
+          batch.push({ d: depthOf([0, 0, 0], q) - 0.04, fn: () => drawWindow(q, G) });
+        }
         batch.sort((a, b) => b.d - a.d);
         for (const e of batch) e.fn();
 
@@ -1111,7 +1124,7 @@
         /* ---- 水上批 ---- */
         const over = [];
         if (state.showRays) over.push({ d: depthOf(scl(add(G.P, G.E), 0.5), q), fn: () => seg3(G.P, G.E, cEyeSeg, 2.2) });
-        if (state.showExt) over.push({ d: depthOf(G.E, q) + 0.02, fn: () => seg3(G.E, G.I, 'rgba(148,163,184,.42)', 1.2, [3, 5]) });
+        if (state.showExt) over.push({ d: depthOf(G.E, q) + 0.02, fn: () => seg3(G.E, G.I, 'rgba(148,163,184,.34)', 1.1, [3, 5]) });
         over.push({ d: depthOf(G.E, q), fn: () => drawObserver(q, G.E, ro) });
         over.push({ d: depthOf(G.P, q) + 0.01, fn: () => disc(project(G.P, q), 4.0, '#e0f2fe', 'rgba(2,6,23,.9)', 1.2) });
         over.sort((a, b) => b.d - a.d);
@@ -1286,11 +1299,14 @@
         crit:      { mode: 'water', h: 2.5, e: 1.2, D: 4.0, n: 1.5, phi: 0, nm: '临界角' }
       };
       const state = {
-        yaw: VIEWS.iso.yaw, pitch: VIEWS.iso.pitch, zoom: VIEWS.iso.zoom,
+        yaw: VIEWS.side.yaw, pitch: VIEWS.side.pitch, zoom: VIEWS.side.zoom,
         mode: 'air', h: H_DEF, e: E_DEF, D: D_DEF, n: N_DEF, phi: 0,
         preset: 'slant',
-        showRays: true, showExt: true, showNormal: true, showRuler: true,
-        view: 'iso',
+        showRays: true, showExt: true, showNormal: true, showRuler: false, showWindow: false,
+        // 🔴 默认视角是「折射剖面」（side）：一打开就是教科书式剖面图 ——
+        //    真鱼 / 水面折射点 / 观察者 / 黄→青光线 / 白虚线延长线全部铺在同一平面里。
+        //    原来的默认 iso 立体视角把 4 面池壁 + 网格 + 标签投影成交织线条，鱼被压没。
+        view: 'side',
         // 🔴 state.h 是【水的深度】，不能再拿它当画布高度 ——
         //    原先沿用了模板页的 state.w/state.h 表示画布尺寸，resize() 一跑就把水深改成 578，
         //    于是 θ₁ 变成 0.296°、鱼被投到屏幕外 2700 px。画布高度改名为 state.ch。
@@ -1332,7 +1348,7 @@
       function setPhi(v) { state.phi = ((v % 360) + 360) % 360; if (VIEWS[state.view].yawFromPhi) state.yaw = -state.phi * D2R; syncInputs(); updateReadout(); }
       /* ★ 四个勾选框必须走【同一个入口】——只写 state + dirty 的话主画布会更新，
          但 ② 面板与结论是 updateReadout() 画的，漏掉就完全没反应。 */
-      const TOGGLE_ID = { showRays: 'pool-rays', showExt: 'pool-ext', showNormal: 'pool-normal', showRuler: 'pool-ruler' };
+      const TOGGLE_ID = { showRays: 'pool-rays', showExt: 'pool-ext', showNormal: 'pool-normal', showRuler: 'pool-ruler', showWindow: 'pool-window' };
       function setToggle(k, v) {
         if (!(k in TOGGLE_ID)) return;
         state[k] = !!v;
@@ -1561,7 +1577,7 @@
       $('pool-n').addEventListener('input', e => setN(+e.target.value));
       const cb = (id, key) => { const el = $(id); if (el) el.addEventListener('change', e => setToggle(key, e.target.checked)); };
       cb('pool-rays', 'showRays'); cb('pool-ext', 'showExt');
-      cb('pool-normal', 'showNormal'); cb('pool-ruler', 'showRuler');
+      cb('pool-normal', 'showNormal'); cb('pool-ruler', 'showRuler'); cb('pool-window', 'showWindow');
       $('pool-record').addEventListener('click', recordNow);
       $('pool-clear').addEventListener('click', clearRecords);
 
@@ -1647,9 +1663,9 @@
         setToggle: setToggle,
         reset: () => {
           state.mode = 'air'; state.h = H_DEF; state.e = E_DEF; state.D = D_DEF; state.n = N_DEF; state.phi = 0;
-          state.showRays = true; state.showExt = true; state.showNormal = true; state.showRuler = true;
+          state.showRays = true; state.showExt = true; state.showNormal = true; state.showRuler = false; state.showWindow = false;
           state.preset = 'slant';
-          for (const p of [['pool-rays', 'showRays'], ['pool-ext', 'showExt'], ['pool-normal', 'showNormal'], ['pool-ruler', 'showRuler']]) {
+          for (const p of [['pool-rays', 'showRays'], ['pool-ext', 'showExt'], ['pool-normal', 'showNormal'], ['pool-ruler', 'showRuler'], ['pool-window', 'showWindow']]) {
             const el = $(p[0]); if (el) el.checked = state[p[1]];
           }
           syncInputs(); updateReadout();
