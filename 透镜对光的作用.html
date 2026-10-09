@@ -54,9 +54,10 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:15px;heigh
 <div class="ctrl-group"><label>透镜类型</label><select id="lensSel"><option value="convex">凸透镜（会聚）</option><option value="concave">凹透镜（发散）</option></select></div>
 <div class="ctrl-group"><label>光线数量</label><select id="rayCountSel"><option value="3">3条主光线</option><option value="5" selected>5条光线</option><option value="9">9条光线</option></select></div>
 <div class="ctrl-group"><label>平行光入射角</label><input type="range" id="angleSlider" min="-20" max="20" value="0" step="1"><div class="val-row"><span>-20°</span><span id="angleDisplay">0°</span><span>+20°</span></div></div>
-<div class="ctrl-group"><label>显示元素</label><div style="display:flex;gap:0.5rem">
+<div class="ctrl-group"><label>显示元素</label><div style="display:flex;gap:0.5rem;flex-wrap:wrap">
 <label style="font-size:0.8rem;display:flex;align-items:center;gap:0.3rem;color:var(--text-muted);cursor:pointer"><input type="checkbox" id="showFocal" checked> 焦点/焦距</label>
-<label style="font-size:0.8rem;display:flex;align-items:center;gap:0.3rem;color:var(--text-muted);cursor:pointer"><input type="checkbox" id="showAxis" checked> 主光轴</label></div></div>
+<label style="font-size:0.8rem;display:flex;align-items:center;gap:0.3rem;color:var(--text-muted);cursor:pointer"><input type="checkbox" id="showAxis" checked> 主光轴</label>
+<label style="font-size:0.8rem;display:flex;align-items:center;gap:0.3rem;color:var(--text-muted);cursor:pointer" title="取消勾选后不画光线，只显示白色光柱（平行光柱 → 会聚光锥 → 焦点 → 发散光锥）"><input type="checkbox" id="showRays" checked> 光线</label></div></div>
 <div class="data-grid">
 <div class="data-item"><div class="dl">透镜类型</div><div class="dv cyan" id="lensType">凸透镜</div></div>
 <div class="data-item"><div class="dl">对光的作用</div><div class="dv orange" id="effectDisplay">会聚</div></div>
@@ -64,7 +65,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:15px;heigh
 <div class="formula-bar"><span class="fm">凸透镜：对光有会聚作用 &nbsp;|&nbsp; 凹透镜：对光有发散作用</span><span class="calc" id="calcDisplay">观察平行光经过透镜后的偏折</span></div></div>
 <div class="section-info wrap" style="max-width:1200px;margin:2rem auto 0">
 <div class="card"><h3>实验原理</h3><p><b>凸透镜</b>（中间厚边缘薄）对光线有<b>会聚</b>作用，平行于主光轴的光线经凸透镜后会聚于焦点。<br><b>凹透镜</b>（中间薄边缘厚）对光线有<b>发散</b>作用，平行光经凹透镜后发散，反向延长线交于虚焦点。</p></div>
-<div class="card"><h3>操作指南</h3><ol><li>切换凸透镜/凹透镜观察折射效果</li><li>调节光线数量观察光路分布</li><li>调节入射角观察斜入射时的折射</li></ol></div></div></div>
+<div class="card"><h3>操作指南</h3><ol><li>切换凸透镜/凹透镜观察折射效果</li><li>调节光线数量观察光路分布</li><li>调节入射角观察斜入射时的折射</li><li>取消勾选「光线」——只留白色光柱：平行光柱 → 会聚光锥 → 焦点 → 发散光锥</li></ol></div></div></div>
 <script src="script.js"></script>
 <script>
 (function(){
@@ -73,46 +74,96 @@ var x=c.getContext("2d");
 var W=700,H=400;
 var CX=350,LY=200;
 var FL=160;
-var st={lens:"convex",rayCount:5,angle:0,showFocal:true,showAxis:true};
+var st={lens:"convex",rayCount:5,angle:0,showFocal:true,showAxis:true,showRays:true};
+var FX=CX+FL;   // 右焦点 F′ 横坐标 —— 平行光经凸透镜后的会聚点
 
 function $(id){return document.getElementById(id);}
-var LS={lensSel:$("lensSel"),rayCountSel:$("rayCountSel"),angleSlider:$("angleSlider"),angleDisplay:$("angleDisplay"),showFocal:$("showFocal"),showAxis:$("showAxis"),lensType:$("lensType"),effectDisplay:$("effectDisplay"),calcDisplay:$("calcDisplay")};
+var LS={lensSel:$("lensSel"),rayCountSel:$("rayCountSel"),angleSlider:$("angleSlider"),angleDisplay:$("angleDisplay"),showFocal:$("showFocal"),showAxis:$("showAxis"),showRays:$("showRays"),lensType:$("lensType"),effectDisplay:$("effectDisplay"),calcDisplay:$("calcDisplay")};
+
+// 折射后光线的纵坐标：k=-1 会聚（每一条都严格通过右焦点 F′）；k=+1 发散（反向延长线通过左焦点 F）
+function refractY(h,xx,k){var dy=h-LY;return LY+dy*(1+k*(xx-CX)/FL);}
+
+// 一束平行光（上边缘 yt / 下边缘 yb）的光柱轮廓。
+// 左段是平行光柱，右段凸透镜先收成光锥、过顶点后再张开成发散光锥（凹透镜则一路张开）。
+// 🔴 顶点 ax/ay 只在这里定义一次：填充和描边共用同一份顶点，两处各算一遍必然会对不上。
+function beamOutline(k,yt,yb){
+  var ax=FX,ay=LY;                     // 光锥顶点 = 右焦点 F′
+  var e1=refractY(yt,W-30,k),e2=refractY(yb,W-30,k);
+  return {band:[[30,yt],[CX,yt],[CX,yb],[30,yb]],
+          cone:k<0?[[CX,yt],[ax,ay],[CX,yb]]:[[CX,yt],[W-30,e1],[W-30,e2],[CX,yb]],
+          fan:k<0?[[ax,ay],[W-30,e1],[W-30,e2]]:null,
+          edgeTop:k<0?[[30,yt],[CX,yt],[ax,ay],[W-30,e1]]:[[30,yt],[CX,yt],[W-30,e1]],
+          edgeBot:k<0?[[30,yb],[CX,yb],[ax,ay],[W-30,e2]]:[[30,yb],[CX,yb],[W-30,e2]]};
+}
+function tracePath(pts){for(var i=0;i<pts.length;i++){if(i)x.lineTo(pts[i][0],pts[i][1]);else x.moveTo(pts[i][0],pts[i][1]);}}
 
 function drawScene(){
   x.clearRect(0,0,W,H);
+
+  var isConv=(st.lens==="convex");
+  var k=isConv?-1:1;
+  var rc=parseInt(st.rayCount);
+  var startY=LY-70,endY=LY+70;
+  if(rc===3){startY=LY-45;endY=LY+45;}
+  var step=(endY-startY)/(rc-1);
+  var off=(st.angle*Math.PI/180)*200;   // 平行光束整体偏移（仍与主光轴平行 ⇒ 仍然会聚于 F′）
+  var top=startY+off,bot=endY+off;
+  var yc=(top+bot)/2,hh=(bot-top)/2;
+
+  // ---- 几何登记：画什么就登记什么，自检直接读这里 ----
+  var geom={CX:CX,LY:LY,FL:FL,lens:st.lens,rayCount:rc,angle:st.angle,
+            focusL:{x:CX-FL,y:LY},focusR:{x:FX,y:LY},
+            top:top,bot:bot,showRays:st.showRays,incoming:[],refract:[]};
+  for(var i=0;i<rc;i++){
+    var sy=startY+i*step+off;
+    geom.incoming.push({x1:30,y1:sy,x2:CX,y2:sy});
+    geom.refract.push({x1:CX,y1:sy,x2:W-30,y2:refractY(sy,W-30,k)});
+  }
+  window.__lens.geom=geom;
+
+  // 网格
   x.save();
   x.strokeStyle="rgba(255,255,255,0.015)";x.lineWidth=0.5;
   for(var y=0;y<H;y+=30){x.beginPath();x.moveTo(0,y);x.lineTo(W,y);x.stroke();}
   for(var xg=0;xg<W;xg+=30){x.beginPath();x.moveTo(xg,0);x.lineTo(xg,H);x.stroke();}
   x.restore();
-  
-  var isConv=(st.lens==="convex");
-  var angRad=st.angle*Math.PI/180;
-  var fp=FL;
-  
-  // Axis
+
+  // ---- 光柱：同轴心一束束由外向内叠加，累计不透明度 0.12 → 0.88，叠出平滑的白色光柱（不是几道色带）----
+  var LAYERS=[[1.25,"120,175,255",0.120],[1.00,"150,195,255",0.205],
+              [0.85,"175,212,255",0.143],[0.70,"198,226,255",0.167],
+              [0.55,"218,236,255",0.200],[0.40,"235,245,255",0.225],
+              [0.28,"248,251,255",0.258],[0.16,"255,255,255",0.261],
+              [0.06,"255,255,255",0.294]];
+  x.save();
+  for(var L=0;L<LAYERS.length;L++){
+    var ob=beamOutline(k,yc-hh*LAYERS[L][0],yc+hh*LAYERS[L][0]);
+    x.beginPath();
+    tracePath(ob.band);x.closePath();
+    tracePath(ob.cone);x.closePath();
+    if(ob.fan){tracePath(ob.fan);x.closePath();}
+    x.fillStyle="rgba("+LAYERS[L][1]+","+LAYERS[L][2]+")";x.fill();
+  }
+  // 光柱上下边缘的亮白轮廓线（顶点与填充同一份几何）
+  var oe=beamOutline(k,top,bot);
+  x.beginPath();tracePath(oe.edgeTop);tracePath(oe.edgeBot);
+  x.strokeStyle="rgba(255,255,255,0.22)";x.lineWidth=1;x.stroke();
+  // 会聚点上的光斑
+  if(isConv){
+    var g=x.createRadialGradient(FX,LY,0,FX,LY,30);
+    g.addColorStop(0,"rgba(255,255,255,0.85)");g.addColorStop(0.34,"rgba(215,238,255,0.34)");
+    g.addColorStop(1,"rgba(180,220,255,0)");
+    x.fillStyle=g;x.beginPath();x.arc(FX,LY,30,0,Math.PI*2);x.fill();
+  }
+  x.restore();
+
+  // 主光轴：画在光柱【之上】，否则会被亮光柱整条吃掉；用偏冷的灰蓝，亮处暗处都看得见
   if(st.showAxis){
-    x.save();x.setLineDash([5,5]);x.strokeStyle="rgba(255,255,255,0.1)";x.lineWidth=0.5;
+    x.save();x.setLineDash([5,5]);x.strokeStyle="rgba(120,155,200,0.5)";x.lineWidth=0.8;
     x.beginPath();x.moveTo(30,LY);x.lineTo(W-30,LY);x.stroke();x.restore();
-    x.fillStyle="rgba(255,255,255,0.15)";x.font="11px sans-serif";x.textAlign="right";x.textBaseline="bottom";
-    x.fillText("主光轴",W-35,LY-3);
+    x.fillStyle="rgba(190,215,245,0.8)";x.font="11px sans-serif";x.textAlign="right";x.textBaseline="bottom";
+    x.fillText("主光轴",W-35,LY-4);
   }
-  
-  // Focal points
-  if(st.showFocal){
-    var fx1=CX-fp,fx2=CX+fp;
-    x.save();x.setLineDash([3,3]);x.strokeStyle="rgba(245,158,11,0.3)";x.lineWidth=0.5;
-    x.beginPath();x.moveTo(fx1,LY-80);x.lineTo(fx1,LY+80);x.stroke();
-    x.beginPath();x.moveTo(fx2,LY-80);x.lineTo(fx2,LY+80);x.stroke();
-    x.setLineDash([]);
-    x.fillStyle="rgba(245,158,11,0.5)";x.font="11px sans-serif";x.textAlign="center";x.textBaseline="top";
-    x.fillText("F",fx1,LY+5);
-    x.fillText("F\u2032",fx2,LY+5);
-    x.restore();
-    x.beginPath();x.arc(fx1,LY,3,0,Math.PI*2);x.fillStyle="rgba(245,158,11,0.6)";x.fill();
-    x.beginPath();x.arc(fx2,LY,3,0,Math.PI*2);x.fillStyle="rgba(245,158,11,0.6)";x.fill();
-  }
-  
+
   // Lens
   var lw=isConv?30:20;
   x.save();
@@ -138,43 +189,48 @@ function drawScene(){
   x.fillStyle=lg;x.fill();
   x.strokeStyle="rgba(180,210,255,0.3)";x.lineWidth=1.5;x.stroke();
   x.restore();
-  
-  // Rays
-  var rc=parseInt(st.rayCount);
-  var startY=LY-70,endY=LY+70;
-  if(rc===3){startY=LY-45;endY=LY+45;}
-  var step=(endY-startY)/(rc-1);
-  
-  x.save();
-  for(var i=0;i<rc;i++){
-    var sy=startY+i*step;
-    var off=angRad*200;
-    var syOff=sy+off;
-    
-    // Incoming ray (yellow)
-    x.beginPath();x.moveTo(30,syOff);x.lineTo(CX-5,syOff);
-    x.strokeStyle="rgba(255,200,100,"+(0.5+0.3*(1-i/rc))+")";x.lineWidth=1.5;x.stroke();
-    
-    // Outgoing ray (blue)
-    var dy=syOff-LY;
-    if(isConv){
-      // Converge to focus
-      var x2=CX+fp+20;
-      var y2=LY-dy*20/(fp+20);
-      x.beginPath();x.moveTo(CX+5,syOff);
-      x.quadraticCurveTo(CX+15,syOff+(y2-syOff)*0.5,x2,y2);
-    } else {
-      // Diverge
-      var x2=W-30;
-      var y2=LY+dy*1.3;
-      x.beginPath();x.moveTo(CX+5,syOff);
-      x.quadraticCurveTo(CX+15,syOff+(y2-syOff)*0.3,x2,y2);
+
+  // ---- 光线（细线光路，可直接关掉只留光柱）----
+  if(st.showRays){
+    x.save();
+    for(var r=0;r<rc;r++){
+      var s0=startY+r*step+off;
+      var al=0.95-0.2*r/Math.max(1,rc-1);
+      // 入射光线（暖黄）
+      x.beginPath();x.moveTo(30,s0);x.lineTo(CX,s0);
+      x.strokeStyle="rgba(255,196,70,"+al+")";x.lineWidth=1.8;x.stroke();
+      // 折射光线（深蓝）—— 严格是直线，凸透镜时全部通过 F′
+      var s1=refractY(s0,W-30,k);
+      x.beginPath();x.moveTo(CX,s0);x.lineTo(W-30,s1);
+      x.strokeStyle="rgba(56,130,246,"+al+")";x.lineWidth=1.8;x.stroke();
     }
-    x.strokeStyle="rgba(59,130,246,"+(0.5+0.3*(1-i/rc))+")";x.lineWidth=1.5;x.stroke();
+    x.restore();
   }
-  x.restore();
-  
-  x.fillStyle="rgba(255,255,255,0.15)";x.font="12px sans-serif";
+
+  // ---- 焦点 / 焦距（画在最上层，保证黄点压在光柱上面看得见）----
+  if(st.showFocal){
+    var fxs=[geom.focusL.x,geom.focusR.x];
+    x.save();x.setLineDash([3,3]);x.strokeStyle="rgba(245,158,11,0.35)";x.lineWidth=0.7;
+    for(var q=0;q<2;q++){x.beginPath();x.moveTo(fxs[q],LY-80);x.lineTo(fxs[q],LY+80);x.stroke();}
+    x.restore();
+    for(var q2=0;q2<2;q2++){
+      var fx=fxs[q2];
+      x.save();x.shadowColor="rgba(245,158,11,0.95)";x.shadowBlur=10;
+      x.beginPath();x.arc(fx,LY,4.4,0,Math.PI*2);x.fillStyle="#f59e0b";x.fill();
+      x.restore();
+      x.beginPath();x.arc(fx,LY,1.8,0,Math.PI*2);x.fillStyle="#fff7ed";x.fill();
+      x.save();
+      x.shadowColor="rgba(0,0,0,0.85)";x.shadowBlur=4;
+      x.textAlign="center";x.textBaseline="top";
+      x.fillStyle="#fbbf24";x.font="bold 12px sans-serif";
+      x.fillText(q2===0?"F":"F\u2032",fx,LY+8);
+      x.fillStyle="rgba(251,191,36,0.95)";x.font="10px sans-serif";
+      x.fillText("焦点",fx,LY+23);
+      x.restore();
+    }
+  }
+
+  x.fillStyle="rgba(255,255,255,0.18)";x.font="12px sans-serif";
   x.textAlign="center";x.textBaseline="bottom";
   x.fillText(isConv?"凸透镜（会聚）":"凹透镜（发散）",CX,LY-95);
 }
@@ -191,6 +247,10 @@ LS.rayCountSel.addEventListener("change",function(){st.rayCount=parseInt(LS.rayC
 LS.angleSlider.addEventListener("input",function(){st.angle=parseInt(LS.angleSlider.value);LS.angleDisplay.textContent=st.angle+"°";});
 LS.showFocal.addEventListener("change",function(){st.showFocal=LS.showFocal.checked;});
 LS.showAxis.addEventListener("change",function(){st.showAxis=LS.showAxis.checked;});
+LS.showRays.addEventListener("change",function(){st.showRays=LS.showRays.checked;});
+
+window.__lens={state:st,geom:null,renderNow:drawScene,
+  layout:function(){return {W:W,H:H,CX:CX,LY:LY,FL:FL,FX:FX};}};
 
 updateUI();
 (function loop(){drawScene();requestAnimationFrame(loop);})();
