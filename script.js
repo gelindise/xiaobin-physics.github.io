@@ -487,7 +487,7 @@ window.onload = async function() {
       const isExpired = isVip && user.expire !== "永久" && new Date() > new Date(user.expire);
       let vipBadge = isVip ? (isExpired ? `<span style="background:#ef4444;color:white;padding:2px 8px;border-radius:4px;font-size:0.7rem;margin-right:8px;">VIP已到期</span>` : `<span style="background:linear-gradient(135deg,#fbbf24,#d97706);color:white;padding:2px 8px;border-radius:4px;font-size:0.7rem;font-weight:bold;margin-right:8px;box-shadow:0 0 10px rgba(251,191,36,0.5);">💎 VIP</span>`) : `<span style="background:#475569;color:white;padding:2px 8px;border-radius:4px;font-size:0.7rem;margin-right:8px;">普通用户</span>`;
       const avatarDataUrl = generateAvatar(uName);
-      nav.innerHTML = `<a href="index.html">首页</a><a href="experiments.html">实验列表</a><a href="free-trial.html" style="color:#fbbf24;font-weight:700;">免费体验</a><a href="vip.html">开通VIP</a><div style="display:inline-flex;align-items:center;margin-left:2rem;padding:0.25rem 1rem 0.25rem 0.25rem;background:rgba(255,255,255,0.05);border-radius:50px;border:1px solid var(--glass-border);cursor:pointer;" onclick="toggleProfile()"><img src="${avatarDataUrl}" style="width:30px;height:30px;border-radius:50%;margin-right:8px;flex-shrink:0;box-shadow:0 0 8px rgba(59,130,246,0.3);">${vipBadge}<div style="display:flex;flex-direction:column;line-height:1.2;"><span style="color:var(--text-main);font-size:0.9rem;font-weight:600;">${uName}</span></div><a href="javascript:logout()" style="color:var(--accent);margin-left:1.2rem;font-size:0.8rem;text-decoration:none;opacity:0.7;" onclick="event.stopPropagation()">[退出]</a></div>`;
+      nav.innerHTML = `<a href="index.html">首页</a><a href="experiments.html">实验列表</a><a href="free-trial.html" style="color:#fbbf24;font-weight:700;">免费体验</a><a href="vip.html">开通VIP</a><button class="nav-install js-install-entry" type="button" title="把本站添加到桌面，像 App 一样打开">📲 添加到桌面</button><div style="display:inline-flex;align-items:center;margin-left:2rem;padding:0.25rem 1rem 0.25rem 0.25rem;background:rgba(255,255,255,0.05);border-radius:50px;border:1px solid var(--glass-border);cursor:pointer;" onclick="toggleProfile()"><img src="${avatarDataUrl}" style="width:30px;height:30px;border-radius:50%;margin-right:8px;flex-shrink:0;box-shadow:0 0 8px rgba(59,130,246,0.3);">${vipBadge}<div style="display:flex;flex-direction:column;line-height:1.2;"><span style="color:var(--text-main);font-size:0.9rem;font-weight:600;">${uName}</span></div><a href="javascript:logout()" style="color:var(--accent);margin-left:1.2rem;font-size:0.8rem;text-decoration:none;opacity:0.7;" onclick="event.stopPropagation()">[退出]</a></div>`;
       if (isVip && !isExpired) {
         document.querySelectorAll('.card.lock').forEach(card => {
           card.classList.remove('lock');
@@ -537,3 +537,160 @@ function initParticles() {
   function animate() { ctx.clearRect(0, 0, canvas.width, canvas.height); particles.forEach(p => { p.update(); p.draw(); }); requestAnimationFrame(animate); }
   animate();
 }
+
+// ========== 「一键添加到桌面」==========
+// Chromium 系（Chrome/Edge/安卓Chrome）走 beforeinstallprompt，点按钮即原生安装；
+// 其余浏览器（微信/Safari/Firefox）没有可编程的安装 API，落回分平台图文引导。
+// 入口在导航栏，而登录后 window.onload 会用 nav.innerHTML 重绘整个导航，
+// 所以点击用事件委托绑定，并在导航变动后重新同步「是否隐藏入口」。
+(function () {
+  function isStandalone() {
+    return (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) ||
+           window.navigator.standalone === true;
+  }
+
+  function removeEntries() {
+    Array.prototype.forEach.call(document.querySelectorAll('.js-install-entry'), function (el) {
+      if (el.parentNode) el.parentNode.removeChild(el);
+    });
+  }
+
+  var deferredPrompt = null;
+
+  window.addEventListener('beforeinstallprompt', function (e) {
+    e.preventDefault();
+    deferredPrompt = e;
+  });
+  window.addEventListener('appinstalled', removeEntries);
+
+  document.addEventListener('click', function (e) {
+    var el = e.target && e.target.closest && e.target.closest('.js-install-entry');
+    if (!el) return;
+    e.preventDefault();
+    if (deferredPrompt) {
+      var p = deferredPrompt;
+      deferredPrompt = null;            // prompt() 每次事件只能用一次
+      p.prompt();
+      if (p.userChoice) {
+        p.userChoice.then(function (choice) {
+          if (choice && choice.outcome === 'accepted') removeEntries();
+        }).catch(function () {});
+      }
+      return;
+    }
+    showGuide();
+  });
+
+  var GUIDES = {
+    'wechat': {
+      title: '先跳出微信，再添加到桌面',
+      sub: '微信内置浏览器不能添加桌面图标',
+      steps: ['点右上角的「···」', '选择「在浏览器打开」', '在浏览器里再点「📲 添加到桌面」']
+    },
+    'ios-safari': {
+      title: '添加到主屏幕',
+      sub: 'iPhone / iPad 用 Safari 的分享菜单添加',
+      steps: ['点底部中间的「分享」按钮 ⬆️', '在菜单里找到「添加到主屏幕」', '点右上角「添加」']
+    },
+    'ios-other': {
+      title: '请改用 Safari 打开',
+      sub: 'iOS 上只有 Safari 能添加主屏幕图标',
+      steps: ['复制本页网址', '打开 Safari 粘贴访问', '再点「📲 添加到桌面」按提示操作']
+    },
+    'android': {
+      title: '添加到主屏幕',
+      sub: '在安卓浏览器的菜单里添加',
+      steps: ['点浏览器右上角菜单「⋮」', '选择「添加到主屏幕」或「安装应用」', '确认即可']
+    },
+    'desktop-chromium': {
+      title: '安装到桌面',
+      sub: 'Chrome / Edge 可以像 App 一样安装',
+      steps: ['看地址栏右侧有没有「安装」小图标 ⊕，点它', '没有的话点右上角「⋮」菜单', '选「更多工具 → 创建快捷方式」，勾上「在窗口中打开」'],
+      tip: '安装后桌面/开始菜单会出现图标，点开即是全屏应用，没有浏览器地址栏。'
+    },
+    'mac-safari': {
+      title: '添加到程序坞',
+      sub: 'macOS Safari 可把网页变成 App',
+      steps: ['在菜单栏点「文件」', '选择「添加到程序坞」', '起个名字，点「添加」'],
+      tip: '此功能需要 Safari 17（macOS Sonoma）及以上。'
+    },
+    'firefox': {
+      title: '建议改用 Chrome / Edge',
+      sub: 'Firefox 暂不支持把网页装到桌面',
+      steps: ['用 Chrome 或 Edge 打开本页', '点「📲 添加到桌面」一键安装']
+    },
+    'other': {
+      title: '添加到桌面',
+      sub: '在浏览器菜单里找相关选项',
+      steps: ['打开浏览器菜单', '找「添加到主屏幕」/「安装应用」/「创建快捷方式」', '确认即可']
+    }
+  };
+
+  function detectEnv() {
+    var ua = navigator.userAgent || '';
+    if (/MicroMessenger/i.test(ua)) return 'wechat';
+    var isIOS = /iPad|iPhone|iPod/.test(ua) ||
+                (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    if (isIOS) {
+      var safari = /Safari/.test(ua) && !/CriOS|FxiOS|EdgiOS|OPiOS|MicroMessenger/.test(ua);
+      return safari ? 'ios-safari' : 'ios-other';
+    }
+    if (/Android/i.test(ua)) return 'android';
+    if (/Firefox|FxiOS/i.test(ua)) return 'firefox';
+    if (/Macintosh/.test(ua) && /Safari/.test(ua) && !/Chrome|Chromium|Edg|OPR/.test(ua)) return 'mac-safari';
+    if (/Edg\/|Chrome|Chromium/.test(ua)) return 'desktop-chromium';
+    return 'other';
+  }
+
+  var overlay = null, card = null;
+
+  function ensureModal() {
+    if (overlay) return;
+    overlay = document.createElement('div');
+    overlay.className = 'install-modal';
+    card = document.createElement('div');
+    card.className = 'install-card';
+    overlay.appendChild(card);
+    document.body.appendChild(overlay);
+    overlay.addEventListener('click', function (e) { if (e.target === overlay) closeGuide(); });
+    document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeGuide(); });
+  }
+
+  function showGuide() {
+    ensureModal();
+    var g = GUIDES[detectEnv()] || GUIDES['other'];
+    card.innerHTML = '<button class="install-close" type="button" aria-label="关闭">×</button>' +
+      '<h3>' + g.title + '</h3>' +
+      '<div class="install-sub">' + g.sub + '</div>' +
+      '<ul class="install-steps">' + g.steps.map(function (s, i) {
+        return '<li><span class="step-no">' + (i + 1) + '</span><span>' + s + '</span></li>';
+      }).join('') + '</ul>' +
+      (g.tip ? '<div class="install-tip">' + g.tip + '</div>' : '') +
+      '<button class="btn" type="button" style="width:100%;margin-top:1.3rem;">我知道了</button>';
+    overlay.classList.add('show');
+    document.body.style.overflow = 'hidden';
+    card.querySelector('.install-close').onclick = closeGuide;
+    card.querySelector('.btn').onclick = closeGuide;
+  }
+
+  function closeGuide() {
+    if (!overlay) return;
+    overlay.classList.remove('show');
+    document.body.style.overflow = '';
+  }
+
+  function sync() { if (isStandalone()) removeEntries(); }
+  sync();
+
+  var nav = document.querySelector('.nav');
+  if (nav && window.MutationObserver) {
+    new MutationObserver(sync).observe(nav, { childList: true });
+  }
+
+  // 零缓存直通 Service Worker，仅供可安装性判定（失败静默）
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', function () {
+      navigator.serviceWorker.register('sw.js').catch(function () {});
+    });
+  }
+})();
