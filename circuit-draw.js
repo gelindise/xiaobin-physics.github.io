@@ -275,11 +275,29 @@
     }
   }
 
+  // 「对调极性」时元件本体走 ctx.scale(-1, 1) 镜像，丝印文字必须再镜回来，
+  // 否则字是反的（电池身上的「1.5V」会印成一串镜像字）。
+  //
+  // 判据取【当前变换矩阵的行列式】而不是一个全局开关：镜像可能发生在任意
+  // 一层 ctx.save() 里（本体一层、烧毁标记又一层），靠标志位传递迟早漏一处。
+  // a·d − b·c < 0 就是「含奇数个反射」的充要条件。
+  // 反镜像的做法：绕文字自身的锚点 x 再镜一次（两次镜像 = 平移 + 旋转），
+  // 于是字正立、位置不变。
+  function unmirrorText(ctx, x) {
+    try {
+      if (!ctx.getTransform) return;
+      var m = ctx.getTransform();
+      if (m.a * m.d - m.b * m.c >= 0) return;      // 没镜像，什么都不做
+      ctx.translate(x, 0); ctx.scale(-1, 1); ctx.translate(-x, 0);
+    } catch (e) { /* 某些离屏上下文没有 getTransform，按没镜像处理 */ }
+  }
+
   // 丝印 / 铭牌文字。压在浅色塑料上要深色，压在深色上要浅色 —— 由调用方给。
   // 一律先描一圈反色垫底：不加垫底的细字压在同色系底上会糊掉（电池盒上
   // 那几个「1.5V」以前就是这样，远看是一块脏）。
   function silk(ctx, text, x, y, px, color, halo) {
     ctx.save();
+    unmirrorText(ctx, x);
     ctx.font = 'bold ' + px + 'px -apple-system,"PingFang SC","Helvetica Neue",sans-serif';
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.lineJoin = 'round';
@@ -436,6 +454,20 @@
     ],
   };
 
+  // 「对调极性」标记。电池 / 发光二极管 / 电动机的参数面板上有一个「对调」
+  // 按钮，点一下把左右的正负记号换过来 —— 实物上就是【把元件调个头】。
+  // 语义落在 params.flip 上（会进存档、进撤销栈），绘制层只读它。
+  //
+  // ⚠️ 只翻【局部 x】：把端子坐标 x 取负，等于把 0 号端子从这一头搬到那一头。
+  //    于是「电流从 0 号端子流进」这句话的含义没变，只是 0 号端子换到了另一边
+  //    —— 内核、读数、极性判定（reversed / 充电 / 反转）一个数都不用改。
+  //    反过来若去翻转「端子编号」，rec.i 的正负号含义就全乱了。
+  //    编辑器在这边配合做一件事：把挂在该元件上的导线端点 termIdx 也交换
+  //    （0↔1），线头就留在原地不动 —— 合起来正好是「元件原地转 180°、线没动」。
+  function flipOf(comp) {
+    return !!(comp && comp.params && comp.params.flip);
+  }
+
   function toWorld(comp, lx, ly) {
     var r = (comp.rot || 0) * Math.PI / 180;
     var c = Math.cos(r), s = Math.sin(r);
@@ -450,7 +482,20 @@
   }
   function terminalWorld(comp, i) {
     var t = TERMINALS[comp.type][i];
-    return toWorld(comp, t.x, t.y);
+    if (!t) return null;
+    return toWorld(comp, flipOf(comp) ? -t.x : t.x, t.y);
+  }
+  // 导线的【一个端点】的世界坐标。e 有两种形态：
+  //   {compId, termIdx} —— 正常情况，走元件端子；
+  //   {compId: null, x, y} —— 【冻结坐标】：元件被删掉以后，挂在它上面的导线
+  //     不会跟着消失，端点就地冻住（见 circuit-editor 的 removeSelected）。
+  // 所有解导线端点的地方都必须走这里，别再直接 byId + terminalWorld ——
+  // 元件没了以后 byId 返回 null，terminalWorld 会当场抛错。
+  function endWorld(comp, e) {
+    if (!e) return null;
+    if (e.compId && comp) return terminalWorld(comp, e.termIdx);
+    if (e.x != null && e.y != null) return { x: e.x, y: e.y };
+    return null;
   }
 
   // 滑动变阻器的几何。绘制和「拨滑片」的命中判断必须共用这一组数字——
@@ -1076,6 +1121,12 @@
     ctx.save();
     ctx.translate(comp.x, comp.y);
     ctx.rotate((comp.rot || 0) * Math.PI / 180);
+    // 「对调极性」= 把整台电池盒原地左右镜像：干电池的锌筒（负极）换到右边、
+    // 黄铜帽（正极）换到左边，端板上的「＋」和「－」也跟着换边。
+    // ⚠️ 镜像只加在【本体】这一段里，posts() 是在这段之外调的 —— 接线柱的
+    //    世界坐标来自 terminalWorld()，那里已经按 flip 把 x 取过负了，
+    //    在本体里再镜像一次就会把柱子画到相反的一侧去。
+    if (flipOf(comp)) ctx.scale(-1, 1);
 
     // 电池盒：照人教版实物——一个开口朝上的浅灰塑料槽，干电池横躺在里面，
     // 靠前面那道【弧形托口】卡住。之所以不做成「竖直圆柱并列」：接线柱在左右
@@ -1364,6 +1415,7 @@
       roundRect(ctx, -lblW / 2, arcBot + bandH / 2 - lblH / 2, lblW, lblH, 2.4); ctx.fill();
       ctx.strokeStyle = 'rgba(70,84,100,0.28)'; ctx.lineWidth = 0.8; ctx.stroke();
       ctx.fillStyle = '#42536a';
+      unmirrorText(ctx, 0);        // 对调极性时前壁跟着镜像，铭牌上的字不能反
       ctx.font = 'bold ' + Math.max(8, Math.min(12, Math.round(bandH * 0.62))) +
         'px -apple-system,"PingFang SC",sans-serif';
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
@@ -1415,6 +1467,7 @@
       ctx.save();
       ctx.translate(comp.x, comp.y);
       ctx.rotate((comp.rot || 0) * Math.PI / 180);
+      if (flipOf(comp)) ctx.scale(-1, 1);   // 裂口跟着本体走（牌子上是字，silk 会自己镜回来）
       soot(ctx, 0, 0, boxW * 0.54, boxH * 0.62, 1);
       // 外壳裂口：一条折线从盒沿劈进去，两侧错开一点，读得出「裂了」
       ctx.strokeStyle = 'rgba(12,10,9,0.85)'; ctx.lineWidth = 2.2;
@@ -1800,6 +1853,7 @@
   function faultTag(ctx, x, y, text, sc) {
     var k = (sc || 1);
     ctx.save();
+    unmirrorText(ctx, x);
     ctx.font = 'bold ' + (10.5 * k) + 'px -apple-system,"PingFang SC",sans-serif';
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     var w = ctx.measureText(text).width + 13 * k, h = 15.5 * k;
@@ -2915,6 +2969,7 @@
     ctx.strokeStyle = SILK_INK; ctx.lineWidth = 1.7;
     ctx.beginPath(); ctx.arc(0, 0, 9, 0, 6.284); ctx.stroke();
     ctx.fillStyle = SILK_INK;
+    unmirrorText(ctx, 0);                 // 对调极性时圆跟着镜像，字母 M 不能反着写
     ctx.font = 'bold 12px Georgia,"Times New Roman",serif';
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillText('M', 0, 0.5);
@@ -2985,6 +3040,10 @@
     // ① 底板 + 板面丝印（＋ / 符号 / －）。底板和开关、灯泡同一块。
     ctx.save();
     ctx.translate(comp.x, comp.y); ctx.rotate(rad);
+    // 对调极性：整块板连同管身一起原地左右镜像 —— 板面的「＋」「－」互换、
+    // 板上的二极管符号（三角尖朝向）也跟着翻，正是「管子调了个头」的样子。
+    // 镜像是【局部 x】，和 terminalWorld 对端子 x 取负是同一件事的两面。
+    if (flipOf(comp)) ctx.scale(-1, 1);
     basePlate(ctx, PLATE.HW, PLATE.TOP, PLATE.FACE, PLATE.BOT);
     plateFace(ctx, plateSymLed, '＋', '－');
     // ② 两根引脚：从管身两端水平伸出 → 折下 → 沿板面走到接线柱底下。
@@ -2997,6 +3056,7 @@
     // ③ 管身：把坐标系抬到管轴高度 G.y，下面这段沿用管轴 y=0 的局部坐标。
     ctx.save();
     ctx.translate(comp.x, comp.y); ctx.rotate(rad);
+    if (flipOf(comp)) ctx.scale(-1, 1);       // 半球透镜换到右边 = 阳极在右
     ctx.translate(0, G.y);
 
     // 管身的轮廓路径：左半圆（透镜）+ 矩形（管身）。后面反复用到，抽出来。
@@ -3131,6 +3191,7 @@
     if (rec && rec.fault === 'burned') {
       ctx.save();
       ctx.translate(comp.x, comp.y); ctx.rotate(rad);
+      if (flipOf(comp)) ctx.scale(-1, 1);     // 熏黑与裂痕跟着管子走
       soot(ctx, (G.domeCx + G.cylX1) / 2, G.y, 40, 24, 1);
       ctx.strokeStyle = 'rgba(12,10,9,0.8)'; ctx.lineWidth = 1.8;
       ctx.lineCap = 'round';
@@ -3187,6 +3248,12 @@
     // ① 底板 + 板面丝印（＋ / 符号 M / －）
     ctx.save();
     ctx.translate(comp.x, comp.y); ctx.rotate(rad);
+    // 对调极性：底板、支撑、机身、螺旋桨一起原地左右镜像（轴端螺旋桨换到左端）。
+    // ⚠️ 螺旋桨的【转角 spin 不加任何处理】。镜像本身就会让叶子看起来反着扫，
+    //    而 flip 之后 rec.i 变号、内核给的 omega 也变号 —— 两者刚好各反一次，
+    //    合起来正是「对调极性 → 电机反转」这一幕。要是在这里再把 spin 取负，
+    //    两个反转互相抵消，学生点了按钮会发现螺旋桨纹丝不动地照原样转。
+    if (flipOf(comp)) ctx.scale(-1, 1);
     basePlate(ctx, PLATE.HW, PLATE.TOP, PLATE.FACE, PLATE.BOT);
     plateFace(ctx, plateSymMotor, '＋', '－');
     ctx.restore();
@@ -3194,6 +3261,7 @@
     // ② 支撑柱 + 引线（都画在机身【之前】，机身压上来就是「坐在支架上」）
     ctx.save();
     ctx.translate(comp.x, comp.y); ctx.rotate(rad);
+    if (flipOf(comp)) ctx.scale(-1, 1);
     G.saddX.forEach(function (sx) {
       var w = G.saddHW * 2;
       ctx.save();
@@ -3222,6 +3290,7 @@
     // ③ 机身：把坐标系抬到轴线高度 BY，下面这段沿用轴线 y=0 的局部坐标。
     ctx.save();
     ctx.translate(comp.x, comp.y); ctx.rotate(rad);
+    if (flipOf(comp)) ctx.scale(-1, 1);
     ctx.translate(0, BY);
 
     // 外壳：横躺的金属圆筒。左端圆、右端留出端面椭圆。
@@ -3587,6 +3656,12 @@
   return {
     PALETTE: PALETTE, HALF: HALF, TERMINALS: TERMINALS,
     terminalWorld: terminalWorld, toWorld: toWorld, toLocal: toLocal,
+    // flipOf —— 「对调极性」的单一真值（读 comp.params.flip）。绘制、命中、
+    //          测试都该问它，别各自去翻 params。
+    // endWorld —— 解【导线端点】的唯一入口：元件还在就走端子坐标，元件被删了
+    //          就读端点里冻住的 x/y（见 circuit-editor 的 removeSelected）。
+    //          任何 byId + terminalWorld 的写法在「删元件保留导线」之后都会崩。
+    flipOf: flipOf, endWorld: endWorld,
     RHEO: RHEO, PLATE: PLATE,
     sliderLocalX: sliderLocalX, slideFromLocalX: slideFromLocalX,
     slideOf: slideOf,

@@ -195,6 +195,14 @@
     cursor:pointer;font-variant-numeric:tabular-nums}
   .prow .tap:hover{border-color:var(--accent);color:var(--accent)}
   .prow .tap.on{background:var(--accent);border-color:var(--accent);color:#fff}
+  /* 「对调极性」按钮。和量程按钮同一套外观，但语义完全不同：量程是「线插在
+     哪个柱子上」，对调是「把元件原地调个头」——所以各占一个 class，免得
+     量程那一套同步逻辑（syncTapPanel 按 data-tap 点亮）误伤它。 */
+  .prow .flipBtn{flex:0 0 auto;padding:4px 9px;border:1px solid var(--line);border-radius:6px;
+    background:#fff;color:var(--text);font-family:inherit;font-size:12px;font-weight:600;
+    cursor:pointer}
+  .prow .flipBtn:hover{border-color:var(--accent);color:var(--accent)}
+  .prow .flipBtn:active{background:var(--accent);border-color:var(--accent);color:#fff}
   .prow .val.unwired{color:var(--warn);font-weight:600;font-size:11.5px;white-space:nowrap}
   .empty{color:var(--dim);font-size:12.5px;text-align:center;padding:16px 4px}
   table{width:100%;border-collapse:collapse;font-size:12.5px}
@@ -392,7 +400,7 @@
        窄屏折行后那个 auto 会把它单独推一行，去掉让它跟着按钮排。 */
     .bar .hint{font-size:11px;gap:8px;padding-left:0;margin-left:0}
     /* 点按钮不要触发双击缩放，顺带干掉 300ms 点击延迟 */
-    .bar button,.pop button,.prow .tap,.warn .fix,
+    .bar button,.pop button,.prow .tap,.prow .flipBtn,.warn .fix,
     .schHead button,.saveHead button,.zoomHead button{touch-action:manipulation}
 
     /* ── 全屏 + 手机：顶栏再瘦一圈 ───────────────────────────
@@ -761,9 +769,8 @@ function loadPreset(i){
   // 直愣愣的 Z 形 —— 那条 Z 会横穿元件，画面上就成了「导线扎进表壳里」。
   // 手绘导线走 refitManual()：拖动元件时拐点按比例重新分布，而不是原地不动。
   scene.wires.forEach(function(x){
-    var a = byId(x.a.compId), b = byId(x.b.compId);
-    if (!a || !b) return;
-    var p0 = D.terminalWorld(a, x.a.termIdx), p1 = D.terminalWorld(b, x.b.termIdx);
+    var p0 = D.endWorld(byId(x.a.compId), x.a), p1 = D.endWorld(byId(x.b.compId), x.b);
+    if (!p0 || !p1) return;
     x.auto = false;
     x.base = { ends: [[p0.x, p0.y], [p1.x, p1.y]],
                via: x.via.map(function(v){ return [v[0], v[1]]; }) };
@@ -992,10 +999,13 @@ var fgLayer = document.createElement('canvas');
 //   ① drawWire 的绘制路径；② 电流粒子 / 电流箭头的跑道；③ 编辑器 hitWire
 //   逐段量距离的命中判据（编辑器那份 pathOf 调的是同一个 roundPath）。
 // 只在绘制里抹圆、命中判据还用尖角，就会出现「看得见却点不着」。
+// ⚠️ 端点一律走 D.endWorld：元件被删掉以后导线还留着（用户要求），那一头的
+// 端点里 compId 是 null、坐标冻在 x/y 上。写 byId(wire.a.compId) 会拿到 null
+// 再去取端子坐标，当场抛错 —— 整条渲染链断掉，画面全黑。
 function pathOf(wire){
-  var a = byId(wire.a.compId), b = byId(wire.b.compId);
-  if (!a || !b) return [];
-  var p0 = D.terminalWorld(a, wire.a.termIdx), p1 = D.terminalWorld(b, wire.b.termIdx);
+  var p0 = D.endWorld(byId(wire.a.compId), wire.a);
+  var p1 = D.endWorld(byId(wire.b.compId), wire.b);
+  if (!p0 || !p1) return [];
   var pts = [{x:p0.x, y:p0.y}];
   (wire.via||[]).forEach(function(v){ pts.push({x:v[0], y:v[1]}); });
   pts.push({x:p1.x, y:p1.y});
@@ -1790,7 +1800,11 @@ window.addEventListener('keydown', function(e){
 var PARAM_UI = {
   resistor:  [{k:'R', t:'range', label:'阻值', unit:'Ω', min:1, max:100, step:1}],
   battery:   [{k:'emf', t:'range', label:'电动势', unit:'V', min:1.5, max:7.5, step:1.5},
-              {k:'rInt', t:'range', label:'内阻', unit:'Ω', min:0, max:2, step:0.1}],
+              {k:'rInt', t:'range', label:'内阻', unit:'Ω', min:0, max:2, step:0.1},
+              // 「对调」不是一条能拧的数，是【把元件原地调个头】——所以它和
+              // 量程一样走按钮（t:'flip'），走的是 editor.flipComp()，
+              // 由它同时翻 params.flip 和交换挂在元件上的导线端点。
+              {k:'flip', t:'flip', label:'极性'}],
   switch:    [{k:'closed', t:'check', label:'闭合'}],
   // 量程不是拧出来的参数，是「线接在哪个量程柱上」——所以这两个表的量程
   // 走 t:'tap'（点一下把导线挪到那个柱子上），选项和柱号都取自内核的 TYPES，
@@ -1818,14 +1832,16 @@ var PARAM_UI = {
   // 「3.1V」这个数 —— 再看一眼电源只有 3V，就知道为什么它不亮。
   led:       [{k:'color', t:'select', label:'颜色',
                options:['red','green','blue'],
-               labels:{red:'红色 1.8V', green:'绿色 2.1V', blue:'蓝色 3.1V'}}],
+               labels:{red:'红色 1.8V', green:'绿色 2.1V', blue:'蓝色 3.1V'}},
+              {k:'flip', t:'flip', label:'极性'}],
   // 电动机的三项都是【铭牌上印得出来的数】：线圈电阻、空载电流、转速常数。
   // 空载电流单独给一格，是因为「转起来电流反而很小」这件事全看它 ——
   // 学生把它调大调小，再对照堵转那一挡，这条规律就自己浮出来了。
   motor:     [{k:'Rcoil', t:'range', label:'线圈电阻', unit:'Ω', min:1, max:12, step:0.5},
               {k:'noLoadI', t:'range', label:'空载电流', unit:'A', min:0.02, max:0.1, step:0.01},
               {k:'rpmPerV', t:'range', label:'转速常数', unit:'转/V', min:300, max:1400, step:100},
-              {k:'stall', t:'check', wide:1, label:'卡住转子（堵转）'}],
+              {k:'stall', t:'check', wide:1, label:'卡住转子（堵转）'},
+              {k:'flip', t:'flip', label:'极性'}],
   // 电铃只有两个旋钮，但它们正好就是「电磁铁磁性强弱跟什么有关」的两个答案：
   // 电流（由线圈电阻和电压定）与匝数。调小任何一个，磁动势掉到吸合线以下，
   // 衔铁就吸不动、铃不响了。
@@ -1985,6 +2001,19 @@ function paramRowsHTML(c, specs, pfx){
         }).join('') +
         '<span class="val unwired" id="' + pfx + sp.k + '">' +
           (cur == null ? '未接量程柱' : '') + '</span></div>';
+    } else if (sp.t === 'flip') {
+      // 「对调极性」。按钮上不写当前状态（按钮是【动作】，写状态会读成开关），
+      // 状态写在右边的旁注里：此刻【正极在哪一头】。
+      // 基准取 TERMINALS[type][0].x 的符号 —— 0 号端子就是「+」，它落在
+      // 哪一侧由绘制层拍板（电池的 + 在右、二极管/电动机的 + 在左），
+      // 这里不再抄一份「谁在左谁在右」的表。
+      var T0 = D.TERMINALS[c.type] ? D.TERMINALS[c.type][0] : null;
+      var plusRight = !!(T0 && T0.x > 0);
+      if (D.flipOf(c)) plusRight = !plusRight;
+      html += '<div class="prow"><label>' + sp.label + '</label>' +
+        '<button type="button" class="flipBtn" data-flip="1">对调 ＋ / －</button>' +
+        '<span class="val" id="' + pfx + sp.k + '">' +
+          (plusRight ? '＋在右' : '＋在左') + '</span></div>';
     }
   });
   return html;
@@ -2020,6 +2049,14 @@ function wireParamInputs(box, c, specs, pfx){
   box.querySelectorAll('button.tap').forEach(function(btn){
     btn.addEventListener('click', function(){
       if (editor.plugRange(c.id, +btn.dataset.tap)) rebuildParamPanels();
+    });
+  });
+  // 「对调极性」按钮：走 editor.flipComp() 而不是 setParam —— 它同时要交换
+  // 挂在元件上的导线端点（线头留在原地），只改参数的话导线会被拽到另一头去。
+  // 翻完两个面板都要重建：旁注写的是「正极此刻在哪一头」，不重建就停在旧值。
+  box.querySelectorAll('button.flipBtn').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      if (editor.flipComp(c.id)) rebuildParamPanels();
     });
   });
 }
@@ -2144,6 +2181,11 @@ function updateSide(){
   //     任何一次重解（拖一下别的元件、点一下空白处）都会把它们清掉，于是
   //     「短路」两个字在学生眼前一闪而过。断着的导线就是刚短过路的证据，
   //     用它兜底，这条提示才留得住。
+  // ⚠️ 判据只认【电源】。把开关的两个接线柱用一根导线连起来【不是】短路：
+  //    导线把两个端子并成了同一个节点，开关那条零阻支路就成了 0 = 0 的废话
+  //    （内核在 assemble() 里把它丢掉，见 degenerateIdealBranch），串联在回路
+  //    里的电源和负载一个没变，电流一点没变 —— 只是开关失去控制作用。内核会
+  //    为这种接法发一条 SWITCH_BYPASSED 警告，走下面 warnings 那一排，不经过这里。
   var melted = faultLog.some(function(x){ return x.kind === 'wire'; });
   var meltedWires = scene.wires.filter(function(x){ return x.broken; }).length;
   if (shortSeen || (results.shortCircuit && results.shortCircuit.compIds.length)){
@@ -2732,6 +2774,13 @@ function mergeJunctions(src){
     var v = (w.via || []).map(function(q){ return [q[0], q[1]]; });
     return (w.a.compId === jid) ? v : v.reverse();
   }
+  // 端点原样搬过去。⚠️ 悬空端（元件被删、导线还在）的 compId 是 null，坐标只
+  // 存在 x/y 上 —— 只搬 compId/termIdx 的话，合并出来的新线会丢掉这一头的坐标。
+  function cpEnd(e){
+    var o = { compId: (e.compId == null) ? null : e.compId, termIdx: e.termIdx || 0 };
+    if (o.compId == null){ o.x = e.x; o.y = e.y; }
+    return o;
+  }
   var wires = src.wires.filter(function(w){
     return !js[w.a.compId] && !js[w.b.compId];
   });
@@ -2752,8 +2801,7 @@ function mergeJunctions(src){
         return k === 0 || Math.hypot(z[0] - via[k-1][0], z[1] - via[k-1][1]) > 0.5;
       });
       wires.push({
-        a: { compId: inc[0].e.compId, termIdx: inc[0].e.termIdx },
-        b: { compId: inc[i].e.compId, termIdx: inc[i].e.termIdx },
+        a: cpEnd(inc[0].e), b: cpEnd(inc[i].e),
         via: via, auto: false,
       });
     }
@@ -3320,7 +3368,15 @@ function validScene(o){
   for (var j = 0; j < o.wires.length; j++){
     var wr = o.wires[j];
     if (!wr || !wr.a || !wr.b) return false;
-    if (!seen[wr.a.compId] || !seen[wr.b.compId]) return false;
+    // 端点允许【悬空】：元件被删掉、导线还留着（用户要求），这一头的 compId
+    // 是 null，坐标冻在 x/y 上 —— 少了坐标，恢复出来是一根算不出形状的线。
+    // 挂在元件上的端点则必须指向一个真实存在的元件，否则恢复出半坏电路。
+    for (var k = 0; k < 2; k++){
+      var e = k ? wr.b : wr.a;
+      if (e.compId == null){
+        if (typeof e.x !== 'number' || typeof e.y !== 'number') return false;
+      } else if (!seen[e.compId]) return false;
+    }
   }
   return true;
 }
@@ -3692,7 +3748,8 @@ window.__pop = function(){
     rows: rows.length,
     kinds: rows.map(function(r){
       var i = r.querySelector('input'), s = r.querySelector('select');
-      return i ? i.type : (s ? 'select' : (r.querySelector('button.tap') ? 'tap' : '?'));
+      return i ? i.type : (s ? 'select' : (r.querySelector('button.tap') ? 'tap'
+             : (r.querySelector('button.flipBtn') ? 'flip' : '?')));
     }),
     // 浮层里的勾选框/滑块，给「两个面板同步」那条断言用
     checks: rows.filter(function(r){ return r.querySelector('input[type=checkbox]'); })
@@ -3817,6 +3874,34 @@ window.__tagHeights = function(){ return { id:TAG_ID_H, st:TAG_ST_H }; };
 // 编辑器那份 pathOf（命中用）和页面那份（绘制用）必须是同一串点，
 // 否则「看得见却点不着」。两边各导一个，测试直接逐点比。
 window.__hitPathOf = function(wr){ return editor.pathOf(wr); };
+// 「对调极性」。断言要一次看清三件事：元件翻没翻、正极现在在哪一头、
+// 以及【导线端点有没有跟着元件跑】—— 后者才是这个按钮最容易做错的地方：
+// 只翻 params 不交换导线端点的 termIdx 的话，0 号端子的世界坐标跳到另一头，
+// 接在上面的导线会被当场拽过去、横穿元件本体（线头位置是能直接量出来的判据）。
+window.__flip = function(id){
+  var c = editor.byId(id);
+  if (!c) return null;
+  var T = D.TERMINALS[c.type] || [];
+  var ends = [];
+  scene.wires.forEach(function(w, i){
+    ['a', 'b'].forEach(function(k){
+      if (w[k].compId !== id) return;
+      var p = D.endWorld(c, w[k]);
+      ends.push({ wire: i, side: k, termIdx: w[k].termIdx,
+                  x: p ? +p.x.toFixed(2) : null, y: p ? +p.y.toFixed(2) : null });
+    });
+  });
+  var t0 = D.terminalWorld(c, 0), t1 = D.terminalWorld(c, 1);
+  return {
+    flip: !!D.flipOf(c),
+    plusSide: (t0 && t1) ? (t0.x > t1.x ? 'right' : 'left') : null,
+    t0: t0 ? { x: +t0.x.toFixed(2), y: +t0.y.toFixed(2) } : null,
+    t1: t1 ? { x: +t1.x.toFixed(2), y: +t1.y.toFixed(2) } : null,
+    terms: T.length,
+    ends: ends,
+  };
+};
+window.__flipComp = function(id){ return editor.flipComp(id); };
 // 画布的逻辑尺寸。屏幕坐标 ↔ 逻辑坐标的换算必须按【这个】比例来：
 // 画布被 CSS 拉伸过（视口宽高比 ≠ 1000:740），横竖两个方向的比例不一样 ——
 // 拿宽度那个比例去算纵坐标，点会落到上面老远的地方。出图脚本点器材、

@@ -963,6 +963,9 @@
     wires.forEach(function (w, i) {
       [w.a, w.b].forEach(function (e) {
         if (!e) return;
+        // 悬空端（元件被删、导线还在）没有端子可言，跳过 —— 否则两个悬空端
+        // 会被拼成同一个 "null:0" 名字，两根互不相干的线在图上被当成同一个节点。
+        if (e.compId == null) return;
         var k = e.compId + ':' + e.termIdx;
         if (term[k] != null) { var x = find(i), y = find(term[k]); if (x !== y) parent[x] = y; }
         else term[k] = i;

@@ -144,6 +144,47 @@
       return null;
     }
 
+    // 导线【一个端点】的世界坐标。全部走 D.endWorld：
+    // 元件还在 ⇒ 端子坐标；元件被删了 ⇒ 端点里冻住的 x/y（见 removeSelected）。
+    // 绝不要再写 D.terminalWorld(byId(e.compId), e.termIdx) —— 元件一没，
+    // byId 返回 null，terminalWorld 当场抛错，整条渲染链就断了。
+    function endPt(e) {
+      if (!e) return null;
+      return D.endWorld(byId(e.compId), e);
+    }
+    // 这个端点是【悬空】的吗（挂着的元件已经不在了）。悬空的线头可以再被
+    // 拖到别的接线柱上（见 onDown 里那一段）。
+    function isLooseEnd(e) { return !!(e && !e.compId); }
+
+    // 端点对象的规范化拷贝。悬空端（compId 为 null）必须把 x/y 一起带上 ——
+    // 元件删掉以后导线还在（见 removeSelected），线头的坐标就只存在端点里，
+    // 拷贝时漏掉它，接出来的新线当场算不出形状（endWorld 返回 null）。
+    function cpEnd(e) {
+      var o = { compId: (e.compId == null) ? null : e.compId, termIdx: e.termIdx || 0 };
+      if (o.compId == null) { o.x = e.x; o.y = e.y; }
+      return o;
+    }
+
+    // 点中一个【悬空的线头】。命中框比接线柱（TERM_HIT=13）再大一点：线头
+    // 没有柱子那样的实体，只有一根线尖，小了根本瞄不准。
+    // 只认真正悬空的端 —— 挂在元件上的那一头永远由 hitTerminal 负责，
+    // 两者同时命中时接线柱优先（见 onDown 的顺序）。
+    var LOOSE_HIT = 16;
+    function hitLooseEnd(p) {
+      var ws = getScene().wires;
+      for (var i = ws.length - 1; i >= 0; i--) {
+        var w = ws[i];
+        for (var k = 0; k < 2; k++) {
+          var e = k ? w.b : w.a;
+          if (!isLooseEnd(e)) continue;
+          if (Math.hypot(e.x - p.x, e.y - p.y) <= LOOSE_HIT) {
+            return { index: i, k: k ? 'b' : 'a', x: e.x, y: e.y };
+          }
+        }
+      }
+      return null;
+    }
+
     function bodyHalf(c) {
       var b = BODY[c.type] || [50, 50];
       return (c.rot === 90 || c.rot === 270) ? [b[1], b[0]] : [b[0], b[1]];
@@ -212,9 +253,8 @@
     // 抹圆后的路径（pathOf）只是同一根线的另一种画法 —— 拆分导线要在原始折线上
     // 做，拿抹圆后的点去切 via 数组对不上号（多出来的采样点会变成假拐点）。
     function rawPathOf(wr) {
-      var a = byId(wr.a.compId), b = byId(wr.b.compId);
-      if (!a || !b) return [];
-      var p0 = D.terminalWorld(a, wr.a.termIdx), p1 = D.terminalWorld(b, wr.b.termIdx);
+      var p0 = endPt(wr.a), p1 = endPt(wr.b);
+      if (!p0 || !p1) return [];
       var pts = [{ x: p0.x, y: p0.y }];
       (wr.via || []).forEach(function (v) { pts.push({ x: v[0], y: v[1] }); });
       pts.push({ x: p1.x, y: p1.y });
@@ -419,13 +459,49 @@
       hit.w[hit.k] = { compId: compId, termIdx: tapIdx };
       // 端点换了柱子，手绘的那个形状不再贴合新位置，改成自动正交走线，
       // 免得挪完以后导线横穿表壳。
-      var a = byId(hit.w.a.compId), b = byId(hit.w.b.compId);
+      // ⚠️ 另一头可能是【悬空端】（挂在别的元件上的那件被删了），所以坐标一律
+      // 走 endPt —— 不能写 terminalWorld(byId(...))，那对悬空端会当场抛错。
+      var q0 = endPt(hit.w.a), q1 = endPt(hit.w.b);
       hit.w.auto = true; hit.w.base = null;
-      hit.w.via = routeTo(D.terminalWorld(a, hit.w.a.termIdx),
-                          D.terminalWorld(b, hit.w.b.termIdx), -1).via;
+      if (q0 && q1) hit.w.via = routeTo(q0, q1, -1).via;
       changed();
       // 实物上「换量程」就是拔下来插到另一个柱子上，一声「咔」是对的。
       report('plug', { compId: compId, tap: tapIdx });
+      return true;
+    }
+
+    // 参数面板上的「对调」按钮（电池 / 发光二极管 / 电动机）。
+    // 实物上就是把元件【原地调个头】：正负记号换边，电流方向跟着反过来。
+    // 两件事必须同时做，缺一件画面就自相矛盾：
+    //   ① comp.params.flip 取反 —— 绘制层（terminalWorld 的 x 取负、本体
+    //      的 ctx.scale(-1,1)）读它，正负记号与极性元件的外形整体翻面；
+    //   ② 把挂在这个元件上的导线端点 termIdx 交换（0 ↔ 1）—— 线头【留在原地】。
+    // 只做 ① 的话，0 号端子的世界坐标跳到另一头，接在上面的导线会被当场拽
+    // 过去、横穿元件本体；只做 ② 的话元件根本没翻。
+    // 合起来正好是「元件绕自身中心转 180°，导线一个像素都没动」。
+    //
+    // 只对【两端极性元件】开放。三柱表头、四柱变阻器的端子号是【功能编号】
+    // （− 柱 / 量程柱 / A B C D），换号等于换一件元件，不在这个按钮的职责里。
+    function flipComp(compId) {
+      var c = byId(compId);
+      if (!c) return false;
+      var T = D.TERMINALS[c.type];
+      if (!T || T.length !== 2) return false;
+      pushUndo();
+      c.params = c.params || {};
+      c.params.flip = !c.params.flip;
+      getScene().wires.forEach(function (w) {
+        ['a', 'b'].forEach(function (k) {
+          var e = w[k];
+          if (!e || e.compId !== compId) return;
+          e.termIdx = (e.termIdx === 0) ? 1 : 0;
+        });
+      });
+      // 端点的【位置】没变，但元件本体翻了 —— 重走一遍走线，让正交导线按新
+      // 的极性记号重新确认落点（手绘导线走 refitManual，位移为 0，形状不动）。
+      rerouteAll();
+      changed();
+      report('flip', { comp: c });
       return true;
     }
 
@@ -445,16 +521,33 @@
       report('place', { comp: c });
       return c;
     }
+    // 删掉选中的东西。⚠️ 删【元件】时导线一根都不删 —— 这是用户明确要的：
+    // 「只删除这个用电器，而导线还是要保留的」。实物上就是「把元件从桌上拿走，
+    // 两根线还躺在桌上」。做法是把挂在这个元件上的端点【冻住】：
+    //   { compId:'SW1', termIdx:0 }  →  { compId:null, x:·, y:· }
+    // 冻结坐标取【删之前】的端子世界坐标，所以线头一个像素都不动。
+    // 从此这根线的这一头由 endWorld 读端点里的 x/y（见 circuit-draw 的 endWorld）。
+    //
+    // 只 filter 掉 comps 不碰 wires 是【不行】的：端点里还写着 SW1，而 SW1 已经
+    // 不在场景里了 —— 页面每次重绘都要 byId('SW1') 拿端子坐标，拿到 null 就抛错，
+    // 整条渲染链当场断掉（画面全黑，只剩一句报错）。
     function removeSelected() {
       if (!selected) return false;
       pushUndo();
       var s = getScene();
       if (selected.kind === 'comp') {
         var gone = byId(selected.id);
-        s.comps = s.comps.filter(function (c) { return c.id !== selected.id; });
-        s.wires = s.wires.filter(function (w) {
-          return w.a.compId !== selected.id && w.b.compId !== selected.id;
+        s.wires.forEach(function (w) {
+          ['a', 'b'].forEach(function (k) {
+            var e = w[k];
+            if (!e || e.compId !== selected.id) return;
+            var p = endPt(e);              // 元件还在，先把端子坐标量出来
+            if (p) { e.x = p.x; e.y = p.y; }
+            e.compId = null;
+            e.termIdx = 0;
+          });
         });
+        s.comps = s.comps.filter(function (c) { return c.id !== selected.id; });
         report('remove', { comp: gone });
       } else {
         var dead = s.wires[selected.index];
@@ -490,9 +583,8 @@
     function rerouteAll() {
       var s = getScene();
       s.wires.forEach(function (w) {
-        var a = byId(w.a.compId), b = byId(w.b.compId);
-        if (!a || !b) return;
-        var p0 = D.terminalWorld(a, w.a.termIdx), p1 = D.terminalWorld(b, w.b.termIdx);
+        var p0 = endPt(w.a), p1 = endPt(w.b);
+        if (!p0 || !p1) return;                  // 悬空端的线：形状照旧，别动它
         if (w.auto) { w.via = routeTo(p0, p1, -1).via; return; }
         refitManual(w, p0, p1);          // 手绘导线：按原始形状重新贴合两端
       });
@@ -500,14 +592,13 @@
     // 拖动元件的过程中只重贴合它身上的手绘导线。正交导线留到松手时再算，
     // 否则它们在拖动途中会不停跳线，看着像电路自己在抽搐。
     function refitWiresOf(compId) {
-      var s = getScene(), c = byId(compId);
-      if (!c) return;
+      var s = getScene();
       s.wires.forEach(function (w) {
         if (w.auto) return;
         if (w.a.compId !== compId && w.b.compId !== compId) return;
-        var a = byId(w.a.compId), b = byId(w.b.compId);
-        if (!a || !b) return;
-        refitManual(w, D.terminalWorld(a, w.a.termIdx), D.terminalWorld(b, w.b.termIdx));
+        var p0 = endPt(w.a), p1 = endPt(w.b);
+        if (!p0 || !p1) return;
+        refitManual(w, p0, p1);
       });
     }
 
@@ -528,9 +619,8 @@
     // 给它们补一个会改变「拖元件时导线怎么跟」的既有行为。
     function refreshWireBase(wr) {
       if (!wr.base) return;
-      var a = byId(wr.a.compId), b = byId(wr.b.compId);
-      if (!a || !b) return;
-      var p0 = D.terminalWorld(a, wr.a.termIdx), p1 = D.terminalWorld(b, wr.b.termIdx);
+      var p0 = endPt(wr.a), p1 = endPt(wr.b);
+      if (!p0 || !p1) return;
       wr.base = { ends: [[p0.x, p0.y], [p1.x, p1.y]],
                   via: (wr.via || []).map(function (z) { return [z[0], z[1]]; }) };
     }
@@ -619,8 +709,15 @@
     }
     function describeSelection() {
       if (!selected) return null;
-      if (selected.kind === 'comp') return { kind: 'comp', comp: byId(selected.id) };
-      return { kind: 'wire', wire: getScene().wires[selected.index] };
+      // ⚠️ 选中的东西可能已经不在场景里了（撤销、删除元件都会让 selected 指向
+      // 一个已经不存在的 id）。这时必须报「什么都没选」，不能返回 {comp:null}：
+      // 宿主拿到 comp:null 会去读 s.comp.id，当场抛错、整条渲染链断掉。
+      if (selected.kind === 'comp') {
+        var c = byId(selected.id);
+        return c ? { kind: 'comp', comp: c } : null;
+      }
+      var w = getScene().wires[selected.index];
+      return w ? { kind: 'wire', wire: w } : null;
     }
     function select(sel) { selected = sel; }
 
@@ -646,6 +743,20 @@
       var t = hitTerminal(p);
       if (t) {                                  // 从端子拉线
         wiring = { from: t, cur: p, to: null, trail: [{ x: p.x, y: p.y }] };
+        canvas.setPointerCapture && canvas.setPointerCapture(ev.pointerId);
+        return;
+      }
+
+      // 悬空的线头（挂在被删元件上的那一头）。排在滑片 / 元件 / 导线之前：
+      // 线头本身很细，只要让别的命中先吃掉这一下，它就永远抓不住 —— 而
+      // 「把线头插回某个柱子」正是删掉元件以后最自然的下一步动作。
+      // 排在 hitTerminal 之后：两者同时命中时，接线柱优先（柱子上能起一根新线，
+      // 是更常见、也更不该被挡住的意图）。
+      var le = hitLooseEnd(p);
+      if (le) {
+        wiring = { from: { compId: null, termIdx: 0, x: le.x, y: le.y },
+                   fromWire: { index: le.index, k: le.k },
+                   cur: p, to: null, trail: [{ x: p.x, y: p.y }] };
         canvas.setPointerCapture && canvas.setPointerCapture(ev.pointerId);
         return;
       }
@@ -739,8 +850,9 @@
         if (wireDragTo(p)) onChange();
         return;
       }
-      var nt = hitTerminal(p), nh = null;
+      var nt = hitTerminal(p), nl = nt ? null : hitLooseEnd(p), nh = null;
       if (nt) nh = { kind: 'term', compId: nt.compId, termIdx: nt.termIdx };
+      else if (nl) nh = { kind: 'loose', index: nl.index, k: nl.k };
       else {
         var ns = hitSlider(p);
         if (ns) nh = { kind: 'slider', id: ns.id };
@@ -757,7 +869,7 @@
       var changedHover = JSON.stringify(nh) !== JSON.stringify(hover);
       hover = nh;
       canvas.style.cursor = hitDeleteButton(p) ? 'pointer'
-        : nt ? 'crosshair'
+        : (nt || nl) ? 'crosshair'
         : (nh && nh.kind === 'slider') ? 'ew-resize'
         : (nh ? 'move' : 'default');
       if (changedHover) onChange();
@@ -775,9 +887,12 @@
       var hit = nearestOnWire(wiring.cur);
       if (!hit) return false;
       var s = getScene(), W = s.wires[hit.index], from = wiring.from;
-      // 接到「起点自己那根线」上等于没接（同一个节点），还会凭空多一个结点
-      if ((W.a.compId === from.compId && W.a.termIdx === from.termIdx) ||
-          (W.b.compId === from.compId && W.b.termIdx === from.termIdx)) return false;
+      // 接到「起点自己那根线」上等于没接（同一个节点），还会凭空多一个结点。
+      // 起点是【悬空线头】时 compId 为 null，两个 null 会被误判成「同一根」，
+      // 所以这一条只对真正挂在元件上的端点生效。
+      if (from.compId && (
+          (W.a.compId === from.compId && W.a.termIdx === from.termIdx) ||
+          (W.b.compId === from.compId && W.b.termIdx === from.termIdx))) return false;
       // 量程冲突：起点在某只表的量程柱上，而目标导线也接着同一只表的量程柱 ——
       // 接上去等于把两个量程柱短接，读数就废了。
       if (rangeConflict(from, W.a) || rangeConflict(from, W.b)) return false;
@@ -801,27 +916,58 @@
       // 新导线从起点划到【结点】为止。末端就是结点本身（junction 的端子在
       // (0,0)），所以不用再往 via 尾巴上补一个落点 —— 补了会和端点重合，
       // 变成零长度段（mkWire 会过滤掉，但不如一开始就别写）。
-      var cp = D.terminalWorld(byId(from.compId), from.termIdx);
+      // 起点可能是【悬空线头】（元件被删、导线还在），所以走 endPt。
+      var cp = endPt(from);
+      if (!cp) return false;
       var viaNew = simplify(wiring.trail.slice(1), TRAIL_TOL)
         .filter(function (z) { return Math.hypot(z.x - cp.x, z.y - cp.y) > 1; })
         .slice(0, VIA_MAX - 1)
         .map(function (z) { return [z.x, z.y]; });
 
-      var tA = { compId: W.a.compId, termIdx: W.a.termIdx };
-      var tB = { compId: W.b.compId, termIdx: W.b.termIdx };
+      var tA = cpEnd(W.a), tB = cpEnd(W.b);
       s.wires.splice(hit.index, 1);
-      s.wires.push(mkWire(tA, { compId: jc.id, termIdx: 0 }, viaA));
-      s.wires.push(mkWire({ compId: jc.id, termIdx: 1 }, tB, viaB));
-      s.wires.push(mkWire(from, { compId: jc.id, termIdx: 0 }, viaNew));
+      // mkWire 在端点算不出坐标时返回 null（理论上到不了这里：三条新线的端点
+      // 要么是刚检查过的 cp，要么是原导线上已经能解出来的端点）。仍然逐个过滤，
+      // 因为把 null 推进 wires 会让后面每一次重绘都在 w.a 上抛错。
+      [mkWire(tA, { compId: jc.id, termIdx: 0 }, viaA),
+       mkWire({ compId: jc.id, termIdx: 1 }, tB, viaB),
+       mkWire(from, { compId: jc.id, termIdx: 0 }, viaNew)].forEach(function (nw) {
+        if (nw) s.wires.push(nw);
+      });
       report('plug', { a: from, b: { compId: jc.id, termIdx: 0 } });
       return true;
     }
+    // 把一根【悬空】的线头插回某个接线柱上。和「从端子拉一根新线」是两回事：
+    // 这里不新增导线，只是改那个端点的归属，所以线的根数一根不变。
+    // 判据全在落点上：没落在柱子上就什么都不做，线头留在原地等下一次。
+    function replugLooseEnd(wiring) {
+      var b = wiring.to;
+      if (!b) return false;
+      var s = getScene();
+      var wr = s.wires[wiring.fromWire.index];
+      if (!wr) return false;
+      var k = wiring.fromWire.k, ok = (k === 'a') ? 'b' : 'a';
+      var other = wr[ok];
+      // 插到「自己另一头所在的那个柱子」上 = 自环，等于把这根线短路掉
+      if (other && other.compId === b.compId && other.termIdx === b.termIdx) return false;
+      if (rangeConflict(other, b)) return false;
+      pushUndo();
+      wr[k] = { compId: b.compId, termIdx: b.termIdx };
+      // 端点换了位置，手绘的形状不再贴合 —— 和 plugRange 同一条规矩：改成
+      // 自动正交走线，免得插上以后整根线横穿元件本体。
+      wr.auto = true; wr.base = null;
+      var q0 = endPt(wr.a), q1 = endPt(wr.b);
+      if (q0 && q1) wr.via = routeTo(q0, q1, -1).via;
+      report('plug', { a: wr.a, b: wr.b });
+      return true;
+    }
+
     // 造一根【手绘】导线，顺便把「原始形状」记下来 —— refitManual 靠 base
     // 在元件被拖走时按比例重新分布拐点。缺了 base 拐点会原地不动，导线就从
     // 元件身上脱开了。
     function mkWire(a, b, via) {
-      var p0 = D.terminalWorld(byId(a.compId), a.termIdx);
-      var p1 = D.terminalWorld(byId(b.compId), b.termIdx);
+      var p0 = endPt(a), p1 = endPt(b);
+      if (!p0 || !p1) return null;
       // 过滤「与两端点重合」和「与前一个拐点重合」的点。它们在 rawPathOf 里
       // 是零长度段 —— 画面上看不见，但电路图布局会把它当成一个多余的拐点，
       // 报「第 N 根导线布局需核对」。接线点的两个端子都落在 (0,0)，最容易踩到。
@@ -836,8 +982,7 @@
         v.push([z[0], z[1]]);
       });
       return {
-        a: { compId: a.compId, termIdx: a.termIdx },
-        b: { compId: b.compId, termIdx: b.termIdx },
+        a: cpEnd(a), b: cpEnd(b),
         via: v, auto: false,
         base: { ends: [[p0.x, p0.y], [p1.x, p1.y]], via: v.map(function (z) { return [z[0], z[1]]; }) },
       };
@@ -852,6 +997,14 @@
         return;
       }
       if (wiring) {
+        // 拖的是【悬空线头】：这一下不是「画一根新线」，而是「把这根线插回某个
+        // 柱子上」—— 只改那个端点的归属，导线的根数不变（见 replugLooseEnd）。
+        if (wiring.fromWire) {
+          replugLooseEnd(wiring);
+          wiring = null;
+          changed();
+          return;
+        }
         if (wiring.to) {
           var a = wiring.from, b = wiring.to;
           if (a.compId !== b.compId || a.termIdx !== b.termIdx) {
@@ -865,9 +1018,9 @@
             // 兜底：落点预览已经拦过一次，但「起点就在量程柱上、别处已经
             // 接了一根」这类情况只有到这里才看全，所以再判一次。
             if (!dup && !rangeConflict(a, b)) {
+              var p0 = endPt(a), p1 = endPt(b);
+              if (!p0 || !p1) { wiring = null; changed(); return; }
               pushUndo();
-              var ca = byId(a.compId), cb = byId(b.compId);
-              var p0 = D.terminalWorld(ca, a.termIdx), p1 = D.terminalWorld(cb, b.termIdx);
               // 轨迹的首尾两点落在两个接线柱上，接线柱坐标每次渲染现算，
               // 存下来只会和它们打架，丢掉。
               var raw = wiring.trail.slice(1);
@@ -880,8 +1033,7 @@
                 .slice(0, VIA_MAX)
                 .map(function (q) { return [q.x, q.y]; });
               s.wires.push({
-                a: { compId: a.compId, termIdx: a.termIdx },
-                b: { compId: b.compId, termIdx: b.termIdx },
+                a: cpEnd(a), b: cpEnd(b),
                 via: via, auto: false,
                 // 原始形状留一份，元件拖走时按它重新贴合，见 refitManual
                 base: { ends: [[p0.x, p0.y], [p1.x, p1.y]], via: via.map(function (v) { return [v[0], v[1]]; }) },
@@ -957,6 +1109,21 @@
     function drawOverlay(ctx) {
       var cs = getScene().comps;
 
+      // 悬空的线头：一个小空心圈。元件被删掉以后导线留着（用户明确要求），
+      // 线头就悬在半空 —— 不标一下，学生只会以为「这根线画坏了」。
+      // 琥珀色和拉线预览里「落点悬空」是同一个颜色语义。
+      var ws0 = getScene().wires;
+      ctx.save();
+      ctx.strokeStyle = '#f59e0b'; ctx.lineWidth = 2;
+      for (var wi = 0; wi < ws0.length; wi++) {
+        for (var wk = 0; wk < 2; wk++) {
+          var we = wk ? ws0[wi].b : ws0[wi].a;
+          if (!isLooseEnd(we)) continue;
+          ctx.beginPath(); ctx.arc(we.x, we.y, 5.5, 0, 6.284); ctx.stroke();
+        }
+      }
+      ctx.restore();
+
       // 悬停端子：放大高亮，这是「可以接线」的视觉锚点
       if (hover && hover.kind === 'term') {
         var hc = byId(hover.compId);
@@ -965,6 +1132,18 @@
           ctx.save();
           ctx.strokeStyle = '#22c55e'; ctx.lineWidth = 2.5;
           ctx.beginPath(); ctx.arc(q.x, q.y, 13, 0, 6.284); ctx.stroke();
+          ctx.restore();
+        }
+      }
+
+      // 悬停悬空线头：同一个圈，颜色跟线头走，表示「这一头能插回去」
+      if (hover && hover.kind === 'loose') {
+        var hlw = getScene().wires[hover.index];
+        var hle = hlw ? (hover.k === 'a' ? hlw.a : hlw.b) : null;
+        if (isLooseEnd(hle)) {
+          ctx.save();
+          ctx.strokeStyle = '#f59e0b'; ctx.lineWidth = 2.5;
+          ctx.beginPath(); ctx.arc(hle.x, hle.y, 13, 0, 6.284); ctx.stroke();
           ctx.restore();
         }
       }
@@ -1031,9 +1210,9 @@
 
       // 正在拉的导线：虚线预览，走的就是鼠标划过的轨迹
       if (wiring) {
-        var ca = byId(wiring.from.compId);
-        if (ca) {
-          var p0 = D.terminalWorld(ca, wiring.from.termIdx);
+        // 起点可能是【悬空线头】（拖回来重插），所以走 endPt 而不是 terminalWorld
+        var p0 = endPt(wiring.from);
+        if (p0) {
           var p1 = wiring.to ? { x: wiring.to.x, y: wiring.to.y }
                    : (wiring.snap ? wiring.snap.q : wiring.cur);
           var trail = wiring.trail.slice(1);
@@ -1092,6 +1271,10 @@
       // 参数面板的「量程」按钮走它，而不是 setParam：量程在实物上是「线接在
       // 哪个柱子上」，改参数不改接线的话画面和读数就对不上了。
       plugRange: plugRange,
+      // 「对调极性」按钮。和 plugRange 同一条路子：面板上的按钮改的是
+      // 【元件/接线的实际状态】，不是一条参数 —— 只 setParam('flip') 的话，
+      // 挂在元件上的导线不会跟着换端点，线头会当场被拽到另一头去。
+      flipComp: flipComp,
       rotateSelected: rotateSelected, undo: undo, rerouteAll: rerouteAll,
       select: function (s) { select(s); changed(); },
       getSelected: function () { return describeSelection(); },
@@ -1105,6 +1288,12 @@
       rawPathOf: rawPathOf,
       nearestOnWire: nearestOnWire,
       connectToWireMid: connectToWireMid,
+      // 删元件保留导线（用户要求）以后，导线上会出现【悬空端】。这两条给测试用：
+      // 判「线头还在不在」「点没点中它」，光看场景是分不出来的 ——
+      // compId 为 null 和 compId 指向一个已经不存在的元件，外观上一模一样。
+      endPt: endPt,
+      isLooseEnd: isLooseEnd,
+      hitLooseEnd: hitLooseEnd,
       // 滑片中心的逻辑坐标。测试和外部代码都用它，别自己按 RHEO 常数猜。
       knobPos: function (id) {
         var c = byId(id);

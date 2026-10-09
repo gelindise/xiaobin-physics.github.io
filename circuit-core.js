@@ -330,6 +330,13 @@
       // 就此断开。只在绘制时画个断口是不够的 —— 那样画面上看着断了，
       // 求解器却还当成一根完好的导线，读数会继续骗人。
       if (w && w.broken) continue;
+      if (!w || !w.a || !w.b) continue;
+      // 悬空端（compId 为 null）：这一头没接在任何元件上，导线到这里就【断】了。
+      // 删元件保留导线（见 circuit-editor 的 removeSelected）之后线头就长这样。
+      // 不判这一下的话 union('null:0', …) 会凭空造出一个叫 "null:0" 的假节点，
+      // 把所有悬空的线头连到一起 —— 剪断的导线会重新「接通」，读数继续骗人。
+      // 只悬空一头的线同样整根不参与合并：它本来就没有第二个节点可连。
+      if (!w.a.compId || !w.b.compId) continue;
       dsu.union(w.a.compId + ':' + w.a.termIdx, w.b.compId + ':' + w.b.termIdx);
     }
 
@@ -412,6 +419,8 @@
   // ------------------------------------------------------------
   // R / LAMP 自环（p===q）→ 丢弃（电流恒 0，与不存在等效）
   // V 自环【不丢】→ 携带内阻信息，正是「电源被短路」的解
+  //   ⚠️ 例外：Rs≈0 且 V≈0 的自环是 0 = 0 的废话，由 assemble() 丢掉
+  //      （见 degenerateIdealBranch），否则矩阵会因一行全零而判奇异。
   // ============================================================
   function describeComponent(comp, termNode, lampR, tap, st) {
     var out = [];
@@ -629,22 +638,53 @@
 
   // 矩阵奇异时用来分辨「短路」还是「接错线」。
   // 只看理想电压源支路（Rs≈0：理想电源、闭合开关、理想电流表）：
-  //   · 这条支路两端落到同一个电气节点 → 它被零阻通路短接了；
-  //   · 两条这样的支路压在同一对节点上却给出不同电压 → 方程组自相矛盾，
-  //     物理上就是一个电源被另一条零阻支路强行摁到别的电位（典型的
-  //     「理想电源两端并一个闭合开关」）。
+  //   · 两端落到同一个电气节点【且电压不为 0】→ 方程组自相矛盾（0 = V），
+  //     物理上就是「一个理想电源被零阻通路强行摁住」= 真短路；
+  //   · 两条这样的支路压在同一对节点上却给出不同电压 → 同样的矛盾，
+  //     典型是「理想电源两端并一个闭合开关」。
+  //
+  // ⚠️ p === q 本身【不是】短路的证据。零阻零压的理想支路（闭合开关、
+  //    理想电流表、0Ω 电阻）两端同节点时，它写的方程是 0 = 0 —— 一条
+  //    什么也没说的冗余约束。学生把一根导线并在开关两个接线柱上就是这种
+  //    情形：导线已经把两个端子并成了同一个节点，开关那条支路成了废话。
+  //    它【不会】让回路里的电流变大（串联的电源和负载一个没变），只是让
+  //    开关失去控制作用。旧版在这里 `if (b.p === b.q) return true;`，
+  //    于是「短接了开关」被报成「电源短路、电流过大」——物理上是错的。
+  //    这类支路已经在 assemble() 里被丢掉了（见 degenerateIdealBranch），
+  //    所以正常路径下根本走不到这里；留着这一句是给「手工构造的支路表」
+  //    （测试直接调它）兜底。
   function isShortedByIdealLoop(branches) {
     var byPair = new Map();
     for (var i = 0; i < branches.length; i++) {
       var b = branches[i];
       if (b.kind !== 'V' || !(Math.abs(b.Rs) <= 1e-9)) continue;
-      if (b.p === b.q) return true;
+      if (b.p === b.q) {
+        if (Math.abs(b.V) > EPS) return true;   // 0 = V ≠ 0：矛盾，真短路
+        continue;                               // 0 = 0：什么都没说，跳过
+      }
       var key = b.p <= b.q ? (b.p + '|' + b.q) : (b.q + '|' + b.p);
       var prev = byPair.get(key);
       if (prev === undefined) { byPair.set(key, b); continue; }
       if (Math.abs(prev.V - b.V) > 1e-9) return true;
     }
     return false;
+  }
+
+  // 退化的理想电压源支路：Rs≈0、V≈0、且两端已经落在同一个电气节点上。
+  // 它写的方程是 `0 = 0`（见 solveIsland 的 stamp：p === q 时两侧 KCL 抵消，
+  // 只剩 −Rs·Ik = V），在矩阵里就是【一整行零】—— 高斯消元当场判奇异，
+  // 于是整条电路报「无法求解」。可它明明什么信息都没携带，删掉它电路照样解。
+  //
+  // 谁会踩到：把一根导线并在闭合开关的两个接线柱上（导线把两端并成同一
+  // 节点，开关那条支路就成了自环）、理想电流表被短接、0Ω 电阻被短接。
+  // 删掉之后这些元件的 rec.i 自然为 0（bs 为空），正好是物理事实：电流
+  // 全从并接的那条零阻通路走了，开关自己身上一点电流都没有。
+  //
+  // ⚠️ 只丢 V≈0 的。Rs≈0 而 V≠0 的自环【必须留下】—— 那是「理想电源被
+  //    导线直接短接」，方程 0 = V 无解，正是最严重的短路，得让它去报错。
+  function degenerateIdealBranch(b) {
+    return b.kind === 'V' && Math.abs(b.Rs) <= 1e-9 &&
+           Math.abs(b.V) <= EPS && b.p === b.q;
   }
 
   // ============================================================
@@ -895,10 +935,11 @@
 
     // 哪些端子上真的挂了导线（"compId:termIdx" 集合）。表头的量程柱、
     // 「−」柱接没接上，只能从这里看——参数面板选了什么不算数。
+    // 悬空端（compId 为 null）跳过：它会造出 "null:0" 这个不存在的端子名。
     var wired = new Set();
     wires.forEach(function (w) {
-      if (w && w.a) wired.add(w.a.compId + ':' + w.a.termIdx);
-      if (w && w.b) wired.add(w.b.compId + ':' + w.b.termIdx);
+      if (w && w.a && w.a.compId != null) wired.add(w.a.compId + ':' + w.a.termIdx);
+      if (w && w.b && w.b.compId != null) wired.add(w.b.compId + ':' + w.b.termIdx);
     });
     // 每个表头生效的量程柱。导线接法在求解过程中不变，识别一次就固定，
     // 灯泡迭代里反复 assemble() 拿的是同一份。
@@ -932,7 +973,13 @@
       components.forEach(function (c) {
         var tap = meterTaps[c.id];                       // {idx, conflict} 或 undefined
         describeComponent(c, topo.termNode, lampR.get(c.id), tap ? tap.idx : null, st)
-          .forEach(function (b) { branches.push(b); });
+          .forEach(function (b) {
+            // 0 = 0 的冗余约束在这里就丢掉，别让它进矩阵把整条电路判成奇异
+            // （见 degenerateIdealBranch：闭合开关被导线短接、理想电流表被
+            //  短接、0Ω 电阻被短接，都会生成这种自环支路）。
+            if (degenerateIdealBranch(b)) return;
+            branches.push(b);
+          });
       });
       return branches;
     }
@@ -1082,7 +1129,10 @@
       // 后面「熔断导线 / 烧电源」的判定会把最该处理的这一种漏掉。
       out.shortCircuit = { compIds: shortedBatteryIds(components, usedBranches, topo.termNode) };
       warnings.push(shorted
-        ? { code: 'SHORT_CIRCUIT', message: '电源被导线或闭合开关直接短接，电流会过大' }
+        // 只说【电源】被短接：闭合开关被导线短接不会走到这里（那条支路是
+        // 0 = 0，早被丢掉了），会走到这里的闭合开关必定是和电源并在一起
+        // 把它摁住的那一条 —— 那本来就是电源短路。
+        ? { code: 'SHORT_CIRCUIT', message: '电源被导线直接短接，电流会过大' }
         : { code: 'SINGULAR', message: '电路存在矛盾约束，请检查接线' });
       return out;
     }
@@ -1184,6 +1234,19 @@
             rec.i = 0;
           }
           rec.p = rec.v * rec.i;
+          // 「闭合着，可一条支路都没有」只有一种来路：它的两个接线柱落在
+          // 同一个电气节点上（有导线把两端并起来了），那条 0 = 0 的支路被
+          // degenerateIdealBranch 丢掉了。这就是「用一根导线把开关短接」。
+          // 必须说出来，而且必须说【准】—— 它只是让开关失去控制作用，
+          // 回路里的电流一点没变（串联的电源和负载一个没少）。旧版把这种
+          // 接法报成「电源短路、电流过大」，学生照着改线会越改越糊涂。
+          rec.bypassed = P.closed && !bs.length && !isOpenFault(c);
+          if (rec.bypassed) {
+            warnings.push({ code: 'SWITCH_BYPASSED',
+              message: '开关 ' + c.id + ' 的两个接线柱被导线直接连通，' +
+                       '它已经控制不了电路了（电流不经过开关，大小不变）',
+              componentIds: [c.id] });
+          }
           break;
         }
 
@@ -1661,15 +1724,20 @@
 
     // 哪些端子上真的挂了导线。变阻器的 C/D 是同电位的一对引线，
     // 不区分「接的是哪一个」就无法把注入量分对（见 terminalInjection）。
+    // 悬空端（compId 为 null）跳过 —— 它会造出 "null:0" 这个不存在的端子名。
     var wired = new Set();
     wires.forEach(function (wr) {
-      if (wr && wr.a) wired.add(wr.a.compId + ':' + wr.a.termIdx);
-      if (wr && wr.b) wired.add(wr.b.compId + ':' + wr.b.termIdx);
+      if (wr && wr.a && wr.a.compId != null) wired.add(wr.a.compId + ':' + wr.a.termIdx);
+      if (wr && wr.b && wr.b.compId != null) wired.add(wr.b.compId + ':' + wr.b.termIdx);
     });
 
     // 按电气节点分组，每组内只放「两端确实同节点」的导线
     var groups = new Map();
     wires.forEach(function (wr, i) {
+      // 悬空端：这一头没接在任何元件上，导线在那里断了 —— 它不参与分流，
+      // 电流恒为 0（flow[i] 保持初值）。判在拼接字符串之前，别让 "null:0"
+      // 混进 res.terminalNode 的查表里。
+      if (!wr || !wr.a || !wr.b || !wr.a.compId || !wr.b.compId) return;
       var ka = wr.a.compId + ':' + wr.a.termIdx, kb = wr.b.compId + ':' + wr.b.termIdx;
       var na = res.terminalNode[ka], nb = res.terminalNode[kb];
       if (na == null || nb == null || na !== nb) return;   // 不是节点内导线（跨节点或未接线）
