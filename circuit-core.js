@@ -136,13 +136,18 @@
     ammeter: {
       label: '电流表', terminals: 3, termNames: ['-', '0.6', '3'],
       commonTerm: 0, rangeTaps: [1, 2], rangeValues: [0.6, 3],
-      defaults: { range: 0.6, rInternal: 0 },
+      // zeroed = 【调零】状态。默认 false = 未调零：真实的表拿到手第一件事
+      // 就是拧面板上那颗螺丝把指针拨到零刻度，没调零就读数是错的 —— 这是
+      // 课本「实验前要检查仪器」那句话的落地点，所以默认必须是【没调】的，
+      // 而不是替学生调好。调零只改指针的画法（见 drawMeter 的 ZERO_OFF），
+      // 不改求解出来的读数：读数本身是电路的事，调零是仪器的事。
+      defaults: { range: 0.6, rInternal: 0, zeroed: false },
     },
     voltmeter: {
       label: '电压表', terminals: 3, termNames: ['-', '3', '15'],
       commonTerm: 0, rangeTaps: [1, 2], rangeValues: [3, 15],
       // rInternal = null 表示理想电压表（完全开路、不分流，初中标准模型）
-      defaults: { range: 3, rInternal: null },
+      defaults: { range: 3, rInternal: null, zeroed: false },
     },
   };
 
@@ -184,6 +189,7 @@
   var FAULT_LABEL = {
     burned:  '灯丝烧断',
     removed: '灯泡已取下',
+    shorted: '灯座短路',
     burnt:   '烧坏',
     over:    '超量程损坏',
     rev:     '接反打表损坏',
@@ -191,6 +197,10 @@
   // 两只表【不是】：真实的表打表以后电路照样通，只是读数不能信了（指针顶在
   // 端点）。把它们也断掉的话，「反接指针左偏」这一幕就永远看不到了 ——
   // 而那正是用户点名要看的现象。
+  // ⚠️ shorted（灯座短路）也【不在】这张表里，而且和「两只表」是两回事：
+  //    表是「通着但读数不可信」，灯座短路是「灯被旁路掉了」——电流全从短接
+  //    线走，灯丝里一点电流都没有（所以灯不亮），可外电路照常工作。它改的是
+  //    这一件的等效电阻（见 describeComponent 的 bulb 分支），不是通断。
   var OPEN_FAULTS = { burned: 1, removed: 1, burnt: 1 };
   function isOpenFault(comp) {
     return !!(comp && comp.fault && OPEN_FAULTS[comp.fault]);
@@ -216,6 +226,13 @@
   //     接三节干电池 4.5V（内阻 1.5Ω）→ I≈0.46A，P≈1.75W = 2.33 P额 → 烧断。
   //   即「两节电池正常发光、再加一节就烧了」—— 正是学生真做过的那件事。
   var BULB_BURN_K = 1.5;
+
+  // ── 灯座短路时的等效电阻 ───────────────────────────────────
+  // 不是 0：0Ω 在这个内核里会被当成【理想短路线】（addR 里 `!(R > EPS)` 那
+  // 一支），电源被理想短路线短接时矩阵直接奇异，界面报「接线矛盾，无法求解」。
+  // 0.01Ω 在 3V 下是 300A 量级，肉眼与读数上和「真的短接」没有区别，却让
+  // 求解矩阵保持非奇异 —— 学生看到的才是「灯不亮、别的元件照常工作」。
+  var SHORT_R = 0.01;
 
   // ── 短路时电源能扛住的电流 ───────────────────────────────────
   // 短路电流 I = E/r（外电路被短接，只剩内阻）。所以「电源会不会烧」取决于
@@ -425,6 +442,22 @@
         break;
 
       case 'bulb':
+        // 灯座短路（演示故障之一）：灯座上并了一根铜丝，灯泡两端被直接短接。
+        // 电流全从短接的那根线走，灯丝里一点电流都没有 ⇒ 灯不亮；而外电路
+        // 【仍然是通的】（别的灯照亮、电流表照有读数）—— 这正是它和「拔下 /
+        // 灯丝断了」最要紧的区别，那两个是把电路弄断，这个只是把灯废掉。
+        // 等效成一个很小的电阻（而不是 0Ω 的理想短路线）：理想短路线会让
+        // 求解矩阵在「电源被灯座短接」这种接法下直接奇异，学生看到的会是
+        // 「接线矛盾，无法求解」，而不是「灯不亮、别的都正常」。
+        if (comp.fault === 'shorted') {
+          addR(N(0), N(1), SHORT_R);
+          // 标一下「这条支路是短接线、不是灯丝」——填读数时要靠它绕开
+          // fillLamp（否则按 p/P额 算出来的亮度会顶到最大，灯亮得像要炸）。
+          if (out.length && out[out.length - 1].kind === 'R') {
+            out[out.length - 1].shorted = true;
+          }
+          break;
+        }
         var rl = lampR != null ? lampR : lampInitR(comp);
         if (N(0) !== N(1) && rl > EPS) {
           out.push({ kind: 'LAMP', comp: comp, p: N(0), q: N(1), R: rl });
@@ -1124,7 +1157,14 @@
             rec.i = rec.v / br.R;
           }
           rec.p = rec.v * rec.i;
-          if (c.type === 'bulb') fillLamp(rec, c, P);
+          if (c.type === 'bulb') {
+            // 灯座短路：这条支路是一根 0.01Ω 的短接线，不是灯丝。绝不能走
+            // fillLamp —— 它按 p/P额 算亮度，而短接线上的功率是 I²·0.01，
+            // 3V 下几百瓦，算出来的亮度会顶到 1.3，灯【亮得像要炸】，
+            // 正好把「灯座短路 ⇒ 灯不亮」这件事讲反了。
+            if (br.shorted) { rec.brightness = 0; rec.overload = false; }
+            else fillLamp(rec, c, P);
+          }
           if (c.type === 'voltmeter') {
             // 有内阻的电压表走的是这条支路：支路另一端（「−」柱）没接线时
             // 支路里没有电流，但两端电位差照样算得出来——同样得按 rec.wired 抹掉。

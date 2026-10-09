@@ -137,28 +137,23 @@
 
   // 电池符号的极板。**最右边那根必须是长线**：端子 0 = 正极 = 落在 TERMINALS
   // 的 +HALF（右侧），这是全站不可动摇的极性（circuit-draw.js:770）。
-  // 于是从右往左数，一根长、一根短、一根长……画出来自左向右就是「短长 短长」，
-  // 正是两节干电池串联该有的样子（每节负极朝左、正极朝右）。
+  //
+  // ⚠️ 只画【一节】（一长一短两根竖线），不再按 cellCount 画 n 节。
+  //    用户点名要去掉的就是多出来的那一组：一盒 3V 的电池在电路图上被画成
+  //    四根竖线，学生数出来是「四节」，而它其实是两节 1.5V 串成的 —— 数错了。
+  //    课本上电源的符号就是一个电池符号（一长一短），几节、总电压多少写在
+  //    符号旁边的「E = 3.0 V」上（见 valueOf），不靠竖线的根数去表达。
+  //    cellCount() 本身留着：它是「电动势反推节数」那条规矩的唯一出处，
+  //    实物那边的干电池盒（circuit-draw 的 batterySize）要用它。
   function batteryPlates(comp) {
-    var n = cellCount(comp);
-    var x = 0, out = [];
-    for (var k = 0; k < n; k++) {
-      out.push({ x: x, h: LONG.h, lw: LONG.lw });
-      x -= CELL_INNER;
-      out.push({ x: x, h: SHORT.h, lw: SHORT.lw });
-      x -= (CELL_PITCH - CELL_INNER);
-    }
-    // 整组居中：先量出实际的左右边界再挪，别拿循环末尾的 x 反推
-    // （末尾的 x 比最左那根极板还多让了一格，按它居中会整体偏左）。
-    var xs = out.map(function (p) { return p.x; });
-    var mid = (Math.min.apply(null, xs) + Math.max.apply(null, xs)) / 2;
-    out.forEach(function (p) { p.x -= mid; });
-    return out;
+    return [
+      { x:  CELL_INNER / 2, h: LONG.h,  lw: LONG.lw },   // 右：长线 = 正极
+      { x: -CELL_INNER / 2, h: SHORT.h, lw: SHORT.lw },  // 左：短线 = 负极
+    ];
   }
-  function batteryHalf(comp) {
-    var n = cellCount(comp);
-    return ((n - 1) * CELL_PITCH + CELL_INNER) / 2;
-  }
+  // 引线终点 = 极板所在处（和电阻的 lead(ctx,T,-56) 一个规矩：引线画到符号本体边上，
+  // 不留缝、也不插进符号里面）。symRect 的框宽也跟着它走。
+  function batteryHalf(comp) { return CELL_INNER / 2; }
 
   // 电表：圆骑在「−」柱和被接的那个量程柱【中间】。
   // 只接了一个量程柱是常态（内核的规矩就是「量程由接线决定」），这时候圆心
@@ -1811,6 +1806,9 @@
     termWorld: schTermWorld,
     LEGEND: LEGEND, subscript: subscript, COLOR: COLOR,
     valueOf: valueOf, cellCount: cellCount, batteryHalf: batteryHalf,
+    // 电源符号的极板表。导出是为了让「电路图上电源只画一节」这条断言能
+    // 直接读【画出去的那份数据】，而不是去数截图上的竖线 —— 谁画谁登记。
+    batteryPlates: batteryPlates,
     // 规整化/走线的常量：测试要断言「位移 ≤ MOVE_MAX」，从这里取，
     // 免得内核改了上限、测试还按老数字断（那就成了自证）
     MOVE_MAX: MOVE_MAX,

@@ -394,6 +394,11 @@
     ZERO: { x: 0, y: 26, r: 6.5 },                  // 调零螺丝
     BASE_HW: 96, BASE_TOP: 42, BASE_BOT: 60,        // 底座（比表壳宽一圈）
     POST_Y: 72,                                     // 三柱锚点（= TERMINALS 的 y）
+    // 未调零时指针偏离零位的量（占整个扫角的比例）。0.045 × 120° ≈ 5.4°，
+    // 在刻度弧上是 4~5 个像素 —— 小到不挡读数，大到一眼看得出「针没停在零上」。
+    // 方向固定【向右】：向左会落进「反接打表」那一小格（frac −0.085），
+    // 学生就分不清「表没调零」和「表接反了」了。
+    ZERO_OFF: 0.045,
   };
   // 指针扫角：−150° → −30°，绕正上方左右各 60°（教材表的弧线就这一段）
   var MET_SWEEP = { A0: -Math.PI * 5 / 6, A1: -Math.PI / 6 };
@@ -823,7 +828,13 @@
         var q = pointDirAt(pts, d2);
         ctx.save();
         ctx.translate(q.x, q.y);
-        ctx.rotate(Math.atan2(q.uy, q.ux));     // 箭头朝向 = 该点的切向
+        // 尖端必须朝【电流流向】。pointDirAt 给的是「从首端到末端」这条折线的
+        // 单位切向（ux,uy），只有电流为正（首端→末端）时它才等于电流方向；
+        // 电流为负时箭头是沿着导线【往回】走的（见 currentShift 的符号），
+        // 而朝向要是还按 +切向画，尖端就朝着来路 —— 屏幕上就是一支倒着飞的
+        // 箭头。这正是用户看到的「有的地方尖端朝后」：同一条回路里，
+        // 反向支路上的那几根导线全是这个毛病。
+        ctx.rotate(Math.atan2(q.uy, q.ux) + (opts.flow < 0 ? Math.PI : 0));
         ctx.beginPath();
         ctx.moveTo(7, 0); ctx.lineTo(-5, -4.8); ctx.lineTo(-5, 4.8);
         ctx.closePath(); ctx.fill();
@@ -1998,6 +2009,32 @@
     // ⚠️ 同样必须在 restore() 【之前】画：牌子用的是局部坐标，restore 之后上下文
     //    已经回到世界坐标，再传 (0, SOCK_TOP+2) 就等于把牌子画到画布左上角去。
     if (fault === 'burned') faultTag(ctx, 0, SOCK_TOP + 2, '灯丝烧断', 1);
+
+    // ── 灯座短路：两根接线柱之间夹了一根铜丝 ──────────────────
+    // 这就是「灯座短路」在实物上的样子：灯泡【没坏】，是有人拿一根导线把灯座
+    // 两端直接连起来了 —— 电流全走铜丝，灯丝里一点电流都没有（所以灯不亮），
+    // 而电路仍然是通的。画在最后（压住灯座底板）、用亮铜色：它必须是画面上
+    // 一眼就能找到的那件「多出来的东西」，否则学生只看得出「灯不亮」，
+    // 看不出是为什么 —— 而「为什么」正是这个故障要教的东西。
+    if (fault === 'shorted') {
+      ctx.save();
+      ctx.strokeStyle = linGrad(ctx, -HALF, 0, HALF, 0,
+        [[0, '#8c5624'], [0.45, '#e8b183'], [0.6, '#bc7833'], [1, '#8c5624']]);
+      ctx.lineWidth = 5.5; ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(-HALF, 0);
+      ctx.quadraticCurveTo(0, 26, HALF, 0);      // 实际最低点 y≈13，落在底板面上
+      ctx.stroke();
+      // 两端的焊点：铜丝得像是【焊】在柱子上的，不是飘在那儿
+      ctx.fillStyle = '#c9ced6';
+      ctx.beginPath(); ctx.arc(-HALF, 0, 4.2, 0, 6.284); ctx.fill();
+      ctx.beginPath(); ctx.arc(HALF, 0, 4.2, 0, 6.284); ctx.fill();
+      ctx.strokeStyle = 'rgba(51,65,85,0.45)'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.arc(-HALF, 0, 4.2, 0, 6.284); ctx.stroke();
+      ctx.beginPath(); ctx.arc(HALF, 0, 4.2, 0, 6.284); ctx.stroke();
+      ctx.restore();
+      faultTag(ctx, 0, SOCK_TOP + 2, '灯座短路', 1);
+    }
     ctx.restore();
 
     // 两端柱子照参考图给红的：实物上这两件器材的接线柱都是红的。
@@ -2187,7 +2224,12 @@
     // 电流再大也停在零刻度左边那一点点——那个位置根本没有刻度，所以「读不出数」。
     // 按比例镜像（−0.3A 画成 0.3A 的镜像）会落在弧上、指着 0.3 那条线，
     // 看着像是能读的，正好把这个知识点教反了。
-    var frac = rev ? -0.085 : mag;
+    // 未调零：指针【不在零位上】。默认就是未调零（见 TYPES.ammeter.defaults 的
+    // zeroed:false）—— 真实的表拿到手第一件事是拧那颗螺丝把针拨到零刻度，
+    // 没调零就用，读数整体偏一个固定量，量出来的数据全是错的。
+    // 偏移只改【画法】，不改 rec.reading：读数是电路的事，调零是仪器的事。
+    var zeroed = !!(comp.params && comp.params.zeroed);
+    var frac = rev ? -0.085 : Math.min(mag + (zeroed ? 0 : M.ZERO_OFF), 1.06);
     var na = SW.A0 + (SW.A1 - SW.A0) * frac;
     var alert = over || rev;                       // 超量程 / 反接都用红针
     // 损坏（内核回传的闩锁状态，与「此刻正超量程」不是一回事）：指针【被打弯了】。
@@ -2204,18 +2246,29 @@
     ctx.strokeStyle = alert ? '#b91c1c' : '#111827'; ctx.lineWidth = 3.0;
     ctx.beginPath(); ctx.moveTo(-17, 0); ctx.lineTo(-7, 0); ctx.stroke();
     ctx.lineCap = 'round';
-    if (!bent) {
-      ctx.strokeStyle = 'rgba(15,23,42,0.18)'; ctx.lineWidth = 3.4;
-      ctx.beginPath(); ctx.moveTo(-8, 1.6); ctx.lineTo(M.RT1 - 14, 1.6); ctx.stroke();
+    // 针身：从根部（−9）的 4.8 宽【连续收细】到针尖（RT0+6）的一个点。
+    // 真表的针就是这样一根刀片 —— 最宽处在转轴附近，一路收到尖，中途
+    // 【没有任何一处比根部宽】。上一版是「2.2 宽的直杆 + 一个 5.6 宽的三角尖」，
+    // 那个比杆宽出一倍的三角正是用户看到的那支【箭头】，必须去掉。
+    // 分两段收：先缓收到刻度弧前（读起来是一根细长的针），最后 10px 再锐收成尖
+    // （真针的尖是刀刃形的，不是一整个长三角）。
+    function blade(dy) {
+      ctx.beginPath();
+      ctx.moveTo(-9, -2.4 + dy);
+      ctx.lineTo(M.RT1 - 16, -0.85 + dy);
+      ctx.lineTo(M.RT0 + 6, dy);
+      ctx.lineTo(M.RT1 - 16, 0.85 + dy);
+      ctx.lineTo(-9, 2.4 + dy);
+      ctx.closePath();
     }
-    // 指针杆保持 2.2 宽【不能变细】：反接时针尖要打进零刻度线左边那一小格，
-    // 那里是像素级断言在盯着（细杆在那一格里数不够墨，测试会红）。
-    // 真实的锥形指针在这里用「针尖三角」表达，杆保持等宽。
     var rodCol = alert ? '#b91c1c' : '#111827';
     if (bent) {
       // 折弯：杆在中段折一下，针尖歪到弧的内侧去。
       var kx = (M.RT1 - 14) * 0.52, tipX = M.RT1 - 15, tipY = -5.6;
-      ctx.strokeStyle = rodCol; ctx.lineWidth = 2.2;
+      ctx.strokeStyle = 'rgba(15,23,42,0.16)'; ctx.lineWidth = 3.2;
+      ctx.beginPath(); ctx.moveTo(-8, 1.6); ctx.lineTo(kx, 1.6);
+      ctx.lineTo(tipX, tipY + 1.2); ctx.stroke();
+      ctx.strokeStyle = rodCol; ctx.lineWidth = 2.4;
       ctx.beginPath();
       ctx.moveTo(-8, 0); ctx.lineTo(kx, 0); ctx.lineTo(tipX, tipY);
       ctx.stroke();
@@ -2224,19 +2277,18 @@
       ctx.rotate(Math.atan2(tipY, tipX - kx));
       ctx.fillStyle = rodCol;
       ctx.beginPath();
-      ctx.moveTo(3, 0); ctx.lineTo(-6, -2.8); ctx.lineTo(-6, 2.8);
+      ctx.moveTo(1.5, 0); ctx.lineTo(-6, -1.9); ctx.lineTo(-6, 1.9);
       ctx.closePath(); ctx.fill();
       ctx.restore();
     } else {
-      ctx.strokeStyle = rodCol; ctx.lineWidth = 2.2;
-      ctx.beginPath(); ctx.moveTo(-8, 0); ctx.lineTo(M.RT1 - 14, 0); ctx.stroke();
-      // 针尖：细长的三角，不是等腰三角 —— 真指针的尖是刀刃形的
-      ctx.fillStyle = rodCol;
-      ctx.beginPath();
-      ctx.moveTo(M.RT0 + 3, 0);
-      ctx.lineTo(M.RT0 - 6, -2.8);
-      ctx.lineTo(M.RT0 - 6, 2.8);
-      ctx.closePath(); ctx.fill();
+      // 阴影和针身【共用同一个路径】：分开画的话，针尖附近针身只剩半个像素宽、
+      // 而阴影还有 3.4 宽，会从针尖边上漏出去一截灰边（看着像两根针）。
+      ctx.fillStyle = 'rgba(15,23,42,0.16)'; blade(1.6); ctx.fill();
+      ctx.fillStyle = rodCol; blade(0); ctx.fill();
+      // 针根那一小截：把针身和转轴轴帽接起来（轴帽半径 4.6，针身从 −9 起画，
+      // 少了这截，针看着是浮在轴旁边的）。
+      ctx.strokeStyle = rodCol; ctx.lineWidth = 3.0;
+      ctx.beginPath(); ctx.moveTo(-7, 0); ctx.lineTo(-2, 0); ctx.stroke();
     }
     ctx.restore();
     // 限位钉：零刻度线外侧立着的一根小柱子，指针回到零就顶在它上面。

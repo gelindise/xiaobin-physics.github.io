@@ -242,6 +242,25 @@
   .zoomFoot{color:var(--text);font-size:13.5px;font-weight:700;text-align:center;
     display:flex;gap:10px;justify-content:center;align-items:baseline}
   .zoomFoot #zoomRange{color:var(--dim);font-weight:400;font-size:12.5px}
+  /* 调零按钮：和表盘上那颗旋钮是同一件事的两个入口（旋钮在画布上更直观，
+     这颗按钮给触屏和键盘用）。已调零时禁用并变灰 —— 再点一次没有意义。 */
+  .zoomFoot #zoomZero{background:#fff7ed;border:1px solid #fdba74;color:#b45309;
+    border-radius:7px;cursor:pointer;font-family:inherit;font-size:12.5px;
+    font-weight:700;padding:3px 10px;line-height:1.2;align-self:center}
+  .zoomFoot #zoomZero:hover:not(:disabled){background:#ffedd5}
+  .zoomFoot #zoomZero:disabled{background:#f0fdf4;border-color:#86efac;color:#15803d;
+    cursor:default}
+  /* 临时提示条：贴在实验画布上沿的一条通知（目前只有「电表没调零」用它）。
+     绝对定位在 .cv 里 ⇒ 它不进文档流，弹出来不会把实验画面或控制台挤动。
+     深度压在画笔层（z-index 6）和工具条（7）之上：提示条必须看得见。 */
+  .toast{position:absolute;left:50%;top:10px;transform:translateX(-50%);z-index:9;
+    display:flex;align-items:center;gap:9px;max-width:min(94%,580px);
+    padding:9px 12px;border-radius:11px;background:rgba(254,242,242,.97);
+    border:1px solid #fca5a5;color:#7f1d1d;font-size:12.5px;line-height:1.45;
+    box-shadow:0 10px 26px rgba(15,23,42,.20);text-align:left}
+  .toast[hidden]{display:none}
+  .toast button{flex:none;background:#fff;border:1px solid #fca5a5;border-radius:8px;
+    padding:3px 9px;font-size:12px;color:#7f1d1d;cursor:pointer;font-family:inherit}
   /* 电路图浮层：和表盘放大镜同一套骨架（fixed + hidden + 点背景关），
      内容换成一张整幅电路图，右边挂一列「实物 ↔ 符号」对照。
      宽度不写死——canvas 多大由脚本按电路的外接框算，容器只负责不够时滚动。 */
@@ -457,7 +476,10 @@
     <!-- 画笔：penCanvas 是盖在实验画布正上方的标注层，penBar 是它的工具条。
          两个都在 .cv 里面，位置由 layout() → penPlace() 逐帧对齐。 -->
     <div class="cv"><canvas id="simCanvas"></canvas><canvas id="penCanvas"></canvas>
-      <div class="penBar" id="penBar"></div></div>
+      <div class="penBar" id="penBar"></div>
+      <!-- 临时提示条。放在 .cv 里 = 绝对定位在画布上沿，不进文档流。 -->
+      <div class="toast" id="toast" hidden><span id="toastText"></span>
+        <button type="button" id="toastX">知道了</button></div></div>
     <div class="side">
       <div class="panel" id="paramPanel"></div>
       <div class="panel">
@@ -507,7 +529,8 @@
     <canvas id="zoomCanvas"></canvas>
     <!-- 读数单独一个 span：量程那格可以照印，读数那格【接反时必须一个数字都没有】。
          混成一行的话，「不印数字」这条规矩就说不清楚了。 -->
-    <div class="zoomFoot"><span id="zoomRead"></span><span id="zoomRange"></span></div>
+    <div class="zoomFoot"><span id="zoomRead"></span><span id="zoomRange"></span>
+      <button id="zoomZero" type="button">🎯 调零</button></div>
   </div>
 </div>
 
@@ -920,6 +943,24 @@ function pathOf(wire){
 var DROP = {battery:40, ammeter:80, voltmeter:80, resistor:22, bulb:38, rheostat:46, switch:38,
             led:38, motor:38, bell:38};
 
+// ── 读数的小数位 ────────────────────────────────────────────
+// 一律【一位小数】：读数框、侧栏那张 I/U/R/P 表、点元件弹出的浮层，全走它。
+// 之前是 toFixed(4)，屏幕上印着「0.3000 A」「0.7500 W」—— 多出来的那三位
+// 既读不出来也没有物理意义（真实的学生电表只能估读到分度值的下一位）。
+// 唯一的例外：本该是 0.0 却【不是】0 的小量（0.04A、0.005A）。一位小数会把
+// 它们印成「0.0」，看着就是「没有电流」—— 那不是精度问题，是说了假话。
+// 这种值往下补一位、还不够再补一位；别的值一位不动。
+function num1(v){
+  var x = +v;
+  if (!isFinite(x)) return '—';
+  var s = x.toFixed(1);
+  if (x !== 0 && parseFloat(s) === 0) {
+    s = x.toFixed(2);
+    if (parseFloat(s) === 0) s = x.toFixed(3);
+  }
+  return s;
+}
+
 // 元件旁边那个读数框里写哪几行，返回 null 表示这个元件不飘框（开关写在底座上了）。
 // 单独抽成函数是为了让测试能直接断言文字：反接这种「读数框里该写什么」的判断
 // 混在画框的循环里，只能靠截图像素去猜，改一个字都验不出来。
@@ -927,8 +968,8 @@ function readoutLines(c, r){
   var lines = [];
   if (c.type === 'switch') return null;   // 通断状态已经写在底座上，别再飘一个框
   if (c.type === 'rheostat') {
-    lines.push('R = ' + (r.rUsed == null ? '—' : r.rUsed.toFixed(1)) + 'Ω');
-    lines.push('I = ' + Math.abs(r.i).toFixed(3) + 'A');
+    lines.push('R = ' + (r.rUsed == null ? '—' : num1(r.rUsed)) + 'Ω');
+    lines.push('I = ' + num1(Math.abs(r.i)) + 'A');
   } else if (c.type === 'ammeter' || c.type === 'voltmeter') {
     // 表头有【两个】接点：量程柱和「−」柱。两边都接上，表才真的串在电路里，
     // 读数才有意义。缺哪一根就先点哪一根的名——不印数字。
@@ -943,11 +984,11 @@ function readoutLines(c, r){
     // 这里要是照 |reading| 印一个正数（以前就是这么写的），学生会把一个
     // 无效读数当成有效数据抄进实验报告——反接最该教的正是「这一格读不了」。
     else if (r.reversed) { lines.push('指针反偏'); lines.push('读不出数'); }
-    else lines.push((c.type === 'ammeter' ? 'I = ' : 'U = ') + Math.abs(r.reading).toFixed(3) +
+    else lines.push((c.type === 'ammeter' ? 'I = ' : 'U = ') + num1(Math.abs(r.reading)) +
                (c.type === 'ammeter' ? 'A' : 'V'));
   } else if (c.type === 'battery') {
-    lines.push('E = ' + r.emf.toFixed(1) + 'V');
-    lines.push('U = ' + Math.abs(r.v).toFixed(2) + 'V');
+    lines.push('E = ' + num1(r.emf) + 'V');
+    lines.push('U = ' + num1(Math.abs(r.v)) + 'V');
   } else if (c.type === 'led') {
     // 「不亮」有三种完全不同的原因，读数框必须把它们分开说 —— 混成一句
     // 「不导电」，学生就分不清是【管子接反了】还是【电压不够】。
@@ -962,7 +1003,7 @@ function readoutLines(c, r){
       lines.push('未接入电路');
     } else if (r.on) {
       lines.push('I = ' + (r.i * 1000).toFixed(1) + 'mA');
-      lines.push('U = ' + Math.abs(r.v).toFixed(2) + 'V');
+      lines.push('U = ' + num1(Math.abs(r.v)) + 'V');
     } else if (r.v < -0.05) {
       lines.push('反向截止');
       lines.push('不导电');
@@ -970,11 +1011,11 @@ function readoutLines(c, r){
       // 卡在门槛上：正向偏置刚好等于 Vf、一点电流都没有（两只红管串在 3V 上
       // 就是这种）。这时【不能】写「低于 1.8V」—— 读数框上一行就印着 1.80V，
       // 上下两行自相矛盾，学生只会怀疑仪器坏了。
-      lines.push('U = ' + Math.abs(r.v).toFixed(2) + 'V');
+      lines.push('U = ' + num1(Math.abs(r.v)) + 'V');
       lines.push('未导通 · 不亮');
     } else {
-      lines.push('U = ' + Math.abs(r.v).toFixed(2) + 'V');
-      lines.push('低于 ' + r.Vf.toFixed(1) + 'V · 不亮');
+      lines.push('U = ' + num1(Math.abs(r.v)) + 'V');
+      lines.push('低于 ' + num1(r.Vf) + 'V · 不亮');
     }
   } else if (c.type === 'motor') {
     // 「不转」有四种原因，和发光二极管、电铃同一个道理，必须分开说 ——
@@ -996,7 +1037,7 @@ function readoutLines(c, r){
       lines.push(r.stalled
         ? (r.stallSwitch ? '堵转 · 不转' : '推不动 · 不转')
         : 'n = ' + Math.abs(r.rpm).toFixed(0) + ' r/min' + (r.reversed ? ' 反转' : ''));
-      lines.push('I = ' + Math.abs(r.i).toFixed(3) + 'A');
+      lines.push('I = ' + num1(Math.abs(r.i)) + 'A');
     }
   } else if (c.type === 'bell') {
     // 同理：「没接线」和「接上了但磁动势不够」是两件事。以前按电流判，
@@ -1005,18 +1046,24 @@ function readoutLines(c, r){
       lines.push('未接入电路');
     } else if (r.rings) {
       lines.push('通电 · 铃响');
-      lines.push('I = ' + Math.abs(r.i).toFixed(3) + 'A');
+      lines.push('I = ' + num1(Math.abs(r.i)) + 'A');
     } else if (Math.abs(r.i) < 1e-9) {
       lines.push('没有电流');
       lines.push('不响');
     } else {
       lines.push('磁动势不足');
-      lines.push('不响 · ' + Math.abs(r.i).toFixed(3) + 'A');
+      lines.push('不响 · ' + num1(Math.abs(r.i)) + 'A');
     }
+  } else if (c.type === 'bulb' && r.fault === 'shorted') {
+    // 灯座短路：灯泡【没坏】，是它被一根铜丝旁路掉了。读数框必须说清这件事 ——
+    // 照通用那三行印出「R = 0.0Ω / U = 0.0V / I = 0.3A」，学生只会以为这盏灯
+    // 变成了一个 0Ω 的电阻（那正是「短路」这个词最典型的误解）。
+    lines.push('灯座短路 · 不亮');
+    lines.push('I = ' + num1(Math.abs(r.i)) + 'A');
   } else {
-    lines.push('R = ' + (r.R || 0).toFixed(1) + 'Ω');
-    lines.push('U = ' + Math.abs(r.v).toFixed(2) + 'V');
-    lines.push('I = ' + Math.abs(r.i).toFixed(3) + 'A');
+    lines.push('R = ' + num1(r.R || 0) + 'Ω');
+    lines.push('U = ' + num1(Math.abs(r.v)) + 'V');
+    lines.push('I = ' + num1(Math.abs(r.i)) + 'A');
   }
   return lines;
 }
@@ -1459,10 +1506,10 @@ function dispI(c, r){
   // 电动机的「反接」要写成「反转」：接反不是接错了线，是转子往反方向转。
   if (r.reversed) tag = '<span class="tag">' + (r.reverseLabel || '反接') + '</span>';
   else if (c.type === 'battery' && r.i < -1e-9) tag = '<span class="tag">充电</span>';
-  return s.toFixed(4) + tag;
+  return num1(s) + tag;
 }
 function dispU(c, r){
-  return (POLAR[c.type] ? r.v : Math.abs(r.v)).toFixed(4);
+  return num1(POLAR[c.type] ? r.v : Math.abs(r.v));
 }
 // 表格里的 R 一列。开关按通断写 0/∞，变阻器写【实际接入】的那一段，
 // 其余按求解出来的等效电阻写；解不出来（断路、被烧掉）写破折号。
@@ -1470,8 +1517,8 @@ function dispU(c, r){
 // 会把开关的 ∞ 写成 NaN。
 function fmtR(c, r){
   if (c.type === 'switch') return r.closed ? '0' : '∞';
-  if (c.type === 'rheostat') return r.rUsed == null ? '∞' : r.rUsed.toFixed(1);
-  return r.R == null ? '—' : r.R.toFixed(2);
+  if (c.type === 'rheostat') return r.rUsed == null ? '∞' : num1(r.rUsed);
+  return r.R == null ? '—' : num1(r.R);
 }
 
 function pval(c, k){
@@ -1528,7 +1575,7 @@ function syncCheckPanel(){
       var mrec = (results && results.components) ? results.components[c.id] : null;
       sh.textContent = (c.type !== 'motor') ? ''
         : (pval(c, 'stall')
-            ? (mrec ? 'I = ' + Math.abs(mrec.i).toFixed(3) + 'A · 线圈发烫' : '线圈发烫')
+            ? (mrec ? 'I = ' + num1(Math.abs(mrec.i)) + 'A · 线圈发烫' : '线圈发烫')
             : '转起来电流小');
     }
   });
@@ -1628,6 +1675,57 @@ function renderParams(sel){
   wireParamInputs(box, c, specs, 'pv_');
 }
 
+// ── 临时提示条 ────────────────────────────────────────────
+// 贴在实验画布上沿的一条通知，目前只有「电表没调零就通电」用它。
+// 做成绝对定位（在 .cv 里）：不进文档流，弹出来不会把实验画面或控制台挤动。
+// 默认 6 秒自己收掉 —— 它是一条提醒，不是一块要学生去关的对话框；
+// 「知道了」按钮只是让急性子的人提前收掉它。
+var toastEl = document.getElementById('toast');
+var toastTextEl = document.getElementById('toastText');
+var toastTimer = 0;
+function showToast(text, ms){
+  toastTextEl.textContent = text;
+  toastEl.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(function(){ toastEl.hidden = true; }, ms || 6000);
+}
+function hideToast(){ clearTimeout(toastTimer); toastEl.hidden = true; }
+document.getElementById('toastX').onclick = hideToast;
+
+// 「正在被使用、但还没调零」的电表。两个条件缺一不可：
+//   · 表真的串进电路了（rec.wired）—— 没接线的表谈不上「读数不可信」；
+//   · 真有电流流过（|reading| > 0）—— 开关还断着就说「你没调零」是冤枉人，
+//     那一刻学生根本还没开始测量。
+// 读数本身不受调零影响（调零只改指针画法），所以这里的 reading 是真实电流。
+function unzeroedInUse(){
+  var out = [];
+  if (!results || !results.components) return out;
+  scene.comps.forEach(function(c){
+    if (c.type !== 'ammeter' && c.type !== 'voltmeter') return;
+    if (meterZeroed(c)) return;
+    var r = results.components[c.id];
+    if (!r || !r.wired) return;
+    if (Math.abs(r.reading || 0) < 1e-6) return;
+    out.push({ id: c.id, label: TYPE_LABEL[c.type] || '电表' });
+  });
+  return out;
+}
+// 合闸那一下的提示。挂在编辑器的 onEvent 上（= 学生亲手合闸的那一刻），
+// 不靠每帧比对场景状态：后者在「预设电路一加载」「拖动别的元件导致重解」
+// 时都会误报一次，而这件事只在合闸时该说。
+// 延到下一个任务再判：onEvent 排在场景已经改完、但 changed()/求解【还没跑】
+// 的那一刻，当场读 results 拿到的是上一次的旧结果。
+function checkZeroOnClose(){
+  setTimeout(function(){
+    var bad = unzeroedInUse();
+    if (!bad.length) return;
+    var who = bad.length > 1 ? ('有 ' + bad.length + ' 只表')
+                             : (bad[0].label + ' ' + bad[0].id);
+    showToast(who + ' 没有调零就通电了 —— 指针不在零位上，读数整体偏一个固定量，' +
+      '量出来的数据不可信。先断开开关，点开表盘、再点表盘上的调零旋钮。');
+  }, 0);
+}
+
 // ── 侧栏数据 ──────────────────────────────────────────────
 function updateSide(){
   var recs = results.components;
@@ -1644,7 +1742,7 @@ function updateSide(){
     tr.innerHTML = '<td>' + (TYPE_LABEL[c.type]||c.type) + ' ' + c.id + '</td>' +
       '<td>' + dispI(c, r) + '</td>' +
       '<td>' + dispU(c, r) + '</td><td>' + fmtR(c, r) + '</td>' +
-      '<td>' + Math.abs(r.p).toFixed(4) + '</td>';
+      '<td>' + num1(Math.abs(r.p)) + '</td>';
     tb.appendChild(tr);
   });
 
@@ -1683,7 +1781,9 @@ function updateSide(){
   wb.innerHTML = '';
   // 每条警告自带一个「修复」。断掉的可能是一件器材，也可能是一根导线 ——
   // 导线没有参数面板，只能从这儿修，所以按钮长在警告上而不是面板上。
-  function warnRow(text, onFix){
+  // fixLabel 可以换掉按钮上的字：不是所有警告都是「坏了要修」——
+  // 「没调零」要做的是【调零】，挂一个「🔧 修复」上去会让人以为表坏了。
+  function warnRow(text, onFix, fixLabel){
     var d = document.createElement('div');
     d.className = 'warn';
     var sp = document.createElement('span');
@@ -1691,7 +1791,7 @@ function updateSide(){
     d.appendChild(sp);
     if (onFix) {
       var b = document.createElement('button');
-      b.type = 'button'; b.className = 'fix'; b.textContent = '🔧 修复';
+      b.type = 'button'; b.className = 'fix'; b.textContent = fixLabel || '🔧 修复';
       b.onclick = onFix;
       d.appendChild(b);
     }
@@ -1712,6 +1812,12 @@ function updateSide(){
   scene.wires.forEach(function(x, i){
     if (!x.broken) return;
     warnRow('导线 ' + (i+1) + '：' + (x.brokenWhy || '已熔断'), function(){ repairWire(i); });
+  });
+  // 电表没调零：不是「坏了」，是「没按规矩用」。排在损坏之后、内核警告之前 ——
+  // 它比「电流偏大」要紧（读数直接不可信），但比「已经烧了」轻（还能救）。
+  unzeroedInUse().forEach(function(z){
+    warnRow(z.label + ' ' + z.id + '：没有调零（指针不在零位上，读数不可信）',
+      function(){ zeroMeter(editor.byId(z.id)); }, '🎯 调零');
   });
   (results.warnings||[]).forEach(function(wn){
     warnRow(wn.message, null);
@@ -1857,7 +1963,14 @@ editor = E.create({
   onTap: onTapComp,
   // 编辑器报「发生了一件值得出声的事」，页面转手交给音效引擎。
   // 页面不判断该不该响、响什么 —— 那是引擎的事；这里只做一次转发。
-  onEvent: function(name, data){ if (sound) sound.trigger(name, data); },
+  onEvent: function(name, data){
+    if (sound) sound.trigger(name, data);
+    // 开关【合上】的那一下：电路里有没调零的电表正在读数，当场提示。
+    // 挂在「动作真的发生的那一行」上（和音效同一条理由，见编辑器里那段注释）：
+    // 靠每帧比对场景状态的话，预设电路一加载、或者学生拖动别的元件导致重解，
+    // 都会误报一次 —— 而这件事只在「学生亲手合闸」时才该说。
+    if (name === 'switch' && data && data.closed) checkZeroOnClose();
+  },
 });
 
 // ── 点元件弹出的浮动参数面板 ──────────────────────────────
@@ -1917,7 +2030,7 @@ function popReadInner(c){
   var r = results && results.components && results.components[c.id];
   if (!r) return '';
   return 'I ' + dispI(c, r) + ' A　U ' + dispU(c, r) + ' V<br>' +
-    'R ' + fmtR(c, r) + ' Ω　P ' + Math.abs(r.p).toFixed(4) + ' W';
+    'R ' + fmtR(c, r) + ' Ω　P ' + num1(Math.abs(r.p)) + ' W';
 }
 function popReadHTML(c){
   var s = popReadInner(c);
@@ -1931,14 +2044,18 @@ function popFaultHTML(c){
     (why ? '<i class="fw">' + why + '</i>' : '') +
     '</span><button type="button" data-act="fix">🔧 修复</button></div>';
 }
-// 灯泡专属的两下【演示故障】：老师想让学生看清「灯丝断了电路就不通」，
-// 不用真去烧一只灯泡，点一下就行。已经坏了的时候这一排整个收起来 ——
-// 那时该做的是「修复」（上面那条红框里），再摆两个「弄坏它」的按钮很荒唐。
+// 灯泡专属的三下【演示故障】：老师想让学生看清「灯丝断了电路就不通」，
+// 不用真去烧一只灯泡，点一下就行。三个故障各有各的看点：
+//   拔掉灯泡 / 烧断灯丝 → 电路【断了】，别的元件跟着停；
+//   灯座短路           → 电路【照样通】，只有这盏灯不亮（电流全走短接线）。
+// 已经坏了的时候这一排整个收起来 —— 那时该做的是「修复」（上面那条红框里），
+// 再摆几个「弄坏它」的按钮很荒唐。
 function popActsHTML(c){
   if (c.type !== 'bulb' || c.fault) return '';
   return '<div class="popActs">' +
     '<button type="button" data-act="remove">拔掉灯泡</button>' +
-    '<button type="button" data-act="burn">烧断灯丝</button></div>';
+    '<button type="button" data-act="burn">烧断灯丝</button>' +
+    '<button type="button" data-act="short">灯座短路</button></div>';
 }
 
 function renderPop(){
@@ -1955,7 +2072,9 @@ function renderPop(){
     btn.addEventListener('click', function(){
       var act = btn.dataset.act;
       if (act === 'fix') repairComp(c.id);
-      else if (act === 'remove' || act === 'burn') setCompFault(c.id, act === 'burn' ? 'burned' : 'removed');
+      else if (act === 'remove' || act === 'burn' || act === 'short') {
+        setCompFault(c.id, act === 'burn' ? 'burned' : (act === 'short' ? 'shorted' : 'removed'));
+      }
     });
   });
   syncCheckPanel();                               // 勾选框/旁注跟当前参数对齐
@@ -2009,7 +2128,12 @@ var zoomCv = document.getElementById('zoomCanvas');
 var zoomTitle = document.getElementById('zoomTitle');
 var zoomRead = document.getElementById('zoomRead');
 var zoomRange = document.getElementById('zoomRange');
+var zoomZero = document.getElementById('zoomZero');
 var zoomComp = null;                              // 正在放大的元件（null = 没开）
+// 放大镜这一帧的变换参数（drawZoom 每次重画都刷新）。点旋钮要按它把
+// 屏幕坐标反推回元件局部坐标 —— 页面不自己记一份几何，用的一定是【这一帧
+// 真的画出去的那个 K】，否则窗口一缩放，点击位置就和画面对不上了。
+var zoomView = { K: 0, cw: 0, ch: 0, midX: 0, midY: 0 };
 
 // 表盘的可点区域 = 表壳 + 底座正面：横向 ±96，纵向从表壳顶 −88 到底座 46。
 // 【不能】一直管到接线柱（局部 y = 72）：那两根柱子得留给拖线用，
@@ -2025,6 +2149,26 @@ function openZoom(c){
   drawZoom();
 }
 function closeZoom(){ zoomComp = null; zoomEl.hidden = true; }
+
+// ── 调零 ────────────────────────────────────────────────────
+// 电表调零状态。没写 params.zeroed 的（离屏工具手搓的 rec、老存档）按
+// 【未调零】算 —— 和 TYPES 里的默认值一致，不额外照顾。
+function meterZeroed(c){
+  return !!(c && c.params && c.params.zeroed);
+}
+// 调零：把指针拨回零刻度。真实的表就是拧面板上那颗螺丝 —— 这里对应
+// 「点开表盘、再点表盘上的调零旋钮」两下（放大镜底部那颗按钮给触屏用，同一个入口）。
+function zeroMeter(c){
+  if (!c || (c.type !== 'ammeter' && c.type !== 'voltmeter')) return false;
+  if (meterZeroed(c)) return false;                 // 已经调过了
+  if (!c.params) c.params = {};
+  // 走编辑器的 setParam：它负责压撤销栈（调零是一次真实的操作，⌘Z 该撤得回来）。
+  if (editor) editor.setParam(c.id, 'zeroed', true);
+  c.params.zeroed = true;                           // 编辑器不在时的兜底
+  hideToast();                                      // 调好了就把提示条收掉
+  refreshZoom();                                    // 放大镜开着的时候当场变样
+  return true;
+}
 
 function drawZoom(){
   if (!zoomComp) return;
@@ -2052,7 +2196,39 @@ function drawZoom(){
   // 不是给他看这表在画布上朝哪边——斜着放大出来的数字照样没法读。
   D.drawComponent(g, { id: zoomComp.id, type: zoomComp.type, x: 0, y: 0, rot: 0,
                        params: zoomComp.params }, rec);
+  // 调零旋钮的提示圈：【只画在放大镜里】。画布上那颗螺丝半径才 6.5px，
+  // 在它外面套一圈只会把小表盘弄脏；而放大镜里正是「学生要动手调零」的地方。
+  // 未调零：琥珀圈 + 一个「调零」字样（不写的话，那颗螺丝和表壳上另外两颗
+  // 装饰螺丝长得一模一样，没人知道它是能点的）。已调零：一圈绿 + 一枚绿勾。
+  var zeroed = meterZeroed(zoomComp);
+  var Z = D.MET.ZERO;
+  g.save();
+  g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.lineWidth = 2.2 / K;
+  g.beginPath(); g.arc(Z.x, Z.y, Z.r + 4.5, 0, 6.284);
+  g.strokeStyle = zeroed ? 'rgba(21,128,61,0.9)' : 'rgba(245,158,11,0.95)';
+  g.stroke();
+  if (zeroed) {
+    g.fillStyle = '#15803d';
+    g.font = 'bold 11px -apple-system,"PingFang SC",sans-serif';
+    g.fillText('✓', Z.x, Z.y);
+  } else {
+    // ⚠️ 字样写在【圆环右侧、和螺丝同一条水平线】上，不写在正下方。
+    //    正下方（Z.y + Z.r + 9）实测会压到底座绿面板的上沿 —— 那里的白描边
+    //    横切过绿条的边框，看着像把量程条划了一道。右侧这条线上是深色网纹块，
+    //    琥珀字压上去对比度反而更好，而且这个高度上既没有指针、也没有配重尾。
+    g.font = 'bold 9px -apple-system,"PingFang SC",sans-serif';
+    g.textAlign = 'left';
+    g.lineWidth = 3 / K; g.strokeStyle = '#ffffff';
+    g.strokeText('调零', Z.x + Z.r + 9, Z.y);
+    g.fillStyle = '#b45309';
+    g.fillText('调零', Z.x + Z.r + 9, Z.y);
+  }
   g.restore();
+  g.restore();
+  // 记下【这一帧真的画出去的那个 K】：点旋钮时要按它把屏幕坐标反推回局部坐标。
+  zoomView.K = K; zoomView.cw = cw; zoomView.ch = ch;
+  zoomView.midX = ZBOX.x + ZBOX.w/2; zoomView.midY = ZBOX.y + ZBOX.h/2;
   // 下面这行字和画布上的读数框共用 readoutLines()：反接时画布写「指针反偏」，
   // 放大镜里也必须一样，不能这边照旧印一个数字出来。
   zoomRead.textContent = (readoutLines(zoomComp, rec) || []).join('　·　');
@@ -2061,8 +2237,37 @@ function drawZoom(){
   // 没接量程柱就不写：读数那行已经写了「量程柱没接线」，再写一遍是啰嗦。
   zoomRange.textContent = rec.rangeWired
     ? ('量程 ' + rec.range + (zoomComp.type === 'ammeter' ? 'A' : 'V')) : '';
+  // 调零按钮跟着状态走：未调零可点，已调零禁用并变成绿字。
+  zoomZero.disabled = zeroed;
+  zoomZero.textContent = zeroed ? '✓ 已调零' : '🎯 调零';
 }
 function refreshZoom(){ if (zoomComp) drawZoom(); }
+
+// 点表盘上的调零旋钮。屏幕坐标 → 元件局部坐标要【逆着 drawZoom 那一串变换】
+// 走：先还原成放大镜画布里的 CSS 像素（样式宽和 rect 宽可能不等，所以按比值
+// 换算），再减画布中心、除以 K、加回 ZBOX 中心。用的一定是【这一帧真的画出去
+// 的那个 K】—— 自己另算一份的话，窗口一缩放就点不中了。
+function zoomHitZero(clientX, clientY){
+  if (!zoomComp || !zoomView.K) return false;
+  var r = zoomCv.getBoundingClientRect();
+  if (!r.width || !r.height) return false;
+  var zx = (clientX - r.left) * (zoomView.cw / r.width);
+  var zy = (clientY - r.top) * (zoomView.ch / r.height);
+  var lx = (zx - zoomView.cw / 2) / zoomView.K + zoomView.midX;
+  var ly = (zy - zoomView.ch / 2) / zoomView.K + zoomView.midY;
+  var Z = D.MET.ZERO;
+  // 判定半径放宽到「螺丝 + 4.5」：真手指点不准 6.5px 的螺丝，而这个半径在
+  // 屏幕上就是 15px 上下，正好是一个指肚。几何取自绘制层导出的 D.MET.ZERO，
+  // 页面不自己记一份 —— 绘制改了这里就悄悄错位。
+  return Math.hypot(lx - Z.x, ly - Z.y) <= Z.r + 4.5;
+}
+zoomCv.addEventListener('pointerdown', function(ev){
+  if (!zoomComp) return;
+  if (!zoomHitZero(ev.clientX, ev.clientY)) return;
+  ev.preventDefault(); ev.stopPropagation();
+  zeroMeter(zoomComp);
+});
+zoomZero.addEventListener('click', function(){ if (zoomComp) zeroMeter(zoomComp); });
 
 document.getElementById('zoomX').onclick = closeZoom;
 zoomEl.addEventListener('pointerdown', function(ev){
@@ -3482,6 +3687,32 @@ window.__closeSchematic = function(){ closeSchematic(); };
 window.__schPNG = function(){ return schematicPNG(); };
 window.__schLegendIcon = function(type, which){
   return (which === 'real' ? drawRealIcon(type) : drawSymbolIcon(type));
+};
+
+// ── 读数精度 / 调零 / 未调零提示（2026-10-09 新增）──────────
+window.__num1 = function(v){ return num1(v); };
+window.__zeroed = function(id){ return meterZeroed(editor.byId(id)); };
+window.__zeroMeter = function(id){ return zeroMeter(editor.byId(id)); };
+window.__unzeroed = function(){ return unzeroedInUse(); };
+window.__toast = function(){ return { hidden: toastEl.hidden, text: toastTextEl.textContent }; };
+window.__hideToast = function(){ hideToast(); };
+window.__zoomZeroHit = function(cx, cy){ return zoomHitZero(cx, cy); };
+window.__zoomZeroBtn = function(){
+  return { disabled: zoomZero.disabled, text: zoomZero.textContent };
+};
+window.__zoomView = function(){
+  return { K: zoomView.K, cw: zoomView.cw, ch: zoomView.ch };
+};
+// 放大镜里那颗调零旋钮的【屏幕坐标】（给真实指针点击用）。按 drawZoom 那一串
+// 变换正着算一遍 —— 和 zoomHitZero 的逆变换是同两个常数，互为反函数。
+window.__zoomZeroScreen = function(){
+  if (!zoomComp || !zoomView.K) return null;
+  var r = zoomCv.getBoundingClientRect();
+  var Z = D.MET.ZERO;
+  return {
+    x: r.left + (zoomView.cw/2 + zoomView.K*(Z.x - zoomView.midX)) * (r.width / zoomView.cw),
+    y: r.top  + (zoomView.ch/2 + zoomView.K*(Z.y - zoomView.midY)) * (r.height / zoomView.ch),
+  };
 };
 })();
 </script>
