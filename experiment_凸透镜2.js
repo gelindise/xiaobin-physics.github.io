@@ -38,10 +38,10 @@ import * as THREE from './assets/optics-three.min.js';
     { id: 'near', ratio: .7, name: 'u < f', result: '正立、放大的虚像' }
   ];
   const descriptions = [
-    '<strong>认识器材：</strong>铝合金双槽导轨、带锁紧旋钮的滑座、圆环镜架与磨砂白屏均是独立的立体部件。关闭光路开关，绕着装置看它们的形状与连接方式。',
+    '<strong>认识器材：</strong>铝合金双槽导轨、带锁紧旋钮的滑座、圆环镜架与半透明膜光屏均是独立的立体部件。关闭光路开关，绕着装置看它们的形状与连接方式 —— 光屏是一片装在金属框里的半透明膜，绕着它转一圈，会发现从背面也能看穿。',
     '<strong>调整三心：</strong>焰心、透镜光心、光屏中心初始同在 12 cm 高度。画面右下角的读数面板会实时给出三个滑座在光具座上的刻度读数，以及物距 u 与像距 v。',
     '<strong>改变物距：</strong>蜡烛、凸透镜、光屏三个滑座都能移动。改变物距后，比较折射光线是汇聚、平行还是发散。',
-    '<strong>移动光屏：</strong>u > f 时缓慢移动光屏，从散焦找到清晰实像；只有实像才能被光屏接住。切到 F 光源还能看清像的倒立与左右颠倒。',
+    '<strong>移动光屏：</strong>u > f 时缓慢移动光屏，从散焦找到清晰实像；只有实像才能被光屏接住。屏是半透明膜，用「背面看光屏」绕到它后面，透过膜照样能看到这个像（画面相对正面左右翻转）。切到 F 光源还能看清像的倒立与左右颠倒。',
     '<strong>记录归纳：</strong>记录各物距区域的数据。比较光屏中的像、两个发光点的相对位置，以及焦距与二倍焦距两处分界。'
   ];
   const clamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
@@ -132,7 +132,6 @@ import * as THREE from './assets/optics-three.min.js';
   const brass = material('#bd9151', .58, .28);
   const bronze = material('#66543e', .56, .38);
   const cream = material('#e5dbbd', .05, .75);
-  const paper = material('#c6cbc3', .03, .88, { side: THREE.DoubleSide });
   const gold = material('#e5a75d', .21, .37, { emissive: '#533019', emissiveIntensity: .38 });
   const blue = material('#64a4ce', .20, .34, { emissive: '#224d66', emissiveIntensity: .38 });
   function mesh(geometry, mat, parent, x = 0, y = 0, z = 0, shadow = true) {
@@ -231,9 +230,11 @@ import * as THREE from './assets/optics-three.min.js';
     for (const z of [-2.25,2.25]) box(runner,[5.8,.1,1.45],[0,1.82,z],slotBlack);
     // The screen's own frame sits in front of its slide, so the post is pushed behind the
     // panel; otherwise the stem would poke through the diffusing face.
-    const sx=kind==='screen'?.70:0;
-    const stem = cylinder(group,.38,kind==='candle'?3.65:kind==='lens'?4.1:3.45,[sx,kind==='candle'?5:kind==='lens'?5.25:4.9,0],brightAlu);
-    const col = cylinder(group,.62,.40,[sx,3.31,0],metalDark);
+    // 光屏是一片半透明膜，背面也要能看穿：它的立柱与托盘必须整个收进滑座里，否则会有一根
+    // 竖杆正好立在膜的背面中央，从背面看像时被它挡掉一条。
+    const sx=kind==='screen'?.70:0, screenKind=kind==='screen';
+    const stem = cylinder(group,.38,screenKind?.85:kind==='candle'?3.65:4.1,[sx,screenKind?2.45:kind==='candle'?5:5.25,0],brightAlu);
+    const col = cylinder(group,.62,.40,[sx,screenKind?2.45:3.31,0],metalDark);
     const lock = cylinder(group,.77,.48,[1.55,2.43,5.0],bronze,24);
     lock.rotation.x=Math.PI/2;
     const dial = cylinder(group,.50,.53,[1.55,2.43,5.3],brass,24);
@@ -339,29 +340,30 @@ import * as THREE from './assets/optics-three.min.js';
   highlight.rotation.x=.48;
   const lensLabel=badge(lens,'凸透镜 · f 可调',[0,20,0],'#485c63',17);
 
-  // Fixed rectangular white diffusing screen. The texture grid matches the 16.8 x 18.8 cm
-  // face exactly (50 px per cm), so the projected image is never stretched or upscaled.
+  // 半透明膜光屏。纹理网格与 16.8 x 18.8 cm 的膜面严格对应（50 px/cm），所以投上去的像既
+  // 不会被拉伸也不会被放大。膜只有一层双面可见的面片，靠纹理自带的 alpha 透光（见 paintPaper），
+  // 于是从透镜这一侧（正面）能看到像，绕到另一侧（背面）透过膜照样能看到同一个像。
+  // 背面看到的是同一幅画面的左右镜像 —— 这是 WebGL 双面渲染天然给出的结果，也正是真实半透明
+  // 屏的观察结果：像在膜上是客观存在的，换一侧看，看到的还是那个倒立的像，只是相对正面那幅
+  // 画面翻了过来。所以这里【不能】再挂一块不透明的背板，那会把背面挡死。
   const texCanvas=document.createElement('canvas');texCanvas.width=840;texCanvas.height=940;
   const texCtx=texCanvas.getContext('2d');
   const screenTexture=new THREE.CanvasTexture(texCanvas);
   screenTexture.colorSpace=THREE.SRGBColorSpace;
   screenTexture.anisotropy=Math.min(16,renderer.capabilities.getMaxAnisotropy());
-  const screenMat=new THREE.MeshBasicMaterial({map:screenTexture,side:THREE.DoubleSide, toneMapped:false});
-  box(screen,[.28,19.9,17.9],[.22,12,0],brightAlu);
-  box(screen,[.25,19.0,17.0],[-.02,12,0],paper);
-  const screenFace=mesh(new THREE.PlaneGeometry(16.8,18.8),screenMat,screen,-.17,12,0,false);
+  const screenMat=new THREE.MeshBasicMaterial({map:screenTexture,side:THREE.DoubleSide,transparent:true,toneMapped:false,depthWrite:false});
+  const screenFace=mesh(new THREE.PlaneGeometry(16.8,18.8),screenMat,screen,0,12,0,false);
   screenFace.rotation.y=-Math.PI/2;
   screenFace.receiveShadow=false;
-  const screenBack=mesh(new THREE.PlaneGeometry(16.8,18.8),new THREE.MeshStandardMaterial({color:'#c3c8c2',roughness:.82,side:THREE.DoubleSide}),screen,.39,12,0,false);
-  screenBack.rotation.y=Math.PI/2;
-  for(const z of [-8.85,8.85])box(screen,[.82,20.5,.42],[.2,12,z],metalDark);
-  for(const y of [1.95,22.05])box(screen,[.82,.42,18.1],[.2,y,0],metalDark);
-  for(const z of [-8.25,8.25])for(const y of [2.5,21.5]){
-    const bolt=mesh(new THREE.CylinderGeometry(.12,.12,.18,12),brass,screen,-.66,y,z);
+  screenFace.renderOrder=4;
+  // 膜框：四条边把膜严丝合缝地框住（内空正好 16.8 x 18.8），中间完全镂空 —— 背面才没有东西挡着。
+  for(const z of [-8.61,8.61])box(screen,[.82,20.5,.42],[.2,12,z],metalDark);
+  for(const y of [2.39,21.61])box(screen,[.82,.42,17.64],[.2,y,0],metalDark);
+  for(const z of [-8.61,8.61])for(const y of [2.39,21.61]){
+    const bolt=mesh(new THREE.CylinderGeometry(.12,.12,.18,12),brass,screen,-.45,y,z);
     bolt.rotation.z=Math.PI/2;
   }
-  box(screen,[.35,12.0,.40],[.57,12,0],alu);
-  const screenLabel=badge(screen,'毛玻璃光屏',[-.2,25,0],'#4c6070',14);
+  const screenLabel=badge(screen,'半透明膜光屏',[-.2,25,0],'#4c6070',15);
   // Taking the screen off the bench has to leave the stage completely clear: no leftover
   // wireframe, no translucent panel, nothing between the eye and the image. The only thing kept
   // is a fully invisible pick plane in the screen's own place, so clicking that empty spot still
@@ -643,18 +645,21 @@ import * as THREE from './assets/optics-three.min.js';
     const confusion = vCm > 0 ? 2 * 5.6 * offsetCm / vCm : 999;
     return clamp(confusion * pxPerCm / 2.5, 0, 40);
   }
+  // 半透明磨砂膜：底色只铺一层带 alpha 的乳白，膜后面的空间会透出来 —— 这正是「绕到背面
+  // 也能看到像」的来由。像的笔画是不透明实色（drawObjectArt 画上去的），所以无论从哪一侧
+  // 看，像本身都依然清晰；膜则始终是透光的。
   function paintPaper(c, w, h){
-    // A slightly grey diffusing screen: the projected image is light added on top, so the
-    // paper must stay darker than the image for the strokes to read at a glance.
     const grad = c.createLinearGradient(0, 0, w, h);
-    grad.addColorStop(0, '#a8aea8'); grad.addColorStop(.52, '#c2c0b6'); grad.addColorStop(1, '#959a94');
+    grad.addColorStop(0, 'rgba(214,221,215,.72)');
+    grad.addColorStop(.52, 'rgba(236,234,223,.78)');
+    grad.addColorStop(1, 'rgba(198,205,199,.70)');
     c.fillStyle = grad; c.fillRect(0, 0, w, h);
     // Seeded deterministic grain, so nothing flickers while the camera is dragged.
     let seed = 87591;
     for (let i = 0; i < 900; i++) {
       seed = (seed * 1664525 + 1013904223) >>> 0; const x = seed % w;
       seed = (seed * 1664525 + 1013904223) >>> 0; const y = seed % h;
-      c.fillStyle = i % 4 ? '#4a5a6412' : '#ffffff20'; c.fillRect(x, y, 1, 1);
+      c.fillStyle = i % 4 ? 'rgba(74,90,100,.10)' : 'rgba(255,255,255,.17)'; c.fillRect(x, y, 1, 1);
     }
   }
   function redrawScreen(){
@@ -683,7 +688,6 @@ import * as THREE from './assets/optics-three.min.js';
     }
     c.strokeStyle='#a7a9a154';c.lineWidth=1.5;c.strokeRect(5,5,w-10,h-10);
     screenTexture.needsUpdate=true;
-    paintInset(info);
   }
   // The preview is painted at its own resolution instead of cropping the screen texture, so
   // it stays genuinely sharp. It shows what the eye receives: the diffusing screen while it
@@ -718,13 +722,20 @@ import * as THREE from './assets/optics-three.min.js';
     // The frame centres the image itself. stampObject places the art's own centre, which is
     // the optical axis, at (W/2, cy), so cy shifts by however far the image centre moved.
     const cy=H/2+(mode==='virtual'?1:-1)*pxCm*mag*(mid-12);
+    // 膜是双面的：绕到光屏背面时，眼睛看到的是同一幅画面的左右镜像（像在膜上是客观存在的
+    // 图案，换一侧看自然就翻过来）。预览窗跟着翻，学生才不会觉得「屏幕上明明有像，窗里却是反的」。
+    const fromBack=mode==='screen'&&camera.position.x>wx(state.scrP);
     g.save();
     if(mode==='screen'){
+      g.fillStyle='#cbd0c8';g.fillRect(0,0,W,H);   // 预览窗用实底：这里要的是像的对比度
       paintPaper(g,W,H);
       const offset=Math.abs(state.sd-info.v),sigma=blurSigma(offset,info.v,pxCm);
       g.beginPath();g.rect(4,4,W-8,H-8);g.clip();
       g.filter=sigma<.5?'none':`blur(${sigma.toFixed(1)}px)`;
+      g.save();
+      if(fromBack){g.translate(W,0);g.scale(-1,1);}
       stampObject(g,W/2,cy,mag,true,pxCm);
+      g.restore();
     }else{
       const bg=g.createRadialGradient(W/2,H/2,10,W/2,H/2,H*.78);
       bg.addColorStop(0,'#20323d');bg.addColorStop(1,'#0b141a');
@@ -740,10 +751,12 @@ import * as THREE from './assets/optics-three.min.js';
     g.restore();
     g.strokeStyle='#a7a9a155';g.lineWidth=1.5;g.strokeRect(4,4,W-8,H-8);
     const sizeText=`放大 ${mag.toFixed(2)} 倍`;
-    $('previewTitle').textContent=mode==='screen'?'光屏近景 · 放大观察'
+    $('previewTitle').textContent=mode==='screen'
+      ?(fromBack?'光屏背面 · 透过半透明膜看':'光屏正面 · 放大观察')
       :mode==='air'?'透过透镜 · 空中的实像':'透过透镜 · 正立的虚像';
     $('previewText').textContent = mode==='screen'
-      ? (info.crisp?'屏上得到清晰的倒立实像 · '+sizeText
+      ? (fromBack?'背面看：像依然倒立，整幅画面相对正面左右翻转 · ':'')
+        +(info.crisp?'屏上得到清晰的倒立实像 · '+sizeText
         :`离焦 ${Math.abs(info.v-state.sd).toFixed(1)} cm · 移动光屏寻找像`)
       : (mode==='air'?'撤去光屏后，实像仍悬在空中（倒立） · '+sizeText
         :'透过透镜看到正立、放大的虚像（与物同侧） · '+sizeText)
@@ -793,6 +806,10 @@ import * as THREE from './assets/optics-three.min.js';
     camera.position.sub(target).multiplyScalar(base/hi).add(target);
     camera.updateMatrixWorld();
   }
+  // 预览窗只在相机或器材真的变了时重绘。除了省掉无谓的重画，更要紧的是画面稳定性：
+  // 「撤去光屏后舞台必须一个残余像素都没有」这条判据靠的是同一状态两次截图逐字节相同，
+  // 而同一状态反复重绘会让 swiftshader 出现幅度几个灰阶的抖动。
+  let insetKey = null;
   function render(){
     // Where the eye sits decides whether the image is in view, and a visible image in turn
     // widens the shot, so the framing is settled first and the decision is then taken with that
@@ -802,6 +819,12 @@ import * as THREE from './assets/optics-three.min.js';
     updateGhost();
     fitCamera();
     renderer.render(scene,camera);
+    // 预览窗跟着眼睛走：绕到光屏背面时，窗里显示的也整体翻过来 —— 屏幕上看到的和窗里
+    // 看到的才是同一件事。放在这里（而不是只放在 update() 里），是因为相机可以在器材
+    // 一个都不动的情况下被拖走，那时预览窗也必须跟着变。
+    const key=[camera.position.x,camera.position.y,camera.position.z,state.f,state.u,state.sd,
+      state.scrP,state.source,state.sourceY,state.secondY,state.second,state.screenRemoved].join('|');
+    if(key!==insetKey){insetKey=key;paintInset(status());}
   }
   function resize(){
     const rect=canvas.getBoundingClientRect();if(!rect.width||!rect.height)return;
@@ -903,13 +926,13 @@ import * as THREE from './assets/optics-three.min.js';
     $('ghostBadge').textContent=info.real?'实像（倒立，悬在空中）':'虚像（正立、放大）';
     $('observeHint').textContent=info.needsScreenOff
       ?'u ≤ f：光屏上接不到像，光屏已自动撤去。虚像在透镜左侧，必须绕到光屏一侧透过透镜才看得到 —— 站在物体这一侧什么都看不到，可以转动视角亲自验证。'
-      :'u > f：移动光屏接收实像，直到屏上的像最清晰；也可以点击 3D 画面里的光屏把它撤去，再绕到光屏一侧看像是否仍悬在空中。';
+      :'u > f：移动光屏接收实像，直到屏上的像最清晰。光屏是半透明膜：点「背面看光屏」绕到它后面，透过膜同样能看到这个像（左右翻转）；也可以点击 3D 画面里的光屏把它撤去，再看像是否仍悬在空中。';
     let text;
     if(info.kind==='focus')text='u = f：折射后的光线同向平行射出，在有限位置不能获得清晰像；屏上和眼中都只有一片模糊。';
     else if(info.kind==='near')text=`u = ${state.u.toFixed(1)} cm < f：实际光线在屏侧发散，反向延长后在光源同侧得到正立、放大的虚像（放大 ${(Math.abs(info.v)/state.u).toFixed(2)} 倍）。光屏接不到虚像。`;
     else if(info.v>75)text=`实像位于透镜右侧 ${info.v.toFixed(1)} cm 处，已超出光屏滑动范围；把光源移远一点再试。`;
     else if(state.screenRemoved)text=`撤去光屏后，${preset.result}仍然悬在透镜右侧 ${info.v.toFixed(1)} cm 处；从光屏一侧透过透镜就能看到它。`;
-    else if(info.crisp)text=`${preset.result}；光屏在 ${state.scrP.toFixed(1)} cm 刻度上得到最清晰的像。`;
+    else if(info.crisp)text=`${preset.result}；光屏在 ${state.scrP.toFixed(1)} cm 刻度上得到最清晰的像。屏是半透明膜，绕到背面透过膜看到的是同一个像。`;
     else text=`光屏距离清晰像面 ${Math.abs(info.v-state.sd).toFixed(1)} cm。观察屏上模糊的轮廓，缓慢滑动光屏。`;
     $('finding').innerHTML='<b>当前观察</b><br>'+text;
     document.querySelectorAll('#presets button').forEach(b=>b.classList.toggle('active',b.dataset.case===info.kind));
@@ -1047,7 +1070,7 @@ import * as THREE from './assets/optics-three.min.js';
     update();
   });
   $('steps').addEventListener('click',e=>{const b=e.target.closest('[data-step]');if(!b)return;state.step=+b.dataset.step;update();});
-  const VIEWS={side:[0,.10],front:[-1.22,.17],top:[-.54,1.17],reset:[-.42,.21]};
+  const VIEWS={side:[0,.10],front:[-1.22,.17],back:[1.22,.17],top:[-.54,1.17],reset:[-.42,.21]};
   document.querySelectorAll('[data-view]').forEach(b=>b.addEventListener('click',()=>{
     [state.yaw,state.pitch]=VIEWS[b.dataset.view];
     state.zoom=b.dataset.view==='reset'?1.06:1;
@@ -1176,6 +1199,7 @@ import * as THREE from './assets/optics-three.min.js';
     rayShiftsFor,diopterOf,recordsTable,LENS_AP,
     get lastRayTraces(){return lastRayTraces;},
     debug:()=>{const i=status();return {objP:state.objP,lensP:state.lensP,scrP:state.scrP,u:state.u,sd:state.sd,
+      cameraX:camera.position.x,screenX:wx(state.scrP),
       kind:i.kind,v:Number.isFinite(i.v)?i.v:null,crisp:i.crisp,real:i.real,screenRemoved:state.screenRemoved,
       source:state.source,candle:candle.position.x,lens:lens.position.x,screen:screen.position.x,
       sources:lightSources.map(g=>g.position.y),rayCount:rays.children.length,
@@ -1192,6 +1216,31 @@ import * as THREE from './assets/optics-three.min.js';
   window.__lensLab.railXAt=railXAt;
   window.__lensLab.art={canvas:objCanvas,artY,artX,artXz,pxCm:ART_PX_CM};
   window.__lensLab.screen={canvas:texCanvas,pxCm:PX_CM};
+  // 自检用：从光屏背面（+x 侧）朝膜中心看过去，会不会被别的实体挡住。
+  // 「从背面也能看到像」的前提是：膜本身是双面可见的透光面片，而且膜的背面一侧没有
+  // 一块不透明的板盖住它。这里直接遍历场景图，把挡住膜中心 (y=12,z=0) 这条视线的
+  // 不透明实体列出来 —— 加回一块背板，这个列表立刻就不为空。
+  window.__lensLab.screenBackProbe=()=>{
+    const local=o=>{const v={x:0,y:0,z:0};for(let n=o;n&&n!==screen;n=n.parent){v.x+=n.position.x;v.y+=n.position.y;v.z+=n.position.z;}return v;};
+    const blocking=[];
+    screen.traverse(o=>{
+      if(!o.isMesh||o===screenFace)return;
+      if(o.material.transparent)return;          // 半透明的部件不算「挡死」
+      const p=o.geometry.parameters||{};
+      const r=p.radiusTop!==undefined?p.radiusTop:(p.radius||0);
+      const hx=p.width!==undefined?p.width/2:r, hy=p.height!==undefined?p.height/2:r,
+            hz=p.depth!==undefined?p.depth/2:r;
+      const v=local(o);
+      if(v.x<0.05)return;                        // 只在膜的背面一侧找
+      // 包围盒「含」膜中心 (12, 0) 就算挡住，所以两边都取闭区间：一块背板就是 depth=0 的
+      // 平面，hz 算出来是 0，用开区间时 v.z-hz<0 在 z=0 处恒不成立 —— 那样一块正对膜中心的
+      // 不透明板会被漏掉（负向对照 N13 就是靠这条抓出来的）。
+      if(v.y-hy<=12&&v.y+hy>=12&&v.z-hz<=0&&v.z+hz>=0)
+        blocking.push({x:+v.x.toFixed(2),y:+v.y.toFixed(2),z:+v.z.toFixed(2)});
+    });
+    return {faceTransparent:!!screenFace.material.transparent,
+      doubleSided:screenFace.material.side===THREE.DoubleSide, blocking};
+  };
   window.__lensLab.fSource={group:fSource,strokes:F_STROKES,points:F_POINTS};
   // The scene graph itself is exposed for the round-7 checks: "the stage must be left completely
   // clear" and "no floating label for the eye" are properties of what is actually in the scene,
