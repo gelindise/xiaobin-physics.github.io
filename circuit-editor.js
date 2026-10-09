@@ -21,6 +21,12 @@
   var GRID = 20;          // 网格吸附步长
   var TERM_HIT = 17;      // 端子命中半径（像素，逻辑坐标）
   var WIRE_HIT = 9;       // 导线命中距离
+  // 拖动导线时【中间那几个拐点】能挪多远（逻辑像素）。两端接线柱是钉死的，
+  // 动的只有拐点 —— 所以这根线永远是「从同一个柱子到同一个柱子，只是绕了个弯」，
+  // 不会掉下来、也不会改变电路拓扑。
+  // 上限 90 是量出来的：沙盒里两个相邻元件之间通常 150~300px，90 够把线从
+  // 元件正上方绕到旁边去；再大就会和邻居元件的导线糊在一起，看着像两根线打架。
+  var WIRE_DRAG_MAX = 90;
 
   // 自动编号前缀。变阻器不能也取 R，否则和定值电阻撞号。
   // 二极管取 D、电动机取 M、电铃取 B —— 都是课本上认得出的字母
@@ -90,6 +96,10 @@
     var moving = null;        // 拖元件 {id, dx, dy}
     var slider = null;        // 拨变阻器滑片 {id, moved}
     var wiring = null;        // 拉导线 {from:{compId,termIdx}, cur:{x,y}, to:{...}|null}
+    // 拖导线 {index, x0, y0, via0, mid0, moved}。两端接线柱钉死，动的是中间拐点。
+    // via0 / mid0 记的是【按下那一刻】的形状：每一帧都从它 + 总位移重算，
+    // 而不是在上一帧的结果上继续加 —— 后者会让位移越积越大，松手前就冲到天上。
+    var wireDrag = null;
     var lastPointer = {x: 0, y: 0};
 
     // 撤销栈：每一步改动前压一份深拷贝。栈深 40 足够，再多也没人按得回来。
@@ -501,6 +511,66 @@
       });
     }
 
+    // ---------- 拖导线 ----------
+    // 两端接线柱钉死，只挪中间拐点 —— 所以这根线永远是「从同一个柱子到同一个
+    // 柱子，只是绕了个弯」，不会掉下来，也不会改变电路拓扑（读数一个数都不变）。
+    // 原来一根「两点直线」的导线没有拐点可挪，第一次拖的时候给它现长一个
+    // （在两端中点）：否则学生拖了半天线纹丝不动，只会以为这个功能是坏的。
+    function clampLen(dx, dy, max) {
+      var d = Math.hypot(dx, dy);
+      if (d <= max || d < 1e-6) return { dx: dx, dy: dy };
+      return { dx: dx / d * max, dy: dy / d * max };
+    }
+    // 拐点搬完以后重记「原始形状」。不重记的话，下一次拖别的元件触发
+    // refitManual 时，它会按【拖之前】的形状把线拉回去 —— 学生看到的是
+    // 「我刚摆好的线，一碰别的元件就弹回原位」。
+    // 只对本来就有 base 的导线做：预设电路里那些正交导线没有 base，
+    // 给它们补一个会改变「拖元件时导线怎么跟」的既有行为。
+    function refreshWireBase(wr) {
+      if (!wr.base) return;
+      var a = byId(wr.a.compId), b = byId(wr.b.compId);
+      if (!a || !b) return;
+      var p0 = D.terminalWorld(a, wr.a.termIdx), p1 = D.terminalWorld(b, wr.b.termIdx);
+      wr.base = { ends: [[p0.x, p0.y], [p1.x, p1.y]],
+                  via: (wr.via || []).map(function (z) { return [z[0], z[1]]; }) };
+    }
+    function wireDragBegin(index, p) {
+      var wr = getScene().wires[index];
+      if (!wr) return false;
+      var pts = rawPathOf(wr);
+      if (pts.length < 2) return false;
+      wireDrag = {
+        index: index, x0: p.x, y0: p.y, moved: false,
+        via0: (wr.via || []).map(function (z) { return [z[0], z[1]]; }),
+        mid0: { x: (pts[0].x + pts[pts.length - 1].x) / 2,
+                y: (pts[0].y + pts[pts.length - 1].y) / 2 },
+      };
+      beginEdit();          // 快照揣着，真拖动了才入栈（和拖元件同一条规矩）
+      return true;
+    }
+    function wireDragTo(p) {
+      var wr = getScene().wires[wireDrag.index];
+      if (!wr) return false;
+      // 每帧都从【按下那一刻】的形状 + 总位移重算，不在上一帧结果上继续加：
+      // 后者会让位移越积越大，手还没松线就冲到画布外面去了。
+      var d = clampLen(p.x - wireDrag.x0, p.y - wireDrag.y0, WIRE_DRAG_MAX);
+      if (!wireDrag.moved && Math.hypot(d.dx, d.dy) > 4) {
+        wireDrag.moved = true;
+        commitEdit();
+      }
+      var via = (wireDrag.via0.length === 0)
+        ? [[wireDrag.mid0.x + d.dx, wireDrag.mid0.y + d.dy]]
+        : wireDrag.via0.map(function (z) { return [z[0] + d.dx, z[1] + d.dy]; });
+      // 夹进画布：拖到画布外面去的话，那一段线在屏幕上根本不存在，而它照样在
+      // 电路里 —— 学生看到的会是一根「看不见却读得出电流」的线。
+      var M = 24;
+      wr.via = via.map(function (z) {
+        return [Math.max(M, Math.min(W - M, z[0])), Math.max(M, Math.min(H - M, z[1]))];
+      });
+      refreshWireBase(wr);
+      return true;
+    }
+
     // ---------- 导线上的删除按钮 ----------
     // 点到导线只把它选中，真正的删除交给线上长出来的这个圆钮：
     // 导线很细，点中即删容易误伤；多一步确认，也让学生看清删的是哪根。
@@ -605,7 +675,15 @@
         }
       }
       var wi = hitWire(p);
-      if (wi >= 0) { select({ kind: 'wire', index: wi }); changed(); return; }
+      if (wi >= 0) {
+        select({ kind: 'wire', index: wi });
+        // 选中之后还能【接着拖】：两端接线柱钉死，中间拐点最多挪 WIRE_DRAG_MAX。
+        // 只是点一下（没移动）就还是「选中」，不留撤销记录 —— 和点元件一个规矩。
+        wireDragBegin(wi, p);
+        canvas.setPointerCapture && canvas.setPointerCapture(ev.pointerId);
+        changed();
+        return;
+      }
       if (selected) { selected = null; changed(); }
     }
 
@@ -657,6 +735,10 @@
         onChange();
         return;
       }
+      if (wireDrag) {
+        if (wireDragTo(p)) onChange();
+        return;
+      }
       var nt = hitTerminal(p), nh = null;
       if (nt) nh = { kind: 'term', compId: nt.compId, termIdx: nt.termIdx };
       else {
@@ -667,6 +749,9 @@
           for (var i = cs.length - 1; i >= 0; i--) {
             if (hitComp(p, cs[i])) { nh = { kind: 'comp', id: cs[i].id }; break; }
           }
+          // 导线也进 hover：它现在能拖了，不给一个 move 光标的话，学生根本
+          // 不知道这线是可拖的 —— 它长得和别的线一模一样。
+          if (!nh) { var nw = hitWire(p); if (nw >= 0) nh = { kind: 'wire', index: nw }; }
         }
       }
       var changedHover = JSON.stringify(nh) !== JSON.stringify(hover);
@@ -834,6 +919,14 @@
         // 宿主按类型自己过滤，编辑器不替它决定「哪些元件值得点」。
         if (!wasMoved && mc) onTap(mc, lastPointer);
         changed();
+        return;
+      }
+      if (wireDrag) {
+        // 拖动了就已经入过栈；只按一下没动，就是普通点选，不留撤销记录 ——
+        // 和拖元件同一条规矩，否则点三根线再按 ⌘Z 得连按三次才动得了东西。
+        if (!wireDrag.moved) discardEdit();
+        wireDrag = null;
+        changed();
       }
     }
 
@@ -846,6 +939,7 @@
         rotateSelected();
       } else if (ev.key === 'Escape') {
         if (wiring) { wiring = null; onChange(); }
+        else if (wireDrag) { wireDrag = null; onChange(); }
         else if (selected) { selected = null; changed(); }
       } else if ((ev.metaKey || ev.ctrlKey) && (ev.key === 'z' || ev.key === 'Z')) {
         undo(); ev.preventDefault();
@@ -1022,6 +1116,18 @@
       endSilent: function () { muted = false; pushUndo(); },
       drawOverlay: drawOverlay,
       GRID: GRID,
+      // 拖导线：上限和当前状态都给出去，测试不用自己猜 90 这个数。
+      WIRE_DRAG_MAX: WIRE_DRAG_MAX,
+      // 撤销栈深度。「点一下不留撤销记录」这条规矩只能靠它验 —— 光看场景
+      // 变没变是分不出「没入栈」和「入了栈又恰好长得一样」的。
+      undoDepth: function () { return undoStack.length; },
+      wireDragInfo: function () {
+        if (!wireDrag) return null;
+        var wr = getScene().wires[wireDrag.index];
+        return { index: wireDrag.index, moved: wireDrag.moved,
+                 via0: wireDrag.via0.length,
+                 via: wr ? (wr.via || []).map(function (z) { return [z[0], z[1]]; }) : null };
+      },
     };
   }
 

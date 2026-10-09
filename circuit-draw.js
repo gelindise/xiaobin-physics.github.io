@@ -733,11 +733,23 @@
   function currentShift(flow, phase) { return -electronShift(flow, phase); }
 
   // opts: { flow: 有符号电流(A, 正=从首端流向末端), phase: 秒,
-  //         current: 是否画电流方向箭头（默认关，向后兼容只传 flow/phase 的调用） }
+  //         current: 是否画电流方向箭头（默认关，向后兼容只传 flow/phase 的调用）,
+  //         weak: 这条线里是【微弱电流】（默认关，见下面那一段） }
+  //
+  // weak = true 的用法只有一个：电压表按【真实内阻】接进电路时，接它的那两根
+  // 导线里流过的是 mA 量级的电流（3V / 3kΩ ≈ 1mA），和主回路差两三个数量级。
+  // 这时候如果照常画红箭头，学生看到的是「电压表也在耗电」和「电压表不分流」
+  // 两条互相打架的印象 —— 而「电压表内阻很大、几乎不分流」正是这个选项要教的。
+  // 所以弱电流【必须换一套长相】，不能只是「同样的小球跑得慢一点」：
+  //   · 自由电子小球：半径 2.9 → 1.7，透明度 1 → 0.5，间距 42 → 68；
+  //   · 电流箭头：实心三角 → 【空心箭头（">" 形）】，颜色从正红变成淡红，
+  //     去掉发光，间距 64 → 96，整体缩到 0.6 倍。
+  // 空心 vs 实心是最一目了然的区别 —— 缩小和调淡在手机屏上都会糊掉。
   function drawWire(ctx, pts, opts) {
     if (!pts || pts.length < 2) return;
     opts = opts || {};
     var W = opts.width || 6;
+    var weak = !!opts.weak;
 
     // 熔断的导线：中间【真的缺一段】。不是画个「断开」标记压在整根线上 ——
     // 那样画面上导线还是通的，只是多贴了一张标签，和「断了」是两回事。
@@ -792,19 +804,19 @@
     if (I > 1e-6 && opts.phase != null && opts.electrons !== false) {
       var L = polyLen(pts);
       if (L < 1) return;
-      var n = Math.max(1, Math.round(L / 42));   // 42px 一颗，长导线自动多排几颗
+      var n = Math.max(1, Math.round(L / (weak ? 68 : 42)));   // 42px 一颗，长导线自动多排几颗
       var step = L / n;
       var shift = electronShift(opts.flow, opts.phase);
       ctx.save();
       ctx.fillStyle = PALETTE.flow;
-      ctx.shadowColor = 'rgba(245,158,11,0.85)';
-      ctx.shadowBlur = 7;
+      if (weak) ctx.globalAlpha = 0.5;                 // 微弱电流的小球压淡
+      else { ctx.shadowColor = 'rgba(245,158,11,0.85)'; ctx.shadowBlur = 7; }
       for (var i = 0; i < n; i++) {
         // 对 L 取模：粒子从导线末端出去就从首端进来，两端接得上，看不到跳变
         var d = ((i * step + shift) % L + L) % L;
         var p = pointAt(pts, d);
         ctx.beginPath();
-        ctx.arc(p.x, p.y, 2.9, 0, 6.284);
+        ctx.arc(p.x, p.y, weak ? 1.7 : 2.9, 0, 6.284);
         ctx.fill();
       }
       ctx.restore();
@@ -816,13 +828,19 @@
     if (I > 1e-6 && opts.phase != null && opts.current) {
       var L2 = polyLen(pts);
       if (L2 < 1) return;
-      var n2 = Math.max(1, Math.round(L2 / 64));
+      var n2 = Math.max(1, Math.round(L2 / (weak ? 96 : 64)));
       var step2 = L2 / n2;
       var sh2 = currentShift(opts.flow, opts.phase);
       ctx.save();
-      ctx.fillStyle = PALETTE.current;
-      ctx.shadowColor = 'rgba(220,38,38,0.7)';
-      ctx.shadowBlur = 6;
+      if (!weak) {
+        ctx.fillStyle = PALETTE.current;
+        ctx.shadowColor = 'rgba(220,38,38,0.7)';
+        ctx.shadowBlur = 6;
+      } else {
+        // 弱电流：淡红空心箭头（">"）。不填充、不发光、整体缩到 0.6 倍。
+        ctx.strokeStyle = 'rgba(248,113,113,0.85)';
+        ctx.lineWidth = 1.7; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+      }
       for (var j = 0; j < n2; j++) {
         var d2 = ((j * step2 + sh2) % L2 + L2) % L2;
         var q = pointDirAt(pts, d2);
@@ -835,9 +853,18 @@
         // 箭头。这正是用户看到的「有的地方尖端朝后」：同一条回路里，
         // 反向支路上的那几根导线全是这个毛病。
         ctx.rotate(Math.atan2(q.uy, q.ux) + (opts.flow < 0 ? Math.PI : 0));
-        ctx.beginPath();
-        ctx.moveTo(7, 0); ctx.lineTo(-5, -4.8); ctx.lineTo(-5, 4.8);
-        ctx.closePath(); ctx.fill();
+        if (weak) {
+          var ks = 0.6;
+          ctx.beginPath();
+          ctx.moveTo(-5.2 * ks, -6.2 * ks);
+          ctx.lineTo(6.6 * ks, 0);
+          ctx.lineTo(-5.2 * ks, 6.2 * ks);
+          ctx.stroke();
+        } else {
+          ctx.beginPath();
+          ctx.moveTo(7, 0); ctx.lineTo(-5, -4.8); ctx.lineTo(-5, 4.8);
+          ctx.closePath(); ctx.fill();
+        }
         ctx.restore();
       }
       ctx.restore();
@@ -1475,7 +1502,48 @@
   // 最外侧（本体 +81~+110）；刀片长度、柱高、底板一个字没动。
   // 抬起/压下的角度也要一起取反——canvas 的正角是顺时针，刀片伸向 +x 时
   // 要 θ<0 才是「抬起来」，沿用原来的 +0.28 会画成往板子里扎下去。
+  //
+  // ⚠️ 2026-10-09：金属件（静触点 / 铰链支架 / 刀片）一律改成【纯铜】，
+  //    并补上两根铜片把两个接线柱分别接到触点和支架上。原来金属件是银白的，
+  //    和底板四角的一字螺钉同色，「哪一段是导电的铜」在画面上根本没有区别；
+  //    铜色 + 铜片把「左柱 → 支架 → 刀片 → 触点 → 右柱」这一整条通路点亮，
+  //    一断开，缝在哪儿（刀片与触点之间）也就一目了然。
+  //    手柄仍然是灰色胶木 —— 它是【绝缘】件，跟着铜会让学生以为那是带电的一端。
   // ============================================================
+  // ============================================================
+  // 铜片（母线）
+  // ------------------------------------------------------------
+  // 闸刀开关的静触点、铰链支架各自【用一根铜片接到自己的接线柱上】—— 这是实物上
+  // 看得见的一段：拧开柱子的螺母，底下压着一条铜片，顺着板面走到触点 / 支架的脚上。
+  // 不画这一段，学生看到的是一块板子上孤立地站着两个金属件和两根柱子，看不出
+  // 「柱子 ↔ 触点」本来就在同一根导体上 —— 而「开关断开的其实是刀片和触点之间
+  // 那一个缝」这句话，全靠这条看得见的铜路才立得住。
+  //
+  // ⚠️ 坐标是【元件局部坐标】：调用方必须已经 translate/rotate 到元件自身坐标系。
+  // 和三根柱子的关系是「后画的压在上面」，所以铜片要在 posts() 之后画。
+  // ============================================================
+  function copperStrap(ctx, x0, x1, y) {
+    ctx.save();
+    ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(x1, y);
+    // 先描一圈暗铜色当轮廓：铜片压在板面上，没有它整条会糊成一片高光
+    ctx.strokeStyle = 'rgba(74,44,14,0.85)'; ctx.lineWidth = 7.6; ctx.stroke();
+    ctx.strokeStyle = linGrad(ctx, 0, y - 4, 0, y + 4,
+      [[0, PALETTE.copperHi], [0.5, PALETTE.copper], [1, PALETTE.copperLo]]);
+    ctx.lineWidth = 4.6; ctx.stroke();
+    ctx.strokeStyle = 'rgba(255,236,200,0.55)'; ctx.lineWidth = 1.2; ctx.stroke();
+    ctx.restore();
+  }
+  // 铜片末端的压接螺钉：拧在接线柱上的那一下
+  function copperBolt(ctx, x, y) {
+    ctx.save();
+    ctx.fillStyle = PALETTE.copperLo;
+    ctx.beginPath(); ctx.arc(x, y, 3.2, 0, 6.284); ctx.fill();
+    ctx.fillStyle = 'rgba(255,235,205,0.78)';
+    ctx.beginPath(); ctx.arc(x - 0.8, y - 0.8, 1.3, 0, 6.284); ctx.fill();
+    ctx.restore();
+  }
+
   function drawSwitch(ctx, comp, rec) {
     var closed = rec ? rec.closed : !!(comp.params && comp.params.closed);
     var sc = ctxScale(ctx);
@@ -1516,22 +1584,27 @@
     // 垫得太靠左整把开关像天平，也挡住了「闭合 / 断开」四个字。
     // 渐变的两端是【绝对坐标】，镜像时元宝不镜像光：全站光源都在左上，
     // 跟着形状一起翻的话，右半边的金属件会变成右上打光，一眼看去是两个方向。
+    //
+    // ⚠️ 金属件一律【纯铜】（2026-10-09 用户要求）。原来的银白钢片在放大镜里
+    //    和底板螺钉、和别的元件的银色零件混成一片，看不出「导电的那条路」。
+    //    铜色 + 铜片把「柱子 → 触点 → 刀片 → 支架 → 柱子」这条通路整条点亮，
+    //    开关一断开，缝在哪儿就一目了然。
     var CT0 = CONTACT_X - CONTACT_HW, CT1 = CONTACT_X + CONTACT_HW;
     ctx.save();
     ctx.beginPath();
     roundRect(ctx, CT0, CONTACT_TOP, CONTACT_HW * 2, PLATE.TOP - CONTACT_TOP, 2.5);
     ctx.clip();
     ctx.fillStyle = linGrad(ctx, CT0, 0, CT1, 0,
-      [[0, '#f7fafc'], [0.16, '#dde5ed'], [0.42, '#aebbc9'],
-       [0.70, '#8493a3'], [1, '#5f6e7e']]);
+      [[0, '#fdf0e0'], [0.16, '#f3d0aa'], [0.42, '#dda86d'],
+       [0.70, '#b8792f'], [1, '#8a5620']]);
     ctx.fillRect(CT0, CONTACT_TOP, CONTACT_HW * 2, PLATE.TOP - CONTACT_TOP);
     ctx.restore();
     roundRect(ctx, CT0, CONTACT_TOP, CONTACT_HW * 2, PLATE.TOP - CONTACT_TOP, 2.5);
-    ctx.strokeStyle = 'rgba(51,65,85,0.6)'; ctx.lineWidth = 1; ctx.stroke();
+    ctx.strokeStyle = 'rgba(96,58,16,0.62)'; ctx.lineWidth = 1; ctx.stroke();
     // 顶面的受光棱 + 夹线槽：刀片压下来就是压在这条棱上
-    ctx.fillStyle = 'rgba(255,255,255,0.62)';
+    ctx.fillStyle = 'rgba(255,244,224,0.72)';
     roundRect(ctx, CT0 + 1.2, CONTACT_TOP + 0.8, CONTACT_HW * 2 - 2.4, 1.4, 0.7); ctx.fill();
-    ctx.fillStyle = 'rgba(40,52,68,0.45)';                      // 顶上那道夹线槽
+    ctx.fillStyle = 'rgba(88,50,12,0.5)';                       // 顶上那道夹线槽
     roundRect(ctx, CT0, CONTACT_TOP + 2.4, CONTACT_HW * 2, 2.6, 1.3); ctx.fill();
     // 触点底座的一字螺钉（把触点拧在板上）
     if (sc >= 1) screwHead(ctx, CONTACT_X, PLATE.TOP - 7, 3.4, 'slot', sc);
@@ -1543,20 +1616,31 @@
     roundRect(ctx, HB0, PIV.y - 7, HB1 - HB0, PLATE.TOP - (PIV.y - 7), 2.5);
     ctx.clip();
     ctx.fillStyle = linGrad(ctx, HB0, 0, HB1, 0,
-      [[0, '#f7fafc'], [0.16, '#dde5ed'], [0.42, '#aebbc9'],
-       [0.70, '#8493a3'], [1, '#5f6e7e']]);
+      [[0, '#fdf0e0'], [0.16, '#f3d0aa'], [0.42, '#dda86d'],
+       [0.70, '#b8792f'], [1, '#8a5620']]);
     ctx.fillRect(HB0, PIV.y - 7, HB1 - HB0, PLATE.TOP - (PIV.y - 7));
     // 支架上的加强筋：两道竖的浅槽，金属片的「折过边」才有厚度
-    ctx.strokeStyle = 'rgba(51,65,85,0.22)'; ctx.lineWidth = 1;
+    ctx.strokeStyle = 'rgba(96,58,16,0.28)'; ctx.lineWidth = 1;
     [HB0 + 6, HB1 - 6].forEach(function (vx) {
       ctx.beginPath(); ctx.moveTo(vx, PIV.y - 3); ctx.lineTo(vx, PLATE.TOP - 2); ctx.stroke();
     });
     ctx.restore();
     roundRect(ctx, HB0, PIV.y - 7, HB1 - HB0, PLATE.TOP - (PIV.y - 7), 2.5);
-    ctx.strokeStyle = 'rgba(51,65,85,0.6)'; ctx.lineWidth = 1; ctx.stroke();
-    ctx.fillStyle = 'rgba(255,255,255,0.58)';
+    ctx.strokeStyle = 'rgba(96,58,16,0.62)'; ctx.lineWidth = 1; ctx.stroke();
+    ctx.fillStyle = 'rgba(255,244,224,0.68)';
     roundRect(ctx, HB0 + 1.2, PIV.y - 5.8, HB1 - HB0 - 2.4, 1.4, 0.7); ctx.fill();
     if (sc >= 1) screwHead(ctx, (HB0 + HB1) / 2, PLATE.TOP - 7, 3.4, 'slot', sc);
+
+    // ── 两根铜片：把接线柱和「板面上那两个金属件」连成一条导体 ──
+    // 左柱（−70）→ 铰链支架（−55~−35）；右柱（+70）→ 静触点（8~32）。
+    // 走在板面顶棱上（y = −2.6，板顶面是 −5、柱脚在 0）：铜片的顶边正好顶到
+    // 触点和支架的脚，读起来就是「一条铜片从柱子底下铺到触点上」。
+    // 画在【金属件之后】：铜片压在触点/支架的脚上，才像用螺钉拧住的。
+    var STRAP_Y = -2.6;
+    copperStrap(ctx, -70, HB0 + 10, STRAP_Y);
+    copperBolt(ctx, -70, STRAP_Y);
+    copperStrap(ctx, CONTACT_X + 8, 70, STRAP_Y);
+    copperBolt(ctx, 70, STRAP_Y);
 
     // 刀片：绕左端转轴转。断开抬起约 20°（再高就像旗子，再低看不出断开）。
     // 闭合时压到 +0.02：不能是 0，0 画出来像浮着，微微压下才有「压住触点」的意思。
@@ -1572,30 +1656,30 @@
     ctx.translate(PIV.x, PIV.y);
     ctx.rotate(closed ? 0.02 : -0.28);
     // 刀片：上沿受光的金属条。改成「上亮下暗」的竖向渐变 + 两端倒角，
-    // 原来那种整条一个色的写法在放大镜里是一块铁皮。
+    // 原来那种整条一个色的写法在放大镜里是一块铁皮。铜色同触点那一套。
     ctx.save();
     ctx.beginPath();
     roundRect(ctx, 0, -BLADE_HT, BLADE_LEN, BLADE_HT * 2, 3);
     ctx.clip();
     ctx.fillStyle = linGrad(ctx, 0, -BLADE_HT, 0, BLADE_HT,
-      [[0, '#ffffff'], [0.12, '#f2f6fa'], [0.34, '#d5dee7'],
-       [0.62, '#a9b6c4'], [0.86, '#8493a3'], [1, '#67767f']]);
+      [[0, '#fdf0e0'], [0.12, '#f3d0aa'], [0.34, '#dfa76f'],
+       [0.62, '#c4863f'], [0.86, '#a86c2c'], [1, '#8a5620']]);
     ctx.fillRect(0, -BLADE_HT, BLADE_LEN, BLADE_HT * 2);
     // 拉丝：沿长度方向的细线。刀片是轧出来的，表面有轧制纹
     if (sc >= 1.3) {
-      ctx.strokeStyle = 'rgba(255,255,255,0.30)'; ctx.lineWidth = 0.7;
+      ctx.strokeStyle = 'rgba(255,236,205,0.34)'; ctx.lineWidth = 0.7;
       for (var bz = -BLADE_HT + 1.6; bz < BLADE_HT; bz += 2.2) {
         ctx.beginPath(); ctx.moveTo(2, bz); ctx.lineTo(BLADE_LEN - 2, bz); ctx.stroke();
       }
     }
     ctx.restore();
     roundRect(ctx, 0, -BLADE_HT, BLADE_LEN, BLADE_HT * 2, 3);
-    ctx.strokeStyle = 'rgba(51,65,85,0.55)'; ctx.lineWidth = 0.9; ctx.stroke();
-    ctx.fillStyle = 'rgba(255,255,255,0.72)';   // 刀背上的一条锐利高光
+    ctx.strokeStyle = 'rgba(96,58,16,0.6)'; ctx.lineWidth = 0.9; ctx.stroke();
+    ctx.fillStyle = 'rgba(255,244,224,0.78)';   // 刀背上的一条锐利高光
     roundRect(ctx, 3, -BLADE_HT + 1.1, BLADE_LEN - 8, 1.3, 0.65); ctx.fill();
     // 铰链端的铆钉孔：刀片是铆在支架上的，没有它刀片像贴在支架上
     if (sc >= 1) {
-      ctx.fillStyle = 'rgba(51,65,85,0.30)';
+      ctx.fillStyle = 'rgba(90,52,14,0.38)';
       ctx.beginPath(); ctx.arc(4.5, 0, 2.1, 0, 6.284); ctx.fill();
     }
     // 绝缘手柄：刀片末端的灰色套筒（实物是胶木的，不是红的——红的在参考图里
@@ -2397,7 +2481,9 @@
   //   · 白瓷管长度按立板间距给满，电阻丝只绕在【中间那一段】——两头留白的
   //     白瓷上拧着 A / B 两个接线柱，这正是「下面两柱接在电阻丝两头」的样子
   //   · 一根细金属杆横跨两板，鞍形滑片骑在杆上，触臂下探到绕线上
-  //   · C / D 是金属杆两端的柱子（银），A / B 是瓷管两端的柱子（红）
+  //   · C / D 是金属杆两端的柱子，A / B 是瓷管两端的柱子 —— 四个【都是红的】
+  //     （2026-10-09 起，用户要求接线柱颜色全站一致；红只表示「这是接线柱」，
+  //      不表示极性，语义靠 A/B/C/D 四个字母）
   // 几何全部走 RHEO：滑片行程、命中框都靠它，一个数字都不能自作主张。
   // ============================================================
   function drawRheostat(ctx, comp, rec) {
@@ -2665,13 +2751,20 @@
     // A/B 给 1.4 倍、8 高的螺纹杆（和开关、灯泡同一档）：图16.4-2 里这两个柱子
     // 是【立在白瓷端头上】的，柱顶要高过瓷管，一眼能看见；按默认的矮柱子画，
     // 它整根都埋在那条红铜引线的粗细里，看着只剩一根横着的铜片。
+    //
+    // ⚠️ C/D 现在【也是红的】（2026-10-09 用户要求「和其他接线柱保持一致」）。
+    //    原来它们是银的、A/B 是红的，同一台器材上两种柱色，学生数接线柱时
+    //    得先分辨「哪个是红的」才敢认 A/B —— 而红在全站其它元件上一直是
+    //    「接线柱」这个身份本身的标记（开关、灯泡、电池盒的柱子全是红的）。
+    //    红仍然【不代表正极】：变阻器无极性，A/B/C/D 四个字母才是语义。
     posts(ctx, comp, ['pos', 'pos'], 1.4, 8);
 
     // C / D：金属杆两端的柱子是【横着朝外伸】的圆柱头（图16.4-2 里就是两个
-    // 从立板上探出来的银色圆柱）。立着画有两个毛病：一是柱子顶在立板上沿，
+    // 从立板上探出来的圆柱）。立着画有两个毛病：一是柱子顶在立板上沿，
     // 看着像板子上又长了一颗蘑菇；二是「它接的是那根细杆」这句话在图上没了着落
     // ——横着从杆的端头伸出去，才一眼看出它和杆是一条线。
     // 顺带一个好处：导线本来就是水平走过来的，横柱让线接头看着更顺。
+    // 柱色用 POST_GRAD.pos 那一套红（和 A/B 及全站接线柱同一组色标）。
     [2, 3].forEach(function (ti) {
       var p = terminalWorld(comp, ti);
       ctx.save();
@@ -2681,31 +2774,31 @@
       ctx.beginPath(); ctx.ellipse(1, 4, 9, 3, 0, 0, 6.284); ctx.fill();
       // 柱身走【竖向】渐变（上亮下暗）才是根圆管，横向渐变会画成一根扁铁片
       ctx.fillStyle = linGrad(ctx, 0, -6, 0, 6,
-        [[0, '#5b6c7d'], [0.26, '#93a2b2'], [0.48, '#f2f6fa'],
-         [0.72, '#9aa8b8'], [1, '#5b6c7d']]);
+        [[0, '#6f1a1a'], [0.26, '#b91c1c'], [0.48, '#f3a8a8'],
+         [0.72, '#dc2626'], [1, '#6f1a1a']]);
       roundRect(ctx, -9, -6, 18, 12, 3); ctx.fill();
-      ctx.strokeStyle = 'rgba(40,52,68,0.45)'; ctx.lineWidth = 0.9; ctx.stroke();
-      ctx.fillStyle = 'rgba(255,255,255,0.55)';   // 管身上的一道细高光
+      ctx.strokeStyle = 'rgba(110,20,20,0.55)'; ctx.lineWidth = 0.9; ctx.stroke();
+      ctx.fillStyle = 'rgba(255,228,228,0.62)';   // 管身上的一道细高光
       roundRect(ctx, -8, -4.6, 15, 1.4, 0.7); ctx.fill();
       // 外端那圈滚花螺母（比柱身粗一圈，和别的元件的柱帽是同一套长相）
       // 尺寸/圆角都收着来：15 高 + 2.5 圆角配 8 宽，放大镜里是一个方疙瘩；
       // 改成 14 高、2.9 圆角，再补一条内肩线和外端倒角，才是一颗拧在杆上的螺母。
       ctx.fillStyle = linGrad(ctx, 0, -7, 0, 7,
-        [[0, '#4b5b6c'], [0.30, '#8fa0b2'], [0.52, '#eef3f9'], [1, '#4b5b6c']]);
+        [[0, '#6f1a1a'], [0.30, '#b91c1c'], [0.52, '#f3a8a8'], [1, '#6f1a1a']]);
       roundRect(ctx, 7, -7, 8, 14, 2.9); ctx.fill();
       ctx.save();
       roundRect(ctx, 7, -7, 8, 14, 2.9); ctx.clip();
-      knurl(ctx, 7, -7, 8, 14, sc * 1.2, 'rgba(15,23,42,0.30)');
+      knurl(ctx, 7, -7, 8, 14, sc * 1.2, 'rgba(90,10,10,0.32)');
       // 外端倒角：螺母的端面是倒过角的，一道竖直的亮棱比整块平头有体积
-      ctx.fillStyle = 'rgba(255,255,255,0.42)';
+      ctx.fillStyle = 'rgba(255,228,228,0.5)';
       ctx.fillRect(14.2, -5.6, 1.1, 11.2);
-      ctx.fillStyle = 'rgba(30,41,59,0.22)';
+      ctx.fillStyle = 'rgba(120,20,20,0.28)';
       ctx.fillRect(13.0, -5.6, 1.1, 11.2);
       ctx.restore();
-      ctx.strokeStyle = 'rgba(40,52,68,0.5)'; ctx.lineWidth = 0.9;
+      ctx.strokeStyle = 'rgba(110,20,20,0.6)'; ctx.lineWidth = 0.9;
       roundRect(ctx, 7, -7, 8, 14, 2.9); ctx.stroke();
       // 内肩：螺母压在柱身端头的那一圈，有它才看得出是「拧上去的」
-      ctx.strokeStyle = 'rgba(40,52,68,0.42)'; ctx.lineWidth = 0.9;
+      ctx.strokeStyle = 'rgba(110,20,20,0.5)'; ctx.lineWidth = 0.9;
       ctx.beginPath(); ctx.moveTo(7.6, -5.4); ctx.lineTo(7.6, 5.4); ctx.stroke();
       ctx.restore();
     });

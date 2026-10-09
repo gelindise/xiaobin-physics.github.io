@@ -259,6 +259,13 @@
     border:1px solid #fca5a5;color:#7f1d1d;font-size:12.5px;line-height:1.45;
     box-shadow:0 10px 26px rgba(15,23,42,.20);text-align:left}
   .toast[hidden]{display:none}
+  /* 警告标记：红圆底 + 白叹号。用 CSS 画而不是写「⚠」字形 —— 那个码位在
+     各平台上是「三角警告牌」，尺寸和基线都随字体变，在 22px 的小圆里会
+     忽大忽小、偏左偏右。一个圆加一个字符是确定的。 */
+  .toast .tIcon{flex:none;width:22px;height:22px;border-radius:50%;background:#dc2626;
+    color:#fff;font-weight:800;font-size:15px;line-height:22px;text-align:center;
+    font-family:-apple-system,"PingFang SC",sans-serif;
+    box-shadow:0 1px 3px rgba(127,29,29,.45)}
   .toast button{flex:none;background:#fff;border:1px solid #fca5a5;border-radius:8px;
     padding:3px 9px;font-size:12px;color:#7f1d1d;cursor:pointer;font-family:inherit}
   /* 电路图浮层：和表盘放大镜同一套骨架（fixed + hidden + 点背景关），
@@ -477,8 +484,11 @@
          两个都在 .cv 里面，位置由 layout() → penPlace() 逐帧对齐。 -->
     <div class="cv"><canvas id="simCanvas"></canvas><canvas id="penCanvas"></canvas>
       <div class="penBar" id="penBar"></div>
-      <!-- 临时提示条。放在 .cv 里 = 绝对定位在画布上沿，不进文档流。 -->
-      <div class="toast" id="toast" hidden><span id="toastText"></span>
+      <!-- 临时提示条。放在 .cv 里 = 绝对定位在画布上沿，不进文档流。
+           左边的红圆叹号是【警告标记】：目前只有「电表没调零就通电」用它，
+           用户点名要「一个叹号 + 说明原因」，所以图标和文案是固定搭配。 -->
+      <div class="toast" id="toast" hidden><span class="tIcon" id="toastIcon">!</span>
+        <span id="toastText"></span>
         <button type="button" id="toastX">知道了</button></div></div>
     <div class="side">
       <div class="panel" id="paramPanel"></div>
@@ -583,14 +593,14 @@
      会出现「说明写了电子逆流、小球却还顺着流」这种自相矛盾）。改脚本时
      把这个 build 号 +1 即可。 -->
 <script src="circuit-core.js?build=16"></script>
-<script src="circuit-draw.js?build=20"></script>
-<script src="circuit-editor.js?build=17"></script>
+<script src="circuit-draw.js?build=21"></script>
+<script src="circuit-editor.js?build=19"></script>
 <!-- 电路图（实物图 → 标准符号）。独立成第四块内核：沙盒和欧姆定律页共用同一份，
      免得各写一套符号，两边的图画法迟早不一样。三个老内核一行没动，build 号不升。 -->
 <script src="circuit-schematic.js?build=11"></script>
 <!-- 音效引擎。全部音色现场合成，不带音频素材；AudioContext 懒创建，
      等第一次真实手势才建。它只读状态、只出声，不碰物理也不碰画面。 -->
-<script src="circuit-sound.js?build=1"></script>
+<script src="circuit-sound.js?build=2"></script>
 <script>
 // ---- 访问保护：仅允许站内跳转（与站内其它实验页一致）----
 (function(){
@@ -789,6 +799,64 @@ function solveOnce(){
     return { a:x.a, b:x.b, broken: !!x.broken };
   }));
   flows = C.wireCurrents(scene, results);
+}
+
+// ── 微弱电流：接在「真实电压表」上的那两根导线 ──────────────────
+// 判据有两条，缺一不可：
+//   · 这根线的【某一端接在一只勾了「模拟微弱电流」的电压表】上 —— 这才是
+//     「微弱」的来由。只按电流大小判（比如「比主回路小 20 倍」）会在
+//     「整个电路就只有一只电压表」时失灵，那时候没有对比量，1mA 会被当成
+//     正常电流画成实心红箭头。
+//   · 它确实只是一股【支路】电流：不到「电路其余部分」电流的 1/4。
+//     电压表要是被【串】进了主回路（错误接法），那两根线里流的就是主电流，
+//     不能算微弱 —— 画成空心箭头等于替学生把一个错误接法粉饰过去了。
+//     ★ 这里必须拿「其余部分的电流」当参照，不能只卡一个绝对阈值：串联时
+//       整个回路都只有 1mA，绝对阈值 0.02 会让接表的那两根线照样判成微弱，
+//       学生看到的是「四根线里两根是空心箭头」，比不画还乱。
+var WEAK_I_MAX = 0.02;    // 绝对上限：再怎么「相对小」，超过 20mA 就不是微弱电流
+var WEAK_RATIO = 0.25;    // 相对上限：够不着「电路其余部分」的 1/4 才算支路电流
+// 「这根线接在勾了微弱电流的电压表上」—— 纯拓扑判断，和电流大小无关。
+// 拆出来单独用：算参照电流（maxOtherI）时得先知道哪些线是那只表的支路。
+function wireOnWeakVolt(i){
+  var wr = scene.wires[i];
+  if (!wr) return false;
+  var ends = [wr.a, wr.b];
+  for (var k = 0; k < 2; k++){
+    var c = byId(ends[k].compId);
+    if (c && c.type === 'voltmeter' && pval(c, 'weakI')) return true;
+  }
+  return false;
+}
+// 不接在那只电压表上的导线里最大的一股电流 = 「电路其余部分」的电流。
+function maxOtherI(){
+  var m = 0;
+  for (var i = 0; i < flows.length; i++){
+    if (wireOnWeakVolt(i)) continue;
+    m = Math.max(m, Math.abs(flows[i] || 0));
+  }
+  return m;
+}
+function wireIsWeak(i){
+  if (!wireOnWeakVolt(i)) return false;
+  var f = Math.abs(flows[i] || 0);
+  if (f <= 1e-6 || f > WEAK_I_MAX) return false;
+  var o = maxOtherI();
+  // 电路其余部分一点电流都没有（整个电路就只有这只电压表）→ 这 1mA 就是电路里
+  // 唯一的电流，它确实是「通过电压表的微弱电流」，照画。
+  if (o <= 1e-6) return true;
+  return f < WEAK_RATIO * o;
+}
+// 主回路里最大的那股电流。参数面板上写「主回路 x A」用它 —— 学生要对比的
+// 正是这两个数，不能拿「被选中那只表自己」的电流去当参照（那就成了自己和自己比）。
+// 弱电流那几根要排除在外：不然「整个电路只有一只电压表」时，参照量会变成
+// 那 1mA 本身，面板上写成「I ≈ 1.0 mA（主回路 0.001 A）」，看着像句废话。
+function maxWireI(){
+  var m = 0;
+  for (var i = 0; i < flows.length; i++){
+    if (wireIsWeak(i)) continue;
+    m = Math.max(m, Math.abs(flows[i] || 0));
+  }
+  return m;
 }
 
 // 把本帧新发生的损坏写进场景。返回「真的写了东西没有」。
@@ -1208,8 +1276,11 @@ function drawFrame(){
     scene.wires.forEach(function(wr,i){
       // phase 直接传秒数，由 drawWire 换算成像素行程；两个开关都关时传 null，
       // drawWire 就不画任何东西。current 只决定画不画箭头，小球照旧。
+      // weak = 这根线接在「按真实内阻参与求解」的电压表上（见 wireIsWeak）：
+      // 画成淡红空心箭头 + 小一号半透明的小球，和主回路的实心红箭头区分开。
       D.drawWire(ctx, pathOf(wr), { flow: flows[i], phase: (showFlow || showCurrent) ? phase : null,
                                     electrons: showFlow, current: showCurrent,
+                                    weak: wireIsWeak(i),
                                     broken: !!wr.broken });
     });
     // 接线柱补回最上层：它是交互点，不能被导线压掉。柱子用绝对坐标画，
@@ -1218,6 +1289,7 @@ function drawFrame(){
     drawMotion();                           // 会动的元件压在缓存层之上
     drawSmokeLayer();                       // 烧坏的东西在冒烟（唯一「坏了还在动」的事）
     drawTags(ctx);                          // 标签在最上层，不被导线划掉
+    drawZeroWarn(ctx);                      // 未调零的电表：红叹号（压在所有东西之上）
   }
   if (editor) editor.drawOverlay(ctx);      // 选中框 / 拉线预览，永远在最上层
 }
@@ -1236,13 +1308,55 @@ function drawSmokeLayer(){
   });
 }
 
+// 未调零的电表上挂一个【警告标记】（红圆 + 白叹号 + 「未调零」）。
+// 和顶部提示条是同一件事的两个落点，缺一不可：
+//   · 提示条说「你这一步做错了」——合闸那一下的一次性提醒；
+//   · 这个标记说「错的是【这一只】」——台上有两只表的时候，光有提示条
+//     学生还得自己猜是哪只没调零，而画面上两只表长得一模一样。
+// 判据和侧栏那条警告共用 unzeroedInUse()：一处改了另一处跟着改，不会出现
+// 「侧栏说有、画面上找不到」这种自相矛盾。
+// 画在【标签之后】：它要压住导线和标签，是全场最上面的一层注解。
+var zeroWarnDrawn = [];
+function drawZeroWarn(g){
+  zeroWarnDrawn.length = 0;
+  if (!results || !results.components) return;
+  unzeroedInUse().forEach(function(z){
+    var c = editor && editor.byId(z.id);
+    if (!c) return;
+    // 表壳是 ±88 / 顶 −86、底座到 +60，所以挂在【右上角外侧】不会盖住刻度：
+    // 学生正需要一边看针偏了多少、一边看见这个叹号。
+    var p = D.toWorld(c, 72, -96);
+    g.save();
+    g.beginPath(); g.arc(p.x, p.y, 12, 0, 6.284);
+    g.fillStyle = '#dc2626'; g.fill();
+    g.strokeStyle = '#ffffff'; g.lineWidth = 2; g.stroke();
+    g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillStyle = '#ffffff';
+    g.font = 'bold 17px -apple-system,"PingFang SC",sans-serif';
+    g.fillText('!', p.x, p.y + 0.5);
+    g.font = 'bold 11px -apple-system,"PingFang SC",sans-serif';
+    g.lineJoin = 'round';
+    g.lineWidth = 3.5; g.strokeStyle = 'rgba(255,255,255,0.95)';
+    g.strokeText('未调零', p.x, p.y + 24);
+    g.fillStyle = '#b91c1c';
+    g.fillText('未调零', p.x, p.y + 24);
+    g.restore();
+    zeroWarnDrawn.push({ id: z.id, x: p.x, y: p.y, label: '未调零' });
+  });
+}
+
 var lastT = 0;
+// 电流箭头和电子小球都是【沿相位走】的，相位每帧 += dt。同一幅画面隔一帧
+// 取两次样，落在取样框里的箭头个数可能差一个 —— 像素断言会变成「一会儿绿
+// 一会儿红」。自检用 __lockPhase() 把相位钉死，量到的就是确定值。
+var phaseLock = null;
 function tick(t){
   var dt = lastT ? Math.min((t - lastT)/1000, 0.06) : 0;
   lastT = t;
   var anim = showFlow || showCurrent;
   // 粒子只在电路真的导通时才走（断路/短路时导线上的小球停住，这本身就是信息）。
-  if (anim && results && results.status === 'ok') phase += dt;
+  if (phaseLock != null) phase = phaseLock;
+  else if (anim && results && results.status === 'ok') phase += dt;
   animT += dt;
   var moving = stepMotion(dt);
   // 粒子关着、也没有器材在动 → 画面是静止的，完全空转（只在编辑操作时重绘）。
@@ -1306,7 +1420,183 @@ var penBarEl = document.getElementById('penBar');
 var PEN_COLORS = ['#ef4444', '#2563eb', '#111827', '#eab308'];
 var PEN_WIDTHS = [2.5, 4.5, 7];
 var PEN_WLABEL = ['细', '中', '粗'];
-var pen = { on: false, color: PEN_COLORS[0], width: PEN_WIDTHS[1], strokes: [], cur: null };
+var pen = { on: false, color: PEN_COLORS[0], width: PEN_WIDTHS[1], strokes: [], cur: null,
+            smudge: null };
+// 被【涂抹】擦掉的笔迹（按原下标记着）。撤销要能把它填回去 —— 擦除是一次真实
+// 的操作，⌘Z 撤不回来等于「涂错一下就得重画」。
+var penEraseLog = [];
+var penSmudgeTimer = 0;
+
+// ── 涂抹擦除 ────────────────────────────────────────────────
+// 用户要求：不新增按钮，直接在笔迹上来回涂抹就把它擦掉。
+// 「涂抹」和「写字 / 画圈 / 画 Z」的区别在【轨迹形状】上，不在「画了多久 /
+// 画了多少点」上 —— 慢慢写一个字和快速来回涂抹，点数差不多。
+// 判据三条，缺一不可；每一条都对应一种会被误判的形状：
+//   · 自我重叠率 OVER：轨迹有没有大比例地压在自己走过的路上。
+//       涂抹有；直线 / 圆 / Z 字 / W 都没有。← 主判据
+//   · 方向折返 BACK：沿主轴看，有没有明显「往回走」的一段。
+//       涂抹有（去一半、回一半）；密齿锯齿没有（它一路向右）。
+//   · 长度 / 密度：太短、太稀疏的轨迹直接排除。
+// 为什么不能只留一条：只看重叠率，密齿锯齿（相邻齿只隔几像素）会被判成
+// 涂抹；只看折返，圆也是「去一半回一半」，会被判成涂抹。两条正好互补。
+// —— 上一版用的是「相邻两段夹角 > 100° 的掉头次数」，两头都不对：来回涂抹
+//    因为手抖出的小折角只有 87° 左右，数不到反转（漏判）；而 Z 字一笔画下来
+//    每个顶点都是 165° 的大折角（误判）。夹角阈值卡在中间，怎么调都不行。
+var PEN_SCRIBBLE = {
+  LEN_MIN: 90,     // 太短的轨迹不可能是涂抹（手抖一下不算）
+  DENS_MIN: 1.6,   // 轨迹长度 / 包围盒对角线
+  STEP: 5,         // 重采样步长：判据只在等弧长的采样点上算，跟手画快慢无关
+  NEAR: 14,        // 「回到老地方」的判定半径
+  GAP: 5,          // 至少隔这么多个采样点（= 25px 弧长）才算「回头」
+  OVER_MIN: 0.45,  // 自我重叠率阈值
+  BACK_MIN: 0.25,  // 折返比例阈值（沿主方向往回走的长度占比）
+  HIT_MIN: 3,      // 一根笔迹要被至少这么多个采样点碰到才算被涂到
+  SMUDGE_W: 26,    // 涂抹痕迹的宽度
+  FADE_MS: 280,    // 松手后痕迹停留多久（让「我涂掉了哪几根」看得见）
+};
+function penSegDist(p, a, b){
+  var vx = b.x - a.x, vy = b.y - a.y, L2 = vx*vx + vy*vy;
+  var t = L2 ? ((p.x-a.x)*vx + (p.y-a.y)*vy) / L2 : 0;
+  t = Math.max(0, Math.min(1, t));
+  return Math.hypot(p.x - (a.x + t*vx), p.y - (a.y + t*vy));
+}
+// 按弧长把折线重采样成等间距的点。判据要跟「手画的快慢」无关 ——
+// 同一段涂抹画得快就点少、画得慢就点多，直接拿原始点会得出两个结论。
+function penResample(pts, step){
+  var out = [{ x: pts[0].x, y: pts[0].y }], dist = 0;
+  for (var i = 1; i < pts.length; i++){
+    var ax = pts[i-1].x, ay = pts[i-1].y, bx = pts[i].x, by = pts[i].y;
+    var seg = Math.hypot(bx - ax, by - ay);
+    if (seg < 1e-9) continue;
+    var t = 0;
+    while (dist + (seg - t) >= step){
+      t += step - dist;
+      out.push({ x: ax + (bx - ax) * (t / seg), y: ay + (by - ay) * (t / seg) });
+      dist = 0;
+    }
+    dist += seg - t;
+  }
+  return out;
+}
+// 自我重叠率：有多少比例的采样点，能在「时间上离得远」的地方找到另一个
+// 采样点贴着它。来回涂抹 ≈ 1；直线 / 圆 / Z 字 ≈ 0。
+function penOverlapRate(sp){
+  var n = sp.length, gap = PEN_SCRIBBLE.GAP, r2 = PEN_SCRIBBLE.NEAR * PEN_SCRIBBLE.NEAR;
+  if (n < 2 * gap + 2) return 0;
+  var hit = 0;
+  for (var i = 0; i < n; i++){
+    var p = sp[i], lo = i - gap, hi = i + gap;
+    for (var j = 0; j < n; j++){
+      if (j >= lo && j <= hi) continue;              // 时间上挨着的不算「回头」
+      var dx = p.x - sp[j].x, dy = p.y - sp[j].y;
+      if (dx*dx + dy*dy <= r2){ hit++; break; }
+    }
+  }
+  return hit / n;
+}
+// 折返比例：把每个采样步投影到主轴（首尾位移；首尾几乎重合时用协方差主轴），
+// 看正向、反向各走了多长。一条道走到黑 ≈ 0；对半来回 ≈ 0.5。
+function penBacktrack(sp){
+  var n = sp.length;
+  if (n < 4) return 0;
+  var dx = sp[n-1].x - sp[0].x, dy = sp[n-1].y - sp[0].y, L = Math.hypot(dx, dy);
+  if (L < 8){                                        // 首尾重合 → 用协方差主轴
+    var i, mx = 0, my = 0;
+    for (i = 0; i < n; i++){ mx += sp[i].x; my += sp[i].y; }
+    mx /= n; my /= n;
+    var sxx = 0, sxy = 0, syy = 0;
+    for (i = 0; i < n; i++){
+      var ux = sp[i].x - mx, uy = sp[i].y - my;
+      sxx += ux*ux; sxy += ux*uy; syy += uy*uy;
+    }
+    var th = 0.5 * Math.atan2(2 * sxy, sxx - syy);
+    dx = Math.cos(th); dy = Math.sin(th);
+  } else { dx /= L; dy /= L; }
+  var fwd = 0, back = 0;
+  for (i = 1; i < n; i++){
+    var s = (sp[i].x - sp[i-1].x) * dx + (sp[i].y - sp[i-1].y) * dy;
+    if (s > 0) fwd += s; else back -= s;
+  }
+  var tot = fwd + back;
+  return tot > 0 ? Math.min(fwd, back) / tot : 0;
+}
+// 这段轨迹像不像「涂抹」。纯函数，喂一串点进来就能问 —— 自检直接调它，
+// 不用去合成一串真实的指针事件。
+function penIsScribble(pts){
+  if (!pts || pts.length < 8) return false;
+  var i, len = 0;
+  var minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  for (i = 0; i < pts.length; i++){
+    if (pts[i].x < minX) minX = pts[i].x;
+    if (pts[i].x > maxX) maxX = pts[i].x;
+    if (pts[i].y < minY) minY = pts[i].y;
+    if (pts[i].y > maxY) maxY = pts[i].y;
+    if (i) len += Math.hypot(pts[i].x - pts[i-1].x, pts[i].y - pts[i-1].y);
+  }
+  if (len < PEN_SCRIBBLE.LEN_MIN) return false;
+  var diag = Math.hypot(maxX - minX, maxY - minY);
+  if (len / Math.max(24, diag) < PEN_SCRIBBLE.DENS_MIN) return false;
+  var sp = penResample(pts, PEN_SCRIBBLE.STEP);
+  if (penOverlapRate(sp) < PEN_SCRIBBLE.OVER_MIN) return false;
+  return penBacktrack(sp) >= PEN_SCRIBBLE.BACK_MIN;
+}
+// 一根已有笔迹被这段轨迹碰到了几个采样点
+function penHitCount(pts, s){
+  var near = PEN_SCRIBBLE.NEAR + (s.width || 4) / 2;
+  var sp = s.pts || [];
+  if (!sp.length) return 0;
+  var n = 0;
+  for (var i = 0; i < pts.length; i++){
+    var p = pts[i];
+    for (var j = 0; j < sp.length; j++){
+      var d = (sp.length === 1) ? Math.hypot(p.x - sp[0].x, p.y - sp[0].y)
+            : (j > 0 ? penSegDist(p, sp[j-1], sp[j]) : Infinity);
+      if (d <= near) { n++; break; }
+    }
+  }
+  return n;
+}
+// 这段轨迹底下有哪些笔迹该被擦掉（返回【下标数组】，从大到小，方便直接 splice）
+function penEraseHits(pts){
+  var out = [];
+  for (var i = pen.strokes.length - 1; i >= 0; i--){
+    if (penHitCount(pts, pen.strokes[i]) >= PEN_SCRIBBLE.HIT_MIN) out.push(i);
+  }
+  return out;
+}
+// 真的擦：把命中的笔迹摘掉，并记一笔到擦除日志里（撤销要填回去）。
+// 日志条目写成 { items:[…] } 而不是裸数组 —— penUndo 和 __penScribble 都按
+// .items 读，生产者写裸数组的话两边都会炸（上一版就是这么埋着的，因为一直
+// 没真的擦到过东西，直到探针第一次涂到线才露出来）。
+function penEraseNow(pts){
+  var hits = penEraseHits(pts);
+  if (!hits.length) return 0;
+  var items = hits.map(function(i){ return { i: i, s: pen.strokes[i] }; })
+                 .sort(function(a, b){ return a.i - b.i; });
+  for (var k = hits.length - 1; k >= 0; k--) pen.strokes.splice(hits[k], 1);
+  penEraseLog.push({ items: items });
+  penSyncUI();
+  return items.length;
+}
+// 涂抹的痕迹：一道半透明的灰痕 + 中间一道更淡的，看着像被蹭开的粉笔灰。
+// 松手之后还要停留一小会儿再淡出 —— 学生得看得见「我刚才涂掉的是这一段」。
+function penDrawSmudge(g, sm){
+  var pts = sm.pts;
+  if (!pts || !pts.length) return;
+  var a = (sm.alpha == null ? 1 : sm.alpha);
+  g.save();
+  g.lineCap = 'round'; g.lineJoin = 'round';
+  var path = function(){
+    g.beginPath(); g.moveTo(pts[0].x, pts[0].y);
+    for (var i = 1; i < pts.length; i++) g.lineTo(pts[i].x, pts[i].y);
+    g.stroke();
+  };
+  g.strokeStyle = 'rgba(148,163,184,' + (0.46 * a).toFixed(3) + ')';
+  g.lineWidth = PEN_SCRIBBLE.SMUDGE_W; path();
+  g.strokeStyle = 'rgba(255,255,255,' + (0.50 * a).toFixed(3) + ')';
+  g.lineWidth = PEN_SCRIBBLE.SMUDGE_W * 0.45; path();
+  g.restore();
+}
 
 // 画一笔（「只点了一下」= 一个圆点）。绘制只有这一个出口，所以屏幕上看到的
 // 和存下来的永远同源 —— 断言读像素和读 strokes 不会打架。
@@ -1331,7 +1621,13 @@ function penRedraw(){
   penCtx.clearRect(0, 0, penCanvas.width, penCanvas.height);
   penCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
   pen.strokes.forEach(function(s){ penDrawStroke(penCtx, s); });
-  if (pen.cur) penDrawStroke(penCtx, pen.cur);
+  // 涂抹痕迹：正在涂的时候就是这一笔本身，松手之后是 pen.smudge（要淡出）。
+  // 两者只能画一个 —— 同时画会叠出两层灰，看着像擦了两遍。
+  var sm = pen.cur && pen.cur.scribble ? pen.cur : pen.smudge;
+  if (sm) penDrawSmudge(penCtx, sm);
+  // 已经判成涂抹的那一笔【不再当笔迹画】：它的意思是「擦掉」，
+  // 手上还在留一道红线的话，学生只会以为「涂了半天反而画上了」。
+  if (pen.cur && !pen.cur.scribble) penDrawStroke(penCtx, pen.cur);
 }
 // 把标注层对齐到实验画布：尺寸和位置都跟着它。layout() 每次算完调一遍，
 // 全屏 / 手机端 / 窗口缩放三种版式自动跟上。
@@ -1361,20 +1657,40 @@ function penSyncUI(){
     el.classList.toggle('on', +el.dataset.width === pen.width);
   });
   var u = penBarEl.querySelector('#penUndo');
-  if (u) u.disabled = pen.strokes.length === 0;
+  // 擦除也算「有东西可撤」：涂掉三根笔迹之后，撤销钮必须亮着 —— 否则学生
+  // 涂错了发现撤销是灰的，只能重画。
+  if (u) u.disabled = pen.strokes.length === 0 && penEraseLog.length === 0;
   var c = penBarEl.querySelector('#penClear');
-  if (c) c.disabled = pen.strokes.length === 0;
+  if (c) c.disabled = pen.strokes.length === 0 && !pen.smudge;
 }
 function penSetOn(v){
   pen.on = !!v;
   document.body.classList.toggle('penOn', pen.on);
   pen.cur = null;
+  pen.smudge = null;
+  clearTimeout(penSmudgeTimer);
   penPlace();               // display 从 none 变 block，位置要立刻对齐一次
   penSyncUI();
   return pen.on;
 }
-function penUndo(){ pen.strokes.pop(); penRedraw(); penSyncUI(); return pen.strokes.length; }
-function penClear(){ pen.strokes.length = 0; pen.cur = null; penRedraw(); penSyncUI(); return 0; }
+// 撤销的次序必须和发生的次序反过来：擦除总是最后发生的，所以先撤擦除、
+// 再撤笔迹。混在一起按「笔迹栈」撤的话，擦掉的三根线永远回不来。
+function penUndo(){
+  if (penEraseLog.length){
+    var last = penEraseLog.pop();
+    last.items.forEach(function(it){
+      pen.strokes.splice(Math.min(it.i, pen.strokes.length), 0, it.s);
+    });
+    penRedraw(); penSyncUI(); return pen.strokes.length;
+  }
+  pen.strokes.pop(); penRedraw(); penSyncUI(); return pen.strokes.length;
+}
+function penClear(){
+  pen.strokes.length = 0; pen.cur = null; pen.smudge = null;
+  penEraseLog.length = 0;
+  clearTimeout(penSmudgeTimer);
+  penRedraw(); penSyncUI(); return 0;
+}
 
 // 工具条：颜色 / 粗细 / 撤销 / 清空。按钮在这里生成，HTML 里只留一个空容器。
 (function buildPenBar(){
@@ -1413,6 +1729,7 @@ penCanvas.addEventListener('pointerdown', function(e){
   if (!pen.on) return;
   e.preventDefault();
   if (penCanvas.setPointerCapture) { try { penCanvas.setPointerCapture(e.pointerId); } catch (err) {} }
+  pen.smudge = null;                     // 新手势开始，上一道的痕迹收掉
   pen.cur = { color: pen.color, width: pen.width, pts: [penClientToLocal(e)] };
   penRedraw();
 });
@@ -1423,6 +1740,11 @@ penCanvas.addEventListener('pointermove', function(e){
   // 移动小于 1px 的点不记：手抖出来的重复点会让折线变胖、也白占内存。
   if (Math.abs(p.x - last.x) < 1 && Math.abs(p.y - last.y) < 1) return;
   pen.cur.pts.push(p);
+  // 每一帧都重判一次「这是不是涂抹」：擦除要【当场发生】—— 学生一边涂一边
+  // 看着线没了，才知道这个手势是有效的。等松手才擦的话，中途屏幕上毫无反应，
+  // 只会以为涂错了、然后放弃。
+  if (!pen.cur.scribble && penIsScribble(pen.cur.pts)) pen.cur.scribble = true;
+  if (pen.cur.scribble) penEraseNow(pen.cur.pts);
   penRedraw();
 });
 function penEnd(e){
@@ -1430,8 +1752,23 @@ function penEnd(e){
   if (penCanvas.releasePointerCapture && e && e.pointerId != null) {
     try { penCanvas.releasePointerCapture(e.pointerId); } catch (err) {}
   }
-  pen.strokes.push(pen.cur);
-  pen.cur = null;
+  if (pen.cur.scribble){
+    // 涂抹【本身不留笔迹】—— 它的意思是「擦掉」，再留一道灰痕等于又画了一笔。
+    // 但痕迹要停留一小会儿再淡出：学生得看得见自己刚才涂掉的是哪几段。
+    pen.smudge = { pts: pen.cur.pts, alpha: 1 };
+    pen.cur = null;
+    clearTimeout(penSmudgeTimer);
+    var steps = 4, k = 0;
+    penSmudgeTimer = setInterval(function(){
+      k++;
+      if (k >= steps){ clearInterval(penSmudgeTimer); penSmudgeTimer = 0; pen.smudge = null; }
+      else if (pen.smudge) pen.smudge.alpha = 1 - k / steps;
+      penRedraw();
+    }, PEN_SCRIBBLE.FADE_MS / steps);
+  } else {
+    pen.strokes.push(pen.cur);
+    pen.cur = null;
+  }
   penRedraw(); penSyncUI();
 }
 penCanvas.addEventListener('pointerup', penEnd);
@@ -1459,7 +1796,13 @@ var PARAM_UI = {
   // 走 t:'tap'（点一下把导线挪到那个柱子上），选项和柱号都取自内核的 TYPES，
   // 页面这边不再抄一份量程数值。
   ammeter:   [{k:'range', t:'tap', label:'量程', unit:'A'}],
-  voltmeter: [{k:'range', t:'tap', label:'量程', unit:'V'}],
+  voltmeter: [{k:'range', t:'tap', label:'量程', unit:'V'},
+              // 「理想电压表不分流」是课本给初中生的简化模型，但它【不是真的】：
+              // 真实电压表有一份很大的内阻，接进电路就会偷走一点点电流。
+              // 勾上这一项，表就按 3kΩ 的真实内阻参与求解 —— 接它的两根导线上
+              // 会真的流过约 1mA，画成淡红空心箭头（见 drawWire 的 opts.weak），
+              // 和主回路的实心红箭头一眼分得开。默认不勾 = 课本的理想模型。
+              {k:'weakI', t:'check', wide:1, label:'模拟微弱电流（真实表内阻）'}],
   rheostat:  [{k:'Rmax', t:'range', label:'最大阻值', unit:'Ω', min:5, max:50, step:5},
               {k:'slide', t:'range', label:'滑片位置', unit:'', min:0, max:1, step:0.01}],
   // 灯泡多一个【单独的选项】：灯丝电阻随温度升高而增大。
@@ -1523,9 +1866,18 @@ function fmtR(c, r){
 
 function pval(c, k){
   if (c.params && c.params[k] != null) return c.params[k];
+  // 电压表的「模拟微弱电流」不是一个独立参数，它就是【rInternal 有没有值】。
+  // 单独存一份布尔量的话，两者迟早对不上：撤销栈、存档往返、预设电路各自
+  // 只恢复其中一个，于是面板上勾着、求解器里还是理想表（或者反过来）——
+  // 而画面上「有没有微弱电流」全看 rInternal，勾选框就成了一个说谎的控件。
+  if (k === 'weakI') return !!(c.params && c.params.rInternal > 0);
   var d = C.defaultParams(c.type);
   return d[k];
 }
+// 真实电压表的内阻。3 kΩ 是学生表（J0408 型，1 kΩ/V）在 3V 挡上的数：
+// 3V 下偷 1mA，相对主回路（几百 mA）是千分之几 —— 既真的偷了电流，
+// 又不至于让「几乎不分流」这句话当场破产。
+var VOLT_RIN = 3000;
 // 参数面板有两个容器：右侧固定的「元件参数」和点元件弹出的浮层。它们的
 // 参数行必须一模一样 —— 所以行由同一个 paramRowsHTML 生成，事件由同一个
 // wireParamInputs 挂上，同步由同一组 sync* 负责。哪一处漏了，学生就会遇到
@@ -1577,6 +1929,19 @@ function syncCheckPanel(){
         : (pval(c, 'stall')
             ? (mrec ? 'I = ' + num1(Math.abs(mrec.i)) + 'A · 线圈发烫' : '线圈发烫')
             : '转起来电流小');
+    }
+    // 电压表的「模拟微弱电流」同一条路子：把【它此刻真的偷走的电流】写出来，
+    // 学生就能拿它和主回路那个数直接比 —— 「差了三个数量级」这句话不用讲，
+    // 两个数并排摆着就自己成立了。没接线时不编数字，只说「几乎不分流」。
+    var vh = document.getElementById(pfx + 'weakI');
+    if (vh) {
+      var vrec = (results && results.components) ? results.components[c.id] : null;
+      vh.textContent = (c.type !== 'voltmeter' || !pval(c, 'weakI')) ? ''
+        : (vrec && vrec.wired
+            ? 'I ≈ ' + num1(Math.abs(vrec.i) * 1000) + ' mA' +
+              (maxWireI() > 1e-6 ? '（主回路 ' + num1(maxWireI()) + ' A）'
+                                 : '（电路里只有它这一股）')
+            : '几乎不分流');
     }
   });
 }
@@ -1634,7 +1999,12 @@ function wireParamInputs(box, c, specs, pfx){
       // 而面板上显示的是「蓝色」：图和数就此对不上，还查不出来。
       var val = el.tagName === 'SELECT' ? el.value
               : el.type === 'checkbox' ? el.checked : parseFloat(el.value);
-      editor.setParam(c.id, k, val);
+      // 「模拟微弱电流」勾选框写的是 rInternal（唯一的真值），不是它自己那一格。
+      // 取消勾选写 null 而不是 0：内核里 rInternal === 0 是一条 0Ω 支路
+      // （等于把电压表两端短路，量程柱和「−」柱之间直接导通），
+      // 而 null 才是「理想电压表，一条支路都不产生」。
+      if (k === 'weakI') editor.setParam(c.id, 'rInternal', val ? VOLT_RIN : null);
+      else editor.setParam(c.id, k, val);
       if (el.type === 'range') {
         var sp = specs.filter(function(s){ return s.k === k; })[0];
         var lab = document.getElementById(pfx + k);
@@ -1719,12 +2089,21 @@ function checkZeroOnClose(){
   setTimeout(function(){
     var bad = unzeroedInUse();
     if (!bad.length) return;
+    // 先出声再出字。这一下是整页唯一一个「你这一步做错了」的声音，必须和
+    // 合闸那声「咔」同时到达 —— 挂在这里而不是挂进音效引擎的 setState：
+    // 引擎只看得到电路状态（有没有短路、铃响不响），分不出「学生刚合上闸」
+    // 和「拖了一下别的元件导致重解」。见 onEvent 那段注释。
+    if (sound) sound.trigger('warn', { n: bad.length });
     var who = bad.length > 1 ? ('有 ' + bad.length + ' 只表')
                              : (bad[0].label + ' ' + bad[0].id);
     showToast(who + ' 没有调零就通电了 —— 指针不在零位上，读数整体偏一个固定量，' +
       '量出来的数据不可信。先断开开关，点开表盘、再点表盘上的调零旋钮。');
+    zeroWarnAt = Date.now();          // 给自检留一个「提示真的弹过」的时间戳
   }, 0);
 }
+// 上一次「未调零」提示弹出的时刻（0 = 从没弹过）。自检用它区分
+// 「没弹提示」和「弹了又被 6 秒定时器收掉」—— 后者不能算失败。
+var zeroWarnAt = 0;
 
 // ── 侧栏数据 ──────────────────────────────────────────────
 function updateSide(){
@@ -2826,7 +3205,7 @@ toolBtn('📐 转成电路图', openSchematic);
 // 「⋯ 更多」—— 手机上用手指写字本来就不实用，而它多占一格会把顶栏顶到 4 行，
 // 竖屏全屏下顶栏就从 90px 涨到 96px（M6 那条 ≤90 的判据实测抓到过）。
 var btnPen = toolBtn('✏️ 画笔：关', function(){ setPen(!pen.on); }, '', 1);
-btnPen.title = '在实验画面上写字画画（圈重点、写批注）';
+btnPen.title = '在实验画面上写字画画（圈重点、写批注）；在笔迹上来回涂抹即可擦掉';
 function setPen(v){
   var on = penSetOn(v);
   btnPen.textContent = '✏️ 画笔：' + (on ? '开' : '关');
@@ -3261,6 +3640,13 @@ window.__showFlow = function(){ return showFlow; };
 window.__setFlow = function(v){ setFlow(v); };
 window.__showCurrent = function(){ return showCurrent; };
 window.__setCurrent = function(v){ setCurrent(v); };
+// 把电流动画的相位钉住（传 null 解除）。像素断言必须先钉住它：箭头沿相位走，
+// 同一个电路状态取两次样，取样框里的箭头个数可能差一个，断言就变成抛硬币。
+window.__lockPhase = function(v){
+  phaseLock = (v == null ? null : Number(v));
+  if (phaseLock != null) phase = phaseLock;
+  return phaseLock;
+};
 window.__showSound = function(){ return showSound; };
 window.__setSound = function(v){ setSound(v); };
 // 电路安全：损坏 / 修复 / 演示故障。这几条给「灯泡烧断阈值」「表超量程与反接」
@@ -3431,6 +3817,11 @@ window.__tagHeights = function(){ return { id:TAG_ID_H, st:TAG_ST_H }; };
 // 编辑器那份 pathOf（命中用）和页面那份（绘制用）必须是同一串点，
 // 否则「看得见却点不着」。两边各导一个，测试直接逐点比。
 window.__hitPathOf = function(wr){ return editor.pathOf(wr); };
+// 画布的逻辑尺寸。屏幕坐标 ↔ 逻辑坐标的换算必须按【这个】比例来：
+// 画布被 CSS 拉伸过（视口宽高比 ≠ 1000:740），横竖两个方向的比例不一样 ——
+// 拿宽度那个比例去算纵坐标，点会落到上面老远的地方。出图脚本点器材、
+// 按导线都用它，别再自己按 1000 猜。
+window.__canvasWH = function(){ return { W: W, H: H }; };
 // 窄屏顶栏：断言读的是【屏幕几何】（谁真的看得见、顶栏多高），
 // 不是读 class 名 —— 读 class 的话，CSS 没生效也照样全绿。
 window.__barMetrics = function(){
@@ -3589,6 +3980,41 @@ window.__penStroke = function(pts){
   return pen.strokes.length;
 };
 window.__penPix = function(x, y, w, h){ return pixStatsOn(penCanvas, x, y, w, h); };
+// 标注层的【逻辑坐标 → 屏幕坐标】。真实指针事件（page.mouse）只认屏幕像素，
+// 而笔迹是按逻辑坐标存的；少了这个换算，「用真手指涂抹」就没法验。
+window.__penLogicalToScreen = function(x, y){
+  var r = penCanvas.getBoundingClientRect();
+  var dpr = window.devicePixelRatio || 1;
+  var W = penCanvas.width / dpr, H = penCanvas.height / dpr;
+  return { x: r.left + x * r.width / W, y: r.top + y * r.height / H };
+};
+// 涂抹擦除。判据本身（penIsScribble / penHitCount）单独导出 —— 自检要能
+// 「喂一串点进去问它算不算涂抹」，而不是每次都得合成一串真实指针事件。
+window.__penIsScribble = function(pts){
+  return penIsScribble(pts.map(function(p){ return { x: p[0], y: p[1] }; }));
+};
+window.__penEraseHits = function(pts){
+  return penEraseHits(pts.map(function(p){ return { x: p[0], y: p[1] }; }));
+};
+window.__penScribble = function(){
+  return { threshold: { dens: PEN_SCRIBBLE.DENS_MIN, len: PEN_SCRIBBLE.LEN_MIN,
+                        step: PEN_SCRIBBLE.STEP, near: PEN_SCRIBBLE.NEAR,
+                        gap: PEN_SCRIBBLE.GAP, over: PEN_SCRIBBLE.OVER_MIN,
+                        back: PEN_SCRIBBLE.BACK_MIN, hit: PEN_SCRIBBLE.HIT_MIN },
+           smudge: pen.smudge ? { n: pen.smudge.pts.length, alpha: pen.smudge.alpha } : null,
+           curScribble: !!(pen.cur && pen.cur.scribble),
+           eraseLog: penEraseLog.map(function(e){ return e.items.length; }) };
+};
+// 判据的三个分量单独露出来 —— 断言要能看见「为什么算 / 为什么不算」，
+// 只给一个 true/false 的话，判错了根本不知道是哪一条卡的。
+window.__penShape = function(pts){
+  var q = (pts || []).map(function(p){ return { x: p[0], y: p[1] }; });
+  var i, len = 0;
+  for (i = 1; i < q.length; i++) len += Math.hypot(q[i].x - q[i-1].x, q[i].y - q[i-1].y);
+  var sp = q.length ? penResample(q, PEN_SCRIBBLE.STEP) : [];
+  return { len: len, n: sp.length, over: penOverlapRate(sp), back: penBacktrack(sp),
+           scribble: penIsScribble(q) };
+};
 // 抓一帧的原始像素，之后再和「同一块区域」比对 —— 用来验「在转 / 没转」。
 window.__pixSnap = function(x, y, w, h){
   var dpr = window.devicePixelRatio || 1;
@@ -3695,6 +4121,30 @@ window.__zeroed = function(id){ return meterZeroed(editor.byId(id)); };
 window.__zeroMeter = function(id){ return zeroMeter(editor.byId(id)); };
 window.__unzeroed = function(){ return unzeroedInUse(); };
 window.__toast = function(){ return { hidden: toastEl.hidden, text: toastTextEl.textContent }; };
+// 未调零警告：提示条 + 画布上那枚红叹号 + 有没有出声（声音走音效引擎的账本，
+// 这里只报「什么时候弹的」和「画了几个叹号、画在哪儿」）。
+window.__zeroWarn = function(){
+  var ic = document.getElementById('toastIcon');
+  var ir = ic ? ic.getBoundingClientRect() : null;
+  return {
+    at: zeroWarnAt,
+    drawn: zeroWarnDrawn.map(function(z){ return { id:z.id, x:z.x, y:z.y, label:z.label }; }),
+    icon: ir ? { text: ic.textContent, w: ir.width, h: ir.height,
+                 bg: getComputedStyle(ic).backgroundColor } : null,
+  };
+};
+// 微弱电流：逐根导线报「电流多少、算不算微弱」。判据在 wireIsWeak()，
+// 这里只是把它的结果原样交出来，不在测试里另抄一份阈值。
+window.__weakWires = function(){
+  return scene.wires.map(function(w, i){
+    return { i:i, flow: flows[i] || 0, weak: wireIsWeak(i) };
+  });
+};
+window.__weakWiresDrawn = function(){
+  return { weakI: WEAK_I_MAX, ratio: WEAK_RATIO, voltRin: VOLT_RIN,
+           maxI: maxWireI(), maxOther: maxOtherI(),
+           wires: window.__weakWires() };
+};
 window.__hideToast = function(){ hideToast(); };
 window.__zoomZeroHit = function(cx, cy){ return zoomHitZero(cx, cy); };
 window.__zoomZeroBtn = function(){
