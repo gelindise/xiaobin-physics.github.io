@@ -334,9 +334,20 @@ import * as THREE from './assets/optics-three.min.js';
   const drawn = {
     rays: [],        // 每条光线实画的入/内/出三段端点
     axis: null,
-    focus: null,     // 近轴出射光线的实测交点
+    /* 🔴 本页有两个「焦点」，别把它们混成一个（混了就是用户报的那个 bug）：
+       · paraxialFocus —— 近轴出射光线（h≈0.66 cm）的交点。它是【焦距 f 的定义点】，
+         读数「实测焦距」由它算（从像方主平面量起），与侧栏的 f 对得上。
+       · focus —— 【实际画出去的那束光】的会聚点，取当前模式下最外侧那一对对称光线的交点。
+         黄点标记、光锥顶点、虚焦点全部用它 ⇒ 点永远落在眼睛看到的那个会聚处。
+       两者相差多少就是球差：光束半径越大差得越多。原来只用近轴那一对定焦点，
+       而画面里最外两条光线（h = beamRadius）在 x≈10.3 就交了、黄点却钉在 12.2 ——
+       用户一眼就看出「点没落在汇聚点上」。 */
+    focus: null,
+    paraxialFocus: null,
     virtualFocus: null,
-    edgeFocus: null, // 边缘光线交点（用于看球差）
+    edgeFocus: null, // 边缘光线交点（= focus，记录表「边缘实测焦距」用）
+    principal: null,
+    measuredFocal: null,
     beam: null
   };
 
@@ -374,6 +385,36 @@ import * as THREE from './assets/optics-three.min.js';
     return intersectXY({ p: a.P2, d: a.d2 }, { p: b.P2, d: b.d2 });
   }
 
+  /* 这个焦距下「还追得动」的最大入射高度。
+     🔴 镜片边缘处两个球面几乎相交（凸透镜边缘厚只剩 ~0.1 cm）：贴着口径的光线会从
+     第二面【背后】穿出去，求交返回 null（实测 f=6 时 h ≥ 3.0 就没了，f=12 时 h ≥ 4.4）。
+     滑块停在 4.4 而实际只画得出 2.8 的光束 ⇒ 黄点还会退回近轴焦点，正是用户报的那个 bug。
+     所以按焦距二分出上限，再把滑块 max 顶到那儿去 —— 界面不许你点一个画不出来的值。 */
+  function maxTraceableRadius() {
+    if (focusPair(APERTURE)) return APERTURE;
+    let lo = 0.5, hi = APERTURE;
+    for (let i = 0; i < 26; i++) {
+      const mid = (lo + hi) / 2;
+      if (focusPair(mid)) lo = mid; else hi = mid;
+    }
+    return Math.floor(lo * 10) / 10;    // 保守到 0.1 cm
+  }
+
+  // 把光束半径滑块的上下限同步到当前透镜：改焦距/换镜片后必须重算
+  // 🔴 上限的「设计上限」必须在模块初始化时抓一次存起来：滑块 max 会被自己改小，
+  //    若每次都从 sl.max 读，焦距从 6 调回 20 时上限就再也涨不回去了。
+  const BEAM_MAX_UI = +($('beamRadius').max || APERTURE);
+  function syncBeamRange() {
+    const sl = $('beamRadius');
+    if (!sl) return;
+    const maxUi = Math.max(1.0, Math.min(BEAM_MAX_UI, maxTraceableRadius()));
+    sl.max = maxUi.toFixed(1);
+    if (state.beamRadius > maxUi) state.beamRadius = maxUi;
+    if (state.beamRadius < +sl.min) state.beamRadius = +sl.min;
+    sl.value = state.beamRadius;
+    if ($('beamValue')) $('beamValue').textContent = state.beamRadius.toFixed(1) + ' cm';
+  }
+
   // 像方主平面：一条平行于主轴、高度 h 的入射光线，与它出射后【反向延长】的交点所在的平面。
   // 这是主平面的原始定义，几何构造出来 —— 焦距正是从主平面量到焦点的距离。
   // （本页镜片有厚度，主平面落在镜片内部，所以「从透镜中心量起的焦点距离」会比 f 略大；
@@ -394,8 +435,137 @@ import * as THREE from './assets/optics-three.min.js';
     return line;
   }
 
+  /* ================= 体积光柱 =================
+     多层同轴壳叠加（加法混合）⇒ 中间自然烧成一条白芯，边缘是冷暖两色。
+     入射段暖白、出射段冷白 —— 两层在镜面处接上，交汇的地方就是白得最亮的那一段。
+     层数给到 5 层是为了把「色带」磨平：三层时相邻壳的半径差太大，侧看能数出圆环台阶。
+     调亮/调淡只改下面两张表的 op（整体再乘 BEAM_LEVEL 那一档）。 */
+  const BEAM_IN = [                       // 入射段（还没被透镜折过）
+    { k: 1.00, color: '#ffc98a', op: 0.062 },
+    { k: 0.82, color: '#ffdcb4', op: 0.068 },
+    { k: 0.62, color: '#ffeed8', op: 0.078 },
+    { k: 0.42, color: '#ffffff', op: 0.094 },
+    { k: 0.22, color: '#ffffff', op: 0.118 }
+  ];
+  const BEAM_OUT = [                      // 出射段（折射之后）
+    { k: 1.00, color: '#6fd8f2', op: 0.062 },
+    { k: 0.82, color: '#9ae6f8', op: 0.068 },
+    { k: 0.62, color: '#cdf3ff', op: 0.080 },
+    { k: 0.42, color: '#ffffff', op: 0.098 },
+    { k: 0.22, color: '#ffffff', op: 0.124 }
+  ];
+  const BEAM_LEVEL = { soft: 0.55, full: 1.0 };
+  /* 凹透镜入射侧的「虚光锥」：出射光的反向延长线看起来在那里会聚。
+     它和【真实的入射光柱】占同一块空间，所以必须① 染成紫调（和 all 模式里的紫虚线、
+     紫点同一套语言）② 压到一半以下 —— 否则学生会把「虚的」看成「光真的在那里会聚」。 */
+  const BEAM_VIRT = [
+    { k: 1.00, color: '#8f7ae0', op: 0.040 },
+    { k: 0.62, color: '#b8a4ff', op: 0.048 },
+    { k: 0.30, color: '#e6dcff', op: 0.060 }
+  ];
+
+  /* 会聚点上的光晕（加法 sprite）。
+     🔴 中心必须是【全透明】的环，不能是一坨实心白：实心白在加法混合下会把黄点整个
+     冲成白色 —— 用户要的正是「一眼看到光柱汇聚到那个黄点」，点被糊掉就白改了。
+     透明芯的半径 0.13 × (5.0/2) ≈ 0.33 cm，比黄点半径 0.42 cm 略小，亮环正好套在点外面。 */
+  const glowTex = (() => {
+    const c = document.createElement('canvas'); c.width = c.height = 128;
+    const g = c.getContext('2d');
+    const gr = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+    gr.addColorStop(0.00, 'rgba(255,255,255,0)');
+    gr.addColorStop(0.13, 'rgba(255,255,255,0.05)');
+    gr.addColorStop(0.22, 'rgba(255,255,255,0.80)');
+    gr.addColorStop(0.34, 'rgba(206,242,255,0.42)');
+    gr.addColorStop(0.55, 'rgba(96,200,236,0.16)');
+    gr.addColorStop(1.00, 'rgba(12,60,96,0)');
+    g.fillStyle = gr; g.fillRect(0, 0, 128, 128);
+    const t = new THREE.CanvasTexture(c);
+    t.colorSpace = THREE.SRGBColorSpace;
+    return t;
+  })();
+
+  function beamShell(geo, hex, op, x, y, rz) {
+    const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
+      color: hex, transparent: true, opacity: op, depthWrite: false,
+      blending: THREE.AdditiveBlending, side: THREE.DoubleSide
+    }));
+    m.position.set(x, y, 0);
+    m.rotation.z = rz;
+    beamGroup.add(m);
+    return m;
+  }
+
+  function buildBeam(level) {
+    const mul = BEAM_LEVEL[level] || 1;
+    const Rb = state.beamRadius;
+    const a = state.incidence * RAD, tanA = Math.tan(a);
+    const isConvex = state.kind === 'convex';
+    const f = drawn.focus;
+    const SEG = 48;
+    drawn.beam = null;
+
+    // ① 入射圆柱：轴沿 (cos a, sin a, 0)，中心线 y = x·tan a，从 RAY_X0 到镜面
+    const len = Math.abs(RAY_X0), midX = RAY_X0 / 2;
+    for (const s of BEAM_IN) {
+      beamShell(new THREE.CylinderGeometry(Rb * s.k, Rb * s.k, len, SEG, 1, true),
+        s.color, s.op * mul, midX, midX * tanA, a - Math.PI / 2);
+    }
+    if (!f) return;
+
+    if (isConvex) {
+      const dx = f.x, dy = f.y, hh = Math.hypot(dx, dy);
+      if (!(hh > 2)) return;
+      // ② 会聚光锥：底面落在镜面处（半径 Rb），锥尖正好钉在黄点上
+      for (const s of BEAM_OUT) {
+        beamShell(new THREE.ConeGeometry(Rb * s.k, hh, SEG, 1, true),
+          s.color, s.op * mul, dx / 2, dy / 2, Math.atan2(dy, dx) - Math.PI / 2);
+      }
+      // ③ 过了焦点之后重新张开 —— 光锥变回发散光锥（用户要的「汇聚之后再散开」）
+      const Ld = Math.min(RAY_X1 - dx, 3.5 * hh);
+      if (Ld > 1) {
+        const rEnd = Rb * Ld / hh;
+        for (const s of BEAM_OUT) {
+          beamShell(new THREE.CylinderGeometry(rEnd * s.k, 1e-3, Ld, SEG, 1, true),
+            s.color, s.op * mul * 0.8, dx + Ld / 2, dy + Ld / 2 * tanA, a - Math.PI / 2);
+        }
+      }
+      drawn.beam = { apex: [dx, dy, 0], base: [0, 0, 0], r: Rb, rEnd: Rb * Ld / hh, kind: 'converge', level };
+    } else {
+      // 凹透镜：出射光向右张开（截锥），入射侧再补一个「反向延长线看起来会聚」的虚光锥
+      const L = Math.min(RAY_X1, 2.4 * Math.abs(lens().fTheory));
+      const rEnd = Rb * (1 + L / Math.abs(lens().fTheory));
+      for (const s of BEAM_OUT) {
+        beamShell(new THREE.CylinderGeometry(rEnd * s.k, Rb * s.k, L, SEG, 1, true),
+          s.color, s.op * mul, L / 2, L / 2 * tanA, a - Math.PI / 2);
+      }
+      const hh = Math.hypot(f.x, f.y);
+      if (hh > 2) {
+        for (const s of BEAM_VIRT) {
+          beamShell(new THREE.ConeGeometry(Rb * s.k, hh, SEG, 1, true),
+            s.color, s.op * mul, f.x / 2, f.y / 2, Math.atan2(f.y, f.x) - Math.PI / 2);
+        }
+      }
+      drawn.beam = { apex: [f.x, f.y, 0], base: [0, 0, 0], r: Rb, rEnd, kind: 'diverge', level };
+    }
+
+    // ④ 会聚点上的光晕
+    if (Math.abs(f.x) < 60) {
+      const sp = new THREE.Sprite(new THREE.SpriteMaterial({
+        map: glowTex, transparent: true, depthWrite: false, depthTest: false,
+        blending: THREE.AdditiveBlending,
+        opacity: (level === 'full' ? 0.95 : 0.5) * (isConvex ? 1 : 0.72),
+        color: isConvex ? '#ffffff' : '#d9c8ff'
+      }));
+      sp.scale.set(5.0, 5.0, 1);
+      sp.position.set(f.x, f.y, f.z);
+      beamGroup.add(sp);
+      drawn.beam.glow = [f.x, f.y, f.z];
+    }
+  }
+
   function rebuildRays() {
     const L = lens();
+    const beamOnly = state.rayMode === 'beam';   // 「只看光柱」档：一条光线都不画
     clearGroup(rayGroup);
     clearGroup(beamGroup);
     drawn.rays = [];
@@ -403,7 +573,10 @@ import * as THREE from './assets/optics-three.min.js';
 
     // 选要追迹的光线
     let samples;
-    if (state.rayMode === 'special') {
+    if (beamOnly) {
+      // 「只看光柱」：画面上只剩体积光柱本身。焦点照算（不依赖画了哪几条）。
+      samples = [];
+    } else if (state.rayMode === 'special') {
       // 三条特殊光线：平行主轴（过 +h）、过光心、过焦点入射
       const h = Math.max(1.6, state.beamRadius * .62);
       samples = [{ y: h, z: 0, r: h, tag: 'parallel' },
@@ -434,46 +607,65 @@ import * as THREE from './assets/optics-three.min.js';
       traced.push({ s, r });
     }
 
-    // 近轴 / 边缘两组，各用一对对称光线定焦点（不依赖上面画了哪几条）
-    // 近轴取样高度随焦距缩放（h/f 恒定）⇒ 球差的相对量恒定，实测焦距在全焦距段同样准。
+    /* ---- 两个焦点，各算各的（互不引用） ----
+       ① 近轴焦点 hNear：焦距 f 的定义点。取样高度随焦距缩放（h/f 恒定）
+          ⇒ 球差的相对量恒定，实测焦距在全焦距段同样准。读数「实测焦距」用它。
+       ② 会聚点 hOuter：当前模式下【最外侧那一对对称光线】的交点 —— 也就是眼睛看到的
+          那个收束点。黄点、光锥顶点、虚焦点都用它。 */
     const hNear = Math.min(APERTURE * NEAR_AXIS, state.beamRadius * 0.92, 0.055 * Math.abs(state.f));
-    const hEdge = state.beamRadius;
     const fNear = focusPair(hNear);
-    const fEdge = (hEdge - hNear) > 0.05 ? focusPair(hEdge) : null;
-    drawn.focus = fNear ? { x: fNear.x, y: fNear.y, z: 0 } : null;
-    drawn.edgeFocus = fEdge ? { x: fEdge.x, y: fEdge.y, z: 0 } : null;
-    // 主平面 + 「实测焦距」（从主平面量到焦点，与侧栏的焦距 f 是同一定义的量）
+    drawn.paraxialFocus = fNear ? { x: fNear.x, y: fNear.y, z: 0 } : null;
+
+    // 最外侧对称光线的高度：从【真的追出来的那几条】里取，而不是照抄滑块。
+    // （「6 条」档只画一圈 r = 0.62·Rb；「单条」档只有一条；「只看光柱」档一条都没有。）
+    let hOuter = 0;
+    for (const t of traced) {
+      if (t.s.tag === 'focal') continue;     // 「过焦点入射」那条不是平行光，不参与定焦点
+      const rr = Math.abs(t.s.y);
+      if (rr > hOuter) hOuter = rr;
+    }
+    if (beamOnly) hOuter = state.beamRadius;  // 只看光柱：光锥底面半径就是它
+    if (!(hOuter > hNear + 0.05)) hOuter = hNear;
+    const fOuter = focusPair(hOuter) || fNear;
+    drawn.focus = fOuter ? { x: fOuter.x, y: fOuter.y, z: 0 } : null;
+    drawn.edgeFocus = drawn.focus;                 // 记录表「边缘实测焦距」= 同一束光的最外沿
+    drawn.hOuter = hOuter;
+
+    // 主平面 + 「实测焦距」（从主平面量到【近轴】焦点 —— 与侧栏的焦距 f 同一定义）
     drawn.principal = principalH(hNear);
-    drawn.measuredFocal = (drawn.focus && drawn.principal !== null) ? (drawn.focus.x - drawn.principal) : null;
+    drawn.measuredFocal = (drawn.paraxialFocus && drawn.principal !== null)
+      ? (drawn.paraxialFocus.x - drawn.principal) : null;
+    // 「焦点位置」读数：黄点（= 实际会聚点）在主光轴上的位置，从透镜中心量起
+    drawn.focusPos = drawn.focus ? drawn.focus.x : null;
 
     const isConvex = state.kind === 'convex';
 
-    // 画光线
-    for (const t of traced) {
-      const { r, s } = t;
-      const endX = RAY_X1;
-      const k = Math.abs(r.d2.x) > 1e-9 ? (endX - r.P2.x) / r.d2.x : 24;
-      const P3 = r.P2.clone().addScaledVector(r.d2, Math.max(k, 6));
-      const op = state.rayMode === 'all' ? .95 : 1;
-      matIn.opacity = op; matOut.opacity = op;
-      addSeg(rayGroup, r.P0, r.P1, matIn);
-      addSeg(rayGroup, r.P1, r.P2, matGlass);
-      addSeg(rayGroup, r.P2, P3, matOut);
-      drawn.rays.push({
-        tag: s.tag || 'beam', r: s.r,
-        in: [r.P0.toArray(), r.P1.toArray()],
-        glass: [r.P1.toArray(), r.P2.toArray()],
-        out: [r.P2.toArray(), P3.toArray()],
-        dOut: r.d2.toArray()
-      });
-    }
-
-    // 凹透镜的虚焦点：出射光的反向延长线交于入射侧，与出射光线的交点【同一点】
-    // （直线求交与方向无关），所以直接取 drawn.focus。画不画由 showVirtual 决定。
+    // 画光线（「只看光柱」这一档一条都不画 —— 画面上只剩体积光柱）
     drawn.virtualFocus = null;
-    if (!isConvex && drawn.focus) {
-      drawn.virtualFocus = { x: drawn.focus.x, y: drawn.focus.y, z: 0 };
-      if (state.showVirtual) {
+    if (!isConvex && drawn.focus) drawn.virtualFocus = { x: drawn.focus.x, y: drawn.focus.y, z: 0 };
+    if (!beamOnly) {
+      for (const t of traced) {
+        const { r, s } = t;
+        const endX = RAY_X1;
+        const k = Math.abs(r.d2.x) > 1e-9 ? (endX - r.P2.x) / r.d2.x : 24;
+        const P3 = r.P2.clone().addScaledVector(r.d2, Math.max(k, 6));
+        const op = state.rayMode === 'all' ? .95 : 1;
+        matIn.opacity = op; matOut.opacity = op;
+        addSeg(rayGroup, r.P0, r.P1, matIn);
+        addSeg(rayGroup, r.P1, r.P2, matGlass);
+        addSeg(rayGroup, r.P2, P3, matOut);
+        drawn.rays.push({
+          tag: s.tag || 'beam', r: s.r,
+          in: [r.P0.toArray(), r.P1.toArray()],
+          glass: [r.P1.toArray(), r.P2.toArray()],
+          out: [r.P2.toArray(), P3.toArray()],
+          dOut: r.d2.toArray()
+        });
+      }
+
+      // 凹透镜的虚焦点：出射光的反向延长线交于入射侧，与出射光线的交点【同一点】
+      // （直线求交与方向无关），所以直接取 drawn.focus。画不画由 showVirtual 决定。
+      if (!isConvex && drawn.focus && state.showVirtual) {
         for (const t of traced) {
           const k = Math.abs(t.r.d2.x) > 1e-9 ? ((drawn.focus.x - 6) - t.r.P2.x) / (-t.r.d2.x) : 6;
           if (k > 0) {
@@ -484,52 +676,11 @@ import * as THREE from './assets/optics-three.min.js';
       }
     }
 
-    // 光柱体积：只画个淡淡的壳，帮眼睛把「一束光」和「一条线」区分开
-    if (state.showBeam && state.rayMode === 'all') {
-      const Rb = state.beamRadius;
-      const a = state.incidence * RAD;
-      const tanA = Math.tan(a);
-      // 入射圆柱：轴沿 (cos a, sin a, 0)，中心线 y = x·tan a
-      const len = Math.abs(RAY_X0);
-      const cyl = new THREE.CylinderGeometry(Rb, Rb, len, 32, 1, true);
-      const cy = new THREE.Mesh(cyl, new THREE.MeshBasicMaterial({
-        color: '#ffcf8a', transparent: true, opacity: .05, depthWrite: false,
-        blending: THREE.AdditiveBlending, side: THREE.DoubleSide
-      }));
-      const midX = RAY_X0 / 2;
-      cy.position.set(midX, midX * tanA, 0);
-      cy.rotation.z = a - Math.PI / 2;      // 圆柱默认轴沿 +y，转成 (cos a, sin a, 0)
-      beamGroup.add(cy);
-      // 出射段
-      if (isConvex && drawn.focus) {
-        const dx = drawn.focus.x, dy = drawn.focus.y;
-        const h = Math.hypot(dx, dy);
-        if (h > 2) {
-          const cone = new THREE.ConeGeometry(Rb, h, 32, 1, true);
-          const cn = new THREE.Mesh(cone, new THREE.MeshBasicMaterial({
-            color: '#7fe6f7', transparent: true, opacity: .055, depthWrite: false,
-            blending: THREE.AdditiveBlending, side: THREE.DoubleSide
-          }));
-          cn.position.set(dx / 2, dy / 2, 0);
-          cn.rotation.z = Math.atan2(dy, dx) - Math.PI / 2;   // 锥尖指向焦点
-          beamGroup.add(cn);
-          drawn.beam = { apex: [dx, dy, 0], base: [0, 0, 0], r: Rb, kind: 'converge' };
-        }
-      } else if (!isConvex) {
-        // 凹透镜：出射光向右张开，画一个截锥
-        const L = 22;
-        const rEnd = Rb * (1 + L / Math.abs(lens().fTheory));
-        const fr = new THREE.CylinderGeometry(rEnd, Rb, L, 32, 1, true);
-        const fm = new THREE.Mesh(fr, new THREE.MeshBasicMaterial({
-          color: '#c4a4ff', transparent: true, opacity: .05, depthWrite: false,
-          blending: THREE.AdditiveBlending, side: THREE.DoubleSide
-        }));
-        fm.position.set(L / 2, L / 2 * tanA, 0);
-        fm.rotation.z = a - Math.PI / 2;
-        beamGroup.add(fm);
-        drawn.beam = { apex: null, base: [0, 0, 0], r: Rb, rEnd, kind: 'diverge' };
-      }
-    }
+    /* ---- 体积光柱 ----
+       'soft'：和光线一起看，一层淡淡的壳，帮眼睛把「一束光」和「一条线」分开。
+       'full'：「只看光柱」的主角 —— 入射光柱 → 会聚光锥 → 过焦点后再张开成发散光锥。 */
+    const beamOn = (state.showBeam && state.rayMode === 'all') || beamOnly;
+    if (beamOn) buildBeam(beamOnly ? 'full' : 'soft');
 
     // 焦点标记
     clearGroup(focalGroup);
@@ -562,11 +713,14 @@ import * as THREE from './assets/optics-three.min.js';
   function updateReadouts() {
     const isConvex = state.kind === 'convex';
     const f = lens().fTheory;
-    const mf = drawn.measuredFocal;                    // 实测焦距（从像方主平面量到焦点）
+    const mf = drawn.measuredFocal;                    // 近轴实测焦距（从像方主平面量到近轴焦点）
+    const fp = drawn.focusPos;                         // 黄点（实际会聚点）在主光轴上的位置
     const txt = (v) => Number.isFinite(v) ? (v >= 0 ? '+' : '') + v.toFixed(2) + ' cm' : '—';
     $('roKind').textContent = isConvex ? '凸透镜' : '凹透镜';
     $('roF').textContent = Math.abs(f).toFixed(1) + ' cm';
     $('roFocus').textContent = txt(mf);
+    if ($('roFocusPos')) $('roFocusPos').textContent = txt(fp);
+    if ($('roFocusPosLabel')) $('roFocusPosLabel').textContent = isConvex ? '焦点位置' : '虚焦点位置';
     $('roConv').textContent = isConvex ? '会聚' : '发散';
     $('roFocusLabel').textContent = '实测焦距';
     $('metricFocusLabel').textContent = isConvex ? '实测焦距' : '实测焦距（虚）';
@@ -575,7 +729,7 @@ import * as THREE from './assets/optics-three.min.js';
     $('metricFocus').textContent = txt(mf);
     $('metricEffect').textContent = isConvex ? '会聚（聚焦）' : '发散（散开）';
     $('roNote').textContent = isConvex
-      ? '实测焦距由出射光求交算出，从像方主平面量起'
+      ? '实测焦距由近轴出射光求交算出，从像方主平面量起'
       : '负号表示焦点是虚焦点，落在入射侧';
   }
 
@@ -610,6 +764,7 @@ import * as THREE from './assets/optics-three.min.js';
   }
 
   function rebuildAll() {
+    syncBeamRange();          // 光束半径上限跟着焦距走（贴口径的光线追不出来）
     buildLens(lens());
     rebuildRays();
     render();
@@ -716,10 +871,15 @@ import * as THREE from './assets/optics-three.min.js';
     if (!Number.isFinite(mf)) return;
     const theory = lens().fTheory;
     const err = Math.abs(mf - theory) / Math.abs(theory) * 100;
+    const fp = drawn.focusPos;
     $('finding').innerHTML = '<b>聚焦法测焦距：</b>把平行光正对透镜，量出光斑最小处到<b>主平面</b>的距离，' +
       '就得到焦距 <b>f ≈ ' + mf.toFixed(2) + ' cm</b>；侧栏设定的焦距是 ' + theory.toFixed(2) + ' cm，' +
       '两者相差 <b>' + err.toFixed(2) + '%</b>（差别来自球差：把「光束半径」调小会更接近）。' +
-      (state.showBeam ? '' : '（把「光柱体积」打开更容易看到光斑收成一点。）');
+      (Number.isFinite(fp)
+        ? '黄色标记落在<b>实际光斑最小处</b> x = ' + (fp >= 0 ? '+' : '') + fp.toFixed(2) + ' cm；' +
+          '边缘光线比近轴光线更早会聚，所以它比近轴焦点略靠近透镜。'
+        : '') +
+      (state.rayMode === 'beam' ? '' : '（切到「只看光柱」更容易看到光斑收成一点。）');
     if (dotA) dotA.scale.setScalar(1.9);
     render();
   }
@@ -795,6 +955,9 @@ import * as THREE from './assets/optics-three.min.js';
     state,
     get lens() { return lens(); },
     get focus() { return drawn.focus; },
+    get paraxialFocus() { return drawn.paraxialFocus; },
+    get focusPos() { return drawn.focusPos; },
+    get hOuter() { return drawn.hOuter; },
     get edgeFocus() { return drawn.edgeFocus; },
     get virtualFocus() { return drawn.virtualFocus; },
     get rays() { return drawn.rays; },
@@ -838,22 +1001,44 @@ import * as THREE from './assets/optics-three.min.js';
     clearRecords: () => { state.records = []; renderRecords(); },
     render, rebuildAll,
     size: () => ({ w: state.w, h: state.h, dpr: state.dpr }),
+    /* 世界坐标 → 画布像素（含 dpr 的 backing store 坐标）。
+       走页面自己的 render() 再投影 ⇒ 相机矩阵与画布尺寸一定是当前的，
+       自检拿到的位置与【画出去的那一个】同源，不是另写一份投影。
+       返回的 w/h 就是 canvas.width/height，采样时按同一坐标系读像素。 */
+    project: (x, y, z) => {
+      render();
+      const v = new THREE.Vector3(x, y, z).project(camera);
+      return {
+        x: (v.x * .5 + .5) * canvas.width,
+        y: (.5 - v.y * .5) * canvas.height,
+        z: v.z, w: canvas.width, h: canvas.height
+      };
+    },
     debug() {
-      const L = lens(), fo = drawn.focus;
+      const L = lens(), fo = drawn.focus, pa = drawn.paraxialFocus;
       return {
         kind: state.kind, fSetting: state.f, fTheory: L.fTheory, R: L.R,
         R1: L.R1, R2: L.R2, c1: L.c1, c2: L.c2,
         focusX: fo ? fo.x : null, focusY: fo ? fo.y : null,
+        paraxialX: pa ? pa.x : null,
+        hOuter: drawn.hOuter,
         edgeFocusX: drawn.edgeFocus ? drawn.edgeFocus.x : null,
         virtualX: drawn.virtualFocus ? drawn.virtualFocus.x : null,
         principalX: drawn.principal,
         measuredFocal: drawn.measuredFocal,
+        focusPos: drawn.focusPos,
+        beamEff: state.beamRadius,
+        beamMaxUi: +$('beamRadius').max,
+        beamKind: drawn.beam ? drawn.beam.kind : null,
+        beamLevel: drawn.beam ? drawn.beam.level : null,
         rayCount: drawn.rays.length,
+        rayMode: state.rayMode,
         nearAxisLimit: APERTURE * NEAR_AXIS,
         aperture: APERTURE, thick: THICK, n: N_GLASS,
         incidence: state.incidence,
         metricFocus: $('metricFocus').textContent,
         roFocus: $('roFocus').textContent,
+        roFocusPos: $('roFocusPos') ? $('roFocusPos').textContent : null,
         records: state.records.length
       };
     }
