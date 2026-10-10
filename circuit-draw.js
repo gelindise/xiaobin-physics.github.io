@@ -468,6 +468,23 @@
     return !!(comp && comp.params && comp.params.flip);
   }
 
+  // 元件的【显示名】。默认就是自动编号（c.id：L1 / S2 / E1 …），学生点画布上
+  // 那个标签框就能改成任意短名（「L」「灯泡」「小灯」…）。
+  //
+  // ⚠️ 只改【显示】，绝不改 c.id：
+  //   · 导线端点的 compId、内核的 results.components[c.id]、并查集的
+  //     `id + ':' + termIdx` 节点名、撤销快照的键 —— 全都认 c.id；
+  //   · 改 id 等于给元件换一个身份，上面每一处都要跟着重写，代价远大于收益；
+  //   · 而且 id 一变，自动编号的「不重复」判据（`byId(prefix + n)`）就漏了
+  //     —— 用户把 L1 改名成 L 之后再放一个灯泡，会又冒出一个 L1。
+  // 所以 name 是一个纯附加字段：空 / 全空白 ⇒ 回落到 id（等于「没改过」）。
+  // 存档（comps 整体序列化）与撤销栈（整个 scene 快照）都自动带上它。
+  function nameOf(comp) {
+    if (!comp) return '';
+    var n = comp.name;
+    return (typeof n === 'string' && n.trim()) ? n.trim() : comp.id;
+  }
+
   function toWorld(comp, lx, ly) {
     var r = (comp.rot || 0) * Math.PI / 180;
     var c = Math.cos(r), s = Math.sin(r);
@@ -3662,6 +3679,9 @@
     //          就读端点里冻住的 x/y（见 circuit-editor 的 removeSelected）。
     //          任何 byId + terminalWorld 的写法在「删元件保留导线」之后都会崩。
     flipOf: flipOf, endWorld: endWorld,
+    // nameOf —— 元件的【显示名】单一真值（c.name 空则回落 c.id）。画布标签、
+    //           侧栏表、警告行、浮层标题一律问它，别各自去读 c.id 或 c.name。
+    nameOf: nameOf,
     RHEO: RHEO, PLATE: PLATE,
     sliderLocalX: sliderLocalX, slideFromLocalX: slideFromLocalX,
     slideOf: slideOf,

@@ -97,6 +97,21 @@
     box-shadow:0 14px 40px rgba(15,23,42,.28);padding:10px 12px 12px;
     max-height:calc(100vh - 24px);overflow:auto}
   .pop[hidden]{display:none}
+  /* 元件改名浮层：点画布上那个写着 L1 / R2 的名字标签弹出来。故意做得比
+     参数浮层（.pop）小一号 —— 它只干一件事，占太多地方反而挡住元件。 */
+  .namePop{position:fixed;z-index:50;display:flex;align-items:center;gap:6px;
+    padding:7px 8px;background:var(--card);border:1px solid var(--line);
+    border-radius:10px;box-shadow:0 12px 30px rgba(15,23,42,.22)}
+  .namePop[hidden]{display:none}
+  .namePop input{width:112px;padding:5px 8px;font-family:inherit;font-size:13px;
+    font-weight:700;color:var(--text);background:#fff;border:1px solid var(--line);
+    border-radius:7px}
+  .namePop input:focus{outline:none;border-color:var(--accent);
+    box-shadow:0 0 0 2px rgba(234,88,12,.16)}
+  .namePop button{padding:5px 10px;font-family:inherit;font-size:12.5px;font-weight:700;
+    color:#fff;background:var(--accent);border:1px solid var(--accent);
+    border-radius:7px;cursor:pointer}
+  .namePop button:hover{filter:brightness(1.06)}
   .popHead{display:flex;align-items:center;gap:8px;font-size:13.5px;font-weight:700;
     margin-bottom:7px}
   .popHead .sp{flex:1 1 auto}
@@ -534,6 +549,14 @@
     <button id="popX" type="button" title="关闭">✕</button></div>
   <div id="popBody"></div>
 </div>
+<!-- 元件改名浮层。点画布上元件的名字标签（L1 / R2 / E1 …）弹出来；
+     空着点确定 = 恢复自动编号。名字只是【显示名】，内部编号（导线端点、
+     存档引用）仍是 c.id —— 见 circuit-draw 的 nameOf。 -->
+<div class="namePop" id="namePop" hidden>
+  <input id="nameInput" type="text" maxlength="12" spellcheck="false"
+         autocomplete="off" aria-label="元件名称" placeholder="元件名称">
+  <button id="nameOk" type="button">确定</button>
+</div>
 
 <!-- 表盘放大镜。里面的 canvas 由 openZoom() 按 K 倍重画【同一只表】
      （同一个 drawComponent、同一份求解结果），不是另做一套放大版表盘——
@@ -600,12 +623,12 @@
      改了内核而 HTML 没变的话，老访客会拿缓存里的旧脚本跑新页面（画面上就
      会出现「说明写了电子逆流、小球却还顺着流」这种自相矛盾）。改脚本时
      把这个 build 号 +1 即可。 -->
-<script src="circuit-core.js?build=16"></script>
-<script src="circuit-draw.js?build=21"></script>
-<script src="circuit-editor.js?build=19"></script>
+<script src="circuit-core.js?build=17"></script>
+<script src="circuit-draw.js?build=22"></script>
+<script src="circuit-editor.js?build=20"></script>
 <!-- 电路图（实物图 → 标准符号）。独立成第四块内核：沙盒和欧姆定律页共用同一份，
      免得各写一套符号，两边的图画法迟早不一样。三个老内核一行没动，build 号不升。 -->
-<script src="circuit-schematic.js?build=11"></script>
+<script src="circuit-schematic.js?build=12"></script>
 <!-- 音效引擎。全部音色现场合成，不带音频素材；AudioContext 懒创建，
      等第一次真实手势才建。它只读状态、只出声，不碰物理也不碰画面。 -->
 <script src="circuit-sound.js?build=2"></script>
@@ -880,7 +903,7 @@ function applyFaults(){
     c.faultWhy = x.why || '';
     wrote = true;
     added.push({ kind:'comp', id:x.id, fault:x.fault, why:x.why,
-                 label:(TYPE_LABEL[c.type]||c.type) + ' ' + c.id });
+                 label:(TYPE_LABEL[c.type]||c.type) + ' ' + D.nameOf(c) });
   });
   f.wires.forEach(function(i){
     var w2 = scene.wires[i];
@@ -1168,13 +1191,17 @@ var TAG_ID_H = 17, TAG_ST_H = 15;
 // 每帧把【实际画出去】的标签几何记在这里。断言读它，不读 stateLinesOf ——
 // 读 stateLinesOf 等于量的是「算的那一步」，把 drawCompTag 里改成用
 // readoutLines（参数又飘回画布上）这个改坏照样全绿。
+// 它同时是【名字标签的命中框】：点这一行字能改名，靠的就是这份几何。
 var tagDrawn = [];
 function drawCompTag(f, c, r){
   var st = stateLinesOf(c, r);
+  // 名字走 D.nameOf —— 默认是自动编号（L1 / R2 / E1），学生点标签改过名之后
+  // 就是他自己起的名。c.id 只留给内部索引，不再直接上画布。
+  var nm = D.nameOf(c);
   f.save();
   f.textAlign = 'center'; f.textBaseline = 'middle';
   f.font = 'bold 12.5px -apple-system,"PingFang SC",sans-serif';
-  var w = f.measureText(c.id).width;
+  var w = f.measureText(nm).width;
   f.font = '11.5px -apple-system,"PingFang SC",sans-serif';
   st.forEach(function(l){ w = Math.max(w, f.measureText(l).width); });
   var bw = w + 16, bh = TAG_ID_H + st.length * TAG_ST_H;
@@ -1187,7 +1214,7 @@ function drawCompTag(f, c, r){
   f.strokeStyle = 'rgba(148,163,184,0.55)'; f.lineWidth = 1; f.stroke();
   f.fillStyle = '#334155';
   f.font = 'bold 12.5px -apple-system,"PingFang SC",sans-serif';
-  f.fillText(c.id, bx, by - bh / 2 + 4 + TAG_ID_H / 2);
+  f.fillText(nm, bx, by - bh / 2 + 4 + TAG_ID_H / 2);
   if (st.length){
     f.font = '11.5px -apple-system,"PingFang SC",sans-serif';
     f.fillStyle = '#b91c1c';
@@ -1196,7 +1223,7 @@ function drawCompTag(f, c, r){
     });
   }
   f.restore();
-  tagDrawn.push({ id:c.id, type:c.type, lines:st.slice(),
+  tagDrawn.push({ id:c.id, name:nm, type:c.type, lines:st.slice(),
                   w:bw, h:bh, x:bx, y:by });
 }
 
@@ -2076,7 +2103,7 @@ function renderParams(sel){
   }
   var c = sel.comp;
   var specs = PARAM_UI[c.type] || [];
-  box.innerHTML = '<h3>' + (TYPE_LABEL[c.type] || c.type) + ' ' + c.id + '</h3>' +
+  box.innerHTML = '<h3>' + (TYPE_LABEL[c.type] || c.type) + ' ' + D.nameOf(c) + '</h3>' +
     paramRowsHTML(c, specs, 'pv_');
   syncCheckPanel();
   wireParamInputs(box, c, specs, 'pv_');
@@ -2113,7 +2140,7 @@ function unzeroedInUse(){
     var r = results.components[c.id];
     if (!r || !r.wired) return;
     if (Math.abs(r.reading || 0) < 1e-6) return;
-    out.push({ id: c.id, label: TYPE_LABEL[c.type] || '电表' });
+    out.push({ id: c.id, name: D.nameOf(c), label: TYPE_LABEL[c.type] || '电表' });
   });
   return out;
 }
@@ -2155,7 +2182,7 @@ function updateSide(){
     var r = recs[c.id]; if (!r) return;
     var tr = document.createElement('tr');
     if (c.id === selId) tr.className = 'sel';
-    tr.innerHTML = '<td>' + (TYPE_LABEL[c.type]||c.type) + ' ' + c.id + '</td>' +
+    tr.innerHTML = '<td>' + (TYPE_LABEL[c.type]||c.type) + ' ' + D.nameOf(c) + '</td>' +
       '<td>' + dispI(c, r) + '</td>' +
       '<td>' + dispU(c, r) + '</td><td>' + fmtR(c, r) + '</td>' +
       '<td>' + num1(Math.abs(r.p)) + '</td>';
@@ -2226,7 +2253,7 @@ function updateSide(){
     // 优先显示「为什么坏」：它带着烧断时的那个数（几倍额定功率、超了多少量程），
     // 而那正是这个实验要讲的东西。手动弄坏的（拔灯泡 / 烧灯丝）没有 why，
     // 退回一句状态说明。
-    warnRow((TYPE_LABEL[c.type]||c.type) + ' ' + c.id + '：' +
+    warnRow((TYPE_LABEL[c.type]||c.type) + ' ' + D.nameOf(c) + '：' +
       (c.faultWhy || r.faultLabel || C.faultLabel(c.fault, c)),
       function(){ repairComp(c.id); });
   });
@@ -2237,7 +2264,10 @@ function updateSide(){
   // 电表没调零：不是「坏了」，是「没按规矩用」。排在损坏之后、内核警告之前 ——
   // 它比「电流偏大」要紧（读数直接不可信），但比「已经烧了」轻（还能救）。
   unzeroedInUse().forEach(function(z){
-    warnRow(z.label + ' ' + z.id + '：没有调零（指针不在零位上，读数不可信）',
+    // 名字走 z.name（= D.nameOf）而不是 z.id：这行字是给学生看的，学生把电压表
+    // 改名成「表头」之后，警告里还写「V1」就和画布 / 侧栏自相矛盾了。z.id 只留给
+    // 下面 zeroMeter(editor.byId(z.id)) 这类【内部索引】用。
+    warnRow(z.label + ' ' + z.name + '：没有调零（指针不在零位上，读数不可信）',
       function(){ zeroMeter(editor.byId(z.id)); }, '🎯 调零');
   });
   (results.warnings||[]).forEach(function(wn){
@@ -2376,12 +2406,87 @@ function onTapComp(c, p){
   openPop(c.id);
 }
 
+// ── 元件改名 ──────────────────────────────────────────────
+// 用户要求：点画布上元件的名字（L1 / R2 / E1 …）就能改，所有元件都支持。
+// 改的是【显示名】（comp.name），不是 id —— 导线端点的 compId、内核的
+// results.components[id]、存档里的引用全都还认 id（见 circuit-draw 的 nameOf）。
+// 所以改名对电路本身是零影响：电流、读数、警告一条都不会变，变的只是字。
+var namePop = document.getElementById('namePop');
+var nameInput = document.getElementById('nameInput');
+var nameEditing = null;      // 正在改名的元件 id（null = 浮层没开）
+
+// 命中框就是【这一帧实际画出去的那个小圆角框】（tagDrawn 里的 x/y/w/h，
+// 逻辑坐标）。读实际几何、不按公式再算一遍：算的那份一旦和画的那份漂移，
+// 症状就是「看得见却点不着」。
+function tagAt(p){
+  for (var i = tagDrawn.length - 1; i >= 0; i--){
+    var t = tagDrawn[i];
+    if (Math.abs(p.x - t.x) <= t.w / 2 + 2 &&
+        Math.abs(p.y - t.y) <= t.h / 2 + 2) return t;
+  }
+  return null;
+}
+function openNameEditor(c, ev){
+  nameEditing = c.id;
+  nameInput.value = D.nameOf(c);
+  namePop.hidden = false;
+  // 贴着鼠标弹。越界就翻到另一侧 —— 飘出视口的话学生只能看见半截输入框。
+  var w = namePop.offsetWidth || 190, h = namePop.offsetHeight || 38;
+  var x = (ev ? ev.clientX : 0) + 8, y = (ev ? ev.clientY : 0) + 8;
+  if (x + w > window.innerWidth - 8) x = Math.max(8, x - w - 16);
+  if (y + h > window.innerHeight - 8) y = Math.max(8, y - h - 16);
+  namePop.style.left = Math.round(x) + 'px';
+  namePop.style.top = Math.round(y) + 'px';
+  nameInput.focus();
+  nameInput.select();        // 全选：想整个换掉就直接打字，想改一个字也能按方向键
+}
+function closeNameEditor(){ namePop.hidden = true; nameEditing = null; }
+function commitNameEditor(){
+  if (!nameEditing) return;
+  var id = nameEditing;
+  closeNameEditor();         // 先收浮层再改：setName 会触发重绘
+  editor.setName(id, nameInput.value);
+}
+document.getElementById('nameOk').addEventListener('click', function(ev){
+  ev.stopPropagation(); commitNameEditor();
+});
+nameInput.addEventListener('keydown', function(ev){
+  // 输入框里打字不能漏给画布的快捷键（Delete 删元件、⌘Z 撤销…）——
+  // 那些监听挂在 window 上，不拦住的话删一个字就把元件删了。
+  ev.stopPropagation();
+  if (ev.key === 'Enter'){ ev.preventDefault(); commitNameEditor(); }
+  else if (ev.key === 'Escape'){ ev.preventDefault(); closeNameEditor(); }
+});
+namePop.addEventListener('pointerdown', function(ev){ ev.stopPropagation(); });
+// 点浮层外面 = 确定（和文件管理器的重命名一致：少一步，也不会白输一遍）。
+// 捕获阶段，和「⋯ 更多」菜单同一套路子。
+document.addEventListener('pointerdown', function(ev){
+  if (namePop.hidden) return;
+  if (namePop.contains(ev.target)) return;
+  commitNameEditor();
+}, true);
+
 editor = E.create({
   canvas: canvas, W: W, H: H,
   getScene: function(){ return scene; },
   onChange: renderSoft,
   onSelect: onSelChanged,
   onTap: onTapComp,
+  // 名字标签的命中交给页面：标签是页面画的（几何记在 tagDrawn 里），编辑器看不见。
+  // 返回 true 表示这一下已经被吃掉，编辑器不再拿它去拉线 / 拖元件 / 选中。
+  onHitTag: function(p, ev){
+    var t = tagAt(p); if (!t) return false;
+    var c = editor.byId(t.id); if (!c) return false;
+    // preventDefault 是必须的：pointerdown 的默认动作里包含「把焦点给画布」，
+    // 不拦住的话紧接着的 nameInput.focus() 当场被它盖掉 —— 学生点完标签还得再
+    // 点一下输入框才打得进字；更糟的是回车 / Esc / Delete 全都会发给画布
+    // （删元件、撤销），在改名的当口把电路删了。
+    if (ev && ev.preventDefault) ev.preventDefault();
+    openNameEditor(c, ev);
+    return true;
+  },
+  // 悬停时把光标换成输入光标 —— 不给这个反馈，学生根本不会想到那行字可以点。
+  onHoverTag: function(p){ return !!tagAt(p); },
   // 编辑器报「发生了一件值得出声的事」，页面转手交给音效引擎。
   // 页面不判断该不该响、响什么 —— 那是引擎的事；这里只做一次转发。
   onEvent: function(name, data){
@@ -2484,7 +2589,7 @@ function renderPop(){
   var c = editor.byId(popId);
   if (!c) { closePop(); return; }                 // 元件被删了
   var specs = PARAM_UI[c.type] || [];
-  popTitle.textContent = (TYPE_LABEL[c.type] || c.type) + ' ' + c.id;
+  popTitle.textContent = (TYPE_LABEL[c.type] || c.type) + ' ' + D.nameOf(c);
   popBody.innerHTML = popFaultHTML(c) + popReadHTML(c) +
     paramRowsHTML(c, specs, 'pp_') + popActsHTML(c);
   popFaultKey = c.fault || '';
@@ -3867,8 +3972,30 @@ window.__readout = function(c, r){ return readoutLines(c, r); };
 // 不是再算一遍 stateLinesOf。
 window.__tagDrawn = function(){
   return tagDrawn.map(function(t){
-    return { id:t.id, type:t.type, lines:t.lines.slice(), w:t.w, h:t.h, x:t.x, y:t.y };
+    return { id:t.id, name:t.name, type:t.type, lines:t.lines.slice(),
+             w:t.w, h:t.h, x:t.x, y:t.y };
   });
+};
+// 名字标签的命中。和编辑器 onDown 里走的是【同一个】tagAt —— 探针拿它量
+// 「框内点得中、框外点不中」，另外再用真实鼠标点一次做端到端。
+window.__tagAt = function(x, y){ return tagAt({ x:x, y:y }); };
+// 逻辑坐标 → 屏幕坐标（和 popAnchor 用的是同一个比值 rect.width / W）。
+// 探针要拿【真实鼠标】去点标签，就得先把逻辑坐标换到页面上。
+window.__toScreen = function(x, y){
+  var rect = canvas.getBoundingClientRect();
+  var k = rect.width / W;
+  return { x: rect.left + x * k, y: rect.top + y * k };
+};
+// 改名浮层现在开没开、跟着哪个元件。判「点标签真的弹了框」用它，
+// 比去读 DOM 的 hidden 更直接（也顺带暴露了 nameEditing 有没有正确清空）。
+window.__namePop = function(){
+  return { open: !namePop.hidden, editing: nameEditing,
+           value: nameInput.value, left: namePop.style.left, top: namePop.style.top };
+};
+window.__nameSet = function(id, v){ return editor.setName(id, v); };
+window.__nameOf = function(id){
+  var c = editor.byId(id);
+  return c ? { name: D.nameOf(c), id: c.id, raw: (c.name === undefined ? null : c.name) } : null;
 };
 window.__tagHeights = function(){ return { id:TAG_ID_H, st:TAG_ST_H }; };
 // 编辑器那份 pathOf（命中用）和页面那份（绘制用）必须是同一串点，

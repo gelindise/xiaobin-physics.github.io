@@ -1206,7 +1206,11 @@
       else if (lay.type === 'rheostat') it.meta = rheoGeom(lay, wires, rec, D);
       else it.meta = {};
       it.rect = symRect(it);                  // 局部框：只和 params / meta 有关，与位置无关
-      it.label = labels ? subscript(lay.id) : '';
+      // 图上那个「R₁ / L₂」标注跟【显示名】走：学生在主画布上把灯泡改名成
+      // 「L」，导出的电路图还印「L₁」就自相矛盾了。名字里没有数字时 subscript
+      // 原样返回，所以改过名的元件不会被它动过（「灯泡」照旧印「灯泡」）。
+      // it.id 仍是 c.id —— 那是内部索引（byId / 规整化都用它）。
+      it.label = labels ? subscript(D.nameOf ? D.nameOf(c) : lay.id) : '';
       it.value = values ? valueOf(it, rec) : '';
       it.hint = values ? hintOf(it) : '';
       return it;

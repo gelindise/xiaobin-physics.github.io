@@ -687,6 +687,16 @@
            Math.abs(b.V) <= EPS && b.p === b.q;
   }
 
+  // 元件的【显示名】。页面允许学生点画布上的标签给元件改名（见 circuit-draw
+  // 的 nameOf），内核只在【文案】上跟着走 —— 节点名（`id + ':' + termIdx`）、
+  // `componentIds`、`results.components[c.id]` 这些【索引】一律仍用 c.id，
+  // 换了名字不能让求解器认不出元件。
+  function nameOf(c) {
+    if (!c) return '';
+    var n = c.name;
+    return (typeof n === 'string' && n.trim()) ? n.trim() : c.id;
+  }
+
   // ============================================================
   // 第三遍：连通分量（电气孤岛）
   // ------------------------------------------------------------
@@ -1243,7 +1253,7 @@
           rec.bypassed = P.closed && !bs.length && !isOpenFault(c);
           if (rec.bypassed) {
             warnings.push({ code: 'SWITCH_BYPASSED',
-              message: '开关 ' + c.id + ' 的两个接线柱被导线直接连通，' +
+              message: '开关 ' + nameOf(c) + ' 的两个接线柱被导线直接连通，' +
                        '它已经控制不了电路了（电流不经过开关，大小不变）',
               componentIds: [c.id] });
           }

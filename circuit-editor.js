@@ -79,6 +79,14 @@
     // 编辑器不知道宿主拿这一下干什么（沙盒用它开表盘放大镜），所以只报事件。
     var onTap = opts.onTap || function () {};
 
+    // 「这一下点在某个元件的【名字标签】上了吗」—— 标签是宿主画的（页面每帧
+    // 把实际画出去的那个小圆角框记在 tagDrawn 里），编辑器看不见，所以只能问宿主。
+    // 返回 true = 这一下已经被宿主吃掉（它开了改名输入框），编辑器别再拿它去
+    // 拉线 / 拖元件 / 选中。onHoverTag 同一条路子，只用来把光标换成输入光标 ——
+    // 不换的话学生根本不知道那行字是可以点的。
+    var onHitTag = opts.onHitTag || null;
+    var onHoverTag = opts.onHoverTag || null;
+
     // 「发生了一件值得出声的事」——接上线、拔掉线、通断开关、放上/拿走元件、
     // 撤销。和 onTap 同一条路子：编辑器只报事件，不替宿主决定要不要响、响什么。
     // 音效必须挂在【动作真的发生的那一行】上，不能靠每帧比对场景猜：比对分不出
@@ -572,6 +580,29 @@
       changed();
       if (differs && key === 'closed') report('switch', { comp: c, closed: !!val });
     }
+
+    // 给元件改名（画布上那个标签框里显示的字）。空 / 全空白 ⇒ 恢复自动编号
+    // （等于「没改过」），所以「把名字清空」是一条正当操作，不是错误。
+    //
+    // ⚠️ 改的是【显示名】而不是 id。id 是元件的身份：导线端点的 compId、
+    //    内核的 results.components[id]、并查集的 `id + ':' + termIdx` 节点名、
+    //    撤销快照的键、存档里的引用 —— 全都认它（见 circuit-draw 的 nameOf）。
+    //    换 id 等于换一个元件，上面每一处都要跟着重写，而且自动编号的
+    //    「不重复」判据会漏 —— 改名成 L 之后再放一个灯泡又会冒出一个 L1。
+    var NAME_MAX = 12;
+    function setName(id, name) {
+      var c = byId(id); if (!c) return false;
+      // 连续空白压成一个空格、首尾去掉：中文输入法下很容易带出全角空格，
+      // 而一个只有空白的名字等于「没名字」，与恢复默认是同一个语义。
+      var v = (name == null) ? '' : String(name).replace(/\s+/g, ' ').trim();
+      if (v.length > NAME_MAX) v = v.slice(0, NAME_MAX);
+      var next = v ? v : null;
+      if ((c.name || null) === next) return false;   // 值没变：别白入一条撤销记录
+      pushUndo();
+      if (next === null) delete c.name; else c.name = next;
+      changed();
+      return true;
+    }
     function rotateSelected() {
       if (!selected || selected.kind !== 'comp') return;
       pushUndo();
@@ -740,6 +771,13 @@
         return;
       }
 
+      // 元件名字标签（画布上那个写着 L1 / R2 的小圆角框）。排在删除钮之后、
+      // 接线柱之前：删除钮是选中导线时才出现的显式按钮，必须先接走；标签框长在
+      // 元件【下方】几十像素处、通常不和接线柱重叠，但它是一个明确的 UI 区域 ——
+      // 点它就是要改名，不该被底下的导线 / 元件抢走。吃掉这一下就直接 return：
+      // 改名是宿主的浮层在做，编辑器这边不选中、不拖拽、也不拉线。
+      if (onHitTag && onHitTag(p, ev)) return;
+
       var t = hitTerminal(p);
       if (t) {                                  // 从端子拉线
         wiring = { from: t, cur: p, to: null, trail: [{ x: p.x, y: p.y }] };
@@ -868,7 +906,10 @@
       }
       var changedHover = JSON.stringify(nh) !== JSON.stringify(hover);
       hover = nh;
-      canvas.style.cursor = hitDeleteButton(p) ? 'pointer'
+      // 名字标签的输入光标排最前：标签长在元件【下方】、和别的命中互不重叠，
+      // 先问它只是为了让「这行字可以点」有反馈（不给的话学生根本不会去点它）。
+      canvas.style.cursor = (onHoverTag && onHoverTag(p)) ? 'text'
+        : hitDeleteButton(p) ? 'pointer'
         : (nt || nl) ? 'crosshair'
         : (nh && nh.kind === 'slider') ? 'ew-resize'
         : (nh ? 'move' : 'default');
@@ -1275,6 +1316,8 @@
       // 【元件/接线的实际状态】，不是一条参数 —— 只 setParam('flip') 的话，
       // 挂在元件上的导线不会跟着换端点，线头会当场被拽到另一头去。
       flipComp: flipComp,
+      // 改名。页面点画布上的名字标签时调它。空名 = 恢复自动编号。
+      setName: setName,
       rotateSelected: rotateSelected, undo: undo, rerouteAll: rerouteAll,
       select: function (s) { select(s); changed(); },
       getSelected: function () { return describeSelection(); },
