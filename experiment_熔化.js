@@ -2937,16 +2937,20 @@ import * as THREE from './assets/optics-three.min.js';
      冻结时只刷新时间基准（免得解冻后 dt 巨大），不推进仿真。 */
   let animFrozen = false;
   let last = performance.now();
-  (function loop(now) {
-    requestAnimationFrame(loop);
+  /* ★ 循环体单独成函数：真实 rAF 与自检走【同一段代码】。
+     把冻结判断只写在 rAF 回调里的话，无头环境 rAF 一次都不触发 ⇒ 那段判断
+     永远「看起来正常」，负向对照里「去掉 animFrozen 判断」会全绿（实测 N65）。
+     抽出来之后自检能手动跑同一帧、确定性地验「冻结真的生效」。 */
+  function loopBody(now) {
     const t = now || performance.now();
-    if (animFrozen) { last = t; return; }
+    if (animFrozen) { last = t; return; }   // 冻结：只刷新时间基准，不推进任何动画
     let dt = (t - last) / 1000;
     last = t;
     if (!isFinite(dt) || dt < 0) dt = 0;
     dt = Math.min(dt, 0.1);
     frameStep(dt);
-  })(last);
+  }
+  (function loop(now) { requestAnimationFrame(loop); loopBody(now); })(last);
 
   const ro = new ResizeObserver(() => { resize(); drawChart(); drawMicro(0.016); });
   ro.observe(stage);
@@ -2965,6 +2969,8 @@ import * as THREE from './assets/optics-three.min.js';
     setRunning, resetSim, refreshAll,
     /* 冻结渲染循环（只给自检用）：见文件末尾 loop 的说明 */
     freezeAnim(v) { animFrozen = !!v; },
+    loopBody,                            // 自检用：手动跑一帧循环体（真实 rAF 走的就是这个函数）
+    animClock() { return clock; },        // 自检用：动画时钟（火焰摇曳等的累计推进量）
     step(dt) { stepSim(dt); updateSample(); pushSample(); updateReadouts(); drawChart(); drawMicro(dt); requestRender(); },
     advance(seconds) {                       // 直接推进仿真，不依赖真实时间
       let left = seconds;
