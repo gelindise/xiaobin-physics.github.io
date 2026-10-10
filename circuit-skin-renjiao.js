@@ -126,6 +126,16 @@
       var S = G2[key];
       CV2[key] = mkCanvas(S.w, S.h);
       CV2[key].getContext('2d').drawImage(IMG2[key], 0, 0, S.w, S.h);
+      if (S.kind === 'needle' && IMG2[key + '_needle']) {
+        CV2[key + '_needle'] = mkCanvas(S.needleW, S.needleH);
+        CV2[key + '_needle'].getContext('2d')
+          .drawImage(IMG2[key + '_needle'], 0, 0, S.needleW, S.needleH);
+      }
+      if (S.kind === 'slider' && IMG2[key + '_slider']) {
+        CV2[key + '_slider'] = mkCanvas(S.sliderW, S.sliderH);
+        CV2[key + '_slider'].getContext('2d')
+          .drawImage(IMG2[key + '_slider'], 0, 0, S.sliderW, S.sliderH);
+      }
     });
     ready = true;
     try { window.dispatchEvent(new Event('circuit-skin-ready')); } catch (e) {}
@@ -140,9 +150,13 @@
   ], function () {
     // 第二批是【另一张表】，单独加载、单独回调；两边都到齐才 ready。
     if (!G2) { build(); return; }
-    loadAll(KEYS2.map(function (key) {
-      return { key: key, src: G2[key].full };
-    }), build, IMG2);
+    var list2 = [];
+    KEYS2.forEach(function (key) {
+      list2.push({ key: key, src: G2[key].full });
+      if (G2[key].kind === 'needle') list2.push({ key: key + '_needle', src: G2[key].needle });
+      if (G2[key].kind === 'slider') list2.push({ key: key + '_slider', src: G2[key].slider });
+    });
+    loadAll(list2, build, IMG2);
   });
 
   // ── 图像坐标 → 本地坐标 ──────────────────────────────────────
@@ -338,7 +352,7 @@
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = 'high';
     pose(ctx, comp, D);
-    for (var i = 0; i < rects.length && i < 2; i++) {
+    for (var i = 0; i < rects.length; i++) {
       var r = rects[i];
       var sx = (r.x0 + mid[0]) * k * dpr, sy = (r.y0 + mid[1]) * k * dpr;
       var sw = (r.x1 - r.x0) * k * dpr, sh = (r.y1 - r.y0) * k * dpr;
@@ -378,6 +392,68 @@
     };
   }
 
+  // ── 表头：底盘贴原图，指针抠出来绕原图转轴转 ─────────────────
+  // 🔴 指针角度按【课本自己的】刻度弧两端（S.a0 → S.a1）算。沙盒的扫角是
+  //    −150°→−30°，和课本这两张对不上；照抄沙盒常数，针会指到刻度外面去。
+  //    原图里指针正好停在 a0（零刻度）⇒ frac=0 时旋转量是 0，画面和原图逐像素一致。
+  function drawMeter(key) {
+    return function (ctx, comp, rec, opts, D) {
+      var S = G2 && G2[key], cv = CV2[key], nd = CV2[key + '_needle'];
+      if (!ready || !S || !cv || !nd) { fallback(D, ctx, comp, rec, opts); return; }
+      var isVolt = (key === 'voltmeter');
+      var reading = rec ? (rec.reading || 0) : 0;
+      var range = (rec && rec.range) || (comp.params && comp.params.range) || (isVolt ? 3 : 0.6);
+      var rev = reading < -1e-9;
+      var mag = Math.min(Math.abs(reading) / (range || 1), 1.06);
+      var zeroed = !!(comp.params && comp.params.zeroed);
+      var ZOFF = (D.MET && D.MET.ZERO_OFF) || 0;
+      var frac = rev ? -0.085 : Math.min(mag + (zeroed ? 0 : ZOFF), 1.06);
+      var ang = S.a0 + (S.a1 - S.a0) * frac;
+
+      ctx.save();
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      pose(ctx, comp, D);
+      ctx.drawImage(cv, -S.mid[0] * S.k, -S.mid[1] * S.k, S.w / S.dpr, S.h / S.dpr);
+      // 指针：绕原图的转轴销转
+      ctx.save();
+      ctx.translate((S.pivotImg[0] - S.mid[0]) * S.k, (S.pivotImg[1] - S.mid[1]) * S.k);
+      ctx.rotate((ang - S.a0) * Math.PI / 180);
+      ctx.drawImage(nd, -S.pivotInNeedle[0] / S.dpr, -S.pivotInNeedle[1] / S.dpr,
+                    S.needleW / S.dpr, S.needleH / S.dpr);
+      ctx.restore();
+      ctx.restore();
+      Skin.setPosts(comp, ['neg', 'pos', 'pos'], 1.4, 8);
+    };
+  }
+
+  // ── 滑动变阻器：底盘贴原图，滑片抠出来沿原图行程左右平移 ──────
+  // 🔴 原图里滑片停在 slide=0.5 处（实测 x≈460 = sliderX0 + span/2），所以
+  //    slide=0.5 时平移量是 0，画面和原图逐像素一致。
+  function drawRheostat(key) {
+    return function (ctx, comp, rec, opts, D) {
+      var S = G2 && G2[key], cv = CV2[key], sl = CV2[key + '_slider'];
+      if (!ready || !S || !cv || !sl) { fallback(D, ctx, comp, rec, opts); return; }
+      var slide = 0.5;
+      if (rec && rec.slide != null) slide = +rec.slide;
+      else if (comp.params && comp.params.slide != null) slide = +comp.params.slide;
+      slide = Math.max(0, Math.min(1, slide));
+      var mid0 = S.sliderX0 + S.sliderSpan * 0.5;
+      var dx = (S.sliderX0 + S.sliderSpan * slide - mid0) * S.k;
+
+      ctx.save();
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      pose(ctx, comp, D);
+      ctx.drawImage(cv, -S.mid[0] * S.k, -S.mid[1] * S.k, S.w / S.dpr, S.h / S.dpr);
+      ctx.drawImage(sl, (S.sliderAt[0] - S.mid[0]) * S.k + dx,
+                        (S.sliderAt[1] - S.mid[1]) * S.k,
+                    S.sliderW / S.dpr, S.sliderH / S.dpr);
+      ctx.restore();
+      Skin.setPosts(comp, ['pos', 'pos', 'pos', 'pos'], 1.4, 8);
+    };
+  }
+
   // 电池：沙盒的干电池【节数跟着电压走】（1~6 节）。手上只有 1 节和 2 节两张
   // 课本图，所以 ≥2 节一律用 2 节那张 —— 节数照旧由沙盒的读数标签写清楚
   // （「1.5V × N」），只是画面不跟着长。🔴 这是素材的硬限制，不是漏做。
@@ -407,6 +483,10 @@
       bulb: drawBulb,
       battery: drawBattery,
       resistor: drawStatic('resistor'),
+      ammeter: drawMeter('ammeter'),
+      voltmeter: drawMeter('voltmeter'),
+      rheostat: drawRheostat('rheostat'),
+      motor: drawStatic('motor'),
     },
     posts: {
       switch: function (ctx, comp, s, D) {
@@ -420,6 +500,10 @@
       },
       battery: postsBattery,
       resistor: postsFor('resistor'),
+      ammeter: postsFor('ammeter'),
+      voltmeter: postsFor('voltmeter'),
+      rheostat: postsFor('rheostat'),
+      motor: postsFor('motor'),
     },
     // 符号层留空：人教版电路图符号 = 现行实现（沙盒那张电路图本来就是照人教版画的）
     symbol: {},
