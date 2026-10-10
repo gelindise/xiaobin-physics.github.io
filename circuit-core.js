@@ -108,6 +108,23 @@
       // 所以「2 节 1.5V 的干电池」这个外观一点没变。
       defaults: { emf: 3, rInt: 0 },
     },
+    // ── 学生电源 ──────────────────────────────────────────────
+    // 实验室里那台【输出电压可调】的直流稳压电源（J1202 那一类）：面板上一个
+    // 电压旋钮、一只电压指示表、红黑两个接线柱。
+    //
+    // 和干电池在【电路上】完全一样（都是「电动势串内阻」的电压源，见
+    // describeComponent 里并在一起的那两个 case），区别只有两条：
+    //   · 可调范围：干电池只有 1.5V 的整数倍（1~5 节），学生电源 1.5~15V
+    //     连续可调 —— 这就是用户要的「电源电压是可调的」；
+    //   · 稳压程度：学生电源是稳压源，负载变了输出电压几乎不动，所以内阻
+    //     默认 0；干电池一节 0.5Ω，接上小电阻就会掉压。
+    // 之所以另立一个类型而不是给 battery 加个开关：外观（台仪器 vs 一节干
+    // 电池）和默认参数都不同，而【默认参数是按类型查表的】——共用类型就只能
+    // 二选一，另一种的默认值会跟着错。
+    power: {
+      label: '学生电源', terminals: 2, termNames: ['+', '-'],
+      defaults: { emf: 6, rInt: 0 },
+    },
     switch: {
       label: '开关', terminals: 2, termNames: ['a', 'b'],
       defaults: { closed: false },
@@ -150,6 +167,21 @@
       defaults: { range: 3, rInternal: null, zeroed: false },
     },
   };
+
+  // ============================================================
+  // 「这个类型是不是【电源】」
+  // ------------------------------------------------------------
+  // 求解器里有三处必须按电源特判，而且三处【都要一视同仁】：
+  //   · shortedBatteryIds  短路检测 —— 漏掉一个就会出现「学生电源被导线
+  //                        直接短接、电流爆表，却一条警告都不报」；
+  //   · 无源判定（no-source）—— 漏掉一个，整个电路只要有学生电源就会被
+  //                        判成「没有电源」；
+  //   · terminalFlow       端子电流方向 —— 电源支路的 Ik 是【充电方向】，
+  //                        别的元件是放电方向，约定不同（见那里的注释）。
+  // 所以别再各处写 `c.type === 'battery'`：加一个电源类型就要改三处，
+  // 迟早漏一处，而漏掉的那处不会报错、只会静默算错。
+  // ============================================================
+  function isSourceType(t) { return t === 'battery' || t === 'power'; }
 
   // ── 发光二极管的颜色 → 正向压降 ──────────────────────────────
   // 真实的 LED 是按【颜色分规格】的，不是按电压卖：红光 1.8~2.0V、
@@ -524,12 +556,19 @@
         addR(N(0), N(1), num(P.Rcoil, 20));
         break;
 
+      // 干电池与学生电源【共用这一支】：两者在电路上完全同构，都是
+      // 「电动势 V 串内阻 Rs」的一条电压源支路。分两个 case 各写一遍的话，
+      // 日后改了内阻的算法只改一处，另一种就静默地算错。
+      // cells / emfPerCell / rPerCell 是老键，只有干电池会用（学生电源没有
+      // 「节数」这个概念）；学生电源永远走 emf / rInt 这两个键。
       case 'battery':
+      case 'power': {
         var cells = P.cells != null ? P.cells : 1;
         var emf = P.emf != null ? P.emf : cells * (P.emfPerCell != null ? P.emfPerCell : 1.5);
         var rInt = P.rInt != null ? P.rInt : cells * (P.rPerCell != null ? P.rPerCell : 0.5);
         out.push({ kind: 'V', comp: comp, p: N(0), q: N(1), V: emf, Rs: rInt });
         break;
+      }
 
       case 'rheostat':
         // C(2)/D(3) 已在 buildNodes 中合并 → 同一节点 = 滑片 S
@@ -900,14 +939,14 @@
     var seen = {};                                       // createDSU 没有 has()，自己记一份
     branches.forEach(function (b) {
       if (b.kind !== 'V' || Math.abs(b.Rs) > 1e-9) return;
-      if (b.comp && b.comp.type === 'battery') return;   // 见上面那条警告
+      if (b.comp && isSourceType(b.comp.type)) return;   // 见上面那条警告
       if (b.p === b.q) return;
       dsu.add(b.p); dsu.add(b.q); dsu.union(b.p, b.q);
       seen[b.p] = 1; seen[b.q] = 1;
     });
     var ids = [];
     components.forEach(function (c) {
-      if (c.type !== 'battery' || isOpenFault(c)) return;
+      if (!isSourceType(c.type) || isOpenFault(c)) return;
       var n0 = termNode[c.id + ':0'], n1 = termNode[c.id + ':1'];
       if (n0 == null || n1 == null) return;
       // 两极同节点 = 被导线直接短接；否则看零阻元件有没有把它们连通。
@@ -1379,7 +1418,8 @@
           break;
         }
 
-        case 'battery': {
+        case 'battery':
+        case 'power': {
           var bb = bs[0];
           // 烧坏的电源没有支路（describeComponent 提前返回了），bs 是空的。
           // 不判空的话这里会读 undefined.p 把整个求解器带崩 —— 而且崩在
@@ -1479,7 +1519,7 @@
     // ---- 状态判定 ----
     if (shorted) out.status = 'shorted';
     else if (anyCurrent) out.status = 'ok';
-    else if (!components.some(function (c) { return c.type === 'battery'; })) out.status = 'no-source';
+    else if (!components.some(function (c) { return isSourceType(c.type); })) out.status = 'no-source';
     else out.status = 'open-circuit';
 
     out.stats = {
@@ -1661,9 +1701,9 @@
       if (termIdx === MT.commonTerm) return rec.i;   // 「−」柱：电流流出表头
       return 0;
     }
-    // 电池的记录沿用了「支路电流 Ik = 充电方向」的约定，放电是 −Ik，
-    // 别的元件 rec.i 是放电方向。这里统一成「流出元件、注入节点」。
-    var out = (comp.type === 'battery') ? rec.i : -rec.i;
+    // 电源（干电池 / 学生电源）的记录沿用了「支路电流 Ik = 充电方向」的约定，
+    // 放电是 −Ik，别的元件 rec.i 是放电方向。这里统一成「流出元件、注入节点」。
+    var out = isSourceType(comp.type) ? rec.i : -rec.i;
     return (termIdx === 0) ? out : -out;
   }
 

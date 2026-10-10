@@ -219,6 +219,32 @@
   .prow .flipBtn:hover{border-color:var(--accent);color:var(--accent)}
   .prow .flipBtn:active{background:var(--accent);border-color:var(--accent);color:#fff}
   .prow .val.unwired{color:var(--warn);font-weight:600;font-size:11.5px;white-space:nowrap}
+  /* 数字输入框（练习模式的「读数为 ___」）。面板里以前只有 range / select，
+     没有 number —— 不写这条的话它会用浏览器默认外观，字号和边框都跟旁边的
+     下拉框对不上。 */
+  .prow input[type=number]{flex:1;min-width:0;padding:4px 6px;border:1px solid var(--line);
+    border-radius:6px;font-family:inherit;font-size:12.5px;background:#fff;
+    font-variant-numeric:tabular-nums}
+  /* ── 练习模式 ─────────────────────────────────────────────
+     一块独立的小面板，挂在参数行下面（只挂在滑动变阻器上）。用琥珀色和
+     红色警告、蓝色参数都分开：它既不是故障也不是参数，是一道题。 */
+  .pracBox{margin-top:11px;padding:9px 10px;border-radius:9px;
+    background:#fffbeb;border:1px solid #fde68a}
+  .pracBox .pracHd{font-size:12px;font-weight:700;color:#92400e;margin-bottom:2px}
+  .pracBox .pracMsg{margin-top:7px;font-size:11.5px;line-height:1.5;color:#92400e}
+  .pracBox .prow{margin:6px 0}
+  .pracBox .prow label{flex:0 0 52px;color:#92400e}
+  .pracBox .prow .val{flex:0 0 18px;text-align:left;color:#92400e}
+  .pracBox .pracGo{flex:1;padding:6px 10px;border:1px solid #f59e0b;border-radius:7px;
+    background:#f59e0b;color:#fff;font-family:inherit;font-size:12.5px;font-weight:700;
+    cursor:pointer}
+  .pracBox .pracGo:hover{background:#d97706;border-color:#d97706}
+  /* 画布左上角那枚「练习模式」小牌。全屏时侧栏整块让位，没有它的话学生
+     根本不知道读数为什么全是「?」—— 一枚牌子比任何解释都省事。 */
+  .pracTag{position:absolute;left:10px;top:10px;z-index:8;pointer-events:none;
+    padding:5px 10px;border-radius:999px;background:rgba(254,243,199,.96);
+    border:1px solid #fcd34d;color:#92400e;font-size:12px;font-weight:700}
+  .pracTag[hidden]{display:none}
   .empty{color:var(--dim);font-size:12.5px;text-align:center;padding:16px 4px}
   table{width:100%;border-collapse:collapse;font-size:12.5px}
   th{text-align:right;color:var(--dim);font-weight:600;padding:5px 6px;
@@ -507,6 +533,9 @@
          两个都在 .cv 里面，位置由 layout() → penPlace() 逐帧对齐。 -->
     <div class="cv"><canvas id="simCanvas"></canvas><canvas id="penCanvas"></canvas>
       <div class="penBar" id="penBar"></div>
+      <!-- 练习模式的状态小牌。贴在画布左上角（绝对定位，不进文档流），
+           全屏时侧栏看不见了，靠它说明「读数为什么全是 ?」。 -->
+      <div class="pracTag" id="pracTag" hidden>🎓 练习模式 · 点元件揭晓读数</div>
       <!-- 临时提示条。放在 .cv 里 = 绝对定位在画布上沿，不进文档流。
            左边的红圆叹号是【警告标记】：目前只有「电表没调零就通电」用它，
            用户点名要「一个叹号 + 说明原因」，所以图标和文案是固定搭配。 -->
@@ -623,12 +652,15 @@
      改了内核而 HTML 没变的话，老访客会拿缓存里的旧脚本跑新页面（画面上就
      会出现「说明写了电子逆流、小球却还顺着流」这种自相矛盾）。改脚本时
      把这个 build 号 +1 即可。 -->
-<script src="circuit-core.js?build=17"></script>
-<script src="circuit-draw.js?build=22"></script>
-<script src="circuit-editor.js?build=20"></script>
+<script src="circuit-core.js?build=18"></script>
+<script src="circuit-draw.js?build=25"></script>
+<script src="circuit-editor.js?build=21"></script>
+<!-- 参数面板规格 + 读数显示格式。从本页内联抽出，与 3D 版沙盒（电路实验沙盒3D）
+     共用同一份真值：面板规格、小数位、极性显示规则改一处两边都变。 -->
+<script src="circuit-params.js?build=2"></script>
 <!-- 电路图（实物图 → 标准符号）。独立成第四块内核：沙盒和欧姆定律页共用同一份，
      免得各写一套符号，两边的图画法迟早不一样。三个老内核一行没动，build 号不升。 -->
-<script src="circuit-schematic.js?build=12"></script>
+<script src="circuit-schematic.js?build=13"></script>
 <!-- 音效引擎。全部音色现场合成，不带音频素材；AudioContext 懒创建，
      等第一次真实手势才建。它只读状态、只出声，不碰物理也不碰画面。 -->
 <script src="circuit-sound.js?build=2"></script>
@@ -650,6 +682,13 @@
 (function(){
 'use strict';
 var C = window.CircuitCore, D = window.CircuitDraw, E = window.CircuitEditor;
+// 参数面板规格与读数显示格式抽到 circuit-params.js，与 3D 版沙盒共用同一份
+// 真值（面板规格、小数位、极性显示规则改一处两边都变）。这里只做别名，下面
+// 代码里的 PARAM_UI / TYPE_LABEL / POLAR / num1 / dispI / dispU / fmtR / pval
+// 全部指向共享模块，行为与本页内联时完全一致。
+var CP = window.CircuitParams;
+var PARAM_UI = CP.PARAM_UI, TYPE_LABEL = CP.TYPE_LABEL, POLAR = CP.POLAR;
+var num1 = CP.num1, dispI = CP.dispI, dispU = CP.dispU, fmtR = CP.fmtR, pval = CP.pval;
 var W = 1000, H = 740;
 var canvas = document.getElementById('simCanvas');
 var ctx = canvas.getContext('2d');
@@ -675,6 +714,43 @@ try { showSound = localStorage.getItem(SOUND_KEY) !== '0'; } catch (e) {}
 // 音效引擎。声明在这里、装配在下面（和两个动画开关并排），但 render/renderSoft
 // 里的 syncSound() 靠它判断——先声明成 null，函数里判空，装配顺序就不影响正确性。
 var sound = null;
+
+// ── 练习模式（模拟练习题）────────────────────────────────────
+// 用户要求：① 可以对元件「输入已知值」；② 其余量由求解器逆推；③ 默认一个读数都
+// 不显示；④ 点某个元件才显示【它自己】那份数据 —— 用来模拟「已知……求……」这类
+// 练习题的情境。
+//
+// 分成两层，都不碰内核：
+//   ·【藏】是页面层的事：画布标签不印参数行、侧栏 I/U/R/P 四列印「?」、浮层读数
+//     条和放大镜读数换成一句提示、表盘上那块数字液晶也不画（见 circuit-draw 里
+//     的 rec.practiceHide）。内核该算的照算 —— 藏的是【给人看的字】，不是数据。
+//   ·【揭晓】= 点画布上的元件，把它记进 revealed 再重绘。
+// revealed 只记 id、不进 scene，所以存档和撤销栈都干干净净。
+var PRACTICE_KEY = 'circuit_sandbox_practice';
+var practice = false;
+try { practice = localStorage.getItem(PRACTICE_KEY) === '1'; } catch (e) {}
+var revealed = {};
+// 「这一件的读数现在该不该藏」。练习模式没开时恒 false —— 就是平时上课的样子。
+function practiceHidden(c){
+  return !!(practice && c && !revealed[c.id]);
+}
+// 把「藏不藏」写成求解结果上的一个字段（rec.practiceHide），绘制层读它。
+// 写在 rec 上而不是 comp.params 上：rec 每次求解重建，不进存档、不进撤销栈。
+function applyPracticeFlags(){
+  if (!results || !results.components) return;
+  for (var id in results.components){
+    results.components[id].practiceHide = practiceHidden(byId(id));
+  }
+}
+// 练习模式那几处 UI（画布左上角的状态小牌、「揭晓全部」按钮、body 上的 class）
+// 每次重绘同步一遍。做成一个函数而不是散在各处：开关、加载预设、撤销……
+// 哪条路进来都得让它们跟上，漏一条就会出现「按钮还在、模式已经关了」。
+function syncPracticeUI(){
+  var tag = document.getElementById('pracTag');
+  if (tag) tag.hidden = !practice;
+  if (btnRevealAll) btnRevealAll.hidden = !practice;
+  document.body.classList.toggle('practice', practice);
+}
 
 function w(a, ai, b, bi, via, auto){
   return { a:{compId:a,termIdx:ai}, b:{compId:b,termIdx:bi}, via:via||[], auto:auto !== false };
@@ -940,6 +1016,7 @@ function solveNow(){
     }
     if (!applyFaults()) break;      // 没有新损坏 → 这一遍的解就是最终解
   }
+  applyPracticeFlags();             // 练习模式：把「这件藏不藏」压到 rec 上
   syncSound();
 }
 
@@ -1041,26 +1118,11 @@ function pathOf(wire){
 // 铺到导线下方 y=+30 的底板，所以从 30/32 提到 38，不然读数框会压在板上。
 // 二极管 / 电动机 / 电铃这一版也改成了同一块底板（板底同样是 y=+30），
 // 所以三个数一起抬到 38 —— 原来是按裸管/裸筒的厚度给的 24 / 34。
-var DROP = {battery:40, ammeter:80, voltmeter:80, resistor:22, bulb:38, rheostat:46, switch:38,
-            led:38, motor:38, bell:38};
+var DROP = {battery:40, power:46, ammeter:80, voltmeter:80, resistor:22, bulb:38, rheostat:46,
+            switch:38, led:38, motor:38, bell:38};
 
 // ── 读数的小数位 ────────────────────────────────────────────
-// 一律【一位小数】：读数框、侧栏那张 I/U/R/P 表、点元件弹出的浮层，全走它。
-// 之前是 toFixed(4)，屏幕上印着「0.3000 A」「0.7500 W」—— 多出来的那三位
-// 既读不出来也没有物理意义（真实的学生电表只能估读到分度值的下一位）。
-// 唯一的例外：本该是 0.0 却【不是】0 的小量（0.04A、0.005A）。一位小数会把
-// 它们印成「0.0」，看着就是「没有电流」—— 那不是精度问题，是说了假话。
-// 这种值往下补一位、还不够再补一位；别的值一位不动。
-function num1(v){
-  var x = +v;
-  if (!isFinite(x)) return '—';
-  var s = x.toFixed(1);
-  if (x !== 0 && parseFloat(s) === 0) {
-    s = x.toFixed(2);
-    if (parseFloat(s) === 0) s = x.toFixed(3);
-  }
-  return s;
-}
+// num1 已抽到 circuit-params.js（见文件顶部别名），与 3D 版沙盒共用同一份。
 
 // 元件旁边那个读数框里写哪几行，返回 null 表示这个元件不飘框（开关写在底座上了）。
 // 单独抽成函数是为了让测试能直接断言文字：反接这种「读数框里该写什么」的判断
@@ -1087,6 +1149,12 @@ function readoutLines(c, r){
     else if (r.reversed) { lines.push('指针反偏'); lines.push('读不出数'); }
     else lines.push((c.type === 'ammeter' ? 'I = ' : 'U = ') + num1(Math.abs(r.reading)) +
                (c.type === 'ammeter' ? 'A' : 'V'));
+  } else if (c.type === 'power') {
+    // 学生电源是【稳压源】：面板上标的是输出电压 U（不是电动势 E），和电路图
+    // 那边的 valueOf 保持一致。第二行给电流 —— 那才是「这台电源现在带着多大
+    // 的负载」那个数，也是做练习时最常被给定的量。
+    lines.push('U = ' + num1(Math.abs(r.v)) + 'V');
+    lines.push('I = ' + num1(Math.abs(r.i)) + 'A');
   } else if (c.type === 'battery') {
     lines.push('E = ' + num1(r.emf) + 'V');
     lines.push('U = ' + num1(Math.abs(r.v)) + 'V');
@@ -1194,7 +1262,10 @@ var TAG_ID_H = 17, TAG_ST_H = 15;
 // 它同时是【名字标签的命中框】：点这一行字能改名，靠的就是这份几何。
 var tagDrawn = [];
 function drawCompTag(f, c, r){
-  var st = stateLinesOf(c, r);
+  // 练习模式下【揭晓过的】元件把完整读数（含参数行）一并印出来 —— 这就是
+  // 「点一下才显示它自己的数据」这句话落到画布上的样子。没揭晓的照旧只印状态
+  // 提示（参数行本来就不上画布，见上面那段注释），于是一个数都不会漏出来。
+  var st = (practice && revealed[c.id]) ? (readoutLines(c, r) || []) : stateLinesOf(c, r);
   // 名字走 D.nameOf —— 默认是自动编号（L1 / R2 / E1），学生点标签改过名之后
   // 就是他自己起的名。c.id 只留给内部索引，不再直接上画布。
   var nm = D.nameOf(c);
@@ -1293,6 +1364,29 @@ function drawMotion(){
   });
 }
 
+// 变阻器绕线【内部】的粒子层（见 circuit-draw 的 drawRheostatFlow）。
+// 为什么单独一层、而且要画在导线【之后】：
+//   · 变阻器的本体（密绕六十多圈的丝、瓷管、两块立板）在静态缓存层里，
+//     画一次就够；粒子是动画，必须每帧画 —— 所以只有这一层跟着帧走。
+//   · 导线是压在元件之上的（见上面 drawFrame 里那段注释：真实情况就是导线
+//     从器材上跨过去）。粒子要是跟着本体进缓存层，就会被导线盖掉一半，
+//     而「绕线里有电流在跑」恰恰是这一层唯一要给人看的东西。
+// 粒子开关（showFlow / showCurrent）关着时整层不画：绕线上的粒子和导线上的
+// 粒子归同一个开关管，关一个留一个，自相矛盾。
+// 这一帧流动层【真的画出去】的粒子数（元件 id → {left,right,arm,iL,iR,iArm}）。
+// 断言读它，不读 rec.segments —— 读 rec 等于量「算的那一步」，把「只画通电的那
+// 半根」改成「两半都画」这种改坏照样全绿。见 circuit-draw 里 drawRheostatFlow。
+var flowDrawn = {};
+function drawFlowLayer(){
+  flowDrawn = {};
+  if (!results || !results.components) return;
+  if (!(showFlow || showCurrent)) return;
+  scene.comps.forEach(function(c){
+    if (c.type !== 'rheostat') return;
+    flowDrawn[c.id] = D.drawRheostatFlow(ctx, c, results.components[c.id], { phase: phase });
+  });
+}
+
 function buildLayers(){
   var dpr = window.devicePixelRatio || 1;
   [bgLayer, fgLayer].forEach(function(c){
@@ -1324,6 +1418,7 @@ function drawFrame(){
     // 和元件本身无关（会动的元件的柱子由 drawMotion 画，这里补画是幂等的）。
     scene.comps.forEach(function(c){ D.drawTerminals(ctx, c); });
     drawMotion();                           // 会动的元件压在缓存层之上
+    drawFlowLayer();                        // 变阻器绕线里的粒子（压在导线之上）
     drawSmokeLayer();                       // 烧坏的东西在冒烟（唯一「坏了还在动」的事）
     drawTags(ctx);                          // 标签在最上层，不被导线划掉
     drawZeroWarn(ctx);                      // 未调零的电表：红叹号（压在所有东西之上）
@@ -1339,7 +1434,7 @@ function drawSmokeLayer(){
   scene.comps.forEach(function(c){
     var r = results.components[c.id];
     if (!r || r.fault !== 'burnt') return;
-    var off = (c.type === 'battery') ? -34 : -30;
+    var off = (c.type === 'battery' || c.type === 'power') ? -34 : -30;
     var p = D.toWorld(c, 0, off);
     D.drawSmoke(ctx, p.x, p.y, animT, { count: 6, scale: 1, rise: 46, spread: 9 });
   });
@@ -1823,100 +1918,9 @@ window.addEventListener('keydown', function(e){
 }, true);
 
 // ── 参数面板 ──────────────────────────────────────────────
-// 每类元件能调什么，写在这里；面板由它生成，不写死 HTML。
-var PARAM_UI = {
-  resistor:  [{k:'R', t:'range', label:'阻值', unit:'Ω', min:1, max:100, step:1}],
-  battery:   [{k:'emf', t:'range', label:'电动势', unit:'V', min:1.5, max:7.5, step:1.5},
-              {k:'rInt', t:'range', label:'内阻', unit:'Ω', min:0, max:2, step:0.1},
-              // 「对调」不是一条能拧的数，是【把元件原地调个头】——所以它和
-              // 量程一样走按钮（t:'flip'），走的是 editor.flipComp()，
-              // 由它同时翻 params.flip 和交换挂在元件上的导线端点。
-              {k:'flip', t:'flip', label:'极性'}],
-  switch:    [{k:'closed', t:'check', label:'闭合'}],
-  // 量程不是拧出来的参数，是「线接在哪个量程柱上」——所以这两个表的量程
-  // 走 t:'tap'（点一下把导线挪到那个柱子上），选项和柱号都取自内核的 TYPES，
-  // 页面这边不再抄一份量程数值。
-  ammeter:   [{k:'range', t:'tap', label:'量程', unit:'A'}],
-  voltmeter: [{k:'range', t:'tap', label:'量程', unit:'V'},
-              // 「理想电压表不分流」是课本给初中生的简化模型，但它【不是真的】：
-              // 真实电压表有一份很大的内阻，接进电路就会偷走一点点电流。
-              // 勾上这一项，表就按 3kΩ 的真实内阻参与求解 —— 接它的两根导线上
-              // 会真的流过约 1mA，画成淡红空心箭头（见 drawWire 的 opts.weak），
-              // 和主回路的实心红箭头一眼分得开。默认不勾 = 课本的理想模型。
-              {k:'weakI', t:'check', wide:1, label:'模拟微弱电流（真实表内阻）'}],
-  rheostat:  [{k:'Rmax', t:'range', label:'最大阻值', unit:'Ω', min:5, max:50, step:5},
-              {k:'slide', t:'range', label:'滑片位置', unit:'', min:0, max:1, step:0.01}],
-  // 灯泡多一个【单独的选项】：灯丝电阻随温度升高而增大。
-  //   勾上（默认）= 真灯泡，R 随自身功率变，小电压下 R 掉到 1Ω 出头；
-  //   取消 = 当定值电阻，R 恒为额定电阻 U额²/P额（课本「不计温度影响」那一步）。
-  // 这一行是整句话的标签，比「额定电压」长得多，68px 的标签栏装不下（会挤成
-  // 两行把勾选框顶偏），所以走 wide：标签占满剩余宽度，勾选框贴右边。
-  bulb:      [{k:'ratedV', t:'range', label:'额定电压', unit:'V', min:1.5, max:6, step:0.5},
-              {k:'ratedW', t:'range', label:'额定功率', unit:'W', min:0.2, max:3, step:0.1},
-              {k:'tempDependent', t:'check', wide:1, label:'灯丝电阻随温度升高而增大'}],
-  // 二极管的「颜色」不是一个装饰参数，它就是规格本身：换一根管子等于换一个
-  // 正向压降。所以下拉框里把压降一起写出来（labels），学生换到蓝管时看得见
-  // 「3.1V」这个数 —— 再看一眼电源只有 3V，就知道为什么它不亮。
-  led:       [{k:'color', t:'select', label:'颜色',
-               options:['red','green','blue'],
-               labels:{red:'红色 1.8V', green:'绿色 2.1V', blue:'蓝色 3.1V'}},
-              {k:'flip', t:'flip', label:'极性'}],
-  // 电动机的三项都是【铭牌上印得出来的数】：线圈电阻、空载电流、转速常数。
-  // 空载电流单独给一格，是因为「转起来电流反而很小」这件事全看它 ——
-  // 学生把它调大调小，再对照堵转那一挡，这条规律就自己浮出来了。
-  motor:     [{k:'Rcoil', t:'range', label:'线圈电阻', unit:'Ω', min:1, max:12, step:0.5},
-              {k:'noLoadI', t:'range', label:'空载电流', unit:'A', min:0.02, max:0.1, step:0.01},
-              {k:'rpmPerV', t:'range', label:'转速常数', unit:'转/V', min:300, max:1400, step:100},
-              {k:'stall', t:'check', wide:1, label:'卡住转子（堵转）'},
-              {k:'flip', t:'flip', label:'极性'}],
-  // 电铃只有两个旋钮，但它们正好就是「电磁铁磁性强弱跟什么有关」的两个答案：
-  // 电流（由线圈电阻和电压定）与匝数。调小任何一个，磁动势掉到吸合线以下，
-  // 衔铁就吸不动、铃不响了。
-  bell:      [{k:'Rcoil', t:'range', label:'线圈电阻', unit:'Ω', min:5, max:60, step:5},
-              {k:'turns', t:'range', label:'线圈匝数', unit:'匝', min:200, max:1200, step:100}],
-};
-var TYPE_LABEL = {battery:'电源', resistor:'定值电阻', switch:'开关',
-  ammeter:'电流表', voltmeter:'电压表', rheostat:'滑动变阻器', bulb:'小灯泡',
-  led:'发光二极管', motor:'电动机', bell:'电铃'};
+// PARAM_UI / TYPE_LABEL / POLAR / dispI / dispU / fmtR / pval 已抽到
+// circuit-params.js（见文件顶部别名），与 3D 版沙盒共用同一份真值。
 
-// 无极性元件的电流/电压要显示大小，不能显示符号。
-// 内核里 rec.i 记的是「从 0 号端子流向 1 号端子」，而 0 号端子在元件的哪一侧
-// 只是绘制时的朝向——电阻转 180° 接进回路还是同一个电阻。直接把带符号的
-// 数印出来，串联回路里的开关就会显示 −0.1000A，学生只会以为电路接反了。
-// 只有极性本身就承载信息的元件（电表接反要报错、电源充电放电是两回事、
-// 二极管和电动机接反是「不导电」和「反转」两件不同的事）才带符号。
-var POLAR = {ammeter:1, voltmeter:1, battery:1, led:1, motor:1};
-function dispI(c, r){
-  var s = POLAR[c.type] ? r.i : Math.abs(r.i);
-  var tag = '';
-  // 电动机的「反接」要写成「反转」：接反不是接错了线，是转子往反方向转。
-  if (r.reversed) tag = '<span class="tag">' + (r.reverseLabel || '反接') + '</span>';
-  else if (c.type === 'battery' && r.i < -1e-9) tag = '<span class="tag">充电</span>';
-  return num1(s) + tag;
-}
-function dispU(c, r){
-  return num1(POLAR[c.type] ? r.v : Math.abs(r.v));
-}
-// 表格里的 R 一列。开关按通断写 0/∞，变阻器写【实际接入】的那一段，
-// 其余按求解出来的等效电阻写；解不出来（断路、被烧掉）写破折号。
-// 侧栏表格和点元件弹出的浮层共用一份 —— 两处各写一套的话，迟早有一处
-// 会把开关的 ∞ 写成 NaN。
-function fmtR(c, r){
-  if (c.type === 'switch') return r.closed ? '0' : '∞';
-  if (c.type === 'rheostat') return r.rUsed == null ? '∞' : num1(r.rUsed);
-  return r.R == null ? '—' : num1(r.R);
-}
-
-function pval(c, k){
-  if (c.params && c.params[k] != null) return c.params[k];
-  // 电压表的「模拟微弱电流」不是一个独立参数，它就是【rInternal 有没有值】。
-  // 单独存一份布尔量的话，两者迟早对不上：撤销栈、存档往返、预设电路各自
-  // 只恢复其中一个，于是面板上勾着、求解器里还是理想表（或者反过来）——
-  // 而画面上「有没有微弱电流」全看 rInternal，勾选框就成了一个说谎的控件。
-  if (k === 'weakI') return !!(c.params && c.params.rInternal > 0);
-  var d = C.defaultParams(c.type);
-  return d[k];
-}
 // 真实电压表的内阻。3 kΩ 是学生表（J0408 型，1 kΩ/V）在 3V 挡上的数：
 // 3V 下偷 1mA，相对主回路（几百 mA）是千分之几 —— 既真的偷了电流，
 // 又不至于让「几乎不分流」这句话当场破产。
@@ -2048,6 +2052,10 @@ function paramRowsHTML(c, specs, pfx){
 
 function wireParamInputs(box, c, specs, pfx){
   box.querySelectorAll('input,select').forEach(function(el){
+    // 练习面板里的控件没有 data-k（它们不是元件参数），必须跳过 ——
+    // 不跳的话 k 是 undefined，editor.setParam(c.id, undefined, …) 会往 params
+    // 里写一个名叫 "undefined" 的键，而面板上看不出任何异常。
+    if (!el.dataset.k) return;
     function apply(){
       var k = el.dataset.k;
       // 下拉框给的是字符串（二极管存 'red' 这种 key），不能走 parseFloat ——
@@ -2088,6 +2096,140 @@ function wireParamInputs(box, c, specs, pfx){
   });
 }
 
+// ── 练习模式 · 逆推 ──────────────────────────────────────────
+// 这是练习模式里唯一一条【真的逆推】：「要让电流表读 0.40A，滑片该放在哪儿」。
+// 做法是二分 —— 滑片位置当自变量、读数当因变量，先在 [0,1] 上粗扫一遍找到
+// 目标值落在哪两个采样点之间，再在那一小段里二分解出来。
+//
+// ⚠️ 每一次试探都走 C.solve 的【纯求解】，不走 solveNow()。solveNow 那一支会
+//    施加损坏判定：二分要试几十次，中间某次电流偏大就会把导线熔断、把电源烧掉，
+//    后面几十次试的全是【已经坏掉的电路】的读数 —— 最后报「反推不出来」，
+//    而真正的原因是这个工具自己把电路弄坏了。
+function metersInScene(){
+  return scene.comps.filter(function(c){
+    return c.type === 'ammeter' || c.type === 'voltmeter';
+  });
+}
+// 把滑片摆到 slide，纯求解一次，回报这只表此刻的读数（取幅值）。
+// 读不出数（没接进电路 / 接反 / 求解不成立）返回 null —— 调用方据此跳过这一档。
+function readingAtSlide(rheo, slide, meter){
+  var comps = scene.comps.map(function(c){
+    if (c.id !== rheo.id) return c;
+    var cp = {}, k;
+    for (k in c) cp[k] = c[k];
+    cp.params = {};
+    for (k in (c.params || {})) cp.params[k] = c.params[k];
+    cp.params.slide = slide;
+    return cp;
+  });
+  var res;
+  try {
+    res = C.solve(comps, scene.wires.map(function(x){
+      return { a:x.a, b:x.b, broken: !!x.broken };
+    }));
+  } catch (e) { return null; }
+  var r = res && res.components && res.components[meter.id];
+  if (!r || !r.wired || r.reversed) return null;
+  var v = Math.abs(r.reading);
+  return isFinite(v) ? v : null;
+}
+// 反推滑片位置。返回 { ok:true, slide, got } 或 { ok:false, why }。
+function inverseSlide(rheo, meter, target){
+  if (!rheo || !meter) return { ok:false, why:'没有可调的变阻器或电表' };
+  target = Math.abs(target);
+  if (!isFinite(target)) return { ok:false, why:'目标读数填的不是一个数' };
+  var N = 40, pts = [], i;
+  for (i = 0; i <= N; i++) pts.push({ s: i / N, v: readingAtSlide(rheo, i / N, meter) });
+  var valid = pts.filter(function(p){ return p.v != null; });
+  if (valid.length < 2) {
+    return { ok:false, why:'这只表此刻读不出数（没接进电路，或这一档求解不成立）' };
+  }
+  for (i = 0; i < pts.length - 1; i++){
+    var p0 = pts[i], p1 = pts[i+1];
+    if (p0.v == null || p1.v == null) continue;
+    // 目标值不在这一小段里（同号）就换下一段。用 > 0 而不是 >= 0：
+    // 相等（目标恰好落在采样点上）也要当成「找到了」。
+    if ((p0.v - target) * (p1.v - target) > 0) continue;
+    var lo = p0.s, hi = p1.s, flo = p0.v - target, k;
+    for (k = 0; k < 40; k++){
+      var mid = (lo + hi) / 2;
+      var vm = readingAtSlide(rheo, mid, meter);
+      if (vm == null) break;
+      if (flo * (vm - target) <= 0) { hi = mid; }
+      else { lo = mid; flo = vm - target; }
+    }
+    var sOut = (lo + hi) / 2;
+    return { ok:true, slide: sOut, got: readingAtSlide(rheo, sOut, meter) };
+  }
+  var vmin = Math.min.apply(null, valid.map(function(p){ return p.v; }));
+  var vmax = Math.max.apply(null, valid.map(function(p){ return p.v; }));
+  return { ok:false, why:'滑片从 0 到 1 都到不了这个读数（实际能到的范围 ' +
+    num1(vmin) + '~' + num1(vmax) + '）' };
+}
+
+// 练习面板的 HTML。只挂在滑动变阻器上；练习模式没开就返回空串，
+// 于是正常模式下面板和以前一模一样，一个字都不多。
+function practiceRowsHTML(c, pfx){
+  if (!practice || c.type !== 'rheostat') return '';
+  var ms = metersInScene();
+  var head = '<div class="pracBox"><div class="pracHd">🎓 练习 · 逆推</div>';
+  if (!ms.length) {
+    return head + '<div class="pracMsg">电路里还没有电表。先放一只电流表串进回路，' +
+      '才能按它的示数反推滑片该放哪儿。</div></div>';
+  }
+  var opts = ms.map(function(m){
+    return '<option value="' + m.id + '">' + (TYPE_LABEL[m.type] || m.type) +
+      ' ' + D.nameOf(m) + '</option>';
+  }).join('');
+  return head +
+    '<div class="prow"><label>让</label>' +
+      '<select data-prac="meter">' + opts + '</select></div>' +
+    '<div class="prow"><label>读数为</label>' +
+      '<input type="number" data-prac="target" step="0.01" min="0" value="0.4">' +
+      '<span class="val" data-prac="unit">' +
+        (ms[0].type === 'ammeter' ? 'A' : 'V') + '</span></div>' +
+    '<div class="prow"><button type="button" class="pracGo" data-prac="go">' +
+      '🎯 反推滑片位置</button></div>' +
+    '<div class="pracMsg" data-prac="msg">设定目标读数，反推变阻器该接入多大阻值 —— ' +
+      '其余读数由电路自己算出来。</div></div>';
+}
+// 逆推面板的接线。走 box.querySelector 而不是 getElementById：侧栏和浮层两个
+// 面板会同时存在，id 只有一份（pv_ / pp_ 两套前缀就是为了绕开这个坑），
+// 而 data-prac 的属性在各自 box 里是唯一的。
+function wirePractice(box, c){
+  var go = box.querySelector('button[data-prac="go"]');
+  if (!go) return;
+  var sel = box.querySelector('select[data-prac="meter"]');
+  var inp = box.querySelector('input[data-prac="target"]');
+  var unit = box.querySelector('[data-prac="unit"]');
+  function unitOf(m){ return m && m.type === 'voltmeter' ? 'V' : 'A'; }
+  function syncUnit(){
+    var m = sel ? editor.byId(sel.value) : null;
+    if (unit) unit.textContent = unitOf(m);
+  }
+  if (sel) sel.addEventListener('change', syncUnit);
+  syncUnit();
+  go.addEventListener('click', function(){
+    var meter = sel ? editor.byId(sel.value) : null;
+    if (!meter) { msg().textContent = '选中的那只表已经不在电路里了。'; return; }
+    var target = parseFloat(inp.value);
+    var res = inverseSlide(c, meter, target);
+    if (!res.ok) { msg().textContent = '反推不出来：' + res.why; return; }
+    // 学生既然点了「反推」，要的就是答案 —— 把变阻器和这只表一起揭晓。
+    // 先写 revealed 再 setParam：setParam 会触发一次重绘，重绘时标记就得已经到位。
+    revealed[c.id] = 1; revealed[meter.id] = 1;
+    var slide = Math.round(res.slide * 100) / 100;
+    editor.setParam(c.id, 'slide', slide);      // 自带一次 renderSoft
+    rebuildParamPanels();                       // 两个面板里的滑块要跟着新值走
+    msg().textContent = '滑片 → ' + Math.round(slide * 100) + '%，接入 ' +
+      num1(pval(c, 'Rmax') * slide) + 'Ω，' + D.nameOf(meter) + ' 现在读 ' +
+      num1(res.got) + unitOf(meter) + '。';
+  });
+  // 每次都重新查：rebuildParamPanels() 会把 box 里的子节点整批换掉，
+  // 之前抓住的那个 msg 节点已经不在文档里了，往里写学生一个字也看不见。
+  function msg(){ return box.querySelector('[data-prac="msg"]'); }
+}
+
 // 参数改了「接线」（量程柱）之后，两个面板都得重建。分开写的话，
 // 从浮层里换量程，侧栏那个面板会一直亮着旧的那一挡。
 function rebuildParamPanels(){
@@ -2104,9 +2246,10 @@ function renderParams(sel){
   var c = sel.comp;
   var specs = PARAM_UI[c.type] || [];
   box.innerHTML = '<h3>' + (TYPE_LABEL[c.type] || c.type) + ' ' + D.nameOf(c) + '</h3>' +
-    paramRowsHTML(c, specs, 'pv_');
+    paramRowsHTML(c, specs, 'pv_') + practiceRowsHTML(c, 'pv_');
   syncCheckPanel();
   wireParamInputs(box, c, specs, 'pv_');
+  wirePractice(box, c);
 }
 
 // ── 临时提示条 ────────────────────────────────────────────
@@ -2182,12 +2325,17 @@ function updateSide(){
     var r = recs[c.id]; if (!r) return;
     var tr = document.createElement('tr');
     if (c.id === selId) tr.className = 'sel';
+    // 练习模式下【没揭晓】的元件，四列一律印「?」。这不是「没有值」，是「先不给
+    // 看」—— 印 0 会让学生以为「这件没电流」，而那正好把要考的那个数白送了。
+    var hid = practiceHidden(c);
     tr.innerHTML = '<td>' + (TYPE_LABEL[c.type]||c.type) + ' ' + D.nameOf(c) + '</td>' +
-      '<td>' + dispI(c, r) + '</td>' +
-      '<td>' + dispU(c, r) + '</td><td>' + fmtR(c, r) + '</td>' +
-      '<td>' + num1(Math.abs(r.p)) + '</td>';
+      '<td>' + (hid ? '?' : dispI(c, r)) + '</td>' +
+      '<td>' + (hid ? '?' : dispU(c, r)) + '</td>' +
+      '<td>' + (hid ? '?' : fmtR(c, r)) + '</td>' +
+      '<td>' + (hid ? '?' : num1(Math.abs(r.p))) + '</td>';
     tb.appendChild(tr);
   });
+  syncPracticeUI();
 
   var map = {ok:['电路导通',''], 'open-circuit':['断路：没有电流通路','bad'],
     shorted:['短路！电流过大','bad'], 'no-source':['还没有接电源','idle'],
@@ -2394,6 +2542,19 @@ function onSelChanged(){
 // 抽成具名函数是为了自检能直接走这一路 —— 点表盘开的是放大镜、点别处开的是
 // 参数面板，这两件事的分岔点全在这里，自检不绕过它才测得到真东西。
 function onTapComp(c, p){
+  // 练习模式：点元件 = 揭晓【它自己】的读数，再点一下收起。
+  // 揭晓之后继续往下走原来的路（表盘 → 放大镜、其余 → 参数浮层），
+  // 「揭晓」和「看细节」就是同一次点击，不用点两下。
+  if (practice){
+    if (revealed[c.id]) {
+      delete revealed[c.id];
+      closePop(); closeZoom();
+      render();
+      return;                      // 收起就是收起，不再弹任何面板
+    }
+    revealed[c.id] = 1;
+    render();                      // 先重绘：标签、侧栏、表盘一起亮出来
+  }
   if (c.type === 'ammeter' || c.type === 'voltmeter') {
     var l = D.toLocal(c, p.x, p.y);
     if (dialHit(l.x, l.y)) { openZoom(c); return; }
@@ -2553,6 +2714,9 @@ function placePop(c){
 // 拆成 inner / HTML 两个函数，是为了让 syncPop 能【只换里面的字】——
 // 整块 outerHTML 换掉的话，旁边正在拖的滑块会被一起抽走。
 function popReadInner(c){
+  // 练习模式：没揭晓就不给数。这里留一句【怎么揭晓】，不然学生只看到一块空面板。
+  // 正常路径下点元件那一刻就已经揭晓了，这句是给「先揭晓、又手动收起」那条路兜底的。
+  if (practiceHidden(c)) return '读数已隐藏 —— 点一下这个元件揭晓';
   var r = results && results.components && results.components[c.id];
   if (!r) return '';
   return 'I ' + dispI(c, r) + ' A　U ' + dispU(c, r) + ' V<br>' +
@@ -2591,9 +2755,10 @@ function renderPop(){
   var specs = PARAM_UI[c.type] || [];
   popTitle.textContent = (TYPE_LABEL[c.type] || c.type) + ' ' + D.nameOf(c);
   popBody.innerHTML = popFaultHTML(c) + popReadHTML(c) +
-    paramRowsHTML(c, specs, 'pp_') + popActsHTML(c);
+    paramRowsHTML(c, specs, 'pp_') + practiceRowsHTML(c, 'pp_') + popActsHTML(c);
   popFaultKey = c.fault || '';
   wireParamInputs(popBody, c, specs, 'pp_');
+  wirePractice(popBody, c);
   popBody.querySelectorAll('button[data-act]').forEach(function(btn){
     btn.addEventListener('click', function(){
       var act = btn.dataset.act;
@@ -2757,7 +2922,9 @@ function drawZoom(){
   zoomView.midX = ZBOX.x + ZBOX.w/2; zoomView.midY = ZBOX.y + ZBOX.h/2;
   // 下面这行字和画布上的读数框共用 readoutLines()：反接时画布写「指针反偏」，
   // 放大镜里也必须一样，不能这边照旧印一个数字出来。
-  zoomRead.textContent = (readoutLines(zoomComp, rec) || []).join('　·　');
+  zoomRead.textContent = practiceHidden(zoomComp)
+    ? '读数已隐藏 —— 点一下这只表揭晓'
+    : (readoutLines(zoomComp, rec) || []).join('　·　');
   // 量程单独一格：它是「线接在哪个柱上」的信息，跟能不能读数无关，
   // 接反时照印——那时学生更该看清指针到底顶在哪一挡的零刻度左边。
   // 没接量程柱就不写：读数那行已经写了「量程柱没接线」，再写一遍是啰嗦。
@@ -3127,6 +3294,9 @@ var LG_ICON = { w: 86, h: 58 };
 var LG_VIEW = {
   resistor:  { x0: -74, y0: -26, x1: 74, y1: 26 },
   battery:   { x0: -112, y0: -42, x1: 112, y1: 42 },
+  // 学生电源：机箱 ±62（面板上还长着表头和旋钮）、接线柱在 ±70，
+  // 机箱上沿 −70、下沿 +38。取景框照这个给，图例里才看得清面板。
+  power:     { x0: -78, y0: -76, x1: 78, y1: 44 },
   switch:    { x0: -74, y0: -68, x1: 74, y1: 38 },
   bulb:      { x0: -74, y0: -80, x1: 74, y1: 40 },
   ammeter:   { x0: -102, y0: -92, x1: 102, y1: 82 },
@@ -3260,7 +3430,7 @@ window.addEventListener('keydown', function(ev){
 }, true);
 
 // 元件栏
-var PAL = ['battery','switch','resistor','rheostat','bulb','ammeter','voltmeter',
+var PAL = ['battery','power','switch','resistor','rheostat','bulb','ammeter','voltmeter',
            'led','motor','bell'];
 var bar = document.getElementById('palette');
 
@@ -3717,6 +3887,30 @@ function animToggle(label, key, initial, apply, offLabel, opt){
 var flowAnim = animToggle('⚡ 电子流动', FLOW_KEY, showFlow, function(v){ showFlow = v; }, null, 1);
 var curAnim  = animToggle('➡ 电流方向', CUR_KEY, showCurrent, function(v){ showCurrent = v; }, null, 1);
 
+// 🎓 练习模式：读数全藏起来，点画布上的元件才揭晓它自己那份 —— 用来模拟
+// 「已知……求……」这类练习题。和上面两个开关一样记在 localStorage：老师上
+// 一节课开着，下一节课进来还是开着。
+// 归到 opt 那一批：它不该在窄屏上多占一格（顶栏每多一行就是 30 多像素，
+// 竖屏全屏那 90px 的预算很紧）。
+var practiceAnim = animToggle('🎓 练习', PRACTICE_KEY, practice, function(v){
+  practice = v;
+  if (!v) revealed = {};        // 关掉练习模式就把揭晓记录清干净，别留到下次
+  // 装配阶段（脚本还在往下跑、第一遍 render 还没到）只压标记 + 重画画布；
+  // 之后每一次真实切换才整页重绘 —— 那时侧栏和两个参数面板都已经就位。
+  if (results) render(); else { applyPracticeFlags(); drawFrame(); }
+}, null, 1);
+
+// 「揭晓全部 / 全部收起」：老师讲评时一句话把所有答案亮出来，再点一下全部藏回去。
+// 只在练习模式下出现（syncPracticeUI 每帧同步它的 hidden）。
+var btnRevealAll = toolBtn('👁 揭晓全部', function(){
+  var anyHidden = scene.comps.some(function(c){ return practiceHidden(c); });
+  if (anyHidden) scene.comps.forEach(function(c){ revealed[c.id] = 1; });
+  else revealed = {};
+  render();
+}, 'prac', 1);
+btnRevealAll.title = '把场上所有元件的读数一次全亮出来；再点一下全部藏回去';
+syncPracticeUI();               // 按钮刚建出来，先让它跟当前模式对齐一次
+
 // ── 音效 ──────────────────────────────────────────────────
 // 引擎在这里才建（而不是在页面顶部）：它要读 localStorage 里的开关状态，
 // 而 AudioContext 本身是懒创建的 —— 载入时不建，等第一次真实手势才建
@@ -3810,6 +4004,35 @@ window.__lockPhase = function(v){
 };
 window.__showSound = function(){ return showSound; };
 window.__setSound = function(v){ setSound(v); };
+
+// ── 练习模式 ──────────────────────────────────────────────
+window.__practice = function(){ return practice; };
+window.__setPractice = function(v){ practiceAnim.set(!!v); return practice; };
+window.__revealed = function(){ return Object.keys(revealed); };
+window.__practiceHidden = function(id){ return practiceHidden(editor.byId(id)); };
+// 画布标签【这一帧真的印了哪几行】。判「揭晓之后参数行才出现」必须读画出去的
+// 那一份，不能读 stateLinesOf —— 那等于量「算的那一步」，把 drawCompTag 里
+// 改成照旧用 stateLinesOf 这个改坏照样全绿。
+window.__tagLines = function(id){
+  for (var i = tagDrawn.length - 1; i >= 0; i--) {
+    if (tagDrawn[i].id === id) return tagDrawn[i].lines.slice();
+  }
+  return null;
+};
+window.__metersInScene = function(){
+  return metersInScene().map(function(c){ return { id:c.id, type:c.type, name:D.nameOf(c) }; });
+};
+window.__readingAtSlide = function(rheoId, slide, meterId){
+  return readingAtSlide(editor.byId(rheoId), slide, editor.byId(meterId));
+};
+window.__inverseSlide = function(rheoId, meterId, target){
+  return inverseSlide(editor.byId(rheoId), editor.byId(meterId), target);
+};
+window.__pracTag = function(){
+  var el = document.getElementById('pracTag');
+  return el ? { hidden: el.hidden, text: el.textContent, shown: el.offsetParent !== null } : null;
+};
+window.__btnRevealAll = function(){ return btnRevealAll; };
 // 电路安全：损坏 / 修复 / 演示故障。这几条给「灯泡烧断阈值」「表超量程与反接」
 // 「短路熔断导线」「修好以后恢复」那几组断言用。
 window.__faults = function(){
@@ -4141,6 +4364,17 @@ window.__resetAnim = function(){ animT = 0; spinAng = {}; drawFrame(); };
 window.__tickReset = function(){ lastT = 0; };
 window.__tick = function(t){ tick(t == null ? 0 : t); };
 window.__drawMotion = function(){ drawMotion(); };
+// 变阻器绕线里【这一帧真的画出去】的粒子数（元件 id → {left,right,arm,…}）。
+// 返回的是深拷贝：断言拿到手之后页面再画一帧也不会把它改掉。
+window.__rheoFlow = function(){
+  var out = {};
+  for (var id in flowDrawn) {
+    var s = flowDrawn[id];
+    out[id] = { left:s.left, right:s.right, arm:s.arm,
+                iL:s.iL, iR:s.iR, iArm:s.iArm, phase:s.phase };
+  }
+  return out;
+};
 // 像素层：断言「灯真的亮了」「飞轮真的在转」只能靠像素。坐标一律用【逻辑坐标】
 // （画布内部宽高 W/H），由这里乘 dpr 换算 —— 调用方不用管设备像素比。
 // 分三层给：主画布（bg+导线+缓存层+会动的元件）、缓存层 fgLayer、背景层 bgLayer。

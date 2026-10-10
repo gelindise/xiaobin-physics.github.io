@@ -427,6 +427,10 @@
   var TERMINALS = {
     resistor: [{ x: -HALF, y: 0 }, { x: HALF, y: 0 }],
     battery: [{ x: HALF, y: 0 }, { x: -HALF, y: 0 }],   // 0 = 正极（右）
+    // 学生电源：端子和干电池【同一个摆法】（0 号是正极、落在右侧）。
+    // 两者的极性语义本来就一样（都是「电流从正极流出」），接线柱也都在两侧，
+    // 所以坐标一致 —— 换元件的时候导线不用重新接。
+    power: [{ x: HALF, y: 0 }, { x: -HALF, y: 0 }],     // 0 = 正极（右）
     switch: [{ x: -HALF, y: 0 }, { x: HALF, y: 0 }],
     bulb: [{ x: -HALF, y: 0 }, { x: HALF, y: 0 }],
     // 二极管和电动机是【有极性】的，0 号端子一律是「+」（左边那个红柱）。
@@ -1096,6 +1100,11 @@
         var s = batterySize(Math.max(1, Math.min(6, Math.round(emf / per))));
         return { hw: s.boxW / 2, hh: s.boxH / 2 };
       }
+      // 学生电源：整台机箱的包围盒（机箱 ±62，接线柱在 ±70）。
+      // ⚠️ hw 必须【小于 70−3 = 67】才不把接线柱圈进盒子里（见上面那条注释），
+      //    取 66 正好：机箱 62 被盖住、接线柱 70 落在外面。hh 取 70 罩住机箱
+      //    上下沿（−70 / 38）。
+      case 'power': return { hw: 66, hh: 70 };
       // 开关和灯泡是「板子铺在导线底下、柱子从板面上立起来」的一类，
       // 和两只表正好反过来。盒子取「够用不缩」的那一档，但要卡死 ≤ 73：
       // 接线柱在 ±70，走线检查算的是 |lx| < hw−3，hw 再大柱子就被圈进盒子里，
@@ -1122,6 +1131,157 @@
       case 'rheostat': return { hw: RHEO.BW / 2, hh: RHEO.BH / 2 }; // 含陶瓷管与滑片杆
       default: return { hw: 54, hh: 20 };                // 定值电阻 BW/BH = 108/40
     }
+  }
+
+  // ============================================================
+  // 学生电源（直流稳压电源）
+  // ------------------------------------------------------------
+  // 实验室里那台 J1202 型的稳压电源：方形机箱，面板左上是一只电压指示表头、
+  // 右上一个电压调节旋钮，红黑两个接线柱从两侧引出。
+  //
+  // 为什么不像干电池那样画「躺在槽里的电池」：这是【两个不同的元件】。
+  // 干电池的电压由节数定死（1.5V 的整数倍），学生电源的电压由旋钮连续调 ——
+  // 这正是用户要的「电源电压是可调的」。电路图上两者也是不同的符号
+  // （学生电源外面多套一个方框，见 circuit-schematic 的 drawSymbol）。
+  // 实物画成一个样，学生就分不清自己接的是哪个，而这恰恰是「用学生电源
+  // 取任意电压做实验」这件事的起点。
+  //
+  // ⚠️ 表头上的指针【跟着实际输出电压走】：旋钮一转针就动。画成一根钉死的
+  //    针，面板上那只表头就只是个装饰，学生也不会把「旋钮」和「电压」联系起来。
+  // ============================================================
+  var PSU = {
+    HW: 62, TOP: -70, BOT: 38,        // 机箱：半宽 / 上沿 / 下沿
+    DIAL: { x: -30, y: -38, r: 24 },  // 面板左上：电压指示表头
+    KNOB: { x: 27, y: -40, r: 17 },   // 面板右上：电压调节旋钮
+    // 表头刻度：指针只扫上半圈，从 −130° 到 −50°（和真表一样）。
+    A0: -Math.PI * 0.72, A1: -Math.PI * 0.28,
+    VMAX: 15,                          // 表头满量程（= 面板旋钮能调到的最大电压）
+  };
+
+  function drawPowerSupply(ctx, comp, rec) {
+    var P = comp.params || {};
+    var emf = P.emf != null ? +P.emf : 6;
+    var S = PSU, D = S.DIAL, K = S.KNOB;
+    var sc = ctxScale(ctx);
+    var frac = Math.max(0, Math.min(1, emf / S.VMAX));
+
+    ctx.save();
+    ctx.translate(comp.x, comp.y);
+    ctx.rotate((comp.rot || 0) * Math.PI / 180);
+    // 「对调极性」= 整台机箱原地左右镜像（和干电池一个规矩，见 drawBattery）。
+    // ⚠️ 镜像只加在【本体】这一段里：接线柱的世界坐标来自 terminalWorld()，
+    //    那里已经按 flip 把 x 取过负了，在这里再镜像一次会把柱子画到相反的一侧。
+    if (flipOf(comp)) ctx.scale(-1, 1);
+
+    var boxW = S.HW * 2, boxH = S.BOT - S.TOP;
+
+    // ── 引出线：从机箱侧面水平引到接线柱 ────────────────────────
+    // 水平引出（不用斜线）：斜线会让接线柱看起来像被导线戳穿。
+    ctx.strokeStyle = PALETTE.metalLo; ctx.lineWidth = 3.5; ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(-S.HW, 0); ctx.lineTo(-HALF, 0);
+    ctx.moveTo(S.HW, 0);  ctx.lineTo(HALF, 0);
+    ctx.stroke();
+
+    // ── 机箱 ────────────────────────────────────────────────────
+    contactShadow(ctx, 0, S.BOT + 1, S.HW * 0.92, 6, 0.28);
+    ctx.save();
+    ctx.shadowColor = 'rgba(15,23,42,0.30)'; ctx.shadowBlur = 16; ctx.shadowOffsetY = 6;
+    ctx.fillStyle = linGrad(ctx, 0, S.TOP, 0, S.BOT,
+      [[0, '#eef3f8'], [0.28, '#dbe4ee'], [0.70, '#c3cfdc'], [1, '#a6b4c5']]);
+    roundRect(ctx, -S.HW, S.TOP, boxW, boxH, 7); ctx.fill();
+    ctx.restore();
+    ctx.strokeStyle = 'rgba(51,65,85,0.45)'; ctx.lineWidth = 1.3;
+    roundRect(ctx, -S.HW, S.TOP, boxW, boxH, 7); ctx.stroke();
+    // 顶面受光 + 底边压暗：只有这两笔，机箱才是一个有厚度的箱体而不是一块板
+    ctx.save();
+    roundRect(ctx, -S.HW, S.TOP, boxW, boxH, 7); ctx.clip();
+    ctx.fillStyle = 'rgba(255,255,255,0.55)';
+    ctx.fillRect(-S.HW + 5, S.TOP + 2, boxW - 10, 3);
+    ctx.fillStyle = 'rgba(51,65,85,0.12)';
+    ctx.fillRect(-S.HW + 5, S.BOT - 8, boxW - 10, 6);
+    ctx.restore();
+
+    // ── 前面板：内嵌的沉台，比箱体亮一档 ────────────────────────
+    var panX = -S.HW + 6, panY = S.TOP + 6, panW = boxW - 12, panH = boxH - 14;
+    ctx.fillStyle = linGrad(ctx, 0, panY, 0, panY + panH,
+      [[0, '#f7fafd'], [0.55, '#ebf1f7'], [1, '#dbe4ee']]);
+    roundRect(ctx, panX, panY, panW, panH, 5); ctx.fill();
+    ctx.strokeStyle = 'rgba(100,116,139,0.35)'; ctx.lineWidth = 1;
+    roundRect(ctx, panX, panY, panW, panH, 5); ctx.stroke();
+
+    // ── 电压指示表头（左上）────────────────────────────────────
+    var pvx = D.x, pvy = D.y + D.r * 0.42;     // 指针轴心（偏下）
+    var ar = D.r * 0.56;                       // 刻度弧半径
+    ctx.beginPath(); ctx.arc(D.x, D.y, D.r, 0, 6.284);
+    ctx.fillStyle = linGrad(ctx, D.x, D.y - D.r, D.x, D.y + D.r,
+      [[0, '#ffffff'], [0.72, '#f5f8fb'], [1, '#e3eaf2']]);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(71,85,105,0.60)'; ctx.lineWidth = 1.4; ctx.stroke();
+    // 刻度弧 + 四根刻度线（0 / 5 / 10 / 15V）
+    ctx.strokeStyle = '#64748b'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.arc(pvx, pvy, ar, S.A0, S.A1); ctx.stroke();
+    for (var i = 0; i <= 3; i++) {
+      var a = S.A0 + (S.A1 - S.A0) * (i / 3);
+      ctx.beginPath();
+      ctx.moveTo(pvx + Math.cos(a) * ar, pvy + Math.sin(a) * ar);
+      ctx.lineTo(pvx + Math.cos(a) * ar * 0.78, pvy + Math.sin(a) * ar * 0.78);
+      ctx.stroke();
+    }
+    // 指针 + 轴心
+    var pa = S.A0 + (S.A1 - S.A0) * frac;
+    ctx.strokeStyle = '#b91c1c'; ctx.lineWidth = 1.7; ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(pvx - Math.cos(pa) * ar * 0.16, pvy - Math.sin(pa) * ar * 0.16);
+    ctx.lineTo(pvx + Math.cos(pa) * ar * 0.98, pvy + Math.sin(pa) * ar * 0.98);
+    ctx.stroke();
+    ctx.beginPath(); ctx.arc(pvx, pvy, 2.3, 0, 6.284);
+    ctx.fillStyle = '#334155'; ctx.fill();
+    // 盘面中央的「V」
+    ctx.fillStyle = '#334155';
+    ctx.font = 'bold 9px -apple-system,"PingFang SC",sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('V', D.x, D.y + D.r * 0.70);
+
+    // ── 电压调节旋钮（右上）────────────────────────────────────
+    ctx.beginPath(); ctx.arc(K.x, K.y, K.r + 2.5, 0, 6.284);
+    ctx.fillStyle = 'rgba(51,65,85,0.16)'; ctx.fill();
+    var kg = ctx.createRadialGradient(K.x - K.r * 0.35, K.y - K.r * 0.35, K.r * 0.12,
+                                      K.x, K.y, K.r);
+    kg.addColorStop(0, '#f4f7fb'); kg.addColorStop(0.55, '#ccd6e2'); kg.addColorStop(1, '#8494a8');
+    ctx.beginPath(); ctx.arc(K.x, K.y, K.r, 0, 6.284);
+    ctx.fillStyle = kg; ctx.fill();
+    ctx.strokeStyle = 'rgba(51,65,85,0.50)'; ctx.lineWidth = 1.2; ctx.stroke();
+    // 侧面滚花：一圈短竖线，远看就是「拧得动」的塑料旋钮
+    ctx.strokeStyle = 'rgba(51,65,85,0.26)'; ctx.lineWidth = 1;
+    for (var t = 0; t < 16; t++) {
+      var ta = t / 16 * Math.PI * 2;
+      ctx.beginPath();
+      ctx.moveTo(K.x + Math.cos(ta) * K.r * 0.80, K.y + Math.sin(ta) * K.r * 0.80);
+      ctx.lineTo(K.x + Math.cos(ta) * K.r * 0.96, K.y + Math.sin(ta) * K.r * 0.96);
+      ctx.stroke();
+    }
+    // 指示线跟着电压转：0V 指向左下、15V 指向右下，中间扫过正上方。
+    // 和表头指针【同一个 frac】——两处各算一遍的话，迟早出现「针指着 6V、
+    // 旋钮却停在 9V」，而画面上看着都挺对。
+    var ka = -Math.PI * 0.75 + Math.PI * 1.5 * frac;
+    ctx.strokeStyle = '#b91c1c'; ctx.lineWidth = 2.6; ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(K.x + Math.cos(ka) * K.r * 0.18, K.y + Math.sin(ka) * K.r * 0.18);
+    ctx.lineTo(K.x + Math.cos(ka) * K.r * 0.86, K.y + Math.sin(ka) * K.r * 0.86);
+    ctx.stroke();
+    ctx.beginPath(); ctx.arc(K.x, K.y, K.r * 0.22, 0, 6.284);
+    ctx.fillStyle = '#e6ecf3'; ctx.fill();
+    ctx.strokeStyle = 'rgba(51,65,85,0.35)'; ctx.lineWidth = 0.9; ctx.stroke();
+
+    // ── 丝印：型号 + 当前输出电压 ───────────────────────────────
+    if (sc >= 1) {
+      silk(ctx, 'J1202', -S.HW + 24, S.BOT - 12, 8, 'rgba(100,116,139,0.92)');
+      silk(ctx, '学生电源', S.HW - 26, S.BOT - 12, 8, 'rgba(51,65,85,0.85)');
+    }
+    silk(ctx, emf.toFixed(1) + ' V', K.x, K.y + K.r + 13, 10.5, '#1f2937');
+
+    ctx.restore();
   }
 
   function drawBattery(ctx, comp, rec) {
@@ -2238,6 +2398,27 @@
     screwHead(ctx, x, y, r, 'slot', sc);
   }
 
+  // 读数的格式化（表盘上那块数字示数用）。
+  // 优先用 circuit-params.js 的 num1 —— 表盘上的数字和侧栏那张 I/U/R 表
+  // 【必须是同一套规则】，否则学生把两处一对照会看到两个不同的数，
+  // 而其中一个必然「看着不对」，那比不显示更坏。
+  // 那个模块万一没加载（离屏出图工具、单文件测试），退回下面这份等价实现。
+  function fmtRead(v) {
+    var G = (typeof self !== 'undefined') ? self
+          : (typeof global !== 'undefined') ? global : this;
+    if (G.CircuitParams && typeof G.CircuitParams.num1 === 'function') {
+      return G.CircuitParams.num1(v);
+    }
+    var x = +v;
+    if (!isFinite(x)) return '—';
+    var s = x.toFixed(1);
+    if (x !== 0 && parseFloat(s) === 0) {
+      s = x.toFixed(2);
+      if (parseFloat(s) === 0) s = x.toFixed(3);
+    }
+    return s;
+  }
+
   function drawMeter(ctx, comp, rec, isVolt) {
     var M = MET, SW = MET_SWEEP;
     var reading = rec ? (rec.reading || 0) : 0;
@@ -2350,6 +2531,30 @@
     ctx.fillStyle = '#1f2937';
     ctx.font = 'bold 19px -apple-system,"PingFang SC",sans-serif';
     ctx.fillText(isVolt ? 'V' : 'A', 0, M.PIVOT.y - 16);
+
+    // ── 数字示数（可选，默认【不显示】）────────────────────────
+    // 参数面板里勾上「在表盘上显示读数」才画。
+    // 位置挑在刻度弧【下方】、指针轴心【上方】那一块 —— 那是表盘上唯一不会被
+    // 指针扫到的区域（指针扫的是半径 RT0~RT1、绕轴心的上半圈，在 |x| ≤ 30 的
+    // 范围里最低只到 y ≈ −44），所以数字永远盖不住针、针也永远划不过数字。
+    // 换位置之前先把这条算清楚，不然会出现「针从数字上划过去」。
+    // ⚠️ rec.practiceHide 是【练习模式】压上来的：那一档里读数默认一个都不给看，
+    //    要等学生点这只表揭晓。判据挂在 rec 上而不是 comp.params 上 —— rec 每次
+    //    求解重建，不进存档、不进撤销栈；写进 params 的话，一个纯粹的显示开关
+    //    会被存进学生保存的电路里，下次打开还藏着一块。
+    if (comp.params && comp.params.showValue && !(rec && rec.practiceHide)) {
+      var txt = fmtRead(reading) + (isVolt ? ' V' : ' A');
+      // 深色底 = 表盘上贴的一块小液晶屏。液晶的青色字压在深底上，
+      // 和黑针、白盘都分得开。
+      ctx.fillStyle = 'rgba(15,23,42,0.92)';
+      roundRect(ctx, -30, -40, 60, 20, 3); ctx.fill();
+      ctx.strokeStyle = 'rgba(148,163,184,0.55)'; ctx.lineWidth = 1;
+      roundRect(ctx, -30, -40, 60, 20, 3); ctx.stroke();
+      ctx.fillStyle = '#7dd3fc';
+      ctx.font = 'bold 13px ui-monospace,Menlo,Consolas,monospace';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(txt, 0, -29.5);
+    }
 
     // ── 底部网纹块 + 调零螺丝 ───────────────────────────────
     // 教材上指针的转轴就藏在这块深色网纹里。块先画，指针后画压在上面。
@@ -2557,6 +2762,121 @@
   //      不表示极性，语义靠 A/B/C/D 四个字母）
   // 几何全部走 RHEO：滑片行程、命中框都靠它，一个数字都不能自作主张。
   // ============================================================
+  // ============================================================
+  // 滑动变阻器绕线【内部】的电流 / 电子流动（独立一层）
+  // ------------------------------------------------------------
+  // 为什么单独抽成一层、而不是画在 drawRheostat 里：
+  //   ① 绕线上的粒子是靠相位驱动的【动画】，必须每帧重画；而变阻器的本体
+  //      （密绕六十多圈的丝、瓷管、两块立板）画一次就够了，每帧重画纯属白费。
+  //      所以本体留在静态缓存层，只有这一层每帧画。
+  //   ② 导线是画在元件【之上】的（见页面 drawFrame 的注释：真实情况就是导线
+  //      从器材上跨过去）。粒子要是跟着本体走，就会被导线盖掉一半 —— 而它
+  //      恰恰是这一层要给人看的东西。
+  // 用户 2026-10-11 点名要的：「滑动变阻器内部的电子电流的流动是没有显示的」。
+  //
+  // 三条判据，一条都不能省：
+  //   · 【只画有电流的那半根】：判据直接读 rec.segments 的电流，不去推断接法。
+  //     A-C/A-D 只画左半、B-C/B-D 只画右半、A-B 两半都画、C-D 两半都不画 ——
+  //     接法一改这里自动跟着变，绘制层不必再写一份接法表（写两份迟早对不上）。
+  //   · 【方向按段自己的电流符号】：段的 a→b 就是左→右，而 segments[i].i 的
+  //     约定正是「沿该段的 a→b 为正」（见内核 rheostat 分支的 addR 顺序），
+  //     所以直接把 i 交给 electronShift，不用再换算方向。
+  //   · 【电子逆着电流走】：由 electronShift 内部的负号保证，和主回路导线上
+  //     那些小球是同一套规矩（金属里自由电子带负电，定向移动方向与规定的
+  //     电流方向相反）。
+  //
+  // ⚠️ 画在绕线【表面】（cylMid 这条轴线上）而不是瓷管里：绕线才是导体，
+  //    电子跑在导体里 —— 画到瓷管上等于把「绝缘的瓷」和「导电的丝」搞反了。
+  // ⚠️ opts.phase 为 null（粒子开关关着）时【一个粒子都不画】：绕线上的粒子和
+  //    导线上的粒子是同一个开关管的，关掉一个却让另一个继续跑，自相矛盾。
+  //
+  // 返回值 = 【这一帧真的画出去的那几个数】（左右两半各几粒、触臂几粒）。
+  // 断言读它，不读 rec.segments —— 读 rec 等于量「算的那一步」，把 runSeg 的
+  // 调用条件改坏（比如两半都画）照样全绿。返回它等于把「画了什么」钉死。
+  // ============================================================
+  function drawRheostatFlow(ctx, comp, rec, opts) {
+    var stats = { left: 0, right: 0, arm: 0, iL: 0, iR: 0, iArm: 0, phase: null };
+    var phase = opts && opts.phase;
+    if (phase == null) return stats;                   // 开关关着 → 一个粒子都不画
+    stats.phase = phase;
+    if (!rec || !rec.segments || rec.segments.length < 2) return stats;
+    var iL = rec.segments[0].i, iR = rec.segments[1].i;
+    stats.iL = iL; stats.iR = iR;
+    if (Math.abs(iL) <= 1e-12 && Math.abs(iR) <= 1e-12) return stats;
+
+    var cylX = RHEO.cylX, cylW = RHEO.cylW, cylY = RHEO.cylY, cylH = RHEO.cylH;
+    var cylMid = cylY + cylH / 2;                      // 绕线轴线（电阻丝所在的那条线）
+    var sxNow = sliderLocalX(slideOf(comp, rec));
+    var tipY = cylY + cylH * 0.62;                     // 触臂端头（和 drawRheostat 同一处）
+    var sc = ctxScale(ctx);
+    var rBall = 2.6 * Math.min(1, Math.max(0.62, sc));
+
+    ctx.save();
+    ctx.translate(comp.x, comp.y);
+    ctx.rotate((comp.rot || 0) * Math.PI / 180);
+    ctx.fillStyle = PALETTE.flow;
+    ctx.shadowColor = 'rgba(245,158,11,0.85)'; ctx.shadowBlur = 6;
+
+    // 沿一段绕线跑：x0 → x1，flow 是这一段的有符号电流（沿 x0→x1 为正）。
+    // 返回画出去的粒子数（0 = 这一段没通电，一颗都不画）。
+    function runSeg(x0, x1, flow, rad, gap) {
+      if (Math.abs(flow) <= 1e-12) return 0;
+      var len = x1 - x0;
+      if (len < 5) return 0;
+      var shift = electronShift(flow, phase);
+      var n = Math.max(1, Math.round(len / gap));
+      var step = len / n;
+      for (var k = 0; k < n; k++) {
+        // 对 len 取模：粒子从这段末端出去就从首端进来，看不到跳变
+        var d = ((k * step + shift) % len + len) % len;
+        ctx.beginPath();
+        ctx.arc(x0 + d, cylMid, rad, 0, 6.284);
+        ctx.fill();
+      }
+      return n;
+    }
+    stats.left  = runSeg(cylX, sxNow, iL, rBall, 26);          // 左半段：A → 滑片
+    stats.right = runSeg(sxNow, cylX + cylW, iR, rBall, 26);   // 右半段：滑片 → B
+
+    // 触臂那一段（绕线 → 滑片）。不做它的话，A-C 接法下电流跑到滑片就
+    // 「凭空消失」了 —— 学生看着电流进了滑片再没出来，比不画还糊涂。
+    //
+    // 触臂上的电流 = 【净流入滑片节点的量】= iL − iR。两个 segment 的方向约定
+    // 不同（seg0 是 A→S，seg1 是 S→B），所以是相减而不是相加：
+    //   A-C：iL = I、iR = 0  → I（电流从绕线进滑片，再经金属杆流向 C/D）
+    //   B-C：iL = 0、iR = −I → I（同一个 I，只是从右半段进来）
+    //   A-B：iL = I、iR = I  → 0（电流在滑片处从左边转到右边，不进出外部）
+    //   C-D：iL = iR = 0     → 0（电流只走金属杆，压根不碰绕线和触臂）
+    // 正值 = 从绕线流向滑片，所以触臂的 a→b 就取「下 → 上」（tipY → knobBottom）。
+    var iArm = iL - iR;
+    stats.iArm = iArm;
+    if (Math.abs(iArm) > 1e-12) {
+      // ⚠️ 触臂是【从绕线往上走到滑片】：tipY ≈ +20 在绕线轴线上，knobBottom = −12
+      //    在它【上面】—— 所以 yTo − yFrom 是【负】的。以前这里写的是
+      //    `var aLen = yHigh - yLow; if (aLen > 3)`，把两个端点的先后写反了，
+      //    aLen 恒为 −32 ⇒ 这个 if 永远不成立 ⇒ 触臂上【一颗粒子都画不出来】。
+      //    症状很隐蔽：绕线里的粒子照跑，只是跑到滑片就凭空消失。
+      //    现在按【有向长度】写：dir 记方向，span 记长度，两个都必须对。
+      var yFrom = tipY, yTo = RHEO.knobBottom;
+      var span = Math.abs(yTo - yFrom);
+      var dir = (yTo < yFrom) ? -1 : 1;
+      if (span > 3) {
+        var aShift = electronShift(iArm, phase);
+        var nA = Math.max(1, Math.round(span / 18));
+        var aStep = span / nA;
+        stats.arm = nA;
+        for (var ka = 0; ka < nA; ka++) {
+          var da = ((ka * aStep + aShift) % span + span) % span;
+          ctx.beginPath();
+          ctx.arc(sxNow, yFrom + dir * da, rBall * 0.82, 0, 6.284);
+          ctx.fill();
+        }
+      }
+    }
+    ctx.restore();
+    return stats;
+  }
+
   function drawRheostat(ctx, comp, rec) {
     var slide = slideOf(comp, rec);
     var BW = RHEO.BW, BH = RHEO.BH;
@@ -3643,6 +3963,7 @@
     switch (comp.type) {
       case 'resistor': drawResistor(ctx, comp, rec); break;
       case 'battery': drawBattery(ctx, comp, rec); break;
+      case 'power': drawPowerSupply(ctx, comp, rec); break;
       case 'switch': drawSwitch(ctx, comp, rec); break;
       case 'bulb': drawBulb(ctx, comp, rec); break;
       case 'led': drawLed(ctx, comp, rec, opts); break;
@@ -3686,6 +4007,13 @@
     sliderLocalX: sliderLocalX, slideFromLocalX: slideFromLocalX,
     slideOf: slideOf,
     drawComponent: drawComponent, drawWire: drawWire, electronShift: electronShift,
+    // drawRheostatFlow —— 变阻器绕线内部的粒子层。宿主必须【每帧】调它（本体
+    // 留在静态缓存层，只有这一层是动画），而且要在导线之后调，否则粒子会被
+    // 压在导线底下。phase 传 null 就不画（粒子开关关着时）。
+    drawRheostatFlow: drawRheostatFlow,
+    // 表盘上那块数字示数用的格式化。导出是为了让断言能拿【同一份】规则去对账 ——
+    // 在测试里再抄一份 num1 等于把「表盘数字和侧栏表是同一套规则」这个洞留着。
+    fmtRead: fmtRead,
     drawTerminals: drawTerminals,
     currentShift: currentShift,
     roundPath: roundPath, CORNER_SEG: CORNER_SEG,
@@ -3700,6 +4028,10 @@
     drawBackground: drawBackground, drawBindingPost: drawBindingPost,
     resistorBands: resistorBands, roundRect: roundRect, softShadow: softShadow,
     batterySize: batterySize, bodyBox: bodyBox,
+    // 学生电源的面板几何（机箱 / 表头 / 旋钮）。导出是给测试用的：断言要能拿
+    // 【同一份】几何去判「表头指针有没有跟着电压走」，而不是在测试里再抄一遍
+    // 坐标 —— 抄一份就等于把「实现改了、测试还绿」这个洞留着。
+    PSU: PSU,
     MAT: MAT, MET: MET, MET_SWEEP: MET_SWEEP, POST_GRAD: POST_GRAD,
     BAND_COLORS: BAND_COLORS,
     version: '2.3.0',

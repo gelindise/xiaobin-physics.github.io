@@ -135,6 +135,14 @@
   var CELL_PITCH = 14;              // 一节占的横向宽度
   var CELL_INNER = 6;               // 一节里长线到短线的距离
 
+  // 「这个类型是不是【电源】」。内核里对应的是 isSourceType()，两处是同一件事：
+  // 现在有两个电源类型（干电池 battery / 学生电源 power），它们在电路上完全同构。
+  // 电路图里凡是「找电源」的地方（回路定向、连通块排序、BFS 根、上下排的起点）
+  // 都必须走它 —— 写死 'battery' 的话，一张只放了学生电源的图会被判成
+  // 「一个电源都没有」，排版退回兜底、电流方向也标不出来，而画面上看不出
+  // 哪里错了，只觉得「这图怎么摆得乱七八糟」。
+  function isSrc(type) { return type === 'battery' || type === 'power'; }
+
   // 电池符号的极板。**最右边那根必须是长线**：端子 0 = 正极 = 落在 TERMINALS
   // 的 +HALF（右侧），这是全站不可动摇的极性（circuit-draw.js:770）。
   //
@@ -145,6 +153,8 @@
   //    符号旁边的「E = 3.0 V」上（见 valueOf），不靠竖线的根数去表达。
   //    cellCount() 本身留着：它是「电动势反推节数」那条规矩的唯一出处，
   //    实物那边的干电池盒（circuit-draw 的 batterySize）要用它。
+  //    学生电源（power）也走这张表：它的符号是同一个「一长一短」，只是外面
+  //    再套一个方框（见 drawSymbol 的 case 'power'）。
   function batteryPlates(comp) {
     return [
       { x:  CELL_INNER / 2, h: LONG.h,  lw: LONG.lw },   // 右：长线 = 正极
@@ -206,6 +216,14 @@
       case 'battery': {
         var hw = batteryHalf(it.comp) + 4;
         return { x0: -hw, y0: -LONG.h - 2, x1: hw, y1: LONG.h + 2 };
+      }
+      // 学生电源：同一个电池符号，但外面套一个方框（方框 = 「这是一台仪器」）。
+      // ⚠️ 框的尺寸必须和 drawSymbol 里画的那个方框【一模一样】—— 这个矩形管的是
+      //    导线避让和标注定位，两者对不上就会出现「标签压在方框上」或者
+      //    「导线从方框角上穿过去」，而符号本身看着没问题，很难查。
+      case 'power': {
+        var phw = batteryHalf(it.comp) + 8;
+        return { x0: -phw - 3, y0: -25, x1: phw + 3, y1: 25 };
       }
       case 'switch':
         // 断开的刀片抬到 y ≈ −20，梢上还有个实心圆，盒子得够高
@@ -493,7 +511,7 @@
     var n = cycle.length;
     if (n < 2) return null;
     var bi = -1;
-    for (var i = 0; i < n; i++) if (cycle[i].type === 'battery') { bi = i; break; }
+    for (var i = 0; i < n; i++) if (isSrc(cycle[i].type)) { bi = i; break; }
     if (bi < 0) return null;
     var seq = cycle.slice(bi).concat(cycle.slice(0, bi));   // 电池打头 → 落在下排左端
 
@@ -711,7 +729,7 @@
     if (items.length < 2 || !wires.length) return false;
     var g = netGraph(items, byId, wires);
     if (!g) return false;
-    var bats = g.edges.filter(function (e) { return e.type === 'battery'; });
+    var bats = g.edges.filter(function (e) { return isSrc(e.type); });
     if (bats.length !== 1) return false;
     var cycle = mainCycle(g, bats[0].compId);
     if (!cycle || cycle.length < 2) return false;
@@ -736,7 +754,7 @@
     // 给主回路元件定向，两处都翻就成了翻两次、端子又回到错的一侧；而且 rot=180
     // 会把开关的刀片、变阻器的滑片杆一起倒过来（见 drawSymbol 里的 up / scale(-1,1)）。
     if (cycle.length === 2) {
-      var source = cycle.filter(function (e) { return e.type === 'battery'; })[0];
+      var source = cycle.filter(function (e) { return isSrc(e.type); })[0];
       g.edges.forEach(function (e) {
         if (e === source || (e.type !== 'resistor' && e.type !== 'bulb')) return;
         if (e.a === source.a || e.b === source.a) {
@@ -777,8 +795,8 @@
     });
     // 有电源的连通块在前，孤立元件在后；同级保持画布中的创建顺序。
     groups.sort(function (a, b) {
-      var pa = a.some(function (id) { return byId[id].type === 'battery'; }) ? 0 : 1;
-      var pb = b.some(function (id) { return byId[id].type === 'battery'; }) ? 0 : 1;
+      var pa = a.some(function (id) { return isSrc(byId[id].type); }) ? 0 : 1;
+      var pb = b.some(function (id) { return isSrc(byId[id].type); }) ? 0 : 1;
       return pa - pb;
     });
     function place(id, x, lineY) {
@@ -793,7 +811,7 @@
       var allSimple = group.every(function (id) { return adj[id].length <= 2; });
       if (allSimple) {
         var root = group.filter(function (id) { return adj[id].length <= 1; })[0] ||
-                   group.filter(function (id) { return byId[id].type === 'battery'; })[0] || group[0];
+                   group.filter(function (id) { return isSrc(byId[id].type); })[0] || group[0];
         var order = [], visited = {}, current = root;
         while (current != null && !visited[current]) {
           order.push(current); visited[current] = true;
@@ -807,7 +825,7 @@
         });
         baseY += Math.ceil(order.length / cols) * stepY + 120;
       } else {
-        var source = group.filter(function (id) { return byId[id].type === 'battery'; })[0] || group[0];
+        var source = group.filter(function (id) { return isSrc(byId[id].type); })[0] || group[0];
         var levels = [[source]], visited2 = {}; visited2[source] = true;
         for (var depth = 0; depth < levels.length; depth++) {
           var nextLevel = [];
@@ -1090,6 +1108,12 @@
     var c = it.comp, P = c.params || {};
     var core = it.core;
     switch (c.type) {
+      // 学生电源是【稳压源】：面板上标的是输出电压 U，不是电动势 E。
+      // 干电池用久了端压会掉，写 E 是如实；学生电源内部有稳压电路，输出不随
+      // 负载变，写 U 才对 —— 两个数在「内阻为 0」时数值相同，但含义不同，
+      // 而这个区别正是学生电源存在的理由。
+      case 'power':
+        return 'U = ' + emfOf(c, rec).toFixed(1) + ' V';
       case 'battery':
         // 端压和电动势是两个数，电路图上标的是铭牌（电动势）
         return 'E = ' + emfOf(c, rec).toFixed(1) + ' V';
@@ -1590,6 +1614,25 @@
         });
         break;
       }
+      // 学生电源：和干电池共用「一长一短两根竖线」的电池符号，外面再套一个方框。
+      // 国标里【方框 = 一台仪器/装置】，不是一节电池 —— 学生的实物就是一台方机箱，
+      // 符号跟着方，图和物才对得上，也才能和干电池一眼分开（这是两个不同的元件，
+      // 电路图里画成一个样，学生就分不清自己接的是哪个）。
+      // ⚠️ 方框的尺寸改了必须同步改 symRect 的 case 'power'（见那里的注释）。
+      case 'power': {
+        var ph = batteryHalf(it.comp) + 8;
+        lead(ctx, T[0], ph); lead(ctx, T[1], -ph);
+        ctx.beginPath();
+        D.roundRect(ctx, -ph, -22, ph * 2, 44, 3);
+        ctx.stroke();
+        batteryPlates(it.comp).forEach(function (p) {
+          ctx.lineWidth = p.lw;
+          ctx.beginPath();
+          ctx.moveTo(p.x, -p.h); ctx.lineTo(p.x, p.h);
+          ctx.stroke();
+        });
+        break;
+      }
       case 'switch': {
         lead(ctx, T[0], -22); lead(ctx, T[1], 22);
         // 两个触点是固定不动的接点，刀片绕左触点转。
@@ -1785,6 +1828,8 @@
   var LEGEND = [
     { type: 'battery',  name: '电源（干电池盒）', from: '一盒干电池，标着总电压',
       to: '一长一短两条线：长线是正极；几节电池就画几组' },
+    { type: 'power',    name: '学生电源',         from: '输出电压可调的直流稳压电源',
+      to: '同一个电池符号，外面套一个方框（方框表示它是一台仪器）。旁边的「U = 6.0 V」是旋钮调出来的输出电压' },
     { type: 'switch',   name: '开关（闸刀）',     from: '底板上抬起来的那把刀',
       to: '两个圆点加一根刀片：合上时刀片落下接通，断开时斜抬起来' },
     { type: 'resistor', name: '定值电阻',         from: '带四道色环的圆柱',
