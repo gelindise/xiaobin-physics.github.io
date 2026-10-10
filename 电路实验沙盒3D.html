@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>电路实验沙盒 3D · 自由搭电路 — 物理虚拟实验</title>
+<!-- 门禁：VIP 专享。本页【不】登记 auth-check.js 的 FREE_EXPERIMENTS 白名单，
+     拦截全靠这行脚本；卡片用 card lock。三处（卡片 / 白名单 / 本行）缺一不可。 -->
+<script src="auth-check.js"></script>
+<style>
+  :root{
+    --bg:#020617; --panel:rgba(15,23,42,.72); --line:rgba(148,163,184,.16);
+    --ink:#e2e8f0; --dim:#94a3b8; --dim2:#64748b;
+    --blue:#38bdf8; --cyan:#22d3ee; --purple:#a78bfa; --green:#34d399;
+    --amber:#fbbf24; --red:#f87171; --rose:#f43f5e;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{
+    background:
+      radial-gradient(1100px 620px at 12% -8%, rgba(56,189,248,.14), transparent 62%),
+      radial-gradient(900px 560px at 88% 4%, rgba(167,139,250,.13), transparent 60%),
+      radial-gradient(760px 520px at 50% 108%, rgba(244,63,94,.09), transparent 60%),
+      var(--bg);
+    color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Segoe UI",Roboto,sans-serif;
+    -webkit-font-smoothing:antialiased; line-height:1.62; min-height:100vh;
+  }
+  .lab3d{max-width:1520px;margin:0 auto;padding:20px 18px 40px}
+  .lab3d h1{margin:0;font-size:19px;letter-spacing:.3px;
+    background:linear-gradient(120deg,#e2e8f0 10%,#7dd3fc 52%,#c4b5fd 92%);
+    -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+  .lab3d-sub{margin:7px 0 16px;color:#93b4c4;font-size:12.5px;line-height:1.65;max-width:1220px}
+  .lab3d-sub b{color:#a5f3fc;font-weight:700}
+  .lab3d-sub .hl{color:#fcd34d;font-weight:700}
+
+  /* 三栏：左控制台 / 中画面 / 右读数。控制台与画面【左右并排，绝不放下面】。 */
+  .lab3d-layout{display:grid;grid-template-columns:306px minmax(0,1fr) 306px;
+    grid-template-areas:"ctl scene read" "ctl lower read";gap:14px;align-items:start}
+  .lab3d-ctl{grid-area:ctl;display:flex;flex-direction:column;gap:11px;min-width:0;align-self:stretch}
+  .lab3d-stage{grid-area:scene;position:relative;height:clamp(470px,72vh,720px);
+    border:1px solid var(--line);border-radius:16px;overflow:hidden;background:#040a16}
+  .lab3d-sidebar{grid-area:read;grid-row:1 / span 2;display:flex;flex-direction:column;gap:11px;min-width:0}
+  .lab3d-lower{grid-area:lower;display:grid;grid-template-columns:repeat(auto-fit,minmax(258px,1fr));gap:11px}
+
+  .lab3d-stage canvas{display:block;width:100%;height:100%;touch-action:none;cursor:grab;outline:none}
+  .lab3d-stage canvas.grabbing{cursor:grabbing}
+  .lab3d-stage canvas.pick{cursor:pointer}
+  .lab3d-stage canvas.wiring{cursor:crosshair}
+
+  .stage-hint{position:absolute;left:12px;top:12px;max-width:60%;padding:7px 11px;border-radius:9px;
+    background:rgba(2,6,23,.74);border:1px solid rgba(148,163,184,.22);color:#cbd5e1;font-size:11.5px;
+    line-height:1.6;backdrop-filter:blur(6px);pointer-events:none}
+  .stage-hint b{color:#7dd3fc}
+  .stage-toast{position:absolute;left:50%;top:14%;transform:translateX(-50%);padding:9px 16px;border-radius:12px;
+    background:rgba(2,6,23,.92);border:1px solid rgba(56,189,248,.45);color:#e0f2fe;font-size:12.5px;font-weight:600;
+    opacity:0;transition:opacity .22s;pointer-events:none;max-width:80%;text-align:center}
+  .stage-toast.show{opacity:1}
+
+  .stage-bar{position:absolute;left:0;right:0;bottom:0;display:flex;align-items:flex-end;justify-content:space-between;
+    gap:10px;padding:10px 12px;pointer-events:none}
+  .stage-bar .bar-left{display:flex;align-items:center;gap:7px;flex-wrap:wrap;pointer-events:auto}
+  .stage-bar .stage-help{font-size:11px;color:#7b93a6;text-align:right;max-width:44%;line-height:1.5}
+  .stage-btn{padding:8px 13px;border-radius:10px;border:1px solid rgba(148,163,184,.3);
+    background:rgba(15,23,42,.88);color:#cbd5e1;font-size:12px;font-weight:600;cursor:pointer;
+    font-family:inherit;transition:all .18s;display:inline-flex;align-items:center;gap:6px}
+  .stage-btn:hover{background:rgba(30,41,59,.95);color:#e2e8f0}
+  .stage-btn.on{border-color:rgba(56,189,248,.6);background:linear-gradient(135deg,rgba(56,189,248,.3),rgba(34,211,238,.2));color:#e0f2fe}
+  .stage-btn.hot{border-color:rgba(249,115,22,.6);background:rgba(124,45,18,.5);color:#fed7aa}
+  .stage-btn:disabled{opacity:.42;cursor:not-allowed}
+
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:13px 15px;
+    backdrop-filter:blur(8px);min-width:0}
+  .panel h3{margin:0 0 9px;font-size:13px;color:#cbd5e1;display:flex;align-items:center;gap:8px;font-weight:700}
+  .panel h3 .pill{margin-left:auto}
+  .pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700;
+    background:rgba(148,163,184,.14);border:1px solid rgba(148,163,184,.28);color:#cbd5e1;white-space:nowrap}
+  .pill.ok{background:rgba(52,211,153,.15);border-color:rgba(52,211,153,.4);color:#6ee7b7}
+  .pill.bad{background:rgba(248,113,113,.16);border-color:rgba(248,113,113,.42);color:#fca5a5}
+  .pill.warn{background:rgba(251,191,36,.14);border-color:rgba(251,191,36,.36);color:#fcd34d}
+
+  /* 元件栏 */
+  .palette{display:grid;grid-template-columns:repeat(2,1fr);gap:7px}
+  .palette button{padding:9px 6px;border-radius:10px;border:1px solid var(--line);
+    background:rgba(255,255,255,.04);color:#cbd5e1;font-size:12px;font-weight:600;cursor:pointer;
+    font-family:inherit;transition:all .16s;display:flex;flex-direction:column;align-items:center;gap:3px}
+  .palette button:hover{background:rgba(56,189,248,.14);border-color:rgba(56,189,248,.4);color:#e0f2fe}
+  .palette button .ic{font-size:16px;line-height:1}
+  .palette button .nm{font-size:11px}
+
+  .btn-row{display:flex;gap:7px;flex-wrap:wrap;margin-top:9px}
+  .btn-row button{flex:1;min-width:64px;padding:8px 10px;border-radius:10px;border:1px solid var(--line);
+    background:rgba(255,255,255,.04);color:#cbd5e1;font-size:12px;font-weight:600;cursor:pointer;
+    font-family:inherit;transition:all .18s}
+  .btn-row button:hover{background:rgba(255,255,255,.09);color:#e2e8f0}
+  .btn-row button.on{background:linear-gradient(135deg,rgba(56,189,248,.28),rgba(34,211,238,.22));
+    border-color:rgba(56,189,248,.5);color:#e0f2fe}
+  .btn-row button.danger:hover{background:rgba(244,63,94,.2);color:#fecdd3;border-color:rgba(244,63,94,.5)}
+  .btn-row button:disabled{opacity:.4;cursor:not-allowed}
+
+  /* 参数面板 */
+  .prow{display:flex;align-items:center;gap:8px;padding:5px 0;font-size:12px}
+  .prow label{color:var(--dim);flex:0 0 68px}
+  .prow label.wide{flex:1 1 auto}
+  .prow input[type=range]{flex:1 1 auto;min-width:0;accent-color:#38bdf8}
+  .prow input[type=checkbox]{width:16px;height:16px;accent-color:#38bdf8}
+  .prow select{flex:1 1 auto;min-width:0;background:rgba(2,6,23,.6);color:#e2e8f0;border:1px solid var(--line);
+    border-radius:8px;padding:4px 6px;font-family:inherit;font-size:12px}
+  .prow .val{flex:0 0 52px;text-align:right;color:#a5f3fc;font-variant-numeric:tabular-nums;font-weight:700}
+  .prow .tapbtn,.prow .flipbtn{padding:4px 12px;border-radius:8px;border:1px solid var(--line);
+    background:rgba(255,255,255,.05);color:#cbd5e1;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit}
+  .prow .tapbtn.on{background:linear-gradient(135deg,rgba(56,189,248,.3),rgba(34,211,238,.22));
+    border-color:rgba(56,189,248,.55);color:#e0f2fe}
+  .prow .flipbtn:hover{background:rgba(251,191,36,.18);color:#fde68a;border-color:rgba(251,191,36,.45)}
+  .empty-note{color:var(--dim2);font-size:12px;padding:6px 0;line-height:1.6}
+
+  table.rec{width:100%;border-collapse:collapse;font-size:11.5px;margin-top:2px}
+  table.rec th,table.rec td{padding:5px 5px;border-bottom:1px solid rgba(148,163,184,.13);text-align:center;
+    font-variant-numeric:tabular-nums}
+  table.rec th{color:var(--dim2);font-weight:600;font-size:10.5px}
+  table.rec td:first-child{text-align:left;color:var(--dim)}
+  table.rec tr:last-child td{border-bottom:none}
+  table.rec tr.sel td{background:rgba(56,189,248,.10)}
+  table.rec .tag{display:inline-block;margin-left:4px;padding:0 5px;border-radius:6px;font-size:10px;
+    background:rgba(248,113,113,.18);color:#fca5a5}
+
+  .note{margin:9px 0 0;font-size:11.5px;color:var(--dim);line-height:1.6}
+  .note b{color:#cbd5e1}
+  .note.warn{border-left:2px solid rgba(251,191,36,.6);padding-left:9px;color:#fcd34d}
+  .note.bad{border-left:2px solid rgba(248,113,113,.65);padding-left:9px;color:#fca5a5}
+  .note.good{border-left:2px solid rgba(52,211,153,.6);padding-left:9px;color:#6ee7b7}
+  .chk{list-style:none;margin:0;padding:0;font-size:12px}
+  .chk li{display:flex;gap:8px;align-items:flex-start;padding:4px 0;color:#cbd5e1;line-height:1.55}
+  .chk li .mk{flex:0 0 auto;font-weight:800;color:#7dd3fc}
+
+  @media (max-width:1240px){
+    .lab3d-layout{grid-template-columns:262px minmax(0,1fr) 262px}
+  }
+  @media (max-width:980px){
+    .lab3d-layout{grid-template-columns:minmax(0,1fr) 296px;
+      grid-template-areas:"scene read" "lower read" "ctl read"}
+    .lab3d-ctl{grid-area:ctl}
+  }
+  @media (max-width:860px){
+    .lab3d-layout{grid-template-columns:minmax(0,1fr);
+      grid-template-areas:"scene" "ctl" "lower" "read"}
+    .lab3d-stage{height:clamp(360px,56vh,470px)}
+    .lab3d-sidebar{grid-row:auto}
+    .stage-bar .stage-help{display:none}
+    .lab3d h1{font-size:16px}
+  }
+
+/* === 紧凑版面补丁 :: sticky（右栏跨两行才有行程，左列第 2 行 lower 有内容） === */
+.lab3d-sidebar{
+  position:sticky;top:16px;align-self:start;
+  max-height:calc(100vh - 104px);
+  overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;
+}
+
+    /* ===== 实拍视频区（站点形态：上半屏虚拟实验 + 底部实拍视频，两者缺一不可） ===== */
+    .video-section { max-width: 1520px; margin: 24px auto 40px; padding: 0 16px; }
+    .video-section .section-title { font-size: 20px; font-weight: bold; color: #f8fafc; margin-bottom: 16px; }
+    .video-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 18px; }
+    .video-card { background: #1e293b; border: 1px solid rgba(255,255,255,0.12); border-radius: 12px; padding: 18px 20px; }
+    .video-card h3 { margin: 0 0 12px; font-size: 15px; line-height: 1.5; color: #f8fafc; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 10px; display: flex; align-items: flex-start; gap: 8px; }
+    .video-card h3 .live-badge { font-size: 11px; background: rgba(239,68,68,0.15); color: #ef4444; padding: 2px 8px; border-radius: 6px; font-weight: 600; white-space: nowrap; flex-shrink: 0; }
+    .video-container { position: relative; width: 100%; padding-bottom: 56.25%; height: 0; border-radius: 12px; overflow: hidden; background: #000; }
+    .video-container iframe { position: absolute; top: 0; left: 0; width: 100%; height: 100%; border: 0; }
+    .video-desc { font-size: 13px; color: #94a3b8; line-height: 1.7; margin-top: 10px; }
+    .video-fullscreen-btn { position: absolute; top: 10px; right: 10px; z-index: 10; width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; border: none; border-radius: 8px; background: rgba(0,0,0,0.55); color: #fff; cursor: pointer; transition: background 0.2s ease; }
+    .video-fullscreen-btn:hover { background: rgba(59,130,246,0.85); }
+    .video-container:fullscreen, .video-container:-webkit-full-screen { width: 100%; height: 100%; padding-bottom: 0; border-radius: 0; }
+  </style>
+</head>
+<body>
+<div class="lab3d">
+  <h1>电路实验沙盒 · 3D 自由搭电路</h1>
+  <p class="lab3d-sub">
+    把元件从左边<b>拖到实验台上</b>，用鼠标在两个<b>接线柱</b>之间一拉，就接好一根导线；
+    电路一接通，<span class="hl">电流自己就流起来了</span> —— 灯泡亮、电表指针偏、电动机转，全部按真实电路算出来。
+    器材、端子、电路规律都和 2D 版「电路实验沙盒」<b>共用同一套内核</b>，只是这回它们真的立在桌面上、可以绕着看。
+    拖<b>空白处</b>旋转视角，滚轮缩放；点<b>开关</b>通断，点<b>灯泡</b>拧下／装上。
+  </p>
+
+  <div class="lab3d-layout">
+    <!-- 左：控制台（元件栏 + 工具 + 视角） -->
+    <div class="lab3d-ctl">
+      <div class="panel">
+        <h3>元件栏 <span class="pill">拖到台上</span></h3>
+        <div class="palette" id="palette"></div>
+      </div>
+      <div class="panel">
+        <h3>工具</h3>
+        <div class="btn-row" id="tools">
+          <button type="button" id="btnUndo" title="撤销 (Ctrl/Cmd+Z)">↶ 撤销</button>
+          <button type="button" id="btnDelete" class="danger" title="删除选中 (Delete)">🗑 删除</button>
+          <button type="button" id="btnRotate" title="旋转 90° (R)">⟳ 旋转</button>
+          <button type="button" id="btnClear" class="danger" title="清空画布">✕ 清空</button>
+        </div>
+        <div class="btn-row" id="presets">
+          <button type="button" data-preset="series">串联两灯</button>
+          <button type="button" data-preset="parallel">并联两灯</button>
+          <button type="button" data-preset="measure">伏安法</button>
+        </div>
+      </div>
+      <div class="panel">
+        <h3>视角</h3>
+        <div class="btn-row" id="views">
+          <button type="button" data-view="angle" class="on">斜视</button>
+          <button type="button" data-view="front">正视</button>
+          <button type="button" data-view="top">俯视</button>
+          <button type="button" data-view="side">侧视</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 中：3D 舞台 -->
+    <div class="lab3d-stage" id="stage">
+      <canvas id="gl"></canvas>
+      <div class="stage-hint" id="hint">
+        <b>拖空白</b>转视角 · <b>滚轮</b>缩放<br>
+        <b>拖元件</b>挪位置 · <b>拉接线柱</b>连导线<br>
+        点<b>开关</b>通断 · 点<b>灯泡</b>拧下／装上
+      </div>
+      <div class="stage-toast" id="toast"></div>
+      <div class="stage-bar">
+        <div class="bar-left" id="barleft">
+          <button type="button" class="stage-btn" id="barAdd">＋ 加元件</button>
+          <button type="button" class="stage-btn" id="barUndo">↶ 撤销</button>
+          <button type="button" class="stage-btn hot" id="barDelete">🗑 删除</button>
+          <button type="button" class="stage-btn" id="barView">⟳ 转视角</button>
+        </div>
+        <div class="stage-help">拖动空白处旋转 · 滚轮缩放<br>点<b>开关</b>通断 · 点<b>灯泡</b>拧下／装上</div>
+      </div>
+    </div>
+
+    <!-- 右：参数 + 读数 + 状态 -->
+    <div class="lab3d-sidebar">
+      <div class="panel">
+        <h3>元件参数 <span class="pill" id="selpill">未选中</span></h3>
+        <div id="paramPanel"><div class="empty-note">点台上的元件，这里出现它的参数。</div></div>
+      </div>
+      <div class="panel">
+        <h3>读数 <span class="pill" id="statpill">—</span></h3>
+        <table class="rec" id="recTable">
+          <thead><tr><th>元件</th><th>I / A</th><th>U / V</th><th>R / Ω</th><th>P / W</th></tr></thead>
+          <tbody id="recBody"></tbody>
+        </table>
+        <div id="warnBox"></div>
+      </div>
+      <div class="panel">
+        <h3>怎么用</h3>
+        <ul class="chk">
+          <li><span class="mk">1</span><span>从左上<b>元件栏</b>点一个元件，它会落在台子中央。</span></li>
+          <li><span class="mk">2</span><span>按住元件<b>拖动</b>可以挪位置；选中后按 <b>R</b> 或「旋转」把它转 90°。</span></li>
+          <li><span class="mk">3</span><span>从一个<b>接线柱</b>拖到另一个接线柱，接出一根导线（拖到已有导线上会自动长一个接线点）。</span></li>
+          <li><span class="mk">4</span><span>点<b>开关</b>通断、点<b>灯泡</b>拧下／装上；右边读数会跟着变。</span></li>
+          <li><span class="mk">5</span><span>删除元件时<b>导线不会消失</b>，线头留在原地 —— 可以再插到别的柱子上。</span></li>
+        </ul>
+      </div>
+      <div class="panel">
+        <h3>电流是怎么算出来的</h3>
+        <p class="note">
+          这台沙盒不做简化，而是把整张电路当成一张方程组来解：每条导线的端点合并成<b>节点</b>，
+          每个元件写出一段<b>电压—电流关系</b>，再联立求出所有节点的电位。灯丝电阻还会随温度变、
+          电动机转起来有反电动势 —— 这些都真的算进去。所以短路会真的烧、电表接反会真的反偏。
+        </p>
+      </div>
+    </div>
+
+    <!-- 左列第 2 行（有真实内容，右栏 sticky 才有行程） -->
+    <div class="lab3d-lower">
+      <div class="panel">
+        <h3>台上能放的元件</h3>
+        <p class="note">
+          <b>电源</b>（可调电动势/内阻）、<b>开关</b>、<b>定值电阻</b>、<b>滑动变阻器</b>（一上一下接法）、
+          <b>小灯泡</b>（灯丝电阻随温度变）、<b>电流表</b>/<b>电压表</b>（三柱、可换量程）、
+          <b>发光二极管</b>（单向导电）、<b>电动机</b>（反电动势）、<b>电铃</b>。
+          接线点会在你从接线柱往导线中间连线时自动长出来。
+        </p>
+      </div>
+      <div class="panel">
+        <h3>为什么是 3D</h3>
+        <p class="note">
+          2D 沙盒是一张俯视示教板，看得全、连得快；3D 版把同样的元件<b>立到实验台上</b>，
+          接线柱的高低、元件的前后、导线的走向都看得见 —— 更接近学生手里那套真实的电学实验箱。
+          两边的<b>物理内核与器材尺寸是同一份</b>，所以读数、故障判断完全一致，可以对照着用。
+        </p>
+      </div>
+    </div>
+  </div>
+</div>
+
+  <!-- 实拍视频区（站点形态：上半屏虚拟实验 + 底部实拍视频，两者缺一不可）
+       素材对应本页「自由搭电路」：先看真人怎么把电源、开关、灯泡连成回路，再回到 3D 台上自己搭。 -->
+  <div class="video-section">
+    <div class="section-title">🎬 实拍视频 · 从虚拟实验到真实世界</div>
+    <div class="video-grid">
+      <div class="video-card">
+        <h3>初中物理实验：连接串联电路和并联电路<span class="live-badge">实拍</span></h3>
+        <div class="video-container">
+          <iframe src="//player.bilibili.com/player.html?bvid=BV1iBd9BHEWP&page=1&autoplay=0&loop=1&danmaku=0&high_quality=1" scrolling="no" frameborder="no" framespacing="0" allowfullscreen="true"></iframe>
+          <button class="video-fullscreen-btn" title="全屏播放" aria-label="全屏播放">
+            <svg class="fs-expand" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"/></svg>
+            <svg class="fs-compress" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:none"><path stroke-linecap="round" stroke-linejoin="round" d="M8 3v3a2 2 0 01-2 2H3m18 0h-3a2 2 0 01-2-2V3m0 18v-3a2 2 0 012-2h3M3 16h3a2 2 0 012 2v3"/></svg>
+          </button>
+        </div>
+        <div class="video-desc">真人实验：把电源、开关、两只小灯泡用导线依次连成串联回路，再改接成并联。和上方 3D 台面对照 —— 在台上照着连一遍，看右边读数表里串联「处处相等」、并联「干路等于两支路之和」是不是真的。</div>
+      </div>
+      <div class="video-card">
+        <h3>简单电铃电路的连接<span class="live-badge">实拍</span></h3>
+        <div class="video-container">
+          <iframe src="//player.bilibili.com/player.html?bvid=BV1ij411p7Jg&page=1&autoplay=0&loop=1&danmaku=0&high_quality=1" scrolling="no" frameborder="no" framespacing="0" allowfullscreen="true"></iframe>
+          <button class="video-fullscreen-btn" title="全屏播放" aria-label="全屏播放">
+            <svg class="fs-expand" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"/></svg>
+            <svg class="fs-compress" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:none"><path stroke-linecap="round" stroke-linejoin="round" d="M8 3v3a2 2 0 01-2 2H3m18 0h-3a2 2 0 01-2-2V3m0 18v-3a2 2 0 012-2h3M3 16h3a2 2 0 012 2v3"/></svg>
+          </button>
+        </div>
+        <div class="video-desc">真人实验：把电铃接进回路，合上开关，看衔铁被电磁铁吸下、敲响铃碗。回到 3D 台上放一只<b>电铃</b>接进去，看它是不是也「通电就响」—— 这正是台面上「磁动势不足 · 不响」那行提示在说的物理。</div>
+      </div>
+    </div>
+  </div>
+
+<!-- 器材与电路规律【不另画一套】：直接用「电路实验沙盒」那套共享模块。
+     circuit-core.js  = 物理内核（MNA 求解，2D/3D 同一份）
+     circuit-draw.js  = 端子几何真值（terminalWorld / endWorld / 器材尺寸）
+     circuit-editor.js= 编辑语义（放/删/连线/极性/量程，2D/3D 同一套规则）
+     circuit-params.js= 参数面板规格 + 读数显示格式（2D/3D 同一份）
+     3D 只是【渲染层 + 交互层】的新实现，物理与几何一行没改。 -->
+<script src="circuit-core.js?build=17"></script>
+<script src="circuit-draw.js?build=22"></script>
+<script src="circuit-editor.js?build=21"></script>
+<script src="circuit-params.js?build=1"></script>
+<script type="module" src="circuit-3d-sandbox.js?build=1"></script>
+
+  <script>
+  (function() {
+    var btns = document.querySelectorAll('.video-fullscreen-btn');
+    if (!btns.length) return;
+    btns.forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        var container = btn.closest('.video-container');
+        if (!container) return;
+        if (document.fullscreenElement === container) { document.exitFullscreen(); }
+        else { if (container.requestFullscreen) container.requestFullscreen(); else if (container.webkitRequestFullscreen) container.webkitRequestFullscreen(); }
+      });
+    });
+    document.addEventListener('fullscreenchange', function() {
+      var fsEl = document.fullscreenElement;
+      btns.forEach(function(btn) {
+        var container = btn.closest('.video-container');
+        var on = fsEl === container;
+        var ex = btn.querySelector('.fs-expand'), cp = btn.querySelector('.fs-compress');
+        if (ex) ex.style.display = on ? 'none' : '';
+        if (cp) cp.style.display = on ? '' : 'none';
+        btn.title = on ? '退出全屏' : '全屏播放';
+        btn.setAttribute('aria-label', btn.title);
+      });
+    });
+  })();
+  </script>
+</body>
+</html>

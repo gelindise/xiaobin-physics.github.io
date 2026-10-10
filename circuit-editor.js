@@ -31,10 +31,14 @@
   // 自动编号前缀。变阻器不能也取 R，否则和定值电阻撞号。
   // 二极管取 D、电动机取 M、电铃取 B —— 都是课本上认得出的字母
   // （D = diode，M = motor，B = bell），不会和已有的 E/S/R/V/A/L/RH 撞。
+  // 学生电源取 U：它的面板、读数框、电路图铭牌上标的都是「U = 6.0 V」
+  // （见 circuit-params 的 PARAM_UI 与 circuit-schematic 的 valueOf），
+  // 编号跟着用 U 就一眼对得上。E 已经给干电池了（电动势），不能撞。
   var ID_PREFIX = {
     resistor: 'R', battery: 'E', switch: 'S',
     ammeter: 'A', voltmeter: 'V', rheostat: 'RH', bulb: 'L',
     led: 'D', motor: 'M', bell: 'B',
+    power: 'U',
     // 接线点（导线中间自动长出来的结点）。它【不在元件栏里】—— 学生不是
     // 「放一个接线点」，而是从接线柱往导线中间连线时它自己冒出来。
     junction: 'J',
@@ -517,6 +521,11 @@
     function addComp(type, x, y) {
       pushUndo();
       var s = getScene();
+      // 前缀表漏登记一个类型就直接抛。不抛的话下面 `ID_PREFIX[type] + n` 会
+      // 得到 "undefined1"：两个同类元件还会撞成同一个 id（并查集把它们当成
+      // 一个元件，读数全错），而画面上看不出任何异常 —— 只觉得「怎么算不对」。
+      // 加新元件类型时忘了登记这一行，就该当场炸在放元件那一下。
+      if (!ID_PREFIX[type]) throw new Error('ID_PREFIX 没有登记元件类型: ' + type);
       var n = 1;
       while (byId(ID_PREFIX[type] + n)) n++;      // 编号不重复，否则并查集会把两个元件当成一个
       var id = ID_PREFIX[type] + n;
@@ -1029,6 +1038,35 @@
       };
     }
 
+    // 直接连两个接线柱（外部代码 / 3D 版沙盒用）。语义与「在画布上从一个柱
+    // 拖到另一个柱」完全一致：同样的重复 / 量程冲突拦截、同样的自动正交走线、
+    // 同样的撤销入栈与音效。返回 true = 真的连上了。
+    //   参数 a、b 形如 { compId, termIdx }，两端都必须是【挂在元件上】的端子；
+    //   compId 为 null（删元件后留下的悬空线头）不适用本函数 —— 那是
+    //   replugLooseEnd 的事（它只改端点归属、不新增导线）。
+    function connectTerminals(a, b) {
+      if (!a || !b || !a.compId || !b.compId) return false;
+      if (a.compId === b.compId && a.termIdx === b.termIdx) return false;
+      var s = getScene();
+      var dup = s.wires.some(function (w) {
+        return (w.a.compId === a.compId && w.a.termIdx === a.termIdx &&
+                w.b.compId === b.compId && w.b.termIdx === b.termIdx) ||
+               (w.a.compId === b.compId && w.a.termIdx === b.termIdx &&
+                w.b.compId === a.compId && w.b.termIdx === a.termIdx);
+      });
+      if (dup || rangeConflict(a, b)) return false;
+      var p0 = endPt(a), p1 = endPt(b);
+      if (!p0 || !p1) return false;
+      pushUndo();
+      s.wires.push({
+        a: cpEnd(a), b: cpEnd(b),
+        via: routeTo(p0, p1, -1).via, auto: true, base: null,
+      });
+      report('plug', { a: a, b: b });
+      changed();
+      return true;
+    }
+
     function onUp() {
       if (slider) {
         // 拨动了就已经入过栈；只按一下没动，就是普通点选，不留撤销记录
@@ -1331,6 +1369,9 @@
       rawPathOf: rawPathOf,
       nearestOnWire: nearestOnWire,
       connectToWireMid: connectToWireMid,
+      // 端子↔端子直接连线（外部代码 / 3D 版沙盒用）。和 connectToWireMid 一样
+      // 是「落线动作」，只是落点也是一个接线柱而不是导线中间。
+      connectTerminals: connectTerminals,
       // 删元件保留导线（用户要求）以后，导线上会出现【悬空端】。这两条给测试用：
       // 判「线头还在不在」「点没点中它」，光看场景是分不出来的 ——
       // compId 为 null 和 compId 指向一个已经不存在的元件，外观上一模一样。
@@ -1363,5 +1404,5 @@
     };
   }
 
-  return { create: create, GRID: GRID, BODY: BODY };
+  return { create: create, GRID: GRID, BODY: BODY, ID_PREFIX: ID_PREFIX };
 });
