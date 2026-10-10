@@ -454,15 +454,16 @@
     };
   }
 
-  // 电池：沙盒的干电池【节数跟着电压走】（1~6 节）。手上只有 1 节和 2 节两张
-  // 课本图，所以 ≥2 节一律用 2 节那张 —— 节数照旧由沙盒的读数标签写清楚
-  // （「1.5V × N」），只是画面不跟着长。🔴 这是素材的硬限制，不是漏做。
+  // 电池：沙盒的干电池【节数跟着电压走】（1~6 节）。
+  // 用户只给了「1 节」「2 节」两张课本图，而且两张的【比例不一样】——
+  // 所以 dev-imgskin2.py 拿 2 节那张当模板【拼装】出 1~6 节（battery1..battery6），
+  // 底板横向均匀，拼接处看不出来。这里只负责把电压换成节数。
   function batteryKey(comp) {
     var P = (comp && comp.params) || {};
     var per = P.emfPerCell != null ? +P.emfPerCell : 1.5;
     var emf = P.emf != null ? +P.emf : (P.cells != null ? P.cells * per : 3);
     var cells = Math.max(1, Math.min(6, Math.round(emf / per)));
-    return cells >= 2 ? 'battery2' : 'battery';
+    return 'battery' + cells;
   }
   function drawBattery(ctx, comp, rec, opts, D) {
     if (!drawImg(batteryKey(comp), ctx, comp, rec, opts, D)) return;
@@ -518,6 +519,16 @@
       bulb: { x0: -92, y0: -87, x1: 90, y1: 46 },
     },
     bodyBox: {},
+    // 元件名称标签该落在哪儿 —— 覆盖沙盒写死的 DROP。
+    // 🔴 课本表头那张图往下伸到 y≈167（本地），而沙盒的 DROP.ammeter 是 80 ⇒
+    //    标签正好压在量程柱的「0.6 / 3」上。数值由 dev-imgskin2.py 按【素材墨迹的
+    //    实际下沿】算出来，不是拍的。
+    tagDropOf: function (comp) {
+      if (!ready || !comp) return null;
+      var key = comp.type === 'battery' ? batteryKey(comp) : comp.type;
+      var S = G2 && G2[key];
+      return (S && S.tagDrop != null) ? S.tagDrop : null;
+    },
     // 给自检用的只读口子
     __isReady: function () { return ready; },
     __geom: function () {
