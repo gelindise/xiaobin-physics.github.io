@@ -90,16 +90,24 @@
 
   var IMG = {}, SWC = {}, BLC = {};
 
-  function loadAll(list, done) {
-    var n = list.length, fin = 0, ok = 0;
+  function loadAll(list, done, store) {
+    store = store || IMG;
+    var n = list.length, fin = 0;
     if (!n) { done(); return; }
     list.forEach(function (it) {
       var im = new Image();
-      im.onload = function () { IMG[it.key] = im; ok++; if (++fin === n) done(); };
+      im.onload = function () { store[it.key] = im; if (++fin === n) done(); };
       im.onerror = function () { if (++fin === n) done(); };
       im.src = it.src;
     });
   }
+
+  // ── 第二批素材（电池 / 定值电阻 / 电流表 / 电压表 / 滑动变阻器 / 电动机）──
+  // 和人教版开关、灯泡同一套口径：底盘用原图一个像素不动，该动的活动件从同一张
+  // 原图里抠出来当刚体转/移。
+  var G2 = (typeof window !== 'undefined' && window.__SKIN_IMG_RENJIAO2) || null;
+  var IMG2 = {}, CV2 = {};
+  var KEYS2 = G2 ? Object.keys(G2) : [];
 
   function build() {
     if (!IMG.swFull || !IMG.swChassis || !IMG.swBlade || !IMG.blFull || !IMG.blBase) {
@@ -111,6 +119,14 @@
     SWC.blade = scaleTo(IMG.swBlade, SW.k);
     BLC.full = scaleTo(IMG.blFull, BL.k);
     BLC.base = scaleTo(IMG.blBase, BL.k);
+    // 第二批：素材已经是【按显示尺寸(×DPR)存好的】，这里不用再缩放，直接收进
+    // 离屏 canvas 当纹理用（每帧 drawImage 一张 Image 也行，但 canvas 更快更稳）。
+    KEYS2.forEach(function (key) {
+      if (!IMG2[key]) return;
+      var S = G2[key];
+      CV2[key] = mkCanvas(S.w, S.h);
+      CV2[key].getContext('2d').drawImage(IMG2[key], 0, 0, S.w, S.h);
+    });
     ready = true;
     try { window.dispatchEvent(new Event('circuit-skin-ready')); } catch (e) {}
   }
@@ -121,7 +137,13 @@
     { key: 'swBlade', src: SW.blade },
     { key: 'blFull', src: BL.full },
     { key: 'blBase', src: BL.base },
-  ], build);
+  ], function () {
+    // 第二批是【另一张表】，单独加载、单独回调；两边都到齐才 ready。
+    if (!G2) { build(); return; }
+    loadAll(KEYS2.map(function (key) {
+      return { key: key, src: G2[key].full };
+    }), build, IMG2);
+  });
 
   // ── 图像坐标 → 本地坐标 ──────────────────────────────────────
   function mapper(mid, k) {
@@ -307,18 +329,73 @@
   // 宿主把导线画在元件【之上】，接线柱是交互点，必须补画到最上层。
   // 这里贴的是【地盘图上完全相同的那一块】—— 所以像素逐个一致，唯一的效果
   // 就是把导线盖住。故意用矩形 alpha：不需要抠形状，也不会漏边。
-  function drawPosts(ctx, comp, D, src, rects, mid, k) {
+  // dpr 只有【第二批】素材要给（它们按 k×dpr 存，屏幕 dpr=2 时更清楚）：
+  // 源矩形在【存储像素】里 = 原图坐标 × k × dpr；目标在【逻辑坐标】里 = × k。
+  // 开关/灯泡那两张是按逻辑尺寸存的，dpr 省略（=1）。
+  function drawPosts(ctx, comp, D, src, rects, mid, k, dpr) {
+    dpr = dpr || 1;
     ctx.save();
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = 'high';
     pose(ctx, comp, D);
     for (var i = 0; i < rects.length && i < 2; i++) {
       var r = rects[i];
-      var sx = (r.x0 + mid[0]) * k, sy = (r.y0 + mid[1]) * k;
-      var sw = (r.x1 - r.x0) * k, sh = (r.y1 - r.y0) * k;
-      ctx.drawImage(src, sx, sy, sw, sh, r.x0 * k, r.y0 * k, sw, sh);
+      var sx = (r.x0 + mid[0]) * k * dpr, sy = (r.y0 + mid[1]) * k * dpr;
+      var sw = (r.x1 - r.x0) * k * dpr, sh = (r.y1 - r.y0) * k * dpr;
+      ctx.drawImage(src, sx, sy, sw, sh,
+                    r.x0 * k, r.y0 * k, (r.x1 - r.x0) * k, (r.y1 - r.y0) * k);
     }
     ctx.restore();
+  }
+
+  // ═════════════════════════════════════════════════════════════
+  // 第二批：通用「静止件」
+  // ─────────────────────────────────────────────────────────────
+  // 底盘就是整张原图，没有活动件 —— 电池、定值电阻、以及将来任何「不通电就
+  // 不变样」的器材都走这里。活动件（表针 / 滑片）另写。
+  function drawImg(key, ctx, comp, rec, opts, D) {
+    var S = G2 && G2[key], cv = CV2[key];
+    if (!ready || !S || !cv) { fallback(D, ctx, comp, rec, opts); return false; }
+    ctx.save();
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    pose(ctx, comp, D);
+    ctx.drawImage(cv, -S.mid[0] * S.k, -S.mid[1] * S.k, S.w / S.dpr, S.h / S.dpr);
+    ctx.restore();
+    return true;
+  }
+  function drawStatic(key) {
+    return function (ctx, comp, rec, opts, D) {
+      if (!drawImg(key, ctx, comp, rec, opts, D)) return;
+      Skin.setPosts(comp, ['pos', 'pos'], 1.4, 8);
+    };
+  }
+  function postsFor(key) {
+    return function (ctx, comp, s, D) {
+      var S = G2 && G2[key], cv = CV2[key];
+      if (!ready || !S || !cv) { D.drawTerminals(ctx, comp); return; }
+      drawPosts(ctx, comp, D, cv, S.posts, S.mid, S.k, S.dpr);
+    };
+  }
+
+  // 电池：沙盒的干电池【节数跟着电压走】（1~6 节）。手上只有 1 节和 2 节两张
+  // 课本图，所以 ≥2 节一律用 2 节那张 —— 节数照旧由沙盒的读数标签写清楚
+  // （「1.5V × N」），只是画面不跟着长。🔴 这是素材的硬限制，不是漏做。
+  function batteryKey(comp) {
+    var P = (comp && comp.params) || {};
+    var per = P.emfPerCell != null ? +P.emfPerCell : 1.5;
+    var emf = P.emf != null ? +P.emf : (P.cells != null ? P.cells * per : 3);
+    var cells = Math.max(1, Math.min(6, Math.round(emf / per)));
+    return cells >= 2 ? 'battery2' : 'battery';
+  }
+  function drawBattery(ctx, comp, rec, opts, D) {
+    if (!drawImg(batteryKey(comp), ctx, comp, rec, opts, D)) return;
+    Skin.setPosts(comp, ['pos', 'neg'], 1.4, 8);
+  }
+  function postsBattery(ctx, comp, s, D) {
+    var key = batteryKey(comp), S = G2 && G2[key], cv = CV2[key];
+    if (!ready || !S || !cv) { D.drawTerminals(ctx, comp); return; }
+    drawPosts(ctx, comp, D, cv, S.posts, S.mid, S.k, S.dpr);
   }
 
   var api = {
@@ -328,6 +405,8 @@
     equip: {
       switch: drawSwitch,
       bulb: drawBulb,
+      battery: drawBattery,
+      resistor: drawStatic('resistor'),
     },
     posts: {
       switch: function (ctx, comp, s, D) {
@@ -339,6 +418,8 @@
         if (!ready) { D.drawTerminals(ctx, comp); return; }
         drawPosts(ctx, comp, D, BLC.full, BL.posts, BL.mid, BL.k);
       },
+      battery: postsBattery,
+      resistor: postsFor('resistor'),
     },
     // 符号层留空：人教版电路图符号 = 现行实现（沙盒那张电路图本来就是照人教版画的）
     symbol: {},
@@ -359,6 +440,14 @@
       return {
         sw: { k: SW.k, mid: SW.mid, pivotImg: SW.pivotImg, bladeAt: SW.bladeAt, openDeg: SW.openDeg },
         bl: { k: BL.k, mid: BL.mid, glassAt: BL.glassAt, glassC: BL.glassC, glassR: BL.glassR },
+        v2: (function () {
+          var o = {};
+          KEYS2.forEach(function (key) {
+            var S = G2[key];
+            o[key] = { k: S.k, mid: S.mid, dpr: S.dpr, w: S.w, h: S.h };
+          });
+          return o;
+        })(),
       };
     },
   };
