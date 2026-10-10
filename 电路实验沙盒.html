@@ -51,6 +51,18 @@
   body.full .bar button.pal{display:none}
   .bar .addWrap > button{background:#fff7ed;border-color:#fed7aa;color:#9a3412;font-weight:600}
   .bar .addWrap > button:hover{background:#ffedd5}
+  /* 「教材版本」下拉：换的是元件【画法】。用青绿 —— 和「＋元件」的橙、工具按钮的
+     灰都拉开，它是个「模式」，不是一次性动作。
+     窄屏下和别的次要控件一样收进「⋯ 更多」：实测这一块 157px 宽，390px 竖屏上
+     会把顶栏从 71px 顶到 112px（预算 110px）、竖屏全屏从 63 顶到 103（预算 90）。
+     ⚠️ 它【不】挂 button.opt 那个 class —— __barMetrics 的 optTotal 是按
+        `button.opt` 数的（现为 10），挂上去会把那条断言顶到 11。用 .skinWrap
+        自己的选择器收放，计数口径不动。 */
+  .bar .skinWrap{display:flex;align-items:center;gap:6px;background:#f0fdfa;
+    border:1px solid #99f6e4;border-radius:8px;padding:6px 9px}
+  .bar .skinWrap > span{font-size:13px;color:#0f766e;font-weight:600;white-space:nowrap}
+  .bar .skinWrap select{background:transparent;border:0;color:#0f766e;font-weight:600;
+    font-size:13px;font-family:inherit;cursor:pointer;outline:none;max-width:12em}
   .addMenu{position:absolute;left:0;top:calc(100% + 5px);z-index:46;
     background:var(--card);border:1px solid var(--line);border-radius:10px;
     box-shadow:0 12px 34px rgba(15,23,42,.22);padding:5px;min-width:176px;
@@ -437,6 +449,10 @@
     .bar button.opt{display:none}
     .bar.more button.opt{display:inline-block}
     .bar button.moreToggle{display:inline-block}
+    /* 「教材版本」和上面那批一起收放（理由见它自己那段注释：它不挂 button.opt，
+       免得动到 optTotal 的口径）。 */
+    .bar .skinWrap{display:none}
+    .bar.more .skinWrap{display:flex}
     /* 存档那行（份数 + 恢复/清除）：桌面靠 margin-left:auto 顶到最右，
        窄屏折行后那个 auto 会把它单独推一行，去掉让它跟着按钮排。 */
     .bar .hint{font-size:11px;gap:8px;padding-left:0;margin-left:0}
@@ -654,6 +670,16 @@
      把这个 build 号 +1 即可。 -->
 <script src="circuit-core.js?build=18"></script>
 <script src="circuit-draw.js?build=26"></script>
+<!-- 教材版本皮肤：把「元件长什么样」从 circuit-draw.js 里摘出来做成可切换的一层。
+     皮肤【只画外形】，一个物理量都不算 —— 接线柱照旧画在 D.terminalWorld 上，
+     读数照旧从内核回传的 rec 里读。所以换皮肤不影响导线、拖拽、命中、求解。
+     没覆盖到的元件类型一律回落原版画法，皮肤可以一件一件上。
+     ⚠️ 改这几个文件同样要把下面的 build 号 +1。 -->
+<script src="circuit-skin.js?build=1"></script>
+<!-- 人教版素材：从两张课本原图里拆出来的「整图 / 地盘 / 刀片刚体 / 接线柱小块」
+     （dev-imgskin.py 自动生成，别手改）。约 37 KB base64。 -->
+<script src="circuit-skin-renjiao-img-data.js?build=1"></script>
+<script src="circuit-skin-renjiao.js?build=2"></script>
 <script src="circuit-editor.js?build=21"></script>
 <!-- 参数面板规格 + 读数显示格式。从本页内联抽出，与 3D 版沙盒（电路实验沙盒3D）
      共用同一份真值：面板规格、小数位、极性显示规则改一处两边都变。 -->
@@ -3885,6 +3911,81 @@ function toolBtn(text, fn, cls, opt){
   bar.appendChild(b); return b;
 }
 var sep = document.createElement('div'); sep.className = 'sep'; bar.appendChild(sep);
+
+// ── 教材版本（元件外观）────────────────────────────────────
+// 换的是【画法】，不是元件本身：同一个 drawComponent 入口、同一组端子坐标、
+// 同一份物理内核（求解结果 rec 原样喂给皮肤）。所以换皮肤不会让电路变样，
+// 也不产生一条可撤销的操作，更不进存档 —— 它是查看偏好，不是编辑动作。
+var SKIN_KEY = 'circuit_sandbox_skin';
+var SKIN = window.CircuitSkin;
+// 元件栏的取景框（LG_VIEW）原值。皮肤自带 view 的那两件要换掉，切回原版时要还原；
+// 存的是【当前的原版值】而不是写死字面量 —— 以后原版取景框改了，这里自动跟上。
+var LG_VIEW_BASE = { switch: LG_VIEW.switch, bulb: LG_VIEW.bulb };
+var skinId = 'base';
+try {
+  var _sk = localStorage.getItem(SKIN_KEY);
+  if (_sk && SKIN && SKIN.has(_sk)) skinId = _sk;
+} catch (e) {}
+
+function applySkin(id, doRender){
+  if (!SKIN || !SKIN.has(id)) id = 'base';
+  skinId = id;
+  // 只换这一个引用就够了：画布、离屏层、放大镜、元件栏图例全部走 D.xxx，
+  // 所以「改一处、全页跟着变」是自动的，不用逐处去改。
+  D = SKIN.wrap(window.CircuitDraw, id);
+  // 元件栏取景框跟着换：这套画法比原版大一圈，还用原版那三个数就会把元件
+  // 裁掉两头（图例正是用来「认清这件器材长什么样」的那一栏）。
+  var v = (SKIN.get(id) || {}).view || {};
+  ['switch', 'bulb'].forEach(function(t){
+    LG_VIEW[t] = v[t] ? { x0: v[t].x0, y0: v[t].y0, x1: v[t].x1, y1: v[t].y1 }
+                      : LG_VIEW_BASE[t];
+  });
+  try { localStorage.setItem(SKIN_KEY, id); } catch (e) {}
+  if (skinSel && skinSel.value !== id) skinSel.value = id;
+  // 电路图浮层开着的话，图例（实物那一栏）也要跟着换 —— buildLegend 在
+  // drawSchematic 里，refreshSchematic 只在浮层打开时才真画。
+  if (doRender) { render(); refreshSchematic(); }
+}
+
+// 下拉。宽屏常驻；窄屏跟别的次要控件一起收进「⋯ 更多」——
+// 这一块 157px 宽，常驻会把竖屏顶栏从 71px 顶到 112px（预算 110px）。
+var skinWrap = document.createElement('div');
+skinWrap.className = 'skinWrap';
+var skinLbl = document.createElement('span');
+skinLbl.textContent = '📖 教材版本';
+var skinSel = document.createElement('select');
+skinSel.id = 'skinSel';
+skinSel.title = '换元件的外观画法；物理、接线、读数完全不变';
+(SKIN ? SKIN.list() : []).forEach(function(s){
+  var o = document.createElement('option');
+  o.value = s.id; o.textContent = s.label;
+  if (s.note) o.title = s.note;
+  skinSel.appendChild(o);
+});
+skinSel.onchange = function(){ applySkin(skinSel.value, true); };
+skinWrap.appendChild(skinLbl); skinWrap.appendChild(skinSel);
+bar.appendChild(skinWrap);
+
+// 起步只装皮肤、不重绘：下面 seed() 之后那次 render 就会用新皮肤画。
+applySkin(skinId, false);
+
+// 皮肤素材是 data: URI，要等 Image.onload 才解出来。没就绪之前皮肤一律回落
+// 原版画法（绝不画半张图），就绪之后补一次重绘 —— 否则首屏会一直停在原版那张。
+// 事件可能在本监听器注册【之前】就发过（那就什么也不用做：下面那次 boot render
+// 已经拿到就绪的皮肤了），两种时序都正确。
+window.addEventListener('circuit-skin-ready', function(){
+  if (editor && skinId !== 'base') { render(); refreshSchematic(); }
+});
+
+window.__skin = function(){ return skinId; };
+window.__setSkin = function(id){ applySkin(id, true); return skinId; };
+window.__skinList = function(){
+  return (SKIN ? SKIN.list() : []).map(function(s){ return { id: s.id, label: s.label }; });
+};
+// 元件栏取景框的当前值。断言要能分辨「换皮肤时取景框真的跟着换了」和
+// 「忘了换、图例里把元件裁掉两头」—— 后者在缩略图上不容易一眼看出来。
+window.__lgView = function(){ return JSON.parse(JSON.stringify(LG_VIEW)); };
+
 toolBtn('↺ 撤销', function(){ editor.undo(); render(); });
 // 「删除选中」放 opt：手机上没有 Delete 键，但点元件弹出的浮层里自带「删除」，
 // 所以它不是唯一的删除入口。
