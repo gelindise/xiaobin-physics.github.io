@@ -565,12 +565,14 @@
     // 🔴 下面这几个都是【cm】—— 画图时必须 × CM 换成世界单位（1 世界单位 = 10 cm），
     //    直接把 25 当世界单位用会把螺杆画到 250 cm 外、相机被撑到看不见装置（实测踩过）。
     const NUT_STEM_IN = 25.0;     // 螺纹杆起点 = 尺端（25 cm）
-    const NUT_STEM_OUT = 28.9;    // 螺纹杆外端（28.9 cm）
+    const NUT_STEM_OUT = 29.4;    // 螺纹杆外端（29.4 cm）—— 必须比「螺母最外端」再长一点：
+                                  // 螺母在 NUT_OUT 时外端面 = 28.5 + NUT_HD(0.75) = 29.25 ⇒ 29.4 留余量
     const NUT_STEM_R = 0.42;      // 螺纹杆半径 0.42 cm
     const NUT_IN = 25.5;          // 螺母行程内端（离支点 25.5 cm）
     const NUT_OUT = 28.5;         // 螺母行程外端（离支点 28.5 cm）⇒ 行程 3.0 cm
     const NUT_STEP = 0.1;         // 螺母位置的最小调节量 0.1 cm（拧一格的量级）
-    const NUT_R = 0.135, NUT_HD = 0.075;   // 螺母六角外接圆半径 / 半厚
+    // 螺母六角外接圆半径 / 沿【杆】方向的半厚（螺母是套在杆上的，厚度沿杆方向量）
+    const NUT_R = 0.135, NUT_HD = 0.075;
     const NUT_EPS = 0.06;         // N·cm —— 判定「平衡螺母已调平」的容差
     // 杠杆尺自重造成的不平衡力矩：重心在支点左侧 ⇒ 左端下沉。
     // 【这是本实验必须先调平衡螺母的原因】——不调平，后面怎么挂钩码都不会水平。
@@ -1335,32 +1337,52 @@
       return out;
     }
 
-    // 平衡螺母：六角螺母（画成六棱柱），拧在尺两端伸出的螺纹杆上
+    // 平衡螺母：六角螺母 —— 【孔是套在螺纹杆上的】，所以只看得见它的侧面
+    // （六条棱面 + 两个六角端面），看不见孔；杆从两个端面穿出来。
+    // 棱柱的轴 = 【杆的方向】（尺的局部 x）。🔴 旧版把轴画在 z 上（六角面朝着镜头）
+    // ⇒ 画面正中一个黑洞、像「孔朝外」，与实物不符（用户指出）。
     function drawNut(q, G, color, sel) {
-      const cx = G.world[0], cy = G.world[1], cz = 0;
-      const N = 6, front = [], back = [];
-      for (let i = 0; i < N; i++) {
-        const ang = PI2 * i / N + Math.PI / 6;
-        const dx = Math.cos(ang) * NUT_R, dy = Math.sin(ang) * NUT_R;
-        front.push([cx + dx, cy + dy, cz + NUT_HD]);
-        back.push([cx + dx, cy + dy, cz - NUT_HD]);
+      const N = 6, L = G.d;                        // L = 螺母中心在尺上的局部 x（带符号）
+      const nrm = k => [k === 1 ? 1 : -1, 0, 0];   // 端面外法线（沿杆方向）
+      const ring = [[], []];
+      for (let k = 0; k < 2; k++) {
+        const lx = L + (k ? NUT_HD : -NUT_HD);     // 两个六角端面：沿杆方向前后各一片
+        for (let i = 0; i < N; i++) {
+          const a = PI2 * i / N;                   // 0° 起 ⇒ 上下各是一条平面（螺母躺着的样子）
+          ring[k].push(TR([lx, Math.cos(a) * NUT_R, Math.sin(a) * NUT_R]));
+        }
       }
-      const fp = front.map(p => project(p, q)), bp = back.map(p => project(p, q));
+      const pr = ring.map(r => r.map(p => project(p, q)));
+      const dep = pr.map(r => r.reduce((s, p) => s + p.z, 0) / N);
+      const near = dep[0] < dep[1] ? 0 : 1;        // z 越大越远
+      // ① 远端的六角端面
+      poly(pr[1 - near], shade(color, nrm(1 - near), 0.60), 'rgba(2,6,23,.5)', 1.1);
+      // ② 六条棱面（我们主要看到的就是这些「侧面」）
       const sides = [];
       for (let i = 0; i < N; i++) {
         const j = (i + 1) % N;
-        sides.push({ pts: [fp[i], fp[j], bp[j], bp[i]],
-                     dep: (fp[i].z + fp[j].z + bp[j].z + bp[i].z) / 4 });
+        const am = PI2 * (i + 0.5) / N;            // 该面的外法线（在局部 y-z 平面内）
+        sides.push({ pts: [pr[0][i], pr[0][j], pr[1][j], pr[1][i]],
+                     dep: (pr[0][i].z + pr[0][j].z + pr[1][j].z + pr[1][i].z) / 4,
+                     n: [0, Math.cos(am), Math.sin(am)] });
       }
       sides.sort((A, B) => B.dep - A.dep);
-      for (const s of sides) poly(s.pts, rgb(color, 0.60), 'rgba(2,6,23,.5)', 1);
-      poly(fp, rgb(color, 0.92), 'rgba(2,6,23,.55)', 1.2);
-      const c = project([cx, cy, cz + NUT_HD + 0.001], q);
-      ctx.beginPath(); ctx.arc(c.x, c.y, Math.max(1.6, 0.052 * c.s), 0, PI2);
-      ctx.fillStyle = 'rgba(15,23,42,.85)'; ctx.fill();
-      if (sel) { ctx.lineWidth = 2; ctx.strokeStyle = 'rgba(56,189,248,.95)'; ctx.stroke(); }
-      boxOfPts(fp.concat(bp), 'nut');
-      return { which: G.which, x: c.x, y: c.y, r: Math.max(10, NUT_R * c.s + 8), cm: G.cm };
+      // 🔴 底噪（amb）不能太低：六条棱面的法线差 60°，`shade` 的 0.6·max(0, n·LIGHT)
+      //    会让「背光面」掉到 0.4 亮度 ⇒ 看着发黑、黄铜像素腿也量不到（实测踩过）。
+      for (const s of sides) poly(s.pts, shade(color, s.n, 0.52), 'rgba(2,6,23,.45)', 1);
+      // ③ 近端的六角端面（螺纹杆就是从这里穿出来的）
+      poly(pr[near], shade(color, nrm(near), 0.78), 'rgba(2,6,23,.55)', 1.1);
+      const c = project(TR([L, 0, 0]), q);
+      if (sel) {
+        const hull = convexHull(pr[0].concat(pr[1]));
+        ctx.beginPath();
+        hull.forEach((p, k) => k ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+        ctx.closePath();
+        ctx.lineWidth = 2; ctx.strokeStyle = 'rgba(56,189,248,.95)'; ctx.stroke();
+      }
+      boxOfPts(pr[0].concat(pr[1]), 'nut');
+      return { which: G.which, x: c.x, y: c.y, r: Math.max(10, NUT_R * c.s + 8), cm: G.cm,
+               d: L, world: ring[0].concat(ring[1]) };
     }
 
     /* ============================================================
@@ -2092,6 +2114,7 @@
         get NUT_STEP() { return NUT_STEP; }, get NUT_EPS() { return NUT_EPS; }, get BIAS_TAU() { return BIAS_TAU; },
         get NUT_STEM_IN() { return NUT_STEM_IN; }, get NUT_STEM_OUT() { return NUT_STEM_OUT; },
         get NUT_STEM_R() { return NUT_STEM_R; }, get NUT_TRIM() { return NUT_TRIM; },
+        get NUT_R() { return NUT_R; }, get NUT_HD() { return NUT_HD; },
         get FORCE_UP() { return FORCE_UP; },
         get TILT_MAX() { return TILT_MAX; }, get TILT_K() { return TILT_K; },
         get PIVOT() { return PIVOT.slice(); }, get CAMD() { return CAMD; },
