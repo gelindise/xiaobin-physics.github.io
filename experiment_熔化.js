@@ -146,8 +146,12 @@ import * as THREE from './assets/optics-three.min.js';
     assembled: 0
   };
   /* plot = 「手动描点」模式：把学生自己记下的那几组 (t, T) 标到图上；
-     plotLink = 学生自己把点连成折线。两个都是开关，不参与物理推进。 */
-  const toggles = { bath: true, melt: true, micro: true, loupe: false, plot: false, plotLink: false };
+     plotLink = 学生自己把点连成折线；truth = 显示【真值曲线】（橙色）。
+     三个都是开关，不参与物理推进。
+     ★ truth 默认 false：真实探究里图像是学生自己描点、自己连线画出来的，
+       电脑一上来就把曲线画好，学生就只会「看图」而不会「画图」。
+       必须点「对照真值曲线」才显示，用来检验自己连的折线准不准。 */
+  const toggles = { bath: true, melt: true, micro: true, loupe: false, plot: false, plotLink: false, truth: false };
 
   const VIEWS = {
     front: { yaw: -0.08, pitch: 0.10, dist: 85, ty: 22.5 },
@@ -275,42 +279,74 @@ import * as THREE from './assets/optics-three.min.js';
     return t;
   }
 
-  /* 海波晶体：白色半透明结晶颗粒 */
+  /* 海波晶体：白色颗粒物 —— 一眼就能看出是「固态」。
+     ★ 颗粒必须【在屏幕像素上看得见】，否则纹理画得再细，渲染出来也只是一片均匀浅色。
+       实测（1440 宽、angle 视角）：试样只有约 90 px 高、约 130 px 宽，而纹理纵向
+       repeat 是 cylH×1.55 ≈ 9.3 次 ⇒ 512 px 的纹理先被压进 90 px、再乘 9.3 次重复，
+       原来 step 3.6 px 的颗粒缩到 0.07 px —— 等于没有，所以看不出「颗粒」。
+     改法：① 颗粒放大到 step 26 px（每边约 20 颗，世界尺寸约 3 mm，跟真海波颗粒同量级）；
+           ② 颗粒之间留出【暗缝】，颗粒才「分得开」；
+           ③ 颜色去蓝走中性白（原来 hsl(200~220) 偏蓝，看着像冰、不像白色晶体）；
+           ④ repeat 同步降到 cylH×0.17（见 updateSample），颗粒在屏幕上稳定在 4~5 px；
+           ⑤ 形状用【不规则 7 边形 + 一条直棱反光】，不用椭圆 —— 椭圆 + 环形高光
+              出图读起来是一串气泡，跟「颗粒物」是两回事（出图肉眼验收过）。 */
   function makeHypoMap() {
     const S = 512, rnd = mulberry32(2468);
     const c = newCanvas(S, S), g = c.getContext('2d');
     const b = newCanvas(S, S), gb = b.getContext('2d');
-    g.fillStyle = '#e9eef2'; g.fillRect(0, 0, S, S);
-    gb.fillStyle = '#8a8a8a'; gb.fillRect(0, 0, S, S);
+    // 底色 = 颗粒之间的缝隙：要够暗，颗粒边界才读得出来
+    g.fillStyle = '#b3bac1'; g.fillRect(0, 0, S, S);
+    gb.fillStyle = '#565656'; gb.fillRect(0, 0, S, S);
 
-    const step = 3.6;
+    const step = 26;
+    /* 不规则多边形晶粒：真海波颗粒是【碎晶】，不是圆球。
+       一开始用 ellipse 画，出图看着像一串气泡（圆鼓鼓 + 环形高光），
+       不像「白色颗粒物」⇒ 改成半径抖动的 7 边形 + 直棱反光。 */
+    const poly = (ctx, x, y, r, asp, rot, n, jit) => {
+      ctx.beginPath();
+      for (let k = 0; k < n; k++) {
+        const a = rot + (k / n) * Math.PI * 2;
+        const rr = r * (1 - jit + rnd() * jit * 2);
+        const px = x + Math.cos(a) * rr, py = y + Math.sin(a) * rr * asp;
+        if (k === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+      }
+      ctx.closePath();
+    };
     for (let gy = -step; gy < S + step; gy += step) {
       for (let gx = -step; gx < S + step; gx += step) {
-        const x = gx + (rnd() - 0.5) * step * 1.1;
-        const y = gy + (rnd() - 0.5) * step * 1.1;
-        const r = 1.5 + rnd() * 2.0;
-        const asp = 0.68 + rnd() * 0.6;
+        const x = gx + (rnd() - 0.5) * step * 0.55;
+        const y = gy + (rnd() - 0.5) * step * 0.55;
+        const r = 9.5 + rnd() * 4.5;
+        const asp = 0.80 + rnd() * 0.40;
         const rot = rnd() * Math.PI;
-        const l = 82 + rnd() * 15;
-        const s = 6 + rnd() * 12;
-        g.fillStyle = `hsl(${200 + rnd() * 20},${s}%,${l}%)`;
-        g.beginPath(); g.ellipse(x, y, r, r * asp, rot, 0, 7); g.fill();
+        const l = 91 + rnd() * 7;                       // 明度 91~98：纯白
 
-        // 晶体棱面的亮边（半透明结晶的关键）
-        g.strokeStyle = `hsla(0,0%,100%,${0.35 + rnd() * 0.45})`;
-        g.lineWidth = 0.5 + rnd() * 0.7;
+        // 颗粒主体：中心亮、边缘略暗 ⇒ 读起来是一颗有厚度的白色小粒，而不是一块白斑
+        const grd = g.createRadialGradient(x - r * 0.3, y - r * asp * 0.3, r * 0.12, x, y, r * 1.05);
+        grd.addColorStop(0, `hsl(210,2%,${Math.min(99, l + 5)}%)`);
+        grd.addColorStop(0.70, `hsl(210,2%,${l}%)`);
+        grd.addColorStop(1, `hsl(210,4%,${Math.max(72, l - 12)}%)`);
+        g.fillStyle = grd;
+        poly(g, x, y, r, asp, rot, 7, 0.22); g.fill();
+
+        // 晶面棱：一条【直的】反光边 —— 白色晶体那种棱，不是水泡的环形高光
+        const a1 = rot + rnd() * 1.4, a2 = a1 + 1.9 + rnd() * 1.0;
+        g.strokeStyle = `hsla(0,0%,100%,${0.5 + rnd() * 0.4})`;
+        g.lineWidth = 1.0 + rnd() * 0.9;
         g.beginPath();
-        g.ellipse(x - r * 0.16, y - r * asp * 0.16, r * 0.72, r * asp * 0.72, rot, Math.PI * 0.9, Math.PI * 1.9);
+        g.moveTo(x + Math.cos(a1) * r * 0.82, y + Math.sin(a1) * r * asp * 0.82);
+        g.lineTo(x + Math.cos(a2) * r * 0.82, y + Math.sin(a2) * r * asp * 0.82);
         g.stroke();
 
-        const v = Math.round(clamp(120 + (l - 88) * 8, 60, 250));
-        gb.fillStyle = `rgb(${v},${v},${v})`;
-        gb.beginPath(); gb.ellipse(x, y, r * 0.94, r * asp * 0.94, rot, 0, 7); gb.fill();
+        // bump：颗粒凸起（亮）、缝隙凹陷（暗底）
+        gb.fillStyle = 'rgb(214,214,214)';
+        gb.beginPath(); gb.ellipse(x, y, r * 0.88, r * asp * 0.88, rot, 0, 7); gb.fill();
       }
     }
-    for (let i = 0; i < 500; i++) {
-      const x = rnd() * S, y = rnd() * S, r = 2.4 + rnd() * 4.6;
-      g.fillStyle = `hsla(${195 + rnd() * 25},${8 + rnd() * 18}%,${88 + rnd() * 10}%,0.5)`;
+    // 颗粒表面再撒一层细碎小晶面，免得 20 颗大粒看起来像「压出来的格子」
+    for (let i = 0; i < 420; i++) {
+      const x = rnd() * S, y = rnd() * S, r = 1.6 + rnd() * 2.6;
+      g.fillStyle = `hsla(210,${2 + rnd() * 5}%,${90 + rnd() * 8}%,0.55)`;
       g.beginPath(); g.ellipse(x, y, r, r * (0.6 + rnd() * 0.5), rnd() * 3, 0, 7); g.fill();
     }
     const map = new THREE.CanvasTexture(c);
@@ -935,7 +971,7 @@ import * as THREE from './assets/optics-three.min.js';
      原来固相 #f7ead0（暖奶油）配液相 #d5ebef（浅蓝白），两者都是浅色半透明，
      在深色背景上只差一点色温 —— 实测看不出「白色晶体」和「澄清液体」。 */
   const solidMat = new THREE.MeshStandardMaterial({
-    map: solidTex, bumpMap: solidBump, bumpScale: 0.10, color: '#ffffff', roughness: 0.58, metalness: 0.02
+    map: solidTex, bumpMap: solidBump, bumpScale: 0.16, color: '#ffffff', roughness: 0.56, metalness: 0.02
   });
   const liquidMat = new THREE.MeshPhysicalMaterial({
     color: '#eaf6fa', transparent: true, opacity: 0.40, roughness: 0.03, metalness: 0,
@@ -1778,7 +1814,7 @@ import * as THREE from './assets/optics-three.min.js';
       if (showSolid) {
         solidMesh.scale.set(1, cylH, 1);
         solidMesh.position.set(0, TT_Y0 + 0.12 + cylH / 2, 0);
-        solidTex.repeat.set(2.2, Math.max(0.05, cylH * 1.55));
+        solidTex.repeat.set(1.4, Math.max(0.05, cylH * 0.17));
         solidBump.repeat.copy(solidTex.repeat);
       }
       solidDome.visible = domeOn;
@@ -1998,8 +2034,9 @@ import * as THREE from './assets/optics-three.min.js';
       g.fillText(`熔点 ${s.tm} ℃`, padL + 6, y - 3);
     }
 
-    // 熔化区间着色
-    if (series.length > 1) {
+    /* 熔化区间着色 —— 它同样在「直接告诉学生哪一段是平台」，
+       所以和真值曲线一起显示/隐藏，不能偷偷替学生把答案标出来。 */
+    if (toggles.truth && series.length > 1) {
       let runStart = -1;
       const bands = [];
       for (let i = 0; i < series.length; i++) {
@@ -2025,8 +2062,10 @@ import * as THREE from './assets/optics-three.min.js';
       g.setLineDash([]);
     }
 
-    // 试样曲线
-    if (series.length > 1) {
+    /* 试样曲线 = 真值曲线（橙色）。★ 默认【不画】：
+       真实探究里这条线是学生自己描点连线画出来的，电脑替他画好就失去了意义。
+       点「对照真值曲线」才显示 —— 用来核对自己连的折线准不准。 */
+    if (toggles.truth && series.length > 1) {
       const grad = g.createLinearGradient(0, padT, 0, H - padB);
       grad.addColorStop(0, 'rgba(251,146,60,0.22)');
       grad.addColorStop(1, 'rgba(251,146,60,0.02)');
@@ -2055,7 +2094,8 @@ import * as THREE from './assets/optics-three.min.js';
        画在真值曲线【之后】才不会被曲线盖住；用紫红色，和橙色真值曲线一眼分得开。 */
     const PS = plotStats();
     if (toggles.plot && PS.n) {
-      if (series.length > 1) {
+      /* 偏差细虚线要有一条【看得见的】参照线才有意义 —— 真值曲线没显示时不画 */
+      if (toggles.truth && series.length > 1) {
         g.strokeStyle = 'rgba(232,121,249,0.55)';
         g.lineWidth = 1.2;
         g.setLineDash([3, 3]);
@@ -2093,6 +2133,10 @@ import * as THREE from './assets/optics-three.min.js';
     state.drawn.plotSegs = (toggles.plot && toggles.plotLink && PS.n > 1) ? PS.n - 1 : 0;
     state.drawn.plotDevMax = PS.devMax;
     state.drawn.plotDevMean = PS.devMean;
+    /* 真值曲线是否画出来了 + 真值采样点数 —— 自检直接读这两个数，
+       而不是去数画布上的橙色像素（那要靠颜色猜，且「点了按钮没重画」也会照样绿）。 */
+    state.drawn.truthShown = !!toggles.truth;
+    state.drawn.seriesPts = series.length;
   }
 
   /* ==========================================================================
@@ -2653,7 +2697,7 @@ import * as THREE from './assets/optics-three.min.js';
     { name: '05 海波凝固', text: '<strong>反过来做一次：</strong>把「实验方向」切到<b>凝固</b> —— 酒精灯撤走、烧杯里的热水换成<b>冰水</b>。液态海波从 65 ℃ 开始降温，降到 <b>48 ℃</b> 时温度又停住了：这次它<b>继续放热</b>（把热量交给冰水），温度却保持不变，直到全部凝固成固态，温度才接着下降。' },
     { name: '06 凝固点=熔点', text: '<strong>把两张图叠起来看：</strong>熔化时的平台和凝固时的平台都在 <b>48 ℃</b>。同一种晶体，<b>凝固点等于熔点</b> —— 温度降下来到 48 ℃ 才开始凝固，升上去到 48 ℃ 才开始熔化，同一个温度。在右侧「③ 记录数据」里两个方向各记三组，表格会替你算出两个平台到底差多少。' },
     { name: '07 记录归纳', text: '<strong>记录归纳：</strong>把海波“开始熔化 / 熔化一半 / 刚好熔化完”三个时刻记下来，你会发现三个温度都是 48 ℃；凝固方向再记三组，凝固平台同样是 48 ℃。最后记录石蜡同一阶段的温度，结论就出来了。' },
-    { name: '08 描点画图', text: '<strong>自己画一遍图：</strong>真实的实验报告里，图是自己<b>描点</b>画出来的，不是电脑替你画的。点右侧「③ 记录数据」里的<b>「描点画图」</b>，你刚才记下的每一组数据都会变成图上的一个<b>紫点</b>；再点<b>「连成折线」</b>，用直线把这些点依次连起来 —— 这就是手工描点得到的图像。把它和橙色的真值曲线叠在一起比：折线的拐弯处和曲线对得上吗？点记得太稀，就会把 <b>48 ℃ 的平台</b>连成一条斜线，看不出“温度不变”。所以实验时要在<b>温度快变化的地方多记几组</b>。' }
+    { name: '08 描点画图', text: '<strong>自己画一遍图：</strong>真实的实验报告里，图是自己<b>描点</b>画出来的，不是电脑替你画的 —— 所以这张图上<b>默认没有曲线</b>，要你自己把它画出来。点右侧「③ 记录数据」里的<b>「描点画图」</b>，你刚才记下的每一组数据都会变成图上的一个<b>紫点</b>；再点<b>「连成折线」</b>，用直线把这些点依次连起来 —— 这就是手工描点得到的图像。画完之后再点<b>「对照真值曲线」</b>，把橙色的真值曲线叠上来比一比：折线的拐弯处和曲线对得上吗？点记得太稀，就会把 <b>48 ℃ 的平台</b>连成一条斜线，看不出“温度不变”。所以实验时要在<b>温度快变化的地方多记几组</b>。' }
   ];
   const stepButtons = Array.from(document.querySelectorAll('[data-step]'));
   const stepDetail = $('stepDetail');
@@ -2758,12 +2802,13 @@ import * as THREE from './assets/optics-three.min.js';
      所以调用顺序必须是【先 drawChart、再 syncPlotUI】—— 反过来会读到上一帧的旧数。 */
   function syncPlotUI() {
     const btnOn = $('plotToggle'), btnLink = $('plotLink'), hint = $('plotHint'), sum = $('plotSum');
+    const btnTruth = $('truthToggle');
     const D = state.drawn || {};
     const n = (D.plotDots || []).length;
     if (btnOn) {
       btnOn.classList.toggle('active', !!toggles.plot);
       btnOn.setAttribute('aria-pressed', toggles.plot ? 'true' : 'false');
-      btnOn.textContent = toggles.plot ? '收起描点　只看真值曲线' : '描点画图　把记录点标到图上';
+      btnOn.textContent = toggles.plot ? '收起描点' : '描点画图　把记录点标到图上';
     }
     if (btnLink) {
       btnLink.disabled = !toggles.plot || n < 2;
@@ -2772,26 +2817,39 @@ import * as THREE from './assets/optics-three.min.js';
         ? '取消连线'
         : `连成折线（${n} 点 → ${Math.max(0, n - 1)} 段）`;
     }
+    if (btnTruth) {
+      btnTruth.classList.toggle('active', !!toggles.truth);
+      btnTruth.setAttribute('aria-pressed', toggles.truth ? 'true' : 'false');
+      btnTruth.textContent = toggles.truth
+        ? '收起真值曲线　只看我自己画的'
+        : '对照真值曲线　我连得准不准';
+    }
     if (hint) {
-      hint.textContent = toggles.plot
-        ? '紫点 = 你自己记下的（时刻，温度）；紫虚线 = 你连的折线；细虚线 = 每个描点离真值曲线差多少。'
-        : '先点几下「记录数据」，再打开描点 —— 你自己记下的点会变成图上的紫点。';
+      hint.textContent = !toggles.plot
+        ? '先点几下「记录数据」，再打开描点 —— 你自己记下的点会变成图上的紫点。'
+        : toggles.truth
+          ? '紫点 = 你记下的（时刻，温度）；紫虚线 = 你连的折线；橙线 = 电脑算出的真值曲线；细虚线 = 每个点离真值差多少。'
+          : '紫点 = 你记下的（时刻，温度）；紫虚线 = 你连的折线。想看自己画得准不准，再点「对照真值曲线」。';
     }
     if (sum) {
       const other = state.records.length - n;
       const tail = other > 0 ? `（另有 ${other} 条记录属于另一个实验方向，切回去才能看到它们的描点。）` : '';
       if (!toggles.plot) {
-        sum.textContent = '点「描点画图」把表格里的记录标到图上，再自己连成折线，和真值曲线比一比。';
+        sum.textContent = '先「记录数据」，再点「描点画图」把记录标到图上，然后自己连成折线 —— 图是你自己画的，电脑不替你画。';
       } else if (n === 0) {
         sum.textContent = `当前方向还没有记录 —— 先加热（或冷却）、点「记录数据」。${tail}`;
       } else {
-        const devTxt = isFinite(D.plotDevMax)
-          ? `与真值曲线最大相差 ${D.plotDevMax.toFixed(2)} ℃（平均 ${D.plotDevMean.toFixed(2)} ℃）`
-          : '真值曲线还没有第二个采样点，暂时算不出偏差';
         const segTxt = D.plotSegs
-          ? `你连的折线共 ${D.plotSegs} 段，叠在真值曲线上 —— 折线是「点连出来的」，真值曲线是连续算出来的。`
-          : '再点「连成折线」，把点连起来和真值曲线比一比。';
-        sum.textContent = `当前方向描了 ${n} 个点；${devTxt}。${segTxt}${tail}`;
+          ? `你连的折线共 ${D.plotSegs} 段。`
+          : '再点「连成折线」，把点连起来。';
+        if (!toggles.truth) {
+          sum.textContent = `当前方向描了 ${n} 个点；${segTxt}点「对照真值曲线」可以看看自己连得准不准。${tail}`;
+        } else {
+          const devTxt = isFinite(D.plotDevMax)
+            ? `与真值曲线最大相差 ${D.plotDevMax.toFixed(2)} ℃（平均 ${D.plotDevMean.toFixed(2)} ℃）`
+            : '真值曲线还没有第二个采样点，暂时算不出偏差';
+          sum.textContent = `当前方向描了 ${n} 个点；${devTxt}。${segTxt}${tail}`;
+        }
       }
     }
   }
@@ -2812,9 +2870,18 @@ import * as THREE from './assets/optics-three.min.js';
     syncPlotUI();
     requestRender();
   }
-  const plotToggleBtn = $('plotToggle'), plotLinkBtn = $('plotLink');
-  if (plotToggleBtn) plotToggleBtn.addEventListener('click', () => setPlotMode(!toggles.plot));
-  if (plotLinkBtn) plotLinkBtn.addEventListener('click', () => setPlotLink(!toggles.plotLink));
+  /* 真值曲线开关：学生自己描完点、连完线，再点开对照。
+     与另两个开关一样【同步】重画 —— 无头环境没有 rAF，只置脏会让自检读到上一帧的状态。 */
+  function setTruth(on) {
+    toggles.truth = !!on;
+    drawChart();
+    syncPlotUI();
+    requestRender();
+  }
+    const plotToggleBtn = $('plotToggle'), plotLinkBtn = $('plotLink'), truthBtn = $('truthToggle');
+    if (plotToggleBtn) plotToggleBtn.addEventListener('click', () => setPlotMode(!toggles.plot));
+    if (plotLinkBtn) plotLinkBtn.addEventListener('click', () => setPlotLink(!toggles.plotLink));
+    if (truthBtn) truthBtn.addEventListener('click', () => setTruth(!toggles.truth));
   syncPlotUI();
 
   /* ==========================================================================
@@ -2863,10 +2930,17 @@ import * as THREE from './assets/optics-three.min.js';
     }
   }
 
+  /* ★ 冻结开关：只给自检用。像素级对照（「同一状态连拍两帧必须完全一致」）要求
+     两次 render 之间【没有任何东西在推进】。但本机 headless 的 rAF 有时真的在跑，
+     它每帧都 frameStep(dt) ⇒ 火焰摇曳 / 水面起伏持续变化 ⇒ 连拍两帧也能量出
+     2% 的差异，把「差异来自物态」这条对照判据整个废掉。
+     冻结时只刷新时间基准（免得解冻后 dt 巨大），不推进仿真。 */
+  let animFrozen = false;
   let last = performance.now();
   (function loop(now) {
     requestAnimationFrame(loop);
     const t = now || performance.now();
+    if (animFrozen) { last = t; return; }
     let dt = (t - last) / 1000;
     last = t;
     if (!isFinite(dt) || dt < 0) dt = 0;
@@ -2889,6 +2963,8 @@ import * as THREE from './assets/optics-three.min.js';
     rodTop: BASE_H + ROD_H, armY: ARM_Y, sleeveHalf: 1.1,
     mats: { solidMat, mushMat, liquidMat, waxMat, thGlassMat, thRedMat, glassMat, waterMat },
     setRunning, resetSim, refreshAll,
+    /* 冻结渲染循环（只给自检用）：见文件末尾 loop 的说明 */
+    freezeAnim(v) { animFrozen = !!v; },
     step(dt) { stepSim(dt); updateSample(); pushSample(); updateReadouts(); drawChart(); drawMicro(dt); requestRender(); },
     advance(seconds) {                       // 直接推进仿真，不依赖真实时间
       let left = seconds;
@@ -2913,13 +2989,14 @@ import * as THREE from './assets/optics-three.min.js';
     statusText, meltFraction, shortState, sampleStateChip, renderRecords, clearRecords, setDirection,
     /* 手动描点：映射、取点、统计、开关，全部从这几个入口走 ——
        自检不自己重抄一遍 X/Y，也不靠数画布上的紫点。 */
-    chartGeom, truthAt, plotDots, plotStats, setPlotMode, setPlotLink, syncPlotUI,
+    chartGeom, truthAt, plotDots, plotStats, setPlotMode, setPlotLink, setTruth, syncPlotUI,
     plotDrawn() {
       const D = state.drawn || {};
       return {
         mode: !!D.plotMode, linked: !!D.plotLinked, segs: D.plotSegs || 0,
         dots: (D.plotDots || []).map((d) => ({ t: d.t, T: d.T, x: d.x, y: d.y })),
-        devMax: D.plotDevMax, devMean: D.plotDevMean
+        devMax: D.plotDevMax, devMean: D.plotDevMean,
+        truth: !!D.truthShown, seriesPts: D.seriesPts || 0
       };
     },
     /* 凝固方向的常量与画面量，供自检直接读（别在脚本里重抄一遍常量） */
@@ -3022,7 +3099,7 @@ import * as THREE from './assets/optics-three.min.js';
     },
     setLoupe,
     /* 试样外观：固相顶上的晶堆半球 + 液相弯月面（供像素/几何断言直接读，不靠数像素猜） */
-    solidDome, meniscus, domeH: DOME_H,
+    solidDome, meniscus, solidMesh, domeH: DOME_H,
     setSubstance(k) {
       state.substance = k;
       document.querySelectorAll('[data-substance]').forEach((b) => b.classList.toggle('active', b.dataset.substance === k));
