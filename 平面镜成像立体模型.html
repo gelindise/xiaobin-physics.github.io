@@ -158,27 +158,13 @@
             background: rgba(16, 185, 129, .18); border: 1px solid rgba(52, 211, 153, .6); color: #a7f3d0;
         }
         .lab3d-stage .stage-flag.show { opacity: 1; }
-        /* 「从这个角度看不到像」的提示。虚像本来就只有看进玻璃板才看得见，
-           不说清楚的话，像一消失就会被当成画错了。 */
-        .lab3d-stage .stage-note {
-            position: absolute; left: 15px; top: 52px; max-width: 68%; pointer-events: none;
-            font-size: 11px; line-height: 1.55; color: #fcd34d; background: rgba(2, 6, 23, .84);
-            border: 1px solid rgba(252, 211, 77, .34); padding: 7px 10px; border-radius: 8px;
-            opacity: 0; transition: opacity .2s;
-        }
-        .lab3d-stage .stage-note.show { opacity: 1; }
-        /* 悬停在可拖动物体上时跟着物体走的小气泡：既说「能拖」，也说「能点」。
-           没有它的话，点击点燃这个动作完全无从发现——页面上没有任何提示。 */
-        .lab3d-stage .stage-tip {
-            position: absolute; pointer-events: none; opacity: 0; transition: opacity .15s;
-            transform: translate(-50%, -100%);
-            font-size: 11px; font-weight: 700; white-space: nowrap;
-            padding: 4px 9px; border-radius: 7px;
-            background: rgba(2, 6, 23, .92); border: 1px solid rgba(56, 189, 248, .55); color: #bae6fd;
-        }
-        .lab3d-stage .stage-tip.show { opacity: 1; }
-        /* 动作回馈（点燃 / 熄灭）。和提示条分开：提示条是「状态说明」，这个是「刚做了什么」。
-           放到底部偏上：上面是场景说明、再下面是重合横幅和底部那一条，都不去挤。 */
+        /* 【用户要求去掉三处会挡画面的浮层提示】原来这里还有：
+             · .stage-note —— 左上角那条「⚠ 这个角度看不到像：…」（黄框，宽到 68%，压在场景上）
+             · .stage-tip  —— 悬停时跟着物体走的气泡「拖动移动 · 点一下熄灭」
+             · 画布上「屏上无光斑 → 虚像」那行标注（在 drawScreen 里）
+           三条都盖住实验画面，老师要求整条去掉。**别再往回加**：这是明确的界面决定，
+           不是漏写。状态说明留在侧栏的「观察提示」里，不占画面。 */
+        /* 动作回馈（点燃 / 熄灭）。放到底部偏上：上面是场景说明、再下面是重合横幅和底部那一条。 */
         .lab3d-stage .stage-toast {
             position: absolute; left: 50%; transform: translateX(-50%); bottom: 96px;
             pointer-events: none; opacity: 0; transition: opacity .2s;
@@ -330,8 +316,6 @@
           <div class="lab3d-stage">
             <canvas id="mir-canvas" aria-label="可拖动旋转、滚轮缩放，并可拖动蜡烛与光屏的平面镜成像三维装置"></canvas>
             <div class="stage-hint" id="mir-stagehint"><b></b>三维实验场景 · 玻璃板 → 蜡烛 A → 蜡烛 B → 光屏</div>
-            <div class="stage-note" id="mir-ghostnote"></div>
-            <div class="stage-tip" id="mir-tip"></div>
             <div class="stage-toast" id="mir-toast"></div>
             <div class="stage-flag" id="mir-flag">完全重合 ✓ 像与物到玻璃板的距离相等</div>
             <!-- 底部一条：左边是记录按钮（就在舞台上，不用滑到侧栏去找），右边是操作提示 -->
@@ -1062,21 +1046,34 @@
       }
 
       // 火焰：屏幕空间的水滴 + 外光晕。alpha 用来画「像」的暗一号火焰。
-      // ── 抖动：真蜡烛的火焰不会定住不动。用几个【互不成整数倍】的正弦叠加出
-      //    没有明显周期的跳动（整数倍会合成出一个一眼看得出的循环）：
-      //      · 横向摆动（火苗尖左右晃）· 竖直伸缩（窜高 / 缩回）· 亮度呼吸
-      //    三个量各用不同的频率组合，看上去就是「自然地动」。
-      //    【所有火焰共用 state.t 这一个相位】——A 的火焰和它的像本来就是同一团火的
-      //    镜像，相位一错开，画面里就变成两支各烧各的蜡烛，一眼假。
-      //    相位由 tick 里的 rAF 时间戳推进（state.t），不用 performance.now() 现取：
-      //    两处各取一次时间会差出几毫秒，火焰和「要不要重画」就不同步了。
+      // ── 抖动：真蜡烛的火焰不但不会定住，而且【不该有规律】。
+      //    第一版是「几个正弦叠加」——频率虽然互不成整数倍，看上去还是一波一波地推，
+      //    盯着看两秒就能预判下一秒往哪边摆。现在换成【值噪声】：把时间轴切成小段，
+      //    每段取一个伪随机值、段内用 smoothstep 平滑插值。它仍是时间的【纯函数】
+      //    （同一个 t 取两次样必然一样，自检才钉得住相位），但永不重复、也没有可辨认的周期。
+      //    三个速率叠着用：慢摆 ≈1.1 Hz（整团火苗的晃）· 中抖 ≈2.9 Hz · 快颤 ≈6.7 Hz。
+      //    三个速率各带自己的相位偏移，免得三条曲线在整点上同时换段（那会看出「一顿一顿」）。
+      const hash1 = i => { const x = Math.sin(i * 12.9898 + 78.233) * 43758.5453; return x - Math.floor(x); };
+      const noise1 = t => {
+        const i = Math.floor(t), fr = t - i;
+        const u = fr * fr * (3 - 2 * fr);              // smoothstep：段与段之间一阶连续，不抽搐
+        return hash1(i) * (1 - u) + hash1(i + 1) * u;  // 0..1
+      };
+      const nz = (t, c) => (noise1(t) - 0.5) * c;      // 映射到 ±c/2
+      const rSlow = (t, c) => nz(t * 1.13 + 4.7, c);
+      const rMid  = (t, c) => nz(t * 2.87 + 11.3, c);
+      const rFast = (t, c) => nz(t * 6.71 + 23.1, c);
+      // 【所有火焰共用 state.t 这一个相位】——A 的火焰和它的像本来就是同一团火的
+      // 镜像，相位一错开，画面里就变成两支各烧各的蜡烛，一眼假。
+      // 相位由 tick 里的 rAF 时间戳推进（state.t），不用 performance.now() 现取：
+      // 两处各取一次时间会差出几毫秒，火焰和「要不要重画」就不同步了。
       function flameShake(t) {
         return {
-          sx: 1 + 0.16 * Math.sin(t * 7.1) + 0.09 * Math.sin(t * 11.7 + 1.3),      // 横向胖瘦
-          sy: 1 + 0.13 * Math.sin(t * 11.7 + 1.3) + 0.07 * Math.sin(t * 3.7 + 2.1),// 竖向高矮
-          sw: 0.22 * Math.sin(t * 7.1) + 0.12 * Math.sin(t * 3.7 + 2.1),           // 火苗尖的左右偏移（相对 r）
-          lu: 1 + 0.12 * Math.sin(t * 3.7 + 2.1),                                   // 亮度呼吸
-          gl: 1 + 0.10 * Math.sin(t * 7.1)                                          // 外光晕的胀缩
+          sx: 1 + rFast(t, 0.20) + rSlow(t, 0.16),            // 横向胖瘦
+          sy: 1 + rMid(t, 0.26) + rFast(t, 0.10),             // 竖向高矮
+          sw: rFast(t, 0.52) + rMid(t, 0.36) + rSlow(t, 0.30),// 火苗尖的左右偏移（相对 r）
+          lu: 1 + rMid(t, 0.24) + rSlow(t, 0.14),             // 亮度呼吸
+          gl: 1 + rFast(t, 0.16) + rSlow(t, 0.14)             // 外光晕的胀缩
         };
       }
       const aOf = v => Math.max(0, Math.min(1, v));
@@ -1303,12 +1300,9 @@
         poly(pts, null, hit ? 'rgba(52,211,153,.95)' : 'rgba(203,213,225,.8)', hit ? 2.8 : 1.6);
         const t = project([state.sx, hS * 0.55, state.sz], q);
         label({ x: t.x, y: t.y }, '光屏', 'rgba(226,232,240,.92)', 11);
-        if (hit) {
-          // 【为什么不说「屏上无像」】光屏正放在像的位置时，透过玻璃板看过去，
-          // 像恰好和光屏重合，屏上【看得见】那个像——那是板里的虚像，不是屏上的光斑。
-          // 写「屏上无像」会和学生眼睛看到的东西直接打架，所以改成「无光斑」。
-          label({ x: t.x, y: t.y + 18 }, '屏上无光斑 → 虚像', 'rgba(110,231,183,.98)', 11);
-        }
+        // 【用户要求去掉】原来屏正放在像位时这里还会再画一行「屏上无光斑 → 虚像」。
+        // 那行字正压在光屏（也就是像）身上，把最该看清的地方挡住了 —— 整行去掉。
+        // 「屏上没有光斑」这件事改由侧栏的「观察提示」文字说明，不占画面。
       }
 
       // 辅助线：物距 / 像距 / 连线。画在所有实体之后，作为标注叠在上面。
@@ -1734,7 +1728,9 @@
             canvas.classList.toggle('pick', !!hit);
             state.dirty = true;                 // 悬停高亮要重画
           }
-          if (hit) updateTip();
+          // 【原来这里还会弹一个跟着物体走的气泡「拖动移动 · 点一下熄灭」】
+          // 它盖在蜡烛身上，用户要求去掉。光标变手型 + 脚下那圈高亮已经说清「能拖」；
+          // 「点一下点燃」的说明留在侧栏的「观察提示」和底部那行操作提示里。
         }
         state.lastX = p.x; state.lastY = p.y;
       });
@@ -1759,7 +1755,6 @@
         if (!state.dragging && !state.drag) {
           state.hover = null;
           canvas.classList.remove('pick');
-          ui.tip.classList.remove('show');
           state.dirty = true;
         }
       });
@@ -1780,8 +1775,8 @@
         gw: el('mir-gw'), gh: el('mir-gh'), gx: el('mir-gx'), gz: el('mir-gz'),
         gwV: el('mir-gw-v'), ghV: el('mir-gh-v'), gxV: el('mir-gx-v'), gzV: el('mir-gz-v'),
         lh: el('mir-lh'), lhV: el('mir-lh-v'), sh: el('mir-sh'), shV: el('mir-sh-v'),
-        note: el('mir-ghostnote'), always: el('mir-ghost-always'),
-        tip: el('mir-tip'), toast: el('mir-toast'),
+        always: el('mir-ghost-always'),
+        toast: el('mir-toast'),
         srcCandle: el('mir-src-candle'), srcF: el('mir-src-f'),
         mu: el('mir-mu'), mv: el('mir-mv'), mb: el('mir-mb'), mc: el('mir-mc'),
         mcard: el('mir-mcard'), verdict: el('mir-verdict'), flag: el('mir-flag'),
@@ -2021,25 +2016,9 @@
         showToast(on ? (isF ? '🔠 F 光源 A 已点亮' : '🔥 蜡烛 A 已点燃')
                      : (isF ? '🌫 F 光源 A 已熄灭' : '🌫 蜡烛 A 已熄灭'));
       }
-      // 悬停小气泡：跟着物体顶端走。它同时承担两件事——说「能拖」，
-      // 以及说「点一下能点燃」（否则「点击点燃」这个动作在页面上完全无从发现）。
-      function updateTip() {
-        const h = state.hover;
-        if (!h) { ui.tip.classList.remove('show'); return; }
-        const q = {}; makeCam(q, state.w, state.h);
-        const at = h === 'a' ? { x: state.ax, z: state.az, top: srcTop() }
-                 : h === 'b' ? { x: state.bx, z: state.bz, top: srcTop() }
-                 : { x: state.sx, z: state.sz, top: state.sh };
-        const s = project([at.x, at.top, at.z], q);
-        ui.tip.textContent = h === 'a'
-          ? (state.aLit ? '拖动移动 · 点一下熄灭' : '拖动移动 · 点一下点燃')
-          : '拖动移动';
-        // 气泡是 DOM，坐标系是 CSS 像素（和 canvas 的 CSS 尺寸同一套）。
-        // 要夹在舞台内——靠边的物体不夹的话气泡会飞出去被 overflow:hidden 裁掉。
-        ui.tip.style.left = clamp(s.x, 66, Math.max(66, state.w - 66)) + 'px';
-        ui.tip.style.top = clamp(s.y - 8, 24, Math.max(24, state.h - 6)) + 'px';
-        ui.tip.classList.add('show');
-      }
+      // 【原来这里有个悬停小气泡 updateTip()：「拖动移动 · 点一下熄灭」，跟着物体顶端走】
+      // 用户要求去掉——它正压在蜡烛 / 光屏身上。悬停的可见证据改为只靠
+      // 「光标变手型」+「脚下那圈高亮」（drawHover），两者都不盖住物体本身。
       function updateLegend() {
         const isF = state.src === 'f';
         ui.legend.innerHTML = '<span style="color:#fca5a5">●</span> ' + (isF ? 'F 光源 A（物）' : '蜡烛 A（物）') + '　'
@@ -2051,28 +2030,11 @@
           (isF ? 'F 光源 A → F 光源 B' : '蜡烛 A → 蜡烛 B') + ' → 光屏';
       }
 
-      // 「这个角度看不到像」的提示条。虚像本来就只有看进玻璃板才看得见——
-      // 不解释一句的话，像一消失就会被当成画错了，学生反而学到错的东西。
-      function updateGhostNote() {
-        let txt = '';
-        // 【不要在这里加 !state.screenHit】光屏挪到像的位置时，像会不会显示，
-        // 由 imageVisible 这一个判据说了算：透过玻璃板看得见就显示，视线转开就消失。
-        if (state.showGhost && !state.ghostVisible) {
-          // 一定要把「去哪儿能把它调回来」写出来：像突然消失，第一反应是画错了。
-          txt = state.ghostAlways
-            ? '⚠ 这个角度其实看不到像：' + state.ghostReason + '。现在按「像始终显示」画了出来，这是演示画法。'
-            : '⚠ 这个角度看不到像：' + state.ghostReason +
-              '。（虚像本来就只有看进玻璃板才看得见；想让像照常显示，勾选下方的「像始终显示」）';
-        } else if (state.showGhost && state.drawn.ghost > 0 && state.ghostBand) {
-          // 「看得见」≠「整支都看得见」：板上沿以上那一段收不到反射光线，已经裁掉了。
-          // 不解释一句的话，学生看到的是「像的上半截凭空没了」——和「像整个消失」一样
-          // 容易被当成画错了。这里说清楚原因，并指出怎么把它调回来。
-          txt = '⚠ 像的顶部被玻璃板上沿挡住了：比板上沿更高的那一段像收不到反射光线，'
-              + '从眼睛里本来就看不着。（把「玻璃板 · 高度」调大，或者把视角压低一点，就看得全了）';
-        }
-        if (ui.note.textContent !== txt) ui.note.textContent = txt;
-        ui.note.classList.toggle('show', !!txt);
-      }
+      // 【原来这里有个 updateGhostNote()：舞台左上角那条「⚠ 这个角度看不到像：…」黄框提示】
+      // 它最宽占 68% 的画布宽度，正压在实验画面上，用户要求整条去掉。
+      // 「像为什么会消失」这件事改由侧栏的「观察提示」（ui.verdict）文字说明——
+      // 那里本来就在讲下一步该干什么，不占画面。判据（imageVisible / ghostBand）照旧保留，
+      // 只是不再往舞台上写字。
 
       ui.light.addEventListener('click', () => setLit(!state.aLit));
       // 「记录这一组」的【唯一入口】：侧栏按钮和舞台上那个浮动按钮都走这里。
@@ -2158,8 +2120,6 @@
           updateCoincide();
           render();
           updateReadout();
-          // 提示条要在 render 之后更新：可见性是 render 里算的
-          updateGhostNote();
         }
         requestAnimationFrame(tick);
       }
@@ -2255,7 +2215,7 @@
         setT(t) { state.t = t; state.dirty = true; return state.t; },
         // 同步强制重绘一次。headless 里 rAF 不一定回调，读「画出来的量」之前先调它。
         renderNow() {
-          updateCoincide(); render(); updateReadout(); updateGhostNote();
+          updateCoincide(); render(); updateReadout();
           return { drawn: state.drawn, band: state.ghostBand, vis: state.ghostVisible };
         },
         // 走真实的点击路径，不直接写 state：否则按钮的 .active 高亮不会跟着动
@@ -2340,8 +2300,16 @@
                    // 舞台底边离视口底多远——>0 说明不用滚动就能看见
                    visibleWithoutScroll: r.bottom <= window.innerHeight + 1 };
         },
-        tip() { return { text: ui.tip.textContent, show: ui.tip.classList.contains('show'),
-                         x: ui.tip.style.left, y: ui.tip.style.top }; },
+        // 三处会挡画面的浮层提示已被用户要求去掉（stage-note / stage-tip / 屏上那行标注）。
+        // 自检要能直接问到「它们确实不在了」，而不是靠人去看截图——见 overlays()。
+        overlays() {
+          return {
+            note: !!document.getElementById('mir-ghostnote'),
+            tip: !!document.getElementById('mir-tip'),
+            // 画布上那行「屏上无光斑 → 虚像」已删：这里回的是【本帧画出去的标注文字】
+            labels: (window.__mirLabelLog || []).map(l => l.text)
+          };
+        },
         toast() { return { text: ui.toast.textContent, show: ui.toast.classList.contains('show') }; },
         cursor() { return canvas.className; }
       };
