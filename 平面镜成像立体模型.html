@@ -384,6 +384,12 @@
             F 光源左右不对称，用来验证「平面镜成的像<b style="color:#7dd3fc">不左右颠倒</b>」——
             像里的 F 还是 F，不是反过来的。
           </small>
+          <div class="lab3d-field" style="margin-top:14px">
+            <label for="mir-lh">光源高度 <output id="mir-lh-v">9.0 cm</output></label>
+            <input id="mir-lh" type="range" min="5" max="16" value="9" step="0.5">
+            <small>蜡烛量的是蜡体高度（火焰另算），F 光源量的是整块面板的高度——滑块跟着当前光源走。
+              把光源调矮，就能看出<b style="color:#7dd3fc">板上沿会把像的顶部挡掉</b></small>
+          </div>
 
           <h3>玻璃板</h3>
           <div class="lab3d-field">
@@ -403,6 +409,13 @@
             <label for="mir-gz">前后位置 <output id="mir-gz-v">0.0 cm</output></label>
             <input id="mir-gz" type="range" min="-4" max="4" value="0" step="0.5">
             <small>玻璃板一挪，物距 / 像距的零点跟着挪；像始终是物关于<b style="color:#7dd3fc">板面</b>的镜像</small>
+          </div>
+
+          <h3>光屏</h3>
+          <div class="lab3d-field">
+            <label for="mir-sh">高度 <output id="mir-sh-v">10.0 cm</output></label>
+            <input id="mir-sh" type="range" min="5" max="20" value="10" step="0.5">
+            <small>光屏是块白卡纸。调到和像差不多高，最容易看清「屏上确实没有光斑」</small>
           </div>
 
           <h3>位置微调</h3>
@@ -483,19 +496,23 @@
       const GW0     = 1.15;       // 玻璃板半宽默认值（23 cm 宽，可调：state.gw）
       const GH0     = 2.05;       // 玻璃板高默认值（20.5 cm，可调：state.gh）
       const CR      = 0.135;      // 蜡烛半径（直径 2.7 cm，与课本上那两支短粗蜡烛接近）
-      const CH      = 1.20;       // 蜡烛高
+      // 蜡烛高【默认值，可调：state.ch】。真实实验用的就是这种短粗蜡烛——12 cm 的蜡烛
+      // 加上火焰快顶到板上沿了，反而看不出「板上沿把像的顶部挡掉」这件事。默认取 9 cm。
+      const CH      = 0.90;
       const WK      = 0.10;       // 烛芯长
       const FL      = 0.34;       // 火焰高
       // F 光源：一块薄板上抠出一个发光的 F，面板与玻璃板平行（都躺在 x-y 平面里，
       // 厚度沿 z）。左右不对称，所以能验证「像不左右颠倒」——蜡烛左右对称，验不出来。
-      const F_H     = 1.12;       // F 总高（11.2 cm，比蜡烛+火焰矮一截，板肯定罩得住）
+      const F_H     = 1.10;       // F 总高（11.0 cm，比蜡烛+火焰矮一截，板肯定罩得住）
+                                  // 【必须落在「光源高度」滑块的 0.5 cm 刻度上】11.2 会被浏览器
+                                  // 吸附成 11.0，滑块显示和实际值就对不上了（实测踩过）。
       const F_W     = 0.30;       // F 左右总宽（含竖笔和横笔）
       const F_S     = 0.10;       // 笔画粗细
       const F_M0    = 0.50;       // 中横笔的下沿高度
       const F_M1    = 0.60;       // 中横笔的上沿高度
       const F_Z     = 0.045;      // 薄板半厚（画侧面厚度用）
       const SCR_W   = 0.55;       // 光屏半宽
-      const SCR_H   = 1.00;       // 光屏高（比蜡烛略矮，和真实的白色卡纸差不多）
+      const SCR_H   = 1.00;       // 光屏高【默认值，可调：state.sh】
       const CAMD    = 13.5;       // 相机距离基准。取得比场景大得多，透视就弱，
                                   // 前后两支蜡烛看起来才一样大——这是个测量实验，
                                   // 近大远小会让人误判「B 是不是和像一样大」。
@@ -503,7 +520,7 @@
       const RULER_X = -1.92;      // 刻度尺所在位置（沿 z 轴摆放）
       const PAD     = 0.34;       // 物体离纸边的最小留白
       const PAPER_Z = 1.95;       // 白纸在 z 方向可用到 ±1.95：A/B/光屏的绝对边界
-      const ENV_TOP = CH + WK + FL;   // 蜡烛能到的最高点（火焰尖）
+      const ENV_TOP = CH + WK + FL;   // 蜡烛能到的最高点（火焰尖）——【默认值】，实时值见 srcTop()
 
       /* 器材区：白纸右侧的一条竖带。没点燃的 B 和光屏一开始就搁在这儿——
          真实实验里它们也是摆在台子边上的，学生得自己把它们拿到玻璃板后面去。
@@ -541,6 +558,11 @@
         yaw: VIEWS.perspective[0], pitch: VIEWS.perspective[1], zoom: 1,
         // 玻璃板：半宽 / 高 / 左右 / 前后。像、读数、刻度尺零点全都跟着它走。
         gw: GW0, gh: GH0, gx: 0, gz: 0,
+        // 高度：蜡烛（蜡体）/ F 光源面板 / 光屏。三者都能调，实时值只在这里存一份——
+        // 画图、取景、命中测试、读数全部读它，绝不各写一个常量。
+        ch: CH, fh: F_H, sh: SCR_H,
+        // 火焰动画时钟（秒）。只在点燃时推进；所有火焰共用同一个相位（见 drawFlame）。
+        t: 0,
         // 光源类型：'candle' 蜡烛 | 'f' F 光源。物体与替代物用同一种。
         src: 'candle',
         // 物体 A（玻璃板前，z > gz）
@@ -564,11 +586,13 @@
         dragging: false, drag: null, dragOff: [0, 0], downAt: null,
         lastX: 0, lastY: 0, hover: null, view: 'perspective',
         depth: null,                 // 这一帧「像 / 光屏」的深度关系（render 里写）
+        ghostBand: null,             // 这一帧「像」真正能透过玻璃板看到的高度带（render 里写）
         drawn: { candle: 0, glass: 0, ghost: 0 }
       };
 
       // 光源能到的最高点：蜡烛带火焰，F 光源矮一些。取景和可见性判据都要用。
-      const srcTop = () => state.src === 'f' ? F_H : ENV_TOP;
+      // 【必须读 state】高度可调之后，写死常量会让「调高蜡烛 → 取景不跟 → 蜡烛顶被裁掉」。
+      const srcTop = () => state.src === 'f' ? state.fh : (state.ch + WK + FL);
       // 光源的名字。标注、图例、提示文字全从这里取——别在别处写死「蜡烛」，
       // 换光源时就会漏掉一句，页面上同时出现「蜡烛 A」和「F 光源 A」两套说法。
       const srcName = isObj => state.src === 'f'
@@ -604,6 +628,12 @@
        *   交点必须落在板面矩形内：|xc − gx| ≤ gw，且 0 ≤ yc ≤ gh。
        *   把 yc 的两个边界反解回「像上哪一段高度能看见」，长度超过 3 mm 才算看得见
        *   （否则只剩一条边，屏幕上就是一两条像素，等于没有）。
+       *
+       * 【为什么要返回 lo / hi 而不是一个布尔】「看不看得见」和「看得见哪一段」是两件事：
+       * 板比像矮的时候（或者视角抬高、从板上沿往下看的时候），像的下半段照样透过玻璃板
+       * 看得见，只是【高出板上沿的那一段】收不到反射光线 —— 画出来就是错的（学生一眼就会
+       * 发现「板上沿以上的像根本不该有」）。所以除了布尔，还要把这一段高度带交出去，
+       * render 里据此把像裁掉。二者同源：都用下面这组 yLo / yHi。
        * ============================================================ */
       function imageVisible(q) {
         const u = state.az - state.gz;              // 物距（物体在板前为正）
@@ -626,7 +656,9 @@
             ? '视线从玻璃板上沿越过去了——俯角太大，或者玻璃板比像矮'
             : '视线从玻璃板下沿底下穿过去了——把视角抬高一点' };
         }
-        return { vis: true, why: '' };
+        // lo / hi 是【像上真正能看见的那一段高度】（世界 y）。通常 lo = 0、hi = 像顶，
+        // 也就是整支像都看得见；板上沿一挡住，hi 就落下来，render 据此把顶部裁掉。
+        return { vis: true, why: '', lo: yLo, hi: yHi, top: top };
       }
 
       /* ============================================================
@@ -668,9 +700,10 @@
         for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
           pts.push([sx * (PT_W - PAD), srcTop(), sz * PAPER_Z]);
         }
-        // 光屏顶端两角：光屏能到的最前（贴着板）和最后
+        // 光屏顶端两角：光屏能到的最前（贴着板）和最后。高度用【实时值】——
+        // 屏调高了取景要跟着让位，写死 SCR_H 会让调高后的屏顶被画布裁掉。
         for (const zz of [state.gz - 0.20, -PAPER_Z]) {
-          pts.push([-SCR_W, SCR_H, zz], [SCR_W, SCR_H, zz]);
+          pts.push([-SCR_W, state.sh, zz], [SCR_W, state.sh, zz]);
         }
         return pts;
       }
@@ -744,6 +777,43 @@
         ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, PI2);
         if (fill) { ctx.fillStyle = fill; ctx.fill(); }
         if (stroke) { ctx.lineWidth = lw || 1; ctx.strokeStyle = stroke; ctx.stroke(); }
+      }
+
+      // ── 把后续绘制裁到「世界 y ≤ capY」（或 ≥）那一侧。
+      //    【边界取哪条线】不能取「水平面 y = capY 的投影」——投影把【平面】映成【半平面】，
+      //    它的边界是【地平线】，不是这个平面在画面上的位置。踩过：该裁在 167 px，结果裁在
+      //    188 px，而 188 px 正是地平线，于是像被多裁掉一大截。
+      //    要裁的是【像这个物体】上「y = capY 以上」的那一段。像是一根竖着的细长物体，
+      //    它那条分界线在屏幕上的位置，就是【世界直线 { y = capY, z = 像的 z }】的投影——
+      //    这条直线上的点全都恰好落在分界线上，投影后仍是一条直线（三维直线投影还是直线）。
+      //    【两条候选】沿 x 的、沿 z 的。相机沿 x 看时沿 x 那条退化成一点、沿 z 看时沿 z 那条
+      //    退化，两条恰好互补，取屏幕上更长的那条即可。两条都退化 ⇒ 这个视角本来也看不到像，
+      //    直接不裁（返回 false）。
+      function clipGhostAtY(capY, keepBelow, cx, cz, q) {
+        const mk = (p1, p2) => {
+          const a = project(p1, q), b = project(p2, q);
+          return { a: a, b: b, d: Math.hypot(a.x - b.x, a.y - b.y) };
+        };
+        const Lx = mk([cx - 1, capY, cz], [cx + 1, capY, cz]);
+        const Lz = mk([cx, capY, cz - 1], [cx, capY, cz + 1]);
+        const L = Lx.d >= Lz.d ? Lx : Lz;
+        if (L.d < 4) return false;              // 退化成一点：不裁
+        let dx = L.b.x - L.a.x, dy = L.b.y - L.a.y;
+        const n = Math.hypot(dx, dy) || 1; dx /= n; dy /= n;
+        const nx = -dy, ny = dx;
+        // 【保留侧怎么定】按「屏幕上在上还是在下」硬写会随俯仰翻转。拿一个【确定在保留侧】
+        // 的世界点（物体轴线上、离切面 0.4 处）投影出来，看点积符号。
+        const probe = project([cx, capY + (keepBelow ? -0.4 : 0.4), cz], q);
+        const sgn = ((probe.x - L.a.x) * nx + (probe.y - L.a.y) * ny) >= 0 ? 1 : -1;
+        const B = 1e5;                          // 半平面要盖住整个画布
+        ctx.beginPath();
+        ctx.moveTo(L.a.x - dx * B, L.a.y - dy * B);
+        ctx.lineTo(L.a.x + dx * B, L.a.y + dy * B);
+        ctx.lineTo(L.a.x + dx * B + nx * B * sgn, L.a.y + dy * B + ny * B * sgn);
+        ctx.lineTo(L.a.x - dx * B + nx * B * sgn, L.a.y - dy * B + ny * B * sgn);
+        ctx.closePath();
+        ctx.clip();
+        return true;
       }
       // 这一帧已经画出来的标签盒。避让算法要用【真实盒子】而不是「锚点距离」——
       // 两个读数（u = / v =）都挂在同一根轴线上（A→板→像 本来就是一条直线），
@@ -992,36 +1062,65 @@
       }
 
       // 火焰：屏幕空间的水滴 + 外光晕。alpha 用来画「像」的暗一号火焰。
+      // ── 抖动：真蜡烛的火焰不会定住不动。用几个【互不成整数倍】的正弦叠加出
+      //    没有明显周期的跳动（整数倍会合成出一个一眼看得出的循环）：
+      //      · 横向摆动（火苗尖左右晃）· 竖直伸缩（窜高 / 缩回）· 亮度呼吸
+      //    三个量各用不同的频率组合，看上去就是「自然地动」。
+      //    【所有火焰共用 state.t 这一个相位】——A 的火焰和它的像本来就是同一团火的
+      //    镜像，相位一错开，画面里就变成两支各烧各的蜡烛，一眼假。
+      //    相位由 tick 里的 rAF 时间戳推进（state.t），不用 performance.now() 现取：
+      //    两处各取一次时间会差出几毫秒，火焰和「要不要重画」就不同步了。
+      function flameShake(t) {
+        return {
+          sx: 1 + 0.16 * Math.sin(t * 7.1) + 0.09 * Math.sin(t * 11.7 + 1.3),      // 横向胖瘦
+          sy: 1 + 0.13 * Math.sin(t * 11.7 + 1.3) + 0.07 * Math.sin(t * 3.7 + 2.1),// 竖向高矮
+          sw: 0.22 * Math.sin(t * 7.1) + 0.12 * Math.sin(t * 3.7 + 2.1),           // 火苗尖的左右偏移（相对 r）
+          lu: 1 + 0.12 * Math.sin(t * 3.7 + 2.1),                                   // 亮度呼吸
+          gl: 1 + 0.10 * Math.sin(t * 7.1)                                          // 外光晕的胀缩
+        };
+      }
+      const aOf = v => Math.max(0, Math.min(1, v));
       function drawFlame(p, q, size, alpha) {
         const s = project(p, q);
         const r = Math.max(1.5, size * s.s);
-        let g = ctx.createRadialGradient(s.x, s.y, 0, s.x, s.y, r * 3.1);
-        g.addColorStop(0, 'rgba(255,214,102,' + (0.40 * alpha) + ')');
-        g.addColorStop(0.42, 'rgba(255,152,44,' + (0.18 * alpha) + ')');
+        const f = flameShake(state.t);
+        const tipX = s.x + r * f.sw, tipY = s.y - r * 1.95 * f.sy;
+        const lum = alpha * f.lu;
+        let g = ctx.createRadialGradient(s.x, s.y, 0, s.x, s.y, r * 3.1 * f.gl);
+        g.addColorStop(0, 'rgba(255,214,102,' + aOf(0.40 * lum) + ')');
+        g.addColorStop(0.42, 'rgba(255,152,44,' + aOf(0.18 * lum) + ')');
         g.addColorStop(1, 'rgba(255,120,20,0)');
         ctx.fillStyle = g;
-        ctx.beginPath(); ctx.arc(s.x, s.y, r * 3.1, 0, PI2); ctx.fill();
+        ctx.beginPath(); ctx.arc(s.x, s.y, r * 3.1 * f.gl, 0, PI2); ctx.fill();
 
         ctx.beginPath();
-        ctx.moveTo(s.x, s.y - r * 1.95);
-        ctx.bezierCurveTo(s.x + r * 0.92, s.y - r * 0.55, s.x + r * 0.76, s.y + r * 0.92, s.x, s.y + r);
-        ctx.bezierCurveTo(s.x - r * 0.76, s.y + r * 0.92, s.x - r * 0.92, s.y - r * 0.55, s.x, s.y - r * 1.95);
-        const g2 = ctx.createLinearGradient(s.x, s.y - r * 1.95, s.x, s.y + r);
-        g2.addColorStop(0, 'rgba(255,240,182,' + (0.95 * alpha) + ')');
-        g2.addColorStop(0.48, 'rgba(255,193,64,' + (0.98 * alpha) + ')');
-        g2.addColorStop(1, 'rgba(255,132,26,' + (0.88 * alpha) + ')');
+        ctx.moveTo(tipX, tipY);
+        ctx.bezierCurveTo(s.x + r * 0.92 * f.sx, s.y - r * 0.55 * f.sy,
+                          s.x + r * 0.76 * f.sx, s.y + r * 0.92, s.x, s.y + r);
+        ctx.bezierCurveTo(s.x - r * 0.76 * f.sx, s.y + r * 0.92,
+                          s.x - r * 0.92 * f.sx, s.y - r * 0.55 * f.sy, tipX, tipY);
+        const g2 = ctx.createLinearGradient(s.x, tipY, s.x, s.y + r);
+        g2.addColorStop(0, 'rgba(255,240,182,' + aOf(0.95 * lum) + ')');
+        g2.addColorStop(0.48, 'rgba(255,193,64,' + aOf(0.98 * lum) + ')');
+        g2.addColorStop(1, 'rgba(255,132,26,' + aOf(0.88 * lum) + ')');
         ctx.fillStyle = g2; ctx.fill();
         // 内芯：让火焰有层次，不然只是一块橙色
         ctx.beginPath();
-        ctx.ellipse(s.x, s.y + r * 0.22, r * 0.34, r * 0.62, 0, 0, PI2);
-        ctx.fillStyle = 'rgba(255,255,238,' + (0.72 * alpha) + ')';
+        ctx.ellipse(s.x + r * f.sw * 0.6, s.y + r * 0.22, r * 0.34 * f.sx, r * 0.62 * f.sy, 0, 0, PI2);
+        ctx.fillStyle = 'rgba(255,255,238,' + aOf(0.72 * lum) + ')';
         ctx.fill();
+        // 自检用：把【这一帧真正画出去的火苗尖端】记下来（平时零开销）。
+        // 火焰动画没法靠读 state 证明——state.t 变了不等于画出来的形状变了，
+        // 所以测的就是这里记下的、实际参与绘图的那两个坐标。
+        if (window.__mirFlameLog) window.__mirFlameLog.push({ x: s.x, y: s.y, tipX: tipX, tipY: tipY, r: r });
       }
 
       // 一支蜡烛。ghost=true 时画成半透明的「像」，颜色偏冷。
+      // 高度读 state.ch（可调），不能写死 CH——否则调高蜡烛时身子长了、火焰还钉在旧位置。
       function drawCandle(cx, cz, q, opt) {
         const N = 26;
-        const sil = cylSilhouette(cx, cz, CR, CH, q, N);
+        const hC = state.ch;
+        const sil = cylSilhouette(cx, cz, CR, hC, q, N);
         const a = opt.alpha == null ? 1 : opt.alpha;
         const edge = opt.ghost ? 'rgba(165,243,252,' + (0.72 * a) + ')' : 'rgba(30,41,59,' + (0.55 * a) + ')';
 
@@ -1045,10 +1144,10 @@
         poly(sil.top, opt.ghost ? 'rgba(186,230,253,' + (0.38 * a) + ')' : 'rgba(255,252,240,' + a + ')', edge, 1.1);
 
         // 烛芯
-        const wt = project([cx, CH, cz], q), wb = project([cx, CH + WK, cz], q);
+        const wt = project([cx, hC, cz], q), wb = project([cx, hC + WK, cz], q);
         line([wt, wb], opt.ghost ? 'rgba(186,230,253,' + (0.5 * a) + ')' : 'rgba(69,26,3,' + (0.9 * a) + ')', 1.6);
 
-        if (opt.lit) drawFlame([cx, CH + WK + FL * 0.52, cz], q, CR * 1.55, a);
+        if (opt.lit) drawFlame([cx, hC + WK + FL * 0.52, cz], q, CR * 1.55, a);
         return sil;
       }
 
@@ -1056,14 +1155,20 @@
       // 逆时针一圈 10 个点，画出来就是字母 F：一根竖笔 + 上面两根横笔。
       // 【为什么不用三段矩形分别填】三段矩形会留下内部接缝，半透明一叠，
       // 接缝处颜色比别处深，发光的 F 上会出现两道脏线。一次成形的凹多边形没有这个问题。
+      // 【尺寸按 state.fh 等比缩放】F 面板的高度也能调（和蜡烛共用一个「光源高度」滑块）。
+      // 只拉高不拉宽会把 F 拉变形，所以宽、笔画粗细、两根横笔的位置全部乘同一个系数 k。
+      // k = 1（默认值）时下面每一个数都和原来的常量逐字相等。
+      const fScale = () => state.fh / F_H;
       function fOutline(cx, y0, z) {
-        const x0 = cx - F_W / 2, x1 = cx + F_W / 2, xs = x0 + F_S;
+        const k = fScale();
+        const H = F_H * k, W = F_W * k, S = F_S * k, M0 = F_M0 * k, M1 = F_M1 * k;
+        const x0 = cx - W / 2, x1 = cx + W / 2, xs = x0 + S;
         return [
           [x0, y0 + 0, z], [xs, y0 + 0, z],
-          [xs, y0 + F_M0, z], [x1, y0 + F_M0, z],
-          [x1, y0 + F_M1, z], [xs, y0 + F_M1, z],
-          [xs, y0 + F_H - F_S, z], [x1, y0 + F_H - F_S, z],
-          [x1, y0 + F_H, z], [x0, y0 + F_H, z]
+          [xs, y0 + M0, z], [x1, y0 + M0, z],
+          [x1, y0 + M1, z], [xs, y0 + M1, z],
+          [xs, y0 + H - S, z], [x1, y0 + H - S, z],
+          [x1, y0 + H, z], [x0, y0 + H, z]
         ];
       }
 
@@ -1181,11 +1286,13 @@
       }
 
       // 光屏：用来验证「像是虚像」。放在像的位置上，屏上什么也没有。
+      // 高度读 state.sh（可调）——写死 SCR_H 会让滑块调高时屏还是原来那么矮。
       function drawScreen(q) {
+        const hS = state.sh;
         const x0 = state.sx - SCR_W, x1 = state.sx + SCR_W;
         const pts = [
           project([x0, 0, state.sz], q), project([x1, 0, state.sz], q),
-          project([x1, SCR_H, state.sz], q), project([x0, SCR_H, state.sz], q)
+          project([x1, hS, state.sz], q), project([x0, hS, state.sz], q)
         ];
         const hit = state.screenHit;
         const g = ctx.createLinearGradient(pts[0].x, pts[0].y, pts[2].x, pts[2].y);
@@ -1194,7 +1301,7 @@
         g.addColorStop(1, 'rgba(170,183,197,.95)');
         poly(pts, g, 'rgba(2,6,23,.5)', 5);
         poly(pts, null, hit ? 'rgba(52,211,153,.95)' : 'rgba(203,213,225,.8)', hit ? 2.8 : 1.6);
-        const t = project([state.sx, SCR_H * 0.55, state.sz], q);
+        const t = project([state.sx, hS * 0.55, state.sz], q);
         label({ x: t.x, y: t.y }, '光屏', 'rgba(226,232,240,.92)', 11);
         if (hit) {
           // 【为什么不说「屏上无像」】光屏正放在像的位置时，透过玻璃板看过去，
@@ -1254,14 +1361,16 @@
         const z0i = project([im.x, 0.014, gz], q);
 
         // 物距 u
-        const sc = project([state.sx, SCR_H * 0.55, state.sz], q);   // 光屏标注的位置，用来让 u/v 躲开
+        const sc = project([state.sx, state.sh * 0.55, state.sz], q);   // 光屏标注的位置，用来让 u/v 躲开
         // 【为什么要额外躲「中横笔的末端」】midLabel 只把标注沿线的法向推开十几像素，
         // 那是按蜡烛这种「细长条」定的。F 光源的中横笔朝 +x 伸出 10 cm，
         // 正对视角下正好横在 u/v 标注该去的位置上——实测 v = 13.5 cm 这个框
         // 把 F 的中横笔外侧一半整个盖掉了。把笔画末端也列进避让点，标注就会翻到另一侧。
         const avoid = [sc];
         if (state.src === 'f') {
-          const tip = (x, z) => project([x + F_W / 2, F_M0 + F_S / 2, z], q);
+          // F 尺寸随「光源高度」等比缩放，避让点也要跟着缩放，否则调高之后标注又会压到横笔上
+          const k = fScale();
+          const tip = (x, z) => project([x + F_W * k / 2, (F_M0 + F_S / 2) * k, z], q);
           avoid.push(tip(state.ax, state.az), tip(im.x, im.z));
         }
         line([zA, z0], 'rgba(248,113,113,.90)', 1.6, [6, 4]);
@@ -1286,6 +1395,11 @@
         // 标签避让是「本帧已经画了哪些盒子」，每帧必须清空——
         // 不清的话上一帧的盒子会一直参与计算，标注会被越推越远。
         frameBoxes = [];
+        // 自检钩子也按帧重置。点燃之后每帧都会重绘，测试那边的「清空 → 等两帧 → 读」
+        // 会把同一批标签记两遍，两个同位置同尺寸的盒子互相算成 100% 重叠——
+        // 「读数被压住」立刻变成 300% 的假红（实测踩过）。这里和 frameBoxes 一样，
+        // 保证日志里装的永远是【最后一帧】画出来的那些盒子。
+        if (window.__mirLabelLog) window.__mirLabelLog.length = 0;
         drawBackdrop(w, h);
 
         const q = {};
@@ -1297,6 +1411,13 @@
         const gv = imageVisible(q);
         state.ghostVisible = gv.vis;
         state.ghostReason = gv.why;
+        // 「像能看见」≠「整支像都能看见」。板上沿以上的那一段像收不到反射光线，
+        // 从眼睛看过去是看不到的——板比像矮、或者视角抬高到从板上沿往下看的时候最明显。
+        // 这里把 gv 给出的高度带存下来，下面画像的时候用它裁一刀。
+        // 【和 ghostVisible 同源】两条判断都出自 imageVisible 里那一组 yLo / yHi，
+        // 不是另算一套，所以不会出现「判它看得见、却把该看见的那段裁掉」。
+        const band = (gv.vis && (gv.hi < srcTop() - 1e-9 || gv.lo > 1e-9)) ? gv : null;
+        state.ghostBand = band;
 
         drawTable(q);
 
@@ -1325,7 +1446,7 @@
         // 深度直接挂到光屏自己的采样点上——像和屏的采样高度不同（0.82 vs 0.50），
         // 相机又是俯视的，两个深度天然差 0.08 左右，各自加个小偏移根本压不住。
         const dIm = dOf([im.x, srcTop() * 0.5, im.z]);
-        const dScr = dOf([state.sx, SCR_H * 0.5, state.sz]);
+        const dScr = dOf([state.sx, state.sh * 0.5, state.sz]);
         const onScr = state.screenHit && showBack;
         const dGhost = onScr ? dScr - 0.02 : dIm + 0.05;
         const dNear = onScr ? dScr - 0.06 : dIm - 0.05;
@@ -1339,14 +1460,21 @@
           drawn.candle++;
           push(dOf([state.ax, srcTop() * 0.5, state.az]), () => drawSrc(state.ax, state.az, q, { lit: state.aLit }));
         }
+        // 画像（以及它的火焰 / F 轮廓）之前先按可见高度带裁一刀。
+        // 【为什么要 save/restore】clip 是画布状态，不清掉会把后面画的 B、光屏、
+        // 玻璃板一起裁掉——那才是真正的画错。
+        const ghostClip = f => () => {
+          if (!band) { f(); return; }
+          ctx.save();
+          clipGhostAtY(band.hi, true, im.x, im.z, q);              // 保留 y ≤ 板上沿对应的像高
+          if (band.lo > 1e-9) clipGhostAtY(band.lo, false, im.x, im.z, q);  // 极少数视角下像的底部也被挡
+          f();
+          ctx.restore();
+        };
         if (ghostOn) {
-          // 像的「身体」比 B 稍远一点画（B 是不透明的，要能压住它），
-          // 火焰则比 B 稍近一点画——重合时火焰正好落在 B 的烛芯上，看上去就是 B 被点着了。
-          // 所以这里 lit 传 false：火焰单独作为一项画，不然会画两遍。
-          // 光屏在像位时像被画在浅色屏面上，透明度要调高一点才看得清。
           drawn.ghost++;
           const ga = onScr ? 0.9 : 0.58;
-          push(dGhost, () => drawSrc(im.x, im.z, q, { ghost: true, lit: false, alpha: ga }));
+          push(dGhost, ghostClip(() => drawSrc(im.x, im.z, q, { ghost: true, lit: false, alpha: ga })));
         }
         if (showBack) {
           drawn.candle++;
@@ -1356,13 +1484,14 @@
         // 光屏挪到像位时也一样画，只是深度改挂到光屏上（见上面的 dNear）。
         // F 光源没有火焰，这一步跳过。
         if (ghostOn && state.aLit && state.src === 'candle') {
-          push(dNear, () => drawFlame([im.x, CH + WK + FL * 0.52, im.z], q, CR * 1.55, onScr ? 0.92 : 0.68));
+          push(dNear, ghostClip(() => drawFlame([im.x, state.ch + WK + FL * 0.52, im.z], q,
+                                                CR * 1.55, onScr ? 0.92 : 0.68)));
         }
         // F 光源没有火焰，重合时像会被不透明的 B 整个盖住，「对不对齐」就看不出来了。
         // 所以再画一层【比 B 稍近】的虚线轮廓：对齐时虚线正好压在 B 的边上，
         // 没对齐时虚线独立地偏在一边——和蜡烛「火焰落在烛芯上」是同一个作用。
         if (ghostOn && state.src === 'f') {
-          push(dNear - 0.01, () => drawF(im.x, im.z, q, { ghost: true, outlineOnly: true, alpha: 0.9 }));
+          push(dNear - 0.01, ghostClip(() => drawF(im.x, im.z, q, { ghost: true, outlineOnly: true, alpha: 0.9 })));
         }
         if (showBack) {
           push(dScr, () => drawScreen(q));
@@ -1392,11 +1521,12 @@
           label({ x: pB.x + 62, y: pB.y }, srcName(false), 'rgba(134,239,172,.98)', 12);
         }
         if (ghostOn) {
-          // 高度只比 A / B 高 0.23 个世界单位（≈36 px），刚好错开又不至于飞出去。
-          // 【别调回 0.70】玻璃板高 2.05，蜡烛顶 1.64；+0.70 会把锚点顶到 2.34，
-          // 超出取景包络，标签被 label() 的边界钳制一路推到画布最上沿——
-          // 看上去「像 A′」孤零零挂在顶上，和像完全脱开。
-          const pI = project([im.x, srcTop() + 0.45, im.z], q);
+          // 锚点跟着【看得见的那一段的顶端】走：像的顶部被板上沿挡掉之后，
+          // 标签若还挂在原来那个高度，就会孤零零飘在一片空处，和像完全脱开。
+          // 【别调回 0.70】板高 2.05、蜡烛顶 1.34；+0.70 会把锚点顶到 2.04，
+          // 超出取景包络，标签被 label() 的边界钳制一路推到画布最上沿。
+          const yTop = band ? Math.min(srcTop(), band.hi) : srcTop();
+          const pI = project([im.x, yTop + 0.45, im.z], q);
           label(pI, '像 A′' + (state.aLit ? '' : '（A 未点亮）'), 'rgba(165,243,252,.98)', 12);
         }
         // 器材区那块区域的【名字】放在所有标签之后：它是地面区域的名字，
@@ -1452,7 +1582,7 @@
         if (!state.onlyBack) add('a', boxOf(state.ax, state.az, hwObj, srcTop()));
         if (!state.onlyFront) {
           add('b', boxOf(state.bx, state.bz, hwObj, srcTop()));
-          add('screen', boxOf(state.sx, state.sz, SCR_W, SCR_H));
+          add('screen', boxOf(state.sx, state.sz, SCR_W, state.sh));
         }
         if (!cands.length) return null;
         // 两个物体在屏幕上叠住时（B 与像重合、光屏又挪到像位就是这种情况），
@@ -1649,6 +1779,7 @@
         azV: el('mir-az-v'), axV: el('mir-ax-v'), bxV: el('mir-bx-v'), bzV: el('mir-bz-v'),
         gw: el('mir-gw'), gh: el('mir-gh'), gx: el('mir-gx'), gz: el('mir-gz'),
         gwV: el('mir-gw-v'), ghV: el('mir-gh-v'), gxV: el('mir-gx-v'), gzV: el('mir-gz-v'),
+        lh: el('mir-lh'), lhV: el('mir-lh-v'), sh: el('mir-sh'), shV: el('mir-sh-v'),
         note: el('mir-ghostnote'), always: el('mir-ghost-always'),
         tip: el('mir-tip'), toast: el('mir-toast'),
         srcCandle: el('mir-src-candle'), srcF: el('mir-src-f'),
@@ -1675,12 +1806,18 @@
       function buildSteps() {
         ui.steps.innerHTML = STEPS.map((s, i) =>
           '<li><i>' + (i + 1) + '</i><span>' + s.text() + '</span></li>').join('');
+        stepsSig = '';              // 重新生成了 DOM，缓存作废（否则会跳过这次刷新）
       }
 
+      // 上一步画出来的步骤状态签名。点燃后每帧都会调到这里，没变就不碰 DOM。
+      let stepsSig = '\u0000';
       function updateSteps() {
         const li = [...ui.steps.children];
         let cur = -1;
         STEPS.forEach((s, i) => { if (cur < 0 && !s.done()) cur = i; });
+        const sig = STEPS.map(s => s.done() ? '1' : '0').join('') + '|' + cur;
+        if (sig === stepsSig) return;
+        stepsSig = sig;
         STEPS.forEach((s, i) => {
           li[i].classList.toggle('on', s.done());
           li[i].classList.toggle('cur', i === cur);
@@ -1713,6 +1850,14 @@
         ui.gh.value = toCm(state.gh); ui.ghV.textContent = toCm(state.gh).toFixed(1) + ' cm';
         ui.gx.value = toCm(state.gx); ui.gxV.textContent = toCm(state.gx).toFixed(1) + ' cm';
         ui.gz.value = toCm(state.gz); ui.gzV.textContent = toCm(state.gz).toFixed(1) + ' cm';
+        // 光源高度：这个滑块同时管两种光源，显示的是【当前光源】的那个高度。
+        // 换光源时值会跟着跳（蜡烛默认 9 cm、F 面板默认 11 cm）——这是对的，
+        // 它报的就是此刻画面上那个光源有多高。见 setSource 里的 syncInputs。
+        // 【默认值必须落在滑块的 0.5 cm 刻度上】否则浏览器会把 value 吸附到相邻刻度，
+        // 滑块显示的数就和 state 里的真实值对不上（F 面板原来是 11.2，踩过这个坑）。
+        const lhCm = toCm(state.src === 'f' ? state.fh : state.ch);
+        ui.lh.value = lhCm; ui.lhV.textContent = lhCm.toFixed(1) + ' cm';
+        ui.sh.value = toCm(state.sh); ui.shV.textContent = toCm(state.sh).toFixed(1) + ' cm';
       }
 
       // 滑块的 min/max/step 也从 cmOf 派生，别让 HTML 里再存一份会和拖动限位打架的刻度。
@@ -1726,6 +1871,9 @@
         set(ui.bx, B.x[0], B.x[1]);
         set(ui.bz, B.z[0], B.z[1]);
       }
+
+      // 上一帧写进「观察提示」的那段 HTML。点燃之后每帧都会重算它，一样就不写 DOM。
+      let lastVerdict = '';
 
       function updateReadout() {
         const im = imagePos();
@@ -1757,35 +1905,40 @@
         const isF = state.src === 'f';
         const aName = isF ? 'F 光源 A' : '蜡烛 A';
         const bName = isF ? 'F 光源 B' : '蜡烛 B';
+        // 【为什么要先拼成字符串再写】点燃之后每一帧都会走到这里（火焰在动，
+        // 整页每帧重绘）。innerHTML 每帧赋一次值 = 每帧解析一遍 HTML + 重排，
+        // 60 fps 下纯属白烧。拼出来和上一帧一样就不写。
+        let html;
         if (!state.aLit) {
-          ui.verdict.innerHTML = '<b>观察提示：</b>先把' + aName + '点亮——直接点一下画面里的它，'
+          html = '<b>观察提示：</b>先把' + aName + '点亮——直接点一下画面里的它，'
             + '或者按侧栏的按钮。不发光就看不清「像」在哪，也就没法用 ' + bName + ' 去对。'
             + '点亮后把 ' + bName + ' 从白纸右边的<b>器材区</b>拖到玻璃板后面，'
             + '慢慢挪，直到它与像完全重合。';
         } else if (bZone === 'staged') {
-          ui.verdict.innerHTML = '<b>观察提示：</b>' + bName + '还摆在白纸右边的<b>器材区</b>里，'
+          html = '<b>观察提示：</b>' + bName + '还摆在白纸右边的<b>器材区</b>里，'
             + '先把它拖到<b>玻璃板后面</b>去。把光标移到它身上（变手型）按住往左后方拖就行——'
             + '玻璃板挡在中间，从板正前方是拖不过去的，要从板外侧绕到后面。';
         } else if (bZone === 'front') {
-          ui.verdict.innerHTML = '<b>观察提示：</b>' + bName + '现在还在<b>玻璃板前面</b>，'
+          html = '<b>观察提示：</b>' + bName + '现在还在<b>玻璃板前面</b>，'
             + '而像在板后。把它往<b>板后</b>拖：从板外侧（右边那片空地）绕过去最顺手，'
             + '或者直接往板后拖过板面也行——它不会停在玻璃里，会被挡在板外 2 cm 处。';
         } else if (!co) {
-          ui.verdict.innerHTML = '<b>观察提示：</b>' + bName + '距离像还有 <b>'
+          html = '<b>观察提示：</b>' + bName + '距离像还有 <b>'
             + (state.coincideErr * U).toFixed(1) + ' cm</b>。继续移动它，'
             + (isF ? '注意看 B 的竖笔和两根横笔——和像里的 F 完全对齐时，就是「完全重合」。'
                    : '注意看 B 的烛芯——当烛芯正好落在 A 的火焰上时，B 就像被点着了，那一刻就是「完全重合」。');
         } else if (!state.screenChecked) {
-          ui.verdict.innerHTML = '<b>观察提示：</b>' + bName + '与像完全重合了，说明<b>像与物大小相等</b>、'
+          html = '<b>观察提示：</b>' + bName + '与像完全重合了，说明<b>像与物大小相等</b>、'
             + '而且 <b>' + u.toFixed(1) + ' cm = ' + v.toFixed(1) + ' cm</b>（物距 = 像距）。'
             + (isF ? '顺便看一眼：像里的 F <b>还是 F，没有左右颠倒</b>。' : '')
             + '接下来把<b>光屏</b>拖到像的位置，直接看光屏上有没有东西——这一步用来判断是实像还是虚像。';
         } else {
-          ui.verdict.innerHTML = '<b>结论：</b>光屏上<b>没有任何光斑</b>，说明平面镜成的像是<b>虚像</b>，'
+          html = '<b>结论：</b>光屏上<b>没有任何光斑</b>，说明平面镜成的像是<b>虚像</b>，'
             + '不能用光屏承接。注意：你在光屏上看到的那个「像」并不是屏上的光斑——'
             + '它是玻璃板里的虚像恰好和光屏重合了，把视角转开、视线不再穿过玻璃板，它就没了。'
             + '像与物关于玻璃板<b>对称</b>：大小相等、到玻璃板距离相等、连线与玻璃板垂直。';
         }
+        if (html !== lastVerdict) { lastVerdict = html; ui.verdict.innerHTML = html; }
         updateRecordBtn();
         updateSteps();
       }
@@ -1812,6 +1965,16 @@
       ui.gx.addEventListener('input', () => { state.gx = fromCm(+ui.gx.value); afterPlateChange(); });
       ui.gz.addEventListener('input', () => { state.gz = fromCm(+ui.gz.value); afterPlateChange(); });
 
+      // ── 光源高度 / 光屏高度。高度不参与碰撞，所以不用重排物体；但取景包络
+      //    （envelopePoints）和命中测试都读实时值，置一下 dirty 就够了。
+      //    光源高度这一个滑块管两种光源：蜡烛改蜡体高、F 光源改面板高（等比缩放）。
+      ui.lh.addEventListener('input', () => {
+        const v = fromCm(+ui.lh.value);
+        if (state.src === 'f') state.fh = v; else state.ch = v;
+        syncInputs(); state.dirty = true;
+      });
+      ui.sh.addEventListener('input', () => { state.sh = fromCm(+ui.sh.value); syncInputs(); state.dirty = true; });
+
       [['mir-ghost', 'showGhost'], ['mir-aid', 'showAid'], ['mir-ruler', 'showRuler'],
        ['mir-marks', 'showMarks'], ['mir-front', 'onlyFront'], ['mir-back', 'onlyBack']].forEach(([id, key]) => {
         el(id).addEventListener('change', e => { state[key] = e.target.checked; state.dirty = true; });
@@ -1826,6 +1989,8 @@
         ui.srcF.classList.toggle('primary', s === 'f');
         // 换光源后物体高度变了，取景包络和「抓取点」都要跟着变——
         // dirty 一置，下一帧 render 会重算 makeCam，不需要别的动作。
+        // 「光源高度」滑块也要跟着换值：它显示的是当前光源的高度（蜡烛 / F 面板不同）。
+        syncInputs();
         buildSteps(); updateSteps(); updateLightBtn(); updateLegend();
         state.dirty = true;
       }
@@ -1864,7 +2029,7 @@
         const q = {}; makeCam(q, state.w, state.h);
         const at = h === 'a' ? { x: state.ax, z: state.az, top: srcTop() }
                  : h === 'b' ? { x: state.bx, z: state.bz, top: srcTop() }
-                 : { x: state.sx, z: state.sz, top: SCR_H };
+                 : { x: state.sx, z: state.sz, top: state.sh };
         const s = project([at.x, at.top, at.z], q);
         ui.tip.textContent = h === 'a'
           ? (state.aLit ? '拖动移动 · 点一下熄灭' : '拖动移动 · 点一下点燃')
@@ -1898,6 +2063,12 @@
             ? '⚠ 这个角度其实看不到像：' + state.ghostReason + '。现在按「像始终显示」画了出来，这是演示画法。'
             : '⚠ 这个角度看不到像：' + state.ghostReason +
               '。（虚像本来就只有看进玻璃板才看得见；想让像照常显示，勾选下方的「像始终显示」）';
+        } else if (state.showGhost && state.drawn.ghost > 0 && state.ghostBand) {
+          // 「看得见」≠「整支都看得见」：板上沿以上那一段收不到反射光线，已经裁掉了。
+          // 不解释一句的话，学生看到的是「像的上半截凭空没了」——和「像整个消失」一样
+          // 容易被当成画错了。这里说清楚原因，并指出怎么把它调回来。
+          txt = '⚠ 像的顶部被玻璃板上沿挡住了：比板上沿更高的那一段像收不到反射光线，'
+              + '从眼睛里本来就看不着。（把「玻璃板 · 高度」调大，或者把视角压低一点，就看得全了）';
         }
         if (ui.note.textContent !== txt) ui.note.textContent = txt;
         ui.note.classList.toggle('show', !!txt);
@@ -1937,6 +2108,8 @@
         state.bx = STAGE.b.x; state.bz = STAGE.b.z;
         state.sx = STAGE.scr.x; state.sz = STAGE.scr.z;
         state.gw = GW0; state.gh = GH0; state.gx = 0; state.gz = 0;
+        // 高度也回到默认（和板的大小一样属于「装置参数」，重做实验就该复位）
+        state.ch = CH; state.fh = F_H; state.sh = SCR_H;
         state.aLit = false; state.snapped = false; state.screenChecked = false;
         state.ghostAlways = false; ui.always.checked = false;
         state.marks = [];
@@ -1970,8 +2143,16 @@
       /* ============================================================
        * 主循环：只在需要时重绘（谁重画谁清屏，避免残影）
        * ============================================================ */
-      function tick() {
+      function tick(now) {
         resize();
+        // 点燃之后火焰要一直动 ⇒ 每帧都得重画（没点燃时照旧「只在需要时重绘」，
+        // 不白烧 CPU）。时间取 rAF 传进来的时间戳，而不是在这儿再调一次
+        // performance.now()：drawFlame 用的就是 state.t，两处各取一次时间会差出
+        // 几毫秒，火焰的相位和「这一帧要不要重画」就对不上了。
+        if (state.aLit) {
+          state.t = (typeof now === 'number' ? now : performance.now()) / 1000;
+          state.dirty = true;
+        }
         if (state.dirty) {
           state.dirty = false;
           updateCoincide();
@@ -2042,6 +2223,10 @@
           if (o.gx != null) state.gx = o.gx;
           if (o.gz != null) state.gz = o.gz;
           if (o.src != null) setSource(o.src);
+          // 三个高度也能直接设（自检要固定几何，不经过滑块）
+          if (o.ch != null) state.ch = o.ch;
+          if (o.fh != null) state.fh = o.fh;
+          if (o.sh != null) state.sh = o.sh;
           if (o.ghostAlways != null) { state.ghostAlways = o.ghostAlways; ui.always.checked = o.ghostAlways; }
           clampToPlate();
           applySliderRanges();
@@ -2052,7 +2237,26 @@
           state.dirty = true;
           return { ax: state.ax, az: state.az, bx: state.bx, bz: state.bz,
                    gw: state.gw, gh: state.gh, gx: state.gx, gz: state.gz,
+                   ch: state.ch, fh: state.fh, sh: state.sh,
                    coincideErr: state.coincideErr, snapped: state.snapped, src: state.src };
+        },
+        // 三个可调高度（世界单位）和它们换算成 cm 的读数。自检要能验「拖了滑块真的变了」，
+        // 所以读的必须是 state 里的实时值，不是那几个默认常量。
+        heights() {
+          return { ch: state.ch, fh: state.fh, sh: state.sh,
+                   chCm: toCm(state.ch), fhCm: toCm(state.fh), shCm: toCm(state.sh),
+                   srcTop: srcTop() };
+        },
+        // 这一帧「像」实际被裁到的高度带（render 里算的、和画出去的同源）。
+        // 判据不能自己再算一遍 yHi——那样只能证明公式自洽，证明不了画对了。
+        ghostBand: () => state.ghostBand,
+        // 火焰动画时钟。动画类断言必须先【钉死相位】再取样，否则同一状态两次取样
+        // 得到的是两个不同的形状，断言就成了抛硬币（见 §自检底线）。
+        setT(t) { state.t = t; state.dirty = true; return state.t; },
+        // 同步强制重绘一次。headless 里 rAF 不一定回调，读「画出来的量」之前先调它。
+        renderNow() {
+          updateCoincide(); render(); updateReadout(); updateGhostNote();
+          return { drawn: state.drawn, band: state.ghostBand, vis: state.ghostVisible };
         },
         // 走真实的点击路径，不直接写 state：否则按钮的 .active 高亮不会跟着动
         setView(name) {
@@ -2105,8 +2309,11 @@
           if (!state.onlyBack) pts.push(at(state.ax, state.az));
           if (!state.onlyFront) {
             pts.push(at(state.bx, state.bz));
-            pts.push(at(im.x, im.z));
-            pts.push([state.sx - SCR_W, SCR_H, state.sz], [state.sx + SCR_W, SCR_H, state.sz]);
+            // 像的极点要按【实际画出去的高度】算：像被板上沿裁掉一段时，画面上根本没有
+            // 原来那么高，拿未裁的高度去比会白白多出一段余量（这个导出量的意义就是
+            // 「当下的实物」，得和画出去的同源）。
+            pts.push([im.x, state.ghostBand ? Math.min(top, state.ghostBand.hi) : top, im.z]);
+            pts.push([state.sx - SCR_W, state.sh, state.sz], [state.sx + SCR_W, state.sh, state.sz]);
           }
           return pts.map(p => { const s = project(p, q); return { x: s.x, y: s.y }; });
         },
