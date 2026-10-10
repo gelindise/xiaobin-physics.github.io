@@ -653,7 +653,7 @@
      会出现「说明写了电子逆流、小球却还顺着流」这种自相矛盾）。改脚本时
      把这个 build 号 +1 即可。 -->
 <script src="circuit-core.js?build=18"></script>
-<script src="circuit-draw.js?build=25"></script>
+<script src="circuit-draw.js?build=26"></script>
 <script src="circuit-editor.js?build=21"></script>
 <!-- 参数面板规格 + 读数显示格式。从本页内联抽出，与 3D 版沙盒（电路实验沙盒3D）
      共用同一份真值：面板规格、小数位、极性显示规则改一处两边都变。 -->
@@ -730,16 +730,33 @@ var PRACTICE_KEY = 'circuit_sandbox_practice';
 var practice = false;
 try { practice = localStorage.getItem(PRACTICE_KEY) === '1'; } catch (e) {}
 var revealed = {};
-// 「这一件的读数现在该不该藏」。练习模式没开时恒 false —— 就是平时上课的样子。
+// 「这一件还有藏着的量吗」—— 浮层 / 放大镜那句「读数已隐藏」的提示用它。
+// 练习模式没开时恒 false，就是平时上课的样子。
 function practiceHidden(c){
-  return !!(practice && c && !revealed[c.id]);
+  if (!practice || !c || revealed[c.id]) return false;
+  if (c.type === 'voltmeter') return qHidden(c, 'u');
+  if (c.type === 'ammeter') return qHidden(c, 'i');
+  return qHidden(c, 'u') || qHidden(c, 'i') || qHidden(c, 'r');
 }
 // 把「藏不藏」写成求解结果上的一个字段（rec.practiceHide），绘制层读它。
 // 写在 rec 上而不是 comp.params 上：rec 每次求解重建，不进存档、不进撤销栈。
 function applyPracticeFlags(){
   if (!results || !results.components) return;
   for (var id in results.components){
-    results.components[id].practiceHide = practiceHidden(byId(id));
+    var c = byId(id), rec = results.components[id];
+    // 表盘上的数字液晶：这只表的【读数】还是待求量时才藏（学生自己填进去的
+    // 已知读数照常显示 —— 那是题目的条件，藏起来就没法做题了）。
+    rec.practiceHide = !!(practice && c &&
+      qHidden(c, c.type === 'voltmeter' ? 'u' : 'i'));
+    // 电源黑匣子：练习模式下电源一律画成黑盒（学生不知道里面是多大的电压），
+    // 盒面写「?」；要是电压作为已知条件给了，就直接写数值。
+    rec.practiceBox = !!(practice && c && isSrcType(c.type));
+    if (rec.practiceBox){
+      // 盒面写什么，看的是【这个电源的电压有没有被当成已知条件】——也就是它
+      // 参数框里有没有数（= rKnown）。反推出来的电压不算「知道」，照写问号。
+      rec.practiceBoxKnown = (knownOfComp(c).rKnown !== false);
+      rec.practiceBoxText = rec.practiceBoxKnown ? (num1(paramValOf(c)) + ' V') : '?';
+    }
   }
 }
 // 练习模式那几处 UI（画布左上角的状态小牌、「揭晓全部」按钮、body 上的 class）
@@ -750,6 +767,254 @@ function syncPracticeUI(){
   if (tag) tag.hidden = !practice;
   if (btnRevealAll) btnRevealAll.hidden = !practice;
   document.body.classList.toggle('practice', practice);
+}
+
+// ── 练习 · 已知量（命题 → 闭合 → 逆推）────────────────────────
+// 用户要求：开关断开时点元件可以【输入已知量】（两端电压 / 电阻 / 电流），闭合
+// 开关后由求解器把其余量【逆推】出来；默认一个读数都不显示，点某个元件才揭晓
+// 它自己那份。电源在练习模式下变成【黑匣子】：电压未知写「?」，已知写数值。
+//
+// 模型（页面层，不进 scene、不进存档）：每个元件的 U / R / I 三个量，
+// 【填了 = 已知条件（照常显示）】、【留空 = 待求（显示「?」，点元件揭晓）】。
+//   · 参数（电阻的 R、电源的 emf）留空 ⇒ 它是【变量】，要由已知条件反解；
+//   · 读数（电压 U / 电流 I）留空 ⇒ 它是【因变量】，由电路自己算出来。
+// 电阻 / 电源的参数框默认预填当前参数值（⇒ 默认「参数已知、求读数」这道最常见
+// 的题）；想反解某个电阻，把它的 R 框清空就行。
+var knownOf = {};
+function knownOfComp(c){
+  if (!c) return { u:null, i:null, rKnown:true };
+  var k = knownOf[c.id];
+  // 电源的参数默认【未知】—— 用户要的就是「电池是个黑匣子，上面一个问号」，
+  // 电压得由学生当成已知条件填进去（或由别的条件反推）才会显示出来。
+  // 电阻的 R 默认已知（画电路时就定了），于是「参数已知、求读数」那道最常见的
+  // 题开箱即用。
+  if (!k) k = knownOf[c.id] = { u:null, i:null, rKnown: !isSrcType(c.type) };
+  return k;
+}
+function isSrcType(t){ return t === 'battery' || t === 'power'; }
+// 这个元件有没有「可以被反解的参数」——只有定值电阻和电源有（其余元件要么
+// 非线性、要么参数就是它自己的规格，不该由题目反解）。
+function hasFreeParam(c){ return !!(c && (c.type === 'resistor' || isSrcType(c.type))); }
+function paramKeyOf(c){ return isSrcType(c.type) ? 'emf' : 'R'; }
+// 该元件此刻参数框里那个数（已知时 = 面板上的参数值）。
+function paramValOf(c){ return pval(c, paramKeyOf(c)); }
+
+// 某元件的某个量现在该不该藏（显示「?」）。已知条件永远显示；待求量默认藏，
+// 点过这个元件（revealed）之后整件都亮出来。
+function qHidden(c, kind){
+  if (!practice || !c) return false;
+  if (revealed[c.id]) return false;
+  var k = knownOfComp(c);
+  // 电源的「电压」就是它的参数（电源电压 / 电动势），和电阻的 R 走同一路判据。
+  if (kind === 'u' && isSrcType(c.type)) kind = 'r';
+  if (kind === 'u') return k.u == null;
+  if (kind === 'i') return k.i == null;
+  if (kind === 'r') return !!(hasFreeParam(c) && k.rKnown === false);
+  return false;
+}
+
+// ── 逆推引擎 ────────────────────────────────────────────────
+// 变量 = 被清空了参数框的元件（电阻的 R / 电源的 emf）；
+// 约束 = 学生填了数的读数（电压 U / 电流 I）。
+// ⚠️ 每次试探都走 C.solve 的【纯求解】，不走 solveNow —— 后者会施加损坏判定，
+//    迭代要试几十次，中途一次电流偏大就会把导线熔断，后面试的全是【已经坏掉
+//    的电路】的读数（这条坑在 inverseSlide 那段注释里已经踩过一次）。
+function practiceVars(){
+  var vars = [];
+  scene.comps.forEach(function(c){
+    if (!hasFreeParam(c)) return;
+    if (knownOfComp(c).rKnown !== false) return;
+    var isSrc = isSrcType(c.type);
+    vars.push({
+      id: c.id, key: paramKeyOf(c),
+      lo: 0.02, hi: isSrc ? 80 : 1e5,
+      init: Math.max(0.05, paramValOf(c) || (isSrc ? 3 : 10)),
+    });
+  });
+  return vars;
+}
+function practiceCons(){
+  var cons = [];
+  scene.comps.forEach(function(c){
+    var k = knownOfComp(c);
+    if (k.u != null && isFinite(k.u)) cons.push({ id:c.id, kind:'u', target:k.u });
+    if (k.i != null && isFinite(k.i)) cons.push({ id:c.id, kind:'i', target:k.i });
+  });
+  return cons;
+}
+// 把一组参数覆盖到场景副本上，纯求解一次。
+function practiceSolveWith(vars, p){
+  var over = {};
+  vars.forEach(function(v, i){ (over[v.id] = over[v.id] || {})[v.key] = p[i]; });
+  var comps = applyParamOver(scene.comps, over);
+  return C.solve(comps, scene.wires.map(function(x){
+    return { a:x.a, b:x.b, broken: !!x.broken };
+  }));
+}
+// 参数覆盖的唯一入口：深拷贝受影响的元件、盖上新参数，其余元件原样引用。
+function applyParamOver(comps, over){
+  if (!over) return comps;
+  var touched = false;
+  var out = comps.map(function(c){
+    var o = over[c.id];
+    if (!o) return c;
+    touched = true;
+    var cp = {}; for (var k in c) cp[k] = c[k];
+    cp.params = {}; for (var k2 in (c.params || {})) cp.params[k2] = c.params[k2];
+    for (var k3 in o) cp.params[k3] = o[k3];
+    return cp;
+  });
+  return touched ? out : comps;
+}
+function quantityOf(res, id, kind){
+  var rec = res && res.components && res.components[id];
+  if (!rec) return null;
+  if (kind === 'u') return rec.v;
+  if (kind === 'i') return rec.i;
+  if (kind === 'emf') return rec.emf;
+  if (kind === 'R') return rec.R != null ? rec.R : rec.rUsed;
+  return null;
+}
+function residualsOf(vars, cons, p){
+  var res = practiceSolveWith(vars, p);
+  var out = [];
+  for (var i = 0; i < cons.length; i++){
+    var q = quantityOf(res, cons[i].id, cons[i].kind);
+    out.push(q == null ? NaN : q - cons[i].target);
+  }
+  return { res: res, r: out };
+}
+function costOf(vars, cons, p){
+  var rr = residualsOf(vars, cons, p).r, s = 0;
+  for (var i = 0; i < rr.length; i++){
+    if (!isFinite(rr[i])) return Infinity;
+    s += rr[i] * rr[i];
+  }
+  return s;
+}
+// 一维黄金分割（在 [a,b] 上最小化 cost）。
+function golden1D(vars, cons, a, b){
+  var gr = 0.6180339887;
+  var c1 = b - gr * (b - a), c2 = a + gr * (b - a);
+  var f1 = costOf(vars, cons, [c1]), f2 = costOf(vars, cons, [c2]);
+  for (var i = 0; i < 70; i++){
+    if (f1 < f2){ b = c2; c2 = c1; f2 = f1; c1 = b - gr * (b - a); f1 = costOf(vars, cons, [c1]); }
+    else { a = c1; c1 = c2; f1 = f2; c2 = a + gr * (b - a); f2 = costOf(vars, cons, [c2]); }
+  }
+  return (a + b) / 2;
+}
+// 一维：先粗扫找最优那一小段，再在段内黄金分割细化。
+function solveOneDim(vars, cons){
+  var v = vars[0], N = 48, xs = [], fs = [];
+  for (var i = 0; i <= N; i++){
+    var x = v.lo + (v.hi - v.lo) * i / N;
+    xs.push(x); fs.push(costOf(vars, cons, [x]));
+  }
+  var bi = 0;
+  for (i = 1; i <= N; i++) if (fs[i] < fs[bi]) bi = i;
+  var lo = xs[Math.max(0, bi - 1)], hi = xs[Math.min(N, bi + 1)];
+  return [golden1D(vars, cons, lo, hi)];
+}
+// 多维：坐标下降 —— 每轮只调一个变量、在它的整个区间上扫 + 细化，轮着来。
+// 初值取元件当前参数值，通常两三**轮**就收敛；比硬上牛顿法稳得多（不用算雅可比，
+// 也不会因为初值差就发散），代价是慢一点 —— 而这里最慢也只是几十毫秒。
+function solveMultiDim(vars, cons){
+  var p = vars.map(function(v){ return v.init; });
+  for (var round = 0; round < 30; round++){
+    var moved = false;
+    for (var j = 0; j < vars.length; j++){
+      var v = vars[j], N = 24, xs = [], fs = [];
+      for (var i = 0; i <= N; i++){
+        var x = v.lo + (v.hi - v.lo) * i / N;
+        var q = p.slice(); q[j] = x;
+        xs.push(x); fs.push(costOf(vars, cons, q));
+      }
+      var bi = 0;
+      for (i = 1; i <= N; i++) if (fs[i] < fs[bi]) bi = i;
+      var lo = xs[Math.max(0, bi - 1)], hi = xs[Math.min(N, bi + 1)];
+      var xr = goldenND(vars, cons, p, j, lo, hi);
+      if (Math.abs(xr - p[j]) > 1e-9 * Math.max(1, Math.abs(p[j]))) moved = true;
+      p[j] = xr;
+    }
+    if (!moved) break;
+  }
+  return p;
+}
+// 固定其余维、只动第 j 维的黄金分割。
+function goldenND(vars, cons, p, j, a, b){
+  var gr = 0.6180339887;
+  function f(x){ var q = p.slice(); q[j] = x; return costOf(vars, cons, q); }
+  var c1 = b - gr * (b - a), c2 = a + gr * (b - a);
+  var f1 = f(c1), f2 = f(c2);
+  for (var i = 0; i < 50; i++){
+    if (f1 < f2){ b = c2; c2 = c1; f2 = f1; c1 = b - gr * (b - a); f1 = f(c1); }
+    else { a = c1; c1 = c2; f1 = f2; c2 = a + gr * (b - a); f2 = f(c2); }
+  }
+  return (a + b) / 2;
+}
+// 主入口。返回 { ok, vars, cons, over, results } 或 { ok:false, why }。
+function solvePractice(){
+  var vars = practiceVars(), cons = practiceCons();
+  if (!cons.length && !vars.length) return { ok:true, vars:[], cons:[], over:null };
+  // 一条已知条件都没填：不报错、也不硬解 —— 就是「还没开始做题」。
+  // 报「条件不足」太吓人：学生刚打开练习模式，什么都还没填呢。
+  if (!cons.length) return { ok:true, vars:vars, cons:cons, over:null, idle:true };
+  if (vars.length > cons.length){
+    return { ok:false, why:'条件不足：有 ' + vars.length + ' 个待求的元件参数，' +
+      '只给了 ' + cons.length + ' 个已知条件，还差 ' + (vars.length - cons.length) + ' 个。',
+      vars:vars, cons:cons };
+  }
+  var p = (vars.length === 1) ? solveOneDim(vars, cons)
+        : (vars.length >= 2) ? solveMultiDim(vars, cons)
+        : [];
+  var got = residualsOf(vars, cons, p);
+  // 每一条已知条件都要真的被满足，否则就是条件互相矛盾（比如同一个元件上
+  // 同时给了 U、I、R 三个数而它们不满足欧姆定律）。
+  var bad = [];
+  for (var i = 0; i < cons.length; i++){
+    var tol = 1e-4 * Math.max(1, Math.abs(cons[i].target));
+    if (!isFinite(got.r[i]) || Math.abs(got.r[i]) > tol) bad.push(cons[i]);
+  }
+  if (bad.length){
+    return { ok:false, why:'这些已知条件互相矛盾，凑不出一个自洽的电路（' +
+      bad.length + ' 条对不上）。检查一下是不是同一个元件上给的量彼此冲突。',
+      vars:vars, cons:cons };
+  }
+  var over = {};
+  vars.forEach(function(v, i){ (over[v.id] = over[v.id] || {})[v.key] = p[i]; });
+  return { ok:true, vars:vars, cons:cons, over:over, p:p, results:got.res };
+}
+// 逆推结果缓存：条件（已知量 / 拓扑 / 参数）没变就不重算 —— render 很频繁
+// （拖动元件时每帧一次），而逆推一次要几十上百次纯求解，不能每帧都跑。
+var practiceSol = null, practiceSolKey = null;
+function practiceFingerprint(){
+  var parts = [];
+  scene.comps.forEach(function(c){
+    var k = knownOf[c.id];
+    parts.push(c.id + ':' + c.type + ':' + (c.rot || 0) + ':' + (c.params ? JSON.stringify(c.params) : '') +
+      ':' + (k ? ((k.u == null ? '-' : k.u) + '/' + (k.i == null ? '-' : k.i) + '/' + (k.rKnown === false ? '0' : '1')) : 'd'));
+  });
+  scene.wires.forEach(function(x){
+    parts.push((x.a && x.a.compId) + '.' + (x.a && x.a.termIdx) + '-' +
+               (x.b && x.b.compId) + '.' + (x.b && x.b.termIdx) + (x.broken ? '!' : ''));
+  });
+  return parts.join('|');
+}
+function syncPracticeSolve(){
+  if (!practice){ practiceSol = null; practiceSolKey = null; return; }
+  var key = practiceFingerprint();
+  if (key === practiceSolKey) return;
+  practiceSolKey = key;
+  practiceSol = solvePractice();
+}
+// 换场景（载预设 / 读档 / 清空画布）必须把练习状态一起清掉：knownOf 和 revealed
+// 都是按【元件 id】记的，而 id 会被复用（新电路的 L1 还叫 L1）—— 不清的话，上一张
+// 电路留下的已知条件会悄悄套到新电路的同名元件上，学生看到的是「我没填过它呀」。
+function resetPracticeState(){
+  knownOf = {};
+  revealed = {};
+  practiceSol = null;
+  practiceSolKey = null;
 }
 
 function w(a, ai, b, bi, via, auto){
@@ -876,6 +1141,7 @@ function loadPreset(i){
   });
   faultLog.length = 0;
   shortSeen = null;
+  resetPracticeState();
   return true;
 }
 function seed(){ loadPreset(0); }
@@ -901,7 +1167,15 @@ var shortSeen = null;
 function solveOnce(){
   // broken 必须带下去：内核靠它把熔断的导线从节点合并里剔除。
   // 漏传的话画面上导线断成两截、求解器却当成完好的，读数会继续骗人。
-  results = C.solve(scene.comps, scene.wires.map(function(x){
+  //
+  // 练习模式：逆推出来的元件参数（practiceSol.over）在这里【盖上】——用场景的
+  // 深拷贝求解，不动 scene.comps 本身（不然会污染撤销栈和存档）。wireCurrents
+  // 仍旧拿原 scene 算：它读的是元件的 type / flip，与 R / emf 无关。
+  var comps = scene.comps;
+  if (practice && practiceSol && practiceSol.ok && practiceSol.over){
+    comps = applyParamOver(scene.comps, practiceSol.over);
+  }
+  results = C.solve(comps, scene.wires.map(function(x){
     return { a:x.a, b:x.b, broken: !!x.broken };
   }));
   flows = C.wireCurrents(scene, results);
@@ -1004,6 +1278,7 @@ function applyFaults(){
 }
 
 function solveNow(){
+  syncPracticeSolve();              // 练习模式：条件变了就重跑一次逆推
   faultLog = [];
   shortSeen = null;
   for (var pass = 0; pass < DAMAGE_MAX_PASS; pass++){
@@ -1261,11 +1536,33 @@ var TAG_ID_H = 17, TAG_ST_H = 15;
 // readoutLines（参数又飘回画布上）这个改坏照样全绿。
 // 它同时是【名字标签的命中框】：点这一行字能改名，靠的就是这份几何。
 var tagDrawn = [];
+// 练习模式下的画布标签：每个量按【已知 / 待求】逐条决定 —— 已知条件印真值
+// （那是题目给的条件），待求量印「?」（点元件才揭晓）。判据不另抄一份
+// 「哪行是哪个量」的清单：参数行的形状只有一种（`字母 = 数值`），首字母就是那个量。
+function practiceLetterKind(c, letter){
+  if (letter === 'R') return 'r';
+  if (letter === 'I') return 'i';
+  if (letter === 'E') return 'r';
+  // 电源的「电压」就是它的参数（电源电压 / 电动势），不是普通元件那一路读数。
+  if (letter === 'U') return isSrcType(c.type) ? 'r' : 'u';
+  return null;
+}
+function practiceLines(c, r){
+  var lines = readoutLines(c, r) || [];
+  return lines.map(function(l){
+    var m = /^([A-Za-z])\s*=/.exec(l);
+    if (!m) return l;
+    var kind = practiceLetterKind(c, m[1]);
+    if (!kind) return l;
+    return qHidden(c, kind) ? (m[1] + ' = ?') : l;
+  });
+}
 function drawCompTag(f, c, r){
-  // 练习模式下【揭晓过的】元件把完整读数（含参数行）一并印出来 —— 这就是
-  // 「点一下才显示它自己的数据」这句话落到画布上的样子。没揭晓的照旧只印状态
-  // 提示（参数行本来就不上画布，见上面那段注释），于是一个数都不会漏出来。
-  var st = (practice && revealed[c.id]) ? (readoutLines(c, r) || []) : stateLinesOf(c, r);
+  // 练习模式：揭晓过的元件把完整读数一并印出来；没揭晓的，已知条件印真值、
+  // 待求量印「?」—— 这就是「点一下才显示它自己那份数据」落到画布上的样子。
+  var st = !practice ? stateLinesOf(c, r)
+         : revealed[c.id] ? (readoutLines(c, r) || [])
+         : practiceLines(c, r);
   // 名字走 D.nameOf —— 默认是自动编号（L1 / R2 / E1），学生点标签改过名之后
   // 就是他自己起的名。c.id 只留给内部索引，不再直接上画布。
   var nm = D.nameOf(c);
@@ -2167,10 +2464,48 @@ function inverseSlide(rheo, meter, target){
     num1(vmin) + '~' + num1(vmax) + '）' };
 }
 
-// 练习面板的 HTML。只挂在滑动变阻器上；练习模式没开就返回空串，
-// 于是正常模式下面板和以前一模一样，一个字都不多。
+// 练习面板的 HTML。练习模式没开就返回空串，于是正常模式下面板和以前一模一样。
+// 分两条路：滑动变阻器走【反推滑片】（它的未知量是滑片位置，不是 R / emf）；
+// 其余元件走【已知量】面板（填 U / R / I，留空的是待求量）。
 function practiceRowsHTML(c, pfx){
-  if (!practice || c.type !== 'rheostat') return '';
+  if (!practice) return '';
+  return c.type === 'rheostat' ? rheostatPracticeHTML(c, pfx) : knownRowsHTML(c, pfx);
+}
+// 「已知量」面板：每个元件的 U / R / I。填了的是已知条件（照常显示），留空的是
+// 待求量（显示「?」，点元件揭晓）。电阻 / 电源多一行参数（R / 电源电压），
+// 那一行留空 = 这个参数要由已知条件反解。
+function knownRowsHTML(c, pfx){
+  var k = knownOfComp(c);
+  var isSrc = isSrcType(c.type);
+  var isAmm = (c.type === 'ammeter');
+  var isVolt = (c.type === 'voltmeter');
+  var html = '<div class="pracBox"><div class="pracHd">🎓 练习 · 已知量</div>' +
+    '<div class="pracMsg">填了的是已知条件（照常显示）；留空的是待求量，' +
+    '显示「?」、点元件揭晓。</div>';
+  if (hasFreeParam(c)){
+    html += '<div class="prow"><label>' + (isSrc ? '电源电压' : '电阻 R') + '</label>' +
+      '<input type="number" data-prac="param" step="0.1" min="0" ' +
+      'value="' + (k.rKnown === false ? '' : paramValOf(c)) + '">' +
+      '<span class="val">' + (isSrc ? 'V' : 'Ω') + '</span></div>';
+  }
+  // 电流表是理想表（两端电压恒 0），不给电压那一行。
+  if (!isAmm){
+    html += '<div class="prow"><label>电压 U</label>' +
+      '<input type="number" data-prac="u" step="0.1" ' +
+      'value="' + (k.u == null ? '' : k.u) + '">' +
+      '<span class="val">V</span></div>';
+  }
+  // 电压表是理想表（电流恒 0），不给电流那一行。
+  if (!isVolt){
+    html += '<div class="prow"><label>电流 I</label>' +
+      '<input type="number" data-prac="i" step="0.001" ' +
+      'value="' + (k.i == null ? '' : k.i) + '">' +
+      '<span class="val">A</span></div>';
+  }
+  html += '<div class="pracMsg" data-prac="state"></div></div>';
+  return html;
+}
+function rheostatPracticeHTML(c, pfx){
   var ms = metersInScene();
   var head = '<div class="pracBox"><div class="pracHd">🎓 练习 · 逆推</div>';
   if (!ms.length) {
@@ -2193,10 +2528,63 @@ function practiceRowsHTML(c, pfx){
     '<div class="pracMsg" data-prac="msg">设定目标读数，反推变阻器该接入多大阻值 —— ' +
       '其余读数由电路自己算出来。</div></div>';
 }
-// 逆推面板的接线。走 box.querySelector 而不是 getElementById：侧栏和浮层两个
-// 面板会同时存在，id 只有一份（pv_ / pp_ 两套前缀就是为了绕开这个坑），
-// 而 data-prac 的属性在各自 box 里是唯一的。
+// 练习面板的接线：按 box 里出现的是哪一套控件分派。
 function wirePractice(box, c){
+  if (!practice) return;
+  if (box.querySelector('button[data-prac="go"]')) { wireRheostatPractice(box, c); return; }
+  if (box.querySelector('input[data-prac]')) wireKnown(box, c);
+}
+// 「已知量」面板的接线：改了就写进 knownOf，再重绘一遍（不重建面板 —— 重建会把
+// 学生正在输入的焦点抽掉）。
+function wireKnown(box, c){
+  box.querySelectorAll('input[data-prac]').forEach(function(el){
+    el.addEventListener('input', function(){
+      var role = el.dataset.prac, raw = el.value.trim(), k = knownOfComp(c);
+      if (role === 'param'){
+        if (raw === ''){ k.rKnown = false; }          // 留空 = 这个参数要反解
+        else {
+          var v = parseFloat(raw);
+          if (!isFinite(v) || v <= 0) return;          // 非法值先不写，等学生改完
+          k.rKnown = true;
+          editor.setParam(c.id, paramKeyOf(c), v);     // 同步到元件参数（自带重绘）
+        }
+      } else {
+        var val = raw === '' ? null : parseFloat(raw);
+        if (val != null && !isFinite(val)) return;
+        if (role === 'u') k.u = val; else k.i = val;
+      }
+      // 改已知量要重跑逆推 —— solveNow 里的 syncPracticeSolve 会因指纹变化自动
+      // 重算；这里只重绘、不重建面板。提示行得手动同步（renderSoft 不管它）。
+      renderSoft();
+      syncPracticeMsg();
+    });
+  });
+  syncPracticeMsg();
+}
+// 把逆推的状态写进两个面板里的提示行。
+function practiceStateText(){
+  if (!practice || !practiceSol) return '';
+  if (practiceSol.ok === false) return '⚠ ' + practiceSol.why;
+  var nv = (practiceSol.vars || []).length, nc = (practiceSol.cons || []).length;
+  if (practiceSol.idle || (!nv && !nc)){
+    return nv ? ('电路里有 ' + nv + ' 个待求的元件参数 —— 填上已知条件，' +
+                 '电路会把其余量算出来。')
+              : '还没填任何已知量。';
+  }
+  return '✔ 已按 ' + nc + ' 个已知条件解出 ' + nv + ' 个待求参数 —— ' +
+    '点画布上的元件看它自己那份数据。';
+}
+function syncPracticeMsg(){
+  var txt = practiceStateText();
+  paramRoots().forEach(function(root){
+    var el = root[0].querySelector('[data-prac="state"]');
+    if (el) el.textContent = txt;
+  });
+}
+// 反推滑片面板的接线。走 box.querySelector 而不是 getElementById：侧栏和浮层
+// 两个面板会同时存在，id 只有一份（pv_ / pp_ 两套前缀就是为了绕开这个坑），
+// 而 data-prac 的属性在各自 box 里是唯一的。
+function wireRheostatPractice(box, c){
   var go = box.querySelector('button[data-prac="go"]');
   if (!go) return;
   var sel = box.querySelector('select[data-prac="meter"]');
@@ -2325,14 +2713,14 @@ function updateSide(){
     var r = recs[c.id]; if (!r) return;
     var tr = document.createElement('tr');
     if (c.id === selId) tr.className = 'sel';
-    // 练习模式下【没揭晓】的元件，四列一律印「?」。这不是「没有值」，是「先不给
-    // 看」—— 印 0 会让学生以为「这件没电流」，而那正好把要考的那个数白送了。
-    var hid = practiceHidden(c);
+    // 练习模式：已知条件照常印（那是题目给的），待求量印「?」—— 逐列判，不再
+    // 整件一刀切。印 0 会让学生以为「这件没电流」，正好把要考的那个数白送了。
+    var hi = qHidden(c, 'i'), hu = qHidden(c, 'u'), hr = qHidden(c, 'r');
     tr.innerHTML = '<td>' + (TYPE_LABEL[c.type]||c.type) + ' ' + D.nameOf(c) + '</td>' +
-      '<td>' + (hid ? '?' : dispI(c, r)) + '</td>' +
-      '<td>' + (hid ? '?' : dispU(c, r)) + '</td>' +
-      '<td>' + (hid ? '?' : fmtR(c, r)) + '</td>' +
-      '<td>' + (hid ? '?' : num1(Math.abs(r.p))) + '</td>';
+      '<td>' + (hi ? '?' : dispI(c, r)) + '</td>' +
+      '<td>' + (hu ? '?' : dispU(c, r)) + '</td>' +
+      '<td>' + (hr ? '?' : fmtR(c, r)) + '</td>' +
+      '<td>' + ((hi || hu) ? '?' : num1(Math.abs(r.p))) + '</td>';
     tb.appendChild(tr);
   });
   syncPracticeUI();
@@ -2714,13 +3102,14 @@ function placePop(c){
 // 拆成 inner / HTML 两个函数，是为了让 syncPop 能【只换里面的字】——
 // 整块 outerHTML 换掉的话，旁边正在拖的滑块会被一起抽走。
 function popReadInner(c){
-  // 练习模式：没揭晓就不给数。这里留一句【怎么揭晓】，不然学生只看到一块空面板。
-  // 正常路径下点元件那一刻就已经揭晓了，这句是给「先揭晓、又手动收起」那条路兜底的。
-  if (practiceHidden(c)) return '读数已隐藏 —— 点一下这个元件揭晓';
   var r = results && results.components && results.components[c.id];
   if (!r) return '';
-  return 'I ' + dispI(c, r) + ' A　U ' + dispU(c, r) + ' V<br>' +
-    'R ' + fmtR(c, r) + ' Ω　P ' + num1(Math.abs(r.p)) + ' W';
+  // 练习模式：逐项印 —— 已知条件印真值（那是题目给的），待求量印「?」，点元件揭晓。
+  var hi = qHidden(c, 'i'), hu = qHidden(c, 'u'), hr = qHidden(c, 'r');
+  var tail = (practice && !revealed[c.id] && (hi || hu || hr))
+    ? '　·　点一下这个元件揭晓' : '';
+  return 'I ' + (hi ? '?' : dispI(c, r)) + ' A　U ' + (hu ? '?' : dispU(c, r)) + ' V<br>' +
+    'R ' + (hr ? '?' : fmtR(c, r)) + ' Ω　P ' + ((hi || hu) ? '?' : num1(Math.abs(r.p))) + ' W' + tail;
 }
 function popReadHTML(c){
   var s = popReadInner(c);
@@ -2922,9 +3311,10 @@ function drawZoom(){
   zoomView.midX = ZBOX.x + ZBOX.w/2; zoomView.midY = ZBOX.y + ZBOX.h/2;
   // 下面这行字和画布上的读数框共用 readoutLines()：反接时画布写「指针反偏」，
   // 放大镜里也必须一样，不能这边照旧印一个数字出来。
-  zoomRead.textContent = practiceHidden(zoomComp)
-    ? '读数已隐藏 —— 点一下这只表揭晓'
-    : (readoutLines(zoomComp, rec) || []).join('　·　');
+  var zLines = (practice && !revealed[zoomComp.id])
+    ? practiceLines(zoomComp, rec) : (readoutLines(zoomComp, rec) || []);
+  zoomRead.textContent = zLines.join('　·　') +
+    ((practice && practiceHidden(zoomComp)) ? '　·　点一下这只表揭晓' : '');
   // 量程单独一格：它是「线接在哪个柱上」的信息，跟能不能读数无关，
   // 接反时照印——那时学生更该看清指针到底顶在哪一挡的零刻度左边。
   // 没接量程柱就不写：读数那行已经写了「量程柱没接线」，再写一遍是啰嗦。
@@ -3506,6 +3896,7 @@ var btnRepair = toolBtn('🔧 全部修复', function(){ repairAll(); }, 'repair
 toolBtn('清空画布', function(){
   editor.pushUndo();
   scene.comps = []; scene.wires = [];
+  resetPracticeState();
   editor.select(null); render();
 }, 'danger', 1);
 // 三套预设电路（串联 / 并联 / 伏安法）。三个按钮走同一条「换场景」路径，所以
@@ -3692,6 +4083,7 @@ function writeSlots(slots){
 function applyScene(o){
   scene.comps = o.comps;
   scene.wires = o.wires;
+  resetPracticeState();
   // 选中的那个元件可能压根不在新场景里，留着的话参数面板会去读它的 type 崩掉
   if (editor && editor.getSelected()) editor.select(null);
 }
@@ -4033,6 +4425,54 @@ window.__pracTag = function(){
   return el ? { hidden: el.hidden, text: el.textContent, shown: el.offsetParent !== null } : null;
 };
 window.__btnRevealAll = function(){ return btnRevealAll; };
+// ── 练习 · 已知量 & 逆推 ────────────────────────────────────
+window.__known = function(id){
+  var c = editor.byId(id); if (!c) return null;
+  var k = knownOfComp(c);
+  return { u:k.u, i:k.i, rKnown:k.rKnown !== false,
+           param: paramValOf(c), key: paramKeyOf(c) };
+};
+window.__setKnown = function(id, o){
+  var c = editor.byId(id); if (!c) return null;
+  var k = knownOfComp(c);
+  if (o && 'u' in o) k.u = o.u;
+  if (o && 'i' in o) k.i = o.i;
+  if (o && 'rKnown' in o) k.rKnown = !!o.rKnown;
+  if (o && 'param' in o && o.param != null){
+    k.rKnown = true;
+    editor.setParam(c.id, paramKeyOf(c), o.param);
+  }
+  render();
+  return window.__known(id);
+};
+window.__practiceSol = function(){
+  if (!practiceSol) return null;
+  // idle 必须一起交出去：它是「一条已知条件都还没填」和「条件不足」的分水岭 ——
+  // 少了这个字段，断言只能读到 ok:true，把「刚进练习模式」和「真解出来了」混成
+  // 一件事（这一轮就是这么漏的：断言写的是 idle.idle === true，而钩子从来没给过
+  // 这个键，于是那条断言永远红、还看不出来是钩子的错）。
+  return { ok: practiceSol.ok, idle: !!practiceSol.idle, why: practiceSol.why || '',
+           vars: (practiceSol.vars || []).map(function(v){ return { id:v.id, key:v.key }; }),
+           cons: (practiceSol.cons || []).map(function(x){ return { id:x.id, kind:x.kind, target:x.target }; }),
+           over: practiceSol.over || null };
+};
+window.__practiceState = function(){ return practiceStateText(); };
+window.__resetPractice = function(){ resetPracticeState(); return true; };
+window.__qHidden = function(id, kind){
+  var c = editor.byId(id); return c ? qHidden(c, kind) : null;
+};
+// 电源黑匣子：盒面那行字（「?」或电压数值）到底画了没有。
+window.__srcBox = function(id){
+  var r = results && results.components && results.components[id];
+  return r ? { box: !!r.practiceBox, text: r.practiceBoxText || null,
+               known: !!r.practiceBoxKnown } : null;
+};
+// 侧栏表的第 idx 行（= scene.comps 的第 idx 个元件）四个格子印了什么。
+window.__sideRow = function(idx){
+  var tb = document.getElementById('tbody');
+  var tr = tb && tb.rows[idx]; if (!tr) return null;
+  return [].slice.call(tr.cells).map(function(td){ return td.textContent; });
+};
 // 电路安全：损坏 / 修复 / 演示故障。这几条给「灯泡烧断阈值」「表超量程与反接」
 // 「短路熔断导线」「修好以后恢复」那几组断言用。
 window.__faults = function(){

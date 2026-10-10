@@ -3959,11 +3959,58 @@
     ctx.restore();
   }
 
+  // ============================================================
+  // 练习模式下的电源【黑匣子】
+  // ------------------------------------------------------------
+  // 做练习题时，电源就是一个不知道电压的黑盒子 —— 盒面写一个「?」；要是电压作为
+  // 已知条件给了，就直接写数值（用户要求：「如果电源电压知道，就直接显示多少伏」）。
+  // 接线柱照常留在两侧：导线还得连着，不然电路看着就断了。
+  // 盒子尺寸【固定】、不随 emf 变 —— emf 未知时压根没有「节数」可算。
+  // ============================================================
+  function drawSourceBox(ctx, comp, rec) {
+    var isPSU = comp.type === 'power';
+    var hw = 62, hh = isPSU ? 52 : 24;
+    ctx.save();
+    ctx.translate(comp.x, comp.y);
+    ctx.rotate((comp.rot || 0) * Math.PI / 180);
+    // 引出导线：从盒体水平引到 ±HALF 的接线柱上（和两种电源原来的引法一致）
+    ctx.strokeStyle = PALETTE.metalLo; ctx.lineWidth = 3.5; ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(-hw, 0); ctx.lineTo(-HALF, 0);
+    ctx.moveTo(hw, 0); ctx.lineTo(HALF, 0);
+    ctx.stroke();
+    // 盒体：深色渐变，一眼看出「这里面是什么，不知道」
+    var g = ctx.createLinearGradient(0, -hh, 0, hh);
+    g.addColorStop(0, '#475569'); g.addColorStop(0.55, '#334155'); g.addColorStop(1, '#1e293b');
+    ctx.fillStyle = g;
+    roundRect(ctx, -hw, -hh, hw * 2, hh * 2, 9);
+    ctx.fill();
+    ctx.strokeStyle = '#0f172a'; ctx.lineWidth = 2; ctx.stroke();
+    // 盒面那行字：已知 → 电压数值（琥珀色，一眼是「题目给的」）；未知 → 大问号
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    if (rec && rec.practiceBoxKnown) {
+      ctx.fillStyle = '#fbbf24';
+      ctx.font = 'bold 16px -apple-system,"PingFang SC",sans-serif';
+      ctx.fillText(String(rec.practiceBoxText || ''), 0, 0);
+    } else {
+      ctx.fillStyle = '#e2e8f0';
+      ctx.font = 'bold 30px -apple-system,"PingFang SC",sans-serif';
+      ctx.fillText('?', 0, 1);
+    }
+    ctx.restore();
+  }
+
   function drawComponent(ctx, comp, rec, opts) {
     switch (comp.type) {
       case 'resistor': drawResistor(ctx, comp, rec); break;
-      case 'battery': drawBattery(ctx, comp, rec); break;
-      case 'power': drawPowerSupply(ctx, comp, rec); break;
+      case 'battery':
+        if (rec && rec.practiceBox) drawSourceBox(ctx, comp, rec);
+        else drawBattery(ctx, comp, rec);
+        break;
+      case 'power':
+        if (rec && rec.practiceBox) drawSourceBox(ctx, comp, rec);
+        else drawPowerSupply(ctx, comp, rec);
+        break;
       case 'switch': drawSwitch(ctx, comp, rec); break;
       case 'bulb': drawBulb(ctx, comp, rec); break;
       case 'led': drawLed(ctx, comp, rec, opts); break;
