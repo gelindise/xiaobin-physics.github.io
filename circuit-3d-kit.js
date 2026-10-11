@@ -242,28 +242,47 @@ BUILDERS.power = function (ctx) {
   var emf = (ctx.comp.params && ctx.comp.params.emf) || 6;
   var flip = ctx.flip;
   // 机箱（立式仪器）
-  var chassis = new THREE.Mesh(boxGeo(132, 108, 74), M.plastic);
-  chassis.position.copy(ctx.P(0, 6, 54));
+  //
+  // 🔴 机箱宽度必须【盖得住两个接线柱】。学生电源照课本把柱子挪到了面板右下角
+  //    （见 circuit-draw 的 TERMINALS.power：元件局部 x = 36 / 78），而 2D 前面板
+  //    有 212 宽。机箱原来照 2D 的旧面板（144）给 132 —— 也就是 ±66；柱子一挪到
+  //    78，最右那根就落到机箱【外面】了，画面上是「一根柱子悬在箱子右边」。
+  //    取 194：和 2D 面板同比例（132 / 144 = 0.917，212 × 0.917 ≈ 194），
+  //    两端各留 19px 余量（78 + 柱帽半径 6.5 = 84.5 < 97）。
+  //
+  // 🔴 机箱还要整体【往台面里侧退 30】。柱子的落点由 terminalAnchor 派生 ⇒ 两根柱
+  //    站在局部 z = 26·S = 0.52 上。机箱深 74 ⇒ 退 30 之后箱体 z 跨 [−1.22, +0.26]，
+  //    柱身与柱帽（z ∈ [0.39, 0.65]）整个落在箱体【前面】，看得见、接得上，
+  //    也不和箱体穿插。不退的话箱体前面顶到 z = 0.56，两根柱子会被埋进箱体里 ——
+  //    画面上看不出柱子，导线却照样连过去，像接在一团空气上。
+  //    ⚠️ 别改成「缩小机箱」：132…194 × 108 × 74 这个外形是照着台式稳压电源定的，
+  //       收深了就成了薄片；往后让一段只是它在台面上坐得靠里一点。
+  //    ⚠️ 顶面那块面板与旋钮本来就在 z = −0.44，仍在新范围内，不用跟着动。
+  var BOX_DZ = -30;                 // 机箱在台面上的纵向后退量（逻辑 px）
+  var BOX_W = 194;                  // 机箱宽（逻辑 px）—— 必须盖住最右那根柱子(78)
+  var chassis = new THREE.Mesh(boxGeo(BOX_W, 108, 74), M.plastic);
+  chassis.position.copy(ctx.P(0, 6 + BOX_DZ, 54));
   ctx.add(chassis);
-  // 面板（+Z 面）上的指示表：一块深色小窗 + 发光读数条
-  var panel = new THREE.Mesh(boxGeo(96, 40, 3), mat(0x0f172a, { metalness: 0.2, roughness: 0.6 }));
-  panel.position.copy(ctx.P(-12, -22, 110));
+  // 面板（顶面）上的指示表：一块深色小窗 + 发光读数条。
+  // 横向位置按机箱变宽的比例摊开（×1.47），不然两块会挤在机箱正中间一小片。
+  var panel = new THREE.Mesh(boxGeo(140, 40, 3), mat(0x0f172a, { metalness: 0.2, roughness: 0.6 }));
+  panel.position.copy(ctx.P(-18, -22, 110));
   ctx.add(panel);
-  var readout = new THREE.Mesh(boxGeo(70, 14, 2), new THREE.MeshStandardMaterial({ color: 0x22c55e, emissive: 0x22c55e, emissiveIntensity: 0.85, roughness: 0.5 }));
-  readout.position.copy(ctx.P(-12, -22, 112));
+  var readout = new THREE.Mesh(boxGeo(100, 14, 2), new THREE.MeshStandardMaterial({ color: 0x22c55e, emissive: 0x22c55e, emissiveIntensity: 0.85, roughness: 0.5 }));
+  readout.position.copy(ctx.P(-18, -22, 112));
   ctx.add(readout);
   // 电压旋钮（绕 Z 轴的圆柱）
   var knob = new THREE.Mesh(cylGeo(16, 16, 10, 18), M.brass);
   knob.rotation.x = Math.PI / 2;
-  knob.position.copy(ctx.P(34, -22, 110));
+  knob.position.copy(ctx.P(50, -22, 110));
   ctx.add(knob);
   var mark = new THREE.Mesh(boxGeo(3, 12, 3), M.darkBody);
-  mark.position.copy(ctx.P(34, -14, 116));
+  mark.position.copy(ctx.P(50, -14, 116));
   ctx.add(mark);
-  // 底部散热格栅（几条横线）
+  // 散热格栅（几条横线）。跟着机箱一起退、一起加宽，否则会浮在箱体前面的空气里。
   for (var i = 0; i < 3; i++) {
-    var slot = new THREE.Mesh(boxGeo(96, 3, 2), M.darkBody);
-    slot.position.copy(ctx.P(0, 40 + i * 8, 108));
+    var slot = new THREE.Mesh(boxGeo(140, 3, 2), M.darkBody);
+    slot.position.copy(ctx.P(0, 40 + i * 8 + BOX_DZ, 108));
     ctx.add(slot);
   }
   ctx.powerKnob = knob;

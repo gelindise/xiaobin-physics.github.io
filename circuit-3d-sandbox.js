@@ -12,7 +12,12 @@
  * 水平工作台面坐标（见 circuit-3d-kit.js 的 to3D）。
  */
 import * as THREE from './assets/optics-three.min.js';
-import KIT from './circuit-3d-kit.js';
+// 🔴 这个 import 必须带版本号（和页面里 <script src="…?build=N"> 一个道理）。
+//    不带的话它【没有缓存键】：页面入口 circuit-3d-sandbox.js?build=1 换了版，
+//    浏览器会重新拉入口，却照样拿缓存里那份旧的 circuit-3d-kit.js ——
+//    症状是「改了器材库、3D 页看上去一点没变」，而入口文件的改动明明生效了。
+//    改 circuit-3d-kit.js 之后，这里要跟着 +1。
+import KIT from './circuit-3d-kit.js?build=2';
 
 (function () {
   'use strict';

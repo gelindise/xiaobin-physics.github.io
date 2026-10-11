@@ -19,11 +19,17 @@
  *
  * ⚠️ 两条不能动的地基
  *
- * 1) 符号的引脚坐标**一律取自 D.TERMINALS**，一个常数都不许自己发明。
+ * 1) 符号的引脚坐标**一律取自 symTerms(type, D)**，一个常数都不许自己发明。
  *    circuit-draw.js:15 的规矩是「端子 0 画在哪一头，由 TERMINALS 拍板，并且全站统一」。
  *    电路图的引线端点必须和导线端点**逐点相同**，自己写死一个 ±70 出来，哪天
  *    TERMINALS 改了，导线就接不到引脚上，看着像断的。所以下面每一处引线都写
  *    `T[i]` / `t.x` / `t.y`，绝不出现裸数字。
+ *
+ *    ⚠️ symTerms 默认就是 D.TERMINALS（符号引脚 = 实物柱），【唯一例外】是学生
+ *    power：实物柱照课本挪到了面板右下角，符号引脚仍留在 ±HALF 的轴线上。
+ *    为什么必须例外、照实物柱走会坏哪三件事，见 symTerms 上面那段注释。
+ *    本文件里【所有】端子坐标都要走 symTerms —— 只要有一处漏了，那一处就会
+ *    用实物柱的位置去算，症状是「排版把元件往下拽 18px」或者「导线斜着连」。
  *
  * 2) 导线避让用**符号**的包围盒（本文件 symRect），**不是** D.bodyBox()。
  *    bodyBox 返的是【实物】外形：电表 100×70、变阻器 78×29、开关 70×62。
@@ -165,11 +171,38 @@
   // 不留缝、也不插进符号里面）。symRect 的框宽也跟着它走。
   function batteryHalf(comp) { return CELL_INNER / 2; }
 
+  // 学生电源符号方框的半宽。**唯一真值**：symRect 的框、drawSymbol 画的框、
+  // 下面 SYM_TERMS 的引脚落点，三处都读它。改了必须三处一起改 —— 拆开写的话
+  // 症状是「引线端点落在框外/框内一点点」，图看着没坏，导线却接不到符号上。
+  var POWER_HALF = CELL_INNER / 2 + 8;
+
+  // 符号坐标系里的端子位置。默认就是 D.TERMINALS —— 实物柱在哪，符号的引脚
+  // 就在哪，全站一直是这个规矩（文件头那条「一个常数都不许自己发明」）。
+  //
+  // 【唯一的例外】是学生电源。它的实物柱照课本挪到了面板右下角、还挨在一起
+  // （见 circuit-draw 的 TERMINALS.power），但那【不是】符号该长的样子：
+  // 符号是一只套着方框的电池，引脚必须在方框左右两条边的中点上，引线才是
+  // 水平进出的。照实物柱走会同时坏三件事：
+  //   ① drawSymbol 的 lead() 从柱子拉到框边 —— 柱子跑到框里，那根引线就成了
+  //      一条横穿方框的杂线（两根一叠，看着像符号被划掉）；
+  //   ② axisYOf 取两端子 y 的平均 —— 实物柱的 y 是 18 不是 0，整台电源会被
+  //      在电路图里往下拽 18px，主回路那一横就断了；
+  //   ③ 端子落在右下角 ⇒ 导线斜着连过来，和「横平竖直」的教材画法冲突。
+  // 所以符号这一侧单给一份：±HALF 在轴线上 —— 正是它改造【前】实物柱的位置，
+  // 也是全站其它两端元件共用的那两个点。
+  function symTerms(type, D) {
+    if (type === 'power') {
+      var h = (D && D.HALF != null) ? D.HALF : 70;
+      return [{ x: h, y: 0 }, { x: -h, y: 0 }];
+    }
+    return (D && D.TERMINALS[type]) || [];
+  }
+
   // 电表：圆骑在「−」柱和被接的那个量程柱【中间】。
   // 只接了一个量程柱是常态（内核的规矩就是「量程由接线决定」），这时候圆心
   // 落在两柱中点上，两根引线水平地引到圆周——串在回路里的一只表，教材就这么画。
   function meterGeom(comp, wires, D) {
-    var T = D.TERMINALS[comp.type];              // 0=「−」柱，1/2=量程柱
+    var T = symTerms(comp.type, D);              // 0=「−」柱，1/2=量程柱
     var tap = null;
     if (termHasWire(wires, comp.id, 1)) tap = 1;
     else if (termHasWire(wires, comp.id, 2)) tap = 2;
@@ -222,7 +255,7 @@
       //    导线避让和标注定位，两者对不上就会出现「标签压在方框上」或者
       //    「导线从方框角上穿过去」，而符号本身看着没问题，很难查。
       case 'power': {
-        var phw = batteryHalf(it.comp) + 8;
+        var phw = POWER_HALF;
         return { x0: -phw - 3, y0: -25, x1: phw + 3, y1: 25 };
       }
       case 'switch':
@@ -282,11 +315,15 @@
       var sx = Math.max(-54, Math.min(54, it.meta.xl));   // 和 drawSymbol 的 sx 取同一段
       return D.toWorld(it.comp, mir ? -sx : sx, RHEO_STEM_TOP);
     }
-    if (mir) {
-      var t = D.TERMINALS[it.type][termIdx];
-      return D.toWorld(it.comp, -t.x, t.y);
-    }
-    return D.terminalWorld(it.comp, termIdx);
+    // 符号引脚走 symTerms（默认 = 实物柱，学生电源是例外，见那里的注释）。
+    // 自己算 toWorld 就必须自己把【两种左右翻转】都补上 —— 原来只有 mir 那一支
+    // 走 toWorld、其余走 D.terminalWorld（后者内部会补 flipOf），所以
+    // 「mir + params.flip 同时为真」时它其实漏翻了一次。两个翻转都是左右镜像，
+    // 同时为真就互相抵消，写成 !== 正好。
+    var t = symTerms(it.type, D)[termIdx];
+    if (!t) return null;
+    var fx = (mir !== D.flipOf(it.comp)) ? -t.x : t.x;
+    return D.toWorld(it.comp, fx, t.y);
   }
 
   // 元件的【轴线】局部 y：导线该落在元件哪条水平线上。
@@ -340,7 +377,7 @@
   // 对齐端子导线才是直的，而「直」正是这个功能要的东西。
   function alignLayout(items, byId, wires, D) {
     items.forEach(function (it) {
-      it._off = D.TERMINALS[it.type].map(function (t) {
+      it._off = symTerms(it.type, D).map(function (t) {
         var w = D.toWorld(it.lay, t.x, t.y);
         return { x: w.x - it.lay.x, y: w.y - it.lay.y };
       });
@@ -515,7 +552,7 @@
     if (bi < 0) return null;
     var seq = cycle.slice(bi).concat(cycle.slice(0, bi));   // 电池打头 → 落在下排左端
 
-    function T(e) { return D.TERMINALS[byId[e.compId].type]; }
+    function T(e) { return symTerms(byId[e.compId].type, D); }
     function halfW(e) {
       var r = symRect(byId[e.compId]), t = T(e);
       return Math.max(-r.x0, r.x1, Math.abs(t[e.tA].x), Math.abs(t[e.tB].x));
@@ -566,7 +603,7 @@
     // 符号跟着一起镜像，所以三角形的朝向永远和实物一致。
     var FLIPPABLE = ['switch', 'bulb', 'resistor', 'led', 'motor'];
     function flipOf(e, dir) {
-      var it = byId[e.compId], T = D.TERMINALS[it.type];
+      var it = byId[e.compId], T = symTerms(it.type, D);
       if (FLIPPABLE.indexOf(it.type) < 0) return false;
       var en = enteringOf[e.compId], lv = (en === e.tA) ? e.tB : e.tA;
       // dir=+1：这一件从左往右走，接进来的端子该在【左】；
@@ -609,7 +646,7 @@
     // 已经摆好的回路节点 → 世界坐标，用来给弦/桥找落点
     var nodePos = {};
     cycle.forEach(function (c) {
-      var it = byId[c.compId], T = D.TERMINALS[it.type];
+      var it = byId[c.compId], T = symTerms(it.type, D);
       nodePos[c.a] = { x: it.lay.x + T[c.tA].x, y: it.lay.y + T[c.tA].y };
       nodePos[c.b] = { x: it.lay.x + T[c.tB].x, y: it.lay.y + T[c.tB].y };
     });
@@ -650,7 +687,7 @@
       var dir = aPos.x <= bPos.x ? 1 : -1;
       var spacing = Math.abs(aPos.x - bPos.x) / (done.edges.length + 1);
       done.edges.forEach(function (e, k) {
-        var it = byId[e.compId], T = D.TERMINALS[it.type];
+        var it = byId[e.compId], T = symTerms(it.type, D);
         var entering = done.nodes[k] === e.a ? e.tA : e.tB;
         var leaving = entering === e.tA ? e.tB : e.tA;
         var reversed = dir < 0 ? T[entering].x < T[leaving].x
@@ -672,11 +709,11 @@
       cycle.forEach(function (c) {
         if ((c.a === br.a && c.b === br.b) || (c.a === br.b && c.b === br.a)) mate = c;
       });
-      var bit = byId[br.compId], bt = D.TERMINALS[bit.type];
+      var bit = byId[br.compId], bt = symTerms(bit.type, D);
       var midY = axisYOf(bit.type, bt[br.tA], bt[br.tB]);
       var midX = (bt[br.tA].x + bt[br.tB].x) / 2;
       if (mate) {
-        var mit = byId[mate.compId], mt = D.TERMINALS[mit.type];
+        var mit = byId[mate.compId], mt = symTerms(mit.type, D);
         var mateLine = mit.lay.y + axisYOf(mit.type, mt[mate.tA], mt[mate.tB]);
         var isTop = Math.abs(mateLine - rect.topY) < Math.abs(mateLine - rect.bottomY);
         var k = shifts[mate.compId] || 0; shifts[mate.compId] = k + 1;
@@ -800,12 +837,12 @@
       return pa - pb;
     });
     function place(id, x, lineY) {
-      var it = byId[id], u = usedTerms(it, wires), terms = D.TERMINALS[it.type];
+      var it = byId[id], u = usedTerms(it, wires), terms = symTerms(it.type, D);
       var axisY = u ? (terms[u[0]].y + terms[u[1]].y) / 2 : 0;
       it.lay.x = snap(x);
       it.lay.y = lineY - axisY;
       it.lay.rot = 0; // 电表字母与元件标签保持正立
-      it.lay.mir = false; // 这条通道不翻面：端子左右按 TERMINALS 原样摆
+      it.lay.mir = false; // 这条通道不翻面：端子左右按符号端子表原样摆
     }
     groups.forEach(function (group) {
       var allSimple = group.every(function (id) { return adj[id].length <= 2; });
@@ -1393,7 +1430,7 @@
   var RAY_TOL = 0.5;
   // 接线柱的引线朝哪个方向伸进符号本体（沿主轴取，和 lead()/hLead() 画的横线一致）。
   function leadDir(it, termIdx, D) {
-    var t = D.TERMINALS[it.type][termIdx], r = it.rect;
+    var t = symTerms(it.type, D)[termIdx], r = it.rect;
     var cx = (r.x0 + r.x1) / 2, cy = (r.y0 + r.y1) / 2;
     var dx = cx - t.x, dy = cy - t.y;
     if (Math.abs(dx) >= Math.abs(dy)) return { x: dx >= 0 ? 1 : -1, y: 0 };
@@ -1465,7 +1502,7 @@
     var terms = [];
     if (items && wires && D) {
       items.forEach(function (it) {
-        var ts = D.TERMINALS[it.type] || [];
+        var ts = symTerms(it.type, D) || [];
         for (var t = 0; t < ts.length; t++) {
           if (!termHasWire(wires, it.id, t)) continue;   // 悬空的柱不是导体
           var p = schTermWorld(it, t, D);
@@ -1583,7 +1620,7 @@
   }
 
   function drawSymbol(ctx, it, D, values) {
-    var c = it.comp, T = D.TERMINALS[c.type];
+    var c = it.comp, T = symTerms(c.type, D);
     ctx.save();
     ctx.translate(c.x, c.y);
     if (c.rot) ctx.rotate(c.rot * Math.PI / 180);
@@ -1620,7 +1657,7 @@
       // 电路图里画成一个样，学生就分不清自己接的是哪个）。
       // ⚠️ 方框的尺寸改了必须同步改 symRect 的 case 'power'（见那里的注释）。
       case 'power': {
-        var ph = batteryHalf(it.comp) + 8;
+        var ph = POWER_HALF;
         lead(ctx, T[0], ph); lead(ctx, T[1], -ph);
         ctx.beginPath();
         D.roundRect(ctx, -ph, -22, ph * 2, 44, 3);
@@ -1864,6 +1901,6 @@
     // 规整化/走线的常量：测试要断言「位移 ≤ MOVE_MAX」，从这里取，
     // 免得内核改了上限、测试还按老数字断（那就成了自证）
     MOVE_MAX: MOVE_MAX,
-    version: '3.8.0',
+    version: '3.9.0',
   };
 });

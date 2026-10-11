@@ -67,6 +67,11 @@
     ammeter:   [100, 70],
     voltmeter: [100, 70],
     rheostat:  [78, 31],
+    // 学生电源：整台机箱（前面板 ±106，右侧面再厚 18 ⇒ 最右 124；顶面抬高 12
+    // ⇒ 最上 −66；下沿 44）。命中框上下对称，所以 hh 给 61 而不是 66 ——
+    // 顶面最上面那几像素抓不到无伤大雅，给满反而会向下抢走邻居元件的点击。
+    // 🔴 必须和 CircuitDraw.bodyBox('power') 取同一套口径。
+    power:     [124, 61],
     // 接线点：小圆点。命中框贴着它给 —— 给大了会从邻居元件那里抢走点击。
     junction:  [9, 9],
   };
@@ -107,6 +112,7 @@
     var hover = null;         // {kind:'term', compId, termIdx} | {kind:'comp'|'wire', ...}
     var moving = null;        // 拖元件 {id, dx, dy}
     var slider = null;        // 拨变阻器滑片 {id, moved}
+    var psuKnob = null;       // 拧学生电源的电压旋钮 {id, moved}
     var wiring = null;        // 拉导线 {from:{compId,termIdx}, cur:{x,y}, to:{...}|null}
     // 拖导线 {index, x0, y0, via0, mid0, moved}。两端接线柱钉死，动的是中间拐点。
     // via0 / mid0 记的是【按下那一刻】的形状：每一帧都从它 + 总位移重算，
@@ -248,6 +254,71 @@
     // 和画布上的滑片显示不一致（面板显示 0.42，画布其实在 0.4237）。
     function slideClamp(v) {
       return Math.round(Math.max(0, Math.min(1, v)) * 100) / 100;
+    }
+    // 学生电源的电压旋钮能不能一把抓住。几何全部从 D.PSU 取，和绘制同源；
+    // 命中框比旋钮本体放大一点（+7），不然那只旋钮很难瞄准。
+    // ⚠️ 学生电源可以「对调极性」（params.flip ⇒ 绘制层 ctx.scale(-1,1)），
+    //    而 D.toLocal 只做旋转+平移、不做镜像，所以这里要自己把 x 翻回来 ——
+    //    不翻的话，翻转过的电源上旋钮的命中区会跑到面板左半边去。
+    var PSU_SLACK = 7;
+    // 元件自身坐标系里的一点，在不在【面板开关】那块命中框里。
+    // hitPsuSwitch / hitPsuKnob 共用它，因为这两块框必须【互斥】：
+    // 旋钮框的左边沿是 KNOB.x − (r + SLACK) = −67，开关框的右边沿是
+    // SW.x + SW.w/2 + SLACK = −60 —— 两者在 x 上叠了 7px，在 y 上也叠
+    // 6px（开关框上沿 8、旋钮框下沿 14）。不排除的话，点在开关右上角
+    // 那一片时「按下去抓的是旋钮、松手翻的却是开关」：同一个点，两条路。
+    function inPsuSwitchRect(l) {
+      var r = psuSwitchRect();
+      if (!r) return false;
+      return l.x >= r.x - PSU_SLACK && l.x <= r.x + r.w + PSU_SLACK &&
+             l.y >= r.y - PSU_SLACK && l.y <= r.y + r.h + PSU_SLACK;
+    }
+    function hitPsuKnob(p) {
+      var cs = getScene().comps, S = D.PSU;
+      if (!S) return null;
+      for (var i = cs.length - 1; i >= 0; i--) {
+        var c = cs[i];
+        if (c.type !== 'power') continue;
+        var l = D.toLocal(c, p.x, p.y);
+        if (D.flipOf(c)) l.x = -l.x;
+        if (inPsuSwitchRect(l)) continue;      // 开关那一块归 hitPsuSwitch
+        // 旋钮是一只矮圆柱：顶面椭圆（半轴 r / 0.6r）再往下接一段侧壁。
+        var rx = S.KNOB.r + PSU_SLACK, ry = S.KNOB.r * 0.6 + PSU_SLACK;
+        if (Math.abs(l.x - S.KNOB.x) <= rx &&
+            l.y >= S.KNOB.y - ry && l.y <= S.KNOB.y + 14) return c;
+      }
+      return null;
+    }
+    // 面板上那颗方形电源开关占的矩形（元件自身坐标系）。页面点它一下要通断，
+    // 所以判据必须和绘制同源 —— 这里直接读 D.PSU.SW，别在页面里再抄一份坐标。
+    function psuSwitchRect() {
+      var S = D.PSU;
+      if (!S || !S.SW) return null;
+      return { x: S.SW.x - S.SW.w / 2, y: S.SW.y - S.SW.h / 2, w: S.SW.w, h: S.SW.h };
+    }
+    // 鼠标这一下是不是落在学生电源【面板那颗方形开关】上。
+    // 和 hitPsuKnob 一个规矩：几何读 D.PSU.SW、自己把 flip 的镜像补回来。
+    //
+    // ⚠️ 判据必须比绘制【宽一点点】：SW 是 26×20 的一颗小方块，照原样判的话
+    //    学生得瞄准到像素级。四周各放 PSU_SLACK。
+    // 🔴 放完这两块框是【真的叠着】的：旋钮中心 (−38, 0)、半径 22 ⇒ 命中框
+    //    x ∈ [−67, −9]、y ∈ [−20.2, 14]；开关框 x ∈ [−100, −60]、y ∈ [8, 42]。
+    //    交集 x ∈ [−67, −60] × y ∈ [8, 14]（7 × 6 px）。靠缩小框去躲是躲不掉的
+    //    —— 旋钮要抓得住就得往外放，开关也是。所以判据不是「两块框不相交」，
+    //    而是「**有效**集合不相交」：hitPsuKnob 里那句 inPsuSwitchRect 排除掉
+    //    开关那一块，两个函数返回的元件集合就互斥了。自检要钉的也是这一条
+    //    （整块面板逐像素扫：同一个点不许既被 hitPsuKnob 收下又被 hitPsuSwitch 收下）。
+    function hitPsuSwitch(p) {
+      var cs = getScene().comps;
+      if (!psuSwitchRect()) return null;
+      for (var i = cs.length - 1; i >= 0; i--) {
+        var c = cs[i];
+        if (c.type !== 'power') continue;
+        var l = D.toLocal(c, p.x, p.y);
+        if (D.flipOf(c)) l.x = -l.x;
+        if (inPsuSwitchRect(l)) return c;
+      }
+      return null;
     }
     function hitTerminal(p) {
       var cs = getScene().comps;
@@ -606,6 +677,11 @@
       rerouteAll();
       changed();
       if (differs && key === 'closed') report('switch', { comp: c, closed: !!val });
+      // 学生电源面板上那颗方形开关走的是同一个声音：它和闸刀开关做的是同一件
+      // 事（通 / 断），只是长在仪器上。键名是 'on' 不是 'closed'，因为它的语义
+      // 是「这台仪器有没有开机」，和闸刀的「闸刀合上没有」是两回事 ——
+      // 内核里 buildBranches 也只认 P.on === false 才断路。
+      else if (differs && key === 'on') report('switch', { comp: c, closed: !!val });
     }
 
     // 给元件改名（画布上那个标签框里显示的字）。空 / 全空白 ⇒ 恢复自动编号
@@ -838,6 +914,18 @@
         return;
       }
 
+      // 拧学生电源的电压旋钮，同样要排在「搬走整台电源」前面：旋钮长在面板上，
+      // 先判本体的话这一下永远被当成拖元件，旋钮就白画了。
+      var pk = hitPsuKnob(p);
+      if (pk) {
+        beginEdit();
+        select({ kind: 'comp', id: pk.id });
+        psuKnob = { id: pk.id, moved: false };
+        canvas.setPointerCapture && canvas.setPointerCapture(ev.pointerId);
+        changed();
+        return;
+      }
+
       var cs = getScene().comps;
       for (var i = cs.length - 1; i >= 0; i--) {   // 后画的在上层，从后往前找
         if (hitComp(p, cs[i])) {
@@ -899,6 +987,25 @@
         }
         slider = null;
       }
+      if (psuKnob) {
+        var pc = byId(psuKnob.id);
+        if (pc && D.PSU) {
+          var pl = D.toLocal(pc, p.x, p.y);
+          if (D.flipOf(pc)) pl.x = -pl.x;      // 镜像过的电源：把 x 翻回面板坐标系
+          // 角度 = 从旋钮中心指向鼠标。刻度盘与指针共用 psuEmfFromAngle 这一份
+          // 换算（它自带 0.5V 吸附），所以「指针停在哪 = 电压是多少」永远一致。
+          var ang = Math.atan2(pl.y - D.PSU.KNOB.y, pl.x - D.PSU.KNOB.x);
+          var nv2 = D.psuEmfFromAngle(ang);
+          if (nv2 !== (pc.params || {}).emf) {
+            if (!psuKnob.moved) { psuKnob.moved = true; commitEdit(); }  // 真拧动了才入栈
+            pc.params = pc.params || {};
+            pc.params.emf = nv2;
+          }
+          onChange();
+          return;
+        }
+        psuKnob = null;
+      }
       if (moving) {
         var c = byId(moving.id);
         if (!moving.moved && Math.hypot(p.x - moving.x0, p.y - moving.y0) > 4) {
@@ -919,16 +1026,20 @@
       if (nt) nh = { kind: 'term', compId: nt.compId, termIdx: nt.termIdx };
       else if (nl) nh = { kind: 'loose', index: nl.index, k: nl.k };
       else {
-        var ns = hitSlider(p);
-        if (ns) nh = { kind: 'slider', id: ns.id };
+        var np = hitPsuKnob(p);
+        if (np) nh = { kind: 'psuKnob', id: np.id };
         else {
-          var cs = getScene().comps;
-          for (var i = cs.length - 1; i >= 0; i--) {
-            if (hitComp(p, cs[i])) { nh = { kind: 'comp', id: cs[i].id }; break; }
+          var ns = hitSlider(p);
+          if (ns) nh = { kind: 'slider', id: ns.id };
+          else {
+            var cs = getScene().comps;
+            for (var i = cs.length - 1; i >= 0; i--) {
+              if (hitComp(p, cs[i])) { nh = { kind: 'comp', id: cs[i].id }; break; }
+            }
+            // 导线也进 hover：它现在能拖了，不给一个 move 光标的话，学生根本
+            // 不知道这线是可拖的 —— 它长得和别的线一模一样。
+            if (!nh) { var nw = hitWire(p); if (nw >= 0) nh = { kind: 'wire', index: nw }; }
           }
-          // 导线也进 hover：它现在能拖了，不给一个 move 光标的话，学生根本
-          // 不知道这线是可拖的 —— 它长得和别的线一模一样。
-          if (!nh) { var nw = hitWire(p); if (nw >= 0) nh = { kind: 'wire', index: nw }; }
         }
       }
       var changedHover = JSON.stringify(nh) !== JSON.stringify(hover);
@@ -939,6 +1050,7 @@
         : hitDeleteButton(p) ? 'pointer'
         : (nt || nl) ? 'crosshair'
         : (nh && nh.kind === 'slider') ? 'ew-resize'
+        : (nh && nh.kind === 'psuKnob') ? 'grab'
         : (nh ? 'move' : 'default');
       if (changedHover) onChange();
     }
@@ -1090,6 +1202,14 @@
         // 拨动了就已经入过栈；只按一下没动，就是普通点选，不留撤销记录
         if (!slider.moved) discardEdit();
         slider = null;
+        changed();
+        return;
+      }
+      if (psuKnob) {
+        // 同上：拧动了才留撤销记录。单纯点一下旋钮 = 选中这台电源
+        // （参数面板照常显示），不报 onTap —— 旋钮是控件，不是「点一下看读数」。
+        if (!psuKnob.moved) discardEdit();
+        psuKnob = null;
         changed();
         return;
       }
@@ -1264,6 +1384,27 @@
         }
       }
 
+      // 悬停 / 正在拧【学生电源】的电压旋钮：给它描一圈。旋钮画在面板上、
+      // 和机箱同色，不描一圈学生根本不知道这东西可以直接拧。
+      var hp = psuKnob || (hover && hover.kind === 'psuKnob' ? hover : null);
+      if (hp) {
+        var hpc = byId(hp.id);
+        if (hpc && hpc.type === 'power' && D.PSU) {
+          var KS = D.PSU.KNOB;
+          ctx.save();
+          ctx.translate(hpc.x, hpc.y);
+          ctx.rotate((hpc.rot || 0) * Math.PI / 180);
+          if (D.flipOf(hpc)) ctx.scale(-1, 1);   // 和绘制本体同一套位姿
+          ctx.beginPath();
+          ctx.ellipse(KS.x, KS.y, KS.r + 6, KS.r * 0.6 + 6, 0, 0, 6.284);
+          ctx.fillStyle = 'rgba(37,99,235,0.16)';
+          ctx.fill();
+          ctx.strokeStyle = 'rgba(37,99,235,0.9)'; ctx.lineWidth = 2;
+          ctx.stroke();
+          ctx.restore();
+        }
+      }
+
       // 选中框
       if (selected && selected.kind === 'comp') {
         var c = byId(selected.id);
@@ -1407,6 +1548,24 @@
         return D.toWorld(c, D.sliderLocalX(D.slideOf(c)),
                          (D.RHEO.knobTop + D.RHEO.knobBottom) / 2);
       },
+      // 学生电源：旋钮中心与面板开关矩形的逻辑坐标。页面「点开关通断」和
+      // 自检「拖旋钮」都要用，别自己按 PSU 常数再猜一遍 —— 猜的那份一旦和
+      // 绘制漂移，症状就是「看得见却点不着」。
+      psuKnobPos: function (id) {
+        var c = byId(id);
+        if (!c || c.type !== 'power' || !D.PSU) return null;
+        var lx = D.PSU.KNOB.x, ly = D.PSU.KNOB.y;
+        if (D.flipOf(c)) lx = -lx;
+        return D.toWorld(c, lx, ly);
+      },
+      // 面板开关命中的是【元件自身坐标系】的矩形：调用方自己 toLocal 再判，
+      // 这样镜像 / 旋转都跟着走。
+      psuSwitchRect: psuSwitchRect,
+      // 世界坐标 → 「这一下落在哪台学生电源的面板开关 / 电压旋钮上」。
+      // 页面点开关要通断，走它比「psuSwitchRect + 自己 toLocal + 自己补 flip」
+      // 少两处能漂的地方；自检还要用它断「两块命中框不许相交」。
+      hitPsuSwitch: hitPsuSwitch,
+      hitPsuKnob: hitPsuKnob,
       beginSilent: function () { muted = true; },
       endSilent: function () { muted = false; pushUndo(); },
       drawOverlay: drawOverlay,

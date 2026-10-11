@@ -123,7 +123,12 @@
     // 二选一，另一种的默认值会跟着错。
     power: {
       label: '学生电源', terminals: 2, termNames: ['+', '-'],
-      defaults: { emf: 6, rInt: 0 },
+      // on = 面板上那颗【电源开关】。默认合上（true），关掉就整台机器不输出
+      // —— 和断开一个开关完全同构（见 buildBranches 的 battery/power 分支）。
+      // 默认值必须是 true 而不是 undefined：参数面板上那个勾选框读的是
+      // defaultParams()，给 undefined 的话新放的电源一上来就显示成「关着的」，
+      // 而电路其实通着 —— 面板和电路自相矛盾。
+      defaults: { emf: 6, rInt: 0, on: true },
     },
     switch: {
       label: '开关', terminals: 2, termNames: ['a', 'b'],
@@ -563,6 +568,18 @@
       // 「节数」这个概念）；学生电源永远走 emf / rInt 这两个键。
       case 'battery':
       case 'power': {
+        // 学生电源面板上那颗【电源开关】关掉 = 这台仪器不输出，一条支路都不
+        // 产生 —— 和断开一个开关同构（见下面 case 'switch'）。干电池没有这颗
+        // 开关（TYPES.battery.defaults 里没有 on），P.on 恒为 undefined
+        // ⇒ 不受影响；另外那句 comp.type 判断本来也把它挡在外面。
+        // ⚠️ 判据必须写 `P.on === false`，不能写 `!P.on`。注意这里的 P 是
+        //    【paramsOf(comp)】—— 已经和 TYPES.power.defaults 合并过，所以
+        //    「存档里没有 on 这个键」这一种情形 P.on 恒为 true，两种写法等价，
+        //    别拿它当理由（我一开始就是这么写错的）。真正能分辨的是
+        //    【键在、值却不是布尔】：JSON 里 "on": null 完全合法，手改过的存档、
+        //    导出的旧文件都可能带上它 —— 那时 !P.on 会把一台好好的电源判成
+        //    「关着的」，学生只看到「电路通了但不亮」。只有显式 false 才算关。
+        if (comp.type === 'power' && P.on === false) break;
         var cells = P.cells != null ? P.cells : 1;
         var emf = P.emf != null ? P.emf : cells * (P.emfPerCell != null ? P.emfPerCell : 1.5);
         var rInt = P.rInt != null ? P.rInt : cells * (P.rPerCell != null ? P.rPerCell : 0.5);
@@ -1959,6 +1976,6 @@
     isOpenFault: isOpenFault,
     BULB_BURN_K: BULB_BURN_K,
     BATT_MAX_I: BATT_MAX_I,
-    version: '1.2.0',
+    version: '1.3.0',
   };
 });

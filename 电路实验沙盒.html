@@ -668,8 +668,8 @@
      改了内核而 HTML 没变的话，老访客会拿缓存里的旧脚本跑新页面（画面上就
      会出现「说明写了电子逆流、小球却还顺着流」这种自相矛盾）。改脚本时
      把这个 build 号 +1 即可。 -->
-<script src="circuit-core.js?build=18"></script>
-<script src="circuit-draw.js?build=27"></script>
+<script src="circuit-core.js?build=19"></script>
+<script src="circuit-draw.js?build=28"></script>
 <!-- 教材版本皮肤：把「元件长什么样」从 circuit-draw.js 里摘出来做成可切换的一层。
      皮肤【只画外形】，一个物理量都不算 —— 接线柱照旧画在 D.terminalWorld 上，
      读数照旧从内核回传的 rec 里读。所以换皮肤不影响导线、拖拽、命中、求解。
@@ -681,22 +681,22 @@
 <script src="circuit-skin-renjiao-img-data.js?build=1"></script>
 <!-- 第二批素材：电池（1 节 / 2 节）、定值电阻、电流表、电压表、滑动变阻器、电动机。
      同一套口径：底盘用原图，该动的活动件从同一张原图里抠出来当刚体。 -->
-<script src="circuit-skin-renjiao-img2-data.js?build=1"></script>
+<script src="circuit-skin-renjiao-img2-data.js?build=2"></script>
 <!-- 第三批素材：发光二极管（人教版图 15.2-3）。图上正好画了【两个状态】——
      正向导通（管身发亮 + 放射状光芒）与反向截止（暗管），各贴一张原图；
      绿管 / 蓝管由同一张底图旋转色相派生（形状一个像素没动）。 -->
 <script src="circuit-skin-renjiao-img3-data.js?build=1"></script>
-<script src="circuit-skin-renjiao.js?build=5"></script>
-<script src="circuit-editor.js?build=22"></script>
+<script src="circuit-skin-renjiao.js?build=6"></script>
+<script src="circuit-editor.js?build=23"></script>
 <!-- 参数面板规格 + 读数显示格式。从本页内联抽出，与 3D 版沙盒（电路实验沙盒3D）
      共用同一份真值：面板规格、小数位、极性显示规则改一处两边都变。 -->
-<script src="circuit-params.js?build=2"></script>
+<script src="circuit-params.js?build=3"></script>
 <!-- 电路图（实物图 → 标准符号）。独立成第四块内核：沙盒和欧姆定律页共用同一份，
      免得各写一套符号，两边的图画法迟早不一样。三个老内核一行没动，build 号不升。 -->
-<script src="circuit-schematic.js?build=13"></script>
+<script src="circuit-schematic.js?build=14"></script>
 <!-- 音效引擎。全部音色现场合成，不带音频素材；AudioContext 懒创建，
      等第一次真实手势才建。它只读状态、只出声，不碰物理也不碰画面。 -->
-<script src="circuit-sound.js?build=2"></script>
+<script src="circuit-sound.js?build=3"></script>
 <script>
 // ---- 访问保护：仅允许站内跳转（与站内其它实验页一致）----
 (function(){
@@ -2969,6 +2969,10 @@ function onSelChanged(){
 // 抽成具名函数是为了自检能直接走这一路 —— 点表盘开的是放大镜、点别处开的是
 // 参数面板，这两件事的分岔点全在这里，自检不绕过它才测得到真东西。
 function onTapComp(c, p){
+  // 🔴 srcBox 必须在 practice 分支【之前】取一次。那一段会把 revealed 置上，
+  //    等判到下面「点开关」那一行再读，第一下就已经算「揭晓过了」——
+  //    于是学生在练习模式里点一下电源黑匣子，回来发现它被关掉了。
+  var srcBox = !!(practice && !revealed[c.id]);
   // 练习模式：点元件 = 揭晓【它自己】的读数，再点一下收起。
   // 揭晓之后继续往下走原来的路（表盘 → 放大镜、其余 → 参数浮层），
   // 「揭晓」和「看细节」就是同一次点击，不用点两下。
@@ -2984,13 +2988,35 @@ function onTapComp(c, p){
   }
   if (c.type === 'ammeter' || c.type === 'voltmeter') {
     var l = D.toLocal(c, p.x, p.y);
-    if (dialHit(l.x, l.y)) { openZoom(c); return; }
+    if (dialHit(l.x, l.y, c)) { openZoom(c); return; }
   }
   // 开关不弹浮层：点一下它【已经通断】了（编辑器在 pointerup 里翻的 params，
   // 见 circuit-editor 那段「点一下就通断」）。再弹一块只写着一个「闭合」勾选框
   // 的浮层，等于给同一件事开两个入口 —— 学生点完开关还得动手把它关掉。
   // 选中照旧发生，所以右侧「元件参数」里那份勾选框还在，要看细的往那儿看。
   if (c.type === 'switch') return;
+  // 学生电源面板上那颗【电源开关】：和普通开关同一个规矩 —— 点一下就通断、
+  // 不弹浮层。区别是这一支走【页面】而不是编辑器（编辑器 pointerup 里那段
+  // 只认 type === 'switch'），所以通断、音效、撤销都在这儿补齐。
+  // 🔴 练习模式下黑匣子盖住的正是整台机器（含那颗开关）：那一下只是揭晓读数，
+  //    既不能顺手把它关掉（srcBox 就是为此在函数开头先取一次的），
+  //    也不该响那一声闸刀。
+  if (c.type === 'power' && !srcBox) {
+    if (editor.hitPsuSwitch(p) === c) {
+      editor.pushUndo();
+      c.params = c.params || {};
+      // 判据和内核一致（见 circuit-core 的 battery/power 分支）：只有【显式
+      // false】才算关着，键缺失 / null 一律算开着。写 !on 的话，存档里
+      // "on": null 的电源会被点成「开着」——和面板显示的正好相反。
+      c.params.on = (c.params.on === false);
+      onEditorEvent('switch', { comp: c, closed: !!c.params.on });
+      render();
+      return;
+    }
+    // 电压旋钮：点一下不拖 = 只是选中这台电源（和变阻器滑片一个规矩：
+    // 没真动过就当没发生），同样不弹浮层。真拧动在编辑器的 pointermove 里做。
+    if (editor.hitPsuKnob(p) === c) return;
+  }
   openPop(c.id);
 }
 
@@ -3072,6 +3098,20 @@ var Dproxy = (typeof Proxy === 'function')
     })
   : window.CircuitDraw;
 
+// 编辑器报「发生了一件值得出声的事」，页面转手交给音效引擎。
+// 页面不判断该不该响、响什么 —— 那是引擎的事；这里只做一次转发。
+// 抽成具名函数是为了【学生电源面板开关】那一支也能走同一条路：那一支在
+// onTapComp 里（编辑器 pointerup 只认 type === 'switch'），不共用的话
+// 它会静默不出声 —— 而「闸刀那一声」正是学生判断「这一下真的通断了」的依据。
+function onEditorEvent(name, data){
+  if (sound) sound.trigger(name, data);
+  // 开关【合上】的那一下：电路里有没调零的电表正在读数，当场提示。
+  // 挂在「动作真的发生的那一行」上（和音效同一条理由，见编辑器里那段注释）：
+  // 靠每帧比对场景状态的话，预设电路一加载、或者学生拖动别的元件导致重解，
+  // 都会误报一次 —— 而这件事只在「学生亲手合闸」时才该说。
+  if (name === 'switch' && data && data.closed) checkZeroOnClose();
+}
+
 editor = E.create({
   canvas: canvas, W: W, H: H,
   draw: Dproxy,
@@ -3095,15 +3135,7 @@ editor = E.create({
   // 悬停时把光标换成输入光标 —— 不给这个反馈，学生根本不会想到那行字可以点。
   onHoverTag: function(p){ return !!tagAt(p); },
   // 编辑器报「发生了一件值得出声的事」，页面转手交给音效引擎。
-  // 页面不判断该不该响、响什么 —— 那是引擎的事；这里只做一次转发。
-  onEvent: function(name, data){
-    if (sound) sound.trigger(name, data);
-    // 开关【合上】的那一下：电路里有没调零的电表正在读数，当场提示。
-    // 挂在「动作真的发生的那一行」上（和音效同一条理由，见编辑器里那段注释）：
-    // 靠每帧比对场景状态的话，预设电路一加载、或者学生拖动别的元件导致重解，
-    // 都会误报一次 —— 而这件事只在「学生亲手合闸」时才该说。
-    if (name === 'switch' && data && data.closed) checkZeroOnClose();
-  },
+  onEvent: onEditorEvent,
 });
 
 // ── 点元件弹出的浮动参数面板 ──────────────────────────────
@@ -3276,7 +3308,13 @@ var zoomView = { K: 0, cw: 0, ch: 0, midX: 0, midY: 0 };
 // 表盘的可点区域 = 表壳 + 底座正面：横向 ±96，纵向从表壳顶 −88 到底座 46。
 // 【不能】一直管到接线柱（局部 y = 72）：那两根柱子得留给拖线用，
 // 点柱子应该拉出一根导线，而不是弹放大镜。
-function dialHit(lx, ly){ return Math.abs(lx) <= 96 && ly >= -88 && ly <= 46; }
+// 表盘命中框（点这儿开放大镜）。皮肤可以给一个更贴的框：课本表缩小之后
+// 原版那组数（±96 / −88…46）会把表外面一大圈也算成表盘，点旁边的空白也会开表。
+function dialHit(lx, ly, comp){
+  var b = (D.__skin && D.__skin.dialBoxOf && comp) ? D.__skin.dialBoxOf(comp) : null;
+  if (b) return lx >= b.x0 && lx <= b.x1 && ly >= b.y0 && ly <= b.y1;
+  return Math.abs(lx) <= 96 && ly >= -88 && ly <= 46;
+}
 
 function openZoom(c){
   if (!c || (c.type !== 'ammeter' && c.type !== 'voltmeter')) return;
@@ -3339,7 +3377,10 @@ function drawZoom(){
   // 未调零：琥珀圈 + 一个「调零」字样（不写的话，那颗螺丝和表壳上另外两颗
   // 装饰螺丝长得一模一样，没人知道它是能点的）。已调零：一圈绿 + 一枚绿勾。
   var zeroed = meterZeroed(zoomComp);
-  var Z = D.MET.ZERO;
+  // 调零螺丝的位置：皮肤可以覆盖。原版 D.MET.ZERO 是 (0, 26) —— 课本图上
+  // 螺丝在 (−4.7, 11.6)，照原版画圈就落在网纹块【下面】的浅蓝底板上
+  // （用户报的「圈偏下了」）。皮肤没声明就退回原版。
+  var Z = (D.__skin && D.__skin.zeroKnobOf && D.__skin.zeroKnobOf(zoomComp)) || D.MET.ZERO;
   g.save();
   g.textAlign = 'center'; g.textBaseline = 'middle';
   g.lineWidth = 2.2 / K;
@@ -3396,7 +3437,7 @@ function zoomHitZero(clientX, clientY){
   var zy = (clientY - r.top) * (zoomView.ch / r.height);
   var lx = (zx - zoomView.cw / 2) / zoomView.K + zoomView.midX;
   var ly = (zy - zoomView.ch / 2) / zoomView.K + zoomView.midY;
-  var Z = D.MET.ZERO;
+  var Z = (D.__skin && D.__skin.zeroKnobOf && D.__skin.zeroKnobOf(zoomComp)) || D.MET.ZERO;
   // 判定半径放宽到「螺丝 + 4.5」：真手指点不准 6.5px 的螺丝，而这个半径在
   // 屏幕上就是 15px 上下，正好是一个指肚。几何取自绘制层导出的 D.MET.ZERO，
   // 页面不自己记一份 —— 绘制改了这里就悄悄错位。
@@ -3742,9 +3783,11 @@ var LG_ICON = { w: 86, h: 58 };
 var LG_VIEW = {
   resistor:  { x0: -74, y0: -26, x1: 74, y1: 26 },
   battery:   { x0: -112, y0: -42, x1: 112, y1: 42 },
-  // 学生电源：机箱 ±62（面板上还长着表头和旋钮）、接线柱在 ±70，
-  // 机箱上沿 −70、下沿 +38。取景框照这个给，图例里才看得清面板。
-  power:     { x0: -78, y0: -76, x1: 78, y1: 44 },
+  // 学生电源：照课本图重做后前面板 212×98（±106）、右侧面再进深 18，
+  // 机箱上沿 −54（顶面再高 12 ⇒ −66）、下沿 +44；接线柱挪到面板右下角
+  // （局部 x = 36 / 78）。取景框照这个给，图例里才看得清面板 ——
+  // 小一圈就会把顶面和右边切掉一条。
+  power:     { x0: -126, y0: -68, x1: 126, y1: 46 },
   switch:    { x0: -74, y0: -68, x1: 74, y1: 38 },
   bulb:      { x0: -74, y0: -80, x1: 74, y1: 40 },
   ammeter:   { x0: -102, y0: -92, x1: 102, y1: 82 },
@@ -4770,7 +4813,7 @@ window.__openZoom = function(id){
   if (c) openZoom(c);
 };
 window.__closeZoom = function(){ closeZoom(); };
-window.__dialHit = function(lx, ly){ return dialHit(lx, ly); };
+window.__dialHit = function(lx, ly, c){ return dialHit(lx, ly, c); };
 window.__btnCurrent = function(){ return btnCurrent; };
 window.__pathOf = function(wr){ return pathOf(wr); };
 window.__readout = function(c, r){ return readoutLines(c, r); };
@@ -5187,7 +5230,10 @@ window.__zoomView = function(){
 window.__zoomZeroScreen = function(){
   if (!zoomComp || !zoomView.K) return null;
   var r = zoomCv.getBoundingClientRect();
-  var Z = D.MET.ZERO;
+  // 🔴 必须和 drawZoom / zoomHitZero 用【同一份】几何（皮肤可以覆盖）。
+  //    这里写死 D.MET.ZERO 的话，皮肤下返回的是原版那个位置 ——
+  //    自检照它点下去点不到螺丝，而人手动点又是对的（只有自动化的腿会假红）。
+  var Z = (D.__skin && D.__skin.zeroKnobOf && D.__skin.zeroKnobOf(zoomComp)) || D.MET.ZERO;
   return {
     x: r.left + (zoomView.cw/2 + zoomView.K*(Z.x - zoomView.midX)) * (r.width / zoomView.cw),
     y: r.top  + (zoomView.ch/2 + zoomView.K*(Z.y - zoomView.midY)) * (r.height / zoomView.ch),

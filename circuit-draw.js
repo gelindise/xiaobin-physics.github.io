@@ -427,10 +427,19 @@
   var TERMINALS = {
     resistor: [{ x: -HALF, y: 0 }, { x: HALF, y: 0 }],
     battery: [{ x: HALF, y: 0 }, { x: -HALF, y: 0 }],   // 0 = 正极（右）
-    // 学生电源：端子和干电池【同一个摆法】（0 号是正极、落在右侧）。
-    // 两者的极性语义本来就一样（都是「电流从正极流出」），接线柱也都在两侧，
-    // 所以坐标一致 —— 换元件的时候导线不用重新接。
-    power: [{ x: HALF, y: 0 }, { x: -HALF, y: 0 }],     // 0 = 正极（右）
+    // 学生电源：全站【唯一】一件端子不在 ±70 上的元件 —— 照课本实物，
+    // 两个接线柱都长在面板右下角（0 号 = 正极，是左边那个）。
+    // 这和干电池的摆法不一样是有意的：两者极性语义相同（电流从正极流出），
+    // 但实物长相不同，柱子位置当然也不同。
+    // 坐标是【量那幅课本图】量出来的：两个柱子相对面板宽度在 0.66 / 0.85 处、
+    // 高度在 0.83 处（面板 212×98、上沿 −54 ⇒ 36 / 78、y = 26）。
+    // 两柱间距 42 也是照图给的 —— 第一版只隔 22，两根柱子快粘成一根。
+    // 🔴 改这四位数会牵到四处，改之前先把它们一起看一遍：
+    //    · circuit-schematic 的 schTermWorld —— 电路图仍按「符号两端」引线
+    //    · circuit-3d-kit 的端子表 —— 3D 机箱宽度必须盖得住最右那根柱子
+    //    · circuit-editor 的 BODY 命中框（点得到 / 看不见会打架）
+    //    · circuit-draw 的 bodyBox（走线避让）与 PSU.POSTS（直接引用这一项）
+    power: [{ x: 36, y: 26 }, { x: 78, y: 26 }],
     switch: [{ x: -HALF, y: 0 }, { x: HALF, y: 0 }],
     bulb: [{ x: -HALF, y: 0 }, { x: HALF, y: 0 }],
     // 二极管和电动机是【有极性】的，0 号端子一律是「+」（左边那个红柱）。
@@ -1112,11 +1121,14 @@
         var s = batterySize(Math.max(1, Math.min(6, Math.round(emf / per))));
         return { hw: s.boxW / 2, hh: s.boxH / 2 };
       }
-      // 学生电源：整台机箱的包围盒（机箱 ±62，接线柱在 ±70）。
-      // ⚠️ hw 必须【小于 70−3 = 67】才不把接线柱圈进盒子里（见上面那条注释），
-      //    取 66 正好：机箱 62 被盖住、接线柱 70 落在外面。hh 取 70 罩住机箱
-      //    上下沿（−70 / 38）。
-      case 'power': return { hw: 66, hh: 70 };
+      // 学生电源：整台机箱的包围盒（前面板 ±106，右侧面再厚 18 ⇒ 最右 124；
+      // 顶面抬高 12 ⇒ 最上 −66；下沿 44）。
+      // 🔴 这一件是【例外】：接线柱长在面板【里面】（右下角），所以不能再靠
+      //    「hw 小于柱子坐标」把它们挡在盒子外 —— 盒子就是整台机箱，柱子本来
+      //    就长在机箱上。走线避让（laneFree）只判竖车道，柱子那截横引线不参与，
+      //    所以不会把「导线夹在柱子上」误判成「导线穿过元件」。
+      // ⚠️ 改了 PSU 的 HW / DEP / TOP / DTOP / BOT，这两个数要跟着重算。
+      case 'power': return { hw: 126, hh: 66 };
       // 开关和灯泡是「板子铺在导线底下、柱子从板面上立起来」的一类，
       // 和两只表正好反过来。盒子取「够用不缩」的那一档，但要卡死 ≤ 73：
       // 接线柱在 ±70，走线检查算的是 |lx| < hw−3，hw 再大柱子就被圈进盒子里，
@@ -1148,34 +1160,118 @@
   // ============================================================
   // 学生电源（直流稳压电源）
   // ------------------------------------------------------------
-  // 实验室里那台 J1202 型的稳压电源：方形机箱，面板左上是一只电压指示表头、
-  // 右上一个电压调节旋钮，红黑两个接线柱从两侧引出。
+  // 照人教版课本插图那台机器画：浅灰方机箱、四分之三视角（看得见顶面和右侧
+  // 面），前面板上
+  //     · 左上  圆形指示灯（通电就亮）
+  //     · 左中  大旋钮 + 外圈刻度盘（3~36V，12 档）
+  //     · 左下  方形电源开关（真的能拨）
+  //     · 右上  「学生电源」丝印
+  //     · 右下  红黑两个接线柱（+ / −）
   //
-  // 为什么不像干电池那样画「躺在槽里的电池」：这是【两个不同的元件】。
-  // 干电池的电压由节数定死（1.5V 的整数倍），学生电源的电压由旋钮连续调 ——
-  // 这正是用户要的「电源电压是可调的」。电路图上两者也是不同的符号
-  // （学生电源外面多套一个方框，见 circuit-schematic 的 drawSymbol）。
-  // 实物画成一个样，学生就分不清自己接的是哪个，而这恰恰是「用学生电源
-  // 取任意电压做实验」这件事的起点。
+  // ⚠️ 全站只有这一件是四分之三视角。这不是风格跑偏 —— 课本上这台机器就是
+  //    这么画的（用户要求「1:1 还原」）。厚度压得很浅（18 / 12），远看仍是一台
+  //    方机箱，不会显得比别的元件「歪」。
   //
-  // ⚠️ 表头上的指针【跟着实际输出电压走】：旋钮一转针就动。画成一根钉死的
-  //    针，面板上那只表头就只是个装饰，学生也不会把「旋钮」和「电压」联系起来。
+  // ⚠️ 面板做宽到 212×98 —— 【课本上这台机器是只扁箱子】，量那幅图：前面板
+  //    约 297×117 px，宽高比 2.54:1；别的元件（小灯泡 / 开关）是 140 宽的一
+  //    块板，这台机器横着快是它们的一倍半。第一版只给了 144×84（1.71:1），
+  //    症状不是「窄一点」这么轻 —— 12 个刻度数字被挤到直径 88 的那一圈里，
+  //    每格只剩 11.2px，而且最左边那个「12」正好压在指示灯上（实测重叠
+  //    2.1 × 4.4 px）。宽高比摆对了，这一圈数字才排得开（见 PSU.DIAL 那段）。
+  //
+  // 🔴 改 HW / TOP / BOT / DEP / DTOP 会牵到五处，改之前一起看一遍：
+  //    · 本文件 bodyBox 的 case 'power'（走线避让的包围盒）
+  //    · 本文件 TERMINALS.power（两个接线柱就在这块面板上，别跑到箱子外）
+  //    · circuit-editor 的 BODY.power 与 PSU_SLACK 那一族命中框
+  //    · circuit-3d-kit 的 BUILDERS.power（3D 机箱宽度要跟得上柱子）
+  //    · 页面里 LG_VIEW.power（图例取景框，小一圈就把机箱切掉一条）
+  //
+  // ⚠️ 旋钮能【拖】、开关能【点】。几何全部从下面这个 PSU 导出，命中判定与
+  //    画法共用同一份数字 —— 各写一份迟早漂移成「看得见却拧不动」。
   // ============================================================
   var PSU = {
-    HW: 62, TOP: -70, BOT: 38,        // 机箱：半宽 / 上沿 / 下沿
-    DIAL: { x: -30, y: -38, r: 24 },  // 面板左上：电压指示表头
-    KNOB: { x: 27, y: -40, r: 17 },   // 面板右上：电压调节旋钮
-    // 表头刻度：指针只扫上半圈，从 −130° 到 −50°（和真表一样）。
-    A0: -Math.PI * 0.72, A1: -Math.PI * 0.28,
-    VMAX: 15,                          // 表头满量程（= 面板旋钮能调到的最大电压）
+    HW: 106, TOP: -54, BOT: 44,       // 前面板：半宽 / 上沿 / 下沿（212 × 98）
+    DEP: 18, DTOP: 12,                // 立体厚度（顶面与右侧面向【右上】偏移）
+    // 电压调节旋钮。摆在【面板左侧偏中】—— 课本图上旋钮中心在面板宽度 0.31
+    // 处（−106 + 0.31×212 ≈ −40），不是正中间：右边要留给丝印和接线柱。
+    KNOB: { x: -38, y: 0, r: 22 },
+    // 刻度盘：一圈刻度线（r0~r1）+ 一圈数字（rt）。角度是 canvas 约定
+    // （0 = 正右、顺时针为正），190° → 350°：从左下经正上方扫到右下。
+    //
+    // ⚠️ 这三个半径是【挤出来的】，别随手放大：
+    //    · r0 = 23 紧贴旋钮椭圆的左右两极（旋钮 r = 22、竖直半轴 13.2，190° 那个
+    //      方向的椭圆半径约 21.4），刻度线才像是从旋钮边上长出来的；
+    //    · rt = 46 是【能排下 12 个数字】的半径：190°~350° 共 160°，12 个数字
+    //      均分就是 14.5°，在 46 上是 11.7px 一格；字号 6.5 的两位数是 7.2px 宽，
+    //      留 4.5px 空隙。缩到 38 只剩 9.7px，12 和 15 就粘成一个「1215」了；
+    //    · 数字那一圈再往外就顶到面板上沿：中心 y = 0，rt = 46 时最上面那个
+    //      数字（18 / 21）的中心在 −45.6、字高 6.5 ⇒ 上边缘 −48.9，面板上沿 −54。
+    DIAL: { r0: 23, r1: 38, rt: 46, a0: 190, a1: 350 },
+    // 方形电源开关（左下角）与圆形指示灯（左上角）。两者都要【让开刻度盘】：
+    // 开关整块落在旋钮左边（右沿 −67，旋钮椭圆最左 −60，留 7px），指示灯摆在
+    // 面板左上角、和刻度盘最左那个「12」（x ≈ −69…−62）横向差 15px 以上。
+    // ⚠️ 指示灯【不能】再往右下挪：第一版它在 (−58,−38)，正好被「12」压住
+    //    （实测重叠 2.1 × 4.4 px，绿点边上糊了半个「1」）。
+    SW: { x: -80, y: 25, w: 26, h: 20 },
+    LAMP: { x: -90, y: -42, r: 5.5 },
+    READY: 32,                               // 当前电压那行丝印的 y
+    // 两个接线柱【就是】TERMINALS.power（同一份数字，别再抄一遍）。
+    POSTS: TERMINALS.power,
+    // 接线柱下面那块【垫板】（课本图上两个柱子是拧在一块凸起的小板上的）。
+    // 坐标照 POSTS 推：两柱在 36 / 78，板子左右各让出 18 / 16。
+    PLATE: { x0: 18, y0: 10, x1: 94, y1: 36 },
+    VMIN: 3, VMAX: 36, TICKS: 12,            // 输出电压 3~36V，12 档
   };
+  // 电压 → 刻度盘上的比例（0~1）。画指针和拖拽反解共用这一份。
+  function psuFracOf(emf) {
+    var f = ((+emf || 0) - PSU.VMIN) / (PSU.VMAX - PSU.VMIN);
+    return f < 0 ? 0 : (f > 1 ? 1 : f);
+  }
+  function psuAngleOf(emf) {
+    var D = PSU.DIAL;
+    return (D.a0 + (D.a1 - D.a0) * psuFracOf(emf)) * Math.PI / 180;
+  }
+  // 拖拽用：屏幕上的一个角度 → 电压。按 0.5V 吸附 —— 和参数面板那根滑块的
+  // 步进必须一致，不吸附的话面板显示 6.0、画布上其实是 6.0437，两边永远对不上。
+  //
+  // 🔴 刻度盘只占 190°~350°（上半圈），剩下那 200°（右 → 下 → 左）是【缺口】。
+  //    落在缺口里的角度必须按【就近】夹到两端：
+  //      · 指针拖到右下（≈0°）→ 36V，拖到左下（≈180°）→ 3V；
+  //      · 一律夹到 36 的话，把旋钮往左下方拖会跳到最大值 —— 和学生的手感正好相反。
+  //    ⚠️ 更要命的是【缺口边界上的浮点误差】：190° 那一端稍微差一点点（比如
+  //    189.9998，真实鼠标坐标来回换算必然带这种误差），原来那句
+  //    「deg < a0 就 += 360」会把它一路推到 549.9998，算出 36V ——
+  //    也就是「明明拧到了最小档，读数却是最大」。自检里那次「拖到 190° 实得
+  //    36V」就是这么来的。所以先把角度规整到 [0,360)，再按就近判断。
+  function psuEmfFromAngle(a) {
+    var D = PSU.DIAL;
+    var deg = a * 180 / Math.PI;
+    deg = ((deg % 360) + 360) % 360;             // atan2 给 (−180,180] → [0,360)
+    var f;
+    if (deg >= D.a0 && deg <= D.a1) {
+      f = (deg - D.a0) / (D.a1 - D.a0);
+    } else {
+      // 缺口里：比到两端的【角距离】（取 360 的补角，免得跨 0° 时算成 350）
+      var d0 = Math.abs(deg - D.a0); d0 = Math.min(d0, 360 - d0);
+      var d1 = Math.abs(deg - D.a1); d1 = Math.min(d1, 360 - d1);
+      f = (d0 <= d1) ? 0 : 1;
+    }
+    return Math.round((PSU.VMIN + (PSU.VMAX - PSU.VMIN) * f) * 2) / 2;
+  }
+  // 旋钮（顶面椭圆）在屏幕上的半径：照【屏幕方向】取点，而不是照椭圆参数方程
+  // 取点 —— 后者竖直方向被压扁，指针看起来会比刻度偏一个角。
+  function psuKnobRadius(a) {
+    var K = PSU.KNOB, kry = K.r * 0.60;
+    return 1 / Math.hypot(Math.cos(a) / K.r, Math.sin(a) / kry);
+  }
 
   function drawPowerSupply(ctx, comp, rec) {
     var P = comp.params || {};
+    var S = PSU, K = S.KNOB, DL = S.DIAL, SW = S.SW, LP = S.LAMP;
     var emf = P.emf != null ? +P.emf : 6;
-    var S = PSU, D = S.DIAL, K = S.KNOB;
+    var on = P.on !== false;                  // 面板上那颗电源开关（默认合上）
     var sc = ctxScale(ctx);
-    var frac = Math.max(0, Math.min(1, emf / S.VMAX));
+    var L = -S.HW, R = S.HW, T = S.TOP, B = S.BOT, dx = S.DEP, dy = S.DTOP;
 
     ctx.save();
     ctx.translate(comp.x, comp.y);
@@ -1185,115 +1281,190 @@
     //    那里已经按 flip 把 x 取过负了，在这里再镜像一次会把柱子画到相反的一侧。
     if (flipOf(comp)) ctx.scale(-1, 1);
 
-    var boxW = S.HW * 2, boxH = S.BOT - S.TOP;
+    // ── 接触阴影 ────────────────────────────────────────────────
+    contactShadow(ctx, (L + R + dx) / 2, B + 2, (R - L + dx) * 0.5, 7, 0.26);
 
-    // ── 引出线：从机箱侧面水平引到接线柱 ────────────────────────
-    // 水平引出（不用斜线）：斜线会让接线柱看起来像被导线戳穿。
-    ctx.strokeStyle = PALETTE.metalLo; ctx.lineWidth = 3.5; ctx.lineCap = 'round';
+    // ── 顶面（平行四边形）：四分之三视角里唯一看得见的水平面 ─────
     ctx.beginPath();
-    ctx.moveTo(-S.HW, 0); ctx.lineTo(-HALF, 0);
-    ctx.moveTo(S.HW, 0);  ctx.lineTo(HALF, 0);
-    ctx.stroke();
-
-    // ── 机箱 ────────────────────────────────────────────────────
-    contactShadow(ctx, 0, S.BOT + 1, S.HW * 0.92, 6, 0.28);
-    ctx.save();
-    ctx.shadowColor = 'rgba(15,23,42,0.30)'; ctx.shadowBlur = 16; ctx.shadowOffsetY = 6;
-    ctx.fillStyle = linGrad(ctx, 0, S.TOP, 0, S.BOT,
-      [[0, '#eef3f8'], [0.28, '#dbe4ee'], [0.70, '#c3cfdc'], [1, '#a6b4c5']]);
-    roundRect(ctx, -S.HW, S.TOP, boxW, boxH, 7); ctx.fill();
-    ctx.restore();
-    ctx.strokeStyle = 'rgba(51,65,85,0.45)'; ctx.lineWidth = 1.3;
-    roundRect(ctx, -S.HW, S.TOP, boxW, boxH, 7); ctx.stroke();
-    // 顶面受光 + 底边压暗：只有这两笔，机箱才是一个有厚度的箱体而不是一块板
-    ctx.save();
-    roundRect(ctx, -S.HW, S.TOP, boxW, boxH, 7); ctx.clip();
-    ctx.fillStyle = 'rgba(255,255,255,0.55)';
-    ctx.fillRect(-S.HW + 5, S.TOP + 2, boxW - 10, 3);
-    ctx.fillStyle = 'rgba(51,65,85,0.12)';
-    ctx.fillRect(-S.HW + 5, S.BOT - 8, boxW - 10, 6);
-    ctx.restore();
-
-    // ── 前面板：内嵌的沉台，比箱体亮一档 ────────────────────────
-    var panX = -S.HW + 6, panY = S.TOP + 6, panW = boxW - 12, panH = boxH - 14;
-    ctx.fillStyle = linGrad(ctx, 0, panY, 0, panY + panH,
-      [[0, '#f7fafd'], [0.55, '#ebf1f7'], [1, '#dbe4ee']]);
-    roundRect(ctx, panX, panY, panW, panH, 5); ctx.fill();
-    ctx.strokeStyle = 'rgba(100,116,139,0.35)'; ctx.lineWidth = 1;
-    roundRect(ctx, panX, panY, panW, panH, 5); ctx.stroke();
-
-    // ── 电压指示表头（左上）────────────────────────────────────
-    var pvx = D.x, pvy = D.y + D.r * 0.42;     // 指针轴心（偏下）
-    var ar = D.r * 0.56;                       // 刻度弧半径
-    ctx.beginPath(); ctx.arc(D.x, D.y, D.r, 0, 6.284);
-    ctx.fillStyle = linGrad(ctx, D.x, D.y - D.r, D.x, D.y + D.r,
-      [[0, '#ffffff'], [0.72, '#f5f8fb'], [1, '#e3eaf2']]);
+    ctx.moveTo(L, T); ctx.lineTo(R, T);
+    ctx.lineTo(R + dx, T - dy); ctx.lineTo(L + dx, T - dy);
+    ctx.closePath();
+    ctx.fillStyle = linGrad(ctx, 0, T - dy, 0, T, [[0, '#d5dade'], [1, '#bcc3ca']]);
     ctx.fill();
-    ctx.strokeStyle = 'rgba(71,85,105,0.60)'; ctx.lineWidth = 1.4; ctx.stroke();
-    // 刻度弧 + 四根刻度线（0 / 5 / 10 / 15V）
-    ctx.strokeStyle = '#64748b'; ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.arc(pvx, pvy, ar, S.A0, S.A1); ctx.stroke();
-    for (var i = 0; i <= 3; i++) {
-      var a = S.A0 + (S.A1 - S.A0) * (i / 3);
-      ctx.beginPath();
-      ctx.moveTo(pvx + Math.cos(a) * ar, pvy + Math.sin(a) * ar);
-      ctx.lineTo(pvx + Math.cos(a) * ar * 0.78, pvy + Math.sin(a) * ar * 0.78);
-      ctx.stroke();
-    }
-    // 指针 + 轴心
-    var pa = S.A0 + (S.A1 - S.A0) * frac;
-    ctx.strokeStyle = '#b91c1c'; ctx.lineWidth = 1.7; ctx.lineCap = 'round';
-    ctx.beginPath();
-    ctx.moveTo(pvx - Math.cos(pa) * ar * 0.16, pvy - Math.sin(pa) * ar * 0.16);
-    ctx.lineTo(pvx + Math.cos(pa) * ar * 0.98, pvy + Math.sin(pa) * ar * 0.98);
-    ctx.stroke();
-    ctx.beginPath(); ctx.arc(pvx, pvy, 2.3, 0, 6.284);
-    ctx.fillStyle = '#334155'; ctx.fill();
-    // 盘面中央的「V」
-    ctx.fillStyle = '#334155';
-    ctx.font = 'bold 9px -apple-system,"PingFang SC",sans-serif';
-    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText('V', D.x, D.y + D.r * 0.70);
+    ctx.strokeStyle = 'rgba(71,85,105,0.42)'; ctx.lineWidth = 1; ctx.stroke();
 
-    // ── 电压调节旋钮（右上）────────────────────────────────────
-    ctx.beginPath(); ctx.arc(K.x, K.y, K.r + 2.5, 0, 6.284);
-    ctx.fillStyle = 'rgba(51,65,85,0.16)'; ctx.fill();
-    var kg = ctx.createRadialGradient(K.x - K.r * 0.35, K.y - K.r * 0.35, K.r * 0.12,
-                                      K.x, K.y, K.r);
-    kg.addColorStop(0, '#f4f7fb'); kg.addColorStop(0.55, '#ccd6e2'); kg.addColorStop(1, '#8494a8');
-    ctx.beginPath(); ctx.arc(K.x, K.y, K.r, 0, 6.284);
-    ctx.fillStyle = kg; ctx.fill();
-    ctx.strokeStyle = 'rgba(51,65,85,0.50)'; ctx.lineWidth = 1.2; ctx.stroke();
-    // 侧面滚花：一圈短竖线，远看就是「拧得动」的塑料旋钮
-    ctx.strokeStyle = 'rgba(51,65,85,0.26)'; ctx.lineWidth = 1;
-    for (var t = 0; t < 16; t++) {
-      var ta = t / 16 * Math.PI * 2;
+    // ── 右侧面 ──────────────────────────────────────────────────
+    ctx.beginPath();
+    ctx.moveTo(R, T); ctx.lineTo(R + dx, T - dy);
+    ctx.lineTo(R + dx, B - dy); ctx.lineTo(R, B);
+    ctx.closePath();
+    ctx.fillStyle = linGrad(ctx, R, 0, R + dx, 0, [[0, '#aeb6bf'], [1, '#8b949e']]);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(71,85,105,0.42)'; ctx.lineWidth = 1; ctx.stroke();
+
+    // ── 前面板 ──────────────────────────────────────────────────
+    ctx.save();
+    ctx.shadowColor = 'rgba(15,23,42,0.26)'; ctx.shadowBlur = 12; ctx.shadowOffsetY = 5;
+    roundRect(ctx, L, T, R - L, B - T, 4);
+    ctx.fillStyle = linGrad(ctx, 0, T, 0, B,
+      [[0, '#e6eaee'], [0.42, '#d8dde2'], [1, '#c3cad1']]);
+    ctx.fill();
+    ctx.restore();
+    ctx.strokeStyle = 'rgba(71,85,105,0.55)'; ctx.lineWidth = 1.3;
+    roundRect(ctx, L, T, R - L, B - T, 4); ctx.stroke();
+
+    // 面板内嵌沉台：比箱体亮一档，读出「这是一块面板」
+    var pX = L + 5, pY = T + 5, pW = (R - L) - 10, pH = (B - T) - 10;
+    ctx.fillStyle = linGrad(ctx, 0, pY, 0, pY + pH, [[0, '#eff2f5'], [1, '#dee3e8']]);
+    roundRect(ctx, pX, pY, pW, pH, 3); ctx.fill();
+    ctx.strokeStyle = 'rgba(100,116,139,0.28)'; ctx.lineWidth = 0.9;
+    roundRect(ctx, pX, pY, pW, pH, 3); ctx.stroke();
+
+    // ── 接线柱垫板（右下）────────────────────────────────────────
+    // 课本图上那两个柱子不是直接拧在面板上的，是拧在一块【凸起的小板】上。
+    // 画在丝印之前、posts() 之前：柱子由宿主在导线之后补画，那时这块早就铺好。
+    var PL = S.PLATE;
+    ctx.beginPath();
+    roundRect(ctx, PL.x0, PL.y0, PL.x1 - PL.x0, PL.y1 - PL.y0, 3);
+    ctx.fillStyle = linGrad(ctx, 0, PL.y0, 0, PL.y1, [[0, '#eef1f5'], [1, '#d5dbe2']]);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(100,116,139,0.38)'; ctx.lineWidth = 0.9; ctx.stroke();
+    // 板子上沿一道亮边：没有它这块板读成「面板上刷了块浅灰」，看不出凸起。
+    ctx.beginPath();
+    ctx.moveTo(PL.x0 + 2, PL.y0 + 0.8); ctx.lineTo(PL.x1 - 2, PL.y0 + 0.8);
+    ctx.strokeStyle = 'rgba(255,255,255,0.85)'; ctx.lineWidth = 1; ctx.stroke();
+
+    // ── 刻度盘：一圈刻度线 + 一圈数字（先画，旋钮压在上面）──────
+    var i, n = S.TICKS;
+    // 一道【细弧线】把 12 根刻度线的外端串起来。课本图上那一圈数字就是印在
+    // 这么一道弧上的 —— 只有 12 根孤立的短线时，远看是一把扇子，不像刻度盘。
+    ctx.beginPath();
+    ctx.arc(K.x, K.y, DL.r1, DL.a0 * Math.PI / 180, DL.a1 * Math.PI / 180);
+    ctx.strokeStyle = 'rgba(107,114,128,0.75)'; ctx.lineWidth = 1;
+    ctx.stroke();
+    for (i = 0; i < n; i++) {
+      var t = i / (n - 1);
+      var a = (DL.a0 + (DL.a1 - DL.a0) * t) * Math.PI / 180;
+      var ca = Math.cos(a), sa = Math.sin(a);
+      var big = (i === 0 || i === n - 1);
       ctx.beginPath();
-      ctx.moveTo(K.x + Math.cos(ta) * K.r * 0.80, K.y + Math.sin(ta) * K.r * 0.80);
-      ctx.lineTo(K.x + Math.cos(ta) * K.r * 0.96, K.y + Math.sin(ta) * K.r * 0.96);
+      ctx.moveTo(K.x + ca * DL.r0, K.y + sa * DL.r0);
+      ctx.lineTo(K.x + ca * DL.r1, K.y + sa * DL.r1);
+      ctx.strokeStyle = big ? '#374151' : '#6b7280';
+      ctx.lineWidth = big ? 1.8 : 1.1;
+      ctx.lineCap = 'round';
       ctx.stroke();
     }
-    // 指示线跟着电压转：0V 指向左下、15V 指向右下，中间扫过正上方。
-    // 和表头指针【同一个 frac】——两处各算一遍的话，迟早出现「针指着 6V、
-    // 旋钮却停在 9V」，而画面上看着都挺对。
-    var ka = -Math.PI * 0.75 + Math.PI * 1.5 * frac;
-    ctx.strokeStyle = '#b91c1c'; ctx.lineWidth = 2.6; ctx.lineCap = 'round';
+    // 数字：只在够大时画（缩略图上会糊成一坨脏点，见 ctxScale 的注释）
+    if (sc >= 0.85) {
+      for (i = 0; i < n; i++) {
+        var t2 = i / (n - 1);
+        var a2 = (DL.a0 + (DL.a1 - DL.a0) * t2) * Math.PI / 180;
+        silk(ctx, String(Math.round(S.VMIN + (S.VMAX - S.VMIN) * t2)),
+             K.x + Math.cos(a2) * DL.rt, K.y + Math.sin(a2) * DL.rt, 6.5, '#3f4a58');
+      }
+    }
+
+    // ── 旋钮：四分之三视角里是一只矮圆柱（顶面是椭圆）────────────
+    var krx = K.r, kry = K.r * 0.60, kh = 8;
+    // 侧壁
     ctx.beginPath();
-    ctx.moveTo(K.x + Math.cos(ka) * K.r * 0.18, K.y + Math.sin(ka) * K.r * 0.18);
-    ctx.lineTo(K.x + Math.cos(ka) * K.r * 0.86, K.y + Math.sin(ka) * K.r * 0.86);
+    ctx.moveTo(K.x + krx, K.y);
+    ctx.ellipse(K.x, K.y + kh, krx, kry, 0, 0, Math.PI);
+    ctx.lineTo(K.x - krx, K.y);
+    ctx.closePath();
+    ctx.fillStyle = linGrad(ctx, K.x - krx, 0, K.x + krx, 0,
+      [[0, '#8d97a1'], [0.32, '#c2cad2'], [1, '#7d8792']]);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(51,65,85,0.45)'; ctx.lineWidth = 0.9; ctx.stroke();
+    // 顶面
+    var kg = ctx.createRadialGradient(K.x - krx * 0.35, K.y - kry * 0.35, krx * 0.1,
+                                      K.x, K.y, krx);
+    kg.addColorStop(0, '#f6f8fa'); kg.addColorStop(0.5, '#d3dae1'); kg.addColorStop(1, '#98a3ae');
+    ctx.beginPath(); ctx.ellipse(K.x, K.y, krx, kry, 0, 0, 6.284);
+    ctx.fillStyle = kg; ctx.fill();
+    ctx.strokeStyle = 'rgba(51,65,85,0.45)'; ctx.lineWidth = 1; ctx.stroke();
+    // 滚花：顶面外圈的一圈短径向线，远看就是「拧得动」
+    if (sc >= 0.85) {
+      ctx.strokeStyle = 'rgba(51,65,85,0.30)'; ctx.lineWidth = 0.9;
+      for (i = 0; i < 24; i++) {
+        var ta = i / 24 * Math.PI * 2;
+        ctx.beginPath();
+        ctx.moveTo(K.x + Math.cos(ta) * krx * 0.80, K.y + Math.sin(ta) * kry * 0.80);
+        ctx.lineTo(K.x + Math.cos(ta) * krx * 0.97, K.y + Math.sin(ta) * kry * 0.97);
+        ctx.stroke();
+      }
+    }
+    // 指示线：角度直接取刻度盘那一份（psuAngleOf），按【屏幕方向】落在椭圆上
+    var pa = psuAngleOf(emf), prr = psuKnobRadius(pa);
+    ctx.strokeStyle = '#c0392b'; ctx.lineWidth = 3; ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(K.x + Math.cos(pa) * prr * 0.18, K.y + Math.sin(pa) * prr * 0.18);
+    ctx.lineTo(K.x + Math.cos(pa) * prr * 0.88, K.y + Math.sin(pa) * prr * 0.88);
     ctx.stroke();
-    ctx.beginPath(); ctx.arc(K.x, K.y, K.r * 0.22, 0, 6.284);
-    ctx.fillStyle = '#e6ecf3'; ctx.fill();
+    ctx.beginPath(); ctx.ellipse(K.x, K.y, krx * 0.26, kry * 0.26, 0, 0, 6.284);
+    ctx.fillStyle = '#e9edf1'; ctx.fill();
     ctx.strokeStyle = 'rgba(51,65,85,0.35)'; ctx.lineWidth = 0.9; ctx.stroke();
 
-    // ── 丝印：型号 + 当前输出电压 ───────────────────────────────
-    if (sc >= 1) {
-      silk(ctx, 'J1202', -S.HW + 24, S.BOT - 12, 8, 'rgba(100,116,139,0.92)');
-      silk(ctx, '学生电源', S.HW - 26, S.BOT - 12, 8, 'rgba(51,65,85,0.85)');
+    // ── 方形电源开关（左下）────────────────────────────────────
+    // 真机是一颗方形拨动开关：底壳 + 一根能左右倒的拨杆。
+    // 拨杆倒向哪边一眼就能读出来，而且和「点一下真的通断」对得上。
+    ctx.beginPath();
+    roundRect(ctx, SW.x - SW.w / 2, SW.y - SW.h / 2, SW.w, SW.h, 3);
+    ctx.fillStyle = linGrad(ctx, 0, SW.y - SW.h / 2, 0, SW.y + SW.h / 2,
+      [[0, '#5a6570'], [1, '#39424c']]);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(15,23,42,0.60)'; ctx.lineWidth = 1; ctx.stroke();
+    // 内凹（拨杆在里面倒）
+    ctx.beginPath();
+    roundRect(ctx, SW.x - SW.w / 2 + 3.5, SW.y - SW.h / 2 + 3.5, SW.w - 7, SW.h - 7, 2);
+    ctx.fillStyle = 'rgba(15,23,42,0.44)'; ctx.fill();
+    ctx.save();
+    ctx.translate(SW.x, SW.y);
+    ctx.rotate(on ? -0.44 : 0.44);
+    ctx.beginPath();
+    roundRect(ctx, -SW.w * 0.20, -SW.h * 0.30, SW.w * 0.40, SW.h * 0.60, SW.w * 0.14);
+    ctx.fillStyle = linGrad(ctx, -SW.w * 0.2, 0, SW.w * 0.2, 0,
+      [[0, '#f2f5f8'], [0.45, '#cdd5dd'], [1, '#8b959f']]);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(15,23,42,0.45)'; ctx.lineWidth = 0.9; ctx.stroke();
+    ctx.restore();
+
+    // ── 圆形指示灯（左上）：通电就亮 ─────────────────────────────
+    ctx.beginPath(); ctx.arc(LP.x, LP.y, LP.r + 1.8, 0, 6.284);
+    ctx.fillStyle = '#4a545e'; ctx.fill();
+    ctx.beginPath(); ctx.arc(LP.x, LP.y, LP.r, 0, 6.284);
+    if (on) {
+      var lg = ctx.createRadialGradient(LP.x - LP.r * 0.3, LP.y - LP.r * 0.3, LP.r * 0.1,
+                                        LP.x, LP.y, LP.r);
+      lg.addColorStop(0, '#bbf7d0'); lg.addColorStop(0.55, '#22c55e'); lg.addColorStop(1, '#15803d');
+      ctx.fillStyle = lg;
+    } else {
+      ctx.fillStyle = '#2f3944';
     }
-    silk(ctx, emf.toFixed(1) + ' V', K.x, K.y + K.r + 13, 10.5, '#1f2937');
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(15,23,42,0.45)'; ctx.lineWidth = 0.9; ctx.stroke();
+
+    // ── 丝印 ────────────────────────────────────────────────────
+    // 机型名摆在右上角（课本就是这么印的：右端离面板右沿约 18px）。
+    silk(ctx, '学生电源', 66, -42, 11, '#39424e');
+    // 接线柱的极性记号。
+    // 🔴 必须摆在柱子的【左上方】，不能摆正上方 —— 柱子是 posts() 在变换【之外】
+    //    补画的，画在丝印【之后】；摆在正上方那 9px 字会被柱帽整个盖住。
+    //    第一版就摆在 (x, y−13)，那正好落在滚花螺母的范围里（局部 y ∈ [−23, +2.7]），
+    //    于是「+ / −」两个记号在画面上【一个都看不见】—— 而极性记号是学生认
+    //    正负极的唯一依据，看不见等于这件器材没标极性。
+    //    摆到左边 x−14 就整块出了螺母的横向范围（螺母半宽 6.75），压不到了。
+    silk(ctx, '+', S.POSTS[0].x - 14, S.POSTS[0].y - 10, 9.5, '#b91c1c');
+    silk(ctx, '−', S.POSTS[1].x - 14, S.POSTS[1].y - 10, 9.5, '#1f2937');
+    // 当前输出电压：旋钮正下方（拖旋钮时它就是那个「看得见的反馈」）。
+    // 左沿约 −52 让开方形开关的右沿 −67，右沿约 −24 离接线柱垫板（左沿 18）还远。
+    silk(ctx, emf.toFixed(1) + ' V', K.x, S.READY, 10.5, '#1f2937');
 
     ctx.restore();
+
+    // 接线柱：端子 0 = 正极（左）。kinds[i] 对应【端子序号】，不是左右顺序。
+    posts(ctx, comp, ['pos', 'neg'], 1.35, 8);
   }
 
   function drawBattery(ctx, comp, rec) {
@@ -3981,16 +4152,28 @@
   // ============================================================
   function drawSourceBox(ctx, comp, rec) {
     var isPSU = comp.type === 'power';
-    var hw = 62, hh = isPSU ? 52 : 24;
+    // 盒体范围。
+    //  · 电池：柱子钉在 ±HALF(±70)，盒子比柱子窄（±62），再从盒壁引两截线到柱子；
+    //  · 学生电源：柱子长在面板【右下角】(36, 26) / (78, 26)，盒子必须整个盖住
+    //    它们 —— 照电池那套 ±62 画的话，右边那根柱子在盒外，导线接在半空里。
+    //    取【上下左右对称】的 ±84 而不是「左 −70 / 右 90」的偏心盒：这件器材
+    //    可以「对调极性」（params.flip ⇒ 柱子镜像到 −36 / −78），而 drawSourceBox
+    //    这一段没有跟着镜像 —— 偏心盒会在翻转过的电源上把柱子漏到盒外去。
+    // 🔴 这两个数要跟着 TERMINALS.power 走（柱子在面板上挪了，盒子就得跟着挪）。
+    var hw = isPSU ? 84 : 62;
+    var hh = isPSU ? 58 : 24;
     ctx.save();
     ctx.translate(comp.x, comp.y);
     ctx.rotate((comp.rot || 0) * Math.PI / 180);
-    // 引出导线：从盒体水平引到 ±HALF 的接线柱上（和两种电源原来的引法一致）
-    ctx.strokeStyle = PALETTE.metalLo; ctx.lineWidth = 3.5; ctx.lineCap = 'round';
-    ctx.beginPath();
-    ctx.moveTo(-hw, 0); ctx.lineTo(-HALF, 0);
-    ctx.moveTo(hw, 0); ctx.lineTo(HALF, 0);
-    ctx.stroke();
+    // 引出导线：只有电池那一路需要。学生电源的柱子本来就在盒子【里面】，
+    // 再画那两截就是往盒面上刷一条横线。
+    if (!isPSU) {
+      ctx.strokeStyle = PALETTE.metalLo; ctx.lineWidth = 3.5; ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(-hw, 0); ctx.lineTo(-HALF, 0);
+      ctx.moveTo(hw, 0); ctx.lineTo(HALF, 0);
+      ctx.stroke();
+    }
     // 盒体：深色渐变，一眼看出「这里面是什么，不知道」
     var g = ctx.createLinearGradient(0, -hh, 0, hh);
     g.addColorStop(0, '#475569'); g.addColorStop(0.55, '#334155'); g.addColorStop(1, '#1e293b');
@@ -4088,12 +4271,17 @@
     drawBackground: drawBackground, drawBindingPost: drawBindingPost,
     resistorBands: resistorBands, roundRect: roundRect, softShadow: softShadow,
     batterySize: batterySize, bodyBox: bodyBox,
-    // 学生电源的面板几何（机箱 / 表头 / 旋钮）。导出是给测试用的：断言要能拿
-    // 【同一份】几何去判「表头指针有没有跟着电压走」，而不是在测试里再抄一遍
-    // 坐标 —— 抄一份就等于把「实现改了、测试还绿」这个洞留着。
+    // 学生电源的面板几何（机箱 / 旋钮 / 刻度盘 / 开关 / 指示灯 / 接线柱）。
+    // 导出是给【编辑器】和【自检】用的：
+    //   · 编辑器拖旋钮时按 psuEmfFromAngle 反解电压；
+    //   · 自检要能拿【同一份】几何去判「拖了旋钮，电压真的跟着变」，
+    //     而不是在测试里再抄一遍角度公式 —— 抄一份就等于把「实现改了、
+    //     测试还绿」这个洞留着。
     PSU: PSU,
+    psuFracOf: psuFracOf, psuAngleOf: psuAngleOf,
+    psuEmfFromAngle: psuEmfFromAngle, psuKnobRadius: psuKnobRadius,
     MAT: MAT, MET: MET, MET_SWEEP: MET_SWEEP, POST_GRAD: POST_GRAD,
     BAND_COLORS: BAND_COLORS,
-    version: '2.3.0',
+    version: '2.5.0',
   };
 });
