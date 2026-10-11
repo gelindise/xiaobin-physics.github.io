@@ -669,13 +669,13 @@
      会出现「说明写了电子逆流、小球却还顺着流」这种自相矛盾）。改脚本时
      把这个 build 号 +1 即可。 -->
 <script src="circuit-core.js?build=18"></script>
-<script src="circuit-draw.js?build=26"></script>
+<script src="circuit-draw.js?build=27"></script>
 <!-- 教材版本皮肤：把「元件长什么样」从 circuit-draw.js 里摘出来做成可切换的一层。
      皮肤【只画外形】，一个物理量都不算 —— 接线柱照旧画在 D.terminalWorld 上，
      读数照旧从内核回传的 rec 里读。所以换皮肤不影响导线、拖拽、命中、求解。
      没覆盖到的元件类型一律回落原版画法，皮肤可以一件一件上。
      ⚠️ 改这几个文件同样要把下面的 build 号 +1。 -->
-<script src="circuit-skin.js?build=1"></script>
+<script src="circuit-skin.js?build=2"></script>
 <!-- 人教版素材：从两张课本原图里拆出来的「整图 / 地盘 / 刀片刚体 / 接线柱小块」
      （dev-imgskin.py 自动生成，别手改）。约 37 KB base64。 -->
 <script src="circuit-skin-renjiao-img-data.js?build=1"></script>
@@ -686,8 +686,8 @@
      正向导通（管身发亮 + 放射状光芒）与反向截止（暗管），各贴一张原图；
      绿管 / 蓝管由同一张底图旋转色相派生（形状一个像素没动）。 -->
 <script src="circuit-skin-renjiao-img3-data.js?build=1"></script>
-<script src="circuit-skin-renjiao.js?build=4"></script>
-<script src="circuit-editor.js?build=21"></script>
+<script src="circuit-skin-renjiao.js?build=5"></script>
+<script src="circuit-editor.js?build=22"></script>
 <!-- 参数面板规格 + 读数显示格式。从本页内联抽出，与 3D 版沙盒（电路实验沙盒3D）
      共用同一份真值：面板规格、小数位、极性显示规则改一处两边都变。 -->
 <script src="circuit-params.js?build=2"></script>
@@ -3054,8 +3054,27 @@ document.addEventListener('pointerdown', function(ev){
   commitNameEditor();
 }, true);
 
+// 编辑器必须看到【和画布同一套】几何：接线柱位置、外形包围盒、命中框。
+// 皮肤的 wrap() 每换一次皮肤就产出【新对象】，而 E.create() 会把 D 收进闭包
+// —— 直接把 D 传进去，换皮肤之后编辑器还在用旧那一份，症状是「导线接在皮肤的
+// 柱子上、点选/拉线却按原版算」，而且只有切换过皮肤才看得出来。
+// 所以传一个【转发代理】：每个属性每次读都回到当前的 D。
+// 🔴 老浏览器没有 Proxy 就退回原版（皮肤那层几何覆盖失效，但页面不崩）——
+//    宁可少一个特性，也不能白屏。
+var Dproxy = (typeof Proxy === 'function')
+  ? new Proxy({}, {
+      get: function (t, k) { return D[k]; },
+      has: function (t, k) { return k in D; },
+      ownKeys: function () { return Object.keys(D); },
+      getOwnPropertyDescriptor: function (t, k) {
+        return { configurable: true, enumerable: true, value: D[k] };
+      },
+    })
+  : window.CircuitDraw;
+
 editor = E.create({
   canvas: canvas, W: W, H: H,
+  draw: Dproxy,
   getScene: function(){ return scene; },
   onChange: renderSoft,
   onSelect: onSelChanged,

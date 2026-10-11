@@ -122,6 +122,50 @@
       return base.bodyBox(comp);
     };
 
+    // ── 接线柱位置：皮肤可以改【某几件】器材的柱子 ──────────────────
+    // 形状和 circuit-draw 的 TERMINALS 里那一项一样（元件自身坐标系）：
+    //   skin.terminals = { motor: [{x,y},{x,y}], rheostat: [{x,y},…] }
+    //
+    // 🔴 为什么必须有这条：像电动机那两根引线、变阻器的 C/D 柱，课本图上的
+    //    位置和原版不一样。改 circuit-draw 的 TERMINALS 是【共享契约】——
+    //    全站 16 个页面、内核的极性语义、基座那套画法会跟着一起变，等于把
+    //    原版也改了。所以皮肤自己带一张表，只有「选了这张皮肤」时才生效。
+    //
+    // 🔴 局部坐标 → 世界坐标只有一份实现（base.terminalWorldIn）：
+    //    翻转 flipOf 和位姿 rotate/translate 都在里面。皮肤自己再写一遍
+    //    这套三角函数，迟早在「翻转过的元件」上漂移成两套真值。
+    function tw(comp, list, i) {
+      var t = list && list[i];
+      if (!t) return null;
+      if (base.terminalWorldIn) return base.terminalWorldIn(comp, list, i);
+      // 老版本 circuit-draw（没导出 terminalWorldIn）的兜底：同样的式子，
+      // 少一层封装而已。不写这个的话老缓存页面上柱子会全部错位。
+      return base.toWorld(comp, base.flipOf(comp) ? -t.x : t.x, t.y);
+    }
+    out.terminalWorld = function (comp, i) {
+      var list = skin && skin.terminals && skin.terminals[comp.type];
+      if (list) return tw(comp, list, i);
+      return base.terminalWorld(comp, i);
+    };
+    // endWorld 必须跟着一起覆盖：原版那个函数内部调的是【模块作用域】的
+    // terminalWorld，拿不到上面这层覆盖 —— 不重写的话，导线端点会按原版
+    // 柱子解算，画出来的线落在 A 处、皮肤画的柱子在 B 处。
+    out.endWorld = function (comp, e) {
+      if (!e) return null;
+      if (e.compId && comp) return out.terminalWorld(comp, e.termIdx);
+      if (e.x != null && e.y != null) return { x: e.x, y: e.y };
+      return null;
+    };
+
+    // ── 命中框 / 选中框：皮肤声明「这件器材实际占多大地盘」──────────
+    // 返回【元件自身坐标系】的矩形 {x0,y0,x1,y1}（可以非对称 —— 开关的
+    // 手柄往左伸出去一大截，对称框要么框不住手柄、要么往右多圈一片空气）。
+    // 返回 null = 让调用方用它自己的默认值（原版那张 BODY 表）。
+    out.hitBoxOf = function (comp) {
+      var f = skin && skin.hitBox && skin.hitBox[comp.type];
+      return f ? f(comp) : null;
+    };
+
     return out;
   }
 

@@ -201,9 +201,27 @@
       var b = BODY[c.type] || [50, 50];
       return (c.rot === 90 || c.rot === 270) ? [b[1], b[0]] : [b[0], b[1]];
     }
+    // 命中框 / 选中框在【元件自身坐标系】里的矩形。
+    //
+    // 皮肤可以声明这件器材实际占多大地盘（D.hitBoxOf）—— 课本插图那套外形
+    // 和原版差得远（开关的手柄往左伸出去一大截、表头是一整台仪器），照原版
+    // 那张对称表算，症状就是「点手柄点不着」和「选中虚线框只框住表盘下半截」。
+    // 皮肤没声明就退回 BODY，原版行为一个字节没变。
+    function localBox(c) {
+      if (D.hitBoxOf) {
+        var b = D.hitBoxOf(c);
+        if (b) return b;
+      }
+      var h = BODY[c.type] || [50, 50];
+      return { x0: -h[0], y0: -h[1], x1: h[0], y1: h[1] };
+    }
     function hitComp(p, c) {
-      var h = bodyHalf(c);
-      return Math.abs(p.x - c.x) <= h[0] + 4 && Math.abs(p.y - c.y) <= h[1] + 4;
+      // 🔴 在【局部坐标】里判：原来的写法是拿世界坐标跟半宽比，只在 rot=0
+      //    时对；转过的元件要么点不着要么点得到旁边。toLocal 把位姿一次算清。
+      var l = D.toLocal(c, p.x, p.y);
+      var b = localBox(c);
+      return l.x >= b.x0 - 4 && l.x <= b.x1 + 4 &&
+             l.y >= b.y0 - 4 && l.y <= b.y1 + 4;
     }
     // 变阻器滑片能不能一把抓住。几何全部从 D.RHEO 取，和绘制同源；
     // 命中框比滑片本体放大一点（+6），不然 14px 宽的小凸起很难瞄准。
@@ -1250,11 +1268,15 @@
       if (selected && selected.kind === 'comp') {
         var c = byId(selected.id);
         if (c) {
-          var h = bodyHalf(c);
+          var b = localBox(c);
           ctx.save();
           ctx.strokeStyle = '#ea580c'; ctx.lineWidth = 2;
           ctx.setLineDash([7, 5]);
-          D.roundRect(ctx, c.x - h[0] - 7, c.y - h[1] - 7, (h[0] + 7) * 2, (h[1] + 7) * 2, 8);
+          // 框画在【元件自身坐标系】里：皮肤声明的是非对称框（开关的手柄
+          // 往左伸），按中心对称去画的话手柄框不住、右边还多圈一片空气。
+          ctx.translate(c.x, c.y);
+          ctx.rotate((c.rot || 0) * Math.PI / 180);
+          D.roundRect(ctx, b.x0 - 7, b.y0 - 7, (b.x1 - b.x0) + 14, (b.y1 - b.y0) + 14, 8);
           ctx.stroke();
           ctx.restore();
         }
@@ -1345,7 +1367,7 @@
     }
 
     return {
-      toLogical: toLogical, pathOf: pathOf, bodyHalf: bodyHalf, byId: byId,
+      toLogical: toLogical, pathOf: pathOf, bodyHalf: bodyHalf, localBox: localBox, byId: byId,
       addComp: addComp, setParam: setParam, removeSelected: removeSelected,
       // 参数面板的「量程」按钮走它，而不是 setParam：量程在实物上是「线接在
       // 哪个柱子上」，改参数不改接线的话画面和读数就对不上了。

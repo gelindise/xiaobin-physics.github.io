@@ -438,10 +438,7 @@
     // 一头的位置，二极管/电动机的 + 在左只是本页的摆法 —— 学生认哪边是正，
     // 靠的是柱子颜色和丝印，不是左右。
     led: [{ x: -HALF, y: 0 }, { x: HALF, y: 0 }],       // 0 = 「+」（阳极）
-    // 电动机：两个接线柱是【机身左下角那两根小引线】（课本图上它们挨得很近），
-    // 不是左右两端 —— 照 ±70 画，导线会接到机身两侧的空白处。实测课本图里
-    // 两根引线在机身左下，间距 12px。
-    motor: [{ x: -83.1, y: 56.9 }, { x: -71.3, y: 56.9 }],   // 0 = 「+」
+    motor: [{ x: -HALF, y: 0 }, { x: HALF, y: 0 }],     // 0 = 「+」
     // 电铃两个柱子都是金属色（neutral）—— 它没有极性，这不是省事，
     // 就是「通电就响、与电流方向无关」这件事在实物上的样子。
     bell: [{ x: -HALF, y: 0 }, { x: HALF, y: 0 }],
@@ -457,11 +454,7 @@
       // 上面两个柱是 C/D（金属杆两端）。改这四个点的【顺序】等于改内核语义，
       // 必须和 circuit-core.js 的 TYPES.rheostat 一起动。
       { x: -78, y: 26 }, { x: 78, y: 26 },     // A 左下 / B 右下（电阻丝）
-      // 🔴 C/D 原来也写 ±78，但【人教版课本图 16.4-2 上它们在外侧两端】——
-      //    照 ±78 画，接在 C/D 上的导线会停在离柱子十几像素的半空中。实测
-      //    课本图里 C/D 柱心在 ±95.1、比 A/B 高 38（局部 y=−12）。改成实测值：
-      //    基座画法走 terminalWorld，所以原版那套也跟着对齐，不会两套对不上。
-      { x: -95.1, y: -12 }, { x: 95.1, y: -12 },   // C 左上 / D 右上（金属杆）
+      { x: -78, y: -26 }, { x: 78, y: -26 },   // C 左上 / D 右上（金属杆）
     ],
   };
 
@@ -509,7 +502,19 @@
     return { x: dx * c - dy * s, y: dx * s + dy * c };
   }
   function terminalWorld(comp, i) {
-    var t = TERMINALS[comp.type][i];
+    return terminalWorldIn(comp, TERMINALS[comp.type], i);
+  }
+  // terminalWorld 的【表驱动】版本：端子表从外面传进来。
+  //
+  // 存在的理由：皮肤（circuit-skin.js）要能改某几件器材的接线柱位置，
+  // 但「局部坐标 → 世界坐标」这一步必须只有一份实现（翻转 flipOf、位姿
+  // rotate/translate 全在里面）。皮肤自己再写一遍这套三角函数，迟早在
+  // 「翻转过的元件」上漂移成两套真值 —— 导线接在 A 处、命中判定在 B 处。
+  //
+  // 🔴 传进来的 list 必须是【元件自身坐标系】的柱子表，形状和 TERMINALS 里
+  //    那一项一样（[{x,y}, …]）。原版调用走 TERMINALS[type]，一个字节没变。
+  function terminalWorldIn(comp, list, i) {
+    var t = list && list[i];
     if (!t) return null;
     return toWorld(comp, flipOf(comp) ? -t.x : t.x, t.y);
   }
@@ -4047,7 +4052,8 @@
 
   return {
     PALETTE: PALETTE, HALF: HALF, TERMINALS: TERMINALS,
-    terminalWorld: terminalWorld, toWorld: toWorld, toLocal: toLocal,
+    terminalWorld: terminalWorld, terminalWorldIn: terminalWorldIn,
+    toWorld: toWorld, toLocal: toLocal,
     // flipOf —— 「对调极性」的单一真值（读 comp.params.flip）。绘制、命中、
     //          测试都该问它，别各自去翻 params。
     // endWorld —— 解【导线端点】的唯一入口：元件还在就走端子坐标，元件被删了

@@ -109,6 +109,33 @@
   var IMG2 = {}, CV2 = {};
   var KEYS2 = G2 ? Object.keys(G2) : [];
 
+  // ── 皮肤自己的接线柱位置（元件自身坐标系）─────────────────────────
+  // 🔴 为什么不直接改 circuit-draw 的 TERMINALS：那是【共享契约】—— 全站 16 个
+  //    页面、内核的极性语义、基座那套画法会跟着一起变，等于把原版也改了。
+  //    （上一版就是踩了这个坑：为了把变阻器的 C/D 挪到课本位置，改了共享表，
+  //      结果原版的 C/D 也一起挪了，用户当场看出来。）
+  //    课本插图这三件的柱位和原版不一样：电动机的柱是机身左下角两根引线、
+  //    变阻器的 C/D 在两端外侧、表缩小后柱子跟着往里收。
+  var TERMS = {};
+  ['motor', 'rheostat', 'ammeter', 'voltmeter'].forEach(function (t) {
+    var S = G2 && G2[t];
+    if (S && S.terms && S.terms.length) TERMS[t] = S.terms;
+  });
+
+  // ── 命中框 / 选中框（局部坐标，非对称）───────────────────────────
+  // 数值由 dev-imgskin*.py 按【素材实际墨迹】量出来写进数据 —— 不在皮肤里猜：
+  // 开关手柄往左伸出去一大截、表是一整台仪器，照原版那张对称表算，症状就是
+  // 「点手柄点不着」和「选中虚线框只框住表盘下半截」。
+  var BOX = {};
+  (function () {
+    var G1 = (typeof window !== 'undefined' && window.__SKIN_IMG_RENJIAO) || null;
+    if (G1) {
+      if (G1.sw && G1.sw.box) BOX.switch = G1.sw.box;
+      if (G1.bl && G1.bl.box) BOX.bulb = G1.bl.box;
+    }
+    KEYS2.forEach(function (k) { if (G2[k].box) BOX[k] = G2[k].box; });
+  })();
+
   function build() {
     if (!IMG.swFull || !IMG.swChassis || !IMG.swBlade || !IMG.blFull || !IMG.blBase) {
       // 有一张没解出来就整体不启用：半套素材比没有更糟（画面会缺件）
@@ -135,6 +162,15 @@
         CV2[key + '_slider'] = mkCanvas(S.sliderW, S.sliderH);
         CV2[key + '_slider'].getContext('2d')
           .drawImage(IMG2[key + '_slider'], 0, 0, S.sliderW, S.sliderH);
+      }
+      if (S.kind === 'motor') {
+        // 两根引线各是一张 sprite（会各自绕上端转一个角度）
+        (S.leads || []).forEach(function (L, i) {
+          var im = IMG2[key + '_lead' + i];
+          if (!im) return;
+          CV2[key + '_lead' + i] = mkCanvas(L.w, L.h);
+          CV2[key + '_lead' + i].getContext('2d').drawImage(im, 0, 0, L.w, L.h);
+        });
       }
     });
     ready = true;
@@ -192,6 +228,11 @@
       list2.push({ key: key, src: G2[key].full });
       if (G2[key].kind === 'needle') list2.push({ key: key + '_needle', src: G2[key].needle });
       if (G2[key].kind === 'slider') list2.push({ key: key + '_slider', src: G2[key].slider });
+      if (G2[key].kind === 'motor') {
+        (G2[key].leads || []).forEach(function (L, i) {
+          list2.push({ key: key + '_lead' + i, src: L.img });
+        });
+      }
     });
     loadAll(list2, function () { build(); loadBatch3(); }, IMG2);
   });
@@ -491,6 +532,35 @@
     };
   }
 
+  // ── 电动机：底盘贴原图，两根引线抠出来绕【上端】向外张 ──────────
+  // 🔴 课本图上那两根引线间距只有 10px —— 导线接上去两根几乎叠在一起。
+  //    所以把引线各自当刚体、绕【上端】（贴到机身那一头）向外转 30°：
+  //    引线用的还是原图那几个像素，只是转了个角度，末端间距从 10px 拉到 27px。
+  //    端子（皮肤 terminals.motor）落在张开后的末端，导线就接在引线头上。
+  function drawMotor(ctx, comp, rec, opts, D) {
+    var S = G2 && G2['motor'], cv = CV2['motor'];
+    if (!ready || !S || !cv) { fallback(D, ctx, comp, rec, opts); return; }
+    ctx.save();
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    pose(ctx, comp, D);
+    ctx.drawImage(cv, -S.mid[0] * S.k, -S.mid[1] * S.k, S.w / S.dpr, S.h / S.dpr);
+    (S.leads || []).forEach(function (L, i) {
+      var lc = CV2['motor_lead' + i];
+      if (!lc) return;
+      // 旋转中心在【原图】里的位置 → 本地坐标
+      var px = (L.at[0] + L.pivot[0] - S.mid[0]) * S.k;
+      var py = (L.at[1] + L.pivot[1] - S.mid[1]) * S.k;
+      ctx.save();
+      ctx.translate(px, py);
+      ctx.rotate(L.deg * Math.PI / 180);
+      ctx.drawImage(lc, -L.pivot[0] * S.k, -L.pivot[1] * S.k, L.w * S.k, L.h * S.k);
+      ctx.restore();
+    });
+    ctx.restore();
+    Skin.setPosts(comp, ['pos', 'neg'], 1.4, 8);
+  }
+
   // 电池：沙盒的干电池【节数跟着电压走】（1~6 节）。
   // 用户只给了「1 节」「2 节」两张课本图，而且两张的【比例不一样】——
   // 所以 dev-imgskin2.py 拿 2 节那张当模板【拼装】出 1~6 节（battery1..battery6），
@@ -591,8 +661,23 @@
       ammeter: drawMeter('ammeter'),
       voltmeter: drawMeter('voltmeter'),
       rheostat: drawRheostat('rheostat'),
-      motor: drawStatic('motor'),
+      motor: drawMotor,
       led: drawLed,
+    },
+    // 🔴 皮肤自己的接线柱表（局部坐标）。wrap 的 terminalWorld 认它，
+    //    没列的类型走原版 —— 原版的 ±70 / ±78 一个字节没动。
+    terminals: TERMS,
+    // 命中框 / 选中框（局部坐标，可非对称）。没列的类型走编辑器那张 BODY 表。
+    hitBox: {
+      switch: function () { return BOX.switch || null; },
+      bulb: function () { return BOX.bulb || null; },
+      resistor: function () { return BOX.resistor || null; },
+      rheostat: function () { return BOX.rheostat || null; },
+      ammeter: function () { return BOX.ammeter || null; },
+      voltmeter: function () { return BOX.voltmeter || null; },
+      motor: function () { return BOX.motor || null; },
+      // 电池按【节数】换框：1 节和 6 节的宽高差一倍多
+      battery: function (comp) { return BOX[batteryKey(comp)] || null; },
     },
     posts: {
       switch: function (ctx, comp, s, D) {
@@ -609,17 +694,26 @@
       ammeter: postsFor('ammeter'),
       voltmeter: postsFor('voltmeter'),
       rheostat: postsFor('rheostat'),
-      motor: postsFor('motor'),
+      // 🔴 电动机【必须】给一个 posts 实现（哪怕是空的）：wrap 的 drawTerminals
+      //    在没有这一项时会回落到【原版】画法，而原版画的是 ±70 那对红黑柱 ——
+      //    皮肤的柱在左下角引线上，于是导线接在引线上、柱却画在机身两侧。
+      //    电动机的「柱」就是引线本身，没有额外的柱块要补画。
+      motor: function () {},
     },
     // 符号层留空：人教版电路图符号 = 现行实现（沙盒那张电路图本来就是照人教版画的）
     symbol: {},
     // 外形包络（非对称，比原版大一圈）：给验收卡「画出来的像素有没有跑出去」
-    // 外形包络（非对称，比原版大一圈）：给验收卡「画出来的像素有没有跑出去」
     // LED 是【竖着】的：管身顶在 −180、两根引线折平后落在 ±70 / y≈+5。
+    // 表头那一项是【缩小之后】的（METER_SCALE = 0.62）。
     envelope: {
       switch: { x0: -122, x1: 86, y0: -73, y1: 42 },
       bulb: { x0: -88, x1: 86, y0: -83, y1: 42 },
       led: { x0: -78, x1: 80, y0: -184, y1: 10 },
+      resistor: { x0: -94, x1: 94, y0: -8, y1: 46 },
+      rheostat: { x0: -121, x1: 119, y0: -36, y1: 75 },
+      ammeter: { x0: -79, x1: 74, y0: -100, y1: 101 },
+      voltmeter: { x0: -75, x1: 73, y0: -95, y1: 100 },
+      motor: { x0: -116, x1: 99, y0: -71, y1: 59 },
     },
     // 元件栏（沙盒 LG_VIEW）的取景框：不换的话图例里手柄会被裁掉两头
     view: {
@@ -628,6 +722,14 @@
       // 🔴 沙盒默认的 LG_VIEW.led（−78,−52 → 78,36）是给【横躺】的原版管子
       //    定的；人教版的管子立着、高 184，照默认框裁会把管子从中间截断。
       led: { x0: -82, y0: -188, x1: 82, y1: 16 },
+      // 这几件的框都按【脚本量出来的实际墨迹】给（见 dev-imgskin2.py 的 alpha_box）。
+      // 表头缩小之后，原版那两个框（±102 / −92…82）会留一大圈空白。
+      resistor: { x0: -100, y0: -14, x1: 100, y1: 52 },
+      battery: { x0: -92, y0: -52, x1: 90, y1: 32 },
+      ammeter: { x0: -85, y0: -106, x1: 80, y1: 107 },
+      voltmeter: { x0: -81, y0: -101, x1: 79, y1: 106 },
+      rheostat: { x0: -126, y0: -42, x1: 125, y1: 81 },
+      motor: { x0: -122, y0: -77, x1: 105, y1: 65 },
     },
     bodyBox: {},
     // 元件名称标签该落在哪儿 —— 覆盖沙盒写死的 DROP。
