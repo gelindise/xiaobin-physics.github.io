@@ -501,6 +501,33 @@
                     S.needleW / S.dpr, S.needleH / S.dpr);
       ctx.restore();
       ctx.restore();
+
+      // ── 数字示数（参数面板勾了「在表盘上显示读数」才画）────────────
+      // 🔴 位置和原版不一样，必须换：原版把液晶块放在【刻度弧下方、轴心上方】
+      //    那块「针扫不到」的地方 —— 因为原版的针只有一小段弧（半径 50~62）。
+      //    课本这张表的针是【从轴心一直伸到针尖】的一整条线，整片上半盘都在
+      //    它的扫程里，照原版的位置画会被针划过去。
+      //    课本表的扫角全是负角（−138.8°→−26.8°，绕轴心转），所以【轴心下方】
+      //    那一块永远扫不到 —— 液晶块放那儿：既空着、又不会被针划到。
+      //    数值一律走 D.fmtRead（和原版同一个格式化，不能这边自己拼小数位）。
+      if (comp.params && comp.params.showValue && !(rec && rec.practiceHide)) {
+        var vtxt = (D.fmtRead ? D.fmtRead(reading) : String(reading)) + (isVolt ? ' V' : ' A');
+        // 位置/尺寸按【网纹块右边那块空白】量出来：电流表网纹块占到 x=21、
+        // 表盘右沿在 66；电压表网纹块占到 x=11.3、表盘右沿在 48。
+        var vw = isVolt ? 34 : 42;
+        var va = isVolt ? [30, 2] : [43, 2];
+        ctx.save();
+        ctx.translate(va[0], va[1]);
+        ctx.fillStyle = 'rgba(15,23,42,0.92)';
+        D.roundRect(ctx, -vw / 2, -7.5, vw, 15, 3); ctx.fill();
+        ctx.strokeStyle = 'rgba(148,163,184,0.55)'; ctx.lineWidth = 1;
+        D.roundRect(ctx, -vw / 2, -7.5, vw, 15, 3); ctx.stroke();
+        ctx.fillStyle = '#7dd3fc';
+        ctx.font = 'bold ' + (isVolt ? 9 : 10.5) + 'px ui-monospace,Menlo,Consolas,monospace';
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText(vtxt, 0, 0.5);
+        ctx.restore();
+      }
       Skin.setPosts(comp, ['neg', 'pos', 'pos'], 1.4, 8);
     };
   }
@@ -732,8 +759,23 @@
       motor: { x0: -122, y0: -77, x1: 105, y1: 65 },
     },
     bodyBox: {},
-    // 元件名称标签该落在哪儿 —— 覆盖沙盒写死的 DROP。
-    // 🔴 课本表头那张图往下伸到 y≈167（本地），而沙盒的 DROP.ammeter 是 80 ⇒
+    // ── 放大镜 / 表盘命中（都在元件自身坐标系）──────────────────────
+    // 调零螺丝的位置。🔴 原版 D.MET.ZERO 是 (0, 26)：课本表缩小到 0.62 之后，
+    // 照原版画那个琥珀圈就落在网纹块【下面】的浅蓝底板上（用户报的「偏下」）。
+    // 数值由 dev-imgskin2.py 按原图里那个深色小圆实测后写进数据。
+    zeroKnobOf: function (comp) {
+      var S = (ready && comp && G2) ? G2[comp.type] : null;
+      return (S && S.zero) ? S.zero : null;
+    },
+    // 表盘的命中框（点这儿开放大镜）。原版写死 ±96 / −88…46，是给原版那块
+    // 192 宽的表定的；课本表缩到 152 宽之后，照原版会把表外面一大圈也算成表盘。
+    dialBoxOf: function (comp) {
+      if (!ready || !comp) return null;
+      return (comp.type === 'voltmeter')
+        ? { x0: -72, y0: -95, x1: 70, y1: 28 }
+        : { x0: -76, y0: -100, x1: 72, y1: 28 };
+    },
+    // 元件名称标签该落在哪儿 —— 覆盖沙盒写死的 DROP。    // 🔴 课本表头那张图往下伸到 y≈167（本地），而沙盒的 DROP.ammeter 是 80 ⇒
     //    标签正好压在量程柱的「0.6 / 3」上。数值由 dev-imgskin2.py 按【素材墨迹的
     //    实际下沿】算出来，不是拍的。
     tagDropOf: function (comp) {
