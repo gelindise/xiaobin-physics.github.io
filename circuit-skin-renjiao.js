@@ -141,6 +141,43 @@
     try { window.dispatchEvent(new Event('circuit-skin-ready')); } catch (e) {}
   }
 
+  // ── 第三批素材（发光二极管）──────────────────────────────────
+  // 和人教版开关、灯泡同一套口径：底盘用课本原图一个像素不动。LED 有两个
+  // 【状态】（正向导通 / 反向截止），课本图 15.2-3 上正好各画了一只 ——
+  // 于是两个状态各贴一张原图，一笔都没重画。
+  var G3 = (typeof window !== 'undefined' && window.__SKIN_IMG_RENJIAO3) || null;
+  var IMG3 = {}, CV3 = {}, ready3 = false;
+  var KEYS3 = G3 ? Object.keys(G3) : [];
+
+  function build3() {
+    KEYS3.forEach(function (key) {
+      var S = G3[key];
+      if (!IMG3[key]) return;
+      CV3[key] = mkCanvas(S.w, S.h);
+      CV3[key].getContext('2d').drawImage(IMG3[key], 0, 0, S.w, S.h);
+      ['green', 'blue'].forEach(function (c) {
+        if (!IMG3[key + '_' + c]) return;
+        CV3[key + '_' + c] = mkCanvas(S.w, S.h);
+        CV3[key + '_' + c].getContext('2d').drawImage(IMG3[key + '_' + c], 0, 0, S.w, S.h);
+      });
+    });
+    ready3 = true;
+    try { window.dispatchEvent(new Event('circuit-skin-ready')); } catch (e) {}
+  }
+
+  function loadBatch3() {
+    if (!G3 || !KEYS3.length) return;
+    var list3 = [];
+    KEYS3.forEach(function (key) {
+      var S = G3[key];
+      list3.push({ key: key, src: S.full });
+      ['green', 'blue'].forEach(function (c) {
+        if (S[c]) list3.push({ key: key + '_' + c, src: S[c] });
+      });
+    });
+    loadAll(list3, build3, IMG3);
+  }
+
   loadAll([
     { key: 'swFull', src: SW.full },
     { key: 'swChassis', src: SW.chassis },
@@ -148,15 +185,15 @@
     { key: 'blFull', src: BL.full },
     { key: 'blBase', src: BL.base },
   ], function () {
-    // 第二批是【另一张表】，单独加载、单独回调；两边都到齐才 ready。
-    if (!G2) { build(); return; }
+    // 第二批是【另一张表】，单独加载、单独回调；三批都到齐才全 ready。
+    if (!G2) { build(); loadBatch3(); return; }
     var list2 = [];
     KEYS2.forEach(function (key) {
       list2.push({ key: key, src: G2[key].full });
       if (G2[key].kind === 'needle') list2.push({ key: key + '_needle', src: G2[key].needle });
       if (G2[key].kind === 'slider') list2.push({ key: key + '_slider', src: G2[key].slider });
     });
-    loadAll(list2, build, IMG2);
+    loadAll(list2, function () { build(); loadBatch3(); }, IMG2);
   });
 
   // ── 图像坐标 → 本地坐标 ──────────────────────────────────────
@@ -475,6 +512,73 @@
     drawPosts(ctx, comp, D, cv, S.posts, S.mid, S.k, S.dpr);
   }
 
+  // ═════════════════════════════════════════════════════════════
+  // 发光二极管（人教版图 15.2-3「发光二极管具有单向导电性」）
+  // ─────────────────────────────────────────────────────────────
+  // 课本那张图上有【两只】管子：左边正向导通（管身发亮 + 一圈放射状光芒）、
+  // 右边反向截止（暗管）。两个状态各用一张原图，一个像素都没重画。
+  //
+  // 三件事和别的元件不一样，都写在下面：
+  //   ① 管子是【竖着】的。课本图就是这么画的 —— 管身抬在原点上方，两根引线
+  //      垂下来、再向两侧折平，水平段的末端正好落在沙盒的 ±70 端子上。
+  //      **端子契约一个字没改**（TERMINALS.led 仍是 ±70、y=0），所以导线、
+  //      拖拽、命中、求解全不受影响；变的只是「身体」从横躺变成立着。
+  //   ② 素材在生成时已经【左右镜像】过 —— 课本图正极在右，而沙盒 0 号端子
+  //      （「+」）在左。不镜像的话画面上的正极引脚接在「−」柱上。
+  //   ③ 颜色：课本图只有粉红一种管子，绿管 / 蓝管是把同一张底图【旋转色相】
+  //      派生的（形状、高光、渐变一个像素没动）。见 dev-imgskin3.py。
+  //
+  // 🔴 接线柱走【原版】画法（登记 __posts、由宿主在导线之后补画），不从素材上裁：
+  //    课本图的管子底下只有两根引线，没有接线柱 —— 硬从图上裁一块只会在引线
+  //    末端贴两个白块。原版的红黑柱照 TERMINALS 落在 ±70 上，正好是引线水平段
+  //    的末端，和另外几件人教版器材的柱子也是同一套画法。
+  // ============================================================
+  function ledKey(comp, on) {
+    var col = (comp && comp.params && comp.params.color) || 'red';
+    var k = on ? 'ledOn' : 'ledOff';
+    return (col === 'green' || col === 'blue') ? (k + '_' + col) : k;
+  }
+  function drawLed(ctx, comp, rec, opts, D) {
+    var on = !!(rec && rec.on);
+    var S = G3 && G3[on ? 'ledOn' : 'ledOff'], cv = CV3[ledKey(comp, on)];
+    if (!ready3 || !S || !cv) { fallback(D, ctx, comp, rec, opts); return; }
+
+    ctx.save();
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    pose(ctx, comp, D);
+
+    // ④ 光晕。课本原图上的「亮」是画死的（一整张图），而内核的 brightness
+    //    是【连续】的 —— 电池电压从 0 慢慢升上去时，管子应当是渐亮的。
+    //    这层随亮度走的径向光就是那个连续量在画面上的落点；压在本体【底下】画，
+    //    压在管身上会把管子糊成一片亮斑，看不出「半透明彩色塑料」这件事。
+    if (on) {
+      var bright = Math.max(0, Math.min((rec && rec.brightness) || 0, 1.3));
+      var bg = Math.min(bright, 1.3) / 1.3;
+      var rgb = (rec && rec.rgb) || [255, 62, 62];
+      var cx = (99 - S.mid[0]) * S.k, cy = (77 - S.mid[1]) * S.k;
+      var gr = 48 * (0.82 + 0.55 * bg);
+      var g = ctx.createRadialGradient(cx, cy, 2, cx, cy, gr);
+      var cc = function (a) {
+        return 'rgba(' + Math.round(rgb[0]) + ',' + Math.round(rgb[1]) + ',' +
+               Math.round(rgb[2]) + ',' + a.toFixed(3) + ')';
+      };
+      g.addColorStop(0, cc(0.34 * bg));
+      g.addColorStop(0.55, cc(0.13 * bg));
+      g.addColorStop(1, cc(0));
+      ctx.fillStyle = g;
+      ctx.beginPath(); ctx.arc(cx, cy, gr, 0, TAU); ctx.fill();
+    }
+
+    ctx.drawImage(cv, -S.mid[0] * S.k, -S.mid[1] * S.k, S.w / S.dpr, S.h / S.dpr);
+    ctx.restore();
+
+    // ⑨ 接线柱：只【登记】规格，不在这里画。柱子是交互点，宿主会在导线之后
+    //    再补画一次（见 circuit-skin.js 的铁律 3）—— 和另外几件人教版器材
+    //    完全一致，所以「皮肤版元件在图例里没有柱子」这条既有行为也照样成立。
+    Skin.setPosts(comp, ['pos', 'neg'], 1.4, 8);
+  }
+
   var api = {
     id: 'renjiao',
     label: '人教版',
@@ -488,6 +592,7 @@
       voltmeter: drawMeter('voltmeter'),
       rheostat: drawRheostat('rheostat'),
       motor: drawStatic('motor'),
+      led: drawLed,
     },
     posts: {
       switch: function (ctx, comp, s, D) {
@@ -509,14 +614,20 @@
     // 符号层留空：人教版电路图符号 = 现行实现（沙盒那张电路图本来就是照人教版画的）
     symbol: {},
     // 外形包络（非对称，比原版大一圈）：给验收卡「画出来的像素有没有跑出去」
+    // 外形包络（非对称，比原版大一圈）：给验收卡「画出来的像素有没有跑出去」
+    // LED 是【竖着】的：管身顶在 −180、两根引线折平后落在 ±70 / y≈+5。
     envelope: {
       switch: { x0: -122, x1: 86, y0: -73, y1: 42 },
       bulb: { x0: -88, x1: 86, y0: -83, y1: 42 },
+      led: { x0: -78, x1: 80, y0: -184, y1: 10 },
     },
     // 元件栏（沙盒 LG_VIEW）的取景框：不换的话图例里手柄会被裁掉两头
     view: {
       switch: { x0: -126, y0: -77, x1: 90, y1: 46 },
       bulb: { x0: -92, y0: -87, x1: 90, y1: 46 },
+      // 🔴 沙盒默认的 LG_VIEW.led（−78,−52 → 78,36）是给【横躺】的原版管子
+      //    定的；人教版的管子立着、高 184，照默认框裁会把管子从中间截断。
+      led: { x0: -82, y0: -188, x1: 82, y1: 16 },
     },
     bodyBox: {},
     // 元件名称标签该落在哪儿 —— 覆盖沙盒写死的 DROP。
@@ -524,13 +635,22 @@
     //    标签正好压在量程柱的「0.6 / 3」上。数值由 dev-imgskin2.py 按【素材墨迹的
     //    实际下沿】算出来，不是拍的。
     tagDropOf: function (comp) {
-      if (!ready || !comp) return null;
+      if (!comp) return null;
+      // LED 的引线折平在 y≈+5，标签紧贴着它落（沙盒的 DROP.led=38 是按原版
+      // 那块示教底板的底边定的，套到立着的管子上会飘出一大截）。
+      if (comp.type === 'led') return ready3 ? 14 : null;
+      if (!ready) return null;
       var key = comp.type === 'battery' ? batteryKey(comp) : comp.type;
       var S = G2 && G2[key];
       return (S && S.tagDrop != null) ? S.tagDrop : null;
     },
     // 给自检用的只读口子
     __isReady: function () { return ready; },
+    __isReady3: function () { return ready3; },
+    __ledGeom: function () {
+      return (G3 && G3.ledOff) ? { k: G3.ledOff.k, mid: G3.ledOff.mid,
+                                   dpr: G3.ledOff.dpr, w: G3.ledOff.w, h: G3.ledOff.h } : null;
+    },
     __geom: function () {
       return {
         sw: { k: SW.k, mid: SW.mid, pivotImg: SW.pivotImg, bladeAt: SW.bladeAt, openDeg: SW.openDeg },
