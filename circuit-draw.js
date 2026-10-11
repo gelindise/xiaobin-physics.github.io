@@ -586,6 +586,13 @@
           [0.52, '#a8b6c4'], [0.72, '#8fa0b2'], [1, '#55636f']],
   };
 
+  // 柱帽球冠的半径 / 高度。抽成模块级常量：drawBindingPost 拿它画顶盖，
+  // drawPowerSupply 拿它算「柱尖到锚点多远」—— 学生电源那两根柱子是【斜插在
+  // 前表面上】的，锚点取在柱【尖】上，柱子沿轴缩进面板里。
+  // 各写一份的话，改了这边、那边的斜柱就会戳出面板或者整根缩进面板里。
+  var POST_DOME_R = 4.5, POST_DOME_H = 3.1;
+  var POST_TIP_H = 9 + POST_DOME_H;      // 元件自身坐标系里「柱尖」到原点的距离
+
   // neck = 螺纹杆的高度（默认 0）：闸刀开关、小灯泡的柱子立在板面上，教材实物里
   // 它们明显比电池盒上的高出一截，不抬起来就被底板吃掉、只露个顶。
   // 加高的那一段是【细一圈的螺杆】，上面才是滚花螺母——一整根一样粗的圆柱
@@ -640,7 +647,7 @@
     // 而且渐变只取到最亮的那一段，整个顶盖是一片平的浅色 —— 放大镜里读成
     // 「柱子上扣了个盖子」。改成比螺母【窄一圈】的球冠，渐变从顶到底走满
     // 高光 → 本色 → 暗面，它才是一块有体积的金属。
-    var dr = 4.5, dh = 3.1;                 // 穹顶半径 / 高度，都比螺母小一圈
+    var dr = POST_DOME_R, dh = POST_DOME_H;   // 穹顶半径 / 高度，都比螺母小一圈
     ctx.fillStyle = linGrad(ctx, 0, -9 - nk - dh, 0, -9 - nk + dh * 0.45,
       [[0, HI], [0.5, BODY], [1, DARK]]);
     ctx.beginPath();
@@ -662,7 +669,15 @@
   }
 
   // 两端元件统一收尾：画端子引线 + 接线柱
-  function posts(ctx, comp, kinds, scale, neck) {
+  //
+  // faceAngle = 柱子的【倾斜】，默认 null = 柱子立着（全站都是这样）。
+  //   给一个角度 = 柱子【斜插】在这件器材上，这个角度是「柱尖朝外」在【元件自身
+  //   坐标系】里的方向角（柱子的局部 +y 是柱尖方向）。学生电源用它：那两根柱子
+  //   拧在【竖直的前表面】上，柱轴垂直于前表面 ⇒ 画面上朝观察者（左下）伸出来。
+  //   ⚠️ 必须一并存进 __posts：宿主把导线画在元件之上以后会用 drawTerminals()
+  //      补画一遍柱子（柱子是交互点，不能被导线压住），补画时只有这一份登记可读。
+  //      漏了它，症状是「画的时候是斜的、导线一盖再补画就变回竖的」。
+  function posts(ctx, comp, kinds, scale, neck, faceAngle) {
     // 记下这一件器材的柱子规格：宿主把导线画在元件【之上】以后（真实情况就是
     // 导线从表盘上面跨过去），柱子会被导线压住 —— 接线柱是交互点，必须留在
     // 最上层，由 drawTerminals() 在导线之后补画一次。
@@ -670,15 +685,38 @@
     // 撤销快照不会因为多出这个字段而对不上。
     try {
       Object.defineProperty(comp, '__posts', {
-        value: { kinds: kinds, scale: scale, neck: neck },
+        value: { kinds: kinds, scale: scale, neck: neck, faceAngle: faceAngle },
         writable: true, enumerable: false, configurable: true
       });
     } catch (e) {
-      comp.__posts = { kinds: kinds, scale: scale, neck: neck };
+      comp.__posts = { kinds: kinds, scale: scale, neck: neck, faceAngle: faceAngle };
+    }
+    var sc = scale == null ? 1.25 : scale;
+    var nk = neck == null ? 0 : neck;
+    // 元件自身坐标系里的方向 → 世界坐标里的方向。翻转和旋转都要跟着走。
+    // 🔴 别在这里自己写一套三角函数：flipOf 的镜像 + comp.rot 的旋转，
+    //    全站只有 toWorld / terminalWorldIn 那一份实现（皮肤也是问它）。
+    //    各写一份的结果是「翻转过的元件上，柱子斜向反了」。
+    var tilt = null;
+    if (faceAngle != null) {
+      var ddx = Math.sin(faceAngle), ddy = -Math.cos(faceAngle);
+      if (flipOf(comp)) ddx = -ddx;
+      var trr = (comp.rot || 0) * Math.PI / 180;
+      var tcr = Math.cos(trr), tsr = Math.sin(trr);
+      var dwx = ddx * tcr - ddy * tsr, dwy = ddx * tsr + ddy * tcr;
+      tilt = Math.atan2(dwx, -dwy);
     }
     for (var i = 0; i < kinds.length; i++) {
       var p = terminalWorld(comp, i);
-      drawBindingPost(ctx, p.x, p.y, kinds[i], scale, neck);
+      if (tilt == null) { drawBindingPost(ctx, p.x, p.y, kinds[i], scale, neck); continue; }
+      ctx.save();
+      ctx.translate(p.x, p.y);
+      ctx.rotate(tilt);
+      // 沿柱轴推出去一个柱长：柱【尖】（球冠顶）正好落在锚点上 —— 锚点就是
+      // 导线接上来的那一点，柱身从它沿 −FACE 缩进器材里。
+      ctx.translate(0, (POST_TIP_H + nk) * sc);
+      drawBindingPost(ctx, 0, 0, kinds[i], scale, neck);
+      ctx.restore();
     }
   }
 
@@ -688,7 +726,7 @@
   function drawTerminals(ctx, comp) {
     var s = comp.__posts;
     if (!s) return;
-    posts(ctx, comp, s.kinds, s.scale, s.neck);
+    posts(ctx, comp, s.kinds, s.scale, s.neck, s.faceAngle);
   }
 
   // ============================================================
@@ -1194,13 +1232,24 @@
     DEP: 18, DTOP: 12,                // 立体厚度（顶面与右侧面向【右上】偏移）
     // 电压调节旋钮。摆在【面板左侧偏中】—— 课本图上旋钮中心在面板宽度 0.31
     // 处（−106 + 0.31×212 ≈ −40），不是正中间：右边要留给丝印和接线柱。
-    KNOB: { x: -38, y: 0, r: 22 },
+    //   r  = 法兰（贴面板那一圈环）的【外】径
+    //   ri = 法兰的【内】径 = 桶身在面板处的半径
+    //   rt = 桶身顶面（捏手）的半径
+    // 🔴 这三个半径定的是「旋钮从正面看长什么样」，别随手改（量的是课本那幅图，
+    //    折算到面板 212 宽之后）：法兰半径 22、桶身根部 19、顶面 13.5。
+    //    · r − ri = 法兰环的宽度，只有 3 —— 课本图上它就是一道【窄环】。
+    //      给太宽（比如把整块圆盘都填满）那只旋钮会读成一只球；
+    //    · ri − rt = 桶身的【收口】量（19 → 13.5），课本上收得很明显：
+    //      顶面只有法兰半径的六成，所以那一圈侧壁才看得出是一圈【齿】；
+    //    · KNOB_OUT + rt ≤ r：桶身的可见轮廓要收在法兰外圆【里面】
+    //      （22 是相切，所以取 8 + 13.5 = 21.5）。
+    KNOB: { x: -38, y: 0, r: 22, ri: 19, rt: 13.5 },
     // 刻度盘：一圈刻度线（r0~r1）+ 一圈数字（rt）。角度是 canvas 约定
     // （0 = 正右、顺时针为正），190° → 350°：从左下经正上方扫到右下。
     //
     // ⚠️ 这三个半径是【挤出来的】，别随手放大：
-    //    · r0 = 23 紧贴旋钮椭圆的左右两极（旋钮 r = 22、竖直半轴 13.2，190° 那个
-    //      方向的椭圆半径约 21.4），刻度线才像是从旋钮边上长出来的；
+    //    · r0 = 23 紧贴旋钮法兰的左右两极（法兰 r = 22），刻度线才像是从旋钮
+    //      边上长出来的；
     //    · rt = 46 是【能排下 12 个数字】的半径：190°~350° 共 160°，12 个数字
     //      均分就是 14.5°，在 46 上是 11.7px 一格；字号 6.5 的两位数是 7.2px 宽，
     //      留 4.5px 空隙。缩到 38 只剩 9.7px，12 和 15 就粘成一个「1215」了；
@@ -1208,20 +1257,69 @@
     //      数字（18 / 21）的中心在 −45.6、字高 6.5 ⇒ 上边缘 −48.9，面板上沿 −54。
     DIAL: { r0: 23, r1: 38, rt: 46, a0: 190, a1: 350 },
     // 方形电源开关（左下角）与圆形指示灯（左上角）。两者都要【让开刻度盘】：
-    // 开关整块落在旋钮左边（右沿 −67，旋钮椭圆最左 −60，留 7px），指示灯摆在
+    // 开关整块落在旋钮左边（右沿 −70，法兰最左 −60，留 10px），指示灯摆在
     // 面板左上角、和刻度盘最左那个「12」（x ≈ −69…−62）横向差 15px 以上。
     // ⚠️ 指示灯【不能】再往右下挪：第一版它在 (−58,−38)，正好被「12」压住
     //    （实测重叠 2.1 × 4.4 px，绿点边上糊了半个「1」）。
-    SW: { x: -80, y: 25, w: 26, h: 20 },
+    // 🔴 开关是【方形凹槽里一根上下拨的拨杆】，不是左右倒的翘板（用户明确指出的）。
+    //    所以槽做成【竖长】的 20×30：拨杆从槽心（支点）指向上端 = 合上、下端 =
+    //    断开，行程才够长、远看读得出通断。见 drawPowerSupply 里那一段。
+    SW: { x: -80, y: 20, w: 20, h: 30 },
     LAMP: { x: -90, y: -42, r: 5.5 },
     READY: 32,                               // 当前电压那行丝印的 y
+    // ── 「拧/插在前表面上」的东西各自的凸出量（屏幕像素）────────────
+    // 它们一律沿 FACE（前表面法线，见下面那个 IIFE）凸出去。
+    //   · 旋钮：法兰环（外径 KNOB.r / 内径 KNOB.ri）压在面板上不动，桶身的顶面
+    //     （半径 KNOB.rt）沿 FACE 偏出 KNOB_OUT ⇒ 露在【右上】那一侧的月牙就是
+    //     桶身侧壁；
+    //   · 接线柱：柱【尖】就落在锚点（TERMINALS.power，导线接上来的那一点）上，
+    //     柱身沿 −FACE 缩进面板 ⇒ 露出来的那一截正对着观察者。
+    KNOB_OUT: 8,
+    // 接线柱的粗细与螺杆高。别随手放大：柱长 = (POST_TIP_H + POST_NECK) ×
+    // POST_SCALE ≈ 18.8，柱根落在锚点沿 −FACE 缩进 18.8 的地方 —— 再长就顶出
+    // 面板右沿（锚点 78 + 18.8×0.832 ≈ 93.6，螺母半宽再 +3 ≈ 96.6）。
+    POST_SCALE: 1.1, POST_NECK: 5,
     // 两个接线柱【就是】TERMINALS.power（同一份数字，别再抄一遍）。
     POSTS: TERMINALS.power,
     // 接线柱下面那块【垫板】（课本图上两个柱子是拧在一块凸起的小板上的）。
-    // 坐标照 POSTS 推：两柱在 36 / 78，板子左右各让出 18 / 16。
-    PLATE: { x0: 18, y0: 10, x1: 94, y1: 36 },
+    // 坐标照 POSTS 推：两柱在 36 / 78，板子左右各让出 20 / 20。
+    // 🔴 板子必须罩得住【柱子的可见部分】—— 柱子现在是【斜插】的：柱尖在锚点上、
+    //    柱根沿 −FACE（右上）缩进 18.8，所以右柱的柱根落在 (93.6, 15.6) 附近，
+    //    螺母再往两侧各撑 3px ⇒ 右沿要 98 才够（原来是照「竖直的柱子」量到 94 的，
+    //    斜过来以后 94 会把右柱的柱根露在板子外面）。自检有 plateCovers 兜着。
+    PLATE: { x0: 16, y0: 9, x1: 98, y1: 36 },
     VMIN: 3, VMAX: 36, TICKS: 12,            // 输出电压 3~36V，12 档
   };
+
+  // 🔴🔴 整个学生电源的绘制都要用这一个方向：「从前表面往外、朝观察者」。
+  //
+  // 机箱是长方体，我们看到的是【前表面 + 顶面 + 右侧面】。顶面与右侧面是往
+  // 【右上】偏 (DEP, −DTOP) 画出纵深的 ⇒ 观察者在左上前方 ⇒ 前表面的法线
+  // （也就是「朝观察者」）在屏幕上就是【左下】= (−DEP, +DTOP)。
+  //
+  // 拧/插在前表面上的东西（旋钮、拨杆、接线柱）一律沿它凸出去。
+  // ⚠️ 沿屏幕【竖直】方向凸 = 读成「立在一块水平板上」，也就是用户报的
+  //    「好像平放到地面上」——那是把前表面当成了地面。前表面是【竖直】的。
+  //
+  // 不写死数字：改了 DEP / DTOP 的角度，这里跟着变（自检有一条等式钉住它）。
+  (function () {
+    var h = Math.hypot(PSU.DEP, PSU.DTOP);
+    PSU.NX = -PSU.DEP / h;              // ≈ −0.832（左）
+    PSU.NY = PSU.DTOP / h;              // ≈ +0.555（下）
+  })();
+  // 最近一次画学生电源时【实际画出去】的几何（自检用）。
+  // 和页面里的 tagDrawn 一个道理：断言读「画出去的那一份」，不按公式再算一遍 ——
+  // 算的那份一旦和画的那份漂移，症状就是「看着是斜的、断言说正的」。
+  var psuDrawn = null;
+
+  // 学生电源的柱子【斜插在前表面上】：柱轴垂直于前表面 ⇒ 画面上朝观察者
+  // （左下）伸出来。返回值是「柱尖朝外」这个方向在【元件自身坐标系】里的角度
+  // （posts() 的 faceAngle 参数就吃它）。
+  // 不写死数字：改了 DEP / DTOP，NX / NY 跟着变，这里跟着变。
+  function psuFaceAngle() {
+    return Math.atan2(PSU.NX, -PSU.NY);
+  }
+
   // 电压 → 刻度盘上的比例（0~1）。画指针和拖拽反解共用这一份。
   function psuFracOf(emf) {
     var f = ((+emf || 0) - PSU.VMIN) / (PSU.VMAX - PSU.VMIN);
@@ -1258,11 +1356,17 @@
     }
     return Math.round((PSU.VMIN + (PSU.VMAX - PSU.VMIN) * f) * 2) / 2;
   }
-  // 旋钮（顶面椭圆）在屏幕上的半径：照【屏幕方向】取点，而不是照椭圆参数方程
-  // 取点 —— 后者竖直方向被压扁，指针看起来会比刻度偏一个角。
+  // 旋钮在屏幕上的抓取半径（= 法兰那个整圆的半径 K.r）。
+  //
+  // 🔴 原来这里按【椭圆】取点（竖直半轴 = K.r × 0.60），因为那时候旋钮画成
+  //    「竖直轴的椭圆」。现在旋钮是一只【拧在竖直前表面上的圆柱】—— 前表面与
+  //    画面平行，前表面上的圆投影下来还是圆（见 drawPowerSupply 里那段）——
+  //    所以这里就是常数 K.r，和角度无关。
+  //    留着函数不内联：指示线（画在捏手顶面上，长度 = 它 × GRIP）和自检的
+  //    dragTo（要落在这只旋钮上）两处都调它，哪天改回椭圆的画法只改这一处，
+  //    不会出现「两处各算一份、对不上」。
   function psuKnobRadius(a) {
-    var K = PSU.KNOB, kry = K.r * 0.60;
-    return 1 / Math.hypot(Math.cos(a) / K.r, Math.sin(a) / kry);
+    return PSU.KNOB.r;
   }
 
   function drawPowerSupply(ctx, comp, rec) {
@@ -1272,6 +1376,13 @@
     var on = P.on !== false;                  // 面板上那颗电源开关（默认合上）
     var sc = ctxScale(ctx);
     var L = -S.HW, R = S.HW, T = S.TOP, B = S.BOT, dx = S.DEP, dy = S.DTOP;
+    // 本轮「视角返工」的落点都记在这里，自检读【画出去的那一份】。
+    // 坐标是元件自身坐标系（画之前那一层），和 PSU 里那些常数同一口径。
+    psuDrawn = {
+      face: { x: S.NX, y: S.NY },
+      knob: null, grip: null, lever: null, posts: [],
+      plate: { x0: S.PLATE.x0, y0: S.PLATE.y0, x1: S.PLATE.x1, y1: S.PLATE.y1 },
+    };
 
     ctx.save();
     ctx.translate(comp.x, comp.y);
@@ -1365,70 +1476,144 @@
       }
     }
 
-    // ── 旋钮：四分之三视角里是一只矮圆柱（顶面是椭圆）────────────
-    var krx = K.r, kry = K.r * 0.60, kh = 8;
-    // 侧壁
+    // ── 旋钮：拧在【竖直的前表面】上的一只滚花圆柱 ────────────────
+    // 🔴🔴 这一段是本轮「视角返工」的核心。第一版画成「竖直轴的椭圆 + 往下的
+    //    椭圆柱身」（kry = K.r × 0.60、侧壁在 K.y + kh）—— 那正是一只【平放在
+    //    水平桌面上的圆柱】从左上斜看过去的样子，所以读出来是「这只旋钮躺在地
+    //    上」（用户原话）。而且刻度盘画的是整圆、旋钮是椭圆，两者根本不在同一个
+    //    平面上：一眼就能看出「旋钮和它的刻度盘不是一块东西」。
+    //
+    // 前表面与画面【平行】⇒ 画在前表面上的圆投影下来还是圆。结构分三层，一层比
+    // 一层更靠近观察者（都沿 FACE 叠）：
+    //    ① 法兰环：外径 KNOB.r、内径 KNOB.ri，平贴在面板上；
+    //    ② 桶身侧壁：外径 KNOB.ri，从面板沿 FACE 伸出 KNOB_OUT，顶面收到 KNOB.rt；
+    //    ③ 捏手顶面：半径 KNOB.rt 的【整圆】+ 指示线。
+    //    侧壁露在【右上】那一侧 —— 近端面朝观察者（左下）偏出去，远端就从右上露。
+    //    ⚠️ 沿屏幕【竖直】方向凸是错的：那等于把前表面当成了地面。
+    var KR = K.r, KI = K.ri, KT = K.rt;
+    var gx = K.x + S.NX * S.KNOB_OUT, gy = K.y + S.NY * S.KNOB_OUT;
+    psuDrawn.knob = { x: K.x, y: K.y, r: KR, ri: KI };
+    psuDrawn.grip = { x: gx, y: gy, r: KT };
+    // ① 法兰环：外圆 + 内圆【反向】绕 —— nonzero 填充规则下填出来的正好是那个
+    //    环（同心圆同向绕会填成一整块实心圆盘，那只旋钮就变成一只球了）。
     ctx.beginPath();
-    ctx.moveTo(K.x + krx, K.y);
-    ctx.ellipse(K.x, K.y + kh, krx, kry, 0, 0, Math.PI);
-    ctx.lineTo(K.x - krx, K.y);
-    ctx.closePath();
-    ctx.fillStyle = linGrad(ctx, K.x - krx, 0, K.x + krx, 0,
-      [[0, '#8d97a1'], [0.32, '#c2cad2'], [1, '#7d8792']]);
+    ctx.arc(K.x, K.y, KR, 0, 6.284);
+    ctx.arc(K.x, K.y, KI, 0, 6.284, true);
+    ctx.fillStyle = linGrad(ctx, 0, K.y - KR, 0, K.y + KR,
+      [[0, '#eaeff4'], [0.5, '#c9d1d9'], [1, '#a3adb7']]);
     ctx.fill();
-    ctx.strokeStyle = 'rgba(51,65,85,0.45)'; ctx.lineWidth = 0.9; ctx.stroke();
-    // 顶面
-    var kg = ctx.createRadialGradient(K.x - krx * 0.35, K.y - kry * 0.35, krx * 0.1,
-                                      K.x, K.y, krx);
-    kg.addColorStop(0, '#f6f8fa'); kg.addColorStop(0.5, '#d3dae1'); kg.addColorStop(1, '#98a3ae');
-    ctx.beginPath(); ctx.ellipse(K.x, K.y, krx, kry, 0, 0, 6.284);
-    ctx.fillStyle = kg; ctx.fill();
-    ctx.strokeStyle = 'rgba(51,65,85,0.45)'; ctx.lineWidth = 1; ctx.stroke();
-    // 滚花：顶面外圈的一圈短径向线，远看就是「拧得动」
+    ctx.strokeStyle = 'rgba(51,65,85,0.50)'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.arc(K.x, K.y, KR, 0, 6.284); ctx.stroke();
+    // 桶身与法兰的交界：一道暗环，桶身才像是「从环里长出来的」
+    ctx.beginPath(); ctx.arc(K.x, K.y, KI, 0, 6.284);
+    ctx.strokeStyle = 'rgba(51,65,85,0.34)'; ctx.lineWidth = 1; ctx.stroke();
+    // ② 桶身侧壁：先把整个 KI 圆铺出来，捏手一会儿压在上面 —— 露出来的那一弯
+    //    自动就是侧壁，不必去解两个圆的交点（解错了就是一条歪边）。
+    ctx.save();
+    ctx.beginPath(); ctx.arc(K.x, K.y, KI, 0, 6.284); ctx.clip();
+    // 侧壁的横向 = FACE 的垂线（画面上指向左上）。光从左上打来 ⇒ 那一侧亮。
+    var kpx2 = -S.NY, kpy2 = S.NX;
+    ctx.fillStyle = linGrad(ctx, K.x + kpx2 * KI, K.y + kpy2 * KI,
+                                 K.x - kpx2 * KI, K.y - kpy2 * KI,
+      [[0, '#e4eaf0'], [0.45, '#aab4be'], [1, '#7c8792']]);
+    ctx.beginPath(); ctx.arc(K.x, K.y, KI, 0, 6.284); ctx.fill();
+    // 滚花齿：真螺母的搓花是一根根【沿柱轴】的棱。柱轴在画面上就是 FACE ⇒
+    // 每根齿是「桶身根部圆周上的 θ」到「顶面圆周上同一个 θ」的一条短线。
+    // 🔴 两个数都是量着课本定的，别随手加：
+    //    · 只有 12 根 —— 课本那只桶身上一眼能数出 4~5 道【宽齿】（远看像一颗
+    //      六角螺母）。24 根细线画出来是一圈「涡轮/风车」，完全不是那个东西；
+    //    · 只画【朝右上】那一带的齿 —— 也就是桶身侧壁真正露出来的那一弯。
+    //      facing = 这个方位在「右上」方向上的投影。不按方位筛的话，齿会绕满
+    //      一整圈（侧壁在反侧根本不露出来，那里不该有齿）。
     if (sc >= 0.85) {
-      ctx.strokeStyle = 'rgba(51,65,85,0.30)'; ctx.lineWidth = 0.9;
-      for (i = 0; i < 24; i++) {
-        var ta = i / 24 * Math.PI * 2;
+      for (i = 0; i < 12; i++) {
+        var kt = i / 12 * Math.PI * 2, kc = Math.cos(kt), ks = Math.sin(kt);
+        var facing = -kc * S.NX - ks * S.NY;
+        var tal = 0.36 * Math.min(1, Math.max(0, (facing - 0.45) / 0.45));
+        if (tal < 0.02) continue;
+        ctx.strokeStyle = 'rgba(51,65,85,' + tal.toFixed(3) + ')';
+        ctx.lineWidth = 1.5;
         ctx.beginPath();
-        ctx.moveTo(K.x + Math.cos(ta) * krx * 0.80, K.y + Math.sin(ta) * kry * 0.80);
-        ctx.lineTo(K.x + Math.cos(ta) * krx * 0.97, K.y + Math.sin(ta) * kry * 0.97);
+        ctx.moveTo(K.x + kc * KI, K.y + ks * KI);
+        ctx.lineTo(gx + kc * KT, gy + ks * KT);
         ctx.stroke();
       }
     }
-    // 指示线：角度直接取刻度盘那一份（psuAngleOf），按【屏幕方向】落在椭圆上
-    var pa = psuAngleOf(emf), prr = psuKnobRadius(pa);
+    ctx.restore();
+    // ③ 捏手顶面：整圆。渐变必须用【线性】（左上亮 → 右下暗）—— 径向渐变会把
+    //    这块平面画成一只球，那和「旋钮躺在地上」一样是读错了朝向。
+    ctx.beginPath(); ctx.arc(gx, gy, KT, 0, 6.284);
+    ctx.fillStyle = linGrad(ctx, gx - KT * 0.75, gy - KT * 0.75,
+                                 gx + KT * 0.85, gy + KT * 0.85,
+      [[0, '#fbfdfe'], [0.5, '#e2e8ee'], [1, '#c2cbd4']]);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(51,65,85,0.45)'; ctx.lineWidth = 1; ctx.stroke();
+    // 指示线：角度直接取刻度盘那一份（psuAngleOf），画在【捏手的顶面】上 ——
+    // 顶面是整圆，所以线的长度按捏手半径 KT 取（按法兰半径会戳出顶面一截）。
+    var pa = psuAngleOf(emf);
     ctx.strokeStyle = '#c0392b'; ctx.lineWidth = 3; ctx.lineCap = 'round';
     ctx.beginPath();
-    ctx.moveTo(K.x + Math.cos(pa) * prr * 0.18, K.y + Math.sin(pa) * prr * 0.18);
-    ctx.lineTo(K.x + Math.cos(pa) * prr * 0.88, K.y + Math.sin(pa) * prr * 0.88);
+    ctx.moveTo(gx + Math.cos(pa) * KT * 0.16, gy + Math.sin(pa) * KT * 0.16);
+    ctx.lineTo(gx + Math.cos(pa) * KT * 0.86, gy + Math.sin(pa) * KT * 0.86);
     ctx.stroke();
-    ctx.beginPath(); ctx.ellipse(K.x, K.y, krx * 0.26, kry * 0.26, 0, 0, 6.284);
+    ctx.beginPath(); ctx.arc(gx, gy, KT * 0.26, 0, 6.284);
     ctx.fillStyle = '#e9edf1'; ctx.fill();
     ctx.strokeStyle = 'rgba(51,65,85,0.35)'; ctx.lineWidth = 0.9; ctx.stroke();
 
-    // ── 方形电源开关（左下）────────────────────────────────────
-    // 真机是一颗方形拨动开关：底壳 + 一根能左右倒的拨杆。
-    // 拨杆倒向哪边一眼就能读出来，而且和「点一下真的通断」对得上。
+    // ── 方形电源开关（左下）：凹槽里一根【上下拨】的拨杆 ─────────────
+    // 🔴🔴 第一版画成「一颗左右倒的翘板」（ctx.rotate(on ? −0.44 : 0.44)），
+    //    用户指出：真机是一根【往上拨 / 往下拨】的拨杆。
+    // 前表面与画面【平行】⇒ 面板平面内的竖直方向就是【屏幕竖直】，所以「上 /
+    // 下」在画面上就是上 / 下，不会因为视角而变成斜的。拨杆本身再沿 FACE 朝
+    // 观察者凸出来一点点 —— 那一点正是「它长在竖直面板上」的证据。
     ctx.beginPath();
     roundRect(ctx, SW.x - SW.w / 2, SW.y - SW.h / 2, SW.w, SW.h, 3);
     ctx.fillStyle = linGrad(ctx, 0, SW.y - SW.h / 2, 0, SW.y + SW.h / 2,
       [[0, '#5a6570'], [1, '#39424c']]);
     ctx.fill();
     ctx.strokeStyle = 'rgba(15,23,42,0.60)'; ctx.lineWidth = 1; ctx.stroke();
-    // 内凹（拨杆在里面倒）
+    // 内凹（拨杆在里面上下走）
     ctx.beginPath();
     roundRect(ctx, SW.x - SW.w / 2 + 3.5, SW.y - SW.h / 2 + 3.5, SW.w - 7, SW.h - 7, 2);
-    ctx.fillStyle = 'rgba(15,23,42,0.44)'; ctx.fill();
-    ctx.save();
-    ctx.translate(SW.x, SW.y);
-    ctx.rotate(on ? -0.44 : 0.44);
+    ctx.fillStyle = 'rgba(15,23,42,0.38)'; ctx.fill();
+    // 中间一道【竖直导槽】：远看就告诉学生「这颗开关是上下拨的」，
+    // 也给拨杆的行程一个看得见的范围（横向的翘板没有这道槽）。
+    // ⚠️ 槽要比内凹【更深】一档才看得见（0.55 vs 0.38）—— 两档一样深的时候
+    //    槽和底槽糊成一块，整颗开关就只剩一个黑洞。
     ctx.beginPath();
-    roundRect(ctx, -SW.w * 0.20, -SW.h * 0.30, SW.w * 0.40, SW.h * 0.60, SW.w * 0.14);
-    ctx.fillStyle = linGrad(ctx, -SW.w * 0.2, 0, SW.w * 0.2, 0,
-      [[0, '#f2f5f8'], [0.45, '#cdd5dd'], [1, '#8b959f']]);
+    roundRect(ctx, SW.x - 4.5, SW.y - SW.h / 2 + 3.5, 9, SW.h - 7, 4.5);
+    ctx.fillStyle = 'rgba(15,23,42,0.55)'; ctx.fill();
+    // 拨杆：支点在槽心，杆身指向上端（合上）/ 下端（断开），末端再沿 FACE 凸出。
+    // 🔴 倾角取 60°（而不是真机的 ±30°）：本机箱的厚度压得浅（DEP:DTOP = 18:12
+    //    ⇒ FACE 在画面里只有 33.7° 那么斜），30° 的摆角投影下来「合上」那一边
+    //    几乎是【水平朝左】的，读不出「往上拨」。60° 摆角投影后是「上左 55° /
+    //    下左 70°」，一上一下一眼分得开 —— 开关的可读性优先于摆角的真实性。
+    var kphi = 60 * Math.PI / 180, kL = 9.5;
+    var ksn = on ? -1 : 1;
+    var tvx = SW.x + kL * S.NX * Math.cos(kphi);
+    var tvy = SW.y + kL * (S.NY * Math.cos(kphi) + Math.sin(kphi) * ksn);
+    psuDrawn.lever = { x: tvx, y: tvy, on: !!on, px: SW.x, py: SW.y };
+    var kdx = tvx - SW.x, kdy = tvy - SW.y, klen = Math.hypot(kdx, kdy) || 1;
+    var kpx = -kdy / klen, kpy = kdx / klen;          // 杆的法向（用来定杆的宽度）
+    var w0 = 3.8, w1 = 3.0;                           // 杆根 / 杆尖的半宽
+    ctx.beginPath();
+    ctx.moveTo(SW.x + kpx * w0, SW.y + kpy * w0);
+    ctx.lineTo(tvx + kpx * w1, tvy + kpy * w1);
+    ctx.lineTo(tvx - kpx * w1, tvy - kpy * w1);
+    ctx.lineTo(SW.x - kpx * w0, SW.y - kpy * w0);
+    ctx.closePath();
+    ctx.fillStyle = linGrad(ctx, SW.x + kpx * w0, SW.y + kpy * w0,
+                                  SW.x - kpx * w0, SW.y - kpy * w0,
+      [[0, '#f4f7fa'], [0.42, '#ccd4dc'], [1, '#8b959f']]);
     ctx.fill();
-    ctx.strokeStyle = 'rgba(15,23,42,0.45)'; ctx.lineWidth = 0.9; ctx.stroke();
-    ctx.restore();
+    ctx.strokeStyle = 'rgba(15,23,42,0.50)'; ctx.lineWidth = 0.9; ctx.stroke();
+    // 杆尖的端面：一小块亮面，读成「一根有粗细的杆」，而不是一条线
+    var kg2 = ctx.createRadialGradient(tvx - w1 * 0.35, tvy - w1 * 0.35, w1 * 0.1,
+                                       tvx, tvy, w1);
+    kg2.addColorStop(0, '#ffffff'); kg2.addColorStop(1, '#b9c2cb');
+    ctx.beginPath(); ctx.arc(tvx, tvy, w1, 0, 6.284);
+    ctx.fillStyle = kg2; ctx.fill();
+    ctx.strokeStyle = 'rgba(15,23,42,0.40)'; ctx.lineWidth = 0.8; ctx.stroke();
 
     // ── 圆形指示灯（左上）：通电就亮 ─────────────────────────────
     ctx.beginPath(); ctx.arc(LP.x, LP.y, LP.r + 1.8, 0, 6.284);
@@ -1455,16 +1640,39 @@
     //    于是「+ / −」两个记号在画面上【一个都看不见】—— 而极性记号是学生认
     //    正负极的唯一依据，看不见等于这件器材没标极性。
     //    摆到左边 x−14 就整块出了螺母的横向范围（螺母半宽 6.75），压不到了。
+    // ⚠️ 本轮柱子改成【斜插】（柱身从锚点沿 −FACE 往右上缩进面板）之后仍然成立：
+    //    柱身朝右上走，左上方那一块反而更空了。
     silk(ctx, '+', S.POSTS[0].x - 14, S.POSTS[0].y - 10, 9.5, '#b91c1c');
     silk(ctx, '−', S.POSTS[1].x - 14, S.POSTS[1].y - 10, 9.5, '#1f2937');
     // 当前输出电压：旋钮正下方（拖旋钮时它就是那个「看得见的反馈」）。
-    // 左沿约 −52 让开方形开关的右沿 −67，右沿约 −24 离接线柱垫板（左沿 18）还远。
+    // 左沿约 −52 让开方形开关的右沿 −70，右沿约 −24 离接线柱垫板（左沿 16）还远。
+    // ⚠️ 上沿要留出旋钮的【可见近端面】：法兰下沿 y = 22、捏手下沿 y ≈ 19.4，
+    //    READY = 32 时字的上沿在 26.75 —— 压不到。
     silk(ctx, emf.toFixed(1) + ' V', K.x, S.READY, 10.5, '#1f2937');
 
     ctx.restore();
 
-    // 接线柱：端子 0 = 正极（左）。kinds[i] 对应【端子序号】，不是左右顺序。
-    posts(ctx, comp, ['pos', 'neg'], 1.35, 8);
+    // ── 接线柱：插在【前表面】上，柱身朝观察者（左下）伸出来 ──────────
+    // 🔴🔴 第一版把柱子【竖直】立在面板上（drawBindingPost 的默认朝向），于是它
+    //    读成「两个柱子摆在一块水平板上」（用户原话）。真机是【拧在前表面上】的，
+    //    柱轴垂直于前表面 ⇒ 画面上朝左下伸出来。
+    // 锚点（TERMINALS.power，也是导线接上来的那一点）取在柱【尖】上：柱身从锚点
+    // 沿 −FACE 缩进面板里，露出来的那一截正对着观察者。
+    var tipLen = (POST_TIP_H + S.POST_NECK) * S.POST_SCALE;
+    for (i = 0; i < S.POSTS.length; i++) {
+      var pbx = S.POSTS[i].x - S.NX * tipLen, pby = S.POSTS[i].y - S.NY * tipLen;
+      // 柱根落在面板上的那一小片接触阴影。前表面与画面平行 ⇒ 这里的阴影是
+      // 【正圆】；drawBindingPost 内部那只扁椭圆是给「立在台面上的柱子」用的，
+      // 斜过来以后它会被拧成一道斜的暗痕，所以这里自己铺。
+      contactShadow(ctx, pbx, pby, 9, 7, 0.30);
+      psuDrawn.posts.push({ tip: { x: S.POSTS[i].x, y: S.POSTS[i].y },
+                            base: { x: pbx, y: pby },
+                            kind: i === 0 ? 'pos' : 'neg' });
+    }
+    // 柱子由 posts() 画（并把规格登记进 __posts，供宿主在导线之后补画一遍）。
+    // 端子 0 = 正极（左）。kinds[i] 对应【端子序号】，不是左右顺序。
+    // 最后一个参数 = 柱子斜插的角度：柱尖朝前表面法线（左下）。
+    posts(ctx, comp, ['pos', 'neg'], S.POST_SCALE, S.POST_NECK, psuFaceAngle());
   }
 
   function drawBattery(ctx, comp, rec) {
@@ -4280,8 +4488,14 @@
     PSU: PSU,
     psuFracOf: psuFracOf, psuAngleOf: psuAngleOf,
     psuEmfFromAngle: psuEmfFromAngle, psuKnobRadius: psuKnobRadius,
+    // psuDrawn —— 最近一次画学生电源时【实际画出去】的几何（元件自身坐标系）：
+    //   旋钮法兰 / 捏手 / 拨杆尖端 / 两根柱子的柱尖与柱根 / 前表面法线。
+    // 自检拿它断「这三件东西都是沿 FACE 凸出去的」—— 按 PSU 常数再算一遍是
+    // 算不出「画的时候到底往哪个方向偏」的（那正是本轮要修的那个 bug）。
+    psuDrawn: function () { return psuDrawn; },
+    psuFaceAngle: psuFaceAngle,
     MAT: MAT, MET: MET, MET_SWEEP: MET_SWEEP, POST_GRAD: POST_GRAD,
     BAND_COLORS: BAND_COLORS,
-    version: '2.5.0',
+    version: '2.6.0',
   };
 });
