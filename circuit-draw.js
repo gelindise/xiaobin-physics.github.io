@@ -3470,6 +3470,7 @@
         stats.arm = nA;
         var aAng = (iArm > 0 ? -1 : 1) * Math.PI / 2;    // iArm > 0 = 往上走
         var sE = electronShift(iArm, phase), sC = currentShift(iArm, phase);
+        stats.shiftArm = sC;
         for (var ka = 0; ka < nA; ka++) {
           if (wantEle) {
             var dE = ((ka * aStep + sE) % span2 + span2) % span2;
@@ -3517,6 +3518,7 @@
       var step = len / n;
       var ang = (dir > 0 ? 0 : Math.PI) + (flow < 0 ? Math.PI : 0);
       var sE = electronShift(flow, phase), sC = currentShift(flow, phase);
+      stats.shiftRod = sC;
       var k = 0;
       for (var i = 0; i < n; i++) {
         if (wantEle) {
