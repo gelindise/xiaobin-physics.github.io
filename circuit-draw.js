@@ -316,11 +316,16 @@
   // 「栅栏」：相邻两圈一亮一暗，眼睛看到的是 60 根独立的棒，不是一根绕上去的丝。
   // 正确的读法来自「亮的是丝、暗的是缝」，而且缝要细、要密，远看糊成一片金属，
   // 凑近才看得出圈数 —— 真变阻器就是这个观感。
+  // 一圈丝的斜度（局部单位）。coil() 画丝、drawRheostatFlow 铺电流都要它 ——
+  // 抽成一份，两处不可能漂移；「斜度 = 螺距的方向感」这个比例也只写一遍。
+  function coilSkew(step, yTop, yBot) {
+    return Math.min(step * 1.9, (yBot - yTop) * 0.42);
+  }
   function coil(ctx, x0, x1, yTop, yBot, turns, stops, sc) {
     if (x1 - x0 < 0.5) return;
     var n = Math.max(2, Math.round(turns));
     var step = (x1 - x0) / n;
-    var skew = Math.min(step * 1.9, (yBot - yTop) * 0.42);   // 斜度 = 螺距的方向感
+    var skew = coilSkew(step, yTop, yBot);                   // 斜度 = 螺距的方向感
     ctx.save();
     ctx.beginPath(); ctx.rect(x0 - 0.5, yTop, (x1 - x0) + 1, yBot - yTop); ctx.clip();
     // ① 丝的底色：整片铺满，竖向渐变给出圆柱的明暗
@@ -548,6 +553,14 @@
     knobHalf: 14, knobTop: -38, knobBottom: -12,  // 滑片（骑在金属杆上）
     track: 9,                                    // 滑片行程两端各留的余量
     postX: 78, postY: 26,                        // 下面两个柱（A / B）的局部坐标
+    // 绕线的圈距（局部单位）。🔴 drawRheostat 用它画丝、drawRheostatFlow 用它铺
+    // 电流记号 —— 两处各写一份 1.9 的话，电流迟早从丝上跑偏（而且只在放大时才
+    // 看得出来）。所以它必须住在几何常量里，和 cylX / cylW 一样。
+    pitch: 1.9,
+    // 电流记号沿绕线的间距（局部单位）。圈距才 1.9px，每圈画一个的话六十多个
+    // 箭头会糊成一条红带 —— 按弧长取 18px 一个，和导线上的箭头（64px 一个）
+    // 是同一个量级，只是绕线更密一些。
+    markGap: 18,
   };
   // 滑片位置 slide（0~1）→ 局部横坐标
   function sliderLocalX(slide) {
@@ -3210,48 +3223,95 @@
   // 调用条件改坏（比如两半都画）照样全绿。返回它等于把「画了什么」钉死。
   // ============================================================
   function drawRheostatFlow(ctx, comp, rec, opts) {
-    var stats = { left: 0, right: 0, arm: 0, iL: 0, iR: 0, iArm: 0, phase: null };
+    var stats = { left: 0, right: 0, arm: 0, iL: 0, iR: 0, iArm: 0, phase: null, style: null };
     var phase = opts && opts.phase;
-    if (phase == null) return stats;                   // 开关关着 → 一个粒子都不画
+    if (phase == null) return stats;                   // 开关关着 → 一个记号都不画
     stats.phase = phase;
     if (!rec || !rec.segments || rec.segments.length < 2) return stats;
     var iL = rec.segments[0].i, iR = rec.segments[1].i;
     stats.iL = iL; stats.iR = iR;
     if (Math.abs(iL) <= 1e-12 && Math.abs(iR) <= 1e-12) return stats;
 
+    // 画成什么样式，由【导线上那两个开关】决定 —— 绕线不再自己画一种「只此一处」
+    // 的橙色小球。导线上开「➡ 电流方向」就是红色箭头、开「⚡ 电子流动」就是琥珀
+    // 小球，两个都开就两个都画；语义与 drawWire 的 opts.electrons / opts.current
+    // 完全一致。两个都关着 → 整层不画。
+    var wantCur = !!(opts && opts.current);
+    var wantEle = !!(opts && opts.electrons !== false);
+    if (!wantCur && !wantEle) return stats;
+    stats.style = wantCur ? 'current' : 'electrons';
+
     var cylX = RHEO.cylX, cylW = RHEO.cylW, cylY = RHEO.cylY, cylH = RHEO.cylH;
-    var cylMid = cylY + cylH / 2;                      // 绕线轴线（电阻丝所在的那条线）
     var sxNow = sliderLocalX(slideOf(comp, rec));
     var tipY = cylY + cylH * 0.62;                     // 触臂端头（和 drawRheostat 同一处）
+    // 绕线的上下沿：和 drawRheostat 调 coil() 时喂的是【同一组数】。
+    var yTop = cylY + 0.6, yBot = cylY + cylH - 0.6;
     var sc = ctxScale(ctx);
     var rBall = 2.6 * Math.min(1, Math.max(0.62, sc));
 
     ctx.save();
     ctx.translate(comp.x, comp.y);
     ctx.rotate((comp.rot || 0) * Math.PI / 180);
-    ctx.fillStyle = PALETTE.flow;
-    ctx.shadowColor = 'rgba(245,158,11,0.85)'; ctx.shadowBlur = 6;
 
-    // 沿一段绕线跑：x0 → x1，flow 是这一段的有符号电流（沿 x0→x1 为正）。
-    // 返回画出去的粒子数（0 = 这一段没通电，一颗都不画）。
-    function runSeg(x0, x1, flow, rad, gap) {
-      if (Math.abs(flow) <= 1e-12) return 0;
-      var len = x1 - x0;
-      if (len < 5) return 0;
-      var shift = electronShift(flow, phase);
-      var n = Math.max(1, Math.round(len / gap));
-      var step = len / n;
-      for (var k = 0; k < n; k++) {
-        // 对 len 取模：粒子从这段末端出去就从首端进来，看不到跳变
-        var d = ((k * step + shift) % len + len) % len;
-        ctx.beginPath();
-        ctx.arc(x0 + d, cylMid, rad, 0, 6.284);
-        ctx.fill();
-      }
-      return n;
+    // 两种记号各画各的：小球 = 实心圆（琥珀），箭头 = drawWire 里那支红三角
+    // （同一形状、同一朝向规则）—— 学生能把绕线里的箭头和导线上的箭头对上号。
+    // fillStyle / shadow 各自设，因为「两个开关都开」时同一帧要画两种。
+    function dot(x, y, r) {
+      ctx.fillStyle = PALETTE.flow;
+      ctx.shadowColor = 'rgba(245,158,11,0.85)'; ctx.shadowBlur = 6;
+      ctx.beginPath(); ctx.arc(x, y, r, 0, 6.284); ctx.fill();
     }
-    stats.left  = runSeg(cylX, sxNow, iL, rBall, 26);          // 左半段：A → 滑片
-    stats.right = runSeg(sxNow, cylX + cylW, iR, rBall, 26);   // 右半段：滑片 → B
+    function arrow(x, y, ang) {
+      ctx.fillStyle = PALETTE.current;
+      ctx.shadowColor = 'rgba(220,38,38,0.7)'; ctx.shadowBlur = 6;
+      ctx.save();
+      ctx.translate(x, y); ctx.rotate(ang);
+      ctx.beginPath();
+      ctx.moveTo(7, 0); ctx.lineTo(-5, -4.8); ctx.lineTo(-5, 4.8);
+      ctx.closePath(); ctx.fill();
+      ctx.restore();
+    }
+
+    // 沿一段绕线（x0 → x1）铺电流。**路径就是 coil() 画的那根丝**：每圈一条斜线，
+    // 同样的 yTop / yBot / 斜度，整条斜线沿 x 平移半个圈距（落在丝的中间，不是沟
+    // 里）。记号沿斜线走、**圈与圈错开**，连起来看就是电流在螺旋里一圈圈绕 ——
+    // 这正是参考图里「贴着线圈走的电流」的意思。
+    // 上一版是沿瓷管【中线】拉一条水平线撒圆点，根本看不出「在绕圈」这件事。
+    // 返回这一帧真的画出去的记号数（0 = 这一段没通电）。
+    function runCoil(x0, x1, flow) {
+      if (Math.abs(flow) <= 1e-12) return 0;
+      var span = x1 - x0;
+      if (span < 3) return 0;
+      var n = Math.max(2, Math.round(span / RHEO.pitch));
+      var step = span / n;
+      var skew = coilSkew(step, yTop, yBot);
+      var dy = yBot - yTop;
+      var segLen = Math.sqrt(skew * skew + dy * dy);
+      var ang = Math.atan2(dy, skew) + (flow < 0 ? Math.PI : 0);
+      // 记号不是「每圈一个」：圈距才 1.9px，六十多个箭头会糊成一条红带。
+      var stride = Math.max(1, Math.round(RHEO.markGap / step));
+      // 小球和箭头各走各的相位（电子与电流本来就反向跑，两个都开时自然错开）。
+      var baseE = electronShift(flow, phase) / segLen;
+      var baseC = currentShift(flow, phase) / segLen;
+      var k = 0;
+      for (var i = 0; i < n; i += stride) {
+        var xc = x0 + (i + 0.5) * step;
+        // 圈与圈错开 i/n 圈：整段正好错开一整圈 ⇒ 连起来是一条螺旋，而不是一排竖线。
+        var off = i / n;
+        if (wantEle) {
+          var tE = ((baseE + off) % 1 + 1) % 1;
+          dot(xc - skew / 2 + skew * tE, yTop + dy * tE, rBall);
+        }
+        if (wantCur) {
+          var tC = ((baseC + off) % 1 + 1) % 1;
+          arrow(xc - skew / 2 + skew * tC, yTop + dy * tC, ang);
+        }
+        k++;
+      }
+      return k;
+    }
+    stats.left  = runCoil(cylX, sxNow, iL);          // 左半段：A → 滑片
+    stats.right = runCoil(sxNow, cylX + cylW, iR);   // 右半段：滑片 → B
 
     // 触臂那一段（绕线 → 滑片）。不做它的话，A-C 接法下电流跑到滑片就
     // 「凭空消失」了 —— 学生看着电流进了滑片再没出来，比不画还糊涂。
@@ -3262,29 +3322,31 @@
     //   B-C：iL = 0、iR = −I → I（同一个 I，只是从右半段进来）
     //   A-B：iL = I、iR = I  → 0（电流在滑片处从左边转到右边，不进出外部）
     //   C-D：iL = iR = 0     → 0（电流只走金属杆，压根不碰绕线和触臂）
-    // 正值 = 从绕线流向滑片，所以触臂的 a→b 就取「下 → 上」（tipY → knobBottom）。
+    // 正值 = 从绕线流向滑片 ⇒ 画面上是【往上走】（tipY 在下、knobBottom 在上）。
+    // ⚠️ 这一段是【有向长度】：dir 记方向、span 记长度，两个都必须对。以前把两个
+    //    端点的先后写反过，span 恒为负 ⇒ 触臂上一条记号都画不出来，而且很隐蔽
+    //    （绕线里的记号照跑，只是跑到滑片就凭空消失）。
     var iArm = iL - iR;
     stats.iArm = iArm;
     if (Math.abs(iArm) > 1e-12) {
-      // ⚠️ 触臂是【从绕线往上走到滑片】：tipY ≈ +20 在绕线轴线上，knobBottom = −12
-      //    在它【上面】—— 所以 yTo − yFrom 是【负】的。以前这里写的是
-      //    `var aLen = yHigh - yLow; if (aLen > 3)`，把两个端点的先后写反了，
-      //    aLen 恒为 −32 ⇒ 这个 if 永远不成立 ⇒ 触臂上【一颗粒子都画不出来】。
-      //    症状很隐蔽：绕线里的粒子照跑，只是跑到滑片就凭空消失。
-      //    现在按【有向长度】写：dir 记方向，span 记长度，两个都必须对。
       var yFrom = tipY, yTo = RHEO.knobBottom;
-      var span = Math.abs(yTo - yFrom);
+      var span2 = Math.abs(yTo - yFrom);
       var dir = (yTo < yFrom) ? -1 : 1;
-      if (span > 3) {
-        var aShift = electronShift(iArm, phase);
-        var nA = Math.max(1, Math.round(span / 18));
-        var aStep = span / nA;
+      if (span2 > 3) {
+        var nA = Math.max(1, Math.round(span2 / RHEO.markGap));
+        var aStep = span2 / nA;
         stats.arm = nA;
+        var aAng = (iArm > 0 ? -1 : 1) * Math.PI / 2;    // iArm > 0 = 往上走
+        var sE = electronShift(iArm, phase), sC = currentShift(iArm, phase);
         for (var ka = 0; ka < nA; ka++) {
-          var da = ((ka * aStep + aShift) % span + span) % span;
-          ctx.beginPath();
-          ctx.arc(sxNow, yFrom + dir * da, rBall * 0.82, 0, 6.284);
-          ctx.fill();
+          if (wantEle) {
+            var dE = ((ka * aStep + sE) % span2 + span2) % span2;
+            dot(sxNow, yFrom + dir * dE, rBall * 0.82);
+          }
+          if (wantCur) {
+            var dC = ((ka * aStep + sC) % span2 + span2) % span2;
+            arrow(sxNow, yFrom + dir * dC, aAng);
+          }
         }
       }
     }
@@ -3419,7 +3481,7 @@
                    [0.44, '#e8b273'], [0.62, '#b8772f'], [0.84, '#7a4d18'], [1, '#3d260a']];
     var CU_DEAD = [[0, '#57534a'], [0.14, '#7c776c'], [0.30, '#a8a294'],
                    [0.44, '#c2bcae'], [0.62, '#9c968a'], [0.84, '#736e64'], [1, '#4a463f']];
-    var PITCH = 1.9;                    // 圈距（局部单位）。真变阻器的绕线就密到这个程度：
+    var PITCH = RHEO.pitch;             // 圈距（局部单位）。真变阻器的绕线就密到这个程度：
                                         // 缩到 1 倍时圈缝糊成一片金属，放大才数得出圈数。
     ctx.save();
     roundRect(ctx, -TUBE_HW, cylY, TUBE_HW * 2, cylH, cylH / 2); ctx.clip();
