@@ -1,0 +1,855 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>电流表读数练习 - 物理虚拟实验</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="stylesheet" href="style.css">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+           background: #f1f5f9; color: #334155; }
+
+    .exp-wrap { max-width: 1180px; margin: 0 auto; padding: 0 16px 40px; }
+    .exp-wrap h2 { color: #1e293b; font-size: 24px; margin-bottom: 4px; }
+    .exp-wrap .sub { color: #64748b; font-size: 14px; margin-bottom: 18px; }
+
+    /* ===== 舞台：实验画面（左） + 答题台（右）—— 必须【左右并排】，
+           绝不把答题台放到画面下面（滚下去按按钮时画面已经看不见了）。 ===== */
+    .stage { display: flex; gap: 14px; align-items: flex-start; flex-wrap: wrap; }
+    .cv { position: relative; flex: 1 1 640px; min-width: 0; background: #fff;
+          border: 1px solid #e2e8f0; border-radius: 14px; padding: 10px;
+          box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
+    .cv canvas { display: block; width: 100%; height: auto; border-radius: 8px; background: #eef2f7; }
+    .side { flex: 0 0 330px; min-width: 0; display: flex; flex-direction: column; gap: 12px; }
+    @media (max-width: 900px) { .cv { flex: 1 1 100%; } .side { flex: 1 1 100%; } }
+
+    /* 舞台右上角的全屏按钮 */
+    .fsBtn { position: absolute; top: 18px; right: 18px; z-index: 6;
+             display: flex; align-items: center; gap: 5px;
+             padding: 6px 11px; border-radius: 9px; border: 1px solid #cbd5e1;
+             background: rgba(255,255,255,0.92); color: #334155;
+             font-family: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer;
+             box-shadow: 0 2px 8px rgba(15,23,42,.10); transition: .15s; }
+    .fsBtn:hover { background: #fff; border-color: #94a3b8; }
+    .fsBtn.on { background: #2563eb; border-color: #2563eb; color: #fff; }
+
+    /* 画布左上角的题号牌（绝对定位，不进文档流） */
+    .qTag { position: absolute; top: 18px; left: 18px; z-index: 6;
+            padding: 5px 11px; border-radius: 8px; font-size: 12.5px; font-weight: 700;
+            background: rgba(15,23,42,.82); color: #fff; letter-spacing: .02em; }
+
+    /* 全屏：舞台铺满视口，画布居中 */
+    #stage:fullscreen, #stage:-webkit-full-screen {
+      padding: 8px; border: 0; border-radius: 0; background: #eef2f7;
+      display: flex; align-items: center; justify-content: center; overflow: hidden; }
+    #stage:fullscreen canvas, #stage:-webkit-full-screen canvas { width: auto; height: auto; }
+    #stage:fullscreen .fsBtn, #stage:-webkit-full-screen .fsBtn { top: 14px; right: 14px; }
+    #stage:fullscreen .qTag,  #stage:-webkit-full-screen .qTag  { top: 14px; left: 14px; }
+
+    /* ===== 答题台 ===== */
+    .panel { background: #fff; border: 1px solid #e2e8f0; border-radius: 14px;
+             padding: 14px; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
+    .panel h3 { font-size: 14px; color: #1e293b; margin-bottom: 10px; }
+    .ask { font-size: 13.5px; color: #475569; line-height: 1.6; margin-bottom: 10px; }
+    .ask b { color: #2563eb; }
+
+    .ansRow { display: flex; align-items: stretch; gap: 8px; }
+    .ansRow input { flex: 1; min-width: 0; padding: 10px 12px; font-size: 20px; font-weight: 700;
+      font-family: 'SF Mono','Cascadia Code','Consolas',monospace;
+      border: 2px solid #cbd5e1; border-radius: 10px; background: #fff; color: #1e293b;
+      outline: none; transition: .15s; }
+    .ansRow input:focus { border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,.15); }
+    .ansRow input.ok { border-color: #16a34a; background: #f0fdf4; }
+    .ansRow input.bad { border-color: #dc2626; background: #fef2f2; }
+    .ansRow .unit { display: flex; align-items: center; font-size: 16px; font-weight: 700; color: #64748b; }
+    .ansRow button { padding: 0 16px; border-radius: 10px; border: 1px solid #3b82f6;
+      background: #3b82f6; color: #fff; font-family: inherit; font-size: 14px;
+      font-weight: 700; cursor: pointer; transition: .15s; white-space: nowrap; }
+    .ansRow button:hover { background: #2563eb; }
+
+    .fb { margin-top: 10px; font-size: 13px; line-height: 1.65; border-radius: 10px;
+          padding: 0; color: #64748b; }
+    .fb.show { padding: 9px 11px; border: 1px solid; }
+    .fb.ok   { background: #ecfdf5; border-color: #a7f3d0; color: #065f46; }
+    .fb.bad  { background: #fef2f2; border-color: #fecaca; color: #b91c1c; }
+    .fb.info { background: #fffbeb; border-color: #fde68a; color: #92400e; }
+    .fb b { font-weight: 700; }
+    .fb .kbd2 { font-family: 'SF Mono','Consolas',monospace; background: rgba(15,23,42,.07);
+                padding: 1px 5px; border-radius: 5px; }
+
+    .stat { margin-top: 10px; font-size: 12.5px; color: #64748b;
+            display: flex; gap: 14px; flex-wrap: wrap; }
+    .stat b { color: #1e293b; font-family: 'SF Mono','Consolas',monospace; }
+
+    .btnRow { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+    .btnRow button { flex: 1 1 auto; padding: 8px 10px; border-radius: 9px;
+      border: 1px solid #cbd5e1; background: #f8fafc; color: #475569;
+      font-family: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer; transition: .15s; }
+    .btnRow button:hover { background: #f1f5f9; border-color: #94a3b8; }
+    .btnRow button.primary { background: #0f172a; border-color: #0f172a; color: #fff; }
+    .btnRow button.primary:hover { background: #1e293b; }
+
+    .howto ol { padding-left: 18px; }
+    .howto li { font-size: 12.5px; color: #475569; line-height: 1.85; }
+    .howto li b { color: #2563eb; }
+    .howto .tbl { width: 100%; border-collapse: collapse; margin-top: 9px; font-size: 12.5px; }
+    .howto .tbl th, .howto .tbl td { padding: 5px 6px; text-align: center; border-bottom: 1px solid #f1f5f9; }
+    .howto .tbl th { color: #64748b; font-weight: 600; font-size: 11.5px; border-bottom: 1px solid #e2e8f0; }
+    .howto .tbl td { color: #334155; font-family: 'SF Mono','Consolas',monospace; font-weight: 600; }
+    .howto .tbl td.lbl { font-family: inherit; font-weight: 500; color: #475569; }
+
+    /* ===== 说明卡 ===== */
+    .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px; }
+    @media (max-width: 800px) { .info-grid { grid-template-columns: 1fr; } }
+    .info-card { background: #fff; border-radius: 14px; padding: 16px; border: 1px solid #e2e8f0;
+                 box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
+    .info-card h3 { color: #1e293b; font-size: 16px; margin-bottom: 8px; }
+    .info-card p, .info-card ul { color: #475569; font-size: 13px; line-height: 1.8; }
+    .info-card ul { padding-left: 18px; }
+    .info-card ul li strong { color: #2563eb; }
+
+    /* ===== 自动隐藏导航栏 ===== */
+    .header { position: fixed !important; top: 0; left: 0; right: 0;
+              transition: transform 0.35s cubic-bezier(0.4, 0, 0.2, 1); will-change: transform; }
+    .header.hidden { transform: translateY(-100%); }
+    body { padding-top: 56px; transition: padding-top 0.35s cubic-bezier(0.4, 0, 0.2, 1); }
+    body.header-hidden { padding-top: 0; }
+    @media (max-width: 768px) { body { padding-top: 48px; } }
+
+    /* ===== 实拍视频区 ===== */
+    .video-section { max-width: 1200px; margin: 24px auto 40px; padding: 0 16px; }
+    .video-section .section-title { font-size: 20px; font-weight: bold; color: #1e293b; margin-bottom: 16px; }
+    .video-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 18px; }
+    .video-card { background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 18px 20px;
+                  box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
+    .video-card h3 { margin: 0 0 12px; font-size: 15px; line-height: 1.5; color: #1e293b;
+                     border-bottom: 1px solid #e2e8f0; padding-bottom: 10px;
+                     display: flex; align-items: flex-start; gap: 8px; }
+    .video-card h3 .live-badge { font-size: 11px; background: #fee2e2; color: #ef4444;
+                     padding: 2px 8px; border-radius: 6px; font-weight: 600; white-space: nowrap; flex-shrink: 0; }
+    .video-container { position: relative; width: 100%; padding-bottom: 56.25%; height: 0;
+                       border-radius: 12px; overflow: hidden; background: #000; }
+    .video-container iframe { position: absolute; top: 0; left: 0; width: 100%; height: 100%; border: 0; }
+    .video-desc { font-size: 13px; color: #64748b; line-height: 1.7; margin-top: 10px; }
+    .video-fullscreen-btn { position: absolute; top: 10px; right: 10px; z-index: 10; width: 36px; height: 36px;
+      display: flex; align-items: center; justify-content: center; border: none; border-radius: 8px;
+      background: rgba(0,0,0,0.55); color: #fff; cursor: pointer; transition: background 0.2s ease; }
+    .video-fullscreen-btn:hover { background: rgba(59,130,246,0.85); }
+    .video-container:fullscreen, .video-container:-webkit-full-screen {
+      width: 100%; height: 100%; padding-bottom: 0; border-radius: 0; }
+  </style>
+  <script src="protect.js"></script>
+  <script src="auth-check.js"></script>
+</head>
+<body>
+  <header class="header">
+    <div class="logo">物理虚拟实验平台</div>
+    <nav class="nav">
+      <a href="experiments.html">实验目录</a>
+      <a href="index.html">首页</a>
+    </nav>
+  </header>
+
+  <div class="exp-wrap">
+    <h2>电流表读数练习</h2>
+    <p class="sub">电路里的电流表已经串好、开关已经闭合 —— 看清导线接在哪个量程柱上，数出指针过了几大格几小格，把读数填进右边的框里</p>
+
+    <div class="stage">
+      <div class="cv" id="stage">
+        <canvas id="simCanvas"></canvas>
+        <div class="qTag" id="qTag">第 1 题</div>
+        <button class="fsBtn" id="fsBtn" type="button" title="全屏显示实验画面">⛶ 全屏</button>
+      </div>
+
+      <div class="side">
+        <div class="panel">
+          <h3>读数</h3>
+          <p class="ask">电流表的示数是多少？<b>（单位 A）</b></p>
+          <div class="ansRow">
+            <input id="ans" type="text" inputmode="decimal" autocomplete="off"
+                   spellcheck="false" placeholder="例如 0.32" aria-label="电流表读数（A）">
+            <span class="unit">A</span>
+            <button id="btnOk" type="button">提交</button>
+          </div>
+          <div class="fb" id="fb"></div>
+          <div class="stat">
+            <span>已答 <b id="stTot">0</b> 题</span>
+            <span>一次答对 <b id="stOk">0</b></span>
+            <span>连对 <b id="stStreak">0</b></span>
+          </div>
+          <div class="btnRow">
+            <button id="btnHint" type="button">💡 提示</button>
+            <button id="btnReveal" type="button">👁 看答案</button>
+            <button id="btnNext" class="primary" type="button">下一题 ▸</button>
+          </div>
+        </div>
+
+        <div class="panel howto">
+          <h3>怎么读电流表</h3>
+          <ol>
+            <li>先看<b>量程</b>：导线夹在哪一个量程柱上，量程就是哪一个 ——
+                <b>0.6</b> 柱是 0～0.6 A，<b>3</b> 柱是 0～3 A。</li>
+            <li>再数<b>分度值</b>：一小格代表多少安。</li>
+            <li>最后数指针从零刻度起<b>过了几个大格、几个小格</b>。</li>
+          </ol>
+          <table class="tbl">
+            <thead><tr><th>量程</th><th>一大格</th><th>一小格（分度值）</th></tr></thead>
+            <tbody>
+              <tr><td class="lbl">0～0.6 A</td><td>0.2 A</td><td>0.02 A</td></tr>
+              <tr><td class="lbl">0～3 A</td><td>1 A</td><td>0.1 A</td></tr>
+            </tbody>
+          </table>
+          <p class="ask" style="margin-top:9px;font-size:12.5px;">
+            两排数字印在<b>同一条弧线</b>上（外圈 0～3、内圈 0～0.6），指针只指一个位置，
+            读错排就会差 5 倍。</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="info-grid">
+      <div class="info-card">
+        <h3>实验原理</h3>
+        <p>电流表要<strong>串联</strong>在被测电路里，电流从「+」接线柱（量程柱）流入、从「−」接线柱流出。</p>
+        <p style="margin-top:6px;">读数不是「抄表上印的数字」，而是<strong>从刻度盘上读出来的</strong>：
+        指针停在两排数字之间的某条刻度线上，到底读多少，全看<strong>当前用的是哪个量程</strong>。
+        同一个指针位置，接 0.6 柱读 0.5 A，接 3 柱就读 2.5 A —— 差 5 倍。</p>
+        <p style="margin-top:6px;">本页的指针位置不是画上去的：电路由
+        <code>circuit-core.js</code> 的改进节点法（MNA）真求解，读数就是解出来的电流，
+        表盘、指针、读数三者同源。</p>
+      </div>
+      <div class="info-card">
+        <h3>读数步骤与常见错误</h3>
+        <ul>
+          <li><strong>第一步永远是看量程</strong>：先看导线夹在哪个量程柱上，再看两排数字里哪一排是「当前有效」的（画得深的那一排）。</li>
+          <li><strong>分度值</strong>：0～0.6 A 挡一小格 0.02 A；0～3 A 挡一小格 0.1 A。</li>
+          <li><strong>从零刻度数</strong>，数大格再数小格，不要从指针往两头数。</li>
+          <li>常见错误①：读错排 —— 用 3 A 挡却照内圈 0～0.6 那排读，读数正好差 5 倍。</li>
+          <li>常见错误②：数错小格 —— 一大格里的 10 小格漏数或多数一格。</li>
+          <li>读数要读到<strong>分度值的下一位</strong>，写清单位 A。</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <div class="video-section">
+    <div class="section-title">🎬 实拍视频 · 从虚拟实验到真实世界</div>
+    <div class="video-grid">
+      <div class="video-card">
+        <h3>练习使用电流表：连接、量程选择与读数<span class="live-badge">实拍</span></h3>
+        <div class="video-container">
+          <iframe src="//player.bilibili.com/player.html?bvid=BV1erd9BJEoR&page=1&autoplay=0&loop=1&danmaku=0&high_quality=1" scrolling="no" frameborder="no" framespacing="0" allowfullscreen="true"></iframe>
+          <button class="video-fullscreen-btn" title="全屏播放" aria-label="全屏播放">
+            <svg class="fs-expand" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"/></svg>
+            <svg class="fs-compress" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:none"><path stroke-linecap="round" stroke-linejoin="round" d="M8 3v3a2 2 0 01-2 2H3m18 0h-3a2 2 0 01-2-2V3m0 18v-3a2 2 0 012-2h3M3 16h3a2 2 0 012 2v3"/></svg>
+          </button>
+        </div>
+        <div class="video-desc">与上方虚拟实验一一对应：实拍演示电流表必须串联接入被测电路、电流从「+」接线柱流入，并分别用 0～0.6 A 和 0～3 A 两个量程读数 —— 同一个指针位置、两个量程差 5 倍，正是本页要练的那一步。</div>
+      </div>
+    </div>
+  </div>
+
+  <script src="supabase.js"></script>
+  <script src="script.js"></script>
+
+  <script src="circuit-core.js?build=19"></script>
+  <script src="circuit-draw.js?build=32"></script>
+  <script src="circuit-params.js?build=4"></script>
+  <script>
+(function () {
+'use strict';
+// ============================================================
+// 电流表读数练习
+// ------------------------------------------------------------
+// 「电路器件」全部来自电学沙盒那一套共享内核，一个字都没有另画：
+//   · 元件外形 / 表盘 / 刻度弧 / 指针  ← circuit-draw.js 的 drawComponent
+//   · 读数                            ← circuit-core.js 的 MNA 求解
+//   · 读数的小数位与分度值口径        ← circuit-params.js / circuit-draw 的 fmtRead
+// 页面自己只负责三件事：搭一条固定的串联回路、出题、判分。
+//
+// ── 为什么读数一定是「分度值的整数倍」────────────────────────
+// 出题时先挑一对 (电动势 E, 定值电阻 R)，使 E/R 恰好落在 0.6 A 挡的 0.02 A 刻度线上
+// （或 3 A 挡的 0.1 A 刻度线上），再把这对参数写进电路让内核真解一遍。
+// 指针因此每次都停在某一条刻度线上 —— 答案唯一，学生数格数就一定能数出来，
+// 不会出现「指针落在两线之间、标准答案说不清」的情况。
+//
+// ── 三处「同一件事只有一个真值」────────────────────────────
+//   1. 答案 = 内核解出来的 rec.reading（不是出题时那个目标值）—— 两者必须一致，
+//      不一致就换一题（见 newQuestion 的校验）。
+//   2. 指针角度 = D.meterIndicated() / rec.range —— 绘制层和判分层问同一个函数。
+//   3. 分度值 = range / 30 —— 30 = 表盘上 3 大格 × 每大格 10 小格（见 circuit-draw
+//      的 MAJOR / MINOR），自检里有一条源码守卫盯着这两个数。
+// ============================================================
+
+var C = window.CircuitCore, D = window.CircuitDraw, P = window.CircuitParams;
+
+// ---------- 画布逻辑尺寸与布局常量 ----------
+var W = 660, H = 400;
+var AM_S = 1.35;                     // 电流表放大倍数（表盘是主角，比别的元件画大一号）
+var TOP_Y = 227;                     // 上排导线（电流表三个接线柱正好落在这一行）
+var BOT_Y = 350;                     // 下排导线
+var LEFT_X = 40, RIGHT_X = 620;      // 左右两根立线
+var A_X = 250;                       // 电流表锚点 x
+var A_Y = TOP_Y - 72 * AM_S;         // 锚点 y：让三个接线柱（局部 y=72）正好落在 TOP_Y 上
+var SW_X = 540, SW_Y = TOP_Y;        // 开关在上排（刀口朝上，不压任何东西）
+var E_X = 150, R_X = 420;            // 电源 / 定值电阻在下排
+
+var canvas = document.getElementById('simCanvas'), ctx = canvas.getContext('2d');
+var stageEl = document.getElementById('stage');
+var dpr = 1, s = 1;                  // s = 世界单位 → CSS 像素
+var phase = 0, lastT = 0, isFull = false;
+
+// ---------- 题库 ----------
+// 电动势池与电阻池。两个池子都是「实物上拧得出来的数」：干电池按 1.5V 一节的整数倍，
+// 定值电阻取实验室常见的标称值。
+var E_POOL = [1.5, 3, 4.5, 6, 7.5];
+var R_POOL = [1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6, 7.5, 8, 10, 12, 15, 20, 25, 30, 40, 50, 60, 75, 100];
+// 表盘上 3 大格、每大格 10 小格 ⇒ 一个量程 30 格（见 circuit-draw 的 MAJOR / MINOR）
+var METER_DIVS = 30;
+function divOf(range) { return range / METER_DIVS; }
+
+// 「x 是不是 d 的整数倍」，是就返回倍数 k，否则返回 null。
+// 容差取 1e-9：E/R 在二进制浮点里必然有 ulp 级的误差，卡太死会把好题全滤掉。
+function nearMul(x, d) {
+  var k = Math.round(x / d);
+  return Math.abs(x - k * d) < 1e-9 ? k : null;
+}
+
+function buildBank() {
+  var groups = [
+    { range: 0.6, tapIdx: 1, lo: 0.10, hi: 0.58 },
+    { range: 3,   tapIdx: 2, lo: 0.80, hi: 2.70 }
+  ];
+  return groups.map(function (g) {
+    var div = divOf(g.range), cases = [];
+    E_POOL.forEach(function (emf) {
+      R_POOL.forEach(function (R) {
+        var I = emf / R;
+        if (nearMul(I, div) == null) return;
+        if (I < g.lo - 1e-9 || I > g.hi + 1e-9) return;
+        cases.push({ emf: emf, R: R, target: I });
+      });
+    });
+    return { range: g.range, tapIdx: g.tapIdx, div: div, cases: cases };
+  });
+}
+var BANK = buildBank();
+
+// ---------- 场景 ----------
+function wire(a, ai, b, bi, via) {
+  return { a: { compId: a, termIdx: ai }, b: { compId: b, termIdx: bi }, via: via || [], auto: false };
+}
+var scene = { comps: [], wires: [] };
+function byId(id) {
+  for (var i = 0; i < scene.comps.length; i++) if (scene.comps[i].id === id) return scene.comps[i];
+  return null;
+}
+// 电流表的「−」柱（端子 0）接在左侧立线那一段上，量程柱（端子 1 或 2）接在右侧那一段上。
+// 换量程 = 换一根导线接到另一个量程柱上（沙盒里也是这么做的），所以量程永远和画面一致。
+function buildScene() {
+  scene.comps = [
+    { id: 'E',  type: 'battery',  x: E_X,  y: BOT_Y, params: { emf: 3, rInt: 0 } },
+    { id: 'R1', type: 'resistor', x: R_X,  y: BOT_Y, params: { R: 10 } },
+    { id: 'SW', type: 'switch',   x: SW_X, y: SW_Y,  params: { closed: true } },
+    { id: 'A',  type: 'ammeter',  x: A_X,  y: A_Y,
+      params: { range: 0.6, rInternal: 0, zeroed: true, showValue: false } }
+  ];
+  scene.wires = [
+    wire('E', 0, 'R1', 0, []),                                    // 电源 + → 定值电阻
+    wire('R1', 1, 'SW', 1, [[RIGHT_X, BOT_Y], [RIGHT_X, TOP_Y]]),  // 电阻 → 右立线上去 → 开关
+    wire('SW', 0, 'A', 1, []),                                     // 开关 → 电流表量程柱（待改）
+    wire('A', 0, 'E', 1, [[LEFT_X, TOP_Y], [LEFT_X, BOT_Y]])       // 电流表 − → 左立线下来 → 电源 −
+  ];
+}
+// 换量程 = 把「开关 → 电流表」那根线的端点挪到另一个量程柱上。
+function setTap(tapIdx) {
+  for (var i = 0; i < scene.wires.length; i++) {
+    var w = scene.wires[i];
+    if (w.a.compId === 'SW' && w.b.compId === 'A') { w.b.termIdx = tapIdx; return true; }
+  }
+  return false;
+}
+
+// ---------- 求解 ----------
+var results = null, flows = [];
+function solveNow() {
+  results = C.solve(scene.comps, scene.wires.map(function (w) { return { a: w.a, b: w.b }; }));
+  flows = C.wireCurrents(scene, results);
+}
+
+// ---------- 出题 ----------
+var q = null, qSeq = 0;
+var stat = { tot: 0, ok: 0, streak: 0 };
+var hintOn = false;
+
+function applyCase(g, c) {
+  var A = byId('A'), E = byId('E'), R = byId('R1');
+  E.params.emf = c.emf; E.params.rInt = 0;
+  R.params.R = c.R;
+  A.params.range = g.range;
+  A.params.rInternal = 0;
+  A.params.zeroed = true;          // 练习读数必须是一只【调好零】的表：指针 = 真值
+  A.params.showValue = false;      // 数字示数默认不显示（要看答案时才打开）
+  setTap(g.tapIdx);
+}
+
+// 挑一题。返回 null 表示这次没挑成（调用方重试）。
+// 三道校验缺一不可：① 表真的串进电路了；② 没有反接/超量程；③ 解出来的读数
+// 恰好落在刻度线上，且与出题时那个目标值一致 —— 三条都过，答案才唯一。
+function tryQuestion(avoidKey) {
+  var g = BANK[Math.floor(Math.random() * BANK.length)];
+  var c = g.cases[Math.floor(Math.random() * g.cases.length)];
+  var key = g.range + ':' + c.target.toFixed(4);
+  if (key === avoidKey) return null;
+
+  applyCase(g, c);
+  solveNow();
+  var rec = results && results.components ? results.components['A'] : null;
+  if (!rec || !rec.wired || rec.reversed || rec.overRange) return null;
+  if (results.status !== 'ok') return null;
+
+  var truth = rec.reading;
+  var k = nearMul(truth, g.div);
+  if (k == null) return null;                       // 指针没落在刻度线上 → 这题不能出
+  if (Math.abs(truth - c.target) > 1e-9) return null; // 解出来的和出题的目标不一致 → 弃
+
+  return {
+    key: key, range: g.range, div: g.div, tapIdx: g.tapIdx,
+    truth: truth, target: c.target, emf: c.emf, R: c.R,
+    k: k,                              // 指针过了 k 个小格
+    major: Math.floor(k / 10),         // 过了几大格
+    minor: k % 10,                     // 余下几小格
+    answered: false, revealed: false, firstTry: true, resolved: false
+  };
+}
+function newQuestion() {
+  var avoid = q ? q.key : null, nq = null;
+  for (var i = 0; i < 60 && !nq; i++) nq = tryQuestion(avoid);
+  if (!nq) { for (var j = 0; j < 60 && !nq; j++) nq = tryQuestion(null); }   // 兜底：允许重复
+  if (!nq) return false;
+  q = nq; qSeq++;
+  hintOn = false;
+  return true;
+}
+
+// ---------- 判分 ----------
+// 容差 = 0.35 个分度值：整格读对了就一定过；差一整格（最常见的错）一定不过。
+// 这个数不能大：取到 0.5 格就会把「差一格」也算对（0.6 挡上 0.21 与 0.22 只差 0.01）。
+var TOL_FRAC = 0.35;
+function tolOf(qq) { return qq.div * TOL_FRAC; }
+
+// 把输入框里那串字变成一个数。认「0.32 / .32 / 0.32A / 0.32 A / 0.32安」，其余返回 NaN。
+function parseAnswer(raw) {
+  if (typeof raw !== 'string') return NaN;
+  var t = raw.trim();
+  t = t.replace(/[\s\u3000]/g, '');
+  t = t.replace(/(A|a|安培|安)$/, '');
+  t = t.replace(/^\+/, '');
+  if (!/^\d*\.?\d+$/.test(t)) return NaN;
+  if (t === '.' || t === '') return NaN;
+  return parseFloat(t);
+}
+
+// 判一题。返回 { ok, kind, msg }。
+// kind 用于自检与反馈样式：ok / row（读错排）/ cell（差一格）/ scale（小数点）/
+// zero（读成 0）/ bad（不是数字）/ far（差得远）
+function judge(ans, qq) {
+  var truth = qq.truth, div = qq.div, tol = tolOf(qq);
+  if (!isFinite(ans)) {
+    return { ok: false, kind: 'bad', msg: '请填一个数字（单位 A），例如 <span class="kbd2">0.32</span>。' };
+  }
+  if (Math.abs(ans - truth) <= tol) {
+    return { ok: true, kind: 'ok', msg: '' };
+  }
+  // 读错排：两排数字印在同一条弧上，内圈恒为外圈的 1/5
+  var other = truth * (qq.range >= 3 ? 0.2 : 5);
+  if (Math.abs(ans - other) <= tol) {
+    return { ok: false, kind: 'row', msg: qq.range >= 3
+      ? '你读的是<b>内圈 0～0.6</b> 那一排数字。可是导线夹在 <b>3</b> 接线柱上，量程是 0～3 A —— 该读<b>外圈</b>那一排。'
+      : '你读的是<b>外圈 0～3</b> 那一排数字。可是导线夹在 <b>0.6</b> 接线柱上，量程是 0～0.6 A —— 该读<b>内圈</b>那一排。' };
+  }
+  // 差一整格
+  if (Math.abs(Math.abs(ans - truth) - div) <= tol) {
+    return { ok: false, kind: 'cell', msg: '只差<b>一格</b>（一小格 = <span class="kbd2">' +
+      div + '</span> A）。从零刻度重新数一遍：先数大格，再数小格。' };
+  }
+  // 小数点 / 单位弄错（读成 24 而不是 0.24）
+  if (truth > 0 && (Math.abs(ans - truth * 10) <= truth * 0.5 || Math.abs(ans - truth * 100) <= truth * 0.5)) {
+    return { ok: false, kind: 'scale', msg: '数值大小差了个数量级 —— 检查一下<b>小数点</b>，单位是 <b>A</b>。' };
+  }
+  if (ans === 0) {
+    return { ok: false, kind: 'zero', msg: '指针<b>没有</b>停在零刻度上，再仔细看看指针落在哪条刻度线。' };
+  }
+  return { ok: false, kind: 'far', msg: '还不对。先看清<b>量程</b>（导线夹在哪个柱上），再从零刻度数<b>大格 → 小格</b>。' };
+}
+
+// ---------- 画布 ----------
+function termPos(c, idx) {
+  var p = D.terminalWorld(c, idx);
+  if (c.type !== 'ammeter') return p;
+  // 电流表整体放大 AM_S 倍（绕自己的锚点），接线柱跟着一起放大 —— 导线必须接在这个位置上
+  return { x: c.x + (p.x - c.x) * AM_S, y: c.y + (p.y - c.y) * AM_S };
+}
+function pathOf(w) {
+  var a = byId(w.a.compId), b = byId(w.b.compId);
+  if (!a || !b) return [];
+  var p0 = termPos(a, w.a.termIdx), p1 = termPos(b, w.b.termIdx);
+  var pts = [{ x: p0.x, y: p0.y }];
+  (w.via || []).forEach(function (v) { pts.push({ x: v[0], y: v[1] }); });
+  pts.push({ x: p1.x, y: p1.y });
+  return pts;
+}
+
+// 提示：把「当前有效的那一排数字」用一条半透明的荧光带标出来。
+// ⚠️ 必须画在 drawComponent【之后】—— 表盘是一块不透明的白盘，先画的带子会被它盖掉
+//    （第一版就是这么写的，画面上什么都看不见）。压在数字上用的是半透明色，
+//    深色数字透出来仍然清清楚楚，只是「被荧光笔划过一道」。
+function drawHintBand(g, c, rec) {
+  var range = (rec && rec.range) || (c.params && c.params.range) || 0.6;
+  var hi = range >= 3 - 1e-9;
+  var R = hi ? D.MET.RN_HI : D.MET.RN_LO;
+  g.save();
+  g.translate(c.x, c.y);
+  g.beginPath(); D.roundRect(g, D.MET.DIAL.x, D.MET.DIAL.y, D.MET.DIAL.w, D.MET.DIAL.h, 14); g.clip();
+  g.beginPath();
+  g.arc(D.MET.PIVOT.x, D.MET.PIVOT.y, R, D.MET_SWEEP.A0, D.MET_SWEEP.A1);
+  g.strokeStyle = 'rgba(250,204,21,0.42)';
+  g.lineWidth = hi ? 19 : 16; g.lineCap = 'butt';
+  g.stroke();
+  g.restore();
+}
+function drawComp(g, c, rec) {
+  if (c.type !== 'ammeter') { D.drawComponent(g, c, rec); return; }
+  g.save();
+  g.translate(c.x, c.y); g.scale(AM_S, AM_S); g.translate(-c.x, -c.y);
+  D.drawComponent(g, c, rec);
+  if (hintOn) drawHintBand(g, c, rec);
+  g.restore();
+}
+// 接线柱补回最上层（导线画在元件之上，柱子是接线点不能被压掉）。
+// ⚠️ 电流表要自己补：drawTerminals 走的是【未放大】的 terminalWorld，
+//    在这只被放大的表上会把柱子画回原位。柱子的种类/尺寸从 drawMeter 登记的
+//    comp.__posts 里读，避免在这里再抄一份。
+function drawPosts(g, c) {
+  if (c.type !== 'ammeter') { D.drawTerminals(g, c); return; }
+  var ps = c.__posts || { kinds: ['neg', 'pos', 'pos'], scale: 1.25, neck: 0 };
+  for (var i = 0; i < 3; i++) {
+    var p = termPos(c, i);
+    D.drawBindingPost(g, p.x, p.y, ps.kinds[i], ps.scale, ps.neck);
+  }
+}
+function drawHintRing(g, c, rec) {
+  if (!hintOn || !rec || rec.tapIdx == null) return;
+  var p = termPos(c, rec.tapIdx);
+  g.save();
+  g.beginPath(); g.arc(p.x, p.y, 11, 0, 6.284);
+  g.strokeStyle = '#f59e0b'; g.lineWidth = 3; g.stroke();
+  g.beginPath(); g.arc(p.x, p.y, 15, 0, 6.284);
+  g.strokeStyle = 'rgba(245,158,11,0.45)'; g.lineWidth = 2; g.stroke();
+  g.restore();
+}
+
+function drawFrame() {
+  ctx.setTransform(dpr * s, 0, 0, dpr * s, 0, 0);
+  ctx.clearRect(0, 0, W, H);
+  D.drawBackground(ctx, W, H);
+  if (!results) return;
+  var recs = results.components;
+  scene.wires.forEach(function (w, i) {
+    D.drawWire(ctx, pathOf(w), { flow: flows[i], phase: phase, electrons: false, current: true });
+  });
+  scene.comps.forEach(function (c) { drawComp(ctx, c, recs[c.id]); });
+  scene.comps.forEach(function (c) { drawPosts(ctx, c); });
+  var a = byId('A');
+  if (a) drawHintRing(ctx, a, recs['A']);
+}
+function tick(t) {
+  var dt = lastT ? Math.min((t - lastT) / 1000, 0.06) : 0;
+  lastT = t;
+  if (results && results.status === 'ok') phase += dt;
+  drawFrame();
+  requestAnimationFrame(tick);
+}
+function layout() {
+  dpr = window.devicePixelRatio || 1;
+  var pad = 10;
+  var availW = Math.max(80, stageEl.clientWidth - pad * 2);
+  var availH = isFull ? Math.max(80, stageEl.clientHeight - pad * 2) : Infinity;
+  s = availW / W;
+  if (isFinite(availH)) s = Math.min(s, availH / H);
+  canvas.style.width = (W * s) + 'px';
+  canvas.style.height = (H * s) + 'px';
+  canvas.width = Math.round(W * s * dpr);
+  canvas.height = Math.round(H * s * dpr);
+  drawFrame();
+}
+
+// ---------- 界面 ----------
+var elAns = document.getElementById('ans'), elFb = document.getElementById('fb');
+var elQTag = document.getElementById('qTag');
+var elTot = document.getElementById('stTot'), elOk = document.getElementById('stOk'),
+    elStreak = document.getElementById('stStreak');
+
+function fmtNum(v) { return P ? P.num2(v) : String(v); }
+
+function syncStat() {
+  elTot.textContent = stat.tot;
+  elOk.textContent = stat.ok;
+  elStreak.textContent = stat.streak;
+  elQTag.textContent = '第 ' + qSeq + ' 题';
+}
+function setFb(kind, html) {
+  elFb.className = 'fb show ' + kind;
+  elFb.innerHTML = html;
+}
+function clearFb() { elFb.className = 'fb'; elFb.innerHTML = ''; }
+
+function refreshQuestion() {
+  elAns.value = '';
+  elAns.className = '';
+  elAns.disabled = false;
+  clearFb();
+  hintOn = false;
+  // ⚠️ 这里【不再】写 A.params.showValue = false —— 那和 applyCase 是同一个不变量，
+  //    写两处的话单独改坏任何一处都不会被发现（实测就是这么漏掉的）。
+  //    showValue 的唯一入口是 applyCase（每出一题都会走到）。
+  solveNow();
+  layout();
+  syncStat();
+  elAns.focus();
+}
+
+function answerText(qq) {
+  var parts = [];
+  parts.push('正确读数是 <b>' + fmtNum(qq.truth) + ' A</b>。');
+  parts.push('量程 0～' + qq.range + ' A，一小格 = <b>' + qq.div + ' A</b>。');
+  parts.push('指针从零刻度起过了 <b>' + qq.major + '</b> 大格又 <b>' + qq.minor +
+             '</b> 小格 ⇒ ' + qq.major + '×' + (qq.div * 10) + ' + ' + qq.minor + '×' + qq.div +
+             ' = ' + fmtNum(qq.truth) + ' A。');
+  return parts.join('<br>');
+}
+
+function doSubmit() {
+  if (!q) return;
+  if (q.answered) { doNext(); return; }
+  var ans = parseAnswer(elAns.value);
+  var r = judge(ans, q);
+  if (r.kind === 'bad') { setFb('info', r.msg); return; }
+
+  if (!q.resolved) { stat.tot++; q.resolved = true; }
+
+  if (r.ok) {
+    if (q.firstTry) { stat.ok++; stat.streak++; } else { stat.streak = 0; }
+    q.answered = true;
+    elAns.classList.add('ok');
+    setFb('ok', '✅ 读对了 —— ' + fmtNum(q.truth) + ' A。<br>' + answerText(q) +
+                '<br><span style="opacity:.75">按 <b>回车</b> 或「下一题」继续。</span>');
+  } else {
+    if (q.firstTry) stat.streak = 0;
+    q.firstTry = false;
+    elAns.classList.add('bad');
+    setFb('bad', '❌ ' + r.msg + '<br><span style="opacity:.8">再读一次，答案先不给。</span>');
+  }
+  syncStat();
+}
+function doNext() {
+  if (!newQuestion()) { setFb('info', '出题失败，请刷新页面。'); return; }
+  refreshQuestion();
+}
+function doHint() {
+  if (!q) return;
+  hintOn = true;
+  drawFrame();
+  var rec = results.components['A'];
+  var rowTxt = q.range >= 3 ? '外圈 0～3' : '内圈 0～0.6';
+  setFb('info', '💡 两步：<br>① 导线夹在 <b>' +
+    (q.range >= 3 ? '3' : '0.6') + '</b> 接线柱上 ⇒ 量程 <b>0～' + q.range + ' A</b>（读' + rowTxt + '那一排）。<br>' +
+    '② 一小格 = <b>' + q.div + ' A</b>（一大格 = ' + (q.div * 10) + ' A）。数指针过了几大格、几小格。' +
+    '<br><span style="opacity:.8">画布上已经把那排数字圈出来了，量程柱也标了圈。</span>');
+}
+function doReveal() {
+  if (!q) return;
+  q.revealed = true;
+  var A = byId('A');
+  if (A) A.params.showValue = true;      // 打开沙盒自带的「表盘上显示读数」
+  drawFrame();
+  if (!q.resolved) { stat.tot++; q.resolved = true; }
+  q.firstTry = false; stat.streak = 0;
+  q.answered = true;
+  elAns.classList.remove('bad'); elAns.classList.add('ok');
+  elAns.value = fmtNum(q.truth);
+  setFb('info', '👁 答案：<br>' + answerText(q) +
+                '<br><span style="opacity:.8">表盘上那块小液晶显示的就是这个数。按「下一题」继续。</span>');
+  syncStat();
+}
+
+elAns.addEventListener('keydown', function (ev) {
+  if (ev.key === 'Enter') { ev.preventDefault(); doSubmit(); }
+});
+document.getElementById('btnOk').addEventListener('click', doSubmit);
+document.getElementById('btnNext').addEventListener('click', doNext);
+document.getElementById('btnHint').addEventListener('click', doHint);
+document.getElementById('btnReveal').addEventListener('click', doReveal);
+
+// ---------- 全屏（舞台）----------
+var fsBtn = document.getElementById('fsBtn');
+function fsEl() { return document.fullscreenElement || document.webkitFullscreenElement || null; }
+function fsIsStage() { return fsEl() === stageEl; }
+fsBtn.addEventListener('click', function () {
+  if (fsIsStage()) {
+    var ex = document.exitFullscreen || document.webkitExitFullscreen;
+    if (ex) ex.call(document);
+  } else {
+    var rq = stageEl.requestFullscreen || stageEl.webkitRequestFullscreen;
+    if (rq) rq.call(stageEl);
+  }
+});
+function onFsChange() {
+  isFull = fsIsStage();
+  fsBtn.textContent = isFull ? '⛶ 退出全屏' : '⛶ 全屏';
+  fsBtn.classList.toggle('on', isFull);
+  fsBtn.title = isFull ? '退出全屏（也可以按 Esc）' : '全屏显示实验画面';
+  // 全屏改的是舞台尺寸 ⇒ 立刻重算一次，再晚一帧补一次（等浏览器把布局定下来）
+  layout();
+  setTimeout(function () { layout(); drawFrame(); }, 60);
+}
+['fullscreenchange', 'webkitfullscreenchange'].forEach(function (ev) {
+  document.addEventListener(ev, onFsChange);
+});
+
+// ---------- 启动 ----------
+// ⚠️ 调试钩子必须在【任何绘制之前】装好：页面万一在首帧渲染里抛错，
+//    钩子还在，自检就能把「运行期有 JS 报错」判红；装在最后的话会变成
+//    「页面根本没起来」（HARNESS），那不算被抓住。
+// ============================================================
+// 给自动化验证留的钩子
+// ============================================================
+window.__am = {
+  // 页面自报身份：负向对照把页面改坏后写进另一个文件名（__amneg_*），
+  // 任何靠 location 推身份的断言在每一条变异上都会误红 —— 所以身份写死在源码里。
+  PAGE_FILE: '电流表读数练习.html',
+  W: W, H: H, AM_S: AM_S, METER_DIVS: METER_DIVS,
+  consts: { TOP_Y: TOP_Y, BOT_Y: BOT_Y, LEFT_X: LEFT_X, RIGHT_X: RIGHT_X,
+            A_X: A_X, A_Y: A_Y, SW_X: SW_X, E_X: E_X, R_X: R_X },
+  bank: function () { return BANK; },
+  divOf: divOf, nearMul: nearMul,
+  scene: function () { return scene; },
+  results: function () { return results; },
+  flows: function () { return flows; },
+  q: function () { return q; },
+  stat: function () { return { tot: stat.tot, ok: stat.ok, streak: stat.streak, seq: qSeq }; },
+  hintOn: function () { return hintOn; },
+  judge: judge, parseAnswer: parseAnswer, tolOf: tolOf,
+  newQuestion: newQuestion,
+  submit: doSubmit, next: doNext, hint: doHint, reveal: doReveal,
+  renderNow: drawFrame,
+  view: function () { return { s: s, dpr: dpr, w: canvas.width, h: canvas.height,
+                               cssW: canvas.clientWidth, cssH: canvas.clientHeight }; },
+  stage: function () { return stageEl; },
+  fullscreen: function () { return fsIsStage(); },
+  // 指针几何：世界坐标 + 画布设备像素。自检拿它去打像素点。
+  // 角度/示数一律问 D.meterIndicated 与 MET/MET_SWEEP —— 绝不在自检里另算一套。
+  meterProbe: function (radius) {
+    var c = byId('A'), rec = results && results.components ? results.components['A'] : null;
+    if (!c || !rec) return null;
+    var shown = D.meterIndicated(c, rec);
+    var range = rec.range || (c.params && c.params.range) || 0.6;
+    var frac = Math.min(Math.abs(shown) / (range || 1), 1.06);
+    var na = D.MET_SWEEP.A0 + (D.MET_SWEEP.A1 - D.MET_SWEEP.A0) * frac;
+    var r = radius == null ? 46 : radius;
+    var lx = D.MET.PIVOT.x + Math.cos(na) * r;
+    var ly = D.MET.PIVOT.y + Math.sin(na) * r;
+    var wx = c.x + lx * AM_S, wy = c.y + ly * AM_S;
+    var k = canvas.width / W;
+    // 对照点：沿表盘【偏移一个固定角度】而不是「关于竖轴镜像」——
+    // 指针正好指在正中（半偏）时，镜像点就是指针自己，那条断言会退化成恒假。
+    var dAng = 0.6;
+    var altAng = (na + dAng <= D.MET_SWEEP.A1) ? na + dAng : na - dAng;
+    var ax = D.MET.PIVOT.x + Math.cos(altAng) * r;
+    var ay = D.MET.PIVOT.y + Math.sin(altAng) * r;
+    return { shown: shown, range: range, frac: frac, ang: na, altAng: altAng,
+             local: { x: lx, y: ly },
+             world: { x: wx, y: wy }, px: { x: wx * k, y: wy * k }, k: k,
+             alt: { px: { x: (c.x + ax * AM_S) * k, y: (c.y + ay * AM_S) * k } } };
+  },
+  // 表盘（白色圆角矩形）在画布上的设备像素盒 —— 自检用来判「表盘够不够大、读得出数」
+  dialBox: function () {
+    var c = byId('A'); if (!c) return null;
+    var k = canvas.width / W;
+    var x0 = (c.x + D.MET.DIAL.x * AM_S) * k, y0 = (c.y + D.MET.DIAL.y * AM_S) * k;
+    var x1 = (c.x + (D.MET.DIAL.x + D.MET.DIAL.w) * AM_S) * k;
+    var y1 = (c.y + (D.MET.DIAL.y + D.MET.DIAL.h) * AM_S) * k;
+    return { x0: x0, y0: y0, x1: x1, y1: y1, w: x1 - x0, h: y1 - y0 };
+  },
+  // 一帧里真正画出去的东西（供遮挡/越界类断言）
+  drawn: function () {
+    var c = byId('A'); if (!c) return null;
+    var k = canvas.width / W;
+    var box = D.bodyBox(c);
+    return {
+      wires: scene.wires.map(function (w) { return pathOf(w).map(function (p) { return { x: p.x * k, y: p.y * k }; }); }),
+      meterBox: { x0: (c.x - (D.MET.BASE_HW + 2) * AM_S) * k, y0: (c.y + (D.MET.CASE_TOP - 2) * AM_S) * k,
+                  x1: (c.x + (D.MET.BASE_HW + 2) * AM_S) * k, y1: (c.y + (D.MET.POST_Y + 8) * AM_S) * k },
+      canvasW: canvas.width, canvasH: canvas.height,
+      bodyBoxUnscaled: box
+    };
+  }
+};
+buildScene();
+if (!newQuestion()) { /* 题库为空时下面仍能画出空场景，不至于白屏 */ }
+solveNow();
+layout();
+syncStat();
+drawFrame();                       // 首帧【同步】画，不等 rAF（headless 下 rAF 可能一帧都不回调）
+requestAnimationFrame(tick);
+window.addEventListener('resize', function () { layout(); });
+elAns.focus();
+
+})();
+  </script>
+
+  <script>
+  (function() {
+    var header = document.querySelector('.header');
+    var hideTimer = null, HIDE_DELAY = 800;
+    function show() { clearTimeout(hideTimer); header.classList.remove('hidden'); document.body.classList.remove('header-hidden'); }
+    function hide() { hideTimer = setTimeout(function() { header.classList.add('hidden'); document.body.classList.add('header-hidden'); }, HIDE_DELAY); }
+    document.addEventListener('mousemove', function(e) {
+      if (e.clientY <= 60) show();
+      else if (e.clientY > header.offsetHeight + 20 && !header.classList.contains('hidden')) hide();
+    });
+    header.addEventListener('mouseenter', show);
+    header.addEventListener('mouseleave', hide);
+    hideTimer = setTimeout(function() { header.classList.add('hidden'); document.body.classList.add('header-hidden'); }, 2000);
+  })();
+  </script>
+
+  <script>
+  (function() {
+    var btns = document.querySelectorAll('.video-fullscreen-btn');
+    if (!btns.length) return;
+    btns.forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        var container = btn.closest('.video-container');
+        if (!container) return;
+        if (document.fullscreenElement === container) { document.exitFullscreen(); }
+        else { if (container.requestFullscreen) container.requestFullscreen(); else if (container.webkitRequestFullscreen) container.webkitRequestFullscreen(); }
+      });
+    });
+    document.addEventListener('fullscreenchange', function() {
+      var fsEl = document.fullscreenElement;
+      btns.forEach(function(btn) {
+        var container = btn.closest('.video-container');
+        var on = fsEl === container;
+        var ex = btn.querySelector('.fs-expand'), cp = btn.querySelector('.fs-compress');
+        if (ex) ex.style.display = on ? 'none' : '';
+        if (cp) cp.style.display = on ? '' : 'none';
+        btn.title = on ? '退出全屏' : '全屏播放';
+        btn.setAttribute('aria-label', btn.title);
+      });
+    });
+  })();
+  </script>
+</body>
+</html>
