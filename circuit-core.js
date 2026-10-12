@@ -177,7 +177,7 @@
   // 「这个类型是不是【电源】」
   // ------------------------------------------------------------
   // 求解器里有三处必须按电源特判，而且三处【都要一视同仁】：
-  //   · shortedBatteryIds  短路检测 —— 漏掉一个就会出现「学生电源被导线
+  //   · shortCircuitInfo  短路检测 —— 漏掉一个就会出现「学生电源被导线
   //                        直接短接、电流爆表，却一条警告都不报」；
   //   · 无源判定（no-source）—— 漏掉一个，整个电路只要有学生电源就会被
   //                        判成「没有电源」；
@@ -278,6 +278,20 @@
   // 默认场景短路时【断的是导线】，电源保得住 —— 这正好是保险丝的原理，
   // 学生把内阻拧到 0.5Ω 以下才会看到电源烧坏。
   var BATT_MAX_I = 5;
+
+  // ── 表头烧坏的门槛（量程的几倍）─────────────────────────────
+  // 表和人一样有两条命，必须分成两档：
+  //   · **打表** —— 指针顶到限位钉上，读数不能信了，但表还能用（fault = 'over'）；
+  //   · **烧表** —— 动圈过热烧断，表彻底废了（fault = 'burnt'，内核里是断路）。
+  // 学生真会犯的两种错正好落在这两档上：
+  //   · 量程选小了 —— 0.6A 挡去量 0.8A 的回路，指针打到头 ⇒ 打表；
+  //   · 把电流表直接接在电源两极上 —— 电流是安培级，0.6A 挡上差着一个数量级
+  //     ⇒ 烧表。
+  // 所以门槛取【量程的 2 倍】：1~2 倍之间只打表，2 倍往上才烧。
+  // ⚠️ 这两档【必须分开】。合成一个的话，「量程选小了」和「接成了短路」在
+  //    学生眼里就是同一件事 —— 而它们该讲的道理完全不同：前者是选量程，
+  //    后者是「电流表内阻几乎为零，绝不能并接在电源上」。
+  var METER_BURN_K = 2;
 
   // ── 直流电动机的铭牌常数 ────────────────────────────────────
   //   rpmPerV  空载转速常数（每伏特每分钟多少转）：3V 下 2400 r/min，
@@ -950,27 +964,53 @@
   //
   // ⚠️ 电源自己的支路【不能算进这条通路】：Rs=0 的理想电源也是 kind:'V'，
   //    把它算进去就成了「电源自己把自己短路」，任何一台理想电源都恒短路。
+  //
+  // 返回 { compIds, loopIds }：
+  //   compIds = 被短接的【电源】（状态栏那句「电源被导线直接短接」说的是它）；
+  //   loopIds = 落在这条零阻通路上的【非电源元件】—— 电流无穷大，它们也跑不掉。
+  // 🔴🔴 为什么要单独认一遍 loopIds：理想电源（内阻 0）被零阻通路短接时，方程
+  //    【解不出来】（矩阵奇异），solve 提前返回、results.components 是一张空表
+  //    ⇒ 每个元件都拿不到读数 ⇒ faultsOf 里「读数超量程」那条判据一个元件都
+  //    进不去。于是学生把【电流表直接接在电源两极上】，画面上电源烧了、电流表
+  //    却毫发无伤 —— 而真实的电流表这么接是当场烧表的（表的内阻几乎为零，
+  //    它就是那条零阻通路本身）。这一支必须按【拓扑】认，不能按读数认。
+  // ⚠️ 找 loopIds 必须用【支路】而不是【元件端子表】：三柱表头的「两端」是
+  //    「−」柱 + 当前那个量程柱，端子号不是 0/1 —— 拿 termNode[id+':0'/':1']
+  //    去查，接在 3A 柱上的电流表会被整个漏掉。支路的 p/q 才是它真实的两端。
+  // ⚠️ 只有「同一个零阻集合里还有电源的端子」才算短路环。少了这个条件，
+  //    任何一根闭合开关（也是零阻支路）都会被算进去。
   // ============================================================
-  function shortedBatteryIds(components, branches, termNode) {
+  function shortCircuitInfo(components, branches, termNode) {
     var dsu = createDSU();
-    var seen = {};                                       // createDSU 没有 has()，自己记一份
+    var seen = {};
     branches.forEach(function (b) {
       if (b.kind !== 'V' || Math.abs(b.Rs) > 1e-9) return;
-      if (b.comp && isSourceType(b.comp.type)) return;   // 见上面那条警告
+      if (b.comp && isSourceType(b.comp.type)) return;
       if (b.p === b.q) return;
       dsu.add(b.p); dsu.add(b.q); dsu.union(b.p, b.q);
       seen[b.p] = 1; seen[b.q] = 1;
     });
-    var ids = [];
+    var ids = [], roots = {};
     components.forEach(function (c) {
       if (!isSourceType(c.type) || isOpenFault(c)) return;
       var n0 = termNode[c.id + ':0'], n1 = termNode[c.id + ':1'];
       if (n0 == null || n1 == null) return;
-      // 两极同节点 = 被导线直接短接；否则看零阻元件有没有把它们连通。
-      if (n0 === n1) { ids.push(c.id); return; }
-      if (seen[n0] && seen[n1] && dsu.find(n0) === dsu.find(n1)) ids.push(c.id);
+      if (n0 === n1) { ids.push(c.id); roots[dsu.find(n0)] = 1; return; }
+      if (seen[n0] && seen[n1] && dsu.find(n0) === dsu.find(n1)) {
+        ids.push(c.id); roots[dsu.find(n0)] = 1;
+      }
     });
-    return ids;
+    var loop = [];
+    if (ids.length) {
+      branches.forEach(function (b) {
+        if (!b.comp || b.kind !== 'V' || Math.abs(b.Rs) > 1e-9) return;
+        if (isSourceType(b.comp.type) || isOpenFault(b.comp)) return;
+        if (!seen[b.p] || !seen[b.q]) return;
+        if (!roots[dsu.find(b.p)]) return;
+        if (loop.indexOf(b.comp.id) < 0) loop.push(b.comp.id);
+      });
+    }
+    return { compIds: ids, loopIds: loop };
   }
 
   // ============================================================
@@ -1193,7 +1233,7 @@
       // 无解这一支也要给短路信息：理想电源（内阻 0）被零阻通路短接时电流是
       // 无穷大，方程根本解不出来 —— 这恰恰是【最严重】的短路，不给的话
       // 后面「熔断导线 / 烧电源」的判定会把最该处理的这一种漏掉。
-      out.shortCircuit = { compIds: shortedBatteryIds(components, usedBranches, topo.termNode) };
+      out.shortCircuit = shortCircuitInfo(components, usedBranches, topo.termNode);
       warnings.push(shorted
         // 只说【电源】被短接：闭合开关被导线短接不会走到这里（那条支路是
         // 0 = 0，早被丢掉了），会走到这里的闭合开关必定是和电源并在一起
@@ -1527,11 +1567,11 @@
       return { hasSource: is.hasSource, nodeIds: nodes, componentIds: ids };
     });
 
-    // ---- 短路（拓扑判据，见 shortedBatteryIds）----
+    // ---- 短路（拓扑判据，见 shortCircuitInfo）----
     // 放在这里而不是 status 判定里：status 只回答「电路通不通」，而短路是
     // 「通得太厉害」——两者要分开报。status 的计算逻辑一个字没动，
     // 短路另开一个字段，免得动摇了既有的用例。
-    out.shortCircuit = { compIds: shortedBatteryIds(components, usedBranches, topo.termNode) };
+    out.shortCircuit = shortCircuitInfo(components, usedBranches, topo.termNode);
 
     // ---- 状态判定 ----
     if (shorted) out.status = 'shorted';
@@ -1862,6 +1902,66 @@
   }
 
   // ============================================================
+  // 干路 / 支路（并联电路的导线配色）
+  // ------------------------------------------------------------
+  // 课本上「干路」是【拓扑】定义的：电流从电源出来、到第一个分支点之前的那
+  // 一段，以及从最后一个汇合点回到电源的那一段。这里不去做通用的串并联分解
+  // （那要枚举两点间的所有路径，还得处理桥式、多电源……），而是用一条
+  // 【等价、可量、且会随电路自动重画】的电流判据：
+  //   · 干路 = 载有【总电流】的导线（总电流 = 电源输出电流，取 max 兜底）；
+  //   · 并联 = 存在载着「明显小于总电流」的导线 ⇒ 电流在某个节点上真的分岔了。
+  // 两条都挂在电流上，所以学生拧下一盏灯、剩下那条支路的电流立刻涨到全电流，
+  // 「并联」当场消失、配色跟着收回去 —— 不需要另写一套「拓扑变了要重算」。
+  //
+  // ⚠️ 为什么要有 BRANCH_MIN 这条 5% 的门槛：并联的判据不能是「存在比总电流小
+  //    的导线」——【电压表并联在某个元件上】时，它那条支路的分流只有总电流的
+  //    千分之几（内阻 3000Ω 对 10Ω 量级的主回路）。那在拓扑上确实是一次并联，
+  //    但把它算进来，学生搭一个纯串联电路、随手并一只电压表，主回路就会整条
+  //    变色 —— 画面在喊「这是并联电路」，而这道题讲的是串联。取 5% 就把
+  //    「真的分走一股电流的支路」和「电压表那点微弱分流」分开了。
+  //    这个数也【必须小】：两个灯泡并联时各自的支路都是 50% 上下，差得远。
+  //
+  // 返回 { parallel, total, main: [bool × 导线数] }。parallel 为 false 时
+  // main 全是 false —— 串联 / 单回路一律不配色，那种电路「干路」没有区分意义。
+  // ============================================================
+  var BRANCH_MIN = 0.05;
+  function mainBranchFlags(components, flows, results) {
+    var n = (flows && flows.length) || 0;
+    var main = [];
+    for (var z = 0; z < n; z++) main.push(false);
+    var out = { parallel: false, total: 0, main: main };
+    if (!n) return out;
+
+    // 总电流：导线上最大的那股 + 电源自己报出来的输出电流，取大的那个。
+    // ⚠️ 不能只看导线。干路上如果【一根导线都没有】（两根支路直接接在电源的
+    //    两个接线柱上），导线里的最大电流只是其中一条支路的电流，拿它当总电流
+    //    就会把那条支路误判成干路。电源的 rec.i 才是真正的总电流。
+    var tot = 0;
+    for (var i = 0; i < n; i++) tot = Math.max(tot, Math.abs(flows[i] || 0));
+    var comps = (results && results.components) || {};
+    (components || []).forEach(function (c) {
+      if (!c || !isSourceType(c.type)) return;
+      var r = comps[c.id];
+      if (r) tot = Math.max(tot, Math.abs(r.i || 0));
+    });
+    out.total = tot;
+    if (!(tot > 1e-6)) return out;                 // 没有电流（开关断开 / 断路）：不配色
+    var tol = Math.max(1e-9, tot * 1e-6);
+
+    var hasBranch = false;
+    for (var k = 0; k < n; k++) {
+      var a = Math.abs(flows[k] || 0);
+      if (a >= BRANCH_MIN * tot && a <= tot - tol) { hasBranch = true; break; }
+    }
+    if (!hasBranch) return out;                    // 串联 / 单回路：不分干路支路
+    out.parallel = true;
+    for (var m = 0; m < n; m++) {
+      if (Math.abs(flows[m] || 0) >= tot - tol) main[m] = true;
+    }
+    return out;
+  }
+
+  // ============================================================
   // 损坏判定（纯函数）
   // ------------------------------------------------------------
   // 输入【当前这一帧的解】，输出【本帧应当新发生的损坏】。不写场景、不碰界面，
@@ -1906,15 +2006,44 @@
       } else if (c.type === 'ammeter' || c.type === 'voltmeter') {
         // 只对【真的接进电路】的表判：没接线的表读数恒 0，谈不上超量程或反接。
         if (!r.wired) return;
-        if (r.overRange) {
+        var unit = (c.type === 'ammeter' ? 'A' : 'V');
+        // ① 读数大到【量程的 METER_BURN_K 倍】⇒ 动圈烧了（比打表更重的一档）。
+        //    判据挂在 rangeWired 上（见 fillMeterRange）：量程必须是【导线真的
+        //    接在那个量程柱上】的那个，参数里的 range 只是显示值 —— 拿它判，
+        //    没接线 / 接错柱的表会凭空烧掉。
+        //    理由里带上实际读数与倍数：烧掉之后 rec.reading 已经是 0，那个数
+        //    再也读不回来，而它正是「超了多少才烧」这个问题的答案。
+        if (r.rangeWired && Math.abs(r.reading) >= METER_BURN_K * r.range) {
+          outC.push({ id: c.id, fault: 'burnt',
+            why: '读数 ' + Math.abs(r.reading).toFixed(2) + unit + ' 达到量程 ' +
+                 r.range + unit + ' 的 ' + METER_BURN_K + ' 倍以上，表头烧坏' });
+        } else if (r.overRange) {
           outC.push({ id: c.id, fault: 'over',
-            why: '读数超过量程 ' + r.range + (c.type === 'ammeter' ? 'A' : 'V') +
-                 '，指针向右打表损坏' });
+            why: '读数超过量程 ' + r.range + unit + '，指针向右打表损坏' });
         } else if (r.reversed) {
           outC.push({ id: c.id, fault: 'rev', why: '正负接线柱接反，指针向左打表损坏' });
         }
       }
     });
+
+    // ── 短路环上的电表：方程解不出来，但表照样烧 ────────────────
+    // 🔴 这一支【不能并进上面的元件循环】：理想电源被零阻通路短接时方程奇异、
+    //    results.components 是空表，上面那个循环一个元件都进不去（`if (!r) return`）。
+    //    所以「电流表直接接在电源两极上」这条最该烧表的路，恰恰是读数判据够不着
+    //    的地方 —— 必须按拓扑认（见 shortCircuitInfo 的 loopIds）。
+    var loopIds = (results.shortCircuit && results.shortCircuit.loopIds) || [];
+    if (loopIds.length) {
+      var loopSet = {};
+      loopIds.forEach(function (id) { loopSet[id] = 1; });
+      components.forEach(function (c) {
+        if (!loopSet[c.id] || c.fault) return;
+        if (c.type !== 'ammeter' && c.type !== 'voltmeter') return;
+        if (outC.some(function (x) { return x.id === c.id; })) return;
+        outC.push({ id: c.id, fault: 'burnt',
+          why: (c.type === 'ammeter' ? '电流表' : '电压表') +
+               '直接接在电源两极之间，电流过大烧坏表头' });
+      });
+    }
 
     // ── 短路：熔断导线 + 烧坏电源 ─────────────────────────────
     // 真实的短路保护就靠这个顺序：导线（保险丝）先断，电源保住；导线粗到
@@ -1975,7 +2104,18 @@
     faultLabel: faultLabel,
     isOpenFault: isOpenFault,
     BULB_BURN_K: BULB_BURN_K,
+    // 表头烧坏的门槛（量程的几倍）。导出是给自检用的：断言要拿【同一份】倍数
+    // 去对账，而不是在测试里再抄一个 2 —— 抄一份就等于把「实现改了、测试还绿」
+    // 这个洞留着。
+    METER_BURN_K: METER_BURN_K,
     BATT_MAX_I: BATT_MAX_I,
+    // 短路环识别。导出是为了让自检能拿一个【手搓的场景】直接问「这条环上都有
+    // 谁」—— 理想电源被短接时方程无解、读数一个都拿不到，只有拓扑判据能验。
+    shortCircuitInfo: shortCircuitInfo,
+    // 干路 / 支路（并联电路的导线配色）。纯函数，喂 (components, flows, results)
+    // 进去看它给哪几根导线打了「干路」标记。
+    mainBranchFlags: mainBranchFlags,
+    BRANCH_MIN: BRANCH_MIN,
     version: '1.3.0',
   };
 });

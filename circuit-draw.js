@@ -62,6 +62,11 @@
     grid: '#e0e7ef',
     wire: '#8496ab',
     wireDim: '#b3c0cf',
+    // 并联电路的【干路】导线色。挑这个蓝的理由是「和画面上已有的三种颜色都
+    // 分得开」：支路是灰蓝 #8496ab（彩度低、发灰）、电流箭头是正红 #dc2626、
+    // 电子小球是琥珀 #f59e0b。课本里干路也常印成另一种颜色，学生一眼就能顺着
+    // 它从电源摸到分支点。别改成红色系 —— 那会和电流箭头糊在一起。
+    mainWire: '#2563eb',
     flow: '#f59e0b',         // 自由电子小球（画布上跑的小球，琥珀色）
     current: '#dc2626',      // 电流方向箭头（和电子反向跑，正红）
     metalHi: '#eef3f8',
@@ -1144,6 +1149,28 @@
   // 即圆角 ≈ 0.092·CWD < 0.12·CWD，正好够。
   var OV_MAX = 6, OV_RATE = 0.12;
 
+  // 端板那对极性记号（＋ / −）在【元件自身坐标系】里的位置与大小。
+  // 抽成函数是给自检用的：断言要拿【同一份】几何去点它，而不是在测试里按
+  // boxW / padx / OV_RATE 再算一遍 —— 重算一遍等于把「几何改了、测试还按老
+  // 位置取样」这个洞留着，取样点漂到记号外面就量到端板底色，断言静默失效。
+  // 返回 { x, y, mk }：x = 正极（＋）记号中心，负极（−）在 −x，y 两者相同，
+  // mk = 半臂长。两端记号都印在端板上、离接线柱最近的地方。
+  function batteryMarkLocal(cells) {
+    var SZ = batterySize(cells);
+    var EW = SZ.padx + Math.min(OV_MAX, SZ.cwd * OV_RATE);
+    return { x: SZ.boxW / 2 - EW / 2, y: -SZ.chd * 0.16,
+             mk: Math.max(4.5, Math.min(6.5, EW * 0.33)) };
+  }
+
+  // 表盘中心（元件自身坐标系）+ 表盘尺寸。和 batteryMarkLocal 同一个理由：断言要
+  // 拿【同一份】几何去点它，而不是在测试里按 MET.DIAL 再算一遍 —— 重算一遍等于把
+  // 「几何改了、取样点漂到表盘外面」这个洞留着（那时量到的是表壳，断言静默失效）。
+  // 「烧坏的表盘熏黑」那条像素腿就点在这个中心上。
+  function meterDialCenter() {
+    return { x: MET.DIAL.x + MET.DIAL.w / 2, y: MET.DIAL.y + MET.DIAL.h / 2,
+             w: MET.DIAL.w, h: MET.DIAL.h };
+  }
+
   function batterySize(cells) {
     // 单节做得【长】一点：电池身上要印得下两头的极性记号（左「−」右「＋」），
     // 一节里挤两个记号需要长度；同时把直径收到 38 让整条电池看起来是「长条」
@@ -2003,12 +2030,21 @@
       roundRect(ctx, -lblW / 2, arcBot + bandH / 2 - lblH / 2, lblW, lblH, 2.4); ctx.fill();
       ctx.strokeStyle = 'rgba(70,84,100,0.28)'; ctx.lineWidth = 0.8; ctx.stroke();
       ctx.fillStyle = '#42536a';
+      // 🔴🔴 unmirrorText 是【就地改变换】的（translate + scale(-1,1) + translate），
+      //    不是「画完自己还原」——必须自己 save/restore 把它框住。
+      //    这里漏掉 save/restore 的后果是【静默的】：它把镜像提前取消掉，于是
+      //    后面 ⑦ 那对端板极性记号（＋ / −）也变成不镜像的了 —— 学生点「对调
+      //    ＋ / －」，电池身上的记号翻过去了、接线柱的红黑也换了边，偏偏端板上
+      //    那个「＋」还钉在右边，图和自己打架。加一圈 save/restore 只影响这一
+      //    段文字，⑦ 的镜像照旧。
+      ctx.save();
       unmirrorText(ctx, 0);        // 对调极性时前壁跟着镜像，铭牌上的字不能反
       ctx.font = 'bold ' + Math.max(8, Math.min(12, Math.round(bandH * 0.62))) +
         'px -apple-system,"PingFang SC",sans-serif';
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       ctx.fillText(perCell.toFixed(1).replace(/\.0$/, '') + 'V' + (cells > 1 ? ' × ' + cells : ''),
         0, arcBot + bandH / 2 + 0.5);
+      ctx.restore();
     }
 
     // ⑦ 极性记号：印在【端板】上，和真电池盒一样。端板正好在接线柱内侧、
@@ -2021,8 +2057,12 @@
     //    mk 按【端板宽度】定，不按电池半径：端板内侧那一段被接线柱的底座压着，
     //    记号排到板外就会被柱子吃掉一角（上一版 mk 跟着 CR 走，2 节时牌子宽到
     //    23，比端板还宽，左端的「−」整个糊进柱子的黑影里）。
-    var markY = -CHD * 0.16, markX = boxW / 2 - EW / 2;
-    var mk = Math.max(4.5, Math.min(6.5, EW * 0.33));    // 记号的半臂长
+    //    ⚠️ 几何【只有一份】：走 batteryMarkLocal(cells)。原来这里是就地重算，
+    //    自检那边为了取样又抄了一遍 —— 两份一旦漂开，取样点就落到端板底色上，
+    //    「对调后 ＋ 换到左边」那条像素断言会【静默变绿】（量到的是灰端板，
+    //    既不是红也不是白，两边都不像 ⇒ 判据恒假）。抽成一个函数就没有这个洞。
+    var MK = batteryMarkLocal(cells);
+    var markY = MK.y, markX = MK.x, mk = MK.mk;
     ctx.fillStyle = PALETTE.positive;
     roundRect(ctx, markX - mk, markY - mk * 0.34, mk * 2, mk * 0.68, mk * 0.34); ctx.fill();
     roundRect(ctx, markX - mk * 0.34, markY - mk, mk * 0.68, mk * 2, mk * 0.34); ctx.fill();
@@ -3244,7 +3284,11 @@
                   // 路径长度 ≈ 2.8 × 水平跨度 是「路径是螺旋、不是一条水平线」的
                   // 判据；位移则用来钉「绕线里的记号速度和导线同源」——
                   // 它必须等于 CircuitDraw.currentShift(flow, phase)。
-                  pathL: 0, pathR: 0, shiftL: 0, shiftR: 0 };
+                  pathL: 0, pathR: 0, shiftL: 0, shiftR: 0,
+                  // 触臂 / 金属杆这一帧用的位移（px）。四个地方（绕线左右两半、
+                  // 触臂、金属杆）和导线【必须同源】—— 都得等于
+                  // CircuitDraw.currentShift(那一段的真实电流, phase)。
+                  shiftArm: 0, shiftRod: 0 };
     var phase = opts && opts.phase;
     if (phase == null) return stats;                   // 开关关着 → 一个记号都不画
     stats.phase = phase;
@@ -3449,10 +3493,17 @@
     //   A-B（两端都没接）⇒ iArm = 0 ⇒ 这一段自然不画；
     //   C-D ⇒ iArm 也是 0（绕线不接入），画面与内核一致。
     // 哪一端接了导线由页面查 scene.wires 得出（opts.rodEnd: 'C' | 'D' | null）。
+    //
+    // 🔴🔴 这里必须传【真实电流 iArm】，不能传 ±1！electronShift 的速度是
+    //    `320·√(I/0.8)` 只跟电流大小有关 —— 传 ±1 的话 I 恒等于 1，
+    //    记号永远按【最大速度 320px/s】跑：0.32A 的回路里导线是 200px/s，
+    //    金属杆却是 320px/s（1.6 倍），小电流下差得更远（0.1A 时差 2.8 倍）。
+    //    症状很隐蔽 —— 方向是对的、位置也对，只有「快慢」不对。
+    //    iArm 的符号约定和原来那对 ±1 完全一致（正 = 从滑片流向接了线的那一端）。
     var rodEnd = opts && opts.rodEnd;
     if (rodEnd && Math.abs(iArm) > 1e-12) {
       var rodT = (rodEnd === 'C') ? TERMINALS.rheostat[2] : TERMINALS.rheostat[3];
-      stats.rod = runRod(sxNow, rodT.x, (iArm > 0 ? 1 : -1));
+      stats.rod = runRod(sxNow, rodT.x, iArm);
     }
 
     // 沿金属杆的一段（水平，x0 → x1，flow 的正方向 = 从 x0 到 x1）铺电流。
@@ -4697,7 +4748,8 @@
     soot: soot, faultTag: faultTag, drawSmoke: drawSmoke,
     drawBackground: drawBackground, drawBindingPost: drawBindingPost,
     resistorBands: resistorBands, roundRect: roundRect, softShadow: softShadow,
-    batterySize: batterySize, bodyBox: bodyBox,
+    batterySize: batterySize, batteryMarkLocal: batteryMarkLocal, bodyBox: bodyBox,
+    meterDialCenter: meterDialCenter,
     // 学生电源的面板几何（机箱 / 旋钮 / 刻度盘 / 开关 / 指示灯 / 接线柱）。
     // 导出是给【编辑器】和【自检】用的：
     //   · 编辑器拖旋钮时按 psuEmfFromAngle 反解电压；

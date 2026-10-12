@@ -668,8 +668,8 @@
      改了内核而 HTML 没变的话，老访客会拿缓存里的旧脚本跑新页面（画面上就
      会出现「说明写了电子逆流、小球却还顺着流」这种自相矛盾）。改脚本时
      把这个 build 号 +1 即可。 -->
-<script src="circuit-core.js?build=19"></script>
-<script src="circuit-draw.js?build=33"></script>
+<script src="circuit-core.js?build=20"></script>
+<script src="circuit-draw.js?build=34"></script>
 <!-- ════════════════════════════════════════════════════════════════════
      【教材版本皮肤 · 已从线上撤下】2026-10-12
      人教版元件外观（circuit-skin*.js 共 5 个文件）暂不在线上启用，学生看到的
@@ -727,6 +727,10 @@ var ctx = canvas.getContext('2d');
 // ── 场景（编辑器直接改这两个数组）──────────────────────────
 var scene = { comps: [], wires: [] };
 var results = null, flows = [], phase = 0;
+// 干路 / 支路（并联电路的导线配色）。判据在内核（C.mainBranchFlags，纯函数），
+// 这里只存它算出来的结果：{ parallel, total, main:[bool × 导线数] }。
+// 每次重解都要跟着重算 —— 学生拧下一盏灯、拔掉一根线，干路的界线就变了。
+var mainInfo = { parallel: false, total: 0, main: [] };
 
 // 两个动画开关，各自独立：电子流动（琥珀色小球）和电流方向（红色箭头）。
 // 上课讲解时可以都关掉——静态图更容易指着某一段说走向，粒子一直在跑反而分散注意力。
@@ -1323,6 +1327,9 @@ function solveNow(){
     if (!applyFaults()) break;      // 没有新损坏 → 这一遍的解就是最终解
   }
   applyPracticeFlags();             // 练习模式：把「这件藏不藏」压到 rec 上
+  // 干路 / 支路：必须在【损坏迭代收敛之后】算 —— 烧断一个灯泡、熔断一根导线
+  // 都会改变各段电流，拿中间那一遍的解去配色，画面上会留一帧错的。
+  mainInfo = C.mainBranchFlags(scene.comps, flows, results);
   syncSound();
 }
 
@@ -1766,9 +1773,13 @@ function drawFrame(){
       // drawWire 就不画任何东西。current 只决定画不画箭头，小球照旧。
       // weak = 这根线接在「按真实内阻参与求解」的电压表上（见 wireIsWeak）：
       // 画成淡红空心箭头 + 小一号半透明的小球，和主回路的实心红箭头区分开。
+      // color = 并联电路里的【干路】导线换成另一种颜色（见 mainInfo / 内核的
+      // mainBranchFlags）。只在【真的分岔了】的时候给色：串联 / 单回路时
+      // mainInfo.parallel 是 false，一根线都不变色 —— 那种电路讲「干路」没有意义。
       D.drawWire(ctx, pathOf(wr), { flow: flows[i], phase: (showFlow || showCurrent) ? phase : null,
                                     electrons: showFlow, current: showCurrent,
                                     weak: wireIsWeak(i),
+                                    color: (mainInfo.parallel && mainInfo.main[i]) ? D.PALETTE.mainWire : null,
                                     broken: !!wr.broken });
     });
     // 接线柱补回最上层：它是交互点，不能被导线压掉。柱子用绝对坐标画，
@@ -4593,6 +4604,13 @@ window.__clickPreset = function(i){
 };
 window.__results = function(){ return results; };
 window.__flows = function(){ return flows.slice(); };
+// 干路 / 支路（并联配色）。交出【每根导线是不是干路】+ 总电流 + 并联判定，
+// 断言要能同时读这三样：只读 main 的话，「串联时一根都不该变色」这条判据
+// 靠的是 parallel 这个开关，不把它导出来就验不到。
+window.__mainBranch = function(){
+  return { parallel: !!mainInfo.parallel, total: mainInfo.total,
+           main: mainInfo.main.slice() };
+};
 window.__editor = function(){ return editor; };
 // 场景被【外部钩子】改过以后要重算读数/重画时用。页面自己那条路是 onUp 末尾
 // 统一 render()，钩子绕过了 onUp，就得显式补一脚。
