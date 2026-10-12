@@ -3223,7 +3223,7 @@
   // 调用条件改坏（比如两半都画）照样全绿。返回它等于把「画了什么」钉死。
   // ============================================================
   function drawRheostatFlow(ctx, comp, rec, opts) {
-    var stats = { left: 0, right: 0, arm: 0, iL: 0, iR: 0, iArm: 0, phase: null, style: null };
+    var stats = { left: 0, right: 0, arm: 0, rod: 0, iL: 0, iR: 0, iArm: 0, phase: null, style: null };
     var phase = opts && opts.phase;
     if (phase == null) return stats;                   // 开关关着 → 一个记号都不画
     stats.phase = phase;
@@ -3349,6 +3349,48 @@
           }
         }
       }
+    }
+
+    // ── 金属杆：滑片到 C（左）/ D（右）那一段 ─────────────────────
+    // 内核里 C/D 与滑片是【同一节点】（金属杆是 0Ω 的短接线，压根不产生支路），
+    // 所以「金属杆上的电流」不在 rec.segments 里。它的唯一真值来自触臂那一段：
+    // 电流从绕线经触臂进滑片节点，再从【真的接了导线的那一端】流出 ——
+    // 大小就是 iArm，方向由「接了哪一端」定（terminalInjection 里
+    // `segs[0].i - segs[1].i` 那句注释说的就是这件事）。
+    //   A-C / B-C → 往左流到 C；A-D / B-D → 往右流到 D；
+    //   A-B（两端都没接）⇒ iArm = 0 ⇒ 这一段自然不画；
+    //   C-D ⇒ iArm 也是 0（绕线不接入），画面与内核一致。
+    // 哪一端接了导线由页面查 scene.wires 得出（opts.rodEnd: 'C' | 'D' | null）。
+    var rodEnd = opts && opts.rodEnd;
+    if (rodEnd && Math.abs(iArm) > 1e-12) {
+      var rodT = (rodEnd === 'C') ? TERMINALS.rheostat[2] : TERMINALS.rheostat[3];
+      stats.rod = runRod(sxNow, rodT.x, (iArm > 0 ? 1 : -1));
+    }
+
+    // 沿金属杆的一段（水平，x0 → x1，flow 的正方向 = 从 x0 到 x1）铺电流。
+    // 和绕线用同一套记号 —— 学生看到的应该是「同一股电流从绕线经触臂、金属杆
+    // 流到接线柱」，中间换一种画法就断了。
+    function runRod(x0, x1, flow) {
+      var len = Math.abs(x1 - x0);
+      if (len < 8) return 0;
+      var dir = (x1 >= x0) ? 1 : -1;
+      var n = Math.max(1, Math.round(len / RHEO.markGap));
+      var step = len / n;
+      var ang = (dir > 0 ? 0 : Math.PI) + (flow < 0 ? Math.PI : 0);
+      var sE = electronShift(flow, phase), sC = currentShift(flow, phase);
+      var k = 0;
+      for (var i = 0; i < n; i++) {
+        if (wantEle) {
+          var dE = ((i * step + sE) % len + len) % len;
+          dot(x0 + dir * dE, rodT.y, rBall);
+        }
+        if (wantCur) {
+          var dC = ((i * step + sC) % len + len) % len;
+          arrow(x0 + dir * dC, rodT.y, ang);
+        }
+        k++;
+      }
+      return k;
     }
     ctx.restore();
     return stats;
