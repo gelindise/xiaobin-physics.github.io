@@ -801,7 +801,7 @@
     // 点到导线或元件只把它选中，真正的删除交给选中后长出来的这颗红圆钮：
     // 导线很细、元件和导线又常常挤在一起，点中即删容易误伤；多一步确认，
     // 也让学生看清删的是哪一根 / 哪一件。
-    // 导线上的钮长在线的【中点】，元件上的钮长在元件的【右上角】——
+    // 导线上的钮长在线的【中点】，元件上的钮长在元件的【左上角】——
     // 位置不同、长相和行为完全一样，所以是同一颗钮（同一个 DEL_R、同一套画法、
     // 同一段命中判据），不是两套。
     var DEL_R = 11;
@@ -825,12 +825,12 @@
       }
       return { x: pts[pts.length-1].x, y: pts[pts.length-1].y };
     }
-    // 元件上那颗删除钮的位置（世界坐标）。取【世界包围盒】的右上角，而不是
-    // 元件自身坐标系的框角：元件能转 90° / 180°，跟着转的话删除钮会跑到左下角
-    // 去，学生反而找不着 —— 「右上角」说的是屏幕意义上的右上角，和元件怎么摆
+    // 元件上那颗删除钮的位置（世界坐标）。取【世界包围盒】的左上角，而不是
+    // 元件自身坐标系的框角：元件能转 90° / 180°，跟着转的话删除钮会跑到对角
+    // 去，学生反而找不着 —— 「左上角」说的是屏幕意义上的左上角，和元件怎么摆
     // 无关。夹回画布内：元件拖到画布角落时按钮不能跑到画布外面（那就永远点不到
-    // 了）；夹回之后它至多压在元件自己身上，仍然是「右上角那一带」。
-    var COMP_DEL_PAD = 8;              // 钮心相对包围盒右上角再往外偏的量
+    // 了）；夹回之后它至多压在元件自己身上，仍然是「左上角那一带」。
+    var COMP_DEL_PAD = 8;              // 钮心相对包围盒左上角再往外偏的量
     function compDeletePos(c) {
       var b = localBox(c);
       var xs = [], ys = [];
@@ -838,7 +838,7 @@
         var w = D.toWorld(c, q[0], q[1]);
         xs.push(w.x); ys.push(w.y);
       });
-      var x = Math.max.apply(null, xs) + COMP_DEL_PAD + DEL_R;
+      var x = Math.min.apply(null, xs) - COMP_DEL_PAD - DEL_R;
       var y = Math.min.apply(null, ys) - COMP_DEL_PAD - DEL_R;
       x = Math.max(DEL_R + 2, Math.min(W - DEL_R - 2, x));
       y = Math.max(DEL_R + 2, Math.min(H - DEL_R - 2, y));
@@ -860,7 +860,7 @@
       }
       return !!b && Math.hypot(p.x - b.x, p.y - b.y) <= DEL_R + 4;
     }
-    // 画一颗删除圆钮（白圈 + 红底 + 两笔白叉）。导线中点那颗和元件右上角那颗
+    // 画一颗删除圆钮（白圈 + 红底 + 两笔白叉）。导线中点那颗和元件左上角那颗
     // 是【同一颗】—— 两处各写一套的话，迟早会长得不一样、命中半径也会跑偏。
     // 叉用两笔粗线画，不用「×」字形——字形的粗细和居中随字体变，在小圆钮里
     // 会忽大忽小、偏左偏右。
@@ -1468,8 +1468,8 @@
           ctx.stroke();
           ctx.restore();
 
-          // 元件右上角那颗删除钮。画在 restore 【之后】：虚线框跟着元件转，
-          // 钮不跟 —— 它在世界坐标里，元件转到哪它都在右上角。
+          // 元件左上角那颗删除钮。画在 restore 【之后】：虚线框跟着元件转，
+          // 钮不跟 —— 它在世界坐标里，元件转到哪它都在左上角。
           drawDelButton(ctx, compDeletePos(c));
         }
       } else if (selected && selected.kind === 'wire') {
@@ -1559,7 +1559,7 @@
       getSelected: function () { return describeSelection(); },
       pushUndo: pushUndo,
       delButtonPos: delButtonPos,
-      // 元件右上角那颗删除钮的位置（世界坐标）。自检按它点真实鼠标，
+      // 元件左上角那颗删除钮的位置（世界坐标）。自检按它点真实鼠标，
       // 走的才是学生走的那条路（onDown → hitDeleteButton → removeSelected）。
       compDeletePos: compDeletePos,
       // 「往导线中间连线」那一条路的两半，分开导出：
