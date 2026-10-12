@@ -139,6 +139,9 @@
       background: rgba(255,255,255,0.04); color: var(--text);
     }
     .btn-grid button:hover { background: rgba(255,255,255,0.09); }
+    /* 「重置」在 5 个按钮里落单（2 列排下来最后一行只剩它一个）—— 让它横跨整行，
+       否则右边空着一格，看着像少了一个按钮。 */
+    .btn-grid button#resetBtn { grid-column: 1 / -1; }
     .btn-grid button.on {
       background: rgba(245,158,11,0.18); border-color: rgba(245,158,11,0.45);
       color: #fcd34d; font-weight: 700;
@@ -305,6 +308,29 @@
     .schCvWrap canvas { display: block; }
     .schEmpty { color: #64748b; font-size: 13px; padding: 30px 34px; text-align: center; white-space: nowrap; }
 
+    /* ── 表盘放大镜（后排学生的刚需）──────────────────────────
+       点画面里的电流表弹出来。里面画的是【同一只表、同一份求解结果】——
+       同一个 D.drawComponent、同一个 rec，只是按 K 倍重画，
+       所以放大出来的读数不可能和画布上那只表对不上。 */
+    .zoom { position: fixed; inset: 0; z-index: 65; background: rgba(2,6,23,0.80);
+      display: flex; align-items: center; justify-content: center; padding: 16px; }
+    .zoom[hidden] { display: none; }
+    .zoomBox { background: #fff; color: #1e293b; border-radius: 16px; padding: 10px 14px 12px;
+      box-shadow: 0 18px 50px rgba(0,0,0,0.55); max-width: 100%; max-height: 100%;
+      display: flex; flex-direction: column; gap: 6px; align-items: center; }
+    .zoomHead { display: flex; align-items: center; gap: 10px; width: 100%;
+      font-size: 14px; font-weight: 700; }
+    .zoomHead .sp { flex: 1 1 auto; }
+    .zoomHead button { background: #f1f5f9; border: 1px solid #dbe3ec; border-radius: 8px;
+      cursor: pointer; font-family: inherit; font-size: 13px; color: #1e293b;
+      padding: 5px 12px; line-height: 1.2; white-space: nowrap; }
+    .zoomHead button:hover { background: #e2e8f0; }
+    .zoomBox canvas { display: block; border-radius: 10px; }
+    .zoomFoot { display: flex; gap: 16px; align-items: baseline; justify-content: center;
+      font-size: 17px; font-weight: 800; font-variant-numeric: tabular-nums; }
+    .zoomFoot #zoomRange { color: #64748b; font-weight: 400; font-size: 13px; }
+    .zoomFoot #zoomRead.rev { color: #dc2626; }
+
     @media (max-width: 880px) {
       .grid { grid-template-columns: 1fr; }
       .grid.three { grid-template-columns: 1fr; }
@@ -366,9 +392,11 @@
           <div class="btn-grid">
             <button id="switchBtn" type="button">⏻ 开关：断开</button>
             <button id="rangeBtn" type="button">量程：0.6 A</button>
+            <button id="zoomBtn" type="button">🔍 放大表盘</button>
             <button id="schemBtn" type="button">🔀 看电路图</button>
             <button id="resetBtn" type="button">↺ 重置</button>
           </div>
+          <p class="phint">也可以直接点画面里的<b>电流表</b>放大读数 —— 后排看不清就用它。</p>
         </div>
 
         <div class="panel">
@@ -399,7 +427,7 @@
       <p class="tip">
         提示：先点一下画面里的<b>闸刀开关</b>闭合电路；再点木板上任意一根导体（或右侧的 a/b/c/d 按钮），两只接线夹就会夹到那根导体上，
         电流表读数随之变化。<b>控制变量</b>：a 与 b 材料、长度相同而粗细不同；a 与 c 材料、粗细相同而长度不同；c 与 d 长度、粗细都相同而材料不同。
-        手机上看不清就点画面右上角的 <b>⛶</b> 全屏，把手机横过来画面最大。
+        <b>后排看不清表盘就点一下电流表</b>（表盘右上角有个放大镜），读数会放大到整屏；手机上看不清再点画面右上角的 <b>⛶</b> 全屏。
       </p>
     </div>
 
@@ -476,6 +504,21 @@
         <canvas id="schCanvas"></canvas>
         <div class="schEmpty" id="schEmpty" hidden>画布上还没有元件 —— 先摆一个再转成电路图</div>
       </div>
+    </div>
+  </div>
+
+  <!-- 表盘放大镜。点画面里的电流表（或侧栏「🔍 放大表盘」）弹出来。
+       里面重画的是【同一只表】：同一个 D.drawComponent、同一份 rec，
+       只是按 K 倍画大 —— 两套画法迟早会画歪，那就等于放大了一个假读数。 -->
+  <div class="zoom" id="zoom" hidden>
+    <div class="zoomBox">
+      <div class="zoomHead">
+        <span id="zoomTitle">电流表 · 放大读数</span>
+        <span class="sp"></span>
+        <button id="zoomX" type="button">✕ 关闭</button>
+      </div>
+      <canvas id="zoomCanvas"></canvas>
+      <div class="zoomFoot"><span id="zoomRead">—</span><span id="zoomRange"></span></div>
     </div>
   </div>
 
@@ -754,12 +797,20 @@ function drawConductor(f, g, active) {
   // 两头的接线柱（沙盒的公共基元，和电池/开关上的柱子是同一套画法）
   D.drawBindingPost(f, g.x0, g.y, 'neutral', 1.05, 0);
   D.drawBindingPost(f, g.x1, g.y, 'neutral', 1.05, 0);
-  // 编号：写在丝的左端【上方】。写在中点会和上面那根挤在一起。
+  // 编号 + 材料：写在丝的左端【上方】。编号居中于柱子，材料名紧跟在它右边。
+  // 三根镍铬合金丝并排写着同一个名字 ——「a、b、c 是同种材料」这件事不用讲，
+  // 扫一眼就看得出来；d 那一行换成了「铜丝」，材料不同也就一眼分得开。
+  // （用户点名要的：课本图上只有 a/b/c/d 四个字母，学生看不出谁是同种材料。）
   f.save();
+  f.textBaseline = 'middle';
   f.font = 'bold 17px -apple-system,"PingFang SC",sans-serif';
-  f.textAlign = 'center'; f.textBaseline = 'middle';
+  f.textAlign = 'center';
   f.fillStyle = active ? '#b45309' : '#6b5637';
-  f.fillText(g.id, g.x0, g.y - 26);
+  f.fillText(g.id, g.x0 - 8, g.y - 26);
+  f.font = '11.5px -apple-system,"PingFang SC",sans-serif';
+  f.textAlign = 'left';
+  f.fillStyle = active ? 'rgba(146,100,30,0.95)' : 'rgba(120,92,54,0.82)';
+  f.fillText(g.mat, g.x0 + 6, g.y - 25);
   f.restore();
 }
 
@@ -807,6 +858,21 @@ function drawClips(f) {
   drawClip(f, g.x1 + 3, g.y,  1, '#1e293b');   // 右夹：黑
 }
 
+// 电流表右上角那枚小放大镜 —— 画布上的「这只表能点」提示。
+// 少了它，学生根本不知道表盘是可以点开的（侧栏那颗按钮在宽屏上离得远，
+// 而后排学生的眼睛本来就盯在画面上）。
+function drawZoomBadge(f) {
+  var bx = A_X + 96, by = A_Y - 70;
+  f.save();
+  f.beginPath(); f.arc(bx, by, 14, 0, 6.2832);
+  f.fillStyle = 'rgba(255,255,255,0.95)'; f.fill();
+  f.strokeStyle = 'rgba(59,130,246,0.85)'; f.lineWidth = 1.8; f.stroke();
+  f.strokeStyle = '#334155'; f.lineWidth = 2.2; f.lineCap = 'round';
+  f.beginPath(); f.arc(bx - 2, by - 2, 5, 0, 6.2832); f.stroke();
+  f.beginPath(); f.moveTo(bx + 1.6, by + 1.6); f.lineTo(bx + 5.4, by + 5.4); f.stroke();
+  f.restore();
+}
+
 // ── 读数框（照沙盒那套白底小框）───────────────────────────
 function readoutBox(f, cx, cy, lines) {
   f.save();
@@ -850,6 +916,7 @@ function buildFg() {
   });
   drawReadouts(f);
   drawClips(f);
+  drawZoomBadge(f);
 }
 
 // ── 主画布 ───────────────────────────────────────────────
@@ -914,6 +981,7 @@ function layout() {
   buildBg();
   buildFg();
   render();
+  if (zoomOpen) drawZoom();     // 放大镜的 K 是按视口算的，窗口一变就得重画
 }
 // 进出全屏后量两次：立刻一次（拿到的还是旧盒子），下一帧一次（盒子已经变了）。
 // 只量一次的话，全屏后画布还按进入前那个尺寸画，四周空一大圈。
@@ -939,6 +1007,7 @@ function applyAll() {
   buildFg();
   render();
   syncUI();
+  if (zoomOpen) drawZoom();     // 放大镜开着 ⇒ 读数/量程跟着一起变
 }
 
 function setCond(id) {
@@ -1102,6 +1171,7 @@ canvas.addEventListener('click', function (ev) {
   var id = hitConductor(p);
   if (id) { setCond(id); return; }
   if (hitSwitch(p)) { toggleSwitch(); return; }
+  if (dialHit(p)) { openZoom(); return; }        // 点表盘 ⇒ 放大读数
 });
 
 // ============================================================
@@ -1159,7 +1229,75 @@ schEl.addEventListener('click', function (ev) { if (ev.target === schEl) closeSc
 schValues.addEventListener('change', drawSchematic);
 
 // ============================================================
-// 9. 事件绑定
+// 9. 表盘放大镜（用户要求：后排学生看不清表盘）
+// ------------------------------------------------------------
+// 点一下电流表（或侧栏「🔍 放大表盘」），把【同一只表】按 K 倍重画一遍。
+// 关键是「同一只」：同一个 D.drawComponent、同一份求解结果 rec，只是画大 ——
+// 另做一套「放大版表盘」的话，两套画法迟早会画歪，那就等于放大了一个假读数。
+// ZBOX 是表壳 + 底座的外接框（元件局部坐标），照抄沙盒的取景框。
+var ZBOX = { x:-100, y:-90, w:200, h:154 };
+var zoomEl = document.getElementById('zoom');
+var zoomCv = document.getElementById('zoomCanvas');
+var zoomRead = document.getElementById('zoomRead');
+var zoomRange = document.getElementById('zoomRange');
+var zoomOpen = false;
+
+// 表盘的可点区域 = 表壳 + 底座（局部 ±96 / −88…+46）。
+// 【不能】一直管到接线柱（局部 y = +72）：那是导线接上来的地方，
+// 点它不该弹放大镜（那一片是「线接在哪个量程柱上」的视觉区）。
+function dialHit(p) {
+  return Math.abs(p.x - A_X) <= 96 && p.y >= A_Y - 88 && p.y <= A_Y + 46;
+}
+
+function openZoom() {
+  if (!results || !recOf('A')) return;
+  zoomOpen = true;
+  zoomEl.hidden = false;
+  drawZoom();
+}
+function closeZoom() { zoomOpen = false; zoomEl.hidden = true; }
+
+function drawZoom() {
+  if (!zoomOpen) return;
+  var c = byId('A'), rec = recOf('A');
+  if (!c || !rec) { closeZoom(); return; }     // 元件没了，浮层自己收掉
+  // K 按视口算：手机上放得下，投影仪上也够大。上限 4.4（ZBOX 宽 200 ⇒ 最宽 880px），
+  // 再大就是把一只小表拉成一片糊掉的大色块。
+  var K = Math.min((Math.min(window.innerWidth - 72, 900)) / ZBOX.w,
+                   (window.innerHeight - 190) / ZBOX.h);
+  K = Math.max(1.4, Math.min(K, 4.4));
+  var cw = Math.round(ZBOX.w * K), ch = Math.round(ZBOX.h * K);
+  zoomCv.width = Math.round(cw * dpr); zoomCv.height = Math.round(ch * dpr);
+  zoomCv.style.width = cw + 'px'; zoomCv.style.height = ch + 'px';
+  var g = zoomCv.getContext('2d');
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, cw, ch);
+  g.fillStyle = '#fff'; g.fillRect(0, 0, cw, ch);   // 放大后要读刻度，底给白的
+  g.save();
+  g.translate(cw / 2, ch / 2);
+  g.scale(K, K);
+  g.translate(-(ZBOX.x + ZBOX.w / 2), -(ZBOX.y + ZBOX.h / 2));
+  // rot 一律 0：放大镜是给学生【读数】用的，不是给他看这表在画布上朝哪边 ——
+  // 斜着放大出来的数字照样没法读。
+  D.drawComponent(g, { id:'A', type:'ammeter', x:0, y:0, rot:0, params:c.params }, rec);
+  g.restore();
+  // 下面这行字和画布上的读数框共用同一条判据：接反 / 没接全时【一个数字都不印】，
+  // 照印一个正数学生会把它当成有效读数抄进实验报告。
+  var txt, bad = false;
+  if (!rec.wired) { txt = (rec.rangeWired ? '「−」柱没接线' : '量程柱没接线') + '　·　读不出数'; bad = true; }
+  else if (rec.reversed) { txt = '指针反偏　·　读不出数'; bad = true; }
+  else txt = 'I = ' + Math.abs(rec.reading).toFixed(3) + ' A';
+  zoomRead.textContent = txt;
+  zoomRead.className = bad ? 'rev' : '';
+  zoomRange.textContent = rec.rangeWired ? ('量程 ' + rec.range + ' A') : '';
+}
+
+document.getElementById('zoomBtn').addEventListener('click', openZoom);
+document.getElementById('zoomX').addEventListener('click', closeZoom);
+zoomEl.addEventListener('click', function (ev) { if (ev.target === zoomEl) closeZoom(); });
+
+// ============================================================
+// 10. 事件绑定
 // ============================================================
 document.getElementById('condSeg').addEventListener('click', function (ev) {
   var b = ev.target.closest('button');
@@ -1198,7 +1336,9 @@ document.getElementById('fsBtn').addEventListener('click', function () {
 });
 window.addEventListener('resize', layout);
 document.addEventListener('keydown', function (ev) {
-  if (ev.key === 'Escape' && schOpen) closeSchematic();
+  if (ev.key !== 'Escape') return;
+  if (zoomOpen) { closeZoom(); return; }         // 放大镜开着先收它
+  if (schOpen) closeSchematic();
 });
 
 // ============================================================
@@ -1225,6 +1365,11 @@ window.__wireLab = {
   setCond: setCond, toggleSwitch: toggleSwitch, setRange: setRange, setEmf: setEmf,
   recordNow: recordNow,
   ampRec: ampRec, condRec: condRec,
+  // 表盘放大镜（自检要能直接开关它，也要能问「现在开着吗」）
+  openZoom: openZoom, closeZoom: closeZoom,
+  isZoomOpen: function () { return zoomOpen; },
+  dialHit: dialHit,
+  zoomCanvas: function () { return zoomCv; },
   // 接线夹的两个夹口坐标（画法里的真值，自检的像素腿要拿它定位探针）
   clipPos: function () {
     var g = condOf(state.sel);
