@@ -5,7 +5,8 @@
  *   PARAM_UI  每类元件能调什么，面板由它生成
  *   TYPE_LABEL 元件类型 → 中文名
  *   POLAR      哪些元件的电流/电压要带符号显示
- *   num1       读数的小数位（一律一位，0.0 但非 0 的小量往下补位）
+ *   num1 / num2 读数的小数位（num1 一位；num2 两位，给电流表用。
+ *               0.0 / 0.00 但非 0 的小量往下补位）
  *   dispI / dispU / fmtR  表格与浮层的 I / U / R 显示
  *   pval       取参数当前值（含电压表「模拟微弱电流」这种派生量的换算）
  *
@@ -133,16 +134,39 @@
     return s;
   }
 
+  // 电流表的读数：两位小数。0.6A 量程的分度值是 0.02A，一位小数会把 0.13
+  // 印成 0.1 —— 和指针指的位置对不上（用户报的就是这个）。
+  // 和 num1 同一条原则：本该是 0.00 却【不是】0 的小量往下补一位，不印假话。
+  function num2(v){
+    var x = +v;
+    if (!isFinite(x)) return '—';
+    var s = x.toFixed(2);
+    if (x !== 0 && parseFloat(s) === 0) s = x.toFixed(3);
+    return s;
+  }
+
+  // 电表的示数：未调零时指针偏了 ZERO_OFF×量程，读数得跟着偏 —— 唯一真值在
+  // circuit-draw 的 meterIndicated。它没加载时（离屏出图、单文件测试）退回真值。
+  function meterShow(c, r){
+    var D = G.CircuitDraw;
+    if (D && typeof D.meterIndicated === 'function') return D.meterIndicated(c, r);
+    return null;
+  }
   function dispI(c, r){
-    var s = POLAR[c.type] ? r.i : Math.abs(r.i);
+    var raw = r.i;
+    // 电流表那一格印的是【它自己的示数】；电压表的 I 列是流过它的电流，与调零无关。
+    if (c.type === 'ammeter') { var m = meterShow(c, r); if (m != null) raw = m; }
+    var s = POLAR[c.type] ? raw : Math.abs(raw);
     var tag = '';
     // 电动机的「反接」要写成「反转」：接反不是接错了线，是转子往反方向转。
     if (r.reversed) tag = '<span class="tag">' + (r.reverseLabel || '反接') + '</span>';
     else if (c.type === 'battery' && r.i < -1e-9) tag = '<span class="tag">充电</span>';
-    return num1(s) + tag;
+    return (c.type === 'ammeter' ? num2(s) : num1(s)) + tag;
   }
   function dispU(c, r){
-    return num1(POLAR[c.type] ? r.v : Math.abs(r.v));
+    var raw = r.v;
+    if (c.type === 'voltmeter') { var m = meterShow(c, r); if (m != null) raw = m; }
+    return num1(POLAR[c.type] ? raw : Math.abs(raw));
   }
   // 表格里的 R 一列。开关按通断写 0/∞，变阻器写【实际接入】的那一段，
   // 其余按求解出来的等效电阻写；解不出来（断路、被烧掉）写破折号。
@@ -170,6 +194,7 @@
     TYPE_LABEL: TYPE_LABEL,
     POLAR: POLAR,
     num1: num1,
+    num2: num2,
     dispI: dispI,
     dispU: dispU,
     fmtR: fmtR,

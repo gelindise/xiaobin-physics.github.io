@@ -669,7 +669,7 @@
      会出现「说明写了电子逆流、小球却还顺着流」这种自相矛盾）。改脚本时
      把这个 build 号 +1 即可。 -->
 <script src="circuit-core.js?build=19"></script>
-<script src="circuit-draw.js?build=29"></script>
+<script src="circuit-draw.js?build=30"></script>
 <!-- ════════════════════════════════════════════════════════════════════
      【教材版本皮肤 · 已从线上撤下】2026-10-12
      人教版元件外观（circuit-skin*.js 共 5 个文件）暂不在线上启用，学生看到的
@@ -688,7 +688,7 @@
 <script src="circuit-editor.js?build=25"></script>
 <!-- 参数面板规格 + 读数显示格式。从本页内联抽出，与 3D 版沙盒（电路实验沙盒3D）
      共用同一份真值：面板规格、小数位、极性显示规则改一处两边都变。 -->
-<script src="circuit-params.js?build=3"></script>
+<script src="circuit-params.js?build=4"></script>
 <!-- 电路图（实物图 → 标准符号）。独立成第四块内核：沙盒和欧姆定律页共用同一份，
      免得各写一套符号，两边的图画法迟早不一样。三个老内核一行没动，build 号不升。 -->
 <script src="circuit-schematic.js?build=14"></script>
@@ -719,7 +719,7 @@ var C = window.CircuitCore, D = window.CircuitDraw, E = window.CircuitEditor;
 // 全部指向共享模块，行为与本页内联时完全一致。
 var CP = window.CircuitParams;
 var PARAM_UI = CP.PARAM_UI, TYPE_LABEL = CP.TYPE_LABEL, POLAR = CP.POLAR;
-var num1 = CP.num1, dispI = CP.dispI, dispU = CP.dispU, fmtR = CP.fmtR, pval = CP.pval;
+var num1 = CP.num1, num2 = CP.num2, dispI = CP.dispI, dispU = CP.dispU, fmtR = CP.fmtR, pval = CP.pval;
 var W = 1000, H = 740;
 var canvas = document.getElementById('simCanvas');
 var ctx = canvas.getContext('2d');
@@ -1453,8 +1453,16 @@ function readoutLines(c, r){
     // 这里要是照 |reading| 印一个正数（以前就是这么写的），学生会把一个
     // 无效读数当成有效数据抄进实验报告——反接最该教的正是「这一格读不了」。
     else if (r.reversed) { lines.push('指针反偏'); lines.push('读不出数'); }
-    else lines.push((c.type === 'ammeter' ? 'I = ' : 'U = ') + num1(Math.abs(r.reading)) +
-               (c.type === 'ammeter' ? 'A' : 'V'));
+    else {
+      // 电表的示数跟着指针走：未调零时指针偏了 ZERO_OFF×量程，读数必须一起偏，
+      // 否则学生看到「针指 0.13、数字写 0.10」只会以为表坏了。同源函数在
+      // circuit-draw 的 meterIndicated —— 表盘数字、侧栏表、这里共用它。
+      var mInd = (D && D.meterIndicated) ? D.meterIndicated(c, r) : r.reading;
+      var mAbs = Math.abs(mInd);
+      lines.push((c.type === 'ammeter' ? 'I = ' : 'U = ') +
+        (c.type === 'ammeter' ? num2(mAbs) : num1(mAbs)) +
+        (c.type === 'ammeter' ? 'A' : 'V'));
+    }
   } else if (c.type === 'power') {
     // 学生电源是【稳压源】：面板上标的是输出电压 U（不是电动势 E），和电路图
     // 那边的 valueOf 保持一致。第二行给电流 —— 那才是「这台电源现在带着多大
@@ -2464,7 +2472,9 @@ function readingAtSlide(rheo, slide, meter){
   } catch (e) { return null; }
   var r = res && res.components && res.components[meter.id];
   if (!r || !r.wired || r.reversed) return null;
-  var v = Math.abs(r.reading);
+  // 逆推的目标是【电表的示数】：学生看着表上那个数去凑，未调零时那个数就带着
+  // 偏移 —— 按真值逆推会得到「表上读 0.50、滑片却不在该在的位置」。
+  var v = Math.abs((D && D.meterIndicated) ? D.meterIndicated(meter, r) : r.reading);
   return isFinite(v) ? v : null;
 }
 // 反推滑片位置。返回 { ok:true, slide, got } 或 { ok:false, why }。

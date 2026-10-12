@@ -2789,23 +2789,48 @@
     screwHead(ctx, x, y, r, 'slot', sc);
   }
 
+  // 电表的【示数】—— 指针实际指着多少。
+  //
+  // 未调零时指针整体偏右 ZERO_OFF×量程（模拟真表没调零），读数必须跟着偏：
+  // 否则学生看到「针指 0.13、数字写 0.10」，只会以为表坏了，而不是
+  // 「没调零，读出来的数据不可信」。调零后指针回到真值，读数一起回来 ——
+  // 「调零」这个操作才看得出效果。
+  //
+  // 反接 / 打表损坏时指针顶在限位钉上（那个位置根本没有刻度），不参与换算，
+  // 照原样返回真值：那两档的读数框写的是「读不出数」，不印数字。
+  //
+  // 🔴 指针角度和表盘数字都走这一个函数 —— 各算各的迟早差一点点，
+  //    而那一点点正是「指针和读数对不上」。
+  function meterIndicated(comp, rec) {
+    var v = (rec && rec.reading) || 0;
+    if (!comp || !comp.params || comp.params.zeroed) return v;
+    if (v < 0) return v;                       // 反接：指针顶在左边的限位钉上
+    if (rec && rec.fault) return v;            // 打表弯针，指针已经回不到零
+    var rng = (rec && rec.range) || (comp.params && comp.params.range) || 0;
+    if (!(rng > 0)) return v;
+    return v + MET.ZERO_OFF * rng;
+  }
+
   // 读数的格式化（表盘上那块数字示数用）。
-  // 优先用 circuit-params.js 的 num1 —— 表盘上的数字和侧栏那张 I/U/R 表
+  // 优先用 circuit-params.js 的 num1 / num2 —— 表盘上的数字和侧栏那张 I/U/R 表
   // 【必须是同一套规则】，否则学生把两处一对照会看到两个不同的数，
   // 而其中一个必然「看着不对」，那比不显示更坏。
+  // two = 要两位小数（电流表：0.6A 量程的分度值是 0.02A，一位小数会把 0.13
+  // 印成 0.1，和指针指的位置对不上）。电压表仍是一位。
   // 那个模块万一没加载（离屏出图工具、单文件测试），退回下面这份等价实现。
-  function fmtRead(v) {
+  function fmtRead(v, two) {
     var G = (typeof self !== 'undefined') ? self
           : (typeof global !== 'undefined') ? global : this;
-    if (G.CircuitParams && typeof G.CircuitParams.num1 === 'function') {
-      return G.CircuitParams.num1(v);
+    if (G.CircuitParams) {
+      if (two && typeof G.CircuitParams.num2 === 'function') return G.CircuitParams.num2(v);
+      if (typeof G.CircuitParams.num1 === 'function') return G.CircuitParams.num1(v);
     }
     var x = +v;
     if (!isFinite(x)) return '—';
-    var s = x.toFixed(1);
+    var s = x.toFixed(two ? 2 : 1);
     if (x !== 0 && parseFloat(s) === 0) {
-      s = x.toFixed(2);
-      if (parseFloat(s) === 0) s = x.toFixed(3);
+      s = x.toFixed(two ? 3 : 2);
+      if (parseFloat(s) === 0) s = x.toFixed(two ? 4 : 3);
     }
     return s;
   }
@@ -2813,6 +2838,8 @@
   function drawMeter(ctx, comp, rec, isVolt) {
     var M = MET, SW = MET_SWEEP;
     var reading = rec ? (rec.reading || 0) : 0;
+    // 指针和数字都用【示数】：未调零时它比真实值大 ZERO_OFF×量程。
+    var shown = meterIndicated(comp, rec);
     var range = (rec && rec.range) || (comp.params && comp.params.range) || (isVolt ? 3 : 0.6);
     // 反接：接线柱正负接反，电流从「−」柱流进，指针往【左】打。取 rec.reading 的
     // 符号而不是 rec.reversed——离屏工具（dev-crop 之类）手搓的 rec 里没有那个字段。
@@ -2934,7 +2961,7 @@
     //    求解重建，不进存档、不进撤销栈；写进 params 的话，一个纯粹的显示开关
     //    会被存进学生保存的电路里，下次打开还藏着一块。
     if (comp.params && comp.params.showValue && !(rec && rec.practiceHide)) {
-      var txt = fmtRead(reading) + (isVolt ? ' V' : ' A');
+      var txt = fmtRead(shown, !isVolt) + (isVolt ? ' V' : ' A');
       // 深色底 = 表盘上贴的一块小液晶屏。液晶的青色字压在深底上，
       // 和黑针、白盘都分得开。
       ctx.fillStyle = 'rgba(15,23,42,0.92)';
@@ -2970,17 +2997,14 @@
 
     // ── 指针 ────────────────────────────────────────────────
     // 偏转量按【当前量程】算：同一个 0.3A，接 0.6 柱指半偏、接 3 柱指 10% 处。
-    var mag = Math.min(Math.abs(reading) / (range || 1), 1.06);
+    // 未调零的偏移已经折进 shown（见 meterIndicated）—— 指针和表盘数字共用
+    // 这一个示数，不可能各算各的。
+    var mag = Math.min(Math.abs(shown) / (range || 1), 1.06);
     // 反接时**不按比例往左画**：真表的指针这时候会一直顶到左边的限位钉上，
     // 电流再大也停在零刻度左边那一点点——那个位置根本没有刻度，所以「读不出数」。
     // 按比例镜像（−0.3A 画成 0.3A 的镜像）会落在弧上、指着 0.3 那条线，
     // 看着像是能读的，正好把这个知识点教反了。
-    // 未调零：指针【不在零位上】。默认就是未调零（见 TYPES.ammeter.defaults 的
-    // zeroed:false）—— 真实的表拿到手第一件事是拧那颗螺丝把针拨到零刻度，
-    // 没调零就用，读数整体偏一个固定量，量出来的数据全是错的。
-    // 偏移只改【画法】，不改 rec.reading：读数是电路的事，调零是仪器的事。
-    var zeroed = !!(comp.params && comp.params.zeroed);
-    var frac = rev ? -0.085 : Math.min(mag + (zeroed ? 0 : M.ZERO_OFF), 1.06);
+    var frac = rev ? -0.085 : mag;
     var na = SW.A0 + (SW.A1 - SW.A0) * frac;
     var alert = over || rev;                       // 超量程 / 反接都用红针
     // 损坏（内核回传的闩锁状态，与「此刻正超量程」不是一回事）：指针【被打弯了】。
@@ -4465,6 +4489,9 @@
     // 表盘上那块数字示数用的格式化。导出是为了让断言能拿【同一份】规则去对账 ——
     // 在测试里再抄一份 num1 等于把「表盘数字和侧栏表是同一套规则」这个洞留着。
     fmtRead: fmtRead,
+    // 电表的示数（指针实际指着多少，未调零时含偏移）。侧栏表格、点元件浮层、
+    // 放大镜读数、逆推，全都问它 —— 显示层各算各的就会出现「指针和读数不一致」。
+    meterIndicated: meterIndicated,
     drawTerminals: drawTerminals,
     currentShift: currentShift,
     roundPath: roundPath, CORNER_SEG: CORNER_SEG,
