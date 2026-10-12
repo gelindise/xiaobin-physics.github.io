@@ -797,9 +797,13 @@
       return true;
     }
 
-    // ---------- 导线上的删除按钮 ----------
-    // 点到导线只把它选中，真正的删除交给线上长出来的这个圆钮：
-    // 导线很细，点中即删容易误伤；多一步确认，也让学生看清删的是哪根。
+    // ---------- 删除按钮（导线 / 元件共用同一颗） ----------
+    // 点到导线或元件只把它选中，真正的删除交给选中后长出来的这颗红圆钮：
+    // 导线很细、元件和导线又常常挤在一起，点中即删容易误伤；多一步确认，
+    // 也让学生看清删的是哪一根 / 哪一件。
+    // 导线上的钮长在线的【中点】，元件上的钮长在元件的【右上角】——
+    // 位置不同、长相和行为完全一样，所以是同一颗钮（同一个 DEL_R、同一套画法、
+    // 同一段命中判据），不是两套。
     var DEL_R = 11;
     function delButtonPos(wr) {
       var pts = pathOf(wr);
@@ -821,12 +825,59 @@
       }
       return { x: pts[pts.length-1].x, y: pts[pts.length-1].y };
     }
+    // 元件上那颗删除钮的位置（世界坐标）。取【世界包围盒】的右上角，而不是
+    // 元件自身坐标系的框角：元件能转 90° / 180°，跟着转的话删除钮会跑到左下角
+    // 去，学生反而找不着 —— 「右上角」说的是屏幕意义上的右上角，和元件怎么摆
+    // 无关。夹回画布内：元件拖到画布角落时按钮不能跑到画布外面（那就永远点不到
+    // 了）；夹回之后它至多压在元件自己身上，仍然是「右上角那一带」。
+    var COMP_DEL_PAD = 8;              // 钮心相对包围盒右上角再往外偏的量
+    function compDeletePos(c) {
+      var b = localBox(c);
+      var xs = [], ys = [];
+      [[b.x0, b.y0], [b.x1, b.y0], [b.x1, b.y1], [b.x0, b.y1]].forEach(function (q) {
+        var w = D.toWorld(c, q[0], q[1]);
+        xs.push(w.x); ys.push(w.y);
+      });
+      var x = Math.max.apply(null, xs) + COMP_DEL_PAD + DEL_R;
+      var y = Math.min.apply(null, ys) - COMP_DEL_PAD - DEL_R;
+      x = Math.max(DEL_R + 2, Math.min(W - DEL_R - 2, x));
+      y = Math.max(DEL_R + 2, Math.min(H - DEL_R - 2, y));
+      return { x: x, y: y };
+    }
+    // 命中判据对两种选中都成立。半径一律 DEL_R + 4 —— 和导线那颗同一个数，
+    // 不然两处「看得见却点不着」的余量会不一样。
     function hitDeleteButton(p) {
-      if (!selected || selected.kind !== 'wire') return false;
-      var wr = getScene().wires[selected.index];
-      if (!wr) return false;
-      var b = delButtonPos(wr);
+      if (!selected) return false;
+      var b = null;
+      if (selected.kind === 'wire') {
+        var wr = getScene().wires[selected.index];
+        if (!wr) return false;
+        b = delButtonPos(wr);
+      } else if (selected.kind === 'comp') {
+        var c = byId(selected.id);
+        if (!c) return false;
+        b = compDeletePos(c);
+      }
       return !!b && Math.hypot(p.x - b.x, p.y - b.y) <= DEL_R + 4;
+    }
+    // 画一颗删除圆钮（白圈 + 红底 + 两笔白叉）。导线中点那颗和元件右上角那颗
+    // 是【同一颗】—— 两处各写一套的话，迟早会长得不一样、命中半径也会跑偏。
+    // 叉用两笔粗线画，不用「×」字形——字形的粗细和居中随字体变，在小圆钮里
+    // 会忽大忽小、偏左偏右。
+    function drawDelButton(ctx, bp) {
+      if (!bp) return;
+      ctx.save();
+      ctx.beginPath(); ctx.arc(bp.x, bp.y, DEL_R + 2.5, 0, 6.284);
+      ctx.fillStyle = '#fff'; ctx.fill();
+      ctx.beginPath(); ctx.arc(bp.x, bp.y, DEL_R, 0, 6.284);
+      ctx.fillStyle = '#dc2626'; ctx.fill();
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = 2.6; ctx.lineCap = 'round';
+      var d = DEL_R * 0.42;
+      ctx.beginPath();
+      ctx.moveTo(bp.x - d, bp.y - d); ctx.lineTo(bp.x + d, bp.y + d);
+      ctx.moveTo(bp.x + d, bp.y - d); ctx.lineTo(bp.x - d, bp.y + d);
+      ctx.stroke();
+      ctx.restore();
     }
     function undo() {
       if (!undoStack.length) return false;
@@ -862,19 +913,13 @@
       var p = toLogical(ev);
       lastPointer = p;
 
-      // 删除钮必须排在所有命中判断之前：它就长在导线上，
-      // 先判导线的话这一下会被当成「再选一次这根线」，按钮永远点不动。
-      if (hitDeleteButton(p)) {
-        var delWr = getScene().wires[selected.index];
-        if (delWr) {                     // 只删这一根，不碰元件
-          pushUndo();
-          getScene().wires.splice(selected.index, 1);
-          selected = null;
-          changed();
-          report('unplug', { wire: delWr });   // 拔掉一根线，和 delete 键同一种声音
-        }
-        return;
-      }
+      // 删除钮必须排在所有命中判断之前：它就长在导线上 / 元件角上，
+      // 先判导线的话这一下会被当成「再选一次这根线」、先判元件的话会被当成
+      // 「开始拖元件」，按钮永远点不动。
+      // 走 removeSelected 这【同一条】删除路径，不在这儿另写一份：导线要
+      // report('unplug')、元件要 report('remove') 并且【保留导线】（只把挂在
+      // 它上面的端点冻住），两条规矩都写在那里，这里再抄一遍迟早抄漏一条。
+      if (hitDeleteButton(p)) { removeSelected(); return; }
 
       // 元件名字标签（画布上那个写着 L1 / R2 的小圆角框）。排在删除钮之后、
       // 接线柱之前：删除钮是选中导线时才出现的显式按钮，必须先接走；标签框长在
@@ -1422,6 +1467,10 @@
           D.roundRect(ctx, b.x0 - 7, b.y0 - 7, (b.x1 - b.x0) + 14, (b.y1 - b.y0) + 14, 8);
           ctx.stroke();
           ctx.restore();
+
+          // 元件右上角那颗删除钮。画在 restore 【之后】：虚线框跟着元件转，
+          // 钮不跟 —— 它在世界坐标里，元件转到哪它都在右上角。
+          drawDelButton(ctx, compDeletePos(c));
         }
       } else if (selected && selected.kind === 'wire') {
         var wr = getScene().wires[selected.index];
@@ -1431,24 +1480,8 @@
           D.drawWire(ctx, pathOf(wr), { width: 10, flowing: false });
           ctx.restore();
 
-          // 选中导线后，在线的中点长出一个删除圆钮
-          var bp = delButtonPos(wr);
-          if (bp) {
-            ctx.save();
-            ctx.beginPath(); ctx.arc(bp.x, bp.y, DEL_R + 2.5, 0, 6.284);
-            ctx.fillStyle = '#fff'; ctx.fill();
-            ctx.beginPath(); ctx.arc(bp.x, bp.y, DEL_R, 0, 6.284);
-            ctx.fillStyle = '#dc2626'; ctx.fill();
-            // 叉用两笔粗线画，不用「×」字形——字形的粗细和居中随字体变，
-            // 在小圆钮里会忽大忽小、偏左偏右。
-            ctx.strokeStyle = '#fff'; ctx.lineWidth = 2.6; ctx.lineCap = 'round';
-            var d = DEL_R * 0.42;
-            ctx.beginPath();
-            ctx.moveTo(bp.x - d, bp.y - d); ctx.lineTo(bp.x + d, bp.y + d);
-            ctx.moveTo(bp.x + d, bp.y - d); ctx.lineTo(bp.x - d, bp.y + d);
-            ctx.stroke();
-            ctx.restore();
-          }
+          // 选中导线后，在线的中点长出一个删除圆钮（和元件那颗同一颗）
+          drawDelButton(ctx, delButtonPos(wr));
         }
       }
 
@@ -1526,6 +1559,9 @@
       getSelected: function () { return describeSelection(); },
       pushUndo: pushUndo,
       delButtonPos: delButtonPos,
+      // 元件右上角那颗删除钮的位置（世界坐标）。自检按它点真实鼠标，
+      // 走的才是学生走的那条路（onDown → hitDeleteButton → removeSelected）。
+      compDeletePos: compDeletePos,
       // 「往导线中间连线」那一条路的两半，分开导出：
       //   nearestOnWire   = 吸附判据（纯函数，喂一个逻辑坐标进去看它吸到哪）；
       //   connectToWireMid= 落线动作（会改场景）。
