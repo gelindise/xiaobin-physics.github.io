@@ -1,0 +1,1142 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>传送带上的受力分析 - 物理虚拟实验</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="stylesheet" href="style.css">
+  <style>
+    :root{
+      --bg:#020617; --panel:rgba(15,23,42,.72); --line:rgba(148,163,184,.16);
+      --ink:#e2e8f0; --dim:#94a3b8; --dim2:#64748b;
+      --blue:#38bdf8; --purple:#a78bfa; --green:#34d399; --amber:#fbbf24;
+      --red:#fb7185; --cyan:#22d3ee;
+      --g-col:#fb7185; --n-col:#38bdf8; --f-col:#fbbf24;
+    }
+    *{box-sizing:border-box}
+    html,body{margin:0}
+    body{
+      padding:20px 0 0; min-width:320px;
+      background:
+        radial-gradient(1100px 620px at 12% -8%, rgba(56,189,248,.13), transparent 62%),
+        radial-gradient(900px 560px at 88% 4%, rgba(167,139,250,.12), transparent 60%),
+        radial-gradient(760px 520px at 50% 108%, rgba(34,211,238,.08), transparent 60%),
+        var(--bg);
+      color:var(--ink);
+      font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Segoe UI",Roboto,sans-serif;
+      -webkit-font-smoothing:antialiased; line-height:1.62;
+    }
+    .exp-wrap{max-width:1200px;margin:0 auto;padding:0 16px 26px}
+    .exp-wrap h2{margin:0;font-size:22px;letter-spacing:.3px;
+      background:linear-gradient(120deg,#e2e8f0 10%,#7dd3fc 55%,#c4b5fd 92%);
+      -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+    .exp-wrap .sub{margin:7px 0 16px;color:#93b4c4;font-size:12.5px;line-height:1.65}
+    .exp-wrap .sub b{color:#a5f3fc;font-weight:700}
+
+    /* ===== 舞台 = 画面区 + 控制台。常规下【左右并排】；全屏下控制台压成
+           画面【下面】一条控制带 —— 全屏里必须能调参、能切阶段，
+           绝不能让用户「要退出全屏才能操作」（用户要求，见 MEMORY 布局条）。 ===== */
+    .stage{display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap}
+    .cv{position:relative;flex:1 1 660px;min-width:0;
+        background:rgba(9,15,28,.86);border:1px solid var(--line);border-radius:16px;padding:10px;
+        box-shadow:0 18px 46px rgba(2,6,23,.5)}
+    .cv canvas{display:block;width:100%;height:auto;border-radius:10px;background:#060a14}
+    .side{flex:0 0 344px;min-width:0;display:flex;flex-direction:column;gap:12px}
+    @media (max-width:960px){ .cv{flex:1 1 100%} .side{flex:1 1 100%} }
+
+    /* 舞台右上角的全屏按钮 */
+    .fsBtn{position:absolute;top:18px;right:18px;z-index:7;
+      display:flex;align-items:center;gap:5px;
+      padding:6px 11px;border-radius:9px;border:1px solid rgba(148,163,184,.32);
+      background:rgba(15,23,42,.82);color:#cbd5e1;
+      font-family:inherit;font-size:12.5px;font-weight:600;cursor:pointer;
+      box-shadow:0 2px 10px rgba(2,6,23,.5);transition:.15s}
+    .fsBtn:hover{background:rgba(30,41,59,.95);border-color:rgba(148,163,184,.6)}
+    .fsBtn.on{background:#2563eb;border-color:#2563eb;color:#fff}
+
+    /* 画布左上角的阶段牌（绝对定位，不进文档流） */
+    .stageTag{position:absolute;top:18px;left:18px;z-index:7;max-width:36%;
+      padding:6px 12px;border-radius:9px;font-size:12.5px;font-weight:700;
+      background:rgba(2,6,23,.86);color:#e2e8f0;border:1px solid rgba(148,163,184,.28);
+      letter-spacing:.02em;line-height:1.45}
+    .stageTag .n{color:#fbbf24}
+    .stageTag .s{display:block;font-weight:500;font-size:11.5px;color:#94a3b8;margin-top:2px}
+
+    /* ===== 全屏：画面占满上方，控制台变成【底部控制带】 =====
+       ⚠️ 全屏目标 = 【整个舞台】—— 只有把控制台放进全屏元素【里面】，
+          它才会在真全屏里渲染出来（全屏只显示 fullscreenElement 及其后代）。
+       🔴 flex-wrap 必须显式 nowrap、align-items 必须显式 stretch：
+          基础样式是 wrap + flex-start，竖排下 wrap 会把控制带甩到【另一列】、
+          flex-start 会让画面区缩成内容宽（画布就长不大）。 */
+    #stage:fullscreen, #stage:-webkit-full-screen{
+      display:flex;flex-direction:column;flex-wrap:nowrap;align-items:stretch;
+      gap:0;padding:0;border:0;border-radius:0;background:#060a14;overflow:hidden}
+    #stage:fullscreen .cv, #stage:-webkit-full-screen .cv{
+      flex:1 1 auto;min-height:0;padding:6px;border:0;border-radius:0;
+      background:transparent;box-shadow:none;
+      display:flex;align-items:center;justify-content:center;overflow:hidden}
+    #stage:fullscreen .cv canvas, #stage:-webkit-full-screen .cv canvas{
+      width:auto;height:auto;border-radius:6px}
+    #stage:fullscreen .fsBtn, #stage:-webkit-full-screen .fsBtn{top:14px;right:14px}
+    #stage:fullscreen .stageTag, #stage:-webkit-full-screen .stageTag{top:14px;left:14px}
+
+    /* 底部控制带：一整条深色，左边控制台压成一行、右边读数压成一行 */
+    #stage:fullscreen .side, #stage:-webkit-full-screen .side{
+      flex:0 0 auto;flex-direction:row;align-items:flex-start;gap:16px;
+      padding:8px 14px 10px;background:rgba(9,15,28,.98);border-top:1px solid var(--line)}
+    #stage:fullscreen .panel, #stage:-webkit-full-screen .panel{
+      padding:0;border:0;border-radius:0;box-shadow:none;background:transparent}
+    #stage:fullscreen .ctl, #stage:-webkit-full-screen .ctl{
+      flex:1 1 auto;min-width:0;display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px}
+    #stage:fullscreen .ctl h3, #stage:-webkit-full-screen .ctl h3{display:none}
+    #stage:fullscreen .seg, #stage:-webkit-full-screen .seg{margin:0}
+    #stage:fullscreen .sliders, #stage:-webkit-full-screen .sliders{
+      flex:1 1 auto;min-width:0;display:flex;flex-wrap:wrap;gap:4px 14px;margin:0}
+    #stage:fullscreen .sl, #stage:-webkit-full-screen .sl{min-width:186px;margin:0}
+    #stage:fullscreen .sl .row label, #stage:-webkit-full-screen .sl .row label{font-size:11.5px}
+    #stage:fullscreen .sl .row output, #stage:-webkit-full-screen .sl .row output{font-size:12px}
+    #stage:fullscreen .checks, #stage:-webkit-full-screen .checks{
+      margin:0;flex-direction:row;flex-wrap:wrap;gap:4px 12px}
+    #stage:fullscreen .btns, #stage:-webkit-full-screen .btns{margin:0;flex:0 0 auto}
+    #stage:fullscreen .btns button, #stage:-webkit-full-screen .btns button{padding:8px 12px}
+    #stage:fullscreen .read, #stage:-webkit-full-screen .read{flex:0 0 auto;min-width:0}
+    #stage:fullscreen .read h3, #stage:-webkit-full-screen .read h3{display:none}
+    /* 读数摊成四列两行 —— 控制带高度直接决定全屏画面能有多大，能压就压 */
+    #stage:fullscreen .read .kv, #stage:-webkit-full-screen .read .kv{
+      grid-template-columns:auto auto auto auto;gap:2px 14px;font-size:11.5px}
+    #stage:fullscreen .bars, #stage:-webkit-full-screen .bars{display:none}
+    #stage:fullscreen .formula, #stage:-webkit-full-screen .formula{
+      margin-top:5px;padding:5px 8px;font-size:11px;line-height:1.6}
+    #stage:fullscreen .verdict, #stage:-webkit-full-screen .verdict{
+      margin:5px 0 0;padding:6px 8px;font-size:11px;line-height:1.6;max-width:600px}
+    @media (max-width:1100px){
+      #stage:fullscreen .read, #stage:-webkit-full-screen .read{display:none}
+    }
+
+    /* ===== 面板 ===== */
+    .panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:13px;
+      box-shadow:0 10px 30px rgba(2,6,23,.35)}
+    .panel h3{margin:0 0 9px;font-size:13px;color:#cbd5e1;font-weight:700;letter-spacing:.02em}
+
+    .seg{display:flex;gap:6px;margin-bottom:11px;flex-wrap:wrap}
+    .seg button{flex:1 1 auto;padding:8px 10px;border-radius:9px;
+      border:1px solid rgba(148,163,184,.24);background:rgba(15,23,42,.6);color:#94a3b8;
+      font-family:inherit;font-size:12.5px;font-weight:600;cursor:pointer;transition:.15s;white-space:nowrap}
+    .seg button:hover{border-color:rgba(148,163,184,.5);color:#cbd5e1}
+    .seg button.on{background:linear-gradient(180deg,#1d4ed8,#1e40af);border-color:#3b82f6;color:#fff;
+      box-shadow:0 4px 14px rgba(37,99,235,.35)}
+    .seg.stageSeg button.on{background:linear-gradient(180deg,#b45309,#92400e);border-color:#f59e0b;
+      box-shadow:0 4px 14px rgba(245,158,11,.3)}
+
+    .sl{margin-bottom:9px}
+    .sl .row{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:3px}
+    .sl .row label{font-size:12px;color:#94a3b8}
+    .sl .row label b{color:#cbd5e1;font-weight:600}
+    .sl .row output{font-family:'SF Mono','Cascadia Code','Consolas',monospace;font-size:12.5px;
+      font-weight:700;color:#7dd3fc;min-width:64px;text-align:right}
+    .sl input[type=range]{width:100%;-webkit-appearance:none;appearance:none;height:5px;border-radius:99px;
+      background:rgba(148,163,184,.22);outline:none;cursor:pointer}
+    .sl input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:15px;height:15px;
+      border-radius:50%;background:#38bdf8;border:2px solid #0b1220;box-shadow:0 0 0 1px rgba(56,189,248,.5);cursor:pointer}
+    .sl input[type=range]::-moz-range-thumb{width:13px;height:13px;border-radius:50%;background:#38bdf8;
+      border:2px solid #0b1220;cursor:pointer}
+    .sl.dim{opacity:.35;pointer-events:none}
+
+    .checks{display:flex;flex-direction:column;gap:5px;margin:9px 0 11px}
+    .checks label{display:flex;align-items:center;gap:7px;font-size:12px;color:#94a3b8;cursor:pointer;user-select:none}
+    .checks input{width:14px;height:14px;accent-color:#38bdf8;cursor:pointer}
+
+    .btns{display:flex;gap:8px;flex-wrap:wrap}
+    .btns button{flex:1 1 auto;padding:9px 11px;border-radius:9px;
+      border:1px solid rgba(148,163,184,.24);background:rgba(15,23,42,.6);color:#cbd5e1;
+      font-family:inherit;font-size:12.5px;font-weight:600;cursor:pointer;transition:.15s;white-space:nowrap}
+    .btns button:hover{background:rgba(30,41,59,.85);border-color:rgba(148,163,184,.5)}
+    .btns button.primary{background:linear-gradient(180deg,#059669,#047857);border-color:#10b981;color:#fff}
+    .btns button.primary:hover{background:linear-gradient(180deg,#10b981,#059669)}
+
+    /* ===== 读数 ===== */
+    .badge{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:99px;
+      font-size:11.5px;font-weight:700;margin-bottom:9px;border:1px solid}
+    .badge.slide{background:rgba(251,191,36,.14);border-color:rgba(251,191,36,.45);color:#fcd34d}
+    .badge.ride{background:rgba(52,211,153,.14);border-color:rgba(52,211,153,.45);color:#6ee7b7}
+    .badge.down{background:rgba(251,113,133,.14);border-color:rgba(251,113,133,.45);color:#fda4af}
+    .kv{display:grid;grid-template-columns:auto auto;gap:5px 14px;font-size:12px}
+    .kv dt{color:#7f8ea3;white-space:nowrap}
+    .kv dd{margin:0;font-family:'SF Mono','Cascadia Code','Consolas',monospace;font-weight:700;
+      color:#e2e8f0;text-align:right}
+    .kv dd.g{color:var(--g-col)} .kv dd.n{color:var(--n-col)} .kv dd.f{color:var(--f-col)}
+    .kv dd.p{color:#c4b5fd}
+    .verdict{margin:10px 0 0;padding:9px 10px;border-radius:10px;font-size:12px;line-height:1.7;
+      background:rgba(56,189,248,.07);border:1px solid rgba(56,189,248,.2);color:#bae6fd}
+    .verdict b{color:#7dd3fc}
+    .verdict .warn{color:#fcd34d}
+    /* 速度对比条：v带 固定当参照，v物 与它比长短 —— 共速时两根一样长 */
+    .bars{margin-top:10px;display:flex;flex-direction:column;gap:6px}
+    .bar{display:flex;align-items:center;gap:8px;font-size:11.5px;color:#94a3b8}
+    .bar .nm{flex:0 0 30px;text-align:right}
+    .bar .tr{flex:1 1 auto;height:8px;border-radius:99px;background:rgba(148,163,184,.16);
+      position:relative;overflow:hidden}
+    .bar .tr b{position:absolute;left:0;top:0;bottom:0;border-radius:99px;width:0;
+      transition:width .1s linear}
+    .bar.vb .tr b{background:#94a3b8}
+    .bar.vo .tr b{background:#a78bfa}
+    .bar.vo.neg .tr b{background:#fb7185}
+    .bar em{font-style:normal;flex:0 0 62px;text-align:right;
+      font-family:'SF Mono','Cascadia Code','Consolas',monospace;font-weight:700;color:#cbd5e1}
+    .formula{margin-top:9px;padding:8px 10px;border-radius:10px;font-size:12px;line-height:1.8;
+      background:rgba(2,6,23,.5);border:1px solid var(--line);color:#94a3b8;
+      font-family:'SF Mono','Cascadia Code','Consolas',monospace}
+    .formula b{color:#e2e8f0;font-weight:700}
+
+    /* ===== 说明卡 ===== */
+    .info-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px}
+    @media (max-width:820px){ .info-grid{grid-template-columns:1fr} }
+    .info-card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px}
+    .info-card h3{margin:0 0 8px;color:#e2e8f0;font-size:15px}
+    .info-card p,.info-card li{color:#94a3b8;font-size:13px;line-height:1.85}
+    .info-card ul{padding-left:18px;margin:0}
+    .info-card strong{color:#7dd3fc}
+    .info-card .tbl{width:100%;border-collapse:collapse;margin-top:9px;font-size:12.5px}
+    .info-card .tbl th,.info-card .tbl td{padding:6px 7px;text-align:left;border-bottom:1px solid var(--line)}
+    .info-card .tbl th{color:#7f8ea3;font-weight:600;font-size:11.5px}
+    .info-card .tbl td{color:#cbd5e1;font-size:12px;line-height:1.6}
+    .info-card .tbl td.k{color:#7dd3fc;font-weight:700;white-space:nowrap}
+
+    /* ===== 自动隐藏导航栏 ===== */
+    .header{position:fixed !important;top:0;left:0;right:0;z-index:50;
+      transition:transform .35s cubic-bezier(.4,0,.2,1);will-change:transform}
+    .header.hidden{transform:translateY(-100%)}
+    body{padding-top:56px;transition:padding-top .35s cubic-bezier(.4,0,.2,1)}
+    body.header-hidden{padding-top:0}
+    @media (max-width:768px){ body{padding-top:48px} }
+
+    /* ===== 实拍视频区 ===== */
+    .video-section{max-width:1200px;margin:24px auto 40px;padding:0 16px}
+    .video-section .section-title{font-size:19px;font-weight:bold;color:#e2e8f0;margin-bottom:16px}
+    .video-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:18px}
+    .video-card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px 20px}
+    .video-card h3{margin:0 0 12px;font-size:14.5px;line-height:1.5;color:#e2e8f0;
+      border-bottom:1px solid var(--line);padding-bottom:10px;display:flex;align-items:flex-start;gap:8px}
+    .video-card h3 .live-badge{font-size:11px;background:rgba(239,68,68,.18);color:#fca5a5;
+      padding:2px 8px;border-radius:6px;font-weight:600;white-space:nowrap;flex-shrink:0}
+    .video-container{position:relative;width:100%;padding-bottom:56.25%;height:0;border-radius:12px;
+      overflow:hidden;background:#000}
+    .video-container iframe{position:absolute;top:0;left:0;width:100%;height:100%;border:0}
+    .video-desc{font-size:12.5px;color:#8fa3b8;line-height:1.75;margin-top:10px}
+    .video-fullscreen-btn{position:absolute;top:10px;right:10px;z-index:10;width:36px;height:36px;
+      display:flex;align-items:center;justify-content:center;border:none;border-radius:8px;
+      background:rgba(0,0,0,.55);color:#fff;cursor:pointer;transition:background .2s ease}
+    .video-fullscreen-btn:hover{background:rgba(59,130,246,.85)}
+    .video-container:fullscreen,.video-container:-webkit-full-screen{width:100%;height:100%;padding-bottom:0;border-radius:0}
+  </style>
+  <script src="protect.js"></script>
+  <script src="auth-check.js"></script>
+</head>
+<body>
+  <header class="header">
+    <div class="logo">物理虚拟实验平台</div>
+    <nav class="nav">
+      <a href="experiments.html">实验目录</a>
+      <a href="index.html">首页</a>
+    </nav>
+  </header>
+
+  <div class="exp-wrap">
+    <h2>传送带上的受力分析</h2>
+    <p class="sub">把木箱<b>轻放</b>到一直在匀速转动的传送带上，看它<b>受到哪几个力</b> ——
+      刚放上的一瞬间、和它被带稳之后，受力完全不同；水平带和倾斜带，差别更大。</p>
+
+    <div class="stage" id="stage">
+      <div class="cv" id="cv">
+        <canvas id="simCanvas"></canvas>
+        <div class="stageTag" id="stageTag">① 刚放上 · 相对滑动<span class="s">木箱比带慢，带在拖着它走</span></div>
+        <button class="fsBtn" id="fsBtn" type="button" title="全屏显示实验画面">⛶ 全屏</button>
+      </div>
+
+      <div class="side" id="side">
+        <div class="panel ctl">
+          <h3>控制台</h3>
+
+          <div class="seg" id="modeSeg">
+            <button type="button" data-mode="level" class="on">水平传送带</button>
+            <button type="button" data-mode="incline">倾斜传送带（向上）</button>
+          </div>
+
+          <div class="seg stageSeg" id="stageSeg">
+            <button type="button" data-stage="slide" class="on">① 刚放上</button>
+            <button type="button" data-stage="ride">② 一起匀速</button>
+          </div>
+
+          <div class="sliders">
+            <div class="sl" id="slV">
+              <div class="row"><label>传送带速度 <b>v<sub>带</sub></b></label><output id="oV">1.5 m/s</output></div>
+              <input type="range" id="rV" min="0.5" max="3" step="0.1" value="1.5">
+            </div>
+            <div class="sl" id="slM">
+              <div class="row"><label>木箱质量 <b>m</b></label><output id="oM">2.0 kg</output></div>
+              <input type="range" id="rM" min="0.5" max="5" step="0.5" value="2">
+            </div>
+            <div class="sl" id="slMu">
+              <div class="row"><label>动摩擦因数 <b>μ</b></label><output id="oMu">0.30</output></div>
+              <input type="range" id="rMu" min="0.05" max="0.9" step="0.05" value="0.3">
+            </div>
+            <div class="sl dim" id="slTh">
+              <div class="row"><label>倾角 <b>θ</b></label><output id="oTh">30°</output></div>
+              <input type="range" id="rTh" min="10" max="35" step="1" value="30">
+            </div>
+          </div>
+
+          <div class="checks">
+            <label><input type="checkbox" id="cVal" checked> 显示力的数值</label>
+            <label><input type="checkbox" id="cVel" checked> 显示速度对比（v<sub>物</sub> / v<sub>带</sub>）</label>
+            <label><input type="checkbox" id="cDec"> 显示重力分解（倾斜时）</label>
+            <label><input type="checkbox" id="cSlow" checked> 慢动作（0.5×）</label>
+          </div>
+
+          <div class="btns">
+            <button id="btnPlay" class="primary" type="button">▶ 放上传送带</button>
+            <button id="btnReset" type="button">↺ 重置</button>
+          </div>
+        </div>
+
+        <div class="panel read">
+          <h3>实时读数</h3>
+          <div class="badge slide" id="badge">相对滑动 · 木箱比带慢</div>
+          <dl class="kv">
+            <dt>木箱速度 v<sub>物</sub></dt><dd id="kV">0.00 m/s</dd>
+            <dt>传送带速度 v<sub>带</sub></dt><dd id="kVB">1.50 m/s</dd>
+            <dt>相对滑动速度</dt><dd id="kRel">1.50 m/s（向后）</dd>
+            <dt>重力 G</dt><dd class="g" id="kG">20.0 N</dd>
+            <dt>支持力 N</dt><dd class="n" id="kN">20.0 N</dd>
+            <dt>摩擦力 f</dt><dd class="f" id="kF">6.0 N</dd>
+            <dt>合力 F<sub>合</sub></dt><dd class="p" id="kNet">6.0 N</dd>
+            <dt>加速度 a</dt><dd class="p" id="kA">3.00 m/s²</dd>
+          </dl>
+          <div class="bars">
+            <div class="bar vb"><span class="nm">v带</span><i class="tr"><b id="barVB"></b></i><em id="tVB">1.50</em></div>
+            <div class="bar vo" id="barVo"><span class="nm">v物</span><i class="tr"><b id="barV"></b></i><em id="tV">0.00</em></div>
+          </div>
+          <div class="formula" id="formula">f = μN = μmg = 0.30×20.0 = 6.0 N</div>
+          <div class="verdict" id="verdict"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="info-grid">
+      <div class="info-card">
+        <h3>实验原理 · 摩擦力往哪边？</h3>
+        <ul>
+          <li><strong>第一步，永远先看「相对滑动」</strong>：木箱和传送带谁快？不是看谁动，是看<strong>彼此之间</strong>有没有滑动。</li>
+          <li><strong>第二步，定方向</strong>：滑动摩擦力的方向<strong>与相对滑动的方向相反</strong> ——
+              木箱比带慢，它相对带在往后滑，所以摩擦力<strong>朝前</strong>，把木箱往前拖。</li>
+          <li><strong>第三步，算大小</strong>：滑动时 f = μN，水平带上 N = mg；
+              倾斜带上 N = mg·cosθ（重力垂直带面的分量才是压力）。</li>
+          <li><strong>共速之后呢？</strong>水平带上木箱不再需要任何水平方向的力，摩擦力<strong>变成 0</strong>，
+              只剩重力和支持力 —— 这就是<strong>二力平衡</strong>。</li>
+        </ul>
+      </div>
+      <div class="info-card">
+        <h3>四种情况对照</h3>
+        <table class="tbl">
+          <thead><tr><th>情况</th><th>受力</th><th>合力</th><th>运动</th></tr></thead>
+          <tbody>
+            <tr><td class="k">水平带<br>刚放上</td><td>G、N、f（水平向前）<br>f = μmg</td><td>f ≠ 0</td><td>加速，直到追上带速</td></tr>
+            <tr><td class="k">水平带<br>一起匀速</td><td>只有 G、N<br><b>f = 0</b></td><td>0</td><td>匀速直线运动</td></tr>
+            <tr><td class="k">倾斜带<br>刚放上</td><td>G、N、f（沿斜面向上）<br>f = μmg·cosθ</td><td>f − mg·sinθ</td><td>若 μ &gt; tanθ 则加速上行</td></tr>
+            <tr><td class="k">倾斜带<br>一起匀速</td><td>G、N、f（静摩擦，沿斜面向上）<br>f = mg·sinθ</td><td>0</td><td>匀速上行（三力平衡）</td></tr>
+          </tbody>
+        </table>
+        <p style="margin-top:9px;">把 <strong>μ 调到 tanθ 以下</strong>（例如 30° 时 μ &lt; 0.58），
+        你会发现摩擦力<strong>拉不动</strong>木箱 —— 它反而沿斜面往下滑。</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="video-section">
+    <div class="section-title">🎬 实拍视频 · 从虚拟实验到真实世界</div>
+    <div class="video-grid">
+      <div class="video-card">
+        <h3>传送带摩擦力受力分析<span class="live-badge">实拍</span></h3>
+        <div class="video-container">
+          <iframe src="//player.bilibili.com/player.html?bvid=BV1kgqTBJEaw&page=1&autoplay=0&loop=1&danmaku=0&high_quality=1" scrolling="no" frameborder="no" framespacing="0" allowfullscreen="true"></iframe>
+          <button class="video-fullscreen-btn" title="全屏播放" aria-label="全屏播放">
+            <svg class="fs-expand" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"/></svg>
+            <svg class="fs-compress" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:none"><path stroke-linecap="round" stroke-linejoin="round" d="M8 3v3a2 2 0 01-2 2H3m18 0h-3a2 2 0 01-2-2V3m0 18v-3a2 2 0 012-2h3M3 16h3a2 2 0 012 2v3"/></svg>
+          </button>
+        </div>
+        <div class="video-desc">与上方虚拟实验一一对应：木箱刚放上传送带时，滑动摩擦力是把它「拖」上去的那个力；
+        等它和传送带共速之后，水平带上摩擦力归零、倾斜带上换成了静摩擦力 —— 视频里逐个画给你看。</div>
+      </div>
+    </div>
+  </div>
+
+  <script src="supabase.js"></script>
+  <script src="script.js"></script>
+
+  <script>
+(function () {
+'use strict';
+// ============================================================
+// 传送带上的受力分析
+// ------------------------------------------------------------
+// 一条一直在匀速转动的传送带，把木箱【轻放】上去，逐阶段做受力分析：
+//   ① 水平带 · 刚放上   → 相对滑动，滑动摩擦沿带面向前，f = μmg，合力 ≠ 0，加速
+//   ② 水平带 · 一起匀速 → 共速，水平方向不需要力，f = 0，只剩 G 与 N ⇒ 二力平衡
+//   ③ 倾斜带 · 刚放上   → 相对滑动，f = μmg·cosθ 沿斜面向上，合力 = f − mg·sinθ
+//   ④ 倾斜带 · 一起匀速 → 共速，静摩擦沿斜面向上 f = mg·sinθ ⇒ 三力平衡，合力 0
+//
+// ── 只有一个真值源：forces() ────────────────────────────────
+// 画布上的箭头长度、读数栏的数字、说明文字里的方向，全部来自同一个 forces()。
+// 自检里绝不允许再抄一套公式（抄一套 = 页面改坏了自检也不知道）。
+//
+// ── 阶段怎么判（computeStage）────────────────────────────────
+// 判据只有一条：木箱速度与带速是否相等。
+//   不等 ⇒ 'sliding'（相对滑动，滑动摩擦）
+//   相等 ⇒ 水平带 'together'；倾斜带还要看 μN 是否够撑住 mg·sinθ，
+//          撑不住就立刻打滑下滑（这也是真实情况，不是特判）。
+// ============================================================
+
+var G = 10;                       // 重力加速度（初中取 10 N/kg）
+
+// ---------- 画布逻辑尺寸 ----------
+var W = 800, H = 440;
+
+// ---------- 模式常量 ----------
+// a = 带的下端/左端（滚筒中心）的画布坐标；beltPx = 带面长度（像素）；
+// lenM = 这条带「看得见的那一段」折算成多少米（只影响木箱沿带走多快，不影响受力）。
+var MODES = {
+  level:   { key: 'level',   name: '水平传送带',       lenM: 4.0, beltPx: 540, a: { x: 120, y: 336 } },
+  incline: { key: 'incline', name: '倾斜传送带（向上）', lenM: 4.0, beltPx: 430, a: { x: 150, y: 352 } }
+};
+var GROUND_Y = 418;
+var U_START = 0.20, U_RIDE = 0.58, U_END = 0.95;
+var MU_DEFAULT = { level: 0.30, incline: 0.80 };   // 两档各自的推荐 μ（水平带小 μ 才看得清加速过程；倾斜带要 μ > tanθ）
+var TH_MIN = 10, TH_MAX = 35;
+
+// ---------- 当前参数（滑块） ----------
+var P = {
+  mode: 'level',
+  vBelt: 1.5,        // m/s
+  m: 2.0,            // kg
+  mu: MU_DEFAULT.level,
+  theta: 30,         // 度（仅倾斜）
+  slow: true,        // 慢动作
+  showVal: true,     // 显示力的数值
+  showVel: true,     // 显示速度对比
+  showDec: false     // 显示重力分解
+};
+var MU_STORE = { level: MU_DEFAULT.level, incline: MU_DEFAULT.incline };
+
+// ---------- 运动状态 ----------
+var S = {
+  u: U_START,        // 木箱在带上的归一化位置（0 = 下端 / 左端，1 = 上端 / 右端）
+  v: 0,              // 木箱沿带面的速度（+ = 与带同向）
+  stage: 'sliding',  // 'sliding' | 'together'
+  running: false,
+  slidOff: false     // 是否已经从下端滑出去（μ 太小）
+};
+var beltPhase = 0;   // 带面纹理相位（传送带一直转，与木箱是否运动无关）
+var lastT = 0, isFull = false;
+
+function thetaRad() { return P.mode === 'incline' ? P.theta * Math.PI / 180 : 0; }
+function modeC() { return MODES[P.mode]; }
+function beltLenM() { return modeC().lenM; }
+
+// ---------- 传送带几何 ----------
+// A = 带的下端/左端（滚筒中心），B = 上端/右端；ang = 带面与水平方向的夹角。
+function beltGeom() {
+  var md = modeC(), th = thetaRad();
+  var A = { x: md.a.x, y: md.a.y };
+  var L = md.beltPx;
+  return { A: A, B: { x: A.x + L * Math.cos(th), y: A.y - L * Math.sin(th) },
+           ang: th, L: L };
+}
+// 木箱姿态：坐在带面上（沿法线抬升半个带厚 + 半个箱高）
+var OBJ_W = 50, OBJ_H = 36, BELT_T = 15, ROLLER_R = 21;
+function objPose() {
+  var g = beltGeom();
+  var px = g.A.x + (g.B.x - g.A.x) * S.u;
+  var py = g.A.y + (g.B.y - g.A.y) * S.u;
+  var nx = -Math.sin(g.ang), ny = -Math.cos(g.ang);      // 带面法线（朝上）
+  var off = BELT_T / 2 + OBJ_H / 2;
+  return { x: px + nx * off, y: py + ny * off, ang: g.ang,
+           nx: nx, ny: ny,
+           dx: Math.cos(g.ang), dy: -Math.sin(g.ang),      // 带面方向（向前 = 带上行方向）
+           beltX: px, beltY: py };
+}
+
+// ---------- 阶段判定（唯一入口） ----------
+// 阶段的真值源就是 forces() 里的 kind：相对滑动 ⇒ sliding，静摩擦 / 无摩擦 ⇒ together。
+// ⚠️ 这里【绝不能】再写一套「rel 是否为零 / μN 够不够」的判据 —— 写两套的话，
+//    改坏其中一套会被另一套兜住，负向对照里就表现为「怎么改都全绿」（这条踩过）。
+var VEPS = 1e-6;
+function computeStage() {
+  return forces().kind === 'slide' ? 'sliding' : 'together';
+}
+
+// ---------- 受力（唯一真值源） ----------
+// dir：摩擦力沿带面的方向，+1 = 与带同向（向前/沿斜面向上），-1 = 反向，0 = 无摩擦力
+function forces() {
+  var th = thetaRad(), cos = Math.cos(th), sin = Math.sin(th);
+  var mg = P.m * G, N = mg * cos;
+  var rel = S.v - P.vBelt;
+  var f, dir, kind;
+  if (rel < -VEPS) {                 // 木箱比带慢 ⇒ 相对带向后滑 ⇒ 摩擦向前
+    f = P.mu * N; dir = +1; kind = 'slide';
+  } else if (rel > VEPS) {           // 木箱比带快 ⇒ 相对带向前滑 ⇒ 摩擦向后
+    f = P.mu * N; dir = -1; kind = 'slide';
+  } else {                           // 共速
+    if (P.mode === 'level') { f = 0; dir = 0; kind = 'none'; }
+    else if (P.mu * N >= mg * sin - 1e-9) { f = mg * sin; dir = +1; kind = 'static'; }
+    else { f = P.mu * N; dir = +1; kind = 'slide'; }   // 静摩擦撑不住 ⇒ 打滑下滑
+  }
+  return { mg: mg, N: N, f: f, dir: dir, kind: kind,
+           th: th, cos: cos, sin: sin, rel: rel,
+           Fnet: dir * f - mg * sin,
+           a: (dir * f - mg * sin) / P.m };
+}
+
+// ---------- 物理积分 ----------
+function step(dt) {
+  var F = forces();
+  var rel = S.v - P.vBelt;
+  S.v += F.a * dt;
+  // 追上带速 / 掉回带速 ⇒ 吸附（共速是精确态，不能靠浮点漂过去）
+  if (rel < 0 && S.v >= P.vBelt) S.v = P.vBelt;
+  if (rel > 0 && S.v <= P.vBelt) S.v = P.vBelt;
+  S.u += S.v * dt / beltLenM();
+  if (S.u < 0.04) { S.u = 0.04; S.running = false; S.slidOff = true; }   // 从下端滑出去了
+  else if (S.u > U_END) { S.u = U_START; S.v = 0; }                      // 到末端 ⇒ 循环，重新放一个
+  S.stage = computeStage();
+}
+
+// ---------- 画箭头 ----------
+function arrow(g, x0, y0, x1, y1, color, w, head, halo) {
+  var dx = x1 - x0, dy = y1 - y0, L = Math.sqrt(dx * dx + dy * dy);
+  if (L < 0.5) return;
+  var ux = dx / L, uy = dy / L;
+  var hs = Math.min(head == null ? 12 : head, L * 0.55);
+  var hw = hs * 0.45;
+  if (halo !== false) {                       // 深色描边：箭头压在带面/木箱上也读得清
+    g.save();
+    g.strokeStyle = 'rgba(2,6,23,.72)'; g.fillStyle = 'rgba(2,6,23,.72)';
+    g.lineWidth = (w || 3) + 3; g.lineCap = 'round'; g.lineJoin = 'round';
+    g.beginPath(); g.moveTo(x0, y0); g.lineTo(x1 - ux * hs * 0.9, y1 - uy * hs * 0.9); g.stroke();
+    g.beginPath();
+    g.moveTo(x1, y1);
+    g.lineTo(x1 - ux * hs - uy * hw, y1 - uy * hs + ux * hw);
+    g.lineTo(x1 - ux * hs + uy * hw, y1 - uy * hs - ux * hw);
+    g.closePath(); g.fill();
+    g.restore();
+  }
+  g.strokeStyle = color; g.fillStyle = color;
+  g.lineWidth = w || 3; g.lineCap = 'round';
+  g.beginPath(); g.moveTo(x0, y0); g.lineTo(x1 - ux * hs * 0.9, y1 - uy * hs * 0.9); g.stroke();
+  g.beginPath();
+  g.moveTo(x1, y1);
+  g.lineTo(x1 - ux * hs - uy * hw, y1 - uy * hs + ux * hw);
+  g.lineTo(x1 - ux * hs + uy * hw, y1 - uy * hs - ux * hw);
+  g.closePath(); g.fill();
+}
+
+// ---------- 力的矢量几何（画与自检共用） ----------
+// 返回每个力箭头的【起止点世界坐标 + 颜色 + 长度】—— 自检拿它打像素点，
+// 不允许在自检里另算一套（那样页面改坏了自检也不知道）。
+var FSCALE_BASE = 78;   // 重力箭头固定 78 px，其余按力的大小等比（同一个比例尺，不搞两套）
+function forceArrows() {
+  var F = forces(), pose = objPose();
+  var k = FSCALE_BASE / F.mg;              // px / N
+  var out = {};
+  // 重力：竖直向下
+  out.G = { x0: pose.x, y0: pose.y, x1: pose.x, y1: pose.y + F.mg * k, len: F.mg * k, color: '#fb7185' };
+  // 支持力：沿带面法线（朝上），N = mg·cosθ
+  out.N = { x0: pose.x, y0: pose.y, x1: pose.x + pose.nx * F.N * k, y1: pose.y + pose.ny * F.N * k,
+            len: F.N * k, color: '#38bdf8' };
+  // 摩擦力：沿带面，dir 决定朝向
+  var flen = F.f * k;
+  out.f = { x0: pose.x, y0: pose.y,
+            x1: pose.x + pose.dx * F.dir * flen, y1: pose.y + pose.dy * F.dir * flen,
+            len: flen, color: '#fbbf24', dir: F.dir };
+  return out;
+}
+
+// ---------- 画场景 ----------
+function drawGround(g) {
+  g.save();
+  g.strokeStyle = 'rgba(148,163,184,.24)'; g.lineWidth = 1.5;
+  g.beginPath(); g.moveTo(0, GROUND_Y); g.lineTo(W, GROUND_Y); g.stroke();
+  g.strokeStyle = 'rgba(148,163,184,.11)';
+  for (var x = -40; x < W + 40; x += 18) {
+    g.beginPath(); g.moveTo(x, GROUND_Y); g.lineTo(x + 14, GROUND_Y + 14); g.stroke();
+  }
+  g.restore();
+}
+
+function drawBelt(g) {
+  var b = beltGeom();
+  g.save();
+  // 支架：两端立柱 + 底座；倾斜时再加一根斜撑 —— 别让上端那根柱子看起来像根光杆
+  function post(x, y) {
+    g.strokeStyle = 'rgba(148,163,184,.34)'; g.lineWidth = 7; g.lineCap = 'round';
+    g.beginPath(); g.moveTo(x, y + 8); g.lineTo(x, GROUND_Y); g.stroke();
+    g.strokeStyle = 'rgba(148,163,184,.5)'; g.lineWidth = 5;
+    g.beginPath(); g.moveTo(x - 17, GROUND_Y - 2); g.lineTo(x + 17, GROUND_Y - 2); g.stroke();
+  }
+  post(b.A.x, b.A.y);
+  post(b.B.x, b.B.y);
+  if (P.mode === 'incline') {
+    // 斜撑：从上端立柱的中点到下端，构成一个三角支架（不画与带面平行的长线，那样太乱）
+    g.strokeStyle = 'rgba(148,163,184,.2)'; g.lineWidth = 3.5;
+    g.beginPath();
+    g.moveTo(b.B.x, (b.B.y + GROUND_Y) / 2);
+    g.lineTo(b.A.x, b.A.y + 6);
+    g.stroke();
+  }
+
+  // 带面（一条粗带，两端圆头 = 滚筒）
+  g.translate(b.A.x, b.A.y); g.rotate(b.ang);
+  var L = b.L;
+  var bg = g.createLinearGradient(0, -BELT_T / 2, 0, BELT_T / 2);
+  bg.addColorStop(0, '#64748b'); bg.addColorStop(0.35, '#475569'); bg.addColorStop(1, '#1e293b');
+  g.fillStyle = bg;
+  g.beginPath();
+  g.moveTo(0, -BELT_T / 2); g.lineTo(L, -BELT_T / 2);
+  g.lineTo(L, BELT_T / 2); g.lineTo(0, BELT_T / 2); g.closePath(); g.fill();
+  // 带面上的纹路（跟着带速滚动 —— 传送带一直在转，与木箱动不动无关）
+  var SP = 26;
+  var off = ((beltPhase % SP) + SP) % SP;
+  g.strokeStyle = 'rgba(226,232,240,.55)'; g.lineWidth = 2.2;
+  for (var d = off - SP; d < L; d += SP) {
+    if (d < 0 || d > L) continue;
+    g.beginPath(); g.moveTo(d, -BELT_T / 2 + 2); g.lineTo(d, BELT_T / 2 - 2); g.stroke();
+  }
+  // 带面上下沿描一道亮边，把带面从深色背景里拎出来
+  g.strokeStyle = 'rgba(203,213,225,.5)'; g.lineWidth = 1.4;
+  g.beginPath(); g.moveTo(0, -BELT_T / 2); g.lineTo(L, -BELT_T / 2); g.stroke();
+  // 滚筒
+  [0, L].forEach(function (cx) {
+    var gr = g.createRadialGradient(cx - 6, -6, 2, cx, 0, ROLLER_R);
+    gr.addColorStop(0, '#cbd5e1'); gr.addColorStop(0.6, '#64748b'); gr.addColorStop(1, '#334155');
+    g.fillStyle = gr;
+    g.beginPath(); g.arc(cx, 0, ROLLER_R, 0, 6.2832); g.fill();
+    g.strokeStyle = 'rgba(15,23,42,.9)'; g.lineWidth = 2; g.stroke();
+    g.fillStyle = '#0f172a';
+    g.beginPath(); g.arc(cx, 0, 4, 0, 6.2832); g.fill();
+  });
+  g.restore();
+
+  // 传送带运动方向 + 带速：画成【画布顶部正中一枚固定的小牌子】。
+  // 不画在带子旁边 —— 带子上方是木箱和三个力箭头的地盘（倾斜档木箱走到中点时压得最狠），
+  // 带子下方是重力箭头和 G 标签的地盘（水平档压得最狠）。两头都不安全，就钉死在顶部。
+  drawBeltSpeedChip(g, b);
+}
+
+var lastChip = null;    // 带速牌这一帧实际画在哪（自检要读【实际位置】，不是重算一遍期望位置）
+function drawBeltSpeedChip(g, b) {
+  var txt = 'v带 = ' + P.vBelt.toFixed(1) + ' m/s';
+  var cx = W / 2, cy = 28;
+  g.save();
+  g.font = '700 12.5px -apple-system,"PingFang SC",sans-serif';
+  var tw = g.measureText(txt).width;
+  var arrowLen = 58;
+  var padL = 12, padR = 12, gap = 9;
+  var wBox = padL + arrowLen + gap + tw + padR, hBox = 28;
+  var x0 = cx - wBox / 2, y0 = cy - hBox / 2;
+  g.fillStyle = 'rgba(2,6,23,.8)';
+  g.strokeStyle = 'rgba(148,163,184,.28)'; g.lineWidth = 1;
+  g.beginPath(); roundRect(g, x0, y0, wBox, hBox, 9); g.fill(); g.stroke();
+  // 箭头：方向永远 = 带面方向（水平带朝右、倾斜带朝右上）
+  var ax = x0 + padL, ay = cy;
+  var dx = Math.cos(b.ang), dy = -Math.sin(b.ang);
+  arrow(g, ax, ay, ax + dx * arrowLen, ay + dy * arrowLen, '#cbd5e1', 2.6, 10);
+  g.fillStyle = '#cbd5e1'; g.textAlign = 'left'; g.textBaseline = 'middle';
+  g.fillText(txt, ax + arrowLen + gap, cy + 0.5);
+  lastChip = { box: { x0: x0, y0: y0, x1: x0 + wBox, y1: y0 + hBox },
+               arrow: { x0: ax, y0: ay, x1: ax + dx * arrowLen, y1: ay + dy * arrowLen },
+               dir: { x: dx, y: dy }, ang: b.ang };
+  g.restore();
+}
+
+function roundRect(g, x, y, w, h, r) {
+  g.moveTo(x + r, y);
+  g.lineTo(x + w - r, y); g.quadraticCurveTo(x + w, y, x + w, y + r);
+  g.lineTo(x + w, y + h - r); g.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  g.lineTo(x + r, y + h); g.quadraticCurveTo(x, y + h, x, y + h - r);
+  g.lineTo(x, y + r); g.quadraticCurveTo(x, y, x + r, y);
+  g.closePath();
+}
+
+function drawAngleArc(g) {
+  var b = beltGeom();
+  g.save();
+  g.strokeStyle = 'rgba(56,189,248,.6)'; g.lineWidth = 1.6;
+  g.beginPath(); g.arc(b.A.x, b.A.y, 76, -b.ang, 0); g.stroke();
+  g.fillStyle = '#7dd3fc'; g.font = '700 13px -apple-system,"PingFang SC",sans-serif';
+  g.textAlign = 'left'; g.textBaseline = 'middle';
+  g.fillText('θ = ' + P.theta + '°', b.A.x + 86, b.A.y - 22);
+  g.restore();
+}
+
+function drawObject(g) {
+  var p = objPose();
+  g.save();
+  g.translate(p.x, p.y); g.rotate(p.ang);
+  var hw = OBJ_W / 2, hh = OBJ_H / 2;
+  g.fillStyle = '#0f172a'; g.strokeStyle = 'rgba(2,6,23,.9)'; g.lineWidth = 3;
+  g.beginPath(); g.rect(-hw - 1.5, -hh - 1.5, OBJ_W + 3, OBJ_H + 3); g.fill();
+  var gr = g.createLinearGradient(0, -hh, 0, hh);
+  gr.addColorStop(0, '#c2854a'); gr.addColorStop(1, '#8a5a2b');
+  g.fillStyle = gr;
+  g.beginPath(); g.rect(-hw, -hh, OBJ_W, OBJ_H); g.fill();
+  g.strokeStyle = 'rgba(80,45,15,.55)'; g.lineWidth = 1.6;
+  for (var i = 1; i < 3; i++) {
+    g.beginPath(); g.moveTo(-hw + 4, -hh + OBJ_H * i / 3); g.lineTo(hw - 4, -hh + OBJ_H * i / 3); g.stroke();
+  }
+  g.strokeStyle = 'rgba(255,236,200,.35)'; g.lineWidth = 1.4;
+  g.beginPath(); g.rect(-hw + 1, -hh + 1, OBJ_W - 2, OBJ_H - 2); g.stroke();
+  g.restore();
+}
+
+function drawForces(g) {
+  var F = forces(), A = forceArrows(), p = objPose();
+  g.save();
+  g.font = '700 13px -apple-system,"PingFang SC",sans-serif';
+  g.textAlign = 'center'; g.textBaseline = 'middle';
+  // 重力分解（可选）：沿斜面向下 mg·sinθ + 垂直带面 mg·cosθ（虚线）
+  if (P.showDec && P.mode === 'incline') {
+    var k = FSCALE_BASE / F.mg;
+    g.save();
+    g.setLineDash([6, 5]); g.lineWidth = 2; g.strokeStyle = 'rgba(251,113,133,.55)';
+    arrow(g, p.x, p.y, p.x - p.dx * F.mg * F.sin * k, p.y - p.dy * F.mg * F.sin * k, 'rgba(251,113,133,.6)', 2, 10, false);
+    arrow(g, p.x, p.y, p.x - p.nx * F.mg * F.cos * k, p.y - p.ny * F.mg * F.cos * k, 'rgba(251,113,133,.6)', 2, 10, false);
+    g.setLineDash([]);
+    g.restore();
+  }
+  // 三个力
+  arrow(g, A.G.x0, A.G.y0, A.G.x1, A.G.y1, A.G.color, 3.4, 13);
+  arrow(g, A.N.x0, A.N.y0, A.N.x1, A.N.y1, A.N.color, 3.4, 13);
+  if (F.f > 0.01) arrow(g, A.f.x0, A.f.y0, A.f.x1, A.f.y1, A.f.color, 3.4, 13);
+
+  if (P.showVal) {
+    label(g, 'G = ' + F.mg.toFixed(1) + ' N', A.G.x1, A.G.y1 + 13, '#fb7185');
+    label(g, 'N = ' + F.N.toFixed(1) + ' N', A.N.x1, A.N.y1 - 13, '#38bdf8');
+    if (F.f > 0.01) label(g, 'f = ' + F.f.toFixed(1) + ' N', A.f.x1 + (F.dir > 0 ? 26 : -26), A.f.y1 - 14, '#fbbf24');
+    // 无摩擦力的标签用【灰】，而且必须让开「摩擦力本该在」的那条水平线 ——
+    // 压在线上会把画布遮成一片灰，既看不清、也让像素判据永远采不到东西。
+    else label(g, 'f = 0', p.x + 46, p.y - 32, '#94a3b8');
+  }
+  g.restore();
+}
+function label(g, txt, x, y, color) {
+  g.save();
+  g.font = '700 12.5px -apple-system,"PingFang SC",sans-serif';
+  g.textAlign = 'center'; g.textBaseline = 'middle';
+  var w = g.measureText(txt).width + 12;
+  g.fillStyle = 'rgba(2,6,23,.78)';
+  g.beginPath();
+  var r = 6, h = 19, x0 = x - w / 2, y0 = y - h / 2;
+  g.moveTo(x0 + r, y0); g.lineTo(x0 + w - r, y0); g.quadraticCurveTo(x0 + w, y0, x0 + w, y0 + r);
+  g.lineTo(x0 + w, y0 + h - r); g.quadraticCurveTo(x0 + w, y0 + h, x0 + w - r, y0 + h);
+  g.lineTo(x0 + r, y0 + h); g.quadraticCurveTo(x0, y0 + h, x0, y0 + h - r);
+  g.lineTo(x0, y0 + r); g.quadraticCurveTo(x0, y0, x0 + r, y0);
+  g.closePath(); g.fill();
+  g.fillStyle = color; g.fillText(txt, x, y);
+  g.restore();
+}
+
+function drawVelocities(g) {
+  // 速度对比已经搬到右侧读数栏的对比条上（画布上再画一套会和力箭头抢位置）
+  return;
+}
+
+function drawFrame() {
+  ctx.setTransform(dpr * s, 0, 0, dpr * s, 0, 0);
+  ctx.clearRect(0, 0, W, H);
+  var bg = ctx.createLinearGradient(0, 0, 0, H);
+  bg.addColorStop(0, '#0a1220'); bg.addColorStop(1, '#060a14');
+  ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
+  ctx.save();
+  ctx.strokeStyle = 'rgba(148,163,184,.055)'; ctx.lineWidth = 1;
+  for (var gx = 0; gx < W; gx += 40) { ctx.beginPath(); ctx.moveTo(gx, 0); ctx.lineTo(gx, H); ctx.stroke(); }
+  for (var gy = 0; gy < H; gy += 40) { ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(W, gy); ctx.stroke(); }
+  ctx.restore();
+  drawGround(ctx);
+  drawBelt(ctx);
+  if (P.mode === 'incline') drawAngleArc(ctx);
+  drawObject(ctx);
+  drawForces(ctx);
+}
+
+// ---------- 读数栏 ----------
+var elBadge = document.getElementById('badge'), elVerdict = document.getElementById('verdict'),
+    elFormula = document.getElementById('formula'), elTag = document.getElementById('stageTag');
+var kV = document.getElementById('kV'), kVB = document.getElementById('kVB'), kRel = document.getElementById('kRel'),
+    kG = document.getElementById('kG'), kN = document.getElementById('kN'), kF = document.getElementById('kF'),
+    kNet = document.getElementById('kNet'), kA = document.getElementById('kA');
+var barVB = document.getElementById('barVB'), barV = document.getElementById('barV'),
+    tVB = document.getElementById('tVB'), tV = document.getElementById('tV'),
+    barVo = document.getElementById('barVo');
+
+// 速度对比条：v带 固定占满（当参照），v物 按比值取长度 —— 共速时两根一样长，一眼看出「追上了」
+function syncBars() {
+  var mx = Math.max(P.vBelt, 0.5);
+  barVB.style.width = '100%';
+  barV.style.width = (Math.min(Math.abs(S.v) / mx, 1) * 100) + '%';
+  tVB.textContent = P.vBelt.toFixed(2);
+  tV.textContent = S.v.toFixed(2);
+  barVo.classList.toggle('neg', S.v < -VEPS);
+}
+
+function dirText(F) {
+  if (F.dir === 0) return '无摩擦力';
+  if (P.mode === 'level') return F.dir > 0 ? '水平向右（与带同向）' : '水平向左';
+  return F.dir > 0 ? '沿斜面向上' : '沿斜面向下';
+}
+function syncReadout() {
+  var F = forces();
+  S.stage = computeStage();
+  var rel = F.rel;
+  kVB.textContent = P.vBelt.toFixed(2) + ' m/s';
+  kV.textContent = S.v.toFixed(2) + ' m/s';
+  kRel.textContent = Math.abs(rel) < VEPS ? '0（与带共速）'
+    : Math.abs(rel).toFixed(2) + ' m/s（' + (rel < 0 ? '木箱比带慢，相对带向后滑' : '木箱比带快，相对带向前滑') + '）';
+  kG.textContent = F.mg.toFixed(1) + ' N';
+  kN.textContent = F.N.toFixed(1) + ' N';
+  kF.textContent = F.f.toFixed(1) + ' N' + (F.f > 0.01 ? '（' + dirText(F) + '）' : '');
+  kNet.textContent = Math.abs(F.Fnet) < 1e-9 ? '0（合力为零）' : Math.abs(F.Fnet).toFixed(1) + ' N';
+  kA.textContent = Math.abs(F.a) < 1e-9 ? '0（匀速）' : F.a.toFixed(2) + ' m/s²';
+
+  // 公式（跟着情况走，不写死）
+  var fo;
+  if (P.mode === 'level') {
+    fo = F.kind === 'slide'
+      ? 'f = μN = μmg = ' + P.mu.toFixed(2) + '×' + F.mg.toFixed(1) + ' = ' + F.f.toFixed(1) + ' N'
+      : 'f = 0（水平方向不需要力，摩擦力自己消失）';
+  } else {
+    fo = (F.kind === 'static')
+      ? 'f = mg·sinθ = ' + F.mg.toFixed(1) + '×sin' + P.theta + '° = ' + F.f.toFixed(1) + ' N（静摩擦）'
+      : 'f = μN = μmg·cosθ = ' + P.mu.toFixed(2) + '×' + F.mg.toFixed(1) + '×cos' + P.theta + '° = ' + F.f.toFixed(1) + ' N';
+    fo += '　｜　N = mg·cosθ = ' + F.N.toFixed(1) + ' N';
+  }
+  elFormula.textContent = fo;
+
+  // 阶段牌
+  var stageNo, stageTxt, stageSub;
+  if (S.stage === 'sliding' && rel < 0) { stageNo = '①'; stageTxt = '刚放上 · 相对滑动'; stageSub = '木箱比带慢，带在拖着它走'; }
+  else if (S.stage === 'sliding' && rel > 0) { stageNo = '①'; stageTxt = '相对滑动 · 木箱比带快'; stageSub = '摩擦向后，把木箱往回拖'; }
+  else if (P.mode === 'level') { stageNo = '②'; stageTxt = '一起匀速 · 二力平衡'; stageSub = '只剩重力与支持力，摩擦力为 0'; }
+  else { stageNo = '②'; stageTxt = '一起匀速 · 三力平衡'; stageSub = '静摩擦沿斜面向上，f = mg·sinθ'; }
+  elTag.innerHTML = '<span class="n">' + stageNo + '</span> ' + stageTxt + '<span class="s">' + stageSub + '</span>';
+
+  // 状态徽章
+  var bcls, btxt;
+  if (S.slidOff) { bcls = 'down'; btxt = '木箱从下端滑出去了 · μ 太小'; }
+  else if (S.stage === 'sliding' && rel > 0) { bcls = 'slide'; btxt = '相对滑动 · 木箱比带快'; }
+  else if (S.stage === 'sliding') { bcls = 'slide'; btxt = '相对滑动 · 木箱比带慢'; }
+  else if (P.mode === 'level') { bcls = 'ride'; btxt = '共速 · 水平带不需要摩擦力'; }
+  else { bcls = 'ride'; btxt = '共速 · 静摩擦沿斜面向上'; }
+  elBadge.className = 'badge ' + bcls;
+  elBadge.textContent = btxt;
+
+  // 结论
+  var vd;
+  if (S.slidOff) {
+    vd = '<span class="warn">μ = ' + P.mu.toFixed(2) + ' 小于 tanθ = ' + Math.tan(thetaRad()).toFixed(2) +
+         '，滑动摩擦力（' + F.f.toFixed(1) + ' N）拉不过重力的下滑分量（' + (F.mg * F.sin).toFixed(1) +
+         ' N），木箱反而沿斜面向下滑。</span>';
+  } else if (S.stage === 'sliding' && P.mode === 'level') {
+    vd = '竖直方向：G 与 N <b>等大反向</b>（二力平衡）。水平方向只有摩擦力，' +
+         '<b>F合 = f = ' + F.f.toFixed(1) + ' N ≠ 0</b> ⇒ 木箱加速前进，直到追上带速。';
+  } else if (S.stage === 'sliding') {
+    vd = '垂直带面：N = mg·cosθ，与重力的垂直分量平衡。沿带面：合力 = f − mg·sinθ = ' +
+         F.Fnet.toFixed(1) + ' N ≠ 0 ⇒ 木箱加速上行。';
+  } else if (P.mode === 'level') {
+    vd = '木箱与带共速后<b>不需要任何水平方向的力</b>，摩擦力变成 <b>0</b>。' +
+         '只受 G 和 N 两个力，<b>等大、反向、同一直线</b> ⇒ 二力平衡，木箱做匀速直线运动。';
+  } else {
+    vd = '共速后木箱还要克服重力下滑，所以带必须给它一个<b>沿斜面向上的静摩擦力</b> ' +
+         'f = mg·sinθ = ' + F.f.toFixed(1) + ' N。重力、支持力、静摩擦力<b>三力平衡</b>（合力为 0），木箱匀速上行。';
+  }
+  elVerdict.innerHTML = vd;
+  syncBars();
+  maybeRelayout();
+}
+
+// 全屏下控制带的高度会被读数文字撑高撑矮（换档、木箱加速时结论句长度都在变）。
+// 控制带一变高，画面区就变矮 —— 不重算的话画布会顶出容器被裁掉。
+// 只在全屏里、且高度真的变了才重算（不是每帧都 layout）。
+var lastBandH = -1;
+function maybeRelayout() {
+  if (!isFull) { lastBandH = -1; return; }
+  var h = document.getElementById('side').getBoundingClientRect().height;
+  if (Math.abs(h - lastBandH) > 1) { lastBandH = h; layout(); }
+}
+
+// ---------- 交互 ----------
+function setMode(mode) {
+  P.mode = mode;
+  P.mu = MU_STORE[mode];
+  document.getElementById('rMu').value = P.mu;
+  document.getElementById('oMu').textContent = P.mu.toFixed(2);
+  document.getElementById('slTh').classList.toggle('dim', mode !== 'incline');
+  Array.prototype.forEach.call(document.querySelectorAll('#modeSeg button'), function (b) {
+    b.classList.toggle('on', b.getAttribute('data-mode') === mode);
+  });
+  resetSim();
+}
+function setStage(name) {
+  if (name === 'slide') { S.u = U_START; S.v = 0; }
+  else { S.u = U_RIDE; S.v = P.vBelt; }
+  S.running = false; S.slidOff = false;
+  S.stage = computeStage();
+  Array.prototype.forEach.call(document.querySelectorAll('#stageSeg button'), function (b) {
+    b.classList.toggle('on', b.getAttribute('data-stage') === name);
+  });
+  syncReadout(); drawFrame();
+}
+function resetSim() {
+  S.u = U_START; S.v = 0; S.running = false; S.slidOff = false;
+  S.stage = computeStage();
+  document.getElementById('btnPlay').textContent = '▶ 放上传送带';
+  setStageButtons();
+  syncReadout(); drawFrame();
+}
+function setStageButtons() {
+  var rel = S.v - P.vBelt;
+  var on = (Math.abs(rel) < VEPS) ? 'ride' : 'slide';
+  Array.prototype.forEach.call(document.querySelectorAll('#stageSeg button'), function (b) {
+    b.classList.toggle('on', b.getAttribute('data-stage') === on);
+  });
+}
+function play() {
+  if (S.running) { S.running = false; document.getElementById('btnPlay').textContent = '▶ 继续'; return; }
+  if (Math.abs(S.v - P.vBelt) < VEPS && S.u > U_RIDE - 0.05) { S.u = U_START; S.v = 0; }   // 已经跑完一轮 ⇒ 重放
+  S.slidOff = false;
+  S.running = true;
+  document.getElementById('btnPlay').textContent = '⏸ 暂停';
+}
+
+function bindSlider(id, out, fmt, apply) {
+  var r = document.getElementById(id), o = document.getElementById(out);
+  function upd() { var v = parseFloat(r.value); apply(v); o.textContent = fmt(v); }
+  r.addEventListener('input', upd);
+  return upd;
+}
+var updV = bindSlider('rV', 'oV', function (v) { return v.toFixed(1) + ' m/s'; },
+  function (v) { P.vBelt = v; });
+var updM = bindSlider('rM', 'oM', function (v) { return v.toFixed(1) + ' kg'; },
+  function (v) { P.m = v; });
+var updMu = bindSlider('rMu', 'oMu', function (v) { return v.toFixed(2); },
+  function (v) { P.mu = v; MU_STORE[P.mode] = v; });
+var updTh = bindSlider('rTh', 'oTh', function (v) { return v + '°'; },
+  function (v) { P.theta = v; });
+
+['rV', 'rM', 'rMu', 'rTh'].forEach(function (id) {
+  document.getElementById(id).addEventListener('input', function () {
+    if (id === 'rTh' || id === 'rMu') S.slidOff = false;
+    S.stage = computeStage(); syncReadout(); drawFrame();
+  });
+});
+document.getElementById('modeSeg').addEventListener('click', function (e) {
+  var b = e.target.closest('button[data-mode]'); if (b) setMode(b.getAttribute('data-mode'));
+});
+document.getElementById('stageSeg').addEventListener('click', function (e) {
+  var b = e.target.closest('button[data-stage]'); if (b) setStage(b.getAttribute('data-stage'));
+});
+document.getElementById('btnPlay').addEventListener('click', play);
+document.getElementById('btnReset').addEventListener('click', resetSim);
+document.getElementById('cVal').addEventListener('change', function (e) { P.showVal = e.target.checked; drawFrame(); });
+document.getElementById('cVel').addEventListener('change', function (e) { P.showVel = e.target.checked; drawFrame(); });
+document.getElementById('cDec').addEventListener('change', function (e) { P.showDec = e.target.checked; drawFrame(); });
+document.getElementById('cSlow').addEventListener('change', function (e) { P.slow = e.target.checked; });
+
+// ---------- 画布与布局 ----------
+var canvas = document.getElementById('simCanvas'), ctx = canvas.getContext('2d');
+var stageEl = document.getElementById('stage'), cvWrap = document.getElementById('cv');
+var dpr = 1, s = 1;
+
+function layout() {
+  dpr = window.devicePixelRatio || 1;
+  var pad = isFull ? 6 : 10;
+  var availW = Math.max(80, cvWrap.clientWidth - pad * 2);
+  var availH = isFull ? Math.max(80, cvWrap.clientHeight - pad * 2) : Infinity;
+  s = availW / W;
+  if (isFinite(availH)) s = Math.min(s, availH / H);
+  canvas.style.width = (W * s) + 'px';
+  canvas.style.height = (H * s) + 'px';
+  canvas.width = Math.round(W * s * dpr);
+  canvas.height = Math.round(H * s * dpr);
+  drawFrame();
+}
+
+// ---------- 主循环 ----------
+function tick(t) {
+  var dt = lastT ? Math.min((t - lastT) / 1000, 0.05) : 0;
+  lastT = t;
+  // 传送带一直在匀速转动 —— 纹理相位只跟带速有关，与木箱动不动无关
+  var g = beltGeom();
+  beltPhase += P.vBelt * (g.L / beltLenM()) * dt;
+  if (S.running) {
+    var d = dt * (P.slow ? 0.5 : 1);
+    var sub = 4;
+    for (var i = 0; i < sub; i++) step(d / sub);     // 细分积分：加速段不因帧长跳过头
+    if (!S.running) document.getElementById('btnPlay').textContent = '▶ 放上传送带';
+    setStageButtons();
+    syncReadout();
+  }
+  drawFrame();
+  requestAnimationFrame(tick);
+}
+
+// ---------- 全屏（舞台） ----------
+var fsBtn = document.getElementById('fsBtn');
+function fsEl() { return document.fullscreenElement || document.webkitFullscreenElement || null; }
+function fsIsStage() { return fsEl() === stageEl; }
+fsBtn.addEventListener('click', function () {
+  if (fsIsStage()) {
+    var ex = document.exitFullscreen || document.webkitExitFullscreen;
+    if (ex) ex.call(document);
+  } else {
+    var rq = stageEl.requestFullscreen || stageEl.webkitRequestFullscreen;
+    if (rq) rq.call(stageEl);
+  }
+});
+var fsLayoutCalls = 0;   // 全屏切换后重算布局的次数（要求：立刻一次 + 晚一帧一次 = 2 次）
+function onFsChange() {
+  isFull = fsIsStage();
+  fsBtn.textContent = isFull ? '⛶ 退出全屏' : '⛶ 全屏';
+  fsBtn.classList.toggle('on', isFull);
+  fsBtn.title = isFull ? '退出全屏（也可以按 Esc）' : '全屏显示实验画面';
+  // 全屏改的是舞台尺寸 ⇒ 立刻重算一次，再晚一帧补一次（等浏览器把布局定下来）。
+  // 只做立刻那一次是不够的：fullscreenchange 派发时布局可能还没定下来，
+  // 那一刻量到的舞台尺寸是旧的 ⇒ 画布停在进全屏前的尺寸。
+  fsLayoutCalls++; layout();
+  setTimeout(function () { fsLayoutCalls++; layout(); drawFrame(); }, 60);
+}
+['fullscreenchange', 'webkitfullscreenchange'].forEach(function (ev) {
+  document.addEventListener(ev, onFsChange);
+});
+
+// ============================================================
+// 给自动化验证留的钩子
+// ⚠️ 必须在【任何绘制之前】装好：页面万一在首帧渲染里抛错，钩子还在，
+//    自检就能把「运行期有 JS 报错」判红；装在最后会变成「页面根本没起来」。
+// ============================================================
+window.__cb = {
+  PAGE_FILE: '传送带受力分析.html',     // 身份写死在源码里（负向对照会换文件名，靠 location 推身份会误红）
+  W: W, H: H, G: G,
+  BELT_T: BELT_T, OBJ_W: OBJ_W, OBJ_H: OBJ_H, ROLLER_R: ROLLER_R,
+  FSCALE_BASE: FSCALE_BASE, VEPS: VEPS,
+  MU_DEFAULT: MU_DEFAULT, TH_MIN: TH_MIN, TH_MAX: TH_MAX,
+  MODES: MODES,
+  params: function () { return { mode: P.mode, vBelt: P.vBelt, m: P.m, mu: P.mu, theta: P.theta,
+                                 slow: P.slow, showVal: P.showVal, showVel: P.showVel, showDec: P.showDec }; },
+  setParams: function (o) {
+    for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) P[k] = o[k];
+    S.stage = computeStage(); syncReadout(); drawFrame();
+  },
+  state: function () { return { u: S.u, v: S.v, stage: S.stage, running: S.running, slidOff: !!S.slidOff }; },
+  setState: function (o) {
+    for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) S[k] = o[k];
+    S.stage = computeStage(); syncReadout(); drawFrame();
+  },
+  stage: computeStage,
+  forces: forces,
+  thetaRad: thetaRad,
+  beltGeom: beltGeom,
+  objPose: objPose,
+  forceArrows: forceArrows,
+  chipGeom: function () { return lastChip; },   // 带速牌【这一帧实际画在】哪
+  dirText: dirText,
+  // 一步定长积分：自检用它做「解析解 vs 数值解」的对照
+  integrate: function (dt, n) { for (var i = 0; i < (n || 1); i++) step(dt); S.stage = computeStage(); },
+  setMode: setMode, setStage: setStage, reset: resetSim, play: play,
+  syncReadout: syncReadout,
+  renderNow: drawFrame,
+  // 画面元素在【画布设备像素】里的位置 —— 自检拿它打像素点
+  probe: function () {
+    var k = canvas.width / W;
+    var A = forceArrows(), p = objPose();
+    function pt(q) { return { x: q.x * k, y: q.y * k }; }
+    return {
+      k: k,
+      G: { p0: pt({ x: A.G.x0, y: A.G.y0 }), p1: pt({ x: A.G.x1, y: A.G.y1 }), len: A.G.len, color: A.G.color },
+      N: { p0: pt({ x: A.N.x0, y: A.N.y0 }), p1: pt({ x: A.N.x1, y: A.N.y1 }), len: A.N.len, color: A.N.color },
+      f: { p0: pt({ x: A.f.x0, y: A.f.y0 }), p1: pt({ x: A.f.x1, y: A.f.y1 }), len: A.f.len, color: A.f.color, dir: A.f.dir },
+      obj: { c: pt(p), w: OBJ_W * k, h: OBJ_H * k, ang: p.ang },
+      belt: { A: pt(beltGeom().A), B: pt(beltGeom().B), ang: beltGeom().ang },
+      canvasW: canvas.width, canvasH: canvas.height, W: W, H: H
+    };
+  },
+  view: function () { return { s: s, dpr: dpr, w: canvas.width, h: canvas.height,
+                               cssW: canvas.clientWidth, cssH: canvas.clientHeight }; },
+  stageEl: function () { return stageEl; },
+  cv: function () { return cvWrap; },
+  side: function () { return document.getElementById('side'); },
+  ctl: function () { return document.querySelector('.ctl'); },
+  readPanel: function () { return document.querySelector('.read'); },
+  fullscreen: function () { return fsIsStage(); },
+  fsLayoutCalls: function () { return fsLayoutCalls; },
+  readoutText: function () {
+    return { badge: elBadge.textContent, tag: elTag.textContent,
+             verdict: elVerdict.textContent, formula: elFormula.textContent,
+             v: kV.textContent, vb: kVB.textContent, rel: kRel.textContent,
+             G: kG.textContent, N: kN.textContent, f: kF.textContent,
+             net: kNet.textContent, a: kA.textContent };
+  }
+};
+resetSim();
+syncReadout();
+layout();
+drawFrame();                       // 首帧【同步】画，不等 rAF（headless 下 rAF 可能一帧都不回调）
+requestAnimationFrame(tick);
+window.addEventListener('resize', function () { layout(); });
+
+})();
+  </script>
+
+  <script>
+  (function() {
+    var header = document.querySelector('.header');
+    var hideTimer = null, HIDE_DELAY = 800;
+    function show() { clearTimeout(hideTimer); header.classList.remove('hidden'); document.body.classList.remove('header-hidden'); }
+    function hide() { hideTimer = setTimeout(function() { header.classList.add('hidden'); document.body.classList.add('header-hidden'); }, HIDE_DELAY); }
+    document.addEventListener('mousemove', function(e) {
+      if (e.clientY <= 60) show();
+      else if (e.clientY > header.offsetHeight + 20 && !header.classList.contains('hidden')) hide();
+    });
+    header.addEventListener('mouseenter', show);
+    header.addEventListener('mouseleave', hide);
+    hideTimer = setTimeout(function() { header.classList.add('hidden'); document.body.classList.add('header-hidden'); }, 2000);
+  })();
+  </script>
+
+  <script>
+  (function() {
+    var btns = document.querySelectorAll('.video-fullscreen-btn');
+    if (!btns.length) return;
+    btns.forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        var container = btn.closest('.video-container');
+        if (!container) return;
+        if (document.fullscreenElement === container) { document.exitFullscreen(); }
+        else { if (container.requestFullscreen) container.requestFullscreen(); else if (container.webkitRequestFullscreen) container.webkitRequestFullscreen(); }
+      });
+    });
+    document.addEventListener('fullscreenchange', function() {
+      var fsEl = document.fullscreenElement;
+      btns.forEach(function(btn) {
+        var container = btn.closest('.video-container');
+        var on = fsEl === container;
+        var ex = btn.querySelector('.fs-expand'), cp = btn.querySelector('.fs-compress');
+        if (ex) ex.style.display = on ? 'none' : '';
+        if (cp) cp.style.display = on ? '' : 'none';
+        btn.title = on ? '退出全屏' : '全屏播放';
+        btn.setAttribute('aria-label', btn.title);
+      });
+    });
+  })();
+  </script>
+</body>
+</html>
