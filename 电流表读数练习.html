@@ -293,7 +293,19 @@ var LEFT_X = 40, RIGHT_X = 620;      // 左右两根立线
 var A_X = 250;                       // 电流表锚点 x
 var A_Y = TOP_Y - 72 * AM_S;         // 锚点 y：让三个接线柱（局部 y=72）正好落在 TOP_Y 上
 var SW_X = 540, SW_Y = TOP_Y;        // 开关在上排（刀口朝上，不压任何东西）
+var SW0_X = SW_X - 70;               // 开关【左】柱：电流表那根导线的起点
 var E_X = 150, R_X = 420;            // 电源 / 定值电阻在下排
+
+// ── 接 0.6 柱时导线要【从 3 A 柱下面兜过去】──────────────────
+// 三个接线柱从左到右是 −(A_X−94.5) / 0.6(A_X) / 3(A_X+94.5)，而开关在【右边】。
+// 于是「开关 → 0.6 柱」这根线直着连过去，会先从 3 A 柱身上穿过去（用户报的就是这个）。
+// 柱子是【柱身朝上、锚点在柱底】（见 circuit-draw 的 drawBindingPost），
+// 所以正确的绕法是：下去 → 从柱子底下横过去 → 再从下面往上夹到 0.6 柱上。
+// 接 3 柱时它就在右边，直连即可，不用绕。
+var TAP_DETOUR_Y = TOP_Y + 26;       // 兜底那一段的高度（柱子底沿 ≈ TOP_Y+2.5，留足余量）
+function tapVia(tapIdx) {
+  return tapIdx === 1 ? [[SW0_X, TAP_DETOUR_Y], [A_X, TAP_DETOUR_Y]] : [];
+}
 
 var canvas = document.getElementById('simCanvas'), ctx = canvas.getContext('2d');
 var stageEl = document.getElementById('stage');
@@ -358,15 +370,20 @@ function buildScene() {
   scene.wires = [
     wire('E', 0, 'R1', 0, []),                                    // 电源 + → 定值电阻
     wire('R1', 1, 'SW', 1, [[RIGHT_X, BOT_Y], [RIGHT_X, TOP_Y]]),  // 电阻 → 右立线上去 → 开关
-    wire('SW', 0, 'A', 1, []),                                     // 开关 → 电流表量程柱（待改）
+    wire('SW', 0, 'A', 1, tapVia(1)),                              // 开关 → 电流表量程柱（待改）
     wire('A', 0, 'E', 1, [[LEFT_X, TOP_Y], [LEFT_X, BOT_Y]])       // 电流表 − → 左立线下来 → 电源 −
   ];
 }
-// 换量程 = 把「开关 → 电流表」那根线的端点挪到另一个量程柱上。
+// 换量程 = 把「开关 → 电流表」那根线的端点挪到另一个量程柱上，
+// 同时把走线换成那一档该有的绕法（接 0.6 柱要绕开 3 A 柱，见 tapVia）。
 function setTap(tapIdx) {
   for (var i = 0; i < scene.wires.length; i++) {
     var w = scene.wires[i];
-    if (w.a.compId === 'SW' && w.b.compId === 'A') { w.b.termIdx = tapIdx; return true; }
+    if (w.a.compId === 'SW' && w.b.compId === 'A') {
+      w.b.termIdx = tapIdx;
+      w.via = tapVia(tapIdx).map(function (p) { return [p[0], p[1]]; });
+      return true;
+    }
   }
   return false;
 }
@@ -731,7 +748,9 @@ window.__am = {
   PAGE_FILE: '电流表读数练习.html',
   W: W, H: H, AM_S: AM_S, METER_DIVS: METER_DIVS,
   consts: { TOP_Y: TOP_Y, BOT_Y: BOT_Y, LEFT_X: LEFT_X, RIGHT_X: RIGHT_X,
-            A_X: A_X, A_Y: A_Y, SW_X: SW_X, E_X: E_X, R_X: R_X },
+            A_X: A_X, A_Y: A_Y, SW_X: SW_X, SW0_X: SW0_X, E_X: E_X, R_X: R_X,
+            TAP_DETOUR_Y: TAP_DETOUR_Y },
+  tapVia: function (tapIdx) { return tapVia(tapIdx); },
   bank: function () { return BANK; },
   divOf: divOf, nearMul: nearMul,
   scene: function () { return scene; },
