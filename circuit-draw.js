@@ -557,10 +557,17 @@
     // 电流记号 —— 两处各写一份 1.9 的话，电流迟早从丝上跑偏（而且只在放大时才
     // 看得出来）。所以它必须住在几何常量里，和 cylX / cylW 一样。
     pitch: 1.9,
-    // 电流记号沿绕线的间距（局部单位）。圈距才 1.9px，每圈画一个的话六十多个
-    // 箭头会糊成一条红带 —— 按弧长取 18px 一个，和导线上的箭头（64px 一个）
-    // 是同一个量级，只是绕线更密一些。
+    // 电流记号沿路径的间距（局部单位）。圈距才 1.9px，每圈画一个的话六十多个
+    // 箭头会糊成一条红带 —— 取 18 一个。注意：绕线上按【水平跨度】折算个数
+    // （见 drawRheostatFlow.runCoil），所以这个数决定的仍然是「看着有多密」，
+    // 和路径本身有多长无关。
     markGap: 18,
+    // 电流路径那条【螺旋虚线】的圈距（局部单位）。它比画丝的圈距（pitch=1.9）
+    // 粗得多 —— 1.9px 一圈的螺旋在屏幕上就是一整片，看不出是「一圈圈绕上去的」。
+    // 取 24：半根绕线（约 60px）上绕 2.5 圈，一眼数得清。
+    flowPitch: 24,
+    // 虚线的实线段 / 空档（弧长，局部单位）。
+    railOn: 6, railOff: 4,
   };
   // 滑片位置 slide（0~1）→ 局部横坐标
   function sliderLocalX(slide) {
@@ -3171,6 +3178,14 @@
     // 「已损坏」牌挂在表壳上沿（表盘之上）——压在表盘中央会把刻度盖掉，
     // 而学生正需要对照「针打到哪儿了」来判断是超量程还是接反。
     if (bent) faultTag(ctx, 0, M.CASE_TOP + 7, '已损坏', 1);
+    // 烧坏（动圈烧断）是比「打表」更重的一档，必须和「已损坏」分开画：
+    // 打表还能看清针顶在哪儿（学生要对照刻度判是超量程还是接反），烧了就是
+    // 一块废表 —— 表盘熏黑 + 「已烧坏」。内核那边 fault 也是两个不同的码
+    // （over / burnt），这里只是把它们画得不一样。
+    if (rec && rec.fault === 'burnt') {
+      soot(ctx, 0, M.DIAL.y + M.DIAL.h * 0.5, M.CASE_HW * 0.74, M.DIAL.h * 0.64, 1);
+      faultTag(ctx, 0, M.CASE_TOP + 7, '已烧坏', 1);
+    }
     ctx.restore();
     // kind 按【端子序号】给：0 号是「−」柱（黑），1/2 号是两个量程柱（红）。
     posts(ctx, comp, ['neg', 'pos', 'pos']);
@@ -3223,7 +3238,13 @@
   // 调用条件改坏（比如两半都画）照样全绿。返回它等于把「画了什么」钉死。
   // ============================================================
   function drawRheostatFlow(ctx, comp, rec, opts) {
-    var stats = { left: 0, right: 0, arm: 0, rod: 0, iL: 0, iR: 0, iArm: 0, phase: null, style: null };
+    var stats = { left: 0, right: 0, arm: 0, rod: 0, iL: 0, iR: 0, iArm: 0,
+                  phase: null, style: null,
+                  // 左 / 右半根绕线的【螺旋路径长度】和这一帧用的位移（px）。
+                  // 路径长度 ≈ 2.8 × 水平跨度 是「路径是螺旋、不是一条水平线」的
+                  // 判据；位移则用来钉「绕线里的记号速度和导线同源」——
+                  // 它必须等于 CircuitDraw.currentShift(flow, phase)。
+                  pathL: 0, pathR: 0, shiftL: 0, shiftR: 0 };
     var phase = opts && opts.phase;
     if (phase == null) return stats;                   // 开关关着 → 一个记号都不画
     stats.phase = phase;
@@ -3272,46 +3293,113 @@
       ctx.restore();
     }
 
-    // 沿一段绕线（x0 → x1）铺电流。**路径就是 coil() 画的那根丝**：每圈一条斜线，
-    // 同样的 yTop / yBot / 斜度，整条斜线沿 x 平移半个圈距（落在丝的中间，不是沟
-    // 里）。记号沿斜线走、**圈与圈错开**，连起来看就是电流在螺旋里一圈圈绕 ——
-    // 这正是参考图里「贴着线圈走的电流」的意思。
-    // 上一版是沿瓷管【中线】拉一条水平线撒圆点，根本看不出「在绕圈」这件事。
+    // ── 绕线：电流路径 = 绕瓷管的一条【螺旋虚线】 ─────────────────
+    // 电阻丝是绕在瓷管上的，电流走的就是这条螺旋。侧视投影下它是一条正弦线：
+    // 前半圈落在管面上（看得见，斜向与画丝的那条斜线同向），后半圈绕到管子背面
+    // （压淡一档，读作「绕过去了」）。整条路径画成【虚线】，箭头沿虚线走 ——
+    // 学生一眼看出「电流是绕着电阻丝一圈圈绕的」，而不是「管子上撒了几个箭头」。
+    //
+    // 🔴 记号位置按【弧长】排，速度和导线用的是同一套（electronShift 返回的就是
+    //    px 位移）。上一版把记号钉死在各自那一圈的斜线上往复：斜线只有 25px 长，
+    //    320px/s 下 0.08 秒跑完一个来回 ⇒ 看着像高频抖动，比导线上的记号「快得多」。
+    //    路径拉长之后，同样的速度就正常了 —— 快慢是由【每秒多少像素】定的，
+    //    与路径长短无关，这条不能变。
+    var HELIX_A = (yBot - yTop) / 2, HELIX_MID = (yTop + yBot) / 2;
+    // 螺旋路径：从 x0 到 x1 绕 n 圈，按弧长采样成一串折线点。
+    // d > 0 = 前半圈（朝向观察者），< 0 = 绕到背面。
+    function helixOf(x0, x1) {
+      var span = x1 - x0;
+      var n = Math.max(1, Math.round(span / RHEO.flowPitch));
+      var SEG = 18;                                    // 每圈采样段数（够密，直线代弧）
+      var steps = n * SEG;
+      var pts = new Array(steps + 1), total = 0;
+      for (var i = 0; i <= steps; i++) {
+        var u = i / steps, th = 2 * Math.PI * n * u;
+        var x = x0 + span * u, y = HELIX_MID + HELIX_A * Math.sin(th);
+        if (i > 0) {
+          var dx = x - pts[i - 1].x, dy = y - pts[i - 1].y;
+          total += Math.sqrt(dx * dx + dy * dy);
+        }
+        pts[i] = { x: x, y: y, s: total, d: Math.cos(th) };
+      }
+      return { pts: pts, total: total };
+    }
+    // 弧长 d 处的点 + 单位切向 + 前后判定
+    function helixAt(h, d) {
+      var pts = h.pts, lo = 0, hi = pts.length - 1;
+      while (lo < hi - 1) {
+        var m = (lo + hi) >> 1;
+        if (pts[m].s <= d) lo = m; else hi = m;
+      }
+      var a = pts[lo], b = pts[hi];
+      var seg = Math.max(1e-6, b.s - a.s);
+      var t = Math.max(0, Math.min(1, (d - a.s) / seg));
+      return {
+        x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t,
+        ux: (b.x - a.x) / seg, uy: (b.y - a.y) / seg,
+        d: a.d + (b.d - a.d) * t,
+      };
+    }
+    // 后半圈的透明度。整条一样亮的话「绕过去」这件事就看不出来了。
+    var BACK_ALPHA = 0.5;
+    // 沿螺旋铺虚线。虚线是【路径本身】，不跟着电流动 —— 动的是上面的记号；
+    // 线也跟着动的话就分不清哪个是轨道、哪个是车了。
+    // 🔴 线要【够粗够亮】才压得住底下那片金属绕线（1:1 时线圈才 120px 宽，
+    //    1.5px / 0.62 的线在铜色底子上几乎看不见）。加一道暗描边把红线和
+    //    金属分开，不然红缝和线圈自己的暗缝混在一起。
+    function helixRail(h, col) {
+      var per = RHEO.railOn + RHEO.railOff;
+      ctx.save();
+      ctx.strokeStyle = col;
+      ctx.lineWidth = 2.2; ctx.lineCap = 'round';
+      ctx.shadowColor = 'rgba(15,23,42,0.45)'; ctx.shadowBlur = 2.5;
+      for (var d = 0; d < h.total; d += per) {
+        var d2 = Math.min(h.total, d + RHEO.railOn);
+        var q0 = helixAt(h, d), q1 = helixAt(h, d2);
+        var qm = helixAt(h, (d + d2) / 2);
+        ctx.globalAlpha = qm.d >= 0 ? 0.9 : 0.9 * BACK_ALPHA;
+        ctx.beginPath();
+        ctx.moveTo(q0.x, q0.y); ctx.lineTo(q1.x, q1.y);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
     // 返回这一帧真的画出去的记号数（0 = 这一段没通电）。
-    function runCoil(x0, x1, flow) {
+    // key = 'L' / 'R'：把路径长度和位移记进 stats，供断言读（见 stats 的注释）。
+    function runCoil(x0, x1, flow, key) {
       if (Math.abs(flow) <= 1e-12) return 0;
       var span = x1 - x0;
       if (span < 3) return 0;
-      var n = Math.max(2, Math.round(span / RHEO.pitch));
-      var step = span / n;
-      var skew = coilSkew(step, yTop, yBot);
-      var dy = yBot - yTop;
-      var segLen = Math.sqrt(skew * skew + dy * dy);
-      var ang = Math.atan2(dy, skew) + (flow < 0 ? Math.PI : 0);
-      // 记号不是「每圈一个」：圈距才 1.9px，六十多个箭头会糊成一条红带。
-      var stride = Math.max(1, Math.round(RHEO.markGap / step));
+      var h = helixOf(x0, x1);
+      if (h.total < 6) return 0;
+      // 轨道用「这一帧在画的那种记号」的颜色：只开箭头就是红的，只开小球就是琥珀的。
+      if (wantCur) helixRail(h, PALETTE.current);
+      else if (wantEle) helixRail(h, PALETTE.flow);
+      // 记号个数沿用老口径「每 markGap 一个」（用户认过的疏密），只是位置改成沿
+      // 【弧长】均匀排布 —— 个数没变，路径变长了，每个记号的行程也就长了。
+      var n = Math.max(1, Math.round(span / RHEO.markGap));
+      var step = h.total / n;
       // 小球和箭头各走各的相位（电子与电流本来就反向跑，两个都开时自然错开）。
-      var baseE = electronShift(flow, phase) / segLen;
-      var baseC = currentShift(flow, phase) / segLen;
-      var k = 0;
-      for (var i = 0; i < n; i += stride) {
-        var xc = x0 + (i + 0.5) * step;
-        // 圈与圈错开 i/n 圈：整段正好错开一整圈 ⇒ 连起来是一条螺旋，而不是一排竖线。
-        var off = i / n;
+      var sE = electronShift(flow, phase), sC = currentShift(flow, phase);
+      stats['path' + key] = h.total;
+      stats['shift' + key] = sC;
+      for (var i = 0; i < n; i++) {
         if (wantEle) {
-          var tE = ((baseE + off) % 1 + 1) % 1;
-          dot(xc - skew / 2 + skew * tE, yTop + dy * tE, rBall);
+          var qE = helixAt(h, ((i * step + sE) % h.total + h.total) % h.total);
+          ctx.globalAlpha = qE.d >= 0 ? 1 : BACK_ALPHA;
+          dot(qE.x, qE.y, rBall);
         }
         if (wantCur) {
-          var tC = ((baseC + off) % 1 + 1) % 1;
-          arrow(xc - skew / 2 + skew * tC, yTop + dy * tC, ang);
+          var qC = helixAt(h, ((i * step + sC) % h.total + h.total) % h.total);
+          ctx.globalAlpha = qC.d >= 0 ? 1 : BACK_ALPHA;
+          arrow(qC.x, qC.y, Math.atan2(qC.uy, qC.ux) + (flow < 0 ? Math.PI : 0));
         }
-        k++;
       }
-      return k;
+      ctx.globalAlpha = 1;
+      return n;
     }
-    stats.left  = runCoil(cylX, sxNow, iL);          // 左半段：A → 滑片
-    stats.right = runCoil(sxNow, cylX + cylW, iR);   // 右半段：滑片 → B
+    stats.left  = runCoil(cylX, sxNow, iL, 'L');          // 左半段：A → 滑片
+    stats.right = runCoil(sxNow, cylX + cylW, iR, 'R');   // 右半段：滑片 → B
 
     // 触臂那一段（绕线 → 滑片）。不做它的话，A-C 接法下电流跑到滑片就
     // 「凭空消失」了 —— 学生看着电流进了滑片再没出来，比不画还糊涂。
