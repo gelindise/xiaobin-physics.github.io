@@ -510,10 +510,15 @@
         // 求解矩阵在「电源被灯座短接」这种接法下直接奇异，学生看到的会是
         // 「接线矛盾，无法求解」，而不是「灯不亮、别的都正常」。
         if (comp.fault === 'shorted') {
+          var nBr = out.length;
           addR(N(0), N(1), SHORT_R);
           // 标一下「这条支路是短接线、不是灯丝」——填读数时要靠它绕开
-          // fillLamp（否则按 p/P额 算出来的亮度会顶到最大，灯亮得像要炸）。
-          if (out.length && out[out.length - 1].kind === 'R') {
+          // fillLamp（否则按 p/P额 算出来的亮度会顶到最大，灯亮得像要炸）；
+          // shortCircuitInfo 也靠这个标记把「灯座短路」认成【零阻支路】。
+          // ⚠️ 必须用【加之前 / 之后】的长度差：灯两端若已被导线短接（p === q），
+          //    addR 会直接 return、一条都不 push —— 此时若按 out.length 取末条，
+          //    标到的是【上一个元件】的支路。
+          if (out.length > nBr && out[out.length - 1].kind === 'R') {
             out[out.length - 1].shorted = true;
           }
           break;
@@ -981,10 +986,21 @@
   //    任何一根闭合开关（也是零阻支路）都会被算进去。
   // ============================================================
   function shortCircuitInfo(components, branches, termNode) {
+    // 「这条支路在拓扑上是不是一根【零阻导线】」。
+    // 🔴 「灯座短路」那条支路在 describeComponent 里被等效成【很小的电阻】
+    //    （SHORT_R = 0.01Ω，不是 0Ω）—— 当初是为了不让求解矩阵奇异（否则学生
+    //    看到的是「接线矛盾，无法求解」而不是「灯不亮、别的都正常」）。
+    //    但它在拓扑上就是【一根跨在灯座两端的铜丝】，短路判定必须把它当零阻看：
+    //    漏掉它的后果，正是用户报的那条 —— L1、L2 并联时把 L2 灯座短路，
+    //    电源明明被短路了，却既不烧电源、L1 还照样亮（sc.compIds 是空的）。
+    function isZeroBr(b) {
+      if (b.shorted === true) return true;              // 灯座短路的等效支路
+      return b.kind === 'V' && Math.abs(b.Rs) <= 1e-9;  // 真正的理想零阻导线
+    }
     var dsu = createDSU();
     var seen = {};
     branches.forEach(function (b) {
-      if (b.kind !== 'V' || Math.abs(b.Rs) > 1e-9) return;
+      if (!isZeroBr(b)) return;
       if (b.comp && isSourceType(b.comp.type)) return;
       if (b.p === b.q) return;
       dsu.add(b.p); dsu.add(b.q); dsu.union(b.p, b.q);
@@ -1003,7 +1019,7 @@
     var loop = [];
     if (ids.length) {
       branches.forEach(function (b) {
-        if (!b.comp || b.kind !== 'V' || Math.abs(b.Rs) > 1e-9) return;
+        if (!b.comp || !isZeroBr(b)) return;
         if (isSourceType(b.comp.type) || isOpenFault(b.comp)) return;
         if (!seen[b.p] || !seen[b.q]) return;
         if (!roots[dsu.find(b.p)]) return;
