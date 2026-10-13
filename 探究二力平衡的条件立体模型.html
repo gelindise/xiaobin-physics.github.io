@@ -311,7 +311,7 @@
             <li>两侧托盘各 2 个 → 卡片静止吗？</li>
             <li>把右侧托盘改成 3 个 → 卡片往哪边动？</li>
             <li>两边相等，把 θ 拖到 30° 再松手</li>
-            <li>点「剪开卡片」→ 两半各自怎么动？</li>
+            <li>点「剪开卡片」→ 两半各自怎么动？两侧托盘和两个滑轮呢？</li>
             <li>θ 拖到 60°，松手后转回要多久？</li>
             <li>交换两侧的砝码，合力方向变吗？</li>
             <li>松手后盯住两侧托盘：一边升、一边降，各升降多少？</li>
@@ -405,7 +405,8 @@
               <span class="fml">τ = r₁ × F₁ + r₂ × F₂</span>），读数、检查表、结论、自检共用，不各写一遍。</li>
           <li>装置本身还守着一条守恒：<b>细线不可伸长</b> ⇒ <span class="fml">水平段 + 90°弧 + 竖直段 = 定值</span>。
               卡片一移动，一侧托盘就<b>升</b>、另一侧就<b>降</b>，升降量正好等于卡片位移；绳在轮槽里同步
-              走过这么长，两个定滑轮跟着转（<span class="fml">Δφ = Δ水平段 ÷ 槽底半径</span>）。</li>
+              走过这么长，两个定滑轮跟着转（<span class="fml">Δφ = Δ水平段 ÷ 槽底半径</span>）。
+              把卡片剪开，两半各自向自己那侧的滑轮滑过去，<b>两条绳同时变短 ⇒ 两个托盘一起降</b>。</li>
         </ul>
       </div>
       <div class="info-card">
@@ -415,7 +416,10 @@
               两边一样多时卡片静止；改成一边多，卡片沿合力方向加速。</li>
           <li>模式②「<b>扭转角度</b>」：两侧砝码相等，把 θ 拖到 20°~60°，点「松手」——
               卡片会<b>自己转回 0°</b>，因为此时两个力不共线。</li>
-          <li>模式③「<b>剪开卡片</b>」：点「剪开卡片」，两半各自被一侧的力拉走。</li>
+          <li>模式③「<b>剪开卡片</b>」：点「剪开卡片」，两半各自被<b>同侧</b>的力拉走。
+              绳被拉着变短 ⇒ <b>两侧托盘一起下降</b>（降多少 = 那一半滑出去多少），两个滑轮<b>反向</b>转。</li>
+          <li>两个拉力箭头画在<b>作用点</b>上：起点 = <b>绳与卡片外端的接触点</b>，方向沿绳。
+              卡片一移动、或者被剪开，箭头都跟着那个接触点走。</li>
           <li><b>细线是绷直、不可伸长的</b>：卡片一移动，一侧水平段变短、另一侧变长，
               竖直段就等量反向变化 —— <b>一侧托盘下降、另一侧上升，升降量恰好等于卡片的位移</b>；
               绳在轮槽里同步走过这么长，<b>两个定滑轮跟着转</b>（卡片平移时两轮同向、扭转时反向）。
@@ -564,10 +568,11 @@
     const MIN_HANG = N_MAX * WM_H + 0.14;
 
     const ARROW_K = 0.22;               // 世界单位 / N —— 最大 2 N → 0.44 m
-    // 🔴 力箭头【抬到细线之上】：卡片平贴在木板上，细线与卡片等高 ⇒ 箭头若也画在
-    //    这一高度，就会把「水平段细线」整段盖掉，学生看不到绳子（教材图里 F₁/F₂
-    //    也是浮在木板上方画的）。抬 0.055 m，方向与长度都不变。
-    const ARROW_LIFT = 0.055;
+    // 🔴🔴 力箭头【必须从系点出发、沿绳方向】：作用点就是「绳与卡片外端的接触点」，
+    //    方向就是绳的方向 —— 两者都由 cardGeom() 的系点 A/B 与 dirA/dirB 给出，
+    //    不许再额外抬起来（抬起来就不是作用点了）。
+    //    合力不是接触力，按惯例画在卡片中心【正上方】，另给一个高度免得和 F₁/F₂ 挤在一起。
+    const NET_LIFT = 0.13;
     const CAMD = 10.0;
     const TARGET = [0, -0.02, 0];
 
@@ -625,13 +630,17 @@
      * 🔴 抽成 geomAt(sx, tw)：托盘升降、滑轮转角、取景包络都要在【别的 (sx,θ) 上】算几何，
      *    不能再只读 state —— 那些量必须与真正画出去的那一份同源。
      */
-    function geomAt(sx, tw) {
+    function geomAt(sx, tw, hL, hR) {
+      hL = hL || 0; hR = hR || 0;   // 不剪开时两半位移为 0（取景包络等只传前两个参数）
       const O = [sx, CARD_Y, 0];
       const local = [CARD_L / 2, 0, 0];
       const rA = rotY([-local[0], 0, 0], tw);       // 左端系点（相对中心）
       const rB = rotY(local, tw);                   // 右端系点
-      const A = add(O, rA);
-      const B = add(O, rB);
+      // 🔴🔴 剪开后两半各沿 ±x 滑出去，【绳系在半的外端】⇒ 系点跟着半走。
+      //    这一句同时决定了「绳的起止、托盘高度、滑轮转角、力箭头作用点」四件事 ——
+      //    全都要在同一个 geomAt 里体现，否则又是「画一份、算一份」。
+      const A = add(add(O, rA), [-hL, 0, 0]);
+      const B = add(add(O, rB), [ hR, 0, 0]);
       const LC = [-PUL_X, PUL_CY, 0];               // 左侧定滑轮【轮心】
       const RC = [ PUL_X, PUL_CY, 0];               // 右侧定滑轮【轮心】
       // 🔴 切点高度直接写 CARD_Y（不写 PUL_CY + PUL_RG）：两者数学上相等，但浮点下
@@ -643,7 +652,7 @@
       const dirB = vnorm(sub(R, B));                // 右侧细线把卡片往 +x 拉（F₂）
       return { O, A, B, L, R, LC, RC, rA, rB, dirA, dirB };
     }
-    const cardGeom = () => geomAt(state.sx, state.twist);
+    const cardGeom = () => geomAt(state.sx, state.twist, state.halfL, state.halfR);
 
     /* ── 细线长度守恒的三个派生量（画法与自检共用同一份） ──────────────────
      * sgn = 滑轮在 x 轴上的符号（+1 右轮、−1 左轮）；右轮系卡片右端 B、左轮系左端 A。
@@ -746,7 +755,7 @@
       sx: 0,                // 卡片中心已移动的距离（m）
       vx: 0,                // 卡片中心速度（m/s）
       omega: 0,             // 卡片绕竖直轴的角速度（rad/s）
-      halfA: 0, halfB: 0,   // 剪开后两半各自已移动的距离（m）
+      halfL: 0, halfR: 0,   // 剪开后两半各自【向外】滑出的距离（m）：左半往 −x、右半往 +x
       drag: null, hover: false,
       w: 0, h: 0, dpr: 1, dirty: true, t: 0, drawn: {}
     };
@@ -806,6 +815,9 @@
             lo = Math.min(lo, y); hi = Math.max(hi, y);
           }
         }
+        // 剪开后：两半各自向外滑 ⇒ 同侧绳变短 ⇒ 同侧托盘【降】⇒ 也要进包络
+        const yCut = hangY(sgn, geomAt(0, 0, sgn < 0 ? MAX_HALF : 0, sgn > 0 ? MAX_HALF : 0));
+        lo = Math.min(lo, yCut); hi = Math.max(hi, yCut);
         for (const [rx, ry] of [[hx, lo - TRAY_T - 0.03], [hx, hi + N_MAX * WM_H + 0.03],
                                 [hx + sgn * TRAY_R, lo], [hx - sgn * TRAY_R, lo],
                                 [hx + sgn * TRAY_R, hi], [hx - sgn * TRAY_R, hi]]) {
@@ -813,17 +825,17 @@
         }
       }
       // 力箭头的两个极端（最大拉力 2 N 沿 ±x，起点抬到细线之上）
-      const arrY = CARD_Y + ARROW_LIFT;
+      const arrY = CARD_Y;
       for (const sgn of [1, -1]) {
         pts.push([sgn * (CARD_L / 2 + N_MAX * W0 * ARROW_K + 0.08), arrY + 0.06, 0]);
         pts.push([sgn * (CARD_L / 2 + 0.02), arrY + 0.06, 0]);
       }
       // 合力箭头（从卡片中心出发，最长 = 最大合力 2 N × ARROW_K）
-      for (const k of [MAX_SX + N_MAX * W0 * ARROW_K + 0.06, -(MAX_SX + N_MAX * W0 * ARROW_K + 0.06)]) {
-        pts.push([k, CARD_Y + 0.16, 0]);
+      for (const k of [SL + N_MAX * W0 * ARROW_K + 0.06, -(SL + N_MAX * W0 * ARROW_K + 0.06)]) {
+        pts.push([k, CARD_Y + NET_LIFT + 0.03, 0]);
       }
-      // 剪开后两半飞出的极端位置
-      for (const k of [MAX_SX + CARD_L, -(MAX_SX + CARD_L)]) pts.push([k, CARD_Y, 0]);
+      // 剪开后两半向外滑出的极端位置（半的外端 = 半长 + 向外滑出的距离）
+      for (const k of [CARD_L / 2 + MAX_HALF + 0.05, -(CARD_L / 2 + MAX_HALF + 0.05)]) pts.push([k, CARD_Y, 0]);
       return pts;
     }
 
@@ -1316,26 +1328,26 @@
       if (!state.cut) {
         plate = drawPlate(q, state.sx, 0, state.twist, C_CARD, 'card');
       } else {
-        // 两半各只有 CARD_L/2 长；中心沿【扭转后的长轴】各偏 CARD_L/4，再各自沿受力方向平移
+        // 两半各只有 CARD_L/2 长；中心沿【扭转后的长轴】各偏 CARD_L/4，再各自向外滑出
         const dx = (CARD_L / 4) * cosOf(state.twist), dz = -(CARD_L / 4) * sinOf(state.twist);
-        plate = drawPlate(q, state.sx + state.halfA + dx, dz, state.twist, C_CARD, 'card', CARD_L / 2);
-        drawPlate(q, state.sx - state.halfB - dx, -dz, state.twist, C_CARD2, 'card2', CARD_L / 2);
+        plate = drawPlate(q, state.sx + state.halfR + dx, dz, state.twist, C_CARD, 'card', CARD_L / 2);
+        drawPlate(q, state.sx - state.halfL - dx, -dz, state.twist, C_CARD2, 'card2', CARD_L / 2);
       }
 
       // 托盘 + 砝码（nA = n₁ = 左侧，nB = n₂ = 右侧；托盘高度由细线长度守恒算出）
       const wL = drawHanger(q, -1, state.nA, g);
       const wR = drawHanger(q, 1, state.nB, g);
 
-      // 两个拉力箭头（从卡片系点沿细线方向；整体抬到细线之上，别把绳子盖掉）
-      const lift = [0, ARROW_LIFT, 0];
-      const arrA = drawForceArrow(q, add(g.A, lift), g.dirA, S.TA, C_F1, 'arrowA');
-      const arrB = drawForceArrow(q, add(g.B, lift), g.dirB, S.TB, C_F2, 'arrowB');
+      // 两个拉力箭头：🔴 起点 = 绳与卡片外端的【接触点】（系点 A/B；剪开后跟着半走），
+      //    方向 = 绳的方向（dirA/dirB）—— 不抬、不偏，就是作用点本身。
+      const arrA = drawForceArrow(q, g.A, g.dirA, S.TA, C_F1, 'arrowA');
+      const arrB = drawForceArrow(q, g.B, g.dirB, S.TB, C_F2, 'arrowB');
 
       // 合力箭头（从卡片中心，长度 ∝ |Fnet|，方向 = Fnet）
       let arrNet = null;
       if (S.net.FnetMag > 1e-6) {
         const c = cardCenter();
-        arrNet = drawForceArrow(q, [c[0], CARD_Y + ARROW_LIFT + 0.10, c[2]], vnorm(S.net.Fnet), S.net.FnetMag, C_NET, 'arrowNet');
+        arrNet = drawForceArrow(q, [c[0], CARD_Y + NET_LIFT, c[2]], vnorm(S.net.Fnet), S.net.FnetMag, C_NET, 'arrowNet');
       }
 
       // ── 标注 ──
@@ -1366,7 +1378,7 @@
         // 世界坐标的顶面四角 —— 屏幕跨度受透视影响（非线性），判「半张」必须读世界量
         plate3: plate ? (plate.top || []) : [],
         twist: state.twist, sx: state.sx, cut: state.cut,
-        halfA: state.halfA, halfB: state.halfB
+        halfL: state.halfL, halfR: state.halfR
       };
       state.drawn.pulley = {
         L: project(g.L, q), R: project(g.R, q),
@@ -1385,8 +1397,8 @@
       // 【from3 / dir 也要导出】—— 否则「箭头长度 == 力 × ARROW_K」这条判据
       // 只能读屏幕像素，抓不住 ARROW_K 被改小这类变异。
       state.drawn.forces = {
-        FA: arrA ? { a: arrA.a, b: arrA.b, to: arrA.to, from3: g.A, dir: g.dirA, mag: S.TA } : null,
-        FB: arrB ? { a: arrB.a, b: arrB.b, to: arrB.to, from3: g.B, dir: g.dirB, mag: S.TB } : null,
+        FA: arrA ? { a: arrA.a, b: arrA.b, to: arrA.to, from3: arrA.from3, dir: arrA.dir, mag: S.TA } : null,
+        FB: arrB ? { a: arrB.a, b: arrB.b, to: arrB.to, from3: arrB.from3, dir: arrB.dir, mag: S.TB } : null,
         Fnet: arrNet ? { a: arrNet.a, b: arrNet.b, to: arrNet.to, from3: arrNet.from3, dir: arrNet.dir, mag: S.net.FnetMag } : null,
         TA: S.TA, TB: S.TB, netMag: S.net.FnetMag, tau: S.net.tau
       };
@@ -1590,7 +1602,7 @@
       refreshAll();
     }
     function resetMotion() {
-      state.sx = 0; state.vx = 0; state.omega = 0; state.halfA = 0; state.halfB = 0;
+      state.sx = 0; state.vx = 0; state.omega = 0; state.halfL = 0; state.halfR = 0;
       if (!state.cut) state.phase = 'ready';
     }
     function setNA(v) { state.nA = clamp(Math.round(v), N_MIN, N_MAX); state.dirty = true; refreshAll(); }
@@ -1615,12 +1627,12 @@
       if (state.cut) return;
       state.cut = true;
       state.phase = 'cut';
-      state.halfA = 0; state.halfB = 0;
+      state.halfL = 0; state.halfR = 0;
       state.dirty = true; refreshAll();
       flashFlag('剪开：两个力不再作用在同一物体上 —— 两半各被一侧拉走', 'red');
     }
     function resetAll() {
-      state.sx = 0; state.vx = 0; state.omega = 0; state.halfA = 0; state.halfB = 0;
+      state.sx = 0; state.vx = 0; state.omega = 0; state.halfL = 0; state.halfR = 0;
       state.cut = false; state.phase = 'ready';
       if (state.mode === 'twist') state.twist = Math.max(TW_MIN, 25);
       else state.twist = 0;
@@ -1655,7 +1667,9 @@
      * 物理：a = F合/m（卡片整体平移）；α = τ/I（卡片绕竖直轴转动）。
      * 阻尼让「松手后转回原位」能收敛，而不是永远摆下去。
      * ============================================================ */
-    const LIN_DAMP = 0.90, ANG_DAMP = 0.72, MAX_SX = 0.85, MAX_HALF = 0.85;
+    // 🔴 MAX_HALF 不再随便给 0.85：两半滑出去多少，同侧托盘就【降】多少（细线守恒）
+    //    ⇒ 给太大会把取景撑得很高、半块还会一路顶到滑轮上。
+    const LIN_DAMP = 0.90, ANG_DAMP = 0.72, MAX_SX = 0.85, MAX_HALF = 0.40;
     function stepAnim(dt) {
       if (state.phase !== 'running' && state.phase !== 'cut') return false;
       const S = solve();
@@ -1680,9 +1694,10 @@
         }
       } else if (state.phase === 'cut') {
         // 两半各自沿所受力的方向加速：a = T / (m/2)
-        const aA = S.TA / HALF_M, aB = S.TB / HALF_M;
-        state.halfA = clamp(state.halfA + aA * dt * dt * 0.5 + 0.35 * dt, 0, MAX_HALF);
-        state.halfB = clamp(state.halfB + aB * dt * dt * 0.5 + 0.35 * dt, 0, MAX_HALF);
+        // 🔴 左半受【左侧】的力 F₁=TA、右半受【右侧】的力 F₂=TB —— 原来两个力接反了
+        //    （左半被右边的力推、右半被左边的力推），等大工况下看不出来，不等大才现形。
+        state.halfL = clamp(state.halfL + (S.TA / HALF_M) * dt * dt * 0.5 + 0.35 * dt, 0, MAX_HALF);
+        state.halfR = clamp(state.halfR + (S.TB / HALF_M) * dt * dt * 0.5 + 0.35 * dt, 0, MAX_HALF);
       }
       state.dirty = true;
       return true;
@@ -1864,7 +1879,7 @@
         get STRING_LEN() { return STRING_LEN; }, get ARC_LEN() { return ARC_LEN; },
         get MIN_HANG() { return MIN_HANG; }, get ROPE_REF() { return ROPE_REF; },
         get WM_R() { return WM_R; }, get WM_H() { return WM_H; },
-        get ARROW_K() { return ARROW_K; }, get ARROW_LIFT() { return ARROW_LIFT; },
+        get ARROW_K() { return ARROW_K; }, get NET_LIFT() { return NET_LIFT; },
         get ROPE_SEG() { return ROPE_SEG; }, get CAMD() { return CAMD; },
         get BAL_EPS() { return BAL_EPS; }, get OPP_MAX() { return OPP_MAX; }, get LINE_EPS() { return LINE_EPS; },
         get MAX_SX() { return MAX_SX; }, get MAX_HALF() { return MAX_HALF; },
