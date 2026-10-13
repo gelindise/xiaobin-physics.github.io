@@ -55,6 +55,7 @@
     #stage:fullscreen .krow, #stage:-webkit-full-screen .krow { margin-bottom: 5px; }
     #stage:fullscreen .mbtn, #stage:-webkit-full-screen .mbtn { padding: 5px 6px; font-size: 11.5px; }
     #stage:fullscreen .mhint, #stage:-webkit-full-screen .mhint { display: none; }
+    #stage:fullscreen .relBtn, #stage:-webkit-full-screen .relBtn { margin-top: 6px; padding: 5px 4px; font-size: 11px; }
     #stage:fullscreen .khint, #stage:-webkit-full-screen .khint { display: none; }
     #stage:fullscreen .rtbl td, #stage:-webkit-full-screen .rtbl td { padding: 3px 4px; font-size: 11.5px; }
 
@@ -73,6 +74,12 @@
     .mbtn small { display: block; font-weight: 500; font-size: 10px; opacity: .75; margin-top: 2px; }
     .mhint { margin-top: 9px; font-size: 12px; color: #64748b; line-height: 1.6; }
     .mhint b { color: #2563eb; }
+    .relBtn { display: block; width: 100%; margin-top: 9px; padding: 8px 6px; border-radius: 9px;
+              border: 1px dashed #93c5fd; background: #eff6ff; color: #1d4ed8;
+              font-family: inherit; font-size: 12px; font-weight: 700; cursor: pointer;
+              transition: .15s; line-height: 1.4; }
+    .relBtn:hover { background: #dbeafe; border-style: solid; }
+    .relBtn:active { transform: scale(.985); }
 
     .krow { display: flex; align-items: center; gap: 7px; margin-bottom: 8px; }
     .krow:last-of-type { margin-bottom: 0; }
@@ -189,6 +196,7 @@
             <button class="mbtn" type="button" data-mode="single">单个力<small>只用一个 F</small></button>
           </div>
           <p class="mhint" id="mHint">两个力方向相同，都向右拉 E′。</p>
+          <button class="relBtn" id="btnRelease" type="button">⟲ 释放一次（橡皮筋先回到原长 AE，再拉长到 AE′）</button>
         </div>
 
         <div class="panel pKnob">
@@ -321,24 +329,30 @@
 // ============================================================
 
 // ---------- 世界（逻辑单位 = mm） ----------
-var W = 860, H = 570;
-var AXIS_Y   = 330;                       // 橡皮筋/细绳所在的水平轴
-var WALL     = { x0: 62, x1: 106, y0: 196, y1: 508 };
+var W = 880, H = 640;
+var AXIS_Y   = 268;                       // 橡皮筋 / 细绳【水平段】所在的轴线
+var WALL     = { x0: 60, x1: 104, y0: 196, y1: 556 };
 var A_X      = WALL.x1;                   // 橡皮筋固定点 A
-var AE0      = 150;                       // 橡皮筋原长 AE
+var AE0      = 140;                       // 橡皮筋原长 AE
 var E0_X     = A_X + AE0;                 // E 的位置
-var PL       = { x: 176, y: AXIS_Y };     // 左定滑轮（反向时 F₂ 用）
-var PR1      = { x: 592, y: AXIS_Y };     // 右定滑轮 1（F₁ 用）
-var PR2      = { x: 712, y: AXIS_Y };     // 右定滑轮 2（同向时 F₂ 用）
-var PUL_R    = 17;
-var WT_TOP   = 378, WT_H = 26, WT_GAP = 5, WT_HW = 25;
+var PUL_R    = 16;
+// 🔴 定滑轮圆心在轴线【下方 R】处 —— 这样绳的水平段正好【切于轮顶】，
+//    绕 1/4 圈后从轮侧切点竖直向下，才是真的「绳绕过滑轮」。
+var PUL_CY   = AXIS_Y + PUL_R;
+var PL       = { x: 168 };                // 左定滑轮（反向时 F₂ 用）
+var PR1      = { x: 598 };                // 右定滑轮 1（F₁ 用）
+var PR2      = { x: 726 };                // 右定滑轮 2（同向时 F₂ 用）
+var WT_HW = 22, WT_H = 22, WT_GAP = 4;
+var V0_R = 30;                            // 右侧绳：ΔL = 0 时的竖直段长度
+var V0_L = 94;                            // 左侧绳：反向最大伸长时竖直段 = 30
 var G0       = 0.5;                       // 每个钩码的重力 N
-var MM_PER_N = 40;                        // 1 N 对应的伸长量（世界单位 = mm）
+var MM_PER_N = 32;                        // 1 N 对应的伸长量（世界单位 = mm）⇒ 1 个钩码 = 16
 var NMIN = 1, NMAX = 5;
-var FP = { x: 26, y: 18, w: 808, h: 168 };  // 顶部「力的图示」面板
+var FP = { x: 26, y: 18, w: 828, h: 168 };  // 顶部「力的图示」面板
 var FP_ROW = [74, 110, 146];                // 三行箭头的 y
-var ORIGIN_X = 480, FSCALE = 46;            // 力的图示：原点与比例（46 px / N）
-var FP_BASE_X0 = 368, FP_BASE_X1 = 712;
+var ORIGIN_X = 490, FSCALE = 46;            // 力的图示：原点与比例（46 px / N）
+var FP_BASE_X0 = 330, FP_BASE_X1 = 722;     // 基线左端留够：向左的 F₂ 标签不许压到行标签
+var FP_LAB_X = 318;                         // 行标签右对齐位置
 
 var COL = {
   f1: '#e11d48', f2: '#2563eb', fr: '#7c3aed',
@@ -349,33 +363,45 @@ var FONT = "-apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB'
 var MONO = "'SF Mono','Cascadia Code','Consolas',monospace";
 
 // ---------- 状态 ----------
-var st = { mode: 'same', n1: 2, n2: 1, nS: 3 };
+// 三种拉法【各自记住】自己的钩码数（切模式不互相干扰），且三个默认值都落在
+// 【同一个 AE′】上：同向 2+1 = 反向 4−1 = 单个力 3 个钩码 = 基准。
+var st = {
+  mode: 'same', nS: 3,
+  same: { n1: 2, n2: 1 },
+  opp:  { n1: 4, n2: 1 }
+};
 var rec = { same: null, opp: null };       // 命中基准时快照下来的读数
-var animDL = 0;                            // 平滑显示的伸长量
+var animDL = 0;                            // 当前显示的伸长量（弹簧动画）
+var animV  = 0;                            // 它的速度
+var SPRING_K = 55, SPRING_C = 11;          // 欠阻尼弹簧：约 0.7 s 到位 + 轻微过冲
+var rafRan = false;                        // rAF 有没有真的跑过（无头环境兜底用）
 var lastDraw = null;                       // 上一帧【真正画出去】的那份几何（自检直接读它）
 
 // ---------- 派生量（唯一真值源） ----------
+function slot()  { return st.mode === 'opp' ? st.opp : st.same; }
+function curN1() { return slot().n1; }
+function curN2() { return slot().n2; }
 function forces() {
   if (st.mode === 'single') {
     return { rows: [ { k: 'F', v: st.nS * G0, dir: 1, col: COL.f1 } ],
              f1: st.nS * G0, f2: 0, net: st.nS * G0 };
   }
+  var a = curN1(), b = curN2();
   if (st.mode === 'same') {
-    return { rows: [ { k: 'F₁', v: st.n1 * G0, dir: 1, col: COL.f1 },
-                     { k: 'F₂', v: st.n2 * G0, dir: 1, col: COL.f2 } ],
-             f1: st.n1 * G0, f2: st.n2 * G0, net: (st.n1 + st.n2) * G0 };
+    return { rows: [ { k: 'F₁', v: a * G0, dir: 1, col: COL.f1 },
+                     { k: 'F₂', v: b * G0, dir: 1, col: COL.f2 } ],
+             f1: a * G0, f2: b * G0, net: (a + b) * G0 };
   }
-  var d = st.n1 - st.n2;                   // 恒 ≥ 0（n₂ 被卡在 n₁ 以下）
-  return { rows: [ { k: 'F₁', v: st.n1 * G0, dir: 1, col: COL.f1 },
-                   { k: 'F₂', v: st.n2 * G0, dir: -1, col: COL.f2 } ],
-           f1: st.n1 * G0, f2: st.n2 * G0, net: d * G0 };
+  return { rows: [ { k: 'F₁', v: a * G0, dir: 1, col: COL.f1 },
+                   { k: 'F₂', v: b * G0, dir: -1, col: COL.f2 } ],
+           f1: a * G0, f2: b * G0, net: (a - b) * G0 };
 }
 function dL()     { return Math.abs(forces().net) * MM_PER_N; }
 function refDL()  { return st.nS * G0 * MM_PER_N; }          // 基准 = 单个力那一挡
 function ePrimeX() { return E0_X + animDL; }
 function hitRef() { return Math.abs(dL() - refDL()) < 1e-6; }
 function cmOf(mm) { return (mm / 10).toFixed(1) + ' cm'; }
-function n2Cap()  { return st.mode === 'opp' ? st.n1 : NMAX; }
+function n2Cap()  { return st.mode === 'opp' ? curN1() : NMAX; }
 
 // ---------- 画布 ----------
 var stageEl = document.getElementById('stage');
@@ -481,7 +507,7 @@ function drawForcePanel(g, rows) {
     var row = rows[i], y = row.y;
     g.strokeStyle = row.isNet ? '#dbe3ec' : '#eef2f7'; g.lineWidth = 1.2;
     g.beginPath(); g.moveTo(FP_BASE_X0, y); g.lineTo(FP_BASE_X1, y); g.stroke();
-    txt(g, row.k, FP_BASE_X0 - 12, y, row.col, row.isNet ? 14 : 13, 800, 'right');
+    txt(g, row.k, FP_LAB_X, y, row.col, row.isNet ? 14 : 13, 800, 'right');
     if (row.v < 1e-9) {
       txt(g, '= 0', ORIGIN_X + 10, y, COL.muted, 12.5, 700, 'left', true);
       continue;
@@ -522,10 +548,11 @@ function drawRefLine(g, x) {
   var label = '基准 AE′';
   g.font = '700 11.5px ' + FONT;
   var tw = g.measureText(label).width + 14;
-  rr(g, x - tw / 2, WALL.y0 + 2, tw, 18, 6);
+  var ly = WALL.y1 - 8;                      // 标签钉在虚线【底端】—— 顶端要留给合力箭头
+  rr(g, x - tw / 2, ly - 9, tw, 18, 6);
   g.fillStyle = 'rgba(16,185,129,0.16)'; g.fill();
   g.strokeStyle = 'rgba(16,185,129,0.5)'; g.lineWidth = 1; g.stroke();
-  txt(g, label, x, WALL.y0 + 11, '#047857', 11.5, 700, 'center');
+  txt(g, label, x, ly, '#047857', 11.5, 700, 'center');
 }
 
 function drawWall(g) {
@@ -589,44 +616,89 @@ function drawBand(g, ex) {
   g.moveTo(A_X, y + w / 2); g.lineTo(ex, y + w / 2); g.stroke();
 }
 
-// 细绳 + 定滑轮 + 钩码
-function ropeFrom(g, fromX, toPt, col, n) {
-  var y = AXIS_Y;
-  g.strokeStyle = col; g.lineWidth = 2.2; g.lineCap = 'round';
-  g.beginPath(); g.moveTo(fromX, y); g.lineTo(toPt.x, toPt.y); g.stroke();
-  if (Math.abs(toPt.x - fromX) > 34) {
-    var ang = Math.atan2(0, toPt.x - fromX);
-    tri(g, (fromX + toPt.x) / 2, y, ang, 13, 9, col);
+// ---------- 定滑轮 + 绕绳 + 钩码（唯一真值源） ----------
+// 一条绳的几何 = ①水平段(E′ → 轮顶切点) ②绕过滑轮的 1/4 圆弧 ③竖直段(轮侧切点 → 钩码)。
+// 绳长守恒：E′ 右移 ΔL ⇒ 右绳水平段短 ΔL、竖直段长 ΔL ⇒ 右侧钩码【下降】；
+//                      左绳水平段长 ΔL、竖直段短 ΔL ⇒ 左侧钩码【上升】。
+// 滑轮转角 = 绳在轮面上走过的距离 / R（右轮顺时针、左轮逆时针）。
+function ropePlan(f) {
+  if (st.mode === 'single') return [{ x: PR1.x, side: 1, col: COL.f1, n: st.nS, k: 'F' }];
+  if (st.mode === 'same') return [{ x: PR2.x, side: 1, col: COL.f2, n: curN2(), k: 'F₂' },
+                                  { x: PR1.x, side: 1, col: COL.f1, n: curN1(), k: 'F₁' }];
+  return [{ x: PL.x, side: -1, col: COL.f2, n: curN2(), k: 'F₂' },
+          { x: PR1.x, side: 1, col: COL.f1, n: curN1(), k: 'F₁' }];
+}
+function runGeom(f, dlNow) {
+  return ropePlan(f).map(function (r) {
+    var v = r.side > 0 ? (V0_R + dlNow) : (V0_L - dlNow);
+    v = Math.max(14, v);
+    return {
+      k: r.k, col: r.col, n: r.n, side: r.side,
+      x: r.x, cy: PUL_CY, R: PUL_R,
+      tangent: { x: r.x, y: PUL_CY - PUL_R },      // 轮顶切点（水平段的终点）
+      ropeX: r.x + r.side * PUL_R,                 // 轮侧切点 x（竖直段所在）
+      arcA0: -Math.PI / 2,                         // 圆弧起点角（轮顶）
+      arcA1: r.side > 0 ? 0 : -Math.PI,            // 圆弧终点角（轮右 / 轮左）
+      arcCcw: r.side < 0,
+      vert: v, weightTop: PUL_CY + v, theta: r.side * dlNow / PUL_R
+    };
+  });
+}
+// 绳分两段画（中间夹着滑轮），这样「别的绳从本滑轮上方擦过」会被滑轮挡住，
+// 而「本绳绕过本滑轮」压在轮缘上 —— 层次和课本图一致。
+function drawRopeFlat(g, run, ex) {          // ① 水平段：E′ → 轮顶切点
+  var cx = run.x, cy = run.cy, R = run.R;
+  g.save();
+  g.strokeStyle = run.col; g.lineWidth = 2.4; g.lineCap = 'round';
+  g.beginPath(); g.moveTo(ex, AXIS_Y); g.lineTo(cx, cy - R); g.stroke();
+  g.restore();
+  if (Math.abs(cx - ex) > 46) {              // 水平段上的力箭头（指向滑轮）
+    tri(g, ex + (cx - ex) * 0.46, AXIS_Y, run.side > 0 ? 0 : Math.PI, 13, 9, run.col);
   }
-  // 竖直段
-  g.beginPath(); g.moveTo(toPt.x, toPt.y); g.lineTo(toPt.x, WT_TOP); g.stroke();
-  drawPulley(g, toPt, col);
-  drawWeights(g, toPt.x, n, col);
 }
-function drawPulley(g, p, col) {
-  g.beginPath(); g.arc(p.x, p.y, PUL_R, 0, Math.PI * 2);
-  var pg = g.createRadialGradient(p.x - 6, p.y - 6, 2, p.x, p.y, PUL_R);
-  pg.addColorStop(0, '#ffffff'); pg.addColorStop(0.5, '#dde5ee'); pg.addColorStop(1, '#9aa9bb');
-  g.fillStyle = pg; g.fill();
-  g.strokeStyle = col; g.lineWidth = 3; g.stroke();
-  g.beginPath(); g.arc(p.x, p.y, 4.6, 0, Math.PI * 2);
-  g.fillStyle = '#7b8b9e'; g.fill();
-  g.beginPath(); g.arc(p.x - 1.2, p.y - 1.2, 1.6, 0, Math.PI * 2);
-  g.fillStyle = '#f1f5f9'; g.fill();
+function drawRopeWrap(g, run) {              // ② 绕过滑轮 ③ 竖直段 → 钩码
+  var cx = run.x, cy = run.cy, R = run.R;
+  g.save();
+  g.strokeStyle = run.col; g.lineWidth = 2.4; g.lineCap = 'round';
+  g.beginPath(); g.arc(cx, cy, R, run.arcA0, run.arcA1, run.arcCcw); g.stroke();
+  g.beginPath(); g.moveTo(run.ropeX, cy); g.lineTo(run.ropeX, run.weightTop); g.stroke();
+  g.restore();
 }
-function drawWeights(g, x, n, col) {
-  for (var i = 0; i < n; i++) {
-    var y = WT_TOP + i * (WT_H + WT_GAP);
-    g.beginPath(); g.moveTo(x, y - 6); g.lineTo(x, y + 1);
+function drawPulley(g, run) {
+  var cx = run.x, cy = run.cy, R = run.R;
+  g.save();
+  g.translate(cx, cy);
+  // 轮体用中性金属色 —— 绳才是彩色，这样「绳绕在轮上」一眼看得出
+  var pg = g.createRadialGradient(-R * 0.4, -R * 0.4, R * 0.15, 0, 0, R);
+  pg.addColorStop(0, '#ffffff'); pg.addColorStop(0.5, '#e8eef6'); pg.addColorStop(1, '#8fa0b4');
+  g.beginPath(); g.arc(0, 0, R - 1, 0, Math.PI * 2); g.fillStyle = pg; g.fill();
+  g.strokeStyle = '#5b6b7d'; g.lineWidth = 2; g.stroke();
+  // 辐条 + 记号点：随绳在轮面上走过的距离一起转（θ = 绳位移 / R）
+  g.rotate(run.theta);
+  g.strokeStyle = 'rgba(90,105,122,0.75)'; g.lineWidth = 1.8; g.lineCap = 'round';
+  for (var i = 0; i < 4; i++) {
+    var a = i * Math.PI / 2;
+    g.beginPath(); g.moveTo(0, 0); g.lineTo(Math.cos(a) * (R - 6), Math.sin(a) * (R - 6)); g.stroke();
+  }
+  g.beginPath(); g.arc(R - 9.5, 0, 3, 0, Math.PI * 2); g.fillStyle = run.col; g.fill();
+  g.restore();
+  g.beginPath(); g.arc(cx, cy, 4.2, 0, Math.PI * 2); g.fillStyle = '#5b6b7d'; g.fill();
+  g.beginPath(); g.arc(cx - 1.1, cy - 1.1, 1.5, 0, Math.PI * 2); g.fillStyle = '#f1f5f9'; g.fill();
+}
+function drawWeights(g, run) {
+  var x = run.ropeX;
+  for (var i = 0; i < run.n; i++) {
+    var y = run.weightTop + i * (WT_H + WT_GAP);
+    g.beginPath(); g.moveTo(x, y - 7); g.lineTo(x, y + 1);
     g.strokeStyle = '#64748b'; g.lineWidth = 1.8; g.stroke();
-    rr(g, x - WT_HW, y, WT_HW * 2, WT_H, 8);
+    rr(g, x - WT_HW, y, WT_HW * 2, WT_H, 7);
     var wg = g.createLinearGradient(x - WT_HW, 0, x + WT_HW, 0);
     wg.addColorStop(0, '#8e9dae'); wg.addColorStop(0.24, '#f8fafc');
     wg.addColorStop(0.52, '#cbd5e1'); wg.addColorStop(0.8, '#a7b4c3'); wg.addColorStop(1, '#77869a');
     g.fillStyle = wg; g.fill();
-    g.strokeStyle = col; g.lineWidth = 1.6; g.stroke();
+    g.strokeStyle = run.col; g.lineWidth = 1.6; g.stroke();
     g.strokeStyle = 'rgba(255,255,255,0.85)'; g.lineWidth = 1.4;
-    g.beginPath(); g.moveTo(x - WT_HW + 8, y + 4); g.lineTo(x - WT_HW + 8, y + WT_H - 4); g.stroke();
+    g.beginPath(); g.moveTo(x - WT_HW + 7, y + 4); g.lineTo(x - WT_HW + 7, y + WT_H - 4); g.stroke();
   }
 }
 
@@ -713,7 +785,7 @@ function drawFrame() {
 
   var f = forces(), ex = ePrimeX();
   var refX = E0_X + refDL();
-  var plan = ropePlan(f);          // 绳 / 滑轮 / 钩码的唯一真值源
+  var runs = runGeom(f, animDL);   // 绳 / 滑轮 / 钩码的唯一真值源
   var arrows = panelGeom(f);       // 力的图示的唯一真值源
   var na = netArrowGeom(f, ex);    // 合力箭头的唯一真值源
 
@@ -721,13 +793,14 @@ function drawFrame() {
   drawWall(g);
   drawBand(g, ex);
 
-  // 细绳（先画绳，滑轮/钩码盖在上面 —— 课本图就是这个层次）
-  plan.forEach(function (r) { ropeFrom(g, ex, r.to, r.col, r.n); });
-  // 反向时若 n₁ = n₂，两根绳的箭头会正好反向重合，把 F₁ 再描一遍更清楚
-  if (st.mode === 'opp' && st.n1 === st.n2) {
+  // 层次：①所有水平段 → ②所有滑轮（挡住从它上面擦过的别的绳）→ ③绕轮圆弧 + 竖直段 + 钩码
+  runs.forEach(function (r) { drawRopeFlat(g, r, ex); });
+  if (st.mode === 'opp' && curN1() === curN2()) {
     g.strokeStyle = 'rgba(225,29,72,0.35)'; g.lineWidth = 2.2;
-    g.beginPath(); g.moveTo(ex, AXIS_Y + 3.5); g.lineTo(PR1.x, AXIS_Y + 3.5); g.stroke();
+    g.beginPath(); g.moveTo(ex, AXIS_Y + 4); g.lineTo(PR1.x, AXIS_Y + 4); g.stroke();
   }
+  runs.forEach(function (r) { drawPulley(g, r); });
+  runs.forEach(function (r) { drawRopeWrap(g, r); drawWeights(g, r); });
 
   drawMarks(g, ex);
   drawNetArrow(g, na, f);
@@ -737,25 +810,41 @@ function drawFrame() {
   // 自检读的就是这一帧真正用掉的那份几何 —— 不是另算一套
   lastDraw = {
     mode: st.mode, net: f.net, dL: dL(), refDL: refDL(), refX: refX,
-    ePrime: ex, hit: hitRef(),
+    ePrime: ex, hit: hitRef(), animDL: animDL,
     band: { x0: A_X, x1: ex, y: AXIS_Y },
-    ropes: plan,
-    weights: plan.map(function (r) { return { x: r.to.x, n: r.n, col: r.col, k: r.k }; }),
+    runs: runs,
+    ropes: runs,
+    weights: runs.map(function (r) { return { x: r.ropeX, n: r.n, col: r.col, k: r.k, top: r.weightTop }; }),
     netArrow: na,
     panel: { x0: FP.x, y0: FP.y, x1: FP.x + FP.w, y1: FP.y + FP.h, rows: arrows },
     canvasW: canvas.width, canvasH: canvas.height
   };
 }
 
-// ---------- 平滑动画 ----------
-function tick() {
-  var t = dL();
-  if (Math.abs(animDL - t) < 0.3) animDL = t;
-  else animDL += (t - animDL) * 0.22;
+// ---------- 释放动画：欠阻尼弹簧 ----------
+// 参数一变，「释放」后橡皮筋从 E 弹性伸到 E′（约 0.7 s，轻微过冲），
+// 钩码与滑轮跟着一起动。自检用 step() 手动推进，不依赖 rAF。
+function stepAnim(dtMs) {
+  var dt = Math.min(0.05, Math.max(0, dtMs / 1000));
+  var target = dL();
+  animV += ((target - animDL) * SPRING_K - animV * SPRING_C) * dt;
+  animDL += animV * dt;
+  if (Math.abs(animDL - target) < 0.4 && Math.abs(animV) < 2.5) { animDL = target; animV = 0; }
+  return animDL;
+}
+var lastT = 0;
+function tick(now) {
+  rafRan = true;
+  var t = typeof now === 'number' ? now : performance.now();
+  stepAnim(lastT ? t - lastT : 16.7);
+  lastT = t;
   drawFrame();
   requestAnimationFrame(tick);
 }
-function renderNow() { animDL = dL(); drawFrame(); }
+// 「释放」= 橡皮筋先回到原长 E，再由弹簧动画拉到 E′（三种拉法都走这条路）
+function release() { animDL = 0; animV = 0; lastT = 0; }
+// 直接落到目标（自检 / 出图要确定性，不等动画）
+function renderNow() { animDL = dL(); animV = 0; lastT = 0; drawFrame(); }
 
 // ---------- 控制台 ----------
 var el = {
@@ -776,25 +865,25 @@ var HINT = {
 var DASH = '—';
 
 function syncUI() {
-  var f = forces();
-  Array.prototype.forEach.call(document.querySelectorAll('.mbtn'), function (b) {
-    b.classList.toggle('on', b.getAttribute('data-mode') === st.mode);
+  var f = forces(), a = curN1(), b = curN2();
+  Array.prototype.forEach.call(document.querySelectorAll('.mbtn'), function (bt) {
+    bt.classList.toggle('on', bt.getAttribute('data-mode') === st.mode);
   });
   el.mHint.innerHTML = HINT[st.mode];
 
   el.k1.classList.toggle('off', st.mode === 'single');
   el.k2.classList.toggle('off', st.mode !== 'same');
   el.kS.classList.toggle('off', st.mode !== 'single');
-  el.n1v.textContent = st.n1; el.n2v.textContent = st.n2; el.nSv.textContent = st.nS;
-  el.k1val.textContent = '= ' + (st.n1 * G0).toFixed(1) + ' N';
-  el.k2val.textContent = '= ' + (st.n2 * G0).toFixed(1) + ' N';
+  el.n1v.textContent = a; el.n2v.textContent = b; el.nSv.textContent = st.nS;
+  el.k1val.textContent = '= ' + (a * G0).toFixed(1) + ' N';
+  el.k2val.textContent = '= ' + (b * G0).toFixed(1) + ' N';
   el.kSval.textContent = '= ' + (st.nS * G0).toFixed(1) + ' N';
   // n₂ 不能超过 n₁（反向时）
-  Array.prototype.forEach.call(document.querySelectorAll('.step'), function (b) {
-    var k = b.getAttribute('data-k'), d = Number(b.getAttribute('data-d'));
-    var cur = k === 'n1' ? st.n1 : (k === 'n2' ? st.n2 : st.nS);
+  Array.prototype.forEach.call(document.querySelectorAll('.step'), function (bt) {
+    var k = bt.getAttribute('data-k'), d = Number(bt.getAttribute('data-d'));
+    var cur = k === 'n1' ? a : (k === 'n2' ? b : st.nS);
     var cap = (k === 'n2') ? n2Cap() : NMAX;
-    b.disabled = (d > 0 && cur >= cap) || (d < 0 && cur <= NMIN);
+    bt.disabled = (d > 0 && cur >= cap) || (d < 0 && cur <= NMIN);
   });
 
   el.rNet.textContent = Math.abs(f.net).toFixed(1) + ' N';
@@ -848,16 +937,24 @@ function setTxt(id, v, ok) {
 function setMode(m) {
   if (m === st.mode) return;
   st.mode = m;
-  if (m === 'opp' && st.n2 > st.n1) st.n2 = st.n1;    // n₂ ≤ n₁
+  if (m === 'opp' && st.opp.n2 > st.opp.n1) st.opp.n2 = st.opp.n1;   // n₂ ≤ n₁
+  release();                     // 换拉法 = 重新做一次：橡皮筋从原长 AE 释放到 AE′
   syncUI();
 }
 function setN(key, v) {
   v = Math.max(NMIN, Math.min(NMAX, v));
-  if (key === 'n2' && st.mode === 'opp') v = Math.min(v, st.n1);
-  st[key] = v;
+  if (key === 'nS') { st.nS = v; syncUI(); return; }
+  var s = slot();
+  if (key === 'n2' && st.mode === 'opp') v = Math.min(v, s.n1);
+  s[key] = v;
   syncUI();
 }
-function setN1(v) { st.n1 = Math.max(NMIN, Math.min(NMAX, v)); if (st.n2 > st.n1) st.n2 = st.n1; syncUI(); }
+function setN1(v) {
+  var s = slot();
+  s.n1 = Math.max(NMIN, Math.min(NMAX, v));
+  if (s.n2 > s.n1) s.n2 = s.n1;
+  syncUI();
+}
 
 Array.prototype.forEach.call(document.querySelectorAll('.mbtn'), function (b) {
   b.addEventListener('click', function () { setMode(b.getAttribute('data-mode')); });
@@ -865,9 +962,13 @@ Array.prototype.forEach.call(document.querySelectorAll('.mbtn'), function (b) {
 Array.prototype.forEach.call(document.querySelectorAll('.step'), function (b) {
   b.addEventListener('click', function () {
     var k = b.getAttribute('data-k'), d = Number(b.getAttribute('data-d'));
-    if (k === 'n1') setN1(st.n1 + d); else setN('n2' === k ? 'n2' : 'nS', st[k] + d);
+    if (k === 'n1') setN1(curN1() + d);
+    else if (k === 'n2') setN('n2', curN2() + d);
+    else setN('nS', st.nS + d);
   });
 });
+var btnRel = document.getElementById('btnRelease');
+if (btnRel) btnRel.addEventListener('click', function () { release(); });
 
 // ---------- 全屏（舞台） ----------
 var fsBtn = document.getElementById('fsBtn');
@@ -903,14 +1004,21 @@ window.__fc = {
   PAGE_FILE: '探究同一直线上的二力合成.html',
   W: W, H: H,
   consts: { AXIS_Y: AXIS_Y, WALL: WALL, A_X: A_X, AE0: AE0, E0_X: E0_X,
-            PL: PL, PR1: PR1, PR2: PR2, PUL_R: PUL_R,
-            WT_TOP: WT_TOP, WT_H: WT_H, WT_GAP: WT_GAP, WT_HW: WT_HW,
+            PL: PL, PR1: PR1, PR2: PR2, PUL_R: PUL_R, PUL_CY: PUL_CY,
+            V0_R: V0_R, V0_L: V0_L,
+            WT_H: WT_H, WT_GAP: WT_GAP, WT_HW: WT_HW,
             G0: G0, MM_PER_N: MM_PER_N, NMIN: NMIN, NMAX: NMAX,
             FP: FP, FP_ROW: FP_ROW, ORIGIN_X: ORIGIN_X, FSCALE: FSCALE },
   COL: COL,
-  state: function () { return { mode: st.mode, n1: st.n1, n2: st.n2, nS: st.nS }; },
+  state: function () { return { mode: st.mode, n1: curN1(), n2: curN2(), nS: st.nS }; },
+  slots: function () { return { same: { n1: st.same.n1, n2: st.same.n2 },
+                                opp: { n1: st.opp.n1, n2: st.opp.n2 }, nS: st.nS }; },
   forces: forces, dL: dL, refDL: refDL, hitRef: hitRef,
   animDL: function () { return animDL; },
+  anim: function () { return { dL: animDL, v: animV }; },
+  release: release,
+  step: function (ms) { stepAnim(ms); return animDL; },
+  drawNow: function () { drawFrame(); },
   ePrimeX: ePrimeX,
   rec: function () { return { same: rec.same, opp: rec.opp }; },
   // 布置场景（自检用页面自己的入口，不手改 st）
@@ -928,21 +1036,17 @@ window.__fc = {
   // 世界坐标 → 画布设备像素
   toPx: function (p) { var k = canvas.width / W; return { x: p.x * k, y: p.y * k }; }
 };
-// 绳 / 滑轮 / 钩码：一次算好，绘制与自检共用（绝不在别处再推一遍）
-function ropePlan(f) {
-  if (st.mode === 'single') return [{ to: PR1, col: COL.f1, n: st.nS, k: 'F' }];
-  if (st.mode === 'same') return [{ to: PR2, col: COL.f2, n: st.n2, k: 'F₂' },
-                                  { to: PR1, col: COL.f1, n: st.n1, k: 'F₁' }];
-  return [{ to: PL, col: COL.f2, n: st.n2, k: 'F₂' },
-          { to: PR1, col: COL.f1, n: st.n1, k: 'F₁' }];
-}
+// 绳 / 滑轮 / 钩码的几何在 runGeom() 里一次算好，绘制与自检共用（绝不在别处再推一遍）
 
 // ---------- 启动 ----------
 // ⚠️ 调试钩子必须在【任何绘制之前】装好：页面万一在首帧渲染里抛错，
 //    钩子还在，自检就能把「运行期有 JS 报错」判红。
 syncUI();
-renderNow();                       // 首帧【同步】画，不等 rAF（headless 下 rAF 可能一帧都不回调）
+animDL = 0; animV = 0;             // 首帧：橡皮筋还挂在【原长 AE】上
+drawFrame();                       // 接着由 tick 把它「释放」拉到 AE′
 requestAnimationFrame(tick);
+// 兜底：无头环境里 rAF 可能一帧都不回调 ⇒ 1.2 s 后直接落到目标，别让画面停在原长
+setTimeout(function () { if (!rafRan) renderNow(); }, 1200);
 window.addEventListener('resize', function () { layout(); });
 layout();
 
