@@ -314,6 +314,8 @@
             <li>点「剪开卡片」→ 两半各自怎么动？</li>
             <li>θ 拖到 60°，松手后转回要多久？</li>
             <li>交换两侧的砝码，合力方向变吗？</li>
+            <li>松手后盯住两侧托盘：一边升、一边降，各升降多少？</li>
+            <li>再看两个滑轮：卡片平移和卡片扭转，轮子的转向一样吗？</li>
           </ol>
         </div>
       </div>
@@ -401,6 +403,9 @@
               不再是「同一对」平衡力，两半会各自被拉走。</li>
           <li>本页的合力与力矩都由<b>同一份三维向量</b>算出（<span class="fml">F合 = F₁ + F₂</span>，
               <span class="fml">τ = r₁ × F₁ + r₂ × F₂</span>），读数、检查表、结论、自检共用，不各写一遍。</li>
+          <li>装置本身还守着一条守恒：<b>细线不可伸长</b> ⇒ <span class="fml">水平段 + 90°弧 + 竖直段 = 定值</span>。
+              卡片一移动，一侧托盘就<b>升</b>、另一侧就<b>降</b>，升降量正好等于卡片位移；绳在轮槽里同步
+              走过这么长，两个定滑轮跟着转（<span class="fml">Δφ = Δ水平段 ÷ 槽底半径</span>）。</li>
         </ul>
       </div>
       <div class="info-card">
@@ -411,6 +416,10 @@
           <li>模式②「<b>扭转角度</b>」：两侧砝码相等，把 θ 拖到 20°~60°，点「松手」——
               卡片会<b>自己转回 0°</b>，因为此时两个力不共线。</li>
           <li>模式③「<b>剪开卡片</b>」：点「剪开卡片」，两半各自被一侧的力拉走。</li>
+          <li><b>细线是绷直、不可伸长的</b>：卡片一移动，一侧水平段变短、另一侧变长，
+              竖直段就等量反向变化 —— <b>一侧托盘下降、另一侧上升，升降量恰好等于卡片的位移</b>；
+              绳在轮槽里同步走过这么长，<b>两个定滑轮跟着转</b>（卡片平移时两轮同向、扭转时反向）。
+              卡片被拉到「一侧托盘顶住滑轮」就再也拉不动了，行程上限由细线长度决定。</li>
           <li><b>拖动空白处</b>旋转视角，<b>滚轮</b>缩放，<b>直接拖动卡片</b>可以改扭转角。</li>
           <li>右栏「平衡四条件」实时显示每一条的实测值：等大比的是两个力的大小差，
               反向比的是两个力方向的点积，共线比的是两力作用线的偏离量，同物比的是卡片是否被剪开。</li>
@@ -539,12 +548,20 @@
     const PUL_X  = BOARD.x1 + PUL_R + 0.006;   // 轮心 x（板端外侧）
 
     /* ── 托盘 + 砝码（教材器材：向托盘里加砝码） ──────────────────────────
-     * 🔴 细线长度不变 ⇒ 托盘【不随砝码数下沉】：托盘上表面钉在 TRAY_Y，
-     *    砝码往上叠、细线竖直段一直落到托盘（中段被砝码挡住）。
+     * 🔴 托盘【不随砝码数下沉】（细线长度不变）：砝码往上叠、细线竖直段一直落到托盘。
+     * 🔴🔴 但托盘【会随卡片平移 / 扭转而升降】—— 细线不可伸长，一侧水平段变长，
+     *      同侧竖直段就必须变短。托盘高度是【算出来的】，不是常数（见 hangY()）。
      */
     const WM_R = 0.046, WM_H = 0.032;   // 单个砝码（圆柱）
     const TRAY_R = 0.088, TRAY_T = 0.010;  // 托盘（圆盘）
-    const TRAY_Y = -0.300;              // 托盘【上表面】高度（固定，与 n 无关）
+    const TRAY_Y = -0.550;              // 托盘【上表面】的参考高度（卡片居中、未扭转时）
+
+    /* ── 细线长度守恒 ⇒ 托盘升降 + 滑轮转动，全部由这一组常量推出来 ──────── */
+    const ARC_LEN  = PUL_RG * Math.PI / 2;                       // 绕过滑轮的 90° 弧长
+    const ROPE_REF = PUL_X - CARD_L / 2;                         // 参考态（sx=0、θ=0）水平段长
+    const STRING_LEN = ROPE_REF + ARC_LEN + (PUL_CY - TRAY_Y);   // 每根细线的总长（恒定）
+    // 竖直段的最短长度：再短，托盘里的砝码就顶到滑轮了。它同时决定「卡片最多能被拉多远」。
+    const MIN_HANG = N_MAX * WM_H + 0.14;
 
     const ARROW_K = 0.22;               // 世界单位 / N —— 最大 2 N → 0.44 m
     // 🔴 力箭头【抬到细线之上】：卡片平贴在木板上，细线与卡片等高 ⇒ 箭头若也画在
@@ -605,12 +622,14 @@
      * 🔴 A = 左端、B = 右端；L = 左轮切点、R = 右轮切点。
      *    约定：「n₁ / F₁ / 左侧」这一整套必须指向同一侧（原来是反的 —— 滑杆写着「左侧 n₁」
      *    却驱动右侧托盘、粉色 F₁ 也画在右边，与教材图 7-22 相反）。
+     * 🔴 抽成 geomAt(sx, tw)：托盘升降、滑轮转角、取景包络都要在【别的 (sx,θ) 上】算几何，
+     *    不能再只读 state —— 那些量必须与真正画出去的那一份同源。
      */
-    function cardGeom() {
-      const O = cardCenter();
+    function geomAt(sx, tw) {
+      const O = [sx, CARD_Y, 0];
       const local = [CARD_L / 2, 0, 0];
-      const rA = rotY([-local[0], 0, 0], state.twist);   // 左端系点（相对中心）
-      const rB = rotY(local, state.twist);               // 右端系点
+      const rA = rotY([-local[0], 0, 0], tw);       // 左端系点（相对中心）
+      const rB = rotY(local, tw);                   // 右端系点
       const A = add(O, rA);
       const B = add(O, rB);
       const LC = [-PUL_X, PUL_CY, 0];               // 左侧定滑轮【轮心】
@@ -624,25 +643,55 @@
       const dirB = vnorm(sub(R, B));                // 右侧细线把卡片往 +x 拉（F₂）
       return { O, A, B, L, R, LC, RC, rA, rB, dirA, dirB };
     }
+    const cardGeom = () => geomAt(state.sx, state.twist);
+
+    /* ── 细线长度守恒的三个派生量（画法与自检共用同一份） ──────────────────
+     * sgn = 滑轮在 x 轴上的符号（+1 右轮、−1 左轮）；右轮系卡片右端 B、左轮系左端 A。
+     */
+    const sideOf = (G, sgn) => (sgn > 0 ? { from: G.B, pc: G.RC, top: G.R } : { from: G.A, pc: G.LC, top: G.L });
+    /* 水平段（系点 → 轮顶切点）长度。卡片平移 / 扭转都只通过它影响另外两个量。 */
+    const horizOf = (G, sgn) => vlen(sub(sideOf(G, sgn).top, sideOf(G, sgn).from));
+    /* 托盘上表面高度：细线总长 − 水平段 − 弧长 = 竖直段 ⇒ 托盘 = 轮心 − 竖直段。
+     * 🔴 卡片往【远离】这一侧走 ⇒ 水平段变长 ⇒ 竖直段变短 ⇒ 这一侧托盘【升】。 */
+    function hangY(sgn, G) {
+      const vert = Math.max(MIN_HANG, STRING_LEN - horizOf(G, sgn) - ARC_LEN);
+      return PUL_CY - vert;
+    }
+    /* 滑轮转角（rad）= 绳在槽里走过的弧长 ÷ 槽底半径。
+     * 🔴 符号由「绳在轮顶切点处的移动方向」定：右轮水平段变长 ⇒ 绳往卡片方向（−x）走 ⇒ 逆时针；
+     *    左轮相反。所以卡片平移时两个轮【同向】转，卡片扭转时两个轮【反向】转。
+     */
+    function pulleySpin(sgn, G) {
+      const h = horizOf(G, sgn);
+      return (sgn > 0 ? h - ROPE_REF : ROPE_REF - h) / PUL_RG;
+    }
+    /* 卡片最多能被拉多远：受细线长度限制 —— 一侧托盘被提到滑轮底下就再也提不动了。
+     * 由 horiz ≤ STRING_LEN − ARC_LEN − MIN_HANG 解出，是 θ 的函数（扭转会吃掉行程）。 */
+    function slideLimit(tw) {
+      const half = (CARD_L / 2) * cosOf(tw), zoff = (CARD_L / 2) * sinOf(tw);
+      const D = STRING_LEN - ARC_LEN - MIN_HANG;
+      const s2 = D * D - zoff * zoff;
+      const S = s2 > 0 ? Math.sqrt(s2) : 0;
+      return Math.max(0, S + half - PUL_X);
+    }
     /* 细线【唯一几何入口】：
      *   卡片系点 → 轮顶切点（水平段）→ 90° 圆弧（沿槽底绕过轮）→ 外侧切点 → 竖直下垂到托盘。
      * 🔴 「绳绕轮」不是画法问题、是几何问题：三个折点与弧上每个采样点都落在
      *    【以轮心为圆心、PUL_RG 为半径】的圆上 ⇒ 「绳从轮心穿过去」在结构上过不了
      *    自检里的「绳上每点到轮心距离 ≥ 槽底半径」那一条。
-     * sgn = 滑轮在 x 轴上的符号（+1 右轮、−1 左轮）；右轮系卡片右端 B、左轮系左端 A。
      */
     const ROPE_SEG = 14;
     function ropePath(sgn, g) {
       const G = g || cardGeom();
-      const pc = sgn > 0 ? G.RC : G.LC;             // 轮心
-      const from = sgn > 0 ? G.B : G.A;             // 卡片系点
-      const pts = [from, [pc[0], pc[1] + PUL_RG, 0]];   // 水平段 → 轮顶切点
+      const S = sideOf(G, sgn);
+      const pc = S.pc;                              // 轮心
+      const pts = [S.from, [pc[0], pc[1] + PUL_RG, 0]];  // 水平段 → 轮顶切点
       for (let i = 1; i <= ROPE_SEG; i++) {         // 90° 圆弧：从轮顶绕到外侧切点
         const th = Math.PI / 2 * (1 - i / ROPE_SEG);
         pts.push([pc[0] + sgn * PUL_RG * Math.cos(th), pc[1] + PUL_RG * Math.sin(th), 0]);
       }
-      pts.push([pc[0] + sgn * PUL_RG, TRAY_Y, 0]);  // 竖直段（中段被砝码挡住）
-      return { pts: pts, pc: pc, from: from, sgn: sgn };
+      pts.push([pc[0] + sgn * PUL_RG, hangY(sgn, G), 0]);  // 竖直段（中段被砝码挡住）
+      return { pts: pts, pc: pc, from: S.from, sgn: sgn };
     }
     const pullA = () => state.nA * W0;              // 右侧拉力（N）
     const pullB = () => state.nB * W0;              // 左侧拉力（N）
@@ -735,22 +784,33 @@
           pts.push([p[0], CARD_Y + 0.04, p[2]]);
         }
       }
-      // 卡片平移的两个极端（合力最大时最远）
-      for (const sx of [-MAX_SX, MAX_SX]) {
+      // 卡片平移的两个极端（θ=0 时能拉得最远，取它做包络）
+      const SL = slideLimit(0);
+      for (const sx of [-SL, SL]) {
         pts.push([sx, CARD_Y, 0]);
         pts.push([sx, CARD_Y + 0.10, 0]);
       }
-      // 两个滑轮（整个轮盘）与两侧托盘 + 砝码（托盘高度与 n 无关，砝码最多叠到 N_MAX 个）
+      // 两个滑轮（整个轮盘）与两侧托盘 + 砝码
+      // 🔴 托盘高度是【算出来的】：卡片平移 / 扭转都会让它升降 ⇒ 包络必须在 (sx, θ) 上
+      //    扫一遍取极值，不能再用一个常数 TRAY_Y。
       for (const sgn of [1, -1]) {
         const px = sgn * PUL_X, hx = sgn * (PUL_X + PUL_RG);
         pts.push([px, PUL_CY + PUL_R + 0.03, 0]);
         pts.push([px, PUL_CY - PUL_R - 0.03, 0]);
         pts.push([px + PUL_R + 0.03, PUL_CY, 0]);
         pts.push([px - PUL_R - 0.03, PUL_CY, 0]);
-        pts.push([hx, TRAY_Y - TRAY_T - 0.03, 0]);
-        pts.push([hx + sgn * TRAY_R, TRAY_Y, 0]);
-        pts.push([hx - sgn * TRAY_R, TRAY_Y, 0]);
-        pts.push([hx, TRAY_Y + N_MAX * WM_H + 0.03, 0]);
+        let lo = Infinity, hi = -Infinity;
+        for (const sx of [-SL, -SL / 2, 0, SL / 2, SL]) {
+          for (const tw of [0, TW_MAX / 2, TW_MAX]) {
+            const y = hangY(sgn, geomAt(sx, tw));
+            lo = Math.min(lo, y); hi = Math.max(hi, y);
+          }
+        }
+        for (const [rx, ry] of [[hx, lo - TRAY_T - 0.03], [hx, hi + N_MAX * WM_H + 0.03],
+                                [hx + sgn * TRAY_R, lo], [hx - sgn * TRAY_R, lo],
+                                [hx + sgn * TRAY_R, hi], [hx - sgn * TRAY_R, hi]]) {
+          pts.push([rx, ry, 0]);
+        }
       }
       // 力箭头的两个极端（最大拉力 2 N 沿 ±x，起点抬到细线之上）
       const arrY = CARD_Y + ARROW_LIFT;
@@ -1111,13 +1171,15 @@
     /* 定滑轮：真三维圆盘 —— 盘面在 xy 平面内、轴沿 z、细线沿【槽底圆】绕过它。
      * 🔴 轮心在细线【之下】PUL_RG（见常量区），所以轮顶切点正好落在细线高度上：
      *    水平段切于轮顶、竖直段切于轮外侧 —— 绳不会从轮盘中间穿过去。
+     * 🔴 ang = 轮子转角（rad，由 pulleySpin() 从【绳走了多少】反解）。圆盘本身旋转对称，
+     *    不画轮辐的话「转没转」根本看不出来 ⇒ 三根轮辐是这条动态腿的唯一可见载体。
      */
-    function drawPulley(q, sgn) {
+    function drawPulley(q, sgn, ang) {
       const px = sgn * PUL_X, cy = PUL_CY, R = PUL_R, T = PUL_T;
       const P = (x, y, z) => project([x, y, z], q);
-      const circ = (r, z, n) => {
+      const circ = (r, z, n, ph) => {
         const out = [], N = n || 44;
-        for (let i = 0; i < N; i++) { const a = i / N * PI2; out.push(P(px + r * Math.cos(a), cy + r * Math.sin(a), z)); }
+        for (let i = 0; i < N; i++) { const a = i / N * PI2 + (ph || 0); out.push(P(px + r * Math.cos(a), cy + r * Math.sin(a), z)); }
         return out;
       };
       const N = 44, back = circ(R, -T / 2, N), front = circ(R, T / 2, N);
@@ -1137,14 +1199,21 @@
       grd.addColorStop(0.5, rgb(C_PUL, 1.02));
       grd.addColorStop(1, rgb(C_PUL, 0.70));
       poly(circ(R, T / 2 + 0.0015, 48), grd, 'rgba(16,22,32,.55)', 1.3);
+      // 轮辐（3 根，随 ang 转）：轮子转动时只有它看得出来
+      for (let k = 0; k < 3; k++) {
+        const a = ang + k * PI2 / 3;
+        line([P(px + R * 0.26 * Math.cos(a), cy + R * 0.26 * Math.sin(a), T / 2 + 0.0045),
+              P(px + R * 0.97 * Math.cos(a), cy + R * 0.97 * Math.sin(a), T / 2 + 0.0045)],
+             rgb(C_PUL_D, 0.62), 2.4);
+      }
       // 轮槽：两道同心深圈（细线正落在这圈上）
       line(circ(PUL_RG * 1.10, T / 2 + 0.003, 48), rgb(C_PUL_D, 0.95), 2.4);
       line(circ(PUL_RG * 0.90, T / 2 + 0.003, 48), rgb(C_PUL_D, 0.80), 1.6);
       // 轮毂 + 轴
-      poly(circ(R * 0.30, T / 2 + 0.004, 32), rgb(C_PUL, 0.94), rgb(C_PUL_D, 0.9), 1.1);
-      poly(circ(R * 0.13, T / 2 + 0.006, 24), rgb(C_PUL_D, 1.15));
+      poly(circ(R * 0.30, T / 2 + 0.005, 32), rgb(C_PUL, 0.94), rgb(C_PUL_D, 0.9), 1.1);
+      poly(circ(R * 0.13, T / 2 + 0.007, 24), rgb(C_PUL_D, 1.15));
       boxOfPts(circ(R, T / 2, 20), 'pulley');
-      return { c: [px, cy, 0], R: R, RG: PUL_RG, sgn: sgn };
+      return { c: [px, cy, 0], R: R, RG: PUL_RG, sgn: sgn, ang: ang };
     }
 
     /* 细线：走 ropePath() 的【唯一几何】——
@@ -1161,12 +1230,12 @@
       return R0;
     }
 
-    /* 托盘 + 砝码（教材器材）：托盘【上表面】钉在 TRAY_Y —— 细线长度不变，
-     * 加砝码不会让托盘下沉，砝码是往上叠的（这一点与「钩码堆往下挂」不同）。 */
-    function drawHanger(q, sgn, n) {
+    /* 托盘 + 砝码（教材器材）：加砝码不会让托盘下沉（砝码往上叠），
+     * 🔴 但托盘【会随卡片平移 / 扭转升降】—— 高度来自 hangY()（细线长度守恒），
+     *    不是常数。卡片往【远离】这一侧走 ⇒ 这一侧托盘【升】；往这一侧走 ⇒ 【降】。 */
+    function drawHanger(q, sgn, n, g) {
       const x = sgn * (PUL_X + PUL_RG);
-      // 🔴 托盘高度【唯一真源】：细线长度不变 ⇒ 与砝码数无关（改这一行就能同时改画法与导出）
-      const trayY = TRAY_Y;
+      const trayY = hangY(sgn, g || cardGeom());
       tube([x, trayY - TRAY_T, 0], [x, trayY, 0], TRAY_R, q, C_TRAY, 0.66);   // 托盘
       const pts = [];
       for (let i = 0; i < n; i++) {                                            // 砝码往上叠
@@ -1179,7 +1248,7 @@
       pts.push(P(trayY - TRAY_T), P(trayY), P(trayY + n * WM_H));
       pts.push(project([x + TRAY_R, trayY, 0], q), project([x - TRAY_R, trayY, 0], q));
       boxOfPts(pts, 'weight');
-      return { top: trayY + n * WM_H, bot: trayY - TRAY_T, x: x };
+      return { top: trayY + n * WM_H, bot: trayY - TRAY_T, x: x, trayY: trayY };
     }
 
     // 竖直轴（通过卡片中心的虚线）
@@ -1238,7 +1307,8 @@
       //   支架/滑轮 → 细线（落在轮槽里，必须压在轮盘之上才看得见）
       //   → 卡片（盖住系点）→ 托盘砝码（挡住细线竖直段的中段）。
       drawBracket(q, 1); drawBracket(q, -1);
-      drawPulley(q, -1); drawPulley(q, 1);
+      const spinL = pulleySpin(-1, g), spinR = pulleySpin(1, g);
+      drawPulley(q, -1, spinL); drawPulley(q, 1, spinR);
       const ropeL = drawRope(q, -1, g), ropeR = drawRope(q, 1, g);
 
       // 卡片 / 剪开后的两半
@@ -1252,9 +1322,9 @@
         drawPlate(q, state.sx - state.halfB - dx, -dz, state.twist, C_CARD2, 'card2', CARD_L / 2);
       }
 
-      // 托盘 + 砝码（nA = n₁ = 左侧，nB = n₂ = 右侧）
-      const wL = drawHanger(q, -1, state.nA);
-      const wR = drawHanger(q, 1, state.nB);
+      // 托盘 + 砝码（nA = n₁ = 左侧，nB = n₂ = 右侧；托盘高度由细线长度守恒算出）
+      const wL = drawHanger(q, -1, state.nA, g);
+      const wR = drawHanger(q, 1, state.nB, g);
 
       // 两个拉力箭头（从卡片系点沿细线方向；整体抬到细线之上，别把绳子盖掉）
       const lift = [0, ARROW_LIFT, 0];
@@ -1302,8 +1372,10 @@
         L: project(g.L, q), R: project(g.R, q),
         // 轮心 / 槽底半径 / 外缘半径 —— 「绳绕轮」的判据要拿轮心现算，不能读屏幕量
         LC: g.LC.slice(), RC: g.RC.slice(), RG: PUL_RG, RE: PUL_R,
-        wL: { top: wL.top, bot: wL.bot, x: wL.x, n: state.nA },
-        wR: { top: wR.top, bot: wR.bot, x: wR.x, n: state.nB }
+        // 转角（rad）：由「绳走了多少」反解 —— 判据拿它和绳长变化对账
+        spinL: spinL, spinR: spinR,
+        wL: { top: wL.top, bot: wL.bot, x: wL.x, n: state.nA, trayY: wL.trayY },
+        wR: { top: wR.top, bot: wR.bot, x: wR.x, n: state.nB, trayY: wR.trayY }
       };
       // 🔴 细线的世界折线（唯一几何）：判据「绳上每点到轮心 ≥ 槽底半径」读的就是它
       state.drawn.rope = {
@@ -1504,6 +1576,7 @@
     }
     function setHint() {
       $('bl-hint').innerHTML = '<b>探究：</b>改托盘里的砝码个数 / 扭转角 / 剪开卡片，看卡片动不动、往哪动。' +
+        '<br>卡片一动：一侧托盘<b>下降</b>、另一侧<b>上升</b>，两个滑轮被绳带着转。' +
         '<br>拖动卡片可直接改扭转角。';
     }
 
@@ -1588,10 +1661,13 @@
       const S = solve();
       if (state.phase === 'running') {
         // 平移：沿合力的 x 分量
+        // 🔴 行程上限不是常数：一侧托盘被提到滑轮底下，卡片就再也拉不动了（slideLimit）。
+        const lim = Math.min(MAX_SX, slideLimit(state.twist));
         const ax = S.net.Fnet[0] / CARD_M;
         state.vx += ax * dt;
         state.vx *= LIN_DAMP;
-        state.sx = clamp(state.sx + state.vx * dt, -MAX_SX, MAX_SX);
+        state.sx = clamp(state.sx + state.vx * dt, -lim, lim);
+        if (state.sx <= -lim || state.sx >= lim) state.vx = 0;   // 拉到头就停住，不再积速度
         // 转动：α = τ / I
         const alpha = S.net.tau / CARD_I();
         state.omega += alpha * dt;
@@ -1785,6 +1861,8 @@
         get PUL_X() { return PUL_X; }, get PUL_R() { return PUL_R; },
         get PUL_RG() { return PUL_RG; }, get PUL_CY() { return PUL_CY; }, get PUL_T() { return PUL_T; },
         get TRAY_Y() { return TRAY_Y; }, get TRAY_R() { return TRAY_R; }, get TRAY_T() { return TRAY_T; },
+        get STRING_LEN() { return STRING_LEN; }, get ARC_LEN() { return ARC_LEN; },
+        get MIN_HANG() { return MIN_HANG; }, get ROPE_REF() { return ROPE_REF; },
         get WM_R() { return WM_R; }, get WM_H() { return WM_H; },
         get ARROW_K() { return ARROW_K; }, get ARROW_LIFT() { return ARROW_LIFT; },
         get ROPE_SEG() { return ROPE_SEG; }, get CAMD() { return CAMD; },
@@ -1795,8 +1873,9 @@
       makeCam: makeCam, project: project, envelopePoints: envelopePoints, worldYAtScreen: worldYAtScreen,
       rotY: rotY, size: () => ({ w: state.w, h: state.h, dpr: state.dpr }),
       // 物理：与页面同一份
-      cardGeom: cardGeom, netOf: netOf, lineOffset: lineOffset, oppositeDot: oppositeDot,
+      cardGeom: cardGeom, geomAt: geomAt, netOf: netOf, lineOffset: lineOffset, oppositeDot: oppositeDot,
       ropePath: ropePath,
+      horizOf: horizOf, hangY: hangY, pulleySpin: pulleySpin, slideLimit: slideLimit,
       pullA: pullA, pullB: pullB, condOf: condOf, solve: solve,
       cardI: CARD_I,
       // 动作：与按钮走同一条路
