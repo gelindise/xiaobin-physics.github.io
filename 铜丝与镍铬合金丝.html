@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>铜丝与镍铬合金丝 · 探究影响导体电阻大小的因素 - 物理虚拟实验</title>
+  <title>探究影响导体电阻大小的因素 - 物理虚拟实验</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg">
   <link rel="stylesheet" href="style.css">
   <script src="protect.js"></script>
@@ -991,7 +991,10 @@ function layout() {
 }
 // 进出全屏后量两次：立刻一次（拿到的还是旧盒子），下一帧一次（盒子已经变了）。
 // 只量一次的话，全屏后画布还按进入前那个尺寸画，四周空一大圈。
+// 🔴 搬浮层必须排在【量尺寸之前】：放大镜的 K 是按视口算的，浮层没进舞台时
+//    它连渲染都轮不上（详见 mountOverlays 那一段注释）。
 function onFsChange() {
+  mountOverlays();
   layout();
   requestAnimationFrame(layout);
 }
@@ -1248,6 +1251,24 @@ var zoomRead = document.getElementById('zoomRead');
 var zoomRange = document.getElementById('zoomRange');
 var zoomOpen = false;
 
+// 🔴🔴 全屏的是【舞台】（.canvas-shell），而浏览器在全屏时只渲染【全屏元素及其子树】——
+// 挂在 <body> 下的浮层（放大镜、电路图）在全屏里【根本不存在】。
+// 症状：全屏后点画面里的电流表「没反应」——其实 openZoom() 老老实实跑了、zoomOpen
+// 也变 true 了、zoomEl.hidden 也撤了，只是那一层压根没被渲染，学生看到的还是原来那张表。
+// 做法：进出全屏时把浮层【搬进 / 搬出】舞台，退出时各自挂回原来的家。
+var OVERLAYS = [
+  { el: zoomEl, home: zoomEl.parentNode },
+  { el: document.getElementById('sch'), home: document.getElementById('sch').parentNode }
+];
+function mountOverlays() {
+  var fs = (document.fullscreenElement === stage);
+  OVERLAYS.forEach(function (o) {
+    if (!o.el) return;
+    var want = fs ? stage : o.home;
+    if (o.el.parentNode !== want) want.appendChild(o.el);
+  });
+}
+
 // 表盘的可点区域 = 表壳 + 底座（局部 ±96 / −88…+46）。
 // 【不能】一直管到接线柱（局部 y = +72）：那是导线接上来的地方，
 // 点它不该弹放大镜（那一片是「线接在哪个量程柱上」的视觉区）。
@@ -1267,13 +1288,16 @@ function drawZoom() {
   if (!zoomOpen) return;
   var c = byId('A'), rec = recOf('A');
   if (!c || !rec) { closeZoom(); return; }     // 元件没了，浮层自己收掉
-  // K 按视口算：手机上放得下，投影仪上也够大。上限 4.4（ZBOX 宽 200 ⇒ 最宽 880px），
+  // K 按视口算：手机上放得下，投影仪上也够大。非全屏上限 4.4（ZBOX 宽 200 ⇒ 最宽 880px），
   // 再大就是把一只小表拉成一片糊掉的大色块。
   // 留白给得紧一点（宽 −60 / 高 −140）：浮层里除画布外只有标题行 + 读数行（约 90px）
   // 和两圈内边距，多扣 100px 只会白白把手机上的表缩小一圈 —— 而后排看得清正是这条的目的。
-  var K = Math.min((Math.min(window.innerWidth - 60, 900)) / ZBOX.w,
+  // 🔴 全屏时把上限放到 8（最宽 1600px）：按全屏按钮的场合就是【投影给后排看】，
+  //    这一刻还卡在 880px 等于白按了全屏。全屏是【重画】不是缩放，放大不会糊。
+  var fsNow = (document.fullscreenElement === stage);
+  var K = Math.min((Math.min(window.innerWidth - 60, fsNow ? 1700 : 900)) / ZBOX.w,
                    (window.innerHeight - 140) / ZBOX.h);
-  K = Math.max(1.4, Math.min(K, 4.4));
+  K = Math.max(1.4, Math.min(K, fsNow ? 8 : 4.4));
   var cw = Math.round(ZBOX.w * K), ch = Math.round(ZBOX.h * K);
   zoomCv.width = Math.round(cw * dpr); zoomCv.height = Math.round(ch * dpr);
   zoomCv.style.width = cw + 'px'; zoomCv.style.height = ch + 'px';
@@ -1378,6 +1402,8 @@ window.__wireLab = {
   isZoomOpen: function () { return zoomOpen; },
   dialHit: dialHit,
   zoomCanvas: function () { return zoomCv; },
+  zoomEl: function () { return zoomEl; },        // 全屏里「浮层到底在不在渲染树里」要看它
+  schEl: function () { return document.getElementById('sch'); },
   // 接线夹的两个夹口坐标（画法里的真值，自检的像素腿要拿它定位探针）
   clipPos: function () {
     var g = condOf(state.sel);
