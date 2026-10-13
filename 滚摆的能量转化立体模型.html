@@ -587,6 +587,19 @@
   const discY = () => Y_LOW + (state.H - state.h);
   // 悬线竖直段长度（从横梁底面到轴的上缘）
   const wireLen = () => (BEAM_Y - BEAM_T) - (discY() + state.ra);
+  /* ---- 线在轴上的【缠绕】 ----
+   * 线绕在轴上，圆盘下落 h 就把线从轴上解开了 h 长，即 h/(2πr) 圈。
+   * 所以「轴上还剩几圈」是 h 的直接读数：h = 0 最多、落到最低点最少。
+   * 🔴 只画一段固定角度的弧（不随 h 变）等于没画 —— 一眼就看不出线在解开/卷回。 */
+  const WIND_N0 = 8;            // 最高点（h=0）时绕在轴上的圈数
+  const WIND_PITCH = 0.42;      // 每圈沿轴占的长度（cm）—— 由线径决定，是【固定】的
+  function windTurns() {
+    const per = PI2 * state.ra;                       // 一圈对应的线长（cm）
+    return clamp(WIND_N0 - state.h / per, 1.5, WIND_N0);
+  }
+  // 缠绕区沿轴的长度 = 圈数 × 螺距。螺距不变、长度随圈数变 ⇒ 线解开时缠绕区【变短】，
+  // 这才是真实缠绕的样子（反过来做「长度固定、螺距变」会画成一根弹簧）。
+  const windLen = () => windTurns() * WIND_PITCH;
 
   /* ============================================================
    * 状态
@@ -923,28 +936,61 @@
     placeLabel({ x: bc.x, y: bc.y }, '横梁（固定）', '#c9a87c', 11);
   }
 
-  function drawWires(q) {
+  /* 悬线：竖直段 + 绕在轴上的【螺旋】。
+   * half = 'back' 只画螺旋中位于轴【后方】的那半（z < 0）；'front' 画前方那半 + 竖直段。
+   * 中间夹着 drawAxle / drawDisc ⇒ 螺旋才真的「缠在轴表面」而不是浮在轴前面。 */
+  function drawWires(q, half) {
     const WX = wireX(), ra = state.ra, y = discY();
     const yTop = BEAM_Y - BEAM_T;
+    const turns = windTurns();
     for (const sx of [-WX, WX]) {
-      const zf = 0;
-      const a0 = [sx, yTop, zf], a1 = [sx, y + ra, zf];
-      const sp = [project(a0, q), project(a1, q)];
-      const w = Math.max(1.6, 0.055 * sp[0].s);
-      line(sp, 'rgba(2,6,23,.8)', w + 2.0);
-      line(sp, rgb(C_WIRE, 0.92), w);
-      boxOfPts(sp, 'wire');
-      // 绕在轴上的那一段：从轴的上缘绕【一整圈】再回来一点，读起来就是「线缠在轴上」
-      const arc = [];
-      for (let i = 0; i <= 34; i++) {
-        const a = Math.PI / 2 + (PI2 - 0.30) * i / 34;
-        arc.push(project([sx, y + Math.sin(a) * ra, Math.cos(a) * ra], q));
+      const w = Math.max(1.6, 0.055 * project([sx, yTop, 0], q).s);
+      if (half === 'front') {
+        // 竖直段：横梁底面 → 轴的上缘
+        const sp = [project([sx, yTop, 0], q), project([sx, y + ra, 0], q)];
+        line(sp, 'rgba(2,6,23,.8)', w + 2.0);
+        line(sp, rgb(C_WIRE, 0.92), w);
       }
-      line(arc, 'rgba(2,6,23,.8)', w + 1.6);
-      line(arc, rgb(C_WIRE, 0.82), w * 0.92);
+      // 螺旋：从轴的上缘出发，边绕边沿轴【向内侧】铺开；圈数 = 轴上还剩几圈
+      const dir = sx > 0 ? -1 : 1;
+      const SEG = Math.max(64, Math.round(turns * 18));
+      const pts = [];
+      for (let i = 0; i <= SEG; i++) {
+        const t = i / SEG;
+        const a = Math.PI / 2 - PI2 * turns * t + state.theta;   // 相位跟着轴一起转
+        pts.push({ p: project([sx + dir * windLen() * t, y + Math.sin(a) * ra, Math.cos(a) * ra], q),
+                   front: Math.cos(a) >= 0 });
+      }
+      const wantFront = (half === 'front');
+      ctx.beginPath();
+      let pen = false;
+      for (const it of pts) {
+        if (it.front === wantFront) {
+          if (pen) ctx.lineTo(it.p.x, it.p.y);
+          else { ctx.moveTo(it.p.x, it.p.y); pen = true; }
+        } else pen = false;
+      }
+      ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+      ctx.setLineDash([]);
+      ctx.lineWidth = w + 1.6; ctx.strokeStyle = 'rgba(2,6,23,.8)'; ctx.stroke();
+      ctx.lineWidth = w * 0.92;
+      ctx.strokeStyle = rgb(C_WIRE, half === 'front' ? 0.94 : 0.62);
+      ctx.stroke();
+      if (half === 'front') {
+        const end = pts[pts.length - 1].p;
+        ctx.beginPath();                                  // 线头小结：线端系在轴上
+        ctx.arc(end.x, end.y, Math.max(1.5, w * 0.85), 0, PI2);
+        ctx.fillStyle = rgb(C_WIRE, 0.9); ctx.fill();
+        boxOfPts([pts[0].p, end], 'wire');
+      }
     }
-    state.drawn.wireTop = project([0, yTop, 0], q);
-    state.drawn.wireX = WX;
+    if (half === 'front') {
+      state.drawn.wireTop = project([0, yTop, 0], q);
+      state.drawn.wireX = WX;
+      state.drawn.windTurns = turns;
+      state.drawn.windLen = windLen();
+      state.drawn.windSegs = Math.max(64, Math.round(turns * 18));
+    }
   }
 
   function drawRuler(q) {
@@ -1051,9 +1097,10 @@
     drawBackdrop(q);
     drawRuler(q);
     drawBeam(q);
+    drawWires(q, 'back');      // 螺旋的后半：会被轴挡住
     drawAxle(q);
     drawDisc(q);
-    drawWires(q);
+    drawWires(q, 'front');     // 竖直段 + 螺旋的前半：压在轴表面上
     drawGuides(q);
 
     state.drawn.q = { yaw: state.yaw, pitch: state.pitch, zoom: state.zoom, focal: q.focal, roll: q.roll };
@@ -1299,7 +1346,7 @@
   function setHint() {
     const el = $('rw-hint');
     if (!el) return;
-    el.innerHTML = '细线从横梁垂下、<b>绕在轴上</b>；放手后飞轮边落边转。<br>'
+    el.innerHTML = '细线从横梁垂下、<b>绕在轴上</b>：下落时线从轴上<b>解开</b>，上升时又<b>卷回去</b> —— 轴上剩几圈直接看得见。<br>'
       + '拖动飞轮可以把它放到任意高度，松手即从那里开始。';
   }
   function applyView(name) {
@@ -1484,10 +1531,12 @@
       get DISC_T() { return DISC_T; }, get R_MIN() { return R_MIN; }, get R_MAX() { return R_MAX; },
       get A_MIN() { return A_MIN; }, get A_MAX() { return A_MAX; },
       get G_ACC() { return G_ACC; }, get V_STOP() { return V_STOP; },
+      get WIND_N0() { return WIND_N0; }, get WIND_PITCH() { return WIND_PITCH; },
       get CAMD() { return CAMD; }, VIEWS: VIEWS
     },
     // 物理：与页面同一份
     discModel: discModel, discY: discY, wireLen: wireLen, wireX: wireX, axleHalf: axleHalf,
+    windTurns: windTurns, windLen: windLen,
     stepPhysics: stepPhysics,
     // 相机
     makeCam: makeCam, project: project, envelopePoints: envelopePoints,
