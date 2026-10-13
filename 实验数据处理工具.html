@@ -1,0 +1,1415 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>实验数据处理 · 描点连线 - 物理虚拟实验</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="stylesheet" href="style.css">
+  <style>
+    :root{
+      --bg:#020617; --panel:rgba(15,23,42,.72); --line:rgba(148,163,184,.16);
+      --ink:#e2e8f0; --dim:#94a3b8; --dim2:#64748b;
+      --blue:#38bdf8; --purple:#a78bfa; --green:#34d399; --amber:#fbbf24;
+      --red:#fb7185; --cyan:#22d3ee; --orange:#fb923c;
+    }
+    *{box-sizing:border-box}
+    html,body{margin:0}
+    body{
+      padding:20px 0 0; min-width:320px;
+      background:
+        radial-gradient(1100px 620px at 12% -8%, rgba(56,189,248,.14), transparent 62%),
+        radial-gradient(900px 560px at 88% 4%, rgba(251,191,36,.11), transparent 60%),
+        radial-gradient(760px 520px at 50% 108%, rgba(56,189,248,.07), transparent 60%),
+        var(--bg);
+      color:var(--ink);
+      font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Segoe UI",Roboto,sans-serif;
+      -webkit-font-smoothing:antialiased; line-height:1.62;
+    }
+    .exp-wrap{max-width:1240px;margin:0 auto;padding:0 16px 26px}
+    .exp-wrap h2{margin:0;font-size:22px;letter-spacing:.3px;
+      background:linear-gradient(120deg,#e2e8f0 10%,#7dd3fc 55%,#fcd34d 92%);
+      -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+    .exp-wrap .sub{margin:7px 0 16px;color:#93b4c4;font-size:12.5px;line-height:1.7}
+    .exp-wrap .sub b{color:#7dd3fc;font-weight:700}
+    .exp-wrap .sub b.e{color:#fcd34d}
+
+    /* ===== 舞台 = 画面区 + 控制台。常规【左右并排】；全屏下控制台压成
+           画面【下面】一条控制带 —— 全屏里也必须能选实验、输数据。 ===== */
+    .stage{display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap}
+    .cv{position:relative;flex:1 1 680px;min-width:0;
+        background:rgba(9,15,28,.86);border:1px solid var(--line);border-radius:16px;padding:10px;
+        box-shadow:0 18px 46px rgba(2,6,23,.5);text-align:center}
+    .cv canvas{display:block;margin:0 auto;border-radius:10px;background:#060a14;cursor:crosshair;max-width:100%}
+    .side{flex:0 0 400px;min-width:0;display:flex;flex-direction:column;gap:12px}
+    @media (max-width:1020px){ .cv{flex:1 1 100%} .side{flex:1 1 100%} }
+
+    .fsBtn{position:absolute;top:18px;right:18px;z-index:7;
+      display:flex;align-items:center;gap:5px;
+      padding:6px 11px;border-radius:9px;border:1px solid rgba(148,163,184,.32);
+      background:rgba(15,23,42,.82);color:#cbd5e1;
+      font-family:inherit;font-size:12.5px;font-weight:600;cursor:pointer;
+      box-shadow:0 2px 10px rgba(2,6,23,.5);transition:.15s}
+    .fsBtn:hover{background:rgba(30,41,59,.95);border-color:rgba(148,163,184,.6)}
+    .fsBtn.on{background:#2563eb;border-color:#2563eb;color:#fff}
+
+    .stageTag{position:absolute;top:18px;left:18px;z-index:7;max-width:46%;text-align:left;
+      padding:6px 12px;border-radius:9px;font-size:12.5px;font-weight:700;
+      background:rgba(2,6,23,.86);color:#e2e8f0;border:1px solid rgba(148,163,184,.28);
+      letter-spacing:.02em;line-height:1.45}
+    .stageTag .s{display:block;font-weight:500;font-size:11.5px;color:#94a3b8;margin-top:2px}
+    @media (max-width:560px){
+      .stageTag{max-width:66%;font-size:11px;padding:5px 9px}
+      .stageTag .s{display:none}
+    }
+
+    /* ===== 全屏：画面占满上方，控制台变成【底部控制带】 ===== */
+    #stage:fullscreen, #stage:-webkit-full-screen{
+      display:flex;flex-direction:column;flex-wrap:nowrap;align-items:stretch;
+      gap:0;padding:0;border:0;border-radius:0;background:#060a14;overflow:hidden}
+    #stage:fullscreen .cv, #stage:-webkit-full-screen .cv{
+      flex:1 1 auto;min-height:0;padding:6px;border:0;border-radius:0;
+      background:transparent;box-shadow:none;
+      display:flex;align-items:center;justify-content:center;overflow:hidden}
+    #stage:fullscreen .fsBtn, #stage:-webkit-full-screen .fsBtn{top:14px;right:14px}
+    #stage:fullscreen .stageTag, #stage:-webkit-full-screen .stageTag{top:14px;left:14px}
+
+    #stage:fullscreen .side, #stage:-webkit-full-screen .side{
+      flex:0 0 auto;flex-direction:row;align-items:stretch;gap:16px;
+      padding:8px 14px 10px;background:rgba(9,15,28,.98);border-top:1px solid var(--line)}
+    #stage:fullscreen .panel, #stage:-webkit-full-screen .panel{
+      padding:0;border:0;border-radius:0;box-shadow:none;background:transparent}
+    #stage:fullscreen .ctl, #stage:-webkit-full-screen .ctl{
+      flex:1 1 auto;min-width:0;display:flex;flex-wrap:wrap;align-items:flex-start;gap:6px 14px}
+    #stage:fullscreen .ctl h3, #stage:-webkit-full-screen .ctl h3{display:none}
+    #stage:fullscreen .fld, #stage:-webkit-full-screen .fld{margin:0;flex:0 0 232px}
+    #stage:fullscreen .pinfo, #stage:-webkit-full-screen .pinfo{display:none}
+    #stage:fullscreen .opts, #stage:-webkit-full-screen .opts{margin:0;flex:0 0 auto;max-width:290px}
+    #stage:fullscreen .tblwrap, #stage:-webkit-full-screen .tblwrap{
+      flex:0 0 470px;max-height:104px}
+    #stage:fullscreen .btns, #stage:-webkit-full-screen .btns{margin:0;flex:0 0 auto;max-width:300px}
+    #stage:fullscreen .btns button, #stage:-webkit-full-screen .btns button{padding:7px 10px;font-size:12px}
+    @media (max-width:900px){
+      #stage:fullscreen .tblwrap, #stage:-webkit-full-screen .tblwrap{flex:0 0 100%;max-height:92px}
+      #stage:fullscreen .opts, #stage:-webkit-full-screen .opts{max-width:none}
+    }
+
+    /* ===== 面板 ===== */
+    .panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:13px;
+      box-shadow:0 10px 30px rgba(2,6,23,.35)}
+    .panel h3{margin:0 0 9px;font-size:13px;color:#cbd5e1;font-weight:700;letter-spacing:.02em}
+
+    .fld{margin:0 0 10px}
+    .fld label{display:block;font-size:11.5px;color:var(--dim);margin-bottom:5px}
+    .fld select{width:100%;padding:8px 9px;border-radius:9px;
+      border:1px solid rgba(148,163,184,.26);background:rgba(2,6,23,.72);color:#e2e8f0;
+      font-family:inherit;font-size:12.5px;font-weight:600;cursor:pointer}
+    .fld select:focus{outline:none;border-color:#38bdf8;box-shadow:0 0 0 2px rgba(56,189,248,.18)}
+    .fld select optgroup{color:#64748b;font-weight:700;background:#0b1220}
+    .fld select option{color:#e2e8f0;background:#0b1220;font-weight:500}
+
+    .pinfo{margin:0 0 10px;padding:8px 10px;border-radius:9px;font-size:11.5px;line-height:1.7;
+      background:rgba(2,6,23,.5);border:1px solid var(--line);color:#93b4c4}
+    .pinfo b{color:#7dd3fc}
+    .pinfo em{font-style:normal;color:#fcd34d}
+
+    .opts{display:flex;flex-wrap:wrap;gap:5px 12px;margin:0 0 10px;
+      padding:8px 10px;border-radius:9px;background:rgba(2,6,23,.42);border:1px solid var(--line)}
+    .opts label{display:flex;align-items:center;gap:5px;font-size:11.5px;color:#a5b4c8;cursor:pointer;white-space:nowrap}
+    .opts input[type=checkbox]{width:14px;height:14px;accent-color:#38bdf8;cursor:pointer;margin:0}
+    .opts label.dis{opacity:.38;cursor:not-allowed}
+
+    /* ===== 数据表 ===== */
+    .tblwrap{max-height:37vh;overflow:auto;border:1px solid var(--line);border-radius:10px;
+      background:rgba(2,6,23,.5);margin:0 0 10px}
+    .dtbl{width:100%;border-collapse:collapse;font-size:12.5px}
+    .dtbl th{position:sticky;top:0;z-index:2;background:#0d1729;color:#93b4c4;font-weight:700;
+      font-size:11px;padding:6px 6px;text-align:right;border-bottom:1px solid var(--line);white-space:nowrap}
+    .dtbl th:first-child{text-align:center;width:30px}
+    .dtbl th:last-child{width:30px}
+    .dtbl td{padding:3px 4px;border-bottom:1px solid rgba(148,163,184,.07)}
+    .dtbl td.idx{width:30px;color:var(--dim2);font-size:11px;text-align:center;
+      font-variant-numeric:tabular-nums;padding-right:2px}
+    .dtbl input{width:100%;min-width:0;padding:5px 7px;border-radius:7px;
+      border:1px solid rgba(148,163,184,.2);background:rgba(2,6,23,.62);color:#e2e8f0;
+      font-family:inherit;font-size:12.5px;font-variant-numeric:tabular-nums;text-align:right}
+    .dtbl input:focus{outline:none;border-color:#38bdf8;box-shadow:0 0 0 2px rgba(56,189,248,.18)}
+    .dtbl input.bad{border-color:rgba(251,113,133,.75)}
+    .dtbl td.op{width:30px;text-align:center}
+    .dtbl button.del{width:22px;height:22px;padding:0;border-radius:7px;border:1px solid transparent;
+      background:transparent;color:#64748b;cursor:pointer;font-size:14px;line-height:1;font-family:inherit}
+    .dtbl button.del:hover{color:#fb7185;border-color:rgba(251,113,133,.4);background:rgba(251,113,133,.08)}
+    .tbl-empty{padding:14px 10px;text-align:center;color:var(--dim2);font-size:11.5px}
+
+    .btns{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 8px}
+    .btns:last-child{margin-bottom:0}
+    .btns button{flex:1 1 auto;padding:8px 10px;border-radius:10px;
+      border:1px solid rgba(148,163,184,.24);background:rgba(15,23,42,.6);color:#cbd5e1;
+      font-family:inherit;font-size:12px;font-weight:600;cursor:pointer;transition:.15s;white-space:nowrap}
+    .btns button:hover{border-color:rgba(148,163,184,.5);color:#fff}
+    .btns button.primary{background:linear-gradient(180deg,#0284c7,#0369a1);border-color:#38bdf8;color:#fff}
+    .btns button.primary:hover{filter:brightness(1.08)}
+
+    /* ===== 处理结果条（画面【下方】，全宽横排 —— 输完数据视线往下就能看到结论） ===== */
+    .readbar{display:grid;grid-template-columns:auto minmax(0,1fr) minmax(0,1.2fr);
+      gap:10px 20px;align-items:start;margin-top:14px;padding:13px 15px;
+      background:var(--panel);border:1px solid var(--line);border-radius:14px;
+      box-shadow:0 10px 30px rgba(2,6,23,.35)}
+    .readbar .badge{display:inline-block;padding:4px 11px;border-radius:999px;
+      font-size:11.5px;font-weight:700;letter-spacing:.02em;align-self:start;white-space:nowrap;
+      background:rgba(56,189,248,.16);color:#7dd3fc;border:1px solid rgba(56,189,248,.42)}
+    .readbar .right{display:flex;flex-direction:column;gap:8px;min-width:0}
+    .readbar .formula{margin:0}
+    .readbar .verdict{margin:0}
+    @media (max-width:900px){
+      .readbar{grid-template-columns:minmax(0,1fr)}
+      .readbar .badge,.readbar .kv,.readbar .right{grid-column:1}
+    }
+    .kv{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;margin:0;font-size:12px}
+    .kv dt{color:var(--dim);white-space:nowrap}
+    .kv dd{margin:0;text-align:right;font-weight:700;font-variant-numeric:tabular-nums;color:#fff}
+    .kv dd.w{color:#7dd3fc}
+    .kv dd.e{color:#fcd34d}
+    .kv .sep{grid-column:1/-1;height:0;border-top:1px dashed rgba(148,163,184,.22);margin:3px 0}
+
+    .formula{margin-top:10px;padding:7px 10px;border-radius:9px;font-size:11.5px;line-height:1.7;
+      background:rgba(2,6,23,.55);border:1px solid var(--line);color:#a5b4c8;
+      font-variant-numeric:tabular-nums;word-break:break-word}
+    .formula b{color:#fcd34d}
+    .verdict{margin:8px 0 0;padding:8px 11px;border-radius:9px;font-size:11.5px;line-height:1.7;
+      background:rgba(56,189,248,.07);border:1px solid rgba(56,189,248,.2);color:#bae6fd}
+    .verdict.ok{background:rgba(52,211,153,.09);border-color:rgba(52,211,153,.32);color:#a7f3d0}
+    .verdict b{color:#fff}
+
+    /* ===== 信息卡 ===== */
+    .info-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-top:16px}
+    @media (max-width:880px){ .info-grid{grid-template-columns:minmax(0,1fr)} }
+    .info-card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px}
+    .info-card.wide{grid-column:1/-1}
+    .info-card h3{margin:0 0 10px;font-size:15px;color:#7dd3fc}
+    .info-card p,.info-card li{color:var(--dim);font-size:12.5px;line-height:1.85}
+    .info-card ul{margin:0;padding-left:18px}
+    .info-card ol{margin:0;padding-left:20px}
+    .info-card b{color:#e2e8f0}
+    .info-card b.w{color:#7dd3fc}
+    .info-card b.e{color:#fcd34d}
+    .info-card .tbl{width:100%;border-collapse:collapse;font-size:12px;margin-top:2px}
+    .info-card .tbl th{color:var(--dim2);font-weight:600;font-size:11.5px;text-align:left;
+      padding:6px 8px;border-bottom:1px solid var(--line);white-space:nowrap;
+      position:sticky;top:0;background:#0b1220;z-index:1}
+    .info-card .tbl td{padding:7px 8px;border-bottom:1px solid rgba(148,163,184,.08);
+      color:#cbd5e1;line-height:1.6;vertical-align:top}
+    .info-card .tbl td.w{color:#7dd3fc;font-weight:600;white-space:nowrap}
+    .info-card .tbl td.e{color:#fcd34d;font-weight:600;white-space:nowrap}
+    .info-card .tbl tr.grp td{background:rgba(56,189,248,.07);color:#7dd3fc;font-weight:700;
+      font-size:11.5px;letter-spacing:.04em;padding:6px 8px}
+    .scroller{max-height:430px;overflow:auto;border:1px solid var(--line);border-radius:10px}
+
+    /* ===== 自动隐藏导航栏 ===== */
+    .header{position:fixed !important;top:0;left:0;right:0;z-index:50;
+      transition:transform .35s cubic-bezier(.4,0,.2,1);will-change:transform}
+    .header.hidden{transform:translateY(-100%)}
+    body{padding-top:56px;transition:padding-top .35s cubic-bezier(.4,0,.2,1)}
+    body.header-hidden{padding-top:0}
+    @media (max-width:768px){ body{padding-top:48px} }
+  </style>
+  <script src="protect.js"></script>
+  <script src="auth-check.js"></script>
+</head>
+<body>
+  <header class="header">
+    <div class="logo">物理虚拟实验平台</div>
+    <nav class="nav">
+      <a href="experiments.html">实验目录</a>
+      <a href="index.html">首页</a>
+    </nav>
+  </header>
+
+  <div class="exp-wrap">
+    <h2>实验数据处理 · 描点连线</h2>
+    <p class="sub">把实验测得的<strong>数据</strong>填进右边的表格，左边会自动画好
+      <b>直角坐标系</b>、<b>描点</b>、<b>连线</b>，并帮你把<b class="e">规律</b>找出来。
+      先在上面选一个实验（比如「电流与电压」「重力与质量」「路程与时间」），
+      坐标轴的名称和单位会自动换好；再把表格里的示例数据改成你自己测出来的数据 ——
+      图像会立刻跟着变。系统会自动判断 <b>正比 / 反比 / 曲线 / 平台</b>，并给出拟合结果。</p>
+
+    <div class="stage" id="stage">
+      <div class="cv" id="cv">
+        <canvas id="simCanvas"></canvas>
+        <div class="stageTag" id="stageTag">实验数据处理 · 描点连线<span class="s" id="tagSub">选择实验 → 输入数据 → 自动描点连线</span></div>
+        <button class="fsBtn" id="fsBtn" type="button" title="全屏显示图像">⛶ 全屏</button>
+      </div>
+
+      <div class="side" id="side">
+        <div class="panel ctl" id="ctl">
+          <h3>控制台</h3>
+
+          <div class="fld">
+            <label for="presetSel">实验项目（决定 X 轴 / Y 轴与单位）</label>
+            <select id="presetSel"></select>
+          </div>
+
+          <div class="pinfo" id="pinfo"></div>
+
+          <div class="opts" id="opts">
+            <label><input type="checkbox" id="optGrid" checked> 网格</label>
+            <label><input type="checkbox" id="optLine" checked> 连线</label>
+            <label id="fitLbl"><input type="checkbox" id="optFit" checked> 拟合曲线</label>
+            <label id="originLbl"><input type="checkbox" id="optOrigin" checked> 拟合过原点</label>
+            <label><input type="checkbox" id="optLabel"> 点坐标</label>
+            <label><input type="checkbox" id="optZero" checked> 坐标轴从 0 起</label>
+            <label><input type="checkbox" id="optClick"> 点画面加点</label>
+          </div>
+
+          <div class="tblwrap" id="tblwrap">
+            <table class="dtbl" id="dtbl">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th id="thX">X</th>
+                  <th id="thY">Y</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="tbody"></tbody>
+            </table>
+          </div>
+
+          <div class="btns">
+            <button id="btnAdd" type="button">＋ 加一行</button>
+            <button id="btnClear" type="button">🗑 清空数据</button>
+            <button id="btnSample" type="button">↺ 载入示例</button>
+          </div>
+          <div class="btns">
+            <button id="btnPng" class="primary" type="button">⬇ 导出图像</button>
+            <button id="btnCsv" type="button">⬇ 导出数据</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="readbar" id="read">
+      <div class="badge" id="badge">—</div>
+      <dl class="kv" id="kv"></dl>
+      <div class="right">
+        <div class="formula" id="formula"></div>
+        <div class="verdict" id="verdict"></div>
+      </div>
+    </div>
+
+    <div class="info-grid">
+      <div class="info-card wide">
+        <h3>初中物理里，哪些实验的数据可以画成图像？</h3>
+        <p style="margin-top:0">凡是「<b>改变一个量、测另一个量</b>」的实验，都可以把测得的每一组数据
+          当成坐标系里的一个点，描点连线后从图像上看出规律。下面这些是初中阶段最常用的。</p>
+        <div class="scroller">
+          <table class="tbl">
+            <thead><tr><th>实验</th><th>X 轴（自变量）</th><th>Y 轴（因变量）</th><th>图像特点</th></tr></thead>
+            <tbody>
+              <tr class="grp"><td colspan="4">八年级上册</td></tr>
+              <tr><td>测量平均速度（s-t 图像）</td><td class="w">时间 t / s</td><td class="e">路程 s / m</td><td>过原点的直线，斜率 = 速度 v</td></tr>
+              <tr><td>探究重力的大小与质量的关系</td><td class="w">质量 m / kg</td><td class="e">重力 G / N</td><td>过原点的直线，斜率 = g = 9.8 N/kg</td></tr>
+              <tr><td>探究同种物质的质量与体积的关系</td><td class="w">体积 V / cm³</td><td class="e">质量 m / g</td><td>过原点的直线，斜率 = 密度 ρ</td></tr>
+              <tr><td>探究弹簧的伸长量与拉力的关系</td><td class="w">拉力 F / N</td><td class="e">伸长量 ΔL / cm</td><td>弹性限度内是过原点的直线</td></tr>
+              <tr><td>探究水沸腾时温度变化的特点</td><td class="w">时间 t / min</td><td class="e">温度 T / ℃</td><td>先上升，到沸点后保持水平</td></tr>
+              <tr><td>探究固体熔化时温度的变化规律</td><td class="w">时间 t / min</td><td class="e">温度 T / ℃</td><td>出现「平台」，平台温度 = 熔点</td></tr>
+              <tr><td>探究光的反射定律</td><td class="w">入射角 i / °</td><td class="e">反射角 r / °</td><td>过原点的直线，且 r = i</td></tr>
+              <tr><td>探究平面镜成像的特点</td><td class="w">物距 u / cm</td><td class="e">像距 v / cm</td><td>直线，v = u</td></tr>
+              <tr><td>探究凸透镜成像的规律</td><td class="w">物距 u / cm</td><td class="e">像距 v / cm</td><td>曲线（1/u + 1/v = 1/f）</td></tr>
+              <tr><td>探究滑动摩擦力与压力的关系</td><td class="w">压力 F<sub>N</sub> / N</td><td class="e">摩擦力 f / N</td><td>过原点的直线，斜率 = 动摩擦因数</td></tr>
+
+              <tr class="grp"><td colspan="4">八年级下册</td></tr>
+              <tr><td>探究液体内部压强与深度的关系</td><td class="w">深度 h / cm</td><td class="e">压强 p / Pa</td><td>过原点的直线（p = ρgh）</td></tr>
+              <tr><td>探究浮力大小与排开液体体积的关系</td><td class="w">排开液体体积 V / cm³</td><td class="e">浮力 F / N</td><td>过原点的直线</td></tr>
+              <tr><td>探究浮力大小与液体密度的关系</td><td class="w">液体密度 ρ / (g·cm⁻³)</td><td class="e">浮力 F / N</td><td>过原点的直线</td></tr>
+              <tr><td>验证阿基米德原理</td><td class="w">排开液体重 G<sub>排</sub> / N</td><td class="e">浮力 F<sub>浮</sub> / N</td><td>直线，F<sub>浮</sub> = G<sub>排</sub></td></tr>
+              <tr><td>探究杠杆的平衡条件</td><td class="w">动力臂 L₁ / cm</td><td class="e">动力 F₁ / N</td><td>双曲线，F₁·L₁ = 常数</td></tr>
+              <tr><td>探究动能大小与速度的关系</td><td class="w">速度 v / (m·s⁻¹)</td><td class="e">动能 E<sub>k</sub> / J</td><td>曲线（E<sub>k</sub> ∝ v²）</td></tr>
+              <tr><td>探究滑轮组的机械效率</td><td class="w">物重 G / N</td><td class="e">机械效率 η / %</td><td>先快速上升，后趋于平缓</td></tr>
+
+              <tr class="grp"><td colspan="4">九年级全一册</td></tr>
+              <tr><td>探究电流与电压的关系</td><td class="w">电压 U / V</td><td class="e">电流 I / A</td><td>过原点的直线，斜率 = 1/R</td></tr>
+              <tr><td>探究电流与电阻的关系</td><td class="w">电阻 R / Ω</td><td class="e">电流 I / A</td><td>双曲线，I·R = U（常数）</td></tr>
+              <tr><td>伏安法测电阻</td><td class="w">电压 U / V</td><td class="e">电流 I / A</td><td>过原点的直线，斜率 = 1/R</td></tr>
+              <tr><td>测量小灯泡的电功率</td><td class="w">电压 U / V</td><td class="e">电流 I / A</td><td>曲线（灯丝电阻随温度升高而变大）</td></tr>
+              <tr><td>探究电流产生的热量与电流的关系</td><td class="w">电流 I / A</td><td class="e">热量 Q / J</td><td>曲线（Q ∝ I²）</td></tr>
+              <tr><td>探究电阻大小与导体长度的关系</td><td class="w">长度 L / cm</td><td class="e">电阻 R / Ω</td><td>过原点的直线</td></tr>
+              <tr><td>探究电磁铁磁性强弱与电流的关系</td><td class="w">电流 I / A</td><td class="e">吸引大头针数 n / 枚</td><td>一定范围内近似直线</td></tr>
+              <tr><td>比较不同物质的比热容</td><td class="w">加热时间 t / min</td><td class="e">温度 T / ℃</td><td>直线，斜率越小，比热容越大</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="info-card">
+        <h3>怎么用这个工具</h3>
+        <ol>
+          <li><b>选实验</b>：在「实验项目」里选你做的那个实验，坐标轴的名称、单位、示例数据会自动换好。</li>
+          <li><b>清空</b>：点「🗑 清空数据」，表格里就只剩空行。</li>
+          <li><b>输数据</b>：把每次测得的两个量分别填进 X、Y 两列（用 <b>＋ 加一行</b> 增加行数），按回车自动跳到下一格。</li>
+          <li><b>看图</b>：左边的坐标系会自动定刻度、描点、连线，并画出拟合曲线。</li>
+          <li><b>读结论</b>：右边「处理结果」里会给出斜率 k（或乘积 k）、R² 和结论。</li>
+          <li><b>交作业</b>：点「⬇ 导出图像」保存图片，点「⬇ 导出数据」保存成表格文件。</li>
+        </ol>
+        <p style="margin-bottom:0">小技巧：勾上「<b class="w">点画面加点</b>」后，可以直接在坐标系里点一下，
+          就在那个位置补一个数据点。</p>
+      </div>
+
+      <div class="info-card">
+        <h3>图像怎么看 · 三个关键</h3>
+        <ul>
+          <li><b class="w">① 形状</b>：过原点的直线 ⇒ 两个量<b>成正比</b>；不过原点的直线 ⇒ 一次函数关系；
+              双曲线 ⇒ <b>成反比</b>；弯曲的曲线 ⇒ 更复杂的关系（如 E<sub>k</sub> ∝ v²）。</li>
+          <li><b class="w">② 斜率</b>：k = Δy/Δx，就是「每增加 1 个单位的 X，Y 增加多少」。
+              斜率常常对应一个物理量 —— 比如 G-m 图的斜率是 g，m-V 图的斜率是密度 ρ，
+              U-I 图的斜率是电阻 R 的倒数。</li>
+          <li><b class="w">③ 截距</b>：图线与 Y 轴的交点。截距不为 0 时要想一想为什么 ——
+              可能是系统误差（例如摩擦力没算进去、弹簧有自重）。</li>
+        </ul>
+        <p style="margin-bottom:0">判断「成正比」的依据是<b>图像是过原点的直线</b>，
+          不是「数据看起来差不多」。</p>
+      </div>
+
+      <div class="info-card">
+        <h3>作图四个常见错误</h3>
+        <ul>
+          <li><b class="e">① 折线连点</b>：把相邻点用折线硬连成锯齿。正确的做法是<b>描点后画一条光滑曲线</b>，
+              让点大致均匀分布在曲线两侧 —— 所以本页的「连线」只用来帮你看趋势，判断规律要看<b>拟合曲线</b>。</li>
+          <li><b class="e">② 刻度不均匀</b>：纵轴每格忽大忽小。坐标轴上的刻度必须<b>等间距</b>，
+              本页会自动帮你把刻度取成 1、2、5 的整数倍。</li>
+          <li><b class="e">③ 忘写单位</b>：坐标轴旁边一定要写清物理量和单位，如「t / s」「G / N」。</li>
+          <li><b class="e">④ 起点随意</b>：探究正比关系的实验，坐标轴一般要<b>从 0 开始</b>，
+              否则容易把「不过原点的直线」看成「过原点」。本页的「坐标轴从 0 起」默认打开。</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <script src="supabase.js"></script>
+  <script src="script.js"></script>
+  <script>
+(function () {
+'use strict';
+
+// ============================================================
+// 实验数据处理 · 描点连线
+// ------------------------------------------------------------
+// 真值源（自检也读它）：
+//   rows[]  —— 表格里每一行的原始文本（xs / ys），解析成数字后才是数据点
+//   validPts() —— 有效的 (x, y) 点（两个都能解析成有限数）
+//   ranges()   —— 由数据 + 「从 0 起」开关算出的坐标范围与刻度步长
+//   computeFit() —— 最小二乘拟合（正比 / 一次函数 / 反比）
+//   drawFrame() —— 唯一的绘制入口，画出去的几何与 probe() 读到的同源
+// ============================================================
+
+var W = 1000, H = 620;            // 画布逻辑尺寸
+var PAD = 10;                     // .cv 内边距
+// 绘图区（逻辑坐标）：左边留 Y 轴标签，底部留 X 轴标签
+var PLOT = { x: 122, y: 54, w: 812, h: 474 };
+
+// ── DOM ─────────────────────────────────────────────────────
+var canvas  = document.getElementById('simCanvas');
+var ctx     = canvas.getContext('2d');
+var cvWrap  = document.getElementById('cv');
+var stageEl = document.getElementById('stage');
+var fsBtn   = document.getElementById('fsBtn');
+var tbody   = document.getElementById('tbody');
+var presetSel = document.getElementById('presetSel');
+var thX = document.getElementById('thX'), thY = document.getElementById('thY');
+var pinfo = document.getElementById('pinfo');
+var tagSub = document.getElementById('tagSub');
+var elBadge = document.getElementById('badge');
+var elKv = document.getElementById('kv');
+var elFormula = document.getElementById('formula');
+var elVerdict = document.getElementById('verdict');
+var optGrid = document.getElementById('optGrid'), optLine = document.getElementById('optLine');
+var optFit = document.getElementById('optFit'), optLabel = document.getElementById('optLabel');
+var optZero = document.getElementById('optZero'), optClick = document.getElementById('optClick');
+var optOrigin = document.getElementById('optOrigin');
+var fitLbl = document.getElementById('fitLbl');
+var originLbl = document.getElementById('originLbl');
+var dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+var isFull = false, fsLayoutCalls = 0;
+
+// ============================================================
+// 一、实验预设
+// ------------------------------------------------------------
+//  fit: 'prop'    过原点正比  y = kx
+//       'linear'  一次函数    y = kx + b
+//       'inverse' 反比        y = k/x
+//       'none'    只连线不拟合（熔化 / 沸腾 / 凸透镜这类曲线）
+// ============================================================
+var PRESETS = [
+  // ── 八年级上册 ────────────────────────────────────────────
+  { id:'st', grp:'八年级上册', name:'测量平均速度（s-t 图像）', chap:'第一章 第4节',
+    x:{n:'时间 t', u:'s'}, y:{n:'路程 s', u:'m'}, fit:'prop', kName:'它就是速度 v',
+    sample:[[0,0],[1,0.5],[2,1.0],[3,1.5],[4,2.0],[5,2.5]],
+    note:'图像是过原点的直线，说明 s 与 t 成正比。' },
+
+  { id:'gm', grp:'八年级上册', name:'探究重力的大小与质量的关系', chap:'第六章 第3节',
+    x:{n:'质量 m', u:'kg'}, y:{n:'重力 G', u:'N'}, fit:'prop', kName:'它就是 g（约 9.8 N/kg）',
+    sample:[[0.1,0.98],[0.2,1.96],[0.3,2.94],[0.4,3.92],[0.5,4.90]],
+    note:'图像是过原点的直线，说明 G 与 m 成正比。' },
+
+  { id:'mv', grp:'八年级上册', name:'探究同种物质的质量与体积的关系', chap:'第六章 第2节',
+    x:{n:'体积 V', u:'cm³'}, y:{n:'质量 m', u:'g'}, fit:'prop', kName:'它就是这种物质的密度 ρ',
+    sample:[[10,27],[20,54],[30,81],[40,108],[50,135]],
+    note:'图像是过原点的直线，说明同种物质 m 与 V 成正比，斜率就是密度。' },
+
+  { id:'hook', grp:'八年级上册', name:'探究弹簧的伸长量与拉力的关系', chap:'第七章 第2节',
+    x:{n:'拉力 F', u:'N'}, y:{n:'伸长量 ΔL', u:'cm'}, fit:'prop', kName:'1/k 就是弹簧的劲度系数',
+    sample:[[0.5,1.0],[1.0,2.0],[1.5,3.0],[2.0,4.0],[2.5,5.0]],
+    note:'在弹性限度内，图像是过原点的直线，说明 ΔL 与 F 成正比（胡克定律）。超过弹性限度后图线会弯。' },
+
+  { id:'boil', grp:'八年级上册', name:'探究水沸腾时温度变化的特点', chap:'第三章 第3节',
+    x:{n:'时间 t', u:'min'}, y:{n:'温度 T', u:'℃'}, fit:'none',
+    sample:[[0,90],[1,92],[2,94],[3,96],[4,98],[5,99],[6,100],[7,100],[8,100],[9,100],[10,100]],
+    concl:'沸腾前温度不断升高；温度达到 <b>100 ℃</b> 后继续加热，温度<b>保持不变</b> —— 这个温度就是水的沸点。水沸腾时要<b>继续吸热</b>，但温度不再升高。' },
+
+  { id:'melt', grp:'八年级上册', name:'探究固体熔化时温度的变化规律', chap:'第三章 第2节',
+    x:{n:'时间 t', u:'min'}, y:{n:'温度 T', u:'℃'}, fit:'none',
+    sample:[[0,-6],[1,-3],[2,0],[3,0],[4,0],[5,0],[6,0],[7,2],[8,4],[9,6]],
+    concl:'图像上出现一段<b>水平「平台」</b>，平台对应的温度就是这种晶体的<b>熔点</b>。平台期间物质<b>继续吸热但温度不变</b>，吸收的热量用来破坏晶体的结构（熔化）。' },
+
+  { id:'refl', grp:'八年级上册', name:'探究光的反射定律', chap:'第四章 第2节',
+    x:{n:'入射角 i', u:'°'}, y:{n:'反射角 r', u:'°'}, fit:'prop', kName:'它等于 1，说明 r = i',
+    sample:[[15,15],[30,30],[45,45],[60,60],[75,75]],
+    note:'图线是一条与坐标轴成 45° 的直线，说明反射角总是等于入射角。' },
+
+  { id:'mirror', grp:'八年级上册', name:'探究平面镜成像的特点', chap:'第四章 第3节',
+    x:{n:'物距 u', u:'cm'}, y:{n:'像距 v', u:'cm'}, fit:'prop', kName:'它等于 1，说明 v = u',
+    sample:[[5,5],[10,10],[15,15],[20,20],[25,25]],
+    note:'图线是 45° 直线，说明像距总等于物距，像与物到镜面的距离相等。' },
+
+  { id:'lens', grp:'八年级上册', name:'探究凸透镜成像的规律', chap:'第五章 第3节',
+    x:{n:'物距 u', u:'cm'}, y:{n:'像距 v', u:'cm'}, fit:'none',
+    sample:[[15,30],[20,20],[25,16.7],[30,15],[40,13.3],[60,12]],
+    concl:'图线是一条<b>弯曲的曲线</b>：u 增大时 v 减小，但减小的速度越来越慢。它们满足 <b>1/u + 1/v = 1/f</b>（本例 f = 10 cm）。u = 2f 时 v = 2f，是像放大与缩小的分界点。' },
+
+  { id:'fric', grp:'八年级上册', name:'探究滑动摩擦力与压力的关系', chap:'第八章 第3节',
+    x:{n:'压力 F_N', u:'N'}, y:{n:'摩擦力 f', u:'N'}, fit:'prop', kName:'它就是接触面间的动摩擦因数',
+    sample:[[2,0.6],[4,1.2],[6,1.8],[8,2.4],[10,3.0]],
+    note:'图像是过原点的直线，说明接触面不变时，滑动摩擦力与压力成正比。' },
+
+  // ── 八年级下册 ────────────────────────────────────────────
+  { id:'phyd', grp:'八年级下册', name:'探究液体内部压强与深度的关系', chap:'第九章 第2节',
+    x:{n:'深度 h', u:'cm'}, y:{n:'压强 p', u:'Pa'}, fit:'prop', kName:'它等于 ρg',
+    sample:[[5,500],[10,1000],[15,1500],[20,2000],[25,2500]],
+    note:'图像是过原点的直线，说明同种液体中，液体压强与深度成正比。' },
+
+  { id:'fbv', grp:'八年级下册', name:'探究浮力大小与排开液体体积的关系', chap:'第十章 第1节',
+    x:{n:'排开液体体积 V', u:'cm³'}, y:{n:'浮力 F', u:'N'}, fit:'prop', kName:'它等于 ρ液·g',
+    sample:[[20,0.2],[40,0.4],[60,0.6],[80,0.8],[100,1.0]],
+    note:'图像是过原点的直线，说明液体密度不变时，浮力与排开液体的体积成正比。' },
+
+  { id:'fbr', grp:'八年级下册', name:'探究浮力大小与液体密度的关系', chap:'第十章 第1节',
+    x:{n:'液体密度 ρ', u:'g/cm³'}, y:{n:'浮力 F', u:'N'}, fit:'prop', kName:'它等于 V排·g',
+    sample:[[0.8,0.8],[1.0,1.0],[1.2,1.2],[1.4,1.4]],
+    note:'图像是过原点的直线，说明排开液体体积不变时，浮力与液体密度成正比。' },
+
+  { id:'arch', grp:'八年级下册', name:'验证阿基米德原理', chap:'第十章 第2节',
+    x:{n:'排开液体重 G排', u:'N'}, y:{n:'浮力 F浮', u:'N'}, fit:'prop', kName:'它等于 1，说明 F浮 = G排',
+    sample:[[0.2,0.2],[0.4,0.4],[0.6,0.6],[0.8,0.8],[1.0,1.0]],
+    note:'图线是 45° 直线，说明物体受到的浮力等于它排开的液体所受的重力。' },
+
+  { id:'lever', grp:'八年级下册', name:'探究杠杆的平衡条件', chap:'第十二章 第1节',
+    x:{n:'动力臂 L₁', u:'cm'}, y:{n:'动力 F₁', u:'N'}, fit:'inverse', kName:'它就是 F₁·L₁（阻力和阻力臂的乘积）',
+    sample:[[10,4.0],[20,2.0],[25,1.6],[40,1.0],[50,0.8]],
+    note:'图线是双曲线，说明 F₁ 与 L₁ 成反比，即 F₁·L₁ 保持不变。' },
+
+  { id:'ek', grp:'八年级下册', name:'探究动能大小与速度的关系', chap:'第十一章 第3节',
+    x:{n:'速度 v', u:'m/s'}, y:{n:'动能 Ek', u:'J'}, fit:'none',
+    sample:[[1,0.05],[2,0.20],[3,0.45],[4,0.80]],
+    concl:'图线是<b>向上弯曲的曲线</b>（不是直线），说明动能<b>不与速度成正比</b>，而是与速度的<b>平方</b>成正比（E<sub>k</sub> ∝ v²）：速度变为 2 倍，动能变为 4 倍。' },
+
+  { id:'pulley', grp:'八年级下册', name:'探究滑轮组的机械效率', chap:'第十二章 第3节',
+    x:{n:'物重 G', u:'N'}, y:{n:'机械效率 η', u:'%'}, fit:'none',
+    sample:[[2,66.7],[4,80.0],[6,85.7],[8,88.9],[10,90.9]],
+    concl:'图线先<b>快速上升</b>，随后<b>趋于平缓</b>：同一滑轮组，提升的物体越重，机械效率越高，但不会无限增大（因为动滑轮的重是一定的）。' },
+
+  // ── 九年级全一册 ──────────────────────────────────────────
+  { id:'iu', grp:'九年级全一册', name:'探究电流与电压的关系（欧姆定律）', chap:'第十七章 第1节',
+    x:{n:'电压 U', u:'V'}, y:{n:'电流 I', u:'A'}, fit:'prop', kName:'它就是电阻的倒数 1/R',
+    sample:[[0.5,0.1],[1.0,0.2],[1.5,0.3],[2.0,0.4],[2.5,0.5]],
+    note:'图像是过原点的直线，说明电阻一定时，电流与电压成正比。' },
+
+  { id:'ir', grp:'九年级全一册', name:'探究电流与电阻的关系', chap:'第十七章 第1节',
+    x:{n:'电阻 R', u:'Ω'}, y:{n:'电流 I', u:'A'}, fit:'inverse', kName:'它就是电阻两端的电压 U',
+    sample:[[5,0.60],[10,0.30],[15,0.20],[20,0.15],[25,0.12]],
+    note:'图线是双曲线，说明电压一定时，电流与电阻成反比，I·R 保持不变。' },
+
+  { id:'ohm', grp:'九年级全一册', name:'伏安法测电阻', chap:'第十七章 第3节',
+    x:{n:'电压 U', u:'V'}, y:{n:'电流 I', u:'A'}, fit:'prop', kName:'它就是电阻的倒数 1/R，取倒数即得 R',
+    sample:[[1.0,0.20],[2.0,0.40],[3.0,0.60],[4.0,0.80],[5.0,1.00]],
+    note:'图像是过原点的直线，斜率等于 1/R，由此可算出待测电阻的阻值。' },
+
+  { id:'lamp', grp:'九年级全一册', name:'测量小灯泡的电功率', chap:'第十八章 第3节',
+    x:{n:'电压 U', u:'V'}, y:{n:'电流 I', u:'A'}, fit:'none',
+    sample:[[0.5,0.14],[1.0,0.20],[1.5,0.26],[2.0,0.32],[2.5,0.38]],
+    concl:'图线是<b>弯曲的曲线</b>（不是直线）：电压升高时灯丝温度升高，灯丝电阻变大，所以 I 随 U 增长得越来越慢。因此<b>小灯泡的电阻不是定值</b>，不能把它当定值电阻处理。' },
+
+  { id:'joule', grp:'九年级全一册', name:'探究电流产生的热量与电流的关系', chap:'第十八章 第4节',
+    x:{n:'电流 I', u:'A'}, y:{n:'热量 Q', u:'J'}, fit:'none',
+    sample:[[0.2,2.4],[0.4,9.6],[0.6,21.6],[0.8,38.4]],
+    concl:'图线是<b>向上弯曲的曲线</b>，说明电流产生的热量<b>与电流的平方成正比</b>（Q = I²Rt）：电流变为 2 倍，热量变为 4 倍。' },
+
+  { id:'rlen', grp:'九年级全一册', name:'探究电阻大小与导体长度的关系', chap:'第十六章 第3节',
+    x:{n:'长度 L', u:'cm'}, y:{n:'电阻 R', u:'Ω'}, fit:'prop', kName:'它等于单位长度的电阻',
+    sample:[[20,1.0],[40,2.0],[60,3.0],[80,4.0],[100,5.0]],
+    note:'图像是过原点的直线，说明材料、横截面积相同时，电阻与长度成正比。' },
+
+  { id:'emag', grp:'九年级全一册', name:'探究电磁铁磁性强弱与电流的关系', chap:'第二十章 第3节',
+    x:{n:'电流 I', u:'A'}, y:{n:'吸引大头针数 n', u:'枚'}, fit:'prop', kName:'它反映电磁铁的磁性强弱',
+    sample:[[0.2,8],[0.4,16],[0.6,24],[0.8,32],[1.0,40]],
+    note:'一定范围内图像近似为过原点的直线，说明线圈匝数不变时，电流越大，电磁铁的磁性越强。' },
+
+  { id:'heat', grp:'九年级全一册', name:'比较不同物质的比热容', chap:'第十三章 第3节',
+    x:{n:'加热时间 t', u:'min'}, y:{n:'温度 T', u:'℃'}, fit:'prop', kName:'它反映吸热的快慢，斜率越小比热容越大',
+    sample:[[0,20],[1,24],[2,28],[3,32],[4,36],[5,40]],
+    note:'用同一个热源加热，图像是直线：相同时间内温度升高越多，说明这种物质的比热容越小。' }
+];
+
+var curId = PRESETS[0].id;
+function cur(){ for (var i=0;i<PRESETS.length;i++){ if (PRESETS[i].id === curId) return PRESETS[i]; } return PRESETS[0]; }
+
+// ============================================================
+// 二、数据（唯一真值源）
+// ============================================================
+var ROW_MIN = 1, ROW_MAX = 40;
+var rows = [];                       // [{xs:'', ys:''}]
+var MIN_ROWS = 8;
+
+function parseNum(s){
+  if (s === null || s === undefined) return NaN;
+  var t = String(s).trim();
+  if (!t) return NaN;
+  // 允许写成 "1.5"、"0.3"、"-2"、"1e-3"，也容忍末尾带单位（如 "1.5V"）
+  var n = parseFloat(t);
+  if (isFinite(n)) return n;
+  var m = t.match(/^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?/);
+  if (m){ n = parseFloat(m[0]); if (isFinite(n)) return n; }
+  return NaN;
+}
+function rowX(r){ return parseNum(r.xs); }
+function rowY(r){ return parseNum(r.ys); }
+function validPts(){
+  var out = [];
+  for (var i=0;i<rows.length;i++){
+    var x = rowX(rows[i]), y = rowY(rows[i]);
+    if (isFinite(x) && isFinite(y)) out.push([x,y]);
+  }
+  return out;
+}
+function hasAnyText(){
+  for (var i=0;i<rows.length;i++){
+    if (String(rows[i].xs).trim() || String(rows[i].ys).trim()) return true;
+  }
+  return false;
+}
+
+// ============================================================
+// 三、坐标范围与刻度（nice number）
+// ============================================================
+function niceStep(raw){
+  if (!(raw > 0) || !isFinite(raw)) return 1;
+  var e = Math.pow(10, Math.floor(Math.log(raw)/Math.LN10));
+  var f = raw / e;
+  var m = f <= 1 ? 1 : f <= 2 ? 2 : f <= 5 ? 5 : 10;
+  return m * e;
+}
+function niceRange(lo, hi, fromZero){
+  if (!isFinite(lo)) lo = 0;
+  if (!isFinite(hi)) hi = 1;
+  if (fromZero && lo > 0) lo = 0;
+  if (hi <= lo) hi = lo + (Math.abs(lo) > 1e-9 ? Math.abs(lo) : 1);
+  var step = niceStep((hi - lo) / 5);
+  var nlo = Math.floor(lo/step + 1e-9) * step;
+  var nhi = Math.ceil(hi/step - 1e-9) * step;
+  if (nhi - nlo < step*1.5) nhi = nlo + step*2;
+  return { lo: nlo, hi: nhi, step: step };
+}
+function ranges(){
+  var p = validPts();
+  var xs = [], ys = [];
+  for (var i=0;i<p.length;i++){ xs.push(p[i][0]); ys.push(p[i][1]); }
+  var xlo = xs.length ? Math.min.apply(null, xs) : 0;
+  var xhi = xs.length ? Math.max.apply(null, xs) : 1;
+  var ylo = ys.length ? Math.min.apply(null, ys) : 0;
+  var yhi = ys.length ? Math.max.apply(null, ys) : 1;
+  var z = !!optZero.checked;
+  return { XR: niceRange(xlo, xhi, z), YR: niceRange(ylo, yhi, z) };
+}
+function fmtTick(v, step){
+  var d = 0;
+  if (step < 1) d = Math.min(4, Math.ceil(-Math.log(step)/Math.LN10 + 1e-9));
+  var s = v.toFixed(d);
+  if (s.indexOf('.') >= 0) s = s.replace(/0+$/,'').replace(/\.$/,'');
+  if (s === '-0' || s === '') s = '0';
+  return s;
+}
+function fmt(v){
+  if (!isFinite(v)) return '—';
+  var a = Math.abs(v);
+  if (a === 0) return '0';
+  if (a >= 1e5 || a < 1e-3) return v.toExponential(2);
+  return String(parseFloat(v.toPrecision(4)));
+}
+
+// ============================================================
+// 四、拟合
+// ============================================================
+function computeFit(){
+  var P = cur();
+  if (P.fit === 'none') return null;
+  var p = validPts();
+  if (p.length < 2) return null;
+  var i, n = p.length;
+
+  if (P.fit === 'inverse'){
+    var suy = 0, suu = 0, m = 0;
+    for (i=0;i<n;i++){
+      if (Math.abs(p[i][0]) < 1e-12) continue;
+      var u = 1/p[i][0];
+      suy += u * p[i][1]; suu += u * u; m++;
+    }
+    if (m < 2 || suu < 1e-15) return null;
+    var ki = suy / suu;
+    return { kind:'inverse', k:ki, b:0, n:m,
+             pred:function(x){ return Math.abs(x) < 1e-12 ? NaN : ki / x; },
+             r2: r2of(p, function(x){ return Math.abs(x) < 1e-12 ? NaN : ki / x; }) };
+  }
+
+  var sx=0, sy=0, sxy=0, sxx=0;
+  for (i=0;i<n;i++){ sx += p[i][0]; sy += p[i][1]; sxy += p[i][0]*p[i][1]; sxx += p[i][0]*p[i][0]; }
+  var k, b, kind;
+  // 「拟合过原点」开关：勾上 ⇒ 强制 y = kx（物理上判断「成正比」的规范做法）；
+  // 取消 ⇒ 一般最小二乘 y = kx + b，用来考察「图线为什么不过原点」。
+  if (P.fit === 'prop' && optOrigin.checked){
+    if (sxx < 1e-15) return null;
+    k = sxy / sxx; b = 0; kind = 'prop';
+  } else {
+    var den = n*sxx - sx*sx;
+    if (Math.abs(den) < 1e-15) return null;
+    k = (n*sxy - sx*sy) / den;
+    b = (sy - k*sx) / n; kind = 'linear';
+  }
+  return { kind:kind, k:k, b:b, n:n,
+           pred:function(x){ return k*x + b; },
+           r2: r2of(p, function(x){ return k*x + b; }) };
+}
+function r2of(p, pred){
+  var n = p.length, i, sum = 0, cnt = 0;
+  for (i=0;i<n;i++){ var v = pred(p[i][0]); if (isFinite(v)){ sum += p[i][1]; cnt++; } }
+  if (!cnt) return NaN;
+  var ym = sum / cnt, ssTot = 0, ssRes = 0;
+  for (i=0;i<n;i++){
+    var pv = pred(p[i][0]);
+    if (!isFinite(pv)) continue;
+    ssTot += (p[i][1]-ym)*(p[i][1]-ym);
+    ssRes += (p[i][1]-pv)*(p[i][1]-pv);
+  }
+  if (ssTot < 1e-15) return 1;
+  return 1 - ssRes/ssTot;
+}
+
+// ============================================================
+// 五、绘制
+// ============================================================
+function mapOf(rng){
+  var XR = rng.XR, YR = rng.YR;
+  var xs = PLOT.w / (XR.hi - XR.lo), ys = PLOT.h / (YR.hi - YR.lo);
+  return {
+    XR: XR, YR: YR, xs: xs, ys: ys,
+    sx: function(x){ return PLOT.x + (x - XR.lo) * xs; },
+    sy: function(y){ return PLOT.y + PLOT.h - (y - YR.lo) * ys; },
+    ux: function(px){ return XR.lo + (px - PLOT.x) / xs; },
+    uy: function(py){ return YR.lo + (PLOT.y + PLOT.h - py) / ys; }
+  };
+}
+var FONT = '-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif';
+
+function drawFrame(){
+  var k = canvas.width / W;
+  ctx.setTransform(k, 0, 0, k, 0, 0);
+  ctx.clearRect(0, 0, W, H);
+  ctx.fillStyle = '#060a14';
+  ctx.fillRect(0, 0, W, H);
+
+  var P = cur();
+  var pts = validPts();
+  var rng = ranges();
+  var m = mapOf(rng);
+
+  // ① 网格
+  if (optGrid.checked) drawGrid(m);
+
+  // ② 坐标轴 + 刻度
+  drawAxes(m, P);
+
+  // ③ 拟合曲线（先于数据点，避免盖住点）
+  var fit = computeFit();
+  if (fit && optFit.checked) drawFit(m, fit);
+
+  // ④ 连线（按 X 升序折线，只作趋势提示）
+  if (optLine.checked && pts.length >= 2) drawPolyline(m, pts);
+
+  // ⑤ 数据点
+  drawPoints(m, pts);
+
+  // ⑥ 点坐标标注
+  if (optLabel.checked) drawLabels(m, pts);
+
+  // ⑦ 空数据提示
+  if (!pts.length) drawEmptyHint();
+}
+
+function drawGrid(m){
+  var i, v;
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(PLOT.x, PLOT.y, PLOT.w, PLOT.h);
+  ctx.clip();
+  ctx.strokeStyle = 'rgba(148,163,184,.13)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  for (v = m.XR.lo; v <= m.XR.hi + 1e-9; v += m.XR.step){
+    var px = Math.round(m.sx(v)) + .5;
+    ctx.moveTo(px, PLOT.y); ctx.lineTo(px, PLOT.y + PLOT.h);
+  }
+  for (v = m.YR.lo; v <= m.YR.hi + 1e-9; v += m.YR.step){
+    var py = Math.round(m.sy(v)) + .5;
+    ctx.moveTo(PLOT.x, py); ctx.lineTo(PLOT.x + PLOT.w, py);
+  }
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawAxes(m, P){
+  var i, v, t;
+  ctx.save();
+  // 轴线
+  ctx.strokeStyle = 'rgba(148,163,184,.55)';
+  ctx.lineWidth = 1.6;
+  ctx.beginPath();
+  ctx.moveTo(PLOT.x + .5, PLOT.y);
+  ctx.lineTo(PLOT.x + .5, PLOT.y + PLOT.h + .5);
+  ctx.lineTo(PLOT.x + PLOT.w, PLOT.y + PLOT.h + .5);
+  ctx.stroke();
+
+  ctx.fillStyle = '#94a3b8';
+  ctx.font = '12px ' + FONT;
+  ctx.textBaseline = 'middle';
+
+  // X 刻度
+  ctx.textAlign = 'center';
+  var originCorner = Math.abs(m.XR.lo) < 1e-9 && Math.abs(m.YR.lo) < 1e-9;
+  for (v = m.XR.lo; v <= m.XR.hi + 1e-9; v += m.XR.step){
+    var px = m.sx(v);
+    if (px < PLOT.x - .5 || px > PLOT.x + PLOT.w + .5) continue;
+    ctx.strokeStyle = 'rgba(148,163,184,.45)';
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(px, PLOT.y + PLOT.h); ctx.lineTo(px, PLOT.y + PLOT.h + 5); ctx.stroke();
+    t = fmtTick(v, m.XR.step);
+    // 原点在左下角时，0 的刻度数字让给下面的「O」标记，免得两个挤在一起
+    if (originCorner && Math.abs(v) < 1e-9) continue;
+    ctx.fillText(t, px, PLOT.y + PLOT.h + 17);
+  }
+  // Y 刻度
+  ctx.textAlign = 'right';
+  for (v = m.YR.lo; v <= m.YR.hi + 1e-9; v += m.YR.step){
+    var py = m.sy(v);
+    if (py < PLOT.y - .5 || py > PLOT.y + PLOT.h + .5) continue;
+    ctx.strokeStyle = 'rgba(148,163,184,.45)';
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(PLOT.x - 5, py); ctx.lineTo(PLOT.x, py); ctx.stroke();
+    ctx.fillText(fmtTick(v, m.YR.step), PLOT.x - 9, py);
+  }
+
+  // 轴名 + 单位
+  ctx.fillStyle = '#cbd5e1';
+  ctx.font = 'bold 13.5px ' + FONT;
+  ctx.textAlign = 'center';
+  ctx.fillText(P.x.n + ' / ' + P.x.u, PLOT.x + PLOT.w/2, PLOT.y + PLOT.h + 42);
+  ctx.save();
+  ctx.translate(30, PLOT.y + PLOT.h/2);
+  ctx.rotate(-Math.PI/2);
+  ctx.fillText(P.y.n + ' / ' + P.y.u, 0, 0);
+  ctx.restore();
+
+  // 原点 O（只在原点真的落在绘图区左下角时标）
+  if (originCorner){
+    ctx.fillStyle = '#64748b';
+    ctx.font = '11.5px ' + FONT;
+    ctx.textAlign = 'right';
+    ctx.fillText('O', PLOT.x - 9, PLOT.y + PLOT.h + 13);
+  }
+  ctx.restore();
+}
+
+function drawFit(m, fit){
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(PLOT.x, PLOT.y, PLOT.w, PLOT.h);
+  ctx.clip();
+  ctx.strokeStyle = '#fbbf24';
+  ctx.lineWidth = 2.2;
+  ctx.setLineDash([9, 6]);
+  ctx.beginPath();
+  if (fit.kind === 'inverse'){
+    var x0 = Math.max(m.XR.lo, (m.XR.hi - m.XR.lo) * 1e-3);
+    var x1 = m.XR.hi, N = 240, first = true;
+    for (var i=0;i<=N;i++){
+      var x = x0 + (x1 - x0) * i / N;
+      var y = fit.pred(x);
+      if (!isFinite(y)) continue;
+      var px = m.sx(x), py = m.sy(y);
+      if (first){ ctx.moveTo(px, py); first = false; } else ctx.lineTo(px, py);
+    }
+  } else {
+    ctx.moveTo(m.sx(m.XR.lo), m.sy(fit.pred(m.XR.lo)));
+    ctx.lineTo(m.sx(m.XR.hi), m.sy(fit.pred(m.XR.hi)));
+  }
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawPolyline(m, pts){
+  var a = pts.slice().sort(function(p, q){ return p[0]-q[0]; });
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(PLOT.x, PLOT.y, PLOT.w, PLOT.h);
+  ctx.clip();
+  ctx.strokeStyle = 'rgba(125,211,252,.62)';
+  ctx.lineWidth = 1.6;
+  ctx.beginPath();
+  for (var i=0;i<a.length;i++){
+    var px = m.sx(a[i][0]), py = m.sy(a[i][1]);
+    if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+  }
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawPoints(m, pts){
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(PLOT.x - 12, PLOT.y - 12, PLOT.w + 24, PLOT.h + 24);
+  ctx.clip();
+  for (var i=0;i<pts.length;i++){
+    var px = m.sx(pts[i][0]), py = m.sy(pts[i][1]);
+    ctx.beginPath();
+    ctx.arc(px, py, 4.6, 0, Math.PI*2);
+    ctx.fillStyle = '#38bdf8';
+    ctx.fill();
+    ctx.lineWidth = 1.6;
+    ctx.strokeStyle = '#0b1220';
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawLabels(m, pts){
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(PLOT.x - 60, PLOT.y - 14, PLOT.w + 120, PLOT.h + 28);
+  ctx.clip();
+  ctx.font = '11px ' + FONT;
+  ctx.fillStyle = '#e2e8f0';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  for (var i=0;i<pts.length;i++){
+    var px = m.sx(pts[i][0]), py = m.sy(pts[i][1]);
+    ctx.fillText('(' + fmt(pts[i][0]) + ', ' + fmt(pts[i][1]) + ')', px + 8, py - 10);
+  }
+  ctx.restore();
+}
+
+function drawEmptyHint(){
+  ctx.save();
+  ctx.fillStyle = 'rgba(148,163,184,.55)';
+  ctx.font = '15px ' + FONT;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('在右边的表格里输入数据，这里会自动描点连线', PLOT.x + PLOT.w/2, PLOT.y + PLOT.h/2 - 12);
+  ctx.font = '12.5px ' + FONT;
+  ctx.fillStyle = 'rgba(100,116,139,.75)';
+  ctx.fillText('（每行填一组：X 列填自变量，Y 列填因变量）', PLOT.x + PLOT.w/2, PLOT.y + PLOT.h/2 + 14);
+  ctx.restore();
+}
+
+// ============================================================
+// 六、表格
+// ============================================================
+function renderTable(){
+  var html = '';
+  for (var i=0;i<rows.length;i++){
+    html += '<tr data-i="' + i + '">' +
+      '<td class="idx">' + (i+1) + '</td>' +
+      '<td><input type="text" inputmode="decimal" autocomplete="off" data-k="xs" value="' +
+        esc(rows[i].xs) + '" aria-label="X 第' + (i+1) + '行"></td>' +
+      '<td><input type="text" inputmode="decimal" autocomplete="off" data-k="ys" value="' +
+        esc(rows[i].ys) + '" aria-label="Y 第' + (i+1) + '行"></td>' +
+      '<td class="op"><button class="del" type="button" title="删除这一行">×</button></td>' +
+      '</tr>';
+  }
+  tbody.innerHTML = html;
+  markBad();
+}
+function esc(s){
+  return String(s == null ? '' : s)
+    .replace(/&/g,'&amp;').replace(/"/g,'&quot;')
+    .replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+function markBad(){
+  var trs = tbody.querySelectorAll('tr');
+  for (var i=0;i<trs.length;i++){
+    var ins = trs[i].querySelectorAll('input');
+    var x = parseNum(rows[i].xs), y = parseNum(rows[i].ys);
+    var xEmpty = !String(rows[i].xs).trim(), yEmpty = !String(rows[i].ys).trim();
+    ins[0].classList.toggle('bad', !xEmpty && !isFinite(x));
+    ins[1].classList.toggle('bad', !yEmpty && !isFinite(y));
+  }
+}
+function setRowCount(n){
+  n = Math.max(ROW_MIN, Math.min(ROW_MAX, n));
+  while (rows.length < n) rows.push({ xs:'', ys:'' });
+  while (rows.length > n) rows.pop();
+}
+function addRow(){
+  if (rows.length >= ROW_MAX) return;
+  rows.push({ xs:'', ys:'' });
+  renderTable();
+  var last = tbody.querySelector('tr:last-child input');
+  if (last) last.focus();
+  refresh();
+}
+function clearAll(){
+  rows = [];
+  setRowCount(MIN_ROWS);
+  renderTable();
+  refresh();
+}
+function loadSample(){
+  var s = cur().sample || [];
+  rows = [];
+  for (var i=0;i<s.length;i++) rows.push({ xs: String(s[i][0]), ys: String(s[i][1]) });
+  setRowCount(Math.max(MIN_ROWS, rows.length));
+  renderTable();
+  refresh();
+}
+function applyPreset(id){
+  curId = id;
+  presetSel.value = id;
+  var P = cur();
+  thX.textContent = P.x.n + ' / ' + P.x.u;
+  thY.textContent = P.y.n + ' / ' + P.y.u;
+  pinfo.innerHTML = '<b>' + esc(P.chap) + '</b><br>' +
+    '横轴：<em>' + esc(P.x.n) + '（' + esc(P.x.u) + '）</em>　纵轴：<em>' + esc(P.y.n) + '（' + esc(P.y.u) + '）</em><br>' +
+    (P.fit === 'none' ? '这个实验的图像是曲线，不做直线拟合。' : '系统会做最小二乘拟合。');
+  fitLbl.classList.toggle('dis', P.fit === 'none');
+  optFit.disabled = (P.fit === 'none');
+  originLbl.classList.toggle('dis', P.fit !== 'prop');
+  optOrigin.disabled = (P.fit !== 'prop');
+  tagSub.textContent = P.name + ' · ' + P.x.n + ' — ' + P.y.n;
+  document.title = P.name + ' · 数据处理 - 物理虚拟实验';
+  loadSample();
+}
+
+// ============================================================
+// 七、读数
+// ============================================================
+function refresh(){
+  drawFrame();
+  updateReadout();
+}
+function updateReadout(){
+  var P = cur();
+  var pts = validPts();
+  var fit = computeFit();
+  elBadge.textContent = P.name;
+
+  var kx = P.x.u, ky = P.y.u;
+  var rowsHtml = '';
+  rowsHtml += '<dt>有效数据点</dt><dd class="w">' + pts.length + ' 组</dd>';
+  if (pts.length){
+    var rng = ranges();
+    rowsHtml += '<dt>横轴范围</dt><dd>' + fmtTick(rng.XR.lo, rng.XR.step) + ' ~ ' +
+      fmtTick(rng.XR.hi, rng.XR.step) + ' ' + kx + '</dd>';
+    rowsHtml += '<dt>纵轴范围</dt><dd>' + fmtTick(rng.YR.lo, rng.YR.step) + ' ~ ' +
+      fmtTick(rng.YR.hi, rng.YR.step) + ' ' + ky + '</dd>';
+  }
+  if (fit){
+    rowsHtml += '<div class="sep"></div>';
+    if (fit.kind === 'inverse'){
+      rowsHtml += '<dt>k = ' + P.x.n + '·' + P.y.n + '</dt><dd class="e">' + fmt(fit.k) + ' ' + kx + '·' + ky + '</dd>';
+    } else {
+      rowsHtml += '<dt>斜率 k</dt><dd class="e">' + fmt(fit.k) + ' ' + ky + '/' + kx + '</dd>';
+      if (fit.kind === 'linear') rowsHtml += '<dt>截距 b</dt><dd class="e">' + fmt(fit.b) + ' ' + ky + '</dd>';
+    }
+    rowsHtml += '<dt>拟合优度 R²</dt><dd>' + (isFinite(fit.r2) ? fit.r2.toFixed(4) : '—') + '</dd>';
+  }
+  elKv.innerHTML = rowsHtml;
+
+  // 公式栏
+  if (fit){
+    if (fit.kind === 'inverse'){
+      elFormula.innerHTML = P.x.n + '·' + P.y.n + ' = <b>' + fmt(fit.k) + ' ' + kx + '·' + ky + '</b>' +
+        '（即 ' + P.y.n + ' = ' + fmt(fit.k) + ' / ' + P.x.n + '）';
+    } else {
+      elFormula.innerHTML = P.y.n + ' = <b>' + fmt(fit.k) + '</b> · ' + P.x.n +
+        (fit.kind === 'linear' && Math.abs(fit.b) > 1e-9 ? ' + <b>' + fmt(fit.b) + '</b>' : '');
+    }
+  } else {
+    elFormula.innerHTML = P.fit === 'none'
+      ? '这个实验的图像不是直线，直接看形状与趋势。'
+      : '至少需要 2 组有效数据才能拟合。';
+  }
+
+  // 结论
+  var vHtml = '', ok = false;
+  if (!pts.length){
+    vHtml = '还没有数据。先把每次测得的两个量填进表格。';
+  } else if (P.fit === 'none'){
+    vHtml = P.concl || '';
+  } else if (!fit){
+    vHtml = '有效数据不足 2 组，暂时无法拟合。';
+  } else if (fit.kind === 'inverse'){
+    ok = true;
+    vHtml = '<b>' + P.y.n + '</b> 与 <b>' + P.x.n + '</b> 成<b>反比</b>：乘积 k = ' +
+      fmt(fit.k) + ' ' + kx + '·' + ky + (P.kName ? '，' + P.kName + '。' : '。') +
+      (P.note || '') + '（图线是双曲线，不是直线。）';
+  } else {
+    ok = (fit.kind === 'prop');
+    vHtml = '<b>' + P.y.n + '</b> 与 <b>' + P.x.n + '</b> ' + (fit.kind === 'prop' ? '成<b>正比</b>' : '成<b>一次函数关系</b>') +
+      '：斜率 k = ' + fmt(fit.k) + ' ' + ky + '/' + kx + (P.kName ? '，' + P.kName + '。' : '。') +
+      (fit.kind === 'linear' && Math.abs(fit.b) > 1e-9 ? '（注意截距 b = ' + fmt(fit.b) + ' ' + ky + ' 不为 0，要想想为什么。）' : '') +
+      (P.note || '');
+  }
+  elVerdict.className = 'verdict' + (ok ? ' ok' : '');
+  elVerdict.innerHTML = vHtml;
+}
+
+// ============================================================
+// 八、导出
+// ============================================================
+function dl(name, url){
+  var a = document.createElement('a');
+  a.href = url; a.download = name;
+  document.body.appendChild(a); a.click();
+  setTimeout(function(){ document.body.removeChild(a); }, 0);
+}
+function exportPng(){
+  var url = canvas.toDataURL('image/png');
+  dl(cur().name.replace(/[\/\\:*?"<>|]/g, '_') + '.png', url);
+}
+function csvText(){
+  var P = cur();
+  var pts = validPts();
+  var lines = ['#' + P.name, '#' + P.chap, '#' + P.x.n + '(' + P.x.u + '),' + P.y.n + '(' + P.y.u + ')'];
+  lines.push(P.x.n + '/' + P.x.u + ',' + P.y.n + '/' + P.y.u);
+  for (var i=0;i<pts.length;i++) lines.push(pts[i][0] + ',' + pts[i][1]);
+  var fit = computeFit();
+  if (fit){
+    lines.push('');
+    lines.push('#拟合结果');
+    if (fit.kind === 'inverse') lines.push('#k = ' + P.x.n + '*' + P.y.n + ' = ' + fit.k);
+    else lines.push('#k = ' + fit.k + ' , b = ' + fit.b);
+    lines.push('#R2 = ' + (isFinite(fit.r2) ? fit.r2.toFixed(6) : ''));
+  }
+  return lines.join('\r\n');
+}
+function exportCsv(){
+  var blob = new Blob(['\ufeff' + csvText()], { type:'text/csv;charset=utf-8' });
+  var url = URL.createObjectURL(blob);
+  dl(cur().name.replace(/[\/\\:*?"<>|]/g, '_') + '.csv', url);
+  setTimeout(function(){ URL.revokeObjectURL(url); }, 4000);
+}
+
+// ============================================================
+// 九、布局 / 全屏
+// ============================================================
+function setCanvasSize(cw, ch){
+  cw = Math.max(280, Math.round(cw));
+  ch = Math.max(180, Math.round(ch));
+  canvas.style.width = cw + 'px';
+  canvas.style.height = ch + 'px';
+  canvas.width = Math.round(cw * dpr);
+  canvas.height = Math.round(ch * dpr);
+}
+function layout(){
+  var availW = Math.max(300, cvWrap.clientWidth - PAD*2 - 2);
+  var availH = cvWrap.clientHeight - PAD*2 - 2;
+  if (isFull){
+    // 全屏：按【可用宽】和【可用高】同时夹一次，保证画布不溢出容器、不盖住控制带
+    availH = Math.max(180, availH);
+    var k = Math.min(availW / W, availH / H);
+    setCanvasSize(W * k, H * k);
+  } else {
+    var cw = availW;
+    var ch = cw * H / W;
+    var maxH = Math.round(window.innerHeight * 0.76);
+    if (ch > maxH){ ch = maxH; cw = ch * W / H; }
+    setCanvasSize(cw, ch);
+  }
+  drawFrame();
+}
+var lastBandH = 0;
+function maybeRelayout(){
+  if (!isFull) return;
+  var side = document.getElementById('side');
+  var h = side ? side.getBoundingClientRect().height : 0;
+  if (Math.abs(h - lastBandH) > 1) { lastBandH = h; layout(); }
+}
+function fsEl(){ return document.fullscreenElement || document.webkitFullscreenElement || null; }
+function fsIsStage(){ return fsEl() === stageEl; }
+fsBtn.addEventListener('click', function (){
+  if (fsIsStage()){
+    var ex = document.exitFullscreen || document.webkitExitFullscreen;
+    if (ex) ex.call(document);
+  } else {
+    var rq = stageEl.requestFullscreen || stageEl.webkitRequestFullscreen;
+    if (rq) rq.call(stageEl);
+  }
+});
+function onFsChange(){
+  isFull = fsIsStage();
+  fsBtn.textContent = isFull ? '⛶ 退出全屏' : '⛶ 全屏';
+  fsBtn.classList.toggle('on', isFull);
+  fsBtn.title = isFull ? '退出全屏（也可以按 Esc）' : '全屏显示图像';
+  lastBandH = 0;
+  fsLayoutCalls++; layout();
+  setTimeout(function(){ fsLayoutCalls++; layout(); }, 60);
+}
+['fullscreenchange', 'webkitfullscreenchange'].forEach(function (ev){
+  document.addEventListener(ev, onFsChange);
+});
+
+// ============================================================
+// 十、交互绑定
+// ============================================================
+// 预设下拉（按年级分组）
+(function buildSelect(){
+  var groups = [], seen = {};
+  for (var i=0;i<PRESETS.length;i++){
+    if (!seen[PRESETS[i].grp]){ seen[PRESETS[i].grp] = []; groups.push(PRESETS[i].grp); }
+    seen[PRESETS[i].grp].push(PRESETS[i]);
+  }
+  var html = '';
+  for (var g=0;g<groups.length;g++){
+    html += '<optgroup label="' + esc(groups[g]) + '">';
+    var list = seen[groups[g]];
+    for (var j=0;j<list.length;j++){
+      html += '<option value="' + list[j].id + '">' + esc(list[j].name) + '</option>';
+    }
+    html += '</optgroup>';
+  }
+  presetSel.innerHTML = html;
+})();
+
+presetSel.addEventListener('change', function (){ applyPreset(presetSel.value); });
+
+// 表格输入（事件委托，不重建 DOM ⇒ 不丢焦点）
+tbody.addEventListener('input', function (e){
+  var t = e.target;
+  if (!t || t.tagName !== 'INPUT') return;
+  var tr = t.parentNode.parentNode;
+  var i = parseInt(tr.getAttribute('data-i'), 10);
+  if (!(i >= 0 && i < rows.length)) return;
+  var key = t.getAttribute('data-k');
+  rows[i][key] = t.value;
+  markBad();
+  refresh();
+});
+tbody.addEventListener('keydown', function (e){
+  if (e.key !== 'Enter') return;
+  var t = e.target;
+  if (!t || t.tagName !== 'INPUT') return;
+  e.preventDefault();
+  var all = tbody.querySelectorAll('input');
+  var idx = Array.prototype.indexOf.call(all, t);
+  if (idx === all.length - 1){ addRow(); return; }
+  all[idx + 1].focus();
+  if (all[idx + 1].select) all[idx + 1].select();
+});
+tbody.addEventListener('click', function (e){
+  var t = e.target;
+  if (!t || !t.classList || !t.classList.contains('del')) return;
+  var tr = t.parentNode.parentNode;
+  var i = parseInt(tr.getAttribute('data-i'), 10);
+  if (!(i >= 0 && i < rows.length)) return;
+  if (rows.length <= ROW_MIN){ rows[i] = { xs:'', ys:'' }; }
+  else rows.splice(i, 1);
+  renderTable();
+  refresh();
+});
+
+document.getElementById('btnAdd').addEventListener('click', addRow);
+document.getElementById('btnClear').addEventListener('click', clearAll);
+document.getElementById('btnSample').addEventListener('click', loadSample);
+document.getElementById('btnPng').addEventListener('click', exportPng);
+document.getElementById('btnCsv').addEventListener('click', exportCsv);
+
+[optGrid, optLine, optFit, optLabel, optZero, optOrigin].forEach(function (el){
+  el.addEventListener('change', refresh);
+});
+optClick.addEventListener('change', function (){
+  canvas.style.cursor = optClick.checked ? 'copy' : 'crosshair';
+});
+
+// 点画面加点
+canvas.addEventListener('click', function (e){
+  if (!optClick.checked) return;
+  var r = canvas.getBoundingClientRect();
+  if (!r.width || !r.height) return;
+  // 屏幕坐标 → 逻辑坐标：横竖各按【自己的】显示尺寸换算
+  var lx = (e.clientX - r.left) / r.width * W;
+  var ly = (e.clientY - r.top) / r.height * H;
+  if (lx < PLOT.x || lx > PLOT.x + PLOT.w || ly < PLOT.y || ly > PLOT.y + PLOT.h) return;
+  var rng = ranges();
+  var m = mapOf(rng);
+  var x = m.ux(lx), y = m.uy(ly);
+  var step = rng.XR.step, stepY = rng.YR.step;
+  x = Math.round(x / step) * step;
+  y = Math.round(y / stepY) * stepY;
+  var slot = -1;
+  for (var i=0;i<rows.length;i++){
+    if (!String(rows[i].xs).trim() && !String(rows[i].ys).trim()){ slot = i; break; }
+  }
+  if (slot < 0){
+    if (rows.length >= ROW_MAX) return;
+    rows.push({ xs:'', ys:'' });
+    slot = rows.length - 1;
+  }
+  rows[slot].xs = String(parseFloat(x.toPrecision(6)));
+  rows[slot].ys = String(parseFloat(y.toPrecision(6)));
+  renderTable();
+  refresh();
+});
+
+window.addEventListener('resize', function (){ layout(); });
+if (window.ResizeObserver){
+  try { new ResizeObserver(function (){ layout(); }).observe(cvWrap); } catch (_) {}
+}
+
+// ============================================================
+// 十一、自检钩子（必须在【任何绘制之前】装好）
+// ============================================================
+window.__cb = {
+  PAGE_FILE: '实验数据处理工具.html',
+  W: W, H: H, PLOT: PLOT, PAD: PAD,
+  presets: function (){ return PRESETS.map(function(p){ return { id:p.id, name:p.name, grp:p.grp, fit:p.fit }; }); },
+  presetCount: function (){ return PRESETS.length; },
+  currentId: function (){ return curId; },
+  current: function (){ var P = cur(); return { id:P.id, name:P.name, fit:P.fit,
+    xN:P.x.n, xU:P.x.u, yN:P.y.n, yU:P.y.u }; },
+  rows: function (){ return rows.map(function(r){ return { xs:r.xs, ys:r.ys }; }); },
+  points: function (){ return validPts(); },
+  ranges: function (){ return ranges(); },
+  fit: function (){ var f = computeFit(); return f ? { kind:f.kind, k:f.k, b:f.b, n:f.n, r2:f.r2 } : null; },
+  opts: function (){ return { grid:optGrid.checked, line:optLine.checked, fit:optFit.checked,
+    label:optLabel.checked, zero:optZero.checked, click:optClick.checked, origin:optOrigin.checked }; },
+  setOpt: function (o){
+    if (!o) return;
+    if (typeof o.grid === 'boolean') optGrid.checked = o.grid;
+    if (typeof o.line === 'boolean') optLine.checked = o.line;
+    if (typeof o.fit === 'boolean') optFit.checked = o.fit;
+    if (typeof o.label === 'boolean') optLabel.checked = o.label;
+    if (typeof o.zero === 'boolean') optZero.checked = o.zero;
+    if (typeof o.click === 'boolean') optClick.checked = o.click;
+    if (typeof o.origin === 'boolean') optOrigin.checked = o.origin;
+    refresh();
+  },
+  setPreset: applyPreset,
+  setData: function (arr){
+    rows = [];
+    for (var i=0;i<arr.length;i++) rows.push({ xs:String(arr[i][0]), ys:String(arr[i][1]) });
+    setRowCount(Math.max(MIN_ROWS, rows.length));
+    renderTable();
+    refresh();
+  },
+  addRow: addRow, clearAll: clearAll, loadSample: loadSample,
+  csvText: csvText,
+  pngDataUrl: function (){ return canvas.toDataURL('image/png'); },
+  stepFit: function (kind, pts){
+    // 期望值一律从参数重算，不从被测函数抄
+    var n = pts.length, i, sx=0, sy=0, sxy=0, sxx=0, suy=0, suu=0;
+    if (kind === 'inverse'){
+      for (i=0;i<n;i++){ var u = 1/pts[i][0]; suy += u*pts[i][1]; suu += u*u; }
+      var kk = suy/suu;
+      return { k: kk, b: 0 };
+    }
+    for (i=0;i<n;i++){ sx+=pts[i][0]; sy+=pts[i][1]; sxy+=pts[i][0]*pts[i][1]; sxx+=pts[i][0]*pts[i][0]; }
+    if (kind === 'prop') return { k: sxy/sxx, b: 0 };
+    var den = n*sxx - sx*sx;
+    var k2 = (n*sxy - sx*sy)/den, b2 = (sy - k2*sx)/n;
+    return { k: k2, b: b2 };
+  },
+  renderNow: drawFrame,
+  layout: layout,
+  probe: function (){
+    var k = canvas.width / W;
+    var pts = validPts();
+    var rng = ranges();
+    var m = mapOf(rng);
+    var out = { k:k, W:W, H:H, canvasW:canvas.width, canvasH:canvas.height,
+      plot: { x:PLOT.x*k, y:PLOT.y*k, w:PLOT.w*k, h:PLOT.h*k },
+      origin: { x:m.sx(rng.XR.lo)*k, y:m.sy(rng.YR.lo)*k },
+      pts: [], XR:rng.XR, YR:rng.YR };
+    for (var i=0;i<pts.length;i++) out.pts.push({ x:m.sx(pts[i][0])*k, y:m.sy(pts[i][1])*k });
+    return out;
+  },
+  view: function (){ return { dpr:dpr, w:canvas.width, h:canvas.height,
+    cssW:canvas.clientWidth, cssH:canvas.clientHeight }; },
+  canvasEl: function (){ return canvas; },
+  stageEl: function (){ return stageEl; },
+  cv: function (){ return cvWrap; },
+  side: function (){ return document.getElementById('side'); },
+  ctl: function (){ return document.getElementById('ctl'); },
+  readPanel: function (){ return document.getElementById('read'); },
+  tblwrap: function (){ return document.getElementById('tblwrap'); },
+  fullscreen: function (){ return fsIsStage(); },
+  fsLayoutCalls: function (){ return fsLayoutCalls; },
+  readoutText: function (){
+    function tx(id){ var e = document.getElementById(id); return e ? e.textContent : ''; }
+    return { badge: tx('badge'), tag: tx('stageTag'), sub: tx('tagSub'),
+             kv: tx('kv'), formula: tx('formula'), verdict: tx('verdict'),
+             thX: tx('thX'), thY: tx('thY'), pinfo: tx('pinfo') };
+  },
+  inputValues: function (){
+    var ins = tbody.querySelectorAll('input'), out = [];
+    for (var i=0;i<ins.length;i++) out.push(ins[i].value);
+    return out;
+  }
+};
+
+// ============================================================
+// 十二、启动
+// ============================================================
+applyPreset(PRESETS[0].id);   // 内含 loadSample + refresh
+layout();
+
+// 无头兜底：本机 headless 里 rAF 可能一次都不回调（本页不依赖动画，只做首帧保险）
+window.addEventListener('load', function (){ layout(); });
+setTimeout(function (){ layout(); }, 400);
+window.__cb.initDone = true;
+
+})();
+  </script>
+
+  <script>
+  (function() {
+    var header = document.querySelector('.header');
+    var hideTimer = null, HIDE_DELAY = 800;
+    function show() { clearTimeout(hideTimer); header.classList.remove('hidden'); document.body.classList.remove('header-hidden'); }
+    function hide() { hideTimer = setTimeout(function() { header.classList.add('hidden'); document.body.classList.add('header-hidden'); }, HIDE_DELAY); }
+    document.addEventListener('mousemove', function(e) {
+      if (e.clientY <= 60) show();
+      else if (e.clientY > header.offsetHeight + 20 && !header.classList.contains('hidden')) hide();
+    });
+    header.addEventListener('mouseenter', show);
+    header.addEventListener('mouseleave', hide);
+    hideTimer = setTimeout(function() { header.classList.add('hidden'); document.body.classList.add('header-hidden'); }, 2000);
+  })();
+  </script>
+</body>
+</html>
