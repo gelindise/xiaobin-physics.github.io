@@ -574,6 +574,27 @@
     // 虚线的实线段 / 空档（弧长，局部单位）。
     railOn: 6, railOff: 4,
   };
+  // 滑动变阻器那四个端子字母（A/B/C/D）的规格。
+  // 🔴 住在常量里、由 drawRheostat 与自检【读同一份】—— 只把 19px 写死在
+  //    drawRheostat 里的话，「字够不够大」这件事就只能靠肉眼，谁把它改回 15
+  //    都没人知道；而它恰恰是学生「接到 D 和 B」这句话能不能落地的唯一参照系，
+  //    且这个实验绝大多数时候是投在大屏上看的。
+  // ⚠️ offX / offY 是【字母相对元件中心的局部偏移】，必须比接线柱（±78 / ±26、
+  //    柱体半径约 17）更靠外，否则字会压到红柱帽上、白描边把柱子啃掉一块。
+  var RHEO_LABEL = {
+    font: 19, offX: 107, offY: 47, color: '#1e293b',
+    halo: 5, haloColor: 'rgba(255,255,255,0.92)',
+    // 四个字母的局部坐标，顺序 = A B C D（A/B 是下面两个柱、C/D 是上面两个）。
+    at: { A: [-107, 47], B: [107, 47], C: [-107, -47], D: [107, -47] },
+  };
+  // 端子字母【这一帧真的画出去了什么】（元件 id → { px, font, w, pts }）。
+  // 🔴 断言必须读它、不能读 RHEO_LABEL：读常量等于量「打算画的那一步」——
+  //    把 drawRheostat 里那行字体写死回 15px（不再读 RHEO_LABEL）照样全绿，
+  //    而「投影到大屏上认不认得出 A/B/C/D」正是这一档唯一要守的东西。
+  //    w = 真正按那个字体量出来的字形宽度，是「画得够不够大」的硬证据。
+  // 🔴 按 comp.id 存：调色板图标（id='__lg__'）和放大镜也走 drawComponent，
+  //    存一个全局单值会被它们覆盖掉。
+  var rheoLabelDrawn = {};
   // 滑片位置 slide（0~1）→ 局部横坐标
   function sliderLocalX(slide) {
     return RHEO.cylX + RHEO.track + (RHEO.cylW - RHEO.track * 2) * slide;
@@ -3780,20 +3801,34 @@
     ctx.restore();
 
     // 端子字母：滑动变阻器没有极性，只标 A/B/C/D 四位接线柱
+    // 🔴 字号与白描边是【按教室大屏投影】定的：这四个字母是学生数接线柱的
+    //    唯一参照系（「接到 D 和 B」这句话全靠它落地），投影后认不出来，
+    //    整节课的接线指令就没法执行。15px 在 1:1 桌面上够，投影不够。
+    //    规格住在 RHEO_LABEL 里，自检读的是同一份 —— 别把数写回这里。
     ctx.save();
-    ctx.font = 'bold 15px -apple-system,"PingFang SC",sans-serif';
+    ctx.font = 'bold ' + RHEO_LABEL.font + 'px -apple-system,"PingFang SC",sans-serif';
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(255,255,255,0.92)'; ctx.lineJoin = 'round';
+    ctx.lineWidth = RHEO_LABEL.halo; ctx.strokeStyle = RHEO_LABEL.haloColor;
+    ctx.lineJoin = 'round';
     // 字母落在接线柱斜外侧（接线柱在 ±78/±26，柱体半径约 17）。
     // 上下不能画反：A/B 是【下面】两个柱（电阻丝两端）、C/D 是【上面】两个柱
     // （金属杆两端）——这是人教版图16.4-2 的编号，也是学生数接线柱的参照系。
-    [['A', -101, 44], ['B', 101, 44], ['C', -101, -44], ['D', 101, -44]].forEach(function(L){
-      var p = toWorld(comp, L[1], L[2]);
-      ctx.strokeText(L[0], p.x, p.y);
-      ctx.fillStyle = '#334155';
-      ctx.fillText(L[0], p.x, p.y);
+    // 记下这一帧【真的画出去】的字号（从 ctx 读回来，不是抄常量）与每个字母的
+    // 世界坐标 —— 见 rheoLabelDrawn 的注释。
+    var LG = { font: ctx.font, px: null, w: 0, pts: [] };
+    var pm = /([\d.]+)px/.exec(ctx.font);
+    LG.px = pm ? +pm[1] : null;
+    ['A', 'B', 'C', 'D'].forEach(function(ch){
+      var L = RHEO_LABEL.at[ch];
+      var p = toWorld(comp, L[0], L[1]);
+      ctx.strokeText(ch, p.x, p.y);
+      ctx.fillStyle = RHEO_LABEL.color;
+      ctx.fillText(ch, p.x, p.y);
+      LG.w = Math.max(LG.w, ctx.measureText(ch).width);
+      LG.pts.push({ ch: ch, x: p.x, y: p.y });
     });
     ctx.restore();
+    rheoLabelDrawn[comp.id] = LG;
 
     // 柱色按图16.4-2：下面两个（A/B，电阻丝两端）是红的，上面两个（C/D，金属杆）
     // 是银的。变阻器本身没有极性，红在这里只表示「出厂就接在电阻丝上」，
@@ -4723,7 +4758,9 @@
     // nameOf —— 元件的【显示名】单一真值（c.name 空则回落 c.id）。画布标签、
     //           侧栏表、警告行、浮层标题一律问它，别各自去读 c.id 或 c.name。
     nameOf: nameOf,
-    RHEO: RHEO, PLATE: PLATE,
+    RHEO: RHEO, RHEO_LABEL: RHEO_LABEL, PLATE: PLATE,
+    // 端子字母这一帧真的画出去的字号 / 字形宽度 / 落点（见 rheoLabelDrawn 注释）。
+    rheoLabels: function () { return rheoLabelDrawn; },
     sliderLocalX: sliderLocalX, slideFromLocalX: slideFromLocalX,
     slideOf: slideOf,
     drawComponent: drawComponent, drawWire: drawWire, electronShift: electronShift,

@@ -1541,6 +1541,37 @@
             var vv = nV(sol, b.p) - nV(sol, b.q);
             segs.push({ R: b.R, v: vv, i: vv / b.R, isShort: false });
           });
+          // ── 把「被导线短路掉的那半根」补成【零电流占位段】────────────────
+          // 变阻器内部是 A —[左半根]— S —[右半根]— B，而 S 又是 C/D 金属杆
+          // 那一端。学生若把 B 和 C/D 接到【同一个外部节点】（用户报的那张图
+          // 就是 D 和 B 都接在灯泡左端），B 的节点就成了 S ⇒ `addR(S, N(1), …)`
+          // 变成自环、被 addR 丢掉 —— 右半根整根被那根导线短路，本来就一点
+          // 电流都没有。左半根被短路（A 接到 C/D）时同理。
+          //
+          // 🔴 段数少了一段，下游每一处「按段号取电流」的地方都会错：
+          //    · drawRheostatFlow 开头 `segments.length < 2` 直接早退 ⇒ 变阻器
+          //      一个记号都不画（绕线、触臂、金属杆全空）；
+          //    · terminalInjection 的 `segs.length < 2` 一律回 0 ⇒ 挂在滑片
+          //      节点上的那两根导线注入量全算成 0 ⇒ 那两根线上一颗粒子都没有。
+          //    症状正是用户报的「两根线的电流可视化没了，变阻器也没了」。
+          // 🔴 更阴的是【段号错位】：A 被短路时剩下的那一段其实是【右半根】，
+          //    若照 segs[0] 当左半根读，就是拿右半根的电流去画左半根 —— 方向、
+          //    大小全不对，还偏偏画得出来（不报错、不空屏）。所以哪一头补占位
+          //    必须按【节点】判断（A 与 S 同节点 ⇒ 左半根没了），不能只看长度。
+          // 🔴 补出来的段 i 恒为 0，【不是从解里读的】——它压根不在回路里；
+          //    carry 过滤（|i| > 1e-12）因此天然把它排除在 rUsed 之外。
+          var nS = N(2);
+          function padSeg() {
+            // isShort 取 true：这一半被外部导线短路了，与「0Ω 的接法」同语义。
+            // bypassed 是给 terminalInjection 看的：它要据此把 A/B 也当成
+            // 「挂在滑片节点上的引线」，和 C/D 一起分配注入量。
+            return { R: 0, v: 0, i: 0, isShort: true, bypassed: true };
+          }
+          // bs 的顺序 = describeComponent 里 addR 的先后：左半根在前、右半根在后，
+          // 所以存在哪一半，就按顺序 shift 出来占哪一位。
+          var segL = (N(0) !== nS) ? (segs.shift() || padSeg()) : padSeg();
+          var segR = (N(1) !== nS) ? (segs.shift() || padSeg()) : padSeg();
+          segs = [segL, segR];
           rec.segments = segs;
           var carry = segs.filter(function (s) { return Math.abs(s.i) > 1e-12; });
           if (carry.length) {
@@ -1737,11 +1768,26 @@
       // 外加 A→S、S→B 两个半段电阻。整体 rec.i 在这里没有意义，
       // 必须按半段算：segs[0] 的电流从 A 流向 S，segs[1] 从 S 流向 B。
       var segs = rec.segments;
-      if (!segs || segs.length < 2) return 0;
-      if (termIdx === 0) return -segs[0].i;   // A：电流流进元件，注入节点为负
-      if (termIdx === 1) return segs[1].i;    // B：电流从元件流出，注入节点为正
-      // C(2)/D(3) 挂在同一个滑片节点上，KCL 给出两者注入之和：
-      //   inj_C + inj_D = −(segs[1].i − segs[0].i)
+      if (!segs || segs.length < 2) return 0;  // 理论上到不了（两段恒存在）；真到得了宁可不动
+      // 🔴 两段【恒存在】：被导线短路掉的那半根由内核补成零电流占位段
+      //    （见 describeComponent 的 rheostat 段）。这里若还按「长度不够就
+      //    回 0」兜底，挂在滑片节点上的那两根线上的电流可视化就整段消失
+      //    —— 用户报过的那张图（D 与 B 同接灯泡左端）正是这个症状。
+      var byL = !!segs[0].bypassed;            // 左半根被导线短路 ⇒ A 就在滑片节点上
+      var byR = !!segs[1].bypassed;            // 右半根被导线短路 ⇒ B 就在滑片节点上
+      // A / B 各自的半根【还在】时，它们是有向支路，注入量直接读支路电流：
+      //   A：电流流进元件，注入节点为负；B：电流从元件流出，注入节点为正。
+      // 半根被短路时，A（或 B）与滑片 S 就是【同一个节点】，它和 C/D 一样
+      // 只是「挂在滑片节点上的一根引线」，各分多少定不下来，归到下面一起分。
+      if (termIdx === 0 && !byL) return -segs[0].i;
+      if (termIdx === 1 && !byR) return segs[1].i;
+      if (termIdx !== 0 && termIdx !== 1 && termIdx !== 2 && termIdx !== 3) return 0;
+      var ends = [2, 3];
+      if (byL) ends.push(0);
+      if (byR) ends.push(1);
+      if (ends.indexOf(termIdx) < 0) return 0;
+      // 滑片节点上这一【组】端子的注入之和，由滑片节点的 KCL 给出：
+      //   Σ inj = −(segs[1].i − segs[0].i) = segs[0].i − segs[1].i
       // 这个负号是关键。segs[1].i − segs[0].i 由滑片节点 S 的 KCL 推出来，
       // 它等于「从 C 端【流入】元件的电流」；而本函数的契约是「流出元件、
       // 注入节点」，方向正好相反，所以必须取负。
@@ -1750,16 +1796,16 @@
       // 从哪端开始写的。接 C 的那根线若写成「E → C」（a 端是 E），先剥 E，
       // 结果是对的；写成「C → E」先剥 C，用上这个注入量，这根线的电流就
       // 整个反号——屏幕上就是【这一段和其它段的粒子反向跑】。
-      // 两者各分多少，解里是定不下来的（同一节点的两根引线）。
-      // 实际接线只用一个，所以按「谁真的接了线」分配：只接一个就全给它，
-      // 两个都接（少见，等于把同一根杆引到两处）才平分。
-      if (termIdx !== 2 && termIdx !== 3) return 0;
-      var total = segs[0].i - segs[1].i;      // 从 C 端【流出】元件的电流
-      var cWired = wired ? wired.has(comp.id + ':2') : false;
-      var dWired = wired ? wired.has(comp.id + ':3') : false;
-      if (cWired && !dWired) return (termIdx === 2) ? total : 0;
-      if (dWired && !cWired) return (termIdx === 3) ? total : 0;
-      return total / 2;
+      // 组内各分多少，解里同样定不下来：同一节点上的几根理想引线，谁多谁少
+      // 都满足 KCL（等电阻网络的最小二乘解给出的就是「平分」）。实际接线
+      // 通常只用一个，所以按「谁真的接了线」分配：只接一个就全给它，
+      // 接了多个（少见：把同一根杆 / 同一半根引到两处）才平分。
+      var total = segs[0].i - segs[1].i;       // 从滑片节点这一端【流出】元件的电流
+      var wiredEnds = ends.filter(function (t) {
+        return wired ? wired.has(comp.id + ':' + t) : false;
+      });
+      if (!wiredEnds.length) return 0;
+      return total / wiredEnds.length;
     }
     // 三柱表头（电流表/电压表）：电流只从【实际接了线的那个量程柱】流进，
     // 从「−」柱流出，另一个量程柱悬空——它在电路外面，注入恒 0。
@@ -1939,9 +1985,52 @@
   //
   // 返回 { parallel, total, main: [bool × 导线数] }。parallel 为 false 时
   // main 全是 false —— 串联 / 单回路一律不配色，那种电路「干路」没有区分意义。
+  // ⚠️ 第 4 个参数 wires 是【场景里的导线表】（拿它认冗余线，见 redundantWires）。
+  //    不传也能跑（按「没有冗余线」处理），只是那种接法下会多配色 —— 页面必须传。
   // ============================================================
   var BRANCH_MIN = 0.05;
-  function mainBranchFlags(components, flows, results) {
+  // 「冗余线」：两根导线【共用一个接线柱】，而且另一端接在【同一个元件】上。
+  // 🔴 为什么需要它：变阻器的 B 与 C/D 接到同一个外部节点时（用户报的那张图），
+  //    两根线一端都插在灯泡左端、另一端都插在变阻器上，而变阻器这两个端子此刻
+  //    是同一个电位（B 被导线并到了滑片节点上）。它们各自只分到一半电流，但那是
+  //    【同一段路铺了两根线】，不是「电流在某处分岔走了两条不同的路」——课本上的
+  //    并联说的是后者。把它们算进「有没有分岔」里，一台纯串联的变阻器电路会被
+  //    整条涂成干路色。
+  // ⚠️ 判据必须是【成对】的（共用接线柱 + 远端同元件），不能只看「哪些端子在
+  //    同一个节点上」——每根导线的两端本来就在同一个电气节点里（并查集就是这么
+  //    建节点的），照那个判会把全部导线都算成冗余。也不能只看「同一元件的两个
+  //    端子在同一个节点上」：用导线把开关短接时开关两端也同节点，可挂在它上面的
+  //    两根线根本不共用接线柱，是【干路】的两截 —— 短接开关是常见演示，不能因此
+  //    不给干路配色。
+  // 返回与 wires 等长的 bool 数组。
+  function redundantWires(wires) {
+    var n = (wires || []).length, out = [], i;
+    for (i = 0; i < n; i++) out.push(false);
+    function endsOf(wr) {
+      if (!wr || !wr.a || !wr.b || wr.a.compId == null || wr.b.compId == null) return null;
+      return [wr.a, wr.b];
+    }
+    for (i = 0; i < n; i++) {
+      var A = endsOf(wires[i]);
+      if (!A) continue;
+      for (var j = i + 1; j < n; j++) {
+        var B = endsOf(wires[j]);
+        if (!B) continue;
+        var share = false, farSame = false;
+        for (var x = 0; x < 2; x++) {
+          for (var y = 0; y < 2; y++) {
+            if (A[x].compId === B[y].compId && A[x].termIdx === B[y].termIdx) {
+              share = true;
+              if (A[1 - x].compId === B[1 - y].compId) farSame = true;
+            }
+          }
+        }
+        if (share && farSame) { out[i] = true; out[j] = true; }
+      }
+    }
+    return out;
+  }
+  function mainBranchFlags(components, flows, results, wires) {
     var n = (flows && flows.length) || 0;
     var main = [];
     for (var z = 0; z < n; z++) main.push(false);
@@ -1965,13 +2054,18 @@
     var tol = Math.max(1e-9, tot * 1e-6);
 
     var hasBranch = false;
+    var dup = redundantWires(wires);
     for (var k = 0; k < n; k++) {
+      if (dup[k]) continue;                        // 冗余线不是「分岔」（见 redundantWires）
       var a = Math.abs(flows[k] || 0);
       if (a >= BRANCH_MIN * tot && a <= tot - tol) { hasBranch = true; break; }
     }
     if (!hasBranch) return out;                    // 串联 / 单回路：不分干路支路
     out.parallel = true;
     for (var m = 0; m < n; m++) {
+      // 冗余线两边都不认：它既不是「分岔出去的那条支路」，也不是一段独立的干路
+      //（同一段路上并两根，谁都不该被单独涂成干路色）。
+      if (dup[m]) continue;
       if (Math.abs(flows[m] || 0) >= tot - tol) main[m] = true;
     }
     return out;

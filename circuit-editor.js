@@ -113,6 +113,10 @@
     var moving = null;        // 拖元件 {id, dx, dy}
     var slider = null;        // 拨变阻器滑片 {id, moved}
     var psuKnob = null;       // 拧学生电源的电压旋钮 {id, moved}
+    // 拖旋转钮 {id, a0, r0, moved}：a0 = 按下那一刻鼠标相对元件中心的角度，
+    // r0 = 按下那一刻的角度。每一帧都从 r0 + 角度差重算，而不是在上一帧的结果上
+    // 继续加 —— 后者在快速转圈时会因为丢帧而越积越多（和 wireDrag 同一条规矩）。
+    var rotating = null;
     var wiring = null;        // 拉导线 {from:{compId,termIdx}, cur:{x,y}, to:{...}|null}
     // 拖导线 {index, x0, y0, via0, mid0, moved}。两端接线柱钉死，动的是中间拐点。
     // via0 / mid0 记的是【按下那一刻】的形状：每一帧都从它 + 总位移重算，
@@ -879,6 +883,93 @@
       ctx.stroke();
       ctx.restore();
     }
+
+    // ---------- 旋转钮（元件自由旋转） ----------
+    // 用户要的：「点击电路元件之后就出来一个旋钮，可以让它 360° 旋转」。
+    //
+    // 和删除钮一对：删除钮长在世界包围盒【左上角】外，旋转钮长在【右上角】外。
+    // 两个角不会打架，学生也不会把它们认混（红叉 = 删、蓝盘 = 转）。
+    // 位置一律按【世界包围盒】算，不跟元件自身坐标系走：元件转了之后，跟着转的
+    // 按钮会跑到对角去，学生反而找不着 —— 和删除钮那条规矩完全一样。
+    var ROT_R = 13;
+    var COMP_ROT_PAD = 8;              // 钮心相对包围盒右上角再往外偏的量
+    // 自由旋转，但快贴到 90° 的整数倍时轻轻吸一下：0/90/180/270 是最常要的四个
+    // 姿态（元件横放、竖放），手拖很难精确停在整数度上，而差 2° 的元件在大屏上
+    // 一眼就看出是歪的。其余角度保留一位小数 —— 用户要的是「自由旋转」，不是
+    // 「只能转四个方向」，所以吸附窗口只有 ±4°。
+    var ROT_SNAP = 4;
+    function snapRot(deg) {
+      var v = ((deg % 360) + 360) % 360;
+      var q = Math.round(v / 90) * 90;
+      if (Math.abs(v - q) <= ROT_SNAP) return q % 360;
+      return Math.round(v * 10) / 10;
+    }
+    function compRotPos(c) {
+      var b = localBox(c);
+      var xs = [], ys = [];
+      [[b.x0, b.y0], [b.x1, b.y0], [b.x1, b.y1], [b.x0, b.y1]].forEach(function (q) {
+        var w = D.toWorld(c, q[0], q[1]);
+        xs.push(w.x); ys.push(w.y);
+      });
+      // 右上角 = x 最大、y 最小。夹回画布内：元件拖到画布角落时按钮不能跑到
+      // 画布外面（那就永远点不到了）；夹回之后它至多压在元件自己身上。
+      var x = Math.max.apply(null, xs) + COMP_ROT_PAD + ROT_R;
+      var y = Math.min.apply(null, ys) - COMP_ROT_PAD - ROT_R;
+      x = Math.max(ROT_R + 2, Math.min(W - ROT_R - 2, x));
+      y = Math.max(ROT_R + 2, Math.min(H - ROT_R - 2, y));
+      return { x: x, y: y };
+    }
+    // 命中半径比删除钮（DEL_R + 4）再宽一点：这个钮是【拖】的，按住的瞬间就要
+    // 咬住，不像删除钮点一下就完事。
+    function hitRotButton(p) {
+      if (!selected || selected.kind !== 'comp') return false;
+      var c = byId(selected.id);
+      if (!c) return false;
+      var b = compRotPos(c);
+      return !!b && Math.hypot(p.x - b.x, p.y - b.y) <= ROT_R + 5;
+    }
+    // 画旋转钮：白圈 + 蓝底 + 一根【指向当前角度】的指针 + 一圈刻度。
+    // 指针是关键 —— 它让「元件现在朝哪」在这颗钮上看得见，拖的时候指针跟着转，
+    // 手感和反馈是同一个东西。四个刻度点标出 0/90/180/270，方便对到正方向。
+    function drawRotButton(ctx, bp, rot) {
+      if (!bp) return;
+      ctx.save();
+      ctx.beginPath(); ctx.arc(bp.x, bp.y, ROT_R + 2.5, 0, 6.284);
+      ctx.fillStyle = '#fff'; ctx.fill();
+      ctx.beginPath(); ctx.arc(bp.x, bp.y, ROT_R, 0, 6.284);
+      ctx.fillStyle = '#2563eb'; ctx.fill();
+      // 刻度：四个正方向上的小点（画在圆内沿）
+      ctx.fillStyle = 'rgba(255,255,255,0.55)';
+      for (var k = 0; k < 4; k++) {
+        var ta = k * Math.PI / 2;
+        ctx.beginPath();
+        ctx.arc(bp.x + Math.cos(ta) * (ROT_R - 2.6),
+                bp.y + Math.sin(ta) * (ROT_R - 2.6), 1.5, 0, 6.284);
+        ctx.fill();
+      }
+      // 指针：从中心指向元件当前的朝向（rot = 0 时元件横放、端子 0 在右边）。
+      // 末端带一个小箭头尖 —— 光一根直线在圆里像钟表指针，加了箭头才是「可以转」
+      // 的图标；而箭头指的又是【元件当前朝哪】，方向和手势是同一个信息。
+      var a = (rot || 0) * Math.PI / 180;
+      var tipR = ROT_R - 6.5;
+      var tx = bp.x + Math.cos(a) * tipR, ty = bp.y + Math.sin(a) * tipR;
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = 2.6; ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(bp.x, bp.y);
+      ctx.lineTo(tx, ty);
+      ctx.stroke();
+      var aw = 4.4;
+      ctx.fillStyle = '#fff';
+      ctx.beginPath();
+      ctx.moveTo(tx + Math.cos(a) * aw * 1.15, ty + Math.sin(a) * aw * 1.15);
+      ctx.lineTo(tx + Math.cos(a + 2.4) * aw, ty + Math.sin(a + 2.4) * aw);
+      ctx.lineTo(tx + Math.cos(a - 2.4) * aw, ty + Math.sin(a - 2.4) * aw);
+      ctx.closePath();
+      ctx.fill();
+      ctx.beginPath(); ctx.arc(bp.x, bp.y, 2.4, 0, 6.284);
+      ctx.fillStyle = '#fff'; ctx.fill();
+      ctx.restore();
+    }
     function undo() {
       if (!undoStack.length) return false;
       var st = undoStack.pop();
@@ -889,7 +980,6 @@
       report('undo', {});
       return true;
     }
-
     function changed() {
       onChange();
       onSelect(selected ? describeSelection() : null, undoStack.length);
@@ -920,6 +1010,21 @@
       // report('unplug')、元件要 report('remove') 并且【保留导线】（只把挂在
       // 它上面的端点冻住），两条规矩都写在那里，这里再抄一遍迟早抄漏一条。
       if (hitDeleteButton(p)) { removeSelected(); return; }
+
+      // 旋转钮紧随删除钮：两者都是「选中之后才长出来」的控件，命中判据也只认
+      // 当前选中件。必须排在 hitComp 之前 —— 钮就长在元件旁边，让本体先接走
+      // 这一下的话，按下去就变成「搬走整个元件」，钮永远拖不动（删除钮同一个理）。
+      if (hitRotButton(p)) {
+        var rc0 = byId(selected.id);
+        if (rc0) {
+          beginEdit();
+          rotating = { id: rc0.id, a0: Math.atan2(p.y - rc0.y, p.x - rc0.x),
+                       r0: rc0.rot || 0, moved: false };
+          canvas.setPointerCapture && canvas.setPointerCapture(ev.pointerId);
+          changed();
+        }
+        return;
+      }
 
       // 元件名字标签（画布上那个写着 L1 / R2 的小圆角框）。排在删除钮之后、
       // 接线柱之前：删除钮是选中导线时才出现的显式按钮，必须先接走；标签框长在
@@ -1053,6 +1158,26 @@
         }
         psuKnob = null;
       }
+      if (rotating) {
+        var rc = byId(rotating.id);
+        if (rc) {
+          // 角度 = 从元件中心指向鼠标。记的是【按下那一刻】的鼠标角度和元件角度，
+          // 每一帧都从 r0 + 角度差重算 —— 不在上一帧的结果上继续加，否则快速转圈
+          // 丢帧时会越积越多（wireDrag 那条注释里踩过同一个坑）。
+          var a = Math.atan2(p.y - rc.y, p.x - rc.x);
+          var nv = snapRot(rotating.r0 + (a - rotating.a0) * 180 / Math.PI);
+          if (nv !== (rc.rot || 0)) {
+            if (!rotating.moved) { rotating.moved = true; commitEdit(); }
+            rc.rot = nv;
+            // 端子位置跟着转，挂在它上面的导线必须【每帧】重贴。拖元件那条路可以
+            // 拖完再重算（正交导线松手才跟），旋转不行：转 90° 时端子会挪到大半个
+            // 元件之外，导线当场和接线柱分家，看着像线掉下来了。
+            rerouteAll();
+          }
+          onChange();
+        }
+        return;
+      }
       if (moving) {
         var c = byId(moving.id);
         if (!moving.moved && Math.hypot(p.x - moving.x0, p.y - moving.y0) > 4) {
@@ -1095,6 +1220,7 @@
       // 先问它只是为了让「这行字可以点」有反馈（不给的话学生根本不会去点它）。
       canvas.style.cursor = (onHoverTag && onHoverTag(p)) ? 'text'
         : hitDeleteButton(p) ? 'pointer'
+        : hitRotButton(p) ? (rotating ? 'grabbing' : 'grab')
         : (nt || nl) ? 'crosshair'
         : (nh && nh.kind === 'slider') ? 'ew-resize'
         : (nh && nh.kind === 'psuKnob') ? 'grab'
@@ -1257,6 +1383,14 @@
         // （参数面板照常显示），不报 onTap —— 旋钮是控件，不是「点一下看读数」。
         if (!psuKnob.moved) discardEdit();
         psuKnob = null;
+        changed();
+        return;
+      }
+      if (rotating) {
+        // 转动了就入过栈；只按一下没动就是普通点选（旋钮是选中件的控件，不是
+        // 「点一下看读数」），不留撤销记录 —— 和滑片、电源旋钮同一条规矩。
+        if (!rotating.moved) discardEdit();
+        rotating = null;
         changed();
         return;
       }
@@ -1471,6 +1605,8 @@
           // 元件左上角那颗删除钮。画在 restore 【之后】：虚线框跟着元件转，
           // 钮不跟 —— 它在世界坐标里，元件转到哪它都在左上角。
           drawDelButton(ctx, compDeletePos(c));
+          // 旋转钮长在【右上角】外，和删除钮成对角。同样在世界坐标里、不跟元件转。
+          drawRotButton(ctx, compRotPos(c), c.rot || 0);
         }
       } else if (selected && selected.kind === 'wire') {
         var wr = getScene().wires[selected.index];
@@ -1482,6 +1618,29 @@
 
           // 选中导线后，在线的中点长出一个删除圆钮（和元件那颗同一颗）
           drawDelButton(ctx, delButtonPos(wr));
+        }
+      }
+
+      // 正在转：把当前角度写出来。旋钮上那根指针说得出「朝哪」，说不出「多少度」——
+      // 老师让学生「转到 30°」时，这个数是唯一的依据。
+      if (rotating) {
+        var rgc = byId(rotating.id);
+        if (rgc) {
+          var rbp = compRotPos(rgc);
+          var txt = Math.round(rgc.rot || 0) + '°';
+          ctx.save();
+          ctx.font = 'bold 16px -apple-system,"PingFang SC",sans-serif';
+          ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+          var tw = ctx.measureText(txt).width;
+          var pw = tw + 20, ph = 26;
+          var px0 = rbp.x - pw / 2, py0 = rbp.y - ROT_R - 9 - ph;
+          // 药丸贴到画布上沿时翻到钮下面，别让数跑出画布
+          if (py0 < 2) py0 = rbp.y + ROT_R + 9;
+          ctx.fillStyle = 'rgba(37,99,235,0.96)';
+          D.roundRect(ctx, px0, py0, pw, ph, 8); ctx.fill();
+          ctx.fillStyle = '#fff';
+          ctx.fillText(txt, rbp.x, py0 + ph / 2 + 0.5);
+          ctx.restore();
         }
       }
 
@@ -1562,6 +1721,17 @@
       // 元件左上角那颗删除钮的位置（世界坐标）。自检按它点真实鼠标，
       // 走的才是学生走的那条路（onDown → hitDeleteButton → removeSelected）。
       compDeletePos: compDeletePos,
+      // 旋转钮（元件自由旋转）的位置、半径和命中判据。自检要按【这个位置】拖真实
+      // 鼠标，走的才是学生走的那条路（onDown → hitRotButton → rotating）；
+      // 自己按 ROT_R 猜坐标的话，钮挪了位置断言会跟着一起错，反而验不出来。
+      compRotPos: compRotPos,
+      hitRotButton: hitRotButton,
+      ROT_R: ROT_R,
+      // 当前旋转拖动状态。「按下去真的进入了旋转拖动」光看元件角度是分不出来的
+      //（按下不动角度也没变），得直接问编辑器。
+      rotDrag: function () {
+        return rotating ? { id: rotating.id, moved: rotating.moved } : null;
+      },
       // 「往导线中间连线」那一条路的两半，分开导出：
       //   nearestOnWire   = 吸附判据（纯函数，喂一个逻辑坐标进去看它吸到哪）；
       //   connectToWireMid= 落线动作（会改场景）。
