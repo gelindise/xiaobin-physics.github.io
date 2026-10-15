@@ -473,8 +473,6 @@ async function proxyStream(req, res, src, platformHint) {
   res.statusCode = 200;
   const ct = upstream.headers.get('content-type');
   if (ct) res.setHeader('Content-Type', ct);
-  res.setHeader('X-Dbg-Up', String(upstream.status));
-  res.setHeader('X-Dbg-UpCR', String(upstream.headers.get('content-range') || ''));
   res.setHeader('Cache-Control', 'no-store');
 
   if (!upstream.body) return res.end();
