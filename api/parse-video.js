@@ -463,22 +463,19 @@ async function proxyStream(req, res, src, platformHint) {
   }
 
   const upstream = await fetch(src, { headers });
-  res.statusCode = upstream.status;
-  res.setHeader('X-Dbg-Range', String(headers.Range || 'none'));
-  res.setHeader('X-Dbg-Up', String(upstream.status));
-  res.setHeader('X-Dbg-UpCL', String(upstream.headers.get('content-length') || ''));
-  res.setHeader('X-Dbg-UpCR', String(upstream.headers.get('content-range') || ''));
 
-  // 🔴 只转发这几项，【不转发 content-length】：
-  //   上游 206 响应里的 content-length 实测是【整个文件】的大小（51,973,319），
-  //   而不是本片的大小。一旦原样抄给客户端，客户端就会一直等剩下的 50MB，
-  //   表现为「下到几百 KB 就断」。交给运行时按实际写入字节走 chunked 编码即可。
-  for (const h of ['content-type', 'content-range', 'accept-ranges']) {
-    const v = upstream.headers.get(h);
-    if (v) res.setHeader(h.replace(/(^|-)([a-z])/g, (m) => m.toUpperCase()), v);
-  }
+  // 🔴 不转发 content-length / content-range / accept-ranges，一律按普通 200 回传本片字节。
+  //   实测：只要带上 Content-Range（如 "bytes 1048576-2097151/51973319"），
+  //   前置 CDN 就会拿斜杠后的【总大小】当 Content-Length 回给客户端，
+  //   而函数实际只写了本片 ⇒ 客户端一直等剩余字节，症状是
+  //   「第 1 片正常、第 2 片起返回 0 字节 / 下到几百 KB 就断」。
+  //   前端只需要「本片的字节」，不需要这些头，去掉最稳。
+  res.statusCode = 200;
+  const ct = upstream.headers.get('content-type');
+  if (ct) res.setHeader('Content-Type', ct);
+  res.setHeader('X-Dbg-Up', String(upstream.status));
+  res.setHeader('X-Dbg-UpCR', String(upstream.headers.get('content-range') || ''));
   res.setHeader('Cache-Control', 'no-store');
-  res.setHeader('Access-Control-Expose-Headers', 'Content-Range, Content-Length, Accept-Ranges, Content-Disposition');
 
   if (!upstream.body) return res.end();
   Readable.fromWeb(upstream.body).pipe(res);
