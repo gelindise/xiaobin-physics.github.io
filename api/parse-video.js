@@ -465,9 +465,15 @@ async function proxyStream(req, res, src, platformHint) {
   const upstream = await fetch(src, { headers });
   res.statusCode = upstream.status;
   res.setHeader('X-Dbg-Range', String(headers.Range || 'none'));
-  res.setHeader('X-Dbg-Start', String(start));
   res.setHeader('X-Dbg-Up', String(upstream.status));
-  for (const h of ['content-type', 'content-length', 'content-range', 'accept-ranges', 'etag', 'last-modified']) {
+  res.setHeader('X-Dbg-UpCL', String(upstream.headers.get('content-length') || ''));
+  res.setHeader('X-Dbg-UpCR', String(upstream.headers.get('content-range') || ''));
+
+  // 🔴 只转发这几项，【不转发 content-length】：
+  //   上游 206 响应里的 content-length 实测是【整个文件】的大小（51,973,319），
+  //   而不是本片的大小。一旦原样抄给客户端，客户端就会一直等剩下的 50MB，
+  //   表现为「下到几百 KB 就断」。交给运行时按实际写入字节走 chunked 编码即可。
+  for (const h of ['content-type', 'content-range', 'accept-ranges']) {
     const v = upstream.headers.get(h);
     if (v) res.setHeader(h.replace(/(^|-)([a-z])/g, (m) => m.toUpperCase()), v);
   }
