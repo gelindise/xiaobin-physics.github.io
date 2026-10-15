@@ -398,6 +398,31 @@ module.exports = async (req, res) => {
       return res.status(429).json({ ok: false, error: '请求过于频繁，请稍后再试' });
     }
 
+    // ---- 诊断（临时）：把各条上游请求的真实结果摊开，用于定位机房 IP 被拦的原因 ----
+    if (mode === 'debug') {
+      const probe = async (label, url, headers) => {
+        try {
+          const r = await fetch(url, { headers });
+          const text = await r.text();
+          return { label, status: r.status, ct: r.headers.get('content-type') || '', body: text.slice(0, 260) };
+        } catch (e) {
+          return { label, error: String((e && e.message) || e) };
+        }
+      };
+      const bvid = 'BV1GJ411x7h7';
+      const base = { 'User-Agent': UA, Accept: 'application/json, text/plain, */*' };
+      const out = [];
+      out.push(await probe('1.spi指纹', 'https://api.bilibili.com/x/frontend/finger/spi', Object.assign({}, base, { Referer: 'https://www.bilibili.com/' })));
+      out.push(await probe('2.view-无cookie', `https://api.bilibili.com/x/web-interface/view?bvid=${bvid}`, Object.assign({}, base, { Referer: 'https://www.bilibili.com/' })));
+      const ck = await getBiliCookie(true);
+      out.push({ label: '3.取得的cookie', value: String(ck).slice(0, 70) });
+      out.push(await probe('4.view-带cookie', `https://api.bilibili.com/x/web-interface/view?bvid=${bvid}`, Object.assign({}, base, { Referer: 'https://www.bilibili.com/', Cookie: ck })));
+      out.push(await probe('5.view-无referer', `https://api.bilibili.com/x/web-interface/view?bvid=${bvid}`, base));
+      out.push(await probe('6.视频页HTML', `https://www.bilibili.com/video/${bvid}/`, { 'User-Agent': UA }));
+      out.push(await probe('7.出口IP', 'https://api.ipify.org?format=json', base));
+      return res.json({ ok: true, debug: out });
+    }
+
     // ---- 下载中转 ----
     if (mode === 'stream') {
       const src = q.src;
