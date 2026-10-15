@@ -72,11 +72,16 @@
   .stage-btn.go{border-color:rgba(52,211,153,.62);background:rgba(6,78,59,.46);color:#d1fae5}
   .stage-help{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
     color:#93b4c4;font-size:11px;background:rgba(2,6,23,.72);padding:6px 10px;border-radius:7px;pointer-events:none}
-  .stage-toast{position:absolute;left:50%;transform:translateX(-50%);bottom:96px;
-    padding:8px 14px;border-radius:10px;font-size:12px;font-weight:700;max-width:82%;text-align:center;
-    background:rgba(2,6,23,.94);border:1px solid rgba(56,189,248,.42);color:#e0f2fe;
-    opacity:0;transition:opacity .2s;pointer-events:none}
-  .stage-toast.show{opacity:1}
+  /* 操作提示：🔴 一律放在【侧栏】，绝不做成画布上的浮层 —— 浮层会盖住金属球那一片，
+     学生正看着电子转移的时候被一行字挡住，是最要命的遮挡。 */
+  .panel.tip{border-color:rgba(56,189,248,.34);background:rgba(8,26,44,.9)}
+  .panel.tip>h3{color:#7dd3fc}
+  .panel.tip .tip-txt{margin:0;font-size:12px;line-height:1.65;color:#cfe6f3}
+  .panel.tip.flash{animation:tipflash .9s ease-out}
+  @keyframes tipflash{
+    0%   {box-shadow:0 0 0 0 rgba(56,189,248,.55); border-color:rgba(125,211,252,.95)}
+    100% {box-shadow:0 0 0 12px rgba(56,189,248,0); border-color:rgba(56,189,248,.34)}
+  }
 
   .panel{border:1px solid rgba(148,163,184,.17);border-radius:13px;
     background:rgba(9,20,35,.82);padding:11px 12px}
@@ -225,7 +230,7 @@
         <div class="btn-row" style="margin-top:6px">
           <button id="bt-reset">全部复位</button>
         </div>
-        <p class="note">也可以直接<b>点金属球</b>接地放电：一只手会伸过来按住金属球，电荷顺着人体导入大地，电子的流动方向在画面上看得见。</p>
+        <p class="note">也可以直接<b>点金属球</b>接地放电：一根导线从金属球接到大地，电子顺着导线流走（或从大地补进来），流动方向在画面上看得见。</p>
       </div>
 
       <div class="panel">
@@ -262,13 +267,17 @@
           <button class="stage-btn" id="vw-top">俯视</button>
           <button class="stage-btn" id="vw-close">金箔特写</button>
         </div>
-        <div class="stage-help">拖空白处旋转 · 滚轮缩放 · 拖带电体改变距离 · 点金属球用手接地</div>
+        <div class="stage-help">拖空白处旋转 · 滚轮缩放 · 拖带电体改变距离 · 点金属球接一根导线放电</div>
       </div>
-      <div class="stage-toast" id="toast"></div>
     </div>
 
     <!-- ================= 右：读数 ================= -->
     <aside class="lab3d-sidebar">
+      <div class="panel tip" id="tip-panel">
+        <h3>操作提示</h3>
+        <p class="tip-txt" id="toast">先「靠近金属球」看静电感应（不接触也张开），再「接触金属球」看电子转移，最后「接地放电」把电荷导走。</p>
+      </div>
+
       <div class="panel">
         <h3>金属箔张角<span class="pill" id="pill-state">不带电</span></h3>
         <div class="gauge"><span class="num" id="g-theta">0.0</span><span class="unit">°</span></div>
@@ -560,38 +569,67 @@
     t: 0,
     w: 0, h: 0, dpr: 1,
     // —— 电荷流动可视化（接触传电 / 接地放电共用）——
-    flow: null,          // {kind, phase, t, dur, dir, label, a, c, b, q0, th0, screen[]}
-    parts: [],           // 电子粒子：{kind, a, c, b, t, dur, spd}
+    flow: null,          // {kind, phase, t, dur, dir, label, q0, th0, dense[], wire}
+    parts: [],           // 电子粒子：{t, dur, jit}（只存弧长参数，端点每帧按相机重算）
     emit: 0,             // 发射累加器
     thetaVis: 0,         // 已弃用（现由 thetaVisual() 现算），留着给老自检读
-    hand: 0,             // 接地那只手的伸出程度 0..1
+    hand: 0,             // 接地导线的【接通程度】0..1（字段名沿用，语义已由「手」改成「导线」）
     fs: false
   };
 
   /* 电子流动可视化 ------------------------------------------------
-   * 画布上画三样东西：一串会跑的小电子（带 − 号 + 彗尾）、顺着路径流动的箭头，
-   * 以及「①②③」分步说明（分步放在右侧侧栏，不再浮在画面上挡东西）。
+   * 画布上画两样东西：一串会跑的电子（实心圆 + 白色负号 + 彗尾）、顺着路径流动的虚线箭头。
+   * ①②③ 的分步说明与操作提示【全在右侧侧栏】，画面上一个字都不许浮 —— 浮层会盖住金属球。
+   *
+   * 🔴 路径是【多点折线】不是一段弧：接触时电子必须沿「金属箔 → 金属杆 → 金属球 → 带电体」
+   *    整条金属通路走完，只画球到棒那一小段等于把最重要的过程省掉了。
+   * 🔴 路径每帧按当前相机【重新投影】，粒子只存弧长参数 t ∈ [0,1] —— 这样转视角时
+   *    电子跟着金属走，不会脱轨；也不能把端点存进粒子（那是上一帧的相机）。
+   * 路径一律按「验电器 → 外部」的正向建，反不反向交给 flowReversed() 一处决定。
+   *
    * 方向一律按【电子本身】判断，不按「正电荷怎么流」：
    *   接触：rodQ > 0（带电体缺电子）⇒ 电子 验电器 → 带电体
    *        rodQ < 0（带电体多电子）⇒ 电子 带电体 → 验电器
-   *   接地：scopeQ < 0（验电器多电子）⇒ 电子 验电器 → 大地（经手出去）
-   *        scopeQ > 0（验电器缺电子）⇒ 电子 大地 → 验电器（经手进来）
-   * 粒子一律从 p0 跑向 p2（p1 是弧线控制点），方向在建流的时候就定死。                    */
+   *   接地：scopeQ < 0（验电器多电子）⇒ 电子 验电器 → 大地（顺导线出去）
+   *        scopeQ > 0（验电器缺电子）⇒ 电子 大地 → 验电器（顺导线进来）       */
   var FLOW = {
     contact: { in: 0.55, flow: 5.6, hold: 3.2 },   // 触发电弧 / 电子流动 / 停留
-    ground:  { in: 0.62, flow: 3.0, out: 0.75 }    // 手伸进来 / 电子流动 / 手缩回
+    ground:  { in: 0.62, flow: 3.0, out: 0.75 }    // 导线接通 / 电子流动 / 导线断开
   };
-  function flowPoint(f, t){
-    // t: 0 → p0，1 → p2；p1 是控制点。p* 是三维点（接触）或屏幕点（接地，z 忽略）
-    var u = 1 - t, a = f.p0, b = f.p1, c = f.p2;
-    return [u*u*a[0] + 2*u*t*b[0] + t*t*c[0],
-            u*u*a[1] + 2*u*t*b[1] + t*t*c[1],
-            (u*u*a[2]||0) + 2*u*t*(b[2]||0) + t*t*(c[2]||0)];
-  }
   function rodContactPoint(){
     // 带电体近端（贴住金属球那一点）
     var d = ROD_DIR, k = BALL.r + 0.02;
     return [d[0]*k, BALL.y + d[1]*k, 0];
+  }
+  /* 带电体上的【电子入口】：比接触点再往杆里进 1.8 —— 箭头落在杆身上，
+     不会跟金属球的轮廓糊在一起（电子确实是进到带电体内部再散开的）。 */
+  function rodEntryPoint(){
+    var d = ROD_DIR, k = BALL.r + 1.80;
+    return [d[0]*k, BALL.y + d[1]*k, 0];
+  }
+  /* 验电器【内部】那条金属通路，正向一律是「金属箔 → 铰链 → 金属杆 → 金属球」。
+   * 🔴 只留这一个方向。之前反过来存过一版，结果拼出来的路径是
+   *    「球→…→箔→球→带电体」，电子在杆上跑一个来回，接地那条更是绕了个圈。 */
+  function scopePathUpward(){
+    var th = thetaVisual();
+    return [
+      [ -Math.sin(th)*LEAF.L*0.70, HINGE_Y - Math.cos(th)*LEAF.L*0.70, -LEAF.dz ],  // 左片箔中下段
+      [0, HINGE_Y, 0],                                    // 铰链
+      [0, HINGE_Y + (BALL.y - BALL.r - HINGE_Y)*0.45, 0], // 金属杆中段
+      [0, BALL.y - BALL.r + 0.55, 0],                     // 金属杆顶（球的下方）
+      [0, BALL.y, 0]                                      // 金属球心
+    ];
+  }
+  /* 接触路径（世界坐标，正向 = 验电器 → 带电体）
+   * 🔴 箔那一端【每帧现算】：箔的张角在转移 / 放电过程中会变，端点写死就会脱开金属箔。 */
+  function contactPath(){
+    return scopePathUpward().concat([rodEntryPoint()]);
+  }
+  function flowReversed(f){
+    // dir 的语义在两种流里正好相反，只在这里说清楚一次，别在别处各写各的
+    //   接触：dir=-1 是「验电器 → 带电体」= 正向
+    //   接地：dir= 1 是「验电器 → 大地」  = 正向
+    return f.kind === 'ground' ? (f.dir === -1) : (f.dir === 1);
   }
   function startContactFlow(){
     // 方向在建流的瞬间定死：用户中途调带电体电量，也不该把已经讲清楚的方向翻过来
@@ -599,13 +637,9 @@
     if (Math.abs(state.rodQ) < 1e-9){ dir = 0; label = '不带电'; }
     else if (state.rodQ > 0){ dir = -1; label = '验电器 → 带电体'; }  // 带电体缺电子
     else { dir = 1; label = '带电体 → 验电器'; }
-    var ball = [0, BALL.y, 0], near = rodContactPoint();
-    // 控制点往【上 + 后】鼓：球与棒只在一点相碰，不把弧拉出来电子就挤成一团看不清
-    var p1 = [(ball[0]+near[0])/2 + 0.30, (ball[1]+near[1])/2 + 2.10, -2.2];
     state.flow = {
       kind: 'contact', phase: 'in', t: 0, dur: FLOW.contact.in, dir: dir, label: label,
-      p0: dir === 1 ? near : ball, p1: p1, p2: dir === 1 ? ball : near,
-      q0: Math.abs(state.rodQ), screen: false
+      q0: Math.abs(state.rodQ), th0: 0, dense: null, wire: null, wireAttach: null
     };
     return state.flow;
   }
@@ -614,8 +648,7 @@
     state.flow = {
       kind: 'ground', phase: 'in', t: 0, dur: FLOW.ground.in,
       dir: dir, label: qSign < 0 ? '验电器 → 大地' : '大地 → 验电器',
-      q0: q0 || 0, th0: th0 || 0, screen: true,
-      p0: [0,0,0], p1: [0,0,0], p2: [0,0,0]     // 每帧按屏幕坐标重算
+      q0: q0 || 0, th0: th0 || 0, dense: null, wire: null, wireAttach: null
     };
     return state.flow;
   }
@@ -850,15 +883,21 @@
    * ============================================================ */
   var frameBoxes = [], LQUEUE = [], drawnLabels = [];
   var flowLabelPath = null;   // 每帧由 drawChargeFlow 填，标签在【最后】登记（让部件标注先挑位置）
+  // 🔴 每帧由 drawChargeFlow 填：本帧【主电子】（不含彗尾）的屏幕坐标 + 亮度淡出系数。
+  //    自检要靠它「按圆心取样」判「圆里有没有负号」——按整张画布扫白横条的话，
+  //    电子圆的【白色描边】在正上/正下也近似水平，会被误判成负号（改坏也照样绿）。
+  var electronRecs = [];
 
-  // 画布上的浮层（左上提示框 / 底部按钮条 / 提示条）也要当障碍物 ——
-  // 只避让「画布内已画的标签」时，金属球的标签会正好落在提示框底下（实测）。
-  // 画面上只剩「底部按钮条」和「toast」两个浮层（原来左上角的提示框已删——
-  // 它会把金属球那一片整个盖住，而同样的文字在右侧「状态说明」面板里有完整版）。
+  // 🔴 画布上的浮层只剩「底部按钮条」一个，它也要当障碍物 ——
+  //    只避让「画布内已画的标签」时，金属球的标签会正好落在按钮条底下（实测）。
+  //    原来的左上提示框、底部提示条（toast）都【已移出画布】：
+  //    它们会把金属球那一片盖住，而同样的文字在右侧侧栏里有完整版。
   function uiBoxes(){
     var out = [];
     var cr = canvas.getBoundingClientRect();
-    var sels = ['.stage-bar', '.stage-toast'];
+    // 🔴 画布上的浮层只剩底部按钮条一条。提示文字已全部移到侧栏（#toast 在 .lab3d-sidebar 里），
+    //    所以这里【不许】再往 sels 里加画布内的浮层 —— 加了就等于承认画面上有东西挡实验。
+    var sels = ['.stage-bar'];
     for (var i=0;i<sels.length;i++){
       var e = stage.querySelector(sels[i]);
       if (!e) continue;
@@ -1083,28 +1122,74 @@
   }
 
   /* ============================================================
-   * 电荷流动可视化：电子粒子 + 流向箭头 + 接地那只手
+   * 电荷流动可视化：电子粒子 + 流向箭头 + 接地导线
    * ------------------------------------------------------------
-   * 电子一律画成「蓝白小圆点 + 中间的 − 号 + 彗尾」；箭号沿路径流动。
-   * 接触传电的路径是【三维】的（跟着相机转），接地放电的路径是【屏幕】的
-   * （手本来就在屏幕空间里画），所以粒子/路径都带一个 screen 开关。
-   * ============================================================ */
-  function bezAt(p0, p1, p2, t){
-    var u = 1 - t;
-    return { x: u*u*p0.x + 2*u*t*p1.x + t*t*p2.x,
-             y: u*u*p0.y + 2*u*t*p1.y + t*t*p2.y };
+   * 电子一律画成「实心蓝圆 + 白色负号 + 彗尾」；箭号沿路径流动。
+   * 🔴 路径统一走【折线 + Chaikin 平滑】，不再是一段二次贝塞尔：
+   *    贝塞尔只有三个点，画不出「箔→杆→球→带电体」这条折来折去的金属通路。
+   * Chaikin 只削角、不外扩（不像 Catmull-Rom 会冲出去），首尾点保持不变
+   * ⇒ 电子起点永远钉在金属箔上、终点永远落在带电体 / 大地上。 */
+  function chaikin(pts, iters){
+    var p = pts, k, i, out, a, b;
+    for (k=0;k<iters;k++){
+      if (p.length < 3) return p;
+      out = [p[0]];
+      for (i=0;i<p.length-1;i++){
+        a = p[i]; b = p[i+1];
+        out.push({ x: a.x*0.75 + b.x*0.25, y: a.y*0.75 + b.y*0.25 });
+        out.push({ x: a.x*0.25 + b.x*0.75, y: a.y*0.25 + b.y*0.75 });
+      }
+      out.push(p[p.length-1]);
+      p = out;
+    }
+    return p;
   }
+  function polyAt(pts, t){
+    // 按【弧长】在折线上取点：按参数取点会在长段上飞、短段上磨蹭
+    if (!pts || !pts.length) return null;
+    if (pts.length === 1) return { x: pts[0].x, y: pts[0].y };
+    var i, acc = 0, total = 0, segs = [], d;
+    for (i=0;i<pts.length-1;i++){
+      d = Math.hypot(pts[i+1].x-pts[i].x, pts[i+1].y-pts[i].y);
+      segs.push(d); total += d;
+    }
+    if (total < 1e-6) return { x: pts[0].x, y: pts[0].y };
+    var want = clamp(t, 0, 1) * total;
+    for (i=0;i<segs.length;i++){
+      if (acc + segs[i] >= want || i === segs.length-1){
+        var u = segs[i] > 1e-6 ? (want-acc)/segs[i] : 0;
+        return { x: pts[i].x + (pts[i+1].x-pts[i].x)*u,
+                 y: pts[i].y + (pts[i+1].y-pts[i].y)*u };
+      }
+      acc += segs[i];
+    }
+    return { x: pts[pts.length-1].x, y: pts[pts.length-1].y };
+  }
+  function polyTangent(pts, t){
+    var a = polyAt(pts, Math.max(0, t - 0.02)), b = polyAt(pts, Math.min(1, t + 0.02));
+    if (!a || !b) return { x: 1, y: 0 };
+    var dx = b.x - a.x, dy = b.y - a.y, L = Math.hypot(dx, dy) || 1;
+    return { x: dx/L, y: dy/L };
+  }
+  function polyLen(pts){
+    var L = 0, i;
+    for (i=1;i<pts.length;i++) L += Math.hypot(pts[i].x-pts[i-1].x, pts[i].y-pts[i-1].y);
+    return L;
+  }
+  /* 路径统一出口：返回【屏幕坐标】点数组，顺序 = 电子实际前进的方向。
+   * 接触段全是世界点（跟着相机转），接地段 = 世界点（箔→球）+ 屏幕点（导线）。 */
   function flowScreenPath(q, f){
     if (!f) return null;
-    if (f.screen){
-      var bp = project([0, BALL.y, 0], q);
-      var tip = f.tipScreen || bp;
-      var dx = tip.x - bp.x;
-      var mid = { x: (bp.x + tip.x)/2 + dx*0.06,
-                  y: (bp.y + tip.y)/2 - Math.abs(dx)*0.20 - 14 };
-      return f.dir === 1 ? [bp, mid, tip] : [tip, mid, bp];
+    var world = (f.kind === 'contact') ? contactPath() : scopePathUpward();
+    var pts = world.map(function(p){ return project(p, q); });
+    if (f.kind === 'ground'){
+      var wg = wireGeom(q);
+      f.wire = wg;
+      f.wireAttach = wg.start;
+      pts = pts.concat(wg.pts);
     }
-    return [project(f.p0, q), project(f.p1, q), project(f.p2, q)];
+    if (flowReversed(f)) pts = pts.slice().reverse();
+    return pts;
   }
   function arrowHead(at, dx, dy, size, col){
     var a = Math.atan2(dy, dx);
@@ -1118,86 +1203,92 @@
     ctx.fillStyle = col; ctx.fill();
     ctx.restore();
   }
+  /* 电子 = 【一个圆 + 圆里一个负号】。
+   * 🔴 负号用【画出来的短横】而不是字体字形：字号小的时候 '−' 会被抗锯齿糊成一团，
+   *    而且不同字体基线不同，横杠会偏。短横 + 线帽永远居中、永远清楚。
+   * 🔴 圆要【实心 + 描边】：只描边的话叠在深色金属杆上就看不见了。 */
   function drawElectronDot(x, y, r, alpha){
     if (r <= 0 || alpha <= 0.01) return;
-    var g = ctx.createRadialGradient(x, y, 0, x, y, r*3.4);
-    g.addColorStop(0,   'rgba(186,230,253,' + (0.62*alpha).toFixed(3) + ')');
-    g.addColorStop(0.42,'rgba(56,189,248,' + (0.30*alpha).toFixed(3) + ')');
-    g.addColorStop(1,   'rgba(56,189,248,0)');
+    var g = ctx.createRadialGradient(x, y, r*0.85, x, y, r*2.9);
+    g.addColorStop(0, 'rgba(56,189,248,' + (0.38*alpha).toFixed(3) + ')');
+    g.addColorStop(1, 'rgba(56,189,248,0)');
     ctx.fillStyle = g;
-    ctx.beginPath(); ctx.arc(x, y, r*3.4, 0, PI2); ctx.fill();
-    dot2({x:x, y:y}, r, '#e0f2fe', 'rgba(2,6,23,.6)', Math.max(1, r*0.34));
-    ctx.font = '800 ' + (r*1.62).toFixed(1) + 'px ui-monospace, Menlo, monospace';
-    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillStyle = 'rgba(2,6,23,.92)';
-    ctx.fillText('−', x, y + r*0.06);
-  }
-  function particleScreen(p, q){
-    var a, b, c;
-    if (p.screen){ a = p.a; b = p.b; c = p.c; }
-    else { a = project(p.a, q); b = project(p.b, q); c = project(p.c, q); }
-    var t = clamp(p.t, 0, 1);
-    var pt = bezAt(a, b, c, t);
-    var dx = c.x - a.x, dy = c.y - a.y, dl = Math.hypot(dx, dy) || 1;
-    pt.x += (-dy/dl) * p.jit * dl;
-    pt.y += ( dx/dl) * p.jit * dl;
-    return pt;
+    ctx.beginPath(); ctx.arc(x, y, r*2.9, 0, PI2); ctx.fill();
+
+    ctx.beginPath(); ctx.arc(x, y, r, 0, PI2);
+    ctx.fillStyle = 'rgba(12,74,140,' + (0.95*alpha).toFixed(3) + ')';
+    ctx.fill();
+    ctx.lineWidth = Math.max(1.1, r*0.30);
+    ctx.strokeStyle = 'rgba(224,242,254,' + (0.95*alpha).toFixed(3) + ')';
+    ctx.stroke();
+
+    var hw = r*0.52, lt = Math.max(1.3, r*0.30);
+    ctx.beginPath();
+    ctx.moveTo(x - hw, y); ctx.lineTo(x + hw, y);
+    ctx.lineCap = 'round';
+    ctx.lineWidth = lt;
+    ctx.strokeStyle = 'rgba(255,255,255,' + alpha.toFixed(3) + ')';
+    ctx.stroke();
   }
   function drawChargeFlow(q){
     var f = state.flow;
     if (!f) return;
+    electronRecs.length = 0;
     var path = flowScreenPath(q, f);
-    if (!path) return;
-    var p0 = path[0], p1 = path[1], p2 = path[2];
+    if (!path || path.length < 2) return;
+    var dense = chaikin(path, 3);
+    f.dense = dense;                       // 给 spawnParticle / 自检读
+    var tail = dense[dense.length-1];
     var live = Math.abs(f.dir) > 1e-9 && f.phase !== 'in';
-    var L = Math.hypot(p2.x-p0.x, p2.y-p0.y) || 1;
-    var rad = clamp(L*0.075, 9, 22);
+    var L = Math.max(1, polyLen(dense));
+    var rad = clamp(L*0.030, 8, 18);          // 流动虚线 / 箭头的尺度（跟路径长度走）
+    // 🔴 电子圆的半径【跟路径长度解耦】：接路径长度算的话，短路径上电子会缩到半径不到
+    //    3 px —— 圆里的负号糊成一格，学生根本看不出「这是个带负号的小球」。
+    //    固定在一个读得清的区间里，长路径只是排得稀一点。
+    var er = clamp(L*0.022, 4.8, 7.4);
+    f.len = L; f.er = er;
+    var i;
 
     if (live){
-      var pts = [], i;
-      for (i=0;i<=36;i++) pts.push(bezAt(p0, p1, p2, i/36));
       ctx.save();
       ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-      ctx.beginPath(); ctx.moveTo(pts[0].x, pts[0].y);
-      for (i=1;i<pts.length;i++) ctx.lineTo(pts[i].x, pts[i].y);
-      ctx.strokeStyle = 'rgba(56,189,248,.15)'; ctx.lineWidth = rad*0.66; ctx.stroke();
-      ctx.setLineDash([rad*0.46, rad*0.60]);
-      ctx.lineDashOffset = -((state.t * rad * 5.0) % (rad*1.06));
-      ctx.strokeStyle = 'rgba(147,197,253,.82)'; ctx.lineWidth = Math.max(2, rad*0.19); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(dense[0].x, dense[0].y);
+      for (i=1;i<dense.length;i++) ctx.lineTo(dense[i].x, dense[i].y);
+      ctx.strokeStyle = 'rgba(56,189,248,.14)'; ctx.lineWidth = rad*0.70; ctx.stroke();
+      ctx.setLineDash([rad*0.44, rad*0.58]);
+      ctx.lineDashOffset = -((state.t * rad * 5.0) % (rad*1.02));
+      ctx.strokeStyle = 'rgba(147,197,253,.85)'; ctx.lineWidth = Math.max(2, rad*0.20); ctx.stroke();
       ctx.setLineDash([]);
-      // 终点箭头：指向电子要去的那一头
-      arrowHead(p2, p2.x-p1.x, p2.y-p1.y, rad*0.82, 'rgba(186,230,253,.96)');
+      // 终点箭头：指向电子要去的那一头（用末尾两点定方向，别用首点 —— 折线首尾方向完全不同）
+      var pe = dense[dense.length-2];
+      arrowHead(tail, tail.x-pe.x, tail.y-pe.y, rad*0.86, 'rgba(186,230,253,.96)');
       ctx.restore();
-      flowLabelPath = { mid: bezAt(p0, p1, p2, 0.5), rad: rad, txt: '电子 ' + f.label };
+      flowLabelPath = { mid: polyAt(dense, 0.5), rad: rad, txt: '电子 ' + f.label };
     }
     for (var k=0;k<state.parts.length;k++){
       var p = state.parts[k];
-      var pt = particleScreen(p, q);
       var fade = Math.min(1, (1-p.t)*4.5) * Math.min(1, p.t*4.5);
-      // 彗尾
+      var tan = polyTangent(dense, p.t);
+      var ox = -tan.y * p.jit * rad, oy = tan.x * p.jit * rad;   // 横向铺开，别挤成一根线
       for (var t2=1;t2<=3;t2++){
-        var q2 = particleScreen({ a:p.a, b:p.b, c:p.c, screen:p.screen,
-                                  t:p.t - 0.035*t2, jit:p.jit }, q);
-        drawElectronDot(q2.x, q2.y, rad*0.20*(1-0.22*t2), fade*0.30);
+        var g2 = polyAt(dense, p.t - 0.028*t2);
+        if (g2) drawElectronDot(g2.x + ox*(1 - 0.30*t2), g2.y + oy*(1 - 0.30*t2),
+                                er*0.62*(1-0.20*t2), fade*0.26);
       }
-      drawElectronDot(pt.x, pt.y, rad*0.30, fade);
+      var pt = polyAt(dense, p.t);
+      if (pt){
+        var ex = pt.x + ox, ey = pt.y + oy;
+        drawElectronDot(ex, ey, er, fade);
+        if (fade > 0.30) electronRecs.push({ x: ex, y: ey, r: er, fade: fade });
+      }
     }
   }
 
-  /* ---------- 接地那只手：屏幕空间，食指指尖钉在金属球【右下】的球面上 ----------
-   * 为什么钉右下而不是正右：带电体是从球的【右上方】伸过来的，手要是也从右上过来，
-   * 两根手指正好压在带电体上，学生分不清「手按的是球还是棒」。 */
-  function handGeom(q){
-    var bp = project([0, BALL.y, 0], q);
-    var rb = Math.max(12, q.focal*BALL.r/Math.max(bp.z, 0.02));
-    var u  = Math.max(14, rb*0.80);
-    var reach = clamp(state.hand, 0, 1);
-    var A = -18 * Math.PI/180;                          // 球面右下 ~18° 处
-    var tx = bp.x + rb*Math.cos(A), ty = bp.y - rb*Math.sin(A);
-    var offX = (state.w + u*5.5) - tx;
-    return { bp:bp, rb:rb, u:u, reach:reach,
-             tip: { x: tx + offX*(1-reach), y: ty + u*0.85*(1-reach) } };
-  }
+  /* ---------- 接地导线：一根线从金属球接到大地（🔴 不再画手） ----------
+   * 起点取球面【右下】34° 处：带电体是从球的【右上方】伸过来的，
+   * 导线要是也从右上走，会和带电体叠在一起，学生分不清哪根是导线。
+   * 🔴 导线必须【绕开玻璃瓶】：先推到瓶子的屏幕包围盒外侧，再落到接地符号上；
+   *    把球和角落直接连成一条斜线会横穿瓶身。 */
   function groundAnchor(q){
     // 接地符号别压在玻璃瓶上：按瓶子的屏幕包围盒在四个角里挑一个空的
     var bb = bboxOf(revolveOutline(flaskProfile(), q, 22));
@@ -1209,9 +1300,77 @@
     ];
     for (var i=0;i<cand.length;i++){
       var c = cand[i];
-      if (!(c.x + 62 > bb.x0 && c.x - 62 < bb.x1 && c.y + 44 > bb.y0 && c.y - 34 < bb.y1)) return c;
+      if (!(c.x + 62 > bb.x0 && c.x - 62 < bb.x1 && c.y + 44 > bb.y0 && c.y - 34 < bb.y1))
+        return { c: c, bb: bb };
     }
-    return cand[0];
+    return { c: cand[0], bb: bb };
+  }
+  function wireGeom(q){
+    var ga = groundAnchor(q), gnd = ga.c, bb = ga.bb;
+    var bp = project([0, BALL.y, 0], q);
+    var rb = Math.max(12, q.focal*BALL.r/Math.max(bp.z, 0.02));
+    var A  = Math.PI * 0.34;
+    var start = { x: bp.x + rb*Math.cos(A), y: bp.y + rb*Math.sin(A) };
+    var u = Math.max(13, rb*0.72);
+    var side = (gnd.x >= state.w*0.5) ? 1 : -1;
+    var outX = side > 0 ? Math.max(bb.x1 + u*1.25, start.x + u*1.15)
+                        : Math.min(bb.x0 - u*1.25, start.x - u*1.15);
+    outX = clamp(outX, u*1.15, state.w - u*1.15);
+    var top = { x: gnd.x, y: gnd.y - u*0.62 };       // 接地符号引线的顶端
+    var pts = [
+      start,
+      { x: start.x + (outX - start.x)*0.62, y: start.y + u*0.55 },
+      { x: outX,                            y: start.y + (top.y - start.y)*0.62 },
+      { x: outX + (top.x - outX)*0.58,      y: top.y - u*0.34 },
+      top
+    ];
+    return { pts: pts, start: start, gnd: gnd, u: u, side: side, bb: bb };
+  }
+  // 球那头的接线夹：一个小铜夹子，说明「导线是接在金属球上的」
+  function drawClip(start, next, u){
+    var ang = Math.atan2(next.y - start.y, next.x - start.x);
+    ctx.save();
+    ctx.translate(start.x, start.y); ctx.rotate(ang);
+    ctx.beginPath();
+    if (ctx.roundRect) ctx.roundRect(u*0.10, -u*0.32, u*0.90, u*0.64, u*0.15);
+    else ctx.rect(u*0.10, -u*0.32, u*0.90, u*0.64);
+    ctx.fillStyle = '#b45309'; ctx.fill();
+    ctx.strokeStyle = 'rgba(69,26,3,.8)'; ctx.lineWidth = Math.max(1, u*0.05); ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(u*0.06, -u*0.26); ctx.lineTo(-u*0.20, -u*0.42);
+    ctx.moveTo(u*0.06,  u*0.26); ctx.lineTo(-u*0.20,  u*0.42);
+    ctx.strokeStyle = '#f59e0b'; ctx.lineWidth = Math.max(1.4, u*0.10);
+    ctx.lineCap = 'round'; ctx.stroke();
+    ctx.restore();
+  }
+  function drawGroundWire(q){
+    var f = state.flow;
+    if (!f || f.kind !== 'ground') return;
+    var reach = clamp(state.hand, 0, 1);           // 导线接通进度 0..1
+    if (reach <= 0.004) return;
+    var wg = wireGeom(q);
+    var u = wg.u, gnd = wg.gnd;
+    var dense = chaikin(wg.pts, 3);
+    var n = Math.max(2, Math.round(dense.length * reach));   // 导线「长出来」的过程
+    var sub = dense.slice(0, n), i;
+
+    ctx.save();
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    ctx.beginPath(); ctx.moveTo(sub[0].x, sub[0].y);
+    for (i=1;i<sub.length;i++) ctx.lineTo(sub[i].x, sub[i].y);
+    ctx.strokeStyle = 'rgba(15,23,42,.92)';    ctx.lineWidth = u*0.30; ctx.stroke();
+    ctx.strokeStyle = 'rgba(148,163,184,.95)'; ctx.lineWidth = u*0.15; ctx.stroke();
+    ctx.strokeStyle = 'rgba(226,232,240,.50)'; ctx.lineWidth = Math.max(1, u*0.05); ctx.stroke();
+    // 🔴 这里【不再】画导线自己的流动虚线：电子那条路径（drawChargeFlow）本来就沿同一条
+    //    曲线画了虚线 + 电子，两套叠在一起只会糊成一条。导线的职责只是「有根线接上去」。
+    drawClip(wg.start, wg.pts[1], u);
+    ctx.globalAlpha = clamp((reach - 0.55)/0.45, 0, 1);
+    drawGroundSymbol(gnd, u);
+    ctx.globalAlpha = 1;
+    ctx.restore();
+
+    f.wireAttach = wg.start;
+    f.wire = wg;
   }
   function drawGroundSymbol(c, u){
     var w = u*1.15, h = u*0.16;
@@ -1234,69 +1393,9 @@
     ctx.fillText('大地', c.x, c.y + u*0.95);
     ctx.restore();
   }
-  function drawGroundHand(q){
-    var f = state.flow;
-    if (!f || f.kind !== 'ground' || state.hand <= 0.004) return;
-    var g = handGeom(q), u = g.u, tip = g.tip;
-    ctx.save();
-    ctx.globalAlpha = clamp(state.hand*1.2, 0, 1);
+  /* 旧版这里是「一只手从右边伸过来按住金属球」。已按需求改成一根导线接地，
+     整个 drawGroundHand / handGeom 一并删掉 —— 留着会让人以为还有第二种接地方式。 */
 
-    var skin = ctx.createLinearGradient(tip.x, tip.y - u*2.6, tip.x + u*3.6, tip.y + u*2.6);
-    skin.addColorStop(0,    '#f9ddc2');
-    skin.addColorStop(0.42, '#eec3a0');
-    skin.addColorStop(1,    '#cd9672');
-    var ink = 'rgba(74,40,22,.5)';
-    function P(dx, dy){ return { x: tip.x + dx*u, y: tip.y + dy*u }; }
-    function cap(p0, p1, r, fill){
-      var ang = Math.atan2(p1.y-p0.y, p1.x-p0.x);
-      ctx.beginPath();
-      ctx.arc(p0.x, p0.y, r, ang + Math.PI/2, ang - Math.PI/2);
-      ctx.arc(p1.x, p1.y, r, ang - Math.PI/2, ang + Math.PI/2);
-      ctx.closePath();
-      ctx.fillStyle = fill || skin; ctx.fill();
-      ctx.strokeStyle = ink; ctx.lineWidth = Math.max(1, u*0.05); ctx.stroke();
-    }
-    // 前臂（一直伸到画布右缘外）+ 袖口
-    var wrist = P(2.32, 0.86);
-    cap(wrist, { x: state.w + u*2.0, y: wrist.y + u*0.58 }, u*0.58);
-    var cuff = P(3.05, 1.00);
-    cap({ x: cuff.x - u*0.14, y: cuff.y - u*0.50 }, { x: cuff.x + u*0.14, y: cuff.y + u*0.58 },
-        u*0.63, '#1d4ed8');
-    // 手掌 + 四指（食指最前，指尖正好点在球面上）+ 拇指（挑在掌背上方，看得见）
-    cap(P(1.60, 0.30), P(1.60, 1.05), u*0.55);
-    cap(P(0.00, 0.00), P(1.22, 0.10), u*0.175);
-    cap(P(0.14, 0.40), P(1.30, 0.50), u*0.172);
-    cap(P(0.26, 0.78), P(1.32, 0.88), u*0.165);
-    cap(P(0.40, 1.14), P(1.28, 1.26), u*0.150);
-    cap(P(1.45, 0.22), P(0.80, -0.62), u*0.240);
-
-    // 导线：从手背拉到接地符号；电子顺着它入地（或从大地爬上来）
-    var gnd = groundAnchor(q);
-    var wireFrom = P(2.92, 0.96);
-    var wireMid = { x: (wireFrom.x + gnd.x)/2 + u*0.6, y: (wireFrom.y + gnd.y)/2 + u*0.9 };
-    var wirePts = [], i;
-    for (i=0;i<=20;i++) wirePts.push(bezAt(wireFrom, wireMid, gnd, i/20));
-    ctx.beginPath(); ctx.moveTo(wirePts[0].x, wirePts[0].y);
-    for (i=1;i<wirePts.length;i++) ctx.lineTo(wirePts[i].x, wirePts[i].y);
-    ctx.lineCap = 'round';
-    ctx.strokeStyle = 'rgba(15,23,42,.85)'; ctx.lineWidth = u*0.30; ctx.stroke();
-    ctx.strokeStyle = 'rgba(100,116,139,.9)'; ctx.lineWidth = u*0.16; ctx.stroke();
-    if (f.phase !== 'in'){
-      // 导线上那串流动虚线的方向必须跟电子一致：dir=1（电子往大地去）从手流向大地，
-      // dir=-1（电子从大地来）反过来 —— 只按导线自己的起点画会正好画反。
-      var ph = (state.t * u * 4.0) % (u*0.72);
-      ctx.save();
-      ctx.setLineDash([u*0.30, u*0.42]);
-      ctx.lineDashOffset = (f.dir === 1) ? -ph : ph;
-      ctx.strokeStyle = 'rgba(125,211,252,.9)'; ctx.lineWidth = u*0.13; ctx.stroke();
-      ctx.restore();
-    }
-    drawGroundSymbol(gnd, u);
-
-    f.tipScreen = tip;
-    f.wire = { a: wireFrom, b: wireMid, c: gnd };
-    ctx.restore();
-  }
 
   /* ---------- 主绘制 ---------- */
   function draw(){
@@ -1436,7 +1535,7 @@
     }
 
     drawSparks(q);
-    drawGroundHand(q);      // 先画手（含导线 / 接地符号），电子再压在它上面
+    drawGroundWire(q);      // 先画接地导线（含接线夹 / 接地符号），电子再压在它上面
     drawChargeFlow(q);
 
     /* ---------- 标注 ---------- */
@@ -1463,9 +1562,13 @@
         Math.abs(state.rodQ) < 1e-9 ? '#94a3b8' : (state.rodQ > 0 ? '#fca5a5' : '#7dd3fc'), 12, 'center');
     }
     // 电子流向的标注【最后登记】：四个部件标注先挑位置，它只补空。
+    // 电子流向的标注【最后登记】：四个部件标注先挑位置，它只补空。
+    // 用 leaderLabel（带引线 + 自动避让）而不是直接压在路径中点上 ——
+    // 路径中点在金属杆上，直接压上去会和「绝缘塞 / 金属杆」两个标注挤成一团。
     if (flowLabelPath){
-      labelAt(flowLabelPath.mid.x, flowLabelPath.mid.y - flowLabelPath.rad*1.6,
-        flowLabelPath.txt, '#7dd3fc', 12, 'center');
+      leaderLabel(flowLabelPath.mid, flowLabelPath.txt, '#7dd3fc', 12,
+        [[-112,-26,'center'],[-112,26,'center'],[112,-26,'center'],[112,26,'center'],
+         [0,-58,'center'],[-112,0,'center'],[112,0,'center']]);
     }
     flushLabels();
 
@@ -1485,10 +1588,16 @@
       rodNearScreen: rodDraw ? rodDraw.pn : null,
       flow: state.flow ? { kind: state.flow.kind, phase: state.flow.phase,
                            dir: state.flow.dir, label: state.flow.label,
-                           path: flowScreenPath(q, state.flow) } : null,
+                           n: state.flow.dense ? state.flow.dense.length : 0,
+                           len: state.flow.len || 0,
+                           head: state.flow.dense ? state.flow.dense[0] : null,
+                           tail: state.flow.dense ? state.flow.dense[state.flow.dense.length-1] : null,
+                           path: state.flow.dense || null } : null,
       hand: state.hand,
-      handTip: (state.flow && state.flow.tipScreen) ? state.flow.tipScreen : null,
+      wireAttach: (state.flow && state.flow.wireAttach) ? state.flow.wireAttach : null,
+      handTip: (state.flow && state.flow.wireAttach) ? state.flow.wireAttach : null,  // 兼容旧名
       parts: state.parts.length,
+      electrons: electronRecs.map(function(e){ return { x: e.x, y: e.y, r: e.r, fade: e.fade }; }),
       labels: drawnLabels.map(function(b){ return { txt:b.txt, x:b.x, y:b.y, w:b.w, h:b.h }; })
     };
     return drawn;
@@ -1586,13 +1695,21 @@
    * 行为
    * ============================================================ */
   var toastTimer = null;
+  /* 操作提示写在【右侧侧栏】的 #toast 里（不是画布浮层）—— 画面上一个字都不许压。
+     改的是文字 + 一次边框脉冲，学生余光扫得到，又永远挡不住实验。 */
   function toast(msg){
     var el = $('toast');
-    if (!el) return;
-    el.textContent = msg;
-    el.classList.add('show');
+    if (el) el.textContent = msg;
+    var panel = $('tip-panel');
+    if (panel){
+      panel.classList.remove('flash');
+      void panel.offsetWidth;              // 强制重排，让动画能连续重放
+      panel.classList.add('flash');
+    }
     if (toastTimer) clearTimeout(toastTimer);
-    toastTimer = setTimeout(function(){ el.classList.remove('show'); }, 3400);
+    toastTimer = setTimeout(function(){
+      var p = $('tip-panel'); if (p) p.classList.remove('flash');
+    }, 1000);
   }
   function addSpark(p){ state.sparks.push({ p: p.slice(), t: 0, dur: 0.72 }); }
 
@@ -1647,12 +1764,12 @@
     var q0 = state.scopeQ;
     var th0 = leafAngle(Math.abs(Qeff()));      // 放电【前】的张角，给画面上的合拢动画当起点
     // 真值【立刻】归零（读数 / 自检要的就是这个），
-    // 「手伸过来 → 电子流走 → 金属箔合拢」的画面另起一条动画线，两件事互不牵连。
+    // 「导线接通 → 电子流走 → 金属箔合拢」的画面另起一条动画线，两件事互不牵连。
     state.scopeQ = 0;
     state.groundPulse = 1;
     addSpark([0, BALL.y, 0]);
     startGroundFlow(Math.sign(q0), th0, Math.abs(q0));
-    toast('接地放电：' + (q0 < 0 ? '验电器上多余的电子顺着手流向大地' : '大地的电子顺着手流进验电器，把缺的电子补上') +
+    toast('接地放电：' + (q0 < 0 ? '验电器上多余的电子顺着导线流向大地' : '大地的电子顺着导线流进验电器，把缺的电子补上') +
           '，金属箔合拢。');
   }
   function doReset(){
@@ -1806,7 +1923,7 @@
       2: ''
     },
     ground: {
-      0: '手（人体 = 导体）按住金属球，接通大地',
+      0: '一根导线从金属球接到大地，金属球、金属杆、金属箔连成的导体接通大地',
       1: '',
       2: '电荷全部导走，金属箔重新合拢'
     }
@@ -1838,10 +1955,10 @@
       titleTxt = '接地放电';
       t0 = STEP_TEXT.ground[0];
       t1 = state.flow.dir === -1
-        ? '大地的电子经手流进验电器（验电器原来缺电子）'
-        : '验电器上多余的电子经手流向大地';
+        ? '大地的电子顺着导线流进验电器（验电器原来缺电子）'
+        : '验电器上多余的电子顺着导线流向大地';
       t2 = STEP_TEXT.ground[2];
-      if (f.phase === 'in'){ active = 0; pillTxt = '① 伸手接触'; pillCls = 'live'; }
+      if (f.phase === 'in'){ active = 0; pillTxt = '① 接通导线'; pillCls = 'live'; }
       else if (f.phase === 'flow'){ active = 1; pillTxt = '② 放电中'; pillCls = 'live'; }
       else { active = 2; pillTxt = '③ 已放完'; pillCls = 'ok'; }
     } else {
@@ -1851,7 +1968,7 @@
       t2 = '电荷平分，金属箔按新电荷量张开';
       if (Math.abs(state.scopeQ) > 1e-9){
         active = 2;
-        t2 = '验电器带 ' + fmtCn(state.scopeQ) + '，张角 ' + th.toFixed(1) + '° 保持；点「接地放电」用手把它导走';
+        t2 = '验电器带 ' + fmtCn(state.scopeQ) + '，张角 ' + th.toFixed(1) + '° 保持；点「接地放电」用一根导线把它导走';
         pillTxt = '已带电'; pillCls = 'warn';
       }
     }
@@ -1877,7 +1994,7 @@
     }
     stepFlow(dt);
     stepParticles(dt);
-    stepGroundHand(dt);
+    stepGroundWire(dt);
   }
 
   /* ---------- 电子流动动画的分阶段推进 ---------- */
@@ -1902,42 +2019,21 @@
     if (f.kind === 'contact' && !state.touching) stopFlow();
   }
 
-  /* ---------- 电子粒子 ---------- */
-  // ⚠️ 屏幕路径的端点必须存成 {x,y} 对象（世界路径才是 [x,y,z] 数组）——
-  //    bezAt 直接读 .x/.y，存成数组就是 undefined ⇒ 粒子全画在 (NaN,NaN)。
-  function pushParticle(a, ctrl, c, screen, dur){
-    state.parts.push({
-      a: screen ? { x:a[0],    y:a[1]    } : a.slice(),
-      b: screen ? { x:ctrl[0], y:ctrl[1] } : ctrl.slice(),
-      c: screen ? { x:c[0],    y:c[1]    } : c.slice(),
-      screen: !!screen, t: 0, dur: dur,
-      jit: (Math.random()-0.5)*0.12
-    });
-  }
+  /* ---------- 电子粒子 ----------
+   * 🔴 粒子【只存弧长参数 t】，不存端点：路径每帧按当前相机重新投影，
+   *    把端点存进粒子等于把上一帧的相机钉死，转视角时电子就脱轨飞出去。 */
   function spawnParticle(){
     var f = state.flow;
     if (!f) return;
-    if (f.screen && f.tipScreen){
-      // 接地：一条流在「金属球 ↔ 指尖」之间，另一条顺着导线流向大地
-      var q = drawn.q || makeCam(state.w, state.h);
-      var bp = project([0, BALL.y, 0], q);
-      var mid = { x:(bp.x+f.tipScreen.x)/2 + (f.tipScreen.x-bp.x)*0.06,
-                  y:(bp.y+f.tipScreen.y)/2 - Math.abs(f.tipScreen.x-bp.x)*0.20 - 14 };
-      var p0 = f.dir === 1 ? bp : f.tipScreen, p2 = f.dir === 1 ? f.tipScreen : bp;
-      pushParticle([p0.x,p0.y,0], [mid.x,mid.y,0], [p2.x,p2.y,0], true, 0.8 + Math.random()*0.4);
-      if (f.wire){
-        var w = f.wire;
-        var wa = f.dir === 1 ? w.a : w.c, wc = f.dir === 1 ? w.c : w.a;
-        pushParticle([wa.x,wa.y,0], [w.b.x,w.b.y,0], [wc.x,wc.y,0], true, 0.9 + Math.random()*0.4);
-      }
-    } else {
-      pushParticle(f.p0, f.p1, f.p2, false, 0.85 + Math.random()*0.45);
-    }
+    // 接地那条路（箔→杆→球→导线→大地）比接触那条长得多，给慢一点才不至于一闪而过
+    var dur = (f.kind === 'ground') ? 1.55 + Math.random()*0.65
+                                    : 1.00 + Math.random()*0.50;
+    state.parts.push({ t: 0, dur: dur, jit: (Math.random()-0.5)*0.75 });
   }
   function stepParticles(dt){
     var f = state.flow, i;
     if (f && Math.abs(f.dir) > 1e-9 && f.phase !== 'in'){
-      var rate = (f.kind === 'ground') ? 8 : 6.5;   // 每秒几个电子
+      var rate = (f.kind === 'ground') ? 11 : 9;   // 每秒几个电子（路径长了，密一点才连成流）
       state.emit += dt * rate;
       while (state.emit >= 1){ spawnParticle(); state.emit -= 1; }
     }
@@ -1950,7 +2046,7 @@
   }
 
   /* ---------- 「画面上」的张角 ----------
-   * 只有【接地放电】那几秒故意滞后：手还没碰到时保持张开，碰到以后跟着电子一起合到底，
+   * 只有【接地放电】那几秒故意滞后：导线还没接通时保持张开，接通以后跟着电子一起合到底，
    * 学生才看得出「电子走光了 → 箔才合拢」这条因果。其余情况一律等于真值。
    * ⚠️ 必须由 draw() / syncReadouts() 每次现算，不能放进 driveAnim 里缓动：
    *    自检里 renderNow() 不走 driveAnim，缓动会让 drawn.leafTipWorld 停在上一帧的角上，
@@ -1961,14 +2057,14 @@
     //    两片箔直接立起来指向天上、弧上标着 171.9°。
     var f = state.flow, target = leafAngle(Math.abs(Qeff()));
     if (!(f && f.kind === 'ground' && f.th0 > 0.5)) return target;
-    if (f.phase === 'in') return f.th0;                  // 手还在路上：箔不动
+    if (f.phase === 'in') return f.th0;                  // 导线还在路上：箔不动
     var u = clamp(f.t/f.dur, 0, 1);
     var v = f.th0 * (1 - u*u*(3-2*u));                   // 放电中：smoothstep 合到底
     return v < 1e-4 ? 0 : v;
   }
 
-  /* ---------- 接地那只手的伸 / 缩 ---------- */
-  function stepGroundHand(dt){
+  /* ---------- 接地导线的接通 / 断开 ---------- */
+  function stepGroundWire(dt){
     var f = state.flow;
     if (!f || f.kind !== 'ground'){ state.hand = 0; return; }
     var u;
@@ -2120,7 +2216,14 @@
     toggleFs: toggleFs,
     thetaVisual: thetaVisual,
     stopFlow: stopFlow,
-    handGeom: handGeom,
+    contactPath: contactPath,
+    scopePathUpward: scopePathUpward,
+    rodEntryPoint: rodEntryPoint,
+    flowReversed: flowReversed,
+    wireGeom: wireGeom,
+    chaikin: chaikin,
+    polyAt: polyAt,
+    polyTangent: polyTangent,
     flowScreenPath: flowScreenPath,
     projectWorld: function(p){ return drawn.q ? project(p, drawn.q) : null; },
     projectRings: function(prof, n){ return drawn.q ? revolveOutline(prof, drawn.q, n || 22) : null; },
