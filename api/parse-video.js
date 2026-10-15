@@ -446,11 +446,16 @@ function refererFor(src, platformHint) {
 }
 
 async function proxyStream(req, res, src, platformHint) {
-  const headers = { 'User-Agent': UA, Referer: refererFor(src, platformHint), Accept: '*/*' };
+  const headers = {
+    'User-Agent': UA,
+    Referer: refererFor(src, platformHint),
+    Accept: '*/*',
+    'Accept-Encoding': 'identity',
+  };
 
   // 支持前端传来的 start/end 分片，也支持浏览器原生的 Range
-  const start = req.query.start;
-  const end = req.query.end;
+  const start = req.query && req.query.start;
+  const end = req.query && req.query.end;
   if (start != null && start !== '') {
     headers.Range = `bytes=${start}-${end != null && end !== '' ? end : ''}`;
   } else if (req.headers.range) {
@@ -459,6 +464,9 @@ async function proxyStream(req, res, src, platformHint) {
 
   const upstream = await fetch(src, { headers });
   res.statusCode = upstream.status;
+  res.setHeader('X-Dbg-Range', String(headers.Range || 'none'));
+  res.setHeader('X-Dbg-Start', String(start));
+  res.setHeader('X-Dbg-Up', String(upstream.status));
   for (const h of ['content-type', 'content-length', 'content-range', 'accept-ranges', 'etag', 'last-modified']) {
     const v = upstream.headers.get(h);
     if (v) res.setHeader(h.replace(/(^|-)([a-z])/g, (m) => m.toUpperCase()), v);
