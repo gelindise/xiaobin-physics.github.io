@@ -462,37 +462,35 @@ module.exports = async (req, res) => {
       return res.status(429).json({ ok: false, error: '请求过于频繁，请稍后再试' });
     }
 
-    // ---- 诊断（临时）：批量探测各接口在机房 IP 下的可用性 ----
+    // ---- 诊断（临时）：聚焦 WBI 签名链路 ----
     if (mode === 'debug') {
       const bvid = 'BV1GJ411x7h7';
-      const cid = '137649199';
-      const ck = await getBiliCookie(true);
-      const headers = {
-        'User-Agent': UA,
-        Accept: 'application/json, text/plain, */*',
-        Referer: 'https://www.bilibili.com/',
-        Cookie: ck,
-      };
-      const urls = {
-        spi: 'https://api.bilibili.com/x/frontend/finger/spi',
-        pagelist: `https://api.bilibili.com/x/player/pagelist?bvid=${bvid}`,
-        archStat: `https://api.bilibili.com/x/web-interface/archive/stat?bvid=${bvid}`,
-        viewDetail: `https://api.bilibili.com/x/web-interface/view/detail?bvid=${bvid}`,
-        playurl: `https://api.bilibili.com/x/player/playurl?bvid=${bvid}&cid=${cid}&qn=80&fnval=0&platform=html5&high_quality=1`,
-        playerV2: `https://api.bilibili.com/x/player/v2?bvid=${bvid}&cid=${cid}`,
-        v2view: `https://api.bilibili.com/x/v2/view?bvid=${bvid}`,
-        wbiView: `https://api.bilibili.com/x/web-interface/wbi/view?bvid=${bvid}`,
-        popular: 'https://api.bilibili.com/x/web-interface/popular?ps=1',
-        nav: 'https://api.bilibili.com/x/web-interface/nav',
-      };
       const out = [];
-      for (const k of Object.keys(urls)) {
+      let mixin = '';
+      try {
+        const navRes = await bfetch('https://api.bilibili.com/x/web-interface/nav');
+        const navText = await navRes.text();
+        out.push({ k: 'nav', status: navRes.status, ct: navRes.headers.get('content-type'), body: navText.slice(0, 200) });
+        const nj = JSON.parse(navText);
+        const img = nj && nj.data && nj.data.wbi_img;
+        if (img) {
+          const base = (u) => String(u).split('/').pop().split('.')[0];
+          const orig = base(img.img_url) + base(img.sub_url);
+          mixin = MIXIN_KEY_ENC_TAB.map((i) => orig[i]).join('').slice(0, 32);
+          out.push({ k: 'mixinKey', value: mixin, len: mixin.length });
+        }
+      } catch (e) {
+        out.push({ k: 'nav', error: String((e && e.message) || e) });
+      }
+      if (mixin) {
         try {
-          const r = await fetch(urls[k], { headers });
+          const qs = wbiSign({ bvid }, mixin);
+          out.push({ k: '签名串', value: qs });
+          const r = await bfetch(`https://api.bilibili.com/x/web-interface/wbi/view?${qs}`);
           const t = await r.text();
-          out.push({ k, status: r.status, body: t.slice(0, 140) });
+          out.push({ k: 'wbiView签名', status: r.status, ct: r.headers.get('content-type'), body: t.slice(0, 260) });
         } catch (e) {
-          out.push({ k, error: String((e && e.message) || e) });
+          out.push({ k: 'wbiView签名', error: String((e && e.message) || e) });
         }
       }
       let ip = '';
