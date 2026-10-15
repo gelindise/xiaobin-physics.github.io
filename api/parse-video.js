@@ -398,29 +398,44 @@ module.exports = async (req, res) => {
       return res.status(429).json({ ok: false, error: '请求过于频繁，请稍后再试' });
     }
 
-    // ---- 诊断（临时）：把各条上游请求的真实结果摊开，用于定位机房 IP 被拦的原因 ----
+    // ---- 诊断（临时）：批量探测各接口在机房 IP 下的可用性 ----
     if (mode === 'debug') {
-      const probe = async (label, url, headers) => {
-        try {
-          const r = await fetch(url, { headers });
-          const text = await r.text();
-          return { label, status: r.status, ct: r.headers.get('content-type') || '', body: text.slice(0, 260) };
-        } catch (e) {
-          return { label, error: String((e && e.message) || e) };
-        }
-      };
       const bvid = 'BV1GJ411x7h7';
-      const base = { 'User-Agent': UA, Accept: 'application/json, text/plain, */*' };
-      const out = [];
-      out.push(await probe('1.spi指纹', 'https://api.bilibili.com/x/frontend/finger/spi', Object.assign({}, base, { Referer: 'https://www.bilibili.com/' })));
-      out.push(await probe('2.view-无cookie', `https://api.bilibili.com/x/web-interface/view?bvid=${bvid}`, Object.assign({}, base, { Referer: 'https://www.bilibili.com/' })));
+      const cid = '137649199';
       const ck = await getBiliCookie(true);
-      out.push({ label: '3.取得的cookie', value: String(ck).slice(0, 70) });
-      out.push(await probe('4.view-带cookie', `https://api.bilibili.com/x/web-interface/view?bvid=${bvid}`, Object.assign({}, base, { Referer: 'https://www.bilibili.com/', Cookie: ck })));
-      out.push(await probe('5.view-无referer', `https://api.bilibili.com/x/web-interface/view?bvid=${bvid}`, base));
-      out.push(await probe('6.视频页HTML', `https://www.bilibili.com/video/${bvid}/`, { 'User-Agent': UA }));
-      out.push(await probe('7.出口IP', 'https://api.ipify.org?format=json', base));
-      return res.json({ ok: true, debug: out });
+      const headers = {
+        'User-Agent': UA,
+        Accept: 'application/json, text/plain, */*',
+        Referer: 'https://www.bilibili.com/',
+        Cookie: ck,
+      };
+      const urls = {
+        spi: 'https://api.bilibili.com/x/frontend/finger/spi',
+        pagelist: `https://api.bilibili.com/x/player/pagelist?bvid=${bvid}`,
+        archStat: `https://api.bilibili.com/x/web-interface/archive/stat?bvid=${bvid}`,
+        viewDetail: `https://api.bilibili.com/x/web-interface/view/detail?bvid=${bvid}`,
+        playurl: `https://api.bilibili.com/x/player/playurl?bvid=${bvid}&cid=${cid}&qn=80&fnval=0&platform=html5&high_quality=1`,
+        playerV2: `https://api.bilibili.com/x/player/v2?bvid=${bvid}&cid=${cid}`,
+        v2view: `https://api.bilibili.com/x/v2/view?bvid=${bvid}`,
+        wbiView: `https://api.bilibili.com/x/web-interface/wbi/view?bvid=${bvid}`,
+        popular: 'https://api.bilibili.com/x/web-interface/popular?ps=1',
+        nav: 'https://api.bilibili.com/x/web-interface/nav',
+      };
+      const out = [];
+      for (const k of Object.keys(urls)) {
+        try {
+          const r = await fetch(urls[k], { headers });
+          const t = await r.text();
+          out.push({ k, status: r.status, body: t.slice(0, 140) });
+        } catch (e) {
+          out.push({ k, error: String((e && e.message) || e) });
+        }
+      }
+      let ip = '';
+      try {
+        ip = await (await fetch('https://api.ipify.org?format=json')).text();
+      } catch (_) {}
+      return res.json({ ok: true, ip, debug: out });
     }
 
     // ---- 下载中转 ----
