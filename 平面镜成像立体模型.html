@@ -397,8 +397,11 @@
           <div class="lab3d-field">
             <label for="mir-gt">镜面倾角 <output id="mir-gt-v">0°</output></label>
             <input id="mir-gt" type="range" min="-60" max="60" value="0" step="5">
-            <small>玻璃板绕竖直轴转动：0° 时板面与左右方向平行。倾角为正，板的左端转向板前、<b style="color:#7dd3fc">像往左移</b>；
-              为负则像往右移。像始终是物关于此刻板面的镜像——「物距 = 像距」「连线垂直于镜面」这两条不随倾角改变</small>
+            <small>玻璃板绕<b style="color:#7dd3fc">底部那条横线</b>倾倒：0° 时板面竖直（垂直于桌面）。
+              倾角为正，板顶朝板前倒，<b style="color:#7dd3fc">像会升到桌面上方、并跟着前倾</b>（倾斜角度是倾角的 2 倍）；
+              为负则板顶朝板后倒，像沉到桌面以下、被桌面挡住。像始终是物关于此刻板面的镜像——
+              「物距 = 像距」「连线垂直于镜面」这两条不随倾角改变。倾到 50° 以上时板面会
+              把光源 A 的上半截挡到板后去，像就只剩一部分了（提示条会说明）</small>
           </div>
 
           <h3>光屏</h3>
@@ -588,49 +591,67 @@
       const srcName = isObj => state.src === 'f'
         ? (isObj ? (state.aLit ? 'F 光源 A（点亮）' : 'F 光源 A') : 'F 光源 B（未点亮）')
         : (isObj ? (state.aLit ? '蜡烛 A（点燃）' : '蜡烛 A') : '蜡烛 B（未点燃）');
-      /* ── 镜面姿态：玻璃板可【绕竖直轴（y）倾斜 / 转动】一个角度 gt。
-       *  u = 板面的水平方向，n = 板前的法线，p0 = 板底中心（gx, 0, gz）。
-       *  gt = 0 时 u = +x、n = +z——正是原来那块「竖在 z = gz」的板，
-       *  所以下面每一条公式在 gt = 0 时都和改动前逐字等价。
-       * 【符号约定】gt > 0 把板的【左端】拨向板前（右端转向板后），
-       * 法线 n 随之偏向 +x，像被反射到 −n 一侧 ⇒ 像往左移——默认相机在右前方，
-       * 正角度转过去视线更容易落在板内（实测 +30° 像仍完整可见，−30° 会偏出板外）。
-       * 【为什么只绕竖直轴】像必须还落在桌面上，B 才可能拖过去与它重合；
-       * 绕水平轴倾，像会整个抬到空中，这个实验的核心步骤就没了。
+      /* ── 镜面姿态：玻璃板【绕底部那条横线向前倾倒】一个角度 gt。
+       *  底部那条线过 (gx, 0, gz)、方向恒为 +x（倾倒不改变它在纸上的位置）。
+       *  u  = 板面水平方向（恒为 +x）
+       *  up = 板面内「向上」的方向，随倾角转：(0, cos gt, sin gt) —— gt 越大越倒向板前
+       *  n  = 板前法线：(0, −sin gt, cos gt)。gt = 0 时就是原来那块「竖在 z = gz」的板，
+       *       所以下面每一条公式在 gt = 0 时都和改动前逐字等价。
+       *  【为什么只朝板前倒】朝板后倒时像会沉到桌面以下（被不透明的桌面挡住），
+       *  看上去像「像没了」；朝板前倒时像升到桌面上方、并跟着倾斜——正是要给学生看的现象。
+       *  【关键差别】法线有了 y 分量 ⇒ 同一条竖线上的点离板面的距离不再相同，
+       *  「像升起来」和「像倾斜」都是从这里来的。所以垂距一律写成 sigP(x, y, z)。
        * ───────────────────────────────────────────────────────────── */
       const MIR = () => {
-        const th = state.gt, c = Math.cos(th), s = Math.sin(th);
-        return { u: [c, 0, -s], n: [s, 0, c] };
+        const b = state.gt, c = Math.cos(b), s = Math.sin(b);
+        return { u: [1, 0, 0], up: [0, c, s], n: [0, -s, c] };
       };
-      // 点 (x,z) 到板面的【带符号】垂直距离：正 = 板前。物距 / 像距 / 刻度尺
-      // 零点全以它为零点——板一倾，距离就不沿 z 量了，别拿 z 坐标差充数。
-      const sig = (x, z) => {
+      // 三维点 (x,y,z) 到板面的【带符号】垂距：正 = 板前。
+      const sigP = (x, y, z) => {
         const m = MIR();
-        return m.n[0] * (x - state.gx) + m.n[2] * (z - state.gz);
+        return m.n[1] * y + m.n[2] * (z - state.gz);
       };
-      // 点在【板面方向】上的坐标。「会不会被板挡住」按它判——板只挡 |s| ≤ gw 那一段。
-      const tanOf = (x, z) => {
-        const m = MIR();
-        return m.u[0] * (x - state.gx) + m.u[2] * (z - state.gz);
+      // 桌面上（y = 0）的点到板面的垂距。物距 / 像距 / 「B 到玻璃板」都用它。
+      const sig = (x, z) => MIR().n[2] * (z - state.gz);
+      // 点关于板面的镜像（反射）。像 = 物的反射，所以「物距 = 像距」按构造恒等。
+      const refP = (x, y, z) => {
+        const m = MIR(), s = sigP(x, y, z);
+        return [x - 2 * s * m.n[0], y - 2 * s * m.n[1], z - 2 * s * m.n[2]];
       };
-      // 像：物关于【此刻板面】的镜像（反射）。板挪了、倾了，像都跟着动——
-      // 对称轴永远是板面，所以像与物到板面的距离按构造恒等，不需要「算」成像。
-      // gt = 0 时就是 (ax, ·, 2gz − az)。
+      // 像的姿态：底面（= 物底面的反射）+ 轴线方向（= 竖直方向的反射，倾斜 2·gt）。
+      // gt = 0 时 up = (0,1,0)、底面在 (ax, 0, 2gz − az) —— 与改动前逐字等价。
+      const ghostFrame = () => {
+        const b = state.gt;
+        return { base: refP(state.ax, 0, state.az),
+                 up: [0, Math.cos(2 * b), Math.sin(2 * b)] };
+      };
+      // 像上参数 t 处的世界点（t 沿像的轴线量，和「像有多高」同一把尺）。
+      const ghostPoint = (g, t) => [
+        g.base[0] + g.up[0] * t, g.base[1] + g.up[1] * t, g.base[2] + g.up[2] * t
+      ];
+      // 像的底面（世界坐标，可能悬在桌面上方）。gt = 0 时 y = 0。
       const imagePos = () => {
-        const m = MIR(), s = sig(state.ax, state.az);
-        return { x: state.ax - 2 * s * m.n[0], z: state.az - 2 * s * m.n[2] };
+        const g = ghostFrame();
+        return { x: g.base[0], y: g.base[1], z: g.base[2] };
       };
-      // 点到板面的垂足（沿法线投影回板面）。辅助线的「零点」画在各垂足上。
-      const footOf = (x, z) => {
-        const m = MIR(), s = sig(x, z);
-        return [x - s * m.n[0], z - s * m.n[2]];
+      // 点到板面的垂足（沿法线投影回板面）。辅助线的「零点」画在各垂足上；
+      // 板一倾，垂足就离开桌面悬在空中（物距 / 像距都是量到它为止）。
+      const footOf = (x, y, z) => {
+        const m = MIR(), s = sigP(x, y, z);
+        return [x - s * m.n[0], y - s * m.n[1], z - s * m.n[2]];
       };
-      // 镜面局部坐标 → 世界坐标：su 沿板面方向、nv 沿法线、y 为高度。
-      // 玻璃板 / 底座夹子 / 纸上的镜面线 / 刻度尺 全部由它生成，改倾角只需改这一处。
-      const mp = (su, nv, y) => {
+      // 镜面局部坐标 → 世界坐标：su 沿板面水平方向、t 沿板面向上量、nv 沿法线。
+      // 玻璃板 / 底座夹子 / 高光 全部由它生成，改倾角只需改这一处。
+      const mp = (su, t, nv) => {
         const m = MIR();
-        return [state.gx + su * m.u[0] + nv * m.n[0], y, state.gz + su * m.u[2] + nv * m.n[2]];
+        return [state.gx + su * m.u[0] + nv * m.n[0],
+                t * m.up[1] + nv * m.n[1],
+                state.gz + t * m.up[2] + nv * m.n[2]];
       };
+      // 点沿【板面水平方向】离板底中心多远。板面水平方向恒为 +x（倾倒不改变它），
+      // 所以就是 x − gx。它取代了旧版那个「绕竖直轴转」的 tanOf：
+      // 「物体在不在板挡得住的那一段」判据用的是它（|s| ≤ gw 才被板挡住）。
+      const alongOf = x => x - state.gx;
       // 物距（世界单位，正 = 板前）。像距按构造与它恒等。
       const objDist = () => sig(state.ax, state.az);
       // B / 光屏还在不在【器材区】。判据是「在玻璃板右侧那片空地上」——
@@ -656,68 +677,127 @@
        * 这跟「B 有没有和像重合」是两件事——B 是不透明的实物，绕到哪个角度都看得见；
        * 像却会随着视角转出板外而整个消失。这是真的物理，不是画错了。
        *
-       * 推导（eye = 相机位置，u = 物距，D = 相机到板面的距离，均沿法线量）：
+       * 推导（eye = 相机位置，u = 该像点对应的【物点】到板面的垂距，D = 相机到板面的垂距）：
        *   眼睛 → 像上某点 的直线，与板面的交点参数 t = D / (D + u)。
-       *   交点必须落在板面矩形内：沿板面方向 |s| ≤ gw，高度 0 ≤ y ≤ gh。
-       *   板面可绕竖直轴倾斜（gt），所以交点要用【板面局部坐标】判，不能再看 x − gx。
-       *   把高度方向的两个边界反解回「像上哪一段高度能看见」，长度超过 3 mm 才算看得见
-       *   （否则只剩一条边，屏幕上就是一两条像素，等于没有）。
+       *   交点必须落在板面矩形内：沿板面水平方向 |x交点 − gx| ≤ gw，沿板面向上 0 ≤ t ≤ gh
+       *   （板一倾，「板内的高度」就不再是世界 y 了，得投影到板面的 up 上量）。
+       *   【板一倾，u 随高度变】法线有了竖直分量 ⇒ 像上每一段对应的 u 都不一样，
+       *   不能再用一个统一的 t 反解出「看得见的高度带」。所以这里改成【沿像的轴线采样】：
+       *   逐点算交点、逐点判在不在板内，再取最长的一段连续可见区间，两端用二分法收紧。
+       *   gt = 0 时这套采样给出的结果与原来的解析解一致（分辨率 3 mm 以内）。
        *
        * 【为什么要返回 lo / hi 而不是一个布尔】「看不看得见」和「看得见哪一段」是两件事：
        * 板比像矮的时候（或者视角抬高、从板上沿往下看的时候），像的下半段照样透过玻璃板
        * 看得见，只是【高出板上沿的那一段】收不到反射光线 —— 画出来就是错的（学生一眼就会
-       * 发现「板上沿以上的像根本不该有」）。所以除了布尔，还要把这一段高度带交出去，
-       * render 里据此把像裁掉。二者同源：都用下面这组 yLo / yHi。
+       * 发现「板上沿以上的像根本不该有」）。所以除了布尔，还要把这一段交出去，
+       * render 里据此把像裁掉。二者同源：都用下面这套采样。
        * ============================================================ */
       function imageVisible(q) {
-        // 板面可倾，所以「到板面的距离」一律沿【法线】量（见 sig）：
-        // u = 物距（物体在板前为正），D = 相机到板面（相机在板前为正）。
-        const im = imagePos();
-        const u = sig(state.ax, state.az);           // 物距（物体在板前为正）
-        const D = sig(q.eye[0], q.eye[2]);           // 相机到板面（相机在板前为正）
-        if (u <= 0.05) return { vis: false, why: 'A 已经跑到玻璃板后面去了，它成的像在板前，这个视角看不到' };
+        const g = ghostFrame(), top = srcTop();
+        const D = sigP(q.eye[0], q.eye[1], q.eye[2]);   // 相机到板面（相机在板前为正）
         if (D <= 0.05) return { vis: false, why: '你现在绕到了玻璃板背面。虚像是反射光线在板前形成的，站在板后看不到' };
-        const t = D / (D + u);
-        // 眼睛 → 像底 的直线与板面的交点。板面绕竖直轴转了，交点要用
-        // 【板面局部坐标】判「在不在板内」：沿板面方向 |s| ≤ gw（高度方向不受倾角影响）。
-        const qx = q.eye[0] + t * (im.x - q.eye[0]);
-        const qz = q.eye[2] + t * (im.z - q.eye[2]);
-        const s = tanOf(qx, qz);
-        if (Math.abs(s) > state.gw) {
-          const over = (Math.abs(s) - state.gw) * U;
-          return { vis: false, why: '视线从眼睛到像的连线落到玻璃板外了（沿板面偏出 ' + over.toFixed(1) +
-            ' cm）——把玻璃板调宽一点、把光源 A 往板心挪一点，或者把视角转正一些' };
+        if (sig(state.ax, state.az) <= 0.05) {
+          return { vis: false, why: 'A 已经跑到玻璃板后面去了，它成的像在板前，这个视角看不到' };
         }
-        const top = srcTop();
-        const yb = q.eye[1] * (1 - t);              // 像的底端（y = 0）投影到板上的高度
-        const yLo = Math.max(0, -yb / t);
-        const yHi = Math.min(top, (state.gh - yb) / t);
-        if (yHi - yLo <= 0.03) {
-          return { vis: false, why: yb > state.gh
-            ? '视线从玻璃板上沿越过去了——俯角太大，或者玻璃板比像矮'
-            : '视线从玻璃板下沿底下穿过去了——把视角抬高一点' };
+        // 【板朝板后倒时像会沉到桌面以下】板顶往板后倒（倾角为负）⇒ 像被压到桌面下面去，
+        // 而桌面是不透明的——真实实验里这个位置根本看不到像。所以不是「画错」，
+        // 而是这里必须如实说看不见，并告诉学生怎么调回来（否则画面上会出现
+        // 一个「穿在桌面里」的像，比不画还糟）。
+        if (g.base[1] < -0.01) {
+          return { vis: false, why: '镜面朝板后倾倒，像沉到桌面以下去了——不透明的桌面把它挡住。' +
+                   '把倾角调成正值（板顶朝板前倒），像就会升到桌面上方、跟着一起倾斜' };
         }
-        // lo / hi 是【像上真正能看见的那一段高度】（世界 y）。通常 lo = 0、hi = 像顶，
-        // 也就是整支像都看得见；板上沿一挡住，hi 就落下来，render 据此把顶部裁掉。
-        return { vis: true, why: '', lo: yLo, hi: yHi, top: top };
+        // 像上参数 t 处的点，能不能透过玻璃板被看见。
+        const m = MIR();
+        const visAt = t => {
+          const P = ghostPoint(g, t);
+          const u = -sigP(P[0], P[1], P[2]);   // 像在板后 ⇒ 对应物点的垂距 = −σ(像)
+          if (u <= 0.05) return { ok: false, why: 'behind' };
+          const tt = D / (D + u);
+          const Qx = q.eye[0] + tt * (P[0] - q.eye[0]);
+          const Qy = q.eye[1] + tt * (P[1] - q.eye[1]);
+          const Qz = q.eye[2] + tt * (P[2] - q.eye[2]);
+          if (Math.abs(Qx - state.gx) > state.gw) return { ok: false, why: 'side', over: (Math.abs(Qx - state.gx) - state.gw) * U };
+          // 【交点在板内的「高度」不是世界 y】板一倾，板面内向上的方向变成 up = (0, cos gt, sin gt)，
+          // 所以要把交点投影到 up 上量（gt = 0 时 up = (0,1,0)，退化成 y，与改动前逐字等价）。
+          const ht = Qy * m.up[1] + (Qz - state.gz) * m.up[2];
+          if (ht > state.gh) return { ok: false, why: 'top' };
+          if (ht < 0) return { ok: false, why: 'bottom' };
+          return { ok: true };
+        };
+        // 粗采样找最长连续可见段
+        const N = 24;
+        let bestI = -1, bestJ = -1, i0 = -1, overMax = 0;
+        // 【为什么要按「失败次数」挑原因】整段像都看不见时，光拿【第一个】失败的采样点
+        // 说事会指错方向：板倾到 60° 时像被抬到板上沿以上，第一个点（像底）先撞上的是
+        // 「偏出板外」，报出来就成了「把玻璃板调宽一点」——而真正该做的是把倾角调小。
+        // 所以逐点统计失败原因，报出现次数最多的那一种。
+        const tally = {};
+        for (let i = 0; i <= N; i++) {
+          const r = visAt(top * i / N);
+          if (r.ok) { if (i0 < 0) i0 = i; }
+          else {
+            tally[r.why] = (tally[r.why] || 0) + 1;
+            if (r.why === 'side' && r.over > overMax) overMax = r.over;
+            if (i0 >= 0 && i - 1 - i0 > bestJ - bestI) { bestI = i0; bestJ = i - 1; }
+            i0 = -1;
+          }
+        }
+        if (i0 >= 0 && N - i0 > bestJ - bestI) { bestI = i0; bestJ = N; }
+        if (bestI < 0) {
+          let pick = 'top', best = -1;
+          // 顺序即「同票时的优先级」：先报更有指导性的那条
+          for (const k of ['top', 'behind', 'side', 'bottom']) {
+            if ((tally[k] || 0) > best) { best = tally[k] || 0; pick = k; }
+          }
+          const why = pick === 'side'
+            ? '视线从眼睛到像的连线落到玻璃板外了（沿板面偏出 ' + overMax.toFixed(1) +
+              ' cm）——把玻璃板调宽一点、把光源 A 往板心挪一点，或者把视角转正一些'
+            : pick === 'behind'
+            ? '镜面倾得太厉害，把光源 A 的上半截压到板后去了——把光源往前挪一点，或者把倾角调小'
+            : pick === 'bottom'
+            ? '视线从玻璃板下沿底下穿过去了——把视角抬高一点'
+            : '视线从玻璃板上沿越过去了——俯角太大、玻璃板比像矮，或者镜面倾角把像抬得太高；' +
+              '把视角放平、把玻璃板调高，或者把倾角调小一些';
+          return { vis: false, why: why };
+        }
+        // 两端用二分法收紧到 3 mm 以内
+        const refine = (a, b) => {                 // a 可见、b 不可见（或越界）
+          for (let k = 0; k < 8; k++) { const m = (a + b) / 2; if (visAt(m).ok) a = m; else b = m; }
+          return a;
+        };
+        const step = top / N;
+        let lo = top * bestI / N, hi = top * bestJ / N;
+        if (bestI > 0) lo = refine(lo, lo - step);
+        if (bestJ < N) hi = refine(hi, hi + step);
+        if (hi - lo <= 0.03) {
+          return { vis: false, why: '这个视角下只有一小条像露在板内（不到 3 mm），等于看不见——把视角转正一些' };
+        }
+        // lo / hi 是【像的轴线上真正能看见的那一段】（世界单位，从像底量起）。
+        // 通常 lo = 0、hi = 像顶；板上沿一挡住，hi 就落下来，render 据此把顶部裁掉。
+        return { vis: true, why: '', lo: lo, hi: hi, top: top };
       }
 
       /* ============================================================
        * 物理：重合判定
        * ------------------------------------------------------------
-       * B 与像「完全重合」= 在桌面上的位置相同。鼠标拖 3D 物体精度有限，
+       * B 与像「完全重合」= 在【空间里】位置相同。鼠标拖 3D 物体精度有限，
        * 所以进了 1.3 cm 就吸到像上（松手也不会掉），要离开得拖过 2.0 cm ——
        * 这叫回差，不然一吸附就粘住，学生想演示「没重合」都拖不开。
+       * 【为什么距离里带 y】镜面一倾，像就升到桌面上方（底面 y > 0），
+       * 而 B 是站在桌上的实物——带上 y 这一维之后，倾斜时 B 自然「够不着」像，
+       * 不需要为倾角另写一条特判。gt = 0 时 y = 0，与改动前逐字等价。
        * ============================================================ */
       function updateCoincide() {
         const im = imagePos();
-        let d = Math.hypot(state.bx - im.x, state.bz - im.z);
+        let d = Math.hypot(state.bx - im.x, 0 - im.y, state.bz - im.z);
         if (state.snapped) { if (d > 0.20) state.snapped = false; }
         else { if (d < 0.13) state.snapped = true; }
         if (state.snapped) { state.bx = im.x; state.bz = im.z; d = 0; }
         state.coincideErr = d;
-        // 光屏是否正放在像的位置（±1.5 cm 内）
-        state.screenHit = Math.hypot(state.sx - im.x, state.sz - im.z) < 0.15;
+        // 光屏是否正放在像的位置（±1.5 cm 内）。同样带 y：像升起来之后，
+        // 屏（竖在桌上）也就够不到它了——这正是「屏上接不到虚像」的直观版本。
+        state.screenHit = Math.hypot(state.sx - im.x, 0 - im.y, state.sz - im.z) < 0.15;
         if (state.screenHit) state.screenChecked = true;
       }
 
@@ -735,11 +815,18 @@
         const pts = [];
         for (const sx of [-1, 1]) for (const sz of [-1, 1]) pts.push([sx * TABLE_W, 0, sz * TABLE_D]);
         // 玻璃板顶端两角。板的位置、大小、倾角都能调，所以必须用【当前值】——
-        // 板调高调宽、镜子转动，取景要跟着让位；用写死的常量会让板顶被画布切掉。
-        pts.push(mp(-state.gw, 0, state.gh), mp(state.gw, 0, state.gh));
+        // 板调高调宽、镜子倾倒，取景要跟着让位；用写死的常量会让板顶被画布切掉。
+        // mp(su, t, nv)：t 沿板面向上量，所以顶端两角是 t = gh、nv = 0。
+        pts.push(mp(-state.gw, state.gh, 0), mp(state.gw, state.gh, 0));
         // 物体能到的最高点：白纸四角附近（物体可以拖到纸上任何位置）
         for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
           pts.push([sx * (PT_W - PAD), srcTop(), sz * PAPER_Z]);
+          // 像的极点 = 物极点的反射。镜面一倾，像会【升到桌面上方、比板还高】——
+          // 不把它的极点算进来，倾到一定角度像的顶部就会被画布切掉。
+          // 用【位置的取值范围】而不是当前坐标，所以拖动光源不会让取景一缩一放；
+          // gt = 0 时这些点与上面那批重合（反射就是关于 z = gz 的镜像），取景零变化。
+          pts.push(refP(sx * (PT_W - PAD), 0, sz * PAPER_Z));
+          pts.push(refP(sx * (PT_W - PAD), srcTop(), sz * PAPER_Z));
         }
         // 光屏顶端两角：光屏能到的最前（贴着板）和最后。高度用【实时值】——
         // 屏调高了取景要跟着让位，写死 SCR_H 会让调高后的屏顶被画布裁掉。
@@ -830,21 +917,32 @@
       //    【两条候选】沿 x 的、沿 z 的。相机沿 x 看时沿 x 那条退化成一点、沿 z 看时沿 z 那条
       //    退化，两条恰好互补，取屏幕上更长的那条即可。两条都退化 ⇒ 这个视角本来也看不到像，
       //    直接不裁（返回 false）。
-      function clipGhostAtY(capY, keepBelow, cx, cz, q) {
+      // ── 把后续绘制裁到「像的轴线参数 t ≤ capT」（或 ≥）那一侧。
+      //    【为什么按轴线参数裁、不按世界高度裁】像会随镜面倾斜而倾斜（倾角 gt ⇒ 像轴
+      //    与竖直方向成 2gt），「世界 y = 常数」那个水平面已经不是像的横截面了——
+      //    按它裁会把倾斜的像裁出一道斜口子。像是一根沿自己轴线躺着的细长物体，
+      //    该裁的是「轴线参数 t = capT」那个【垂直于像轴】的平面。
+      //    【边界取哪条线】不能取「平面投影的边界」（那是地平线，踩过：该裁 167px 结果裁到 188px）。
+      //    要取的是【这个切平面与像所在竖直平面的交线】——切平面上过像轴点、方向任取两条，
+      //    投影后取屏幕上更长的那条即可（相机沿 x 看时沿 x 那条退化，两条互补）。
+      //    两条都退化 ⇒ 这个视角本来也看不到像，直接不裁（返回 false）。
+      function clipGhostAtT(g, capT, keepBelow, q) {
+        const C = ghostPoint(g, capT);            // 切平面上的像轴点
         const mk = (p1, p2) => {
           const a = project(p1, q), b = project(p2, q);
           return { a: a, b: b, d: Math.hypot(a.x - b.x, a.y - b.y) };
         };
-        const Lx = mk([cx - 1, capY, cz], [cx + 1, capY, cz]);
-        const Lz = mk([cx, capY, cz - 1], [cx, capY, cz + 1]);
+        const Lx = mk([C[0] - 1, C[1], C[2]], [C[0] + 1, C[1], C[2]]);
+        const Lz = mk([C[0], C[1], C[2] - 1], [C[0], C[1], C[2] + 1]);
         const L = Lx.d >= Lz.d ? Lx : Lz;
         if (L.d < 4) return false;              // 退化成一点：不裁
         let dx = L.b.x - L.a.x, dy = L.b.y - L.a.y;
         const n = Math.hypot(dx, dy) || 1; dx /= n; dy /= n;
         const nx = -dy, ny = dx;
         // 【保留侧怎么定】按「屏幕上在上还是在下」硬写会随俯仰翻转。拿一个【确定在保留侧】
-        // 的世界点（物体轴线上、离切面 0.4 处）投影出来，看点积符号。
-        const probe = project([cx, capY + (keepBelow ? -0.4 : 0.4), cz], q);
+        // 的世界点（像轴上、离切面 0.4 处）投影出来，看点积符号。
+        const P = ghostPoint(g, capT + (keepBelow ? -0.4 : 0.4));
+        const probe = project(P, q);
         const sgn = ((probe.x - L.a.x) * nx + (probe.y - L.a.y) * ny) >= 0 ? 1 : -1;
         const B = 1e5;                          // 半平面要盖住整个画布
         ctx.beginPath();
@@ -899,17 +997,24 @@
           window.__mirLabelLog.push({ text: text, x: b.x, y: b.y, w: b.w, h: b.h });
         }
       }
-      // 竖直圆柱的轮廓。屏幕 x 的极值点给出两条母线，
+      // 圆柱（沿任意轴）的轮廓。屏幕 x 的极值点给出两条母线，
       // 「屏幕 y 更大」的那半底圆 + 「屏幕 y 更小」的那半顶圆连起来就是侧面。
       // 【坑】直接把底圈点 + 反序顶圈点连成一个多边形 fill() 是错的：两圈缠绕方向相反，
       // 非零填充规则下侧带会被抵消掉，只剩顶盖和底盘。
-      function cylSilhouette(cx, cz, r, h, q, N) {
+      // 【为什么要带轴】镜面一倾，像就是【斜躺着的】一支蜡烛——轴线不再是竖直的。
+      // 轴用正交基 (e1, e2, ax) 描述：底面圆在 e1-e2 平面里，轴方向 ax。
+      // 竖直蜡烛（e1 = x̂, e2 = ẑ, ax = ŷ）就是原来那种情形，逐字等价。
+      function cylSilhouette(base, e1, e2, ax, r, h, q, N) {
         const bot = [], top = [];
+        const at = (k, t) => {
+          const a = k / N * PI2, c = Math.cos(a) * r, s = Math.sin(a) * r;
+          return [base[0] + e1[0] * c + e2[0] * s + ax[0] * t,
+                  base[1] + e1[1] * c + e2[1] * s + ax[1] * t,
+                  base[2] + e1[2] * c + e2[2] * s + ax[2] * t];
+        };
         for (let k = 0; k < N; k++) {
-          const a = k / N * PI2;
-          const x = cx + Math.cos(a) * r, z = cz + Math.sin(a) * r;
-          bot.push(project([x, 0, z], q));
-          top.push(project([x, h, z], q));
+          bot.push(project(at(k, 0), q));
+          top.push(project(at(k, h), q));
         }
         let iL = 0, iR = 0;
         for (let k = 1; k < N; k++) {
@@ -926,6 +1031,9 @@
         };
         return { bot: bot, top: top, outline: walk(bot, iL, iR, true).concat(walk(top, iR, iL, false)) };
       }
+      // 「底面 + 正交基」这种摆法统一由下面两个工厂造（见 ptOn / standingFrame / ghostSrcFrame）：
+      //   站在桌上的 A / B：轴竖直、底面在纸上
+      //   像 A′：底面可能悬空、轴可能斜躺（板倾倒 ⇒ 轴与竖直方向成 2·gt）
 
       /* ============================================================
        * 场景绘制
@@ -976,10 +1084,10 @@
         poly(stg, 'rgba(34,211,238,.085)', null, 0);
         line(stg.concat([stg[0]]), 'rgba(103,232,249,.52)', 1.4, [7, 5]);
 
-        // 玻璃板站的那条线：白纸上的「镜面线」，是量距离的基准。
-        // 板挪了、倾了，这条线都跟着动——它始终是【板面与纸面的交线】。
-        line([project(mp(-state.gw - 0.18, 0, 0.007), q),
-              project(mp(state.gw + 0.18, 0, 0.007), q)],
+        // 玻璃板与纸面的交线（白纸上的「镜面线」，量距离的基准）。
+        // 【它不随倾角变】板是绕这条线倾倒的，所以交线永远是 z = gz 那条横线。
+        line([project([state.gx - state.gw - 0.18, 0.007, state.gz], q),
+              project([state.gx + state.gw + 0.18, 0.007, state.gz], q)],
              'rgba(56,189,248,.72)', 2);
 
         if (state.showRuler) drawRuler(q);
@@ -990,6 +1098,12 @@
           if (state.showGhost) {
             const im = imagePos();
             ring(im.x, im.z, 0.20, 'rgba(103,232,249,.75)', [4, 4], q);
+            // 像被镜面「抬」到桌面上方之后，从纸上的像位拉一条细虚线连到像的底面——
+            // 不画的话，纸上的圈和悬空的像看上去像两件互不相干的东西。
+            if (im.y > 0.01) {
+              line([project([im.x, 0.009, im.z], q), project([im.x, im.y, im.z], q)],
+                   'rgba(103,232,249,.40)', 1.1, [3, 4]);
+            }
           }
           ring(state.sx, state.sz, 0.26, 'rgba(226,232,240,.55)', [3, 5], q);
         }
@@ -1055,32 +1169,21 @@
       // 刻度尺：沿 z 轴摆，0 对准玻璃板。每 1 cm 一小格、5 cm 一大格。
       // 板挪了尺子跟着挪——尺子上的数就是「离玻璃板多远」，和物距/像距是同一把尺。
       // 尺子长度固定，但两端要夹在白纸内，所以板靠边时尺子会被裁短一点。
-      // 刻度尺：始终【垂直于镜面】摆，零刻度对准镜面线——距离本来就是沿法线量的，
-      // 板一倾尺子跟着倾。锚点取镜面线上离「纸的左边 x = RULER_X」最近的那个点，
-      // 所以镜子转到任何角度，尺子都还留在纸左边一带（gt = 0 时与原来逐字等价）。
-      // 尺身按白纸可用范围裁剪：倾大了别探出纸外。
+      // 刻度尺：始终【垂直于镜面】摆在白纸上，零刻度对准镜面线——距离本来就是沿法线量的。
+      // 【板绕底部横线倾倒，不改变板面与纸面的交线】所以尺子仍旧是「过 (RULER_X, gz)、
+      // 沿 z 方向」那一条（gt = 0 时与原来逐字等价）：倾倒只是把板立起来 / 倒下去，
+      // 并没有把它在纸面上转开——这正是「绕底部那条线转」和「绕竖直轴转」的区别。
+      // 尺身按白纸可用范围裁剪：板靠边时尺子会被裁短一点。
       function drawRuler(q) {
-        const m = MIR();
-        // 锚点 = 镜面线上离 (RULER_X, 0, 0) 最近的那一点
-        const t0 = (RULER_X - state.gx) * m.u[0] + (0 - state.gz) * m.u[2];
-        const ax = state.gx + t0 * m.u[0], az = state.gz + t0 * m.u[2];
-        // 沿法线方向取 ±L，再裁进白纸可用矩形（x ±PT_W、z ±PAPER_Z）
+        const x = RULER_X;                      // 尺身固定在纸左边一带
+        const zc = state.gz;                    // 零刻度 = 镜面线
         const L = PT_D - 0.16;
-        let lo = -L, hi = L;
-        const cut = (a0, da, blo, bhi) => {
-          if (Math.abs(da) < 1e-9) return a0 >= blo && a0 <= bhi;
-          let a = (blo - a0) / da, b = (bhi - a0) / da;
-          if (a > b) { const tt = a; a = b; b = tt; }
-          if (a > lo) lo = a;
-          if (b < hi) hi = b;
-          return true;
-        };
-        if (!cut(ax, m.n[0], -PT_W, PT_W)) return;
-        if (!cut(az, m.n[2], -PAPER_Z, PAPER_Z)) return;
+        const lo = Math.max(-L, -PAPER_Z - zc);
+        const hi = Math.min(L, PAPER_Z - zc);
         if (hi - lo < 0.6) return;
         const w = 0.13;
-        // 尺身上的一点：沿法线 s、沿板面侧向 a、高度 y
-        const P = (s, a, y) => project(mp(t0 + a, s, y), q);
+        // 尺身上的一点：s 沿 z（到镜面的距离）、a 沿 x（尺宽方向）、y 抬一点离开纸面
+        const P = (s, a, y) => project([x + a, y, zc + s], q);
         poly([P(lo, -w, 0.010), P(lo, w, 0.010), P(hi, w, 0.010), P(hi, -w, 0.010)],
              'rgba(250,204,21,.20)', 'rgba(250,204,21,.55)', 1.1);
         // 数字要不要隔一个标，取决于相邻两个数字在【屏幕上】的实际间距，而不是
@@ -1119,13 +1222,14 @@
           dot2(project([m.bx, 0.012, m.bz], q), 5, 'rgba(74,222,128,.95)', 'rgba(2,6,23,.7)', 1.4);
           line([project([m.ax, 0.012, m.az], q), project([m.bx, 0.012, m.bz], q)],
                'rgba(226,232,240,.72)', 1.3, [5, 4]);
-          // 这一组记录时【镜面】的位置：一小段虚线。镜子后来转过多少度，
-          // 旧数据依旧关于当时的镜面对称——画出来才看得出来。
+          // 这一组记录时【镜面】的位置：一小段虚线。板后来挪过、倾倒过，
+          // 旧数据依旧关于当时的板面对称——画出来才看得出来。
+          // 【镜面线不随倾角变】它是板面与纸面的交线，倾倒绕的就是它，所以这一段
+          // 永远是横在 z = mgz 的一条线（记录里存了 m.gt，是留给读数 / 自检的）。
           const mgx = m.mgx == null ? state.gx : m.mgx, mgz = m.mgz == null ? state.gz : m.mgz;
-          const mc = Math.cos(m.gt || 0), ms = Math.sin(m.gt || 0);
           const mh = Math.min(0.62, state.gw);
-          line([project([mgx - mh * mc, 0.012, mgz - mh * ms], q),
-                project([mgx + mh * mc, 0.012, mgz + mh * ms], q)],
+          line([project([mgx - mh, 0.012, mgz], q),
+                project([mgx + mh, 0.012, mgz], q)],
                'rgba(56,189,248,.55)', 1.2, [4, 4]);
           label(project([m.ax, 0.012, m.az], q), 'A' + (i + 1), 'rgba(252,165,165,.95)', 10, 'left');
           label(project([m.bx, 0.012, m.bz], q), 'B' + (i + 1), 'rgba(134,239,172,.95)', 10, 'left');
@@ -1164,11 +1268,20 @@
         };
       }
       const aOf = v => Math.max(0, Math.min(1, v));
-      function drawFlame(p, q, size, alpha) {
+      // ax（可选）= 光源的轴线方向。像斜躺着时，火苗也得跟着斜——否则一支斜躺的
+      // 蜡烛上竖着一团火，一眼假。做法：在屏幕上量出轴线的倾角，把画布转过去再画。
+      function drawFlame(p, q, size, alpha, ax) {
         const s = project(p, q);
         const r = Math.max(1.5, size * s.s);
         const f = flameShake(state.t);
-        const tipX = s.x + r * f.sw, tipY = s.y - r * 1.95 * f.sy;
+        let ang = 0;
+        if (ax) {
+          const e = project([p[0] + ax[0], p[1] + ax[1], p[2] + ax[2]], q);
+          ang = Math.atan2(e.x - s.x, -(e.y - s.y));      // 0 = 屏幕上朝上
+        }
+        const ca = Math.cos(ang), sa = Math.sin(ang);
+        const tipLx = r * f.sw, tipLy = -r * 1.95 * f.sy;
+        const tipS = { x: s.x + tipLx * ca - tipLy * sa, y: s.y + tipLx * sa + tipLy * ca };
         const lum = alpha * f.lu;
         let g = ctx.createRadialGradient(s.x, s.y, 0, s.x, s.y, r * 3.1 * f.gl);
         g.addColorStop(0, 'rgba(255,214,102,' + aOf(0.40 * lum) + ')');
@@ -1177,34 +1290,52 @@
         ctx.fillStyle = g;
         ctx.beginPath(); ctx.arc(s.x, s.y, r * 3.1 * f.gl, 0, PI2); ctx.fill();
 
+        // 火苗本体画在【转过 ang 的局部坐标系】里（局部坐标里「上」是 −y）
+        ctx.save();
+        ctx.translate(s.x, s.y);
+        if (ang) ctx.rotate(ang);
         ctx.beginPath();
-        ctx.moveTo(tipX, tipY);
-        ctx.bezierCurveTo(s.x + r * 0.92 * f.sx, s.y - r * 0.55 * f.sy,
-                          s.x + r * 0.76 * f.sx, s.y + r * 0.92, s.x, s.y + r);
-        ctx.bezierCurveTo(s.x - r * 0.76 * f.sx, s.y + r * 0.92,
-                          s.x - r * 0.92 * f.sx, s.y - r * 0.55 * f.sy, tipX, tipY);
-        const g2 = ctx.createLinearGradient(s.x, tipY, s.x, s.y + r);
+        ctx.moveTo(tipLx, tipLy);
+        ctx.bezierCurveTo(r * 0.92 * f.sx, -r * 0.55 * f.sy,
+                          r * 0.76 * f.sx, r * 0.92, 0, r);
+        ctx.bezierCurveTo(-r * 0.76 * f.sx, r * 0.92,
+                          -r * 0.92 * f.sx, -r * 0.55 * f.sy, tipLx, tipLy);
+        const g2 = ctx.createLinearGradient(0, tipLy, 0, r);
         g2.addColorStop(0, 'rgba(255,240,182,' + aOf(0.95 * lum) + ')');
         g2.addColorStop(0.48, 'rgba(255,193,64,' + aOf(0.98 * lum) + ')');
         g2.addColorStop(1, 'rgba(255,132,26,' + aOf(0.88 * lum) + ')');
         ctx.fillStyle = g2; ctx.fill();
         // 内芯：让火焰有层次，不然只是一块橙色
         ctx.beginPath();
-        ctx.ellipse(s.x + r * f.sw * 0.6, s.y + r * 0.22, r * 0.34 * f.sx, r * 0.62 * f.sy, 0, 0, PI2);
+        ctx.ellipse(tipLx * 0.6, r * 0.22, r * 0.34 * f.sx, r * 0.62 * f.sy, 0, 0, PI2);
         ctx.fillStyle = 'rgba(255,255,238,' + aOf(0.72 * lum) + ')';
         ctx.fill();
+        ctx.restore();
         // 自检用：把【这一帧真正画出去的火苗尖端】记下来（平时零开销）。
         // 火焰动画没法靠读 state 证明——state.t 变了不等于画出来的形状变了，
-        // 所以测的就是这里记下的、实际参与绘图的那两个坐标。
-        if (window.__mirFlameLog) window.__mirFlameLog.push({ x: s.x, y: s.y, tipX: tipX, tipY: tipY, r: r });
+        // 所以测的就是这里记下的、实际参与绘图的那两个坐标（已含旋转）。
+        if (window.__mirFlameLog) {
+          window.__mirFlameLog.push({ x: s.x, y: s.y, tipX: tipS.x, tipY: tipS.y, r: r });
+        }
       }
+
+      // 沿光源轴线取一点：base + ax·t。t = 0 是底面中心。
+      const ptOn = (f, t) => [f.base[0] + f.ax[0] * t, f.base[1] + f.ax[1] * t, f.base[2] + f.ax[2] * t];
+      // 站在桌面上的光源（物 A / 替代物 B）：轴竖直、底面在纸上。
+      const standingFrame = (x, z) => ({ base: [x, 0, z], e1: [1, 0, 0], e2: [0, 0, 1], ax: [0, 1, 0] });
+      // 像的姿态：底面可能悬在桌面上方，轴可能斜躺（见 ghostFrame）。
+      const ghostSrcFrame = () => {
+        const g = ghostFrame();
+        return { base: g.base, e1: [1, 0, 0], e2: [0, g.up[2], -g.up[1]], ax: g.up };
+      };
 
       // 一支蜡烛。ghost=true 时画成半透明的「像」，颜色偏冷。
       // 高度读 state.ch（可调），不能写死 CH——否则调高蜡烛时身子长了、火焰还钉在旧位置。
-      function drawCandle(cx, cz, q, opt) {
+      // 【frame】底面 + 正交基：站着的蜡烛轴竖直；镜面一倾，像就是斜躺的（轴随倾角转）。
+      function drawCandle(frame, q, opt) {
         const N = 26;
         const hC = state.ch;
-        const sil = cylSilhouette(cx, cz, CR, hC, q, N);
+        const sil = cylSilhouette(frame.base, frame.e1, frame.e2, frame.ax, CR, hC, q, N);
         const a = opt.alpha == null ? 1 : opt.alpha;
         const edge = opt.ghost ? 'rgba(165,243,252,' + (0.72 * a) + ')' : 'rgba(30,41,59,' + (0.55 * a) + ')';
 
@@ -1227,11 +1358,11 @@
         // 顶盖（从上方看得到）
         poly(sil.top, opt.ghost ? 'rgba(186,230,253,' + (0.38 * a) + ')' : 'rgba(255,252,240,' + a + ')', edge, 1.1);
 
-        // 烛芯
-        const wt = project([cx, hC, cz], q), wb = project([cx, hC + WK, cz], q);
-        line([wt, wb], opt.ghost ? 'rgba(186,230,253,' + (0.5 * a) + ')' : 'rgba(69,26,3,' + (0.9 * a) + ')', 1.6);
+        // 烛芯（沿轴线）
+        line([project(ptOn(frame, hC), q), project(ptOn(frame, hC + WK), q)],
+             opt.ghost ? 'rgba(186,230,253,' + (0.5 * a) + ')' : 'rgba(69,26,3,' + (0.9 * a) + ')', 1.6);
 
-        if (opt.lit) drawFlame([cx, hC + WK + FL * 0.52, cz], q, CR * 1.55, a);
+        if (opt.lit) drawFlame(ptOn(frame, hC + WK + FL * 0.52), q, CR * 1.55, a, frame.ax);
         return sil;
       }
 
@@ -1243,31 +1374,46 @@
       // 只拉高不拉宽会把 F 拉变形，所以宽、笔画粗细、两根横笔的位置全部乘同一个系数 k。
       // k = 1（默认值）时下面每一个数都和原来的常量逐字相等。
       const fScale = () => state.fh / F_H;
-      function fOutline(cx, y0, z) {
+      // F 轮廓的点：局部二维坐标 (px 沿板面横向, py 沿板面向上, pz 沿板面法线) → 世界坐标。
+      // frame 的 e1 是横向、ax 是「向上」、e2 是法线。竖直摆法（e1 = x̂, ax = ŷ, e2 = ẑ）
+      // 时与原来逐字等价；镜面一倾，像里的 F 也跟着斜。
+      function fOutline(frame) {
         const k = fScale();
         const H = F_H * k, W = F_W * k, S = F_S * k, M0 = F_M0 * k, M1 = F_M1 * k;
-        const x0 = cx - W / 2, x1 = cx + W / 2, xs = x0 + S;
+        const x0 = -W / 2, x1 = W / 2, xs = x0 + S;
+        const P = (px, py, pz) => [
+          frame.base[0] + frame.e1[0] * px + frame.ax[0] * py + frame.e2[0] * pz,
+          frame.base[1] + frame.e1[1] * px + frame.ax[1] * py + frame.e2[1] * pz,
+          frame.base[2] + frame.e1[2] * px + frame.ax[2] * py + frame.e2[2] * pz
+        ];
         return [
-          [x0, y0 + 0, z], [xs, y0 + 0, z],
-          [xs, y0 + M0, z], [x1, y0 + M0, z],
-          [x1, y0 + M1, z], [xs, y0 + M1, z],
-          [xs, y0 + H - S, z], [x1, y0 + H - S, z],
-          [x1, y0 + H, z], [x0, y0 + H, z]
+          P(x0, 0, 0), P(xs, 0, 0),
+          P(xs, M0, 0), P(x1, M0, 0),
+          P(x1, M1, 0), P(xs, M1, 0),
+          P(xs, H - S, 0), P(x1, H - S, 0),
+          P(x1, H, 0), P(x0, H, 0)
         ];
       }
 
       // F 光源：一块薄板上抠出发光的 F。ghost=true 时画成半透明的「像」。
-      function drawF(cx, cz, q, opt) {
+      function drawF(frame, q, opt) {
         const a = opt.alpha == null ? 1 : opt.alpha;
-        const y0 = 0;
         // 没点亮的 F 就是一块灰板——和「没点着的蜡烛」是同一个意思。
         // 亮起来才发光，否则一进页面就是亮的，「点亮」这一步等于白做。
         const on = opt.ghost || opt.lit !== false;
-        // 薄板的两个面：哪一面朝着相机由眼睛的 z 决定（相机在板后时前后互换）。
-        const sgn = q.eye[2] > cz ? 1 : -1;
-        const zf = cz + sgn * F_Z, zb = cz - sgn * F_Z;
-        const front = fOutline(cx, y0, zf).map(p => project(p, q));
-        const back = fOutline(cx, y0, zb).map(p => project(p, q));
+        // 薄板的两个面：哪一面朝着相机，由眼睛在板面【法线】的哪一侧决定
+        // （竖直摆法时法线就是 +z，退化成「眼睛的 z 与面板的 z 谁大」）。
+        const nrm = frame.e2;
+        const sgn = ((q.eye[0] - frame.base[0]) * nrm[0] +
+                     (q.eye[1] - frame.base[1]) * nrm[1] +
+                     (q.eye[2] - frame.base[2]) * nrm[2]) >= 0 ? 1 : -1;
+        const F1 = fOutline(frame), F2 = fOutline({
+          base: [frame.base[0] + nrm[0] * sgn * F_Z, frame.base[1] + nrm[1] * sgn * F_Z,
+                 frame.base[2] + nrm[2] * sgn * F_Z],
+          e1: frame.e1, e2: frame.e2, ax: frame.ax
+        });
+        const front = F1.map(p => project(p, q));
+        const back = F2.map(p => project(p, q));
 
         // 只勾轮廓（叠在不透明的 B 上做「对齐了没有」的判据，见 render 里的调用）。
         // 这一路【不能】画背面那一圈厚度，否则虚线里会多出一层灰边，
@@ -1310,13 +1456,6 @@
           poly(front, g, null, 0);
           ctx.restore();
         }
-        if (opt.outlineOnly) {
-          // 只勾轮廓：用来叠在不透明的 B 上做「对齐了没有」的判据。
-          // 里面留一点点极淡的填充，不然在浅色背景上只剩虚线、看不出形状。
-          poly(front, 'rgba(125,211,252,' + (0.10 * a) + ')', null, 0);
-          line(front.concat([front[0]]), 'rgba(165,243,252,' + (0.95 * a) + ')', 1.6, [6, 5]);
-          return { front: front, back: back };
-        }
         poly(front, g, opt.ghost ? 'rgba(165,243,252,' + (0.85 * a) + ')'
              : (on ? 'rgba(255,236,150,.95)' : 'rgba(100,116,139,.85)'), 1.4);
         // 像的轮廓再虚线勾一遍，和实心的 B 区分开（和蜡烛的像同一套语言）
@@ -1327,19 +1466,21 @@
       // 光源分发：物体 A、替代物 B、像 A′ 三处都走这里。
       // 【为什么要有这一层】三处如果各自 if 一下 state.src，加第三种光源时就要改三处，
       // 漏一处就出现「A 是 F、像却是蜡烛」这种自相矛盾的画面。
-      function drawSrc(x, z, q, opt) {
-        return state.src === 'f' ? drawF(x, z, q, opt) : drawCandle(x, z, q, opt);
+      // 【frame】底面 + 正交基。A、B 用 standingFrame(x, z)（站在桌上）；
+      // 像用 ghostSrcFrame()（可能悬空、可能斜躺）。
+      function drawSrc(frame, q, opt) {
+        return state.src === 'f' ? drawF(frame, q, opt) : drawCandle(frame, q, opt);
       }
 
-      // 玻璃板：竖直立在板底中心 (gx, gz) 上，横向以 gx 为中心，可绕竖直轴倾 gt。半透明，
-      // 所以后面的 B 能透过来被看见——这正是这个实验用玻璃板而不用平面镜的原因。
+      // 玻璃板：底边永远落在纸上的镜面线（z = gz）上，可绕这条底边向前倾倒 gt 角。
+      // 半透明，所以后面的 B 能透过来被看见——这正是这个实验用玻璃板而不用平面镜的原因。
       // 板的位置、大小、倾角都能调，所以四角一律用【镜面局部坐标】生成（见 mp），
-      // 不能再用写死的常量，否则拖动滑块或倾斜镜面时板不动、像却已经按新板面镜像了。
+      // 不能再用写死的常量，否则拖动滑块或倾倒镜面时板不动、像却已经按新板面镜像了。
       function drawGlass(q) {
         const gw = state.gw, gh = state.gh;
         const pts = [
           project(mp(-gw, 0, 0), q), project(mp(gw, 0, 0), q),
-          project(mp(gw, 0, gh), q), project(mp(-gw, 0, gh), q)
+          project(mp(gw, gh, 0), q), project(mp(-gw, gh, 0), q)
         ];
         const g = ctx.createLinearGradient(pts[0].x, pts[0].y, pts[2].x, pts[2].y);
         g.addColorStop(0, 'rgba(186,230,253,.36)');
@@ -1357,14 +1498,15 @@
         if (facing >= 0.30) line([pts[0], pts[1]], 'rgba(226,244,255,.9)', 2.6);
         // 一道斜高光，让「这是一块玻璃」一眼可辨。高光按板宽板高成比例摆，
         // 板调大调小、镜子转动时都还落在板面内。
-        line([project(mp(-gw * 0.72, 0, gh * 0.10), q), project(mp(-gw * 0.18, 0, gh * 0.92), q)],
+        line([project(mp(-gw * 0.72, gh * 0.10, 0), q), project(mp(-gw * 0.18, gh * 0.92, 0), q)],
              'rgba(255,255,255,.42)', 2.2);
-        line([project(mp(gw * 0.30, 0, gh * 0.08), q), project(mp(gw * 0.72, 0, gh * 0.66), q)],
+        line([project(mp(gw * 0.30, gh * 0.08, 0), q), project(mp(gw * 0.72, gh * 0.66, 0), q)],
              'rgba(255,255,255,.22)', 1.4);
-        // 底座夹子：玻璃板是插在这个夹子里竖起来的，跟着板一起倾——
+        // 底座夹子：玻璃板是插在这个夹子里竖起来的，跟着板一起倾倒——
         // 它跨坐在板面上（沿法线 ±0.10），不是钉死在某个 z 上。
+        // 【底边就在底部轴线上】所以板再怎么倒，这个夹子始终留在纸面上。
         const clamp1 = [
-          project(mp(-gw * 0.34, -0.10, 0), q), project(mp(gw * 0.34, -0.10, 0), q),
+          project(mp(-gw * 0.34, 0, -0.10), q), project(mp(gw * 0.34, 0, -0.10), q),
           project(mp(gw * 0.34, 0.10, 0.10), q), project(mp(-gw * 0.34, 0.10, 0.10), q)
         ];
         poly(clamp1, 'rgba(51,65,85,.95)', 'rgba(148,163,184,.65)', 1.2);
@@ -1434,13 +1576,16 @@
         const d = objDist();                    // 物距 = 像距（按构造恒等），都沿法线量
         const zA = project([state.ax, 0.014, state.az], q);
         const zB = project([state.bx, 0.014, state.bz], q);
-        const zI = project([im.x, 0.014, im.z], q);
-        // 量距离的起点是各点关于【板面】的垂足：板倾了，垂足不再落在 z = gz 那条线上，
-        // u / v 两条线段自动跟着垂直于镜面（这正是要证的结论③）。
-        const fA = footOf(state.ax, state.az), fB = footOf(state.bx, state.bz), fI = footOf(im.x, im.z);
-        const z0 = project([fA[0], 0.014, fA[1]], q);
-        const z0b = project([fB[0], 0.014, fB[1]], q);
-        const z0i = project([fI[0], 0.014, fI[1]], q);
+        // 像的底面可能已经被镜面抬到桌面上方，所以这里用它【真实的高度】。
+        const zI = project([im.x, im.y + 0.014, im.z], q);
+        // 量距离的起点是各点关于【板面】的垂足。板倾倒之后垂足离开桌面、悬在板面上
+        // （A 和它的像共用同一个垂足——反射保持垂足不变），u / v 两条线段自动垂直于镜面，
+        // 这正是要证的结论③。所以这里必须用三维的 footOf(x, y, z)。
+        const fA = footOf(state.ax, 0, state.az), fB = footOf(state.bx, 0, state.bz),
+              fI = footOf(im.x, im.y, im.z);
+        // 抬 0.014 是为了离开纸面、别和方格线打架（gt = 0 时垂足就在纸上，与改动前逐字等价）
+        const lift = p => project([p[0], p[1] + 0.014, p[2]], q);
+        const z0 = lift(fA), z0b = lift(fB), z0i = lift(fI);
 
         // 物距 u
         const sc = project([state.sx, state.sh * 0.55, state.sz], q);   // 光屏标注的位置，用来让 u/v 躲开
@@ -1450,10 +1595,11 @@
         // 把 F 的中横笔外侧一半整个盖掉了。把笔画末端也列进避让点，标注就会翻到另一侧。
         const avoid = [sc];
         if (state.src === 'f') {
-          // F 尺寸随「光源高度」等比缩放，避让点也要跟着缩放，否则调高之后标注又会压到横笔上
-          const k = fScale();
-          const tip = (x, z) => project([x + F_W * k / 2, (F_M0 + F_S / 2) * k, z], q);
-          avoid.push(tip(state.ax, state.az), tip(im.x, im.z));
+          // F 尺寸随「光源高度」等比缩放，避让点也要跟着缩放，否则调高之后标注又会压到横笔上。
+          // 像的那个末端必须按【像自己的姿态】算（可能斜躺、可能悬空），不能照实物摆法算——
+          // 否则板一倾倒，避让点就跑到像的外面去了。
+          avoid.push(project(fOutline(standingFrame(state.ax, state.az))[3], q),
+                     project(fOutline(ghostSrcFrame())[3], q));
         }
         line([zA, z0], 'rgba(248,113,113,.90)', 1.6, [6, 4]);
         // u 先画：它的盒子会自动进 frameBoxes，v 再画时就躲得开它，不用手动传。
@@ -1511,6 +1657,9 @@
         const push = (d, f) => items.push({ d: d, f: f });
         const dOf = p => project(p, q).z;
 
+        // 像的姿态：底面（板一倾就被抬到桌面上方）+ 轴线（与竖直方向成 2·gt，可能斜躺）。
+        // 画像、画它的火焰、算它的深度、取它的极点，全都要走这一个 frame——各算一套必然对不上。
+        const gf = ghostFrame();
         const im = imagePos();
         const showA = !state.onlyBack;
         const showBack = !state.onlyFront;
@@ -1527,7 +1676,9 @@
         // 但光屏正放在像的位置时，像必须画在光屏【前面】才看得见。
         // 深度直接挂到光屏自己的采样点上——像和屏的采样高度不同（0.82 vs 0.50），
         // 相机又是俯视的，两个深度天然差 0.08 左右，各自加个小偏移根本压不住。
-        const dIm = dOf([im.x, srcTop() * 0.5, im.z]);
+        // 像的采样点取【它自己轴线的中点】：像会斜躺、会升高，用 (im.x, 高度, im.z) 那种
+        // 「竖直线上取一点」的写法在倾角大时会跑到像的外面去，深度就排错了。
+        const dIm = dOf(ghostPoint(gf, srcTop() * 0.5));
         const dScr = dOf([state.sx, state.sh * 0.5, state.sz]);
         const onScr = state.screenHit && showBack;
         const dGhost = onScr ? dScr - 0.02 : dIm + 0.05;
@@ -1540,47 +1691,56 @@
 
         if (showA) {
           drawn.candle++;
-          push(dOf([state.ax, srcTop() * 0.5, state.az]), () => drawSrc(state.ax, state.az, q, { lit: state.aLit }));
+          push(dOf([state.ax, srcTop() * 0.5, state.az]),
+               () => drawSrc(standingFrame(state.ax, state.az), q, { lit: state.aLit }));
         }
         // 画像（以及它的火焰 / F 轮廓）之前先按可见高度带裁一刀。
         // 【为什么要 save/restore】clip 是画布状态，不清掉会把后面画的 B、光屏、
         // 玻璃板一起裁掉——那才是真正的画错。
+        // 【为什么裁「像轴参数」而不是世界高度】像会随镜面倾倒而斜躺，「世界 y = 板上沿」
+        // 那个水平面已经不是像的横截面了——按它裁会在像身上裁出一道斜口子。见 clipGhostAtT。
         const ghostClip = f => () => {
           if (!band) { f(); return; }
           ctx.save();
-          clipGhostAtY(band.hi, true, im.x, im.z, q);              // 保留 y ≤ 板上沿对应的像高
-          if (band.lo > 1e-9) clipGhostAtY(band.lo, false, im.x, im.z, q);  // 极少数视角下像的底部也被挡
+          clipGhostAtT(gf, band.hi, true, q);              // 保留 t ≤ 板上沿对应的那段像
+          if (band.lo > 1e-9) clipGhostAtT(gf, band.lo, false, q);  // 极少数视角下像的底部也被挡
           f();
           ctx.restore();
         };
         if (ghostOn) {
           drawn.ghost++;
           const ga = onScr ? 0.9 : 0.58;
-          push(dGhost, ghostClip(() => drawSrc(im.x, im.z, q, { ghost: true, lit: false, alpha: ga })));
+          push(dGhost, ghostClip(() => drawSrc(ghostSrcFrame(), q, { ghost: true, lit: false, alpha: ga })));
         }
         if (showBack) {
           drawn.candle++;
-          push(dOf([state.bx, srcTop() * 0.5, state.bz]), () => drawSrc(state.bx, state.bz, q, { lit: false }));
+          push(dOf([state.bx, srcTop() * 0.5, state.bz]),
+               () => drawSrc(standingFrame(state.bx, state.bz), q, { lit: false }));
         }
         // 火焰比 B 稍近一点画——重合时火焰正好落在 B 的烛芯上，看上去就是 B 被点着了。
         // 光屏挪到像位时也一样画，只是深度改挂到光屏上（见上面的 dNear）。
         // F 光源没有火焰，这一步跳过。
         if (ghostOn && state.aLit && state.src === 'candle') {
-          push(dNear, ghostClip(() => drawFlame([im.x, state.ch + WK + FL * 0.52, im.z], q,
-                                                CR * 1.55, onScr ? 0.92 : 0.68)));
+          // 像的火焰要长在【像自己的轴线上】（斜躺的像 ⇒ 火苗也得跟着斜），
+          // 所以位置用 ptOn 沿像轴取、朝向用像轴 gf.up。
+          const gsf = ghostSrcFrame();
+          push(dNear, ghostClip(() => drawFlame(ptOn(gsf, state.ch + WK + FL * 0.52), q,
+                                                CR * 1.55, onScr ? 0.92 : 0.68, gsf.ax)));
         }
         // F 光源没有火焰，重合时像会被不透明的 B 整个盖住，「对不对齐」就看不出来了。
         // 所以再画一层【比 B 稍近】的虚线轮廓：对齐时虚线正好压在 B 的边上，
         // 没对齐时虚线独立地偏在一边——和蜡烛「火焰落在烛芯上」是同一个作用。
         if (ghostOn && state.src === 'f') {
-          push(dNear - 0.01, ghostClip(() => drawF(im.x, im.z, q, { ghost: true, outlineOnly: true, alpha: 0.9 })));
+          push(dNear - 0.01, ghostClip(() => drawF(ghostSrcFrame(), q, { ghost: true, outlineOnly: true, alpha: 0.9 })));
         }
         if (showBack) {
           push(dScr, () => drawScreen(q));
         }
 
         drawn.glass++;
-        push(dOf([state.gx, state.gh * 0.5, state.gz]), () => drawGlass(q));
+        // 玻璃板的采样点取【板心】（沿板面往上半个板高）——板倾倒之后，它的质心不再
+        // 落在 (gx, gh/2, gz) 这条竖线上，深度排序会跟着偏。
+        push(dOf(mp(0, state.gh * 0.5, 0)), () => drawGlass(q));
 
         state.drawn = drawn;
         items.sort((a, b) => b.d - a.d);
@@ -1608,7 +1768,9 @@
           // 【别调回 0.70】板高 2.05、蜡烛顶 1.34；+0.70 会把锚点顶到 2.04，
           // 超出取景包络，标签被 label() 的边界钳制一路推到画布最上沿。
           const yTop = band ? Math.min(srcTop(), band.hi) : srcTop();
-          const pI = project([im.x, yTop + 0.45, im.z], q);
+          // 锚点沿【像自己的轴线】再往外推一点：像斜躺时，若还按「竖直线上抬 0.45」算，
+          // 标签会跑到像的旁边甚至和像脱开。
+          const pI = project(ghostPoint(gf, yTop + 0.45), q);
           label(pI, '像 A′' + (state.aLit ? '' : '（A 未点亮）'), 'rgba(165,243,252,.98)', 12);
         }
         // 器材区那块区域的【名字】放在所有标签之后：它是地面区域的名字，
@@ -1704,17 +1866,21 @@
       // 板前能到多远（cm，负值 = 在板前）。器材区就在这一段里。
       // 和板后的上限一样，端点必须是 STEP_CM 的整数倍，否则滑块/拖动网格会错位；
       // 但这里是【拖动的钳位】，不落到滑块上，所以直接用即可。
-      const frontLoCm = () => toCm(state.gz) - Z_CM;
+      // 同样要乘 cos(gt)：板倾倒后，同一片纸面深度对应的垂距缩短了（见 cmOf）。
+      const frontLoCm = () => (toCm(state.gz) - Z_CM) * Math.cos(state.gt);
       // 换段回差：想从板前挪到板后（或反过来），至少要拖过板面这么多，免得贴着板来回跳。
       const HYST_CM = 0.5;
       // z 方向的可用范围【以板面为零点】，随玻璃板前后位置变：
       //   板往前走，板前剩的深度就少几厘米；板往后挪，板后就更宽敞。
       //   所以这张表是【函数】而不是常量——板一挪就得重算（applySliderRanges 会调）。
       // 上限向下取整到 STEP_CM 的整数倍，保证滑块网格起点落在 min 上。
+      // 【为什么乘 cos(gt)】这张表里的是【垂直于板面的距离】，而可用空间是按世界 z 量出来的。
+      // 板一倾倒，同样的纸面深度对应的垂距就缩短了 cos(gt) 倍（gt = 60° 时只剩一半）——
+      // 不折算的话，「前后位置」滑块能滑到纸外面去，物体就飘在白纸之外了。
       const cmOf = k => {
         const behind = (k !== 'a');                    // B 和光屏在板后
         const gap = behind ? GAP_B : GAP_A;
-        const reach = behind ? Z_CM + toCm(state.gz) : Z_CM - toCm(state.gz);
+        const reach = (behind ? Z_CM + toCm(state.gz) : Z_CM - toCm(state.gz)) * Math.cos(state.gt);
         const hi = Math.max(gap + 2, Math.floor(reach / STEP_CM) * STEP_CM);
         return { x: X_CM, z: [gap, hi] };
       };
@@ -1722,12 +1888,14 @@
       // 网格外的数，滑块显示 13.0、侧栏读数显示 13.2，同一件事两个数。
       // 5 mm 的量化远小于本实验的判定容差（吸附回差 1.3~2.0 cm），不影响手感。
       const snapCm = v => Math.round(v / STEP_CM) * STEP_CM;
-      // 把点沿着【垂直于板面】的方向挪到「到板面 dcm（cm，正 = 板前）」，
-      // 同时保持它在板面方向上的投影不变——所以「前后位置」滑块不会顺手
-      // 改写物体的左右位置（gt = 0 时与原来的 zWorld 逐字等价）。
+      // 把点挪到「到板面 dcm（cm，正 = 板前）」，同时保持它在板面方向上的投影不变——
+      // 所以「前后位置」滑块不会顺手改写物体的左右位置。
+      // 【解 z 而不是沿法线走】物体是站在桌面上的（y = 0），沿法线走会把它带离桌面。
+      // 桌面上的点到板面的垂距是 sig = cos(gt)·(z − gz)，令它等于 d 就得到 z = gz + d/cos gt。
+      // 板倾倒不改变板面与纸面的交线，所以左右方向仍是 +x、x 原样不动（gt = 0 时逐字等价）。
       const moveAlongNormal = (x, z, dcm) => {
-        const m = MIR(), d = fromCm(dcm), s = tanOf(x, z);
-        return { x: state.gx + s * m.u[0] + d * m.n[0], z: state.gz + s * m.u[2] + d * m.n[2] };
+        const c = Math.cos(state.gt), d = fromCm(dcm);
+        return { x: x, z: state.gz + (Math.abs(c) < 1e-6 ? d : d / c) };
       };
       const posOf = k => k === 'a' ? { x: state.ax, z: state.az }
                     : k === 'b' ? { x: state.bx, z: state.bz }
@@ -1747,8 +1915,9 @@
         }
 
         // ── B 和光屏：玻璃板是一块【挡板】，物体不能从板中间穿过去。
-        // 板只挡在「沿板面方向 |s| ≤ gw」那一段（板倾了，这个判据也跟着转——
-        // 见 tanOf），所以分两种情形（d 为「到板面的距离」，正 = 板后）：
+        // 板只挡在「沿板面方向 |x − gx| ≤ gw」那一段（板是绕底部横线倾倒的，板面水平
+        // 方向恒为 +x，所以这个判据与倾角无关——见 alongOf），分两种情形
+        // （d 为「到板面的距离」，正 = 板后）：
         //   ① 在板的【外侧】（器材区那一片）：没有玻璃，z 方向整张纸都能走；
         //   ② 在板的正前方 / 正后方：只能待在原来那一侧，d ∈ [−GAP_B, …] 或 [+GAP_B, …]。
         // 想换侧要拖过板面 0.5 cm 以上（回差），免得贴着板来回跳。
@@ -1760,7 +1929,7 @@
         const d0 = -toCm(sig(x, z));             // 正 = 板后（= −垂距）
         const behind = { lo: GAP_B, hi: C.z[1] };
         const front  = { lo: frontLoCm(), hi: -GAP_B };
-        const blocked = Math.abs(tanOf(x, z)) < state.gw + 0.16;
+        const blocked = Math.abs(alongOf(x)) < state.gw + 0.16;
         let r;
         if (!blocked) {
           r = { lo: frontLoCm(), hi: C.z[1] };              // 板外：整张纸都能用
@@ -1973,7 +2142,6 @@
       let lastVerdict = '';
 
       function updateReadout() {
-        const im = imagePos();
         const u = objDist() * U, v = objDist() * U;
         const db = -sig(state.bx, state.bz) * U;      // B 到玻璃板（正 = 板后，沿法线量）
         const bZone = zoneOf('b');
@@ -2035,6 +2203,13 @@
             + '不能用光屏承接。注意：你在光屏上看到的那个「像」并不是屏上的光斑——'
             + '它是玻璃板里的虚像恰好和光屏重合了，把视角转开、视线不再穿过玻璃板，它就没了。'
             + '像与物关于玻璃板<b>对称</b>：大小相等、到玻璃板距离相等、连线与玻璃板垂直。';
+        }
+        // 【像被板上沿切掉一截时补一句】玻璃板倾倒、或者视角抬高之后，像高出板上沿的那一段
+        // 收不到反射光线（见 render 里的 ghostBand），画面上就是像被「切」了一刀。
+        // 不说明的话，学生第一反应是「画错了」。只在本帧真的被裁、而且上面几句都还没提过时补。
+        if (state.ghostBand && state.ghostBand.hi < srcTop() - 1e-9 && html.indexOf('板上沿') < 0) {
+          html += '<br><b>注：</b>像高出玻璃板上沿的那一段收不到反射光线，所以看不到——'
+                + '把玻璃板调高、把倾角调小，或者把视角放平一些。';
         }
         if (html !== lastVerdict) { lastVerdict = html; ui.verdict.innerHTML = html; }
         updateRecordBtn();
@@ -2260,7 +2435,11 @@
         unproject: unproject, envelopePoints: envelopePoints, hitTest: hitTest,
         VIEWS: VIEWS,
         // 镜面姿态（含倾角）：像 = 物关于该平面的反射，自检必须用同一套函数才算同源。
-        MIR: MIR, sig: sig, tanOf: tanOf, footOf: footOf, mp: mp,
+        // 板绕【底部横线】倾倒，所以「沿板面方向」就是 x − gx（alongOf），
+        // 而垂距分两种：桌面上的点用 sig(x,z)，空中的点用 sigP(x,y,z)。
+        MIR: MIR, sig: sig, sigP: sigP, alongOf: alongOf,
+        refP: refP, ghostFrame: ghostFrame, ghostPoint: ghostPoint,
+        footOf: footOf, mp: mp, moveAlongNormal: moveAlongNormal,
         tiltDeg: () => state.gt / DEG,
         // imageVisible 是「这个视角看不看得见像」的唯一判据。自检要能直接问它，
         // 而不是去数像素——数像素只能验「画了没有」，验不出「判得对不对」。
@@ -2344,11 +2523,17 @@
           updateCoincide(); render(); updateReadout();
           return { drawn: state.drawn, band: state.ghostBand, vis: state.ghostVisible };
         },
-        // 走真实的点击路径，不直接写 state：否则按钮的 .active 高亮不会跟着动
+        // 走真实的点击路径，不直接写 state：否则按钮的 .active 高亮不会跟着动。
+        // 【为什么不写 state.yaw = name】工具栏里除了 5 个视角按钮，还有「↺ 重置视角」
+        // 这类【没有 data-view】的按钮。拿它的文字当视角名传进来，旧写法会把一个
+        // 字符串塞进 state.yaw ⇒ Math.cos('…') = NaN ⇒ 相机 eye/focal 全 NaN ⇒
+        // 每帧 createLinearGradient 抛「non-finite」、画布冻住。视角名不认识就
+        // 什么都不做（原样返回当前状态），绝不污染 state。
         setView(name) {
-          const btn = document.querySelector('.lab3d-toolbar button[data-view="' + name + '"]');
-          if (btn) btn.click();
-          else { state.yaw = name; }
+          if (Object.prototype.hasOwnProperty.call(VIEWS, name)) {
+            const btn = document.querySelector('.lab3d-toolbar button[data-view="' + name + '"]');
+            if (btn) btn.click(); else applyView(name);
+          }
           return { yaw: state.yaw, pitch: state.pitch, zoom: state.zoom, view: state.view };
         },
         setCam(yaw, pitch, zoom) {
@@ -2392,14 +2577,16 @@
           const pts = envelopePoints().slice();
           const top = srcTop();
           const at = (x, z) => [x, top, z];
-          const im = imagePos();
+          const gf = ghostFrame();
           if (!state.onlyBack) pts.push(at(state.ax, state.az));
           if (!state.onlyFront) {
             pts.push(at(state.bx, state.bz));
-            // 像的极点要按【实际画出去的高度】算：像被板上沿裁掉一段时，画面上根本没有
+            // 像的极点要按【实际画出去的那一段】算：像被板上沿裁掉一段时，画面上根本没有
             // 原来那么高，拿未裁的高度去比会白白多出一段余量（这个导出量的意义就是
             // 「当下的实物」，得和画出去的同源）。
-            pts.push([im.x, state.ghostBand ? Math.min(top, state.ghostBand.hi) : top, im.z]);
+            // 【必须沿像自己的轴线取点】像会斜躺、会升高，「竖直线上的那个高度」在
+            // 倾角大时已经不是像上的点了——用 ghostPoint 才和 drawSrc 画的是同一处。
+            pts.push(ghostPoint(gf, state.ghostBand ? Math.min(top, state.ghostBand.hi) : top));
             pts.push([state.sx - SCR_W, state.sh, state.sz], [state.sx + SCR_W, state.sh, state.sz]);
           }
           return pts.map(p => { const s = project(p, q); return { x: s.x, y: s.y }; });
