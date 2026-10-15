@@ -138,14 +138,44 @@ function findVideoUrl(node, depth) {
   return '';
 }
 
-async function bfetch(url, referer) {
+// B 站对机房 IP 会返回 -412（request was banned），解决办法是带上 buvid3 Cookie。
+// 官方 /x/frontend/finger/spi 就是给这个用的，取不到时退化成本地生成的 UUID 形状值。
+let _biliCookie = { value: '', at: 0 };
+function randomBuvid3() {
+  const hex = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16).toUpperCase();
+  });
+  return hex + 'infoc';
+}
+async function getBiliCookie(force) {
+  const now = Date.now();
+  if (!force && _biliCookie.value && now - _biliCookie.at < 30 * 60 * 1000) return _biliCookie.value;
+  let cookie = '';
+  try {
+    const r = await fetch('https://api.bilibili.com/x/frontend/finger/spi', {
+      headers: { 'User-Agent': UA, Referer: 'https://www.bilibili.com/', Accept: 'application/json, text/plain, */*' },
+    });
+    const j = await r.json();
+    const b3 = j && j.data && j.data.b_3;
+    const b4 = j && j.data && j.data.b_4;
+    if (b3) cookie = 'buvid3=' + b3 + (b4 ? '; buvid4=' + b4 : '');
+  } catch (_) {}
+  if (!cookie) cookie = 'buvid3=' + randomBuvid3();
+  _biliCookie = { value: cookie, at: now };
+  return cookie;
+}
+
+async function bfetch(url, referer, forceNewCookie) {
+  const cookie = await getBiliCookie(forceNewCookie);
   return fetch(url, {
     headers: {
       'User-Agent': UA,
       Referer: referer || 'https://www.bilibili.com',
-      Origin: 'https://www.bilibili.com',
       Accept: 'application/json, text/plain, */*',
       'Accept-Language': 'zh-CN,zh;q=0.9',
+      Cookie: cookie,
     },
   });
 }
@@ -183,7 +213,11 @@ async function parseBilibili(shareUrl) {
   }
   if (!bvid) throw new Error('没能从链接里认出 B 站视频号（BV 号）。请直接粘贴视频页地址，如 https://www.bilibili.com/video/BVxxxxxxxxxx');
 
-  const view = await bjson(await bfetch(`https://api.bilibili.com/x/web-interface/view?bvid=${bvid}`), 'view');
+  let view = await bjson(await bfetch(`https://api.bilibili.com/x/web-interface/view?bvid=${bvid}`), 'view');
+  if (view.code === -412) {
+    // 被反爬拦了：换一个新指纹再试一次
+    view = await bjson(await bfetch(`https://api.bilibili.com/x/web-interface/view?bvid=${bvid}`, null, true), 'view');
+  }
   if (view.code !== 0) throw new Error('B站接口：' + (view.message || 'code ' + view.code));
   const d = view.data || {};
 
@@ -397,11 +431,15 @@ module.exports = async (req, res) => {
     const platform = detectPlatform(shareUrl);
     let data;
     if (platform === 'bilibili') {
-      data = await parseBilibili(shareUrl);
-    } else if (platform === 'unknown') {
-      data = await parseViaProvider(shareUrl, platform); // 交给配置的接口，或抛出明确提示
+      try {
+        data = await parseBilibili(shareUrl);
+      } catch (e) {
+        // 内置接口被反爬拦（-412）或接口变动时，若配了第三方接口就降级过去
+        if (VIDEO_PARSE_API) data = await parseViaProvider(shareUrl, 'bilibili');
+        else throw e;
+      }
     } else {
-      data = await parseViaProvider(shareUrl, platform);
+      data = await parseViaProvider(shareUrl, platform); // 未知平台也交给配置的接口，或抛出明确提示
     }
 
     return res.json(Object.assign({ ok: true, shareUrl }, data));
