@@ -247,6 +247,42 @@ async function biliWbiView(params) {
 // ---------------------------------------------------------------------------
 const QUALITY_MAP = { 127: '8K', 120: '4K', 116: '1080P60', 112: '1080P+', 80: '1080P', 64: '720P', 32: '480P', 16: '360P' };
 
+// 元数据（标题/封面/作者/时长）：三条路依次降级。
+//   实测：机房 IP 下 x/web-interface/view 返回 -412、wbi/view 返回 -404（风控），
+//   只有 pagelist / playurl 放行。元数据失败后不再反复硬刷（越刷风控越差），
+//   10 分钟内直接跳过，由 pagelist 兜底（能拿到标题与时长，缺封面与作者）。
+let _metaBlockedUntil = 0;
+async function biliMeta(bvid) {
+  if (Date.now() < _metaBlockedUntil) return null;
+  try {
+    const v = await bjson(await bfetch(`https://api.bilibili.com/x/web-interface/view?bvid=${bvid}`), 'view');
+    if (v.code === 0 && v.data) return v.data;
+  } catch (_) {}
+  try {
+    const v = await biliWbiView({ bvid });
+    if (v.code === 0 && v.data) return v.data;
+  } catch (_) {}
+  try {
+    // 搜索接口兜底：按 BV 号搜到自己，可拿回标题 / 封面 / 作者 / 时长
+    const qs = wbiSign({ search_type: 'video', keyword: bvid, page: 1 }, await getWbiMixinKey());
+    const s = await bjson(await bfetch(`https://api.bilibili.com/x/web-interface/wbi/search/type?${qs}`), 'search');
+    const list = (s && s.data && s.data.result) || [];
+    const hit = list.find((x) => x && x.bvid === bvid) || list[0];
+    if (hit) {
+      let pic = String(hit.pic || '');
+      if (pic.indexOf('//') === 0) pic = 'https:' + pic;
+      return {
+        title: String(hit.title || '').replace(/<[^>]+>/g, ''),
+        pic,
+        owner: { name: hit.author || '' },
+        duration: hit.duration || 0,
+      };
+    }
+  } catch (_) {}
+  _metaBlockedUntil = Date.now() + 10 * 60 * 1000;
+  return null;
+}
+
 async function parseBilibili(shareUrl) {
   let bvid = (shareUrl.match(/BV[0-9A-Za-z]{10}/) || [])[0] || '';
   const aid = (shareUrl.match(/\/av(\d+)/i) || [])[1] || '';
@@ -264,18 +300,8 @@ async function parseBilibili(shareUrl) {
   }
   if (!bvid) throw new Error('没能从链接里认出 B 站视频号（BV 号）。请直接粘贴视频页地址，如 https://www.bilibili.com/video/BVxxxxxxxxxx');
 
-  // 元数据依次降级：普通 view → WBI 签名 view → pagelist 兜底（只够拿到 cid）
-  let meta = null;
-  try {
-    const v = await bjson(await bfetch(`https://api.bilibili.com/x/web-interface/view?bvid=${bvid}`), 'view');
-    if (v.code === 0 && v.data) meta = v.data;
-  } catch (_) {}
-  if (!meta) {
-    try {
-      const v = await biliWbiView({ bvid });
-      if (v.code === 0 && v.data) meta = v.data;
-    } catch (_) {}
-  }
+  // 元数据（可能为 null，此时用 pagelist 兜底）
+  const meta = await biliMeta(bvid);
 
   // 分P：优先用元数据里的 pages；拿不到就单独查 pagelist（该接口在机房 IP 下正常）
   let pages = meta && Array.isArray(meta.pages) && meta.pages.length ? meta.pages : null;
@@ -326,9 +352,9 @@ async function parseBilibili(shareUrl) {
     title: (meta && meta.title) || (pages[0] && pages[0].part) || '',
     cover: String((meta && meta.pic) || '').replace(/^http:/, 'https:'),
     author: (meta && meta.owner && meta.owner.name) || '',
-    duration: (meta && meta.duration) || 0,
+    duration: (meta && meta.duration) || (pages[0] && pages[0].duration) || 0,
     videos,
-    source: meta ? '内置接口' : '内置接口（降级）',
+    source: meta ? '内置接口' : '内置接口（元数据降级）',
   };
 }
 
@@ -460,44 +486,6 @@ module.exports = async (req, res) => {
     const ip = clientIp(req);
     if (rateLimited('video:' + ip, 60, 60 * 1000)) {
       return res.status(429).json({ ok: false, error: '请求过于频繁，请稍后再试' });
-    }
-
-    // ---- 诊断（临时）：聚焦 WBI 签名链路 ----
-    if (mode === 'debug') {
-      const bvid = 'BV1GJ411x7h7';
-      const out = [];
-      let mixin = '';
-      try {
-        const navRes = await bfetch('https://api.bilibili.com/x/web-interface/nav');
-        const navText = await navRes.text();
-        out.push({ k: 'nav', status: navRes.status, ct: navRes.headers.get('content-type'), body: navText.slice(0, 200) });
-        const nj = JSON.parse(navText);
-        const img = nj && nj.data && nj.data.wbi_img;
-        if (img) {
-          const base = (u) => String(u).split('/').pop().split('.')[0];
-          const orig = base(img.img_url) + base(img.sub_url);
-          mixin = MIXIN_KEY_ENC_TAB.map((i) => orig[i]).join('').slice(0, 32);
-          out.push({ k: 'mixinKey', value: mixin, len: mixin.length });
-        }
-      } catch (e) {
-        out.push({ k: 'nav', error: String((e && e.message) || e) });
-      }
-      if (mixin) {
-        try {
-          const qs = wbiSign({ bvid }, mixin);
-          out.push({ k: '签名串', value: qs });
-          const r = await bfetch(`https://api.bilibili.com/x/web-interface/wbi/view?${qs}`);
-          const t = await r.text();
-          out.push({ k: 'wbiView签名', status: r.status, ct: r.headers.get('content-type'), body: t.slice(0, 260) });
-        } catch (e) {
-          out.push({ k: 'wbiView签名', error: String((e && e.message) || e) });
-        }
-      }
-      let ip = '';
-      try {
-        ip = await (await fetch('https://api.ipify.org?format=json')).text();
-      } catch (_) {}
-      return res.json({ ok: true, ip, debug: out });
     }
 
     // ---- 下载中转 ----
