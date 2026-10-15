@@ -143,9 +143,28 @@ async function bfetch(url, referer) {
     headers: {
       'User-Agent': UA,
       Referer: referer || 'https://www.bilibili.com',
+      Origin: 'https://www.bilibili.com',
+      Accept: 'application/json, text/plain, */*',
       'Accept-Language': 'zh-CN,zh;q=0.9',
     },
   });
+}
+
+// 带诊断的 JSON 解析：非 JSON（例如机房 IP 被 B 站拦截后返回的 HTML）时报出
+// 真实状态码与正文片段，而不是一句无用的「Unexpected token '<'」。
+async function bjson(res, what) {
+  const ct = res.headers.get('content-type') || '';
+  const text = await res.text();
+  if (!/json/i.test(ct)) {
+    throw new Error(
+      `B站接口[${what}]返回非 JSON（HTTP ${res.status}，${ct || '无类型'}）：${text.slice(0, 200).replace(/\s+/g, ' ')}`
+    );
+  }
+  try {
+    return JSON.parse(text);
+  } catch (_) {
+    throw new Error(`B站接口[${what}]JSON 解析失败（HTTP ${res.status}）：${text.slice(0, 200)}`);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -158,14 +177,13 @@ async function parseBilibili(shareUrl) {
   const aid = (shareUrl.match(/\/av(\d+)/i) || [])[1] || '';
 
   if (!bvid && aid) {
-    const r = await bfetch(`https://api.bilibili.com/x/web-interface/view?aid=${aid}`);
-    const j = await r.json();
+    const j = await bjson(await bfetch(`https://api.bilibili.com/x/web-interface/view?aid=${aid}`), 'view/aid');
     if (j.code !== 0) throw new Error('B站接口：' + (j.message || j.code));
     bvid = j.data.bvid;
   }
   if (!bvid) throw new Error('没能从链接里认出 B 站视频号（BV 号）。请直接粘贴视频页地址，如 https://www.bilibili.com/video/BVxxxxxxxxxx');
 
-  const view = await (await bfetch(`https://api.bilibili.com/x/web-interface/view?bvid=${bvid}`)).json();
+  const view = await bjson(await bfetch(`https://api.bilibili.com/x/web-interface/view?bvid=${bvid}`), 'view');
   if (view.code !== 0) throw new Error('B站接口：' + (view.message || 'code ' + view.code));
   const d = view.data || {};
 
@@ -179,12 +197,13 @@ async function parseBilibili(shareUrl) {
   const results = await Promise.all(
     slice.map(async (pg) => {
       try {
-        const pj = await (
+        const pj = await bjson(
           await bfetch(
             `https://api.bilibili.com/x/player/playurl?bvid=${bvid}&cid=${pg.cid}` +
               `&qn=80&fnval=0&platform=html5&high_quality=1`
-          )
-        ).json();
+          ),
+          'playurl'
+        );
         const durl = (pj.data && pj.data.durl) || [];
         if (!durl.length) return null;
         return {
