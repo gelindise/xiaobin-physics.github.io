@@ -1197,6 +1197,13 @@
         var R = (rec && rec.R != null) ? +rec.R : (P.R != null ? +P.R : 10);
         return 'R = ' + num(R) + ' Ω';
       }
+      // 导体板：电路上就是一段电阻（R = ρ·L/S），图上也按电阻符号画，
+      // 铭牌印那个数 —— 学生拧材料/长度/横截面积时，图上的 R 跟着变，
+      // 这正是「决定式」要在图上看出来的样子。
+      case 'plate': {
+        var Rp = (rec && rec.R != null) ? +rec.R : null;
+        return Rp == null ? '' : 'R = ' + num(Rp) + ' Ω';
+      }
       case 'bulb': {
         var v = (P.ratedV != null ? +P.ratedV : (core ? core.lampParams(c).ratedV : 2.5));
         var w = (P.ratedW != null ? +P.ratedW : (core ? core.lampParams(c).Prated : 0.75));
@@ -1673,7 +1680,7 @@
     ctx.fillStyle = COLOR.wire;
 
     switch (c.type) {
-      case 'resistor': {
+      case 'resistor': case 'plate': {
         lead(ctx, T[0], -56); lead(ctx, T[1], 56);
         ctx.beginPath();
         D.roundRect(ctx, -56, -13, 112, 26, 2);
@@ -1916,6 +1923,8 @@
       to: '两段横线中间留一个断口，一根刀片从左端斜着抬起来：合上时刀片落下接通' },
     { type: 'resistor', name: '定值电阻',         from: '带四道色环的圆柱',
       to: '一个空心矩形，两端各引一根线' },
+    { type: 'plate',    name: '导体板',           from: '小块木板上压着一段金属条：颜色是材料、长短是长度、宽窄是横截面积',
+      to: '一个空心矩形（和电阻同一个符号），旁边印 R = ρ·L/S 算出来的阻值 —— 材料、长度、横截面积拧哪一个，这个数都跟着变' },
     { type: 'rheostat', name: '滑动变阻器',       from: '绕线瓷管加一个滑片',
       to: '矩形加一根朝下的箭头：箭头的位置就是滑片的位置。用到的两个接头画实线，空着的画虚线' },
     { type: 'bulb',     name: '小灯泡',           from: '带灯座的玻璃泡',

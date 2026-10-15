@@ -32,6 +32,14 @@
   // 每类元件能调什么，写在这里；面板由它生成，不写死 HTML。
   var PARAM_UI = {
     resistor:  [{k:'R', t:'range', label:'阻值', unit:'Ω', min:1, max:100, step:1}],
+    // 导体板：三个旋钮正好是课本那三个因素 —— 材料（ρ）、长度 L、横截面积 S，
+    // R = ρ·L/S 由求解器现算（读数表 R 列直接读它）。这里只给输入，
+    // 不给「阻值」滑条：那个数是算出来的，再给人拧一遍就和公式对不上了。
+    plate:     [{k:'material', t:'select', label:'材料',
+                 options:['copper','manganin','constantan','nichrome'],
+                 labels:{copper:'铜', manganin:'锰铜', constantan:'康铜', nichrome:'镍铬合金'}},
+                {k:'length', t:'range', label:'长度', unit:'m', min:0.2, max:2, step:0.1},
+                {k:'section', t:'range', label:'横截面积', unit:'mm²', min:0.1, max:2, step:0.05}],
     battery:   [{k:'emf', t:'range', label:'电动势', unit:'V', min:1.5, max:7.5, step:1.5},
                 {k:'rInt', t:'range', label:'内阻', unit:'Ω', min:0, max:2, step:0.1},
                 // 「对调」不是一条能拧的数，是【把元件原地调个头】——所以它和
@@ -106,7 +114,9 @@
   };
   var TYPE_LABEL = {battery:'电源', resistor:'定值电阻', switch:'开关',
     ammeter:'电流表', voltmeter:'电压表', rheostat:'滑动变阻器', bulb:'小灯泡',
-    led:'发光二极管', motor:'电动机', bell:'电铃', power:'学生电源'};
+    led:'发光二极管', motor:'电动机', bell:'电铃', power:'学生电源',
+    // 导体板：探究电阻的影响因素那块实验板（R = ρ·L/S）。
+    plate:'导体板'};
 
   // 无极性元件的电流/电压要显示大小，不能显示符号。
   // 内核里 rec.i 记的是「从 0 号端子流向 1 号端子」，而 0 号端子在元件的哪一侧

@@ -119,7 +119,7 @@ function torusGeo(r, tube, seg) { return geo('t' + r + '_' + tube + '_' + (seg |
 // ============================================================
 export const POST_H = {
   resistor: 22, battery: 30, power: 30, switch: 30, bulb: 30, led: 22, motor: 30, bell: 30,
-  ammeter: 26, voltmeter: 26, rheostat: 24, junction: 5,
+  ammeter: 26, voltmeter: 26, rheostat: 24, junction: 5, plate: 22,
 };
 export function postHeight(type) { return POST_H[type] != null ? POST_H[type] : 24; }
 
@@ -208,6 +208,42 @@ BUILDERS.resistor = function (ctx) {
       ctx.add(ring);
     });
   } catch (e) {}
+};
+
+// ── 导体板：木板 + 金属条（长度随 L、粗细随 S、颜色随材料）──────
+// 「电阻与材料 / 长度 / 横截面积有关」三个旋钮的【可见】落点：条子的长短就是
+// 长度 L、宽窄就是横截面积 S、颜色就是材料（铜偏红、镍铬发亮）—— 学生在台上
+// 转这三颗旋钮时，板子本身跟着变，不用扭头去参数面板对。
+// ⚠️ 颜色只是【视觉】映射，物理值一律由内核 plateR（R=ρ·L/S）算，构建器不
+//    自己算电阻（抄一份就等于把「改了实现、画面没跟着变」这个洞留着）。
+BUILDERS.plate = function (ctx) {
+  var M = materials(), Cc = C();
+  var P = ctx.comp.params || {};
+  var L = Math.max(0.1, Math.min(2, +P.length || 1));      // m
+  var S = Math.max(0.1, Math.min(2, +P.section || 0.5));   // mm²
+  // 木板：比金属条大一圈，条子贴在板面上（板不随 L 变 —— 板是板，条是条）
+  var board = new THREE.Mesh(boxGeo(156, 12, 86), mat(0xc7a273, { roughness: 0.9 }));
+  board.position.copy(ctx.P(0, 0, 6));
+  ctx.add(board);
+  // 金属条：长度 ∝ L（0.2~2m → 40~102），宽度 ∝ S（0.2~2mm² → 18~54）
+  var len = 26 + L * 38, wid = 12 + S * 20;
+  var PM = Cc.PLATE_MATERIALS || {};
+  var known = Object.prototype.hasOwnProperty.call(PM, P.material);
+  var col = { copper: 0xb87333, manganin: 0xd3dae2, constantan: 0x9aa4b0, nichrome: 0xbcc6d2 }[P.material];
+  var strip = new THREE.Mesh(boxGeo(len, 7, wid),
+    mat(known ? (col || 0xbcc6d2) : 0xbcc6d2, { roughness: 0.35, metalness: 0.75 }));
+  strip.position.copy(ctx.P(0, 0, 15.5));
+  ctx.add(strip);
+  // 两端引出线：条子短于柱距（±70），中间那段用铜线搭过去
+  var tx = 70, gap = tx - len / 2;
+  if (gap > 2) {
+    [1, -1].forEach(function (s) {
+      var lead = new THREE.Mesh(cylGeo(2.4, 2.4, gap, 8), M.postNeu);
+      lead.rotation.z = Math.PI / 2;
+      lead.position.copy(ctx.P(s * (len / 2 + gap / 2), 0, 22));
+      ctx.add(lead);
+    });
+  }
 };
 
 // ── 电源：塑料托盘 + 干电池圆柱（节数 = emf/1.5 反推）────────

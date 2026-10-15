@@ -39,6 +39,8 @@
     ammeter: 'A', voltmeter: 'V', rheostat: 'RH', bulb: 'L',
     led: 'D', motor: 'M', bell: 'B',
     power: 'U',
+    // 导体板（探究电阻的影响因素）：一块金属条，两个接线柱。
+    plate: 'P',
     // 接线点（导线中间自动长出来的结点）。它【不在元件栏里】—— 学生不是
     // 「放一个接线点」，而是从接线柱往导线中间连线时它自己冒出来。
     junction: 'J',
@@ -62,6 +64,13 @@
     led:       [70, 46],
     motor:     [70, 60],
     bell:      [70, 60],
+    // 导体板：底板铺在导线下方，金属条贴在板面正面（y = 6 ~ 27，不往上长）。
+    // hw 给 90 而不是 70：板子照旧 ±70，但金属条在 2D 里最长到 ±47、
+    // 3D 里条长随 length 变（30 + L×38），命中框要连条子一起罩住才点得到。
+    // 卡在 70 以内会让「点在条子上」落空 —— 而条子正是学生最想点的那一块。
+    // ⚠️ 不能超过 100：接线柱在 ±70，hw 再大柱子就被圈进盒子里，
+    //    「导线夹在柱子上」会被误判成「导线穿过元件」（见 bodyBox 的注释）。
+    plate:     [90, 34],
     // 两只表的仪器本体全部落在导线【上方】（三个接线柱在底部探出来），
     // 所以高只有表壳+底座这一截，不是上下对称的。
     ammeter:   [100, 70],
@@ -413,6 +422,42 @@
     var TRAIL_TOL = 6;      // 抽稀容差（逻辑像素）
     var TRAIL_MIN = 5;      // 采样间距：移动不足这么远就不记点
     var VIA_MAX = 60;       // 单根导线的拐点上限，防止极端拖动撑爆场景数据
+
+    // ---------- 停留成线 ----------
+    // 用户要的第三起居线方式：从一个接线柱出发，拖到【任意一个点】（不必是接
+    // 线柱、也不必压在导线上），在那里停住不动 ≥ DWELL_MS，这根线就直接成形 ——
+    // 落点长出一颗接线点，途经的轨迹成为它的拐点。
+    // 为什么是「停住」而不是「松手」：学生拉到一半总要停一下看看位置接得顺不
+    // 顺，这一停就是两秒；改成松手才成线的话，中间每次停顿都会误接出一根线来。
+    // ⚠️ 判据里必须带上 fromWire / to / snap 三个排除项（见 onMove）：
+    //    悬空线头是「插回柱子」另一种动作，压着接线柱 / 导线时上面的规则优先。
+    var DWELL_MS = 2000;    // 停这么久就自动成线
+    var DWELL_SLACK = 8;    // 算「没动」的半径（逻辑像素）。比 TRAIL_MIN 大一点：
+                           // 手再稳也会抖，卡太严永远计不满两秒。
+    function nowMs() {
+      return (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+    }
+    // 定时器：指针停住之后【再也不来移动事件】，只靠 onMove 检查就永远接不上
+    // （停在一秒九的学生永远等不到下一次 mousemove）。所以起一个闹钟，到点自己
+    // 来查一次。onUp 里那句兜底照样留着 —— 闹钟被浏览器节流掉时它兜底。
+    var dwellTimer = null;
+    function clearDwellTimer() { if (dwellTimer) { clearTimeout(dwellTimer); dwellTimer = null; } }
+    function dwellFire() {
+      clearDwellTimer();
+      if (!wiring || !wiring.dwellPt || wiring.fromWire || wiring.to || wiring.blocked || wiring.snap) return;
+      if (nowMs() - wiring.dwellT < DWELL_MS) return;
+      if (connectToPoint(wiring)) { wiring = null; changed(); }
+    }
+    // 计时期间让宿主重绘几次：进度环是画在画布上的，而画布只在变更时重绘 ——
+    // 不补这几笔，环会停在刚开始那一小段不动，看着像卡住了。
+    function dwellPulse() {
+      clearTimeout(dwellPulse._t);
+      if (!wiring || !wiring.dwellPt) return;
+      if (nowMs() - wiring.dwellT > DWELL_MS + 300) return;
+      dwellPulse._t = setTimeout(function () {
+        if (wiring && wiring.dwellPt) { changed(); dwellPulse(); }
+      }, 120);
+    }
 
     function simplify(pts, tol) {
       var n = pts.length;
@@ -1035,6 +1080,7 @@
 
       var t = hitTerminal(p);
       if (t) {                                  // 从端子拉线
+        clearDwellTimer();                     // 上一根线的闹钟不能留着烧到这一根
         wiring = { from: t, cur: p, to: null, trail: [{ x: p.x, y: p.y }] };
         canvas.setPointerCapture && canvas.setPointerCapture(ev.pointerId);
         return;
@@ -1047,6 +1093,7 @@
       // 是更常见、也更不该被挡住的意图）。
       var le = hitLooseEnd(p);
       if (le) {
+        clearDwellTimer();
         wiring = { from: { compId: null, termIdx: 0, x: le.x, y: le.y },
                    fromWire: { index: le.index, k: le.k },
                    cur: p, to: null, trail: [{ x: p.x, y: p.y }] };
@@ -1121,6 +1168,35 @@
         // 预览点取最近点而不是鼠标位置：让「会吸到哪里」看得见，否则学生只能
         // 松手以后才知道接上没有。
         wiring.snap = (!wiring.to && !wiring.blocked) ? nearestOnWire(p) : null;
+        // ── 停留成线：停住 ≥ DWELL_MS 就地接线 ──────────────────
+        // 只对「从端子起头的新线、且落点不在柱子上、也不在导线上」计时 ——
+        // 那三种情况各有各的接线规则（端子优先、导线中段其次），不抢。
+        if (!wiring.fromWire && !wiring.to && !wiring.blocked && !wiring.snap) {
+          var dp = wiring.dwellPt;
+          if (!dp || Math.hypot(p.x - dp.x, p.y - dp.y) > DWELL_SLACK) {
+            wiring.dwellPt = { x: p.x, y: p.y };
+            wiring.dwellT = nowMs();
+          } else if (nowMs() - wiring.dwellT >= DWELL_MS) {
+            if (connectToPoint(wiring)) {
+              // 成线即收工：把 wiring 清掉，指针还按着也不再续下一根
+              // （不然松手时 onUp 看到 wiring 还在，又去接一次）。
+              wiring = null;
+              changed();
+              return;
+            }
+            // 落点被拒（压在元件身上）。别每帧重试：把锚点推开一点，
+            // 等学生再动一下才重新计时。
+            wiring.dwellPt = { x: p.x + DWELL_SLACK, y: p.y };
+          }
+          // 起闹钟 + 起重绘脉冲（停住之后没有新事件，全靠这两条把线接上、
+          // 把进度环画完）
+          clearDwellTimer();
+          dwellTimer = setTimeout(dwellFire, DWELL_MS + 60);
+          dwellPulse();
+        } else {
+          wiring.dwellPt = null; wiring.dwellT = 0;
+          clearDwellTimer();
+        }
         onChange();
         return;
       }
@@ -1290,6 +1366,55 @@
       report('plug', { a: from, b: { compId: jc.id, termIdx: 0 } });
       return true;
     }
+
+    // ---------- 拖到空白处、停住成线 ----------
+    // 用户要的第三起居线方式：从一个接线柱出发，拖到【任意一个空白点】
+    // （不必是接线柱、也不必压在导线上），在那里停住不动 → 落点长出一颗
+    // 接线点，途经的轨迹成为这根导线的拐点，连线完成。
+    //
+    // 为什么终点也要造一个 junction：导线必须落在【端子】上才算接入电路
+    // （求解器只认端子）。留一个悬空线头的话，这根线画在那儿却不通电，
+    // 而学生明明「看见线接上了」—— 那比不接更坏。接线点还顺手给了这根线
+    // 一个接着往下连的桩子。
+    //
+    // 与 connectToWireMid 的关系：落点压在已有导线上时走那条（会把那根线
+    // 从落点切成两截，三根线并到一颗点上）；落在元件身上 / 空白处才走这条。
+    // 页面侧的顺序是「端子 → 导线中段 → 空白处」，三者互斥。
+    function connectToPoint(wiring) {
+      if (!wiring || !wiring.cur || !wiring.from) return false;
+      var from = wiring.from;
+      if (!from.compId) return false;                 // 悬空线头不是这条的输入
+      var s = getScene();
+      var q = { x: snap(wiring.cur.x), y: snap(wiring.cur.y) };
+      // 落在元件身上不接：接线点会嵌在器材里，看着像插上了、其实没有。
+      for (var i = 0; i < s.comps.length; i++) {
+        var c = s.comps[i];
+        var ol = D.toLocal(c, q.x, q.y), b = localBox(c);
+        if (ol.x >= b.x0 - 2 && ol.x <= b.x1 + 2 && ol.y >= b.y0 - 2 && ol.y <= b.y1 + 2) return false;
+      }
+      // 起点与落点是同一个端子 = 自环，没意义
+      pushUndo();
+      var n = 1;
+      while (byId(ID_PREFIX.junction + n)) n++;
+      var jc = { id: ID_PREFIX.junction + n, type: 'junction',
+                 x: q.x, y: q.y, params: {} };
+      s.comps.push(jc);
+      var cp = endPt(from);
+      if (!cp) return false;
+      // 途经点成为导线的拐点（和 connectToWireMid 同一条简化管线）。
+      // 尾巴上跟落点重合的点要去掉：接线点自己的端子在 (x,y)，补一个等于零长度段。
+      var viaNew = simplify(wiring.trail.slice(1), TRAIL_TOL)
+        .filter(function (z) { return Math.hypot(z.x - cp.x, z.y - cp.y) > 1; })
+        .slice(0, VIA_MAX - 1)
+        .map(function (z) { return [z.x, z.y]; });
+      while (viaNew.length && Math.hypot(viaNew[viaNew.length - 1][0] - q.x,
+                                         viaNew[viaNew.length - 1][1] - q.y) < 1) viaNew.pop();
+      var nw = mkWire(from, { compId: jc.id, termIdx: 0 }, viaNew);
+      if (nw) s.wires.push(nw);
+      report('plug', { a: from, b: { compId: jc.id, termIdx: 0 } });
+      return true;
+    }
+
     // 把一根【悬空】的线头插回某个接线柱上。和「从端子拉一根新线」是两回事：
     // 这里不新增导线，只是改那个端点的归属，所以线的根数一根不变。
     // 判据全在落点上：没落在柱子上就什么都不做，线头留在原地等下一次。
@@ -1442,10 +1567,17 @@
             }
           }
         } else {
-          // 落点不在任何接线柱上 —— 试试是不是落在某根导线的【中间】。
-          // 是的话就在那里长一个接线点，把三根线接到一起。
-          connectToWireMid(wiring);
+          // 落点不在任何接线柱上 —— 先试是不是落在某根导线的【中间】（是的话
+          // 在那里长一个接线点，把三根线接到一起），再试「停够两秒」的空白
+          // 落点（同样长一颗接线点，途经轨迹成为这根线的拐点）。两者互斥。
+          // 第二条同时是兜底：onMove 里的停留计时只在「又来了一次移动事件」时
+          // 才检查，学生要是正好停在一秒九、再也不动，就靠松手这一下补上。
+          if (!connectToWireMid(wiring)) {
+            if (wiring.dwellPt && !wiring.fromWire &&
+                nowMs() - wiring.dwellT >= DWELL_MS) connectToPoint(wiring);
+          }
         }
+        clearDwellTimer();
         wiring = null;
         changed();
         return;
@@ -1740,6 +1872,20 @@
       rawPathOf: rawPathOf,
       nearestOnWire: nearestOnWire,
       connectToWireMid: connectToWireMid,
+      // 拖到【空白处】停住成线：落点长一颗接线点，途经轨迹成为导线的拐点。
+      // 和 connectToWireMid 的落点判据互补（那条压的是已有导线的中段）。
+      connectToPoint: connectToPoint,
+      // 停留成线的计时进度（宿主拿它画「快接上了」的圆环）。返回
+      // { x, y, k }（k = 0~1）或 null（没在计时 / 已经接上）。
+      // 判据和 onMove 里那条逐项对齐：少一项就会出现「圆环转满了却没接线」。
+      dwellInfo: function () {
+        if (!wiring || !wiring.dwellPt || wiring.fromWire || wiring.to ||
+            wiring.blocked || wiring.snap) return null;
+        var k = (nowMs() - wiring.dwellT) / DWELL_MS;
+        if (!(k > 0) || k >= 1) return null;
+        return { x: wiring.cur ? wiring.cur.x : wiring.dwellPt.x,
+                 y: wiring.cur ? wiring.cur.y : wiring.dwellPt.y, k: k };
+      },
       // 端子↔端子直接连线（外部代码 / 3D 版沙盒用）。和 connectToWireMid 一样
       // 是「落线动作」，只是落点也是一个接线柱而不是导线中间。
       connectTerminals: connectTerminals,

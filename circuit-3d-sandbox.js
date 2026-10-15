@@ -17,7 +17,7 @@ import * as THREE from './assets/optics-three.min.js';
 //    浏览器会重新拉入口，却照样拿缓存里那份旧的 circuit-3d-kit.js ——
 //    症状是「改了器材库、3D 页看上去一点没变」，而入口文件的改动明明生效了。
 //    改 circuit-3d-kit.js 之后，这里要跟着 +1。
-import KIT from './circuit-3d-kit.js?build=2';
+import KIT from './circuit-3d-kit.js?build=3';
 
 (function () {
   'use strict';
@@ -70,10 +70,52 @@ import KIT from './circuit-3d-kit.js?build=2';
   benchGroup.add(KIT.makeBench());
 
   // ============================================================
+  //  停留成线的提示环（平贴在台面上，随计时进度长大、变实）
+  //  没有它，学生停住两秒期间完全看不出「要有事发生」—— 只会以为卡了。
+  // ============================================================
+  var cueRing = new THREE.Mesh(
+    new THREE.RingGeometry(0.26, 0.34, 48),
+    new THREE.MeshBasicMaterial({ color: 0x38bdf8, transparent: true,
+      opacity: 0.9, side: THREE.DoubleSide, depthWrite: false }));
+  cueRing.rotation.x = -Math.PI / 2;
+  cueRing.visible = false;
+  gscene.add(cueRing);
+  function updateCue() {
+    if (!wiring || !wiring.dwellPt || wiring.to) { cueRing.visible = false; return; }
+    var k = (nowMs() - wiring.dwellT) / DWELL_MS;
+    if (!(k > 0.02)) { cueRing.visible = false; return; }
+    cueRing.position.copy(KIT.to3D(wiring.cur.x, wiring.cur.y, 0.03));
+    var s = Math.max(0.3, Math.min(1, k));
+    cueRing.scale.setScalar(s);
+    cueRing.material.opacity = 0.35 + 0.55 * s;
+    cueRing.visible = true;
+  }
+
+  // ============================================================
   //  相机（自写轨道；站内 three 精简版不含 OrbitControls）
   // ============================================================
   var cam = { yaw: -0.55, pitch: 0.62, dist: 26, zoom: 1 };
   var LOOK = new THREE.Vector3(0, 0.35, 0);
+  // 停留成线的两条参数（与 circuit-editor 的 DWELL_MS / DWELL_SLACK 同值）。
+  // 各写一份是没办法的事：3D 这边自己管指针（射线拾取），编辑器的 dwell 分支
+  // 走的是它自己的 onMove。但【数】必须一致 —— 学生在 2D 页习惯了「停两秒」，
+  // 到 3D 页停三秒才接线，那就是两个产品。
+  var DWELL_MS = 2000, DWELL_SLACK = 8;
+  function nowMs() { return performance.now(); }
+  // 闹钟：指针停住之后【再也不来移动事件】，只靠 onMove 检查永远接不上
+  // （停在一秒九的学生等不到下一次 mousemove）。onUp 里那句兜底照样留着。
+  var dwellTimer = null;
+  function clearDwellTimer() { if (dwellTimer) { clearTimeout(dwellTimer); dwellTimer = null; } }
+  function dwellFire() {
+    clearDwellTimer();
+    if (!wiring || !wiring.dwellPt || wiring.to) return;
+    if (nowMs() - wiring.dwellT < DWELL_MS) return;
+    if (editor.connectToPoint(wiring)) {
+      wiring = null;
+      showToast('已接好一根导线');
+      onSceneChanged();
+    }
+  }
   var VIEWS = {
     angle: { yaw: -0.55, pitch: 0.62 },
     front: { yaw: 0, pitch: 0.18 },
@@ -384,7 +426,7 @@ import KIT from './circuit-3d-kit.js?build=2';
   // ============================================================
   //  渲染
   // ============================================================
-  function render() { renderer.render(gscene, camera); }
+  function render() { updateCue(); renderer.render(gscene, camera); }
   function renderNow() { updateAnim(0.05); render(); }
 
   function resize() {
@@ -447,6 +489,7 @@ import KIT from './circuit-3d-kit.js?build=2';
     if (ev.button === 2 || ev.button === 1) { orbiting = true; lastPtr = { x: ev.clientX, y: ev.clientY }; try { canvas.setPointerCapture(ev.pointerId); } catch (e) {} return; }
     var term = pickTerminal(ev);
     if (term) {
+      clearDwellTimer();                     // 上一根线的闹钟不能留着烧到这一根
       wiring = { from: term, trail: [], cur: null, to: null };
       canvas.classList.add('wiring');
       try { canvas.setPointerCapture(ev.pointerId); } catch (e) {}
@@ -476,7 +519,32 @@ import KIT from './circuit-3d-kit.js?build=2';
   function onMove(ev) {
     if (wiring) {
       var lp = planePoint(ev);
-      if (lp) { wiring.cur = lp; wiring.trail.push(lp); wiring.to = pickTerminal(ev); }
+      if (lp) {
+        wiring.cur = lp; wiring.trail.push(lp); wiring.to = pickTerminal(ev);
+        // ── 停留成线（与 2D 沙盒同一条规则）────────────────────
+        // 从接线柱出发拖到【任意一个空白点】，停住 ≥ DWELL_MS 不长接线柱也
+        // 不压导线：落点就地长一颗接线点、途经轨迹成为这根线的拐点，一根线
+        // 直接在手上成形。落点是接线柱 / 导线中段时让位给那两条既有规则。
+        if (wiring.to) {
+          wiring.dwellPt = null;
+        } else {
+          var dp = wiring.dwellPt;
+          if (!dp || Math.hypot(lp.x - dp.x, lp.y - dp.y) > DWELL_SLACK) {
+            wiring.dwellPt = { x: lp.x, y: lp.y }; wiring.dwellT = nowMs();
+          } else if (nowMs() - wiring.dwellT >= DWELL_MS) {
+            if (editor.connectToPoint(wiring)) {
+              wiring = null;
+              showToast('已接好一根导线');
+              onSceneChanged();
+              return;
+            }
+            wiring.dwellPt = { x: lp.x + DWELL_SLACK, y: lp.y };   // 被拒（压在元件上）：等再动一下
+          }
+          // 起闹钟：停住之后没有新事件，全靠它到点把线接上
+          clearDwellTimer();
+          dwellTimer = setTimeout(dwellFire, DWELL_MS + 60);
+        }
+      }
       return;
     }
     if (dragComp) {
@@ -527,9 +595,17 @@ import KIT from './circuit-3d-kit.js?build=2';
       if (wiring.to && (wiring.to.compId !== from.compId || wiring.to.termIdx !== from.termIdx)) {
         editor.connectTerminals(from, wiring.to);
       } else if (wiring.cur) {
-        // 落在导线中间 → 复用编辑器的「长接线点」逻辑
-        try { editor.connectToWireMid({ from: from, cur: wiring.cur, trail: wiring.trail }); } catch (e) {}
+        // 落在导线中间 → 复用编辑器的「长接线点」逻辑；再试「停够两秒」的
+        // 空白落点 → connectToPoint（落点长一颗接线点、轨迹成拐点）。
+        // 第二条同时是兜底：onMove 里的停留计时只在又来了一次移动事件时才
+        // 检查，正好停在一秒九、再也不动的学生，靠松手这一下补上。
+        var done = false;
+        try { done = editor.connectToWireMid({ from: from, cur: wiring.cur, trail: wiring.trail }); } catch (e) {}
+        if (!done && wiring.dwellPt && nowMs() - wiring.dwellT >= DWELL_MS) {
+          editor.connectToPoint(wiring);
+        }
       }
+      clearDwellTimer();
       wiring = null;
       onSceneChanged();
       return;
@@ -571,17 +647,25 @@ import KIT from './circuit-3d-kit.js?build=2';
   function doDelete() { editor.removeSelected(); selectedId = null; renderParamPanel(); highlightTable(); onSceneChanged(); }
   function doRotate() { editor.rotateSelected(); onSceneChanged(); }
   function doClear() { circuitScene.comps = []; circuitScene.wires = []; selectedId = null; renderParamPanel(); highlightTable(); rebuild(); solve(); }
-  function addAt(type) {
+  function addAt(type, px, py) {
     if (!C.TYPES[type] || !KIT.hasBuilder(type)) return;   // 内核不认识的类型不落台
-    // 找一个尽量空的落点
-    var x = 500, y = 380;
-    var tries = 0;
-    while (tries < 60) {
-      var occupied = circuitScene.comps.some(function (c) { return Math.abs(c.x - x) < 150 && Math.abs(c.y - y) < 110; });
-      if (!occupied) break;
-      tries++;
-      x = 180 + ((tries * 160) % 640);
-      y = 140 + (Math.floor(tries / 4) * 130) % 460;
+    var x, y;
+    if (px != null && py != null) {
+      // 拖放进台：落点就是松手那一下指针在台面上的位置（留出边距，
+      // 免得半个板子探出台面外）
+      x = Math.max(70, Math.min(W - 70, px));
+      y = Math.max(60, Math.min(H - 60, py));
+    } else {
+      // 点一下元件盒：找一个尽量空的落点
+      x = 500; y = 380;
+      var tries = 0;
+      while (tries < 60) {
+        var occupied = circuitScene.comps.some(function (c) { return Math.abs(c.x - x) < 150 && Math.abs(c.y - y) < 110; });
+        if (!occupied) break;
+        tries++;
+        x = 180 + ((tries * 160) % 640);
+        y = 140 + (Math.floor(tries / 4) * 130) % 460;
+      }
     }
     var c = editor.addComp(type, x, y);
     if (c) selectedId = c.id;
@@ -589,14 +673,29 @@ import KIT from './circuit-3d-kit.js?build=2';
   }
 
   // ============================================================
-  //  元件栏
+  //  元件盒（图示 + 拖到台面上）
   // ============================================================
   var PAL = [
-    ['battery', '🔋', '电源'], ['power', '⚡', '学生电源'], ['switch', '🔘', '开关'], ['resistor', '🟫', '电阻'],
-    ['rheostat', '🎚️', '变阻器'], ['bulb', '💡', '灯泡'], ['ammeter', '🅰️', '电流表'],
-    ['voltmeter', '🆅', '电压表'], ['led', '🔴', '二极管'], ['motor', '🌀', '电动机'],
-    ['bell', '🔔', '电铃'],
+    ['battery', '电源'], ['power', '学生电源'], ['switch', '开关'], ['resistor', '电阻'],
+    ['rheostat', '变阻器'], ['bulb', '灯泡'], ['ammeter', '电流表'],
+    ['voltmeter', '电压表'], ['led', '二极管'], ['motor', '电动机'],
+    ['bell', '电铃'], ['plate', '导体板'],
   ];
+  // 元件盒里那一小格图标：用【同一支渲染器】画（CircuitDraw.drawIcon），
+  // 不是另找一串 emoji —— emoji 和台面上那件器材对不上，学生建立不起
+  // 「这颗按钮 = 那件器材」的对应；用真渲染器画，盒子里看到的就是台面上的样子。
+  // 取景框在 CircuitDraw.ICON_VIEW（和图例那一栏同一组数）。
+  function paletteIcon(type) {
+    var w = 96, h = 62;
+    var cv = document.createElement('canvas');
+    var dpr = Math.min(2, window.devicePixelRatio || 1);
+    cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
+    var g = cv.getContext('2d');
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    g.fillStyle = '#e9eef5'; g.fillRect(0, 0, w, h);      // 台面底色：图标就是台面上那一小块
+    D.drawIcon(g, type, (C.defaultParams ? C.defaultParams(type) : {}), w, h);
+    return cv;
+  }
   function buildPalette() {
     var box = document.getElementById('palette');
     if (!box) return;
@@ -608,10 +707,61 @@ import KIT from './circuit-3d-kit.js?build=2';
       if (!C.TYPES[p[0]] || !KIT.hasBuilder(p[0])) return;
       var b = document.createElement('button');
       b.type = 'button';
-      b.innerHTML = '<span class="ic">' + p[1] + '</span><span class="nm">' + p[2] + '</span>';
-      b.title = (CP.TYPE_LABEL[p[0]] || p[0]);
-      b.addEventListener('click', function () { addAt(p[0]); });
+      b.dataset.type = p[0];
+      b.title = CP.TYPE_LABEL[p[0]] || p[0];
+      var ic = document.createElement('span'); ic.className = 'ic';
+      ic.appendChild(paletteIcon(p[0]));
+      var nm = document.createElement('span'); nm.className = 'nm'; nm.textContent = p[1];
+      b.appendChild(ic); b.appendChild(nm);
+      // 点一下 = 落在台子中央（老用法一个都没丢）；按住拖动 = 落在松手的地方。
+      b.addEventListener('click', function () { if (!palDrag.moved) addAt(p[0]); });
+      bindPaletteDrag(b, p[0]);
       box.appendChild(b);
+    });
+  }
+
+  // ── 元件盒 → 台面 拖放 ────────────────────────────────────
+  // 用户要的第一件事：元件在图示盒里，直接拖进画面就落台。做法是「一颗跟着
+  // 指针跑的鬼影 + 落点判定」：鬼影是按下那颗按钮的克隆；只有落在画布上才算
+  // 放下，落回盒子里或盒外一律取消（拖出来又后悔了，不该在台中央多出一件）。
+  var palDrag = { moved: false };
+  function overStage(cx, cy) {
+    var r = stageEl.getBoundingClientRect();
+    return cx >= r.left && cx <= r.right && cy >= r.top && cy <= r.bottom;
+  }
+  function bindPaletteDrag(btn, type) {
+    btn.addEventListener('pointerdown', function (ev) {
+      if (ev.button !== 0) return;
+      palDrag.moved = false;
+      var sx = ev.clientX, sy = ev.clientY, ghost = null;
+      function move(e) {
+        // 7px 以内当抖动：不拖、也不落台（这是「点一下」的那一下）
+        if (!ghost && Math.hypot(e.clientX - sx, e.clientY - sy) < 7) return;
+        palDrag.moved = true;
+        if (!ghost) {
+          ghost = btn.cloneNode(true);
+          ghost.className = 'pal-ghost';
+          document.body.appendChild(ghost);
+        }
+        ghost.style.left = (e.clientX - 36) + 'px';
+        ghost.style.top = (e.clientY - 26) + 'px';
+        stageEl.classList.toggle('dropping', overStage(e.clientX, e.clientY));
+      }
+      function up(e) {
+        window.removeEventListener('pointermove', move);
+        window.removeEventListener('pointerup', up);
+        stageEl.classList.remove('dropping');
+        if (ghost) ghost.remove();
+        if (palDrag.moved && overStage(e.clientX, e.clientY)) {
+          // 松手点在台面上 ⇒ 用射线和台面求交，拿逻辑坐标落台
+          var lp = planePoint({ clientX: e.clientX, clientY: e.clientY });
+          if (lp) addAt(type, lp.x, lp.y);
+        }
+        // click 会在 pointerup 之后紧接着触发，所以要等它判完 moved 再清
+        setTimeout(function () { palDrag.moved = false; }, 0);
+      }
+      window.addEventListener('pointermove', move);
+      window.addEventListener('pointerup', up);
     });
   }
 
@@ -747,10 +897,36 @@ import KIT from './circuit-3d-kit.js?build=2';
   //  按钮接线
   // ============================================================
   var state = { view: 'angle' };
+  var appEl = document.getElementById('app');
   function syncViewButtons() {
     document.querySelectorAll('#views button').forEach(function (b) {
       b.classList.toggle('on', b.dataset.view === state.view);
     });
+  }
+  // 三处折叠：元件盒 / 右栏 / 功能栏。都只是换 app 上的一个 class，
+  // CSS 负责让位 —— 「画面最大化」这件事全押在这一层。
+  // ⚠️ 折叠后必须调 resize()：画布按 .stage 的 clientWidth/Height 设尺寸，
+  //    容器变大了不会自己通知渲染器（ResizeObserver 会，但那要等一帧，
+  //    折叠后马上量会量到旧尺寸）。
+  function toggleBox() {
+    appEl.classList.toggle('nobox');
+    var on = !appEl.classList.contains('nobox');
+    var b1 = document.getElementById('btnBox'), b2 = document.getElementById('kbFold');
+    if (b1) b1.classList.toggle('on', on);
+    if (b2) b2.textContent = on ? '◀' : '▶';
+    resize();
+  }
+  function toggleSide() {
+    appEl.classList.toggle('noside');
+    document.getElementById('btnSide').classList.toggle('on', !appEl.classList.contains('noside'));
+    resize();
+  }
+  function toggleFold() {
+    appEl.classList.toggle('folded');
+    var f = appEl.classList.contains('folded');
+    var b = document.getElementById('btnFold');
+    if (b) { b.textContent = f ? '▾ 展开' : '▴ 收起'; b.classList.toggle('on', f); }
+    resize();
   }
   function bindUI() {
     var on = function (id, fn) { var el = document.getElementById(id); if (el) el.addEventListener('click', fn); };
@@ -758,11 +934,9 @@ import KIT from './circuit-3d-kit.js?build=2';
     on('btnDelete', doDelete); on('barDelete', doDelete);
     on('btnRotate', doRotate);
     on('btnClear', function () { if (circuitScene.comps.length) doClear(); });
-    on('barView', function () {
-      var order = ['angle', 'front', 'top', 'side'];
-      var i = order.indexOf(state.view); setView(order[(i + 1) % order.length]);
-    });
-    on('barAdd', function () { addAt('battery'); showToast('已放上一个电源，可在左边元件栏换别的元件'); });
+    on('btnBox', toggleBox); on('kbFold', toggleBox);
+    on('btnSide', toggleSide);
+    on('btnFold', toggleFold);
     document.querySelectorAll('#views button').forEach(function (b) {
       b.addEventListener('click', function () { setView(b.dataset.view); });
     });

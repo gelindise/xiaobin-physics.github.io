@@ -716,12 +716,15 @@
   </div>
 </div>
 
-<!-- 版本号只用来给浏览器缓存开门：GitHub Pages 的静态资源默认缓存 10 分钟，
-     改了内核而 HTML 没变的话，老访客会拿缓存里的旧脚本跑新页面（画面上就
-     会出现「说明写了电子逆流、小球却还顺着流」这种自相矛盾）。改脚本时
-     把这个 build 号 +1 即可。 -->
-<script src="circuit-core.js?build=22"></script>
-<script src="circuit-draw.js?build=36"></script>
+<!-- 版本号只用来给浏览器缓存开门：线上（EdgeOne→Vercel）对带 ?build= 的 js 发
+     30 天 immutable，所以 build 号是【缓存键】不是版本号。改了内核而 HTML 没变的话，
+     老访客会拿缓存里的旧脚本跑新页面（画面上就会出现「说明写了电子逆流、小球却还
+     顺着流」这种自相矛盾）。
+     🔴 新键必须大于该文件【全史出现过的最大值】—— 照抄"某个页当前在用的键"不够：
+       那个键可能早几十年就用旧内容 serve 过，访客浏览器里缓存的是旧代码。
+       2026-10 这批：core 23 / draw 37 / editor 28 / params 5 / schematic 17。 -->
+<script src="circuit-core.js?build=23"></script>
+<script src="circuit-draw.js?build=37"></script>
 <!-- ════════════════════════════════════════════════════════════════════
      【教材版本皮肤 · 已从线上撤下】2026-10-12
      人教版元件外观（circuit-skin*.js 共 5 个文件）暂不在线上启用，学生看到的
@@ -737,13 +740,13 @@
 <!-- <script src="circuit-skin-renjiao-img2-data.js?build=2"></script> -->
 <!-- <script src="circuit-skin-renjiao-img3-data.js?build=1"></script> -->
 <!-- <script src="circuit-skin-renjiao.js?build=6"></script> -->
-<script src="circuit-editor.js?build=27"></script>
+<script src="circuit-editor.js?build=28"></script>
 <!-- 参数面板规格 + 读数显示格式。从本页内联抽出，与 3D 版沙盒（电路实验沙盒3D）
      共用同一份真值：面板规格、小数位、极性显示规则改一处两边都变。 -->
-<script src="circuit-params.js?build=4"></script>
+<script src="circuit-params.js?build=5"></script>
 <!-- 电路图（实物图 → 标准符号）。独立成第四块内核：沙盒和欧姆定律页共用同一份，
      免得各写一套符号，两边的图画法迟早不一样。三个老内核一行没动，build 号不升。 -->
-<script src="circuit-schematic.js?build=16"></script>
+<script src="circuit-schematic.js?build=17"></script>
 <!-- 音效引擎。全部音色现场合成，不带音频素材；AudioContext 懒创建，
      等第一次真实手势才建。它只读状态、只出声，不碰物理也不碰画面。 -->
 <script src="circuit-sound.js?build=3"></script>
@@ -1899,6 +1902,27 @@ function drawFrame(){
     drawZeroWarn(ctx);                      // 未调零的电表：红叹号（压在所有东西之上）
   }
   if (editor) editor.drawOverlay(ctx);      // 选中框 / 拉线预览，永远在最上层
+  drawDwellCue();                           // 停留成线的进度环（压在最上面）
+}
+
+// 停留成线的进度环：从接线柱拉出一根线、停在某处不动时，落点上出现一个
+// 越长越实的蓝环 —— 满环那一瞬间线就接上了（见 circuit-editor 的 DWELL_MS）。
+// 没有它，这两秒钟学生完全看不出「要有事发生」，只会以为软件卡住了。
+function drawDwellCue(){
+  var info = editor && editor.dwellInfo && editor.dwellInfo();
+  if (!info) return;
+  var k = Math.max(0.25, Math.min(1, info.k));
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(info.x, info.y, 26 * k, 0, 6.2832);
+  ctx.strokeStyle = 'rgba(37,99,235,' + (0.35 + 0.5 * k).toFixed(2) + ')';
+  ctx.lineWidth = 3.5;
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(info.x, info.y, 4.5, 0, 6.2832);
+  ctx.fillStyle = 'rgba(37,99,235,0.85)';
+  ctx.fill();
+  ctx.restore();
 }
 
 // 冒烟：电源烧坏之后一直在冒。必须每帧画 —— 它是「坏了还在动」的唯一一件事，
@@ -2940,8 +2964,14 @@ function updateSide(){
   } else if (meltedWires) {
     m = ['短路保护：' + meltedWires + ' 根导线已熔断', 'bad'];
   }
+  // 🔴 这里印的是【教材口径的支路数】（内核 countPaths），不是 branchCount。
+  //    branchCount 是求解器的支路行数：并联两灯那一条回路，电源、开关、两只
+  //    灯泡各占一行，印出来是「4 条支路」—— 而课本和学生数的是「两条支路」。
+  //    支路里多串一个电阻、或者把电表接进去，branchCount 还会继续涨（6、8…），
+  //    数字越大越不像话。countPaths 按「节点之间有几条并联路径」数，串联一条、
+  //    并联两灯两条、三灯三条 —— 和学生嘴里说出来的数一致。
   document.getElementById('statusText').textContent = m[0] + '　·　' +
-    results.stats.branchCount + ' 条支路 / ' + results.stats.nodeCount + ' 个节点 / ' +
+    results.stats.pathCount + ' 条支路 / ' + results.stats.nodeCount + ' 个节点 / ' +
     results.stats.solveMs + 'ms';
   document.getElementById('dot').className = 'dot ' + m[1];
 
@@ -2999,7 +3029,7 @@ function updateSide(){
   var nB = brokenCount();
   document.getElementById('fsText').textContent = m[0] +
     (nB ? '　·　' + nB + ' 处损坏' : '') +
-    '　·　' + results.stats.branchCount + ' 条支路 / ' + results.stats.solveMs + 'ms';
+    '　·　' + results.stats.pathCount + ' 条支路 / ' + results.stats.solveMs + 'ms';
   document.getElementById('fsDot').className = 'dot ' + m[1];
 
   // 工具栏那个「全部修复」跟着损坏件数走：一件没有就禁用（点了什么都不会发生，
@@ -3948,6 +3978,9 @@ var LG_ICON = { w: 86, h: 58 };
 // 取景框不是对称的；照 bodyBox 的 hh 对称裁会把表切掉半截。
 var LG_VIEW = {
   resistor:  { x0: -74, y0: -26, x1: 74, y1: 26 },
+  // 导体板：金属条贴在板面正面（y = 5 ~ 27），两端接线柱立在板沿上。
+  // 取景框照板面给 —— 和共享层 CircuitDraw.ICON_VIEW.plate 同一组数。
+  plate:     { x0: -78, y0: -14, x1: 78, y1: 40 },
   battery:   { x0: -112, y0: -42, x1: 112, y1: 42 },
   // 学生电源：照课本图重做后前面板 212×98（±106）、右侧面再进深 18，
   // 机箱上沿 −54（顶面再高 12 ⇒ −66）、下沿 +44；接线柱挪到面板右下角
@@ -4091,7 +4124,7 @@ window.addEventListener('keydown', function(ev){
 
 // 元件栏
 var PAL = ['battery','power','switch','resistor','rheostat','bulb','ammeter','voltmeter',
-           'led','motor','bell'];
+           'led','motor','bell','plate'];
 var bar = document.getElementById('palette');
 
 // 放进画布。找一个没被占的格位，免得新元件叠在旧的上面。

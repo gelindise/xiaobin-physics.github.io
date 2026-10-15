@@ -51,6 +51,17 @@
       defaults: { Rmax: 20, slide: 0.5 },
       internalShort: [2, 3],
     },
+    // ── 导体板（探究电阻的影响因素）────────────────────────
+    // 一块贴在小木板上的金属条，两个接线柱。它把「电阻的大小与材料、长度、
+    // 横截面积有关」这句话变成三个能拧的旋钮：材料（换 ρ）、长度 L、
+    // 横截面积 S，R = ρ·L/S —— 正是课本那条决定式。
+    // 电器上就是一个普通电阻支路（没有温度系数、没有极性）：变的只是
+    // 参数而不是拓扑，所以它和 resistor 共用 addR 这条支路。
+    // 端子与定值电阻相同（±HALF），3D 里画成「板 + 金属条 + 尺寸标注」。
+    plate: {
+      label: '导体板', terminals: 2, termNames: ['a', 'b'],
+      defaults: { material: 'nichrome', length: 1, section: 0.5 },
+    },
     bulb: {
       label: '小灯泡', terminals: 2, termNames: ['a', 'b'],
       // tempDependent：灯丝电阻随温度升高而增大（钨丝的正温度系数）。
@@ -303,6 +314,31 @@
   // 转速常数 —— 学生调得到的都写在铭牌上，调不到的是电机型号。
   var MOTOR = { rpmPerV: 800, noLoadI: 0.05, I_RATIO: 2, URATED: 3, R_DEF: 5 };
 
+  // ── 导体板材料电阻率（Ω·mm²/m，20℃）──────────────────────
+  // 「电阻与材料有关」这句话的数值落点：R = ρ·L/S，ρ 就在这张表里。
+  // 单位取 Ω·mm²/m 而不是 Ω·m：L 用 m、S 用 mm² 时 R 直接是欧姆，
+  // 不用在面板和求解器之间来回换算（换算错一次就是 10⁶ 倍）。
+  // 铜收进来是为了和「铜丝与镍铬合金丝」那节课对照：同样 1m / 0.5mm²，
+  // 铜 0.034Ω 对镍铬 2Ω，差约 60 倍 —— 灯泡亮度差着一大截。
+  var PLATE_MATERIALS = {
+    copper:     { label: '铜',       rho: 0.017 },
+    manganin:   { label: '锰铜',     rho: 0.44 },
+    constantan: { label: '康铜',     rho: 0.50 },
+    nichrome:   { label: '镍铬合金', rho: 1.0 },
+  };
+  function plateMaterial(P) {
+    var m = PLATE_MATERIALS[(P && P.material)] || PLATE_MATERIALS.nichrome;
+    return m;
+  }
+  // 导体板的电阻：R = ρ·L / S。L 单位 m、S 单位 mm²、ρ 单位 Ω·mm²/m。
+  function plateR(comp) {
+    var P = paramsOf(comp);
+    var L = num(P.length, 1), S = num(P.section, 0.5);
+    if (!(L > 0)) L = 1;
+    if (!(S > 0)) S = 0.5;      // 0 截面 = 没有导体，退回默认而不是除零
+    return plateMaterial(P).rho * L / S;
+  }
+
   // ── 电铃的吸合磁动势下限（安匝 = 电流 × 匝数）──────────────
   // 低于它，电磁铁的吸力顶不动弹簧片，铃【不响】—— 这正是「电磁铁磁性强弱
   // 跟电流、匝数有关」那句话的直接后果：电压调低、线圈电阻调大、匝数调少，
@@ -499,6 +535,12 @@
     switch (comp.type) {
       case 'resistor':
         addR(N(0), N(1), P.R);
+        break;
+
+      // 导体板：R = ρ·L/S（见 plateR）。它和定值电阻在电路上完全同构，
+      // 分开写只是为了让「三个因素」各有自己的旋钮。
+      case 'plate':
+        addR(N(0), N(1), plateR(comp));
         break;
 
       case 'bulb':
@@ -1049,7 +1091,13 @@
       warnings: warnings, nodeV: {}, terminalNode: {}, components: {},
       islands: [], stats: {},
     };
-    if (components.length === 0) { out.status = 'empty'; return out; }
+    if (components.length === 0) {
+      out.status = 'empty';
+      // 空画布也把 stats 补全：状态栏照印「0 条支路」，读 undefined 会印出
+      // 「undefined 条支路」。nodeCount 此时还是 0（并查集还没建）。
+      out.stats = { nodeCount: 0, branchCount: 0, pathCount: 0, matrixSize: 0, solveMs: 0 };
+      return out;
+    }
 
     var t0 = now();
     var topo = buildNodes(components, wires);
@@ -1256,6 +1304,15 @@
         // 把它摁住的那一条 —— 那本来就是电源短路。
         ? { code: 'SHORT_CIRCUIT', message: '电源被导线直接短接，电流会过大' }
         : { code: 'SINGULAR', message: '电路存在矛盾约束，请检查接线' });
+      // 无解也要给 stats：状态栏那一行照印（「4 条支路 / 3ms」），
+      // 少了这一句 pages 读 results.stats.branchCount 会拿到 undefined。
+      out.stats = {
+        nodeCount: topo.nodeCount,
+        branchCount: usedBranches.length,
+        pathCount: countPaths(usedBranches, {}),
+        matrixSize: 0,
+        solveMs: +(now() - t0).toFixed(3),
+      };
       return out;
     }
 
@@ -1299,7 +1356,10 @@
       }
 
       switch (c.type) {
-        case 'resistor': case 'bulb': case 'voltmeter': {
+        // 导体板和定值电阻在回填上完全同构：一条 R 支路，R = ρ·L/S
+        // （见 describeComponent 的 plate 分支）。加进来而不是另写一个 case：
+        // 两份回填逻辑迟早对不上，而读数表里那一列 R 直接读 rec.R。
+        case 'resistor': case 'plate': case 'bulb': case 'voltmeter': {
           if (bs.length === 0) {
             // 理想电压表（无支路）：读数是两端节点电压差，电流为 0。
             // 注意不能在这里 break 成 v=0 —— 否则理想电压表永远读 0。
@@ -1628,7 +1688,11 @@
 
     out.stats = {
       nodeCount: topo.nodeCount,
+      // branchCount = MNA 支路（每个元件一条，含电源/开关/变阻器两段）；
+      // pathCount   = 课本口径的支路数（分岔出去的路径）。状态栏印后者 ——
+      // 「并联两灯 = 2 条支路」，印前者会印成 4，用户报的就是这个。
       branchCount: usedBranches.length,
+      pathCount: countPaths(usedBranches, comp),
       matrixSize: sol.matrixSize || 0,
       solveMs: +(now() - t0).toFixed(3),
     };
@@ -2072,6 +2136,72 @@
   }
 
   // ============================================================
+  // 支路数（教材口径）—— 状态栏「N 条支路」印的就是它
+  // ------------------------------------------------------------
+  // 用户报的 bug：「并联两灯明明是 2 条支路，状态栏写着 4 条」。
+  // 病因：原先那一格直接印 usedBranches.length —— 那是【矩阵分析 (MNA) 的
+  // 支路】，每个元件（含电源、开关、变阻器的两段、电流表）都算一条；
+  // 而课本上的「支路」是【分岔出去的路径】：并联两灯 = 2 条，串联回路 = 1 条。
+  // 两个口径差着「干路上那些元件」，所以越复杂的电路差得越离谱
+  // （伏安法那一台印到 6）。
+  //
+  // 判据 = 课本那句话的可量版本，两步：
+  //   ① 串联链折叠：只接了两条支路的节点（度数为 2）把两侧元件并成
+  //      一条复合支路 —— 灯泡和限流电阻串在同一条支路里，仍算 1 条；
+  //   ② 数「真的分走一股电流」的复合支路：电流落在总电流的
+  //      [5%, 95%] 里算一条支路，取总电流（100%）的是干路，不足 5%
+  //      的是电压表那点微弱分流（见 mainBranchFlags 的同一条门槛）。
+  // 一条都没有（纯串联 / 单回路）= 1 条支路；台上空着 = 0。
+  //
+  // ⚠️ 5% 这条门槛和导线配色（mainBranchFlags / BRANCH_MIN）是同一个数：
+  //     「什么算一条支路」在画面上和学生眼里必须是同一件事。
+  function countPaths(usedBranches, compRec) {
+    if (!usedBranches || !usedBranches.length) return 0;
+    var n = usedBranches.length, i;
+    // — ① 串联链折叠（并查集，key = 支路下标）—
+    var byNode = {};                     // 节点 → 接在它上面的支路下标
+    for (i = 0; i < n; i++) {
+      var b = usedBranches[i];
+      (byNode[b.p] = byNode[b.p] || []).push(i);
+      if (b.q !== b.p) (byNode[b.q] = byNode[b.q] || []).push(i);   // 自环不算「两侧」
+    }
+    var parent = [];
+    for (i = 0; i < n; i++) parent.push(i);
+    function find(x) { while (parent[x] !== x) { parent[x] = parent[parent[x]]; x = parent[x]; } return x; }
+    Object.keys(byNode).forEach(function (k) {
+      var list = byNode[k];
+      if (list.length !== 2) return;     // 度数为 2 才是「一段路上的一个中间点」
+      var ra = find(list[0]), rb = find(list[1]);
+      if (ra !== rb) parent[ra] = rb;
+    });
+    // — ② 每条复合支路的电流 = 链上任意一个元件的 rec.i（串联处处相等）—
+    var groups = new Map();
+    for (i = 0; i < n; i++) {
+      var r = find(i);
+      if (!groups.has(r)) groups.set(r, []);
+      groups.get(r).push(usedBranches[i]);
+    }
+    var tot = 0, vals = [];
+    groups.forEach(function (bs) {
+      var cur = 0;
+      for (var k = 0; k < bs.length; k++) {
+        var rec = compRec && compRec[bs[k].comp.id];
+        var v = rec ? Math.abs(rec.i || 0) : 0;
+        if (v > cur) cur = v;
+      }
+      vals.push(cur);
+      if (cur > tot) tot = cur;
+    });
+    if (!(tot > 1e-9)) return 1;         // 没有电流（断路 / 开关断开）：整体算一条
+    var tol = Math.max(1e-9, tot * 1e-6);
+    var paths = 0;
+    for (i = 0; i < vals.length; i++) {
+      if (vals[i] >= BRANCH_MIN * tot && vals[i] <= tot - tol) paths++;
+    }
+    return paths || 1;                   // 纯串联回路也报 1 条
+  }
+
+  // ============================================================
   // 损坏判定（纯函数）
   // ------------------------------------------------------------
   // 输入【当前这一帧的解】，输出【本帧应当新发生的损坏】。不写场景、不碰界面，
@@ -2226,6 +2356,17 @@
     // 进去看它给哪几根导线打了「干路」标记。
     mainBranchFlags: mainBranchFlags,
     BRANCH_MIN: BRANCH_MIN,
-    version: '1.3.0',
+    // 支路数（教材口径）。状态栏「N 条支路」印的是它，不是 branchCount。
+    countPaths: countPaths,
+    // 导体板：电阻率表 + R=ρL/S。导出给 3D 构建器按材料配色（铜偏红、
+    // 镍铬发亮），也给测试拿同一份 ρ 对账。
+    PLATE_MATERIALS: PLATE_MATERIALS,
+    plateR: plateR,
+    // 导体板：材料电阻率表 + R = ρ·L/S。导出给面板与 3D 标签用 ——
+    // 「这块板是镍铬 1m 0.5mm²」这句话必须在页面和求解器里是同一份。
+    PLATE_MATERIALS: PLATE_MATERIALS,
+    plateMaterial: plateMaterial,
+    plateR: plateR,
+    version: '1.4.0',
   };
 });

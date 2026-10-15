@@ -436,6 +436,10 @@
   // ============================================================
   var TERMINALS = {
     resistor: [{ x: -HALF, y: 0 }, { x: HALF, y: 0 }],
+    // 导体板：两个接线柱钉在板子两端，和定值电阻同一套坐标（±HALF）。
+    // 「长度」不挪柱子 —— 柱子是接线的地方，金属条长短是材料/尺寸的事，
+    // 两件事各画各的（3D 里板长随 length 变，柱子始终在板沿上）。
+    plate: [{ x: -HALF, y: 0 }, { x: HALF, y: 0 }],
     battery: [{ x: HALF, y: 0 }, { x: -HALF, y: 0 }],   // 0 = 正极（右）
     // 学生电源：全站【唯一】一件端子不在 ±70 上的元件 —— 照课本实物，
     // 两个接线柱都长在面板右下角（0 号 = 正极，是左边那个）。
@@ -1043,6 +1047,46 @@
   }
 
   // ============================================================
+  // 元件图示（元件盒 / 拖拽鬼影用）
+  // ------------------------------------------------------------
+  // 和 2D 页图例那套 LG_VIEW 是同一组取景框：那里给的是「图例里认器材」，
+  // 这里给的是「元件盒里那一小格」。两处数字必须一致 —— 图标框就是学生建立
+  // 「这颗按钮 = 台面上那件器材」第一印象的地方，框歪了按钮就和器材对不上。
+  // ⚠️ 这里是【纯绘制】层，参数由宿主用 C.defaultParams 填好再传进来，
+  //    不许在这里问内核要默认值。
+  // ============================================================
+  var ICON_VIEW = {
+    resistor:  { x0: -74, y0: -26, x1: 74, y1: 26 },
+    plate:     { x0: -78, y0: -14, x1: 78, y1: 40 },
+    battery:   { x0: -112, y0: -42, x1: 112, y1: 42 },
+    power:     { x0: -126, y0: -68, x1: 126, y1: 46 },
+    switch:    { x0: -74, y0: -68, x1: 74, y1: 38 },
+    bulb:      { x0: -74, y0: -80, x1: 74, y1: 40 },
+    ammeter:   { x0: -102, y0: -92, x1: 102, y1: 82 },
+    voltmeter: { x0: -102, y0: -92, x1: 102, y1: 82 },
+    rheostat:  { x0: -94, y0: -46, x1: 94, y1: 54 },
+    led:       { x0: -78, y0: -52, x1: 78, y1: 36 },
+    motor:     { x0: -78, y0: -64, x1: 78, y1: 36 },
+    bell:      { x0: -78, y0: -66, x1: 78, y1: 42 },
+  };
+  var ICON_VIEW_DEF = { x0: -80, y0: -80, x1: 80, y1: 80 };
+  // 把一件器材画进 w×h 的小格子里（ rec 传 null = 只画外形，不带读数 ）。
+  // 返回时画布坐标系已经还原，宿主可以直接接着画框。背景不填 —— 由宿主决定
+  // 这块图标是白底（浅色页）还是深底（3D 页）。
+  function drawIcon(ctx, type, params, w, h) {
+    var v = ICON_VIEW[type] || ICON_VIEW_DEF;
+    // 缺参数时给一个空对象：画出默认外形比抛异常强（抛了整栏图标全没）
+    var comp = { id: '__icon__', type: type, x: 0, y: 0, rot: 0, params: params || {} };
+    var k = Math.min(w / (v.x1 - v.x0), h / (v.y1 - v.y0));
+    ctx.save();
+    ctx.translate(w / 2, h / 2);
+    ctx.scale(k, k);
+    ctx.translate(-(v.x0 + v.x1) / 2, -(v.y0 + v.y1) / 2);
+    try { drawComponent(ctx, comp, null); } catch (e) {}
+    ctx.restore();
+  }
+
+  // ============================================================
   // 定值电阻（色环）
   // ============================================================
   function resistorBands(R) {
@@ -1248,6 +1292,9 @@
       case 'led': return { hw: 70, hh: 46 };             // 底板 ±70，管身顶 y = −45
       case 'motor': return { hw: 70, hh: 60 };           // 底板 ±70，机身/螺旋桨顶 y = −58
       case 'bell': return { hw: 70, hh: 60 };            // 底板 ±70，铃碗顶 y = −36
+      // 导体板：底板 ±70，金属条贴在板面正面（y = 6 ~ 27），本体不长到导线上面，
+      // 所以 hh 只要盖住板面这一截。同样卡死 ≤ 70 —— 柱子钉在 ±70 上。
+      case 'plate': return { hw: 70, hh: 30 };           // 板面下沿 y = 30
       // 接线点：就是一个小圆点，盒子贴着它给 —— 给大了会抢邻居元件的点击，
       // 也会让「导线穿过元件」的检查把它当成障碍。
       case 'junction': return { hw: 9, hh: 9 };
@@ -2192,6 +2239,109 @@
         ctx.restore();
         screwHead(ctx, s[0], s[1], 3.2, 'slot', sc);
       });
+  }
+
+  // ============================================================
+  // 导体板（探究「电阻的大小与什么因素有关」）
+  // ------------------------------------------------------------
+  // 人教版那块实验板：一小块木板上压着一段金属条，两端各一个接线柱。
+  // 三个旋钮在画面上必须【看得见】，否则学生在参数面板里拧、板子却一动不动：
+  //   · 材料 → 金属条的颜色（铜偏红、镍铬发亮、康铜偏暗、锰铜发白）
+  //   · 长度 L → 条子的长短（0.2~2 m → 36~94 px）
+  //   · 横截面积 S → 条子的宽窄（0.2~2 mm² → 10~21 px）
+  // ⚠️ 这里【不许】出现 ρ、R 或任何电阻计算：circuit-draw 是纯绘制层，电阻由
+  //    内核按 R = ρ·L/S 算好经 rec.R 传进来。抄一份公式就等于埋下「改了实现、
+  //    画面没跟着变」的洞。
+  // ⚠️ 颜色 ↔ 材料键是【视觉】映射（材料清单含 ρ 在内核 PLATE_MATERIALS）。
+  //    内核加一种材料时这里补一行颜色；漏补只会「认不出是哪种金属」，
+  //    不会算错电阻 —— 本条与上一条合起来就是这个组件不碰物理的原因。
+  // ============================================================
+  var PLATE_METAL = {
+    copper:     { hi: PALETTE.copperHi, mid: PALETTE.copper, lo: PALETTE.copperLo },
+    nichrome:   { hi: PALETTE.metalHi,   mid: PALETTE.metal,   lo: PALETTE.metalLo },
+    constantan: { hi: '#c6cfd9',          mid: '#93a0ad',       lo: '#6b7885' },
+    manganin:   { hi: '#f2f6fa',          mid: '#ccd6e0',       lo: '#a5b1bf' },
+  };
+  var PLATE_METAL_NAME = {
+    copper: '铜', nichrome: '镍铬合金', constantan: '康铜', manganin: '锰铜',
+  };
+
+  function drawPlate(ctx, comp, rec) {
+    var P = comp.params || {};
+    var L = Math.max(0.1, Math.min(2, +P.length || 1));
+    var S = Math.max(0.1, Math.min(2, +P.section || 0.5));
+    var MC = PLATE_METAL[P.material] || PLATE_METAL.nichrome;
+    var nameTxt = PLATE_METAL_NAME[P.material] || PLATE_METAL_NAME.nichrome;
+    var sc = ctxScale(ctx);
+    var rad = (comp.rot || 0) * Math.PI / 180;
+
+    ctx.save();
+    ctx.translate(comp.x, comp.y);
+    ctx.rotate(rad);
+
+    // ① 底板：和二极管 / 电动机 / 电铃同一块示教板（±70，面朝下方）
+    basePlate(ctx, PLATE.HW, PLATE.TOP, PLATE.FACE, PLATE.BOT);
+
+    // ② 金属条：长短 = L、宽窄 = S，压在板面正面（柱脚在 y = 2，条子上沿给到 6）
+    var len = 30 + L * 32;                    // 0.2~2m → 36~94
+    var wid = 9 + S * 6;                      // 0.2~2mm² → 10~21
+    var top = 6, cy = top + wid / 2;
+    contactShadow(ctx, 0, top + wid + 1.2, len * 0.46, 3.2, 0.26);
+    ctx.save();
+    roundRect(ctx, -len / 2, top, len, wid, 3);
+    ctx.clip();
+    // 金属的光照：上亮下暗 + 中间一条窄高光（文件头的材质规范：只有「上亮下暗」
+    // 才立得起来，整根一个色是一张纸片）
+    ctx.fillStyle = linGrad(ctx, 0, top, 0, top + wid,
+      [[0, MC.hi], [0.30, MC.mid], [0.55, MC.lo], [1, MC.lo]]);
+    ctx.fillRect(-len / 2, top, len, wid);
+    if (wid >= 12) {
+      ctx.fillStyle = 'rgba(255,255,255,0.42)';
+      roundRect(ctx, -len / 2 + 5, top + wid * 0.16, len - 10, Math.max(1, wid * 0.12), 1);
+      ctx.fill();
+    }
+    // 拉丝痕：几条很淡的斜线。没有它就是一块色块，读不出「这是金属」
+    if (sc >= 1.1 && len >= 44) {
+      ctx.strokeStyle = 'rgba(20,28,38,0.10)'; ctx.lineWidth = 0.8;
+      for (var k = 0; k <= 4; k++) {
+        var xa = -len / 2 + 5 + k * (len - 10) / 4;
+        ctx.beginPath();
+        ctx.moveTo(xa, top + 1.5);
+        ctx.lineTo(xa - 3, top + wid - 1.5);
+        ctx.stroke();
+      }
+    }
+    ctx.restore();
+    roundRect(ctx, -len / 2, top, len, wid, 3);
+    ctx.strokeStyle = 'rgba(40,52,68,0.45)'; ctx.lineWidth = 1; ctx.stroke();
+
+    // ③ 两端的铜片：把条子接到 ±70 的接线柱上。实物上柱螺母底下就压着这么一段
+    //    铜片，拧开螺母能看见 —— 不画它，条子与柱子像两样不相干的东西。
+    //    走线：条端 → 横向到 ±62 → 折上到柱脚（y = 2）
+    [1, -1].forEach(function (s) {
+      var bx = s * 62;
+      ctx.strokeStyle = PALETTE.copper; ctx.lineWidth = 5; ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(s * (len / 2 - 1), cy);
+      ctx.lineTo(bx, cy);
+      ctx.lineTo(bx, 2);
+      ctx.stroke();
+      ctx.strokeStyle = PALETTE.copperHi; ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      ctx.moveTo(s * (len / 2 + 1), cy - 1.3);
+      ctx.lineTo(bx, cy - 1.3);
+      ctx.stroke();
+    });
+
+    // ④ 丝印：材料 + 尺寸（一行，板面只有 35px 高，字号不能大）
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 9.5px -apple-system,"PingFang SC",sans-serif';
+    ctx.fillStyle = PALETTE.text;
+    ctx.fillText(nameTxt + '  L ' + L + 'm · S ' + S + 'mm²', 0, 2.4);
+
+    ctx.restore();
+    // 接线柱：和别的示教板同一组参数（neutral = 无极性，scale 1.4、neck 8）
+    posts(ctx, comp, ['neutral', 'neutral'], 1.4, 8);
   }
 
   // ============================================================
@@ -4726,6 +4876,7 @@
       case 'ammeter': drawMeter(ctx, comp, rec, false); break;
       case 'voltmeter': drawMeter(ctx, comp, rec, true); break;
       case 'rheostat': drawRheostat(ctx, comp, rec); break;
+      case 'plate': drawPlate(ctx, comp, rec); break;
       case 'junction': drawJunction(ctx, comp); break;
       default: throw new Error('未知元件类型: ' + comp.type);
     }
@@ -4764,6 +4915,9 @@
     sliderLocalX: sliderLocalX, slideFromLocalX: slideFromLocalX,
     slideOf: slideOf,
     drawComponent: drawComponent, drawWire: drawWire, electronShift: electronShift,
+    // 元件图示（元件盒图标 / 拖拽鬼影）。取景框 ICON_VIEW 一并导出：
+    // 自检要能问「这颗按钮的框包没包住整件器材」。
+    drawIcon: drawIcon, ICON_VIEW: ICON_VIEW,
     // drawRheostatFlow —— 变阻器绕线内部的粒子层。宿主必须【每帧】调它（本体
     // 留在静态缓存层，只有这一层是动画），而且要在导线之后调，否则粒子会被
     // 压在导线底下。phase 传 null 就不画（粒子开关关着时）。
