@@ -394,6 +394,12 @@
             <input id="mir-gz" type="range" min="-4" max="4" value="0" step="0.5">
             <small>玻璃板一挪，物距 / 像距的零点跟着挪；像始终是物关于<b style="color:#7dd3fc">板面</b>的镜像</small>
           </div>
+          <div class="lab3d-field">
+            <label for="mir-gt">镜面倾角 <output id="mir-gt-v">0°</output></label>
+            <input id="mir-gt" type="range" min="-60" max="60" value="0" step="5">
+            <small>玻璃板绕竖直轴转动：0° 时板面与左右方向平行。倾角为正，板的左端转向板前、<b style="color:#7dd3fc">像往左移</b>；
+              为负则像往右移。像始终是物关于此刻板面的镜像——「物距 = 像距」「连线垂直于镜面」这两条不随倾角改变</small>
+          </div>
 
           <h3>光屏</h3>
           <div class="lab3d-field">
@@ -465,12 +471,12 @@
       /* ============================================================
        * 场景常量（世界坐标：y 向上；x/z 水平。1 世界单位 = 10 cm）
        * ------------------------------------------------------------
-       * 玻璃板【竖直】立着，法线是水平的 (0,0,1)。这是实验的真实摆法：
-       * 玻璃板竖着插在桌面上，物体放在它前面（z > gz），替代物放在它后面（z < gz）。
-       * 像的位置就是物关于【板面 z = gz】的镜像，即 (ax, ·, 2gz − az)——
-       * 不需要「算」成像，取镜像就严格对称。
-       * 板面位置 gz 可调，所以「物距 / 像距 / 刻度尺零点」全部以 gz 为基准，
-       * 不能再用写死的 z = 0。
+       * 玻璃板【竖直】立着（绕水平轴不倾——像必须还落在桌面上，B 才拖得过去与之重合），
+       * 但可以【绕竖直轴转动】一个倾角 gt。板面位置 gz 与倾角都可调，
+       * 所以「物距 / 像距 / 刻度尺零点 / 镜面线」全部以【此刻的板面】为基准：
+       * 距离一律沿板面法线丈量（见 sig），不能再拿 z 坐标差充数。
+       * 这是实验的真实摆法：玻璃板竖着插在桌面上，物体放在它前面，替代物放在它后面。
+       * gt = 0 时法线是 (0,0,1)、板面就是 z = gz，和早先写死的摆法逐字等价。
        * ============================================================ */
       const U       = 10;         // 1 世界单位 = 10 cm，读数时乘它
       const TABLE_W = 3.05;       // 桌面半宽
@@ -540,8 +546,8 @@
 
       const state = {
         yaw: VIEWS.perspective[0], pitch: VIEWS.perspective[1], zoom: 1,
-        // 玻璃板：半宽 / 高 / 左右 / 前后。像、读数、刻度尺零点全都跟着它走。
-        gw: GW0, gh: GH0, gx: 0, gz: 0,
+        // 玻璃板：半宽 / 高 / 左右 / 前后 / 倾角（gt，弧度）。像、读数、刻度尺零点全都跟着它走。
+        gw: GW0, gh: GH0, gx: 0, gz: 0, gt: 0,
         // 高度：蜡烛（蜡体）/ F 光源面板 / 光屏。三者都能调，实时值只在这里存一份——
         // 画图、取景、命中测试、读数全部读它，绝不各写一个常量。
         ch: CH, fh: F_H, sh: SCR_H,
@@ -582,10 +588,51 @@
       const srcName = isObj => state.src === 'f'
         ? (isObj ? (state.aLit ? 'F 光源 A（点亮）' : 'F 光源 A') : 'F 光源 B（未点亮）')
         : (isObj ? (state.aLit ? '蜡烛 A（点燃）' : '蜡烛 A') : '蜡烛 B（未点燃）');
-      // 像：物关于【板面 z = gz】的镜像。板挪了，像跟着挪——对称轴永远是板面。
-      const imagePos = () => ({ x: state.ax, z: 2 * state.gz - state.az });
-      // 物距 / 像距（世界单位）。两者按构造恒等。
-      const objDist = () => state.az - state.gz;
+      /* ── 镜面姿态：玻璃板可【绕竖直轴（y）倾斜 / 转动】一个角度 gt。
+       *  u = 板面的水平方向，n = 板前的法线，p0 = 板底中心（gx, 0, gz）。
+       *  gt = 0 时 u = +x、n = +z——正是原来那块「竖在 z = gz」的板，
+       *  所以下面每一条公式在 gt = 0 时都和改动前逐字等价。
+       * 【符号约定】gt > 0 把板的【左端】拨向板前（右端转向板后），
+       * 法线 n 随之偏向 +x，像被反射到 −n 一侧 ⇒ 像往左移——默认相机在右前方，
+       * 正角度转过去视线更容易落在板内（实测 +30° 像仍完整可见，−30° 会偏出板外）。
+       * 【为什么只绕竖直轴】像必须还落在桌面上，B 才可能拖过去与它重合；
+       * 绕水平轴倾，像会整个抬到空中，这个实验的核心步骤就没了。
+       * ───────────────────────────────────────────────────────────── */
+      const MIR = () => {
+        const th = state.gt, c = Math.cos(th), s = Math.sin(th);
+        return { u: [c, 0, -s], n: [s, 0, c] };
+      };
+      // 点 (x,z) 到板面的【带符号】垂直距离：正 = 板前。物距 / 像距 / 刻度尺
+      // 零点全以它为零点——板一倾，距离就不沿 z 量了，别拿 z 坐标差充数。
+      const sig = (x, z) => {
+        const m = MIR();
+        return m.n[0] * (x - state.gx) + m.n[2] * (z - state.gz);
+      };
+      // 点在【板面方向】上的坐标。「会不会被板挡住」按它判——板只挡 |s| ≤ gw 那一段。
+      const tanOf = (x, z) => {
+        const m = MIR();
+        return m.u[0] * (x - state.gx) + m.u[2] * (z - state.gz);
+      };
+      // 像：物关于【此刻板面】的镜像（反射）。板挪了、倾了，像都跟着动——
+      // 对称轴永远是板面，所以像与物到板面的距离按构造恒等，不需要「算」成像。
+      // gt = 0 时就是 (ax, ·, 2gz − az)。
+      const imagePos = () => {
+        const m = MIR(), s = sig(state.ax, state.az);
+        return { x: state.ax - 2 * s * m.n[0], z: state.az - 2 * s * m.n[2] };
+      };
+      // 点到板面的垂足（沿法线投影回板面）。辅助线的「零点」画在各垂足上。
+      const footOf = (x, z) => {
+        const m = MIR(), s = sig(x, z);
+        return [x - s * m.n[0], z - s * m.n[2]];
+      };
+      // 镜面局部坐标 → 世界坐标：su 沿板面方向、nv 沿法线、y 为高度。
+      // 玻璃板 / 底座夹子 / 纸上的镜面线 / 刻度尺 全部由它生成，改倾角只需改这一处。
+      const mp = (su, nv, y) => {
+        const m = MIR();
+        return [state.gx + su * m.u[0] + nv * m.n[0], y, state.gz + su * m.u[2] + nv * m.n[2]];
+      };
+      // 物距（世界单位，正 = 板前）。像距按构造与它恒等。
+      const objDist = () => sig(state.ax, state.az);
       // B / 光屏还在不在【器材区】。判据是「在玻璃板右侧那片空地上」——
       // 玻璃板只挡在 |x − gx| ≤ gw 那一段，板右侧本来就没有玻璃，前后是连通的。
       // 还在器材区时「到玻璃板的距离」对实验没有意义，读数就说「待取用」。
@@ -594,23 +641,26 @@
       //   'staged' 还在白纸右边的器材区（还没取用，谈「到玻璃板」没意义）
       //   'behind' 已经放到板后（这才是实验要的那个读数）
       //   'front'  被拖到了板前、但没进器材区——「到玻璃板」是个负数，如实写出来
+      // 「板前 / 板后」按【垂直于板面】的方向判（板可倾）：垂距 ≤ 0 就是板后。
       const zoneOf = k => staged(k) ? 'staged'
-                     : ((k === 'b' ? state.bz : state.sz) <= state.gz ? 'behind' : 'front');
+                     : (sig(k === 'b' ? state.bx : state.sx,
+                            k === 'b' ? state.bz : state.sz) <= 0 ? 'behind' : 'front');
       // 「已经放进实验区」：既不在器材区，又在玻璃板后面。只有这时候距离才是个有意义的读数。
       const placed = k => zoneOf(k) === 'behind';
 
       /* ============================================================
        * 物理：虚像到底看不看得见
        * ------------------------------------------------------------
-       * 平面镜（玻璃板）成的像是【虚像】：反射光线是从板面往板前（+z）射回来的，
+       * 平面镜（玻璃板）成的像是【虚像】：反射光线是从板面沿法线往板前回来的，
        * 所以只有①眼睛在板前，②从眼睛到像的那条直线真的从板面上穿过去，像才看得见。
        * 这跟「B 有没有和像重合」是两件事——B 是不透明的实物，绕到哪个角度都看得见；
        * 像却会随着视角转出板外而整个消失。这是真的物理，不是画错了。
        *
-       * 推导（eye = 相机位置，u = 物距，D = 相机到板面的距离）：
-       *   眼睛 → 像上某点 的直线，与板面 z = gz 的交点参数 t = D / (D + u)。
-       *   交点必须落在板面矩形内：|xc − gx| ≤ gw，且 0 ≤ yc ≤ gh。
-       *   把 yc 的两个边界反解回「像上哪一段高度能看见」，长度超过 3 mm 才算看得见
+       * 推导（eye = 相机位置，u = 物距，D = 相机到板面的距离，均沿法线量）：
+       *   眼睛 → 像上某点 的直线，与板面的交点参数 t = D / (D + u)。
+       *   交点必须落在板面矩形内：沿板面方向 |s| ≤ gw，高度 0 ≤ y ≤ gh。
+       *   板面可绕竖直轴倾斜（gt），所以交点要用【板面局部坐标】判，不能再看 x − gx。
+       *   把高度方向的两个边界反解回「像上哪一段高度能看见」，长度超过 3 mm 才算看得见
        *   （否则只剩一条边，屏幕上就是一两条像素，等于没有）。
        *
        * 【为什么要返回 lo / hi 而不是一个布尔】「看不看得见」和「看得见哪一段」是两件事：
@@ -620,16 +670,23 @@
        * render 里据此把像裁掉。二者同源：都用下面这组 yLo / yHi。
        * ============================================================ */
       function imageVisible(q) {
-        const u = state.az - state.gz;              // 物距（物体在板前为正）
-        const D = q.eye[2] - state.gz;              // 相机到板面（相机在板前为正）
+        // 板面可倾，所以「到板面的距离」一律沿【法线】量（见 sig）：
+        // u = 物距（物体在板前为正），D = 相机到板面（相机在板前为正）。
+        const im = imagePos();
+        const u = sig(state.ax, state.az);           // 物距（物体在板前为正）
+        const D = sig(q.eye[0], q.eye[2]);           // 相机到板面（相机在板前为正）
         if (u <= 0.05) return { vis: false, why: 'A 已经跑到玻璃板后面去了，它成的像在板前，这个视角看不到' };
         if (D <= 0.05) return { vis: false, why: '你现在绕到了玻璃板背面。虚像是反射光线在板前形成的，站在板后看不到' };
         const t = D / (D + u);
-        const xc = q.eye[0] + t * (state.ax - q.eye[0]);
-        if (Math.abs(xc - state.gx) > state.gw) {
-          const over = (Math.abs(xc - state.gx) - state.gw) * U;
-          return { vis: false, why: '视线从眼睛到像的连线落到玻璃板外了（横向偏出 ' + over.toFixed(1) +
-            ' cm）——把玻璃板调宽一点，或者把视角转正一些' };
+        // 眼睛 → 像底 的直线与板面的交点。板面绕竖直轴转了，交点要用
+        // 【板面局部坐标】判「在不在板内」：沿板面方向 |s| ≤ gw（高度方向不受倾角影响）。
+        const qx = q.eye[0] + t * (im.x - q.eye[0]);
+        const qz = q.eye[2] + t * (im.z - q.eye[2]);
+        const s = tanOf(qx, qz);
+        if (Math.abs(s) > state.gw) {
+          const over = (Math.abs(s) - state.gw) * U;
+          return { vis: false, why: '视线从眼睛到像的连线落到玻璃板外了（沿板面偏出 ' + over.toFixed(1) +
+            ' cm）——把玻璃板调宽一点、把光源 A 往板心挪一点，或者把视角转正一些' };
         }
         const top = srcTop();
         const yb = q.eye[1] * (1 - t);              // 像的底端（y = 0）投影到板上的高度
@@ -677,9 +734,9 @@
       function envelopePoints() {
         const pts = [];
         for (const sx of [-1, 1]) for (const sz of [-1, 1]) pts.push([sx * TABLE_W, 0, sz * TABLE_D]);
-        // 玻璃板顶端两角。板的位置和大小都能调，所以必须用【当前值】——
-        // 板调高调宽，取景要跟着让位；用写死的常量会让板顶被画布切掉。
-        pts.push([state.gx - state.gw, state.gh, state.gz], [state.gx + state.gw, state.gh, state.gz]);
+        // 玻璃板顶端两角。板的位置、大小、倾角都能调，所以必须用【当前值】——
+        // 板调高调宽、镜子转动，取景要跟着让位；用写死的常量会让板顶被画布切掉。
+        pts.push(mp(-state.gw, 0, state.gh), mp(state.gw, 0, state.gh));
         // 物体能到的最高点：白纸四角附近（物体可以拖到纸上任何位置）
         for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
           pts.push([sx * (PT_W - PAD), srcTop(), sz * PAPER_Z]);
@@ -920,9 +977,9 @@
         line(stg.concat([stg[0]]), 'rgba(103,232,249,.52)', 1.4, [7, 5]);
 
         // 玻璃板站的那条线：白纸上的「镜面线」，是量距离的基准。
-        // 板一挪这条线就跟着挪——物距 / 像距都是从它量起的。
-        const gl0 = state.gx - state.gw - 0.18, gl1 = state.gx + state.gw + 0.18;
-        line([project([gl0, 0.007, state.gz], q), project([gl1, 0.007, state.gz], q)],
+        // 板挪了、倾了，这条线都跟着动——它始终是【板面与纸面的交线】。
+        line([project(mp(-state.gw - 0.18, 0, 0.007), q),
+              project(mp(state.gw + 0.18, 0, 0.007), q)],
              'rgba(56,189,248,.72)', 2);
 
         if (state.showRuler) drawRuler(q);
@@ -998,38 +1055,60 @@
       // 刻度尺：沿 z 轴摆，0 对准玻璃板。每 1 cm 一小格、5 cm 一大格。
       // 板挪了尺子跟着挪——尺子上的数就是「离玻璃板多远」，和物距/像距是同一把尺。
       // 尺子长度固定，但两端要夹在白纸内，所以板靠边时尺子会被裁短一点。
+      // 刻度尺：始终【垂直于镜面】摆，零刻度对准镜面线——距离本来就是沿法线量的，
+      // 板一倾尺子跟着倾。锚点取镜面线上离「纸的左边 x = RULER_X」最近的那个点，
+      // 所以镜子转到任何角度，尺子都还留在纸左边一带（gt = 0 时与原来逐字等价）。
+      // 尺身按白纸可用范围裁剪：倾大了别探出纸外。
       function drawRuler(q) {
-        const zc = state.gz, half = PT_D - 0.16;
-        const z0 = Math.max(-PAPER_Z, zc - half), z1 = Math.min(PAPER_Z, zc + half);
-        if (z1 - z0 < 0.6) return;
+        const m = MIR();
+        // 锚点 = 镜面线上离 (RULER_X, 0, 0) 最近的那一点
+        const t0 = (RULER_X - state.gx) * m.u[0] + (0 - state.gz) * m.u[2];
+        const ax = state.gx + t0 * m.u[0], az = state.gz + t0 * m.u[2];
+        // 沿法线方向取 ±L，再裁进白纸可用矩形（x ±PT_W、z ±PAPER_Z）
+        const L = PT_D - 0.16;
+        let lo = -L, hi = L;
+        const cut = (a0, da, blo, bhi) => {
+          if (Math.abs(da) < 1e-9) return a0 >= blo && a0 <= bhi;
+          let a = (blo - a0) / da, b = (bhi - a0) / da;
+          if (a > b) { const tt = a; a = b; b = tt; }
+          if (a > lo) lo = a;
+          if (b < hi) hi = b;
+          return true;
+        };
+        if (!cut(ax, m.n[0], -PT_W, PT_W)) return;
+        if (!cut(az, m.n[2], -PAPER_Z, PAPER_Z)) return;
+        if (hi - lo < 0.6) return;
         const w = 0.13;
-        poly(rectPts(RULER_X - w, z0, RULER_X + w, z1, 0.010, q),
+        // 尺身上的一点：沿法线 s、沿板面侧向 a、高度 y
+        const P = (s, a, y) => project(mp(t0 + a, s, y), q);
+        poly([P(lo, -w, 0.010), P(lo, w, 0.010), P(hi, w, 0.010), P(hi, -w, 0.010)],
              'rgba(250,204,21,.20)', 'rgba(250,204,21,.55)', 1.1);
         // 数字要不要隔一个标，取决于相邻两个数字在【屏幕上】的实际间距，而不是
         // 世界里的 5 cm：手机画布只有 ~350px 时，尺子整根才几十像素，每 5 cm 一个
         // 数字会挤成一团（实测相邻标注盒重叠 50%+）。刻度线照旧，只把数字放稀。
-        const pe0 = project([RULER_X, 0.011, z0], q), pe1 = project([RULER_X, 0.011, z1], q);
+        const pe0 = P(lo, 0, 0.011), pe1 = P(hi, 0, 0.011);
         const spanPx = Math.hypot(pe1.x - pe0.x, pe1.y - pe0.y);
-        const nMaj = Math.max(1, Math.round((z1 - z0) * U / 5));   // 每 5 cm 一个「大格」
+        const nMaj = Math.max(1, Math.round((hi - lo) * U / 5));   // 每 5 cm 一个「大格」
         const spacing = s => spanPx * s / (nMaj * 5);              // 步距 s(cm) 时相邻数字的像素间距
         let stride = 5;
         while (stride < 20 && spacing(stride) < 20) stride *= 2;   // 至少留 20px 才不打架
-        for (let cm = Math.ceil(z0 * U); cm <= Math.floor(z1 * U); cm++) {
-          const z = cm / U;
+        for (let cm = Math.ceil(lo * U); cm <= Math.floor(hi * U); cm++) {
+          const s = cm / U;                       // 到镜面的距离（世界单位）
           const major = cm % 5 === 0;
           const len = major ? w * 0.95 : w * 0.5;
-          line([project([RULER_X - w, 0.011, z], q), project([RULER_X - w + len, 0.011, z], q)],
+          // 刻度线从尺子一侧穿向另一侧（原来是从尺边指向尺心）
+          line([P(s, -w, 0.011), P(s, -w + len, 0.011)],
                major ? 'rgba(253,224,71,.85)' : 'rgba(253,224,71,.45)', major ? 1.3 : 1);
-          const off = Math.round((cm - zc * U));
-          if (major && off !== 0 && Math.abs(off) % stride === 0) {
-            const pl = project([RULER_X - w - 0.13, 0.011, z], q);
-            label(pl, String(Math.abs(off)), 'rgba(253,224,71,.85)', 10);
+          const off = Math.abs(cm);               // 刻度读数 = 到镜面的垂距
+          if (major && off !== 0 && off % stride === 0) {
+            label(P(s, -w - 0.13, 0.011), String(off), 'rgba(253,224,71,.85)', 10);
           }
         }
-        label(project([RULER_X - w - 0.13, 0.011, zc], q), '0', 'rgba(56,189,248,.95)', 11);
+        // 零刻度：镜面线所在处（被裁出纸外时这一帧没有零点，如实跳过）
+        if (lo <= 1e-9 && hi >= -1e-9) label(P(0, -w - 0.13, 0.011), '0', 'rgba(56,189,248,.95)', 11);
         // 单位「cm」不能跟在末端的数字后面——那个数字和它只差 0.20，盒子会叠上。
-        // 数字列在尺子左侧，单位就放到右侧的末端，各占一边。
-        label(project([RULER_X + w + 0.16, 0.011, z1 - 0.10], q), 'cm', 'rgba(253,224,71,.75)', 10);
+        // 数字列在尺子一侧，单位就放到另一侧的末端，各占一边。
+        label(P(hi - 0.10, w + 0.16, 0.011), 'cm', 'rgba(253,224,71,.75)', 10);
       }
 
       // 记录下来的位置点：A 点、B 点、连线（连线垂直于玻璃板正是要证的结论之一）
@@ -1040,6 +1119,14 @@
           dot2(project([m.bx, 0.012, m.bz], q), 5, 'rgba(74,222,128,.95)', 'rgba(2,6,23,.7)', 1.4);
           line([project([m.ax, 0.012, m.az], q), project([m.bx, 0.012, m.bz], q)],
                'rgba(226,232,240,.72)', 1.3, [5, 4]);
+          // 这一组记录时【镜面】的位置：一小段虚线。镜子后来转过多少度，
+          // 旧数据依旧关于当时的镜面对称——画出来才看得出来。
+          const mgx = m.mgx == null ? state.gx : m.mgx, mgz = m.mgz == null ? state.gz : m.mgz;
+          const mc = Math.cos(m.gt || 0), ms = Math.sin(m.gt || 0);
+          const mh = Math.min(0.62, state.gw);
+          line([project([mgx - mh * mc, 0.012, mgz - mh * ms], q),
+                project([mgx + mh * mc, 0.012, mgz + mh * ms], q)],
+               'rgba(56,189,248,.55)', 1.2, [4, 4]);
           label(project([m.ax, 0.012, m.az], q), 'A' + (i + 1), 'rgba(252,165,165,.95)', 10, 'left');
           label(project([m.bx, 0.012, m.bz], q), 'B' + (i + 1), 'rgba(134,239,172,.95)', 10, 'left');
         });
@@ -1244,40 +1331,41 @@
         return state.src === 'f' ? drawF(x, z, q, opt) : drawCandle(x, z, q, opt);
       }
 
-      // 玻璃板：竖直立在 z = gz、横向以 gx 为中心。半透明，所以后面的 B 能透过来被看见——
-      // 这正是这个实验用玻璃板而不用平面镜的原因。
-      // 板的位置和大小都能调，所以这里一律读 state 的实时值（gx / gz / gw / gh），
-      // 不能再用写死的常量，否则拖动滑块时板不动，像却已经按新板面镜像了。
+      // 玻璃板：竖直立在板底中心 (gx, gz) 上，横向以 gx 为中心，可绕竖直轴倾 gt。半透明，
+      // 所以后面的 B 能透过来被看见——这正是这个实验用玻璃板而不用平面镜的原因。
+      // 板的位置、大小、倾角都能调，所以四角一律用【镜面局部坐标】生成（见 mp），
+      // 不能再用写死的常量，否则拖动滑块或倾斜镜面时板不动、像却已经按新板面镜像了。
       function drawGlass(q) {
-        const gx = state.gx, gz = state.gz, gw = state.gw, gh = state.gh;
+        const gw = state.gw, gh = state.gh;
         const pts = [
-          project([gx - gw, 0, gz], q), project([gx + gw, 0, gz], q),
-          project([gx + gw, gh, gz], q), project([gx - gw, gh, gz], q)
+          project(mp(-gw, 0, 0), q), project(mp(gw, 0, 0), q),
+          project(mp(gw, 0, gh), q), project(mp(-gw, 0, gh), q)
         ];
         const g = ctx.createLinearGradient(pts[0].x, pts[0].y, pts[2].x, pts[2].y);
         g.addColorStop(0, 'rgba(186,230,253,.36)');
         g.addColorStop(0.42, 'rgba(125,211,252,.16)');
         g.addColorStop(0.62, 'rgba(226,240,255,.30)');
         g.addColorStop(1, 'rgba(56,189,248,.20)');
-        // 玻璃板的法线是 (0,0,1)：|fwd·n| 就是它「正对相机」的程度。
+        // 法线随倾角一起转（gt = 0 时就是 (0,0,1)）：|fwd·n| 就是它「正对相机」的程度。
         // 快侧过来时投影只剩一条细带，那道深色背衬会把整条带涂黑——
         // 俯视和侧视时玻璃板会变成一块莫名其妙的黑斑，就是这里来的。
-        const facing = Math.abs(q.fwd[2]);
+        const facing = Math.abs(dot(q.fwd, MIR().n));
         const backW = facing < 0.30 ? 0 : (facing < 0.55 ? 3 : 6);
         poly(pts, g, backW ? 'rgba(2,6,23,.68)' : null, backW);
         poly(pts, null, 'rgba(196,235,253,.95)', facing < 0.30 ? 3 : 2.4);
         // 底边压一道亮线：玻璃板是「站」在纸上的，这条边把它和纸锚在一起
         if (facing >= 0.30) line([pts[0], pts[1]], 'rgba(226,244,255,.9)', 2.6);
         // 一道斜高光，让「这是一块玻璃」一眼可辨。高光按板宽板高成比例摆，
-        // 板调大调小都还落在板面内。
-        line([project([gx - gw * 0.72, gh * 0.10, gz], q), project([gx - gw * 0.18, gh * 0.92, gz], q)],
+        // 板调大调小、镜子转动时都还落在板面内。
+        line([project(mp(-gw * 0.72, 0, gh * 0.10), q), project(mp(-gw * 0.18, 0, gh * 0.92), q)],
              'rgba(255,255,255,.42)', 2.2);
-        line([project([gx + gw * 0.30, gh * 0.08, gz], q), project([gx + gw * 0.72, gh * 0.66, gz], q)],
+        line([project(mp(gw * 0.30, 0, gh * 0.08), q), project(mp(gw * 0.72, 0, gh * 0.66), q)],
              'rgba(255,255,255,.22)', 1.4);
-        // 底座夹子：玻璃板是插在这个夹子里竖起来的，跟着板一起挪
+        // 底座夹子：玻璃板是插在这个夹子里竖起来的，跟着板一起倾——
+        // 它跨坐在板面上（沿法线 ±0.10），不是钉死在某个 z 上。
         const clamp1 = [
-          project([gx - gw * 0.34, 0, gz - 0.10], q), project([gx + gw * 0.34, 0, gz - 0.10], q),
-          project([gx + gw * 0.34, 0.10, gz + 0.10], q), project([gx - gw * 0.34, 0.10, gz + 0.10], q)
+          project(mp(-gw * 0.34, -0.10, 0), q), project(mp(gw * 0.34, -0.10, 0), q),
+          project(mp(gw * 0.34, 0.10, 0.10), q), project(mp(-gw * 0.34, 0.10, 0.10), q)
         ];
         poly(clamp1, 'rgba(51,65,85,.95)', 'rgba(148,163,184,.65)', 1.2);
       }
@@ -1343,16 +1431,16 @@
       }
       function drawAids(q) {
         const im = imagePos();
-        const gz = state.gz;
-        const d = objDist();                    // 物距 = 像距（按构造恒等），都从板面量起
+        const d = objDist();                    // 物距 = 像距（按构造恒等），都沿法线量
         const zA = project([state.ax, 0.014, state.az], q);
         const zB = project([state.bx, 0.014, state.bz], q);
         const zI = project([im.x, 0.014, im.z], q);
-        // 量距离的起点是【板面】，不是 z = 0：板挪了，这些辅助线也要跟着挪，
-        // 否则读数写 13.5 而画出来的线段长度是另一回事，学生一量就发现对不上。
-        const z0 = project([state.ax, 0.014, gz], q);
-        const z0b = project([state.bx, 0.014, gz], q);
-        const z0i = project([im.x, 0.014, gz], q);
+        // 量距离的起点是各点关于【板面】的垂足：板倾了，垂足不再落在 z = gz 那条线上，
+        // u / v 两条线段自动跟着垂直于镜面（这正是要证的结论③）。
+        const fA = footOf(state.ax, state.az), fB = footOf(state.bx, state.bz), fI = footOf(im.x, im.z);
+        const z0 = project([fA[0], 0.014, fA[1]], q);
+        const z0b = project([fB[0], 0.014, fB[1]], q);
+        const z0i = project([fI[0], 0.014, fI[1]], q);
 
         // 物距 u
         const sc = project([state.sx, state.sh * 0.55, state.sz], q);   // 光屏标注的位置，用来让 u/v 躲开
@@ -1634,8 +1722,13 @@
       // 网格外的数，滑块显示 13.0、侧栏读数显示 13.2，同一件事两个数。
       // 5 mm 的量化远小于本实验的判定容差（吸附回差 1.3~2.0 cm），不影响手感。
       const snapCm = v => Math.round(v / STEP_CM) * STEP_CM;
-      // 到板面的距离（cm）→ 世界坐标 z。A 在板前（+），B 和光屏在板后（−）。
-      const zWorld = (k, dcm) => k === 'a' ? state.gz + fromCm(dcm) : state.gz - fromCm(dcm);
+      // 把点沿着【垂直于板面】的方向挪到「到板面 dcm（cm，正 = 板前）」，
+      // 同时保持它在板面方向上的投影不变——所以「前后位置」滑块不会顺手
+      // 改写物体的左右位置（gt = 0 时与原来的 zWorld 逐字等价）。
+      const moveAlongNormal = (x, z, dcm) => {
+        const m = MIR(), d = fromCm(dcm), s = tanOf(x, z);
+        return { x: state.gx + s * m.u[0] + d * m.n[0], z: state.gz + s * m.u[2] + d * m.n[2] };
+      };
       const posOf = k => k === 'a' ? { x: state.ax, z: state.az }
                     : k === 'b' ? { x: state.bx, z: state.bz }
                     : { x: state.sx, z: state.sz };
@@ -1644,30 +1737,34 @@
         // 先钳到可用范围，再对齐到滑块刻度（cm 网格 → 再换回世界单位）
         x = fromCm(snapCm(clamp(toCm(x), C.x[0], C.x[1])));
 
+        // 【距离一律沿法线量】板面可倾，「到玻璃板的距离」是垂直于板面的垂距
+        // （见 sig），不是 z 坐标差——gt = 0 时两者相等。
         if (k === 'a') {
-          const dc = snapCm(clamp(toCm(z - state.gz), C.z[0], C.z[1]));
-          state.ax = x; state.az = zWorld(k, dc);
+          const dc = snapCm(clamp(toCm(sig(x, z)), C.z[0], C.z[1]));
+          const w = moveAlongNormal(x, z, dc);
+          state.ax = w.x; state.az = w.z;
           return;
         }
 
         // ── B 和光屏：玻璃板是一块【挡板】，物体不能从板中间穿过去。
-        // 板只挡在 |x − gx| ≤ gw 那一段，所以分两种情形（d 为「到板面的距离」，
-        // 正 = 板后，负 = 板前）：
+        // 板只挡在「沿板面方向 |s| ≤ gw」那一段（板倾了，这个判据也跟着转——
+        // 见 tanOf），所以分两种情形（d 为「到板面的距离」，正 = 板后）：
         //   ① 在板的【外侧】（器材区那一片）：没有玻璃，z 方向整张纸都能走；
         //   ② 在板的正前方 / 正后方：只能待在原来那一侧，d ∈ [−GAP_B, …] 或 [+GAP_B, …]。
         // 想换侧要拖过板面 0.5 cm 以上（回差），免得贴着板来回跳。
         // 【为什么不做「必须绕过去」】真实实验里 B 是从桌子右边绕过玻璃板放到板后的，
         // 但那要求命中测试懂「绕过」这件事，手感反而更差。用一点回差代替，
         // 物理上讲得通（板前板后确实不连通），操作上也不会卡住。
-        const cur = k === 'b' ? state.bz : state.sz;
-        const d0 = toCm(state.gz - z);
+        const curX = k === 'b' ? state.bx : state.sx;
+        const curZ = k === 'b' ? state.bz : state.sz;
+        const d0 = -toCm(sig(x, z));             // 正 = 板后（= −垂距）
         const behind = { lo: GAP_B, hi: C.z[1] };
         const front  = { lo: frontLoCm(), hi: -GAP_B };
-        const blocked = Math.abs(x - state.gx) < state.gw + 0.16;
+        const blocked = Math.abs(tanOf(x, z)) < state.gw + 0.16;
         let r;
         if (!blocked) {
           r = { lo: frontLoCm(), hi: C.z[1] };              // 板外：整张纸都能用
-        } else if (cur > state.gz) {
+        } else if (sig(curX, curZ) > 0) {
           // 【符号别看反】d 为正 = 板后，为负 = 板前。
           // 在板前 → 只有目标跑到板后（d0 > +GAP_B）才换侧；
           // 一开始写成「在板后、目标也在板后」也换侧，于是 B 一被设到板后就立刻被扔回板前。
@@ -1676,8 +1773,10 @@
           r = d0 < -GAP_B - HYST_CM ? front : behind;
         }
         const dc = snapCm(clamp(d0, r.lo, r.hi));
-        if (k === 'b') { state.bx = x; state.bz = zWorld(k, dc); }
-        else { state.sx = x; state.sz = zWorld(k, dc); }
+        // d0 以「板后为正」，moveAlongNormal 以「板前为正」——反个号。
+        const w = moveAlongNormal(x, z, -dc);
+        if (k === 'b') { state.bx = w.x; state.bz = w.z; }
+        else { state.sx = w.x; state.sz = w.z; }
       }
       // 玻璃板一挪，物体到板面的距离就变了。最小间隙必须重新保证，
       // 否则板会从蜡烛身上穿过去（或者把 B 挤到板前面去）。
@@ -1774,6 +1873,7 @@
         azV: el('mir-az-v'), axV: el('mir-ax-v'), bxV: el('mir-bx-v'), bzV: el('mir-bz-v'),
         gw: el('mir-gw'), gh: el('mir-gh'), gx: el('mir-gx'), gz: el('mir-gz'),
         gwV: el('mir-gw-v'), ghV: el('mir-gh-v'), gxV: el('mir-gx-v'), gzV: el('mir-gz-v'),
+        gt: el('mir-gt'), gtV: el('mir-gt-v'),
         lh: el('mir-lh'), lhV: el('mir-lh-v'), sh: el('mir-sh'), shV: el('mir-sh-v'),
         always: el('mir-ghost-always'),
         toast: el('mir-toast'),
@@ -1826,7 +1926,7 @@
         // 是同一件事），不是世界坐标：板一挪，同一个世界坐标对应两个不同的距离，
         // 滑块若写世界坐标，必然和它自己旁边那行读数对不上。
         const dA = toCm(objDist());
-        const dB = toCm(state.gz - state.bz);
+        const dB = -toCm(sig(state.bx, state.bz));   // B 到玻璃板（正 = 板后）
         ui.az.value = dA; ui.azV.textContent = dA.toFixed(1) + ' cm';
         ui.ax.value = toCm(state.ax); ui.axV.textContent = toCm(state.ax).toFixed(1) + ' cm';
         ui.bx.value = toCm(state.bx); ui.bxV.textContent = toCm(state.bx).toFixed(1) + ' cm';
@@ -1838,13 +1938,15 @@
         ui.bz.value = bBehind ? dB : +ui.bz.min;
         ui.bzV.textContent = bZone === 'staged' ? '待取用'
                            : bBehind ? dB.toFixed(1) + ' cm'
-                           : '板前 ' + ((state.bz - state.gz) * U).toFixed(1) + ' cm';
+                           : '板前 ' + (toCm(sig(state.bx, state.bz))).toFixed(1) + ' cm';
         // 玻璃板：宽度滑块写的是【整块板的宽度】（23 cm），state 里存的是半宽
         const gwc = toCm(state.gw * 2);
         ui.gw.value = gwc; ui.gwV.textContent = gwc.toFixed(1) + ' cm';
         ui.gh.value = toCm(state.gh); ui.ghV.textContent = toCm(state.gh).toFixed(1) + ' cm';
         ui.gx.value = toCm(state.gx); ui.gxV.textContent = toCm(state.gx).toFixed(1) + ' cm';
         ui.gz.value = toCm(state.gz); ui.gzV.textContent = toCm(state.gz).toFixed(1) + ' cm';
+        // 镜面倾角：滑块是度，state 里是弧度。只在两处换算（和 cm ↔ 世界单位一个道理）。
+        ui.gt.value = state.gt / DEG; ui.gtV.textContent = Math.round(state.gt / DEG) + '°';
         // 光源高度：这个滑块同时管两种光源，显示的是【当前光源】的那个高度。
         // 换光源时值会跟着跳（蜡烛默认 9 cm、F 面板默认 11 cm）——这是对的，
         // 它报的就是此刻画面上那个光源有多高。见 setSource 里的 syncInputs。
@@ -1872,7 +1974,8 @@
 
       function updateReadout() {
         const im = imagePos();
-        const u = objDist() * U, v = objDist() * U, db = (state.gz - state.bz) * U;
+        const u = objDist() * U, v = objDist() * U;
+        const db = -sig(state.bx, state.bz) * U;      // B 到玻璃板（正 = 板后，沿法线量）
         const bZone = zoneOf('b');
         const bPlaced = bZone === 'behind';
         ui.mu.textContent = u.toFixed(1) + ' cm';
@@ -1881,7 +1984,7 @@
         // 两处各写一套的话，同一件事会在两个地方显示成两个不同的数。
         ui.mb.textContent = bZone === 'staged' ? '待取用'
                           : bPlaced ? db.toFixed(1) + ' cm'
-                          : '板前 ' + ((state.bz - state.gz) * U).toFixed(1) + ' cm';
+                          : '板前 ' + (sig(state.bx, state.bz) * U).toFixed(1) + ' cm';
 
         const co = state.coincideErr < 1e-6;
         ui.mc.textContent = co ? '完全重合 ✓'
@@ -1938,11 +2041,21 @@
         updateSteps();
       }
 
-      // ── 位置微调滑块。z 的两个滑块写的是【到玻璃板的距离】，所以读回来要加上板的位置
-      ui.az.addEventListener('input', () => { state.az = zWorld('a', +ui.az.value); syncInputs(); state.dirty = true; });
+      // ── 位置微调滑块。z 的两个滑块写的是【到玻璃板的距离】，所以读回来要沿法线挪
+      // （板面可倾，距离不再沿 z 量；gt = 0 时和「加上板的位置」等价）。
+      ui.az.addEventListener('input', () => {
+        const w = moveAlongNormal(state.ax, state.az, +ui.az.value);
+        state.ax = w.x; state.az = w.z;
+        syncInputs(); state.dirty = true;
+      });
       ui.ax.addEventListener('input', () => { state.ax = fromCm(+ui.ax.value); syncInputs(); state.dirty = true; });
       ui.bx.addEventListener('input', () => { state.bx = fromCm(+ui.bx.value); state.snapped = false; syncInputs(); state.dirty = true; });
-      ui.bz.addEventListener('input', () => { state.bz = zWorld('b', +ui.bz.value); state.snapped = false; syncInputs(); state.dirty = true; });
+      ui.bz.addEventListener('input', () => {
+        // B 滑块写的是「到玻璃板的距离」正 = 板后，而 moveAlongNormal 以板前为正，取负。
+        const w = moveAlongNormal(state.bx, state.bz, -(+ui.bz.value));
+        state.bx = w.x; state.bz = w.z; state.snapped = false;
+        syncInputs(); state.dirty = true;
+      });
 
       // ── 玻璃板：宽 / 高 / 左右 / 前后
       // 【为什么先 clampToPlate 再 applySliderRanges】板往前挪，板前的可用深度就少几厘米，
@@ -1959,6 +2072,9 @@
       ui.gh.addEventListener('input', () => { state.gh = fromCm(+ui.gh.value); afterPlateChange(); });
       ui.gx.addEventListener('input', () => { state.gx = fromCm(+ui.gx.value); afterPlateChange(); });
       ui.gz.addEventListener('input', () => { state.gz = fromCm(+ui.gz.value); afterPlateChange(); });
+      // 镜面倾角：板一倾，像、垂足、刻度尺、镜面线、底座夹子全部跟着转——
+      // 物体不动，所以只需重新钳一次位（板倾后别让 B 站在玻璃里）。
+      ui.gt.addEventListener('input', () => { state.gt = (+ui.gt.value) * DEG; afterPlateChange(); });
 
       // ── 光源高度 / 光屏高度。高度不参与碰撞，所以不用重排物体；但取景包络
       //    （envelopePoints）和命中测试都读实时值，置一下 dirty 就够了。
@@ -2047,7 +2163,10 @@
           showToast('先让 B 与像完全重合，再记录');
           return false;
         }
-        state.marks.push({ ax: state.ax, az: state.az, bx: state.bx, bz: state.bz });
+        // 镜面姿态一起记下来：之后镜子一转，旧记录仍按【当时的镜面】留在纸上，
+        // 才看得出「每一组的 A、B 各自关于当时的镜面对称」。
+        state.marks.push({ ax: state.ax, az: state.az, bx: state.bx, bz: state.bz,
+                           gt: state.gt, mgx: state.gx, mgz: state.gz });
         state.dirty = true;
         showToast('已记录第 ' + state.marks.length + ' 组数据');
         return true;
@@ -2069,7 +2188,7 @@
         // B 和光屏回到右边的【器材区】，不是玻璃板后——重做实验要连「取器材」这一步一起重来
         state.bx = STAGE.b.x; state.bz = STAGE.b.z;
         state.sx = STAGE.scr.x; state.sz = STAGE.scr.z;
-        state.gw = GW0; state.gh = GH0; state.gx = 0; state.gz = 0;
+        state.gw = GW0; state.gh = GH0; state.gx = 0; state.gz = 0; state.gt = 0;
         // 高度也回到默认（和板的大小一样属于「装置参数」，重做实验就该复位）
         state.ch = CH; state.fh = F_H; state.sh = SCR_H;
         state.aLit = false; state.snapped = false; state.screenChecked = false;
@@ -2140,6 +2259,9 @@
         state: state, imagePos: imagePos, makeCam: makeCam, project: project,
         unproject: unproject, envelopePoints: envelopePoints, hitTest: hitTest,
         VIEWS: VIEWS,
+        // 镜面姿态（含倾角）：像 = 物关于该平面的反射，自检必须用同一套函数才算同源。
+        MIR: MIR, sig: sig, tanOf: tanOf, footOf: footOf, mp: mp,
+        tiltDeg: () => state.gt / DEG,
         // imageVisible 是「这个视角看不看得见像」的唯一判据。自检要能直接问它，
         // 而不是去数像素——数像素只能验「画了没有」，验不出「判得对不对」。
         imageVisible: () => { const q = {}; makeCam(q, state.w, state.h); return imageVisible(q); },
@@ -2157,12 +2279,13 @@
                   PT_W: PT_W, PT_D: PT_D, TABLE_W: TABLE_W, TABLE_D: TABLE_D,
                   STEP_CM: STEP_CM, X_CM: X_CM, GAP_A: GAP_A, GAP_B: GAP_B,
                   HYST_CM: HYST_CM, STAGE: STAGE },
-        // 玻璃板此刻的实时尺寸 / 位置（世界单位）。常量只有默认值，
-        // 自检要验「拖滑块板真的动了」，必须能读到实时值。
-        plate() { return { gw: state.gw, gh: state.gh, gx: state.gx, gz: state.gz }; },
+        // 玻璃板此刻的实时尺寸 / 位置 / 倾角（世界单位，gt 为弧度）。常量只有默认值，
+        // 自检要验「拖滑块板真的动了、镜子真的转了」，必须能读到实时值。
+        plate() { return { gw: state.gw, gh: state.gh, gx: state.gx, gz: state.gz,
+                           gt: state.gt, gtDeg: state.gt / DEG }; },
         // 此刻各个滑块真实的 min / max / step 和它显示的值——验「滑块和 state 同一套刻度」
         sliders() {
-          const ids = ['mir-az', 'mir-ax', 'mir-bx', 'mir-bz', 'mir-gw', 'mir-gh', 'mir-gx', 'mir-gz'];
+          const ids = ['mir-az', 'mir-ax', 'mir-bx', 'mir-bz', 'mir-gw', 'mir-gh', 'mir-gx', 'mir-gz', 'mir-gt'];
           const o = {};
           ids.forEach(id => { const e = document.getElementById(id);
             o[id] = { min: +e.min, max: +e.max, step: +e.step, value: +e.value }; });
@@ -2182,6 +2305,9 @@
           if (o.gh != null) state.gh = o.gh;
           if (o.gx != null) state.gx = o.gx;
           if (o.gz != null) state.gz = o.gz;
+          // 倾角两种写法都收：gt = 弧度（和 state 一致），gtDeg = 度（和滑块一致）
+          if (o.gt != null) state.gt = o.gt;
+          if (o.gtDeg != null) state.gt = o.gtDeg * DEG;
           if (o.src != null) setSource(o.src);
           // 三个高度也能直接设（自检要固定几何，不经过滑块）
           if (o.ch != null) state.ch = o.ch;
@@ -2196,7 +2322,7 @@
           updateReadout();
           state.dirty = true;
           return { ax: state.ax, az: state.az, bx: state.bx, bz: state.bz,
-                   gw: state.gw, gh: state.gh, gx: state.gx, gz: state.gz,
+                   gw: state.gw, gh: state.gh, gx: state.gx, gz: state.gz, gt: state.gt,
                    ch: state.ch, fh: state.fh, sh: state.sh,
                    coincideErr: state.coincideErr, snapped: state.snapped, src: state.src };
         },
@@ -2250,8 +2376,9 @@
           syncInputs(); updateCoincide(); updateReadout();
           state.dirty = true;
           const pos = k === 'a' ? [state.ax, state.az] : k === 'b' ? [state.bx, state.bz] : [state.sx, state.sz];
+          // d 为「到板面的距离」（沿法线量，正 = 板后）——镜子倾了也按垂距算
           return { x: +pos[0].toFixed(4), z: +pos[1].toFixed(4),
-                   d: +((state.gz - pos[1]) * U).toFixed(2) };   // d 为「到板面的距离」，正 = 板后
+                   d: +(-sig(pos[0], pos[1]) * U).toFixed(2) };
         },
         projectedEnvelope() {
           const q = {}; makeCam(q, state.w, state.h);
