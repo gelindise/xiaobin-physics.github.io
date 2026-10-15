@@ -26,6 +26,7 @@
 //  安全：只允许 http(s)，拦截内网 / 本机地址（防 SSRF），并做实例级限频。
 // ============================================================================
 const { Readable } = require('stream');
+const crypto = require('crypto');
 
 const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
@@ -198,6 +199,50 @@ async function bjson(res, what) {
 }
 
 // ---------------------------------------------------------------------------
+// WBI 签名
+//   实测：机房 IP 对 x/web-interface/view 会返回 -412，但对
+//   x/web-interface/wbi/view（带签名）、x/player/pagelist、x/player/playurl 都放行。
+//   所以元数据改走签名版接口：先用 nav 拿 wbi_img，按固定置换表算出 mixinKey，
+//   再把参数按字典序拼串 + mixinKey 做 MD5 得到 w_rid。
+// ---------------------------------------------------------------------------
+const MIXIN_KEY_ENC_TAB = [
+  46, 47, 18, 2, 53, 8, 23, 32, 15, 50, 10, 31, 58, 3, 45, 35, 27, 43, 5, 49,
+  33, 9, 42, 19, 29, 28, 14, 39, 12, 38, 41, 13, 37, 48, 7, 16, 24, 55, 40,
+  61, 26, 17, 0, 1, 60, 51, 30, 4, 22, 25, 54, 21, 56, 59, 6, 63, 57, 62, 11,
+  36, 20, 34, 44, 52,
+];
+
+let _wbi = { key: '', at: 0 };
+async function getWbiMixinKey() {
+  const now = Date.now();
+  if (_wbi.key && now - _wbi.at < 60 * 60 * 1000) return _wbi.key;
+  const j = await bjson(await bfetch('https://api.bilibili.com/x/web-interface/nav'), 'nav');
+  const img = j && j.data && j.data.wbi_img;
+  if (!img || !img.img_url || !img.sub_url) throw new Error('拿不到 WBI 密钥');
+  const base = (u) => String(u).split('/').pop().split('.')[0];
+  const orig = base(img.img_url) + base(img.sub_url);
+  const key = MIXIN_KEY_ENC_TAB.map((i) => orig[i]).join('').slice(0, 32);
+  _wbi = { key, at: now };
+  return key;
+}
+
+function wbiSign(params, mixinKey) {
+  const p = Object.assign({}, params, { wts: Math.round(Date.now() / 1000) });
+  const query = Object.keys(p)
+    .sort()
+    .map((k) => encodeURIComponent(k) + '=' + encodeURIComponent(String(p[k]).replace(/[!'()*]/g, '')))
+    .join('&');
+  const w_rid = crypto.createHash('md5').update(query + mixinKey).digest('hex');
+  return query + '&w_rid=' + w_rid;
+}
+
+// 带 WBI 签名的视频信息接口（机房 IP 可用）
+async function biliWbiView(params) {
+  const qs = wbiSign(params, await getWbiMixinKey());
+  return bjson(await bfetch(`https://api.bilibili.com/x/web-interface/wbi/view?${qs}`), 'wbi/view');
+}
+
+// ---------------------------------------------------------------------------
 // 哔哩哔哩：内置官方接口解析（无需配置）
 // ---------------------------------------------------------------------------
 const QUALITY_MAP = { 127: '8K', 120: '4K', 116: '1080P60', 112: '1080P+', 80: '1080P', 64: '720P', 32: '480P', 16: '360P' };
@@ -207,22 +252,41 @@ async function parseBilibili(shareUrl) {
   const aid = (shareUrl.match(/\/av(\d+)/i) || [])[1] || '';
 
   if (!bvid && aid) {
-    const j = await bjson(await bfetch(`https://api.bilibili.com/x/web-interface/view?aid=${aid}`), 'view/aid');
-    if (j.code !== 0) throw new Error('B站接口：' + (j.message || j.code));
+    let j = null;
+    try {
+      j = await biliWbiView({ aid });
+    } catch (_) {}
+    if (!j || j.code !== 0 || !j.data) {
+      j = await bjson(await bfetch(`https://api.bilibili.com/x/web-interface/view?aid=${aid}`), 'view/aid');
+    }
+    if (j.code !== 0 || !j.data) throw new Error('B站接口：' + (j.message || j.code));
     bvid = j.data.bvid;
   }
   if (!bvid) throw new Error('没能从链接里认出 B 站视频号（BV 号）。请直接粘贴视频页地址，如 https://www.bilibili.com/video/BVxxxxxxxxxx');
 
-  let view = await bjson(await bfetch(`https://api.bilibili.com/x/web-interface/view?bvid=${bvid}`), 'view');
-  if (view.code === -412) {
-    // 被反爬拦了：换一个新指纹再试一次
-    view = await bjson(await bfetch(`https://api.bilibili.com/x/web-interface/view?bvid=${bvid}`, null, true), 'view');
+  // 元数据依次降级：普通 view → WBI 签名 view → pagelist 兜底（只够拿到 cid）
+  let meta = null;
+  try {
+    const v = await bjson(await bfetch(`https://api.bilibili.com/x/web-interface/view?bvid=${bvid}`), 'view');
+    if (v.code === 0 && v.data) meta = v.data;
+  } catch (_) {}
+  if (!meta) {
+    try {
+      const v = await biliWbiView({ bvid });
+      if (v.code === 0 && v.data) meta = v.data;
+    } catch (_) {}
   }
-  if (view.code !== 0) throw new Error('B站接口：' + (view.message || 'code ' + view.code));
-  const d = view.data || {};
 
-  // 分P：链接里的 ?p=N 决定优先解析哪一 P，其余 P 也一并列出
-  const pages = Array.isArray(d.pages) && d.pages.length ? d.pages : [{ cid: d.cid, part: d.title, page: 1 }];
+  // 分P：优先用元数据里的 pages；拿不到就单独查 pagelist（该接口在机房 IP 下正常）
+  let pages = meta && Array.isArray(meta.pages) && meta.pages.length ? meta.pages : null;
+  if (!pages) {
+    const pl = await bjson(await bfetch(`https://api.bilibili.com/x/player/pagelist?bvid=${bvid}`), 'pagelist');
+    if (pl.code === 0 && Array.isArray(pl.data) && pl.data.length) {
+      pages = pl.data.map((p) => ({ cid: p.cid, part: p.part, page: p.page, duration: p.duration }));
+    }
+  }
+  if ((!pages || !pages.length) && meta && meta.cid) pages = [{ cid: meta.cid, part: meta.title, page: 1 }];
+  if (!pages || !pages.length) throw new Error('拿不到该视频的分P信息，请确认链接指向的是视频页');
   const wantP = parseInt((shareUrl.match(/[?&]p=(\d+)/) || [])[1] || '1', 10);
   const ordered = pages.slice().sort((a, b) => (a.page === wantP ? -1 : b.page === wantP ? 1 : a.page - b.page));
 
@@ -259,12 +323,12 @@ async function parseBilibili(shareUrl) {
   return {
     platform: 'bilibili',
     platformLabel: '哔哩哔哩',
-    title: d.title || '',
-    cover: String(d.pic || '').replace(/^http:/, 'https:'),
-    author: (d.owner && d.owner.name) || '',
-    duration: d.duration || 0,
+    title: (meta && meta.title) || (pages[0] && pages[0].part) || '',
+    cover: String((meta && meta.pic) || '').replace(/^http:/, 'https:'),
+    author: (meta && meta.owner && meta.owner.name) || '',
+    duration: (meta && meta.duration) || 0,
     videos,
-    source: '内置接口',
+    source: meta ? '内置接口' : '内置接口（降级）',
   };
 }
 
