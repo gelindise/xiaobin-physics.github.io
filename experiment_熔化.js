@@ -1436,7 +1436,7 @@ import * as THREE from './assets/optics-three.min.js';
     { key: 'base',   parts: ['stand', 'rod'],
       name: '铁架台底座 + 立柱', hint: '先把最下面的铸铁底座放稳，立柱才立得住 —— 上面所有器材都挂在它上面。' },
     { key: 'lamp',   parts: ['lamp'],
-      name: '酒精灯', hint: '放酒精灯。铁圈要照它的火焰高度来定，所以先摆灯、后定圈。' },
+      name: '酒精灯', hint: '放酒精灯 —— 灯一放稳就点着（真实实验里也是先点灯、后定铁圈）。铁圈的高度要照火焰尖来定，所以先摆灯、后定圈。' },
     { key: 'ring',   parts: ['ring', 'net'],
       name: '铁圈 + 石棉网', hint: '铁圈套在立柱上，高度让外焰刚好舔到石棉网；石棉网再铺在铁圈上。' },
     { key: 'beaker', parts: ['beaker'],
@@ -1559,6 +1559,16 @@ import * as THREE from './assets/optics-three.min.js';
     return n;
   }
   function assemblyReady() { return assembledCount() >= ASM_STEPS.length; }
+
+  /* ★ 第 ② 步「放酒精灯」是否已经落位 —— 灯焰的点亮时刻就用它。
+     真实实验里灯要先点着，才能照着火焰尖的高度去定铁圈（第 ③ 步），
+     所以灯一放稳就该是【点燃状态】，不必等整套装好。
+     散放时（progress = 1）仍然是灭的：否则一朵火焰飘在半空中，一眼就假。 */
+  const LAMP_STEP_I = ASM_STEPS.findIndex((s) => s.key === 'lamp');
+  function lampPlaced() {
+    const st = ASM_STEPS[LAMP_STEP_I];
+    return !!st && st.parts.every((k) => partProgress(k) < 1e-6);
+  }
 
   const ASM_DUR = 0.75;            // 单步组装动画时长（秒）
   let asmTween = null;             // { parts:[key], from, to, k }
@@ -1782,9 +1792,11 @@ import * as THREE from './assets/optics-three.min.js';
   function updateDirectionVisual() {
     const freeze = state.direction === 'freeze';
     lamp.visible = !freeze;              // 酒精灯连同灯焰、灯焰光源一起撤走
-    /* 灯焰只在「整套装置装好之后」才点着 —— 散放在台面上的酒精灯是没点的。
-       不这样卡的话，散件状态下一朵火焰飘在半空中，一眼就假。 */
-    const lit = !freeze && assemblyReady();
+    /* 灯焰在【酒精灯放稳的那一刻】就点着 —— 铁圈的高度要照火焰尖来定，
+       所以先摆灯（点燃的）、后定圈；不用等整套装置装完。
+       散放在台面上的酒精灯仍然是没点的：不这样卡的话，
+       散件状态下一朵火焰飘在半空中，一眼就假。 */
+    const lit = !freeze && lampPlaced();
     flameGroup.visible = lit;
     flameLight.visible = lit;
     iceGroup.visible = freeze;
