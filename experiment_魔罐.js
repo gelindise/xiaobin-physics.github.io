@@ -739,6 +739,8 @@ import * as THREE from './assets/optics-three.min.js';
       asmSay('一键组装中：' + st.name, false);
       return;
     }
+    /* 队列空了：这里【只】改提示文字，不碰 DOM —— 刷新统一交给
+       frameStep 里那个「补间收尾」的唯一出口（见下）。 */
     asmSay('做好了！推它一把试试', false);
   }
   function autoAssemble() {
@@ -758,8 +760,15 @@ import * as THREE from './assets/optics-three.min.js';
     for (const k of asmTween.parts) setPartT(k, t);
     if (asmTween.k >= 1) {
       for (const k of asmTween.parts) setPartT(k, asmTween.to);
+      const queued = asmQueue.length;
       asmTween = null;
-      if (asmQueue.length) nextAutoStep(); else afterAsmChange();
+      /* 队列里还有下一步 ⇒ 接着装（「一键」最后一步走的就是 nextAutoStep 的空队列支，
+         顺手写上「做好了！」）。★ 队列为空 = 学生是一步步点的 ⇒ 绝不能调 nextAutoStep()：
+         它会无条件把提示写成「做好了！推它一把试试」，而这时可能才刚装完第 ① 步。
+         改成清掉「正在装…」这句临时提示，让 updateAsmUI 回到「下一步：…」。
+         收尾的 DOM 刷新不在这里做 —— 统一交给 frameStep 里那个唯一出口。 */
+      if (queued) nextAutoStep();
+      else asmSay('', false);
     }
   }
   function scatterAll() {
@@ -1637,7 +1646,18 @@ import * as THREE from './assets/optics-three.min.js';
   function renderNow() { renderer.render(scene, camera); dirty = false; }
   let uiAcc = 0;
   function frameStep(dt) {
+    /* ★★ 「补间收尾」的唯一出口。
+       组装补间结束的那一帧，必须在这里补一次 afterAsmChange()（它才会 updateAsmUI()）。
+       之前把刷新写在 advanceAsm 的 else 支里，而「一键自动组装」的最后一步是走到
+       nextAutoStep 的【空队列】支上收尾的 —— 那一支只调了 asmSay()（只改 asmNote、
+       完全不碰 DOM）⇒ 内部 progress 已经全 0、assemblyReady() 已经返回 true，
+       但页面上还停在「0 / 6」、清单第一项永远挂着 busy、「推它一把」一直是灰的。
+       学生看到的就是：一键装完了，却怎么也推不动。
+       🔴 判据教训：只断言 H.asm.ready() 是【假绿】—— 内部状态与 DOM 是两套东西，
+       必须各自取一次来比。 */
+    const wasBusy = !!asmTween;
     if (asmTween) advanceAsm(dt);
+    if (wasBusy && !asmTween) afterAsmChange();
     if (state.running && !state.finished && !state.paused) {
       const d = dt * state.speed;
       let rem = d;
