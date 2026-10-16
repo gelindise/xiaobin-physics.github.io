@@ -1642,8 +1642,11 @@ import * as THREE from './assets/optics-three.min.js';
      十八、渲染循环
      ========================================================================== */
   let dirty = true;
+  /* ★★ 重绘计数器：动画类断言必须能问「这一段时间里画布到底重绘了几次」。
+     几何量（rectOf / drawn / state.z）全都读不出来「画布冻结」这个病 —— 它们照常变化。 */
+  let renderCount = 0;
   function requestRender() { dirty = true; }
-  function renderNow() { renderer.render(scene, camera); dirty = false; }
+  function renderNow() { renderCount++; renderer.render(scene, camera); dirty = false; }
   let uiAcc = 0;
   function frameStep(dt) {
     /* ★★ 「补间收尾」的唯一出口。
@@ -1658,6 +1661,15 @@ import * as THREE from './assets/optics-three.min.js';
     const wasBusy = !!asmTween;
     if (asmTween) advanceAsm(dt);
     if (wasBusy && !asmTween) afterAsmChange();
+    /* ★★ 「这一帧动过画面吗？」—— 动过就必须请求重绘。
+       🔴🔴 原来这里【一句 requestRender() 都没有】，而 placeParts / updateScene /
+       stepSim 也都不请求重绘 ⇒ dirty 一直停在 false ⇒ `if (dirty) renderNow()` 一次都不进
+       ⇒ WebGL 画布冻结在「推它一把」那一刻那一帧，而 HUD、能量条、图像照常刷新
+       （它们走 DOM / 2D 画布，跟 WebGL 那条腿无关）。
+       学生看到的正是：**数字在变，罐子一动不动**。
+       自检也全绿 —— 因为所有断言读的都是 __moLab 的几何量，而几何确实在动。
+       🔴🔴 教训：**「几何在动」≠「画面在动」**，动画必须有一条「这一帧真的重绘了」的判据。 */
+    let moved = wasBusy;
     if (state.running && !state.finished && !state.paused) {
       const d = dt * state.speed;
       let rem = d;
@@ -1678,7 +1690,9 @@ import * as THREE from './assets/optics-three.min.js';
         pushSample();
       }
       updateScene();
+      moved = true;
     }
+    if (moved) requestRender();
     uiAcc += dt;
     if (uiAcc >= 0.08) {
       uiAcc = 0;
@@ -1876,6 +1890,8 @@ import * as THREE from './assets/optics-three.min.js';
       };
     },
     fsLayouts() { return state.fsLayouts; },
+    /* 累计重绘次数。断言用「差值」：跑一段动画前后各取一次。 */
+    renderCount() { return renderCount; },
     /* ---- 组装 ---- */
     asm: {
       steps: ASM_STEPS.map((s) => ({ key: s.key, name: s.name, parts: s.parts.slice(), hint: s.hint })),
