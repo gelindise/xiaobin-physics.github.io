@@ -407,20 +407,28 @@
   // 尺寸是「两排数字 + 中央字母 + 弧形刻度」挤出来的：内圈数字在 ±20°
   // 处离竖直只有 0.34r 的横向偏移，r 不够大时它们会挤到中线上，把「A」
   // 压掉。要对上教材的排布，弧半径得 60 上下，表盘就得 150 宽。
+  // 🔴 2026-10-16 用户第 3 点「表盘和刻度再放大一些，现在太小了」：
+  //    整台表按【只往上长】的办法放大 —— 表壳上沿 −86 → −104、表盘
+  //    152×106 → 180×126、刻度半径 50/62 → 58/74、两排数字半径跟着放。
+  //    下沿（CASE_BOT 42 / BASE_TOP 42 / BASE_BOT 60 / POST_Y 72）【一个数都没动】：
+  //      ① 三个接线柱钉在 POST_Y 上，导线行高 = 元件 y + 72 这条约定是全站
+  //         （预设、拖放、走线避让）共用的，动了它三套预设的竖直排布全要重排；
+  //      ② 本体仍然整个落在导线【上方】，导线不会从表壳中间穿过去。
+  //    所以「放大」在这台仪器上就等于「往上长」——表壳变得更高、更宽，底座不动。
   var MET = {
-    CASE_HW: 88, CASE_TOP: -86, CASE_BOT: 42,       // 表壳（浅色胶木，上沿大圆角）
-    // 表盘比上一版高了 16：大量程的数字要挪到刻度弧【外面】（真表就是这个排布），
+    CASE_HW: 106, CASE_TOP: -104, CASE_BOT: 42,     // 表壳（浅色胶木，上沿大圆角）
+    // 表盘比上一版又高又宽：大量程的数字要挪到刻度弧【外面】（真表就是这个排布），
     // 弧的半径一动，两排数字就全挤到「A」字上——所以是往上长表壳，不是缩弧。
-    DIAL: { x: -76, y: -72, w: 152, h: 106 },       // 白色表盘
+    DIAL: { x: -90, y: -90, w: 180, h: 126 },       // 白色表盘
     PIVOT: { x: 0, y: 10 },                         // 指针转轴
-    RT0: 50, RT1: 62,                               // 刻度线内 / 外半径
+    RT0: 58, RT1: 74,                               // 刻度线内 / 外半径
     // 刻度的两排数字：大量程在弧线【外】（表盘上方），小量程在弧线【内】。
     // 真表（J0407）就是这么印的：读数先看零刻度在哪一排，两排一上一下不会看串。
     // 上一版两排都塞在弧线里面，大数字只是半径大一点，和「上面 / 下面」不是一回事。
-    RN_HI: 73, RN_LO: 38,                           // 弧外（大量程）/ 弧内（小量程）数字半径
-    BLOCK: { top: 4, bot: 34, hwT: 24, hwB: 34 },   // 底部网纹块（梯形）
-    ZERO: { x: 0, y: 26, r: 6.5 },                  // 调零螺丝
-    BASE_HW: 96, BASE_TOP: 42, BASE_BOT: 60,        // 底座（比表壳宽一圈）
+    RN_HI: 88, RN_LO: 45,                           // 弧外（大量程）/ 弧内（小量程）数字半径
+    BLOCK: { top: 4, bot: 36, hwT: 26, hwB: 38 },   // 底部网纹块（梯形）
+    ZERO: { x: 0, y: 27, r: 7 },                    // 调零螺丝
+    BASE_HW: 116, BASE_TOP: 42, BASE_BOT: 60,       // 底座（比表壳宽一圈）
     POST_Y: 72,                                     // 三柱锚点（= TERMINALS 的 y）
     // 未调零时指针偏离零位的量（占整个扫角的比例）。0.045 × 120° ≈ 5.4°，
     // 在刻度弧上是 4~5 个像素 —— 小到不挡读数，大到一眼看得出「针没停在零上」。
@@ -430,6 +438,35 @@
   };
   // 指针扫角：−150° → −30°，绕正上方左右各 60°（教材表的弧线就这一段）
   var MET_SWEEP = { A0: -Math.PI * 5 / 6, A1: -Math.PI / 6 };
+
+  // ============================================================
+  // 表头【大读数牌】的几何（用户第 1 点：读数要显著地显示在整台表正上方）
+  // ------------------------------------------------------------
+  // 牌子挂在表壳上沿再往上 GAP 处，宽按字宽撑开、最小 MINW，高 H。
+  // ⚠️ 它由【页面】在导线之后画（理由见 drawMeter 里那段注释：导线压在元件
+  //    之上，留在绘制层画会被从表上方经过的那根线横切）。所以这一份几何必须
+  //    绘制层和页面共用 —— 各写一份的话，牌子迟早压到表壳上或者飘到天上去。
+  // ============================================================
+  var METER_READOUT = {
+    GAP: 12, H: 40, MINW: 132, PADX: 30, TOP_MIN: 3,
+    FONT: 'bold 26px ui-monospace,Menlo,Consolas,monospace',
+    BG: 'rgba(15,23,42,0.94)', BORDER: 'rgba(125,211,252,0.75)', FG: '#7dd3fc',
+  };
+  // 一块读数牌的落点（元件自身坐标系，不随 rot 转）。返回 {x,y,w,h}，
+  // x/y 是左上角。cx 传元件的世界 x，用来把牌子夹在画布内（TOP_MIN）。
+  function meterReadoutBox(cx, cy, text, ctx2) {
+    var R = METER_READOUT;
+    var w = R.MINW, h = R.H;
+    if (ctx2 && text) {
+      ctx2.save();
+      ctx2.font = R.FONT;
+      w = Math.max(R.MINW, ctx2.measureText(text).width + R.PADX);
+      ctx2.restore();
+    }
+    var y = MET.CASE_TOP - R.GAP - h;
+    if (cy + y < R.TOP_MIN) y = R.TOP_MIN - cy;      // 表贴到画布顶边时别整块飘出去
+    return { x: cx - w / 2, y: cy + y, w: w, h: h };
+  }
 
   // ============================================================
   // 端子坐标
@@ -455,6 +492,11 @@
     //    · circuit-draw 的 bodyBox（走线避让）与 PSU.POSTS（直接引用这一项）
     power: [{ x: 36, y: 26 }, { x: 78, y: 26 }],
     switch: [{ x: -HALF, y: 0 }, { x: HALF, y: 0 }],
+    // 单刀双掷开关：三柱排成一行，和表头同一套排布（外侧两根钉在 ±HALF 上，
+    // 中间那根落在 x=0）—— 「左 = 掷 1、中 = 公共、右 = 掷 2」。
+    // 🔴 中间那根【必须】在正中：它是刀片的转轴，刀片左右等长才能两边都搭得上。
+    //    偏心一根，刀片就得做成两段不一样长，画出来像把跷跷板。
+    spdt: [{ x: -HALF, y: 0 }, { x: 0, y: 0 }, { x: HALF, y: 0 }],
     bulb: [{ x: -HALF, y: 0 }, { x: HALF, y: 0 }],
     // 二极管和电动机是【有极性】的，0 号端子一律是「+」（左边那个红柱）。
     // 和电池的「+在右」不一样是有意的：电池的 + 在右是干电池实物上碳棒那
@@ -1061,9 +1103,12 @@
     battery:   { x0: -112, y0: -42, x1: 112, y1: 42 },
     power:     { x0: -126, y0: -68, x1: 126, y1: 46 },
     switch:    { x0: -74, y0: -68, x1: 74, y1: 38 },
+    // 单刀双掷：和开关同一块底板，本体略矮（没有那把抬起 20° 的刀片，
+    // 只有一根左右倒 15° 的横刀）—— 顶到 −62 就够。
+    spdt:      { x0: -74, y0: -68, x1: 74, y1: 38 },
     bulb:      { x0: -74, y0: -80, x1: 74, y1: 40 },
-    ammeter:   { x0: -102, y0: -92, x1: 102, y1: 82 },
-    voltmeter: { x0: -102, y0: -92, x1: 102, y1: 82 },
+    ammeter:   { x0: -122, y0: -110, x1: 122, y1: 84 },
+    voltmeter: { x0: -122, y0: -110, x1: 122, y1: 84 },
     rheostat:  { x0: -94, y0: -46, x1: 94, y1: 54 },
     led:       { x0: -78, y0: -52, x1: 78, y1: 36 },
     motor:     { x0: -78, y0: -64, x1: 78, y1: 36 },
@@ -1284,6 +1329,11 @@
       // 接线柱在 ±70，走线检查算的是 |lx| < hw−3，hw 再大柱子就被圈进盒子里，
       // 「导线夹在柱子上」会被误判成「导线穿过元件」。
       case 'switch': return { hw: 70, hh: 62 };          // 底板 ±70，手柄抬起后顶到 −62
+      // 单刀双掷：同一块底板（±70），本体长在板面上方 —— 最高的地方是
+      // 【翘起来的那一头刀片】（PIV.y − HALF·sin15° − 刀片半厚 ≈ −61.7）。
+      // hw 必须卡死 ≤ 70：接线柱钉在 ±70 上，再宽柱子就被圈进盒子里，
+      // 「导线夹在柱子上」会被误判成「导线穿过元件」。
+      case 'spdt': return { hw: 70, hh: 62 };
       case 'bulb': return { hw: 70, hh: 74 };            // 底板 ±70，玻璃泡顶 y = −71.5
       // 三个新元件都是「示教板」：和开关 / 灯泡同一块底板（±70），本体长在板面上方。
       // 所以 hw 给 70（板宽），hh 只要盖住本体到板面这一截 —— 一超过 70，
@@ -1300,7 +1350,7 @@
       case 'junction': return { hw: 9, hh: 9 };
       // 表头：整台仪器的包围盒（表壳 + 底座）。接线柱在 POST_Y，
       // 故意落在盒子【外面】——导线夹在柱子上，不该被当成穿体。
-      // 所以 hh 有【上限 70】：表壳为了放下大量程那排数字往上长到了 −86（见 MET），
+      // 所以 hh 有【上限 70】：表壳为了放下大量程那排数字往上长到了 −104（见 MET），
       // 但盒子不能跟着长——一过 75，接线柱（POST_Y = 72）就被圈回盒子里，
       // 挂着导线的柱子会被判成「导线穿过表体」。盒子比表壳矮一截是有意的。
       case 'ammeter': case 'voltmeter':
@@ -2579,6 +2629,201 @@
   }
 
   // ============================================================
+  // 单刀双掷开关（人教版「楼梯开关」里的那一只）
+  // ------------------------------------------------------------
+  // 三柱排成一行钉在板面上（±70 与正中，和表头同一套「三柱」布局）：
+  //   左柱 = 掷 1、中柱 = 公共（刀片的转轴）、右柱 = 掷 2。
+  // 板面上再立起一副机构：
+  //   · 正中一根支架把刀片举到 PIV，刀片【绕中点左右倒】；
+  //   · 两侧各一块静触点，倒向哪边就搭在哪一块上；
+  //   · 左柱 → 左触点、中柱 → 转轴、右柱 → 右触点，三段铜片把「柱子」和
+  //     「板面上的金属件」连成一条看得见的导体（和闸刀开关同一条规矩：
+  //     金属件一律纯铜，「导电的那条路」要一眼看得出来）。
+  // 🔴 它【没有「断开」这一档】：刀片永远搭在某一侧（真实的单刀双掷就是
+  //    这样 —— 它是「通到哪一头」的开关，不是「通 / 断」的开关）。
+  // 🔴 触点顶面高度【由倾角反算】（见 SPDT.CT.top），不许手写一个数：改了
+  //    倾角或刀长之后手写的那个数会让刀片悬在触点上、或者插进触点里。
+  // ============================================================
+  var SPDT = {
+    PIV: { x: 0, y: -42 },        // 刀片转轴（举在板面上方）
+    HALF: 54, HT: 5.5,            // 刀片半长 / 半厚
+    TILT: 15 * Math.PI / 180,     // 倒向一侧时的倾角（15° 在投影上看得清）
+    CT: { x: 46, w: 22 },         // 静触点的横坐标 / 宽度（左右对称）
+    POST: { w: 17 },              // 中央支架宽度（板面顶 → 转轴下方）
+  };
+  // 触点顶面 = 刀片倒 TILT 之后、在触点横坐标处【下沿】的高度。
+  // 刀片中线在 x 处的 y = PIV.y + x·tan(TILT)；下沿再往下半个厚度（垂直
+  // 厚度按 cos 折算）。反算出来是 −24.0，正好让刀片压在触点的受光棱上。
+  SPDT.CT.top = SPDT.PIV.y + SPDT.CT.x * Math.tan(SPDT.TILT) +
+                SPDT.HT / Math.cos(SPDT.TILT);
+
+  function drawSpdt(ctx, comp, rec) {
+    // 刀片当下搭在哪一侧：以求解结果为准（rec.throw），还没解过就看参数。
+    // 和内核的 throwOf 同一条规矩：非 2 即 1 —— 不存在「两边都不通」。
+    var sel = (rec && rec.throw != null) ? (rec.throw === 2 ? 2 : 1)
+            : ((+((comp.params || {}).throw) === 2) ? 2 : 1);
+    var sc = ctxScale(ctx);
+    var CT = SPDT.CT, PIV = SPDT.PIV;
+    var STRAP_Y = -2.6;                       // 铜片走在板面顶棱上（同闸刀开关）
+
+    ctx.save();
+    ctx.translate(comp.x, comp.y);
+    ctx.rotate((comp.rot || 0) * Math.PI / 180);
+    basePlate(ctx, PLATE.HW, PLATE.TOP, PLATE.FACE, PLATE.BOT);
+    ctx.restore();
+
+    // 柱子夹在【底板】和【板面上的金属件】之间画，所以要从外层变换里退出来
+    // 单独一段 —— posts() 走的是 terminalWorld()，拿到的已经是绝对坐标
+    // （见 drawSwitch 里那段「平移叠了两遍」的注释）。
+    // 三根都是红的：开关没有正负极，红只表示「这是接线柱」。
+    posts(ctx, comp, ['pos', 'pos', 'pos'], 1.4, 8);
+
+    ctx.save();
+    ctx.translate(comp.x, comp.y);
+    ctx.rotate((comp.rot || 0) * Math.PI / 180);
+
+    // ── 两块静触点（坐在板面上的铜块，刀片倒过去就搭在它的受光棱上）──
+    // 渐变的两端是【绝对坐标】，左右两块都取「左亮右暗」：全站光源在左上，
+    // 跟着形状镜像的话，右半边的金属件会变成右上打光，一眼看去是两个方向。
+    function contactBlock(cx) {
+      var x0 = cx - CT.w / 2;
+      ctx.save();
+      ctx.beginPath();
+      roundRect(ctx, x0, CT.top, CT.w, PLATE.TOP - CT.top, 2.5);
+      ctx.clip();
+      ctx.fillStyle = linGrad(ctx, x0, 0, x0 + CT.w, 0,
+        [[0, '#fdf0e0'], [0.16, '#f3d0aa'], [0.42, '#dda86d'],
+         [0.70, '#b8792f'], [1, '#8a5620']]);
+      ctx.fillRect(x0, CT.top, CT.w, PLATE.TOP - CT.top);
+      ctx.restore();
+      roundRect(ctx, x0, CT.top, CT.w, PLATE.TOP - CT.top, 2.5);
+      ctx.strokeStyle = 'rgba(96,58,16,0.62)'; ctx.lineWidth = 1; ctx.stroke();
+      // 顶面的受光棱 + 夹线槽：刀片压下来压的就是这条棱
+      ctx.fillStyle = 'rgba(255,244,224,0.72)';
+      roundRect(ctx, x0 + 1.2, CT.top + 0.8, CT.w - 2.4, 1.4, 0.7); ctx.fill();
+      ctx.fillStyle = 'rgba(88,50,12,0.5)';
+      roundRect(ctx, x0, CT.top + 2.4, CT.w, 2.6, 1.3); ctx.fill();
+      if (sc >= 1) screwHead(ctx, cx, PLATE.TOP - 7, 3.4, 'slot', sc);
+    }
+    contactBlock(-CT.x); contactBlock(CT.x);
+
+    // ── 中央支架：把转轴举到板面上方 ──
+    // 上端收窄成一块「叉头」，转轴销就穿在叉口里 —— 少了这一收，柱子就是
+    // 一根方木头，看不出它是「托着刀片转」的。
+    var PW = SPDT.POST.w;
+    ctx.save();
+    ctx.beginPath();
+    roundRect(ctx, -PW / 2, PIV.y - 8, PW, PLATE.TOP - (PIV.y - 8), 2.5);
+    ctx.clip();
+    ctx.fillStyle = linGrad(ctx, -PW / 2, 0, PW / 2, 0,
+      [[0, '#fdf0e0'], [0.16, '#f3d0aa'], [0.42, '#dda86d'],
+       [0.70, '#b8792f'], [1, '#8a5620']]);
+    ctx.fillRect(-PW / 2, PIV.y - 8, PW, PLATE.TOP - (PIV.y - 8));
+    // 支架上的两道竖槽：金属片的「折过边」才有厚度
+    ctx.strokeStyle = 'rgba(96,58,16,0.28)'; ctx.lineWidth = 1;
+    [-PW / 2 + 4, PW / 2 - 4].forEach(function (vx) {
+      ctx.beginPath(); ctx.moveTo(vx, PIV.y - 3); ctx.lineTo(vx, PLATE.TOP - 2); ctx.stroke();
+    });
+    ctx.restore();
+    roundRect(ctx, -PW / 2, PIV.y - 8, PW, PLATE.TOP - (PIV.y - 8), 2.5);
+    ctx.strokeStyle = 'rgba(96,58,16,0.62)'; ctx.lineWidth = 1; ctx.stroke();
+    ctx.fillStyle = 'rgba(255,244,224,0.68)';
+    roundRect(ctx, -PW / 2 + 1.2, PIV.y - 6.8, PW - 2.4, 1.4, 0.7); ctx.fill();
+
+    // ── 三段铜片：把三根接线柱和板面上那三个金属件连成一条导体 ──
+    // 左柱(−70) → 左触点、中柱(0) → 中央支架、右柱(70) → 右触点。
+    copperStrap(ctx, -70, -CT.x + 6, STRAP_Y);
+    copperBolt(ctx, -70, STRAP_Y);
+    copperStrap(ctx, -12, 12, STRAP_Y);
+    copperBolt(ctx, 0, STRAP_Y);
+    copperStrap(ctx, CT.x - 6, 70, STRAP_Y);
+    copperBolt(ctx, 70, STRAP_Y);
+
+    // ── 刀片：绕中点倒。倒向哪边，哪边的触点就通电 ──
+    // 刀片【伸向两边的长度一样】—— 转轴在正中，两边都得到端点，才叫双掷。
+    ctx.save();
+    ctx.translate(PIV.x, PIV.y);
+    ctx.rotate((sel === 2 ? 1 : -1) * SPDT.TILT);
+    ctx.save();
+    ctx.beginPath();
+    roundRect(ctx, -SPDT.HALF, -SPDT.HT, SPDT.HALF * 2, SPDT.HT * 2, 3);
+    ctx.clip();
+    ctx.fillStyle = linGrad(ctx, 0, -SPDT.HT, 0, SPDT.HT,
+      [[0, '#fdf0e0'], [0.12, '#f3d0aa'], [0.34, '#dfa76f'],
+       [0.62, '#c4863f'], [0.86, '#a86c2c'], [1, '#8a5620']]);
+    ctx.fillRect(-SPDT.HALF, -SPDT.HT, SPDT.HALF * 2, SPDT.HT * 2);
+    // 拉丝：刀片是轧出来的，表面有轧制纹
+    if (sc >= 1.3) {
+      ctx.strokeStyle = 'rgba(255,236,205,0.34)'; ctx.lineWidth = 0.7;
+      for (var bz = -SPDT.HT + 1.6; bz < SPDT.HT; bz += 2.2) {
+        ctx.beginPath();
+        ctx.moveTo(-SPDT.HALF + 2, bz); ctx.lineTo(SPDT.HALF - 2, bz); ctx.stroke();
+      }
+    }
+    ctx.restore();
+    roundRect(ctx, -SPDT.HALF, -SPDT.HT, SPDT.HALF * 2, SPDT.HT * 2, 3);
+    ctx.strokeStyle = 'rgba(96,58,16,0.6)'; ctx.lineWidth = 0.9; ctx.stroke();
+    ctx.fillStyle = 'rgba(255,244,224,0.78)';       // 刀背上的一条锐利高光
+    roundRect(ctx, -SPDT.HALF + 3, -SPDT.HT + 1.1, SPDT.HALF * 2 - 6, 1.3, 0.65); ctx.fill();
+    // 两端各一颗铆钉孔：刀片的端头是压在触点上的那一头，有个孔才像一件活的零件
+    if (sc >= 1) {
+      ctx.fillStyle = 'rgba(90,52,14,0.38)';
+      [-SPDT.HALF + 6, SPDT.HALF - 6].forEach(function (rx) {
+        ctx.beginPath(); ctx.arc(rx, 0, 2.1, 0, 6.284); ctx.fill();
+      });
+    }
+    // 中段的绝缘套筒（灰胶木）：学生就是捏着它把刀片扳到另一边。
+    // 摆在【正中】而不是两端：两端是压在触点上的工作面，套筒挡在那儿就成了
+    // 「垫着胶木的接触」，实物上不长这样。
+    ctx.save();
+    ctx.beginPath(); roundRect(ctx, -13, -10.5, 26, 21, 7); ctx.clip();
+    ctx.fillStyle = linGrad(ctx, 0, -10.5, 0, 10.5,
+      [[0, '#f0f4f8'], [0.14, '#dbe2ea'], [0.42, '#b3bfcd'],
+       [0.72, '#8d9cad'], [1, '#6d7d8e']]);
+    ctx.fillRect(-13, -10.5, 26, 21);
+    if (sc >= 1.1) {
+      ctx.strokeStyle = 'rgba(51,65,85,0.24)'; ctx.lineWidth = 1;
+      for (var gz = -9; gz < 10; gz += 3.4) {
+        ctx.beginPath(); ctx.moveTo(gz, -9.5); ctx.lineTo(gz, 9.5); ctx.stroke();
+      }
+    }
+    ctx.restore();
+    roundRect(ctx, -13, -10.5, 26, 21, 7);
+    ctx.strokeStyle = 'rgba(51,65,85,0.55)'; ctx.lineWidth = 1; ctx.stroke();
+    ctx.fillStyle = 'rgba(255,255,255,0.42)';
+    roundRect(ctx, -8, -6.5, 16, 4.2, 2.1); ctx.fill();
+    ctx.restore();
+
+    // 转轴销（黄铜）：压在套筒正中，刀片是铆在它上面转的
+    ctx.fillStyle = linGrad(ctx, PIV.x - 6, 0, PIV.x + 6, 0,
+      [[0, '#8a5f1c'], [0.35, '#e8c37a'], [0.55, '#fff2c8'], [1, '#8a5f1c']]);
+    ctx.beginPath(); ctx.arc(PIV.x, PIV.y, 5.5, 0, 6.284); ctx.fill();
+    ctx.strokeStyle = 'rgba(70,46,10,0.55)'; ctx.lineWidth = 1; ctx.stroke();
+    if (sc >= 1) {
+      ctx.strokeStyle = 'rgba(255,255,255,0.7)'; ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.ellipse(PIV.x - 1.2, PIV.y - 1.2, 3.2, 2.4, -0.6, Math.PI * 1.0, Math.PI * 1.7);
+      ctx.stroke();
+    }
+
+    // ── 状态：刀片搭在哪一侧 ────────────────────────────────
+    // 两只掷位都是「通」，所以这里不能用闸刀开关那套「闭合=绿 / 断开=灰」——
+    // 要认的是【通到哪一头】。两个掷位各印一个号（1 / 2），当前那一头点亮；
+    // 板面正中再写一句「刀片 → 掷 N」，投影到大屏上不用去找那个小数字。
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    [-1, 1].forEach(function (s) {
+      var on = (s < 0 ? 1 : 2) === sel;
+      ctx.fillStyle = on ? '#0f766e' : '#a8b3c0';
+      ctx.font = (on ? 'bold ' : '') + '15px -apple-system,"PingFang SC",sans-serif';
+      ctx.fillText(s < 0 ? '1' : '2', s * CT.x, 7);
+    });
+    ctx.fillStyle = '#0f766e';
+    ctx.font = 'bold 12.5px -apple-system,"PingFang SC",sans-serif';
+    ctx.fillText('刀片 → 掷 ' + sel, 0, 21);
+    ctx.restore();
+  }
+
+  // ============================================================
   // 小灯泡（人教版实物：浅灰底板 + 瓷灯座 + 银色螺口 + 玻璃泡）
   // ------------------------------------------------------------
   // rec.brightness 是 core 定的【物理量】P/P额，这里只把它画成
@@ -3144,7 +3389,7 @@
     // 三档线长，和真表一致：
     //   大格（带数字）3 段 × 每段 10 小格 —— 0.6A 量程一大格 0.2A、小格 0.02A；
     //   3A 量程共用同一条弧，一大格 1A、小格 0.1A（两排数字正好落在同一批长线上）。
-    //   大格【中点】的线短一截（8/12），其余小格再短（5/12）——
+    //   大格【中点】的线短一截（9.5/14），其余小格再短（6/14）——
     //   上一版把中点也画成大格那么长，一条弧上就多出三根没有数字的长线，
     //   看着像刻度印漏了，读数时也分不清哪根才是大格。
     var MAJOR = 3, MINOR = 10, total = MAJOR * MINOR, i;
@@ -3152,9 +3397,9 @@
       var a = SW.A0 + (SW.A1 - SW.A0) * (i / total);
       var step = i % MINOR;                       // 0 = 带数字的大格
       var isMajor = (step === 0), isHalf = (step === MINOR / 2);
-      var r1 = M.RT1, r0 = M.RT1 - (isMajor ? 12 : (isHalf ? 8 : 5));
+      var r1 = M.RT1, r0 = M.RT1 - (isMajor ? 14 : (isHalf ? 9.5 : 6));
       ctx.strokeStyle = isMajor ? '#1f2937' : '#94a3b8';
-      ctx.lineWidth = isMajor ? 1.8 : (isHalf ? 1.2 : 0.9);
+      ctx.lineWidth = isMajor ? 2 : (isHalf ? 1.3 : 1);
       ctx.beginPath();
       ctx.moveTo(M.PIVOT.x + Math.cos(a) * r0, M.PIVOT.y + Math.sin(a) * r0);
       ctx.lineTo(M.PIVOT.x + Math.cos(a) * r1, M.PIVOT.y + Math.sin(a) * r1);
@@ -3162,9 +3407,11 @@
     }
 
     // ── 两排数字 ────────────────────────────────────────────
+    // 字号跟着刻度一起放大（12 → 14 / 10.5 → 12.5）：用户第 3 点要的就是
+    // 「教室里看得清」，弧半径放大了而字号不动，数字反而显得更小。
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    [['hi', M.RN_HI, HI_TX, 12, 3],
-     ['lo', M.RN_LO, LO_TX, 10.5, 2]].forEach(function (row) {
+    [['hi', M.RN_HI, HI_TX, 14, 3],
+     ['lo', M.RN_LO, LO_TX, 12.5, 2]].forEach(function (row) {
       var on = (row[0] === 'hi') ? hiActive : !hiActive;
       ctx.fillStyle = on ? '#1f2937' : '#b9c3cf';
       ctx.font = (on ? 'bold ' : '') + row[3] + 'px -apple-system,"PingFang SC",sans-serif';
@@ -3178,32 +3425,22 @@
 
     // 表盘正中的大字母
     ctx.fillStyle = '#1f2937';
-    ctx.font = 'bold 19px -apple-system,"PingFang SC",sans-serif';
-    ctx.fillText(isVolt ? 'V' : 'A', 0, M.PIVOT.y - 16);
+    ctx.font = 'bold 22px -apple-system,"PingFang SC",sans-serif';
+    ctx.fillText(isVolt ? 'V' : 'A', 0, M.PIVOT.y - 17);
 
     // ── 数字示数（可选，默认【不显示】）────────────────────────
-    // 参数面板里勾上「在表盘上显示读数」才画。
-    // 位置挑在刻度弧【下方】、指针轴心【上方】那一块 —— 那是表盘上唯一不会被
-    // 指针扫到的区域（指针扫的是半径 RT0~RT1、绕轴心的上半圈，在 |x| ≤ 30 的
-    // 范围里最低只到 y ≈ −44），所以数字永远盖不住针、针也永远划不过数字。
-    // 换位置之前先把这条算清楚，不然会出现「针从数字上划过去」。
-    // ⚠️ rec.practiceHide 是【练习模式】压上来的：那一档里读数默认一个都不给看，
-    //    要等学生点这只表揭晓。判据挂在 rec 上而不是 comp.params 上 —— rec 每次
-    //    求解重建，不进存档、不进撤销栈；写进 params 的话，一个纯粹的显示开关
-    //    会被存进学生保存的电路里，下次打开还藏着一块。
-    if (comp.params && comp.params.showValue && !(rec && rec.practiceHide)) {
-      var txt = fmtRead(shown, !isVolt) + (isVolt ? ' V' : ' A');
-      // 深色底 = 表盘上贴的一块小液晶屏。液晶的青色字压在深底上，
-      // 和黑针、白盘都分得开。
-      ctx.fillStyle = 'rgba(15,23,42,0.92)';
-      roundRect(ctx, -30, -40, 60, 20, 3); ctx.fill();
-      ctx.strokeStyle = 'rgba(148,163,184,0.55)'; ctx.lineWidth = 1;
-      roundRect(ctx, -30, -40, 60, 20, 3); ctx.stroke();
-      ctx.fillStyle = '#7dd3fc';
-      ctx.font = 'bold 13px ui-monospace,Menlo,Consolas,monospace';
-      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      ctx.fillText(txt, 0, -29.5);
-    }
+    // 🔴 2026-10-16 用户第 1 点：原来这块小液晶贴在【表盘内部】上方
+    //    （−30,−40 那个 60×20 的框）。两个毛病：
+    //      ① 玻璃面罩那道白色弧形反光正好横切过它（glassHighlight 的椭圆
+    //         圆心就落在表盘上部），字被压掉一截 —— 用户说的「有遮挡」；
+    //      ② 60×20 的框里塞 13px 的字，投影到教室大屏上根本读不出来。
+    //    现在整块牌子【搬出绘制层】了：它画在【表壳正上方】，而且必须画在
+    //    【导线之后】—— 导线是压在元件之上的（见页面 drawFrame），留在这一层
+    //    画的话，从表上方经过的那根线会横切过读数牌，又变回「有遮挡」。
+    //    所以这一块的实现在页面里（drawMeterReadout，由 drawTags 那一层调），
+    //    几何从 D.METER_READOUT 取，绘制层和页面读同一份数字。
+    //    这一层只保留【表盘本体】——放大镜（drawZoom）与离屏出图工具看到的
+    //    就是一台干净的表，读数在放大镜底下那一行文字里。
 
     // ── 底部网纹块 + 调零螺丝 ───────────────────────────────
     // 教材上指针的转轴就藏在这块深色网纹里。块先画，指针后画压在上面。
@@ -3245,36 +3482,47 @@
     ctx.save();
     ctx.translate(M.PIVOT.x, M.PIVOT.y);
     ctx.rotate(na);
+    // 🔴 2026-10-16 用户第 3 点：指针一律【红色】。
+    //    原来正常态是黑针、只有超量程 / 反接才变红（拿颜色当异常信号）。用户
+    //    要的是「针本身就要红」，所以红不再表示异常 —— 异常改由【更深的暗红】
+    //    来区分，加上原有的「已损坏」牌子、画布上的「指针反偏 / 读不出数」，
+    //    信息一条没丢（红色 24 个色阶的差距在投影上是分得开的）。
+    var rodCol = alert ? '#7f1d1d' : '#dc2626';
     // 配重尾：真表的指针在转轴【另一边】有一小截配重，指针才不至于被自己的
     // 重量压弯。少了它，指针就是一根插在轴上的针，读不出「会转」这件事。
-    ctx.strokeStyle = 'rgba(15,23,42,0.20)'; ctx.lineWidth = 4.2;
-    ctx.beginPath(); ctx.moveTo(-17, 1.6); ctx.lineTo(-7, 1.6); ctx.stroke();
-    ctx.strokeStyle = alert ? '#b91c1c' : '#111827'; ctx.lineWidth = 3.0;
+    ctx.strokeStyle = 'rgba(15,23,42,0.20)'; ctx.lineWidth = 4.6;
+    ctx.beginPath(); ctx.moveTo(-17, 1.8); ctx.lineTo(-7, 1.8); ctx.stroke();
+    ctx.strokeStyle = rodCol; ctx.lineWidth = 3.4;
     ctx.beginPath(); ctx.moveTo(-17, 0); ctx.lineTo(-7, 0); ctx.stroke();
     ctx.lineCap = 'round';
-    // 针身：从根部（−9）的 4.8 宽【连续收细】到针尖（RT0+6）的一个点。
+    // 针身：从根部（−9）的 2.8 宽【连续收细】到针尖的一个点。
     // 真表的针就是这样一根刀片 —— 最宽处在转轴附近，一路收到尖，中途
     // 【没有任何一处比根部宽】。上一版是「2.2 宽的直杆 + 一个 5.6 宽的三角尖」，
     // 那个比杆宽出一倍的三角正是用户看到的那支【箭头】，必须去掉。
-    // 分两段收：先缓收到刻度弧前（读起来是一根细长的针），最后 10px 再锐收成尖
+    // 分两段收：先缓收到刻度弧前（读起来是一根细长的针），最后 9px 再锐收成尖
     // （真针的尖是刀刃形的，不是一整个长三角）。
+    // 🔴 2026-10-16 用户第 3 点「指针再长一点」：针尖从 RT0+6（=64）伸到
+    //    RT1−3（=71）—— 也就是【顶到刻度弧最外那一圈的内侧】。原来的针尖只落在
+    //    刻度带（58~74）偏里的位置，投影到大屏上离外圈数字还差一截，读数时眼睛
+    //    要在针尖和数字之间来回找；针尖抵到外沿之后，一眼就能对上是哪一格。
     function blade(dy) {
       ctx.beginPath();
-      ctx.moveTo(-9, -2.4 + dy);
-      ctx.lineTo(M.RT1 - 16, -0.85 + dy);
-      ctx.lineTo(M.RT0 + 6, dy);
-      ctx.lineTo(M.RT1 - 16, 0.85 + dy);
-      ctx.lineTo(-9, 2.4 + dy);
+      ctx.moveTo(-9, -2.8 + dy);
+      ctx.lineTo(M.RT1 - 12, -1.0 + dy);
+      ctx.lineTo(M.RT1 - 3, dy);
+      ctx.lineTo(M.RT1 - 12, 1.0 + dy);
+      ctx.lineTo(-9, 2.8 + dy);
       ctx.closePath();
     }
-    var rodCol = alert ? '#b91c1c' : '#111827';
     if (bent) {
       // 折弯：杆在中段折一下，针尖歪到弧的内侧去。
+      // 几何跟着加长后的针走：原来 kx 取 0.52·(RT1−14)、针尖落在 RT1−15 上，
+      // 针一加长（RT1 62 → 74）这段比例不变，折不折弯一眼仍分得开。
       var kx = (M.RT1 - 14) * 0.52, tipX = M.RT1 - 15, tipY = -5.6;
-      ctx.strokeStyle = 'rgba(15,23,42,0.16)'; ctx.lineWidth = 3.2;
-      ctx.beginPath(); ctx.moveTo(-8, 1.6); ctx.lineTo(kx, 1.6);
-      ctx.lineTo(tipX, tipY + 1.2); ctx.stroke();
-      ctx.strokeStyle = rodCol; ctx.lineWidth = 2.4;
+      ctx.strokeStyle = 'rgba(15,23,42,0.16)'; ctx.lineWidth = 3.6;
+      ctx.beginPath(); ctx.moveTo(-8, 1.8); ctx.lineTo(kx, 1.8);
+      ctx.lineTo(tipX, tipY + 1.4); ctx.stroke();
+      ctx.strokeStyle = rodCol; ctx.lineWidth = 2.8;
       ctx.beginPath();
       ctx.moveTo(-8, 0); ctx.lineTo(kx, 0); ctx.lineTo(tipX, tipY);
       ctx.stroke();
@@ -3293,7 +3541,7 @@
       ctx.fillStyle = rodCol; blade(0); ctx.fill();
       // 针根那一小截：把针身和转轴轴帽接起来（轴帽半径 4.6，针身从 −9 起画，
       // 少了这截，针看着是浮在轴旁边的）。
-      ctx.strokeStyle = rodCol; ctx.lineWidth = 3.0;
+      ctx.strokeStyle = rodCol; ctx.lineWidth = 3.4;
       ctx.beginPath(); ctx.moveTo(-7, 0); ctx.lineTo(-2, 0); ctx.stroke();
     }
     ctx.restore();
@@ -3302,8 +3550,8 @@
     // 不会把那一格染黑（那一格是正接时必须干净的白表盘）。
     ctx.strokeStyle = 'rgba(51,65,85,0.75)'; ctx.lineWidth = 1.8; ctx.lineCap = 'round';
     ctx.beginPath();
-    ctx.moveTo(M.PIVOT.x + Math.cos(SW.A0) * 52, M.PIVOT.y + Math.sin(SW.A0) * 52);
-    ctx.lineTo(M.PIVOT.x + Math.cos(SW.A0) * 60, M.PIVOT.y + Math.sin(SW.A0) * 60);
+    ctx.moveTo(M.PIVOT.x + Math.cos(SW.A0) * 60, M.PIVOT.y + Math.sin(SW.A0) * 60);
+    ctx.lineTo(M.PIVOT.x + Math.cos(SW.A0) * 70, M.PIVOT.y + Math.sin(SW.A0) * 70);
     ctx.stroke();
     // 转轴轴心：一个带一字槽的黄铜轴帽，不是一块银片
     ctx.fillStyle = linGrad(ctx, -5, M.PIVOT.y, 5, M.PIVOT.y,
@@ -4869,6 +5117,7 @@
         else drawPowerSupply(ctx, comp, rec);
         break;
       case 'switch': drawSwitch(ctx, comp, rec); break;
+      case 'spdt': drawSpdt(ctx, comp, rec); break;
       case 'bulb': drawBulb(ctx, comp, rec); break;
       case 'led': drawLed(ctx, comp, rec, opts); break;
       case 'motor': drawMotor(ctx, comp, rec, opts); break;
@@ -4909,7 +5158,7 @@
     // nameOf —— 元件的【显示名】单一真值（c.name 空则回落 c.id）。画布标签、
     //           侧栏表、警告行、浮层标题一律问它，别各自去读 c.id 或 c.name。
     nameOf: nameOf,
-    RHEO: RHEO, RHEO_LABEL: RHEO_LABEL, PLATE: PLATE,
+    RHEO: RHEO, RHEO_LABEL: RHEO_LABEL, PLATE: PLATE, SPDT: SPDT,
     // 端子字母这一帧真的画出去的字号 / 字形宽度 / 落点（见 rheoLabelDrawn 注释）。
     rheoLabels: function () { return rheoLabelDrawn; },
     sliderLocalX: sliderLocalX, slideFromLocalX: slideFromLocalX,
@@ -4959,6 +5208,9 @@
     psuDrawn: function () { return psuDrawn; },
     psuFaceAngle: psuFaceAngle,
     MAT: MAT, MET: MET, MET_SWEEP: MET_SWEEP, POST_GRAD: POST_GRAD,
+    // 表头大读数牌（用户第 1 点）。页面在导线之后按 meterReadoutBox 落笔画，
+    // 绘制层只出几何 —— 两边共用同一份，牌子不会和表壳错位。
+    METER_READOUT: METER_READOUT, meterReadoutBox: meterReadoutBox,
     BAND_COLORS: BAND_COLORS,
     version: '2.6.0',
   };
