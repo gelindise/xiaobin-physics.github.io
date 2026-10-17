@@ -1207,8 +1207,10 @@
       case 'power':
         return 'U = ' + emfOf(c, rec).toFixed(1) + ' V';
       case 'battery':
-        // 端压和电动势是两个数，电路图上标的是铭牌（电动势）
-        return 'E = ' + emfOf(c, rec).toFixed(1) + ' V';
+        // 端压和电动势是两个数，电路图上标的是铭牌（电源电压）。
+        // 🔴 2026-10-17 用户第 2 点：写 U 不写 E —— 初中课本的电源标的是
+        // 「电压 U」，E 是高中才用的电动势记号。
+        return 'U = ' + emfOf(c, rec).toFixed(1) + ' V';
       case 'resistor': {
         var R = (rec && rec.R != null) ? +rec.R : (P.R != null ? +P.R : 10);
         return 'R = ' + num(R) + ' Ω';

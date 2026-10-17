@@ -35,7 +35,10 @@
   // （见 circuit-params 的 PARAM_UI 与 circuit-schematic 的 valueOf），
   // 编号跟着用 U 就一眼对得上。E 已经给干电池了（电动势），不能撞。
   var ID_PREFIX = {
-    resistor: 'R', battery: 'E', switch: 'S',
+    // 🔴 电源的编号用 U（用户 2026-10-17 第 2 点：「电源的符号用 U 表示，
+    // 不要用 E」）。学生电源（power）本来就叫 U —— 两个电源共用同一个前缀
+    // 是【对的】：编号靠 while (byId(...)) 顺延，不会撞，画面上就是 U1 / U2。
+    resistor: 'R', battery: 'U', switch: 'S',
     ammeter: 'A', voltmeter: 'V', rheostat: 'RH', bulb: 'L',
     led: 'D', motor: 'M', bell: 'B',
     power: 'U',

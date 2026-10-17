@@ -608,15 +608,15 @@
     // 电流记号 —— 两处各写一份 1.9 的话，电流迟早从丝上跑偏（而且只在放大时才
     // 看得出来）。所以它必须住在几何常量里，和 cylX / cylW 一样。
     pitch: 1.9,
-    // 电流记号沿路径的间距（局部单位）。圈距才 1.9px，每圈画一个的话六十多个
-    // 箭头会糊成一条红带 —— 取 18 一个。注意：绕线上按【水平跨度】折算个数
-    // （见 drawRheostatFlow.runCoil），所以这个数决定的仍然是「看着有多密」，
-    // 和路径本身有多长无关。
-    markGap: 18,
     // 电流路径那条【螺旋虚线】的圈距（局部单位）。它比画丝的圈距（pitch=1.9）
     // 粗得多 —— 1.9px 一圈的螺旋在屏幕上就是一整片，看不出是「一圈圈绕上去的」。
-    // 取 24：半根绕线（约 60px）上绕 2.5 圈，一眼数得清。
-    flowPitch: 24,
+    // 🔴🔴 2026-10-17 用户第 4 点：原来是 24（半根绕线绕 2.5 圈），记号沿螺旋
+    //    每秒 320px 跑，一圈才 20px 横向 ⇒ 垂直方向来回抖 16 Hz，看着比导线
+    //    「快得多」。改成 44（半根 60px 上只绕 1 圈多），抖动的频率降到 1/2、
+    //    横向速度也提上来，肉眼才和导线一致。
+    //    这一条和记号密度是【两件事】：密度由 drawRheostatFlow 里的 gap（42/64，
+    //    和导线同一个数）定，这里只管「绕几圈」。
+    flowPitch: 44,
     // 虚线的实线段 / 空档（弧长，局部单位）。
     railOn: 6, railOff: 4,
   };
@@ -1103,8 +1103,8 @@
     battery:   { x0: -112, y0: -42, x1: 112, y1: 42 },
     power:     { x0: -126, y0: -68, x1: 126, y1: 46 },
     switch:    { x0: -74, y0: -68, x1: 74, y1: 38 },
-    // 单刀双掷：和开关同一块底板，本体略矮（没有那把抬起 20° 的刀片，
-    // 只有一根左右倒 15° 的横刀）—— 顶到 −62 就够。
+    // 单刀双掷：和开关同一块底板，本体略矮 —— 没有闸刀那把抬得很高的刀片，
+    // 只有一根【单边】刀片绕转轴倒 14°（远端是黑柄）。顶到 −62 就够。
     spdt:      { x0: -74, y0: -68, x1: 74, y1: 38 },
     bulb:      { x0: -74, y0: -80, x1: 74, y1: 40 },
     ammeter:   { x0: -122, y0: -110, x1: 122, y1: 84 },
@@ -2248,8 +2248,12 @@
   // BOT = 板底。三个数一起决定板的厚度感，单独改一个会画成一块斜面。
   var PLATE = { HW: 70, TOP: -5, FACE: 3, BOT: 30 };   // 半宽 70 = 接线柱正好钉在板子两角
 
-  function basePlate(ctx, hw, top, face, bot) {
+  // opts.screws === false = 【不画四角一字螺钉】。单刀双掷开关照的那张实物
+  // 照片上，底板是一块光的浅灰钢板，没有螺钉 —— 而板面上正好要印「1 / 2」
+  // 两个掷位号，留着螺钉就必然压到一个。
+  function basePlate(ctx, hw, top, face, bot, opts) {
     var sc = ctxScale(ctx);
+    var screws = !(opts && opts.screws === false);
     softShadow(ctx, -hw, top, hw * 2, bot - top, 13, 6);
     // 接触阴影：板子压在台面上的那一条。只在板底下方一点，比投影窄
     contactShadow(ctx, 0, bot + 1, hw * 0.94, 4.5, 0.30);
@@ -2281,6 +2285,7 @@
     ctx.fillStyle = 'rgba(40,52,68,0.22)';
     roundRect(ctx, -hw + 2, bot - 3.4, hw * 2 - 4, 2.6, 1.3); ctx.fill();
     // 四角一字螺钉：位置避开接线柱（柱体只占 y ∈ [−11, +2]，螺钉在它下面）
+    if (!screws) return;
     [[-hw + 11, top + 12], [hw - 11, top + 12], [-hw + 11, bot - 8], [hw - 11, bot - 8]]
       .forEach(function (s) {
         ctx.save();
@@ -2645,15 +2650,23 @@
   //    倾角或刀长之后手写的那个数会让刀片悬在触点上、或者插进触点里。
   // ============================================================
   var SPDT = {
-    PIV: { x: 0, y: -42 },        // 刀片转轴（举在板面上方）
-    HALF: 54, HT: 5.5,            // 刀片半长 / 半厚
-    TILT: 15 * Math.PI / 180,     // 倒向一侧时的倾角（15° 在投影上看得清）
-    CT: { x: 46, w: 22 },         // 静触点的横坐标 / 宽度（左右对称）
-    POST: { w: 17 },              // 中央支架宽度（板面顶 → 转轴下方）
+    // 🔴🔴 2026-10-17 用户第 1 点：照实物照片重画 ——
+    //   · 一块浅灰底板；左右各一块【U 形银白钢片】当静触点；
+    //   · 正中一根银白支架把【转轴】举起来，转轴下面压着一颗【红色接线柱】
+    //     （公共端，实物上就是那颗红的）；
+    //   · 刀片是一根【单边】的银白钢条，远端套一段【黑色绝缘柄】——
+    //     学生捏着黑柄扳。刀片不再是「以转轴为中心两头一样长」的跷跷板：
+    //     实物就是一头铰在转轴上、一头带柄。
+    PIV: { x: 0, y: -52 },        // 刀片转轴（举在板面上方）
+    HALF: 66, HT: 5,              // 刀片【单边】长度 / 半厚
+    TILT: 14 * Math.PI / 180,     // 倒向一侧时的倾角
+    CT: { x: 56, w: 13 },         // U 形静触点的横坐标 / 宽度（左右对称）
+    POST: { w: 16 },              // 中央支架宽度（板面顶 → 转轴下方）
+    GRIP: 26,                     // 远端黑色绝缘柄的长度
   };
   // 触点顶面 = 刀片倒 TILT 之后、在触点横坐标处【下沿】的高度。
   // 刀片中线在 x 处的 y = PIV.y + x·tan(TILT)；下沿再往下半个厚度（垂直
-  // 厚度按 cos 折算）。反算出来是 −24.0，正好让刀片压在触点的受光棱上。
+  // 厚度按 cos 折算）。手写一个数的话，改了倾角/刀长触点就悬空或插进去。
   SPDT.CT.top = SPDT.PIV.y + SPDT.CT.x * Math.tan(SPDT.TILT) +
                 SPDT.HT / Math.cos(SPDT.TILT);
 
@@ -2664,162 +2677,163 @@
             : ((+((comp.params || {}).throw) === 2) ? 2 : 1);
     var sc = ctxScale(ctx);
     var CT = SPDT.CT, PIV = SPDT.PIV;
-    var STRAP_Y = -2.6;                       // 铜片走在板面顶棱上（同闸刀开关）
+    // 银白钢件的两套渐变（全站光源在左上）：
+    //   SILVER_H 给【立着的】零件（左右两侧亮暗）；
+    //   SILVER_V 给【躺着的】刀片（上下亮暗）。
+    // 都用同一族色阶 —— 一块钢件上出现两种不同的灰，一眼就看得出是拼的。
+    var SILVER_H = [[0, '#f8fafc'], [0.18, '#e8eef5'], [0.45, '#cbd5e1'],
+                    [0.72, '#a3aeba'], [1, '#7f8b98']];
+    var SILVER_V = [[0, '#ffffff'], [0.18, '#eef3f8'], [0.52, '#ccd6e1'],
+                    [0.82, '#a6b2bf'], [1, '#8d99a6']];
 
     ctx.save();
     ctx.translate(comp.x, comp.y);
     ctx.rotate((comp.rot || 0) * Math.PI / 180);
-    basePlate(ctx, PLATE.HW, PLATE.TOP, PLATE.FACE, PLATE.BOT);
+    basePlate(ctx, PLATE.HW, PLATE.TOP, PLATE.FACE, PLATE.BOT, { screws: false });
     ctx.restore();
 
     // 柱子夹在【底板】和【板面上的金属件】之间画，所以要从外层变换里退出来
-    // 单独一段 —— posts() 走的是 terminalWorld()，拿到的已经是绝对坐标
-    // （见 drawSwitch 里那段「平移叠了两遍」的注释）。
-    // 三根都是红的：开关没有正负极，红只表示「这是接线柱」。
-    posts(ctx, comp, ['pos', 'pos', 'pos'], 1.4, 8);
+    // 单独一段 —— posts() 走的是 terminalWorld()，拿到的已经是绝对坐标。
+    // 颜色照实物：中间那根（公共端）是红的，两边两个掷位是黑螺母。
+    posts(ctx, comp, ['neg', 'pos', 'neg'], 1.4, 8);
 
     ctx.save();
     ctx.translate(comp.x, comp.y);
     ctx.rotate((comp.rot || 0) * Math.PI / 180);
 
-    // ── 两块静触点（坐在板面上的铜块，刀片倒过去就搭在它的受光棱上）──
-    // 渐变的两端是【绝对坐标】，左右两块都取「左亮右暗」：全站光源在左上，
-    // 跟着形状镜像的话，右半边的金属件会变成右上打光，一眼看去是两个方向。
-    function contactBlock(cx) {
-      var x0 = cx - CT.w / 2;
+    // ── 两块 U 形静触点 ────────────────────────────────────────
+    // 立起来的银白钢片，中间开一条槽（实物是个「U」）：槽里是背光的暗面，
+    // 顶棱是刀片压下来的那一条受光边。
+    function bracket(cx) {
+      var w = CT.w, x0 = cx - w / 2;
+      var yT = CT.top, yB = PLATE.TOP + 1.5;
       ctx.save();
       ctx.beginPath();
-      roundRect(ctx, x0, CT.top, CT.w, PLATE.TOP - CT.top, 2.5);
+      roundRect(ctx, x0, yT, w, yB - yT, 3.2);
       ctx.clip();
-      ctx.fillStyle = linGrad(ctx, x0, 0, x0 + CT.w, 0,
-        [[0, '#fdf0e0'], [0.16, '#f3d0aa'], [0.42, '#dda86d'],
-         [0.70, '#b8792f'], [1, '#8a5620']]);
-      ctx.fillRect(x0, CT.top, CT.w, PLATE.TOP - CT.top);
+      ctx.fillStyle = linGrad(ctx, x0, 0, x0 + w, 0, SILVER_H);
+      ctx.fillRect(x0, yT, w, yB - yT);
       ctx.restore();
-      roundRect(ctx, x0, CT.top, CT.w, PLATE.TOP - CT.top, 2.5);
-      ctx.strokeStyle = 'rgba(96,58,16,0.62)'; ctx.lineWidth = 1; ctx.stroke();
-      // 顶面的受光棱 + 夹线槽：刀片压下来压的就是这条棱
-      ctx.fillStyle = 'rgba(255,244,224,0.72)';
-      roundRect(ctx, x0 + 1.2, CT.top + 0.8, CT.w - 2.4, 1.4, 0.7); ctx.fill();
-      ctx.fillStyle = 'rgba(88,50,12,0.5)';
-      roundRect(ctx, x0, CT.top + 2.4, CT.w, 2.6, 1.3); ctx.fill();
-      if (sc >= 1) screwHead(ctx, cx, PLATE.TOP - 7, 3.4, 'slot', sc);
+      roundRect(ctx, x0, yT, w, yB - yT, 3.2);
+      ctx.strokeStyle = 'rgba(71,85,105,0.55)'; ctx.lineWidth = 0.9; ctx.stroke();
+      // 顶棱受光
+      ctx.fillStyle = 'rgba(255,255,255,0.92)';
+      roundRect(ctx, x0 + 1.3, yT + 0.8, w - 2.6, 1.7, 0.85); ctx.fill();
+      // 中间的槽：实物是【∩】——两条腿站在板面上，顶上连成一块，刀片压在
+      // 顶上那条棱上。所以槽从下面开口、上端是圆的，槽里压暗（背光的内壁）。
+      ctx.fillStyle = 'rgba(51,65,85,0.42)';
+      roundRect(ctx, cx - 2.6, yT + 6, 5.2, yB - yT - 5, 2.4); ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,255,0.28)';
+      roundRect(ctx, cx - 2.6, yT + 6, 1.2, yB - yT - 5, 0.6); ctx.fill();
     }
-    contactBlock(-CT.x); contactBlock(CT.x);
+    bracket(-CT.x); bracket(CT.x);
 
-    // ── 中央支架：把转轴举到板面上方 ──
-    // 上端收窄成一块「叉头」，转轴销就穿在叉口里 —— 少了这一收，柱子就是
-    // 一根方木头，看不出它是「托着刀片转」的。
+    // ── 中央支架：把转轴举到板面上方 ──────────────────────────
     var PW = SPDT.POST.w;
+    var pTop = PIV.y - 7;
     ctx.save();
     ctx.beginPath();
-    roundRect(ctx, -PW / 2, PIV.y - 8, PW, PLATE.TOP - (PIV.y - 8), 2.5);
+    roundRect(ctx, -PW / 2, pTop, PW, PLATE.TOP - pTop, 3);
     ctx.clip();
-    ctx.fillStyle = linGrad(ctx, -PW / 2, 0, PW / 2, 0,
-      [[0, '#fdf0e0'], [0.16, '#f3d0aa'], [0.42, '#dda86d'],
-       [0.70, '#b8792f'], [1, '#8a5620']]);
-    ctx.fillRect(-PW / 2, PIV.y - 8, PW, PLATE.TOP - (PIV.y - 8));
-    // 支架上的两道竖槽：金属片的「折过边」才有厚度
-    ctx.strokeStyle = 'rgba(96,58,16,0.28)'; ctx.lineWidth = 1;
-    [-PW / 2 + 4, PW / 2 - 4].forEach(function (vx) {
-      ctx.beginPath(); ctx.moveTo(vx, PIV.y - 3); ctx.lineTo(vx, PLATE.TOP - 2); ctx.stroke();
-    });
+    ctx.fillStyle = linGrad(ctx, -PW / 2, 0, PW / 2, 0, SILVER_H);
+    ctx.fillRect(-PW / 2, pTop, PW, PLATE.TOP - pTop);
     ctx.restore();
-    roundRect(ctx, -PW / 2, PIV.y - 8, PW, PLATE.TOP - (PIV.y - 8), 2.5);
-    ctx.strokeStyle = 'rgba(96,58,16,0.62)'; ctx.lineWidth = 1; ctx.stroke();
-    ctx.fillStyle = 'rgba(255,244,224,0.68)';
-    roundRect(ctx, -PW / 2 + 1.2, PIV.y - 6.8, PW - 2.4, 1.4, 0.7); ctx.fill();
+    roundRect(ctx, -PW / 2, pTop, PW, PLATE.TOP - pTop, 3);
+    ctx.strokeStyle = 'rgba(71,85,105,0.55)'; ctx.lineWidth = 0.9; ctx.stroke();
+    // 顶端开叉：刀片夹在叉口里转（照片上就是一道黑缝）
+    ctx.fillStyle = 'rgba(51,65,85,0.42)';
+    roundRect(ctx, -3.4, pTop + 1.6, 6.8, 9, 1.8); ctx.fill();
+    // 左侧一条高光：立着的钢板没有它就成了一块平涂的灰
+    ctx.fillStyle = 'rgba(255,255,255,0.55)';
+    roundRect(ctx, -PW / 2 + 1.5, pTop + 3, 1.7, PLATE.TOP - pTop - 5, 0.85); ctx.fill();
 
-    // ── 三段铜片：把三根接线柱和板面上那三个金属件连成一条导体 ──
-    // 左柱(−70) → 左触点、中柱(0) → 中央支架、右柱(70) → 右触点。
-    copperStrap(ctx, -70, -CT.x + 6, STRAP_Y);
-    copperBolt(ctx, -70, STRAP_Y);
-    copperStrap(ctx, -12, 12, STRAP_Y);
-    copperBolt(ctx, 0, STRAP_Y);
-    copperStrap(ctx, CT.x - 6, 70, STRAP_Y);
-    copperBolt(ctx, 70, STRAP_Y);
-
-    // ── 刀片：绕中点倒。倒向哪边，哪边的触点就通电 ──
-    // 刀片【伸向两边的长度一样】—— 转轴在正中，两边都得到端点，才叫双掷。
+    // ── 刀片：一头铰在转轴、一头带黑柄 ────────────────────────
+    // 刀片【伸向两边】的不再是等长两截 —— 转轴在一端，刀身全长都朝一侧，
+    // 所以倒向哪边、哪边才有一整根刀片压上去（实物就是这样）。
     ctx.save();
     ctx.translate(PIV.x, PIV.y);
-    ctx.rotate((sel === 2 ? 1 : -1) * SPDT.TILT);
+    // 刀片只朝【+x】长。掷 2 = 原样往右倒；掷 1 = 整根【镜像】到左边再倒。
+    // 🔴 别用「转 π − TILT」代替镜像：那样刀片的上下也翻过来了，刀背高光
+    //    会跑到下沿去（光源在左上，全站只有这一处会逆着光）。
+    if (sel === 1) ctx.scale(-1, 1);
+    ctx.rotate(SPDT.TILT);
+    var L = SPDT.HALF, HT = SPDT.HT;
     ctx.save();
     ctx.beginPath();
-    roundRect(ctx, -SPDT.HALF, -SPDT.HT, SPDT.HALF * 2, SPDT.HT * 2, 3);
+    roundRect(ctx, -6, -HT, L + 6, HT * 2, HT);
     ctx.clip();
-    ctx.fillStyle = linGrad(ctx, 0, -SPDT.HT, 0, SPDT.HT,
-      [[0, '#fdf0e0'], [0.12, '#f3d0aa'], [0.34, '#dfa76f'],
-       [0.62, '#c4863f'], [0.86, '#a86c2c'], [1, '#8a5620']]);
-    ctx.fillRect(-SPDT.HALF, -SPDT.HT, SPDT.HALF * 2, SPDT.HT * 2);
+    ctx.fillStyle = linGrad(ctx, 0, -HT, 0, HT, SILVER_V);
+    ctx.fillRect(-6, -HT, L + 6, HT * 2);
     // 拉丝：刀片是轧出来的，表面有轧制纹
     if (sc >= 1.3) {
-      ctx.strokeStyle = 'rgba(255,236,205,0.34)'; ctx.lineWidth = 0.7;
-      for (var bz = -SPDT.HT + 1.6; bz < SPDT.HT; bz += 2.2) {
+      ctx.strokeStyle = 'rgba(255,255,255,0.30)'; ctx.lineWidth = 0.7;
+      for (var bz = -HT + 1.6; bz < HT; bz += 2.2) {
         ctx.beginPath();
-        ctx.moveTo(-SPDT.HALF + 2, bz); ctx.lineTo(SPDT.HALF - 2, bz); ctx.stroke();
+        ctx.moveTo(-4, bz); ctx.lineTo(L - 28, bz); ctx.stroke();
       }
     }
     ctx.restore();
-    roundRect(ctx, -SPDT.HALF, -SPDT.HT, SPDT.HALF * 2, SPDT.HT * 2, 3);
-    ctx.strokeStyle = 'rgba(96,58,16,0.6)'; ctx.lineWidth = 0.9; ctx.stroke();
-    ctx.fillStyle = 'rgba(255,244,224,0.78)';       // 刀背上的一条锐利高光
-    roundRect(ctx, -SPDT.HALF + 3, -SPDT.HT + 1.1, SPDT.HALF * 2 - 6, 1.3, 0.65); ctx.fill();
-    // 两端各一颗铆钉孔：刀片的端头是压在触点上的那一头，有个孔才像一件活的零件
+    roundRect(ctx, -6, -HT, L + 6, HT * 2, HT);
+    ctx.strokeStyle = 'rgba(71,85,105,0.62)'; ctx.lineWidth = 0.9; ctx.stroke();
+    ctx.fillStyle = 'rgba(255,255,255,0.88)';       // 刀背上的一条锐利高光
+    roundRect(ctx, -4, -HT + 1.1, L + 2, 1.5, 0.75); ctx.fill();
+    // 转轴端的一个铆钉孔（照片上就有这么个孔）
     if (sc >= 1) {
-      ctx.fillStyle = 'rgba(90,52,14,0.38)';
-      [-SPDT.HALF + 6, SPDT.HALF - 6].forEach(function (rx) {
-        ctx.beginPath(); ctx.arc(rx, 0, 2.1, 0, 6.284); ctx.fill();
-      });
+      ctx.fillStyle = 'rgba(71,85,105,0.42)';
+      ctx.beginPath(); ctx.arc(-1.5, 0, 1.9, 0, 6.284); ctx.fill();
     }
-    // 中段的绝缘套筒（灰胶木）：学生就是捏着它把刀片扳到另一边。
-    // 摆在【正中】而不是两端：两端是压在触点上的工作面，套筒挡在那儿就成了
-    // 「垫着胶木的接触」，实物上不长这样。
+    // 远端的【黑色绝缘柄】：学生捏的就是这一段。柄比刀身厚一圈，
+    // 末端是圆的 —— 平头的黑块读起来像贴上去的胶带。
+    var gx = L - SPDT.GRIP, gw = SPDT.GRIP + 3, gh = HT + 1.5;
     ctx.save();
-    ctx.beginPath(); roundRect(ctx, -13, -10.5, 26, 21, 7); ctx.clip();
-    ctx.fillStyle = linGrad(ctx, 0, -10.5, 0, 10.5,
-      [[0, '#f0f4f8'], [0.14, '#dbe2ea'], [0.42, '#b3bfcd'],
-       [0.72, '#8d9cad'], [1, '#6d7d8e']]);
-    ctx.fillRect(-13, -10.5, 26, 21);
-    if (sc >= 1.1) {
-      ctx.strokeStyle = 'rgba(51,65,85,0.24)'; ctx.lineWidth = 1;
-      for (var gz = -9; gz < 10; gz += 3.4) {
-        ctx.beginPath(); ctx.moveTo(gz, -9.5); ctx.lineTo(gz, 9.5); ctx.stroke();
-      }
-    }
+    ctx.beginPath();
+    roundRect(ctx, gx, -gh, gw, gh * 2, 4);
+    ctx.clip();
+    ctx.fillStyle = linGrad(ctx, 0, -gh, 0, gh,
+      [[0, '#59616b'], [0.20, '#3a4149'], [0.55, '#242a30'], [1, '#14181c']]);
+    ctx.fillRect(gx, -gh, gw, gh * 2);
+    // 柄背的一条柔光：全黑的一块会读成剪影
+    ctx.fillStyle = 'rgba(255,255,255,0.16)';
+    roundRect(ctx, gx + 2, -gh + 1.6, gw - 6, 2.2, 1.1); ctx.fill();
     ctx.restore();
-    roundRect(ctx, -13, -10.5, 26, 21, 7);
-    ctx.strokeStyle = 'rgba(51,65,85,0.55)'; ctx.lineWidth = 1; ctx.stroke();
-    ctx.fillStyle = 'rgba(255,255,255,0.42)';
-    roundRect(ctx, -8, -6.5, 16, 4.2, 2.1); ctx.fill();
+    roundRect(ctx, gx, -gh, gw, gh * 2, 4);
+    ctx.strokeStyle = 'rgba(15,23,42,0.72)'; ctx.lineWidth = 0.8; ctx.stroke();
     ctx.restore();
 
-    // 转轴销（黄铜）：压在套筒正中，刀片是铆在它上面转的
-    ctx.fillStyle = linGrad(ctx, PIV.x - 6, 0, PIV.x + 6, 0,
-      [[0, '#8a5f1c'], [0.35, '#e8c37a'], [0.55, '#fff2c8'], [1, '#8a5f1c']]);
-    ctx.beginPath(); ctx.arc(PIV.x, PIV.y, 5.5, 0, 6.284); ctx.fill();
-    ctx.strokeStyle = 'rgba(70,46,10,0.55)'; ctx.lineWidth = 1; ctx.stroke();
+    // ── 转轴销：压在刀片上（刀片是铆在它上面转的）────────────
+    // 退出刀片的旋转再画 —— 销子是固定在支架上的，不跟着刀片倒。
+    ctx.beginPath(); ctx.arc(PIV.x, PIV.y, 6.4, 0, 6.284);
+    ctx.fillStyle = linGrad(ctx, PIV.x - 6.4, 0, PIV.x + 6.4, 0,
+      [[0, '#475569'], [0.35, '#cbd5e1'], [0.55, '#f8fafc'], [1, '#64748b']]);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(15,23,42,0.6)'; ctx.lineWidth = 1; ctx.stroke();
     if (sc >= 1) {
-      ctx.strokeStyle = 'rgba(255,255,255,0.7)'; ctx.lineWidth = 1.2;
+      // 一字槽 + 高光弧：一颗真的螺钉，而不是一个灰圆点
+      ctx.strokeStyle = 'rgba(15,23,42,0.45)'; ctx.lineWidth = 1.2;
       ctx.beginPath();
-      ctx.ellipse(PIV.x - 1.2, PIV.y - 1.2, 3.2, 2.4, -0.6, Math.PI * 1.0, Math.PI * 1.7);
+      ctx.moveTo(PIV.x - 3.4, PIV.y + 0.4); ctx.lineTo(PIV.x + 3.4, PIV.y + 0.4);
+      ctx.stroke();
+      ctx.strokeStyle = 'rgba(255,255,255,0.75)'; ctx.lineWidth = 1.1;
+      ctx.beginPath();
+      ctx.ellipse(PIV.x - 1.2, PIV.y - 1.4, 3.4, 2.5, -0.6, Math.PI * 1.0, Math.PI * 1.7);
       ctx.stroke();
     }
 
     // ── 状态：刀片搭在哪一侧 ────────────────────────────────
     // 两只掷位都是「通」，所以这里不能用闸刀开关那套「闭合=绿 / 断开=灰」——
-    // 要认的是【通到哪一头】。两个掷位各印一个号（1 / 2），当前那一头点亮；
-    // 板面正中再写一句「刀片 → 掷 N」，投影到大屏上不用去找那个小数字。
+    // 要认的是【通到哪一头】。两个掷位各印一个号（1 / 2），当前那一头点亮。
+    // 号印在【各自支架正上方】的空白处，带一圈白描边：板面上四个角都有螺钉，
+    // 挤在板面上必然压到一个。
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     [-1, 1].forEach(function (s) {
       var on = (s < 0 ? 1 : 2) === sel;
-      ctx.fillStyle = on ? '#0f766e' : '#a8b3c0';
-      ctx.font = (on ? 'bold ' : '') + '15px -apple-system,"PingFang SC",sans-serif';
-      ctx.fillText(s < 0 ? '1' : '2', s * CT.x, 7);
+      // 号印在【各自支架正下方】的板面上（底板没有螺钉，这块是空的）——
+      // 印在支架上方会正好撞上扳过去的黑柄。
+      var tx = s * CT.x, ty = PLATE.BOT - 8;
+      ctx.font = (on ? 'bold ' : '') + '13px -apple-system,"PingFang SC",sans-serif';
+      ctx.fillStyle = on ? '#0f766e' : 'rgba(100,116,139,0.75)';
+      ctx.fillText(s < 0 ? '1' : '2', tx, ty);
     });
-    ctx.fillStyle = '#0f766e';
-    ctx.font = 'bold 12.5px -apple-system,"PingFang SC",sans-serif';
-    ctx.fillText('刀片 → 掷 ' + sel, 0, 21);
     ctx.restore();
   }
 
@@ -3697,24 +3711,24 @@
   // 调用条件改坏（比如两半都画）照样全绿。返回它等于把「画了什么」钉死。
   // ============================================================
   function drawRheostatFlow(ctx, comp, rec, opts) {
+    // 这一帧真的画出去的记号数（按段统计）。断言读它，不读 rec.segments ——
+    // 读 rec 等于量「算的那一步」，「只画通电的那半根」改成「两半都画」照样全绿。
     var stats = { left: 0, right: 0, arm: 0, rod: 0, iL: 0, iR: 0, iArm: 0,
                   phase: null, style: null,
                   // 左 / 右半根绕线的【螺旋路径长度】和这一帧用的位移（px）。
-                  // 路径长度 ≈ 2.8 × 水平跨度 是「路径是螺旋、不是一条水平线」的
-                  // 判据；位移则用来钉「绕线里的记号速度和导线同源」——
-                  // 它必须等于 CircuitDraw.currentShift(flow, phase)。
+                  // 位移必须等于 CircuitDraw.currentShift(那一段的真实电流, phase)
+                  // —— 自检拿它钉「绕线里的记号和导线同源」。
                   pathL: 0, pathR: 0, shiftL: 0, shiftR: 0,
-                  // 触臂 / 金属杆这一帧用的位移（px）。四个地方（绕线左右两半、
-                  // 触臂、金属杆）和导线【必须同源】—— 都得等于
-                  // CircuitDraw.currentShift(那一段的真实电流, phase)。
-                  shiftArm: 0, shiftRod: 0 };
+                  shiftArm: 0, shiftRod: 0,
+                  // 整条内部通路的总长 / 记号间距 / 记号总数。密度那条判据
+                  // （gap 必须等于导线上的 42 / 64）就靠这三个数。
+                  total: 0, gap: 0, count: 0 };
     var phase = opts && opts.phase;
     if (phase == null) return stats;                   // 开关关着 → 一个记号都不画
     stats.phase = phase;
     if (!rec || !rec.segments || rec.segments.length < 2) return stats;
     var iL = rec.segments[0].i, iR = rec.segments[1].i;
     stats.iL = iL; stats.iR = iR;
-    if (Math.abs(iL) <= 1e-12 && Math.abs(iR) <= 1e-12) return stats;
 
     // 画成什么样式，由【导线上那两个开关】决定 —— 绕线不再自己画一种「只此一处」
     // 的橙色小球。导线上开「➡ 电流方向」就是红色箭头、开「⚡ 电子流动」就是琥珀
@@ -3732,6 +3746,137 @@
     var yTop = cylY + 0.6, yBot = cylY + cylH - 0.6;
     var sc = ctxScale(ctx);
     var rBall = 2.6 * Math.min(1, Math.max(0.62, sc));
+    var HELIX_A = (yBot - yTop) / 2, HELIX_MID = (yTop + yBot) / 2;
+    var BACK_ALPHA = 0.5;
+
+    // 触臂上的电流 = 【净流入滑片节点的量】= iL − iR。两个 segment 的方向约定
+    // 不同（seg0 是 A→S，seg1 是 S→B），所以是相减而不是相加：
+    //   A-C：iL = I、iR = 0  → I（电流从绕线进滑片，再经金属杆流向 C/D）
+    //   B-C：iL = 0、iR = −I → I（同一个 I，只是从右半段进来）
+    //   A-B：iL = I、iR = I  → 0（电流在滑片处从左边转到右边，不进出外部）
+    //   C-D：iL = iR = 0     → 0（电流只走金属杆，压根不碰绕线和触臂）
+    // 正值 = 从绕线流向滑片 ⇒ 画面上是【往上走】。
+    var iArm = iL - iR;
+    stats.iArm = iArm;
+    var rodEnd = opts && opts.rodEnd;
+    var rodT = (rodEnd === 'C') ? TERMINALS.rheostat[2]
+             : (rodEnd === 'D') ? TERMINALS.rheostat[3] : null;
+
+    // 四段的电流位移（px）。全部走 electronShift / currentShift —— 和导线
+    // 是同一个函数、同一个 phase，所以「每秒多少像素」天生一样。
+    stats.shiftL = currentShift(iL, phase);
+    stats.shiftR = currentShift(iR, phase);
+    stats.shiftArm = currentShift(iArm, phase);
+    stats.shiftRod = currentShift(iArm, phase);
+
+    // ============================================================
+    // 把「绕线左半 / 右半 / 触臂 / 金属杆」拼成【一条通路】
+    // ------------------------------------------------------------
+    // 🔴🔴 以前四段各画各的、各用 `Math.max(1, …)` 凑一个记号，于是：
+    //   ① 触臂只有 32px，那颗记号按 320px/s 在 32px 里来回跑 ⇒ 10 Hz 频闪；
+    //   ② 绕线里的记号按【水平跨度】折算个数（每 18px 一个），投影到螺旋上
+    //      只有 20px 的横向间隔，而导线上的箭头是 64px 一个 ⇒ 绕线里看着
+    //      密三倍。两条加起来，学生看到的正是「变阻器里的电流明显更快」。
+    // 拼成一条通路之后：记号沿【整条通路】按导线的间距均匀铺、按同一个位移
+    // 走 —— 进去几个出来几个，任何一段都不会自己加速，也不会自己变密。
+    // ============================================================
+    var P = [], total = 0, marks = [], coilDraw = [];
+    function push(x, y, d) {
+      var last = P[P.length - 1];
+      if (last) {
+        var dl = Math.hypot(x - last.x, y - last.y);
+        if (dl < 1e-9) { if (d != null) last.d = d; return; }
+        total += dl;
+      }
+      P.push({ x: x, y: y, s: total, d: (d == null ? 1 : d) });
+    }
+    function piece(name, pts) {
+      if (!pts || pts.length < 2) return 0;
+      var s0 = total;
+      for (var i = 0; i < pts.length; i++) push(pts[i].x, pts[i].y, pts[i].d);
+      var len = total - s0;
+      marks.push({ name: name, s0: s0, s1: total });
+      return len;
+    }
+    // 绕线：从 xa 到 xb 绕 n 圈，按弧长采样成一串折线点。
+    // d > 0 = 前半圈（朝向观察者），< 0 = 绕到背面（压淡一档画）。
+    function coilPts(xa, xb) {
+      var span = xb - xa, ad = Math.abs(span);
+      var n = Math.max(1, Math.round(ad / RHEO.flowPitch));
+      var steps = n * 16, out = [];
+      for (var i = 0; i <= steps; i++) {
+        var u = i / steps, th = 2 * Math.PI * n * u * (span < 0 ? -1 : 1);
+        out.push({ x: xa + span * u, y: HELIX_MID + HELIX_A * Math.sin(th),
+                   d: Math.cos(th) });
+      }
+      return out;
+    }
+    // flow > 0 = 从 xa 流向 xb；< 0 就把整段反过来铺（电流方向就是走线方向）
+    function coilPiece(name, xa, xb, flow) {
+      if (Math.abs(flow) <= 1e-12) return;
+      var pts = coilPts(flow >= 0 ? xa : xb, flow >= 0 ? xb : xa);
+      var len = piece(name, pts);
+      coilDraw.push({ pts: pts, len: len });
+      if (name === 'left') stats.pathL = len; else stats.pathR = len;
+    }
+    // 触臂：从绕线表面到金属杆（穿过滑片）。up = 电流从绕线流向滑片。
+    function armPts(up) {
+      var y0 = tipY, y1 = TERMINALS.rheostat[2].y;     // −26 = 金属杆的高度
+      var a = [], N = 8;
+      for (var i = 0; i <= N; i++) {
+        var u = i / N;
+        a.push({ x: sxNow, y: up ? (y0 + (y1 - y0) * u) : (y1 + (y0 - y1) * u), d: 1 });
+      }
+      return a;
+    }
+    function rodPts(fromX, toX) {
+      var a = [], N = 8;
+      for (var i = 0; i <= N; i++) a.push({ x: fromX + (toX - fromX) * i / N,
+                                            y: rodT.y, d: 1 });
+      return a;
+    }
+
+    var hasL = Math.abs(iL) > 1e-12, hasR = Math.abs(iR) > 1e-12;
+    var armActive = rodT && Math.abs(iArm) > 1e-12;
+    if (armActive) {
+      // 电流：绕线 → 触臂 → 金属杆 → 接线柱（iArm > 0），或者反过来。
+      var coilName = hasL ? 'left' : (hasR ? 'right' : null);
+      var up = iArm > 0;
+      var coilFor = function (name) {
+        if (name === 'left') coilPiece('left', cylX, sxNow, iL);
+        else if (name === 'right') coilPiece('right', sxNow, cylX + cylW, iR);
+      };
+      if (up) {
+        if (coilName) coilFor(coilName);
+        piece('arm', armPts(true));
+        piece('rod', rodPts(sxNow, rodT.x));
+      } else {
+        piece('rod', rodPts(rodT.x, sxNow));
+        piece('arm', armPts(false));
+        if (coilName) coilFor(coilName);
+      }
+    } else if (hasL && hasR) {
+      // A-B：整根绕线都接入，电流在滑片处从左半根穿到右半根（触臂不参与）。
+      if (iL >= 0) { coilPiece('left', cylX, sxNow, iL); coilPiece('right', sxNow, cylX + cylW, iR); }
+      else { coilPiece('right', sxNow, cylX + cylW, iR); coilPiece('left', cylX, sxNow, iL); }
+    } else if (hasL) {
+      coilPiece('left', cylX, sxNow, iL);
+    } else if (hasR) {
+      coilPiece('right', sxNow, cylX + cylW, iR);
+    }
+    if (total < 4 || !P.length) return stats;          // 一段都没通电
+
+    // 沿通路的弧长取点（含单位切向与前后判定）
+    function pointAt(s) {
+      s = ((s % total) + total) % total;
+      var lo = 0, hi = P.length - 1;
+      while (lo < hi - 1) { var m = (lo + hi) >> 1; if (P[m].s <= s) lo = m; else hi = m; }
+      var a = P[lo], b = P[hi], seg = Math.max(1e-6, b.s - a.s);
+      var t = Math.max(0, Math.min(1, (s - a.s) / seg));
+      return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t,
+               ux: (b.x - a.x) / seg, uy: (b.y - a.y) / seg,
+               d: a.d + (b.d - a.d) * t };
+    }
 
     ctx.save();
     ctx.translate(comp.x, comp.y);
@@ -3739,7 +3884,6 @@
 
     // 两种记号各画各的：小球 = 实心圆（琥珀），箭头 = drawWire 里那支红三角
     // （同一形状、同一朝向规则）—— 学生能把绕线里的箭头和导线上的箭头对上号。
-    // fillStyle / shadow 各自设，因为「两个开关都开」时同一帧要画两种。
     function dot(x, y, r) {
       ctx.fillStyle = PALETTE.flow;
       ctx.shadowColor = 'rgba(245,158,11,0.85)'; ctx.shadowBlur = 6;
@@ -3756,201 +3900,57 @@
       ctx.restore();
     }
 
-    // ── 绕线：电流路径 = 绕瓷管的一条【螺旋虚线】 ─────────────────
-    // 电阻丝是绕在瓷管上的，电流走的就是这条螺旋。侧视投影下它是一条正弦线：
-    // 前半圈落在管面上（看得见，斜向与画丝的那条斜线同向），后半圈绕到管子背面
-    // （压淡一档，读作「绕过去了」）。整条路径画成【虚线】，箭头沿虚线走 ——
-    // 学生一眼看出「电流是绕着电阻丝一圈圈绕的」，而不是「管子上撒了几个箭头」。
-    //
-    // 🔴 记号位置按【弧长】排，速度和导线用的是同一套（electronShift 返回的就是
-    //    px 位移）。上一版把记号钉死在各自那一圈的斜线上往复：斜线只有 25px 长，
-    //    320px/s 下 0.08 秒跑完一个来回 ⇒ 看着像高频抖动，比导线上的记号「快得多」。
-    //    路径拉长之后，同样的速度就正常了 —— 快慢是由【每秒多少像素】定的，
-    //    与路径长短无关，这条不能变。
-    var HELIX_A = (yBot - yTop) / 2, HELIX_MID = (yTop + yBot) / 2;
-    // 螺旋路径：从 x0 到 x1 绕 n 圈，按弧长采样成一串折线点。
-    // d > 0 = 前半圈（朝向观察者），< 0 = 绕到背面。
-    function helixOf(x0, x1) {
-      var span = x1 - x0;
-      var n = Math.max(1, Math.round(span / RHEO.flowPitch));
-      var SEG = 18;                                    // 每圈采样段数（够密，直线代弧）
-      var steps = n * SEG;
-      var pts = new Array(steps + 1), total = 0;
-      for (var i = 0; i <= steps; i++) {
-        var u = i / steps, th = 2 * Math.PI * n * u;
-        var x = x0 + span * u, y = HELIX_MID + HELIX_A * Math.sin(th);
-        if (i > 0) {
-          var dx = x - pts[i - 1].x, dy = y - pts[i - 1].y;
-          total += Math.sqrt(dx * dx + dy * dy);
-        }
-        pts[i] = { x: x, y: y, s: total, d: Math.cos(th) };
-      }
-      return { pts: pts, total: total };
-    }
-    // 弧长 d 处的点 + 单位切向 + 前后判定
-    function helixAt(h, d) {
-      var pts = h.pts, lo = 0, hi = pts.length - 1;
-      while (lo < hi - 1) {
-        var m = (lo + hi) >> 1;
-        if (pts[m].s <= d) lo = m; else hi = m;
-      }
-      var a = pts[lo], b = pts[hi];
-      var seg = Math.max(1e-6, b.s - a.s);
-      var t = Math.max(0, Math.min(1, (d - a.s) / seg));
-      return {
-        x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t,
-        ux: (b.x - a.x) / seg, uy: (b.y - a.y) / seg,
-        d: a.d + (b.d - a.d) * t,
-      };
-    }
-    // 后半圈的透明度。整条一样亮的话「绕过去」这件事就看不出来了。
-    var BACK_ALPHA = 0.5;
-    // 沿螺旋铺虚线。虚线是【路径本身】，不跟着电流动 —— 动的是上面的记号；
-    // 线也跟着动的话就分不清哪个是轨道、哪个是车了。
-    // 🔴 线要【够粗够亮】才压得住底下那片金属绕线（1:1 时线圈才 120px 宽，
-    //    1.5px / 0.62 的线在铜色底子上几乎看不见）。加一道暗描边把红线和
-    //    金属分开，不然红缝和线圈自己的暗缝混在一起。
-    function helixRail(h, col) {
-      var per = RHEO.railOn + RHEO.railOff;
+    // 绕线那段画成【螺旋虚线】的轨道：电流走的就是这条螺旋，虚线只是轨道，
+    // 不跟着电流动（跟着动就分不清哪个是轨道、哪个是车了）。
+    // 🔴 线要够粗够亮才压得住底下那片金属绕线；再加一道暗描边把红线和金属分开。
+    function rail(pts) {
+      var per = RHEO.railOn + RHEO.railOff, acc = 0, on = true, prev = pts[0];
       ctx.save();
-      ctx.strokeStyle = col;
+      ctx.strokeStyle = wantCur ? PALETTE.current : PALETTE.flow;
       ctx.lineWidth = 2.2; ctx.lineCap = 'round';
       ctx.shadowColor = 'rgba(15,23,42,0.45)'; ctx.shadowBlur = 2.5;
-      for (var d = 0; d < h.total; d += per) {
-        var d2 = Math.min(h.total, d + RHEO.railOn);
-        var q0 = helixAt(h, d), q1 = helixAt(h, d2);
-        var qm = helixAt(h, (d + d2) / 2);
-        ctx.globalAlpha = qm.d >= 0 ? 0.9 : 0.9 * BACK_ALPHA;
-        ctx.beginPath();
-        ctx.moveTo(q0.x, q0.y); ctx.lineTo(q1.x, q1.y);
-        ctx.stroke();
+      for (var i = 1; i < pts.length; i++) {
+        var q = pts[i], dl = Math.hypot(q.x - prev.x, q.y - prev.y);
+        acc += dl;
+        if (on) {
+          ctx.globalAlpha = ((prev.d + q.d) / 2 >= 0 ? 0.9 : 0.9 * BACK_ALPHA);
+          ctx.beginPath(); ctx.moveTo(prev.x, prev.y); ctx.lineTo(q.x, q.y); ctx.stroke();
+        }
+        if (acc >= (on ? RHEO.railOn : RHEO.railOff)) { acc = 0; on = !on; }
+        prev = q;
       }
       ctx.restore();
     }
-    // 返回这一帧真的画出去的记号数（0 = 这一段没通电）。
-    // key = 'L' / 'R'：把路径长度和位移记进 stats，供断言读（见 stats 的注释）。
-    function runCoil(x0, x1, flow, key) {
-      if (Math.abs(flow) <= 1e-12) return 0;
-      var span = x1 - x0;
-      if (span < 3) return 0;
-      var h = helixOf(x0, x1);
-      if (h.total < 6) return 0;
-      // 轨道用「这一帧在画的那种记号」的颜色：只开箭头就是红的，只开小球就是琥珀的。
-      if (wantCur) helixRail(h, PALETTE.current);
-      else if (wantEle) helixRail(h, PALETTE.flow);
-      // 记号个数沿用老口径「每 markGap 一个」（用户认过的疏密），只是位置改成沿
-      // 【弧长】均匀排布 —— 个数没变，路径变长了，每个记号的行程也就长了。
-      var n = Math.max(1, Math.round(span / RHEO.markGap));
-      var step = h.total / n;
-      // 小球和箭头各走各的相位（电子与电流本来就反向跑，两个都开时自然错开）。
-      var sE = electronShift(flow, phase), sC = currentShift(flow, phase);
-      stats['path' + key] = h.total;
-      stats['shift' + key] = sC;
+    coilDraw.forEach(function (c) { rail(c.pts); });
+
+    // 记号：间距取【导线上的那一个】（箭头 64 / 小球 42，见 drawWire），
+    // 沿整条通路均匀铺，位移用同一个函数。count 回填给 stats 供断言读。
+    function lay(gap, shift, draw) {
+      var n = Math.max(1, Math.round(total / gap));
+      var step = total / n;
       for (var i = 0; i < n; i++) {
-        if (wantEle) {
-          var qE = helixAt(h, ((i * step + sE) % h.total + h.total) % h.total);
-          ctx.globalAlpha = qE.d >= 0 ? 1 : BACK_ALPHA;
-          dot(qE.x, qE.y, rBall);
-        }
-        if (wantCur) {
-          var qC = helixAt(h, ((i * step + sC) % h.total + h.total) % h.total);
-          ctx.globalAlpha = qC.d >= 0 ? 1 : BACK_ALPHA;
-          arrow(qC.x, qC.y, Math.atan2(qC.uy, qC.ux) + (flow < 0 ? Math.PI : 0));
+        var s = ((i * step + shift) % total + total) % total;
+        var q = pointAt(s);
+        ctx.globalAlpha = q.d >= 0 ? 1 : BACK_ALPHA;
+        draw(q);
+        for (var k = 0; k < marks.length; k++) {
+          if (s >= marks[k].s0 && s < marks[k].s1) { stats[marks[k].name]++; break; }
         }
       }
       ctx.globalAlpha = 1;
       return n;
     }
-    stats.left  = runCoil(cylX, sxNow, iL, 'L');          // 左半段：A → 滑片
-    stats.right = runCoil(sxNow, cylX + cylW, iR, 'R');   // 右半段：滑片 → B
-
-    // 触臂那一段（绕线 → 滑片）。不做它的话，A-C 接法下电流跑到滑片就
-    // 「凭空消失」了 —— 学生看着电流进了滑片再没出来，比不画还糊涂。
-    //
-    // 触臂上的电流 = 【净流入滑片节点的量】= iL − iR。两个 segment 的方向约定
-    // 不同（seg0 是 A→S，seg1 是 S→B），所以是相减而不是相加：
-    //   A-C：iL = I、iR = 0  → I（电流从绕线进滑片，再经金属杆流向 C/D）
-    //   B-C：iL = 0、iR = −I → I（同一个 I，只是从右半段进来）
-    //   A-B：iL = I、iR = I  → 0（电流在滑片处从左边转到右边，不进出外部）
-    //   C-D：iL = iR = 0     → 0（电流只走金属杆，压根不碰绕线和触臂）
-    // 正值 = 从绕线流向滑片 ⇒ 画面上是【往上走】（tipY 在下、knobBottom 在上）。
-    // ⚠️ 这一段是【有向长度】：dir 记方向、span 记长度，两个都必须对。以前把两个
-    //    端点的先后写反过，span 恒为负 ⇒ 触臂上一条记号都画不出来，而且很隐蔽
-    //    （绕线里的记号照跑，只是跑到滑片就凭空消失）。
-    var iArm = iL - iR;
-    stats.iArm = iArm;
-    if (Math.abs(iArm) > 1e-12) {
-      var yFrom = tipY, yTo = RHEO.knobBottom;
-      var span2 = Math.abs(yTo - yFrom);
-      var dir = (yTo < yFrom) ? -1 : 1;
-      if (span2 > 3) {
-        var nA = Math.max(1, Math.round(span2 / RHEO.markGap));
-        var aStep = span2 / nA;
-        stats.arm = nA;
-        var aAng = (iArm > 0 ? -1 : 1) * Math.PI / 2;    // iArm > 0 = 往上走
-        var sE = electronShift(iArm, phase), sC = currentShift(iArm, phase);
-        stats.shiftArm = sC;
-        for (var ka = 0; ka < nA; ka++) {
-          if (wantEle) {
-            var dE = ((ka * aStep + sE) % span2 + span2) % span2;
-            dot(sxNow, yFrom + dir * dE, rBall * 0.82);
-          }
-          if (wantCur) {
-            var dC = ((ka * aStep + sC) % span2 + span2) % span2;
-            arrow(sxNow, yFrom + dir * dC, aAng);
-          }
-        }
-      }
+    // 通路本身就是【顺着电流方向】铺的，所以位移取正号的 |I|：
+    // currentShift(+|I|) 往前、electronShift(+|I|) 往后（电子逆着电流走）。
+    var Ipath = Math.abs(armActive ? iArm : (hasL ? iL : iR));
+    stats.total = total;
+    if (wantEle) {
+      stats.gap = 42; stats.count = lay(42, electronShift(Ipath, phase),
+        function (q) { dot(q.x, q.y, rBall); });
     }
-
-    // ── 金属杆：滑片到 C（左）/ D（右）那一段 ─────────────────────
-    // 内核里 C/D 与滑片是【同一节点】（金属杆是 0Ω 的短接线，压根不产生支路），
-    // 所以「金属杆上的电流」不在 rec.segments 里。它的唯一真值来自触臂那一段：
-    // 电流从绕线经触臂进滑片节点，再从【真的接了导线的那一端】流出 ——
-    // 大小就是 iArm，方向由「接了哪一端」定（terminalInjection 里
-    // `segs[0].i - segs[1].i` 那句注释说的就是这件事）。
-    //   A-C / B-C → 往左流到 C；A-D / B-D → 往右流到 D；
-    //   A-B（两端都没接）⇒ iArm = 0 ⇒ 这一段自然不画；
-    //   C-D ⇒ iArm 也是 0（绕线不接入），画面与内核一致。
-    // 哪一端接了导线由页面查 scene.wires 得出（opts.rodEnd: 'C' | 'D' | null）。
-    //
-    // 🔴🔴 这里必须传【真实电流 iArm】，不能传 ±1！electronShift 的速度是
-    //    `320·√(I/0.8)` 只跟电流大小有关 —— 传 ±1 的话 I 恒等于 1，
-    //    记号永远按【最大速度 320px/s】跑：0.32A 的回路里导线是 200px/s，
-    //    金属杆却是 320px/s（1.6 倍），小电流下差得更远（0.1A 时差 2.8 倍）。
-    //    症状很隐蔽 —— 方向是对的、位置也对，只有「快慢」不对。
-    //    iArm 的符号约定和原来那对 ±1 完全一致（正 = 从滑片流向接了线的那一端）。
-    var rodEnd = opts && opts.rodEnd;
-    if (rodEnd && Math.abs(iArm) > 1e-12) {
-      var rodT = (rodEnd === 'C') ? TERMINALS.rheostat[2] : TERMINALS.rheostat[3];
-      stats.rod = runRod(sxNow, rodT.x, iArm);
-    }
-
-    // 沿金属杆的一段（水平，x0 → x1，flow 的正方向 = 从 x0 到 x1）铺电流。
-    // 和绕线用同一套记号 —— 学生看到的应该是「同一股电流从绕线经触臂、金属杆
-    // 流到接线柱」，中间换一种画法就断了。
-    function runRod(x0, x1, flow) {
-      var len = Math.abs(x1 - x0);
-      if (len < 8) return 0;
-      var dir = (x1 >= x0) ? 1 : -1;
-      var n = Math.max(1, Math.round(len / RHEO.markGap));
-      var step = len / n;
-      var ang = (dir > 0 ? 0 : Math.PI) + (flow < 0 ? Math.PI : 0);
-      var sE = electronShift(flow, phase), sC = currentShift(flow, phase);
-      stats.shiftRod = sC;
-      var k = 0;
-      for (var i = 0; i < n; i++) {
-        if (wantEle) {
-          var dE = ((i * step + sE) % len + len) % len;
-          dot(x0 + dir * dE, rodT.y, rBall);
-        }
-        if (wantCur) {
-          var dC = ((i * step + sC) % len + len) % len;
-          arrow(x0 + dir * dC, rodT.y, ang);
-        }
-        k++;
-      }
-      return k;
+    if (wantCur) {
+      stats.gap = 64; stats.count = lay(64, currentShift(Ipath, phase),
+        function (q) { arrow(q.x, q.y, Math.atan2(q.uy, q.ux)); });
     }
     ctx.restore();
     return stats;

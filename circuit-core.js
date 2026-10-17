@@ -188,18 +188,27 @@
     ammeter: {
       label: '电流表', terminals: 3, termNames: ['-', '0.6', '3'],
       commonTerm: 0, rangeTaps: [1, 2], rangeValues: [0.6, 3],
-      // zeroed = 【调零】状态。默认 false = 未调零：真实的表拿到手第一件事
-      // 就是拧面板上那颗螺丝把指针拨到零刻度，没调零就读数是错的 —— 这是
-      // 课本「实验前要检查仪器」那句话的落地点，所以默认必须是【没调】的，
-      // 而不是替学生调好。调零只改指针的画法（见 drawMeter 的 ZERO_OFF），
-      // 不改求解出来的读数：读数本身是电路的事，调零是仪器的事。
-      defaults: { range: 0.6, rInternal: 0, zeroed: false },
+      // zeroed = 【调零】状态（指针此刻到底调没调）。调零只改指针的画法
+      // （见 drawMeter 的 ZERO_OFF）和示数，不改求解出来的读数：读数本身是
+      // 电路的事，调零是仪器的事。
+      //
+      // 🔴🔴 2026-10-17 用户第 3 点：默认改成【已调零】。老师上课要的是
+      //   「接上就有对的读数」，而不是每只表都得先点两下调零。
+      //   zeroMode 是面板上那一行三选一（on = 已调零 / off = 未调零 /
+      //   rand = 随机），它只是【怎么定 zeroed】的入口：
+      //     · on  → zeroed 恒 true；
+      //     · off → zeroed 恒 false；
+      //     · rand → 建这台表的那一刻掷一次硬币，结果写进 zeroed 并【冻住】
+      //              （每次渲染都重新掷的话，指针会一帧一个样）。
+      //   真正的判据永远只看 zeroed —— 求解器、警告、放大镜全走它，
+      //   不认 zeroMode，免得「面板上写已调零、指针却偏着」。
+      defaults: { range: 0.6, rInternal: 0, zeroed: true, zeroMode: 'on' },
     },
     voltmeter: {
       label: '电压表', terminals: 3, termNames: ['-', '3', '15'],
       commonTerm: 0, rangeTaps: [1, 2], rangeValues: [3, 15],
       // rInternal = null 表示理想电压表（完全开路、不分流，初中标准模型）
-      defaults: { range: 3, rInternal: null, zeroed: false },
+      defaults: { range: 3, rInternal: null, zeroed: true, zeroMode: 'on' },
     },
   };
 

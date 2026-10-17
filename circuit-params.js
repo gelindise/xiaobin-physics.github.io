@@ -30,6 +30,12 @@
 
   // ── 参数面板 ──────────────────────────────────────────────
   // 每类元件能调什么，写在这里；面板由它生成，不写死 HTML。
+  // 电表「调零」那一行：两只表共用同一份，改一处两处一起变。
+  // dflt = 'on'：老存档里没写 zeroMode 的（或者离屏工具手搓的 comp），
+  // 面板上要亮「已调零」—— 判据是 params.zeroed 的真值，不是这个键存不存在。
+  var ZERO_ROW = {k:'zeroMode', t:'pick', label:'调零', dflt:'on',
+                  options:[{v:'on', label:'已调零'}, {v:'off', label:'未调零'},
+                           {v:'rand', label:'随机'}]};
   var PARAM_UI = {
     // 定值电阻：滑条之外再给一个【数字输入框】（num:1）。
     // 用户第 6 点：阻值要能手动输入、而且可以是小数。
@@ -47,7 +53,9 @@
                  labels:{copper:'铜', manganin:'锰铜', constantan:'康铜', nichrome:'镍铬合金'}},
                 {k:'length', t:'range', label:'长度', unit:'m', min:0.2, max:2, step:0.1},
                 {k:'section', t:'range', label:'横截面积', unit:'mm²', min:0.1, max:2, step:0.05}],
-    battery:   [{k:'emf', t:'range', label:'电动势', unit:'V', min:1.5, max:7.5, step:1.5},
+    // 标签写「电源电压」不写「电动势」：画布和电路图上现在都标 U（用户第 2 点），
+    // 面板上再写 E 就是两套记号。键仍是 emf —— 内核语义，不动。
+    battery:   [{k:'emf', t:'range', label:'电源电压', unit:'V', min:1.5, max:7.5, step:1.5},
                 {k:'rInt', t:'range', label:'内阻', unit:'Ω', min:0, max:2, step:0.1},
                 // 「对调」不是一条能拧的数，是【把元件原地调个头】——所以它和
                 // 量程一样走按钮（t:'flip'），走的是 editor.flipComp()，
@@ -82,12 +90,19 @@
     // 走 t:'tap'（点一下把导线挪到那个柱子上），选项和柱号都取自内核的 TYPES，
     // 页面这边不再抄一份量程数值。
     ammeter:   [{k:'range', t:'tap', label:'量程', unit:'A'},
+                // 调零三选一（用户 2026-10-17 第 3 点）：默认【已调零】，
+                // 老师想讲「不调零读数不可信」就切到「未调零」，也可以选
+                // 「随机」—— 每台表建出来的时候掷一次硬币（结果冻在
+                // params.zeroed 里，不会一帧一个样）。
+                // 键是 zeroMode，真正生效的仍是 zeroed（见内核 TYPES 注释）。
+                ZERO_ROW,
                 // 数字示数【默认不显示】：真实的指针表就是靠读刻度盘的，
                 // 一上来就把数字印在表上，学生练的就不是「读数」而是「抄数字」。
                 // 参数面板里可以打开，开了以后表盘下方多一行数字 —— 用来
                 // 对照自己读得对不对，或者做练习模式时把答案显出来。
                 {k:'showValue', t:'check', wide:1, label:'在表盘上显示读数'}],
     voltmeter: [{k:'range', t:'tap', label:'量程', unit:'V'},
+                ZERO_ROW,
                 {k:'showValue', t:'check', wide:1, label:'在表盘上显示读数'},
                 // 「理想电压表不分流」是课本给初中生的简化模型，但它【不是真的】：
                 // 真实电压表有一份很大的内阻，接进电路就会偷走一点点电流。
