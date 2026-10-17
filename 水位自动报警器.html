@@ -1,0 +1,2670 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>虚拟物理实验 - 水位自动报警器（电磁继电器）</title>
+    <link rel="stylesheet" href="style.css">
+    <style>
+        :root {
+            --bg: #020617;
+            --line: rgba(148, 163, 184, .18);
+            --primary: #3b82f6;
+            --secondary: #06b6d4;
+            --accent: #8b5cf6;
+            --text: #f8fafc;
+            --muted: #94a3b8;
+        }
+
+        body {
+            font-family: 'Inter', 'Microsoft YaHei', 'Noto Sans SC', sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: var(--bg);
+            color: var(--text);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+            box-sizing: border-box;
+        }
+
+        body::before {
+            content: "";
+            position: fixed;
+            inset: 0;
+            z-index: -1;
+            pointer-events: none;
+            background:
+                radial-gradient(circle at 18% 22%, rgba(59, 130, 246, .16), transparent 42%),
+                radial-gradient(circle at 82% 68%, rgba(139, 92, 246, .14), transparent 44%),
+                radial-gradient(circle at 50% 100%, rgba(6, 182, 212, .10), transparent 55%);
+        }
+
+        .lab3d {
+            width: 100%;
+            max-width: 1600px;
+            margin: 8px auto 26px;
+            box-sizing: border-box;
+            overflow: hidden;
+            border: 1px solid rgba(56, 189, 248, .22);
+            border-radius: 18px;
+            background: linear-gradient(160deg, rgba(15, 23, 42, .92), rgba(2, 6, 23, .96));
+            color: #e2e8f0;
+            box-shadow: 0 26px 70px rgba(2, 6, 23, .6), 0 0 0 1px rgba(2, 6, 23, .8) inset;
+        }
+        .lab3d * { box-sizing: border-box; }
+        .lab3d-top {
+            display: flex; justify-content: space-between; gap: 15px; align-items: center;
+            padding: 17px 23px; border-bottom: 1px solid var(--line);
+            background: linear-gradient(90deg, rgba(59, 130, 246, .12), rgba(6, 182, 212, .05) 45%, transparent);
+        }
+        .lab3d-kicker { color: #22d3ee; font-size: 11px; font-weight: 800; letter-spacing: .2em; }
+        .lab3d-top h2 { margin: 3px 0 0; color: #f8fafc; font-size: 21px; letter-spacing: .02em; }
+        .lab3d-top p { margin: 4px 0 0; color: #94a3b8; font-size: 12px; }
+        .lab3d-status {
+            border: 1px solid rgba(34, 211, 238, .45); border-radius: 99px; padding: 6px 12px;
+            color: #67e8f9; font-size: 12px; white-space: nowrap; background: rgba(6, 182, 212, .08);
+        }
+        .lab3d-layout { display: grid; grid-template-columns: minmax(0, 1fr) 320px; }
+        .lab3d-main {
+            min-width: 0; padding: 15px 16px 16px;
+            background: radial-gradient(circle at 43% 36%, rgba(30, 64, 100, .55), rgba(8, 22, 36, .92) 62%, rgba(3, 10, 18, .96));
+        }
+        .lab3d-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; padding-bottom: 12px; }
+        .lab3d-toolbar .toolbar-label { color: #94a3b8; font-size: 12px; margin-right: 5px; }
+        .lab3d button {
+            padding: 7px 12px; border: 1px solid rgba(148, 163, 184, .25); border-radius: 8px;
+            background: rgba(30, 41, 59, .7); color: #cbd5e1; font-size: 12px; font-weight: 600;
+            box-shadow: none; transition: background .2s, border-color .2s, color .2s;
+            font-family: inherit; cursor: pointer;
+        }
+        .lab3d button:hover { transform: none; box-shadow: none; background: rgba(51, 65, 85, .85); }
+        .lab3d button.active {
+            background: rgba(59, 130, 246, .25); border-color: #38bdf8; color: #e0f2fe;
+            box-shadow: 0 0 14px rgba(56, 189, 248, .3);
+        }
+        .lab3d button:disabled { opacity: .42; cursor: not-allowed; }
+        .lab3d-toolbar .toolbar-spacer { flex: 1; }
+
+        .lab3d-stage {
+            position: relative; height: clamp(400px, 49vw, 580px);
+            border: 1px solid rgba(56, 189, 248, .2); border-radius: 12px; overflow: hidden;
+            background: #061423;
+        }
+        .lab3d-stage canvas {
+            display: block; width: 100%; height: 100%;
+            border: 0; border-radius: 0; box-shadow: none; background: transparent;
+            cursor: default; touch-action: none;
+        }
+        .lab3d-stage canvas.pick { cursor: ns-resize; }
+        .lab3d-stage .stage-hint {
+            position: absolute; top: 13px; left: 15px; pointer-events: none; font-size: 12px;
+            color: #bae6fd; background: rgba(2, 6, 23, .78); border: 1px solid rgba(56, 189, 248, .25);
+            padding: 7px 11px; border-radius: 8px;
+        }
+        .lab3d-stage .stage-hint b {
+            display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+            background: #22d3ee; vertical-align: 2px; margin-right: 6px; box-shadow: 0 0 8px #22d3ee;
+        }
+        .lab3d-stage .stage-bar {
+            position: absolute; left: 0; right: 0; bottom: 0;
+            display: flex; align-items: center; justify-content: space-between; gap: 10px;
+            padding: 0 12px 9px; pointer-events: none;
+        }
+        .lab3d-stage .stage-bar .wa-ctrls {
+            flex: none; pointer-events: auto; display: inline-flex; align-items: center; gap: 5px;
+            padding: 4px 5px; border-radius: 10px;
+            border: 1px solid rgba(148, 163, 184, .28); background: rgba(2, 6, 23, .86);
+        }
+        .lab3d-stage .stage-bar .wa-ctrls button {
+            padding: 5px 9px; border-radius: 7px; font-size: 11.5px; font-weight: 800;
+            border: 1px solid rgba(148, 163, 184, .3); background: rgba(30, 41, 59, .8); color: #cbd5e1;
+        }
+        .lab3d-stage .stage-bar .wa-ctrls button.on {
+            border-color: rgba(56, 189, 248, .85); background: rgba(56, 189, 248, .22); color: #e0f2fe;
+        }
+        .lab3d-stage .stage-bar .stage-help {
+            min-width: 0; pointer-events: none;
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+            color: #93b4c4; font-size: 11px; background: rgba(2, 6, 23, .72); padding: 6px 10px; border-radius: 7px;
+        }
+        .lab3d-stage .stage-flag {
+            position: absolute; left: 50%; transform: translateX(-50%); top: 58px;
+            pointer-events: none; font-size: 12px; font-weight: 700;
+            padding: 7px 14px; border-radius: 99px; opacity: 0; transition: opacity .25s;
+            background: rgba(239, 68, 68, .18); border: 1px solid rgba(248, 113, 113, .6); color: #fecaca;
+        }
+        .lab3d-stage .stage-flag.show { opacity: 1; }
+        .lab3d-foot {
+            display: flex; align-items: center; flex-wrap: wrap; gap: 12px 18px;
+            padding: 12px 3px 1px; font-size: 12px; color: #b6c8d4;
+        }
+        .lab3d-foot .legend { margin-left: auto; color: #8ba7b6; }
+        .lab3d-sidebar {
+            padding: 18px; color: #cbd5e1; border-left: 1px solid var(--line);
+            background: linear-gradient(180deg, rgba(15, 23, 42, .75), rgba(2, 6, 23, .6));
+        }
+        .lab3d-sidebar h3 { margin: 0 0 15px; color: #e2e8f0; font-size: 15px; letter-spacing: .05em; }
+        .lab3d-sidebar h3:not(:first-child) { margin-top: 22px; }
+        .lab3d-field { margin: 0 0 16px; }
+        .lab3d-field label, .lab3d-field .field-label {
+            display: flex; justify-content: space-between; gap: 8px; align-items: baseline;
+            color: #cbd5e1; font-size: 12px; font-weight: 700;
+        }
+        .lab3d-field output { color: #38bdf8; font-size: 13px; font-weight: 800; }
+        .lab3d-field input[type="range"] { display: block; width: 100%; margin: 11px 0 5px; }
+        .lab3d-field input[type="range"]::-webkit-slider-thumb { background: linear-gradient(135deg, #3b82f6, #22d3ee); }
+        .lab3d-field small { color: #64748b; font-size: 10px; line-height: 1.5; display: block; }
+        .lab3d-metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 12px; }
+        .lab3d-metric {
+            padding: 12px 13px; border: 1px solid rgba(56, 189, 248, .18); border-radius: 10px;
+            background: linear-gradient(160deg, rgba(30, 58, 95, .55), rgba(15, 23, 42, .6));
+        }
+        .lab3d-metric span { display: block; font-size: 11px; color: #9fb8c6; }
+        .lab3d-metric strong { display: block; margin-top: 4px; color: #e0f2fe; font-size: 17px; }
+        .lab3d-metric.ok strong { color: #6ee7b7; }
+        .lab3d-metric.bad strong { color: #fca5a5; }
+        .lab3d-metric.warn strong { color: #fcd34d; }
+        .lab3d-note { margin: 12px 0 0; color: #9fb8c6; font-size: 12px; line-height: 1.65; }
+        .lab3d-note b { color: #7dd3fc; }
+
+        .step-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
+        .step-list li {
+            display: flex; gap: 8px; align-items: flex-start;
+            padding: 8px 10px; border-radius: 9px; font-size: 12px; line-height: 1.5;
+            border: 1px solid rgba(148, 163, 184, .16); background: rgba(148, 163, 184, .05);
+            color: #a9bccc; transition: background .2s, border-color .2s, color .2s;
+        }
+        .step-list li i {
+            font-style: normal; flex: none; width: 16px; height: 16px; border-radius: 50%;
+            display: grid; place-items: center; font-size: 10px; font-weight: 800;
+            background: rgba(148, 163, 184, .18); color: #94a3b8; margin-top: 1px;
+        }
+        .step-list li.cur { border-color: rgba(56, 189, 248, .55); background: rgba(56, 189, 248, .10); color: #e0f2fe; }
+        .step-list li.cur i { background: #38bdf8; color: #052437; }
+        .step-list li.on { border-color: rgba(52, 211, 153, .5); background: rgba(16, 185, 129, .12); color: #d1fae5; }
+        .step-list li.on i { background: #10b981; color: #04231a; }
+
+        .law-list { margin: 0; padding: 0; list-style: none; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+        .law-list li {
+            display: flex; gap: 8px; align-items: flex-start;
+            padding: 9px 11px; border-radius: 9px; font-size: 12px; line-height: 1.55;
+            border: 1px solid rgba(148, 163, 184, .16); background: rgba(148, 163, 184, .05);
+            color: #b6c8d4; transition: background .2s, border-color .2s, color .2s;
+        }
+        .law-list li.on {
+            border-color: rgba(52, 211, 153, .5); background: rgba(16, 185, 129, .12); color: #d1fae5;
+        }
+        .law-list li i { font-style: normal; color: #64748b; flex: none; font-weight: 700; }
+        .law-list li.on i { color: #6ee7b7; }
+
+        .lab3d-btnrow { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 4px; }
+        .lab3d-btnrow button { width: 100%; }
+        .lab3d-btnrow button.primary {
+            border-color: rgba(56, 189, 248, .55); background: rgba(56, 189, 248, .16); color: #e0f2fe;
+        }
+
+        /* ===== 全屏（站内规矩：全屏目标 = 整个舞台，参数面板与底部控制带都在里面） ===== */
+        .lab3d-stage .stage-fs-btn {
+            position: absolute; top: 11px; right: 11px; z-index: 9;
+            display: inline-flex; align-items: center; gap: 5px; line-height: 1;
+            padding: 7px 11px; border-radius: 9px;
+            border: 1px solid rgba(148, 163, 184, .3); background: rgba(2, 6, 23, .86); color: #cbd5e1;
+            font-family: inherit; font-size: 11.5px; font-weight: 800; cursor: pointer;
+            transition: background .2s, border-color .2s, color .2s;
+        }
+        .lab3d-stage .stage-fs-btn:hover {
+            border-color: rgba(125, 211, 252, .7); background: rgba(15, 23, 42, .92); color: #e0f2fe;
+        }
+        .lab3d-stage .stage-fs-btn:focus-visible { outline: 2px solid rgba(125, 211, 252, .8); outline-offset: 2px; }
+        .lab3d-stage:fullscreen, .lab3d-stage:-webkit-full-screen {
+            width: 100%; height: 100%; border: 0; border-radius: 0; background: #050b18;
+        }
+
+        /* ===== 参数面板：可折叠，住在实验画面里 ===== */
+        .lab3d-stage .stage-params {
+            position: absolute; top: 52px; right: 11px; z-index: 8;
+            display: flex; flex-direction: column;
+            width: 300px; max-width: calc(100% - 22px); max-height: calc(100% - 118px);
+            border: 1px solid rgba(56, 189, 248, .3); border-radius: 12px;
+            background: rgba(2, 6, 23, .88);
+            -webkit-backdrop-filter: blur(9px); backdrop-filter: blur(9px);
+            box-shadow: 0 18px 44px rgba(2, 6, 23, .62);
+            color: #cbd5e1; text-align: left;
+        }
+        .lab3d-stage .stage-params.collapsed { width: auto; }
+        .lab3d-stage .stage-params.collapsed .params-body { display: none; }
+        .lab3d-stage .stage-params .params-head {
+            display: flex; align-items: center; justify-content: space-between; gap: 12px;
+            padding: 9px 12px; border-bottom: 1px solid rgba(148, 163, 184, .18); cursor: pointer;
+        }
+        .lab3d-stage .stage-params.collapsed .params-head { border-bottom: 0; padding: 8px 12px; }
+        .lab3d-stage .stage-params .params-title {
+            color: #7dd3fc; font-size: 12px; font-weight: 800; letter-spacing: .04em; white-space: nowrap;
+        }
+        .lab3d-stage .stage-params .params-toggle {
+            flex: none; padding: 4px 9px; border-radius: 7px; line-height: 1.25;
+            border: 1px solid rgba(56, 189, 248, .45); background: rgba(56, 189, 248, .16); color: #e0f2fe;
+            font-family: inherit; font-size: 11px; font-weight: 800; cursor: pointer;
+            transition: background .2s, border-color .2s;
+        }
+        .lab3d-stage .stage-params .params-toggle:hover {
+            border-color: rgba(125, 211, 252, .8); background: rgba(56, 189, 248, .26);
+        }
+        .lab3d-stage .stage-params .params-body {
+            overflow-y: auto; overscroll-behavior: contain; touch-action: pan-y;
+            padding: 0 13px 15px; scrollbar-width: thin;
+        }
+        .lab3d-stage .stage-params .params-body::-webkit-scrollbar { width: 8px; }
+        .lab3d-stage .stage-params .params-body::-webkit-scrollbar-thumb {
+            background: rgba(148, 163, 184, .35); border-radius: 99px;
+        }
+        .lab3d-stage .stage-params h4 {
+            margin: 14px 0 10px; padding-top: 11px; border-top: 1px solid rgba(148, 163, 184, .14);
+            color: #7dd3fc; font-size: 12px; font-weight: 800; letter-spacing: .05em;
+        }
+        .lab3d-stage .stage-params h4:first-child { margin-top: 12px; padding-top: 0; border-top: 0; }
+        .lab3d-stage .stage-params .params-checks {
+            display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 10px;
+        }
+        .lab3d-stage .stage-params .params-checks label {
+            display: inline-flex; align-items: center; gap: 6px; color: #cbd5e1;
+            font-size: 11.5px; cursor: pointer;
+        }
+        .lab3d-stage .stage-params .params-checks input { accent-color: #22d3ee; margin: 0; flex: none; }
+        .lab3d-stage .stage-params .lab3d-field:last-child { margin-bottom: 4px; }
+
+        @media (max-width: 900px) {
+            .lab3d-layout { grid-template-columns: minmax(0, 1fr); }
+            .lab3d-sidebar { border-left: 0; border-top: 1px solid var(--line); }
+        }
+        @media (max-width: 620px) {
+            body { padding-left: 10px; padding-right: 10px; }
+            .lab3d { border-radius: 14px; }
+            .lab3d-top { padding: 15px; }
+            .lab3d-top h2 { font-size: 17px; }
+            .lab3d-status { display: none; }
+            .lab3d-main { padding: 10px; }
+            .lab3d-toolbar { gap: 6px; }
+            .lab3d-toolbar .toolbar-label, .lab3d-toolbar .toolbar-spacer { display: none; }
+            .lab3d-toolbar button { padding: 6px 9px; font-size: 11px; }
+            /* 窄屏：舞台高度按画面宽高比（1440:726）收，否则上下各留 60+ px 黑边 */
+            .lab3d-stage { height: 240px; }
+            .lab3d-stage .stage-hint { display: none; }
+            .lab3d-stage .stage-help { display: none; }
+            /* 报警横幅挪到底部：窄屏右上角被参数面板占着，放顶上会互相盖住 */
+            .lab3d-stage .stage-flag { top: auto; bottom: 60px; font-size: 11px; padding: 5px 11px; }
+            .lab3d-stage .wa-ctrls button { padding: 5px 8px; font-size: 11px; }
+            .lab3d-stage .stage-fs-btn { padding: 6px 9px; font-size: 11px; }
+            .lab3d-stage .stage-fs-btn .lbl { display: none; }
+            .lab3d-stage .stage-params {
+                top: 46px; right: 8px; width: min(282px, 88%); max-height: calc(100% - 104px);
+            }
+            .lab3d-sidebar { padding: 16px; }
+            .lab3d-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+            .law-list { grid-template-columns: minmax(0, 1fr); }
+        }
+    </style>
+</head>
+<body>
+
+<section class="lab3d" aria-label="水位自动报警器">
+  <div class="lab3d-top">
+    <div>
+      <div class="lab3d-kicker">ELECTROMAGNETIC RELAY LAB · 电磁继电器</div>
+      <h2>水位自动报警器 · 电磁继电器的应用</h2>
+      <p>水位升高淹没电极 A、B → 控制电路接通 → 电磁铁吸下衔铁 → 触点切换 → 红灯亮起报警</p>
+    </div>
+    <span class="lab3d-status">● 实时物理模拟</span>
+  </div>
+
+  <div class="lab3d-layout">
+    <div class="lab3d-main">
+      <div class="lab3d-toolbar" role="group" aria-label="显示选项">
+        <span class="toolbar-label">画面</span>
+        <button type="button" class="active" id="wa-show-anno">标注</button>
+        <button type="button" class="active" id="wa-show-current">电流</button>
+        <button type="button" class="active" id="wa-show-field">磁场</button>
+        <button type="button" class="active" id="wa-show-scale">水位刻度</button>
+        <span class="toolbar-spacer"></span>
+        <button type="button" id="wa-reset-view">↺ 复位装置</button>
+      </div>
+
+      <div class="lab3d-stage" id="wa-stage">
+        <canvas id="wa-canvas" aria-label="水位自动报警器二维剖面：左侧玻璃水槽与电极，中间电磁继电器，右侧绿灯与红灯"></canvas>
+        <div class="stage-hint" id="wa-stagehint"><b></b>拖动水面可改变水位 · 拖动电极 A 可改报警水位</div>
+        <div class="stage-flag" id="wa-flag">水位超限 · 红灯报警</div>
+
+        <button type="button" class="stage-fs-btn" id="wa-fs" title="全屏显示实验画面" aria-label="全屏显示实验画面">
+          <svg class="fs-expand" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"/></svg>
+          <svg class="fs-compress" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:none"><path stroke-linecap="round" stroke-linejoin="round" d="M8 3v3a2 2 0 01-2 2H3m18 0h-3a2 2 0 01-2-2V3m0 18v-3a2 2 0 012-2h3M3 16h3a2 2 0 012 2v3"/></svg>
+          <span class="lbl">全屏</span>
+        </button>
+
+        <aside class="stage-params collapsed" id="wa-params" aria-label="实验参数调节面板">
+          <div class="params-head" id="wa-params-head">
+            <span class="params-title">⚙ 实验参数</span>
+            <button type="button" class="params-toggle" id="wa-params-toggle"
+                    aria-expanded="false" aria-controls="wa-params-body">▸ 展开</button>
+          </div>
+          <div class="params-body" id="wa-params-body">
+            <h4>水位</h4>
+            <div class="lab3d-field">
+              <label for="wa-h">当前水位 <output id="wa-h-v">35%</output></label>
+              <input id="wa-h" type="range" min="0" max="100" value="35" step="0.5">
+              <small>也可以直接在画面里<b style="color:#7dd3fc">拖动水面</b>。水位超过电极 A 的下端，控制电路才接通</small>
+            </div>
+            <div class="lab3d-field">
+              <label for="wa-ha">电极 A 高度（报警水位）<output id="wa-ha-v">62%</output></label>
+              <input id="wa-ha" type="range" min="45" max="88" value="62" step="1">
+              <small>画面里也能<b style="color:#7dd3fc">上下拖动电极 A</b>。A 越矮，水要涨得越高才报警</small>
+            </div>
+
+            <h4>控制电路</h4>
+            <div class="lab3d-field">
+              <label for="wa-u">电源电压 <output id="wa-u-v">6.0 V</output></label>
+              <input id="wa-u" type="range" min="3" max="12" value="6" step="0.5">
+              <small>电压低 ⇒ 电流小 ⇒ 电磁铁吸力不足，衔铁吸不下来</small>
+            </div>
+            <div class="lab3d-field">
+              <label for="wa-n">线圈匝数 <output id="wa-n-v">800 匝</output></label>
+              <input id="wa-n" type="range" min="300" max="1400" value="800" step="50">
+              <small>匝数越多、同样电流下磁性越强</small>
+            </div>
+            <div class="lab3d-field">
+              <label for="wa-water">水的导电性 <output id="wa-water-v">中等（自来水）</output></label>
+              <input id="wa-water" type="range" min="0" max="2" value="1" step="1">
+              <small>纯净水几乎不导电；水越「脏」，电极之间的电阻越小、电流越大</small>
+            </div>
+            <div class="lab3d-field">
+              <label for="wa-spring">弹簧拉力 <output id="wa-spring-v">0.55</output></label>
+              <input id="wa-spring" type="range" min="0.30" max="2.00" value="0.55" step="0.01">
+              <small>弹簧太硬，电流再大也吸不下来；太软，断电后衔铁复位无力</small>
+            </div>
+
+            <h4>自动演示</h4>
+            <div class="lab3d-field">
+              <label for="wa-speed">水位变化速度 <output id="wa-speed-v">1.0×</output></label>
+              <input id="wa-speed" type="range" min="0.3" max="3" value="1" step="0.1">
+            </div>
+
+            <h4>显示</h4>
+            <div class="params-checks">
+              <label><input id="wa-c-anno" type="checkbox" checked>器材标注</label>
+              <label><input id="wa-c-current" type="checkbox" checked>电流粒子</label>
+              <label><input id="wa-c-field" type="checkbox" checked>磁感线</label>
+              <label><input id="wa-c-scale" type="checkbox" checked>水位刻度</label>
+            </div>
+          </div>
+        </aside>
+
+        <div class="stage-bar">
+          <div class="wa-ctrls">
+            <button type="button" id="wa-fill">▶ 注水</button>
+            <button type="button" id="wa-drain">◀ 排水</button>
+            <button type="button" id="wa-stop">⏸ 停</button>
+            <button type="button" id="wa-reset">↺ 复位</button>
+          </div>
+          <div class="stage-help">拖动水面改水位 · 拖动电极 A 改报警水位 · 全屏里也能操作</div>
+        </div>
+      </div>
+
+      <div class="lab3d-foot">
+        <span style="color:#8ba7b6">参数都在实验画面右上角的「⚙ 实验参数」面板里（默认收起，点一下展开）</span>
+        <span class="legend">控制电路：青蓝导线 · 工作电路：琥珀导线</span>
+      </div>
+
+      <div class="lab3d-metrics" aria-live="polite">
+        <div class="lab3d-metric"><span>水位 / 报警水位</span><strong id="wa-m-h">—</strong></div>
+        <div class="lab3d-metric" id="wa-m-c1"><span>控制电路</span><strong id="wa-m-i">—</strong></div>
+        <div class="lab3d-metric" id="wa-m-c2"><span>电磁铁吸力 / 弹簧拉力</span><strong id="wa-m-f">—</strong></div>
+        <div class="lab3d-metric" id="wa-m-c3"><span>工作电路</span><strong id="wa-m-w">—</strong></div>
+      </div>
+
+      <ul class="law-list" style="margin-top:12px">
+        <li id="wa-c1"><i>①</i><span>水位淹没 A、B，水把控制电路接通</span></li>
+        <li id="wa-c2"><i>②</i><span>电磁铁通电产生磁性，把衔铁吸下来</span></li>
+        <li id="wa-c3"><i>③</i><span>衔铁带动动触点，从上触点切换到下触点</span></li>
+        <li id="wa-c4"><i>④</i><span>绿灯灭、红灯亮——低电压控制高电压报警</span></li>
+      </ul>
+    </div>
+
+    <aside class="lab3d-sidebar">
+      <h3>实验步骤</h3>
+      <ol class="step-list" id="wa-steps"></ol>
+
+      <h3>现象提示</h3>
+      <p class="lab3d-note" id="wa-verdict" style="margin-top:0"><b>现在：</b>水位低于电极 A 的下端，A、B 之间被空气隔开，控制电路是断开的，电磁铁没有磁性，衔铁被弹簧拉住，动触点压在上面的静触点上——绿灯亮，表示水位正常。</p>
+
+      <div class="lab3d-btnrow" style="margin-top:18px">
+        <button type="button" class="primary" id="wa-demo">🌊 自动涨水演示</button>
+        <button type="button" id="wa-reset2">↺ 重做实验</button>
+      </div>
+      <small style="color:#64748b;font-size:10px;display:block;margin-top:8px;line-height:1.5">
+        自动涨水会让水位缓慢上升，观察「水刚碰到电极 A 时继电器不一定动作」——要淹到一定深度、
+        电流够大，衔铁才会「啪」地吸下去。
+      </small>
+
+      <h3 style="margin-top:22px">为什么会这样</h3>
+      <p class="lab3d-note" style="margin-top:0">
+        电磁继电器的本质是<b>用一个小电流去控制另一个电路</b>：<br>
+        ① 水位是「开关」——水导电，淹到 A 就把控制电路闭合；<br>
+        ② 控制电路里只有<b>低压小电流</b>，人碰水槽也安全；<br>
+        ③ 这个电流流过线圈，铁芯被磁化，吸力大于弹簧拉力时衔铁被吸下；<br>
+        ④ 衔铁一动，动触点就<b>从上触点跳到下触点</b>，工作电路从绿灯切到红灯。<br>
+        所以报警用的高电压、大电流完全不经过水槽——这正是继电器「<b>低电压控制高电压</b>」的意义。
+      </p>
+    </aside>
+  </div>
+</section>
+
+<script src="protect.js"></script>
+<script>
+/* ============================================================================
+ * 水位自动报警器 · 2D 侧视剖面
+ * ----------------------------------------------------------------------------
+ * 一个画面里同时呈现三件事：
+ *   ① 水槽里水位在变（水淹到电极 A 才导通）；
+ *   ② 中间继电器里衔铁被吸下 / 被弹簧拉回（含撞击弹跳）；
+ *   ③ 右侧工作电路从绿灯切到红灯（动触点先离上触点、再碰下触点）。
+ *
+ * 物理链条（全部走同一份真值，画出去的和读数读的是同一个 state）：
+ *   水位 h → 浸没深度 d → 水电阻 R_w(d) → 控制电流 I = U/(R_c+R_w+R_line)
+ *          → 安匝 NI = N·I → 吸力 F_mag(x) = (NI/NI0)²/(1-0.8x)²
+ *          → 与弹簧力 F_s(x) = FS0 + k·x 比较 → 衔铁位移 x（二阶动力学）
+ *          → 触点位置 → 工作电路通断 → 灯泡亮度（一阶热惯性）
+ * ========================================================================== */
+(function () {
+  'use strict';
+
+  var cv = document.getElementById('wa-canvas');
+  var ctx = cv.getContext('2d');
+  var stage = document.getElementById('wa-stage');
+
+  /* ---------------- 世界坐标（逻辑像素，等比缩放居中） ---------------- */
+  var W = 1440, H = 800;
+
+  /* 水槽 */
+  var TANK = { x: 58, y: 176, w: 344, h: 544, wall: 11, r: 16 };
+  var T_IN = { x: TANK.x + TANK.wall, y: TANK.y + TANK.wall,
+               w: TANK.w - TANK.wall * 2, h: TANK.h - TANK.wall * 2 };
+  var WL_BOTTOM = TANK.y + TANK.h - TANK.wall - 5;     // 724：水位 0%
+  var WL_TOP    = TANK.y + TANK.wall + 46;             // 233：水位 100%
+  var WL_SPAN   = WL_BOTTOM - WL_TOP;                  // 491
+  var CM        = WL_SPAN / 24.6;                      // ≈20 px / cm（水深 24.6 cm）
+
+  /* 电极 */
+  var EL_W = 28;
+  var AX = 150, BX = 296;            // A / B 电极中心 x
+  var EL_TOP = 148;                  // 电极顶端（槽口以上）
+  var B_BOT = 690;                   // B 电极下端（接近槽底，常浸没）
+
+  /* 继电器 */
+  var CORE_X = 760, CORE_W = 44, CORE_TOP = 366, CORE_BOT = 656;
+  var COIL_TOP = 400, COIL_BOT = 598, COIL_RX = 50, COIL_RY = 9;
+  var AR_PIVOT = { x: 668, y: 340 };  // 衔铁支点
+  var AR_LEFT = 646, AR_RIGHT = 890;
+  var AR_STROKE = 26;                 // 衔铁右端行程（px）
+  var SPR_TOP = 236, SPR_X = 880;     // 弹簧上端固定点
+  var CON_MOV_Y0 = 368;               // 动触点中心（未吸合）
+  var CON_UP_Y = 357.5;               // 上静触点中心
+  var CON_DN_Y = 404;                 // 下静触点中心
+  var CON_X = 891;                    // 触点块中心 x
+  var CON_W = 33, CON_H = 10;
+
+  /* 控制电路电源 */
+  var BAT1 = { x: 492, y: 664, w: 116, h: 56 };
+
+  /* 工作电路 */
+  var BOARD = { x: 1032, y: 228, w: 348, h: 492 };
+  var LAMP_G = { x: 1200, y: 280, r: 36, col: [34, 197, 94], colHot: [190, 255, 214] };
+  var LAMP_R = { x: 1200, y: 480, r: 36, col: [239, 68, 68], colHot: [255, 205, 195] };
+  var BAT2 = { x: 1058, y: 664, w: 126, h: 56 };
+  var RAIL_X = 1340;
+
+  /* ---------------- 参数与状态 ---------------- */
+  var params = {
+    h: 0.35,          // 水位 0..1
+    hA: 0.62,         // 电极 A 高度（对应报警水位）
+    u: 6.0,           // 控制电压 V
+    n: 800,           // 线圈匝数
+    water: 1,         // 水质档 0/1/2
+    spring: 0.55,     // 弹簧预紧力
+    speed: 1.0        // 自动升降速度倍率
+  };
+
+  var state = {
+    t: 0,
+    h: params.h,
+    auto: 0,          // +1 注水 / -1 排水 / 0 停
+    // 衔铁
+    x: 0,             // 0 = 释放（上触点），1 = 吸合（下触点）
+    v: 0,
+    // 电学
+    I: 0,             // 控制电流 A
+    Iw: 0,            // 工作电流 A
+    contact: 'up',    // 'up' | 'mid' | 'down'
+    lampG: 0, lampR: 0,
+    spark: 0,         // 触点切换亮闪计时
+    splash: 0,        // 入水溅花强度
+    // 视觉
+    w: 300, hh: 150, dpr: 1,
+    dirty: true,
+    renderCount: 0,
+    phase: 0
+  };
+
+  var view = { k: 1, ox: 0, oy: 0 };
+  var VIEW_Y0 = 80, VIEW_H = 726;
+  var show = { anno: true, current: true, field: true, scale: true };
+
+  /* ---------------- 工具 ---------------- */
+  function el(id) { return document.getElementById(id); }
+  function clamp(v, a, b) { return v < a ? a : (v > b ? b : v); }
+  function lerp(a, b, t) { return a + (b - a) * t; }
+
+  function rr(c, x, y, w, h, r) {
+    r = Math.min(r, Math.abs(w) / 2, Math.abs(h) / 2);
+    c.beginPath();
+    c.moveTo(x + r, y);
+    c.lineTo(x + w - r, y);
+    c.quadraticCurveTo(x + w, y, x + w, y + r);
+    c.lineTo(x + w, y + h - r);
+    c.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+    c.lineTo(x + r, y + h);
+    c.quadraticCurveTo(x, y + h, x, y + h - r);
+    c.lineTo(x, y + r);
+    c.quadraticCurveTo(x, y, x + r, y);
+    c.closePath();
+  }
+
+  function poly(pts) {
+    ctx.beginPath();
+    ctx.moveTo(pts[0][0], pts[0][1]);
+    for (var i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+  }
+
+  /* 折线路径的弧长参数化（电流粒子沿它走） */
+  function makePath(pts) {
+    var seg = [], total = 0;
+    for (var i = 1; i < pts.length; i++) {
+      var dx = pts[i][0] - pts[i - 1][0], dy = pts[i][1] - pts[i - 1][1];
+      var L = Math.hypot(dx, dy);
+      seg.push({ a: pts[i - 1], b: pts[i], L: L, s0: total });
+      total += L;
+    }
+    return { pts: pts, seg: seg, total: total };
+  }
+  function atPath(p, u) {
+    var s = clamp(u, 0, 1) * p.total;
+    for (var i = 0; i < p.seg.length; i++) {
+      var g = p.seg[i];
+      if (s <= g.s0 + g.L || i === p.seg.length - 1) {
+        var f = g.L > 0.001 ? (s - g.s0) / g.L : 0;
+        return [lerp(g.a[0], g.b[0], f), lerp(g.a[1], g.b[1], f)];
+      }
+    }
+    return p.pts[p.pts.length - 1];
+  }
+
+  /* ---------------- 几何真值（画面与读数共用） ---------------- */
+  function waterY(h) { return WL_BOTTOM - (h === undefined ? state.h : h) * WL_SPAN; }
+
+  function electrodeA() {
+    // hA ∈ [0.45,0.88] → A 电极下端 y
+    return WL_BOTTOM - params.hA * WL_SPAN;
+  }
+
+  /* 电极 A 被水淹没的深度（cm）；水面在 A 下端之上为正 */
+  function immersedCm() {
+    var ya = electrodeA();
+    var d = (ya - waterY()) / CM;
+    return d > 0 ? d : 0;
+  }
+
+  /* 水的等效电阻：浸没越深接触面积越大、电阻越小；刚碰到时接触极差 ⇒ 近似断路 */
+  function waterR() {
+    var d = immersedCm();
+    if (d < 0.12) return Infinity;
+    var k = [2.6, 1.0, 0.45][params.water];   // 弱 / 中 / 强 导电性
+    // d0 = 1.6 cm：刚淹 0.2~0.3 cm 时水电阻还很大（接触面积小），要淹到约 2 cm 才够电流
+    return 45 * k / (1 + Math.pow(d / 1.6, 1.6));
+  }
+
+  var R_COIL = 8, R_LINE = 1;
+
+  function controlCurrent() {
+    var rw = waterR();
+    if (!isFinite(rw)) return 0;
+    return params.u / (R_COIL + rw + R_LINE);
+  }
+
+  /* 归一化吸力：NI0 = 220 安匝是「刚好吸合」的参考值 */
+  function magForce(I, x) {
+    var ni = params.n * I;
+    var gap = 1 - 0.80 * clamp(x, 0, 1);        // 1 → 0.2（气隙越吸越小）
+    return 0.9 * Math.pow(ni / 220, 2) / (gap * gap);
+  }
+  function springForce(x) { return params.spring + 0.9 * clamp(x, 0, 1); }
+
+  /* 衔铁动力学：二阶 + 限位弹跳（吸合与释放都有「啪」的一下） */
+  var ARM_M = 0.0025, ARM_C = 0.055;
+  function stepArm(dt) {
+    var F = magForce(state.I, state.x) - springForce(state.x);
+    var a = (F - ARM_C * state.v) / ARM_M;
+    state.v += a * dt;
+    state.x += state.v * dt;
+    if (state.x < 0) { state.x = 0; if (state.v < 0) state.v = -state.v * 0.28; }
+    if (state.x > 1) { state.x = 1; if (state.v > 0) state.v = -state.v * 0.28; }
+    if (state.x <= 0.0001 && Math.abs(state.v) < 0.02) { state.x = 0; state.v = 0; }
+    if (state.x >= 0.9999 && Math.abs(state.v) < 0.02) { state.x = 1; state.v = 0; }
+  }
+
+  function contactOf(x) { return x < 0.14 ? 'up' : (x > 0.86 ? 'down' : 'mid'); }
+
+  /* ---------------- 视图 ---------------- */
+  function resize() {
+    var r = stage.getBoundingClientRect();
+    var dpr = Math.min(window.devicePixelRatio || 1, 2);
+    var cw = Math.max(1, Math.round(r.width * dpr));
+    var ch = Math.max(1, Math.round(r.height * dpr));
+    if (cv.width !== cw || cv.height !== ch) { cv.width = cw; cv.height = ch; }
+    state.w = r.width; state.hh = r.height; state.dpr = dpr;
+    // 【可视窗口】世界顶部 0..62 是空背景，裁掉后画面能放大约 8%（高度是瓶颈）
+    var k = Math.min(cw / W, ch / VIEW_H);
+    view.k = k;
+    view.ox = (cw - W * k) / 2;
+    view.oy = (ch - VIEW_H * k) / 2 - VIEW_Y0 * k;
+  }
+
+  /* ---------------- 物理主步 ---------------- */
+  var ACC = 0, FIXED = 1 / 240;
+  function step(dt) {
+    state.t += dt;
+    state.phase += dt;
+
+    // 水位自动升降
+    if (state.auto !== 0) {
+      var dh = 0.115 * params.speed * dt * state.auto;
+      state.h = clamp(state.h + dh, 0, 1);
+      if (state.h <= 0 && state.auto < 0) state.auto = 0;
+      if (state.h >= 1 && state.auto > 0) state.auto = 0;
+      params.h = state.h;
+      syncWaterSlider();
+    }
+
+    // 电学
+    state.I = controlCurrent();
+
+    // 衔铁（定步长，保证不同帧率下动作一致）
+    ACC += dt;
+    var guard = 0;
+    while (ACC >= FIXED && guard++ < 40) { stepArm(FIXED); ACC -= FIXED; }
+
+    // 触点
+    var c = contactOf(state.x);
+    if (c !== state.contact) {
+      if (c === 'mid' || state.contact === 'mid') state.spark = 1;  // 离开/碰上那一下闪一下
+      state.contact = c;
+    }
+
+    // 工作电路
+    state.Iw = state.contact === 'down' ? 0.25 : (state.contact === 'up' ? 0.25 : 0);
+
+    // 灯泡热惯性
+    var tg = state.contact === 'up' ? 1 : 0;
+    var tr = state.contact === 'down' ? 1 : 0;
+    state.lampG += (tg - state.lampG) * Math.min(1, dt / (tg > state.lampG ? 0.09 : 0.16));
+    state.lampR += (tr - state.lampR) * Math.min(1, dt / (tr > state.lampR ? 0.09 : 0.16));
+
+    if (state.spark > 0) state.spark = Math.max(0, state.spark - dt / 0.09);
+    if (state.splash > 0) state.splash = Math.max(0, state.splash - dt / 0.5);
+  }
+
+  /* ============================================================
+   * 绘制
+   * ============================================================ */
+  var FONT = "'Inter','Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif";
+  var TABLE_Y = 720;
+
+  function surfY(x) {
+    var yw = waterY();
+    var amp = 1.5 + state.splash * 4.5;
+    return yw + Math.sin(x * 0.043 + state.phase * 1.9) * amp * 0.62
+              + Math.sin(x * 0.117 - state.phase * 2.7) * amp * 0.38;
+  }
+
+  /* ---------- 背景：墙面 + 实验台 ---------- */
+  function drawBG() {
+    var g = ctx.createLinearGradient(0, -300, 0, TABLE_Y);
+    g.addColorStop(0, '#0c1c2e');
+    g.addColorStop(0.45, '#112741');
+    g.addColorStop(1, '#0b1d30');
+    ctx.fillStyle = g;
+    ctx.fillRect(-600, -400, W + 1200, TABLE_Y + 400);
+
+    // 墙面柔光
+    var rg = ctx.createRadialGradient(700, 300, 40, 700, 360, 760);
+    rg.addColorStop(0, 'rgba(56,189,248,.085)');
+    rg.addColorStop(1, 'rgba(56,189,248,0)');
+    ctx.fillStyle = rg;
+    ctx.fillRect(-600, -400, W + 1200, TABLE_Y + 400);
+
+    // 台面
+    var g2 = ctx.createLinearGradient(0, TABLE_Y, 0, TABLE_Y + 260);
+    g2.addColorStop(0, '#1b3047');
+    g2.addColorStop(0.16, '#132538');
+    g2.addColorStop(1, '#040a12');
+    ctx.fillStyle = g2;
+    ctx.fillRect(-600, TABLE_Y, W + 1200, 500);
+
+    // 台面前沿高光
+    var g3 = ctx.createLinearGradient(0, TABLE_Y - 4, 0, TABLE_Y + 6);
+    g3.addColorStop(0, 'rgba(125,211,252,0)');
+    g3.addColorStop(0.5, 'rgba(148,214,255,.30)');
+    g3.addColorStop(1, 'rgba(125,211,252,0)');
+    ctx.fillStyle = g3;
+    ctx.fillRect(-600, TABLE_Y - 4, W + 1200, 10);
+
+    // 台面细纹
+    ctx.strokeStyle = 'rgba(148,197,253,.045)';
+    ctx.lineWidth = 1;
+    for (var i = 1; i < 9; i++) {
+      ctx.beginPath();
+      ctx.moveTo(-600, TABLE_Y + i * i * 3.2);
+      ctx.lineTo(W + 600, TABLE_Y + i * i * 3.2);
+      ctx.stroke();
+    }
+  }
+
+  /* ---------- 接地软阴影 ---------- */
+  function groundShadow(cx, w, a) {
+    var g = ctx.createRadialGradient(cx, TABLE_Y + 2, 4, cx, TABLE_Y + 2, w);
+    g.addColorStop(0, 'rgba(0,0,0,' + (a || 0.5) + ')');
+    g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.save();
+    ctx.translate(0, 0);
+    ctx.scale(1, 0.13);
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(cx, (TABLE_Y + 2) / 0.13, w, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  /* ---------- 水槽：后壁玻璃 ---------- */
+  function drawTankBack() {
+    groundShadow(TANK.x + TANK.w / 2, TANK.w * 0.62, 0.62);
+
+    rr(ctx, TANK.x, TANK.y, TANK.w, TANK.h, TANK.r);
+    var g = ctx.createLinearGradient(TANK.x, 0, TANK.x + TANK.w, 0);
+    g.addColorStop(0, 'rgba(148,197,253,.10)');
+    g.addColorStop(0.42, 'rgba(148,197,253,.032)');
+    g.addColorStop(1, 'rgba(148,197,253,.085)');
+    ctx.fillStyle = g;
+    ctx.fill();
+
+    // 内腔壁
+    rr(ctx, T_IN.x, T_IN.y, T_IN.w, T_IN.h, 9);
+    ctx.strokeStyle = 'rgba(186,230,253,.14)';
+    ctx.lineWidth = 1.4;
+    ctx.stroke();
+  }
+
+  /* ---------- 水 ---------- */
+  var bubbles = [];
+  function spawnBubble(x, y) {
+    bubbles.push({ x: x, y: y, r: 1.6 + Math.random() * 3.2,
+                   vy: -(18 + Math.random() * 34), life: 1 });
+  }
+
+  function drawWater() {
+    var yw = waterY();
+    var bottom = TANK.y + TANK.h - TANK.wall;
+
+    ctx.save();
+    rr(ctx, T_IN.x, T_IN.y, T_IN.w, T_IN.h, 9);
+    ctx.clip();
+
+    // 水体
+    ctx.beginPath();
+    ctx.moveTo(T_IN.x - 4, bottom + 6);
+    ctx.lineTo(T_IN.x - 4, yw);
+    for (var x = T_IN.x - 4; x <= T_IN.x + T_IN.w + 4; x += 7) ctx.lineTo(x, surfY(x));
+    ctx.lineTo(T_IN.x + T_IN.w + 4, bottom + 6);
+    ctx.closePath();
+
+    var g = ctx.createLinearGradient(0, yw, 0, bottom);
+    g.addColorStop(0, 'rgba(150,224,255,.52)');
+    g.addColorStop(0.26, 'rgba(74,182,238,.44)');
+    g.addColorStop(0.66, 'rgba(36,120,196,.54)');
+    g.addColorStop(1, 'rgba(22,78,150,.66)');
+    ctx.fillStyle = g;
+    ctx.fill();
+
+    // 水下焦散（缓慢漂移的亮斑）
+    ctx.save();
+    ctx.clip();
+    ctx.globalCompositeOperation = 'lighter';
+    for (var i = 0; i < 4; i++) {
+      var cx = T_IN.x + 74 + i * 74 + Math.sin(state.phase * 0.5 + i * 1.7) * 18;
+      var cy = yw + 90 + i * 62 + Math.cos(state.phase * 0.42 + i) * 14;
+      var rg = ctx.createRadialGradient(cx, cy, 2, cx, cy, 34);
+      rg.addColorStop(0, 'rgba(186,230,253,.075)');
+      rg.addColorStop(1, 'rgba(186,230,253,0)');
+      ctx.fillStyle = rg;
+      ctx.beginPath();
+      ctx.ellipse(cx, cy, 34, 20, 0.2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+
+    // 水面高光
+    ctx.beginPath();
+    for (var x2 = T_IN.x - 4; x2 <= T_IN.x + T_IN.w + 4; x2 += 5) {
+      var yy = surfY(x2);
+      if (x2 === T_IN.x - 4) ctx.moveTo(x2, yy); else ctx.lineTo(x2, yy);
+    }
+    ctx.strokeStyle = 'rgba(236,250,255,.92)';
+    ctx.lineWidth = 2.2;
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(255,255,255,.34)';
+    ctx.lineWidth = 7;
+    ctx.globalAlpha = 0.55;
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+    // 水面下方的一层亮带（折射后的水体表层）
+    ctx.beginPath();
+    for (var x3 = T_IN.x - 4; x3 <= T_IN.x + T_IN.w + 4; x3 += 5) {
+      var y3 = surfY(x3) + 7;
+      if (x3 === T_IN.x - 4) ctx.moveTo(x3, y3); else ctx.lineTo(x3, y3);
+    }
+    ctx.strokeStyle = 'rgba(186,230,253,.11)';
+    ctx.lineWidth = 9;
+    ctx.stroke();
+
+    // 气泡
+    for (var b = bubbles.length - 1; b >= 0; b--) {
+      var bb = bubbles[b];
+      if (bb.y < yw + 3) { bubbles.splice(b, 1); continue; }
+      ctx.beginPath();
+      ctx.arc(bb.x, bb.y, bb.r, 0, Math.PI * 2);
+      ctx.strokeStyle = 'rgba(224,246,255,.55)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      ctx.fillStyle = 'rgba(224,246,255,.14)';
+      ctx.fill();
+    }
+
+    ctx.restore();
+  }
+
+  /* ---------- 电极（薄金属片） ---------- */
+  function drawRod(x, yTop, yBot, label) {
+    var w = EL_W, h = yBot - yTop;
+    if (h <= 2) return;
+
+    // 【平板侧视 = 正面 + 一条厚度侧面】，不能画成「中间亮、两边暗」的圆柱渐变
+    var fx = x - w / 2, fw = w * 0.76;      // 正面
+    var tx = fx + fw, tw = w - fw;          // 厚度侧面
+    var g = ctx.createLinearGradient(fx, 0, fx + fw, 0);
+    g.addColorStop(0, '#b9cad9');
+    g.addColorStop(0.35, '#cddbe8');
+    g.addColorStop(0.75, '#c2d0de');
+    g.addColorStop(1, '#aebfce');
+    ctx.fillStyle = g;
+    rr(ctx, fx, yTop, w, h, 2.5);
+    ctx.fill();
+
+    var g2 = ctx.createLinearGradient(tx, 0, tx + tw, 0);
+    g2.addColorStop(0, '#7e90a3');
+    g2.addColorStop(0.55, '#5b6c80');
+    g2.addColorStop(1, '#3a4a5c');
+    ctx.fillStyle = g2;
+    ctx.fillRect(tx, yTop + 1, tw, h - 2);
+
+    ctx.save();
+    rr(ctx, fx, yTop, w, h, 2.5);
+    ctx.clip();
+
+    // 正面左缘的一道窄高光
+    ctx.fillStyle = 'rgba(255,255,255,.42)';
+    ctx.fillRect(fx + 1.2, yTop, 1.2, h);
+
+    // 极细的轧制纹理
+    ctx.strokeStyle = 'rgba(255,255,255,.07)';
+    ctx.lineWidth = 0.7;
+    for (var i = 0; i < 5; i++) {
+      ctx.beginPath();
+      ctx.moveTo(x - w / 2, yTop + 18 + i * 26);
+      ctx.lineTo(x + w / 2, yTop + 18 + i * 26);
+      ctx.stroke();
+    }
+
+    // 水下部分变暗（隔着水看金属）
+    var yw = waterY();
+    if (yw < yBot) {
+      var yy = Math.max(yw, yTop);
+      ctx.fillStyle = 'rgba(8,50,88,.34)';
+      ctx.fillRect(x - w / 2, yy, w, yBot - yy);
+      // 水线处的弯月面
+      if (yw > yTop && yw < yBot) {
+        ctx.strokeStyle = 'rgba(224,246,255,.55)';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(x - w / 2, yw + 2);
+        ctx.quadraticCurveTo(x, yw - 2.6, x + w / 2, yw + 2);
+        ctx.stroke();
+      }
+    }
+    ctx.restore();
+
+    // 轮廓
+    rr(ctx, x - w / 2, yTop, w, h, 2.5);
+    ctx.strokeStyle = 'rgba(9,20,34,.7)';
+    ctx.lineWidth = 1.1;
+    ctx.stroke();
+
+    // 顶端接线柱
+    var cy = yTop - 8;
+    ctx.beginPath();
+    ctx.arc(x, cy, 8, 0, Math.PI * 2);
+    var cg = ctx.createRadialGradient(x - 2.5, cy - 2.5, 0.8, x, cy, 8);
+    cg.addColorStop(0, '#e8f0f8');
+    cg.addColorStop(0.55, '#a8b9ca');
+    cg.addColorStop(1, '#4a5b6d');
+    ctx.fillStyle = cg;
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(9,20,34,.65)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    // 接线柱上的小螺丝槽
+    ctx.beginPath();
+    ctx.moveTo(x - 3.6, cy - 1.4);
+    ctx.lineTo(x + 3.6, cy + 1.4);
+    ctx.strokeStyle = 'rgba(9,20,34,.55)';
+    ctx.lineWidth = 1.1;
+    ctx.stroke();
+  }
+
+  /* ---------- 水槽前壁玻璃（盖在水与电极之上） ---------- */
+  function drawTankFront() {
+    rr(ctx, TANK.x, TANK.y, TANK.w, TANK.h, TANK.r);
+    var g = ctx.createLinearGradient(TANK.x, TANK.y, TANK.x + TANK.w * 0.75, TANK.y + TANK.h);
+    g.addColorStop(0, 'rgba(226,244,255,.075)');
+    g.addColorStop(0.30, 'rgba(226,244,255,.012)');
+    g.addColorStop(0.68, 'rgba(226,244,255,.008)');
+    g.addColorStop(1, 'rgba(226,244,255,.055)');
+    ctx.fillStyle = g;
+    ctx.fill();
+
+    // 玻璃外轮廓（亮边）
+    rr(ctx, TANK.x, TANK.y, TANK.w, TANK.h, TANK.r);
+    ctx.strokeStyle = 'rgba(186,230,253,.40)';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    // 槽口边缘：一圈加厚的玻璃口沿（顶面 + 内侧倒角）
+    var rim = ctx.createLinearGradient(0, TANK.y - 2, 0, TANK.y + 12);
+    rim.addColorStop(0, 'rgba(236,249,255,.42)');
+    rim.addColorStop(0.45, 'rgba(186,230,253,.16)');
+    rim.addColorStop(1, 'rgba(186,230,253,.03)');
+    ctx.fillStyle = rim;
+    rr(ctx, TANK.x + 2, TANK.y - 2, TANK.w - 4, 13, 5);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(TANK.x + 4, TANK.y - 1);
+    ctx.lineTo(TANK.x + TANK.w - 4, TANK.y - 1);
+    ctx.strokeStyle = 'rgba(236,249,255,.72)';
+    ctx.lineWidth = 2.2;
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(TANK.x + 4, TANK.y + 11);
+    ctx.lineTo(TANK.x + TANK.w - 4, TANK.y + 11);
+    ctx.strokeStyle = 'rgba(186,230,253,.28)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    // 左侧厚玻璃（壁厚 + 内侧反光）
+    var tg = ctx.createLinearGradient(TANK.x, 0, TANK.x + TANK.wall, 0);
+    tg.addColorStop(0, 'rgba(226,244,255,.30)');
+    tg.addColorStop(0.45, 'rgba(226,244,255,.10)');
+    tg.addColorStop(1, 'rgba(226,244,255,.20)');
+    ctx.fillStyle = tg;
+    ctx.fillRect(TANK.x + 1, TANK.y + 10, TANK.wall - 1, TANK.h - 22);
+    // 右侧厚玻璃
+    ctx.fillStyle = 'rgba(226,244,255,.20)';
+    ctx.fillRect(TANK.x + TANK.w - TANK.wall, TANK.y + 10, TANK.wall - 2, TANK.h - 22);
+
+    // 左侧竖直高光
+    var hg = ctx.createLinearGradient(TANK.x + 12, 0, TANK.x + 34, 0);
+    hg.addColorStop(0, 'rgba(255,255,255,.22)');
+    hg.addColorStop(0.5, 'rgba(255,255,255,.05)');
+    hg.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = hg;
+    rr(ctx, TANK.x + 12, TANK.y + 26, 22, TANK.h - 60, 10);
+    ctx.fill();
+
+    // 右侧窄高光
+    ctx.fillStyle = 'rgba(255,255,255,.10)';
+    rr(ctx, TANK.x + TANK.w - 26, TANK.y + 40, 7, TANK.h - 110, 4);
+    ctx.fill();
+
+    // 底厚玻璃
+    var bg = ctx.createLinearGradient(0, TANK.y + TANK.h - 16, 0, TANK.y + TANK.h);
+    bg.addColorStop(0, 'rgba(186,230,253,.16)');
+    bg.addColorStop(1, 'rgba(186,230,253,.05)');
+    ctx.fillStyle = bg;
+    rr(ctx, TANK.x + 3, TANK.y + TANK.h - 15, TANK.w - 6, 13, 5);
+    ctx.fill();
+  }
+
+  /* ---------- 导线 ---------- */
+  var TONE_CTRL = { dark: '#0a2c34', mid: '#28798c', hi: 'rgba(150,232,246,.62)' };
+  var TONE_WORK = { dark: '#33240a', mid: '#7b5a1e', hi: 'rgba(240,208,148,.45)' };
+
+  function drawWire(pts, tone, w) {
+    w = w || 5.6;
+    ctx.save();
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+
+    // 落影
+    ctx.save();
+    ctx.translate(2, 3);
+    poly(pts);
+    ctx.strokeStyle = 'rgba(0,0,0,.32)';
+    ctx.lineWidth = w + 0.4;
+    ctx.stroke();
+    ctx.restore();
+
+    // 绝缘外皮
+    poly(pts);
+    ctx.strokeStyle = tone.dark;
+    ctx.lineWidth = w;
+    ctx.stroke();
+
+    // 受光面
+    poly(pts);
+    ctx.strokeStyle = tone.mid;
+    ctx.lineWidth = w * 0.6;
+    ctx.stroke();
+
+    // 细高光（偏上 1px）
+    ctx.save();
+    ctx.translate(0, -1.1);
+    poly(pts);
+    ctx.strokeStyle = tone.hi;
+    ctx.lineWidth = Math.max(0.9, w * 0.18);
+    ctx.stroke();
+    ctx.restore();
+
+    ctx.restore();
+  }
+
+  /* ---------- 电池（横放圆柱，实物感） ---------- */
+  function drawBattery(B, tone) {
+    var x = B.x, y = B.y, w = B.w, h = B.h;
+    groundShadow(x + w / 2, w * 0.62, 0.55);
+
+    // 外壳
+    var g = ctx.createLinearGradient(0, y, 0, y + h);
+    g.addColorStop(0, '#3d4f63');
+    g.addColorStop(0.14, '#6d8398');
+    g.addColorStop(0.42, '#38506a');
+    g.addColorStop(0.78, '#1c2c3e');
+    g.addColorStop(1, '#0e1826');
+    ctx.fillStyle = g;
+    rr(ctx, x, y, w, h, 9);
+    ctx.fill();
+
+    // 标签色带
+    var lg = ctx.createLinearGradient(0, y + 8, 0, y + h - 8);
+    lg.addColorStop(0, tone.tag1);
+    lg.addColorStop(0.5, tone.tag2);
+    lg.addColorStop(1, tone.tag1);
+    ctx.fillStyle = lg;
+    ctx.fillRect(x + 14, y + 9, w - 28, h - 18);
+
+    // 标签上的细线
+    ctx.strokeStyle = 'rgba(255,255,255,.30)';
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.moveTo(x + 20, y + 18);
+    ctx.lineTo(x + w - 20, y + 18);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(x + 20, y + h - 18);
+    ctx.lineTo(x + w - 20, y + h - 18);
+    ctx.stroke();
+
+    // 正极端子（凸起）
+    ctx.fillStyle = '#cbd5e1';
+    rr(ctx, x - 7, y + h * 0.30, 9, h * 0.40, 3);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(9,20,34,.55)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    // 负极端（平）
+    ctx.fillStyle = '#94a3b8';
+    rr(ctx, x + w - 3, y + h * 0.18, 5, h * 0.64, 2);
+    ctx.fill();
+
+    // 极性与文字
+    ctx.font = '800 13px ' + FONT;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = 'rgba(255,255,255,.92)';
+    ctx.fillText('+', x + 8, y + h / 2);
+    ctx.fillText('−', x + w - 10, y + h / 2);
+
+    ctx.font = '700 9px ' + FONT;
+    ctx.fillStyle = 'rgba(255,255,255,.55)';
+    ctx.fillText(tone.name, x + w / 2, y + h / 2 + 1);
+
+    // 顶部高光
+    var hg = ctx.createLinearGradient(0, y + 2, 0, y + 13);
+    hg.addColorStop(0, 'rgba(255,255,255,.30)');
+    hg.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = hg;
+    rr(ctx, x + 3, y + 2, w - 6, 12, 6);
+    ctx.fill();
+
+    // 轮廓
+    rr(ctx, x, y, w, h, 9);
+    ctx.strokeStyle = 'rgba(6,14,24,.75)';
+    ctx.lineWidth = 1.3;
+    ctx.stroke();
+  }
+
+  /* ---------- 继电器：底座 / 铁芯 / 线圈 ---------- */
+  function armRightY() { return AR_PIVOT.y + state.x * AR_STROKE; }
+
+  function drawRelayBase() {
+    groundShadow(810, 190, 0.55);
+    var x = 646, y = 656, w = 322, h = 64;
+
+    var g = ctx.createLinearGradient(0, y, 0, y + h);
+    g.addColorStop(0, '#33465c');
+    g.addColorStop(0.12, '#1e2f42');
+    g.addColorStop(1, '#0a141f');
+    ctx.fillStyle = g;
+    rr(ctx, x, y, w, h, 7);
+    ctx.fill();
+    rr(ctx, x, y, w, h, 7);
+    ctx.strokeStyle = 'rgba(148,197,253,.22)';
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+
+    // 四颗螺丝
+    for (var i = 0; i < 4; i++) {
+      var sx = x + 22 + i * (w - 44) / 3;
+      ctx.beginPath();
+      ctx.arc(sx, y + h / 2, 4.6, 0, Math.PI * 2);
+      ctx.fillStyle = '#5b6d80';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(9,20,34,.7)';
+      ctx.lineWidth = 0.9;
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(sx - 2.8, y + h / 2 - 2.8);
+      ctx.lineTo(sx + 2.8, y + h / 2 + 2.8);
+      ctx.strokeStyle = 'rgba(9,20,34,.6)';
+      ctx.stroke();
+    }
+  }
+
+  function drawCore() {
+    var x = CORE_X - CORE_W / 2, w = CORE_W;
+    var y = CORE_TOP, h = CORE_BOT - CORE_TOP;
+
+    // 铁芯主体
+    var g = ctx.createLinearGradient(x, 0, x + w, 0);
+    g.addColorStop(0, '#3b4a5c');
+    g.addColorStop(0.16, '#8a9bad');
+    g.addColorStop(0.40, '#c3d1df');
+    g.addColorStop(0.70, '#71839a');
+    g.addColorStop(1, '#2b3949');
+    ctx.fillStyle = g;
+    rr(ctx, x, y, w, h, 6);
+    ctx.fill();
+    rr(ctx, x, y, w, h, 6);
+    ctx.strokeStyle = 'rgba(9,20,34,.6)';
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+
+    // 顶部磁极面（略宽）
+    var pg = ctx.createLinearGradient(x - 5, 0, x + w + 5, 0);
+    pg.addColorStop(0, '#5d6f84');
+    pg.addColorStop(0.35, '#dbe6f2');
+    pg.addColorStop(1, '#43536a');
+    ctx.fillStyle = pg;
+    rr(ctx, x - 5, y - 7, w + 10, 12, 4);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(9,20,34,.55)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
+
+  function drawCoil() {
+    var x = CORE_X, top = COIL_TOP, bot = COIL_BOT, rx = COIL_RX, ry = COIL_RY;
+
+    function body() {
+      ctx.beginPath();
+      ctx.moveTo(x - rx, top);
+      ctx.lineTo(x - rx, bot);
+      ctx.ellipse(x, bot, rx, ry, 0, Math.PI, 0, true);
+      ctx.lineTo(x + rx, top);
+      ctx.ellipse(x, top, rx, ry, 0, 0, Math.PI, true);
+      ctx.closePath();
+    }
+
+    // 落影
+    ctx.save();
+    ctx.beginPath();
+    ctx.ellipse(x + 4, bot + 4, rx + 6, ry + 4, 0, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(0,0,0,.35)';
+    ctx.fill();
+    ctx.restore();
+
+    // 圆柱本体
+    body();
+    var g = ctx.createLinearGradient(x - rx, 0, x + rx, 0);
+    g.addColorStop(0, '#331a06');
+    g.addColorStop(0.12, '#6f3a10');
+    g.addColorStop(0.30, '#a86526');
+    g.addColorStop(0.46, '#cf9250');
+    g.addColorStop(0.62, '#9a5c20');
+    g.addColorStop(0.84, '#5a2f0e');
+    g.addColorStop(1, '#281303');
+    ctx.fillStyle = g;
+    ctx.fill();
+
+    // 绕线纹理（密排斜线 = 螺旋绕组）
+    ctx.save();
+    body();
+    ctx.clip();
+    ctx.lineWidth = 1.9;
+    for (var y = top - 10; y < bot + 14; y += 3.6) {
+      ctx.beginPath();
+      ctx.moveTo(x - rx - 2, y);
+      ctx.lineTo(x + rx + 2, y + 9);
+      ctx.strokeStyle = 'rgba(255,214,168,.20)';
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(x - rx - 2, y + 1.9);
+      ctx.lineTo(x + rx + 2, y + 10.9);
+      ctx.strokeStyle = 'rgba(42,18,3,.50)';
+      ctx.stroke();
+    }
+    // 左侧柱面高光
+    var hg = ctx.createLinearGradient(x - rx * 0.72, 0, x - rx * 0.20, 0);
+    hg.addColorStop(0, 'rgba(255,235,205,0)');
+    hg.addColorStop(0.55, 'rgba(255,235,205,.26)');
+    hg.addColorStop(1, 'rgba(255,235,205,0)');
+    ctx.fillStyle = hg;
+    ctx.fillRect(x - rx, top - 4, rx, bot - top + 8);
+    ctx.restore();
+
+    // 上下挡圈（胶木端板：外径 56、内孔 22，铁芯从孔中穿过）
+    [top, bot].forEach(function (yy) {
+      ctx.beginPath();
+      ctx.ellipse(x, yy, rx + 6, ry + 3.2, 0, 0, Math.PI * 2);
+      ctx.ellipse(x, yy, 22, 4.2, 0, 0, Math.PI * 2);
+      var dg = ctx.createLinearGradient(x - rx, yy - 10, x + rx, yy + 10);
+      dg.addColorStop(0, '#1a2430');
+      dg.addColorStop(0.38, '#4a5d72');
+      dg.addColorStop(0.72, '#2b3949');
+      dg.addColorStop(1, '#121a24');
+      ctx.fillStyle = dg;
+      ctx.fill('evenodd');
+      ctx.strokeStyle = 'rgba(8,16,26,.75)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      // 端板上的高光
+      ctx.beginPath();
+      ctx.ellipse(x, yy, rx + 6, ry + 3.2, 0, Math.PI * 1.08, Math.PI * 1.55);
+      ctx.strokeStyle = 'rgba(160,190,220,.30)';
+      ctx.lineWidth = 1.2;
+      ctx.stroke();
+    });
+
+    // 通电时的暖光
+    if (state.I > 0.02) {
+      var a = clamp(state.I / 0.45, 0, 1) * 0.34;
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      var rg = ctx.createRadialGradient(x, (top + bot) / 2, 10, x, (top + bot) / 2, rx + 34);
+      rg.addColorStop(0, 'rgba(255,168,72,' + a + ')');
+      rg.addColorStop(1, 'rgba(255,168,72,0)');
+      ctx.fillStyle = rg;
+      ctx.beginPath();
+      ctx.ellipse(x, (top + bot) / 2, rx + 34, (bot - top) / 2 + 18, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+
+    // 两根引线的焊点
+    [[-rx, 470], [-rx, 580]].forEach(function (p) {
+      ctx.beginPath();
+      ctx.arc(x + p[0], p[1], 4.6, 0, Math.PI * 2);
+      ctx.fillStyle = '#e0a866';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(56,26,6,.8)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(x + p[0] - 1.2, p[1] - 1.2, 1.7, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(255,240,210,.75)';
+      ctx.fill();
+    });
+  }
+
+  /* ---------- 衔铁 + 支点 ---------- */
+  function drawArmature() {
+    var py = AR_PIVOT.y, xr = AR_RIGHT;
+    var dy = state.x * AR_STROKE;
+    var ang = Math.atan2(dy, xr - AR_PIVOT.x);
+
+    ctx.save();
+    ctx.translate(AR_PIVOT.x, py);
+    ctx.rotate(ang);
+
+    var len = xr - AR_PIVOT.x;
+    // 衔铁主体
+    var g = ctx.createLinearGradient(0, -8, 0, 8);
+    g.addColorStop(0, '#c6d3e1');
+    g.addColorStop(0.22, '#93a4b6');
+    g.addColorStop(0.55, '#586b80');
+    g.addColorStop(0.82, '#35465a');
+    g.addColorStop(1, '#1c2836');
+    ctx.fillStyle = g;
+    rr(ctx, -20, -7, len + 20, 14, 3.5);
+    ctx.fill();
+    rr(ctx, -20, -7, len + 20, 14, 3.5);
+    ctx.strokeStyle = 'rgba(9,20,34,.75)';
+    ctx.lineWidth = 1.1;
+    ctx.stroke();
+
+    // 顶面高光
+    ctx.fillStyle = 'rgba(255,255,255,.22)';
+    rr(ctx, -16, -5.8, len + 12, 2.4, 1.2);
+    ctx.fill();
+
+    // 动触点连杆（衔铁右端下方）
+    ctx.fillStyle = '#7f92a6';
+    rr(ctx, 208, 6, 5.5, 17, 1.6);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(9,20,34,.7)';
+    ctx.lineWidth = 0.9;
+    ctx.stroke();
+
+    ctx.restore();
+
+    // 支点（固定不转）
+    ctx.beginPath();
+    ctx.arc(AR_PIVOT.x, py, 6.2, 0, Math.PI * 2);
+    ctx.fillStyle = '#cbd5e1';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(9,20,34,.8)';
+    ctx.lineWidth = 1.3;
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(AR_PIVOT.x, py, 2.1, 0, Math.PI * 2);
+    ctx.fillStyle = '#334155';
+    ctx.fill();
+
+    // 支点支架
+    ctx.beginPath();
+    ctx.moveTo(AR_PIVOT.x - 12, py + 7);
+    ctx.lineTo(AR_PIVOT.x + 12, py + 7);
+    ctx.lineTo(AR_PIVOT.x + 7, 656);
+    ctx.lineTo(AR_PIVOT.x - 7, 656);
+    ctx.closePath();
+    var sg = ctx.createLinearGradient(AR_PIVOT.x - 12, 0, AR_PIVOT.x + 12, 0);
+    sg.addColorStop(0, '#3c4d60');
+    sg.addColorStop(0.35, '#8395a8');
+    sg.addColorStop(1, '#26323f');
+    ctx.fillStyle = sg;
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(9,20,34,.65)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
+
+  /* ---------- 弹簧 ---------- */
+  function drawSpring() {
+    var topY = SPR_TOP;
+    var botY = armRightY() - 9;
+    var len = Math.max(40, botY - topY);
+    var turns = 8.5;
+    var rad = 9;
+
+    // 上端固定环
+    ctx.beginPath();
+    ctx.arc(SPR_X, topY, 4.8, 0, Math.PI * 2);
+    ctx.strokeStyle = '#8fa3b8';
+    ctx.lineWidth = 2.6;
+    ctx.stroke();
+
+    var steps = 240;
+    function coilPath() {
+      ctx.beginPath();
+      for (var i = 0; i <= steps; i++) {
+        var f = i / steps;
+        var y = topY + f * len;
+        var x = SPR_X + Math.sin(f * turns * Math.PI * 2) * rad;
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      }
+    }
+    ctx.save();
+    ctx.lineCap = 'round';
+    coilPath();
+    ctx.strokeStyle = 'rgba(0,0,0,.38)';
+    ctx.lineWidth = 5.6;
+    ctx.stroke();
+
+    coilPath();
+    var g = ctx.createLinearGradient(SPR_X - rad, 0, SPR_X + rad, 0);
+    g.addColorStop(0, '#4a5c70');
+    g.addColorStop(0.30, '#e2ecf7');
+    g.addColorStop(0.55, '#9fb3c8');
+    g.addColorStop(1, '#33424f');
+    ctx.strokeStyle = g;
+    ctx.lineWidth = 3.1;
+    ctx.stroke();
+    ctx.restore();
+
+    // 下端挂环
+    ctx.beginPath();
+    ctx.arc(SPR_X, botY, 4.8, 0, Math.PI * 2);
+    ctx.strokeStyle = '#8fa3b8';
+    ctx.lineWidth = 2.6;
+    ctx.stroke();
+  }
+
+  /* ---------- 顶梁 + 静触点支架 ---------- */
+  function drawFrame() {
+    var y = SPR_TOP - 14;
+    var g = ctx.createLinearGradient(0, y, 0, y + 15);
+    g.addColorStop(0, '#62748a');
+    g.addColorStop(0.30, '#b3c3d4');
+    g.addColorStop(1, '#28353f');
+    ctx.fillStyle = g;
+    rr(ctx, 700, y, 246, 15, 4);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(9,20,34,.65)';
+    ctx.lineWidth = 1.1;
+    ctx.stroke();
+
+    // 顶梁左立柱
+    ctx.fillStyle = '#43556a';
+    rr(ctx, 702, y + 11, 9, 656 - y - 11, 2);
+    ctx.fill();
+
+    // 静触点支架（右侧立板，兼作接线柱）
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = '#5d7085';
+    ctx.lineWidth = 5.4;
+    ctx.beginPath();
+    ctx.moveTo(900, CON_UP_Y);
+    ctx.lineTo(934, CON_UP_Y);
+    ctx.lineTo(934, y + 14);
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.moveTo(900, CON_DN_Y);
+    ctx.lineTo(934, CON_DN_Y);
+    ctx.lineTo(934, 656);
+    ctx.stroke();
+
+    // 高光
+    ctx.strokeStyle = 'rgba(219,230,242,.45)';
+    ctx.lineWidth = 1.3;
+    ctx.beginPath();
+    ctx.moveTo(932, y + 20);
+    ctx.lineTo(932, CON_UP_Y - 8);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(932, 652);
+    ctx.lineTo(932, CON_DN_Y + 8);
+    ctx.stroke();
+
+    // 接线柱帽
+    [[934, CON_UP_Y], [934, CON_DN_Y]].forEach(function (p) {
+      ctx.beginPath();
+      ctx.arc(p[0], p[1], 5, 0, Math.PI * 2);
+      ctx.fillStyle = '#b9c8d8';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(9,20,34,.75)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(p[0] - 1.3, p[1] - 1.3, 1.8, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(255,255,255,.6)';
+      ctx.fill();
+    });
+  }
+
+  /* ---------- 触点 ---------- */
+  function contactBlock(cx, cy, w, h, hot) {
+    var g = ctx.createLinearGradient(0, cy - h / 2, 0, cy + h / 2);
+    g.addColorStop(0, '#f4f8fc');
+    g.addColorStop(0.28, '#cfdae6');
+    g.addColorStop(0.58, '#8a9cb0');
+    g.addColorStop(1, '#3a4a5c');
+    ctx.fillStyle = g;
+    rr(ctx, cx - w / 2, cy - h / 2, w, h, 2);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(9,20,34,.78)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    if (hot) {
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.fillStyle = 'rgba(255,238,196,.55)';
+      rr(ctx, cx - w / 2, cy - h / 2, w, h, 2);
+      ctx.fill();
+      ctx.restore();
+    }
+  }
+
+  /* 静触点用「银触点」圆点——和动触点的长条区分得开，贴合时也能看出是两件东西 */
+  function contactDot(cx, cy, r, hot) {
+    var g = ctx.createRadialGradient(cx - r * 0.34, cy - r * 0.36, r * 0.1, cx, cy, r);
+    g.addColorStop(0, '#ffffff');
+    g.addColorStop(0.42, '#dbe6f2');
+    g.addColorStop(0.82, '#8598ac');
+    g.addColorStop(1, '#3d4d5f');
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.fillStyle = g;
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(9,20,34,.7)';
+    ctx.lineWidth = 0.9;
+    ctx.stroke();
+    if (hot) {
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.fillStyle = 'rgba(255,240,200,.5)';
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+  }
+
+  function drawContacts() {
+    var movY = CON_MOV_Y0 + state.x * AR_STROKE;
+    var touchUp = state.contact === 'up';
+    var touchDn = state.contact === 'down';
+
+    contactDot(895, CON_UP_Y, 5.5, touchUp);
+    contactDot(895, CON_DN_Y, 5.5, touchDn);
+    contactBlock(891, movY, 33, 8, false);
+
+    // 接触瞬间的亮闪
+    if (state.spark > 0.02) {
+      var cy = state.contact === 'down' ? CON_DN_Y : (state.contact === 'up' ? CON_UP_Y : movY);
+      var a = state.spark;
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      var rg = ctx.createRadialGradient(891, cy, 1, 891, cy, 24 + 20 * a);
+      rg.addColorStop(0, 'rgba(255,248,220,' + (0.7 * a) + ')');
+      rg.addColorStop(0.42, 'rgba(255,206,120,' + (0.28 * a) + ')');
+      rg.addColorStop(1, 'rgba(255,180,80,0)');
+      ctx.fillStyle = rg;
+      ctx.beginPath();
+      ctx.arc(891, cy, 24 + 20 * a, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(255,240,200,' + (0.5 * a) + ')';
+      ctx.lineWidth = 1.3;
+      for (var i = 0; i < 6; i++) {
+        var an = i * Math.PI / 3 + 0.3;
+        var r0 = 11, r1 = 19 + 15 * a;
+        ctx.beginPath();
+        ctx.moveTo(891 + Math.cos(an) * r0, cy + Math.sin(an) * r0);
+        ctx.lineTo(891 + Math.cos(an) * r1, cy + Math.sin(an) * r1);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+  }
+
+  /* ---------- 磁感线 ---------- */
+  function drawField() {
+    if (!show.field || state.I < 0.015) return;
+    var a = clamp(state.I / 0.42, 0, 1);
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    for (var i = 1; i <= 2; i++) {
+      var rx = COIL_RX + 16 + i * 26;
+      var ry = (CORE_BOT - CORE_TOP) / 2 + i * 20;
+      ctx.beginPath();
+      ctx.ellipse(CORE_X, (CORE_TOP + CORE_BOT) / 2, rx, ry, 0, 0, Math.PI * 2);
+      ctx.strokeStyle = 'rgba(96,165,250,' + (a * (0.20 - i * 0.05)) + ')';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    }
+    // 顶部/底部发散的小箭头状短线
+    ctx.strokeStyle = 'rgba(125,211,252,' + (a * 0.45) + ')';
+    ctx.lineWidth = 1.4;
+    for (var k = -1; k <= 1; k += 2) {
+      for (var m = 0; m < 3; m++) {
+        var bx = CORE_X + k * (CORE_W / 2 + 12 + m * 9);
+        var by = CORE_TOP - 4 - m * 6;
+        ctx.beginPath();
+        ctx.moveTo(bx, by);
+        ctx.lineTo(bx + k * 5, by - 7);
+        ctx.stroke();
+      }
+    }
+    ctx.restore();
+  }
+
+  /* ---------- 配电板（右侧工作电路底板） ---------- */
+  function drawBoard() {
+    var B = BOARD;
+    groundShadow(B.x + B.w / 2, B.w * 0.55, 0.5);
+
+    var g = ctx.createLinearGradient(B.x, B.y, B.x + B.w, B.y + B.h);
+    g.addColorStop(0, 'rgba(42,64,88,.95)');
+    g.addColorStop(0.5, 'rgba(22,40,60,.95)');
+    g.addColorStop(1, 'rgba(12,24,38,.96)');
+    ctx.fillStyle = g;
+    rr(ctx, B.x, B.y, B.w, B.h, 10);
+    ctx.fill();
+
+    // 板面网格（浅）
+    ctx.save();
+    rr(ctx, B.x, B.y, B.w, B.h, 10);
+    ctx.clip();
+    ctx.strokeStyle = 'rgba(125,211,252,.045)';
+    ctx.lineWidth = 1;
+    for (var x = B.x + 20; x < B.x + B.w; x += 26) {
+      ctx.beginPath(); ctx.moveTo(x, B.y); ctx.lineTo(x, B.y + B.h); ctx.stroke();
+    }
+    for (var y = B.y + 20; y < B.y + B.h; y += 26) {
+      ctx.beginPath(); ctx.moveTo(B.x, y); ctx.lineTo(B.x + B.w, y); ctx.stroke();
+    }
+    ctx.restore();
+
+    // 边框
+    rr(ctx, B.x, B.y, B.w, B.h, 10);
+    ctx.strokeStyle = 'rgba(125,211,252,.22)';
+    ctx.lineWidth = 1.4;
+    ctx.stroke();
+
+    // 四角螺丝
+    [[B.x + 16, B.y + 16], [B.x + B.w - 16, B.y + 16],
+     [B.x + 16, B.y + B.h - 16], [B.x + B.w - 16, B.y + B.h - 16]].forEach(function (p) {
+      ctx.beginPath();
+      ctx.arc(p[0], p[1], 5.2, 0, Math.PI * 2);
+      var sg = ctx.createRadialGradient(p[0] - 1.5, p[1] - 1.5, 0.5, p[0], p[1], 5.2);
+      sg.addColorStop(0, '#9fb3c8');
+      sg.addColorStop(1, '#42566c');
+      ctx.fillStyle = sg;
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(6,14,24,.8)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(p[0] - 3, p[1] - 3);
+      ctx.lineTo(p[0] + 3, p[1] + 3);
+      ctx.strokeStyle = 'rgba(6,14,24,.65)';
+      ctx.stroke();
+    });
+  }
+
+  /* ---------- 灯泡（梨形玻璃泡 + 螺旋灯丝） ---------- */
+  function drawLamp(L, bright) {
+    var x = L.x, y = L.y, r = L.r;
+    var col = L.col, hot = L.colHot;
+    var b = clamp(bright, 0, 1);
+    var neckY = y + r + 2;
+    var sy = neckY + 1;
+
+    // 光晕
+    if (b > 0.01) {
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      var rg = ctx.createRadialGradient(x, y, r * 0.2, x, y, r * 5.0);
+      rg.addColorStop(0, 'rgba(' + hot[0] + ',' + hot[1] + ',' + hot[2] + ',' + (0.50 * b) + ')');
+      rg.addColorStop(0.22, 'rgba(' + col[0] + ',' + col[1] + ',' + col[2] + ',' + (0.26 * b) + ')');
+      rg.addColorStop(0.55, 'rgba(' + col[0] + ',' + col[1] + ',' + col[2] + ',' + (0.10 * b) + ')');
+      rg.addColorStop(1, 'rgba(' + col[0] + ',' + col[1] + ',' + col[2] + ',0)');
+      ctx.fillStyle = rg;
+      ctx.beginPath();
+      ctx.arc(x, y, r * 5.0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+
+    // 玻璃颈（泡与灯座之间的收口）
+    ctx.beginPath();
+    ctx.moveTo(x - 15, neckY - 5);
+    ctx.lineTo(x + 15, neckY - 5);
+    ctx.lineTo(x + 13, neckY + 3);
+    ctx.lineTo(x - 13, neckY + 3);
+    ctx.closePath();
+    var nk = ctx.createLinearGradient(x - 15, 0, x + 15, 0);
+    nk.addColorStop(0, 'rgba(196,222,248,.30)');
+    nk.addColorStop(0.35, 'rgba(236,249,255,.55)');
+    nk.addColorStop(1, 'rgba(150,180,210,.32)');
+    ctx.fillStyle = nk;
+    ctx.fill();
+
+    // 灯座：金属螺纹壳
+    var sg = ctx.createLinearGradient(x - 18, 0, x + 18, 0);
+    sg.addColorStop(0, '#33424f');
+    sg.addColorStop(0.20, '#8fa3b8');
+    sg.addColorStop(0.42, '#d7e2ee');
+    sg.addColorStop(0.68, '#7d90a4');
+    sg.addColorStop(1, '#222e3a');
+    ctx.fillStyle = sg;
+    rr(ctx, x - 17, sy, 34, 30, 3);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(6,14,24,.55)';
+    ctx.lineWidth = 0.9;
+    for (var i = 1; i < 7; i++) {
+      ctx.beginPath();
+      ctx.moveTo(x - 16.4, sy + i * 4.1);
+      ctx.lineTo(x + 16.4, sy + i * 4.1);
+      ctx.stroke();
+    }
+    ctx.strokeStyle = 'rgba(6,14,24,.8)';
+    ctx.lineWidth = 1.1;
+    rr(ctx, x - 17, sy, 34, 30, 3);
+    ctx.stroke();
+
+    // 陶瓷底座
+    var cg = ctx.createLinearGradient(x - 19, 0, x + 19, 0);
+    cg.addColorStop(0, '#2b3542');
+    cg.addColorStop(0.45, '#6a7c90');
+    cg.addColorStop(1, '#1b232d');
+    ctx.fillStyle = cg;
+    rr(ctx, x - 19, sy + 28, 38, 11, 3);
+    ctx.fill();
+
+    // 接线柱
+    [-31, 31].forEach(function (dx) {
+      ctx.beginPath();
+      ctx.arc(x + dx, sy + 16, 4.8, 0, Math.PI * 2);
+      ctx.fillStyle = '#b9c8d8';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(6,14,24,.8)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(x + dx - 1.2, sy + 14.8, 1.7, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(255,255,255,.55)';
+      ctx.fill();
+    });
+
+    // ---- 梨形玻璃泡 ----
+    // 【arc 方向】canvas 的 0.5π 在【下方】，要从 0.8π 经顶部走到 0.2π 必须【顺时针】，
+    // 写成逆时针会画成下半圆 ⇒ 泡变成一弯月牙（本页实测踩过）。
+    var a0 = Math.PI * 0.80, a1 = Math.PI * 0.20;
+    function bulbPath() {
+      ctx.beginPath();
+      ctx.arc(x, y, r, a0, a1, false);
+      ctx.quadraticCurveTo(x + 19, y + r * 0.94, x + 15.5, neckY);
+      ctx.lineTo(x - 15.5, neckY);
+      ctx.quadraticCurveTo(x - 19, y + r * 0.94,
+                           x + r * Math.cos(a0), y + r * Math.sin(a0));
+      ctx.closePath();
+    }
+
+    bulbPath();
+    var bg = ctx.createRadialGradient(x - r * 0.22, y - r * 0.26, r * 0.06, x, y + r * 0.12, r * 1.24);
+    if (b > 0.01) {
+      bg.addColorStop(0, 'rgba(255,255,255,' + (0.07 + 0.08 * b) + ')');
+      bg.addColorStop(0.24, 'rgba(' + hot[0] + ',' + hot[1] + ',' + hot[2] + ',' + (0.16 + 0.34 * b) + ')');
+      bg.addColorStop(0.66, 'rgba(' + col[0] + ',' + col[1] + ',' + col[2] + ',' + (0.12 + 0.26 * b) + ')');
+      bg.addColorStop(1, 'rgba(' + col[0] + ',' + col[1] + ',' + col[2] + ',' + (0.20 + 0.22 * b) + ')');
+    } else {
+      bg.addColorStop(0, 'rgba(226,240,255,.14)');
+      bg.addColorStop(0.5, 'rgba(190,215,240,.06)');
+      bg.addColorStop(1, 'rgba(170,200,230,.13)');
+    }
+    ctx.fillStyle = bg;
+    ctx.fill();
+
+    // ---- 灯丝（细密锯齿，亮时白热） ----
+    // 灯丝：一条「之」字细线（引线不再单画两根竖线，否则会糊成两只耳朵）
+    var fTop = y - r * 0.26, fBot = y + r * 0.42;
+    ctx.beginPath();
+    ctx.moveTo(x - 6, fTop);
+    var zig = 6;
+    for (var s = 0; s < zig; s++) {
+      var t = (s + 1) / zig;
+      ctx.lineTo(x + (s % 2 === 0 ? 6 : -6), lerp(fTop, fBot, t));
+    }
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.strokeStyle = b > 0.02
+      ? 'rgba(255,' + Math.round(252 - 20 * b) + ',' + Math.round(226 - 70 * b) + ',' + (0.75 + 0.25 * b) + ')'
+      : 'rgba(150,170,190,.55)';
+    ctx.lineWidth = 0.9 + 0.4 * b;
+    ctx.stroke();
+
+    if (b > 0.04) {
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.strokeStyle = 'rgba(255,250,235,' + (0.55 * b) + ')';
+      ctx.lineWidth = 1.7 + 0.7 * b;
+      ctx.stroke();
+      // 灯丝处的核心亮斑
+      var cg2 = ctx.createRadialGradient(x, (fTop + fBot) / 2, 1, x, (fTop + fBot) / 2, 12);
+      cg2.addColorStop(0, 'rgba(255,255,245,' + (0.24 * b) + ')');
+      cg2.addColorStop(1, 'rgba(255,240,200,0)');
+      ctx.fillStyle = cg2;
+      ctx.beginPath();
+      ctx.arc(x, (fTop + fBot) / 2, 10, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+
+    // 玻璃高光
+    ctx.beginPath();
+    ctx.ellipse(x - r * 0.36, y - r * 0.42, r * 0.22, r * 0.13, -0.62, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255,255,255,' + (0.34 + 0.30 * b) + ')';
+    ctx.fill();
+    ctx.beginPath();
+    ctx.ellipse(x + r * 0.30, y + r * 0.26, r * 0.12, r * 0.07, 0.5, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255,255,255,.14)';
+    ctx.fill();
+
+    // 玻璃轮廓
+    bulbPath();
+    ctx.strokeStyle = b > 0.25
+      ? 'rgba(255,255,255,' + (0.30 + 0.42 * b) + ')'
+      : 'rgba(196,222,248,.40)';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    // 灯座被照亮
+    if (b > 0.05) {
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      var lg = ctx.createRadialGradient(x, sy + 2, 2, x, sy + 2, 44);
+      lg.addColorStop(0, 'rgba(' + hot[0] + ',' + hot[1] + ',' + hot[2] + ',' + (0.24 * b) + ')');
+      lg.addColorStop(1, 'rgba(' + hot[0] + ',' + hot[1] + ',' + hot[2] + ',0)');
+      ctx.fillStyle = lg;
+      ctx.beginPath();
+      ctx.arc(x, sy + 2, 44, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+  }
+
+  /* ---------- 电流粒子 ---------- */
+  function drawFlow(path, I, color, dotR) {
+    if (!show.current || I < 0.008) return;
+    var speed = clamp(I / 0.35, 0.15, 1.4) * 92;   // px/s
+    var gap = 62;
+    var n = Math.max(2, Math.round(path.total / gap));
+    var base = (state.phase * speed) % path.total;
+
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    for (var i = 0; i < n; i++) {
+      var s = (base + i * (path.total / n)) % path.total;
+      var p = atPath(path, s / path.total);
+      var rg = ctx.createRadialGradient(p[0], p[1], 0.4, p[0], p[1], dotR * 3.2);
+      rg.addColorStop(0, 'rgba(' + color + ',.95)');
+      rg.addColorStop(0.35, 'rgba(' + color + ',.45)');
+      rg.addColorStop(1, 'rgba(' + color + ',0)');
+      ctx.fillStyle = rg;
+      ctx.beginPath();
+      ctx.arc(p[0], p[1], dotR * 3.2, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = 'rgba(255,255,255,.92)';
+      ctx.beginPath();
+      ctx.arc(p[0], p[1], dotR * 0.72, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  /* ---------- 导线走线（世界坐标，端点被器材盖住） ---------- */
+  var W_CTRL_A = [[710, 470], [630, 470], [630, 110], [150, 110], [150, 140]];
+  var W_CTRL_B = [[296, 140], [430, 140], [430, 695], [492, 695]];
+  var W_CTRL_P = [[600, 695], [640, 695], [640, 620], [690, 620], [690, 580], [710, 580]];
+
+  var W_G_UP   = [[934, 358], [1000, 358], [1000, 335], [1170, 335]];
+  var W_G_RET  = [[1231, 335], [1340, 335], [1340, 695], [1180, 695]];
+  var W_R_DN   = [[934, 402], [970, 402], [970, 535], [1170, 535]];
+  var W_R_RET  = [[1231, 535], [1340, 535], [1340, 695], [1180, 695]];
+  var W_COM    = [[1060, 695], [960, 695], [960, 430]];
+
+  function flexPts(movY) {
+    // 动触点 → 固定点的软导线（二次贝塞尔采样成折线，粒子与描边共用同一份）
+    var p0 = [890, movY + 5], p1 = [928, movY + 46], p2 = [960, 430];
+    var out = [];
+    for (var i = 0; i <= 10; i++) {
+      var t = i / 10, u = 1 - t;
+      out.push([u * u * p0[0] + 2 * u * t * p1[0] + t * t * p2[0],
+                u * u * p0[1] + 2 * u * t * p1[1] + t * t * p2[1]]);
+    }
+    return out;
+  }
+
+  function drawFlex(movY) {
+    drawWire(flexPts(movY), TONE_WORK, 4.2);
+  }
+
+  /* ---------- 电流路径 ---------- */
+  var P_CTRL_1 = makePath([[600, 695], [640, 695], [640, 620], [690, 620], [690, 580], [710, 580]]);
+  var P_CTRL_2 = makePath([[710, 470], [630, 470], [630, 110], [150, 110], [150, 140], [150, 300]]);
+  var P_CTRL_4 = makePath([[296, 300], [296, 140], [430, 140], [430, 695], [492, 695]]);
+
+  /* ---------- 标注 ---------- */
+  function txt(s, x, y, align, size, color, weight) {
+    ctx.font = (weight || 600) + ' ' + (size || 12.5) + 'px ' + FONT;
+    ctx.textAlign = align || 'left';
+    ctx.textBaseline = 'middle';
+    ctx.save();
+    ctx.shadowColor = 'rgba(0,0,0,.85)';
+    ctx.shadowBlur = 3.5;
+    ctx.fillStyle = color || 'rgba(186,230,253,.78)';
+    ctx.fillText(s, x, y);
+    ctx.restore();
+  }
+
+  function leader(x1, y1, x2, y2) {
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+    ctx.strokeStyle = 'rgba(125,211,252,.32)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(x2, y2, 1.9, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(125,211,252,.55)';
+    ctx.fill();
+  }
+
+  function drawScale() {
+    if (!show.scale) return;
+    var x1 = 54;
+    var yA = electrodeA();
+
+    ctx.beginPath();
+    ctx.moveTo(x1, WL_TOP - 12);
+    ctx.lineTo(x1, WL_BOTTOM + 6);
+    ctx.strokeStyle = 'rgba(125,211,252,.28)';
+    ctx.lineWidth = 1.4;
+    ctx.stroke();
+
+    for (var cm = 0; cm <= 24; cm++) {
+      var y = WL_BOTTOM - (cm / 24.6) * WL_SPAN;
+      if (y < WL_TOP - 6) continue;
+      var major = (cm % 5 === 0);
+      ctx.beginPath();
+      ctx.moveTo(x1, y);
+      ctx.lineTo(x1 - (major ? 11 : 5), y);
+      ctx.strokeStyle = major ? 'rgba(125,211,252,.45)' : 'rgba(125,211,252,.20)';
+      ctx.lineWidth = major ? 1.4 : 1;
+      ctx.stroke();
+      if (major) txt(cm + '', x1 - 14, y, 'right', 10.5, 'rgba(148,197,253,.7)', '600');
+    }
+    txt('cm', x1 - 14, WL_TOP - 22, 'right', 10, 'rgba(148,197,253,.55)', '700');
+
+    // 报警水位：刻度上的红三角
+    ctx.beginPath();
+    ctx.moveTo(x1 + 2, yA);
+    ctx.lineTo(x1 + 11, yA - 5.5);
+    ctx.lineTo(x1 + 11, yA + 5.5);
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(248,113,113,.9)';
+    ctx.fill();
+  }
+
+  function drawAnnotations() {
+    if (!show.anno) return;
+    var yA = electrodeA();
+    var yw = waterY();
+
+    txt('A', 116, 236, 'right', 15, 'rgba(226,244,255,.92)', '800');
+    leader(120, 236, 134, 236);
+    txt('B', 338, 236, 'left', 15, 'rgba(226,244,255,.92)', '800');
+    leader(324, 236, 312, 236);
+
+    // 报警水位虚线
+    ctx.save();
+    ctx.setLineDash([7, 7]);
+    ctx.beginPath();
+    ctx.moveTo(164, yA);
+    ctx.lineTo(388, yA);
+    ctx.strokeStyle = 'rgba(248,113,113,.55)';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    ctx.restore();
+    txt('报警水位', 78, yA - 12, 'left', 10.5, 'rgba(252,165,165,.9)', '700');
+
+    txt('衔铁', 690, 316, 'center', 12, 'rgba(186,230,253,.72)');
+    leader(690, 324, 690, 332);
+
+    txt('弹簧', 842, 288, 'right', 12, 'rgba(186,230,253,.72)');
+    leader(846, 288, 868, 288);
+
+    txt('电磁铁', 592, 552, 'right', 12, 'rgba(186,230,253,.72)');
+    leader(596, 552, 688, 530);
+
+    txt('触点', 966, 476, 'left', 12, 'rgba(186,230,253,.72)');
+    leader(962, 476, 914, 404);
+
+    txt('绿灯', 1262, 238, 'left', 12.5, 'rgba(134,239,172,.85)', '700');
+    txt('红灯', 1262, 438, 'left', 12.5, 'rgba(252,165,165,.9)', '700');
+
+
+    var cmNow = (WL_BOTTOM - yw) / WL_SPAN * 24.6;
+    txt(cmNow.toFixed(1) + ' cm', 380, 214, 'right', 11.5, 'rgba(186,230,253,.9)', '700');
+  }
+
+  /* ---------- 主渲染 ---------- */
+  function render() {
+    resize();
+    var k = view.k;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, cv.width, cv.height);
+    ctx.setTransform(k, 0, 0, k, view.ox, view.oy);
+    ctx.lineCap = 'butt';
+    ctx.lineJoin = 'miter';
+
+    var yA = electrodeA();
+    var movY = CON_MOV_Y0 + state.x * AR_STROKE;
+
+    drawBG();
+    drawTankBack();
+    drawWater();
+    drawRod(AX, EL_TOP, yA, 'A');
+    drawRod(BX, EL_TOP, B_BOT, 'B');
+    drawTankFront();
+
+    drawScale();
+    drawBoard();
+
+    drawWire(W_CTRL_A, TONE_CTRL);
+    drawWire(W_CTRL_B, TONE_CTRL);
+    drawWire(W_CTRL_P, TONE_CTRL);
+
+    drawWire(W_COM, TONE_WORK);
+    drawFlex(movY);
+    drawWire(W_G_UP, TONE_WORK);
+    drawWire(W_G_RET, TONE_WORK);
+    drawWire(W_R_DN, TONE_WORK);
+    drawWire(W_R_RET, TONE_WORK);
+
+    drawBattery(BAT1, { tag1: '#1d3f5c', tag2: '#2b6f8f', name: 'CONTROL 6V' });
+
+    drawRelayBase();
+    drawCore();
+    drawCoil();
+    drawFrame();
+    drawArmature();
+    drawSpring();
+    drawContacts();
+    drawField();
+
+    drawLamp(LAMP_G, state.lampG);
+    drawLamp(LAMP_R, state.lampR);
+    drawBattery(BAT2, { tag1: '#4a2a12', tag2: '#8a4b1c', name: 'WORK 6V' });
+
+    /* 电流粒子 */
+    if (show.current) {
+      var I = state.I;
+      if (I > 0.008) {
+        drawFlow(P_CTRL_1, I, '160,240,255', 2.5);
+        drawFlow(P_CTRL_2, I, '160,240,255', 2.5);
+        drawFlow(P_CTRL_4, I, '160,240,255', 2.5);
+        var d = immersedCm();
+        if (d > 0.05) {
+          var yp = Math.min(waterY() + 22, yA - 7, 692);
+          yp = Math.max(yp, waterY() + 5);
+          var wp = makePath([[168, yp], [278, yp]]);
+          drawFlow(wp, I * 0.7, '125,235,255', 2.1);
+        }
+      }
+      if (state.Iw > 0.01) {
+        if (state.contact === 'up') {
+          drawFlow(makePath(W_COM), state.Iw, '255,226,150', 2.6);
+          drawFlow(makePath(flexPts(movY).concat([[890, movY - 6], [890, CON_UP_Y + 4]])),
+                   state.Iw, '255,226,150', 2.6);
+          drawFlow(makePath(W_G_UP), state.Iw, '255,226,150', 2.6);
+          drawFlow(makePath(W_G_RET), state.Iw, '255,226,150', 2.6);
+        } else if (state.contact === 'down') {
+          drawFlow(makePath(W_COM), state.Iw, '255,226,150', 2.6);
+          drawFlow(makePath(flexPts(movY).concat([[890, movY + 6], [890, CON_DN_Y - 4]])),
+                   state.Iw, '255,226,150', 2.6);
+          drawFlow(makePath(W_R_DN), state.Iw, '255,226,150', 2.6);
+          drawFlow(makePath(W_R_RET), state.Iw, '255,226,150', 2.6);
+        }
+      }
+    }
+
+    drawAnnotations();
+    state.renderCount++;
+  }
+
+  /* ============================================================
+   * DOM 读数（带缓存，避免每帧写 DOM）
+   * ============================================================ */
+  var cache = {};
+  function setTxt(id, v) {
+    if (cache[id] === v) return;
+    cache[id] = v;
+    var e = el(id);
+    if (e) e.textContent = v;
+  }
+  function setCls(id, cls) {
+    var key = id + '@cls';
+    if (cache[key] === cls) return;
+    cache[key] = cls;
+    var e = el(id);
+    if (e) e.className = 'lab3d-metric' + (cls ? ' ' + cls : '');
+  }
+  function setOn(id, on) {
+    var key = id + '@on';
+    if (cache[key] === on) return;
+    cache[key] = on;
+    var e = el(id);
+    if (e) e.classList.toggle('on', !!on);
+  }
+
+  function refreshLive() {
+    var cmNow = (WL_BOTTOM - waterY()) / WL_SPAN * 24.6;
+    var cmAlarm = (WL_BOTTOM - electrodeA()) / WL_SPAN * 24.6;
+    setTxt('wa-m-h', cmNow.toFixed(1) + ' / ' + cmAlarm.toFixed(1) + ' cm');
+
+    var rw = waterR();
+    var I = state.I;
+    if (!isFinite(rw)) {
+      setTxt('wa-m-i', '断开');
+      setCls('wa-m-c1', 'warn');
+    } else {
+      setTxt('wa-m-i', I.toFixed(3) + ' A');
+      setCls('wa-m-c1', I > 0.05 ? 'ok' : 'warn');
+    }
+
+    var fNow = magForce(I, state.x);
+    var fSpring = springForce(state.x);
+    setTxt('wa-m-f', (fNow > 99 ? '99+' : fNow.toFixed(2)) + ' / ' + fSpring.toFixed(2));
+    setCls('wa-m-c2', fNow > fSpring ? 'ok' : 'bad');
+
+    if (state.contact === 'down') { setTxt('wa-m-w', '红灯亮 · 报警'); setCls('wa-m-c3', 'bad'); }
+    else if (state.contact === 'up') { setTxt('wa-m-w', '绿灯亮 · 正常'); setCls('wa-m-c3', 'ok'); }
+    else { setTxt('wa-m-w', '触点切换中'); setCls('wa-m-c3', 'warn'); }
+
+    setOn('wa-c1', immersedCm() > 0);
+    setOn('wa-c2', fNow > fSpring && I > 0.03);
+    setOn('wa-c3', state.contact === 'down');
+    setOn('wa-c4', state.lampR > 0.5);
+
+    var flag = el('wa-flag');
+    if (flag) flag.classList.toggle('show', state.lampR > 0.55);
+
+    updateSteps();
+
+    var v = el('wa-verdict');
+    if (v) {
+      var html;
+      if (state.contact === 'down') {
+        html = '<b>现在：</b>水位已经淹没电极 A，控制电路接通，电流 ' + I.toFixed(2) +
+               ' A 流过线圈，电磁铁吸力大于弹簧拉力，<b>衔铁被吸下</b>，动触点压在下静触点上——' +
+               '<b>红灯亮</b>，报警！注意工作电路里的大电流并不经过水槽。';
+      } else if (immersedCm() > 0) {
+        if (fNow > fSpring) {
+          html = '<b>现在：</b>水刚淹没电极 A，控制电路已经接通（' + I.toFixed(2) +
+                 ' A），衔铁正在动作……';
+        } else {
+          html = '<b>现在：</b>水已经碰到电极 A，但淹没得太浅、接触面积小，水的电阻还很大，' +
+                 '电流只有 ' + I.toFixed(3) + ' A，<b>吸力 ' + fNow.toFixed(2) +
+                 ' 还小于弹簧拉力 ' + fSpring.toFixed(2) + '</b>，衔铁纹丝不动。' +
+                 '再涨一点水就能报警——这就是真实的「阈值」行为。';
+        }
+      } else {
+        html = '<b>现在：</b>水位低于电极 A 的下端，A、B 之间被空气隔开，控制电路是断开的，' +
+               '电磁铁没有磁性，衔铁被弹簧拉住，动触点压在上面的静触点上——<b>绿灯亮</b>，表示水位正常。';
+      }
+      if (cache['verdict'] !== html) { cache['verdict'] = html; v.innerHTML = html; }
+    }
+  }
+
+  var STEPS = [
+    '观察待命状态：绿灯亮，衔铁停在上方，动触点压着上静触点',
+    '点「注水」慢慢抬高水位，让水面接近电极 A 的下端',
+    '水面淹没 A、B：水把控制电路接通，看电流读数跳起来',
+    '继续观察：吸力超过弹簧拉力，衔铁被吸下、动触点切到下静触点',
+    '红灯亮起报警；再排水，看衔铁复位、绿灯重新亮起'
+  ];
+  var stepsBuilt = false;
+  function updateSteps() {
+    var box = el('wa-steps');
+    if (!box) return;
+    if (!stepsBuilt) {
+      box.innerHTML = STEPS.map(function (s, i) {
+        return '<li><i>' + (i + 1) + '</i><span>' + s + '</span></li>';
+      }).join('');
+      stepsBuilt = true;
+    }
+    var cur;
+    if (state.contact === 'down') cur = 4;
+    else if (immersedCm() > 0) cur = 3;
+    else if (state.h > params.hA - 0.10) cur = 2;
+    else if (state.h > 0.06) cur = 1;
+    else cur = 0;
+    var lis = box.children;
+    for (var i = 0; i < lis.length; i++) {
+      lis[i].className = i < cur ? 'on' : (i === cur ? 'cur' : '');
+    }
+  }
+
+  /* ============================================================
+   * 交互：拖水面 / 拖电极 A
+   * ============================================================ */
+  var drag = null;
+
+  function toWorld(ev) {
+    var r = cv.getBoundingClientRect();
+    var px = (ev.clientX - r.left) * (cv.width / Math.max(1, r.width));
+    var py = (ev.clientY - r.top) * (cv.height / Math.max(1, r.height));
+    return { x: (px - view.ox) / view.k, y: (py - view.oy) / view.k };
+  }
+
+  function hitTest(p) {
+    var yA = electrodeA();
+    if (p.x > AX - 26 && p.x < AX + 26 && p.y > EL_TOP - 26 && p.y < yA + 26) return 'A';
+    if (p.x > T_IN.x - 6 && p.x < T_IN.x + T_IN.w + 6 && p.y > T_IN.y - 10 && p.y < T_IN.y + T_IN.h + 6) {
+      if (Math.abs(p.y - waterY()) < 52) return 'water';
+      if (p.y > waterY()) return 'water';
+    }
+    return null;
+  }
+
+  cv.addEventListener('pointerdown', function (ev) {
+    var p = toWorld(ev);
+    var h = hitTest(p);
+    if (!h) return;
+    drag = { kind: h };
+    if (cv.setPointerCapture) { try { cv.setPointerCapture(ev.pointerId); } catch (e) {} }
+    cv.classList.add('pick');
+    if (h === 'water') applyWater(p.y);
+    ev.preventDefault();
+  });
+
+  cv.addEventListener('pointermove', function (ev) {
+    var p = toWorld(ev);
+    if (!drag) {
+      cv.classList.toggle('pick', !!hitTest(p));
+      return;
+    }
+    if (drag.kind === 'water') applyWater(p.y);
+    else if (drag.kind === 'A') applyHA(p.y);
+    ev.preventDefault();
+  });
+
+  function endDrag(ev) {
+    if (!drag) return;
+    drag = null;
+    cv.classList.remove('pick');
+    if (ev && ev.pointerId !== undefined && cv.releasePointerCapture) {
+      try { cv.releasePointerCapture(ev.pointerId); } catch (e) {}
+    }
+  }
+  cv.addEventListener('pointerup', endDrag);
+  cv.addEventListener('pointercancel', endDrag);
+
+  function applyWater(y) {
+    var h = clamp((WL_BOTTOM - y) / WL_SPAN, 0, 1);
+    state.h = h;
+    params.h = h;
+    state.auto = 0;
+    state.splash = Math.max(state.splash, 0.7);
+    for (var i = 0; i < 4; i++) {
+      spawnBubble(T_IN.x + 40 + Math.random() * (T_IN.w - 80), WL_BOTTOM - 10);
+    }
+    syncWaterSlider();
+    syncAutoButtons();
+  }
+
+  function applyHA(y) {
+    var hA = clamp((WL_BOTTOM - y) / WL_SPAN, 0.45, 0.88);
+    params.hA = hA;
+    var s = el('wa-ha');
+    if (s) s.value = Math.round(hA * 100);
+    setTxt('wa-ha-v', Math.round(hA * 100) + '%');
+  }
+
+  function syncWaterSlider() {
+    var s = el('wa-h');
+    if (s && document.activeElement !== s) s.value = (state.h * 100).toFixed(1);
+    setTxt('wa-h-v', Math.round(state.h * 100) + '%');
+  }
+
+  /* ============================================================
+   * 参数面板 / 滑块
+   * ============================================================ */
+  function bindRange(id, outId, fmt, onInput) {
+    var s = el(id);
+    if (!s) return;
+    var fire = function () {
+      var v = parseFloat(s.value);
+      var o = el(outId);
+      if (o) o.textContent = fmt(v);
+      onInput(v);
+      state.dirty = true;
+    };
+    s.addEventListener('input', fire);
+    fire();
+  }
+
+  bindRange('wa-h', 'wa-h-v', function (v) { return Math.round(v) + '%'; }, function (v) {
+    state.h = v / 100; params.h = state.h; state.auto = 0; syncAutoButtons();
+  });
+  bindRange('wa-ha', 'wa-ha-v', function (v) { return Math.round(v) + '%'; }, function (v) {
+    params.hA = v / 100;
+  });
+  bindRange('wa-u', 'wa-u-v', function (v) { return v.toFixed(1) + ' V'; }, function (v) { params.u = v; });
+  bindRange('wa-n', 'wa-n-v', function (v) { return Math.round(v) + ' 匝'; }, function (v) { params.n = v; });
+  bindRange('wa-water', 'wa-water-v', function (v) {
+    return ['弱（纯净水）', '中等（自来水）', '强（盐水）'][v] || '中等';
+  }, function (v) { params.water = Math.round(v); });
+  bindRange('wa-spring', 'wa-spring-v', function (v) { return v.toFixed(2); }, function (v) { params.spring = v; });
+  bindRange('wa-speed', 'wa-speed-v', function (v) { return v.toFixed(1) + '×'; }, function (v) { params.speed = v; });
+
+  function bindCheck(id, key) {
+    var c = el(id);
+    if (!c) return;
+    c.addEventListener('change', function () {
+      show[key] = c.checked;
+      var btn = el('wa-show-' + key);
+      if (btn) btn.classList.toggle('active', c.checked);
+      state.dirty = true;
+      render();
+    });
+  }
+  bindCheck('wa-c-anno', 'anno');
+  bindCheck('wa-c-current', 'current');
+  bindCheck('wa-c-field', 'field');
+  bindCheck('wa-c-scale', 'scale');
+
+  function bindToolbarBtn(id, key) {
+    var b = el(id);
+    if (!b) return;
+    b.addEventListener('click', function () {
+      show[key] = !show[key];
+      b.classList.toggle('active', show[key]);
+      var c = el('wa-c-' + key);
+      if (c) c.checked = show[key];
+      state.dirty = true;
+      render();
+    });
+  }
+  bindToolbarBtn('wa-show-anno', 'anno');
+  bindToolbarBtn('wa-show-current', 'current');
+  bindToolbarBtn('wa-show-field', 'field');
+  bindToolbarBtn('wa-show-scale', 'scale');
+
+  function syncAutoButtons() {
+    var f = el('wa-fill'), d = el('wa-drain');
+    if (f) f.classList.toggle('on', state.auto > 0);
+    if (d) d.classList.toggle('on', state.auto < 0);
+  }
+  function setAuto(dir) {
+    state.auto = dir;
+    syncAutoButtons();
+    state.dirty = true;
+  }
+  var bFill = el('wa-fill'), bDrain = el('wa-drain'), bStop = el('wa-stop');
+  if (bFill) bFill.addEventListener('click', function () { setAuto(1); });
+  if (bDrain) bDrain.addEventListener('click', function () { setAuto(-1); });
+  if (bStop) bStop.addEventListener('click', function () { setAuto(0); });
+
+  function resetAll() {
+    state.auto = 0;
+    state.h = 0.35; params.h = 0.35;
+    params.hA = 0.62; params.u = 6; params.n = 800; params.water = 1; params.spring = 0.55;
+    params.speed = 1;
+    state.x = 0; state.v = 0; state.I = 0; state.Iw = 0;
+    state.lampG = 1; state.lampR = 0; state.contact = 'up'; state.spark = 0;
+    bubbles.length = 0;
+    [['wa-h', 35], ['wa-ha', 62], ['wa-u', 6], ['wa-n', 800], ['wa-water', 1],
+     ['wa-spring', 0.55], ['wa-speed', 1]].forEach(function (p) {
+      var s = el(p[0]);
+      if (s) { s.value = p[1]; s.dispatchEvent(new Event('input')); }
+    });
+    syncAutoButtons();
+    state.dirty = true;
+    render();
+    refreshLive();
+  }
+  var bReset = el('wa-reset'), bReset2 = el('wa-reset2');
+  if (bReset) bReset.addEventListener('click', resetAll);
+  if (bReset2) bReset2.addEventListener('click', resetAll);
+
+  var bDemo = el('wa-demo');
+  if (bDemo) bDemo.addEventListener('click', function () {
+    state.h = 0.20; params.h = state.h;
+    syncWaterSlider();
+    setAuto(1);
+  });
+
+  var bResetView = el('wa-reset-view');
+  if (bResetView) bResetView.addEventListener('click', resetAll);
+
+  /* ============================================================
+   * 全屏（目标 = 整个舞台）
+   * ============================================================ */
+  var fsBtn = el('wa-fs');
+  var fsIsOn = function () {
+    return document.fullscreenElement === stage || document.webkitFullscreenElement === stage;
+  };
+  var fsLayouts = 0;
+  function fsLayout() {
+    resize();
+    render();
+    fsLayouts++;
+  }
+  if (fsBtn) {
+    fsBtn.addEventListener('click', function () {
+      if (document.fullscreenElement || document.webkitFullscreenElement) {
+        (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+      } else if (stage.requestFullscreen) {
+        stage.requestFullscreen();
+      } else if (stage.webkitRequestFullscreen) {
+        stage.webkitRequestFullscreen();
+      }
+    });
+  }
+  function onFsChange() {
+    var on = fsIsOn();
+    if (fsBtn) {
+      var ex = fsBtn.querySelector('.fs-expand'), cp = fsBtn.querySelector('.fs-compress'),
+          lb = fsBtn.querySelector('.lbl');
+      if (ex) ex.style.display = on ? 'none' : '';
+      if (cp) cp.style.display = on ? '' : 'none';
+      if (lb) lb.textContent = on ? '退出' : '全屏';
+      fsBtn.title = on ? '退出全屏' : '全屏显示实验画面';
+      fsBtn.setAttribute('aria-label', fsBtn.title);
+    }
+    fsLayout();
+    requestAnimationFrame(function () { requestAnimationFrame(fsLayout); });
+    setTimeout(fsLayout, 90);
+  }
+  document.addEventListener('fullscreenchange', onFsChange);
+  document.addEventListener('webkitfullscreenchange', onFsChange);
+
+  /* ============================================================
+   * 参数面板
+   * ============================================================ */
+  var paramsBox = el('wa-params'), paramsHead = el('wa-params-head'),
+      paramsToggle = el('wa-params-toggle'), paramsBody = el('wa-params-body');
+  function paramsIsOpen() { return !!paramsBox && !paramsBox.classList.contains('collapsed'); }
+  function setParamsOpen(on) {
+    if (!paramsBox) return;
+    paramsBox.classList.toggle('collapsed', !on);
+    paramsToggle.setAttribute('aria-expanded', on ? 'true' : 'false');
+    paramsToggle.textContent = on ? '▾ 收起' : '▸ 展开';
+    paramsToggle.title = on ? '收起参数面板' : '展开参数面板';
+    state.dirty = true;
+  }
+  if (paramsBox) {
+    paramsToggle.addEventListener('click', function (e) { e.stopPropagation(); setParamsOpen(!paramsIsOpen()); });
+    paramsHead.addEventListener('click', function (e) {
+      if (e.target.closest && e.target.closest('#wa-params-toggle')) return;
+      setParamsOpen(!paramsIsOpen());
+    });
+    paramsBox.addEventListener('pointerdown', function (e) { e.stopPropagation(); });
+    paramsBox.addEventListener('pointerup', function (e) { e.stopPropagation(); });
+    paramsBox.addEventListener('wheel', function (e) { e.stopPropagation(); }, { passive: true });
+    setParamsOpen(false);
+  }
+
+  function paramsPanelInfo() {
+    if (!paramsBox) return null;
+    var r = paramsBox.getBoundingClientRect();
+    var st = stage.getBoundingClientRect();
+    var cs = getComputedStyle(paramsBody);
+    return {
+      open: paramsIsOpen(),
+      text: paramsToggle.textContent,
+      expanded: paramsToggle.getAttribute('aria-expanded'),
+      bodyDisplay: cs.display,
+      inStage: stage.contains(paramsBox),
+      insideStage: r.left >= st.left - 1 && r.right <= st.right + 1 &&
+                   r.top >= st.top - 1 && r.bottom <= st.bottom + 1,
+      areaPct: +(r.width * r.height / (st.width * st.height) * 100).toFixed(2),
+      scrollable: paramsBody.scrollHeight > paramsBody.clientHeight + 1,
+      scrollH: paramsBody.scrollHeight, clientH: paramsBody.clientHeight,
+      sliders: paramsBody.querySelectorAll('input[type="range"]').length,
+      checks: paramsBody.querySelectorAll('input[type="checkbox"]').length,
+      rect: { x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height) },
+      stage: { x: Math.round(st.left), y: Math.round(st.top), w: Math.round(st.width), h: Math.round(st.height) }
+    };
+  }
+
+  /* ============================================================
+   * 主循环
+   * ============================================================ */
+  var lastT = 0, rafRan = false;
+  function tick(now) {
+    rafRan = true;
+    if (!lastT) lastT = now;
+    var dt = Math.min(0.05, (now - lastT) / 1000);
+    lastT = now;
+    step(dt);
+    render();
+    refreshLive();
+    requestAnimationFrame(tick);
+  }
+
+  /* ============================================================
+   * 启动
+   * ============================================================ */
+  function boot() {
+    resize();
+    state.x = 0; state.v = 0;
+    state.lampG = 1; state.lampR = 0; state.contact = 'up';
+    render();
+    refreshLive();
+    requestAnimationFrame(tick);
+    setTimeout(function () { if (!rafRan) render(); }, 1200);
+  }
+
+  /* ============================================================
+   * 自检钩子
+   * ============================================================ */
+  window.__wa = {
+    W: W, H: H,
+    params: params,
+    state: state,
+    show: show,
+    geom: function () {
+      return {
+        waterY: waterY(),
+        yA: electrodeA(),
+        yB: B_BOT,
+        immersedCm: immersedCm(),
+        waterR: waterR(),
+        I: state.I,
+        Iw: state.Iw,
+        magF: magForce(state.I, state.x),
+        springF: springForce(state.x),
+        armX: state.x,
+        armRightY: armRightY(),
+        movY: CON_MOV_Y0 + state.x * AR_STROKE,
+        contact: state.contact,
+        lampG: state.lampG,
+        lampR: state.lampR,
+        touchUpY: CON_UP_Y,
+        touchDnY: CON_DN_Y,
+        coreX: CORE_X, coreTop: CORE_TOP,
+        tank: { x: TANK.x, y: TANK.y, w: TANK.w, h: TANK.h },
+        waterBottom: WL_BOTTOM, waterTop: WL_TOP,
+        cm: CM
+      };
+    },
+    view: function () { return { k: view.k, ox: view.ox, oy: view.oy, w: cv.width, h: cv.height }; },
+    // 【改完参数立刻重算电流】否则读数与画面要等下一帧 step() 才更新（自检会读到旧值）
+    setH: function (v) { state.h = clamp(v, 0, 1); params.h = state.h; state.I = controlCurrent();
+      syncWaterSlider(); render(); refreshLive(); return state.h; },
+    setHA: function (v) { params.hA = clamp(v, 0.45, 0.88); state.I = controlCurrent();
+      render(); refreshLive(); return params.hA; },
+    setParam: function (k, v) { params[k] = v; state.I = controlCurrent();
+      render(); refreshLive(); return params[k]; },
+    setAuto: function (d) { setAuto(d); return state.auto; },
+    setShow: function (k, v) { show[k] = v; render(); return show[k]; },
+    reset: function () { resetAll(); },
+    renderNow: function () { render(); },
+    step: function (dt) { step(dt); render(); refreshLive(); },
+    settle: function (sec) {
+      var n = Math.round((sec || 1) * 240);
+      for (var i = 0; i < n; i++) step(1 / 240);
+      render(); refreshLive();
+      return { x: state.x, contact: state.contact, I: state.I };
+    },
+    click: function (id) { var e = el(id); if (e) e.click(); return true; },
+    panel: paramsPanelInfo,
+    setParams: function (on) { setParamsOpen(!!on); return paramsPanelInfo(); },
+    fs: { isOn: fsIsOn, layouts: function () { return fsLayouts; }, click: function () { if (fsBtn) fsBtn.click(); } },
+    probe: function () {
+      var r = cv.getBoundingClientRect();
+      return { rect: { x: r.left, y: r.top, w: r.width, h: r.height },
+               k: view.k, ox: view.ox, oy: view.oy, cw: cv.width, ch: cv.height };
+    },
+    // 世界坐标 → 【画布设备像素】（getImageData 用的是设备像素，别再除 CSS 比例）
+    px: function (wx, wy) {
+      return { x: view.ox + wx * view.k, y: view.oy + wy * view.k };
+    },
+    pix: function (wx, wy) {
+      var p = this.px(wx, wy);
+      var d = ctx.getImageData(Math.round(p.x), Math.round(p.y), 1, 1).data;
+      return [d[0], d[1], d[2], d[3]];
+    },
+    pixAvg: function (wx, wy, rad) {
+      var p = this.px(wx, wy);
+      var r = rad || 3;
+      var d = ctx.getImageData(Math.round(p.x - r), Math.round(p.y - r), r * 2 + 1, r * 2 + 1).data;
+      var n = 0, R = 0, G = 0, B = 0;
+      for (var i = 0; i < d.length; i += 4) { R += d[i]; G += d[i + 1]; B += d[i + 2]; n++; }
+      return [R / n, G / n, B / n];
+    },
+    hit: function (wx, wy) { return hitTest({ x: wx, y: wy }); },
+    renderCount: function () { return state.renderCount; }
+  };
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', boot);
+  } else {
+    boot();
+  }
+})();
+</script>
+</body>
+</html>
