@@ -1,0 +1,527 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>汽车车窗起雾与除雾 · 三维物态变化实验</title>
+  <link rel="stylesheet" href="style.css">
+  <style>
+    * { box-sizing: border-box; }
+    :root { color-scheme: dark; --line: rgba(56, 189, 248, .18); }
+    body {
+      margin: 0; padding: 22px 18px 60px; min-width: 320px;
+      background: #020617; color: #e2e8f0;
+      font-family: Inter, -apple-system, 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', sans-serif;
+    }
+    body::before {
+      content: ''; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+      background: radial-gradient(circle at 14% 2%, #12304999, transparent 40%),
+                  radial-gradient(circle at 88% 48%, #0b3a3a66, transparent 46%);
+    }
+    .lab3d { max-width: 1460px; margin: 0 auto; border: 1px solid var(--line); border-radius: 18px;
+      background: linear-gradient(180deg, rgba(9, 20, 36, .96), rgba(4, 10, 20, .98));
+      box-shadow: 0 26px 70px #0009; overflow: hidden; }
+    .lab3d a { color: #7dd3fc; text-decoration: none; }
+    .lab3d a:hover { text-decoration: underline; }
+    .lab3d-top { display: flex; justify-content: space-between; align-items: flex-end; gap: 18px;
+      padding: 20px 22px 17px; border-bottom: 1px solid rgba(56, 189, 248, .14); }
+    .lab3d-kicker { font-size: 10.5px; color: #7dd3fc; letter-spacing: .22em; font-weight: 800; }
+    .lab3d-top h2 { margin: 7px 0 6px; font-size: clamp(19px, 2.3vw, 27px); color: #f8fafc; }
+    .lab3d-top p { margin: 0; color: #a6b8ca; font-size: 12.5px; line-height: 1.65; max-width: 780px; }
+    .lab3d-top p b { color: #a5f3fc; }
+    .lab3d-status { flex: none; color: #6ee7b7; font-size: 11.5px; border: 1px solid rgba(16, 185, 129, .4);
+      background: rgba(6, 78, 59, .35); padding: 6px 11px; border-radius: 99px; white-space: nowrap; }
+    .lab3d-layout { display: grid; grid-template-columns: minmax(0, 1fr) 320px; align-items: start; }
+    .lab3d-main { min-width: 0; padding: 14px; }
+    .lab3d-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; margin-bottom: 10px; }
+    .lab3d-toolbar .toolbar-label { color: #8da8bb; font-size: 11.5px; margin-right: 3px; }
+    .lab3d-toolbar .toolbar-spacer { flex: 1; }
+    .lab3d button {
+      font-family: inherit; cursor: pointer; padding: 7px 12px; font-size: 12px; border-radius: 9px;
+      border: 1px solid rgba(148, 163, 184, .32); background: rgba(30, 41, 59, .7); color: #cbd5e1;
+      transition: background .2s, border-color .2s, color .2s, box-shadow .2s;
+    }
+    .lab3d button:hover { background: rgba(51, 65, 85, .9); border-color: #38bdf8; }
+    .lab3d button.active { background: rgba(59, 130, 246, .25); border-color: #38bdf8; color: #e0f2fe;
+      box-shadow: 0 0 14px rgba(56, 189, 248, .28); }
+    .lab3d button:disabled { opacity: .42; cursor: not-allowed; }
+
+    /* ===== 实验画面（全屏目标 = 整个舞台） ===== */
+    .lab3d-stage { position: relative; height: clamp(430px, 50vw, 620px);
+      border: 1px solid rgba(56, 189, 248, .22); border-radius: 12px; overflow: hidden; background: #061423; }
+    .lab3d-stage canvas#sceneCanvas { display: block; width: 100%; height: 100%; border: 0; border-radius: 0;
+      background: transparent; cursor: grab; touch-action: none; }
+    .lab3d-stage canvas#sceneCanvas:active { cursor: grabbing; }
+    .lab3d-stage canvas#sceneCanvas.pick { cursor: pointer; }
+    .lab3d-stage .stage-hint { position: absolute; top: 12px; left: 14px; pointer-events: none; font-size: 11.5px;
+      color: #bae6fd; background: rgba(2, 6, 23, .8); border: 1px solid rgba(56, 189, 248, .25);
+      padding: 7px 11px; border-radius: 8px; line-height: 1.5; max-width: 46%; }
+    .lab3d-stage .stage-hint b { color: #7dd3fc; }
+    .lab3d-stage .stage-hint .dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+      background: #22d3ee; vertical-align: 2px; margin-right: 6px; box-shadow: 0 0 8px #22d3ee; }
+    .lab3d-stage .stage-hint .state { display: block; margin-top: 5px; padding-top: 5px;
+      border-top: 1px solid rgba(56, 189, 248, .2); color: #e0f2fe; font-weight: 700; }
+    .lab3d-stage .stage-hint .state em { font-style: normal; color: #93a9bb; font-weight: 500; }
+    .lab3d-stage .stage-hud { position: absolute; right: 12px; bottom: 58px; pointer-events: none;
+      background: rgba(2, 6, 23, .88); border: 1px solid rgba(56, 189, 248, .28); border-radius: 9px;
+      padding: 8px 12px; font-size: 11px; line-height: 1.75; color: #b7ccdc; font-variant-numeric: tabular-nums; }
+    .lab3d-stage .stage-hud b { color: #fdba74; font-size: 15px; }
+    .lab3d-stage .stage-hud i { font-style: normal; color: #7dd3fc; }
+    .lab3d-stage .stage-hud u { text-decoration: none; color: #fca5a5; }
+
+    /* 微观示意：玻璃剖面上水分子在干什么 */
+    .micro-inset { position: absolute; top: 12px; right: 12px; width: 216px; pointer-events: none;
+      border: 1px solid rgba(56, 189, 248, .3); border-radius: 10px; background: rgba(4, 14, 26, .9);
+      padding: 7px; box-shadow: 0 10px 30px #0007; }
+    .micro-inset > span { display: block; text-align: center; color: #bae6fd; font-size: 10.5px; font-weight: 700; margin-bottom: 4px; }
+    #microCanvas { display: block; width: 100%; height: 104px; border-radius: 5px; background: #071522; }
+    .micro-inset small { display: block; text-align: center; padding-top: 4px; color: #9fb6c8; font-size: 9.5px; line-height: 1.45; }
+
+    .lab3d-stage .stage-fs-btn { position: absolute; top: 10px; right: 10px; z-index: 9;
+      display: inline-flex; align-items: center; gap: 5px; line-height: 1; padding: 7px 11px; border-radius: 9px;
+      border: 1px solid rgba(148, 163, 184, .3); background: rgba(2, 6, 23, .88); color: #cbd5e1;
+      font-size: 11.5px; font-weight: 800; }
+    .lab3d-stage .stage-fs-btn:hover { border-color: rgba(125, 211, 252, .75); color: #e0f2fe; }
+    .lab3d-stage:fullscreen, .lab3d-stage:-webkit-full-screen { width: 100%; height: 100%; border: 0; border-radius: 0; background: #050b18; }
+
+    /* ===== 参数面板：住在画面里，默认收起 ===== */
+    .lab3d-stage .stage-params { position: absolute; top: 50px; right: 10px; z-index: 8;
+      display: flex; flex-direction: column; width: 302px; max-width: calc(100% - 20px);
+      max-height: calc(100% - 112px); border: 1px solid rgba(56, 189, 248, .32); border-radius: 12px;
+      background: rgba(2, 6, 23, .9); -webkit-backdrop-filter: blur(9px); backdrop-filter: blur(9px);
+      box-shadow: 0 18px 44px rgba(2, 6, 23, .66); color: #cbd5e1; text-align: left; }
+    .lab3d-stage .stage-params.collapsed { width: auto; }
+    .lab3d-stage .stage-params.collapsed .params-body { display: none; }
+    .lab3d-stage .stage-params .params-head { display: flex; align-items: center; justify-content: space-between;
+      gap: 12px; padding: 9px 12px; border-bottom: 1px solid rgba(148, 163, 184, .18); cursor: pointer; }
+    .lab3d-stage .stage-params.collapsed .params-head { border-bottom: 0; padding: 8px 12px; }
+    .lab3d-stage .stage-params .params-title { color: #7dd3fc; font-size: 12px; font-weight: 800;
+      letter-spacing: .04em; white-space: nowrap; }
+    .lab3d-stage .stage-params .params-toggle { flex: none; padding: 4px 9px; border-radius: 7px; line-height: 1.25;
+      border: 1px solid rgba(56, 189, 248, .45); background: rgba(56, 189, 248, .16); color: #e0f2fe;
+      font-size: 11px; font-weight: 800; }
+    .lab3d-stage .stage-params .params-body { overflow-y: auto; overscroll-behavior: contain;
+      touch-action: pan-y; padding: 0 13px 15px; scrollbar-width: thin; }
+    .lab3d-stage .stage-params .params-body::-webkit-scrollbar { width: 8px; }
+    .lab3d-stage .stage-params .params-body::-webkit-scrollbar-thumb { background: rgba(148, 163, 184, .35); border-radius: 99px; }
+    .lab3d-stage .stage-params h4 { margin: 14px 0 10px; padding-top: 11px;
+      border-top: 1px solid rgba(148, 163, 184, .14); color: #7dd3fc; font-size: 12px; font-weight: 800; letter-spacing: .05em; }
+    .lab3d-stage .stage-params h4:first-child { margin-top: 12px; padding-top: 0; border-top: 0; }
+    .lab3d-field { margin: 0 0 14px; }
+    .lab3d-field .field-label { display: flex; justify-content: space-between; gap: 8px; align-items: baseline;
+      color: #cbd5e1; font-size: 11.5px; font-weight: 700; }
+    .lab3d-field output { color: #38bdf8; font-size: 12.5px; font-weight: 800; font-variant-numeric: tabular-nums; }
+    .lab3d-field input[type="range"] { display: block; width: 100%; margin: 9px 0 4px; accent-color: #22d3ee; }
+    .lab3d-field small { color: #64748b; font-size: 10px; line-height: 1.5; display: block; }
+    .params-choice { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+    .params-choice.quad { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .params-choice button { padding: 8px 5px; font-size: 11.5px; font-weight: 700; text-align: center; }
+    .params-choice button small { display: block; margin-top: 2px; font-size: 9.5px; font-weight: 500; color: #8ba3b8; }
+    .params-choice button.active small { color: #a5e9f7; }
+    .params-checks { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 10px; }
+    .params-checks label { display: inline-flex; align-items: center; gap: 6px; color: #cbd5e1; font-size: 11.5px; cursor: pointer; }
+    .params-checks input { accent-color: #22d3ee; margin: 0; flex: none; }
+
+    /* 底部控制带：全屏里也能完成关键操作 */
+    .lab3d-stage .stage-bar { position: absolute; left: 0; right: 0; bottom: 0; z-index: 7;
+      display: flex; align-items: center; gap: 8px; flex-wrap: nowrap;
+      padding: 8px 12px; background: linear-gradient(180deg, rgba(2, 6, 23, 0), rgba(2, 6, 23, .86) 46%); }
+    .lab3d-stage .stage-bar .bar-btn { flex: none; padding: 7px 11px; font-size: 11.5px; font-weight: 700;
+      border-radius: 8px; background: rgba(15, 23, 42, .92); }
+    .lab3d-stage .stage-bar .bar-btn.primary { border-color: rgba(251, 146, 60, .7);
+      background: linear-gradient(120deg, #ea580c, #d97706); color: #fff; }
+    .lab3d-stage .stage-bar .bar-btn.on { border-color: #34d399; background: rgba(16, 185, 129, .24); color: #d1fae5; }
+    .lab3d-stage .stage-bar .bar-hint { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis;
+      white-space: nowrap; color: #93b4c4; font-size: 10.5px; background: rgba(2, 6, 23, .7);
+      padding: 5px 9px; border-radius: 7px; }
+
+    .lab3d-foot { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 18px; padding: 11px 3px 0;
+      font-size: 11.5px; color: #b6c8d4; }
+    .lab3d-foot label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+    .lab3d-foot input { accent-color: #22d3ee; margin: 0; }
+    .lab3d-foot .legend { margin-left: auto; color: #8ba7b6; }
+    .lab3d-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-top: 11px; }
+    .lab3d-metric { padding: 11px 12px; border: 1px solid rgba(56, 189, 248, .18); border-radius: 10px;
+      background: linear-gradient(160deg, rgba(30, 58, 95, .5), rgba(15, 23, 42, .6)); }
+    .lab3d-metric span { display: block; font-size: 10.5px; color: #9fb8c6; }
+    .lab3d-metric strong { display: block; margin-top: 4px; color: #e0f2fe; font-size: 16px; font-variant-numeric: tabular-nums; }
+    .lab3d-metric.ok strong { color: #6ee7b7; }
+    .lab3d-metric.bad strong { color: #fca5a5; }
+    .lab3d-metric.warn strong { color: #fcd34d; }
+
+    .lab3d-sidebar { padding: 17px; color: #cbd5e1; border-left: 1px solid var(--line);
+      background: linear-gradient(180deg, rgba(15, 23, 42, .7), rgba(2, 6, 23, .55));
+      max-height: min(calc(100vh - 24px), 980px); overflow-y: auto; }
+    .lab3d-sidebar h3 { margin: 0 0 12px; color: #e2e8f0; font-size: 13.5px; letter-spacing: .04em; }
+    .lab3d-sidebar h3:not(:first-child) { margin-top: 20px; }
+    .step-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
+    .step-list li { display: flex; gap: 8px; align-items: flex-start; padding: 8px 10px; border-radius: 9px;
+      font-size: 11.5px; line-height: 1.5; border: 1px solid rgba(148, 163, 184, .16);
+      background: rgba(148, 163, 184, .05); color: #a9bccc; }
+    .step-list li i { font-style: normal; flex: none; width: 16px; height: 16px; border-radius: 50%;
+      display: grid; place-items: center; font-size: 10px; font-weight: 800;
+      background: rgba(148, 163, 184, .18); color: #94a3b8; margin-top: 1px; }
+    .step-list li.cur { border-color: rgba(56, 189, 248, .55); background: rgba(56, 189, 248, .1); color: #e0f2fe; }
+    .step-list li.cur i { background: #38bdf8; color: #052437; }
+    .step-list li.on { border-color: rgba(52, 211, 153, .5); background: rgba(16, 185, 129, .12); color: #d1fae5; }
+    .step-list li.on i { background: #10b981; color: #04231a; }
+    .law-list { margin: 0; padding: 0; list-style: none; display: grid; gap: 7px; }
+    .law-list li { display: flex; gap: 8px; align-items: flex-start; padding: 9px 10px; border-radius: 9px;
+      font-size: 11.5px; line-height: 1.55; border: 1px solid rgba(148, 163, 184, .16);
+      background: rgba(148, 163, 184, .05); color: #b6c8d4; }
+    .law-list li.on { border-color: rgba(52, 211, 153, .5); background: rgba(16, 185, 129, .12); color: #d1fae5; }
+    .law-list li i { font-style: normal; color: #64748b; flex: none; font-weight: 700; }
+    .law-list li.on i { color: #6ee7b7; }
+    .side-table { width: 100%; border-collapse: collapse; font-size: 10.5px; line-height: 1.5; }
+    .side-table th, .side-table td { text-align: left; padding: 6px 5px; border-bottom: 1px solid rgba(148, 163, 184, .14);
+      color: #b6c8d4; vertical-align: top; }
+    .side-table th { color: #fdba74; font-size: 10px; font-weight: 700; }
+    .side-table td:first-child { color: #7dd3fc; white-space: nowrap; }
+    .side-note { margin: 9px 0 0; color: #8fa8ba; font-size: 10.5px; line-height: 1.6; }
+    .side-note b { color: #a5f3fc; }
+
+    /* ===== 底部：原理长文 ===== */
+    .below { max-width: 1460px; margin: 17px auto 0; display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(320px, .72fr); gap: 15px; }
+    .panel { border: 1px solid rgba(56, 189, 248, .16); background: rgba(10, 22, 38, .82); border-radius: 14px;
+      padding: 18px; min-width: 0; }
+    .panel h2 { margin: 0 0 9px; font-size: 17px; color: #f1f5f9; }
+    .panel p { color: #a9bdcb; font-size: 12px; line-height: 1.7; margin: 0 0 11px; }
+    .law { margin: 12px 0 0; padding: 14px; border: 1px solid rgba(45, 212, 191, .28);
+      background: rgba(11, 53, 64, .28); border-radius: 11px; color: #b7dce6; font-size: 12px; line-height: 1.9; }
+    .law b { color: #99f6e4; }
+    .law em { font-style: normal; color: #fdba74; font-weight: 700; }
+    .compare { width: 100%; border-collapse: collapse; font-size: 11.5px; }
+    .compare th, .compare td { text-align: left; padding: 8px 6px; border-bottom: 1px solid rgba(148, 163, 184, .16);
+      color: #c5d6e4; vertical-align: top; line-height: 1.55; }
+    .compare th { color: #fdba74; font-size: 10.5px; }
+    .compare td:first-child { color: #7dd3fc; white-space: nowrap; }
+    .note { color: #90a9b9; font-size: 11px; line-height: 1.65; margin-top: 10px; }
+
+    .no-webgl { position: absolute; inset: 0; display: grid; place-items: center; padding: 24px;
+      color: #fff; background: #182732; text-align: center; font-size: 14px; line-height: 1.65; }
+
+    @media (max-width: 1080px) {
+      .lab3d-layout { grid-template-columns: minmax(0, 1fr); }
+      .lab3d-sidebar { border-left: 0; border-top: 1px solid var(--line); max-height: none;
+        display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 20px; }
+      .lab3d-sidebar h3 { grid-column: 1 / -1; }
+      .lab3d-sidebar h3:not(:first-child) { margin-top: 0; }
+      .below { grid-template-columns: minmax(0, 1fr); }
+    }
+    @media (max-width: 720px) {
+      body { padding: 12px 9px 40px; }
+      .lab3d-top { flex-direction: column; align-items: flex-start; gap: 9px; padding: 15px 14px 13px; }
+      .lab3d-main { padding: 9px; }
+      .lab3d-stage { height: 430px; }
+      .lab3d-stage .stage-hint { font-size: 10px; max-width: 54%; padding: 5px 8px; }
+      .micro-inset { width: 148px; padding: 5px; top: 8px; right: 8px; }
+      #microCanvas { height: 76px; }
+      .micro-inset small { font-size: 8.5px; }
+      .lab3d-stage .stage-fs-btn { padding: 6px 8px; font-size: 11px; }
+      .lab3d-stage .stage-fs-btn .lbl { display: none; }
+      /* 窄屏：参数药丸必须让开右上角的全屏按钮（两者原来叠在一起，按钮点不到） */
+      .lab3d-stage .stage-params { top: 42px; right: 7px; width: min(280px, 90%); max-height: calc(100% - 100px); }
+      /* 窄屏画面只有 390×430，四个角已经被状态牌 / HUD / 控制带占满，
+         微观示意再挤进来就互相压 —— 窄屏先收起来，宽屏照常显示。 */
+      .micro-inset { display: none; }
+      .lab3d-stage .stage-hud { right: 7px; bottom: 54px; padding: 6px 9px; font-size: 10px; }
+      .lab3d-stage .stage-hud b { font-size: 13px; }
+      .lab3d-stage .stage-bar { padding: 7px 8px; gap: 5px; }
+      .lab3d-stage .stage-bar .bar-btn { padding: 6px 8px; font-size: 10.5px; }
+      .lab3d-stage .stage-bar .bar-hint { display: none; }
+      .lab3d-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .lab3d-sidebar { display: block; }
+    }
+
+    /* ===== 实拍视频区（站点形态：上半屏虚拟实验 + 底部实拍视频） ===== */
+    .video-section { max-width: 1200px; margin: 24px auto 40px; padding: 0 16px; }
+    .video-section .section-title { font-size: 20px; font-weight: bold; color: #f8fafc; margin-bottom: 16px; }
+    .video-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 18px; }
+    .video-card { background: #1e293b; border: 1px solid rgba(255,255,255,0.12); border-radius: 12px; padding: 18px 20px; }
+    .video-card h3 { margin: 0 0 12px; font-size: 15px; line-height: 1.5; color: #f8fafc; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 10px; display: flex; align-items: flex-start; gap: 8px; }
+    .video-card h3 .live-badge { font-size: 11px; background: rgba(239,68,68,0.15); color: #ef4444; padding: 2px 8px; border-radius: 6px; font-weight: 600; white-space: nowrap; flex-shrink: 0; }
+    .video-container { position: relative; width: 100%; padding-bottom: 56.25%; height: 0; border-radius: 12px; overflow: hidden; background: #000; }
+    .video-container iframe { position: absolute; top: 0; left: 0; width: 100%; height: 100%; border: 0; }
+    .video-desc { font-size: 13px; color: #94a3b8; line-height: 1.7; margin-top: 10px; }
+    .video-desc b { color: #a5f3fc; }
+    .video-fullscreen-btn { position: absolute; top: 10px; right: 10px; z-index: 10; width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; border: none; border-radius: 8px; background: rgba(0,0,0,0.55); color: #fff; cursor: pointer; transition: background 0.2s ease; }
+    .video-fullscreen-btn:hover { background: rgba(59,130,246,0.85); }
+    .video-container:fullscreen, .video-container:-webkit-full-screen { width: 100%; height: 100%; padding-bottom: 0; border-radius: 0; }
+  </style>
+  <script src="auth-check.js"></script>
+</head>
+<body>
+  <!-- 3D 实验页不放站内页头：页头 sticky 会盖住实验区（站内规矩） -->
+  <section class="lab3d" aria-label="汽车车窗起雾与除雾三维实验">
+    <div class="lab3d-top">
+      <div>
+        <div class="lab3d-kicker">THERMAL PHYSICS LAB · 三维物态变化实验</div>
+        <h2>汽车车窗为什么会起雾 · 怎样才能除干净</h2>
+        <p>冬天坐进车里，前挡风玻璃很快就蒙上一层白雾；夏天从闷热的地库开出来，雾气却结在玻璃<b>外面</b>。
+           钻进驾驶室，自己拧温度旋钮、按 A/C、切内外循环、选吹风方向，看着玻璃温度、车内湿度和露点一起变化 ——
+           <b>雾是水蒸气液化成的小水珠</b>，除雾就是想办法让玻璃表面的水蒸气<b>不再饱和</b>。</p>
+      </div>
+      <span class="lab3d-status">● 实时热湿模型</span>
+    </div>
+
+    <div class="lab3d-layout">
+      <div class="lab3d-main">
+        <div class="lab3d-toolbar" role="group" aria-label="观察视角">
+          <span class="toolbar-label">观察视角</span>
+          <button type="button" class="active" data-view="driver">驾驶位</button>
+          <button type="button" data-view="center">前排中央</button>
+          <button type="button" data-view="glass">贴近玻璃</button>
+          <button type="button" data-view="dash">看仪表盘</button>
+          <button type="button" data-view="outside">车外看前挡</button>
+          <span class="toolbar-spacer"></span>
+          <button type="button" id="car-reset-view">↺ 重置视角</button>
+        </div>
+
+        <div class="lab3d-stage" id="stage">
+          <canvas id="sceneCanvas" tabindex="0"
+                  aria-label="可拖动旋转的三维汽车驾驶室：前挡风玻璃、仪表台、方向盘、空调控制面板与出风口。玻璃上会随温度与湿度起雾或消雾。"></canvas>
+
+          <div class="stage-hint" id="stageHint">
+            <span class="dot"></span><b>三维驾驶室</b> · 拖动环绕 · 滚轮缩放<br>
+            点仪表盘上的旋钮和按钮也能操作
+            <span class="state" id="stateChip">玻璃 2.0 ℃　车内 20 ℃ / 65%　→ 内表面起雾<em>（水蒸气液化）</em></span>
+          </div>
+
+          <div class="micro-inset">
+            <span>微观 · 玻璃表面在发生什么</span>
+            <canvas id="microCanvas" width="432" height="208"
+                    aria-label="玻璃剖面微观示意：车内空气中的水蒸气分子撞到冷玻璃，液化成小水珠；玻璃被暖风吹热后，水珠又汽化成水蒸气飞走"></canvas>
+            <small id="microText">—</small>
+          </div>
+
+          <div class="stage-hud">
+            玻璃温度 <b id="hudGlass">2.0</b> ℃<br>
+            车内露点 <i id="hudDew">13.3</i> ℃<br>
+            车内湿度 <i id="hudRH">65</i> %<br>
+            内表面雾 <u id="hudFogIn">80</u> %　外表面 <u id="hudFogOut">0</u> %
+          </div>
+
+          <button type="button" class="stage-fs-btn" id="car-fs" title="全屏显示实验画面" aria-label="全屏显示实验画面">
+            <svg class="fs-expand" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"/></svg>
+            <svg class="fs-compress" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:none" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M8 3v3a2 2 0 01-2 2H3m18 0h-3a2 2 0 01-2-2V3m0 18v-3a2 2 0 012-2h3M3 16h3a2 2 0 012 2v3"/></svg>
+            <span class="lbl">全屏</span>
+          </button>
+
+          <!-- 参数面板是舞台的子元素 ⇒ 进全屏跟着一起进去，全屏里也能调参数 -->
+          <aside class="stage-params collapsed" id="car-params" aria-label="实验参数调节面板">
+            <div class="params-head">
+              <span class="params-title">⚙ 空调与工况参数</span>
+              <button type="button" class="params-toggle" id="car-params-toggle"
+                      aria-expanded="false" aria-controls="car-params-body">▸ 展开</button>
+            </div>
+            <div class="params-body" id="car-params-body">
+              <h4>工况</h4>
+              <div class="params-choice" id="caseGroup">
+                <button type="button" data-case="winter" class="active">冬季<small>车内暖湿 · 车外 −3 ℃</small></button>
+                <button type="button" data-case="summer">夏季雨天<small>车外湿热 · 车内开空调</small></button>
+              </div>
+
+              <h4>温度旋钮</h4>
+              <div class="lab3d-field">
+                <div class="field-label"><span>冷 ←→ 热</span><output id="knobOut">偏冷 28 ℃</output></div>
+                <input type="range" id="knob" min="0" max="100" step="1" value="26"
+                       aria-label="温度旋钮：从最冷到最热">
+                <small>它决定吹出来的风有多热。暖风来自发动机余热，不是空调“制热”。</small>
+              </div>
+
+              <h4>风量档位</h4>
+              <div class="params-choice quad" id="fanGroup">
+                <button type="button" data-fan="0">0 关<small>不送风</small></button>
+                <button type="button" data-fan="1">1 弱<small></small></button>
+                <button type="button" data-fan="2" class="active">2 中<small></small></button>
+                <button type="button" data-fan="3">3 强<small></small></button>
+                <button type="button" data-fan="4">4 最大<small>除雾常用</small></button>
+              </div>
+
+              <h4>吹风方向</h4>
+              <div class="params-choice quad" id="modeGroup">
+                <button type="button" data-mode="face">吹面<small>不对玻璃</small></button>
+                <button type="button" data-mode="feet">吹脚<small>不对玻璃</small></button>
+                <button type="button" data-mode="defrost" class="active">除霜<small>正对前挡</small></button>
+                <button type="button" data-mode="mix">吹面+吹脚<small></small></button>
+              </div>
+
+              <h4>开关</h4>
+              <div class="params-checks">
+                <label><input type="checkbox" id="acOn"> A/C 压缩机（除湿）</label>
+                <label><input type="checkbox" id="recirc"> 内循环</label>
+                <label><input type="checkbox" id="windowOpen"> 开一条窗缝</label>
+                <label><input type="checkbox" id="wiperAuto"> 雨刮（刮外表面）</label>
+              </div>
+
+              <h4>显示</h4>
+              <div class="params-checks">
+                <label><input type="checkbox" id="showFlow" checked> 显示气流</label>
+                <label><input type="checkbox" id="showFog" checked> 显示雾气</label>
+                <label><input type="checkbox" id="showLabels"> 显示出风口标注</label>
+                <label><input type="checkbox" id="showInside" checked> 车内视角外壳</label>
+              </div>
+            </div>
+          </aside>
+
+          <div class="stage-bar">
+            <button type="button" class="bar-btn primary" id="demoWinter">冬季除雾演示</button>
+            <button type="button" class="bar-btn" id="demoSummer">夏季外表面</button>
+            <button type="button" class="bar-btn" id="wipeBtn">刮一下雨刮</button>
+            <button type="button" class="bar-btn" id="pauseBtn">暂停</button>
+            <button type="button" class="bar-btn" id="resetBtn">重置</button>
+            <span class="bar-hint" id="barHint">先在参数面板里把「除霜」和风量调起来，再看玻璃温度怎么爬。</span>
+          </div>
+        </div>
+
+        <div class="lab3d-foot">
+          <label><input type="checkbox" id="footFlow" checked> 气流粒子</label>
+          <label><input type="checkbox" id="footFog" checked> 玻璃雾气</label>
+          <span class="legend">橙色气流 = 暖风　·　蓝色气流 = 冷风　·　玻璃上的白色 = 液化的小水珠</span>
+        </div>
+
+        <div class="lab3d-metrics">
+          <div class="lab3d-metric" id="mGlass"><span>玻璃温度</span><strong id="metricGlass">—</strong></div>
+          <div class="lab3d-metric" id="mDew"><span>车内露点</span><strong id="metricDew">—</strong></div>
+          <div class="lab3d-metric" id="mIn"><span>内表面雾</span><strong id="metricFogIn">—</strong></div>
+          <div class="lab3d-metric" id="mOut"><span>外表面雾</span><strong id="metricFogOut">—</strong></div>
+        </div>
+      </div>
+
+      <aside class="lab3d-sidebar" aria-label="实验步骤与结论">
+        <h3>五步做完这个实验</h3>
+        <ul class="step-list" id="stepList">
+          <li data-step="0" class="cur"><i>1</i><span>先别开空调，等 30 秒：看玻璃温度掉到多少、雾怎么长出来。</span></li>
+          <li data-step="1"><i>2</i><span>试一次「冷风 + 内循环」：雾是消了还是更重？</span></li>
+          <li data-step="2"><i>3</i><span>切「除霜 + 暖风 + 风量 3」：盯住玻璃温度和雾面积。</span></li>
+          <li data-step="3"><i>4</i><span>再按 A/C、切外循环：同样的雾，为什么消得更快？</span></li>
+          <li data-step="4"><i>5</i><span>切到夏季：雾跑到玻璃外面去了，这时候该怎么办？</span></li>
+        </ul>
+
+        <h3>你该发现的四件事</h3>
+        <ul class="law-list" id="lawList">
+          <li data-law="0"><i>①</i><span>雾不是“水蒸气”，是水蒸气<b>液化</b>成的小水珠。水蒸气本身看不见。</span></li>
+          <li data-law="1"><i>②</i><span>起雾的条件：玻璃温度 <b>低于车内空气的露点</b>（水蒸气达到饱和）。</span></li>
+          <li data-law="2"><i>③</i><span>暖风吹玻璃 = 把玻璃加热到露点以上，雾滴<b>汽化</b>消失；慢，但玻璃热了就长久不雾。</span></li>
+          <li data-law="3"><i>④</i><span>开 A/C / 外循环 / 开窗 = 把车内<b>湿度降下来</b>，露点跟着降；快，但要一直开着。</span></li>
+        </ul>
+
+        <h3>冬天和夏天，方法不一样</h3>
+        <table class="side-table">
+          <thead><tr><th>项目</th><th>冬季</th><th>夏季雨天</th></tr></thead>
+          <tbody>
+            <tr><td>雾在哪</td><td>玻璃<b>内</b>表面</td><td>玻璃<b>外</b>表面</td></tr>
+            <tr><td>谁遇冷</td><td>车内暖湿空气</td><td>车外湿热空气</td></tr>
+            <tr><td>玻璃被谁冷却</td><td>车外冷空气</td><td>空调冷风直吹</td></tr>
+            <tr><td>怎么除</td><td>暖风 + 除霜（＋A/C 除湿更快）</td><td>雨刮刮掉；别让冷风直吹玻璃</td></tr>
+            <tr><td>怎么防</td><td>外循环换气、开 A/C 除湿</td><td>出风口调离前挡、适当提高送风温度</td></tr>
+          </tbody>
+        </table>
+        <p class="side-note">共同点只有一句：<b>让玻璃表面的水蒸气不再饱和</b> —— 要么把玻璃加热，要么把空气弄干。</p>
+      </aside>
+    </div>
+  </section>
+
+  <div class="below">
+    <section class="panel">
+      <h2>雾从哪里来，又到哪里去</h2>
+      <p>玻璃本身不“产生”水。雾是车里（或车外）空气中的<b>水蒸气</b>，碰到温度低于<b>露点</b>的玻璃时，
+        在表面<b>液化</b>成的一层小水珠。所以除雾永远只有两条路：<b>把玻璃烧热</b>，或者<b>把空气弄干</b>。</p>
+      <div class="law">
+        <b>一、起雾的判据</b>　空气里水蒸气的分压 p<sub>水</sub> 一旦超过该温度下的<b>饱和汽压</b> p<sub>饱和</sub>(T)，
+        多出来的水蒸气就会液化。玻璃温度 T<sub>玻璃</sub> 越低，p<sub>饱和</sub>(T<sub>玻璃</sub>) 越小，越容易饱和。
+        把「p<sub>水</sub> 恰好等于 p<sub>饱和</sub>」对应的温度叫<b>露点</b> T<sub>露</sub>：
+        <em>T<sub>玻璃</sub> &lt; T<sub>露</sub> ⇒ 起雾</em>；T<sub>玻璃</sub> &gt; T<sub>露</sub> ⇒ 雾会蒸发掉。<br>
+        <b>二、为什么冬天雾在里面</b>　车外 −3 ℃、车内 20 ℃ 且坐了人（呼吸、雪水、湿衣服不断加水汽），
+        车内露点常在 13 ℃ 上下；玻璃被车外冷空气一泡，只有几摄氏度 ⇒ 车内一侧的水蒸气在<b>内表面</b>液化。<br>
+        <b>三、为什么夏天雾在外面</b>　车外 31 ℃、相对湿度 88%，露点约 29 ℃；空调冷风把前挡吹到 24 ℃
+        ⇒ 这次是<b>车外</b>的水蒸气在<b>外表面</b>液化。所以暖风吹玻璃、开 A/C 都没用，雨刮一刮就掉 ——
+        要根治，得让玻璃别被吹得那么冷（出风口调离前挡、适当提高送风温度）。<br>
+        <b>四、暖风除雾为什么“先更糊、后更清”</b>　刚开暖风时玻璃还是冷的，暖风把车内和玻璃表面的水汽搅起来，
+        湿度先升；等玻璃被吹热、越过露点，雾才开始<b>汽化</b>退下去。所以别急着关，等十几秒。<br>
+        <b>五、A/C 为什么能“快速除雾”</b>　压缩机让空气经过冰冷的蒸发器，水蒸气在蒸发器上液化被排走，
+        送风含湿量骤降（约 5 g/kg）；这部分干空气再进入车内，把整车露点拉下来。
+        它和「暖风加热玻璃」是两条不同的路：<em>一个降露点，一个抬玻璃温度</em>。<br>
+        <b>六、内外循环怎么选</b>　<b>外循环</b>把车外空气换进来（冬天车外空气虽冷但很干，露点低），
+        能持续把湿气排出去；<b>内循环</b>只让车内空气打转，人呼吸产生的水汽越积越多，起雾反而更快。
+        所以除雾阶段用外循环，雾清干净、玻璃热起来之后再用内循环保温。
+      </div>
+      <p class="note">模型：饱和汽压用 Magnus 公式 p<sub>饱和</sub>(T) = 610.94·exp(17.625T/(T+243.04)) Pa 现算；
+        露点由含湿量反解；玻璃温度按「车内自然对流 + 车外对流 + 送风射流」三项热平衡积分；
+        结雾/消雾用相对过饱和度驱动的一阶过程。所有读数都由同一份状态算出，不是预先写好的曲线。</p>
+    </section>
+
+    <section class="panel">
+      <h2>冬天 vs 夏天 · 一张表看清</h2>
+      <table class="compare">
+        <thead><tr><th>问题</th><th>冬季（车内起雾）</th><th>夏季雨天（车外起雾）</th></tr></thead>
+        <tbody>
+          <tr><td>雾的位置</td><td>前挡 / 侧窗<b>内表面</b></td><td>前挡<b>外表面</b></td></tr>
+          <tr><td>哪一侧空气被冷却</td><td>车内暖湿空气被冷玻璃冷却</td><td>车外湿热空气被冷玻璃冷却</td></tr>
+          <tr><td>玻璃为什么冷</td><td>车外 −3 ℃ 的自然冷却</td><td>空调冷风直吹前挡</td></tr>
+          <tr><td>最有效的一招</td><td>除霜档 + 暖风 + 风量 3～4</td><td>雨刮刮掉，或把出风口调离前挡</td></tr>
+          <tr><td>最快的一招</td><td>A/C + 外循环（降露点）</td><td>雨刮（物理刮除）</td></tr>
+          <tr><td>常见错误</td><td>冷风 + 内循环 → 玻璃更冷、雾更厚</td><td>继续用冷风猛吹玻璃 → 越吹越雾</td></tr>
+          <tr><td>物态变化</td><td>液化（放热）成雾；汽化（吸热）除雾</td><td>液化（放热）成雾；刮走 / 汽化除雾</td></tr>
+        </tbody>
+      </table>
+      <p class="note">后视镜加热、防雾喷剂（表面活性剂让水铺成膜而不是成珠）也都是同一个道理的不同实现：
+        要么让水不饱和，要么让水珠长不大。</p>
+    </section>
+  </div>
+
+  <script type="module" src="experiment_汽车除雾.js"></script>
+
+  <!-- 实拍视频区（站点形态：上半屏虚拟实验 + 底部实拍视频，两者缺一不可） -->
+  <div class="video-section">
+    <div class="section-title">🎬 实拍视频 · 从虚拟实验到真实世界</div>
+    <div class="video-grid">
+      <div class="video-card">
+        <h3>车窗起雾，到底该开暖风还是开 A/C<span class="live-badge">原理讲解</span></h3>
+        <div class="video-container">
+          <iframe src="//player.bilibili.com/player.html?bvid=BV18DBaYCEPe&page=1&autoplay=0&loop=1&danmaku=0&high_quality=1" scrolling="no" frameborder="no" framespacing="0" allowfullscreen="true"></iframe>
+          <button class="video-fullscreen-btn" title="全屏播放" aria-label="全屏播放">
+            <svg class="fs-expand" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"/></svg>
+            <svg class="fs-compress" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:none"><path stroke-linecap="round" stroke-linejoin="round" d="M8 3v3a2 2 0 01-2 2H3m18 0h-3a2 2 0 01-2-2V3m0 18v-3a2 2 0 012-2h3M3 16h3a2 2 0 012 2v3"/></svg>
+          </button>
+        </div>
+        <div class="video-desc">先看真实车上怎么操作：<b>除霜档 + 暖风 + 风量开大</b>，需要更快就按 <b>A/C</b> 并切<b>外循环</b>。回到上面的三维驾驶室，把同样的按钮点一遍，看玻璃温度和露点这两条读数怎么靠近、又怎么拉开。</div>
+      </div>
+      <div class="video-card">
+        <h3>夏天车窗外面起雾是怎么回事<span class="live-badge">易错点</span></h3>
+        <div class="video-container">
+          <iframe src="//player.bilibili.com/player.html?bvid=BV1dt411q7wc&page=1&autoplay=0&loop=1&danmaku=0&high_quality=1" scrolling="no" frameborder="no" framespacing="0" allowfullscreen="true"></iframe>
+          <button class="video-fullscreen-btn" title="全屏播放" aria-label="全屏播放">
+            <svg class="fs-expand" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"/></svg>
+            <svg class="fs-compress" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:none"><path stroke-linecap="round" stroke-linejoin="round" d="M8 3v3a2 2 0 01-2 2H3m18 0h-3a2 2 0 01-2-2V3m0 18v-3a2 2 0 012-2h3M3 16h3a2 2 0 012 2v3"/></svg>
+          </button>
+        </div>
+        <div class="video-desc">夏季雨天，车外又热又湿，玻璃被空调吹冷，水蒸气就在<b>玻璃外面</b>液化。这时候暖风没用、A/C 也没用 —— 点上面的 <b>「夏季外表面」</b>，再点 <b>「刮一下雨刮」</b> 对比一下。</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // 视频区全屏按钮（站内统一做法）
+    document.querySelectorAll('.video-fullscreen-btn').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var box = btn.closest('.video-container');
+        if (!box) return;
+        var on = document.fullscreenElement || document.webkitFullscreenElement;
+        if (on) { (document.exitFullscreen || document.webkitExitFullscreen).call(document); return; }
+        if (box.requestFullscreen) box.requestFullscreen();
+        else if (box.webkitRequestFullscreen) box.webkitRequestFullscreen();
+      });
+      var box = btn.closest('.video-container');
+      if (!box) return;
+      document.addEventListener('fullscreenchange', function () {
+        var on = (document.fullscreenElement === box);
+        var ex = btn.querySelector('.fs-expand'), cp = btn.querySelector('.fs-compress');
+        if (ex) ex.style.display = on ? 'none' : '';
+        if (cp) cp.style.display = on ? '' : 'none';
+      });
+    });
+  </script>
+</body>
+</html>
