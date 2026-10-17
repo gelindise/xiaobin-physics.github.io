@@ -101,15 +101,51 @@ import * as THREE from './assets/optics-three.min.js';
   }
   function dryTimeNow() { return dryTime(state.levels.temp, state.levels.area, state.levels.wind); }
 
-  /* --- 蒸发致冷：湿球温差 --- */
-  const DMAX = 7.0;                       // 温差上限 ℃
-  const K_SAT = 2.2;                      // 半值参数
-  function wetDelta() { const r = evapRate(); return DMAX * r / (r + K_SAT); }
+  /* --- 蒸发致冷：干湿球温差 = 解【干湿表方程】，不是拟合曲线 ---
+     湿球读数是能量平衡的结果：
+       ① 蒸发吸热的速率 ∝ (e_s(T_w) − e)，e 是环境水汽压；
+       ② 空气对流给纱布补热的速率 ∝ A·P·(T − T_w)，A 是干湿表系数。
+     两式相等 ⇒  e_s(T_w) − A·P·(T − T_w) = e = RH·e_s(T)。
+     A 随通风变强而【变小】：静风时纱布周围那层空气很快被水汽填满、局部接近饱和，
+     传质受阻（A ≈ 1.0×10⁻³ /℃）；强通风把边界层吹走（A → 0.62×10⁻³ /℃，阿斯曼
+     干湿表的标称值）。⇒ 风越大，A 越小、局部 RH 越低，方程重新平衡后 T_w 只能更低。
+     「风越大，干湿球温差越大」是从方程里解出来的，不是写死的单调曲线；
+     同理「空气温度越高，温差越大」（热空气能装更多水汽、e_s 的斜率更陡）也是解出来的。
+     ★ 温差只跟【空气温度】和【风速】有关，与水滴摊开多大无关 —— 湿球是测空气的。 */
+  const RH0 = 0.50;                       // 环境相对湿度 50 %（房间常态）
+  const P_ATM = 1013;                     // 大气压 hPa
+  const WIND_MS = [0.12, 1.1, 2.6];       // 三档风在纱布处的空气流速 m/s
+  const RH_STILL = 0.88;                  // 静风时纱布周围那层空气的局部相对湿度
+  const A_VENT = 0.00062, A_STILL = 0.00042;   // 干湿表系数：充分通风值 + 静风增量
+  function esat(T) { return 6.112 * Math.exp(17.62 * T / (243.12 + T)); }  // Magnus 式 hPa
+  function ventA(v) { return A_VENT + A_STILL * Math.exp(-v / 0.75); }     // 1/℃
+  function localRH(v) { return RH0 + (RH_STILL - RH0) * Math.exp(-v / 0.55); }
+  function wetBulbT(T, v) {
+    const e = localRH(v) * esat(T);
+    const A = ventA(v) * P_ATM;
+    /* f(T_w) = e_s(T_w) − A·P·(T − T_w) − e 对 T_w 严格单调递增，
+       且 f(T) = e_s(T)·(1 − RH_local) ≥ 0 ⇒ 根必落在 [T − 60, T] 内，二分即可。 */
+    let lo = T - 60, hi = T;
+    for (let i = 0; i < 48; i++) {
+      const mid = 0.5 * (lo + hi);
+      if (esat(mid) - A * (T - mid) - e > 0) hi = mid; else lo = mid;
+    }
+    return 0.5 * (lo + hi);
+  }
+  function wetDelta() {
+    const T = TEMP_LEVELS[clamp(state.levels.temp, 0, 2)];
+    return T - wetBulbT(T, WIND_MS[clamp(state.levels.wind, 0, 2)]);
+  }
   function dryTarget() { return TEMP_LEVELS[state.levels.temp]; }
   function wetTarget() { return dryTarget() - wetDelta(); }
-  const K_LAG = 0.9;                      // 湿球读数的一阶滞后系数 /s（τ ≈ 1.1 s）
+  /* 一阶滞后：τ ≈ 0.45 s。不能更慢 —— 用户换档后 1 s 内就要能读出稳定值，
+     否则「刚点完高档看到的是上一个档位的读数」，看起来就是高档反而更热。 */
+  const K_LAG = 2.2;                      // 1/s（τ ≈ 0.45 s）
 
-  /* --- 液面上方水蒸气层的饱和程度 --- */
+  /* --- 液面上方水蒸气层的饱和程度 ---
+     ★ 这一项【只喂画面】（水蒸气层的不透明度），不是任何读数。
+       它是刻意夸张过的显示量：真实边界层在 1 m/s 上下就已经被吹得很薄，
+       低档 / 高档在视觉上几乎一样，那样学生看不出「风把水蒸气吹走」。 */
   function satFrac() { return 1 / (1 + 0.95 * WIND_LEVELS[state.levels.wind]); }
 
   /* ==========================================================================
@@ -246,6 +282,7 @@ import * as THREE from './assets/optics-three.min.js';
     Td: TEMP_LEVELS[0],         // 干球读数 ℃
     Tw: TEMP_LEVELS[0],         // 湿球读数 ℃（一阶滞后）
     fanSpin: 0,
+    fanOmega: 0,                // 扇叶当前视觉角速度 rad/s（向档位目标一阶靠拢）
     windPhase: 0,
     step: 0,
     records: [],
@@ -447,7 +484,16 @@ import * as THREE from './assets/optics-three.min.js';
   /* ---- 小台扇（可调速） ---- */
   const FAN_X = 17.5, FAN_Z = 2.0;
   const fanGroup = new THREE.Group();
-  const fanBlades = [];
+  const fanBlades = [];                   // 每个元素是【叶片转轴 Group】，不是 mesh
+  /* ★ 桨距角与旋向是一对，必须配套：
+     叶片绕【局部 x（径向轴）】扭 +BLADE_PITCH，桨距面的法线 z 分量为 +cos(β)；
+     叶片绕风扇轴 +z 转 ω 时，法线与速度的点积 = −ω·r·sinβ。
+     要让风朝 +z（机头正对，经 Ry(−90°) 后就是朝 −x 的加热板）吹，
+     必须让「速度沿 +n」⇒ ω·sinβ < 0 ⇒ 桨距取正时旋向必须取负。 */
+  const BLADE_PITCH = 0.34;               // 桨距角 rad
+  const FAN_SPIN_SIGN = -1;               // ★ 与 BLADE_PITCH 配套，改一个必须同时改另一个
+  /* 视觉角速度 rad/s（只由档位决定，见 animateParts 的说明） */
+  const FAN_OMEGA = [0, 5.6, 11.2];
   {
     const darkMat = new THREE.MeshStandardMaterial({ color: 0x2f3742, roughness: 0.5, metalness: 0.35, envMapIntensity: 0.8 });
     const chromeMat = new THREE.MeshStandardMaterial({ color: 0xcfd8e0, roughness: 0.22, metalness: 0.9, envMapIntensity: 1.3 });
@@ -475,13 +521,25 @@ import * as THREE from './assets/optics-three.min.js';
     hub.rotation.x = Math.PI / 2;
     head.add(hub);
 
+    /* ★ 叶片做成【两级】：
+         外层 pivot —— 只负责绕风扇轴（局部 z）转，转速与档位一致；
+         内层 mesh  —— 只负责绕自己的径向轴（局部 x）扭一个桨距角。
+       以前把「桨距」和「转速」都写在同一个 mesh 的 rotation.y 上，动画一覆盖
+       桨距就没了，而且转轴错成了 y —— 叶片会从风盘里翻出去（法线在 xz 面里扫），
+       看上去是「整盘叶片在乱翻」而不是「绕轴转」。 */
     for (let i = 0; i < 3; i++) {
+      const pivot = new THREE.Group();
+      const baseAngle = (i / 3) * Math.PI * 2;
+      pivot.rotation.z = baseAngle;
+      pivot.userData.baseAngle = baseAngle;
+
       const b = new THREE.Mesh(new THREE.BoxGeometry(2.55, 0.95, 0.07), chromeMat);
       b.geometry.translate(1.45, 0, 0);
-      b.rotation.z = (i / 3) * Math.PI * 2;
-      b.rotation.y = 0.34;
-      head.add(b);
-      fanBlades.push(b);
+      b.rotation.x = BLADE_PITCH;         // 桨距：绕径向轴扭（几何沿 x 平移 ⇒ 转动后仍在半径上）
+      pivot.add(b);
+
+      head.add(pivot);
+      fanBlades.push(pivot);
     }
 
     const cage = new THREE.Group();
@@ -775,12 +833,25 @@ import * as THREE from './assets/optics-three.min.js';
   }
 
   function colHeight(T) { return clamp(T / TH_RANGE, 0, 1) * TH_COL_MAX; }
+  /* ★ 读数牌是 CanvasTexture，读数每 0.1 s 刷一次 ⇒ 每秒新建 10 张 256×96 贴图。
+     不释放的话显存只涨不落（跑十几分钟就是上千张）；而且同一个读数还在反复重画。
+     这里按【文本变化】去重 + 旧贴图 dispose。 */
+  const numLabelCache = { dry: '', wet: '' };
+  function setNumLabel(sprite, key, text, bg, fg) {
+    if (!sprite) return;
+    if (numLabelCache[key] === text) return;
+    numLabelCache[key] = text;
+    const old = sprite.material.map;
+    sprite.material.map = makeLabelMap(text, bg, fg);
+    sprite.material.needsUpdate = true;
+    if (old) old.dispose();
+  }
   function updateThermo() {
     state.Td = dryTarget();
     if (dryColMesh) dryColMesh.scale.y = Math.max(colHeight(state.Td), 0.02);
     if (wetColMesh) wetColMesh.scale.y = Math.max(colHeight(state.Tw), 0.02);
-    if (dryNumSprite) dryNumSprite.material.map = makeLabelMap(state.Td.toFixed(1), 'rgba(8,20,32,0.86)', '#fdba74');
-    if (wetNumSprite) wetNumSprite.material.map = makeLabelMap(state.Tw.toFixed(1), 'rgba(8,32,26,0.86)', '#6ee7b7');
+    setNumLabel(dryNumSprite, 'dry', state.Td.toFixed(1), 'rgba(8,20,32,0.86)', '#fdba74');
+    setNumLabel(wetNumSprite, 'wet', state.Tw.toFixed(1), 'rgba(8,32,26,0.86)', '#6ee7b7');
     state.drawn.dryColH = dryColMesh ? +dryColMesh.scale.y.toFixed(4) : 0;
     state.drawn.wetColH = wetColMesh ? +wetColMesh.scale.y.toFixed(4) : 0;
     state.drawn.Td = +state.Td.toFixed(4);
@@ -791,10 +862,21 @@ import * as THREE from './assets/optics-three.min.js';
   }
 
   function animateParts(dt) {
-    const w = WIND_LEVELS[state.levels.wind];
-    state.fanSpin += dt * state.speed * w * 7.0;
-    fanBlades.forEach((b) => { b.rotation.y = state.fanSpin; });
-    state.windPhase += dt * state.speed * (1.4 + 5.2 * w);
+    const w = clamp(state.levels.wind, 0, 2);
+    /* ★ 视觉角速度只由【档位】决定，不乘时间倍速。
+       以前是 dt·speed·w·7.0：×4 时高档每帧转角已经 53°，×10 时 133° ——
+       叶片间隔只有 120°，每帧转角一旦超过它的一半就会频闪倒转（车轮倒转效应），
+       于是「高档看着比低档还慢」，而且同一个档位在不同倍速下看着还不一样。
+       现在 5.6 / 11.2 rad/s ⇒ 60 fps 下每帧 5.3° / 10.7°，远小于 60°，
+       任何倍速下都不会频闪；高档恒为低档的 2 倍。 */
+    const target = FAN_OMEGA[w];
+    state.fanOmega += (target - state.fanOmega) * Math.min(1, 5.0 * dt);
+    state.fanSpin += state.fanOmega * dt;
+    fanBlades.forEach((p) => {
+      p.rotation.z = p.userData.baseAngle + FAN_SPIN_SIGN * state.fanSpin;
+    });
+    /* 气流速度与扇叶角速度同源：叶子转得快，风才走得快 */
+    state.windPhase += dt * state.fanOmega * 2.4;
   }
 
   /* ==========================================================================
@@ -1047,17 +1129,32 @@ import * as THREE from './assets/optics-three.min.js';
 
   function updateReadouts() {
     const cool = state.scene === 'cool';
+    /* 湿球还在往新平衡值爬的时候必须【说出来】—— 否则换档后立刻读到的
+       是上一个档位的数字，看起来就是「高档反而更热」。 */
+    const settleErr = Math.abs(state.Tw - wetTarget());
+    const settling = settleErr > 0.12;
+    state.drawn.settleErr = +settleErr.toFixed(4);
+    state.drawn.settling = settling;
     if (els.hudTemp) els.hudTemp.textContent = dryTarget().toFixed(1);
     if (els.hudTempLabel) els.hudTempLabel.textContent = cool ? '空气温度' : '加热板温度';
     if (els.hudAux) {
-      els.hudAux.textContent = cool ? (state.Td - state.Tw).toFixed(2) : (state.remain * 100).toFixed(1);
+      /* 稳定中就把「当前 → 稳定值」一起写出来：只给当前值的话，
+         换档后立刻读到的还是上一个档位的数字，看着就像「高档反而更热」。 */
+      const cur = (state.Td - state.Tw).toFixed(2);
+      els.hudAux.textContent = cool
+        ? (settling ? cur + ' → ' + wetDelta().toFixed(2) : cur)
+        : (state.remain * 100).toFixed(1);
     }
     if (els.hudAuxLabel) els.hudAuxLabel.textContent = cool ? '干湿球温差 ℃' : '剩余水量 %';
 
     if (els.metricTemp) els.metricTemp.textContent = dryTarget().toFixed(0) + ' ℃';
     if (els.metricRemain) els.metricRemain.textContent = (state.remain * 100).toFixed(1) + ' %';
     if (els.metricDry) els.metricDry.textContent = dryTimeNow().toFixed(1) + ' s';
-    if (els.metricDelta) els.metricDelta.textContent = (state.Td - state.Tw).toFixed(2) + ' ℃';
+    if (els.metricDelta) {
+      els.metricDelta.textContent = (state.Td - state.Tw).toFixed(2) + ' ℃';
+      els.metricDelta.style.color = settling ? '#fdba74' : '';
+      els.metricDelta.title = settling ? '湿球还在往新的平衡值爬（热惯性），约 1 s 后稳定' : '';
+    }
     if (els.metricState) els.metricState.textContent = statusText();
 
     if (els.finding) {
@@ -1070,6 +1167,10 @@ import * as THREE from './assets/optics-three.min.js';
       if (state.scene === 'cool') {
         s += '<br>干球 <b>' + state.Td.toFixed(1) + ' ℃</b>、湿球 <b>' + state.Tw.toFixed(1) + ' ℃</b>，'
           + '差值 <b>' + (state.Td - state.Tw).toFixed(2) + ' ℃</b> —— 湿球永远更低，因为纱布上的水蒸发时把热带走了。';
+        if (settling) {
+          s += '<br><span style="color:#fdba74">湿球读数还在往新的平衡值爬（热惯性，约 1 s），'
+            + '稳下来是 <b>' + wetTarget().toFixed(1) + ' ℃</b>、差值 <b>' + wetDelta().toFixed(2) + ' ℃</b>。</span>';
+        }
       } else {
         s += '<br>五滴水<b>体积一样</b>：摊得越平，接触面越大、越薄，蒸得越快。';
       }
@@ -1148,8 +1249,8 @@ import * as THREE from './assets/optics-three.min.js';
     { name: '03 只改温度', text: '<strong>只改温度：</strong>打开「控制变量」，只把温度从 20 ℃ 调到 60 ℃，另两个因素会自动回到基准档。温度升高 → 分子的平均动能变大 → 单位时间能挣脱液面的分子更多 → 蒸发更快。看左边的柱子：干燥时间从 75 s 掉到 9 s 左右。' },
     { name: '04 只改表面积', text: '<strong>只改表面积：</strong>温度回到 20 ℃、风速回 0，只把水滴摊开 —— 注意<b>水量（体积）不变</b>，变的只是它摊开的形状。接触面越大，<b>液面上同时能跑出去的分子就越多</b> —— 干燥时间从 75 s 降到 25 s 左右。这就是「晾衣服要摊开、不要揉成一团」的原因。' },
     { name: '05 只改风速', text: '<strong>只改风速：</strong>温度和表面积都回基准，只把风扇开到高档。风把液面上方<b>快要饱和的那层水蒸气吹走</b>，液面上方一直是「空」的，蒸发更快 —— 干燥时间从 75 s 压到 <b>28 s 左右</b>。三根柱子都在基准左边：<b>温度、表面积、风速，哪一个变大，柱子都变矮（干得更快）</b>。' },
-    { name: '06 湿球为什么更低', text: '<strong>切到「蒸发致冷」：</strong>两支温度计并排立在同一个空间里。湿球的玻璃泡裹着湿纱布，纱布上的水不断蒸发、不断<b>吸热</b>，热量只能从玻璃泡本身来 —— 于是湿球读数<b>恒低于</b>干球。把风速调大，纱布上的水蒸得更快、吸热更多，两支的差值跟着变大。' },
-    { name: '07 风越大差越大', text: '<strong>把风速从「无风」调到「高档」：</strong>注意湿球读数是<b>慢慢降下去</b>的，不是一下子跳过去 —— 温度计有热惯性。等它稳住再看差值：无风时约 2.2 ℃，低档约 3.2 ℃，高档约 3.9 ℃，<b>严格变大</b>。' },
+    { name: '06 湿球为什么更低', text: '<strong>切到「蒸发致冷」：</strong>两支温度计并排立在同一个空间里。湿球的玻璃泡裹着湿纱布，纱布上的水不断蒸发、不断<b>吸热</b>，热量只能从玻璃泡本身来 —— 于是湿球读数<b>恒低于</b>干球。把风速调大，纱布上的水蒸得更快、吸热更多，两支的差值跟着变大。湿球读数是<b>能量平衡</b>算出来的：蒸发吸热 = 空气给纱布补热。' },
+    { name: '07 风越大差越大', text: '<strong>把风速从「无风」调到「高档」：</strong>注意湿球读数是<b>慢慢降下去</b>的，不是一下子跳过去 —— 温度计有热惯性。等它稳住再看差值：室温 20 ℃ 下无风约 <b>1.9 ℃</b>、低档约 <b>5.3 ℃</b>、高档约 <b>6.2 ℃</b>，<b>严格变大</b>。道理是：静风时纱布周围那层空气很快被水汽填满、几乎饱和，蒸发很慢；风一吹，饱和层被换走，蒸发快、吸热多，温差就大。' },
     { name: '08 记录归纳', text: '<strong>记录归纳：</strong>每改一个因素就记一组，最后在下面的表格里横向比一比。结论是：<b>液体的温度越高、表面积越大、液面上方空气流动越快，蒸发就越快</b>；而蒸发要<b>吸热</b>，所以蒸发快的地方温度就低 —— 出汗后吹风扇觉得更凉，道理就在这里。' }
   ];
 
@@ -1252,6 +1353,7 @@ import * as THREE from './assets/optics-three.min.js';
     state.remain = 1;
     state.finished = false;
     state.fanSpin = 0;
+    state.fanOmega = 0;
     state.windPhase = 0;
     state.lastChanged = null;
     FACTORS.forEach((f) => { state.levels[f] = BASE_LEVEL[f]; });
@@ -1381,13 +1483,16 @@ import * as THREE from './assets/optics-three.min.js';
     bench, plate, plateGlow, glassPlate, dropGroup, drops, fanGroup, fanBlades,
     windGroup, windParticles, vaporGroup, vaporPuffs, thermoGroup, thermos, gauzeMesh,
     dryColMesh, wetColMesh,
-    A0, H0, V0, K_DRY, E_OVER_R, T_REF, WIND_K, DMAX, K_SAT, K_LAG,
+    A0, H0, V0, K_DRY, E_OVER_R, T_REF, WIND_K, K_LAG,
+    RH0, P_ATM, WIND_MS, RH_STILL, A_VENT, A_STILL, esat, ventA, localRH, wetBulbT,
+    BLADE_PITCH, FAN_SPIN_SIGN, FAN_OMEGA,
     TEMP_LEVELS, AREA_LEVELS, WIND_LEVELS, FACTORS, BASE_LEVEL, LEVEL_LABEL, FACTOR_NAME,
     PLATE_TOP, GLASS_TOP, TH_RANGE, TH_COL_MAX, DROP_X,
     fTemp, fArea, fWind, evapRate, dryTime, dryTimeNow, wetDelta, wetTarget, dryTarget,
     dropGeom, satFrac, colHeight, sceneFrame, chartBars,
     setScene, setFactor, setControl, resetSim, setRunning, setSpeed, setView,
     updateAll, updateVisibility, updateCamera, updateReadouts, drawChart, drawMicro,
+    animateParts,
     clearRecords, renderRecords, statusText, lockedFactors,
     stepEvapDt, relaxThermo, applyStepUI,
 
