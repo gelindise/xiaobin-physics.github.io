@@ -479,7 +479,9 @@ import * as THREE from './assets/optics-three.min.js';
   canRoot.add(weightGrp);
 
   /* ---- 橡皮筋：两条、各两股；每股用一串小圆柱画出来 ---- */
-  const STRAND_SEG = 12;
+  /* 段数决定螺旋的圆滑度：扭满 1.2 圈时 16 段 ⇒ 每圈 ~13 段，看得出一圈一圈。
+     再往上加会把渲染量顶上去（软件渲染下整页自检直接崩），收益已经很小。 */
+  const STRAND_SEG = 14;
   const SEG_GEO = new THREE.CylinderGeometry(1, 1, 1, 8);
   const JOINT_GEO = new THREE.SphereGeometry(1, 8, 6);
   const STRANDS = [
@@ -494,7 +496,9 @@ import * as THREE from './assets/optics-three.min.js';
     const host = st.band === 'A' ? bandAGrp : bandBGrp;
     for (let i = 0; i < STRAND_SEG; i++) {
       const m = new THREE.Mesh(SEG_GEO, bandMat);
-      m.castShadow = true;
+      /* ★ 细橡皮筋的投影在罐子里根本看不见，却要让阴影 pass 多画 4×N 个 mesh
+         —— 软件渲染下这是压垮渲染进程的那一根稻草，直接关掉。 */
+      m.castShadow = false;
       host.add(m);
       st.segs.push(m);
     }
@@ -512,15 +516,22 @@ import * as THREE from './assets/optics-three.min.js';
   scene.add(bandBGrp);
 
   /* ==========================================================================
-     七、橡皮筋几何（唯一真值：strandPoint）
+     七、橡皮筋几何（唯一真值：strandCore / coilOffset / strandPoint）
      --------------------------------------------------------------------------
-     每一股从【孔心】连到【钩码挂钩】，中间按参数 u 线性过渡：
+     【中心线】每一股从【孔心】连到【钩码挂钩】，中间按参数 u 线性过渡：
        角度：从孔的当前角（a0 + φ）扫到钩码角 π（走最短路径）
        半径：从 HOLE_R 收到 HANG_R_S
        轴向：从 ±HOLE_X 收到 0
-     φ 越大两股扭得越厉害 —— 这就是"橡皮筋被扭紧"的画面证据。
+     【缠绕】橡皮筋的扭转刚度很低，一扭就会【绕着它自己的中心线卷成螺旋】——
+       这才是真实橡皮筋被扭之后的样子，也是「缠绕 / 释放」唯一看得见的证据。
+       相位沿带子累积：u=1 时正好转过 φ（即 φ/2π 圈）；
+       螺旋半径在两端收到 0（端点必须精确落在孔和挂钩上），中间鼓起来。
+       🔴 旧写法把角行程 wrapPi 掉（永远 ≤180°）⇒ 罐子扭多少都只像一根弯管子，
+       缠绕量根本不累积，学生看不到「越扭越紧 / 松回来」。
      ========================================================================== */
-  function strandPoint(sign, a0, u, phi, out) {
+  const COIL_MAX = 1.15;                    // 螺旋最大半径（场景单位 = cm）
+  const COIL_REF = 0.6 * 2 * Math.PI;       // 扭到 0.6 圈时螺旋半径到最大
+  function strandCore(sign, a0, u, phi, out) {
     const aHole = a0 + phi;
     const aEnd = aHole + wrapPi(W_A - aHole);
     const a = aHole + (aEnd - aHole) * u;
@@ -529,6 +540,24 @@ import * as THREE from './assets/optics-three.min.js';
        漏掉 state.z·U 就会「罐子滚走了、橡皮筋还留在原地」—— 从侧面看是几根
        橙色管子从罐子里支棱出来。 */
     return out.set(sign * HOLE_X * (1 - u), AXIS_Y + r * Math.cos(a), state.z * U + r * Math.sin(a));
+  }
+  /* 缠绕偏移：垂直于罐轴的那两个分量（y / z），两端恒为 0 ⇒ 端点仍精确落在孔 / 挂钩上 */
+  function coilOffset(a0, u, phi, out2) {
+    const k = Math.min(1, Math.abs(phi) / COIL_REF);
+    if (k < 1e-6) return out2.set(0, 0);
+    /* 指数取 0.35：让螺旋沿【整条带子】都鼓起来，只在两端很快收到 0
+       —— 取 0.75 时鼓包挤在正中间，画面上只看得见一个小圈。 */
+    const bulge = COIL_MAX * k * Math.pow(Math.sin(Math.PI * u), 0.35);
+    const ph = a0 + phi + Math.PI / 2 + phi * u;   // 相位沿带子累积，u=1 时正好是 φ
+    return out2.set(bulge * Math.cos(ph), bulge * Math.sin(ph));
+  }
+  const _coil = new THREE.Vector2();
+  function strandPoint(sign, a0, u, phi, out) {
+    strandCore(sign, a0, u, phi, out);
+    coilOffset(a0, u, phi, _coil);
+    out.y += _coil.x;
+    out.z += _coil.y;
+    return out;
   }
   function hookWorld(out) {
     return out.set(0, AXIS_Y - HANG_R_S, state.z * U);
@@ -1028,9 +1057,12 @@ import * as THREE from './assets/optics-three.min.js';
     /* 侧视 dist 取 70（不是 50）：最大初速度 1.6 m/s 时第一次折返能滚到 31 cm，
        画框横向要装得下 ±34 cm 才不会被裁 —— 实测 dist=50 时 30 cm 处罐子已经出框。 */
     side:  { yaw: -0.85, pitch: 0.19, dist: 70, ty: 4.4 },
-    axis:  { yaw: 1.44, pitch: 0.13, dist: 34, ty: 4.2 },
+    /* ★ 沿轴：镜头【跟着罐子走】。这一档是看内部橡皮筋怎么缠上去的，
+       罐子一滚就是沿着画面的横向平移，不跟的话它滚 19 cm 就整只出了画框，
+       学生只看到空荡荡的地面 —— 缠绕根本没法观察。 */
+    axis:  { yaw: 1.44, pitch: 0.13, dist: 34, ty: 4.2, track: true },
     top:   { yaw: -0.62, pitch: 0.86, dist: 62, ty: 2 },
-    close: { yaw: -0.55, pitch: 0.11, dist: 26, ty: 4.2 },
+    close: { yaw: -0.55, pitch: 0.11, dist: 26, ty: 4.2, track: true },
     parts: { yaw: -0.66, pitch: 0.72, dist: 150, ty: 0 }
   };
   const view = { ...VIEWS.side };
@@ -1039,6 +1071,9 @@ import * as THREE from './assets/optics-three.min.js';
   function updateCamera() {
     /* 注视点：默认 (0, ty, 0)；零件台取景会额外给出 tx / tz 把散件挪到画框正中 */
     const t = new THREE.Vector3(view.tx || 0, view.ty, view.tz || 0);
+    /* ★ 跟拍档（沿轴 / 贴近）：注视点跟着罐子的 z 走。
+       不跟的话罐子滚到 19 cm 就整只出画，看内部缠绕时只能对着空地面。 */
+    if (view.track) t.z = state.z * U;
     const cp = Math.cos(view.pitch), sp = Math.sin(view.pitch);
     camera.position.set(
       t.x + view.dist * cp * Math.sin(view.yaw),
@@ -1076,6 +1111,7 @@ import * as THREE from './assets/optics-three.min.js';
     Object.assign(view, v);
     view.tx = v.tx || 0;                       // 零件台取景会写这三个，切视角必须清掉
     view.tz = v.tz || 0;
+    view.track = !!v.track;                    // 沿轴 / 贴近两档：镜头跟着罐子平移
     document.querySelectorAll('[data-view]').forEach((b) => b.classList.toggle('active', b.dataset.view === name));
     /* 「沿轴看内部」时罐底钢板正对着你，实体挡得严严实实 ⇒ 自动切到半透明 */
     if (name === 'axis' && state.skin === 'solid') setSkin('glass');
@@ -1329,6 +1365,9 @@ import * as THREE from './assets/optics-three.min.js';
     rArrow.visible = state.arrow && state.pushed && !state.finished;
     rArrow.position.set(HOLE_X + PLATE_T + 1.4, AXIS_Y, zc);
     rArrow.rotation.x = phiSafe();
+    /* ★ 跟拍档（沿轴 / 贴近）：罐子每帧都在动 ⇒ 相机也得每帧重摆，
+       否则「跟着罐子」只在切视角那一瞬间生效，滚起来照样出画。 */
+    if (view.track) updateCamera();
   }
   function phiSafe() { return state.phi; }
 
@@ -1802,6 +1841,23 @@ import * as THREE from './assets/optics-three.min.js';
     },
     strandInfo() {
       return STRANDS.map((s) => ({ band: s.band, sign: s.sign, hole: s.hole, segs: s.segs.length, joints: s.joints.length }));
+    },
+    /* 中心线（不含缠绕偏移）—— 收口半径 / 扫过角这些是【中心线】的性质，
+       拿带螺旋的落笔点去量会被螺旋的鼓包带偏，判据就失真了。 */
+    strandCorePoints(bandIdx, holeIdx, n) {
+      const st = STRANDS.filter((s) => s.band === bandIdx)[holeIdx];
+      if (!st) return null;
+      const N = Math.max(2, n || STRAND_SEG + 1);
+      const hook = hookWorld(new THREE.Vector3());
+      const out = [];
+      const tmp = new THREE.Vector3();
+      for (let i = 0; i < N; i++) {
+        const u = i / (N - 1);
+        strandCore(st.sign, HOLE_A[st.hole], u, state.phi, tmp);
+        if (u === 1) tmp.copy(hook);
+        out.push({ x: tmp.x, y: tmp.y, z: tmp.z });
+      }
+      return out;
     },
     hookWorld() { const v = hookWorld(new THREE.Vector3()); return { x: v.x, y: v.y, z: v.z }; },
     /* 钩码【网格自己】的世界位置（不是算出来的挂钩点）——
