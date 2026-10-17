@@ -2136,6 +2136,63 @@ import * as THREE from './assets/optics-three.min.js';
     if (loupeRead) loupeRead.textContent = `${Tc.toFixed(1)} ℃`;
   }
 
+  /* ★ 什么时候才把放大镜亮出来 —— 口径是「组装好之后、加热的时候」：
+       · 器材没装好：温度计还在台面上躺着，谈不上读数；
+       · 装了但还没点「开始加热」：水就是室温，读不读都一样；
+       · 撤去酒精灯 / 重置：加热条件没了，图标跟着收起。
+     判据用 `running || t > 0` 而不是只看 running —— 暂停时温度就停在那儿，
+     学生照样要读它，图标不该跟着一起消失。 */
+  function loupeActive() {
+    return assemblyReady() && state.lampOn && (state.running || state.t > 0);
+  }
+
+  /* 把放大镜图标贴到温度计旁边。位置是【算出来】的，不是写死的：
+     投影出温度计的屏幕包围盒 → 取它的右上角 → 往右挪 GAP、往下挪 DROP。
+     往下挪 26px 的原因：温度计最顶上是球帽，真正的刻度露在硬纸盖以上那一段，
+     图标压在盖子稍上方最贴近「看刻度」这个动作。
+     ★ 窄屏（手机）时舞台只有 350 px 宽，温度计右边被「微观 · 水分子」那块浮层占着，
+       硬贴上去会盖住它 ⇒ 右侧放不下就【翻到温度计左边】，并把 y 让到左上说明框的下沿之下。
+       让多少不估：直接量 .stage-top 的实际底边。
+     ★ 用 transform 而不是 left/top：每帧改 left/top 会触发布局，transform 只走合成。 */
+  const panelRectIn = (sel) => {
+    const n = stage.querySelector(sel);
+    if (!n) return null;
+    const b = n.getBoundingClientRect(), s = stage.getBoundingClientRect();
+    return { left: b.left - s.left, top: b.top - s.top, right: b.right - s.left, bottom: b.bottom - s.top };
+  };
+  function placeLoupeHotspot() {
+    const el = $('toggleLoupe');
+    if (!el) return;
+    /* 放大镜开着的时候图标必须留着 —— 否则撤火后图标一藏，学生就再也关不掉读数窗了。 */
+    const show = !!(toggles.loupe || loupeActive());
+    if (el.hidden !== !show) el.hidden = !show;
+    if (!show) return;
+    const r = screenRectOf(thermometer);          // GL 像素，原点在左下
+    const dpr = renderer.getPixelRatio();
+    const cv = canvas.getBoundingClientRect();
+    const st = stage.getBoundingClientRect();
+    /* GL → 舞台内 CSS 像素：x 同向，y 要翻过来（GL 的 y 向上、CSS 的 y 向下） */
+    const ox = cv.left - st.left, oy = cv.top - st.top;
+    const thLeft = r.x / dpr + ox;
+    const thRight = (r.x + r.w) / dpr + ox;
+    const thTop = (r.H - (r.y + r.h)) / dpr + oy;
+    const W = stage.clientWidth, H = stage.clientHeight;
+    const w = el.offsetWidth || 84, h = el.offsetHeight || 28;
+    const GAP = 10, DROP = 26, PAD = 8;
+    /* 右边界：舞台内沿，以及右上角「微观」浮层的左沿 —— 谁更靠左听谁的 */
+    const micro = panelRectIn('.micro-inset');
+    const rightLimit = Math.min(W - PAD, micro ? micro.left - PAD : W - PAD);
+    let x = thRight + GAP, y = thTop + DROP;
+    if (x + w > rightLimit) {
+      x = thLeft - GAP - w;
+      const topBox = panelRectIn('.stage-top');
+      if (topBox) y = Math.max(y, topBox.bottom + PAD);
+    }
+    x = clamp(x, PAD, Math.max(PAD, W - w - PAD));
+    y = clamp(y, PAD, Math.max(PAD, H - h - PAD));
+    el.style.transform = `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px)`;
+  }
+
   /* ==========================================================================
      八、界面刷新
      ========================================================================== */
@@ -2213,6 +2270,8 @@ import * as THREE from './assets/optics-three.min.js';
     drawTimerFace(state.t, due);
     /* 放大镜只在打开时重画（关着时它是 hidden 的，画了也没人看） */
     if (toggles.loupe) drawLoupe();
+    /* 温度计旁边的放大镜图标：显隐 + 落点都跟着温度计走 */
+    placeLoupeHotspot();
 
     const lowP = state.Tb < 99.5;
     let hint;
@@ -2394,6 +2453,8 @@ import * as THREE from './assets/optics-three.min.js';
        「设完视角马上量」的代码（组装视角的自动取景就是）量到的都是【上一帧的相机】：
        包围盒看着还挺合理，其实完全是错的。 */
     camera.updateMatrixWorld(true);
+    /* 相机一动，贴在温度计旁边的放大镜图标就得跟着挪 —— 否则拖一下画面图标就飘在半空 */
+    placeLoupeHotspot();
     requestRender();
   }
 
@@ -2403,6 +2464,7 @@ import * as THREE from './assets/optics-three.min.js';
     renderer.setSize(w, h, false);
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
+    placeLoupeHotspot();
     requestRender();
   }
 
@@ -2454,7 +2516,8 @@ import * as THREE from './assets/optics-three.min.js';
   /* 页面初始是散放状态 ⇒ 直接用组装视角取景：默认 45° 斜视（dist 76）框不下摊开的一桌器材 */
   if (!assemblyReady()) gotoAssembleView();
 
-  /* --- 放大镜开关（舞台浮层 + 侧栏按钮状态一起切） --- */
+  /* --- 放大镜开关（舞台浮层 + 温度计旁边那个图标的按下态一起切） ---
+     入口从侧栏搬到了【温度计旁边】的 🔍 图标上，逻辑还是同一份 setLoupe()。 */
   const loupeBtn = $('toggleLoupe'), loupeInset = $('loupeInset');
   function setLoupe(v) {
     toggles.loupe = !!v;
@@ -2463,6 +2526,7 @@ import * as THREE from './assets/optics-three.min.js';
       loupeBtn.classList.toggle('active', toggles.loupe);
       loupeBtn.setAttribute('aria-pressed', String(toggles.loupe));
     }
+    placeLoupeHotspot();
     if (toggles.loupe) drawLoupe();
     requestRender();
   }
@@ -2857,6 +2921,21 @@ import * as THREE from './assets/optics-three.min.js';
           }
         }
         return NaN;
+      }
+    },
+    /* 温度计【旁边】那个放大镜图标：显隐口径 + 落点都是算出来的，自检直接量 DOM。
+       位置判据必须量 getBoundingClientRect 与温度计屏幕包围盒的关系，
+       不能量 CSS 里那个写死的数值 —— 那正是这套「跟着温度计走」要防的东西。 */
+    loupeHotspot: {
+      active: loupeActive,
+      hidden: () => { const e = $('toggleLoupe'); return e ? !!e.hidden : null; },
+      place: placeLoupeHotspot,
+      rect() {
+        const e = $('toggleLoupe');
+        if (!e || e.hidden) return null;
+        const b = e.getBoundingClientRect(), s = stage.getBoundingClientRect();
+        return { x: b.left - s.left, y: b.top - s.top, w: b.width, h: b.height,
+                 stageW: s.width, stageH: s.height };
       }
     },
     setLoupe,
