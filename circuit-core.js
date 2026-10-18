@@ -210,6 +210,27 @@
       // rInternal = null 表示理想电压表（完全开路、不分流，初中标准模型）
       defaults: { range: 3, rInternal: null, zeroed: true, zeroMode: 'on' },
     },
+    // ── 灵敏电流计（J0409 那一类：中心零、可双向偏转）──────────────
+    // 和电流表最要紧的差别只有一条：【刻度零点在正中】。所以电流从哪一头流
+    // 进来，指针就往哪一边偏 —— 反向偏转是它的正常工作状态，不是「接反」。
+    // 这一条决定了三件事，改任何一件都要三处一起看：
+    //   · 只有【两个】接线柱（教材图上就是左黑右红），没有量程柱，满偏由参数给；
+    //   · 内核【不判 reversed】—— 电流表那套「反接 = 指针顶死在左限位、读不出数」
+    //     放在这里就是错的，rec.reversed 恒 false；
+    //   · 超量程仍然是「打表」（fault 'over'），左右两侧都算。
+    //
+    // 满偏默认 ±30mA，不是真表的 ±30μA：这个沙盒的电源是 1.5~36V、负载是几欧到
+    // 几百欧，μA 级一接上就满偏烧表，学生只会以为这件器材是坏的。想还原真表
+    // 规格，参数面板里切到「30 μA」即可 —— 那时它正好用来讲「灵敏电流计
+    // 不能直接接电源」。三档的数字都取得让刻度印出来是整数（30 / 3 / 30）。
+    galvanometer: {
+      label: '灵敏电流计', terminals: 2, termNames: ['-', '+'],
+      // range = 满偏电流的【幅值】：±range 就是整条刻度。
+      // rInternal 默认 2Ω：真表几十~上百欧，但那样它一进串联回路就把电流
+      // 改掉一大半，学生量的已经不是「原来那个电路」了。2Ω 既能看见「表也
+      // 有一点内阻」，又不至于把电路拧走样；要讲内阻就在面板上拧大。
+      defaults: { range: 0.03, rInternal: 2, zeroed: true, zeroMode: 'on' },
+    },
   };
 
   // ============================================================
@@ -386,6 +407,18 @@
   function ledColorOf(P) {
     var c = LED_COLORS[P && P.color];
     return c || LED_COLORS.red;
+  }
+
+  // 灵敏电流计：满偏电流 → 「表盘上印的单位 + 换算系数」。
+  // 刻度数字 = 满偏换算到该单位之后按 1/3、2/3、1 三等分，所以三档满偏
+  // （30mA / 3mA / 30μA）印出来都是整数 30 / 3 / 30。
+  //
+  // 🔴 这个判断【只能有一份】。绘制层（表盘刻度、读数牌）、电路图（铭牌）、
+  //    损坏原因文案都要写单位，四处各写一套「多少以下算 μA」的话，只要有一处
+  //    写反，同一只表在画布上读 18mA、在电路图上读 18000μA —— 差 1000 倍。
+  //    所以真值放在内核（TYPES 也在这儿），绘制层转发过来问。
+  function galUnitOf(range) {
+    return (range < 0.00095) ? { u: 'μA', k: 1e6 } : { u: 'mA', k: 1e3 };
   }
 
   function defaultParams(type) {
@@ -614,6 +647,14 @@
         if (tap != null) {
           out.push({ kind: 'V', comp: comp, p: N(tap), q: N(NC()), V: 0, Rs: P.rInternal || 0 });
         }
+        break;
+
+      // 灵敏电流计：两端元件，一只【带内阻的理想电流表】—— 和电流表走同一条
+      // 「0V 电压源 + 串联内阻」支路。区别只在它没有量程柱：端子 0/1 就是
+      // 「−」「+」两根柱子，两头都接上就进了电路。
+      // 不判「接反」：中心零的表，电流从哪头进就往哪边偏，那是它的功能。
+      case 'galvanometer':
+        out.push({ kind: 'V', comp: comp, p: N(0), q: N(1), V: 0, Rs: P.rInternal || 0 });
         break;
 
       case 'switch':
@@ -1617,6 +1658,38 @@
           break;
         }
 
+        // 灵敏电流计：两端元件。一根柱子悬空时支路电流恒 0（拓扑保证），
+        // 读数自然是 0 —— 不需要像三柱表那样再按 rec.wired 抹一遍。
+        case 'galvanometer': {
+          rec.i = bs.length ? bI(sol, bs[0]) : 0;
+          rec.R = P.rInternal || 0;
+          rec.v = rec.R * rec.i;
+          rec.p = rec.v * rec.i;
+          rec.range = P.range;
+          // 没有量程柱：量程永远是参数给的那个，「接在哪个柱上」这件事不存在。
+          // rangeWired / wired 恒 true 是给下游（faultsOf、读数框）看的，
+          // 让它们不必为这件器材再写一条特例。
+          rec.rangeWired = true;
+          rec.wired = true;
+          rec.ideal = !P.rInternal;
+          // 🔴 读数 = 【−i】。内核的 rec.i 约定是「从 0 号端子流向 1 号端子为正」，
+          //    而这只表的 0 号是「−」柱、1 号是「+」柱。真表（和人教版那句
+          //    「电流从正接线柱流入，指针向右偏转」）要的是「从 + 柱流进 = 正」，
+          //    正好和 rec.i 反号。不翻的话，学生接对了线却读出一个负数。
+          //    反号只加在 reading 上：rec.i 仍是内核口径（导线粒子、表格都用它）。
+          rec.reading = -rec.i;
+          // 🔴 中心零：读数的【符号】就是指针偏向哪一边 —— 不判反接。
+          //    rec.reversed 恒 false，页面那套「指针反偏 / 读不出数」的文案
+          //    因此不会被这件器材触发（它本来也不该触发）。
+          rec.reversed = false;
+          rec.centerZero = true;
+          rec.overRange = Math.abs(rec.reading) > rec.range + 1e-12;
+          if (rec.overRange) {
+            warnings.push({ code: 'METER_OVER_RANGE', message: '灵敏电流计超量程', componentIds: [c.id] });
+          }
+          break;
+        }
+
         case 'battery':
         case 'power': {
           var bb = bs[0];
@@ -2341,6 +2414,24 @@
         } else if (r.reversed) {
           outC.push({ id: c.id, fault: 'rev', why: '正负接线柱接反，指针向左打表损坏' });
         }
+      } else if (c.type === 'galvanometer') {
+        // 中心零表：【不判反接】。反向偏转是它的正常工作状态（「检验电流方向」
+        // 就靠这一条），照电流表那套判会让它一接上就「坏」。
+        // 只判两档，门槛与电流表同一个：超过满偏 = 打表（两侧都算）；
+        // 超过满偏 METER_BURN_K 倍 = 动圈烧断。
+        if (!r.wired) return;
+        var guo = galUnitOf(r.range);
+        var gk = guo.k, gu = guo.u;
+        var gFull = (r.range * gk).toFixed(0);
+        if (Math.abs(r.reading) >= METER_BURN_K * r.range) {
+          outC.push({ id: c.id, fault: 'burnt',
+            why: '读数 ' + (Math.abs(r.reading) * gk).toFixed(1) + gu +
+                 ' 达到满偏 ' + gFull + gu + ' 的 ' + METER_BURN_K +
+                 ' 倍以上，动圈烧断' });
+        } else if (r.overRange) {
+          outC.push({ id: c.id, fault: 'over',
+            why: '读数超过满偏 ±' + gFull + gu + '，指针打表损坏' });
+        }
       }
     });
 
@@ -2355,10 +2446,12 @@
       loopIds.forEach(function (id) { loopSet[id] = 1; });
       components.forEach(function (c) {
         if (!loopSet[c.id] || c.fault) return;
-        if (c.type !== 'ammeter' && c.type !== 'voltmeter') return;
+        // 灵敏电流计也在这里：它内阻只有几欧，接在电源两极上同样是一根短路线
+        // —— 而且它的动圈比电流表更细，这一条路更该烧。
+        if (c.type !== 'ammeter' && c.type !== 'voltmeter' && c.type !== 'galvanometer') return;
         if (outC.some(function (x) { return x.id === c.id; })) return;
         outC.push({ id: c.id, fault: 'burnt',
-          why: (c.type === 'ammeter' ? '电流表' : '电压表') +
+          why: ((TYPES[c.type] && TYPES[c.type].label) || '电表') +
                '直接接在电源两极之间，电流过大烧坏表头' });
       });
     }
@@ -2393,6 +2486,8 @@
   return {
     TYPES: TYPES,
     defaultParams: defaultParams,
+    // 满偏 → 单位换算（灵敏电流计）。绘制层 / 电路图 / 损坏文案共用这一份。
+    galUnitOf: galUnitOf,
     lampParams: lampParams,
     lampRAt: lampRAt,
     solve: solve,

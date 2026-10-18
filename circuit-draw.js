@@ -511,6 +511,10 @@
     // 外侧两个柱仍钉在 ±HALF，保持全站网格约定，只有 y 落到底座下面。
     ammeter: [{ x: -HALF, y: MET.POST_Y }, { x: 0, y: MET.POST_Y }, { x: HALF, y: MET.POST_Y }],
     voltmeter: [{ x: -HALF, y: MET.POST_Y }, { x: 0, y: MET.POST_Y }, { x: HALF, y: MET.POST_Y }],
+    // 灵敏电流计只有【两根】柱子：0 = 「−」（黑，左），1 = 「+」（红，右）。
+    // 它没有量程柱 —— 满偏是参数（±30mA / 3mA / 30μA 三档），不是「换根柱子」。
+    // y 和其它表一样落在底座下面（POST_Y），导线行高的约定不变。
+    galvanometer: [{ x: -HALF, y: MET.POST_Y }, { x: HALF, y: MET.POST_Y }],
     // 接线点：两个端子【在同一个点上】（它就是导线中间的一个结点）。
     // 两根导线各接一个端子、画出来落点完全重合，看上去就是一整根线。
     junction: [{ x: 0, y: 0 }, { x: 0, y: 0 }],
@@ -1109,6 +1113,8 @@
     bulb:      { x0: -74, y0: -80, x1: 74, y1: 40 },
     ammeter:   { x0: -122, y0: -110, x1: 122, y1: 84 },
     voltmeter: { x0: -122, y0: -110, x1: 122, y1: 84 },
+    // 灵敏电流计：和两只表同一只壳、同一块底座，取景框当然也一样。
+    galvanometer: { x0: -122, y0: -110, x1: 122, y1: 84 },
     rheostat:  { x0: -94, y0: -46, x1: 94, y1: 54 },
     led:       { x0: -78, y0: -52, x1: 78, y1: 36 },
     motor:     { x0: -78, y0: -64, x1: 78, y1: 36 },
@@ -1354,6 +1360,10 @@
       // 但盒子不能跟着长——一过 75，接线柱（POST_Y = 72）就被圈回盒子里，
       // 挂着导线的柱子会被判成「导线穿过表体」。盒子比表壳矮一截是有意的。
       case 'ammeter': case 'voltmeter':
+        return { hw: MET.BASE_HW + 4, hh: Math.min(-MET.CASE_TOP, 70) };
+      // 灵敏电流计：同一只表壳、同一块底座 ⇒ 包围盒和电流表一字不差。
+      // （它是两只柱不是三只，但盒子只关心「表体占多大」，柱子本来就在盒外。）
+      case 'galvanometer':
         return { hw: MET.BASE_HW + 4, hh: Math.min(-MET.CASE_TOP, 70) };
       case 'rheostat': return { hw: RHEO.BW / 2, hh: RHEO.BH / 2 }; // 含陶瓷管与滑片杆
       default: return { hw: 54, hh: 20 };                // 定值电阻 BW/BH = 108/40
@@ -3284,6 +3294,46 @@
   // 整台仪器都在导线【上方】，导线不会从表壳或底座中间穿过去。
   // ============================================================
 
+  // 表盘：白底 + 上沿内阴影（表盘压在沉台里）。指针、刻度、数字画在它之上。
+  function meterDialFace(ctx) {
+    var M = MET;
+    ctx.fillStyle = linGrad(ctx, 0, M.DIAL.y, 0, M.DIAL.y + M.DIAL.h,
+      [[0, '#ffffff'], [0.72, '#f8fbfd'], [1, '#eaf0f6']]);
+    roundRect(ctx, M.DIAL.x, M.DIAL.y, M.DIAL.w, M.DIAL.h, 14);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(100,116,139,0.45)'; ctx.lineWidth = 1; ctx.stroke();
+    // 表盘压在沉台里：上沿一圈内阴影。没有它，白盘是浮在壳面上的贴纸。
+    ctx.save();
+    roundRect(ctx, M.DIAL.x, M.DIAL.y, M.DIAL.w, M.DIAL.h, 14); ctx.clip();
+    ctx.fillStyle = 'rgba(51,65,85,0.13)';
+    ctx.fillRect(M.DIAL.x, M.DIAL.y, M.DIAL.w, 3.5);
+    ctx.fillRect(M.DIAL.x, M.DIAL.y, 3.5, M.DIAL.h);
+    ctx.restore();
+  }
+
+  // 玻璃面罩：画在指针【之上】才有「隔着玻璃看」的感觉。
+  // 一道斜反光 + 一道弧形反光：只有斜带时表盘看着是平的（玻璃只是一层膜）。
+  function meterGlass(ctx) {
+    var M = MET;
+    ctx.save();
+    roundRect(ctx, M.DIAL.x, M.DIAL.y, M.DIAL.w, M.DIAL.h, 14);
+    ctx.clip();
+    glassHighlight(ctx, M.DIAL.x, M.DIAL.y, M.DIAL.w, M.DIAL.h);
+    ctx.strokeStyle = 'rgba(255,255,255,0.75)';
+    ctx.lineWidth = 7;
+    ctx.beginPath();
+    ctx.ellipse(0, M.DIAL.y + M.DIAL.h * 0.30, M.DIAL.w * 0.40, M.DIAL.h * 0.34,
+      0, Math.PI * 1.10, Math.PI * 1.62);
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(255,255,255,0.45)';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.ellipse(0, M.DIAL.y + M.DIAL.h * 0.32, M.DIAL.w * 0.44, M.DIAL.h * 0.36,
+      0, Math.PI * 1.14, Math.PI * 1.58);
+    ctx.stroke();
+    ctx.restore();
+  }
+
   // 表壳：上沿大圆角、下沿小圆角。全站唯一一处两个圆角不一样的壳子，
   // 所以不走通用的 roundRect。
   function meterCasePath(ctx, hw, top, bot, rt, rb) {
@@ -3308,6 +3358,82 @@
     ctx.fillStyle = 'rgba(51,65,85,0.18)';
     ctx.beginPath(); ctx.arc(x, y, r + 1.1, 0, 6.284); ctx.fill();
     screwHead(ctx, x, y, r, 'slot', sc);
+  }
+
+  // ── 表壳 / 底座：电流表、电压表、灵敏电流计【共用】的两块壳子 ────────
+  // 用户 2026-10-18：「参考电流表的外形，然后参考这幅图片来做一个灵敏电流计」。
+  // 「参考外形」落在代码里就是【同一份几何、同一套光影】，只让色板可传：
+  //   · 电流表 / 电压表传 null ⇒ 用原来那组米白（一个像素都不许变）；
+  //   · 灵敏电流计传一组浅蓝 ⇒ 和用户给的那张课本图同色，摆在一起又能一眼分开。
+  // 抽出来的理由和 meterCasePath 一样：两件器材各写一份壳子，改一处漏一处，
+  // 最后就是「同一家厂的两只表，圆角半径都不一样」。
+  function meterCaseBody(ctx, stops) {
+    var M = MET;
+    softShadow(ctx, -M.CASE_HW, M.CASE_TOP, M.CASE_HW * 2, M.CASE_BOT - M.CASE_TOP, 18, 16);
+    contactShadow(ctx, 0, M.CASE_BOT + 1, M.CASE_HW * 0.92, 6, 0.26);
+    ctx.fillStyle = linGrad(ctx, -M.CASE_HW, M.CASE_TOP, M.CASE_HW * 0.5, M.CASE_BOT,
+      stops || [[0, '#fdfefe'], [0.40, '#e9eff6'], [1, '#c4d0de']]);
+    meterCasePath(ctx, M.CASE_HW, M.CASE_TOP, M.CASE_BOT, 24, 7);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(51,65,85,0.55)'; ctx.lineWidth = 1.4; ctx.stroke();
+    // 壳面上的两道模压棱：外侧一圈是壳的翻边，里侧一圈是面板的沉台。
+    // 只有外圈时表壳是一块平板；加上里圈，它才是一只「盒」。
+    ctx.strokeStyle = 'rgba(255,255,255,0.7)'; ctx.lineWidth = 1.1;
+    meterCasePath(ctx, M.CASE_HW - 3.5, M.CASE_TOP + 3.5, M.CASE_BOT - 3.5, 21, 5);
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(100,116,139,0.28)'; ctx.lineWidth = 1;
+    meterCasePath(ctx, M.CASE_HW - 5.5, M.CASE_TOP + 5.5, M.CASE_BOT - 5.5, 19.5, 4);
+    ctx.stroke();
+    // 壳顶的一道受光：上沿那一圈是圆的，光在左上
+    ctx.save();
+    meterCasePath(ctx, M.CASE_HW, M.CASE_TOP, M.CASE_BOT, 24, 7); ctx.clip();
+    ctx.fillStyle = 'rgba(255,255,255,0.5)';
+    ctx.fillRect(-M.CASE_HW + 6, M.CASE_TOP + 2, M.CASE_HW * 2 - 12, 3);
+    ctx.fillStyle = 'rgba(51,65,85,0.10)';
+    ctx.fillRect(-M.CASE_HW + 6, M.CASE_BOT - 7, M.CASE_HW * 2 - 12, 5);
+    ctx.restore();
+  }
+
+  // 底座：比表壳宽一圈的浅色台座 + 顶上一块绿色面板（接线柱就立在绿板上）。
+  // 白色丝印（− / 0.6 / 3 或 − / +）不在这里画 —— 那是每只表自己的字。
+  function meterBaseBody(ctx, stops) {
+    var M = MET;
+    var BT = M.BASE_TOP, BB = M.BASE_BOT;
+    softShadow(ctx, -M.BASE_HW, BT - 3, M.BASE_HW * 2, BB - BT + 8, 12, 8);
+    contactShadow(ctx, 0, BB + 1, M.BASE_HW * 0.94, 5, 0.28);
+    ctx.save();
+    roundRect(ctx, -M.BASE_HW, BT, M.BASE_HW * 2, BB - BT, 6); ctx.clip();
+    ctx.fillStyle = linGrad(ctx, 0, BT, 0, BB,
+      stops || [[0, '#e6edf4'], [0.28, '#ccd7e3'], [0.68, '#b0bdcb'], [1, '#8fa0b2']]);
+    ctx.fillRect(-M.BASE_HW, BT, M.BASE_HW * 2, BB - BT);
+    ctx.restore();
+    roundRect(ctx, -M.BASE_HW, BT, M.BASE_HW * 2, BB - BT, 6);
+    ctx.strokeStyle = 'rgba(51,65,85,0.45)'; ctx.lineWidth = 1.2; ctx.stroke();
+    // 底座前脸的两道模压棱：上棱受光、下棱背光。底座才不是一块厚板。
+    ctx.strokeStyle = 'rgba(255,255,255,0.6)'; ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(-M.BASE_HW + 4, BT + 0.9); ctx.lineTo(M.BASE_HW - 4, BT + 0.9);
+    ctx.stroke();
+    ctx.fillStyle = 'rgba(40,52,68,0.20)';
+    roundRect(ctx, -M.BASE_HW + 3, BB - 3, M.BASE_HW * 2 - 6, 2.4, 1.2); ctx.fill();
+    // 上表面（画成梯形，近大远小），白色字印在上面
+    ctx.beginPath();
+    ctx.moveTo(-M.BASE_HW + 4, BT + 3);
+    ctx.lineTo(M.BASE_HW - 4, BT + 3);
+    ctx.lineTo(M.BASE_HW - 13, BT + 15);
+    ctx.lineTo(-M.BASE_HW + 13, BT + 15);
+    ctx.closePath();
+    ctx.fillStyle = linGrad(ctx, 0, BT + 3, 0, BT + 15, [[0, '#2f8f5b'], [1, '#196240']]);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(6,78,59,0.75)'; ctx.lineWidth = 1; ctx.stroke();
+    // 绿面板上的一道反光：塑料的漫反射，宽而软
+    ctx.fillStyle = 'rgba(255,255,255,0.16)';
+    ctx.beginPath();
+    ctx.moveTo(-M.BASE_HW + 8, BT + 4.6);
+    ctx.lineTo(M.BASE_HW - 8, BT + 4.6);
+    ctx.lineTo(M.BASE_HW - 15, BT + 9);
+    ctx.lineTo(-M.BASE_HW + 15, BT + 9);
+    ctx.closePath(); ctx.fill();
   }
 
   // 电表的【示数】—— 指针实际指着多少。
@@ -3382,29 +3508,9 @@
 
     // ── 表壳 ────────────────────────────────────────────────
     var sc = ctxScale(ctx);
-    softShadow(ctx, -M.CASE_HW, M.CASE_TOP, M.CASE_HW * 2, M.CASE_BOT - M.CASE_TOP, 18, 16);
-    contactShadow(ctx, 0, M.CASE_BOT + 1, M.CASE_HW * 0.92, 6, 0.26);
-    ctx.fillStyle = linGrad(ctx, -M.CASE_HW, M.CASE_TOP, M.CASE_HW * 0.5, M.CASE_BOT,
-      [[0, '#fdfefe'], [0.40, '#e9eff6'], [1, '#c4d0de']]);
-    meterCasePath(ctx, M.CASE_HW, M.CASE_TOP, M.CASE_BOT, 24, 7);
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(51,65,85,0.55)'; ctx.lineWidth = 1.4; ctx.stroke();
-    // 壳面上的两道模压棱：外侧一圈是壳的翻边，里侧一圈是面板的沉台。
-    // 只有外圈时表壳是一块平板；加上里圈，它才是一只「盒」。
-    ctx.strokeStyle = 'rgba(255,255,255,0.7)'; ctx.lineWidth = 1.1;
-    meterCasePath(ctx, M.CASE_HW - 3.5, M.CASE_TOP + 3.5, M.CASE_BOT - 3.5, 21, 5);
-    ctx.stroke();
-    ctx.strokeStyle = 'rgba(100,116,139,0.28)'; ctx.lineWidth = 1;
-    meterCasePath(ctx, M.CASE_HW - 5.5, M.CASE_TOP + 5.5, M.CASE_BOT - 5.5, 19.5, 4);
-    ctx.stroke();
-    // 壳顶的一道受光：上沿那一圈是圆的，光在左上
-    ctx.save();
-    meterCasePath(ctx, M.CASE_HW, M.CASE_TOP, M.CASE_BOT, 24, 7); ctx.clip();
-    ctx.fillStyle = 'rgba(255,255,255,0.5)';
-    ctx.fillRect(-M.CASE_HW + 6, M.CASE_TOP + 2, M.CASE_HW * 2 - 12, 3);
-    ctx.fillStyle = 'rgba(51,65,85,0.10)';
-    ctx.fillRect(-M.CASE_HW + 6, M.CASE_BOT - 7, M.CASE_HW * 2 - 12, 5);
-    ctx.restore();
+    // 壳子本体（阴影 + 填充 + 两道模压棱 + 顶沿受光）在 meterCaseBody 里，
+    // 和灵敏电流计共用；这里只留「这只表自己的字」。
+    meterCaseBody(ctx, null);
     // 型号丝印：真表（J0407 / J0408）的壳顶就印着型号。两排数字之外多一行
     // 小字，整台仪器立刻从「一张画」变成「一台仪器」。
     if (sc >= 1) {
@@ -3417,18 +3523,7 @@
     meterScrew(ctx, M.CASE_HW - 14, M.CASE_TOP + 8, 5.5);
 
     // ── 白色表盘 ────────────────────────────────────────────
-    ctx.fillStyle = linGrad(ctx, 0, M.DIAL.y, 0, M.DIAL.y + M.DIAL.h,
-      [[0, '#ffffff'], [0.72, '#f8fbfd'], [1, '#eaf0f6']]);
-    roundRect(ctx, M.DIAL.x, M.DIAL.y, M.DIAL.w, M.DIAL.h, 14);
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(100,116,139,0.45)'; ctx.lineWidth = 1; ctx.stroke();
-    // 表盘压在沉台里：上沿一圈内阴影。没有它，白盘是浮在壳面上的贴纸。
-    ctx.save();
-    roundRect(ctx, M.DIAL.x, M.DIAL.y, M.DIAL.w, M.DIAL.h, 14); ctx.clip();
-    ctx.fillStyle = 'rgba(51,65,85,0.13)';
-    ctx.fillRect(M.DIAL.x, M.DIAL.y, M.DIAL.w, 3.5);
-    ctx.fillRect(M.DIAL.x, M.DIAL.y, 3.5, M.DIAL.h);
-    ctx.restore();
+    meterDialFace(ctx);
 
     // ── 刻度弧 ──────────────────────────────────────────────
     // 三档线长，和真表一致：
@@ -3612,63 +3707,12 @@
     }
 
     // ── 玻璃面罩（画在指针之上，才有「隔着玻璃看」的感觉）────
-    ctx.save();
-    roundRect(ctx, M.DIAL.x, M.DIAL.y, M.DIAL.w, M.DIAL.h, 14);
-    ctx.clip();
-    glassHighlight(ctx, M.DIAL.x, M.DIAL.y, M.DIAL.w, M.DIAL.h);
-    // 玻璃上沿的一道弧形反光：玻璃是【鼓】的，反光必然是弯的。
-    // 只有那条直的斜带时，表盘看着是平的（玻璃只是一层膜）。
-    ctx.strokeStyle = 'rgba(255,255,255,0.75)';
-    ctx.lineWidth = 7;
-    ctx.beginPath();
-    ctx.ellipse(0, M.DIAL.y + M.DIAL.h * 0.30, M.DIAL.w * 0.40, M.DIAL.h * 0.34,
-      0, Math.PI * 1.10, Math.PI * 1.62);
-    ctx.stroke();
-    ctx.strokeStyle = 'rgba(255,255,255,0.45)';
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.ellipse(0, M.DIAL.y + M.DIAL.h * 0.32, M.DIAL.w * 0.44, M.DIAL.h * 0.36,
-      0, Math.PI * 1.14, Math.PI * 1.58);
-    ctx.stroke();
-    ctx.restore();
+    meterGlass(ctx);
 
     // ── 底座 + 绿色面板 ─────────────────────────────────────
-    var BT = M.BASE_TOP, BB = M.BASE_BOT;
-    softShadow(ctx, -M.BASE_HW, BT - 3, M.BASE_HW * 2, BB - BT + 8, 12, 8);
-    contactShadow(ctx, 0, BB + 1, M.BASE_HW * 0.94, 5, 0.28);
-    ctx.save();
-    roundRect(ctx, -M.BASE_HW, BT, M.BASE_HW * 2, BB - BT, 6); ctx.clip();
-    ctx.fillStyle = linGrad(ctx, 0, BT, 0, BB,
-      [[0, '#e6edf4'], [0.28, '#ccd7e3'], [0.68, '#b0bdcb'], [1, '#8fa0b2']]);
-    ctx.fillRect(-M.BASE_HW, BT, M.BASE_HW * 2, BB - BT);
-    ctx.restore();
-    roundRect(ctx, -M.BASE_HW, BT, M.BASE_HW * 2, BB - BT, 6);
-    ctx.strokeStyle = 'rgba(51,65,85,0.45)'; ctx.lineWidth = 1.2; ctx.stroke();
-    // 底座前脸的两道模压棱：上棱受光、下棱背光。底座才不是一块厚板。
-    ctx.strokeStyle = 'rgba(255,255,255,0.6)'; ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(-M.BASE_HW + 4, BT + 0.9); ctx.lineTo(M.BASE_HW - 4, BT + 0.9);
-    ctx.stroke();
-    ctx.fillStyle = 'rgba(40,52,68,0.20)';
-    roundRect(ctx, -M.BASE_HW + 3, BB - 3, M.BASE_HW * 2 - 6, 2.4, 1.2); ctx.fill();
-    // 上表面（画成梯形，近大远小），白色字印在上面
-    ctx.beginPath();
-    ctx.moveTo(-M.BASE_HW + 4, BT + 3);
-    ctx.lineTo(M.BASE_HW - 4, BT + 3);
-    ctx.lineTo(M.BASE_HW - 13, BT + 15);
-    ctx.lineTo(-M.BASE_HW + 13, BT + 15);
-    ctx.closePath();
-    ctx.fillStyle = linGrad(ctx, 0, BT + 3, 0, BT + 15, [[0, '#2f8f5b'], [1, '#196240']]);
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(6,78,59,0.75)'; ctx.lineWidth = 1; ctx.stroke();
-    // 绿面板上的一道反光：塑料的漫反射，宽而软
-    ctx.fillStyle = 'rgba(255,255,255,0.16)';
-    ctx.beginPath();
-    ctx.moveTo(-M.BASE_HW + 8, BT + 4.6);
-    ctx.lineTo(M.BASE_HW - 8, BT + 4.6);
-    ctx.lineTo(M.BASE_HW - 15, BT + 9);
-    ctx.lineTo(-M.BASE_HW + 15, BT + 9);
-    ctx.closePath(); ctx.fill();
+    // 台座本体在 meterBaseBody 里（和灵敏电流计共用），这里只印自己的丝印。
+    var BT = M.BASE_TOP;
+    meterBaseBody(ctx, null);
     ctx.fillStyle = '#ffffff';
     ctx.font = 'bold 10px -apple-system,"PingFang SC",sans-serif';
     ctx.fillText('−', POSTX[0], BT + 9);
@@ -3693,6 +3737,251 @@
     ctx.restore();
     // kind 按【端子序号】给：0 号是「−」柱（黑），1/2 号是两个量程柱（红）。
     posts(ctx, comp, ['neg', 'pos', 'pos']);
+  }
+
+  // ============================================================
+  // 灵敏电流计（J0409 那一类：中心零、可双向偏转）
+  // ------------------------------------------------------------
+  // 用户 2026-10-18 给的那张课本图（「（a）灵敏电流计」）：浅蓝壳、白表盘、
+  // 一条上凸的弧，弧顶正中是 0，往左 −10 −20 −30、往右 10 20 30；指针竖直
+  // 向上停在 0；表盘正中一个大写 G；底部网纹块里嵌着调零螺丝；底座绿面板上
+  // 两根柱子（左黑「−」右红「+」）。
+  //
+  // 外形【整套照电流表】：同一只表壳、同一块底座、同一批接线柱、同一套玻璃
+  // 反光 —— meterCaseBody / meterBaseBody / meterDialFace / meterGlass 就是
+  // 为此抽出来的。只换三处：
+  //   ① 刻度：零点从弧的左端搬到【正中】⇒ 扫角 −150°…−30°（零位 −90° =
+  //      正上方），数字是 ±30 而不是 0…3；
+  //   ② 字母：A → G；
+  //   ③ 柱子：三根（−/0.6/3）→ 两根（−/+）—— 满偏不是「换根柱子」换出来的。
+  // 指针、配重尾、刀片形针身、轴帽、网纹块、调零螺丝全部沿用电流表那几段
+  // （连宽度都是同一组数）：两只表摆在一起，学生该看出它们是同一类仪器。
+  //
+  // 🔴 读数【带符号】。电流表的 reading 是「电流大小」，反接要判错；这只表的
+  //    reading 是「指针偏向哪边」—— 负号是信息，不是故障。所以这里既不做
+  //    「反偏」判定、也不画「读不出数」，针就往左偏，学生在表盘上照读负值。
+  // ============================================================
+  var GAL = {
+    // 扫角：零位在正上方（−90°），左右各 60° —— 和图片上那条弧的角度一致。
+    A0: -Math.PI * 5 / 6, A1: -Math.PI / 6, ZERO: -Math.PI / 2,
+    MAJOR: 6, MINOR: 10,          // 6 大格 × 每大格 10 小格
+    // 数字半径：在弧的【内侧】、贴着刻度线内端（58 − 字号半高 ≈ 55）。
+    // 图片上那几个数字就是紧贴弧线印的 —— 放到 50 会往表盘中心缩一圈，
+    // 和中央那个 G 挤成一团（用户那张图上数字和 G 之间是留得出白的）。
+    R_NUM: 55,
+    NUM_FONT: 11,
+    // 浅蓝壳：和用户给的那张图同色系。电流表是米白，两件摆在一起一眼分得开。
+    CASE_STOPS: [[0, '#f9fcff'], [0.42, '#e2edf8'], [1, '#b6c8dc']],
+    BASE_STOPS: [[0, '#eaf2fa'], [0.28, '#cfdcea'], [0.68, '#b0c2d6'], [1, '#8ea2b8']],
+  };
+
+  // 满偏 → 「印在刻度上的单位 + 换算系数」。
+  // 🔴 真值在内核（CircuitCore.galUnitOf）：绘制层、电路图铭牌、损坏文案
+  //    共用那一份。这里只做转发 —— 各写一套「多少以下算 μA」的话，只要有一处
+  //    写反，同一只表就会在画布上读 18mA、在电路图上读 18000μA。
+  //    内核没加载时（离屏出图、单文件测试）才退回下面这份等价实现。
+  function galUnitOf(range) {
+    var G2 = (typeof self !== 'undefined') ? self
+           : (typeof global !== 'undefined') ? global : this;
+    if (G2 && G2.CircuitCore && typeof G2.CircuitCore.galUnitOf === 'function') {
+      return G2.CircuitCore.galUnitOf(range);
+    }
+    return (range < 0.00095) ? { u: 'μA', k: 1e6 } : { u: 'mA', k: 1e3 };
+  }
+  function galFullOf(comp, rec) {
+    var r = (rec && rec.range) || (comp && comp.params && comp.params.range) || 0.03;
+    return r > 0 ? r : 0.03;
+  }
+  // 刻度数字的写法：整数不带小数点（30 / 20 / 10），否则一位小数；
+  // 负号用「−」（U+2212），和电流表两排数字里那个负号同一个字符。
+  function galTickText(v) {
+    var x = Math.abs(v);
+    var s = (Math.abs(x - Math.round(x)) < 1e-6) ? String(Math.round(x)) : x.toFixed(1);
+    return (v < -1e-9 ? '−' : '') + s;
+  }
+
+  function drawGalvanometer(ctx, comp, rec) {
+    var M = MET, G0 = GAL;
+    var shown = meterIndicated(comp, rec);        // 未调零时含偏移
+    var range = galFullOf(comp, rec);
+    var over = !!(rec && rec.overRange);
+    var bent = !!(rec && rec.fault === 'over');
+    var burnt = !!(rec && rec.fault === 'burnt');
+    var POSTX = [TERMINALS.galvanometer[0].x, TERMINALS.galvanometer[1].x];
+    var gu = galUnitOf(range), full = range * gu.k;
+
+    ctx.save();
+    ctx.translate(comp.x, comp.y);
+    ctx.rotate((comp.rot || 0) * Math.PI / 180);
+    var sc = ctxScale(ctx);
+
+    // ── 表壳（浅蓝）+ 型号丝印 + 面板螺丝 ────────────────────
+    meterCaseBody(ctx, G0.CASE_STOPS);
+    if (sc >= 1) {
+      silk(ctx, 'J0409', 0, M.CASE_TOP + 11, 8.5,
+        'rgba(100,116,139,0.9)', 'rgba(255,255,255,0.55)');
+    }
+    meterScrew(ctx, -M.CASE_HW + 14, M.CASE_TOP + 8, 5.5);
+    meterScrew(ctx, M.CASE_HW - 14, M.CASE_TOP + 8, 5.5);
+
+    // ── 白色表盘 ────────────────────────────────────────────
+    meterDialFace(ctx);
+
+    // ── 刻度弧：中心零，左右各 3 大格 ────────────────────────
+    // 大格（带数字）6 段、每段 10 小格；大格中点短一截、小格再短 —— 和电流表
+    // 同一套线长（14 / 9.5 / 6）。这只表没有第二排数字，所以每一根刻度线
+    // 都只有一种含义：从 0 往两边数。
+    var i, a, step;
+    var total = G0.MAJOR * G0.MINOR;
+    for (i = 0; i <= total; i++) {
+      a = G0.A0 + (G0.A1 - G0.A0) * (i / total);
+      step = i % G0.MINOR;
+      var isMajor = (step === 0), isHalf = (step === G0.MINOR / 2);
+      var r1 = M.RT1, r0 = M.RT1 - (isMajor ? 14 : (isHalf ? 9.5 : 6));
+      ctx.strokeStyle = isMajor ? '#1f2937' : '#94a3b8';
+      ctx.lineWidth = isMajor ? 2 : (isHalf ? 1.3 : 1);
+      ctx.beginPath();
+      ctx.moveTo(M.PIVOT.x + Math.cos(a) * r0, M.PIVOT.y + Math.sin(a) * r0);
+      ctx.lineTo(M.PIVOT.x + Math.cos(a) * r1, M.PIVOT.y + Math.sin(a) * r1);
+      ctx.stroke();
+    }
+
+    // ── 刻度数字：−full … 0 … +full（七个）────────────────────
+    // 印在弧的【内侧】（图片就是这么印的）。零那个字正好落在指针的行程上，
+    // 指针从它中间穿过去 —— 真表就是这样，不是遮挡。
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#1f2937';
+    ctx.font = 'bold ' + G0.NUM_FONT + 'px -apple-system,"PingFang SC",sans-serif';
+    for (i = 0; i <= G0.MAJOR; i++) {
+      a = G0.A0 + (G0.A1 - G0.A0) * (i / G0.MAJOR);
+      ctx.fillText(galTickText(-full + 2 * full * (i / G0.MAJOR)),
+        M.PIVOT.x + Math.cos(a) * G0.R_NUM,
+        M.PIVOT.y + Math.sin(a) * G0.R_NUM);
+    }
+    // 单位：真表（J0409）表盘左下角印着 μA / mA。刻度数字是纯数字（−30…30），
+    // 没有这行字，学生分不清那 30 是 30mA 还是 30μA —— 而这两档差 1000 倍。
+    if (sc >= 0.85) {
+      ctx.textAlign = 'left';
+      ctx.fillStyle = 'rgba(71,85,105,0.85)';
+      ctx.font = 'bold 9px -apple-system,"PingFang SC",sans-serif';
+      ctx.fillText(gu.u, M.DIAL.x + 10, M.DIAL.y + M.DIAL.h - 12);
+      ctx.textAlign = 'center';
+    }
+
+    // ── 表盘正中的大字母 G ──────────────────────────────────
+    // 用衬线体（图片上那个 G 就是衬线），字号比 A/V 大一号 —— 它是这只表
+    // 唯一的身份标记，投影到大屏上要认得出。位置在转轴上方、数字弧以内：
+    // 再往上就顶到「0」那个字了。
+    ctx.fillStyle = '#1f2937';
+    ctx.font = 'bold 24px Georgia,"Times New Roman",serif';
+    ctx.fillText('G', 0, M.PIVOT.y - 24);
+
+    // ── 底部网纹块 + 调零螺丝（和电流表同一块、同一颗）────────
+    var B = M.BLOCK;
+    ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(-B.hwT, B.top); ctx.lineTo(B.hwT, B.top);
+    ctx.lineTo(B.hwB, B.bot); ctx.lineTo(-B.hwB, B.bot);
+    ctx.closePath();
+    ctx.fillStyle = linGrad(ctx, 0, B.top, 0, B.bot, [[0, '#4b5563'], [1, '#1f2937']]);
+    ctx.fill();
+    ctx.clip();
+    ctx.strokeStyle = 'rgba(226,232,240,0.30)'; ctx.lineWidth = 1;
+    for (var hx = -70; hx < 70; hx += 5) {
+      ctx.beginPath();
+      ctx.moveTo(hx, B.bot + 2);
+      ctx.lineTo(hx + (B.bot - B.top) + 4, B.top - 2);
+      ctx.stroke();
+    }
+    ctx.restore();
+    meterScrew(ctx, M.ZERO.x, M.ZERO.y, M.ZERO.r);
+
+    // ── 指针：零位竖直向上，向两边都能偏 ────────────────────
+    // frac = 示数 / 满偏，clamp 到 ±1.02 —— 超量程时针顶到刻度弧外面一点点，
+    // 正好是「打表」那个位置。零位角 −90°，左右各 60°。
+    var frac = Math.max(-1.02, Math.min(1.02, shown / range));
+    var na = G0.ZERO + (G0.A1 - G0.ZERO) * frac;
+    var alert = over || bent;
+    var rodCol = alert ? '#7f1d1d' : '#dc2626';
+    ctx.save();
+    ctx.translate(M.PIVOT.x, M.PIVOT.y);
+    ctx.rotate(na);
+    // 配重尾（和电流表同一组数）
+    ctx.strokeStyle = 'rgba(15,23,42,0.20)'; ctx.lineWidth = 4.6;
+    ctx.beginPath(); ctx.moveTo(-17, 1.8); ctx.lineTo(-7, 1.8); ctx.stroke();
+    ctx.strokeStyle = rodCol; ctx.lineWidth = 3.4;
+    ctx.beginPath(); ctx.moveTo(-17, 0); ctx.lineTo(-7, 0); ctx.stroke();
+    ctx.lineCap = 'round';
+    function blade(dy) {
+      ctx.beginPath();
+      ctx.moveTo(-9, -2.8 + dy);
+      ctx.lineTo(M.RT1 - 12, -1.0 + dy);
+      ctx.lineTo(M.RT1 - 3, dy);
+      ctx.lineTo(M.RT1 - 12, 1.0 + dy);
+      ctx.lineTo(-9, 2.8 + dy);
+      ctx.closePath();
+    }
+    if (bent) {
+      // 打表损坏：杆在中段折一下，针尖歪向【超量程那一侧】。
+      // 电流表那根折针固定往左歪（它是「反接」打坏的），这只表两边都可能打，
+      // 所以方向跟着 frac 的符号走。
+      var side = (frac < 0) ? -1 : 1;
+      var kx = (M.RT1 - 14) * 0.52, tipX = M.RT1 - 15, tipY = 5.6 * side;
+      ctx.strokeStyle = 'rgba(15,23,42,0.16)'; ctx.lineWidth = 3.6;
+      ctx.beginPath(); ctx.moveTo(-8, 1.8); ctx.lineTo(kx, 1.8);
+      ctx.lineTo(tipX, tipY + 1.4); ctx.stroke();
+      ctx.strokeStyle = rodCol; ctx.lineWidth = 2.8;
+      ctx.beginPath();
+      ctx.moveTo(-8, 0); ctx.lineTo(kx, 0); ctx.lineTo(tipX, tipY);
+      ctx.stroke();
+      ctx.save();
+      ctx.translate(tipX, tipY);
+      ctx.rotate(Math.atan2(tipY, tipX - kx));
+      ctx.fillStyle = rodCol;
+      ctx.beginPath();
+      ctx.moveTo(1.5, 0); ctx.lineTo(-6, -1.9); ctx.lineTo(-6, 1.9);
+      ctx.closePath(); ctx.fill();
+      ctx.restore();
+    } else {
+      ctx.fillStyle = 'rgba(15,23,42,0.16)'; blade(1.6); ctx.fill();
+      ctx.fillStyle = rodCol; blade(0); ctx.fill();
+      ctx.strokeStyle = rodCol; ctx.lineWidth = 3.4;
+      ctx.beginPath(); ctx.moveTo(-7, 0); ctx.lineTo(-2, 0); ctx.stroke();
+    }
+    ctx.restore();
+    // 转轴轴心：带一字槽的黄铜轴帽（和电流表同一颗）
+    ctx.fillStyle = linGrad(ctx, -5, M.PIVOT.y, 5, M.PIVOT.y,
+      [[0, '#5b6c7d'], [0.5, '#eef3f8'], [1, '#5b6c7d']]);
+    ctx.beginPath(); ctx.arc(M.PIVOT.x, M.PIVOT.y, 4.6, 0, 6.284); ctx.fill();
+    ctx.strokeStyle = 'rgba(15,23,42,0.45)'; ctx.lineWidth = 1; ctx.stroke();
+    if (sc >= 1.1) {
+      ctx.strokeStyle = 'rgba(30,41,59,0.55)'; ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(M.PIVOT.x - 2.6, M.PIVOT.y + 0.7);
+      ctx.lineTo(M.PIVOT.x + 2.6, M.PIVOT.y - 0.7);
+      ctx.stroke();
+    }
+
+    // ── 玻璃面罩（画在指针之上）────────────────────────────
+    meterGlass(ctx);
+
+    // ── 底座 + 绿色面板（两根柱子的丝印：− / +）──────────────
+    var BT = M.BASE_TOP;
+    meterBaseBody(ctx, G0.BASE_STOPS);
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 10px -apple-system,"PingFang SC",sans-serif';
+    ctx.fillText('−', POSTX[0], BT + 9);
+    ctx.fillText('+', POSTX[1], BT + 9);
+
+    // 损坏牌（挂在表壳上沿，不盖刻度）—— 和电流表同一个位置、同一套措辞。
+    if (bent) faultTag(ctx, 0, M.CASE_TOP + 7, '已损坏', 1);
+    if (burnt) {
+      soot(ctx, 0, M.DIAL.y + M.DIAL.h * 0.5, M.CASE_HW * 0.74, M.DIAL.h * 0.64, 1);
+      faultTag(ctx, 0, M.CASE_TOP + 7, '已烧坏', 1);
+    }
+    ctx.restore();
+    // 0 号是「−」柱（黑），1 号是「+」柱（红）。
+    posts(ctx, comp, ['neg', 'pos']);
   }
 
 
@@ -5155,6 +5444,7 @@
       case 'bell': drawBell(ctx, comp, rec, opts); break;
       case 'ammeter': drawMeter(ctx, comp, rec, false); break;
       case 'voltmeter': drawMeter(ctx, comp, rec, true); break;
+      case 'galvanometer': drawGalvanometer(ctx, comp, rec); break;
       case 'rheostat': drawRheostat(ctx, comp, rec); break;
       case 'plate': drawPlate(ctx, comp, rec); break;
       case 'junction': drawJunction(ctx, comp); break;
@@ -5239,6 +5529,10 @@
     psuDrawn: function () { return psuDrawn; },
     psuFaceAngle: psuFaceAngle,
     MAT: MAT, MET: MET, MET_SWEEP: MET_SWEEP, POST_GRAD: POST_GRAD,
+    // 灵敏电流计的几何 / 满偏换算。GAL 导出给自检点刻度用；galUnitOf /
+    // galFullOf 导出是因为【读数牌、读数框、放大镜】都要写单位（mA / μA），
+    // 三处各写一份「range < 0.001 就 μA」迟早有一处写反 —— 差 1000 倍。
+    GAL: GAL, galUnitOf: galUnitOf, galFullOf: galFullOf,
     // 表头大读数牌（用户第 1 点）。页面在导线之后按 meterReadoutBox 落笔画，
     // 绘制层只出几何 —— 两边共用同一份，牌子不会和表壳错位。
     METER_READOUT: METER_READOUT, meterReadoutBox: meterReadoutBox,

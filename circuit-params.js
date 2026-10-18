@@ -110,6 +110,26 @@
                 // 会真的流过约 1mA，画成淡红空心箭头（见 drawWire 的 opts.weak），
                 // 和主回路的实心红箭头一眼分得开。默认不勾 = 课本的理想模型。
                 {k:'weakI', t:'check', wide:1, label:'模拟微弱电流（真实表内阻）'}],
+    // ── 灵敏电流计 ────────────────────────────────────────────
+    // 满偏【不是】「线接在哪根柱子上」—— 它只有两根柱子（− / +），所以这里
+    // 走 t:'pick'（只改参数、一根线都不动），不是电流表那种 t:'tap'。
+    // 三档都是实验室里印得出来的规格，刻度数字跟着满偏等比走：
+    //   30mA → 印 −30…30（默认，这个沙盒的电源/负载正好用得到）
+    //   3mA  → 印 −3…3
+    //   30μA → 印 −30…30，单位改成 μA（真表 J0409 就是这一档）
+    // 单位由绘制层按满偏自动选（见 circuit-draw 的 galUnitOf），面板这里
+    // 只负责把三档摆出来 —— 两处各写一份「多少以下算 μA」迟早差 1000 倍。
+    galvanometer: [
+                {k:'range', t:'pick', label:'满偏', options:[
+                  // 标签写成紧凑的「±30mA」而不是「±30 mA」：参数面板那三个
+                  // 按钮是 flex:1，中间加空格在窄面板上会把 μA 那一档折成两行。
+                  {v:0.03, label:'±30mA'}, {v:0.003, label:'±3mA'},
+                  {v:0.00003, label:'±30μA'}]},
+                ZERO_ROW,
+                // 内阻：真表几十~上百欧。默认 2Ω 是「看得见但拧不走样」的那个数；
+                // 要讲「电表本身也有电阻」就往大拧（最大 50Ω，够把回路电流压下去一半）。
+                {k:'rInternal', t:'range', label:'内阻', unit:'Ω', min:0, max:50, step:0.5},
+                {k:'showValue', t:'check', wide:1, label:'在表盘上显示读数'}],
     rheostat:  [{k:'Rmax', t:'range', label:'最大阻值', unit:'Ω', min:5, max:50, step:5},
                 {k:'slide', t:'range', label:'滑片位置', unit:'', min:0, max:1, step:0.01}],
     // 灯泡多一个【单独的选项】：灯丝电阻随温度升高而增大。
@@ -164,6 +184,10 @@
   var TYPE_LABEL = {battery:'电源', resistor:'定值电阻', switch:'开关',
     ammeter:'电流表', voltmeter:'电压表', rheostat:'滑动变阻器', bulb:'小灯泡',
     led:'发光二极管', motor:'电动机', bell:'电铃', power:'学生电源',
+    // 灵敏电流计：刻度零点在正中、能双向偏转的那只表（J0409）。
+    // 名字照教材写全称，不缩成「电流计」——「灵敏」两个字正是它和电流表的
+    // 全部区别：满偏只有几十毫安，用来测微弱电流 / 看电流方向。
+    galvanometer:'灵敏电流计',
     // 单刀双掷开关：教材上它出现在「楼梯开关」那道题里（楼上楼下各一只，
     // 任何一只都能点亮 / 熄灭同一盏灯）。名字照教材写全称，不缩成「双掷开关」。
     spdt:'单刀双掷开关',
@@ -176,7 +200,10 @@
   // 数印出来，串联回路里的开关就会显示 −0.1000A，学生只会以为电路接反了。
   // 只有极性本身就承载信息的元件（电表接反要报错、电源充电放电是两回事、
   // 二极管和电动机接反是「不导电」和「反转」两件不同的事）才带符号。
-  var POLAR = {ammeter:1, voltmeter:1, battery:1, led:1, motor:1, power:1};
+  var POLAR = {ammeter:1, voltmeter:1, battery:1, led:1, motor:1, power:1,
+    // 灵敏电流计必须带符号：中心零的表，正负就是指针偏向哪一边。
+    // 取绝对值会把「向左偏 18mA」印成「18mA」——那正是它最该教的反向偏转。
+    galvanometer:1};
 
   // ── 读数的小数位 ────────────────────────────────────────────
   // 一律【一位小数】：读数框、侧栏那张 I/U/R/P 表、点元件弹出的浮层，全走它。
@@ -214,10 +241,31 @@
     if (D && typeof D.meterIndicated === 'function') return D.meterIndicated(c, r);
     return null;
   }
+  // 灵敏电流计的读数：满偏只有几十毫安，一位小数会把 18mA 印成「0.0」，
+  // 两位小数会把 μA 档印成「0.00」。所以按数量级自动给小数位 ——
+  // 最少 3 位（0.018）、μA 档 5 位（0.00002）。符号必须留着（见 POLAR）。
+  function galNum(v){
+    var x = +v;
+    if (!isFinite(x)) return '—';
+    if (x === 0) return '0';
+    var a = Math.abs(x);
+    var d = (a >= 0.01) ? 3 : (a >= 0.001 ? 4 : 5);
+    return x.toFixed(d);
+  }
   function dispI(c, r){
     var raw = r.i;
     // 电流表那一格印的是【它自己的示数】；电压表的 I 列是流过它的电流，与调零无关。
     if (c.type === 'ammeter') { var m = meterShow(c, r); if (m != null) raw = m; }
+    // 灵敏电流计同理：读数带符号（偏转方向），小数位按数量级走。
+    // 而且【连单位一起给】（29.412 mA / 18.0 μA）—— 满偏是几十毫安，
+    // 只写「0.029」的话学生要在脑子里换算一次才看得出偏了多少；
+    // 表盘上印的也是 mA，两处对得上号。
+    if (c.type === 'galvanometer') {
+      var g = meterShow(c, r); if (g == null) g = r.reading;
+      var gu = (G.CircuitCore && G.CircuitCore.galUnitOf)
+        ? G.CircuitCore.galUnitOf(r.range || 0.03) : { u: 'mA', k: 1e3 };
+      return galNum(g * gu.k) + ' ' + gu.u;
+    }
     var s = POLAR[c.type] ? raw : Math.abs(raw);
     var tag = '';
     // 电动机的「反接」要写成「反转」：接反不是接错了线，是转子往反方向转。
@@ -228,6 +276,9 @@
   function dispU(c, r){
     var raw = r.v;
     if (c.type === 'voltmeter') { var m = meterShow(c, r); if (m != null) raw = m; }
+    // 灵敏电流计：U 是它自己两端的分压，没有「方向」可言 —— 符号只对电流
+    // （指针偏向哪边）有意义。照 POLAR 印一个负电压，学生会以为哪里接反了。
+    if (c.type === 'galvanometer') return num1(Math.abs(raw));
     return num1(POLAR[c.type] ? raw : Math.abs(raw));
   }
   // 表格里的 R 一列。开关按通断写 0/∞，变阻器写【实际接入】的那一段，
@@ -260,6 +311,9 @@
     POLAR: POLAR,
     num1: num1,
     num2: num2,
+    // galNum —— 灵敏电流计读数的小数位（按数量级自适应，见上面那段）。
+    // 页面的大读数牌也用它：表盘上的数字和侧栏表必须是同一套规则。
+    galNum: galNum,
     dispI: dispI,
     dispU: dispU,
     fmtR: fmtR,

@@ -224,6 +224,14 @@
       var hm = (D && D.HALF != null) ? D.HALF : 70;
       return [{ x: -hm, y: 0 }, { x: hm, y: 0 }, { x: hm, y: 0 }];
     }
+    // 灵敏电流计：只有两个柱，而且两柱【都在轴线上】（y 都是 POST_Y）——
+    // 所以只要把 y 拉回 0 就是符号的两个引脚，左右对称落在 ±HALF。
+    // 不拉回 0 的话整只表在电路图里会往下坠 72px，主回路那一横在它这里断开
+    // （和电表「例外二」踩的是同一个坑）。
+    if (type === 'galvanometer') {
+      var hg = (D && D.HALF != null) ? D.HALF : 70;
+      return [{ x: -hg, y: 0 }, { x: hg, y: 0 }];
+    }
     // 单刀双掷开关：三个引脚【不都在轴线上】—— 两个掷位在左右（±HALF），
     // 公共端（刀片的转轴）引到符号【下方】。理由：符号正中就是转轴，公共
     // 端留在正中（0,0）的话它落在符号的墨迹框【里面】，导线接到框内会被
@@ -250,6 +258,17 @@
   //      症状就是导线套着表绕半圈 + 一处十字交叉。
   function meterGeom(comp, wires, D) {
     var T = symTerms(comp.type, D);              // 0=「−」柱，1/2=量程柱（同一右引脚）
+    // 灵敏电流计：两个引脚、没有量程柱，也没有「悬空的量程柱」这个概念。
+    // 单独一条分支，不去套下面那套「tap / dangling」—— 它只有两个柱，
+    // T[2] 是 undefined，照抄会当场读 undefined.x 把整张电路图带崩。
+    if (comp.type === 'galvanometer') {
+      return {
+        tap: null, centerZero: true,
+        posWired: termHasWire(wires, comp.id, 0),
+        negWired: termHasWire(wires, comp.id, 1),
+        cx: 0, cy: 0, r: 26, dangling: [],
+      };
+    }
     var tap = null;
     if (termHasWire(wires, comp.id, 1)) tap = 1;
     else if (termHasWire(wires, comp.id, 2)) tap = 2;
@@ -320,7 +339,9 @@
       // 电铃：拱顶到 y=−18，底边在 0，铃舌垂到 y≈12。框要罩住铃舌，
       // 导线才不会从铃舌上穿过去。
       case 'bell': return { x0: -22, y0: -22, x1: 22, y1: 14 };
-      case 'ammeter': case 'voltmeter': {
+      // 三只指针表共用同一个墨迹框：就是一个圆（半径 26）。
+      // 灵敏电流计也走这里 —— 它的 meta 同样是 {cx, cy, r}（见 meterGeom）。
+      case 'ammeter': case 'voltmeter': case 'galvanometer': {
         var m = it.meta;
         // 就画到圆周为止。空着的那根量程柱**不再画虚脚**（原来往下多留 26px），
         // 那根虚脚固定在离圆心 100px 外，画出来是画面正中凭空一根小竖线。
@@ -656,7 +677,8 @@
     // 二极管和电动机【必须】能翻：它们是有极性的，翻面不只是为了走线好看，
     // 还是「这根管子是正着接还是反着接」在电路图上的表达。翻面是左右镜像，
     // 符号跟着一起镜像，所以三角形的朝向永远和实物一致。
-    var FLIPPABLE = ['switch', 'bulb', 'resistor', 'led', 'motor', 'ammeter', 'voltmeter'];
+    var FLIPPABLE = ['switch', 'bulb', 'resistor', 'led', 'motor', 'ammeter', 'voltmeter',
+                     'galvanometer'];
     function flipOf(e, dir) {
       var it = byId[e.compId], T = symTerms(it.type, D);
       if (FLIPPABLE.indexOf(it.type) < 0) return false;
@@ -747,7 +769,7 @@
         var leaving = entering === e.tA ? e.tB : e.tA;
         var reversed = dir < 0 ? T[entering].x < T[leaving].x
                                : T[entering].x > T[leaving].x;
-        var rot = reversed && ['resistor','bulb','ammeter','voltmeter','switch'].indexOf(it.type) >= 0 ? 180 : 0;
+        var rot = reversed && ['resistor','bulb','ammeter','voltmeter','galvanometer','switch'].indexOf(it.type) >= 0 ? 180 : 0;
         var axisX = (T[e.tA].x + T[e.tB].x) / 2;
         var axisY = axisYOf(it.type, T[e.tA], T[e.tB]);
         it.lay.rot = rot;
@@ -1237,6 +1259,16 @@
         var t = meterRangeText(c.type, it.meta.tap, core);
         return t ? t + ' 挡' : '';
       }
+      // 灵敏电流计：铭牌印【满偏】。它没有量程柱，满偏是参数 —— 所以这里
+      // 不能复用上面那行（那行读的是 TYPES.rangeValues，这只表根本没有）。
+      // 单位由绘制层那一份 galUnitOf 定：两处各写一套「多少以下算 μA」，
+      // 迟早有一处差 1000 倍。
+      case 'galvanometer': {
+        var gr = (rec && rec.range) || P.range || 0.03;
+        // 单位换算问内核（和绘制层表盘共用一份），这里不自己写「多少算 μA」。
+        var gu = (core && core.galUnitOf) ? core.galUnitOf(gr) : { u: 'mA', k: 1e3 };
+        return '±' + num(gr * gu.k) + ' ' + gu.u;
+      }
       case 'rheostat': {
         var mx = (rec && rec.Rmax != null) ? +rec.Rmax : (P.Rmax != null ? +P.Rmax : 20);
         // 接线由导线本身表示，图上不重复印 B-C 等调试信息；保留教学需要的滑片位置。
@@ -1276,6 +1308,10 @@
     // 是软件算错了（0.000A 和「管子没导通」是两件事）。
     if (it.type === 'led' && it.rec && !it.rec.on && !it.rec.isolated) return '反向截止 · 不导电';
     if (it.type === 'bell' && it.rec && !it.rec.rings && !it.rec.isolated) return '磁动势不足 · 铃不响';
+    // 灵敏电流计只有两根柱子：缺一根就是没接进电路，读数恒 0。
+    // 符号上那一头画的是虚线，但学生未必看得出「虚线和实线不一样」。
+    if (it.type === 'galvanometer' && it.meta &&
+        (!it.meta.posWired || !it.meta.negWired)) return '只接了一根线 · 没有读数';
     return '';
   }
 
@@ -1331,7 +1367,9 @@
                   params: c.params || {} };
       var it = { id: c.id, type: lay.type, x: lay.x, y: lay.y, rot: lay.rot,
                  comp: lay, lay: lay, src: c, core: core, meta: {}, rect: null, rec: rec };
-      if (lay.type === 'ammeter' || lay.type === 'voltmeter') it.meta = meterGeom(lay, wires, D);
+      if (lay.type === 'ammeter' || lay.type === 'voltmeter' || lay.type === 'galvanometer') {
+        it.meta = meterGeom(lay, wires, D);
+      }
       else if (lay.type === 'rheostat') it.meta = rheoGeom(lay, wires, rec, D);
       else it.meta = {};
       it.rect = symRect(it);                  // 局部框：只和 params / meta 有关，与位置无关
@@ -1907,6 +1945,30 @@
         ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
         break;
       }
+      // 灵敏电流计：教材画法和 A/V 一模一样 —— 一个圆、左右两根引线，
+      // 圆里写 G。它【没有量程柱】，所以两根引线各认自己那根柱子：
+      // 没接的那一头画虚线（悬空），这和电表「空着的量程柱不画虚脚」是
+      // 两件不同的事（那里是「没有第三根脚」，这里是「这根脚没接线」）。
+      case 'galvanometer': {
+        var mg = it.meta;
+        hLead(ctx, T[0], mg.cx - mg.r, mg.posWired);
+        hLead(ctx, T[1], mg.cx + mg.r, mg.negWired);
+        ctx.beginPath(); ctx.arc(mg.cx, mg.cy, mg.r, 0, Math.PI * 2);
+        ctx.fillStyle = COLOR.paper; ctx.fill();
+        ctx.strokeStyle = COLOR.wire; ctx.lineWidth = 2.4; ctx.stroke();
+        ctx.fillStyle = COLOR.wire;
+        ctx.font = 'bold 24px Georgia,"Times New Roman",serif';
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        // 字母正立：和外层 rot=180 / mir=scale(-1,1) 各抵消一次（同电表那段）。
+        ctx.save();
+        ctx.translate(mg.cx, mg.cy);
+        if (c.mir) ctx.scale(-1, 1);
+        if ((c.rot || 0) % 360 === 180) ctx.rotate(Math.PI);
+        ctx.fillText('G', 0, 1);
+        ctx.restore();
+        ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+        break;
+      }
       case 'rheostat': {
         var g = it.meta;
         // 只画接上的那根 A/B 引线（整件没接线时两根都画）
@@ -1992,6 +2054,8 @@
       to: '一个圆里写 A，串在电路里；符号两端各引一根线（不再照实物三根柱画）。接的是哪一挡，写在符号下面' },
     { type: 'voltmeter', name: '电压表',          from: '三个接线柱的指针表',
       to: '一个圆里写 V，并接在被测元件的两端' },
+    { type: 'galvanometer', name: '灵敏电流计',   from: '两个接线柱的指针表：刻度零点在正中，指针能往两边偏',
+      to: '一个圆里写 G，串在电路里。中心零：电流从「+」柱流进就往右偏、从「−」柱流进就往左偏 —— 所以符号没有正负标记，看指针偏哪边就知道电流往哪边走' },
     { type: 'led',      name: '发光二极管',       from: '示教板上的彩色小管：一端半球透镜、一端带平边',
       to: '实心三角加一条横线：三角尖端指向横线，电流只许这么流（单向导电性）。右上两个小箭头表示发光' },
     { type: 'motor',    name: '电动机',           from: '示教板上的直流电动机：机身架在两个支撑上，轴端带螺旋桨',
