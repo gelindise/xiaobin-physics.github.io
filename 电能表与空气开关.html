@@ -1,0 +1,1926 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>虚拟物理实验 - 电能表与空气开关</title>
+    <link rel="stylesheet" href="style.css">
+    <style>
+        :root {
+            --bg: #020617;
+            --line: rgba(148, 163, 184, .18);
+            --primary: #3b82f6;
+            --secondary: #06b6d4;
+            --accent: #8b5cf6;
+            --text: #f8fafc;
+            --muted: #94a3b8;
+        }
+
+        body {
+            font-family: 'Inter', 'Microsoft YaHei', 'Noto Sans SC', sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: var(--bg);
+            color: var(--text);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+            box-sizing: border-box;
+        }
+
+        body::before {
+            content: "";
+            position: fixed;
+            inset: 0;
+            z-index: -1;
+            pointer-events: none;
+            background:
+                radial-gradient(circle at 16% 20%, rgba(59, 130, 246, .16), transparent 42%),
+                radial-gradient(circle at 84% 70%, rgba(139, 92, 246, .13), transparent 44%),
+                radial-gradient(circle at 50% 100%, rgba(6, 182, 212, .10), transparent 55%);
+        }
+
+        /* ===== 实验台外壳（与站内其它 lab3d 页面同一套视觉基线）===== */
+        .lab3d {
+            width: 100%;
+            max-width: 1600px;
+            margin: 8px auto 26px;
+            box-sizing: border-box;
+            overflow: hidden;
+            border: 1px solid rgba(56, 189, 248, .22);
+            border-radius: 18px;
+            background: linear-gradient(160deg, rgba(15, 23, 42, .92), rgba(2, 6, 23, .96));
+            color: #e2e8f0;
+            box-shadow: 0 26px 70px rgba(2, 6, 23, .6), 0 0 0 1px rgba(2, 6, 23, .8) inset;
+        }
+        .lab3d * { box-sizing: border-box; }
+        .lab3d-top {
+            display: flex; justify-content: space-between; gap: 15px; align-items: center;
+            padding: 17px 23px; border-bottom: 1px solid var(--line);
+            background: linear-gradient(90deg, rgba(59, 130, 246, .12), rgba(6, 182, 212, .05) 45%, transparent);
+        }
+        .lab3d-kicker { color: #22d3ee; font-size: 11px; font-weight: 800; letter-spacing: .2em; }
+        .lab3d-top h2 { margin: 3px 0 0; color: #f8fafc; font-size: 21px; letter-spacing: .02em; }
+        .lab3d-top p { margin: 4px 0 0; color: #94a3b8; font-size: 12px; }
+        .lab3d-status {
+            border: 1px solid rgba(34, 211, 238, .45); border-radius: 99px; padding: 6px 12px;
+            color: #67e8f9; font-size: 12px; white-space: nowrap; background: rgba(6, 182, 212, .08);
+        }
+        .lab3d-layout { display: grid; grid-template-columns: minmax(0, 1fr) 320px; }
+        .lab3d-main {
+            min-width: 0; padding: 15px 16px 16px;
+            background: radial-gradient(circle at 43% 36%, rgba(30, 64, 100, .55), rgba(8, 22, 36, .92) 62%, rgba(3, 10, 18, .96));
+        }
+        .lab3d-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; padding-bottom: 12px; }
+        .lab3d-toolbar .toolbar-label { color: #94a3b8; font-size: 12px; margin-right: 5px; }
+        .lab3d button {
+            padding: 7px 12px; border: 1px solid rgba(148, 163, 184, .25); border-radius: 8px;
+            background: rgba(30, 41, 59, .7); color: #cbd5e1; font-size: 12px; font-weight: 600;
+            font-family: inherit; cursor: pointer; transition: background .2s, border-color .2s, color .2s;
+        }
+        .lab3d button:hover { border-color: rgba(125, 211, 252, .6); background: rgba(30, 58, 95, .8); color: #e0f2fe; }
+        .lab3d button.primary {
+            border-color: rgba(34, 211, 238, .5); background: rgba(6, 182, 212, .16); color: #a5f3fc;
+        }
+        .lab3d button.primary:hover { background: rgba(6, 182, 212, .26); }
+        .lab3d button.active { border-color: rgba(34, 211, 238, .8); background: rgba(6, 182, 212, .24); color: #cffafe; }
+        .lab3d button:disabled { opacity: .42; cursor: not-allowed; }
+        .lab3d-toolbar .toolbar-spacer { flex: 1; }
+
+        .lab3d-stage {
+            position: relative; height: clamp(400px, 49vw, 580px);
+            border: 1px solid rgba(56, 189, 248, .2); border-radius: 12px; overflow: hidden;
+            background: #061423;
+        }
+        .lab3d-stage canvas {
+            display: block; width: 100%; height: 100%;
+            border: 0; border-radius: 0; box-shadow: none; background: transparent;
+            touch-action: none;
+        }
+        .lab3d-stage canvas.pick { cursor: pointer; }
+
+        /* 舞台底部控制带：全屏里也在这里，关键操作不用退出全屏 */
+        .lab3d-stage .stage-bar {
+            position: absolute; left: 0; right: 0; bottom: 0;
+            display: flex; align-items: center; gap: 8px;
+            padding: 0 12px 11px; pointer-events: none; flex-wrap: nowrap;
+        }
+        .lab3d-stage .stage-bar .grow { flex: 1; }
+        .lab3d-stage .stage-btn {
+            pointer-events: auto; flex: none;
+            display: inline-flex; align-items: center; gap: 6px;
+            padding: 8px 12px; border-radius: 10px;
+            font-size: 12px; font-weight: 800; font-family: inherit;
+            border: 1px solid rgba(148, 163, 184, .35); background: rgba(2, 6, 23, .88); color: #cbd5e1;
+            cursor: pointer; transition: background .2s, border-color .2s, color .2s, box-shadow .2s;
+        }
+        .lab3d-stage .stage-btn:hover { border-color: rgba(125, 211, 252, .7); color: #e0f2fe; }
+        .lab3d-stage .stage-btn.danger { border-color: rgba(248, 113, 113, .55); color: #fecaca; }
+        .lab3d-stage .stage-btn.danger:hover { background: rgba(127, 29, 29, .5); }
+        .lab3d-stage .stage-btn.warn { border-color: rgba(251, 191, 36, .55); color: #fde68a; }
+        .lab3d-stage .stage-help {
+            min-width: 0; pointer-events: none;
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+            color: #93b4c4; font-size: 11px; background: rgba(2, 6, 23, .72);
+            padding: 6px 10px; border-radius: 7px;
+        }
+
+        .lab3d-stage .stage-toast {
+            position: absolute; left: 50%; transform: translateX(-50%); bottom: 62px;
+            pointer-events: none; opacity: 0; transition: opacity .2s;
+            font-size: 12px; font-weight: 700; white-space: nowrap; max-width: 92%;
+            padding: 7px 14px; border-radius: 99px;
+            background: rgba(2, 6, 23, .92); border: 1px solid rgba(251, 191, 36, .6); color: #fde68a;
+        }
+        .lab3d-stage .stage-toast.show { opacity: 1; }
+        .lab3d-stage .stage-toast.bad { border-color: rgba(248, 113, 113, .7); color: #fecaca; }
+        .lab3d-stage .stage-toast.good { border-color: rgba(52, 211, 153, .7); color: #a7f3d0; }
+
+        .lab3d-foot {
+            display: flex; align-items: center; flex-wrap: wrap; gap: 12px 18px;
+            padding: 12px 3px 1px; font-size: 12px; color: #b6c8d4;
+        }
+        .lab3d-foot .legend { margin-left: auto; color: #8ba7b6; }
+        .lab3d-sidebar {
+            padding: 18px; color: #cbd5e1; border-left: 1px solid var(--line);
+            background: linear-gradient(180deg, rgba(15, 23, 42, .75), rgba(2, 6, 23, .6));
+        }
+        .lab3d-sidebar h3 { margin: 0 0 15px; color: #e2e8f0; font-size: 15px; letter-spacing: .05em; }
+        .lab3d-sidebar h3:not(:first-child) { margin-top: 22px; }
+        .lab3d-field { margin: 0 0 16px; }
+        .lab3d-field label, .lab3d-field .field-label {
+            display: flex; justify-content: space-between; gap: 8px; align-items: baseline;
+            color: #cbd5e1; font-size: 12px; font-weight: 700;
+        }
+        .lab3d-field output { color: #38bdf8; font-size: 13px; font-weight: 800; }
+        .lab3d-field input[type="range"] { display: block; width: 100%; margin: 11px 0 5px; }
+        .lab3d-field input[type="range"]::-webkit-slider-thumb { background: linear-gradient(135deg, #3b82f6, #22d3ee); }
+        .lab3d-field small { color: #64748b; font-size: 10px; line-height: 1.5; display: block; }
+        .lab3d-metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 12px; }
+        .lab3d-metric {
+            padding: 12px 13px; border: 1px solid rgba(56, 189, 248, .18); border-radius: 10px;
+            background: linear-gradient(160deg, rgba(30, 58, 95, .55), rgba(15, 23, 42, .6));
+        }
+        .lab3d-metric span { display: block; font-size: 11px; color: #9fb8c6; }
+        .lab3d-metric strong { display: block; margin-top: 4px; color: #e0f2fe; font-size: 17px; }
+        .lab3d-metric.ok strong { color: #6ee7b7; }
+        .lab3d-metric.bad strong { color: #fca5a5; }
+        .lab3d-metric.warn strong { color: #fcd34d; }
+        .lab3d-note { color: #a8bcc9; font-size: 12px; line-height: 1.75; margin: 0 0 12px; }
+        .lab3d-note b { color: #7dd3fc; }
+        .lab3d-btnrow { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+        .step-list { margin: 0; padding-left: 0; list-style: none; counter-reset: st; }
+        .step-list li {
+            position: relative; padding: 0 0 0 26px; margin-bottom: 11px;
+            color: #94a3b8; font-size: 12px; line-height: 1.6; counter-increment: st;
+        }
+        .step-list li::before {
+            content: counter(st); position: absolute; left: 0; top: 1px;
+            width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center;
+            font-size: 10px; font-weight: 800; color: #64748b;
+            border: 1px solid rgba(148, 163, 184, .3);
+        }
+        .step-list li.done { color: #cbd5e1; }
+        .step-list li.done::before { background: rgba(52, 211, 153, .2); border-color: rgba(52, 211, 153, .6); color: #6ee7b7; }
+        .law-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+        .law-list li {
+            display: flex; gap: 9px; align-items: flex-start; padding: 10px 12px;
+            border: 1px solid rgba(56, 189, 248, .16); border-radius: 9px;
+            background: rgba(15, 23, 42, .5); font-size: 12px; color: #94a3b8; line-height: 1.6;
+        }
+        .law-list li i {
+            flex: none; font-style: normal; font-size: 10px; font-weight: 800; color: #38bdf8;
+            border: 1px solid rgba(56, 189, 248, .35); border-radius: 5px; padding: 1px 5px; margin-top: 1px;
+        }
+        .law-list li.hit { border-color: rgba(52, 211, 153, .5); color: #d1fae5; background: rgba(16, 185, 129, .1); }
+
+        /* ===== 实验画面全屏 ===== */
+        .lab3d-stage .stage-fs-btn {
+            position: absolute; top: 11px; right: 11px; z-index: 9;
+            display: inline-flex; align-items: center; gap: 5px; line-height: 1;
+            padding: 7px 11px; border-radius: 9px;
+            border: 1px solid rgba(148, 163, 184, .3); background: rgba(2, 6, 23, .86); color: #cbd5e1;
+            font-family: inherit; font-size: 11.5px; font-weight: 800; cursor: pointer;
+            transition: background .2s, border-color .2s, color .2s;
+        }
+        .lab3d-stage .stage-fs-btn:hover {
+            border-color: rgba(125, 211, 252, .7); background: rgba(15, 23, 42, .92); color: #e0f2fe;
+        }
+        .lab3d-stage .stage-fs-btn:focus-visible { outline: 2px solid rgba(125, 211, 252, .8); outline-offset: 2px; }
+        .lab3d-stage:fullscreen, .lab3d-stage:-webkit-full-screen {
+            width: 100%; height: 100%; border: 0; border-radius: 0; background: #050b18;
+        }
+
+        /* ===== 参数面板：可折叠，住在实验画面里 ===== */
+        .lab3d-stage .stage-params {
+            position: absolute; top: 52px; right: 11px; z-index: 8;
+            display: flex; flex-direction: column;
+            width: 300px; max-width: calc(100% - 22px); max-height: calc(100% - 118px);
+            border: 1px solid rgba(56, 189, 248, .3); border-radius: 12px;
+            background: rgba(2, 6, 23, .9);
+            -webkit-backdrop-filter: blur(9px); backdrop-filter: blur(9px);
+            box-shadow: 0 18px 44px rgba(2, 6, 23, .62);
+            color: #cbd5e1; text-align: left;
+        }
+        .lab3d-stage .stage-params.collapsed { width: auto; }
+        .lab3d-stage .stage-params.collapsed .params-body { display: none; }
+        .lab3d-stage .stage-params .params-head {
+            display: flex; align-items: center; justify-content: space-between; gap: 12px;
+            padding: 9px 12px; border-bottom: 1px solid rgba(148, 163, 184, .18); cursor: pointer;
+        }
+        .lab3d-stage .stage-params.collapsed .params-head { border-bottom: 0; padding: 8px 12px; }
+        .lab3d-stage .stage-params .params-title {
+            color: #7dd3fc; font-size: 12px; font-weight: 800; letter-spacing: .04em; white-space: nowrap;
+        }
+        .lab3d-stage .stage-params .params-toggle {
+            flex: none; padding: 4px 9px; border-radius: 7px; line-height: 1.25;
+            border: 1px solid rgba(56, 189, 248, .45); background: rgba(56, 189, 248, .16); color: #e0f2fe;
+            font-family: inherit; font-size: 11px; font-weight: 800; cursor: pointer;
+        }
+        .lab3d-stage .stage-params .params-body {
+            overflow-y: auto; overscroll-behavior: contain; touch-action: pan-y;
+            padding: 0 13px 15px; scrollbar-width: thin;
+        }
+        .lab3d-stage .stage-params .params-body::-webkit-scrollbar { width: 8px; }
+        .lab3d-stage .stage-params .params-body::-webkit-scrollbar-thumb {
+            background: rgba(148, 163, 184, .35); border-radius: 99px;
+        }
+        .lab3d-stage .stage-params h4 {
+            margin: 14px 0 10px; padding-top: 11px; border-top: 1px solid rgba(148, 163, 184, .14);
+            color: #7dd3fc; font-size: 12px; font-weight: 800; letter-spacing: .05em;
+        }
+        .lab3d-stage .stage-params h4:first-child { margin-top: 12px; padding-top: 0; border-top: 0; }
+        .lab3d-stage .stage-params .params-checks {
+            display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 10px;
+        }
+        .lab3d-stage .stage-params .params-checks label {
+            display: inline-flex; align-items: center; gap: 6px; color: #cbd5e1;
+            font-size: 11.5px; cursor: pointer;
+        }
+        .lab3d-stage .stage-params .params-checks input { accent-color: #22d3ee; margin: 0; flex: none; }
+        .lab3d-stage .stage-params .lab3d-field:last-child { margin-bottom: 4px; }
+        .lab3d-stage .stage-params .seg {
+            display: grid; grid-auto-flow: column; gap: 6px; margin: 8px 0 6px;
+        }
+        .lab3d-stage .stage-params .seg button {
+            padding: 6px 4px; font-size: 11px; border-radius: 7px;
+        }
+        .lab3d-stage .stage-params .seg button.active {
+            border-color: rgba(34, 211, 238, .8); background: rgba(6, 182, 212, .24); color: #cffafe;
+        }
+
+        @media (max-width: 900px) {
+            .lab3d-layout { grid-template-columns: minmax(0, 1fr); }
+            .lab3d-sidebar { border-left: 0; border-top: 1px solid var(--line); }
+        }
+        @media (max-width: 620px) {
+            body { padding-left: 10px; padding-right: 10px; }
+            .lab3d { border-radius: 14px; }
+            .lab3d-top { padding: 15px; }
+            .lab3d-top h2 { font-size: 17px; }
+            .lab3d-status { display: none; }
+            .lab3d-main { padding: 10px; }
+            .lab3d-toolbar { gap: 6px; }
+            .lab3d-toolbar .toolbar-label, .lab3d-toolbar .toolbar-spacer { display: none; }
+            .lab3d-toolbar button { padding: 6px 9px; font-size: 11px; }
+            .lab3d-stage { height: 330px; }
+            .lab3d-stage .stage-help { font-size: 10px; padding: 5px 8px; }
+            .lab3d-stage .stage-btn { padding: 7px 9px; font-size: 11px; gap: 4px; }
+            .lab3d-stage .stage-bar { gap: 5px; padding: 0 8px 9px; }
+            .lab3d-stage .stage-fs-btn { padding: 6px 9px; font-size: 11px; }
+            .lab3d-stage .stage-fs-btn .lbl { display: none; }
+            .lab3d-stage .stage-params {
+                top: 46px; right: 8px; width: min(282px, 88%); max-height: calc(100% - 104px);
+            }
+            .lab3d-sidebar { padding: 16px; }
+            .lab3d-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+            .law-list { grid-template-columns: minmax(0, 1fr); }
+            .lab3d-foot .legend { margin-left: 0; width: 100%; }
+        }
+
+        /* ===== 实拍视频区 ===== */
+        .video-section { max-width: 1200px; margin: 24px auto 40px; padding: 0 16px; }
+        .video-section .section-title { font-size: 20px; font-weight: bold; color: #f8fafc; margin-bottom: 16px; }
+        .video-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 18px; }
+        .video-card { background: #1e293b; border: 1px solid rgba(255,255,255,0.12); border-radius: 12px; padding: 18px 20px; }
+        .video-card h3 { margin: 0 0 12px; font-size: 15px; line-height: 1.5; color: #f8fafc; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 10px; }
+        .video-container { position: relative; width: 100%; padding-bottom: 56.25%; height: 0; border-radius: 12px; overflow: hidden; background: #000; }
+        .video-container iframe { position: absolute; top: 0; left: 0; width: 100%; height: 100%; border: 0; }
+        .video-desc { font-size: 13px; color: #94a3b8; line-height: 1.7; margin-top: 10px; }
+        .video-desc b { color: #a5f3fc; }
+    </style>
+    <script src="auth-check.js"></script>
+</head>
+<body>
+    <section class="lab3d" aria-label="电能表与空气开关">
+      <div class="lab3d-top">
+        <div>
+          <div class="lab3d-kicker">INTERACTIVE PHYSICS LAB · 生活用电</div>
+          <h2>电能表与空气开关 · 读数与保护</h2>
+          <p>进户线 → 电能表 → 空气开关 → 用电器：调电流看转盘与示数，超载烧表、过流跳闸，手柄还能自己扳</p>
+        </div>
+        <span class="lab3d-status">● 实时物理模拟</span>
+      </div>
+
+      <div class="lab3d-layout">
+        <div class="lab3d-main">
+          <div class="lab3d-toolbar" role="group" aria-label="演示场景">
+            <span class="toolbar-label">一键场景</span>
+            <button type="button" id="wb-sc-normal">🏠 正常用电</button>
+            <button type="button" id="wb-sc-overload">🔥 超载烧表</button>
+            <button type="button" id="wb-sc-trip">⚡ 过流跳闸</button>
+            <button type="button" id="wb-sc-short">💥 短路</button>
+            <span class="toolbar-spacer"></span>
+            <button type="button" id="wb-reset">↺ 复位重来</button>
+          </div>
+
+          <div class="lab3d-stage" id="wb-stage">
+            <canvas id="wb-canvas" aria-label="电能表与空气开关接线演示：可拖动空气开关手柄合闸分闸"></canvas>
+            <div class="stage-toast" id="wb-toast"></div>
+
+            <button type="button" class="stage-fs-btn" id="wb-fs" title="全屏显示实验画面" aria-label="全屏显示实验画面">
+              <svg class="fs-expand" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"/></svg>
+              <svg class="fs-compress" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:none"><path stroke-linecap="round" stroke-linejoin="round" d="M8 3v3a2 2 0 01-2 2H3m18 0h-3a2 2 0 01-2-2V3m0 18v-3a2 2 0 012-2h3M3 16h3a2 2 0 012 2v3"/></svg>
+              <span class="lbl">全屏</span>
+            </button>
+
+            <aside class="stage-params collapsed" id="wb-params" aria-label="实验参数调节面板">
+              <div class="params-head" id="wb-params-head">
+                <span class="params-title">⚙ 实验参数</span>
+                <button type="button" class="params-toggle" id="wb-params-toggle"
+                        aria-expanded="false" aria-controls="wb-params-body">▸ 展开</button>
+              </div>
+              <div class="params-body" id="wb-params-body">
+                <h4>用电器总电流</h4>
+                <div class="lab3d-field">
+                  <label for="wb-i">电流 I <output id="wb-i-v">5.0 A</output></label>
+                  <input id="wb-i" type="range" min="0" max="30" value="5" step="0.1">
+                  <small>对应总功率 <b id="wb-i-p">1100 W</b>。电能表标着 <b>10(20)A</b>：
+                    10 A 是标定电流，<b>20 A 是允许通过的最大电流</b> —— 超过它，表就要烧。</small>
+                </div>
+
+                <h4>空气开关</h4>
+                <div class="lab3d-field">
+                  <label>额定电流 C<span id="wb-in-v">20</span></label>
+                  <div class="seg" id="wb-in-seg">
+                    <button type="button" data-in="10">10 A</button>
+                    <button type="button" data-in="16">16 A</button>
+                    <button type="button" data-in="20" class="active">20 A</button>
+                    <button type="button" data-in="32">32 A</button>
+                    <button type="button" data-in="40">40 A</button>
+                  </div>
+                  <small>空开的额定电流要<b>不大于</b>电能表的最大电流，才能替表挡刀。
+                    选 32 A / 40 A 时，25 A 的过载它根本不理 —— 表先烧。</small>
+                </div>
+
+                <h4>演示速度</h4>
+                <div class="lab3d-field">
+                  <label>时间倍率 <output id="wb-speed-v">×60</output></label>
+                  <div class="seg" id="wb-speed-seg">
+                    <button type="button" data-speed="1">×1</button>
+                    <button type="button" data-speed="10">×10</button>
+                    <button type="button" data-speed="60" class="active">×60</button>
+                    <button type="button" data-speed="240">×240</button>
+                  </div>
+                  <small>真实电能表 1000 W 时转盘才 10 r/min，不加速根本看不出在转。
+                    倍率只放大「用电时间」，脱扣与烧表的快慢仍按真实秒走。</small>
+                </div>
+
+                <h4>显示</h4>
+                <div class="params-checks">
+                  <label><input id="wb-show-flow" type="checkbox" checked>电流流动</label>
+                  <label><input id="wb-show-label" type="checkbox" checked>器材标注</label>
+                  <label><input id="wb-show-grid" type="checkbox">接线网格</label>
+                </div>
+              </div>
+            </aside>
+
+            <div class="stage-bar">
+              <button type="button" class="stage-btn" id="wb-switch">⏻ 分闸</button>
+              <button type="button" class="stage-btn danger" id="wb-short">💥 制造短路</button>
+              <button type="button" class="stage-btn warn" id="wb-newmeter">🔧 换新表</button>
+              <div class="grow"></div>
+              <div class="stage-help" id="wb-help">拖空开手柄 / 点它一下，就能合闸与分闸</div>
+            </div>
+          </div>
+
+          <div class="lab3d-foot">
+            <span style="color:#8ba7b6">参数都在实验画面右上角的「⚙ 实验参数」面板里（默认收起，点一下展开）</span>
+            <span class="legend" id="wb-legend"></span>
+          </div>
+
+          <div class="lab3d-metrics" aria-live="polite">
+            <div class="lab3d-metric" id="wb-m-i"><span>干路电流 I</span><strong>—</strong></div>
+            <div class="lab3d-metric" id="wb-m-p"><span>总功率 P = UI</span><strong>—</strong></div>
+            <div class="lab3d-metric" id="wb-m-rpm"><span>转盘转速</span><strong>—</strong></div>
+            <div class="lab3d-metric ok" id="wb-m-w"><span>电能表示数</span><strong>—</strong></div>
+          </div>
+
+          <ul class="law-list" style="margin-top:12px">
+            <li id="wb-c1"><i>①</i><span>转盘转得越快，说明用电器消耗电能越快（功率越大）</span></li>
+            <li id="wb-c2"><i>②</i><span>示数增加的量，就是这段时间电流做的功 W</span></li>
+            <li id="wb-c3"><i>③</i><span>电流超过电能表最大电流 20 A，表会被烧坏</span></li>
+            <li id="wb-c4"><i>④</i><span>电流过大时空气开关自动跳闸，保护电路</span></li>
+          </ul>
+        </div>
+
+        <aside class="lab3d-sidebar">
+          <h3>实验步骤</h3>
+          <ol class="step-list" id="wb-steps"></ol>
+
+          <h3>现象解读</h3>
+          <p class="lab3d-note" id="wb-verdict" style="margin-top:0"><b>观察提示：</b>合上闸，转盘就转；把电流调大，转盘转得更快、示数爬得更快。可一旦超过 20 A，表里的电流线圈就会过热 —— 而空气开关是不是来得及替你挡下来，取决于它的额定电流选得多大。</p>
+
+          <div class="lab3d-btnrow" style="margin-top:18px">
+            <button type="button" class="primary" id="wb-pause">⏸ 暂停</button>
+            <button type="button" class="primary" id="wb-reset2">↺ 复位</button>
+          </div>
+          <small style="color:#64748b;font-size:10px;display:block;margin-top:10px;line-height:1.5">
+            画面里那只空气开关可以<b style="color:#7dd3fc">直接拖</b>：往上推 = 合闸，往下扳 = 分闸。
+            自动跳闸后手柄会停在中间，得先扳到「分」再推上去。
+          </small>
+        </aside>
+      </div>
+    </section>
+
+    <section class="video-section">
+      <h2 class="section-title">📺 实拍视频</h2>
+      <div class="video-grid">
+        <div class="video-card">
+          <h3>家庭电路的连接：电能表接在哪</h3>
+          <div class="video-container">
+            <iframe src="//player.bilibili.com/player.html?bvid=BV1ZRqZBHE3U&page=1&autoplay=0&loop=1&danmaku=0&high_quality=1" scrolling="no" frameborder="no" framespacing="0" allowfullscreen="true"></iframe>
+          </div>
+          <div class="video-desc">对照画面里的接线顺序：<b>进户线 → 电能表 → 空气开关 → 用电器</b>。电能表串在干路上，家里用多少电它都记着；后面那只空开，才是负责「出事就断电」的那一个。</div>
+        </div>
+        <div class="video-card">
+          <h3>空气开关为什么会跳闸</h3>
+          <div class="video-container">
+            <iframe src="//player.bilibili.com/player.html?bvid=BV1o1B4Y6E8Y&page=1&autoplay=0&loop=1&danmaku=0&high_quality=1" scrolling="no" frameborder="no" framespacing="0" allowfullscreen="true"></iframe>
+          </div>
+          <div class="video-desc">拆开看里面的两套脱扣：<b>双金属片受热弯曲</b>管过载（电流越大弯得越快），<b>电磁线圈</b>管短路（电流一大就瞬间顶开）。页内把额定电流改小、电流调大，就能把这两种跳闸分别做出来。</div>
+        </div>
+      </div>
+    </section>
+
+    <script src="protect.js"></script>
+    <script>
+    (function () {
+      'use strict';
+      var canvas = document.getElementById('wb-canvas');
+      if (!canvas) return;
+      var ctx = canvas.getContext('2d');
+
+      /* ============================================================
+       * 一、物理模型
+       * ------------------------------------------------------------
+       * 真值链只有一条：
+       *   滑块电流 I → 干路有效电流 effCurrent() → 功率 P = U·I
+       *   → 转盘角速度 ω ∝ P → 累积电能 W → 示数 = W0 + W
+       *   → 同一份 I 再进【表的热积累】与【空开的两种脱扣】
+       * 画面、读数、结论卡、步骤高亮全读这一份，绝不另算一遍。
+       * ============================================================ */
+      var W = 1300, H = 620;          // 画布逻辑尺寸（16:7.6，贴近舞台比例）
+      var U = 220;                    // 进户电压 V
+
+      var METER = {
+        rate: 600,                    // 铭牌常数 r/(kW·h)
+        rated: 10,                    // 标定电流 10 A
+        maxI: 20,                     // 允许通过的最大电流 20 A
+        W0: 123.4,                    // 出厂示数（正好显示 0 1 2 3 4）
+        burnT: 12                     // 过载烧表时间系数：t_burn = 12·(20/I)^4 秒
+      };
+      var SHORT_I = 300;              // 短路电流 A
+      var K_MAG = 5;                  // 电磁脱扣：≥ 5×额定 瞬动
+      var MAG_DELAY = 0.15;           // 电磁脱扣可见延时（真实秒，看得见「啪」）
+      var HEAT_T = 6;                 // 热脱扣时间系数
+      var HEAT_K = 1.13;              // 热脱扣起始倍数
+
+      var state = {
+        I: 5,                         // 滑块设定的负载电流
+        In: 20,                       // 空开额定电流
+        closed: true,                 // 空开合闸
+        tripped: false,               // 自动跳闸（手柄停在中间）
+        burned: false,                // 电能表烧坏
+        shorted: false,               // 火零短路
+        speed: 60,                    // 演示时间倍率
+        paused: false,
+        t: 0,                         // 真实时间 s
+        W: 0,                         // 已消耗电能 kW·h（相对 W0）
+        discAng: 0,                   // 转盘累积角 rad（与 W 严格同源，自检读它）
+        discVis: 0,                   // 转盘【视觉】累积角（封顶后，绘制读它）
+        burnAcc: 0,                   // 表的热积累 0..1
+        heatAcc: 0,                   // 空开热脱扣积累 0..1
+        magT: 0,                      // 电磁脱扣已持续（真实秒）
+        handleY: 214,                 // 手柄当前 y（平滑动画用）
+        spark: 0,                     // 跳闸火花剩余时间
+        smoke: [],                    // 烟粒子
+        flowPhase: 0,                 // 电流小球的相位（px）
+        show: { flow: true, label: true, grid: false },
+        lastTrip: null,               // 最近一次跳闸/烧表的记录
+        burnedAt: -1
+      };
+
+      // 空开手柄的三个停位（y 越大越靠下 = 分闸）
+      var HANDLE = { cx: 765, yOn: 214, yTrip: 258, yOff: 300, w: 52, h: 34, slotTop: 196, slotBot: 316 };
+
+      function effCurrent() {
+        if (state.burned) return 0;          // 表内线圈烧断 ⇒ 全屋断电
+        if (!state.closed) return 0;
+        if (state.shorted) return SHORT_I;
+        return state.I;
+      }
+      function powerW() { return U * effCurrent(); }
+      function readingOf() { return METER.W0 + state.W; }
+      // 转盘转速 r/min：P(kW)·N(r/kW·h) 得到 r/h，再 ÷60
+      function discRpm() { return powerW() / 1000 * METER.rate / 60; }
+      // 真实角速度 rad/s（未封顶）
+      function discOmega() { return discRpm() * Math.PI * 2 / 60; }
+      // 视觉角速度：封顶 4 r/s。真实表 2200 W 时就 0.37 r/s、开了 60 倍速是 22 r/s，
+      // 不封顶会频闪（甚至看着倒转），所以画面按 4 r/s 转 + 叠残影表示「实际更快」。
+      var OMEGA_CAP = Math.PI * 2 * 4;
+      function discOmegaVis() { return Math.min(discOmega() * state.speed, OMEGA_CAP); }
+
+      // 表烧坏的时间：t = burnT·(20/I)^4，I=25 A → 4.9 s，I=30 A → 2.4 s
+      function burnSeconds(I) { return I <= METER.maxI ? Infinity : METER.burnT / Math.pow(I / METER.maxI, 4); }
+      // 空开热脱扣时间：t = HEAT_T/((I/(1.13·In))²−1)，I 越大越快
+      function tripSeconds(I, In) {
+        var r = I / (HEAT_K * In);
+        if (r <= 1) return Infinity;
+        return HEAT_T / (r * r - 1);
+      }
+
+      /* ============================================================
+       * 二、几何布局（照教材图 19.1-1 的接线关系重新排成横构图）
+       * ============================================================ */
+      var G = {
+        meter: { x: 198, y: 26, w: 416, h: 398 },
+        panel: { x: 216, y: 44, w: 380, h: 362 },
+        win: { x: 282, y: 76, w: 264, h: 64 },
+        disc: { x: 296, y: 242, w: 220, h: 78 },
+        term: { x: 216, y: 406, w: 380, h: 56 },
+        termX: [250, 306, 362, 418],
+        termY: 434,
+        air: { x: 700, y: 150, w: 130, h: 246 },
+        load: { x: 980, y: 180, w: 290, h: 260 }
+      };
+
+      // 六段导线。端子排 4 个孔：左两孔进户、右两孔出线（照实物接法，画面不打架）
+      var WIRES = [
+        { id: 'inL', kind: 'L', pts: [[58, 0], [58, 500], [250, 500], [250, 434]] },
+        { id: 'inN', kind: 'N', pts: [[108, 0], [108, 540], [306, 540], [306, 434]] },
+        { id: 'outL', kind: 'L', pts: [[362, 434], [362, 580], [664, 580], [664, 100], [740, 100], [740, 150]] },
+        { id: 'outN', kind: 'N', pts: [[418, 434], [418, 472], [692, 472], [692, 132], [790, 132], [790, 150]] },
+        { id: 'ldL', kind: 'L', pts: [[740, 396], [740, 490], [1030, 490], [1030, 440]] },
+        { id: 'ldN', kind: 'N', pts: [[790, 396], [790, 455], [1090, 455], [1090, 440]] }
+      ];
+
+      /* ============================================================
+       * 三、绘图小工具
+       * ============================================================ */
+      function rr(c, x, y, w, h, r) {
+        r = Math.min(r, w / 2, h / 2);
+        c.beginPath();
+        c.moveTo(x + r, y);
+        c.lineTo(x + w - r, y);
+        c.arcTo(x + w, y, x + w, y + r, r);
+        c.lineTo(x + w, y + h - r);
+        c.arcTo(x + w, y + h, x + w - r, y + h, r);
+        c.lineTo(x + r, y + h);
+        c.arcTo(x, y + h, x, y + h - r, r);
+        c.lineTo(x, y + r);
+        c.arcTo(x, y, x + r, y, r);
+        c.closePath();
+      }
+      function polyLen(pts) {
+        var s = 0;
+        for (var i = 1; i < pts.length; i++) s += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
+        return s;
+      }
+      function polyAt(pts, u) {                 // u = 0..1 按【弧长】取点
+        var total = polyLen(pts), want = Math.max(0, Math.min(1, u)) * total, acc = 0;
+        for (var i = 1; i < pts.length; i++) {
+          var dx = pts[i][0] - pts[i - 1][0], dy = pts[i][1] - pts[i - 1][1];
+          var L = Math.hypot(dx, dy);
+          if (acc + L >= want || i === pts.length - 1) {
+            var k = L < 1e-6 ? 0 : (want - acc) / L;
+            return { x: pts[i - 1][0] + dx * k, y: pts[i - 1][1] + dy * k };
+          }
+          acc += L;
+        }
+        return { x: pts[0][0], y: pts[0][1] };
+      }
+      function tracePath(c, pts) {
+        c.beginPath();
+        c.moveTo(pts[0][0], pts[0][1]);
+        for (var i = 1; i < pts.length; i++) c.lineTo(pts[i][0], pts[i][1]);
+      }
+
+      /* ============================================================
+       * 四、场景绘制
+       * ============================================================ */
+      // x0/y0/x1/y1 = 这一帧要铺满的逻辑范围（全屏时比 0..W 更大，用来填掉留白）
+      function drawBackdrop(x0, y0, x1, y1) {
+        var g = ctx.createLinearGradient(0, y0, 0, y1);
+        g.addColorStop(0, '#eaf0f6');
+        g.addColorStop(.55, '#dde6ee');
+        g.addColorStop(1, '#c9d5e1');
+        ctx.fillStyle = g;
+        ctx.fillRect(x0, y0, x1 - x0, y1 - y0);
+
+        if (state.show.grid) {
+          ctx.save();
+          ctx.strokeStyle = 'rgba(90,120,150,.13)';
+          ctx.lineWidth = 1;
+          for (var x = Math.floor(x0 / 40) * 40; x <= x1; x += 40) {
+            ctx.beginPath(); ctx.moveTo(x + .5, y0); ctx.lineTo(x + .5, y1); ctx.stroke();
+          }
+          for (var y = Math.floor(y0 / 40) * 40; y <= y1; y += 40) {
+            ctx.beginPath(); ctx.moveTo(x0, y + .5); ctx.lineTo(x1, y + .5); ctx.stroke();
+          }
+          ctx.restore();
+        }
+
+        // 配电箱内壁的暗角，让画面有纵深
+        var vg = ctx.createRadialGradient(W / 2, H / 2, H * .35, W / 2, H / 2, H * 1.05);
+        vg.addColorStop(0, 'rgba(0,0,0,0)');
+        vg.addColorStop(1, 'rgba(38,58,78,.20)');
+        ctx.fillStyle = vg;
+        ctx.fillRect(x0, y0, x1 - x0, y1 - y0);
+      }
+
+      function drawWires() {
+        ctx.save();
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        // 先铺一道浅色「跨线底」，交叉处后画的线像从上面跨过去
+        ctx.strokeStyle = 'rgba(244,248,252,.95)';
+        ctx.lineWidth = 13;
+        for (var i = 0; i < WIRES.length; i++) { tracePath(ctx, WIRES[i].pts); ctx.stroke(); }
+        // 再画黑线本体
+        ctx.strokeStyle = '#1d242c';
+        ctx.lineWidth = 7;
+        for (var j = 0; j < WIRES.length; j++) { tracePath(ctx, WIRES[j].pts); ctx.stroke(); }
+        ctx.restore();
+      }
+
+      function drawFlow() {
+        if (!state.show.flow) return;
+        var I = effCurrent();
+        var alive = I > 0;
+        ctx.save();
+        for (var w = 0; w < WIRES.length; w++) {
+          var pts = WIRES[w].pts, total = polyLen(pts);
+          if (total < 20) continue;
+          var gap = 44, n = Math.max(1, Math.floor(total / gap));
+          for (var k = 0; k < n; k++) {
+            var u = ((k * gap + state.flowPhase) % total) / total;
+            var p = polyAt(pts, u);
+            var r = alive ? 2.5 : 2.2;
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+            ctx.fillStyle = alive ? 'rgba(250,204,21,.78)' : 'rgba(148,163,184,.45)';
+            ctx.fill();
+            if (alive) {
+              ctx.beginPath();
+              ctx.arc(p.x, p.y, r + 2.2, 0, Math.PI * 2);
+              ctx.fillStyle = 'rgba(250,204,21,.12)';
+              ctx.fill();
+            }
+          }
+        }
+        ctx.restore();
+      }
+
+      function drawShortWire() {
+        if (!state.shorted) return;
+        var pts = [[1030, 480], [1030, 525], [1090, 525], [1090, 445]];
+        var pulse = 0.55 + 0.45 * Math.sin(state.t * 14);
+        ctx.save();
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        // 大电流的红色光晕
+        ctx.strokeStyle = 'rgba(239,68,68,' + (0.18 + 0.16 * pulse) + ')';
+        ctx.lineWidth = 22;
+        tracePath(ctx, pts); ctx.stroke();
+        // 短接铜线
+        ctx.strokeStyle = '#a8201a';
+        ctx.lineWidth = 7;
+        tracePath(ctx, pts); ctx.stroke();
+        ctx.strokeStyle = 'rgba(255,150,110,.9)';
+        ctx.lineWidth = 2.6;
+        tracePath(ctx, pts); ctx.stroke();
+
+        // 短路点的火花
+        var mx = 1060, my = 525;
+        ctx.strokeStyle = 'rgba(253,224,71,' + (0.45 + 0.55 * pulse) + ')';
+        ctx.lineWidth = 2;
+        for (var i = 0; i < 7; i++) {
+          var ang = i / 7 * Math.PI * 2 + state.t * 3;
+          var L = 10 + (i % 3) * 8;
+          ctx.beginPath();
+          ctx.moveTo(mx + Math.cos(ang) * 6, my + Math.sin(ang) * 6);
+          ctx.lineTo(mx + Math.cos(ang) * L, my + Math.sin(ang) * L);
+          ctx.stroke();
+        }
+        ctx.beginPath();
+        ctx.arc(mx, my, 7, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(253,224,71,.88)';
+        ctx.fill();
+
+        ctx.fillStyle = 'rgba(150,22,16,.95)';
+        ctx.font = '800 13px "Microsoft YaHei", sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('短路', mx, my + 28);
+        ctx.restore();
+      }
+
+      // ---------- 电能表 ----------
+      function drawMeter() {
+        var m = G.meter, p = G.panel;
+
+        // 外壳投影
+        ctx.save();
+        ctx.shadowColor = 'rgba(15,32,48,.34)';
+        ctx.shadowBlur = 22;
+        ctx.shadowOffsetY = 9;
+        rr(ctx, m.x, m.y, m.w, m.h, 16);
+        ctx.fillStyle = '#3a424c';
+        ctx.fill();
+        ctx.restore();
+
+        // 外壳本体
+        var shell = ctx.createLinearGradient(m.x, m.y, m.x + m.w, m.y + m.h);
+        shell.addColorStop(0, '#525b66');
+        shell.addColorStop(.42, '#3d454f');
+        shell.addColorStop(1, '#272d35');
+        rr(ctx, m.x, m.y, m.w, m.h, 16);
+        ctx.fillStyle = shell;
+        ctx.fill();
+
+        // 顶部挂耳
+        rr(ctx, 386, 14, 40, 18, 4);
+        ctx.fillStyle = '#333a43';
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(406, 24, 4.2, 0, Math.PI * 2);
+        ctx.fillStyle = '#1a1f25';
+        ctx.fill();
+
+        // 面板
+        rr(ctx, p.x, p.y, p.w, p.h, 9);
+        var pg = ctx.createLinearGradient(p.x, p.y, p.x, p.y + p.h);
+        pg.addColorStop(0, '#fbf8ee');
+        pg.addColorStop(.6, '#f3efe2');
+        pg.addColorStop(1, '#e6e1d2');
+        ctx.fillStyle = pg;
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(120,110,92,.35)';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+
+        drawDigits();
+        drawNameplate();
+        drawDisc();
+        drawTerminals();
+
+        // 烧坏：整体压暗 + 几块焦斑 + 红边警示
+        if (state.burned) {
+          var a = Math.min(1, 0.5 + state.burnAcc * 0.5);
+          ctx.save();
+          rr(ctx, m.x, m.y, m.w, m.h, 16);
+          ctx.clip();
+          ctx.fillStyle = 'rgba(16,13,10,' + (0.52 * a) + ')';
+          ctx.fillRect(m.x, m.y, m.w, m.h);
+
+          var spots = [[318, 118, 132], [486, 268, 150], [352, 408, 128], [566, 96, 96]];
+          for (var si = 0; si < spots.length; si++) {
+            var sp = spots[si];
+            var sg = ctx.createRadialGradient(sp[0], sp[1], 4, sp[0], sp[1], sp[2]);
+            sg.addColorStop(0, 'rgba(8,6,4,' + (0.86 * a) + ')');
+            sg.addColorStop(.5, 'rgba(24,18,12,' + (0.55 * a) + ')');
+            sg.addColorStop(1, 'rgba(40,32,22,0)');
+            ctx.fillStyle = sg;
+            ctx.fillRect(sp[0] - sp[2], sp[1] - sp[2], sp[2] * 2, sp[2] * 2);
+          }
+          ctx.restore();
+
+          ctx.save();
+          ctx.globalAlpha = 0.45 + 0.35 * Math.sin(state.t * 6);
+          rr(ctx, m.x - 2, m.y - 2, m.w + 4, m.h + 4, 18);
+          ctx.strokeStyle = '#ef4444';
+          ctx.lineWidth = 3;
+          ctx.stroke();
+          ctx.restore();
+        }
+      }
+
+      function drawDigits() {
+        var win = G.win, cellW = win.w / 5;
+        // 窗框
+        rr(ctx, win.x - 6, win.y - 6, win.w + 12, win.h + 12, 6);
+        ctx.fillStyle = '#20262d';
+        ctx.fill();
+        rr(ctx, win.x - 3, win.y - 3, win.w + 6, win.h + 6, 4);
+        ctx.fillStyle = '#0d1116';
+        ctx.fill();
+
+        var R = readingOf();
+        var weights = [1000, 100, 10, 1, 0.1];
+        for (var i = 0; i < 5; i++) {
+          var x = win.x + i * cellW;
+          var isDec = (i === 4);
+          var v = R / weights[i];
+          var d = Math.floor(v) % 10;
+          if (d < 0) d = 0;
+          var f = v - Math.floor(v);
+          // 字轮只在快要进位的那一小段才滚：平时稳稳停住，进位时「啪」地翻过去
+          var roll = Math.max(0, (f - 0.94) / 0.06);
+
+          ctx.save();
+          ctx.beginPath();
+          ctx.rect(x + 1, win.y, cellW - 2, win.h);
+          ctx.clip();
+          ctx.fillStyle = isDec ? (state.burned ? '#5c3a33' : '#b32c1e') : (state.burned ? '#3b3a37' : '#f7f5ec');
+          ctx.fillRect(x + 1, win.y, cellW - 2, win.h);
+
+          var col = isDec ? '#fff4e8' : (state.burned ? '#8b877c' : '#15191e');
+          ctx.fillStyle = col;
+          ctx.font = '800 48px "DIN Alternate", "Helvetica Neue", Arial, sans-serif';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          var cy = win.y + win.h / 2;
+          var y1 = cy - roll * win.h;
+          var y2 = cy - roll * win.h + win.h;
+          ctx.fillText(String(d), x + cellW / 2, y1);
+          ctx.fillText(String((d + 1) % 10), x + cellW / 2, y2);
+          ctx.restore();
+
+          // 格间分隔线
+          if (i > 0) {
+            ctx.beginPath();
+            ctx.moveTo(x + .5, win.y + 2);
+            ctx.lineTo(x + .5, win.y + win.h - 2);
+            ctx.strokeStyle = 'rgba(0,0,0,.22)';
+            ctx.lineWidth = 1;
+            ctx.stroke();
+          }
+        }
+      }
+
+      function drawNameplate() {
+        ctx.save();
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = state.burned ? '#5b564c' : '#2b3138';
+        ctx.font = '700 17px "Microsoft YaHei", sans-serif';
+        ctx.fillText('单相电度表', 406, 168);
+
+        ctx.font = '700 14px "DIN Alternate", Arial, sans-serif';
+        ctx.fillText('kW·h', 406, 192);
+
+        ctx.font = '700 15px "DIN Alternate", Arial, sans-serif';
+        ctx.fillText('220V  10(20)A  50Hz', 406, 220);
+
+        ctx.font = '700 12px "DIN Alternate", Arial, sans-serif';
+        ctx.fillStyle = state.burned ? '#7a7368' : '#5d554b';
+        ctx.fillText(METER.rate + ' r/kW·h', 406, 352);
+        ctx.restore();
+      }
+
+      function drawDisc() {
+        var d = G.disc, cx = d.x + d.w / 2, cy = d.y + d.h / 2, rad = d.h / 2 - 3;
+
+        // 窗框
+        rr(ctx, d.x - 3, d.y - 3, d.w + 6, d.h + 6, 6);
+        ctx.fillStyle = '#232a33';
+        ctx.fill();
+        // 窗内衬（不是纯黑，否则铝盘糊在里面看不见）
+        rr(ctx, d.x, d.y, d.w, d.h, 4);
+        var bg = ctx.createLinearGradient(d.x, d.y, d.x, d.y + d.h);
+        bg.addColorStop(0, '#2b3541');
+        bg.addColorStop(.5, '#1b232c');
+        bg.addColorStop(1, '#141a21');
+        ctx.fillStyle = bg;
+        ctx.fill();
+
+        ctx.save();
+        rr(ctx, d.x + 1, d.y + 1, d.w - 2, d.h - 2, 4);
+        ctx.clip();
+
+        var spinning = !state.burned && effCurrent() > 0;
+        var ang = state.discVis;
+        var rps = discOmegaVis() / (Math.PI * 2);
+        var blur = Math.max(0, Math.min(1, (rps - 0.7) / 3.0));
+
+        function drawOne(a, alpha) {
+          ctx.save();
+          ctx.translate(cx, cy);
+          ctx.rotate(a);
+          ctx.globalAlpha = alpha;
+
+          // 盘体
+          var g = ctx.createRadialGradient(-rad * .34, -rad * .38, rad * .1, 0, 0, rad);
+          g.addColorStop(0, '#ffffff');
+          g.addColorStop(.45, '#eef4fa');
+          g.addColorStop(.8, '#c9d4e0');
+          g.addColorStop(1, '#9fadbb');
+          ctx.beginPath();
+          ctx.arc(0, 0, rad, 0, Math.PI * 2);
+          ctx.fillStyle = g;
+          ctx.fill();
+          ctx.strokeStyle = 'rgba(58,70,84,.7)';
+          ctx.lineWidth = 1.4;
+          ctx.stroke();
+
+          // 边缘齿纹（数得清的刻度，转动时看得出角位移）
+          ctx.strokeStyle = 'rgba(74,88,102,.42)';
+          ctx.lineWidth = 1;
+          for (var i = 0; i < 30; i++) {
+            var t = i / 30 * Math.PI * 2;
+            ctx.beginPath();
+            ctx.moveTo(Math.cos(t) * rad * .80, Math.sin(t) * rad * .80);
+            ctx.lineTo(Math.cos(t) * rad * .96, Math.sin(t) * rad * .96);
+            ctx.stroke();
+          }
+
+          // 红色标记条：转没转就看它
+          ctx.beginPath();
+          ctx.moveTo(0, -rad * .19);
+          ctx.lineTo(rad * .94, 0);
+          ctx.lineTo(0, rad * .19);
+          ctx.closePath();
+          ctx.fillStyle = '#e03a22';
+          ctx.fill();
+
+          // 中心轴帽
+          ctx.beginPath();
+          ctx.arc(0, 0, rad * .13, 0, Math.PI * 2);
+          ctx.fillStyle = '#5a6572';
+          ctx.fill();
+          ctx.beginPath();
+          ctx.arc(-rad * .04, -rad * .04, rad * .05, 0, Math.PI * 2);
+          ctx.fillStyle = 'rgba(255,255,255,.5)';
+          ctx.fill();
+          ctx.restore();
+        }
+
+        // 高速时在【不压暗主盘】的前提下叠残影：看起来就是「转得飞快」
+        if (spinning && blur > 0.02) {
+          for (var k = 1; k <= 6; k++) drawOne(ang - k * 0.42, 0.30 * blur * (1 - k / 7));
+        }
+        drawOne(ang, 1);
+        ctx.restore();
+
+        // 玻璃反光
+        ctx.save();
+        rr(ctx, d.x + 1, d.y + 1, d.w - 2, d.h - 2, 4);
+        ctx.clip();
+        var hl = ctx.createLinearGradient(d.x, d.y, d.x + d.w * .55, d.y + d.h);
+        hl.addColorStop(0, 'rgba(255,255,255,.16)');
+        hl.addColorStop(.4, 'rgba(255,255,255,.03)');
+        hl.addColorStop(1, 'rgba(255,255,255,0)');
+        ctx.fillStyle = hl;
+        ctx.fillRect(d.x, d.y, d.w, d.h);
+        ctx.restore();
+      }
+
+      function drawTerminals() {
+        var t = G.term;
+        rr(ctx, t.x, t.y, t.w, t.h, 7);
+        ctx.fillStyle = '#2b323a';
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(0,0,0,.4)';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+
+        var names = ['L', 'N', 'L', 'N'];
+        for (var i = 0; i < 4; i++) {
+          var x = G.termX[i], y = G.termY;
+          // 铜端子
+          var g = ctx.createRadialGradient(x - 2, y - 3, 1, x, y, 10);
+          g.addColorStop(0, '#f0cf8e');
+          g.addColorStop(.6, '#c99b4f');
+          g.addColorStop(1, '#8a6428');
+          ctx.beginPath();
+          ctx.arc(x, y, 9.5, 0, Math.PI * 2);
+          ctx.fillStyle = g;
+          ctx.fill();
+          ctx.strokeStyle = 'rgba(40,30,10,.5)';
+          ctx.lineWidth = 1;
+          ctx.stroke();
+          // 十字螺丝
+          ctx.strokeStyle = 'rgba(50,38,16,.85)';
+          ctx.lineWidth = 1.8;
+          ctx.beginPath();
+          ctx.moveTo(x - 5, y); ctx.lineTo(x + 5, y);
+          ctx.moveTo(x, y - 5); ctx.lineTo(x, y + 5);
+          ctx.stroke();
+          // 字母
+          ctx.fillStyle = i < 2 ? '#f0a7a7' : '#a7c8f0';
+          ctx.font = '700 10px "DIN Alternate", Arial, sans-serif';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(names[i], x, t.y + 44);
+        }
+      }
+
+      // ---------- 空气开关 ----------
+      function drawAirSwitch() {
+        var a = G.air;
+        // 投影
+        ctx.save();
+        ctx.shadowColor = 'rgba(15,32,48,.28)';
+        ctx.shadowBlur = 14;
+        ctx.shadowOffsetY = 6;
+        rr(ctx, a.x, a.y, a.w, a.h, 8);
+        ctx.fillStyle = '#e7ebef';
+        ctx.fill();
+        ctx.restore();
+
+        var g = ctx.createLinearGradient(a.x, a.y, a.x + a.w, a.y);
+        g.addColorStop(0, '#f7f9fb');
+        g.addColorStop(.5, '#e9edf1');
+        g.addColorStop(1, '#ccd3da');
+        rr(ctx, a.x, a.y, a.w, a.h, 8);
+        ctx.fillStyle = g;
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(120,132,146,.55)';
+        ctx.lineWidth = 1.2;
+        ctx.stroke();
+
+        // 上下接线柱
+        function post(x, y) {
+          ctx.beginPath();
+          ctx.arc(x, y, 8, 0, Math.PI * 2);
+          ctx.fillStyle = '#5a636d';
+          ctx.fill();
+          ctx.beginPath();
+          ctx.arc(x, y, 4.6, 0, Math.PI * 2);
+          ctx.fillStyle = '#2c333b';
+          ctx.fill();
+        }
+        post(740, a.y); post(790, a.y);
+        post(740, a.y + a.h); post(790, a.y + a.h);
+
+        // 手柄槽
+        rr(ctx, HANDLE.cx - 26, HANDLE.slotTop, 52, HANDLE.slotBot - HANDLE.slotTop, 7);
+        ctx.fillStyle = '#b3bbc3';
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(90,100,112,.6)';
+        ctx.lineWidth = 1.2;
+        ctx.stroke();
+        // 槽内阴影
+        var ig = ctx.createLinearGradient(HANDLE.cx - 26, 0, HANDLE.cx + 26, 0);
+        ig.addColorStop(0, 'rgba(60,70,80,.28)');
+        ig.addColorStop(.5, 'rgba(60,70,80,0)');
+        ig.addColorStop(1, 'rgba(60,70,80,.22)');
+        ctx.fillStyle = ig;
+        ctx.fillRect(HANDLE.cx - 26, HANDLE.slotTop, 52, HANDLE.slotBot - HANDLE.slotTop);
+
+        // 手柄
+        var hy = state.handleY;
+        ctx.save();
+        ctx.shadowColor = 'rgba(20,10,8,.35)';
+        ctx.shadowBlur = 6;
+        ctx.shadowOffsetY = 2;
+        rr(ctx, HANDLE.cx - HANDLE.w / 2, hy - HANDLE.h / 2, HANDLE.w, HANDLE.h, 5);
+        var hg = ctx.createLinearGradient(0, hy - HANDLE.h / 2, 0, hy + HANDLE.h / 2);
+        hg.addColorStop(0, '#f06252'); hg.addColorStop(.55, '#d63c2c'); hg.addColorStop(1, '#a52a1e');
+        ctx.fillStyle = hg;
+        ctx.fill();
+        ctx.restore();
+        // 防滑纹
+        ctx.strokeStyle = 'rgba(255,255,255,.42)';
+        ctx.lineWidth = 1.4;
+        for (var i = -1; i <= 1; i++) {
+          ctx.beginPath();
+          ctx.moveTo(HANDLE.cx + i * 9, hy - 8);
+          ctx.lineTo(HANDLE.cx + i * 9, hy + 8);
+          ctx.stroke();
+        }
+
+        // 状态窗
+        var sw = { x: 745, y: 322, w: 40, h: 26 };
+        rr(ctx, sw.x, sw.y, sw.w, sw.h, 3);
+        var st = !state.closed ? (state.tripped ? 'trip' : 'off') : 'on';
+        var cols = {
+          on: ['#22c55e', '#15803d', 'ON'],
+          off: ['#64748b', '#334155', 'OFF'],
+          trip: ['#f59e0b', '#b45309', 'TRIP'],
+          burn: ['#ef4444', '#991b1b', '—']
+        };
+        var cc = cols[st];
+        var sg = ctx.createLinearGradient(0, sw.y, 0, sw.y + sw.h);
+        sg.addColorStop(0, cc[0]); sg.addColorStop(1, cc[1]);
+        ctx.fillStyle = sg;
+        ctx.fill();
+        ctx.fillStyle = '#fff';
+        ctx.font = '800 9px "DIN Alternate", Arial, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(cc[2], sw.x + sw.w / 2, sw.y + sw.h / 2 + .5);
+
+        // 型号
+        ctx.fillStyle = '#4a5563';
+        ctx.font = '800 15px "DIN Alternate", Arial, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('C' + state.In, a.x + a.w / 2, 372);
+
+        // 跳闸火花
+        if (state.spark > 0) {
+          var k = state.spark / 0.45;
+          ctx.save();
+          ctx.globalAlpha = k;
+          ctx.strokeStyle = '#fde68a';
+          ctx.lineWidth = 2;
+          for (var s = 0; s < 5; s++) {
+            var ang = -Math.PI / 2 + (s - 2) * 0.4;
+            var L = 16 + s * 5;
+            ctx.beginPath();
+            ctx.moveTo(HANDLE.cx, hy - 8);
+            ctx.lineTo(HANDLE.cx + Math.cos(ang) * L * .6, hy - 8 + Math.sin(ang) * L * .6);
+            ctx.lineTo(HANDLE.cx + Math.cos(ang) * L, hy - 8 + Math.sin(ang) * L);
+            ctx.stroke();
+          }
+          ctx.beginPath();
+          ctx.arc(HANDLE.cx, hy - 6, 26 * (1.2 - k * .4), 0, Math.PI * 2);
+          ctx.fillStyle = 'rgba(253,230,138,' + (0.28 * k) + ')';
+          ctx.fill();
+          ctx.restore();
+        }
+      }
+
+      // ---------- 用电器 ----------
+      function drawLoad() {
+        var l = G.load;
+        rr(ctx, l.x, l.y, l.w, l.h, 10);
+        var g = ctx.createLinearGradient(l.x, l.y, l.x, l.y + l.h);
+        g.addColorStop(0, '#f5f8fb');
+        g.addColorStop(1, '#dde5ee');
+        ctx.fillStyle = g;
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(120,136,152,.5)';
+        ctx.lineWidth = 1.4;
+        ctx.stroke();
+
+        ctx.fillStyle = '#46525f';
+        ctx.font = '800 14px "Microsoft YaHei", sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('用电器（负载）', l.x + l.w / 2, l.y + 26);
+
+        // 插座面板
+        var sp = { x: 1040, y: 220, w: 170, h: 150 };
+        rr(ctx, sp.x, sp.y, sp.w, sp.h, 12);
+        ctx.fillStyle = '#fbfcfd';
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(120,136,152,.55)';
+        ctx.lineWidth = 1.2;
+        ctx.stroke();
+
+        // 两个插孔（左零右火）+ 接地孔
+        function hole(x, y, w, h) {
+          rr(ctx, x, y, w, h, w / 2);
+          ctx.fillStyle = '#2f3944';
+          ctx.fill();
+        }
+        hole(sp.x + 53, sp.y + 52, 14, 46);
+        hole(sp.x + 103, sp.y + 52, 14, 46);
+        ctx.beginPath();
+        ctx.arc(sp.x + 85, sp.y + 32, 8, 0, Math.PI * 2);
+        ctx.fillStyle = '#2f3944';
+        ctx.fill();
+
+        // 通电指示灯
+        var I = effCurrent();
+        var lit = I > 0.2;
+        var pulse = 0.72 + 0.28 * Math.sin(state.t * 5);
+        ctx.beginPath();
+        ctx.arc(sp.x + sp.w - 22, sp.y + sp.h - 20, 6, 0, Math.PI * 2);
+        ctx.fillStyle = lit ? 'rgba(74,222,128,' + pulse + ')' : 'rgba(120,132,146,.5)';
+        ctx.fill();
+        if (lit) {
+          ctx.beginPath();
+          ctx.arc(sp.x + sp.w - 22, sp.y + sp.h - 20, 13, 0, Math.PI * 2);
+          ctx.fillStyle = 'rgba(74,222,128,.20)';
+          ctx.fill();
+        }
+
+        // 功率读数
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#1f2b38';
+        ctx.font = '800 20px "DIN Alternate", Arial, sans-serif';
+        ctx.fillText('P = ' + Math.round(state.shorted ? 0 : powerW()) + ' W', l.x + l.w / 2, l.y + l.h - 26);
+      }
+
+      function drawLabels() {
+        if (!state.show.label) return;
+        ctx.save();
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = 'rgba(38,52,66,.82)';
+        ctx.font = '700 13px "Microsoft YaHei", sans-serif';
+
+        // 进户线（竖排）
+        ctx.textAlign = 'center';
+        var chars = '进户线';
+        for (var i = 0; i < chars.length; i++) ctx.fillText(chars[i], 30, 150 + i * 22);
+
+        // 电能表
+        ctx.fillText('电能表', 406, 14);
+
+        // 空气开关
+        ctx.textAlign = 'left';
+        ctx.fillText('空气开关', 844, 288);
+
+        ctx.restore();
+      }
+
+      function drawSmoke() {
+        for (var i = 0; i < state.smoke.length; i++) {
+          var s = state.smoke[i];
+          var a = Math.max(0, s.life / s.life0);
+          ctx.beginPath();
+          ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+          ctx.fillStyle = 'rgba(58,56,54,' + (0.38 * a) + ')';
+          ctx.fill();
+          ctx.beginPath();
+          ctx.arc(s.x - s.r * .2, s.y - s.r * .2, s.r * .55, 0, Math.PI * 2);
+          ctx.fillStyle = 'rgba(120,118,114,' + (0.20 * a) + ')';
+          ctx.fill();
+        }
+      }
+
+      function render() {
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        // 逻辑坐标 → 设备像素（等比 contain，居中）
+        var k = Math.min(canvas.width / W, canvas.height / H);
+        var ox = (canvas.width - W * k) / 2;
+        var oy = (canvas.height - H * k) / 2;
+        ctx.setTransform(k, 0, 0, k, ox, oy);
+
+        // 留白（全屏时上下那两条）也铺成同一套墙面，不要露深色底
+        drawBackdrop(-ox / k, -oy / k, (canvas.width - ox) / k, (canvas.height - oy) / k);
+        drawWires();
+        drawShortWire();
+        drawFlow();
+        drawMeter();
+        drawAirSwitch();
+        drawLoad();
+        drawLabels();
+        drawSmoke();
+      }
+
+      /* ============================================================
+       * 五、一帧推进（真实循环与自检共用这一个函数）
+       * ============================================================ */
+      function frameStep(dt) {
+        if (state.paused) return;
+        if (!(dt > 0)) return;
+        dt = Math.min(dt, 0.1);
+        state.t += dt;
+
+        var I = effCurrent();
+
+        // ---- 电能表：过载热积累 → 烧坏 ----
+        if (!state.burned) {
+          if (I > METER.maxI) {
+            var kk = Math.min(I, 40) / METER.maxI;      // 短路电流不参与烧表（空开的事）
+            state.burnAcc += kk * kk * kk * kk * dt / METER.burnT;
+          } else {
+            state.burnAcc = Math.max(0, state.burnAcc - 0.35 * dt / METER.burnT);
+          }
+          if (state.burnAcc >= 1) {
+            state.burnAcc = 1;
+            state.burned = true;
+            state.burnedAt = state.t;
+            state.lastTrip = { kind: 'burn', I: I, t: state.t };
+            onBurned();
+          }
+        }
+
+        // ---- 空气开关：电磁脱扣（瞬动）+ 热脱扣（反时限）----
+        if (state.closed && !state.tripped && !state.burned) {
+          if (I >= K_MAG * state.In) {
+            state.magT += dt;
+            if (state.magT >= MAG_DELAY) {
+              tripBreaker('mag', I);
+            }
+          } else {
+            state.magT = 0;
+            var r = I / (HEAT_K * state.In);
+            if (r > 1) state.heatAcc += (r * r - 1) * dt / HEAT_T;
+            else state.heatAcc = Math.max(0, state.heatAcc - 0.55 * dt / HEAT_T);
+            if (state.heatAcc >= 1) tripBreaker('heat', I);
+          }
+        } else {
+          state.magT = 0;
+        }
+
+        // ---- 电能累积与转盘 ----
+        // 短路是瞬时故障，不按演示倍率放大（否则「啪」一下示数就跳好几度电）
+        var tScale = state.shorted ? 1 : state.speed;
+        if (I > 0) {
+          var P = U * I / 1000;                       // kW
+          var dW = P * dt * tScale / 3600;            // kW·h
+          state.W += dW;
+          // 真实累积角：n = W·N，一圈不差（自检与「转数」读数都读这一条）
+          state.discAng = (state.discAng + dW * METER.rate * Math.PI * 2) % (Math.PI * 2);
+          // 视觉累积角：封顶后的角速度，避免频闪倒转
+          state.discVis = (state.discVis + discOmegaVis() * dt) % (Math.PI * 2);
+        }
+
+        // ---- 电流小球相位 ----
+        if (I > 0) state.flowPhase += Math.min(I, 30) * 2.2 * dt;
+
+        // ---- 手柄平滑趋位 ----
+        // 烧表不会让空开跳闸：手柄该在哪儿还在哪儿（这正是「空开没替你挡下来」的现场）
+        var target = state.tripped ? HANDLE.yTrip : (state.closed ? HANDLE.yOn : HANDLE.yOff);
+        state.handleY += (target - state.handleY) * Math.min(1, dt * 14);
+
+        // ---- 火花衰减 ----
+        if (state.spark > 0) state.spark = Math.max(0, state.spark - dt);
+
+        // ---- 烟粒子 ----
+        if (state.burned) {
+          if (Math.random() < dt * 22) {
+            state.smoke.push({
+              x: 300 + Math.random() * 220, y: 24 + Math.random() * 18,
+              vx: (Math.random() - .5) * 16, vy: -20 - Math.random() * 22,
+              r: 6 + Math.random() * 9, life: 2.6 + Math.random() * 1.8, life0: 4.4
+            });
+          }
+        }
+        for (var i = state.smoke.length - 1; i >= 0; i--) {
+          var s = state.smoke[i];
+          s.x += s.vx * dt; s.y += s.vy * dt; s.vy -= 3 * dt; s.r += 7 * dt; s.life -= dt;
+          if (s.life <= 0) state.smoke.splice(i, 1);
+        }
+      }
+
+      function tripBreaker(kind, I) {
+        state.closed = false;
+        state.tripped = true;
+        state.heatAcc = 0;
+        state.magT = 0;
+        state.spark = 0.45;
+        state.lastTrip = { kind: kind, I: I, t: state.t, In: state.In };
+        if (typeof onTrip === 'function') onTrip(kind, I);
+      }
+
+      function onBurned() { if (typeof onBurnUI === 'function') onBurnUI(); }
+      function onTrip(kind, I) { if (typeof onTripUI === 'function') onTripUI(kind, I); }
+
+      // 手动合闸 / 分闸（画面手柄与按钮共用这一个入口）
+      function setClosed(on) {
+        if (on) {
+          if (state.burned) { showToast('电能表已经烧坏了 —— 先「换新表」再合闸', 'bad'); return false; }
+          state.closed = true;
+          state.tripped = false;
+          state.heatAcc = 0;
+          state.magT = 0;
+          state.spark = 0.25;
+          return true;
+        }
+        state.closed = false;
+        state.tripped = false;
+        state.heatAcc = 0;
+        state.magT = 0;
+        return true;
+      }
+
+      /* ============================================================
+       * 六、界面
+       * ============================================================ */
+      function el(id) { return document.getElementById(id); }
+      var textCache = {};
+      function setText(id, s) {
+        if (textCache[id] === s) return;
+        var e = el(id);
+        if (!e) return;
+        var target = e.querySelector('strong') || e;
+        target.textContent = s;
+        textCache[id] = s;
+      }
+      function setClass(id, cls) {
+        var e = el(id);
+        if (!e) return;
+        if (e.className !== cls) e.className = cls;
+      }
+
+      var toastTimer = null;
+      function showToast(msg, kind) {
+        var t = el('wb-toast');
+        if (!t) return;
+        t.textContent = msg;
+        t.className = 'stage-toast show' + (kind ? ' ' + kind : '');
+        clearTimeout(toastTimer);
+        toastTimer = setTimeout(function () { t.className = 'stage-toast'; }, 3000);
+      }
+
+      function onTripUI(kind, I) {
+        if (kind === 'mag') {
+          showToast('💥 ' + Math.round(I) + ' A 短路电流 —— 电磁脱扣瞬动跳闸', 'bad');
+        } else {
+          showToast('⚡ 过载跳闸：' + I.toFixed(1) + ' A 超过空开额定 ' + state.In + ' A', 'bad');
+        }
+        syncUI();
+      }
+      function onBurnUI() {
+        var I = state.lastTrip ? state.lastTrip.I : 0;
+        showToast('🔥 电能表烧坏了：' + I.toFixed(1) + ' A 超过最大电流 ' + METER.maxI + ' A', 'bad');
+        syncUI();
+      }
+
+      function resize() {
+        var rect = canvas.getBoundingClientRect();
+        var dpr = Math.min(window.devicePixelRatio || 1, 2);
+        var w = Math.max(1, Math.round(rect.width * dpr));
+        var h = Math.max(1, Math.round(rect.height * dpr));
+        if (canvas.width !== w || canvas.height !== h) {
+          canvas.width = w;
+          canvas.height = h;
+        }
+      }
+      function renderNow() { resize(); render(); updateReadouts(); }
+
+      function updateReadouts() {
+        var I = effCurrent();
+        var Itext = I.toFixed(1) + ' A';
+        setText('wb-m-i', Itext);
+        setText('wb-m-p', Math.round(powerW()) + ' W');
+        setText('wb-m-rpm', discRpm().toFixed(1) + ' r/min');
+        setText('wb-m-w', readingOf().toFixed(1) + ' kW·h');
+
+        var mi = el('wb-m-i'), mp = el('wb-m-p');
+        var bad = state.burned || I > METER.maxI;
+        var warn = !bad && state.tripped;
+        mi.className = 'lab3d-metric' + (bad ? ' bad' : (warn ? ' warn' : (I > 0 ? ' ok' : '')));
+        mp.className = 'lab3d-metric' + (bad ? ' bad' : (I > 0 ? ' ok' : ''));
+        el('wb-m-rpm').className = 'lab3d-metric' + (I > 0 ? ' ok' : '');
+        el('wb-m-w').className = 'lab3d-metric' + (state.burned ? ' bad' : ' ok');
+
+        // 结论卡随现象点亮
+        var hit = {
+          'wb-c1': I > 0 && !state.burned,
+          'wb-c2': state.W > 0.0005,
+          'wb-c3': state.burned,
+          'wb-c4': state.tripped
+        };
+        for (var id in hit) {
+          var e = el(id);
+          if (e) e.className = hit[id] ? 'hit' : '';
+        }
+        updateSteps();
+        updateVerdict();
+      }
+
+      var STEPS = [
+        { t: '合上空气开关：手柄推到「ON」，看指示灯变绿、转盘开始转。', ok: function () { return state.closed && !state.burned; } },
+        { t: '把电流调大（拖「电流 I」滑块），看转盘转得更快、示数爬得更快。', ok: function () { return state.W > 0.0005; } },
+        { t: '把电流推过 20 A，看电能表过热、冒烟、烧坏 —— 示数停住。', ok: function () { return state.burned; } },
+        { t: '换一只额定 10 A 的空开、把电流调到 18 A，看它自动跳闸。', ok: function () { return state.tripped; } }
+      ];
+      function buildSteps() {
+        var box = el('wb-steps');
+        if (!box) return;
+        box.innerHTML = '';
+        for (var i = 0; i < STEPS.length; i++) {
+          var li = document.createElement('li');
+          li.textContent = STEPS[i].t;
+          li.setAttribute('data-i', i);
+          box.appendChild(li);
+        }
+      }
+      var stepsCache = '';
+      function updateSteps() {
+        var box = el('wb-steps');
+        if (!box) return;
+        var sig = STEPS.map(function (s) { return s.ok() ? 1 : 0; }).join('');
+        if (sig === stepsCache) return;
+        stepsCache = sig;
+        var lis = box.children;
+        for (var i = 0; i < lis.length; i++) {
+          lis[i].className = STEPS[i].ok() ? 'done' : '';
+        }
+      }
+
+      var verdictCache = '';
+      function updateVerdict() {
+        var I = effCurrent();
+        var txt;
+        if (state.burned) {
+          txt = '<b>表烧坏了。</b>刚才的电流 ' + (state.lastTrip ? state.lastTrip.I.toFixed(1) : '—') +
+            ' A 超过了电能表允许通过的最大电流 20 A，表里的电流线圈过热烧断，全屋断电 —— 只能换表。' +
+            '注意：这时候空开还是合着的，它并没有替你挡下来。';
+        } else if (state.tripped) {
+          txt = '<b>空开跳闸了。</b>' + (state.lastTrip && state.lastTrip.kind === 'mag'
+            ? '短路电流远超 5 倍额定，电磁脱扣瞬间动作。'
+            : '过载电流让双金属片受热弯曲，' + tripSeconds(state.lastTrip ? state.lastTrip.I : 0, state.In).toFixed(1) + ' s 后顶开触点。') +
+            '手柄停在中间，要先扳到「分」再推上去才合得上。';
+        } else if (!state.closed) {
+          txt = '<b>已分闸。</b>把画面里的红色手柄往上推（或点「合闸」），电路才接通。';
+        } else if (I > METER.maxI) {
+          txt = '<b>过载中！</b>' + I.toFixed(1) + ' A 已经超过电能表的最大电流 20 A，' +
+            '再过约 ' + burnSeconds(I).toFixed(1) + ' s 表就要烧坏。';
+        } else if (I > METER.rated) {
+          txt = '<b>已超过标定电流。</b>' + I.toFixed(1) + ' A 在 10(20) A 的区间里，表还能撑住，但已经在超负荷工作；' +
+            '空开若选的是 ' + state.In + ' A，再过约 ' + (isFinite(tripSeconds(I, state.In)) ? tripSeconds(I, state.In).toFixed(1) + ' s' : '很久') + ' 会热脱扣。';
+        } else if (I > 0) {
+          txt = '<b>正常用电。</b>转盘 ' + discRpm().toFixed(1) + ' r/min，示数每秒增加 ' +
+            (powerW() / 1000 / 3600 * state.speed).toFixed(4) + ' kW·h。转得越快，说明用电功率越大。';
+        } else {
+          txt = '<b>电路断开，没有电流。</b>转盘停住、示数冻结在 ' + readingOf().toFixed(1) + ' kW·h —— 示数只增不减，断电也不会退回去。';
+        }
+        if (txt !== verdictCache) {
+          verdictCache = txt;
+          var e = el('wb-verdict');
+          if (e) e.innerHTML = '<b>现象解读：</b>' + txt;
+        }
+      }
+
+      function updateLegend() {
+        var e = el('wb-legend');
+        if (!e) return;
+        var s = '电能表 ' + METER.rate + ' r/kW·h · ' + METER.rated + '(' + METER.maxI + ')A · 空开 C' + state.In;
+        if (e.textContent !== s) e.textContent = s;
+      }
+
+      function syncUI() {
+        // 滑块与输出
+        var si = el('wb-i');
+        if (si && Math.abs(parseFloat(si.value) - state.I) > 1e-9) si.value = String(state.I);
+        var sv = el('wb-i-v');
+        if (sv) sv.textContent = state.I.toFixed(1) + ' A';
+        var sp = el('wb-i-p');
+        if (sp) sp.textContent = Math.round(U * state.I) + ' W';
+
+        var iv = el('wb-in-v');
+        if (iv) iv.textContent = String(state.In);
+        var seg = el('wb-in-seg');
+        if (seg) {
+          for (var i = 0; i < seg.children.length; i++) {
+            var b = seg.children[i];
+            b.className = (parseInt(b.getAttribute('data-in'), 10) === state.In) ? 'active' : '';
+          }
+        }
+        var spd = el('wb-speed-seg');
+        if (spd) {
+          for (var j = 0; j < spd.children.length; j++) {
+            var b2 = spd.children[j];
+            b2.className = (parseInt(b2.getAttribute('data-speed'), 10) === state.speed) ? 'active' : '';
+          }
+        }
+        var spv = el('wb-speed-v');
+        if (spv) spv.textContent = '×' + state.speed;
+
+        // 底部按钮文案跟着状态走
+        var sw = el('wb-switch');
+        if (sw) {
+          sw.textContent = state.closed ? '⏻ 分闸' : '⏻ 合闸';
+          sw.className = 'stage-btn' + (state.closed ? '' : ' primary');
+        }
+        var sb = el('wb-short');
+        if (sb) {
+          sb.textContent = state.shorted ? '✂ 拆除短路线' : '💥 制造短路';
+          sb.className = 'stage-btn' + (state.shorted ? ' warn' : ' danger');
+        }
+        var pb = el('wb-pause');
+        if (pb) pb.textContent = state.paused ? '▶ 继续' : '⏸ 暂停';
+
+        updateLegend();
+        stepsCache = '';           // 强制重算一次
+        updateReadouts();
+      }
+
+      /* ============================================================
+       * 七、事件
+       * ============================================================ */
+      function toLogical(e) {
+        var rect = canvas.getBoundingClientRect();
+        var k = Math.min(rect.width / W, rect.height / H);
+        var ox = (rect.width - W * k) / 2, oy = (rect.height - H * k) / 2;
+        return { x: (e.clientX - rect.left - ox) / k, y: (e.clientY - rect.top - oy) / k };
+      }
+      function handleRect() {
+        return { x: HANDLE.cx - 30, y: state.handleY - 24, w: 60, h: 48 };
+      }
+      function hitHandle(p) {
+        var r = handleRect();
+        return p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h;
+      }
+
+      var drag = null;
+      canvas.addEventListener('pointerdown', function (e) {
+        var p = toLogical(e);
+        if (!hitHandle(p)) return;
+        drag = { y0: p.y, h0: state.handleY, moved: false };
+        canvas.classList.add('pick');
+        try { canvas.setPointerCapture(e.pointerId); } catch (_) { }
+        e.preventDefault();
+      });
+      canvas.addEventListener('pointermove', function (e) {
+        var p = toLogical(e);
+        if (!drag) {
+          canvas.classList.toggle('pick', hitHandle(p));
+          return;
+        }
+        var y = drag.h0 + (p.y - drag.y0);
+        state.handleY = Math.max(HANDLE.yOn - 8, Math.min(HANDLE.yOff + 8, y));
+        if (Math.abs(p.y - drag.y0) > 5) drag.moved = true;
+        renderNow();
+        e.preventDefault();
+      });
+      canvas.addEventListener('pointerup', function (e) {
+        if (!drag) return;
+        var moved = drag.moved;
+        drag = null;
+        try { canvas.releasePointerCapture(e.pointerId); } catch (_) { }
+        if (moved) {
+          if (state.handleY < (HANDLE.yOn + HANDLE.yOff) / 2) setClosed(true);
+          else setClosed(false);
+        } else {
+          toggleBreaker();
+        }
+        syncUI();
+        renderNow();
+      });
+      canvas.addEventListener('pointercancel', function () { drag = null; });
+
+      function toggleBreaker() {
+        // 烧表后手柄照样能扳（只是电路已经断了）；要合闸才提示先换表
+        if (state.closed) setClosed(false);
+        else setClosed(true);
+      }
+
+      // ---- 滑块 / 分段按钮 ----
+      el('wb-i').addEventListener('input', function (e) {
+        state.I = parseFloat(e.target.value);
+        syncUI();
+      });
+      el('wb-in-seg').addEventListener('click', function (e) {
+        var b = e.target.closest ? e.target.closest('button') : null;
+        if (!b) return;
+        state.In = parseInt(b.getAttribute('data-in'), 10);
+        state.heatAcc = 0;
+        state.magT = 0;
+        syncUI();
+      });
+      el('wb-speed-seg').addEventListener('click', function (e) {
+        var b = e.target.closest ? e.target.closest('button') : null;
+        if (!b) return;
+        state.speed = parseInt(b.getAttribute('data-speed'), 10);
+        syncUI();
+      });
+      el('wb-show-flow').addEventListener('change', function (e) { state.show.flow = e.target.checked; renderNow(); });
+      el('wb-show-label').addEventListener('change', function (e) { state.show.label = e.target.checked; renderNow(); });
+      el('wb-show-grid').addEventListener('change', function (e) { state.show.grid = e.target.checked; renderNow(); });
+
+      // ---- 底部控制带 ----
+      el('wb-switch').addEventListener('click', function () { toggleBreaker(); syncUI(); renderNow(); });
+      el('wb-short').addEventListener('click', function () {
+        state.shorted = !state.shorted;
+        if (state.shorted) {
+          if (!state.closed) showToast('短路线接好了 —— 但空开是分着的，合闸才会出事', 'warn');
+          else showToast('💥 火线与零线直接短接！', 'bad');
+        } else {
+          showToast('短路线已拆除', 'good');
+        }
+        syncUI();
+        renderNow();
+      });
+      el('wb-newmeter').addEventListener('click', function () {
+        newMeter();
+      });
+      el('wb-pause').addEventListener('click', function () {
+        state.paused = !state.paused;
+        syncUI();
+        renderNow();
+      });
+      el('wb-reset').addEventListener('click', function () { resetAll(); });
+      el('wb-reset2').addEventListener('click', function () { resetAll(); });
+
+      // ---- 一键场景 ----
+      el('wb-sc-normal').addEventListener('click', function () { scenario('normal'); });
+      el('wb-sc-overload').addEventListener('click', function () { scenario('overload'); });
+      el('wb-sc-trip').addEventListener('click', function () { scenario('trip'); });
+      el('wb-sc-short').addEventListener('click', function () { scenario('short'); });
+
+      function scenario(name) {
+        state.shorted = false;
+        state.burned = false;
+        state.burnAcc = 0;
+        state.heatAcc = 0;
+        state.magT = 0;
+        state.tripped = false;
+        state.closed = true;
+        state.smoke = [];
+        state.spark = 0;
+        state.paused = false;
+        state.lastTrip = null;
+        state.handleY = HANDLE.yOn;
+        if (name === 'normal') { state.I = 5; state.In = 20; showToast('正常用电：5.0 A，转盘慢慢转', 'good'); }
+        else if (name === 'overload') { state.I = 26; state.In = 32; showToast('超载：26 A 已超过 20 A，空开选 32 A 管不着 —— 看表先烧', 'bad'); }
+        else if (name === 'trip') { state.I = 18; state.In = 10; showToast('过载跳闸：18 A 是空开额定 10 A 的 1.8 倍，等它热脱扣', 'warn'); }
+        else if (name === 'short') { state.I = 5; state.In = 20; state.shorted = true; showToast('短路：合着闸，300 A 会瞬间把空开顶开', 'bad'); }
+        syncUI();
+        renderNow();
+      }
+
+      function resetAll() {
+        state.I = 5;
+        state.In = 20;
+        state.closed = true;
+        state.tripped = false;
+        state.burned = false;
+        state.shorted = false;
+        state.paused = false;
+        state.W = 0;
+        state.discAng = 0;
+        state.burnAcc = 0;
+        state.heatAcc = 0;
+        state.magT = 0;
+        state.smoke = [];
+        state.spark = 0;
+        state.t = 0;
+        state.lastTrip = null;
+        state.handleY = HANDLE.yOn;
+        stepsCache = '';
+        verdictCache = '';
+        syncUI();
+        renderNow();
+      }
+
+      function newMeter() {
+        var keep = readingOf();
+        state.burned = false;
+        state.burnAcc = 0;
+        state.smoke = [];
+        state.tripped = false;
+        state.closed = true;
+        state.heatAcc = 0;
+        state.magT = 0;
+        state.shorted = false;
+        state.handleY = HANDLE.yOn;
+        state.paused = false;
+        showToast('已换上新表，示数接着 ' + keep.toFixed(1) + ' kW·h 往下走', 'good');
+        syncUI();
+        renderNow();
+      }
+
+      /* ============================================================
+       * 八、全屏 + 参数面板
+       * ============================================================ */
+      var stageBox = document.getElementById('wb-stage');
+      var fsBtn = el('wb-fs');
+      var fsLayouts = 0;
+      function fsIsOn() {
+        return document.fullscreenElement === stageBox || document.webkitFullscreenElement === stageBox;
+      }
+      function fsLayout() {
+        resize();
+        render();
+        updateReadouts();
+        fsLayouts++;
+      }
+      if (fsBtn) {
+        fsBtn.addEventListener('click', function () {
+          if (document.fullscreenElement || document.webkitFullscreenElement) {
+            (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+          } else if (stageBox.requestFullscreen) {
+            stageBox.requestFullscreen();
+          } else if (stageBox.webkitRequestFullscreen) {
+            stageBox.webkitRequestFullscreen();
+          }
+        });
+      }
+      function onFsChange() {
+        var on = fsIsOn();
+        if (fsBtn) {
+          var ex = fsBtn.querySelector('.fs-expand'), cp = fsBtn.querySelector('.fs-compress'),
+            lb = fsBtn.querySelector('.lbl');
+          if (ex) ex.style.display = on ? 'none' : '';
+          if (cp) cp.style.display = on ? '' : 'none';
+          if (lb) lb.textContent = on ? '退出' : '全屏';
+          fsBtn.title = on ? '退出全屏' : '全屏显示实验画面';
+          fsBtn.setAttribute('aria-label', fsBtn.title);
+        }
+        fsLayout();
+        requestAnimationFrame(function () { requestAnimationFrame(fsLayout); });
+        setTimeout(fsLayout, 90);
+      }
+      document.addEventListener('fullscreenchange', onFsChange);
+      document.addEventListener('webkitfullscreenchange', onFsChange);
+
+      var paramsBox = el('wb-params'), paramsHead = el('wb-params-head'),
+        paramsToggle = el('wb-params-toggle'), paramsBody = el('wb-params-body');
+      function paramsIsOpen() { return !!paramsBox && !paramsBox.classList.contains('collapsed'); }
+      function setParamsOpen(on) {
+        if (!paramsBox) return;
+        paramsBox.classList.toggle('collapsed', !on);
+        paramsToggle.setAttribute('aria-expanded', on ? 'true' : 'false');
+        paramsToggle.textContent = on ? '▾ 收起' : '▸ 展开';
+        paramsToggle.title = on ? '收起参数面板' : '展开参数面板';
+      }
+      if (paramsBox) {
+        paramsToggle.addEventListener('click', function (e) { e.stopPropagation(); setParamsOpen(!paramsIsOpen()); });
+        paramsHead.addEventListener('click', function (e) {
+          if (e.target.closest && e.target.closest('#wb-params-toggle')) return;
+          setParamsOpen(!paramsIsOpen());
+        });
+        paramsBox.addEventListener('pointerdown', function (e) { e.stopPropagation(); });
+        paramsBox.addEventListener('pointerup', function (e) { e.stopPropagation(); });
+        paramsBox.addEventListener('wheel', function (e) { e.stopPropagation(); }, { passive: true });
+        setParamsOpen(false);
+      }
+      function paramsPanelInfo() {
+        if (!paramsBox) return null;
+        var r = paramsBox.getBoundingClientRect();
+        var st = stageBox.getBoundingClientRect();
+        var cs = getComputedStyle(paramsBody);
+        return {
+          open: paramsIsOpen(),
+          text: paramsToggle.textContent,
+          expanded: paramsToggle.getAttribute('aria-expanded'),
+          bodyDisplay: cs.display,
+          inStage: stageBox.contains(paramsBox),
+          insideStage: r.left >= st.left - 1 && r.right <= st.right + 1 &&
+            r.top >= st.top - 1 && r.bottom <= st.bottom + 1,
+          areaPct: +(r.width * r.height / (st.width * st.height) * 100).toFixed(2),
+          scrollable: paramsBody.scrollHeight > paramsBody.clientHeight + 1,
+          scrollH: paramsBody.scrollHeight, clientH: paramsBody.clientHeight,
+          sliders: paramsBody.querySelectorAll('input[type="range"]').length,
+          checks: paramsBody.querySelectorAll('input[type="checkbox"]').length,
+          rect: { x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height) },
+          stage: { x: Math.round(st.left), y: Math.round(st.top), w: Math.round(st.width), h: Math.round(st.height) }
+        };
+      }
+
+      /* ============================================================
+       * 九、主循环
+       * ============================================================ */
+      var lastT = 0, rafRan = 0, loopPaused = false;
+      function tick(now) {
+        if (!lastT) lastT = now;
+        var dt = (now - lastT) / 1000;
+        lastT = now;
+        if (dt > 0.25) dt = 0.25;
+        if (dt < 0) dt = 0;
+        if (!loopPaused) frameStep(dt);   // 自检把主循环摘掉，改用手动 frameStep 推进
+        render();
+        updateReadouts();
+        rafRan++;
+        requestAnimationFrame(tick);
+      }
+      window.addEventListener('resize', function () { resize(); render(); });
+
+      function advance(sec, dt) {
+        dt = dt || 1 / 60;
+        var n = Math.max(1, Math.round(sec / dt));
+        for (var i = 0; i < n; i++) frameStep(dt);
+        renderNow();
+      }
+
+      buildSteps();
+      syncUI();
+      resize();
+      render();
+      updateReadouts();
+      requestAnimationFrame(tick);
+      // 无头环境兜底：rAF 一次都不回调时，至少把首帧画出来
+      setTimeout(function () { if (!rafRan) { renderNow(); } }, 1200);
+
+      /* ============================================================
+       * 十、自检钩子（页面本身不依赖它）
+       * ============================================================ */
+      window.__wb = {
+        state: state, W: W, H: H, G: G, WIRES: WIRES, HANDLE: HANDLE, METER: METER,
+        U: U, SHORT_I: SHORT_I, K_MAG: K_MAG, HEAT_K: HEAT_K,
+        effCurrent: effCurrent, powerW: powerW, readingOf: readingOf,
+        discRpm: discRpm, discOmega: discOmega, discOmegaVis: discOmegaVis,
+        burnSeconds: burnSeconds, tripSeconds: tripSeconds,
+        setClosed: setClosed, tripBreaker: tripBreaker, toggleBreaker: toggleBreaker,
+        frameStep: frameStep, advance: advance, renderNow: renderNow, resize: resize,
+        hitHandle: hitHandle, handleRect: handleRect, toLogical: toLogical,
+        paramsInfo: paramsPanelInfo, scenario: scenario, resetAll: resetAll, newMeter: newMeter,
+        fsState: function () { return { on: fsIsOn(), layouts: fsLayouts }; },
+        rafRan: function () { return rafRan; },
+        setLoopPaused: function (v) { loopPaused = !!v; },
+        digits: function () {
+          var R = readingOf(), w = [1000, 100, 10, 1, 0.1], out = [];
+          for (var i = 0; i < 5; i++) {
+            var v = R / w[i];
+            out.push({ d: Math.floor(v) % 10, f: +(v - Math.floor(v)).toFixed(4) });
+          }
+          return out;
+        }
+      };
+    })();
+    </script>
+    <script src="supabase.js"></script>
+</body>
+</html>
