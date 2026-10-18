@@ -14,7 +14,7 @@ const page = process.argv[2], tag = process.argv[3] || 'shot', W = +(process.arg
   await p.setViewport({ width: W, height: 980, deviceScaleFactor: 1 });
   await p.goto('file://' + path.join(__dirname, page) + '?trial=1', { waitUntil: 'load' });
   await new Promise(r => setTimeout(r, 900));
-  const el = await p.$('.lab3d');
+  const el = (await p.$('.lab3d')) || (await p.$('.stage')) || (await p.$('body'));
   await el.screenshot({ path: path.join(OUT, 'tmp-' + tag + '-closed.png') });
   const ok = await p.evaluate(() => {
     const t = document.querySelector('.stage-params .params-toggle');
