@@ -839,6 +839,9 @@ import * as THREE from './assets/optics-three.min.js';
   const numLabelCache = { dry: '', wet: '' };
   function setNumLabel(sprite, key, text, bg, fg) {
     if (!sprite) return;
+    /* 把「牌子上此刻写的字」记进画面量 —— 数字牌是学生直接读的读数，
+       自检要能卡住「牌子跟着读数走」，而不是只能卡内部状态。 */
+    state.drawn[key === 'dry' ? 'numLabelDry' : 'numLabelWet'] = text;
     if (numLabelCache[key] === text) return;
     numLabelCache[key] = text;
     const old = sprite.material.map;
@@ -1456,6 +1459,12 @@ import * as THREE from './assets/optics-three.min.js';
     uiAcc += dt;
     if (uiAcc >= 0.1) {
       uiAcc = 0;
+      /* ★ updateThermo() 必须在这一档里，不能只放在 updateAll()。
+         湿球读数是被动过程，换档后它一直在爬 —— 只刷 DOM 的话，温度计的
+         数字牌和红液柱会【永远停在换档那一刻的值】（也就是上一个档位的读数），
+         而记录表读的是 state.Tw，于是「记录对、画面错」。
+         贴图按文本去重 + dispose，所以这里的开销只在读数真的变化时才有。 */
+      updateThermo();
       updateReadouts();
       drawChart();
       drawMicro(Math.max(dt, 0.016));
