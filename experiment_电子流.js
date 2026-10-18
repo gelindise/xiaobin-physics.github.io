@@ -103,26 +103,62 @@ import * as THREE from './assets/optics-three.min.js';
 
   /* ==========================================================================
      三、世界常量与布局
+     --------------------------------------------------------------------------
+     ★★ 整个模型只有一条空间隐喻：【高度 = 电势】—— 视频里最要紧的那件事。
+        · 下轨 y = 0 是低电势（0 V）；上轨 y = H 是高电势（U）。
+        · 电源 = 左边那台「升降机」，把电子从低处搬到高处（绿色箭头向上）。
+        · 电阻 = 右边那条【下坡的锯齿】，电子从高处滑下来，一路把电势能交给电阻。
+        · H 直接由电压 U 决定 ⇒ 拖电压滑块，落差就跟着变 ——「电压就是落差」。
+        · 串联 = 落差被两段电阻分掉（每段各一半 ⇒ 分压）；
+          并联 = 两条支路各自跨满整个落差（⇒ 同压），电子多出一条路。
      ========================================================================== */
+  const XL = -46;                  // 左竖边（电源所在）x
+  const XR_TOP = 30;               // 上轨右端 = 电阻起点 x
+  const RES_RUN = 30;              // 电阻段水平跨度
+  const LAND = 13;                 // 串联时两段电阻之间的「平台」长度
+  const XR_BOT = XR_TOP + RES_RUN + LAND;   // 70：电阻终点 = 下轨左端 x
+  const H_MIN = 40, H_MAX = 72;    // 落差的世界单位范围（对应 U_MIN … U_MAX）
+  const BAT_H = 16;                // 电池本体高度（固定，像一只真电池）
+  const BAT_R = 4.6;
+
+  /** 电压 → 落差（世界单位）。全页唯一换算点。 */
+  function loopHeight(U) {
+    const u = clamp(U === undefined ? state.U : U, U_MIN, U_MAX);
+    return H_MIN + (u - U_MIN) / (U_MAX - U_MIN) * (H_MAX - H_MIN);
+  }
+
+  /* 节点是【可变数组】：layout() 就地改值，外部拿到的引用永远有效 */
   const NODE = {
-    A: [-44, 0, 0],      // 左下角：电源「+」接线端
-    B: [-44, 62, 0],     // 左上角：电源「−」一侧（导线从电池顶部引上来）
-    C: [44, 62, 0],      // 右上角：电阻的上端
-    D: [68, 0, 0],       // 右下角：电阻的下端
-    S0: [-9, 62, 0],     // 开关左触点
-    S1: [9, 62, 0]       // 开关右触点
+    A: [XL, 0, 0],         // 左下：电池「+」
+    B: [XL, H_MAX, 0],     // 左上：电池「−」一侧（上轨左端）
+    C: [XR_TOP, H_MAX, 0], // 右上：电阻起点
+    D: [XR_BOT, 0, 0],     // 右下：电阻终点
+    S0: [-9, H_MAX, 0],    // 开关左触点
+    S1: [9, H_MAX, 0]      // 开关右触点
   };
-  const BAT = { x: -44, r: 5.2, y0: 1.2, y1: 17.2, nubR: 2.4, nubH: 1.2 };
-  const W_WIRE = 2.7;            // 导线带宽
-  const T_WIRE = 0.62;           // 导线带厚
-  const E_R = 1.35;              // 电子半径
-  const SPACING = 6.0;           // 电子沿线间距（世界单位）—— 恒定线密度
-  const E_MAX = 320;             // 电子实例上限
-  const TEETH = 7;               // 一只电阻的锯齿齿数
-  const AMP_K = 0.32;            // 锯齿幅度 = AMP_K × R
-  const PAR_SEP = 6.6;           // 并联两条支路在【面内法向】上的分离
-  const PAR_Z = 7.0;             // 并联两条支路在【深度】上的分离
+  const BAT = { x: XL, r: BAT_R, y0: 1.2, y1: BAT_H, nubR: 2.2, nubH: 1.2 };
+  const W_WIRE = 4.8;            // 导线带宽（视频里是宽扁的轨道）
+  const T_WIRE = 1.0;            // 导线带厚
+  const E_R = 1.55;              // 电子半径（视频里小球几乎挨在一起）
+  const SPACING = 4.2;           // 电子沿线间距 —— 恒定线密度
+  const E_MAX = 640;             // 电子实例上限
+  const TEETH_ONE = 4;           // 单个电阻的锯齿齿数
+  const TEETH_SER = 3;           // 串联时【每一段】的齿数
+  const AMP_K = 0.42;            // 锯齿幅度 = AMP_K × R
+  const PAR_Z = 8.0;             // 并联两条支路在【深度】上的分离
   const ampOf = (R) => AMP_K * R;
+
+  /** 就地更新全部节点坐标（落差跟着 U 走） */
+  function layout() {
+    const H = loopHeight();
+    NODE.A[0] = XL; NODE.A[1] = 0; NODE.A[2] = 0;
+    NODE.B[0] = XL; NODE.B[1] = H; NODE.B[2] = 0;
+    NODE.C[0] = XR_TOP; NODE.C[1] = H; NODE.C[2] = 0;
+    NODE.D[0] = XR_BOT; NODE.D[1] = 0; NODE.D[2] = 0;
+    NODE.S0[0] = -9; NODE.S0[1] = H; NODE.S0[2] = 0;
+    NODE.S1[0] = 9; NODE.S1[1] = H; NODE.S1[2] = 0;
+    return H;
+  }
 
   const state = {
     U: U_DEF, R: R_DEF, mode: 'single', closed: true,
@@ -132,8 +168,10 @@ import * as THREE from './assets/optics-three.min.js';
   };
   /* ★ 真正落笔的那一份几何，自检读它 —— 不许另抄一份期望值 */
   const DRAWN = {
-    amp: 0, teeth: 0, branches: 1, resPoints: 0,
+    amp: 0, teeth: 0, branches: 1, resPoints: 0, H: H_MAX,
     voltLen: 0, voltTop: 0, voltBottom: 0, leverAngle: 0,
+    resTopY: H_MAX, resMidY: H_MAX / 2, resBotY: 0,
+    branchTopY: [], branchBotY: [],
     electrons: [], arrowDirs: [], totalParticles: 0, spacing: SPACING
   };
 
@@ -259,9 +297,14 @@ import * as THREE from './assets/optics-three.min.js';
      五、材质
      ========================================================================== */
   const MAT = {
-    wire: new THREE.MeshStandardMaterial({ color: '#f0b21a', metalness: 0.88, roughness: 0.30, envMapIntensity: 1.15, side: THREE.DoubleSide }),
-    resistor: new THREE.MeshStandardMaterial({
-      color: '#dbeafe', metalness: 0.42, roughness: 0.28, envMapIntensity: 1.05,
+    wire: new THREE.MeshStandardMaterial({ color: '#f5c518', metalness: 0.55, roughness: 0.42, envMapIntensity: 0.9, side: THREE.DoubleSide }),
+    /* 电阻：蓝白相间（照视频），一个齿一条带 */
+    resA: new THREE.MeshStandardMaterial({
+      color: '#2563eb', metalness: 0.30, roughness: 0.32, envMapIntensity: 0.9,
+      emissive: new THREE.Color('#f97316'), emissiveIntensity: 0.0, side: THREE.DoubleSide
+    }),
+    resB: new THREE.MeshStandardMaterial({
+      color: '#ffffff', metalness: 0.18, roughness: 0.28, envMapIntensity: 1.0,
       emissive: new THREE.Color('#f97316'), emissiveIntensity: 0.0, side: THREE.DoubleSide
     }),
     electron: new THREE.MeshStandardMaterial({ color: '#e11d1d', metalness: 0.10, roughness: 0.20, envMapIntensity: 1.6, emissive: new THREE.Color('#7f1010'), emissiveIntensity: 0.55 }),
@@ -269,6 +312,7 @@ import * as THREE from './assets/optics-three.min.js';
     batteryNeg: new THREE.MeshStandardMaterial({ color: '#26303c', metalness: 0.70, roughness: 0.34, envMapIntensity: 0.95 }),
     forceArrow: new THREE.MeshStandardMaterial({ color: '#22c55e', metalness: 0.30, roughness: 0.42, emissive: new THREE.Color('#14532d'), emissiveIntensity: 0.45 }),
     voltArrow: new THREE.MeshStandardMaterial({ color: '#c084fc', metalness: 0.25, roughness: 0.40, emissive: new THREE.Color('#6b21a8'), emissiveIntensity: 0.50 }),
+    voltGuide: new THREE.MeshBasicMaterial({ color: '#c084fc', transparent: true, opacity: 0.32, depthWrite: false }),
     currentArrow: new THREE.MeshStandardMaterial({ color: '#fde047', metalness: 0.20, roughness: 0.35, emissive: new THREE.Color('#a16207'), emissiveIntensity: 0.60 }),
     metal: new THREE.MeshStandardMaterial({ color: '#c3ccd8', metalness: 0.86, roughness: 0.30, envMapIntensity: 1.1 }),
     post: new THREE.MeshStandardMaterial({ color: '#b45a2a', metalness: 0.62, roughness: 0.40, envMapIntensity: 1.0 }),
@@ -301,34 +345,36 @@ import * as THREE from './assets/optics-three.min.js';
     return { name, pts, segs: g.segs, len: g.len, kind };
   }
 
-  /** 把 p0→p1 之间画成 teeth 个齿、幅度 amp 的锯齿（两端恰好落在中线上） */
-  function zigzagPts(p0, p1, teeth, amp) {
+  /** 把 p0→p1 画成 teeth 个齿、幅度 amp 的锯齿（两端恰好落在中线上）。
+      zBase = 整段在深度上的固定偏移（并联支路用）。 */
+  function zigzagPts(p0, p1, teeth, amp, zBase) {
     const dx = p1[0] - p0[0], dy = p1[1] - p0[1];
     const L = Math.hypot(dx, dy) || 1;
     const ux = dx / L, uy = dy / L;
     const nx = -uy, ny = ux;
     const M = teeth * 8;
+    const z0 = zBase || 0;
     const out = [];
     for (let i = 0; i <= M; i++) {
       const t = i / M;
       const off = amp * triWave(teeth * t + 0.25);
-      out.push([p0[0] + ux * t * L + nx * off, p0[1] + uy * t * L + ny * off, 0]);
+      out.push([p0[0] + ux * t * L + nx * off, p0[1] + uy * t * L + ny * off, z0]);
     }
     return out;
   }
-  /** 并联的一条支路：整条对角线锯齿 + 面内法向 / 深度两个方向的分离（两端收拢回节点） */
+  /** 并联的一条支路：整条下坡锯齿 + 深度分离（两端收拢回节点，另加一点点面内分离） */
   function parallelBranchPts(sign, amp) {
     const p0 = NODE.C, p1 = NODE.D;
     const dx = p1[0] - p0[0], dy = p1[1] - p0[1];
     const L = Math.hypot(dx, dy) || 1;
     const ux = dx / L, uy = dy / L;
     const nx = -uy, ny = ux;
-    const M = TEETH * 8;
+    const M = TEETH_ONE * 8;
     const out = [];
     for (let i = 0; i <= M; i++) {
       const t = i / M;
       const ramp = Math.min(1, t / 0.12) * Math.min(1, (1 - t) / 0.12);
-      const off = amp * triWave(TEETH * t + 0.25) * ramp + sign * PAR_SEP * ramp;
+      const off = amp * triWave(TEETH_ONE * t + 0.25) * ramp + sign * 3.2 * ramp;
       out.push([
         p0[0] + ux * t * L + nx * off,
         p0[1] + uy * t * L + ny * off,
@@ -340,18 +386,42 @@ import * as THREE from './assets/optics-three.min.js';
 
   let route = null, particles = [], forkCounter = 0, electronMesh = null;
 
+  /**
+   * 电阻段几何。返回 { branches: [折线…], amp, teeth, strips: [{pts,kind}] }
+   *   single   ：一整条下坡锯齿，齿数 4
+   *   series   ：落差被分成两段（各一半）+ 中间一段【金色平台】，每段 3 齿 ⇒ 分压
+   *   parallel ：两条支路各自跨满整个落差（⇒ 同压），深度分开
+   */
   function buildResistorPts() {
     const amp = ampOf(state.R);
+    const H = NODE.C[1];
+    const strips = [];
+    const toothStrips = (pts, teeth) => {
+      const per = 8;
+      for (let k = 0; k < teeth; k++) strips.push({ pts: pts.slice(k * per, (k + 1) * per + 1), kind: 'res' });
+    };
     if (state.mode === 'parallel') {
-      return { branches: [parallelBranchPts(+1, amp), parallelBranchPts(-1, amp)], amp, teeth: TEETH };
+      const a = parallelBranchPts(+1, amp), b = parallelBranchPts(-1, amp);
+      toothStrips(a, TEETH_ONE); toothStrips(b, TEETH_ONE);
+      return { branches: [a, b], amp, teeth: TEETH_ONE * 2, strips };
     }
     if (state.mode === 'series') {
-      const mid = [(NODE.C[0] + NODE.D[0]) / 2, (NODE.C[1] + NODE.D[1]) / 2, 0];
-      const a = zigzagPts(NODE.C, mid, TEETH, amp);
-      const b = zigzagPts(mid, NODE.D, TEETH, amp);
-      return { branches: [a.concat(b.slice(1))], amp, teeth: TEETH * 2 };
+      const midY = H / 2;
+      const xMid1 = XR_TOP + RES_RUN / 2;
+      const xMid2 = xMid1 + LAND;
+      const a = zigzagPts([XR_TOP, H, 0], [xMid1, midY, 0], TEETH_SER, amp);
+      const b = zigzagPts([xMid2, midY, 0], [XR_BOT, 0, 0], TEETH_SER, amp);
+      toothStrips(a, TEETH_SER);
+      /* 中间那截【金色】平台：两段电阻之间的连接导线（分压的分界点） */
+      strips.push({ pts: [[xMid1, midY, 0], [xMid2, midY, 0]], kind: 'landing' });
+      toothStrips(b, TEETH_SER);
+      /* ★ 必须 a.concat(b)（不是 b.slice(1)）：两段之间要留出那段【水平平台】，
+         否则电子路径会从第一段末端直接斜跳到第二段第二个采样点，把平台抄近路抄掉。 */
+      return { branches: [a.concat(b)], amp, teeth: TEETH_SER * 2, strips, landMidY: midY };
     }
-    return { branches: [zigzagPts(NODE.C, NODE.D, TEETH, amp)], amp, teeth: TEETH };
+    const one = zigzagPts([XR_TOP, H, 0], [XR_BOT, 0, 0], TEETH_ONE, amp);
+    toothStrips(one, TEETH_ONE);
+    return { branches: [one], amp, teeth: TEETH_ONE, strips };
   }
 
   /* ---- 导线带：沿折线扫掠一个矩形截面 ---- */
@@ -430,39 +500,51 @@ import * as THREE from './assets/optics-three.min.js';
   }
   root.add(forceArrows);
 
-  /* 开关：两个触点柱 + 一根绕左触点转动的闸刀 */
+  /* 开关：两个触点柱 + 一根绕左触点转动的闸刀。
+     ★ 全部按【局部 y = 0】建，靠 switchGroup.position.y 跟到上轨 —— 落差变了不用重建。 */
   const switchGroup = new THREE.Group();
   const lever = new THREE.Group();
   {
     for (const x of [NODE.S0[0], NODE.S1[0]]) {
-      const post = new THREE.Mesh(new THREE.CylinderGeometry(1.05, 1.05, 3.0, 18), MAT.post);
-      post.position.set(x, NODE.S0[1], 0);
+      const post = new THREE.Mesh(new THREE.CylinderGeometry(1.05, 1.05, 3.4, 18), MAT.post);
+      post.position.set(x, 0, 0);
       post.castShadow = true;
       switchGroup.add(post);
-      const cap = new THREE.Mesh(new THREE.SphereGeometry(1.25, 18, 12), MAT.metal);
-      cap.position.set(x, NODE.S0[1] + 1.5, 0);
+      const cap = new THREE.Mesh(new THREE.SphereGeometry(1.3, 18, 12), MAT.metal);
+      cap.position.set(x, 1.7, 0);
       switchGroup.add(cap);
     }
     const barLen = NODE.S1[0] - NODE.S0[0];
-    const bar = new THREE.Mesh(new THREE.BoxGeometry(barLen, 1.15, 1.5), MAT.metal);
+    const bar = new THREE.Mesh(new THREE.BoxGeometry(barLen, 1.2, 1.6), MAT.metal);
     bar.position.set(barLen / 2, 0, 0);
     bar.castShadow = true;
     lever.add(bar);
-    lever.position.set(NODE.S0[0], NODE.S0[1] + 1.5, 0);
+    lever.position.set(NODE.S0[0], 1.7, 0);
     switchGroup.add(lever);
   }
   root.add(switchGroup);
 
-  /* 电压双箭头（紫）：长度随 U 变，直观展示"电压越大，压得越狠" */
+  /** 落差一变，把跟着上轨走的那几件搬过去 */
+  function placeComponents() {
+    switchGroup.position.y = NODE.S0[1];
+    voltGroup.position.set(8, 0, 0);
+  }
+
+  /* 电压双箭头（紫）：★ 正好跨满下轨到上轨 —— 长度就是落差，就是电压 */
   const voltGroup = new THREE.Group();
-  let voltShaft = null, voltHeadUp = null, voltHeadDown = null;
+  let voltShaft = null, voltHeadUp = null, voltHeadDown = null, voltGuide = null, voltGuide2 = null;
   {
     voltShaft = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 1, 14), MAT.voltArrow);
     voltHeadUp = new THREE.Mesh(new THREE.ConeGeometry(1.5, 3.2, 18), MAT.voltArrow);
     voltHeadDown = new THREE.Mesh(new THREE.ConeGeometry(1.5, 3.2, 18), MAT.voltArrow);
     voltHeadDown.rotation.z = Math.PI;
-    voltGroup.add(voltShaft, voltHeadUp, voltHeadDown);
-    voltGroup.position.set(6, 0, 0);
+    /* 两条「等势线」：从箭头两端横着拉出去 —— 落差一眼可见（只跨回路内部，别伸到轨道外面） */
+    voltGuide = new THREE.Mesh(new THREE.BoxGeometry(62, 0.34, 0.34), MAT.voltGuide);
+    voltGuide2 = new THREE.Mesh(new THREE.BoxGeometry(62, 0.34, 0.34), MAT.voltGuide);
+    voltGuide.position.x = -14;
+    voltGuide2.position.x = -14;
+    voltGroup.add(voltShaft, voltHeadUp, voltHeadDown, voltGuide, voltGuide2);
+    voltGroup.position.set(8, 0, 0);
   }
   root.add(voltGroup);
 
@@ -470,7 +552,7 @@ import * as THREE from './assets/optics-three.min.js';
   const currentArrowGroup = new THREE.Group();
   const CUR_ARROWS = 8;
   for (let i = 0; i < CUR_ARROWS; i++) {
-    const cone = new THREE.Mesh(new THREE.ConeGeometry(1.15, 3.0, 16), MAT.currentArrow);
+    const cone = new THREE.Mesh(new THREE.ConeGeometry(1.4, 3.8, 16), MAT.currentArrow);
     currentArrowGroup.add(cone);
   }
   root.add(currentArrowGroup);
@@ -482,11 +564,12 @@ import * as THREE from './assets/optics-three.min.js';
   root.add(electronMesh);
 
   /* ---- 文字标签（Sprite，永远面向相机） ---- */
-  function makeLabel(text, opts) {
-    const o = Object.assign({ font: 44, pad: 16, color: '#f8fafc', bg: 'rgba(9,20,33,0.78)', border: 'rgba(125,211,252,0.55)', scale: 0.052 }, opts || {});
-    const c = newCanvas(8, 8);
-    let g = c.getContext('2d');
+  /** 把 text 画进 sp 自己的 canvas 并换贴图（尺寸跟着文字变） */
+  function paintLabel(sp, text) {
+    const o = sp.userData.opt;
+    const c = sp.userData.canvas;
     const fontStr = '700 ' + o.font + 'px Inter, "PingFang SC", "Microsoft YaHei", sans-serif';
+    let g = c.getContext('2d');
     g.font = fontStr;
     const tw = Math.ceil(g.measureText(text).width);
     c.width = tw + o.pad * 2;
@@ -499,12 +582,29 @@ import * as THREE from './assets/optics-three.min.js';
     g.fillStyle = o.color;
     g.textAlign = 'center'; g.textBaseline = 'middle';
     g.fillText(text, c.width / 2, c.height / 2 + 2);
+    sp.userData.text = text;
+    const tex = sp.material.map;
+    if (tex) {
+      tex.image = c;
+      tex.needsUpdate = true;
+    }
+    sp.scale.set(c.width * o.scale, c.height * o.scale, 1);
+  }
+  function makeLabel(text, opts) {
+    const o = Object.assign({ font: 44, pad: 16, color: '#f8fafc', bg: 'rgba(9,20,33,0.78)', border: 'rgba(125,211,252,0.55)', scale: 0.052 }, opts || {});
+    const c = newCanvas(8, 8);
     const tex = new THREE.CanvasTexture(c);
     tex.colorSpace = THREE.SRGBColorSpace;
     const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false, depthWrite: false });
     const sp = new THREE.Sprite(mat);
-    sp.scale.set(c.width * o.scale, c.height * o.scale, 1);
+    sp.userData = { opt: o, canvas: c, text: null };
+    paintLabel(sp, text);
     return sp;
+  }
+  /** 只在文字真的变了才重画（每帧调也不心疼） */
+  function setSpriteText(sp, text) {
+    if (!sp || !sp.userData || sp.userData.text === text) return;
+    paintLabel(sp, text);
   }
 
   const labelGroup = new THREE.Group();
@@ -512,35 +612,38 @@ import * as THREE from './assets/optics-three.min.js';
     battery: makeLabel('电源', { color: '#fde68a', border: 'rgba(250,204,21,0.6)' }),
     plus: makeLabel('+', { color: '#fde68a', border: 'rgba(250,204,21,0.6)', font: 54 }),
     minus: makeLabel('−', { color: '#cbd5e1', border: 'rgba(148,163,184,0.6)', font: 54 }),
-    force: makeLabel('电源的力', { color: '#86efac', border: 'rgba(34,197,94,0.6)' }),
+    force: makeLabel('把电子搬上去', { color: '#86efac', border: 'rgba(34,197,94,0.6)' }),
     resistor: makeLabel('电阻 R', { color: '#bfdbfe', border: 'rgba(59,130,246,0.6)' }),
     voltage: makeLabel('电压 U', { color: '#e9d5ff', border: 'rgba(168,85,247,0.65)' }),
     switchL: makeLabel('开关', { color: '#e2e8f0', border: 'rgba(148,163,184,0.6)' }),
     electron: makeLabel('自由电子', { color: '#fecaca', border: 'rgba(239,68,68,0.65)' }),
     current: makeLabel('电流方向', { color: '#fde047', border: 'rgba(234,179,8,0.7)' }),
-    r1: makeLabel('R₁', { color: '#bfdbfe', border: 'rgba(59,130,246,0.6)', font: 40, pad: 12 }),
-    r2: makeLabel('R₂', { color: '#bfdbfe', border: 'rgba(59,130,246,0.6)', font: 40, pad: 12 })
+    r1: makeLabel('R₁ 分到 U/2', { color: '#bfdbfe', border: 'rgba(59,130,246,0.6)', font: 38, pad: 12 }),
+    r2: makeLabel('R₂ 分到 U/2', { color: '#bfdbfe', border: 'rgba(59,130,246,0.6)', font: 38, pad: 12 }),
+    highPot: makeLabel('高电势', { color: '#fcd34d', border: 'rgba(250,204,21,0.55)', font: 38, pad: 12 }),
+    lowPot: makeLabel('低电势 0', { color: '#94a3b8', border: 'rgba(148,163,184,0.55)', font: 38, pad: 12 }),
+    drop: makeLabel('落差 = 电压', { color: '#e9d5ff', border: 'rgba(168,85,247,0.6)', font: 38, pad: 12 })
   };
   Object.values(LBL).forEach((s) => labelGroup.add(s));
   root.add(labelGroup);
 
   /* 标签的世界位置 */
   function placeLabels() {
-    LBL.battery.position.set(BAT.x + 11.5, 22.8, 0);
-    LBL.plus.position.set(BAT.x + 7.8, 4.8, 0);
-    LBL.minus.position.set(BAT.x + 7.8, 14.8, 0);
-    LBL.force.position.set(BAT.x - 11.5, 24.5, 0);
-    LBL.switchL.position.set(NODE.S0[0] - 3, NODE.S0[1] + 7.5, 0);
-    LBL.electron.position.set(-26, 44, 0);
-    const c = NODE.C, d = NODE.D;
-    const mid = [(c[0] + d[0]) / 2, (c[1] + d[1]) / 2, 0];
-    LBL.resistor.position.set(mid[0] + 22, mid[1] + 9, 0);
-    LBL.voltage.position.set(6 - 13, 34, 0);
-    /* 串联：两只电阻各自的标签落在自己那半段的中点旁 */
-    const q1 = [(c[0] + mid[0]) / 2, (c[1] + mid[1]) / 2, 0];
-    const q2 = [(mid[0] + d[0]) / 2, (mid[1] + d[1]) / 2, 0];
-    LBL.r1.position.set(q1[0] + 15, q1[1] + 7, 0);
-    LBL.r2.position.set(q2[0] + 15, q2[1] + 7, 0);
+    const H = NODE.C[1];
+    LBL.battery.position.set(XL + 13, BAT_H + 11, 0);
+    LBL.plus.position.set(BAT.x + 7.4, 4.6, 0);
+    LBL.minus.position.set(BAT.x + 7.4, BAT_H - 3.4, 0);
+    LBL.force.position.set(XL - 8, BAT_H + 11, 0);
+    LBL.switchL.position.set(NODE.S0[0] - 2, H + 8, 0);
+    LBL.electron.position.set(-30, H * 0.16, 0);
+    LBL.highPot.position.set(XL + 22, H - 8, 0);
+    LBL.lowPot.position.set(XR_BOT - 16, 7, 0);
+    LBL.voltage.position.set(8 - 17, H * 0.55, 0);
+    LBL.drop.position.set(8 - 17, H * 0.30, 0);
+    const mx = (XR_TOP + XR_BOT) / 2;
+    LBL.resistor.position.set(mx + 21, H * 0.5, 0);
+    LBL.r1.position.set(XR_TOP + 22, H * 0.76, 0);
+    LBL.r2.position.set(XR_TOP + 26, H * 0.26, 0);
     const a = currentArrowGroup.children[2];
     LBL.current.position.set(a.position.x, a.position.y + 11, a.position.z);
   }
@@ -549,6 +652,13 @@ import * as THREE from './assets/optics-three.min.js';
      七、路径装配
      ========================================================================== */
   function rebuildRoute(modeChanged) {
+    const oldLens = route ? {
+      pre: route.pre.map((s) => s.len),
+      res: route.res.map((s) => s.len),
+      post: route.post.map((s) => s.len)
+    } : null;
+
+    layout();                       // ★ 落差跟着 U 走：节点先就位
     const rp = buildResistorPts();
     const pre = [
       mkStage('left', [NODE.A.slice(), NODE.B.slice()], 'trunk'),
@@ -564,14 +674,34 @@ import * as THREE from './assets/optics-three.min.js';
     DRAWN.teeth = rp.teeth;
     DRAWN.branches = res.length;
     DRAWN.resPoints = rp.branches[0].length;
+    DRAWN.H = NODE.C[1];
+    DRAWN.resTopY = NODE.C[1];
+    DRAWN.resBotY = NODE.D[1];
+    DRAWN.resMidY = rp.landMidY === undefined ? (NODE.C[1] + NODE.D[1]) / 2 : rp.landMidY;
+    DRAWN.branchTopY = rp.branches.map((p) => p[0][1]);
+    DRAWN.branchBotY = rp.branches.map((p) => p[p.length - 1][1]);
 
-    rebuildWire();
-    if (modeChanged) initParticles();
-    else clampParticles();
+    rebuildWire(rp);
+    placeComponents();
+    if (modeChanged || !oldLens) initParticles();
+    else rescaleParticles(oldLens);
+  }
+
+  /** 落差 / 电阻值变了：把每个电子的弧长按【段长变化比例】缩放，不瞬移 */
+  function rescaleParticles(oldLens) {
+    for (const p of particles) {
+      const list = p.phase === 0 ? route.pre : p.phase === 2 ? route.post : route.res;
+      const oldList = p.phase === 0 ? oldLens.pre : p.phase === 2 ? oldLens.post : oldLens.res;
+      const i = p.phase === 1 ? p.b : p.idx;
+      const st = list[i], old = oldList[i];
+      if (!st || !old || old <= 0) continue;
+      p.s = p.s * (st.len / old);
+      if (p.s >= st.len) p.s = st.len * 0.98;
+    }
   }
 
   /** 重建所有导线带（含电阻段） */
-  function rebuildWire() {
+  function rebuildWire(rp) {
     while (wireGroup.children.length) {
       const o = wireGroup.children.pop();
       if (o.geometry) o.geometry.dispose();
@@ -584,21 +714,33 @@ import * as THREE from './assets/optics-three.min.js';
       m.receiveShadow = true;
       wireGroup.add(m);
     };
-    /* 左竖边：从电池顶部往上（电池本体占掉 0→17.2） */
-    addRibbon([[-44, BAT.y1, 0], NODE.B.slice()], MAT.wire, W_WIRE, T_WIRE);
-    /* 顶导线（开关两侧各留一小段引出） */
+    /* 左竖边（升降段）：从电池顶部一直抬到上轨 */
+    addRibbon([[XL, BAT.y1, 0], NODE.B.slice()], MAT.wire, W_WIRE, T_WIRE);
+    /* 上轨（高电势）：开关两侧各留一小段引出 */
     addRibbon([NODE.B.slice(), [NODE.S0[0] - 1.2, NODE.S0[1], 0]], MAT.wire, W_WIRE, T_WIRE);
     addRibbon([[NODE.S1[0] + 1.2, NODE.S1[1], 0], NODE.C.slice()], MAT.wire, W_WIRE, T_WIRE);
-    /* 电阻段 */
-    for (const st of route.res) addRibbon(st.pts, MAT.resistor, W_WIRE, T_WIRE);
-    /* 底导线 */
+    /* 下轨（低电势） */
     addRibbon([NODE.D.slice(), NODE.A.slice()], MAT.wire, W_WIRE, T_WIRE);
-    /* 串联中间的接头小圆点（提示"这里是两个电阻接在一起的地方"） */
-    if (state.mode === 'series') {
-      const mid = [(NODE.C[0] + NODE.D[0]) / 2, (NODE.C[1] + NODE.D[1]) / 2, 0];
-      const dot = new THREE.Mesh(new THREE.SphereGeometry(1.5, 18, 12), MAT.nodeDot);
-      dot.position.set(mid[0], mid[1], 0);
-      wireGroup.add(dot);
+
+    /* 电阻：一个齿一条带，蓝白相间（照视频的配色）；串联的中间平台用金色导线 */
+    let resIdx = 0;
+    for (const s of (rp && rp.strips) || []) {
+      if (s.kind === 'landing') {
+        addRibbon(s.pts, MAT.wire, W_WIRE, T_WIRE);
+        resIdx = 0;
+        continue;
+      }
+      addRibbon(s.pts, (resIdx++ % 2 === 0) ? MAT.resA : MAT.resB, W_WIRE, T_WIRE);
+    }
+
+    /* 并联：上下各加一块「分流 / 汇合」宽板（视频里电阻两端那两条横档） */
+    if (state.mode === 'parallel') {
+      for (const p of [NODE.C, NODE.D]) {
+        const plate = new THREE.Mesh(new THREE.BoxGeometry(7.5, T_WIRE, 2 * PAR_Z + W_WIRE + 2), MAT.wire);
+        plate.position.set(p[0], p[1], 0);
+        plate.castShadow = true; plate.receiveShadow = true;
+        wireGroup.add(plate);
+      }
     }
   }
 
@@ -675,14 +817,7 @@ import * as THREE from './assets/optics-three.min.js';
     }
     DRAWN.totalParticles = particles.length;
   }
-  /** R 变了、几何长度跟着变：把已有的 s 夹回合法区间（不重置，避免拖动滑块时电子瞬移） */
-  function clampParticles() {
-    for (const p of particles) {
-      const st = curStage(p);
-      if (!st) continue;
-      if (p.s >= st.len) p.s = st.len * 0.98;
-    }
-  }
+  /** R 变了、几何长度跟着变：把已有的 s 按比例缩放（见 rescaleParticles） */
 
   /* ==========================================================================
      八、每帧刷新场景
@@ -716,17 +851,22 @@ import * as THREE from './assets/optics-three.min.js';
     const on = state.showVoltage;
     voltGroup.visible = on;
     if (!on) { DRAWN.voltLen = 0; return; }
-    const span = (state.U - U_MIN) / (U_MAX - U_MIN);       // 0..1
-    const len = 6 + span * 30;                              // 6..36
-    const y0 = 18;
-    voltShaft.scale.set(1, Math.max(0.01, len), 1);
+    /* ★★ 电压箭头【正好跨满下轨到上轨】：箭头有多长，落差就有多高 ——
+       「电压就是落差」这件事必须由几何本身说出来，不能靠一个长度随便给的装饰箭头。 */
+    const H = NODE.C[1];
+    const y0 = 0, y1 = H;
+    const len = y1 - y0;
+    voltShaft.scale.set(1, Math.max(0.01, len - 6.4), 1);
     voltShaft.position.set(0, y0 + len / 2, 0);
-    voltHeadUp.position.set(0, y0 + len + 1.4, 0);
-    voltHeadDown.position.set(0, y0 - 1.4, 0);
+    voltHeadUp.position.set(0, y1 - 1.6, 0);
+    voltHeadDown.position.set(0, y0 + 1.6, 0);
+    /* 两条等势横线：贴在两条轨的外侧一点点，避免和轨道本身 z-fighting */
+    voltGuide.scale.y = 1;
+    voltGuide.position.set(-14, y1 + 1.0, 0);
+    voltGuide2.position.set(-14, y0 - 1.0, 0);
     DRAWN.voltLen = len;
     DRAWN.voltBottom = y0;
-    DRAWN.voltTop = y0 + len;
-    LBL.voltage.position.set(-7.5, y0 + len + 5.5, 0);
+    DRAWN.voltTop = y1;
   }
 
   function updateCurrentArrows() {
@@ -749,9 +889,10 @@ import * as THREE from './assets/optics-three.min.js';
       for (const cand of segs) { if (s < cand.len) { st = cand; break; } s -= cand.len; }
       const q = pointAt(st, clamp(s, 0, st.len * 0.9999));
       const cone = currentArrowGroup.children[i];
-      /* 电子沿 +切向 前进 ⇒ 电流方向取 −切向 */
+      /* 电子沿 +切向 前进 ⇒ 电流方向取 −切向。
+         ★ 往 +z 挪一点：不挪的话黄锥体整根埋在大红球堆里，一枚都看不见。 */
       const ang = Math.atan2(-q.tx, q.ty);
-      cone.position.set(q.x, q.y, q.z);
+      cone.position.set(q.x, q.y, (q.z || 0) + 3.6);
       cone.rotation.set(0, 0, -ang);
       DRAWN.arrowDirs.push({ x: q.x, y: q.y, z: q.z, dx: -q.tx, dy: -q.ty });
     }
@@ -759,14 +900,19 @@ import * as THREE from './assets/optics-three.min.js';
     LBL.current.position.set(a0.position.x, a0.position.y + 11, a0.position.z);
   }
 
-  const RES_COOL = new THREE.Color('#a8c8ff');   // 冷：浅蓝（对照视频里蓝白色的电阻）
-  const RES_HOT = new THREE.Color('#ff7a3c');    // 热：橙红（电流做功越多越亮）
+  const RES_A_COOL = new THREE.Color('#2563eb');   // 冷：蓝（照视频里电阻的蓝面）
+  const RES_A_HOT = new THREE.Color('#b45309');
+  const RES_B_COOL = new THREE.Color('#ffffff');   // 冷：白（电阻的白面）
+  const RES_B_HOT = new THREE.Color('#fed7aa');
   function updateHeat() {
     const P = state.closed ? powerOf(state.U, state.mode, state.R) : 0;
     const Pmax = powerOf(U_MAX, 'parallel', R_MIN);
     const k = clamp(P / Pmax, 0, 1);
-    MAT.resistor.emissiveIntensity = state.closed ? k * 0.9 : 0;
-    MAT.resistor.color.copy(RES_COOL).lerp(RES_HOT, k);
+    const on = state.closed ? k * 0.85 : 0;
+    MAT.resA.emissiveIntensity = on;
+    MAT.resB.emissiveIntensity = on * 0.6;
+    MAT.resA.color.copy(RES_A_COOL).lerp(RES_A_HOT, k);
+    MAT.resB.color.copy(RES_B_COOL).lerp(RES_B_HOT, k);
   }
 
   function updateScene() {
@@ -779,7 +925,9 @@ import * as THREE from './assets/optics-three.min.js';
     LBL.current.visible = state.showLabels && state.showCurrent;
     LBL.r1.visible = state.showLabels && state.mode === 'series';
     LBL.r2.visible = state.showLabels && state.mode === 'series';
-    for (const k of ['battery', 'plus', 'minus', 'force', 'switchL']) LBL[k].visible = state.showLabels;
+    for (const k of ['battery', 'plus', 'minus', 'force', 'switchL', 'highPot', 'lowPot']) LBL[k].visible = state.showLabels;
+    LBL.drop.visible = false;      // 「落差 = 电压」这条与箭头标签重复，留字面不给画面添乱
+    setSpriteText(LBL.voltage, '电压 U = ' + fmt(state.U, 1) + ' V');
     lever.rotation.z = state.closed ? 0 : 0.82;
     DRAWN.leverAngle = lever.rotation.z;
     placeLabels();
@@ -792,12 +940,13 @@ import * as THREE from './assets/optics-three.min.js';
   /* ==========================================================================
      九、相机 / 视角 / 全屏
      ========================================================================== */
+  /* tyF = 注视点在落差上的【比例】—— 落差随电压变，注视点必须跟着走 */
   const VIEWS = {
-    iso: { yaw: -0.62, pitch: 0.22, dist: 172, tx: 13, ty: 31 },
-    front: { yaw: 0.0, pitch: 0.02, dist: 168, tx: 13, ty: 31 },
-    top: { yaw: -0.55, pitch: 1.03, dist: 178, tx: 13, ty: 27 },
-    resistor: { yaw: -0.18, pitch: 0.10, dist: 52, tx: 56, ty: 30 },
-    battery: { yaw: -0.95, pitch: 0.14, dist: 52, tx: -42, ty: 11 }
+    iso: { yaw: -0.60, pitch: 0.20, dist: 172, tx: 12, tyF: 0.47 },
+    front: { yaw: 0.00, pitch: 0.02, dist: 168, tx: 12, tyF: 0.47 },
+    top: { yaw: -0.55, pitch: 1.02, dist: 200, tx: 12, tyF: 0.46 },
+    resistor: { yaw: -0.16, pitch: 0.08, dist: 60, tx: 50, tyF: 0.50 },
+    battery: { yaw: -0.95, pitch: 0.14, dist: 58, tx: -38, tyF: 0.20 }
   };
   const view = Object.assign({}, VIEWS.iso);
   let currentView = 'iso';
@@ -812,7 +961,10 @@ import * as THREE from './assets/optics-three.min.js';
   }
 
   function updateCamera() {
-    const t = new THREE.Vector3(view.tx || 0, view.ty || 0, view.tz || 0);
+    const H = NODE.C[1];
+    const ty = (view.tyF === undefined ? 0.5 : view.tyF) * H;
+    view.ty = ty;
+    const t = new THREE.Vector3(view.tx || 0, ty, view.tz || 0);
     const cp = Math.cos(view.pitch), sp = Math.sin(view.pitch);
     const dist = view.dist * fitFactor();
     camera.position.set(
@@ -995,16 +1147,16 @@ import * as THREE from './assets/optics-three.min.js';
     if (!el) return;
     let s;
     if (!state.closed) {
-      s = '开关断开了：<b>电压还在，电流却没了</b>。红色电子全部停在原地 —— 它们还在导线里，只是不再定向移动。';
+      s = '开关断开了：<b>落差还在（电压没变），电流却没了</b>。红色电子全部停在坡上 —— 它们还在导线里，只是不再往下走。';
     } else if (state.mode === 'parallel') {
-      s = '两个电阻<b>并联</b>：电子从右上角分成两条路各走一条，干路电流 <b>' + fmt(I, 2) +
-        ' A</b> 是单个电阻时的 <b>2 倍</b>。总电阻只有 <b>' + fmt(Rtot, 1) + ' Ω</b>（等于 R/2），所以电流更大。';
+      s = '两个电阻<b>并联</b>：<b>两条锯齿坡各自跨满整个落差</b>（所以电压相同），电子在右上角分成两路各走一条，下端再汇合。' +
+        '干路电流 <b>' + fmt(I, 2) + ' A</b> 是单个电阻时的 <b>2 倍</b>，总电阻只剩 <b>' + fmt(Rtot, 1) + ' Ω</b>（= R/2）。';
     } else if (state.mode === 'series') {
-      s = '两个电阻<b>串联</b>：相当于一个 <b>' + fmt(Rtot, 1) + ' Ω</b> 的大电阻，锯齿更密，电子受到的阻碍更大，' +
-        '电流只剩单个电阻时的 <b>一半</b>（' + fmt(I, 2) + ' A）。';
+      s = '两个电阻<b>串联</b>：整个落差被两段锯齿<b>分掉</b>（中间是金色平台，每段各分到 U/2），路更长、磕碰更多 —— ' +
+        '相当于一个 <b>' + fmt(Rtot, 1) + ' Ω</b> 的大电阻，电流只剩单个电阻时的 <b>一半</b>（' + fmt(I, 2) + ' A）。';
     } else {
-      s = '一个电阻：I = U / R = ' + fmt(state.U, 1) + ' V ÷ ' + fmt(state.R, 0) + ' Ω = <b>' + fmt(I, 2) +
-        ' A</b>，电功率 P = UI = <b>' + fmt(P, 2) + ' W</b>。想让电流更大？把电压调大，或者把电阻调小。';
+      s = '一个电阻：落差 <b>' + fmt(state.U, 1) + ' V</b>，锯齿 <b>' + fmt(state.R, 0) + ' Ω</b> ⇒ I = U / R = <b>' +
+        fmt(I, 2) + ' A</b>，电功率 P = UI = <b>' + fmt(P, 2) + ' W</b>。想让电流更大？把落差拉大，或者把锯齿削平。';
     }
     el.innerHTML = s;
   }
@@ -1139,6 +1291,8 @@ import * as THREE from './assets/optics-three.min.js';
     const nv = clamp(Math.round(v / U_STEP) * U_STEP, U_MIN, U_MAX);
     if (Math.abs(nv - state.U) < 1e-9) return;
     state.U = +nv.toFixed(2);
+    /* ★ 电压 = 落差 ⇒ 改电压必须重建几何（轨道高低、电阻坡长、电压箭头全都跟着变） */
+    rebuildRoute(false);
     updateScene(); syncAll(); requestRender();
   }
   function setR(v) {
@@ -1208,12 +1362,12 @@ import * as THREE from './assets/optics-three.min.js';
 
   /* ---- 步骤卡 ---- */
   const STEPS = [
-    { t: '01 认识电路', d: '红色小球就是导线里的<b>自由电子</b>。开关闭合后，它们在电源的推动下沿着导线<b>定向移动</b> —— 这就形成了<b>电流</b>。金黄扁带是导线，右上那条<b>锯齿</b>是电阻，绿色箭头是<b>电源对电子的作用力</b>，紫色双箭头标出<b>电压</b>。' },
-    { t: '02 增大电压', d: '把电压从 3 V 调到 6 V、再到 9 V：<b>紫色箭头变长</b>，红色电子明显<b>跑得更快</b>，电流表的读数跟着变大。这就是第一条路：<b>U 越大 ⇒ I 越大</b>（电阻不变时成正比）。' },
-    { t: '03 减小电阻', d: '把电阻从 20 Ω 调到 10 Ω、再到 5 Ω：<b>锯齿越来越小、越来越平缓</b>，电子受到的阻碍变小，于是跑得更快、电流更大。第二条路：<b>R 越小 ⇒ I 越大</b>。' },
-    { t: '04 两个电阻串联', d: '把接法换成<b>串联</b>：两个电阻首尾相接，相当于一个阻值是 <b>2R</b> 的大电阻 —— 画面上锯齿一下子变密了。电子受到的阻碍更大，电流只有原来的一半。' },
-    { t: '05 两个电阻并联', d: '把接法换成<b>并联</b>：电子从右上角<b>分成两条路</b>各走一条，然后在下端汇合。总电阻变成 <b>R/2</b>，干路电流是原来的 <b>2 倍</b> —— 注意干路上的电子比每条支路上的<b>跑得快一倍</b>。' },
-    { t: '06 电流做功', d: '电流通过电阻时会做功，把电能变成内能：电阻会发热发亮（功率越大越亮）。<b>电功 W = UIt</b> —— 电压越高、电流越大、通电时间越长，电功越多。舞台右侧的「电功」读数一直在累加，点「⟲ 清零」重新开始。' }
+    { t: '01 认识电路：一条立体的坡道', d: '整条电路其实是一条<b>坡道</b>：下面那条轨是<b>低电势</b>，上面那条轨是<b>高电势</b>，<b>两条轨之间的高度差就是电压</b>。红色小球是导线里的<b>自由电子</b>；电源像一台<b>升降机</b>，把它们从低处搬到高处（绿色箭头）；电子再从高处沿着右边那条<b>锯齿电阻</b>滑下来，回到低处 —— 绕一圈，就是电流。' },
+    { t: '02 增大电压：把落差拉大', d: '把电压从 1.5 V 调到 6 V、再到 9 V：<b>上下两条轨之间的落差明显变大</b>（紫色双箭头跟着变长），电子被抬得更高、冲下来更猛，电流表的读数跟着变大。这就是第一条路：<b>U 越大 ⇒ I 越大</b>（电阻不变时成正比）。' },
+    { t: '03 减小电阻：把锯齿削平', d: '把电阻从 20 Ω 调到 10 Ω、再到 5 Ω：<b>锯齿越来越小、越来越平缓</b>，电子滑下来时磕碰变少，于是跑得更快、电流更大。第二条路：<b>R 越小 ⇒ I 越大</b>。' },
+    { t: '04 两个电阻串联：落差被分掉', d: '换成<b>串联</b>：整个落差被<b>两段锯齿分掉</b>（中间是一段金色平台），每段只分到 <b>U/2</b>；路更长、磕碰更多 —— 相当于一个阻值是 <b>2R</b> 的大电阻。电子滑得更慢，电流只有原来的一半。' },
+    { t: '05 两个电阻并联：两条坡各走一条', d: '换成<b>并联</b>：<b>两条锯齿坡各自跨满整个落差</b>（所以两条支路两端的电压相同），电子在右上角<b>分成两路</b>各走一条，到下端再汇合。总电阻变成 <b>R/2</b>，干路电流是原来的 <b>2 倍</b> —— 注意干路上的电子比每条支路上的<b>跑得快一倍</b>。' },
+    { t: '06 电流做功', d: '电子从高处滑到低处，一路把<b>电势能</b>交给电阻，电能变成了内能：电阻会发热发亮（功率越大越亮）。<b>电功 W = UIt</b> —— 落差越大、电流越大、通电时间越长，电功越多。舞台右侧的「电功」读数一直在累加，点「⟲ 电功清零」重新开始。' }
   ];
   function setStep(i) {
     const s = STEPS[i];
@@ -1296,7 +1450,8 @@ import * as THREE from './assets/optics-three.min.js';
      ========================================================================== */
   window.__elab = {
     state, view, VIEWS, camera, renderer, scene, DRAWN,
-    P: { U_MIN, U_MAX, U_DEF, U_STEP, R_MIN, R_MAX, R_DEF, SPEED_K, V_VIS_MIN, V_VIS_MAX, SPACING, E_R, TEETH, AMP_K, PAR_SEP, PAR_Z, W_WIRE, T_WIRE, E_MAX, MODES },
+    P: { U_MIN, U_MAX, U_DEF, U_STEP, R_MIN, R_MAX, R_DEF, SPEED_K, V_VIS_MIN, V_VIS_MAX, SPACING, E_R, AMP_K, PAR_Z, W_WIRE, T_WIRE, E_MAX, MODES, H_MIN, H_MAX, TEETH_ONE, TEETH_SER, BAT_H, XL, XR_TOP, XR_BOT },
+    loopHeight, layout,
     NODE, BAT,
     resistorTotal, totalCurrent, branchCurrent, powerOf, workOf, visualSpeed,
     ampOf, triWave, zigzagPts, parallelBranchPts,
