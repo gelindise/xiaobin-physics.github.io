@@ -67,7 +67,8 @@
     // 单刀双掷：和开关同一块底板、同一个命中框（本体高度也相同 —— 翘起
     // 那一头刀片顶到 −62）。数字必须和 CircuitDraw.bodyBox('spdt') 一致，
     // 否则「点得到但看不见 / 看得见却点不到」。
-    spdt:      [70, 62],
+    // 刀片 96 长、远端还有柄 ⇒ 命中框跟着放宽（点刀片那一带也要能选中 / 换掷位）
+    spdt:      [104, 64],
     bulb:      [70, 72],
     // 三个新元件和开关 / 灯泡一样是「示教板」：底板铺在导线下方（±70），
     // 本体长在板面上方。命中框取【上下对称】的盒子，所以 hh 要够到本体最高处；
@@ -1611,6 +1612,25 @@
           // 「点了一下」的通用出口，宿主按类型过滤；开关这一下编辑器自己就知道
           // 是什么意思，没必要让宿主再判一次类型。
           report('switch', { comp: mc, closed: !!mc.params.closed });
+        } else if (mc && mc.type === 'spdt') {
+          // 🔴🔴 单刀双掷：点【左半边】就合到左掷、点【右半边】就合到右掷。
+          // 用户 2026-10-18：「不用再点开那个面板，然后再进行调节」—— 点哪儿
+          // 就合到哪儿，和闸刀「点一下通断」是同一种手感。
+          // 判据用【点击点自身的局部 x】：转过的元件按旋转反算（D.toLocal），
+          // 翻过极性的再把 x 翻回来（toLocal 不做镜像，见 hitPsuKnob 那段）。
+          var lp = D.toLocal(mc, lastPointer.x, lastPointer.y);
+          if (D.flipOf(mc)) lp.x = -lp.x;
+          var want = (lp.x >= 0) ? 2 : 1;
+          mc.params = mc.params || {};
+          // 已经搭在那一侧：什么都不做（不压撤销记录、也不响 —— 画面上没有
+          // 任何变化却「咔」一声，学生会以为点错了）。
+          if ((+mc.params.throw === 2 ? 2 : 1) === want) discardEdit();
+          else {
+            commitEdit();
+            mc.params.throw = want;
+            // 和闸刀同一个音效：它永远在「合上」，所以 closed 恒 true。
+            report('switch', { comp: mc, closed: true, throw: want });
+          }
         } else discardEdit();       // 单纯点选，不留撤销记录
         // 没拖动 = 单击，报给宿主。开关在上面已经就地翻转了，这里照样报一声：
         // 宿主按类型自己过滤，编辑器不替它决定「哪些元件值得点」。

@@ -1105,7 +1105,7 @@
     switch:    { x0: -74, y0: -68, x1: 74, y1: 38 },
     // 单刀双掷：和开关同一块底板，本体略矮 —— 没有闸刀那把抬得很高的刀片，
     // 只有一根【单边】刀片绕转轴倒 14°（远端是黑柄）。顶到 −62 就够。
-    spdt:      { x0: -74, y0: -68, x1: 74, y1: 38 },
+    spdt:      { x0: -104, y0: -62, x1: 104, y1: 38 },
     bulb:      { x0: -74, y0: -80, x1: 74, y1: 40 },
     ammeter:   { x0: -122, y0: -110, x1: 122, y1: 84 },
     voltmeter: { x0: -122, y0: -110, x1: 122, y1: 84 },
@@ -2650,25 +2650,27 @@
   //    倾角或刀长之后手写的那个数会让刀片悬在触点上、或者插进触点里。
   // ============================================================
   var SPDT = {
-    // 🔴🔴 2026-10-17 用户第 1 点：照实物照片重画 ——
-    //   · 一块浅灰底板；左右各一块【U 形银白钢片】当静触点；
-    //   · 正中一根银白支架把【转轴】举起来，转轴下面压着一颗【红色接线柱】
-    //     （公共端，实物上就是那颗红的）；
-    //   · 刀片是一根【单边】的银白钢条，远端套一段【黑色绝缘柄】——
-    //     学生捏着黑柄扳。刀片不再是「以转轴为中心两头一样长」的跷跷板：
-    //     实物就是一头铰在转轴上、一头带柄。
+    // 🔴🔴 2026-10-18 用户第二版：① 刀片【加长】，让绝缘柄完全落在夹口外面
+    //   （上一版刀片 66 长、柄从 40 开始，而夹口在 56 —— 合上之后是【绝缘皮】
+    //   贴在触点上，物理上根本不通电）；② 静触点改成【弹簧夹口】：两条腿 +
+    //   中间一道缝，刀片从缝里穿过去 —— 这样"刀片到底有没有夹进触点"一眼看得见，
+    //   而不是"一根棍子悬在铁片上"。
     PIV: { x: 0, y: -52 },        // 刀片转轴（举在板面上方）
-    HALF: 66, HT: 5,              // 刀片【单边】长度 / 半厚
+    HALF: 96, HT: 5,              // 刀片【单边】长度 / 半厚（96 = 夹口 56 + 柄 24 + 余量）
     TILT: 14 * Math.PI / 180,     // 倒向一侧时的倾角
-    CT: { x: 56, w: 13 },         // U 形静触点的横坐标 / 宽度（左右对称）
+    CT: { x: 56, w: 16, gap: 6 }, // 夹口横坐标 / 总宽 / 两条腿之间的缝宽
     POST: { w: 16 },              // 中央支架宽度（板面顶 → 转轴下方）
-    GRIP: 26,                     // 远端黑色绝缘柄的长度
+    GRIP: 24,                     // 远端黑色绝缘柄的长度
+    FACE: 2.2,                    // 顶面（钢板厚度）的透视偏移
   };
-  // 触点顶面 = 刀片倒 TILT 之后、在触点横坐标处【下沿】的高度。
-  // 刀片中线在 x 处的 y = PIV.y + x·tan(TILT)；下沿再往下半个厚度（垂直
-  // 厚度按 cos 折算）。手写一个数的话，改了倾角/刀长触点就悬空或插进去。
-  SPDT.CT.top = SPDT.PIV.y + SPDT.CT.x * Math.tan(SPDT.TILT) +
-                SPDT.HT / Math.cos(SPDT.TILT);
+  // 夹口顶面 = 刀片在夹口处的【上沿】再高 3px。
+  // 为什么按「上沿」而不是「下沿」算：刀片是从上面【插进】缝里的，夹口必须比
+  // 刀片高，两条腿才有东西夹住它。上一版按下沿算（CT.top = 刀片下沿），
+  // 于是刀片整个浮在夹口上方 —— 看着像"搭"着，其实是"悬"着。
+  // 高出的这 6.5px 就是「夹口在刀片上方还露着一截」—— 少了它，刀片顶棱和夹口
+  // 顶棱齐平，看着又变成「搭在上面」。
+  SPDT.CT.top = SPDT.PIV.y + SPDT.CT.x * Math.tan(SPDT.TILT)
+              - SPDT.HT / Math.cos(SPDT.TILT) - 6.5;
 
   function drawSpdt(ctx, comp, rec) {
     // 刀片当下搭在哪一侧：以求解结果为准（rec.throw），还没解过就看参数。
@@ -2678,13 +2680,16 @@
     var sc = ctxScale(ctx);
     var CT = SPDT.CT, PIV = SPDT.PIV;
     // 银白钢件的两套渐变（全站光源在左上）：
-    //   SILVER_H 给【立着的】零件（左右两侧亮暗）；
-    //   SILVER_V 给【躺着的】刀片（上下亮暗）。
-    // 都用同一族色阶 —— 一块钢件上出现两种不同的灰，一眼就看得出是拼的。
+    //   SILVER_H 给【立着的】零件（左右亮暗）；SILVER_V 给【躺着的】刀片（上下亮暗）。
     var SILVER_H = [[0, '#f8fafc'], [0.18, '#e8eef5'], [0.45, '#cbd5e1'],
                     [0.72, '#a3aeba'], [1, '#7f8b98']];
+    // 夹口【里侧】那条腿：它躲在缝的阴影里，整体压暗一档 —— 两条腿一样亮的话，
+    // 缝就看不出来，夹口又变回一块实心铁片。
+    var SILVER_D = [[0, '#cbd5e1'], [0.22, '#b3bfcd'], [0.55, '#9aa7b6'],
+                    [0.82, '#7f8b98'], [1, '#6b7885']];
     var SILVER_V = [[0, '#ffffff'], [0.18, '#eef3f8'], [0.52, '#ccd6e1'],
                     [0.82, '#a6b2bf'], [1, '#8d99a6']];
+    var EDGE = 'rgba(71,85,105,0.58)';
 
     ctx.save();
     ctx.translate(comp.x, comp.y);
@@ -2701,32 +2706,49 @@
     ctx.translate(comp.x, comp.y);
     ctx.rotate((comp.rot || 0) * Math.PI / 180);
 
-    // ── 两块 U 形静触点 ────────────────────────────────────────
-    // 立起来的银白钢片，中间开一条槽（实物是个「U」）：槽里是背光的暗面，
-    // 顶棱是刀片压下来的那一条受光边。
-    function bracket(cx) {
-      var w = CT.w, x0 = cx - w / 2;
-      var yT = CT.top, yB = PLATE.TOP + 1.5;
-      ctx.save();
+    // ── 静触点 = 弹簧夹口（两条腿 + 中间一道缝）────────────────
+    // 两条腿站在板面上、上端齐平；刀片从缝里【穿过去】。缝在刀片上下都露着
+    // 一截暗面 —— 这一截就是"刀片真的插进去了"的唯一证据，别把它盖掉。
+    var yB = PLATE.TOP + 1.5;
+    var yT = CT.top;
+    function topFace(x0, x1, dark) {
+      // 钢板厚度：往右上偏移 FACE 的一块平行四边形。少了它，两条腿就是两根
+      // 贴纸；有了它，夹口立刻读成"立着的钢片"。
       ctx.beginPath();
-      roundRect(ctx, x0, yT, w, yB - yT, 3.2);
-      ctx.clip();
-      ctx.fillStyle = linGrad(ctx, x0, 0, x0 + w, 0, SILVER_H);
-      ctx.fillRect(x0, yT, w, yB - yT);
-      ctx.restore();
-      roundRect(ctx, x0, yT, w, yB - yT, 3.2);
-      ctx.strokeStyle = 'rgba(71,85,105,0.55)'; ctx.lineWidth = 0.9; ctx.stroke();
-      // 顶棱受光
-      ctx.fillStyle = 'rgba(255,255,255,0.92)';
-      roundRect(ctx, x0 + 1.3, yT + 0.8, w - 2.6, 1.7, 0.85); ctx.fill();
-      // 中间的槽：实物是【∩】——两条腿站在板面上，顶上连成一块，刀片压在
-      // 顶上那条棱上。所以槽从下面开口、上端是圆的，槽里压暗（背光的内壁）。
-      ctx.fillStyle = 'rgba(51,65,85,0.42)';
-      roundRect(ctx, cx - 2.6, yT + 6, 5.2, yB - yT - 5, 2.4); ctx.fill();
-      ctx.fillStyle = 'rgba(255,255,255,0.28)';
-      roundRect(ctx, cx - 2.6, yT + 6, 1.2, yB - yT - 5, 0.6); ctx.fill();
+      ctx.moveTo(x0, yT); ctx.lineTo(x1, yT);
+      ctx.lineTo(x1 + SPDT.FACE, yT - SPDT.FACE); ctx.lineTo(x0 + SPDT.FACE, yT - SPDT.FACE);
+      ctx.closePath();
+      ctx.fillStyle = dark ? 'rgba(148,163,184,0.95)' : 'rgba(226,232,240,0.98)';
+      ctx.fill();
+      ctx.strokeStyle = EDGE; ctx.lineWidth = 0.8; ctx.stroke();
     }
-    bracket(-CT.x); bracket(CT.x);
+    function leg(x0, x1, dark) {
+      ctx.save();
+      ctx.beginPath(); roundRect(ctx, x0, yT, x1 - x0, yB - yT, 2.2); ctx.clip();
+      ctx.fillStyle = linGrad(ctx, x0, 0, x1, 0, dark ? SILVER_D : SILVER_H);
+      ctx.fillRect(x0, yT, x1 - x0, yB - yT);
+      ctx.restore();
+      roundRect(ctx, x0, yT, x1 - x0, yB - yT, 2.2);
+      ctx.strokeStyle = EDGE; ctx.lineWidth = 0.9; ctx.stroke();
+      // 受光的那一条边（左上光）
+      ctx.fillStyle = dark ? 'rgba(255,255,255,0.35)' : 'rgba(255,255,255,0.78)';
+      roundRect(ctx, x0 + 1, yT + 2.4, 1.3, yB - yT - 5, 0.65); ctx.fill();
+    }
+
+    // 两个夹口都要画，而且【里侧腿 → 刀片 → 外侧腿】这三步的顺序对两边都成立：
+    // 视线是从左前方来的，所以两个夹口都是「左边那条腿在后、右边那条腿在前」。
+    var CLIPS = [-CT.x, CT.x];
+    function backX(cx) { return [cx - CT.w / 2, cx - CT.gap / 2]; }   // 里侧的腿（暗）
+    function frontX(cx) { return [cx + CT.gap / 2, cx + CT.w / 2]; }  // 外侧的腿（亮）
+    // ① 里侧那条腿（先画，刀片要压在它上面）+ 缝里的暗面
+    CLIPS.forEach(function (cx) {
+      var b = backX(cx);
+      leg(b[0], b[1], true);
+      topFace(b[0], b[1], true);
+      // 缝里的暗面：刀片上下各露一截，这两截就是"插进去了"
+      ctx.fillStyle = 'rgba(51,65,85,0.55)';
+      ctx.fillRect(cx - CT.gap / 2, yT, CT.gap, yB - yT);
+    });
 
     // ── 中央支架：把转轴举到板面上方 ──────────────────────────
     var PW = SPDT.POST.w;
@@ -2739,17 +2761,17 @@
     ctx.fillRect(-PW / 2, pTop, PW, PLATE.TOP - pTop);
     ctx.restore();
     roundRect(ctx, -PW / 2, pTop, PW, PLATE.TOP - pTop, 3);
-    ctx.strokeStyle = 'rgba(71,85,105,0.55)'; ctx.lineWidth = 0.9; ctx.stroke();
-    // 顶端开叉：刀片夹在叉口里转（照片上就是一道黑缝）
+    ctx.strokeStyle = EDGE; ctx.lineWidth = 0.9; ctx.stroke();
+    // 顶端开叉：刀片夹在叉口里转（实物上就是一道黑缝）
     ctx.fillStyle = 'rgba(51,65,85,0.42)';
     roundRect(ctx, -3.4, pTop + 1.6, 6.8, 9, 1.8); ctx.fill();
-    // 左侧一条高光：立着的钢板没有它就成了一块平涂的灰
     ctx.fillStyle = 'rgba(255,255,255,0.55)';
     roundRect(ctx, -PW / 2 + 1.5, pTop + 3, 1.7, PLATE.TOP - pTop - 5, 0.85); ctx.fill();
 
     // ── 刀片：一头铰在转轴、一头带黑柄 ────────────────────────
-    // 刀片【伸向两边】的不再是等长两截 —— 转轴在一端，刀身全长都朝一侧，
-    // 所以倒向哪边、哪边才有一整根刀片压上去（实物就是这样）。
+    // 刀片【单边】长 96：夹口在 56，黑柄从 72 开始 —— 金属刀身整段压在夹口上，
+    // 绝缘柄完全露在夹口外面。上一版柄从 40 就开始，正好盖住触点（用户指出的
+    // 「绝缘皮和触点接触」）。
     ctx.save();
     ctx.translate(PIV.x, PIV.y);
     // 刀片只朝【+x】长。掷 2 = 原样往右倒；掷 1 = 整根【镜像】到左边再倒。
@@ -2769,7 +2791,7 @@
       ctx.strokeStyle = 'rgba(255,255,255,0.30)'; ctx.lineWidth = 0.7;
       for (var bz = -HT + 1.6; bz < HT; bz += 2.2) {
         ctx.beginPath();
-        ctx.moveTo(-4, bz); ctx.lineTo(L - 28, bz); ctx.stroke();
+        ctx.moveTo(-4, bz); ctx.lineTo(L - SPDT.GRIP - 6, bz); ctx.stroke();
       }
     }
     ctx.restore();
@@ -2792,13 +2814,26 @@
     ctx.fillStyle = linGrad(ctx, 0, -gh, 0, gh,
       [[0, '#59616b'], [0.20, '#3a4149'], [0.55, '#242a30'], [1, '#14181c']]);
     ctx.fillRect(gx, -gh, gw, gh * 2);
-    // 柄背的一条柔光：全黑的一块会读成剪影
     ctx.fillStyle = 'rgba(255,255,255,0.16)';
     roundRect(ctx, gx + 2, -gh + 1.6, gw - 6, 2.2, 1.1); ctx.fill();
     ctx.restore();
     roundRect(ctx, gx, -gh, gw, gh * 2, 4);
     ctx.strokeStyle = 'rgba(15,23,42,0.72)'; ctx.lineWidth = 0.8; ctx.stroke();
     ctx.restore();
+
+    // ③ 外侧那条腿（亮，压在刀片上）+ 它的顶面 —— 画在刀片【之后】，
+    //    刀片从它后面穿过去，这就是"夹住了"的那一下。
+    CLIPS.forEach(function (cx) {
+      var f = frontX(cx);
+      leg(f[0], f[1], false);
+      topFace(f[0], f[1], false);
+      // 缝口的一道暗线：贴着里侧腿的右缘（有它才有深度）
+      ctx.strokeStyle = 'rgba(15,23,42,0.26)'; ctx.lineWidth = 1.3;
+      ctx.beginPath();
+      ctx.moveTo(cx - CT.gap / 2 + 0.4, yT + 1.5);
+      ctx.lineTo(cx - CT.gap / 2 + 0.4, yB - 1);
+      ctx.stroke();
+    });
 
     // ── 转轴销：压在刀片上（刀片是铆在它上面转的）────────────
     // 退出刀片的旋转再画 —— 销子是固定在支架上的，不跟着刀片倒。
@@ -2808,7 +2843,6 @@
     ctx.fill();
     ctx.strokeStyle = 'rgba(15,23,42,0.6)'; ctx.lineWidth = 1; ctx.stroke();
     if (sc >= 1) {
-      // 一字槽 + 高光弧：一颗真的螺钉，而不是一个灰圆点
       ctx.strokeStyle = 'rgba(15,23,42,0.45)'; ctx.lineWidth = 1.2;
       ctx.beginPath();
       ctx.moveTo(PIV.x - 3.4, PIV.y + 0.4); ctx.lineTo(PIV.x + 3.4, PIV.y + 0.4);
@@ -2821,14 +2855,11 @@
 
     // ── 状态：刀片搭在哪一侧 ────────────────────────────────
     // 两只掷位都是「通」，所以这里不能用闸刀开关那套「闭合=绿 / 断开=灰」——
-    // 要认的是【通到哪一头】。两个掷位各印一个号（1 / 2），当前那一头点亮。
-    // 号印在【各自支架正上方】的空白处，带一圈白描边：板面上四个角都有螺钉，
-    // 挤在板面上必然压到一个。
+    // 要认的是【通到哪一头】。号印在【各自夹口正下方】的板面上（底板没有螺钉，
+    // 这块是空的），当前那一头点亮。
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     [-1, 1].forEach(function (s) {
       var on = (s < 0 ? 1 : 2) === sel;
-      // 号印在【各自支架正下方】的板面上（底板没有螺钉，这块是空的）——
-      // 印在支架上方会正好撞上扳过去的黑柄。
       var tx = s * CT.x, ty = PLATE.BOT - 8;
       ctx.font = (on ? 'bold ' : '') + '13px -apple-system,"PingFang SC",sans-serif';
       ctx.fillStyle = on ? '#0f766e' : 'rgba(100,116,139,0.75)';

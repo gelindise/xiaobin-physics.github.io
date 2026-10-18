@@ -826,7 +826,11 @@
     <canvas id="zoomCanvas"></canvas>
     <!-- 读数单独一个 span：量程那格可以照印，读数那格【接反时必须一个数字都没有】。
          混成一行的话，「不印数字」这条规矩就说不清楚了。 -->
-    <div class="zoomFoot"><span id="zoomRead"></span><span id="zoomRange"></span>
+    <!-- 底部【只留量程和调零】：读数不在这里重复印一遍（2026-10-18 用户要求）。
+         学生要看数字，走参数面板的「在表盘上显示读数」—— 那是同一个开关，
+         表盘上（以及放大后的表盘上）就会印出来；放大镜底部再抄一份，
+         等于给了两个各说各话的读数入口。 -->
+    <div class="zoomFoot"><span id="zoomRange"></span>
       <button id="zoomZero" type="button">🎯 调零</button></div>
   </div>
 </div>
@@ -885,7 +889,7 @@
        （上一批是 core 23 / draw 37 / editor 28 / params 5 / schematic 17，
          这一轮五个文件都动了：世界加宽 + 电表放大 + 读数牌搬家 + 单刀双掷开关。） -->
 <script src="circuit-core.js?build=25"></script>
-<script src="circuit-draw.js?build=39"></script>
+<script src="circuit-draw.js?build=40"></script>
 <!-- ════════════════════════════════════════════════════════════════════
      【教材版本皮肤 · 已从线上撤下】2026-10-12
      人教版元件外观（circuit-skin*.js 共 5 个文件）暂不在线上启用，学生看到的
@@ -901,7 +905,7 @@
 <!-- <script src="circuit-skin-renjiao-img2-data.js?build=2"></script> -->
 <!-- <script src="circuit-skin-renjiao-img3-data.js?build=1"></script> -->
 <!-- <script src="circuit-skin-renjiao.js?build=6"></script> -->
-<script src="circuit-editor.js?build=30"></script>
+<script src="circuit-editor.js?build=31"></script>
 <!-- 参数面板规格 + 读数显示格式。从本页内联抽出，与 3D 版沙盒（电路实验沙盒3D）
      共用同一份真值：面板规格、小数位、极性显示规则改一处两边都变。 -->
 <script src="circuit-params.js?build=7"></script>
@@ -3498,7 +3502,9 @@ function onTapComp(c, p){
   // 的浮层，等于给同一件事开两个入口 —— 学生点完开关还得动手把它关掉。
   // 开关的参数只有「闭合」这一项，点本体就是它的全部操作，不需要第二个入口
   //（原来那句「要看细的往右侧面板看」随着常驻面板一起没了）。
-  if (c.type === 'switch') return;
+  // 单刀双掷同理：点左半边 / 右半边就合到那一侧（编辑器在 pointerup 里换的
+  // throw，见 circuit-editor 那段），不再弹一块只有「掷 1 / 掷 2」的浮层。
+  if (c.type === 'switch' || c.type === 'spdt') return;
   // 学生电源面板上那颗【电源开关】：和普通开关同一个规矩 —— 点一下就通断、
   // 不弹浮层。区别是这一支走【页面】而不是编辑器（编辑器 pointerup 里那段
   // 只认 type === 'switch'），所以通断、音效、撤销都在这儿补齐。
@@ -3803,7 +3809,6 @@ var ZBOX = { x: -124, y: -112, w: 248, h: 198 };
 var zoomEl = document.getElementById('zoom');
 var zoomCv = document.getElementById('zoomCanvas');
 var zoomTitle = document.getElementById('zoomTitle');
-var zoomRead = document.getElementById('zoomRead');
 var zoomRange = document.getElementById('zoomRange');
 var zoomZero = document.getElementById('zoomZero');
 var zoomComp = null;                              // 正在放大的元件（null = 没开）
@@ -3940,15 +3945,13 @@ function drawZoom(){
   // 记下【这一帧真的画出去的那个 K】：点旋钮时要按它把屏幕坐标反推回局部坐标。
   zoomView.K = K; zoomView.cw = cw; zoomView.ch = ch;
   zoomView.midX = ZBOX.x + ZBOX.w/2; zoomView.midY = ZBOX.y + ZBOX.h/2;
-  // 下面这行字和画布上的读数框共用 readoutLines()：反接时画布写「指针反偏」，
-  // 放大镜里也必须一样，不能这边照旧印一个数字出来。
-  var zLines = (practice && !revealed[zoomComp.id])
-    ? practiceLines(zoomComp, rec) : (readoutLines(zoomComp, rec) || []);
-  zoomRead.textContent = zLines.join('　·　') +
-    ((practice && practiceHidden(zoomComp)) ? '　·　点一下这只表揭晓' : '');
+  // 底部【不印读数】：放大镜是给学生「照着刻度读」用的，把数字直接写在他眼睛
+  // 底下，读刻度这一步就废了；而且参数面板里已经有「在表盘上显示读数」这个
+  // 开关（params.showValue），要看数字勾一下、表盘上就印出来 —— 放大镜里放大
+  // 的正是那张表盘，勾上之后这里自然也看得见。两个入口各说各话只会更乱。
   // 量程单独一格：它是「线接在哪个柱上」的信息，跟能不能读数无关，
   // 接反时照印——那时学生更该看清指针到底顶在哪一挡的零刻度左边。
-  // 没接量程柱就不写：读数那行已经写了「量程柱没接线」，再写一遍是啰嗦。
+  // 没接量程柱就不写：留个空串，底部只剩调零按钮。
   zoomRange.textContent = rec.rangeWired
     ? ('量程 ' + rec.range + (zoomComp.type === 'ammeter' ? 'A' : 'V')) : '';
   // 调零按钮跟着状态走：未调零可点，已调零禁用并变成绿字。
@@ -4325,7 +4328,7 @@ var LG_VIEW = {
   power:     { x0: -126, y0: -68, x1: 126, y1: 46 },
   switch:    { x0: -74, y0: -68, x1: 74, y1: 38 },
   // 单刀双掷：和开关同一块底板（本体最高处是翘起来那一头的刀片，−62）。
-  spdt:      { x0: -74, y0: -68, x1: 74, y1: 38 },
+  spdt:      { x0: -104, y0: -62, x1: 104, y1: 38 },
   bulb:      { x0: -74, y0: -80, x1: 74, y1: 40 },
   ammeter:   { x0: -122, y0: -110, x1: 122, y1: 84 },
   voltmeter: { x0: -122, y0: -110, x1: 122, y1: 84 },
@@ -5602,8 +5605,11 @@ window.__fsStatus = function(){
 window.__zoom = function(){
   return { open: !!zoomComp, id: zoomComp ? zoomComp.id : null,
            type: zoomComp ? zoomComp.type : null,
-           read: zoomRead.textContent, range: zoomRange.textContent,
-           foot: zoomRead.textContent + ' ' + zoomRange.textContent,
+           // read 恒为空串：放大镜底部【不再印读数】（见 drawZoom 那段注释），
+           // 要看数字走参数面板的「在表盘上显示读数」。字段留着，老的自检
+           // 脚本读它不会炸，判据改成判「空」即可。
+           read: '', range: zoomRange.textContent,
+           foot: zoomRange.textContent,
            w: zoomCv.width, h: zoomCv.height };
 };
 window.__openZoom = function(id){
