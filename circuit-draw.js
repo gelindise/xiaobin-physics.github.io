@@ -469,6 +469,21 @@
   }
 
   // ============================================================
+  // 电阻示教板的几何（四根电阻丝）
+  // ------------------------------------------------------------
+  // 放在这里而不是紧挨着 drawRheoboard：TERMINALS.rheoboard 要按它算八个
+  // 柱子的坐标，而 TERMINALS 就在下面。写在绘制函数那边的话，这里只能
+  // 再抄一份数字 —— 两处各写一份，改一个忘了另一个，柱子就落到丝外面去。
+  // ============================================================
+  var RHEOB = {
+    HW: 84, TOP: -66, FACE: -58, BOT: 66,   // 板面（半宽 / 上沿 / 顶面折线 / 下沿）
+    ROW_Y: [-45, -15, 15, 45],              // 四根丝的行高（= 8 个柱子的 y）
+    WIRE_X: 64,                             // 丝的半长
+    POST_X: 76,                             // 柱子（板内 8px，导线夹得住）
+    LABEL_DY: -10,                          // 规格文字在丝上方多远
+  };
+
+  // ============================================================
   // 端子坐标
   // ============================================================
   var TERMINALS = {
@@ -477,6 +492,18 @@
     // 「长度」不挪柱子 —— 柱子是接线的地方，金属条长短是材料/尺寸的事，
     // 两件事各画各的（3D 里板长随 length 变，柱子始终在板沿上）。
     plate: [{ x: -HALF, y: 0 }, { x: HALF, y: 0 }],
+    // 电阻示教板：8 根柱子 = 4 根丝的两端（2i 左、2i+1 右）。
+    // y 落在四根丝各自的行高上，x 在板内 8px —— 柱子和丝由绘制层用铜片
+    // 连起来，所以柱脚必须和丝端在【同一条水平线】上。
+    // 🔴 顺序 = 丝的顺序 = 内核 PLATE_WIRES 的顺序 = 板面 ①②③④ 的顺序。
+    rheoboard: RHEOB.ROW_Y.reduce(function (acc, y) {
+      acc.push({ x: -RHEOB.POST_X, y: y }, { x: RHEOB.POST_X, y: y });
+      return acc;
+    }, []),
+    // 铅笔芯：两个端子都在 ±HALF —— 左端是固定夹引出的柱子，右端是
+    // 移动夹那根软线接回来的柱子。端子不跟着夹子走：柱子是【接线的地方】，
+    // 夹子在哪是导体长度的事，两件事各画各的（和导体板「柱子不随 L 挪」同理）。
+    pencil: [{ x: -HALF, y: 0 }, { x: HALF, y: 0 }],
     battery: [{ x: HALF, y: 0 }, { x: -HALF, y: 0 }],   // 0 = 正极（右）
     // 学生电源：全站【唯一】一件端子不在 ±70 上的元件 —— 照课本实物，
     // 两个接线柱都长在面板右下角（0 号 = 正极，是左边那个）。
@@ -1104,6 +1131,9 @@
   var ICON_VIEW = {
     resistor:  { x0: -74, y0: -26, x1: 74, y1: 26 },
     plate:     { x0: -78, y0: -14, x1: 78, y1: 40 },
+    // 铅笔芯：芯悬在板上方（中心 −18、半径 4.6 ⇒ 顶 −22.6），板底 30。
+    // 取景框必须包住芯顶，否则元件盒里那根芯会被切掉一截。
+    pencil:    { x0: -78, y0: -34, x1: 78, y1: 34 },
     battery:   { x0: -112, y0: -42, x1: 112, y1: 42 },
     power:     { x0: -126, y0: -68, x1: 126, y1: 46 },
     switch:    { x0: -74, y0: -68, x1: 74, y1: 38 },
@@ -1119,6 +1149,8 @@
     led:       { x0: -78, y0: -52, x1: 78, y1: 36 },
     motor:     { x0: -78, y0: -64, x1: 78, y1: 36 },
     bell:      { x0: -78, y0: -66, x1: 78, y1: 42 },
+    // 电阻示教板：整块板 + 八个柱子（柱头到 ±82）。少给一点，图标里板角会被切。
+    rheoboard: { x0: -84, y0: -70, x1: 84, y1: 72 },
   };
   var ICON_VIEW_DEF = { x0: -80, y0: -80, x1: 80, y1: 80 };
   // 把一件器材画进 w×h 的小格子里（ rec 传 null = 只画外形，不带读数 ）。
@@ -1351,9 +1383,17 @@
       // 导体板：底板 ±70，金属条贴在板面正面（y = 6 ~ 27），本体不长到导线上面，
       // 所以 hh 只要盖住板面这一截。同样卡死 ≤ 70 —— 柱子钉在 ±70 上。
       case 'plate': return { hw: 70, hh: 30 };           // 板面下沿 y = 30
+      // 铅笔芯：同一块示教板（±70），芯顶 −22.6、板底 30 ⇒ 上下各 30 够。
+      // 同样卡死 hw ≤ 70 —— 柱子钉在 ±70 上，一宽就被圈进盒子里。
+      case 'pencil': return { hw: 70, hh: 30 };
       // 接线点：就是一个小圆点，盒子贴着它给 —— 给大了会抢邻居元件的点击，
       // 也会让「导线穿过元件」的检查把它当成障碍。
       case 'junction': return { hw: 9, hh: 9 };
+      // 电阻示教板：盒子【恰好吃到柱子】为止（hw = POST_X）—— 再大一点，
+      // 八根柱子就被圈进盒子里，「导线夹在柱子上」会被判成「穿过元件」，
+      // 每根线都要绕板一圈（见上面 plate / led 那几条注释，同一个坑）。
+      // 板面本身比柱子宽 8px，露出盒外是有意的：走线避让只躲柱子那一圈。
+      case 'rheoboard': return { hw: RHEOB.POST_X, hh: -RHEOB.TOP };
       // 表头：整台仪器的包围盒（表壳 + 底座）。接线柱在 POST_Y，
       // 故意落在盒子【外面】——导线夹在柱子上，不该被当成穿体。
       // 所以 hh 有【上限 70】：表壳为了放下大量程那排数字往上长到了 −104（见 MET），
@@ -2258,6 +2298,45 @@
   // BOT = 板底。三个数一起决定板的厚度感，单独改一个会画成一块斜面。
   var PLATE = { HW: 70, TOP: -5, FACE: 3, BOT: 30 };   // 半宽 70 = 接线柱正好钉在板子两角
 
+  // ── 铅笔芯（课本图 16.4-1：用铅笔芯控制小灯泡的亮度）────────────
+  // 一根 0.5mm / 60mm 的自动铅笔芯架在示教板上：左端一只固定鳄鱼夹、
+  // 右端一只可沿芯移动的鳄鱼夹。夹子在【芯上的局部 x】与【接入长度 mm】
+  // 之间的换算是绘制层与交互层共用的唯一一份 —— 拖动改长度时两边必须
+  // 落在同一条映射上，各写一份的话「画到哪儿」和「电阻是多少」会错开。
+  //
+  // 🔴 60 这个数必须和内核 PENCIL.LEN_MM 一致。能读到内核就问它（同一个
+  //    真值），读不到（离屏出图、单文件测试）才退回这个常量。
+  // 🔴 X0/X1 = 芯的两端，100px 代表 60mm。夹子行程 = [clipLocalX(10), X1]：
+  //    最小接入 10mm（再短就接近短路，灯丝会被烧断），所以移动夹永远
+  //    推不到固定夹身上 —— 画面上两个夹子之间总留着一小截芯。
+  var PENCIL = {
+    X0: -54, X1: 54,
+    Y: -20,                 // 芯的中心线（板面在 −6 以下，芯悬在板上方）
+    R: 5.4,                 // 芯的视觉半径：真实 0.5mm 画出来不到 1px，示意放大
+    LEN_MIN: 10, LEN_MAX: 60,
+  };
+  function pencilTotalMM() {
+    var g = (typeof self !== 'undefined') ? self : null;
+    if (g && g.CircuitCore && g.CircuitCore.PENCIL) return g.CircuitCore.PENCIL.LEN_MM;
+    return 60;
+  }
+  // 接入长度（mm）→ 夹子在芯上的局部 x
+  function clipLocalX(lenMM) {
+    var total = pencilTotalMM();
+    var k = Math.max(0, Math.min(1, (+lenMM || PENCIL.LEN_MIN) / total));
+    return PENCIL.X0 + (PENCIL.X1 - PENCIL.X0) * k;
+  }
+  // 局部 x → 接入长度（mm，未截断；调用方负责夹到 [LEN_MIN, LEN_MAX]）
+  function clipLenFromLocalX(lx) {
+    return (lx - PENCIL.X0) / (PENCIL.X1 - PENCIL.X0) * pencilTotalMM();
+  }
+  // 当前接入长度。读参数而不是读 rec：长度是【参数】，rec 只是求解结果
+  // （没接进电路时 rec 可能根本没有）。
+  function pencilLenOf(comp) {
+    var v = comp && comp.params && comp.params.len;
+    return (v == null) ? 20 : +v;
+  }
+
   // opts.screws === false = 【不画四角一字螺钉】。单刀双掷开关照的那张实物
   // 照片上，底板是一块光的浅灰钢板，没有螺钉 —— 而板面上正好要印「1 / 2」
   // 两个掷位号，留着螺钉就必然压到一个。
@@ -2407,6 +2486,385 @@
     ctx.restore();
     // 接线柱：和别的示教板同一组参数（neutral = 无极性，scale 1.4、neck 8）
     posts(ctx, comp, ['neutral', 'neutral'], 1.4, 8);
+  }
+
+  // ============================================================
+  // 电阻示教板（四根电阻丝，探究影响导体电阻大小的因素）
+  // ------------------------------------------------------------
+  // 用户 2026-10-19：「导体板…上面有几条电阻丝…把那个整体放到器材盒里，
+  // 而不是放一根导体板」。教材那块板（J2359）就是这样：四根丝平铺在板上，
+  // 每根两端各一个接线柱 —— 换一根丝只要把两根导线挪到另一对柱子上。
+  //
+  // 画面上必须一眼读出三件事，少一件学生就不知道自己在换什么：
+  //   ① 四根丝是【四行】，序号 ①②③④ 印在各自那一行上；
+  //   ② 丝的【粗细】就是直径（φ0.3 细、φ0.5 粗），【颜色】就是材料
+  //      （镍铬银灰、锰铜偏暖）—— 「只变一个因素」在板面上看得见；
+  //   ③ 规格 / 阻值印在丝的上方一行（showSpec 可关，做盲测用）。
+  //
+  // 🔴 四根丝的【顺序】必须和内核 PLATE_WIRES、端子编号（2i / 2i+1）一致。
+  //    各写一份顺序的话，学生照着板上的「①」去接线，接到的却是另一根丝 ——
+  //    而电流表照样有读数，看不出哪里错了。
+  // ============================================================
+  // 四根丝的【配色】。和导体板那套 PLATE_METAL 分开：那块板的锰铜是浅银灰
+  // （旧画法），而示教板上四根丝必须靠颜色一眼分开材料 —— 锰铜是铜镍合金，
+  // 实物偏红铜色；镍铬是银亮的不锈钢色。两套色表混用的话，④ 和 ① 在板面上
+  // 长得一模一样，「比材料」这一组对照就白做了。
+  var RHEOB_METAL = {
+    nichrome: { hi: '#f2f6fa', mid: '#c2ccd6', lo: '#7e8b98' },   // 银亮
+    manganin: { hi: '#f2c69c', mid: '#c4814c', lo: '#7d4a26' },   // 红铜
+    constantan: { hi: '#e6d6c4', mid: '#b08a63', lo: '#75543a' },
+    copper: { hi: PALETTE.copperHi, mid: PALETTE.copper, lo: PALETTE.copperLo },
+  };
+
+  // 四根丝的规格。真值在内核（CircuitCore.PLATE_WIRES），这里只做转发；
+  // 内核没加载时（离屏出图、单文件测试）退回一份等价表。
+  function rheobWires() {
+    var G2 = (typeof self !== 'undefined') ? self
+           : (typeof global !== 'undefined') ? global : this;
+    if (G2 && G2.CircuitCore && G2.CircuitCore.PLATE_WIRES) return G2.CircuitCore.PLATE_WIRES;
+    return [
+      { mat: 'nichrome', d: 0.30, L: 1.0, R: 14.15, matLabel: '镍铬合金' },
+      { mat: 'nichrome', d: 0.30, L: 0.5, R: 7.07, matLabel: '镍铬合金' },
+      { mat: 'nichrome', d: 0.50, L: 1.0, R: 5.09, matLabel: '镍铬合金' },
+      { mat: 'manganin', d: 0.30, L: 1.0, R: 6.22, matLabel: '锰铜' },
+    ];
+  }
+
+  function drawRheoboard(ctx, comp, rec) {
+    var P = comp.params || {};
+    var showSpec = P.showSpec !== false;
+    var wires = rheobWires();
+    var BR = RHEOB;
+    var sc = ctxScale(ctx);
+
+    ctx.save();
+    ctx.translate(comp.x, comp.y);
+    ctx.rotate((comp.rot || 0) * Math.PI / 180);
+
+    // ① 底板：和二极管 / 电动机 / 电铃 / 导体板同一块示教板
+    basePlate(ctx, BR.HW, BR.TOP, BR.FACE, BR.BOT);
+
+    for (var i = 0; i < BR.ROW_Y.length; i++) {
+      var w = wires[i] || wires[0];
+      var y = BR.ROW_Y[i];
+      var MC = RHEOB_METAL[w.mat] || RHEOB_METAL.nichrome;
+      // 粗细跟着直径走：φ0.30 → 3.4px，φ0.50 → 5.4px。
+      // 差 2px 在投影上是分得出来的（这也是「横截面积」唯一的视觉线索）。
+      var thick = 3.4 + (w.d - 0.30) * 10;
+      // 丝的长短【照着长度画】：1.0m 顶满板面，0.5m 只有一半 ——
+      // 「长度」这个因素因此在板面上直接看得见，不用去读那行小字。
+      // 两端再用铜片引到柱子（柱子的位置不能跟着丝走：8 根柱子必须
+      // 排成整齐的两列，否则接线时找不到对应的那一对）。
+      var half = BR.WIRE_X * Math.min(1, Math.max(0.25, w.L / 1.0));
+
+      // 「这根丝此刻通不通」—— 接线柱上接了导线才算（只看电流不行：
+      // 合开关之前电流也是 0，而学生已经把线接好了）。接通的丝亮一档、
+      // 没接的压暗一档，学生一眼看得出「现在用的是③」。
+      var seg = rec && rec.branches && rec.branches[i];
+      var active = !!(seg && seg.wired);
+
+      // ② 丝：上亮下暗 + 一条窄高光（和导体板的金属条同一套打光）
+      contactShadow(ctx, 0, y + thick * 0.5 + 1.4, half * 0.92, 2.2, 0.22);
+      ctx.save();
+      roundRect(ctx, -half, y - thick / 2, half * 2, thick, thick / 2);
+      ctx.clip();
+      // 0.7 而不是 0.45：压得太狠，锰铜那根的暖色会被浅灰板面冲淡成灰，
+      // ④ 和 ①② 就长得一样了（实测 0.45 时「比材料」那一组看不出区别）。
+      ctx.globalAlpha = active ? 1 : 0.7;
+      ctx.fillStyle = linGrad(ctx, 0, y - thick / 2, 0, y + thick / 2,
+        [[0, MC.hi], [0.34, MC.mid], [0.62, MC.lo], [1, MC.lo]]);
+      ctx.fillRect(-half, y - thick / 2, half * 2, thick);
+      ctx.fillStyle = 'rgba(255,255,255,0.45)';
+      roundRect(ctx, -half + 4, y - thick * 0.30, half * 2 - 8,
+                Math.max(1, thick * 0.16), 1);
+      ctx.fill();
+      // 接通的那根再加一层暖光：金属通电发热 —— 也是「这一根现在在电路里」
+      // 最直接的视觉信号（比压暗其它三根更主动）。
+      if (active) {
+        ctx.fillStyle = 'rgba(255,170,70,0.20)';
+        ctx.fillRect(-half, y - thick / 2, half * 2, thick);
+      }
+      ctx.restore();
+      ctx.save();
+      ctx.globalAlpha = active ? 1 : 0.62;
+      roundRect(ctx, -half, y - thick / 2, half * 2, thick, thick / 2);
+      ctx.strokeStyle = 'rgba(40,52,68,0.42)'; ctx.lineWidth = 1; ctx.stroke();
+      ctx.restore();
+
+      // ③ 两端的铜片：把丝接到柱脚上（和导体板那两条铜片同一个画法）
+      [1, -1].forEach(function (s) {
+        var bx = s * (BR.POST_X - 1);
+        ctx.strokeStyle = PALETTE.copper; ctx.lineWidth = 4.2; ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(s * (half - 1), y);
+        ctx.lineTo(bx, y);
+        ctx.stroke();
+        ctx.strokeStyle = PALETTE.copperHi; ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.moveTo(s * (half + 1), y - 1.1);
+        ctx.lineTo(bx, y - 1.1);
+        ctx.stroke();
+      });
+
+      // ④ 丝上方那一行字：序号 + 材料 + 直径 + 长度 [+ 阻值]
+      //    序号用 ①②③④（和端子 2i/2i+1 的顺序一一对应）。
+      // 🔴 这一行【必须短】：板宽只有 176，字号 8.2 下中文约 4px/字。
+      //    「镍铬合金 φ0.30mm · 1.0m」那种写法（21 个字符 ≈ 90px）加上
+      //    右端的「14.1Ω」，两边会在板中间撞上（实测就是这样）。
+      //    所以材料用简称、直径不带 mm：整行压到 ≈ 60px，右边留得出空。
+      var tag = ['①', '②', '③', '④'][i];
+      var shortMat = (w.matLabel || '').replace('合金', '');
+      var txt = tag + ' ' + shortMat;
+      if (showSpec) txt += ' φ' + w.d.toFixed(2) + ' ' + w.L.toFixed(1) + 'm';
+      ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+      ctx.font = 'bold 8.2px -apple-system,"PingFang SC",sans-serif';
+      ctx.fillStyle = active ? PALETTE.text : 'rgba(51,65,85,0.55)';
+      // ⚠️ 文字的落点用【板面的】半宽，不用丝的半宽：丝短的那一行
+      //    （0.5m）如果照 half 对齐，左字和右阻值会挤到板中间撞在一起
+      //    （实测「② 镍铬 φ0.30 0.5m」和「7.1Ω」叠成了一团）。
+      ctx.fillText(txt, -BR.WIRE_X + 2, y + BR.LABEL_DY);
+      // 阻值单独靠右印：学生做对照实验时最想知道的就是这个数
+      if (showSpec && sc >= 0.9) {
+        ctx.textAlign = 'right';
+        ctx.fillStyle = active ? 'rgba(30,58,95,0.9)' : 'rgba(30,58,95,0.5)';
+        ctx.font = 'bold 8.6px ui-monospace,Menlo,Consolas,monospace';
+        ctx.fillText(w.R.toFixed(1) + 'Ω', BR.WIRE_X - 2, y + BR.LABEL_DY);
+      }
+    }
+
+    ctx.restore();
+    // 八个接线柱：无极性、比单个元件的柱子小一号（行距只有 30px）
+    posts(ctx, comp, ['neutral', 'neutral', 'neutral', 'neutral',
+                      'neutral', 'neutral', 'neutral', 'neutral'], 1.25, 6);
+  }
+
+  // ============================================================
+  // 铅笔芯（课本图 16.4-1）
+  // ------------------------------------------------------------
+  // 画面上必须同时读出三件事，少一件这个实验就退化成「又一个可变电阻」：
+  //   ① 【接入的那一段亮、没接入的那一段暗】—— 两个夹子之间才是电路的一部分。
+  //      这是「电阻跟长度有关」唯一的视觉证据，比参数面板上的数字管用得多；
+  //   ② 移动夹真的【咬住】芯（夹口有齿、有缝），不是飘在旁边；
+  //   ③ 移动夹的软线【跟着夹子走】—— 夹子在哪，电就从哪进。
+  //
+  // ⚠️ 电阻由内核算好经 rec.R 传进来，这里只画。抄一份 ρ·L/S 就等于埋下
+  //    「改了电阻模型、画面没跟着变」的洞（和导体板那条注释同一条规矩）。
+  // ============================================================
+  // 石墨（铅笔芯）的两套光照：接入段是「通电的导体」，未接入段压暗一档。
+  // 上暗-高光-下暗，和绕线 / 金属条同一个打光方向（光源左上）。
+  var PENCIL_ROD_LIVE = [[0, '#34383e'], [0.18, '#5d636c'], [0.36, '#9aa1ab'],
+                         [0.55, '#6a7079'], [0.80, '#41464d'], [1, '#262a2f']];
+  var PENCIL_ROD_DEAD = [[0, '#23262b'], [0.22, '#3b3f45'], [0.40, '#555b63'],
+                         [0.62, '#3a3e44'], [1, '#1b1e22']];
+
+  function drawPencil(ctx, comp, rec) {
+    var P = comp.params || {};
+    var lenMM = Math.max(PENCIL.LEN_MIN, Math.min(PENCIL.LEN_MAX,
+      (P.len == null ? 20 : +P.len)));
+    var grade = P.grade || 'HB';
+    var clipX = clipLocalX(lenMM);
+    var sc = ctxScale(ctx);
+    // 「接入段有没有电」：没接进电路时 rec 为 null / i 为 0，此时接入段
+    // 仍比未接入段亮（结构对比），但不再加那一层通电的暖光。
+    var live = !!(rec && Math.abs(rec.i) > 1e-12);
+
+    ctx.save();
+    ctx.translate(comp.x, comp.y);
+    ctx.rotate((comp.rot || 0) * Math.PI / 180);
+
+    // ① 示教板：比导体板再薄一点 —— 铅笔芯是悬在板上方的，板子只是个托
+    basePlate(ctx, 70, -6, 2, 30);
+
+    // ② 铅笔芯本体：先整根画「未接入」的暗色，再把 X0..clipX 这一段
+    //    （固定夹 → 移动夹）画成「接入」的亮色。顺序反过来的话接缝处
+    //    会留下一条硬边。
+    var yTop = PENCIL.Y - PENCIL.R, yBot = PENCIL.Y + PENCIL.R;
+    function rod(x0, x1, stops) {
+      if (x1 - x0 < 0.6) return;
+      ctx.fillStyle = linGrad(ctx, 0, yTop, 0, yBot, stops);
+      roundRect(ctx, x0, yTop, x1 - x0, PENCIL.R * 2, PENCIL.R); ctx.fill();
+    }
+    rod(PENCIL.X0, PENCIL.X1, PENCIL_ROD_DEAD);
+    rod(PENCIL.X0, clipX, PENCIL_ROD_LIVE);
+    // 石墨的纹理：三条极淡的纵纹。没有它，那根芯是一根塑料棒；
+    // 有了它才读得出「这是压出来的石墨芯」。
+    ctx.save();
+    roundRect(ctx, PENCIL.X0, yTop, PENCIL.X1 - PENCIL.X0, PENCIL.R * 2, PENCIL.R); ctx.clip();
+    ctx.strokeStyle = 'rgba(20,24,30,0.16)'; ctx.lineWidth = 0.7;
+    [-0.45, 0.05, 0.5].forEach(function (k) {
+      ctx.beginPath();
+      ctx.moveTo(PENCIL.X0, PENCIL.Y + PENCIL.R * k);
+      ctx.lineTo(PENCIL.X1, PENCIL.Y + PENCIL.R * k);
+      ctx.stroke();
+    });
+    ctx.restore();
+    // 芯上的一道细高光：只在接入段上画 —— 那是「这一段在导电」的亮线
+    ctx.fillStyle = live ? 'rgba(255,244,222,0.66)' : 'rgba(235,240,248,0.32)';
+    roundRect(ctx, PENCIL.X0 + 2, PENCIL.Y - PENCIL.R * 0.46,
+      Math.max(0, clipX - PENCIL.X0 - 4), 1.4, 0.7); ctx.fill();
+    // 两端的断面：铅笔芯是【断】的，不是一根无限长的杆
+    [PENCIL.X0, PENCIL.X1].forEach(function (ex) {
+      ctx.fillStyle = 'rgba(24,27,32,0.85)';
+      ctx.beginPath(); ctx.ellipse(ex, PENCIL.Y, 1.4, PENCIL.R * 0.88, 0, 0, 6.284); ctx.fill();
+    });
+
+    // ③ 两只鳄鱼夹。原点 = 夹口（咬在芯上那一点），夹身沿 +x 伸出；
+    //    dir = −1 时整只翻到左边（固定夹）。
+    //
+    //    形状照实物：上下两片【颚】把芯包在中间 —— 上颚压在芯上面、下颚托在
+    //    芯下面，中间那道口子正好是芯的直径。这是「夹住了」唯一可信的画法：
+    //    只画一块贴着芯的金属片，读出来是「标签贴在上面」。
+    //    颚的内侧各三颗齿，咬进石墨里。
+    var CLIP_LEN = 30;            // 夹口 → 绝缘套尾端的长度（引线从这里出来）
+    function alligator(cx, ang, dir, kind) {
+      var RED = kind === 'red';
+      ctx.save();
+      ctx.translate(cx, PENCIL.Y);
+      ctx.rotate(ang);
+      ctx.scale(dir, 1);
+
+      // 钢灰而不是亮银：夹子压在【浅灰板面】上，亮银的颚片和板子糊成一片，
+      // 远看只剩两个白三角。压深两档之后，「两片金属夹住深灰的芯」才读得出来。
+      var METAL = [[0, '#414c5a'], [0.16, '#8b99aa'], [0.34, '#d3dde8'],
+                   [0.56, '#8b99a9'], [0.80, '#586574'], [1, '#39424e']];
+      // ⚠️ 阴影必须【画在颚片上】（shadowColor + 一次 fill），不能先铺一块
+      //    白色圆角矩形 —— softShadow() 那个 helper 是「先铺白底、随后由真实
+      //    形状盖住」的用法，夹子只有两片薄颚，盖不住，白底会整块露在芯后面。
+      ctx.shadowColor = 'rgba(15,23,42,0.28)';
+      ctx.shadowBlur = 5; ctx.shadowOffsetY = 2;
+
+      // ── 上颚：从夹口向后张开。内沿贴芯、外沿厚 —— 一片【有厚度】的金属，
+      //    不是一条线。之前画成细曲线，读出来是「夹子被压扁了」。
+      ctx.beginPath();
+      ctx.moveTo(-2, -5.8);
+      ctx.quadraticCurveTo(6, -6.6, 12, -8.8);
+      ctx.quadraticCurveTo(15.5, -10.2, 17, -8.2);
+      ctx.lineTo(17, -4.6);
+      ctx.quadraticCurveTo(12, -5.6, 6, -5.4);
+      ctx.quadraticCurveTo(2, -5.4, -2, -5.8);
+      ctx.closePath();
+      ctx.fillStyle = linGrad(ctx, 0, -10.5, 0, -4.4, METAL);
+      ctx.fill();
+      ctx.shadowColor = 'transparent';
+      ctx.strokeStyle = 'rgba(40,52,68,0.6)'; ctx.lineWidth = 1; ctx.stroke();
+
+      // ── 下颚：镜像一片（略短 —— 实物上活动的那片是下颚）
+      ctx.beginPath();
+      ctx.moveTo(-2, 5.8);
+      ctx.quadraticCurveTo(5, 6.6, 10.5, 8.6);
+      ctx.quadraticCurveTo(13.8, 9.9, 15, 8.0);
+      ctx.lineTo(15, 4.6);
+      ctx.quadraticCurveTo(10.5, 5.6, 5, 5.4);
+      ctx.quadraticCurveTo(1.5, 5.4, -2, 5.8);
+      ctx.closePath();
+      ctx.fillStyle = linGrad(ctx, 0, 4.4, 0, 10, METAL);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(40,52,68,0.6)'; ctx.lineWidth = 1; ctx.stroke();
+
+      // 齿：上下各三颗，朝芯里咬。浅色金属，衬在深灰的芯上才看得见。
+      ctx.fillStyle = '#eef4fb';
+      for (var i = 0; i < 3; i++) {
+        var gx = 1.6 + i * 3.4;
+        ctx.beginPath();
+        ctx.moveTo(gx, -5.4); ctx.lineTo(gx + 1.5, -3.0); ctx.lineTo(gx + 3.0, -5.4);
+        ctx.closePath(); ctx.fill();
+        ctx.beginPath();
+        ctx.moveTo(gx, 5.4); ctx.lineTo(gx + 1.5, 3.0); ctx.lineTo(gx + 3.0, 5.4);
+        ctx.closePath(); ctx.fill();
+      }
+
+      // 铆钉：两片颚的铰接点（也是弹簧的位置）
+      ctx.fillStyle = linGrad(ctx, 14, -3, 18, 3,
+        [[0, '#f2f7fc'], [0.4, '#a9b7c6'], [1, '#5d6b7a']]);
+      ctx.beginPath(); ctx.arc(16, 0, 3.1, 0, 6.284); ctx.fill();
+      ctx.strokeStyle = 'rgba(40,52,68,0.6)'; ctx.lineWidth = 0.9; ctx.stroke();
+      ctx.fillStyle = 'rgba(255,255,255,0.85)';
+      ctx.beginPath(); ctx.arc(15.1, -0.9, 1.1, 0, 6.284); ctx.fill();
+
+      // ── 柄 + 绝缘套：红（固定端）/ 黑（移动端）。
+      //    绝缘套是【绝缘】件，绝不能跟着夹身用金属色 —— 那会让学生以为
+      //    手捏的那一头也带电。
+      ctx.fillStyle = linGrad(ctx, 0, -4, 0, 4,
+        [[0, '#8a97a6'], [0.3, '#dfe8f2'], [0.6, '#a3b0bf'], [1, '#5d6a79']]);
+      roundRect(ctx, 17, -3.4, 7, 6.8, 2.6); ctx.fill();
+      ctx.strokeStyle = 'rgba(40,52,68,0.45)'; ctx.lineWidth = 0.8; ctx.stroke();
+      var S = RED
+        ? [[0, '#7f1d1d'], [0.20, '#dc2626'], [0.36, '#fca5a5'],
+           [0.54, '#dc2626'], [0.80, '#991b1b'], [1, '#5f1414']]
+        : [[0, '#0b1220'], [0.20, '#1e293b'], [0.36, '#64748b'],
+           [0.54, '#243244'], [0.80, '#111c2b'], [1, '#080d15']];
+      ctx.fillStyle = linGrad(ctx, 0, -6, 0, 6, S);
+      roundRect(ctx, 23, -5.9, 10, 11.8, 4.4); ctx.fill();
+      ctx.strokeStyle = 'rgba(0,0,0,0.38)'; ctx.lineWidth = 0.9; ctx.stroke();
+      // 套管上的两道滚花
+      ctx.strokeStyle = RED ? 'rgba(255,220,220,0.45)' : 'rgba(160,180,205,0.36)';
+      ctx.lineWidth = 1;
+      [25.6, 28.8].forEach(function (rx) {
+        ctx.beginPath(); ctx.moveTo(rx, -4.7); ctx.lineTo(rx, 4.7); ctx.stroke();
+      });
+      ctx.restore();
+    }
+
+    // 固定夹：夹口在 X0，夹身朝【左下】—— 真实的鳄鱼夹就是从下面咬住铅笔芯、
+    // 导线往下垂。朝正左的话红色绝缘套正好被左接线柱挡住（柱子画在最上层），
+    // 远看只剩一个红点，等于没画。
+    alligator(PENCIL.X0, -0.95, -1, 'red');
+    // 移动夹：夹口在 clipX，夹身朝右、略微下垂
+    alligator(clipX, 0.35, 1, 'black');
+
+    // ④ 两根引线
+    //    · 固定夹的尾巴 → 左柱：一小段软线（尾巴本来就在柱子上方，几乎垂直）
+    //    · 移动夹的尾巴 → 右柱：随夹子走的一条弧线，兜到板前面再上去。
+    //      🔴 这条线必须【跟着夹子动】—— 它是「夹子在哪、电就从哪进」的唯一证据。
+    ctx.save();
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    // 固定夹那一根（红）：尾巴 = 夹口沿 −x 方向转 −0.5rad 出去 32
+    var fx = PENCIL.X0 - CLIP_LEN * Math.cos(0.95) + 1;
+    var fy = PENCIL.Y + CLIP_LEN * Math.sin(0.95);
+    ctx.strokeStyle = 'rgba(127,29,29,0.92)'; ctx.lineWidth = 4.4;
+    ctx.beginPath();
+    ctx.moveTo(fx, fy);
+    ctx.quadraticCurveTo(fx - 8, fy - 2, -70, -2);
+    ctx.stroke();
+    ctx.strokeStyle = '#dc2626'; ctx.lineWidth = 2.9;
+    ctx.beginPath();
+    ctx.moveTo(fx, fy);
+    ctx.quadraticCurveTo(fx - 8, fy - 2, -70, -2);
+    ctx.stroke();
+    // 移动夹那一根（黑）：起点 = 夹尾，终点 = 右柱
+    var tx0 = Math.min(clipX + CLIP_LEN * Math.cos(0.35) - 1, 67);
+    var ty0 = PENCIL.Y + CLIP_LEN * Math.sin(0.35) * 0.55 + 2;
+    var tx1 = 70, ty1 = -2;
+    ctx.strokeStyle = 'rgba(8,13,21,0.88)'; ctx.lineWidth = 4.8;
+    ctx.beginPath();
+    ctx.moveTo(tx0, ty0);
+    ctx.bezierCurveTo(tx0 + 10, 12, tx1 - 10, 12, tx1, ty1);
+    ctx.stroke();
+    ctx.strokeStyle = '#243244'; ctx.lineWidth = 3.1;
+    ctx.beginPath();
+    ctx.moveTo(tx0, ty0);
+    ctx.bezierCurveTo(tx0 + 10, 12, tx1 - 10, 12, tx1, ty1);
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(148,163,184,0.55)'; ctx.lineWidth = 0.9;
+    ctx.beginPath();
+    ctx.moveTo(tx0, ty0 - 0.8);
+    ctx.bezierCurveTo(tx0 + 10, 11.2, tx1 - 10, 11.2, tx1, ty1 - 0.8);
+    ctx.stroke();
+    ctx.restore();
+
+    // ⑤ 丝印一行：型号 + 接入长度 + R。R 由求解结果给，没接进电路就不写 ——
+    //    写个「R 0.0Ω」等于告诉学生「这根芯没有电阻」。
+    //    只占一行：两行会被移动夹那根软线从中间穿过（y=12 那条弧）。
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 9.5px -apple-system,"PingFang SC",sans-serif';
+    var Rtxt = (rec && rec.R != null) ? ' · R ' + rec.R.toFixed(1) + 'Ω' : '';
+    ctx.fillStyle = PALETTE.text;
+    ctx.fillText(grade + ' 铅笔芯 · 接入 ' + lenMM + 'mm' + Rtxt, 0, 25);
+
+    ctx.restore();
+
+    // ⑦ 接线柱：和导体板同一组参数（neutral = 无极性）
+    posts(ctx, comp, ['neutral', 'neutral'], 1.4, 6);
   }
 
   // ============================================================
@@ -5447,6 +5905,8 @@
       case 'galvanometer': drawGalvanometer(ctx, comp, rec); break;
       case 'rheostat': drawRheostat(ctx, comp, rec); break;
       case 'plate': drawPlate(ctx, comp, rec); break;
+      case 'rheoboard': drawRheoboard(ctx, comp, rec); break;
+      case 'pencil': drawPencil(ctx, comp, rec); break;
       case 'junction': drawJunction(ctx, comp); break;
       default: throw new Error('未知元件类型: ' + comp.type);
     }
@@ -5480,10 +5940,19 @@
     //           侧栏表、警告行、浮层标题一律问它，别各自去读 c.id 或 c.name。
     nameOf: nameOf,
     RHEO: RHEO, RHEO_LABEL: RHEO_LABEL, PLATE: PLATE, SPDT: SPDT,
+    // 电阻示教板：板面几何 + 四根丝（转发内核 PLATE_WIRES）。自检要按
+    // 同一份几何点柱子、量丝的粗细，不能自己再抄一遍行高。
+    RHEOB: RHEOB, rheobWires: rheobWires,
     // 端子字母这一帧真的画出去的字号 / 字形宽度 / 落点（见 rheoLabelDrawn 注释）。
     rheoLabels: function () { return rheoLabelDrawn; },
     sliderLocalX: sliderLocalX, slideFromLocalX: slideFromLocalX,
     slideOf: slideOf,
+    // 铅笔芯：夹子在芯上的局部 x ↔ 接入长度（mm）。拖动改长度时编辑器
+    // 必须走这一份换算 —— 另写一份「x 到毫米」的算式，画到哪儿和电阻
+    // 是多少就会错开（和滑片那条注释同一个坑）。
+    PENCIL: PENCIL,
+    clipLocalX: clipLocalX, clipLenFromLocalX: clipLenFromLocalX,
+    pencilLenOf: pencilLenOf,
     drawComponent: drawComponent, drawWire: drawWire, electronShift: electronShift,
     // 元件图示（元件盒图标 / 拖拽鬼影）。取景框 ICON_VIEW 一并导出：
     // 自检要能问「这颗按钮的框包没包住整件器材」。

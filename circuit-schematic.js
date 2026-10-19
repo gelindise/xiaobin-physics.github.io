@@ -224,6 +224,17 @@
       var hm = (D && D.HALF != null) ? D.HALF : 70;
       return [{ x: -hm, y: 0 }, { x: hm, y: 0 }, { x: hm, y: 0 }];
     }
+    // 电阻示教板：8 个端子折成【左右两个引脚】—— 教材上示教板在电路图里
+    // 就是一个矩形（和定值电阻同一个符号），选的是哪一根写在符号下面。
+    // 🔴 返回的数组必须按【端子号】索引（T[e.tA] 就是这么取的），所以是
+    //    8 项而不是 2 项：2i（第 i 根的左端）→ 左引脚，2i+1 → 右引脚。
+    //    只返回 2 项的话，学生接第③根时 T[4] 是 undefined，布局当场崩。
+    if (type === 'rheoboard') {
+      var hb = (D && D.HALF != null) ? D.HALF : 70;
+      var rbT = [];
+      for (var bi = 0; bi < 4; bi++) rbT.push({ x: -hb, y: 0 }, { x: hb, y: 0 });
+      return rbT;
+    }
     // 灵敏电流计：只有两个柱，而且两柱【都在轴线上】（y 都是 POST_Y）——
     // 所以只要把 y 拉回 0 就是符号的两个引脚，左右对称落在 ±HALF。
     // 不拉回 0 的话整只表在电路图里会往下坠 72px，主回路那一横在它这里断开
@@ -349,6 +360,10 @@
       }
       // 电阻丝 14..38，滑片杆顶在 0（= 轴线）。墨迹框要够高才放得下上面的编号
       case 'rheostat': return { x0: -60, y0: -6, x1: 60, y1: 40 };
+      // 电阻示教板：和定值电阻【同一个矩形】（±56 × ±13），外面留一点线宽。
+      // 这个框管的是走线避让和标注定位，必须和 drawSymbol 里画的那个矩形
+      // 逐个数一致 —— 不一致就会出现「标注压在矩形上」或「导线从矩形角穿过」。
+      case 'rheoboard': return { x0: -60, y0: -16, x1: 60, y1: 16 };
       default: return { x0: -58, y0: -14, x1: 58, y1: 14 };   // 定值电阻：矩形 ±56 加线宽
     }
   }
@@ -535,6 +550,17 @@
 
   // 这个元件在回路里【真用到的两个端子】。用不到两个（没接线/悬空）→ null。
   function usedTerms(it, wires) {
+    // 电阻示教板：8 个端子，只有【同一根丝的两端】都接了线才算一条边。
+    // 落到下面的默认分支（只看 0 / 1 号端子）会把接在②③④上的板当成
+    // 「没接线」，布局时当成孤立件丢在一边 —— 而图上那两根线还在。
+    if (it.type === 'rheoboard') {
+      for (var rk = 0; rk < 4; rk++) {
+        if (termHasWire(wires, it.id, rk * 2) && termHasWire(wires, it.id, rk * 2 + 1)) {
+          return [rk * 2, rk * 2 + 1];
+        }
+      }
+      return null;
+    }
     if (it.type === 'ammeter' || it.type === 'voltmeter') {
       if (!it.meta.posWired || !it.meta.tap) return null;
       return [0, it.meta.tap];
@@ -1244,6 +1270,22 @@
         var Rp = (rec && rec.R != null) ? +rec.R : null;
         return Rp == null ? '' : 'R = ' + num(Rp) + ' Ω';
       }
+      // 电阻示教板：铭牌印【用的是哪一根 + 它的阻值】。四根丝的阻值差着
+      // 两三倍，只印一个「R = 5.1 Ω」在图上根本认不出是哪一根 —— 而
+      // 「换了根丝」正是这个实验唯一要看的那件事。
+      case 'rheoboard': {
+        if (!rec || rec.which == null || !core || !core.PLATE_WIRES) return '未接线';
+        var rw = core.PLATE_WIRES[rec.which];
+        return ['①', '②', '③', '④'][rec.which] + ' ' + num(rw.R) + ' Ω';
+      }
+      // 铅笔芯：铭牌印【接入长度 + 算出来的电阻】。长度是学生动手改的那个量，
+      // 电阻是它的结果 —— 两个数并排印着，夹子一拖，「L 变短、R 变小」这条
+      // 因果关系在图上就自己写出来了。
+      case 'pencil': {
+        var lp = (P.len != null) ? +P.len : 20;
+        var Rp2 = (rec && rec.R != null) ? +rec.R : null;
+        return num(lp) + ' mm' + (Rp2 == null ? '' : ' · ' + num(Rp2) + ' Ω');
+      }
       case 'bulb': {
         var v = (P.ratedV != null ? +P.ratedV : (core ? core.lampParams(c).ratedV : 2.5));
         var w = (P.ratedW != null ? +P.ratedW : (core ? core.lampParams(c).Prated : 0.75));
@@ -1310,6 +1352,12 @@
     if (it.type === 'bell' && it.rec && !it.rec.rings && !it.rec.isolated) return '磁动势不足 · 铃不响';
     // 灵敏电流计只有两根柱子：缺一根就是没接进电路，读数恒 0。
     // 符号上那一头画的是虚线，但学生未必看得出「虚线和实线不一样」。
+    // 电阻示教板：接了不止一根丝（两根丝被接成并联）—— 图上只画得出一个
+    // 电阻，必须说清楚「图上这一个代表几根」，否则学生会拿符号上的阻值
+    // 去和电流表对账，怎么算都对不上。
+    if (it.type === 'rheoboard' && it.rec && it.rec.wiredCount > 1) {
+      return '接了 ' + it.rec.wiredCount + ' 根丝（并联）';
+    }
     if (it.type === 'galvanometer' && it.meta &&
         (!it.meta.posWired || !it.meta.negWired)) return '只接了一根线 · 没有读数';
     return '';
@@ -1747,6 +1795,48 @@
         ctx.stroke();
         break;
       }
+      // 电阻示教板：和定值电阻同一个矩形，里面四条细线表示「这块板上是
+      // 四根丝」。选的是哪一根、阻值多少，写在符号下面（见 valueOf）。
+      // ⚠️ 四条线要淡、要细：画满了会被认成电池组，而教材上「电阻」就是
+      //    一只空盒子 —— 这里的四条线只是「四根丝」的提示，不是主体。
+      case 'rheoboard': {
+        lead(ctx, T[0], -56); lead(ctx, T[1], 56);
+        ctx.beginPath();
+        D.roundRect(ctx, -56, -13, 112, 26, 2);
+        ctx.stroke();
+        ctx.save();
+        ctx.strokeStyle = 'rgba(30,41,59,0.34)';
+        ctx.lineWidth = 1;
+        [-7.5, -2.5, 2.5, 7.5].forEach(function (yy) {
+          ctx.beginPath(); ctx.moveTo(-47, yy); ctx.lineTo(47, yy); ctx.stroke();
+        });
+        ctx.restore();
+        break;
+      }
+      // 铅笔芯：矩形 + 一条斜穿箭头的「可变电阻」符号。
+      // 🔴 不能用变阻器那根【竖直滑片杆】——那是「滑片在电阻丝上分压」的画法，
+      //    铅笔芯改的是【导体本身的长度】，两件事在图上必须长得不一样，
+      //    否则学生看着同一张图会以为它们是一回事。
+      case 'pencil': {
+        lead(ctx, T[0], -56); lead(ctx, T[1], 56);
+        ctx.beginPath();
+        D.roundRect(ctx, -56, -13, 112, 26, 2);
+        ctx.stroke();
+        // 斜箭头：从左下穿到右上，箭头尖在右上（国际电工符号里的可变电阻）
+        var pax0 = -34, pay0 = 13, pax1 = 34, pay1 = -13;
+        ctx.beginPath();
+        ctx.moveTo(pax0, pay0); ctx.lineTo(pax1, pay1);
+        ctx.stroke();
+        ctx.save();
+        ctx.fillStyle = COLOR.wire;
+        ctx.translate(pax1, pay1);
+        ctx.rotate(Math.atan2(pay1 - pay0, pax1 - pax0));
+        ctx.beginPath();
+        ctx.moveTo(0, 0); ctx.lineTo(-10, -4.4); ctx.lineTo(-10, 4.4);
+        ctx.closePath(); ctx.fill();
+        ctx.restore();
+        break;
+      }
       case 'battery': {
         var half = batteryHalf(it.comp);
         lead(ctx, T[0], half); lead(ctx, T[1], -half);
@@ -2048,6 +2138,8 @@
       to: '一个空心矩形（和电阻同一个符号），旁边印 R = ρ·L/S 算出来的阻值 —— 材料、长度、横截面积拧哪一个，这个数都跟着变' },
     { type: 'rheostat', name: '滑动变阻器',       from: '绕线瓷管加一个滑片',
       to: '矩形加一根朝下的箭头：箭头的位置就是滑片的位置。用到的两个接头画实线，空着的画虚线' },
+    { type: 'pencil',   name: '铅笔芯',           from: '一根自动铅笔芯，两端各一只鳄鱼夹：一只固定、一只沿芯移动',
+      to: '矩形加一条【斜穿】的箭头（可变电阻的符号）。箭头和变阻器那根竖杆不一样：这里改的是导体本身的长度，不是滑片的分压比' },
     { type: 'bulb',     name: '小灯泡',           from: '带灯座的玻璃泡',
       to: '一个圆，里面打一个叉' },
     { type: 'ammeter',  name: '电流表',           from: '三个接线柱的指针表',
@@ -2056,6 +2148,8 @@
       to: '一个圆里写 V，并接在被测元件的两端' },
     { type: 'galvanometer', name: '灵敏电流计',   from: '两个接线柱的指针表：刻度零点在正中，指针能往两边偏',
       to: '一个圆里写 G，串在电路里。中心零：电流从「+」柱流进就往右偏、从「−」柱流进就往左偏 —— 所以符号没有正负标记，看指针偏哪边就知道电流往哪边走' },
+    { type: 'rheoboard', name: '电阻示教板',     from: '一块板上平铺四根电阻丝，每根两端各一个接线柱',
+      to: '和定值电阻同一个矩形，里面四条细线表示四根丝。换一根丝 = 把两根线挪到另一对柱子上；符号下面的「① 14.1 Ω」写的就是当下用的那一根' },
     { type: 'led',      name: '发光二极管',       from: '示教板上的彩色小管：一端半球透镜、一端带平边',
       to: '实心三角加一条横线：三角尖端指向横线，电流只许这么流（单向导电性）。右上两个小箭头表示发光' },
     { type: 'motor',    name: '电动机',           from: '示教板上的直流电动机：机身架在两个支撑上，轴端带螺旋桨',

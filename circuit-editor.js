@@ -47,6 +47,13 @@
     power: 'U',
     // 导体板（探究电阻的影响因素）：一块金属条，两个接线柱。
     plate: 'P',
+    // 铅笔芯：取 PC（pencil core）。不能也用 P —— 导体板已经占了，两块板
+    // 编号撞在一起时学生光看编号分不出谁是谁（和变阻器避开 R、单刀双掷
+    // 避开 S 是同一条理由）。
+    pencil: 'PC',
+    // 电阻示教板（四根电阻丝）：取 RB（rheoboard）。和变阻器的 RH 分开 ——
+    // 两块板长得像、名字也像，编号再撞就分不清谁是谁了。
+    rheoboard: 'RB',
     // 单刀双掷开关：取 SP 而不是 S。虽然「编号不重复」那条 while 循环本身
     // 就能挡住撞号（byId 查得到就往后跳），但和普通开关共用 S 的话，
     // 一块板上会数出 S1 / S2 两只【长得完全不一样】的开关，面板和读数表里
@@ -87,6 +94,14 @@
     // ⚠️ 不能超过 100：接线柱在 ±70，hw 再大柱子就被圈进盒子里，
     //    「导线夹在柱子上」会被误判成「导线穿过元件」（见 bodyBox 的注释）。
     plate:     [90, 34],
+    // 电阻示教板：板面 ±84、上下 ±66；命中框的【半宽取 76】= 柱子所在的
+    // 那一列，再宽一点八根柱子就被圈进盒子里（见 CircuitDraw.bodyBox 的
+    // 注释：柱子被圈进去，导线夹在柱上会被判成「穿过元件」）。
+    // 高给 66：整块板从 −66 到 +66，上下对称的命中框正好罩住。
+    rheoboard: [76, 66],
+    // 铅笔芯：同一块示教板（±70），芯顶 −22.6、板底 30。命中框给 34 和
+    // CircuitDraw.bodyBox('pencil') 的 hh=30 基本一致，略放一点好点。
+    pencil:    [70, 34],
     // 两只表的仪器本体全部落在导线【上方】（三个接线柱在底部探出来），
     // 所以高只有表壳+底座这一截，不是上下对称的。
     ammeter:   [100, 70],
@@ -141,6 +156,9 @@
     var hover = null;         // {kind:'term', compId, termIdx} | {kind:'comp'|'wire', ...}
     var moving = null;        // 拖元件 {id, dx, dy}
     var slider = null;        // 拨变阻器滑片 {id, moved}
+    // 拖铅笔芯的移动夹 {id, dx, moved}。dx = 按下那一刻「夹口 x − 鼠标局部 x」，
+    // 每一帧都用它把夹口摆回鼠标下面 —— 抓住夹子的哪一头都不会跳。
+    var clipDrag = null;
     var psuKnob = null;       // 拧学生电源的电压旋钮 {id, moved}
     // 拖旋转钮 {id, a0, r0, moved}：a0 = 按下那一刻鼠标相对元件中心的角度，
     // r0 = 按下那一刻的角度。每一帧都从 r0 + 角度差重算，而不是在上一帧的结果上
@@ -282,6 +300,30 @@
       var sx = D.sliderLocalX(D.slideOf(c));
       return { x: sx - D.RHEO.knobHalf, y: D.RHEO.knobTop,
                w: D.RHEO.knobHalf * 2, h: D.RHEO.knobBottom - D.RHEO.knobTop };
+    }
+
+    // 铅笔芯的移动夹能不能一把抓住。几何全部从 D.PENCIL / D.clipLocalX 取，
+    // 和绘制同源。命中框比夹子本体放大一点（+7）：夹子只有 31×22，投影到
+    // 大屏上还要再缩，不给余量根本瞄不准。
+    // 🔴 命中区是「夹口 → 夹尾」这一整段（不是夹口一个点）：学生想抓的是
+    //    那只看得见的夹子，而夹口那一端被芯挡着、最不好点。
+    var CLIP_SLACK = 7;
+    function clipHitRect(c) {
+      var cx = D.clipLocalX(D.pencilLenOf(c));
+      // 夹身从夹口（cx）往右伸到 35（含绝缘套），上下 ±10
+      return { x0: cx - 4 - CLIP_SLACK, x1: cx + 35 + CLIP_SLACK,
+               y0: D.PENCIL.Y - 10 - CLIP_SLACK, y1: D.PENCIL.Y + 10 + CLIP_SLACK };
+    }
+    function hitClip(p) {
+      var cs = getScene().comps;
+      for (var i = cs.length - 1; i >= 0; i--) {
+        var c = cs[i];
+        if (c.type !== 'pencil') continue;
+        var l = D.toLocal(c, p.x, p.y);
+        var r = clipHitRect(c);
+        if (l.x >= r.x0 && l.x <= r.x1 && l.y >= r.y0 && l.y <= r.y1) return c;
+      }
+      return null;
     }
     // 夹到 0~1，并对齐参数面板 range 的 step=0.01：不对齐的话面板滑块会
     // 和画布上的滑片显示不一致（面板显示 0.42，画布其实在 0.4237）。
@@ -1148,6 +1190,21 @@
         return;
       }
 
+      // 拖铅笔芯的移动夹：同样要排在「搬走整块板」前面 —— 夹子长在板子上，
+      // 先判本体的话这一下永远被当成拖元件，夹子就白画了。
+      var pc = hitClip(p);
+      if (pc) {
+        beginEdit();
+        select({ kind: 'comp', id: pc.id });
+        // 记下「夹口 − 鼠标」的偏移：抓夹口还是抓夹尾，拖起来都不跳
+        var pl0 = D.toLocal(pc, p.x, p.y).x;
+        clipDrag = { id: pc.id,
+                     dx: D.clipLocalX(D.pencilLenOf(pc)) - pl0, moved: false };
+        canvas.setPointerCapture && canvas.setPointerCapture(ev.pointerId);
+        changed();
+        return;
+      }
+
       var cs = getScene().comps;
       for (var i = cs.length - 1; i >= 0; i--) {   // 后画的在上层，从后往前找
         if (hitComp(p, cs[i])) {
@@ -1238,6 +1295,24 @@
         }
         slider = null;
       }
+      if (clipDrag) {
+        var cc = byId(clipDrag.id);
+        if (cc) {
+          var lxc = D.toLocal(cc, p.x, p.y).x + clipDrag.dx;
+          // 换算成毫米后取整：参数面板是 step=1 的滑条，画布上却给连续值，
+          // 不取整的话面板显示 27、画布其实停在 27.4（和滑片那条规矩一样）。
+          var nvl = Math.round(D.clipLenFromLocalX(lxc));
+          nvl = Math.max(D.PENCIL.LEN_MIN, Math.min(D.PENCIL.LEN_MAX, nvl));
+          if (nvl !== D.pencilLenOf(cc)) {
+            if (!clipDrag.moved) { clipDrag.moved = true; commitEdit(); }
+            cc.params = cc.params || {};
+            cc.params.len = nvl;
+          }
+          onChange();
+          return;
+        }
+        clipDrag = null;
+      }
       if (psuKnob) {
         var pc = byId(psuKnob.id);
         if (pc && D.PSU) {
@@ -1303,6 +1378,10 @@
           var ns = hitSlider(p);
           if (ns) nh = { kind: 'slider', id: ns.id };
           else {
+            // 铅笔芯的移动夹：和滑片一样是「长在本体上的控件」，排在 hitComp 前
+            var ncp = hitClip(p);
+            if (ncp) nh = { kind: 'clip', id: ncp.id };
+            else {
             var cs = getScene().comps;
             for (var i = cs.length - 1; i >= 0; i--) {
               if (hitComp(p, cs[i])) { nh = { kind: 'comp', id: cs[i].id }; break; }
@@ -1310,6 +1389,7 @@
             // 导线也进 hover：它现在能拖了，不给一个 move 光标的话，学生根本
             // 不知道这线是可拖的 —— 它长得和别的线一模一样。
             if (!nh) { var nw = hitWire(p); if (nw >= 0) nh = { kind: 'wire', index: nw }; }
+            }
           }
         }
       }
@@ -1322,6 +1402,7 @@
         : hitRotButton(p) ? (rotating ? 'grabbing' : 'grab')
         : (nt || nl) ? 'crosshair'
         : (nh && nh.kind === 'slider') ? 'ew-resize'
+        : (nh && nh.kind === 'clip') ? 'ew-resize'
         : (nh && nh.kind === 'psuKnob') ? 'grab'
         : (nh ? 'move' : 'default');
       if (changedHover) onChange();
@@ -1523,6 +1604,13 @@
         // 拨动了就已经入过栈；只按一下没动，就是普通点选，不留撤销记录
         if (!slider.moved) discardEdit();
         slider = null;
+        changed();
+        return;
+      }
+      if (clipDrag) {
+        // 同上：拖动了才留撤销记录，单纯点一下 = 选中这件器材
+        if (!clipDrag.moved) discardEdit();
+        clipDrag = null;
         changed();
         return;
       }
@@ -1732,6 +1820,26 @@
           ctx.rotate((kc.rot || 0) * Math.PI / 180);
           ctx.fillStyle = 'rgba(37,99,235,0.16)';
           D.roundRect(ctx, kb.x - 3, kb.y - 3, kb.w + 6, kb.h + 6, 8);
+          ctx.fill();
+          ctx.strokeStyle = 'rgba(37,99,235,0.9)'; ctx.lineWidth = 2;
+          ctx.stroke();
+          ctx.restore();
+        }
+      }
+
+      // 悬停 / 正在拖【铅笔芯的移动夹】：给它描一圈。夹子和铅笔芯都是深灰，
+      // 不描一圈学生根本不知道这只夹子能左右拖 —— 而「拖动它」正是这个实验
+      // 唯一要学生动手的那一步。
+      var hcl = clipDrag || (hover && hover.kind === 'clip' ? hover : null);
+      if (hcl) {
+        var hcc = byId(hcl.id);
+        if (hcc && hcc.type === 'pencil') {
+          var cr = clipHitRect(hcc);
+          ctx.save();
+          ctx.translate(hcc.x, hcc.y);
+          ctx.rotate((hcc.rot || 0) * Math.PI / 180);
+          ctx.fillStyle = 'rgba(37,99,235,0.16)';
+          D.roundRect(ctx, cr.x0, cr.y0, cr.x1 - cr.x0, cr.y1 - cr.y0, 8);
           ctx.fill();
           ctx.strokeStyle = 'rgba(37,99,235,0.9)'; ctx.lineWidth = 2;
           ctx.stroke();

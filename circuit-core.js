@@ -62,6 +62,48 @@
       label: '导体板', terminals: 2, termNames: ['a', 'b'],
       defaults: { material: 'nichrome', length: 1, section: 0.5 },
     },
+    // ── 电阻示教板（探究影响导体电阻大小的因素）────────────────────
+    // 用户 2026-10-19：「导体板…上面有几条电阻丝…把那个整体放到器材盒里，
+    // 而不是放一根导体板」—— 原来那块 plate 只有一根金属条、靠三个滑条调
+    // 材料 / 长度 / 截面，做对照实验要反复拧滑条，太麻烦。教材上这块板是
+    // 【四根现成的丝】：换一根只要把两根导线挪到另一对柱子上，「只变一个
+    // 因素」就变成一次接线动作，而不是三次拖滑条。
+    //
+    // 四根丝的规格是【两两对照】设计的（每次只变一个因素）：
+    //   ① 镍铬 φ0.30 1.0m → 14.1Ω   ← 基准
+    //   ② 镍铬 φ0.30 0.5m →  7.1Ω   ← 与①比【长度】（长度减半、阻值减半）
+    //   ③ 镍铬 φ0.50 1.0m →  5.1Ω   ← 与①比【横截面积】（加粗、阻值变小）
+    //   ④ 锰铜 φ0.30 1.0m →  6.2Ω   ← 与①比【材料】（锰铜 ρ 小、阻值小）
+    // 阻值一律由 ρ·L/S 现算（见 PLATE_WIRES），不在这里写死。
+    //
+    // 🔴 端子 2i / 2i+1 是第 i 根丝的两端（i = 0..3）—— 这个编号是
+    //    describeComponent / 回填 / 绘制 / 接线柱四处共用的唯一约定，
+    //    改一处就得四处一起改。
+    // 🔴 单独一个类型、不去改造 plate：3D 沙盒的器材盒里还有 plate
+    //    （circuit-3d-kit 的 builder 只认两端子），改了它 3D 页当场崩。
+    rheoboard: {
+      label: '电阻示教板', terminals: 8,
+      termNames: ['1a', '1b', '2a', '2b', '3a', '3b', '4a', '4b'],
+      // showSpec = 板面上印不印每根丝的规格（材料 / 直径 / 长度）。
+      // 关掉只留序号 —— 做「盲测」用：让学生自己按电流大小判断哪根阻值大。
+      defaults: { showSpec: true },
+    },
+    // ── 铅笔芯（课本「用铅笔芯控制小灯泡的亮度」）──────────────
+    // 一根自动铅笔芯架在板上：左端一个夹子固定，另一个夹子沿芯移动。
+    // 接进电路的是【两个夹子之间】那一段，R = ρ·L/S —— L 就是夹子间距。
+    // 所以它和滑动变阻器不是一回事：变阻器改的是滑片在整根电阻丝上的
+    // 分压比，铅笔芯改的是【导体本身的长度】，正是课本那句
+    // 「导体的电阻跟它的长度有关」的实物入口。
+    //   端子 0 = 左端固定夹；端子 1 = 右端接线柱（经软线连到移动夹）。
+    // 参数：
+    //   len   接入长度（mm，10~60）。全长 60mm = 标准自动铅笔芯长度；
+    //         夹子往左推 ⇒ 接入变短 ⇒ R 变小 ⇒ 灯变亮。
+    //   grade 型号（HB / 2B / 6B）。型号 = 石墨与黏土的比例，越软石墨越多、
+    //         电阻率越小 —— 这是「电阻还跟材料有关」的入口。
+    pencil: {
+      label: '铅笔芯', terminals: 2, termNames: ['a', 'b'],
+      defaults: { len: 20, grade: 'HB' },
+    },
     bulb: {
       label: '小灯泡', terminals: 2, termNames: ['a', 'b'],
       // tempDependent：灯丝电阻随温度升高而增大（钨丝的正温度系数）。
@@ -324,6 +366,28 @@
   //   即「两节电池正常发光、再加一节就烧了」—— 正是学生真做过的那件事。
   var BULB_BURN_K = 1.5;
 
+  // ── 「理想电压表」在求解器里的等效内阻 ──────────────────────
+  // 初中课本把电压表当成「内阻无穷大、完全不分流」，但它【不是真的】：
+  // 两只理想电压表串联接在电源两端时，中间那个节点就没有任何支路连过去，
+  // 求解器只能给悬空节点一个幽灵 0V ⇒ 一只表读满电源电压、另一只读 0
+  // （用户 2026-10-19 报的就是这个）。真表有内阻，串联时按内阻分压 ——
+  // 两只同规格的表各分一半，这正是课本上那道题要的答案。
+  //
+  // 所以理想表在【求解时】也走一条 R 支路，只是内阻取得极大：1GΩ 下
+  // 3V 电源的漏电流只有 3nA，「电压表几乎不分流」这句话照样成立。
+  // ⚠️ 对外（rec.i / rec.R / 弱电流可视化）仍按【理想表】报 —— 见
+  //    fillVoltmeter 末尾那三行。学生看到的是「表里没有电流」，
+  //    求解器内部才用这条 1GΩ 支路把节点电位算对。
+  //
+  // 为什么是 1e9 而不是 1e7（10MΩ，数字万用表的量级）：
+  //   伏安法测电阻那条断言要求 U/I 精确等于 10Ω（容差 1e-6）。10MΩ 并在
+  //   10Ω 上，等效电阻 9.99999Ω ⇒ U/I 偏 1e-5，直接踩线；1GΩ 偏 1e-7，
+  //   留出一个数量级的余量。实测 1e8 时 1e-6 刚好卡在边上，不能用。
+  //   再往上（1e10）矩阵条件数开始变差，收益已经没有了。
+  // 不要改成 3kΩ：那是「模拟微弱电流」那一挡，3kΩ 会让电压表真的偷走
+  // 1mA，和「理想」两个字自相矛盾。
+  var IDEAL_VM_R = 1e9;
+
   // ── 灯座短路时的等效电阻 ───────────────────────────────────
   // 不是 0：0Ω 在这个内核里会被当成【理想短路线】（addR 里 `!(R > EPS)` 那
   // 一支），电源被理想短路线短接时矩阵直接奇异，界面报「接线矛盾，无法求解」。
@@ -386,6 +450,62 @@
     if (!(L > 0)) L = 1;
     if (!(S > 0)) S = 0.5;      // 0 截面 = 没有导体，退回默认而不是除零
     return plateMaterial(P).rho * L / S;
+  }
+
+  // ── 电阻示教板的四根丝 ────────────────────────────────────────
+  // 规格照实验室里那块 J2359（电阻定律示教板）印的数：
+  //   直径 0.3 / 0.5mm 的镍铬丝、0.3mm 的锰铜丝，长度 1.0 / 0.5m。
+  // 阻值由 R = ρ·L/S 现算（S = π·(d/2)²，单位 mm²），不写死 ——
+  // 写死的话，改了 PLATE_MATERIALS 的 ρ 之后板上的数就和公式对不上了。
+  //
+  // 🔴 四根丝的【顺序】就是端子编号顺序（2i / 2i+1），也是画面上从上到下
+  //    的顺序、板面序号 ①②③④ 的顺序。三处必须是同一个顺序，否则学生照着
+  //    「①」去接线，接到的却是另一根丝。
+  var PLATE_WIRES = [
+    { mat: 'nichrome', d: 0.30, L: 1.0 },     // ① 基准：14.1Ω
+    { mat: 'nichrome', d: 0.30, L: 0.5 },     // ② 比长度：7.1Ω
+    { mat: 'nichrome', d: 0.50, L: 1.0 },     // ③ 比粗细：5.1Ω
+    { mat: 'manganin', d: 0.30, L: 1.0 },     // ④ 比材料：6.2Ω
+  ];
+  PLATE_WIRES.forEach(function (w) {
+    w.S = Math.PI * (w.d / 2) * (w.d / 2);    // mm²
+    w.R = plateMaterial({ material: w.mat }).rho * w.L / w.S;
+    w.matLabel = plateMaterial({ material: w.mat }).label;
+  });
+
+  // ── 铅笔芯（课本「用铅笔芯控制小灯泡的亮度」）──────────────────
+  // 尺寸照实验室里真发得出来的自动铅笔芯：0.5mm 直径、60mm 长。
+  // 电阻率单位仍是 Ω·mm²/m（和导体板同一套，见 PLATE_MATERIALS）：
+  // 石墨芯的 ρ 在 2e-5 ~ 7e-5 Ω·m 量级，换成 Ω·mm²/m 就是 20~70。
+  //
+  // 型号 = 石墨 / 黏土的比例：HB 黏土多、硬而阻值大；6B 石墨多、软而阻值小。
+  // 🔴 这三个数不是拍出来的：0.5mm、60mm 的 HB 芯实测在 10~20Ω，正好和
+  //    2.5V/0.75W 的小灯泡（热态 8.3Ω）同一个量级 —— 串联时「夹子一动、
+  //    灯就明显变暗」才看得见。取小了（比如 5Ω 全长）铅笔芯就成了导线，
+  //    灯一直亮着不动；取大了（比如 100Ω 全长）灯从头到尾都是灭的。
+  var PENCIL = {
+    LEN_MM: 60, DIA_MM: 0.5,
+    LEN_MIN: 10, LEN_MAX: 60,
+    // 横截面积（mm²）：π·(d/2)² = 0.196
+    section: Math.PI * 0.25 * 0.25,
+  };
+  var PENCIL_GRADES = {
+    HB: { label: 'HB', rho: 55 },
+    '2B': { label: '2B', rho: 38 },
+    '6B': { label: '6B', rho: 22 },
+  };
+  function pencilGrade(P) {
+    return PENCIL_GRADES[P && P.grade] || PENCIL_GRADES.HB;
+  }
+  // 接入长度（mm）。夹子拖出界、存档手改成 "abc" 都退回默认值，不抛错。
+  function pencilLen(comp) {
+    var P = paramsOf(comp);
+    var L = num(P.len, 20);
+    return Math.max(PENCIL.LEN_MIN, Math.min(PENCIL.LEN_MAX, L));
+  }
+  // 接入那一段的电阻：R = ρ·L/S（L 从 mm 换成 m）。
+  function pencilR(comp) {
+    return pencilGrade(paramsOf(comp)).rho * (pencilLen(comp) / 1000) / PENCIL.section;
   }
 
   // ── 电铃的吸合磁动势下限（安匝 = 电流 × 匝数）──────────────
@@ -604,6 +724,28 @@
         addR(N(0), N(1), plateR(comp));
         break;
 
+      // 电阻示教板：四根丝各一条支路（端子 2i / 2i+1）。
+      // 🔴 四根【都】要 push，哪怕学生只接了一根 —— 没接通的那几根落在
+      //    无源岛里，求解器会把整个岛归零（见 solveIsland 的接地注释），
+      //    不会让矩阵奇异；而少 push 一根，回填时按 plateIdx 找支路就会落空。
+      // 支路里带 plateIdx：解出来的 bs 顺序未必等于 push 顺序（被短接的那根
+      // 会被 addR 丢掉），只有这个标记能把电流准确归位到某一根丝。
+      case 'rheoboard': {
+        for (var ri = 0; ri < PLATE_WIRES.length; ri++) {
+          var rp = N(ri * 2), rq = N(ri * 2 + 1);
+          if (rp === rq) continue;              // 两端被同一根导线短接：这根不起作用
+          out.push({ kind: 'R', comp: comp, p: rp, q: rq,
+                     R: PLATE_WIRES[ri].R, plateIdx: ri });
+        }
+        break;
+      }
+
+      // 铅笔芯：接入的那一段就是一段电阻，R = ρ·L/S（见 pencilR）。
+      // 电路上和定值电阻完全同构 —— 变的只是参数（夹子位置），不是拓扑。
+      case 'pencil':
+        addR(N(0), N(1), pencilR(comp));
+        break;
+
       case 'bulb':
         // 灯座短路（演示故障之一）：灯座上并了一根铜丝，灯泡两端被直接短接。
         // 电流全从短接的那根线走，灯丝里一点电流都没有 ⇒ 灯不亮；而外电路
@@ -638,10 +780,16 @@
       // tap 为 null（没接量程柱）时表根本不在电路里，不产生任何支路——
       // 这样量程柱空着的表既不导通也不偷电流，和它没被接上是一致的。
       case 'voltmeter':
-        if (tap != null && P.rInternal != null && isFinite(P.rInternal)) {
-          addR(N(tap), N(NC()), P.rInternal);
+        // 理想电压表（rInternal = null）【也给一条支路】，内阻取 IDEAL_VM_R
+        // （10MΩ）—— 见那个常量的注释：不给的话，两只理想电压表串联时中间
+        // 节点是悬空的，一只表读满电源电压、另一只读 0（用户 2026-10-19 报的）。
+        // 「不分流」这句话仍然成立：10MΩ 的漏电流只有 0.3μA，而且对外
+        // rec.i 一律按 0 报（fillVoltmeter 末尾），学生看到的仍是理想表。
+        if (tap != null) {
+          var rv = (P.rInternal != null && isFinite(P.rInternal)) ? P.rInternal : IDEAL_VM_R;
+          if (rv > EPS) addR(N(tap), N(NC()), rv);
         }
-        break;                                             // 理想电压表：不产生支路
+        break;
 
       case 'ammeter':
         if (tap != null) {
@@ -1442,10 +1590,50 @@
       }
 
       switch (c.type) {
+        // 电阻示教板：四根丝各一条支路，逐根回填。
+        // 学生一次只接一根（教材用法），但也可能接两根 —— 那时两根各有电流，
+        // rec.R 取【电流最大的那根】做「当前阻值」，rec.branches 全给出来，
+        // 读数框和参数面板据此说清楚「现在用的是哪一根、还接了哪几根」。
+        case 'rheoboard': {
+          var psegs = [];
+          for (var pi = 0; pi < PLATE_WIRES.length; pi++) {
+            // 按 plateIdx 找支路，不能按 bs 的下标 —— 被短接的那根不在 bs 里，
+            // 下标会整体错位（那样「①」会读到「②」的电流，还不报错）。
+            var pb = null;
+            for (var bj = 0; bj < bs.length; bj++) {
+              if (bs[bj].plateIdx === pi) { pb = bs[bj]; break; }
+            }
+            var pw = PLATE_WIRES[pi];
+            var pv = pb ? (nV(sol, pb.p) - nV(sol, pb.q)) : 0;
+            psegs.push({
+              idx: pi, R: pw.R, v: pv, i: pb ? (pv / pb.R) : 0,
+              // 这根丝的两端是不是都接了外部导线 —— 「接通」的唯一判据。
+              // 只看电流不行：合开关之前电流也是 0，那时学生已经接好线了。
+              wired: wired.has(c.id + ':' + (pi * 2)) &&
+                     wired.has(c.id + ':' + (pi * 2 + 1)),
+            });
+          }
+          rec.branches = psegs;
+          var pick = null;
+          psegs.forEach(function (s) {
+            if (!s.wired || Math.abs(s.i) <= 1e-12) return;
+            if (!pick || Math.abs(s.i) > Math.abs(pick.i)) pick = s;
+          });
+          if (!pick) pick = psegs.filter(function (s) { return s.wired; })[0] || null;
+          rec.which = pick ? pick.idx : null;
+          rec.R = pick ? pick.R : null;
+          // 对外一律用幅值：这块板没有极性，学生不该看到「−0.21A」。
+          rec.i = pick ? Math.abs(pick.i) : 0;
+          rec.v = pick ? Math.abs(pick.v) : 0;
+          rec.p = rec.v * rec.i;
+          rec.wiredCount = psegs.filter(function (s) { return s.wired; }).length;
+          break;
+        }
+
         // 导体板和定值电阻在回填上完全同构：一条 R 支路，R = ρ·L/S
         // （见 describeComponent 的 plate 分支）。加进来而不是另写一个 case：
         // 两份回填逻辑迟早对不上，而读数表里那一列 R 直接读 rec.R。
-        case 'resistor': case 'plate': case 'bulb': case 'voltmeter': {
+        case 'resistor': case 'plate': case 'pencil': case 'bulb': case 'voltmeter': {
           if (bs.length === 0) {
             // 理想电压表（无支路）：读数是两端节点电压差，电流为 0。
             // 注意不能在这里 break 成 v=0 —— 否则理想电压表永远读 0。
@@ -1820,8 +2008,24 @@
     out.shortCircuit = shortCircuitInfo(components, usedBranches, topo.termNode);
 
     // ---- 状态判定 ----
+    // 🔴 「通不通」还要再挡一层：理想电压表在求解器里走的是一条 10MΩ 支路
+    //    （见 IDEAL_VM_R，为了把串联分压算对），它的漏电流只有 0.3μA，
+    //    但足以让 anyCurrent 变 true。而课本管「电源上只接了一只电压表」
+    //    叫【断路】—— 灯一个都不亮、电流表读 0。所以再问一句「这个有源岛里
+    //    有没有【真正的负载】」：只有电源和理想电压表的岛不算导通。
+    //    有负载（电阻 / 灯 / 电动机 / 真实电压表…）就照旧按 anyCurrent 判。
+    var hasRealLoad = islands.some(function (is) {
+      if (!is.hasSource) return false;
+      return is.branches.some(function (b) {
+        if (isSourceType(b.comp.type)) return false;
+        // 理想电压表（rInternal 为 null）不算负载；勾了「模拟微弱电流」的
+        // （rInternal = 3kΩ）算 —— 那一挡就是让学生看见它真的偷电流。
+        if (b.comp.type === 'voltmeter' && !(paramsOf(b.comp).rInternal > 0)) return false;
+        return true;
+      });
+    });
     if (shorted) out.status = 'shorted';
-    else if (anyCurrent) out.status = 'ok';
+    else if (anyCurrent && hasRealLoad) out.status = 'ok';
     else if (!components.some(function (c) { return isSourceType(c.type); })) out.status = 'no-source';
     else out.status = 'open-circuit';
 
@@ -1937,6 +2141,15 @@
     if (!rec.wired) { rec.v = 0; rec.i = 0; rec.p = 0; }
     rec.reading = rec.v;
     rec.ideal = !(P.rInternal > 0);
+    // 🔴 理想电压表：求解时它走的是一条 10MΩ 支路（见 IDEAL_VM_R），但
+    //    【对外】仍按「不分流」报 —— i = 0、R = null。这一条不能省：
+    //      · 侧栏 I 列会印出一个 0.0000003 的电流，学生以为表在偷电；
+    //      · R 列会印 10000000Ω，看着像一只坏表；
+    //      · 导线上的电流粒子会在这两根线上冒出来（terminalInjection 读 rec.i）；
+    //      · anyCurrent 会被这条 μA 级漏电流点亮 ⇒ 电路被判成「导通」，
+    //        而实际上只有一只电压表接着，课本管这个叫断路。
+    //    内部那条支路只负责把【节点电位】算对（串联分压），不负责对外报数。
+    if (rec.ideal) { rec.i = 0; rec.p = 0; rec.R = null; }
     rec.overRange = rec.rangeWired && Math.abs(rec.reading) > rec.range + 1e-12;
     rec.reversed = rec.v < -1e-9;
     if (rec.overRange) warnings.push({ code: 'METER_OVER_RANGE', message: '电压表超量程', componentIds: [c.id] });
@@ -2009,6 +2222,17 @@
       });
       if (!wiredEnds.length) return 0;
       return total / wiredEnds.length;
+    }
+    if (comp.type === 'rheoboard') {
+      // 八个端子 = 四根丝的两端，每根丝【各流各的电流】—— 不像两端元件那样
+      // 全元件共用 rec.i。落到下面 `(termIdx === 0) ? out : -out` 的兜底上，
+      // 8 个端子会被当成同一根支路的两端：① 的电流会画到 ④ 的导线上，
+      // 而 ②③④ 的导线一根粒子都没有（用户会报「换了根丝，电流动画没变」）。
+      var rIdx = Math.floor(termIdx / 2);
+      var rSeg = rec.branches && rec.branches[rIdx];
+      if (!rSeg) return 0;
+      // 端子 2i 是电流【流进】元件那一头 ⇒ 注入节点为负；2i+1 反过来。
+      return (termIdx % 2 === 0) ? -rSeg.i : rSeg.i;
     }
     // 三柱表头（电流表/电压表）：电流只从【实际接了线的那个量程柱】流进，
     // 从「−」柱流出，另一个量程柱悬空——它在电路外面，注入恒 0。
@@ -2540,6 +2764,18 @@
     PLATE_MATERIALS: PLATE_MATERIALS,
     plateMaterial: plateMaterial,
     plateR: plateR,
-    version: '1.4.0',
+    // 电阻示教板的四根丝：材料 / 直径 / 长度 / 现算出来的阻值。
+    // 绘制层按这个顺序画（也就是端子 2i/2i+1 的顺序），面板按它列规格 ——
+    // 各抄一份的话，学生照着板上的「①」去接线会接到另一根丝。
+    PLATE_WIRES: PLATE_WIRES,
+    // 铅笔芯：规格（0.5mm / 60mm）、型号电阻率表、R = ρ·L/S。
+    // 绘制层要用 LEN_MM 把「夹子局部 x」换算成「接入多少毫米」，
+    // 面板要用型号表列选项 —— 两处都问这里，别各自抄一份。
+    PENCIL: PENCIL,
+    PENCIL_GRADES: PENCIL_GRADES,
+    pencilGrade: pencilGrade,
+    pencilLen: pencilLen,
+    pencilR: pencilR,
+    version: '1.5.0',
   };
 });
