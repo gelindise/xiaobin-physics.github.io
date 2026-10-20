@@ -270,6 +270,9 @@
       .lab3d-stage .stage-hint { font-size: 10px; padding: 6px 9px; max-width: 64%; }
       .lab3d-stage .stage-help { display: none; }
       .lab3d-stage .stage-btn { padding: 7px 10px; font-size: 11px; gap: 5px; }
+      /* 底栏有 4 个按钮了（出题 / 调零 / 提交 / 全屏），窄屏要允许换行，
+         否则最后一颗会顶出舞台右边被裁掉 */
+      .lab3d-stage .bar-left { gap: 5px; flex-wrap: wrap; justify-content: flex-end; }
       .lab3d-stage .stage-flag { bottom: 54px; font-size: 11px; padding: 6px 11px; }
       .gauge-num .num { font-size: 23px; }
     }
@@ -282,6 +285,30 @@
   max-height: calc(100vh - 104px);
   overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin;
 }
+
+    /* ===== 全屏 =====
+       全屏的是【整个实验区】(h1 + 舞台 + 侧栏 + 下半区)，不是单块 canvas ——
+       只全屏画布的话「读数提交」「砝码按钮」「操作步骤」全被切掉，边看边调就不成立了。 */
+    .lab3d:fullscreen, .lab3d:-webkit-full-screen {
+      display: block; height: 100vh; padding: 10px 12px 14px;
+      background: radial-gradient(circle at 30% 0%, #0d2035 0%, #020617 62%);
+      overflow: auto; overscroll-behavior: contain;
+    }
+    .lab3d:fullscreen h1 { font-size: 15px; margin-bottom: 8px; }
+    .lab3d:fullscreen .lab3d-sub,
+    .lab3d:fullscreen .info-cards { display: none; }
+    .lab3d:fullscreen .lab3d-layout { gap: 12px; }
+    /* 舞台吃掉「屏幕高 − 标题 − 第二行」，两边都不留空白，也不用滚动。
+       减 300 而不是 208：下面那一行（视角 / 读数提交 / 分析）在 1080p 下正好露全，
+       少了这一截，「提交读数」会被压到屏幕外面去。 */
+    .lab3d:fullscreen .lab3d-stage { height: calc(100vh - 300px); min-height: 320px; }
+    .lab3d:fullscreen .lab3d-sidebar { top: 0; max-height: calc(100vh - 34px); }
+    .lab3d:fullscreen .lab3d-lower { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+    @media (max-width: 900px) {
+      /* 窄屏全屏：舞台占大半屏，侧栏折到下面滚动 */
+      .lab3d:fullscreen .lab3d-stage { height: 54vh; }
+      .lab3d:fullscreen .lab3d-sidebar { position: static; max-height: none; }
+    }
     /* ===== 实拍视频区（站点形态：上半屏虚拟实验 + 底部实拍视频，两者缺一不可） ===== */
     .video-section { max-width: 1200px; margin: 24px auto 40px; padding: 0 16px; }
     .video-section .section-title { font-size: 20px; font-weight: bold; color: #f8fafc; margin-bottom: 16px; }
@@ -321,8 +348,9 @@
             <button type="button" class="stage-btn go" id="bal-new">🎲 随机出题</button>
             <button type="button" class="stage-btn" id="bal-zero">⚡ 快速调零</button>
             <button type="button" class="stage-btn ok" id="bal-submit2">✓ 提交读数</button>
+            <button type="button" class="stage-btn" id="bal-fs" title="全屏实验（Esc 退出）">⛶ 全屏</button>
           </div>
-          <div class="stage-help">拖动空白处旋转 · 滚轮缩放 · 拖动游码 / 平衡螺母 · 点右盘砝码取下</div>
+          <div class="stage-help">拖动空白处旋转 · 滚轮缩放 · 拖动游码 / 平衡螺母 · 点右盘砝码取下 · ⛶ 全屏</div>
         </div>
       </div>
 
@@ -401,8 +429,9 @@
             <button type="button" id="bal-tw-drop">放下镊子（Esc）</button>
           </div>
           <p class="note" id="bal-tw-hint" style="display:none;">
-            镊子已拿起：点<b>砝码盒里的一颗</b>夹起 → 点<b>右盘</b>放上；点盘上的砝码可以夹回来，
-            点<b>砝码盒</b>放回去。
+            镊子已拿起：点<b>砝码盒里的一颗</b>夹起 → 移到<b>右盘</b>上方（盘口会亮绿圈）再点一下放下，
+            会自动吸附到空位；夹着砝码时移到<b>砝码盒</b>上方点一下放回。
+            <b>空手时照样能拖游码和平衡螺母</b>；按 <b>Esc</b> 放下镊子。
           </p>
           <p class="note">加砝码<b>用镊子、由大到小</b>。点画面里的<b>镊子</b>把它拿起来再夹砝码；
             下面的按钮是快捷方式。</p>
@@ -659,7 +688,16 @@
       //   carry 是夹着的那颗砝码质量（null = 空手），carryFrom 记住它是从哪儿夹起来的
       //   （'box' 要从盒里少一颗、'pan' 已经从盘上摘掉了）。
       tweez: { held: false, tipX: TW_X1, tipZ: TW_Z, tipY: TW_TIP_Y, ang: 0,
-               carry: null, carryFrom: null },
+               carry: null, carryFrom: null,
+               // 目标位置：镊尖每帧【指数逼近】tX/tY/tZ，不直接跳（见 tick）。
+               // 旧版是「鼠标一动镊尖就瞬移」，夹着砝码平移时像在闪，也看不出在搬运。
+               tX: TW_X1, tY: TW_TIP_Y, tZ: TW_Z,
+               hover: null, hoverHit: null,   // 光标下的投放 / 夹取目标（画高亮圈用）
+               // 拿在手里时镊身【起竖】一个角度（绕镊尖）：真人拿镊子是斜向下夹的，
+               // 平躺着平移的话，杆子会横穿托盘、看上去像一根棍子戳在盘上。
+               pitch: 0, tPitch: 0,
+               hideHeld: false },              // 落盘动画期间先不画手里的砝码（否则重影）
+      fly: null,                       // 砝码落盘动画 { g, x0..z1, t0, dur }
       drawn: {}
     };
 
@@ -1899,8 +1937,10 @@
       //    旧版不看 PHY.weightsOnPan，盒里永远摆满 8 颗 ⇒ 盘上摆着 100 g 时盒里也躺着一颗 100 g，
       //    画面里同时出现两颗同规格砝码，而且用镊子「夹起」也没地方可少。
       const taken = PHY.weightsOnPan.slice();
-      // 镊子上夹着的、且是从盒里夹起来的那颗，盒里也得空着
-      if (state.tweez.carry && state.tweez.carryFrom === 'box') taken.push(state.tweez.carry);
+      // 🔴 镊子上夹着的那颗，盒里【一定】要空着 —— 不管它是从盒里夹起来的，还是从盘上
+      //    夹下来的。旧版只在 carryFrom === 'box' 时才当「已取走」，于是「从盘上夹起一颗
+      //    20 g」的瞬间，盒里又冒出一颗 20 g（画面上同时三颗），而且想放回去时找不到空窝。
+      if (state.tweez.carry) taken.push(state.tweez.carry);
       for (let i = 0; i < WB_SET.length; i++) {
         const g = WB_SET[i];
         const sx = cx + WB_COL[i % 4];
@@ -1940,8 +1980,11 @@
       const T = state.tweez;
       const dx = lx - TW_LEN;                       // 相对镊尖（负 = 往柄的方向）
       const c = Math.cos(T.ang), s = Math.sin(T.ang);
-      const y = (T.held ? T.tipY : TW_TIP_Y) + (ly - TW_TIP_Y);
-      return [T.tipX + dx * c - lz * s, y, T.tipZ + dx * s + lz * c];
+      const baseY = T.held ? T.tipY : TW_TIP_Y;
+      // 绕镊尖的俯仰：柄在镊尖的【后上方】（dx<0 时 ax 更负、ay 为正）
+      const cp = Math.cos(T.pitch), sp = Math.sin(T.pitch);
+      const ax = dx * cp, ay = -dx * sp;
+      return [T.tipX + ax * c - lz * s, baseY + ay + (ly - TW_TIP_Y), T.tipZ + ax * s + lz * c];
     }
     function drawTweezers(q) {
       const xj = TW_LEN * 0.34;                     // 柄与两片的分界（局部）
@@ -1970,11 +2013,23 @@
     // 镊子夹着的那颗砝码：镊尖夹的是【提钮】，所以砝码吊在镊尖下面。
     function drawHeldWeight(q) {
       const T = state.tweez;
-      if (!T.carry) return;
+      if (!T.carry || T.hideHeld) return;      // 落盘动画期间由 drawFly 负责画
       const tip = twWorld(TW_LEN, TW_TIP_Y, 0);
       const y0 = tip[1] + 0.010 - weightTopY(T.carry);
-      drawOneWeight(q, tip[0], tip[2], y0, T.carry, T.carryFrom === 'pan');
+      drawOneWeight(q, tip[0], tip[2], y0, T.carry, true);
       state.drawn.heldWeight = { x: tip[0], z: tip[2], y0: y0, g: T.carry };
+    }
+    // 落盘动画中的那颗砝码：从镊尖飞到盘上的空位。
+    function drawFly(q) {
+      const f = state.fly;
+      if (!f) return;
+      const t = clamp((performance.now() - f.t0) / f.dur, 0, 1);
+      const e = 1 - Math.pow(1 - t, 3);                    // easeOutCubic
+      const arc = Math.sin(Math.PI * t) * 0.04;            // 一点点抛物，不是生硬平移
+      drawOneWeight(q,
+        f.x0 + (f.x1 - f.x0) * e,
+        f.z0 + (f.z1 - f.z0) * e,
+        f.y0 + (f.y1 - f.y0) * e + arc, f.g, true);
     }
 
     function drawRightPan(q) {
@@ -2055,8 +2110,12 @@
       // 底座 / 立柱（底座上再没有别的零件）
       avoidLabel(project([BASE_HW * 0.58, BASE_H + 0.012, -BASE_HD * 0.55], q), '底座', '#cbd5e1', 11.5);
       avoidLabel(project([COL_PROF[4][1], (BASE_H + PIVOT_Y) * 0.5, COL_PROF[4][2]], q), '立柱', '#cbd5e1', 11.5);
-      // 砝码盒 / 镊子（真机实验台必备配件）
-      avoidLabel(project([(WB_X0 + WB_X1) / 2, WB_H + 0.07, WB_Z1], q), '砝码盒', '#ffe4ae', 11.5);
+      // 砝码盒 / 镊子（真机实验台必备配件）。
+      // 锚点从「盒口正上方」挪到【立盖顶沿之上】：盒口现在要露出 8 个空窝和投放高亮圈，
+      // 标签压在正中间的话，正好把「往哪个窝里放」这条唯一的视觉线索糊掉。
+      avoidLabel(project([(WB_X0 + WB_X1) / 2,
+                          WB_H + WB_LID_H * WB_CT + 0.06,
+                          WB_Z0 - WB_LID_H * WB_ST], q), '砝码盒', '#ffe4ae', 11.5);
       // 镊子拿在手里时不再打「镊子」标签：它会留在原来的台面位置，指着空气
       if (!state.tweez.held) avoidLabel(project([TW_X1, 0.06, TW_Z], q), '镊子', '#cbd5e1', 11.5);
     }
@@ -2114,7 +2173,10 @@
       // 镊子【拿在手里】时一律最后画：它是浮在空中的，不该被天平或盒子挡。
       if (boxNear) { drawBalance(q); drawWeightBox(q); if (!state.tweez.held) drawTweezers(q); }
       else { drawWeightBox(q); if (!state.tweez.held) drawTweezers(q); drawBalance(q); }
+      // 投放标记必须画在【镊子和手上的砝码之前】：它是「地上的圈」，盖在砝码身上就成雾了
+      drawTweezHints(q);
       if (state.tweez.held) { drawTweezers(q); drawHeldWeight(q); }
+      drawFly(q);          // 正在落盘的那颗砝码
 
       drawLabels(q);
     }
@@ -2192,7 +2254,7 @@
       } else if (s.phase === 2) {
         hint.innerHTML = '天平已调平 ✓ 点<b>「随机出题」</b>，把一个未知质量的物体放进左盘。';
       } else if (s.phase === 3) {
-        hint.innerHTML = '左物右码：点砝码按钮<b>由大到小</b>加到右盘，再用<b>游码</b>微调，直到指针回到中央。';
+        hint.innerHTML = '左物右码：抓起<b>镊子</b>从砝码盒里夹<b>由大到小</b>地加到右盘，再用<b>游码</b>微调，直到指针回到中央。';
       } else {
         hint.innerHTML = '<b>指针指中央了 ✓</b> 读数 = 砝码总质量 + 游码示数。填进「读数提交」里核对吧。';
       }
@@ -2411,12 +2473,13 @@
       const cands = [];
       // 游码
       const rp = project(beamPt(riderX(), -BEAM_H / 2 - RIDER_LIFT * 0.5, 0), q);
-      cands.push({ id: 'rider', cx: rp.x, cy: rp.y, w: Math.max(9, RIDER_W * 2 * rp.s), h: Math.max(14, (BEAM_H + RIDER_LIFT + 0.03) * rp.s) });
-      // 平衡螺母
+      cands.push({ id: 'rider', cx: rp.x, cy: rp.y, w: Math.max(12, RIDER_W * 2 * rp.s), h: Math.max(18, (BEAM_H + RIDER_LIFT + 0.03) * rp.s) });
+      // 平衡螺母：命中框给到 19 px 见方。真机螺母直径才 9.6 mm，屏幕上十几像素 ——
+      // 按实际尺寸判定的话，拿着镊子回来想微调一下，点十次有八次点空。
       for (const side of [-1, 1]) {
         const nx = nutLocalX(side, side < 0 ? PHY.nutLPos : PHY.nutRPos);
         const p = project(beamPt(nx, 0, 0), q);
-        cands.push({ id: side < 0 ? 'nutL' : 'nutR', cx: p.x, cy: p.y, w: Math.max(13, NUT_W * 2.4 * p.s), h: Math.max(13, NUT_R * 2.4 * p.s) });
+        cands.push({ id: side < 0 ? 'nutL' : 'nutR', cx: p.x, cy: p.y, w: Math.max(19, NUT_W * 2.6 * p.s), h: Math.max(19, NUT_R * 2.6 * p.s) });
       }
       // 右盘砝码
       const wb = state.drawn.weightBoxes || [];
@@ -2447,122 +2510,290 @@
     }
 
     /* ---------------------- 镊子：拿起 / 夹砝码 / 放砝码 ---------------------- */
-    // 镊尖要【正好落在光标下】，所以由光标反投到镊子所在的那个水平面上取 (x, z)。
-    // 高度分两档：光标在托盘上方时抬到盘面附近，否则贴着台面 —— 不然拎着 100 g 砝码
-    // 平移到托盘上时，砝码会从盘底穿过去。
+    // ── 镊子交互模型（2026-10 重做）──
+    //   点画面里的镊子 → 拿起来；空手点砝码 → 夹起；夹着砝码移到【右盘 / 砝码盒】
+    //   上方再点一下 → 放下（落点自动吸附到空位，盘上还有一小段落盘动画）。
+    // 旧版被用户实测打回的三个坑：
+    //   ① 托盘判定是「盘口投影的那个小椭圆」，偏十来像素就判成空处 ⇒「放到托盘里放不进去」；
+    //   ② 砝码盒判定是把光标反投到内衬平面再查矩形，光标压在盒壁 / 盒沿上时投出来的点
+    //      已经落到盒外 ⇒「放到盒里放不下去」；
+    //   ③ 镊尖高度只有「在盘上方 / 不在盘上方」两个值，切换是【直接跳】的，
+    //      夹着砝码从盒子移向托盘时砝码从横梁里穿过去 ⇒「卡在横梁」。
+    // 现在：投影多边形判区（还外扩十几像素）+ 落点吸附 + 搬运时抬到横梁以上 + 竖直方向
+    //      指数平滑 + 目标高亮圈 —— 能不能放、放下会落到哪儿，全都看得见。
     function panEllipse(q) {
       const pc = project([panCx(1), panRimY(1), 0], q);
       const rx = Math.max(8, PAN_R * pc.s * 1.06);
       const ry = Math.max(6, PAN_R * pc.s * Math.sin(Math.max(0.08, state.pitch)) * 1.06);
       return { x: pc.x, y: pc.y, rx: rx, ry: ry };
     }
-    function tweezHoverY(x, y, q) {
-      const e = panEllipse(q);
-      const overPan = ((x - e.x) / e.rx) ** 2 + ((y - e.y) / e.ry) ** 2 < 1;
-      const base = overPan ? panFloorY(1) + 0.020 : 0.062;
-      const need = state.tweez.carry ? weightTopY(state.tweez.carry) : 0.100;
-      return base + need;
+    // 点是否落在（投影后的）多边形内。屏幕上的盘口、盒口都是凸多边形，奇偶规则就够。
+    function pointInPoly(x, y, pts) {
+      let inside = false;
+      for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+        const a = pts[i], b = pts[j];
+        const dy = b.y - a.y;
+        if ((a.y > y) !== (b.y > y) && x < (b.x - a.x) * (y - a.y) / (dy || 1e-6) + a.x) inside = !inside;
+      }
+      return inside;
     }
-    function moveTweezToCursor(x, y, q) {
+    // 屏幕多边形沿「重心 → 顶点」向外推 pad 像素。投放区要宽一点：
+    // 真实操作里没人要求把镊尖对准到 1 mm 以内，判定也不该这么要求。
+    function growPoly(pts, pad) {
+      if (!pts || pts.length < 3) return pts || [];
+      let cx = 0, cy = 0;
+      for (const p of pts) { cx += p.x / pts.length; cy += p.y / pts.length; }
+      return pts.map(p => {
+        const dx = p.x - cx, dy = p.y - cy, L = Math.hypot(dx, dy) || 1;
+        return { x: p.x + dx / L * pad, y: p.y + dy / L * pad };
+      });
+    }
+    // 右盘投放区 = 盘口 + 盘底的投影凸包，再外扩 18 px（盒壁、盘沿都算「在盘上」）
+    function panZone(q) {
+      const hx = panCx(1), rim = panRimY(1), flr = panFloorY(1);
+      const pts = [];
+      for (let k = 0; k < 24; k++) {
+        const a = k / 24 * PI2;
+        pts.push(project([hx + PAN_R * Math.cos(a), rim, PAN_R * Math.sin(a)], q));
+        pts.push(project([hx + PAN_R * 0.90 * Math.cos(a), flr, PAN_R * 0.90 * Math.sin(a)], q));
+      }
+      return growPoly(convexHull(pts), 18);
+    }
+    // 砝码盒投放区 = 盒身 8 个角的投影凸包，外扩 12 px
+    function boxZone(q) {
+      const b = state.drawn.weightBox;
+      if (!b) return [];
+      const pts = [];
+      for (const x of [b.x0, b.x1]) for (const z of [b.z0, b.z1]) for (const y of [0, b.h]) {
+        pts.push(project([x, y, z], q));
+      }
+      return growPoly(convexHull(pts), 12);
+    }
+    // 新砝码落到右盘哪个落位：与 drawRightPan 一致 —— 按质量降序排在已有序表里
+    function slotForNewWeight(g) {
+      const sorted = PHY.weightsOnPan.concat([g]).sort((a, b) => b - a);
+      const i = clamp(sorted.indexOf(g), 0, W_SLOTS.length - 1);
+      return W_SLOTS[i];
+    }
+    // 盒里这颗砝码该回哪个窝（空着的、同规格的；找不到就退回第一个空窝）
+    function holeForWeight(g) {
+      const bx = state.drawn.weightBox;
+      if (!bx) return null;
+      const holes = bx.slots.filter(s => s.empty);
+      return holes.find(s => s.g === g) || holes[0] || null;
+    }
+    // 夹着砝码【搬运时】的高度下限：砝码底必须高过横梁顶（支点 + 轴毂 + 尖峰），
+    // 否则从砝码盒移向右盘的路上，整颗砝码会从横梁身上穿过去 —— 就是用户说的「卡在横梁」。
+    function tweezCarryFloorY() {
+      return PIVOT_Y + BEAM_HUB_UP + BEAM_PEAK + 0.075;
+    }
+    // 光标 → 镊尖【目标】位置：有吸附目标就用目标的落点，否则反投到运输高度的水平面上
+    function tweezTargetPos(hit, x, y, q) {
+      const g = state.tweez.carry;
+      const wtop = g ? weightTopY(g) : 0;
+      // drawHeldWeight 里「砝码底 = 镊尖 y + 0.010 − weightTopY」，这里反过来解镊尖
+      const forFloor = fy => fy - 0.010 + wtop;
+      if (hit && (hit.kind === 'pan' || hit.kind === 'box')) return { x: hit.x, y: forFloor(hit.y), z: hit.z };
+      if (hit && (hit.kind === 'panW' || hit.kind === 'boxW')) return { x: hit.x, y: hit.y + 0.05, z: hit.z };
+      const ty = forFloor(g ? tweezCarryFloorY() : 0.15);
+      const w = unproject(x, y, q, ty);
+      if (!w) return null;
+      return { x: clamp(w[0], -2.2, 2.9), y: ty, z: clamp(w[2], -1.9, 1.9) };
+    }
+    // hover 与目标一起更新（onMove / 按下时都走它）
+    function updateTweez(x, y, q) {
       const T = state.tweez;
       if (!T.held) return;
-      const y0 = tweezHoverY(x, y, q);
-      const w = unproject(x, y, q, y0);
-      if (!w) return;
-      T.tipX = clamp(w[0], -2.2, 2.9);
-      T.tipZ = clamp(w[2], -1.9, 1.9);
-      T.tipY = y0;
+      const hit = pickWithTweezers(x, y, q);
+      T.hover = hit ? hit.kind : null;
+      T.hoverHit = hit;
+      const p = tweezTargetPos(hit, x, y, q);
+      if (p) { T.tX = p.x; T.tY = p.y; T.tZ = p.z; }
       state.dirty = true;
     }
+    // 旧名字保留（自检钩子和事件都调它）
+    function moveTweezToCursor(x, y, q) { updateTweez(x, y, q); }
+    // 兼容旧接口：静置高度（导出给自检用）
+    function tweezHoverY(x, y, q) {
+      const p = tweezTargetPos(null, x, y, q);
+      return p ? p.y : (0.15 - 0.010);
+    }
     // 持镊子时光标落在什么上：
-    //   {kind:'panW', index, g} 盘上某颗 | {kind:'boxW', g} 盒里某颗
-    //   {kind:'pan'} 右盘（放上去）| {kind:'box'} 砝码盒（放回去）| null
+    //   {kind:'pan',  x,y,z}            右盘投放点（已吸附到落位）
+    //   {kind:'box',  x,y,z}            砝码盒投放点（已吸附到空窝）
+    //   {kind:'panW', index, g, x,y,z}  盘上某颗砝码
+    //   {kind:'boxW', index, g, x,y,z}  盒里某颗砝码
+    //   null
     function pickWithTweezers(x, y, q) {
-      const inBox = (p, w, h) => x >= p.x - w / 2 && x <= p.x + w / 2 &&
-                                y >= p.y - h / 2 && y <= p.y + h / 2;
-      // ① 盘上的砝码（优先）
+      const T = state.tweez;
+      const bx = state.drawn.weightBox;
+      // ① 手上夹着砝码：只认「往哪儿放」
+      if (T.carry) {
+        if (pointInPoly(x, y, panZone(q))) {
+          const s = slotForNewWeight(T.carry);
+          return { kind: 'pan', x: panCx(1) + s[0], z: s[1], y: panFloorY(1) + 0.012 };
+        }
+        if (bx && pointInPoly(x, y, boxZone(q))) {
+          const h = holeForWeight(T.carry);
+          if (h) return { kind: 'box', x: h.x, z: h.z, y: bx.y0 };
+          return { kind: 'box', x: (bx.x0 + bx.x1) / 2, z: (bx.z0 + bx.z1) / 2, y: bx.y0 };
+        }
+        return null;
+      }
+      // ② 空手：先找盘上的砝码（它们在最前面），再找盒里的。
+      //    命中框统一放大到 ≥20 px —— 1 g 那颗在屏幕上只有十几像素，按真实尺寸判定点不中。
+      const inBox = (p, w, h) => Math.abs(x - p.x) <= w / 2 && Math.abs(y - p.y) <= h / 2;
       const wb = state.drawn.weightBoxes || [];
       let best = null, bestD = 1e9;
       for (let i = 0; i < wb.length; i++) {
         const b = wb[i];
         const p = project([b.cx, b.y0 + b.h * 0.55, b.cz], q);
-        const w = Math.max(13, b.r * 2.2 * p.s), h = Math.max(13, b.h * 1.35 * p.s);
+        const w = Math.max(20, b.r * 2.4 * p.s), h = Math.max(20, b.h * 1.6 * p.s);
         if (!inBox(p, w, h)) continue;
         const d = Math.hypot(x - p.x, y - p.y);
-        if (d < bestD) { bestD = d; best = { kind: 'panW', index: i, g: b.g }; }
+        if (d < bestD) { bestD = d; best = { kind: 'panW', index: i, g: b.g, x: b.cx, z: b.cz, y: b.y0 + b.h }; }
       }
       if (best) return best;
-      // ② 盒里的砝码
-      const bx = state.drawn.weightBox;
       if (bx) {
         for (let i = 0; i < bx.slots.length; i++) {
           const s = bx.slots[i];
           if (s.empty) continue;
-          const p = project([s.x, bx.y0 + Math.max(s.h, 0.05) * 0.55, s.z], q);
-          const w = Math.max(13, s.r * 2.2 * p.s), h = Math.max(13, Math.max(s.h, 0.05) * 1.4 * p.s);
-          if (inBox(p, w, h)) return { kind: 'boxW', g: s.g, index: i };
+          const top = Math.max(s.h, 0.05);
+          const p = project([s.x, bx.y0 + top * 0.55, s.z], q);
+          const w = Math.max(20, s.r * 2.4 * p.s), h = Math.max(20, top * 1.7 * p.s);
+          if (inBox(p, w, h)) return { kind: 'boxW', index: i, g: s.g, x: s.x, z: s.z, y: bx.y0 + top };
         }
-      }
-      // ③ 右盘：屏幕上是椭圆
-      const e = panEllipse(q);
-      if (((x - e.x) / e.rx) ** 2 + ((y - e.y) / e.ry) ** 2 < 1) return { kind: 'pan' };
-      // ④ 砝码盒：把光标投到内衬平面上，看落没落在盒里
-      if (bx) {
-        const w = unproject(x, y, q, bx.y0);
-        if (w && w[0] > bx.x0 - 0.06 && w[0] < bx.x1 + 0.06 &&
-            w[2] > bx.z0 - 0.06 && w[2] < bx.z1 + 0.06) return { kind: 'box' };
       }
       return null;
     }
-    function grabTweezers() {
-      state.tweez.held = true;
-      showToast('拿起镊子：点砝码夹起 → 点右盘放上 / 点砝码盒放回（按 Esc 放下镊子）');
+    function grabTweezers(x, y) {
+      const T = state.tweez;
+      T.held = true;
+      T.hideHeld = false;
+      T.tPitch = 0.82;                    // ≈47°：镊身斜着竖起，杆子不再横穿托盘（再陡就顶出画布）
+      // 目标先定在光标处：点下去镊子就从台面「抬」到手上，而不是原地僵着
+      if (x !== undefined) { const q = {}; makeCam(q, state.w, state.h); updateTweez(x, y, q); }
+      showToast('镊子已拿起：点砝码夹起 → 移到右盘 / 砝码盒上方再点一下放下（Esc 放下镊子）');
       syncTweezUI();
       state.dirty = true;
     }
     function dropTweezers(silent) {
       const T = state.tweez;
+      if (state.fly) finishFly();          // 正在落盘：先让它落地，别把砝码吞了
       const back = T.carry;
-      T.held = false; T.carry = null; T.carryFrom = null;
-      T.tipX = TW_X1; T.tipZ = TW_Z; T.tipY = TW_TIP_Y; T.ang = 0;
+      T.held = false; T.carry = null; T.carryFrom = null; T.hideHeld = false;
+      T.hover = null; T.hoverHit = null;
+      T.pitch = T.tPitch = 0;
+      T.tipX = T.tX = TW_X1; T.tipZ = T.tZ = TW_Z; T.tipY = T.tY = TW_TIP_Y; T.ang = 0;
       if (back && !silent) showToast(back + ' g 砝码已放回砝码盒');
       syncTweezUI();
       state.dirty = true;
     }
+    // 落盘动画：从镊尖当前位置飞到盘上的空位，【落到位才真正加到右盘】。
+    // 先加的话，盘上立刻多出一颗、天上还飞着一颗，画面就是「两颗 100 g」。
+    function startFlyToPan(hit) {
+      const T = state.tweez, g = T.carry;
+      const tip = twWorld(TW_LEN, TW_TIP_Y, 0);
+      state.fly = {
+        g: g,
+        x0: tip[0], y0: tip[1] + 0.010 - weightTopY(g), z0: tip[2],
+        x1: hit.x, y1: hit.y, z1: hit.z,
+        t0: performance.now(), dur: 240
+      };
+      T.hideHeld = true;
+      state.dirty = true;
+    }
+    function finishFly() {
+      const f = state.fly;
+      if (!f) return;
+      state.fly = null;
+      const T = state.tweez;
+      T.hideHeld = false;
+      if (PHY.weightsOnPan.length < W_MAX) {
+        addWeight(f.g);
+        showToast('放上 ' + f.g + ' g 砝码');
+        T.carry = null; T.carryFrom = null;
+        T.hover = null; T.hoverHit = null;
+      } else {
+        showToast('右盘满了，砝码还夹在镊子上');
+      }
+      syncUI(); state.dirty = true;
+    }
     function actWithTweezers(x, y) {
       const q = {}; makeCam(q, state.w, state.h);
-      const pick = pickWithTweezers(x, y, q);
       const T = state.tweez;
-      if (!pick) return false;
+      if (state.fly) return true;                      // 上一颗还在落，先别抢
+      // 用【点击位置】现判一次，不能拿上一帧的 hover 顶替 —— 「移过去马上点」时它还没跟上
+      const hit = pickWithTweezers(x, y, q);
+      T.hover = hit ? hit.kind : null;
+      T.hoverHit = hit;
+      if (!hit) return false;
       if (T.carry) {
-        if (pick.kind === 'pan') {
-          if (addWeight(T.carry) === false) return true;      // 盘满了：继续拎着
-          showToast('放上 ' + T.carry + ' g 砝码');
-          T.carry = null; T.carryFrom = null;
-        } else if (pick.kind === 'box') {
-          showToast(T.carry + ' g 砝码已放回砝码盒');
-          T.carry = null; T.carryFrom = null;
-        } else if (pick.kind === 'boxW' || pick.kind === 'panW') {
-          showToast('镊子上已经夹着一颗 ' + T.carry + ' g 了，先放下它');
+        if (hit.kind === 'pan') {
+          if (PHY.weightsOnPan.length >= W_MAX) { showToast('右盘最多摆 ' + W_MAX + ' 个砝码'); return true; }
+          startFlyToPan(hit);
+          return true;
         }
-        state.dirty = true;
+        if (hit.kind === 'box') {
+          // 刚夹起来就在【同一个位置】又点了一下（双击）—— 不能当成「放回去」，
+          // 否则一次手快的双击就把砝码收回盒里，看着像「夹不起来」。
+          if (performance.now() - (T.pickT || 0) < 380 &&
+              Math.hypot(x - (T.pickX || 0), y - (T.pickY || 0)) < 14) return true;
+          showToast(T.carry + ' g 砝码已放回砝码盒');
+          T.carry = null; T.carryFrom = null; T.hideHeld = false;
+          T.hover = null; T.hoverHit = null;
+          state.dirty = true;
+          return true;
+        }
+        showToast('镊子上已经夹着一颗 ' + T.carry + ' g 了，先把它放下');
         return true;
       }
-      if (pick.kind === 'boxW') {
-        T.carry = pick.g; T.carryFrom = 'box';
-        showToast('夹起 ' + pick.g + ' g 砝码');
-      } else if (pick.kind === 'panW') {
+      if (hit.kind === 'boxW') {
+        T.carry = hit.g; T.carryFrom = 'box';
+        T.pickT = performance.now(); T.pickX = x; T.pickY = y;
+        showToast('夹起 ' + hit.g + ' g 砝码 · 移到右盘上方再点一下');
+      } else if (hit.kind === 'panW') {
         const sorted = PHY.weightsOnPan.map((g, k) => ({ g: g, k: k })).sort((a, b) => b.g - a.g);
-        const it = sorted[pick.index];
+        const it = sorted[hit.index];
         if (!it) return true;
         removeWeightAt(it.k);
         T.carry = it.g; T.carryFrom = 'pan';
+        T.pickT = performance.now(); T.pickX = x; T.pickY = y;
         showToast('从右盘夹起 ' + it.g + ' g 砝码');
-      } else if (pick.kind === 'pan') {
-        showToast('镊子上还没有砝码：先点砝码盒里的一颗夹起来');
       }
       state.dirty = true;
       return true;
+    }
+
+    // 光标下的目标高亮：盘口一圈绿环 / 盒里那个空窝 / 待夹的那颗砝码。
+    // 没有这个，「到底能不能放」全靠猜 —— 这也正是旧版「放不进去」的观感来源之一。
+    function drawTweezHints(q) {
+      const T = state.tweez;
+      if (!T.held || !T.hoverHit || state.fly) return;
+      const h = T.hoverHit;
+      const OK = 'rgba(52,211,153,.95)', OKD = 'rgba(52,211,153,.28)';
+      ctx.save();
+      if (h.kind === 'pan') {
+        const hx = panCx(1), rim = panRimY(1);
+        ctx.shadowColor = OK; ctx.shadowBlur = 10;
+        poly(ringPath(hx, 0, PAN_R * 1.04, rim, q, 44), null, OK, 2.4);
+        ctx.shadowBlur = 0;
+        if (T.carry) {
+          const p = project([h.x, h.y + 0.003, h.z], q);
+          const rr = Math.max(6, weightR(T.carry) * p.s);
+          ctx.beginPath();
+          ctx.ellipse(p.x, p.y, rr, Math.max(3, rr * 0.52), 0, 0, PI2);
+          ctx.fillStyle = OKD; ctx.fill();
+          ctx.strokeStyle = OK; ctx.lineWidth = 1.4; ctx.stroke();
+        }
+      } else if (h.kind === 'box' && T.carry) {
+        // 圈要画得比砝码粗一圈：正好套住的话，手里那颗往下一放就把绿圈盖严了，看不见
+        poly(ringPath(h.x, h.z, weightR(T.carry) * 1.95, h.y + 0.003, q, 24), OKD, OK, 2.2);
+      } else if (h.kind === 'panW' || h.kind === 'boxW') {
+        const by = h.y - weightTopY(h.g) + 0.004;
+        poly(ringPath(h.x, h.z, weightR(h.g) * 1.45, by, q, 22), null, OK, 2);
+      }
+      ctx.restore();
     }
     function syncTweezUI() {
       const r = $('bal-tw-row');
@@ -2585,18 +2816,21 @@
       const hit = hitTest(x, y, q);
       state.downAt = { x: x, y: y, hit: hit, moved: 0 };
       state.dragging = true;
-      if (state.tweez.held) {
-        // 镊子拿在手里：按下一律不转视角、不拖零件，抬起时才算「点了一下」。
-        // （否则「把砝码放到盘上」这个动作会先把相机转跑。）
-        state.drag = null;
-      } else if (hit === 'rider' || hit === 'nutL' || hit === 'nutR') {
+      const T = state.tweez;
+      const partHit = (hit === 'rider' || hit === 'nutL' || hit === 'nutR');
+      // 🔴 拿着镊子（且手上没夹砝码）时，游码 / 平衡螺母【照样能拖】。
+      //    真实操作里「手持镊子」和「用手指拨平衡螺母」根本不冲突；旧版只要拿起镊子就一律
+      //    拦成「点一下」，于是调零这件事在拿起镊子以后彻底做不了 —— 用户实测就卡在这儿。
+      //    夹着砝码时仍然拦着（这时候手指不该去碰横梁，容易误把螺母推歪）。
+      if (partHit && !(T.held && T.carry)) {
         state.drag = hit;
         const lx = beamLocalXFromScreen(x, y, q);
         const cur = hit === 'rider' ? riderX()
                   : nutLocalX(hit === 'nutL' ? -1 : 1, hit === 'nutL' ? PHY.nutLPos : PHY.nutRPos);
         state.dragGrab = (lx === null) ? 0 : lx - cur;
-      } else if (hit === 'tweez') {
-        state.drag = null;                  // 点镊子 = 拿起来（在 onUp 里做，先排除「拖视角」误判）
+      } else if (T.held || hit === 'tweez') {
+        // 持镊子：按下不转视角、不拖零件，抬起时才算「点了一下」（否则放砝码会先把相机转跑）
+        state.drag = null;
       } else {
         state.drag = 'orbit';
         state.lastX = x; state.lastY = y;
@@ -2632,14 +2866,14 @@
             }
           }
         } else if (state.tweez.held) {
-          moveTweezToCursor(x, y, q);       // 按着也能挪镊子
+          updateTweez(x, y, q);             // 按着也能挪镊子
         }
         state.dirty = true;
         return;
       }
       // 没按下：镊子拿在手里就跟着鼠标走
       if (state.tweez.held) {
-        moveTweezToCursor(x, y, q);
+        updateTweez(x, y, q);
         state.hover = null;
         canvas.classList.remove('pick');
         state.dirty = true;
@@ -2659,7 +2893,7 @@
           // 持镊子：按光标下是什么来动作（夹 / 放 / 放回）
           actWithTweezers(state.downAt.x, state.downAt.y);
         } else if (state.downAt.hit === 'tweez') {
-          grabTweezers();
+          grabTweezers(state.downAt.x, state.downAt.y);
         } else if (state.downAt.hit && state.downAt.hit.charAt(0) === 'w') {
           const i = parseInt(state.downAt.hit.slice(1), 10);
           // 画出来的顺序是「按质量降序」，索引要映射回 weightsOnPan 的真实下标
@@ -2703,6 +2937,24 @@
     function tick(ts) {
       const dt = lastTs ? Math.min(0.05, (ts - lastTs) / 1000) : 0;
       lastTs = ts;
+      // ① 镊尖的平滑移动：水平跟得快、竖直跟得慢 —— 抬起来 / 放下去这一段要看得出是「搬运动作」，
+      //    但水平跟手不能拖沓。旧版是每个 mouseMove 直接把 tip 设成新值（瞬移）。
+      if (state.tweez.held) {
+        const T = state.tweez;
+        const kxz = 1 - Math.exp(-dt / 0.040), ky = 1 - Math.exp(-dt / 0.075);
+        const dx = T.tX - T.tipX, dy = T.tY - T.tipY, dz = T.tZ - T.tipZ;
+        if (Math.abs(dx) > 2e-4 || Math.abs(dy) > 2e-4 || Math.abs(dz) > 2e-4) {
+          T.tipX += dx * kxz; T.tipY += dy * ky; T.tipZ += dz * kxz;
+          state.dirty = true;
+        } else { T.tipX = T.tX; T.tipY = T.tY; T.tipZ = T.tZ; }
+        // 镊身起竖 / 放下也跟着缓一下（拿起来的瞬间不会「啪」地翻个角）
+        if (Math.abs(T.tPitch - T.pitch) > 1e-4) {
+          T.pitch += (T.tPitch - T.pitch) * ky;
+          state.dirty = true;
+        } else T.pitch = T.tPitch;
+      }
+      // ② 落盘动画到点 → 真正把砝码加到右盘
+      if (state.fly && performance.now() - state.fly.t0 >= state.fly.dur) finishFly();
       // 天平是静态的：只在 dirty 时重画。但「刚平衡」这一刻要提示一次。
       const bal = PHY.targetMass > 0 && balanceGap() <= BAL_GATE;
       if (bal && !wasBalanced) {
@@ -2751,6 +3003,43 @@
       if (ev.key === 'Escape' && state.tweez.held) { dropTweezers(); ev.preventDefault(); }
     });
     syncTweezUI();
+
+    /* ---------------------------- 全屏 ----------------------------
+     * 全屏的是【整个 .lab3d 实验区】（标题 + 舞台 + 侧栏 + 视角/提交/分析），
+     * 不是单块 canvas —— 只全屏画布的话，读数、砝码按钮、操作步骤全被切掉，
+     * 「一边看指针一边加砝码」就不成立了。Esc 退出，按钮文字跟着变。 */
+    function fsOn() { return document.fullscreenElement || document.webkitFullscreenElement || null; }
+    function toggleFullscreen() {
+      const el = document.querySelector('.lab3d');
+      if (!el) return;
+      if (fsOn()) {
+        const ex = document.exitFullscreen || document.webkitExitFullscreen;
+        if (ex) { const r = ex.call(document); if (r && r.catch) r.catch(() => {}); }
+        return;
+      }
+      const req = el.requestFullscreen || el.webkitRequestFullscreen;
+      if (!req) { showToast('当前浏览器不支持全屏'); return; }
+      const r = req.call(el);
+      if (r && r.catch) r.catch(() => showToast('浏览器拒绝了全屏请求'));
+    }
+    function syncFsBtn() {
+      const b = $('bal-fs');
+      if (b) b.textContent = fsOn() ? '⤡ 退出全屏' : '⛶ 全屏';
+      // 进出全屏时舞台尺寸会变，ResizeObserver 之外再补一帧，防止首帧画布尺寸没跟上
+      setTimeout(resize, 60);
+      setTimeout(() => { state.dirty = true; }, 90);
+    }
+    if ($('bal-fs')) $('bal-fs').addEventListener('click', toggleFullscreen);
+    document.addEventListener('fullscreenchange', syncFsBtn);
+    document.addEventListener('webkitfullscreenchange', syncFsBtn);
+    // 顺手支持 F 键（焦点不在输入框里时），Alt+F 之类不受影响
+    window.addEventListener('keydown', ev => {
+      const tag = (ev.target && ev.target.tagName) || '';
+      if (/^(INPUT|TEXTAREA|SELECT)$/.test(tag)) return;
+      if ((ev.key === 'f' || ev.key === 'F') && !ev.metaKey && !ev.ctrlKey && !ev.altKey) {
+        toggleFullscreen();
+      }
+    });
 
     if (window.ResizeObserver) new ResizeObserver(() => resize()).observe(stage);
     window.addEventListener('resize', resize);
@@ -2820,6 +3109,12 @@
       moveTweezToCursor: moveTweezToCursor, pickWithTweezers: pickWithTweezers,
       grabTweezers: grabTweezers, dropTweezers: dropTweezers,
       actWithTweezers: actWithTweezers,
+      // 投放区判定 / 吸附 / 落盘（重做后的那套）
+      pointInPoly: pointInPoly, panZone: panZone, boxZone: boxZone,
+      slotForNewWeight: slotForNewWeight, holeForWeight: holeForWeight,
+      tweezCarryFloorY: tweezCarryFloorY, tweezTargetPos: tweezTargetPos,
+      updateTweez: updateTweez, startFlyToPan: startFlyToPan, finishFly: finishFly,
+      toggleFullscreen: toggleFullscreen,
       // 动作（和按钮走同一条路）
       setMode: setMode, setRiderMass: setRiderMass, setNuts: setNuts, moveNut: moveNut,
       addWeight: addWeight, removeWeightAt: removeWeightAt, clearPan: clearPan, riderZero: riderZero,
