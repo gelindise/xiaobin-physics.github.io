@@ -66,7 +66,9 @@
     // 长度和画布上的移动夹【双向联动】：拖夹子改的是同一个 params.len，
     // 拖这根滑条夹子也跟着走（面板每次重绘都从参数取值）。
     // 下限 10mm 不是随手给的：再短就接近把电源短路，灯丝会烧断。
-    pencil:    [{k:'len', t:'range', label:'接入长度', unit:'mm', min:10, max:60, step:1},
+    // 上限 120mm = 长款铅笔芯全长（内核 PENCIL.LEN_MAX 必须跟着改）：
+    // 行程翻倍，夹子同样拖一格，电阻变的是原来的 2 倍。
+    pencil:    [{k:'len', t:'range', label:'接入长度', unit:'mm', min:10, max:120, step:1},
                 {k:'grade', t:'select', label:'铅笔芯型号',
                  options:['HB','2B','6B'],
                  labels:{HB:'HB（硬）', '2B':'2B（中软）', '6B':'6B（软）'}}],
