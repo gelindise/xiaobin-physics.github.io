@@ -216,7 +216,17 @@
     border-radius:7px;cursor:pointer}
   .namePop button:hover{filter:brightness(1.06)}
   .popHead{display:flex;align-items:center;gap:8px;font-size:13.5px;font-weight:700;
-    margin-bottom:7px}
+    margin-bottom:7px;
+    /* 表头可以按住拖动（用户 2026-10-20 第 1 点）：浮层默认长在元件旁边，
+       常常正好压住隔壁那件器材。给 grab 光标 + 不许选中文字 —— 不给这两个，
+       学生根本不会想到它能拖，拖着拖着还会把标题选中变成一片蓝。 */
+    cursor:grab;user-select:none;-webkit-user-select:none;touch-action:none}
+  .popHead.dragging{cursor:grabbing}
+  /* 拖动握把：两列小圆点（纯 CSS 画，不依赖字体 —— 「⠿」这类字符在
+     有些中文字体里只落成一个点，看着像屏幕上的一粒灰）。 */
+  .popHead .grip{width:11px;height:13px;flex:0 0 auto;margin-right:-1px;border-radius:2px;
+    background-image:radial-gradient(circle, #94a3b8 1.1px, rgba(0,0,0,0) 1.25px);
+    background-size:5px 5px;background-position:1px 1px}
   .popHead .sp{flex:1 1 auto}
   .popHead button{background:#f1f5f9;border:1px solid var(--line);border-radius:7px;
     cursor:pointer;font-family:inherit;font-size:12.5px;color:var(--text);
@@ -801,7 +811,9 @@
      浮层迟早会漏掉。里面的输入框 id 前缀是 pp_（侧栏是 pv_）——
      两处同名的话 getElementById 只会拿到第一个，另一个就永远不刷新。 -->
 <div class="pop" id="compPop" hidden>
-  <div class="popHead"><span id="popTitle">元件参数</span><span class="sp"></span>
+  <div class="popHead" id="popHead" title="按住表头可以把面板拖到别处">
+    <span class="grip" aria-hidden="true"></span>
+    <span id="popTitle">元件参数</span><span class="sp"></span>
     <button id="popX" type="button" title="关闭">✕</button></div>
   <div id="popBody"></div>
 </div>
@@ -889,7 +901,7 @@
        （上一批是 core 23 / draw 37 / editor 28 / params 5 / schematic 17，
          这一轮五个文件都动了：世界加宽 + 电表放大 + 读数牌搬家 + 单刀双掷开关。） -->
 <script src="circuit-core.js?build=29"></script>
-<script src="circuit-draw.js?build=44"></script>
+<script src="circuit-draw.js?build=45"></script>
 <!-- ════════════════════════════════════════════════════════════════════
      【教材版本皮肤 · 已从线上撤下】2026-10-12
      人教版元件外观（circuit-skin*.js 共 5 个文件）暂不在线上启用，学生看到的
@@ -905,13 +917,13 @@
 <!-- <script src="circuit-skin-renjiao-img2-data.js?build=2"></script> -->
 <!-- <script src="circuit-skin-renjiao-img3-data.js?build=1"></script> -->
 <!-- <script src="circuit-skin-renjiao.js?build=6"></script> -->
-<script src="circuit-editor.js?build=35"></script>
+<script src="circuit-editor.js?build=36"></script>
 <!-- 参数面板规格 + 读数显示格式。从本页内联抽出，与 3D 版沙盒（电路实验沙盒3D）
      共用同一份真值：面板规格、小数位、极性显示规则改一处两边都变。 -->
 <script src="circuit-params.js?build=11"></script>
 <!-- 电路图（实物图 → 标准符号）。独立成第四块内核：沙盒和欧姆定律页共用同一份，
      免得各写一套符号，两边的图画法迟早不一样。三个老内核一行没动，build 号不升。 -->
-<script src="circuit-schematic.js?build=22"></script>
+<script src="circuit-schematic.js?build=23"></script>
 <!-- 音效引擎。全部音色现场合成，不带音频素材；AudioContext 懒创建，
      等第一次真实手势才建。它只读状态、只出声，不碰物理也不碰画面。 -->
 <script src="circuit-sound.js?build=3"></script>
@@ -1979,14 +1991,19 @@ function drawCompTag(f, c, r){
   f.font = TAG_LINE_FONT;
   st.forEach(function(l){ w = Math.max(w, f.measureText(l).width); });
   var bw = w + TAG_PAD_X * 2, bh = TAG_ID_H + st.length * TAG_ST_H;
+  // 元件缩放（comp.scale）：标签是【注解】，字号不缩放（缩到 0.5 倍就没人看得清），
+  // 但落点要跟着器材的实际大小走 —— 一只 2 倍大的表，标签还挂在 1 倍高的位置，
+  // 就正好压在表盘上。
+  var ks = D.scaleOf ? D.scaleOf(c) : 1;
   var bx = c.x, by;
-  if (c.rot === 90 || c.rot === 270) { bx = c.x + 86; by = c.y - (bh - TAG_ID_H) / 2; }
+  if (c.rot === 90 || c.rot === 270) { bx = c.x + 86 * ks; by = c.y - (bh - TAG_ID_H) / 2; }
   else {
     // 皮肤可以覆盖标签的落点：课本表头那张图比沙盒自己的表头矮不了多少，
     // 但【往下的长度】差很多（沙盒 DROP.ammeter=80，课本图下沿在 167）——
     // 不覆盖的话名字框正好压在量程柱的「0.6 / 3」上。
     var skinDrop = (D.__skin && D.__skin.tagDropOf) ? D.__skin.tagDropOf(c) : null;
-    by = c.y + (skinDrop != null ? skinDrop : (DROP[c.type] || 24)) + 8 + bh / 2;
+    var drop = (skinDrop != null ? skinDrop : (DROP[c.type] || 24)) * ks;
+    by = c.y + drop + 8 + bh / 2;
   }
   // 框顶。两行文字的基线中心都以它为原点算，保证「名字行 = TAG_ID_H 高的
   // 一整行」这个口径和 __tagHeights 暴露出去的两个数严格对得上。
@@ -2051,7 +2068,7 @@ function drawMeterReadout(g, c, r){
   } else {
     txt = D.fmtRead(shown, !isVolt) + (isVolt ? ' V' : ' A');
   }
-  var b = D.meterReadoutBox(c.x, c.y, txt, g);
+  var b = D.meterReadoutBox(c.x, c.y, txt, g, D.scaleOf ? D.scaleOf(c) : 1);
   var R = D.METER_READOUT;
   g.save();
   g.font = R.FONT;
@@ -2924,6 +2941,46 @@ function paramRowsHTML(c, specs, pfx){
   return html;
 }
 
+// ── 大小：元件缩放 0.5~2 倍（用户 2026-10-20 第 2 点）─────────
+// 单独生成、**不进 PARAM_UI**：
+//   · 它不是电学参数 —— scale 存在 comp.scale 上（和 rot 同类），内核压根
+//     不认识这个字段，求解结果一个数都不变；
+//   · PARAM_UI 是 2D / 3D 共用的（circuit-params.js），塞进去 3D 沙盒里就会
+//     冒出一个它在 3D 里做不到的旋钮。
+// 数值按百分比给：学生嘴里说的是「放大到 150%」。
+function sizeRowHTML(c, pfx){
+  // 接线点没有「大小」可言（它就是一个圆点，端子就是圆心）——给它一根滑条，
+  // 拖了画面一点变化都没有，只会让学生以为坏了。
+  if (!c || c.type === 'junction') return '';
+  var k = D.scaleOf ? D.scaleOf(c) : 1;
+  // ⚠️ 多一个 sizeRow 类：它不是【元件参数】，是显示大小。自检里「面板有几行」
+  //    那几条按 .prow 数，把这一行算进去就会把「电动机 5 行」判成 6 行 ——
+  //    所以统一用 .prow:not(.sizeRow) 数参数行（见 __pop）。
+  return '<div class="prow sizeRow"><label>大小</label>' +
+    '<input type="range" data-scale="1" min="' + D.SCALE_MIN + '" max="' + D.SCALE_MAX +
+    '" step="0.05" value="' + k + '" title="0.5~2 倍">' +
+    '<span class="val" id="' + pfx + '__scale">' + Math.round(k * 100) + '%</span></div>';
+}
+// 拖动时【只压一次撤销】：滑条 input 事件是每像素一个，照 setParam 那样
+// 每次都 pushUndo，拖一下 150% 会留下几十条快照，学生按 ⌘Z 得按到手酸。
+// 做法：第一次 input 入栈，之后的都当 noUndo，直到 change（松手）为止。
+function wireScaleInput(box, c, pfx){
+  var el = box.querySelector('input[data-scale]');
+  if (!el) return;
+  var opened = false;
+  function apply(){
+    var v = parseFloat(el.value);
+    if (!isFinite(v)) return;
+    editor.setScale(c.id, v, opened);
+    opened = true;
+    var lab = document.getElementById(pfx + '__scale');
+    if (lab) lab.textContent = Math.round(D.scaleOf(c) * 100) + '%';
+  }
+  el.addEventListener('pointerdown', function(){ opened = false; });
+  el.addEventListener('input', apply);
+  el.addEventListener('change', function(){ apply(); opened = false; });
+}
+
 function wireParamInputs(box, c, specs, pfx){
   box.querySelectorAll('input,select').forEach(function(el){
     // 练习面板里的控件没有 data-k（它们不是元件参数），必须跳过 ——
@@ -3743,6 +3800,20 @@ var popTitle = document.getElementById('popTitle');
 var popId = null;          // 浮层现在跟着哪个元件（null = 没开）
 var POP_W = 286;           // 兜底宽度：还没量到实际盒子时用它（和 CSS 的默认 .pop{width} 一致）
 var popFaultKey = '';      // 上一次渲染时元件的 fault —— 变了才重建（见 syncPop）
+// 用户手动拖到的位置（{left, top}，屏幕坐标）。null = 自动贴着元件。
+// 关掉浮层 / 换一个元件时清空 —— 拖到某个角落是「为了这一件让路」，
+// 换一件还停在那儿，就会挡住另一块地方，学生还得再拖一次。
+var popManual = null;
+// 把浮层夹回视口内。宽高【现量】：窄屏上 CSS 把 .pop 收成了
+// min(286px, 100vw - 16px)，写死 286 会让右边界算错，浮层贴着边越出去。
+function clampPopPos(left, top){
+  var pw = popEl.offsetWidth || POP_W;
+  var ph = popEl.offsetHeight || 240;
+  var maxL = Math.max(8, window.innerWidth - pw - 8);
+  var maxT = Math.max(8, window.innerHeight - ph - 8);
+  return { left: Math.max(8, Math.min(left, maxL)),
+           top:  Math.max(8, Math.min(top,  maxT)) };
+}
 
 function popAnchor(c){
   // 元件的世界坐标 → 屏幕坐标。比例就是 rect.width / W，和编辑器换算指针
@@ -3753,6 +3824,16 @@ function popAnchor(c){
   return { x: rect.left + c.x * k, y: rect.top + c.y * k, k: k };
 }
 function placePop(c){
+  // 用户拖动过 ⇒ 就停在他放下的地方，不再自动贴着元件（用户 2026-10-20 第 1 点：
+  // 「有时候参数面板会挡住其他电路元件」）。只做一件事：夹回视口内 ——
+  // 窗口变小 / 竖屏时，一个手动放在右下的面板会整块跑到屏幕外。
+  if (popManual) {
+    popEl.style.visibility = '';
+    var q = clampPopPos(popManual.left, popManual.top);
+    popEl.style.left = Math.round(q.left) + 'px';
+    popEl.style.top = Math.round(q.top) + 'px';
+    return;
+  }
   var a = popAnchor(c);
   // 元件被滚出画布可见范围了就先藏起来。硬钳在视口边上，它会飘在一段无关的
   // 画面上指着一个不在眼前的元件，比不显示更让人糊涂。
@@ -3834,9 +3915,11 @@ function renderPop(){
   var specs = PARAM_UI[c.type] || [];
   popTitle.textContent = (TYPE_LABEL[c.type] || c.type) + ' ' + D.nameOf(c);
   popBody.innerHTML = popFaultHTML(c) + popReadHTML(c) +
-    paramRowsHTML(c, specs, 'pp_') + practiceRowsHTML(c, 'pp_') + popActsHTML(c);
+    paramRowsHTML(c, specs, 'pp_') + practiceRowsHTML(c, 'pp_') + popActsHTML(c) +
+    sizeRowHTML(c, 'pp_');
   popFaultKey = c.fault || '';
   wireParamInputs(popBody, c, specs, 'pp_');
+  wireScaleInput(popBody, c, 'pp_');
   wirePractice(popBody, c);
   popBody.querySelectorAll('button[data-act]').forEach(function(btn){
     btn.addEventListener('click', function(){
@@ -3853,6 +3936,9 @@ function renderPop(){
 function openPop(id){
   var c = editor.byId(id);
   if (!c) return;
+  // 换一件元件才把「手动位置」清掉、重新贴着它长出来；点的是同一件
+  // （比如调完参数又点了它一下）就别动 —— 学生刚拖开的位置不能被抢回去。
+  if (popId !== id) popManual = null;
   popId = id;
   // 顺手把它【选上】。侧栏那块参数面板和 I/U/R/P 表都是跟着「选中项」走的，
   // 不选的话就会出现「点 A 元件弹出浮层、侧栏还写着 B 元件」——学生照浮层里
@@ -3869,6 +3955,7 @@ function openPop(id){
 function closePop(){
   popId = null;
   popFaultKey = '';
+  popManual = null;              // 下次打开重新贴着元件长出来
   popEl.hidden = true;
 }
 
@@ -3886,6 +3973,41 @@ function syncPop(){
 }
 document.getElementById('popX').onclick = closePop;
 window.addEventListener('scroll', function(){ if (popId) syncPop(); }, { passive: true });
+
+// ── 拖动参数浮层（用户 2026-10-20 第 1 点）──────────────────
+// 浮层默认长在元件【旁边】，可元件密密麻麻的时候它照样会压住隔壁那件。
+// 让学生按住表头把它挪开，比「自动挑一个不挡的方位」可靠得多：学生比
+// 任何启发式都知道自己接下来要看哪里。
+//
+// 走 Pointer Events（不写 mousedown/mousemove 那套）：鼠标、触屏、手写笔
+// 同一条路，平板上也一样能拖。setPointerCapture 保证指针划出表头（划到
+// 画布上）时事件还归它 —— 不捕获的话，拖快一点浮层就停在半路。
+var popHead = document.getElementById('popHead');
+var popDrag = null;
+popHead.addEventListener('pointerdown', function(ev){
+  if (ev.button != null && ev.button !== 0) return;         // 只认左键 / 单指
+  // ✕ 那颗按钮不拖：不然「想关掉」会变成「拖了一下」
+  if (ev.target && ev.target.closest && ev.target.closest('button')) return;
+  var r = popEl.getBoundingClientRect();
+  popDrag = { dx: ev.clientX - r.left, dy: ev.clientY - r.top };
+  popHead.classList.add('dragging');
+  try { popHead.setPointerCapture(ev.pointerId); } catch (e) { /* 老浏览器 */ }
+  ev.preventDefault();                                       // 别顺手选中标题文字
+});
+popHead.addEventListener('pointermove', function(ev){
+  if (!popDrag) return;
+  var q = clampPopPos(ev.clientX - popDrag.dx, ev.clientY - popDrag.dy);
+  popManual = { left: q.left, top: q.top };
+  popEl.style.left = Math.round(q.left) + 'px';
+  popEl.style.top = Math.round(q.top) + 'px';
+});
+function endPopDrag(){
+  if (!popDrag) return;
+  popDrag = null;
+  popHead.classList.remove('dragging');
+}
+popHead.addEventListener('pointerup', endPopDrag);
+popHead.addEventListener('pointercancel', endPopDrag);
 
 // ── 表盘放大镜 ────────────────────────────────────────────
 // 点表壳上任何地方（接线柱除外）就把【这一只表】按 K 倍重画到浮层里。
@@ -3973,6 +4095,47 @@ function zeroMeter(c){
   return true;
 }
 
+// 放大镜里给「当前用的那个量程」画一根短接线（用户 2026-10-20 第 3 点）。
+//
+// 真表上没有这根线（导线是直接接在量程柱上的），但放大镜是【读数】用的：
+// 学生抬头看指针、低头对刻度，最容易错的就是「这表到底在 0.6 挡还是 3 挡」
+// —— 两挡差 5 倍，读错就是整道题全错。把这根线画出来，两个柱子被它连着，
+// 「−」柱和「0.6」柱是一对，一眼就认出来了。
+//
+// 画在【柱脚下方】（y = 72 再往下 6~13px）：那是底座底下的空白，不压表盘、
+// 不压绿面板上印的「− 0.6 3」，也不和指针、配重尾打架。
+// 只在放大镜里画：画布上柱子才 10px 宽，一根 7px 粗的线糊上去只会把三根柱子
+// 连成一坨。
+function drawZoomJumper(g, c, rec){
+  if (c.type !== 'ammeter' && c.type !== 'voltmeter') return;   // 电流计只有两柱
+  var tap = rec && rec.tapIdx;
+  if (tap == null) return;                       // 没接量程柱：没有「当前量程」可标
+  var T = D.TERMINALS[c.type];
+  var a = T && T[0], b = T && T[tap];
+  if (!a || !b) return;
+  var y = a.y;                                   // 柱脚（= 导线接上来的那一点）
+  var endY = y + 5, ctrlY = y + 12;
+  g.save();
+  g.lineCap = 'round';
+  // ① 导线：先一道深色轮廓，再上绝缘皮的红，最后一道高光 —— 和画布上
+  //    真正的导线（drawWire）同一套画法，学生一眼认得这是「线」不是装饰。
+  g.beginPath();
+  g.moveTo(a.x, endY);
+  g.quadraticCurveTo((a.x + b.x) / 2, ctrlY, b.x, endY);
+  g.strokeStyle = 'rgba(15,23,42,0.55)'; g.lineWidth = 7; g.stroke();
+  g.strokeStyle = '#c2410c'; g.lineWidth = 4.4; g.stroke();
+  g.strokeStyle = 'rgba(255,255,255,0.38)'; g.lineWidth = 1.1; g.stroke();
+  // ② 两个线夹：颜色跟着绝缘皮走（不画成深灰方块 —— 那会和「−」柱的
+  //    深色柱帽混成一体，学生看着像柱子变长了，而不是「这里接了一根线」）。
+  [a, b].forEach(function (p) {
+    g.fillStyle = '#9a3412';
+    D.roundRect(g, p.x - 3.4, y - 2, 6.8, 8.6, 2.4); g.fill();
+    g.fillStyle = 'rgba(255,255,255,0.42)';
+    D.roundRect(g, p.x - 2.2, y - 0.9, 1.5, 6.2, 0.75); g.fill();
+  });
+  g.restore();
+}
+
 function drawZoom(){
   if (!zoomComp) return;
   var rec = results && results.components[zoomComp.id];
@@ -3997,8 +4160,12 @@ function drawZoom(){
   g.translate(-(ZBOX.x + ZBOX.w/2), -(ZBOX.y + ZBOX.h/2));
   // rot 一律 0：横着接的表也正着读。放大镜是给学生【读数】用的，
   // 不是给他看这表在画布上朝哪边——斜着放大出来的数字照样没法读。
+  // scale 一律 1：放大镜自己已经有 K 倍取景框，元件在画布上被放大到 200%
+  // 的话再叠一层就会把表壳顶和底座切掉一条（用户 2026-10-20 第 2 点）。
   D.drawComponent(g, { id: zoomComp.id, type: zoomComp.type, x: 0, y: 0, rot: 0,
-                       params: zoomComp.params }, rec);
+                       scale: 1, params: zoomComp.params }, rec);
+  // 当前量程的短接线（用户 2026-10-20 第 3 点）：把「−」柱和选中的量程柱连起来。
+  drawZoomJumper(g, zoomComp, rec);
   // 调零旋钮的提示圈：【只画在放大镜里】。画布上那颗螺丝半径才 6.5px，
   // 在它外面套一圈只会把小表盘弄脏；而放大镜里正是「学生要动手调零」的地方。
   // 未调零：琥珀圈 + 一个「调零」字样（不写的话，那颗螺丝和表壳上另外两颗
@@ -5624,10 +5791,18 @@ window.__btnRepair = function(){
 };
 // 点元件弹出的浮动面板。
 window.__pop = function(){
-  var rows = [].slice.call(popBody.querySelectorAll('.prow'));
+  // 参数行 = .prow 里【不是 sizeRow】的那些。最后那行「大小」是显示大小
+  // （comp.scale），不是元件参数 —— 算进去的话「电动机面板 5 行」会变 6 行。
+  var rows = [].slice.call(popBody.querySelectorAll('.prow:not(.sizeRow)'));
+  var szRow = popBody.querySelector('.prow.sizeRow');
   return {
     open: !!popId && !popEl.hidden, id: popId,
     title: popTitle.textContent,
+    // 元件缩放那一行：有没有、当前值多少（0.5~2）。
+    sizeRow: !!szRow,
+    scale: szRow && szRow.querySelector('input[data-scale]')
+      ? +szRow.querySelector('input[data-scale]').value : null,
+    scaleText: szRow && szRow.querySelector('.val') ? szRow.querySelector('.val').textContent : null,
     visible: popEl.style.visibility !== 'hidden',
     left: popEl.style.left, top: popEl.style.top,
     w: popEl.offsetWidth, h: popEl.offsetHeight,
@@ -5757,7 +5932,52 @@ window.__openZoom = function(id){
   if (c) openZoom(c);
 };
 window.__closeZoom = function(){ closeZoom(); };
+window.__zoomPix = function(lx, ly, r){
+  // 放大镜画布里的像素统计。lx / ly 是【元件自身坐标系】的坐标（和
+  // D.TERMINALS 同一套），内部按 drawZoom 那一串变换反推回画布像素。
+  // 断言要判「短接线真的画出去了」，而不是「drawZoomJumper 被调用了」——
+  // 后者在函数里 `return;` 一行就能骗过去。
+  if (!zoomComp || !zoomView.K) return null;
+  var dpr = window.devicePixelRatio || 1;
+  var K = zoomView.K;
+  var px = zoomView.cw / 2 + (lx - zoomView.midX) * K;
+  var py = zoomView.ch / 2 + (ly - zoomView.midY) * K;
+  var rr = Math.max(2, Math.round((r == null ? 5 : r) * K));
+  var g2 = zoomCv.getContext('2d');
+  var x0 = Math.max(0, Math.round((px - rr) * dpr));
+  var y0 = Math.max(0, Math.round((py - rr) * dpr));
+  var w = Math.min(zoomCv.width - x0, Math.round(rr * 2 * dpr));
+  var h = Math.min(zoomCv.height - y0, Math.round(rr * 2 * dpr));
+  if (w <= 0 || h <= 0) return null;
+  var d = g2.getImageData(x0, y0, w, h).data;
+  var n = 0, red = 0, sr = 0, sg = 0, sb = 0;
+  for (var i = 0; i < d.length; i += 4) {
+    n++; sr += d[i]; sg += d[i + 1]; sb += d[i + 2];
+    // 「这根线是红的」= 通道差，不用绝对色值：绝缘皮 #c2410c 的 r−b ≈ 150，
+    // 白底 / 灰阴影 / 绿面板的 r−b 都 ≤ 10，差一个数量级。
+    if (d[i] - d[i + 2] > 40 && d[i] > 110) red++;
+  }
+  return { n: n, red: red, r: sr / n, g: sg / n, b: sb / n };
+};
 window.__dialHit = function(lx, ly, c){ return dialHit(lx, ly, c); };
+// 元件缩放（0.5~2 倍）。断言要能问「这件器材现在按几倍画」以及「端子有没有
+// 跟着挪」—— 只判 comp.scale 这个数等于量「写进去的那一步」，把
+// toWorld 里的缩放删掉照样全绿。
+window.__setScale = function(id, v){ editor.setScale(id, v); };
+window.__scaleOf = function(id){
+  var c = editor.byId(id);
+  return c ? D.scaleOf(c) : null;
+};
+window.__termWorld = function(id, i){
+  var c = editor.byId(id);
+  return c ? D.terminalWorld(c, i) : null;
+};
+// 参数浮层的位置 + 「用户手动拖过没有」。拖拽断言要读真实 DOM 的 rect。
+window.__popPos = function(){
+  var r = popEl.getBoundingClientRect();
+  return { hidden: !!popEl.hidden, left: r.left, top: r.top, w: r.width, h: r.height,
+           manual: !!popManual, id: popId };
+};
 window.__btnCurrent = function(){ return btnCurrent; };
 window.__pathOf = function(wr){ return pathOf(wr); };
 window.__readout = function(c, r){ return readoutLines(c, r); };

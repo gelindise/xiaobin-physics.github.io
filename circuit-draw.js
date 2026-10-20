@@ -454,7 +454,7 @@
   };
   // 一块读数牌的落点（元件自身坐标系，不随 rot 转）。返回 {x,y,w,h}，
   // x/y 是左上角。cx 传元件的世界 x，用来把牌子夹在画布内（TOP_MIN）。
-  function meterReadoutBox(cx, cy, text, ctx2) {
+  function meterReadoutBox(cx, cy, text, ctx2, scale) {
     var R = METER_READOUT;
     var w = R.MINW, h = R.H;
     if (ctx2 && text) {
@@ -463,7 +463,9 @@
       w = Math.max(R.MINW, ctx2.measureText(text).width + R.PADX);
       ctx2.restore();
     }
-    var y = MET.CASE_TOP - R.GAP - h;
+    // 表壳高度跟着元件缩放走（表放大 2 倍，牌子要挂到 2 倍高的表壳上方去），
+    // 牌子【本身】不缩放：它是注解，缩到 0.5 倍就没人看得清了。
+    var y = MET.CASE_TOP * (scale == null ? 1 : scale) - R.GAP - h;
     if (cy + y < R.TOP_MIN) y = R.TOP_MIN - cy;      // 表贴到画布顶边时别整块飘出去
     return { x: cx - w / 2, y: cy + y, w: w, h: h };
   }
@@ -589,17 +591,47 @@
     return (typeof n === 'string' && n.trim()) ? n.trim() : comp.id;
   }
 
-  function toWorld(comp, lx, ly) {
+  // ── 元件的【显示缩放】（2026-10-20 用户第 2 点）────────────────
+  // 「整体可以变大、可以缩小，0.5~2 倍，功能不变」。
+  // 只影响【画多大】，一个电学量都不碰：
+  //   · 端子坐标由 toWorld 一并缩放 ⇒ 导线端点、命中判定、走线避让自动跟着走；
+  //   · toLocal 反着除一次 ⇒ 所有「在元件自身坐标系里比大小」的地方
+  //     （命中框 BODY、bodyBox、变阻器滑片 RHEO）拿到的仍是【原始尺寸】的
+  //     局部坐标，一行都不用改；
+  //   · 绘制函数在 translate/rotate 之后多一句 ctx.scale(k, k)，元件内部
+  //     照旧按原坐标画。
+  // 存在 comp.scale 上（不是 params）：它和 rot 一样是【位姿】，不是电学参数，
+  // 存档 / 撤销快照都按整个 comp 序列化，自然带上；老存档没有这个字段 ⇒ 1。
+  var SCALE_MIN = 0.5, SCALE_MAX = 2;
+  function clampScale(v) {
+    var s = +v;
+    if (!isFinite(s) || s <= 0) return 1;
+    return Math.max(SCALE_MIN, Math.min(SCALE_MAX, s));
+  }
+  function scaleOf(comp) {
+    return comp ? clampScale(comp.scale == null ? 1 : comp.scale) : 1;
+  }
+
+  function toWorld(comp, lx, ly, noScale) {
     var r = (comp.rot || 0) * Math.PI / 180;
     var c = Math.cos(r), s = Math.sin(r);
-    return { x: comp.x + lx * c - ly * s, y: comp.y + lx * s + ly * c };
+    // noScale：电路图（circuit-schematic）专用 —— 那边的符号是【固定尺寸的
+    // 图形】，不随实物缩放变。用带缩放的 toWorld 去算符号引脚，2 倍大的表
+    // 会把引脚推到符号外面，导线就落不到引脚上了。
+    var k = noScale ? 1 : scaleOf(comp);
+    var X = lx * k, Y = ly * k;
+    return { x: comp.x + X * c - Y * s, y: comp.y + X * s + Y * c };
   }
   // toWorld 的逆变换。命中判断（拖滑片）拿鼠标点反推回元件自身坐标系用。
+  // 🔴 缩放要在这里【除】回去：所有下游都拿它和「原始尺寸」的局部坐标比
+  //    （BODY 命中框、bodyBox 走线避让、RHEO 滑片几何）。少除这一下，
+  //    2 倍大的元件会有半圈点不着、导线绕着一团空气走。
   function toLocal(comp, x, y) {
     var r = -(comp.rot || 0) * Math.PI / 180;
     var c = Math.cos(r), s = Math.sin(r);
     var dx = x - comp.x, dy = y - comp.y;
-    return { x: dx * c - dy * s, y: dx * s + dy * c };
+    var k = scaleOf(comp);
+    return { x: (dx * c - dy * s) / k, y: (dx * s + dy * c) / k };
   }
   function terminalWorld(comp, i) {
     return terminalWorldIn(comp, TERMINALS[comp.type], i);
@@ -820,6 +852,10 @@
     }
     var sc = scale == null ? 1.25 : scale;
     var nk = neck == null ? 0 : neck;
+    // 元件缩放：柱子是【器材的一部分】，要跟着放大缩小（一只 2 倍大的表配三根
+    // 指甲盖大的柱子，看着像贴上去的贴纸）。锚点不动 —— 缩放绕端子点做，
+    // 柱尖仍钉在 terminalWorld() 算出来的那一点上，导线接的还是同一处。
+    var ck = scaleOf(comp);
     // 元件自身坐标系里的方向 → 世界坐标里的方向。翻转和旋转都要跟着走。
     // 🔴 别在这里自己写一套三角函数：flipOf 的镜像 + comp.rot 的旋转，
     //    全站只有 toWorld / terminalWorldIn 那一份实现（皮肤也是问它）。
@@ -835,13 +871,19 @@
     }
     for (var i = 0; i < kinds.length; i++) {
       var p = terminalWorld(comp, i);
-      if (tilt == null) { drawBindingPost(ctx, p.x, p.y, kinds[i], scale, neck); continue; }
       ctx.save();
       ctx.translate(p.x, p.y);
-      ctx.rotate(tilt);
-      // 沿柱轴推出去一个柱长：柱【尖】（球冠顶）正好落在锚点上 —— 锚点就是
-      // 导线接上来的那一点，柱身从它沿 −FACE 缩进器材里。
-      ctx.translate(0, (POST_TIP_H + nk) * sc);
+      if (tilt != null) {
+        ctx.rotate(tilt);
+        // 沿柱轴推出去一个柱长：柱【尖】（球冠顶）正好落在锚点上 —— 锚点就是
+        // 导线接上来的那一点，柱身从它沿 −FACE 缩进器材里。
+        // ⚠️ 这一句必须在 ctx.scale(ck) 【之后】按局部单位推：先推再缩放的话，
+        //    位移量也跟着被缩放一次，柱尖会离开锚点（2 倍时偏出半个柱长）。
+        ctx.scale(ck, ck);
+        ctx.translate(0, (POST_TIP_H + nk) * sc);
+      } else {
+        ctx.scale(ck, ck);
+      }
       drawBindingPost(ctx, 0, 0, kinds[i], scale, neck);
       ctx.restore();
     }
@@ -1192,6 +1234,7 @@
     ctx.save();
     ctx.translate(comp.x, comp.y);
     ctx.rotate((comp.rot || 0) * Math.PI / 180);
+    ctx.scale(scaleOf(comp), scaleOf(comp));
 
     // 引出线：镀锡铜。真电阻的两根脚是从【端帽】上焊出来的，所以线要画到
     // 端帽里面一点点，不能停在壳体边缘——停在边缘看着像线插进漆膜里。
@@ -1609,6 +1652,7 @@
     ctx.save();
     ctx.translate(comp.x, comp.y);
     ctx.rotate((comp.rot || 0) * Math.PI / 180);
+    ctx.scale(scaleOf(comp), scaleOf(comp));
     // 「对调极性」= 整台机箱原地左右镜像（和干电池一个规矩，见 drawBattery）。
     // ⚠️ 镜像只加在【本体】这一段里：接线柱的世界坐标来自 terminalWorld()，
     //    那里已经按 flip 把 x 取过负了，在这里再镜像一次会把柱子画到相反的一侧。
@@ -1911,6 +1955,7 @@
     ctx.save();
     ctx.translate(comp.x, comp.y);
     ctx.rotate((comp.rot || 0) * Math.PI / 180);
+    ctx.scale(scaleOf(comp), scaleOf(comp));
     // 「对调极性」= 把整台电池盒原地左右镜像：干电池的锌筒（负极）换到右边、
     // 黄铜帽（正极）换到左边，端板上的「＋」和「－」也跟着换边。
     // ⚠️ 镜像只加在【本体】这一段里，posts() 是在这段之外调的 —— 接线柱的
@@ -2270,6 +2315,7 @@
       ctx.save();
       ctx.translate(comp.x, comp.y);
       ctx.rotate((comp.rot || 0) * Math.PI / 180);
+      ctx.scale(scaleOf(comp), scaleOf(comp));
       if (flipOf(comp)) ctx.scale(-1, 1);   // 裂口跟着本体走（牌子上是字，silk 会自己镜回来）
       soot(ctx, 0, 0, boxW * 0.54, boxH * 0.62, 1);
       // 外壳裂口：一条折线从盒沿劈进去，两侧错开一点，读得出「裂了」
@@ -2439,6 +2485,7 @@
     ctx.save();
     ctx.translate(comp.x, comp.y);
     ctx.rotate(rad);
+    ctx.scale(scaleOf(comp), scaleOf(comp));
 
     // ① 底板：和二极管 / 电动机 / 电铃同一块示教板（±70，面朝下方）
     basePlate(ctx, PLATE.HW, PLATE.TOP, PLATE.FACE, PLATE.BOT);
@@ -2557,6 +2604,7 @@
     ctx.save();
     ctx.translate(comp.x, comp.y);
     ctx.rotate((comp.rot || 0) * Math.PI / 180);
+    ctx.scale(scaleOf(comp), scaleOf(comp));
 
     // ① 底板：和二极管 / 电动机 / 电铃 / 导体板同一块示教板
     basePlate(ctx, BR.HW, BR.TOP, BR.FACE, BR.BOT);
@@ -2688,6 +2736,7 @@
     ctx.save();
     ctx.translate(comp.x, comp.y);
     ctx.rotate((comp.rot || 0) * Math.PI / 180);
+    ctx.scale(scaleOf(comp), scaleOf(comp));
 
     // ① 示教板：比导体板再薄一点 —— 铅笔芯是悬在板上方的，板子只是个托。
     //    板宽跟着芯走（PENCIL.POST）：芯长到 ±108，板还留在 ±70 的话，
@@ -2948,6 +2997,7 @@
     ctx.save();
     ctx.translate(comp.x, comp.y);
     ctx.rotate((comp.rot || 0) * Math.PI / 180);
+    ctx.scale(scaleOf(comp), scaleOf(comp));
 
     basePlate(ctx, PLATE.HW, PLATE.TOP, PLATE.FACE, PLATE.BOT);
     ctx.restore();
@@ -2967,6 +3017,7 @@
     ctx.save();
     ctx.translate(comp.x, comp.y);
     ctx.rotate((comp.rot || 0) * Math.PI / 180);
+    ctx.scale(scaleOf(comp), scaleOf(comp));
 
     // 静触点：立在板面上的一块金属片，刀片落下来正好搭在它的顶面上。
     // 顶面高度 CONTACT_TOP 必须【等于刀片的底边】= PIV.y + 半厚 6.5：给高了
@@ -3185,6 +3236,7 @@
     ctx.save();
     ctx.translate(comp.x, comp.y);
     ctx.rotate((comp.rot || 0) * Math.PI / 180);
+    ctx.scale(scaleOf(comp), scaleOf(comp));
     basePlate(ctx, PLATE.HW, PLATE.TOP, PLATE.FACE, PLATE.BOT, { screws: false });
     ctx.restore();
 
@@ -3196,6 +3248,7 @@
     ctx.save();
     ctx.translate(comp.x, comp.y);
     ctx.rotate((comp.rot || 0) * Math.PI / 180);
+    ctx.scale(scaleOf(comp), scaleOf(comp));
 
     // ── 静触点 = 弹簧夹口（两条腿 + 中间一道缝）────────────────
     // 两条腿站在板面上、上端齐平；刀片从缝里【穿过去】。缝在刀片上下都露着
@@ -3499,6 +3552,7 @@
     ctx.save();
     ctx.translate(comp.x, comp.y);
     ctx.rotate((comp.rot || 0) * Math.PI / 180);
+    ctx.scale(scaleOf(comp), scaleOf(comp));
 
     // 灯座底板：和闸刀开关共用一块，两件器材摆在一起才是同一套
     basePlate(ctx, PLATE.HW, PLATE.TOP, PLATE.FACE, PLATE.BOT);
@@ -3986,6 +4040,7 @@
     ctx.save();
     ctx.translate(comp.x, comp.y);
     ctx.rotate((comp.rot || 0) * Math.PI / 180);
+    ctx.scale(scaleOf(comp), scaleOf(comp));
 
     // ── 表壳 ────────────────────────────────────────────────
     var sc = ctxScale(ctx);
@@ -4294,6 +4349,7 @@
     ctx.save();
     ctx.translate(comp.x, comp.y);
     ctx.rotate((comp.rot || 0) * Math.PI / 180);
+    ctx.scale(scaleOf(comp), scaleOf(comp));
     var sc = ctxScale(ctx);
 
     // ── 表壳（浅蓝）+ 型号丝印 + 面板螺丝 ────────────────────
@@ -4682,6 +4738,7 @@
     ctx.save();
     ctx.translate(comp.x, comp.y);
     ctx.rotate((comp.rot || 0) * Math.PI / 180);
+    ctx.scale(scaleOf(comp), scaleOf(comp));
 
     // 两种记号各画各的：小球 = 实心圆（琥珀），箭头 = drawWire 里那支红三角
     // （同一形状、同一朝向规则）—— 学生能把绕线里的箭头和导线上的箭头对上号。
@@ -4764,6 +4821,7 @@
     ctx.save();
     ctx.translate(comp.x, comp.y);
     ctx.rotate((comp.rot || 0) * Math.PI / 180);
+    ctx.scale(scaleOf(comp), scaleOf(comp));
 
     var cylX = RHEO.cylX, cylW = RHEO.cylW, cylY = RHEO.cylY, cylH = RHEO.cylH;
     var TUBE_HW = BW / 2 - 1;                  // 瓷管半长：正好顶到两块立板
@@ -5111,6 +5169,7 @@
       ctx.save();
       ctx.translate(comp.x, comp.y);
       ctx.rotate((comp.rot || 0) * Math.PI / 180);
+      ctx.scale(scaleOf(comp), scaleOf(comp));
       ctx.lineJoin = 'round'; ctx.lineCap = 'round';
       ENDS.forEach(function (e) {
         ctx.globalAlpha = e.live ? 1 : 0.5;   // 没电流的那半根压暗，和电阻丝上的灰段呼应
@@ -5271,6 +5330,7 @@
     // ① 底板 + 板面丝印（＋ / 符号 / －）。底板和开关、灯泡同一块。
     ctx.save();
     ctx.translate(comp.x, comp.y); ctx.rotate(rad);
+    ctx.scale(scaleOf(comp), scaleOf(comp));
     // 对调极性：整块板连同管身一起原地左右镜像 —— 板面的「＋」「－」互换、
     // 板上的二极管符号（三角尖朝向）也跟着翻，正是「管子调了个头」的样子。
     // 镜像是【局部 x】，和 terminalWorld 对端子 x 取负是同一件事的两面。
@@ -5287,6 +5347,7 @@
     // ③ 管身：把坐标系抬到管轴高度 G.y，下面这段沿用管轴 y=0 的局部坐标。
     ctx.save();
     ctx.translate(comp.x, comp.y); ctx.rotate(rad);
+    ctx.scale(scaleOf(comp), scaleOf(comp));
     if (flipOf(comp)) ctx.scale(-1, 1);       // 半球透镜换到右边 = 阳极在右
     ctx.translate(0, G.y);
 
@@ -5422,6 +5483,7 @@
     if (rec && rec.fault === 'burned') {
       ctx.save();
       ctx.translate(comp.x, comp.y); ctx.rotate(rad);
+      ctx.scale(scaleOf(comp), scaleOf(comp));
       if (flipOf(comp)) ctx.scale(-1, 1);     // 熏黑与裂痕跟着管子走
       soot(ctx, (G.domeCx + G.cylX1) / 2, G.y, 40, 24, 1);
       ctx.strokeStyle = 'rgba(12,10,9,0.8)'; ctx.lineWidth = 1.8;
@@ -5479,6 +5541,7 @@
     // ① 底板 + 板面丝印（＋ / 符号 M / －）
     ctx.save();
     ctx.translate(comp.x, comp.y); ctx.rotate(rad);
+    ctx.scale(scaleOf(comp), scaleOf(comp));
     // 对调极性：底板、支撑、机身、螺旋桨一起原地左右镜像（轴端螺旋桨换到左端）。
     // ⚠️ 螺旋桨的【转角 spin 不加任何处理】。镜像本身就会让叶子看起来反着扫，
     //    而 flip 之后 rec.i 变号、内核给的 omega 也变号 —— 两者刚好各反一次，
@@ -5492,6 +5555,7 @@
     // ② 支撑柱 + 引线（都画在机身【之前】，机身压上来就是「坐在支架上」）
     ctx.save();
     ctx.translate(comp.x, comp.y); ctx.rotate(rad);
+    ctx.scale(scaleOf(comp), scaleOf(comp));
     if (flipOf(comp)) ctx.scale(-1, 1);
     G.saddX.forEach(function (sx) {
       var w = G.saddHW * 2;
@@ -5521,6 +5585,7 @@
     // ③ 机身：把坐标系抬到轴线高度 BY，下面这段沿用轴线 y=0 的局部坐标。
     ctx.save();
     ctx.translate(comp.x, comp.y); ctx.rotate(rad);
+    ctx.scale(scaleOf(comp), scaleOf(comp));
     if (flipOf(comp)) ctx.scale(-1, 1);
     ctx.translate(0, BY);
 
@@ -5682,6 +5747,7 @@
     ctx.save();
     ctx.translate(comp.x, comp.y);
     ctx.rotate((comp.rot || 0) * Math.PI / 180);
+    ctx.scale(scaleOf(comp), scaleOf(comp));
 
     basePlate(ctx, PLATE.HW, PLATE.TOP, PLATE.FACE, PLATE.BOT);
     // 板面丝印：电铃没有极性（两个柱都是金属色），所以正面不印 ＋/－，
@@ -5843,6 +5909,7 @@
     ctx.save();
     ctx.translate(comp.x, comp.y);
     ctx.rotate((comp.rot || 0) * Math.PI / 180);
+    ctx.scale(scaleOf(comp), scaleOf(comp));
     ctx.beginPath();
     ctx.arc(0, 0, JUNC_R, 0, Math.PI * 2);
     ctx.fillStyle = PALETTE.wire;
@@ -5876,6 +5943,7 @@
     ctx.save();
     ctx.translate(comp.x, comp.y);
     ctx.rotate((comp.rot || 0) * Math.PI / 180);
+    ctx.scale(scaleOf(comp), scaleOf(comp));
     // 引出导线：只有电池那一路需要。学生电源的柱子本来就在盒子【里面】，
     // 再画那两截就是往盒面上刷一条横线。
     if (!isPSU) {
@@ -6029,6 +6097,11 @@
     // 绘制层只出几何 —— 两边共用同一份，牌子不会和表壳错位。
     METER_READOUT: METER_READOUT, meterReadoutBox: meterReadoutBox,
     BAND_COLORS: BAND_COLORS,
+    // 元件缩放（0.5~2 倍，见 scaleOf）。编辑器 / 参数面板 / 自检都问这三个，
+    // 别在页面里再写一遍 0.5 / 2 —— 夹取范围两处不一致时，面板能拧到 2 倍、
+    // 绘制却按 1.8 画，学生的「200%」和画面上的大小对不上。
+    scaleOf: scaleOf, clampScale: clampScale,
+    SCALE_MIN: SCALE_MIN, SCALE_MAX: SCALE_MAX,
     version: '2.6.0',
   };
 });

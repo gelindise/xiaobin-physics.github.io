@@ -400,7 +400,9 @@
     var mir = !!(it.comp && it.comp.mir);
     if (it.type === 'rheostat' && termIdx >= 2) {
       var sx = Math.max(-54, Math.min(54, it.meta.xl));   // 和 drawSymbol 的 sx 取同一段
-      return D.toWorld(it.comp, mir ? -sx : sx, RHEO_STEM_TOP);
+      // 第 4 个参数 true = 【不算元件缩放】：电路图里是固定尺寸的符号，
+      // 2 倍大的实物在图上还是那么大，引脚位置不能跟着翻倍。
+      return D.toWorld(it.comp, mir ? -sx : sx, RHEO_STEM_TOP, true);
     }
     // 符号引脚走 symTerms（默认 = 实物柱，学生电源是例外，见那里的注释）。
     // 自己算 toWorld 就必须自己把【两种左右翻转】都补上 —— 原来只有 mir 那一支
@@ -410,7 +412,7 @@
     var t = symTerms(it.type, D)[termIdx];
     if (!t) return null;
     var fx = (mir !== D.flipOf(it.comp)) ? -t.x : t.x;
-    return D.toWorld(it.comp, fx, t.y);
+    return D.toWorld(it.comp, fx, t.y, true);
   }
 
   // 元件的【轴线】局部 y：导线该落在元件哪条水平线上。
@@ -428,7 +430,7 @@
   function worldRect(it, D) {
     var r = it.rect, c = it.comp;
     var pts = [[r.x0, r.y0], [r.x1, r.y0], [r.x0, r.y1], [r.x1, r.y1]]
-      .map(function (p) { return D.toWorld(c, p[0], p[1]); });
+      .map(function (p) { return D.toWorld(c, p[0], p[1], true); });
     var xs = pts.map(function (p) { return p.x; }), ys = pts.map(function (p) { return p.y; });
     return { x0: Math.min.apply(null, xs), y0: Math.min.apply(null, ys),
              x1: Math.max.apply(null, xs), y1: Math.max.apply(null, ys) };

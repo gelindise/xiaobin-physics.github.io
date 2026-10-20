@@ -258,7 +258,12 @@
 
     function bodyHalf(c) {
       var b = BODY[c.type] || [50, 50];
-      return (c.rot === 90 || c.rot === 270) ? [b[1], b[0]] : [b[0], b[1]];
+      // 元件缩放（comp.scale，0.5~2）：命中框 / 走线避让 / 参数浮层让位
+      // 用的都是【世界坐标里的占地】，所以这里乘一次。
+      // 🔴 别把这个乘进 localBox：localBox 是【元件自身坐标系】里的框，
+      //    和 toLocal 配着用（toLocal 已经把缩放除回去了）。
+      var k = D.scaleOf ? D.scaleOf(c) : 1;
+      return (c.rot === 90 || c.rot === 270) ? [b[1] * k, b[0] * k] : [b[0] * k, b[1] * k];
     }
     // 命中框 / 选中框在【元件自身坐标系】里的矩形。
     //
@@ -800,6 +805,32 @@
       // 是「这台仪器有没有开机」，和闸刀的「闸刀合上没有」是两回事 ——
       // 内核里 buildBranches 也只认 P.on === false 才断路。
       else if (differs && key === 'on') report('switch', { comp: c, closed: !!val });
+    }
+
+    // 元件缩放（0.5~2 倍，用户 2026-10-20 第 2 点）。只改【显示大小】。
+    //
+    // 为什么存在 comp.scale 上、而不是 params.scale：
+    //   · 它是位姿，和 rot 同类；params 是电学参数，会被内核逐项读；
+    //   · 存档 / 撤销快照都是整个 comp 序列化，放顶层自然带上，内核一个字段
+    //     都不用认（求解器压根不知道元件画多大）；
+    //   · 参数面板里那一行由页面单独生成（见 renderPop 的 sizeRowHTML），
+    //     不进 PARAM_UI —— 否则 3D 沙盒也会冒出一个它在 3D 里做不到的旋钮。
+    //
+    // 🔴 端子坐标是【跟着缩放走】的（toWorld 乘了 scale），所以改完必须
+    //    rerouteAll()：不重算的话，正交导线还按旧端点走，元件一放大，
+    //    线头就和柱子分家了。
+    function setScale(id, v, noUndo) {
+      var c = byId(id); if (!c) return false;
+      var next = D.clampScale ? D.clampScale(v) : +v;
+      // 四舍五入到 1%：滑条 step 是 0.05，但存档 / 外部调用可能给 1.2345678
+      next = Math.round(next * 100) / 100;
+      var cur = D.scaleOf ? D.scaleOf(c) : 1;
+      if (Math.abs(next - cur) < 1e-9) return false;    // 值没变：别白入一条撤销
+      if (!noUndo) pushUndo();
+      c.scale = next;
+      rerouteAll();
+      changed();
+      return true;
     }
 
     // 给元件改名（画布上那个标签框里显示的字）。空 / 全空白 ⇒ 恢复自动编号
@@ -1882,6 +1913,8 @@
           // 往左伸），按中心对称去画的话手柄框不住、右边还多圈一片空气。
           ctx.translate(c.x, c.y);
           ctx.rotate((c.rot || 0) * Math.PI / 180);
+          // 虚线框画在元件自身坐标系里 ⇒ 元件放大 2 倍，框也要放大 2 倍。
+          if (D.scaleOf) { var ks = D.scaleOf(c); ctx.scale(ks, ks); }
           D.roundRect(ctx, b.x0 - 7, b.y0 - 7, (b.x1 - b.x0) + 14, (b.y1 - b.y0) + 14, 8);
           ctx.stroke();
           ctx.restore();
@@ -1988,6 +2021,9 @@
     return {
       toLogical: toLogical, pathOf: pathOf, bodyHalf: bodyHalf, localBox: localBox, byId: byId,
       addComp: addComp, setParam: setParam, removeSelected: removeSelected,
+      // 元件缩放（0.5~2 倍）。参数面板那一行「大小」走它，不走 setParam ——
+      // scale 是位姿不是电学参数（见 setScale 上那段注释）。
+      setScale: setScale,
       // 参数面板的「量程」按钮走它，而不是 setParam：量程在实物上是「线接在
       // 哪个柱子上」，改参数不改接线的话画面和读数就对不上了。
       plugRange: plugRange,
