@@ -1175,11 +1175,14 @@ import * as THREE from './assets/optics-three.min.js';
   thread.position.set(TH_X, ARM_Y - THREAD_LEN / 2, TH_Z);
   thSupport.add(thread);
 
-  /* --- 玻璃搅拌棒 --- */
-  const stir = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 18, 14), glassMat);
-  stir.position.set(-0.62, TT_Y0 + 5.6, -0.2);
-  stir.rotation.z = 0.045;
-  scene.add(stir);
+  /* --- 玻璃搅拌棒：已删除 ---
+     原来这里有一根 CylinderGeometry(0.14, 0.14, 18) 的玻璃棒，中心放在 TT_Y0 + 5.6，
+     于是它从 TT_Y0 − 3.4 一直伸到 TT_Y0 + 14.6 —— 底端穿过试管底、穿过烧杯底、
+     穿过石棉网，直接扎进酒精灯外焰（实测世界 y = 15.73，而烧杯底 17.77、石棉网 17.72、
+     焰尖 17.20）。真实装置里搅拌棒只可能在试管内腔里，绝不会穿出管底；
+     本页也没有任何「搅拌」交互，留着只会穿帮，所以整根去掉。
+     若以后要做搅拌动画，长度必须满足：底端 ≥ TT_Y0 + 0.3（不碰管底）、
+     顶端 ≤ TT_Y0 + TT_H + 1.5（露出管口一小截即可），且 x/z 偏移 + 半径 < TT_R。 */
 
   /* --- 台面计时器（数码计时器） ---
      位置 (x = 20, z = 12)：铁架台底座只占 x∈[-13,13]、z∈[-8.5,8.5]，所以它完全不压器材。
@@ -1428,7 +1431,7 @@ import * as THREE from './assets/optics-three.min.js';
     { key: 'net',    label: '石棉网',            objs: [netMesh, pad] },
     { key: 'beaker', label: '烧杯 + 水',         objs: [beaker] },
     { key: 'clamp',  label: '试管夹',            objs: [bossClamp.sleeve, bossClamp.screw, bossClamp.arm, clampArm, jaws[0], jaws[1], clampPad] },
-    { key: 'tube',   label: '试管 + 试样',       objs: [tube, stir] },
+    { key: 'tube',   label: '试管 + 试样',       objs: [tube] },
     { key: 'thermo', label: '温度计',            objs: [thermometer] },
     { key: 'arm',    label: '温度计横臂',        objs: [thSupport] }
   ];
@@ -1485,9 +1488,9 @@ import * as THREE from './assets/optics-three.min.js';
     return minY;
   }
 
-  /* ★ 一件器材里可能有多个物体（试管 + 搅拌棒、铁圈 + boss 头、灯 + 火焰）。
+  /* ★ 一件器材里可能有多个物体（铁圈 + boss 头、灯 + 火焰、试管夹 + 夹爪）。
      它们必须【作为刚体一起动】：绕同一个支点转，而不是各自绕自己的原点转。
-     各自转会把相对位置扯散 —— 实测「试管 + 搅拌棒」被甩开 15 cm，
+     各自转会把相对位置扯散 —— 实测「铁圈 + boss 头」被甩开 15 cm，
      整件的投影包围盒从 18 cm 宽涨到 38 cm 宽（一眼假）。 */
   const _asmV = new THREE.Vector3();
   const _asmM = new THREE.Matrix4();
@@ -3089,7 +3092,7 @@ import * as THREE from './assets/optics-three.min.js';
       view: () => ({ ...VIEWS.assemble }),
       gotoView: gotoAssembleView
     },
-    base, beaker, tube, netMesh, stand, stir,
+    base, beaker, tube, netMesh, stand,
     /* 温度计刻度与放大镜 —— 供自检「从贴图像素数刻度条数」「红线与真值同源」用。
        ★ 数刻度必须数【贴图像素】，不能读 SCALE_STEP 常量：
          把步长从 1 改回 2 时，常量照样写着 1，只有像素会变。

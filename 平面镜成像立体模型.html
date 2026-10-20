@@ -511,6 +511,25 @@
                   <label><input id="mir-front" type="checkbox">只看玻璃板前</label>
                   <label><input id="mir-back" type="checkbox">只看玻璃板后</label>
                 </div>
+
+                <h4>光路（烛焰上的发光点 P）</h4>
+                <div class="params-checks">
+                  <label><input id="mir-rays" type="checkbox" checked>显示光路</label>
+                </div>
+                <div class="lab3d-field" style="margin-top:12px">
+                  <label for="mir-py">发光点高度 <output id="mir-py-v">11.5 cm</output></label>
+                  <input id="mir-py" type="range" min="2" max="13" value="11.5" step="0.5">
+                  <small>发光点 P 长在烛焰上，<b style="color:#7dd3fc">直接上下拖它</b>也行。
+                    它发出的光线打到玻璃板上，再按反射定律射回板前；
+                    把反射光线<b style="color:#7dd3fc">反向延长</b>（青色虚线），
+                    所有延长线都交在同一点 <b style="color:#7dd3fc">P′</b>——那就是 P 的像点。
+                    上下拖 P，P′ 会跟着上下动：像点的位置是「延长线的交点」，不是板后真有光</small>
+                </div>
+                <div class="lab3d-field">
+                  <label for="mir-rays-n">光线数量 <output id="mir-rays-n-v">5 条</output></label>
+                  <input id="mir-rays-n" type="range" min="3" max="9" value="5" step="2">
+                  <small>光线越多，交点越明显——所有反向延长线都落在同一个 P′ 上，这正是「像点」的由来</small>
+                </div>
               </div>
             </aside>
 
@@ -519,7 +538,7 @@
               <button type="button" class="stage-record" id="mir-record-stage">
                 <span class="ico">📋</span>记录这一组<b class="cnt" id="mir-record-cnt">0</b>
               </button>
-              <div class="stage-help">拖动空白处旋转 · 滚轮缩放 · 光标碰到光源 / 光屏就能拖 · 点一下光源可点燃</div>
+              <div class="stage-help">拖动空白处旋转 · 滚轮缩放 · 光源 / 光屏可拖 · 点一下光源可点燃 · 烛焰上的亮点可上下拖</div>
             </div>
           </div>
 
@@ -630,6 +649,11 @@
       const PAD     = 0.34;       // 物体离纸边的最小留白
       const PAPER_Z = 1.95;       // 白纸在 z 方向可用到 ±1.95：A/B/光屏的绝对边界
       const ENV_TOP = CH + WK + FL;   // 蜡烛能到的最高点（火焰尖）——【默认值】，实时值见 srcTop()
+      // 发光点 P：长在烛焰上的一个「点光源」，用它演示「反射光线的反向延长线交于像点」。
+      // 高度是【绝对高度】（世界单位，从桌面量），可以上下拖；默认落在烛焰中部（11.5 cm），
+      // 必须落在「发光点高度」滑块的 0.5 cm 刻度上，否则滑块显示和实际值对不上（F 面板踩过）。
+      const PY_MIN  = 0.20;       // 能拖到的最低处（2 cm，蜡烛根部附近）
+      const PY0     = 1.15;       // 默认高度 = 烛焰中部
 
       /* 器材区：白纸右侧的一条竖带。没点燃的 B 和光屏一开始就搁在这儿——
          真实实验里它们也是摆在台子边上的，学生得自己把它们拿到玻璃板后面去。
@@ -691,6 +715,10 @@
         showGhost: true, showAid: true, showRuler: true, showMarks: true,
         ghostAlways: false,          // 像是否「始终显示」（不按真实可见性裁剪）
         onlyFront: false, onlyBack: false,
+        // ── 光路：烛焰上的发光点 P（物点）与它的像点 P′
+        // py 是 P 的【绝对高度】（世界单位，从桌面量），可以上下拖；
+        // rays 是画几条光线（3~9 的奇数，对称才好看）。
+        py: PY0, rays: 5, showRays: true,
         w: 1, h: 1, dpr: 0, dirty: true,
         dragging: false, drag: null, dragOff: [0, 0], downAt: null,
         lastX: 0, lastY: 0, hover: null, view: 'perspective',
@@ -784,6 +812,91 @@
                             k === 'b' ? state.bz : state.sz) <= 0 ? 'behind' : 'front');
       // 「已经放进实验区」：既不在器材区，又在玻璃板后面。只有这时候距离才是个有意义的读数。
       const placed = k => zoneOf(k) === 'behind';
+
+      /* ============================================================
+       * 光路：烛焰上的发光点 P 与它的像点 P′
+       * ------------------------------------------------------------
+       * 平面镜成像的「像」不是一个真放在板后的物体，而是【反射光线反向延长后的交点】。
+       * 这一层就把这个构造画出来，让学生看见「像点是怎么来的」：
+       *   ① 发光点 P 发出若干条光线，打在玻璃板上的 Q₁、Q₂…
+       *   ② 每个 Q 处按反射定律射出反射光线（真的射向板前，这是眼睛收到的光）
+       *   ③ 把反射光线【反向】延长到板后 —— 这些延长线（虚线）全都交于同一点
+       *      P′ = P 关于板面的镜像。P′ 就是 P 的像点。
+       * 【为什么 P′ 一定落在所有延长线上】镜面反射是等距变换：Q 到 P 和 Q 到 P′
+       * 的距离相等，且 QP 与 QP′ 关于板面对称 ⇒ 反射光线从 Q 射出的方向，
+       * 正好是 Q→P′ 的反方向。所以「延长线过 P′」是几何恒等式，不是凑出来的。
+       * 【P 只在 A 点亮时才有】它是烛焰上的一个点光源，没点着的蜡烛没有发光点。
+       * ============================================================ */
+      // 物点 P：站在光源轴线上、高度 py 处（蜡烛就是烛焰上那一点）
+      const pointP = () => [state.ax, state.py, state.az];
+      // 像点 P′：P 关于【此刻的板面】的镜像。与 ghostFrame 用的是同一个 refP，
+      // 所以 P′ 一定落在像 A′ 的轴线上——不会出现「像点飘在像外面」。
+      const pointI = () => { const p = pointP(); return refP(p[0], p[1], p[2]); };
+      // 发光点能不能画：要显示、要 A 亮着（烛焰上才有亮点），
+      // 而且不能处在「只看板前 / 只看板后」这两种剖切状态——光路本来就跨板面两侧，
+      // 硬画会和「只看一半」的设定自相矛盾。
+      const raysLive = () => state.showRays && state.aLit && !state.onlyFront && !state.onlyBack;
+      // 把 py 钳回合法区间（光源调矮、换光源之后都要钳一次）
+      // 【上限必须对齐到 0.5 cm 刻度】滑块 max 用的是同一个数；不对齐的话
+      // 「拖到最高」时滑块显示 13.0、旁边读数写着 13.2——同一件事两个数（本页反复踩过）。
+      const pyHi = () => Math.max(PY_MIN + STEP_CM / U,
+                                  Math.floor((srcTop() - 0.02) * U / STEP_CM) * STEP_CM / U);
+      function clampPy() { state.py = clamp(state.py, PY_MIN, pyHi()); }
+
+      // 一束光线：每条给 { Q（板面上的落点）, dir（反射方向）, end（反射光线的末端） }
+      // 【落点为什么不是一条水平线上的等间距点】板面是一块矩形，落点沿板面横向铺开的同时，
+      // 让世界高度围绕 P 上下交替（±2.2 cm）：这样整束光是一个【立体的锥】，
+      // 俯视 / 侧视时才看得出深度，而不是一张贴在某个水平面上的平面扇。
+      function rayBundle() {
+        const P = pointP(), m = MIR();
+        const n = clamp(Math.round(state.rays), 3, 9);
+        const cg = Math.cos(state.gt) || 1;              // 板倾倒后「沿板面量」与「世界高度」差这个系数
+        const out = [];
+        for (let k = 0; k < n; k++) {
+          const a = k / (n - 1);
+          // 沿板面横向：-0.82gw … +0.82gw（留一点边，落点不出板）
+          const su = state.gw * 1.64 * (a - 0.5);
+          // 落点的世界高度：围绕 P 的高度上下起伏（±2.2 cm，按 sin 一个周期交替）。
+          // 【为什么要起伏，而且起伏要够大】所有落点都和 P 等高时，整束光就躺在一个
+          // 水平面里；而默认视角只比桌面高 15°，那个平面几乎是【侧着看】的——
+          // 一束光会缩成一条细线，看不出「光是从一个点向四周发出去的」。
+          // 让落点上下交替，光路就成了一个立体的锥，任何视角都看得出深度。
+          const hw = state.py + 0.22 * Math.sin(a * Math.PI * 2);
+          // 世界高度 → 板面局部高度（板倾倒时 t·cos gt 才是世界高度）
+          let t = hw / cg;
+          t = clamp(t, 0.04, Math.max(0.08, state.gh - 0.04));
+          const Q = mp(su, t, 0);
+          const d = vnorm(sub(Q, P));
+          const dn = dot(d, m.n);
+          const dir = vnorm(sub(d, scl(m.n, 2 * dn)));   // 反射定律：d − 2(d·n)n
+          // 反射光线画多长：略有长短，看起来更像真的一束光。
+          // 末端用渐变淡出（见 lineFade），所以即使画到 1 个单位也不会像一根硬棍子。
+          // 但别扎到桌面底下去——碰到桌面就截断（光线不会穿过桌面继续走）。
+          let L = 0.95 + 0.20 * a;
+          if (dir[1] < -1e-6) L = Math.min(L, Math.max(0.18, (0.03 - Q[1]) / dir[1]));
+          out.push({ Q: Q, dir: dir, end: add(Q, scl(dir, L)) });
+        }
+        return out;
+      }
+
+      // 光标 → 发光点的高度：求「相机射线」与「过 (ax, az) 的竖直线」的最近点。
+      // 【为什么不按屏幕纵向位移折算】俯视时蜡烛轴线在屏幕上几乎退化成一个点，
+      // 按像素折算会一动就飞出去；解三维最近点则在任何视角下手感都一致。
+      function heightAtCursor(sx, sy, q) {
+        const dx = (sx - q.px) / q.focal, dy = -(sy - q.py) / q.focal;
+        const d = add(add(q.fwd, scl(q.right, dx)), scl(q.up, dy));
+        const w = [q.eye[0] - state.ax, q.eye[1], q.eye[2] - state.az];
+        const dd = dot(d, d), dv = d[1];
+        const den = dd - dv * dv;
+        // 【视线太贴近竖直轴线时不解】俯视图里视线与蜡烛轴线夹角只有十几度，
+        // 解出来的高度对光标位置极其敏感——手一动几十像素，点就飞到最上面去了。
+        // 夹角小于约 23°（den < 0.15·|d|²）就不认这次拖动；那种视角下上下拖本来
+        // 也看不出位移，用面板里的「发光点高度」滑块更合适。
+        if (den < 0.15 * dd) return null;
+        const t = (w[1] * dv - dot(d, w)) / den;
+        const s = w[1] + t * dv;                          // A 的 y = 0 ⇒ 世界高度就是 s
+        return isFinite(s) ? s : null;
+      }
 
       /* ============================================================
        * 物理：虚像到底看不看得见
@@ -1121,6 +1234,26 @@
           window.__mirLabelLog.push({ text: text, x: b.x, y: b.y, w: b.w, h: b.h });
         }
       }
+      // 挑一个不压住本帧已有标注的落点再画。
+      // 【为什么需要它】物点 / 像点的名字紧挨着 u / v 两个读数（它们本来就在
+      // A→板→像 这一条直线上），实测倾角 25° 时「物点 P」正好压住「v = 12.0 cm」的左半边。
+      // 候选落点按「离锚点由近到远」排，取第一个不重叠的；都不行就取重叠最小的。
+      function labelAvoid(p, text, color, size, cands) {
+        let best = cands[0], bestOv = Infinity;
+        for (const c of cands) {
+          const b = labelBox({ x: p.x + c[0], y: p.y + c[1] }, text, size, c[2] || 'center');
+          let ov = 0;
+          for (const o of frameBoxes) {
+            const ox = Math.min(b.x + b.w, o.x + o.w) - Math.max(b.x, o.x);
+            const oy = Math.min(b.y + b.h, o.y + o.h) - Math.max(b.y, o.y);
+            if (ox > 0 && oy > 0) ov += ox * oy;
+          }
+          if (ov < bestOv - 1e-9) { bestOv = ov; best = c; }
+          if (ov === 0) break;
+        }
+        label({ x: p.x + best[0], y: p.y + best[1] }, text, color, size, best[2] || 'center');
+      }
+
       // 圆柱（沿任意轴）的轮廓。屏幕 x 的极值点给出两条母线，
       // 「屏幕 y 更大」的那半底圆 + 「屏幕 y 更小」的那半顶圆连起来就是侧面。
       // 【坑】直接把底圈点 + 反序顶圈点连成一个多边形 fill() 是错的：两圈缠绕方向相反，
@@ -1271,6 +1404,17 @@
       function drawHover(q) {
         const h = state.hover;
         if (!h) return;
+        // 发光点不在桌面上，脚下那圈「地面高亮」对它没有意义——改成套在亮点上的一圈虚线
+        if (h === 'point') {
+          const s = project(pointP(), q);
+          ctx.save();
+          ctx.beginPath(); ctx.arc(s.x, s.y, 15, 0, PI2);
+          ctx.fillStyle = 'rgba(34,211,238,.16)'; ctx.fill();
+          ctx.lineWidth = 2; ctx.strokeStyle = 'rgba(103,232,249,.9)';
+          ctx.setLineDash([5, 4]); ctx.stroke(); ctx.setLineDash([]);
+          ctx.restore();
+          return;
+        }
         const at = h === 'a' ? { x: state.ax, z: state.az }
                  : h === 'b' ? { x: state.bx, z: state.bz }
                  : { x: state.sx, z: state.sz };
@@ -1660,6 +1804,148 @@
         // 「屏上没有光斑」这件事改由侧栏的「观察提示」文字说明，不占画面。
       }
 
+      /* ============================================================
+       * 光路的画法
+       * ------------------------------------------------------------
+       * 三种线用三种画法区分，学生一眼就能分辨「哪些是真的光」：
+       *   入射光线  黄实线（P → 板面落点）
+       *   反射光线  橙实线（板面落点 → 射向板前）
+       *   反向延长线 青虚线（板面落点 → 板后的 P′）—— 那里并没有光
+       * 【为什么虚线画在实线之前】虚线在板后、实线在板前，先画虚线再画实线，
+       * 落点处实线压住虚线，视觉上「光从板面折出去」才顺。
+       * ============================================================ */
+      // 一条【会淡出】的线段：反射光线用它在末端收掉。
+      // 【为什么要淡出】光射向眼睛，本来就没有一个「端点」；画成一根等亮度的实线，
+      // 末端会像一根硬邦邦的棍子横在桌面上（实测默认视角下会一直拖到刻度尺那边去）。
+      function lineFade(a, b, c1, c2, lw) {
+        const g = ctx.createLinearGradient(a.x, a.y, b.x, b.y);
+        // 前 60% 保持亮度、后 40% 才收——从头淡到尾会让整段光看着很虚
+        g.addColorStop(0, c1); g.addColorStop(0.6, c1); g.addColorStop(1, c2);
+        ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
+        ctx.setLineDash([]);
+        ctx.lineWidth = lw; ctx.strokeStyle = g; ctx.lineCap = 'round';
+        ctx.stroke();
+      }
+
+      // 在线段 a→b 的 t 处画一个箭头，标明光的传播方向。
+      // 【为什么要箭头】默认视角下入射光线和反射光线的夹角在屏幕上很小，
+      // 光靠颜色分不清「哪一段是打进去的、哪一段是反射出来的」——箭头把方向说死。
+      function arrowAt(a, b, t, color, size) {
+        const dx = b.x - a.x, dy = b.y - a.y;
+        const L = Math.hypot(dx, dy) || 1;
+        const ux = dx / L, uy = dy / L, s = size || 4.6;
+        const x = a.x + dx * t, y = a.y + dy * t;
+        ctx.beginPath();
+        ctx.moveTo(x + ux * s, y + uy * s);
+        ctx.lineTo(x - ux * s * 0.85 - uy * s * 0.6, y - uy * s * 0.85 + ux * s * 0.6);
+        ctx.lineTo(x - ux * s * 0.85 + uy * s * 0.6, y - uy * s * 0.85 - ux * s * 0.6);
+        ctx.closePath();
+        ctx.fillStyle = color; ctx.fill();
+      }
+
+      function drawRays(q) {
+        const P = pointP(), I = pointI();
+        const bundle = rayBundle();
+        const sP = project(P, q), sI = project(I, q);
+
+        // ① 反向延长线：从板面落点 Q 一直连到像点 P′。所有光线共用同一个终点 P′。
+        // 【为什么是虚线】那里并没有光——它只是「看上去的光」从哪儿来。实线 = 真的光，
+        // 虚线 = 延长线，这条区别就是虚像的全部内容，画成实线就把它讲错了。
+        for (const r of bundle) {
+          line([project(r.Q, q), sI], 'rgba(125,240,255,.78)', 1.5, [5, 5]);
+        }
+        // ② 真实的光：入射（黄）+ 反射（橙）。带一点辉光，才像「光」而不是普通线段。
+        //    反射那一段末端淡出——光射向眼睛，本来就没有端点。
+        //    【线宽 1.8~1.9 是量出来的】玻璃板本身是一块亮面（渐变填充到 0.36 的白），
+        //    1.5 px 的黄线压在上面几乎看不见；再粗就成了一根管子，像水管不像光。
+        for (const r of bundle) {
+          const b = project(r.Q, q);
+          ctx.save();
+          ctx.shadowColor = 'rgba(255,236,150,.95)'; ctx.shadowBlur = 9;
+          line([sP, b], 'rgba(255,235,140,.96)', 1.8);
+          ctx.restore();
+          const e = project(r.end, q);
+          ctx.save();
+          ctx.shadowColor = 'rgba(251,146,60,.85)'; ctx.shadowBlur = 9;
+          lineFade(b, e, 'rgba(255,186,88,.95)', 'rgba(251,146,60,0)', 1.9);
+          ctx.restore();
+          // 方向箭头：入射那段指向板面，反射那段离开板面
+          arrowAt(sP, b, 0.66, 'rgba(253,224,71,.95)', 4.4);
+          arrowAt(b, e, 0.46, 'rgba(255,196,110,.95)', 4.6);
+          // 板面上的反射点：一点小亮斑，「光在这里拐弯」才看得见
+          ctx.save();
+          ctx.shadowColor = 'rgba(255,224,130,.95)'; ctx.shadowBlur = 8;
+          dot2(b, 1.8, 'rgba(255,246,214,.95)');
+          ctx.restore();
+        }
+        // ③ 跑动的光点：光从 P 出发、到板面、再反射出去。
+        //    【为什么要它】静态的线看不出「光在走」；跑动的光点让「这些线是光的路径」
+        //    这件事自己说出来，也正好满足「动态显示」这条要求。
+        const t0 = state.t * 0.55;
+        bundle.forEach((r, k) => {
+          const ph = ((t0 + k * 0.13) % 1 + 1) % 1;
+          const seg = ph < 0.5
+            ? [sP, project(r.Q, q), ph * 2]
+            : [project(r.Q, q), project(r.end, q), (ph - 0.5) * 2];
+          const x = seg[0].x + (seg[1].x - seg[0].x) * seg[2];
+          const y = seg[0].y + (seg[1].y - seg[0].y) * seg[2];
+          const al = Math.sin(Math.PI * seg[2]);          // 两端淡出，别在板面上「啪」地出现
+          ctx.save();
+          ctx.shadowColor = 'rgba(255,214,102,.95)'; ctx.shadowBlur = 9;
+          dot2({ x: x, y: y }, 2.2, 'rgba(255,246,214,' + (0.9 * al).toFixed(3) + ')');
+          ctx.restore();
+        });
+        if (window.__mirRayLog) {
+          window.__mirRayLog.push({ P: { x: sP.x, y: sP.y }, I: { x: sI.x, y: sI.y },
+            n: bundle.length,
+            Q: bundle.map(r => { const s = project(r.Q, q); return { x: s.x, y: s.y }; }) });
+        }
+      }
+
+      // 物点 P 与像点 P′ 的标记。画在【所有实体之后】：它们是标注性的点，
+      // 不该被蜡烛 / 玻璃板挡住——否则 P 一拖到蜡体高度就看不见了，拖都拖不动。
+      // 【空心 vs 实心】P 是真实存在的发光点（实心 + 暖色），P′ 是延长线的交点、
+      // 那里并没有光（空心 + 青色 + 一圈虚线），这个区别本身就是「虚像」的注解。
+      function drawPointMarkers(q) {
+        const sP = project(pointP(), q), sI = project(pointI(), q);
+        const ph = ((state.t * 0.85) % 1 + 1) % 1;
+
+        // ── 物点 P：暖色实心 + 两圈外扩的涟漪
+        for (let k = 0; k < 2; k++) {
+          const u = (ph + k * 0.5) % 1;
+          ctx.beginPath(); ctx.arc(sP.x, sP.y, 5 + u * 20, 0, PI2);
+          ctx.strokeStyle = 'rgba(253,224,71,' + (0.55 * (1 - u)).toFixed(3) + ')';
+          ctx.lineWidth = 1.6; ctx.stroke();
+        }
+        let g = ctx.createRadialGradient(sP.x, sP.y, 0, sP.x, sP.y, 17);
+        g.addColorStop(0, 'rgba(255,247,214,.95)');
+        g.addColorStop(0.34, 'rgba(251,191,36,.52)');
+        g.addColorStop(1, 'rgba(251,191,36,0)');
+        ctx.fillStyle = g;
+        ctx.beginPath(); ctx.arc(sP.x, sP.y, 17, 0, PI2); ctx.fill();
+        dot2(sP, 4.6, '#fffbe8', 'rgba(251,191,36,.95)', 1.6);
+
+        // ── 像点 P′：青色空心 + 虚线环 + 涟漪
+        for (let k = 0; k < 2; k++) {
+          const u = (ph + k * 0.5) % 1;
+          ctx.beginPath(); ctx.arc(sI.x, sI.y, 5 + u * 18, 0, PI2);
+          ctx.strokeStyle = 'rgba(103,232,249,' + (0.5 * (1 - u)).toFixed(3) + ')';
+          ctx.lineWidth = 1.5; ctx.stroke();
+        }
+        g = ctx.createRadialGradient(sI.x, sI.y, 0, sI.x, sI.y, 16);
+        g.addColorStop(0, 'rgba(165,243,252,.72)');
+        g.addColorStop(1, 'rgba(56,189,248,0)');
+        ctx.fillStyle = g;
+        ctx.beginPath(); ctx.arc(sI.x, sI.y, 16, 0, PI2); ctx.fill();
+        dot2(sI, 4.2, 'rgba(2,6,23,.92)', 'rgba(103,232,249,.95)', 1.6);
+        ctx.beginPath(); ctx.arc(sI.x, sI.y, 8.6, 0, PI2);
+        ctx.setLineDash([3, 3]); ctx.strokeStyle = 'rgba(103,232,249,.8)';
+        ctx.lineWidth = 1.2; ctx.stroke(); ctx.setLineDash([]);
+        if (window.__mirPointLog) {
+          window.__mirPointLog.push({ P: { x: sP.x, y: sP.y }, I: { x: sI.x, y: sI.y } });
+        }
+      }
+
       // 辅助线：物距 / 像距 / 连线。画在所有实体之后，作为标注叠在上面。
       // 标注要沿线的法向推开一点——不然会正好压在蜡烛身上，读数被蜡烛盖住。
       // 【为什么改成按【盒子】避让】原来是「两个候选方向，挑离避让点更远的那一个」。
@@ -1778,7 +2064,7 @@
         // 相机在玻璃板前 → 后面的蜡烛先画、玻璃板后画，于是 B 透过玻璃可见；
         // 相机绕到玻璃板后 → 顺序自动反过来。不需要额外的分组逻辑。
         let items = [];
-        const drawn = { candle: 0, glass: 0, ghost: 0 };
+        const drawn = { candle: 0, glass: 0, ghost: 0, rays: 0 };
         const push = (d, f) => items.push({ d: d, f: f });
         const dOf = p => project(p, q).z;
 
@@ -1865,11 +2151,23 @@
         drawn.glass++;
         // 玻璃板的采样点取【板心】（沿板面往上半个板高）——板倾倒之后，它的质心不再
         // 落在 (gx, gh/2, gz) 这条竖线上，深度排序会跟着偏。
-        push(dOf(mp(0, state.gh * 0.5, 0)), () => drawGlass(q));
+        const dGlass = dOf(mp(0, state.gh * 0.5, 0));
+        push(dGlass, () => drawGlass(q));
+
+        // 光路排在【玻璃板之后、板前的蜡烛之前】：光线压在玻璃上才看得见；
+        // 而板后的 B 是先画的，反向延长线被 B 挡住 —— 正好说明「延长线不是真的光」。
+        if (raysLive()) {
+          drawn.rays++;
+          push(dGlass - 0.002, () => drawRays(q));
+        }
 
         state.drawn = drawn;
         items.sort((a, b) => b.d - a.d);
         items.forEach(it => it.f());
+
+        // 物点 / 像点的标记画在【所有实体之后】：它们是标注性的点，不该被蜡烛挡住
+        // （P 拖到蜡体高度时若被挡住，就再也拖不动了）。
+        if (raysLive()) drawPointMarkers(q);
 
         // 悬停高亮画在实体之后：它是一圈虚线，叠在桌面上才看得见（画在前面会被蜡烛压掉）
         drawHover(q);
@@ -1897,6 +2195,15 @@
           // 标签会跑到像的旁边甚至和像脱开。
           const pI = project(ghostPoint(gf, yTop + 0.45), q);
           label(pI, '像 A′' + (state.aLit ? '' : '（A 未点亮）'), 'rgba(165,243,252,.98)', 12);
+        }
+        // 物点 / 像点的名字。画在【所有标注之后、器材区之前】：
+        // 这时本帧的标签盒都已经进 frameBoxes，器材区那块地面标签会自己躲开它们。
+        if (raysLive()) {
+          const sP = project(pointP(), q), sI = project(pointI(), q);
+          labelAvoid(sP, '物点 P', 'rgba(253,224,71,.98)', 11,
+                     [[12, -14, 'left'], [12, 16, 'left'], [-12, -14, 'right'], [-12, 16, 'right'], [0, -27, 'center']]);
+          labelAvoid(sI, '像点 P′', 'rgba(165,243,252,.98)', 11,
+                     [[12, 15, 'left'], [12, -15, 'left'], [-12, 15, 'right'], [-12, -15, 'right'], [0, 27, 'center']]);
         }
         // 器材区那块区域的【名字】放在所有标签之后：它是地面区域的名字，
         // 而且这时候才知道本帧有哪些标签、哪个落点不打架（见 drawStageLabel）。
@@ -1930,6 +2237,13 @@
       // 光屏是块大卡纸，按真实半宽 SCR_W 来，不必再放宽。
       function hitTest(x, y) {
         const q = {}; makeCam(q, state.w, state.h);
+        // 【发光点 P 优先】它就长在蜡烛 A 的包围盒里（烛焰上），按「离盒子中心最近」
+        // 去挑会时灵时不灵——学生明明点在亮点上，拖走的却是整支蜡烛。
+        // 所以先给它一个 13 px 的圆，命中就归它。
+        if (raysLive()) {
+          const s = project(pointP(), q);
+          if (Math.hypot(x - s.x, y - s.y) <= 13) return 'point';
+        }
         const boxOf = (cx, cz, hw, top) => {
           let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
           for (const dx of [-hw, hw]) for (const dz of [-hw, hw]) for (const yy of [0, top]) {
@@ -2089,7 +2403,11 @@
         // 记下按下的位置和按在谁身上：抬起时若几乎没移动，这就是一次「点击」，
         // 点在光源上就点燃 / 熄灭它（见 pointerup）。
         state.downAt = { x: p.x, y: p.y, hit: hit };
-        if (hit) {
+        if (hit === 'point') {
+          // 发光点只沿【竖直轴线】上下走，不用桌面平面反投影（它本来就不在桌面上）
+          state.drag = 'point';
+          canvas.classList.add('pick', 'dragging');
+        } else if (hit) {
           const q = {}; makeCam(q, state.w, state.h);
           const wpt = unproject(p.x, p.y, q);
           const cur = posOf(hit);
@@ -2105,7 +2423,16 @@
       });
       canvas.addEventListener('pointermove', e => {
         const p = pointerPos(e);
-        if (state.drag) {
+        if (state.drag === 'point') {
+          // 发光点：只改高度，x / z 钉在光源轴线上。用三维最近点解，
+          // 俯视 / 侧视下手感一致（见 heightAtCursor）。
+          const q = {}; makeCam(q, state.w, state.h);
+          const y = heightAtCursor(p.x, p.y, q);
+          if (y != null) {
+            state.py = clamp(y, PY_MIN, pyHi());
+            syncInputs(); state.dirty = true;
+          }
+        } else if (state.drag) {
           const q = {}; makeCam(q, state.w, state.h);
           const wpt = unproject(p.x, p.y, q);
           if (wpt) setPos(state.drag, wpt[0] + state.dragOff[0], wpt[2] + state.dragOff[1]);
@@ -2170,6 +2497,9 @@
         gt: el('mir-gt'), gtV: el('mir-gt-v'),
         lh: el('mir-lh'), lhV: el('mir-lh-v'), sh: el('mir-sh'), shV: el('mir-sh-v'),
         always: el('mir-ghost-always'),
+        // 光路：发光点高度 / 光线数量 / 显示开关
+        py: el('mir-py'), pyV: el('mir-py-v'),
+        raysN: el('mir-rays-n'), raysNV: el('mir-rays-n-v'), rays: el('mir-rays'),
         toast: el('mir-toast'),
         srcCandle: el('mir-src-candle'), srcF: el('mir-src-f'),
         mu: el('mir-mu'), mv: el('mir-mv'), mb: el('mir-mb'), mc: el('mir-mc'),
@@ -2249,6 +2579,9 @@
         const lhCm = toCm(state.src === 'f' ? state.fh : state.ch);
         ui.lh.value = lhCm; ui.lhV.textContent = lhCm.toFixed(1) + ' cm';
         ui.sh.value = toCm(state.sh); ui.shV.textContent = toCm(state.sh).toFixed(1) + ' cm';
+        // 发光点：滑块写 cm，state 里是世界单位（和别的高度一样，只在两处换算）
+        ui.py.value = toCm(state.py); ui.pyV.textContent = toCm(state.py).toFixed(1) + ' cm';
+        ui.raysN.value = state.rays; ui.raysNV.textContent = state.rays + ' 条';
       }
 
       // 滑块的 min/max/step 也从 cmOf 派生，别让 HTML 里再存一份会和拖动限位打架的刻度。
@@ -2261,6 +2594,9 @@
         set(ui.az, A.z[0], A.z[1]);
         set(ui.bx, B.x[0], B.x[1]);
         set(ui.bz, B.z[0], B.z[1]);
+        // 发光点：上限跟着【光源高度】走（点长在烛焰上，火焰尖就是上限）。
+        // pyHi() 本身已经对齐到 0.5 cm 刻度，这里直接用——拖动钳位和滑块 max 是同一个数。
+        set(ui.py, toCm(PY_MIN), toCm(pyHi()));
       }
 
       // 上一帧写进「观察提示」的那段 HTML。点燃之后每帧都会重算它，一样就不写 DOM。
@@ -2400,9 +2736,28 @@
       ui.lh.addEventListener('input', () => {
         const v = fromCm(+ui.lh.value);
         if (state.src === 'f') state.fh = v; else state.ch = v;
+        // 光源调矮之后，发光点可能已经在火焰尖以上了 ⇒ 先钳回去，再把新的上限写进滑块
+        clampPy(); applySliderRanges();
         syncInputs(); state.dirty = true;
       });
       ui.sh.addEventListener('input', () => { state.sh = fromCm(+ui.sh.value); syncInputs(); state.dirty = true; });
+
+      // ── 光路：发光点高度 / 光线数量 / 显示开关
+      ui.py.addEventListener('input', () => {
+        state.py = fromCm(+ui.py.value);
+        syncInputs(); state.dirty = true;
+      });
+      ui.raysN.addEventListener('input', () => {
+        state.rays = clamp(Math.round(+ui.raysN.value), 3, 9);
+        syncInputs(); state.dirty = true;
+      });
+      // 【为什么要单独挂、不进上面那个批量循环】它有个附带动作：光路只在 A 点亮时才画，
+      // 学生刚勾上却发现画面上什么都没有，会以为坏了——这里当场把原因说出来。
+      ui.rays.addEventListener('change', e => {
+        state.showRays = e.target.checked;
+        if (state.showRays && !state.aLit) showToast('先点燃蜡烛 A —— 发光点长在烛焰上');
+        state.dirty = true;
+      });
 
       [['mir-ghost', 'showGhost'], ['mir-aid', 'showAid'], ['mir-ruler', 'showRuler'],
        ['mir-marks', 'showMarks'], ['mir-front', 'onlyFront'], ['mir-back', 'onlyBack']].forEach(([id, key]) => {
@@ -2419,6 +2774,9 @@
         // 换光源后物体高度变了，取景包络和「抓取点」都要跟着变——
         // dirty 一置，下一帧 render 会重算 makeCam，不需要别的动作。
         // 「光源高度」滑块也要跟着换值：它显示的是当前光源的高度（蜡烛 / F 面板不同）。
+        // 发光点的上限也跟着光源高度走，所以这里要重钳一次、重写一次滑块范围。
+        clampPy();
+        applySliderRanges();
         syncInputs();
         buildSteps(); updateSteps(); updateLightBtn(); updateLegend();
         state.dirty = true;
@@ -2457,7 +2815,9 @@
         const isF = state.src === 'f';
         ui.legend.innerHTML = '<span style="color:#fca5a5">●</span> ' + (isF ? 'F 光源 A（物）' : '蜡烛 A（物）') + '　'
           + '<span style="color:#86efac">●</span> ' + (isF ? 'F 光源 B（替代物）' : '蜡烛 B（替代物）') + '　'
-          + '<span style="color:#a5f3fc">●</span> 像 A′';
+          + '<span style="color:#a5f3fc">●</span> 像 A′'
+          + '　<span style="color:#fde047">●</span> 物点 P（可上下拖）'
+          + '　<span style="color:#67e8f9">○</span> 像点 P′（反向延长线的交点）';
         // 舞台上那行小字也跟着换，否则切到 F 光源后它还写着「蜡烛 A」
         const h = document.getElementById('mir-stagehint');
         if (h) h.innerHTML = '<b></b>三维实验场景 · 玻璃板 → ' +
@@ -2511,6 +2871,13 @@
         state.ch = CH; state.fh = F_H; state.sh = SCR_H;
         state.aLit = false; state.snapped = false; state.screenChecked = false;
         state.ghostAlways = false; ui.always.checked = false;
+        // 发光点也回到默认（烛焰中部、5 条光线、显示光路）——它属于「装置参数」，
+        // 重做实验就该复位；否则上一轮拖到蜡烛根部，这一轮一进来就找不到亮点。
+        state.py = PY0; state.rays = 5; state.showRays = true;
+        ui.rays.checked = true;
+        // 【必须钳一次】F 光源只有 11 cm 高，而 PY0 = 11.5 cm —— 不钳的话
+        // 滑块 max 是 10.5、读数写着 11.5，两边对不上。
+        clampPy();
         state.marks = [];
         updateLightBtn();
         applySliderRanges();
@@ -2749,7 +3116,12 @@
           if (o.fh != null) state.fh = o.fh;
           if (o.sh != null) state.sh = o.sh;
           if (o.ghostAlways != null) { state.ghostAlways = o.ghostAlways; ui.always.checked = o.ghostAlways; }
+          // 光路：发光点高度 / 光线数量 / 显示开关（自检要固定几何，不经过滑块）
+          if (o.py != null) state.py = o.py;
+          if (o.rays != null) state.rays = clamp(Math.round(o.rays), 3, 9);
+          if (o.showRays != null) { state.showRays = o.showRays; ui.rays.checked = o.showRays; }
           clampToPlate();
+          clampPy();
           applySliderRanges();
           updateLightBtn();
           syncInputs();
@@ -2759,6 +3131,7 @@
           return { ax: state.ax, az: state.az, bx: state.bx, bz: state.bz,
                    gw: state.gw, gh: state.gh, gx: state.gx, gz: state.gz, gt: state.gt,
                    ch: state.ch, fh: state.fh, sh: state.sh,
+                   py: state.py, rays: state.rays, showRays: state.showRays,
                    coincideErr: state.coincideErr, snapped: state.snapped, src: state.src };
         },
         // 三个可调高度（世界单位）和它们换算成 cm 的读数。自检要能验「拖了滑块真的变了」，
@@ -2771,6 +3144,38 @@
         // 这一帧「像」实际被裁到的高度带（render 里算的、和画出去的同源）。
         // 判据不能自己再算一遍 yHi——那样只能证明公式自洽，证明不了画对了。
         ghostBand: () => state.ghostBand,
+        // ── 光路：物点 P / 像点 P′ / 每条光线。
+        // 【为什么把 bundle 也交出去】要验「反向延长线真的都过 P′」，就得拿页面
+        // 自己算出的反射方向去和「落点→P′」比对；在测试里重写一遍反射公式，
+        // 只能证明公式自洽，证明不了画面画对了。
+        point() {
+          const q = {}; makeCam(q, state.w, state.h);
+          const P = pointP(), I = pointI(), b = rayBundle();
+          return {
+            live: raysLive(),
+            P: P, I: I,
+            sP: project(P, q), sI: project(I, q),
+            n: b.length,
+            pyCm: toCm(state.py),
+            // 每条光线：落点 Q、反射方向 dir、以及「从 Q 指向 P′」的单位向量 toI。
+            // 判据 = dot(dir, toI) ≈ −1（反射方向与延长线方向严格相反）。
+            bundle: b.map(r => {
+              const toI = vnorm(sub(I, r.Q));
+              return { Q: r.Q, dir: r.dir, toI: toI, dot: dot(r.dir, toI) };
+            })
+          };
+        },
+        // 直接设发光点高度（走 clamp，和拖动同一条路）
+        setPy(v) { state.py = v; clampPy(); applySliderRanges(); syncInputs(); state.dirty = true;
+                   return { py: state.py, pyCm: toCm(state.py) }; },
+        // 走【真实的拖动路径】把发光点拖到某个屏幕高度：先算 screen 上的点，再交给
+        // heightAtCursor。判据要的是「学生上下拖 → 像点跟着动」，不是「直接改 state」。
+        dragPointToScreen(sx, sy) {
+          const q = {}; makeCam(q, state.w, state.h);
+          const y = heightAtCursor(sx, sy, q);
+          if (y != null) { state.py = clamp(y, PY_MIN, pyHi()); syncInputs(); state.dirty = true; }
+          return { y: y, py: state.py, pyCm: toCm(state.py) };
+        },
         // 火焰动画时钟。动画类断言必须先【钉死相位】再取样，否则同一状态两次取样
         // 得到的是两个不同的形状，断言就成了抛硬币（见 §自检底线）。
         setT(t) { state.t = t; state.dirty = true; return state.t; },
