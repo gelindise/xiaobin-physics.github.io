@@ -4017,7 +4017,9 @@ popHead.addEventListener('pointercancel', endPopDrag);
 // 电表外壳+底座的外接框（元件局部坐标）。表壳上沿 −104、两侧 ±106，底座
 // ±116 且下沿 +60，接线柱再往下探到 +72 出头 —— 框照这几项给满，放大镜里
 // 才不会把表壳顶或底座切掉一条。
-var ZBOX = { x: -124, y: -112, w: 248, h: 198 };
+// 下沿给到 +98（h = 210）：柱脚下面还要画【两根线头】（见 drawZoomLeads，
+// 最长那根到 y ≈ 92）。照原来的 198 画，线头会被画布底边齐刷刷切掉。
+var ZBOX = { x: -124, y: -112, w: 248, h: 210 };
 var zoomEl = document.getElementById('zoom');
 var zoomCv = document.getElementById('zoomCanvas');
 var zoomTitle = document.getElementById('zoomTitle');
@@ -4097,16 +4099,20 @@ function zeroMeter(c){
 
 // 放大镜里给「当前用的那个量程」画一根短接线（用户 2026-10-20 第 3 点）。
 //
-// 真表上没有这根线（导线是直接接在量程柱上的），但放大镜是【读数】用的：
-// 学生抬头看指针、低头对刻度，最容易错的就是「这表到底在 0.6 挡还是 3 挡」
-// —— 两挡差 5 倍，读错就是整道题全错。把这根线画出来，两个柱子被它连着，
-// 「−」柱和「0.6」柱是一对，一眼就认出来了。
+// 放大镜里给「当前用的那两个接线柱」各画一根【短线头】（用户 2026-10-20 第 3 点，
+// 2026-10-21 更正：不是一根跨接两个柱子的短接线，是【两根分开的线头】）。
 //
-// 画在【柱脚下方】（y = 72 再往下 6~13px）：那是底座底下的空白，不压表盘、
-// 不压绿面板上印的「− 0.6 3」，也不和指针、配重尾打架。
-// 只在放大镜里画：画布上柱子才 10px 宽，一根 7px 粗的线糊上去只会把三根柱子
-// 连成一坨。
-function drawZoomJumper(g, c, rec){
+// 语义：表是串在回路里的 —— 一根线头把电流【送进】「＋」（量程柱），另一根把
+// 电流从「−」柱【送回】回路。两根线各接各的柱、互不相连，学生一眼看出
+// 「这表此刻是【用这两个柱子】接在回路里的」，也就知道读数该按哪一挡看
+// （0.6 和 3 差 5 倍，读错整题全错）。
+//
+// 画在【柱脚下方】（y = 72 再往下 4~20px）：那是底座底下的空白，不压表盘、
+// 不压绿面板上印的「− 0.6 3」，也不和指针、配重尾打架。外侧两根线头朝
+// 斜下方撇开，中间那根（0.6 挡）朝正下方 —— 两根线一左一右，中间是空的，
+// 这正是「两根独立的线」而不是「一根跨接线」的视觉证据。
+// 只在放大镜里画：画布上柱子才 10px 宽，7px 粗的线糊上去只会把三根柱子连成一坨。
+function drawZoomLeads(g, c, rec){
   if (c.type !== 'ammeter' && c.type !== 'voltmeter') return;   // 电流计只有两柱
   var tap = rec && rec.tapIdx;
   if (tap == null) return;                       // 没接量程柱：没有「当前量程」可标
@@ -4114,20 +4120,24 @@ function drawZoomJumper(g, c, rec){
   var a = T && T[0], b = T && T[tap];
   if (!a || !b) return;
   var y = a.y;                                   // 柱脚（= 导线接上来的那一点）
-  var endY = y + 5, ctrlY = y + 12;
   g.save();
   g.lineCap = 'round';
-  // ① 导线：先一道深色轮廓，再上绝缘皮的红，最后一道高光 —— 和画布上
-  //    真正的导线（drawWire）同一套画法，学生一眼认得这是「线」不是装饰。
-  g.beginPath();
-  g.moveTo(a.x, endY);
-  g.quadraticCurveTo((a.x + b.x) / 2, ctrlY, b.x, endY);
-  g.strokeStyle = 'rgba(15,23,42,0.55)'; g.lineWidth = 7; g.stroke();
-  g.strokeStyle = '#c2410c'; g.lineWidth = 4.4; g.stroke();
-  g.strokeStyle = 'rgba(255,255,255,0.38)'; g.lineWidth = 1.1; g.stroke();
-  // ② 两个线夹：颜色跟着绝缘皮走（不画成深灰方块 —— 那会和「−」柱的
-  //    深色柱帽混成一体，学生看着像柱子变长了，而不是「这里接了一根线」）。
   [a, b].forEach(function (p) {
+    // 朝外撇：柱子在 x = ±70 上，中间那根（x = 0）就朝正下方。
+    var th = (p.x / 70) * 0.55;
+    var len = 22;      // 再长就顶到 ZBOX 下沿（98）了：外侧到 92、中间到 95
+    var ex = p.x + Math.sin(th) * len;
+    var ey = y + 1 + Math.cos(th) * len;
+    // ① 线头本体：深色轮廓 + 红绝缘皮 + 一道高光 —— 和画布上真正的导线
+    //    （drawWire）同一套画法，学生一眼认得这是「线」不是装饰。
+    g.beginPath();
+    g.moveTo(p.x, y + 1);
+    g.lineTo(ex, ey);
+    g.strokeStyle = 'rgba(15,23,42,0.55)'; g.lineWidth = 7; g.stroke();
+    g.strokeStyle = '#c2410c'; g.lineWidth = 4.4; g.stroke();
+    g.strokeStyle = 'rgba(255,255,255,0.38)'; g.lineWidth = 1.1; g.stroke();
+    // ② 线夹：颜色跟着绝缘皮走（不画成深灰方块 —— 那会和「−」柱的深色柱帽
+    //    混成一体，学生看着像柱子变长了，而不是「这里接了一根线」）。
     g.fillStyle = '#9a3412';
     D.roundRect(g, p.x - 3.4, y - 2, 6.8, 8.6, 2.4); g.fill();
     g.fillStyle = 'rgba(255,255,255,0.42)';
@@ -4164,8 +4174,9 @@ function drawZoom(){
   // 的话再叠一层就会把表壳顶和底座切掉一条（用户 2026-10-20 第 2 点）。
   D.drawComponent(g, { id: zoomComp.id, type: zoomComp.type, x: 0, y: 0, rot: 0,
                        scale: 1, params: zoomComp.params }, rec);
-  // 当前量程的短接线（用户 2026-10-20 第 3 点）：把「−」柱和选中的量程柱连起来。
-  drawZoomJumper(g, zoomComp, rec);
+  // 当前量程的两根接线柱上各有一根线头（用户 2026-10-20 第 3 点 /
+  // 2026-10-21 更正：两根分开的线头，不是一根跨接线）。
+  drawZoomLeads(g, zoomComp, rec);
   // 调零旋钮的提示圈：【只画在放大镜里】。画布上那颗螺丝半径才 6.5px，
   // 在它外面套一圈只会把小表盘弄脏；而放大镜里正是「学生要动手调零」的地方。
   // 未调零：琥珀圈 + 一个「调零」字样（不写的话，那颗螺丝和表壳上另外两颗
