@@ -1847,29 +1847,6 @@
         [{ side: side, x: H[0], y: H[1], bot: yBot, top: yTop }]);
     }
 
-    // 限位托架：立柱支点座两侧各一条细钢丝，向下弯出去、末端上翘成小钩 ——
-    // 实拍机横梁下方那两条弯钢丝就是它（限制横梁摆幅，横梁落在钩口里）。
-    // 🔴 它固定在【立柱】上，不跟着横梁转；所以单独一个函数、在 drawBeam 之后画。
-    function drawStays(q) {
-      const z = 0.040;
-      for (const sx of [-1, 1]) {
-        const pts = [];
-        for (let k = 0; k <= 16; k++) {
-          const t = k / 16;
-          const x = sx * (0.024 + 0.430 * t);
-          const y = PIVOT_Y - 0.092 - 0.098 * Math.sin(Math.PI * Math.min(1, t * 1.02));
-          pts.push([x, y, z]);
-        }
-        // 末端上翘的小钩
-        for (let k = 1; k <= 5; k++) {
-          const t = k / 5;
-          pts.push([sx * (0.454 - 0.010 * t), PIVOT_Y - 0.186 + 0.042 * t, z]);
-        }
-        tube(pts, 0.0052, STEEL_COLS, q);
-      }
-      state.drawn.stays = true;
-    }
-
     // 托盘：黑搪瓷浅碟 + 盘口一圈镀铬卷边 + 盘下三臂镀铬托架（全部照实拍图改）。
     // 🔴 旧版是「亮银盘 + 深灰盘面 + 盘缘滚花」，实拍的盘是【黑釉】的：
     //    外壁盘内都是黑的，只有盘口一道亮银卷边 —— 颜色反了，一眼就不像。
@@ -2371,10 +2348,9 @@
       const backCam = q.eye[2] < PTR_Z;
       const pans = [1, -1].sort((a, b) =>
         q.eyeDist([panCx(b), panRimY(b), 0]) - q.eyeDist([panCx(a), panRimY(a), 0]));
-      // 梁以上的东西：限位钢丝 → 两端卡箍 → 托盘 → 盘上的砝码/物体。
+      // 梁以上的东西：两端卡箍 → 托盘 → 盘上的砝码/物体。
       // 🔴 卡箍必须【在横梁之后】画：它就是夹在梁端的一块镀铬件，先画会被梁盖住。
       const drawTop = () => {
-        drawStays(q);
         for (const s of [1, -1]) drawYoke(q, s);
         for (const s of pans) drawPan(q, s);
         drawLeftObject(q);
@@ -2836,18 +2812,26 @@
     function tweezCarryFloorY() {
       return PIVOT_Y + BEAM_HUB_UP + BEAM_PEAK + 0.075;
     }
-    // 光标 → 镊尖【目标】位置：有吸附目标就用目标的落点，否则反投到运输高度的水平面上
+    // 光标 → 镊尖【目标】位置：只把【高度】吸到目标（盘底 / 砝码顶 / 运输高度），
+    // 水平 x/z 一律取【光标反投影】—— 镊尖要跟着光标走。
+    // 🔴 旧版命中盘/盒/砝码时直接返回 hit.x / hit.z（那是「落位点」），光标在盘里挪动时
+    //    镊尖纹丝不动、换一颗砝码就瞬移 ⇒ 用户说的「对应关系不好、不跟手」正是这个。
+    //    现在水平仍跟手；真正落位靠点击时的 hit（startFlyToPan / 归盒），不受影响。
     function tweezTargetPos(hit, x, y, q) {
       const g = state.tweez.carry;
       const wtop = g ? weightTopY(g) : 0;
       // drawHeldWeight 里「砝码底 = 镊尖 y + 0.010 − weightTopY」，这里反过来解镊尖
       const forFloor = fy => fy - 0.010 + wtop;
-      if (hit && (hit.kind === 'pan' || hit.kind === 'box')) return { x: hit.x, y: forFloor(hit.y), z: hit.z };
-      if (hit && (hit.kind === 'panW' || hit.kind === 'boxW')) return { x: hit.x, y: hit.y + 0.05, z: hit.z };
-      const ty = forFloor(g ? tweezCarryFloorY() : 0.15);
+      let ty;
+      if (hit && (hit.kind === 'pan' || hit.kind === 'box')) ty = forFloor(hit.y);
+      else if (hit && (hit.kind === 'panW' || hit.kind === 'boxW')) ty = hit.y + 0.05;
+      else ty = forFloor(g ? tweezCarryFloorY() : 0.15);
       const w = unproject(x, y, q, ty);
-      if (!w) return null;
-      return { x: clamp(w[0], -2.2, 2.9), y: ty, z: clamp(w[2], -1.9, 1.9) };
+      if (w) return { x: clamp(w[0], -2.2, 2.9), y: ty, z: clamp(w[2], -1.9, 1.9) };
+      // 反投影失败（光标在视平线以上等）才退回命中点，别让镊子丢目标
+      if (hit && (hit.kind === 'pan' || hit.kind === 'box' || hit.kind === 'panW' || hit.kind === 'boxW'))
+        return { x: hit.x, y: ty, z: hit.z };
+      return null;
     }
     // hover 与目标一起更新（onMove / 按下时都走它）
     function updateTweez(x, y, q) {
@@ -3294,9 +3278,11 @@
       lastTs = ts;
       // ① 镊尖的平滑移动：水平跟得快、竖直跟得慢 —— 抬起来 / 放下去这一段要看得出是「搬运动作」，
       //    但水平跟手不能拖沓。旧版是每个 mouseMove 直接把 tip 设成新值（瞬移）。
+      // 🔴 水平时间常数 0.040 → 0.018：用户实测「放到盘里 / 从盘里夹」时镊尖跟不上光标，
+      //    调小后镊尖几乎贴着光标走；竖直 0.075 → 0.060 稍微跟紧一点，起落仍看得出是搬运。
       if (state.tweez.held) {
         const T = state.tweez;
-        const kxz = 1 - Math.exp(-dt / 0.040), ky = 1 - Math.exp(-dt / 0.075);
+        const kxz = 1 - Math.exp(-dt / 0.018), ky = 1 - Math.exp(-dt / 0.060);
         const dx = T.tX - T.tipX, dy = T.tY - T.tipY, dz = T.tZ - T.tipZ;
         if (Math.abs(dx) > 2e-4 || Math.abs(dy) > 2e-4 || Math.abs(dz) > 2e-4) {
           T.tipX += dx * kxz; T.tipY += dy * ky; T.tipZ += dz * kxz;
