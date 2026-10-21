@@ -5133,6 +5133,7 @@ canvas.addEventListener('pointermove', function(e){
   eraseClient(e);
 }, true);
 function eraseUp(){
+  if (!eraseMode) return;    // 非擦除模式松手不清选中：点导线出的删除叉号要留着
   erasing = false;
   editor.select(null);
 }
@@ -5209,12 +5210,47 @@ function detachHit(p){
   if (!best) return null;
   return { index: wi, endKey: best.k, endX: best.x, endY: best.y };
 }
+// 导线删除叉号的位置（与编辑器 delButtonPos 同一套：折线弧长中点）。
+// 页面要在 capture 阶段复算它，才能把「点叉号」让给编辑器去删 ——
+// 否则叉号长在短导线中点、离端点不足 26px 时会被断联判定先吃掉。
+function delBtnPosOf(wr){
+  var pts = editor.pathOf(wr);
+  if (!pts || pts.length < 2) return null;
+  var total = 0, i;
+  for (i = 1; i < pts.length; i++) total += Math.hypot(pts[i].x - pts[i-1].x, pts[i].y - pts[i-1].y);
+  if (total < 1) return { x: pts[0].x, y: pts[0].y };
+  var half = total / 2, acc = 0;
+  for (i = 1; i < pts.length; i++){
+    var seg = Math.hypot(pts[i].x - pts[i-1].x, pts[i].y - pts[i-1].y);
+    if (acc + seg >= half){
+      var t = seg ? (half - acc) / seg : 0;
+      return { x: pts[i-1].x + (pts[i].x - pts[i-1].x) * t,
+               y: pts[i-1].y + (pts[i].y - pts[i-1].y) * t };
+    }
+    acc += seg;
+  }
+  return { x: pts[pts.length-1].x, y: pts[pts.length-1].y };
+}
+function delBtnHitAt(p){
+  var ws = scene.wires;
+  for (var i = ws.length - 1; i >= 0; i--){
+    var bp = delBtnPosOf(ws[i]);
+    if (bp && Math.hypot(p.x - bp.x, p.y - bp.y) <= 15) return true;  // DEL_R + 4
+  }
+  return false;
+}
 canvas.addEventListener('pointerdown', function(e){
   if (eraseMode) return;                 // 橡皮擦优先
   var lp = logicalFromClient(e.clientX, e.clientY);
   if (!lp || !lp.inside) return;
+  // 删除按钮优先：点中叉号 → 放行给编辑器（它会命中 hitDeleteButton 删除）。
+  // 这样「点导线 → 叉号 → 点叉号删」永远走得到，短导线也不被断联抢走。
+  if (delBtnHitAt(lp)) return;
   var hit = detachHit(lp);
   if (!hit) return;
+  // 单击（未拖动）也要让「选中 + 叉号」正常出现：手动选中这根导线，
+  // 和编辑器点选的效果一致 —— 用户点导线，导线中间就该长出删除叉号。
+  try { editor.select({ kind: 'wire', index: hit.index }); } catch (err) {}
   detach = { index: hit.index, endKey: hit.endKey,
              p0: { x: lp.x, y: lp.y }, endX: hit.endX, endY: hit.endY, moved: false };
   e.preventDefault(); e.stopPropagation();
