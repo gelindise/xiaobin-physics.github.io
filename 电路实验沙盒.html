@@ -295,6 +295,10 @@
   #penCanvas{position:absolute;display:none;z-index:6;border-radius:8px;
     touch-action:none;cursor:crosshair}
   body.penOn #penCanvas{display:block}
+  /* ── 橡皮擦（用户 2026-10-21 第 1 点）：进入擦除模式后画布光标换成「擦除格」，
+     点 / 涂抹元件或导线即删除。penCanvas 只在画笔开着时显示，橡皮擦不开画笔，
+     所以直接把 simCanvas 的光标换掉即可。 */
+  body.eraserOn #simCanvas{cursor:cell}
   /* 画笔工具条：贴着画布左下角。放在画布【里面】而不是顶栏里 ——
      老师写字时眼睛在图上，颜色和粗细不该跑去顶栏找。 */
   .penBar{position:absolute;left:12px;bottom:12px;z-index:7;display:none;
@@ -901,7 +905,7 @@
        （上一批是 core 23 / draw 37 / editor 28 / params 5 / schematic 17，
          这一轮五个文件都动了：世界加宽 + 电表放大 + 读数牌搬家 + 单刀双掷开关。） -->
 <script src="circuit-core.js?build=29"></script>
-<script src="circuit-draw.js?build=46"></script>
+<script src="circuit-draw.js?build=47"></script>
 <!-- ════════════════════════════════════════════════════════════════════
      【教材版本皮肤 · 已从线上撤下】2026-10-12
      人教版元件外观（circuit-skin*.js 共 5 个文件）暂不在线上启用，学生看到的
@@ -5056,6 +5060,203 @@ window.__skinList = function(){
 window.__lgView = function(){ return JSON.parse(JSON.stringify(LG_VIEW)); };
 
 toolBtn('↺ 撤销', function(){ editor.undo(); render(); });
+
+// ── 橡皮擦（用户 2026-10-21 第 1 点）─────────────────────────────
+// 点击工具栏「橡皮擦」进入擦除模式：点 / 涂抹任意元件或导线即可快速删除。
+// 删除走编辑器同一条路径（select + removeSelected）—— 删元件保留导线（线头
+// 冻住、一个像素都不动）、删导线整根去掉、每条操作都能 ⌘Z 撤销。
+// 🔴 为什么放在【页面层】而不是共享编辑器：3D 沙盒也共用编辑器，而橡皮擦是
+//    2D 实验台的教学工具（用户点名「不是 3D 版」）—— 放页面层，3D 版零改动。
+//    拦截方式：在 canvas 上以【捕获阶段】注册 pointerdown/move —— 捕获阶段
+//    先于编辑器（target 阶段）执行，stopPropagation 后编辑器收不到这一下，
+//    元件不会被拖走、导线也不会被当成接线起点。
+var eraseMode = false, erasing = false;
+// 世界坐标 → 元件局部坐标（和编辑器 toLocal 同式：逆旋转 ÷ scale）。
+// 局部坐标判定是为了让「转过的元件 / 缩放过的元件」也点得准。
+function eraseToLocal(c, p){
+  var dx = p.x - c.x, dy = p.y - c.y;
+  var r = -((c.rot || 0) * Math.PI / 180);
+  var co = Math.cos(r), si = Math.sin(r);
+  var s = c.scale || 1;
+  return { x: (dx * co - dy * si) / s, y: (dx * si + dy * co) / s };
+}
+function eraseHitComp(p){
+  var cs = scene.comps;
+  for (var i = cs.length - 1; i >= 0; i--){
+    var c = cs[i];
+    var l = eraseToLocal(c, p);
+    var b = editor.localBox(c);
+    if (l.x >= b.x0 - 4 && l.x <= b.x1 + 4 &&
+        l.y >= b.y0 - 4 && l.y <= b.y1 + 4) return c;
+  }
+  return null;
+}
+function eraseSegD(p, a, b){
+  var vx = b.x - a.x, vy = b.y - a.y, L2 = vx * vx + vy * vy;
+  var t = L2 ? ((p.x - a.x) * vx + (p.y - a.y) * vy) / L2 : 0;
+  t = Math.max(0, Math.min(1, t));
+  return Math.hypot(p.x - (a.x + vx * t), p.y - (a.y + vy * t));
+}
+// 命中导线：沿【抹圆后的路径】逐段量距（和编辑器 hitWire 同一判据 9px，
+// 这里给 10px 略宽 —— 快速涂抹时手抖一点也能擦中）。
+function eraseHitWire(p){
+  var ws = scene.wires;
+  for (var i = ws.length - 1; i >= 0; i--){
+    var pts = editor.pathOf(ws[i]);
+    for (var j = 1; j < pts.length; j++){
+      if (eraseSegD(p, pts[j - 1], pts[j]) < 10) return i;
+    }
+  }
+  return -1;
+}
+function eraseAt(p){
+  var c = eraseHitComp(p);
+  if (c){ editor.select({ kind: 'comp', id: c.id }); editor.removeSelected(); return true; }
+  var wi = eraseHitWire(p);
+  if (wi >= 0){ editor.select({ kind: 'wire', index: wi }); editor.removeSelected(); return true; }
+  return false;
+}
+function eraseClient(e){
+  var lp = logicalFromClient(e.clientX, e.clientY);
+  if (!lp || !lp.inside) return;
+  eraseAt(lp);
+}
+canvas.addEventListener('pointerdown', function(e){
+  if (!eraseMode) return;
+  e.preventDefault(); e.stopPropagation();
+  erasing = true;
+  eraseClient(e);
+}, true);
+canvas.addEventListener('pointermove', function(e){
+  if (!eraseMode || !erasing) return;
+  e.preventDefault(); e.stopPropagation();
+  eraseClient(e);
+}, true);
+function eraseUp(){
+  erasing = false;
+  editor.select(null);
+}
+canvas.addEventListener('pointerup', eraseUp, true);
+canvas.addEventListener('pointercancel', eraseUp, true);
+function setErase(v){
+  eraseMode = !!v;
+  document.body.classList.toggle('eraserOn', eraseMode);
+  btnErase.textContent = '🧹 橡皮擦：' + (eraseMode ? '开' : '关');
+  btnErase.className = (eraseMode ? 'on' : 'off') + ' opt';
+  if (eraseMode) setPen(false);          // 和画笔互斥：都是「改画布的方式」
+  return eraseMode;
+}
+var btnErase = toolBtn('🧹 橡皮擦：关', function(){ setErase(!eraseMode); }, '', 1);
+btnErase.title = '擦除模式：点击或涂抹任意元件 / 导线即可快速删除（再点一次或按 Esc 退出）';
+// Esc 退出擦除模式。捕获阶段监听：橡皮擦开着时其他 Esc 分支（全屏 / 电路图）
+// 不该抢走它 —— 先判擦除模式，属于它就先吃掉。
+window.addEventListener('keydown', function(e){
+  if (!eraseMode) return;
+  if (e.key === 'Escape' || e.key === 'Esc'){ e.preventDefault(); setErase(false); }
+}, true);
+
+// ── 导线断联（用户 2026-10-21 第 2 点）────────────────────────────
+// 真实实验台的行为：在靠近接线柱的地方点住导线一拉，线就从这根柱子上脱开；
+// 拖着线头到另一根接线柱上松开，重新接上。
+//   判定：pointerdown 点中导线【且】鼠标距该导线某一端点（接线柱）≤ DETACH_HIT
+//        → 进入断联拖拽（capture 阶段拦下，编辑器收不到、不会去挪拐点）。
+//   动作：真正拉过 DETACH_MOVE 才执行断联（pushUndo 一次）—— 把端点从
+//        {compId, termIdx} 换成 {compId:null, x, y} 自由线头（和「删元件保留
+//        导线」冻住的线头同构，渲染 / 求解器都认）；松手在另一接线柱上（≤SNAP）
+//        就接回 {compId, termIdx}，松手在空白就留在原地成为悬空线头（之后还能
+//        再点线头拖到别处 —— 编辑器本来就支持）。
+//   为什么放页面层：和橡皮擦同一条理由，3D 沙盒不受影响。
+var detach = null;
+var DETACH_HIT = 26;      // 靠近接线柱多少以内点导线算「在柱子边上」（逻辑 px）
+var DETACH_SNAP = 26;     // 松手时接到新接线柱的吸附半径
+var DETACH_MOVE = 4;      // 拉过 4px 才算「真的拉了」
+function wireEndPos(wr, k){
+  var e = wr[k];
+  if (!e) return null;
+  var p = editor.endPt(e);
+  return p ? { x: p.x, y: p.y } : null;
+}
+function nearestTerminal(p){
+  var best = null, cs = scene.comps;
+  var D = window.CircuitDraw;
+  for (var i = 0; i < cs.length; i++){
+    var c = cs[i];
+    var T = D.TERMINALS ? D.TERMINALS[c.type] : null;
+    if (!T) continue;
+    for (var t = 0; t < T.length; t++){
+      var q = D.terminalWorld(c, t);
+      var d = Math.hypot(p.x - q.x, p.y - q.y);
+      if (!best || d < best.d) best = { compId: c.id, termIdx: t, x: q.x, y: q.y, d: d };
+    }
+  }
+  return best;
+}
+function detachHit(p){
+  var ws = scene.wires, wi = -1;
+  for (var i = ws.length - 1; i >= 0; i--){
+    var pts = editor.pathOf(ws[i]);
+    for (var j = 1; j < pts.length; j++){
+      if (eraseSegD(p, pts[j - 1], pts[j]) < 10){ wi = i; break; }
+    }
+    if (wi >= 0) break;
+  }
+  if (wi < 0) return null;
+  var wr = ws[wi];
+  var pa = wireEndPos(wr, 'a'), pb = wireEndPos(wr, 'b');
+  var best = null;
+  if (pa){ var da = Math.hypot(p.x - pa.x, p.y - pa.y); if (da <= DETACH_HIT) best = { k: 'a', d: da, x: pa.x, y: pa.y }; }
+  if (pb){ var db = Math.hypot(p.x - pb.x, p.y - pb.y); if (!best || db < best.d) best = { k: 'b', d: db, x: pb.x, y: pb.y }; }
+  if (!best) return null;
+  return { index: wi, endKey: best.k, endX: best.x, endY: best.y };
+}
+canvas.addEventListener('pointerdown', function(e){
+  if (eraseMode) return;                 // 橡皮擦优先
+  var lp = logicalFromClient(e.clientX, e.clientY);
+  if (!lp || !lp.inside) return;
+  var hit = detachHit(lp);
+  if (!hit) return;
+  detach = { index: hit.index, endKey: hit.endKey,
+             p0: { x: lp.x, y: lp.y }, endX: hit.endX, endY: hit.endY, moved: false };
+  e.preventDefault(); e.stopPropagation();
+}, true);
+canvas.addEventListener('pointermove', function(e){
+  if (!detach) return;
+  var lp = logicalFromClient(e.clientX, e.clientY);
+  var wr = scene.wires[detach.index];
+  if (!lp || !wr){ detach = null; return; }
+  if (!detach.moved){
+    if (Math.hypot(lp.x - detach.p0.x, lp.y - detach.p0.y) < DETACH_MOVE) return;
+    detach.moved = true;
+    editor.pushUndo();                   // 断联是可撤销改动，拍一张快照
+    wr[detach.endKey] = { compId: null, x: detach.endX, y: detach.endY };
+  }
+  wr[detach.endKey].x = lp.x;            // 线头跟着鼠标走
+  wr[detach.endKey].y = lp.y;
+  render();
+  e.preventDefault(); e.stopPropagation();
+}, true);
+function detachUp(e){
+  if (!detach) return;
+  var wr = scene.wires[detach.index];
+  var lp = logicalFromClient(e.clientX, e.clientY);
+  if (wr && lp){
+    if (detach.moved){
+      var nt = nearestTerminal(lp);
+      if (nt && nt.d <= DETACH_SNAP){
+        wr[detach.endKey] = { compId: nt.compId, termIdx: nt.termIdx };   // 接回
+      } else {
+        wr[detach.endKey].x = lp.x; wr[detach.endKey].y = lp.y;          // 悬空线头
+      }
+      try { editor.rerouteAll(); } catch (err) {}
+      render();
+    }
+  }
+  detach = null;
+  e.preventDefault(); e.stopPropagation();
+}
+canvas.addEventListener('pointerup', detachUp, true);
+canvas.addEventListener('pointercancel', detachUp, true);
+
 // 「🗑 删除选中」按钮已撤掉。现在删除走【画布上那颗红圆钮】：选中元件它在
 // 左上角长出来、选中导线它长在线中点（见 circuit-editor 的 drawDelButton），
 // 手机上也点得到 —— 工具栏不必再占一格。Delete / Backspace 键照旧能用。
@@ -5102,6 +5303,7 @@ var btnPen = toolBtn('✏️ 画笔：关', function(){ setPen(!pen.on); }, '', 
 btnPen.title = '在实验画面上写字画画（圈重点、写批注）；在笔迹上来回涂抹即可擦掉';
 function setPen(v){
   var on = penSetOn(v);
+  if (on && eraseMode) setErase(false);   // 和橡皮擦互斥：都占画布指针
   btnPen.textContent = '✏️ 画笔：' + (on ? '开' : '关');
   // ⚠️ 这里【必须】把 opt 带上。直接写 className = 'on' 会把 toolBtn 加的
   //    ' opt' 一起抹掉 —— 后果是「点过一次画笔以后，窄屏下这个按钮就再也不收

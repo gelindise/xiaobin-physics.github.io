@@ -2368,10 +2368,11 @@
   //    学生照着课本图找位置就会找错。POST 必须 ≥ |X1|。
   var PENCIL = {
     X0: -108, X1: 108,
-    // 芯的【视觉左端】比接线端点再往左 12px：固定鳄鱼夹咬在 X0 稍右的芯身上，
-    // 芯头从夹口左侧露出一小截 —— 这才是「紧紧夹住左端」，而不是夹口顶在断面上。
+    // 芯的【视觉左端】比接线端点再往左 19px：固定鳄鱼夹咬在 X0 稍右的芯身上，
+    // 芯头从夹口左侧露出一大截 —— 这是「紧紧夹住左端」：夹口咬在芯身上、芯头
+    // 从夹口左侧探出来，而不是夹口顶在断面上。
     // 逻辑端点 X0 仍是接入长度换算的原点，只把断口/露头画到 VX0。
-    VX0: -120,
+    VX0: -127,
     Y: -20,                 // 芯的中心线（板面在 −6 以下，芯悬在板上方）
     R: 5.4,                 // 芯的视觉半径：真实 0.5mm 画出来不到 1px，示意放大
     LEN_MIN: 10, LEN_MAX: 120,
@@ -2808,41 +2809,44 @@
 
       // ── 上颚：从夹口向后张开。内沿贴芯、外沿厚 —— 一片【有厚度】的金属，
       //    不是一条线。之前画成细曲线，读出来是「夹子被压扁了」。
+      //    🔴 内沿 y=-5.3 与芯顶（半径 5.4 ⇒ 顶面在 −5.4）贴平，只留 0.1px
+      //    抗锯齿缝 —— 「上下颚包住芯」就是靠这 0.1px 的贴合读出来的。
       ctx.beginPath();
-      ctx.moveTo(-2, -5.8);
-      ctx.quadraticCurveTo(6, -6.6, 12, -8.8);
-      ctx.quadraticCurveTo(15.5, -10.2, 17, -8.2);
-      ctx.lineTo(17, -4.6);
-      ctx.quadraticCurveTo(12, -5.6, 6, -5.4);
-      ctx.quadraticCurveTo(2, -5.4, -2, -5.8);
+      ctx.moveTo(-2, -5.3);
+      ctx.quadraticCurveTo(6, -6.2, 12, -8.6);
+      ctx.quadraticCurveTo(15.5, -10.0, 17, -8.0);
+      ctx.lineTo(17, -4.4);
+      ctx.quadraticCurveTo(12, -5.5, 6, -5.3);
+      ctx.quadraticCurveTo(2, -5.3, -2, -5.3);
       ctx.closePath();
       ctx.fillStyle = linGrad(ctx, 0, -10.5, 0, -4.4, METAL);
       ctx.fill();
       ctx.shadowColor = 'transparent';
       ctx.strokeStyle = 'rgba(40,52,68,0.6)'; ctx.lineWidth = 1; ctx.stroke();
 
-      // ── 下颚：镜像一片（略短 —— 实物上活动的那片是下颚）
+      // ── 下颚：镜像一片（略短 —— 实物上活动的那片是下颚）。内沿 +5.3 托住芯底。
       ctx.beginPath();
-      ctx.moveTo(-2, 5.8);
-      ctx.quadraticCurveTo(5, 6.6, 10.5, 8.6);
-      ctx.quadraticCurveTo(13.8, 9.9, 15, 8.0);
-      ctx.lineTo(15, 4.6);
-      ctx.quadraticCurveTo(10.5, 5.6, 5, 5.4);
-      ctx.quadraticCurveTo(1.5, 5.4, -2, 5.8);
+      ctx.moveTo(-2, 5.3);
+      ctx.quadraticCurveTo(5, 6.2, 10.5, 8.4);
+      ctx.quadraticCurveTo(13.8, 9.7, 15, 7.8);
+      ctx.lineTo(15, 4.4);
+      ctx.quadraticCurveTo(10.5, 5.5, 5, 5.3);
+      ctx.quadraticCurveTo(1.5, 5.3, -2, 5.3);
       ctx.closePath();
       ctx.fillStyle = linGrad(ctx, 0, 4.4, 0, 10, METAL);
       ctx.fill();
       ctx.strokeStyle = 'rgba(40,52,68,0.6)'; ctx.lineWidth = 1; ctx.stroke();
 
       // 齿：上下各三颗，朝芯里咬。浅色金属，衬在深灰的芯上才看得见。
+      // 齿尖从颚片内沿（±5.3）往芯里伸到 ±3.0 —— 是「咬进石墨」不是「贴在表面」。
       ctx.fillStyle = '#eef4fb';
       for (var i = 0; i < 3; i++) {
         var gx = 1.6 + i * 3.4;
         ctx.beginPath();
-        ctx.moveTo(gx, -5.4); ctx.lineTo(gx + 1.5, -3.0); ctx.lineTo(gx + 3.0, -5.4);
+        ctx.moveTo(gx, -5.3); ctx.lineTo(gx + 1.5, -3.0); ctx.lineTo(gx + 3.0, -5.3);
         ctx.closePath(); ctx.fill();
         ctx.beginPath();
-        ctx.moveTo(gx, 5.4); ctx.lineTo(gx + 1.5, 3.0); ctx.lineTo(gx + 3.0, 5.4);
+        ctx.moveTo(gx, 5.3); ctx.lineTo(gx + 1.5, 3.0); ctx.lineTo(gx + 3.0, 5.3);
         ctx.closePath(); ctx.fill();
       }
 
@@ -2878,14 +2882,14 @@
       ctx.restore();
     }
 
-    // 固定夹：夹口咬在 X0 稍右（+4）的芯身上 —— 芯头从夹口左侧露出一小截
+    // 固定夹：夹口咬在 X0 稍右（+5）的芯身上 —— 芯头从夹口左侧露出一大截
     // （到 VX0），两片颚上下包住芯，是「紧紧夹住左端」的画法。
-    // 角度 −0.5：夹身仍朝左下、避开左接线柱，但比原来的 −0.95 平缓 ——
-    // −0.95 时下颚只够到芯的侧下方，颚片和芯看着是「搭」在一起；−0.5 时
-    // 上颚压住芯顶、下颚托到芯底附近，才是「咬」住。
-    alligator(PENCIL.X0 + 4, -0.5, -1, 'red');
-    // 移动夹：夹口在 clipX，夹身朝右、略微下垂
-    alligator(clipX, 0.35, 1, 'black');
+    // 角度 −0.14：夹身基本水平、微微下垂。之前 −0.5 时颚片斜着搭在芯的侧上方，
+    // 上颚只够到芯顶、下颚悬在芯侧下方，读出来是「夹子靠在芯旁边」；归平之后
+    // 上颚正压芯顶、下颚正托芯底，才是「咬」住。
+    alligator(PENCIL.X0 + 5, -0.14, -1, 'red');
+    // 移动夹：夹口在 clipX，夹身朝右、略微下垂（同样归平，两侧对称咬住）
+    alligator(clipX, 0.14, 1, 'black');
 
     // ④ 两根引线
     //    · 固定夹的尾巴 → 左柱：一小段软线（尾巴本来就在柱子上方，几乎垂直）
@@ -2893,9 +2897,9 @@
     //      🔴 这条线必须【跟着夹子动】—— 它是「夹子在哪、电就从哪进」的唯一证据。
     ctx.save();
     ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-    // 固定夹那一根（红）：尾巴 = 夹口沿 −x 方向转 −0.5rad 出去 30
-    var fx = (PENCIL.X0 + 4) - CLIP_LEN * Math.cos(0.5) + 1;
-    var fy = PENCIL.Y + CLIP_LEN * Math.sin(0.5);
+    // 固定夹那一根（红）：尾巴 = 夹口沿 −x 方向转 −0.14rad 出去 30
+    var fx = (PENCIL.X0 + 5) - CLIP_LEN * Math.cos(0.14) + 1;
+    var fy = PENCIL.Y + CLIP_LEN * Math.sin(0.14);
     //    终点 = 左柱（−PENCIL.POST）：柱子跟着芯长了，这两个数必须一起走，
     //    写死 −70 的话加长后引线会断在板子中间，柱子悬空。
     ctx.strokeStyle = 'rgba(127,29,29,0.92)'; ctx.lineWidth = 4.4;
@@ -2911,8 +2915,8 @@
     // 移动夹那一根（黑）：起点 = 夹尾，终点 = 右柱。
     // tx0 的「柱前 3px」= POST − 3：夹子推到最右时尾巴正好落在柱子前，
     // 不夹进柱子里面。
-    var tx0 = Math.min(clipX + CLIP_LEN * Math.cos(0.35) - 1, PENCIL.POST - 3);
-    var ty0 = PENCIL.Y + CLIP_LEN * Math.sin(0.35) * 0.55 + 2;
+    var tx0 = Math.min(clipX + CLIP_LEN * Math.cos(0.14) - 1, PENCIL.POST - 3);
+    var ty0 = PENCIL.Y + CLIP_LEN * Math.sin(0.14) * 0.55 + 2;
     var tx1 = PENCIL.POST, ty1 = -2;
     ctx.strokeStyle = 'rgba(8,13,21,0.88)'; ctx.lineWidth = 4.8;
     ctx.beginPath();
