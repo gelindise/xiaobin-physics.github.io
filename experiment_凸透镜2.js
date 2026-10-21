@@ -60,9 +60,12 @@ import * as THREE from './assets/optics-three.min.js';
   // 公式与眼睛页是同一份（那边 f 用 m），cm → m 的换算只在这一处发生。
   const diopterOf = fCm => 100 / (fCm / 100);
   // The letter F is the classic object for showing that a real image is inverted in both
-  // directions. Strokes are listed in world (z, y). The lit face points at the lens (+x), and
-  // an eye on that side sees screen-right along -z, so the upright bar has to sit at z > 0 for
-  // the letter to read normally from the lens; the screen then receives a 180° copy of it.
+  // directions. Strokes are listed in world (z, y). The lit face points at the lens (+x) and is
+  // read from that side: the eye looks along −x, so its screen-right runs along −z, and the
+  // upright bar has to sit at z > 0 for the letter to read normally. The screen then receives the
+  // pattern rotated 180° (bar at z < 0), so an eye standing behind the source — looking along +x,
+  // where right = +z — sees the bar on the left with the long arm at the bottom: both directions
+  // reversed, which is what a real image must look like. See FLIP / stampObject below.
   const F_BAR = { z0: 1.78, z1: 2.4,  y0:7.5,  y1:16.5 };  // upright stroke
   const F_TOP = { z0:-2.4,  z1: 2.4,  y0:15.88,y1:16.5 };  // top arm
   const F_MID = { z0:-1.2,  z1: 2.4,  y0:12.6, y1:13.22 }; // middle arm
@@ -579,7 +582,9 @@ import * as THREE from './assets/optics-three.min.js';
   const artY = y => objCanvas.height / 2 + (12 - y) * ART_PX_CM;
   // The art canvas is authored as the object looks from the lens side, where screen-right runs
   // along -z. The candle is symmetric about z = 0 so artX serves it, but the letter F is not:
-  // its strokes have to be mirrored in z to be drawn the way the lens actually sees them.
+  // its strokes are mirrored in z here, which is exactly the orientation the ghost plane wants
+  // (that plane's canvas x runs along -z). The screen face and the close-up preview run their
+  // canvas x along +z, so they have to undo this mirror — that is what FLIP.front does.
   const artXz = z => objCanvas.width / 2 - z * ART_PX_CM;
   const artStroke = (g, s) => g.fillRect(
     Math.min(artXz(s.z0), artXz(s.z1)), artY(s.y1),
@@ -631,11 +636,20 @@ import * as THREE from './assets/optics-three.min.js';
   const objectSpan = () => state.source === 'f'
     ? { top: 16.5, bottom: 7.5 }
     : { top: SRC_MAX + .8, bottom: SRC_MIN - .8 };
+  // 贴像的方向。art 画布是按【从光屏背面看】的朝向画的（见 artXz：画布 x 朝 −z），
+  // 所以同一个 art 贴到别的朝向上，横向还要不要再翻一次，取决于那块画布的 x 轴朝哪边：
+  //   'front'   —— 画布 x 朝 +z：光屏纹理、光屏正面预览。实像在这里上下、左右【都】颠倒。
+  //   'through' —— 画布 x 朝 −z：站在像的另一侧透过透镜看，相对 'front' 再左右翻一次。
+  //   'upright' —— 正立的虚像（放大镜那种看法），左右不翻。
+  // 🔴 实像这一档【只能翻 y】。两个轴都翻（老代码的 flip=true）等于只做了上下颠倒，
+  //    屏上的 F 就成了「倒立、但左右没反」—— 这正是成像逻辑出错的地方。
+  const FLIP = { front:[1,-1], through:[-1,-1], upright:[1,1] };
   // Stamps the object art onto any canvas. The sampling density must be passed in, because
   // the screen face and the close-up preview are drawn at different pixels per centimetre.
-  function stampObject(g, cx, cy, magnification, flip, pxPerCm){
+  function stampObject(g, cx, cy, magnification, mode, pxPerCm){
     const k = pxPerCm / ART_PX_CM * magnification;
-    g.save(); g.translate(cx, cy); g.scale(flip ? -k : k, flip ? -k : k);
+    const [fx, fy] = FLIP[mode] || FLIP.front;
+    g.save(); g.translate(cx, cy); g.scale(fx * k, fy * k);
     g.drawImage(objCanvas, -objCanvas.width / 2, -objCanvas.height / 2);
     g.restore();
   }
@@ -680,7 +694,7 @@ import * as THREE from './assets/optics-three.min.js';
       c.save();c.beginPath();c.rect(6,6,w-12,h-12);c.clip();
       c.globalAlpha=clamp(1-offset/80,.45,1);
       c.filter=sigma<.5?'none':`blur(${sigma.toFixed(1)}px)`;
-      stampObject(c,w/2,h/2,m,true,PX_CM);
+      stampObject(c,w/2,h/2,m,'front',PX_CM);
       c.restore();
       // A faint axis line lets the image be judged against the optical axis.
       c.save();c.globalAlpha=.15;c.strokeStyle='#6b7b83';c.lineWidth=1.5;
@@ -734,7 +748,7 @@ import * as THREE from './assets/optics-three.min.js';
       g.filter=sigma<.5?'none':`blur(${sigma.toFixed(1)}px)`;
       g.save();
       if(fromBack){g.translate(W,0);g.scale(-1,1);}
-      stampObject(g,W/2,cy,mag,true,pxCm);
+      stampObject(g,W/2,cy,mag,'front',pxCm);
       g.restore();
     }else{
       const bg=g.createRadialGradient(W/2,H/2,10,W/2,H/2,H*.78);
@@ -745,7 +759,7 @@ import * as THREE from './assets/optics-three.min.js';
       g.beginPath();g.moveTo(10,cy);g.lineTo(W-10,cy);g.stroke();g.setLineDash([]);
       g.save();g.beginPath();g.rect(4,4,W-8,H-8);g.clip();
       // A real image is inverted in both directions; only the virtual image stays upright.
-      stampObject(g,W/2,cy,mag,mode==='air',pxCm);
+      stampObject(g,W/2,cy,mag,mode==='air'?'through':'upright',pxCm);
       g.restore();
     }
     g.restore();
@@ -908,12 +922,14 @@ import * as THREE from './assets/optics-three.min.js';
     const blocked=info.real&&!state.screenRemoved&&!info.crisp;
     $('recordBtn').disabled=blocked;
     $('recordBtn2').disabled=blocked;
+    $('recordBtn3').disabled=blocked;
     $('recordHint').textContent=blocked
       ?'请先移动光屏找到清晰像再记录':'现在可以记录本组观察';
     const toggle=state.screenRemoved?'放回光屏':'撤去光屏';
     $('screenToggle').textContent=toggle;
     $('screenToggle2').textContent=toggle;
     $('observerBtn').classList.toggle('active',state.observing);
+    $('observerBtn2').classList.toggle('active',state.observing);
     $('stage').classList.toggle('observer-mode',state.screenRemoved);
     // A virtual image sits on the object side, so it can only be reached by looking back
     // through the lens. Say so rather than leaving an empty stage unexplained.
@@ -987,11 +1003,14 @@ import * as THREE from './assets/optics-three.min.js';
   // measured, the image is lost for every u < f at yaw 1.06-1.42 and reliably visible from
   // yaw >= 1.48. Parking the camera at 1.06 (an older value) put the student in a spot where
   // pressing「透过透镜观察」showed nothing at all.
-  $('observerBtn').addEventListener('click',()=>{
+  function toggleObserver(){
     if(state.observing){setScreen(true);return;}
     state.observing=true;state.screenRemoved=true;state.autoScreen=false;
     state.yaw=1.50;state.pitch=.12;state.zoom=1.4;update();
-  });
+  }
+  // 工具条上那颗，和参数面板里那颗，是同一件事（全屏时工具条不在舞台里，只能靠面板这颗）
+  $('observerBtn').addEventListener('click',toggleObserver);
+  $('observerBtn2').addEventListener('click',toggleObserver);
   // 记录表导出：拼成可以直接粘进表格软件 / 文档的制表符文本（首行是表头）。
   // 没记录的行照样导出、单元格留空 —— 粘出来仍是一张 5 行的完整表，缺哪几行一眼可见。
   function recordsTable(){
@@ -1040,6 +1059,7 @@ import * as THREE from './assets/optics-three.min.js';
   }
   $('recordBtn').addEventListener('click',recordMark);
   $('recordBtn2').addEventListener('click',recordMark);
+  $('recordBtn3').addEventListener('click',recordMark);
   $('clearRecords').addEventListener('click',()=>{
     state.records={};renderRecords();update();
   });
@@ -1193,10 +1213,93 @@ import * as THREE from './assets/optics-three.min.js';
       render();
     }
   });
+  // ===== 实验画面全屏 =====
+  // 全屏目标取【整个舞台】：参数面板、刻度读数、光屏特写都是它的后代，所以全屏里照样能
+  // 调参数、读刻度，不用退出来再按一次。
+  // 切换后必须重排画布：:fullscreen 的布局在个别浏览器里要下一帧才落地，只排一次会拿到
+  // 切换过程中的中间尺寸（画布被拉变形）；headless 里 rAF 还可能一次都不回调，
+  // 所以再补一个 setTimeout 兜底（自检会数实际重排了几次，见 fsLayouts）。
+  const stageBox=$('stage'),fsBtn=$('stageFs');
+  const fsIsOn=()=>document.fullscreenElement===stageBox||document.webkitFullscreenElement===stageBox;
+  let fsLayouts=0;
+  function fsLayout(){resize();fsLayouts++;}
+  fsBtn.addEventListener('click',()=>{
+    if(document.fullscreenElement||document.webkitFullscreenElement){
+      const exit=document.exitFullscreen||document.webkitExitFullscreen;
+      if(exit)exit.call(document);
+    }else if(stageBox.requestFullscreen){
+      const p=stageBox.requestFullscreen();if(p&&p.catch)p.catch(()=>{});
+    }else if(stageBox.webkitRequestFullscreen){
+      stageBox.webkitRequestFullscreen();
+    }
+  });
+  function onFsChange(){
+    const on=fsIsOn();
+    fsBtn.querySelector('.fs-expand').style.display=on?'none':'';
+    fsBtn.querySelector('.fs-compress').style.display=on?'':'none';
+    fsBtn.querySelector('.lbl').textContent=on?'退出':'全屏';
+    fsBtn.title=on?'退出全屏':'全屏显示实验画面';
+    fsBtn.setAttribute('aria-label',fsBtn.title);
+    fsLayout();
+    requestAnimationFrame(()=>requestAnimationFrame(fsLayout));
+    setTimeout(fsLayout,90);
+  }
+  document.addEventListener('fullscreenchange',onFsChange);
+  document.addEventListener('webkitfullscreenchange',onFsChange);
+
+  // ===== 参数面板：可折叠，就住在实验画面里 =====
+  // 参数多、又要和画面放一起，所以做成【默认收起】的浮层：收起时只剩一颗小药丸（不遮画面），
+  // 展开后自己在面板里往下滚。折叠是纯界面状态：不停仿真、不动任何参数。
+  const paramsBox=$('stageParams'),paramsHead=$('stageParamsHead'),
+        paramsToggle=$('stageParamsToggle'),paramsBody=$('stageParamsBody');
+  const paramsIsOpen=()=>!paramsBox.classList.contains('collapsed');
+  function setParamsOpen(on){
+    paramsBox.classList.toggle('collapsed',!on);
+    paramsToggle.setAttribute('aria-expanded',on?'true':'false');
+    paramsToggle.textContent=on?'▾ 收起':'▸ 展开';
+    paramsToggle.title=on?'收起参数面板':'展开参数面板';
+  }
+  paramsToggle.addEventListener('click',e=>{e.stopPropagation();setParamsOpen(!paramsIsOpen());});
+  // 标题栏整条都能点（比那个小按钮好按），但别让按钮那一下算两次
+  paramsHead.addEventListener('click',e=>{
+    if(e.target.closest&&e.target.closest('#stageParamsToggle'))return;
+    setParamsOpen(!paramsIsOpen());
+  });
+  // 面板压在画布上方：指针与滚轮事件不能漏到舞台上去（否则会被当成「开始拖场景」）
+  paramsBox.addEventListener('pointerdown',e=>e.stopPropagation());
+  paramsBox.addEventListener('wheel',e=>e.stopPropagation(),{passive:true});
+  setParamsOpen(false);                 // 与 HTML 上的 collapsed 对齐（默认收起）
+  // 面板 / 全屏的自检读数：判据读【真的画在哪儿】（getBoundingClientRect），不是 CSS 写了什么。
+  function paramsPanelInfo(){
+    const r=paramsBox.getBoundingClientRect(),st=stageBox.getBoundingClientRect();
+    return {open:paramsIsOpen(),text:paramsToggle.textContent,
+      expanded:paramsToggle.getAttribute('aria-expanded'),
+      bodyDisplay:getComputedStyle(paramsBody).display,
+      // 面板必须是舞台的后代：全屏只渲染全屏元素及其子树，挂外面就进不去
+      inStage:stageBox.contains(paramsBox),
+      // 宽高先要是个真尺寸：面板被挪出全屏子树时 rect 会退化成 0×0，那种「0 落在框内」是假绿
+      insideStage:r.width>40&&r.height>20&&r.left>=st.left-1&&r.right<=st.right+1
+        &&r.top>=st.top-1&&r.bottom<=st.bottom+1,
+      areaPct:+(r.width*r.height/(st.width*st.height)*100).toFixed(2),
+      scrollable:paramsBody.scrollHeight>paramsBody.clientHeight+1,
+      height:Math.round(r.height),width:Math.round(r.width)};
+  }
+  function fsInfo(){
+    const st=stageBox.getBoundingClientRect();
+    const fsel=document.fullscreenElement||document.webkitFullscreenElement;
+    return {on:fsIsOn(),stageH:Math.round(st.height),viewH:window.innerHeight,
+      stageFull:st.height>=window.innerHeight-2,
+      canvasH:Math.round(canvas.getBoundingClientRect().height),
+      rendererH:Math.round(renderer.getSize(new THREE.Vector2()).y),
+      // 全屏里只有全屏元素及其子树会被画出来；面板必须在这棵子树里，否则全屏里根本没有它
+      panelInFs:!!(fsel&&fsel.contains(paramsBox)),
+      layouts:fsLayouts,label:fsBtn.querySelector('.lbl').textContent};
+  }
   window.addEventListener('resize',resize);
   if(window.ResizeObserver)new ResizeObserver(resize).observe(canvas);
   window.__lensLab={state,status,project,imageY,wx,setScreen,update,render,resize,
-    rayShiftsFor,diopterOf,recordsTable,LENS_AP,
+    rayShiftsFor,diopterOf,recordsTable,renderRecords,LENS_AP,
+    stageBox,setParamsOpen,paramsIsOpen,paramsPanelInfo,fsInfo,
     get lastRayTraces(){return lastRayTraces;},
     debug:()=>{const i=status();return {objP:state.objP,lensP:state.lensP,scrP:state.scrP,u:state.u,sd:state.sd,
       cameraX:camera.position.x,screenX:wx(state.scrP),
