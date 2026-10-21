@@ -1397,6 +1397,31 @@
   // ============================================================
   // build：场景 → 电路图模型（纯数据，测试全部断在它上面）
   // ============================================================
+  // 单件元件的电路图模型（build 里那一段的【同一个】构造过程，抽出来给
+  // 「电路图画布」用）。画布是学生自己摆符号，不走自动布局，但符号必须和
+  // 自动转换出来的那张图【长得一模一样】—— 所以两边共用 itemOf + drawSymbol，
+  // 而不是在画布里再画一套「差不多」的符号。
+  function itemOf(comp, wires, rec, D, opts) {
+    D = D || G.CircuitDraw;
+    var lay = { id: comp.id, type: comp.type, x: comp.x, y: comp.y,
+                rot: comp.rot || 0, mir: !!comp.mir, params: comp.params || {} };
+    var it = { id: comp.id, type: lay.type, x: lay.x, y: lay.y, rot: lay.rot,
+               comp: lay, lay: lay, src: comp, core: coreOf(opts), meta: {}, rect: null,
+               rec: rec || null };
+    if (lay.type === 'ammeter' || lay.type === 'voltmeter' || lay.type === 'galvanometer') {
+      it.meta = meterGeom(lay, wires, D);
+    } else if (lay.type === 'rheostat') {
+      it.meta = rheoGeom(lay, wires, rec, D);
+    } else it.meta = {};
+    it.rect = symRect(it);
+    var noLabel = !!(opts && opts.labels === false);
+    var noValue = !!(opts && opts.values === false);
+    it.label = noLabel ? '' : subscript(D.nameOf ? D.nameOf(comp) : lay.id);
+    it.value = noValue ? '' : valueOf(it, rec);
+    it.hint = noValue ? '' : hintOf(it);
+    return it;
+  }
+
   function build(scene, results, opts) {
     var D = drawOf(opts);
     var core = coreOf(opts);
@@ -2162,6 +2187,9 @@
 
   return {
     build: build, draw: draw, bounds: bounds,
+    // 单件出口：电路图画布（circuit-schlab.js）用它把【同一套标准符号】画在
+    // 学生自己摆的位置上。drawSymbol 和它是一对，两个一起用。
+    itemOf: itemOf, drawSymbol: drawSymbol, symTerms: symTerms,
     symRect: symRect, worldRect: worldRect,
     // 电路图里的端子坐标。**页面和测试都该用这个**，别用 D.terminalWorld
     // ——那返回的是【实物】接线柱的位置，变阻器的 C/D 在电路图上已经并到滑片杆顶了。
