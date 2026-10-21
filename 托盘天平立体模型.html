@@ -38,6 +38,8 @@
     .lab3d-stage canvas { display: block; touch-action: none; cursor: grab; }
     .lab3d-stage canvas.pick { cursor: pointer; }
     .lab3d-stage canvas.grabbing { cursor: grabbing; }
+    /* 🔴🔴 拿起镊子后隐藏系统光标（grab/小手），只让画布里绘制的镊子当指针 —— 否则"还是一只小手" */
+    .lab3d-stage canvas.holding-tweez { cursor: none; }
 
     .lab3d-stage .stage-hint {
       position: absolute; left: 12px; top: 12px; max-width: 60%;
@@ -183,6 +185,13 @@
       transition: border-color .15s, background .15s;
     }
     .wgrid button:hover { border-color: rgba(250, 214, 130, .9); background: linear-gradient(180deg, rgba(196, 152, 74, .48), rgba(120, 86, 30, .42)); }
+    /* 第 6 格是「拿起 / 放下镊子」：钢色，和砝码的黄铜色分开 */
+    .wgrid button.tw {
+      color: #dbe7f3; border-color: rgba(148, 178, 208, .55);
+      background: linear-gradient(180deg, rgba(120, 148, 178, .32), rgba(46, 62, 82, .42));
+    }
+    .wgrid button.tw:hover { border-color: rgba(190, 216, 240, .95); background: linear-gradient(180deg, rgba(140, 170, 200, .5), rgba(56, 74, 96, .55)); }
+    .wgrid button.tw.on { border-color: rgba(52, 211, 153, .75); color: #d1fae5; background: linear-gradient(180deg, rgba(16, 185, 129, .32), rgba(6, 78, 59, .5)); }
 
     .nutrow { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 7px; }
     .nutrow span { color: #a9c2d2; font-size: 11.5px; }
@@ -350,7 +359,7 @@
             <button type="button" class="stage-btn ok" id="bal-submit2">✓ 提交读数</button>
             <button type="button" class="stage-btn" id="bal-fs" title="全屏实验（Esc 退出）">⛶ 全屏</button>
           </div>
-          <div class="stage-help">拖动空白处旋转 · 滚轮缩放 · 拖动游码 / 平衡螺母 · 点右盘砝码取下 · ⛶ 全屏</div>
+          <div class="stage-help">拖动空白处旋转 · 滚轮缩放 · 拖动游码 / 平衡螺母 · 点镊子拿起，点台面空白处搁下 · ⛶ 全屏</div>
         </div>
       </div>
 
@@ -419,7 +428,7 @@
             <button type="button" data-w="20">20 g</button>
             <button type="button" data-w="10">10 g</button>
             <button type="button" data-w="5">5 g</button>
-            <button type="button" data-w="1">1 g</button>
+            <button type="button" id="bal-tw-btn" class="tw">✋ 拿起镊子</button>
           </div>
           <div class="btn-row" style="margin-top:8px;">
             <button type="button" id="bal-clear">清空右盘</button>
@@ -429,12 +438,13 @@
             <button type="button" id="bal-tw-drop">放下镊子（Esc）</button>
           </div>
           <p class="note" id="bal-tw-hint" style="display:none;">
-            镊子已拿起：点<b>砝码盒里的一颗</b>夹起 → 移到<b>右盘</b>上方（盘口会亮绿圈）再点一下放下，
+            镊子已拿起：点<b>砝码盒里的一颗</b>夹起 → 移到<b>右盘</b>上方（盘口会亮绿虚线圈、盘底亮出落位圈）再点一下放下，
             会自动吸附到空位；夹着砝码时移到<b>砝码盒</b>上方点一下放回。
-            <b>空手时照样能拖游码和平衡螺母</b>；按 <b>Esc</b> 放下镊子。
+            空手时点<b>实验台的空白处</b>就能把镊子搁下（画面会先画虚影告诉你落点）；
+            <b>空手时照样能拖游码和平衡螺母</b>；按 <b>Esc</b> 收回。
           </p>
           <p class="note">加砝码<b>用镊子、由大到小</b>。点画面里的<b>镊子</b>把它拿起来再夹砝码；
-            下面的按钮是快捷方式。</p>
+            下面的按钮是快捷方式。砝码组：<b>100 / 50 / 20 / 20 / 10 / 5 g</b>，5 g 以下靠游码。</p>
         </div>
       </div>
 
@@ -537,11 +547,14 @@
     // 🔴 比例全部按参考图 372.6 px/世界单位 反算（底座宽 790 px = 21.2 cm）。
     //    BASE_HW / BASE_HD 是【底面】半宽 / 半深 —— 接触阴影与取景包络都在用它。
     const BASE_HW = 1.06, BASE_HD = 0.50;   // 半宽 21.2 cm / 半深 10.0 cm
-    const BASE_H     = 0.125;               // 板厚 1.25 cm（参考图正面只有 28 px）
+    // 🔴 板厚从 0.125 提到 0.150：实拍机底座正面贴着一张【铭牌】（200g 托盘天平 /
+    //    最大称量 200g / 分度值 0.2g），正面那条竖直带必须够高才贴得下 ——
+    //    0.125 时波峰顶到 0.076、倒角又占掉 0.032，中间只剩 1.7 mm。
+    const BASE_H     = 0.150;               // 板厚 1.5 cm
     const BASE_BEV   = 0.032;               // 顶面倒角高度
     const BASE_R     = 0.210;               // 顶面圆角半径
     const BASE_SKIRT = 0.006;               // 底缘波浪带的【波谷】高度
-    const BASE_WAVE  = 0.070;               // 波浪起伏幅度（参考图底边上下摆 29 px）
+    const BASE_WAVE  = 0.058;               // 波浪起伏幅度（参考图底边上下摆 29 px）
     // 🔴 硬约束：BASE_SKIRT + BASE_WAVE < BASE_H − BASE_BEV，否则波峰会翻到倒角带上面去。
     const SOCK_R     = 0.078;                 // 底座中央座圈半径（立柱根部那一圈加粗的座）
 
@@ -596,7 +609,7 @@
     // 参考图里标尺的「0」紧贴左托叉、「5 g」快到右托叉 ⇒ 行程横跨整根梁。
     const RIDER_X0 = -0.70, RIDER_X1 = 0.70;  // 游码 0 → 5 g 的世界行程
     const RIDER_G  = 5;                        // 游码量程
-    const RIDER_W  = 0.050, RIDER_LIFT = 0.026, RIDER_UP = 0.030;
+    const RIDER_W  = 0.040, RIDER_LIFT = 0.018, RIDER_UP = 0.022;
 
     // ── 平衡螺母（梁端细螺杆 + 滚花圆盘螺母）──
     const NUT_D0   = 1.05;              // 螺母中位到支点的距离（参考图 ±390 px）
@@ -630,9 +643,15 @@
     //    （架盘天平的结构 = 托盘/指针/横梁/砝码托盘/标尺/游标/底座/刀承刀座）。
     //    旧版从底桥往下插一根导杆进底座插座，看着像「托盘被两根柱子顶起来」——
     //    那才是把天平理解错了：托盘是靠横梁端吊住的，不是被底座撑起来的。
-    const YOKE_HW = 0.110, YOKE_Z = 0.078, YOKE_PT = 0.030;
-    const YOKE_TOP = 0.085, YOKE_BOT = -0.245;      // 局部 y（0 = 横梁端销轴）
-    const YOKE_HUB_R = 0.058, YOKE_HUB_HW = 0.092;  // 半长 = 侧板外缘，毂要穿出来
+    // ── 盘架卡箍（吊点处的镀铬夹件 + 上下短柱）──
+    // 🔴🔴 实拍结构纠正：托盘不是「吊」在横梁端（吊耳 + 底桥 + 长吊杆），而是【架】在
+    //    一根从横梁端卡箍往上伸的立柱上 —— 这类机器就叫【架】盘天平。
+    //    旧版把托叉画成一只 0.245 长的蓝灰 U 形吊耳垂在梁下，屏幕上就是两块大方块，
+    //    和实拍完全不是一个东西（实拍梁端只有一小块镀铬夹件 + 一截柱头）。
+    //    YOKE_TOP 保持 0.085 不动：盘底立柱长 PAN_STEM 由它反算，动了会连带盘高。
+    const YOKE_HW = 0.060, YOKE_Z = 0.058;
+    const YOKE_TOP = 0.085, YOKE_BOT = -0.150;      // 局部 y（0 = 横梁端销轴）
+    const YOKE_HUB_R = 0.028, YOKE_HUB_HW = 0.066;  // 轴毂半径 / 朝观察者伸出的销头半长
 
     // ── 指针（细圆杆：从轴毂向上指到分度盘）──
     const PTR_LEN = DIAL_Y0 + DIAL_H * 0.50 - PIVOT_Y;
@@ -656,9 +675,12 @@
     //    一个都看不见 —— 参考图里盖子内面是【整面可见】的，说明它是斜立着的。
     const WB_LID_TILT = 0.60;                   // ≈34.4°
     const WB_CT = Math.cos(WB_LID_TILT), WB_ST = Math.sin(WB_LID_TILT);
-    const WB_SET  = [100, 50, 20, 20, 10, 5, 2, 2];   // 与 200 g 天平配套的砝码组
-    const WB_COL = [-0.44, -0.20, 0.04, 0.28];
-    const WB_ROW = [-0.20, 0.14];
+    const WB_SET  = [100, 50, 20, 20, 10, 5];   // 200 g 天平配套砝码组（用户指定：去掉 2 g）
+    // 3 列 × 2 行：100/50/20 在后排、20/10/5 在前排，重的在后面不会被前排挡住。
+    // 🔴 列距 0.36 必须 > 最大两颗（100 g r=0.118 + 50 g r=0.104 = 0.222）之和的一半，
+    //    否则 AABB 会真的叠在一起（自检 wbNoOverlap 就是按真正落笔的槽位算的）。
+    const WB_COL = [-0.36, 0.00, 0.36];
+    const WB_ROW = [-0.19, 0.15];
     const TW_X0 = 0.70, TW_X1 = 1.50, TW_Z = 0.70;    // 镊子（摆在天平与盒子之间、台面前方）
     const TW_R  = 0.011;
     const TW_LEN = TW_X1 - TW_X0;                     // 镊子全长（局部坐标 0 → TW_LEN）
@@ -687,12 +709,17 @@
       // 镊子：静置时躺在台面上（tipX/tipZ = 原来那根镊子）；held = 拿在手里跟着鼠标。
       //   carry 是夹着的那颗砝码质量（null = 空手），carryFrom 记住它是从哪儿夹起来的
       //   （'box' 要从盒里少一颗、'pan' 已经从盘上摘掉了）。
+      //   🔴 restX / restZ 是「上一次放在台面上的位置」—— 拿起再放下要回原处，
+      //   而不是每次都被弹回出厂坐标（用户要的就是「能随手搁在实验台上」）。
       tweez: { held: false, tipX: TW_X1, tipZ: TW_Z, tipY: TW_TIP_Y, ang: 0,
+               restX: TW_X1, restZ: TW_Z,
                carry: null, carryFrom: null,
                // 目标位置：镊尖每帧【指数逼近】tX/tY/tZ，不直接跳（见 tick）。
                // 旧版是「鼠标一动镊尖就瞬移」，夹着砝码平移时像在闪，也看不出在搬运。
                tX: TW_X1, tY: TW_TIP_Y, tZ: TW_Z,
                hover: null, hoverHit: null,   // 光标下的投放 / 夹取目标（画高亮圈用）
+               // 空手悬在台面空白处时，这个位置就是「松手落点」（画虚影用）
+               spot: null,
                // 拿在手里时镊身【起竖】一个角度（绕镊尖）：真人拿镊子是斜向下夹的，
                // 平躺着平移的话，杆子会横穿托盘、看上去像一根棍子戳在盘上。
                pitch: 0, tPitch: 0,
@@ -934,6 +961,32 @@
     // 面的明暗：按面法线与光线的夹角给亮度。同一个颜色的盒子三个面必须读出
     // 三种明度 —— 这是「像实物」而不是「像贴纸」的来源。
     const shade = (base, n, amb) => rgb(base, (amb === undefined ? 0.52 : amb) + 0.60 * Math.max(0, dot(n, LIGHT)));
+
+    /* ---------------------------- 镀铬 ----------------------------
+     * 实拍机的横梁 / 立柱 / 卡箍 / 盘架全是【镀铬件】：一条亮带 + 一条暗带 + 边缘反光，
+     * 而不是「一个颜色的平板按法线打光」。少了这层渐变，镀铬看起来就是灰塑料。
+     * stops 用 [位置, 'css 颜色'] 给，全部裁在 pts 这个多边形里画。
+     */
+    function metalFill(pts, a, b, stops) {
+      if (!pts || pts.length < 3) return;
+      ctx.save();
+      polyPath(pts); ctx.clip();
+      const g = ctx.createLinearGradient(a.x, a.y, b.x, b.y);
+      for (const s of stops) g.addColorStop(s[0], s[1]);
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, state.w, state.h);
+      ctx.restore();
+    }
+    // 一根竖直镀铬柱/板：从左上到右下扫过亮—暗—亮三带（a、b 是屏幕上的一点到另一点）
+    const CHROME_STOPS = [
+      [0.00, 'rgb(238,246,255)'],
+      [0.10, 'rgb(176,190,206)'],
+      [0.28, 'rgb(96,108,124)'],
+      [0.46, 'rgb(150,164,182)'],
+      [0.62, 'rgb(70,80,94)'],
+      [0.84, 'rgb(126,140,158)'],
+      [1.00, 'rgb(198,212,228)']
+    ];
 
     /* ---------------------------- 标签（带避让） ---------------------------- */
     let frameBoxes = [];
@@ -1186,12 +1239,17 @@
      * ============================================================ */
     const C_STEEL  = [176, 188, 202];   // 亮钢（横梁 / 螺母 / 托盘立柱 / 指针）
     const C_COL    = [150, 162, 176];   // 立柱：比亮钢略暗的铸钢
-    const C_BASE   = [186, 198, 190];   // 底座：鼠尾草绿铸铁（参考图 #c0ccc5 顶 / #9ca7a2 侧）
-    const C_YOKE   = [150, 166, 196];   // 托叉：淡蓝灰铸件（参考图里比横梁略偏蓝、但很淡）
-    const C_DIAL   = [244, 203, 153];   // 分度盘：浅黄铜
-    const C_DIAL_E = [178, 134, 86];    // 分度盘侧面（暗）
-    const C_PAN    = [186, 196, 208];   // 托盘亮银
-    const C_PANTOP = [88, 89, 92];      // 盘面深灰
+    // 🔴 实拍机底座是【浅暖灰塑料】（采样 #b4b6b2 顶 / #9a9c98 侧），不是鼠尾草绿铸铁。
+    const C_BASE   = [180, 182, 178];
+    const C_YOKE   = [188, 199, 213];   // 盘架卡箍：镀铬（比横梁再亮一档）
+    // 🔴 分度盘是【象牙白塑料牌】（实拍：白底 + 深灰刻线 + 中央一条红线），不是黄铜。
+    const C_DIAL   = [236, 233, 223];
+    const C_DIAL_E = [188, 184, 172];   // 分度盘侧面（暗）
+    // 🔴 托盘是【黑色搪瓷浅碟】：盘口一圈镀铬亮边，盘内盘外都是黑釉。
+    //    旧版画成亮银盘 + 深灰盘面，实拍根本不是那个颜色。
+    const C_PAN    = [52, 56, 64];
+    const C_PANTOP = [58, 62, 70];
+    const C_PANRIM = [206, 214, 224];
     const C_SCALE  = [34, 31, 32];      // 标尺黑
     const C_RIDER  = [150, 162, 178];   // 游码：灰钢块
     const C_WEIGHT = [190, 196, 205];   // 砝码：不锈钢银（人教版 图6.1-4 里不是黄铜）
@@ -1334,13 +1392,42 @@
       }
       // ④ 顶沿亮边：金属件的上棱受光
       line(TOP.map(p => project([p[0], BASE_H, p[1]], q)), 'rgba(228,240,226,.34)', 1.1);
+      // ④b 正面那块【凹进去的面板】+ 铭牌：实拍机底座正面是一整块下沉的面，
+      //     中间贴黑底白字的铭牌。少了这两样，底座就是一块光板 —— 一眼假。
+      drawBaseFrontPanel(q);
       // ⑤ 中央一个座圈：立柱从底座顶面这块座里长出来（真机立柱根部就有一圈加粗的座）。
-      // 🔴 左右【没有】任何插座或导杆 —— 托盘吊在横梁端的销轴上，靠重力垂着，
-      //    底座只跟立柱发生关系。架盘天平的结构就是「托盘/指针/横梁/砝码托盘/标尺/
-      //    游标/底座/刀承刀座」，没有导杆这一项。
+      // 🔴 左右【没有】任何插座或导杆 —— 托盘架在横梁端的卡箍立柱上，底座只跟立柱发生关系。
       drawSocket(q, 0, 0);
       state.drawn.base = { hw: BASE_HW, hd: BASE_HD, h: BASE_H, bev: BASE_BEV, r: BASE_R,
                            sockR: SOCK_R };
+    }
+
+    // 底座正面：一块下沉的面板 + 一张铭牌。
+    // 🔴 只在相机真的看得见正面（eye.z > 0）时画 —— 绕到背后时这块牌子会翻到背面去，
+    //    贴在底座后面「透过塑料看得见字」，比不画更假。
+    function drawBaseFrontPanel(q) {
+      if (q.eye[2] <= 0.02) return;
+      const zf = BASE_HD + 0.0012;
+      const P = (x, y) => project([x, y, zf], q);
+      // 铭牌：一块【深色贴纸】+ 两行白字。宽度按实拍占底座正面约 4 成。
+      const x0 = -0.52, x1 = 0.52, y0 = 0.062, y1 = 0.120;
+      const q0 = P(x0, y0), q1 = P(x1, y0), q2 = P(x1, y1), q3 = P(x0, y1);
+      poly([q0, q1, q2, q3], 'rgba(16,18,22,.92)', 'rgba(196,202,212,.55)', 1.0);
+      const wpx = Math.hypot(q1.x - q0.x, q1.y - q0.y);
+      const hpx = Math.hypot(q3.x - q0.x, q3.y - q0.y);
+      if (wpx < 54 || hpx < 9) return;
+      const ang = Math.atan2(q1.y - q0.y, q1.x - q0.x);
+      ctx.save();
+      ctx.translate((q0.x + q2.x) / 2, (q0.y + q2.y) / 2);
+      ctx.rotate(ang);
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillStyle = 'rgba(240,244,250,.97)';
+      ctx.font = '800 ' + Math.max(6, Math.min(13, hpx * 0.40)) + 'px Inter, "Microsoft YaHei", sans-serif';
+      ctx.fillText('200g 托盘天平', 0, -hpx * 0.20);
+      ctx.fillStyle = 'rgba(206,214,226,.90)';
+      ctx.font = '700 ' + Math.max(5, Math.min(9.5, hpx * 0.26)) + 'px Inter, "Microsoft YaHei", sans-serif';
+      ctx.fillText('最大称量 200g      分度值 0.2g', 0, hpx * 0.25);
+      ctx.restore();
     }
 
     // 底座中央的座圈：立柱根部一圈加粗的座（真机立柱就坐在这样一块座里）。
@@ -1356,12 +1443,25 @@
     // 柱顶不是刀口 —— 刀口在柱高约 1/3 处（PIVOT_Y），柱子上半截只负责把分度盘举到高处。
     function drawColumn(q) {
       const P = COL_PROF;
+      // 柱脚：一圈加宽的镀铬底脚（实拍机立柱根部是收进底座座圈里的一块方脚）
+      box3(-P[0][1] * 1.42, COL_Y0, -P[0][2] * 1.30,
+            P[0][1] * 1.42, COL_Y0 + 0.030, P[0][2] * 1.30, C_STEEL, q, 0.62);
       for (let i = 0; i < P.length - 1; i++) {
         const a = P[i], b = P[i + 1];
         const V = BOX_V(-a[1], a[0], -a[2], a[1], b[0], a[2]);
         V[2][0] = b[1]; V[3][0] = -b[1]; V[6][0] = b[1]; V[7][0] = -b[1];
         V[2][2] = -b[2]; V[3][2] = -b[2]; V[6][2] = b[2]; V[7][2] = b[2];
         prismFromV(V, C_COL, q, 0.54);
+      }
+      // 🔴 镀铬层：整根立柱的剪影上再刷一遍横向「亮—暗—亮」渐变。
+      //    只靠逐面 shade() 的话，正面永远是同一个灰度，看起来是【灰塑料柱】而不是镀铬。
+      {
+        const sil = [];
+        for (const p of P) sil.push(project([-p[1], p[0], p[2]], q));
+        for (let i = P.length - 1; i >= 0; i--) { const p = P[i]; sil.push(project([p[1], p[0], p[2]], q)); }
+        const ym = (COL_Y0 + COL_TOP) / 2;
+        const a = project([-P[4][1], ym, 0], q), b = project([P[4][1], ym, 0], q);
+        metalFill(sil, a, b, CHROME_STOPS);
       }
       // 柱顶面
       const t = P[P.length - 1];
@@ -1492,6 +1592,36 @@
         for (const i of [2, 3, 6, 7]) { V[i][0] *= 0.20; }
         prismFromV(V, C_STEEL, q, 0.76, (x, y, z) => beamPt(x, y, z));
       }
+      // ③b 镀铬层：在梁身【正面】再刷一遍沿梁高方向的亮—暗—亮渐变。
+      //     实拍的横梁是一条又亮又硬的镀铬条，逐面 shade() 只会得到一片均匀灰。
+      //     🔴 必须逐段刷「各自的正表面」，不能取整根梁的凸包 —— 梁身是三段渐细的，
+      //     凸包会把细段的顶边连到粗段的顶边，在梁端上方糊出两片镀铬「翅膀」。
+      {
+        const zs = (q.eye[2] >= 0) ? 1 : -1;
+        const gA = project(beamPt(0, hh, 0), q), gB = project(beamPt(0, -hh - 0.03, 0), q);
+        const STOPS = [
+          [0.00, 'rgb(222,234,248)'],
+          [0.14, 'rgb(178,192,208)'],
+          [0.36, 'rgb(104,116,132)'],
+          [0.54, 'rgb(158,172,190)'],
+          [0.76, 'rgb(72,82,96)'],
+          [0.92, 'rgb(142,156,174)'],
+          [1.00, 'rgb(196,210,226)']
+        ];
+        const face = (x0, y0, z0, x1, y1, z1) => {
+          const zz = zs > 0 ? z1 : z0;
+          metalFill([beamPt(x0, y0, zz), beamPt(x1, y0, zz),
+                     beamPt(x1, y1, zz), beamPt(x0, y1, zz)].map(p => project(p, q)), gA, gB, STOPS);
+        };
+        face(-S1, -hh, -hd, S1, hh, hd);
+        for (const sx of [-1, 1]) {
+          face(Math.min(sx * S1, sx * S2), -hh * 0.80, -hd * 0.94,
+               Math.max(sx * S1, sx * S2), hh * 0.80, hd * 0.94);
+          face(Math.min(sx * S2, sx * ARM), -hh * 0.58, -hd * 0.86,
+               Math.max(sx * S2, sx * ARM), hh * 0.58, hd * 0.86);
+        }
+        face(-BEAM_HUB_HW, -hh, -hd - 0.014, BEAM_HUB_HW, BEAM_HUB_UP, hd + 0.014);
+      }
       // ④ 中央支点销：从轴毂朝观察者伸出的一截圆柱
       {
         const sgnZ = (q.eye[2] >= 0) ? 1 : -1;
@@ -1546,14 +1676,25 @@
       // ⑧ 游码：骑在横梁上的一块钢块（顶块 + 前后两片夹住梁身）
       const rx = riderX();
       const yb = -hh - RIDER_LIFT, yt = hh + RIDER_UP;
-      beamBox(rx - RIDER_W, hh - 0.006, -hd - 0.020, rx + RIDER_W, yt, hd + 0.020, C_RIDER, q, 0.68);
+      beamBox(rx - RIDER_W, hh - 0.006, -hd - 0.016, rx + RIDER_W, yt, hd + 0.016, C_RIDER, q, 0.72);
       for (const sz of [1, -1]) {
-        const za = sz * (hd + 0.003), zb = sz * (hd + 0.020);
-        beamBox(rx - RIDER_W, yb, Math.min(za, zb), rx + RIDER_W, hh, Math.max(za, zb), C_RIDER, q, 0.50);
+        const za = sz * (hd + 0.003), zb = sz * (hd + 0.016);
+        beamBox(rx - RIDER_W, yb, Math.min(za, zb), rx + RIDER_W, hh, Math.max(za, zb), C_RIDER, q, 0.52);
       }
-      // 读数棱：游码左缘那条竖棱
-      line([project(beamPt(rx - RIDER_W, yb, hd + 0.021), q),
-            project(beamPt(rx - RIDER_W, yt, hd + 0.021), q)], 'rgba(238,246,254,.85)', 1.3);
+      // 正面一条镀铬渐变：游码也是镀铬件，不刷就是一块灰塑料
+      {
+        const zs = (q.eye[2] >= 0) ? (hd + 0.0165) : -(hd + 0.0165);
+        const pts = [project(beamPt(rx - RIDER_W, yb, zs), q), project(beamPt(rx + RIDER_W, yb, zs), q),
+                     project(beamPt(rx + RIDER_W, yt, zs), q), project(beamPt(rx - RIDER_W, yt, zs), q)];
+        const a = project(beamPt(rx - RIDER_W, yb, zs), q), b = project(beamPt(rx + RIDER_W, yb, zs), q);
+        metalFill(pts, a, b, CHROME_STOPS);
+      }
+      // 读数棱：游码左缘那条竖棱（读数就看这条棱对到哪儿）
+      line([project(beamPt(rx - RIDER_W, yb, hd + 0.017), q),
+            project(beamPt(rx - RIDER_W, yt, hd + 0.017), q)], 'rgba(238,246,254,.90)', 1.4);
+      // 顶面的一道窄槽（真游码顶部是斜的，用来卡住标尺）
+      line([project(beamPt(rx - RIDER_W * 0.6, yt, -hd - 0.010), q),
+            project(beamPt(rx + RIDER_W * 0.6, yt, hd + 0.010), q)], 'rgba(14,20,30,.55)', 1.0);
 
       // ⑨ 螺杆 + 滚花圆盘平衡螺母（轴沿横梁方向，所以走 beamPolyCyl）
       for (const side of [-1, 1]) {
@@ -1572,13 +1713,15 @@
     // 原来做成挂在立柱正面的弧带，那是另一种真机；教材图里它是长在柱顶的一棵树。
     function drawDial(q) {
       const H = DIAL_H, w0 = DIAL_W0 / 2, w1 = DIAL_W1 / 2;
-      // 顺时针：底边 → 右耳 → 右侧上斜 → 顶边 → 左侧下斜 → 左耳
+      // 顺时针：底颈 → 右侧斜肩 → 直边 → 圆角顶 → 左侧对称
       const shape = [
-        [-w0 * 0.50, 0], [w0 * 0.50, 0],
-        [w0 * 0.94, H * 0.15], [w0 * 0.60, H * 0.21],
-        [w1, H * 0.66], [w1 * 0.80, H * 0.95], [0, H],
-        [-w1 * 0.80, H * 0.95], [-w1, H * 0.66],
-        [-w0 * 0.60, H * 0.21], [-w0 * 0.94, H * 0.15]
+        [-w0 * 0.55, 0], [w0 * 0.55, 0],
+        [w0 * 0.92, H * 0.12], [w0 * 0.62, H * 0.20],
+        [w1 * 0.98, H * 0.34], [w1, H * 0.46],
+        [w1 * 0.94, H * 0.90], [w1 * 0.74, H],
+        [-w1 * 0.74, H], [-w1 * 0.94, H * 0.90],
+        [-w1, H * 0.46], [-w1 * 0.98, H * 0.34],
+        [-w0 * 0.62, H * 0.20], [-w0 * 0.92, H * 0.12]
       ];
       const zF = DIAL_TH, zB = -DIAL_TH;
       const front = shape.map(p => project(dialPt(p[0], p[1], zF), q));
@@ -1593,10 +1736,20 @@
         poly([front[k], front[k2], back[k2], back[k]], shade(C_DIAL_E, nn, 0.58), null, 0);
       }
       poly(back, rgb(C_DIAL_E, 0.62), null, 0);
-      poly(front, rgb(C_DIAL, 1.00), 'rgba(74,56,28,.85)', 1.4);
-      // 11 条竖刻线：宽度按牌面在各自高度上的实际半宽给，否则下段会捅出牌边
-      const RSIDE = [[0, w0 * 0.50], [H * 0.15, w0 * 0.94], [H * 0.21, w0 * 0.60],
-                     [H * 0.66, w1], [H * 0.95, w1 * 0.80], [H, 0]];
+      // 牌面：象牙白塑料，上亮下暗一点点（塑料牌也不是纯平色）
+      {
+        const a = project(dialPt(0, H, zF), q), b = project(dialPt(0, 0, zF), q);
+        metalFill(front, a, b, [
+          [0.00, 'rgb(252,250,243)'],
+          [0.45, 'rgb(236,233,223)'],
+          [1.00, 'rgb(206,202,190)']
+        ]);
+      }
+      poly(front, null, 'rgba(72,70,64,.75)', 1.3);
+      // 11 条【竖直】刻线：实拍分度盘上的刻线是等距竖线，不是扇形辐射线。
+      // 🔴 旧版让每条线的上下端各按该高度的半宽走 ⇒ 全都会向顶点收敛，牌面看着像一把扇子。
+      const RSIDE = [[0, w0 * 0.55], [H * 0.12, w0 * 0.92], [H * 0.20, w0 * 0.62],
+                     [H * 0.34, w1 * 0.98], [H * 0.46, w1], [H * 0.90, w1 * 0.94], [H, w1 * 0.74]];
       const halfW = v => {
         for (let i = 0; i < RSIDE.length - 1; i++) {
           const a = RSIDE[i], b = RSIDE[i + 1];
@@ -1604,13 +1757,23 @@
         }
         return 0;
       };
-      const v0 = H * 0.34, v1 = H * 0.84;
+      const v0 = H * 0.40, v1 = H * 0.88;
+      const uMax = w1 * 0.84;
       for (let k = 0; k < DIAL_TICKS; k++) {
         const t = DIAL_TICKS <= 1 ? 0.5 : k / (DIAL_TICKS - 1);
-        const u = -1 + 2 * t;
-        const a = project(dialPt(u * halfW(v0) * 0.88, v0, zF + 0.002), q);
-        const b = project(dialPt(u * halfW(v1) * 0.88, v1, zF + 0.002), q);
-        line([a, b], 'rgba(34,31,32,.92)', 1.3);
+        const u = -uMax + 2 * uMax * t;
+        const a = project(dialPt(u, v0, zF + 0.002), q);
+        const b = project(dialPt(u, v1, zF + 0.002), q);
+        line([a, b], 'rgba(38,36,34,.90)', k === (DIAL_TICKS - 1) / 2 ? 1.5 : 1.2);
+      }
+      // 🔴 中央那条【绿线】就是「平衡」的判据线 —— 实拍机分度盘正中印的就是一条绿线，
+      //    指针尖压在这条线上 = 平衡。旧版没有这条线，学生只能靠「差不多在中间」猜。
+      line([project(dialPt(0, v0 * 0.94, zF + 0.004), q),
+            project(dialPt(0, v1 * 1.02, zF + 0.004), q)], 'rgba(96,150,54,.95)', 2.6);
+      // 牌面两颗固定螺钉
+      for (const su of [-1, 1]) {
+        const p = project(dialPt(su * halfW(H * 0.80) * 0.62, H * 0.80, zF + 0.004), q);
+        dot2(p, Math.max(1.2, 0.007 * p.s), 'rgba(214,212,204,.95)', 'rgba(96,94,88,.9)', 0.9);
       }
       // front / back：牌面正反两面的【投影多边形】。自检要用它判「指针尖真的落在
       // 牌面上」—— 让测试拿 DIAL_* 常量重算一遍多边形等于把页面公式抄进测试，
@@ -1649,99 +1812,170 @@
       state.drawn.tipPhi = beamAngleDeg() * Math.PI / 180;
     }
 
-    /* ---------------------------- 托叉 + 托盘 ---------------------------- */
-    // 托叉：吊在【横梁端销轴】上的一个蓝灰 U 形铸件（两块侧板 + 底桥 + 顶台 + 横躺轴毂）。
-    // 🔴 它【始终保持竖直】—— 像吊耳一样靠重力垂着，横梁摆动 ±12° 时只整体上下平移，
-    //    不跟着转。两块侧板夹住横梁端，所以远侧板必须先画、近侧板必须后画（见 drawBalance）。
-    function drawYokePlate(q, side, zSign) {
-      const H = hookWorld(side);
-      const za = zSign * (YOKE_Z - YOKE_PT / 2), zb = zSign * (YOKE_Z + YOKE_PT / 2);
-      box3(H[0] - YOKE_HW, yokeBotY(side), Math.min(za, zb),
-           H[0] + YOKE_HW, yokeTopY(side), Math.max(za, zb), C_YOKE, q, 0.50);
-    }
-    function drawYokeBody(q, side) {
+    /* ---------------------------- 盘架（卡箍 + 立柱） ---------------------------- */
+    // 🔴🔴 结构纠正（对着实拍图改）：托盘是【架】在横梁端的立柱上，不是吊在吊耳上。
+    //    实拍梁端只有一小块镀铬卡箍，下面露一小截柱头，上面一根立柱直通盘底 ——
+    //    旧版画的「两块侧板 + 底桥 + 长吊杆」是吊盘天平，屏幕上就是两块大方块。
+    function drawYoke(q, side) {
       const H = hookWorld(side);
       const yTop = yokeTopY(side), yBot = yokeBotY(side);
-      // 底桥：一块横着把两块侧板连起来的底板（吊耳的底）。
-      // 🔴 旧版在中间给「导杆」让了一条缝 —— 导杆已删，这里改成整块底板。
-      box3(H[0] - YOKE_HW, yBot, -YOKE_Z, H[0] + YOKE_HW, yBot + 0.046, YOKE_Z, C_YOKE, q, 0.44);
-      // 顶台：托盘的座（盘底立柱正好顶在它上面）
-      box3(H[0] - YOKE_HW, yTop - 0.036, -YOKE_Z, H[0] + YOKE_HW, yTop, YOKE_Z, C_YOKE, q, 0.58);
-      // 横躺轴毂：把横梁端销轴包住，并且【穿出两块侧板】—— 参考图里它就是一个外凸的圆毂
-      tube([[H[0], H[1], -YOKE_HUB_HW], [H[0], H[1], YOKE_HUB_HW]], YOKE_HUB_R, YOKE_COLS, q);
-      // 销轴朝观察者伸出的一小截
+      const yb = H[1] - 0.094;                       // 卡箍底面
+      // ① 卡箍：包住梁端的一块镀铬夹件
+      box3(H[0] - YOKE_HW, yb, -YOKE_Z, H[0] + YOKE_HW, yTop, YOKE_Z, C_YOKE, q, 0.92);
+      // 卡箍正面的镀铬渐变（不加这一层，它就是一块浅蓝灰塑料）
+      {
+        const zs = (q.eye[2] >= 0) ? YOKE_Z : -YOKE_Z;
+        const pts = [project([H[0] - YOKE_HW, yb, zs], q), project([H[0] + YOKE_HW, yb, zs], q),
+                     project([H[0] + YOKE_HW, yTop, zs], q), project([H[0] - YOKE_HW, yTop, zs], q)];
+        const a = project([H[0] - YOKE_HW, yb, zs], q), b = project([H[0] + YOKE_HW, yb, zs], q);
+        metalFill(pts, a, b, CHROME_STOPS);
+      }
+      // ② 下端柱头：卡箍下面露出的那一小截
+      tube([[H[0], yb, 0], [H[0], yBot, 0]], 0.019, STEEL_COLS, q);
+      dot2(project([H[0], yBot, 0], q), Math.max(2, 0.020 * project([H[0], yBot, 0], q).s),
+           '#c8d2de', '#0a121e', 1.0);
+      // ③ 轴销：朝观察者伸出的一小截 + 一字槽（实拍梁端那颗螺钉）
       const sg = (q.eye[2] >= 0) ? 1 : -1;
-      tube([[H[0], H[1], sg * YOKE_HUB_HW], [H[0], H[1], sg * (YOKE_HUB_HW + 0.038)]],
-           0.020, STEEL_COLS, q);
-      // 🔴 这里【不再有任何东西往下伸】。托叉吊在横梁端销轴上，下面就是空的 ——
-      //    底座上也没有插座。旧版从这里往下插一根导杆进底座，等于说「托盘被柱子顶起来」。
+      tube([[H[0], H[1], sg * YOKE_Z], [H[0], H[1], sg * (YOKE_Z + 0.026)]], YOKE_HUB_R, STEEL_COLS, q);
+      {
+        const pc = project([H[0], H[1], sg * (YOKE_Z + 0.028)], q);
+        dot2(pc, Math.max(2, YOKE_HUB_R * pc.s), '#d5dfeb', '#0a121e', 1.0);
+        const rr = Math.max(2, YOKE_HUB_R * pc.s);
+        line([{ x: pc.x - rr * 0.8, y: pc.y }, { x: pc.x + rr * 0.8, y: pc.y }], 'rgba(20,28,40,.75)', 1.1);
+      }
       state.drawn.yokes = (state.drawn.yokes || []).concat(
         [{ side: side, x: H[0], y: H[1], bot: yBot, top: yTop }]);
     }
 
-    // 托盘：大浅盘 + 一圈竖直滚花的外壁（参考图 345 px 直径、盘面深灰、盘缘亮银滚花）
+    // 限位托架：立柱支点座两侧各一条细钢丝，向下弯出去、末端上翘成小钩 ——
+    // 实拍机横梁下方那两条弯钢丝就是它（限制横梁摆幅，横梁落在钩口里）。
+    // 🔴 它固定在【立柱】上，不跟着横梁转；所以单独一个函数、在 drawBeam 之后画。
+    function drawStays(q) {
+      const z = 0.040;
+      for (const sx of [-1, 1]) {
+        const pts = [];
+        for (let k = 0; k <= 16; k++) {
+          const t = k / 16;
+          const x = sx * (0.024 + 0.430 * t);
+          const y = PIVOT_Y - 0.092 - 0.098 * Math.sin(Math.PI * Math.min(1, t * 1.02));
+          pts.push([x, y, z]);
+        }
+        // 末端上翘的小钩
+        for (let k = 1; k <= 5; k++) {
+          const t = k / 5;
+          pts.push([sx * (0.454 - 0.010 * t), PIVOT_Y - 0.186 + 0.042 * t, z]);
+        }
+        tube(pts, 0.0052, STEEL_COLS, q);
+      }
+      state.drawn.stays = true;
+    }
+
+    // 托盘：黑搪瓷浅碟 + 盘口一圈镀铬卷边 + 盘下三臂镀铬托架（全部照实拍图改）。
+    // 🔴 旧版是「亮银盘 + 深灰盘面 + 盘缘滚花」，实拍的盘是【黑釉】的：
+    //    外壁盘内都是黑的，只有盘口一道亮银卷边 —— 颜色反了，一眼就不像。
     function drawPan(q, side) {
       const hx = panCx(side), rimY = panRimY(side), floorY = rimY - PAN_D;
       const botY = floorY - PAN_WALL;
-      // 盘底立柱：把盘底和托叉顶面连起来（参考图里盘下是一根短柱）。
+      // 盘底立柱：把盘底和卡箍顶面连起来（实拍里盘下就是一根短柱）。
       // 🔴 stemA / stemB 就是【真正落笔】的两个端点，记录值直接取它们 ——
       //    若记录值另写 yT，把 tube 的起点改掉时记录值不变，自检就抓不到「立柱悬空」。
       const stemA = yokeTopY(side), stemB = botY + 0.002;
-      if (stemB > stemA + 1e-6) tube([[hx, stemA, 0], [hx, stemB, 0]], PAN_STEM_R, STEEL_COLS, q);
-      // 断面 [半径, y]：盘底【基本是平的】，外缘一小段圆角（PAN_WALL）收上来，
-      // 再走一段【竖直滚花壁】（PAN_D）到盘口 —— 参考图那只盘正是这个形状。
-      // 🔴 外扩不能按 PAN_H 的比例铺开：铺开就成了「薄锥碟」，滚花带也被压得只剩一丁点。
+      if (stemB > stemA + 1e-6) {
+        tube([[hx, stemA, 0], [hx, stemB, 0]], PAN_STEM_R, STEEL_COLS, q);
+        // 柱脚一圈小座（立柱插进卡箍的地方）
+        poly(ringPath(hx, 0, PAN_STEM_R * 1.85, stemA + 0.004, q, 18), rgb(C_STEEL, 0.88), null, 0);
+      }
+      // 三臂托架：从立柱顶端斜出去托住盘底（实拍盘下那三条弯镀铬扁臂）
+      {
+        const hubY = Math.min(stemB - 0.008, botY - 0.008);
+        for (let i = 0; i < 3; i++) {
+          const a = Math.PI / 2 + i * PI2 / 3;
+          const ca = Math.cos(a), sa = Math.sin(a);
+          tube([[hx, hubY, 0],
+                [hx + PAN_R * 0.34 * ca, botY - 0.004, PAN_R * 0.34 * sa],
+                [hx + PAN_R * 0.70 * ca, botY + 0.001, PAN_R * 0.70 * sa]], 0.0105, STEEL_COLS, q);
+        }
+        dot2(project([hx, hubY, 0], q), Math.max(2, 0.016 * project([hx, hubY, 0], q).s),
+             '#cfd9e5', '#0a121e', 1.0);
+      }
+      // 盘体断面：盘底基本是平的，外缘一小段圆角收上来，再走一段竖直外壁到盘口。
       const prof = [
         [0.001, botY],
-        [PAN_R * 0.55, botY + PAN_WALL * 0.30],
-        [PAN_R * 0.88, botY + PAN_WALL * 0.72],
+        [PAN_R * 0.56, botY + 0.002],
+        [PAN_R * 0.86, botY + PAN_WALL * 0.42],
+        [PAN_R * 0.965, botY + PAN_WALL * 0.78],
         [PAN_R, botY + PAN_WALL],
-        [PAN_R, rimY],
-        [PAN_R * 0.955, rimY - 0.004]
+        [PAN_R, rimY - 0.014],
+        [PAN_R * 0.996, rimY - 0.004]
       ];
       const rings = revolveRings(prof, q, 52, hx, 0);
       const outline = ringOutline(rings, q, hx, 0, 26);
       poly(outline, rgb(C_PAN, 0.70), null, 0);
-      // 环向渐变 = 圆柱光照：高光落在左上（和全站光源一致）
+      // 环向渐变 = 黑釉的高光：一条很硬的镜面亮带 + 一条边缘反光
       const camA = camAzim(q, hx, 0);
-      const gA = project([hx + PAN_R * Math.cos(camA + Math.PI * 0.72), botY + PAN_WALL + PAN_D * 0.5,
-                          PAN_R * Math.sin(camA + Math.PI * 0.72)], q);
-      const gB = project([hx + PAN_R * Math.cos(camA - Math.PI * 0.36), botY + PAN_WALL + PAN_D * 0.5,
-                          PAN_R * Math.sin(camA - Math.PI * 0.36)], q);
+      const gA = project([hx + PAN_R * Math.cos(camA + Math.PI * 0.66), botY + PAN_WALL + PAN_D * 0.5,
+                          PAN_R * Math.sin(camA + Math.PI * 0.66)], q);
+      const gB = project([hx + PAN_R * Math.cos(camA - Math.PI * 0.30), botY + PAN_WALL + PAN_D * 0.5,
+                          PAN_R * Math.sin(camA - Math.PI * 0.30)], q);
       ctx.save();
       polyPath(outline); ctx.clip();
       const g = ctx.createLinearGradient(gA.x, gA.y, gB.x, gB.y);
-      g.addColorStop(0.00, rgb(C_PAN, 1.24));
-      g.addColorStop(0.22, rgb(C_PAN, 1.02));
-      g.addColorStop(0.60, rgb(C_PAN, 0.72));
-      g.addColorStop(1.00, rgb(C_PAN, 0.44));
+      g.addColorStop(0.00, 'rgb(198,210,226)');
+      g.addColorStop(0.06, 'rgb(122,132,146)');
+      g.addColorStop(0.24, 'rgb(58,63,72)');
+      g.addColorStop(0.58, 'rgb(30,33,39)');
+      g.addColorStop(0.84, 'rgb(48,53,62)');
+      g.addColorStop(1.00, 'rgb(140,152,168)');
       ctx.fillStyle = g; ctx.fillRect(0, 0, state.w, state.h);
       ctx.restore();
-      // 盘缘滚花：一圈竖直细棱（只画朝观察者的那一半）
-      for (let k = 0; k < PAN_RIBS; k++) {
-        const a = (k + 0.5) / PAN_RIBS * PI2;
-        if (Math.cos(a) * (q.eye[0] - hx) + Math.sin(a) * q.eye[2] <= 0) continue;
-        const pa = project([hx + PAN_R * Math.cos(a), botY + PAN_WALL * 0.92, PAN_R * Math.sin(a)], q);
-        const pb = project([hx + PAN_R * Math.cos(a), rimY - 0.004, PAN_R * Math.sin(a)], q);
-        line([pa, pb], 'rgba(12,18,26,.52)', 1.3);
+      // 盘口镀铬卷边：一圈按法线打光的亮带（只画朝观察者的半圈）
+      const nSeg = 48;
+      const bandH = 0.011;
+      for (let k = 0; k < nSeg; k++) {
+        const a = (k + 0.5) / nSeg * PI2;
+        const nx = Math.cos(a), nz = Math.sin(a);
+        if (nx * (q.eye[0] - hx) + nz * q.eye[2] <= 0) continue;
+        const a0 = k / nSeg * PI2, a1 = (k + 1) / nSeg * PI2;
+        const lit = 0.34 + 0.86 * Math.max(0, nx * LIGHT[0] + nz * LIGHT[2]);
+        poly([project([hx + PAN_R * Math.cos(a0), rimY - bandH, PAN_R * Math.sin(a0)], q),
+              project([hx + PAN_R * Math.cos(a1), rimY - bandH, PAN_R * Math.sin(a1)], q),
+              project([hx + PAN_R * Math.cos(a1), rimY, PAN_R * Math.sin(a1)], q),
+              project([hx + PAN_R * Math.cos(a0), rimY, PAN_R * Math.sin(a0)], q)],
+             rgb(C_PANRIM, lit), null, 0);
       }
-      // 盘口亮圈 + 盘内（深灰盘面 + 内壁）
-      line(frontArc(hx, 0, PAN_R, rimY, 0, PI2, camA, q, 34), 'rgba(238,248,255,.72)', 1.6);
-      poly(ringPath(hx, 0, PAN_R * 0.955, rimY, q, 48), rgb(C_PAN, 1.02), null, 0);
-      poly(ringPath(hx, 0, PAN_R * 0.90, rimY, q, 46), rgb(C_PANTOP, 0.88), null, 0);
-      const nSeg = 46;
+      // 卷边下沿一道暗缝，把亮边和黑釉壁分开
+      line(frontArc(hx, 0, PAN_R, rimY - bandH, 0, PI2, camA, q, 34), 'rgba(8,10,14,.55)', 1.0);
+      // 盘口上沿的亮线（卷边的顶面）
+      line(frontArc(hx, 0, PAN_R, rimY, 0, PI2, camA, q, 34), 'rgba(242,250,255,.86)', 1.5);
+      // 盘内：内壁（内锥面）+ 盘底
+      poly(ringPath(hx, 0, PAN_R * 0.905, rimY, q, 48), rgb(C_PANTOP, 1.02), null, 0);
       const rim = [], flr = [];
       for (let k = 0; k <= nSeg; k++) {
         const a = k / nSeg * PI2;
-        rim.push(project([hx + PAN_R * 0.90 * Math.cos(a), rimY, PAN_R * 0.90 * Math.sin(a)], q));
+        rim.push(project([hx + PAN_R * 0.905 * Math.cos(a), rimY, PAN_R * 0.905 * Math.sin(a)], q));
         flr.push(project([hx + PAN_R * 0.80 * Math.cos(a), floorY, PAN_R * 0.80 * Math.sin(a)], q));
       }
       for (let k = 0; k < nSeg; k++) {
         const a = (k + 0.5) / nSeg * PI2;
         if (-Math.cos(a) * (q.eye[0] - hx) - Math.sin(a) * q.eye[2] <= 0) continue;
-        poly([rim[k], rim[k + 1], flr[k + 1], flr[k]], rgb(C_PANTOP, 0.74), null, 0);
+        poly([rim[k], rim[k + 1], flr[k + 1], flr[k]], rgb(C_PANTOP, 0.80), null, 0);
       }
-      poly(ringPath(hx, 0, PAN_R * 0.80, floorY, q, 44), rgb(C_PANTOP, 0.62), null, 0);
+      // 盘底：黑釉不是纯黑，左上有一片【漫反射】亮区 —— 少了这一片，盘底就是一块死黑饼，
+      // 整只盘看起来是「平的黑片」而不是「凹的碟子」。
+      const floorPts = ringPath(hx, 0, PAN_R * 0.80, floorY, q, 44);
+      poly(floorPts, rgb(C_PANTOP, 0.62), null, 0);
+      {
+        const c0 = project([hx - PAN_R * 0.24, floorY, -PAN_R * 0.22], q);
+        const c1 = project([hx + PAN_R * 0.60, floorY, PAN_R * 0.55], q);
+        const rr = Math.max(6, PAN_R * 0.80 * c0.s);
+        const rg = ctx.createRadialGradient(c0.x, c0.y, 1, c1.x, c1.y, rr * 1.30);
+        rg.addColorStop(0.00, 'rgba(132,146,166,.62)');
+        rg.addColorStop(0.42, 'rgba(64,70,80,.26)');
+        rg.addColorStop(1.00, 'rgba(4,6,10,.46)');
+        ctx.save(); polyPath(floorPts); ctx.clip();
+        ctx.fillStyle = rg; ctx.fillRect(0, 0, state.w, state.h);
+        ctx.restore();
+      }
       state.drawn['pan' + side] = { cx: hx, rimY: rimY, floorY: floorY, r: PAN_R, botY: botY,
                                     h: PAN_H, stemTop: stemA, stemBot: stemB, stemR: PAN_STEM_R };
     }
@@ -1908,8 +2142,8 @@
                 F(x1 - 0.05, WB_LID_H - 0.05), F(x0 + 0.05, WB_LID_H - 0.05)],
                '#a8845c', null, 0);
           for (let i = 0; i < WB_SET.length; i++) {
-            const hcx = cx + WB_COL[i % 4] * 0.90;
-            const hcy = (i < 4 ? 0.615 : 0.335) * WB_LID_H;
+            const hcx = cx + WB_COL[i % 3] * 0.90;
+            const hcy = (i < 3 ? 0.615 : 0.335) * WB_LID_H;
             const ring = [];
             for (let kk = 0; kk <= 18; kk++) {
               const aa = kk / 18 * PI2;
@@ -1931,10 +2165,10 @@
       //    （参考图里衬板是中灰，不是绒布米色 —— 采样 #787E88）
       box3(x0 + WT, FL, z0 + WT, x1 - WT, LINER, z1 - WT, '#6a707a', q, 0.74);
       poly(rectPts(x0 + WT, z0 + WT, x1 - WT, z1 - WT, LINER, q), WB_FELT, null, 0);
-      // ④ 8 个砝码槽 + 躺在槽里的砝码（100/50/20/20/10/5/2/2 g）
+      // ④ 6 个砝码槽 + 躺在槽里的砝码（100/50/20/20/10/5 g，3 列 × 2 行）
       const slots = [];
       // 🔴 盒里只摆【还没拿到盘上去】的砝码 —— 取走的那颗，盒里就该空着（窝还在）。
-      //    旧版不看 PHY.weightsOnPan，盒里永远摆满 8 颗 ⇒ 盘上摆着 100 g 时盒里也躺着一颗 100 g，
+      //    旧版不看 PHY.weightsOnPan，盒里永远摆满 ⇒ 盘上摆着 100 g 时盒里也躺着一颗 100 g，
       //    画面里同时出现两颗同规格砝码，而且用镊子「夹起」也没地方可少。
       const taken = PHY.weightsOnPan.slice();
       // 🔴 镊子上夹着的那颗，盒里【一定】要空着 —— 不管它是从盒里夹起来的，还是从盘上
@@ -1943,8 +2177,8 @@
       if (state.tweez.carry) taken.push(state.tweez.carry);
       for (let i = 0; i < WB_SET.length; i++) {
         const g = WB_SET[i];
-        const sx = cx + WB_COL[i % 4];
-        const sz = cz + WB_ROW[i < 4 ? 0 : 1];
+        const sx = cx + WB_COL[i % 3];
+        const sz = cz + WB_ROW[i < 3 ? 0 : 1];
         const r = weightR(g);
         // 槽（内衬上的凹坑）先画：不管里面有没有砝码，窝都在
         poly(ringPath(sx, sz, r * 1.20, Y0, q, 20), WB_FELT_HOLE, null, 0);
@@ -1987,19 +2221,25 @@
       return [T.tipX + ax * c - lz * s, baseY + ay + (ly - TW_TIP_Y), T.tipZ + ax * s + lz * c];
     }
     function drawTweezers(q) {
-      const xj = TW_LEN * 0.34;                     // 柄与两片的分界（局部）
-      // 🔴 夹住砝码时两片要【合拢】：静置时张开 ±0.062 是为了让「这是镊子」一眼认出来，
+      const xj = TW_LEN * 0.40;                     // 柄与两片的分界（局部）
+      // 🔴 夹住砝码时两片要【合拢】：静置时张开一点是为了让「这是镊子」一眼认出来，
       //    但拎着砝码时还张这么开，看着不像夹住、像套在提钮外面。
-      const k = state.tweez.carry ? 0.40 : 1;
+      const k = state.tweez.carry ? 0.22 : 1;
       const W = twWorld;
-      // 柄：一根稍粗的钢条，尾端再叠一个折弯头
-      tube([W(0.035, 0.015, 0), W(xj + 0.01, 0.017, 0)], TW_R * 1.45, STEEL_COLS, q);
-      tube([W(0, 0.016, 0), W(0.045, 0.015, 0)], TW_R * 1.7, STEEL_COLS, q);
-      // 两片：分界处合拢 → 中段张开 → 尖端略收
+      // 柄：一根稍粗的扁钢条，尾端折一下（实拍镊子的柄尾是弯的）
+      tube([W(0.030, 0.016, 0), W(xj + 0.012, 0.018, 0)], TW_R * 1.5, STEEL_COLS, q);
+      tube([W(0, 0.017, 0), W(0.048, 0.016, 0)], TW_R * 1.9, STEEL_COLS, q);
+      // 两片：分界处合拢 → 中段微微张开 → 尖端几乎碰在一起
       for (const sz of [-1, 1]) {
-        tube([W(xj, 0.017, 0),
-              W(xj + (TW_LEN - xj) * 0.55, 0.021, sz * 0.062 * k),
-              W(TW_LEN, TW_TIP_Y, sz * 0.050 * k)], TW_R, STEEL_COLS, q);
+        tube([W(xj, 0.018, 0),
+              W(xj + (TW_LEN - xj) * 0.52, 0.021, sz * 0.030 * k),
+              W(TW_LEN, TW_TIP_Y, sz * 0.010 * k)], TW_R, STEEL_COLS, q);
+      }
+      // 柄上的滚花（三道细横纹）：不加的话整根就是一根光溜溜的铁丝
+      for (let i = 0; i < 3; i++) {
+        const lx = 0.075 + i * 0.055;
+        const a = W(lx, 0.016, -TW_R * 1.4), b = W(lx, 0.016, TW_R * 1.4);
+        line([project(a, q), project(b, q)], 'rgba(16,24,36,.55)', 1.1);
       }
       state.drawn.tweezers = {
         tip: project(W(TW_LEN, TW_TIP_Y, 0), q),
@@ -2129,12 +2369,13 @@
     //    指针在 z = PTR_Z（立柱与分度盘正面之外），所以相机绕到背后时要整段倒过来画。
     function drawBalance(q) {
       const backCam = q.eye[2] < PTR_Z;
-      const nearZ = (q.eye[2] >= 0) ? 1 : -1;     // 哪一块侧板离眼睛近
       const pans = [1, -1].sort((a, b) =>
         q.eyeDist([panCx(b), panRimY(b), 0]) - q.eyeDist([panCx(a), panRimY(a), 0]));
-      const drawFarPlates = () => { for (const s of [1, -1]) drawYokePlate(q, s, -nearZ); };
-      const drawNearParts = () => {
-        for (const s of [1, -1]) { drawYokePlate(q, s, nearZ); drawYokeBody(q, s); }
+      // 梁以上的东西：限位钢丝 → 两端卡箍 → 托盘 → 盘上的砝码/物体。
+      // 🔴 卡箍必须【在横梁之后】画：它就是夹在梁端的一块镀铬件，先画会被梁盖住。
+      const drawTop = () => {
+        drawStays(q);
+        for (const s of [1, -1]) drawYoke(q, s);
         for (const s of pans) drawPan(q, s);
         drawLeftObject(q);
         drawRightPan(q);
@@ -2143,15 +2384,13 @@
       if (backCam) {
         drawPointer(q);
         drawDial(q);
-        drawFarPlates();
-        drawBeam(q);
         drawColumn(q);
-        drawNearParts();
+        drawBeam(q);
+        drawTop();
       } else {
-        drawFarPlates();
         drawColumn(q);
         drawBeam(q);
-        drawNearParts();
+        drawTop();
         drawDial(q);
         drawPointer(q);
       }
@@ -2166,13 +2405,22 @@
       frameBoxes = uiObstacles.slice();   // 已画出的标签 + 浮层一起当障碍
       state.drawn = {};
 
-      // 砝码盒摆在台面右侧，和天平是【两个独立的深度层】：相机绕到右前方时它比天平近、
-      // 绕到左后方时它比天平远。按 eyeDist 排序，绕着看才不会出现「盒子穿过天平」。
+      // 砝码盒 / 天平 / 镊子三件都摆在台面上，谁挡谁【按深度排】：
+      // 旧版把镊子固定画在天平之前，于是「把镊子搁到天平后面」时它反而压在天平上。
       const wbC = [(WB_X0 + WB_X1) / 2, WB_H * 0.5, (WB_Z0 + WB_Z1) / 2];
-      const boxNear = q.eyeDist(wbC) < q.eyeDist([0, 0.72, 0]);
-      // 镊子【拿在手里】时一律最后画：它是浮在空中的，不该被天平或盒子挡。
-      if (boxNear) { drawBalance(q); drawWeightBox(q); if (!state.tweez.held) drawTweezers(q); }
-      else { drawWeightBox(q); if (!state.tweez.held) drawTweezers(q); drawBalance(q); }
+      const balC = [0, 0.72, 0];
+      const twC = [state.tweez.tipX - TW_LEN * 0.5, 0.02, state.tweez.tipZ];
+      if (state.tweez.held) {
+        // 拿在手里的镊子一律最后画：它是浮在空中的，不该被天平或盒子挡。
+        if (q.eyeDist(wbC) < q.eyeDist(balC)) { drawBalance(q); drawWeightBox(q); }
+        else { drawWeightBox(q); drawBalance(q); }
+      } else {
+        [
+          { d: q.eyeDist(balC), f: () => drawBalance(q) },
+          { d: q.eyeDist(wbC), f: () => drawWeightBox(q) },
+          { d: q.eyeDist(twC), f: () => drawTweezers(q) }
+        ].sort((a, b) => b.d - a.d).forEach(it => it.f());
+      }
       // 投放标记必须画在【镊子和手上的砝码之前】：它是「地上的圈」，盖在砝码身上就成雾了
       drawTweezHints(q);
       if (state.tweez.held) { drawTweezers(q); drawHeldWeight(q); }
@@ -2406,6 +2654,7 @@
       PHY.nutLPos = -15; PHY.nutRPos = 10;
       PHY.randomOffset = (Math.random() - 0.5) * 5;
       state.solved = false;
+      state.tweez.restX = TW_X1; state.tweez.restZ = TW_Z;
       dropTweezers(true);                 // 重置时把镊子放回台面（手里的砝码也归盒）
       flashFlag(false);
       hideFeedback();
@@ -2609,6 +2858,49 @@
       T.hoverHit = hit;
       const p = tweezTargetPos(hit, x, y, q);
       if (p) { T.tX = p.x; T.tY = p.y; T.tZ = p.z; }
+      // 空手悬在台面空白处 ⇒ 记下「松手就放这儿」的落点（画虚影用）
+      T.spot = null;
+      if (!hit && !T.carry && !state.dragging) {
+        const w = unproject(x, y, q, 0);
+        if (w) T.spot = tweezerSpotAt(w[0], w[2]);
+      }
+      state.dirty = true;
+    }
+
+    /* ---------------------- 把镊子放到实验台上 ----------------------
+     * 🔴 用户实测：「镊子拿起来以后没地方放」。真实实验台上镊子就是随手搁在台面上的，
+     *    所以点台面空白处 = 放在那儿（而不是只认「放下镊子」按钮）。
+     *    整根镊身必须落在台面内，而且不能压在天平底座 / 砝码盒上。
+     */
+    function tweezerSpotAt(wx, wz) {
+      if (!Number.isFinite(wx) || !Number.isFinite(wz)) return null;
+      // 光标压到台面外（背景）就不算数 —— 先判原始点，再做边界钳位，
+      // 否则点天空也会被钳到台面边缘，「放得下」就成了永远成立。
+      if (Math.abs(wx) > TABLE_HW - 0.04 || Math.abs(wz) > TABLE_HD - 0.04) return null;
+      let tipX = wx + TW_LEN * 0.5;                    // 手抓中段 ⇒ 镊尖在中点右侧半个身长
+      let tipZ = wz;
+      tipX = clamp(tipX, -TABLE_HW + 0.10, TABLE_HW - 0.10);
+      tipZ = clamp(tipZ, -TABLE_HD + 0.14, TABLE_HD - 0.14);
+      const tailX = tipX - TW_LEN;
+      const hitRect = (x0, x1, z0, z1) =>
+        Math.max(x0, tailX) < Math.min(x1, tipX) && Math.max(z0, tipZ - 0.07) < Math.min(z1, tipZ + 0.07);
+      if (hitRect(-BASE_HW - 0.05, BASE_HW + 0.05, -BASE_HD - 0.05, BASE_HD + 0.05)) return null;
+      if (hitRect(WB_X0 - 0.04, WB_X1 + 0.04, WB_Z0 - 0.10, WB_Z1 + 0.04)) return null;
+      return { x: tipX, z: tipZ };
+    }
+    function placeTweezersAt(spot) {
+      const T = state.tweez;
+      if (state.fly) finishFly();
+      const back = T.carry;
+      T.held = false; T.carry = null; T.carryFrom = null; T.hideHeld = false;
+      T.hover = null; T.hoverHit = null; T.spot = null;
+      T.pitch = T.tPitch = 0;
+      T.tipX = T.tX = T.restX = spot.x;
+      T.tipZ = T.tZ = T.restZ = spot.z;
+      T.tipY = T.tY = TW_TIP_Y;
+      T.ang = 0;
+      showToast(back ? ('镊子放回台面 · ' + back + ' g 砝码已归盒') : '镊子已放在实验台上');
+      syncTweezUI();
       state.dirty = true;
     }
     // 旧名字保留（自检钩子和事件都调它）
@@ -2673,7 +2965,7 @@
       T.tPitch = 0.82;                    // ≈47°：镊身斜着竖起，杆子不再横穿托盘（再陡就顶出画布）
       // 目标先定在光标处：点下去镊子就从台面「抬」到手上，而不是原地僵着
       if (x !== undefined) { const q = {}; makeCam(q, state.w, state.h); updateTweez(x, y, q); }
-      showToast('镊子已拿起：点砝码夹起 → 移到右盘 / 砝码盒上方再点一下放下（Esc 放下镊子）');
+      showToast('镊子已拿起：点砝码夹起 → 移到右盘 / 砝码盒上方再点一下放下（点台面空白处 = 搁下镊子）');
       syncTweezUI();
       state.dirty = true;
     }
@@ -2682,9 +2974,12 @@
       if (state.fly) finishFly();          // 正在落盘：先让它落地，别把砝码吞了
       const back = T.carry;
       T.held = false; T.carry = null; T.carryFrom = null; T.hideHeld = false;
-      T.hover = null; T.hoverHit = null;
+      T.hover = null; T.hoverHit = null; T.spot = null;
       T.pitch = T.tPitch = 0;
-      T.tipX = T.tX = TW_X1; T.tipZ = T.tZ = TW_Z; T.tipY = T.tY = TW_TIP_Y; T.ang = 0;
+      // 🔴 回到【上一次放下的位置】，不是永远弹回出厂坐标 —— 学生把镊子挪到顺手的地方，
+      //    按 Esc 收起再拿起，它该还在那儿。
+      T.tipX = T.tX = T.restX; T.tipZ = T.tZ = T.restZ;
+      T.tipY = T.tY = TW_TIP_Y; T.ang = 0;
       if (back && !silent) showToast(back + ' g 砝码已放回砝码盒');
       syncTweezUI();
       state.dirty = true;
@@ -2727,7 +3022,19 @@
       const hit = pickWithTweezers(x, y, q);
       T.hover = hit ? hit.kind : null;
       T.hoverHit = hit;
-      if (!hit) return false;
+      if (!hit) {
+        // 空手点台面空白处 ⇒ 把镊子搁在这儿（真实实验台就是这样）；
+        // 夹着砝码时不许「连镊子带砝码」一起撂在台面上 —— 砝码必须归盒或进盘。
+        if (!T.carry) {
+          const w = unproject(x, y, q, 0);
+          const spot = w ? tweezerSpotAt(w[0], w[2]) : null;
+          if (spot) { placeTweezersAt(spot); return true; }
+          showToast('这里放不下镊子 —— 放到实验台的空白处');
+          return true;
+        }
+        showToast('镊子上还夹着 ' + T.carry + ' g 砝码：先放进右盘或放回砝码盒');
+        return true;
+      }
       if (T.carry) {
         if (hit.kind === 'pan') {
           if (PHY.weightsOnPan.length >= W_MAX) { showToast('右盘最多摆 ' + W_MAX + ' 个砝码'); return true; }
@@ -2765,33 +3072,58 @@
       return true;
     }
 
-    // 光标下的目标高亮：盘口一圈绿环 / 盒里那个空窝 / 待夹的那颗砝码。
+    // 光标下的目标高亮：盘口一圈虚线 + 落位实心圈 / 盒里那个空窝 / 待夹的那颗砝码。
     // 没有这个，「到底能不能放」全靠猜 —— 这也正是旧版「放不进去」的观感来源之一。
+    // 🔴 三个位置都必须【按真投影画】（ringPath 是 3D 圆环投影），
+    //    旧版落位圈用 ctx.ellipse 写死 0.52 的扁率，换个俯角就整圈飘到盘外。
     function drawTweezHints(q) {
       const T = state.tweez;
-      if (!T.held || !T.hoverHit || state.fly) return;
+      if (!T.held || state.fly) return;
       const h = T.hoverHit;
-      const OK = 'rgba(52,211,153,.95)', OKD = 'rgba(52,211,153,.28)';
+      const OK = 'rgba(52,211,153,.95)', OKD = 'rgba(52,211,153,.26)';
       ctx.save();
-      if (h.kind === 'pan') {
-        const hx = panCx(1), rim = panRimY(1);
-        ctx.shadowColor = OK; ctx.shadowBlur = 10;
-        poly(ringPath(hx, 0, PAN_R * 1.04, rim, q, 44), null, OK, 2.4);
-        ctx.shadowBlur = 0;
+      if (h && h.kind === 'pan') {
+        // ① 盘：盘口一圈【虚线】=「放进这只盘」；② 盘底一个【实心小圈】=「落在这个位」
+        ctx.setLineDash([6, 5]);
+        poly(ringPath(panCx(1), 0, PAN_R * 0.93, panRimY(1) - 0.003, q, 46),
+             null, 'rgba(52,211,153,.72)', 1.8);
+        ctx.setLineDash([]);
         if (T.carry) {
-          const p = project([h.x, h.y + 0.003, h.z], q);
-          const rr = Math.max(6, weightR(T.carry) * p.s);
-          ctx.beginPath();
-          ctx.ellipse(p.x, p.y, rr, Math.max(3, rr * 0.52), 0, 0, PI2);
-          ctx.fillStyle = OKD; ctx.fill();
-          ctx.strokeStyle = OK; ctx.lineWidth = 1.4; ctx.stroke();
+          poly(ringPath(h.x, h.z, weightR(T.carry) * 1.55, h.y + 0.002, q, 30), OKD, OK, 2.2);
         }
-      } else if (h.kind === 'box' && T.carry) {
-        // 圈要画得比砝码粗一圈：正好套住的话，手里那颗往下一放就把绿圈盖严了，看不见
-        poly(ringPath(h.x, h.z, weightR(T.carry) * 1.95, h.y + 0.003, q, 24), OKD, OK, 2.2);
-      } else if (h.kind === 'panW' || h.kind === 'boxW') {
-        const by = h.y - weightTopY(h.g) + 0.004;
-        poly(ringPath(h.x, h.z, weightR(h.g) * 1.45, by, q, 22), null, OK, 2);
+      } else if (h && h.kind === 'box' && T.carry) {
+        // 窝要比砝码粗一圈：正好套住的话，手里那颗往下一放就把绿圈盖严了
+        poly(ringPath(h.x, h.z, weightR(T.carry) * 1.55, h.y + 0.002, q, 30), OKD, OK, 2.2);
+      } else if (h && (h.kind === 'panW' || h.kind === 'boxW')) {
+        // 🔴 待夹的那颗砝码：圈必须套在【砝码腰上】，不能套在脚底。
+        //    旧版把圈画在砝码底面（by = 底），光标明明压在砝码身上、绿圈却在它脚下 ——
+        //    用户说的「框选位置不对」就是这个。腰高取总高的 0.42（正好在圆柱段中部）。
+        const base = h.y - weightTopY(h.g);
+        const mid = base + weightTopY(h.g) * 0.42;
+        poly(ringPath(h.x, h.z, weightR(h.g) * 1.30, mid, q, 28), 'rgba(52,211,153,.16)', OK, 2.2);
+      }
+      // 空手悬在台面空白处：画一个【虚影】，告诉学生「松手就放这儿」
+      if (!T.carry && !h && T.spot) {
+        const s = T.spot, y = TW_TIP_Y;
+        const tip = project([s.x, y, s.z], q);
+        const tail = project([s.x - TW_LEN, y, s.z], q);
+        ctx.setLineDash([5, 4]);
+        line([tail, tip], 'rgba(148,196,255,.75)', 2.0, [5, 4]);
+        for (const sz of [-1, 1]) {
+          line([project([s.x - TW_LEN * 0.62, y, s.z + sz * 0.05], q), tip],
+               'rgba(148,196,255,.55)', 1.4, [5, 4]);
+        }
+        ctx.setLineDash([]);
+        if (tip.s > 0) {
+          ctx.font = '800 10px Inter, "Microsoft YaHei", sans-serif';
+          ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+          const label2 = '松手放这里';
+          const tw2 = ctx.measureText(label2).width;
+          ctx.fillStyle = 'rgba(2,6,23,.78)';
+          ctx.fillRect(tip.x - tw2 / 2 - 5, tip.y - 20, tw2 + 10, 15);
+          ctx.fillStyle = 'rgba(190,220,255,.95)';
+          ctx.fillText(label2, tip.x, tip.y - 12);
+        }
       }
       ctx.restore();
     }
@@ -2800,6 +3132,13 @@
       if (r) r.style.display = state.tweez.held ? '' : 'none';
       const h = $('bal-tw-hint');
       if (h) h.style.display = state.tweez.held ? '' : 'none';
+      const b = $('bal-tw-btn');
+      if (b) {
+        b.classList.toggle('on', state.tweez.held);
+        b.textContent = state.tweez.held ? '✋ 放下镊子' : '✋ 拿起镊子';
+      }
+      // 🔴🔴 拿起镊子 → 隐藏系统光标（grab / 小手），只显示画布里绘制的镊子当指针
+      canvas.classList.toggle('holding-tweez', state.tweez.held);
     }
     // 屏幕点 → 横梁中轴（z = 0 竖平面）上的局部 x
     function beamLocalXFromScreen(x, y, q) {
@@ -2864,6 +3203,22 @@
             } else if (state.drag === 'nutR') {
               setNuts(null, Math.round(nutPosFromX(1, t)));
             }
+          }
+          // 🔴🔴 手持镊子拖游码 / 平衡螺母时，镊尖必须【贴着零件跟手走】。
+          //    旧版只调 setRiderMass / setNuts，从不更新镊子坐标，于是镊子僵在半空，
+          //    系统光标还是一只小手 —— 用户实测就卡在这（"还是一个小手来调节游码"）。
+          //    现在把镊尖钉在零件正上方一点：零件随光标移动、镊子也跟着移动。
+          if (state.tweez.held) {
+            const T = state.tweez;
+            const c = Math.cos(beamTh()), s = Math.sin(beamTh());
+            const bx = state.drag === 'rider' ? riderX()
+                      : nutLocalX(state.drag === 'nutL' ? -1 : 1,
+                                  state.drag === 'nutL' ? PHY.nutLPos : PHY.nutRPos);
+            T.tX = T.tipX = bx * c;
+            T.tZ = T.tipZ = 0;
+            T.tY = T.tipY = PIVOT_Y + bx * s + BEAM_H / 2 + RIDER_UP + 0.012;
+            T.ang = 0;
+            T.hover = state.drag; T.hoverHit = null; T.spot = null;
           }
         } else if (state.tweez.held) {
           updateTweez(x, y, q);             // 按着也能挪镊子
@@ -2999,6 +3354,10 @@
     $('bal-ans').addEventListener('keydown', ev => { if (ev.key === 'Enter') submitAnswer(); });
     // 镊子：按钮放下 + Esc 放下（拿在手里时点画面里任何「空处」不生效，避免误放）
     if ($('bal-tw-drop')) $('bal-tw-drop').addEventListener('click', () => dropTweezers());
+    if ($('bal-tw-btn')) $('bal-tw-btn').addEventListener('click', () => {
+      if (state.tweez.held) dropTweezers();
+      else grabTweezers(state.w * 0.5, state.h * 0.55);
+    });
     window.addEventListener('keydown', ev => {
       if (ev.key === 'Escape' && state.tweez.held) { dropTweezers(); ev.preventDefault(); }
     });
@@ -3078,7 +3437,7 @@
         COL_Y0: COL_Y0, COL_TOP: COL_TOP, COL_PROF: COL_PROF,
         DIAL_Y0: DIAL_Y0, DIAL_H: DIAL_H, DIAL_W0: DIAL_W0, DIAL_W1: DIAL_W1,
         DIAL_Z: DIAL_Z, DIAL_TH: DIAL_TH, DIAL_TILT: DIAL_TILT, DIAL_TICKS: DIAL_TICKS,
-        YOKE_HW: YOKE_HW, YOKE_Z: YOKE_Z, YOKE_PT: YOKE_PT, YOKE_TOP: YOKE_TOP,
+        YOKE_HW: YOKE_HW, YOKE_Z: YOKE_Z, YOKE_TOP: YOKE_TOP,
         YOKE_BOT: YOKE_BOT, YOKE_HUB_R: YOKE_HUB_R, YOKE_HUB_HW: YOKE_HUB_HW,
         RIDER_W: RIDER_W, RIDER_LIFT: RIDER_LIFT, RIDER_UP: RIDER_UP,
         CAMD: CAMD, TARGET: TARGET, BAL_GATE: BAL_GATE, VIEWS: VIEWS, W_SLOTS: W_SLOTS,
