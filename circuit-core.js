@@ -2228,6 +2228,11 @@
         return wired ? wired.has(comp.id + ':' + t) : false;
       });
       if (!wiredEnds.length) return 0;
+      // 注入只分给【真的接了线】的端子：这个端子悬空时不给它分（原先按
+      // 「导线端点」遍历时天然只到接线端子；改成按全部端子遍历后，悬空的
+      // D 柱也会被问到这里，不给它判这一条，它就把整份 total 领走 ——
+      // C/D 同接的电路中 D 柱悬空那根线电流翻倍）。
+      if (wiredEnds.indexOf(termIdx) < 0) return 0;
       return total / wiredEnds.length;
     }
     if (comp.type === 'rheoboard') {
@@ -2346,6 +2351,20 @@
       if (wr && wr.b && wr.b.compId != null) wired.add(wr.b.compId + ':' + wr.b.termIdx);
     });
 
+    // ── 内部短接端子 → 超级顶点 ─────────────────────────────
+    // 接线点（junction）的 a/b、变阻器的 C/D 在求解器里被 internalShort
+    // 并成同一个电气节点 —— 它们是元件【内部】的一根理想导线。可视化分组里
+    // 也必须把它们合并成一个顶点，电流才能从元件的一根引线穿到另一根引线
+    // （否则并联中间挂着接线点时，接在接线点另一头的导线一根粒子都没有）。
+    var repOf = {};
+    (scene.comps || []).forEach(function (c) {
+      var T = TYPES[c.type];
+      if (!T || !T.internalShort || !T.internalShort.length) return;
+      var head = c.id + ':' + T.internalShort[0];
+      T.internalShort.forEach(function (t) { repOf[c.id + ':' + t] = head; });
+    });
+    function rep(k) { return repOf[k] || k; }
+
     // 按电气节点分组，每组内只放「两端确实同节点」的导线
     var groups = new Map();
     wires.forEach(function (wr, i) {
@@ -2353,11 +2372,13 @@
       // 电流恒为 0（flow[i] 保持初值）。判在拼接字符串之前，别让 "null:0"
       // 混进 res.terminalNode 的查表里。
       if (!wr || !wr.a || !wr.b || !wr.a.compId || !wr.b.compId) return;
-      var ka = wr.a.compId + ':' + wr.a.termIdx, kb = wr.b.compId + ':' + wr.b.termIdx;
-      var na = res.terminalNode[ka], nb = res.terminalNode[kb];
+      var ra = wr.a.compId + ':' + wr.a.termIdx, rb = wr.b.compId + ':' + wr.b.termIdx;
+      var na = res.terminalNode[ra], nb = res.terminalNode[rb];
       if (na == null || nb == null || na !== nb) return;   // 不是节点内导线（跨节点或未接线）
       if (!groups.has(na)) groups.set(na, { s: {}, deg: {}, adj: {}, live: {} });
       var g = groups.get(na);
+      var ka = rep(ra), kb = rep(rb);
+      if (ka === kb) return;   // 两端是同一超级顶点（金属杆上跨线 / 接线点自环）：0 电流
       [ka, kb].forEach(function (k) {
         if (!(k in g.s)) { g.s[k] = 0; g.deg[k] = 0; g.adj[k] = []; }
       });
@@ -2367,36 +2388,58 @@
     });
 
     groups.forEach(function (g) {
-      Object.keys(g.s).forEach(function (k) {
-        var p = k.split(':');
-        g.s[k] = terminalInjection(compById[p[0]], res.components[p[0]], +p[1], wired);
+      // 注入累加要遍历【全部元件端子】，不能只遍历 g.s 的键（导线端点）：
+      // internalShort 合并后，变阻器 D 柱这类端子不是任何导线的 rep 端点，
+      // 只扫导线端点会把它的注入量整个丢掉（C/D 同接时滑片节点少算一半）。
+      Object.keys(compById).forEach(function (cid) {
+        var c = compById[cid];
+        var T = TYPES[c.type];
+        var nT = T ? T.terminals : 0;
+        for (var t = 0; t < nT; t++) {
+          var rk = rep(cid + ':' + t);
+          if (!(rk in g.s)) continue;   // 这个端子的 rep 顶点不在本组
+          g.s[rk] = (g.s[rk] || 0) + terminalInjection(c, res.components[cid], t, wired);
+        }
       });
     });
 
     groups.forEach(function (g) {
-      var queue = Object.keys(g.s).filter(function (k) { return g.deg[k] === 1; });
-      while (queue.length) {
+      // 剥叶子分两阶段，避免「注入为 0 的中间端子先被剥」把本应载流的导线
+      // 定成 0。变阻器 C/D 同接（金属杆载流）时踩过：D 柱注入为 0 却先于
+      // 灯被剥，从 D 接出来的那根线就整根没电流粒子，而电路明明有电流。
+      //   阶段一：注入非零的叶子先剥 —— 电流沿唯一路径传播到位；
+      //   阶段二：注入为 0 的叶子后剥 —— 把纯 0 段定死。
+      var queue = Object.keys(g.s).filter(function (k) {
+        return g.deg[k] === 1 && Math.abs(g.s[k]) > 1e-12;
+      });
+      var qZero = [];
+      function strip() {
         var v = queue.shift();
-        if (g.deg[v] !== 1) continue;
+        if (g.deg[v] !== 1) return;
         var e = null;
         for (var j = 0; j < g.adj[v].length; j++) {
           if (g.live[g.adj[v][j].wi]) { e = g.adj[v][j]; break; }
         }
-        if (!e) { g.deg[v] = 0; continue; }
+        if (!e) { g.deg[v] = 0; return; }
         flow[e.wi] = e.isKa ? g.s[v] : -g.s[v];
         g.live[e.wi] = false;
         g.deg[v] = 0; g.deg[e.other]--;
         g.s[e.other] += g.s[v];
-        if (g.deg[e.other] === 1) queue.push(e.other);
+        if (g.deg[e.other] === 1) {
+          (Math.abs(g.s[e.other]) > 1e-12 ? queue : qZero).push(e.other);
+        }
       }
+      while (queue.length) strip();
+      queue = qZero;
+      while (queue.length) strip();
       // 剩下的成环：交给最小二乘解法
       var rest = Object.keys(g.live).filter(function (i) { return g.live[i]; }).map(Number);
       if (!rest.length) return;
       var ringEdges = rest.map(function (i) {
         var wr2 = wires[i];
         return {
-          u: wr2.a.compId + ':' + wr2.a.termIdx,
-          v: wr2.b.compId + ':' + wr2.b.termIdx,
+          u: rep(wr2.a.compId + ':' + wr2.a.termIdx),
+          v: rep(wr2.b.compId + ':' + wr2.b.termIdx),
           wi: i,
         };
       });
