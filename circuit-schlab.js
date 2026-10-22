@@ -498,6 +498,7 @@
       for (var pass = 0; pass < 3; pass++) {
         results = C().solve(scene.comps, scene.wires);
         flows = results.flows || [];
+        noMeterPolarity();
         // 短路是【一闪就没】的：下一轮 applyFaults 会把电源 / 导线烧掉，
         // 拓扑一变就不再是短路了。所以把第一次看到的短路记下来，故障栏里
         // 那句话才留得住（主画布同一条规矩）。
@@ -508,6 +509,25 @@
       }
       // 导线熔断：主画布把 broken 写进导线，内核会当成断路。
       scene.wires.forEach(function (w) { if (w.broken) w.broken = true; });
+    }
+    // 🔴 电路图里【不判电表正负】（用户 2026-10-22）：
+    //    「连线的时候不存在这个说，在电路图中是体现不出来正负接线柱的；
+    //     默认都是正确的，不能说一运行就发现接反了。」
+    // 所以：读数取绝对值（指针永远往右偏），reversed 一律抹掉，
+    // METER_REVERSED 警告也去掉 —— 后面的 faultsOf 就不会判「接反损坏」。
+    // 正负柱的「标注」只是画面上的字（参数里的 polarity），不参与计算。
+    function noMeterPolarity() {
+      if (!results || !results.components) return;
+      scene.comps.forEach(function (c) {
+        if (c.type !== 'ammeter' && c.type !== 'voltmeter') return;
+        var r = results.components[c.id];
+        if (!r) return;
+        r.reversed = false;
+        if (r.reading != null) r.reading = Math.abs(r.reading);
+      });
+      if (results.warnings) {
+        results.warnings = results.warnings.filter(function (w) { return w.code !== 'METER_REVERSED'; });
+      }
     }
     function applyFaults() {
       if (!results || !results.components) return false;
@@ -630,6 +650,27 @@
         g.beginPath(); g.arc(hx, hy, 9, 0, Math.PI * 2);
         g.fillStyle = 'rgba(234,88,12,0.12)'; g.fill();
         g.lineWidth = 2; g.strokeStyle = 'rgba(234,88,12,0.85)'; g.stroke();
+        g.restore();
+      }
+      // 电表的正负柱标注（默认不标）。纯画面标注：内核那边已经把 reversed 抹掉了，
+      // 所以标了也不会因为「接反」判损坏 —— 它只是讲「表棒该怎么接」的板书。
+      var pol = (c.params && c.params.polarity) || 'none';
+      if (pol !== 'none' && (c.type === 'ammeter' || c.type === 'voltmeter')) {
+        var pl = pinWorld(c, 0, scene.wires, rec);
+        var pr = pinWorld(c, 1, scene.wires, rec);
+        var signs = [[pl, pol === 'lr' ? '+' : '−'], [pr, pol === 'lr' ? '−' : '+']];
+        g.save();
+        g.font = 'bold 13px -apple-system,"PingFang SC",sans-serif';
+        g.textAlign = 'center'; g.textBaseline = 'middle';
+        g.lineJoin = 'round';
+        signs.forEach(function (s) {
+          if (!s[0]) return;
+          var x = s[0].x, y = s[0].y - 11;
+          g.lineWidth = 3.5; g.strokeStyle = '#ffffff';
+          g.strokeText(s[1], x, y);            // 白描边：压在导线上也看得清
+          g.fillStyle = s[1] === '+' ? '#b91c1c' : '#1e293b';
+          g.fillText(s[1], x, y);
+        });
         g.restore();
       }
       // 故障标记：符号右上角一枚红牌。电路图上没有「烧黑」这种画法，
@@ -799,6 +840,15 @@
             return '<button type="button" class="labPick' + (tap === tapSel ? ' on' : '') +
               '" data-tap="' + tap + '">' + ti.rangeValues[i] + (c.type === 'ammeter' ? 'A' : 'V') + '</button>';
           }).join('') + '</div></div>';
+        // 正负接线柱：默认【不标注】（电路图里本来就不分正负，接上就是对的）。
+        // 想讲「表棒接反会怎样」时可以打开标注，画面上给两根引线各标一个 + / −。
+        // ⚠️ 纯标注，不影响计算：内核那边已经把 reversed 抹掉了（noMeterPolarity）。
+        var pol = (c.params && c.params.polarity) || 'none';
+        html += '<div class="labRows"><div class="labRow"><label>正负柱</label>' +
+          [['none', '不标注'], ['lr', '＋在左'], ['rl', '＋在右']].map(function (o) {
+            return '<button type="button" class="labPick' + (pol === o[0] ? ' on' : '') +
+              '" data-pol="' + o[0] + '" title="只是标注，不影响读数">' + o[1] + '</button>';
+          }).join('') + '</div></div>';
       }
       html += '<div class="labActs"><button type="button" class="labBtn" data-act="rot">⟳ 转 180°</button>' +
               '<button type="button" class="labBtn" data-act="del">🗑 删除</button></div>';
@@ -937,6 +987,15 @@
       });
       sideParams.querySelectorAll('button[data-tap]').forEach(function (b) {
         b.addEventListener('click', function () { setMeterRange(c, +b.dataset.tap); });
+      });
+      // 正负柱标注：只改画面上的字，不动导线、不参与计算
+      sideParams.querySelectorAll('button[data-pol]').forEach(function (b) {
+        b.addEventListener('click', function () {
+          pushUndo();
+          c.params = c.params || {};
+          c.params.polarity = b.dataset.pol;
+          solve(); renderAll();
+        });
       });
       sideParams.querySelectorAll('button[data-preset]').forEach(function (b) {
         b.addEventListener('click', function () {
@@ -1146,23 +1205,53 @@
       if (t) return t;
       return null;
     }
-    function freePoint(p) {
-      // 拖拽时线头【紧跟鼠标】，不吸网格：一吸就是 20px 一跳，看着像线没跟上
-      // （用户 2026-10-22 第 2 点：「导线画的时候要紧跟鼠标」）。
-      return { x: p.x, y: p.y };
+    // ── 拖线：一个折点，方向【一开始就定死】，线头永远贴着鼠标 ──────
+    // 用户 2026-10-22 第三次反馈：「我轨迹是怎样的就是怎样的，不能跳动；
+    // 我想走这条直线，结果你跳到其他地方」。
+    //
+    // 🔴 上一版的病根：折点方向是【每一帧按 |dx| 和 |dy| 的大小重新算】的。
+    //    鼠标一斜过来（|dy| > |dx|），折点就从 (鼠标x, 起点y) 翻到 (起点x, 鼠标y)
+    //    —— 整条横段突然消失、竖段从起点垂下来，看着就是「跳了」。
+    //
+    // 现在：**方向只在第一次移动时定一次**（往右走就一直是「先横后竖」），
+    // 之后折点永远在 (鼠标x, 起点y)，跟着鼠标平滑滑动，绝不翻边。
+    // 线头始终 = 鼠标（`end` 就是 p）。
+    // 于是「先往右再往下」画出来就是「横一段 + 竖一段」，和手走的路线一致；
+    // 先往下再往右同理（方向在第一步就定成竖的了）。
+    function advanceWire(p) {
+      var d = wireDrag;
+      var a = d.from.at;
+      if (!d.dir) {
+        var dx0 = p.x - a.x, dy0 = p.y - a.y;
+        if (Math.hypot(dx0, dy0) >= 5) d.dir = Math.abs(dx0) >= Math.abs(dy0) ? 'h' : 'v';
+        else {
+          d.state = { dir: null, end: { x: p.x, y: p.y }, pts: [a, { x: p.x, y: p.y }] };
+          return d.state;
+        }
+      }
+      var via = [];
+      if (d.dir === 'h') {
+        if (Math.abs(p.y - a.y) > 1.5) via.push([p.x, a.y]);
+      } else {
+        if (Math.abs(p.x - a.x) > 1.5) via.push([a.x, p.y]);
+      }
+      var pts = [a]
+        .concat(via.map(function (v) { return { x: v[0], y: v[1] }; }),
+                [{ x: p.x, y: p.y }]);
+      d.state = { dir: d.dir, end: { x: p.x, y: p.y }, pts: pts };
+      return d.state;
     }
-    // 拖拽时的「橡皮筋」：只有一个折点，按【主要方向】先走。
-    // 鼠标往右走就先横着走 —— 折点永远落在鼠标正上方/正下方，线看起来一直
-    // 贴着鼠标；鼠标越过 45° 分界线时折点自动翻到另一条边（「它折的时候也跟着折」）。
-    function liveRoute(p, q) {
-      var dx = q.x - p.x, dy = q.y - p.y;
-      if (Math.abs(dx) < 1.5 || Math.abs(dy) < 1.5) return [];    // 同高/同列：直连
-      if (Math.abs(dx) >= Math.abs(dy)) return [[q.x, p.y]];      // 先横后竖
-      return [[p.x, q.y]];                                       // 先竖后横
-    }
-    function previewPath(from, to) {
-      var via = liveRoute(from.at, to);
-      return [from.at].concat(via.map(function (v) { return { x: v[0], y: v[1] }; }), [to]);
+    // 松手/第二下：同样的折法，只是终点换成【真正要接的那个点】（引脚或三通点）。
+    // 因为磁吸半径只有 30px，收尾的这段和预览几乎重合，不会「啪」地跳一下。
+    function finishVia(targetPt) {
+      var d = wireDrag;
+      var a = d.from.at;
+      var dir = d.dir || 'h';
+      var via = [];
+      if (Math.abs(targetPt.y - a.y) > 1 && Math.abs(targetPt.x - a.x) > 1) {
+        via.push(dir === 'h' ? [targetPt.x, a.y] : [a.x, targetPt.y]);
+      }
+      return via;
     }
     function distToSeg(p, a, b) {
       if (Math.abs(a.y - b.y) < 0.5) {
@@ -1238,11 +1327,13 @@
     }
     function finishWire(tgt) {
       var from = wireDrag.from;
+      // 落点用【预览时那条折线】收尾：松手前看到的和松手后画出来的一模一样，
+      // 只在最后补一个正交折点把线头引到柱子上（磁吸的那一点）。
+      // ⚠️ finishVia 要读 wireDrag.dir，必须【先算 via 再把 wireDrag 清空】。
+      var pb = tgt ? pinWorld(tgt.comp, tgt.pin, scene.wires, recOf(tgt.comp)) : null;
+      var via = pb ? finishVia(pb) : null;
       wireDrag = null; hoverPin = null;
       if (!tgt || (tgt.comp.id === from.comp.id && tgt.pin === from.pin)) { draw(); return; }
-      // 落点用【预览时的那条折线】：松手前看到的和松手后画出来的一模一样。
-      var pb = pinWorld(tgt.comp, tgt.pin, scene.wires, recOf(tgt.comp));
-      var via = pb ? liveRoute(from.at, pb) : null;
       if (!addWire(from.comp, from.pin, tgt.comp, tgt.pin, false, via)) {
         say('这两个接线柱已经连过了');
       }
@@ -1250,11 +1341,13 @@
     }
     function finishWireOnWire(hit) {
       var from = wireDrag.from;
+      var at = { x: hit.at.x, y: hit.at.y };
+      var via = finishVia(at);
       wireDrag = null; hoverPin = null;
       pushUndo();
-      var j = splitWireAt(hit.wire, hit.at);
+      var j = splitWireAt(hit.wire, at);
       if (!j) { draw(); return; }
-      addWire(from.comp, from.pin, j, 1, true, liveRoute(from.at, { x: j.x, y: j.y }));
+      addWire(from.comp, from.pin, j, 1, true, via);
       say('接到导线中间：这里自动生成一个接线点（实心点）');
     }
 
@@ -1284,7 +1377,8 @@
       }
       if (hp) {
         // 从引脚拉线：起点就是这个引脚
-        wireDrag = { from: hp, cur: { pts: [hp.at, hp.at] }, moved: false, sticky: false };
+        wireDrag = { from: hp, cur: { pts: [hp.at, hp.at] }, moved: false, sticky: false,
+                     via: [], dir: null, state: null };
         try { cv.setPointerCapture(ev.pointerId); } catch (e) {}
         return;
       }
@@ -1311,15 +1405,11 @@
       var p = toLocal(ev);
       if (wireDrag) {
         if (Math.hypot(p.x - wireDrag.from.at.x, p.y - wireDrag.from.at.y) > 5) wireDrag.moved = true;
-        // 🔴 预览的线头【永远等于鼠标位置】，绝不往引脚上吸。
-        // 上一版把 30px 内的引脚当成落点，于是鼠标一经过某个接线柱，线头就「啪」
-        // 地跳到那个柱子上 —— 用户 2026-10-22 第二次反馈的「它不跟着我的轨迹，
-        // 有的时候会自动跑到其他地方」就是这个。
-        // 磁吸留到【松手那一刻】做：靠近 30px 才真的接上去，拖的时候只把目标柱
-        // 用橙圈标出来（看得见「松手会接到这儿」，但线不乱跑）。
+        // 折线按【鼠标走过的轨迹】一段一段长出来（见 advanceWire 的注释）。
+        // 磁吸仍然只在【松手那一刻】生效：拖的时候只把 30px 内最近的接线柱用橙圈
+        // 点亮，线头始终在鼠标上，绝不跳过去。
         var tgt = wireTarget(p, wireDrag.from);
-        var to = freePoint(p);
-        wireDrag.cur.pts = previewPath(wireDrag.from, to);
+        wireDrag.cur.pts = advanceWire(p).pts;
         wireDrag.target = tgt;
         hoverPin = tgt ? { compId: tgt.comp.id, pin: tgt.pin } : null;
         cv.style.cursor = 'crosshair';
@@ -1613,7 +1703,8 @@
                    scene.comps.forEach(function (c) {
                      var r = recOf(c) || {};
                      o[c.id] = { i: r.i, v: r.v, R: r.R, reading: r.reading, wired: r.wired,
-                                 range: r.range, fault: r.fault || c.fault || null };
+                                 range: r.range, reversed: !!r.reversed,
+                                 fault: r.fault || c.fault || null };
                    });
                    return o;
                  })() };
@@ -1667,14 +1758,17 @@
         var sw = Math.min(Math.max(1, Math.round((w || 1) * k)), cv.width - sx);
         var sh = Math.min(Math.max(1, Math.round((h || 1) * k)), cv.height - sy);
         var d = ctx.getImageData(sx, sy, sw, sh).data;
-        var dark = 0, red = 0, opaque = 0, total = 0;
+        var dark = 0, red = 0, opaque = 0, ink = 0, total = 0;
         for (var i = 0; i < d.length; i += 4) {
           total++;
           if (d[i + 3] > 8) opaque++;
           if (d[i] < 120 && d[i + 1] < 130 && d[i + 2] < 150) dark++;
           if (d[i] > 120 && d[i + 1] < 110 && d[i + 2] < 90) red++;
+          // ink = 「不是白纸」的像素（含红色标注、浅灰等）。判「这儿有没有画东西」
+          // 用它 —— 只数 dark 的话，红色的「+」会被当成没画。
+          if (d[i] < 240 || d[i + 1] < 240 || d[i + 2] < 240) ink++;
         }
-        return { dark: dark, red: red, opaque: opaque, total: total };
+        return { dark: dark, red: red, ink: ink, opaque: opaque, total: total };
       },
       // 接线状态：自检要判「点了一下之后是不是在等第二下」
       wireState: function () {
