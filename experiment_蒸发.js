@@ -118,14 +118,25 @@ import * as THREE from './assets/optics-three.min.js';
      「风越大，干湿球温差越大」是从方程里解出来的，不是写死的单调曲线；
      同理「空气温度越高，温差越大」（热空气能装更多水汽、e_s 的斜率更陡）也是解出来的。
      ★ 温差只跟【空气温度】和【风速】有关，与水滴摊开多大无关 —— 湿球是测空气的。 */
-  const RH0 = 0.50;                       // 环境相对湿度 50 %（房间常态）
+  const RH0 = 0.50;                       // 默认环境相对湿度 50 %（滑块初始位置）
+  const RH_MIN = 0.15, RH_MAX = 0.95;     // 滑块范围
   const P_ATM = 1013;                     // 大气压 hPa
   const WIND_MS = [0.12, 1.1, 2.6];       // 三档风在纱布处的空气流速 m/s
   const RH_STILL = 0.88;                  // 静风时纱布周围那层空气的局部相对湿度
   const A_VENT = 0.00062, A_STILL = 0.00042;   // 干湿表系数：充分通风值 + 静风增量
+  /* 致冷场景（湿度计）固定用低档风 1.1 m/s —— 阿斯曼干湿表的标称通风量级。
+     ★ 这一档【只给湿球方程用】，学生调不到：致冷场景里唯一的自变量是空气湿度。 */
+  const COOL_WIND = 1;
   function esat(T) { return 6.112 * Math.exp(17.62 * T / (243.12 + T)); }  // Magnus 式 hPa
   function ventA(v) { return A_VENT + A_STILL * Math.exp(-v / 0.75); }     // 1/℃
-  function localRH(v) { return RH0 + (RH_STILL - RH0) * Math.exp(-v / 0.55); }
+  /* 纱布周围的【局部】相对湿度：通风越好越接近环境值，静风时那层空气被水汽填满、
+     趋近饱和（RH_STILL）。★ 局部值不能低于环境值 —— 湿度滑块拉到 95 % 时
+     静风「增湿」这项就该消失（否则会出现湿度越高、湿球反而更低的怪结果）。 */
+  function localRH(v) {
+    const rh = clamp(state.rh, RH_MIN, RH_MAX);
+    const cap = Math.max(RH_STILL, rh);
+    return rh + (cap - rh) * Math.exp(-v / 0.55);
+  }
   function wetBulbT(T, v) {
     const e = localRH(v) * esat(T);
     const A = ventA(v) * P_ATM;
@@ -138,9 +149,14 @@ import * as THREE from './assets/optics-three.min.js';
     }
     return 0.5 * (lo + hi);
   }
+  /* 湿球方程用的风速档：致冷场景固定 COOL_WIND（学生只调湿度），
+     影响因素场景才跟「空气流动」这一档走。 */
+  function thermoWindLevel() {
+    return state.scene === 'cool' ? COOL_WIND : clamp(state.levels.wind, 0, 2);
+  }
   function wetDelta() {
     const T = TEMP_LEVELS[clamp(state.levels.temp, 0, 2)];
-    return T - wetBulbT(T, WIND_MS[clamp(state.levels.wind, 0, 2)]);
+    return T - wetBulbT(T, WIND_MS[thermoWindLevel()]);
   }
   function dryTarget() { return TEMP_LEVELS[state.levels.temp]; }
   function wetTarget() { return dryTarget() - wetDelta(); }
@@ -285,6 +301,8 @@ import * as THREE from './assets/optics-three.min.js';
     lastChanged: null,          // 控制变量：最近被改动的那一个因素
     remain: 1,                  // 剩余水量（相对初始）0~1
     finished: false,
+    rh: 0.50,                   // 空气相对湿度 0~1（致冷场景的滑块；湿球读数的唯一自变量）
+    savedLevels: null,          // 进致冷场景前三个因素的档位，切回去时还原
     Td: TEMP_LEVELS[0],         // 干球读数 ℃
     Tw: TEMP_LEVELS[0],         // 湿球读数 ℃（一阶滞后）
     fanSpin: 0,
@@ -1081,7 +1099,9 @@ import * as THREE from './assets/optics-three.min.js';
   const els = {
     hudTemp: $('hudTemp'), hudTempLabel: $('hudTempLabel'),
     hudAux: $('hudAux'), hudAuxLabel: $('hudAuxLabel'), hudAuxUnit: $('hudAuxUnit'),
-    hudDry: $('hudDry'), hudDryLabel: $('hudDryLabel'), hudDryUnit: $('hudDryUnit')
+    hudDry: $('hudDry'), hudDryLabel: $('hudDryLabel'), hudDryUnit: $('hudDryUnit'),
+    /* 致冷场景：参数面板里的三格读数（干球 / 湿球 / 温差）+ 湿度滑块的百分比 */
+    readTd: $('readTd'), readTw: $('readTw'), readDt: $('readDt'), rhVal: $('rhVal')
   };
 
   /* HUD 三行：温度 / 剩余水量（致冷场景是干湿球温差）/ 干燥时间（致冷场景是湿球读数）。
@@ -1098,13 +1118,22 @@ import * as THREE from './assets/optics-three.min.js';
     if (els.hudTempLabel) els.hudTempLabel.textContent = cool ? '空气温度' : '加热板温度';
 
     if (cool) {
-      const cur = (state.Td - state.Tw).toFixed(2);
-      if (els.hudAux) els.hudAux.textContent = settling ? cur + ' → ' + wetDelta().toFixed(2) : cur;
-      if (els.hudAuxLabel) els.hudAuxLabel.textContent = '干湿球温差';
+      /* ★ 用户要求：致冷场景「直接显示干球和湿球的温度就可以了」。
+         三行就是 干球 / 湿球 / 温差 —— 湿球还在往新平衡爬的时候标出目标值，
+         否则拖动湿度滑块后立刻读到的是上一档的数字。 */
+      if (els.hudTemp) els.hudTemp.textContent = state.Td.toFixed(1);
+      if (els.hudTempLabel) els.hudTempLabel.textContent = '干球';
+      const curW = state.Tw.toFixed(1);
+      if (els.hudAux) els.hudAux.textContent = settling ? curW + ' → ' + wetTarget().toFixed(1) : curW;
+      if (els.hudAuxLabel) els.hudAuxLabel.textContent = '湿球';
       if (els.hudAuxUnit) els.hudAuxUnit.textContent = '℃';
-      if (els.hudDry) els.hudDry.textContent = state.Tw.toFixed(1);
-      if (els.hudDryLabel) els.hudDryLabel.textContent = '湿球读数';
+      if (els.hudDry) els.hudDry.textContent = (state.Td - state.Tw).toFixed(1);
+      if (els.hudDryLabel) els.hudDryLabel.textContent = '干湿球温差';
       if (els.hudDryUnit) els.hudDryUnit.textContent = '℃';
+      /* 参数面板里的同一组读数（和 HUD 同源，都是 state.Td / state.Tw） */
+      if (els.readTd) els.readTd.textContent = state.Td.toFixed(1);
+      if (els.readTw) els.readTw.textContent = state.Tw.toFixed(1);
+      if (els.readDt) els.readDt.textContent = (state.Td - state.Tw).toFixed(1);
     } else {
       if (els.hudAux) els.hudAux.textContent = (state.remain * 100).toFixed(1);
       if (els.hudAuxLabel) els.hudAuxLabel.textContent = '剩余水量';
@@ -1113,6 +1142,7 @@ import * as THREE from './assets/optics-three.min.js';
       if (els.hudDryLabel) els.hudDryLabel.textContent = '干燥时间';
       if (els.hudDryUnit) els.hudDryUnit.textContent = 's';
     }
+    if (els.rhVal) els.rhVal.textContent = Math.round(state.rh * 100) + ' %';
   }
 
   /* ==========================================================================
@@ -1212,6 +1242,17 @@ import * as THREE from './assets/optics-three.min.js';
     requestRender();
   }
 
+  /* ★ 致冷场景的唯一自变量：空气相对湿度。
+     拖动滑块只改 state.rh —— 湿球读数是【解方程】解出来的（e_s(T_w) 与补热平衡），
+     不是「湿度 → 温差」的查表，所以「湿度越大温差越小」是算出来的、不是写死的。 */
+  function setRh(pct) {
+    state.rh = clamp(Number(pct) / 100, RH_MIN, RH_MAX);
+    const sl = $('rhSlider');
+    if (sl) sl.value = String(Math.round(state.rh * 100));
+    updateAll();
+    return state.rh;
+  }
+
   function setSpeed(v) {
     state.speed = v;
     document.querySelectorAll('[data-speed]').forEach((b) => b.classList.toggle('active', Number(b.dataset.speed) === v));
@@ -1219,13 +1260,35 @@ import * as THREE from './assets/optics-three.min.js';
 
   function applySceneUI() {
     document.querySelectorAll('[data-scene]').forEach((b) => b.classList.toggle('active', b.dataset.scene === state.scene));
+    /* ★ 用户要求：致冷场景里【不再研究温度 / 表面积 / 空气流动】，
+       只留一个「空气湿度」滑块 ⇒ 那几组连同运行 / 对照 / 记录整块收起来。
+       用 hidden 而不是删 DOM：切回影响因素场景要原样还原，而且自检要能数到它们。 */
+    const cool = state.scene === 'cool';
+    document.querySelectorAll('.only-factor').forEach((el) => { el.hidden = cool; });
+    document.querySelectorAll('.only-cool').forEach((el) => { el.hidden = !cool; });
   }
 
   function setScene(key) {
     if (SCENES.indexOf(key) < 0) return false;
     if (state.scene === key) return true;
+    /* ★ 致冷场景 = 干湿球湿度计：干球就是室温，通风量固定。
+       进去之前先把学生调好的三个档位存起来，切回影响因素场景时原样还原
+       —— 否则「去看一眼湿度计再回来，条件全没了」。 */
+    if (key === 'cool') {
+      state.savedLevels = { ...state.levels };
+      state.levels.temp = 0;              // 干球 = 室温 20 ℃
+      state.levels.area = 0;
+      state.levels.wind = COOL_WIND;      // 固定通风（学生调不到）
+    } else if (state.savedLevels) {
+      state.levels = { ...state.savedLevels };
+      state.savedLevels = null;
+    }
     state.scene = key;
     applySceneUI();
+    applyFactorUI();
+    /* 干球读数跟着换（20 ℃ ↔ 影响因素场景的当前温度档），湿球重新落到稳态 */
+    state.Td = dryTarget();
+    state.Tw = wetTarget();
     updateAll();
     /* ★ 换场景必须【重新取景】：致冷场景多了两支 20 cm 高的温度计，
        主体高度差一个数量级，不重取景会沿用上一档的机位 —— 温度计顶出画布。 */
@@ -1292,6 +1355,8 @@ import * as THREE from './assets/optics-three.min.js';
     state.windPhase = 0;
     state.lastChanged = null;
     FACTORS.forEach((f) => { state.levels[f] = BASE_LEVEL[f]; });
+    /* 致冷场景是湿度计：重置也只把读数拉回稳态，不把通风档改掉 */
+    if (state.scene === 'cool') state.levels.wind = COOL_WIND;
     state.Td = dryTarget();
     state.Tw = wetTarget();          // 复位时湿球直接落在稳态：读数恒低于干球从第一帧就成立
     /* ★★ 这里【绝对不能】再调 clearRecords()：用户明确要求「重置之后表格里的数据不能消失」——
@@ -1311,6 +1376,12 @@ import * as THREE from './assets/optics-three.min.js';
   if (runBtnEl) runBtnEl.addEventListener('click', () => { if (!state.finished) setRunning(true); });
   if (pauseBtnEl) pauseBtnEl.addEventListener('click', () => setRunning(false));
   if (resetBtnEl) resetBtnEl.addEventListener('click', () => { resetSim(); requestRender(); });
+
+  const rhSliderEl = $('rhSlider');
+  if (rhSliderEl) {
+    rhSliderEl.addEventListener('input', (e) => setRh(e.target.value));
+    rhSliderEl.value = String(Math.round(state.rh * 100));
+  }
 
   const cbControl = $('toggleControl');
   if (cbControl) cbControl.addEventListener('change', (e) => setControl(e.target.checked));
@@ -1471,7 +1542,10 @@ import * as THREE from './assets/optics-three.min.js';
     const sdt = dt * state.speed;
     /* 湿球读数是【被动】过程：不管有没有在「观察」，它都在往目标值爬 */
     relaxThermo(sdt);
-    if (state.running && !state.finished) {
+    /* ★ 致冷场景是【湿度计】：玻璃板上那五滴水只是布景，别让它一边蒸发一边干透
+       （干透会触发自动记录，而且画面上的水没了、学生以为实验坏了）。
+       影响因素场景才推进蒸发。 */
+    if (state.running && !state.finished && state.scene === 'factor') {
       stepEvapDt(sdt);
       if (state.finished) setRunning(false);
     }
@@ -1518,7 +1592,8 @@ import * as THREE from './assets/optics-three.min.js';
     windGroup, windParticles, vaporGroup, vaporPuffs, thermoGroup, thermos, gauzeMesh,
     dryColMesh, wetColMesh,
     A0, H0, V0, K_DRY, E_OVER_R, T_REF, WIND_K, K_LAG,
-    RH0, P_ATM, WIND_MS, RH_STILL, A_VENT, A_STILL, esat, ventA, localRH, wetBulbT,
+    RH0, RH_MIN, RH_MAX, COOL_WIND, P_ATM, WIND_MS, RH_STILL, A_VENT, A_STILL,
+    esat, ventA, localRH, wetBulbT, thermoWindLevel, setRh,
     BLADE_PITCH, FAN_SPIN_SIGN, FAN_OMEGA,
     TEMP_LEVELS, AREA_LEVELS, WIND_LEVELS, FACTORS, BASE_LEVEL, LEVEL_LABEL, FACTOR_NAME,
     PLATE_TOP, GLASS_TOP, TH_RANGE, TH_COL_MAX, DROP_X,
