@@ -2314,6 +2314,95 @@ import * as THREE from './assets/optics-three.min.js';
     if (loupeRead) loupeRead.textContent = `${Tc.toFixed(1)} ℃`;
   }
 
+  /* ★ 什么时候才把放大镜亮出来 —— 口径是「组装好之后、实验开始之后」：
+       · 器材没装好：温度计还在台面上躺着，谈不上读数；
+       · 装了但还没点「开始加热 / 开始冷却」：试样就是室温，读不读都一样；
+       · 重置：t 归零，图标跟着收起。
+     判据用 `running || t > 0` 而不是只看 running —— 暂停时温度就停在那儿，
+     学生照样要读它，图标不该跟着一起消失。
+     ★ 熔化方向有水浴加热、凝固方向是冰水浴冷却（没有火焰），
+       所以这里【不能】像沸腾页那样挂 state.lampOn —— 两个方向都要能读数。 */
+  function loupeActive() {
+    return assemblyReady() && (state.running || state.t > 0);
+  }
+
+  /* 把放大镜图标贴到温度计旁边。位置是【算出来】的，不是写死的。
+     ★ 锚点不是温度计的包围盒顶，而是【当前液柱顶端】那个世界点：
+       这支温度计伸到画面顶上去了（整机视角下管顶会被裁掉），
+       按包围盒顶摆，图标会跑到画面最上沿，离真正要读的刻度差半屏。
+       液柱顶端由 scaleYOf(state.Tt) 给出 —— 和 3D 里液柱、印刷刻度同一个式子，
+       所以图标永远停在「现在这条读数」的高度上。
+     ★ 先试右边（贴着管壁），右边被浮层占了就翻到左边，再不行上下错开一格。
+     ★ 用 transform 而不是 left/top：每帧改 left/top 会触发布局，transform 只走合成。 */
+  const panelRectIn = (sel) => {
+    const n = stage.querySelector(sel);
+    if (!n || n.hidden) return null;
+    if (n.offsetWidth === 0 && n.offsetHeight === 0) return null;   // display:none 的浮层不算占位
+    const b = n.getBoundingClientRect(), s = stage.getBoundingClientRect();
+    return { left: b.left - s.left, top: b.top - s.top, right: b.right - s.left, bottom: b.bottom - s.top };
+  };
+  const rectsHit = (a, b, pad) => a && b &&
+    a.x < b.right + pad && a.x + a.w > b.left - pad &&
+    a.y < b.bottom + pad && a.y + a.h > b.top - pad;
+  function placeLoupeHotspot() {
+    const el = $('toggleLoupe');
+    if (!el) return;
+    /* 放大镜开着的时候图标必须留着 —— 否则实验一结束图标一藏，学生就再也关不掉读数窗了。 */
+    const show = !!(toggles.loupe || loupeActive());
+    if (el.hidden !== !show) el.hidden = !show;
+    if (!show) return;
+    /* ★ 投影前必须先把相机的世界矩阵刷新到这一帧：
+         否则刚转过视角的那一帧还按旧矩阵算，图标会滞后一帧（拖动时看得出来在飘）。 */
+    camera.updateMatrixWorld(true);
+    const dpr = renderer.getPixelRatio();
+    const cv = canvas.getBoundingClientRect();
+    const st = stage.getBoundingClientRect();
+    const ox = cv.left - st.left, oy = cv.top - st.top;
+    const W = stage.clientWidth, H = stage.clientHeight;
+    const w = el.offsetWidth || 84, h = el.offsetHeight || 26;
+    const PAD = 8, GAP = 10;
+
+    /* ① 读数所在的世界点 = 液柱顶端（温度计整体会随「提起 / 插入」上下滑，所以要加 position.y） */
+    const wp = new THREE.Vector3(TH_X, scaleYOf(state.Tt) + thermometer.position.y, TH_Z).project(camera);
+    const px = (wp.x * 0.5 + 0.5) * cv.width + ox;
+    const py = (0.5 - wp.y * 0.5) * cv.height + oy;
+
+    /* ② 温度计管子在屏幕上的左右边界（只用横向，纵向一律听液柱顶端的） */
+    const r = screenRectOf(thermometer);
+    const thLeft = r.x / dpr + ox;
+    const thRight = (r.x + r.w) / dpr + ox;
+    const cx = clamp(px, thLeft, thRight);          // 液柱顶端的横向落点（投影点可能略偏）
+
+    /* ③ 已被浮层占掉的区域：四角的三块 + 打开时的读数窗。图标不许压上去。 */
+    const blockers = ['.stage-top', '.micro-inset', '.loupe-inset', '.stage-hud', '.stage-bottom']
+      .map(panelRectIn).filter(Boolean);
+
+    /* ④ 依次试：右侧贴管 → 左侧贴管 → 右侧上移一格 → 右侧下移一格 */
+    const cands = [
+      { x: cx + GAP, y: py - h / 2 },
+      { x: cx - GAP - w, y: py - h / 2 },
+      { x: cx + GAP, y: py - h / 2 - 36 },
+      { x: cx + GAP, y: py - h / 2 + 36 },
+      { x: cx - GAP - w, y: py - h / 2 - 36 }
+    ];
+    let pick = null;
+    for (const c of cands) {
+      const x = clamp(c.x, PAD, Math.max(PAD, W - w - PAD));
+      const y = clamp(c.y, PAD, Math.max(PAD, H - h - PAD));
+      const box = { x, y, w, h };
+      if (!blockers.some((b) => rectsHit(box, b, 4))) { pick = box; break; }
+    }
+    /* 全被占满（窄屏 + 读数窗同时打开）：退回右侧贴管，允许压住读数窗边缘 ——
+       总比图标消失、读数窗关不掉强。 */
+    if (!pick) {
+      pick = {
+        x: clamp(cx + GAP, PAD, Math.max(PAD, W - w - PAD)),
+        y: clamp(py - h / 2, PAD, Math.max(PAD, H - h - PAD)), w, h
+      };
+    }
+    el.style.transform = `translate(${pick.x.toFixed(1)}px, ${pick.y.toFixed(1)}px)`;
+  }
+
   /* ==========================================================================
      八、界面刷新
      ========================================================================== */
@@ -2556,6 +2645,7 @@ import * as THREE from './assets/optics-three.min.js';
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
     requestRender();
+    placeLoupeHotspot();      // 画框一变，温度计的屏幕落点就变了，图标要跟着重摆
   }
 
   let dragging = false, lastX = 0, lastY = 0;
@@ -2687,7 +2777,9 @@ import * as THREE from './assets/optics-three.min.js';
     if (box) box.style.display = toggles.micro ? '' : 'none';
     requestRender();
   });
-  /* --- 放大镜开关（舞台浮层 + 侧栏按钮状态一起切） --- */
+  /* --- 放大镜开关：入口在【温度计旁边的 🔍 图标】上，读数窗浮在舞台右侧 ---
+     ★ 侧栏那个按钮已经撤掉了（用户要求：图标直接贴在温度计旁边点）——
+       逻辑还是同一份 setLoupe()，只是入口换了地方，显隐口径见 loupeActive()。 */
   const loupeBtn = $('toggleLoupe'), loupeInset = $('loupeInset');
   function setLoupe(v) {
     toggles.loupe = !!v;
@@ -2697,6 +2789,7 @@ import * as THREE from './assets/optics-three.min.js';
       loupeBtn.setAttribute('aria-pressed', String(toggles.loupe));
     }
     if (toggles.loupe) drawLoupe();
+    placeLoupeHotspot();       // 开关一按就重新摆位：图标不能因为读数窗弹出而跑掉
     requestRender();
   }
   if (loupeBtn) loupeBtn.addEventListener('click', () => setLoupe(!toggles.loupe));
@@ -2707,7 +2800,7 @@ import * as THREE from './assets/optics-three.min.js';
   const STEPS = [
     { name: '01 认识器材', text: '<strong>认识器材：</strong>铁架台的铸铁底座上立着镀铬立柱，铁圈托住<b>石棉网</b>，烧杯放在石棉网上，试管用铁夹夹住、浸在烧杯的水里，温度计插在试管中。下方是点燃的酒精灯。' },
     { name: '02 水浴加热', text: '<strong>为什么要把试管泡在水里：</strong>火焰直接加热试管，受热不均匀、温度升得太快，来不及记录。用水浴加热，试管里的物质受热<b>均匀</b>、升温<b>缓慢</b>，而且最高只会接近 100 ℃，安全又便于观察。' },
-    { name: '03 海波熔化', text: '<strong>找熔点：</strong>选海波开始加热。温度升到 <b>48 ℃</b> 时注意看 —— 温度计的液柱停住了，但酒精灯还在烧，物质还在吸热。这个不变的温度就是海波的<b>熔点</b>。' },
+    { name: '03 海波熔化', text: '<strong>找熔点：</strong>选海波开始加热。温度升到 <b>48 ℃</b> 时注意看 —— 温度计的液柱停住了，但酒精灯还在烧，物质还在吸热。这个不变的温度就是海波的<b>熔点</b>。<br>整机视角下 1 ℃ 只有约 1 mm，读数看不清：<b>温度计旁边会亮出一个 🔍「放大刻度」</b>，点它，感温泡附近的刻度就放大显示在画面右侧，红线对着的就是当前读数 —— 眼睛还能同时盯着试管里的物质化到哪一步。' },
     { name: '04 石蜡对照', text: '<strong>换石蜡：</strong>换成石蜡重新加热。石蜡没有固定熔点：它先变软、再变稀，温度<b>一直在升高</b>，曲线只有“拐弯”，没有平台。这就是晶体和非晶体最本质的区别。' },
     { name: '05 海波凝固', text: '<strong>反过来做一次：</strong>把「实验方向」切到<b>凝固</b> —— 酒精灯撤走、烧杯里的热水换成<b>冰水</b>。液态海波从 65 ℃ 开始降温，降到 <b>48 ℃</b> 时温度又停住了：这次它<b>继续放热</b>（把热量交给冰水），温度却保持不变，直到全部凝固成固态，温度才接着下降。' },
     { name: '06 凝固点=熔点', text: '<strong>把两张图叠起来看：</strong>熔化时的平台和凝固时的平台都在 <b>48 ℃</b>。同一种晶体，<b>凝固点等于熔点</b> —— 温度降下来到 48 ℃ 才开始凝固，升上去到 48 ℃ 才开始熔化，同一个温度。在右侧「③ 记录数据」里两个方向各记三组，表格会替你算出两个平台到底差多少。' },
@@ -2913,6 +3006,7 @@ import * as THREE from './assets/optics-three.min.js';
   updateCamera();
   resize();
   updateAsmUI();          // 初始：清单 0/6、开始按钮锁住、提示「先装器材」
+  placeLoupeHotspot();    // 初始 t=0 ⇒ 图标隐藏（口径见 loupeActive()）
 
   /* 单帧推进。真实 rAF 循环与验收用的驱动钩子走【同一段】代码 ——
      无头沙箱里 requestAnimationFrame 可能一帧都不触发，
@@ -2943,6 +3037,10 @@ import * as THREE from './assets/optics-three.min.js';
       renderer.render(scene, camera);
       dirty = false;
     }
+    /* 图标跟着温度计走：必须在 render 之后（相机的世界矩阵此刻才是这一帧的）。
+       ★ 放在这里而不是只放在 updateCamera 里 —— 温度计升降、组装动画、窗口缩放
+         都会挪动它的屏幕落点，只有每帧算一次才不会落后。 */
+    placeLoupeHotspot();
   }
 
   /* ★ 冻结开关：只给自检用。像素级对照（「同一状态连拍两帧必须完全一致」）要求
@@ -3116,6 +3214,38 @@ import * as THREE from './assets/optics-three.min.js';
           }
         }
         return NaN;
+      }
+    },
+    /* 温度计【旁边】那个放大镜图标：显隐口径 + 落点都是算出来的，自检直接量 DOM。
+       位置判据必须量 getBoundingClientRect 与温度计屏幕包围盒的关系，
+       不能量 CSS 里那个写死的数值 —— 那正是这套「跟着温度计走」要防的东西。 */
+    loupeHotspot: {
+      active: loupeActive,
+      hidden: () => { const e = $('toggleLoupe'); return e ? !!e.hidden : null; },
+      place: placeLoupeHotspot,
+      rect() {
+        const e = $('toggleLoupe');
+        if (!e || e.hidden) return null;
+        const b = e.getBoundingClientRect(), s = stage.getBoundingClientRect();
+        return { x: b.left - s.left, y: b.top - s.top, w: b.width, h: b.height,
+                 stageW: s.width, stageH: s.height };
+      },
+      /* 读数点（当前液柱顶端）在舞台里的 CSS 坐标 —— 判「图标就贴在读数旁边」用 */
+      readPoint() {
+        camera.updateMatrixWorld(true);
+        const cv = canvas.getBoundingClientRect(), st = stage.getBoundingClientRect();
+        const wp = new THREE.Vector3(TH_X, scaleYOf(state.Tt) + thermometer.position.y, TH_Z).project(camera);
+        return { x: (wp.x * 0.5 + 0.5) * cv.width + (cv.left - st.left),
+                 y: (0.5 - wp.y * 0.5) * cv.height + (cv.top - st.top) };
+      },
+      /* 温度计自己的屏幕包围盒（CSS px，舞台坐标）—— 判「图标贴着温度计」的另一半 */
+      thermoRect() {
+        camera.updateMatrixWorld(true);
+        const r = screenRectOf(thermometer), dpr = renderer.getPixelRatio();
+        const cv = canvas.getBoundingClientRect(), st = stage.getBoundingClientRect();
+        const ox = cv.left - st.left, oy = cv.top - st.top;
+        return { x: r.x / dpr + ox, y: r.H - (r.y + r.h) / dpr + oy,
+                 w: r.w / dpr, h: r.h / dpr };
       }
     },
     setLoupe,
