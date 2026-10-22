@@ -57,6 +57,12 @@ import * as THREE from './assets/optics-three.min.js';
     area: ['1 档 · 水珠', '2 档 · 摊开', '3 档 · 铺平'],
     wind: ['无风', '低档', '高档']
   };
+  /* 记录表用的紧凑档位文案：292 px 宽的面板里塞 6 列，长的写不下 */
+  const LEVEL_SHORT = {
+    temp: ['20 ℃', '40 ℃', '60 ℃'],
+    area: ['1 档', '2 档', '3 档'],
+    wind: ['无风', '低档', '高档']
+  };
   const FACTOR_NAME = { temp: '温度', area: '表面积', wind: '空气流动' };
 
   /* 温度因子：Arrhenius（蒸发是分子挣脱液面，本质是热激活过程）。
@@ -901,7 +907,14 @@ import * as THREE from './assets/optics-three.min.js';
     if (state.remain <= 0) return;
     state.t += dt;
     state.remain = Math.max(0, state.remain - K_DRY * evapRate() / V0 * dt);
-    if (state.remain <= 0) state.finished = true;
+    if (state.remain <= 0) {
+      state.finished = true;
+      /* ★★ 表格里【只记一件事：蒸发完全用了多少时间】。
+         用户明确要求：不要手动点「记录这一组」记一堆中途快照，就跑完这一刻自动记一行
+         （条件 + 用时）。放在这里而不是 frameStep 里，是为了让 advance() 之类的
+         程序化推进也走同一条记录路径 —— 只有一条入口，不会出现「手动记的和自动记的不一样」。 */
+      recordRun();
+    }
   }
 
   /* 湿球读数的一阶滞后：目标值由 wetTarget() 给，读数自己慢慢爬过去。
@@ -1071,13 +1084,6 @@ import * as THREE from './assets/optics-three.min.js';
     hudDry: $('hudDry'), hudDryLabel: $('hudDryLabel'), hudDryUnit: $('hudDryUnit')
   };
 
-  function statusText() {
-    if (state.remain <= 0) return '已完全蒸发';
-    if (state.remain > 0.97) return '刚滴上，还没开始变';
-    if (state.remain > 0.5) return '正在蒸发';
-    return '快干了';
-  }
-
   /* HUD 三行：温度 / 剩余水量（致冷场景是干湿球温差）/ 干燥时间（致冷场景是湿球读数）。
      ★ 湿球还在往新平衡值爬的时候必须【说出来】—— 否则换档后立刻读到的是
        上一个档位的数字，看起来就是「高档反而更热」。 */
@@ -1110,16 +1116,21 @@ import * as THREE from './assets/optics-three.min.js';
   }
 
   /* ==========================================================================
-     十二、记录（就一张小表：时刻 / 剩余 / 干湿球 / 温差）
-     ★ 原来有两张表（侧栏 4 列 + 下方 7 列），同一批数据抄两遍。
-       用户要的是「记录功能简化」⇒ 只留一张，塞进参数面板，记录按钮挪到画面上。
+     十二、记录：只记「蒸发完全用了多少时间」
+     ---------------------------------------------------------------------------
+     用户两条要求（2026-10-22 二次修订）：
+     ① 表格里【只记蒸发完全的时间】—— 不要手动点按钮记中途快照；
+     ② 【重置不许清空表格】—— 重置是为了换条件再跑一次，新的一行接着往下排，
+        学生才能把「只改温度 / 只改表面积 / 只改风速」几组摆在一起比。
+     ⇒ 记录由 stepEvapDt() 在 finished 那一刻自动触发（唯一入口），
+       重置只归零仿真量；清空是单独的按钮。
      ========================================================================== */
   const recordBody = $('records');
-  const recordBtn = $('recordBtn');
   const recSum = $('recSum');
-  const REC_EMPTY = '点画面下方的「记录这一组」，就把这一刻的读数记进来。';
-
-  function sceneName() { return state.scene === 'cool' ? '蒸发致冷' : '蒸发快慢'; }
+  const recCount = $('recCount');
+  const clearRecBtn = $('clearRecBtn');
+  const recToast = $('recToast');
+  const REC_EMPTY = '还没有记录 —— 水滴全部蒸干（跑完一次）就自动记一行。';
 
   function clearRecords() {
     state.records.length = 0;
@@ -1130,27 +1141,60 @@ import * as THREE from './assets/optics-three.min.js';
     const rows = state.records;
     if (recordBody) {
       if (!rows.length) {
-        recordBody.innerHTML = '<tr><td colspan="5" class="empty">还没有记录</td></tr>';
+        recordBody.innerHTML = '<tr><td colspan="5" class="empty">' + REC_EMPTY + '</td></tr>';
       } else {
         recordBody.innerHTML = rows.map((r, i) => '<tr>'
           + '<td>' + (i + 1) + '</td>'
-          + '<td>' + r.t.toFixed(1) + ' s</td>'
-          + '<td>' + (r.remain * 100).toFixed(0) + ' %</td>'
-          + '<td>' + r.Td.toFixed(1) + ' / ' + r.Tw.toFixed(1) + '</td>'
-          + '<td>' + (r.Td - r.Tw).toFixed(1) + '</td></tr>').join('');
+          + '<td>' + LEVEL_SHORT.temp[r.temp] + '</td>'
+          + '<td>' + LEVEL_SHORT.area[r.area] + '</td>'
+          + '<td>' + LEVEL_SHORT.wind[r.wind] + '</td>'
+          + '<td class="t">' + r.t.toFixed(1) + '</td></tr>').join('');
       }
     }
+    if (recCount) recCount.textContent = rows.length ? rows.length + ' 次' : '0 次';
     if (recSum) {
       if (!rows.length) {
         recSum.textContent = REC_EMPTY;
       } else {
         const last = rows[rows.length - 1];
-        recSum.innerHTML = '已记 <b>' + rows.length + '</b> 组。最后一组：'
-          + last.t.toFixed(1) + ' s，剩余 <b>' + (last.remain * 100).toFixed(0) + '%</b>，'
-          + '干/湿球 ' + last.Td.toFixed(1) + ' / ' + last.Tw.toFixed(1)
-          + ' ℃（差 <b>' + (last.Td - last.Tw).toFixed(1) + ' ℃</b>）。';
+        /* 最快的那一行点出来：学生一眼看到「哪个条件干得最快」 */
+        let best = rows[0];
+        rows.forEach((r) => { if (r.t < best.t) best = r; });
+        recSum.innerHTML = '已记 <b>' + rows.length + '</b> 次。最近一次：'
+          + LEVEL_SHORT.temp[last.temp] + ' · ' + LEVEL_SHORT.area[last.area] + ' · ' + LEVEL_SHORT.wind[last.wind]
+          + ' → <b>' + last.t.toFixed(1) + ' s</b>；'
+          + '目前最快：<b>' + best.t.toFixed(1) + ' s</b>（'
+          + LEVEL_SHORT.temp[best.temp] + ' · ' + LEVEL_SHORT.area[best.area] + ' · ' + LEVEL_SHORT.wind[best.wind] + '）。';
       }
     }
+  }
+
+  /* 跑完这一刻记一行：条件 + 用时。
+     ★ 不记「干湿球温差」：用户要的是「只记蒸发完全的时间」，而蒸发快慢场景里
+       温度计根本没摆出来，多一列反而让人以为要点温度计。温差在致冷场景的
+       HUD 上实时读就够了。 */
+  function recordRun() {
+    const r = {
+      temp: state.levels.temp,
+      area: state.levels.area,
+      wind: state.levels.wind,
+      t: state.t
+    };
+    state.records.push(r);
+    if (state.records.length > 40) state.records.shift();
+    renderRecords();
+    showRecToast(r);
+    return r;
+  }
+
+  let recToastTimer = 0;
+  function showRecToast(r) {
+    if (!recToast) return;
+    recToast.innerHTML = '✓ 已记入表格：' + LEVEL_SHORT.temp[r.temp] + ' · ' + LEVEL_SHORT.area[r.area]
+      + ' · ' + LEVEL_SHORT.wind[r.wind] + ' → 用时 <b>' + r.t.toFixed(1) + ' s</b>';
+    recToast.classList.add('show');
+    clearTimeout(recToastTimer);
+    recToastTimer = setTimeout(() => recToast.classList.remove('show'), 3800);
   }
 
   /* ==========================================================================
@@ -1250,7 +1294,8 @@ import * as THREE from './assets/optics-three.min.js';
     FACTORS.forEach((f) => { state.levels[f] = BASE_LEVEL[f]; });
     state.Td = dryTarget();
     state.Tw = wetTarget();          // 复位时湿球直接落在稳态：读数恒低于干球从第一帧就成立
-    clearRecords();
+    /* ★★ 这里【绝对不能】再调 clearRecords()：用户明确要求「重置之后表格里的数据不能消失」——
+       重置是为了换条件再跑一次，前面几行要留着做对比。清空是面板里单独的按钮。 */
     applyFactorUI();
     updateAll();
     setRunning(false);
@@ -1284,21 +1329,10 @@ import * as THREE from './assets/optics-three.min.js';
     requestRender();
   });
 
-  if (recordBtn) {
-    recordBtn.addEventListener('click', () => {
-      const cool = state.scene === 'cool';
-      state.records.push({
-        scene: sceneName(), cool, t: state.t, Td: state.Td, Tw: state.Tw,
-        remain: state.remain, state: statusText(),
-        short: cool ? ('干湿差 ' + (state.Td - state.Tw).toFixed(2) + ' ℃') : statusText()
-      });
-      if (state.records.length > 30) state.records.shift();
-      renderRecords();
-      const wrap = recordBody ? recordBody.closest('.rec-wrap') : null;
-      if (wrap) wrap.scrollTop = wrap.scrollHeight;
-      recordBtn.classList.remove('hit');
-      void recordBtn.offsetWidth;
-      recordBtn.classList.add('hit');
+  if (clearRecBtn) {
+    clearRecBtn.addEventListener('click', () => {
+      clearRecords();
+      if (recToast) recToast.classList.remove('show');
       requestRender();
     });
   }
@@ -1493,7 +1527,7 @@ import * as THREE from './assets/optics-three.min.js';
     setScene, setFactor, setControl, resetSim, setRunning, setSpeed, setView,
     updateAll, updateVisibility, updateCamera, updateReadouts, updateCompare,
     updateDrops, updateVapor, drawMicro, animateParts,
-    clearRecords, renderRecords, statusText, lockedFactors,
+    clearRecords, renderRecords, recordRun, LEVEL_SHORT, lockedFactors,
     stepEvapDt, relaxThermo,
     setParamsOpen, paramsOpen,
 
@@ -1624,7 +1658,10 @@ import * as THREE from './assets/optics-three.min.js';
         on: !!el,
         targetIsStage: el === stage,
         panelInFs: !!el && el.contains(paramsBox),
-        recordInFs: !!el && el.contains(recordBtn),
+        /* 全屏里要能「记 + 清」：自动记录是 stepEvapDt 触发的（与 UI 无关），
+           学生能看到的是这条提示条，能操作的是面板里的「清空」 */
+        recordInFs: !!el && !!recToast && el.contains(recToast)
+                    && !!clearRecBtn && el.contains(clearRecBtn),
         layouts: fsLayouts,
         canvasW: Math.round(canvas.clientWidth), canvasH: Math.round(canvas.clientHeight),
         stageW: Math.round(stage.clientWidth), stageH: Math.round(stage.clientHeight)
