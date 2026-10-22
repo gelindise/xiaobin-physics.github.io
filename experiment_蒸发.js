@@ -782,23 +782,35 @@ import * as THREE from './assets/optics-three.min.js';
     state.drawn.glowIntensity = +g.toFixed(3);
   }
 
+  /* ★★ 水滴必须【真的变小、最后消失】—— 这是用户直接看到的一条。
+     旧写法只把高度乘 rem、接触半径一直钉在 G.a 上：水量掉到 20% 时画面上还是
+     一颗一模一样的扁片，只有 HUD 的百分数在动 —— 看上去就是「水一点没少」。
+     蒸发是【三个方向一起缩】：线性尺寸 ∝ 体积^(1/3)，所以 a、h 同乘 cbrt(rem)。
+     于是 (2/3)πa²h = V0·rem 精确成立，网格体积与剩余水量同源（不再只缩一个轴）。
+     最后 1% 直接隐藏：再小也只剩亚像素，硬留着一颗亮点反而像「永远干不了」。 */
   function updateDrops() {
     const G = dropGeom(state.levels.area);
     const rem = state.remain;
-    const h = G.h * rem;
+    const rf = Math.cbrt(Math.max(rem, 0));
+    const a = G.a * rf;
+    const h = G.h * rf;
+    const gone = rem <= 0.01;
     drops.forEach((d) => {
-      d.scale.set(G.a, Math.max(h, 1e-4), G.a);
-      d.visible = rem > 0.004;
-      d.material.opacity = lerp(0.30, 0.58, Math.min(1, rem * 1.6));
+      d.scale.set(Math.max(a, 1e-4), Math.max(h, 1e-4), Math.max(a, 1e-4));
+      d.visible = !gone;
+      /* 越干越淡：让「消失」是渐隐而不是硬切 */
+      d.material.opacity = lerp(0.10, 0.58, Math.min(1, rem * 3.4));
     });
-    state.drawn.dropA = +G.a.toFixed(4);
+    state.drawn.dropA = +a.toFixed(4);
     state.drawn.dropH = +h.toFixed(4);
-    state.drawn.dropA2H = +(G.a * G.a * h).toFixed(5);
+    state.drawn.dropRf = +rf.toFixed(5);
+    state.drawn.dropA2H = +(a * a * h).toFixed(5);
     state.drawn.dropA2HRef = +(G.a2hRef).toFixed(5);
-    state.drawn.dropVol = +((2 / 3) * Math.PI * G.a * G.a * h).toFixed(5);
+    state.drawn.dropVol = +((2 / 3) * Math.PI * a * a * h).toFixed(5);
     state.drawn.dropVol0 = +V0.toFixed(5);
     state.drawn.remain = +rem.toFixed(5);
-    state.drawn.dropCount = drops.filter((d) => d.visible).length;
+    state.drawn.dropVisible = drops.filter((d) => d.visible).length;
+    state.drawn.dropCount = state.drawn.dropVisible;
   }
 
   function updateVapor() {
@@ -908,7 +920,7 @@ import * as THREE from './assets/optics-three.min.js';
     updateFlow();
     updateThermo();
     updateReadouts();
-    drawChart();
+    updateCompare();
     drawMicro(0.016);
     requestRender();
   }
@@ -1012,104 +1024,42 @@ import * as THREE from './assets/optics-three.min.js';
   }
 
   /* ==========================================================================
-     十、2D 插图：干燥时间对照柱状图
-     ★ 开关类新功能的画面量必须【同步】重画（requestRender 只置脏，无头没有 rAF）。
+     十、干燥时间对照（纯 DOM 小条，取代原来 232 px 高的柱状图画布）
+     ★ 为什么改成 DOM：原图占掉整屏小一半，用户要的是「别把实验弄复杂」。
+       信息一点没少 —— 四行就是「基准 + 只改温度 / 表面积 / 风速」，
+       条的宽度 ∝ 相对蒸发速率（基准 75.3 s → 条最短），秒数直接写在右边。
+     ★ 只在档位真的变了才重建 innerHTML：每 0.1 s 重建一次会把面板的滚动位置打飞。
      ========================================================================== */
-  const chartCanvas = $('chartCanvas');
+  const cmpBox = $('cmpBox');
 
   function chartBars() {
     const L = state.levels;
     return [
-      { key: 'base', label: '基准', sub: '20 ℃ · 1 档 · 无风', sec: dryTime(0, 0, 0), hit: false },
-      { key: 'temp', label: '只改温度', sub: LEVEL_LABEL.temp[L.temp], sec: dryTime(L.temp, 0, 0), hit: L.temp > 0 },
-      { key: 'area', label: '只改表面积', sub: LEVEL_LABEL.area[L.area], sec: dryTime(0, L.area, 0), hit: L.area > 0 },
-      { key: 'wind', label: '只改风速', sub: LEVEL_LABEL.wind[L.wind], sec: dryTime(0, 0, L.wind), hit: L.wind > 0 }
+      { key: 'base', label: '基准', sec: dryTime(0, 0, 0), hit: false },
+      { key: 'temp', label: '只改温度', sec: dryTime(L.temp, 0, 0), hit: L.temp > 0 },
+      { key: 'area', label: '只改表面积', sec: dryTime(0, L.area, 0), hit: L.area > 0 },
+      { key: 'wind', label: '只改风速', sec: dryTime(0, 0, L.wind), hit: L.wind > 0 }
     ];
   }
-  /* 纵轴用【对数轴】：四个因素档位的干燥时间从 1 s 到 75 s 跨了近两个数量级，
-     线性轴上「高温档」那根柱子只有 1 px，什么都看不出来。
-     ★ 量程要盖住【所有可达组合】：最快 = 75.34/(8.41·3·2.7) ≈ 1.1 s，
-       最慢 = 基准 75.34 s（任何因素只要离开基准都只会更快）。 */
-  const SEC_MIN = 1.2, SEC_MAX = 150;
-  const logY = (sec, padT, ph) => {
-    const a = Math.log10(SEC_MAX), b = Math.log10(SEC_MIN);
-    const v = clamp(Math.log10(clamp(sec, SEC_MIN, SEC_MAX)), b, a);
-    return padT + (a - v) / (a - b) * ph;
-  };
 
-  function drawChart() {
-    if (!chartCanvas) return;
-    const W = chartCanvas.clientWidth || 640;
-    const H = chartCanvas.clientHeight || 232;
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    if (chartCanvas.width !== Math.round(W * dpr) || chartCanvas.height !== Math.round(H * dpr)) {
-      chartCanvas.width = Math.round(W * dpr); chartCanvas.height = Math.round(H * dpr);
-    }
-    const g = chartCanvas.getContext('2d');
-    g.setTransform(dpr, 0, 0, dpr, 0, 0);
-    g.clearRect(0, 0, W, H);
-    g.fillStyle = '#0b1a2c'; g.fillRect(0, 0, W, H);
-
-    const padL = 44, padR = 16, padT = 18, padB = 34;
-    const pw = W - padL - padR, ph = H - padT - padB;
-
-    g.strokeStyle = '#1e3a55'; g.lineWidth = 1;
-    g.fillStyle = '#7f96ab'; g.font = '10px "PingFang SC",sans-serif';
-    g.textAlign = 'right'; g.textBaseline = 'middle';
-    [2, 5, 10, 30, 100].forEach((s) => {
-      const y = logY(s, padT, ph);
-      g.beginPath(); g.moveTo(padL, y); g.lineTo(padL + pw, y); g.stroke();
-      g.fillText(s + ' s', padL - 6, y);
-    });
-    g.textAlign = 'left'; g.textBaseline = 'top';
-    g.fillText('干燥时间（对数轴 · 柱越矮干得越快）', padL, 3);
-
-    const bars = chartBars();
-    const n = bars.length;
-    const slot = pw / n;
-    const bw = Math.min(56, slot * 0.5);
-    const drawnBars = [];
-    bars.forEach((b, i) => {
-      const cx = padL + slot * (i + 0.5);
-      const y = logY(b.sec, padT, ph);
-      const h = padT + ph - y;
-      const grad = g.createLinearGradient(0, y, 0, padT + ph);
-      if (b.hit) { grad.addColorStop(0, '#34d399'); grad.addColorStop(1, '#0f766e'); }
-      else { grad.addColorStop(0, '#64748b'); grad.addColorStop(1, '#334155'); }
-      g.fillStyle = grad;
-      roundRect(g, cx - bw / 2, y, bw, Math.max(h, 2), 5); g.fill();
-      g.strokeStyle = b.hit ? '#a7f3d0' : '#94a3b8'; g.lineWidth = 1;
-      roundRect(g, cx - bw / 2, y, bw, Math.max(h, 2), 5); g.stroke();
-
-      g.fillStyle = b.hit ? '#ecfdf5' : '#cbd5e1';
-      g.font = '700 11px "PingFang SC",sans-serif';
-      g.textAlign = 'center'; g.textBaseline = 'bottom';
-      g.fillText(b.sec.toFixed(b.sec < 20 ? 1 : 0) + ' s', cx, y - 4);
-
-      g.fillStyle = '#9fb6c9'; g.font = '11px "PingFang SC",sans-serif';
-      g.textBaseline = 'top';
-      g.fillText(b.label, cx, padT + ph + 6);
-      g.fillStyle = b.hit ? '#6ee7b7' : '#64748b'; g.font = '9.5px "PingFang SC",sans-serif';
-      g.fillText(b.sub, cx, padT + ph + 20);
-
-      drawnBars.push({ key: b.key, sec: +b.sec.toFixed(3), hit: b.hit, px: +h.toFixed(2), x: +cx.toFixed(2), w: +bw.toFixed(2) });
-    });
-
-    /* 当前设置：一条虚线横跨图面（把柱状图与正在跑的实验连起来） */
-    const now = dryTimeNow();
-    const yNow = logY(now, padT, ph);
-    g.save();
-    g.setLineDash([5, 4]);
-    g.strokeStyle = '#fdba74'; g.lineWidth = 1.4;
-    g.beginPath(); g.moveTo(padL, yNow); g.lineTo(padL + pw, yNow); g.stroke();
-    g.restore();
-    g.fillStyle = '#fdba74'; g.font = '700 10.5px "PingFang SC",sans-serif';
-    g.textAlign = 'right'; g.textBaseline = 'bottom';
-    g.fillText('当前设置 ' + now.toFixed(1) + ' s', padL + pw, yNow - 3);
-
-    state.drawn.chartBars = drawnBars;
-    state.drawn.chartNowSec = +now.toFixed(3);
-    state.drawn.chartNowY = +yNow.toFixed(2);
+  let cmpSig = '';
+  function updateCompare() {
+    const rows = chartBars();
+    const sig = rows.map((r) => r.sec.toFixed(3)).join('|');
+    state.drawn.cmpRows = rows.map((r) => ({ key: r.key, sec: +r.sec.toFixed(3), hit: r.hit }));
+    if (!cmpBox || sig === cmpSig) return;
+    cmpSig = sig;
+    const baseSec = rows[0].sec;
+    const maxRatio = Math.max.apply(null, rows.map((r) => baseSec / r.sec));
+    cmpBox.innerHTML = rows.map((r) => {
+      const ratio = baseSec / r.sec;
+      const w = clamp(ratio / maxRatio * 100, 5, 100);
+      const cls = 'cmp-row' + (r.key === 'base' ? ' base' : '') + (r.hit ? ' hit' : '');
+      return '<div class="' + cls + '">'
+        + '<span>' + r.label + '</span>'
+        + '<span class="track"><i style="width:' + w.toFixed(1) + '%"></i></span>'
+        + '<b>' + r.sec.toFixed(r.sec < 20 ? 1 : 0) + ' s</b></div>';
+    }).join('');
   }
 
   /* ==========================================================================
@@ -1117,10 +1067,8 @@ import * as THREE from './assets/optics-three.min.js';
      ========================================================================== */
   const els = {
     hudTemp: $('hudTemp'), hudTempLabel: $('hudTempLabel'),
-    hudAux: $('hudAux'), hudAuxLabel: $('hudAuxLabel'),
-    metricTemp: $('metricTemp'), metricRemain: $('metricRemain'),
-    metricDry: $('metricDry'), metricDelta: $('metricDelta'), metricState: $('metricState'),
-    finding: $('finding'), sceneHint: $('sceneHint')
+    hudAux: $('hudAux'), hudAuxLabel: $('hudAuxLabel'), hudAuxUnit: $('hudAuxUnit'),
+    hudDry: $('hudDry'), hudDryLabel: $('hudDryLabel'), hudDryUnit: $('hudDryUnit')
   };
 
   function statusText() {
@@ -1130,74 +1078,48 @@ import * as THREE from './assets/optics-three.min.js';
     return '快干了';
   }
 
+  /* HUD 三行：温度 / 剩余水量（致冷场景是干湿球温差）/ 干燥时间（致冷场景是湿球读数）。
+     ★ 湿球还在往新平衡值爬的时候必须【说出来】—— 否则换档后立刻读到的是
+       上一个档位的数字，看起来就是「高档反而更热」。 */
   function updateReadouts() {
     const cool = state.scene === 'cool';
-    /* 湿球还在往新平衡值爬的时候必须【说出来】—— 否则换档后立刻读到的
-       是上一个档位的数字，看起来就是「高档反而更热」。 */
     const settleErr = Math.abs(state.Tw - wetTarget());
     const settling = settleErr > 0.12;
     state.drawn.settleErr = +settleErr.toFixed(4);
     state.drawn.settling = settling;
+
     if (els.hudTemp) els.hudTemp.textContent = dryTarget().toFixed(1);
     if (els.hudTempLabel) els.hudTempLabel.textContent = cool ? '空气温度' : '加热板温度';
-    if (els.hudAux) {
-      /* 稳定中就把「当前 → 稳定值」一起写出来：只给当前值的话，
-         换档后立刻读到的还是上一个档位的数字，看着就像「高档反而更热」。 */
+
+    if (cool) {
       const cur = (state.Td - state.Tw).toFixed(2);
-      els.hudAux.textContent = cool
-        ? (settling ? cur + ' → ' + wetDelta().toFixed(2) : cur)
-        : (state.remain * 100).toFixed(1);
-    }
-    if (els.hudAuxLabel) els.hudAuxLabel.textContent = cool ? '干湿球温差 ℃' : '剩余水量 %';
-
-    if (els.metricTemp) els.metricTemp.textContent = dryTarget().toFixed(0) + ' ℃';
-    if (els.metricRemain) els.metricRemain.textContent = (state.remain * 100).toFixed(1) + ' %';
-    if (els.metricDry) els.metricDry.textContent = dryTimeNow().toFixed(1) + ' s';
-    if (els.metricDelta) {
-      els.metricDelta.textContent = (state.Td - state.Tw).toFixed(2) + ' ℃';
-      els.metricDelta.style.color = settling ? '#fdba74' : '';
-      els.metricDelta.title = settling ? '湿球还在往新的平衡值爬（热惯性），约 1 s 后稳定' : '';
-    }
-    if (els.metricState) els.metricState.textContent = statusText();
-
-    if (els.finding) {
-      const L = state.levels;
-      const parts = [];
-      parts.push('温度 <b>' + LEVEL_LABEL.temp[L.temp] + '</b>');
-      parts.push('表面积 <b>' + LEVEL_LABEL.area[L.area] + '</b>');
-      parts.push('空气流动 <b>' + LEVEL_LABEL.wind[L.wind] + '</b>');
-      let s = '当前：' + parts.join(' · ') + '。<br>蒸发速率 <b>' + evapRate().toFixed(2) + '×</b>，预计 <b>' + dryTimeNow().toFixed(1) + ' s</b> 干完。';
-      if (state.scene === 'cool') {
-        s += '<br>干球 <b>' + state.Td.toFixed(1) + ' ℃</b>、湿球 <b>' + state.Tw.toFixed(1) + ' ℃</b>，'
-          + '差值 <b>' + (state.Td - state.Tw).toFixed(2) + ' ℃</b> —— 湿球永远更低，因为纱布上的水蒸发时把热带走了。';
-        if (settling) {
-          s += '<br><span style="color:#fdba74">湿球读数还在往新的平衡值爬（热惯性，约 1 s），'
-            + '稳下来是 <b>' + wetTarget().toFixed(1) + ' ℃</b>、差值 <b>' + wetDelta().toFixed(2) + ' ℃</b>。</span>';
-        }
-      } else {
-        s += '<br>五滴水<b>体积一样</b>：摊得越平，接触面越大、越薄，蒸得越快。';
-      }
-      if (toggles.control) s += '<br><span style="color:#6ee7b7">控制变量已打开：改一个因素，另外两个自动回到基准档。</span>';
-      els.finding.innerHTML = s;
-    }
-    if (els.sceneHint) {
-      els.sceneHint.textContent = state.scene === 'cool'
-        ? '并排两支温度计：右边那支的玻璃泡裹着湿纱布。'
-        : '五滴等体积的水滴摆在玻璃板上，右边是能调速的小台扇。';
+      if (els.hudAux) els.hudAux.textContent = settling ? cur + ' → ' + wetDelta().toFixed(2) : cur;
+      if (els.hudAuxLabel) els.hudAuxLabel.textContent = '干湿球温差';
+      if (els.hudAuxUnit) els.hudAuxUnit.textContent = '℃';
+      if (els.hudDry) els.hudDry.textContent = state.Tw.toFixed(1);
+      if (els.hudDryLabel) els.hudDryLabel.textContent = '湿球读数';
+      if (els.hudDryUnit) els.hudDryUnit.textContent = '℃';
+    } else {
+      if (els.hudAux) els.hudAux.textContent = (state.remain * 100).toFixed(1);
+      if (els.hudAuxLabel) els.hudAuxLabel.textContent = '剩余水量';
+      if (els.hudAuxUnit) els.hudAuxUnit.textContent = '%';
+      if (els.hudDry) els.hudDry.textContent = dryTimeNow().toFixed(1);
+      if (els.hudDryLabel) els.hudDryLabel.textContent = '干燥时间';
+      if (els.hudDryUnit) els.hudDryUnit.textContent = 's';
     }
   }
 
   /* ==========================================================================
-     十二、记录
+     十二、记录（就一张小表：时刻 / 剩余 / 干湿球 / 温差）
+     ★ 原来有两张表（侧栏 4 列 + 下方 7 列），同一批数据抄两遍。
+       用户要的是「记录功能简化」⇒ 只留一张，塞进参数面板，记录按钮挪到画面上。
      ========================================================================== */
   const recordBody = $('records');
-  const recordBodySide = $('recordsSide');
   const recordBtn = $('recordBtn');
-  const recordHint = $('recordHint');
   const recSum = $('recSum');
-  const HINT_DONE = '继续记录：改一个因素后再记一组，表格就能替你比较。';
+  const REC_EMPTY = '点画面下方的「记录这一组」，就把这一刻的读数记进来。';
 
-  function sceneName() { return state.scene === 'cool' ? '蒸发致冷' : '蒸发快慢' ; }
+  function sceneName() { return state.scene === 'cool' ? '蒸发致冷' : '蒸发快慢'; }
 
   function clearRecords() {
     state.records.length = 0;
@@ -1208,62 +1130,28 @@ import * as THREE from './assets/optics-three.min.js';
     const rows = state.records;
     if (recordBody) {
       if (!rows.length) {
-        recordBody.innerHTML = '<tr><td colspan="7" class="empty">尚无记录，先点「开始观察」再记录</td></tr>';
+        recordBody.innerHTML = '<tr><td colspan="5" class="empty">还没有记录</td></tr>';
       } else {
-        recordBody.innerHTML = rows.map((r) => '<tr class="' + (r.cool ? 'cool' : 'warm') + '">'
-          + '<td>' + r.scene + '</td><td>' + r.t.toFixed(1) + ' s</td>'
-          + '<td>' + r.Td.toFixed(1) + ' ℃</td><td>' + (r.remain * 100).toFixed(1) + ' %</td>'
-          + '<td>' + r.Td.toFixed(1) + '</td><td>' + r.Tw.toFixed(1) + '</td>'
-          + '<td>' + (r.Td - r.Tw).toFixed(2) + '</td></tr>').join('');
-      }
-    }
-    if (recordBodySide) {
-      if (!rows.length) {
-        recordBodySide.innerHTML = '<tr><td colspan="4" class="empty">还没有记录</td></tr>';
-      } else {
-        const cool = state.scene === 'cool';
-        recordBodySide.innerHTML = rows.slice(-14).map((r, i) => '<tr class="' + (r.cool ? 'cool' : 'warm') + '">'
-          + '<td>' + (rows.length - Math.min(rows.length, 14) + i + 1) + '</td>'
+        recordBody.innerHTML = rows.map((r, i) => '<tr>'
+          + '<td>' + (i + 1) + '</td>'
           + '<td>' + r.t.toFixed(1) + ' s</td>'
-          + '<td>' + (cool ? r.Tw.toFixed(1) + ' ℃' : (r.remain * 100).toFixed(1) + ' %') + '</td>'
-          + '<td>' + r.short + '</td></tr>').join('');
+          + '<td>' + (r.remain * 100).toFixed(0) + ' %</td>'
+          + '<td>' + r.Td.toFixed(1) + ' / ' + r.Tw.toFixed(1) + '</td>'
+          + '<td>' + (r.Td - r.Tw).toFixed(1) + '</td></tr>').join('');
       }
     }
     if (recSum) {
-      const cool = state.scene === 'cool';
       if (!rows.length) {
-        recSum.textContent = cool ? '点上面的按钮记录干球与湿球的读数，比较它们差多少。' : '点上面的按钮记录时刻和剩余水量。';
+        recSum.textContent = REC_EMPTY;
       } else {
         const last = rows[rows.length - 1];
         recSum.innerHTML = '已记 <b>' + rows.length + '</b> 组。最后一组：'
-          + last.t.toFixed(1) + ' s，' + (cool
-            ? '干球 ' + last.Td.toFixed(1) + ' ℃ / 湿球 ' + last.Tw.toFixed(1) + ' ℃，差 <b>' + (last.Td - last.Tw).toFixed(2) + ' ℃</b>'
-            : '剩余 <b>' + (last.remain * 100).toFixed(1) + '%</b>');
+          + last.t.toFixed(1) + ' s，剩余 <b>' + (last.remain * 100).toFixed(0) + '%</b>，'
+          + '干/湿球 ' + last.Td.toFixed(1) + ' / ' + last.Tw.toFixed(1)
+          + ' ℃（差 <b>' + (last.Td - last.Tw).toFixed(1) + ' ℃</b>）。';
       }
     }
   }
-
-  /* ==========================================================================
-     十三、步骤条
-     ========================================================================== */
-  const STEPS = [
-    { name: '01 认识器材', text: '<strong>认识器材：</strong>实验台上是一块<b>金属加热板</b>（可以通电加热），上面盖一块<b>硼硅玻璃板</b>；玻璃板上摆着<b>五滴一样多的水</b>。右边是一台<b>能调速的小台扇</b>，正对着水滴吹。切到「蒸发致冷」，台上会多出<b>两支温度计</b> —— 一支是干球，另一支的玻璃泡裹着<b>湿纱布</b>。' },
-    { name: '02 五滴一样多', text: '<strong>先记住一件事：五滴水的体积完全一样。</strong>把「表面积」档位从 1 档调到 3 档，水滴会<b>摊平</b>：接触半径变大、高度变小，但<b>体积一点没变</b>（半球扁椭球的 V = ⅔πa²h 恒为常数）。所以后面比快慢时，水量这个变量已经被消掉了。' },
-    { name: '03 只改温度', text: '<strong>只改温度：</strong>打开「控制变量」，只把温度从 20 ℃ 调到 60 ℃，另两个因素会自动回到基准档。温度升高 → 分子的平均动能变大 → 单位时间能挣脱液面的分子更多 → 蒸发更快。看左边的柱子：干燥时间从 75 s 掉到 9 s 左右。' },
-    { name: '04 只改表面积', text: '<strong>只改表面积：</strong>温度回到 20 ℃、风速回 0，只把水滴摊开 —— 注意<b>水量（体积）不变</b>，变的只是它摊开的形状。接触面越大，<b>液面上同时能跑出去的分子就越多</b> —— 干燥时间从 75 s 降到 25 s 左右。这就是「晾衣服要摊开、不要揉成一团」的原因。' },
-    { name: '05 只改风速', text: '<strong>只改风速：</strong>温度和表面积都回基准，只把风扇开到高档。风把液面上方<b>快要饱和的那层水蒸气吹走</b>，液面上方一直是「空」的，蒸发更快 —— 干燥时间从 75 s 压到 <b>28 s 左右</b>。三根柱子都在基准左边：<b>温度、表面积、风速，哪一个变大，柱子都变矮（干得更快）</b>。' },
-    { name: '06 湿球为什么更低', text: '<strong>切到「蒸发致冷」：</strong>两支温度计并排立在同一个空间里。湿球的玻璃泡裹着湿纱布，纱布上的水不断蒸发、不断<b>吸热</b>，热量只能从玻璃泡本身来 —— 于是湿球读数<b>恒低于</b>干球。把风速调大，纱布上的水蒸得更快、吸热更多，两支的差值跟着变大。湿球读数是<b>能量平衡</b>算出来的：蒸发吸热 = 空气给纱布补热。' },
-    { name: '07 风越大差越大', text: '<strong>把风速从「无风」调到「高档」：</strong>注意湿球读数是<b>慢慢降下去</b>的，不是一下子跳过去 —— 温度计有热惯性。等它稳住再看差值：室温 20 ℃ 下无风约 <b>1.9 ℃</b>、低档约 <b>5.3 ℃</b>、高档约 <b>6.2 ℃</b>，<b>严格变大</b>。道理是：静风时纱布周围那层空气很快被水汽填满、几乎饱和，蒸发很慢；风一吹，饱和层被换走，蒸发快、吸热多，温差就大。' },
-    { name: '08 记录归纳', text: '<strong>记录归纳：</strong>每改一个因素就记一组，最后在下面的表格里横向比一比。结论是：<b>液体的温度越高、表面积越大、液面上方空气流动越快，蒸发就越快</b>；而蒸发要<b>吸热</b>，所以蒸发快的地方温度就低 —— 出汗后吹风扇觉得更凉，道理就在这里。' }
-  ];
-
-  const stepButtons = Array.from(document.querySelectorAll('[data-step]'));
-  const stepDetail = $('stepDetail');
-  function applyStepUI() {
-    stepButtons.forEach((b) => b.classList.toggle('active', Number(b.dataset.step) === state.step));
-    if (stepDetail) stepDetail.innerHTML = STEPS[state.step] ? STEPS[state.step].text : '';
-  }
-  stepButtons.forEach((b) => b.addEventListener('click', () => { state.step = Number(b.dataset.step); applyStepUI(); }));
 
   /* ==========================================================================
      十四、控件
@@ -1366,8 +1254,6 @@ import * as THREE from './assets/optics-three.min.js';
     applyFactorUI();
     updateAll();
     setRunning(false);
-    if (recordHint) recordHint.textContent = '观察时随时点一下，当前时刻与读数就记进下面的表格（点「重置」会清空）。';
-    if (recSum) recSum.textContent = '点上面的按钮开始记录。';
   }
 
   /* ---- 绑定 ---- */
@@ -1388,7 +1274,15 @@ import * as THREE from './assets/optics-three.min.js';
   const cbFlow = $('toggleFlow');
   if (cbFlow) cbFlow.addEventListener('change', (e) => { toggles.flow = e.target.checked; updateAll(); });
   const cbMicro = $('toggleMicro');
-  if (cbMicro) cbMicro.addEventListener('change', (e) => { toggles.micro = e.target.checked; drawMicro(0.016); requestRender(); });
+  if (cbMicro) cbMicro.addEventListener('change', (e) => {
+    toggles.micro = e.target.checked;
+    /* ★ 这个开关以前是【假开关】：drawMicro() 里根本没读 toggles.micro，
+       勾掉也照样画。现在关掉就把整块微观示意收起来。 */
+    const inset = $('microInset');
+    if (inset) inset.style.display = toggles.micro ? '' : 'none';
+    drawMicro(0.016);
+    requestRender();
+  });
 
   if (recordBtn) {
     recordBtn.addEventListener('click', () => {
@@ -1400,12 +1294,11 @@ import * as THREE from './assets/optics-three.min.js';
       });
       if (state.records.length > 30) state.records.shift();
       renderRecords();
-      const wrap = recordBodySide ? recordBodySide.closest('.rec-wrap') : null;
+      const wrap = recordBody ? recordBody.closest('.rec-wrap') : null;
       if (wrap) wrap.scrollTop = wrap.scrollHeight;
       recordBtn.classList.remove('hit');
       void recordBtn.offsetWidth;
       recordBtn.classList.add('hit');
-      if (recordHint) recordHint.textContent = HINT_DONE;
       requestRender();
     });
   }
@@ -1434,13 +1327,105 @@ import * as THREE from './assets/optics-three.min.js';
     updateCamera();
   }, { passive: false });
   window.addEventListener('resize', resize);
+  /* 舞台尺寸会被外部改（全屏、窄屏折叠、浏览器缩放），只监听 window.resize
+     会在全屏那一刻拿不到新尺寸 —— 画布被拉成旧宽高比。 */
+  if (typeof ResizeObserver !== 'undefined') {
+    try { new ResizeObserver(() => resize()).observe(stage); } catch (_) { /* ignore */ }
+  }
+
+  /* ==========================================================================
+     十四之二、全屏（站内规矩：实验画面必须能全屏）
+     ---------------------------------------------------------------------------
+     全屏目标取【整个舞台】而不是画布：参数面板、记录按钮、HUD 都是舞台的后代，
+     所以全屏里照样能调参数、能点「记录这一组」，不用退出来再按。
+     ★ UA 的 :fullscreen 样式在个别浏览器里要下一帧才落到布局上，只重排一次会拿到
+       切换过程中的中间尺寸（画布变形）；headless 里 rAF 还可能一次都不回调，
+       所以再补一个 setTimeout 兜底。
+     ========================================================================== */
+  const fsBtn = $('fsBtn');
+  let fsLayouts = 0;
+  const fsIsOn = () => document.fullscreenElement === stage || document.webkitFullscreenElement === stage;
+  function fsLayout() { resize(); requestRender(); fsLayouts++; }
+  if (fsBtn) {
+    fsBtn.addEventListener('click', () => {
+      if (document.fullscreenElement || document.webkitFullscreenElement) {
+        (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+      } else if (stage.requestFullscreen) {
+        stage.requestFullscreen();
+      } else if (stage.webkitRequestFullscreen) {
+        stage.webkitRequestFullscreen();
+      }
+    });
+  }
+  function onFsChange() {
+    const on = fsIsOn();
+    if (fsBtn) {
+      const ex = fsBtn.querySelector('.fs-expand');
+      const cp = fsBtn.querySelector('.fs-compress');
+      const lb = fsBtn.querySelector('.lbl');
+      if (ex) ex.style.display = on ? 'none' : '';
+      if (cp) cp.style.display = on ? '' : 'none';
+      if (lb) lb.textContent = on ? '退出' : '全屏';
+      fsBtn.title = on ? '退出全屏' : '全屏显示实验画面';
+      fsBtn.setAttribute('aria-label', fsBtn.title);
+    }
+    fsLayout();
+    requestAnimationFrame(() => requestAnimationFrame(fsLayout));
+    setTimeout(fsLayout, 90);
+  }
+  document.addEventListener('fullscreenchange', onFsChange);
+  document.addEventListener('webkitfullscreenchange', onFsChange);
+  /* ★ 兜底轮询：headless Chrome（以及个别内嵌 WebView）里 requestFullscreen 明明成功了、
+     document.fullscreenElement 也换了，却【一次 fullscreenchange 都不派发】——
+     于是按钮文案一直写着「全屏」、也不会重排。这里用 120 ms 的状态轮询兜住这种情况：
+     事件能正常派发时轮询什么都不做（状态没变就直接 return），代价是一次属性读取。 */
+  let fsOnCached = false;
+  setInterval(() => {
+    const on = fsIsOn();
+    if (on === fsOnCached) return;
+    fsOnCached = on;
+    onFsChange();
+  }, 120);
+
+  /* ==========================================================================
+     十四之三、参数面板：可展开 / 收起，就住在实验画面里
+     ---------------------------------------------------------------------------
+     ★ 面板是 .stage 的子元素（不是挂在 body 下）：全屏只渲染全屏元素及其子树，
+       挂在外面的浮层进全屏就【根本不存在】，而全屏里恰恰最需要调参数。
+     ★ 折叠是纯界面状态：不停仿真、不动任何参数。
+     ========================================================================== */
+  const paramsBox = $('evapParams'), paramsHead = $('paramsHead'),
+        paramsToggle = $('paramsToggle'), paramsBody = $('paramsBody');
+  function paramsOpen() { return !!paramsBox && !paramsBox.classList.contains('collapsed'); }
+  function setParamsOpen(on) {
+    if (!paramsBox) return;
+    paramsBox.classList.toggle('collapsed', !on);
+    if (paramsToggle) {
+      paramsToggle.setAttribute('aria-expanded', on ? 'true' : 'false');
+      paramsToggle.textContent = on ? '▾ 收起' : '▸ 展开';
+      paramsToggle.title = on ? '收起参数面板' : '展开参数面板';
+    }
+    requestRender();
+    return on;
+  }
+  if (paramsBox) {
+    if (paramsToggle) paramsToggle.addEventListener('click', (e) => { e.stopPropagation(); setParamsOpen(!paramsOpen()); });
+    if (paramsHead) paramsHead.addEventListener('click', (e) => {
+      if (e.target.closest && e.target.closest('#paramsToggle')) return;
+      setParamsOpen(!paramsOpen());
+    });
+    /* 面板压在画布上方：指针 / 滚轮事件不要漏到舞台上，将来给舞台加监听时
+       不会被当成「开始拖场景」 */
+    paramsBox.addEventListener('pointerdown', (e) => e.stopPropagation());
+    paramsBox.addEventListener('pointerup', (e) => e.stopPropagation());
+    paramsBox.addEventListener('wheel', (e) => e.stopPropagation(), { passive: true });
+  }
 
   /* ==========================================================================
      十五、启动
      ========================================================================== */
   canvas.style.cursor = 'grab';
   applySceneUI();
-  applyStepUI();
   applyFactorUI();
   updateCamera();
   resize();
@@ -1459,14 +1444,20 @@ import * as THREE from './assets/optics-three.min.js';
     uiAcc += dt;
     if (uiAcc >= 0.1) {
       uiAcc = 0;
-      /* ★ updateThermo() 必须在这一档里，不能只放在 updateAll()。
-         湿球读数是被动过程，换档后它一直在爬 —— 只刷 DOM 的话，温度计的
-         数字牌和红液柱会【永远停在换档那一刻的值】（也就是上一个档位的读数），
-         而记录表读的是 state.Tw，于是「记录对、画面错」。
-         贴图按文本去重 + dispose，所以这里的开销只在读数真的变化时才有。 */
+      /* ★★ 这一段是「读数在动、画面不动」的老病根，本页栽过两次：
+         ① updateThermo()：换档后湿球一直在爬，只刷 DOM 的话温度计的数字牌与
+            红液柱会【永远停在换档那一刻的值】（上一个档位的读数）——
+            而记录表读 state.Tw，于是「记录对、画面错」。
+         ② updateDrops() / updateVapor()：蒸发推进只改 state.remain，
+            而网格缩放只在 updateAll() 里算 —— 于是整个观察过程中
+            水滴【一点没变小】，HUD 的剩余水量却在往下掉。
+            这正是用户报的「水滴还是那个水滴、并没有消失」。
+         ⇒ 凡是「随仿真时间变化的画面量」，都必须挂在帧循环里，不能只挂 updateAll。 */
+      updateVisibility();
+      updateDrops();
+      updateVapor();
       updateThermo();
       updateReadouts();
-      drawChart();
       drawMicro(Math.max(dt, 0.016));
       dirty = true;
     }
@@ -1500,10 +1491,11 @@ import * as THREE from './assets/optics-three.min.js';
     fTemp, fArea, fWind, evapRate, dryTime, dryTimeNow, wetDelta, wetTarget, dryTarget,
     dropGeom, satFrac, colHeight, sceneFrame, chartBars,
     setScene, setFactor, setControl, resetSim, setRunning, setSpeed, setView,
-    updateAll, updateVisibility, updateCamera, updateReadouts, drawChart, drawMicro,
-    animateParts,
+    updateAll, updateVisibility, updateCamera, updateReadouts, updateCompare,
+    updateDrops, updateVapor, drawMicro, animateParts,
     clearRecords, renderRecords, statusText, lockedFactors,
-    stepEvapDt, relaxThermo, applyStepUI,
+    stepEvapDt, relaxThermo,
+    setParamsOpen, paramsOpen,
 
     /* 喂帧：无头沙箱里 requestAnimationFrame 一次都不触发，必须显式推进 */
     driveAnim(seconds, dt = 1 / 60) {
@@ -1546,18 +1538,22 @@ import * as THREE from './assets/optics-three.min.js';
     dropInfo() {
       const G = dropGeom(state.levels.area);
       const d = drops[0];
+      /* 线性尺寸 ∝ 体积^(1/3) —— 与 updateDrops() 喂给网格的 rf 是同一个量 */
+      const rf = Math.cbrt(Math.max(state.remain, 0));
+      const a = G.a * rf, h = G.h * rf;
       return {
         n: drops.length,
-        a: +G.a.toFixed(5), h: +(G.h * state.remain).toFixed(5),
-        a2h: +(G.a * G.a * G.h * state.remain).toFixed(6),
+        a: +a.toFixed(5), h: +h.toFixed(5), rf: +rf.toFixed(6),
+        a2h: +(a * a * h).toFixed(6),
         a2hRef: +(G.a2hRef).toFixed(6),
-        vol: +((2 / 3) * Math.PI * G.a * G.a * G.h * state.remain).toFixed(6),
+        vol: +((2 / 3) * Math.PI * a * a * h).toFixed(6),
         vol0: +V0.toFixed(6),
         remain: +state.remain.toFixed(5),
         areaL: state.levels.area,
         scale: d ? { x: +d.scale.x.toFixed(5), y: +d.scale.y.toFixed(5), z: +d.scale.z.toFixed(5) } : null,
         y: d ? +d.position.y.toFixed(4) : null,
         visible: d ? d.visible : false,
+        visibleCount: drops.filter((m) => m.visible).length,
         xs: drops.map((m) => +m.position.x.toFixed(3))
       };
     },
@@ -1579,13 +1575,59 @@ import * as THREE from './assets/optics-three.min.js';
         zs: thermos.map((g) => +g.position.z.toFixed(3))
       };
     },
-    /* 柱状图：物理值 + 画出来的像素高度（两处必须同源） */
-    chartInfo() {
+    /* 对照条：物理值 + 真正画出来的条宽（两处必须同源，否则条宽可以是假的） */
+    cmpInfo() {
+      const box = cmpBox;
+      const rows = chartBars().map((b) => ({ key: b.key, sec: +b.sec.toFixed(4), hit: b.hit }));
+      const drawn = box ? Array.from(box.querySelectorAll('.cmp-row')).map((el) => {
+        const bar = el.querySelector('.track i');
+        const b = el.querySelector('b');
+        return {
+          key: (el.querySelector('span') || {}).textContent || '',
+          text: b ? b.textContent : '',
+          wPct: bar ? +parseFloat(bar.style.width).toFixed(2) : 0,
+          px: bar ? +bar.getBoundingClientRect().width.toFixed(2) : 0,
+          hit: el.classList.contains('hit')
+        };
+      }) : [];
+      return { rows, drawn, now: +dryTimeNow().toFixed(4) };
+    },
+    /* 参数面板：位置、面积占比、和舞台的包含关系 —— 判「参数真的收进了面板」
+       要读【真的画在哪儿】，不是 CSS 里写了什么 */
+    paramsPanelInfo() {
+      if (!paramsBox) return null;
+      const r = paramsBox.getBoundingClientRect();
+      const st = stage.getBoundingClientRect();
+      const body = paramsBody ? getComputedStyle(paramsBody) : null;
       return {
-        bars: chartBars().map((b) => ({ key: b.key, sec: +b.sec.toFixed(4), hit: b.hit })),
-        now: +dryTimeNow().toFixed(4),
-        drawn: state.drawn.chartBars || [],
-        nowY: state.drawn.chartNowY
+        open: paramsOpen(),
+        text: paramsToggle ? paramsToggle.textContent : '',
+        expanded: paramsToggle ? paramsToggle.getAttribute('aria-expanded') : null,
+        bodyDisplay: body ? body.display : null,
+        /* 面板必须是舞台的后代 —— 全屏只渲染全屏元素及其子树 */
+        inStage: stage.contains(paramsBox),
+        insideStage: r.left >= st.left - 1 && r.right <= st.right + 1
+                     && r.top >= st.top - 1 && r.bottom <= st.bottom + 1,
+        areaPct: +(r.width * r.height / (st.width * st.height) * 100).toFixed(2),
+        scrollable: paramsBody ? paramsBody.scrollHeight > paramsBody.clientHeight + 1 : false,
+        buttons: paramsBody ? paramsBody.querySelectorAll('button').length : 0,
+        checks: paramsBody ? paramsBody.querySelectorAll('input[type="checkbox"]').length : 0,
+        rect: { x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height) },
+        stage: { x: Math.round(st.left), y: Math.round(st.top), w: Math.round(st.width), h: Math.round(st.height) }
+      };
+    },
+    /* 全屏：目标是不是【整个舞台】（不是画布）、面板在不在全屏子树里、重排了几次 */
+    fsInfo() {
+      const el = document.fullscreenElement || document.webkitFullscreenElement || null;
+      const canvas = renderer.domElement;
+      return {
+        on: !!el,
+        targetIsStage: el === stage,
+        panelInFs: !!el && el.contains(paramsBox),
+        recordInFs: !!el && el.contains(recordBtn),
+        layouts: fsLayouts,
+        canvasW: Math.round(canvas.clientWidth), canvasH: Math.round(canvas.clientHeight),
+        stageW: Math.round(stage.clientWidth), stageH: Math.round(stage.clientHeight)
       };
     },
     drawn() { return { ...state.drawn }; },
