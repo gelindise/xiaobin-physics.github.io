@@ -624,7 +624,8 @@
       // 而拖滑片正是这个实验里唯一要动手的操作（用户 2026-10-22 第 3 点）。
       if (c.type === 'rheostat' && (hoverCompId === c.id || (slideDrag && slideDrag.comp === c))) {
         var hflip = ((c.rot || 0) % 360 === 180) ? -1 : 1;
-        var hx = sliderXOf(c), hy = c.y + 14 * hflip;
+        // 箭头在轴线上方（局部 −20 … −12），圆环套在它身上
+        var hx = sliderXOf(c), hy = c.y - 16 * hflip;
         g.save();
         g.beginPath(); g.arc(hx, hy, 9, 0, Math.PI * 2);
         g.fillStyle = 'rgba(234,88,12,0.12)'; g.fill();
@@ -1113,7 +1114,9 @@
         var wx = sliderXOf(c);
         var flip = ((c.rot || 0) % 360 === 180) ? -1 : 1;
         var dy = (p.y - c.y) * flip;
-        if (Math.abs(p.x - wx) <= 16 && dy >= -6 && dy <= 40) return { comp: c, x: wx };
+        // 滑片杆和箭头在【轴线上方】（局部 −30 … −12），电阻丝方框在 ±12。
+        // 抓取区取 −36 … +6：杆、箭头、以及方框上沿一点，都好抓。
+        if (Math.abs(p.x - wx) <= 16 && dy >= -36 && dy <= 6) return { comp: c, x: wx };
       }
       return null;
     }
@@ -1308,8 +1311,14 @@
       var p = toLocal(ev);
       if (wireDrag) {
         if (Math.hypot(p.x - wireDrag.from.at.x, p.y - wireDrag.from.at.y) > 5) wireDrag.moved = true;
+        // 🔴 预览的线头【永远等于鼠标位置】，绝不往引脚上吸。
+        // 上一版把 30px 内的引脚当成落点，于是鼠标一经过某个接线柱，线头就「啪」
+        // 地跳到那个柱子上 —— 用户 2026-10-22 第二次反馈的「它不跟着我的轨迹，
+        // 有的时候会自动跑到其他地方」就是这个。
+        // 磁吸留到【松手那一刻】做：靠近 30px 才真的接上去，拖的时候只把目标柱
+        // 用橙圈标出来（看得见「松手会接到这儿」，但线不乱跑）。
         var tgt = wireTarget(p, wireDrag.from);
-        var to = tgt ? tgt.at : freePoint(p);
+        var to = freePoint(p);
         wireDrag.cur.pts = previewPath(wireDrag.from, to);
         wireDrag.target = tgt;
         hoverPin = tgt ? { compId: tgt.comp.id, pin: tgt.pin } : null;
