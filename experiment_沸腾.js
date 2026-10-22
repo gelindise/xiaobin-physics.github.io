@@ -8,6 +8,9 @@ import * as THREE from './assets/optics-three.min.js';
          硼硅玻璃烧杯 + 水、硬纸盖（中央开孔穿温度计）、温度计。
    物理：单节点热平衡 —— 酒精灯给水加热，水向环境散热；到达沸点后温度不再上升，
          多出来的功率全部用于汽化（汽化潜热），水量随之缓慢减少。
+         热不是从灯直接进水里的：中间的石棉网、铁圈、杯底是有热容的「余温件」，
+         撤火后它们还在供热（指数衰减），所以水会再沸腾两三秒、越沸越弱才停 ——
+         这正是真实实验里看到的样子（见 RESID_C / RESID_K）。
          沸点由当前气压用 Antoine 方程算出（101 kPa → 100 ℃，70 kPa → 90 ℃），
          温度曲线由方程实时算出，不是预先画好的折线。
    ========================================================================== */
@@ -82,6 +85,22 @@ import * as THREE from './assets/optics-three.min.js';
   const BOIL_HOLD = 180;                             // 沸腾平台维持这么久（模拟秒）才算做完
   const MASS_MIN = 0.55;                             // 水量降到初始值的这个比例就收工（别把水烧干）
 
+  /* ---- 「石棉网有余温」：撤火后水不会立刻停沸 ----------------------------------
+     酒精灯并不直接烧水，中间隔着石棉网、铁圈和烧杯底。这一套「余温件」自己是有
+     热容的：撤走酒精灯以后，它们还烫着，继续往水里灌热，只是功率随时间指数衰减 ——
+     所以水会【再沸腾两三秒、越沸越弱】，之后才真正开始降温。
+     只算水的单节点模型做不到这件事（P 一归零温度立刻往下掉），这里补一个热源节点：
+       Th = 石棉网 / 铁圈 / 杯底 的温度，q = K_H·(Th − Tw) = 这一刻真正进入水的功率
+     灯还烧着时，余温件在 τ ≈ 1.6 s 内就到达准稳态（Th − Tw = P_LAMP/K_H），
+     所以这一段直接按 q = P_LAMP 给水 —— 【加热段与原来逐字节一致】，升温速率不变；
+     撤火后 Th 只出不进，C_H·dTh/dt = −q，q 从 P_LAMP 起按 e^(−t/τ) 衰减。
+     跌到散热功率（加盖 50 W / 敞口 89 W）所需时间分别约 2.9 s / 1.9 s ——
+     这就是那「两三秒」。 */
+  const RESID_C = 48;                                // J/K：石棉网 + 铁圈 + 杯底的有效热容
+  const RESID_K = 30;                                // W/K：这套余温件向水传热的系数
+  const RESID_TAU = RESID_C / RESID_K;               // ≈ 1.6 s：余温衰减的时间常数
+  const RESID_MIN = P_LAMP * 0.03;                   // 9 W：余温低于它就算「真的不沸了」（气泡收住）
+
   /* ---- 「液化放热」的两个参数 ------------------------------------------------
      水面上跑出去的水蒸气碰到温度较低的硬纸盖与杯壁，会在上面【液化】成小水珠。
      液化是汽化的逆过程：汽化时吸走的潜热，液化时【原样放回来】—— 这些热又传回水里。
@@ -110,6 +129,7 @@ import * as THREE from './assets/optics-three.min.js';
     speed: 4,
     t: 0, T: AMB, Tb: 100,
     mass: M_WATER,           // 剩余水量 kg（沸腾时缓慢汽化）
+    Th: AMB,                 // 余温件（石棉网 + 铁圈 + 杯底）的温度 ℃
     lampOn: true,            // 酒精灯是否在加热
     lampAnim: 1,             // 0 = 已撤到旁边，1 = 在烧杯正下方
     flameAnim: 1,            // 火焰强度 0~1（撤去时淡出）
@@ -1574,7 +1594,10 @@ import * as THREE from './assets/optics-three.min.js';
        dT/dt = (P − k·(T − T₀)) / (m·c)
      一旦 T 到达沸点 Tb，温度就锁在 Tb，多出来的净功率全部变成汽化潜热：
        dm/dt = −(P − k·(Tb − T₀)) / L_v
-     撤去酒精灯（P = 0）后水开始降温，沸腾立刻停止 —— 这正是「沸腾需要继续吸热」。
+     ★ P 不是酒精灯的直接功率，而是「余温件」传给水的 q（见 RESID_C / RESID_K）。
+       撤火后 q 从 P_LAMP 指数衰减：水还会继续沸腾两三秒、越沸越弱，
+       等 q 跌到散热功率以下，温度才开始下降 —— 这才是真实实验看到的样子。
+       两个条件缺一不可的那句结论仍然成立：真正不吸热了，沸腾才停。
      散热系数 k 由【加盖 / 敞口】决定；加盖时汽化的水有一部分在盖底 / 杯壁上液化，
      质量与潜热一起回流（液化放热），所以加盖时水开得更快、也更省酒精。
      ========================================================================== */
@@ -1592,16 +1615,40 @@ import * as THREE from './assets/optics-three.min.js';
     return smoothstep(state.Tb - 8, state.Tb - 0.3, state.T);
   }
 
-  /* 画面上的沸腾程度：温度够了【并且】还在继续吸热才算沸腾。
-     撤去酒精灯后水仍是 100 ℃，但气泡、白气、水面翻腾必须立刻收住 ——
-     「沸腾需要继续吸热」正是本节要得出的结论，只按温度画就会自相矛盾。
-     乘 flameAnim（火焰本来就在 0.3 s 内淡出）是为了让「立刻停」在视觉上平滑收尾。 */
-  function boilnessVis() {
-    return boilness() * state.flameAnim;
+  /* 这一刻真正进入水的热功率 W。
+     灯在烧：余温件处于准稳态，热就是从灯来的，按满功率算（升温速率与老模型一致）。
+     撤了火：只剩它存的那点余温，按温差往水里传，随 Th 一起指数衰减。
+     取 ≥ 0：余温件的温度不会低于水温（它就在水底下被烧着），热量不会倒流回网上；
+     这一刀只防「外部把 state.T 直接改高」那种不自洽的状态，正常操作里恒为正值。 */
+  function heatIn() {
+    if (state.lampOn) return P_LAMP;
+    return Math.max(0, RESID_K * (state.Th - state.T));
   }
 
+  /* 热源强度 0~1（相对酒精灯满功率）：驱动气泡形态、白气、水面翻腾。
+     撤火后它从 1 一路衰减到 0 —— 气泡越来越小、白气越来越淡，就是「越沸越弱」。 */
+  function heatFrac() {
+    return state.lampOn ? 1 : clamp(heatIn() / P_LAMP, 0, 1);
+  }
+
+  /* 画面上的沸腾程度：温度够了【并且】还有热进来才算沸腾。
+     撤火后余温还在灌热的两三秒里 vis 从 1 平滑衰减到 0.17（越沸越弱），
+     等余温跌破散热功率、温度开始下降，boilness 再把它收到 0。
+     只按温度画就会自相矛盾：「沸腾需要继续吸热」正是本节要得出的结论。 */
+  function boilnessVis() {
+    return boilness() * heatFrac();
+  }
+
+  /* 是否在沸腾：到了沸点【并且】净吸热。
+     撤火后 q 仍大于散热功率的那两三秒里它还是 true —— 那正是「余温沸腾」。 */
   function isBoiling() {
-    return state.lampOn && state.T >= state.Tb - 0.02;
+    if (state.T < state.Tb - 0.02) return false;
+    return heatIn() > lossK() * (state.T - AMB);
+  }
+
+  /* 撤火后靠余温还在沸的那一段（单独一个阶段：按钮已撤火，但水还在滚） */
+  function residBoiling() {
+    return !state.lampOn && isBoiling();
   }
 
   /* 气泡半径随高度 u（0 = 杯内底，1 = 水面）的变化 —— 本实验要看的核心现象：
@@ -1629,8 +1676,15 @@ import * as THREE from './assets/optics-three.min.js';
   }
 
   function integrate(dt) {
-    const P = state.lampOn ? P_LAMP : 0;
-    const net = P - lossK() * (state.T - AMB);
+    /* ① 余温件：灯在烧就处在准稳态（比水温高 P_LAMP/K_H）；撤火后它只出不进，
+       按 C_H·dTh/dt = −q 指数回落。这一句就是「石棉网有余温」的全部来源 ——
+       少了它，撤火瞬间 q 归零、温度立刻掉。 */
+    const q = heatIn();
+    state.Th = state.lampOn
+      ? state.T + P_LAMP / RESID_K
+      : Math.max(AMB, state.Th - q / RESID_C * dt);
+
+    const net = q - lossK() * (state.T - AMB);
 
     if (state.T >= state.Tb - 1e-9 && net > 0) {
       // 沸腾：温度锁死，净功率全部用于汽化，水量缓慢减少
@@ -1681,6 +1735,7 @@ import * as THREE from './assets/optics-three.min.js';
   function resetSim() {
     state.t = 0;
     state.T = AMB;
+    state.Th = AMB;           // 余温件也回到室温：重置 = 一套全新的冷器材
     state.mass = M_WATER;
     state.boilStart = -1;
     state.boilTime = 0;
@@ -2207,30 +2262,37 @@ import * as THREE from './assets/optics-three.min.js';
     runBtn: $('runBtn'), pauseBtn: $('pauseBtn'), resetBtn: $('resetBtn'), lampBtn: $('lampBtn')
   };
 
-  /* 舞台左上角的状态灯：青＝升温中 / 黄＝即将沸腾 / 橙＝沸腾中 / 绿＝降温中。
-     和侧栏「状态」指标卡读同一份 state（T / Tb / lampOn），不另存一份 ——
+  /* 舞台左上角的状态灯：青＝升温中 / 黄＝即将沸腾 / 橙＝沸腾中 / 深橙＝余温沸腾 / 绿＝降温中。
+     和侧栏「状态」指标卡、记录表短状态读同一份 state，而且都从 phase() 一处派生 ——
      否则「画面写着沸腾中、侧栏写着降温中」这种自相矛盾查不出来。 */
+  function phase() {
+    if (residBoiling()) return 'resid';
+    if (isBoiling()) return 'boil';
+    if (!state.lampOn) return 'cool';
+    if (state.T >= state.Tb - 5) return 'near';
+    return 'heat';
+  }
+  const PHASES = {
+    boil:  { chip: '沸腾中',   note: '气泡越升越大',   color: '#fdba74', status: '沸腾中 · 温度不变',      short: '沸腾中' },
+    resid: { chip: '余温沸腾', note: '石棉网还在供热', color: '#fb923c', status: '余温沸腾 · 温度仍不变',  short: '余温沸腾' },
+    cool:  { chip: '降温中',   note: '撤火 · 已停沸',  color: '#86efac', status: '降温中 · 不再沸腾',      short: '降温中' },
+    near:  { chip: '即将沸腾', note: '气泡越升越小',   color: '#facc15', status: '即将沸腾',              short: '快开了' },
+    heat:  { chip: '升温中',   note: '杯底冒小气泡',   color: '#7dd3fc', status: '升温中',                short: '升温中' }
+  };
+
   function sampleStateChip() {
-    if (!state.lampOn) return { text: '降温中', note: '撤火 · 停止沸腾', color: '#86efac' };
-    if (state.T >= state.Tb - 0.02) return { text: '沸腾中', note: '气泡越升越大', color: '#fdba74' };
-    if (state.T >= state.Tb - 5) return { text: '即将沸腾', note: '气泡越升越小', color: '#facc15' };
-    if (state.T >= 45) return { text: '升温中', note: '杯底冒小气泡', color: '#7dd3fc' };
-    return { text: '升温中', note: '冷水 · 还没冒泡', color: '#7dd3fc' };
+    const ph = phase();
+    const note = ph === 'heat' && state.T < 45 ? '冷水 · 还没冒泡' : PHASES[ph].note;
+    return { text: PHASES[ph].chip, note, color: PHASES[ph].color };
   }
 
   function statusText() {
-    if (!state.lampOn) return state.T >= state.Tb - 0.05 ? '已撤火 · 停止沸腾' : '降温中 · 不再沸腾';
-    if (state.T >= state.Tb - 0.02) return '沸腾中 · 温度不变';
-    if (state.T >= state.Tb - 5) return '即将沸腾';
-    return '升温中';
+    return PHASES[phase()].status;
   }
 
   /* 右侧窄表格里的短状态，四个字以内才排得下一行 */
   function shortState() {
-    if (!state.lampOn) return '降温中';
-    if (state.T >= state.Tb - 0.02) return '沸腾中';
-    if (state.T >= state.Tb - 5) return '快开了';
-    return '升温中';
+    return PHASES[phase()].short;
   }
 
   function updateReadouts() {
@@ -2243,7 +2305,10 @@ import * as THREE from './assets/optics-three.min.js';
     els.heat.textContent = `${(state.heatBack / 1000).toFixed(2)} kJ`;
     els.hudTemp.textContent = state.T.toFixed(1);
     els.hudBoil.textContent = state.Tb.toFixed(1);
-    if (els.hudLamp) els.hudLamp.textContent = state.lampOn ? '加热中' : '已撤去';
+    if (els.hudLamp) {
+      els.hudLamp.textContent = state.lampOn ? '加热中'
+        : (residBoiling() ? '余温中' : '已撤火');
+    }
 
     /* 舞台左上角状态灯：与侧栏「状态」同源，读的是同一份 state */
     const chip = sampleStateChip();
@@ -2276,9 +2341,13 @@ import * as THREE from './assets/optics-three.min.js';
     const lowP = state.Tb < 99.5;
     let hint;
     if (!state.lampOn) {
-      hint = state.T >= state.Tb - 0.05
-        ? `酒精灯已经撤走：水还是 ${state.T.toFixed(1)} ℃，却立刻不再沸腾 —— 说明沸腾必须<b>继续吸热</b>，光达到沸点还不够。`
-        : `撤去酒精灯后水温正在下降（现在 ${state.T.toFixed(1)} ℃），气泡很快消失，沸腾停止。`;
+      /* 撤火后先有「余温沸腾」两三秒，再停沸、再降温 —— 三段话各说各的，
+         不能一句「立刻停止沸腾」糊过去（那是老版本不真实的简化）。 */
+      hint = residBoiling()
+        ? `酒精灯已经撤走，但<b>石棉网、铁圈和杯底还是烫的</b> —— 它们存的热还在往水里灌，水<b>仍在沸腾</b>，只是越来越弱。等这点余温散尽、水不再吸热，沸腾才会停。`
+        : (state.T >= state.Tb - 5
+          ? `余温散尽了：水还是 ${state.T.toFixed(1)} ℃，却<b>已经不再沸腾</b> —— 说明沸腾必须<b>继续吸热</b>，光达到沸点还不够。接下来温度开始下降。`
+          : `撤去酒精灯后水温正在下降（现在 ${state.T.toFixed(1)} ℃），气泡很快消失，沸腾停止。`);
     } else if (state.T < state.Tb - 8) {
       hint = `升温中：水温 ${state.T.toFixed(1)} ℃，离沸点还差 ${(state.Tb - state.T).toFixed(1)} ℃。盯住杯底 —— 有小气泡冒出来，但越往上越小。`;
     } else if (state.T < state.Tb - 0.02) {
@@ -2310,8 +2379,9 @@ import * as THREE from './assets/optics-three.min.js';
 
   function animateParts(dt) {
     clock += dt;
-    /* 视觉强度走 boilnessVis（温度够了【且】还在吸热）：
-       撤火后它 0.3 s 内归零，气泡形态、白气、水面翻腾一起收住。 */
+    /* 视觉强度走 boilnessVis（温度够了【且】还有热进来）：
+       撤火后它随石棉网余温一路衰减（约 3 s 跌到 0.17），气泡形态、白气、
+       水面翻腾跟着一起变弱；余温散尽、温度开始下降时才彻底收住。 */
     const b = boilnessVis();
     const depth = waterDepth();
     /* 烧杯还没装好（散放在台面上）时，气泡 / 白气 / 杯壁水珠都不许出现 ——
@@ -2364,11 +2434,11 @@ import * as THREE from './assets/optics-three.min.js';
 
     /* 气泡：出生在杯底，按 bubbleScale(u) 决定上升途中是缩还是胀。
        u ≥ 1（到水面破裂）或半径缩到看不见（半路消失）都回收，重新从杯底冒。
-       出现条件还要加一条「还在吸热，或水还没烧到沸点附近」：
-       撤去酒精灯后水温仍是 100 ℃（> Tb−8），此时杯底不再产生水蒸气，
-       气泡必须收住 —— 否则「沸腾需要继续吸热」的结论在画面上就站不住。
-       阈值 Tb−8 与 boilness() 的斜坡下沿取同一个值，两边不会各写一个数。 */
-    const showB = beakerReady && toggles.bubbles && state.T > 42 && (state.lampOn || state.T < state.Tb - 8);
+       出现条件 = 杯底还在产生水蒸气，也就是【还有热进来】：
+       撤去酒精灯后靠石棉网余温还能冒几秒（q 越来越小 → 气泡越来越小），
+       余温跌破 RESID_MIN 就收住 —— 不能一撤火就全没，也不能一直冒。
+       否则「沸腾需要继续吸热」的结论在画面上就站不住。 */
+    const showB = beakerReady && toggles.bubbles && state.T > 42 && (state.lampOn || heatIn() > RESID_MIN);
     for (const m of bubbles) {
       const u = m.userData;
       m.visible = showB;
@@ -2644,7 +2714,7 @@ import * as THREE from './assets/optics-three.min.js';
     { name: '02 加热升温', text: '<strong>开始加热：</strong>点“开始加热”，看着温度计的液柱一路上升，同时记下几个时刻的水温。这一步先不着急下结论，只把“升温”这段曲线画出来。' },
     { name: '03 观察气泡', text: '<strong>水开之前先看气泡：</strong>杯底冒出小气泡，可它<b>越往上升越小</b>，还没到水面就没了。原因是上层水温还低于沸点，泡里的水蒸气遇冷又液化成水。' },
     { name: '04 水沸腾了', text: '<strong>到沸点：</strong>温度升到 <b>100 ℃</b>（标准大气压）就不再上升了，但酒精灯还在烧。这时气泡<b>越往上升越大</b>，到水面破裂，放出大量水蒸气。水面上方的“白气”是水蒸气遇冷液化成的<b>小水珠</b>，不是水蒸气本身。' },
-    { name: '05 撤去酒精灯', text: '<strong>撤去酒精灯：</strong>点右侧的“撤去酒精灯”。水明明还是 100 ℃，却<b>立刻停止沸腾</b> —— 说明沸腾必须同时满足两个条件：<b>温度达到沸点</b>、<b>继续吸热</b>，缺一不可。' },
+    { name: '05 撤去酒精灯', text: '<strong>撤去酒精灯：</strong>点右侧的“撤去酒精灯”。水温仍是 100 ℃，但热源没了 —— 靠石棉网和杯底的<b>余温</b>还能再沸腾两三秒，气泡越来越小、越来越少，余温散尽就<b>彻底停沸</b>，之后温度才开始下降。这说明沸腾必须同时满足两个条件：<b>温度达到沸点</b>、<b>继续吸热</b>，缺一不可。' },
     { name: '06 加盖还是敞口', text: '<strong>加盖还是敞口：</strong>水蒸气跑出水面后碰到温度较低的杯壁和纸盖，会<b>液化</b>成小水珠（看杯壁上越积越多的水珠）。液化是汽化的<b>逆过程</b> —— 汽化吸走多少潜热，液化就<b>放回</b>多少，这些热又传回水里；加上盖子本身挡掉了向空气的散热，所以<b>加盖时水开得更快</b>。点右侧「④ 杯口加盖」在<b>加盖</b>与<b>敞口</b>之间来回切，比一比同一段时间里水温升到多少。' },
     { name: '07 描点画图', text: '<strong>自己画一遍图：</strong>真实的实验报告里，图是自己<b>描点</b>画出来的，不是电脑替你画的 —— 所以这张图上<b>默认没有曲线</b>，要你自己把它画出来。点右侧「② 记录数据」里的<b>「描点画图」</b>，你刚才记下的每一组数据都会变成图上的一个<b>紫点</b>；再点<b>「连成折线」</b>，用直线把这些点依次连起来 —— 这就是手工描点得到的图像。画完之后再点<b>「对照真值曲线」</b>，把橙色的真值曲线叠上来比一比：折线对得上吗？如果水沸腾那一段的点记得太稀，就会把<b>温度不变的那段平台</b>连成一条斜线，看不出“沸腾时温度不变”。所以实验时要在<b>水快开和刚开的那一段多记几组</b>。' }
   ];
@@ -2955,6 +3025,8 @@ import * as THREE from './assets/optics-three.min.js';
       updateWater(); pushSample(); updateReadouts(); drawChart(); drawMicro(0.016);
       return {
         t: state.t, T: state.T, Tb: state.Tb, mass: state.mass, boiling: isBoiling(), boil: boilness(),
+        /* 余温件：Th 是石棉网/铁圈/杯底现在的温度，q 是这一刻真正进水的功率 */
+        Th: state.Th, q: heatIn(), heatFrac: heatFrac(), resid: residBoiling(),
         lidOn: state.lidOn, evapG: state.evapG, condG: state.condG, heatBack: state.heatBack
       };
     },
@@ -3063,7 +3135,9 @@ import * as THREE from './assets/optics-three.min.js';
       gotoView: gotoAssembleView,
       fit: fitAssembleView
     },
-    boilness, boilnessVis, isBoiling, bubbleScale, waterDepth, boilingPoint,
+    boilness, boilnessVis, isBoiling, residBoiling, heatIn, heatFrac, bubbleScale, waterDepth, boilingPoint,
+    /* 余温件参数：自检要按这些常量算「撤火后还能沸几秒」，不许在脚本里另抄一份 */
+    resid: { C: RESID_C, K: RESID_K, tau: RESID_TAU, min: RESID_MIN, P: P_LAMP },
     setPressure(key) { setPressure(key); applyPressureUI(); refreshAll(); },
     /* 加盖 / 敞口：对外只暴露这一个入口，UI 高亮与重绘一起做 */
     setLid(on) { setLid(on); applyLidUI(); refreshAll(); },
