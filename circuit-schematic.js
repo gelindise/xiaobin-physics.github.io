@@ -252,6 +252,16 @@
       var hs = (D && D.HALF != null) ? D.HALF : 70;
       return [{ x: -hs, y: 0 }, { x: 0, y: SPDT_STEM_Y }, { x: hs, y: 0 }];
     }
+    // 滑动变阻器：符号的 A/B 引线【画在轴线上】（drawSymbol 里 lead(T[0],-56)），
+    // 所以两个引脚必须在 y = 0。原来落到默认分支读的是 D.TERMINALS —— 那是
+    // 【实物】接线柱的坐标（在电阻丝下面 y = +26），于是每一根接到变阻器的
+    // 导线都要先拐一个 26px 的台阶才下得去（用户 2026-10-22：「滑动变阻器接线
+    // 的时候要和其他的线正好是对齐的，现在是有一点错位」）。
+    // 第 2/3 号端子（滑片 C/D）不从这里取：schTermWorld 单独算箭头杆顶。
+    if (type === 'rheostat') {
+      var hr = (D && D.HALF != null) ? D.HALF : 70;
+      return [{ x: -hr, y: 0 }, { x: hr, y: 0 }, { x: 0, y: 0 }, { x: 0, y: 0 }];
+    }
     return (D && D.TERMINALS[type]) || [];
   }
   // 公共端引线往下的长度（见 symTerms 里那段）。取 32：符号墨迹框的下沿在
@@ -1315,8 +1325,12 @@
       }
       case 'rheostat': {
         var mx = (rec && rec.Rmax != null) ? +rec.Rmax : (P.Rmax != null ? +P.Rmax : 20);
-        // 接线由导线本身表示，图上不重复印 B-C 等调试信息；保留教学需要的滑片位置。
-        return '最大 ' + num(mx) + ' Ω · 滑片 ' + num(it.meta.slide);
+        // 接线由导线本身表示，图上不重复印 B-C 等调试信息；铭牌印【当下接入的阻值】
+        // ——「滑片 0.4」是个抽象的分数，学生要的是「现在接进去几欧」。
+        // 拖滑片时这个数当场跟着变（没通电时按 params.slide 现算，一样会变）。
+        var Rr = (rec && rec.rUsed != null) ? +rec.rUsed : null;
+        if (Rr == null && it.meta && it.meta.slide != null) Rr = mx * it.meta.slide;
+        return '最大 ' + num(mx) + ' Ω' + (Rr == null ? '' : ' · 接入 ' + num(Rr) + ' Ω');
       }
       // 二极管的铭牌是【颜色】而不是电压 —— 真实管子就是按颜色分规格卖的，
       // 正向压降是那个颜色的属性。把两个数一起印出来，学生才知道「3V 点不亮

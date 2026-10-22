@@ -122,6 +122,11 @@
 
     var scene = { comps: [], wires: [] };
     var results = null, selId = null;
+    // 通电状态（用户 2026-10-22 第 1 点）：连好电路【不算通电】，点「▶ 运行」
+    // 才真的通电 —— 在那之前电表一个数都不显示，数据表全是「—」。
+    // 这既符合实验室的真实流程（先接线、检查、再合闸），也让学生分清
+    // 「图画完了」和「电路在工作」两件事。
+    var energized = false;
     var undoStack = [], redoStack = [];
     var drag = null;            // 拖元件
     var wireDrag = null;        // 拉线（从某个引脚拖到另一个）
@@ -140,7 +145,7 @@
     var head = el('div', 'labHead');
     head.appendChild(el('span', 'labTitle', '📐 电路图画布'));
     head.appendChild(el('span', 'labTip',
-      '拖符号进来 → 点一个接线柱、再点另一个就接上（也可以直接拖过去）→ 线头落在导线上自动三通'));
+      '拖符号 → 点两个接线柱就接上（或直接拖）→ 接好点「▶ 运行」通电看读数'));
     var btnX = el('button', 'labX', '✕ 关闭');
     btnX.type = 'button';
     head.appendChild(btnX);
@@ -417,7 +422,7 @@
                (w.b.compId === aComp.id && w.b.termIdx === tA && w.a.compId === bComp.id && w.a.termIdx === tB);
       });
     }
-    function addWire(aComp, aPin, bComp, bPin, noUndo) {
+    function addWire(aComp, aPin, bComp, bPin, noUndo, via) {
       var tA = termOfPin(aComp, aPin), tB = termOfPin(bComp, bPin);
       if (aComp.id === bComp.id && tA === tB) return false;
       if (wireExists(aComp, tA, bComp, tB)) return false;
@@ -426,7 +431,9 @@
       var pb = pinWorld(bComp, bPin, scene.wires, recOf(bComp));
       scene.wires.push({ a: { compId: aComp.id, termIdx: tA },
                          b: { compId: bComp.id, termIdx: tB },
-                         via: routeBetween(pa, pb, [aComp.id, bComp.id]) });
+                         // via 由调用方给（手画的那根 = 用户拖出来的那条折线，
+                         // 松手前后一模一样，不会「啪」地跳一下）；没给就按避让算。
+                         via: via || routeBetween(pa, pb, [aComp.id, bComp.id]) });
       solve(); renderAll();
       return true;
     }
@@ -473,6 +480,7 @@
       if (!scene.comps.length && !scene.wires.length) return;
       pushUndo();
       scene.comps = []; scene.wires = []; selId = null;
+      energized = false;              // 画布清空 = 没有电路可通电
       solve(); renderAll();
     }
 
@@ -481,6 +489,10 @@
     var shortSeen = null;
     function solve() {
       shortSeen = null;
+      // 🔴 没点「运行」= 没通电：不求解、不出示数、也不烧东西。
+      // 只闭合开关不算通电 —— 这正是用户第 1 点要的「模拟」：
+      // 真实实验里也是先接线、检查、再合闸，合闸（点运行）之后才读表。
+      if (!energized) { results = null; flows = []; return; }
       // 损坏要迭代到收敛：烧断一个灯泡会改拓扑，拓扑一变读数又变。
       // 和主画布同一个做法（那边叫 DAMAGE_MAX_PASS），最多三轮。
       for (var pass = 0; pass < 3; pass++) {
@@ -517,11 +529,14 @@
     }
     function warningsOf() {
       var out = [];
-      if (!results) return out;
-      (results.warnings || []).forEach(function (w) { out.push({ code: w.code, msg: w.message }); });
-      var sc = shortSeen || results.shortCircuit;
-      if (sc && sc.compIds && sc.compIds.length) {
-        out.push({ code: 'SHORT', msg: '电源被短路：电流极大，器材会被烧坏' });
+      // 没通电时没有「新的」警告，但【已经烧坏的器材】还要照旧列出来 ——
+      // 那是物理损伤，不会因为断电就自己好了。
+      if (results) {
+        (results.warnings || []).forEach(function (w) { out.push({ code: w.code, msg: w.message }); });
+        var sc = shortSeen || results.shortCircuit;
+        if (sc && sc.compIds && sc.compIds.length) {
+          out.push({ code: 'SHORT', msg: '电源被短路：电流极大，器材会被烧坏' });
+        }
       }
       scene.comps.forEach(function (c) {
         if (c.fault) out.push({ code: 'FAULT', msg: TYPE_LABEL[c.type] + ' ' + c.id + '：' + (c.faultWhy || '已损坏') });
@@ -604,6 +619,18 @@
       g.save();
       SC().drawSymbol(g, it, D(), true);
       g.restore();
+      // 滑片手柄：悬停或正在拖时，在箭头尖上套一个橙色圆环。
+      // 箭头只有 10×14px，不给提示学生根本想不到「这根箭头能拖」——
+      // 而拖滑片正是这个实验里唯一要动手的操作（用户 2026-10-22 第 3 点）。
+      if (c.type === 'rheostat' && (hoverCompId === c.id || (slideDrag && slideDrag.comp === c))) {
+        var hflip = ((c.rot || 0) % 360 === 180) ? -1 : 1;
+        var hx = sliderXOf(c), hy = c.y + 14 * hflip;
+        g.save();
+        g.beginPath(); g.arc(hx, hy, 9, 0, Math.PI * 2);
+        g.fillStyle = 'rgba(234,88,12,0.12)'; g.fill();
+        g.lineWidth = 2; g.strokeStyle = 'rgba(234,88,12,0.85)'; g.stroke();
+        g.restore();
+      }
       // 故障标记：符号右上角一枚红牌。电路图上没有「烧黑」这种画法，
       // 只能用字说 —— 而学生最需要知道的恰恰是「这件已经坏了」。
       if (c.fault) {
@@ -945,10 +972,12 @@
         });
       });
     }
-    // 用户 2026-10-22 第 3 点：参数填好以后【点运行】，其余数据一次算齐。
-    // 平时改参数也实时算（上一轮要的「动态变化」），这个按钮是给学生一个
-    // 「我填完了，算一下」的落点 —— 算完把整张表闪一下，不然看不出有没有生效。
+    // 用户 2026-10-22 第 1、3 点：「连好电路之后，点『运行』才会把实时参数显示出来；
+    // 不运行、只闭合开关，不显示示数」。
+    // 所以 运行 = 合闸通电：点下去才 solve，示数才出现；再点一下变成「停止」，
+    // 断电、示数清空。通电之后改参数 / 扳开关 / 拖滑片都实时重算（上一轮要的动态）。
     function runNow() {
+      energized = true;
       solve(); renderAll();
       var src = scene.comps.filter(function (c) { return c.type === 'battery' || c.type === 'power'; })[0];
       var r = src ? recOf(src) : null;
@@ -962,46 +991,65 @@
               st === 'shorted' ? '电源被短路' : st === 'no-source' ? '还没有电源' : st);
       }
       say(msg, 2600);
-      sideData.classList.remove('flash');
-      void sideData.offsetWidth;          // 强制回流，动画才会重播
-      sideData.classList.add('flash');
+      flash(sideData);
       return msg;
     }
+    function stopNow() {
+      if (!energized) return;
+      energized = false;
+      solve(); renderAll();
+      say('已断电：示数清空。改完电路再点「▶ 运行」', 2600);
+    }
+    function flash(node) {
+      if (!node) return;
+      node.classList.remove('flash');
+      void node.offsetWidth;          // 强制回流，动画才会重播
+      node.classList.add('flash');
+    }
+    function runBtnHTML() {
+      return energized
+        ? '<button type="button" class="labRun stop" data-run="1" title="断电：示数清空，改完电路再运行">⏹ 停止</button>'
+        : '<button type="button" class="labRun" data-run="1" title="合闸通电：按当前参数算一遍">▶ 运行</button>';
+    }
     function renderData() {
-      if (!results) { sideData.innerHTML = '<h4>数据</h4><div class="labEmpty">—</div>'; return; }
-      var st = results.status;
-      var stTxt = st === 'ok' ? '电路导通' : (st === 'shorted' ? '电源短路' :
-                  (st === 'open-circuit' ? '断路' : (st === 'no-source' ? '还没有电源' : st)));
-      var html = '<h4>数据 <em class="' + (st === 'ok' ? 'ok' : 'bad') + '">' + stTxt + '</em>' +
-                 '<button type="button" class="labRun" data-run="1" title="按当前参数把整张表算一遍">▶ 运行</button></h4>';
+      // 没通电：表格照列（学生看得见自己摆了哪几件），但每个数都是「—」。
+      // 这一条就是用户要的「不运行不显示示数」——而且一眼看得出「是没通电，
+      // 不是坏了」。
+      var st = results ? results.status : null;
+      var stTxt = !results ? '未通电' : (st === 'ok' ? '电路导通' : (st === 'shorted' ? '电源短路' :
+                  (st === 'open-circuit' ? '断路' : (st === 'no-source' ? '还没有电源' : st))));
+      var html = '<h4>数据 <em class="' + (!results ? '' : (st === 'ok' ? 'ok' : 'bad')) + '">' + stTxt + '</em>' +
+                 runBtnHTML() + '</h4>';
       var rows = scene.comps.filter(function (c) { return c.type !== 'junction'; });
       if (!rows.length) html += '<div class="labEmpty">还没有元件</div>';
       else {
+        if (!results) html += '<div class="labEmpty">电路还没通电 —— 点右上角「▶ 运行」开始测量</div>';
         html += '<table class="labTable"><thead><tr><th>元件</th><th>I / A</th><th>U / V</th>' +
                 '<th>R / Ω</th><th>P / W</th></tr></thead><tbody>';
         rows.forEach(function (c) {
-          var r = recOf(c) || {};
+          var r = results ? (recOf(c) || {}) : null;
           var sel = (c.id === selId) ? ' class="on"' : '';
-          var R = (r.R == null) ? '—' : (Math.abs(r.R) >= 1000 ? (r.R / 1000).toFixed(1) + 'k' : (+r.R).toFixed(1));
+          var R = (!r || r.R == null) ? '—' :
+                  (Math.abs(r.R) >= 1000 ? (r.R / 1000).toFixed(1) + 'k' : (+r.R).toFixed(1));
           html += '<tr' + sel + ' data-id="' + c.id + '"><td>' + c.id + '</td>' +
-                  '<td>' + fmtRead(Math.abs(r.i || 0)) + '</td>' +
-                  '<td>' + fmtRead(Math.abs(r.v || 0)) + '</td>' +
+                  '<td>' + (r ? fmtRead(Math.abs(r.i || 0)) : '—') + '</td>' +
+                  '<td>' + (r ? fmtRead(Math.abs(r.v || 0)) : '—') + '</td>' +
                   '<td>' + R + '</td>' +
-                  '<td>' + fmtRead(Math.abs(r.p || 0)) + '</td></tr>';
+                  '<td>' + (r ? fmtRead(Math.abs(r.p || 0)) : '—') + '</td></tr>';
         });
         html += '</tbody></table>';
       }
       sideData.innerHTML = html;
       var rb = sideData.querySelector('button[data-run]');
-      if (rb) rb.addEventListener('click', runNow);
+      if (rb) rb.addEventListener('click', function () {
+        if (energized) stopNow(); else runNow();
+      });
       sideData.querySelectorAll('tr[data-id]').forEach(function (tr) {
         tr.addEventListener('click', function () {
           selId = tr.dataset.id; renderAll();
           // 点表格里那一行 = 点画布上那件器材：上面的参数卡要闪一下，
           // 不然学生不知道「参数在哪儿看」（用户 2026-10-22 第 3 点）。
-          sideParams.classList.remove('flash');
-          void sideParams.offsetWidth;
-          sideParams.classList.add('flash');
+          flash(sideParams);
         });
       });
     }
@@ -1051,14 +1099,21 @@
       return null;
     }
     // 变阻器的滑片：符号顶上那根箭头。抓它 = 改 slide（这就是「移动滑动变阻器」）。
+    // 抓取范围比箭头本身宽一点（±16、从轴线上方 10px 到电阻丝下沿）——
+    // 箭头只有 14px 高、10px 宽，按「像素级瞄准」的要求去抓，学生会以为它不能动。
+    function sliderXOf(c) {
+      var it = itemOf(c, scene.wires, recOf(c));
+      var sx = it.meta && it.meta.xl != null ? it.meta.xl : 0;
+      return c.x + ((c.rot || 0) % 360 === 180 ? -sx : sx);
+    }
     function hitSlider(p) {
       for (var i = scene.comps.length - 1; i >= 0; i--) {
         var c = scene.comps[i];
         if (c.type !== 'rheostat') continue;
-        var it = itemOf(c, scene.wires, recOf(c));
-        var sx = it.meta && it.meta.xl != null ? it.meta.xl : 0;
-        var wx = c.x + sx;
-        if (Math.abs(p.x - wx) <= 14 && p.y >= c.y - 46 && p.y <= c.y + 18) return { comp: c, x: wx };
+        var wx = sliderXOf(c);
+        var flip = ((c.rot || 0) % 360 === 180) ? -1 : 1;
+        var dy = (p.y - c.y) * flip;
+        if (Math.abs(p.x - wx) <= 16 && dy >= -6 && dy <= 40) return { comp: c, x: wx };
       }
       return null;
     }
@@ -1089,13 +1144,21 @@
       return null;
     }
     function freePoint(p) {
-      return { x: snap(p.x), y: snap(p.y) };
+      // 拖拽时线头【紧跟鼠标】，不吸网格：一吸就是 20px 一跳，看着像线没跟上
+      // （用户 2026-10-22 第 2 点：「导线画的时候要紧跟鼠标」）。
+      return { x: p.x, y: p.y };
     }
-    // 预览用的折线：和 addWire 里那条【同一个算法】，所以松手前后不会跳一下。
-    function previewPath(from, to, targetCompId) {
-      var ex = [from.comp.id];
-      if (targetCompId) ex.push(targetCompId);
-      var via = routeBetween(from.at, to, ex);
+    // 拖拽时的「橡皮筋」：只有一个折点，按【主要方向】先走。
+    // 鼠标往右走就先横着走 —— 折点永远落在鼠标正上方/正下方，线看起来一直
+    // 贴着鼠标；鼠标越过 45° 分界线时折点自动翻到另一条边（「它折的时候也跟着折」）。
+    function liveRoute(p, q) {
+      var dx = q.x - p.x, dy = q.y - p.y;
+      if (Math.abs(dx) < 1.5 || Math.abs(dy) < 1.5) return [];    // 同高/同列：直连
+      if (Math.abs(dx) >= Math.abs(dy)) return [[q.x, p.y]];      // 先横后竖
+      return [[p.x, q.y]];                                       // 先竖后横
+    }
+    function previewPath(from, to) {
+      var via = liveRoute(from.at, to);
       return [from.at].concat(via.map(function (v) { return { x: v[0], y: v[1] }; }), [to]);
     }
     function distToSeg(p, a, b) {
@@ -1160,11 +1223,24 @@
       scene.comps.push(j);
       return j;
     }
+    // 所有导线按当前端点重算折点（正交 + 避让）。拖元件时每一步都调一次，
+    // 保证画面上永远是横平竖直的，不会出现斜线。
+    function rerouteAll() {
+      scene.wires.forEach(function (w) {
+        var e = wireEnds(w);
+        if (e.a && e.b) {
+          w.via = routeBetween(e.a, e.b, [w.a.compId, w.b.compId].filter(Boolean));
+        }
+      });
+    }
     function finishWire(tgt) {
       var from = wireDrag.from;
       wireDrag = null; hoverPin = null;
       if (!tgt || (tgt.comp.id === from.comp.id && tgt.pin === from.pin)) { draw(); return; }
-      if (!addWire(from.comp, from.pin, tgt.comp, tgt.pin)) {
+      // 落点用【预览时的那条折线】：松手前看到的和松手后画出来的一模一样。
+      var pb = pinWorld(tgt.comp, tgt.pin, scene.wires, recOf(tgt.comp));
+      var via = pb ? liveRoute(from.at, pb) : null;
+      if (!addWire(from.comp, from.pin, tgt.comp, tgt.pin, false, via)) {
         say('这两个接线柱已经连过了');
       }
       draw();
@@ -1175,7 +1251,7 @@
       pushUndo();
       var j = splitWireAt(hit.wire, hit.at);
       if (!j) { draw(); return; }
-      addWire(from.comp, from.pin, j, 1, true);      // 撤销已在上面压过一次
+      addWire(from.comp, from.pin, j, 1, true, liveRoute(from.at, { x: j.x, y: j.y }));
       say('接到导线中间：这里自动生成一个接线点（实心点）');
     }
 
@@ -1196,6 +1272,13 @@
       }
 
       var hp = hitPin(p);
+      // 变阻器的滑片柱（1 号脚）长在箭头杆顶上，和「拖滑片」的抓取区重叠。
+      // 柱子只保留【杆顶那一小块】给接线，箭头（y 6~14）让给滑片 ——
+      // 不然学生想拖滑片，一点就变成拉线。要给滑片接线时也不用点它：
+      // 从别处拖一根线过来，30px 内会自动吸到这个柱子上（nearestPin）。
+      if (hp && hp.comp.type === 'rheostat' && hp.pin === 1) {
+        if (Math.hypot(hp.at.x - p.x, hp.at.y - p.y) > 6) hp = null;
+      }
       if (hp) {
         // 从引脚拉线：起点就是这个引脚
         wireDrag = { from: hp, cur: { pts: [hp.at, hp.at] }, moved: false, sticky: false };
@@ -1227,7 +1310,7 @@
         if (Math.hypot(p.x - wireDrag.from.at.x, p.y - wireDrag.from.at.y) > 5) wireDrag.moved = true;
         var tgt = wireTarget(p, wireDrag.from);
         var to = tgt ? tgt.at : freePoint(p);
-        wireDrag.cur.pts = previewPath(wireDrag.from, to, tgt ? tgt.comp.id : null);
+        wireDrag.cur.pts = previewPath(wireDrag.from, to);
         wireDrag.target = tgt;
         hoverPin = tgt ? { compId: tgt.comp.id, pin: tgt.pin } : null;
         cv.style.cursor = 'crosshair';
@@ -1236,8 +1319,10 @@
       }
       if (slideDrag) {
         var c = slideDrag.comp;
-        // 滑片行程：符号里的 ±54（和 drawSymbol 的 sx 同一段）
-        var rel = clamp((p.x - c.x) / 108 + 0.5, 0, 1);
+        // 滑片行程：符号里的 ±54（和 drawSymbol 的 sx 同一段）。
+        // 元件转 180° 时左右要反过来 —— 不翻的话往右拖滑片反而往左跑。
+        var sflip = ((c.rot || 0) % 360 === 180) ? -1 : 1;
+        var rel = clamp((p.x - c.x) * sflip / 108 + 0.5, 0, 1);
         c.params.slide = Math.round(rel * 100) / 100;
         solve(); refreshData();
         return;
@@ -1247,7 +1332,9 @@
         if (drag.moved) {
           drag.comp.x = snap(p.x - drag.dx);
           drag.comp.y = snap(p.y - drag.dy);
-          // 元件一动，挂在它身上的导线端点跟着走（端子坐标是现算的，不用改 via）
+          // 🔴 元件一动就【立刻重算所有导线的折点】：只靠端点在动、via 还是老坐标的话，
+          // 拖动过程中会看到一根根斜线（用户 2026-10-22：「导线始终都是横平竖直的」）。
+          rerouteAll();
           draw();
           renderData();
         }
@@ -1297,14 +1384,8 @@
             say(d.comp.params.closed ? '开关闭合' : '开关断开');
           }
         } else {
-          // 拖动过：位置变了，导线要重新走线（不然还是按老位置绕的）。
-          // 重新走线走的是带避让的 routeBetween，元件挪开以后线会自己让路。
-          scene.wires.forEach(function (w) {
-            var e = wireEnds(w);
-            if (e.a && e.b) {
-              w.via = routeBetween(e.a, e.b, [w.a.compId, w.b.compId].filter(Boolean));
-            }
-          });
+          // 拖动过：松手时再统一走一遍（拖动过程中每一步也走过，见 pointermove）
+          rerouteAll();
           solve(); renderAll();
         }
       }
@@ -1364,6 +1445,10 @@
     function loadPreset(i) {
       pushUndo();
       scene.comps = []; scene.wires = []; selId = null;
+      // 载入预设也【不通电】：和手工连的电路同一条规矩 —— 学生点一下「▶ 运行」
+    // 才看得见读数。不然「为什么预设一打开就有数、我自己连的没有」会成为一个
+    // 说不清的差别。
+      energized = false;
       function add(type, x, y, params, rot) {
         var c = { id: nextId(type), type: type, x: x, y: y, rot: rot || 0,
                   params: Object.assign(C().defaultParams(type), params || {}) };
@@ -1444,7 +1529,7 @@
         }
       });
       solve(); renderAll();
-      say('已载入预设：' + ['串联', '并联', '伏安法测电阻'][i]);
+      say('已载入预设：' + ['串联', '并联', '伏安法测电阻'][i] + '（点「▶ 运行」通电）', 2600);
     }
 
     // ── 顶栏按钮 ─────────────────────────────────────────────
@@ -1511,6 +1596,7 @@
                             via: (w.via || []).slice() };
                  }),
                  sel: selId,
+                 on: energized,
                  status: results ? results.status : null,
                  warns: warningsOf(),
                  readings: (function () {
@@ -1535,6 +1621,20 @@
       },
       boxOf: function (id) {
         var c = byId(id); return c ? symBox(c, scene.wires, recOf(c)) : null;
+      },
+      // 每根导线【实际画出来的折线】（含端子世界坐标与 via）。自检判「有没有斜线」
+      // 必须看这个 —— 自己拿 pinPos 拼路径时，电表/变阻器的引脚序号和端子号
+      // 不是一回事，拼出来的端点会错位（第一次就错在这儿）。
+      wirePaths: function () {
+        return scene.wires.map(function (w) {
+          return pathOf(w).map(function (p) { return { x: p.x, y: p.y }; });
+        });
+      },
+      // 符号下面那行铭牌（"最大 20 Ω · 接入 8.0 Ω" 这种）。自检要判「拖滑片时
+      // 接入阻值真的在变」，而那行字是画在画布上的，DOM 里查不到。
+      valueText: function (id) {
+        var c = byId(id); if (!c) return '';
+        return itemOf(c, scene.wires, recOf(c)).value || '';
       },
       // 自检 / 诊断用：给一个【逻辑坐标】，回答「这儿点到了谁」。
       // 命中判定和真实指针走的是同一组函数（hitPin / hitComp / hitSlider），
@@ -1573,10 +1673,15 @@
                  moved: !!(wireDrag && wireDrag.moved),
                  from: wireDrag ? { id: wireDrag.from.comp.id, pin: wireDrag.from.pin } : null,
                  target: (wireDrag && wireDrag.target)
-                   ? { id: wireDrag.target.comp.id, pin: wireDrag.target.pin } : null };
+                   ? { id: wireDrag.target.comp.id, pin: wireDrag.target.pin } : null,
+                 // 预览折线：判「线有没有紧跟鼠标」「折点是不是 L 形」都读它
+                 pts: (wireDrag && wireDrag.cur && wireDrag.cur.pts)
+                   ? wireDrag.cur.pts.map(function (q) { return { x: q.x, y: q.y }; }) : null };
       },
       cancelWire: function () { wireDrag = null; hoverPin = null; draw(); },
       run: runNow,
+      stop: stopNow,
+      isOn: function () { return energized; },
       W: W, H: H,
       version: '1.1.0',
     };
