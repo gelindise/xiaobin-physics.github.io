@@ -75,6 +75,16 @@ import * as THREE from './assets/optics-three.min.js';
   const SCALE_STEP = 1;                              // 分度值 ℃ —— 1 ℃ 一条刻度
   let scaleU0 = 0, scaleU1 = 1;                      // 由 makeThermoScale() 实测填入
 
+  /* ★ 温度计量程不是写死的 110 ℃：高压锅里沸点会升到 116.8 ℃，110 ℃ 的量程根本读不出来
+     （液柱顶死在管口、刻度也没有那个数）。所以量程做成一个可切换的值：
+       标准 / 高原 / 高山 → 0~110 ℃（教材常见量程，1 ℃ 分度、111 条刻度）
+       高压锅            → 0~130 ℃（同一支温度计的管长不变，只是每度对应的长度变短）
+     ★ 管长不变 ⇒ 「量程上限」永远落在贴图顶行 ⇒ scaleYOf(TH_RANGE) 恒等于管顶，
+       所以 STEM_Y0 / STEM_Y1 两个世界高度【不随量程变化】，液柱映射只有分母要换。 */
+  const THERMO_RANGE_STD = 110;
+  const THERMO_RANGE_COOKER = 130;
+  let TH_RANGE = THERMO_RANGE_STD;                   // 当前量程上限（℃）
+
   /* ------------------------------ 物理参数 ------------------------------ */
   const AMB = 20;                                    // 室温 ℃
   const M_WATER = 0.20;                              // 水的质量 kg（200 g）
@@ -119,11 +129,15 @@ import * as THREE from './assets/optics-three.min.js';
   const LID_LOSS_K = 1.8;
   const DROP_FULL_G = 3.0;                           // 回流 3 g 水珠就长满（画面上「越积越多」的满标）
 
-  /* 气压环境：沸点不写死，用 Antoine 方程从气压算出来 —— 面板上标多少就真算多少 */
+  /* 气压环境：沸点不写死，用 Antoine 方程从气压算出来 —— 面板上标多少就真算多少。
+     ★ 高压锅不是「海拔」，而是【密闭容器】：水蒸气跑不出去，锅内的水蒸气越积越多，
+       气压被限压阀顶到 180 kPa（≈1.8 个大气压）才排一点出去。气压高了，沸点就高 ——
+       Antoine 方程算出来 116.8 ℃，所以高压锅里的水能烧到 116.8 ℃ 才开。 */
   const PRESSURES = {
-    std:   { name: '标准大气压', p: 101.3, place: '平原地区' },
-    plain: { name: '高原',       p: 70.0,  place: '海拔约 3000 m' },
-    high:  { name: '高山',       p: 54.0,  place: '海拔约 5000 m' }
+    std:    { name: '标准大气压', p: 101.3, place: '平原地区' },
+    plain:  { name: '高原',       p: 70.0,  place: '海拔约 3000 m' },
+    high:   { name: '高山',       p: 54.0,  place: '海拔约 5000 m' },
+    cooker: { name: '高压锅',     p: 180.0, place: '密闭 · 限压阀', cooker: true }
   };
 
   /* ------------------------------ 状态 ------------------------------ */
@@ -141,6 +155,7 @@ import * as THREE from './assets/optics-three.min.js';
     boilTime: 0,             // 已沸腾的时长（模拟秒）
     lidOn: true,             // 是否盖着硬纸盖（加盖 → 蒸气在盖底 / 杯壁上液化回流放热）
     lidAnim: 1,              // 0 = 盖子已抬走（敞口），1 = 盖在杯口
+    cookerAnim: 0,           // 0 = 玻璃烧杯，1 = 高压锅（切换时平滑过渡，不是硬切）
     evapG: 0,                // 累计汽化的水量 g（从水面跑掉的水蒸气）
     condG: 0,                // 累计液化、又流回水里的水量 g
     heatBack: 0,             // 累计液化放热回给水的热量 J
@@ -821,6 +836,170 @@ import * as THREE from './assets/optics-three.min.js';
   lidInner.position.set(0, LID_Y, 0);
   lid.add(lidInner);
 
+  /* --- 高压锅：密闭加压（锅内 180 kPa → 沸点 116.8 ℃）------------------------
+     ★ 为什么锅身是【半透明】的：这一档要给学生看的正是「沸点变了」——
+       同一盏酒精灯，锅里的水会一直升到 116.8 ℃ 才开，气泡在锅里越升越大。
+       不透明的钢锅会把这一切挡得死死的，所以锅身用半透明不锈钢（能透视看锅内），
+       而锅底、把手、卡扣、限压阀仍用不透明钢 —— 一眼仍认得出这是一口真的压力锅。
+     ★ 位置：锅底与烧杯底面同高（都坐在石棉网上）、与温度计同轴 ⇒
+       水位、气泡、水珠、感温泡的世界坐标一个都不用改，只是外面换了一层壳。
+     ★ 不挂进 beaker 组：beaker 是要被散放 / 组装的器材，锅跟着它躺到台面上会很怪。
+       锅只在「装置装好之后」才出现（见 animateParts 里的 ca），也不参与任何包围盒计算，
+       所以组装视角的自动取景、九件散件不重叠那些断言都不受影响。 */
+  const COOK_R = 4.86;                                // 锅身外半径（铁圈内径 10.08 ⇒ 直径 9.72 正好坐进去）
+  const COOK_H = 7.50;                                // 锅口高度（自锅底量起）
+  const COOK_TOP = BK_Y0 + COOK_H;                    // 25.28
+  const COOK_DOME = 1.05;                             // 拱形锅盖的中心拱高
+  const COOK_HOLE = 0.34;                             // 锅盖中央孔（温度计穿过去）
+  const VALVE_X = 2.55;                               // 限压阀在锅盖上的偏心位置
+  const VALVE_Y = COOK_TOP + 2.28;                    // 阀口高度（配重顶上，蒸气从这里喷出来）
+
+  const cookerMat = new THREE.MeshPhysicalMaterial({
+    color: '#b9c5d1', metalness: 0.66, roughness: 0.24,
+    transparent: true, opacity: 0.62, side: THREE.DoubleSide, depthWrite: false,
+    clearcoat: 1.0, clearcoatRoughness: 0.07, envMapIntensity: 1.7
+  });
+  /* 锅身「金属骨架 + 观察窗」的 alphaMap：灰阶，白的（1）不透明、黑的（0）透光。
+     ★ 只用 opacity 调透明的话，整口锅会糊成一个玻璃罐，看不出是压力锅；
+       给它四条竖立柱 + 上下两条厚环带，中间开四扇窗 —— 一眼是「带视窗的压力锅」，
+       窗里能透视看见水在翻滚、气泡越升越大，这正是这一档要给学生看的东西。 */
+  function makeCookerAlpha() {
+    const W = 1024, H = 512;
+    const c = newCanvas(W, H), g = c.getContext('2d');
+    g.fillStyle = '#ffffff'; g.fillRect(0, 0, W, H);
+    /* 窗不是「完全透明」而是「毛玻璃」：留一点雾面（#3a3a3a ≈ 0.23），
+       窗才有玻璃的存在感 —— 全透的话整口锅只剩几条白带，读起来像玻璃罐。 */
+    g.fillStyle = '#3a3a3a';
+    const winW = W / 4;
+    for (let i = 0; i < 4; i++) {
+      const x0 = i * winW + winW * 0.105, x1 = (i + 1) * winW - winW * 0.105;
+      roundRect(g, x0, H * 0.145, x1 - x0, H * 0.70, 34);
+      g.fill();
+    }
+    const t = new THREE.CanvasTexture(c);
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    return t;
+  }
+  cookerMat.alphaMap = makeCookerAlpha();
+  cookerMat.needsUpdate = true;
+
+  /* 锅盖单独一份材质：比锅身实得多（钢盖），但仍留一点透明度 ——
+     默认视角俯角只有 0.16 rad，盖子几乎是侧看的，太透就只剩一条看不见的弧线，
+     「锅是盖着的」这件事在画面上就落不了地。 */
+  const cookerLidMat = new THREE.MeshPhysicalMaterial({
+    color: '#b6c2ce', metalness: 0.78, roughness: 0.26,
+    transparent: true, opacity: 0.82, side: THREE.DoubleSide, depthWrite: false,
+    clearcoat: 1.0, clearcoatRoughness: 0.06, envMapIntensity: 1.9
+  });
+  const cookerSteel = new THREE.MeshStandardMaterial({
+    color: '#96a2ae', metalness: 0.94, roughness: 0.30, envMapIntensity: 1.6
+  });
+  const cookerDark = new THREE.MeshStandardMaterial({
+    color: '#4d565f', metalness: 0.86, roughness: 0.40, envMapIntensity: 1.1
+  });
+
+  const cooker = new THREE.Group();
+  cooker.visible = false;
+  scene.add(cooker);
+
+  /* 锅身：略鼓的直筒（中段比锅口胖一点），Lathe 回转出来 */
+  const cookProfile = [
+    [4.58, 0.00], [4.76, 0.40], [COOK_R, 1.20], [COOK_R, 6.10], [4.80, 7.00], [4.72, COOK_H]
+  ].map(([r, y]) => new THREE.Vector2(r, y));
+  const cookWall = new THREE.Mesh(new THREE.LatheGeometry(cookProfile, 56), cookerMat);
+  cookWall.position.set(0, BK_Y0, 0);
+  cooker.add(cookWall);
+
+  /* 锅底：实心厚钢（不透明）—— 半透明的锅身才有「底下是实的」这个参照。
+     颜色压到中灰：原来用亮钢，被主光一照成了一块白圆盘，比水面还抢眼。 */
+  const cookFootMat = new THREE.MeshStandardMaterial({
+    color: '#78838e', metalness: 0.88, roughness: 0.34, envMapIntensity: 1.2
+  });
+  const cookFoot = new THREE.Mesh(new THREE.CylinderGeometry(4.52, 4.38, 0.44, 56), cookFootMat);
+  cookFoot.position.set(0, BK_Y0 + 0.22, 0);
+  cookFoot.castShadow = true; cookFoot.receiveShadow = true;
+  cooker.add(cookFoot);
+
+  /* 锅口卷边 + 腰箍：两道亮钢环，让半透明的锅身有金属轮廓 */
+  const cookRim = new THREE.Mesh(new THREE.TorusGeometry(4.74, 0.17, 12, 56), cookerSteel);
+  cookRim.rotation.x = Math.PI / 2;
+  cookRim.position.set(0, COOK_TOP, 0);
+  cookRim.castShadow = true;
+  cooker.add(cookRim);
+  /* 腰箍压到锅身下部（原来放在 3.6 cm 处，正好和水面撞在一起 —— 会被误读成「水面」） */
+  const cookBelt = new THREE.Mesh(new THREE.TorusGeometry(COOK_R + 0.02, 0.085, 10, 56), cookerSteel);
+  cookBelt.rotation.x = Math.PI / 2;
+  cookBelt.position.set(0, BK_Y0 + 1.30, 0);
+  cooker.add(cookBelt);
+
+  /* 两侧提手：压扁的小把手，贴着锅口下方（不挡水面） */
+  for (const s of [-1, 1]) {
+    const grip = new THREE.Mesh(new THREE.BoxGeometry(1.35, 0.52, 0.82), cookerDark);
+    grip.position.set(s * (COOK_R + 0.62), COOK_TOP - 1.05, 0);
+    grip.castShadow = true;
+    cooker.add(grip);
+    const gripNeck = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.34, 0.5), cookerSteel);
+    gripNeck.position.set(s * (COOK_R + 0.10), COOK_TOP - 1.05, 0);
+    cooker.add(gripNeck);
+  }
+
+  /* 拱形锅盖：从中央孔（穿温度计）向外一圈圈落下去 */
+  const cookLid = new THREE.Group();
+  cooker.add(cookLid);
+  const lidProfile = [
+    [COOK_HOLE, COOK_DOME], [0.90, COOK_DOME - 0.02], [1.80, COOK_DOME - 0.10],
+    [2.70, COOK_DOME - 0.24], [3.60, COOK_DOME - 0.44], [4.40, COOK_DOME - 0.70], [4.74, 0.02]
+  ].map(([r, y]) => new THREE.Vector2(r, y));
+  const cookLidDome = new THREE.Mesh(new THREE.LatheGeometry(lidProfile, 56), cookerLidMat);
+  cookLidDome.position.set(0, COOK_TOP, 0);
+  cookLidDome.castShadow = true;
+  cookLid.add(cookLidDome);
+  /* 孔壁：不加的话中央就是一个没有厚度的洞，侧看像纸片 */
+  const cookLidHole = new THREE.Mesh(
+    new THREE.CylinderGeometry(COOK_HOLE, COOK_HOLE, 0.14, 28, 1, true), cookerSteel);
+  cookLidHole.position.set(0, COOK_TOP + COOK_DOME - 0.05, 0);
+  cookLid.add(cookLidHole);
+  /* 盖沿 + 六个卡扣：压力锅的盖子是被卡扣压住的 —— 这是「密闭」在画面上的证据。
+     ★ 卡扣必须【盖在锅口外侧】、颜色够深，否则在默认视角（俯角只有 0.16 rad）
+       几乎看不到盖子的厚度，「加盖」这件事在画面上就落不了地。 */
+  const cookLidRim = new THREE.Mesh(new THREE.TorusGeometry(4.88, 0.16, 12, 56), cookerSteel);
+  cookLidRim.rotation.x = Math.PI / 2;
+  cookLidRim.position.set(0, COOK_TOP + 0.02, 0);
+  cookLid.add(cookLidRim);
+  for (let i = 0; i < 6; i++) {
+    const a = Math.PI * 2 * i / 6 + Math.PI / 6;        // 避开 ±x 的两个提手
+    const lug = new THREE.Mesh(new THREE.BoxGeometry(0.86, 1.06, 0.46), cookerDark);
+    lug.position.set(Math.cos(a) * 4.86, COOK_TOP - 0.26, Math.sin(a) * 4.86);
+    lug.rotation.y = -a;
+    lug.castShadow = true;
+    cookLid.add(lug);
+  }
+  /* 限压阀：阀座 + 阀体 + 配重。蒸气顶起配重才排出去 ⇒ 锅内被「顶」到 180 kPa。
+     ★ 尺寸按「在默认 45° 视角下至少 20 px 高」定：原来只有 0.86 cm 的阀体，
+       在整机视角里缩成一根看不清的小棍，「限压阀」这个关键零件等于没画。 */
+  const valveBase = new THREE.Mesh(new THREE.CylinderGeometry(0.72, 0.80, 0.34, 24), cookerSteel);
+  valveBase.position.set(VALVE_X, COOK_TOP + 0.80, 0);
+  cookLid.add(valveBase);
+  const valveBody = new THREE.Mesh(new THREE.CylinderGeometry(0.50, 0.54, 1.02, 24), cookerDark);
+  valveBody.position.set(VALVE_X, COOK_TOP + 1.48, 0);
+  valveBody.castShadow = true;
+  cookLid.add(valveBody);
+  const valveWeight = new THREE.Mesh(new THREE.CylinderGeometry(0.68, 0.68, 0.26, 24), cookerSteel);
+  valveWeight.position.set(VALVE_X, COOK_TOP + 2.06, 0);
+  cookLid.add(valveWeight);
+  /* 阀体两侧的排气口：白气就是从这里喷出来的（喷气点的世界高度见 VALVE_Y） */
+  for (const s of [-1, 1]) {
+    const port = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.11, 0.30, 12), cookerSteel);
+    port.rotation.z = Math.PI / 2;
+    port.position.set(VALVE_X + s * 0.56, COOK_TOP + 1.72, 0);
+    cookLid.add(port);
+  }
+  /* 安全阀：另一个小柱，真实压力锅都有（画面上只是增加可信度） */
+  const safetyValve = new THREE.Mesh(new THREE.CylinderGeometry(0.19, 0.21, 0.44, 16), cookerDark);
+  safetyValve.position.set(-1.85, COOK_TOP + 0.62, 1.15);
+  cookLid.add(safetyValve);
+
+
   /* --- 温度计 --- */
   // 温度计管壁比烧杯玻璃略实一点，否则整支温度计在背景里会化掉
   const thGlassMat = new THREE.MeshPhysicalMaterial({
@@ -835,7 +1014,8 @@ import * as THREE from './assets/optics-three.min.js';
   });
 
   // 温度计刻度：印刷在管壁上（透明底 + 深色刻度与数字）
-  /* 温度计刻度：0~110 ℃。留 10 ℃ 余量，100 ℃ 时液柱不会顶到管顶（真实温度计也这样）。 */
+  /* 温度计刻度：0~TH_RANGE ℃。标准大气压时 0~110（留 10 ℃ 余量，100 ℃ 时液柱不会顶到管顶）；
+     高压锅时换成 0~130 —— 管长不变，所以每度对应的长度变短，刻度仍画得清（1 ℃ ≈ 15.6 贴图 px）。 */
   function makeThermoScale() {
     const W = SCALE_TEX_W, H = SCALE_TEX_H;
     const c = newCanvas(W, H), g = c.getContext('2d');
@@ -848,7 +1028,7 @@ import * as THREE from './assets/optics-three.min.js';
     g.textAlign = 'left'; g.textBaseline = 'middle';
     /* 分度值 1 ℃：10 ℃ 长刻度 + 数字，5 ℃ 中刻度，其余 1 ℃ 短刻度。
        三级长度差要够大（32 / 22 / 10），否则在管壁上缩到亚像素时三级糊成一片。 */
-    for (let T = 0; T <= 110; T += SCALE_STEP) {
+    for (let T = 0; T <= TH_RANGE; T += SCALE_STEP) {
       const y = scaleCanvasY(T);
       const major = T % 10 === 0;
       const mid = !major && T % 5 === 0;
@@ -894,7 +1074,7 @@ import * as THREE from './assets/optics-three.min.js';
 
   /* 刻度 T 画在贴图的哪一行 —— 印刷刻度与液柱映射共用这一个式子，两边不可能再对不上 */
   function scaleCanvasY(T) {
-    return SCALE_TEX_H - 6 - (T / 110) * (SCALE_TEX_H - 12);
+    return SCALE_TEX_H - 6 - (T / TH_RANGE) * (SCALE_TEX_H - 12);
   }
   /* 刻度网格的竖直跨度（下沿 = 玻璃泡中心，上沿 = 管顶下 0.6 cm） */
   const SCALE_Y0 = TH_BULB_Y;
@@ -905,7 +1085,7 @@ import * as THREE from './assets/optics-three.min.js';
   const scaleYOf = (T) => SCALE_Y0 +
     (1 - scaleCanvasY(T) / SCALE_TEX_H) * (SCALE_Y1 - SCALE_Y0);
   const STEM_Y0 = scaleYOf(0);                       // 刻度 0 ℃ 的世界高度
-  const STEM_Y1 = scaleYOf(110);                     // 刻度 110 ℃ 的世界高度
+  const STEM_Y1 = scaleYOf(TH_RANGE);                // 量程上限的世界高度（= 管顶，与量程无关）
 
   const thermometer = new THREE.Group();
   thermometer.position.set(TH_X, 0, TH_Z);
@@ -929,6 +1109,24 @@ import * as THREE from './assets/optics-three.min.js';
   const thScaleBack = thScale.clone();
   thScaleBack.rotation.y += Math.PI;
   thermometer.add(thScaleBack);
+
+  /* ★ 换量程 = 重印这张刻度贴图（不是另建一支温度计）。
+     两片刻度共用同一份材质，所以只换一次 map；旋转角必须重算 ——
+     「130」比「110」宽一点，刻度条在贴图里的 u 范围会变，不重算就会偏几度。 */
+  function applyThermoRange(max) {
+    const m = (max === THERMO_RANGE_COOKER) ? THERMO_RANGE_COOKER : THERMO_RANGE_STD;
+    if (m === TH_RANGE) return false;
+    TH_RANGE = m;
+    const tex = makeThermoScale();
+    const old = thScale.material.map;
+    thScale.material.map = tex;
+    thScale.material.needsUpdate = true;
+    if (old) old.dispose();
+    const rotY = (SCALE_FACE_DEG - 360 * (scaleU0 + scaleU1) / 2) * Math.PI / 180;
+    thScale.rotation.y = rotY;
+    thScaleBack.rotation.y = rotY + Math.PI;
+    return true;
+  }
   const thBulb = new THREE.Mesh(new THREE.SphereGeometry(TH_BULB_R, 22, 14), thGlassMat);
   thBulb.position.set(0, TH_BULB_Y, 0);
   thermometer.add(thBulb);
@@ -1723,17 +1921,34 @@ import * as THREE from './assets/optics-three.min.js';
     }
   }
 
-  /* 换气压环境：沸点重算，已经越过新沸点的水立刻被拉回沸点（换到低气压时马上开锅） */
+  /* 是否处于「高压锅」这一档 —— 全站只认这一个判据，别处不要再写 pressure === 'cooker' */
+  function cookerMode() {
+    return !!(PRESSURES[state.pressure] && PRESSURES[state.pressure].cooker);
+  }
+
+  /* 换气压环境：沸点重算，已经越过新沸点的水立刻被拉回沸点（换到低气压时马上开锅）
+     ★ 高压锅这一档还要做三件事，缺一件画面就会自相矛盾：
+       ① 温度计量程换到 0~130 ℃ —— 116.8 ℃ 的沸点在 110 ℃ 的量程上根本读不出来；
+       ② 强制密闭（lidOn = true）—— 高压锅不可能敞着口加压；
+       ③ 把纸盖的动画值直接对齐，否则切过去的头 0.4 s 会看到纸盖还在慢慢飘。 */
   function setPressure(key) {
     state.pressure = Object.prototype.hasOwnProperty.call(PRESSURES, key) ? key : 'std';
     state.Tb = boilingPoint(PRESSURES[state.pressure].p);
+    applyThermoRange(cookerMode() ? THERMO_RANGE_COOKER : THERMO_RANGE_STD);
+    if (cookerMode()) {
+      state.lidOn = true;
+      state.lidAnim = 1;
+    }
     if (state.T > state.Tb) state.T = state.Tb;
+    applyLidUI();          // 高压锅时「敞口」按钮要锁住 —— 状态变了按钮就得跟着变
   }
 
   /* 加盖 / 敞口：只改实验条件，【不】清掉已经积累的读数 ——
-     读数记录的是「已经真实发生过的事」，跟换气压环境一样，不因为换条件而消失。 */
+     读数记录的是「已经真实发生过的事」，跟换气压环境一样，不因为换条件而消失。
+     ★ 高压锅这一档不允许敞口：锅是密封加压的，敞着口就没有 180 kPa。
+       按钮在 UI 上是 disabled 的，这里再兜一层，防止脚本直接调进来把状态改乱。 */
   function setLid(on) {
-    state.lidOn = !!on;
+    state.lidOn = cookerMode() ? true : !!on;
   }
 
   function resetSim() {
@@ -1772,7 +1987,7 @@ import * as THREE from './assets/optics-three.min.js';
 
     // 温度计液柱：顶端按刻度线性映射（0 ℃ → STEM_Y0，110 ℃ → STEM_Y1），与印刷刻度一致
     const stemLen = STEM_Y1 - STEM_Y0;
-    const colTop = STEM_Y0 + clamp(state.T / 110, 0, 1) * stemLen;
+    const colTop = STEM_Y0 + clamp(state.T / TH_RANGE, 0, 1) * stemLen;
     const colH = Math.max(0.4, colTop - TH_BULB_Y);
     mercury.scale.set(1, colH, 1);
     mercury.position.set(0, TH_BULB_Y + colH / 2, 0);
@@ -1798,7 +2013,9 @@ import * as THREE from './assets/optics-three.min.js';
     const padL = 42, padR = 16, padT = 14, padB = 26;
     const pw = W - padL - padR, ph = H - padT - padB;
     const tMax = Math.max(240, Math.ceil((state.t + 20) / 60) * 60);
-    const T0 = 10, T1 = 110;
+    /* 纵轴上限跟温度计量程同源：高压锅时量程 0~130，图也必须画到 130 ——
+       否则 116.8 ℃ 的沸点参考线会跑到画框外面，看起来像「没画沸点线」。 */
+    const T0 = 10, T1 = TH_RANGE;
     return {
       W, H, padL, padR, padT, padB, pw, ph, tMax, T0, T1,
       X: (t) => padL + (t / tMax) * pw,
@@ -1852,7 +2069,7 @@ import * as THREE from './assets/optics-three.min.js';
   function drawChart() {
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     const G = chartGeom();
-    const { W, H, padL, padR, padT, padB, ph, tMax, X, Y } = G;
+    const { W, H, padL, padR, padT, padB, ph, tMax, T0, T1, X, Y } = G;
     if (chartCanvas.width !== Math.round(W * dpr) || chartCanvas.height !== Math.round(H * dpr)) {
       chartCanvas.width = Math.round(W * dpr);
       chartCanvas.height = Math.round(H * dpr);
@@ -1873,7 +2090,9 @@ import * as THREE from './assets/optics-three.min.js';
     g.font = '10px "Helvetica Neue", Arial, sans-serif';
     g.fillStyle = 'rgba(150,180,205,0.85)';
     g.textAlign = 'right'; g.textBaseline = 'middle';
-    for (let T = 20; T <= 100; T += 20) {
+    /* 横向网格跟着纵轴上限走：高压锅时纵轴到 130，网格要一直画到 120 ——
+       原来写死到 100，切到高压锅后 100 ℃ 以上是一片空白，看着像图画歪了。 */
+    for (let T = 20; T <= T1 - 10; T += 20) {
       const y = Y(T);
       g.beginPath(); g.moveTo(padL, y); g.lineTo(W - padR, y); g.stroke();
       g.fillText(String(T), padL - 5, y);
@@ -1895,7 +2114,9 @@ import * as THREE from './assets/optics-three.min.js';
 
     // 沸点参考线：低气压时额外画一条 100 ℃ 的标准大气压对照线
     if (toggles.boilLine) {
-      if (state.Tb < 99.5) {
+      /* 只要沸点不是 100 ℃ 就画一条 100 ℃ 的灰虚线做对照 ——
+         高原上是「低了多少」，高压锅是「高了多少」，两头都用同一条基准线。 */
+      if (Math.abs(state.Tb - 100) > 0.5) {
         const y100 = Y(100);
         g.setLineDash([3, 4]);
         g.strokeStyle = 'rgba(148,163,184,0.75)';
@@ -2258,6 +2479,7 @@ import * as THREE from './assets/optics-three.min.js';
   const els = {
     temp: $('metricTemp'), boil: $('metricBoil'), state: $('metricState'),
     time: $('metricTime'), mass: $('metricMass'), heat: $('metricHeat'),
+    press: $('metricPress'),
     hudTemp: $('hudTemp'), hudBoil: $('hudBoil'), hudLamp: $('hudLamp'), hudTimer: $('hudTimer'),
     finding: $('finding'),
     stateDot: $('stateDot'), stateChip: $('stateChip'), stateNote: $('stateNote'),
@@ -2312,6 +2534,9 @@ import * as THREE from './assets/optics-three.min.js';
     els.mass.textContent = `${(state.mass * 1000).toFixed(0)} g`;
     /* 液化放热：累计回流的水蒸气液化时放回水里的热量（读数走 state.heatBack，不另算一遍） */
     els.heat.textContent = `${(state.heatBack / 1000).toFixed(2)} kJ`;
+    /* 当前气压：高压锅这一档最该看的就是「气压被顶上去了」——
+       同一盏酒精灯、同一杯水，只因为锅是密闭的，气压从 101 kPa 变成 180 kPa。 */
+    if (els.press) els.press.textContent = `${PRESSURES[state.pressure].p.toFixed(0)} kPa`;
     els.hudTemp.textContent = state.T.toFixed(1);
     els.hudBoil.textContent = state.Tb.toFixed(1);
     if (els.hudLamp) {
@@ -2348,27 +2573,32 @@ import * as THREE from './assets/optics-three.min.js';
     placeLoupeHotspot();
 
     const lowP = state.Tb < 99.5;
+    const highP = state.Tb > 105;
     let hint;
     if (!state.lampOn) {
       /* 撤火后分四段说，不能一句「立刻停止沸腾」糊过去（那是老版本不真实的简化）：
          ① 还在沸（余温沸腾）→ ② 余温还在供热、温度还会再升一点 →
          ③ 已停沸、余温散尽 → ④ 正常降温。 */
       hint = residBoiling()
-        ? `酒精灯已经撤走，但<b>石棉网、铁圈和杯底还是烫的</b> —— 它们存的热还在往水里灌，水<b>仍在沸腾</b>，只是越来越弱。等这点余温散尽、水不再吸热，沸腾才会停。`
+        ? `酒精灯已经撤走，但<b>石棉网、铁圈和${cookerMode() ? '锅底' : '杯底'}还是烫的</b> —— 它们存的热还在往水里灌，水<b>仍在沸腾</b>，只是越来越弱。等这点余温散尽、水不再吸热，沸腾才会停。`
         : (phase() === 'residHeat'
-          ? `酒精灯撤走了，但石棉网和杯底还烫着 —— 它们存的热还在往水里灌，比水向外散热多，所以水温<b>还会再升一点点</b>（现在 ${state.T.toFixed(1)} ℃），等这点余温散尽才转为下降。`
+          ? `酒精灯撤走了，但石棉网和${cookerMode() ? '锅底' : '杯底'}还烫着 —— 它们存的热还在往水里灌，比水向外散热多，所以水温<b>还会再升一点点</b>（现在 ${state.T.toFixed(1)} ℃），等这点余温散尽才转为下降。`
           : (state.T >= state.Tb - 5
             ? `余温散尽了：水还是 ${state.T.toFixed(1)} ℃，却<b>已经不再沸腾</b> —— 说明沸腾必须<b>继续吸热</b>，光达到沸点还不够。接下来温度开始下降。`
             : `撤去酒精灯后水温正在下降（现在 ${state.T.toFixed(1)} ℃），气泡很快消失，沸腾停止。`));
     } else if (state.T < state.Tb - 8) {
-      hint = `升温中：水温 ${state.T.toFixed(1)} ℃，离沸点还差 ${(state.Tb - state.T).toFixed(1)} ℃。盯住杯底 —— 有小气泡冒出来，但越往上越小。`;
+      hint = `升温中：水温 ${state.T.toFixed(1)} ℃，离沸点还差 ${(state.Tb - state.T).toFixed(1)} ℃。盯住${cookerMode() ? '锅' : '杯'}底 —— 有小气泡冒出来，但越往上越小。`
+        + (highP ? `<b>注意这里的沸点是 ${state.Tb.toFixed(1)} ℃，不是 100 ℃</b>：锅是密闭的，水蒸气跑不出去，锅里的气压已经被顶到 ${PRESSURES[state.pressure].p.toFixed(0)} kPa —— 气压越高，沸点越高。` : '');
     } else if (state.T < state.Tb - 0.02) {
-      hint = `快开了：气泡明显变多变大，却还没到水面就消失了。因为上层水温还低于沸点，泡里的水蒸气遇冷又液化。`;
+      hint = `快开了：气泡明显变多变大，却还没到水面就消失了。因为上层水温还低于沸点，泡里的水蒸气遇冷又液化。`
+        + (highP ? `（高压锅里要烧到 ${state.Tb.toFixed(1)} ℃ 才开，现在 ${state.T.toFixed(1)} ℃，还差 ${(state.Tb - state.T).toFixed(1)} ℃。）` : '');
     } else {
       hint = `正在沸腾：温度死死停在 ${state.Tb.toFixed(1)} ℃，酒精灯还在烧，水还在吸热。气泡一路上升一路<b>变大</b>，到水面破裂放出水蒸气 —— 这些水蒸气遇冷液化成小水珠，就是我们看到的白气。`
-        + (state.lidOn
-          ? `这些水蒸气碰到温度较低的杯壁和纸盖，就在那里<b>液化</b>成小水珠 —— 液化是汽化的<b>逆过程</b>，汽化时吸走的潜热在这里<b>放热</b>还给了水：到目前为止已经有 <b>${state.condG.toFixed(1)} g</b> 水蒸气液化回流，放回 <b>${(state.heatBack / 1000).toFixed(2)} kJ</b> 热。这正是<b>加盖比敞口开得快</b>的原因。`
-          : `<b>现在是敞口</b>：水蒸气一出来就散进空气，没有机会液化回流；水面还直接暴露，蒸发和对流带走更多热 —— 所以敞口比加盖开得慢。切到「盖上硬纸盖」再比一比同一段时间的水温。`)
+        + (cookerMode()
+          ? `这口锅是<b>密闭</b>的：水蒸气出不去，被限压阀压在锅里，气压升到 <b>${PRESSURES[state.pressure].p.toFixed(0)} kPa</b>，所以水的沸点从 100 ℃ 升到了 <b>${state.Tb.toFixed(1)} ℃</b>。气压越高、沸点越高 —— 这正是<b>高压锅煮东西熟得快</b>的原因。看锅盖上那个<b>限压阀</b>：蒸气正顶开配重往外喷，锅里再多一点压就由它放掉。锅壁是半透明的，可以看见锅里的水一直在翻滚、气泡越升越大。`
+          : (state.lidOn
+            ? `这些水蒸气碰到温度较低的杯壁和纸盖，就在那里<b>液化</b>成小水珠 —— 液化是汽化的<b>逆过程</b>，汽化时吸走的潜热在这里<b>放热</b>还给了水：到目前为止已经有 <b>${state.condG.toFixed(1)} g</b> 水蒸气液化回流，放回 <b>${(state.heatBack / 1000).toFixed(2)} kJ</b> 热。这正是<b>加盖比敞口开得快</b>的原因。`
+            : `<b>现在是敞口</b>：水蒸气一出来就散进空气，没有机会液化回流；水面还直接暴露，蒸发和对流带走更多热 —— 所以敞口比加盖开得慢。切到「盖上硬纸盖」再比一比同一段时间的水温。`))
         + (lowP ? `注意：这里的气压只有 ${PRESSURES[state.pressure].p.toFixed(1)} kPa，所以沸点不是 100 ℃ 而是 ${state.Tb.toFixed(1)} ℃ —— 气压越低，沸点越低。` : '');
     }
     els.finding.innerHTML = hint;
@@ -2399,6 +2629,41 @@ import * as THREE from './assets/optics-three.min.js';
     /* 烧杯还没装好（散放在台面上）时，气泡 / 白气 / 杯壁水珠都不许出现 ——
        它们是按【装好后的世界坐标】摆的，散放时若照画就会浮在空台上。 */
     const beakerReady = partProgress('beaker') < 1e-6;
+
+    /* 高压锅 / 玻璃烧杯的交叉淡入淡出。
+       ★ 锅只在「装置装好之后」才出现：散放时 beaker 躺在台面上，锅若按装好后的世界坐标
+         立在原地，就会变成「台面上摆着一口锅、烧杯却躺在旁边」的穿帮画面。
+       ★ 走平滑值而不是硬切：切档时锅身淡入、烧杯玻璃淡出，中间那半秒像「换个容器」，
+         不像画面被整块替换。 */
+    const cookTarget = (cookerMode() && assemblyReady()) ? 1 : 0;
+    state.cookerAnim += (cookTarget - state.cookerAnim) * Math.min(1, dt * 5.0);
+    if (Math.abs(cookTarget - state.cookerAnim) < 0.003) state.cookerAnim = cookTarget;
+    const ca = state.cookerAnim;
+    const inCooker = ca > 0.5;
+    cooker.visible = ca > 0.004;
+    if (cooker.visible) {
+      /* 锅身与锅盖各自淡入（两种材质，两个基准不透明度） */
+      cookerMat.opacity = 0.62 * ca;
+      cookerLidMat.opacity = 0.82 * ca;
+    }
+    /* 烧杯玻璃淡出：glassMat 只被烧杯那几个件用（酒精灯另有一份 lampGlassMat），
+       所以直接调它的 opacity 不会误伤别的器材。刻度印刷层是独立材质，单独处理。 */
+    glassMat.opacity = 0.15 * (1 - ca);
+    bkMarks.material.opacity = 1 - ca;
+    bkMarks.visible = ca < 0.995;
+    if (ca > 1e-4 && ca < 1 - 1e-4) dirty = true;      // 只在过渡途中持续重绘
+
+    /* 舞台左下角那行器材说明跟着换 —— 锅里不能还写着「硼硅玻璃烧杯」。
+       只在模式真的变了的时候写一次 DOM（每帧写文本会白掉帧）。 */
+    if (state.drawn.inCooker !== inCooker) {
+      state.drawn.inCooker = inCooker;
+      const sb = document.querySelector('.stage-bottom');
+      if (sb) {
+        sb.textContent = inCooker
+          ? '不锈钢高压锅 · 半透明视窗（可透视看锅内）· 200 g 水 · 限压阀 180 kPa'
+          : '铸铁底座 · 镀铬立柱 · 硼硅玻璃烧杯 · 200 g 水 · 硬纸盖中央开孔';
+      }
+    }
 
     /* 酒精灯：撤去时整盏灯滑到旁边，火焰同步缩小 + 淡出。
        两个平滑值（位置 / 火焰）走同一段代码，所以「熄火」和「移开」是同时发生的。
@@ -2433,6 +2698,8 @@ import * as THREE from './assets/optics-three.min.js';
     if (Math.abs(lidTarget - state.lidAnim) < 0.002) state.lidAnim = lidTarget;
     /* 同样走 poseNow：散放时盖子躺在台面上，直接写 .position.y 会把组装动画吃掉。 */
     poseNow(lid, { y: (1 - state.lidAnim) * 16 });
+    /* 高压锅模式：锅盖取代纸盖 —— 纸盖必须收起来，否则两张盖会叠在一起 */
+    lid.visible = !inCooker;
     if (Math.abs(lidTarget - state.lidAnim) > 5e-4) dirty = true;
 
     /* 温度计插入 / 提起：指数平滑跟随目标，铁夹带着它一起上下滑 */
@@ -2474,9 +2741,15 @@ import * as THREE from './assets/optics-three.min.js';
     }
 
     /* 白气：加盖时从纸盖的孔里冒出来（孔被温度计占着，蒸气从孔壁那圈缝隙喷出）；
-       敞口时盖子抬走了，蒸气直接从水面升起。 */
-    const steamY0 = state.lidOn ? LID_Y + 0.30 : BK_Y0 + depth + 0.15;
-    const steamSpan = state.lidOn ? 8.6 : 9.6;
+       敞口时盖子抬走了，蒸气直接从水面升起；
+       ★ 高压锅时改从【限压阀】喷出来 —— 这正是「锅内压力被顶到 180 kPa」的现场证据：
+         水蒸气不是从锅沿漏，而是顶开配重、从阀口成束地冲出来。
+         束更细（横向只散到阀口附近）、更急（跨度更短），和锅外那股白气一眼分得开。 */
+    const steamY0 = inCooker ? VALVE_Y
+      : (state.lidOn ? LID_Y + 0.30 : BK_Y0 + depth + 0.15);
+    const steamSpan = inCooker ? 7.2 : (state.lidOn ? 8.6 : 9.6);
+    const steamX = inCooker ? VALVE_X : 0;
+    const steamSpreadK = inCooker ? 0.42 : 1;
     for (const m of steams) {
       const u = m.userData;
       m.visible = beakerReady && toggles.steam && b > 0.16;
@@ -2484,9 +2757,9 @@ import * as THREE from './assets/optics-three.min.js';
       u.ph += dt * u.spd;
       const cyc = u.ph % 1;
       const y = steamY0 + cyc * steamSpan;
-      const spread = u.rad + cyc * 1.55;
-      m.position.set(Math.cos(u.a) * spread, y, Math.sin(u.a) * spread);
-      m.scale.setScalar(u.r0 + cyc * 1.5);
+      const spread = (u.rad + cyc * 1.55) * steamSpreadK;
+      m.position.set(steamX + Math.cos(u.a) * spread, y, Math.sin(u.a) * spread);
+      m.scale.setScalar((u.r0 + cyc * 1.5) * (inCooker ? 0.78 : 1));
       m.material.opacity = 0.30 * b * Math.sin(cyc * Math.PI) * (1 - cyc * 0.55);
     }
 
@@ -2495,7 +2768,10 @@ import * as THREE from './assets/optics-three.min.js';
        ★ state.drawn.lidDrops 记的是【真正 visible 的行数】，不是「打算画几个」。 */
     const sat = clamp(state.condG / DROP_FULL_G, 0, 1);   // 回流满 DROP_FULL_G 克就长满
     const wt = BK_Y0 + depth;
-    const bandLo = wt + 0.15, bandHi = LID_Y - 0.14;
+    /* 水珠贴的是【容器内壁】：玻璃烧杯时贴杯壁（4.13），高压锅时贴锅内壁（4.66）——
+       高压锅壁是半透明的，所以「锅壁上越积越多的水珠」照样看得见。 */
+    const dropRad = inCooker ? COOK_R - 0.20 : BK_R - 0.07;
+    const bandLo = wt + 0.15, bandHi = (inCooker ? COOK_TOP : LID_Y) - 0.14;
     let dropsDrawn = 0;
     for (const m of lidDrops) {
       const u = m.userData;
@@ -2503,9 +2779,9 @@ import * as THREE from './assets/optics-three.min.js';
       m.visible = beakerReady && state.lidOn && sat > 0.02;
       if (!m.visible) continue;
       m.position.set(
-        Math.cos(u.a) * u.rad,
+        Math.cos(u.a) * dropRad,
         bandLo + u.hFrac * Math.max(0.05, bandHi - bandLo),
-        Math.sin(u.a) * u.rad
+        Math.sin(u.a) * dropRad
       );
       m.scale.set(s, s * (0.74 + 0.26 * Math.sin(clock * u.sp + u.a)), s);
       dropsDrawn++;
@@ -2643,9 +2919,15 @@ import * as THREE from './assets/optics-three.min.js';
      敞口 → 没有回流，且水面直接暴露、散热更多。两条一起作用，所以加盖开得更快。
      与气压环境一样：这是【实验条件】，重置时不清零已经积累的读数。 */
   function applyLidUI() {
+    /* 高压锅必须密闭：这一档把「敞口」锁掉，并把原因写在按钮下面 ——
+       否则学生切了高压锅、又点开敞口，画面里一口敞着口的高压锅却标着 180 kPa。 */
+    const locked = cookerMode();
     document.querySelectorAll('[data-lid]').forEach((b) => {
       b.classList.toggle('active', (b.dataset.lid === '1') === state.lidOn);
+      b.disabled = locked;
     });
+    const note = $('lidLock');
+    if (note) note.hidden = !locked;
   }
   document.querySelectorAll('[data-lid]').forEach((btn) => {
     btn.addEventListener('click', () => {
@@ -2741,7 +3023,8 @@ import * as THREE from './assets/optics-three.min.js';
     { name: '04 水沸腾了', text: '<strong>到沸点：</strong>温度升到 <b>100 ℃</b>（标准大气压）就不再上升了，但酒精灯还在烧。这时气泡<b>越往上升越大</b>，到水面破裂，放出大量水蒸气。水面上方的“白气”是水蒸气遇冷液化成的<b>小水珠</b>，不是水蒸气本身。' },
     { name: '05 撤去酒精灯', text: '<strong>撤去酒精灯：</strong>点右侧的“撤去酒精灯”。水温仍是 100 ℃，但热源没了 —— 靠石棉网和杯底的<b>余温</b>还能再沸腾几秒，气泡越来越小、越来越少，余温散尽就<b>彻底停沸</b>，之后温度才开始下降。这说明沸腾必须同时满足两个条件：<b>温度达到沸点</b>、<b>继续吸热</b>，缺一不可。' },
     { name: '06 加盖还是敞口', text: '<strong>加盖还是敞口：</strong>水蒸气跑出水面后碰到温度较低的杯壁和纸盖，会<b>液化</b>成小水珠（看杯壁上越积越多的水珠）。液化是汽化的<b>逆过程</b> —— 汽化吸走多少潜热，液化就<b>放回</b>多少，这些热又传回水里；加上盖子本身挡掉了向空气的散热，所以<b>加盖时水开得更快</b>。点右侧「④ 杯口加盖」在<b>加盖</b>与<b>敞口</b>之间来回切，比一比同一段时间里水温升到多少。' },
-    { name: '07 描点画图', text: '<strong>自己画一遍图：</strong>真实的实验报告里，图是自己<b>描点</b>画出来的，不是电脑替你画的 —— 所以这张图上<b>默认没有曲线</b>，要你自己把它画出来。点右侧「② 记录数据」里的<b>「描点画图」</b>，你刚才记下的每一组数据都会变成图上的一个<b>紫点</b>；再点<b>「连成折线」</b>，用直线把这些点依次连起来 —— 这就是手工描点得到的图像。画完之后再点<b>「对照真值曲线」</b>，把橙色的真值曲线叠上来比一比：折线对得上吗？如果水沸腾那一段的点记得太稀，就会把<b>温度不变的那段平台</b>连成一条斜线，看不出“沸腾时温度不变”。所以实验时要在<b>水快开和刚开的那一段多记几组</b>。' }
+    { name: '07 描点画图', text: '<strong>自己画一遍图：</strong>真实的实验报告里，图是自己<b>描点</b>画出来的，不是电脑替你画的 —— 所以这张图上<b>默认没有曲线</b>，要你自己把它画出来。点右侧「② 记录数据」里的<b>「描点画图」</b>，你刚才记下的每一组数据都会变成图上的一个<b>紫点</b>；再点<b>「连成折线」</b>，用直线把这些点依次连起来 —— 这就是手工描点得到的图像。画完之后再点<b>「对照真值曲线」</b>，把橙色的真值曲线叠上来比一比：折线对得上吗？如果水沸腾那一段的点记得太稀，就会把<b>温度不变的那段平台</b>连成一条斜线，看不出“沸腾时温度不变”。所以实验时要在<b>水快开和刚开的那一段多记几组</b>。' },
+    { name: '08 换成高压锅', text: '<strong>换成高压锅：</strong>点右侧「③ 气压环境」里的<b>「高压锅」</b>—— 玻璃烧杯会换成一口<b>半透明的高压锅</b>（能透视看见锅里的水），锅盖被六个卡扣压住、顶上坐着<b>限压阀</b>，温度计从锅盖中央的孔穿进去。锅是密闭的，水蒸气跑不出去，锅里的气压被限压阀顶到 <b>180 kPa</b>，于是沸点从 100 ℃ 升到 <b>116.8 ℃</b>：同样一盏酒精灯，水要烧到 116.8 ℃ 才开。看温度计的液柱、看锅里的气泡、看限压阀喷出的白气 —— 再切回「标准大气压」，沸点立刻回到 100 ℃。<b>气压越高，沸点越高</b>，这就是高原上煮饭必须用高压锅的原因。' }
   ];
   const stepButtons = Array.from(document.querySelectorAll('[data-step]'));
   const stepDetail = $('stepDetail');
@@ -3067,7 +3350,10 @@ import * as THREE from './assets/optics-three.min.js';
         lampAnim: state.lampAnim, flameAnim: state.flameAnim,
         lampX: lamp.position.x, flameVisible: flameGroup.visible,
         /* 盖子与盖底水珠：lidLift 是盖子真正被抬走的高度，lidDrops 是【真正画出去】的行数 */
-        lidAnim: state.lidAnim, lidLift: lid.position.y, lidDrops: state.drawn.lidDrops
+        lidAnim: state.lidAnim, lidLift: lid.position.y, lidDrops: state.drawn.lidDrops,
+        /* 高压锅：过渡值、锅是否真的画着、烧杯玻璃淡到多少 */
+        cookerAnim: state.cookerAnim, cookerVisible: cooker.visible,
+        paperLidVisible: lid.visible, glassOpacity: glassMat.opacity
       };
     },
     statusText, shortState, renderRecords, clearRecords, microStats, sampleStateChip,
@@ -3164,6 +3450,26 @@ import * as THREE from './assets/optics-three.min.js';
     /* 余温件参数：自检要按这些常量算「撤火后还能沸几秒」，不许在脚本里另抄一份 */
     resid: { C: RESID_C, K: RESID_K, tau: RESID_TAU, min: RESID_MIN, P: P_LAMP },
     setPressure(key) { setPressure(key); applyPressureUI(); refreshAll(); },
+    /* ---- 高压锅（气压环境里的第 4 档）-------------------------------------
+       自检要能分清「按钮点了没反应」和「锅本来就不该出现」：
+       这里报的是【真正画出去的】透明度与可见性，不是「打算显示」的意图。 */
+    cooker: {
+      mode: cookerMode,
+      group: cooker, lid: cookLid, wall: cookWall,
+      top: COOK_TOP, r: COOK_R, dome: COOK_DOME, valveX: VALVE_X, valveY: VALVE_Y,
+      anim: () => state.cookerAnim,
+      visible: () => cooker.visible,
+      lidVisible: () => cookLid.visible,
+      /** 锅身当前真正的不透明度（0 = 完全透明，也就是「看不见锅」） */
+      opacity: () => cookerMat.opacity,
+      /** 玻璃烧杯当前的不透明度：切到高压锅后应降到 0 */
+      glassOpacity: () => glassMat.opacity,
+      /** 纸盖当前是否画着（高压锅时应为 false —— 锅盖取代纸盖） */
+      paperLidVisible: () => lid.visible
+    },
+    /* 温度计量程：标准 0~110、高压锅 0~130。液柱映射与图表纵轴都从这一个值派生。 */
+    thermoRange: () => TH_RANGE,
+    THERMO_RANGE_STD, THERMO_RANGE_COOKER,
     /* 加盖 / 敞口：对外只暴露这一个入口，UI 高亮与重绘一起做 */
     setLid(on) { setLid(on); applyLidUI(); refreshAll(); },
     /* 温度计当前实际抬升量（世界单位 cm），走的是渲染用的同一份位置 */
