@@ -20,10 +20,12 @@ var ADMIN_PASSWORD_KEY = 'admin_password';
 
 var PUBLIC_ACTIONS = [
   'login', 'createUser', 'getUserPublic', 'checkSession', 'logout',
+  'dropOtherSessions',
   'findByEmail', 'redeemCode', 'resetPasswordByCode', 'verifyAdmin',
 ];
 var ADMIN_ACTIONS = [
   'getUser', 'getUsers', 'updateUser', 'updateVIP', 'deleteUser',
+  'getSessions', 'kickSession',
   'getActivationCode', 'getAllActivationCodes', 'createActivationCodes',
   'deleteActivationCode', 'updateActivationCode', 'getAdminStats', 'setAdminPassword',
 ];
@@ -128,7 +130,165 @@ function rateLimited(key, limit, windowMs) {
 }
 function clientIp(req) {
   var h = req.headers || {};
-  return String(h['x-forwarded-for'] || h['x-real-ip'] || 'unknown').split(',')[0].trim();
+  // 🔴 EdgeOne 在最前面：线上链路是 用户 → EdgeOne → Vercel，
+  //    到 Vercel 时 x-forwarded-for 的首段未必是真实客户端（可能是 EdgeOne 节点），
+  //    而 EO-Connecting-IP 是 EdgeOne 认定的客户端地址，优先级最高。
+  //    都没有时才退到 x-forwarded-for / x-real-ip（直连 Vercel 或本地调试）。
+  var raw = h['eo-connecting-ip'] || h['x-forwarded-for'] || h['x-real-ip'] || 'unknown';
+  return String(raw).split(',')[0].trim();
+}
+
+// ============ 多设备会话（终身会员：同城 5 个 IP 同时在线） ============
+//  模型：
+//   · 每次登录在 user_sessions 里落一行（token 为主键），checkSession 只认表里的 token
+//   · 普通/月度/年度会员：limit = 1 —— 新登录把旧会话全部清掉（与改版前「单设备」一致）
+//   · 终身VIP：limit = 5 个【不同 IP】。同城可并存；第 6 个 IP 登录时自动挤掉
+//     「最久没活动」的那一个（按 last_seen 最旧），不打断其它设备
+//   · 异地（新 IP 的城市与在线设备不同）→ 允许登录，但把原城市的设备全部下线（换城）
+//   · 城市查不到（第三方接口抖动 / 内网 IP）→ 一律按「同城」处理。
+//     宁可少踢一次，也不能因为接口抖动把正在上课的老师集体踢下线。
+var SESSION_TTL_MS = 12 * 3600 * 1000;   // 会话闲置 12 小时自动失效
+var MULTI_IP_LIMIT = 5;                  // 终身会员同城最多 5 个 IP 同时在线
+var LIFETIME_VIP = '终身VIP';
+
+function isLifetime(u) {
+  if (!u) return false;
+  var vip = String(u.vip || '');
+  var exp = String(u.expire || '');
+  return vip === LIFETIME_VIP || exp === '永久';
+}
+
+function maskIp(ip) {
+  var s = String(ip || '');
+  if (!s || s === 'unknown') return '未知';
+  if (s.indexOf(':') !== -1) return s.split(':').slice(0, 3).join(':') + '::…';
+  var p = s.split('.');
+  return p.length === 4 ? p[0] + '.' + p[1] + '.*.*' : s;
+}
+
+function uniqIp(rows) {
+  var out = [];
+  (rows || []).forEach(function (x) {
+    if (x && x.ip && out.indexOf(x.ip) === -1) out.push(x.ip);
+  });
+  return out;
+}
+
+// checkSession 的「重活」节流：每台设备 5 分钟才统计一次在线 IP / 同步 users.last_seen。
+// 按实例内存记，多实例时实际频率会高一些，但都远低于「每 30 秒一次」。
+var _heavyAt = new Map();
+function heavyDue(token) {
+  var now = Date.now();
+  var last = _heavyAt.get(token) || 0;
+  if (now - last < 5 * 60 * 1000) return false;
+  if (_heavyAt.size > 5000) _heavyAt.clear();
+  _heavyAt.set(token, now);
+  return true;
+}
+
+// —— IP → 城市（带进程内缓存，避免每次登录都打第三方）——
+var _geoCache = new Map();
+var _geoDownUntil = 0;
+var GEO_TTL_MS = 12 * 3600 * 1000;
+
+function normCity(s) {
+  return String(s || '').toLowerCase().replace(/[\s\-_.·]/g, '').replace(/(市|省|自治区|特别行政区|地区)$/, '');
+}
+
+function fetchJson(url, ms) {
+  var ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  var timer = setTimeout(function () { if (ctrl) ctrl.abort(); }, ms);
+  return fetch(url, { signal: ctrl ? ctrl.signal : undefined, headers: { 'User-Agent': 'xiaobin-physics/1.0' } })
+    .then(function (r) { return r.ok ? r.json() : null; })
+    .catch(function () { return null; })
+    .then(function (d) { clearTimeout(timer); return d; });
+}
+
+async function geoOf(ip) {
+  if (!ip || ip === 'unknown') return { key: '', label: '', weak: true };
+  var hit = _geoCache.get(ip);
+  if (hit && (Date.now() - hit.at) < GEO_TTL_MS) return hit.value;
+
+  var value = null;
+  // 主：ip-api.com（45 次/分，免费版只走 http）。城市名稳定，同城判定就靠它。
+  if (Date.now() > _geoDownUntil) {
+    var d1 = await fetchJson('http://ip-api.com/json/' + encodeURIComponent(ip) + '?lang=zh-CN&fields=status,country,regionName,city', 1800);
+    if (d1 && d1.status === 'success') {
+      var c1 = d1.city || d1.regionName || d1.country || '';
+      value = { key: normCity(c1), label: String(c1 || ''), weak: false };
+    } else if (d1 && d1.status === 'fail' && /quota|limit|reserved|private/i.test(String(d1.message || ''))) {
+      _geoDownUntil = Date.now() + 60000;   // 被限频就歇一分钟，别把登录拖慢
+    }
+  }
+  // 备：ipapi.co（https）。城市名可能是英文，所以标记 weak —— 只用于显示，不用于踢人
+  if (!value) {
+    var d2 = await fetchJson('https://ipapi.co/' + encodeURIComponent(ip) + '/json/', 1800);
+    if (d2 && d2.city) value = { key: normCity(d2.city), label: String(d2.city), weak: true };
+  }
+  if (!value) value = { key: '', label: '', weak: true };
+
+  if (_geoCache.size > 3000) _geoCache.clear();
+  _geoCache.set(ip, { at: Date.now(), value: value });
+  return value;
+}
+
+// —— user_sessions 读写 ——
+// 返回 null = 表不可用（还没执行 SQL / 数据库异常）⇒ 调用方降级为旧的单设备模式，
+// 绝不能因为新表没建就让所有人都登不进来。
+async function loadSessions(username) {
+  var r = await sbFetch('user_sessions?username=eq.' + encodeURIComponent(username) +
+    '&select=token,ip,city_key,city_label,city_weak,ua,created_at,last_seen&order=last_seen.asc',
+    { headers: svcHeaders({ Prefer: undefined }) });
+  if (!r.ok) return null;
+  var rows = await r.json();
+  var now = Date.now();
+  var live = [];
+  var stale = false;
+  (rows || []).forEach(function (x) {
+    var t = x.last_seen ? new Date(x.last_seen).getTime() : 0;
+    if (now - t < SESSION_TTL_MS) live.push(x); else stale = true;
+  });
+  if (stale) pruneSessions(username);
+  return live;
+}
+
+function pruneSessions(username) {
+  var cutoff = new Date(Date.now() - SESSION_TTL_MS).toISOString();
+  sbFetch('user_sessions?username=eq.' + encodeURIComponent(username) + '&last_seen=lt.' + encodeURIComponent(cutoff), {
+    method: 'DELETE', headers: svcHeaders({ Prefer: 'return=minimal' }),
+  }).catch(function () {});
+}
+
+// 清空该账号全部会话。顺手把 users.session_token 置空 —— 否则旧 token 会通过
+// checkSession 的「改版前旧 token 迁移」分支被复活，等于踢了又没踢。
+async function clearSessions(username) {
+  var n = 0;
+  try {
+    var r = await sbFetch('user_sessions?username=eq.' + encodeURIComponent(username), {
+      method: 'DELETE', headers: svcHeaders({ Prefer: 'return=representation' }),
+    });
+    if (r.ok) { var d = await r.json(); n = Array.isArray(d) ? d.length : 0; }
+    await sbFetch('users?username=eq.' + encodeURIComponent(username), {
+      method: 'PATCH', headers: svcHeaders({ Prefer: 'return=minimal' }),
+      body: JSON.stringify({ session_token: null }),
+    });
+  } catch (_) {}
+  return n;
+}
+
+async function deleteSession(username, token) {
+  var ok = false;
+  try {
+    var r = await sbFetch('user_sessions?token=eq.' + encodeURIComponent(token) + '&username=eq.' + encodeURIComponent(username), {
+      method: 'DELETE', headers: svcHeaders({ Prefer: 'return=minimal' }),
+    });
+    ok = r.ok;
+    await sbFetch('users?username=eq.' + encodeURIComponent(username) + '&session_token=eq.' + encodeURIComponent(token), {
+      method: 'PATCH', headers: svcHeaders({ Prefer: 'return=minimal' }),
+      body: JSON.stringify({ session_token: null }),
+    });
+  } catch (_) {}
+  return ok;
 }
 function readToken(req) {
   var h = req.headers || {};
@@ -312,13 +472,87 @@ module.exports = async (req, res) => {
         });
       }
 
-      // 生成并存储 session_token
+      // ===== 会话判定：IP 归属地 + 现有在线设备，两个查询并行 =====
+      var pair = await Promise.all([geoOf(ip2), loadSessions(loginName)]);
+      var city = pair[0];
+      var sessions = pair[1];
+      var degraded = (sessions === null);   // 表不可用 → 旧单设备模式
+      if (degraded) sessions = [];
+
+      var lifetime = isLifetime(userData);
+      var limit = lifetime ? MULTI_IP_LIMIT : 1;
+      var kicked = 0;        // 被下线的旧会话数
+      var evicted = null;    // 被挤掉的那台（第 6 个 IP 登录时）
+
+      if (!degraded && limit === 1) {
+        // 非终身会员：单设备，新登录把旧会话全部清掉（与改版前一致）
+        if (sessions.length) kicked = await clearSessions(loginName);
+        sessions = [];
+      } else if (!degraded) {
+        // ① 异地判定：在线设备的城市（只认强结果）与本次登录城市不同 ⇒ 换城
+        var strongCities = [];
+        sessions.forEach(function (s) {
+          if (s.city_key && !s.city_weak && strongCities.indexOf(s.city_key) === -1) strongCities.push(s.city_key);
+        });
+        if (city.key && !city.weak && strongCities.length === 1 && strongCities[0] !== city.key) {
+          kicked = await clearSessions(loginName);   // 原城市的设备全部下线
+          sessions = [];
+        }
+
+        // ② 同城 IP 数上限：满 5 个再来第 6 个 IP ⇒ 挤掉「最久没活动」的那台
+        //    （用 while 而不是 if：万一历史上积了 6、7 个 IP，一次登录也要收敛到 5 个）
+        var guard = 0;
+        while (guard++ < 10) {
+          var ipList = uniqIp(sessions);
+          if (ipList.indexOf(ip2) !== -1 || ipList.length < limit) break;
+          // 同一 IP 下有多台设备时整组一起淘汰，保证 IP 数真的降下来
+          var victimIp = ipList[0];
+          var victims = sessions.filter(function (s) { return s.ip === victimIp; });
+          for (var vi = 0; vi < victims.length; vi++) {
+            await deleteSession(loginName, victims[vi].token);
+            kicked++;
+          }
+          evicted = { ip: maskIp(victimIp), lastSeen: victims.length ? victims[0].last_seen : '' };
+          sessions = sessions.filter(function (s) { return s.ip !== victimIp; });
+        }
+      }
+
+      // ===== 落库：新会话 =====
       var sessionToken = generateSessionToken();
+      var nowIso = new Date().toISOString();
+      if (!degraded) {
+        var ins = await sbFetch('user_sessions', {
+          method: 'POST',
+          headers: svcHeaders({ Prefer: 'return=minimal' }),
+          body: JSON.stringify({
+            token: sessionToken,
+            username: loginName,
+            ip: ip2,
+            city_key: city.key || '',
+            city_label: city.label || '',
+            city_weak: !!city.weak,
+            ua: String((req.headers && req.headers['user-agent']) || '').slice(0, 200),
+            created_at: nowIso,
+            last_seen: nowIso,
+          }),
+        });
+        if (!ins.ok) {
+          // 插入失败（多半是表结构不匹配）→ 降级，宁可退回单设备也不能让人登不进来
+          console.warn('[proxy-user] user_sessions 写入失败，本次降级为单设备:', await ins.text());
+          degraded = true;
+        }
+      }
+
       await sbFetch('users?username=eq.' + encodeURIComponent(loginName), {
         method: 'PATCH',
         headers: svcHeaders({ Prefer: 'return=minimal' }),
-        body: JSON.stringify({ session_token: sessionToken, last_seen: new Date().toISOString() }),
+        body: JSON.stringify({ session_token: sessionToken, last_seen: nowIso }),
       });
+
+      var ipCount = 1;
+      if (!degraded) {
+        ipCount = uniqIp(sessions.concat([{ ip: ip2 }])).length;
+      }
 
       return res.json({
         success: true,
@@ -329,26 +563,123 @@ module.exports = async (req, res) => {
           expire: userData.expire || '',
           email: userData.email || '',
         },
+        session: {
+          limit: limit,
+          ipCount: ipCount,
+          ip: maskIp(ip2),
+          city: city.label || '',
+          multi: limit > 1,
+          degraded: degraded,
+          kicked: kicked,
+          evicted: evicted,
+        },
       });
     }
 
     // ========== 退出登录 ==========
     if (action === 'logout') {
       var logoutName = req.body && req.body.username;
+      var logoutToken = req.body && req.body.token;
       if (!logoutName) return res.status(400).json({ error: '缺少 username' });
-      await sbFetch('users?username=eq.' + encodeURIComponent(logoutName), {
-        method: 'PATCH',
-        headers: svcHeaders({ Prefer: 'return=minimal' }),
-        body: JSON.stringify({ session_token: null }),
-      });
+      if (logoutToken) {
+        // 多设备下只能退自己那一台，不能把别的设备一起退掉
+        await deleteSession(logoutName, logoutToken);
+      } else {
+        await clearSessions(logoutName);   // 旧客户端不带 token → 保持原来的「全退」语义
+      }
       return res.json({ success: true });
     }
 
-    // ========== 校验 session_token（单设备登录）+ 顺带刷新在线时间 ==========
+    // ========== 校验会话（顺带刷新在线时间） ==========
     if (action === 'checkSession') {
       var csName = req.body && req.body.username;
       var csToken = req.body && req.body.token;
       if (!csName || !csToken) return res.status(400).json({ error: '缺少 username 或 token' });
+
+      var sr = await sbFetch('user_sessions?token=eq.' + encodeURIComponent(csToken) +
+        '&username=eq.' + encodeURIComponent(csName) +
+        '&select=token,ip,city_key,city_label,city_weak,last_seen', { headers: svcHeaders({ Prefer: undefined }) });
+
+      if (sr.ok) {
+        var rows = await sr.json();
+        if (rows && rows.length) {
+          var me = rows[0];
+          var age = me.last_seen ? (Date.now() - new Date(me.last_seen).getTime()) : 0;
+          if (age > SESSION_TTL_MS) {
+            await deleteSession(csName, csToken);
+            return res.json({ valid: false, reason: 'expired' });
+          }
+          // 心跳每 30 秒一次：只写本会话的 last_seen（1 次写）。
+          // 「统计在线 IP 数 + 同步 users.last_seen + 查 VIP」每 5 分钟才做一次 ——
+          // 否则 5 台设备 = 每分钟 20 次多余查询，白烧 Supabase 配额。
+          try {
+            await sbFetch('user_sessions?token=eq.' + encodeURIComponent(csToken), {
+              method: 'PATCH', headers: svcHeaders({ Prefer: 'return=minimal' }),
+              body: JSON.stringify({ last_seen: new Date().toISOString() }),
+            });
+          } catch (_) {}
+          if (!heavyDue(csToken)) return res.json({ valid: true });
+
+          var liveRes = await sbFetch('user_sessions?username=eq.' + encodeURIComponent(csName) + '&select=ip,last_seen', {
+            headers: svcHeaders({ Prefer: undefined }),
+          });
+          var liveRows = liveRes.ok ? await liveRes.json() : [];
+          var nowMs = Date.now();
+          var ips = [];
+          (liveRows || []).forEach(function (x) {
+            var t = x.last_seen ? new Date(x.last_seen).getTime() : 0;
+            if (nowMs - t < SESSION_TTL_MS && x.ip && ips.indexOf(x.ip) === -1) ips.push(x.ip);
+          });
+          var nowIso2 = new Date().toISOString();
+          try {
+            await sbFetch('users?username=eq.' + encodeURIComponent(csName), {
+              method: 'PATCH', headers: svcHeaders({ Prefer: 'return=minimal' }),
+              body: JSON.stringify({ last_seen: nowIso2 }),
+            });
+          } catch (_) {}
+          var ur0 = await sbFetch('users?username=eq.' + encodeURIComponent(csName) + '&select=vip,expire', { headers: svcHeaders({ Prefer: undefined }) });
+          var uu0 = ur0.ok ? await ur0.json() : [];
+          var life0 = isLifetime(uu0 && uu0[0]);
+          return res.json({
+            valid: true,
+            session: {
+              limit: life0 ? MULTI_IP_LIMIT : 1,
+              ipCount: ips.length,
+              ip: maskIp(me.ip),
+              city: me.city_label || '',
+              multi: life0,
+            },
+          });
+        }
+
+        // token 不在表里：可能是改版前登录的旧 token。
+        // 只在 users.session_token 正好等于它时才认（说明它仍是「最后一台」），
+        // 认完立刻补一行正式会话 —— 否则老用户全部要重新登录一次。
+        var lur = await sbFetch('users?username=eq.' + encodeURIComponent(csName) + '&select=session_token', {
+          headers: svcHeaders({ Prefer: undefined }),
+        });
+        var luRows = lur.ok ? await lur.json() : [];
+        var legacyToken = luRows && luRows[0] ? luRows[0].session_token : null;
+        if (legacyToken && legacyToken === csToken) {
+          var lip = clientIp(req);
+          var lcity = await geoOf(lip);
+          var lnow = new Date().toISOString();
+          await sbFetch('user_sessions', {
+            method: 'POST',
+            headers: svcHeaders({ Prefer: 'return=minimal' }),
+            body: JSON.stringify({
+              token: csToken, username: csName, ip: lip,
+              city_key: lcity.key || '', city_label: lcity.label || '', city_weak: !!lcity.weak,
+              ua: String((req.headers && req.headers['user-agent']) || '').slice(0, 200),
+              created_at: lnow, last_seen: lnow,
+            }),
+          });
+          return res.json({ valid: true, migrated: true });
+        }
+        return res.json({ valid: false, reason: 'kicked' });
+      }
+
+      // 表不可用 → 退回旧的单值 token 校验（保证降级期间不掉线）
       var url3 = 'users?username=eq.' + encodeURIComponent(csName) + '&select=session_token';
       var r3 = await sbFetch(url3, { headers: svcHeaders({ Prefer: undefined }) });
       if (!r3.ok) return res.status(502).json({ error: '查询失败: ' + (await r3.text()) });
@@ -357,7 +688,6 @@ module.exports = async (req, res) => {
       if (serverToken && serverToken !== csToken) {
         return res.json({ valid: false, reason: 'kicked' });
       }
-      // 仅在令牌确实匹配时才刷新 last_seen（避免匿名者借此刷写）
       if (serverToken && serverToken === csToken) {
         try {
           await sbFetch('users?username=eq.' + encodeURIComponent(csName), {
@@ -367,7 +697,24 @@ module.exports = async (req, res) => {
           });
         } catch (_) {}
       }
-      return res.json({ valid: true });
+      return res.json({ valid: true, degraded: true });
+    }
+
+    // ========== 下线本账号其它设备（本人自助，需持有有效 token） ==========
+    if (action === 'dropOtherSessions') {
+      var doName = req.body && req.body.username;
+      var doToken = req.body && req.body.token;
+      if (!doName || !doToken) return res.status(400).json({ error: '缺少 username 或 token' });
+      var dchk = await sbFetch('user_sessions?token=eq.' + encodeURIComponent(doToken) + '&username=eq.' + encodeURIComponent(doName) + '&select=token', {
+        headers: svcHeaders({ Prefer: undefined }),
+      });
+      var dRows = dchk.ok ? await dchk.json() : [];
+      if (!dRows || !dRows.length) return res.status(401).json({ error: '当前会话已失效，请重新登录' });
+      var del = await sbFetch('user_sessions?username=eq.' + encodeURIComponent(doName) + '&token=neq.' + encodeURIComponent(doToken), {
+        method: 'DELETE', headers: svcHeaders({ Prefer: 'return=representation' }),
+      });
+      var delRows = del.ok ? await del.json() : [];
+      return res.json({ success: true, dropped: Array.isArray(delRows) ? delRows.length : 0 });
     }
 
     // ========== 兑换激活码（服务端原子占用；取代前端直接改表） ==========
@@ -483,13 +830,15 @@ module.exports = async (req, res) => {
         return res.status(403).json({ error: '激活码无效，或与该邮箱不匹配' });
       }
 
-      // 4) 写入新密码，并把 session_token 换成一个谁都不持有的新值 → 旧设备下次校验即被踢下线
+      // 4) 写入新密码，并清空该账号的全部会话 → 所有旧设备下次校验即被踢下线
+      //    （改多设备后不能再靠「换 session_token」踢人：终身会员有 5 条会话）
       var rpRes = await sbFetch('users?username=eq.' + encodeURIComponent(boundTo), {
         method: 'PATCH',
         headers: svcHeaders({ Prefer: 'return=minimal' }),
-        body: JSON.stringify({ password: hashPassword(rpPwd), session_token: generateSessionToken() }),
+        body: JSON.stringify({ password: hashPassword(rpPwd), session_token: null }),
       });
       if (!rpRes.ok) return res.status(502).json({ error: '重置失败: ' + (await rpRes.text()) });
+      await clearSessions(boundTo);
 
       return res.json({ success: true, username: boundTo });
     }
@@ -530,6 +879,50 @@ module.exports = async (req, res) => {
       return res.json({ success: true, user: Array.isArray(data5) ? data5[0] : data5 });
     }
 
+    // ========== 查看某账号的在线设备（仅管理员，用于客服排查） ==========
+    if (action === 'getSessions') {
+      var gsName = String((req.body && req.body.username) || '').trim();
+      if (!gsName) return res.status(400).json({ error: '缺少 username' });
+      var gsRows = await loadSessions(gsName);
+      if (gsRows === null) {
+        return res.status(503).json({ error: 'user_sessions 表不可用，请先执行 outputs/multi-device-sessions.sql' });
+      }
+      var guRes = await sbFetch('users?username=eq.' + encodeURIComponent(gsName) + '&select=vip,expire', {
+        headers: svcHeaders({ Prefer: undefined }),
+      });
+      var guRows = guRes.ok ? await guRes.json() : [];
+      var gLife = isLifetime(guRows && guRows[0]);
+      var callerIp = clientIp(req);
+      var callerCity = await geoOf(callerIp);
+      return res.json({
+        success: true,
+        lifetime: gLife,
+        limit: gLife ? MULTI_IP_LIMIT : 1,
+        ipCount: uniqIp(gsRows).length,
+        sessions: gsRows.map(function (s) {
+          return {
+            token: s.token,
+            ip: maskIp(s.ip),
+            city: s.city_label || '',
+            cityWeak: !!s.city_weak,
+            createdAt: s.created_at,
+            lastSeen: s.last_seen,
+            ua: s.ua || '',
+          };
+        }),
+        caller: { ip: maskIp(callerIp), city: callerCity.label || '', cityWeak: !!callerCity.weak },
+      });
+    }
+
+    // ========== 踢掉指定会话（仅管理员） ==========
+    if (action === 'kickSession') {
+      var ksName = String((req.body && req.body.username) || '').trim();
+      var ksToken = String((req.body && req.body.token) || '').trim();
+      if (!ksName || !ksToken) return res.status(400).json({ error: '缺少 username 或 token' });
+      var ksOk = await deleteSession(ksName, ksToken);
+      return res.json({ success: true, deleted: ksOk });
+    }
+
     // ========== 删除用户（仅管理员） ==========
     if (action === 'deleteUser') {
       const { username } = req.body;
@@ -537,6 +930,12 @@ module.exports = async (req, res) => {
       var url6 = 'users?username=eq.' + encodeURIComponent(username);
       var r6 = await sbFetch(url6, { method: 'DELETE', headers: svcHeaders({ Prefer: undefined }) });
       if (!r6.ok) return res.status(502).json({ error: '删除失败: ' + (await r6.text()) });
+      // 会话一并清掉，否则删号后旧 token 还能通过 checkSession
+      try {
+        await sbFetch('user_sessions?username=eq.' + encodeURIComponent(username), {
+          method: 'DELETE', headers: svcHeaders({ Prefer: 'return=minimal' }),
+        });
+      } catch (_) {}
       return res.json({ success: true });
     }
 

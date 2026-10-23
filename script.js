@@ -154,13 +154,18 @@ async function userLogin() {
     var result = await resp.json();
 
     if (!result.success) {
-      if (tip) { tip.className = "auth-tip error"; tip.textContent = "❌ " + (result.error === '用户不存在' ? '用户不存在，请检查用户名或先注册' : '密码错误，请重试'); }
+      var msg = result.error || '登录失败';
+      if (msg === '用户不存在') msg = '用户不存在，请检查用户名或先注册';
+      else if (msg === '密码错误') msg = '密码错误，请重试';
+      if (tip) { tip.className = "auth-tip error"; tip.textContent = "❌ " + msg; }
       restoreBtn();
       return;
     }
 
     localStorage.setItem("currentUser", user);
     localStorage.setItem("sessionToken", result.token);
+    // 在线设备信息（终身会员同城 5 个 IP）：个人弹窗里显示「x/5」
+    if (result.session) localStorage.setItem("sessionMeta", JSON.stringify(result.session));
 
     // 缓存 VIP 信息到 localStorage（不含密码）
     if (result.user) {
@@ -440,14 +445,17 @@ function buyVip(type) {
 
 async function logout() {
   var user = localStorage.getItem("currentUser");
+  var token = localStorage.getItem("sessionToken");
   localStorage.removeItem("currentUser");
   localStorage.removeItem("sessionToken");
+  localStorage.removeItem("sessionMeta");
   if (user) {
     try {
+      // 多设备：只退当前这一台，别把老师其它教室的设备一起退掉
       await fetch('/api/proxy-user', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'logout', username: user }),
+        body: JSON.stringify({ action: 'logout', username: user, token: token || '' }),
       });
     } catch (e) {
       console.warn("[退出] 请求失败:", e.message);
@@ -470,8 +478,45 @@ async function toggleProfile() {
   const isVip = user.vip && user.vip !== "普通用户";
   const isExpired = isVip && user.expire !== "永久" && new Date() > new Date(user.expire);
   const avatarDataUrl = generateAvatar(uName, 80);
-  modal.innerHTML = `<div class="profile-card"><div class="profile-avatar" style="background:none;box-shadow:none;"><img src="${avatarDataUrl}" style="width:80px;height:80px;border-radius:50%;box-shadow:0 0 20px rgba(59,130,246,0.4);"></div><h2>${uName}</h2><p style="color:${isExpired?'#ef4444':(isVip?'#fbbf24':'#94a3b8')};font-weight:bold;">${isExpired?'VIP已到期':(isVip?user.vip:'普通用户')}</p><div class="profile-info-row"><span>账号类型</span><span>${isVip?'VIP会员':'普通会员'}</span></div><div class="profile-info-row"><span>到期时间</span><span>${user.expire||'无'}</span></div><button class="btn" style="margin-top:2.5rem;width:100%;" onclick="document.getElementById('profileModal').style.display='none'">关闭</button></div>`;
+  // 在线设备：终身会员同城最多 5 个 IP；普通/月度/年度仍是单设备
+  let meta = null;
+  try { meta = JSON.parse(localStorage.getItem("sessionMeta") || "null"); } catch (_) { meta = null; }
+  let deviceRow = '';
+  if (meta && meta.limit) {
+    const cnt = (meta.ipCount || 0) + ' / ' + meta.limit;
+    const cityTxt = meta.city ? ('　·　' + meta.city) : '';
+    deviceRow = `<div class="profile-info-row"><span>在线设备（IP）</span><span>${cnt}${cityTxt}</span></div>`;
+    if (meta.limit > 1) {
+      deviceRow += `<button class="btn" style="margin-top:0.75rem;width:100%;background:rgba(239,68,68,0.14);color:#f87171;border:1px solid rgba(239,68,68,0.35);font-size:0.85rem;padding:0.6rem;" onclick="dropOtherDevices()">下线其它设备</button>`;
+    }
+  }
+  modal.innerHTML = `<div class="profile-card"><div class="profile-avatar" style="background:none;box-shadow:none;"><img src="${avatarDataUrl}" style="width:80px;height:80px;border-radius:50%;box-shadow:0 0 20px rgba(59,130,246,0.4);"></div><h2>${uName}</h2><p style="color:${isExpired?'#ef4444':(isVip?'#fbbf24':'#94a3b8')};font-weight:bold;">${isExpired?'VIP已到期':(isVip?user.vip:'普通用户')}</p><div class="profile-info-row"><span>账号类型</span><span>${isVip?'VIP会员':'普通会员'}</span></div><div class="profile-info-row"><span>到期时间</span><span>${user.expire||'无'}</span></div>${deviceRow}<button class="btn" style="margin-top:2.5rem;width:100%;" onclick="document.getElementById('profileModal').style.display='none'">关闭</button></div>`;
   modal.style.display = 'flex';
+}
+
+// 只保留当前这台设备，其它在线设备全部下线
+async function dropOtherDevices() {
+  var u = localStorage.getItem("currentUser");
+  var t = localStorage.getItem("sessionToken");
+  if (!u || !t) { alert("请先登录"); return; }
+  if (!confirm("确定让其它设备下线吗？只保留当前这一台。")) return;
+  try {
+    var r = await fetch('/api/proxy-user', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'dropOtherSessions', username: u, token: t }),
+    });
+    var d = await r.json();
+    if (!d.success) { alert(d.error || "操作失败，请稍后重试"); return; }
+    var m = null;
+    try { m = JSON.parse(localStorage.getItem("sessionMeta") || "null"); } catch (_) {}
+    if (m) { m.ipCount = 1; localStorage.setItem("sessionMeta", JSON.stringify(m)); }
+    var pm = document.getElementById('profileModal');
+    if (pm) pm.style.display = 'none';
+    alert("已下线 " + (d.dropped || 0) + " 台设备。");
+  } catch (e) {
+    alert("网络错误，请稍后重试");
+  }
 }
 
 window.onload = async function() {
@@ -498,29 +543,43 @@ window.onload = async function() {
       // 在线状态（last_seen）改由 checkSession 的服务端刷新负责
       // —— 原来这里公开调用 updateUser 写 last_seen，等于开放「改任意用户字段」的入口
     }
-
-    // 单设备登录：每 30 秒校验 session token
-    setInterval(async function() {
-      var curUser = localStorage.getItem("currentUser");
-      var curToken = localStorage.getItem("sessionToken");
-      if (!curUser || !curToken) return;
-      try {
-        var resp = await fetch('/api/proxy-user', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'checkSession', username: curUser, token: curToken }),
-        });
-        var result = await resp.json();
-        if (result.valid === false && result.reason === 'kicked') {
-          localStorage.removeItem("currentUser");
-          localStorage.removeItem("sessionToken");
-          alert("您的账号已在其他设备登录，当前设备已下线。");
-          location.href = "login.html?reason=kicked";
-        }
-      } catch(e) {}
-    }, 30000);
   }
+
+  // 会话心跳：每 30 秒校验一次（被挤掉 / 被管理员下线 / 异地换城 / 闲置过期都在这里落地）
+  // 放在 if(user) 外面 —— 本地用户缓存缺失时也要能发现自己已被踢下线
+  startSessionWatch();
 };
+
+function startSessionWatch() {
+  if (!localStorage.getItem("currentUser") || !localStorage.getItem("sessionToken")) return;
+  if (window.__sessionWatchTimer) return;
+  window.__sessionWatchTimer = setInterval(async function() {
+    var curUser = localStorage.getItem("currentUser");
+    var curToken = localStorage.getItem("sessionToken");
+    if (!curUser || !curToken) return;
+    try {
+      var resp = await fetch('/api/proxy-user', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'checkSession', username: curUser, token: curToken }),
+      });
+      var result = await resp.json();
+      if (result.valid === false) {
+        localStorage.removeItem("currentUser");
+        localStorage.removeItem("sessionToken");
+        localStorage.removeItem("sessionMeta");
+        var expired = result.reason === 'expired';
+        alert(expired
+          ? "登录状态已过期（长时间未使用），请重新登录。"
+          : "您的账号已在其它设备或其它城市登录，当前设备已下线。");
+        location.href = "login.html?reason=" + (expired ? 'expired' : 'kicked');
+        return;
+      }
+      // 同步在线设备数（终身会员同城 5 个 IP）
+      if (result.session) localStorage.setItem("sessionMeta", JSON.stringify(result.session));
+    } catch (e) {}
+  }, 30000);
+}
 
 function initParticles() {
   const canvas = document.createElement('canvas'); canvas.id = 'particle-canvas'; canvas.style.position = 'fixed'; canvas.style.top = '0'; canvas.style.left = '0'; canvas.style.width = '100%'; canvas.style.height = '100%'; canvas.style.zIndex = '-2'; canvas.style.pointerEvents = 'none'; document.body.appendChild(canvas);

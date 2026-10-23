@@ -51,6 +51,29 @@
     return;
   }
 
+  // 会话有效性（软校验）：实验页没有 script.js 的 30 秒心跳，被挤掉/被管理员下线后
+  // 靠这里落地。🔴 只认服务端明确回 valid:false 才跳登录页 ——
+  // 网络失败 / 接口 5xx 一律放行，绝不能因为一次超时把正在上课的老师弹出实验页。
+  (function () {
+    try {
+      fetch('/api/proxy-user', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'checkSession', username: user, token: token }),
+      }).then(function (r) { return r.json(); }).then(function (d) {
+        if (d && d.valid === false) {
+          localStorage.removeItem('currentUser');
+          localStorage.removeItem('sessionToken');
+          localStorage.removeItem('sessionMeta');
+          var expired = d.reason === 'expired';
+          window.location.href = 'login.html?reason=' + (expired ? 'expired' : 'kicked');
+        } else if (d && d.session) {
+          try { localStorage.setItem('sessionMeta', JSON.stringify(d.session)); } catch (_) {}
+        }
+      }).catch(function () {});
+    } catch (_) {}
+  })();
+
   // VIP 信息获取（session 校验由 script.js 中的定时器统一处理）
   // 先获取用户的 VIP 状态
 

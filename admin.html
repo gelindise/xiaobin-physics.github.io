@@ -507,9 +507,55 @@
           '📅 到期：' + (d.expire||'无') + '<br>' +
           '📧 邮箱：' + (d.email||'无') + '<br>' +
           '🔑 激活码：' + (d.authCode||'无') + '<br>' +
-          '📋 注册时间：' + (d.created_at ? new Date(d.created_at).toLocaleString() : '未知');
+          '📋 注册时间：' + (d.created_at ? new Date(d.created_at).toLocaleString() : '未知') +
+          await renderSessions(user);
       } catch(e) {
         tip.className = 'admin-tip error'; tip.textContent = '❌ ' + e.message;
+      }
+    }
+
+    // 在线设备（终身会员同城最多 5 个 IP；其余单设备）
+    async function renderSessions(user) {
+      var s;
+      try { s = await proxy('getSessions', { username: user }); } catch (_) { return ''; }
+      if (!s || s.error) {
+        return '<hr style="border-color:var(--glass-border);margin:0.75rem 0;">' +
+          '<span style="color:#f59e0b;">📶 在线设备：' + ((s && s.error) || '查询失败') + '</span>';
+      }
+      var html = '<hr style="border-color:var(--glass-border);margin:0.75rem 0;">' +
+        '📶 在线设备：<b>' + s.ipCount + ' / ' + s.limit + '</b> 个 IP' +
+        (s.lifetime ? '（终身会员 · 同城多设备）' : '（单设备）') + '<br>';
+      if (!s.sessions || !s.sessions.length) {
+        return html + '<span style="opacity:0.6;">当前没有在线设备</span>';
+      }
+      s.sessions.forEach(function (x, i) {
+        html += '<div style="display:flex;align-items:center;gap:0.5rem;margin-top:0.4rem;font-size:0.78rem;">' +
+          '<span style="flex:1;">' + (i + 1) + '. ' + x.ip + ' · ' + (x.city || '未知城市') +
+          ' · ' + (x.lastSeen ? new Date(x.lastSeen).toLocaleString() : '') + '</span>' +
+          '<button class="tab-btn" style="padding:0.1rem 0.5rem;font-size:0.72rem;" ' +
+          'onclick="kickDevice(' + attrJs(x.token) + ',' + attrJs(user) + ')">下线</button>' +
+          '</div>';
+      });
+      return html;
+    }
+
+    // 把值安全地塞进 onclick="..."（外层是双引号属性 ⇒ 内部用单引号字符串，并转义引号与 &）
+    function attrJs(v) {
+      return "'" + String(v == null ? '' : v)
+        .replace(/&/g, '&amp;').replace(/"/g, '&quot;')
+        .replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/\\/g, '\\\\').replace(/'/g, "\\'") + "'";
+    }
+
+    async function kickDevice(token, username) {
+      if (!confirm('确定把这台设备下线吗？该设备 30 秒内会被弹回登录页。')) return;
+      try {
+        var r = await proxy('kickSession', { username: username, token: token });
+        if (!r.success) { alert(r.error || '操作失败'); return; }
+        var tip = document.getElementById('queryTip');
+        if (tip) { tip.innerHTML = await renderSessions(username); }
+      } catch (e) {
+        alert(e.message);
       }
     }
 
