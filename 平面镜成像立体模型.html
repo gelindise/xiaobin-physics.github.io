@@ -624,12 +624,12 @@
                  四个动作按实验步骤的顺序排：标物点 → 标像点 → 描镜面 → 连线测量。
                  每个按钮的状态（当前该做哪一步 / 做完了没有）由 updateMeasUI 每帧同步。 -->
             <div class="stage-meas" id="mir-meas-bar" role="group" aria-label="测量模式工具">
-              <button type="button" class="mbtn" id="mir-m-o" data-tool="O">✏ 标物点 O</button>
-              <button type="button" class="mbtn" id="mir-m-i" data-tool="I">✏ 标像点 I</button>
+              <button type="button" class="mbtn" id="mir-m-o" data-tool="O">✏ 取物点 O</button>
+              <button type="button" class="mbtn" id="mir-m-i" data-tool="I">✏ 取像点 I</button>
               <button type="button" class="mbtn" id="mir-m-m" data-tool="M">📏 描镜面</button>
               <button type="button" class="mbtn" id="mir-m-go">📐 连线测量</button>
               <button type="button" class="mbtn" id="mir-m-redo">↺ 重测</button>
-              <span class="meas-hint" id="mir-m-hint">在纸上点出物点 O</span>
+              <span class="meas-hint" id="mir-m-hint">点一下蜡烛 A（点它身上任何位置都行）</span>
             </div>
           </div>
 
@@ -818,7 +818,8 @@
         // tool —— 当前该做什么：'O' 标物点 | 'I' 标像点 | 'M' 描镜面（要点两下）| 'line' 可以连线了
         // O / I / M —— 学生自己在白纸上点出来的点（世界坐标 x/z，y 恒为 0）
         // result —— 连线测量算出来的结果（见 measCompute），没算之前是 null
-        meas: { on: false, tool: 'O', O: null, I: null, M: [], result: null, hover: null, before: null },
+        meas: { on: false, tool: 'O', O: null, I: null, M: [], result: null,
+                hover: null, hoverHit: null, before: null },
         // 物体 A（玻璃板前，z > gz）
         ax: 0.55, az: 1.35,
         // 替代物 B：一开始在【器材区】（板前右侧），要学生自己拖到板后去
@@ -2317,6 +2318,28 @@
           line([{ x: h.x, y: h.y - 9 }, { x: h.x, y: h.y + 9 }], 'rgba(125,211,252,.7)', 1.2);
         }
 
+        // ④b 标点阶段的命中高亮：光标碰到「该点的那个物体」时，在它脚下打一圈 + 一行说明。
+        //     【为什么必须有】用户反馈「蜡烛有形状，不知道该点哪个点」。现在规则改成
+        //     「点它身上任何地方都行」，那就要让这句话在画面上看得见——
+        //     光标一碰到蜡烛，脚下就亮起「点这里 = 物点 O」，学生不用猜。
+        const hh = ms.hoverHit;
+        const want = ms.tool === 'O' ? 'obj' : (ms.tool === 'I' ? 'image' : null);
+        if (hh && hh === want) {
+          let at;
+          if (hh === 'obj') at = { x: state.ax, z: state.az };
+          else { const im0 = imagePos(); at = { x: im0.x, z: im0.z }; }
+          const ring0 = [];
+          for (let k = 0; k <= 28; k++) {
+            const a = k / 28 * PI2;
+            ring0.push(project([at.x + Math.cos(a) * 0.30, 0.03, at.z + Math.sin(a) * 0.30], q));
+          }
+          line(ring0, 'rgba(52,211,153,.95)', 2.4);
+          const c = pr(at);
+          label({ x: c.x, y: c.y - 16 },
+                hh === 'obj' ? '点这里 = 物点 O' : '点这里 = 像点 I',
+                'rgba(167,243,208,.98)', 11);
+        }
+
         // ⑤ 连线测量的结果：交点处的直角符号 + u′ / v′ 两段读数 + 夹角
         const r = ms.result;
         if (!r || r.err || !r.F) return;
@@ -2655,6 +2678,57 @@
         const r = canvas.getBoundingClientRect();
         return { x: e.clientX - r.left, y: e.clientY - r.top };
       }
+
+      /* ============================================================
+       * 测量模式的命中测试：只认【物 A】和【像 A′】两件东西
+       * ------------------------------------------------------------
+       * 【为什么要单独一套】普通 hitTest 还要认 B、光屏、发光点，测量模式下
+       * 这些都不该被点中；而且它不认「像」——普通模式里像是不能拖的。
+       * 【为什么盒子给得比 hitTest 还宽】学生只要「点到蜡烛身上」就算数，
+       * 具体落在哪儿由程序取代表点（见 measPlace），所以越宽容越好用。
+       * ============================================================ */
+      function measHit(x, y) {
+        const q = {}; makeCam(q, state.w, state.h);
+        const box = pts => {
+          let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
+          for (const p of pts) {
+            const s = project(p, q);
+            if (s.x < x0) x0 = s.x;
+            if (s.x > x1) x1 = s.x;
+            if (s.y < y0) y0 = s.y;
+            if (s.y > y1) y1 = s.y;
+          }
+          return { x0: x0, x1: x1, y0: y0, y1: y1, cx: (x0 + x1) / 2, cy: (y0 + y1) / 2 };
+        };
+        const hw = CR + 0.10;              // 比 hitTest 再宽 1 mm：宁可多认，不可漏认
+        const PAD = 10;
+        const inBox = b => x >= b.x0 - PAD && x <= b.x1 + PAD && y >= b.y0 - PAD && y <= b.y1 + PAD;
+        // 物 A：底面四角 + 顶端四角（顶端取 srcTop，所以点到火苗上同样算「点到蜡烛」）
+        const aPts = [];
+        for (const dx of [-hw, hw]) for (const dz of [-hw, hw]) {
+          aPts.push([state.ax + dx, 0, state.az + dz],
+                    [state.ax + dx, srcTop(), state.az + dz]);
+        }
+        const bA = box(aPts);
+        // 像 A′：沿【像自己的轴线】取底面和顶端，横向各 ±hw（像可能斜躺、可能悬空）
+        const gf = ghostFrame(), top = srcTop();
+        const iPts = [];
+        for (const t of [0, top]) {
+          const p = ghostPoint(gf, t);
+          for (const dx of [-hw, hw]) {
+            iPts.push([p[0] + dx, p[1], p[2]], [p[0], p[1], p[2] + dx]);
+          }
+        }
+        const bI = box(iPts);
+        const inA = inBox(bA), inI = inBox(bI);
+        // 两个盒子在屏幕上叠住时（像与物靠近时），取中心更近的那个
+        if (inA && inI) {
+          return Math.hypot(x - bA.cx, y - bA.cy) <= Math.hypot(x - bI.cx, y - bI.cy)
+            ? 'obj' : 'image';
+        }
+        return inA ? 'obj' : (inI ? 'image' : null);
+      }
+
       // ── 长度单位：state 里一律用「世界单位」，1 单位 = U cm = 10 cm；
       //    而侧栏滑块和读数一律用 cm。两个单位只在这两个函数里换算。
       //    【坑】之前 syncInputs 把世界单位直接写进以 cm 为刻度的 range：
@@ -2794,6 +2868,7 @@
       function measReset() {
         const ms = state.meas;
         ms.tool = 'O'; ms.O = null; ms.I = null; ms.M = []; ms.result = null;
+        ms.hoverHit = null;
         updateMeasUI(); updateSteps(); state.dirty = true;
       }
 
@@ -2826,7 +2901,7 @@
           // 悬停高亮是「这个物体能拖」的提示，测量模式下不拖物体了，先清掉
           state.hover = null;
           if (canvas) canvas.classList.remove('pick');
-          showToast('测量模式：在纸上点出物点 O');
+          showToast('测量模式：点一下蜡烛 A（点它身上任何位置都行）');
         } else {
           const b = ms.before || {};
           if (b.showRays != null) { state.showRays = b.showRays; ui.rays.checked = b.showRays; }
@@ -2847,29 +2922,79 @@
         state.dirty = true;
       }
 
-      // 在纸上落一个点（世界坐标 x / z，y 恒为 0）。返回是否真的落下了。
-      function measClick(x, z) {
+      /* ============================================================
+       * 测量模式落点
+       * ------------------------------------------------------------
+       * 【用户 2026-10-23 晚的要求】蜡烛和像都是有形状的东西，让学生去猜
+       * 「该点哪个点」既难点准、又容易点错——点在蜡烛上半截和点在根部，
+       * 量出来的物距就不是同一个数，而学生根本不知道错在哪儿。所以改成：
+       *   点到【物体身上任何位置】都算数，程序自己取那个唯一的代表点：
+       *     物点 O = 蜡烛 A 的【底面中心】（它站在白纸上的那个点）
+       *     像点 I = 像 A′ 的【底面中心】（同样是它落在纸面上的那个点）
+       *   两者用【同一条规则】取，而像本来就是物的镜像 ⇒ 这两个点严格对应，
+       *   学生不需要再自己去「找对应的那个点」。
+       * 描镜面这一步不受影响：镜面线仍然是学生自己在纸上点两下描出来的。
+       * ------------------------------------------------------------
+       * hit   = 'obj' | 'image' | null（null = 点在空白纸面上）
+       * force = true 时不做命中检查、直接用传入的 (x, z) —— 只给自检的负向对照用
+       *         （要验证「点偏了 u′ ≠ v′」，就必须能真的把一个点放到错的位置上）
+       * ============================================================ */
+      function measPlace(hit, x, z, force) {
         const ms = state.meas;
         if (!ms.on) return false;
-        // 只能点在白纸上——点到桌子边、桌外都不算
-        if (Math.abs(x) > PT_W - 0.03 || Math.abs(z) > PT_D - 0.03) {
-          showToast('点在白纸上（纸面范围内）');
-          return false;
-        }
-        const p = { x: x, z: z };
-        if (ms.tool === 'O') { ms.O = p; ms.tool = 'I'; showToast('物点 O 已标出 · 接着标像点 I'); }
-        else if (ms.tool === 'I') { ms.I = p; ms.tool = 'M'; showToast('像点 I 已标出 · 再点两下描出镜面'); }
-        else if (ms.tool === 'M') {
-          ms.M.push(p);
+        const onPaper = Math.abs(x) <= PT_W - 0.03 && Math.abs(z) <= PT_D - 0.03;
+        if (ms.tool === 'O') {
+          if (!force) {
+            if (hit !== 'obj') {
+              showToast('点一下蜡烛 A —— 点它身上任何地方都行，不用对准某个位置');
+              return false;
+            }
+            // 【命中就取代表点，不再拿光标的纸面位置做范围检查】
+            // 学生点蜡烛上半截时，光标反算回纸面会落到物体【后方】甚至纸外
+            // （俯视 26° 下，高 7 cm 的点反算出去约 15 cm）——用 onPaper 拦一下，
+            // 「点上面一点」就会被莫名其妙地拒绝。物点来自物体坐标，与光标无关。
+            ms.O = { x: state.ax, z: state.az };
+          } else {
+            if (!onPaper) { showToast('点在白纸上（纸面范围内）'); return false; }
+            ms.O = { x: x, z: z };
+          }
+          ms.tool = 'I';
+          showToast('物点 O 已取好（蜡烛底部中心）· 再点一下像');
+        } else if (ms.tool === 'I') {
+          if (!force) {
+            if (hit !== 'image') {
+              showToast('点一下像 A′ —— 点它身上任何地方都行');
+              return false;
+            }
+          } else if (!onPaper) {
+            showToast('点在白纸上（纸面范围内）');
+            return false;
+          }
+          const im = imagePos();
+          // 像被镜面抬起时底面 y ≠ 0，但测量是在纸上做的 ⇒ 取它在纸面上的位置。
+          // 和物点用的是同一条规则（「站在纸上的那个点」），所以两者严格对应。
+          ms.I = force ? { x: x, z: z } : { x: im.x, z: im.z };
+          ms.tool = 'M';
+          showToast('像点 I 已取好（像的底部中心）· 再点两下描出镜面');
+        } else if (ms.tool === 'M') {
+          // 描镜面仍然自由落点：这条线就是要学生自己描的
+          if (!onPaper) { showToast('点在白纸上（纸面范围内）'); return false; }
+          ms.M.push({ x: x, z: z });
           if (ms.M.length >= 2) { ms.tool = 'line'; showToast('镜面描好了 · 点「📐 连线测量」'); }
           else showToast('再点一下，把镜面这条线描出来');
         } else {
           showToast('点「↺ 重测」可以重新标一遍');
+          return false;
         }
         ms.result = null;
         // 步骤列表要立刻跟上（不等下一帧）：学生点完一个点，右侧第几步该打勾是即时反馈。
         updateMeasUI(); updateSteps(); state.dirty = true;
         return true;
+      }
+
+      // 直接落点（跳过命中检查）。给自检的负向对照用。
+      function measClick(x, z) {
+        return measPlace(null, x, z, true);
       }
 
       // 连线测量：全部在纸面（y = 0）上做二维几何。
@@ -2942,9 +3067,10 @@
         if (!hint) return;
         let t = '', ok = false;
         if (!ms.on) t = '';
-        else if (!hasO) t = '第①步：在纸上点出物点 O（' + (state.src === 'f' ? 'F 光源 A' : '蜡烛 A') + ' 的底部位置）';
-        else if (!hasI) t = '第②步：点出像点 I（像的底部位置）';
-        else if (!hasM) t = '第③步：点两下，描出玻璃板在纸上的镜面线（已点 ' + ms.M.length + '/2）';
+        else if (!hasO) t = '第①步：点一下' + (state.src === 'f' ? ' F 光源 A' : '蜡烛 A') +
+                            '（点它身上任何位置都行）';
+        else if (!hasI) t = '第②步：点一下像 A′（同样点它身上任何位置）';
+        else if (!hasM) t = '第③步：在纸上点两下，描出玻璃板在纸上的镜面线（已点 ' + ms.M.length + '/2）';
         else if (!ms.result) t = '第④步：点「📐 连线测量」，看 O—I 是否垂直镜面、u′ 与 v′ 是否相等';
         else if (ms.result.err) t = ms.result.err;
         else {
@@ -2960,14 +3086,18 @@
       function measText() {
         const ms = state.meas;
         const aName = state.src === 'f' ? 'F 光源 A' : '蜡烛 A';
-        let h = '<b>测量模式：</b>这一遍不用页面给的读数——自己拿铅笔和直尺量。';
+        let h = '<b>测量模式：</b>这一遍不用页面给的读数——自己拿铅笔和直尺量。'
+              + '<br><span style="color:#94a3b8">蜡烛和像都是有形状的，所以你不用去对准某个点：'
+              + '<b>点它身上任何位置都行</b>，页面自动取它的<b>底部中心</b>当代表点。'
+              + '物点和像点用同一条规则取，所以这两个点天然对应。</span>';
         if (!ms.O) {
-          h += '<br>① 在纸上点出<b>物点 O</b>：' + aName + ' 底部所在的位置。';
+          h += '<br>① 点一下' + aName + '（点它身上任何位置），自动取它底部中心作<b>物点 O</b>。';
         } else if (!ms.I) {
-          h += '<br>① 物点 O 已标好。② 再点出<b>像点 I</b>：像底部所在的位置'
-             + '（从上方看下去，像就落在纸上某一点）。';
+          h += '<br>① 物点 O 已取好（' + aName + ' 的底部中心）。'
+             + '② 再点一下<b>像 A′</b>（同样点它身上任何位置），自动取像的底部中心作<b>像点 I</b>。';
         } else if (ms.M.length < 2) {
-          h += '<br>①② 两个点都标好了。③ 点两下，把玻璃板在纸上的<b>镜面线</b>描出来。';
+          h += '<br>①② 两个点都取好了，而且它们严格对应（像就是物的镜像）。'
+             + '③ 在纸上点两下，把玻璃板在纸上的<b>镜面线</b>描出来——这一步要你自己描。';
         } else if (!ms.result) {
           h += '<br>③ 镜面线描好了。④ 点「📐 连线测量」：连 O—I，量 u′、v′，'
              + '看 OI 与镜面是否垂直。';
@@ -3049,6 +3179,16 @@
             // 视角一转，这个点在屏幕上的位置就变了；留着它，准星会飘在一个
             // 和光标毫不相干的地方，看着像"点已经落下去了"。
             state.meas.hover = null;
+            state.meas.hoverHit = null;
+          } else if (state.meas.tool === 'O' || state.meas.tool === 'I') {
+            // 【标点阶段给命中反馈】光标碰到蜡烛 / 像就变手型 + 把那个物体高亮起来，
+            // 学生才知道「该点哪儿」。没有这个反馈，他只会以为哪儿都点不下去。
+            const h = measHit(p.x, p.y);
+            if (h !== state.meas.hoverHit) state.meas.hoverHit = h;
+            canvas.classList.toggle('pick', !!h);
+          } else {
+            state.meas.hoverHit = null;
+            canvas.classList.remove('pick');
           }
           state.lastX = p.x; state.lastY = p.y;
           state.dirty = true;
@@ -3099,7 +3239,9 @@
           if (Math.hypot(p.x - d.x, p.y - d.y) < 6) {
             const q = {}; makeCam(q, state.w, state.h);
             const w = unproject(p.x, p.y, q);
-            if (w) measClick(w[0], w[2]);
+            // 【先判命中，再落点】标物点 / 像点要求「点到物体身上」，
+            // 命中之后由 measPlace 取代表点；描镜面仍然用光标在纸上的位置。
+            if (w) measPlace(measHit(p.x, p.y), w[0], w[2], false);
           }
           endDrag();
           return;
@@ -3176,10 +3318,15 @@
       // 这一套是【另一条流程】，所以整条替换掉上面五步，而不是接在后面变成九步——
       // 接在后面会让人以为「前五步做完了才能量」，其实测量是从「已经找到像」开始的。
       const MEAS_STEPS = [
-        { text: () => '在纸上点出<b>物点 O</b>——' + (state.src === 'f' ? 'F 光源 A' : '蜡烛 A') + ' 的底部位置',
+        // 【为什么写成「点一下它就行」】蜡烛 / 像都是有形状的东西，让学生去猜
+        // 「该点哪个点」既难点准又容易点错。规则改成：点到物体身上任何位置，
+        // 程序自己取它的底面中心当代表点（见 measPlace）。
+        { text: () => '点一下' + (state.src === 'f' ? ' F 光源 A' : '蜡烛 A') +
+            '（点它身上任何位置都行），自动取底部中心为<b>物点 O</b>',
           done: () => !!state.meas.O },
-        { text: () => '点出<b>像点 I</b>——像的底部位置', done: () => !!state.meas.I },
-        { text: () => '点两下，描出玻璃板在纸上的<b>镜面线</b>', done: () => state.meas.M.length >= 2 },
+        { text: () => '点一下<b>像 A′</b>（同样点它身上任何位置），自动取底部中心为<b>像点 I</b>',
+          done: () => !!state.meas.I },
+        { text: () => '在纸上点两下，描出玻璃板在纸上的<b>镜面线</b>', done: () => state.meas.M.length >= 2 },
         { text: () => '点「📐 连线测量」：连 O—I，量 u′、v′，看是否垂直镜面、是否相等',
           done: () => !!(state.meas.result && !state.meas.result.err) }
       ];
@@ -3888,15 +4035,34 @@
                      err: ms.result.err || null
                    } : null,
                    hint: (document.getElementById('mir-m-hint') || {}).textContent || '',
+                   hoverHit: ms.hoverHit || null,
                    steps: [...document.querySelectorAll('#mir-steps li')].map(li => ({
                      text: li.textContent.replace(/\s+/g, ' ').trim(),
                      on: li.classList.contains('on'), cur: li.classList.contains('cur')
                    })) };
         },
         setMeasure(on) { setMeasure(on); return window.__mir.measState(); },
-        // 往纸上落一个点（世界坐标）。自检用它在「物点 / 像点 / 镜面线」的位置上精确点击，
-        // 但走的是和鼠标点击完全相同的入口 measClick。
+        // 往纸上【直接】落一个点（世界坐标，跳过命中检查）。
+        // 给负向对照用：要验证「点偏了 u′ ≠ v′」，就必须能真的把点放到错的位置上。
         measClickAt(x, z) { return measClick(x, z); },
+        // 【模拟真实点击】世界点 → 屏幕点 → 先做命中测试 → 再落点。
+        // 和 pointerup 里那条路完全一致（measHit → measPlace），不是直接写 state。
+        measTapAt(x, z) {
+          const q = {}; makeCam(q, state.w, state.h);
+          const s = project([x, 0, z], q);
+          return measPlace(measHit(s.x, s.y), x, z, false);
+        },
+        // 命中测试本身（屏幕坐标）。自检要验「点到蜡烛身上任何高度都算」。
+        measHitScreen(x, y) { return measHit(x, y); },
+        // 【最真实的一档】给屏幕坐标，完全复刻 pointerup 的那条路：
+        // unproject 回纸面 → measHit 判命中 → measPlace 落点。
+        // 自检要验「点在蜡烛上半截，取到的仍然是底面中心」，就得从这个入口进。
+        measTapScreen(x, y) {
+          const q = {}; makeCam(q, state.w, state.h);
+          const w = unproject(x, y, q);
+          if (!w) return false;
+          return measPlace(measHit(x, y), w[0], w[2], false);
+        },
         measGo() { return measGo(); },
         measReset() { measReset(); return window.__mir.measState(); },
         // 屏幕坐标 → 纸上世界点（自检要「点到像的位置」，得先把世界点换成屏幕点）
