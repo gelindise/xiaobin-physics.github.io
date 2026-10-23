@@ -391,8 +391,8 @@ import * as THREE from './assets/optics-three.min.js';
   /* ★ 玻璃管单独一份玻璃，比烧杯亮一档（opacity 0.16 → 0.22）。
      管壁薄、里面还要看得见紫色蒸气和管底的碘颗粒，太暗就只剩一根灰棍。 */
   const tubeGlassMat = new THREE.MeshPhysicalMaterial({
-    color: '#cfe6f2', transparent: true, opacity: 0.07, roughness: 0.05, metalness: 0.0,
-    clearcoat: 0.35, clearcoatRoughness: 0.04, envMapIntensity: 0.55,
+    color: '#cfe6f2', transparent: true, opacity: 0.05, roughness: 0.03, metalness: 0.0,
+    clearcoat: 0.5, clearcoatRoughness: 0.02, envMapIntensity: 0.45,
     side: THREE.DoubleSide, depthWrite: false
   });
   /* 水比玻璃深一档、蓝一点：否则「玻璃上的水」和「玻璃」糊成一片。 */
@@ -401,11 +401,28 @@ import * as THREE from './assets/optics-three.min.js';
     clearcoat: 1.0, clearcoatRoughness: 0.04, envMapIntensity: 1.5,
     side: THREE.DoubleSide, depthWrite: false
   });
-  /* 管壁上的水膜：比水再亮一点、更薄，才读得出「水顺着管壁淌下来」 */
+  /* 管壁上的水膜：比水再亮一点、更薄，才读得出「水顺着管壁淌下来」。
+     ★★ 贴图必须【下端淡出】：水膜是随 wet 长高的圆柱，下端那条硬边在近看时
+        就是一条水平亮线 —— 和「管里有一柱液体、液面在这里」长得一模一样，
+        用户看到的「像液体」有一半是它。 */
+  const FILM_TEX = (() => {
+    const H = 64;
+    const c = newCanvas(4, H), g = c.getContext('2d');
+    const grd = g.createLinearGradient(0, 0, 0, H);   // 画布顶 = 水膜顶（贴管口）
+    grd.addColorStop(0.00, 'rgba(255,255,255,0.55)');
+    grd.addColorStop(0.10, 'rgba(255,255,255,1.00)');
+    grd.addColorStop(0.70, 'rgba(255,255,255,0.92)');
+    grd.addColorStop(0.88, 'rgba(255,255,255,0.42)');
+    grd.addColorStop(1.00, 'rgba(255,255,255,0.00)');
+    g.fillStyle = grd; g.fillRect(0, 0, 4, H);
+    const t = new THREE.CanvasTexture(c);
+    t.colorSpace = THREE.SRGBColorSpace;
+    return t;
+  })();
   const filmMat = new THREE.MeshPhysicalMaterial({
     color: '#7fc4e0', transparent: true, opacity: 0.0, roughness: 0.04, metalness: 0.0,
     clearcoat: 1.0, clearcoatRoughness: 0.02, envMapIntensity: 2.0,
-    side: THREE.DoubleSide, depthWrite: false
+    map: FILM_TEX, side: THREE.DoubleSide, depthWrite: false
   });
   /* 水流：半透明白蓝，比水膜亮一档 —— 它要在暗背景上「看得见在流」 */
   const streamMat = new THREE.MeshPhysicalMaterial({
@@ -418,7 +435,7 @@ import * as THREE from './assets/optics-three.min.js';
   /* 固态碘：紫黑色、带金属光泽的晶体（不是无光泽的黑块）。
      ★ 提亮 + 提高金属度/环境反射：它是「固态碘少下去了」这个核心观察量的唯一载体，
        第一版太暗，透过 0.30 的玻璃 + 0.44 的水之后在画面上直接消失了。 */
-  const iodineSolidMat = new THREE.MeshStandardMaterial({ color: '#4a1553', roughness: 0.28, metalness: 0.38, envMapIntensity: 2.2 });
+  const iodineSolidMat = new THREE.MeshStandardMaterial({ color: '#3c0f49', roughness: 0.38, metalness: 0.28, envMapIntensity: 1.4 });
   /* 碘蒸气：紫色半透明。opacity 随蒸气量实时改。
      ★ 两个关键选择（第一版两个都选错，出来是「悬在水里的一串白珠子」）：
        ① 混合方式必须【普通混合】，不能用 AdditiveBlending —— 加法混合在浅色背景
@@ -448,7 +465,7 @@ import * as THREE from './assets/optics-three.min.js';
   });
   /* 凝华出的碘晶体：有金属光泽的紫黑色晶体。
      ★ 比纯黑亮一档：太暗时它落在半透明冷片上完全读不出来（实测 #2a0b33 就是这样）。 */
-  const crystalMat = new THREE.MeshStandardMaterial({ color: '#3a0a45', roughness: 0.14, metalness: 0.82, envMapIntensity: 2.6 });
+  const crystalMat = new THREE.MeshStandardMaterial({ color: '#1e0629', roughness: 0.26, metalness: 0.62, envMapIntensity: 1.0 });
   /* 干冰：白色微蓝、粗糙（不是纯白 —— 纯白和白雾糊在一起，块就读不出来了） */
   const dryIceMat = new THREE.MeshStandardMaterial({ color: '#dbe7f2', roughness: 0.94, metalness: 0.0, envMapIntensity: 0.9 });
   const frostMat = new THREE.MeshStandardMaterial({ color: '#eaf6ff', roughness: 0.55, metalness: 0.0, envMapIntensity: 1.4, transparent: true, opacity: 0.95 });
@@ -528,29 +545,52 @@ import * as THREE from './assets/optics-three.min.js';
   water.position.set(0, BK_Y0 + WATER_H / 2, 0);
   scene.add(water);
 
-  /* --- 铁夹：把玻璃管夹在立柱上（课本图里那支管子就是被夹住的） --- */
+  /* --- 铁夹：立柱上的套筒 + 斜向横臂 + 夹口 ---
+     ★★ 立柱在 z = ROD_Z(-5.6)、玻璃管在中轴 z = 0，所以横臂必须【沿这条斜线连过去】。
+       上一版横臂只沿 x 走、而且摆在 z = 0 —— 看上去就是一截铁棍悬在管子旁边，
+       立柱和管子谁都没碰到，用户一眼看出「悬空」。 */
   const clampGroup = new THREE.Group();
   rig.add(clampGroup);
-  const clampArm = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.22, 0.22, Math.abs(ROD_X) - TUBE_R, 10), chrome);
-  clampArm.rotation.z = Math.PI / 2;
-  clampArm.position.set((ROD_X + TUBE_R) / 2, CLAMP_Y, 0);
+  const CLAMP_FROM = new THREE.Vector3(ROD_X, CLAMP_Y, ROD_Z);   // 立柱上的夹持点
+  /* ★ 横臂要停在【夹口外缘】上，不能一路伸到管子中心 ——
+     伸到中心时那截铁棍就插进管腔里了，近看像「铁棍穿在玻璃管里」。 */
+  const CLAMP_DIR = new THREE.Vector3(-ROD_X, 0, -ROD_Z).normalize();   // 立柱 → 管子
+  const CLAMP_TO = CLAMP_DIR.clone().multiplyScalar(-(TUBE_R + 0.10)).setY(CLAMP_Y);
+  const clampSleeve = new THREE.Mesh(
+    new THREE.CylinderGeometry(ROD_R + 0.20, ROD_R + 0.20, 1.9, 18), chrome);
+  clampSleeve.position.copy(CLAMP_FROM);
+  clampGroup.add(clampSleeve);
+  const clampArmLen = CLAMP_FROM.distanceTo(CLAMP_TO);
+  const clampArm = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.26, clampArmLen, 14), chrome);
+  clampArm.position.copy(CLAMP_FROM).add(CLAMP_TO).multiplyScalar(0.5);
+  clampArm.quaternion.setFromUnitVectors(
+    new THREE.Vector3(0, 1, 0), CLAMP_TO.clone().sub(CLAMP_FROM).normalize());
   clampGroup.add(clampArm);
-  /* ★ 夹口半径必须跟着管径走（TUBE_R + 0.12）：写死一个大圈就变成「管子上套了个呼啦圈」 */
-  const clampRing = new THREE.Mesh(new THREE.TorusGeometry(TUBE_R + 0.12, 0.13, 10, 36), chrome);
+  /* ★ 夹口半径必须跟着管径走（TUBE_R + 0.10）：写死一个大圈就变成「管子上套了个呼啦圈」 */
+  const clampRing = new THREE.Mesh(new THREE.TorusGeometry(TUBE_R + 0.10, 0.17, 10, 36), darkSteel);
   clampRing.rotation.x = Math.PI / 2;
   clampRing.position.set(0, CLAMP_Y, 0);
   clampGroup.add(clampRing);
-  const clampBoss = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.5, 0.44), darkSteel);
-  clampBoss.position.set(TUBE_R + 0.28, CLAMP_Y, 0);
+  /* 夹口里的两片橡胶垫：贴着管壁，一眼看出「是夹住的」而不是「套了个环」 */
+  [-1, 1].forEach((s) => {
+    const pad = new THREE.Mesh(new THREE.BoxGeometry(0.10, 0.62, 0.42),
+      new THREE.MeshStandardMaterial({ color: '#20272e', roughness: 0.95, metalness: 0.0 }));
+    pad.position.set(s * (TUBE_R + 0.02), CLAMP_Y, 0);
+    clampGroup.add(pad);
+  });
+  /* 压紧块 + 蝶形螺丝：放在【朝向镜头】的 +z 一侧。
+     原来放在 +x，正好被玻璃管整个挡住，画面上只剩一个小圈浮在管子右边 —— 看着像零件掉了。 */
+  const clampBoss = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.46, 0.38), darkSteel);
+  clampBoss.position.set(0, CLAMP_Y, TUBE_R + 0.16);
   clampGroup.add(clampBoss);
-  const clampScrew = new THREE.Mesh(new THREE.CylinderGeometry(0.085, 0.085, 1.0, 10), chrome);
-  clampScrew.rotation.z = Math.PI / 2;
-  clampScrew.position.set(TUBE_R + 0.82, CLAMP_Y, 0);
+  const clampScrew = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.075, 0.62, 10), chrome);
+  clampScrew.rotation.x = Math.PI / 2;
+  clampScrew.position.set(0, CLAMP_Y, TUBE_R + 0.62);
   clampGroup.add(clampScrew);
-  const clampWing = new THREE.Mesh(new THREE.TorusGeometry(0.30, 0.05, 6, 16), chrome);
-  clampWing.rotation.y = Math.PI / 2;
-  clampWing.position.set(TUBE_R + 1.30, CLAMP_Y, 0);
+  /* 滚花螺母：一小片圆盘。上一版用圆环（torus），远看就是个「小圈浮在管子右边」。 */
+  const clampWing = new THREE.Mesh(new THREE.CylinderGeometry(0.26, 0.26, 0.10, 16), chrome);
+  clampWing.rotation.x = Math.PI / 2;
+  clampWing.position.set(0, CLAMP_Y, TUBE_R + 0.92);
   clampGroup.add(clampWing);
 
   /* --- 封闭玻璃管：直筒 + 圆底 + 半球封口 --- */
@@ -575,18 +615,22 @@ import * as THREE from './assets/optics-three.min.js';
   const iodineHeap = new THREE.Group();
   iodineHeap.position.y = TUBE_Y0 + 0.16;
   tubeRig.add(iodineHeap);
+  /* ★★ 一堆【颗粒】而不是一个光滑半球：半球 + 高光在近看时就是「一滴紫色液体」，
+     而这恰恰是用户说「不是里边充满碘液体」时要排除的东西。 */
   const solidIodine = new THREE.Mesh(
-    new THREE.SphereGeometry(0.92, 26, 16, 0, Math.PI * 2, 0, Math.PI / 2), iodineSolidMat);
-  solidIodine.scale.set(1, 0.74, 1);
+    new THREE.SphereGeometry(0.88, 22, 12, 0, Math.PI * 2, 0, Math.PI / 2), iodineSolidMat);
+  solidIodine.scale.set(1, 0.5, 1);
   solidIodine.castShadow = true;
   iodineHeap.add(solidIodine);
   {
     const rnd = mulberry32(7711);
-    for (let i = 0; i < 8; i++) {
-      const g = new THREE.Mesh(new THREE.OctahedronGeometry(0.075 + rnd() * 0.055, 0), iodineSolidMat);
-      const a = rnd() * Math.PI * 2, rr = rnd() * 0.62;
-      g.position.set(Math.cos(a) * rr, 0.52 + rnd() * 0.12, Math.sin(a) * rr);
+    for (let i = 0; i < 18; i++) {
+      const r = 0.085 + rnd() * 0.105;
+      const g = new THREE.Mesh(new THREE.OctahedronGeometry(r, 0), iodineSolidMat);
+      const a = rnd() * Math.PI * 2, rr = Math.pow(rnd(), 0.6) * 0.74;
+      g.position.set(Math.cos(a) * rr, 0.24 + rnd() * 0.30, Math.sin(a) * rr);
       g.rotation.set(rnd() * 3, rnd() * 3, rnd() * 3);
+      g.castShadow = true;
       iodineHeap.add(g);
     }
   }
@@ -595,17 +639,39 @@ import * as THREE from './assets/optics-three.min.js';
      数量/不透明度随蒸气量变。团块小而多才像「雾」；大实心球会读成一颗颗珠子。 --- */
   /* ★ 先铺一层【体积色】：管子内腔一个紫色半透明的柱面。
      只用几十个 Sprite 是撑不出「满管紫气」的 —— 20% 蒸气时画面上是几团灰斑，
-     而学生要看的恰恰是「整根管子变紫了」。Sprite 退到只负责翻滚的质感。 */
+     而学生要看的恰恰是「整根管子变紫了」。Sprite 退到只负责翻滚的质感。
+
+     ★★ 但硬边的圆柱会读成【一柱紫色液体】（顶端那条水平直线尤其像液面），
+        而管里是【密闭腔体里的碘蒸气】。所以给它一张【上下都淡出】的 alpha 渐变：
+        顶端（伸进封口球冠）淡到 0、管底碘堆上方也淡下去，中间才满。
+        这样看上去是「气充满整个腔体」，而不是「液体灌到某个高度」。 */
+  const VAP_GRAD = (() => {
+    const H = 128;
+    const c = newCanvas(4, H), g = c.getContext('2d');
+    const grd = g.createLinearGradient(0, 0, 0, H);      // 画布顶 = 管子顶端（纹理 v=1）
+    grd.addColorStop(0.00, '#000000');
+    grd.addColorStop(0.10, '#3a3a3a');
+    grd.addColorStop(0.26, '#b4b4b4');
+    grd.addColorStop(0.46, '#ffffff');
+    grd.addColorStop(0.80, '#ffffff');
+    grd.addColorStop(0.93, '#b0b0b0');
+    grd.addColorStop(1.00, '#4a4a4a');
+    g.fillStyle = grd; g.fillRect(0, 0, 4, H);
+    const t = new THREE.CanvasTexture(c);
+    return t;
+  })();
   const vaporVolumeMat = new THREE.MeshBasicMaterial({
     color: '#6a12bb', transparent: true, opacity: 0.0, side: THREE.DoubleSide, depthWrite: false,
+    alphaMap: VAP_GRAD,
     /* ★ 不吃 ACES：碘蒸气是【吸收型着色】，过一遍影调曲线会被抬成淡紫灰，
        而学生要认的正是「深紫」—— 关掉 toneMapping 才是它本来的颜色 */
     toneMapped: false
   });
+  const VAP_Y0 = TUBE_Y0 + 0.15, VAP_Y1 = TUBE_Y1 + 0.55;   // 下端贴碘堆上方，上端伸进封口球冠
   const vaporVolume = new THREE.Mesh(
-    new THREE.CylinderGeometry(TUBE_R - 0.26, TUBE_R - 0.26, TUBE_Y1 - TUBE_Y0 - 0.6, 32, 1, true),
+    new THREE.CylinderGeometry(TUBE_R - 0.26, TUBE_R - 0.26, VAP_Y1 - VAP_Y0, 32, 1, true),
     vaporVolumeMat);
-  vaporVolume.position.y = TUBE_Y0 + 0.3 + (TUBE_Y1 - TUBE_Y0 - 0.6) / 2;
+  vaporVolume.position.y = (VAP_Y0 + VAP_Y1) / 2;
   tubeRig.add(vaporVolume);
 
   const vaporGroup = new THREE.Group();
@@ -615,7 +681,7 @@ import * as THREE from './assets/optics-three.min.js';
     const rnd = mulberry32(5150);
     for (let i = 0; i < 104; i++) {
       const sp = new THREE.Sprite(vaporMat.clone());
-      const sz = 0.36 + rnd() * 0.42;                       // 世界单位（cm）边长
+      const sz = 0.42 + rnd() * 0.46;                       // 世界单位（cm）边长
       sp.scale.set(sz, sz, 1);
       /* 幂分布：团块更靠外一圈，贴着管内壁也有气，不至于挤成中心一坨 */
       const u = rnd() * Math.PI * 2;
@@ -628,33 +694,29 @@ import * as THREE from './assets/optics-three.min.js';
     }
   }
 
-  /* --- 凝华出的碘晶体：一层【镀在管内壁上的膜】+ 一层小晶体颗粒。
-     课本上浇完冷水看到的就是管内壁那层紫黑色、有金属光泽的晶体，
-     所以载体是【内壁】而不是某一块插进去的冷片 —— 整个管壁都是「最冷的面」。 --- */
-  const CRYSTAL_FILM_H = TUBE_Y1 - TUBE_Y0 - 1.5;
-  const crystalFilmMat = new THREE.MeshStandardMaterial({
-    color: '#2c0a3a', roughness: 0.14, metalness: 0.80, envMapIntensity: 2.2,
-    transparent: true, opacity: 0.0, side: THREE.DoubleSide, depthWrite: false
-  });
-  const crystalFilm = new THREE.Mesh(
-    new THREE.CylinderGeometry(TUBE_R - 0.16, TUBE_R - 0.16, CRYSTAL_FILM_H, 36, 1, true), crystalFilmMat);
-  crystalFilm.position.y = TUBE_Y0 + 0.75 + CRYSTAL_FILM_H / 2;
-  tubeRig.add(crystalFilm);
-
+  /* --- 凝华出来的碘：一层【附着在管内壁上的细颗粒】。
+     ★★ 用户明确指出两件事，上一版两件都做错了：
+       ① 凝华发生在【密闭腔体的内壁】上，不是跑到管子外面；
+       ② 凝华之后整根管子应该是【几乎透明】的，只有内壁上挂着一些紫黑色颗粒 ——
+          上一版用了一个 opacity 到 0.66 的「晶体膜」把整根管子染紫，读起来像
+          「管子里还有一大柱紫色液体」，正是用户说的「模拟得不对」。
+     所以：**膜去掉**，只留颗粒。颗粒贴内壁（r = TUBE_R - 0.14），数量多、个头小，
+     看上去才是「一些碘颗粒附着在内壁上」而不是「一块块晶体飘在管里」。 --- */
   const crystalGroup = new THREE.Group();
   tubeRig.add(crystalGroup);
   const crystals = [];
   {
     const rnd = mulberry32(9090);
-    for (let i = 0; i < 64; i++) {
-      const r0 = 0.085 + rnd() * 0.065;
+    for (let i = 0; i < 156; i++) {
+      const r0 = 0.042 + rnd() * 0.036;
       const m = new THREE.Mesh(new THREE.OctahedronGeometry(r0, 0), crystalMat);
       const a = rnd() * Math.PI * 2;
-      const yy = TUBE_Y0 + 0.8 + Math.pow(rnd(), 0.85) * (TUBE_Y1 - TUBE_Y0 - 1.3);
-      const rr = TUBE_R - 0.075;
+      /* 沿管壁铺满（幂 0.85 让上部略密：冷水从管顶浇下来，那里最先冷） */
+      const yy = TUBE_Y0 + 0.55 + Math.pow(rnd(), 0.85) * (TUBE_Y1 - TUBE_Y0 - 0.9);
+      const rr = TUBE_R - 0.11;
       m.position.set(Math.cos(a) * rr, yy, Math.sin(a) * rr);
       m.rotation.set(rnd() * 3, rnd() * 3, rnd() * 3);
-      m.userData = { k: 0.4 + rnd() * 0.6, r0 };
+      m.userData = { k: 0.4 + rnd() * 0.6, r0, a, rr0: rr };
       m.visible = false;
       crystalGroup.add(m);
       crystals.push(m);
@@ -1408,18 +1470,18 @@ import * as THREE from './assets/optics-three.min.js';
     vaporGroup.visible = vis;
     /* 普通混合是【叠】上去的：78 个团块互相覆盖，单个的不透明度必须压得低，
        否则中心立刻糊成一块实心紫色。0.04 → 0.16 是让「淡紫 → 浓紫」有层次的范围。 */
-    const op = 0.07 + 0.16 * Math.pow(f, 0.5);
+    const op = 0.10 + 0.22 * Math.pow(f, 0.5);
     /* 体积色：f = 0.2 时已经明显发紫（0.55 × 0.2^0.55 ≈ 0.23），f = 0.6 时浓到看不清管壁 */
     vaporVolume.visible = vis;
-    vaporVolumeMat.opacity = clamp(2.20 * Math.pow(f, 1.30), 0, 0.90);
+    vaporVolumeMat.opacity = clamp(1.60 * Math.pow(f, 1.30), 0, 0.50);
     /* ★ 显示比例不能直接取 f：f = 0.35（碘已经明显冒紫气了）时只画 27 个团块，
        看上去是一颗颗分开的珠子。给一个基线 0.30，让「少量蒸气」就已经是连续的一层雾，
        再多出来的量靠不透明度区分浓淡。 */
-    const show = vis ? Math.max(8, Math.round((0.30 + 0.70 * f) * vapors.length)) : 0;
+    const show = vis ? Math.max(2, Math.round(Math.pow(f, 1.1) * vapors.length)) : 0;
     vapors.forEach((m, i) => {
       m.visible = i < show;
       if (!m.visible) return;
-      m.material.opacity = clamp(op * (0.55 + 0.45 * ((i % 5) / 4)), 0, 0.26);
+      m.material.opacity = clamp(op * (0.55 + 0.45 * ((i % 5) / 4)), 0, 0.32);
       m.position.y = m.userData.y0 + Math.sin(clock * m.userData.sp + m.userData.ph) * 0.26
         + smoothstep(0, 0.5, f) * 0.3;
     });
@@ -1434,19 +1496,16 @@ import * as THREE from './assets/optics-three.min.js';
     const f = clamp(state.mCrystal / M_TOTAL, 0, 1);
     const vis = toggles.crystal && f > 0.002;
     crystalGroup.visible = vis;
-    /* 管壁上那层「膜」的浓淡：f = 0.25 时已经明显能看出管壁发紫黑 */
-    crystalFilm.visible = toggles.crystal && f > 0.001;
-    crystalFilmMat.opacity = clamp(1.15 * Math.pow(f, 0.34), 0, 0.88);
-    const show = vis ? Math.max(10, Math.round(Math.pow(f, 0.42) * crystals.length)) : 0;
+    /* 颗粒数随凝华量涨：f = 0.2 时约 60 颗，f = 0.5 时基本铺满内壁 */
+    const show = vis ? Math.max(12, Math.round(Math.pow(f, 0.45) * crystals.length)) : 0;
     crystals.forEach((m, i) => {
       m.visible = i < show;
       if (!m.visible) return;
-      const k = m.userData.k;
-      const s = 1.0 + 3.6 * Math.pow(f, 0.42) * k;
+      const s = 0.8 + 1.9 * Math.pow(f, 0.45) * m.userData.k;
       m.scale.setScalar(s);
-      /* ★ 晶体是从【管内壁】往轴心方向长的：半径按 f 往里收，
-         写死成常数时晶体一多就糊成一根实心柱，「长在壁上」就读不出来了。 */
-      const rr = TUBE_R - 0.075 - m.userData.r0 * s * 0.3;
+      /* ★ 颗粒始终【贴在内壁上】：半径按颗粒自身尺寸往里让一点。
+         写死成常数时颗粒一大就有一半陷进玻璃里，看着像「长在管子外面」。 */
+      const rr = m.userData.rr0 - m.userData.r0 * s * 0.35;
       const ang = Math.atan2(m.position.z, m.position.x);
       m.position.x = Math.cos(ang) * rr;
       m.position.z = Math.sin(ang) * rr;
@@ -1454,7 +1513,7 @@ import * as THREE from './assets/optics-three.min.js';
     state.drawn.crystalFrac = +f.toFixed(4);
     state.drawn.crystalVisible = !!vis;
     state.drawn.crystalShown = show;
-    state.drawn.crystalFilmOpacity = +crystalFilmMat.opacity.toFixed(4);
+    state.drawn.crystalFilmOpacity = 0;      // 那层「把整根管子染紫的膜」已删掉，字段留着给旧断言读
   }
 
   function updateDryIce(dt) {
@@ -1781,7 +1840,7 @@ import * as THREE from './assets/optics-three.min.js';
     } else if (state.pour.left > 0 && state.pour.mode === 'hot') {
       hint = `热水顺着管壁流下来，管内温度升到 ${state.T.toFixed(0)} ℃。盯住管底那堆碘：它在<b>一点点变小</b>，而管里腾起<b>紫色蒸气</b> —— 中间<b>没有一滴液体</b>。这就是<b>升华</b>：固态直接变成气态。`;
     } else if (state.pour.left > 0 && state.pour.mode === 'cold') {
-      hint = `冷水一浇，管壁温度掉到 ${state.T.toFixed(0)} ℃，紫色蒸气迅速<b>变淡</b>，管内壁上出现一层<b>紫黑色、有金属光泽的晶体</b> —— 蒸气<b>直接</b>变回固态，这就是<b>凝华</b>，同样不经过液态。`;
+      hint = `冷水只浇在管子的<b>外壁</b>上，管内温度掉到 ${state.T.toFixed(0)} ℃，紫色蒸气迅速<b>变淡</b>，几乎恢复透明，只有一些<b>紫黑色的小颗粒</b>附着在<b>管内壁</b>上 —— 蒸气<b>直接</b>变回固态，这就是<b>凝华</b>，同样不经过液态。`;
     } else if (state.mCrystal / M_TOTAL > 0.03) {
       hint = `管壁上已经结了 ${(state.mCrystal / M_TOTAL * 100).toFixed(0)}% 的碘晶体。<b>浇冷水</b>凝华得快，<b>取出来放凉</b>凝华得慢 —— 但两条路都是<b>气 → 固</b>，中间<b>一滴液体都没有</b>。想再看一次升华，就再浇一壶热水。`;
     } else if (state.mGas / M_TOTAL > 0.02) {
@@ -2034,8 +2093,8 @@ import * as THREE from './assets/optics-three.min.js';
      ========================================================================== */
   const STEPS = [
     { name: '01 认识器材', text: '<strong>认识器材：</strong>铁架台的<b>铁夹</b>夹着一支<b>两端封闭的玻璃管</b>，管底沉着少量<b>紫黑色碘颗粒</b>，管下摆一个<b>接水盘</b>，旁边是一只烧杯 —— 往管子上浇水用。管里<b>没有水、也没有别的液体</b>，只有碘。' },
-    { name: '02 浇热水：升华', text: '<strong>浇热水：</strong>点「浇热水」，热水顺着管壁流下去，管内温度升到约 45 ℃ 以上，碘颗粒<b>一点点变小</b>，管里腾起<b>紫色蒸气</b>。盯住管里 —— <b>始终没有一滴液体</b>。这就是<b>升华</b>：固态<b>直接</b>变成气态，<b>不经过液态</b>。' },
-    { name: '03 浇冷水：凝华', text: '<strong>浇冷水：</strong>点「浇冷水」，管壁一下子冷下来，紫色蒸气迅速变淡，管内壁上出现一层<b>紫黑色、有金属光泽的晶体</b> —— 蒸气<b>直接</b>变回固态，这是<b>凝华</b>（气→固），同样<b>不经过液态</b>。晶体长在<b>最冷的管壁</b>上。' },
+    { name: '02 浇热水：升华', text: '<strong>浇热水：</strong>点「浇热水」，热水顺着管子<b>外壁</b>流下去（水进不去，管子是密闭的），管内温度升到约 45 ℃ 以上，碘颗粒<b>一点点变小</b>，管里被<b>紫色碘蒸气</b>充满。盯住管里 —— <b>始终没有一滴液体</b>。这就是<b>升华</b>：固态<b>直接</b>变成气态，<b>不经过液态</b>。' },
+    { name: '03 浇冷水：凝华', text: '<strong>浇冷水：</strong>点「浇冷水」—— 水只浇在管子的<b>外壁</b>上。管壁一下子冷下来，紫色蒸气迅速变淡、整根管子几乎恢复透明，只剩一些<b>紫黑色小颗粒</b>附着在<b>管内壁</b>上（管子是<b>密闭</b>的，碘跑不出去）。蒸气<b>直接</b>变回固态，这是<b>凝华</b>（气→固），同样<b>不经过液态</b>。' },
     { name: '04 取出来放凉：也会凝华', text: '<strong>取出放凉：</strong>不浇冷水，改点「取出放凉」，让管子泡在空气里自己慢慢凉。<b>照样会凝华</b> —— 只是慢得多，晶体是<b>一点点</b>长出来的。所以「凝华」不一定要用冰水逼：<b>只要蒸气冷到饱和以下，就会直接变回固态</b>。' },
     { name: '05 干冰与白雾', text: '<strong>干冰：</strong>切到「干冰」场景。干冰是固态二氧化碳，常温下直接升华成气体。<b>白雾往下沉</b>，不是往上飘 —— 因为二氧化碳比空气重；而且白雾是干冰<b>吸热</b>把空气中水蒸气液化出来的小水珠，<b>不是二氧化碳本身</b>。' },
     { name: '06 霜与凝华放热', text: '<strong>霜：</strong>切到「霜」场景。空气中的水蒸气直接在冷玻璃片上<b>凝华</b>成霜，<b>从边缘和划痕开始长</b>（那里最先冷下来），枝晶朝里伸。霜、雾凇、雪都是这样形成的；凝华和升华相反，是<b>放热</b>的。' },
@@ -2223,7 +2282,7 @@ import * as THREE from './assets/optics-three.min.js';
     camera, renderer, scene,
     /* 碘这一套（玻璃管 / 铁夹 / 接水盘 / 浇水烧杯 / 蒸气 / 晶体） */
     tubeRig, clampGroup, trayGroup, trayWater, pourBeaker, pbWater, pbLip,
-    iodineHeap, solidIodine, vaporGroup, vapors, vaporVolume, vaporVolumeMat, crystalGroup, crystals, crystalFilm, crystalFilmMat, tubeGlassMat,
+    iodineHeap, solidIodine, vaporGroup, vapors, vaporVolume, vaporVolumeMat, crystalGroup, crystals, tubeGlassMat,
     stream, wetFilm, drops, tagHot, tagCold,
     dryGroup, dryBlock, fogs, frostGroup, frostPlate, branches, lifeGroup, lifeObjects, lifeMist,
     water,
