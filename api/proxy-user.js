@@ -138,17 +138,21 @@ function clientIp(req) {
   return String(raw).split(',')[0].trim();
 }
 
-// ============ 多设备会话（终身会员：同城 5 个 IP 同时在线） ============
+// ============ 多设备会话（终身会员：同城最多 5 台设备同时在线） ============
 //  模型：
 //   · 每次登录在 user_sessions 里落一行（token 为主键），checkSession 只认表里的 token
 //   · 普通/月度/年度会员：limit = 1 —— 新登录把旧会话全部清掉（与改版前「单设备」一致）
-//   · 终身VIP：limit = 5 个【不同 IP】。同城可并存；第 6 个 IP 登录时自动挤掉
-//     「最久没活动」的那一个（按 last_seen 最旧），不打断其它设备
+//   · 终身VIP：limit = 5 台【不同设备】。第 6 台登录时自动挤掉「最久没活动」的那一台
+//     （按 last_seen 最旧），不打断其它设备
+//   · 🔴 计数单位是【设备】不是 IP：同一台设备开 10 个标签算 1 台；
+//     不同设备连同一个 wifi（同一出口 IP）算 5 台 —— 早期按 IP 计数会把这种情况全放行。
+//     设备标识 = 前端 localStorage 里的 deviceId（同一浏览器共享，无痕/换浏览器算新设备）。
+//     老会话没有 device_id（改版前登录的）→ 退回按 IP 计数，兼容。
 //   · 异地（新 IP 的城市与在线设备不同）→ 允许登录，但把原城市的设备全部下线（换城）
 //   · 城市查不到（第三方接口抖动 / 内网 IP）→ 一律按「同城」处理。
 //     宁可少踢一次，也不能因为接口抖动把正在上课的老师集体踢下线。
 var SESSION_TTL_MS = 12 * 3600 * 1000;   // 会话闲置 12 小时自动失效
-var MULTI_IP_LIMIT = 5;                  // 终身会员同城最多 5 个 IP 同时在线
+var MULTI_DEVICE_LIMIT = 5;              // 终身会员同城最多 5 台设备同时在线
 var LIFETIME_VIP = '终身VIP';
 
 function isLifetime(u) {
@@ -166,10 +170,18 @@ function maskIp(ip) {
   return p.length === 4 ? p[0] + '.' + p[1] + '.*.*' : s;
 }
 
-function uniqIp(rows) {
+// 一台设备的唯一键：优先 deviceId（前端 localStorage 持久化），没有则退回 IP（兼容老会话）
+function deviceKey(s) {
+  if (!s) return '';
+  if (s.device_id) return 'dev:' + s.device_id;
+  return s.ip ? 'ip:' + s.ip : '';
+}
+
+function uniqDevices(rows) {
   var out = [];
   (rows || []).forEach(function (x) {
-    if (x && x.ip && out.indexOf(x.ip) === -1) out.push(x.ip);
+    var k = deviceKey(x);
+    if (k && out.indexOf(k) === -1) out.push(k);
   });
   return out;
 }
@@ -236,8 +248,10 @@ async function geoOf(ip) {
 // 返回 null = 表不可用（还没执行 SQL / 数据库异常）⇒ 调用方降级为旧的单设备模式，
 // 绝不能因为新表没建就让所有人都登不进来。
 async function loadSessions(username) {
+  // 🔴 用 select=* 而不是列名清单：device_id 是后加的列，
+  //    写死列名时如果还没 ALTER，整个查询会报错 → 降级成单设备（等于功能失效）。
   var r = await sbFetch('user_sessions?username=eq.' + encodeURIComponent(username) +
-    '&select=token,ip,city_key,city_label,city_weak,ua,created_at,last_seen&order=last_seen.asc',
+    '&select=*&order=last_seen.asc',
     { headers: svcHeaders({ Prefer: undefined }) });
   if (!r.ok) return null;
   var rows = await r.json();
@@ -473,6 +487,9 @@ module.exports = async (req, res) => {
       }
 
       // ===== 会话判定：IP 归属地 + 现有在线设备，两个查询并行 =====
+      var deviceId = String((req.body && req.body.deviceId) || '').trim().slice(0, 64);
+      var myKey = deviceId ? ('dev:' + deviceId) : (ip2 && ip2 !== 'unknown' ? 'ip:' + ip2 : '');
+
       var pair = await Promise.all([geoOf(ip2), loadSessions(loginName)]);
       var city = pair[0];
       var sessions = pair[1];
@@ -480,9 +497,9 @@ module.exports = async (req, res) => {
       if (degraded) sessions = [];
 
       var lifetime = isLifetime(userData);
-      var limit = lifetime ? MULTI_IP_LIMIT : 1;
+      var limit = lifetime ? MULTI_DEVICE_LIMIT : 1;
       var kicked = 0;        // 被下线的旧会话数
-      var evicted = null;    // 被挤掉的那台（第 6 个 IP 登录时）
+      var evicted = null;    // 被挤掉的那台（第 6 台设备登录时）
 
       if (!degraded && limit === 1) {
         // 非终身会员：单设备，新登录把旧会话全部清掉（与改版前一致）
@@ -499,48 +516,80 @@ module.exports = async (req, res) => {
           sessions = [];
         }
 
-        // ② 同城 IP 数上限：满 5 个再来第 6 个 IP ⇒ 挤掉「最久没活动」的那台
-        //    （用 while 而不是 if：万一历史上积了 6、7 个 IP，一次登录也要收敛到 5 个）
+        // ② 设备数上限：满 5 台再来第 6 台 ⇒ 挤掉「最久没活动」的那台
+        //    （用 while 而不是 if：万一历史上积了 6、7 台，一次登录也要收敛到 5 台）
         var guard = 0;
-        while (guard++ < 10) {
-          var ipList = uniqIp(sessions);
-          if (ipList.indexOf(ip2) !== -1 || ipList.length < limit) break;
-          // 同一 IP 下有多台设备时整组一起淘汰，保证 IP 数真的降下来
-          var victimIp = ipList[0];
-          var victims = sessions.filter(function (s) { return s.ip === victimIp; });
+        while (guard++ < 12) {
+          var devList = uniqDevices(sessions);
+          if (!myKey || devList.indexOf(myKey) !== -1 || devList.length < limit) break;
+          var victimKey = devList[0];            // last_seen.asc ⇒ 第 0 个就是最久没动的
+          var victims = sessions.filter(function (s) { return deviceKey(s) === victimKey; });
           for (var vi = 0; vi < victims.length; vi++) {
             await deleteSession(loginName, victims[vi].token);
             kicked++;
           }
-          evicted = { ip: maskIp(victimIp), lastSeen: victims.length ? victims[0].last_seen : '' };
-          sessions = sessions.filter(function (s) { return s.ip !== victimIp; });
+          evicted = { ip: maskIp(victims.length ? victims[0].ip : ''), lastSeen: victims.length ? victims[0].last_seen : '' };
+          sessions = sessions.filter(function (s) { return deviceKey(s) !== victimKey; });
         }
       }
 
       // ===== 落库：新会话 =====
       var sessionToken = generateSessionToken();
       var nowIso = new Date().toISOString();
+
+      // 同一台设备重新登录：先清掉它之前的旧会话，避免同一设备在表里堆多行
+      // （device_id 列还不存在时这里会 400，吞掉即可，不影响主流程）
+      if (!degraded && deviceId) {
+        try {
+          await sbFetch('user_sessions?username=eq.' + encodeURIComponent(loginName) +
+            '&device_id=eq.' + encodeURIComponent(deviceId), {
+            method: 'DELETE', headers: svcHeaders({ Prefer: 'return=minimal' }),
+          });
+        } catch (_) {}
+      }
+
       if (!degraded) {
+        var newRow = {
+          token: sessionToken,
+          username: loginName,
+          ip: ip2,
+          city_key: city.key || '',
+          city_label: city.label || '',
+          city_weak: !!city.weak,
+          ua: String((req.headers && req.headers['user-agent']) || '').slice(0, 200),
+          created_at: nowIso,
+          last_seen: nowIso,
+        };
+        if (deviceId) newRow.device_id = deviceId;
+
         var ins = await sbFetch('user_sessions', {
           method: 'POST',
           headers: svcHeaders({ Prefer: 'return=minimal' }),
-          body: JSON.stringify({
-            token: sessionToken,
-            username: loginName,
-            ip: ip2,
-            city_key: city.key || '',
-            city_label: city.label || '',
-            city_weak: !!city.weak,
-            ua: String((req.headers && req.headers['user-agent']) || '').slice(0, 200),
-            created_at: nowIso,
-            last_seen: nowIso,
-          }),
+          body: JSON.stringify(newRow),
         });
         if (!ins.ok) {
-          // 插入失败（多半是表结构不匹配）→ 降级，宁可退回单设备也不能让人登不进来
-          console.warn('[proxy-user] user_sessions 写入失败，本次降级为单设备:', await ins.text());
-          degraded = true;
+          var err1 = await ins.text();
+          // device_id 列还没加（ALTER 未执行）→ 去掉该列重试，退回按 IP 计数。
+          // 这样「先部署后改表」也不会把功能整个打回单设备模式。
+          if (deviceId) {
+            delete newRow.device_id;
+            ins = await sbFetch('user_sessions', {
+              method: 'POST',
+              headers: svcHeaders({ Prefer: 'return=minimal' }),
+              body: JSON.stringify(newRow),
+            });
+            if (ins.ok) {
+              deviceId = '';
+              myKey = ip2 && ip2 !== 'unknown' ? 'ip:' + ip2 : '';
+              console.warn('[proxy-user] device_id 列不存在，本次按 IP 计数（请执行 ALTER TABLE）');
+            } else {
+              console.warn('[proxy-user] user_sessions 写入失败（去掉 device_id 重试仍失败）:', err1, await ins.text());
+            }
+          } else {
+            console.warn('[proxy-user] user_sessions 写入失败，本次降级为单设备:', err1);
+          }
         }
+        if (!ins.ok) degraded = true;
       }
 
       await sbFetch('users?username=eq.' + encodeURIComponent(loginName), {
@@ -549,9 +598,9 @@ module.exports = async (req, res) => {
         body: JSON.stringify({ session_token: sessionToken, last_seen: nowIso }),
       });
 
-      var ipCount = 1;
+      var deviceCount = 1;
       if (!degraded) {
-        ipCount = uniqIp(sessions.concat([{ ip: ip2 }])).length;
+        deviceCount = uniqDevices(sessions.concat([{ device_id: deviceId, ip: ip2 }])).length;
       }
 
       return res.json({
@@ -565,7 +614,7 @@ module.exports = async (req, res) => {
         },
         session: {
           limit: limit,
-          ipCount: ipCount,
+          deviceCount: deviceCount,
           ip: maskIp(ip2),
           city: city.label || '',
           multi: limit > 1,
@@ -598,7 +647,7 @@ module.exports = async (req, res) => {
 
       var sr = await sbFetch('user_sessions?token=eq.' + encodeURIComponent(csToken) +
         '&username=eq.' + encodeURIComponent(csName) +
-        '&select=token,ip,city_key,city_label,city_weak,last_seen', { headers: svcHeaders({ Prefer: undefined }) });
+        '&select=*', { headers: svcHeaders({ Prefer: undefined }) });
 
       if (sr.ok) {
         var rows = await sr.json();
@@ -620,15 +669,18 @@ module.exports = async (req, res) => {
           } catch (_) {}
           if (!heavyDue(csToken)) return res.json({ valid: true });
 
-          var liveRes = await sbFetch('user_sessions?username=eq.' + encodeURIComponent(csName) + '&select=ip,last_seen', {
+          var liveRes = await sbFetch('user_sessions?username=eq.' + encodeURIComponent(csName) + '&select=*', {
             headers: svcHeaders({ Prefer: undefined }),
           });
           var liveRows = liveRes.ok ? await liveRes.json() : [];
           var nowMs = Date.now();
-          var ips = [];
+          var liveDevs = [];
           (liveRows || []).forEach(function (x) {
             var t = x.last_seen ? new Date(x.last_seen).getTime() : 0;
-            if (nowMs - t < SESSION_TTL_MS && x.ip && ips.indexOf(x.ip) === -1) ips.push(x.ip);
+            if (nowMs - t < SESSION_TTL_MS) {
+              var k = deviceKey(x);
+              if (k && liveDevs.indexOf(k) === -1) liveDevs.push(k);
+            }
           });
           var nowIso2 = new Date().toISOString();
           try {
@@ -643,8 +695,8 @@ module.exports = async (req, res) => {
           return res.json({
             valid: true,
             session: {
-              limit: life0 ? MULTI_IP_LIMIT : 1,
-              ipCount: ips.length,
+              limit: life0 ? MULTI_DEVICE_LIMIT : 1,
+              deviceCount: liveDevs.length,
               ip: maskIp(me.ip),
               city: me.city_label || '',
               multi: life0,
@@ -897,11 +949,12 @@ module.exports = async (req, res) => {
       return res.json({
         success: true,
         lifetime: gLife,
-        limit: gLife ? MULTI_IP_LIMIT : 1,
-        ipCount: uniqIp(gsRows).length,
+        limit: gLife ? MULTI_DEVICE_LIMIT : 1,
+        deviceCount: uniqDevices(gsRows).length,
         sessions: gsRows.map(function (s) {
           return {
             token: s.token,
+            device: s.device_id || '',
             ip: maskIp(s.ip),
             city: s.city_label || '',
             cityWeak: !!s.city_weak,

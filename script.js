@@ -125,6 +125,20 @@ async function userRegister() {
   }
 }
 
+// ========== 设备标识（「一个账号最多 5 台设备同时在线」的计数依据）==========
+// 同一浏览器（含多个标签页）共享同一个 deviceId ⇒ 只算 1 台；
+// 换浏览器 / 无痕窗口 / 换电脑手机 ⇒ 新 deviceId ⇒ 算新的一台。
+// 🔴 不能按 IP 计数：教室里 6 台设备连同一个 wifi 就是同一个出口 IP，会全被当成 1 台。
+function getDeviceId() {
+  var id = null;
+  try { id = localStorage.getItem('deviceId'); } catch (_) {}
+  if (!id) {
+    id = 'dev_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+    try { localStorage.setItem('deviceId', id); } catch (_) {}
+  }
+  return id;
+}
+
 // ========== 登录功能 ==========
 async function userLogin() {
   const btn = document.querySelector('.auth-btn');
@@ -149,7 +163,7 @@ async function userLogin() {
     var resp = await fetch('/api/proxy-user', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'login', username: user, password: pwd }),
+      body: JSON.stringify({ action: 'login', username: user, password: pwd, deviceId: getDeviceId() }),
     });
     var result = await resp.json();
 
@@ -478,14 +492,15 @@ async function toggleProfile() {
   const isVip = user.vip && user.vip !== "普通用户";
   const isExpired = isVip && user.expire !== "永久" && new Date() > new Date(user.expire);
   const avatarDataUrl = generateAvatar(uName, 80);
-  // 在线设备：终身会员同城最多 5 个 IP；普通/月度/年度仍是单设备
+  // 在线设备：终身会员同城最多 5 台设备；普通/月度/年度仍是单设备
   let meta = null;
   try { meta = JSON.parse(localStorage.getItem("sessionMeta") || "null"); } catch (_) { meta = null; }
   let deviceRow = '';
   if (meta && meta.limit) {
-    const cnt = (meta.ipCount || 0) + ' / ' + meta.limit;
+    const used = (meta.deviceCount != null ? meta.deviceCount : (meta.ipCount || 0));
+    const cnt = used + ' / ' + meta.limit;
     const cityTxt = meta.city ? ('　·　' + meta.city) : '';
-    deviceRow = `<div class="profile-info-row"><span>在线设备（IP）</span><span>${cnt}${cityTxt}</span></div>`;
+    deviceRow = `<div class="profile-info-row"><span>在线设备</span><span>${cnt}${cityTxt}</span></div>`;
     if (meta.limit > 1) {
       deviceRow += `<button class="btn" style="margin-top:0.75rem;width:100%;background:rgba(239,68,68,0.14);color:#f87171;border:1px solid rgba(239,68,68,0.35);font-size:0.85rem;padding:0.6rem;" onclick="dropOtherDevices()">下线其它设备</button>`;
     }
@@ -510,7 +525,7 @@ async function dropOtherDevices() {
     if (!d.success) { alert(d.error || "操作失败，请稍后重试"); return; }
     var m = null;
     try { m = JSON.parse(localStorage.getItem("sessionMeta") || "null"); } catch (_) {}
-    if (m) { m.ipCount = 1; localStorage.setItem("sessionMeta", JSON.stringify(m)); }
+    if (m) { m.deviceCount = 1; localStorage.setItem("sessionMeta", JSON.stringify(m)); }
     var pm = document.getElementById('profileModal');
     if (pm) pm.style.display = 'none';
     alert("已下线 " + (d.dropped || 0) + " 台设备。");
