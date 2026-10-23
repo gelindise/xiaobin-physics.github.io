@@ -1,11 +1,12 @@
 import * as THREE from './assets/optics-three.min.js';
 
 /* ============================================================================
-   升华和凝华 —— 三维写实实验台（碘锤 / 干冰 / 霜 / 生活现象）
+   升华和凝华 —— 三维写实实验台（碘玻璃管 / 干冰 / 霜 / 生活现象）
    ---------------------------------------------------------------------------
    世界坐标单位：厘米（cm），y 轴向上，实验台台面为 y = 0。
-   器材：铁架台（铸铁底座 + 镀铬立柱 + 铁圈）、石棉网、硼硅玻璃烧杯 + 水浴、
-         硼硅玻璃碘锤（球体 + 细颈）、锤内固态碘、碘蒸气、可插入的冷玻璃片。
+   器材：铁架台（铸铁底座 + 镀铬立柱 + 铁夹）、两端封闭的硼硅玻璃管、
+         管底固态碘、碘蒸气、管壁凝华出的晶体、接水盘、浇水用的烧杯。
+   操作（课本图 3.4-1）：浇热水 → 升华；浇冷水 → 凝华；取出放凉 → 慢速凝华。
    物理：① 升华速率走 Clausius-Clapeyron 形式（相对速率，60 ℃ 定为 1），
             「升华开始温度」由速率阈值【解】出来，不是写死的常数；
          ② 三份质量守恒 —— m固态 + m蒸气 + m晶体 ≡ 2 g，恒成立；
@@ -18,32 +19,36 @@ import * as THREE from './assets/optics-three.min.js';
 
   /* ------------------------------ 器材尺寸 ------------------------------ */
   const BASE_W = 26, BASE_D = 17, BASE_H = 1.8;      // 铸铁底座
-  const ROD_R = 0.55, ROD_H = 40, ROD_Z = -5.6;      // 镀铬立柱
-  const RING_Y = 16.5;                               // 铁圈高度
+  const ROD_R = 0.55, ROD_H = 30, ROD_Z = -5.6;      // 镀铬立柱
+  const RING_Y = 16.5;                               // 铁圈高度（只给干冰场景的烧杯用）
   const NET_W = 13, NET_T = 0.22;                    // 石棉网（方形金属网 + 圆石棉片）
   const BK_R = 4.6, BK_H = 10.5;                     // 烧杯
   const BK_Y0 = RING_Y + NET_T + 0.06;               // 16.78
   const WATER_H = 7.0;
   const WATER_TOP = BK_Y0 + WATER_H;                 // 23.78
 
-  const HAM_R = 2.5;                                 // 碘锤球体半径
-  const HAM_Y0 = BK_Y0 + 1.6;                        // 锤底（悬在水里，不碰杯底）
-  const HAM_CY = HAM_Y0 + HAM_R;                     // 球心
-  const NECK_R = 0.9, NECK_H = 5.0;                  // 细颈
-  const NECK_TOP = HAM_CY + HAM_R + NECK_H;          // 锤口高度
+  /* ★ 碘的容器按课本图 3.4-1 重做：不再是「球泡 + 细颈」的碘锤，而是一支
+     【两端封闭的细玻璃管】，少量碘颗粒沉在圆底里。课本上的做法是往管外
+     【浇热水】看它升华、再【浇冷水】看它凝华 —— 没有水浴、也没有酒精灯。 */
+  const TUBE_R = 1.15;                               // 玻璃管外半径
+  const TUBE_BODY = 11.0;                            // 直筒段长度
+  const TUBE_Y0 = 9.4;                               // 管底（圆底最低点）
+  const TUBE_Y1 = TUBE_Y0 + TUBE_BODY;               // 直筒顶端（再往上接半球封口）
+  const TUBE_TOP = TUBE_Y1 + TUBE_R;                 // 封口最高点 ≈ 23.05
+  const CLAMP_Y = 15.0;                              // 铁夹夹住的高度
+  const IODINE_Y = TUBE_Y0 + 0.30;                   // 碘堆坐在圆底里
 
-  const PLATE_W = 1.4, PLATE_T = 0.18, PLATE_D = 1.0;   // 冷玻璃片（要能从颈口塞进去）
-  const COLD_Y = { top: HAM_CY + 1.6, bottom: HAM_Y0 + 2.1 };   // 都在球泡内（22.48 / 20.48）
-  const M_TOTAL = 2.0;                               // 固态碘总质量 g
+  const TRAY_R = 4.5, TRAY_H = 1.15;                 // 接水盘（浇水时接住流下来的水）
+  const POUR_HOT = 78, POUR_COLD = 8;                // 浇热水 / 浇冷水 时管壁的目标温度
+  const POUR_DUR = 6.0;                              // 一次浇水持续【仿真秒】
+  const M_TOTAL = 2.0;                               // 碘的总质量 g
 
   /* ------------------------------ 物理参数 ------------------------------ */
   const AMB = 20;                                    // 室温 ℃
-  const M_WATER = 0.25;                              // 水浴质量 kg
-  const C_WATER = 4200;
-  const P_LAMP = 320;                                // 酒精灯有效功率 W
-  const K_LOSS = 2.1;                                // 水浴散热 W/K
-  const K_COUPLE = 2.6;                              // 水浴 → 碘锤 的传热系数 W/K
-  const TW_MAX = 100;
+  /* ★ 三条一阶热响应：浇热水 / 浇冷水 / 取出放凉。τ 就是「温度追上目标值的时间常数」。
+     浇水时 τ 很小（玻璃管壁薄，水直接冲在外壁上）；在空气里自然冷却的 τ 大一个量级
+     —— 这正是「浇冷水凝华得快、取出来放凉凝华得慢」这两种情形的区别所在。 */
+  const TAU_HOT = 1.5, TAU_COLD = 1.5, TAU_AIR = 30;
 
   /* 碘的升华：Clausius-Clapeyron 形式。L/R = 8500 K 由「碘在 60 ℃ 的升华速率」标定。
      ★ 不要另写一个「升华开始温度 = 45 ℃」的常数 —— 那个温度是从速率阈值【解】出来的
@@ -67,11 +72,10 @@ import * as THREE from './assets/optics-three.min.js';
   }
   const T_SUB_START = sublimStartT();                // ≈ 45 ℃
 
-  const K_SUB = 0.055;                               // 升华速率系数 g/s（60 ℃ 满量时）
-  const K_DEP = 0.30;                                // 凝华（沉积到冷面）系数 /s
+  const K_SUB = 0.022;                               // 升华速率系数 g/s（60 ℃ 满量时）
+  const K_DEP = 0.115;                               // 凝华（沉积到管壁）系数 /s
   const K_SAT = 1.2;                                 // 饱和曲线的半值参数（见 fSat）
 
-  const COLD_DEP = { top: 1.0, bottom: 0.42 };       // 冷面在颈口 / 在锤底 的沉积效率
   const DRY_ICE_M0 = 20;                             // 干冰 20 g
   const K_DRY = 0.22;                                // 干冰升华 g/s
   const FROST_M0 = 0.9;                              // 霜的满量 g（对应枝晶最长）
@@ -80,33 +84,36 @@ import * as THREE from './assets/optics-three.min.js';
   const state = {
     scene: 'iodine',            // iodine | dryice | frost | life
     running: false,
-    speed: 4,
+    speed: 2,
     t: 0,
-    T: AMB,                     // 锤内 / 场景温度 ℃
-    Tw: AMB,                    // 水浴温度 ℃
-    lampOn: false,
-    lampAnim: 0,                // 酒精灯淡入淡出 0~1
+    T: AMB,                     // 玻璃管内温度 ℃
+    /* 浇水状态机：mode = none | hot | cold；left = 这一壶水还剩多少【仿真秒】；
+       k = 烧杯倾倒动画的进度 0~1（0 = 放在台面上，1 = 倾倒到位） */
+    pour: { mode: 'none', left: 0, k: 0 },
+    wet: 0,                     // 管壁上的水膜 0~1（浇水时涨、之后慢慢干）
+    poured: 0,                  // 累计浇了多久（仿真秒）—— 决定接水盘里的水位
     mSolid: M_TOTAL,            // 固态碘 g
     mGas: 0,                    // 碘蒸气 g
-    mCrystal: 0,                // 凝华出的晶体 g
+    mCrystal: 0,                // 凝华到管壁上的晶体 g
     liquidMass: 0,              // ★ 恒为 0 —— 「不经过液态」的可断言不变量
-    cold: 'top',                // 冷玻璃片位置
     dryIce: DRY_ICE_M0,         // 干冰剩余 g
     fogAmt: 0,                  // 白雾量 0~1
     frost: 0,                   // 霜的累积量 0~1
     lifePick: -1,               // 生活现象里被点中的物件
     step: 0,
-    records: [],
     finished: false,
     drawn: {}                   // ★ 只放【画出来的量】，不放输入
   };
-  const toggles = { vapor: true, crystal: true, guide: true, micro: true };
+  const toggles = { vapor: true, crystal: true, micro: true };
 
+  /* ★ 取景要按【这一套器材的实际包络】给：倾倒时烧杯顶到 y≈31.8、接水盘底在 y≈1.8，
+     竖直方向要装下 30 cm；而玻璃管只有 2.3 cm 粗 —— 机位给远了，整页就是「一根牙签」。
+     dist 48 / ty 15.2 是「管子在画面里占四成高」和「烧杯倾倒时不出框」的折中。 */
   const VIEWS = {
-    front: { yaw: -0.08, pitch: 0.10, dist: 78, ty: 21 },
-    angle: { yaw: -0.55, pitch: 0.16, dist: 80, ty: 21 },
-    top:   { yaw: -0.50, pitch: 0.86, dist: 76, ty: 19 },
-    close: { yaw: -0.42, pitch: 0.06, dist: 26, ty: 22 }
+    front: { yaw: -0.05, pitch: 0.05, dist: 46, ty: 15.2 },
+    angle: { yaw: -0.48, pitch: 0.09, dist: 48, ty: 15.2 },
+    top:   { yaw: -0.50, pitch: 0.80, dist: 44, ty: 13 },
+    close: { yaw: -0.32, pitch: 0.02, dist: 34, ty: 15.2 }
   };
   const view = { ...VIEWS.angle };
   /* ★ 视角切换的唯一入口：四个视角按钮和自检/出图都调它，
@@ -381,29 +388,32 @@ import * as THREE from './assets/optics-three.min.js';
     clearcoat: 1.0, clearcoatRoughness: 0.03, envMapIntensity: 2.1,
     side: THREE.DoubleSide, depthWrite: false
   });
-  /* ★ 碘锤单独一份玻璃，比烧杯亮一档（opacity 0.16 → 0.24）。
-     第一版用同一份：球泡整个泡在水里，两层 0.16 的玻璃叠在一起还是看不见，
-     紫色蒸气看着像「悬在水里的几团光」而没有容器。但也不能过亮（0.30 时球壁读成
-     一颗磨砂实心球），0.24 是「轮廓立得住」和「看得进内部」的折中。 */
-  const hammerGlassMat = new THREE.MeshPhysicalMaterial({
-    color: '#eef7fb', transparent: true, opacity: 0.24, roughness: 0.035, metalness: 0.0,
-    clearcoat: 1.0, clearcoatRoughness: 0.02, envMapIntensity: 3.0,
+  /* ★ 玻璃管单独一份玻璃，比烧杯亮一档（opacity 0.16 → 0.22）。
+     管壁薄、里面还要看得见紫色蒸气和管底的碘颗粒，太暗就只剩一根灰棍。 */
+  const tubeGlassMat = new THREE.MeshPhysicalMaterial({
+    color: '#cfe6f2', transparent: true, opacity: 0.07, roughness: 0.05, metalness: 0.0,
+    clearcoat: 0.35, clearcoatRoughness: 0.04, envMapIntensity: 0.55,
     side: THREE.DoubleSide, depthWrite: false
   });
-  /* 水比玻璃深一档、蓝一点：否则「水里的玻璃」和「水」糊成一片，球泡读不出来。
-     ★ 但也不能太深：0.44 时水 + 球壁两层叠起来透过率只剩 ~0.32，
-       球里的固态碘（核心观察量）就被糊没了。0.34 是「看得出是水」和「看得见球内」的折中。 */
+  /* 水比玻璃深一档、蓝一点：否则「玻璃上的水」和「玻璃」糊成一片。 */
   const waterMat = new THREE.MeshPhysicalMaterial({
     color: '#79bcd8', transparent: true, opacity: 0.34, roughness: 0.06, metalness: 0.0,
     clearcoat: 1.0, clearcoatRoughness: 0.04, envMapIntensity: 1.5,
     side: THREE.DoubleSide, depthWrite: false
   });
-  const plateMat = new THREE.MeshPhysicalMaterial({
-    color: '#dff0fa', transparent: true, opacity: 0.32, roughness: 0.03, metalness: 0.0,
-    clearcoat: 1.0, clearcoatRoughness: 0.02, envMapIntensity: 2.6, depthWrite: false
+  /* 管壁上的水膜：比水再亮一点、更薄，才读得出「水顺着管壁淌下来」 */
+  const filmMat = new THREE.MeshPhysicalMaterial({
+    color: '#7fc4e0', transparent: true, opacity: 0.0, roughness: 0.04, metalness: 0.0,
+    clearcoat: 1.0, clearcoatRoughness: 0.02, envMapIntensity: 2.0,
+    side: THREE.DoubleSide, depthWrite: false
+  });
+  /* 水流：半透明白蓝，比水膜亮一档 —— 它要在暗背景上「看得见在流」 */
+  const streamMat = new THREE.MeshPhysicalMaterial({
+    color: '#cfeaf8', transparent: true, opacity: 0.55, roughness: 0.10, metalness: 0.0,
+    clearcoat: 1.0, envMapIntensity: 1.6, depthWrite: false
   });
   /* ★ 霜场景的冷板单独一份【不透明白底】的冷灰金属板：
-     沿用碘锤那块半透明冷片的话，暗台面会透过板子，白霜落在深底上毫无层次。 */
+     半透明冷片的话，暗台面会透过板子，白霜落在深底上毫无层次。 */
   const frostPlateMat = new THREE.MeshStandardMaterial({ color: '#5d6874', roughness: 0.42, metalness: 0.55, envMapIntensity: 1.1 });
   /* 固态碘：紫黑色、带金属光泽的晶体（不是无光泽的黑块）。
      ★ 提亮 + 提高金属度/环境反射：它是「固态碘少下去了」这个核心观察量的唯一载体，
@@ -433,12 +443,12 @@ import * as THREE from './assets/optics-three.min.js';
     return new THREE.CanvasTexture(c);
   })();
   const vaporMat = new THREE.SpriteMaterial({
-    map: VAP_TEX, color: '#7b3fe4', transparent: true, opacity: 0.0,
-    depthWrite: false, blending: THREE.NormalBlending
+    map: VAP_TEX, color: '#7a1fc8', transparent: true, opacity: 0.0,
+    depthWrite: false, blending: THREE.NormalBlending, toneMapped: false
   });
   /* 凝华出的碘晶体：有金属光泽的紫黑色晶体。
      ★ 比纯黑亮一档：太暗时它落在半透明冷片上完全读不出来（实测 #2a0b33 就是这样）。 */
-  const crystalMat = new THREE.MeshStandardMaterial({ color: '#4a1258', roughness: 0.18, metalness: 0.72, envMapIntensity: 2.4 });
+  const crystalMat = new THREE.MeshStandardMaterial({ color: '#3a0a45', roughness: 0.14, metalness: 0.82, envMapIntensity: 2.6 });
   /* 干冰：白色微蓝、粗糙（不是纯白 —— 纯白和白雾糊在一起，块就读不出来了） */
   const dryIceMat = new THREE.MeshStandardMaterial({ color: '#dbe7f2', roughness: 0.94, metalness: 0.0, envMapIntensity: 0.9 });
   const frostMat = new THREE.MeshStandardMaterial({ color: '#eaf6ff', roughness: 0.55, metalness: 0.0, envMapIntensity: 1.4, transparent: true, opacity: 0.95 });
@@ -518,85 +528,131 @@ import * as THREE from './assets/optics-three.min.js';
   water.position.set(0, BK_Y0 + WATER_H / 2, 0);
   scene.add(water);
 
-  /* --- 碘锤：球体 + 细颈 + 锤口 --- */
-  const hammer = new THREE.Group();
-  hammer.position.set(0, 0, 0);
-  rig.add(hammer);
-  const hamBall = new THREE.Mesh(new THREE.SphereGeometry(HAM_R, 40, 28), hammerGlassMat);
-  hamBall.position.y = HAM_CY;
-  hammer.add(hamBall);
-  const neck = new THREE.Mesh(new THREE.CylinderGeometry(NECK_R, NECK_R, NECK_H, 30, 1, true), hammerGlassMat);
-  neck.position.y = HAM_CY + HAM_R + NECK_H / 2;
-  hammer.add(neck);
-  const mouth = new THREE.Mesh(new THREE.TorusGeometry(NECK_R, 0.11, 8, 30), hammerGlassMat);
-  mouth.rotation.x = Math.PI / 2;
-  mouth.position.y = NECK_TOP;
-  hammer.add(mouth);
+  /* --- 铁夹：把玻璃管夹在立柱上（课本图里那支管子就是被夹住的） --- */
+  const clampGroup = new THREE.Group();
+  rig.add(clampGroup);
+  const clampArm = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.22, 0.22, Math.abs(ROD_X) - TUBE_R, 10), chrome);
+  clampArm.rotation.z = Math.PI / 2;
+  clampArm.position.set((ROD_X + TUBE_R) / 2, CLAMP_Y, 0);
+  clampGroup.add(clampArm);
+  /* ★ 夹口半径必须跟着管径走（TUBE_R + 0.12）：写死一个大圈就变成「管子上套了个呼啦圈」 */
+  const clampRing = new THREE.Mesh(new THREE.TorusGeometry(TUBE_R + 0.12, 0.13, 10, 36), chrome);
+  clampRing.rotation.x = Math.PI / 2;
+  clampRing.position.set(0, CLAMP_Y, 0);
+  clampGroup.add(clampRing);
+  const clampBoss = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.5, 0.44), darkSteel);
+  clampBoss.position.set(TUBE_R + 0.28, CLAMP_Y, 0);
+  clampGroup.add(clampBoss);
+  const clampScrew = new THREE.Mesh(new THREE.CylinderGeometry(0.085, 0.085, 1.0, 10), chrome);
+  clampScrew.rotation.z = Math.PI / 2;
+  clampScrew.position.set(TUBE_R + 0.82, CLAMP_Y, 0);
+  clampGroup.add(clampScrew);
+  const clampWing = new THREE.Mesh(new THREE.TorusGeometry(0.30, 0.05, 6, 16), chrome);
+  clampWing.rotation.y = Math.PI / 2;
+  clampWing.position.set(TUBE_R + 1.30, CLAMP_Y, 0);
+  clampGroup.add(clampWing);
 
-  /* --- 锤内的固态碘：一小堆压扁的球（贴着锤底内壁）。
-     ★ 半径给到 2.0：第一版 1.5 在球泡里只剩一个小黑点，学生根本看不出「固态碘少下去了」 --- */
-  const solidIodine = new THREE.Mesh(new THREE.SphereGeometry(2.0, 28, 18, 0, Math.PI * 2, 0, Math.PI / 2), iodineSolidMat);
-  solidIodine.rotation.x = Math.PI;                       // 半球朝上摊开
-  solidIodine.position.y = HAM_Y0 + 0.34;
-  solidIodine.scale.set(1, 0.66, 1);
+  /* --- 封闭玻璃管：直筒 + 圆底 + 半球封口 --- */
+  const tubeRig = new THREE.Group();
+  rig.add(tubeRig);
+  const tubeWall = new THREE.Mesh(
+    new THREE.CylinderGeometry(TUBE_R, TUBE_R, TUBE_Y1 - TUBE_Y0 - TUBE_R, 40, 1, true), tubeGlassMat);
+  tubeWall.position.y = (TUBE_Y1 + TUBE_Y0 + TUBE_R) / 2;
+  tubeRig.add(tubeWall);
+  const tubeBottomCap = new THREE.Mesh(
+    new THREE.SphereGeometry(TUBE_R, 32, 18, 0, Math.PI * 2, Math.PI / 2, Math.PI / 2), tubeGlassMat);
+  tubeBottomCap.position.y = TUBE_Y0 + TUBE_R;
+  tubeRig.add(tubeBottomCap);
+  const tubeTopCap = new THREE.Mesh(
+    new THREE.SphereGeometry(TUBE_R, 32, 18, 0, Math.PI * 2, 0, Math.PI / 2), tubeGlassMat);
+  tubeTopCap.position.y = TUBE_Y1;
+  tubeRig.add(tubeTopCap);
+
+  /* --- 管底的固态碘：一小堆 + 几颗碎晶。
+     ★ 整堆挂在一个【以堆底为原点】的组上（iodineHeap 的 y 就是管底）：
+       直接缩 mesh 的话，缩放中心在世界原点，碘堆会往上飘而不是「少下去」。 --- */
+  const iodineHeap = new THREE.Group();
+  iodineHeap.position.y = TUBE_Y0 + 0.16;
+  tubeRig.add(iodineHeap);
+  const solidIodine = new THREE.Mesh(
+    new THREE.SphereGeometry(0.92, 26, 16, 0, Math.PI * 2, 0, Math.PI / 2), iodineSolidMat);
+  solidIodine.scale.set(1, 0.74, 1);
   solidIodine.castShadow = true;
-  hammer.add(solidIodine);
+  iodineHeap.add(solidIodine);
+  {
+    const rnd = mulberry32(7711);
+    for (let i = 0; i < 8; i++) {
+      const g = new THREE.Mesh(new THREE.OctahedronGeometry(0.075 + rnd() * 0.055, 0), iodineSolidMat);
+      const a = rnd() * Math.PI * 2, rr = rnd() * 0.62;
+      g.position.set(Math.cos(a) * rr, 0.52 + rnd() * 0.12, Math.sin(a) * rr);
+      g.rotation.set(rnd() * 3, rnd() * 3, rnd() * 3);
+      iodineHeap.add(g);
+    }
+  }
 
-  /* --- 碘蒸气：球内一层互相重叠的软边团块（Sprite，永远正对镜头）。
-     数量/不透明度随蒸气量变。团块小而多（84 个）才像「雾」；
-     第一版 30 个大实心球看着像一颗颗悬浮的珠子。 --- */
+  /* --- 碘蒸气：管内一层互相重叠的软边团块（Sprite，永远正对镜头）。
+     数量/不透明度随蒸气量变。团块小而多才像「雾」；大实心球会读成一颗颗珠子。 --- */
+  /* ★ 先铺一层【体积色】：管子内腔一个紫色半透明的柱面。
+     只用几十个 Sprite 是撑不出「满管紫气」的 —— 20% 蒸气时画面上是几团灰斑，
+     而学生要看的恰恰是「整根管子变紫了」。Sprite 退到只负责翻滚的质感。 */
+  const vaporVolumeMat = new THREE.MeshBasicMaterial({
+    color: '#6a12bb', transparent: true, opacity: 0.0, side: THREE.DoubleSide, depthWrite: false,
+    /* ★ 不吃 ACES：碘蒸气是【吸收型着色】，过一遍影调曲线会被抬成淡紫灰，
+       而学生要认的正是「深紫」—— 关掉 toneMapping 才是它本来的颜色 */
+    toneMapped: false
+  });
+  const vaporVolume = new THREE.Mesh(
+    new THREE.CylinderGeometry(TUBE_R - 0.26, TUBE_R - 0.26, TUBE_Y1 - TUBE_Y0 - 0.6, 32, 1, true),
+    vaporVolumeMat);
+  vaporVolume.position.y = TUBE_Y0 + 0.3 + (TUBE_Y1 - TUBE_Y0 - 0.6) / 2;
+  tubeRig.add(vaporVolume);
+
   const vaporGroup = new THREE.Group();
-  hammer.add(vaporGroup);
+  tubeRig.add(vaporGroup);
   const vapors = [];
   {
     const rnd = mulberry32(5150);
-    for (let i = 0; i < 84; i++) {
+    for (let i = 0; i < 104; i++) {
       const sp = new THREE.Sprite(vaporMat.clone());
-      const sz = 0.95 + rnd() * 1.35;                       // 世界单位（cm）边长
+      const sz = 0.36 + rnd() * 0.42;                       // 世界单位（cm）边长
       sp.scale.set(sz, sz, 1);
-      /* 立方根分布：团块更靠外一圈，球内壁附近也有气，不至于挤成中心一坨 */
+      /* 幂分布：团块更靠外一圈，贴着管内壁也有气，不至于挤成中心一坨 */
       const u = rnd() * Math.PI * 2;
-      const r = Math.pow(rnd(), 0.42) * (HAM_R - 0.45);
-      const yy = HAM_CY + (rnd() - 0.45) * (HAM_R * 1.3);
+      const r = Math.pow(rnd(), 0.45) * (TUBE_R - 0.32);
+      const yy = TUBE_Y0 + 0.75 + rnd() * (TUBE_Y1 - TUBE_Y0 - 1.1);
       sp.position.set(Math.cos(u) * r, yy, Math.sin(u) * r);
-      sp.userData = { ph: rnd() * 6.28, sp: 0.25 + rnd() * 0.4, y0: sp.position.y, sz };
+      sp.userData = { ph: rnd() * 6.28, sp: 0.25 + rnd() * 0.4, y0: yy, sz };
       vaporGroup.add(sp);
       vapors.push(sp);
     }
   }
 
-  /* --- 可插入的冷玻璃片 ---
-     ★ 冷片两个位置都放在【球泡内部】（球泡上部 / 贴近锤底），不放在细颈里：
-       颈内径只有 1.8 cm，冷片塞进去在画面上就剩一小片、学生根本看不见晶体。
-       放球泡里则两个位置都看得清，而「晶体只长在朝着蒸气的那一面」这条判据不变。 */
-  const coldPlate = new THREE.Group();
-  hammer.add(coldPlate);
-  const plateMesh = new THREE.Mesh(new THREE.BoxGeometry(PLATE_W, PLATE_T, PLATE_D), plateMat);
-  plateMesh.castShadow = true;
-  coldPlate.add(plateMesh);
-  /* ★ 拉杆几何用【单位高度】，长度靠 scale.y 伸缩 —— 冷片换位置时杆必须跟着变长变短，
-     否则杆顶够不到锤口、整根杆悬在球泡里（第一版把长度写死就踩了这个）。 */
-  const plateRod = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.13, 1, 10), darkSteel);
-  coldPlate.add(plateRod);
-  const ROD_TOP_Y = NECK_TOP + 2.6;
-  function syncPlateRod(y) {
-    const len = Math.max(0.4, ROD_TOP_Y - y);
-    plateRod.scale.y = len;
-    plateRod.position.y = (ROD_TOP_Y - y) / 2;      // 相对 coldPlate 的局部坐标
-  }
+  /* --- 凝华出的碘晶体：一层【镀在管内壁上的膜】+ 一层小晶体颗粒。
+     课本上浇完冷水看到的就是管内壁那层紫黑色、有金属光泽的晶体，
+     所以载体是【内壁】而不是某一块插进去的冷片 —— 整个管壁都是「最冷的面」。 --- */
+  const CRYSTAL_FILM_H = TUBE_Y1 - TUBE_Y0 - 1.5;
+  const crystalFilmMat = new THREE.MeshStandardMaterial({
+    color: '#2c0a3a', roughness: 0.14, metalness: 0.80, envMapIntensity: 2.2,
+    transparent: true, opacity: 0.0, side: THREE.DoubleSide, depthWrite: false
+  });
+  const crystalFilm = new THREE.Mesh(
+    new THREE.CylinderGeometry(TUBE_R - 0.16, TUBE_R - 0.16, CRYSTAL_FILM_H, 36, 1, true), crystalFilmMat);
+  crystalFilm.position.y = TUBE_Y0 + 0.75 + CRYSTAL_FILM_H / 2;
+  tubeRig.add(crystalFilm);
 
-  /* --- 凝华出的晶体：长在冷片【朝着蒸气的那个面】上 --- */
   const crystalGroup = new THREE.Group();
-  coldPlate.add(crystalGroup);
+  tubeRig.add(crystalGroup);
   const crystals = [];
   {
     const rnd = mulberry32(9090);
-    for (let i = 0; i < 26; i++) {
-      /* ★ 几何半径 0.11~0.20 cm。第一版 0.075~0.15 太小：冷片本身才 1.4 cm 宽，
-         这么小的八面体在球泡上只有 1~2 px，画面上等于没有「晶体」。 */
-      const r0 = 0.11 + rnd() * 0.09;
+    for (let i = 0; i < 64; i++) {
+      const r0 = 0.085 + rnd() * 0.065;
       const m = new THREE.Mesh(new THREE.OctahedronGeometry(r0, 0), crystalMat);
-      m.position.set((rnd() - 0.5) * (PLATE_W - 0.2), 0, (rnd() - 0.5) * (PLATE_D - 0.2));
+      const a = rnd() * Math.PI * 2;
+      const yy = TUBE_Y0 + 0.8 + Math.pow(rnd(), 0.85) * (TUBE_Y1 - TUBE_Y0 - 1.3);
+      const rr = TUBE_R - 0.075;
+      m.position.set(Math.cos(a) * rr, yy, Math.sin(a) * rr);
       m.rotation.set(rnd() * 3, rnd() * 3, rnd() * 3);
       m.userData = { k: 0.4 + rnd() * 0.6, r0 };
       m.visible = false;
@@ -605,71 +661,112 @@ import * as THREE from './assets/optics-three.min.js';
     }
   }
 
-  /* --- 酒精灯（加热碘锤的水浴） ---
-     ★ 用 LatheGeometry 车一个【真实酒精灯的玻璃灯体轮廓】：
-       平底 → 直筒 → 圆肩 → 短颈。第一版是「一个球 + 一根管」，
-       在画面上读起来像只白炽灯泡，学生认不出这是酒精灯。 */
-  const lampGlass = new THREE.MeshPhysicalMaterial({
-    color: '#eaf4fa', transparent: true, opacity: 0.26, roughness: 0.04, metalness: 0.0,
-    clearcoat: 1.0, clearcoatRoughness: 0.02, envMapIntensity: 2.9,
-    side: THREE.DoubleSide, depthWrite: false
-  });
-  const LAMP_R = 3.4, LAMP_H = 7.2;
-  const lampProfile = [
-    [0.00, 0.00], [2.55, 0.00], [3.15, 0.30], [3.40, 0.95], [3.40, 3.30],
-    [3.28, 4.15], [2.72, 5.05], [1.85, 5.85], [1.30, 6.35], [1.30, LAMP_H]
-  ].map(([x, y]) => new THREE.Vector2(x, y));
-  const lamp = new THREE.Group();
-  rig.add(lamp);
-  lamp.position.set(0, BASE_H, 0);
-  const lampBody = new THREE.Mesh(new THREE.LatheGeometry(lampProfile, 40), lampGlass);
-  lamp.add(lampBody);
-  /* 灯里的酒精：液面在灯身 2/3 处、淡蓝一档 —— 一眼看出「这是酒精灯、里面有酒精」 */
-  const lampAlcohol = new THREE.Mesh(
-    new THREE.CylinderGeometry(3.22, 3.10, 4.4, 34),
-    new THREE.MeshPhysicalMaterial({
-      color: '#9fd0e8', transparent: true, opacity: 0.42, roughness: 0.06, metalness: 0.0,
-      clearcoat: 1.0, clearcoatRoughness: 0.03, envMapIntensity: 1.6, depthWrite: false
-    })
-  );
-  lampAlcohol.position.y = 0.55 + 4.4 / 2;
-  lamp.add(lampAlcohol);
-  /* 灯芯管（镀铬）+ 棉灯芯 */
-  const collar = new THREE.Mesh(new THREE.CylinderGeometry(1.38, 1.42, 1.15, 26), chrome);
-  collar.position.y = LAMP_H + 0.30;
-  lamp.add(collar);
-  const collarTop = new THREE.Mesh(new THREE.TorusGeometry(1.38, 0.09, 8, 26), chrome);
-  collarTop.rotation.x = Math.PI / 2;
-  collarTop.position.y = LAMP_H + 0.88;
-  lamp.add(collarTop);
-  const wick = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.52, 0.56, 1.5, 16),
-    new THREE.MeshStandardMaterial({ color: '#cbb894', roughness: 0.95 })
-  );
-  wick.position.y = LAMP_H + 1.35;
-  lamp.add(wick);
-  const LAMP_TOP = LAMP_H + 2.1;                     // 灯芯顶 ≈ 9.3
+  /* --- 接水盘：浇水时接住顺着管壁流下来的水，盘里水位随浇水时长上升 --- */
+  const trayGroup = new THREE.Group();
+  trayGroup.position.y = BASE_H;
+  rig.add(trayGroup);
+  const trayWall = new THREE.Mesh(new THREE.CylinderGeometry(TRAY_R, TRAY_R, TRAY_H, 44, 1, true), glassMat);
+  trayWall.position.y = TRAY_H / 2;
+  trayGroup.add(trayWall);
+  const trayBottom = new THREE.Mesh(new THREE.CylinderGeometry(TRAY_R, TRAY_R, 0.2, 44), glassMat);
+  trayBottom.position.y = 0.1;
+  trayGroup.add(trayBottom);
+  const trayRim = new THREE.Mesh(new THREE.TorusGeometry(TRAY_R, 0.10, 8, 44), glassMat);
+  trayRim.rotation.x = Math.PI / 2;
+  trayRim.position.y = TRAY_H;
+  trayGroup.add(trayRim);
+  const trayWater = new THREE.Mesh(new THREE.CylinderGeometry(TRAY_R - 0.1, TRAY_R - 0.1, 1, 44), waterMat);
+  trayWater.visible = false;
+  trayGroup.add(trayWater);
 
-  const flameGroup = new THREE.Group();
-  flameGroup.position.set(0, BASE_H + LAMP_TOP, 0);
-  flameGroup.visible = false;
-  rig.add(flameGroup);
-  const flameLayers = [];
-  /* ★ 焰高 5.0：灯体加高后焰尖刚好舔到石棉网底面（11.1 + 5.0 = 16.1 < 16.4），
-     不改就会穿模到网上方 —— 灯体高度和焰高是绑在一起的。 */
-  const FLAME_H = 5.0;
-  [[1.5, 0.16, '#ff9a3c'], [0.95, 0.26, '#ffc861'], [0.45, 0.5, '#bfe6ff']].forEach(([r, op, col], i) => {
-    const f = new THREE.Mesh(
-      new THREE.ConeGeometry(r, FLAME_H * (1 - i * 0.16), 18, 1, true),
-      new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: op, depthWrite: false })
-    );
-    f.position.y = FLAME_H * (1 - i * 0.16) / 2;
-    flameGroup.add(f);
-    flameLayers.push(f);
+  /* --- 浇水用的烧杯：浇热水 / 浇冷水都是它，只是杯里水的颜色不同 --- */
+  const POUR_R = 2.2, POUR_H = 4.4;
+  const pourBeaker = new THREE.Group();
+  rig.add(pourBeaker);
+  const pbWall = new THREE.Mesh(new THREE.CylinderGeometry(POUR_R, POUR_R, POUR_H, 36, 1, true), glassMat);
+  pbWall.position.y = POUR_H / 2;
+  pourBeaker.add(pbWall);
+  const pbBottom = new THREE.Mesh(new THREE.CylinderGeometry(POUR_R, POUR_R, 0.18, 36), glassMat);
+  pbBottom.position.y = 0.09;
+  pourBeaker.add(pbBottom);
+  const pbRim = new THREE.Mesh(new THREE.TorusGeometry(POUR_R, 0.10, 8, 36), glassMat);
+  pbRim.rotation.x = Math.PI / 2;
+  pbRim.position.y = POUR_H;
+  pourBeaker.add(pbRim);
+  const pourWaterMat = new THREE.MeshPhysicalMaterial({
+    color: '#f0b49a', transparent: true, opacity: 0.5, roughness: 0.06, metalness: 0.0,
+    clearcoat: 1.0, envMapIntensity: 1.6, depthWrite: false
   });
-  const flameLight = new THREE.PointLight('#ffb45c', 0, 40, 2);
-  flameLight.position.set(0, BASE_H + LAMP_TOP + 1.6, 0);
-  scene.add(flameLight);
+  const pbWater = new THREE.Mesh(new THREE.CylinderGeometry(POUR_R - 0.1, POUR_R - 0.1, 2.9, 36), pourWaterMat);
+  pbWater.position.y = 0.18 + 1.45;
+  pourBeaker.add(pbWater);
+  /* 倒水时水从杯口这个点出去（每帧取它的世界坐标，杯子怎么摆都对得上） */
+  const pbLip = new THREE.Object3D();
+  pbLip.position.set(POUR_R * 0.95, POUR_H * 0.99, 0);
+  pourBeaker.add(pbLip);
+
+  /* 杯上那块「热水 / 冷水」标签：一眼分清现在浇的是哪一壶 */
+  function makeTagTex(text, bg, fg) {
+    const W = 256, H = 96;
+    const c = newCanvas(W, H), g = c.getContext('2d');
+    g.clearRect(0, 0, W, H);
+    g.fillStyle = bg;
+    roundRect(g, 8, 14, W - 16, H - 28, 22); g.fill();
+    g.strokeStyle = fg; g.lineWidth = 3; roundRect(g, 8, 14, W - 16, H - 28, 22); g.stroke();
+    g.fillStyle = fg; g.font = 'bold 46px "PingFang SC", "Microsoft YaHei", sans-serif';
+    g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillText(text, W / 2, H / 2 + 2);
+    const t = new THREE.CanvasTexture(c);
+    t.colorSpace = THREE.SRGBColorSpace;
+    return t;
+  }
+  const tagHot = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: makeTagTex('热水 78℃', 'rgba(67,20,7,0.86)', '#fdba74'), transparent: true, depthWrite: false
+  }));
+  tagHot.scale.set(3.4, 1.28, 1);
+  tagHot.position.set(0, POUR_H + 1.5, 0);
+  tagHot.visible = false;
+  pourBeaker.add(tagHot);
+  const tagCold = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: makeTagTex('冷水 8℃', 'rgba(8,47,73,0.86)', '#7dd3fc'), transparent: true, depthWrite: false
+  }));
+  tagCold.scale.set(3.4, 1.28, 1);
+  tagCold.position.set(0, POUR_H + 1.5, 0);
+  tagCold.visible = false;
+  pourBeaker.add(tagCold);
+
+  /* 烧杯的两个姿态：放在台面上（静置）/ 举到管口上方倾倒 */
+  const PB_REST = { x: 15.5, y: 0, z: 6.5, rot: 0 };
+  /* 倾倒位：杯口（pbLip）落在 (≈0, ≈23.8)，正好在管口正上方 2.3 cm 处 ——
+     这个数是【算出来的】：lip 的局部坐标 (POUR_R*0.95, POUR_H*0.99) 绕 z 转 -0.92 rad
+     后是 (4.83, 0.92)，所以原点要放在 (-5.0, 27.4)。改倾角就要重算，否则水流会歪到管外。 */
+  const PB_POUR = { x: -4.83, y: 22.9, z: 0.6, rot: -0.92 };
+  pourBeaker.position.set(PB_REST.x, PB_REST.y, PB_REST.z);
+
+  /* --- 水流 + 管壁水膜 + 滴落的水珠 --- */
+  const stream = new THREE.Mesh(new THREE.CylinderGeometry(0.145, 0.185, 1, 12, 1, true), streamMat);
+  stream.visible = false;
+  rig.add(stream);
+  const wetFilm = new THREE.Mesh(
+    new THREE.CylinderGeometry(TUBE_R + 0.09, TUBE_R + 0.09, 1, 36, 1, true), filmMat);
+  wetFilm.visible = false;
+  rig.add(wetFilm);
+  const drops = [];
+  {
+    const rnd = mulberry32(6161);
+    for (let i = 0; i < 10; i++) {
+      const m = new THREE.Mesh(new THREE.SphereGeometry(0.085, 10, 8), streamMat);
+      m.userData = { l0: rnd(), sp: 0.65 + rnd() * 0.5, a: rnd() * Math.PI * 2 };
+      m.visible = false;
+      rig.add(m);
+      drops.push(m);
+    }
+  }
+  /* 水流方向/长度每帧现算，这里只留一个可复用的向量 */
+  const _vLip = new THREE.Vector3();
+  const _vTop = new THREE.Vector3(0, TUBE_TOP - 0.08, 0);
+  const _vDir = new THREE.Vector3();
+  const _up = new THREE.Vector3(0, 1, 0);
 
   /* ==========================================================================
      四、干冰场景（烧杯 + 水 + 干冰块 + 白雾）
@@ -1164,10 +1261,8 @@ import * as THREE from './assets/optics-three.min.js';
      ========================================================================== */
   function sublimMassRate() { return K_SUB * sublimRate(state.T); }
 
-  /* 锤内在温度 T 下【能容纳】的蒸气占比。温度越高容纳越多 —— 与 sublimRate 同源，
-     所以「加热时蒸气积得起来」和「一冷却就过饱和」是同一个参数决定的，不会互相打架。
-     ★ 第一版这里写成「沉积速率 ∝ 现有蒸气量」，结果加热 90 s 就有 0.38 g 变成晶体、
-       蒸气始终只有 0.02 g —— 紫色的蒸气根本积不起来，而学生要看的恰恰是它。 */
+  /* 管内在温度 T 下【能容纳】的蒸气占比。温度越高容纳越多 —— 与 sublimRate 同源，
+     所以「浇热水时蒸气积得起来」和「一浇冷水就过饱和」是同一个参数决定的，不会互相打架。 */
   function fSat(T) {
     const r = sublimRate(T);
     return clamp(0.05 + 0.95 * (r / (r + K_SAT)), 0, 0.97);
@@ -1178,8 +1273,8 @@ import * as THREE from './assets/optics-three.min.js';
     if (state.mGas <= 1e-6) return 0;
     const ss = supersat();
     if (ss <= 0) return 0;
-    /* 冷面越冷沉积越快；球泡上部（离水浴远）比锤底更冷 */
-    return K_DEP * COLD_DEP[state.cold] * Math.pow(ss, 0.7);
+    /* 整个管壁都是「最冷的面」，冷得越狠（过饱和越大）沉积越快 */
+    return K_DEP * Math.pow(ss, 0.7);
   }
   function massSum() { return state.mSolid + state.mGas + state.mCrystal; }
 
@@ -1189,16 +1284,26 @@ import * as THREE from './assets/optics-three.min.js';
   function stepIodineDt(dt) {
     state.t += dt;
 
-    /* --- 水浴温度：酒精灯加热 / 自然冷却 --- */
-    if (state.lampOn) {
-      const dTw = (P_LAMP - K_LOSS * (state.Tw - AMB)) / (M_WATER * C_WATER) * dt;
-      state.Tw = Math.min(TW_MAX, state.Tw + dTw);
+    /* --- 管壁温度：三种情境，全是一阶响应 ---
+       ① 浇热水：冲向 POUR_HOT，碘明显升华；
+       ② 浇冷水：冲向 POUR_COLD，蒸气立刻过饱和、在管壁上凝华；
+       ③ 取出放凉（不浇了）：慢慢回到室温，凝华得慢得多。
+       ★ 「浇多久」由 pour.left 管：一壶水浇完（POUR_DUR 仿真秒）就自动转成 ③，
+         不需要学生再点一次 —— 否则杯子会一直举着，和「浇完了」这个事实不符。 */
+    const p = state.pour;
+    if (p.left > 0) {
+      p.left = Math.max(0, p.left - dt);
+      const target = p.mode === 'hot' ? POUR_HOT : POUR_COLD;
+      const tau = p.mode === 'hot' ? TAU_HOT : TAU_COLD;
+      state.T += (target - state.T) * (1 - Math.exp(-dt / tau));
+      state.poured += dt;
+      if (p.left <= 0) p.mode = 'none';
     } else {
-      state.Tw += (AMB - state.Tw) * (1 - Math.exp(-dt * 0.06));
+      state.T += (AMB - state.T) * (1 - Math.exp(-dt / TAU_AIR));
     }
-    /* 碘锤温度向水浴靠拢（一阶） */
-    const kC = K_COUPLE / (0.06 * 730) * dt;              // 碘锤热容折算
-    state.T += (state.Tw - state.T) * clamp(kC, 0, 0.5);
+    /* 管壁的水膜：浇水时很快湿透，之后慢慢干掉（τ ≈ 15 s） */
+    const wetWant = p.left > 0 ? 1 : 0;
+    state.wet += (wetWant - state.wet) * (1 - Math.exp(-dt / (wetWant ? 1.2 : 2.5)));
 
     /* --- 升华：固态碘 → 蒸气（不经过液态） --- */
     /* ★ 底数必须 Math.max(0, …)：守恒式写完后 mSolid 可能是 -4e-16（浮点残差），
@@ -1209,7 +1314,7 @@ import * as THREE from './assets/optics-three.min.js';
     state.mSolid -= sub;
     state.mGas += sub;
 
-    /* --- 凝华：蒸气 → 晶体（只长在最冷的冷面上） --- */
+    /* --- 凝华：蒸气 → 管壁上的晶体 --- */
     const dep = Math.min(state.mGas, depositRate() * M_TOTAL * dt);
     state.mGas -= dep;
     state.mCrystal += dep;
@@ -1225,9 +1330,32 @@ import * as THREE from './assets/optics-three.min.js';
   }
   const stepSim = (dtReal) => stepIodineDt(dtReal * state.speed);
 
+  /* 开始浇一壶水。mode = 'hot' | 'cold'。重复点同一壶 = 续上（left 直接回满）。 */
+  function startPour(mode) {
+    if (mode !== 'hot' && mode !== 'cold') return false;
+    state.pour.mode = mode;
+    state.pour.left = POUR_DUR;
+    state.running = true;
+    /* 水色 / 标签跟着这一壶走 */
+    pourWaterMat.color.set(mode === 'hot' ? '#f0b49a' : '#8fc8e8');
+    tagHot.visible = mode === 'hot';
+    tagCold.visible = mode === 'cold';
+    updateReadouts();
+    requestRender();
+    return true;
+  }
+  /* 取出放凉：停止浇水，让它在空气里自己凉下来 */
+  function takeOut() {
+    state.pour.mode = 'none';
+    state.pour.left = 0;
+    tagHot.visible = tagCold.visible = false;
+    updateReadouts();
+    requestRender();
+  }
+
   function stepDryIceDt(dt) {
     state.t += dt;
-    const rate = K_DRY * (state.lampOn ? 1.35 : 1) * (0.35 + 0.65 * (state.dryIce / DRY_ICE_M0));
+    const rate = K_DRY * (0.35 + 0.65 * (state.dryIce / DRY_ICE_M0));
     const sub = Math.min(state.dryIce, rate * dt);
     state.dryIce -= sub;
     state.fogAmt = clamp(state.fogAmt + sub / DRY_ICE_M0 * 3.4, 0, 1);
@@ -1249,17 +1377,14 @@ import * as THREE from './assets/optics-three.min.js';
   function resetSim() {
     state.running = false;
     state.t = 0;
-    state.T = AMB; state.Tw = AMB;
-    setLampOn(false);
+    state.T = AMB;
+    state.pour.mode = 'none'; state.pour.left = 0; state.pour.k = 0;
+    state.wet = 0; state.poured = 0;
     state.mSolid = M_TOTAL; state.mGas = 0; state.mCrystal = 0; state.liquidMass = 0;
     state.dryIce = DRY_ICE_M0; state.fogAmt = 0; state.frost = 0;
     state.finished = false;
     state.lifePick = -1;
-    /* ★ 判读题的成绩跟着「重置」一起清 —— 与记录表同一个约定（用户明确要求过
-       「重置按钮点击之后记录数据这个表格应该清空」）。 */
     resetQuiz();
-    series.length = 0;
-    pushSample();
     updateAll();
     setRunning(false);
   }
@@ -1268,28 +1393,35 @@ import * as THREE from './assets/optics-three.min.js';
      八、把状态搬到画面上
      ========================================================================== */
   function updateSolid() {
-    const f = state.mSolid / M_TOTAL;
-    solidIodine.visible = f > 0.012;
-    solidIodine.scale.set(Math.max(0.25, Math.cbrt(f) * 1.06), Math.max(0.12, Math.cbrt(f) * 0.62), Math.max(0.25, Math.cbrt(f) * 1.06));
+    const f = clamp(state.mSolid / M_TOTAL, 0, 1);
+    iodineHeap.visible = f > 0.012;
+    /* 碘堆挂在【以堆底为原点】的组上，所以这里整体缩放 = 「越少越矮越窄」，
+       而不是整堆往上飘。cbrt 让「少一点点」在画面上就看得出来。 */
+    const k = Math.cbrt(f);
+    iodineHeap.scale.set(Math.max(0.30, k * 1.04), Math.max(0.18, k), Math.max(0.30, k * 1.04));
+    state.drawn.solidFrac = +f.toFixed(4);
   }
 
   function updateVapor(dt) {
     const f = clamp(state.mGas / M_TOTAL, 0, 1);
     const vis = toggles.vapor && f > 0.004;
     vaporGroup.visible = vis;
-    /* 普通混合是【叠】上去的：84 个团块互相覆盖，单个的不透明度必须压得低，
-       否则中心立刻糊成一块实心紫色。0.05 → 0.27 是让「淡紫 → 浓紫」有层次的范围。 */
-    const op = 0.05 + 0.22 * Math.pow(f, 0.55);
-    /* ★ 显示比例不能直接取 f：f = 0.35（碘已经明显冒紫气了）时只画 29 个团块，
+    /* 普通混合是【叠】上去的：78 个团块互相覆盖，单个的不透明度必须压得低，
+       否则中心立刻糊成一块实心紫色。0.04 → 0.16 是让「淡紫 → 浓紫」有层次的范围。 */
+    const op = 0.07 + 0.16 * Math.pow(f, 0.5);
+    /* 体积色：f = 0.2 时已经明显发紫（0.55 × 0.2^0.55 ≈ 0.23），f = 0.6 时浓到看不清管壁 */
+    vaporVolume.visible = vis;
+    vaporVolumeMat.opacity = clamp(2.20 * Math.pow(f, 1.30), 0, 0.90);
+    /* ★ 显示比例不能直接取 f：f = 0.35（碘已经明显冒紫气了）时只画 27 个团块，
        看上去是一颗颗分开的珠子。给一个基线 0.30，让「少量蒸气」就已经是连续的一层雾，
        再多出来的量靠不透明度区分浓淡。 */
     const show = vis ? Math.max(8, Math.round((0.30 + 0.70 * f) * vapors.length)) : 0;
     vapors.forEach((m, i) => {
       m.visible = i < show;
       if (!m.visible) return;
-      m.material.opacity = clamp(op * (0.55 + 0.45 * ((i % 5) / 4)), 0, 0.40);
-      m.position.y = m.userData.y0 + Math.sin(clock * m.userData.sp + m.userData.ph) * 0.34
-        + smoothstep(0, 0.5, f) * 0.5;
+      m.material.opacity = clamp(op * (0.55 + 0.45 * ((i % 5) / 4)), 0, 0.26);
+      m.position.y = m.userData.y0 + Math.sin(clock * m.userData.sp + m.userData.ph) * 0.26
+        + smoothstep(0, 0.5, f) * 0.3;
     });
     /* 蒸气浓到一定程度才「看得见紫色」—— 这个阈值也是自检的判据之一 */
     state.drawn.vaporFrac = +f.toFixed(4);
@@ -1302,31 +1434,27 @@ import * as THREE from './assets/optics-three.min.js';
     const f = clamp(state.mCrystal / M_TOTAL, 0, 1);
     const vis = toggles.crystal && f > 0.002;
     crystalGroup.visible = vis;
-    const show = vis ? Math.max(2, Math.round(f * crystals.length)) : 0;
-    /* 晶体长在冷片【朝着蒸气】的那个面：冷片在上（球泡上部）朝下长，冷片在下（锤底）朝上长 */
-    const faceY = state.cold === 'top' ? -(PLATE_T / 2 + 0.05) : (PLATE_T / 2 + 0.05);
+    /* 管壁上那层「膜」的浓淡：f = 0.25 时已经明显能看出管壁发紫黑 */
+    crystalFilm.visible = toggles.crystal && f > 0.001;
+    crystalFilmMat.opacity = clamp(1.15 * Math.pow(f, 0.34), 0, 0.88);
+    const show = vis ? Math.max(10, Math.round(Math.pow(f, 0.42) * crystals.length)) : 0;
     crystals.forEach((m, i) => {
       m.visible = i < show;
       if (!m.visible) return;
       const k = m.userData.k;
-      const s = 0.6 + 2.9 * Math.pow(f, 0.5) * k;
+      const s = 1.0 + 3.6 * Math.pow(f, 0.42) * k;
       m.scale.setScalar(s);
-      /* ★ 抬升量按【晶体自身半径】算：位置写死成常数时，晶体一大就整颗陷进冷片里，
-         看上去像「冷片自己变厚了」而不是「面上长出了晶体」。 */
-      m.position.y = faceY + Math.sign(faceY) * m.userData.r0 * s * 0.6;
+      /* ★ 晶体是从【管内壁】往轴心方向长的：半径按 f 往里收，
+         写死成常数时晶体一多就糊成一根实心柱，「长在壁上」就读不出来了。 */
+      const rr = TUBE_R - 0.075 - m.userData.r0 * s * 0.3;
+      const ang = Math.atan2(m.position.z, m.position.x);
+      m.position.x = Math.cos(ang) * rr;
+      m.position.z = Math.sin(ang) * rr;
     });
     state.drawn.crystalFrac = +f.toFixed(4);
     state.drawn.crystalVisible = !!vis;
     state.drawn.crystalShown = show;
-    state.drawn.crystalFace = state.cold;                 // ★ 晶体落在哪个面（画出来的位置）
-    state.drawn.crystalOnFaceY = +faceY.toFixed(3);
-  }
-
-  function updateColdPlate() {
-    const y = COLD_Y[state.cold];
-    coldPlate.position.y = y;
-    syncPlateRod(y);
-    state.drawn.coldPlateY = +y.toFixed(3);
+    state.drawn.crystalFilmOpacity = +crystalFilmMat.opacity.toFixed(4);
   }
 
   function updateDryIce(dt) {
@@ -1389,11 +1517,82 @@ import * as THREE from './assets/optics-three.min.js';
     state.drawn.frostMaxLen = f > 0.015 ? +(Math.max(...branches.map((m) => m.scale.y))).toFixed(3) : 0;
   }
 
+  /* --- 浇水：烧杯姿态、水流、管壁水膜、水珠、接水盘水位 ---
+     ★ 全部由 state.pour / state.wet / state.poured 现算，不另存一份「动画时间」：
+       暂停、改倍速、直接改状态，三种情形下画面都和物理一致。 */
+  function updatePour(dt) {
+    const p = state.pour;
+    const want = p.left > 0 ? 1 : 0;
+    p.k += (want - p.k) * clamp(dt * 4.2, 0, 1);
+    if (p.k < 0.0015) p.k = 0;
+    const k = p.k * p.k * (3 - 2 * p.k);          // smoothstep：起落都不生硬
+    pourBeaker.position.set(
+      PB_REST.x + (PB_POUR.x - PB_REST.x) * k,
+      PB_REST.y + (PB_POUR.y - PB_REST.y) * k,
+      PB_REST.z + (PB_POUR.z - PB_REST.z) * k
+    );
+    pourBeaker.rotation.z = PB_REST.rot + (PB_POUR.rot - PB_REST.rot) * k;
+    /* 杯子举起来倾倒时，杯里的水画成「水位下降」比画一坨倾斜的水面干净得多 */
+    pbWater.visible = k < 0.3;
+    const lv = 1 - 0.45 * k;
+    pbWater.scale.y = lv;
+    pbWater.position.y = 0.18 + 1.45 * lv;
+
+    /* 水流：从杯口（pbLip 的世界坐标）连到管顶 —— 杯子摆到哪儿都对得上 */
+    const pouring = p.left > 0 && k > 0.72;
+    stream.visible = state.scene === 'iodine' && pouring;
+    if (pouring) {
+      pbLip.getWorldPosition(_vLip);
+      _vDir.subVectors(_vTop, _vLip);
+      const len = Math.max(0.2, _vDir.length());
+      stream.position.copy(_vLip).addScaledVector(_vDir, 0.5);
+      stream.scale.set(1, len, 1);
+      stream.quaternion.setFromUnitVectors(_up, _vDir.normalize());
+      streamMat.opacity = 0.42 + 0.10 * Math.sin(clock * 22);
+    }
+
+    /* 管壁水膜：从管顶往下淌，高度跟着 wet 长 */
+    const h = state.wet * (TUBE_Y1 - TUBE_Y0);
+    wetFilm.visible = state.scene === 'iodine' && state.wet > 0.02;
+    wetFilm.scale.set(1, Math.max(0.001, h), 1);
+    wetFilm.position.y = TUBE_Y1 - h / 2;
+    filmMat.opacity = clamp(0.16 * Math.min(1, state.wet * 2.4), 0, 0.16);
+
+    /* 从管底滴进接水盘的水珠 */
+    const falling = state.wet > 0.25 && state.scene === 'iodine';
+    drops.forEach((m) => {
+      m.visible = falling;
+      if (!m.visible) return;
+      const u = m.userData;
+      const l = (clock * u.sp + u.l0) % 1;
+      m.position.set(
+        Math.cos(u.a) * (TUBE_R + 0.06),
+        TUBE_Y0 - 0.1 - l * (TUBE_Y0 - 0.1 - (BASE_H + TRAY_H)),
+        Math.sin(u.a) * (TUBE_R + 0.06)
+      );
+      m.scale.setScalar(0.7 + l * 0.6);
+    });
+
+    /* 接水盘里的水位：浇得越久越高 */
+    const wh = clamp(0.05 + state.poured * 0.028, 0, TRAY_H * 0.78);
+    trayWater.visible = state.poured > 0.4 && state.scene === 'iodine';
+    trayWater.scale.set(1, wh, 1);
+    trayWater.position.y = 0.2 + wh / 2;
+
+    state.drawn.pourMode = p.mode;
+    state.drawn.pourK = +p.k.toFixed(4);
+    state.drawn.streamVisible = !!stream.visible;
+    state.drawn.wet = +state.wet.toFixed(4);
+    state.drawn.wetH = +h.toFixed(3);
+    state.drawn.beaker = [+pourBeaker.position.x.toFixed(2), +pourBeaker.position.y.toFixed(2)];
+    state.drawn.trayWater = +wh.toFixed(3);
+  }
+
   function updateAll() {
     updateSolid();
     updateVapor(0.016);
     updateCrystal();
-    updateColdPlate();
+    updatePour(0.016);
     updateDryIce(0.016);
     updateFrost();
     updateVisibility();
@@ -1402,23 +1601,28 @@ import * as THREE from './assets/optics-three.min.js';
 
   function updateVisibility() {
     const sc = state.scene;
-    hammer.visible = sc === 'iodine';
+    const iod = sc === 'iodine';
+    /* 碘这一套器材（玻璃管 / 铁夹 / 接水盘 / 浇水烧杯）只在碘场景里出现 */
+    tubeRig.visible = iod;
+    clampGroup.visible = iod;
+    trayGroup.visible = iod;
+    pourBeaker.visible = iod;
     dryGroup.visible = sc === 'dryice';
     frostGroup.visible = sc === 'frost';
     lifeGroup.visible = sc === 'life';
-    beaker.visible = sc === 'iodine' || sc === 'dryice';
-    water.visible = sc === 'iodine' || sc === 'dryice';
+    /* ★ 烧杯 + 水浴现在只剩干冰场景在用（干冰泡在水里冒白雾），
+       碘场景已经改成「往管子上浇水」，不再需要水浴 —— 两套器材绝不能同时出现。 */
+    beaker.visible = sc === 'dryice';
+    water.visible = sc === 'dryice';
     /* ★ 干冰场景把水位降到 2.1 cm：7 cm 深的水里干冰块整个没在水下，又被白雾罩住，
        学生看不见「干冰在变小」这个核心观察量。水位是【画面量】，不影响干冰的升华速率。 */
     const wk = sc === 'dryice' ? 0.30 : 1;
     water.scale.y = wk;
     water.position.y = BK_Y0 + WATER_H * wk / 2;
-    lamp.visible = sc === 'iodine' || sc === 'dryice';
-    flameGroup.visible = flameGroup.userData.on && (sc === 'iodine' || sc === 'dryice');
-    net.visible = sc === 'iodine' || sc === 'dryice';
-    ring.visible = ringArm.visible = sc === 'iodine' || sc === 'dryice';
-    /* 铁架台只在碘锤/干冰两个场景里有用；霜与生活现象场景里它挡视线又没有意义 */
-    rod.visible = base.visible = (sc === 'iodine' || sc === 'dryice');
+    net.visible = sc === 'dryice';
+    ring.visible = ringArm.visible = sc === 'dryice';
+    /* 铁架台在碘/干冰两个场景里都要（碘是夹玻璃管、干冰是托烧杯） */
+    rod.visible = base.visible = (iod || sc === 'dryice');
     lifeRing.visible = state.scene === 'life' && state.lifePick >= 0;
     /* ★ 取第 i 件的 Group 走 lifeSlots，不走 lifeGroup.children[i]：
        后者是「按下标假设」的写法，往 lifeGroup 里再加任何东西都可能让它错位。 */
@@ -1430,21 +1634,8 @@ import * as THREE from './assets/optics-three.min.js';
   }
 
   /* ==========================================================================
-     九、2D 插图：温度/质量曲线 与 微观分子
+     九、2D 插图：微观分子（数据曲线与记录表已按用户要求移除，本页只观察现象）
      ========================================================================== */
-  const chartCanvas = $('chartCanvas');
-  const chartCtx = chartCanvas.getContext('2d');
-  const series = [];
-  const T_MAX = 240;                                    // 图像横轴上限 s
-
-  function pushSample() {
-    series.push({
-      t: state.t, T: state.T,
-      s: state.mSolid / M_TOTAL, g: state.mGas / M_TOTAL, c: state.mCrystal / M_TOTAL
-    });
-    if (series.length > 900) series.shift();
-  }
-
   function fitCanvas2D(cv, ctx) {
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     const w = cv.clientWidth, h = cv.clientHeight;
@@ -1454,66 +1645,6 @@ import * as THREE from './assets/optics-three.min.js';
     }
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     return { w, h };
-  }
-
-  function drawChart() {
-    const s = fitCanvas2D(chartCanvas, chartCtx);
-    if (!s) return;
-    const g = chartCtx, W = s.w, H = s.h;
-    g.clearRect(0, 0, W, H);
-    const L = 46, R = 46, T = 14, B = 26;
-    const pw = W - L - R, ph = H - T - B;
-
-    g.strokeStyle = 'rgba(148,163,184,0.18)';
-    g.lineWidth = 1;
-    for (let i = 0; i <= 4; i++) {
-      const y = T + ph * i / 4;
-      g.beginPath(); g.moveTo(L, y); g.lineTo(L + pw, y); g.stroke();
-    }
-    /* 左轴：质量占比 % */
-    g.fillStyle = '#94a3b8'; g.font = '10px Inter, sans-serif'; g.textAlign = 'right';
-    for (let i = 0; i <= 4; i++) {
-      g.fillText((100 - i * 25) + '%', L - 6, T + ph * i / 4 + 3.5);
-    }
-    /* 右轴：温度 ℃ */
-    g.textAlign = 'left';
-    const TLO = 0, THI = 200;
-    for (let i = 0; i <= 4; i++) {
-      g.fillText(Math.round(THI - i * (THI - TLO) / 4) + '℃', L + pw + 6, T + ph * i / 4 + 3.5);
-    }
-    /* 升华开始温度参考线（右轴） */
-    if (toggles.guide) {
-      const y = T + ph * (1 - (T_SUB_START - TLO) / (THI - TLO));
-      g.save();
-      g.setLineDash([5, 4]); g.strokeStyle = 'rgba(250,204,21,0.85)'; g.lineWidth = 1.4;
-      g.beginPath(); g.moveTo(L, y); g.lineTo(L + pw, y); g.stroke();
-      g.restore();
-      g.fillStyle = '#facc15'; g.textAlign = 'left';
-      g.fillText(`升华开始 ${T_SUB_START.toFixed(0)}℃`, L + 6, y - 4);
-    }
-    if (series.length < 2) {
-      g.fillStyle = '#64748b'; g.textAlign = 'center';
-      g.fillText('点「开始加热」，曲线就会画出来', L + pw / 2, T + ph / 2);
-      return;
-    }
-    const xOf = (t) => L + clamp(t / T_MAX, 0, 1) * pw;
-    const yOfM = (v) => T + ph * (1 - clamp(v, 0, 1));
-    const yOfT = (v) => T + ph * (1 - clamp((v - TLO) / (THI - TLO), 0, 1));
-
-    const line = (get, yf, color, width, dash) => {
-      g.save();
-      if (dash) g.setLineDash(dash);
-      g.strokeStyle = color; g.lineWidth = width; g.beginPath();
-      series.forEach((p, i) => {
-        const x = xOf(p.t), y = yf(get(p));
-        if (i === 0) g.moveTo(x, y); else g.lineTo(x, y);
-      });
-      g.stroke(); g.restore();
-    };
-    line((p) => p.s, yOfM, '#fb923c', 2.2);
-    line((p) => p.g, yOfM, '#c084fc', 2.2);
-    line((p) => p.c, yOfM, '#22d3ee', 2.0, [5, 3]);
-    line((p) => p.T, yOfT, '#38bdf8', 1.6);
   }
 
   const microCanvas = $('microCanvas');
@@ -1577,7 +1708,7 @@ import * as THREE from './assets/optics-three.min.js';
     const mt = $('microText');
     if (mt) {
       mt.textContent = state.scene !== 'iodine'
-        ? '这一场景的微观过程与碘锤相同：分子在固态与气态之间直接转换，没有液态。'
+        ? '这一场景的微观过程与碘管相同：分子在固态与气态之间直接转换，没有液态。'
         : (state.mGas / M_TOTAL < 0.01
           ? '固态碘的分子规则地排在晶格里，只在原位振动。'
           : `受热后个别分子动能够大，直接从晶格【飞出去】变成气态 —— 中间没有液态这一步。现在有 ${(state.mGas / M_TOTAL * 100).toFixed(0)}% 的碘在气态。`);
@@ -1587,14 +1718,14 @@ import * as THREE from './assets/optics-three.min.js';
   /* ==========================================================================
      十、读数
      ========================================================================== */
+  /* 读数只留「观察要用的那两个」：管内温度和当前阶段。
+     记录表、质量占比、曲线全部按用户要求删掉了 —— 这一页只看现象。 */
   const els = {
-    hudTemp: $('hudTemp'), hudBath: $('hudBath'),
-    metricTemp: $('metricTemp'), metricSolid: $('metricSolid'), metricGas: $('metricGas'),
-    metricState: $('metricState'), metricLiquid: $('metricLiquid'), finding: $('finding')
+    hudTemp: $('hudTemp'), phase: $('stagePhase'), finding: $('finding')
   };
 
   function sceneName() {
-    return { iodine: '碘锤', dryice: '干冰', frost: '霜', life: '生活现象' }[state.scene];
+    return { iodine: '碘的升华与凝华', dryice: '干冰', frost: '霜', life: '生活现象' }[state.scene];
   }
   function statusText() {
     if (state.scene === 'dryice') {
@@ -1606,37 +1737,40 @@ import * as THREE from './assets/optics-three.min.js';
       return state.frost > 0.02 ? '水蒸气凝华成霜' : '等待凝华';
     }
     if (state.scene === 'life') return state.lifePick < 0 ? '请点击一个物件' : LIFE[state.lifePick].name;
+    /* 碘：先把「正在干什么」说清楚，再说现象 */
+    if (state.pour.left > 0) {
+      return state.pour.mode === 'hot' ? '正在浇热水 · 碘升华' : '正在浇冷水 · 碘凝华';
+    }
+    if (state.mCrystal / M_TOTAL > 0.03) {
+      return state.mGas / M_TOTAL > 0.08 ? '管壁凝华中（气→固）' : '管内壁已凝华出晶体';
+    }
     if (state.mSolid <= 1e-4) return '固态碘已全部升华';
-    if (state.mGas / M_TOTAL > 0.02) return state.mCrystal / M_TOTAL > 0.01 ? '升华与凝华同时进行' : '升华中（固→气）';
-    return '固态碘 · 尚未明显升华';
+    if (state.mGas / M_TOTAL > 0.02) return '管内充满紫色碘蒸气';
+    return '固态碘 · 等待浇热水';
   }
   function shortState() {
     if (state.scene === 'dryice') return state.fogAmt > 0.05 ? '白雾下沉' : '升华中';
     if (state.scene === 'frost') return state.frost > 0.02 ? '凝华成霜' : '待凝华';
     if (state.scene === 'life') return state.lifePick < 0 ? '未选择' : LIFE[state.lifePick].name;
+    if (state.pour.left > 0) return state.pour.mode === 'hot' ? '浇热水中' : '浇冷水中';
     if (state.mSolid <= 1e-4) return '升华完';
-    if (state.mCrystal / M_TOTAL > 0.01) return '凝华中';
-    if (state.mGas / M_TOTAL > 0.02) return '升华中';
+    if (state.mCrystal / M_TOTAL > 0.02) return '已凝华';
+    if (state.mGas / M_TOTAL > 0.02) return '有碘蒸气';
     return '未升华';
   }
 
   function updateReadouts() {
-    const showT = state.scene === 'iodine' || state.scene === 'dryice';
-    els.hudTemp.textContent = (state.scene === 'dryice' ? state.Tw : state.T).toFixed(1);
-    els.hudBath.textContent = state.Tw.toFixed(1);
-    els.metricTemp.textContent = (state.scene === 'dryice' ? state.Tw : state.T).toFixed(1) + ' ℃';
-    els.metricSolid.textContent = (state.mSolid / M_TOTAL * 100).toFixed(0) + ' %';
-    els.metricGas.textContent = (state.mGas / M_TOTAL * 100).toFixed(0) + ' %';
-    els.metricState.textContent = statusText();
-    els.metricLiquid.textContent = state.liquidMass > 0 ? '是' : '否';
-    state.drawn.hudTemp = +(state.scene === 'dryice' ? state.Tw : state.T).toFixed(2);
+    els.hudTemp.textContent = state.T.toFixed(1);
+    state.drawn.hudTemp = +state.T.toFixed(2);
+    state.drawn.phase = statusText();
+    if (els.phase) els.phase.textContent = statusText();
 
     let hint;
     if (state.scene === 'life') {
       const i = state.lifePick;
       hint = i < 0
         ? '点击台面上的任意一个物件，判断它属于哪种物态变化、是吸热还是放热。<b>其中有一个不是升华也不是凝华</b> —— 找出来，说说为什么。'
-        : `<b>${LIFE[i].name}</b>：${LIFE[i].q} 在右边「⑦ 现象判读」里选答案，两问都选了才能提交。`
+        : `<b>${LIFE[i].name}</b>：${LIFE[i].q} 在左边「现象判读」里选答案，两问都选了才能提交。`
           + (state.quiz.graded[i] ? `<br>${LIFE[i].ans}。` : '');
     } else if (state.scene === 'dryice') {
       hint = state.dryIce <= 1e-3
@@ -1644,14 +1778,16 @@ import * as THREE from './assets/optics-three.min.js';
         : `干冰升华吸热，把周围空气里的水蒸气夺走热量、液化成小水珠，就是我们看到的<b>白雾</b>。白雾之所以往下沉，是因为二氧化碳比空气重 —— 盯住它，看它是不是一直往下走。`;
     } else if (state.scene === 'frost') {
       hint = `水蒸气直接凝华成<b>霜</b>，<b>不经过液态</b>。注意霜是<b>从玻璃片的边缘和划痕开始长</b>的 —— 那些地方最先冷下来，枝晶从那里朝里伸。凝华会<b>放热</b>。`;
-    } else if (state.mSolid <= 1e-4) {
-      hint = `固态碘已经全部变成蒸气。整个过程中锤内<b>始终没有出现一滴液体</b> —— 这就是升华：<b>固态直接变成气态</b>。`;
-    } else if (state.T < T_SUB_START) {
-      hint = `温度 ${state.T.toFixed(1)} ℃，还没到明显升华的温度（约 ${T_SUB_START.toFixed(0)} ℃）。其实碘在常温下也会极缓慢地升华，只是看不出来。`;
+    } else if (state.pour.left > 0 && state.pour.mode === 'hot') {
+      hint = `热水顺着管壁流下来，管内温度升到 ${state.T.toFixed(0)} ℃。盯住管底那堆碘：它在<b>一点点变小</b>，而管里腾起<b>紫色蒸气</b> —— 中间<b>没有一滴液体</b>。这就是<b>升华</b>：固态直接变成气态。`;
+    } else if (state.pour.left > 0 && state.pour.mode === 'cold') {
+      hint = `冷水一浇，管壁温度掉到 ${state.T.toFixed(0)} ℃，紫色蒸气迅速<b>变淡</b>，管内壁上出现一层<b>紫黑色、有金属光泽的晶体</b> —— 蒸气<b>直接</b>变回固态，这就是<b>凝华</b>，同样不经过液态。`;
+    } else if (state.mCrystal / M_TOTAL > 0.03) {
+      hint = `管壁上已经结了 ${(state.mCrystal / M_TOTAL * 100).toFixed(0)}% 的碘晶体。<b>浇冷水</b>凝华得快，<b>取出来放凉</b>凝华得慢 —— 但两条路都是<b>气 → 固</b>，中间<b>一滴液体都没有</b>。想再看一次升华，就再浇一壶热水。`;
     } else if (state.mGas / M_TOTAL > 0.02) {
-      hint = `锤内出现<b>紫色碘蒸气</b>了（已升华 ${(state.mGas / M_TOTAL * 100).toFixed(0)}%）。仔细看：锤内<b>没有液体</b>，固态碘直接少下去、蒸气直接多起来。把冷玻璃片挪到<b>球泡上部</b>，蒸气会优先在它上面凝华成晶体。`;
+      hint = `管内是<b>紫色碘蒸气</b>（已升华 ${(state.mGas / M_TOTAL * 100).toFixed(0)}%）。现在点<b>「浇冷水」</b>看它凝华，或者点<b>「取出放凉」</b>让它在空气里慢慢凉下来 —— 两种情形都会凝华，只是快慢不同。`;
     } else {
-      hint = `温度升到 ${state.T.toFixed(1)} ℃，固态碘开始明显升华。`;
+      hint = `管底是<b>紫黑色固态碘</b>，温度 ${state.T.toFixed(1)} ℃，还没明显升华。点<b>「浇热水」</b>：热水顺着管壁流下去，管内温度升高，碘就会直接变成紫色蒸气。`;
     }
     els.finding.innerHTML = hint;
     state.drawn.hintScene = state.scene;
@@ -1663,7 +1799,6 @@ import * as THREE from './assets/optics-three.min.js';
   let dirty = true;
   const requestRender = () => { dirty = true; };
   let clock = 0;
-  let sampleAcc = 0;
 
   /* 冰棍白气：环绕冰棍往下飘。只在生活场景里跑 —— 别的场景白白算 14 个 Sprite 没意义，
      而且「只在那一档动」本身也是可断言的（见 G02）。 */
@@ -1695,51 +1830,24 @@ import * as THREE from './assets/optics-three.min.js';
     if (lifeHot.visible) {
       lifeHot.material.opacity = 0.16 + 0.14 * (0.5 + 0.5 * Math.sin(clock * 3.4));
       state.drawn.hotOpacity = +lifeHot.material.opacity.toFixed(4);
-      /* 生活场景里酒精灯是关的，没有别的东西会把画面标脏 ⇒ 呼吸就看不见了。
-         自己标脏，保证每帧都重画。 */
+      /* 生活场景里没有别的东西会把画面标脏 ⇒ 呼吸就看不见了。自己标脏，保证每帧都重画。 */
       dirty = true;
     } else {
       state.drawn.hotOpacity = 0;
     }
-    const wantLamp = (state.lampOn && (state.scene === 'iodine' || state.scene === 'dryice')) ? 1 : 0;
-    state.lampAnim += (wantLamp - state.lampAnim) * clamp(dt * 3.4, 0, 1);
-    const on = state.lampAnim > 0.02;
-    flameGroup.userData.on = on;
-    flameGroup.visible = on;
-    const sc = state.scene;
-    flameGroup.visible = on && (sc === 'iodine' || sc === 'dryice');
-    flameGroup.scale.set(1, 0.6 + 0.4 * state.lampAnim, 1);
-    flameGroup.position.y = BASE_H + LAMP_TOP + state.lampAnim * 0.4;
-    flameLayers.forEach((f, i) => {
-      f.material.opacity = [0.16, 0.26, 0.5][i] * state.lampAnim;
-      const s = 1 + Math.sin(clock * (7 + i * 2.4)) * 0.05;
-      f.scale.set(s, 0.9 + 0.16 * state.lampAnim, s);
-    });
-    flameLight.intensity = 26 * state.lampAnim;
-
-    /* 冷片在球泡上部与锤底之间平滑滑动（不是瞬移） */
-    const targetY = COLD_Y[state.cold];
-    coldPlate.position.y += (targetY - coldPlate.position.y) * clamp(dt * 5, 0, 1);
-    syncPlateRod(coldPlate.position.y);
-    /* ★ 这里必须同步 state.drawn.coldPlateY：它只在 updateColdPlate() 里写过，
-       而 frameStep 走的是 animateParts、不调 updateColdPlate ——
-       于是「平滑滑动」期间 state.drawn.coldPlateY 一直是【上一次 updateAll 时的旧值】，
-       画面在滑、读数不动（同一个量两个数）。实测踩到过。 */
-    state.drawn.coldPlateY = +coldPlate.position.y.toFixed(3);
 
     updateVapor(dt);
+    updatePour(dt);
     updateDryIce(dt);
     updateLifeMist();
     state.drawn.clock = +clock.toFixed(3);
-    state.drawn.lampAnim = +state.lampAnim.toFixed(4);
-    state.drawn.flameVisible = !!flameGroup.visible;
   }
 
   /* ==========================================================================
      十二、相机与交互
      ========================================================================== */
   /* ★ 取景必须【按场景】给：霜场景的主体在台面上（板面 y ≈ 5.9）、生活场景是一排小物件，
-     沿用碘锤那套 ty = 21 / dist = 80 的取景，主体会缩在画面一角、大片空白。
+     沿用碘管那套取景，主体会缩在画面一角、大片空白。
      这是「取景包络要覆盖所有模式」那条坑的同一形态 —— 一档取景套所有场景必然有一档是废的。 */
   function sceneFrame() {
     const sc = state.scene;
@@ -1788,7 +1896,8 @@ import * as THREE from './assets/optics-three.min.js';
     state.lifePick = hits[0].object.userData.lifeIndex;
     updateVisibility();
     updateReadouts();
-    renderRecords();
+    /* 点了物件就把左侧判读面板自动展开 —— 学生不用再去找那个小按钮 */
+    setQuizOpen(true);
     requestRender();
     return true;
   }
@@ -1832,66 +1941,73 @@ import * as THREE from './assets/optics-three.min.js';
   /* ==========================================================================
      十三、控件
      ========================================================================== */
+  /* ★ 碘场景没有「开始 / 暂停」：浇一壶水就是操作，其余时间它自己慢慢凉。
+     只有干冰 / 霜两个场景需要「开始」按钮。 */
   function setRunning(v) {
     state.running = !!v;
-    const runBtn = $('runBtn'), pauseBtn = $('pauseBtn');
-    runBtn.textContent = state.running ? '加热中…' : (state.t > 0 ? '继续加热' : '开始加热');
-    runBtn.disabled = state.running;
-    pauseBtn.disabled = !state.running;
-    if (state.running) state.lampOn = true;
+    if (state.running) state.finished = false;
+    syncDock();
     updateVisibility();
+    updateReadouts();
     requestRender();
+  }
+
+  /* 底部操作条：碘场景是三个浇水按钮，干冰/霜是一个「开始」按钮，生活现象是一行提示 */
+  function syncDock() {
+    const sc = state.scene;
+    const iod = sc === 'iodine';
+    const runnable = sc === 'dryice' || sc === 'frost';
+    const dIod = $('dockIodine'), dRun = $('runBtn'), dLife = $('dockLife');
+    if (dIod) dIod.hidden = !iod;
+    if (dRun) {
+      dRun.hidden = !runnable;
+      dRun.textContent = state.running ? '⏸ 暂停' : (sc === 'dryice' ? '▶ 开始升华' : '▶ 开始结霜');
+    }
+    if (dLife) dLife.hidden = sc !== 'life';
+    const nm = $('stageScene');
+    if (nm) nm.textContent = sceneName();
+    const hot = $('pourHotBtn'), cold = $('pourColdBtn');
+    const pouring = state.pour.left > 0;
+    if (hot) hot.classList.toggle('active', pouring && state.pour.mode === 'hot');
+    if (cold) cold.classList.toggle('active', pouring && state.pour.mode === 'cold');
   }
 
   function applySceneUI() {
     document.querySelectorAll('[data-scene]').forEach((b) => b.classList.toggle('active', b.dataset.scene === state.scene));
+    syncDock();
   }
   function setScene(key) {
-    if (!state.scene || state.scene !== key) {
-      state.scene = key;
-      state.lifePick = -1;
-      applySceneUI();
-      updateVisibility();
-      updateAll();
-      /* ★ 换场景必须【重新取景】：各场景的主体高度差了一个数量级（碘锤主体在 y≈21，
-         霜的冷板在 y≈5.9，生活小物件在 y≈2.4），不重取景就会沿用上一档的机位 ——
-         主体缩在画面一角。实测漏了这一行，霜/生活两个场景的取景全废。 */
-      updateCamera();
-      updateReadouts();
-      renderRecords();
-    }
+    if (state.scene === key) return;
+    state.scene = key;
+    state.lifePick = -1;
+    state.finished = false;
+    /* 换场景 = 换一套器材，上一场景的「正在浇水」不能带过来 */
+    state.pour.mode = 'none'; state.pour.left = 0;
+    tagHot.visible = tagCold.visible = false;
+    if (key === 'iodine') state.running = true; else state.running = false;
+    applySceneUI();
+    updateVisibility();
+    updateAll();
+    /* ★ 换场景必须【重新取景】：各场景的主体高度差了一个量级（玻璃管在 y≈19，
+       霜的冷板在 y≈5.9，生活小物件在 y≈2.4），不重取景主体就缩在画面一角。 */
+    updateCamera();
+    updateReadouts();
   }
   document.querySelectorAll('[data-scene]').forEach((b) => b.addEventListener('click', () => setScene(b.dataset.scene)));
 
-  $('runBtn').addEventListener('click', () => {
-    if (state.scene === 'life') { setScene('iodine'); }
-    setRunning(true);
-  });
-  $('pauseBtn').addEventListener('click', () => setRunning(false));
-  $('resetBtn').addEventListener('click', () => { resetSim(); clearRecords(); });
-  /* ★ 「撤去酒精灯」= 熄火但【不停仿真】：温度自己降下来，蒸气开始过饱和、在冷面上凝华。
-     这是「凝华」这一段唯一的对照动作 —— 只按「暂停」是看不出温度变化的。 */
-  function setLampOn(v) {
-    state.lampOn = !!v;
-    const b = $('lampBtn');
-    if (b) b.textContent = state.lampOn ? '撤去酒精灯' : '放回酒精灯';
-    updateReadouts();
-    requestRender();
-  }
-  $('lampBtn').addEventListener('click', () => setLampOn(!state.lampOn));
+  const pHot = $('pourHotBtn'), pCold = $('pourColdBtn'), tOut = $('takeOutBtn');
+  if (pHot) pHot.addEventListener('click', () => { startPour('hot'); syncDock(); });
+  if (pCold) pCold.addEventListener('click', () => { startPour('cold'); syncDock(); });
+  if (tOut) tOut.addEventListener('click', () => { takeOut(); syncDock(); });
+  const resetBtn = $('resetBtn');
+  if (resetBtn) resetBtn.addEventListener('click', () => { resetSim(); syncDock(); updateReadouts(); });
+  const runBtnEl = $('runBtn');
+  if (runBtnEl) runBtnEl.addEventListener('click', () => setRunning(!state.running));
 
   document.querySelectorAll('[data-speed]').forEach((b) => {
     b.addEventListener('click', () => {
       state.speed = Number(b.dataset.speed) || 1;
       document.querySelectorAll('[data-speed]').forEach((x) => x.classList.toggle('active', x === b));
-    });
-  });
-  document.querySelectorAll('[data-cold]').forEach((b) => {
-    b.addEventListener('click', () => {
-      state.cold = b.dataset.cold;
-      document.querySelectorAll('[data-cold]').forEach((x) => x.classList.toggle('active', x === b));
-      updateCrystal();
-      requestRender();
     });
   });
   const tgl = (id, key) => {
@@ -1900,12 +2016,11 @@ import * as THREE from './assets/optics-three.min.js';
     el.checked = toggles[key];
     el.addEventListener('change', () => {
       toggles[key] = el.checked;
-      updateAll(); drawChart();
+      updateAll();
     });
   };
   tgl('toggleVapor', 'vapor');
   tgl('toggleCrystal', 'crystal');
-  tgl('toggleGuide', 'guide');
   tgl('toggleMicro', 'micro');
 
   /* 现象判读：选项按钮由 CHANGES / HEATS 现建；提交 / 重做两个动作走函数，不走按钮文案 */
@@ -1915,126 +2030,171 @@ import * as THREE from './assets/optics-three.min.js';
   syncQuizUI();
 
   /* ==========================================================================
-     十四、步骤与记录
+     十四、步骤（本页不记录数据，只按真实操作顺序把现象串起来）
      ========================================================================== */
   const STEPS = [
-    { name: '01 认识器材', text: '<strong>认识器材：</strong>铁架台的铁圈上放着<b>石棉网</b>，石棉网上是盛水的<b>烧杯</b>，烧杯里立着<b>碘锤</b>（球形玻璃容器 + 细颈），锤内底部堆着<b>紫黑色固态碘</b>。点「开始加热」后酒精灯点火，热水浴把碘锤均匀加热。' },
-    { name: '02 升华：固→气', text: '<strong>加热碘锤：</strong>温度升到约 45 ℃ 后，固态碘明显减少、锤内出现<b>紫色蒸气</b>。盯住锤内 —— <b>始终没有一滴液体</b>。这就是<b>升华</b>：物质从固态<b>直接</b>变成气态，<b>不经过液态</b>。微观示意里能看到分子是直接从晶格飞出去的。' },
-    { name: '03 凝华：长在最冷面', text: '<strong>凝华：</strong>把<b>冷玻璃片</b>插进锤内。蒸气遇到最冷的那个面，就直接变回固态、长出有光泽的<b>晶体</b> —— 这是<b>凝华</b>（气→固），同样<b>不经过液态</b>。把冷片从<b>球泡上部</b>挪到<b>锤底</b>，看晶体跟着谁走：晶体永远长在<b>最冷</b>的面上。' },
-    { name: '04 干冰与白雾', text: '<strong>干冰：</strong>切到「干冰」场景。干冰是固态二氧化碳，常温下直接升华成气体。<b>白雾往下沉</b>，不是往上飘 —— 因为二氧化碳比空气重；而且白雾是干冰<b>吸热</b>把空气中水蒸气液化出来的小水珠，<b>不是二氧化碳本身</b>。' },
-    { name: '05 霜与凝华放热', text: '<strong>霜：</strong>切到「霜」场景。空气中的水蒸气直接在冷玻璃片上<b>凝华</b>成霜，<b>从边缘和划痕开始长</b>（那里最先冷下来），枝晶朝里伸。霜、雾凇、雪都是这样形成的；凝华和升华相反，是<b>放热</b>的。' },
-    { name: '06 生活现象判读', text: '<strong>判读（要作答）：</strong>切到「生活现象」场景，六件东西一件件点过去，在右边「⑦ 现象判读」里各选<b>两问</b>：这一件属于<b>六种物态变化里的哪一种</b>、是<b>吸热还是放热</b>。两问都选了才能提交，提交后会在 3D 场景里<b>高亮发生变化的那个部位</b>（灯泡亮的是钨丝，冰棍亮的是它外面的白气）。<br>干冰、樟脑丸、白炽灯泡是<b>升华</b>（固→气，吸热），结霜的玻璃片、雾凇是<b>凝华</b>（气→固，放热）。<b>但「冰棍冒白气」不是</b> —— 那是空气中的水蒸气遇到冰棍<b>液化</b>成的小水珠，中间<b>出现了液态</b>。把「冒白气」一律当成升华，是最常见的前概念错误。' }
+    { name: '01 认识器材', text: '<strong>认识器材：</strong>铁架台的<b>铁夹</b>夹着一支<b>两端封闭的玻璃管</b>，管底沉着少量<b>紫黑色碘颗粒</b>，管下摆一个<b>接水盘</b>，旁边是一只烧杯 —— 往管子上浇水用。管里<b>没有水、也没有别的液体</b>，只有碘。' },
+    { name: '02 浇热水：升华', text: '<strong>浇热水：</strong>点「浇热水」，热水顺着管壁流下去，管内温度升到约 45 ℃ 以上，碘颗粒<b>一点点变小</b>，管里腾起<b>紫色蒸气</b>。盯住管里 —— <b>始终没有一滴液体</b>。这就是<b>升华</b>：固态<b>直接</b>变成气态，<b>不经过液态</b>。' },
+    { name: '03 浇冷水：凝华', text: '<strong>浇冷水：</strong>点「浇冷水」，管壁一下子冷下来，紫色蒸气迅速变淡，管内壁上出现一层<b>紫黑色、有金属光泽的晶体</b> —— 蒸气<b>直接</b>变回固态，这是<b>凝华</b>（气→固），同样<b>不经过液态</b>。晶体长在<b>最冷的管壁</b>上。' },
+    { name: '04 取出来放凉：也会凝华', text: '<strong>取出放凉：</strong>不浇冷水，改点「取出放凉」，让管子泡在空气里自己慢慢凉。<b>照样会凝华</b> —— 只是慢得多，晶体是<b>一点点</b>长出来的。所以「凝华」不一定要用冰水逼：<b>只要蒸气冷到饱和以下，就会直接变回固态</b>。' },
+    { name: '05 干冰与白雾', text: '<strong>干冰：</strong>切到「干冰」场景。干冰是固态二氧化碳，常温下直接升华成气体。<b>白雾往下沉</b>，不是往上飘 —— 因为二氧化碳比空气重；而且白雾是干冰<b>吸热</b>把空气中水蒸气液化出来的小水珠，<b>不是二氧化碳本身</b>。' },
+    { name: '06 霜与凝华放热', text: '<strong>霜：</strong>切到「霜」场景。空气中的水蒸气直接在冷玻璃片上<b>凝华</b>成霜，<b>从边缘和划痕开始长</b>（那里最先冷下来），枝晶朝里伸。霜、雾凇、雪都是这样形成的；凝华和升华相反，是<b>放热</b>的。' },
+    { name: '07 生活现象判读', text: '<strong>判读（要作答）：</strong>切到「生活现象」场景，六件东西一件件点过去，在左边「现象判读」里各选<b>两问</b>：这一件属于<b>六种物态变化里的哪一种</b>、是<b>吸热还是放热</b>。两问都选了才能提交，提交后会在 3D 场景里<b>高亮发生变化的那个部位</b>（灯泡亮的是钨丝，冰棍亮的是它外面的白气）。<br>干冰、樟脑丸、白炽灯泡是<b>升华</b>（固→气，吸热），结霜的玻璃片、雾凇是<b>凝华</b>（气→固，放热）。<b>但「冰棍冒白气」不是</b> —— 那是空气中的水蒸气遇到冰棍<b>液化</b>成的小水珠，中间<b>出现了液态</b>。把「冒白气」一律当成升华，是最常见的前概念错误。' }
   ];
   const stepButtons = Array.from(document.querySelectorAll('[data-step]'));
   const stepDetail = $('stepDetail');
   function showStep(i) {
     state.step = i;
     stepButtons.forEach((b, k) => b.classList.toggle('active', k === i));
-    stepDetail.innerHTML = STEPS[i].text;
+    if (stepDetail) stepDetail.innerHTML = STEPS[i].text;
   }
   stepButtons.forEach((b, i) => b.addEventListener('click', () => showStep(i)));
   showStep(0);
 
-  const recordBtn = $('recordBtn'), recordBody = $('records'), recordBodySide = $('recordsSide'),
-        summary = $('summary'), recSum = $('recSum'), recordHint = $('recordHint');
-
-  const EMPTY_MAIN = '<tr><td colspan="7" class="empty">尚无记录，先点“开始加热”再记录</td></tr>';
-  const EMPTY_SIDE = '<tr><td colspan="4" class="empty">还没有记录</td></tr>';
-  const HINT_READY = '加热时随时点一下，当前时刻、温度和固态碘质量就记进下面的表格（点「重置」会清空）。';
-  const HINT_DONE = '已记录。换场景或改冷片位置后旧记录会保留，正好用来对照；点「重置」则把表格一起清空。';
-
-  function clearRecords() {
-    state.records.length = 0;
-    renderRecords();
-    recordHint.textContent = HINT_READY;
+  /* ==========================================================================
+     十四点五、实验画面全屏 + 舞台内的两个折叠面板
+     --------------------------------------------------------------------------
+     全屏目标取【整个舞台】：操作条、观察提示、微观示意、设置面板全是 .stage 的后代，
+     所以进了全屏照样能浇水、能换场景，不用退出来再按。
+     ★ 面板必须是 .stage 的子元素 —— 全屏只渲染全屏元素及其子树，挂在 body 下的浮层
+       进全屏就【根本不存在】。z-index：面板 8、全屏按钮 9，按钮永远压在上面点得到。
+     ========================================================================== */
+  const stageBox = $('stage');
+  const fsBtn = $('fsBtn');
+  const fsIsOn = () => document.fullscreenElement === stageBox
+    || document.webkitFullscreenElement === stageBox;
+  let fsLayouts = 0;                       // 每次切换实际重排了几次（自检要它 ≥ 2）
+  function fsLayout() {
+    resize();
+    drawMicro(0.016);
+    renderer.render(scene, camera);
+    dirty = false;
+    fsLayouts++;
   }
-
-  function renderRecords() {
-    if (!state.records.length) {
-      recordBody.innerHTML = EMPTY_MAIN;
-      recordBodySide.innerHTML = EMPTY_SIDE;
-      summary.textContent = '建议记录：加热前、刚出现紫色蒸气、蒸气最浓、冷却后这四个时刻，对比固态碘质量和蒸气量的反向变化。';
-      recSum.textContent = '点上面的按钮开始记录。';
-      return;
-    }
-    recordBody.innerHTML = state.records.map((r) => `
-      <tr class="${r.sub ? 'crystal' : ''}">
-        <td>${r.scene}</td><td>${r.t.toFixed(0)} s</td><td>${r.T.toFixed(1)} ℃</td>
-        <td>${r.m.toFixed(2)} g</td><td>${r.g.toFixed(2)} g</td>
-        <td>${r.state}</td><td>${r.liquid ? '是' : '否'}</td>
-      </tr>`).join('');
-    recordBodySide.innerHTML = state.records.map((r, i) => `
-      <tr class="${r.sub ? 'crystal' : ''}">
-        <td>${i + 1}</td><td>${r.t.toFixed(0)} s</td>
-        <td>${r.T.toFixed(1)} ℃</td><td>${r.short}</td>
-      </tr>`).join('');
-
-    const sub = state.records.filter((r) => r.sub);
-    const anyLiquid = state.records.some((r) => r.liquid);
-    let text;
-    if (anyLiquid) {
-      text = '记录里出现了液态碘 —— 这在真实实验里不会发生，请检查模型。';
-    } else if (sub.length >= 2) {
-      const ms = sub.map((r) => r.m);
-      text = `已记录 ${state.records.length} 组，其中 ${sub.length} 组是升华中的。固态碘质量从 ${Math.max(...ms).toFixed(2)} g 降到 ${Math.min(...ms).toFixed(2)} g —— 减少的部分全都去了蒸气里，<b>没有一滴液体</b>。`;
-    } else if (state.records.length >= 2) {
-      text = `已记录 ${state.records.length} 组。再补几组「蒸气最浓」和「冷却之后」的记录，就能看出固态碘与蒸气量的反向变化。`;
-    } else {
-      text = `已记录 ${state.records.length} 组。再补几组不同阶段的记录，才能比较。`;
-    }
-    summary.textContent = text;
-    recSum.textContent = text;
-  }
-  recordBtn.addEventListener('click', () => {
-    state.records.push({
-      scene: sceneName(), t: state.t, T: state.T,
-      m: state.mSolid, g: state.mGas, c: state.mCrystal,
-      sub: state.mGas / M_TOTAL > 0.02, liquid: state.liquidMass > 0,
-      state: statusText(), short: shortState()
+  if (fsBtn) {
+    fsBtn.addEventListener('click', () => {
+      if (document.fullscreenElement || document.webkitFullscreenElement) {
+        (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+      } else if (stageBox.requestFullscreen) {
+        stageBox.requestFullscreen();
+      } else if (stageBox.webkitRequestFullscreen) {
+        stageBox.webkitRequestFullscreen();
+      }
     });
-    if (state.records.length > 24) state.records.shift();
-    renderRecords();
-    const wrap = recordBodySide.closest('.rec-wrap');
-    if (wrap) wrap.scrollTop = wrap.scrollHeight;
-    recordBtn.classList.remove('hit');
-    void recordBtn.offsetWidth;
-    recordBtn.classList.add('hit');
-    recordHint.textContent = HINT_DONE;
-    requestRender();
-  });
-  renderRecords();
+  }
+  function onFsChange() {
+    const on = fsIsOn();
+    if (fsBtn) {
+      const ex = fsBtn.querySelector('.fs-expand'), cp = fsBtn.querySelector('.fs-compress'),
+            lb = fsBtn.querySelector('.lbl');
+      if (ex) ex.style.display = on ? 'none' : '';
+      if (cp) cp.style.display = on ? '' : 'none';
+      if (lb) lb.textContent = on ? '退出' : '全屏';
+      fsBtn.title = on ? '退出全屏' : '全屏显示实验画面';
+      fsBtn.setAttribute('aria-label', fsBtn.title);
+    }
+    /* ★ 立刻 + 晚一帧 + setTimeout 兜底各重排一次：UA 的 :fullscreen 样式在个别浏览器里
+       要下一帧才落到布局上，只重排一次会拿到切换过程中的中间尺寸（画布被拉变形）；
+       headless 里 rAF 还可能一次都不回调。 */
+    fsLayout();
+    requestAnimationFrame(() => requestAnimationFrame(fsLayout));
+    setTimeout(fsLayout, 90);
+  }
+  document.addEventListener('fullscreenchange', onFsChange);
+  document.addEventListener('webkitfullscreenchange', onFsChange);
+
+  /* --- 设置面板：默认收起，收起时只占舞台不到 2% 的面积 --- */
+  const paramsBox = $('params'), paramsHead = $('paramsHead'),
+        paramsToggle = $('paramsToggle'), paramsBody = $('paramsBody');
+  const paramsIsOpen = () => !!paramsBox && !paramsBox.classList.contains('collapsed');
+  function setParamsOpen(on) {
+    if (!paramsBox) return;
+    paramsBox.classList.toggle('collapsed', !on);
+    if (paramsToggle) {
+      paramsToggle.setAttribute('aria-expanded', on ? 'true' : 'false');
+      paramsToggle.textContent = on ? '▾ 收起' : '▸ 展开';
+      paramsToggle.title = on ? '收起设置面板' : '展开设置面板';
+    }
+    dirty = true;
+  }
+  if (paramsBox) {
+    if (paramsToggle) {
+      paramsToggle.addEventListener('click', (e) => { e.stopPropagation(); setParamsOpen(!paramsIsOpen()); });
+    }
+    if (paramsHead) {
+      paramsHead.addEventListener('click', (e) => {
+        if (e.target.closest && e.target.closest('#paramsToggle')) return;
+        setParamsOpen(!paramsIsOpen());
+      });
+    }
+    /* 面板压在画布上方：把指针事件拦住，免得点面板被当成「开始拖动场景」 */
+    paramsBox.addEventListener('pointerdown', (e) => e.stopPropagation());
+    paramsBox.addEventListener('pointerup', (e) => e.stopPropagation());
+    paramsBox.addEventListener('wheel', (e) => e.stopPropagation(), { passive: true });
+    setParamsOpen(false);
+  }
+
+  /* --- 现象判读面板：只在「生活现象」场景出现，点中物件时自动展开 --- */
+  const quizBox = $('quizGroup'), quizHead = $('quizHead'), quizToggle = $('quizToggle');
+  const quizIsOpen = () => !!quizBox && !quizBox.classList.contains('collapsed');
+  function setQuizOpen(on) {
+    if (!quizBox) return;
+    quizBox.classList.toggle('collapsed', !on);
+    if (quizToggle) {
+      quizToggle.setAttribute('aria-expanded', on ? 'true' : 'false');
+      quizToggle.textContent = on ? '▾ 收起' : '▸ 展开';
+    }
+    dirty = true;
+  }
+  if (quizBox) {
+    if (quizToggle) quizToggle.addEventListener('click', (e) => { e.stopPropagation(); setQuizOpen(!quizIsOpen()); });
+    if (quizHead) {
+      quizHead.addEventListener('click', (e) => {
+        if (e.target.closest && e.target.closest('#quizToggle')) return;
+        setQuizOpen(!quizIsOpen());
+      });
+    }
+    quizBox.addEventListener('pointerdown', (e) => e.stopPropagation());
+    quizBox.addEventListener('pointerup', (e) => e.stopPropagation());
+    quizBox.addEventListener('wheel', (e) => e.stopPropagation(), { passive: true });
+    setQuizOpen(false);
+  }
 
   /* ==========================================================================
      十五、启动
      ========================================================================== */
   canvas.style.cursor = 'grab';
   resetSim();
+  /* ★ 碘场景常开：温度、水膜、自然冷却都是随时间走的，没有「开始」按钮 */
+  state.running = true;
   applySceneUI();
   updateCamera();
   resize();
+  updateReadouts();
 
   let uiAcc = 0;
   function frameStep(dt) {
     animateParts(dt);
 
-    if (state.running && !state.finished) {
+    if (state.scene === 'iodine') {
+      stepSim(dt);
+      updateSolid();
+      updateCrystal();
+    } else if (state.running && !state.finished) {
       if (state.scene === 'dryice') stepDryIce(dt);
       else if (state.scene === 'frost') stepFrost(dt);
-      else stepSim(dt);
-      sampleAcc += dt * state.speed;
-      if (sampleAcc >= 0.6) { sampleAcc = 0; pushSample(); }
       updateSolid();
       updateCrystal();
       updateFrost();
-      if (state.finished) { setRunning(false); pushSample(); }
+      if (state.finished) setRunning(false);
     }
 
     uiAcc += dt;
     if (uiAcc >= 0.1) {
       uiAcc = 0;
-      drawChart();
       drawMicro(Math.max(dt, 0.016));
       updateReadouts();
+      syncDock();
       dirty = true;
     }
     if (dirty) { renderer.render(scene, camera); dirty = false; }
@@ -2051,25 +2211,35 @@ import * as THREE from './assets/optics-three.min.js';
     frameStep(dt);
   })(last);
 
-  const ro = new ResizeObserver(() => { resize(); drawChart(); drawMicro(0.016); });
+  const ro = new ResizeObserver(() => { resize(); drawMicro(0.016); });
   ro.observe(stage);
-  window.addEventListener('resize', () => { resize(); drawChart(); drawMicro(0.016); });
+  window.addEventListener('resize', () => { resize(); drawMicro(0.016); });
 
   /* ==========================================================================
      十六、供无头验收脚本读取
      ========================================================================== */
   window.__subLab = {
-    state, view, VIEWS, toggles, series, LIFE,
+    state, view, VIEWS, toggles, LIFE,
     camera, renderer, scene,
-    hammer, solidIodine, vaporGroup, vapors, coldPlate, crystalGroup, crystals,
+    /* 碘这一套（玻璃管 / 铁夹 / 接水盘 / 浇水烧杯 / 蒸气 / 晶体） */
+    tubeRig, clampGroup, trayGroup, trayWater, pourBeaker, pbWater, pbLip,
+    iodineHeap, solidIodine, vaporGroup, vapors, vaporVolume, vaporVolumeMat, crystalGroup, crystals, crystalFilm, crystalFilmMat, tubeGlassMat,
+    stream, wetFilm, drops, tagHot, tagCold,
     dryGroup, dryBlock, fogs, frostGroup, frostPlate, branches, lifeGroup, lifeObjects, lifeMist,
-    lamp, flameGroup, flameLayers, water,
+    water,
     M_TOTAL, T_SUB_START, SUB_RATE_ON, T_REF, L_OVER_R, K_SAT, WATER_TOP,
-    HAM_CY, HAM_R, HAM_Y0, NECK_TOP, COLD_Y, PLATE_T, BK_Y0, BK_H, FROST_PY,
+    TUBE_R, TUBE_Y0, TUBE_Y1, TUBE_TOP, CLAMP_Y, IODINE_Y, TRAY_R, TRAY_H,
+    POUR_HOT, POUR_COLD, POUR_DUR, TAU_HOT, TAU_COLD, TAU_AIR, PB_REST, PB_POUR,
+    BK_Y0, BK_H, FROST_PY,
     sublimRate, sublimStartT, fSat, supersat, depositRate, sublimMassRate, massSum,
-    setRunning, setScene, setLampOn, resetSim, updateAll, updateVisibility, updateCamera, setView,
-    clearRecords, renderRecords, drawChart, drawMicro, microStats, updateReadouts,
+    setRunning, setScene, resetSim, updateAll, updateVisibility, updateCamera, setView,
+    startPour, takeOut, syncDock, updatePour,
+    drawMicro, microStats, updateReadouts,
     statusText, shortState, pickLife,
+    /* 全屏 / 折叠面板：自检要能直接问到「按钮在不在、点了进不进全屏、面板是不是舞台的后代」 */
+    stageBox, fsBtn, fsIsOn, fsLayouts: () => fsLayouts,
+    paramsBox, paramsBody, paramsIsOpen, setParamsOpen,
+    quizBox, quizIsOpen, setQuizOpen,
     /* 现象判读（顺序 7）：选项表、判分、高亮盒 —— 全部原样交出去，
        自检不自己重抄一份选项表或正确答案（自抄一份就变成「两边各写一遍」的盲点）。 */
     CHANGES, HEATS, lifeSlots, lifeHot,
@@ -2177,20 +2347,21 @@ import * as THREE from './assets/optics-three.min.js';
       if (state.scene === 'dryice') stepDryIce(dt);
       else if (state.scene === 'frost') stepFrost(dt);
       else stepSim(dt);
-      updateSolid(); updateCrystal(); updateFrost(); updateDryIce(dt);
-      pushSample(); updateReadouts(); drawChart(); drawMicro(dt); requestRender();
+      updateSolid(); updateCrystal(); updateFrost(); updateDryIce(dt); updatePour(dt);
+      updateReadouts(); drawMicro(dt); requestRender();
     },
     /* 无头沙箱里 requestAnimationFrame 一次都不触发 —— 按固定步长喂帧，
-       走的是与真实循环同一个 frameStep，所以指数平滑（冷片滑动、酒精灯淡入淡出）也推得动。 */
+       走的是与真实循环同一个 frameStep，所以指数平滑（烧杯倾倒、水膜、冷却）也推得动。 */
     driveAnim(seconds, dt = 1 / 60) {
       const n = Math.max(1, Math.round(seconds / dt));
       for (let i = 0; i < n; i++) frameStep(dt);
       renderer.render(scene, camera);
       return {
         frames: n,
-        coldPlateY: +coldPlate.position.y.toFixed(3),
-        lampAnim: +state.lampAnim.toFixed(4),
-        flameVisible: !!flameGroup.visible,
+        pourK: +state.pour.k.toFixed(4),
+        beaker: [+pourBeaker.position.x.toFixed(2), +pourBeaker.position.y.toFixed(2)],
+        streamVisible: !!stream.visible,
+        wet: +state.wet.toFixed(4),
         fogCount: state.drawn.fogCount,
         fogMeanY: state.drawn.fogMeanY
       };
@@ -2209,9 +2380,9 @@ import * as THREE from './assets/optics-three.min.js';
          state.drawn.* 还停在【上一次重画】时的值（通常是 reset 后的全零），
          于是「蒸气到底画出来了没有」这类断言会读到 0 而误报。实测踩过。 */
       updateAll();
-      pushSample(); updateReadouts(); drawChart(); drawMicro(0.016);
+      updateReadouts(); drawMicro(0.016);
       return {
-        t: state.t, T: state.T, Tw: state.Tw,
+        t: state.t, T: state.T, pourMode: state.pour.mode, pourLeft: state.pour.left,
         mSolid: state.mSolid, mGas: state.mGas, mCrystal: state.mCrystal,
         sum: massSum(), liquid: state.liquidMass,
         dryIce: state.dryIce, fogAmt: state.fogAmt, frost: state.frost
@@ -2241,11 +2412,6 @@ import * as THREE from './assets/optics-three.min.js';
       if (!vis.length) return null;
       const ys = vis.map((m) => m.position.y);
       return { min: Math.min(...ys), max: Math.max(...ys), n: vis.length };
-    },
-    setCold(v) {
-      state.cold = v;
-      document.querySelectorAll('[data-cold]').forEach((b) => b.classList.toggle('active', b.dataset.cold === v));
-      updateCrystal(); requestRender();
     },
     sceneFrame,
     /* ------------------------------------------------------------------
