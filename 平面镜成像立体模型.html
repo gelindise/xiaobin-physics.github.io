@@ -546,9 +546,11 @@
 
                 <h4>光屏</h4>
                 <div class="lab3d-field">
-                  <label for="mir-sh">高度 <output id="mir-sh-v">10.0 cm</output></label>
-                  <input id="mir-sh" type="range" min="5" max="20" value="10" step="0.5">
-                  <small>光屏是块白卡纸。调到和像差不多高，最容易看清「屏上确实没有光斑」</small>
+                  <label for="mir-sh">高度 <output id="mir-sh-v">14.0 cm</output></label>
+                  <input id="mir-sh" type="range" min="5" max="20" value="14" step="0.5">
+                  <small>光屏是块白卡纸。默认 14 cm —— 比整支像（连烛焰 13.4 cm）还高一点，
+                    挪到像的位置时能把<b style="color:#7dd3fc">整个像完全罩住</b>，
+                    这样「屏上确实没有光斑」才说得干脆</small>
                 </div>
 
                 <h4>位置微调</h4>
@@ -736,7 +738,12 @@
       const F_M1    = 0.60;       // 中横笔的上沿高度
       const F_Z     = 0.045;      // 薄板半厚（画侧面厚度用）
       const SCR_W   = 0.55;       // 光屏半宽
-      const SCR_H   = 1.00;       // 光屏高【默认值，可调：state.sh】
+      // 光屏高【默认值，可调：state.sh】。
+      // 【默认必须高过整支像】用户 2026-10-23 晚指出：光屏默认只有 10 cm，
+      // 而蜡烛 + 烛芯 + 火焰一共 13.4 cm —— 把屏挪到像的位置时，屏顶只到像的胸口，
+      // 上半截像露在屏外，「屏上承接不到像」这件事就说不干脆（学生分不清是
+      // 「屏太矮」还是「虚像接不住」）。默认取 14 cm：整支像连同烛焰全落在屏内。
+      const SCR_H   = 1.40;
       const CAMD    = 13.5;       // 相机距离基准。取得比场景大得多，透视就弱，
                                   // 前后两支蜡烛看起来才一样大——这是个测量实验，
                                   // 近大远小会让人误判「B 是不是和像一样大」。
@@ -819,7 +826,7 @@
         // O / I / M —— 学生自己在白纸上点出来的点（世界坐标 x/z，y 恒为 0）
         // result —— 连线测量算出来的结果（见 measCompute），没算之前是 null
         meas: { on: false, tool: 'O', O: null, I: null, M: [], result: null,
-                hover: null, hoverHit: null, before: null },
+                hover: null, hoverHit: null, hoverPlate: false, before: null },
         // 物体 A（玻璃板前，z > gz）
         ax: 0.55, az: 1.35,
         // 替代物 B：一开始在【器材区】（板前右侧），要学生自己拖到板后去
@@ -2282,13 +2289,17 @@
         const y = 0.022;                        // 抬离纸面一点点，别和方格线打架
         const pr = p => project([p.x, y, p.z], q);
 
-        // ① 学生描的镜面线：两头延长出去，看着像「一条画在纸上的镜面线」
+        // ① 镜面线（学生点一下玻璃板，页面沿真实镜面画出来的那条虚线）
         if (ms.M.length >= 2) {
           const A = ms.M[0], B = ms.M[1];
           let dx = B.x - A.x, dz = B.z - A.z;
           const L = Math.hypot(dx, dz) || 1; dx /= L; dz /= L;
-          const E = 26;
-          line([pr({ x: A.x - dx * E, z: A.z - dz * E }), pr({ x: A.x + dx * E, z: A.z + dz * E })],
+          // 【长度怎么定】线太短就往外延伸一点（学生自己描的两点常常只有几厘米）；
+          // 已经够长就原样——系统沿板面画的那条本来就有 20 cm，再延伸就飞到桌子外了。
+          const half = Math.max(L / 2, 1.15);
+          const c0 = { x: (A.x + B.x) / 2, z: (A.z + B.z) / 2 };
+          line([pr({ x: c0.x - dx * half, z: c0.z - dz * half }),
+                pr({ x: c0.x + dx * half, z: c0.z + dz * half })],
                'rgba(250,204,21,.80)', 2, [8, 6]);
         } else if (ms.M.length === 1) {
           dot2(pr(ms.M[0]), 4.5, 'rgba(250,204,21,.95)', 'rgba(2,6,23,.8)', 1.4);
@@ -2338,6 +2349,18 @@
           label({ x: c.x, y: c.y - 16 },
                 hh === 'obj' ? '点这里 = 物点 O' : '点这里 = 像点 I',
                 'rgba(167,243,208,.98)', 11);
+        }
+
+        // ④c 描镜面阶段的命中高亮：光标碰到玻璃板，就沿板边亮一圈。
+        //     【为什么要有】这一步现在是「点一下镜面就行」，那必须让「镜面在哪儿、
+        //     点得到」这件事看得见——否则学生还在纸上找那条蓝线。
+        if (ms.tool === 'M' && ms.hoverPlate) {
+          const gw = state.gw, gh = state.gh;
+          const quad = [mp(-gw, 0, 0), mp(gw, 0, 0), mp(gw, gh, 0), mp(-gw, gh, 0)]
+            .map(p => project(p, q));
+          line(quad.concat([quad[0]]), 'rgba(52,211,153,.95)', 3);
+          const c0 = project(mp(0, gh * 0.5, 0), q);
+          label({ x: c0.x, y: c0.y }, '点这里 = 镜面位置', 'rgba(167,243,208,.98)', 11);
         }
 
         // ⑤ 连线测量的结果：交点处的直角符号 + u′ / v′ 两段读数 + 夹角
@@ -2729,6 +2752,49 @@
         return inA ? 'obj' : (inI ? 'image' : null);
       }
 
+      // 点在凸四边形内（板的投影是凸四边形，四个角按顺序给）
+      function inQuad(x, y, pts) {
+        let sgn = 0;
+        for (let i = 0; i < pts.length; i++) {
+          const a = pts[i], b = pts[(i + 1) % pts.length];
+          const cr = (b.x - a.x) * (y - a.y) - (b.y - a.y) * (x - a.x);
+          if (Math.abs(cr) < 1e-9) continue;        // 落在边上：不算越过
+          const s = cr > 0 ? 1 : -1;
+          if (!sgn) sgn = s;
+          else if (s !== sgn) return false;
+        }
+        return true;
+      }
+      // 点到线段的距离（给「点一下纸上那条镜面线」用）
+      function distSeg(x, y, a, b) {
+        const dx = b.x - a.x, dy = b.y - a.y;
+        const L2 = dx * dx + dy * dy;
+        let t = L2 > 1e-9 ? ((x - a.x) * dx + (y - a.y) * dy) / L2 : 0;
+        t = Math.max(0, Math.min(1, t));
+        return Math.hypot(x - (a.x + dx * t), y - (a.y + dy * t));
+      }
+
+      /* ============================================================
+       * 测量模式第三步的命中：点在【玻璃板上】或【纸上那条镜面线】上
+       * ------------------------------------------------------------
+       * 用户 2026-10-23 晚：「描镜面要点两个点，手一点就偏，画出来的线
+       * 根本没对准镜面。」改成——点一下镜面，页面【沿真实镜面】画一条虚线：
+       * 镜面线就是板面与纸面的交线（过 (gx, gz)、方向 +x），位置由板本身给，
+       * 学生只需要「指出镜面在哪儿」，不用靠手点两个点去凑。
+       * ============================================================ */
+      function measHitPlate(x, y) {
+        const q = {}; makeCam(q, state.w, state.h);
+        const gw = state.gw, gh = state.gh;
+        const quad = [mp(-gw, 0, 0), mp(gw, 0, 0), mp(gw, gh, 0), mp(-gw, gh, 0)]
+          .map(p => project(p, q));
+        if (inQuad(x, y, quad)) return true;
+        // 纸上那条蓝色镜面线（两端各延长 0.18，和 drawTable 里画的是同一条）
+        const a = project([state.gx - gw - 0.18, 0, state.gz], q);
+        const b = project([state.gx + gw + 0.18, 0, state.gz], q);
+        return distSeg(x, y, a, b) <= 12;
+      }
+
+
       // ── 长度单位：state 里一律用「世界单位」，1 单位 = U cm = 10 cm；
       //    而侧栏滑块和读数一律用 cm。两个单位只在这两个函数里换算。
       //    【坑】之前 syncInputs 把世界单位直接写进以 cm 为刻度的 range：
@@ -2868,7 +2934,7 @@
       function measReset() {
         const ms = state.meas;
         ms.tool = 'O'; ms.O = null; ms.I = null; ms.M = []; ms.result = null;
-        ms.hoverHit = null;
+        ms.hoverHit = null; ms.hoverPlate = false;
         updateMeasUI(); updateSteps(); state.dirty = true;
       }
 
@@ -2939,7 +3005,7 @@
        * force = true 时不做命中检查、直接用传入的 (x, z) —— 只给自检的负向对照用
        *         （要验证「点偏了 u′ ≠ v′」，就必须能真的把一个点放到错的位置上）
        * ============================================================ */
-      function measPlace(hit, x, z, force) {
+      function measPlace(hit, x, z, force, plateHit) {
         const ms = state.meas;
         if (!ms.on) return false;
         const onPaper = Math.abs(x) <= PT_W - 0.03 && Math.abs(z) <= PT_D - 0.03;
@@ -2975,13 +3041,28 @@
           // 和物点用的是同一条规则（「站在纸上的那个点」），所以两者严格对应。
           ms.I = force ? { x: x, z: z } : { x: im.x, z: im.z };
           ms.tool = 'M';
-          showToast('像点 I 已取好（像的底部中心）· 再点两下描出镜面');
+          showToast('像点 I 已取好（像的底部中心）· 再点一下玻璃板');
         } else if (ms.tool === 'M') {
-          // 描镜面仍然自由落点：这条线就是要学生自己描的
-          if (!onPaper) { showToast('点在白纸上（纸面范围内）'); return false; }
-          ms.M.push({ x: x, z: z });
-          if (ms.M.length >= 2) { ms.tool = 'line'; showToast('镜面描好了 · 点「📐 连线测量」'); }
-          else showToast('再点一下，把镜面这条线描出来');
+          if (!force) {
+            if (!plateHit) {
+              showToast('点一下玻璃板（或纸上那条镜面线）—— 点一下就行，线会自己沿着镜面画');
+              return false;
+            }
+            // 【直接沿真实镜面画】镜面线 = 板面与纸面的交线（过 (gx, gz)、方向 +x）。
+            // 位置由板本身给，学生只需要「指出镜面在哪儿」，不用手点两个点去凑——
+            // 手点必然偏，量出来的 u′ / v′ 就不是垂直于镜面的那两个距离了。
+            // 线段取得比板略长，画出来像一条「延伸出去的镜面线」。
+            const L = state.gw * 1.35 + 0.45;
+            ms.M = [{ x: state.gx - L, z: state.gz }, { x: state.gx + L, z: state.gz }];
+            ms.tool = 'line';
+            showToast('镜面位置已沿板面画好 · 点「📐 连线测量」');
+          } else {
+            // force = 自检的负向对照：要能「故意把镜面描歪」，所以保留自由落点
+            if (!onPaper) { showToast('点在白纸上（纸面范围内）'); return false; }
+            ms.M.push({ x: x, z: z });
+            if (ms.M.length >= 2) { ms.tool = 'line'; showToast('镜面描好了 · 点「📐 连线测量」'); }
+            else showToast('再点一下，把镜面这条线描出来');
+          }
         } else {
           showToast('点「↺ 重测」可以重新标一遍');
           return false;
@@ -3070,7 +3151,7 @@
         else if (!hasO) t = '第①步：点一下' + (state.src === 'f' ? ' F 光源 A' : '蜡烛 A') +
                             '（点它身上任何位置都行）';
         else if (!hasI) t = '第②步：点一下像 A′（同样点它身上任何位置）';
-        else if (!hasM) t = '第③步：在纸上点两下，描出玻璃板在纸上的镜面线（已点 ' + ms.M.length + '/2）';
+        else if (!hasM) t = '第③步：点一下玻璃板（或纸上那条镜面线），线会自动沿着镜面画出来';
         else if (!ms.result) t = '第④步：点「📐 连线测量」，看 O—I 是否垂直镜面、u′ 与 v′ 是否相等';
         else if (ms.result.err) t = ms.result.err;
         else {
@@ -3097,7 +3178,8 @@
              + '② 再点一下<b>像 A′</b>（同样点它身上任何位置），自动取像的底部中心作<b>像点 I</b>。';
         } else if (ms.M.length < 2) {
           h += '<br>①② 两个点都取好了，而且它们严格对应（像就是物的镜像）。'
-             + '③ 在纸上点两下，把玻璃板在纸上的<b>镜面线</b>描出来——这一步要你自己描。';
+             + '③ 点一下<b>玻璃板</b>（或者纸上那条镜面线）——页面会沿着真实的镜面'
+             + '画出一条虚线，不用你自己去点两个点凑。';
         } else if (!ms.result) {
           h += '<br>③ 镜面线描好了。④ 点「📐 连线测量」：连 O—I，量 u′、v′，'
              + '看 OI 与镜面是否垂直。';
@@ -3180,14 +3262,23 @@
             // 和光标毫不相干的地方，看着像"点已经落下去了"。
             state.meas.hover = null;
             state.meas.hoverHit = null;
+            state.meas.hoverPlate = false;
           } else if (state.meas.tool === 'O' || state.meas.tool === 'I') {
             // 【标点阶段给命中反馈】光标碰到蜡烛 / 像就变手型 + 把那个物体高亮起来，
             // 学生才知道「该点哪儿」。没有这个反馈，他只会以为哪儿都点不下去。
             const h = measHit(p.x, p.y);
-            if (h !== state.meas.hoverHit) state.meas.hoverHit = h;
+            state.meas.hoverHit = h;
+            state.meas.hoverPlate = false;
             canvas.classList.toggle('pick', !!h);
+          } else if (state.meas.tool === 'M') {
+            // 描镜面：光标碰到玻璃板（或纸上那条镜面线）就亮起来 + 手型
+            const hp = measHitPlate(p.x, p.y);
+            state.meas.hoverPlate = hp;
+            state.meas.hoverHit = null;
+            canvas.classList.toggle('pick', hp);
           } else {
             state.meas.hoverHit = null;
+            state.meas.hoverPlate = false;
             canvas.classList.remove('pick');
           }
           state.lastX = p.x; state.lastY = p.y;
@@ -3239,9 +3330,9 @@
           if (Math.hypot(p.x - d.x, p.y - d.y) < 6) {
             const q = {}; makeCam(q, state.w, state.h);
             const w = unproject(p.x, p.y, q);
-            // 【先判命中，再落点】标物点 / 像点要求「点到物体身上」，
-            // 命中之后由 measPlace 取代表点；描镜面仍然用光标在纸上的位置。
-            if (w) measPlace(measHit(p.x, p.y), w[0], w[2], false);
+            // 【先判命中，再落点】标物点 / 像点要求「点到物体身上」，描镜面要求
+            // 「点到玻璃板（或纸上那条镜面线）」；命中之后由 measPlace 取代表点 / 画线。
+            if (w) measPlace(measHit(p.x, p.y), w[0], w[2], false, measHitPlate(p.x, p.y));
           }
           endDrag();
           return;
@@ -3326,7 +3417,8 @@
           done: () => !!state.meas.O },
         { text: () => '点一下<b>像 A′</b>（同样点它身上任何位置），自动取底部中心为<b>像点 I</b>',
           done: () => !!state.meas.I },
-        { text: () => '在纸上点两下，描出玻璃板在纸上的<b>镜面线</b>', done: () => state.meas.M.length >= 2 },
+        { text: () => '点一下<b>玻璃板</b>（或纸上那条镜面线），页面自动沿镜面画出虚线',
+          done: () => state.meas.M.length >= 2 },
         { text: () => '点「📐 连线测量」：连 O—I，量 u′、v′，看是否垂直镜面、是否相等',
           done: () => !!(state.meas.result && !state.meas.result.err) }
       ];
@@ -4061,8 +4153,10 @@
           const q = {}; makeCam(q, state.w, state.h);
           const w = unproject(x, y, q);
           if (!w) return false;
-          return measPlace(measHit(x, y), w[0], w[2], false);
+          return measPlace(measHit(x, y), w[0], w[2], false, measHitPlate(x, y));
         },
+        // 「点一下玻璃板」这条路的命中测试（自检要验「点板就沿镜面画线」）
+        measHitPlateScreen(x, y) { return measHitPlate(x, y); },
         measGo() { return measGo(); },
         measReset() { measReset(); return window.__mir.measState(); },
         // 屏幕坐标 → 纸上世界点（自检要「点到像的位置」，得先把世界点换成屏幕点）
