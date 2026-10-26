@@ -2877,17 +2877,51 @@
       ctx.restore();
     });
 
-    // ⑤ 「此刻哪一段丝在电路里」—— 通着电时给接入的那一段压一层暖光。
+    // ⑤ 「哪一段丝真的接在电路里」——【描红】。
     //    这是电位器唯一的空间隐喻：滑片把一圈丝分成两段，只有接进回路的那段
-    //    才在工作。a-b 接法亮 a→滑片，b-c 接法亮滑片→c，a-c / 三柱全接亮整圈。
-    //    ⚠️ 判据用 rec.wA/wB/wC（三根柱各接了没有），不看电流 —— 合开关之前
-    //       电流也是 0，那时学生已经把线接好了，也该看得出接的是哪一段。
-    if (rec && rec.wiredCount >= 2 && Math.abs(rec.i) > 1e-9) {
-      var s0 = a0, s1 = ang;
-      if (rec.wA && rec.wC) { s0 = a0; s1 = a1; }         // 整根丝都在回路里
-      else if (!rec.wA && rec.wC) { s0 = ang; s1 = a1; }  // 只接了 b、c
-      ctx.beginPath(); ctx.arc(0, 0, WR, s0, s1);
-      ctx.lineWidth = WT; ctx.strokeStyle = 'rgba(255,170,70,0.30)'; ctx.stroke();
+    //    才在工作。a-b 接法红 a→滑片，b-c 接法红滑片→c，a-c / 三柱全接红整圈。
+    //    用户 2026-10-26：「电位器接入电路的部分描红，让现象更明显」——
+    //    原来只有一层很淡的暖光（alpha 0.30，还只在有电流时才画），投到教室
+    //    大屏上几乎看不出来。现在三层，各说一件事：
+    //      · 接入段沿丝【描一条红线】：标的是「接的是这一段」（无电流也画，
+    //        它和「正在通电」是两件事）；
+    //      · 有电流时再叠一圈更宽的【红晕】：这才是「正在通电」的信号；
+    //      · 没接入的那一段压一层淡灰：让它退到后面，红线才跳得出来。
+    //    ⚠️ 判据用 rec.wA/wB/wC（三根柱各接了没有），不看电流 —— 开关还没合
+    //       时电流也是 0，可那时学生已经把线接好了，也该看得出接的是哪一段。
+    //    ⚠️ 红线画在【丝之后、引线之前】：引线是压在丝上的铜片，必须盖住红线
+    //       的端头，否则红线会从焊片那条引线上「渗」出去。
+    var pAct = null;
+    if (rec && rec.wiredCount >= 2) {
+      if (rec.wA && rec.wC) pAct = { s0: a0, s1: a1 };          // 整根丝都在回路里
+      else if (rec.wA) pAct = { s0: a0, s1: ang };              // 接 a、b：红 a→滑片
+      else if (rec.wC) pAct = { s0: ang, s1: a1 };              // 接 b、c：红滑片→c
+    }
+    if (pAct) {
+      var pLive = Math.abs(rec.i) > 1e-9;
+      ctx.lineCap = 'butt';
+      // 没接入的那一半压淡。整根丝都接入时【不画】—— 那时的「补集」正好是
+      // 底部那 60° 开口，压一道灰会横在开口上，看着像丝多长了一截。
+      if (!(rec.wA && rec.wC)) {
+        ctx.beginPath();
+        ctx.arc(0, 0, WR, pAct.s1, pAct.s0 + Math.PI * 2);
+        ctx.lineWidth = WT + 3;
+        ctx.strokeStyle = 'rgba(228,236,245,0.62)';
+        ctx.stroke();
+      }
+      // 通电：先铺一圈比丝宽的红晕（像在发热），再描红线
+      if (pLive) {
+        ctx.beginPath(); ctx.arc(0, 0, WR, pAct.s0, pAct.s1);
+        ctx.lineWidth = WT + 7;
+        ctx.strokeStyle = 'rgba(220,38,38,0.20)';
+        ctx.stroke();
+      }
+      // 描红：沿丝一条红线。丝的两侧各留一条金属边，看着才是「描」上去的，
+      // 而不是把整根丝刷成红色（那样就看不出这是一根金属丝了）。
+      ctx.beginPath(); ctx.arc(0, 0, WR, pAct.s0, pAct.s1);
+      ctx.lineWidth = 3.2;
+      ctx.strokeStyle = pLive ? '#dc2626' : 'rgba(220,38,38,0.72)';
+      ctx.stroke();
     }
 
     // ⑥ 三根引线（金属条）：a、c 从丝的两个端头斜着引到焊片，b 从圆心笔直往下。
@@ -6410,6 +6444,6 @@
     // 绘制却按 1.8 画，学生的「200%」和画面上的大小对不上。
     scaleOf: scaleOf, clampScale: clampScale,
     SCALE_MIN: SCALE_MIN, SCALE_MAX: SCALE_MAX,
-    version: '2.7.0',
+    version: '2.7.1',
   };
 });
