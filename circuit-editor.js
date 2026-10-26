@@ -57,6 +57,9 @@
     // 电位器：取 RP（Rheostat-Potentiometer）。不能也用 RH —— 变阻器已经占了，
     // 而这两件器材在读数表和电路图里常常同时出现（一个限流、一个分压）。
     potentiometer: 'RP',
+    // 电阻箱：取 RX。R / RH / RB / RP 都被占了，而电阻箱在读数表里常和它们
+    // 同时出现（一个定值、一个限流、一个分压、一个读得出数），编号不能撞。
+    resistancebox: 'RX',
     // 单刀双掷开关：取 SP 而不是 S。虽然「编号不重复」那条 while 循环本身
     // 就能挡住撞号（byId 查得到就往后跳），但和普通开关共用 S 的话，
     // 一块板上会数出 S1 / S2 两只【长得完全不一样】的开关，面板和读数表里
@@ -111,6 +114,10 @@
     // 和 bodyBox 的口径一致（焊片在框外，「导线夹在焊片上」才不会被判成
     // 「导线穿过机身」）。焊片本身的点击由 hitTerminal 先接走。
     potentiometer: [50, 50],
+    // 电阻箱：命中框 = 整块面板（±76 × ±76）。两个接线柱在 y = 76，正好在
+    // 边界上 —— onDown 里 hitTerminal 排在 hitComp 前面，「从柱子上拉线」
+    // 那一下永远先被端子接走。和 CircuitDraw.bodyBox('resistancebox') 同一口径。
+    resistancebox: [76, 78],
     // 两只表的仪器本体全部落在导线【上方】（三个接线柱在底部探出来），
     // 所以高只有表壳+底座这一截，不是上下对称的。
     ammeter:   [100, 70],
@@ -169,6 +176,10 @@
     // 合成一个状态就得在里面再判类型，而两条路的换算完全不同（slideFromLocalX
     // 与 potPosFromAngle）。
     var potArm = null;
+    // 拨电阻箱的转盘 {id, idx, a0, v0, moved}。a0/v0 = 按下那一刻的指针角度
+    // 与档位；每一帧都从 v0 + 角度差重算，不在上一帧的结果上继续加
+    //（快速转圈丢帧时会越积越多，wireDrag 那条注释里踩过同一个坑）。
+    var resDial = null;
     // 拖铅笔芯的移动夹 {id, dx, moved}。dx = 按下那一刻「夹口 x − 鼠标局部 x」，
     // 每一帧都用它把夹口摆回鼠标下面 —— 抓住夹子的哪一头都不会跳。
     var clipDrag = null;
@@ -340,6 +351,21 @@
         var L2 = ax * ax + ay * ay;
         var t = Math.max(0, Math.min(1, (l.x * ax + l.y * ay) / L2));
         if (Math.hypot(l.x - ax * t, l.y - ay * t) <= POT_ARM_SLACK) return c;
+      }
+      return null;
+    }
+
+    // 电阻箱的转盘能不能一把抓住。四个盘的中心和半径全从 D.RESBOX 取
+    //（D.resBoxDialAt 和绘制同源）—— 命中半径就是刻度环外沿 + 2px，
+    // 学生瞄的是那个盘，不是圆心那一点。
+    function hitResDial(p) {
+      var cs = getScene().comps;
+      for (var i = cs.length - 1; i >= 0; i--) {
+        var c = cs[i];
+        if (c.type !== 'resistancebox') continue;
+        var l = D.toLocal(c, p.x, p.y);
+        var k = D.resBoxDialAt(c, l.x, l.y);
+        if (k >= 0) return { comp: c, idx: k };
       }
       return null;
     }
@@ -1285,6 +1311,21 @@
         return;
       }
 
+      // 拨电阻箱的转盘：同上，排在「搬走整块面板」前面。
+      var rd = hitResDial(p);
+      if (rd) {
+        beginEdit();
+        select({ kind: 'comp', id: rd.comp.id });
+        var rl = D.toLocal(rd.comp, p.x, p.y);
+        var rdc0 = D.RESBOX.DIAL[rd.idx];
+        resDial = { id: rd.comp.id, idx: rd.idx,
+                    a0: Math.atan2(rl.y - rdc0.y, rl.x - rdc0.x),
+                    v0: D.resBoxDigitOf(rd.comp, rd.idx), moved: false };
+        canvas.setPointerCapture && canvas.setPointerCapture(ev.pointerId);
+        changed();
+        return;
+      }
+
       var cs = getScene().comps;
       for (var i = cs.length - 1; i >= 0; i--) {   // 后画的在上层，从后往前找
         if (hitComp(p, cs[i])) {
@@ -1413,6 +1454,26 @@
         }
         potArm = null;
       }
+      if (resDial) {
+        var rdc = byId(resDial.id);
+        if (rdc) {
+          var rl2 = D.toLocal(rdc, p.x, p.y);
+          var dc2 = D.RESBOX.DIAL[resDial.idx];
+          var rdDeg = (Math.atan2(rl2.y - dc2.y, rl2.x - dc2.x) - resDial.a0) * 180 / Math.PI;
+          // 角度差必须归一：从 +179° 跨到 −179° 只转了 2°，不归一会被当成 358°
+          while (rdDeg > 180) rdDeg -= 360;
+          while (rdDeg < -180) rdDeg += 360;
+          var rdv = D.resBoxDigitFromTurn(resDial.v0, rdDeg);
+          if (rdv !== D.resBoxDigitOf(rdc, resDial.idx)) {
+            if (!resDial.moved) { resDial.moved = true; commitEdit(); }  // 真拨动了才入栈
+            rdc.params = rdc.params || {};
+            rdc.params[D.resBoxMeta()[resDial.idx].k] = rdv;
+          }
+          onChange();
+          return;
+        }
+        resDial = null;
+      }
       if (psuKnob) {
         var pc = byId(psuKnob.id);
         if (pc && D.PSU) {
@@ -1486,6 +1547,10 @@
             var npa = hitPotArm(p);
             if (npa) nh = { kind: 'potArm', id: npa.id };
             else {
+            // 电阻箱的转盘：同上，是「长在面板上的控件」，排在 hitComp 前
+            var nrd = hitResDial(p);
+            if (nrd) nh = { kind: 'resDial', id: nrd.comp.id, idx: nrd.idx };
+            else {
             var cs = getScene().comps;
             for (var i = cs.length - 1; i >= 0; i--) {
               if (hitComp(p, cs[i])) { nh = { kind: 'comp', id: cs[i].id }; break; }
@@ -1493,6 +1558,7 @@
             // 导线也进 hover：它现在能拖了，不给一个 move 光标的话，学生根本
             // 不知道这线是可拖的 —— 它长得和别的线一模一样。
             if (!nh) { var nw = hitWire(p); if (nw >= 0) nh = { kind: 'wire', index: nw }; }
+            }
             }
             }
           }
@@ -1511,6 +1577,8 @@
         : (nh && nh.kind === 'psuKnob') ? 'grab'
         // 电位器：转的是个旋钮，光标给 grab / grabbing（和电源旋钮同一条）
         : (nh && nh.kind === 'potArm') ? (potArm ? 'grabbing' : 'grab')
+        // 电阻箱：转盘也是旋钮
+        : (nh && nh.kind === 'resDial') ? (resDial ? 'grabbing' : 'grab')
         : (nh ? 'move' : 'default');
       if (changedHover) onChange();
     }
@@ -1733,6 +1801,13 @@
         // 同上：转了才留撤销记录。单纯点一下机身 = 选中这件器材
         if (!potArm.moved) discardEdit();
         potArm = null;
+        changed();
+        return;
+      }
+      if (resDial) {
+        // 同上：拨动了才留撤销记录。单纯点一下转盘 = 选中这块面板
+        if (!resDial.moved) discardEdit();
+        resDial = null;
         changed();
         return;
       }
@@ -2008,6 +2083,29 @@
           ctx.beginPath(); ctx.arc(0, 0, POT_HUB_HIT, 0, 6.284);
           ctx.fillStyle = 'rgba(37,99,235,0.12)'; ctx.fill();
           ctx.strokeStyle = 'rgba(37,99,235,0.85)'; ctx.lineWidth = 1.6; ctx.stroke();
+          ctx.restore();
+        }
+      }
+
+      // 悬停 / 正在拨【电阻箱】的转盘：给那个盘描一圈蓝环。
+      // 描的是【被指到的那个盘】，不是整块面板 —— 命中区就是那个盘的刻度环，
+      // 描边和命中区一致，学生才知道自己抓的是哪一个。
+      var hrd = resDial || (hover && hover.kind === 'resDial' ? hover : null);
+      if (hrd) {
+        var hrc = byId(hrd.id);
+        if (hrc && hrc.type === 'resistancebox' && D.RESBOX) {
+          var krd = D.scaleOf ? D.scaleOf(hrc) : 1;
+          var dk = D.RESBOX.DIAL[hrd.idx] || D.RESBOX.DIAL[0];
+          ctx.save();
+          ctx.translate(hrc.x, hrc.y);
+          ctx.rotate((hrc.rot || 0) * Math.PI / 180);
+          ctx.scale(krd, krd);
+          ctx.beginPath();
+          ctx.arc(dk.x, dk.y, D.RESBOX.RING_R + 3, 0, 6.284);
+          ctx.fillStyle = 'rgba(37,99,235,0.12)';
+          ctx.fill();
+          ctx.strokeStyle = 'rgba(37,99,235,0.9)'; ctx.lineWidth = 2;
+          ctx.stroke();
           ctx.restore();
         }
       }

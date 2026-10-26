@@ -271,6 +271,13 @@
       var hp = (D && D.HALF != null) ? D.HALF : 70;
       return [{ x: -hp, y: 0 }, { x: 0, y: POT_STEM_TOP }, { x: hp, y: 0 }];
     }
+    // 电阻箱：实物上两个接线柱在【面板下沿】（y = 76），符号的两个引脚必须
+    // 拉回轴线（±HALF, 0）—— 不拉回来的话整只符号会往下坠 76px，主回路那一横
+    // 在它这里断开（和电表「例外二」、灵敏电流计踩的是同一个坑）。
+    if (type === 'resistancebox') {
+      var hrb = (D && D.HALF != null) ? D.HALF : 70;
+      return [{ x: -hrb, y: 0 }, { x: hrb, y: 0 }];
+    }
     return (D && D.TERMINALS[type]) || [];
   }
   // 电位器符号：滑片箭头的杆顶（局部 y）= b 的接点。取 −34 和变阻器的
@@ -482,6 +489,8 @@
     // 不参与「轴线」—— 拿三点的平均会把整件符号往下拽 11px，主回路的横线
     // 就在它这里断开（和电表那条注释踩的是同一个坑）。
     if (type === 'potentiometer') return 0;
+    // 电阻箱同理：两个柱在面板下沿（+76），取平均会把符号往下拽 76px。
+    if (type === 'resistancebox') return 0;
     return (tA.y + tB.y) / 2;
   }
 
@@ -1320,6 +1329,18 @@
         // 🔴 2026-10-17 用户第 2 点：写 U 不写 E —— 初中课本的电源标的是
         // 「电压 U」，E 是高中才用的电动势记号。
         return 'U = ' + emfOf(c, rec).toFixed(1) + ' V';
+      // 电阻箱：电路上就是一个电阻（教材上画成同一个矩形），铭牌印的是
+      // 【拨盘上那个数】—— 这正是它和滑动变阻器的分别：变阻器的阻值看不出来，
+      // 电阻箱的阻值读得出来。没通电 / 没解出数时读 Rset（拨盘上的数），
+      // 所以拨一下转盘，图上的数当场跟着变。
+      case 'resistancebox': {
+        var Rbx = (rec && rec.R != null) ? +rec.R
+                 : ((rec && rec.Rset != null) ? +rec.Rset : null);
+        if (Rbx == null) Rbx = P.d1000 != null || P.d1 != null
+          ? (num(P.d1, 0) + num(P.d10, 0) * 10 + num(P.d100, 0) * 100 + num(P.d1000, 0) * 1000)
+          : null;
+        return Rbx == null ? '' : 'R = ' + num(Rbx) + ' Ω';
+      }
       case 'resistor': {
         var R = (rec && rec.R != null) ? +rec.R : (P.R != null ? +P.R : 10);
         return 'R = ' + num(R) + ' Ω';
@@ -1911,7 +1932,7 @@
     ctx.fillStyle = COLOR.wire;
 
     switch (c.type) {
-      case 'resistor': case 'plate': {
+      case 'resistor': case 'plate': case 'resistancebox': {
         lead(ctx, T[0], -56); lead(ctx, T[1], 56);
         ctx.beginPath();
         D.roundRect(ctx, -56, -13, 112, 26, 2);
@@ -2293,6 +2314,8 @@
       to: '矩形加一根朝下的箭头：箭头的位置就是滑片的位置。用到的两个接头画实线，空着的画虚线' },
     { type: 'potentiometer', name: '电位器',      from: '一圈圆弧电阻丝加一个绕中心转的金属滑片，三个焊片 a / b / c',
       to: '和滑动变阻器同一个矩形加滑片箭头，区别是滑片【单独引出一个端点】（箭头杆顶那根线 = b）：a、c 跨在电源上，b 抽出中间那一份电压' },
+    { type: 'resistancebox', name: '电阻箱',      from: '一块面板上四个拨盘（×100 / ×1k / ×1 / ×10），拨到哪一格就是那一位的读数',
+      to: '和定值电阻同一个矩形。它和滑动变阻器的分别就在铭牌上：变阻器的阻值看不出来（要靠电流表反算），电阻箱的阻值直接读得出来' },
     { type: 'pencil',   name: '铅笔芯',           from: '一根自动铅笔芯，两端各一只鳄鱼夹：一只固定、一只沿芯移动',
       to: '矩形加一条【斜穿】的箭头（可变电阻的符号）。箭头和变阻器那根竖杆不一样：这里改的是导体本身的长度，不是滑片的分压比' },
     { type: 'bulb',     name: '小灯泡',           from: '带灯座的玻璃泡',

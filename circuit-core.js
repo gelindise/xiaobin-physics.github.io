@@ -73,6 +73,22 @@
       // pos ：滑片从 a 转到 c 的比例（0 = 贴着 a，1 = 贴着 c）。
       defaults: { Rmax: 20, pos: 0.5 },
     },
+    // ── 电阻箱（人教版 图16-6）────────────────────────────────
+    // 四个转盘（×1 / ×10 / ×100 / ×1k），每个盘 0~9 档，串起来就是
+    //     R = d1·1 + d10·10 + d100·100 + d1000·1000   （0~9999Ω，步进 1Ω）
+    // 两个接线柱，没有极性。
+    //
+    // 🔴 它和滑动变阻器 / 电位器是【三件不同的事】，别混：
+    //    · 变阻器：连续调，调到几欧【看不出来】，要靠电流表反算；
+    //    · 电阻箱：**跳档**，刻度直接读得出来 —— 这正是它进课本的理由：
+    //      「伏安法测电阻」那一节要求「能读出接入的阻值」，所以要它。
+    //    因此四个盘的数字必须【画出来且读得对】，不能只做一个 R 滑条：
+    //    学生要练的就是「把四个盘拨到 1234Ω」这件事。
+    resistancebox: {
+      label: '电阻箱', terminals: 2, termNames: ['a', 'b'],
+      // 四个盘的档位（0~9）。键名带倍数，免得 d1/d2/d3/d4 谁是谁分不清。
+      defaults: { d1: 0, d10: 0, d100: 0, d1000: 0 },
+    },
     // ── 导体板（探究电阻的影响因素）────────────────────────
     // 一块贴在小木板上的金属条，两个接线柱。它把「电阻的大小与材料、长度、
     // 横截面积有关」这句话变成三个能拧的旋钮：材料（换 ρ）、长度 L、
@@ -537,6 +553,33 @@
     return pencilGrade(paramsOf(comp)).rho * (pencilLen(comp) / 1000) / PENCIL.section;
   }
 
+  // ── 电阻箱的四个盘（见 TYPES.resistancebox）──────────────────
+  // 顺序 = 面板上从左到右、从上到下：×100 / ×1k / ×1 / ×10（图16-6 的排法）。
+  // 🔴 绘制层按这个顺序摆盘、参数面板按这个顺序列滑条、回填按这个顺序给
+  //    digits —— 三处共用一份，各写一份顺序的话「面板上标 ×100 的那个盘」
+  //    和「参数面板第一行」会指到不同的盘，而读数看着又是对的。
+  var RESBOX_DIALS = [
+    { k: 'd100',  mult: 100,  label: '×100' },
+    { k: 'd1000', mult: 1000, label: '×1k' },
+    { k: 'd1',    mult: 1,    label: '×1' },
+    { k: 'd10',   mult: 10,   label: '×10' },
+  ];
+  // 单个盘的档位：0~9 的整数。存档是手改得动的 JSON，写成 "abc" / 12 / −3
+  // 都要夹回合法档位，否则总阻值会变成 NaN 或者负数（画面照画、读数印 NaN）。
+  function resBoxDigit(comp, key) {
+    var v = Math.round(num(paramsOf(comp)[key], 0));
+    return v < 0 ? 0 : (v > 9 ? 9 : v);
+  }
+  // 四个盘串起来的总阻值。这就是「电阻箱」和「滑条式可变电阻」的区别所在：
+  // 它是【十个档的离散电阻】之和，不是连续量。
+  function resBoxR(comp) {
+    var s = 0;
+    for (var i = 0; i < RESBOX_DIALS.length; i++) {
+      s += resBoxDigit(comp, RESBOX_DIALS[i].k) * RESBOX_DIALS[i].mult;
+    }
+    return s;
+  }
+
   // ── 电位器的两个参数（见 TYPES.potentiometer）────────────────
   // 取值一律过一遍夹取：存档是手改得动的 JSON，pos 写成 "abc" / 2 / −1
   // 都会让下面那条分压链算出 NaN 或者负电阻，而画面照画、读数印 NaN。
@@ -764,6 +807,13 @@
       // 分开写只是为了让「三个因素」各有自己的旋钮。
       case 'plate':
         addR(N(0), N(1), plateR(comp));
+        break;
+
+      // 电阻箱：一条 R 支路，阻值 = 四个盘之和（见 resBoxR）。
+      // R = 0（四个盘全归零）时 addR 会换成一条 0V 理想支路 —— 那正是
+      // 「电阻箱调到 0 就是一根导线」，不是「断路」。
+      case 'resistancebox':
+        addR(N(0), N(1), resBoxR(comp));
         break;
 
       // 电阻示教板：四根丝各一条支路（端子 2i / 2i+1）。
@@ -1686,6 +1736,33 @@
           rec.v = pick ? Math.abs(pick.v) : 0;
           rec.p = rec.v * rec.i;
           rec.wiredCount = psegs.filter(function (s) { return s.wired; }).length;
+          break;
+        }
+
+        // 电阻箱：电气上和定值电阻完全同构（一条 R 支路），多回传的只有
+        // 「四个盘各是几档」—— 读数框要照着档位说话，只印一个总阻值学生
+        // 没法核对「我拨的是 1234 还是 1324」。Rset 是拨盘上的数（不管有没有
+        // 接进电路），R 是求解器算出来的那一条支路的阻值，两者在正常接法下
+        // 相等；不接时 R 也照印 Rset（学生要的就是「我调到了多少」）。
+        case 'resistancebox': {
+          rec.digits = RESBOX_DIALS.map(function (d) { return resBoxDigit(c, d.k); });
+          rec.Rset = resBoxR(c);
+          var rbx = bs[0];
+          if (!rbx) {
+            rec.R = rec.Rset;
+            rec.v = nV(sol, N(0)) - nV(sol, N(1));
+            rec.i = 0;
+            rec.p = 0;
+            break;
+          }
+          if (rbx.kind === 'V') {
+            rec.R = 0; rec.v = 0; rec.i = bI(sol, rbx);
+          } else {
+            rec.R = rbx.R;
+            rec.v = nV(sol, rbx.p) - nV(sol, rbx.q);
+            rec.i = rec.v / rbx.R;
+          }
+          rec.p = rec.v * rec.i;
           break;
         }
 
@@ -2950,6 +3027,12 @@
     // 画到哪儿和算出来多少就会错开（和变阻器的 slideOf 同一条规矩）。
     potRmax: potRmax,
     potPos: potPos,
-    version: '1.6.0',
+    // 电阻箱：四个盘（键 / 倍数 / 面板上的标签）、单盘档位、总阻值。
+    // 绘制层按 RESBOX_DIALS 的顺序摆盘并画刻度、面板按它列滑条、
+    // 读数框按 digits 印「各盘几档」—— 三处共用一份顺序。
+    RESBOX_DIALS: RESBOX_DIALS,
+    resBoxDigit: resBoxDigit,
+    resBoxR: resBoxR,
+    version: '1.7.0',
   };
 });

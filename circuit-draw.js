@@ -510,6 +510,39 @@
   var POT_LETTERS = ['a', 'b', 'c'];
 
   // ============================================================
+  // 电阻箱的几何（见下面 drawResistanceBox 的长注释）
+  // ------------------------------------------------------------
+  // 和 POT 摆在这里的理由一样：TERMINALS.resistancebox 要按它算两个接线柱，
+  // 绘制和端子坐标各写一份数字的话，柱子会落到面板外面去。
+  // ============================================================
+  var RESBOX = {
+    HW: 76, TOP: -88, BOT: 86,      // 面板（半宽 / 上沿 / 下沿）
+    RING_R: 26,                     // 刻度环外半径
+    // 刻度环的宽度（RING_R − RING_IN = 10）必须【装得下 0~9 这十个字】：
+    // 第一版环带只有 6.5 宽、字 8.6px，数字上下都顶出环外，看着像印在面板上。
+    RING_IN: 16,
+    DIGIT_R: 21,                    // 数字离圆心的距离（正好在环带中间）
+    KNOB_R: 13, KNOB_IN: 9,         // 星形旋钮的外接 / 内接圆半径
+    // 红色三角（尖端朝上指着刻度环）：这是「读哪一格」的唯一标记，
+    // 参考图上四个盘下面各一个，颜色比面板亮得多。
+    MARK_TIP: 27, MARK_BASE: 35, MARK_HW: 6,
+    // ×100 这行字离圆心多远。它落在【上下两排盘之间的空隙】里（参考图就是
+    // 这样）—— 给到 44 的话，上排的字会压在下排的刻度环上。
+    LABEL_DY: 42,
+    // 四个盘的中心（顺序 = 内核 RESBOX_DIALS：×100 / ×1k / ×1 / ×10）。
+    // 排法照图16-6：上排 ×100、×1k，下排 ×1、×10 —— 不是按大小从上到下排的，
+    // 教材上就是这么摆的，改顺序会让对着课本找盘的学生找不到。
+    // 两排的间距 86 是照「环 52 + 三角 + 一行字」算出来的，别再压。
+    DIAL: [{ x: -38, y: -54 }, { x: 38, y: -54 },
+           { x: -38, y: 32 },  { x: 38, y: 32 }],
+    // 两个接线柱在面板下沿上（半个身子探到面板外）。y 取 88 = 面板下沿 +2：
+    // bodyBox 的 hh 给 86，柱心落在盒外，「导线夹在柱子上」才不会被判成
+    // 「导线穿过面板」（和表头那三根柱子同一条规矩）。
+    POST: [{ x: -16, y: 88 }, { x: 16, y: 88 }],
+    SCREW: [[-63, -76], [63, -76], [-63, 76], [63, 76]],   // 四角一字螺钉
+  };
+
+  // ============================================================
   // 端子坐标
   // ============================================================
   var TERMINALS = {
@@ -589,6 +622,9 @@
     potentiometer: [{ x: -POT.POST_X, y: POT.POST_Y },
                     { x: 0, y: POT.POST_Y },
                     { x: POT.POST_X, y: POT.POST_Y }],
+    // 电阻箱：两个接线柱在面板下沿、左右各一（图16-6 就是这么摆的）。
+    // 0 号在左、1 号在右 —— 它没有极性，左右只是编号。
+    resistancebox: RESBOX.POST.map(function (p) { return { x: p.x, y: p.y }; }),
   };
 
   // 「对调极性」标记。电池 / 发光二极管 / 电动机的参数面板上有一个「对调」
@@ -782,6 +818,43 @@
     if (d <= POT.A1) return (d - POT.A0) / (POT.A1 - POT.A0);   // 在丝上：按比例
     // 落在底部开口里：离哪一头近就贴哪一头
     return (d - POT.A1 < POT.A0 + 360 - d) ? 1 : 0;
+  }
+
+  // ── 电阻箱：四个盘 ──────────────────────────────────────────
+  // 盘的定义（键 / 倍数 / 面板上的字）在内核 RESBOX_DIALS，这里只转发 ——
+  // 绘制、参数面板、读数框三处必须指同一个盘，各抄一份顺序的话，
+  // 「面板上标 ×100 的那个盘」和「参数面板第一行」会指到不同的盘。
+  // 内核没加载时（离屏出图、单文件测试）退回一份等价表。
+  function resBoxMeta() {
+    var G2 = (typeof self !== 'undefined') ? self
+           : (typeof global !== 'undefined') ? global : this;
+    if (G2 && G2.CircuitCore && G2.CircuitCore.RESBOX_DIALS) return G2.CircuitCore.RESBOX_DIALS;
+    return [{ k: 'd100', mult: 100, label: '×100' }, { k: 'd1000', mult: 1000, label: '×1k' },
+            { k: 'd1', mult: 1, label: '×1' }, { k: 'd10', mult: 10, label: '×10' }];
+  }
+  // 第 i 个盘现在是几档（0~9 的整数）。只读参数，不碰物理量。
+  function resBoxDigitOf(comp, i) {
+    var meta = resBoxMeta();
+    var d = meta[i] || meta[0];
+    var P = (comp && comp.params) || {};
+    var v = Math.round(+P[d.k] || 0);
+    return v < 0 ? 0 : (v > 9 ? 9 : v);
+  }
+  // 拖盘：按下时是 v0 档，指针绕过 dDeg 度之后该是几档。
+  // 转盘【顺时针】（canvas 角度增大）⇒ 指到红三角的档位变小（数字跟着盘走）。
+  // 一圈十档 ⇒ 一档 36°。取整 = 吸附到档位，转盘不会停在半格上。
+  function resBoxDigitFromTurn(v0, dDeg) {
+    var v = Math.round(v0 - dDeg / 36);
+    return ((v % 10) + 10) % 10;
+  }
+  // 点/拖在哪个盘上（元件自身坐标系）。半径给到刻度环外沿再放 2px ——
+  // 学生瞄的是那个盘，不是圆心那一点。
+  function resBoxDialAt(comp, lx, ly) {
+    for (var i = 0; i < RESBOX.DIAL.length; i++) {
+      var d = RESBOX.DIAL[i];
+      if (Math.hypot(lx - d.x, ly - d.y) <= RESBOX.RING_R + 2) return i;
+    }
+    return -1;
   }
 
   // ============================================================
@@ -1267,6 +1340,9 @@
     // 取景框必须给到 92，否则元件盒图标里 a/b/c 三个字母会被切掉一半 ——
     // 而这三个字母正是学生「接哪两根柱」的唯一依据。
     potentiometer: { x0: -58, y0: -58, x1: 58, y1: 92 },
+    // 电阻箱：面板 ±76 × (−84…76)，两个接线柱在 +76 上（柱帽再探到 +86）。
+    // 取景框要把柱帽也包进来，否则元件盒图标里那两根柱子被切掉。
+    resistancebox: { x0: -80, y0: -88, x1: 80, y1: 90 },
   };
   var ICON_VIEW_DEF = { x0: -80, y0: -80, x1: 80, y1: 80 };
   // 把一件器材画进 w×h 的小格子里（ rec 传 null = 只画外形，不带读数 ）。
@@ -1517,6 +1593,10 @@
       // 这正是要的：「导线夹在焊片上」不该被当成「导线穿过机身」。盒子若跟着
       // 焊片长到 78，三根线每根都要绕机身一圈（和 plate / rheoboard 同一个坑）。
       case 'potentiometer': return { hw: POT.R, hh: POT.R };
+      // 电阻箱：盒子就是面板（±76 × ±74）。两个接线柱在 y = 76，落在盒外 ——
+      // 这正是要的：「导线夹在柱子上」不该被当成「导线穿过面板」。盒子若跟着
+      // 柱子长到 86，两根线每根都要绕面板一圈（和 plate / rheoboard 同一个坑）。
+      case 'resistancebox': return { hw: RESBOX.HW, hh: RESBOX.BOT - 2 };
       // 表头：整台仪器的包围盒（表壳 + 底座）。接线柱在 POST_Y，
       // 故意落在盒子【外面】——导线夹在柱子上，不该被当成穿体。
       // 所以 hh 有【上限 70】：表壳为了放下大量程那排数字往上长到了 −104（见 MET），
@@ -3031,6 +3111,151 @@
       }
     }
     ctx.restore();
+  }
+
+  // ============================================================
+  // 电阻箱（人教版 图16-6）
+  // ------------------------------------------------------------
+  // 参考图上必须一眼读出五件事，少一件学生就拨不出想要的阻值：
+  //   ① 一块浅蓝面板、四角螺钉 —— 这是「一台仪器」，不是一块板；
+  //   ② 四个转盘按 ×100 / ×1k / ×1 / ×10 摆成 2×2（教材就是这么排的，
+  //      别按大小顺序重排：学生是对着课本找盘的）；
+  //   ③ 每个盘外圈印 0~9、盘心是黑色星形滚花柄；
+  //   ④ 每个盘下面一个【红三角】，指着的那一格就是这一位的读数；
+  //   ⑤ 两个接线柱在面板下沿。
+  //
+  // 🔴 数字一律【正立】：跟着圆周转的话，指在红三角下的那个数是倒的，
+  //    6 和 9 会互换 —— 那不是「像真仪器」，那是读数会错。
+  // 🔴 这里【不算电阻】：四个盘各是几欧由内核 resBoxR 算好经 rec 传进来。
+  //    抄一份 1/10/100/1000 就等于埋下「改了模型、画面没跟着变」的洞。
+  // ============================================================
+  // 8 个尖的星形路径（滚花柄）。从正上方起笔，尖朝上。
+  function starPath(ctx, rOut, rIn, n) {
+    ctx.beginPath();
+    for (var i = 0; i < n * 2; i++) {
+      var a = -Math.PI / 2 + i * Math.PI / n;
+      var r = (i % 2 === 0) ? rOut : rIn;
+      var x = Math.cos(a) * r, y = Math.sin(a) * r;
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.closePath();
+  }
+
+  function drawResBoxDial(ctx, comp, i, sc) {
+    var meta = resBoxMeta();
+    var d = RESBOX.DIAL[i];
+    var v = resBoxDigitOf(comp, i);
+    var step = Math.PI * 2 / 10;
+    ctx.save();
+    ctx.translate(d.x, d.y);
+
+    // ① 刻度环：一圈银色圆环（数字就印在这一圈上），下面压一道接触阴影
+    contactShadow(ctx, 0, 4, RESBOX.RING_R * 0.96, 7, 0.24);
+    ctx.beginPath();
+    ctx.arc(0, 0, RESBOX.RING_R, 0, 6.284);
+    ctx.arc(0, 0, RESBOX.RING_IN, 0, 6.284, true);      // 反向 ⇒ 圆环
+    ctx.fillStyle = linGrad(ctx, -RESBOX.RING_R, -RESBOX.RING_R,
+                                  RESBOX.RING_R, RESBOX.RING_R,
+      [[0, '#f6fafd'], [0.32, '#d8e2ec'], [0.66, '#aebbc8'], [1, '#8d9baa']]);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(45,58,72,0.52)'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.arc(0, 0, RESBOX.RING_R, 0, 6.284); ctx.stroke();
+    ctx.beginPath(); ctx.arc(0, 0, RESBOX.RING_IN, 0, 6.284); ctx.stroke();
+
+    // ② 0~9：位置跟着转盘转（正下方 = 当前档位），字形一律正立
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.font = 'bold 8px -apple-system,"PingFang SC",sans-serif';
+    for (var k = 0; k < 10; k++) {
+      var a = Math.PI / 2 + (k - v) * step;
+      var x = Math.cos(a) * RESBOX.DIGIT_R, y = Math.sin(a) * RESBOX.DIGIT_R;
+      // 正下方那一格（红三角指着的）加重：读数就读它
+      ctx.fillStyle = (k === v) ? '#0b2438' : 'rgba(38,48,60,0.86)';
+      ctx.fillText(String(k), x, y + 0.4);
+    }
+
+    // ③ 星形滚花柄。它跟着盘一起转 —— 转盘转 36°、星形重复 45°，
+    //    所以视觉上是「转一下、档位跳一格」，正好对上真实的跳档手感。
+    ctx.save();
+    ctx.rotate(-v * step);
+    starPath(ctx, RESBOX.KNOB_R, RESBOX.KNOB_IN, 8);
+    var kg = ctx.createRadialGradient(-4, -5, 1, 0, 0, RESBOX.KNOB_R);
+    kg.addColorStop(0, '#6d7a89'); kg.addColorStop(0.45, '#3c4753'); kg.addColorStop(1, '#1d252e');
+    ctx.fillStyle = kg; ctx.fill();
+    ctx.lineJoin = 'round';
+    ctx.strokeStyle = 'rgba(184,197,209,0.8)'; ctx.lineWidth = 1.1; ctx.stroke();
+    ctx.restore();
+    // 盘心那个小圆点（参考图上是一颗亮钉）
+    var cg = ctx.createRadialGradient(-1.3, -1.5, 0.2, 0, 0, 3.3);
+    cg.addColorStop(0, '#ffffff'); cg.addColorStop(0.55, '#cfd9e3'); cg.addColorStop(1, '#8d9aa8');
+    ctx.beginPath(); ctx.arc(0, 0, 3.1, 0, 6.284);
+    ctx.fillStyle = cg; ctx.fill();
+    ctx.strokeStyle = 'rgba(30,41,59,0.45)'; ctx.lineWidth = 0.8; ctx.stroke();
+
+    // ④ 红三角：尖端朝上指着刻度环。它是「读哪一格」的唯一标记，
+    //    颜色要比面板亮得多 —— 参考图上就是这四个小红三角最扎眼。
+    ctx.beginPath();
+    ctx.moveTo(0, RESBOX.MARK_TIP);
+    ctx.lineTo(-RESBOX.MARK_HW, RESBOX.MARK_BASE);
+    ctx.lineTo(RESBOX.MARK_HW, RESBOX.MARK_BASE);
+    ctx.closePath();
+    ctx.fillStyle = '#e8452c'; ctx.fill();
+    ctx.strokeStyle = 'rgba(150,40,20,0.5)'; ctx.lineWidth = 0.8; ctx.stroke();
+
+    // ⑤ ×100 / ×1k / ×1 / ×10（和内核 label 同源）
+    if (sc >= 0.55) {
+      var txt = (meta[i] && meta[i].label) || '';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.font = 'bold 11px -apple-system,"PingFang SC",sans-serif';
+      ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(255,255,255,0.88)';
+      ctx.strokeText(txt, 0, RESBOX.LABEL_DY);
+      ctx.fillStyle = '#12324a';
+      ctx.fillText(txt, 0, RESBOX.LABEL_DY);
+    }
+    ctx.restore();
+  }
+
+  function drawResistanceBox(ctx, comp, rec) {
+    var sc = ctxScale(ctx);
+    var HW = RESBOX.HW, TOP = RESBOX.TOP, BOT = RESBOX.BOT;
+
+    ctx.save();
+    ctx.translate(comp.x, comp.y);
+    ctx.rotate((comp.rot || 0) * Math.PI / 180);
+    ctx.scale(scaleOf(comp), scaleOf(comp));
+
+    // ① 台面上的投影 + 面板本体（浅蓝注塑件，和示教板那套灰蓝分开）
+    softShadow(ctx, -HW, TOP, HW * 2, BOT - TOP, 14, 9);
+    contactShadow(ctx, 0, BOT + 1, HW * 0.95, 5, 0.30);
+    ctx.save();
+    roundRect(ctx, -HW, TOP, HW * 2, BOT - TOP, 9);
+    ctx.clip();
+    ctx.fillStyle = linGrad(ctx, 0, TOP, 0, BOT,
+      [[0, '#eaf6fb'], [0.16, '#d2e9f3'], [0.52, '#b9d9e7'], [0.84, '#a7cbdc'],
+       [1, '#94bacd']]);
+    ctx.fillRect(-HW, TOP, HW * 2, BOT - TOP);
+    ctx.restore();
+    roundRect(ctx, -HW, TOP, HW * 2, BOT - TOP, 9);
+    ctx.strokeStyle = 'rgba(66,92,106,0.5)'; ctx.lineWidth = 1.3; ctx.stroke();
+    // 顶棱高光 + 模压内框：注塑件的边缘总有一圈台阶
+    ctx.strokeStyle = 'rgba(255,255,255,0.72)'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(-HW + 8, TOP + 1.7); ctx.lineTo(HW - 8, TOP + 1.7); ctx.stroke();
+    ctx.strokeStyle = 'rgba(66,92,106,0.18)'; ctx.lineWidth = 1.4;
+    roundRect(ctx, -HW + 5, TOP + 5, HW * 2 - 10, BOT - TOP - 10, 6); ctx.stroke();
+    // 四角一字螺钉
+    RESBOX.SCREW.forEach(function (s) {
+      ctx.save();
+      ctx.fillStyle = 'rgba(38,58,70,0.16)';
+      ctx.beginPath(); ctx.arc(s[0], s[1], 4.6, 0, 6.284); ctx.fill();
+      ctx.restore();
+      screwHead(ctx, s[0], s[1], 3.4, 'slot', sc);
+    });
+
+    // ② 四个转盘
+    for (var i = 0; i < RESBOX.DIAL.length; i++) drawResBoxDial(ctx, comp, i, sc);
+
+    ctx.restore();
+    // ③ 两个接线柱：无极性、比大器材的柱子小一号（面板下沿那点地方）
+    posts(ctx, comp, ['neutral', 'neutral'], 1.05, 4);
   }
 
   // ============================================================
@@ -6334,6 +6559,7 @@
       case 'plate': drawPlate(ctx, comp, rec); break;
       case 'rheoboard': drawRheoboard(ctx, comp, rec); break;
       case 'potentiometer': drawPotentiometer(ctx, comp, rec); break;
+      case 'resistancebox': drawResistanceBox(ctx, comp, rec); break;
       case 'pencil': drawPencil(ctx, comp, rec); break;
       case 'junction': drawJunction(ctx, comp); break;
       default: throw new Error('未知元件类型: ' + comp.type);
@@ -6380,6 +6606,11 @@
     // POT 导出给自检点焊片、量机身与丝环半径（不能自己再抄一遍 50 / 34）。
     POT: POT, POT_LETTERS: POT_LETTERS,
     potPosOf: potPosOf, potAngleOf: potAngleOf, potPosFromAngle: potPosFromAngle,
+    // 电阻箱：几何 / 四个盘的定义 / 单盘档位 / 拖盘换算。
+    // 编辑器拖盘必须走 resBoxDialAt + resBoxDigitFromTurn（和绘制同源），
+    // 自检也要拿 RESBOX 去点盘心、量红三角，别自己再抄一遍 38 / 44。
+    RESBOX: RESBOX, resBoxMeta: resBoxMeta, resBoxDigitOf: resBoxDigitOf,
+    resBoxDialAt: resBoxDialAt, resBoxDigitFromTurn: resBoxDigitFromTurn,
     // 铅笔芯：夹子在芯上的局部 x ↔ 接入长度（mm）。拖动改长度时编辑器
     // 必须走这一份换算 —— 另写一份「x 到毫米」的算式，画到哪儿和电阻
     // 是多少就会错开（和滑片那条注释同一个坑）。
@@ -6444,6 +6675,6 @@
     // 绘制却按 1.8 画，学生的「200%」和画面上的大小对不上。
     scaleOf: scaleOf, clampScale: clampScale,
     SCALE_MIN: SCALE_MIN, SCALE_MAX: SCALE_MAX,
-    version: '2.7.1',
+    version: '2.8.0',
   };
 });
