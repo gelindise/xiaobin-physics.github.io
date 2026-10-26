@@ -203,7 +203,8 @@
     <span class="eq">Q = I²Rt</span> 累积热量，<b>电流越大熔得越快</b>，熔断的瞬间全屋断电。
     <span class="hl">把它换成一根粗铜丝</span>试试 —— 铜丝熔点高、电阻小，怎么烧都不熔，
     可<b>导线先烧起来了</b>。这就是「不能用铜丝铁丝代替保险丝」的可断言版本。
-    <span class="hl">空气开关</span>在短路时「啪」一下瞬动跳闸，要手动扳回去才恢复。
+    <span class="hl">空气开关</span>在短路时「啪」一下瞬动跳闸、在过载时靠双金属片稍慢一点跳闸，
+    都要手动扳回去才恢复。
   </p>
 
   <div class="lab3d-layout">
@@ -354,8 +355,9 @@
       <div class="panel">
         <h3>空气开关 <span class="pill" id="jt-airpill2">—</span></h3>
         <ul class="chk" id="jt-airlist"></ul>
-        <p class="note">空气开关（断路器）里有一套<b>电磁脱扣</b>：电流一旦远大于额定值（本页取 5 倍），
-          线圈的电磁力直接把触点顶开，<b>瞬间跳闸</b>，比保险丝快得多。
+        <p class="note">空气开关（断路器）里有<b>两套</b>脱扣：<b>短路</b>时电流远大于额定值（本页取 5 倍），
+          线圈的电磁力直接把触点顶开，<b>瞬间跳闸</b>；<b>过载</b>时电流只是超过额定、没那么狠，
+          靠双金属片受热弯曲脱扣 —— 慢一些（反时限：电流越大跳得越快），但仍然比同规格的保险丝快。
           跳闸后手柄落在「分」的位置，必须<b>手动扳回</b>才恢复供电 ——
           这样人就会去查「刚才为什么跳」，而不是换根保险丝继续用。</p>
       </div>
@@ -434,10 +436,16 @@ var CU_RATING   = 120;     // A
 var CU_Q_BLOW   = 3.0e9;   // A²·s
 
 // 空气开关：① 电磁脱扣（短路时瞬动）。阈值取额定电流的 K_AIR_TRIP 倍。
-//            ② 热脱扣（双金属片，反时限）—— 与保险丝【同一套数学】，只是热容大得多
-//              （AIR_Q_BLOW = 3 × FUSE_Q_BLOW）⇒ 过载时总是保险丝先熔、空开后跳。
+//            ② 热脱扣（双金属片，反时限）—— 与保险丝【同一套数学】，热容见下面的
+//              AIR_Q_BLOW：比保险丝小 ⇒ 过载时先跳的是空开，保险丝留在「老式电路」里演示。
 var K_AIR_TRIP = 5;
-var AIR_Q_BLOW = 3 * FUSE_Q_BLOW;
+// 🔴 热脱扣的热容必须【比保险丝小】（= 跳得比熔得快）。
+//   现实里现代住宅把空开当主保护：10 A 的 B 曲线微断在 1.9 倍额定（18.9 A）下约 40~80 s 脱扣，
+//   而同规格保险丝要 2~4 min ⇒ 过载时先动作的是空开，不是保险丝。
+//   写成 3 × FUSE_Q_BLOW 的时候，过载永远保险丝先熔，空开的热脱扣一辈子轮不到 ——
+//   学生把三路电器全打开、等到天荒地老也等不到「跳闸」（用户报的就是这个）。
+//   取 1/3：18.9 A / 10 A 档 ⇒ 空开约 52 s 跳，保险丝约 155 s 熔。
+var AIR_Q_BLOW = FUSE_Q_BLOW / 3;
 // ★ 电磁脱扣的【可见延时】（模拟时间，秒）。真实空开的电磁脱扣是 10~20 ms。
 //   ★★ 这个数必须【小于】保险丝在短路电流下的熔断时间，否则空开永远轮不到动作：
 //      603 A 短路下保险丝的熔断时间 = (Q − q0)/(I²−I额²) ≈ 0.11 s（从冷态起算，见 fuseBlowTime）。
@@ -876,7 +884,14 @@ function compsOf(){
   return [
     // 进户电源：交流 220 V，按【有效值】做直流等效。内阻 0.35 Ω ——
     // 短路电流因此被限制在 U/(内阻 + 短路导线电阻) ≈ 600 A，而不是无穷大。
-    {id:'src',   type:'battery',  params:{cells:1, emfPerCell:MAINS_V, rPerCell:SOURCE_R}},
+    // 🔴🔴 键名必须是 emf / rInt。早先这里写的是老键 cells / emfPerCell / rPerCell，
+    //   而 TYPES.battery.defaults 现在是 {emf:3, rInt:0}：paramsOf 一合并，P.emf 恒有值，
+    //   求解器那句 `P.emf != null ? P.emf : cells*emfPerCell` 就永远走不到老键分支 ——
+    //   整个电路悄悄按【3 V 理想电源】在算：干路电流 0.266 A（= 3 V / 11.26 Ω）、
+    //   短路电流 200 A（= 3 V / 0.015 Ω）。于是三路全开也只有 0.27 A，
+    //   永远超不过保险丝额定、更够不到空开的热脱扣 ⇒ 保险丝不熔、空开不跳
+    //   （用户报的「电流过载不会跳闸」就是这条）。改电源参数时必须回来核一遍这两个键。
+    {id:'src',   type:'battery',  params:{emf:MAINS_V, rInt:SOURCE_R}},
     {id:'main',  type:'switch',   params:{closed:true}},      // 总开关
     // 保险丝 / 粗铜丝：同一个位置上的两种器件，电学上都是一个「通 / 断」开关 ——
     //   · 插保险丝且没熔 ⇒ 通；熔断后 ⇒ 断（严格断路，干路电流严格为 0）
@@ -1003,6 +1018,12 @@ var state = {
   tSim: 0,                // 模拟时间（s）= 真实时间 × 时间倍率，物理量都按它累积
   tRate: 1,               // 时间倍率（0.1 / 1 / 10 / 100）
   drawn: {},              // 自检：实际画出去的几何
+  // ★ 「侧栏该重画了」的脏标记。熔断 / 跳闸都发生在【动画循环里】，而 syncUI 早先
+  //   只在点击时被调用 ⇒ 过载真跳闸了，画布上手柄掉了、干路电流变 0，侧栏却还写着
+  //   「合闸 / 18.93 A」—— 学生看不到任何反应，只会说「过载不会跳闸」。
+  //   所以 frameStep 里一改拓扑就置脏，loop() 下一帧立刻补一次 syncUI。
+  //   不做「每帧 syncUI」：它整段重写 innerHTML，按钮会在 pointerdown 与 click 之间被换掉，吞点击。
+  uiDirty: false,
   toast: ''
 };
 
@@ -1042,6 +1063,12 @@ function fuseBlowTime(I, rating, qBlow, q0){
 //   不需要热积累。阈值取额定电流的 K_AIR_TRIP 倍（真实空开约 5~10 倍）。
 function airTripCurrent(rating){ return K_AIR_TRIP * rating; }
 function airShouldTrip(I, rating){ return Math.abs(I) > airTripCurrent(rating); }
+// 空气开关【热脱扣】（过载）还要多久跳 —— 与保险丝同一套数学，只换热容常数。
+//   ★ 侧栏「约 X s 后跳闸」与逐帧累积读的是同一个 AIR_Q_BLOW，不许在别处再写一份。
+function airThermalTripTime(I, rating, q0){
+  if(q0 == null) q0 = -AIR_Q_BLOW;
+  return fuseBlowTime(I, rating, AIR_Q_BLOW, q0);
+}
 // 干路导线的稳态温度（°C）。ΔT ∝ I²（发热 ∝ I²，散热 ∝ 表面积 × 温升），
 //   标定：I = WIRE_I_SAFE 时温升 = WIRE_DT_SAFE。
 // ★ 不封顶 —— 极端值只表示「早已烧毁」。封顶会把上游差异吃掉（自检就量不出来了）。
@@ -1757,6 +1784,7 @@ function frameStep(dt){
       state.airTripped = true;
       state.airMagT = 0;
       state.blowLog = {kind:'air', t:state.tSim, I:I, rating:state.rating, at:airTripCurrent(state.rating)};
+      state.uiDirty = true;      // ← 侧栏必须跟着刷新，理由见 state.uiDirty 的注释
       solveNow();
       I = mainCurrent();
     }
@@ -1764,14 +1792,19 @@ function frameStep(dt){
     state.airMagT = 0;
   }
   // ---- 空气开关：② 热脱扣（双金属片，反时限）—— 与保险丝同一套数学，
-  //      只是热容大得多（AIR_Q_BLOW = 3 × FUSE_Q_BLOW），所以总是保险丝先熔。
+  //      只是热容小得多（AIR_Q_BLOW = FUSE_Q_BLOW / 3），所以【过载时先跳的是空开】。
+  //      ★ blowLog.kind 必须与电磁脱扣区分开（'airT' vs 'air'）：两者都记在同一个
+  //        blowLog 里，但侧栏的说法完全不同 —— 一个「超过电磁脱扣阈值 50 A」，
+  //        一个「超过额定 10 A 持续了一段时间」。混成一种的话，过载跳闸会显示成
+  //        「电流 18.9 A 超过阈值 50 A」，学生一眼就看出是胡说。
   if(!state.noAir && state.sw.air && !state.airTripped){
     var ar = fuseBlow(I, dtSim, state.rating, state.airQ, AIR_Q_BLOW);
     state.airQ = ar.q;
     if(ar.blown){
       state.sw.air = false;
       state.airTripped = true;
-      state.blowLog = {kind:'air', t:state.tSim, I:I, rating:state.rating, at:state.rating};
+      state.blowLog = {kind:'airT', t:state.tSim, I:I, rating:state.rating, at:state.rating};
+      state.uiDirty = true;      // ← 过载跳闸同样要刷侧栏（否则 pill 永远停在「合闸」）
       solveNow();
       I = mainCurrent();
     }
@@ -1787,6 +1820,7 @@ function frameStep(dt){
     if(r.blown){
       if(isFuse) state.fuseBlown = true; else state.cuBlown = true;
       state.blowLog = {kind: isFuse ? 'fuse' : 'cu', t:state.tSim, I:I, rating:rating, dur: dtSim};
+      state.uiDirty = true;   // ← 熔断后侧栏的「已熔断 / 干路电流 0」必须立刻反映
       solveNow();     // 熔断 ⇒ 电路拓扑变了，必须重解
     }
   }
@@ -1813,6 +1847,69 @@ function showToast(msg, kind){
 }
 function fmtW(v){ return (v==null||!isFinite(v)) ? '—' : (v >= 1000 ? (v/1000).toFixed(2)+' kW' : Math.round(v)+' W'); }
 function fmtT(v){ return (v==null||!isFinite(v)) ? '—' : (v > 1200 ? '≫1200' : Math.round(v)) + ' °C'; }
+
+// ---------------- 纯数字块（保险丝读数 + 实时读数） ----------------
+// ★ 单独拆出来，是因为它有两个调用方：
+//   ① syncUI()（点击后整块重画）；② loop() 里 4 Hz 的轻量刷新。
+//   熔断是【几十秒的连续过程】，只靠点击才刷的话，侧栏的「热积累 %」会一直停在 0.0%，
+//   而画面上保险丝已经在发红 —— 学生看到的是两个自相矛盾的东西。
+// 🔴 这一段【只许碰纯文字节点】：里面一个按钮都没有。整块 innerHTML 重写会换掉按钮的
+//   DOM 节点，落在 pointerdown 与 click 之间的那次刷新会把点击吃掉（4 Hz 下这一定会发生）。
+function syncMeters(){
+  var I = mainCurrent();
+  var U = loadVoltage();
+  var isFuse = (state.material === 'fuse');
+  var blown = isFuse ? state.fuseBlown : state.cuBlown;
+  var rating = isFuse ? state.rating : CU_RATING;
+  var qNow = isFuse ? state.fuseQ : state.cuQ;
+  var qLim = isFuse ? FUSE_Q_BLOW : CU_Q_BLOW;
+  var T = wireTempC(I);
+
+  el('jt-fusepill').textContent = (isFuse ? (state.rating + ' A') : '粗铜丝')
+    + ' · ' + (blown ? '已熔断' : '完好');
+  el('jt-fusepill').className = 'pill ' + (blown ? 'bad' : (state.material === 'cu' ? 'warn' : 'ok'));
+  var heatPct = clamp(qNow / qLim, 0, 1) * 100;
+  el('jt-fusedata').innerHTML =
+    '<div><span>热积累</span><b>'+heatPct.toFixed(1)+' %</b></div>'
+    + '<div><span>额定电流</span><b>'+rating+' A</b></div>'
+    + '<div><span>此刻电流</span><b>'+fmt(I,2)+' A</b></div>'
+    + '<div><span>预计熔断</span><b>'
+      + (blown ? '已熔断'
+        : (!(I > rating) ? '不会熔断'
+          : (fuseBlowTime(I, rating, qLim, qNow) < 1e6 ? fmt(fuseBlowTime(I, rating, qLim, qNow),1)+' s' : '很久')))
+      + '</b></div>';
+  el('jt-fusenote').innerHTML = state.material === 'cu'
+    ? '<b>现在插的是一根粗铜丝。</b>铜的熔点约 1083 ℃、电阻率又比铅锑合金小得多 ⇒ '
+      + '要把它熔断需要 <span class="eq">'+CU_RATING+' A</span> 以上、而且持续几小时。'
+      + '所以电流再大它也不断 —— 热量全堆到导线和用电器上去了。'
+    : (blown
+      ? '<b>保险丝已熔断</b>，干路被切断。点「换一根新的」可以再插一根（真实现场也是这么做的）。'
+      : '额定 <b>'+state.rating+' A</b>：电流超过它就开始积累热量，'
+        + '<span class="eq">t = Q/(I² − I额²)</span> —— <b>电流越大熔得越快</b>。');
+
+  var r = el('jt-readouts');
+  function ro(label, val, cls){
+    return '<div class="'+(cls||'')+'"><span>'+label+'</span><b>'+val+'</b></div>';
+  }
+  r.innerHTML =
+    ro('干路电流', fmt(I,2)+' A', I>1e-4?'live':'zero')
+    + ro('用电器端电压', fmt(U,1)+' V', 'zero')
+    // fmtT 自己把 >1200 显示成「≫1200 °C」—— 线性模型在绝缘烧毁后没有物理意义，见 WIRE_T_CAP
+    + ro('导线温度', fmtT(T), T>WIRE_T_MAX?'hot':(T>80?'warn':'zero'))
+    + ro('总功率', fmtW(meterPowerW()), meterPowerW()>1 ? 'warn' : 'zero');
+  el('jt-data').innerHTML =
+    '<div><span>短路支路电流</span><b>'+fmt(shortCurrentA(),1)+' A</b></div>'
+    + '<div><span>并联电流之和</span><b>'+fmt(APPLIANCES.reduce(function(s,a,k){ return s+Math.abs((compRec(a.id)||{}).i||0); },0),2)+' A</b></div>'
+    + '<div><span>短路电流（理论）</span><b>'+fmt(MAINS_V/(SOURCE_R+SHORT_R+WIRE_R),1)+' A</b></div>'
+    + '<div><span>导线安全载流量</span><b>'+WIRE_I_SAFE+' A</b></div>';
+  el('jt-rpill').textContent = blown ? '已断电' : (state.airTripped ? '空开跳闸' : (I > 1e-4 ? '有电流' : '开路'));
+  el('jt-rpill').className = 'pill ' + ((blown || state.airTripped) ? 'bad' : (I > 1e-4 ? 'warn' : ''));
+  var dn = [];
+  dn.push('交流 220 V 在本页<b>按有效值做直流等效</b>（欧姆定律与功率在有效值下成立）。');
+  dn.push('导线温度按 <span class="eq">ΔT ∝ I²</span> 标定：'
+    + WIRE_I_SAFE + ' A 时温升 ' + WIRE_DT_SAFE + ' K，绝缘耐受上限 ' + WIRE_T_MAX + ' °C。');
+  el('jt-datanote').innerHTML = dn.join('<br>');
+}
 
 function syncUI(){
   var I = mainCurrent();
@@ -1843,10 +1940,16 @@ function syncUI(){
   var nOn = APPLIANCES.filter(function(a){ return state.sw[a.sw]; }).length;
   el('jt-loadnote').innerHTML = nOn === 0
     ? '三路电器都断着 —— 干路电流为 <b>0</b>。逐个接入，看干路电流怎么涨。'
-    : '已接入 <b>'+nOn+'</b> 路，总额定功率 <span class="eq">'+Pc+' W</span>，'
-      + '按 <span class="eq">I = P/U</span> 估算 <span class="eq">'+fmt(Pc/MAINS_V,2)+' A</span>；'
-      + '求解器给出的是 <span class="eq">'+fmt(I,3)+' A</span>（用<b>实际端电压</b> '+fmt(U,1)+' V 算出来，'
-      + '比 220 V 略小，因为电源有内阻）。';
+    : (I < 1e-3
+      // ★ 电器都接着、干路却被保护装置切断了：这里必须点明「读数 0 是因为断了，不是因为功率小」，
+      //   否则「求解器给出 0.000 A（比 220 V 略小，因为电源有内阻）」这句就是胡说。
+      ? '已接入 <b>'+nOn+'</b> 路（总额定 <span class="eq">'+Pc+' W</span>），'
+        + '但<b>干路已被切断</b>（'+(blown ? '保险丝熔断' : (state.airTripped ? '空气开关跳闸' : '开关分闸'))+'）'
+        + ' ⇒ 干路电流 <b>0 A</b>。'+(blown ? '点「换一根新的」' : (state.airTripped ? '点「手动复位空开」' : '合上开关'))+'再读数。'
+      : '已接入 <b>'+nOn+'</b> 路，总额定功率 <span class="eq">'+Pc+' W</span>，'
+        + '按 <span class="eq">I = P/U</span> 估算 <span class="eq">'+fmt(Pc/MAINS_V,2)+' A</span>；'
+        + '求解器给出的是 <span class="eq">'+fmt(I,3)+' A</span>（用<b>实际端电压</b> '+fmt(U,1)+' V 算出来，'
+        + '比 220 V 略小，因为电源有内阻）。');
 
   // ---- 短路 ----
   var sc = state.sw.short;
@@ -1864,9 +1967,6 @@ function syncUI(){
       + '注意：接上之前先看一眼保险丝档位和空气开关的状态。';
 
   // ---- 保险丝 ----
-  el('jt-fusepill').textContent = (isFuse ? (state.rating + ' A') : '粗铜丝')
-    + ' · ' + (blown ? '已熔断' : '完好');
-  el('jt-fusepill').className = 'pill ' + (blown ? 'bad' : (state.material === 'cu' ? 'warn' : 'ok'));
   Array.prototype.forEach.call(el('jt-ratings').children, function(b){
     b.className = (Number(b.getAttribute('data-rating')) === state.rating) ? 'on' : '';
   });
@@ -1874,52 +1974,11 @@ function syncUI(){
     b.className = (b.getAttribute('data-mat') === state.material) ? 'on' : '';
     if(b.getAttribute('data-mat') === 'cu') b.className += ' danger';
   });
+  syncMeters();     // ← 纯数字块（保险丝读数 / 实时读数）单独一段，动画循环会 4 Hz 复用
+  // 下面几处文案要用到的量（syncMeters 内部那份是它自己的局部变量，别指望它）
+  var T = wireTempC(I);
   var qNow = isFuse ? state.fuseQ : state.cuQ;
   var qLim = isFuse ? FUSE_Q_BLOW : CU_Q_BLOW;
-  var heatPct = clamp(qNow / qLim, 0, 1) * 100;
-  el('jt-fusedata').innerHTML =
-    '<div><span>热积累</span><b>'+heatPct.toFixed(1)+' %</b></div>'
-    + '<div><span>额定电流</span><b>'+rating+' A</b></div>'
-    + '<div><span>此刻电流</span><b>'+fmt(I,2)+' A</b></div>'
-    + '<div><span>预计熔断</span><b>'
-      + (blown ? '已熔断'
-        : (!(I > rating) ? '不会熔断'
-          : (fuseBlowTime(I, rating, qLim, qNow) < 1e6 ? fmt(fuseBlowTime(I, rating, qLim, qNow),1)+' s' : '很久')))
-      + '</b></div>';
-  el('jt-fusenote').innerHTML = state.material === 'cu'
-    ? '<b>现在插的是一根粗铜丝。</b>铜的熔点约 1083 ℃、电阻率又比铅锑合金小得多 ⇒ '
-      + '要把它熔断需要 <span class="eq">'+CU_RATING+' A</span> 以上、而且持续几小时。'
-      + '所以电流再大它也不断 —— 热量全堆到导线和用电器上去了。'
-    : (blown
-      ? '<b>保险丝已熔断</b>，干路被切断。点「换一根新的」可以再插一根（真实现场也是这么做的）。'
-      : '额定 <b>'+state.rating+' A</b>：电流超过它就开始积累热量，'
-        + '<span class="eq">t = Q/(I² − I额²)</span> —— <b>电流越大熔得越快</b>。');
-
-  // ---- 实时读数 ----
-  var T = wireTempC(I);
-  var r = el('jt-readouts');
-  function ro(label, val, cls){
-    return '<div class="'+(cls||'')+'"><span>'+label+'</span><b>'+val+'</b></div>';
-  }
-  r.innerHTML =
-    ro('干路电流', fmt(I,2)+' A', I>1e-4?'live':'zero')
-    + ro('用电器端电压', fmt(U,1)+' V', 'zero')
-    // fmtT 自己把 >1200 显示成「≫1200 °C」—— 线性模型在绝缘烧毁后没有物理意义，见 WIRE_T_CAP
-    + ro('导线温度', fmtT(T), T>WIRE_T_MAX?'hot':(T>80?'warn':'zero'))
-    + ro('总功率', fmtW(meterPowerW()), meterPowerW()>1 ? 'warn' : 'zero');
-  var d = el('jt-data');
-  d.innerHTML =
-    '<div><span>短路支路电流</span><b>'+fmt(shortCurrentA(),1)+' A</b></div>'
-    + '<div><span>并联电流之和</span><b>'+fmt(APPLIANCES.reduce(function(s,a,k){ return s+Math.abs((compRec(a.id)||{}).i||0); },0),2)+' A</b></div>'
-    + '<div><span>短路电流（理论）</span><b>'+fmt(MAINS_V/(SOURCE_R+SHORT_R+WIRE_R),1)+' A</b></div>'
-    + '<div><span>导线安全载流量</span><b>'+WIRE_I_SAFE+' A</b></div>';
-  el('jt-rpill').textContent = blown ? '已断电' : (state.airTripped ? '空开跳闸' : (I > 1e-4 ? '有电流' : '开路'));
-  el('jt-rpill').className = 'pill ' + ((blown || state.airTripped) ? 'bad' : (I > 1e-4 ? 'warn' : ''));
-  var dn = [];
-  dn.push('交流 220 V 在本页<b>按有效值做直流等效</b>（欧姆定律与功率在有效值下成立）。');
-  dn.push('导线温度按 <span class="eq">ΔT ∝ I²</span> 标定：'
-    + WIRE_I_SAFE + ' A 时温升 ' + WIRE_DT_SAFE + ' K，绝缘耐受上限 ' + WIRE_T_MAX + ' °C。');
-  el('jt-datanote').innerHTML = dn.join('<br>');
   Array.prototype.forEach.call(el('jt-rate').children, function(b){
     b.className = (Number(b.getAttribute('data-rate')) === state.tRate) ? 'on' : '';
   });
@@ -1935,15 +1994,29 @@ function syncUI(){
     : (state.airTripped ? '空开已跳闸' : (state.sw.air ? '合闸' : '分闸'));
   el('jt-protpill').className = 'pill ' + (state.noAir ? 'warn' : (state.airTripped ? 'bad' : (state.sw.air ? 'ok' : '')));
   var airLimit = airTripCurrent(state.rating);
+  // 过载时两条保护各自还要多久动作 —— 侧栏必须说清「谁会先断」，
+  // 否则学生看到「保险丝约 155 s 后熔断」而 52 s 时空开先跳了，会以为读数在骗人。
+  var tFuse = (I > rating) ? fuseBlowTime(I, rating, isFuse ? FUSE_Q_BLOW : CU_Q_BLOW, isFuse ? state.fuseQ : state.cuQ) : Infinity;
+  var tAirTh = (I > state.rating) ? airThermalTripTime(I, state.rating, state.airQ) : Infinity;
   el('jt-proclist').innerHTML =
     (state.noAir
       ? '<li class="no"><span class="mk">✗</span><span><b>空气开关已被拆掉</b>（老式电路）—— 这一路直通，'
         + '短路或过载时<b>没有它来切断电路</b>，保护只剩保险丝一道。</span></li>'
       : ('<li class="'+(state.sw.air?'yes':'no')+'"><span class="mk">'+(state.sw.air?'✓':'✗')+'</span><span>空气开关：'
         + (state.sw.air ? '合闸' : '分闸') + (state.airTripped ? '（<b>自动跳闸</b>，需手动扳回）' : '') + '</span></li>'
-        + '<li class="'+(I<=airLimit?'yes':'no')+'"><span class="mk">'+(I<=airLimit?'✓':'✗')+'</span><span>电磁脱扣阈值 '
+        + '<li class="'+(I<=airLimit?'yes':'no')+'"><span class="mk">'+(I<=airLimit?'✓':'✗')+'</span><span>电磁脱扣（短路）阈值 '
         + '<span class="eq">'+K_AIR_TRIP+' × '+state.rating+' A = '+airLimit+' A</span>，'
-        + '当前 '+fmt(I,1)+' A —— '+(I<=airLimit?'未达阈值':'<b>已超阈值，会瞬动跳闸</b>')+'</span></li>'))
+        + '当前 '+fmt(I,1)+' A —— '+(I<=airLimit?'未达阈值':'<b>已超阈值，会瞬动跳闸</b>')+'</span></li>'
+        + (I > state.rating
+          ? '<li class="'+(state.sw.air?'no':'wait')+'"><span class="mk">'+(state.sw.air?'✗':'—')+'</span><span>热脱扣（过载）：'
+            + '已超额定 <b>'+state.rating+' A</b>，双金属片正在受热 —— '
+            + (state.sw.air
+              ? '约 <b>'+fmt(tAirTh,1)+' s</b> 后跳闸'
+                + (isFinite(tFuse) ? '，'+(tAirTh <= tFuse ? '比保险丝先动作（保险丝要 '+fmt(tFuse,1)+' s）' : '保险丝会先熔（'+fmt(tFuse,1)+' s）') : '')
+              : '但空开已分闸，这条不动作')
+            + '</span></li>'
+          : '<li class="wait"><span class="mk">—</span><span>热脱扣（过载）：当前 '+fmt(I,1)+' A 未超额定 '
+            + state.rating+' A，双金属片不动作</span></li>')))
     + '<li class="'+(I<=rating?'yes':'no')+'"><span class="mk">'+(I<=rating?'✓':'✗')+'</span><span>保险丝额定 '
       + state.rating+' A：当前 '+fmt(I,1)+' A —— '+(I<=rating?'在额定以内，不会熔断':'<b>已超额定，正在积累热量</b>')+'</span></li>';
   var pn = [];
@@ -1951,7 +2024,11 @@ function syncUI(){
     var bl = state.blowLog;
     if(bl.kind === 'air'){
       pn.push('<b>空气开关在 t = '+fmt(bl.t,3)+' s 跳闸</b>：电流 '+fmt(bl.I,1)+' A 超过电磁脱扣阈值 '
-        + bl.at + ' A。跳闸后手柄落在「分」，<b>必须手动扳回</b>才恢复。');
+        + bl.at + ' A（短路，瞬动）。跳闸后手柄落在「分」，<b>必须手动扳回</b>才恢复。');
+    }else if(bl.kind === 'airT'){
+      pn.push('<b>空气开关在 t = '+fmt(bl.t,1)+' s 跳闸</b>：电流 '+fmt(bl.I,1)+' A 超过额定 '
+        + bl.rating+' A，双金属片持续受热弯曲，<b>热脱扣</b>把触点顶开（过载，反时限）。'
+        + '跳闸后手柄落在「分」，<b>必须手动扳回</b>才恢复。');
     }else{
       pn.push('<b>'+(bl.kind==='fuse'?'保险丝':'粗铜丝')+'在 t = '+fmt(bl.t,3)+' s 熔断</b>：电流 '
         + fmt(bl.I,1)+' A，额定 '+bl.rating+' A。');
@@ -1964,9 +2041,10 @@ function syncUI(){
   el('jt-protnote').innerHTML = pn.length ? pn.join('<br>')
     : (state.noAir
       ? '现在是<b>老式电路</b>：只有保险丝一道保护。短路 → 保险丝按 <span class="eq">Q = I²Rt</span> 熔断；'
-        + '把保险丝换成粗铜丝，就<b>什么都不会断</b>，热量全堆在导线上。'
-      : '短路 → 空气开关电磁脱扣（瞬动）；过载 → 保险丝热积累熔断（反时限）。两条路各司其职。'
-        + '<b>拆掉空气开关</b>就回到只有保险丝的老式电路。');
+        + '过载 → 也只能等它熔断。把保险丝换成粗铜丝，就<b>什么都不会断</b>，热量全堆在导线上。'
+      : '短路 → 空气开关<b>电磁脱扣</b>（瞬动，'+AIR_MAG_DELAY+' s）；'
+        + '过载 → 空气开关<b>热脱扣</b>先跳（反时限，约几十秒）—— 现代住宅里空开就是主保护，它比保险丝快。'
+        + '想看保险丝<b>熔断</b>的样子，把空气开关<b>拆掉</b>（老式电路），过载/短路就只剩它一道。');
 
   // ---- 两条来路（底部对照面板）----
   var iShort = shortCurrentA();
@@ -1987,8 +2065,20 @@ function syncUI(){
     ? '<b>熔断时刻的电流是 '+fmt((state.blowLog||{}).I,1)+' A，额定 '+state.rating+' A</b> —— '
       + '熔断发生在电流<b>超过额定值之后</b>，这是它起保护作用的前提。'
     : (I > rating
-      ? '此刻电流 '+fmt(I,2)+' A 已经<b>超过额定 '+rating+' A</b>，热量正在积累：'
-        + '按 <span class="eq">t = Q/(I² − I额²)</span> 约 <b>'+fmt(fuseBlowTime(I,rating,qLim,qNow),1)+' s</b> 后熔断。'
+      ? (function(){
+          var tF = fuseBlowTime(I, rating, qLim, qNow);
+          var s = '此刻电流 '+fmt(I,2)+' A 已经<b>超过额定 '+rating+' A</b>，热量正在积累：'
+            + '按 <span class="eq">t = Q/(I² − I额²)</span> 约 <b>'+fmt(tF,1)+' s</b> 后熔断。';
+          // ★ 同时把「谁会先断」说清：空开还在时，热脱扣比它快 ⇒ 保险丝根本轮不到熔断。
+          //   不说这句，侧栏报「155 s 后熔断」而画面 52 s 就跳闸，读数看着像在骗人。
+          if(!state.noAir && state.sw.air && isFuse){
+            s += (tAirTh <= tF)
+              ? '但<b>空气开关的热脱扣更快</b>（约 '+fmt(tAirTh,1)+' s）—— 它先跳闸把电流切断，'
+                + '保险丝就熔不了了。<b>想看保险丝熔断，先把空气开关拆掉</b>（老式电路）。'
+              : '这一档下空气开关的热脱扣更慢（约 '+fmt(tAirTh,1)+' s），<b>保险丝会先熔</b>。';
+          }
+          return s;
+        })()
       : '此刻电流 '+fmt(I,2)+' A <b>没有超过额定 '+rating+' A</b>，热量积累 ≤ 0 —— 保险丝只是温热，不会熔断。');
 
   // ---- 保险丝怎么选 ----
@@ -2028,8 +2118,9 @@ function syncUI(){
   el('jt-airlist').innerHTML =
     '<li class="yes"><span class="mk">作用</span><span>与保险丝一样：电流过大时切断电路。'
       + '但它<b>不用换</b> —— 跳闸后把闸扳回去就能继续用。</span></li>'
-    + '<li class="yes"><span class="mk">原理</span><span>电磁脱扣（短路，瞬动）+ 热脱扣（过载，反时限）。'
-      + '本页的瞬动阈值 = <span class="eq">'+K_AIR_TRIP+' × 额定</span> = <b>'+airTripCurrent(state.rating)+' A</b>。</span></li>'
+    + '<li class="yes"><span class="mk">原理</span><span>两套脱扣：<b>电磁脱扣</b>（短路，瞬动）+ <b>热脱扣</b>（过载，反时限）。'
+      + '瞬动阈值 = <span class="eq">'+K_AIR_TRIP+' × 额定</span> = <b>'+airTripCurrent(state.rating)+' A</b>；'
+      + '热脱扣按 <span class="eq">Q = I²Rt</span> 累积，热容只有保险丝的 1/3 ⇒ <b>过载时它比保险丝先跳</b>。</span></li>'
     + '<li class="'+(state.noAir?'no':(state.airTripped?'no':'yes'))+'"><span class="mk">'
       + (state.noAir?'✗':(state.airTripped?'✗':'✓'))+'</span><span>当前状态：'
       + (state.noAir ? '<b>已被拆掉</b>（老式电路），短路时没有它来切断电路'
@@ -2076,8 +2167,14 @@ function setSwitch(id, on){
   // ★ 空气开关已被拆掉时它根本不在电路里，分 / 合没有意义（UI 也把按钮禁掉了）。
   if(id === 'air' && state.noAir) return;
   state.sw[id] = !!on;
-  // 手动合闸空气开关 ⇒ 清除「自动跳闸」标记
-  if(id === 'air' && on) state.airTripped = false;
+  // 手动合闸空气开关 ⇒ 清除「自动跳闸」标记，并把双金属片的热积累一起复位。
+  // 🔴 不复位 airQ 的话，热脱扣刚跳完还停在「已到熔点」上 ⇒ 扳回去下一帧立刻又跳，
+  //    看着就像「闸扳不上去」。真实空开也要等双金属片凉下来才能合上（这就是复位）。
+  if(id === 'air' && on){
+    state.airTripped = false;
+    state.airQ = -AIR_Q_BLOW;
+    state.airMagT = 0;
+  }
   solveNow(); syncUI();
 }
 // ★ 「老式电路」：把空气开关拆掉 / 装回来。见 state.noAir 上面的注释 ——
@@ -2240,11 +2337,16 @@ function bind(){
 }
 
 // ---------------- 启动 ----------------
-var rafOn = false, lastT = 0;
+var rafOn = false, lastT = 0, lastMeter = -1;
 function loop(ts){
   var dt = lastT ? Math.min(0.05, (ts-lastT)/1000) : 0;
   lastT = ts;
   frameStep(dt);
+  if(state.uiDirty){ state.uiDirty = false; syncUI(); }   // 熔断 / 跳闸 ⇒ 立刻补刷整块侧栏
+  // 有电流时 4 Hz 刷一遍【纯数字块】：熔断是几十秒的连续过程，热积累 % / 导线温度
+  // 必须看得见在涨，否则学生盯着一个不动的 0.0% 等 52 秒，会以为这页坏了。
+  // 只刷 syncMeters（不含按钮），见它上面的注释。
+  else if(mainCurrent() > 1e-4 && state.t - lastMeter > 0.25){ lastMeter = state.t; syncMeters(); }
   render();
   if(rafOn) requestAnimationFrame(loop);
 }
@@ -2266,7 +2368,7 @@ function boot(){
 // 断言一律读这里的值，不许在测试里重抄一遍公式（那样只证明自洽）。
 // ============================================================
 window.__JTC = {
-  version: '2.1.0',
+  version: '2.2.0',   // 2.2.0：电源改用 emf/rInt（此前老键被默认值吃掉 ⇒ 全页按 3 V 在算）；过载改由空开热脱扣先跳
   // ★ 本页在 auth-check.js 的 VIP_EXPERIMENTS 名单里的【登记名】。
   //   自检不许用 location.pathname 去推：变异页的名字是 __jtcneg_xxx.html，
   //   用 URL 推的话每一条变异都会「名单里查不到」而误红（闸门那条断言就成了噪声）。
@@ -2300,6 +2402,7 @@ window.__JTC = {
   meterPowerW: meterPowerW, loadPowerW: loadPowerW, applPowerW: applPowerW, shortCurrentA: shortCurrentA,
   fuseBlow: fuseBlow, fuseBlowTime: fuseBlowTime,
   airTripCurrent: airTripCurrent, airShouldTrip: airShouldTrip,
+  airThermalTripTime: airThermalTripTime,
   wireTempC: wireTempC, wireOverheat: wireOverheat,
   heatColor: heatColor, lerpHex: lerpHex,
   sockHolePos: sockHolePos, applTermPos: applTermPos, applFacePos: applFacePos,
