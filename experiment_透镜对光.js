@@ -15,46 +15,86 @@ import * as THREE from './assets/optics-three.min.js';
 
   /* ================= 物理常量 ================= */
   const N_GLASS = 1.50;      // 玻璃折射率
-  const APERTURE = 4.4;      // 镜片半口径 cm
-  const THICK = 1.6;         // 透镜中心厚度 cm
+  const A_MAX = 4.4;         // 最长焦（f = 20 cm）时的镜片半口径 cm
+  const F_LO = 6, F_HI = 20; // 焦距滑块量程 cm（口径缩放的参照）
   const RAY_X0 = -26;        // 入射光线起点（物侧远端）
   const RAY_X1 = 31;         // 出射光线终点（像侧远端）
-  const NEAR_AXIS = 0.20;    // 「近轴」判据：径向半径 ≤ NEAR_AXIS × APERTURE
+  const NEAR_AXIS = 0.20;    // 「近轴」判据：径向半径 ≤ NEAR_AXIS × 半口径
 
   /* ================= 透镜几何 =================
      表面参数化：顶点 apex、曲率半径 R（带符号，球心在 apex + R 一侧）。
      剖面上 x(r) = (apex + R) − R·√(1 − (r/R)²)，绕 x 轴旋转即得镜面。
      凸透镜：R₁ = +R、R₂ = −R（两个面都向中间凸 ⇒ 中间厚）
-     凹透镜：R₁ = −R、R₂ = +R（两个面都向外凹 ⇒ 边缘厚） */
-  function radiusForFocal(f) {
-    // 由【厚透镜公式】反解等半径双凸/双凹镜片的曲率半径：
-    //   1/f = (n−1)·(1/R₁ − 1/R₂) + (n−1)²·d/(n·R₁R₂)
-    const n = N_GLASS, d = THICK, k = 1 / Math.abs(f);
-    if (f > 0) {
-      const s = Math.sqrt(Math.max(0, 1 - k * d / n));
-      return (n - 1) * (1 + s) / k;
-    }
-    const s = Math.sqrt(1 + k * d / n);
-    return (n - 1) * (1 + s) / k;
+     凹透镜：R₁ = −R、R₂ = +R（两个面都向外凹 ⇒ 边缘厚）
+
+     🔴🔴 镜片形状必须【由焦距算出来】，不能拿一个固定厚度去套：
+     原来是「中央厚度恒为 1.6 cm、曲率半径按厚透镜公式反解」，f 调到 12 以下时
+     两个球面在边缘处【交叉】—— f = 6 时 R = 5.7 cm、矢高 2.06 cm > 1.6/2，
+     于是边缘 x 比中心 x 还靠右，画出来中间薄、边缘厚，凸透镜被画成了凹透镜
+     （用户报的就是这个）。而且厚度恒定 ⇒ 形状几乎不随焦距变，也不对。
+     现在改成厚度由矢高算出来：
+       · 凸透镜：边缘厚度恒定 0.10 cm ⇒ 中央厚 = 0.10 + 2·矢高（越短焦越鼓）
+       · 凹透镜：中央厚度恒定 0.30 cm ⇒ 边缘厚 = 0.30 + 2·矢高（越短焦边越厚）
+     两式都保证「第二个面永远在第一个面右边」，球面不可能相交。 */
+  const EDGE_THICK = 0.10;   // 凸透镜边缘厚度 cm（恒定 ⇒ 两球面永不相交）
+  const CENTER_THICK = 0.30; // 凹透镜中心厚度 cm（恒定 ⇒ 中间永远比边缘薄）
+
+  const sagOf = (R, a) => R - Math.sqrt(Math.max(0, R * R - a * a));
+
+  /* 短焦透镜的口径本来就小（真实实验室里 f = 6 cm 的镜片直径只有 3 cm 左右）。
+     口径固定 4.4 cm 时，等半径双凸镜片的焦距有个理论下限 ≈ 1.37 × 半口径 ≈ 6.0 cm ——
+     再弯下去中央厚度增长得比曲率更快，f 反而回升，也就是说 4.4 cm 口径【做不出】f = 6 cm。
+     所以口径随焦距一起收：f = 20 → 4.40 cm，f = 6 → 3.07 cm。 */
+  function apertureFor(f) {
+    const t = clamp(Math.abs(f), F_LO, F_HI) / F_HI;
+    return A_MAX * Math.pow(t, 0.30);
   }
 
-  function focalFromRadius(R1, R2, d) {
-    // 厚透镜公式（与光线追迹互不引用）
+  // 厚透镜公式：给定两面对称的曲率半径 R 与中央厚度 d，返回【有符号】焦距
+  function focalOfRadius(kind, R, d) {
     const n = N_GLASS;
+    const R1 = kind === 'convex' ? R : -R, R2 = -R1;
     const P = (n - 1) * (1 / R1 - 1 / R2 + (n - 1) * d / (n * R1 * R2));
     return 1 / P;
   }
 
+  /* 由焦距反解曲率半径。中央厚度本身又是 R 的函数（凸：EDGE + 2·矢高），是隐式方程。
+     🔴 凸透镜的 |f|(R) 不是单调的：R 减小时矢高与中央厚度一起涨，到 R* 处 |f| 取最小值，
+        再弯下去 |f| 反而回升。只有 R > R* 这一支才是「越弯越短焦」，所以先扫出 R*，
+        再在这一支上二分 —— 否则会收敛到错误的一支（凹透镜曾把 |f| = 6 解成 R = 24.5）。 */
+  function radiusForFocal(kind, fAbs, a) {
+    const thick = (R) => kind === 'convex' ? EDGE_THICK + 2 * sagOf(R, a) : CENTER_THICK;
+    const magOf = (R) => Math.abs(focalOfRadius(kind, R, thick(R)));
+    let Rstar = a * 1.0001, fMin = Infinity;
+    for (let i = 1; i <= 400; i++) {
+      const R = a * (1 + i * 0.01);
+      const v = magOf(R);
+      if (v < fMin) { fMin = v; Rstar = R; }
+    }
+    // 两个镜种在「lo → hi」方向 |f| 都是单调增大的
+    let lo = kind === 'convex' ? Rstar : a * 1.0001;
+    let hi = Math.max(4 * fAbs, 8 * a);
+    if (magOf(hi) < fAbs) return hi;            // 兜底：本页量程内不会发生
+    for (let i = 0; i < 120; i++) {
+      const m = (lo + hi) / 2;
+      if (magOf(m) < fAbs) lo = m; else hi = m;
+    }
+    return (lo + hi) / 2;
+  }
+
   function lensGeom(kind, f) {
-    const R = radiusForFocal(kind === 'convex' ? Math.abs(f) : -Math.abs(f));
-    const R1 = kind === 'convex' ? R : -R;
-    const R2 = kind === 'convex' ? -R : R;
+    const a = apertureFor(f);
+    const R = radiusForFocal(kind, Math.abs(f), a);
+    const sag = sagOf(R, a);
+    const d = kind === 'convex' ? EDGE_THICK + 2 * sag : CENTER_THICK;
+    const R1 = kind === 'convex' ? R : -R, R2 = -R1;
     return {
-      kind, R1, R2, R,
-      apex1: -THICK / 2, apex2: THICK / 2,
-      c1: -THICK / 2 + R1, c2: THICK / 2 + R2,
-      d: THICK, aperture: APERTURE, n: N_GLASS,
-      fTheory: focalFromRadius(R1, R2, THICK)
+      kind, R1, R2, R, sag,
+      apex1: -d / 2, apex2: d / 2,
+      c1: -d / 2 + R1, c2: d / 2 + R2,
+      d, aperture: a, n: N_GLASS,
+      edgeGap: kind === 'convex' ? d - 2 * sag : d + 2 * sag,   // 边缘处两个面的间距
+      fTheory: focalOfRadius(kind, R, d)
     };
   }
 
@@ -131,7 +171,7 @@ import * as THREE from './assets/optics-three.min.js';
   };
   const state = {
     kind: 'convex', f: 12,
-    rayCount: 12, beamRadius: 3.6, incidence: 0,
+    rayCount: 12, beamRadius: 3.6, beamWanted: 3.6, incidence: 0,
     rayMode: 'all', singleHeight: 2.4,
     showFocal: true, showAxis: true, showVirtual: true, showBeam: true,
     yaw: VIEWS.perspective[0], pitch: VIEWS.perspective[1], zoom: 1.0,
@@ -277,6 +317,10 @@ import * as THREE from './assets/optics-three.min.js';
     const edge = [], eIdx = [];
     const xa = (L.apex1 + L.R1) - L.R1 * Math.sqrt(1 - (L.aperture / Math.abs(L.R1)) ** 2);
     const xb = (L.apex2 + L.R2) - L.R2 * Math.sqrt(1 - (L.aperture / Math.abs(L.R2)) ** 2);
+    /* 🔴🔴 两个面在边缘处的间距必须恒为正 —— 这是「凸透镜不会被画成凹透镜」的判据。
+       从【真正提交渲染的顶点】上量（不是从 L.edgeGap 抄，那样是自证）。 */
+    drawn.edgeGap = xb - xa;
+    drawn.edgeXA = xa; drawn.edgeXB = xb;
     for (let i = 0; i <= segs; i++) {
       const a = i * 2 * Math.PI / segs;
       edge.push(xa, L.aperture * Math.cos(a), L.aperture * Math.sin(a));
@@ -334,6 +378,8 @@ import * as THREE from './assets/optics-three.min.js';
   const drawn = {
     rays: [],        // 每条光线实画的入/内/出三段端点
     axis: null,
+    lensSurfaces: [],// 实际提交渲染的两个球面（自检用）
+    edgeGap: null,   // 边缘处两个面的间距（> 0 才不是「中间薄、边缘厚」）
     /* 🔴 本页有两个「焦点」，别把它们混成一个（混了就是用户报的那个 bug）：
        · paraxialFocus —— 近轴出射光线（h≈0.66 cm）的交点。它是【焦距 f 的定义点】，
          读数「实测焦距」由它算（从像方主平面量起），与侧栏的 f 对得上。
@@ -391,8 +437,9 @@ import * as THREE from './assets/optics-three.min.js';
      滑块停在 4.4 而实际只画得出 2.8 的光束 ⇒ 黄点还会退回近轴焦点，正是用户报的那个 bug。
      所以按焦距二分出上限，再把滑块 max 顶到那儿去 —— 界面不许你点一个画不出来的值。 */
   function maxTraceableRadius() {
-    if (focusPair(APERTURE)) return APERTURE;
-    let lo = 0.5, hi = APERTURE;
+    const ap = lens().aperture;
+    if (focusPair(ap * 0.999)) return ap;
+    let lo = 0.5, hi = ap;
     for (let i = 0; i < 26; i++) {
       const mid = (lo + hi) / 2;
       if (focusPair(mid)) lo = mid; else hi = mid;
@@ -403,16 +450,28 @@ import * as THREE from './assets/optics-three.min.js';
   // 把光束半径滑块的上下限同步到当前透镜：改焦距/换镜片后必须重算
   // 🔴 上限的「设计上限」必须在模块初始化时抓一次存起来：滑块 max 会被自己改小，
   //    若每次都从 sl.max 读，焦距从 6 调回 20 时上限就再也涨不回去了。
-  const BEAM_MAX_UI = +($('beamRadius').max || APERTURE);
+  const BEAM_MAX_UI = +($('beamRadius').max || A_MAX);
   function syncBeamRange() {
     const sl = $('beamRadius');
     if (!sl) return;
-    const maxUi = Math.max(1.0, Math.min(BEAM_MAX_UI, maxTraceableRadius()));
+    const ap = lens().aperture;
+    // 🔴 向下取整：toFixed(1) 会把 3.77 写成 3.8，滑块就允许一个比镜片口径还大的光束
+    const maxUi = Math.max(1.0, Math.floor(Math.min(BEAM_MAX_UI, ap, maxTraceableRadius()) * 10) / 10);
     sl.max = maxUi.toFixed(1);
-    if (state.beamRadius > maxUi) state.beamRadius = maxUi;
-    if (state.beamRadius < +sl.min) state.beamRadius = +sl.min;
+    /* 🔴 实际光束半径 = min(用户想给的, 上限)。用户那份单独存着 —— 否则焦距滑到 6 cm
+       （口径缩到 3.1 cm，光束被迫压到 2.9）再滑回 20 cm，光束就永远停在 2.9 了。 */
+    state.beamRadius = clamp(state.beamWanted, +sl.min, maxUi);
     sl.value = state.beamRadius;
     if ($('beamValue')) $('beamValue').textContent = state.beamRadius.toFixed(1) + ' cm';
+    // 单条光线的高度也不能超过镜片口径，否则追不到光线、画面上一条线都没有
+    const sh = $('singleHeight');
+    if (sh) {
+      const lim = Math.max(1.0, ap * 0.95);
+      sh.max = lim.toFixed(1); sh.min = (-lim).toFixed(1);
+      state.singleHeight = clamp(state.singleHeight, -lim, lim);
+      sh.value = state.singleHeight;
+      if ($('singleValue')) $('singleValue').textContent = state.singleHeight.toFixed(1) + ' cm';
+    }
   }
 
   // 像方主平面：一条平行于主轴、高度 h 的入射光线，与它出射后【反向延长】的交点所在的平面。
@@ -612,7 +671,7 @@ import * as THREE from './assets/optics-three.min.js';
           ⇒ 球差的相对量恒定，实测焦距在全焦距段同样准。读数「实测焦距」用它。
        ② 会聚点 hOuter：当前模式下【最外侧那一对对称光线】的交点 —— 也就是眼睛看到的
           那个收束点。黄点、光锥顶点、虚焦点都用它。 */
-    const hNear = Math.min(APERTURE * NEAR_AXIS, state.beamRadius * 0.92, 0.055 * Math.abs(state.f));
+    const hNear = Math.min(L.aperture * NEAR_AXIS, state.beamRadius * 0.92, 0.055 * Math.abs(state.f));
     const fNear = focusPair(hNear);
     drawn.paraxialFocus = fNear ? { x: fNear.x, y: fNear.y, z: 0 } : null;
 
@@ -712,7 +771,8 @@ import * as THREE from './assets/optics-three.min.js';
   /* ================= 读数 ================= */
   function updateReadouts() {
     const isConvex = state.kind === 'convex';
-    const f = lens().fTheory;
+    const L = lens();
+    const f = L.fTheory;
     const mf = drawn.measuredFocal;                    // 近轴实测焦距（从像方主平面量到近轴焦点）
     const fp = drawn.focusPos;                         // 黄点（实际会聚点）在主光轴上的位置
     const txt = (v) => Number.isFinite(v) ? (v >= 0 ? '+' : '') + v.toFixed(2) + ' cm' : '—';
@@ -728,9 +788,13 @@ import * as THREE from './assets/optics-three.min.js';
     $('metricF').textContent = Math.abs(f).toFixed(1) + ' cm';
     $('metricFocus').textContent = txt(mf);
     $('metricEffect').textContent = isConvex ? '会聚（聚焦）' : '发散（散开）';
-    $('roNote').textContent = isConvex
-      ? '实测焦距由近轴出射光求交算出，从像方主平面量起'
-      : '负号表示焦点是虚焦点，落在入射侧';
+    // 形状读数：焦距一变，曲率半径与厚度跟着变 —— 让「镜片真的变形了」有个数字可对照
+    const shape = '镜面曲率半径 R = ' + L.R.toFixed(1) + ' cm · ' +
+      (isConvex ? '中央厚 ' + L.d.toFixed(2) + ' cm' : '边缘厚 ' + L.edgeGap.toFixed(2) + ' cm') +
+      ' · 口径 ' + (2 * L.aperture).toFixed(1) + ' cm';
+    $('roNote').textContent = (isConvex
+      ? '实测焦距由近轴出射光求交算出，从像方主平面量起 · '
+      : '负号表示焦点是虚焦点，落在入射侧 · ') + shape;
   }
 
   /* ================= 渲染 ================= */
@@ -844,7 +908,8 @@ import * as THREE from './assets/optics-three.min.js';
     rebuildAll();
   });
   $('beamRadius').addEventListener('input', (e) => {
-    state.beamRadius = +e.target.value;
+    state.beamWanted = +e.target.value;
+    state.beamRadius = state.beamWanted;
     $('beamValue').textContent = state.beamRadius.toFixed(1) + ' cm';
     rebuildAll();
   });
@@ -927,7 +992,7 @@ import * as THREE from './assets/optics-three.min.js';
 
   $('resetAll').addEventListener('click', () => {
     Object.assign(state, {
-      kind: 'convex', f: 12, rayCount: 12, beamRadius: 3.6, incidence: 0,
+      kind: 'convex', f: 12, rayCount: 12, beamRadius: 3.6, beamWanted: 3.6, incidence: 0,
       rayMode: 'all', singleHeight: 2.4,
       showFocal: true, showAxis: true, showVirtual: true, showBeam: true
     });
@@ -962,6 +1027,10 @@ import * as THREE from './assets/optics-three.min.js';
     get virtualFocus() { return drawn.virtualFocus; },
     get rays() { return drawn.rays; },
     get lensSurfaces() { return drawn.lensSurfaces; },
+    get edgeGap() { return drawn.edgeGap; },
+    get aperture() { return lens().aperture; },
+    get thickness() { return lens().d; },
+    get sag() { return lens().sag; },
     get drawn() { return drawn; },
     get records() { return state.records.slice(); },
     trace: (yi, zi, kindOverride, fOverride) => {
@@ -994,7 +1063,7 @@ import * as THREE from './assets/optics-three.min.js';
     setKind: (k) => { state.kind = k; syncLensButtons(); rebuildAll(); },
     setFocal: (v) => { state.f = v; $('focalLength').value = v; $('focalValue').textContent = v.toFixed(1) + ' cm'; rebuildAll(); },
     setIncidence: (v) => { state.incidence = v; $('incidence').value = v; $('angleValue').textContent = v.toFixed(0) + '°'; rebuildAll(); },
-    setBeamRadius: (v) => { state.beamRadius = v; $('beamRadius').value = v; $('beamValue').textContent = v.toFixed(1) + ' cm'; rebuildAll(); },
+    setBeamRadius: (v) => { state.beamWanted = v; state.beamRadius = v; $('beamRadius').value = v; $('beamValue').textContent = v.toFixed(1) + ' cm'; rebuildAll(); },
     setRayMode: (m) => { state.rayMode = m; syncLensButtons(); rebuildAll(); },
     setView: (name) => { if (applyView(name)) render(); },
     measure, recordNow,
@@ -1027,14 +1096,15 @@ import * as THREE from './assets/optics-three.min.js';
         principalX: drawn.principal,
         measuredFocal: drawn.measuredFocal,
         focusPos: drawn.focusPos,
-        beamEff: state.beamRadius,
+        beamEff: state.beamRadius, beamWanted: state.beamWanted,
         beamMaxUi: +$('beamRadius').max,
         beamKind: drawn.beam ? drawn.beam.kind : null,
         beamLevel: drawn.beam ? drawn.beam.level : null,
         rayCount: drawn.rays.length,
         rayMode: state.rayMode,
-        nearAxisLimit: APERTURE * NEAR_AXIS,
-        aperture: APERTURE, thick: THICK, n: N_GLASS,
+        nearAxisLimit: L.aperture * NEAR_AXIS,
+        aperture: L.aperture, thick: L.d, edgeGap: L.edgeGap, sag: L.sag,
+        drawnEdgeGap: drawn.edgeGap, n: N_GLASS,
         incidence: state.incidence,
         metricFocus: $('metricFocus').textContent,
         roFocus: $('roFocus').textContent,
