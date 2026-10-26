@@ -89,6 +89,27 @@
       // 四个盘的档位（0~9）。键名带倍数，免得 d1/d2/d3/d4 谁是谁分不清。
       defaults: { d1: 0, d10: 0, d100: 0, d1000: 0 },
     },
+    // ── 插入式电阻箱（插塞式电阻箱，J2360）──────────────────────
+    // 一条铜排被五个插孔分成六段，每两段之间吊着一段电阻丝（6/6/4/4/2 Ω）。
+    // 每个插孔里插着一个铜插塞：**插着 ⇒ 这个孔被短接**，底下那段丝不接入；
+    // **拔出来 ⇒ 电流只能绕道从丝里走**，那段阻值就进了电路。
+    // 全部拔出 = 22Ω；全部插着 = 0Ω（等于一根导线，不是断路）。
+    //
+    // 🔴 它和旋盘式电阻箱（resistancebox）是【两件不同的器材】，两件都留在
+    //    器材盒里，别拿一件替另一件：
+    //      · 旋盘式：四个转盘，0~9999Ω，步进 1Ω，靠【转】调；
+    //      · 插入式：五个插塞，只有 2⁵ = 32 种阻值，靠【拔插头】选档。
+    //    课本「伏安法测电阻」用旋盘式；插入式出现在变阻器那一节的实物图上，
+    //    学生要认的是「拔掉插头才有电阻」这件事 —— 这是它进课堂的全部理由。
+    //    两者的共同点是阻值【读得出来】，这正是它们和滑动变阻器的分别。
+    plugbox: {
+      label: '插入式电阻箱', terminals: 2, termNames: ['A', 'B'],
+      // p1..p5 = 五个插塞的状态，1 = 拔出（这段丝接入电路），0 = 插着（被短接）。
+      // 顺序 = 面板上从左到右 = 6Ω / 6Ω / 4Ω / 4Ω / 2Ω（见 PLUG_COILS）。
+      // 默认照课本那张实物图：中间两个 4Ω 的插头拔着 ⇒ R = 8Ω。
+      // 一进画布就看得见「有的插着、有的拔着」，这件器材怎么用不用再讲一遍。
+      defaults: { p1: 0, p2: 0, p3: 1, p4: 1, p5: 0 },
+    },
     // ── 导体板（探究电阻的影响因素）────────────────────────
     // 一块贴在小木板上的金属条，两个接线柱。它把「电阻的大小与材料、长度、
     // 横截面积有关」这句话变成三个能拧的旋钮：材料（换 ρ）、长度 L、
@@ -580,6 +601,50 @@
     return s;
   }
 
+  // ── 插入式电阻箱的五段丝（见 TYPES.plugbox）──────────────────
+  // 顺序 = 面板上从左到右 = 插孔 1..5 = 参数 p1..p5。绘制层按这个顺序摆铜排、
+  // 参数面板按它列勾选框、回填按它给 outs —— 三处共用一份，各写一份顺序的话
+  // 「面板上标 6Ω 的那一段」和「参数面板第一行」会指到不同的丝，而读数看着又是对的。
+  //
+  // turns 只是【画几圈】，绝不参与计算：圈数按阻值给（6Ω 六圈、2Ω 三圈），
+  // 让「阻值大 = 丝长 = 圈多」在画面上看得出来。谁要是拿 turns 去算电阻，
+  // 那就是把装饰当模型了（和「电阻箱按盘的倍数算总阻值」同一条界线）。
+  var PLUG_COILS = [
+    { k: 'p1', R: 6, turns: 6, label: '6Ω' },
+    { k: 'p2', R: 6, turns: 6, label: '6Ω' },
+    { k: 'p3', R: 4, turns: 5, label: '4Ω' },
+    { k: 'p4', R: 4, turns: 4, label: '4Ω' },
+    { k: 'p5', R: 2, turns: 3, label: '2Ω' },
+  ];
+  // 第 i 个插塞拔到什么程度（0 = 全插着，1 = 全拔出）。
+  // 连续量：拖动插头时画面上跟着手指走（见 circuit-editor 的 plugDrag），
+  // 松手才吸附到 0 / 1。存档是手改得动的 JSON，写成 "abc" / −3 / 7 都要夹回来。
+  function plugPos(comp, i) {
+    var meta = PLUG_COILS[i];
+    if (!meta) return 0;
+    var v = paramsOf(comp)[meta.k];
+    if (v === true) return 1;
+    if (v === false || v == null) return 0;
+    var n = num(v, 0);
+    return n < 0 ? 0 : (n > 1 ? 1 : n);
+  }
+  // 电气判据只有这一个：过 0.5 就算拔出来了（插塞没有「半拔」这一档 ——
+  // 真实的插塞要么插到底、要么拔出来，中间那段接触电阻不是初中要教的东西）。
+  // 🔴 绘制层要画【连续】位置（见 plugPos），内核只认这个 0/1 ——
+  //    两处各取一份阈值的话，会出现「画面上插头还吊在半空、电阻已经接进去了」。
+  function plugOut(comp, i) {
+    return plugPos(comp, i) > 0.5 ? 1 : 0;
+  }
+  // 拔出的那几段串起来的总阻值。这就是这件器材的全部物理：五段丝【串联】，
+  // 插头只是把其中几段短路掉。
+  function plugBoxR(comp) {
+    var s = 0;
+    for (var i = 0; i < PLUG_COILS.length; i++) {
+      if (plugOut(comp, i)) s += PLUG_COILS[i].R;
+    }
+    return s;
+  }
+
   // ── 电位器的两个参数（见 TYPES.potentiometer）────────────────
   // 取值一律过一遍夹取：存档是手改得动的 JSON，pos 写成 "abc" / 2 / −1
   // 都会让下面那条分压链算出 NaN 或者负电阻，而画面照画、读数印 NaN。
@@ -814,6 +879,13 @@
       // 「电阻箱调到 0 就是一根导线」，不是「断路」。
       case 'resistancebox':
         addR(N(0), N(1), resBoxR(comp));
+        break;
+
+      // 插入式电阻箱：五段丝串成一条 R 支路，阻值 = 拔出的那几段之和
+      //（见 plugBoxR）。插头全插着 = 0Ω，addR 会把它换成一条 0V 理想支路 ——
+      // 那正是「插头全插上就是一根导线」，不是断路（和电阻箱归零同一条）。
+      case 'plugbox':
+        addR(N(0), N(1), plugBoxR(comp));
         break;
 
       // 电阻示教板：四根丝各一条支路（端子 2i / 2i+1）。
@@ -1761,6 +1833,34 @@
             rec.R = rbx.R;
             rec.v = nV(sol, rbx.p) - nV(sol, rbx.q);
             rec.i = rec.v / rbx.R;
+          }
+          rec.p = rec.v * rec.i;
+          break;
+        }
+
+        // 插入式电阻箱：电气上同样是一条 R 支路，多回传的只有「五个插塞各是
+        // 拔着还是插着」—— 读数框要照着它说「拔了 2 个 · 8Ω」，学生才能核对
+        // 自己拔的是哪两个（只印一个总阻值，8Ω 是 6+2 还是 4+4 就分不出来）。
+        // outs 用【内核那份 plugOut】算，不在页面里再读一遍 params：
+        // 两处各取一份阈值的话，画面上插头吊在半空、读数已经算进去了。
+        case 'plugbox': {
+          rec.outs = PLUG_COILS.map(function (m, i) { return plugOut(c, i); });
+          rec.Rset = plugBoxR(c);
+          var gbr = bs[0];
+          if (!gbr) {
+            rec.R = rec.Rset;
+            rec.v = nV(sol, N(0)) - nV(sol, N(1));
+            rec.i = 0;
+            rec.p = 0;
+            break;
+          }
+          if (gbr.kind === 'V') {
+            // 插头全插着 ⇒ R = 0，走的是一条 0V 理想支路（等于一根导线）。
+            rec.R = 0; rec.v = 0; rec.i = bI(sol, gbr);
+          } else {
+            rec.R = gbr.R;
+            rec.v = nV(sol, gbr.p) - nV(sol, gbr.q);
+            rec.i = rec.v / gbr.R;
           }
           rec.p = rec.v * rec.i;
           break;
@@ -3033,6 +3133,13 @@
     RESBOX_DIALS: RESBOX_DIALS,
     resBoxDigit: resBoxDigit,
     resBoxR: resBoxR,
-    version: '1.7.0',
+    // 插入式电阻箱：五段丝（顺序 / 阻值 / 画几圈）、插塞拔到什么程度、
+    // 电气上算不算拔出、总阻值。绘制层按 PLUG_COILS 摆铜排和丝圈，参数面板
+    // 按它列五行勾选框，编辑器按 plugPos 画连续位置、按 plugOut 定电气状态。
+    PLUG_COILS: PLUG_COILS,
+    plugPos: plugPos,
+    plugOut: plugOut,
+    plugBoxR: plugBoxR,
+    version: '1.8.0',
   };
 });

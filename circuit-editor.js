@@ -60,6 +60,9 @@
     // 电阻箱：取 RX。R / RH / RB / RP 都被占了，而电阻箱在读数表里常和它们
     // 同时出现（一个定值、一个限流、一个分压、一个读得出数），编号不能撞。
     resistancebox: 'RX',
+    // 插入式电阻箱：取 PB（Plug Box）。它和旋盘式电阻箱（RX）是两件器材，
+    // 读数表里常常同时出现，编号撞了就分不清谁是谁 —— 和 RH / RP 分开同一条理由。
+    plugbox: 'PB',
     // 单刀双掷开关：取 SP 而不是 S。虽然「编号不重复」那条 while 循环本身
     // 就能挡住撞号（byId 查得到就往后跳），但和普通开关共用 S 的话，
     // 一块板上会数出 S1 / S2 两只【长得完全不一样】的开关，面板和读数表里
@@ -118,6 +121,11 @@
     // 边界上 —— onDown 里 hitTerminal 排在 hitComp 前面，「从柱子上拉线」
     // 那一下永远先被端子接走。和 CircuitDraw.bodyBox('resistancebox') 同一口径。
     resistancebox: [76, 78],
+    // 插入式电阻箱：命中框 = 整块底座（±112 × ±78，和 CircuitDraw.bodyBox
+    // 同一口径）。两个接线柱在 ±118、y = −3，横向落在框外 ——
+    // onDown 里 hitTerminal 排在 hitComp 前面，「从柱子上拉线」那一下永远
+    // 先被端子接走。竖向 78 是为了罩住【拔出来的插头】（帽顶 −76）。
+    plugbox: [112, 78],
     // 两只表的仪器本体全部落在导线【上方】（三个接线柱在底部探出来），
     // 所以高只有表壳+底座这一截，不是上下对称的。
     ammeter:   [100, 70],
@@ -180,6 +188,10 @@
     // 与档位；每一帧都从 v0 + 角度差重算，不在上一帧的结果上继续加
     //（快速转圈丢帧时会越积越多，wireDrag 那条注释里踩过同一个坑）。
     var resDial = null;
+    // 拔/插插入式电阻箱的插塞 {id, idx, y0, out0, moved}。y0 / out0 = 按下那一刻
+    // 的局部 y 与拔出行程；每一帧都从 out0 重算，不在上一帧的结果上继续加
+    //（快速拖动丢帧时会越积越多，wireDrag 那条注释里踩过同一个坑）。
+    var plugDrag = null;
     // 拖铅笔芯的移动夹 {id, dx, moved}。dx = 按下那一刻「夹口 x − 鼠标局部 x」，
     // 每一帧都用它把夹口摆回鼠标下面 —— 抓住夹子的哪一头都不会跳。
     var clipDrag = null;
@@ -365,6 +377,22 @@
         if (c.type !== 'resistancebox') continue;
         var l = D.toLocal(c, p.x, p.y);
         var k = D.resBoxDialAt(c, l.x, l.y);
+        if (k >= 0) return { comp: c, idx: k };
+      }
+      return null;
+    }
+
+    // 插入式电阻箱的插塞能不能一把抓住。几何全从 D.plugAt 取（和绘制同源）：
+    // 命中区 = 从【帽顶】到【铜排上沿】这一竖条，按当前拔出位置算 ——
+    // 拔出来的插头高了一截，框还留在插着的位置的话，学生伸手抓帽子上半截
+    // 会抓空（和「电位器滑片臂的命中区要跟着转角走」同一条规矩）。
+    function hitPlug(p) {
+      var cs = getScene().comps;
+      for (var i = cs.length - 1; i >= 0; i--) {
+        var c = cs[i];
+        if (c.type !== 'plugbox') continue;
+        var l = D.toLocal(c, p.x, p.y);
+        var k = D.plugAt(c, l.x, l.y);
         if (k >= 0) return { comp: c, idx: k };
       }
       return null;
@@ -1326,6 +1354,20 @@
         return;
       }
 
+      // 拔/插插入式电阻箱的插塞：同上，排在「搬走整块器材」前面 ——
+      // 插头长在铜排上，先判本体的话这一下永远被当成拖元件，插头就白画了。
+      var pg = hitPlug(p);
+      if (pg) {
+        beginEdit();
+        select({ kind: 'comp', id: pg.comp.id });
+        plugDrag = { id: pg.comp.id, idx: pg.idx,
+                     y0: D.toLocal(pg.comp, p.x, p.y).y,
+                     out0: D.plugPosOf(pg.comp, pg.idx), moved: false };
+        canvas.setPointerCapture && canvas.setPointerCapture(ev.pointerId);
+        changed();
+        return;
+      }
+
       var cs = getScene().comps;
       for (var i = cs.length - 1; i >= 0; i--) {   // 后画的在上层，从后往前找
         if (hitComp(p, cs[i])) {
@@ -1474,6 +1516,28 @@
         }
         resDial = null;
       }
+      if (plugDrag) {
+        var pgc = byId(plugDrag.id);
+        if (pgc) {
+          // 局部 y 的位移换算成「拔出行程」：往上拖 = 拔出（局部 y 变小）。
+          // 🔴 每帧都从 out0 重算，不在上一帧的结果上继续加 —— 丢帧时会越积越多。
+          var pgdy = D.toLocal(pgc, p.x, p.y).y - plugDrag.y0;
+          if (!plugDrag.moved && Math.abs(pgdy) > 3) {
+            plugDrag.moved = true; commitEdit();     // 真拔动了才入栈
+          }
+          if (plugDrag.moved) {
+            var pgt = Math.max(0, Math.min(1,
+              plugDrag.out0 - pgdy / D.PLUGBOX.TRAVEL));
+            pgc.params = pgc.params || {};
+            // 存【连续量】：画面上插头跟着手指走，松手才吸附到 0 / 1
+            //（电气上内核只认 > 0.5，见 plugOut）。
+            pgc.params['p' + (plugDrag.idx + 1)] = Math.round(pgt * 100) / 100;
+          }
+          onChange();
+          return;
+        }
+        plugDrag = null;
+      }
       if (psuKnob) {
         var pc = byId(psuKnob.id);
         if (pc && D.PSU) {
@@ -1551,6 +1615,10 @@
             var nrd = hitResDial(p);
             if (nrd) nh = { kind: 'resDial', id: nrd.comp.id, idx: nrd.idx };
             else {
+            // 插入式电阻箱的插塞：同上，是「长在铜排上的控件」，排在 hitComp 前
+            var npg = hitPlug(p);
+            if (npg) nh = { kind: 'plug', id: npg.comp.id, idx: npg.idx };
+            if (!nh) {
             var cs = getScene().comps;
             for (var i = cs.length - 1; i >= 0; i--) {
               if (hitComp(p, cs[i])) { nh = { kind: 'comp', id: cs[i].id }; break; }
@@ -1558,6 +1626,7 @@
             // 导线也进 hover：它现在能拖了，不给一个 move 光标的话，学生根本
             // 不知道这线是可拖的 —— 它长得和别的线一模一样。
             if (!nh) { var nw = hitWire(p); if (nw >= 0) nh = { kind: 'wire', index: nw }; }
+            }
             }
             }
             }
@@ -1579,6 +1648,8 @@
         : (nh && nh.kind === 'potArm') ? (potArm ? 'grabbing' : 'grab')
         // 电阻箱：转盘也是旋钮
         : (nh && nh.kind === 'resDial') ? (resDial ? 'grabbing' : 'grab')
+        // 插入式电阻箱：插塞是上下拔的，光标给 ns-resize（比 grab 更说明「方向」）
+        : (nh && nh.kind === 'plug') ? (plugDrag ? 'grabbing' : 'ns-resize')
         : (nh ? 'move' : 'default');
       if (changedHover) onChange();
     }
@@ -1808,6 +1879,29 @@
         // 同上：拨动了才留撤销记录。单纯点一下转盘 = 选中这块面板
         if (!resDial.moved) discardEdit();
         resDial = null;
+        changed();
+        return;
+      }
+      if (plugDrag) {
+        // 两条路改的是同一个参数，手感各不相同：
+        //   · 点一下（没拖动）= 插↔拔 切换 —— 这是最省事的操作，必须给；
+        //   · 拖着走（moved）= 松手时按过半吸附到 0 / 1 —— 像真的把插头按回去
+        //     或拔出来，拖到一半松手不会停在「半插着」那种现实中不存在的状态。
+        var pbc = byId(plugDrag.id);
+        var pidx = plugDrag.idx;
+        if (pbc) {
+          var pgt0 = D.plugPosOf(pbc, pidx);
+          var pout = plugDrag.moved ? (pgt0 > 0.5 ? 1 : 0)
+                                    : (pgt0 > 0.5 ? 0 : 1);
+          // 拔出来和插回去是两声不同的响（音效引擎里本来就有 plug / unplug）。
+          // 两条路都是【真的改了东西】，都要入撤销栈：拖动那条在 onMove 里
+          // 已经 commit 过一次（pending 已置空，这里再调是空操作）。
+          commitEdit();
+          pbc.params = pbc.params || {};
+          pbc.params['p' + (pidx + 1)] = pout;
+          report(pout ? 'unplug' : 'plug', { comp: pbc, idx: pidx });
+        }
+        plugDrag = null;
         changed();
         return;
       }
@@ -2102,6 +2196,31 @@
           ctx.scale(krd, krd);
           ctx.beginPath();
           ctx.arc(dk.x, dk.y, D.RESBOX.RING_R + 3, 0, 6.284);
+          ctx.fillStyle = 'rgba(37,99,235,0.12)';
+          ctx.fill();
+          ctx.strokeStyle = 'rgba(37,99,235,0.9)'; ctx.lineWidth = 2;
+          ctx.stroke();
+          ctx.restore();
+        }
+      }
+
+      // 悬停 / 正在拔【插入式电阻箱】的插塞：给那个插头描一圈蓝框。
+      // 描的是【被指到的那个插头】，不是整块底座 —— 命中区就是那一竖条，
+      // 描边和命中区一致，学生才知道自己抓的是哪一个。
+      // 框按【当前拔出位置】画（帽顶走 D.plugCapTop）：拔出来以后框跟着上移，
+      // 停在插着的位置的话，学生看着框在下面、手在上面。
+      var hpg = plugDrag || (hover && hover.kind === 'plug' ? hover : null);
+      if (hpg) {
+        var hgc = byId(hpg.id);
+        if (hgc && hgc.type === 'plugbox' && D.PLUGBOX) {
+          var kpg = D.scaleOf ? D.scaleOf(hgc) : 1;
+          var pgTop = D.plugCapTop(hgc, hpg.idx);
+          ctx.save();
+          ctx.translate(hgc.x, hgc.y);
+          ctx.rotate((hgc.rot || 0) * Math.PI / 180);
+          ctx.scale(kpg, kpg);
+          var pgx = D.plugX(hpg.idx);
+          D.roundRect(ctx, pgx - 13, pgTop - 4, 26, (D.PLUGBOX.BAR_TOP + 2) - pgTop + 8, 7);
           ctx.fillStyle = 'rgba(37,99,235,0.12)';
           ctx.fill();
           ctx.strokeStyle = 'rgba(37,99,235,0.9)'; ctx.lineWidth = 2;

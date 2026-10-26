@@ -1345,6 +1345,15 @@
         var R = (rec && rec.R != null) ? +rec.R : (P.R != null ? +P.R : 10);
         return 'R = ' + num(R) + ' Ω';
       }
+      // 插入式电阻箱：电路上就是一个电阻（教材上画成同一个矩形），铭牌印
+      // 【拔出来的那几段之和】。这个数随插头一变就变，正是它和滑动变阻器的
+      // 分别：变阻器的阻值看不出来，这件器材读得出来。
+      case 'plugbox': {
+        var Rpb = (rec && rec.R != null) ? +rec.R
+                : (rec && rec.Rset != null) ? +rec.Rset
+                : (core && core.plugBoxR ? core.plugBoxR(c) : null);
+        return Rpb == null ? '' : 'R = ' + num(Rpb) + ' Ω';
+      }
       // 导体板：电路上就是一段电阻（R = ρ·L/S），图上也按电阻符号画，
       // 铭牌印那个数 —— 学生拧材料/长度/横截面积时，图上的 R 跟着变，
       // 这正是「决定式」要在图上看出来的样子。
@@ -1932,7 +1941,7 @@
     ctx.fillStyle = COLOR.wire;
 
     switch (c.type) {
-      case 'resistor': case 'plate': case 'resistancebox': {
+      case 'resistor': case 'plate': case 'resistancebox': case 'plugbox': {
         lead(ctx, T[0], -56); lead(ctx, T[1], 56);
         ctx.beginPath();
         D.roundRect(ctx, -56, -13, 112, 26, 2);

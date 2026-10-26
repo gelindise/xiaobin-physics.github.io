@@ -543,6 +543,47 @@
   };
 
   // ============================================================
+  // 插入式电阻箱的几何（见下面 drawPlugBox 的长注释）
+  // ------------------------------------------------------------
+  // 和 POT / RESBOX 摆在这里的理由一样：TERMINALS.plugbox 要按它算两个接线柱，
+  // 绘制和端子坐标各写一份数字的话，柱子会落到铜排外面去。
+  //
+  // 尺寸照参考图量（横向长条、五段丝吊在铜排下面、插头立在铜排上面）：
+  //   铜排 6 段 × 24 宽 + 5 个插孔 × 12 = 204 宽（±102）
+  //   两个接线柱在 ±118（比铜排两端再外扩 16，柱子不压在铜排上）
+  // ============================================================
+  var PLUGBOX = {
+    NB: 6,                  // 铜排段数 = 插孔数 + 1
+    BLOCK_W: 24,            // 每段铜排的宽
+    GAP: 12,                // 插孔宽（= 相邻两段铜排之间的缺口）
+    BAR_TOP: -14, BAR_BOT: 8,
+    // 五个插孔的中心 x（= 五段丝的中心）。铜排第 j 段的中心见 barX()。
+    // 🔴 这个式子【只能有一份】：绘制、命中（plugAt）、拖动换算全从 plugX / barX
+    //    来。各写一份的话，「点到的插头」和「画出来的插头」会差半个格，
+    //    而画面上又看不出哪里错了。
+    X0: -72, PITCH: 36,
+    HW: 112, HH: 78,        // 包围盒（走线避让 / 点选）
+    PLATE: { y0: -20, y1: 70 },     // 底座（绝缘板）上下沿，左右 = ±HW
+    POST_X: 118, POST_Y: -3,        // 两个接线柱：比铜排再外扩 16
+    COIL_TOP: 16, COIL_BOT: 46, COIL_W: 26,
+    LABEL_Y: 60,                    // 阻值印在丝下面、底座上
+    CAP_W: 18, CAP_H: 18,           // 插头帽（黑色胶木方块）
+    // 插脚（黄铜针，带斜纹）。宽度【略大于插孔缺口】（12.6 > 12）：
+    // 插着的时候两侧压进铜排 0.3px，画面上不留缝 ——「插到底才接通」这件事
+    // 全靠这一点点重叠读出来；比缺口窄的话，两侧各露 1.5px 的暗缝，
+    // 看着像插头浮在孔里没插进去。
+    STEM_W: 12.6, STEM_LEN: 32,
+    // 插着时柱帽的下沿：离铜排上沿 12px，正好露一截插脚 —— 参考图上插着的
+    // 那几个也是「帽在铜排上面、中间露一段斜纹针」，不是把帽压在铜排上。
+    CAP_BOT_IN: -26,
+    TRAVEL: 32,             // 拔出时整只插头上移多少（帽顶 −76，落在包围盒内）
+  };
+  // 第 i 个插孔 / 插头的中心 x（i = 0..4）
+  function plugX(i) { return PLUGBOX.X0 + i * PLUGBOX.PITCH; }
+  // 第 j 段铜排的中心 x（j = 0..5）
+  function barX(j) { return PLUGBOX.X0 - PLUGBOX.PITCH / 2 + j * PLUGBOX.PITCH; }
+
+  // ============================================================
   // 端子坐标
   // ============================================================
   var TERMINALS = {
@@ -625,6 +666,10 @@
     // 电阻箱：两个接线柱在面板下沿、左右各一（图16-6 就是这么摆的）。
     // 0 号在左、1 号在右 —— 它没有极性，左右只是编号。
     resistancebox: RESBOX.POST.map(function (p) { return { x: p.x, y: p.y }; }),
+    // 插入式电阻箱：两个接线柱在铜排两头、比铜排再外扩 16（参考图上 A / B
+    // 就长在铜排两端的外面）。0 = 左（A）、1 = 右（B）—— 它没有极性。
+    plugbox: [{ x: -PLUGBOX.POST_X, y: PLUGBOX.POST_Y },
+              { x: PLUGBOX.POST_X, y: PLUGBOX.POST_Y }],
   };
 
   // 「对调极性」标记。电池 / 发光二极管 / 电动机的参数面板上有一个「对调」
@@ -853,6 +898,54 @@
     for (var i = 0; i < RESBOX.DIAL.length; i++) {
       var d = RESBOX.DIAL[i];
       if (Math.hypot(lx - d.x, ly - d.y) <= RESBOX.RING_R + 2) return i;
+    }
+    return -1;
+  }
+
+  // ── 插入式电阻箱：五段丝 / 插塞位置 / 命中 ─────────────────────
+  // 段表（顺序 / 阻值 / 画几圈 / 印什么字）在内核 PLUG_COILS，这里只转发 ——
+  // 和 resBoxMeta 同一条理由：绘制、参数面板、读数框必须指同一段丝。
+  function plugBoxMeta() {
+    var G2 = (typeof self !== 'undefined') ? self
+           : (typeof global !== 'undefined') ? global : this;
+    if (G2 && G2.CircuitCore && G2.CircuitCore.PLUG_COILS) return G2.CircuitCore.PLUG_COILS;
+    return [{ k: 'p1', R: 6, turns: 6, label: '6Ω' }, { k: 'p2', R: 6, turns: 6, label: '6Ω' },
+            { k: 'p3', R: 4, turns: 5, label: '4Ω' }, { k: 'p4', R: 4, turns: 4, label: '4Ω' },
+            { k: 'p5', R: 2, turns: 3, label: '2Ω' }];
+  }
+  // 第 i 个插塞拔到什么程度（0 = 全插着，1 = 全拔出）——【连续量】。
+  // 拖动时画面要跟着手指走，所以这里不取整；电气状态另走 plugOutOf。
+  function plugPosOf(comp, i) {
+    var meta = plugBoxMeta()[i];
+    if (!meta) return 0;
+    var P = (comp && comp.params) || {};
+    var v = P[meta.k];
+    if (v === true) return 1;
+    if (v === false || v == null) return 0;
+    var n = +v;
+    if (!isFinite(n)) return 0;
+    return n < 0 ? 0 : (n > 1 ? 1 : n);
+  }
+  // 电气判据：过 0.5 才算拔出来（真实的插塞要么插到底、要么拔出来）。
+  // 🔴 阈值只在这一处写；绘制位置用上面的连续量。两处混用的话，拖到一半
+  //    松手之前，画面上的插头还吊在半空、电阻已经接进去了。
+  function plugOutOf(comp, i) { return plugPosOf(comp, i) > 0.5 ? 1 : 0; }
+  // 插头帽的【上沿】y（元件自身坐标系）。绘制和命中都从这里算 ——
+  // 各写一份的话，插头拔出来以后就点不着了（命中框还留在插着的位置）。
+  function plugCapTop(comp, i) {
+    return PLUGBOX.CAP_BOT_IN - plugPosOf(comp, i) * PLUGBOX.TRAVEL - PLUGBOX.CAP_H;
+  }
+  // 点/拖在哪个插塞上（元件自身坐标系），-1 = 都没点到。
+  // 命中区 = 从【帽顶】到【铜排上沿】这一竖条，左右各放 3px：学生瞄的是那个
+  // 看得见的黑帽，不是圆心那一点（和 resBoxDialAt 同一条规矩）。
+  // ⚠️ 必须按【当前拔出的位置】算帽顶：拔出来的插头高了一截，框还留在
+  //    插着的位置的话，学生伸手去抓帽子上半截会抓空。
+  function plugAt(comp, lx, ly) {
+    for (var i = 0; i < plugBoxMeta().length; i++) {
+      var cx = plugX(i);
+      var top = plugCapTop(comp, i);
+      if (Math.abs(lx - cx) <= PLUGBOX.CAP_W / 2 + 3 &&
+          ly >= top - 3 && ly <= PLUGBOX.BAR_TOP + 3) return i;
     }
     return -1;
   }
@@ -1343,6 +1436,11 @@
     // 电阻箱：面板 ±76 × (−84…76)，两个接线柱在 +76 上（柱帽再探到 +86）。
     // 取景框要把柱帽也包进来，否则元件盒图标里那两根柱子被切掉。
     resistancebox: { x0: -80, y0: -88, x1: 80, y1: 90 },
+    // 插入式电阻箱：底座 ±112 × (−20…70)、铜排上沿 −14、拔出来的插头帽顶 −76，
+    // 两个接线柱在 ±118（柱帽再探出去几像素）。取景框要包住柱子和拔起的插头，
+    // 否则元件盒图标里「五个插头有几个是拔出来的」就看不出来了 ——
+    // 而那是这件器材唯一需要一眼看出的操作痕迹。
+    plugbox:   { x0: -130, y0: -84, x1: 130, y1: 78 },
   };
   var ICON_VIEW_DEF = { x0: -80, y0: -80, x1: 80, y1: 80 };
   // 把一件器材画进 w×h 的小格子里（ rec 传 null = 只画外形，不带读数 ）。
@@ -1597,6 +1695,12 @@
       // 这正是要的：「导线夹在柱子上」不该被当成「导线穿过面板」。盒子若跟着
       // 柱子长到 86，两根线每根都要绕面板一圈（和 plate / rheoboard 同一个坑）。
       case 'resistancebox': return { hw: RESBOX.HW, hh: RESBOX.BOT - 2 };
+      // 插入式电阻箱：盒子就是整块底座（±112 × ±78）。两个接线柱在 ±118、
+      // y = −3 —— 横向落在盒外，这正是要的：「导线夹在柱子上」不该被当成
+      // 「导线穿过元件」。盒子若跟着柱子长到 118，两根线每根都要绕板一圈
+      //（和 plate / rheoboard / resistancebox 同一个坑）。
+      // 竖向给 78 是为了罩住【拔出来的插头】（帽顶 −76），不是底座下沿。
+      case 'plugbox': return { hw: PLUGBOX.HW, hh: PLUGBOX.HH };
       // 表头：整台仪器的包围盒（表壳 + 底座）。接线柱在 POST_Y，
       // 故意落在盒子【外面】——导线夹在柱子上，不该被当成穿体。
       // 所以 hh 有【上限 70】：表壳为了放下大量程那排数字往上长到了 −104（见 MET），
@@ -3256,6 +3360,307 @@
     ctx.restore();
     // ③ 两个接线柱：无极性、比大器材的柱子小一号（面板下沿那点地方）
     posts(ctx, comp, ['neutral', 'neutral'], 1.05, 4);
+  }
+
+  // ============================================================
+  // 插入式电阻箱（插塞式电阻箱，J2360）
+  // ------------------------------------------------------------
+  // 参考图上必须一眼读出四件事，少一件学生就不知道这件器材怎么用：
+  //   ① 一条铜排被【五个插孔】分成六段，每两段之间吊着一段电阻丝 ——
+  //      「五段丝串联」这件事必须看得出来，不能画成五个独立的电阻；
+  //   ② 每段丝下面印着阻值（6Ω 6Ω 4Ω 4Ω 2Ω）—— 这正是它和滑动变阻器的
+  //      分别：变阻器的阻值看不出来，这件器材【读得出来】；
+  //   ③ 插孔里有插头：插着 = 铜排接通（那段丝被短接），拔出来 = 电流只能
+  //      绕道从丝里走 —— 这是「插入式」三个字的全部含义；
+  //   ④ 两个接线柱 A / B 在铜排两头。
+  //
+  // 🔴 这里【不算电阻】：哪几段接入由内核 plugOut / plugBoxR 定。
+  //    在绘制层再写一份「过 0.5 算拔出」，就等于埋下「改了模型、画面没跟着变」
+  //    的洞（和电阻箱那条注释同一条规矩）。这里只用 plugOutOf 决定
+  //    「这段丝该不该描红」。
+  // 🔴 插头的纵向位置要用【连续量】plugPosOf（拖动时跟着手指走），
+  //    电气状态用 0/1 的 plugOutOf —— 两处混用的话，拖到一半时画面上的插头
+  //    还吊在半空、电阻已经算进去了。
+  // ============================================================
+  // 一段丝：两根引线挂到铜排下沿 + 一串椭圆丝圈 + 底下印阻值。
+  // inCircuit = 这段丝现在在电路里（插头拔出来了）；live = 真的有电流。
+  function drawPlugCoil(ctx, cx, meta, inCircuit, live) {
+    var PB = PLUGBOX;
+    var n = Math.max(2, meta.turns || 4);
+    var cy = (PB.COIL_TOP + PB.COIL_BOT) / 2;
+    var ry = (PB.COIL_BOT - PB.COIL_TOP) / 2;
+    var rx = 3.7;
+    var span = PB.COIL_W - rx * 2;
+    var step = span / (n - 1);
+    var x0 = cx - span / 2;
+
+    // ① 两根引线：从丝圈顶部【粗铜片】式地接到铜排下沿的接线片上。
+    //    第一版是一根 2.6px 的细线、停在铜排下沿，看着像丝「贴」在铜排上 ——
+    //    学生读不出「这一段丝是接在这两段铜排之间的」。
+    //    现在三层画：暗外廓（读得出粗细）→ 铜色本体 → 一条偏左上的高光，
+    //    末端钻进铜排底面的【接线片】里（接线片在铜排之后画，压住线头）。
+    //    落点取 cx ∓ (GAP/2 + 4)：正好在左右两块铜排的内侧 4px，
+    //    而不是贴在缺口边上 —— 贴边看着像丝挂在两块铜排中间的空气里。
+    var leadX1 = cx - (PB.GAP / 2 + 4), leadX2 = cx + (PB.GAP / 2 + 4);
+    var leadY = PB.BAR_BOT - 2;
+    ctx.lineCap = 'round';
+    [[x0 + 1, leadX1], [x0 + span - 1, leadX2]].forEach(function (pp) {
+      var ax = pp[0], ay = cy - ry + 2;
+      ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(pp[1], leadY);
+      ctx.lineWidth = 6.2; ctx.strokeStyle = 'rgba(60,45,18,0.55)'; ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(pp[1], leadY);
+      ctx.lineWidth = 4.4; ctx.strokeStyle = '#c9a95f'; ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(ax - 0.9, ay); ctx.lineTo(pp[1] - 0.9, leadY);
+      ctx.lineWidth = 1.3; ctx.strokeStyle = 'rgba(255,250,224,0.62)'; ctx.stroke();
+    });
+
+    // ② 丝圈：一圈一圈的椭圆（螺旋丝侧视就是这个样子）。圈数按阻值给
+    //    （6Ω 六圈、2Ω 三圈），「阻值大 = 丝长 = 圈多」在画面上看得出来。
+    //    每圈先描一道暗外廓、再叠本色 —— 只描一条线的话，缩小以后五段丝会
+    //    糊成五团灰，看不出是「一圈一圈绕出来的丝」。
+    for (var k = 0; k < n; k++) {
+      var x = x0 + k * step;
+      ctx.beginPath(); ctx.ellipse(x, cy, rx, ry, 0.16, 0, 6.284);
+      ctx.lineWidth = 4.6; ctx.strokeStyle = 'rgba(38,50,64,0.42)'; ctx.stroke();
+      ctx.beginPath(); ctx.ellipse(x, cy, rx, ry, 0.16, 0, 6.284);
+      ctx.lineWidth = 2.4;
+      // 接入的丝偏铜色、没接入的偏钢灰：不描红时也能一眼分出「哪几段在用」。
+      ctx.strokeStyle = inCircuit ? '#c98a6a' : '#9aa8b8';
+      ctx.stroke();
+    }
+    // ③ 接入的那几段【描红】：标的是「这一段丝在电路里」，不是「正在通电」——
+    //    开关还没合时电流也是 0，可那时学生已经把插头拔了，也该看得出来。
+    //    真有电流时再叠一圈更宽的红晕（和电位器那段同一条规矩）。
+    if (inCircuit) {
+      for (var k2 = 0; k2 < n; k2++) {
+        var x2 = x0 + k2 * step;
+        if (live) {
+          ctx.beginPath(); ctx.ellipse(x2, cy, rx, ry, 0.16, 0, 6.284);
+          ctx.lineWidth = 7.5; ctx.strokeStyle = 'rgba(220,38,38,0.15)'; ctx.stroke();
+        }
+        ctx.beginPath(); ctx.ellipse(x2, cy, rx, ry, 0.16, 0, 6.284);
+        ctx.lineWidth = 1.5;
+        ctx.strokeStyle = live ? '#dc2626' : 'rgba(220,38,38,0.62)';
+        ctx.stroke();
+      }
+    }
+
+    // ④ 阻值：印在丝下面（底座上）。接入的那几段用红棕色加粗、和红线呼应，
+    //    没接入的压成灰 —— 「现在用的是哪几段」不用数插头也看得出来。
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.font = (inCircuit ? 'bold ' : '') + '12px -apple-system,"PingFang SC",sans-serif';
+    // 先描白边再填字：底座是浅灰蓝，深色字不描边在缩小时会糊掉
+    ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(255,255,255,0.86)';
+    ctx.strokeText(meta.label, cx, PB.LABEL_Y);
+    ctx.fillStyle = inCircuit ? '#b91c1c' : '#64748b';
+    ctx.fillText(meta.label, cx, PB.LABEL_Y);
+  }
+
+  // 一段铜排（黄铜块）。六段之间留着插孔，插孔靠「两端的端面压暗」读出来。
+  function drawPlugBar(ctx, cx) {
+    var PB = PLUGBOX, w = PB.BLOCK_W, h = PB.BAR_BOT - PB.BAR_TOP;
+    softShadow(ctx, cx - w / 2, PB.BAR_TOP, w, h, 5, 3);
+    roundRect(ctx, cx - w / 2, PB.BAR_TOP, w, h, 3);
+    ctx.fillStyle = linGrad(ctx, 0, PB.BAR_TOP, 0, PB.BAR_BOT,
+      [[0, '#f7e7b6'], [0.16, '#e3c680'], [0.46, '#c9a95f'],
+       [0.78, '#a6864a'], [1, '#7d6331']]);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(88,66,24,0.6)'; ctx.lineWidth = 1; ctx.stroke();
+    // 顶棱高光：黄铜是金属，上沿必然有一条亮线（和接线柱同一套打光）
+    ctx.fillStyle = 'rgba(255,250,224,0.7)';
+    roundRect(ctx, cx - w / 2 + 2.2, PB.BAR_TOP + 1.5, w - 4.4, 1.5, 0.75); ctx.fill();
+    // 两端端面压暗：相邻两段之间才有「这里断开了」的读法
+    ctx.strokeStyle = 'rgba(70,52,18,0.35)'; ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.moveTo(cx - w / 2 + 0.8, PB.BAR_TOP + 1); ctx.lineTo(cx - w / 2 + 0.8, PB.BAR_BOT - 1);
+    ctx.moveTo(cx + w / 2 - 0.8, PB.BAR_TOP + 1); ctx.lineTo(cx + w / 2 - 0.8, PB.BAR_BOT - 1);
+    ctx.stroke();
+  }
+
+  // 插孔：铜排缺口里的孔口。深色 + 一圈亮边（和焊片的孔同一条画法）。
+  // 插头插着时被插脚挡掉，拔出来才露出这个黑洞 ——「这里本来插着东西」全靠它。
+  // 宽度跟插脚对齐（STEM_W 12.6 → 孔 10.6）：孔比脚窄的话，插着时孔的暗边
+  // 会从插脚两侧露出来，看着像「插头没插到底、旁边还漏着缝」。
+  // 高度给满整条铜排（BAR_TOP−1 → BAR_BOT）：空的插孔本来就该是一条【通到底】
+  // 的槽 —— 只画顶上一小截的话，缺口下半截露着底座，读出来像「铜排断了一截」。
+  function drawPlugHole(ctx, cx) {
+    var PB = PLUGBOX;
+    roundRect(ctx, cx - 5.3, PB.BAR_TOP - 1, 10.6, (PB.BAR_BOT - PB.BAR_TOP) + 1.5, 2.2);
+    ctx.fillStyle = '#4a3a1a'; ctx.fill();
+    ctx.strokeStyle = 'rgba(255,246,214,0.5)'; ctx.lineWidth = 0.9; ctx.stroke();
+    // 槽底压一道更暗的影：孔越深越暗，插脚插到底才「吃满」这个槽
+    ctx.fillStyle = 'rgba(28,20,6,0.55)';
+    roundRect(ctx, cx - 4.2, PB.BAR_BOT - 6, 8.4, 5, 1.6); ctx.fill();
+  }
+
+  // 接线片：丝的两端压在铜排底面的小铜片里。
+  // 这是「丝真的接到铜排上了」唯一可信的视觉证据 —— 只画一根引线碰到铜排
+  // 下沿的话，读出来是「丝靠在铜排旁边」，不是「接进去了」。
+  // 画在铜排【之后】（所以它压在铜排下沿上），但要在插头【之前】。
+  function drawPlugClamp(ctx, cx) {
+    var PB = PLUGBOX;
+    var w = 10, h = 8, top = PB.BAR_BOT - 5;
+    // 投在铜排下沿的接触阴影：片子是压在铜排上的，不是贴纸
+    contactShadow(ctx, cx, PB.BAR_BOT + 1, w * 0.42, 3, 0.26);
+    roundRect(ctx, cx - w / 2, top, w, h, 2.2);
+    ctx.fillStyle = linGrad(ctx, 0, top, 0, top + h,
+      [[0, '#fdf3cf'], [0.22, '#e6c886'], [0.62, '#c2a259'], [1, '#8b6f36']]);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(70,52,18,0.7)'; ctx.lineWidth = 1; ctx.stroke();
+    // 顶沿的暗缝：片子插在铜排【下面】，交界处必然有一道缝
+    ctx.strokeStyle = 'rgba(58,42,14,0.5)'; ctx.lineWidth = 1.2;
+    ctx.beginPath(); ctx.moveTo(cx - w / 2 + 1.6, top + 0.9);
+    ctx.lineTo(cx + w / 2 - 1.6, top + 0.9); ctx.stroke();
+    // 底沿的进线口：丝从这道小口里进去（缺口朝下，正好对着下面那根引线）
+    ctx.fillStyle = 'rgba(64,46,16,0.55)';
+    roundRect(ctx, cx - 2.6, top + h - 3.2, 5.2, 3.6, 1.4); ctx.fill();
+    // 一道横向高光：读得出这是一块压出来的铜片
+    ctx.fillStyle = 'rgba(255,252,232,0.5)';
+    roundRect(ctx, cx - w / 2 + 1.6, top + 2.2, w - 3.2, 1.1, 0.55); ctx.fill();
+  }
+
+  // 一个插头：黄铜插脚（斜纹）+ 黑色胶木方帽。
+  // out 从 0（插着）到 1（拔出），位置是连续的 —— 拖动时跟着手指走。
+  function drawPlug(ctx, comp, i) {
+    var PB = PLUGBOX, cx = plugX(i);
+    var out = plugPosOf(comp, i);
+    var capBot = PB.CAP_BOT_IN - out * PB.TRAVEL;
+    var tip = capBot + PB.STEM_LEN;
+
+    // ① 插脚：黄铜针，带 45° 斜纹。参考图上插脚就是靠这排斜纹认出来的，
+    //    它也让插脚一眼区别于铜排（铜排是竖向渐变，没有纹）。
+    // 🔴 插脚【下宽上窄】，最宽处比缺口宽（12.6 > GAP 12）：插着的时候两侧
+    //    压进铜排 0.3px，画面上一点缝都不能留 —— 留一条 1.5px 的暗缝，学生
+    //    读出来是「插头没插到底」，而这件器材的全部道理就是「插到底才接通」。
+    //    做成上窄下宽的斜梢有两个好处：① 像真插脚；② 帽底那一截不至于比
+    //    胶木帽还宽，看着不像一根针。
+    //    两侧那两条亮边（渐变两端的 #f8f2df）就是「两块金属贴在一起」的高光。
+    var wTop = 10.2, wBot = PB.STEM_W;
+    function stemPath() {
+      ctx.beginPath();
+      ctx.moveTo(cx - wTop / 2, capBot);
+      ctx.lineTo(cx + wTop / 2, capBot);
+      ctx.lineTo(cx + wBot / 2, tip - 1.8);
+      ctx.quadraticCurveTo(cx + wBot / 2, tip, cx + wBot / 2 - 1.8, tip);
+      ctx.lineTo(cx - wBot / 2 + 1.8, tip);
+      ctx.quadraticCurveTo(cx - wBot / 2, tip, cx - wBot / 2, tip - 1.8);
+      ctx.closePath();
+    }
+    ctx.save();
+    stemPath();
+    ctx.clip();
+    ctx.fillStyle = linGrad(ctx, cx - wBot / 2, 0, cx + wBot / 2, 0,
+      [[0, '#c9b184'], [0.11, '#f8f2df'], [0.34, '#e8ddbd'],
+       [0.62, '#d6c79c'], [0.89, '#f8f2df'], [1, '#c9b184']]);
+    ctx.fillRect(cx - 8, capBot - 2, 16, tip - capBot + 4);
+    ctx.strokeStyle = 'rgba(120,96,48,0.5)'; ctx.lineWidth = 1.1;
+    for (var d = -16; d < 28; d += 5) {
+      ctx.beginPath();
+      ctx.moveTo(cx + d, capBot - 2); ctx.lineTo(cx + d + 36, capBot + 34);
+      ctx.stroke();
+    }
+    ctx.restore();
+    stemPath();
+    ctx.strokeStyle = 'rgba(96,76,34,0.65)'; ctx.lineWidth = 1; ctx.stroke();
+
+    // ② 柱帽：黑色胶木方帽。拔出来时它抬到铜排上方一截，一眼就能数出
+    //    「拔了几个」—— 这是这件器材唯一的操作痕迹，必须显眼。
+    softShadow(ctx, cx - PB.CAP_W / 2, capBot - PB.CAP_H, PB.CAP_W, PB.CAP_H, 6, 4);
+    roundRect(ctx, cx - PB.CAP_W / 2, capBot - PB.CAP_H, PB.CAP_W, PB.CAP_H, 2.6);
+    ctx.fillStyle = linGrad(ctx, 0, capBot - PB.CAP_H, 0, capBot,
+      [[0, '#4b535d'], [0.18, '#333a43'], [0.55, '#22272e'], [1, '#12161a']]);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(8,12,16,0.75)'; ctx.lineWidth = 1.1; ctx.stroke();
+    // 顶棱高光 + 底沿的金属箍（帽和插脚的交界）
+    ctx.fillStyle = 'rgba(196,208,222,0.5)';
+    roundRect(ctx, cx - PB.CAP_W / 2 + 2.4, capBot - PB.CAP_H + 1.6,
+              PB.CAP_W - 4.8, 1.4, 0.7); ctx.fill();
+    ctx.fillStyle = 'rgba(214,192,140,0.6)';
+    roundRect(ctx, cx - PB.CAP_W / 2 + 1, capBot - 2.4, PB.CAP_W - 2, 2.4, 1.2); ctx.fill();
+  }
+
+  function drawPlugBox(ctx, comp, rec) {
+    var PB = PLUGBOX, sc = ctxScale(ctx);
+    var metas = plugBoxMeta();
+    var live = !!(rec && Math.abs(rec.i) > 1e-9);
+
+    ctx.save();
+    ctx.translate(comp.x, comp.y);
+    ctx.rotate((comp.rot || 0) * Math.PI / 180);
+    ctx.scale(scaleOf(comp), scaleOf(comp));
+
+    // ① 底座：浅色绝缘板（胶木）。五段丝和铜排都装在它上面，丝下面的阻值
+    //    也是印在它上面 —— 没有这块板，丝和数字就都浮在空中。
+    basePlate(ctx, PB.HW, PB.PLATE.y0, PB.PLATE.y0 + 7, PB.PLATE.y1, { screws: false });
+    // 四角一字螺钉自己摆：basePlate 默认那四个正好压在铜排和丝圈上
+    [[-PB.HW + 9, PB.PLATE.y0 + 9], [PB.HW - 9, PB.PLATE.y0 + 9],
+     [-PB.HW + 9, PB.PLATE.y1 - 9], [PB.HW - 9, PB.PLATE.y1 - 9]]
+      .forEach(function (s) {
+        ctx.fillStyle = 'rgba(40,52,68,0.16)';
+        ctx.beginPath(); ctx.arc(s[0], s[1], 4.4, 0, 6.284); ctx.fill();
+        screwHead(ctx, s[0], s[1], 3.2, 'slot', sc);
+      });
+
+    // ② 五段丝（画在铜排【之前】：铜排要压住丝的两根引线）
+    for (var i = 0; i < metas.length; i++) {
+      drawPlugCoil(ctx, plugX(i), metas[i], plugOutOf(comp, i) === 1, live);
+    }
+
+    // ③ 六段铜排
+    for (var j = 0; j < PB.NB; j++) drawPlugBar(ctx, barX(j));
+
+    // ④ 五个插孔（空着的孔口）。插着时被插脚挡住，拔出来才露出来。
+    for (var h = 0; h < metas.length; h++) drawPlugHole(ctx, plugX(h));
+
+    // ⑤ 十片接线片：每段丝的两端各一片，压在左右铜排的下沿上。
+    //    必须排在铜排【之后】（压在铜排下沿上才叫「接进去」）、插头【之前】。
+    for (var cj = 0; cj < metas.length; cj++) {
+      drawPlugClamp(ctx, plugX(cj) - (PB.GAP / 2 + 4));
+      drawPlugClamp(ctx, plugX(cj) + (PB.GAP / 2 + 4));
+    }
+
+    // ⑥ 五个插头
+    for (var q = 0; q < metas.length; q++) drawPlug(ctx, comp, q);
+
+    // ⑥ 两头的引出铜片 + 绝缘座 + 字母 A / B。
+    //    铜片从端头那段铜排的外沿伸到接线柱 —— 它是「柱子接在这条铜排上」
+    //    的唯一证据，省掉的话柱子看着是凭空立在旁边的。
+    [-1, 1].forEach(function (sgn) {
+      var bx0 = sgn * (PB.HW - 10), bx1 = sgn * (PB.POST_X - 3);
+      ctx.strokeStyle = 'rgba(92,74,38,0.55)'; ctx.lineWidth = 7;
+      ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(bx0, PB.POST_Y); ctx.lineTo(bx1, PB.POST_Y); ctx.stroke();
+      ctx.strokeStyle = '#c9a95f'; ctx.lineWidth = 5;
+      ctx.beginPath(); ctx.moveTo(bx0, PB.POST_Y); ctx.lineTo(bx1, PB.POST_Y); ctx.stroke();
+      ctx.strokeStyle = 'rgba(255,250,224,0.55)'; ctx.lineWidth = 1.4;
+      ctx.beginPath(); ctx.moveTo(bx0, PB.POST_Y - 1.4); ctx.lineTo(bx1, PB.POST_Y - 1.4); ctx.stroke();
+      // 绝缘座：一小块米白瓷座（参考图上 A / B 就长在这种白座上）
+      roundRect(ctx, sgn * PB.POST_X - 7, PB.POST_Y + 2, 14, 9, 2.4);
+      ctx.fillStyle = linGrad(ctx, 0, PB.POST_Y + 2, 0, PB.POST_Y + 11,
+        [[0, '#fdfbf4'], [0.6, '#ece6d6'], [1, '#cfc7b4']]);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(96,88,70,0.5)'; ctx.lineWidth = 1; ctx.stroke();
+    });
+    // 字母印在柱子上方。缩到 0.6 以下就不印了 —— 再小只是一团灰，反而糊住柱子。
+    // ⚠️ x 往内收 11：正对着柱子（±118）的话，选中时那圈虚线框（±119）会
+    //    从字母中间穿过去，看着像字母被划掉。
+    // ⚠️ y 抬到 −33：柱子自己（含螺杆）顶到 −23，字母压在柱头上就成了「帽子」。
+    if (sc * scaleOf(comp) >= 0.6) {
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.font = 'bold 14px -apple-system,"PingFang SC",sans-serif';
+      [-1, 1].forEach(function (sgn) {
+        var lx = sgn * (PB.POST_X - 11), ly = PB.POST_Y - 30;
+        ctx.lineWidth = 3.4; ctx.strokeStyle = 'rgba(255,255,255,0.92)';
+        ctx.strokeText(sgn < 0 ? 'A' : 'B', lx, ly);
+        ctx.fillStyle = '#1e293b';
+        ctx.fillText(sgn < 0 ? 'A' : 'B', lx, ly);
+      });
+    }
+
+    ctx.restore();
+    // ⑦ 两个接线柱（无极性、金属色）。放在 restore 之后：posts 自己算位姿，
+    //    并把 __posts 记下来，宿主把导线画在元件之上以后会补画一次。
+    posts(ctx, comp, ['neutral', 'neutral'], 1.15, 8);
   }
 
   // ============================================================
@@ -6560,6 +6965,7 @@
       case 'rheoboard': drawRheoboard(ctx, comp, rec); break;
       case 'potentiometer': drawPotentiometer(ctx, comp, rec); break;
       case 'resistancebox': drawResistanceBox(ctx, comp, rec); break;
+      case 'plugbox': drawPlugBox(ctx, comp, rec); break;
       case 'pencil': drawPencil(ctx, comp, rec); break;
       case 'junction': drawJunction(ctx, comp); break;
       default: throw new Error('未知元件类型: ' + comp.type);
@@ -6611,6 +7017,12 @@
     // 自检也要拿 RESBOX 去点盘心、量红三角，别自己再抄一遍 38 / 44。
     RESBOX: RESBOX, resBoxMeta: resBoxMeta, resBoxDigitOf: resBoxDigitOf,
     resBoxDialAt: resBoxDialAt, resBoxDigitFromTurn: resBoxDigitFromTurn,
+    // 插入式电阻箱：几何 / 五段丝 / 插塞位置 / 命中。
+    // 编辑器拖插头必须走 plugAt + plugPosOf（和绘制同源），自检也要拿 PLUGBOX
+    // 去点插头、量铜排段数，别自己再抄一遍 36 / 12。
+    PLUGBOX: PLUGBOX, plugBoxMeta: plugBoxMeta,
+    plugPosOf: plugPosOf, plugOutOf: plugOutOf,
+    plugCapTop: plugCapTop, plugAt: plugAt, plugX: plugX, barX: barX,
     // 铅笔芯：夹子在芯上的局部 x ↔ 接入长度（mm）。拖动改长度时编辑器
     // 必须走这一份换算 —— 另写一份「x 到毫米」的算式，画到哪儿和电阻
     // 是多少就会错开（和滑片那条注释同一个坑）。
