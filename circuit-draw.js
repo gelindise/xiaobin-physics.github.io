@@ -584,6 +584,47 @@
   function barX(j) { return PLUGBOX.X0 - PLUGBOX.PITCH / 2 + j * PLUGBOX.PITCH; }
 
   // ============================================================
+  // 焦耳定律演示器的几何（人教版 图18.4-2 / 图18.4-3）
+  // ------------------------------------------------------------
+  // 和 POT / RESBOX / PLUGBOX 摆在这里的理由一样：TERMINALS.joule 要按它算
+  // 四根接线柱。绘制和端子坐标各写一份数字的话，柱子会落到盖子外面去。
+  // ⚠️ 这几个数【必须定义在 TERMINALS 之前】：TERMINALS 是在文件顶层求值的，
+  //    写在后面的话 var 提升到的是 undefined（见 PENCIL.POST 那条注释）。
+  // ============================================================
+  var JOULE = {
+    BOX_W: 96, BOX_TOP: 0, BOX_BOT: 96,     // 两个容器（正面 ±48，顶 0、底 96）
+    BOX_X: 104,                              // 左右箱中心 ±104
+    LID_W: 106, LID_TOP: -9, LID_BOT: 1,     // 盖子：比箱体宽 10、厚 10
+    // 盖子上两根柱（相对箱心 ±18）。y = −8：柱脚正好落在盖子顶面（−9）上，
+    // 落在 0 的话柱子会被盖子吃掉半截，看着像插在罐子里。
+    // 🔴 这两根柱就是【电热丝的两个接线端】：盒里的丝从顶上那道缺口引出两根
+    //    短脚，直接顶到柱脚上（见 drawJouleHeater）。
+    POST_DX: 18, POST_Y: -8,
+    // 容器接管的上升点：落在盖子【内侧】，避开两根柱。
+    LEG_X: 68,
+    // 每台仪器有【两只独立的 U 形管】，各接一个容器（参考图上中间并排的
+    // 四根竖管就是两只 U 形管）。OUT_X = 接容器那条腿（外侧），
+    // IN_X = 敞口通大气那条腿（内侧）。
+    OUT_X: 40, IN_X: 14,
+    // 接管 U 弯的高度（= 汇入外侧腿的位置）；敞口腿的顶端比它高出一大截 ——
+    // 那是参考图上最扎眼的形状：两只压力计的管子从中间竖起来。
+    ARCH_Y: -36,
+    COL_TOP: -104,                           // 敞口腿的顶端
+    MAN_BOT: 46,                             // U 弯圆心
+    TUBE_R: 5.2,                             // 玻璃管内半径
+    WALL: 2.2,                               // 玻璃壁厚
+    // 静止液面 / 单侧最大位移。液面【必须在汇合口以下】（−36）：升到汇合口
+    // 上面去的话，液体就跑到「容器接管那段封闭的空气里」了，画面上看着像
+    // 液柱从管子的侧面漏出来。−10 比 −36 低 26，留得下 ±22 的行程。
+    LVL_REST: -10, LVL_MAX: 22,
+    HEAT_Y: 42, HEAT_R: 25,                  // 电热丝圈心 / 半径
+    LABEL_Y: 82,                             // 箱体上印阻值的位置
+    HW: 157, HH: 114,                        // 包围盒（含盖子最外沿与敞口腿顶端）
+  };
+  // 箱体中心 x（i = 0 甲 / 1 乙）
+  function jouleBoxX(i) { return (i ? 1 : -1) * JOULE.BOX_X; }
+
+  // ============================================================
   // 端子坐标
   // ============================================================
   var TERMINALS = {
@@ -670,6 +711,14 @@
     // 就长在铜排两端的外面）。0 = 左（A）、1 = 右（B）—— 它没有极性。
     plugbox: [{ x: -PLUGBOX.POST_X, y: PLUGBOX.POST_Y },
               { x: PLUGBOX.POST_X, y: PLUGBOX.POST_Y }],
+    // 焦耳定律演示器：四根柱都长在两个容器的【盖子】上。
+    // 0/1 = 甲（左）容器的两根，2/3 = 乙（右）容器 —— 和内核 TYPES.joule 的
+    // termNames 一一对应（改这里必须一起改内核，否则「甲」的电流会算到「乙」上）。
+    // 顺序：甲的左柱、甲的右柱、乙的左柱、乙的右柱（= 电热丝的两端）
+    joule: [{ x: -(JOULE.BOX_X + JOULE.POST_DX), y: JOULE.POST_Y },
+            { x: -(JOULE.BOX_X - JOULE.POST_DX), y: JOULE.POST_Y },
+            { x: (JOULE.BOX_X - JOULE.POST_DX), y: JOULE.POST_Y },
+            { x: (JOULE.BOX_X + JOULE.POST_DX), y: JOULE.POST_Y }],
   };
 
   // 「对调极性」标记。电池 / 发光二极管 / 电动机的参数面板上有一个「对调」
@@ -1441,6 +1490,11 @@
     // 否则元件盒图标里「五个插头有几个是拔出来的」就看不出来了 ——
     // 而那是这件器材唯一需要一眼看出的操作痕迹。
     plugbox:   { x0: -130, y0: -84, x1: 130, y1: 78 },
+    // 焦耳定律演示器：两个容器 ±147（含盖子）、底 96；压力计的竖管顶到
+    // −104（封口的圆头再探到 −113）。取景框要包住整个封口，否则元件盒图标里
+    // 那两根竖管会被切平 —— 而「两根管子从中间竖起来」正是这台仪器唯一的
+    // 形状特征。
+    joule:     { x0: -162, y0: -120, x1: 162, y1: 106 },
   };
   var ICON_VIEW_DEF = { x0: -80, y0: -80, x1: 80, y1: 80 };
   // 把一件器材画进 w×h 的小格子里（ rec 传 null = 只画外形，不带读数 ）。
@@ -1701,6 +1755,11 @@
       //（和 plate / rheoboard / resistancebox 同一个坑）。
       // 竖向给 78 是为了罩住【拔出来的插头】（帽顶 −76），不是底座下沿。
       case 'plugbox': return { hw: PLUGBOX.HW, hh: PLUGBOX.HH };
+      // 焦耳定律演示器：盒子就是整台仪器（±147 × ±96）。四根柱子都长在
+      // 【盖子】上（y = −8），横坐标 ±76 / ±124 —— 落在盒子里是有意的：
+      // 这件器材的柱子本来就长在本体上（和学生电源一样），走线避让只判
+      // 竖车道，柱子那截不参与，不会把「导线夹在柱子上」判成「穿过元件」。
+      case 'joule': return { hw: JOULE.HW, hh: JOULE.HH };
       // 表头：整台仪器的包围盒（表壳 + 底座）。接线柱在 POST_Y，
       // 故意落在盒子【外面】——导线夹在柱子上，不该被当成穿体。
       // 所以 hh 有【上限 70】：表壳为了放下大量程那排数字往上长到了 −104（见 MET），
@@ -3661,6 +3720,241 @@
     // ⑦ 两个接线柱（无极性、金属色）。放在 restore 之后：posts 自己算位姿，
     //    并把 __posts 记下来，宿主把导线画在元件之上以后会补画一次。
     posts(ctx, comp, ['neutral', 'neutral'], 1.15, 8);
+  }
+
+  // ============================================================
+  // 焦耳定律演示器（人教版 图18.4-2 / 图18.4-3）
+  // ------------------------------------------------------------
+  // 参考图上要一眼读出五件事，少一件这台仪器就读不出数：
+  //   ① 两个密闭的金属容器，盖子上各两根接线柱（甲 5Ω、乙 10Ω）；
+  //   ② 容器里各有一段电热丝，**丝的两端从顶部缺口引出两根短脚、接到那两根
+  //      柱子上** —— 丝不是悬空的，它和柱子是同一个回路；
+  //   ③ 每个容器【各配一只独立的 U 形管】：容器引一根管上去、U 弯、下来接
+  //      到 U 形管的【外侧腿】，【内侧腿】敞口通大气；
+  //   ④ 容器里的空气受热 ⇒ 它那只 U 形管的液面【外侧降、内侧升】，
+  //      两边的移动量都是 d，所以液面高度差 = 2d ∝ 产热功率 P；
+  //   ⑤ 两只管子各读各的，**比较的是两只管子的高度差**（不是一根管子的两边）。
+  //
+  // 🔴 液面高度【不是绘制层算的】：内核按 rec.levels（甲、乙各自的 P/满偏）
+  //    算好传进来，这里只按这两个数把两根液柱画高画低。绘制层自己再去碰 P
+  //    的话，「画面上的读数」和「算出来的功率」迟早会对不上（和电阻箱那条
+  //    注释同一条规矩）。
+  // 🔴 画序：箱体 → 电热丝 + 引出脚 → 盖子 → 阻值 → 玻璃管 → 液柱 → 接线柱。
+  //    引出脚要画在【盖子之前】：脚的上端钻进盖子下面，露在盖子外面就成了
+  //    两根戳在盖子上的铜棍（参考图上脚是从盖子里伸出来的）。
+  //    玻璃管要画在【盖子之后】：管子的下端要正好落在盖子顶面上。
+  // ============================================================
+  // 这台仪器在画面上印的阻值：优先读【算好的】rec（参数被手改过也照实印），
+  // 图标（rec 为 null）退回参数。
+  function jouleRof(comp, i, rec) {
+    if (rec && rec.boxes && rec.boxes[i]) return rec.boxes[i].R;
+    var P = (comp && comp.params) || {};
+    var v = +(i ? P.R2 : P.R1);
+    return (isFinite(v) && v > 0) ? v : (i ? 10 : 5);
+  }
+  function jouleRTxt(R) {
+    return (Math.abs(R - Math.round(R)) < 1e-9 ? String(Math.round(R)) : String(R)) + 'Ω';
+  }
+
+  // 容器里的电热丝：正面看是一圈螺旋丝（一圈短径向线），【顶部】留一个缺口，
+  // 缺口两端各引一根短脚上去，接到盖子上的两根接线柱 ——
+  // 这两根脚就是「电阻丝的两端接在柱子上」的唯一视觉证据，省掉的话丝就是
+  // 悬空在盒子里的（参考图上那两根短脚清清楚楚）。
+  function drawJouleHeater(ctx, cx) {
+    var J = JOULE, cy = J.HEAT_Y, r = J.HEAT_R;
+    var n = 46, gap = 1.0;                  // 顶部缺口（弧度，约 57°）
+    var a0 = -Math.PI / 2 + gap / 2;        // 从缺口右侧起笔，绕一整圈
+    var a1 = -Math.PI / 2 - gap / 2 + Math.PI * 2;
+    // 丝的底衬：一圈很淡的暗影。丝压在上面才有「嵌在箱子里」的感觉，
+    // 光秃秃一圈短线看着像贴纸。⚠️ 只能很淡 —— 给到 0.10 时缩小以后
+    // 整圈糊成一个深色圆盘，看着像个小风扇。
+    ctx.beginPath(); ctx.arc(cx, cy, r - 3, a0, a1);
+    ctx.lineWidth = 10; ctx.strokeStyle = 'rgba(96,116,136,0.06)'; ctx.stroke();
+    // 径向短线 = 螺旋丝正对着我们时看到的一圈圈
+    ctx.lineWidth = 1.5; ctx.strokeStyle = '#6a7a8a'; ctx.lineCap = 'round';
+    for (var k = 0; k < n; k++) {
+      var a = a0 + (a1 - a0) * k / (n - 1);
+      var c = Math.cos(a), s = Math.sin(a);
+      ctx.beginPath();
+      ctx.moveTo(cx + c * (r - 9), cy + s * (r - 9));
+      ctx.lineTo(cx + c * r, cy + s * r);
+      ctx.stroke();
+    }
+    // 两根引出脚：从缺口两端直上，顶到柱脚（柱心在 ±POST_DX、柱脚在 POST_Y）。
+    // 丝是【黄铜色】的，和箱子里的金属件区分开，一眼看得出这是一根导线。
+    [-1, 1].forEach(function (sgn) {
+      var a = sgn < 0 ? a1 : a0;
+      var x0 = cx + Math.cos(a) * (r - 4.5);
+      var y0 = cy + Math.sin(a) * (r - 4.5);
+      var x1 = cx + sgn * J.POST_DX, y1 = J.POST_Y + 3;
+      ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1);
+      ctx.lineWidth = 4.4; ctx.strokeStyle = 'rgba(64,48,20,0.45)'; ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1);
+      ctx.lineWidth = 2.8; ctx.strokeStyle = '#c9a95f'; ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(x0 - 0.7, y0); ctx.lineTo(x1 - 0.7, y1);
+      ctx.lineWidth = 1; ctx.strokeStyle = 'rgba(255,250,224,0.6)'; ctx.stroke();
+      // 丝的两个端头：小圆头，正好压在脚的下端
+      ctx.beginPath();
+      ctx.arc(x0, y0, 2.2, 0, 6.284);
+      ctx.fillStyle = '#c9a95f'; ctx.fill();
+    });
+  }
+
+  // 一只 U 形管（每台仪器有【两只】，各接一个容器）：
+  //   外侧腿（OUT_X）接容器、内侧腿（IN_X）敞口通大气。
+  // 一条连续路径：盖子 → 上升 → 顶部 U 弯 → 外侧腿下行 → 底 U 弯 → 内侧腿上升。
+  // sgn = −1 左 / +1 右。两边的圆弧方向相反，写成一个函数才不会漏掉一边
+  // （漏了的话那一侧的弯会朝反方向鼓，画成一只「碗」）。
+  function jouleSidePath(ctx, sgn) {
+    var J = JOULE;
+    var m1 = (J.LEG_X + J.OUT_X) / 2, r1 = (J.LEG_X - J.OUT_X) / 2;   // 顶部 U 弯
+    var m2 = (J.OUT_X + J.IN_X) / 2, r2 = (J.OUT_X - J.IN_X) / 2;     // 底部 U 弯
+    ctx.beginPath();
+    ctx.moveTo(sgn * J.LEG_X, J.LID_TOP);
+    ctx.lineTo(sgn * J.LEG_X, J.ARCH_Y);
+    // 顶部 U 弯：从上升点绕到外侧腿（朝上鼓）
+    if (sgn < 0) ctx.arc(sgn * m1, J.ARCH_Y, r1, Math.PI, 0, false);  // 左：π→2π
+    else         ctx.arc(sgn * m1, J.ARCH_Y, r1, 0, Math.PI, true);   // 右：0→−π
+    ctx.lineTo(sgn * J.OUT_X, J.MAN_BOT);
+    // 底部 U 弯：从外侧腿绕到内侧腿（朝下鼓）
+    if (sgn < 0) ctx.arc(sgn * m2, J.MAN_BOT, r2, Math.PI, 0, true);  // 左：π→0，过下方
+    else         ctx.arc(sgn * m2, J.MAN_BOT, r2, 0, Math.PI, false); // 右：0→π，过下方
+    ctx.lineTo(sgn * J.IN_X, J.COL_TOP);
+  }
+  function drawJouleTube(ctx) {
+    var J = JOULE;
+    ctx.lineCap = 'butt'; ctx.lineJoin = 'round';
+    // 三层叠出「玻璃有厚度」：外壁暗边 → 玻璃体（近白）→ 液柱再压上来。
+    [-1, 1].forEach(function (sgn) {
+      for (var pass = 0; pass < 2; pass++) {
+        jouleSidePath(ctx, sgn);
+        ctx.lineWidth = pass === 0 ? 2 * (J.TUBE_R + J.WALL) : 2 * J.TUBE_R;
+        ctx.strokeStyle = pass === 0 ? 'rgba(104,132,154,0.55)' : '#e9f4fb';
+        ctx.stroke();
+      }
+      // 敞口腿的管口：一圈略深的管壁断面 —— 它是【通大气】的那一头，
+      // 画成封口的话，学生就看不出「这一边受大气压」了。
+      ctx.beginPath();
+      ctx.ellipse(sgn * J.IN_X, J.COL_TOP, J.TUBE_R, 1.6, 0, 0, 6.284);
+      ctx.fillStyle = 'rgba(150,178,198,0.9)'; ctx.fill();
+      ctx.beginPath();
+      ctx.ellipse(sgn * J.IN_X, J.COL_TOP, J.TUBE_R - 1.6, 0.9, 0, 0, 6.284);
+      ctx.fillStyle = '#e9f4fb'; ctx.fill();
+    });
+  }
+
+  // 一只 U 形管里的液柱：外侧腿 → 底弯 → 内侧腿，线宽就是液柱的宽度。
+  // yOut = 外侧腿（接容器）的液面，yIn = 内侧腿（敞口）的液面。
+  // 🔴 容器受热 ⇒ 外侧腿的液面【下降】、内侧腿【上升】，两边各走 d，
+  //    所以高度差是 2d —— 这正是「比较两只管子的高度差」的读数。
+  function drawJouleLiquid(ctx, sgn, yOut, yIn) {
+    var J = JOULE;
+    var m2 = (J.OUT_X + J.IN_X) / 2, r2 = (J.OUT_X - J.IN_X) / 2;
+    // 横向渐变：四条腿各得到一条「中间亮、两边暗」的圆柱高光。
+    // 用 addColorStop 按腿的位置现算，改几何时不用再手调一堆小数。
+    var X = J.OUT_X + J.TUBE_R;
+    var g = ctx.createLinearGradient(-X, 0, X, 0);
+    [-J.OUT_X, -J.IN_X, J.IN_X, J.OUT_X].forEach(function (lx) {
+      var t = (lx + X) / (2 * X), w = (J.TUBE_R - 0.9) / (2 * X);
+      g.addColorStop(Math.max(0, t - w), '#2f8fc8');
+      g.addColorStop(t, '#8fd0ef');
+      g.addColorStop(Math.min(1, t + w), '#2f8fc8');
+    });
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    ctx.beginPath();
+    ctx.moveTo(sgn * J.OUT_X, yOut);
+    ctx.lineTo(sgn * J.OUT_X, J.MAN_BOT);
+    if (sgn < 0) ctx.arc(sgn * m2, J.MAN_BOT, r2, Math.PI, 0, true);
+    else         ctx.arc(sgn * m2, J.MAN_BOT, r2, 0, Math.PI, false);
+    ctx.lineTo(sgn * J.IN_X, yIn);
+    ctx.lineWidth = 2 * J.TUBE_R - 1.4;
+    ctx.strokeStyle = g;
+    ctx.stroke();
+    // 两个液面各一道亮的弯月面。读数就是看【同一只管子里这两条线的高差】。
+    [[J.OUT_X, yOut], [J.IN_X, yIn]].forEach(function (p) {
+      ctx.beginPath();
+      ctx.ellipse(sgn * p[0], p[1], J.TUBE_R - 1, 1.6, 0, 0, 6.284);
+      ctx.fillStyle = 'rgba(196,234,250,0.9)'; ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,0.72)'; ctx.lineWidth = 0.8; ctx.stroke();
+    });
+  }
+
+  // 一个容器：金属罐 + 盖子 + 里面的电热丝 + 阻值。
+  function drawJouleCan(ctx, cx, comp, idx, rec) {
+    var J = JOULE, hw = J.BOX_W / 2;
+    // ① 箱体：正面是浅蓝灰的金属罐（上亮下暗）
+    softShadow(ctx, cx - hw, J.BOX_TOP, hw * 2, J.BOX_BOT - J.BOX_TOP, 12, 6);
+    contactShadow(ctx, cx, J.BOX_BOT + 1, hw * 0.92, 5, 0.28);
+    roundRect(ctx, cx - hw, J.BOX_TOP, hw * 2, J.BOX_BOT - J.BOX_TOP, 4);
+    ctx.fillStyle = linGrad(ctx, 0, J.BOX_TOP, 0, J.BOX_BOT,
+      [[0, '#f6fafc'], [0.16, '#e6eef5'], [0.52, '#d3dfe9'],
+       [0.84, '#bfcdda'], [1, '#aebccb']]);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(70,86,102,0.55)'; ctx.lineWidth = 1.2; ctx.stroke();
+    // ② 两侧压暗 + 左上一条竖高光：金属罐的圆柱感全靠这两笔
+    ctx.save();
+    roundRect(ctx, cx - hw, J.BOX_TOP, hw * 2, J.BOX_BOT - J.BOX_TOP, 4); ctx.clip();
+    ctx.fillStyle = linGrad(ctx, cx - hw, 0, cx + hw, 0,
+      [[0, 'rgba(70,90,110,0.22)'], [0.14, 'rgba(70,90,110,0)'],
+       [0.86, 'rgba(70,90,110,0)'], [1, 'rgba(70,90,110,0.22)']]);
+    ctx.fillRect(cx - hw, J.BOX_TOP, hw * 2, J.BOX_BOT - J.BOX_TOP);
+    ctx.fillStyle = 'rgba(255,255,255,0.5)';
+    roundRect(ctx, cx - hw + 7, J.BOX_TOP + 6, 3.4, J.BOX_BOT - J.BOX_TOP - 22, 1.7);
+    ctx.fill();
+    ctx.restore();
+    // ③ 电热丝 + 两根引出脚（画在盖子【之前】：脚的顶端要钻进盖子下面，
+    //    露在盖子外面就成了两根戳在盖子上面的铜棍 —— 参考图上脚是从盖子里
+    //    伸出来的）
+    drawJouleHeater(ctx, cx);
+    // ④ 盖子：比箱体宽一圈，顶面一条亮带（这一条就是「盖子」的读法）
+    roundRect(ctx, cx - J.LID_W / 2, J.LID_TOP, J.LID_W, J.LID_BOT - J.LID_TOP, 3);
+    ctx.fillStyle = linGrad(ctx, 0, J.LID_TOP, 0, J.LID_BOT,
+      [[0, '#fbfdfe'], [0.35, '#dfe8f0'], [1, '#b3c2d0']]);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(64,80,96,0.6)'; ctx.lineWidth = 1.1; ctx.stroke();
+    ctx.strokeStyle = 'rgba(255,255,255,0.85)'; ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(cx - J.LID_W / 2 + 5, J.LID_TOP + 1.3);
+    ctx.lineTo(cx + J.LID_W / 2 - 5, J.LID_TOP + 1.3);
+    ctx.stroke();
+    // ⑤ 阻值
+    var txt = jouleRTxt(jouleRof(comp, idx, rec));
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.font = 'bold 20px -apple-system,"PingFang SC",sans-serif';
+    ctx.lineWidth = 3.6; ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+    ctx.strokeText(txt, cx, J.LABEL_Y);
+    ctx.fillStyle = '#3f4c5a';
+    ctx.fillText(txt, cx, J.LABEL_Y);
+  }
+
+  function drawJoule(ctx, comp, rec) {
+    var J = JOULE;
+    // 液面：rec.levels = [甲, 乙] 各自的产热功率（0 = 没热、1 = 满偏）。
+    // 🔴 每只 U 形管读【自己那个容器】：外侧腿被压下去 d、内侧腿顶上来 d。
+    //    两只管子各读各的，比较的是两只管子的高度差 —— 这才是这台仪器的用法。
+    //    没有 rec（图标 / 刚放下还没接线）时两只管子都停在静止液面。
+    var levels = (rec && rec.levels) ? rec.levels : [0, 0];
+
+    ctx.save();
+    ctx.translate(comp.x, comp.y);
+    ctx.rotate((comp.rot || 0) * Math.PI / 180);
+    ctx.scale(scaleOf(comp), scaleOf(comp));
+
+    drawJouleCan(ctx, jouleBoxX(0), comp, 0, rec);
+    drawJouleCan(ctx, jouleBoxX(1), comp, 1, rec);
+    drawJouleTube(ctx);
+    // 两只 U 形管各画各的液柱（sgn = −1 左 / +1 右，和 levels 的下标对应）
+    [-1, 1].forEach(function (sgn, i) {
+      var d = levels[i] || 0;
+      drawJouleLiquid(ctx, sgn,
+        J.LVL_REST + d * J.LVL_MAX,     // 外侧腿（接容器）：受热被压下去
+        J.LVL_REST - d * J.LVL_MAX);    // 内侧腿（敞口）：被顶上来
+    });
+
+    ctx.restore();
+    // 四根接线柱：甲 红/黑、乙 红/黑（无极性，颜色只是「两根柱」的区分）
+    posts(ctx, comp, ['pos', 'neg', 'pos', 'neg'], 1.1, 6);
   }
 
   // ============================================================
@@ -6966,6 +7260,7 @@
       case 'potentiometer': drawPotentiometer(ctx, comp, rec); break;
       case 'resistancebox': drawResistanceBox(ctx, comp, rec); break;
       case 'plugbox': drawPlugBox(ctx, comp, rec); break;
+      case 'joule': drawJoule(ctx, comp, rec); break;
       case 'pencil': drawPencil(ctx, comp, rec); break;
       case 'junction': drawJunction(ctx, comp); break;
       default: throw new Error('未知元件类型: ' + comp.type);
@@ -7023,6 +7318,9 @@
     PLUGBOX: PLUGBOX, plugBoxMeta: plugBoxMeta,
     plugPosOf: plugPosOf, plugOutOf: plugOutOf,
     plugCapTop: plugCapTop, plugAt: plugAt, plugX: plugX, barX: barX,
+    // 焦耳定律演示器：几何 + 两个容器的中心 / 阻值。编辑器按 BODY 命中、
+    // 自检按 JOULE 量液面（LVL_REST / LVL_MAX），别自己再抄一遍 15 / 26。
+    JOULE: JOULE, jouleBoxX: jouleBoxX, jouleRof: jouleRof,
     // 铅笔芯：夹子在芯上的局部 x ↔ 接入长度（mm）。拖动改长度时编辑器
     // 必须走这一份换算 —— 另写一份「x 到毫米」的算式，画到哪儿和电阻
     // 是多少就会错开（和滑片那条注释同一个坑）。

@@ -1035,8 +1035,8 @@
        2026-10-16 这批：core 24 / draw 38 / editor 29 / params 6 / schematic 18。
        （上一批是 core 23 / draw 37 / editor 28 / params 5 / schematic 17，
          这一轮五个文件都动了：世界加宽 + 电表放大 + 读数牌搬家 + 单刀双掷开关。） -->
-<script src="circuit-core.js?build=41"></script>
-<script src="circuit-draw.js?build=61"></script>
+<script src="circuit-core.js?build=42"></script>
+<script src="circuit-draw.js?build=62"></script>
 <!-- ════════════════════════════════════════════════════════════════════
      【教材版本皮肤 · 已从线上撤下】2026-10-12
      人教版元件外观（circuit-skin*.js 共 5 个文件）暂不在线上启用，学生看到的
@@ -1052,13 +1052,13 @@
 <!-- <script src="circuit-skin-renjiao-img2-data.js?build=2"></script> -->
 <!-- <script src="circuit-skin-renjiao-img3-data.js?build=1"></script> -->
 <!-- <script src="circuit-skin-renjiao.js?build=6"></script> -->
-<script src="circuit-editor.js?build=47"></script>
+<script src="circuit-editor.js?build=48"></script>
 <!-- 参数面板规格 + 读数显示格式。从本页内联抽出，与 3D 版沙盒（电路实验沙盒3D）
      共用同一份真值：面板规格、小数位、极性显示规则改一处两边都变。 -->
-<script src="circuit-params.js?build=21"></script>
+<script src="circuit-params.js?build=22"></script>
 <!-- 电路图（实物图 → 标准符号）。独立成第四块内核：沙盒和欧姆定律页共用同一份，
      免得各写一套符号，两边的图画法迟早不一样。三个老内核一行没动，build 号不升。 -->
-<script src="circuit-schematic.js?build=37"></script>
+<script src="circuit-schematic.js?build=38"></script>
 <!-- 电路图画布（拖符号画标准电路图 + 当场仿真）。它复用 circuit-schematic 的
      itemOf / drawSymbol，所以画出来的符号和「由实物图转换」那张【一模一样】。 -->
 <script src="circuit-schlab.js?build=5"></script>
@@ -1897,6 +1897,9 @@ var DROP = {battery:40, power:46, ammeter:80, voltmeter:80, galvanometer:80,
             // 插入式电阻箱：底座下沿 +70（丝下面的阻值印到 +66）——
             // 读数框落在 78，正好在底座外面一点，不压住那排 6Ω/4Ω/2Ω。
             plugbox:78,
+            // 焦耳定律演示器：两个容器底 +96，盖子上的柱子到 −14 ——
+            // 读数框落在 106（箱子下面一点，不压住那两个阻值）。
+            joule:106,
             switch:38, spdt:38, led:38, motor:38, bell:38};
 
 // ── 读数的小数位 ────────────────────────────────────────────
@@ -1985,6 +1988,23 @@ function readoutLines(c, r){
     } else {
       lines.push('拔 ' + which.join('') + ' · ' + Math.round(r.Rset) + 'Ω');
       lines.push('I = ' + num1(Math.abs(r.i || 0)) + 'A');
+    }
+  } else if (c.type === 'joule') {
+    // 焦耳定律演示器：两行分别写甲 / 乙的阻值和【产热功率】——
+    // 液面往哪边偏，就是这两行谁大，学生不用自己再算一遍 I²R。
+    // 没接全的那一边直说「未接入」：只印 0.00W 会让学生以为「它没在发热」，
+    // 而其实是那两根线还没接上（和电表「读不出数」同一条规矩）。
+    var jb = (r && r.boxes) || [];
+    if (jb.length < 2 || !r.wiredCount) {
+      lines.push('还没接线');
+      lines.push('读不出数');
+    } else {
+      for (var ji = 0; ji < 2; ji++) {
+        var jbx = jb[ji];
+        var jnm = ji ? '乙' : '甲';
+        if (!jbx.wired) { lines.push(jnm + ' 未接入'); continue; }
+        lines.push(jnm + ' ' + Math.round(jbx.R) + 'Ω ' + num2(jbx.p) + 'W');
+      }
     }
   } else if (c.type === 'galvanometer') {
     // 灵敏电流计：两端元件，没有「量程柱没接」这一说（r.wired 恒 true）。
@@ -3256,10 +3276,15 @@ function paramRowsHTML(c, specs, pfx){
     } else if (sp.t === 'select') {
       // labels 是可选的：值的 key 和给人看的文字不一样时才用（二极管存的是
       // 'red'，面板上要写「红色 1.8V」）。没有 labels 就照旧印值本身。
+      // ⚠️ 选中判据按【字符串】比：下拉框回写的是 el.value（字符串），而
+      //    焦耳定律演示器那两个阻值选项是【数字】5/10/20 —— 严格比较
+      //    会让「默认 10Ω」一进面板就一个都不选中（显示成第一项 5Ω），
+      //    学生一改就再也对不上。和上面 pick 那条（String(pv) === String(o.v)）
+      //    是同一条规矩。
       html += '<div class="prow"><label>' + sp.label + '</label><select data-k="' + sp.k + '">' +
         sp.options.map(function(o){
           var txt = (sp.labels && sp.labels[o]) || o;
-          return '<option value="' + o + '"' + (o === v ? ' selected' : '') + '>' + txt + (sp.unit||'') + '</option>';
+          return '<option value="' + o + '"' + (String(o) === String(v) ? ' selected' : '') + '>' + txt + (sp.unit||'') + '</option>';
         }).join('') + '</select></div>';
     } else if (sp.t === 'tap') {
       // 亮着的那一挡 = 【线当下真的接在哪个量程柱上】（内核按接线解出来的），
@@ -5004,6 +5029,9 @@ var LG_VIEW = {
   // 插入式电阻箱：底座 ±112 × (−20…70)、铜排上沿 −14、拔出来的插头帽顶 −76，
   // 两个接线柱在 ±118。和共享层 CircuitDraw.ICON_VIEW.plugbox 同一组数。
   plugbox:   { x0: -130, y0: -84, x1: 130, y1: 78 },
+  // 焦耳定律演示器：两个容器 ±147（含盖子）、底 96，压力计竖管顶到 −104
+  //（封口圆头再探到 −113）。和共享层 CircuitDraw.ICON_VIEW.joule 同一组数。
+  joule:     { x0: -162, y0: -120, x1: 162, y1: 106 },
   // 三件新器材的取景框。少了它们，只要电路里出现二极管/电动机/电铃，
   // 图例这一栏就会读 undefined 的 x1 直接抛异常 —— 整个电路图浮层打不开，
   // 而报错信息指向的是一行取景框算术，跟「我加了个二极管」八竿子打不着。
@@ -5174,7 +5202,11 @@ var PAL = ['battery','power','switch','spdt','resistor','rheostat',
            // 用户 2026-10-19：「把那个整体放到器材盒里，而不是放一根导体板」。
            // plate 类型本身还留着（老存档里存的是它，加载时照样画得出来），
            // 只是不再出现在器材盒里。
-           'rheoboard'];
+           'rheoboard',
+           // 焦耳定律演示器放在【最后】：它是全站唯一一件「用液面读热量」的
+           // 器材，和前面那些「看电流/看电压」的仪器不是一类，混在变阻器那一排
+           // 里反而找不到。它自己带两个容器（四根柱），一眼就认得出。
+           'joule'];
 // 🔴 两个容器，别混：
 //   bar    = 顶栏那一行【功能按钮】（撤销 / 修复 / 清空 / 预设 / 电路图 / 画笔 / 全屏…）
 //   palBox = 左侧【电路元件盒】里的 17 件器材（图示卡）
