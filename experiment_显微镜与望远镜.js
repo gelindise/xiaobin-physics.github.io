@@ -116,8 +116,11 @@ import * as THREE from './assets/optics-three.min.js';
   const state = {
     mode: 'micro',
     params: {
-      micro: { fObj: 8, fEye: 25, d: 65 },       // d = v1 + fEye（中间像恰在目镜焦平面上）
-      tele:  { fObj: 120, fEye: 30, d: 210 }     // v1 = 1.5 f物 = 180 ⇒ d = 210
+      // 🔴 显微镜默认工况按教材图乙：中间像落在目镜焦点【以内】（u2 = 0.5 f目），
+      //    目镜成放大虚像 A2B2 —— 虚线反向延长线与虚像箭头是默认画面的一部分。
+      //    v1 = imgDist(10, 8) = 40 ⇒ d = 40 + 12.5 = 52.5。
+      micro: { fObj: 8, fEye: 25, d: 52.5 },
+      tele:  { fObj: 120, fEye: 30, d: 210 }     // v1 = 1.5 f物 = 180 ⇒ d = 210（共焦，出射平行光）
     },
     showRays: true,
     showMid: true,
@@ -441,6 +444,7 @@ import * as THREE from './assets/optics-three.min.js';
   const tubeGroup = new THREE.Group(); scene.add(tubeGroup);
   const rayGroup = new THREE.Group(); scene.add(rayGroup);
   const markGroup = new THREE.Group(); scene.add(markGroup);
+  const focusGroup = new THREE.Group(); scene.add(focusGroup);
   const axisGroup = new THREE.Group(); scene.add(axisGroup);
 
   function clearGroup(g) {
@@ -508,13 +512,15 @@ import * as THREE from './assets/optics-three.min.js';
     const h = o.hObj, x = o.xObj;
     const k = labelK();
     arrow(objGroup, x, 0, h, '#fbbf24', false, 9);
-    const lb = label('物体 ' + h.toFixed(1) + ' mm', '#fbbf24', 4.6 * k);
+    const lb = label('物体 AB · ' + h.toFixed(1) + ' mm', '#fbbf24', 4.6 * k);
     lb.position.set(x, h + 14 * k, 0); objGroup.add(lb);
+    // 🔴 物距标注必须给【焦点标签】（轴下 −6k 处）让路：原来 −6k/−11k 的两行
+    //    在俯视投影（y 压成 0.77）下与 F物 标签重叠 37.5%（H 组判红）。下移一行后剖面/俯视都错开。
     const lbD = label('物距 u = ' + o.u1.toFixed(1) + ' mm', '#fcd34d', 3.8 * k);
-    lbD.position.set(x + o.u1 / 2, -h * 0.55 - 11 * k, 0); objGroup.add(lbD);
+    lbD.position.set(x + o.u1 / 2, -h * 0.55 - 17 * k, 0); objGroup.add(lbD);
     // 物距标注线
     const dimMat = new THREE.LineBasicMaterial({ color: '#fcd34d', transparent: true, opacity: .7, depthTest: false });
-    const yD = -h * 0.55 - 6 * k;
+    const yD = -h * 0.55 - 12 * k;
     addSeg(objGroup, new THREE.Vector3(x, yD, 0), new THREE.Vector3(o.xObjLens, yD, 0), dimMat);
     return { x, h };
   }
@@ -586,6 +592,34 @@ import * as THREE from './assets/optics-three.min.js';
     lbEye.position.set(xEyePos, rEye + 8 * k, 0); lensGroup.add(lbEye);
 
     return { obj, eye, xEyePos, rEye };
+  }
+
+  /* --- 建模：焦点标记（教材光路图的题眼） ---
+     中间像落在目镜焦点哪一侧，决定目镜怎么用 —— 所以焦点必须画在图上。
+     只标三个焦点：F物（物镜前焦点，物体摆在它稍外）、F'物（物镜后焦点，远物的实像落在这里）、
+     F目（目镜前焦点，中间像相对它的位置就是全页的判据）。
+     望远镜调好焦时 F'物 与 F目【重合】—— 共焦，这就是望远镜光路图的核心。
+     F'目（目镜后焦点）不参与判断，不标，免得和眼睛环撞车。 */
+  function buildFoci(o) {
+    clearGroup(focusGroup);
+    const k = labelK();
+    const M = modeOf();
+    const halfW = M.camR * 0.72;
+    const L = drawn.lenses || { xEyePos: o.xEyeLens + M.lensEye.dia * 0.85, rEye: M.lensEye.dia * 0.425 };
+    const tick = (x, name, col) => {
+      if (!Number.isFinite(x)) return;
+      if (Math.abs(x - M.target[0]) > halfW) return;            // 出取景包络就不画
+      if (Math.abs(x - L.xEyePos) < L.rEye + 8 * k) return;     // 别戳到眼睛环
+      const mat = new THREE.LineBasicMaterial({ color: col, transparent: true, opacity: .9, depthTest: false });
+      const g = new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(x, -3.2 * k, 0), new THREE.Vector3(x, 3.2 * k, 0)]);
+      const l = new THREE.Line(g, mat); l.renderOrder = 11; focusGroup.add(l);
+      const lb = label(name, col, 3.6 * k);
+      lb.position.set(x, -6.0 * k, 0); focusGroup.add(lb);
+    };
+    tick(o.xObjLens - o.fObj, 'F物', '#7dd3fc');
+    tick(o.xObjLens + o.fObj, "F'物", '#7dd3fc');
+    tick(o.xEyeLens - o.fEye, 'F目', '#c4b5fd');
   }
 
   /* --- 建模：光路 --- */
@@ -665,9 +699,22 @@ import * as THREE from './assets/optics-three.min.js';
     //    按场景尺度给固定粗细会让小箭头细成发丝（实测：1.13 mm 宽 / 屏幕 9 px，看不出是箭头）。
     const headL = 0.30 * len, headR = 0.22 * len, stemR = 0.085 * len;
     const stemLen = Math.max(1e-6, len - headL);
-    const stem = mesh(new THREE.CylinderGeometry(stemR, stemR, stemLen, 10), mat,
-      group, x, yFrom + dir * stemLen / 2, 0);
-    stem.renderOrder = order;
+    if (dashed) {
+      // 虚像的杆按教材惯例画成虚线：一截截短圆柱，中间留空
+      const dash = 0.16 * len, gap = 0.11 * len;
+      let t = 0, guard = 0;
+      while (t < stemLen - 1e-6 && guard++ < 40) {
+        const t2 = Math.min(stemLen, t + dash);
+        const seg = mesh(new THREE.CylinderGeometry(stemR, stemR, t2 - t, 10), mat,
+          group, x, yFrom + dir * (t + t2) / 2, 0);
+        seg.renderOrder = order;
+        t = t2 + gap;
+      }
+    } else {
+      const stem = mesh(new THREE.CylinderGeometry(stemR, stemR, stemLen, 10), mat,
+        group, x, yFrom + dir * stemLen / 2, 0);
+      stem.renderOrder = order;
+    }
     const head = mesh(new THREE.ConeGeometry(headR, headL, 14), mat, group, x, yTo - dir * headL / 2, 0);
     if (dir < 0) head.rotation.z = Math.PI;         // 箭头尖朝下
     head.renderOrder = order;
@@ -682,7 +729,7 @@ import * as THREE from './assets/optics-three.min.js';
     // 中间像：物镜成的实像（倒立）
     if (o.midShown) {
       arrow(markGroup, o.xMid, 0, o.hMid, '#fbbf24', false, 12);
-      const lb = label('中间像 ' + Math.abs(o.hMid).toFixed(2) + ' mm', '#fbbf24', 4.6 * k);
+      const lb = label('中间像 A₁B₁ · ' + Math.abs(o.hMid).toFixed(2) + ' mm', '#fbbf24', 4.6 * k);
       lb.position.set(o.xMid, o.hMid - 14 * k, 0); markGroup.add(lb);
       out.midShown = true;
     }
@@ -713,8 +760,20 @@ import * as THREE from './assets/optics-three.min.js';
       if (o.outSide === 'virtual' && Number.isFinite(o.xFinal) && Math.abs(o.hFinal) > MID_MIN) {
         if (fits(o.xFinal, o.hFinal)) {
           arrow(markGroup, o.xFinal, 0, o.hFinal, '#c4b5fd', true, 13);
-          const lb = label('最终像（虚像）' + Math.abs(o.hFinal).toFixed(2) + ' mm', '#c4b5fd', 4.6 * k);
-          lb.position.set(o.xFinal, o.hFinal + 12 * k, 0); markGroup.add(lb);
+          const lb = label('虚像 A₂B₂ · ' + Math.abs(o.hFinal).toFixed(2) + ' mm', '#c4b5fd', 4.6 * k);
+          // 🔴 标签要挂在箭头【尖端外侧】：hFinal < 0（倒立虚像，教材图乙正是这种）时往下放，
+          //    否则标签会压进箭头杆里。
+          // 🔴 虚像与中间像【几乎重合】时（最短镜筒：u2 → 0，虚像 ≈ 中间像）两个标签会整个叠上
+          //    （实测重叠 99% / 1000+ px²）。此时把虚像标签【挪到中间像标签下方】堆叠。
+          //    ⚠️ 堆叠间距必须按【俯视】投影留余量：俯视把世界 y 压成 sin50° ≈ 0.77，
+          //    而 sprite 标签是广告牌、屏幕尺寸不缩 —— 剖面里够的间距到俯视就不够
+          //    （10k 的间距实测仍重叠 39%）。30k ⇒ 屏幕上 23k > 两个标签半高之和 8.2k。
+          let vy = o.hFinal + (o.hFinal >= 0 ? 12 : -12) * k;
+          if (o.midShown && Math.sign(o.hFinal) === Math.sign(o.hMid) &&
+              Math.abs(o.xFinal - o.xMid) < 60 * k) {
+            vy = o.hMid + (o.hMid >= 0 ? 30 : -30) * k;
+          }
+          lb.position.set(o.xFinal, vy, 0); markGroup.add(lb);
           out.finalShown = true; out.finalInFrame = true;
         } else {
           noteAt('虚像在目镜前 ' + Math.abs(o.v2).toFixed(0) + ' mm（超出画面）', '#c4b5fd');
@@ -939,6 +998,7 @@ import * as THREE from './assets/optics-three.min.js';
     buildAxis();
     drawn.object = buildObject(o);
     drawn.lenses = buildLenses(o);
+    buildFoci(o);
     drawn.rays = buildRays(o);
     drawn.marks = buildMarks(o);
     updateReadouts(o);
@@ -1224,8 +1284,9 @@ import * as THREE from './assets/optics-three.min.js';
   $('clearRecords').addEventListener('click', () => { state.records = []; renderRecords(); });
 
   $('resetAll').addEventListener('click', () => {
+    // 显微镜恢复初始 = 教材图乙工况：中间像落在目镜焦点以内（u2 = 0.5 f目）
     state.params.micro = { fObj: MODES.micro.fObj, fEye: MODES.micro.fEye,
-                           d: imgDist(objDistOf('micro', MODES.micro.fObj), MODES.micro.fObj) + MODES.micro.fEye };
+                           d: imgDist(objDistOf('micro', MODES.micro.fObj), MODES.micro.fObj) + 0.5 * MODES.micro.fEye };
     state.params.tele = { fObj: MODES.tele.fObj, fEye: MODES.tele.fEye,
                           d: imgDist(objDistOf('tele', MODES.tele.fObj), MODES.tele.fObj) + MODES.tele.fEye };
     state.showRays = true; state.showMid = true; state.showFinal = true; state.showTube = true;
