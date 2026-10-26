@@ -262,8 +262,24 @@
       var hr = (D && D.HALF != null) ? D.HALF : 70;
       return [{ x: -hr, y: 0 }, { x: hr, y: 0 }, { x: 0, y: 0 }, { x: 0, y: 0 }];
     }
+    // 电位器：三个引脚 —— 0 = a（左）、2 = c（右）、1 = b（滑片，从符号上方引出）。
+    // a / c 落在轴线上（±HALF），主回路那一横笔直穿过矩形；b 引到符号【框外】
+    //（POT_STEM_TOP = −34），理由和单刀双掷的公共端一样：符号正中有墨迹，
+    // 导线接到框内会被走线避让判成「压元件」，只能绕着走、绕完再插进去。
+    // 横坐标在这里给 0 只是占位：真正的落点按滑片位置算（见 schTermWorld）。
+    if (type === 'potentiometer') {
+      var hp = (D && D.HALF != null) ? D.HALF : 70;
+      return [{ x: -hp, y: 0 }, { x: 0, y: POT_STEM_TOP }, { x: hp, y: 0 }];
+    }
     return (D && D.TERMINALS[type]) || [];
   }
+  // 电位器符号：滑片箭头的杆顶（局部 y）= b 的接点。取 −34 和变阻器的
+  // RHEO_STEM_TOP（−30）差不多高，两张图并排时「第三根线」在同一层。
+  var POT_STEM_TOP = -34;
+  // 滑片箭头在符号上的横坐标范围（pos = 0 → 左端，1 → 右端）。
+  // 不铺满整个矩形（±56）：箭头要留一点边，否则 pos 到 0/1 时箭头尖会骑在
+  // 矩形端头上，看着像从引线上长出来的。
+  var POT_SYM_X0 = -44, POT_SYM_X1 = 44;
   // 公共端引线往下的长度（见 symTerms 里那段）。取 32：符号墨迹框的下沿在
   // 30，引线端点在框外一点点，导线才接得进去。
   var SPDT_STEM_Y = 32;
@@ -310,6 +326,24 @@
     if (!ti || !ti.rangeValues) return '';
     var v = ti.rangeValues[tap - 1];
     return v != null ? (num(v) + (type === 'ammeter' ? 'A' : 'V')) : '';
+  }
+
+  // 电位器在【电路图】里的滑片位置。和 rheoGeom 一样，是「符号上的横坐标」，
+  // 不是实物上的转角 —— 符号画的是矩形 + 滑片箭头，pos 直接映射成横坐标。
+  // 映射范围走 POT_SYM_X0/X1（见 symTerms 上面那段），绘制和接线点共用这一份。
+  function potGeom(comp, wires, rec, D) {
+    var pos = (rec && rec.pos != null) ? +rec.pos : D.potPosOf(comp);
+    if (!isFinite(pos)) pos = 0.5;
+    pos = pos < 0 ? 0 : (pos > 1 ? 1 : pos);
+    return {
+      pos: pos,
+      xl: POT_SYM_X0 + (POT_SYM_X1 - POT_SYM_X0) * pos,
+      // b（滑片）接了没有：没接就画虚线，和变阻器「滑片悬空」同一套语言
+      bWired: termHasWire(wires, comp.id, 1),
+      aWired: termHasWire(wires, comp.id, 0),
+      cWired: termHasWire(wires, comp.id, 2),
+      anyWire: compHasWire(wires, comp.id),
+    };
   }
 
   function rheoGeom(comp, wires, rec, D) {
@@ -371,6 +405,11 @@
       // 滑动变阻器：电阻丝方框骑在轴线上（±12），滑片杆从方框上沿往上伸到 −30。
       // 墨迹框要罩住上面的箭头杆，否则导线会从杆上穿过去。
       case 'rheostat': return { x0: -60, y0: -34, x1: 60, y1: 16 };
+      // 电位器：和变阻器同一个矩形（±56 × ±12），墨迹框要往上多留一截罩住
+      // 滑片箭头杆（杆顶 −34）。这个框管的是走线避让和标注定位，必须和
+      // drawSymbol 里画的那几笔逐个数一致 —— 不一致就会出现「标注压在矩形上」
+      // 或「导线从箭头上穿过去」。
+      case 'potentiometer': return { x0: -60, y0: -38, x1: 60, y1: 16 };
       // 电阻示教板：和定值电阻【同一个矩形】（±56 × ±13），外面留一点线宽。
       // 这个框管的是走线避让和标注定位，必须和 drawSymbol 里画的那个矩形
       // 逐个数一致 —— 不一致就会出现「标注压在矩形上」或「导线从矩形角穿过」。
@@ -386,6 +425,8 @@
   // ⚠️ 下标必须和 rects 一一对齐——excl 里存的是下标。
   function obsRect(it) {
     if (it.type === 'rheostat') return { x0: -60, y0: -16, x1: 60, y1: 16 };
+    // 电位器同理：真正挡视线的是那只【电阻丝矩形】，滑片杆和引线是细线。
+    if (it.type === 'potentiometer') return { x0: -60, y0: -16, x1: 60, y1: 16 };
     return it.rect;
   }
 
@@ -414,6 +455,12 @@
       // 2 倍大的实物在图上还是那么大，引脚位置不能跟着翻倍。
       return D.toWorld(it.comp, mir ? -sx : sx, RHEO_STEM_TOP, true);
     }
+    // 电位器：b（端子 1）是滑片，接点在箭头杆顶 —— 横坐标跟着滑片走。
+    // 和变阻器 C/D 那条一样，符号上的滑片在哪儿，第三根线就落在哪儿。
+    if (it.type === 'potentiometer' && termIdx === 1) {
+      var px = Math.max(POT_SYM_X0, Math.min(POT_SYM_X1, it.meta.xl));
+      return D.toWorld(it.comp, mir ? -px : px, POT_STEM_TOP, true);
+    }
     // 符号引脚走 symTerms（默认 = 实物柱，学生电源是例外，见那里的注释）。
     // 自己算 toWorld 就必须自己把【两种左右翻转】都补上 —— 原来只有 mir 那一支
     // 走 toWorld、其余走 D.terminalWorld（后者内部会补 flipOf），所以
@@ -431,6 +478,10 @@
   // 滑片接点在方框上方（−30），那是【第三根线】的落点，不参与「轴线」。
   function axisYOf(type, tA, tB) {
     if (type === 'rheostat') return 0;
+    // 电位器同理：a / c 两个引脚在轴线上（±HALF），b 那根是第三根线，
+    // 不参与「轴线」—— 拿三点的平均会把整件符号往下拽 11px，主回路的横线
+    // 就在它这里断开（和电表那条注释踩的是同一个坑）。
+    if (type === 'potentiometer') return 0;
     return (tA.y + tB.y) / 2;
   }
 
@@ -1330,6 +1381,22 @@
         if (Rr == null && it.meta && it.meta.slide != null) Rr = mx * it.meta.slide;
         return '最大 ' + num(mx) + ' Ω' + (Rr == null ? '' : ' · 接入 ' + num(Rr) + ' Ω');
       }
+      // 电位器：铭牌印【接进电路的那一份阻值】，和变阻器同一条理由 ——
+      // 「滑片 0.4」是个抽象的分数，学生要的是「现在接进去几欧」。
+      // 没通电 / 没解出数时按 pos 现算（a-b 段 = Rmax·pos，b-c 段 = Rmax·(1−pos)），
+      // 所以拖滑片时图上这个数当场跟着变，不用等「运行」。
+      case 'potentiometer': {
+        var pmx = (rec && rec.Rmax != null) ? +rec.Rmax : (P.Rmax != null ? +P.Rmax : 20);
+        var ppos = (rec && rec.pos != null) ? +rec.pos
+                 : ((it.meta && it.meta.pos != null) ? +it.meta.pos : 0.5);
+        var pused = (rec && rec.R != null) ? +rec.R : null;
+        if (pused == null) {
+          // 没解出数：按「a、b 两个柱」这一种最常见的接法给个可读的数，
+          // 并把满量程一起印上 —— 学生一进电路图就知道这件器材调到哪儿了。
+          pused = pmx * ppos;
+        }
+        return '最大 ' + num(pmx) + ' Ω · 接入 ' + num(pused) + ' Ω';
+      }
       // 二极管的铭牌是【颜色】而不是电压 —— 真实管子就是按颜色分规格卖的，
       // 正向压降是那个颜色的属性。把两个数一起印出来，学生才知道「3V 点不亮
       // 蓝管」不是巧合，是 3.1V 的压降摆在那儿。
@@ -1359,6 +1426,17 @@
   // 不接线的箭头只会以为图画错了。
   function hintOf(it) {
     if (it.type === 'rheostat' && it.meta.stemDashed) return '滑片未接入 · 相当于定值电阻';
+    // 电位器：接了 a、c 两柱、滑片空着 = 整根丝进电路，转滑片一点用都没有
+    //（和变阻器「接 A、B 两柱」是同一类经典错接）。图上必须说出来，否则
+    // 学生转了半年发现灯不变亮，只会以为器材坏了。
+    if (it.type === 'potentiometer' && it.meta.anyWire && !it.meta.bWired) {
+      return '滑片未接入 · 相当于定值电阻';
+    }
+    // 三个柱都接 = 分压接法。这是电位器区别于滑动变阻器的唯一用法，
+    // 图上不说一句，学生只会把它当成「又一个变阻器」。
+    if (it.type === 'potentiometer' && it.meta.aWired && it.meta.bWired && it.meta.cWired) {
+      return '分压接法 · b 抽出中间电压';
+    }
     // 二极管接反时【一条支路都没有】——求解器里它就是断路，读数全是 0。
     // 光看符号看不出「图是对的、电路不导电」，必须写一句，否则学生会以为
     // 是软件算错了（0.000A 和「管子没导通」是两件事）。
@@ -1424,6 +1502,11 @@
       it.meta = meterGeom(lay, wires, D);
     } else if (lay.type === 'rheostat') {
       it.meta = rheoGeom(lay, wires, rec, D);
+    } else if (lay.type === 'potentiometer') {
+      // ⚠️ 这一处和 build() 里那一处【必须都写】：itemOf 是「单件出口」，
+      //    电路图画布（circuit-schlab）和「实物↔符号」图例都走它；漏了这一处，
+      //    滑片的横坐标就是 undefined ⇒ 引脚落到 NaN 上，图例里那张符号直接消失。
+      it.meta = potGeom(lay, wires, rec, D);
     } else it.meta = {};
     it.rect = symRect(it);
     var noLabel = !!(opts && opts.labels === false);
@@ -1458,6 +1541,7 @@
         it.meta = meterGeom(lay, wires, D);
       }
       else if (lay.type === 'rheostat') it.meta = rheoGeom(lay, wires, rec, D);
+      else if (lay.type === 'potentiometer') it.meta = potGeom(lay, wires, rec, D);
       else it.meta = {};
       it.rect = symRect(it);                  // 局部框：只和 params / meta 有关，与位置无关
       // 图上那个「R₁ / L₂」标注跟【显示名】走：学生在主画布上把灯泡改名成
@@ -2127,6 +2211,35 @@
         ctx.restore();
         break;
       }
+      // 电位器：矩形 + 上方滑片箭头，和滑动变阻器同一套画法（人教版两件器材
+      // 在电路图里都是「电阻 + 滑片」），区别只有一条、但必须画出来：
+      // 电位器的滑片【单独引出一个端点 b】—— 杆顶那一小段实线一路通到框外的
+      // 引脚（POT_STEM_TOP），而变阻器的杆顶是 C/D 两根柱子的公共节点。
+      // 所以这里多了「引脚在杆顶」这一笔，也就是三个端点：a 左、c 右、b 上。
+      // 滑片箭头按 pos 落在矩形上的对应横坐标（potGeom.xl），转一转就能看见它走。
+      case 'potentiometer': {
+        var gp = it.meta;
+        // a / c 两根引线：整件一根线都没接（图例图标）时两根都画
+        lead(ctx, T[0], -56);
+        lead(ctx, T[2], 56);
+        ctx.beginPath();
+        D.roundRect(ctx, -56, -12, 112, 24, 2);
+        ctx.stroke();
+        var pxs = Math.max(POT_SYM_X0, Math.min(POT_SYM_X1, gp.xl));
+        // 滑片杆：从矩形上沿一直伸到框外的引脚（−34）。b 没接线时画虚线，
+        // 和变阻器「滑片悬空」同一套语言 —— 但杆本身照画，不能留空。
+        drawPolys(ctx, [{ x: pxs, y: POT_STEM_TOP }, { x: pxs, y: -12 }],
+                  (gp.bWired || !gp.anyWire) ? COLOR.wire : COLOR.dim,
+                  2.2, !(gp.bWired || !gp.anyWire));
+        // 箭头：尖顶在矩形上沿，尾巴朝上 —— 「这一头压在电阻丝上」
+        ctx.save();
+        ctx.fillStyle = COLOR.wire;
+        ctx.beginPath();
+        ctx.moveTo(pxs, -12); ctx.lineTo(pxs - 5, -20); ctx.lineTo(pxs + 5, -20);
+        ctx.closePath(); ctx.fill();
+        ctx.restore();
+        break;
+      }
     }
     ctx.restore();
 
@@ -2178,6 +2291,8 @@
       to: '一个空心矩形（和电阻同一个符号），旁边印 R = ρ·L/S 算出来的阻值 —— 材料、长度、横截面积拧哪一个，这个数都跟着变' },
     { type: 'rheostat', name: '滑动变阻器',       from: '绕线瓷管加一个滑片',
       to: '矩形加一根朝下的箭头：箭头的位置就是滑片的位置。用到的两个接头画实线，空着的画虚线' },
+    { type: 'potentiometer', name: '电位器',      from: '一圈圆弧电阻丝加一个绕中心转的金属滑片，三个焊片 a / b / c',
+      to: '和滑动变阻器同一个矩形加滑片箭头，区别是滑片【单独引出一个端点】（箭头杆顶那根线 = b）：a、c 跨在电源上，b 抽出中间那一份电压' },
     { type: 'pencil',   name: '铅笔芯',           from: '一根自动铅笔芯，两端各一只鳄鱼夹：一只固定、一只沿芯移动',
       to: '矩形加一条【斜穿】的箭头（可变电阻的符号）。箭头和变阻器那根竖杆不一样：这里改的是导体本身的长度，不是滑片的分压比' },
     { type: 'bulb',     name: '小灯泡',           from: '带灯座的玻璃泡',
@@ -2215,6 +2330,6 @@
     // 规整化/走线的常量：测试要断言「位移 ≤ MOVE_MAX」，从这里取，
     // 免得内核改了上限、测试还按老数字断（那就成了自证）
     MOVE_MAX: MOVE_MAX,
-    version: '3.9.0',
+    version: '3.10.0',
   };
 });

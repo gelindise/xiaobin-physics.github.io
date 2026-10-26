@@ -486,6 +486,30 @@
   };
 
   // ============================================================
+  // 电位器的几何（见下面 drawPotentiometer 的长注释）
+  // ------------------------------------------------------------
+  // 放在 TERMINALS 之前：三个焊片的位置要按它算。两处各写一份数字，改一个
+  // 忘了另一个，焊片就落到机身外面去（和 RHEOB 摆在这里是同一条理由）。
+  // ============================================================
+  var POT = {
+    R: 50,             // 机身半径（整件 100px 见方，和变阻器 156×100 同一档）
+    WIRE_R: 37,        // 电阻丝环的半径（离机身外沿只留 9px：参考图上丝几乎顶到边）
+    WIRE_T: 7.5,       // 丝的粗细
+    // 丝的两个端头角度（canvas 角度，度；0°=右、90°=下、180°=左、270°=上）。
+    // 底部留 60° 开口 —— 开口正是三根引线走出来的地方，也是滑片臂转到两头时
+    // 臂端不会压在「丝外面」的原因。0° 的差就是它和滑动变阻器的差别所在。
+    A0: 120, A1: 420,
+    HUB_R: 10,         // 中心转轴半径
+    ARM: 33,           // 滑片臂长（圆心 → 臂端；臂端正好伸到丝的内沿 33.25）
+    POST_X: 46,        // a / c 焊片的 x
+    POST_Y: 72,        // 三个焊片的 y（都在机身下沿之外，导线夹得住）
+    LUG_W: 20, LUG_H: 13, LUG_HOLE: 3.4,   // 焊片本体尺寸 / 中间那个孔的半径
+  };
+  // 三个焊片的字母（顺序 = 端子号 0/1/2）。参考图乙上就是这么印的：
+  // a 左、b 中、c 右 —— 学生接错柱子时，说的也是这三个字母。
+  var POT_LETTERS = ['a', 'b', 'c'];
+
+  // ============================================================
   // 端子坐标
   // ============================================================
   var TERMINALS = {
@@ -558,6 +582,13 @@
       { x: -78, y: 26 }, { x: 78, y: 26 },     // A 左下 / B 右下（电阻丝）
       { x: -78, y: -26 }, { x: 78, y: -26 },   // C 左上 / D 右上（金属杆）
     ],
+    // 电位器：三个焊片排在机身下方，a 左 / b 中 / c 右 —— 和参考图乙一致。
+    // b 落在正中不是随手摆的：它连着圆心的滑片，引线从圆心笔直下来；偏心一点
+    // 那根线就得拐个弯，看着像接错了柱。三根线的落点全在机身【外面】
+    //（y = POST_Y > R），走线避让才不会把「导线夹在焊片上」判成「穿过机身」。
+    potentiometer: [{ x: -POT.POST_X, y: POT.POST_Y },
+                    { x: 0, y: POT.POST_Y },
+                    { x: POT.POST_X, y: POT.POST_Y }],
   };
 
   // 「对调极性」标记。电池 / 发光二极管 / 电动机的参数面板上有一个「对调」
@@ -721,6 +752,36 @@
     if (rec && rec.slide != null) return +rec.slide;
     if (comp && comp.params && comp.params.slide != null) return +comp.params.slide;
     return 0.5;
+  }
+
+  // ── 电位器：滑片位置 ↔ 滑片臂转角 ────────────────────────────
+  // 全站只有这一份换算。绘制按 potAngleOf 画臂，编辑器拖臂时按 potPosFromAngle
+  // 反解 —— 各写一套的话，拖到哪儿和画到哪儿会差一点，而且只在转到两头才露出来。
+  // pos = 0 时臂贴着 a（丝的起点 A0），pos = 1 时贴着 c（A1）。
+  function potPosOf(comp, rec) {
+    if (rec && rec.pos != null) return +rec.pos;
+    if (comp && comp.params && comp.params.pos != null) return +comp.params.pos;
+    return 0.5;
+  }
+  function potAngleOf(pos) {
+    var p = pos == null ? 0.5 : +pos;
+    if (!isFinite(p)) p = 0.5;
+    p = p < 0 ? 0 : (p > 1 ? 1 : p);
+    return (POT.A0 + p * (POT.A1 - POT.A0)) * Math.PI / 180;
+  }
+  // 反解：指针方向（弧度，canvas 系）→ pos。
+  // 🔴 归一化必须归到【从 A0 起算的 360°】这一圈，不能归到 [A0−180, A0+180)：
+  //    后者会把丝的右半边（300°~420°）折到 0° 附近，然后被当成「落在开口里」
+  //    一律吸附成 1 —— 症状是「拖到右半圈，滑片一直顶在 c 端不动」，而端点
+  //    （正好 0°/60°）看起来又是对的，所以只判终点的断言抓不到（踩过）。
+  //    开口（A1 ~ A0+360，也就是 60°~120°）里才按左右就近吸附。
+  function potPosFromAngle(a) {
+    var d = a * 180 / Math.PI;
+    while (d < POT.A0) d += 360;                  // 归到 [A0, A0+360)
+    while (d >= POT.A0 + 360) d -= 360;
+    if (d <= POT.A1) return (d - POT.A0) / (POT.A1 - POT.A0);   // 在丝上：按比例
+    // 落在底部开口里：离哪一头近就贴哪一头
+    return (d - POT.A1 < POT.A0 + 360 - d) ? 1 : 0;
   }
 
   // ============================================================
@@ -895,6 +956,10 @@
   function drawTerminals(ctx, comp) {
     var s = comp.__posts;
     if (!s) return;
+    // 电位器的「接线柱」是三片带孔的焊片（见 drawPotLugs），不是红黑柱。
+    // 分支写在这里而不是另立一个函数：宿主只认 drawTerminals 这一个入口，
+    // 少接一处，导线就会把焊片盖住 —— 学生想接线时找不到孔。
+    if (s.pot) { drawPotLugs(ctx, comp); return; }
     posts(ctx, comp, s.kinds, s.scale, s.neck, s.faceAngle);
   }
 
@@ -1198,6 +1263,10 @@
     bell:      { x0: -78, y0: -66, x1: 78, y1: 42 },
     // 电阻示教板：整块板 + 八个柱子（柱头到 ±82）。少给一点，图标里板角会被切。
     rheoboard: { x0: -84, y0: -70, x1: 84, y1: 72 },
+    // 电位器：机身 ±50，三个焊片在 +72（半高 6.5 ⇒ 78.5），字母再往下到 91。
+    // 取景框必须给到 92，否则元件盒图标里 a/b/c 三个字母会被切掉一半 ——
+    // 而这三个字母正是学生「接哪两根柱」的唯一依据。
+    potentiometer: { x0: -58, y0: -58, x1: 58, y1: 92 },
   };
   var ICON_VIEW_DEF = { x0: -80, y0: -80, x1: 80, y1: 80 };
   // 把一件器材画进 w×h 的小格子里（ rec 传 null = 只画外形，不带读数 ）。
@@ -1444,6 +1513,10 @@
       // 每根线都要绕板一圈（见上面 plate / led 那几条注释，同一个坑）。
       // 板面本身比柱子宽 8px，露出盒外是有意的：走线避让只躲柱子那一圈。
       case 'rheoboard': return { hw: RHEOB.POST_X, hh: -RHEOB.TOP };
+      // 电位器：盒子就是机身那个圆（±50）。三个焊片在 y = 72，落在盒外 ——
+      // 这正是要的：「导线夹在焊片上」不该被当成「导线穿过机身」。盒子若跟着
+      // 焊片长到 78，三根线每根都要绕机身一圈（和 plate / rheoboard 同一个坑）。
+      case 'potentiometer': return { hw: POT.R, hh: POT.R };
       // 表头：整台仪器的包围盒（表壳 + 底座）。接线柱在 POST_Y，
       // 故意落在盒子【外面】——导线夹在柱子上，不该被当成穿体。
       // 所以 hh 有【上限 70】：表壳为了放下大量程那排数字往上长到了 −104（见 MET），
@@ -2706,6 +2779,224 @@
     // 八个接线柱：无极性、比单个元件的柱子小一号（行距只有 30px）
     posts(ctx, comp, ['neutral', 'neutral', 'neutral', 'neutral',
                       'neutral', 'neutral', 'neutral', 'neutral'], 1.25, 6);
+  }
+
+  // ============================================================
+  // 电位器（人教版 16.4「变阻器」最后那件器材；按用户 2026-10-26 给的参考图建模）
+  // ------------------------------------------------------------
+  // 参考图有两幅：甲 = 它在电路里的接法，乙 = 外形放大。乙上必须一眼读出四件事，
+  // 少一件学生就不知道自己在转什么：
+  //   ① 一圈【圆弧】形的电阻丝 —— 不是直的，这是它和滑动变阻器最直观的区别；
+  //   ② 圆心一根绕轴转的金属滑片 P，臂端压在丝上；
+  //   ③ 三个焊片 a / b / c：a、c 是丝的两头，b 从圆心引下来连着滑片；
+  //   ④ 转滑片时臂端【沿着丝走】—— 臂的转角就是参数 pos（0 贴 a、1 贴 c）。
+  //
+  // 和滑动变阻器一样，这里【不碰任何电阻计算】：两段各是多少欧由内核
+  //（TYPES.potentiometer / potRmax / potPos）算好经 rec 传进来。抄一份
+  // Rmax·pos 就等于埋下「改了模型、画面没跟着变」的洞。
+  //
+  // 焊片（而不是接线柱）是有意的：参考图上就是三片带孔的焊片，不是红黑柱。
+  // 导线接在【孔】上，孔的位置 = TERMINALS.potentiometer。
+  // ============================================================
+  function drawPotentiometer(ctx, comp, rec) {
+    var pos = potPosOf(comp, rec);
+    var ang = potAngleOf(pos);
+    var sc = ctxScale(ctx);
+    var a0 = POT.A0 * Math.PI / 180, a1 = POT.A1 * Math.PI / 180;
+    var R = POT.R, WR = POT.WIRE_R, WT = POT.WIRE_T;
+
+    // 登记「这件器材的接线点是三片焊片」—— 宿主把导线画在元件之上以后会调
+    // drawTerminals 补画一次（见那里）。非枚举属性，存档 / 撤销快照看不见它。
+    try {
+      Object.defineProperty(comp, '__posts', {
+        value: { pot: true }, writable: true, enumerable: false, configurable: true
+      });
+    } catch (e) { comp.__posts = { pot: true }; }
+
+    ctx.save();
+    ctx.translate(comp.x, comp.y);
+    ctx.rotate((comp.rot || 0) * Math.PI / 180);
+    ctx.scale(scaleOf(comp), scaleOf(comp));
+
+    // ① 落在台面上的影子：机身是圆的，所以是「一圈径向阴影 + 一道贴地的紧影」
+    contactShadow(ctx, 0, R - 8, R * 0.98, R * 0.62, 0.26);
+    ctx.save();
+    ctx.shadowColor = 'rgba(15,23,42,0.18)';
+    ctx.shadowBlur = 16; ctx.shadowOffsetY = 6;
+    ctx.beginPath(); ctx.arc(0, 0, R, 0, 6.284);
+    ctx.fillStyle = '#dde5ee'; ctx.fill();
+    ctx.restore();
+
+    // ② 机身：浅蓝灰注塑壳（和表壳 / 示教板同一套塑料色），光源在左上。
+    //    渐变刻意压得【平】—— 一开始做成高光很强的「半球」，结果那圈丝陷在里面
+    //    完全看不出来，画面上就是一个亮闪闪的圆盘。壳体是哑光塑料，不该抢戏。
+    var body = ctx.createRadialGradient(-R * 0.34, -R * 0.40, R * 0.08,
+                                         R * 0.10, R * 0.14, R * 1.12);
+    body.addColorStop(0, '#f4f8fc');
+    body.addColorStop(0.44, '#e8eef5');
+    body.addColorStop(0.76, '#d7e0ea');
+    body.addColorStop(1, '#b9c5d3');
+    ctx.beginPath(); ctx.arc(0, 0, R, 0, 6.284);
+    ctx.fillStyle = body; ctx.fill();
+    ctx.strokeStyle = 'rgba(70,84,100,0.50)'; ctx.lineWidth = 1.4; ctx.stroke();
+    // 左上那一段弧形高光：没有它，整块壳就是一个平涂的圆
+    ctx.beginPath();
+    ctx.arc(0, 0, R - 3.4, Math.PI * 1.04, Math.PI * 1.70);
+    ctx.strokeStyle = 'rgba(255,255,255,0.75)'; ctx.lineWidth = 1.7; ctx.stroke();
+
+    // ③ 丝槽：一圈比机身暗的环形凹槽。丝压在槽里才有「嵌进去」的立体感，
+    //    否则那圈丝看着是浮在机身上的一张贴纸。
+    //    槽宽给到丝的 1.2 倍：槽比丝宽一点，丝的两侧才各露一条暗缝。
+    ctx.beginPath();
+    ctx.arc(0, 0, WR + WT * 0.98, 0, 6.284);
+    ctx.arc(0, 0, WR - WT * 0.98, 0, 6.284, true);      // 反向 ⇒ 挖掉内圈 = 圆环
+    ctx.fillStyle = 'rgba(92,108,126,0.22)'; ctx.fill();
+
+    // ④ 电阻丝：一段圆弧，底部留 60° 开口（开口正是三根引线走出来的地方）。
+    //    圆弧没法用「上亮下暗」的线性渐变做出圆柱感，所以外廓描暗、本体走斜向
+    //    渐变、再单独描一条细高光 —— 等价于直丝的「上亮下暗」。
+    function arcStroke(r, w, style) {
+      ctx.beginPath(); ctx.arc(0, 0, r, a0, a1);
+      ctx.lineWidth = w; ctx.strokeStyle = style; ctx.stroke();
+    }
+    ctx.lineCap = 'butt';
+    // 丝的本色用【平色】而不是线性渐变：圆环上那条斜向渐变会让左上四分之一
+    // 变成比机身还亮的浅色，那一整段丝就「消失」了（实测丝与机身只差 10 级灰）。
+    // 圆柱感交给「暗外廓 + 亮内沿」两条细线，和直丝的上亮下暗等价。
+    arcStroke(WR, WT + 3.0, 'rgba(48,62,78,0.62)');
+    arcStroke(WR, WT, '#8d9bab');
+    arcStroke(WR + WT * 0.30, 1.4, 'rgba(38,52,68,0.34)');     // 外沿压暗
+    arcStroke(WR - WT * 0.26, 1.7, 'rgba(255,255,255,0.62)');  // 内沿高光
+    // 两个端头的断面：一小截深色，读得出「这圈丝到这里就断了」
+    [a0, a1].forEach(function (t) {
+      ctx.save();
+      ctx.translate(Math.cos(t) * WR, Math.sin(t) * WR);
+      ctx.rotate(t);                                     // 径向 = 丝的横截面方向
+      ctx.fillStyle = 'rgba(52,66,82,0.72)';
+      roundRect(ctx, -WT / 2, -1.2, WT, 2.4, 1.2); ctx.fill();
+      ctx.restore();
+    });
+
+    // ⑤ 「此刻哪一段丝在电路里」—— 通着电时给接入的那一段压一层暖光。
+    //    这是电位器唯一的空间隐喻：滑片把一圈丝分成两段，只有接进回路的那段
+    //    才在工作。a-b 接法亮 a→滑片，b-c 接法亮滑片→c，a-c / 三柱全接亮整圈。
+    //    ⚠️ 判据用 rec.wA/wB/wC（三根柱各接了没有），不看电流 —— 合开关之前
+    //       电流也是 0，那时学生已经把线接好了，也该看得出接的是哪一段。
+    if (rec && rec.wiredCount >= 2 && Math.abs(rec.i) > 1e-9) {
+      var s0 = a0, s1 = ang;
+      if (rec.wA && rec.wC) { s0 = a0; s1 = a1; }         // 整根丝都在回路里
+      else if (!rec.wA && rec.wC) { s0 = ang; s1 = a1; }  // 只接了 b、c
+      ctx.beginPath(); ctx.arc(0, 0, WR, s0, s1);
+      ctx.lineWidth = WT; ctx.strokeStyle = 'rgba(255,170,70,0.30)'; ctx.stroke();
+    }
+
+    // ⑥ 三根引线（金属条）：a、c 从丝的两个端头斜着引到焊片，b 从圆心笔直往下。
+    //    引线跨过机身外沿是有意的 —— 参考图乙上就是这样，它们是压在壳体上的
+    //    铜片，不是从机身里钻出来的。
+    var endA = { x: Math.cos(a0) * WR, y: Math.sin(a0) * WR };
+    var endC = { x: Math.cos(a1) * WR, y: Math.sin(a1) * WR };
+    function leadStrip(x0, y0, x1, y1) {
+      ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1);
+      ctx.lineWidth = 6.6; ctx.strokeStyle = 'rgba(45,58,72,0.45)'; ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1);
+      ctx.lineWidth = 5.0;
+      ctx.strokeStyle = linGrad(ctx, x0, y0, x1, y1,
+        [[0, '#c3cfdb'], [0.45, '#9aa8b7'], [1, '#7b8998']]);
+      ctx.stroke();
+      // 铜片的高光：沿同一根线偏一点，读得出「这是一条有厚度的金属条」
+      ctx.beginPath();
+      ctx.moveTo(x0 - 0.9, y0 - 0.9); ctx.lineTo(x1 - 0.9, y1 - 0.9);
+      ctx.lineWidth = 1.5; ctx.strokeStyle = 'rgba(255,255,255,0.42)'; ctx.stroke();
+    }
+    leadStrip(endA.x, endA.y, -POT.POST_X, POT.POST_Y);
+    leadStrip(endC.x, endC.y, POT.POST_X, POT.POST_Y);
+    leadStrip(0, POT.HUB_R - 2, 0, POT.POST_Y);
+
+    // ⑦ 滑片臂：从圆心伸到丝的内沿，臂端一小块触头压在丝上。
+    //    先画影子（臂是抬在壳体上方的，没有影子就像贴纸），再画臂、再画触头。
+    var tx = Math.cos(ang) * POT.ARM, ty = Math.sin(ang) * POT.ARM;
+    ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(2.5, 3.5); ctx.lineTo(tx + 2.5, ty + 3.5);
+    ctx.lineWidth = 6.6; ctx.strokeStyle = 'rgba(30,41,59,0.15)'; ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(tx, ty);
+    ctx.lineWidth = 6.2;
+    ctx.strokeStyle = linGrad(ctx, -POT.ARM, -POT.ARM, POT.ARM, POT.ARM,
+      [[0, '#f4f8fc'], [0.45, '#b6c4d2'], [1, '#7f8d9c']]);
+    ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(tx, ty);
+    ctx.lineWidth = 1.5; ctx.strokeStyle = 'rgba(255,255,255,0.55)'; ctx.stroke();
+    // 触头：横跨在丝上的一小块（比丝略宽）。它的【圆心】必须落在丝环半径上
+    // （WR），不是落在臂端 —— 落在臂端的话触头只压住丝的内半边，画出来像
+    // 「滑片停在丝的旁边」，而电位器全部的道理就是「滑片压在丝上」。
+    ctx.save();
+    ctx.translate(Math.cos(ang) * WR, Math.sin(ang) * WR);
+    ctx.rotate(ang + Math.PI / 2);
+    roundRect(ctx, -5.6, -WT * 0.86, 11.2, WT * 1.72, 2.4);
+    ctx.fillStyle = linGrad(ctx, -5.6, 0, 5.6, 0,
+      [[0, '#f2f6fa'], [0.5, '#aab7c4'], [1, '#788694']]);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(45,58,72,0.52)'; ctx.lineWidth = 1; ctx.stroke();
+    ctx.restore();
+
+    // ⑧ 中心转轴：滑片就铆在这根轴上，转它 = 转滑片。一字槽跟着臂一起转
+    //    —— 既是「这是个能拧的旋钮」的提示，也顺手把方向指出来。
+    var hub = ctx.createRadialGradient(-3, -4, 1, 0, 0, POT.HUB_R);
+    hub.addColorStop(0, '#f8fbfe'); hub.addColorStop(0.5, '#c2cedb');
+    hub.addColorStop(1, '#8794a3');
+    ctx.beginPath(); ctx.arc(0, 0, POT.HUB_R, 0, 6.284);
+    ctx.fillStyle = hub; ctx.fill();
+    ctx.strokeStyle = 'rgba(45,58,72,0.55)'; ctx.lineWidth = 1.2; ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(Math.cos(ang) * -POT.HUB_R * 0.60, Math.sin(ang) * -POT.HUB_R * 0.60);
+    ctx.lineTo(Math.cos(ang) * POT.HUB_R * 0.60, Math.sin(ang) * POT.HUB_R * 0.60);
+    ctx.strokeStyle = 'rgba(45,58,72,0.55)'; ctx.lineWidth = 1.8;
+    ctx.lineCap = 'round'; ctx.stroke();
+
+    ctx.restore();
+    // 三个焊片（含 a/b/c 字母）。抽成 drawPotLugs 是因为宿主把导线画在元件
+    // 之上以后要用 drawTerminals 再补一次 —— 接线的地方不能被导线压住。
+    drawPotLugs(ctx, comp, sc * scaleOf(comp));
+  }
+
+  // 电位器的三个焊片 + 字母 a / b / c。自己算位姿（translate/rotate/scale），
+  // 因为 drawTerminals 在元件变换之外调用它。
+  // 焊片而不是红黑接线柱：参考图上就是三片带孔的焊片，导线夹在【孔】上，
+  // 孔心 = TERMINALS.potentiometer，所以「看得见的孔」和「接得上的点」是同一点。
+  function drawPotLugs(ctx, comp, sc) {
+    var k = scaleOf(comp);
+    var s = sc == null ? ctxScale(ctx) * k : sc;
+    ctx.save();
+    ctx.translate(comp.x, comp.y);
+    ctx.rotate((comp.rot || 0) * Math.PI / 180);
+    ctx.scale(k, k);
+    for (var i = 0; i < POT_LETTERS.length; i++) {
+      var t = TERMINALS.potentiometer[i];
+      // 焊片本体：一小块镀锡铜片，左上受光
+      roundRect(ctx, t.x - POT.LUG_W / 2, t.y - POT.LUG_H / 2,
+                POT.LUG_W, POT.LUG_H, 3);
+      ctx.fillStyle = linGrad(ctx, t.x - POT.LUG_W / 2, t.y - POT.LUG_H / 2,
+                                   t.x + POT.LUG_W / 2, t.y + POT.LUG_H / 2,
+        [[0, '#f2f6fa'], [0.42, '#c6d2df'], [0.74, '#9dabba'], [1, '#7d8b9a']]);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(45,58,72,0.55)'; ctx.lineWidth = 1; ctx.stroke();
+      // 孔：深色 + 一圈亮边。「线夹在这里」的唯一视觉锚点
+      ctx.beginPath(); ctx.arc(t.x, t.y, POT.LUG_HOLE, 0, 6.284);
+      ctx.fillStyle = '#5c6b7a'; ctx.fill();
+      ctx.beginPath(); ctx.arc(t.x, t.y, POT.LUG_HOLE, 0, 6.284);
+      ctx.strokeStyle = 'rgba(255,255,255,0.55)'; ctx.lineWidth = 0.9; ctx.stroke();
+      // 字母印在焊片正下方（和变阻器的 A/B/C/D 同一条规矩：字是接线时的参照系）
+      // 缩到 0.62 以下就不印了 —— 再小只是一团灰，反而把焊片糊住。
+      if (s >= 0.62) {
+        ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+        ctx.font = 'bold 13px -apple-system,"PingFang SC",sans-serif';
+        ctx.lineWidth = 3.2; ctx.strokeStyle = 'rgba(255,255,255,0.92)';
+        ctx.strokeText(POT_LETTERS[i], t.x, t.y + POT.LUG_H / 2 + 1.5);
+        ctx.fillStyle = '#1e293b';
+        ctx.fillText(POT_LETTERS[i], t.x, t.y + POT.LUG_H / 2 + 1.5);
+      }
+    }
+    ctx.restore();
   }
 
   // ============================================================
@@ -6008,6 +6299,7 @@
       case 'rheostat': drawRheostat(ctx, comp, rec); break;
       case 'plate': drawPlate(ctx, comp, rec); break;
       case 'rheoboard': drawRheoboard(ctx, comp, rec); break;
+      case 'potentiometer': drawPotentiometer(ctx, comp, rec); break;
       case 'pencil': drawPencil(ctx, comp, rec); break;
       case 'junction': drawJunction(ctx, comp); break;
       default: throw new Error('未知元件类型: ' + comp.type);
@@ -6049,6 +6341,11 @@
     rheoLabels: function () { return rheoLabelDrawn; },
     sliderLocalX: sliderLocalX, slideFromLocalX: slideFromLocalX,
     slideOf: slideOf,
+    // 电位器：滑片位置 ↔ 转角。编辑器拖滑片臂必须走 potPosFromAngle 反解，
+    // 绘制走 potAngleOf —— 一份换算，拖到哪儿和画到哪儿才是一处。
+    // POT 导出给自检点焊片、量机身与丝环半径（不能自己再抄一遍 50 / 34）。
+    POT: POT, POT_LETTERS: POT_LETTERS,
+    potPosOf: potPosOf, potAngleOf: potAngleOf, potPosFromAngle: potPosFromAngle,
     // 铅笔芯：夹子在芯上的局部 x ↔ 接入长度（mm）。拖动改长度时编辑器
     // 必须走这一份换算 —— 另写一份「x 到毫米」的算式，画到哪儿和电阻
     // 是多少就会错开（和滑片那条注释同一个坑）。
@@ -6113,6 +6410,6 @@
     // 绘制却按 1.8 画，学生的「200%」和画面上的大小对不上。
     scaleOf: scaleOf, clampScale: clampScale,
     SCALE_MIN: SCALE_MIN, SCALE_MAX: SCALE_MAX,
-    version: '2.6.0',
+    version: '2.7.0',
   };
 });

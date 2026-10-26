@@ -58,7 +58,7 @@
     cursor:pointer;line-height:1.4}
   .kb-head button:hover{background:#e2e8f0}
   .kb-hint{font-size:11px;color:var(--dim);line-height:1.5}
-  /* 元件盒里的 15 件器材：图示（drawRealIcon 画的真实外观）+ 名字。
+  /* 元件盒里的 16 件器材：图示（drawRealIcon 画的真实外观）+ 名字。
      两列网格 —— 一列太窄，图示会被压成一条；三列在 184px 里每格只剩 54px。 */
   .palette{display:grid;grid-template-columns:1fr 1fr;gap:6px;min-height:0;
     overflow:auto}
@@ -1035,8 +1035,8 @@
        2026-10-16 这批：core 24 / draw 38 / editor 29 / params 6 / schematic 18。
        （上一批是 core 23 / draw 37 / editor 28 / params 5 / schematic 17，
          这一轮五个文件都动了：世界加宽 + 电表放大 + 读数牌搬家 + 单刀双掷开关。） -->
-<script src="circuit-core.js?build=30"></script>
-<script src="circuit-draw.js?build=47"></script>
+<script src="circuit-core.js?build=31"></script>
+<script src="circuit-draw.js?build=48"></script>
 <!-- ════════════════════════════════════════════════════════════════════
      【教材版本皮肤 · 已从线上撤下】2026-10-12
      人教版元件外观（circuit-skin*.js 共 5 个文件）暂不在线上启用，学生看到的
@@ -1052,13 +1052,13 @@
 <!-- <script src="circuit-skin-renjiao-img2-data.js?build=2"></script> -->
 <!-- <script src="circuit-skin-renjiao-img3-data.js?build=1"></script> -->
 <!-- <script src="circuit-skin-renjiao.js?build=6"></script> -->
-<script src="circuit-editor.js?build=36"></script>
+<script src="circuit-editor.js?build=37"></script>
 <!-- 参数面板规格 + 读数显示格式。从本页内联抽出，与 3D 版沙盒（电路实验沙盒3D）
      共用同一份真值：面板规格、小数位、极性显示规则改一处两边都变。 -->
-<script src="circuit-params.js?build=11"></script>
+<script src="circuit-params.js?build=12"></script>
 <!-- 电路图（实物图 → 标准符号）。独立成第四块内核：沙盒和欧姆定律页共用同一份，
      免得各写一套符号，两边的图画法迟早不一样。三个老内核一行没动，build 号不升。 -->
-<script src="circuit-schematic.js?build=26"></script>
+<script src="circuit-schematic.js?build=27"></script>
 <!-- 电路图画布（拖符号画标准电路图 + 当场仿真）。它复用 circuit-schematic 的
      itemOf / drawSymbol，所以画出来的符号和「由实物图转换」那张【一模一样】。 -->
 <script src="circuit-schlab.js?build=5"></script>
@@ -1889,6 +1889,9 @@ var DROP = {battery:40, power:46, ammeter:80, voltmeter:80, galvanometer:80,
             pencil:38,
             // 电阻示教板：板下沿 +66，柱子再往下探一点 —— 读数框落在 78。
             rheoboard:78,
+            // 电位器：机身下沿 +50，焊片在 +72、字母到 +91 —— 读数框落在 100，
+            // 不然会压在 b 那个焊片和它的字母上。
+            potentiometer:100,
             switch:38, spdt:38, led:38, motor:38, bell:38};
 
 // ── 读数的小数位 ────────────────────────────────────────────
@@ -1921,6 +1924,28 @@ function readoutLines(c, r){
       // 接了不止一根：这多半是学生把两根丝的柱子接到了一起（并联），
       // 必须说出来，否则他看到 R 只显示其中一根会以为算错了。
       if (r.wiredCount > 1) lines.push('接了 ' + r.wiredCount + ' 根丝');
+    }
+  } else if (c.type === 'potentiometer') {
+    // 电位器：读数框要说清【现在接的是哪两段】。它有三个柱，三种接法各是
+    // 不同的电阻值，只印一个「R = 10Ω」，学生回头看不出那 10 是哪一段。
+    //   接 a、b → 用的是 a-b 段（R = Rmax·pos）
+    //   接 b、c → 用的是 b-c 段（R = Rmax·(1−pos)）
+    //   接 a、c → 整根丝（滑片不起作用，R = Rmax）
+    //   三柱全接 → 分压接法
+    if (!r || !(r.wiredCount >= 2)) {
+      lines.push(r && r.wiredCount === 1 ? '还差一根线' : '还没接线');
+      lines.push('读不出数');
+    } else {
+      var pTxt;
+      if (r.wA && r.wB && r.wC) pTxt = '分压 · a-c ' + num1(r.Rmax) + 'Ω';
+      else if (r.wA && r.wC) pTxt = 'a-c ' + num1(r.Rmax) + 'Ω';
+      else if (r.wA) pTxt = 'a-b ' + num1(r.rAB) + 'Ω';
+      else pTxt = 'b-c ' + num1(r.rBC) + 'Ω';
+      lines.push(pTxt);
+      lines.push('I = ' + num1(r.i) + 'A');
+      // 接了 a、c 两柱、滑片空着：转滑片一点用都没有 —— 必须说出来，
+      // 否则学生转了半天发现灯不变亮，只会以为器材坏了。
+      if (r.wA && r.wC && !r.wB) lines.push('滑片不起作用');
     }
   } else if (c.type === 'galvanometer') {
     // 灵敏电流计：两端元件，没有「量程柱没接」这一说（r.wired 恒 true）。
@@ -4931,6 +4956,9 @@ var LG_VIEW = {
   // 灵敏电流计：和两只表同一只壳、同一块底座，取景框当然也一样。
   galvanometer: { x0: -122, y0: -110, x1: 122, y1: 84 },
   rheostat:  { x0: -94, y0: -46, x1: 94, y1: 54 },
+  // 电位器：机身 ±50，三个焊片在 +72、字母到 +91。
+  // 和共享层 CircuitDraw.ICON_VIEW.potentiometer 同一组数。
+  potentiometer: { x0: -58, y0: -58, x1: 58, y1: 92 },
   // 三件新器材的取景框。少了它们，只要电路里出现二极管/电动机/电铃，
   // 图例这一栏就会读 undefined 的 x1 直接抛异常 —— 整个电路图浮层打不开，
   // 而报错信息指向的是一行取景框算术，跟「我加了个二极管」八竿子打不着。
@@ -5076,6 +5104,10 @@ window.addEventListener('keydown', function(ev){
 
 // 元件栏
 var PAL = ['battery','power','switch','spdt','resistor','rheostat',
+           // 电位器紧挨着滑动变阻器：两件都是「改变电阻」的器材，学生找它时
+           // 眼睛本来就在那一排；而它们【不是】同一件东西（一个转、一个平移，
+           // 一个三端能分压、一个两端只能限流），并排放着正好对照。
+           'potentiometer',
            // 铅笔芯紧挨着滑动变阻器：两件都是「改变电阻」的器材，学生找它时
            // 眼睛本来就在那一排。它和变阻器改的不是同一件事（一个改长度、
            // 一个改分压比），并排放着正好对照。
@@ -5092,7 +5124,7 @@ var PAL = ['battery','power','switch','spdt','resistor','rheostat',
            'rheoboard'];
 // 🔴 两个容器，别混：
 //   bar    = 顶栏那一行【功能按钮】（撤销 / 修复 / 清空 / 预设 / 电路图 / 画笔 / 全屏…）
-//   palBox = 左侧【电路元件盒】里的 15 件器材（图示卡）
+//   palBox = 左侧【电路元件盒】里的 16 件器材（图示卡）
 // 以前两者是同一个元素（#palette 就是顶栏），现在按用户第 1 点把器材挪进左侧盒里。
 var bar = document.getElementById('tbFuncs');
 var palBox = document.getElementById('palette');
@@ -5131,7 +5163,7 @@ function addAtPoint(t, lx, ly){
   editor.addComp(t, x, y); render();
 }
 
-// 元件盒里的 15 件器材：画的是【器材外形】（drawRealIcon 走 D.drawComponent），
+// 元件盒里的 16 件器材：画的是【器材外形】（drawRealIcon 走 D.drawComponent），
 // 不是文字按钮 —— 用户第 1 点要的就是「以它的图示形式放进去，大小要合适」。
 // 图例取景框 LG_VIEW 是共享层给的，和电路图浮层那一栏同源；换皮肤时 applySkin
 // 会把 LG_VIEW 换掉，这里的图标要跟着重画（见 refreshPalette）。

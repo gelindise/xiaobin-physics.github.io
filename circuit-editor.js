@@ -54,6 +54,9 @@
     // 电阻示教板（四根电阻丝）：取 RB（rheoboard）。和变阻器的 RH 分开 ——
     // 两块板长得像、名字也像，编号再撞就分不清谁是谁了。
     rheoboard: 'RB',
+    // 电位器：取 RP（Rheostat-Potentiometer）。不能也用 RH —— 变阻器已经占了，
+    // 而这两件器材在读数表和电路图里常常同时出现（一个限流、一个分压）。
+    potentiometer: 'RP',
     // 单刀双掷开关：取 SP 而不是 S。虽然「编号不重复」那条 while 循环本身
     // 就能挡住撞号（byId 查得到就往后跳），但和普通开关共用 S 的话，
     // 一块板上会数出 S1 / S2 两只【长得完全不一样】的开关，面板和读数表里
@@ -104,6 +107,10 @@
     // ⚠️ 半宽必须和 bodyBox 的 hw 一致：两边一旦不同，拖动元件的抓取区和
     //    「导线穿过元件」的判定就各说各话。
     pencil:    [146, 34],
+    // 电位器：命中框就是机身那个圆（±50）。三个焊片在 +72，落在框外 ——
+    // 和 bodyBox 的口径一致（焊片在框外，「导线夹在焊片上」才不会被判成
+    // 「导线穿过机身」）。焊片本身的点击由 hitTerminal 先接走。
+    potentiometer: [50, 50],
     // 两只表的仪器本体全部落在导线【上方】（三个接线柱在底部探出来），
     // 所以高只有表壳+底座这一截，不是上下对称的。
     ammeter:   [100, 70],
@@ -158,6 +165,10 @@
     var hover = null;         // {kind:'term', compId, termIdx} | {kind:'comp'|'wire', ...}
     var moving = null;        // 拖元件 {id, dx, dy}
     var slider = null;        // 拨变阻器滑片 {id, moved}
+    // 转电位器滑片 {id, moved}。和 slider 分开：一个是横向位移、一个是角度，
+    // 合成一个状态就得在里面再判类型，而两条路的换算完全不同（slideFromLocalX
+    // 与 potPosFromAngle）。
+    var potArm = null;
     // 拖铅笔芯的移动夹 {id, dx, moved}。dx = 按下那一刻「夹口 x − 鼠标局部 x」，
     // 每一帧都用它把夹口摆回鼠标下面 —— 抓住夹子的哪一头都不会跳。
     var clipDrag = null;
@@ -307,6 +318,30 @@
       var sx = D.sliderLocalX(D.slideOf(c));
       return { x: sx - D.RHEO.knobHalf, y: D.RHEO.knobTop,
                w: D.RHEO.knobHalf * 2, h: D.RHEO.knobBottom - D.RHEO.knobTop };
+    }
+
+    // 电位器的滑片臂能不能一把抓住。
+    // 🔴 命中区是【那根臂 + 中间的转轴】，不是整个机身圆盘。
+    //    第一版做成「整个圆盘都能转」，结果是这件器材【拖不动了】—— 学生想在
+    //    台面上挪个位置，一按下去就变成转滑片。所以：抓臂（±9px）或抓转轴
+    //    （半径 16 以内）才转，抓机身其余地方仍然是「搬走这件器材」。
+    //    9px 的余量是照「臂 6.2 宽 + 手指抖动」给的，和变阻器滑片的 KNOB_SLACK 同一档。
+    var POT_ARM_SLACK = 9, POT_HUB_HIT = 16;
+    function hitPotArm(p) {
+      var cs = getScene().comps;
+      for (var i = cs.length - 1; i >= 0; i--) {
+        var c = cs[i];
+        if (c.type !== 'potentiometer') continue;
+        var l = D.toLocal(c, p.x, p.y);
+        if (Math.hypot(l.x, l.y) <= POT_HUB_HIT) return c;      // 转轴
+        var a = D.potAngleOf(D.potPosOf(c));
+        var ax = Math.cos(a) * D.POT.ARM, ay = Math.sin(a) * D.POT.ARM;
+        // 点到线段（圆心 → 臂端）的距离。L2 恒 > 0（ARM 是正的），不用兜零。
+        var L2 = ax * ax + ay * ay;
+        var t = Math.max(0, Math.min(1, (l.x * ax + l.y * ay) / L2));
+        if (Math.hypot(l.x - ax * t, l.y - ay * t) <= POT_ARM_SLACK) return c;
+      }
+      return null;
     }
 
     // 铅笔芯的移动夹能不能一把抓住。几何全部从 D.PENCIL / D.clipLocalX 取，
@@ -1238,6 +1273,18 @@
         return;
       }
 
+      // 转电位器的滑片：同样要排在「搬走整件器材」前面 —— 滑片臂长在机身里，
+      // 先判本体的话这一下永远被当成拖元件，滑片就白画了。
+      var pa = hitPotArm(p);
+      if (pa) {
+        beginEdit();
+        select({ kind: 'comp', id: pa.id });
+        potArm = { id: pa.id, moved: false };
+        canvas.setPointerCapture && canvas.setPointerCapture(ev.pointerId);
+        changed();
+        return;
+      }
+
       var cs = getScene().comps;
       for (var i = cs.length - 1; i >= 0; i--) {   // 后画的在上层，从后往前找
         if (hitComp(p, cs[i])) {
@@ -1346,6 +1393,26 @@
         }
         clipDrag = null;
       }
+      if (potArm) {
+        var pac = byId(potArm.id);
+        if (pac) {
+          // 角度 = 从圆心指向鼠标。反解走 D.potPosFromAngle（和绘制同源）：
+          // 底部那 60° 开口里按左右就近吸附，拖过开口时数值不会从 0 跳到 1。
+          var pal = D.toLocal(pac, p.x, p.y);
+          var pang = Math.atan2(pal.y, pal.x);
+          // 取到 0.01 —— 和参数面板滑条的 step 对齐（同变阻器滑片那条规矩）：
+          // 不对齐的话面板显示 0.42、画布其实停在 0.4237，撤销栈还会多一条。
+          var nvp = Math.round(D.potPosFromAngle(pang) * 100) / 100;
+          if (nvp !== D.potPosOf(pac)) {
+            if (!potArm.moved) { potArm.moved = true; commitEdit(); }  // 真转了才入栈
+            pac.params = pac.params || {};
+            pac.params.pos = nvp;
+          }
+          onChange();
+          return;
+        }
+        potArm = null;
+      }
       if (psuKnob) {
         var pc = byId(psuKnob.id);
         if (pc && D.PSU) {
@@ -1415,6 +1482,10 @@
             var ncp = hitClip(p);
             if (ncp) nh = { kind: 'clip', id: ncp.id };
             else {
+            // 电位器的滑片臂：同上，是「长在本体上的控件」，排在 hitComp 前
+            var npa = hitPotArm(p);
+            if (npa) nh = { kind: 'potArm', id: npa.id };
+            else {
             var cs = getScene().comps;
             for (var i = cs.length - 1; i >= 0; i--) {
               if (hitComp(p, cs[i])) { nh = { kind: 'comp', id: cs[i].id }; break; }
@@ -1422,6 +1493,7 @@
             // 导线也进 hover：它现在能拖了，不给一个 move 光标的话，学生根本
             // 不知道这线是可拖的 —— 它长得和别的线一模一样。
             if (!nh) { var nw = hitWire(p); if (nw >= 0) nh = { kind: 'wire', index: nw }; }
+            }
             }
           }
         }
@@ -1437,6 +1509,8 @@
         : (nh && nh.kind === 'slider') ? 'ew-resize'
         : (nh && nh.kind === 'clip') ? 'ew-resize'
         : (nh && nh.kind === 'psuKnob') ? 'grab'
+        // 电位器：转的是个旋钮，光标给 grab / grabbing（和电源旋钮同一条）
+        : (nh && nh.kind === 'potArm') ? (potArm ? 'grabbing' : 'grab')
         : (nh ? 'move' : 'default');
       if (changedHover) onChange();
     }
@@ -1652,6 +1726,13 @@
         // （参数面板照常显示），不报 onTap —— 旋钮是控件，不是「点一下看读数」。
         if (!psuKnob.moved) discardEdit();
         psuKnob = null;
+        changed();
+        return;
+      }
+      if (potArm) {
+        // 同上：转了才留撤销记录。单纯点一下机身 = 选中这件器材
+        if (!potArm.moved) discardEdit();
+        potArm = null;
         changed();
         return;
       }
@@ -1901,6 +1982,36 @@
         }
       }
 
+      // 悬停 / 正在转【电位器】的滑片：把滑片臂和转轴描成蓝的，告诉学生这两处能转。
+      // 🔴 描边必须和命中区一致（臂 ±9px + 转轴 16px，见 hitPotArm）：
+      //    画成「整个机身一圈蓝环」的话，学生会去抓机身边缘，而那一下是搬元件。
+      var hpa = potArm || (hover && hover.kind === 'potArm' ? hover : null);
+      if (hpa) {
+        var hpac = byId(hpa.id);
+        if (hpac && hpac.type === 'potentiometer' && D.POT) {
+          var kp = D.scaleOf ? D.scaleOf(hpac) : 1;
+          var pa2 = D.potAngleOf(D.potPosOf(hpac));
+          var ptx = Math.cos(pa2) * D.POT.ARM, pty = Math.sin(pa2) * D.POT.ARM;
+          ctx.save();
+          ctx.translate(hpac.x, hpac.y);
+          ctx.rotate((hpac.rot || 0) * Math.PI / 180);
+          ctx.scale(kp, kp);
+          ctx.lineCap = 'round';
+          // 臂的命中带：一条和臂同宽、两侧各留余量的半透明粗线
+          ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(ptx, pty);
+          ctx.lineWidth = 2 * POT_ARM_SLACK + 6.2;
+          ctx.strokeStyle = 'rgba(37,99,235,0.14)'; ctx.stroke();
+          // 命中带的中线：不画两段平行边线（太啰嗦），一条细中线加圆头就够读了
+          ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(ptx, pty);
+          ctx.lineWidth = 1.6; ctx.strokeStyle = 'rgba(37,99,235,0.75)'; ctx.stroke();
+          // 转轴的命中圈
+          ctx.beginPath(); ctx.arc(0, 0, POT_HUB_HIT, 0, 6.284);
+          ctx.fillStyle = 'rgba(37,99,235,0.12)'; ctx.fill();
+          ctx.strokeStyle = 'rgba(37,99,235,0.85)'; ctx.lineWidth = 1.6; ctx.stroke();
+          ctx.restore();
+        }
+      }
+
       // 选中框
       if (selected && selected.kind === 'comp') {
         var c = byId(selected.id);
@@ -2099,6 +2210,23 @@
         var lx = D.PSU.KNOB.x, ly = D.PSU.KNOB.y;
         if (D.flipOf(c)) lx = -lx;
         return D.toWorld(c, lx, ly);
+      },
+      // 电位器：滑片臂上的一点（离圆心 0.8 个臂长）的逻辑坐标。
+      // 自检要「抓住滑片臂把它转过去」：抓的点必须落在 hitPotArm 的命中圈里，
+      // 又要尽量远离圆心 —— 从圆心附近按下时 atan2 抖得厉害，抓臂端才稳。
+      potArmPos: function (id) {
+        var c = byId(id);
+        if (!c || c.type !== 'potentiometer' || !D.POT) return null;
+        var a = D.potAngleOf(D.potPosOf(c));
+        var r = D.POT.ARM * 0.8;
+        return D.toWorld(c, Math.cos(a) * r, Math.sin(a) * r);
+      },
+      // 电位器滑片位置（0~1）。页面「转一下滑片」和自检都读它，别去读
+      // params.pos —— 那条路会把「画布上真的转了没有」这件事漏掉。
+      potPos: function (id) {
+        var c = byId(id);
+        if (!c || c.type !== 'potentiometer') return null;
+        return D.potPosOf(c);
       },
       // 面板开关命中的是【元件自身坐标系】的矩形：调用方自己 toLocal 再判，
       // 这样镜像 / 旋转都跟着走。

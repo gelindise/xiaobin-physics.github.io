@@ -51,6 +51,28 @@
       defaults: { Rmax: 20, slide: 0.5 },
       internalShort: [2, 3],
     },
+    // ── 电位器（人教版 16.4「变阻器」那一节最后一件器材）────────────
+    // 转柄式电位器：一圈电阻丝 + 一个绕中心转的金属滑片 P，三根引出线
+    // a / b / c。a、c 是电阻丝的两端，b 是滑片。
+    //
+    // 它和滑动变阻器【不是】同一个东西，两条差别都要教：
+    //   · 变阻器靠滑片在【直的】电阻丝上平移，电位器靠滑片在【圆弧】上转
+    //     —— 所以它的参数是转角（pos）而不是长度，画面上也必须真的能转；
+    //   · 变阻器通常只接两根线（一上一下）当【限流】用；电位器有三个柱，
+    //     三根都接就是【分压】—— a、c 跨在电源上，b 抽出中间那一份电压。
+    //     这是初中「变阻器」这一节里唯一一个三根线全用上的器材。
+    //
+    // 电气模型 = 两段电阻【串联】，滑片处抽头：
+    //     a ——[Rmax·pos]—— b ——[Rmax·(1−pos)]—— c
+    // pos = 0 时滑片停在 a 端（a-b 之间 0Ω），pos = 1 停在 c 端。
+    // 🔴 绝不能只建「其中一段」再按接法挑一头：三个柱都接着的时候两段
+    //    同时在回路里，少建一段等于把分压接法算成断路。
+    potentiometer: {
+      label: '电位器', terminals: 3, termNames: ['a', 'b', 'c'],
+      // Rmax：整根电阻丝的总阻值（和变阻器同一档量程，5~50Ω）；
+      // pos ：滑片从 a 转到 c 的比例（0 = 贴着 a，1 = 贴着 c）。
+      defaults: { Rmax: 20, pos: 0.5 },
+    },
     // ── 导体板（探究电阻的影响因素）────────────────────────
     // 一块贴在小木板上的金属条，两个接线柱。它把「电阻的大小与材料、长度、
     // 横截面积有关」这句话变成三个能拧的旋钮：材料（换 ρ）、长度 L、
@@ -515,6 +537,19 @@
     return pencilGrade(paramsOf(comp)).rho * (pencilLen(comp) / 1000) / PENCIL.section;
   }
 
+  // ── 电位器的两个参数（见 TYPES.potentiometer）────────────────
+  // 取值一律过一遍夹取：存档是手改得动的 JSON，pos 写成 "abc" / 2 / −1
+  // 都会让下面那条分压链算出 NaN 或者负电阻，而画面照画、读数印 NaN。
+  // 绘制层要按【同一份】pos 算滑片转角（见 circuit-draw 的 potAngleOf），
+  // 所以这两个函数必须导出 —— 各写一份夹取，画到哪儿和算出多少就会错开。
+  function potRmax(comp) {
+    var R = num(paramsOf(comp).Rmax, 20);
+    return R > 0 ? R : 20;
+  }
+  function potPos(comp) {
+    return clamp01(num(paramsOf(comp).pos, 0.5));
+  }
+
   // ── 电铃的吸合磁动势下限（安匝 = 电流 × 匝数）──────────────
   // 低于它，电磁铁的吸力顶不动弹簧片，铃【不响】—— 这正是「电磁铁磁性强弱
   // 跟电流、匝数有关」那句话的直接后果：电压调低、线圈电阻调大、匝数调少，
@@ -889,6 +924,23 @@
         addR(N(0), S, P.Rmax * clamp01(P.slide));          // A → 滑片（左半段）
         addR(S, N(1), P.Rmax * (1 - clamp01(P.slide)));    // 滑片 → B（右半段）
         break;
+
+      // 电位器：两段串联，滑片 b 是抽头（见 TYPES.potentiometer 的注释）。
+      // 段号写进支路（potSeg 0 = a-b、1 = b-c）—— 回填时 bs 的顺序未必等于
+      // push 的顺序（0Ω 的那一段会被 addR 换成理想短路线），只有这个标记能把
+      // 电流准确归位到某一段，不至于「②的电流读成①的」。
+      // ⚠️ 用【加之前/之后的长度差】判有没有 push 成功：addR 遇到 p === q
+      //    （三个柱被导线并在同一个节点上）会直接 return 一条都不推。
+      case 'potentiometer': {
+        var pR = potRmax(comp), pS = potPos(comp);
+        var pn = out.length;
+        addR(N(0), N(1), pR * pS);
+        if (out.length > pn) out[out.length - 1].potSeg = 0;
+        pn = out.length;
+        addR(N(1), N(2), pR * (1 - pS));
+        if (out.length > pn) out[out.length - 1].potSeg = 1;
+        break;
+      }
 
       // 接线点：一根理想导线，【一条支路都不产生】。
       // 它的两个端子在 buildNodes 里已经被 internalShort 并成同一个节点，
@@ -1982,6 +2034,73 @@
           rec.p = rec.v * rec.i;
           break;
         }
+
+        // 电位器：三段信息都要给出去，少一段读数框就说不清「现在接的是哪两段」。
+        //   rAB / rBC  —— 两段各自的阻值（滑片位置直接决定它们，a-b 段 + b-c 段 = Rmax）
+        //   R          —— 【接进电路的那一份】等效电阻，侧栏表和读数框的 R 列读它
+        //   i / v      —— 主回路电流、两端电压（对外一律取幅值：电位器没有极性）
+        // 接法判定看三根柱各接了没有（wired），不看电流 —— 合开关之前电流也是 0，
+        // 而学生已经把线接好了；那时也得说得出「接的是哪两段」。
+        case 'potentiometer': {
+          var ppos = potPos(c), pmax = potRmax(c);
+          rec.pos = ppos; rec.Rmax = pmax;
+          rec.rAB = pmax * ppos;             // a —[这一段]— b
+          rec.rBC = pmax * (1 - ppos);       // b —[这一段]— c
+          var wA = wired.has(c.id + ':0'),
+              wB = wired.has(c.id + ':1'),
+              wC = wired.has(c.id + ':2');
+          rec.wiredCount = (wA ? 1 : 0) + (wB ? 1 : 0) + (wC ? 1 : 0);
+          // 三根柱各接了没有，单独回传：绘制层要靠它决定「哪一段丝亮着」
+          //（a-b 接法亮 a→滑片那一段，b-c 亮滑片→c，a-c 亮整圈）。只给
+          // wiredCount 的话画不出「亮的是哪一段」，而那是电位器唯一的空间隐喻。
+          rec.wA = wA; rec.wB = wB; rec.wC = wC;
+          // 每段一条记录：按 potSeg 找支路，不能按 bs 下标（被短路的那段不在 bs 里）
+          var pseg = [0, 1].map(function (si) {
+            var pbr = null;
+            for (var q = 0; q < bs.length; q++) {
+              if (bs[q].potSeg === si) { pbr = bs[q]; break; }
+            }
+            var pR2 = si === 0 ? rec.rAB : rec.rBC;
+            var pv = 0, pi = 0;
+            if (pbr) {
+              if (pbr.kind === 'V') { pi = bI(sol, pbr); }        // 0Ω 段：理想短路线
+              else { pv = nV(sol, pbr.p) - nV(sol, pbr.q); pi = pv / pbr.R; }
+            }
+            return { seg: si, R: pR2, v: pv, i: pi };
+          });
+          rec.segments = pseg;
+          // 接进电路的那一份等效电阻。三种接法各自的答案：
+          //   a+b（滑片当可变端）  → 只有 a-b 段，R = Rmax·pos
+          //   b+c（另一端当可变端）→ 只有 b-c 段，R = Rmax·(1−pos)
+          //   a+c（滑片空着）      → 整根丝串起来，R = Rmax（滑片不起作用，经典错接）
+          //   三个都接（分压）      → 从 a 到 c 看进去还是整根丝，R = Rmax
+          // 🔴 a+c 那一支【不能】写成「两段并联」：滑片 b 空着的时候它不是节点，
+          //    电流只能从 a 流过整根丝到 c —— 两段是串联的。
+          if (wA && wC) rec.R = rec.rAB + rec.rBC;
+          else if (wA && wB) rec.R = rec.rAB;
+          else if (wB && wC) rec.R = rec.rBC;
+          else rec.R = null;
+          // 电流：两段里最大的那一个（串联时两段相等，分压时干路那一段更大）。
+          // 一根线都没接全 ⇒ 一律 0，不印「I = 0.000A」那种假读数。
+          rec.i = rec.wiredCount >= 2
+            ? Math.max(Math.abs(pseg[0].i), Math.abs(pseg[1].i)) : 0;
+          // 电压：取【两端】的电位差。三根都接时两端是 a 与 c；否则就是接上
+          // 的那两个柱。直接读节点电位，不用 i×R —— 分压接法下 b 上带着负载，
+          // 两段电流不相等，i×R 算出来的不是真实端压。
+          var pends = (wA && wC) ? [0, 2] : (wA && wB) ? [0, 1] : (wB && wC) ? [1, 2] : null;
+          rec.v = pends ? Math.abs(nV(sol, N(pends[0])) - nV(sol, N(pends[1]))) : 0;
+          rec.p = rec.v * rec.i;
+          // 接了 a 和 c、滑片一根线都没接：整根丝进电路，转滑片一点用都没有 ——
+          // 和变阻器「接 A、B 两柱」是同一类经典错接，必须说出来（否则学生转了
+          // 半天滑片发现灯不变亮，只会以为器材坏了）。
+          if (wA && wC && !wB) {
+            warnings.push({ code: 'POT_SLIDER_IDLE',
+              message: '电位器 ' + nameOf(c) + ' 接的是 a、c 两柱，整根电阻丝都进了电路，' +
+                       '转动滑片不起作用（要调电阻请接 a、b 或 b、c）',
+              componentIds: [c.id] });
+          }
+          break;
+        }
       }
 
       rec.v = fin(rec.v, 0); rec.i = fin(rec.i, 0); rec.p = fin(rec.p, 0);
@@ -2826,6 +2945,11 @@
     pencilGrade: pencilGrade,
     pencilLen: pencilLen,
     pencilR: pencilR,
-    version: '1.5.0',
+    // 电位器：Rmax 与滑片位置（0 = 贴着 a，1 = 贴着 c）。绘制层要按【同一份】
+    // pos 算滑片转角，面板要按同一份夹取范围给滑条 —— 两处各写一份夹取，
+    // 画到哪儿和算出来多少就会错开（和变阻器的 slideOf 同一条规矩）。
+    potRmax: potRmax,
+    potPos: potPos,
+    version: '1.6.0',
   };
 });
