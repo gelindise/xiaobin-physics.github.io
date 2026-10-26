@@ -2651,6 +2651,33 @@
       // 端子 2i 是电流【流进】元件那一头 ⇒ 注入节点为负；2i+1 反过来。
       return (termIdx % 2 === 0) ? -rSeg.i : rSeg.i;
     }
+    if (comp.type === 'joule') {
+      // 四端子 = 两个【互相独立】的电热丝（0/1 = 甲，2/3 = 乙）。
+      // 🔴 落到兜底上，乙的两个端子会被当成甲那一支的两端：端子 2 拿到 +i
+      //    （应该是 −i）、端子 3 拿到 +i。症状是甲、乙 并联时【给乙正极柱
+      //    供电的那根导线粒子反向跑】，另一根速度翻倍 —— 用户 2026-10-26
+      //    报的就是这个，而读数、功率、液面全都正常，光看画面根本查不出来。
+      //    守卫：node check-current-direction.js
+      var jIdx = termIdx >> 1;                      // 0/1 → 0，2/3 → 1
+      var jSeg = rec.boxes && rec.boxes[jIdx];
+      if (!jSeg) return 0;
+      // 端子 2j 是电流【流进】元件那一头 ⇒ 注入节点为负；2j+1 反过来。
+      return (termIdx % 2 === 0) ? -jSeg.i : jSeg.i;
+    }
+    if (comp.type === 'potentiometer') {
+      // 三端子 = 两段电阻（a—R1—b—R2—c），b 是滑片。和变阻器同一个道理：
+      // 整体的 rec.i 在这里没有意义（它是两段里【较大】的那一个），
+      // 必须按段算 —— 否则分压接法下滑片那根线和 c 那根线的电流都翻倍。
+      var psegs = rec.segments;
+      if (!psegs || psegs.length < 2) return 0;
+      if (termIdx === 0) return -psegs[0].i;        // a：电流流进元件
+      if (termIdx === 2) return psegs[1].i;         // c：电流流出元件
+      if (termIdx !== 1) return 0;
+      // 滑片 b：由滑片节点的 KCL，从元件【流出】到滑片节点的电流
+      //   = 流进来的 segs[0].i − 流出去的 segs[1].i。
+      // （和变阻器滑片节点那条 total 是同一个式子、同一个符号。）
+      return psegs[0].i - psegs[1].i;
+    }
     // 三柱表头（电流表/电压表）：电流只从【实际接了线的那个量程柱】流进，
     // 从「−」柱流出，另一个量程柱悬空——它在电路外面，注入恒 0。
     // 不能落到下面那个 `(termIdx === 0) ? out : -out` 的兜底上：那个式子
@@ -2679,6 +2706,13 @@
       if (termIdx === 1) return out;                 // 公共端（刀片转轴）
       return (termIdx === (stSel === 2 ? 2 : 0)) ? -out : 0;
     }
+    // ⚠️⚠️ 下面这条兜底【只对两端元件成立】：端子 0 = 电流流进、端子 1 = 流出。
+    //    凡是有 3 个以上端子、或者内部是几条【互相独立的支路】的元件
+    //    （joule / rheoboard / potentiometer / rheostat / 三柱表头 / 单刀双掷），
+    //    都必须在上面各写一条 case。落到这里的后果是「某个端子的注入量符号或
+    //    大小是错的」，画面症状是【同一条回路上有几根导线的粒子反向跑，或者
+    //    速度是真实值的两倍】，而读数、亮度、功率全都正常 —— 从画面上根本
+    //    反推不出来。守卫：node check-current-direction.js
     return (termIdx === 0) ? out : -out;
   }
 
