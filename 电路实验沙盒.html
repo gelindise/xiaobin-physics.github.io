@@ -1035,8 +1035,8 @@
        2026-10-16 这批：core 24 / draw 38 / editor 29 / params 6 / schematic 18。
        （上一批是 core 23 / draw 37 / editor 28 / params 5 / schematic 17，
          这一轮五个文件都动了：世界加宽 + 电表放大 + 读数牌搬家 + 单刀双掷开关。） -->
-<script src="circuit-core.js?build=43"></script>
-<script src="circuit-draw.js?build=62"></script>
+<script src="circuit-core.js?build=44"></script>
+<script src="circuit-draw.js?build=63"></script>
 <!-- ════════════════════════════════════════════════════════════════════
      【教材版本皮肤 · 已从线上撤下】2026-10-12
      人教版元件外观（circuit-skin*.js 共 5 个文件）暂不在线上启用，学生看到的
@@ -1052,13 +1052,13 @@
 <!-- <script src="circuit-skin-renjiao-img2-data.js?build=2"></script> -->
 <!-- <script src="circuit-skin-renjiao-img3-data.js?build=1"></script> -->
 <!-- <script src="circuit-skin-renjiao.js?build=6"></script> -->
-<script src="circuit-editor.js?build=50"></script>
+<script src="circuit-editor.js?build=51"></script>
 <!-- 参数面板规格 + 读数显示格式。从本页内联抽出，与 3D 版沙盒（电路实验沙盒3D）
      共用同一份真值：面板规格、小数位、极性显示规则改一处两边都变。 -->
-<script src="circuit-params.js?build=22"></script>
+<script src="circuit-params.js?build=23"></script>
 <!-- 电路图（实物图 → 标准符号）。独立成第四块内核：沙盒和欧姆定律页共用同一份，
      免得各写一套符号，两边的图画法迟早不一样。三个老内核一行没动，build 号不升。 -->
-<script src="circuit-schematic.js?build=38"></script>
+<script src="circuit-schematic.js?build=39"></script>
 <!-- 电路图画布（拖符号画标准电路图 + 当场仿真）。它复用 circuit-schematic 的
      itemOf / drawSymbol，所以画出来的符号和「由实物图转换」那张【一模一样】。 -->
 <script src="circuit-schlab.js?build=5"></script>
@@ -1089,6 +1089,8 @@ var C = window.CircuitCore, D = window.CircuitDraw, E = window.CircuitEditor;
 // 全部指向共享模块，行为与本页内联时完全一致。
 var CP = window.CircuitParams;
 var PARAM_UI = CP.PARAM_UI, TYPE_LABEL = CP.TYPE_LABEL, POLAR = CP.POLAR;
+// 器材盒卡片用的短名（只有卡片放不下的那几个才在表里，见 circuit-params）
+var PAL_NAME = CP.PAL_NAME || {};
 var num1 = CP.num1, num2 = CP.num2, dispI = CP.dispI, dispU = CP.dispU, fmtR = CP.fmtR, pval = CP.pval;
 // galNum —— 灵敏电流计读数的小数位（按数量级自适应：18mA → 0.018）。
 // 和侧栏表、读数牌、读数框共用同一份，免得三处印出三个不同的数。
@@ -1906,6 +1908,8 @@ var DROP = {battery:40, power:46, ammeter:80, voltmeter:80, galvanometer:80,
             // 焦耳定律演示器：两个容器底 +96，盖子上的柱子到 −14 ——
             // 读数框落在 106（箱子下面一点，不压住那两个阻值）。
             joule:106,
+            // 量热瓶：瓶底 +139（温度计往上伸到 −139）—— 读数框落在 149。
+            calorimeter:149,
             switch:38, spdt:38, led:38, motor:38, bell:38};
 
 // ── 读数的小数位 ────────────────────────────────────────────
@@ -2012,6 +2016,16 @@ function readoutLines(c, r){
         lines.push(jnm + ' ' + Math.round(jbx.R) + 'Ω ' + num2(jbx.p) + 'W');
       }
     }
+  } else if (c.type === 'calorimeter') {
+    // 量热瓶：温度是它的全部输出，单独一行、带单位。
+    // 第二行给「这一段丝的阻值 + 电流」—— 学生要写 Q = I²Rt 时，两个因数
+    // 就在眼前，不用回头去翻参数面板。
+    // ⚠️ 第一行【不能】写成 `t = 33.5℃`：画布上那个小标签会把「字母 = 数值」
+    //    这种参数行整行滤掉（见 stateLinesOf 的 PARAM_LINE），于是温度——这件
+    //    器材唯一的读数——反而一个字都不显示。用中文起头就不被滤。
+    var ct = (r && typeof r.temp === 'number') ? r.temp : 20;
+    lines.push('温度 ' + num1(ct) + '℃');
+    lines.push('R = ' + Math.round((r && r.R) || 0) + 'Ω  I = ' + num1(Math.abs((r && r.i) || 0)) + 'A');
   } else if (c.type === 'galvanometer') {
     // 灵敏电流计：两端元件，没有「量程柱没接」这一说（r.wired 恒 true）。
     // 🔴 读数【带符号】：中心零的表，正负就是指针偏向哪一边 —— 向左偏就是负值，
@@ -4057,6 +4071,12 @@ function onTapComp(c, p){
     var l = D.toLocal(c, p.x, p.y);
     if (dialHit(l.x, l.y, c)) { openZoom(c); return; }
   }
+  // 量热瓶：点【放大镜】或【温度计】都开放大读数（命中框在绘制层，
+  // 和画出来的放大镜是同一组数 —— 页面不自己再记一份）。
+  if (c.type === 'calorimeter') {
+    var lk = D.toLocal(c, p.x, p.y);
+    if (D.calZoomHit(c, lk.x, lk.y)) { openZoom(c); return; }
+  }
   // 开关不弹浮层：点一下它【已经通断】了（编辑器在 pointerup 里翻的 params，
   // 见 circuit-editor 那段「点一下就通断」）。再弹一块只写着一个「闭合」勾选框
   // 的浮层，等于给同一件事开两个入口 —— 学生点完开关还得动手把它关掉。
@@ -4462,10 +4482,16 @@ function dialHit(lx, ly, comp){
 }
 
 function openZoom(c){
-  if (!c || !isDialMeter(c.type)) return;
+  // 量热瓶也走这条路：它没有表盘，但「放大看读数」这件事是一模一样的
+  // （温度计的刻度在画布上只有 5.5px 高，不放大根本读不出）。画法是另一支
+  // （drawZoomCal），取景框、K、底部那一行各自按瓶子的尺寸算。
+  if (!c || !(isDialMeter(c.type) || c.type === 'calorimeter')) return;
   if (!results || !results.components || !results.components[c.id]) return;
   zoomComp = c;
   zoomTitle.textContent = (TYPE_LABEL[c.type] || '电表') + '　放大读数';
+  // 温度计没有「调零」：那颗按钮只对表头有意义，藏在量热瓶的放大镜里
+  // 只会让学生到处找那颗不存在的螺丝。
+  zoomZero.hidden = (c.type === 'calorimeter');
   zoomEl.hidden = false;
   drawZoom();
 }
@@ -4564,10 +4590,45 @@ function drawZoomLeads(g, c, rec){
   g.restore();
 }
 
+// ── 量热瓶的放大镜 ────────────────────────────────────────────
+// 用户 2026-10-27：「一点击放大镜就直接显示那个温度计，直接显示温度计就可以了」。
+// 所以这里【只画温度计本身】—— 一支按 1:1 画的实验室温度计（细玻璃管 + 圆头 +
+// 每 1℃ 一格、每 10℃ 一条长线带数字 + 红色液柱 + 玻璃泡），不是把整只瓶子
+// 放大。读数只认 rec.temp 这一个数，和画布上那支是同一个 0~50℃ 的线性关系。
+function drawZoomCal(comp, rec){
+  var cw = Math.max(240, Math.min(360, window.innerWidth - 90));
+  var ch = Math.max(420, Math.min(700, window.innerHeight - 230));
+  var dpr = window.devicePixelRatio || 1;
+  if (zoomCv.width !== Math.round(cw*dpr) || zoomCv.height !== Math.round(ch*dpr)) {
+    zoomCv.width = Math.round(cw*dpr); zoomCv.height = Math.round(ch*dpr);
+  }
+  zoomCv.style.width = cw + 'px'; zoomCv.style.height = ch + 'px';
+  var g = zoomCv.getContext('2d');
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, cw, ch);
+  g.fillStyle = '#ffffff'; g.fillRect(0, 0, cw, ch);
+  var t = (rec && typeof rec.temp === 'number') ? rec.temp : 20;
+  D.drawThermoCloseup(g, t, cw, ch - 96);
+  // 底下大字读数
+  g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.font = 'bold 32px -apple-system,"PingFang SC",sans-serif';
+  g.fillStyle = '#b91c1c';
+  g.fillText(t.toFixed(1) + ' ℃', cw / 2, ch - 60);
+  g.font = '12px -apple-system,"PingFang SC",sans-serif';
+  g.fillStyle = '#475569';
+  g.fillText('R = ' + Math.round((rec && rec.R) || 0) + ' Ω　·　P = ' +
+             (((rec && rec.p) || 0)).toFixed(2) + ' W', cw / 2, ch - 26);
+  zoomView.K = 1; zoomView.cw = cw; zoomView.ch = ch;
+  zoomView.midX = 0; zoomView.midY = 0;
+  zoomRange.textContent = '温度计读数';
+  zoomZero.hidden = true;      // 温度计没有调零
+}
+
 function drawZoom(){
   if (!zoomComp) return;
   var rec = results && results.components[zoomComp.id];
   if (!rec) { closeZoom(); return; }             // 元件被删了，浮层自己收掉
+  if (zoomComp.type === 'calorimeter') { drawZoomCal(zoomComp, rec); return; }
   // K 按视口算：手机上要放得下，桌面上也别把小表拉成一片糊掉的大色块。
   var K = Math.min((Math.min(window.innerWidth - 72, 680)) / ZBOX.w,
                    (window.innerHeight - 190) / ZBOX.h);
@@ -4658,6 +4719,7 @@ function refreshZoom(){ if (zoomComp) drawZoom(); }
 // 的那个 K】—— 自己另算一份的话，窗口一缩放就点不中了。
 function zoomHitZero(clientX, clientY){
   if (!zoomComp || !zoomView.K) return false;
+  if (zoomComp.type === 'calorimeter') return false;   // 温度计没有调零旋钮
   var r = zoomCv.getBoundingClientRect();
   if (!r.width || !r.height) return false;
   var zx = (clientX - r.left) * (zoomView.cw / r.width);
@@ -5048,6 +5110,9 @@ var LG_VIEW = {
   // 焦耳定律演示器：两个容器 ±147（含盖子）、底 96，压力计竖管顶到 −104
   //（封口圆头再探到 −113）。和共享层 CircuitDraw.ICON_VIEW.joule 同一组数。
   joule:     { x0: -162, y0: -120, x1: 162, y1: 106 },
+  // 量热瓶：瓶身 ±56、瓶底 +139，温度计管顶 −139。又高又瘦。
+  // 和共享层 CircuitDraw.ICON_VIEW.calorimeter 同一组数。
+  calorimeter: { x0: -68, y0: -166, x1: 68, y1: 146 },
   // 三件新器材的取景框。少了它们，只要电路里出现二极管/电动机/电铃，
   // 图例这一栏就会读 undefined 的 x1 直接抛异常 —— 整个电路图浮层打不开，
   // 而报错信息指向的是一行取景框算术，跟「我加了个二极管」八竿子打不着。
@@ -5222,7 +5287,10 @@ var PAL = ['battery','power','switch','spdt','resistor','rheostat',
            // 焦耳定律演示器放在【最后】：它是全站唯一一件「用液面读热量」的
            // 器材，和前面那些「看电流/看电压」的仪器不是一类，混在变阻器那一排
            // 里反而找不到。它自己带两个容器（四根柱），一眼就认得出。
-           'joule'];
+           'joule',
+           // 量热瓶紧挨着它：课本上这是【两个】演示实验（图18.4-1 量热瓶、
+           // 图18.4-2/3 U 形管），并排放着正好对照「看温度计」和「看液面」。
+           'calorimeter'];
 // 🔴 两个容器，别混：
 //   bar    = 顶栏那一行【功能按钮】（撤销 / 修复 / 清空 / 预设 / 电路图 / 画笔 / 全屏…）
 //   palBox = 左侧【电路元件盒】里的 17 件器材（图示卡）
@@ -5268,10 +5336,6 @@ function addAtPoint(t, lx, ly){
 // 不是文字按钮 —— 用户第 1 点要的就是「以它的图示形式放进去，大小要合适」。
 // 图例取景框 LG_VIEW 是共享层给的，和电路图浮层那一栏同源；换皮肤时 applySkin
 // 会把 LG_VIEW 换掉，这里的图标要跟着重画（见 refreshPalette）。
-// 🔴🔴 元件盒里加新器材（calorimeter 等）时，必须和 circuit-core.js 的
-//    TYPES 在【同一次提交】里上线。只上这边的话，buildPalette 会对一个
-//    core 不认识的类型去调 defaultParams，当场抛「未知元件类型: xxx」——
-//    主脚本中断，整页白屏，连画布都出不来（2026-10-27 崩过一次线上）。
 var PAL_ICON = { w: 76, h: 46 };
 function buildPalette(){
   palBox.innerHTML = '';
@@ -5283,7 +5347,8 @@ function buildPalette(){
     b.title = TYPE_LABEL[t] + '：按住拖到画布上，或点一下直接放';
     b.appendChild(drawRealIcon(t, PAL_ICON.w, PAL_ICON.h));
     var nm = document.createElement('span');
-    nm.className = 'nm'; nm.textContent = TYPE_LABEL[t];
+    // 卡片只有 76px 宽：放不下的那几个用 PAL_NAME 里的短名
+    nm.className = 'nm'; nm.textContent = PAL_NAME[t] || TYPE_LABEL[t];
     b.appendChild(nm);
     b.onclick = function(){ if (!palDrag.moved) addComp(t); };
     bindPaletteDrag(b, t);
@@ -5357,7 +5422,7 @@ var addMenu = document.createElement('div');
 addMenu.className = 'addMenu'; addMenu.id = 'addMenu'; addMenu.hidden = true;
 PAL.forEach(function(t){
   var b = document.createElement('button');
-  b.type = 'button'; b.textContent = TYPE_LABEL[t];
+  b.type = 'button'; b.textContent = PAL_NAME[t] || TYPE_LABEL[t];
   b.onclick = function(){ closeAddMenu(); addComp(t); };
   addMenu.appendChild(b);
 });
@@ -6272,10 +6337,6 @@ function delBtnPosOf(wr){
   }
   return { x: pts[pts.length-1].x, y: pts[pts.length-1].y };
 }
-// 🔴 只认【当前选中】那根线的叉号。叉号是选中之后才长出来的，不看选中状态
-// 就给每根线都算一遍叉号位置的话，每根导线弧长中点那 ±15px 永远被当成
-// 「点了叉号」—— 那一带就再也拖不动了（实测：拖软线中段一直没反应，
-// 被这里悄悄吃掉了）。
 // 🔴 只认【当前选中】那根线的叉号。叉号是选中之后才长出来的，不看选中状态
 // 就给每根线都算一遍叉号位置的话，每根导线弧长中点那 ±15px 永远被当成
 // 「点了叉号」—— 那一带就再也拖不动了（实测：拖软线中段一直没反应，
