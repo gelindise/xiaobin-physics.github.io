@@ -625,6 +625,51 @@
   function jouleBoxX(i) { return (i ? 1 : -1) * JOULE.BOX_X; }
 
   // ============================================================
+  // 焦耳定律演示器（量热瓶，人教版 图18.4-1）的几何
+  // ------------------------------------------------------------
+  // 和 JOULE 摆在一起、理由相同：TERMINALS 要按它算接线柱。
+  // 原点取在【整台仪器的视觉中心】（−139 ~ +139），旋转时不会甩到一边去。
+  // ============================================================
+  var CAL = {
+    JAR_HW: 56,                              // 广口瓶：半宽 56
+    JAR_BOT: 139,                            // 瓶底
+    JAR_SHOULDER: 9,                         // 肩开始收的地方
+    NECK_HW: 26, NECK_TOP: -35, NECK_BOT: -9,// 瓶颈：半宽 26，瓶口在 −35
+    // 橡皮塞：上宽下窄，下端插进瓶颈里（−30 比瓶口 −35 低，看着才是塞进去的）
+    STOP_TOP: -59, STOP_BOT: -30, STOP_HW_TOP: 33, STOP_HW_BOT: 27,
+    DISC_TOP: -67, DISC_BOT: -59, DISC_HW: 37,   // 塞子顶上的木圆盘
+    POST_X: 19, POST_Y: -67,                 // 两根接线柱（插在圆盘上）
+    // 温度计：管身 ±6（实验室温度计就是细的；第一版给 ±10，用户说太粗），
+    // 从 −158 一直伸到瓶里的 +91，下面一颗玻璃泡。
+    // 🔴 玻璃泡【不能插进电阻丝里】（用户 2026-10-27）：液体面在 +23、螺旋顶在
+    //    +67，泡放在 +44（r8 → 36…52）正好「整颗泡在液体里、又在丝的上方」。
+    TH_HW: 6, TH_TOP: -158, TH_BOT: 36, BULB_Y: 44, BULB_R: 8,
+    // 刻度 0~50℃（量程见 circuit-core 的 CAL_TMAX）：0℃ 在 −28、50℃ 在 −148
+    //（2.4 px/℃）。🔴 0℃ 放在 −28 是【量出来】的：塞子在 −55…−30，
+    // 0℃ 落在 −28 就正好从塞子下面露出来，1~13℃ 那一小段被塞子挡住 ——
+    // 那段永远用不到（瓶里是室温起步），而 20~50℃ 全在塞子上面看得见。
+    T0_Y: -28, T50_Y: -148,
+    LIQ_TOP: 23, LIQ_BOT: 133,               // 液体（瓶里装到这儿）
+    COIL_TOP: 67, COIL_BOT: 125, COIL_HW: 40,// 电阻丝：瓶底那一大团螺旋
+    MAG_X: 30, MAG_Y: -112, MAG_R: 11,       // 放大镜（点它 = 放大读数）
+    HW: 62, HH: 158,
+  };
+  // 温度 → 温度计上的 y（线性映射，和画刻度用的是同一对端点）
+  function calTempY(t) {
+    var C = CAL, a = (t - 0) / 50;
+    if (a < 0) a = 0; if (a > 1) a = 1;
+    return C.T0_Y + (C.T50_Y - C.T0_Y) * a;
+  }
+  // 点的是不是放大镜（或温度计本体）—— 命中框比图形略大一点，手机上才点得着
+  function calZoomHit(comp, lx, ly) {
+    var C = CAL;
+    var dm = Math.sqrt((lx - C.MAG_X) * (lx - C.MAG_X) + (ly - C.MAG_Y) * (ly - C.MAG_Y));
+    if (dm <= C.MAG_R + 6) return true;
+    // 温度计本体：管子那一条（从管顶到瓶里那段）也算
+    return Math.abs(lx) <= C.TH_HW + 5 && ly >= C.TH_TOP - 6 && ly <= C.TH_BOT + 14;
+  }
+
+  // ============================================================
   // 端子坐标
   // ============================================================
   var TERMINALS = {
@@ -715,6 +760,9 @@
     // 0/1 = 甲（左）容器的两根，2/3 = 乙（右）容器 —— 和内核 TYPES.joule 的
     // termNames 一一对应（改这里必须一起改内核，否则「甲」的电流会算到「乙」上）。
     // 顺序：甲的左柱、甲的右柱、乙的左柱、乙的右柱（= 电热丝的两端）
+    // 量热瓶：两根柱都插在塞子顶的木圆盘上（POST_X = ±19、POST_Y = −67）
+    calorimeter: [{ x: -CAL.POST_X, y: CAL.POST_Y },
+                  { x: CAL.POST_X, y: CAL.POST_Y }],
     joule: [{ x: -(JOULE.BOX_X + JOULE.POST_DX), y: JOULE.POST_Y },
             { x: -(JOULE.BOX_X - JOULE.POST_DX), y: JOULE.POST_Y },
             { x: (JOULE.BOX_X - JOULE.POST_DX), y: JOULE.POST_Y },
@@ -1495,6 +1543,9 @@
     // 那两根竖管会被切平 —— 而「两根管子从中间竖起来」正是这台仪器唯一的
     // 形状特征。
     joule:     { x0: -162, y0: -120, x1: 162, y1: 106 },
+    // 量热瓶：瓶身 ±56（加高光取 62）、瓶底 +139，温度计管顶 −139 ——
+    // 又高又瘦，取景框按「上下都留一点」给。
+    calorimeter: { x0: -68, y0: -166, x1: 68, y1: 146 },
   };
   var ICON_VIEW_DEF = { x0: -80, y0: -80, x1: 80, y1: 80 };
   // 把一件器材画进 w×h 的小格子里（ rec 传 null = 只画外形，不带读数 ）。
@@ -1760,6 +1811,9 @@
       // 这件器材的柱子本来就长在本体上（和学生电源一样），走线避让只判
       // 竖车道，柱子那截不参与，不会把「导线夹在柱子上」判成「穿过元件」。
       case 'joule': return { hw: JOULE.HW, hh: JOULE.HH };
+      // 量热瓶：盒子就是整台仪器（±62 × ±139，温度计一直伸到 −139）。
+      // 两根柱在塞子上（y = −67），落在盒子里是有意的（和学生电源同理）。
+      case 'calorimeter': return { hw: CAL.HW, hh: CAL.HH };
       // 表头：整台仪器的包围盒（表壳 + 底座）。接线柱在 POST_Y，
       // 故意落在盒子【外面】——导线夹在柱子上，不该被当成穿体。
       // 所以 hh 有【上限 70】：表壳为了放下大量程那排数字往上长到了 −104（见 MET），
@@ -3955,6 +4009,307 @@
     ctx.restore();
     // 四根接线柱：甲 红/黑、乙 红/黑（无极性，颜色只是「两根柱」的区分）
     posts(ctx, comp, ['pos', 'neg', 'pos', 'neg'], 1.1, 6);
+  }
+
+  // ============================================================
+  // 焦耳定律演示器（量热瓶，人教版 图18.4-1）
+  // ------------------------------------------------------------
+  // 参考图上要一眼读出五件事：
+  //   ① 一只装液体的广口瓶，瓶口塞着橡皮塞、塞顶一块木圆盘；
+  //   ② 塞子上插一支温度计，玻璃泡一直泡到液体里；
+  //   ③ 塞子上引出两根接线柱（红/黑），瓶里那两根引线就是从这里下来的；
+  //   ④ 瓶里泡着一段螺旋状电阻丝（通电就放热）；
+  //   ⑤ 旁边一枚放大镜 —— 点它把温度计放大，才读得清刻度。
+  //
+  // 🔴 温度【不是绘制层算的】：内核按 rec.temp（t = T0 + K·P，稳态温升）
+  //    算好传进来，这里只把汞柱画到那一格。绘制层自己再去碰 P 的话，
+  //    「温度计上的读数」和「算出来的功率」迟早会对不上（和电阻箱那条同理）。
+  // 🔴 画序：影子 → 液体 → 电阻丝 → 温度计 → 玻璃瓶 → 塞子 → 接线柱 → 放大镜。
+  //    液体和丝都在瓶【里】，必须先画；玻璃瓶那层半透明罩上去才有「装在
+  //    瓶子里」的感觉，反过来先画瓶子，里面的东西就得靠 clip 一处处抠。
+  // ============================================================
+  function calJarPath(ctx) {
+    var C = CAL;
+    ctx.beginPath();
+    ctx.moveTo(-C.JAR_HW, C.JAR_SHOULDER);
+    ctx.quadraticCurveTo(-C.JAR_HW, C.NECK_BOT - 8, -C.NECK_HW, C.NECK_BOT);
+    ctx.lineTo(-C.NECK_HW, C.NECK_TOP);
+    ctx.lineTo(C.NECK_HW, C.NECK_TOP);
+    ctx.lineTo(C.NECK_HW, C.NECK_BOT);
+    ctx.quadraticCurveTo(C.JAR_HW, C.NECK_BOT - 8, C.JAR_HW, C.JAR_SHOULDER);
+    ctx.lineTo(C.JAR_HW, C.JAR_BOT - 9);
+    ctx.quadraticCurveTo(C.JAR_HW, C.JAR_BOT, C.JAR_HW - 9, C.JAR_BOT);
+    ctx.lineTo(-C.JAR_HW + 9, C.JAR_BOT);
+    ctx.quadraticCurveTo(-C.JAR_HW, C.JAR_BOT, -C.JAR_HW, C.JAR_BOT - 9);
+    ctx.closePath();
+  }
+  // 瓶里的液体：淡蓝，上浅下深，液面一道亮线 + 一个浅浅的椭圆
+  function drawCalLiquid(ctx) {
+    var C = CAL;
+    ctx.save();
+    calJarPath(ctx); ctx.clip();
+    ctx.fillStyle = linGrad(ctx, 0, C.LIQ_TOP, 0, C.LIQ_BOT,
+      [[0, 'rgba(132,196,228,0.62)'], [0.45, 'rgba(104,180,220,0.6)'],
+       [1, 'rgba(74,156,204,0.66)']]);
+    ctx.fillRect(-C.JAR_HW, C.LIQ_TOP, C.JAR_HW * 2, C.LIQ_BOT - C.LIQ_TOP);
+    ctx.beginPath();
+    ctx.ellipse(0, C.LIQ_TOP, C.JAR_HW - 3, 5.5, 0, 0, 6.284);
+    ctx.fillStyle = 'rgba(186,226,245,0.5)'; ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.8)'; ctx.lineWidth = 1.3; ctx.stroke();
+    ctx.restore();
+  }
+  // 瓶里的电阻丝：两根引线从塞子底下穿下来 + 瓶底那一大团螺旋
+  function drawCalCoil(ctx, live) {
+    var C = CAL, cy = (C.COIL_TOP + C.COIL_BOT) / 2, ry = (C.COIL_BOT - C.COIL_TOP) / 2;
+    var wire = live ? '#b4451f' : '#8d4b3a';       // 通电偏亮红、没通电偏暗褐
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    [-1, 1].forEach(function (sgn) {
+      ctx.beginPath();
+      ctx.moveTo(sgn * C.POST_X, C.STOP_BOT - 4);
+      // 🔴 终点 = 端圈椭圆的【顶点】（x = ±(COIL_HW−5)、y = COIL_TOP）。
+      //    第一版写成 ±COIL_HW，比端圈还外 5px，引线就悬在丝旁边 ——
+      //    用户 2026-10-27 一眼看出来的「丝和导线没连到一起」就是这 5px。
+      ctx.lineTo(sgn * (C.COIL_HW - 5), C.COIL_TOP);
+      ctx.strokeStyle = 'rgba(70,25,15,0.32)'; ctx.lineWidth = 5.6; ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(sgn * C.POST_X, C.STOP_BOT - 4);
+      // 🔴 终点 = 端圈椭圆的【顶点】（x = ±(COIL_HW−5)、y = COIL_TOP）。
+      //    第一版写成 ±COIL_HW，比端圈还外 5px，引线就悬在丝旁边 ——
+      //    用户 2026-10-27 一眼看出来的「丝和导线没连到一起」就是这 5px。
+      ctx.lineTo(sgn * (C.COIL_HW - 5), C.COIL_TOP);
+      ctx.strokeStyle = wire; ctx.lineWidth = 3.2; ctx.stroke();
+    });
+    // 螺旋：一圈圈竖椭圆（正对着看的样子），先描暗外廓再叠本色
+    var n = 9, x0 = -C.COIL_HW + 5, x1 = C.COIL_HW - 5, step = (x1 - x0) / (n - 1);
+    for (var k = 0; k < n; k++) {
+      var x = x0 + k * step;
+      ctx.beginPath(); ctx.ellipse(x, cy, 5.5, ry, 0.12, 0, 6.284);
+      ctx.lineWidth = 5.4; ctx.strokeStyle = 'rgba(70,25,15,0.3)'; ctx.stroke();
+      ctx.beginPath(); ctx.ellipse(x, cy, 5.5, ry, 0.12, 0, 6.284);
+      ctx.lineWidth = 3.1; ctx.strokeStyle = wire; ctx.stroke();
+    }
+  }
+  // 温度计：细玻璃管 + 刻度 + 汞柱 + 玻璃泡。
+  // temp 是℃（内核按 rec.temp 给），汞柱就画到那一格。
+  // ⚠️ 画布上【不印数字】：管身只有 12px 宽，5px 的字塞进去只是一团灰。
+  //    数字在放大镜里看 —— 那里有一支按 1:1 画的实验室温度计特写
+  //    （drawThermoCloseup），刻度、数字都清楚。
+  function drawCalThermo(ctx, temp) {
+    var C = CAL, hw = C.TH_HW;
+    // 玻璃管（细、圆头）
+    roundRect(ctx, -hw, C.TH_TOP, hw * 2, C.TH_BOT - C.TH_TOP + 10, hw);
+    ctx.fillStyle = linGrad(ctx, -hw, 0, hw, 0,
+      [[0, '#d7e9f4'], [0.34, '#fbfdfe'], [0.74, '#e6f2f9'], [1, '#bfd7e6']]);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(96,120,138,0.72)'; ctx.lineWidth = 0.9; ctx.stroke();
+    // 玻璃泡（底下那颗红球）
+    ctx.beginPath(); ctx.arc(0, C.BULB_Y, C.BULB_R, 0, 6.284);
+    ctx.fillStyle = linGrad(ctx, -C.BULB_R, C.BULB_Y - C.BULB_R, C.BULB_R, C.BULB_Y + C.BULB_R,
+      [[0, '#f0736b'], [0.45, '#dc2626'], [1, '#a4161a']]);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(96,120,138,0.55)'; ctx.lineWidth = 0.8; ctx.stroke();
+    // 刻度：每 2℃ 一道短线、每 10℃ 一道长线（2.4px/℃，短线间距 4.8px）
+    for (var t = 0; t <= 50; t += 2) {
+      var y = calTempY(t), long = (t % 10 === 0);
+      ctx.beginPath();
+      ctx.moveTo(-1.6, y);
+      ctx.lineTo(long ? hw - 1.4 : hw - 3.4, y);
+      ctx.lineWidth = long ? 0.8 : 0.5;
+      ctx.strokeStyle = long ? 'rgba(51,65,85,0.8)' : 'rgba(100,116,139,0.5)';
+      ctx.stroke();
+    }
+    // 汞柱：从玻璃泡一直升到当前温度那一格
+    var yTop = calTempY(temp);
+    ctx.beginPath();
+    ctx.moveTo(-3.4, C.BULB_Y);
+    ctx.lineTo(-3.4, yTop);
+    ctx.lineWidth = 2.2; ctx.strokeStyle = '#dc2626'; ctx.lineCap = 'round';
+    ctx.stroke();
+    // 液柱顶端那一小段更亮的红：读数就卡在这条线的位置
+    ctx.beginPath(); ctx.arc(-3.4, yTop, 1.8, 0, 6.284);
+    ctx.fillStyle = '#f87171'; ctx.fill();
+  }
+
+  // ── 放大镜里的温度计特写（实验室温度计的样子）──────────────────
+  // 画布上那支只有 12px 宽，刻度挤成一道影子。放大镜里这一支按 1:1 画在
+  // 一个 340×660 的框里：细玻璃管 + 圆头 + 每 1℃ 一格、每 10℃ 一条长线带
+  // 数字 + 红色液柱 + 底下一颗玻璃泡。
+  // 🔴 读数仍然只认调用方传进来的 temp（就是 rec.temp），和画布上那支是
+  //    同一个线性关系（0℃ → 50℃），两支不会各说各话。
+  // 尺寸按【真温度计的比例】定：管身 52 宽、660 高（≈13:1），玻璃泡直径
+  // 是管宽的 2 倍。第一版给 ±44（88 宽），放大出来像一根试管，不像温度计。
+  // 🔴 管底必须【伸进泡里】：泡顶在 bulbY−bulbR = 275，管底给 262 的话中间
+  //    空 13px，放大出来玻璃泡就和管子分家了（用户 2026-10-27 报的）。
+  var THERMO_BIG = { w: 300, h: 660, hw: 26, top: -286, bot: 282,
+                     bulbY: 302, bulbR: 27, t0: 236, t50: -236 };
+  function drawThermoCloseup(ctx, temp, w, h) {
+    var B = THERMO_BIG;
+    var k = Math.min(w / B.w, h / B.h);
+    ctx.save();
+    ctx.translate(w / 2, h / 2);
+    ctx.scale(k, k);
+    var yOf = function (t) {
+      var a = t / 50;
+      if (a < 0) a = 0; if (a > 1) a = 1;
+      return B.t0 + (B.t50 - B.t0) * a;
+    };
+    // 玻璃管（细长、顶端圆头）
+    roundRect(ctx, -B.hw, B.top, B.hw * 2, B.bot - B.top, B.hw);
+    ctx.fillStyle = linGrad(ctx, -B.hw, 0, B.hw, 0,
+      [[0, '#cfe4f1'], [0.2, '#f4fbfe'], [0.48, '#ffffff'],
+       [0.8, '#eaf4fa'], [1, '#b9d2e2']]);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(90,118,140,0.55)'; ctx.lineWidth = 1.6; ctx.stroke();
+    // 玻璃泡
+    ctx.beginPath(); ctx.arc(0, B.bulbY, B.bulbR, 0, 6.284);
+    ctx.fillStyle = linGrad(ctx, -B.bulbR, B.bulbY - B.bulbR, B.bulbR, B.bulbY + B.bulbR,
+      [[0, '#f78b83'], [0.4, '#dc2626'], [1, '#8f1010']]);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(90,118,140,0.5)'; ctx.lineWidth = 1.4; ctx.stroke();
+    // 泡上的高光
+    ctx.beginPath(); ctx.arc(-B.bulbR * 0.34, B.bulbY - B.bulbR * 0.34, B.bulbR * 0.26, 0, 6.284);
+    ctx.fillStyle = 'rgba(255,255,255,0.6)'; ctx.fill();
+    // 刻度：每 1℃ 一短线、每 5℃ 一中线、每 10℃ 一长线 + 数字
+    ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    for (var t = 0; t <= 50; t += 1) {
+      var y = yOf(t);
+      var len = (t % 10 === 0) ? 14 : (t % 5 === 0 ? 10 : 6);
+      ctx.beginPath();
+      ctx.moveTo(-7, y);
+      ctx.lineTo(-7 + len, y);
+      ctx.lineWidth = (t % 10 === 0) ? 1.7 : 1.1;
+      ctx.strokeStyle = (t % 10 === 0) ? 'rgba(30,41,59,0.9)' : 'rgba(71,85,105,0.72)';
+      ctx.stroke();
+      if (t % 10 === 0) {
+        ctx.font = 'bold 16px -apple-system,"PingFang SC",sans-serif';
+        ctx.fillStyle = '#1e293b';
+        ctx.fillText(String(t), 10, y);
+      }
+    }
+    // 单位
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 15px -apple-system,"PingFang SC",sans-serif';
+    ctx.fillStyle = '#334155';
+    ctx.fillText('℃', 0, B.top + 30);
+    // 汞柱（从玻璃泡升到当前温度）
+    var yTop = yOf(temp);
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(-13, B.bulbY);
+    ctx.lineTo(-13, yTop);
+    ctx.lineWidth = 9; ctx.strokeStyle = '#dc2626'; ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(-15.5, B.bulbY);
+    ctx.lineTo(-15.5, yTop);
+    ctx.lineWidth = 2.4; ctx.strokeStyle = 'rgba(255,255,255,0.38)'; ctx.stroke();
+    // 液面（弯月面）
+    ctx.beginPath();
+    ctx.ellipse(-13, yTop, 4.6, 2.2, 0, 0, 6.284);
+    ctx.fillStyle = '#f87171'; ctx.fill();
+    ctx.restore();
+  }
+
+  // 玻璃瓶本体：半透明填充 + 描边 + 高光 + 瓶口厚玻璃
+  function calJarGlass(ctx) {
+    var C = CAL;
+    calJarPath(ctx);
+    ctx.fillStyle = linGrad(ctx, -C.JAR_HW, 0, C.JAR_HW, 0,
+      [[0, 'rgba(206,228,241,0.42)'], [0.16, 'rgba(255,255,255,0.3)'],
+       [0.55, 'rgba(240,248,252,0.12)'], [0.86, 'rgba(206,228,241,0.28)'],
+       [1, 'rgba(178,204,222,0.5)']]);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(92,124,148,0.68)'; ctx.lineWidth = 1.7; ctx.stroke();
+    ctx.save();
+    calJarPath(ctx); ctx.clip();
+    // 左侧一道竖高光：玻璃瓶的圆柱感全靠它
+    ctx.fillStyle = 'rgba(255,255,255,0.55)';
+    roundRect(ctx, -C.JAR_HW + 9, C.JAR_SHOULDER + 10, 5,
+              C.JAR_BOT - C.JAR_SHOULDER - 26, 2.5);
+    ctx.fill();
+    // 瓶底那条弧：瓶身是圆柱，底沿要看得见
+    ctx.beginPath();
+    ctx.ellipse(0, C.JAR_BOT - 7, C.JAR_HW - 3, 7, 0, 0, Math.PI);
+    ctx.strokeStyle = 'rgba(92,124,148,0.4)'; ctx.lineWidth = 1.2; ctx.stroke();
+    ctx.restore();
+    // 瓶口：一圈厚玻璃
+    ctx.beginPath();
+    ctx.ellipse(0, C.NECK_TOP, C.NECK_HW, 5, 0, 0, 6.284);
+    ctx.fillStyle = 'rgba(224,240,248,0.92)'; ctx.fill();
+    ctx.strokeStyle = 'rgba(92,124,148,0.62)'; ctx.lineWidth = 1.2; ctx.stroke();
+  }
+  // 橡皮塞 + 塞顶的木圆盘
+  function drawCalStopper(ctx) {
+    var C = CAL;
+    ctx.beginPath();
+    ctx.moveTo(-C.STOP_HW_TOP, C.STOP_TOP);
+    ctx.lineTo(C.STOP_HW_TOP, C.STOP_TOP);
+    ctx.lineTo(C.STOP_HW_BOT, C.STOP_BOT);
+    ctx.quadraticCurveTo(0, C.STOP_BOT + 4, -C.STOP_HW_BOT, C.STOP_BOT);
+    ctx.closePath();
+    ctx.fillStyle = linGrad(ctx, 0, C.STOP_TOP, 0, C.STOP_BOT,
+      [[0, '#c98a5a'], [0.35, '#b3764a'], [1, '#8a5632']]);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(74,44,22,0.6)'; ctx.lineWidth = 1.1; ctx.stroke();
+    // 顶上的木圆盘（比塞子宽一圈）
+    roundRect(ctx, -C.DISC_HW, C.DISC_TOP, C.DISC_HW * 2, C.DISC_BOT - C.DISC_TOP, 3.5);
+    ctx.fillStyle = linGrad(ctx, 0, C.DISC_TOP, 0, C.DISC_BOT,
+      [[0, '#edd0a6'], [0.45, '#dcb689'], [1, '#bd9165']]);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(96,64,32,0.55)'; ctx.lineWidth = 1; ctx.stroke();
+    // 木纹：两道细线，读得出这是块木头
+    ctx.strokeStyle = 'rgba(150,110,70,0.45)'; ctx.lineWidth = 0.6;
+    [-2.5, 2.5].forEach(function (dy) {
+      ctx.beginPath();
+      ctx.moveTo(-C.DISC_HW + 4, (C.DISC_TOP + C.DISC_BOT) / 2 + dy);
+      ctx.lineTo(C.DISC_HW - 4, (C.DISC_TOP + C.DISC_BOT) / 2 + dy);
+      ctx.stroke();
+    });
+  }
+  // 放大镜按钮：点它 = 把温度计放大读数（命中框见 calZoomHit）
+  function drawCalMag(ctx) {
+    var C = CAL;
+    ctx.save();
+    ctx.translate(C.MAG_X, C.MAG_Y);
+    // 手柄
+    ctx.beginPath(); ctx.moveTo(6.4, 6.4); ctx.lineTo(11.6, 11.6);
+    ctx.lineWidth = 4.4; ctx.strokeStyle = '#94a3b8'; ctx.lineCap = 'round'; ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(6.4, 6.4); ctx.lineTo(11.6, 11.6);
+    ctx.lineWidth = 2.2; ctx.strokeStyle = '#e2e8f0'; ctx.stroke();
+    // 镜框 + 镜片
+    ctx.beginPath(); ctx.arc(0, 0, C.MAG_R - 1.2, 0, 6.284);
+    ctx.fillStyle = 'rgba(219,234,254,0.9)'; ctx.fill();
+    ctx.strokeStyle = '#2563eb'; ctx.lineWidth = 2.6; ctx.stroke();
+    ctx.beginPath(); ctx.arc(-3.2, -3.2, 4.6, Math.PI * 1.06, Math.PI * 1.54);
+    ctx.strokeStyle = 'rgba(255,255,255,0.95)'; ctx.lineWidth = 1.7; ctx.stroke();
+    ctx.restore();
+  }
+
+  function drawCalorimeter(ctx, comp, rec) {
+    var C = CAL;
+    var temp = (rec && typeof rec.temp === 'number') ? rec.temp : 20;
+    var live = !!(rec && Math.abs(rec.i || 0) > 1e-9);
+
+    ctx.save();
+    ctx.translate(comp.x, comp.y);
+    ctx.rotate((comp.rot || 0) * Math.PI / 180);
+    ctx.scale(scaleOf(comp), scaleOf(comp));
+
+    contactShadow(ctx, 0, C.JAR_BOT + 2, C.JAR_HW * 0.92, 6, 0.3);
+    drawCalLiquid(ctx);          // ① 液体（裁在瓶形里）
+    drawCalCoil(ctx, live);      // ② 电阻丝（泡在液体里）
+    drawCalThermo(ctx, temp);    // ③ 温度计（从瓶里一直伸出来）
+    calJarGlass(ctx);            // ④ 玻璃瓶罩上去
+    drawCalStopper(ctx);         // ⑤ 塞子 + 木圆盘
+    // 🔴 温度计是【插进塞子里】的：塞子盖住的那一段就看不见了（用户
+    //    2026-10-27 明确要求「塞子里边那中间是看不到的，不应该显示出来」）。
+    //    所以这里【不】再把那一段重画一遍 —— 早先为了让刻度连续而开的那个
+    //    「孔」是错的。读数照旧：0℃ 放在塞子下沿（−28），20~50℃ 全在塞子
+    //    上面看得见；1~13℃ 那一小段被挡住，而那段本来也用不到。
+    drawCalMag(ctx);             // ⑥ 放大镜按钮
+
+    ctx.restore();
+    // ⑦ 两根接线柱（红/黑，无极性）—— 瓶里的两根引线就是从这里下来的
+    posts(ctx, comp, ['pos', 'neg'], 1.05, 6);
   }
 
   // ============================================================
@@ -7261,6 +7616,7 @@
       case 'resistancebox': drawResistanceBox(ctx, comp, rec); break;
       case 'plugbox': drawPlugBox(ctx, comp, rec); break;
       case 'joule': drawJoule(ctx, comp, rec); break;
+      case 'calorimeter': drawCalorimeter(ctx, comp, rec); break;
       case 'pencil': drawPencil(ctx, comp, rec); break;
       case 'junction': drawJunction(ctx, comp); break;
       default: throw new Error('未知元件类型: ' + comp.type);
@@ -7321,6 +7677,11 @@
     // 焦耳定律演示器：几何 + 两个容器的中心 / 阻值。编辑器按 BODY 命中、
     // 自检按 JOULE 量液面（LVL_REST / LVL_MAX），别自己再抄一遍 15 / 26。
     JOULE: JOULE, jouleBoxX: jouleBoxX, jouleRof: jouleRof,
+    // 量热瓶：几何 + 放大镜命中框 + 温度→刻度。宿主页要靠 calZoomHit 判断
+    // 「这一下点的是不是放大镜」，自检要按 T0_Y/T100_Y 量汞柱画到哪。
+    CAL: CAL, calZoomHit: calZoomHit, calTempY: calTempY,
+    // 放大镜里的温度计特写（宿主页的 drawZoomCal 用）
+    drawThermoCloseup: drawThermoCloseup, THERMO_BIG: THERMO_BIG,
     // 铅笔芯：夹子在芯上的局部 x ↔ 接入长度（mm）。拖动改长度时编辑器
     // 必须走这一份换算 —— 另写一份「x 到毫米」的算式，画到哪儿和电阻
     // 是多少就会错开（和滑片那条注释同一个坑）。

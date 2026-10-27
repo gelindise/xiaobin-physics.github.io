@@ -124,10 +124,26 @@
     // 🔴 参数只有 R1 / R2 两个阻值，没有「加热功率」之类的键：功率是
     //    I²R 算出来的，再给一根滑条就变成「想让它热就调大」，那就不是焦耳定律了。
     joule: {
-      label: '焦耳定律演示器', terminals: 4,
+      label: '焦耳定律演示器（U 形管）', terminals: 4,
       // 端子号：0/1 = 甲（左）容器的两根柱，2/3 = 乙（右）容器。
       termNames: ['甲+', '甲−', '乙+', '乙−'],
       defaults: { R1: 5, R2: 10 },
+    },
+    // ── 焦耳定律演示器（量热瓶，人教版 图18.4-1）──────────────────
+    // 广口瓶里装着液体，瓶塞上插一支温度计、引出两根接线柱，瓶里泡着一段
+    // 螺旋状电阻丝。通电后电阻丝放热、液体升温，看温度计升到多少度，就知道
+    // 「电流产生的热量跟电阻、电流、时间有关」。
+    //
+    // 🔴 它和上面那台「U 形管」版本是【两件不同的器材】，两件都留在器材盒里：
+    //      · U 形管版：两个密闭容器，比的是【空气温度变化的快慢】（看液面差）；
+    //      · 量热瓶版：一个瓶子一种液体，比的是【液体升到多少度】（看温度计）。
+    //    课本上这两张图是两个演示实验，别拿一件替另一件。
+    calorimeter: {
+      label: '焦耳定律演示器（量热瓶）', terminals: 2, termNames: ['a', 'b'],
+      // R = 瓶里那段电阻丝的阻值（参数面板给滑条，1~50Ω）。
+      // 只有这一个键：液体的种类和质量是器材本身定死的，学生要变的是
+      // 「换一段不同阻值的丝」—— 那正是课本要比较的那个量。
+      defaults: { R: 10 },
     },
     // ── 导体板（探究电阻的影响因素）────────────────────────
     // 一块贴在小木板上的金属条，两个接线柱。它把「电阻的大小与材料、长度、
@@ -692,6 +708,26 @@
     return d > 1 ? 1 : d;
   }
 
+  // ── 量热瓶：瓶里液体的温升（见 TYPES.calorimeter）────────────────
+  //   t = T0 + K·P   （夹在 T0 ~ 100℃ 之间）
+  // 取 T0 = 20℃（室温）、K = 15 K/W：3V 直接加在 5Ω 上是 1.8W → 47℃；
+  // 串一只 10Ω 之后 0.5W → 27.5℃ —— 两个读数一眼分得开，又都落在量程里。
+  // 🔴 读的是【稳态温升】：真实量热器边加热边散热，通电一段时间后温度稳定在
+  //    某个值；本页所有器材都是稳态求解（没有计时器），所以给的是那个稳定值。
+  //    它只影响温度计画到哪一格，不参与任何电学量的计算。
+  // 🔴 量程取 0~50℃：量热实验里的温度计就是这一档（0~50 或 0~100），
+  //    而瓶里那点液体 50℃ 以上早该沸腾了。量程小一半，同样的管长下刻度
+  //    就松一倍 —— 画布上细管子里那几道刻线才看得清。
+  var CAL_T0 = 20, CAL_K = 15, CAL_TMAX = 50;
+  function calorimeterR(comp) {
+    var v = num(paramsOf(comp).R, 10);
+    return v > 0 ? v : 10;
+  }
+  function calorimeterTemp(p) {
+    var t = CAL_T0 + CAL_K * (p > 0 ? p : 0);
+    return t > CAL_TMAX ? CAL_TMAX : t;
+  }
+
   // ── 电位器的两个参数（见 TYPES.potentiometer）────────────────
   // 取值一律过一遍夹取：存档是手改得动的 JSON，pos 写成 "abc" / 2 / −1
   // 都会让下面那条分压链算出 NaN 或者负电阻，而画面照画、读数印 NaN。
@@ -913,6 +949,11 @@
     switch (comp.type) {
       case 'resistor':
         addR(N(0), N(1), P.R);
+        break;
+
+      // 量热瓶：瓶里那段电阻丝就是一条普通 R 支路（阻值可调）。
+      case 'calorimeter':
+        addR(N(0), N(1), calorimeterR(comp));
         break;
 
       // 导体板：R = ρ·L/S（见 plateR）。它和定值电阻在电路上完全同构，
@@ -1972,6 +2013,21 @@
           rec.v = Math.abs(jpick.v);
           rec.p = jboxes[0].p + jboxes[1].p;   // 表里那一列是【整台仪器】的发热
           rec.wiredCount = (jboxes[0].wired ? 1 : 0) + (jboxes[1].wired ? 1 : 0);
+          break;
+        }
+
+        // 量热瓶：一条 R 支路 + 一个【温度读数】。
+        // 温度必须在这里算（不能画的时候现算）：绘制层和放大镜都要读它，
+        // 两处各算一遍迟早对不上，而「温度计读数」正是这件器材的全部输出。
+        case 'calorimeter': {
+          var clR = calorimeterR(c), clV = 0, clI = 0;
+          if (bs.length) {
+            if (bs[0].kind === 'V') { clI = bI(sol, bs[0]); }
+            else { clV = nV(sol, bs[0].p) - nV(sol, bs[0].q); clI = clV / bs[0].R; }
+          }
+          rec.R = clR; rec.v = clV; rec.i = clI;
+          rec.p = Math.abs(clV * clI);
+          rec.temp = calorimeterTemp(rec.p);
           break;
         }
 
@@ -3290,6 +3346,11 @@
     JOULE_P_REF: JOULE_P_REF,
     jouleR: jouleR,
     jouleLevelOf: jouleLevelOf,
-    version: '2.0.0',
+    // 量热瓶：阻值 + 稳态温升（t = T0 + K·P）。绘制层按 rec.temp 画温度计、
+    // 参数面板按滑条写 R、自检按 CAL_T0/CAL_K 反算「该升到几度」。
+    CAL_T0: CAL_T0, CAL_K: CAL_K, CAL_TMAX: CAL_TMAX,
+    calorimeterR: calorimeterR,
+    calorimeterTemp: calorimeterTemp,
+    version: '2.1.0',
   };
 });

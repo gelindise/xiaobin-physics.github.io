@@ -287,6 +287,12 @@
       return [{ x: -74, y: 0 }, { x: -16, y: 0 },
               { x: 16, y: 0 }, { x: 74, y: 0 }];
     }
+    // 量热瓶：两个引脚拉回轴线（实物柱在塞子上 y = −67，照抄会让整只符号
+    // 往上飘 67px，主回路那一横在它这里断开 —— 和电阻箱同一条坑）。
+    if (type === 'calorimeter') {
+      var hk = (D && D.HALF != null) ? D.HALF : 70;
+      return [{ x: -hk, y: 0 }, { x: hk, y: 0 }];
+    }
     return (D && D.TERMINALS[type]) || [];
   }
   // 电位器符号：滑片箭头的杆顶（局部 y）= b 的接点。取 −34 和变阻器的
@@ -1370,6 +1376,14 @@
       // 焦耳定律演示器：铭牌写【两个容器各自的阻值】。只印一个数，学生就
       // 不知道哪边是 5Ω、哪边是 10Ω —— 而图18.4-2 那个实验的全部内容就是
       // 「这两边不一样，哪边液面降得快」。
+      // 量热瓶：铭牌写【阻值 + 温度】—— 温度才是这台仪器的输出，
+      // 只印阻值的话，电路图和一只定值电阻没有区别。
+      case 'calorimeter': {
+        var kR = (rec && rec.R != null) ? +rec.R : (core && core.calorimeterR ? core.calorimeterR(c) : 10);
+        var kT = (rec && rec.temp != null) ? +rec.temp
+               : (core && core.calorimeterTemp ? core.calorimeterTemp(0) : 20);
+        return num(kR) + ' Ω · ' + num(kT) + ' ℃';
+      }
       case 'joule': {
         var jR = [0, 1].map(function (i) {
           if (rec && rec.boxes && rec.boxes[i]) return +rec.boxes[i].R;
@@ -1975,6 +1989,23 @@
       // 这台仪器本来就是两个独立的电阻（甲 5Ω / 乙 10Ω），画成一个矩形的话，
       // 学生看不出「两个容器可以分开接」—— 而图18.4-3 那个实验正是靠
       // 「两边电流不同」做的。中间那道缝就是两个容器之间的空气。
+      // 量热瓶：电阻矩形 + 矩形里嵌一支小温度计（竖线 + 刻度 + 底下一颗球）。
+      // 只画矩形的话，它在电路图里和一只定值电阻长得一模一样；铭牌虽然写着
+      // 温度，但「这是一只量热瓶」这件事应该在符号上就看得出来。
+      case 'calorimeter': {
+        lead(ctx, T[0], -56); lead(ctx, T[1], 56);
+        ctx.beginPath();
+        D.roundRect(ctx, -56, -13, 112, 26, 2);
+        ctx.stroke();
+        // 小温度计（画在矩形右侧的空档里）
+        var kx = 34;
+        ctx.beginPath(); ctx.moveTo(kx, -9); ctx.lineTo(kx, 7); ctx.stroke();
+        ctx.beginPath(); ctx.arc(kx, 9.4, 2.6, 0, 6.284); ctx.stroke();
+        [-5, 0, 5].forEach(function (ty) {           // 三道刻度
+          ctx.beginPath(); ctx.moveTo(kx - 3.4, ty); ctx.lineTo(kx - 1, ty); ctx.stroke();
+        });
+        break;
+      }
       case 'joule': {
         [-45, 45].forEach(function (mx) {
           ctx.beginPath();
