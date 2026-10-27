@@ -5704,6 +5704,9 @@ var ROPE = {
   G: 0,             // 重力 px/s²
   DAMP: 0.962,      // 每子步速度保留：阻尼大 → 松手就停，不会一直抖
   ITER: 6,          // 长度约束迭代次数
+  // 约束修正里【不注入速度】的比例（0~1）。见 ropeAdvance ③ 那段注释：
+  // 约束只改形状、不改速度，线才不会像蛇一样一直抖。
+  CONST_VEL: 0.85,
   BEND: 0.20,       // 弯曲刚度：内部点向两侧中点靠的比例
   SEG: 9,           // 每段静止长度（px）→ 决定质点数
   NMIN: 4, NMAX: 46,
@@ -5711,7 +5714,7 @@ var ROPE = {
   GROUND: 26,       // 地面 = H - GROUND
   FRIC: 0.42,       // 落地摩擦：每次接触削掉这么多切向速度
   VSTOP: 0.25,      // 停住判定：所有内部点速度 < 这个值（px/子步）
-  TSTOP: 0.45,      // 且持续这么久（秒）→ 冻结成静态形状
+  TSTOP: 0.30,      // 且持续这么久（秒）→ 冻结成静态形状
   PIN_EASE: 0.20,   // 钉住点向目标靠的系数：接回柱子时是「吸进去」，不是瞬移
   AGE_MAX: 8,       // 兜底：再怎么抖，8 秒后也强制冻结（防止卡在墙角永远动）
 };
@@ -5941,6 +5944,8 @@ function ropeAdvance(wr, r, dt){
   if (steps > ROPE.SUBMAX) steps = ROPE.SUBMAX;
   var g = ROPE.G * ROPE.HZ * ROPE.HZ;      // 定步长 → 重力项是常数
   var held = grab && grab.wire === wr;
+  var cxx = r.cxx || (r.cxx = new Array(n));   // 约束前的位置快照（见 ③）
+  var cyy = r.cyy || (r.cyy = new Array(n));
   for (s = 0; s < steps; s++){
     // ① Verlet 积分（钉住点不动）
     for (i = 1; i < n - 1; i++){
@@ -5959,11 +5964,21 @@ function ropeAdvance(wr, r, dt){
       p2.y += (t2.y - p2.y) * ROPE.PIN_EASE;
       q2.x = p2.x; q2.y = p2.y;            // 钉住点没有速度
     }
-    // ③ 约束迭代
+    // ③ 约束迭代。
+    //    🔴 约束【只改形状、不注入速度】：迭代前记下每个点的位置，迭代完把
+    //    「总修正量」按 CONST_VEL 同步给 prev（Verlet 里速度就是 p − prev）。
+    //    不同步的话，长度约束每子步把点瞬间拉回原长 = 凭空塞进去一个速度，
+    //    下一轮抗折又把它推出去 —— 两个硬约束打乒乓，整根线会永远在抖，
+    //    用户的原话是「像一条蛇一样」「停不下来」。
+    for (i = 0; i < n; i++){ cxx[i] = r.pts[i].x; cyy[i] = r.pts[i].y; }
     for (it = 0; it < ROPE.ITER; it++){
       ropeLenPass(r);
       ropeBendPass(r);
       ropeBoundPass(r);
+    }
+    for (i = 0; i < n; i++){
+      r.prev[i].x += (r.pts[i].x - cxx[i]) * ROPE.CONST_VEL;
+      r.prev[i].y += (r.pts[i].y - cyy[i]) * ROPE.CONST_VEL;
     }
   }
   // ④ 悬空端的坐标回写到 wire：求解器、命中判定、存档读的都是 e.x / e.y。
@@ -5981,6 +5996,12 @@ function ropeAdvance(wr, r, dt){
   }
   r.age += dt;
   if (held){ r.still = 0; return; }
+  // 吸附接回之后限时落定：端点「吸」进柱子只要几帧，之后就让线身定下来，
+  // 别让它为了凑长度再慢慢抖半秒。
+  if (r.freezeIn != null){
+    r.freezeIn -= dt;
+    if (r.freezeIn <= 0){ ropeFreeze(wr); return; }
+  }
   if (vmax < ROPE.VSTOP) r.still += dt; else r.still = 0;
   if (r.still > ROPE.TSTOP || r.age > ROPE.AGE_MAX) ropeFreeze(wr);
 }
@@ -6251,16 +6272,20 @@ function grabRelease(){
     if (sound) sound.trigger('plug', {});
     addPop(nt.x, nt.y);
   } else {
-    // 松手在空白处 = 「把线头放在这里」。🔴 钉住它，别放它自由：
-    // 试过让它当普通质点（受约束和抗折的推挤），结果是线头能自己滑走一百多
-    // 像素（实测松手在 (620,665)，一秒后跑到 (502,714)）—— 抗折约束会一点点
-    // 把弯的地方推直，整根线被"抽"成直线，线头就被甩到绳长边界上。那正是
-    // 用户说的「拿掉它可能就乱动」。真实导线放在台面上，线头就是停在那儿的。
+    // 松手在空白处 = 「把线头放到台面上」。真实导线往桌上一放就静止了 ——
+    // 这里直接落定：先把线身残余的惯性清零（拖动中攒下的），再冻结形状。
+    // 不这么做的话，松手以后线身还要自己抖一会儿（用户原话：「像一条蛇」）。
+    for (var z = 1; z < r.pts.length - 1; z++){
+      r.prev[z].x = r.pts[z].x; r.prev[z].y = r.pts[z].y;
+    }
     r.pin[idx] = true;
     r.tgt[idx].x = r.pts[idx].x;
     r.tgt[idx].y = r.pts[idx].y;
+    ropeFreeze(wr);
+    return true;
   }
   r.still = 0; r.age = 0;
+  r.freezeIn = 0.32;          // 吸附接回：0.32 秒内落定
   return true;
 }
 // 拔 / 插的那一下：接线柱上扩一圈。没有它，「线掉了」和「线还在」在静态
