@@ -561,6 +561,9 @@ const state = {
   pickerIdx: -1,                  // 打开的插座选择器
   hover: null,                    // 鼠标悬停的可点对象
   msg: '', msgT: 0, msgKind: '',  // 画布顶部横幅
+  animMain: 0,                    // 总开关拨杆位置 0=断开 1=合闸（缓动）
+  animBr: [1, 1, 1, 1],
+  tripFlash: 0,                   // 跳闸瞬间的画面红闪 0..1
   dirty: true,
   done: [true, false, false, false, false, false]
 };
@@ -624,6 +627,7 @@ function checkTrips() {
     if (loadPower(i) / U > BRANCHES[i].rated + 1e-6) {
       state.brTrip[i] = true;
       state.br[i] = false;
+      state.tripFlash = 1;
       flash('「' + BRANCHES[i].name + '」电流超过 ' + BRANCHES[i].rated + ' A，分路开关跳闸', 'bad');
     }
   }
@@ -634,13 +638,14 @@ function checkTrips() {
   if (state.main && !state.mainTrip && it > MAIN_RATED + 1e-6) {
     state.mainTrip = true;
     state.main = false;
+    state.tripFlash = 1;
     flash('干路电流 ' + it.toFixed(1) + ' A 超过 20 A，总开关跳闸！', 'bad');
   }
 }
 
 function flash(text, kind) {
   state.msg = text;
-  state.msgT = 2.6;
+  state.msgT = 1.9;
   state.msgKind = kind || '';
 }
 
@@ -951,18 +956,22 @@ function drawAmmeter() {
   txt('干路电流表', a.cx, a.cy - 62, { size: 11, weight: 700, color: C.dim });
 }
 
-/** 单个极（一路）的拨杆：外壳由调用方画，这里只画内部通道与手柄 */
-function drawPole(x, y, w, h, closed, trip, hot) {
+/** 单个极（一路）的拨杆：外壳由调用方画，这里只画内部通道与手柄。
+ *  anim: 0 = 分闸位置，1 = 合闸位置；中间值就是正在滑过去的那一帧。 */
+function drawPole(x, y, w, h, closed, trip, hot, anim) {
+  const a = (anim === undefined) ? (closed ? 1 : 0) : anim;
   rr(x + 6, y + 8, w - 12, h - 16, 4);
   ctx.fillStyle = '#cbd5e1'; ctx.fill();
 
   const pw = Math.max(16, w * 0.40), ph = h * 0.33;
   const px = x + (w - pw) / 2;
-  const py = closed ? y + h * 0.10 : y + h * 0.52;
+  const pyOff = y + h * 0.52, pyOn = y + h * 0.10;
+  const py = pyOff + (pyOn - pyOff) * a;
   rr(px, py, pw, ph, 4);
-  ctx.fillStyle = closed ? (hot ? '#2563eb' : '#60a5fa') : (trip ? '#ef4444' : '#94a3b8');
+  const on = a > 0.5;
+  ctx.fillStyle = on ? (hot ? '#2563eb' : '#60a5fa') : (trip ? '#ef4444' : '#94a3b8');
   ctx.fill();
-  ctx.strokeStyle = closed ? '#1d4ed8' : (trip ? '#b91c1c' : '#64748b');
+  ctx.strokeStyle = on ? '#1d4ed8' : (trip ? '#b91c1c' : '#64748b');
   ctx.lineWidth = 1.2; ctx.stroke();
 
   // 上下端子
@@ -971,13 +980,13 @@ function drawPole(x, y, w, h, closed, trip, hot) {
   ctx.fillRect(x + w / 2 - 5, y + h - 2, 10, 5);
 }
 
-function drawBreaker(x, y, w, h, closed, trip, hot) {
+function drawBreaker(x, y, w, h, closed, trip, hot, anim) {
   rr(x, y, w, h, 6);
   ctx.fillStyle = '#e2e8f0'; ctx.fill();
   ctx.strokeStyle = trip ? C.red : '#94a3b8';
   ctx.lineWidth = trip ? 2.6 : 1.5;
   ctx.stroke();
-  drawPole(x, y, w, h, closed, trip, hot);
+  drawPole(x, y, w, h, closed, trip, hot, anim);
 }
 
 /** 2P 总开关：一个整体外壳包住上下两个极，右侧一根联动连杆 */
@@ -990,8 +999,8 @@ function drawMainSwitch() {
   ctx.lineWidth = state.mainTrip ? 2.6 : 1.6;
   ctx.stroke();
 
-  drawPole(MAIN.x, MAIN.yL, MAIN.w, MAIN.hL, state.main, state.mainTrip, true);
-  drawPole(MAIN.x, MAIN.yN, MAIN.w, MAIN.hN, state.main, state.mainTrip, true);
+  drawPole(MAIN.x, MAIN.yL, MAIN.w, MAIN.hL, state.main, state.mainTrip, true, state.animMain);
+  drawPole(MAIN.x, MAIN.yN, MAIN.w, MAIN.hN, state.main, state.mainTrip, true, state.animMain);
 
   // 2P 联动连杆
   const lx = MAIN.x + MAIN.w + 9;
@@ -1003,7 +1012,8 @@ function drawMainSwitch() {
   txt('2P', lx + 13, (MAIN.yL + MAIN.hL + MAIN.yN + MAIN.hN * 0.42) / 2, { size: 9, weight: 800, color: C.dim });
 }
 
-function drawRcd(cx, closed, trip) {
+function drawRcd(cx, closed, trip, anim) {
+  const a = (anim === undefined) ? (closed ? 1 : 0) : anim;
   const x = cx - 48, y = SW.y, w = 96, h = SW.h;
   rr(x, y, w, h, 6);
   ctx.fillStyle = '#e2e8f0'; ctx.fill();
@@ -1017,11 +1027,11 @@ function drawRcd(cx, closed, trip) {
 
   const pw = 24, ph = h * 0.33;
   const px = x + 5 + (60 - pw) / 2;
-  const py = closed ? y + h * 0.10 : y + h * 0.52;
+  const py = (y + h * 0.52) + ((y + h * 0.10) - (y + h * 0.52)) * a;
   rr(px, py, pw, ph, 4);
-  ctx.fillStyle = closed ? '#2563eb' : (trip ? '#ef4444' : '#94a3b8');
+  ctx.fillStyle = a > 0.5 ? '#2563eb' : (trip ? '#ef4444' : '#94a3b8');
   ctx.fill();
-  ctx.strokeStyle = closed ? '#1d4ed8' : (trip ? '#b91c1c' : '#64748b');
+  ctx.strokeStyle = a > 0.5 ? '#1d4ed8' : (trip ? '#b91c1c' : '#64748b');
   ctx.lineWidth = 1.2; ctx.stroke();
 
   // 右半：漏电保护模块
@@ -1169,16 +1179,19 @@ function drawGround(cx) {
 // ---- 用电器图标 ----
 function drawAppliance(ic, x, y, on, leak) {
   const cx = x + 30, cy = y + 30;
-  const st = leak ? '#dc2626' : (on ? '#0e7490' : '#64748b');
-  const fl = leak ? 'rgba(239,68,68,.18)' : (on ? 'rgba(14,165,233,.16)' : 'rgba(148,163,184,.14)');
+  const st = leak ? '#dc2626' : (on ? '#0e7490' : '#94a3b8');
+  const fl = leak ? 'rgba(239,68,68,.18)' : (on ? 'rgba(14,165,233,.16)' : 'rgba(148,163,184,.10)');
+
+  ctx.save();
+  // 断电的用电器整体压暗：只改描边色的话，和通电的几乎看不出区别
+  if (!on && !leak) ctx.globalAlpha = 0.5;
 
   // 底板
   rr(x, y, 60, 60, 8);
   ctx.fillStyle = fl; ctx.fill();
-  ctx.strokeStyle = leak ? 'rgba(220,38,38,.6)' : 'rgba(148,163,184,.55)';
+  ctx.strokeStyle = leak ? 'rgba(220,38,38,.6)' : 'rgba(148,163,184,.5)';
   ctx.lineWidth = 1.2; ctx.stroke();
 
-  ctx.save();
   ctx.strokeStyle = st;
   ctx.fillStyle = fl;
   ctx.lineWidth = 1.8;
@@ -1261,11 +1274,12 @@ function drawAppliance(ic, x, y, on, leak) {
       ctx.moveTo(cx - 8, cy - 6); ctx.lineTo(cx + 8, cy - 6);
       ctx.moveTo(cx - 8, cy + 1); ctx.lineTo(cx + 8, cy + 1);
       ctx.stroke();
-      // 闪电
+      // 闪电：只有「这一路带电且漏电」时才是红的 ——
+      // 写死 #dc2626 会让断电后的图标照样挂着红闪电，看着像外壳还带着电
       ctx.beginPath();
       ctx.moveTo(cx + 1, cy - 14); ctx.lineTo(cx - 6, cy + 2);
       ctx.lineTo(cx + 1, cy + 2); ctx.lineTo(cx - 3, cy + 15);
-      ctx.strokeStyle = '#dc2626'; ctx.lineWidth = 2.2; ctx.stroke();
+      ctx.strokeStyle = leak ? '#dc2626' : st; ctx.lineWidth = 2.2; ctx.stroke();
       break;
   }
   ctx.restore();
@@ -1299,7 +1313,8 @@ function render(dt) {
   // 导线
   for (const w of wires) {
     const col = w.c === 'L' ? C.L : C.N;
-    const alpha = w.c === 'L' ? (w.hot ? 1 : 0.34) : 1;
+    // 断电的火线保留一半浓度：太淡（0.34）在浅底上几乎看不见，学生会以为「线没了」
+    const alpha = w.c === 'L' ? (w.hot ? 1 : 0.5) : 1;
     strokePath(w.pts, col, w.w, alpha);
   }
 
@@ -1335,8 +1350,8 @@ function render(dt) {
 
   // 分路开关
   for (let i = 0; i < 4; i++) {
-    if (BRANCHES[i].rcd) drawRcd(BRANCHES[i].x, state.br[i], state.brTrip[i]);
-    else drawBreaker(BRANCHES[i].x - SW.w / 2, SW.y, SW.w, SW.h, state.br[i], state.brTrip[i], isLive(i));
+    if (BRANCHES[i].rcd) drawRcd(BRANCHES[i].x, state.br[i], state.brTrip[i], state.animBr[i]);
+    else drawBreaker(BRANCHES[i].x - SW.w / 2, SW.y, SW.w, SW.h, state.br[i], state.brTrip[i], isLive(i), state.animBr[i]);
   }
 
   drawWallSwitch();
@@ -1355,7 +1370,10 @@ function render(dt) {
     const ax = cx + 54, ay = 470;
     // 电源线
     strokePath([[cx + 44, 500], [ax - 4, 500]], '#334155', 3, 0.85);
-    drawAppliance(a.ic, ax, ay, isLive(i + 1), !!a.leak);
+    // 只有这一路真的带电时，漏电才该标红（没通电的电器外壳不带电）
+    const hot = isLive(i + 1);
+    drawAppliance(a.ic, ax, ay, hot, hot && !!a.leak);
+    txt(a.name, ax + 30, ay + 70, { size: 9.5, weight: 700, color: hot ? '#0e7490' : '#9aa8b6' });
   }
 
   // 标注
@@ -1374,6 +1392,18 @@ function render(dt) {
     ctx.strokeStyle = state.msgKind === 'bad' ? 'rgba(248,113,113,.8)' : 'rgba(56,189,248,.6)';
     ctx.lineWidth = 1.6; ctx.stroke();
     txt(state.msg, W / 2, 38, { size: 14, weight: 700, color: state.msgKind === 'bad' ? '#fecaca' : '#e0f2fe' });
+    ctx.restore();
+  }
+
+  // 跳闸瞬间：整屏淡红 + 四边红框，给「啪」的一下视觉反馈（0.5 s 内衰减到 0）
+  if (state.tripFlash > 0.01) {
+    const f = state.tripFlash;
+    ctx.save();
+    ctx.fillStyle = 'rgba(239,68,68,' + (0.07 * f) + ')';
+    ctx.fillRect(0, 0, W, H);
+    ctx.strokeStyle = 'rgba(239,68,68,' + (0.5 * f) + ')';
+    ctx.lineWidth = 12;
+    ctx.strokeRect(6, 6, W - 12, H - 12);
     ctx.restore();
   }
 }
@@ -1502,7 +1532,12 @@ function handleHit(hit) {
       state.brTrip[i] = false;
       state.br[i] = true;
       if (i === 2) state.rcdTrip = false;
-      flash('「' + BRANCHES[i].name + '」已复位合闸', 'ok');
+      const leakStill = i === 2 && APP_MAP[state.plug[1]] && APP_MAP[state.plug[1]].leak;
+      if (leakStill) {
+        flash('⚠ 漏电的用电器还插在厨房插座上 —— 合闸后会立刻再跳闸，先把插头拔掉', 'bad');
+      } else {
+        flash('「' + BRANCHES[i].name + '」已复位合闸', 'ok');
+      }
     } else {
       state.br[i] = !state.br[i];
       if (!state.br[i] && i === 2) state.rcdTrip = false;
@@ -1658,10 +1693,19 @@ function step(dt) {
       state.brTrip[2] = true;
       state.br[2] = false;
       state.rcdTrip = true;
+      state.tripFlash = 1;
       flash('漏电保护器动作：厨房插座这一路已切断（30 mA / 0.1 s 级）', 'bad');
       state.dirty = true;
     }
   }
+
+  // 拨杆缓动：合闸 / 分闸时滑过去（约 120 ms 到位），跳闸才看得出「啪」的一下
+  const ease = Math.min(1, dt * 20);
+  state.animMain += ((state.main ? 1 : 0) - state.animMain) * ease;
+  for (let i = 0; i < 4; i++) {
+    state.animBr[i] += ((state.br[i] ? 1 : 0) - state.animBr[i]) * ease;
+  }
+  if (state.tripFlash > 0) state.tripFlash = Math.max(0, state.tripFlash - dt * 2.0);
 
   if (state.msgT > 0) state.msgT -= dt;
   if (state.dirty) refresh();
@@ -1746,7 +1790,11 @@ function bindEvents() {
   });
   document.addEventListener('fullscreenchange', function () { fitCanvas(); });
 
-  window.addEventListener('resize', fitCanvas);
+  window.addEventListener('resize', function () {
+    fitCanvas();
+    // 选择器是按 canvas 的显示尺寸算位置的，窗口一变就得重算，否则会飘出画面
+    if (state.pickerIdx >= 0) openPicker(state.pickerIdx);
+  });
 
   document.getElementById('pickerClose').addEventListener('click', closePicker);
   document.getElementById('pickerUnplug').addEventListener('click', function () {
