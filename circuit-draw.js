@@ -3867,13 +3867,50 @@
       ctx.fillStyle = '#c9a95f'; ctx.fill();
     });
   }
-  // dual = 这个容器里并了两根丝（只有乙容器可能）。
-  // 外圈 = 主丝（R2），内圈 = 并联丝（R2b）。两圈的脚都落在同一对柱脚上，
-  // 所以「两根丝并联」这件事在画面上是看得见的，不用靠标签解释。
-  function drawJouleHeater(ctx, cx, dual) {
-    var J = JOULE, cy = J.HEAT_Y, r = J.HEAT_R;
-    drawJouleCoil(ctx, cx, cy, r, 46);
-    if (dual) drawJouleCoil(ctx, cx, cy, r - 10, 28, '#7f8d9a');
+  function drawJouleHeater(ctx, cx) {
+    drawJouleCoil(ctx, cx, JOULE.HEAT_Y, JOULE.HEAT_R, 46);
+  }
+  // 乙容器【盒外】那根并联电阻丝。用户 2026-10-27 明确：「不是在空气盒的里边，
+  // 而是在空气盒的外边，和这两个接线柱相连」。
+  // 画在盖子上方一条水平螺旋（侧视 = 波浪），两端引线直接落到那两根柱脚上 ——
+  // 两根丝接同一对柱子就是并联，画面上看得出来，不用靠标签解释。
+  // 位置：x ∈ cx±16、y = −28。这个矩形在 U 型管接管（x = ±68、y ≥ −36）的
+  // 右边、盖子上沿（−9）的上边，是包围盒里唯一一块空着的方寸。
+  function drawJouleParWire(ctx, cx) {
+    var J = JOULE;
+    var y = -29, half = 22, turns = 6;
+    var x0 = cx - half, x1 = cx + half;
+    // 引线：螺旋两端 → 两根柱脚（柱心 cx±POST_DX、柱脚 POST_Y）。
+    // 和盒内主丝同一套三层画法（暗边 → 黄铜 → 高光），看起来是同一根线。
+    [-1, 1].forEach(function (sgn) {
+      var px = cx + sgn * half, py = y + 4;
+      var qx = cx + sgn * J.POST_DX, qy = J.POST_Y + 3;
+      ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(qx, qy);
+      ctx.lineWidth = 4.4; ctx.strokeStyle = 'rgba(64,48,20,0.45)'; ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(qx, qy);
+      ctx.lineWidth = 2.8; ctx.strokeStyle = '#c9a95f'; ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(px - 0.7, py); ctx.lineTo(qx - 0.7, qy);
+      ctx.lineWidth = 1; ctx.strokeStyle = 'rgba(255,250,224,0.6)'; ctx.stroke();
+      // 端头小圆点：压住引线和螺旋的接缝
+      ctx.beginPath(); ctx.arc(px, py, 2.2, 0, 6.284);
+      ctx.fillStyle = '#c9a95f'; ctx.fill();
+    });
+    // 螺旋本体：一条正弦（弹簧侧视）。
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    var wave = function (dy) {
+      ctx.beginPath();
+      for (var k = 0; k <= 64; k++) {
+        var t = k / 64;
+        var px2 = x0 + (x1 - x0) * t;
+        var py2 = y + dy + Math.sin(t * Math.PI * 2 * turns) * 5;
+        if (k === 0) ctx.moveTo(px2, py2); else ctx.lineTo(px2, py2);
+      }
+      ctx.stroke();
+    };
+    ctx.lineWidth = 4.2; ctx.strokeStyle = 'rgba(64,48,20,0.4)'; wave(0.6);
+    ctx.lineWidth = 2.6; ctx.strokeStyle = '#c9a95f'; wave(0);
+    ctx.lineWidth = 0.9; ctx.strokeStyle = 'rgba(255,250,224,0.55)'; wave(-0.8);
   }
 
   // 一只 U 形管（每台仪器有【两只】，各接一个容器）：
@@ -3981,7 +4018,9 @@
     // ③ 电热丝 + 两根引出脚（画在盖子【之前】：脚的顶端要钻进盖子下面，
     //    露在盖子外面就成了两根戳在盖子上面的铜棍 —— 参考图上脚是从盖子里
     //    伸出来的）
-    drawJouleHeater(ctx, cx, idx === 1 && jouleR2bOf(comp) > 0);
+    drawJouleHeater(ctx, cx);
+    // 乙容器并了一根丝：那根丝画在【盒外】、接同一对柱脚
+    if (idx === 1 && jouleR2bOf(comp) > 0) drawJouleParWire(ctx, cx);
     // ④ 盖子：比箱体宽一圈，顶面一条亮带（这一条就是「盖子」的读法）
     roundRect(ctx, cx - J.LID_W / 2, J.LID_TOP, J.LID_W, J.LID_BOT - J.LID_TOP, 3);
     ctx.fillStyle = linGrad(ctx, 0, J.LID_TOP, 0, J.LID_BOT,
