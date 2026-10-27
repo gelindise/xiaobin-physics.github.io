@@ -3855,9 +3855,12 @@
     }
     // 两根引出脚
     [-1, 1].forEach(function (sgn) {
-      // 起笔角度一律 base + sgn·gap/2：sgn = −1 落在缺口左边、+1 落在右边
-      // （flip 时 base 翻到 +π/2，左右自动跟着翻，不用再分两套写法）。
-      var a = base + sgn * gap / 2;
+      // 起笔角度必须让【左缺口连左柱、右缺口连右柱】。
+      // 缺口朝上（base = −π/2）：左 = base − gap/2（−118.6°，cos<0）；
+      // 缺口朝下（base = +π/2）：左 = base + gap/2（+118.6°，cos<0）。
+      // 🔴 一开始两档都写成 base + sgn·gap/2 —— 缺口翻到朝下时左右就反了，
+      //    左脚连到右柱、右脚连到左柱，两根引线在柱脚处交叉成 X（用户抓到）。
+      var a = base + (flip ? -1 : 1) * sgn * gap / 2;
       var x0 = cx + Math.cos(a) * (r - 4.5);
       var y0 = cy + Math.sin(a) * (r - 4.5);
       var x1 = cx + sgn * J.POST_DX, y1 = J.POST_Y + 3;
