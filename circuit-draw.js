@@ -3825,10 +3825,15 @@
   // 丝是【黄铜色】的，和箱子里的金属件区分开，一眼看得出这是一根导线。
   // 抽出成函数是为了「乙容器里再并一根丝」—— 那一根画成同心内圈，两根的脚
   // 在柱脚处汇合，画面上就是【并联】。
-  function drawJouleCoil(ctx, cx, cy, r, n, tone) {
-    var J = JOULE, gap = 1.0;               // 顶部缺口（弧度，约 57°）
-    var a0 = -Math.PI / 2 + gap / 2;        // 从缺口右侧起笔，绕一整圈
-    var a1 = -Math.PI / 2 - gap / 2 + Math.PI * 2;
+  // flip = 缺口朝【下】（脚向下接柱），给盒外那根并联丝用；
+  //        不传 = 缺口朝上（脚向上接柱），盒内的主丝。
+  // 两根丝除了缺口朝向，尺寸 / 线宽 / 径向短线根数 / 配色全都一样 ——
+  // 用户 2026-10-27：「形状外形上要保持一样，做成一个对称的情况」。
+  function drawJouleCoil(ctx, cx, cy, r, n, tone, flip) {
+    var J = JOULE, gap = 1.0;               // 缺口（弧度，约 57°）
+    var base = flip ? Math.PI / 2 : -Math.PI / 2;
+    var a0 = base + gap / 2;                // 从缺口一侧起笔，绕一整圈
+    var a1 = base - gap / 2 + Math.PI * 2;
     var shadowW = r > 20 ? 10 : 7;
     // 丝的底衬：一圈很淡的暗影。丝压在上面才有「嵌在箱子里」的感觉，
     // 光秃秃一圈短线看着像贴纸。⚠️ 只能很淡 —— 给到 0.10 时缩小以后
@@ -3850,7 +3855,9 @@
     }
     // 两根引出脚
     [-1, 1].forEach(function (sgn) {
-      var a = sgn < 0 ? a1 : a0;
+      // 起笔角度一律 base + sgn·gap/2：sgn = −1 落在缺口左边、+1 落在右边
+      // （flip 时 base 翻到 +π/2，左右自动跟着翻，不用再分两套写法）。
+      var a = base + sgn * gap / 2;
       var x0 = cx + Math.cos(a) * (r - 4.5);
       var y0 = cy + Math.sin(a) * (r - 4.5);
       var x1 = cx + sgn * J.POST_DX, y1 = J.POST_Y + 3;
@@ -3877,40 +3884,11 @@
   // 位置：x ∈ cx±16、y = −28。这个矩形在 U 型管接管（x = ±68、y ≥ −36）的
   // 右边、盖子上沿（−9）的上边，是包围盒里唯一一块空着的方寸。
   function drawJouleParWire(ctx, cx) {
-    var J = JOULE;
-    var y = -29, half = 22, turns = 6;
-    var x0 = cx - half, x1 = cx + half;
-    // 引线：螺旋两端 → 两根柱脚（柱心 cx±POST_DX、柱脚 POST_Y）。
-    // 和盒内主丝同一套三层画法（暗边 → 黄铜 → 高光），看起来是同一根线。
-    [-1, 1].forEach(function (sgn) {
-      var px = cx + sgn * half, py = y + 4;
-      var qx = cx + sgn * J.POST_DX, qy = J.POST_Y + 3;
-      ctx.lineCap = 'round';
-      ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(qx, qy);
-      ctx.lineWidth = 4.4; ctx.strokeStyle = 'rgba(64,48,20,0.45)'; ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(qx, qy);
-      ctx.lineWidth = 2.8; ctx.strokeStyle = '#c9a95f'; ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(px - 0.7, py); ctx.lineTo(qx - 0.7, qy);
-      ctx.lineWidth = 1; ctx.strokeStyle = 'rgba(255,250,224,0.6)'; ctx.stroke();
-      // 端头小圆点：压住引线和螺旋的接缝
-      ctx.beginPath(); ctx.arc(px, py, 2.2, 0, 6.284);
-      ctx.fillStyle = '#c9a95f'; ctx.fill();
-    });
-    // 螺旋本体：一条正弦（弹簧侧视）。
-    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-    var wave = function (dy) {
-      ctx.beginPath();
-      for (var k = 0; k <= 64; k++) {
-        var t = k / 64;
-        var px2 = x0 + (x1 - x0) * t;
-        var py2 = y + dy + Math.sin(t * Math.PI * 2 * turns) * 5;
-        if (k === 0) ctx.moveTo(px2, py2); else ctx.lineTo(px2, py2);
-      }
-      ctx.stroke();
-    };
-    ctx.lineWidth = 4.2; ctx.strokeStyle = 'rgba(64,48,20,0.4)'; wave(0.6);
-    ctx.lineWidth = 2.6; ctx.strokeStyle = '#c9a95f'; wave(0);
-    ctx.lineWidth = 0.9; ctx.strokeStyle = 'rgba(255,250,224,0.55)'; wave(-0.8);
+    // 和盒内主丝【同一个函数、同一个半径、同样 46 根短线】，只是：
+    //   · 圆心画在盖子上方 y = −HEAT_Y（对盒子中线上下对称）；
+    //   · 缺口朝下（flip），两根脚从缺口往【下】接到柱脚 —— 正好「紧接接线柱」。
+    // 这样两只盒子（有并联丝的那只）在画面上是上下对称的一对圆环。
+    drawJouleCoil(ctx, cx, -JOULE.HEAT_Y, JOULE.HEAT_R, 46, null, true);
   }
 
   // 一只 U 形管（每台仪器有【两只】，各接一个容器）：
