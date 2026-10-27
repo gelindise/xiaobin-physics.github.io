@@ -78,7 +78,10 @@
 
   var P = {
     micro: { f1: 8, f2: 25, u1: 10, d: 53.75 },
-    tele:  { f1: 120, f2: 30, d: 150 }
+    // 🔭 d = f₁ + 0.7·f₂ = 141：默认就给一个**看得见虚像**的调焦位置。
+    // 原来的 150（= f₁+f₂）恰好共焦，出射光平行、像在无穷远，画面上空无一物 ——
+    // 一进来什么都看不到，这个默认值是错的。
+    tele:  { f1: 120, f2: 30, d: 141 }
   };
 
   /* -------------------------------------------------------------- 物理内核 */
@@ -161,6 +164,9 @@
       }
     } else {
       xL = -0.55 * (p.d + M.eyeGap);
+      // 虚像比这个默认左边界还远时（镜筒越长、中间像越靠近目镜焦点），左边界必须跟着张开，
+      // 否则整支虚像被裁到画外，画面上又变成"什么都看不到"。
+      if (Number.isFinite(o.v2)) xL = Math.min(xL, o.xFinal - 0.1 * (xR - o.xFinal));
     }
 
     var yTop = 0, yBot = 0;
@@ -834,18 +840,58 @@
     }
 
     // 焦点条
-    var ratio = clamp(o.u2 / o.f2, 0, 2);
-    document.getElementById('focusMark').style.left = (ratio / 2 * 100) + '%';
-    // 三区不能等分：中间“恰在焦点”区只占 12%，再窄文字就被挤没了
+    var barMicro = state.mode === 'micro';
+    var pos;
+    if (barMicro) {
+      pos = clamp(o.u2 / o.f2, 0, 2) / 2;
+    } else {
+      // 望远镜的量程本身就是"能看到虚像"的那一段，把整条刻度铺满：
+      // 指针走到哪儿就是"虚像离眼睛多远"，不存在"焦点以外"这一段可走。
+      // 位置直接用滑块自己的量程算，保证指针和滑块永远同步。
+      var tp = P[state.mode], ttr = tubeRange(o);
+      pos = clamp((tp.d - ttr[0]) / Math.max(1e-6, ttr[1] - ttr[0]), 0, 1);
+    }
+    document.getElementById('focusMark').style.left = (pos * 100) + '%';
+
     document.getElementById('focusIn').style.left = '0';
-    document.getElementById('focusIn').style.width = '44%';
+    document.getElementById('focusIn').style.width = barMicro ? '44%' : '100%';
     document.getElementById('focusOn').style.left = '44%';
     document.getElementById('focusOn').style.width = '12%';
     document.getElementById('focusOut').style.left = '56%';
     document.getElementById('focusOut').style.width = '44%';
-    document.getElementById('focusHead').textContent =
-      o.midSide === 'inner' ? '中间像落在目镜焦点以内'
-        : (o.midSide === 'on' ? '中间像恰在目镜焦点上' : '中间像落在目镜焦点以外');
+    // 望远镜没有"恰在焦点 / 焦点以外"这两档可调（它们就是看不到像的位置，已移出量程），
+    // 留着两块空区只会让人以为拖得过去。
+    document.getElementById('focusOn').style.display = barMicro ? '' : 'none';
+    document.getElementById('focusOut').style.display = barMicro ? '' : 'none';
+    document.getElementById('focusIn').innerHTML = barMicro
+      ? '焦点以内<small>目镜当放大镜，成虚像</small>'
+      : '中间像始终在目镜焦点以内<small>目镜一直当放大镜 ⇒ 一定成虚像；越往右，虚像离眼睛越远</small>';
+    document.getElementById('focusHead').textContent = barMicro
+      ? (o.midSide === 'inner' ? '中间像落在目镜焦点以内'
+        : (o.midSide === 'on' ? '中间像恰在目镜焦点上' : '中间像落在目镜焦点以外'))
+      : '虚像离眼睛 ' + Math.abs(o.v2).toFixed(0) + ' mm';
+
+    // 刻度文字：三段的 left 必须显式给，否则三个 absolute 的 span 全叠在左端（原来就是这个 bug）
+    var sc = [['scaleNear', '6%'], ['scaleZero', '50%'], ['scaleFar', '94%']];
+    if (barMicro) {
+      document.getElementById('scaleNear').textContent = '贴近目镜';
+      document.getElementById('scaleZero').textContent = '目镜焦点 F₂';
+      document.getElementById('scaleFar').textContent = '焦点以外';
+      document.getElementById('scaleZero').style.display = '';
+    } else {
+      document.getElementById('scaleNear').textContent = '虚像近';
+      document.getElementById('scaleFar').textContent = '虚像远';
+      document.getElementById('scaleZero').style.display = 'none';
+    }
+    sc.forEach(function (s) { document.getElementById(s[0]).style.left = s[1]; });
+
+    // 预设按钮文案随仪器切换：望远镜没有"平行光"这一档
+    var pl = barMicro
+      ? ['中间像进焦点', '调到平行光', '虚像到明视距离']
+      : ['虚像在近处', '虚像适中', '虚像退到远处'];
+    document.getElementById('presetInside').textContent = pl[0];
+    document.getElementById('presetParallel').textContent = pl[1];
+    document.getElementById('presetNear').textContent = pl[2];
 
     // 侧栏结论
     var finding = document.getElementById('finding');
@@ -911,7 +957,21 @@
     var p = P[state.mode];
     var v1 = o ? o.v1 : (state.mode === 'micro' ? imgDist(p.u1, p.f1) : p.f1);
     if (state.mode === 'micro') return [v1 + 0.12 * p.f2, v1 + 1.85 * p.f2];
-    return [p.f1 + 0.12 * p.f2, p.f1 + 1.8 * p.f2];
+    // 🔭 望远镜只开放「目镜当放大镜」（u₂ < f₂）里**真正看得清**的那一段：
+    //    d = f₁+f₂ 时出射光平行、像在无穷远，画面上没有像；
+    //    d > f₁+f₂ 时目镜成实像落在镜后，眼睛更接不到。这两种位置直接从量程里去掉。
+    //
+    //    剩下的区间还要再收两道，否则虚像会挤在别人身上：
+    //    ① 下端：虚像离中间像 A₁B₁ 太近时（u₂≈0.2f₂ 只剩几毫米），
+    //       两支箭头叠成一团、标签也没地方放 —— 取 u₂ ≥ 0.5f₂，此时至少差 0.5f₂。
+    //    ② 上端：u₂ 越接近 f₂，虚像越往左跑，越过物镜后会压在物镜和“远处物体”上。
+    //       要求 x_final ≥ 0.18f₁，即 u₂²/(f₂−u₂) ≤ 0.82f₁，解一元二次方程取正根。
+    var loU = 0.5 * p.f2;
+    var k = 0.82 * p.f1;
+    var hiCap = (-k + Math.sqrt(k * k + 4 * k * p.f2)) / 2;
+    var hiU = Math.min(0.82 * p.f2, hiCap);
+    if (hiU <= loU * 1.12) hiU = loU * 1.12;   // 极端焦距组合下保底，别让量程塌成 0
+    return [p.f1 + loU, p.f1 + hiU];
   }
 
   function syncUI() {
@@ -951,6 +1011,9 @@
     $('f2Hint').textContent = state.mode === 'micro'
       ? '目镜相当于放大镜：焦距越短，目镜倍数 250/f₂ 越大。'
       : '望远镜的目镜焦距要短，倍数才大。';
+    $('tubeHint').innerHTML = state.mode === 'micro'
+      ? 'd 决定中间像落在目镜焦点的哪一侧 —— 这是全实验的关键变量。'
+      : '望远镜只开放<b>能看到虚像</b>的镜筒范围（中间像在目镜焦点以内）；d 越大，虚像离眼睛越远。';
     document.querySelectorAll('#modeSeg button').forEach(function (b) {
       b.classList.toggle('active', b.dataset.mode === state.mode);
     });
@@ -1077,9 +1140,16 @@
   function preset(kind) {
     var p = P[state.mode];
     var o = solve();
-    if (kind === 'inside') p.d = o.v1 + 0.55 * p.f2;
-    else if (kind === 'parallel') p.d = o.v1 + p.f2;
-    else if (kind === 'near') p.d = o.v1 + (D_NEAR * p.f2) / (D_NEAR + p.f2);
+    if (state.mode === 'micro') {
+      if (kind === 'inside') p.d = o.v1 + 0.55 * p.f2;
+      else if (kind === 'parallel') p.d = o.v1 + p.f2;
+      else if (kind === 'near') p.d = o.v1 + (D_NEAR * p.f2) / (D_NEAR + p.f2);
+    } else {
+      // 望远镜的三个预设改成"虚像离眼睛多远"：近 / 中 / 远。
+      // 原来的「调到平行光」要 d = f₁+f₂，那个位置出射平行、没有像可看，已经不在量程内了。
+      var frac = kind === 'inside' ? 0.55 : (kind === 'parallel' ? 0.7 : 0.8);
+      p.d = p.f1 + frac * p.f2;
+    }
     var tr = tubeRange(o);
     p.d = clamp(p.d, tr[0], tr[1]);
     applyChange(true);
@@ -1088,7 +1158,7 @@
 
   function resetAll() {
     P.micro = { f1: 8, f2: 25, u1: 10, d: 53.75 };
-    P.tele = { f1: 120, f2: 30, d: 150 };
+    P.tele = { f1: 120, f2: 30, d: 141 };
     state.mode = 'micro';
     state.step = 1;
     document.querySelectorAll('#steps .step').forEach(function (b, i) {
