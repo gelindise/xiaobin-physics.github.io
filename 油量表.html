@@ -295,7 +295,7 @@
       </div>
 
       <ul class="law-list">
-        <li id="l1"><i>①</i><span>液面下降 → 浮标下降 → 滑片向上滑 → 接入电阻变大 → 电流变小</span></li>
+        <li id="l1"><i>①</i><span>液面下降 → 浮标下降 → 滑片向上滑 → 接入的电阻丝变长、电阻变大 → 电流变小</span></li>
         <li id="l2"><i>②</i><span>液面上升 → 滑片向下滑 → 接入电阻变小 → 电流变大</span></li>
         <li id="l3"><i>③</i><span>油量表就是一只电流表，只是把刻度改成了「空 / 满」</span></li>
         <li id="l4"><i>④</i><span>U 不变，I = U / (R₀ + R)：R 变多少，指针就摆多少</span></li>
@@ -305,7 +305,7 @@
     <aside class="lab3d-sidebar">
       <h3>实验步骤</h3>
       <ol class="step-list" id="stepList">
-        <li id="st1"><i>1</i><span>认清电路：电源 → 开关 → R₀ → 弧形变阻器 R → 电流表，依次串联</span></li>
+        <li id="st1"><i>1</i><span>认清电路：<b>上端导线接在杠杆支点轴上（等于接滑片）</b>，下端接电阻丝末端 —— 接入的只是滑片下面那一段</span></li>
         <li id="st2"><i>2</i><span>闭合开关，记下电流表的示数（0~0.6 A 档）</span></li>
         <li id="st3"><i>3</i><span>点<b>放水</b>：水面下降，浮标跟着降，滑片向上滑</span></li>
         <li id="st4"><i>4</i><span>盯住电流表：接入电阻变大，示数一路变小</span></li>
@@ -357,20 +357,26 @@ var RAD = Math.PI / 180;
 var TANK  = { x: 60, y: 370, w: 330, h: 200 };
 var INNER = { x: 72, y: 382, w: 306, h: 176 };
 var WATER_TOP = 408, WATER_BOT = 540;      // 满 / 空时的水面
-var FLOAT_X = 140, FLOAT_R = 18;
-var TAP   = { x: 105, y: 300 };            // 加水龙头
+var FLOAT_R = 18;
+var TAP   = { x: 96,  y: 300 };            // 加水龙头
 var VALVE = { x: 400, y: 524 };            // 放水阀出水口
 
 // ── 机构 ────────────────────────────────────────────────────
-var PIVOT = { x: 560, y: 240 };
-var ARM_L = 120;                            // 杠杆左臂（接浮标）
-var ARM_R = 126;                            // 右臂 = 弧形电阻丝的内半径（滑片贴着丝）
-var ARC_R = 126, ARC_TH = 22, ARC_SPAN = 40 * RAD;
+// 照参考图：浮标上面是一根【竖直】连杆，杆顶的销子插在杠杆左臂的【滑槽】里；
+// 杠杆只绕中间那个支点转。竖直杆 + 绕支点转的杠杆，两者必须靠滑槽才可能同时成立
+// （杆顶的 x 不变、杠杆上的点到支点的距离却在变），这也是真浮子阀的做法。
+var PIVOT = { x: 460, y: 240 };
+var FLOAT_X = 300;
+var PIN_DX = PIVOT.x - FLOAT_X;             // 支点到连杆的水平距离（定值）
+var ROD_L = 212;                            // 连杆长度：杆顶销子 = 浮标顶 − 212
+var ARC_R = 126, ARC_TH = 22, ARC_SPAN = 26 * RAD;
 var TERM_R = ARC_R + ARC_TH / 2;
-var TH_AMP = Math.asin((WATER_BOT - WATER_TOP) / 2 / ARM_L);   // 满/空对应的摆角
+var BEAM_L = 205;                           // 杠杆左端到支点的距离（比滑槽外沿再长一点）
+var SLOT_IN = 150, SLOT_OUT = 182;          // 滑槽的内外半径
 
 var TERM_T = { x: PIVOT.x + Math.cos(-ARC_SPAN) * TERM_R, y: PIVOT.y + Math.sin(-ARC_SPAN) * TERM_R };
 var TERM_B = { x: PIVOT.x + Math.cos(ARC_SPAN) * TERM_R,  y: PIVOT.y + Math.sin(ARC_SPAN) * TERM_R };
+var AXLE   = { x: PIVOT.x, y: PIVOT.y - 14 };   // 支点轴上的接线柱（上端导线接这里）
 
 // ── 电路（尺寸都由沙盒的 HALF / MET 决定，这里只放中心） ──────
 var R0_POS  = { x: 860,  y: 90  };
@@ -402,16 +408,20 @@ function waterY(){ return WATER_BOT - state.level * (WATER_BOT - WATER_TOP); }
 function floatCy(){ return waterY() - 4; }          // 球心：吃水一半（r=18，水面在球心下 4px）
 function floatTop(){ return floatCy() - FLOAT_R; }   // 球顶：连杆挂在这里
 
-function theta(){ return TH_AMP * (2 * state.level - 1); }
-function armPt(th){ th = (th == null ? theta() : th);
-  return { x: PIVOT.x - ARM_L * Math.cos(th), y: PIVOT.y - ARM_L * Math.sin(th) }; }
+// 连杆是竖直的：杆顶销子永远在 x = FLOAT_X 上，高度 = 浮标顶 − ROD_L。
+// 销子又必须落在杠杆这条线上 ⇒ 杠杆的摆角由销子高度唯一确定（tanθ = Δy / Δx）。
+function pinY(){ return floatTop() - ROD_L; }
+function pinPt(){ return { x: FLOAT_X, y: pinY() }; }
+function theta(){ return Math.atan((PIVOT.y - pinY()) / PIN_DX); }
 function slidePt(th){ th = (th == null ? theta() : th);
-  return { x: PIVOT.x + ARM_R * Math.cos(th), y: PIVOT.y + ARM_R * Math.sin(th) }; }
+  return { x: PIVOT.x + ARC_R * Math.cos(th), y: PIVOT.y + ARC_R * Math.sin(th) }; }
+function beamEnd(th){ th = (th == null ? theta() : th);
+  return { x: PIVOT.x - BEAM_L * Math.cos(th), y: PIVOT.y - BEAM_L * Math.sin(th) }; }
 
-// 滑片越往下（θ 越大）→ 接入的那段越短 → R 越小
+// 上端接滑片、下端接电阻丝末端 ⇒ 接入的只是【滑片到末端】那一段，
+// 电阻跟这段弧长成正比（不是整根电阻丝都算进去）。
 function arcResistance(){
-  var t = (theta() + TH_AMP) / (2 * TH_AMP);
-  return R_MIN + (R_MAX - R_MIN) * (1 - clamp(t, 0, 1));
+  return R_MAX * (ARC_SPAN - theta()) / (2 * ARC_SPAN);
 }
 
 // ============================================================
@@ -440,7 +450,7 @@ function route(){
       via:[[BAT_POS.x - 70, BOT_Y], [TERM_B.x, BOT_Y]] },
     // ② 变阻器上端子 → R₀ 左柱
     { a:{ compId:'RA', termIdx:0 }, b:{ compId:'R0', termIdx:0 },
-      via:[[TERM_T.x, TOP_Y]] },
+      via:[[AXLE.x, TOP_Y]] },
     // ③ R₀ 右柱 → 电流表「0.6」柱：从表座下面兜过去，不压表身
     { a:{ compId:'R0', termIdx:1 }, b:{ compId:'A', termIdx:1 },
       via:[[RIGHT_X, TOP_Y], [RIGHT_X, BYPASS_Y], [AMM_POS.x, BYPASS_Y]] },
@@ -455,7 +465,7 @@ function route(){
 // 弧形变阻器的两个端子（本页接管，内核不知道）
 function termWorld(c, i){
   if (!c) return { x:0, y:0 };
-  if (c.id === 'RA') return i === 0 ? { x:TERM_T.x, y:TERM_T.y } : { x:TERM_B.x, y:TERM_B.y };
+  if (c.id === 'RA') return i === 0 ? { x:AXLE.x, y:AXLE.y } : { x:TERM_B.x, y:TERM_B.y };
   return D.terminalWorld(c, i);
 }
 function byId(id){
@@ -770,6 +780,20 @@ function drawStand(){
 }
 
 function drawPivotBoss(){
+  // 轴上的接线柱：上端导线接在这里 —— 电气上就等于接在滑片上（杠杆是金属的）
+  ctx.save();
+  var pg = ctx.createLinearGradient(AXLE.x - 5, 0, AXLE.x + 5, 0);
+  pg.addColorStop(0, '#8fa3b8'); pg.addColorStop(.4, '#f1f5f9'); pg.addColorStop(1, '#64748b');
+  D.roundRect(ctx, AXLE.x - 4.5, AXLE.y - 2, 9, 16, 3);
+  ctx.fillStyle = pg; ctx.fill();
+  ctx.lineWidth = 1.2; ctx.strokeStyle = '#334155'; ctx.stroke();
+  ctx.beginPath(); ctx.arc(AXLE.x, AXLE.y - 2, 5.4, 0, Math.PI * 2);
+  var ng = ctx.createRadialGradient(AXLE.x - 2, AXLE.y - 4, 1, AXLE.x, AXLE.y - 2, 6);
+  ng.addColorStop(0, '#f8fafc'); ng.addColorStop(1, '#7f93a3');
+  ctx.fillStyle = ng; ctx.fill();
+  ctx.lineWidth = 1.3; ctx.strokeStyle = '#334155'; ctx.stroke();
+  ctx.restore();
+
   ctx.beginPath(); ctx.arc(PIVOT.x, PIVOT.y, 8, 0, Math.PI * 2);
   var g = ctx.createRadialGradient(PIVOT.x - 2, PIVOT.y - 2, 1, PIVOT.x, PIVOT.y, 7);
   g.addColorStop(0, '#f8fafc'); g.addColorStop(1, '#64748b');
@@ -777,44 +801,67 @@ function drawPivotBoss(){
   ctx.lineWidth = 1.5; ctx.strokeStyle = '#334155'; ctx.stroke();
 }
 
-// ── 杠杆 ────────────────────────────────────────────────────
-function drawBeam(A, S){
-  var ang = Math.atan2(S.y - A.y, S.x - A.x);
-  var len = Math.hypot(S.x - A.x, S.y - A.y);
+// ── 杠杆（绕支点转，左臂开滑槽）──────────────────────────────
+function drawBeam(){
+  var th = theta();
+  var E = beamEnd(th), S = slidePt(th);
+  var ang = Math.atan2(S.y - E.y, S.x - E.x);
+  var len = Math.hypot(S.x - E.x, S.y - E.y);
   ctx.save();
-  ctx.translate(A.x, A.y); ctx.rotate(ang);
-  var g = ctx.createLinearGradient(0, -10, 0, 10);
+  ctx.translate(E.x, E.y); ctx.rotate(ang);
+
+  var g = ctx.createLinearGradient(0, -11, 0, 11);
   g.addColorStop(0, '#ffffff'); g.addColorStop(.22, '#dbe4ec');
   g.addColorStop(.55, '#93a6b8'); g.addColorStop(.82, '#6b8095'); g.addColorStop(1, '#46607a');
-  D.roundRect(ctx, 0, -10, len, 20, 10);
+  D.roundRect(ctx, 0, -11, len, 22, 11);
   ctx.fillStyle = g; ctx.fill();
   ctx.lineWidth = 1.3; ctx.strokeStyle = '#4b5f72'; ctx.stroke();
-  // 高光
-  ctx.fillStyle = 'rgba(255,255,255,.85)';
-  D.roundRect(ctx, 12, -6.6, len - 24, 3.4, 1.7); ctx.fill();
-  // 左端铰链
-  ctx.beginPath(); ctx.arc(7, 0, 7, 0, Math.PI * 2);
-  ctx.fillStyle = '#e2e8f0'; ctx.fill();
+  // 上沿高光
+  ctx.fillStyle = 'rgba(255,255,255,.8)';
+  D.roundRect(ctx, 14, -7.4, len - 28, 3.4, 1.7); ctx.fill();
+
+  // 左臂的滑槽（连杆顶端的销子在里面滑）
+  var slotA = BEAM_L - SLOT_OUT, slotB = BEAM_L - SLOT_IN;   // 从 E 端量起
+  ctx.beginPath();
+  D.roundRect(ctx, slotA, -4.6, slotB - slotA, 9.2, 4.6);
+  ctx.fillStyle = 'rgba(24,40,56,.62)'; ctx.fill();
+  ctx.lineWidth = 1.1; ctx.strokeStyle = 'rgba(15,23,42,.55)'; ctx.stroke();
+  ctx.beginPath();
+  D.roundRect(ctx, slotA + 1, -3.4, slotB - slotA - 2, 2.4, 1.2);
+  ctx.fillStyle = 'rgba(0,0,0,.35)'; ctx.fill();
+
+  // 左端头
+  ctx.beginPath(); ctx.arc(6, 0, 8, 0, Math.PI * 2);
+  ctx.fillStyle = '#dbe4ec'; ctx.fill();
   ctx.lineWidth = 1.3; ctx.strokeStyle = '#475569'; ctx.stroke();
   ctx.restore();
+
+  // 销子（连杆顶）压在滑槽里
+  var P = pinPt();
+  ctx.beginPath(); ctx.arc(P.x, P.y, 7.5, 0, Math.PI * 2);
+  var pg = ctx.createRadialGradient(P.x - 2.5, P.y - 2.5, 1, P.x, P.y, 8);
+  pg.addColorStop(0, '#f8fafc'); pg.addColorStop(1, '#7f93a3');
+  ctx.fillStyle = pg; ctx.fill();
+  ctx.lineWidth = 1.6; ctx.strokeStyle = '#334155'; ctx.stroke();
+  ctx.beginPath(); ctx.arc(P.x, P.y, 2.6, 0, Math.PI * 2);
+  ctx.fillStyle = '#334155'; ctx.fill();
 }
 
-// ── 连杆（浮标 → 杠杆左端）─────────────────────────────────
-function drawRod(A){
-  var x0 = FLOAT_X, y0 = floatTop();
+// ── 连杆（竖直：浮标顶 → 杠杆滑槽里的销子）──────────────────
+function drawRod(){
+  var x = FLOAT_X, y0 = floatTop(), y1 = pinY();
   ctx.save();
-  // 杆身
-  var g = ctx.createLinearGradient(x0, y0, A.x, A.y);
-  g.addColorStop(0, '#b6c4d4'); g.addColorStop(.5, '#e8eef5'); g.addColorStop(1, '#93a6b8');
-  ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(A.x, A.y);
-  ctx.lineWidth = 10; ctx.lineCap = 'round'; ctx.strokeStyle = '#4b5f72'; ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(A.x, A.y);
-  ctx.lineWidth = 8; ctx.lineCap = 'round'; ctx.strokeStyle = g; ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(A.x, A.y);
-  ctx.lineWidth = 2.2; ctx.strokeStyle = 'rgba(255,255,255,.85)'; ctx.stroke();
+  // 杆身（竖直，金属杆带高光）
+  var g = ctx.createLinearGradient(x - 5, 0, x + 5, 0);
+  g.addColorStop(0, '#6b8095'); g.addColorStop(.35, '#e8eef5');
+  g.addColorStop(.7, '#b6c4d4'); g.addColorStop(1, '#5f7385');
+  ctx.beginPath(); ctx.moveTo(x, y0); ctx.lineTo(x, y1);
+  ctx.lineWidth = 11; ctx.lineCap = 'round'; ctx.strokeStyle = '#41586e'; ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(x, y0); ctx.lineTo(x, y1);
+  ctx.lineWidth = 8.4; ctx.lineCap = 'round'; ctx.strokeStyle = g; ctx.stroke();
   ctx.restore();
-  // 下端铰链（浮标顶上）
-  ctx.beginPath(); ctx.arc(x0, y0, 4.2, 0, Math.PI * 2);
+  // 浮标顶的铰链
+  ctx.beginPath(); ctx.arc(x, y0, 4.6, 0, Math.PI * 2);
   ctx.fillStyle = '#94a3b8'; ctx.fill();
   ctx.lineWidth = 1.2; ctx.strokeStyle = '#475569'; ctx.stroke();
 }
@@ -843,18 +890,34 @@ function drawArcRheostat(){
   ctx.fillStyle = cg; ctx.fill();
   ctx.lineWidth = 2; ctx.strokeStyle = '#9a8b6f'; ctx.stroke();
 
-  // 电阻丝（细密绕线）
+  // 电阻丝（细密绕线）。🔴 只有【滑片 → 下端】这一段接入电路，
+  //    画面上必须看得出「接入的那一截是热的、没接入的是凉的」，
+  //    否则学生看不出「变阻器只接了一段」这件事。
+  var thW = theta();
   var n = 84;
   for (var i = 0; i <= n; i++){
     var a = -ARC_SPAN + (2 * ARC_SPAN) * i / n;
     var ca = Math.cos(a), sa = Math.sin(a);
+    var inC = (a >= thW);                    // 角度更大 = 更靠下 = 在滑片与下端之间
     ctx.beginPath();
     ctx.moveTo(P.x + ca * (ARC_R + 2), P.y + sa * (ARC_R + 2));
     ctx.lineTo(P.x + ca * (ARC_R + ARC_TH - 2), P.y + sa * (ARC_R + ARC_TH - 2));
-    ctx.lineWidth = (i % 2) ? 0.9 : 1.5;
-    ctx.strokeStyle = (i % 2) ? 'rgba(176,116,52,.45)' : 'rgba(202,138,58,.95)';
+    if (inC){
+      ctx.lineWidth = (i % 2) ? 1.1 : 1.8;
+      ctx.strokeStyle = (i % 2) ? 'rgba(180,83,9,.7)' : 'rgba(217,119,6,.98)';
+    } else {
+      ctx.lineWidth = (i % 2) ? 0.9 : 1.3;
+      ctx.strokeStyle = (i % 2) ? 'rgba(148,163,184,.55)' : 'rgba(148,163,184,.8)';
+    }
     ctx.stroke();
   }
+  // 接入段再压一层暖光，一眼看出「这一段在电路里」
+  ctx.beginPath();
+  ctx.arc(P.x, P.y, ARC_R + ARC_TH / 2, thW, ARC_SPAN);
+  ctx.lineWidth = ARC_TH - 5;
+  ctx.lineCap = 'butt';
+  ctx.strokeStyle = 'rgba(249,115,22,.16)';
+  ctx.stroke();
 
   // 两端的金属端头 + 接线螺丝
   [TERM_T, TERM_B].forEach(function (t, k){
@@ -939,8 +1002,8 @@ function render(){
   // 机构
   drawArcRheostat();
   drawStand();
-  drawRod(armPt());
-  drawBeam(armPt(), slidePt());
+  drawRod();
+  drawBeam();
   drawWiper();
   drawPivotBoss();
   drawFloat();
@@ -959,11 +1022,14 @@ function drawLabels(){
   txt('浮标', FLOAT_X + 24, wy + 2, { font: '700 13px ' + FONT, color: c });
   line(FLOAT_X + 22, wy + 2, FLOAT_X + 17, wy - 1, 1.2, 'rgba(30,41,59,.5)');
 
-  txt('杠杆', PIVOT.x - 44, PIVOT.y - 30, { align: 'center', font: '700 13px ' + FONT, color: '#475569' });
-  line(PIVOT.x - 44, PIVOT.y - 24, PIVOT.x - 30, PIVOT.y - 8, 1.2, 'rgba(30,41,59,.45)');
+  var thNow = theta();
+  var beamPt = { x: PIVOT.x - 104 * Math.cos(thNow), y: PIVOT.y - 104 * Math.sin(thNow) };
+  txt('杠杆', beamPt.x - 6, beamPt.y - 40, { align: 'center', font: '700 13px ' + FONT, color: '#475569' });
+  line(beamPt.x - 4, beamPt.y - 34, beamPt.x - 1, beamPt.y - 12, 1.2, 'rgba(30,41,59,.45)');
 
-  txt('R', PIVOT.x + 164, PIVOT.y - 6, { font: '800 20px ' + FONT, color: '#b45309' });
-  txt('弧形变阻器', PIVOT.x + 164, PIVOT.y + 18, { font: '700 12px ' + FONT, color: '#92400e' });
+  txt('R', PIVOT.x + 160, PIVOT.y - 6, { font: '800 20px ' + FONT, color: '#b45309' });
+  txt('弧形变阻器', PIVOT.x + 160, PIVOT.y + 18, { font: '700 12px ' + FONT, color: '#92400e' });
+  txt('接入段 = 滑片 → 下端', PIVOT.x + 160, PIVOT.y + 38, { font: '700 10.5px ' + FONT, color: '#a16207' });
 
   txt('R₀ = 10 Ω', R0_POS.x, R0_POS.y + 40, { align: 'center', font: '700 13px ' + FONT, color: c });
   txt('电流表', AMM_POS.x - 128, AMM_POS.y - 6, { align: 'right', font: '700 13px ' + FONT, color: c });
@@ -1216,7 +1282,7 @@ function onFsChange(){
 // 自检钩子
 // ============================================================
 window.__OIL = {
-  version: '2.0.0',
+  version: '2.1.0',
   state: state,
   step: step,
   renderNow: render,
@@ -1232,13 +1298,15 @@ window.__OIL = {
   waterY: waterY,
   thetaDeg: function (){ return theta() / RAD; },
   arcs: function (){
-    return { arcR: ARC_R, arcTh: ARC_TH, spanDeg: ARC_SPAN / RAD, thAmpDeg: TH_AMP / RAD,
-             termT: TERM_T, termB: TERM_B };
+    return { arcR: ARC_R, arcTh: ARC_TH, spanDeg: ARC_SPAN / RAD,
+             termT: TERM_T, termB: TERM_B, axle: AXLE };
   },
   geo: function (){
-    var th = theta(), A = armPt(th), S = slidePt(th);
-    return { pivot: PIVOT, arm: A, slider: S, waterY: waterY(),
-             float: { x: FLOAT_X, y: floatCy() }, tank: TANK, inner: INNER };
+    var th = theta(), S = slidePt(th), E = beamEnd(th), P = pinPt();
+    return { pivot: PIVOT, pin: P, beamEnd: E, slider: S, thetaDeg: th / RAD,
+             waterY: waterY(),
+             rodTop: P, rodBottom: { x: FLOAT_X, y: floatTop() },
+             float: { x: FLOAT_X, y: floatCy() }, tank: TANK, inner: INNER, axle: AXLE };
   },
   comps: function (){ return scene.comps.map(function (c){
     return { id: c.id, type: c.type, x: c.x, y: c.y, R: c.params.R, closed: c.params.closed,
@@ -1256,11 +1324,11 @@ window.__OIL = {
   probe: function (){
     var k = canvas.width / W;
     function pt(p){ return { x: p.x * k, y: p.y * k }; }
-    var A = armPt(), S = slidePt();
+    var S = slidePt(), P = pinPt();
     return {
       k: k,
       float: pt({ x: FLOAT_X, y: floatCy() }),
-      slider: pt(S), arm: pt(A),
+      slider: pt(S), pin: pt(P), rodTop: pt(P), rodBottom: pt({ x: FLOAT_X, y: floatTop() }),
       meter: pt({ x: AMM_POS.x, y: AMM_POS.y }),
       meterNeedle: pt({ x: AMM_POS.x + Math.cos((200 + 140 * needleFrac()) * RAD) * 40,
                         y: AMM_POS.y + Math.sin((200 + 140 * needleFrac()) * RAD) * 40 }),
