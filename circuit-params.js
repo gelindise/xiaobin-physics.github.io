@@ -208,11 +208,18 @@
     // （同电流、比电阻）和「5Ω 与 5Ω 比」（同电阻、比电流），给滑条反而让
     // 学生以为「想让哪边热就把哪边调大」—— 那就不是焦耳定律了。
     // 两个容器各自独立，画布上各自两根接线柱（甲 = 端子 0/1，乙 = 2/3）。
+    // 2026-10-27 用户加的第 3 项：乙容器里【再并一根丝】，两根阻值都可调。
+    // 0 = 不装（默认，和课本图18.4-2/18.4-3 一致）；选 5/10/20 就在乙容器里
+    // 并上一根，等效电阻 R2∥R2b、产热是两条丝之和 —— 画面上会多出一圈内丝。
+    // 用 labels 而不是 unit：0 那一项要写「不装」，不能印成「不装Ω」。
     joule: [
                 {k:'R1', t:'select', label:'甲 电阻', unit:'Ω',
                  options:[5, 10, 20]},
                 {k:'R2', t:'select', label:'乙 电阻', unit:'Ω',
-                 options:[5, 10, 20]}],
+                 options:[5, 10, 20]},
+                {k:'R2b', t:'select', label:'乙 并联丝',
+                 options:[0, 5, 10, 20],
+                 labels:{0:'不装', 5:'5Ω', 10:'10Ω', 20:'20Ω'}}],
     // ── 焦耳定律演示器（量热瓶，图18.4-1）────────────────────
     // 只有一个可调量：瓶里那段电阻丝的阻值。给【滑条】而不是下拉，
     // 因为这里要的是「换一段不同阻值的丝，看温度升到几度」—— 连续可调
@@ -424,9 +431,19 @@
     if (c.type === 'joule') {
       var jb = r.boxes || [];
       if (!jb.length) return '—';
+      var fmtJ = function (v) {
+        return (Math.abs(v - Math.round(v)) < 1e-9) ? String(Math.round(v)) : num1(v);
+      };
+      var jp = c.params || {};
       return jb.map(function (b) {
-        return (Math.abs(b.R - Math.round(b.R)) < 1e-9)
-          ? String(Math.round(b.R)) : num1(b.R);
+        // 乙容器并了第二根丝：印「10∥20」而不是等效值 6.7 —— 学生要能一眼
+        // 看出「里面是两根丝」，等效值只用于电学计算。
+        if (b.par && b.R2b > 0) {
+          var m = +jp.R2;
+          if (!(isFinite(m) && m > 0)) m = 10;
+          return fmtJ(m) + '并' + fmtJ(b.R2b);
+        }
+        return fmtJ(b.R);
       }).join(' / ');
     }
     return r.R == null ? '—' : num1(r.R);

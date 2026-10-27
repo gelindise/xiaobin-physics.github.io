@@ -127,7 +127,11 @@
       label: '焦耳定律演示器（U 形管）', terminals: 4,
       // 端子号：0/1 = 甲（左）容器的两根柱，2/3 = 乙（右）容器。
       termNames: ['甲+', '甲−', '乙+', '乙−'],
-      defaults: { R1: 5, R2: 10 },
+      // R2b = 乙容器里【再并联一根丝】的阻值，0 表示没装（默认）。
+      // 用户 2026-10-27：「右边空气盒里不是有个电阻吗，我想让它在上面再并联
+      // 一个电阻丝，两个的阻值都可以调节」。并上以后乙容器的等效电阻是
+      // R2 ∥ R2b，产热是两条丝之和 —— 用来做「并联电阻 / 改变电阻」那一步。
+      defaults: { R1: 5, R2: 10, R2b: 0 },
     },
     // ── 焦耳定律演示器（量热瓶，人教版 图18.4-1）──────────────────
     // 广口瓶里装着液体，瓶塞上插一支温度计、引出两根接线柱，瓶里泡着一段
@@ -691,20 +695,37 @@
     var v = num(i ? P.R2 : P.R1, i ? 10 : 5);
     return v > 0 ? v : (i ? 10 : 5);
   }
+  // 乙容器里那根【并联】丝的阻值。0 = 没装（默认），所以不能用 jouleR 那套
+  // 「小于等于 0 就兜底」的写法 —— 0 在这里是有意义的值。
+  function jouleR2b(comp) {
+    var v = num(paramsOf(comp).R2b, 0);
+    return v > 0 ? v : 0;
+  }
   // 液面【满偏】对应的产热功率（W）。每一只 U 形管读的是【它自己那个容器】
   // 的产热功率：Δh ∝ Δp ∝ ΔT ∝ P。取 0.5 W 是照初中实验室那套器材标的：
   // 3V 电源 + 5Ω/10Ω 串联时两边是 0.2W / 0.4W，正好落在 40% / 80% 量程 ——
   // 两边的液面高度差一眼能比出来，又都不会顶到头。
   // 🔴 这个数只影响【画面上液面升多少】，不参与任何电学量的计算：
   //    它是一把刻度尺，不是物理模型的一部分。
-  var JOULE_P_REF = 0.5;
+  // 🔴 2026-10-27 改：原来是 0.5W 满偏 + 纯线性，那是按【串联】标的
+  //    （3V + 5Ω/10Ω 串联 → 0.2W / 0.4W）。学生一把两个容器【并联】
+  //    （3V → 1.8W / 0.9W），两个都超过 0.5W ⇒ 双双饱和到满偏 ⇒ 两只 U 形管
+  //    的液面一样高 —— 用户实测抓到的就是这个（「很显然是错误的」）。
+  //    纯线性 + 大满偏也不行：0.2/0.4 只差 4px，串联时又看不出差别。
+  //    取 tanh 是折中：低功率近似线性（Δh ≈ P/P_REF，严格单调、功率大液面差
+  //    就大），高功率软压缩但【永远不顶死】—— sqrt 试过，1.8W 就已经到 1.0，
+  //    学生再把乙容器并一根 5Ω（2.7W）时两边又一样高了（同一个 bug 换个位置
+  //    复发）。tanh 在 0.2W ~ 7.2W 这整段都还分得开。
+  //    物理上也说得通：U 形管是压力计，Δh ∝ Δp；而液面移动本身会让容器里
+  //    空气体积变大、压强升得比 P 慢，所以 Δh 随 P 是【亚线性】的。
+  var JOULE_P_REF = 2.0;
   // 一个容器的产热功率 → 它那只 U 形管的液面偏移（0 ~ 1）。
   // 空气受热压强变大，把它自己那一侧的液面压下去、敞口那一侧顶上来，
   // 两边各移动 d，所以液面【高度差】是 2d。
   // 🔴 每只管子读自己的容器，不是两只管子读「差」：真实器材就是两个独立的
   //    U 形管，比较的是两只管子的高度差，不是一根管子的两边。
   function jouleLevelOf(p) {
-    var d = (p > 0 ? p : 0) / JOULE_P_REF;
+    var d = Math.tanh((p > 0 ? p : 0) / JOULE_P_REF);
     return d > 1 ? 1 : d;
   }
 
@@ -988,6 +1009,16 @@
           if (jp === jq) continue;          // 两根柱被同一根导线短接：这段不起作用
           out.push({ kind: 'R', comp: comp, p: jp, q: jq,
                      R: jouleR(comp, ji), jouleIdx: ji });
+          // 乙容器里【再并一根丝】：同一对节点、另一条 R 支路（R2b > 0 才算）。
+          // 两条都带 jouleIdx = 1，回填时按 jouleIdx 把它们【都】捞出来累加 ——
+          // 只认第一条的话，并联丝发的热会被算丢（液面差偏小，还不报错）。
+          if (ji === 1) {
+            var jrb = jouleR2b(comp);
+            if (jrb > 0) {
+              out.push({ kind: 'R', comp: comp, p: jp, q: jq,
+                         R: jrb, jouleIdx: 1, joulePar: 1 });
+            }
+          }
         }
         break;
       }
@@ -1979,21 +2010,29 @@
           var jboxes = [0, 1].map(function (si) {
             // 按 jouleIdx 找支路，不能按 bs 下标（被短接的那条不在 bs 里，
             // 下标会整体错位 —— 那样「甲」会读到「乙」的电流）。
-            var jbr = null;
+            // 🔴 一个容器可能有【两条】支路（乙容器里并了一根丝），所以这里是
+            //    遍历累加，不是「找到第一条就 break」。
+            var jv = 0, jii = 0, jp = 0, jpar = false;
             for (var q = 0; q < bs.length; q++) {
-              if (bs[q].jouleIdx === si) { jbr = bs[q]; break; }
-            }
-            var jR = jouleR(c, si), jv = 0, jii = 0;
-            if (jbr) {
-              if (jbr.kind === 'V') { jii = bI(sol, jbr); }
-              else { jv = nV(sol, jbr.p) - nV(sol, jbr.q); jii = jv / jbr.R; }
-            }
-            return {
-              idx: si, R: jR, v: jv, i: jii,
+              if (bs[q].jouleIdx !== si) continue;
+              var jbr = bs[q], v1 = 0, i1 = 0;
+              if (jbr.kind === 'V') { i1 = bI(sol, jbr); }
+              else { v1 = nV(sol, jbr.p) - nV(sol, jbr.q); i1 = v1 / jbr.R; }
+              jv = v1;                     // 并联的两条端电压相同，取哪条都一样
+              jii += i1;                   // 总电流 = 两条之和
               // 产热功率：p = |U·I|。用两端压降乘电流而不是 I²R，是因为
               // 两种写法在正常支路上等价，而 U·I 在「这条支路被短接」时
               // 自然给 0（I²R 会给一个假的正数）。
-              p: Math.abs(jv * jii),
+              jp += Math.abs(v1 * i1);
+              if (jbr.joulePar) jpar = true;
+            }
+            // 等效电阻：并了第二根丝时是 R2 ∥ R2b（侧栏、箱体标签、读数框都读它）
+            var jR = jouleR(c, si);
+            var jr2b = si === 1 ? jouleR2b(c) : 0;
+            if (jpar && jr2b > 0) jR = (jR * jr2b) / (jR + jr2b);
+            return {
+              idx: si, R: jR, v: jv, i: jii, p: jp,
+              par: jpar, R2b: jpar ? jr2b : 0, Rmain: jouleR(c, si),
               // 两根柱都接了才算这个容器在工作（只看电流不行：合闸前也是 0）
               wired: wired.has(c.id + ':' + (si * 2)) &&
                      wired.has(c.id + ':' + (si * 2 + 1)),
@@ -3345,6 +3384,7 @@
     JOULE_R_CHOICES: JOULE_R_CHOICES,
     JOULE_P_REF: JOULE_P_REF,
     jouleR: jouleR,
+    jouleR2b: jouleR2b,
     jouleLevelOf: jouleLevelOf,
     // 量热瓶：阻值 + 稳态温升（t = T0 + K·P）。绘制层按 rec.temp 画温度计、
     // 参数面板按滑条写 R、自检按 CAL_T0/CAL_K 反算「该升到几度」。

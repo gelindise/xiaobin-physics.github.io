@@ -3806,6 +3806,12 @@
     var v = +(i ? P.R2 : P.R1);
     return (isFinite(v) && v > 0) ? v : (i ? 10 : 5);
   }
+  // 乙容器里那根并联丝的阻值（0 = 没装）。绘制层要它来画内圈、印标签。
+  function jouleR2bOf(comp) {
+    var P = (comp && comp.params) || {};
+    var v = +P.R2b;
+    return (isFinite(v) && v > 0) ? v : 0;
+  }
   function jouleRTxt(R) {
     return (Math.abs(R - Math.round(R)) < 1e-9 ? String(Math.round(R)) : String(R)) + 'Ω';
   }
@@ -3814,28 +3820,35 @@
   // 缺口两端各引一根短脚上去，接到盖子上的两根接线柱 ——
   // 这两根脚就是「电阻丝的两端接在柱子上」的唯一视觉证据，省掉的话丝就是
   // 悬空在盒子里的（参考图上那两根短脚清清楚楚）。
-  function drawJouleHeater(ctx, cx) {
-    var J = JOULE, cy = J.HEAT_Y, r = J.HEAT_R;
-    var n = 46, gap = 1.0;                  // 顶部缺口（弧度，约 57°）
+  // 一圈电热丝：径向短线 = 螺旋丝正对着我们时看到的一圈圈，两根脚从缺口
+  // 两端直上、顶到柱脚（柱心在 ±POST_DX、柱脚在 POST_Y）。
+  // 丝是【黄铜色】的，和箱子里的金属件区分开，一眼看得出这是一根导线。
+  // 抽出成函数是为了「乙容器里再并一根丝」—— 那一根画成同心内圈，两根的脚
+  // 在柱脚处汇合，画面上就是【并联】。
+  function drawJouleCoil(ctx, cx, cy, r, n, tone) {
+    var J = JOULE, gap = 1.0;               // 顶部缺口（弧度，约 57°）
     var a0 = -Math.PI / 2 + gap / 2;        // 从缺口右侧起笔，绕一整圈
     var a1 = -Math.PI / 2 - gap / 2 + Math.PI * 2;
+    var shadowW = r > 20 ? 10 : 7;
     // 丝的底衬：一圈很淡的暗影。丝压在上面才有「嵌在箱子里」的感觉，
     // 光秃秃一圈短线看着像贴纸。⚠️ 只能很淡 —— 给到 0.10 时缩小以后
     // 整圈糊成一个深色圆盘，看着像个小风扇。
     ctx.beginPath(); ctx.arc(cx, cy, r - 3, a0, a1);
-    ctx.lineWidth = 10; ctx.strokeStyle = 'rgba(96,116,136,0.06)'; ctx.stroke();
-    // 径向短线 = 螺旋丝正对着我们时看到的一圈圈
-    ctx.lineWidth = 1.5; ctx.strokeStyle = '#6a7a8a'; ctx.lineCap = 'round';
+    ctx.lineWidth = shadowW; ctx.strokeStyle = 'rgba(96,116,136,0.06)'; ctx.stroke();
+    // 径向短线
+    ctx.lineWidth = r > 20 ? 1.5 : 1.2;
+    ctx.strokeStyle = tone || '#6a7a8a';
+    ctx.lineCap = 'round';
+    var inner = r > 20 ? r - 9 : r - 6.5;
     for (var k = 0; k < n; k++) {
       var a = a0 + (a1 - a0) * k / (n - 1);
       var c = Math.cos(a), s = Math.sin(a);
       ctx.beginPath();
-      ctx.moveTo(cx + c * (r - 9), cy + s * (r - 9));
+      ctx.moveTo(cx + c * inner, cy + s * inner);
       ctx.lineTo(cx + c * r, cy + s * r);
       ctx.stroke();
     }
-    // 两根引出脚：从缺口两端直上，顶到柱脚（柱心在 ±POST_DX、柱脚在 POST_Y）。
-    // 丝是【黄铜色】的，和箱子里的金属件区分开，一眼看得出这是一根导线。
+    // 两根引出脚
     [-1, 1].forEach(function (sgn) {
       var a = sgn < 0 ? a1 : a0;
       var x0 = cx + Math.cos(a) * (r - 4.5);
@@ -3853,6 +3866,14 @@
       ctx.arc(x0, y0, 2.2, 0, 6.284);
       ctx.fillStyle = '#c9a95f'; ctx.fill();
     });
+  }
+  // dual = 这个容器里并了两根丝（只有乙容器可能）。
+  // 外圈 = 主丝（R2），内圈 = 并联丝（R2b）。两圈的脚都落在同一对柱脚上，
+  // 所以「两根丝并联」这件事在画面上是看得见的，不用靠标签解释。
+  function drawJouleHeater(ctx, cx, dual) {
+    var J = JOULE, cy = J.HEAT_Y, r = J.HEAT_R;
+    drawJouleCoil(ctx, cx, cy, r, 46);
+    if (dual) drawJouleCoil(ctx, cx, cy, r - 10, 28, '#7f8d9a');
   }
 
   // 一只 U 形管（每台仪器有【两只】，各接一个容器）：
@@ -3960,7 +3981,7 @@
     // ③ 电热丝 + 两根引出脚（画在盖子【之前】：脚的顶端要钻进盖子下面，
     //    露在盖子外面就成了两根戳在盖子上面的铜棍 —— 参考图上脚是从盖子里
     //    伸出来的）
-    drawJouleHeater(ctx, cx);
+    drawJouleHeater(ctx, cx, idx === 1 && jouleR2bOf(comp) > 0);
     // ④ 盖子：比箱体宽一圈，顶面一条亮带（这一条就是「盖子」的读法）
     roundRect(ctx, cx - J.LID_W / 2, J.LID_TOP, J.LID_W, J.LID_BOT - J.LID_TOP, 3);
     ctx.fillStyle = linGrad(ctx, 0, J.LID_TOP, 0, J.LID_BOT,
@@ -3972,11 +3993,22 @@
     ctx.moveTo(cx - J.LID_W / 2 + 5, J.LID_TOP + 1.3);
     ctx.lineTo(cx + J.LID_W / 2 - 5, J.LID_TOP + 1.3);
     ctx.stroke();
-    // ⑤ 阻值
-    var txt = jouleRTxt(jouleRof(comp, idx, rec));
+    // ⑤ 阻值。并了两根丝时印「10Ω∥20Ω」—— 只印等效值（6.7Ω）的话，
+    //    学生看不出「里面是两根丝」，而这一版的重点正是那两根。
+    var r2b = idx === 1 ? jouleR2bOf(comp) : 0;
+    var txt, fs = 20;
+    if (r2b > 0) {
+      // 用中文「并」而不是 ∥：这套字体栈里 U+2225 会被回退成「/」，
+      // 画面上读起来像「10Ω 或 20Ω」（量程），不像并联。
+      txt = jouleRTxt(jouleRof(comp, idx, null)) + '并' + jouleRTxt(r2b);
+      fs = 13;                       // 「10Ω并20Ω」7 个字，96px 宽的箱体刚好放得下
+    } else {
+      txt = jouleRTxt(jouleRof(comp, idx, rec));
+    }
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.font = 'bold 20px -apple-system,"PingFang SC",sans-serif';
-    ctx.lineWidth = 3.6; ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+    ctx.font = 'bold ' + fs + 'px -apple-system,"PingFang SC",sans-serif';
+    ctx.lineWidth = fs > 16 ? 3.6 : 3;
+    ctx.strokeStyle = 'rgba(255,255,255,0.9)';
     ctx.strokeText(txt, cx, J.LABEL_Y);
     ctx.fillStyle = '#3f4c5a';
     ctx.fillText(txt, cx, J.LABEL_Y);
