@@ -66,6 +66,8 @@
     // 焦耳定律演示器：取 J。它和「焦耳」那个实验页没有编号上的关系，
     // 取 J 只是因为这件器材在课本上就叫这个名字（Joule）。
     joule: 'J',
+    // 量热瓶：取 K（Kalorimeter / 卡）。和 J 分开，两件器材同屏时不打架。
+    calorimeter: 'K',
     // 单刀双掷开关：取 SP 而不是 S。虽然「编号不重复」那条 while 循环本身
     // 就能挡住撞号（byId 查得到就往后跳），但和普通开关共用 S 的话，
     // 一块板上会数出 S1 / S2 两只【长得完全不一样】的开关，面板和读数表里
@@ -134,6 +136,9 @@
     // 这件器材的柱子本来就长在本体上（和学生电源一样）。onDown 里
     // hitTerminal 排在 hitComp 前面，「从柱子上拉线」那一下永远先被端子接走。
     joule: [157, 114],
+    // 量热瓶：命中框 = 整台仪器（±62 × ±139，和 CircuitDraw.bodyBox 同口径）。
+    // 又高又瘦，点温度计那一段也能选中它。
+    calorimeter: [62, 139],
     // 两只表的仪器本体全部落在导线【上方】（三个接线柱在底部探出来），
     // 所以高只有表壳+底座这一截，不是上下对称的。
     ammeter:   [100, 70],
@@ -543,8 +548,15 @@
       return pts;
     }
     function pathOf(wr) {
+      // 软导线（页面层的质点链，见「电路实验沙盒.html」的 ROPE 那一段）：
+      // 正在被拔 / 被拖 / 跟着元件走的时候，质点就是唯一的真形状 ——
+      // 绘制（页面 pathOf）和命中（这里）必须读同一份，否则「看得见却点不着」。
+      if (wr.__rope) return wr.__rope.pts;
       var pts = rawPathOf(wr);
       if (pts.length < 2) return pts;
+      // 软导线【冻结】下来的形状：点本来就密（每 ~9px 一个），再磨圆会把
+      // 一条自然弧磨成一串折线。标记由页面层的 ropeFreeze 打上。
+      if (wr.phys) return pts;
       // 和页面那份 pathOf 走【同一个】圆角函数。这里是命中判据（hitWire 逐段
       // 量距离、delButtonPos 取中点），那边是绘制路径 —— 两边形状必须一模一样，
       // 否则「看得见却点不着」。首尾两点 roundPath 原样保留，所以导线不会
@@ -2372,6 +2384,15 @@
       rotateSelected: rotateSelected, undo: undo, rerouteAll: rerouteAll,
       select: function (s) { select(s); changed(); },
       getSelected: function () { return describeSelection(); },
+      // 当前选中项（只读副本）。页面层的「点中删除叉号」要认它 ——
+      // 叉号只在【选中】之后才长出来，不看选中状态就去算叉号位置的话，
+      // 每根导线弧长中点那 ±15px 会永远被当成「点了叉号」，拖不动。
+      selected: function () {
+        if (!selected) return null;
+        return selected.kind === 'wire'
+          ? { kind: 'wire', index: selected.index }
+          : { kind: 'comp', id: selected.id };
+      },
       pushUndo: pushUndo,
       delButtonPos: delButtonPos,
       // 元件左上角那颗删除钮的位置（世界坐标）。自检按它点真实鼠标，

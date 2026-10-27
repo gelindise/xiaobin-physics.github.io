@@ -1035,8 +1035,8 @@
        2026-10-16 这批：core 24 / draw 38 / editor 29 / params 6 / schematic 18。
        （上一批是 core 23 / draw 37 / editor 28 / params 5 / schematic 17，
          这一轮五个文件都动了：世界加宽 + 电表放大 + 读数牌搬家 + 单刀双掷开关。） -->
-<script src="circuit-core.js?build=43"></script>
-<script src="circuit-draw.js?build=62"></script>
+<script src="circuit-core.js?build=44"></script>
+<script src="circuit-draw.js?build=63"></script>
 <!-- ════════════════════════════════════════════════════════════════════
      【教材版本皮肤 · 已从线上撤下】2026-10-12
      人教版元件外观（circuit-skin*.js 共 5 个文件）暂不在线上启用，学生看到的
@@ -1052,13 +1052,13 @@
 <!-- <script src="circuit-skin-renjiao-img2-data.js?build=2"></script> -->
 <!-- <script src="circuit-skin-renjiao-img3-data.js?build=1"></script> -->
 <!-- <script src="circuit-skin-renjiao.js?build=6"></script> -->
-<script src="circuit-editor.js?build=48"></script>
+<script src="circuit-editor.js?build=50"></script>
 <!-- 参数面板规格 + 读数显示格式。从本页内联抽出，与 3D 版沙盒（电路实验沙盒3D）
      共用同一份真值：面板规格、小数位、极性显示规则改一处两边都变。 -->
-<script src="circuit-params.js?build=22"></script>
+<script src="circuit-params.js?build=23"></script>
 <!-- 电路图（实物图 → 标准符号）。独立成第四块内核：沙盒和欧姆定律页共用同一份，
      免得各写一套符号，两边的图画法迟早不一样。三个老内核一行没动，build 号不升。 -->
-<script src="circuit-schematic.js?build=38"></script>
+<script src="circuit-schematic.js?build=39"></script>
 <!-- 电路图画布（拖符号画标准电路图 + 当场仿真）。它复用 circuit-schematic 的
      itemOf / drawSymbol，所以画出来的符号和「由实物图转换」那张【一模一样】。 -->
 <script src="circuit-schlab.js?build=5"></script>
@@ -1089,6 +1089,8 @@ var C = window.CircuitCore, D = window.CircuitDraw, E = window.CircuitEditor;
 // 全部指向共享模块，行为与本页内联时完全一致。
 var CP = window.CircuitParams;
 var PARAM_UI = CP.PARAM_UI, TYPE_LABEL = CP.TYPE_LABEL, POLAR = CP.POLAR;
+// 器材盒卡片用的短名（只有卡片放不下的那几个才在表里，见 circuit-params）
+var PAL_NAME = CP.PAL_NAME || {};
 var num1 = CP.num1, num2 = CP.num2, dispI = CP.dispI, dispU = CP.dispU, fmtR = CP.fmtR, pval = CP.pval;
 // galNum —— 灵敏电流计读数的小数位（按数量级自适应：18mA → 0.018）。
 // 和侧栏表、读数牌、读数框共用同一份，免得三处印出三个不同的数。
@@ -1868,12 +1870,18 @@ var fgLayer = document.createElement('canvas');
 // 端点里 compId 是 null、坐标冻在 x/y 上。写 byId(wire.a.compId) 会拿到 null
 // 再去取端子坐标，当场抛错 —— 整条渲染链断掉，画面全黑。
 function pathOf(wire){
+  // 软绳状态（拔线 / 拖线头 / 元件被拖着走时才有）：质点就是真形状，
+  // 别再走 via —— 两者同时存在的话，画面上和命中判定会各拿一份。
+  var rp = wire.__rope;
+  if (rp) return rp.pts;
   var p0 = D.endWorld(byId(wire.a.compId), wire.a);
   var p1 = D.endWorld(byId(wire.b.compId), wire.b);
   if (!p0 || !p1) return [];
   var pts = [{x:p0.x, y:p0.y}];
   (wire.via||[]).forEach(function(v){ pts.push({x:v[0], y:v[1]}); });
   pts.push({x:p1.x, y:p1.y});
+  // 软绳冻结下来的形状：点已经够密（每 ~9px 一个），再磨圆会把弧磨成折线。
+  if (wire.phys) return pts;
   return D.roundPath(pts);
 }
 // 标注牌落在元件下方多远。两只表的三个接线柱是从底座底下探出来的
@@ -1900,6 +1908,8 @@ var DROP = {battery:40, power:46, ammeter:80, voltmeter:80, galvanometer:80,
             // 焦耳定律演示器：两个容器底 +96，盖子上的柱子到 −14 ——
             // 读数框落在 106（箱子下面一点，不压住那两个阻值）。
             joule:106,
+            // 量热瓶：瓶底 +139（温度计往上伸到 −139）—— 读数框落在 149。
+            calorimeter:149,
             switch:38, spdt:38, led:38, motor:38, bell:38};
 
 // ── 读数的小数位 ────────────────────────────────────────────
@@ -2006,6 +2016,16 @@ function readoutLines(c, r){
         lines.push(jnm + ' ' + Math.round(jbx.R) + 'Ω ' + num2(jbx.p) + 'W');
       }
     }
+  } else if (c.type === 'calorimeter') {
+    // 量热瓶：温度是它的全部输出，单独一行、带单位。
+    // 第二行给「这一段丝的阻值 + 电流」—— 学生要写 Q = I²Rt 时，两个因数
+    // 就在眼前，不用回头去翻参数面板。
+    // ⚠️ 第一行【不能】写成 `t = 33.5℃`：画布上那个小标签会把「字母 = 数值」
+    //    这种参数行整行滤掉（见 stateLinesOf 的 PARAM_LINE），于是温度——这件
+    //    器材唯一的读数——反而一个字都不显示。用中文起头就不被滤。
+    var ct = (r && typeof r.temp === 'number') ? r.temp : 20;
+    lines.push('温度 ' + num1(ct) + '℃');
+    lines.push('R = ' + Math.round((r && r.R) || 0) + 'Ω  I = ' + num1(Math.abs((r && r.i) || 0)) + 'A');
   } else if (c.type === 'galvanometer') {
     // 灵敏电流计：两端元件，没有「量程柱没接」这一说（r.wired 恒 true）。
     // 🔴 读数【带符号】：中心零的表，正负就是指针偏向哪一边 —— 向左偏就是负值，
@@ -2432,6 +2452,7 @@ function drawFrame(){
     ctx.drawImage(fgLayer, 0, 0, W, H);     // 元件本体（静态层）
     // 导线画在【元件之上】：线从电流表 / 电压表上面经过时就该压在表上
     // （盖住一部分正是实际情况），而不是从表背后穿过去。
+    var wirePts = [];                       // 本帧每根线的路径：画插头时复用，别算第二遍
     scene.wires.forEach(function(wr,i){
       // phase 直接传秒数，由 drawWire 换算成像素行程；两个开关都关时传 null，
       // drawWire 就不画任何东西。current 只决定画不画箭头，小球照旧。
@@ -2440,7 +2461,9 @@ function drawFrame(){
       // color = 并联电路里的【干路】导线换成另一种颜色（见 mainInfo / 内核的
       // mainBranchFlags）。只在【真的分岔了】的时候给色：串联 / 单回路时
       // mainInfo.parallel 是 false，一根线都不变色 —— 那种电路讲「干路」没有意义。
-      D.drawWire(ctx, pathOf(wr), { flow: flows[i], phase: (showFlow || showCurrent) ? phase : null,
+      var wp = pathOf(wr);
+      wirePts[i] = wp;
+      D.drawWire(ctx, wp, { flow: flows[i], phase: (showFlow || showCurrent) ? phase : null,
                                     electrons: showFlow, current: showCurrent,
                                     weak: wireIsWeak(i),
                                     color: (mainInfo.parallel && mainInfo.main[i]) ? D.PALETTE.mainWire : null,
@@ -2454,6 +2477,10 @@ function drawFrame(){
     drawSmokeLayer();                       // 烧坏的东西在冒烟（唯一「坏了还在动」的事）
     drawTags(ctx);                          // 标签在最上层，不被导线划掉
     drawZeroWarn(ctx);                      // 未调零的电表：红叹号（压在所有东西之上）
+    // 软导线悬空端的插头：真实导线拔下来，手里那一头是个金属插头。
+    // 光秃秃一根线头，「拔下来了」这件事在画面上根本读不出来。
+    drawWireEnds(ctx, wirePts);
+    drawPops(ctx);                          // 拔/插那一下在接线柱上扩一圈
   }
   if (editor) editor.drawOverlay(ctx);      // 选中框 / 拉线预览，永远在最上层
   drawDwellCue();                           // 停留成线的进度环（压在最上面）
@@ -2545,6 +2572,9 @@ function tick(t){
   else if (anim && results && results.status === 'ok') phase += dt;
   animT += dt;
   var moving = stepMotion(dt);
+  // 软导线的力学步进（拔线 / 拖线头 / 元件被拖动时线身跟着走）。
+  // 它自己判断要不要重绘：有绳在动返回 true，全部冻结后返回 false。
+  if (ropeTick(dt)) moving = true;
   // 粒子关着、也没有器材在动 → 画面是静止的，完全空转（只在编辑操作时重绘）。
   if (!anim && !moving) { requestAnimationFrame(tick); return; }
   drawFrame();
@@ -4041,6 +4071,12 @@ function onTapComp(c, p){
     var l = D.toLocal(c, p.x, p.y);
     if (dialHit(l.x, l.y, c)) { openZoom(c); return; }
   }
+  // 量热瓶：点【放大镜】或【温度计】都开放大读数（命中框在绘制层，
+  // 和画出来的放大镜是同一组数 —— 页面不自己再记一份）。
+  if (c.type === 'calorimeter') {
+    var lk = D.toLocal(c, p.x, p.y);
+    if (D.calZoomHit(c, lk.x, lk.y)) { openZoom(c); return; }
+  }
   // 开关不弹浮层：点一下它【已经通断】了（编辑器在 pointerup 里翻的 params，
   // 见 circuit-editor 那段「点一下就通断」）。再弹一块只写着一个「闭合」勾选框
   // 的浮层，等于给同一件事开两个入口 —— 学生点完开关还得动手把它关掉。
@@ -4446,10 +4482,16 @@ function dialHit(lx, ly, comp){
 }
 
 function openZoom(c){
-  if (!c || !isDialMeter(c.type)) return;
+  // 量热瓶也走这条路：它没有表盘，但「放大看读数」这件事是一模一样的
+  // （温度计的刻度在画布上只有 5.5px 高，不放大根本读不出）。画法是另一支
+  // （drawZoomCal），取景框、K、底部那一行各自按瓶子的尺寸算。
+  if (!c || !(isDialMeter(c.type) || c.type === 'calorimeter')) return;
   if (!results || !results.components || !results.components[c.id]) return;
   zoomComp = c;
   zoomTitle.textContent = (TYPE_LABEL[c.type] || '电表') + '　放大读数';
+  // 温度计没有「调零」：那颗按钮只对表头有意义，藏在量热瓶的放大镜里
+  // 只会让学生到处找那颗不存在的螺丝。
+  zoomZero.hidden = (c.type === 'calorimeter');
   zoomEl.hidden = false;
   drawZoom();
 }
@@ -4548,10 +4590,45 @@ function drawZoomLeads(g, c, rec){
   g.restore();
 }
 
+// ── 量热瓶的放大镜 ────────────────────────────────────────────
+// 用户 2026-10-27：「一点击放大镜就直接显示那个温度计，直接显示温度计就可以了」。
+// 所以这里【只画温度计本身】—— 一支按 1:1 画的实验室温度计（细玻璃管 + 圆头 +
+// 每 1℃ 一格、每 10℃ 一条长线带数字 + 红色液柱 + 玻璃泡），不是把整只瓶子
+// 放大。读数只认 rec.temp 这一个数，和画布上那支是同一个 0~50℃ 的线性关系。
+function drawZoomCal(comp, rec){
+  var cw = Math.max(240, Math.min(360, window.innerWidth - 90));
+  var ch = Math.max(420, Math.min(700, window.innerHeight - 230));
+  var dpr = window.devicePixelRatio || 1;
+  if (zoomCv.width !== Math.round(cw*dpr) || zoomCv.height !== Math.round(ch*dpr)) {
+    zoomCv.width = Math.round(cw*dpr); zoomCv.height = Math.round(ch*dpr);
+  }
+  zoomCv.style.width = cw + 'px'; zoomCv.style.height = ch + 'px';
+  var g = zoomCv.getContext('2d');
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, cw, ch);
+  g.fillStyle = '#ffffff'; g.fillRect(0, 0, cw, ch);
+  var t = (rec && typeof rec.temp === 'number') ? rec.temp : 20;
+  D.drawThermoCloseup(g, t, cw, ch - 96);
+  // 底下大字读数
+  g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.font = 'bold 32px -apple-system,"PingFang SC",sans-serif';
+  g.fillStyle = '#b91c1c';
+  g.fillText(t.toFixed(1) + ' ℃', cw / 2, ch - 60);
+  g.font = '12px -apple-system,"PingFang SC",sans-serif';
+  g.fillStyle = '#475569';
+  g.fillText('R = ' + Math.round((rec && rec.R) || 0) + ' Ω　·　P = ' +
+             (((rec && rec.p) || 0)).toFixed(2) + ' W', cw / 2, ch - 26);
+  zoomView.K = 1; zoomView.cw = cw; zoomView.ch = ch;
+  zoomView.midX = 0; zoomView.midY = 0;
+  zoomRange.textContent = '温度计读数';
+  zoomZero.hidden = true;      // 温度计没有调零
+}
+
 function drawZoom(){
   if (!zoomComp) return;
   var rec = results && results.components[zoomComp.id];
   if (!rec) { closeZoom(); return; }             // 元件被删了，浮层自己收掉
+  if (zoomComp.type === 'calorimeter') { drawZoomCal(zoomComp, rec); return; }
   // K 按视口算：手机上要放得下，桌面上也别把小表拉成一片糊掉的大色块。
   var K = Math.min((Math.min(window.innerWidth - 72, 680)) / ZBOX.w,
                    (window.innerHeight - 190) / ZBOX.h);
@@ -4642,6 +4719,7 @@ function refreshZoom(){ if (zoomComp) drawZoom(); }
 // 的那个 K】—— 自己另算一份的话，窗口一缩放就点不中了。
 function zoomHitZero(clientX, clientY){
   if (!zoomComp || !zoomView.K) return false;
+  if (zoomComp.type === 'calorimeter') return false;   // 温度计没有调零旋钮
   var r = zoomCv.getBoundingClientRect();
   if (!r.width || !r.height) return false;
   var zx = (clientX - r.left) * (zoomView.cw / r.width);
@@ -5032,6 +5110,9 @@ var LG_VIEW = {
   // 焦耳定律演示器：两个容器 ±147（含盖子）、底 96，压力计竖管顶到 −104
   //（封口圆头再探到 −113）。和共享层 CircuitDraw.ICON_VIEW.joule 同一组数。
   joule:     { x0: -162, y0: -120, x1: 162, y1: 106 },
+  // 量热瓶：瓶身 ±56、瓶底 +139，温度计管顶 −139。又高又瘦。
+  // 和共享层 CircuitDraw.ICON_VIEW.calorimeter 同一组数。
+  calorimeter: { x0: -68, y0: -166, x1: 68, y1: 146 },
   // 三件新器材的取景框。少了它们，只要电路里出现二极管/电动机/电铃，
   // 图例这一栏就会读 undefined 的 x1 直接抛异常 —— 整个电路图浮层打不开，
   // 而报错信息指向的是一行取景框算术，跟「我加了个二极管」八竿子打不着。
@@ -5206,7 +5287,10 @@ var PAL = ['battery','power','switch','spdt','resistor','rheostat',
            // 焦耳定律演示器放在【最后】：它是全站唯一一件「用液面读热量」的
            // 器材，和前面那些「看电流/看电压」的仪器不是一类，混在变阻器那一排
            // 里反而找不到。它自己带两个容器（四根柱），一眼就认得出。
-           'joule'];
+           'joule',
+           // 量热瓶紧挨着它：课本上这是【两个】演示实验（图18.4-1 量热瓶、
+           // 图18.4-2/3 U 形管），并排放着正好对照「看温度计」和「看液面」。
+           'calorimeter'];
 // 🔴 两个容器，别混：
 //   bar    = 顶栏那一行【功能按钮】（撤销 / 修复 / 清空 / 预设 / 电路图 / 画笔 / 全屏…）
 //   palBox = 左侧【电路元件盒】里的 17 件器材（图示卡）
@@ -5263,7 +5347,8 @@ function buildPalette(){
     b.title = TYPE_LABEL[t] + '：按住拖到画布上，或点一下直接放';
     b.appendChild(drawRealIcon(t, PAL_ICON.w, PAL_ICON.h));
     var nm = document.createElement('span');
-    nm.className = 'nm'; nm.textContent = TYPE_LABEL[t];
+    // 卡片只有 76px 宽：放不下的那几个用 PAL_NAME 里的短名
+    nm.className = 'nm'; nm.textContent = PAL_NAME[t] || TYPE_LABEL[t];
     b.appendChild(nm);
     b.onclick = function(){ if (!palDrag.moved) addComp(t); };
     bindPaletteDrag(b, t);
@@ -5337,7 +5422,7 @@ var addMenu = document.createElement('div');
 addMenu.className = 'addMenu'; addMenu.id = 'addMenu'; addMenu.hidden = true;
 PAL.forEach(function(t){
   var b = document.createElement('button');
-  b.type = 'button'; b.textContent = TYPE_LABEL[t];
+  b.type = 'button'; b.textContent = PAL_NAME[t] || TYPE_LABEL[t];
   b.onclick = function(){ closeAddMenu(); addComp(t); };
   addMenu.appendChild(b);
 });
@@ -5589,71 +5674,651 @@ window.addEventListener('keydown', function(e){
   if (e.key === 'Escape' || e.key === 'Esc'){ e.preventDefault(); setErase(false); }
 }, true);
 
-// ── 导线断联（用户 2026-10-21 第 2 点）────────────────────────────
-// 真实实验台的行为：在靠近接线柱的地方点住导线一拉，线就从这根柱子上脱开；
-// 拖着线头到另一根接线柱上松开，重新接上。
-//   判定：pointerdown 点中导线【且】鼠标距该导线某一端点（接线柱）≤ DETACH_HIT
-//        → 进入断联拖拽（capture 阶段拦下，编辑器收不到、不会去挪拐点）。
-//   动作：真正拉过 DETACH_MOVE 才执行断联（pushUndo 一次）—— 把端点从
-//        {compId, termIdx} 换成 {compId:null, x, y} 自由线头（和「删元件保留
-//        导线」冻住的线头同构，渲染 / 求解器都认）；松手在另一接线柱上（≤SNAP）
-//        就接回 {compId, termIdx}，松手在空白就留在原地成为悬空线头（之后还能
-//        再点线头拖到别处 —— 编辑器本来就支持）。
-//   为什么放页面层：和橡皮擦同一条理由，3D 沙盒不受影响。
-var detach = null;
-// 断联只认「端子旁边导线上的那一小段」：距端点 17px 以内是接线柱命中圈
-// （点那里是拉线，不是脱线），17~30px 的导线带才允许拖出来。跟编辑器
-// 的 TERM_HIT=17 同步，改编辑器那边时这里要一起改。
-var TERM_HIT = 17;        // 与 circuit-editor.js 的 TERM_HIT 同步（端子命中半径）
-var DETACH_HIT = 30;      // 断联外边界：距端点 30px 以内的导线可拖离（逻辑 px）
-var DETACH_SNAP = 26;     // 松手时接到新接线柱的吸附半径
-var DETACH_MOVE = 4;      // 拉过 4px 才算「真的拉了」
-function wireEndPos(wr, k){
-  var e = wr[k];
-  if (!e) return null;
-  var p = editor.endPt(e);
-  return p ? { x: p.x, y: p.y } : null;
+// ── 软导线：拔线 / 拖线头 / 插回接线柱（力学仿真）────────────────────
+// 用户 2026-10-27：「把导线从接线柱拿掉、放到一边，要和真实的导线一样」。
+// 旧版只把【端点】改成自由坐标、拐点一动不动 —— 整根线被拉成一条怪折线；
+// 松手插回去时 replugLooseEnd 又把 via 重排成正交走线，两次硬跳变，看着像
+// 「线在乱动」。这里换成一条真正的【软绳】：
+//
+//   ① 形状 = 质点链 + Verlet 位置积分。位置化积分天然带惯性：手一停，线身
+//      还会往前送一点；手一甩，线会摆一下再停 —— 这是「力学感」的来源。
+//   ② 长度约束（PBD 迭代）= 导线不能被拉长。线头拉远了线身被绷直，而不是
+//      像橡皮筋一样越拉越长。这一条最要紧：有它，线才像「线」。
+//   ③ 弯曲刚度 = 线有「记忆」，不会折成尖角；松手后自己回弹一点。
+//   ④ 极弱重力 + 画布底沿当地面 + 强阻尼 = 松手后很快落定，不会一直抖。
+//
+// 抓取范围（用户明确要求「只在靠近接线柱很短的一段」）：
+//   沿【导线弧长】从端点算起 PULL_IN ~ PULL_OUT 那一小段才拔得下来；
+//   拖线身中段仍然交给编辑器去挪拐点，两者彻底分开（见 pullHit）。
+//
+// 状态存在 wire.__rope 上，且【不可枚举】—— JSON.stringify(scene) 是存档和
+// 撤销快照的唯一通道，可枚举的话每根线都会把几十个质点写进 localStorage。
+var ROPE = {
+  HZ: 1/120,        // 固定子步。Verlet 必须定步长，否则重力项不守恒（会随帧率变重）
+  SUBMAX: 5,        // 一帧最多几个子步：掉帧时宁可慢放，不要一步跨出去炸掉
+  // 重力 0：这是【俯视的实验台】—— 导线拔下来就躺在台面上，不会自己往下掉。
+  // 试过给 130 的「一点点垂坠」，结果是松手以后线在地面上堆成一段、再被约束
+  // 一点点「推直」，最后线头自己滑回原位（实测拖到 (620,665)、松手跑到
+  // (480,610)）—— 那正是用户说的「拿掉它可能就乱动」。俯视图里没有平面内的
+  // 重力，零才是对的；「软」的感觉靠长度约束 + 抗折约束 + 惯性来给。
+  G: 0,             // 重力 px/s²
+  DAMP: 0.962,      // 每子步速度保留：阻尼大 → 松手就停，不会一直抖
+  ITER: 6,          // 长度约束迭代次数
+  BEND: 0.20,       // 弯曲刚度：内部点向两侧中点靠的比例
+  SEG: 9,           // 每段静止长度（px）→ 决定质点数
+  NMIN: 4, NMAX: 46,
+  WALL: 10,         // 左右边界（留一点余量，线不会贴着画布边看不见）
+  GROUND: 26,       // 地面 = H - GROUND
+  FRIC: 0.42,       // 落地摩擦：每次接触削掉这么多切向速度
+  VSTOP: 0.25,      // 停住判定：所有内部点速度 < 这个值（px/子步）
+  TSTOP: 0.45,      // 且持续这么久（秒）→ 冻结成静态形状
+  PIN_EASE: 0.20,   // 钉住点向目标靠的系数：接回柱子时是「吸进去」，不是瞬移
+  AGE_MAX: 8,       // 兜底：再怎么抖，8 秒后也强制冻结（防止卡在墙角永远动）
+};
+// 拔线的抓取带（沿弧长，不是欧氏距离 —— 一根绕了弯的线，欧氏近但弧长远的点
+// 不该能拔）。20px 起：内圈 17px 是编辑器 TERM_HIT 的「点柱子起新线」，
+// 留 3px 余量是给「线是斜着出来的」那种情况（斜线的弧长比欧氏长）。
+// 外圈 40px：这一段在 1260 宽的世界里只占 3%，屏幕上约 25px —— 是「靠近
+// 接线柱很短的一段」，再长就会和「拖线身」打架。
+var PULL_IN = 20, PULL_OUT = 40, PULL_HIT = 9;
+var LOOSE_HIT = 18;       // 点中悬空线头的半径
+var SNAP_R = 26;          // 松手时接到接线柱的吸附半径
+var grab = null;          // 正在拖的线头 { index, k, wire, idx, r, off, p0, moved }
+var pops = [];            // 拔/插的视觉反馈（扩散圈）{ x, y, t }
+
+// 质点数按长度定：太少了弯不出弧，太多了白算。
+function ropeDist(a, b){ return Math.hypot(b.x - a.x, b.y - a.y); }
+function ropePolyLen(pts){
+  var L = 0;
+  for (var i = 1; i < pts.length; i++) L += ropeDist(pts[i-1], pts[i]);
+  return L;
 }
+// 沿折线按弧长均匀取 n 个点。两端原样保留 —— 那两个点必须精确落在接线柱上，
+// 差半个像素就会「线从柱子上飘着」。
+function ropeResample(pts, n){
+  var seg = [], total = 0, i;
+  for (i = 1; i < pts.length; i++){
+    var d = ropeDist(pts[i-1], pts[i]);
+    seg.push(d); total += d;
+  }
+  if (!(total > 0.001) || n < 2) return null;
+  var out = [{ x: pts[0].x, y: pts[0].y }];
+  var step = total / (n - 1), acc = 0, si = 0;
+  for (var k = 1; k < n - 1; k++){
+    var want = step * k;
+    while (si < seg.length - 1 && acc + seg[si] < want){ acc += seg[si]; si++; }
+    var t = seg[si] > 1e-6 ? (want - acc) / seg[si] : 0;
+    if (t < 0) t = 0; if (t > 1) t = 1;
+    out.push({ x: pts[si].x + (pts[si+1].x - pts[si].x) * t,
+               y: pts[si].y + (pts[si+1].y - pts[si].y) * t });
+  }
+  out.push({ x: pts[pts.length-1].x, y: pts[pts.length-1].y });
+  return out;
+}
+// 导线当前的【折线】形状（端点 + 拐点，不磨圆）。建绳的初始形状就是它 ——
+// 所以「按下拔线」那一瞬间形状一个像素都不跳，物理从当前形状开始跑。
+function ropeBasePts(wr){
+  var p0 = D.endWorld(byId(wr.a.compId), wr.a);
+  var p1 = D.endWorld(byId(wr.b.compId), wr.b);
+  if (!p0 || !p1) return null;
+  var pts = [{ x: p0.x, y: p0.y }];
+  (wr.via || []).forEach(function(v){ pts.push({ x: v[0], y: v[1] }); });
+  pts.push({ x: p1.x, y: p1.y });
+  return pts;
+}
+// __rope 必须不可枚举：见上面 ROPE 那段注释。
+function setRope(wr, r){
+  if (!r){ try { delete wr.__rope; } catch (e) {} return; }
+  Object.defineProperty(wr, '__rope', {
+    value: r, writable: true, enumerable: false, configurable: true });
+}
+// 把一根导线变成软绳。已经软着的直接返回（幂等）。
+function ropeEnsure(wr){
+  if (wr.__rope) return wr.__rope;
+  var base = ropeBasePts(wr);
+  if (!base) return null;
+  // 绳长优先用【上一次冻结时记下的真实长度】：via 是抽稀出来的折线，弦永远
+  // 比弧短一点点（抗折约束每次切掉 3~5%），反复拖几次线就会越拖越短。
+  // 只在 ropeLen 明显长于折线时按折线算（上限 12%）—— 否则形状会被"撑"一下。
+  var poly = ropePolyLen(base);
+  var L = poly;
+  if (typeof wr.ropeLen === 'number' && wr.ropeLen > poly && wr.ropeLen < poly * 1.12) L = wr.ropeLen;
+  if (!(L > 12)) return null;
+  var n = Math.round(L / ROPE.SEG) + 1;
+  if (n < ROPE.NMIN) n = ROPE.NMIN;
+  if (n > ROPE.NMAX) n = ROPE.NMAX;
+  var pts = ropeResample(base, n);
+  if (!pts) return null;
+  var r = {
+    pts: pts,
+    prev: pts.map(function(p){ return { x: p.x, y: p.y }; }),
+    tgt: pts.map(function(p){ return { x: p.x, y: p.y }; }),
+    pin: [], rest: L / (n - 1), still: 0, age: 0,
+  };
+  for (var i = 0; i < n; i++) r.pin.push(false);
+  // 🔴 两端【都】钉住。挂在元件上的端点跟元件走；悬空的那一头停在学生放下的
+  //    位置 —— 真实导线放在台面上，线头不会自己滑走。试过让它当普通质点：
+  //    抗折约束会一点点把弯曲推直，整根线被"抽"成直线，线头能滑走一百多
+  //    像素（松手在 (620,665)，一秒后跑到 (502,714)），正是用户说的「乱动」。
+  //    拖线头时由 startGrab 把那一端的 tgt 改成跟着手指，所以照样拖得动。
+  r.pin[0] = true;
+  r.pin[n-1] = true;
+  // 悬空端的权威坐标在 wire 上（wr.a.x/y），先对齐一次，否则第一帧会跳。
+  if (!r.pin[0] && wr.a.compId == null && typeof wr.a.x === 'number'){
+    r.pts[0].x = r.prev[0].x = r.tgt[0].x = wr.a.x;
+    r.pts[0].y = r.prev[0].y = r.tgt[0].y = wr.a.y;
+  }
+  if (!r.pin[n-1] && wr.b.compId == null && typeof wr.b.x === 'number'){
+    r.pts[n-1].x = r.prev[n-1].x = r.tgt[n-1].x = wr.b.x;
+    r.pts[n-1].y = r.prev[n-1].y = r.tgt[n-1].y = wr.b.y;
+  }
+  setRope(wr, r);
+  return r;
+}
+// 抽稀（Douglas-Peucker）。软绳的点本来就在曲线上，抽稀只是去冗余 ——
+// 容差给 1.4px：比这更小的起伏肉眼看不出，但点数是十倍。
+function ropeRDP(pts, tol){
+  var n = pts.length;
+  if (n < 3) return pts.map(function(p){ return { x: p.x, y: p.y }; });
+  var keep = new Array(n);
+  keep[0] = keep[n-1] = true;
+  var stack = [[0, n-1]];
+  while (stack.length){
+    var sg = stack.pop(), i0 = sg[0], i1 = sg[1];
+    if (i1 - i0 < 2) continue;
+    var maxD = -1, idx = -1;
+    for (var i = i0 + 1; i < i1; i++){
+      var d = eraseSegD(pts[i], pts[i0], pts[i1]);
+      if (d > maxD){ maxD = d; idx = i; }
+    }
+    if (maxD > tol && idx > 0){ keep[idx] = true; stack.push([i0, idx], [idx, i1]); }
+  }
+  var out = [];
+  for (var k = 0; k < n; k++) if (keep[k]) out.push({ x: pts[k].x, y: pts[k].y });
+  return out;
+}
+// 冻结：把绳子的形状写成 via 拐点，标记 phys，然后扔掉绳状态。
+//   · auto=false + base=null ⇒ rerouteAll / refitManual 都不再碰它。
+//     这一步是关键：旧版接回时走的是「自动正交走线」，那正是「线又乱动」的来源。
+//   · physEnds 记下冻结时两端的位置，tick 里一旦发现端点漂了（元件被拖动、
+//     或者撤销换了一份场景）就从 via 重新物理化 —— 所以「拖着元件走，导线
+//     软软地跟着」也是同一套代码。
+function ropeFreeze(wr){
+  var r = wr.__rope;
+  if (!r) return;
+  setRope(wr, null);
+  var pts = r.pts, n = pts.length;
+  var keep = ropeRDP(pts, 1.4);
+  var p0 = pts[0], p1 = pts[n-1];
+  var via = [];
+  for (var i = 1; i < keep.length - 1; i++){
+    var q = keep[i];
+    if (ropeDist(q, p0) < 1.5 || ropeDist(q, p1) < 1.5) continue;
+    if (via.length){
+      var last = via[via.length-1];
+      if (Math.hypot(q.x-last[0], q.y-last[1]) < 1) continue;
+    }
+    via.push([Math.round(q.x*10)/10, Math.round(q.y*10)/10]);
+  }
+  wr.via = via;
+  wr.auto = false;
+  wr.base = null;
+  wr.phys = 1;
+  wr.ropeLen = r.rest * (n - 1);      // 真实绳长：下次物理化按它算，别用折线长度
+  wr.physEnds = [[p0.x, p0.y], [p1.x, p1.y]];
+  // 端点坐标必须和形状同步：physEnds 记的是形状的两头，wr.a/b 是别人读的那份，
+  // 两边差一点，下一帧 ropeSyncEnds 就会当成「端点漂了」重建。
+  if (wr.a.compId == null && typeof wr.a.x === 'number'){ wr.a.x = p0.x; wr.a.y = p0.y; }
+  if (wr.b.compId == null && typeof wr.b.x === 'number'){ wr.b.x = p1.x; wr.b.y = p1.y; }
+}
+function ropeLenPass(r){
+  var n = r.pts.length;
+  for (var i = 0; i < n - 1; i++){
+    var a = r.pts[i], b = r.pts[i+1];
+    var dx = b.x - a.x, dy = b.y - a.y;
+    var d = Math.sqrt(dx*dx + dy*dy);
+    if (d < 1e-6) continue;
+    var wa = r.pin[i] ? 0 : 1, wb = r.pin[i+1] ? 0 : 1;
+    var tw = wa + wb;
+    if (!tw) continue;
+    var diff = (d - r.rest) / d;
+    var ka = diff * wa / tw, kb = diff * wb / tw;
+    a.x += dx * ka; a.y += dy * ka;
+    b.x -= dx * kb; b.y -= dy * kb;
+  }
+}
+// 弯曲刚度，两条：
+//   ① 抗折 —— i 与 i+2 的距离不许小于 rest*1.94。
+//      这一条才是真正管用的。只把中间点往两侧中点拉（PBD 的常见写法）在
+//      【折叠】状态下反而会折得更紧：折叠时两侧点本来就靠在一起、中点也在
+//      附近，拉过去等于把它折死。实测把一根 300px 的线接回同一个开关的两个
+//      柱子（相距 140px）时，多余的长度会堆成一团乱褶；加上这一条之后才是
+//      一条大弧。rest*1.94 对应最小弯曲半径 ≈ 2.5 个段长（≈23px），和真实
+//      导线的铜芯差不多软 —— 再硬就不像线，再软就折成一团。
+//   ② 轻微平滑，让弧更顺（系数小，不会和 ① 打架）。
+function ropeBendPass(r){
+  var n = r.pts.length, i;
+  var minSpan = r.rest * 1.94;
+  for (i = 0; i < n - 2; i++){
+    var a = r.pts[i], c = r.pts[i+2];
+    var dx = c.x - a.x, dy = c.y - a.y;
+    var d = Math.sqrt(dx*dx + dy*dy);
+    if (d < 1e-6 || d >= minSpan) continue;
+    var wa = r.pin[i] ? 0 : 1, wc = r.pin[i+2] ? 0 : 1;
+    var tw = wa + wc;
+    if (!tw) continue;
+    var push = (minSpan - d) / d;
+    a.x -= dx * push * (wa / tw); a.y -= dy * push * (wa / tw);
+    c.x += dx * push * (wc / tw); c.y += dy * push * (wc / tw);
+  }
+  var kb = ROPE.BEND;
+  for (i = 1; i < n - 1; i++){
+    if (r.pin[i]) continue;
+    var p0 = r.pts[i-1], p1 = r.pts[i], p2 = r.pts[i+1];
+    p1.x += ((p0.x + p2.x) * 0.5 - p1.x) * kb;
+    p1.y += ((p0.y + p2.y) * 0.5 - p1.y) * kb;
+  }
+}
+function ropeBoundPass(r){
+  var n = r.pts.length, gy = H - ROPE.GROUND;
+  for (var i = 0; i < n; i++){
+    if (r.pin[i]) continue;
+    var p = r.pts[i], q = r.prev[i];
+    if (p.y > gy){
+      p.y = gy;
+      // 落地摩擦：把 prev 往当前位置拉 = 削掉速度（Verlet 里速度就是 p - prev）
+      q.x += (p.x - q.x) * ROPE.FRIC;
+      q.y += (p.y - q.y) * ROPE.FRIC;
+    }
+    if (p.x < ROPE.WALL){ p.x = ROPE.WALL; q.x += (p.x - q.x) * 0.5; }
+    else if (p.x > W - ROPE.WALL){ p.x = W - ROPE.WALL; q.x += (p.x - q.x) * 0.5; }
+  }
+}
+function ropeAdvance(wr, r, dt){
+  var n = r.pts.length, i, it, s;
+  var steps = Math.round(dt / ROPE.HZ);
+  if (!(steps > 0)) steps = 1;
+  if (steps > ROPE.SUBMAX) steps = ROPE.SUBMAX;
+  var g = ROPE.G * ROPE.HZ * ROPE.HZ;      // 定步长 → 重力项是常数
+  var held = grab && grab.wire === wr;
+  for (s = 0; s < steps; s++){
+    // ① Verlet 积分（钉住点不动）
+    for (i = 1; i < n - 1; i++){
+      if (r.pin[i]) continue;
+      var p = r.pts[i], q = r.prev[i];
+      var vx = (p.x - q.x) * ROPE.DAMP;
+      var vy = (p.y - q.y) * ROPE.DAMP;
+      q.x = p.x; q.y = p.y;
+      p.x += vx; p.y += vy + g;
+    }
+    // ② 钉住点向目标缓动（接回柱子 = 「吸进去」；拖元件 = 软软地跟）
+    for (i = 0; i < n; i++){
+      if (!r.pin[i]) continue;
+      var p2 = r.pts[i], t2 = r.tgt[i], q2 = r.prev[i];
+      p2.x += (t2.x - p2.x) * ROPE.PIN_EASE;
+      p2.y += (t2.y - p2.y) * ROPE.PIN_EASE;
+      q2.x = p2.x; q2.y = p2.y;            // 钉住点没有速度
+    }
+    // ③ 约束迭代
+    for (it = 0; it < ROPE.ITER; it++){
+      ropeLenPass(r);
+      ropeBendPass(r);
+      ropeBoundPass(r);
+    }
+  }
+  // ④ 悬空端的坐标回写到 wire：求解器、命中判定、存档读的都是 e.x / e.y。
+  //    🔴 不能加「没被钉住才写」的条件 —— 松手把线头放在台面上时，那一端是
+  //    【钉住】的，漏写会让 wr.a.x/y 停在拔线那一刻的老位置，而 rope 的端点
+  //    已经在放下的地方；冻结之后 ropeSyncEnds 一比较就判「端点漂了」，重建
+  //    时按老位置取样 —— 形状错乱、长度越滚越大（实测 300 滚成 366）。
+  if (wr.a.compId == null && typeof wr.a.x === 'number'){ wr.a.x = r.pts[0].x; wr.a.y = r.pts[0].y; }
+  if (wr.b.compId == null && typeof wr.b.x === 'number'){ wr.b.x = r.pts[n-1].x; wr.b.y = r.pts[n-1].y; }
+  // ⑤ 停住判定 → 冻结
+  var vmax = 0;
+  for (i = 1; i < n - 1; i++){
+    var v = Math.hypot(r.pts[i].x - r.prev[i].x, r.pts[i].y - r.prev[i].y);
+    if (v > vmax) vmax = v;
+  }
+  r.age += dt;
+  if (held){ r.still = 0; return; }
+  if (vmax < ROPE.VSTOP) r.still += dt; else r.still = 0;
+  if (r.still > ROPE.TSTOP || r.age > ROPE.AGE_MAX) ropeFreeze(wr);
+}
+// 每帧的端点同步：① 钉住点跟着元件走；② 已冻结的软线端点漂了就重新物理化。
+// 返回 true = 这一帧有绳在动，需要重绘。
+function ropeSyncEnds(){
+  var ws = scene.wires, dirty = false;
+  for (var i = 0; i < ws.length; i++){
+    var wr = ws[i], r = wr.__rope;
+    if (r){
+      var n = r.pts.length;
+      var heldA = grab && grab.wire === wr && grab.idx === 0;
+      var heldB = grab && grab.wire === wr && grab.idx === n - 1;
+      if (r.pin[0] && !heldA){
+        // 挂在元件上 → 跟元件；悬空 → 停在自己现在的位置（wr.a 由物理写回）
+        var p0 = wr.a.compId ? D.endWorld(byId(wr.a.compId), wr.a) : null;
+        if (p0){ r.tgt[0].x = p0.x; r.tgt[0].y = p0.y; }
+        else if (typeof wr.a.x === 'number'){ r.tgt[0].x = wr.a.x; r.tgt[0].y = wr.a.y; }
+      }
+      if (r.pin[n-1] && !heldB){
+        var p1 = wr.b.compId ? D.endWorld(byId(wr.b.compId), wr.b) : null;
+        if (p1){ r.tgt[n-1].x = p1.x; r.tgt[n-1].y = p1.y; }
+        else if (typeof wr.b.x === 'number'){ r.tgt[n-1].x = wr.b.x; r.tgt[n-1].y = wr.b.y; }
+      }
+      dirty = true;
+      continue;
+    }
+    if (!wr.phys || !wr.physEnds) continue;
+    var q0 = D.endWorld(byId(wr.a.compId), wr.a);
+    var q1 = D.endWorld(byId(wr.b.compId), wr.b);
+    if (!q0 || !q1) continue;
+    var e0 = wr.physEnds[0], e1 = wr.physEnds[1];
+    if (Math.hypot(q0.x - e0[0], q0.y - e0[1]) < 0.6 &&
+        Math.hypot(q1.x - e1[0], q1.y - e1[1]) < 0.6) continue;
+    if (ropeEnsure(wr)) dirty = true;
+  }
+  return dirty;
+}
+function ropeTick(dt){
+  var active = ropeSyncEnds();
+  var ws = scene.wires;
+  for (var i = 0; i < ws.length; i++){
+    var r = ws[i].__rope;
+    if (r){ ropeAdvance(ws[i], r, dt); active = true; }
+  }
+  return active;
+}
+
 function nearestTerminal(p){
   var best = null, cs = scene.comps;
-  var D = window.CircuitDraw;
+  var DD = window.CircuitDraw;
   for (var i = 0; i < cs.length; i++){
     var c = cs[i];
-    var T = D.TERMINALS ? D.TERMINALS[c.type] : null;
+    var T = DD.TERMINALS ? DD.TERMINALS[c.type] : null;
     if (!T) continue;
     for (var t = 0; t < T.length; t++){
-      var q = D.terminalWorld(c, t);
+      var q = DD.terminalWorld(c, t);
       var d = Math.hypot(p.x - q.x, p.y - q.y);
       if (!best || d < best.d) best = { compId: c.id, termIdx: t, x: q.x, y: q.y, d: d };
     }
   }
   return best;
 }
-function detachHit(p){
-  var ws = scene.wires, wi = -1;
+// 拔线判定：沿【弧长】从端点算起 [PULL_IN, PULL_OUT] 那一小段才拔得下来。
+// 为什么必须按弧长：一根绕了个弯的导线，某个点欧氏距离离柱子很近，但沿线
+// 走过去有 100px —— 真实实验里你抓那里是拔不动的。旧版用欧氏距离 30px，
+// 于是「拖线身」经常被误判成「拔线」，正是用户说的那个毛病。
+function pullHit(p){
+  var ws = scene.wires, best = null;
   for (var i = ws.length - 1; i >= 0; i--){
-    var pts = editor.pathOf(ws[i]);
-    for (var j = 1; j < pts.length; j++){
-      if (eraseSegD(p, pts[j - 1], pts[j]) < 10){ wi = i; break; }
+    var wr = ws[i];
+    var pts = editor.pathOf(wr);
+    if (!pts || pts.length < 2) continue;
+    var acc = [0], L = 0, j;
+    for (j = 1; j < pts.length; j++){
+      L += Math.hypot(pts[j].x - pts[j-1].x, pts[j].y - pts[j-1].y);
+      acc.push(L);
     }
-    if (wi >= 0) break;
+    if (L < 26) continue;          // 太短的线整根都在端子附近，分不出「拔」和「拖」
+    var hi = Math.min(PULL_OUT, Math.max(L * 0.42, 16));
+    for (j = 1; j < pts.length; j++){
+      var a = pts[j-1], b = pts[j];
+      var d = eraseSegD(p, a, b);
+      if (d > PULL_HIT) continue;
+      var vx = b.x - a.x, vy = b.y - a.y, L2 = vx*vx + vy*vy;
+      var t = L2 ? ((p.x - a.x) * vx + (p.y - a.y) * vy) / L2 : 0;
+      t = Math.max(0, Math.min(1, t));
+      var s = acc[j-1] + t * (acc[j] - acc[j-1]);
+      var dEnd = Math.min(s, L - s);
+      if (dEnd < PULL_IN || dEnd > hi) continue;
+      var k = (s <= L - s) ? 'a' : 'b';
+      if (!wr[k] || !wr[k].compId) continue;   // 那一端本来就自由 → 那是「拖线头」
+      if (!best || d < best.d) best = { index: i, k: k, d: d };
+    }
   }
-  if (wi < 0) return null;
-  var wr = ws[wi];
-  var pa = wireEndPos(wr, 'a'), pb = wireEndPos(wr, 'b');
-  var best = null;
-  if (pa){ var da = Math.hypot(p.x - pa.x, p.y - pa.y); if (da <= DETACH_HIT) best = { k: 'a', d: da, x: pa.x, y: pa.y }; }
-  if (pb){ var db = Math.hypot(p.x - pb.x, p.y - pb.y); if (!best || db < best.d) best = { k: 'b', d: db, x: pb.x, y: pb.y }; }
-  if (!best) return null;
-  // 🔴 点在接线柱上（命中圈内）=「要拉线」，不是「要脱线」：放行给编辑器
-  //   起一根新线。只在柱子【旁边】的导线带（TERM_HIT ~ DETACH_HIT）上拖
-  //   才断联 —— 用户 2026-10-21：「在端子上我有的时候是点击端子是为了连线」。
-  if (best.d < TERM_HIT) return null;
-  return { index: wi, endKey: best.k, endX: best.x, endY: best.y };
+  return best;
+}
+// 点中【软线】的中段：抓住最近的那个质点往外拖。
+// 为什么软线不能沿用编辑器那套「平移拐点」：那是给正交走线 / 手绘线用的，
+// 平移拐点会让整根线的长度变长（实测 300px 拖成 318px）、还会在线上留下
+// 一个 40° 的硬折角 —— 一条软线不会这样。抓住一个质点拖，两端钉死、长度
+// 守恒、线身自然跟着弯，这才是「拖一根线」该有的样子。
+function physHit(p){
+  var ws = scene.wires;
+  for (var i = ws.length - 1; i >= 0; i--){
+    var wr = ws[i];
+    if (!wr.phys && !wr.__rope) continue;
+    var pts = editor.pathOf(wr);
+    if (!pts || pts.length < 2) continue;
+    // 按【到折线的距离】判，不按「到某个质点的距离」：冻结下来的软线 via
+    // 只留了几个拐点（抽稀过），质点分布很不均匀 —— 按质点判会漏掉大半根线。
+    for (var j = 1; j < pts.length; j++){
+      if (eraseSegD(p, pts[j-1], pts[j]) <= PULL_HIT) return { index: i };
+    }
+  }
+  return null;
+}
+// 悬空线头：元件被删掉、或者导线刚被拔下来时那一头。抓住它 = 拖线头。
+function looseHit(p){
+  var ws = scene.wires;
+  for (var i = ws.length - 1; i >= 0; i--){
+    var wr = ws[i];
+    for (var k = 0; k < 2; k++){
+      var e = k ? wr.b : wr.a;
+      if (!e || e.compId) continue;
+      if (typeof e.x !== 'number' || typeof e.y !== 'number') continue;
+      if (Math.hypot(p.x - e.x, p.y - e.y) <= LOOSE_HIT){
+        return { index: i, k: (k ? 'b' : 'a'), x: e.x, y: e.y };
+      }
+    }
+  }
+  return null;
+}
+// 能不能插到这个柱子上：自环（插回自己另一头那个柱子）不行；同一个表头的
+// 两个量程柱同时接也不行（读数取决于哪根先接上，学生无从判断）。
+function meterTaps(type){
+  var T = window.CircuitCore && window.CircuitCore.TYPES && window.CircuitCore.TYPES[type];
+  return (T && T.rangeTaps) ? T.rangeTaps : null;
+}
+function canPlugTo(wr, k, nt){
+  var other = (k === 'a') ? wr.b : wr.a;
+  if (other && other.compId === nt.compId && other.termIdx === nt.termIdx) return false;
+  var T = meterTaps((byId(nt.compId) || {}).type);
+  if (T && T.indexOf(nt.termIdx) >= 0){
+    for (var i = 0; i < T.length; i++){
+      var t = T[i];
+      if (t === nt.termIdx) continue;
+      if (other && other.compId === nt.compId && other.termIdx === t) return false;
+      var used = scene.wires.some(function(w){
+        return (w.a.compId === nt.compId && w.a.termIdx === t) ||
+               (w.b.compId === nt.compId && w.b.termIdx === t);
+      });
+      if (used) return false;
+    }
+  }
+  return true;
+}
+// 按下：抓住某一端的线头。此时【先不拔】—— 真实实验里你按住导线不动，它
+// 还挂在柱子上；手指一挪才脱开（见 grabMove）。点一下就松手 = 普通选中。
+function startGrab(index, k, lp){
+  var wr = scene.wires[index];
+  if (!wr) return false;
+  var r = ropeEnsure(wr);
+  if (!r) return false;
+  var n = r.pts.length, idx, mid = !k;
+  if (mid){
+    // 抓中段：挑离手指最近的那个质点（不是端点）
+    var bd = 1e9;
+    idx = 1;
+    for (var j = 1; j < n - 1; j++){
+      var dj = Math.hypot(lp.x - r.pts[j].x, lp.y - r.pts[j].y);
+      if (dj < bd){ bd = dj; idx = j; }
+    }
+  } else {
+    idx = (k === 'a') ? 0 : n - 1;
+  }
+  var ep = r.pts[idx];
+  grab = { index: index, k: k, wire: wr, idx: idx, r: r, mid: mid,
+           off: { x: ep.x - lp.x, y: ep.y - lp.y },
+           p0: { x: lp.x, y: lp.y }, moved: false };
+  r.pin[idx] = true;                     // 抓住 = 这一端钉在手上
+  r.tgt[idx].x = ep.x; r.tgt[idx].y = ep.y;
+  r.still = 0; r.age = 0;
+  // 这里【不】select：选中会在导线中点长出一颗红叉，拖线头的时候它就跟着
+  // 线跑，很出戏。点一下不拖（grabRelease 的 !moved 分支）才补选中。
+  return true;
+}
+// 第一次真的挪动 → 把端点从接线柱上脱开（此时才入撤销栈）。
+function grabDetach(){
+  var wr = grab.wire, r = grab.r, idx = grab.idx, k = grab.k;
+  editor.pushUndo();
+  if (k && wr[k] && wr[k].compId){
+    var q = D.endWorld(byId(wr[k].compId), wr[k]);
+    wr[k] = { compId: null, x: q ? q.x : r.pts[idx].x, y: q ? q.y : r.pts[idx].y };
+    r.pts[idx].x = wr[k].x; r.pts[idx].y = wr[k].y;
+    r.prev[idx].x = wr[k].x; r.prev[idx].y = wr[k].y;
+    r.tgt[idx].x = wr[k].x; r.tgt[idx].y = wr[k].y;
+    if (sound) sound.trigger('unplug', {});
+    addPop(wr[k].x, wr[k].y);
+  }
+  r.pin[idx] = true;
+  r.still = 0; r.age = 0;
+}
+function grabMoveTo(lp){
+  if (!grab) return false;
+  if (!grab.moved){
+    if (Math.hypot(lp.x - grab.p0.x, lp.y - grab.p0.y) < 3) return false;
+    grab.moved = true;
+    grabDetach();
+    return true;                          // 拓扑变了：调用方要重新求解一次
+  }
+  var r = grab.r, n = r.pts.length;
+  var tx = lp.x + grab.off.x, ty = lp.y + grab.off.y;
+  // 🔴 绳长守恒：线头最多拉到「另一端 + 整根线的长度」。
+  //    不夹的话，一旦两端距离超过绳长，PBD 就【无解】—— 它的最小二乘解是
+  //    「把每段均匀拉长」，画面上就是一根越拖越长的橡皮筋，正好是要避免的东西。
+  //    真实导线拉到头就是拉不动了，这里照做。
+  var maxLen = r.rest * (n - 1);
+  if (grab.mid){
+    // 抓中段：两端都钉着，约束是「到两端的距离之和 ≤ 绳长」（一条椭圆）。
+    // 迭代几次把点收回椭圆内就行，不用精确投影 —— 差一两像素看不出来。
+    var A = r.pts[0], B = r.pts[n - 1];
+    for (var e = 0; e < 8; e++){
+      var la = Math.hypot(tx - A.x, ty - A.y), lb = Math.hypot(tx - B.x, ty - B.y);
+      var over = la + lb - maxLen;
+      if (over <= 0) break;
+      var mx = (A.x + B.x) / 2, my = (A.y + B.y) / 2;
+      var kk = Math.min(0.5, over / Math.max(1, la + lb));
+      tx += (mx - tx) * kk; ty += (my - ty) * kk;
+    }
+  } else {
+    var other = r.pts[grab.idx === 0 ? n - 1 : 0];
+    var dx = tx - other.x, dy = ty - other.y;
+    var dd = Math.hypot(dx, dy);
+    if (dd > maxLen && dd > 1e-6){
+      tx = other.x + dx / dd * maxLen;
+      ty = other.y + dy / dd * maxLen;
+    }
+  }
+  var t = r.tgt[grab.idx];
+  t.x = Math.max(ROPE.WALL, Math.min(W - ROPE.WALL, tx));
+  t.y = Math.max(ROPE.WALL, Math.min(H - ROPE.WALL, ty));
+  return false;
+}
+// 松手：靠近接线柱就插回去（「吸进去」由 PIN_EASE 缓动完成，不瞬移），
+// 否则线头留在原地自己落定。
+function grabRelease(){
+  if (!grab) return false;
+  var g = grab; grab = null;
+  if (!g.moved){                          // 只是点了一下 → 就是「选中这根线」
+    try { editor.select({ kind: 'wire', index: g.index }); } catch (err) {}
+    return true;
+  }
+  var r = g.r, idx = g.idx, wr = g.wire;
+  if (g.mid){
+    r.pin[idx] = false;
+    r.prev[idx].x = r.pts[idx].x;
+    r.prev[idx].y = r.pts[idx].y;
+    r.still = 0; r.age = 0;
+    return true;
+  }
+  var q = r.pts[idx];
+  var nt = nearestTerminal(q);
+  if (nt && nt.d <= SNAP_R && canPlugTo(wr, g.k, nt)){
+    wr[g.k] = { compId: nt.compId, termIdx: nt.termIdx };
+    r.tgt[idx].x = nt.x; r.tgt[idx].y = nt.y;
+    r.pin[idx] = true;
+    if (sound) sound.trigger('plug', {});
+    addPop(nt.x, nt.y);
+  } else {
+    // 松手在空白处 = 「把线头放在这里」。🔴 钉住它，别放它自由：
+    // 试过让它当普通质点（受约束和抗折的推挤），结果是线头能自己滑走一百多
+    // 像素（实测松手在 (620,665)，一秒后跑到 (502,714)）—— 抗折约束会一点点
+    // 把弯的地方推直，整根线被"抽"成直线，线头就被甩到绳长边界上。那正是
+    // 用户说的「拿掉它可能就乱动」。真实导线放在台面上，线头就是停在那儿的。
+    r.pin[idx] = true;
+    r.tgt[idx].x = r.pts[idx].x;
+    r.tgt[idx].y = r.pts[idx].y;
+  }
+  r.still = 0; r.age = 0;
+  return true;
+}
+// 拔 / 插的那一下：接线柱上扩一圈。没有它，「线掉了」和「线还在」在静态
+// 截图里分不出来，学生也看不出刚才发生了什么。
+function addPop(x, y){ pops.push({ x: x, y: y, t: animT }); }
+function drawPops(g){
+  if (!pops.length) return;
+  var keep = [];
+  for (var i = 0; i < pops.length; i++){
+    var a = (animT - pops[i].t) / 0.42;
+    if (a >= 1) continue;
+    if (a < 0) a = 0;
+    keep.push(pops[i]);
+    g.save();
+    g.beginPath();
+    g.arc(pops[i].x, pops[i].y, 6 + 20 * a, 0, 6.2832);
+    g.strokeStyle = 'rgba(148,163,184,' + (0.85 * (1 - a)).toFixed(3) + ')';
+    g.lineWidth = 2.6 * (1 - a) + 0.6;
+    g.stroke();
+    g.restore();
+  }
+  pops = keep;
+}
+// 悬空端的【插头】。真实导线拔下来，手里那一头是个金属插头 / 鳄鱼夹 ——
+// 光秃秃一根线头，「拔下来」这件事在画面上根本读不出来。
+function drawPlug(g, p, dir){
+  g.save();
+  g.translate(p.x, p.y);
+  g.rotate(Math.atan2(dir.y, dir.x));
+  g.fillStyle = '#111827';                      // 黑色绝缘尾套（压在导线上）
+  D.roundRect(g, -13, -4.2, 13, 8.4, 4); g.fill();
+  g.fillStyle = '#cbd5e1';                      // 金属插头
+  D.roundRect(g, -1.5, -3.4, 11.5, 6.8, 3.2); g.fill();
+  g.strokeStyle = '#94a3b8'; g.lineWidth = 1; g.stroke();
+  g.fillStyle = 'rgba(255,255,255,0.72)';       // 高光
+  g.fillRect(0.2, -2.5, 8, 1.4);
+  g.restore();
+}
+function drawWireEnds(g, cache){
+  var ws = scene.wires;
+  for (var i = 0; i < ws.length; i++){
+    var wr = ws[i];
+    var pts = (cache && cache[i]) || pathOf(wr);
+    if (!pts || pts.length < 2) continue;
+    for (var k = 0; k < 2; k++){
+      var e = k ? wr.b : wr.a;
+      if (!e || e.compId) continue;             // 插在柱子上：柱子本身就是端头
+      var p = k ? pts[pts.length-1] : pts[0];
+      var q = k ? pts[pts.length-2] : pts[1];
+      var dx = p.x - q.x, dy = p.y - q.y;
+      var d = Math.hypot(dx, dy) || 1;
+      drawPlug(g, p, { x: dx/d, y: dy/d });
+    }
+  }
 }
 // 导线删除叉号的位置（与编辑器 delButtonPos 同一套：折线弧长中点）。
 // 页面要在 capture 阶段复算它，才能把「点叉号」让给编辑器去删 ——
-// 否则叉号长在短导线中点、离端点不足 26px 时会被断联判定先吃掉。
+// 否则叉号长在短导线中点、离端点不足 26px 时会被拔线判定先吃掉。
 function delBtnPosOf(wr){
   var pts = editor.pathOf(wr);
   if (!pts || pts.length < 2) return null;
@@ -5672,67 +6337,96 @@ function delBtnPosOf(wr){
   }
   return { x: pts[pts.length-1].x, y: pts[pts.length-1].y };
 }
+// 🔴 只认【当前选中】那根线的叉号。叉号是选中之后才长出来的，不看选中状态
+// 就给每根线都算一遍叉号位置的话，每根导线弧长中点那 ±15px 永远被当成
+// 「点了叉号」—— 那一带就再也拖不动了（实测：拖软线中段一直没反应，
+// 被这里悄悄吃掉了）。
 function delBtnHitAt(p){
-  var ws = scene.wires;
-  for (var i = ws.length - 1; i >= 0; i--){
-    var bp = delBtnPosOf(ws[i]);
-    if (bp && Math.hypot(p.x - bp.x, p.y - bp.y) <= 15) return true;  // DEL_R + 4
-  }
-  return false;
+  var sel = editor && editor.selected ? editor.selected() : null;
+  if (!sel || sel.kind !== 'wire') return false;
+  var wr = scene.wires[sel.index];
+  if (!wr) return false;
+  var bp = delBtnPosOf(wr);
+  return !!bp && Math.hypot(p.x - bp.x, p.y - bp.y) <= 15;   // DEL_R + 4
 }
 canvas.addEventListener('pointerdown', function(e){
-  if (eraseMode) return;                 // 橡皮擦优先
+  if (eraseMode) return;                    // 橡皮擦优先
+  if (grab) return;
   var lp = logicalFromClient(e.clientX, e.clientY);
   if (!lp || !lp.inside) return;
-  // 删除按钮优先：点中叉号 → 放行给编辑器（它会命中 hitDeleteButton 删除）。
-  // 这样「点导线 → 叉号 → 点叉号删」永远走得到，短导线也不被断联抢走。
+  // 删除叉号优先：点中叉号 → 放行给编辑器（它会命中 hitDeleteButton 删除）。
   if (delBtnHitAt(lp)) return;
-  var hit = detachHit(lp);
-  if (!hit) return;
-  // 单击（未拖动）也要让「选中 + 叉号」正常出现：手动选中这根导线，
-  // 和编辑器点选的效果一致 —— 用户点导线，导线中间就该长出删除叉号。
-  try { editor.select({ kind: 'wire', index: hit.index }); } catch (err) {}
-  detach = { index: hit.index, endKey: hit.endKey,
-             p0: { x: lp.x, y: lp.y }, endX: hit.endX, endY: hit.endY, moved: false };
-  e.preventDefault(); e.stopPropagation();
-}, true);
-canvas.addEventListener('pointermove', function(e){
-  if (!detach) return;
-  var lp = logicalFromClient(e.clientX, e.clientY);
-  var wr = scene.wires[detach.index];
-  if (!lp || !wr){ detach = null; return; }
-  if (!detach.moved){
-    if (Math.hypot(lp.x - detach.p0.x, lp.y - detach.p0.y) < DETACH_MOVE) return;
-    detach.moved = true;
-    editor.pushUndo();                   // 断联是可撤销改动，拍一张快照
-    wr[detach.endKey] = { compId: null, x: detach.endX, y: detach.endY };
-  }
-  wr[detach.endKey].x = lp.x;            // 线头跟着鼠标走
-  wr[detach.endKey].y = lp.y;
-  render();
-  e.preventDefault(); e.stopPropagation();
-}, true);
-function detachUp(e){
-  if (!detach) return;
-  var wr = scene.wires[detach.index];
-  var lp = logicalFromClient(e.clientX, e.clientY);
-  if (wr && lp){
-    if (detach.moved){
-      var nt = nearestTerminal(lp);
-      if (nt && nt.d <= DETACH_SNAP){
-        wr[detach.endKey] = { compId: nt.compId, termIdx: nt.termIdx };   // 接回
-      } else {
-        wr[detach.endKey].x = lp.x; wr[detach.endKey].y = lp.y;          // 悬空线头
-      }
-      try { editor.rerouteAll(); } catch (err) {}
-      render();
+  // 悬空线头排在最前：它往往就压在接线柱旁边（吸附半径 26px，线头离柱心
+  // 可能只有 10px）。让「点柱子」先接走这一下的话，学生想抓住线头拖走时
+  // 永远抓不住 —— 实测就是拖了半天线头不动。线头是「断着的」那一头，
+  // 比柱子更需要被点中，所以它优先。
+  var lh = looseHit(lp);
+  if (lh){
+    if (startGrab(lh.index, lh.k, lp)){
+      e.preventDefault(); e.stopPropagation();
     }
+    return;
   }
-  detach = null;
+  // 接线柱命中圈内 = 「要拉一根新线」，放行给编辑器。这一条必须排在拔线
+  // 之前：拔线带从 18px 起，正是为了给这里让出位置。
+  var nt = nearestTerminal(lp);
+  if (nt && nt.d <= 17) return;
+  // 靠近接线柱的那一小段导线：拔线
+  var ph = pullHit(lp);
+  if (ph){
+    if (startGrab(ph.index, ph.k, lp)){
+      e.preventDefault(); e.stopPropagation();
+    }
+    return;
+  }
+  // 软线的中段：抓住一个质点拖（长度守恒、线身跟着弯）。
+  // 非软线（预设的正交走线 / 手绘线）不在这里处理 —— 它们照旧交给编辑器
+  // 去挪拐点，那是既有行为，学生已经习惯了。
+  var mh = physHit(lp);
+  if (mh){
+    if (startGrab(mh.index, null, lp)){
+      e.preventDefault(); e.stopPropagation();
+    }
+    return;
+  }
+  // 其余位置（元件 / 空白）：交给编辑器。
+  // 拖线身中段绝不会把线拔下来 —— 拔线只认接线柱旁边那一小段（见 pullHit）。
+}, true);
+// 悬停反馈：能抓的地方给一个「抓手」光标。
+// 没有它，学生根本不知道「接线柱旁边那一小段线是可以捏住的」——
+// 光看画面，那一段和线身长得一模一样。
+// 挂在冒泡阶段（编辑器 onMove 之后）：只覆盖「命中」这一档，其它情况一律
+// 不动，编辑器的 pointer / crosshair / ew-resize 照旧。
+var hoverCurT = 0;
+canvas.addEventListener('pointermove', function(e){
+  if (grab || eraseMode) return;
+  // 节流 60ms：三个命中函数都要逐段量距离，指针事件一秒几十次，
+  // 每次都跑一遍纯属白烧 CPU（光标变不变，人眼 16ms 也分辨不出来）。
+  var now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+  if (now - hoverCurT < 60) return;
+  hoverCurT = now;
+  var lp = logicalFromClient(e.clientX, e.clientY);
+  if (!lp || !lp.inside) return;
+  if (looseHit(lp) || pullHit(lp) || physHit(lp)) canvas.style.cursor = 'grab';
+}, false);
+// 拖拽期间用 window 监听：指针划出画布再松手也要收得到（画布上的 pointerup
+// 在指针移出元素后不一定会来，那会让线头永远粘在手上）。
+window.addEventListener('pointermove', function(e){
+  if (!grab) return;
+  var lp = logicalFromClient(e.clientX, e.clientY);
+  if (!lp) return;
+  var redo = grabMoveTo(lp);
+  if (redo) render(); else drawFrame();
   e.preventDefault(); e.stopPropagation();
+}, true);
+function endGrab(e){
+  if (!grab) return;
+  var changed = grabRelease();
+  if (changed) render();
+  if (e) { e.preventDefault(); e.stopPropagation(); }
 }
-canvas.addEventListener('pointerup', detachUp, true);
-canvas.addEventListener('pointercancel', detachUp, true);
+window.addEventListener('pointerup', endGrab, true);
+window.addEventListener('pointercancel', endGrab, true);
 
 // 「🗑 删除选中」按钮已撤掉。现在删除走【画布上那颗红圆钮】：选中元件它在
 // 左上角长出来、选中导线它长在线中点（见 circuit-editor 的 drawDelButton），
@@ -5992,6 +6686,12 @@ function shiftSceneToWorld(s){
     if (x.a && typeof x.a.x === 'number') x.a.x += dx;
     if (x.b && typeof x.b.x === 'number') x.b.x += dx;
     (x.via || []).forEach(function(v){ if (typeof v[0] === 'number') v[0] += dx; });
+    // 软导线冻结时记下的两个端点（见 ropeFreeze）：漏掉它的话，老存档按
+    // 新世界宽度补正之后，tick 会判「端点漂了」而重新物理化一次 —— 不崩，
+    // 但形状会莫名松弛一下。
+    if (x.physEnds){
+      x.physEnds.forEach(function(e){ if (e && typeof e[0] === 'number') e[0] += dx; });
+    }
     // base 是手绘导线「原始形状」的那一份副本（loadPreset 会写、也可能被存进
     // 存档）。漏掉它的话，恢复之后一拖元件，导线会跳回没平移过的老形状。
     if (x.base){
