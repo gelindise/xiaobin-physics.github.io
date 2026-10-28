@@ -287,22 +287,30 @@
      只圈 .cv 里的那一张：图例小图标、电路图画布另有各自主的尺寸规则。 */
   .cv > canvas{max-width:100%}
   /* ── 画笔：盖在实验画布正上方的一层标注画布 ──────────────
-     开着的时候它接管【全部】指针事件（pointer-events:auto），下层的实验
-     画布一个事件都收不到 —— 不用去和编辑器抢事件，也就不会出现「想圈一下
-     灯泡，结果把灯泡拖走了」。关掉时 display:none，一切照旧。
+     🔴 这一层【一直显示】，开关只切 pointer-events，绝不 display:none。
+        关掉画笔的意思是「我不改了」，不是「把我写的东西收起来」—— 老做法一关
+        就整层消失，老师讲完课手一滑关掉画笔，一黑板批注当场没了（用户
+        2026-10-28 明确要求改掉）。现在的语义：
+          · 开着（body.penOn）：pointer-events:auto，笔迹层接管【全部】指针，
+            下层实验画布一个事件都收不到 —— 不用去和编辑器抢事件，也就不会
+            「想圈一下灯泡，结果把灯泡拖走了」。
+          · 关着：pointer-events:none，事件全落到下层，元件照常拖、导线照常拉，
+            而批注仍旧留在画面上。要删就先重新点亮画笔再涂抹擦除。
      位置和尺寸由 layout() 里的 penPlace() 逐帧对齐到实验画布（含全屏、
      手机端、缩放三种版式），所以这里不写 left/top/width。 */
-  #penCanvas{position:absolute;display:none;z-index:6;border-radius:8px;
-    touch-action:none;cursor:crosshair}
-  body.penOn #penCanvas{display:block}
+  #penCanvas{position:absolute;z-index:6;border-radius:8px;
+    touch-action:none;cursor:crosshair;pointer-events:none}
+  body.penOn #penCanvas{pointer-events:auto}
   /* ── 橡皮擦（用户 2026-10-21 第 1 点）：进入擦除模式后画布光标换成「擦除格」，
-     点 / 涂抹元件或导线即删除。penCanvas 只在画笔开着时显示，橡皮擦不开画笔，
-     所以直接把 simCanvas 的光标换掉即可。 */
+     点 / 涂抹元件或导线即删除。标注层关着时 pointer-events:none（见上一条），
+     事件本来就落在 simCanvas 上，所以直接把 simCanvas 的光标换掉即可 ——
+     和「标注层是不是看得见」无关，这条别跟着上面那条一起改。 */
   body.eraserOn #simCanvas{cursor:cell}
   /* 画笔工具条：贴着画布左下角。放在画布【里面】而不是顶栏里 ——
      老师写字时眼睛在图上，颜色和粗细不该跑去顶栏找。 */
   .penBar{position:absolute;left:12px;bottom:12px;z-index:7;display:none;
     align-items:center;gap:6px;padding:6px 9px;border-radius:11px;
+    max-width:calc(100% - 24px);flex-wrap:wrap;
     background:rgba(255,255,255,0.95);border:1px solid var(--line);
     box-shadow:0 6px 18px rgba(15,23,42,0.16)}
   body.penOn .penBar{display:flex}
@@ -320,6 +328,12 @@
   /* 「T 文字」按钮开着时反色：它是【模式】，和颜色/粗细那种「选项」不一样，
      学生得一眼看出「我现在点画布会写字、不会画线」。 */
   .penBar .txt.on{background:var(--accent);border-color:var(--accent);color:#fff}
+  /* 首次打开画笔时贴在工具条右边的一句提示，9 秒后自动消失。
+     为什么要它：四个色点 + 三个粗细点之后才是「T 文字」，老师扫一眼只会看到
+     一排圆点，根本注意不到还能打字（用户 2026-10-28 反馈「想要文字功能」，
+     其实按钮一直在，只是没被看见）。只在本次会话第一次打开时出一次。 */
+  .penBar .penHint{font-size:11.5px;line-height:1.32;color:var(--dim);
+    max-width:158px;padding-left:9px;border-left:1px solid var(--line)}
   /* 文字标注的输入框：点画布就地长出来一个，打完回车即落字。
      fixed 定位 —— 跟着鼠标那一下的屏幕坐标走，不用去算画布容器的 padding。 */
   .penText{position:fixed;z-index:60;min-width:150px;padding:5px 9px;
@@ -2973,9 +2987,26 @@ function penSetOn(v){
   // 关画笔时顺手退出文字模式：下次打开是干净的「画线」，不会一上来就弹输入框。
   if (!pen.on) { pen.textMode = false; cancelPenText(); penCanvas.style.cursor = 'crosshair'; }
   clearTimeout(penSmudgeTimer);
-  penPlace();               // display 从 none 变 block，位置要立刻对齐一次
+  // 🔴 这里【只】切 pointer-events（CSS 里 body.penOn 那条），不碰 display：
+  //    关掉画笔后笔迹必须留在画面上，只是不再能改 —— 见 #penCanvas 的注释。
+  //    penPlace() 照样要调：第一次打开时这一层才被摆到实验画布上，
+  //    而且中途可能刚全屏 / 缩放过，对齐一次不花钱。
+  penPlace();
   penSyncUI();
+  if (pen.on) penShowHint();
   return pen.on;
+}
+// 第一次打开画笔时的那句提示：告诉老师「还能打字」。只出一次（本次页面生命周期），
+// 9 秒后自己摘掉 —— 它不是常驻文案，看过一次就该让位给画布。
+var penHintShown = false;
+function penShowHint(){
+  if (penHintShown) return;
+  penHintShown = true;
+  var sp = document.createElement('span');
+  sp.className = 'penHint';
+  sp.textContent = '点「T 文字」再点画布 → 就地打字';
+  penBarEl.appendChild(sp);
+  setTimeout(function(){ if (sp.parentNode) sp.parentNode.removeChild(sp); }, 9000);
 }
 // 撤销的次序必须和发生的次序反过来：擦除总是最后发生的，所以先撤擦除、
 // 再撤笔迹。混在一起按「笔迹栈」撤的话，擦掉的三根线永远回不来。
@@ -3039,6 +3070,11 @@ function cancelPenText(){
   return true;
 }
 penTextEl.addEventListener('keydown', function(e){
+  // 🔴 输入法选词中的回车【不是确认】，是「把候选词上屏」。中文老师写字九成走
+  //    拼音，没有这一条的话：打 zheli → 按回车选字 → 这一下被当成落字，落进去
+  //    的是半截拼音（或干脆空串直接收框），用户看到的现象就是「文字功能根本
+  //    打不出来」。isComposing 是现代浏览器的正解，keyCode 229 兜老 Safari/旧版。
+  if (e.isComposing || e.keyCode === 229) return;
   // 回车落字、Esc 取消；其余键【不许冒泡】—— 空格是「暂停」、⌘Z 是撤销笔迹，
   // 打字的时候它们一个都不该触发。
   if (e.key === 'Enter') { e.preventDefault(); commitPenText(); }
@@ -3160,6 +3196,8 @@ penCanvas.addEventListener('pointercancel', penEnd);
 // stopPropagation 一拦，编辑器的撤销就收不到这一下。
 window.addEventListener('keydown', function(e){
   if (!pen.on) return;
+  // 正在文字框里打字时 ⌘Z 属于输入框（撤的是刚打的字），不该被画笔抢走。
+  if (document.activeElement === penTextEl) return;
   var k = e.key ? e.key.toLowerCase() : '';
   if (k === 'z' && (e.metaKey || e.ctrlKey)) {
     e.preventDefault(); e.stopPropagation(); penUndo();
