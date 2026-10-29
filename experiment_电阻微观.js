@@ -779,7 +779,7 @@ function drawField() {
     if (state.label) ctx.fillText('Na⁺ 向负极', lx, y - 13);
     ctx.fillStyle = 'rgba(34,211,238,.9)';
     ctx.textAlign = 'right';
-    if (state.label) ctx.fillText('Cl⁻ 向正极', rx, y + 35);
+    if (state.label) ctx.fillText('Cl⁻ 向正极', rx, y - 13);
   }
 
   ctx.restore();
@@ -970,9 +970,12 @@ function drawSlice() {
   /* 竖排小字，避开离子列 */
   ctx.translate(SLICE_X + 12, COND.y + 58);
   ctx.rotate(Math.PI / 2);
-  ctx.fillStyle = 'rgba(125,211,252,.78)';
   ctx.font = '11px Inter, "Microsoft YaHei", sans-serif';
   ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+  var tw = ctx.measureText('通过截面').width;
+  ctx.fillStyle = 'rgba(5,12,22,.78)';
+  ctx.fillRect(-4, -7.5, tw + 8, 15);
+  ctx.fillStyle = 'rgba(125,211,252,.92)';
   ctx.fillText('通过截面', 0, 0);
   ctx.restore();
 }
