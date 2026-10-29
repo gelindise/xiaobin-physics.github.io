@@ -337,7 +337,7 @@
             <div class="lab3d-field">
               <label for="pExplode">拆解程度 <output id="pExplodeV">0 %</output></label>
               <input id="pExplode" type="range" min="0" max="100" step="1" value="0">
-              <small>七个零件沿各自方向散开：<b>瓷筒、电阻丝、滑杆、滑片、左右支架、底座</b>。
+              <small>七个零件沿各自方向散开：<b>瓷筒、电阻丝、滑杆、滑片、左右支架、底脚</b>。
                 拆到 100% 时每个零件都单独看得见。</small>
             </div>
             <div class="lab3d-field">
@@ -510,20 +510,23 @@ import * as THREE from './assets/optics-three.min.js';
  *   C(2)/D(3) = 上面两个柱，接金属杆（内部同一节点 = 滑片）
  *   A-C / A-D → R = Rmax·slide        B-C / B-D → R = Rmax·(1−slide)
  *   A-B       → R = Rmax（滑片不起作用）  C-D → R = 0（只有金属杆）
- * 尺寸按实物（mm）：瓷筒 φ32×100、绕线 φ35、滑杆 φ7×132、四柱间距 108。
+ * 外观依据人教版图 16.4-2 重建：蓝灰色薄板支架、银色瓷筒端部、
+ * 密绕铜色电阻丝、细金属滑杆、拱形 P 手柄与压在线圈前面的长触片。
+ * 尺寸按实物比例（mm）：瓷筒 φ32×100，绕线区 80，滑杆 φ3.5×116。
  * ============================================================ */
 
 const $ = (id) => document.getElementById(id);
 
 // ── 器材尺寸（单位 mm，1 世界单位 = 1 mm）────────────────────────
 const TUBE_R = 16, TUBE_L = 100, TUBE_IN = 11.6;   // 瓷筒：外半径 / 长 / 内半径
-const WIND_R = 16.55, WIRE_R = 0.44, TURNS = 72;    // 绕线层半径 / 丝半径 / 匝数
-// 🔴 匝数与丝径要留缝：螺距 96/72 = 1.33 mm、丝径 0.88 mm ⇒ 每两匝之间 0.45 mm 的缝。
-//    之前 96 匝 + 丝径 1.24 时丝是【重叠】的，绕线看着像一根实心橙管，螺旋完全看不出来。
-const WIRE_X0 = -48, WIRE_X1 = 48;                  // 电阻丝覆盖的 x 区间
-const ROD_Y = 42, ROD_R = 3.6, ROD_L = 132;         // 金属滑杆
+const WIND_R = 16.42, WIRE_R = 0.36, TURNS = 112;  // 绕线层半径 / 丝半径 / 匝数
+// 人教版插图是紧密排列的细铜线：80/112 ≈ 0.714 mm 螺距，丝径 0.72 mm。
+const WIRE_X0 = -40, WIRE_X1 = 40;                  // 两端各露出 10 mm 银色端部
+const ROD_Y = 34, ROD_R = 1.75, ROD_L = 116;        // 细金属滑杆
 const HOLD_X = 54;                                  // 支架中心 x
-const BASE_Y = -40;                                 // 底座上表面
+const TERM_X = 42;                                  // A / B 位于两端银色端部前面
+const BASE_Y = -47;                                 // 支架底脚高度
+const CONTACT_Z = WIND_R + WIRE_R + 0.8;            // 触片压在线圈前表面
 
 // ── 状态（唯一真值源，面板 / 控制带 / 3D 全部读它）──────────────
 const state = {
@@ -536,7 +539,7 @@ const state = {
   view: 'persp',
   selected: null,
 };
-const SLIDE_MIN = -44, SLIDE_MAX = 44;   // 滑片可移动范围（丝两端各留 4 mm）
+const SLIDE_MIN = -38, SLIDE_MAX = 38;   // 滑片可移动范围（丝两端各留 2 mm）
 const slideX = (s) => SLIDE_MIN + (SLIDE_MAX - SLIDE_MIN) * s;
 
 // ============================================================
@@ -591,22 +594,25 @@ scene.add(rimLight);
 //  材质
 // ============================================================
 const matCeramic = new THREE.MeshStandardMaterial({
-  color: 0xece9e1, roughness: 0.58, metalness: 0.04, side: THREE.DoubleSide,
+  color: 0xe8edf2, roughness: 0.34, metalness: 0.1, side: THREE.DoubleSide,
 });
 const matCeramicIn = new THREE.MeshStandardMaterial({
-  color: 0xb9b4a8, roughness: 0.86, metalness: 0.02, side: THREE.BackSide,
+  color: 0xaeb8c2, roughness: 0.78, metalness: 0.04, side: THREE.BackSide,
 });
 const matWire = new THREE.MeshStandardMaterial({
-  vertexColors: true, roughness: 0.34, metalness: 0.72,
+  vertexColors: true, roughness: 0.3, metalness: 0.76,
 });
-const matSteel = new THREE.MeshStandardMaterial({ color: 0xc3cbd6, roughness: 0.26, metalness: 0.82 });
-const matBrass = new THREE.MeshStandardMaterial({ color: 0xd8b04a, roughness: 0.3, metalness: 0.8 });
-const matPlastic = new THREE.MeshStandardMaterial({ color: 0x23272e, roughness: 0.66, metalness: 0.12 });
-const matPlasticSoft = new THREE.MeshStandardMaterial({ color: 0x2f3540, roughness: 0.72, metalness: 0.08 });
-const matBase = new THREE.MeshStandardMaterial({ color: 0x39404c, roughness: 0.72, metalness: 0.18 });
-const matRed = new THREE.MeshStandardMaterial({ color: 0xcf2f45, roughness: 0.5, metalness: 0.22 });
-const matBlack = new THREE.MeshStandardMaterial({ color: 0x15181d, roughness: 0.55, metalness: 0.25 });
-const matWhiteDot = new THREE.MeshStandardMaterial({ color: 0xf2f5f8, roughness: 0.5, metalness: 0.05 });
+const matSteel = new THREE.MeshStandardMaterial({ color: 0xd7dfe8, roughness: 0.2, metalness: 0.9 });
+const matBrass = new THREE.MeshStandardMaterial({ color: 0xd7ab52, roughness: 0.28, metalness: 0.82 });
+const matFrame = new THREE.MeshStandardMaterial({ color: 0x8ea8c3, roughness: 0.36, metalness: 0.56 });
+const matFrameEdge = new THREE.MeshStandardMaterial({ color: 0x627c99, roughness: 0.42, metalness: 0.62 });
+const matEndMetal = new THREE.MeshStandardMaterial({ color: 0xdfe6ed, roughness: 0.28, metalness: 0.64 });
+const matPlastic = new THREE.MeshStandardMaterial({ color: 0x26354a, roughness: 0.58, metalness: 0.18 });
+const matPlasticSoft = new THREE.MeshStandardMaterial({ color: 0x9db3ca, roughness: 0.38, metalness: 0.28 });
+const matBase = new THREE.MeshStandardMaterial({ color: 0x7189a3, roughness: 0.48, metalness: 0.48 });
+const matRed = new THREE.MeshStandardMaterial({ color: 0xc83b32, roughness: 0.42, metalness: 0.08 });
+const matBlack = new THREE.MeshStandardMaterial({ color: 0x151b24, roughness: 0.55, metalness: 0.25 });
+const matCopperLead = new THREE.MeshStandardMaterial({ color: 0xb66a2e, roughness: 0.32, metalness: 0.78 });
 
 const CLIP = [];   // 剖面观察用的裁剪面（开关时挂到材质上）
 
@@ -617,13 +623,13 @@ const root = new THREE.Group();
 scene.add(root);
 
 const PARTS = {
-  base:    { name: '底座',     dir: [0, -70, 0],   anchor: [0, BASE_Y + 3, 30] },
-  holderL: { name: '左支架',   dir: [-104, -4, 0], anchor: [-HOLD_X, 26, 0] },
-  holderR: { name: '右支架',   dir: [104, -4, 0],  anchor: [HOLD_X, 26, 0] },
-  tube:    { name: '瓷筒',     dir: [0, 6, 0],     anchor: [-26, -TUBE_R + 2, 0] },
-  wire:    { name: '电阻丝',   dir: [0, 30, 112],  anchor: [34, WIND_R - 4, 0] },
+  base:    { name: '底脚',     dir: [0, -70, 0],   anchor: [0, BASE_Y + 3, 24] },
+  holderL: { name: '左支架',   dir: [-104, -4, 0], anchor: [-HOLD_X, 25, 8] },
+  holderR: { name: '右支架',   dir: [104, -4, 0],  anchor: [HOLD_X, 25, 8] },
+  tube:    { name: '瓷筒',     dir: [0, 6, 0],     anchor: [-24, -TUBE_R + 2, 0] },
+  wire:    { name: '电阻丝',   dir: [0, 45, 112],  anchor: [28, 5, CONTACT_Z] },
   rod:     { name: '金属滑杆', dir: [0, 100, 0],   anchor: [-34, ROD_Y + 5, 0] },
-  slider:  { name: '滑片',     dir: [0, 100, 112], anchor: [0, ROD_Y + 18, 8] },
+  slider:  { name: '滑片',     dir: [0, 165, 112], anchor: [0, ROD_Y + 18, 8] },
 };
 const groups = {};
 
@@ -639,22 +645,19 @@ function tagMesh(mesh, id) {
   return mesh;
 }
 
-// ── 1. 底座 ────────────────────────────────────────────────────
+// ── 1. 两只独立底脚（教材图没有整块公共底座）────────────────────
 (function buildBase() {
   const g = new THREE.Group();
-  const plate = new THREE.Mesh(new THREE.BoxGeometry(172, 7, 66), matBase);
-  plate.position.y = BASE_Y - 4;
-  g.add(tagMesh(plate, 'base'));
-  // 底板四周的小倒角（视觉上不像一块砖）
-  const lip = new THREE.Mesh(new THREE.BoxGeometry(178, 3, 72), matPlasticSoft);
-  lip.position.y = BASE_Y - 9;
-  g.add(tagMesh(lip, 'base'));
-  // 四只脚垫
-  [-1, 1].forEach((sx) => [-1, 1].forEach((sz) => {
-    const foot = new THREE.Mesh(new THREE.CylinderGeometry(5, 5.6, 4, 16), matBlack);
-    foot.position.set(sx * 72, BASE_Y - 10.5, sz * 25);
-    g.add(tagMesh(foot, 'base'));
-  }));
+  [-1, 1].forEach((sx) => {
+    const pad = new THREE.Mesh(new THREE.BoxGeometry(10, 3, 54), matBase);
+    pad.position.set(sx * HOLD_X, BASE_Y - 1.5, 0);
+    g.add(tagMesh(pad, 'base'));
+    [-1, 1].forEach((sz) => {
+      const sole = new THREE.Mesh(new THREE.BoxGeometry(10.4, 1.6, 12), matBlack);
+      sole.position.set(sx * HOLD_X, BASE_Y - 3.6, sz * 19);
+      g.add(tagMesh(sole, 'base'));
+    });
+  });
   mkPart('base', g);
 })();
 
@@ -674,51 +677,124 @@ function tagMesh(mesh, id) {
     new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false })
   );
   plane.rotation.x = -Math.PI / 2;
-  plane.position.set(0, BASE_Y - 13, 6);
+  plane.position.set(0, BASE_Y - 4.8, 6);
   plane.renderOrder = -1;
   root.add(plane);
 })();
 
-// ── 2/3. 左右支架（含 A / B 接线柱）────────────────────────────
+// ── 2/3. 左右蓝灰色薄板支架（含银色端部与 A / B 红色接线柱）──────
+function knurledGeometry(radius, length) {
+  const geo = new THREE.CylinderGeometry(radius * 0.97, radius, length, 48, 2, false);
+  const p = geo.attributes.position;
+  for (let i = 0; i < p.count; i++) {
+    const x = p.getX(i), z = p.getZ(i);
+    const r = Math.hypot(x, z);
+    if (r < radius * 0.65) continue;
+    const a = Math.atan2(z, x);
+    const k = 1 + 0.055 * Math.cos(a * 24);
+    p.setXYZ(i, x * k, p.getY(i), z * k);
+  }
+  geo.computeVertexNormals();
+  return geo;
+}
+
+function addKnob(parent, id, term, pos, axis, radius, length, material) {
+  const cap = new THREE.Mesh(knurledGeometry(radius, length), material);
+  cap.position.copy(pos);
+  if (axis === 'x') cap.rotation.z = Math.PI / 2;
+  if (axis === 'z') cap.rotation.x = Math.PI / 2;
+  cap.userData.termId = term;
+  parent.add(tagMesh(cap, id));
+
+  const slot = new THREE.Mesh(
+    axis === 'x' ? new THREE.BoxGeometry(0.24, 0.65, radius * 1.15)
+                 : new THREE.BoxGeometry(radius * 1.15, 0.65, 0.24), matBlack);
+  slot.position.copy(pos);
+  if (axis === 'x') slot.position.x += Math.sign(pos.x) * (length / 2 + 0.08);
+  else slot.position.z += length / 2 + 0.08;
+  slot.userData.termId = term;
+  parent.add(tagMesh(slot, id));
+  return cap;
+}
+
+function bracketGeometry() {
+  // Shape 的横坐标是 z、纵坐标是 y；挤出后再转成垂直于瓷筒轴的薄板。
+  const s = new THREE.Shape();
+  s.moveTo(-5, 43);
+  s.quadraticCurveTo(0, 48, 5, 43);
+  s.lineTo(8, 30);
+  s.quadraticCurveTo(10, 23, 11, 15);
+  s.lineTo(12, 7);
+  s.quadraticCurveTo(13, -2, 10, -13);
+  s.lineTo(8, -26);
+  s.lineTo(20, -44);
+  s.quadraticCurveTo(22, -47, 18, -47);
+  s.lineTo(-19, -47);
+  s.quadraticCurveTo(-23, -47, -20, -43);
+  s.lineTo(-9, -27);
+  s.lineTo(-12, -9);
+  s.quadraticCurveTo(-14, 0, -12, 12);
+  s.lineTo(-9, 30);
+  s.closePath();
+  const geo = new THREE.ExtrudeGeometry(s, {
+    depth: 4.2, bevelEnabled: true, bevelThickness: 0.65,
+    bevelSize: 0.65, bevelSegments: 2, curveSegments: 16,
+  });
+  geo.translate(0, 0, -2.1);
+  geo.rotateY(Math.PI / 2);
+  return geo;
+}
+
 function buildHolder(id, side) {
   const g = new THREE.Group();
   const x = side * HOLD_X;
-  const post = new THREE.Mesh(new THREE.BoxGeometry(11, 78, 40), matPlastic);
-  post.position.set(x, 4, 0);
-  g.add(tagMesh(post, id));
-  // 顶部轴承座：托住瓷筒轴与滑杆
-  const head = new THREE.Mesh(new THREE.BoxGeometry(14, 11, 36), matPlastic);
-  head.position.set(x, ROD_Y - 2, 0);
-  g.add(tagMesh(head, id));
-  const boss = new THREE.Mesh(new THREE.BoxGeometry(15, 16, 30), matPlastic);
+  const plate = new THREE.Mesh(bracketGeometry(), matFrame);
+  plate.position.x = x;
+  g.add(tagMesh(plate, id));
+
+  // 瓷筒轴承与滑杆轴承：圆形凸台而不是旧版的黑色方块。
+  const boss = new THREE.Mesh(new THREE.CylinderGeometry(9.5, 9.5, 6.2, 40), matFrameEdge);
+  boss.rotation.z = Math.PI / 2;
   boss.position.set(x, 0, 0);
   g.add(tagMesh(boss, id));
-  const foot = new THREE.Mesh(new THREE.BoxGeometry(30, 7, 50), matPlasticSoft);
-  foot.position.set(x, BASE_Y + 3.5, 0);
-  g.add(tagMesh(foot, id));
-  // 瓷筒轴套
-  const bush = new THREE.Mesh(new THREE.CylinderGeometry(8, 8, 14, 20), matPlasticSoft);
-  bush.rotation.z = Math.PI / 2;
-  bush.position.set(x, 0, 0);
-  g.add(tagMesh(bush, id));
+  const axle = new THREE.Mesh(new THREE.CylinderGeometry(4.6, 4.6, 12, 28), matSteel);
+  axle.rotation.z = Math.PI / 2;
+  axle.position.set(x, 0, 0);
+  g.add(tagMesh(axle, id));
+  const topBush = new THREE.Mesh(new THREE.CylinderGeometry(3.8, 3.8, 6.5, 28), matFrameEdge);
+  topBush.rotation.z = Math.PI / 2;
+  topBush.position.set(x, ROD_Y, 0);
+  g.add(tagMesh(topBush, id));
 
-  // 下接线柱（A / B）：柱轴朝前（+z），学生正对着它拧螺帽
+  // 教材图两端发亮的银色套圈，绕线从套圈内缘开始。
+  const band = new THREE.Mesh(
+    new THREE.CylinderGeometry(TUBE_R + 0.18, TUBE_R + 0.18, 10, 64, 1, true), matEndMetal);
+  band.rotation.z = Math.PI / 2;
+  band.position.x = side * 45;
+  g.add(tagMesh(band, id));
+  const bandEdge = new THREE.Mesh(new THREE.TorusGeometry(TUBE_R + 0.2, 0.32, 8, 64), matSteel);
+  bandEdge.rotation.y = Math.PI / 2;
+  bandEdge.position.x = side * 40;
+  g.add(tagMesh(bandEdge, id));
+
+  // A / B：红色细高滚花旋钮，装在银色端部的前表面。
   const term = side < 0 ? 'A' : 'B';
-  const tb = new THREE.Group();
-  const stem = new THREE.Mesh(new THREE.CylinderGeometry(3.4, 3.4, 15, 18), matBrass);
+  const tx = side * TERM_X;
+  const lug = new THREE.Mesh(new THREE.BoxGeometry(7, 6, 2.2), matSteel);
+  lug.position.set(tx, -3, 16.5);
+  lug.userData.termId = term;
+  g.add(tagMesh(lug, id));
+  const stem = new THREE.Mesh(new THREE.CylinderGeometry(2.6, 2.6, 8, 24), matBrass);
   stem.rotation.x = Math.PI / 2;
-  stem.position.set(x, -16, 24);
-  tb.add(tagMesh(stem, id));
-  const cap = new THREE.Mesh(new THREE.CylinderGeometry(5.4, 5.4, 9, 20), matRed);
-  cap.rotation.x = Math.PI / 2;
-  cap.position.set(x, -16, 33);
-  tb.add(tagMesh(cap, id));
-  const nut = new THREE.Mesh(new THREE.CylinderGeometry(4.2, 4.2, 4, 6), matBrass);
-  nut.rotation.x = Math.PI / 2;
-  nut.position.set(x, -16, 29.5);
-  tb.add(tagMesh(nut, id));
-  tb.userData.termId = term;
-  g.add(tb);
+  stem.position.set(tx, -3, 19.5);
+  stem.userData.termId = term;
+  g.add(tagMesh(stem, id));
+  const washer = new THREE.Mesh(new THREE.CylinderGeometry(5, 5, 1.5, 32), matSteel);
+  washer.rotation.x = Math.PI / 2;
+  washer.position.set(tx, -3, 22.3);
+  washer.userData.termId = term;
+  g.add(tagMesh(washer, id));
+  addKnob(g, id, term, new THREE.Vector3(tx, -3, 26.6), 'z', 4.25, 7.2, matRed);
 
   return mkPart(id, g);
 }
@@ -759,7 +835,7 @@ class Helix extends THREE.Curve {
   }
 }
 const HELIX = new Helix();
-const WIRE_SEG = TURNS * 10;          // 每匝 10 段：绕线看着是圆的，顶点数还可控
+const WIRE_SEG = TURNS * 12;          // 密绕细丝的圆周与轴向都保持平滑
 const wireGeo = new THREE.TubeGeometry(HELIX, WIRE_SEG, WIRE_R, 8, false);
 (function initWireColors() {
   const n = wireGeo.attributes.position.count;
@@ -772,89 +848,106 @@ const wireGroup = new THREE.Group();
 wireGroup.add(wireMesh);
 // 丝的两端焊到下柱：各引一段短线（始终显示，不参与绕线进度）
 (function buildLeads() {
-  const mk = (from, mid, to) => {
-    const c = new THREE.CatmullRomCurve3([from, mid, to]);
-    const m = new THREE.Mesh(new THREE.TubeGeometry(c, 24, WIRE_R, 6, false), matSteel);
+  const mk = (points) => {
+    const c = new THREE.CatmullRomCurve3(points);
+    const m = new THREE.Mesh(new THREE.TubeGeometry(c, 32, WIRE_R, 8, false), matCopperLead);
     m.userData.partId = 'wire';
     return m;
   };
-  // 从丝端先沿瓷筒外侧横出去一点、再斜下到 A / B 柱 —— 直接连会【穿过瓷筒】。
-  wireGroup.add(mk(new THREE.Vector3(WIRE_X0, WIND_R, 0), new THREE.Vector3(-52, 6, 14),
-                   new THREE.Vector3(-HOLD_X, -12, 26)));
-  wireGroup.add(mk(new THREE.Vector3(WIRE_X1, WIND_R, 0), new THREE.Vector3(52, 6, 14),
-                   new THREE.Vector3(HOLD_X, -12, 26)));
+  // 两端先越过银色套圈内缘，再沿端部表面接到 A / B 的金属焊片。
+  wireGroup.add(mk([
+    new THREE.Vector3(WIRE_X0, WIND_R, 0), new THREE.Vector3(-41.5, 15, 6),
+    new THREE.Vector3(-TERM_X, 5, 15.5), new THREE.Vector3(-TERM_X, -3, 18),
+  ]));
+  wireGroup.add(mk([
+    new THREE.Vector3(WIRE_X1, WIND_R, 0), new THREE.Vector3(41.5, 15, 6),
+    new THREE.Vector3(TERM_X, 5, 15.5), new THREE.Vector3(TERM_X, -3, 18),
+  ]));
 })();
 mkPart('wire', wireGroup);
 
-// ── 6. 金属滑杆（含 C / D 接线柱）──────────────────────────────
+// ── 6. 细金属滑杆（含 C / D 银色滚花接线柱）─────────────────────
 (function buildRod() {
   const g = new THREE.Group();
-  const rod = new THREE.Mesh(new THREE.CylinderGeometry(ROD_R, ROD_R, ROD_L, 28), matSteel);
+  const rod = new THREE.Mesh(new THREE.CylinderGeometry(ROD_R, ROD_R, ROD_L, 32), matSteel);
   rod.rotation.z = Math.PI / 2;
   rod.position.y = ROD_Y;
   g.add(tagMesh(rod, 'rod'));
   [-1, 1].forEach((s) => {
     const term = s < 0 ? 'C' : 'D';
-    const base = new THREE.Mesh(new THREE.CylinderGeometry(4.6, 4.6, 12, 20), matBrass);
-    base.rotation.z = Math.PI / 2;
-    base.position.set(s * (ROD_L / 2 + 5), ROD_Y, 0);
-    g.add(tagMesh(base, 'rod'));
-    const cap = new THREE.Mesh(new THREE.CylinderGeometry(6.2, 6.2, 10, 22), matRed);
-    cap.rotation.z = Math.PI / 2;
-    cap.position.set(s * (ROD_L / 2 + 15), ROD_Y, 0);
-    g.add(tagMesh(cap, 'rod'));
-    const nut = new THREE.Mesh(new THREE.CylinderGeometry(4.8, 4.8, 4, 6), matBrass);
-    nut.rotation.z = Math.PI / 2;
-    nut.position.set(s * (ROD_L / 2 + 10.5), ROD_Y, 0);
-    g.add(tagMesh(nut, 'rod'));
-    cap.userData.termId = term;
-  });
-  // 滑杆两端的固定耳（压在支架顶上）
-  [-1, 1].forEach((s) => {
-    const ear = new THREE.Mesh(new THREE.BoxGeometry(9, 9, 18), matPlasticSoft);
-    ear.position.set(s * (HOLD_X - 6), ROD_Y, 0);
-    g.add(tagMesh(ear, 'rod'));
+    const washer = new THREE.Mesh(new THREE.CylinderGeometry(4.3, 4.3, 2.2, 32), matSteel);
+    washer.rotation.z = Math.PI / 2;
+    washer.position.set(s * (ROD_L / 2 + 1.1), ROD_Y, 0);
+    washer.userData.termId = term;
+    g.add(tagMesh(washer, 'rod'));
+    addKnob(g, 'rod', term, new THREE.Vector3(s * (ROD_L / 2 + 5.2), ROD_Y, 0),
+      'x', 4.15, 7.2, matSteel);
   });
   mkPart('rod', g);
 })();
 
-// ── 7. 滑片（滑块 + 黄铜触片 + 白色指示点）──────────────────────
+// ── 7. P 滑片（拱形手柄 + 套筒 + 压在线圈前表面的长弹片）─────────
 (function buildSlider() {
   const g = new THREE.Group();
-  const block = new THREE.Mesh(new THREE.BoxGeometry(36, 24, 30), matPlastic);
-  block.position.y = ROD_Y + 1;
-  g.add(tagMesh(block, 'slider'));
-  // 两侧夹住滑杆的夹爪
-  [-1, 1].forEach((s) => {
-    const claw = new THREE.Mesh(new THREE.BoxGeometry(8, 12, 10), matPlastic);
-    claw.position.set(0, ROD_Y - 6, s * 13);
-    g.add(tagMesh(claw, 'slider'));
+
+  // 教材中 P 的浅拱形绝缘手柄，沿滑杆方向较窄、前后有一定宽度。
+  const hs = new THREE.Shape();
+  hs.moveTo(-14, -1.5);
+  hs.lineTo(-14, 0);
+  hs.quadraticCurveTo(-12, 4.5, 0, 5);
+  hs.quadraticCurveTo(12, 4.5, 14, 0);
+  hs.lineTo(14, -1.5);
+  hs.quadraticCurveTo(0, 1, -14, -1.5);
+  hs.closePath();
+  const handleGeo = new THREE.ExtrudeGeometry(hs, {
+    depth: 16, bevelEnabled: true, bevelThickness: 0.8,
+    bevelSize: 0.7, bevelSegments: 3, curveSegments: 20,
   });
-  // 黄铜触片：从滑块底部伸下来，末端压在绕线上（y = 绕线外缘）
-  const armTop = new THREE.Mesh(new THREE.BoxGeometry(13, 13, 12), matBrass);
-  armTop.position.set(0, ROD_Y - 16, 0);
-  g.add(tagMesh(armTop, 'slider'));
-  // 触片末端：底面正好压在绕线外缘上（WIND_R + WIRE_R = 16.99）
-  const armTip = new THREE.Mesh(new THREE.BoxGeometry(11, 6, 13), matBrass);
-  armTip.position.set(0, WIND_R + WIRE_R + 3, 0);
-  g.add(tagMesh(armTip, 'slider'));
-  // 接触点标记：丝与金属杆真正接通的那一点（教学上最该被看见的地方）
-  const contact = new THREE.Mesh(new THREE.SphereGeometry(2.6, 16, 12),
+  handleGeo.translate(0, 0, -8);
+  const handle = new THREE.Mesh(handleGeo, matPlasticSoft);
+  handle.position.y = ROD_Y + 3;
+  g.add(tagMesh(handle, 'slider'));
+
+  const sleeve = new THREE.Mesh(new THREE.CylinderGeometry(2.8, 2.8, 14, 28), matFrameEdge);
+  sleeve.rotation.z = Math.PI / 2;
+  sleeve.position.y = ROD_Y;
+  g.add(tagMesh(sleeve, 'slider'));
+  [-1, 1].forEach((sz) => {
+    const clip = new THREE.Mesh(new THREE.BoxGeometry(13, 3.5, 2), matPlastic);
+    clip.position.set(0, ROD_Y + 0.5, sz * 4.2);
+    g.add(tagMesh(clip, 'slider'));
+  });
+
+  // 用三段有厚度的扁平金属条形成弹性触片；正视轮廓与教材长竖片一致。
+  const flatBar = (a, b, width) => {
+    const dir = b.clone().sub(a);
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(width, dir.length(), 1.8), matSteel);
+    mesh.position.copy(a).add(b).multiplyScalar(0.5);
+    mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize());
+    g.add(tagMesh(mesh, 'slider'));
+  };
+  const p0 = new THREE.Vector3(0, ROD_Y, 0);
+  const p1 = new THREE.Vector3(0, ROD_Y - 6, 7);
+  const p2 = new THREE.Vector3(0, 8, CONTACT_Z);
+  const p3 = new THREE.Vector3(0, 0, CONTACT_Z);
+  flatBar(p0, p1, 7.5);
+  flatBar(p1, p2, 7.5);
+  flatBar(p2, p3, 8.2);
+  const shoe = new THREE.Mesh(new THREE.BoxGeometry(9, 3.6, 2.2), matBrass);
+  shoe.position.set(0, 0, CONTACT_Z);
+  g.add(tagMesh(shoe, 'slider'));
+
+  // 接触点在线圈前表面；光环面向学生，不再放在瓷筒顶部。
+  const contact = new THREE.Mesh(new THREE.SphereGeometry(2.35, 18, 12),
     new THREE.MeshBasicMaterial({ color: 0x67e8f9 }));
-  contact.position.set(0, WIND_R + WIRE_R + 0.6, 0);
+  contact.position.set(0, 0, CONTACT_Z + 1.5);
   contact.userData.role = 'contact';
   g.add(contact);
-  const halo = new THREE.Mesh(new THREE.RingGeometry(4.2, 6.0, 24),
-    new THREE.MeshBasicMaterial({ color: 0x22d3ee, transparent: true, opacity: 0.55, side: THREE.DoubleSide }));
-  halo.position.copy(contact.position);
-  halo.rotation.x = -Math.PI / 2;
+  const halo = new THREE.Mesh(new THREE.RingGeometry(4.1, 5.8, 28),
+    new THREE.MeshBasicMaterial({ color: 0x22d3ee, transparent: true, opacity: 0.5, side: THREE.DoubleSide }));
+  halo.position.set(0, 0, CONTACT_Z + 1.8);
   halo.userData.role = 'contactHalo';
   g.add(halo);
-
-  // 顶上的白色指示点（真实器材上用来对准刻度）
-  const dot = new THREE.Mesh(new THREE.SphereGeometry(2.1, 16, 12), matWhiteDot);
-  dot.position.set(0, ROD_Y + 14, 0);
-  g.add(tagMesh(dot, 'slider'));
   mkPart('slider', g);
 })();
 
@@ -862,10 +955,10 @@ mkPart('wire', wireGroup);
 //  接线柱位置（世界坐标，随零件拆解一起动）
 // ============================================================
 const TERM_LOCAL = {
-  A: new THREE.Vector3(-HOLD_X, -16, 36),
-  B: new THREE.Vector3(HOLD_X, -16, 36),
-  C: new THREE.Vector3(-(ROD_L / 2 + 20), ROD_Y, 0),
-  D: new THREE.Vector3(ROD_L / 2 + 20, ROD_Y, 0),
+  A: new THREE.Vector3(-TERM_X, -3, 31),
+  B: new THREE.Vector3(TERM_X, -3, 31),
+  C: new THREE.Vector3(-(ROD_L / 2 + 9.5), ROD_Y, 0),
+  D: new THREE.Vector3(ROD_L / 2 + 9.5, ROD_Y, 0),
 };
 const TERM_PART = { A: 'holderL', B: 'holderR', C: 'rod', D: 'rod' };
 
@@ -935,18 +1028,18 @@ class WireSegCurve extends THREE.Curve {
 
 // 滑片触点 → 金属杆 → 流出柱（或反向）
 function sliderToRodCurve(fromX) {
-  const y0 = WIND_R + WIRE_R + 4.4;
   return new THREE.CatmullRomCurve3([
-    new THREE.Vector3(fromX, y0, 0),
-    new THREE.Vector3(fromX, ROD_Y - 8, 0),
+    new THREE.Vector3(fromX, 0, CONTACT_Z + 0.8),
+    new THREE.Vector3(fromX, 8, CONTACT_Z),
+    new THREE.Vector3(fromX, ROD_Y - 6, 7),
     new THREE.Vector3(fromX, ROD_Y, 0),
   ]);
 }
-function rodCurveFor(t) {
+function rodCurveFor(t, fromX = slideX(state.slide)) {
   const p = termWorld(t);
   return new THREE.CatmullRomCurve3([
-    new THREE.Vector3(p.x * 0.25, ROD_Y, 0),
-    new THREE.Vector3(p.x * 0.6, ROD_Y, 0),
+    new THREE.Vector3(fromX, ROD_Y, 0),
+    new THREE.Vector3((fromX + p.x) * 0.5, ROD_Y, 0),
     p.clone(),
   ]);
 }
@@ -988,9 +1081,9 @@ function computeMode() {
   return { key, mode: a + '—' + b, label: '—', R: null, frac: null, seg: null, ok: false, note: '' };
 }
 
-// 丝上高亮：接入段亮橙，其余暗灰
-const COL_ON = new THREE.Color(0xff7a2f);
-const COL_OFF = new THREE.Color(0x7b8494);
+// 教材图整圈都是铜色；接入段只提高亮度，不再把未接入段涂成灰色。
+const COL_ON = new THREE.Color(0xffc25c);
+const COL_OFF = new THREE.Color(0xa96228);
 function paintWire() {
   const m = computeMode();
   const col = wireGeo.attributes.color;
@@ -1108,24 +1201,24 @@ function rebuildParticles() {
 //  相机控制
 // ============================================================
 const cam = {
-  yaw: -0.55, pitch: 0.32, dist: 300,
-  target: new THREE.Vector3(0, 4, 0),
-  yawT: -0.55, pitchT: 0.32, distT: 300,
-  targetT: new THREE.Vector3(0, 4, 0),
+  yaw: -0.42, pitch: 0.24, dist: 250,
+  target: new THREE.Vector3(0, 0, 0),
+  yawT: -0.42, pitchT: 0.24, distT: 250,
+  targetT: new THREE.Vector3(0, 0, 0),
 };
 const VIEWS = {
-  persp:   { yaw: -0.55, pitch: 0.32, dist: 300, target: [0, 4, 0] },
-  front:   { yaw: 0,     pitch: 0.06, dist: 300, target: [0, 4, 0] },
-  top:     { yaw: 0,     pitch: 1.16, dist: 330, target: [0, 4, 0] },
-  side:    { yaw: -1.5708, pitch: 0.08, dist: 300, target: [0, 4, 0] },
-  contact: { yaw: -0.46, pitch: 0.22, dist: 152, target: 'slider' },
+  persp:   { yaw: -0.42, pitch: 0.24, dist: 250, target: [0, 0, 0] },
+  front:   { yaw: 0,     pitch: 0.03, dist: 250, target: [0, 0, 0] },
+  top:     { yaw: 0,     pitch: 1.16, dist: 285, target: [0, 0, 0] },
+  side:    { yaw: -1.5708, pitch: 0.08, dist: 250, target: [0, 0, 0] },
+  contact: { yaw: -0.28, pitch: 0.14, dist: 112, target: 'slider' },
 };
 function applyView(name) {
   const v = VIEWS[name] || VIEWS.persp;
   state.view = name;
   cam.yawT = v.yaw; cam.pitchT = v.pitch; cam.distT = v.dist;
   if (v.target === 'slider') {
-    cam.targetT.set(slideX(state.slide), WIND_R + 6, 0);
+    cam.targetT.set(slideX(state.slide), 6, CONTACT_Z);
   } else {
     cam.targetT.set(v.target[0], v.target[1], v.target[2]);
   }
@@ -1200,9 +1293,10 @@ function updateClip() {
 const labelLayer = $('labels');
 const labelEls = [];
 const LABEL_DEFS = [
-  { id: 'base', text: '底座' }, { id: 'holderL', text: '左支架' }, { id: 'holderR', text: '右支架' },
+  { id: 'base', text: '底脚' }, { id: 'holderL', text: '左支架' }, { id: 'holderR', text: '右支架' },
   { id: 'tube', text: '瓷筒' }, { id: 'wire', text: '电阻丝' },
   { id: 'rod', text: '金属滑杆' }, { id: 'slider', text: '滑片' },
+  { id: 'P', text: 'P', term: true },
   { id: 'A', text: 'A', term: true }, { id: 'B', text: 'B', term: true },
   { id: 'C', text: 'C', term: true }, { id: 'D', text: 'D', term: true },
   { id: 'flowIn', text: '电流流入', flow: 'in' }, { id: 'flowOut', text: '电流流出', flow: 'out' },
@@ -1227,6 +1321,7 @@ function labelWorldPos(def) {
     if (!L) return null;
     return L.curve.getPointAt(def.flow === 'in' ? 0.72 : 0.72).clone();
   }
+  if (def.id === 'P') return new THREE.Vector3(0, ROD_Y + 20, 0).add(groups.slider.position);
   if (def.term) return termWorld(def.id).add(new THREE.Vector3(0, 5, 0));
   const p = PARTS[def.id];
   if (!p) return null;
@@ -1280,13 +1375,13 @@ function pickAt(clientX, clientY) {
   raycaster.setFromCamera(ndc, camera);
   const hits = raycaster.intersectObjects(root.children, true);
   for (let i = 0; i < hits.length; i++) {
-    let o = hits[i].object;
-    while (o && !o.userData.partId) o = o.parent;
-    if (o && o.userData.partId) return o.userData.partId;
-    // 接线柱本身：返回 A/B/C/D
+    // 接线柱比所属零件更具体，优先返回 A/B/C/D。
     let q = hits[i].object;
     while (q && !q.userData.termId) q = q.parent;
     if (q && q.userData.termId) return q.userData.termId;
+    let o = hits[i].object;
+    while (o && !o.userData.partId) o = o.parent;
+    if (o && o.userData.partId) return o.userData.partId;
   }
   return null;
 }
@@ -1344,16 +1439,16 @@ function layout() {
 // ============================================================
 const PART_INFO = {
   base: {
-    nm: '底座', role: '把整只器材立住',
-    desc: '一块绝缘塑料底板，四只脚垫防滑。变阻器工作时会发热、拧接线柱时又要用力，所以底座得够重、够稳。它本身不导电，和电路没有关系。',
+    nm: '支架底脚', role: '把整只器材立住',
+    desc: '左右两只独立金属底脚，与人教版教材图一样没有整块公共底座。底脚加宽了支撑面，拧接线柱或移动滑片时器材不容易翻倒。',
   },
   holderL: {
     nm: '左支架（带 A 接线柱）', role: '托住瓷筒 + 引出丝的左端',
-    desc: '塑料支架一头托着瓷筒的轴、一头托着金属滑杆。下面那颗红柱就是 <b>A 接线柱</b>，出厂时已经用导线和电阻丝的左端焊在一起 —— 所以接 A 就等于接在丝的左端。',
+    desc: '蓝灰色薄板支架一头托着瓷筒的轴、一头托着金属滑杆。银色端部前面的红色旋钮就是 <b>A 接线柱</b>，它与电阻丝左端相连。',
   },
   holderR: {
     nm: '右支架（带 B 接线柱）', role: '托住瓷筒 + 引出丝的右端',
-    desc: '和左支架对称。下面那颗柱是 <b>B 接线柱</b>，接在电阻丝的右端。A、B 两颗柱之间的距离，就是整根电阻丝的长度。',
+    desc: '和左支架对称。银色端部前面的红色旋钮是 <b>B 接线柱</b>，接在电阻丝的右端。A、B 之间隔着整根电阻丝。',
   },
   tube: {
     nm: '瓷筒', role: '绝缘 + 耐热 + 支撑',
@@ -1369,7 +1464,7 @@ const PART_INFO = {
   },
   slider: {
     nm: '滑片', role: '决定「用多长的一段丝」',
-    desc: '塑料滑块套在滑杆上，下面一块<b>黄铜触片</b>靠弹性压在绕线上。触点和丝接触的那一点，把「丝」和「金属杆」接通 —— 电流走到这儿就拐进杆里。滑片的位置，就是接入段与未接入段的分界点。',
+    desc: '蓝灰色拱形手柄套在滑杆上，下面一条银色金属弹片伸到线圈前表面，末端的<b>黄铜触头</b>靠弹性压在绕线上。触点把「丝」和「金属杆」接通，滑片的位置就是接入段与未接入段的分界点。',
   },
   A: {
     nm: 'A 接线柱', role: '电阻丝左端（下柱）',
@@ -1482,7 +1577,7 @@ function setSlide(v, quiet) {
   paintWire();
   rebuildFlow();
   rebuildParticles();
-  if (state.view === 'contact') cam.targetT.set(slideX(state.slide), WIND_R + 4, 0);
+  if (state.view === 'contact') cam.targetT.set(slideX(state.slide), 6, CONTACT_Z);
   syncUI();
 }
 function setExplode(v) {
@@ -1490,8 +1585,8 @@ function setExplode(v) {
   updatePartTransforms();
   rebuildFlow();
   rebuildParticles();
-  cam.distT = (VIEWS[state.view] || VIEWS.persp).dist * (1 + 1.05 * easeInOut(state.explode));
-  cam.targetT.set(0, 4 + 26 * easeInOut(state.explode), 0);
+  cam.distT = (VIEWS[state.view] || VIEWS.persp).dist * (1 + 1.4 * easeInOut(state.explode));
+  cam.targetT.set(0, 4 + 54 * easeInOut(state.explode), 0);
   syncUI();
 }
 function setWrap(v) {
