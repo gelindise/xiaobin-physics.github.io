@@ -521,8 +521,8 @@ const $ = (id) => document.getElementById(id);
 
 // ── 器材尺寸（单位 mm，1 世界单位 = 1 mm）────────────────────────
 const TUBE_R = 16, TUBE_L = 100, TUBE_IN = 11.6;   // 瓷筒：外半径 / 长 / 内半径
-const WIND_R = 16.42, WIRE_R = 0.36, TURNS = 112;  // 绕线层半径 / 丝半径 / 匝数
-// 人教版插图是紧密排列的细铜线：80/112 ≈ 0.714 mm 螺距，丝径 0.72 mm。
+const WIND_R = 16.42, WIRE_R = 0.36, TURNS = 100;  // 绕线层半径 / 丝半径 / 匝数
+// 匝间留出约 0.08 mm 暗缝：太密会糊成一根铜管，转到背面就看不见「绕线」了。
 const WIRE_X0 = -40, WIRE_X1 = 40;                  // 两端各露出 10 mm 银色端部
 const ROD_Y = 34, ROD_R = 1.75, ROD_L = 116;        // 细金属滑杆
 const HOLD_X = 54;                                  // 支架中心 x
@@ -588,9 +588,13 @@ scene.add(keyLight);
 const fillLight = new THREE.DirectionalLight(0x9fd0ff, 1.15);
 fillLight.position.set(210, 120, 160);
 scene.add(fillLight);
-const rimLight = new THREE.DirectionalLight(0xa78bfa, 0.85);
-rimLight.position.set(60, 90, -240);
+// 背面专门补一盏冷白轮廓光：转到 180° 时绕线仍然有清楚的铜色和明暗层次。
+const rimLight = new THREE.DirectionalLight(0xd8e9ff, 1.75);
+rimLight.position.set(60, 100, -240);
 scene.add(rimLight);
+const backFill = new THREE.DirectionalLight(0x9fcfff, 0.75);
+backFill.position.set(-150, 30, -190);
+scene.add(backFill);
 
 // ============================================================
 //  材质
@@ -602,7 +606,7 @@ const matCeramicIn = new THREE.MeshStandardMaterial({
   color: 0xaeb8c2, roughness: 0.78, metalness: 0.04, side: THREE.BackSide,
 });
 const matWire = new THREE.MeshStandardMaterial({
-  vertexColors: true, roughness: 0.3, metalness: 0.76, side: THREE.DoubleSide,
+  vertexColors: true, roughness: 0.38, metalness: 0.6, side: THREE.DoubleSide,
 });
 const matSteel = new THREE.MeshStandardMaterial({ color: 0xd7dfe8, roughness: 0.2, metalness: 0.9 });
 const matBrass = new THREE.MeshStandardMaterial({ color: 0xd7ab52, roughness: 0.28, metalness: 0.82 });
@@ -1041,6 +1045,13 @@ class WireSegCurve extends THREE.Curve {
     return HELIX.getPoint(this.t0 + (this.t1 - this.t0) * u, target);
   }
 }
+// 同一根曲线反向走：流入端要「从外面进来」，不能和流出端用同一个方向。
+class ReverseCurve extends THREE.Curve {
+  constructor(curve) { super(); this.curve = curve; }
+  getPoint(u, target = new THREE.Vector3()) {
+    return this.curve.getPoint(1 - u, target);
+  }
+}
 
 // 滑片触点 → 金属杆 → 流出柱（或反向）
 function sliderToRodCurve(fromX) {
@@ -1062,11 +1073,12 @@ function rodCurveFor(t, fromX = slideX(state.slide)) {
 
 // 电流用 Points 一次绘制：粒子更小、更密，也不会因为几百个 Mesh 产生几百次 draw call。
 const PARTICLE_MAX = 900;
-const PARTICLE_COIL = 252;      // 绕线：约每匝 2.25 颗，正反面都连续
-const PARTICLE_LEAD = 8;
-const PARTICLE_ROD = 10;
-const PCOL_IN = new THREE.Color(0x8fe7ff);
-const PCOL_OUT = new THREE.Color(0xffa0ba);
+const PARTICLE_COIL = 252;      // 绕线：约每匝 2.5 颗，正反面都连续
+const PARTICLE_LEAD = 18;       // 外部导线也要能明显看到电流在走
+const PARTICLE_ROD = 14;
+const PARTICLE_CONTACT = 12;
+const PCOL_IN = new THREE.Color(0x52ddff);
+const PCOL_OUT = new THREE.Color(0xff6f9f);
 
 function makeParticleTexture() {
   const cv = document.createElement('canvas');
@@ -1092,7 +1104,7 @@ particleGeo.setAttribute('position', new THREE.BufferAttribute(particlePositions
 particleGeo.setAttribute('color', new THREE.BufferAttribute(particleColors, 3).setUsage(THREE.DynamicDrawUsage));
 particleGeo.setDrawRange(0, 0);
 const particleMat = new THREE.PointsMaterial({
-  size: 3.0, map: makeParticleTexture(), vertexColors: true, sizeAttenuation: true,
+  size: 3.4, map: makeParticleTexture(), vertexColors: true, sizeAttenuation: true,
   transparent: true, depthWrite: false, alphaTest: 0.02, toneMapped: false,
 });
 const particlePoints = new THREE.Points(particleGeo, particleMat);
@@ -1100,6 +1112,23 @@ particlePoints.frustumCulled = false;
 particlePoints.renderOrder = 2;
 particlePoints.visible = false;
 particleGroup.add(particlePoints);
+
+// 每一颗电流粒子再拖一条短短的光尾：运动方向一眼就能看出来，比单纯一堆小圆点更像“电流”。
+const trailPositions = new Float32Array(PARTICLE_MAX * 6);
+const trailColors = new Float32Array(PARTICLE_MAX * 6);
+const trailGeo = new THREE.BufferGeometry();
+trailGeo.setAttribute('position', new THREE.BufferAttribute(trailPositions, 3).setUsage(THREE.DynamicDrawUsage));
+trailGeo.setAttribute('color', new THREE.BufferAttribute(trailColors, 3).setUsage(THREE.DynamicDrawUsage));
+trailGeo.setDrawRange(0, 0);
+const trailMat = new THREE.LineBasicMaterial({
+  vertexColors: true, transparent: true, opacity: 0.72, depthWrite: false,
+  toneMapped: false, blending: THREE.AdditiveBlending,
+});
+const particleTrails = new THREE.LineSegments(trailGeo, trailMat);
+particleTrails.frustumCulled = false;
+particleTrails.renderOrder = 2;
+particleTrails.visible = false;
+particleGroup.add(particleTrails);
 
 
 // ============================================================
@@ -1135,8 +1164,8 @@ function computeMode() {
 }
 
 // 教材图整圈都是铜色；接入段只提高亮度，不再把未接入段涂成灰色。
-const COL_ON = new THREE.Color(0xffc25c);
-const COL_OFF = new THREE.Color(0xa96228);
+const COL_ON = new THREE.Color(0xffd36a);
+const COL_OFF = new THREE.Color(0xc47a35);
 function paintWire() {
   const m = computeMode();
   const col = wireGeo.attributes.color;
@@ -1168,7 +1197,7 @@ function applyWrap() {
 // ============================================================
 //  电流路径（把「导线 → 丝 → 滑片 → 杆 → 导线」串起来）
 // ============================================================
-let flowCurves = [];       // {curve, mat, count}
+let flowCurves = [];       // {curve, color, count, lift | camLift}
 function rebuildFlow() {
   flowCurves = [];
   const m = computeMode();
@@ -1176,57 +1205,64 @@ function rebuildFlow() {
   const outIsTop = (state.outT === 'C' || state.outT === 'D');
   if (state.explode > 0.02) return flowCurves;   // 拆开了就不画电流
 
+  // 电流从外部导线「流进」接线柱，所以流入端必须反向；
+  // 流出端从接线柱「流向外」，保持原方向。
+  const pushIn = () => flowCurves.push({
+    curve: new ReverseCurve(leadCurveFor(state.inT)), color: PCOL_IN, count: PARTICLE_LEAD });
+  const pushOut = () => flowCurves.push({
+    curve: leadCurveFor(state.outT), color: PCOL_OUT, count: PARTICLE_LEAD });
+
   if (!m.ok && m.key !== 'CD') {
     // A-B 接法：整根丝，不经过滑片
     if (m.key === 'AB') {
-      flowCurves.push({ curve: leadCurveFor(state.inT), color: PCOL_IN, count: PARTICLE_LEAD });
-      const c = new WireSegCurve(0, 1);
-      const cc = (state.inT === 'A') ? c : new WireSegCurve(1, 0);
+      pushIn();
+      const cc = (state.inT === 'A') ? new WireSegCurve(0, 1) : new WireSegCurve(1, 0);
       flowCurves.push({ curve: cc, color: PCOL_IN, count: PARTICLE_COIL, lift: WIRE_R + 0.42 });
-      flowCurves.push({ curve: leadCurveFor(state.outT), color: PCOL_OUT, count: PARTICLE_LEAD });
+      pushOut();
     }
     return flowCurves;
   }
   if (m.key === 'CD') {
-    flowCurves.push({ curve: leadCurveFor(state.inT), color: PCOL_IN, count: PARTICLE_LEAD });
+    pushIn();
     const p1 = termWorld(state.inT), p2 = termWorld(state.outT);
     flowCurves.push({
       curve: new THREE.CatmullRomCurve3([p1, new THREE.Vector3((p1.x + p2.x) / 2, ROD_Y, 0), p2]),
       color: PCOL_IN, count: PARTICLE_ROD,
     });
-    flowCurves.push({ curve: leadCurveFor(state.outT), color: PCOL_OUT, count: PARTICLE_LEAD });
+    pushOut();
     return flowCurves;
   }
   if (!m.seg) return flowCurves;
 
   const xS = slideX(state.slide);
   const seg = m.seg;
-  // 电流方向：从流入柱出发
-  //   · 流入下柱 ⇒ 先走丝（A 端→滑片 或 从 B 端反向走到滑片），再上杆
-  //   · 流入上柱 ⇒ 先下杆到滑片，再走丝到另一个下柱
-  flowCurves.push({ curve: leadCurveFor(state.inT), color: PCOL_IN, count: PARTICLE_LEAD });
+  pushIn();
 
   if (!inIsTop) {
+    // 下柱进 → 电阻丝 → 滑片 → 滑杆 → 上柱出
     const a0 = (state.inT === 'A') ? seg[0] : seg[1];
     const a1 = (state.inT === 'A') ? seg[1] : seg[0];
     flowCurves.push({ curve: new WireSegCurve(a0, a1), color: PCOL_IN, count: PARTICLE_COIL, lift: WIRE_R + 0.42 });
-    flowCurves.push({ curve: sliderToRodCurve(xS), color: PCOL_IN, count: PARTICLE_LEAD });
+    flowCurves.push({ curve: sliderToRodCurve(xS), color: PCOL_IN, count: PARTICLE_CONTACT, camLift: 1.15 });
     if (outIsTop) {
-      flowCurves.push({ curve: rodCurveFor(state.outT), color: PCOL_OUT, count: PARTICLE_ROD });
+      flowCurves.push({ curve: rodCurveFor(state.outT, xS), color: PCOL_OUT, count: PARTICLE_ROD });
     }
-    flowCurves.push({ curve: leadCurveFor(state.outT), color: PCOL_OUT, count: PARTICLE_LEAD });
+    pushOut();
   } else {
-    flowCurves.push({ curve: sliderToRodCurve(xS), color: PCOL_IN, count: PARTICLE_LEAD });
+    // 上柱进 → 沿滑杆 → 滑片向下 → 电阻丝 → 下柱出
+    flowCurves.push({ curve: new ReverseCurve(rodCurveFor(state.inT, xS)), color: PCOL_IN, count: PARTICLE_ROD });
+    flowCurves.push({ curve: new ReverseCurve(sliderToRodCurve(xS)), color: PCOL_IN, count: PARTICLE_CONTACT, camLift: 1.15 });
     const b0 = (state.outT === 'A') ? seg[1] : seg[0];
     const b1 = (state.outT === 'A') ? seg[0] : seg[1];
     flowCurves.push({ curve: new WireSegCurve(b0, b1), color: PCOL_IN, count: PARTICLE_COIL, lift: WIRE_R + 0.42 });
-    flowCurves.push({ curve: leadCurveFor(state.outT), color: PCOL_OUT, count: PARTICLE_LEAD });
+    pushOut();
   }
   return flowCurves;
 }
 
 const particlePool = [];
 const _particleV = new THREE.Vector3();
+const _trailV = new THREE.Vector3();
 function rebuildParticles() {
   particlePool.length = 0;
   let k = 0;
@@ -1234,37 +1270,74 @@ function rebuildParticles() {
     const n = Math.max(0, f.count | 0);
     for (let i = 0; i < n && k < PARTICLE_MAX; i++, k++) {
       const c = f.color || PCOL_IN;
-      particlePool.push({ curve: f.curve, u0: i / n, lift: f.lift || 0 });
+      const trailU = f.trailU != null ? f.trailU : (f.lift ? 0.001 : (n === PARTICLE_CONTACT ? 0.12 : 0.04));
+      particlePool.push({
+        curve: f.curve, u0: i / n, lift: f.lift || 0, trailU,
+        camLift: f.camLift != null ? f.camLift : (f.lift ? 0 : 2.2),
+      });
       particleColors[k * 3] = c.r;
       particleColors[k * 3 + 1] = c.g;
       particleColors[k * 3 + 2] = c.b;
+      // 光尾：头亮、尾暗，方向就是粒子运动方向。
+      trailColors[k * 6] = c.r * 0.12; trailColors[k * 6 + 1] = c.g * 0.12; trailColors[k * 6 + 2] = c.b * 0.12;
+      trailColors[k * 6 + 3] = c.r; trailColors[k * 6 + 4] = c.g; trailColors[k * 6 + 5] = c.b;
     }
   });
   particleGeo.setDrawRange(0, k);
   particleGeo.attributes.color.needsUpdate = true;
+  trailGeo.setDrawRange(0, k * 2);
+  trailGeo.attributes.color.needsUpdate = true;
   particlePoints.visible = k > 0 && state.current;
+  particleTrails.visible = k > 0 && state.current;
   updateParticlePositions(0);
+}
+
+function sampleParticle(p, u, target) {
+  p.curve.getPointAt(u, target);
+  if (p.lift) {
+    // 曲线是电阻丝的【中心线】。点必须沿径向抬到丝的外表面，否则会被铜丝本体挡住。
+    const rr = Math.hypot(target.y, target.z);
+    if (rr > 0.001) {
+      target.y += target.y / rr * p.lift;
+      target.z += target.z / rr * p.lift;
+    }
+  } else if (p.camLift) {
+    // 外部导线/滑杆是有厚度的圆管，粒子埋在中心线上会完全看不到。
+    // 朝相机方向抬到导体近侧表面，既不悬空，又始终可见。
+    const dx = camera.position.x - target.x;
+    const dy = camera.position.y - target.y;
+    const dz = camera.position.z - target.z;
+    const dd = Math.hypot(dx, dy, dz) || 1;
+    target.x += dx / dd * p.camLift;
+    target.y += dy / dd * p.camLift;
+    target.z += dz / dd * p.camLift;
+  }
+  return target;
 }
 
 function updateParticlePositions(elapsed) {
   const arr = particlePositions;
+  const tr = trailPositions;
   for (let i = 0; i < particlePool.length; i++) {
     const p = particlePool[i];
     const u = (p.u0 + elapsed * 0.34) % 1;
-    p.curve.getPointAt(u, _particleV);
-    if (p.lift) {
-      // 曲线是电阻丝的【中心线】。点必须沿径向抬到丝的外表面，否则会被铜丝本体挡住。
-      const rr = Math.hypot(_particleV.y, _particleV.z);
-      if (rr > 0.001) {
-        _particleV.y += _particleV.y / rr * p.lift;
-        _particleV.z += _particleV.z / rr * p.lift;
-      }
-    }
+    sampleParticle(p, u, _particleV);
     arr[i * 3] = _particleV.x;
     arr[i * 3 + 1] = _particleV.y;
     arr[i * 3 + 2] = _particleV.z;
+
+    // 光尾落在粒子后面（u 更小的一侧）。跨到 0 时直接夹在起点，
+    // 不能加 1 绕回终点，否则会画出一条横穿整根导线的黑长线。
+    sampleParticle(p, Math.max(0, u - p.trailU), _trailV);
+    tr[i * 6] = _trailV.x;
+    tr[i * 6 + 1] = _trailV.y;
+    tr[i * 6 + 2] = _trailV.z;
+    tr[i * 6 + 3] = _particleV.x;
+    tr[i * 6 + 4] = _particleV.y;
+    tr[i * 6 + 5] = _particleV.z;
   }
   particleGeo.attributes.position.needsUpdate = true;
+  trailGeo.attributes.position.needsUpdate = true;
 }
 
 // ============================================================
@@ -1468,8 +1541,10 @@ function stepAnim(dt) {
   if (state.current && particleGroup.visible && particlePool.length) {
     updateParticlePositions(phase);
     particlePoints.visible = true;
+    particleTrails.visible = true;
   } else {
     particlePoints.visible = false;
+    particleTrails.visible = false;
   }
   if (state.spin) { cam.yawT += dt * 0.4; cam.yaw += dt * 0.4; }
   updateClip();
@@ -1681,6 +1756,7 @@ function setLabels(on) {
 function setCurrent(on) {
   state.current = on;
   particlePoints.visible = on && particlePool.length > 0;
+  particleTrails.visible = particlePoints.visible;
   syncUI();
 }
 function setCut(on) {
