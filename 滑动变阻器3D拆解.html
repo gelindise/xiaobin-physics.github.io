@@ -66,6 +66,8 @@
     display:block;touch-action:none;cursor:grab;outline:none}
   .lab3d-stage canvas.grabbing{cursor:grabbing}
   .lab3d-stage canvas.pick{cursor:pointer}
+  .lab3d-stage canvas.grab-slider{cursor:ew-resize}
+  .lab3d-stage canvas.dragging-slider{cursor:ew-resize}
   .lab3d-stage:fullscreen,.lab3d-stage:-webkit-full-screen{width:100%;height:100%;border:0;border-radius:0;background:#050b18}
 
   .stage-hint{position:absolute;left:12px;top:12px;max-width:58%;padding:7px 11px;border-radius:9px;
@@ -308,7 +310,7 @@
 
         <div class="stage-hint" id="hint">
           <b>拖空白</b>转视角 · <b>滚轮</b>缩放 · 点<b>零件</b>看说明<br>
-          底部拖<b>滑片</b>、拖<b>拆解</b>看七个零件怎么装在一起
+          直接左右拖 <b>P 滑片</b>，或拖底部滑条；拖<b>拆解</b>看七个零件
         </div>
         <div class="stage-toast" id="toast"></div>
 
@@ -600,7 +602,7 @@ const matCeramicIn = new THREE.MeshStandardMaterial({
   color: 0xaeb8c2, roughness: 0.78, metalness: 0.04, side: THREE.BackSide,
 });
 const matWire = new THREE.MeshStandardMaterial({
-  vertexColors: true, roughness: 0.3, metalness: 0.76,
+  vertexColors: true, roughness: 0.3, metalness: 0.76, side: THREE.DoubleSide,
 });
 const matSteel = new THREE.MeshStandardMaterial({ color: 0xd7dfe8, roughness: 0.2, metalness: 0.9 });
 const matBrass = new THREE.MeshStandardMaterial({ color: 0xd7ab52, roughness: 0.28, metalness: 0.82 });
@@ -836,7 +838,8 @@ class Helix extends THREE.Curve {
 }
 const HELIX = new Helix();
 const WIRE_SEG = TURNS * 12;          // 密绕细丝的圆周与轴向都保持平滑
-const wireGeo = new THREE.TubeGeometry(HELIX, WIRE_SEG, WIRE_R, 8, false);
+const WIRE_RADIAL = 10;               // 圆形截面：转到背面也看不到棱线
+const wireGeo = new THREE.TubeGeometry(HELIX, WIRE_SEG, WIRE_R, WIRE_RADIAL, false);
 (function initWireColors() {
   const n = wireGeo.attributes.position.count;
   wireGeo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(n * 3), 3));
@@ -936,6 +939,19 @@ mkPart('wire', wireGroup);
   const shoe = new THREE.Mesh(new THREE.BoxGeometry(9, 3.6, 2.2), matBrass);
   shoe.position.set(0, 0, CONTACT_Z);
   g.add(tagMesh(shoe, 'slider'));
+
+  // 背面导向压簧：让滑片从任何角度都是完整的一副，不只是一块前面板。
+  // 后侧末端用绝缘导向块，真正与电阻丝接通的仍然只有前面的黄铜触头。
+  const q0 = new THREE.Vector3(0, ROD_Y, 0);
+  const q1 = new THREE.Vector3(0, ROD_Y - 6, -7);
+  const q2 = new THREE.Vector3(0, 8, -CONTACT_Z);
+  const q3 = new THREE.Vector3(0, 0, -CONTACT_Z);
+  flatBar(q0, q1, 7.5);
+  flatBar(q1, q2, 7.5);
+  flatBar(q2, q3, 8.2);
+  const rearGuide = new THREE.Mesh(new THREE.BoxGeometry(9, 3.6, 2.2), matFrameEdge);
+  rearGuide.position.set(0, 0, -CONTACT_Z);
+  g.add(tagMesh(rearGuide, 'slider'));
 
   // 接触点在线圈前表面；光环面向学生，不再放在瓷筒顶部。
   const contact = new THREE.Mesh(new THREE.SphereGeometry(2.35, 18, 12),
@@ -1044,9 +1060,46 @@ function rodCurveFor(t, fromX = slideX(state.slide)) {
   ]);
 }
 
-const particleGeo = new THREE.SphereGeometry(1.45, 10, 8);
-const particleMatIn = new THREE.MeshBasicMaterial({ color: 0x7fd4ff });
-const particleMatOut = new THREE.MeshBasicMaterial({ color: 0xff8fb0 });
+// 电流用 Points 一次绘制：粒子更小、更密，也不会因为几百个 Mesh 产生几百次 draw call。
+const PARTICLE_MAX = 900;
+const PARTICLE_COIL = 252;      // 绕线：约每匝 2.25 颗，正反面都连续
+const PARTICLE_LEAD = 8;
+const PARTICLE_ROD = 10;
+const PCOL_IN = new THREE.Color(0x8fe7ff);
+const PCOL_OUT = new THREE.Color(0xffa0ba);
+
+function makeParticleTexture() {
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = 64;
+  const g = cv.getContext('2d');
+  const rg = g.createRadialGradient(32, 32, 1, 32, 32, 30);
+  rg.addColorStop(0, 'rgba(255,255,255,1)');
+  rg.addColorStop(0.35, 'rgba(225,250,255,.95)');
+  rg.addColorStop(0.68, 'rgba(125,220,255,.42)');
+  rg.addColorStop(1, 'rgba(56,189,248,0)');
+  g.fillStyle = rg;
+  g.fillRect(0, 0, 64, 64);
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.minFilter = THREE.LinearFilter;
+  return tex;
+}
+
+const particlePositions = new Float32Array(PARTICLE_MAX * 3);
+const particleColors = new Float32Array(PARTICLE_MAX * 3);
+const particleGeo = new THREE.BufferGeometry();
+particleGeo.setAttribute('position', new THREE.BufferAttribute(particlePositions, 3).setUsage(THREE.DynamicDrawUsage));
+particleGeo.setAttribute('color', new THREE.BufferAttribute(particleColors, 3).setUsage(THREE.DynamicDrawUsage));
+particleGeo.setDrawRange(0, 0);
+const particleMat = new THREE.PointsMaterial({
+  size: 3.0, map: makeParticleTexture(), vertexColors: true, sizeAttenuation: true,
+  transparent: true, depthWrite: false, alphaTest: 0.02, toneMapped: false,
+});
+const particlePoints = new THREE.Points(particleGeo, particleMat);
+particlePoints.frustumCulled = false;
+particlePoints.renderOrder = 2;
+particlePoints.visible = false;
+particleGroup.add(particlePoints);
 
 
 // ============================================================
@@ -1088,7 +1141,7 @@ function paintWire() {
   const m = computeMode();
   const col = wireGeo.attributes.color;
   const arr = col.array;
-  const RSEG = 8;
+  const RSEG = WIRE_RADIAL;
   const t0 = m.seg ? m.seg[0] : -1, t1 = m.seg ? m.seg[1] : -1;
   const highlight = !!m.seg;
   for (let i = 0; i <= WIRE_SEG; i++) {
@@ -1105,7 +1158,7 @@ function paintWire() {
 }
 
 // 绕线进度：TubeGeometry 的索引按段顺序 ⇒ setDrawRange 就是「一圈一圈绕上去」
-const WIRE_IDX_PER_SEG = 8 * 6;
+const WIRE_IDX_PER_SEG = WIRE_RADIAL * 6;
 function applyWrap() {
   const segs = Math.max(0, Math.round(state.wrap * WIRE_SEG));
   wireGeo.setDrawRange(0, segs * WIRE_IDX_PER_SEG);
@@ -1126,22 +1179,22 @@ function rebuildFlow() {
   if (!m.ok && m.key !== 'CD') {
     // A-B 接法：整根丝，不经过滑片
     if (m.key === 'AB') {
-      flowCurves.push({ curve: leadCurveFor(state.inT), mat: particleMatIn, count: 4 });
+      flowCurves.push({ curve: leadCurveFor(state.inT), color: PCOL_IN, count: PARTICLE_LEAD });
       const c = new WireSegCurve(0, 1);
       const cc = (state.inT === 'A') ? c : new WireSegCurve(1, 0);
-      flowCurves.push({ curve: cc, mat: particleMatIn, count: 10 });
-      flowCurves.push({ curve: leadCurveFor(state.outT), mat: particleMatOut, count: 4 });
+      flowCurves.push({ curve: cc, color: PCOL_IN, count: PARTICLE_COIL, lift: WIRE_R + 0.42 });
+      flowCurves.push({ curve: leadCurveFor(state.outT), color: PCOL_OUT, count: PARTICLE_LEAD });
     }
     return flowCurves;
   }
   if (m.key === 'CD') {
-    flowCurves.push({ curve: leadCurveFor(state.inT), mat: particleMatIn, count: 3 });
+    flowCurves.push({ curve: leadCurveFor(state.inT), color: PCOL_IN, count: PARTICLE_LEAD });
     const p1 = termWorld(state.inT), p2 = termWorld(state.outT);
     flowCurves.push({
       curve: new THREE.CatmullRomCurve3([p1, new THREE.Vector3((p1.x + p2.x) / 2, ROD_Y, 0), p2]),
-      mat: particleMatIn, count: 6,
+      color: PCOL_IN, count: PARTICLE_ROD,
     });
-    flowCurves.push({ curve: leadCurveFor(state.outT), mat: particleMatOut, count: 3 });
+    flowCurves.push({ curve: leadCurveFor(state.outT), color: PCOL_OUT, count: PARTICLE_LEAD });
     return flowCurves;
   }
   if (!m.seg) return flowCurves;
@@ -1151,50 +1204,67 @@ function rebuildFlow() {
   // 电流方向：从流入柱出发
   //   · 流入下柱 ⇒ 先走丝（A 端→滑片 或 从 B 端反向走到滑片），再上杆
   //   · 流入上柱 ⇒ 先下杆到滑片，再走丝到另一个下柱
-  flowCurves.push({ curve: leadCurveFor(state.inT), mat: particleMatIn, count: 4 });
+  flowCurves.push({ curve: leadCurveFor(state.inT), color: PCOL_IN, count: PARTICLE_LEAD });
 
   if (!inIsTop) {
     const a0 = (state.inT === 'A') ? seg[0] : seg[1];
     const a1 = (state.inT === 'A') ? seg[1] : seg[0];
-    flowCurves.push({ curve: new WireSegCurve(a0, a1), mat: particleMatIn, count: 10 });
-    flowCurves.push({ curve: sliderToRodCurve(xS), mat: particleMatIn, count: 3 });
+    flowCurves.push({ curve: new WireSegCurve(a0, a1), color: PCOL_IN, count: PARTICLE_COIL, lift: WIRE_R + 0.42 });
+    flowCurves.push({ curve: sliderToRodCurve(xS), color: PCOL_IN, count: PARTICLE_LEAD });
     if (outIsTop) {
-      flowCurves.push({ curve: rodCurveFor(state.outT), mat: particleMatOut, count: 4 });
+      flowCurves.push({ curve: rodCurveFor(state.outT), color: PCOL_OUT, count: PARTICLE_ROD });
     }
-    flowCurves.push({ curve: leadCurveFor(state.outT), mat: particleMatOut, count: 4 });
+    flowCurves.push({ curve: leadCurveFor(state.outT), color: PCOL_OUT, count: PARTICLE_LEAD });
   } else {
-    flowCurves.push({ curve: sliderToRodCurve(xS), mat: particleMatIn, count: 3 });
+    flowCurves.push({ curve: sliderToRodCurve(xS), color: PCOL_IN, count: PARTICLE_LEAD });
     const b0 = (state.outT === 'A') ? seg[1] : seg[0];
     const b1 = (state.outT === 'A') ? seg[0] : seg[1];
-    flowCurves.push({ curve: new WireSegCurve(b0, b1), mat: particleMatIn, count: 10 });
-    flowCurves.push({ curve: leadCurveFor(state.outT), mat: particleMatOut, count: 4 });
+    flowCurves.push({ curve: new WireSegCurve(b0, b1), color: PCOL_IN, count: PARTICLE_COIL, lift: WIRE_R + 0.42 });
+    flowCurves.push({ curve: leadCurveFor(state.outT), color: PCOL_OUT, count: PARTICLE_LEAD });
   }
   return flowCurves;
 }
 
-let particlePool = [];
+const particlePool = [];
+const _particleV = new THREE.Vector3();
 function rebuildParticles() {
-  // 固定池：滑片一拖就重建路径，如果每次都 new Mesh 会一直分配/回收（掉帧）。
-  // 池子里的 mesh 只换 curve 引用，数量不够才补。
-  let need = 0;
-  flowCurves.forEach((f) => { need += f.count; });
-  while (particlePool.length < need) {
-    const mesh = new THREE.Mesh(particleGeo, particleMatIn);
-    mesh.userData.isParticle = true;
-    particleGroup.add(mesh);
-    particlePool.push({ mesh, curve: null, u0: 0 });
-  }
+  particlePool.length = 0;
   let k = 0;
   flowCurves.forEach((f) => {
-    for (let i = 0; i < f.count; i++) {
-      const p = particlePool[k++];
-      p.curve = f.curve;
-      p.u0 = i / f.count;
-      p.mesh.material = f.mat;
-      p.mesh.visible = true;
+    const n = Math.max(0, f.count | 0);
+    for (let i = 0; i < n && k < PARTICLE_MAX; i++, k++) {
+      const c = f.color || PCOL_IN;
+      particlePool.push({ curve: f.curve, u0: i / n, lift: f.lift || 0 });
+      particleColors[k * 3] = c.r;
+      particleColors[k * 3 + 1] = c.g;
+      particleColors[k * 3 + 2] = c.b;
     }
   });
-  for (; k < particlePool.length; k++) particlePool[k].mesh.visible = false;
+  particleGeo.setDrawRange(0, k);
+  particleGeo.attributes.color.needsUpdate = true;
+  particlePoints.visible = k > 0 && state.current;
+  updateParticlePositions(0);
+}
+
+function updateParticlePositions(elapsed) {
+  const arr = particlePositions;
+  for (let i = 0; i < particlePool.length; i++) {
+    const p = particlePool[i];
+    const u = (p.u0 + elapsed * 0.34) % 1;
+    p.curve.getPointAt(u, _particleV);
+    if (p.lift) {
+      // 曲线是电阻丝的【中心线】。点必须沿径向抬到丝的外表面，否则会被铜丝本体挡住。
+      const rr = Math.hypot(_particleV.y, _particleV.z);
+      if (rr > 0.001) {
+        _particleV.y += _particleV.y / rr * p.lift;
+        _particleV.z += _particleV.z / rr * p.lift;
+      }
+    }
+    arr[i * 3] = _particleV.x;
+    arr[i * 3 + 1] = _particleV.y;
+    arr[i * 3 + 2] = _particleV.z;
+  }
+  particleGeo.attributes.position.needsUpdate = true;
 }
 
 // ============================================================
@@ -1394,17 +1464,12 @@ function stepAnim(dt) {
   phase += dt;
   // 相机缓动
   updateCamera();
-  // 粒子
-  if (state.current && particleGroup.visible) {
-    for (let i = 0; i < particlePool.length; i++) {
-      const p = particlePool[i];
-      const u = (p.u0 + phase * 0.34) % 1;
-      const pt = p.curve.getPointAt(u);
-      p.mesh.position.copy(pt);
-      p.mesh.visible = true;
-    }
+  // 粒子：所有点一次更新，并沿各自曲线（含电阻丝背面）连续运动。
+  if (state.current && particleGroup.visible && particlePool.length) {
+    updateParticlePositions(phase);
+    particlePoints.visible = true;
   } else {
-    for (let i = 0; i < particlePool.length; i++) particlePool[i].mesh.visible = false;
+    particlePoints.visible = false;
   }
   if (state.spin) { cam.yawT += dt * 0.4; cam.yaw += dt * 0.4; }
   updateClip();
@@ -1464,7 +1529,7 @@ const PART_INFO = {
   },
   slider: {
     nm: '滑片', role: '决定「用多长的一段丝」',
-    desc: '蓝灰色拱形手柄套在滑杆上，下面一条银色金属弹片伸到线圈前表面，末端的<b>黄铜触头</b>靠弹性压在绕线上。触点把「丝」和「金属杆」接通，滑片的位置就是接入段与未接入段的分界点。',
+    desc: '蓝灰色拱形手柄套在滑杆上，前后各有金属压簧：前侧末端的<b>黄铜触头</b>与电阻丝接通，后侧是绝缘导向块。可以<b>直接左右拖动滑片</b>改变接入长度，滑片的位置就是接入段与未接入段的分界点。',
   },
   A: {
     nm: 'A 接线柱', role: '电阻丝左端（下柱）',
@@ -1615,6 +1680,7 @@ function setLabels(on) {
 }
 function setCurrent(on) {
   state.current = on;
+  particlePoints.visible = on && particlePool.length > 0;
   syncUI();
 }
 function setCut(on) {
@@ -1683,24 +1749,64 @@ document.querySelectorAll('.lab3d-toolbar [data-view]').forEach((b) => {
 });
 
 // ============================================================
-//  指针交互：拖空白转视角 / 滚轮缩放 / 点零件看说明
+//  指针交互：拖滑片调电阻 / 拖空白转视角 / 滚轮缩放 / 点零件看说明
 // ============================================================
 let drag = null;
+
+// 滑片只沿自身的 x 轴移动。把这条三维轴投影到屏幕，鼠标位移就能换算成 0..1。
+function slideAxisOnScreen() {
+  const rect = canvas.getBoundingClientRect();
+  const a = new THREE.Vector3(SLIDE_MIN, ROD_Y, 0).project(camera);
+  const b = new THREE.Vector3(SLIDE_MAX, ROD_Y, 0).project(camera);
+  const vx = (b.x - a.x) * rect.width * 0.5;
+  const vy = -(b.y - a.y) * rect.height * 0.5;
+  const len2 = vx * vx + vy * vy;
+  // 侧视时滑杆几乎正对镜头，屏幕投影退化；此时退回水平拖动。
+  if (len2 < 100) return { x: 1, y: 0, len2: Math.pow(rect.width * 0.55, 2) };
+  return { x: vx, y: vy, len2 };
+}
+
+function endPointerDrag() {
+  canvas.classList.remove('grabbing', 'dragging-slider');
+  drag = null;
+}
+
 canvas.addEventListener('pointerdown', (e) => {
-  drag = { x: e.clientX, y: e.clientY, moved: 0 };
-  canvas.classList.add('grabbing');
+  const hit = pickAt(e.clientX, e.clientY);
+  const onSlider = hit === 'slider';
+  drag = {
+    x: e.clientX, y: e.clientY, startX: e.clientX, startY: e.clientY, moved: 0,
+    mode: onSlider ? 'slide' : 'rotate',
+    startSlide: state.slide,
+    axis: onSlider ? slideAxisOnScreen() : null,
+  };
+  if (onSlider) {
+    selectPart('slider');
+    canvas.classList.add('dragging-slider');
+  } else {
+    canvas.classList.add('grabbing');
+  }
   try { canvas.setPointerCapture(e.pointerId); } catch (_) {}
 });
 canvas.addEventListener('pointermove', (e) => {
   if (!drag) {
-    // 悬停：指到零件上换成手型（顺便让「点得到」这件事有反馈）
+    // 悬停：滑片给左右箭头，其它零件给手型。
     const id = pickAt(e.clientX, e.clientY);
-    canvas.classList.toggle('pick', !!id);
+    canvas.classList.toggle('grab-slider', id === 'slider');
+    canvas.classList.toggle('pick', !!id && id !== 'slider');
     return;
   }
   const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
   drag.moved += Math.abs(dx) + Math.abs(dy);
   drag.x = e.clientX; drag.y = e.clientY;
+
+  if (drag.mode === 'slide') {
+    const ax = drag.axis;
+    const along = ((e.clientX - drag.startX) * ax.x + (e.clientY - drag.startY) * ax.y) / ax.len2;
+    setSlide(drag.startSlide + along);
+    return;
+  }
+
   if (drag.moved > 3) {
     // yaw 减小 = 物体跟着手指转（往右拖，物体右边转过来）
     cam.yawT -= dx * 0.008;
@@ -1708,14 +1814,23 @@ canvas.addEventListener('pointermove', (e) => {
   }
 });
 canvas.addEventListener('pointerup', (e) => {
-  canvas.classList.remove('grabbing');
-  if (drag && drag.moved < 6) {
+  const wasSlider = drag && drag.mode === 'slide';
+  const moved = drag ? drag.moved : 0;
+  endPointerDrag();
+  if (wasSlider) {
+    if (moved > 2) {
+      const m = computeMode();
+      const r = (m.R == null) ? '—' : (Math.round(m.R * 10) / 10).toFixed(1);
+      toast('滑片 ' + pct(state.slide) + '% · R = ' + r + ' Ω');
+    }
+    return;
+  }
+  if (moved < 6) {
     const id = pickAt(e.clientX, e.clientY);
     if (id) selectPart(id);
   }
-  drag = null;
 });
-canvas.addEventListener('pointercancel', () => { drag = null; canvas.classList.remove('grabbing'); });
+canvas.addEventListener('pointercancel', endPointerDrag);
 canvas.addEventListener('wheel', (e) => {
   e.preventDefault();
   cam.distT = Math.max(88, Math.min(820, cam.distT * (1 + e.deltaY * 0.0012)));
@@ -1852,20 +1967,17 @@ window.__rheo = {
     };
   },
   particleInfo() {
-    return particlePool.slice(0, 8).map((p) => {
-      const wp = p.mesh.getWorldPosition(new THREE.Vector3());
-      // 🔴 别用「端点包围盒」判粒子在不在路径上：绕线是一根螺旋，端点之间的
-      //    横向范围有 ±WIND_R，包围盒会把「飞在管外的粒子」也判成合格。
-      //    这里直接量「到曲线的最短距离」。
-      // 采样要够密：绕线那段曲线的弧长有好几米（72 匝），64 点采样的间隔就上百度了。
+    return particlePool.slice(0, 8).map((p, idx) => {
+      const wp = new THREE.Vector3().fromBufferAttribute(particleGeo.attributes.position, idx);
+      // 直接量「到曲线的最短距离」，防止螺旋包围盒把飞在线圈外的点误判为合格。
       let minD = Infinity;
       const q = new THREE.Vector3();
-      for (let i = 0; i <= 400; i++) {
-        p.curve.getPointAt(i / 400, q);
+      for (let i = 0; i <= 500; i++) {
+        p.curve.getPointAt(i / 500, q);
         minD = Math.min(minD, q.distanceTo(wp));
       }
       return {
-        vis: p.mesh.visible,
+        vis: particlePoints.visible,
         pos: [wp.x, wp.y, wp.z].map((n) => Math.round(n * 10) / 10),
         minDist: Math.round(minD * 10) / 10,
       };
