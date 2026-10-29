@@ -127,7 +127,11 @@
       label: '焦耳定律演示器（U 形管）', terminals: 4,
       // 端子号：0/1 = 甲（左）容器的两根柱，2/3 = 乙（右）容器。
       termNames: ['甲+', '甲−', '乙+', '乙−'],
-      defaults: { R1: 5, R2: 10 },
+      // R2b = 乙容器里【再并联一根丝】的阻值，0 表示没装（默认）。
+      // 用户 2026-10-27：「右边空气盒里不是有个电阻吗，我想让它在上面再并联
+      // 一个电阻丝，两个的阻值都可以调节」。并上以后乙容器的等效电阻是
+      // R2 ∥ R2b，产热是两条丝之和 —— 用来做「并联电阻 / 改变电阻」那一步。
+      defaults: { R1: 5, R2: 10, R2b: 0 },
     },
     // ── 焦耳定律演示器（量热瓶，人教版 图18.4-1）──────────────────
     // 广口瓶里装着液体，瓶塞上插一支温度计、引出两根接线柱，瓶里泡着一段
@@ -210,7 +214,10 @@
       // true（默认）= 真灯泡，R 随自身功率变；false = 当定值电阻，R 恒为
       // 额定电阻 U额²/P额。课本上「不计温度影响」和「考虑温度影响」是
       // 两个阶段，这个开关就是那两步之间的门，别把默认改掉。
-      defaults: { ratedV: 2.5, ratedW: 0.75, tempDependent: true },
+      // showTemp = 在灯泡【上方】显示灯丝当前温度（默认关）。这不是装饰：
+      // 「电阻随温度升高而增大」这条要学生信，就得让他看见温度真的在涨
+      // （20℃ → 一千多度），否则「灯丝电阻变了」永远只是书上的一句话。
+      defaults: { ratedV: 2.5, ratedW: 0.75, tempDependent: true, showTemp: false },
     },
     // ── 发光二极管：单向导电性 ────────────────────────────────
     // 全站唯一一个「电流方向不对就不导通」的元件，也是初中讲单向导电性时
@@ -691,21 +698,46 @@
     var v = num(i ? P.R2 : P.R1, i ? 10 : 5);
     return v > 0 ? v : (i ? 10 : 5);
   }
+  // 乙容器里那根【并联】丝的阻值。0 = 没装（默认），所以不能用 jouleR 那套
+  // 「小于等于 0 就兜底」的写法 —— 0 在这里是有意义的值。
+  function jouleR2b(comp) {
+    var v = num(paramsOf(comp).R2b, 0);
+    return v > 0 ? v : 0;
+  }
   // 液面【满偏】对应的产热功率（W）。每一只 U 形管读的是【它自己那个容器】
   // 的产热功率：Δh ∝ Δp ∝ ΔT ∝ P。取 0.5 W 是照初中实验室那套器材标的：
   // 3V 电源 + 5Ω/10Ω 串联时两边是 0.2W / 0.4W，正好落在 40% / 80% 量程 ——
   // 两边的液面高度差一眼能比出来，又都不会顶到头。
   // 🔴 这个数只影响【画面上液面升多少】，不参与任何电学量的计算：
   //    它是一把刻度尺，不是物理模型的一部分。
-  var JOULE_P_REF = 0.5;
+  // 🔴 2026-10-27 改：原来是 0.5W 满偏 + 纯线性，那是按【串联】标的
+  //    （3V + 5Ω/10Ω 串联 → 0.2W / 0.4W）。学生一把两个容器【并联】
+  //    （3V → 1.8W / 0.9W），两个都超过 0.5W ⇒ 双双饱和到满偏 ⇒ 两只 U 形管
+  //    的液面一样高 —— 用户实测抓到的就是这个（「很显然是错误的」）。
+  //    纯线性 + 大满偏也不行：0.2/0.4 只差 4px，串联时又看不出差别。
+  //    🔴 2026-10-27 第二版：单一刻度覆盖不了 0.2W ~ 2.7W（13 倍）——tanh 无论
+  //    P_REF 取多大，总有一头"挤成一条线"（取 2.0 时串联 0.2/0.4 只差 4px；
+  //    取 1.0 时乙并 5Ω 的 1.8/2.7 只剩 2px）。用户第二次反馈：「功率不一样
+  //    的时候高度差不明显，两侧的对比要更明显一些」。
+  //    改成【两段线性】：0.6W 以下放大（每瓦 0.833 个满偏），以上压缩
+  //    （每瓦 0.238）。折点取 0.6W —— 课本串联实验（0.2/0.4W）整个落在低段，
+  //    并联（0.9/1.8W）和乙并 5Ω（1.8/2.7W）落在高段，两头都分得开。
+  //    实测（LVL_MAX = 24，两侧液面差）：串联 8.0px / 并联 10.3px /
+  //    乙并 20Ω 5.1px / 乙并 5Ω 10.3px —— 每一种接法都看得清。
+  //    「分段」不改变单调性和「功率大液面差就大」，只是把刻度做成两档，
+  //    和真实仪器换量程是一个意思。
+  var JOULE_P_KNEE = 0.6;       // 折点（W）
+  var JOULE_P_TOP = 2.7;        // 满偏对应的功率（3V + 乙并 5Ω 的极端组合）
   // 一个容器的产热功率 → 它那只 U 形管的液面偏移（0 ~ 1）。
   // 空气受热压强变大，把它自己那一侧的液面压下去、敞口那一侧顶上来，
   // 两边各移动 d，所以液面【高度差】是 2d。
   // 🔴 每只管子读自己的容器，不是两只管子读「差」：真实器材就是两个独立的
   //    U 形管，比较的是两只管子的高度差，不是一根管子的两边。
   function jouleLevelOf(p) {
-    var d = (p > 0 ? p : 0) / JOULE_P_REF;
-    return d > 1 ? 1 : d;
+    var P = p > 0 ? p : 0;
+    if (P <= JOULE_P_KNEE) return P / (JOULE_P_KNEE / 0.5);          // 0~0.6W → 0~0.5
+    var d = 0.5 + (P - JOULE_P_KNEE) / ((JOULE_P_TOP - JOULE_P_KNEE) / 0.5);
+    return d > 1 ? 1 : d;                                            // 0.6~2.7W → 0.5~1
   }
 
   // ── 量热瓶：瓶里液体的温升（见 TYPES.calorimeter）────────────────
@@ -887,6 +919,30 @@
     return pp.Rcold * (1 + pp.K * Math.pow(Math.max(power, 0), 0.25));
   }
 
+  // ── 灯丝温度（2026-10-29）────────────────────────────────────
+  // 温度是「伏安特性曲线为什么是一条弯的线」的唯一解释：U 一升 → I 升 →
+  // P = UI 涨 → 灯丝变热 → R 变大 → I 涨得没 U 快。所以这个数必须和
+  // 【灯丝电阻用同一个温度关系】，不能另编一套，否则画面上「温度涨了、
+  // 电阻没怎么变」，正好把这节课讲反。
+  //
+  //   lampRAt： R/R冷 = 1 + K·P^0.25
+  //   钨丝：   ρ ∝ T^1.2（300~3000K 实测指数在 1.2 附近；1.2 这个数让
+  //            R热/R冷 = 8 的灯泡落在约 1660 K ≈ 1390 ℃，和真灯泡的
+  //            灯丝温度同一量级）
+  //   ⇒ T = T冷 · (R/R冷)^(1/1.2)
+  //
+  // 🔴 温度按【功率】算，不按解出来的 R 反解。定值电阻模式
+  //    （tempDependent = false）下 R 恒等于额定值，照 R 反解会得出
+  //    「没通电也 1390℃」；按功率算，没通电就是 20℃、通了电才升 ——
+  //    两种模式都对，而且正好把「定值模式忽略了什么」摆在明面上。
+  var BULB_T_COLD = 20;        // 冷态温度 ℃（实验室室温，也是「没通电」的读数）
+  var BULB_T_EXP = 1.2;        // 钨丝电阻率对温度的幂指数
+  function bulbTempOf(pp, power) {
+    var ratio = 1 + pp.K * Math.pow(Math.max(power, 0), 0.25);   // = R/R冷
+    if (!(ratio > 0)) return BULB_T_COLD;
+    return (BULB_T_COLD + 273.15) * Math.pow(ratio, 1 / BULB_T_EXP) - 273.15;
+  }
+
   // ============================================================
   // 表头量程识别：量程由「导线接在哪个量程柱上」决定
   // ------------------------------------------------------------
@@ -988,6 +1044,16 @@
           if (jp === jq) continue;          // 两根柱被同一根导线短接：这段不起作用
           out.push({ kind: 'R', comp: comp, p: jp, q: jq,
                      R: jouleR(comp, ji), jouleIdx: ji });
+          // 乙容器里【再并一根丝】：同一对节点、另一条 R 支路（R2b > 0 才算）。
+          // 两条都带 jouleIdx = 1，回填时按 jouleIdx 把它们【都】捞出来累加 ——
+          // 只认第一条的话，并联丝发的热会被算丢（液面差偏小，还不报错）。
+          if (ji === 1) {
+            var jrb = jouleR2b(comp);
+            if (jrb > 0) {
+              out.push({ kind: 'R', comp: comp, p: jp, q: jq,
+                         R: jrb, jouleIdx: 1, joulePar: 1 });
+            }
+          }
         }
         break;
       }
@@ -1979,21 +2045,29 @@
           var jboxes = [0, 1].map(function (si) {
             // 按 jouleIdx 找支路，不能按 bs 下标（被短接的那条不在 bs 里，
             // 下标会整体错位 —— 那样「甲」会读到「乙」的电流）。
-            var jbr = null;
+            // 🔴 一个容器可能有【两条】支路（乙容器里并了一根丝），所以这里是
+            //    遍历累加，不是「找到第一条就 break」。
+            var jv = 0, jii = 0, jp = 0, jpar = false;
             for (var q = 0; q < bs.length; q++) {
-              if (bs[q].jouleIdx === si) { jbr = bs[q]; break; }
-            }
-            var jR = jouleR(c, si), jv = 0, jii = 0;
-            if (jbr) {
-              if (jbr.kind === 'V') { jii = bI(sol, jbr); }
-              else { jv = nV(sol, jbr.p) - nV(sol, jbr.q); jii = jv / jbr.R; }
-            }
-            return {
-              idx: si, R: jR, v: jv, i: jii,
+              if (bs[q].jouleIdx !== si) continue;
+              var jbr = bs[q], v1 = 0, i1 = 0;
+              if (jbr.kind === 'V') { i1 = bI(sol, jbr); }
+              else { v1 = nV(sol, jbr.p) - nV(sol, jbr.q); i1 = v1 / jbr.R; }
+              jv = v1;                     // 并联的两条端电压相同，取哪条都一样
+              jii += i1;                   // 总电流 = 两条之和
               // 产热功率：p = |U·I|。用两端压降乘电流而不是 I²R，是因为
               // 两种写法在正常支路上等价，而 U·I 在「这条支路被短接」时
               // 自然给 0（I²R 会给一个假的正数）。
-              p: Math.abs(jv * jii),
+              jp += Math.abs(v1 * i1);
+              if (jbr.joulePar) jpar = true;
+            }
+            // 等效电阻：并了第二根丝时是 R2 ∥ R2b（侧栏、箱体标签、读数框都读它）
+            var jR = jouleR(c, si);
+            var jr2b = si === 1 ? jouleR2b(c) : 0;
+            if (jpar && jr2b > 0) jR = (jR * jr2b) / (jR + jr2b);
+            return {
+              idx: si, R: jR, v: jv, i: jii, p: jp,
+              par: jpar, R2b: jpar ? jr2b : 0, Rmain: jouleR(c, si),
               // 两根柱都接了才算这个容器在工作（只看电流不行：合闸前也是 0）
               wired: wired.has(c.id + ':' + (si * 2)) &&
                      wired.has(c.id + ':' + (si * 2 + 1)),
@@ -2547,6 +2621,10 @@
     rec.brightness = Math.max(0, Math.min(rec.p / pp.Prated, 1.3));
     rec.overload = rec.p > 1.3 * pp.Prated;
     rec.R_selfCheck = lampRAt(pp, rec.p);
+    // 灯丝温度（℃）。画面上那个「上方温度牌」读的就是它。
+    // 没通电 ⇒ rec.p = 0 ⇒ 正好是室温 20℃，不是 0℃。
+    rec.tempC = bulbTempOf(pp, rec.p);
+    rec.tempK = rec.tempC + 273.15;
   }
 
   // 表头量程字段：量程由【导线接在哪个量程柱上】决定，参数里的 range
@@ -3259,6 +3337,8 @@
     galUnitOf: galUnitOf,
     lampParams: lampParams,
     lampRAt: lampRAt,
+    bulbTempOf: bulbTempOf,
+    BULB_T_COLD: BULB_T_COLD,
     solve: solve,
     wireCurrents: wireCurrents,
     // 「这个端子往节点里注入多少电流」。导出是为了让测试能独立验 KCL，
@@ -3343,8 +3423,9 @@
     // 绘制层按 rec.levels 画两只 U 形管的液柱、参数面板按 JOULE_R_CHOICES
     // 列下拉、自检按 JOULE_P_REF 反算「液面该到哪」—— 三处共用这一份。
     JOULE_R_CHOICES: JOULE_R_CHOICES,
-    JOULE_P_REF: JOULE_P_REF,
+    JOULE_P_KNEE: JOULE_P_KNEE, JOULE_P_TOP: JOULE_P_TOP,
     jouleR: jouleR,
+    jouleR2b: jouleR2b,
     jouleLevelOf: jouleLevelOf,
     // 量热瓶：阻值 + 稳态温升（t = T0 + K·P）。绘制层按 rec.temp 画温度计、
     // 参数面板按滑条写 R、自检按 CAL_T0/CAL_K 反算「该升到几度」。

@@ -208,11 +208,18 @@
     // （同电流、比电阻）和「5Ω 与 5Ω 比」（同电阻、比电流），给滑条反而让
     // 学生以为「想让哪边热就把哪边调大」—— 那就不是焦耳定律了。
     // 两个容器各自独立，画布上各自两根接线柱（甲 = 端子 0/1，乙 = 2/3）。
+    // 2026-10-27 用户加的第 3 项：乙容器里【再并一根丝】，两根阻值都可调。
+    // 0 = 不装（默认，和课本图18.4-2/18.4-3 一致）；选 5/10/20 就在乙容器里
+    // 并上一根，等效电阻 R2∥R2b、产热是两条丝之和 —— 画面上会多出一圈内丝。
+    // 用 labels 而不是 unit：0 那一项要写「不装」，不能印成「不装Ω」。
     joule: [
                 {k:'R1', t:'select', label:'甲 电阻', unit:'Ω',
                  options:[5, 10, 20]},
                 {k:'R2', t:'select', label:'乙 电阻', unit:'Ω',
-                 options:[5, 10, 20]}],
+                 options:[5, 10, 20]},
+                {k:'R2b', t:'select', label:'乙 并联丝',
+                 options:[0, 5, 10, 20],
+                 labels:{0:'不装', 5:'5Ω', 10:'10Ω', 20:'20Ω'}}],
     // ── 焦耳定律演示器（量热瓶，图18.4-1）────────────────────
     // 只有一个可调量：瓶里那段电阻丝的阻值。给【滑条】而不是下拉，
     // 因为这里要的是「换一段不同阻值的丝，看温度升到几度」—— 连续可调
@@ -246,7 +253,12 @@
                    set:{ratedV:1.5, ratedW:0.3}}]},
                 {k:'ratedV', t:'range', label:'额定电压', unit:'V', min:1.5, max:6, step:0.1},
                 {k:'ratedW', t:'range', label:'额定功率', unit:'W', min:0.2, max:3, step:0.1},
-                {k:'tempDependent', t:'check', wide:1, label:'灯丝电阻随温度升高而增大'}],
+                {k:'tempDependent', t:'check', wide:1, label:'灯丝电阻随温度升高而增大'},
+                // 2026-10-29 用户加的一项：把灯丝温度【显示在灯泡上方】。
+                // 放在「电阻随温度变」下面是有意的 —— 两个勾一起打，画面上就是
+                // 「温度涨 → 电阻涨」这一对因果；只勾上面那个，学生只看到 R 变了
+                // 却不知道为什么；只勾这个，能看到温度却看不到电阻跟着动。
+                {k:'showTemp', t:'check', wide:1, label:'显示灯丝温度（灯泡上方）'}],
     // 二极管的「颜色」不是一个装饰参数，它就是规格本身：换一根管子等于换一个
     // 正向压降。所以下拉框里把压降一起写出来（labels），学生换到蓝管时看得见
     // 「3.1V」这个数 —— 再看一眼电源只有 3V，就知道为什么它不亮。
@@ -424,9 +436,19 @@
     if (c.type === 'joule') {
       var jb = r.boxes || [];
       if (!jb.length) return '—';
+      var fmtJ = function (v) {
+        return (Math.abs(v - Math.round(v)) < 1e-9) ? String(Math.round(v)) : num1(v);
+      };
+      var jp = c.params || {};
       return jb.map(function (b) {
-        return (Math.abs(b.R - Math.round(b.R)) < 1e-9)
-          ? String(Math.round(b.R)) : num1(b.R);
+        // 乙容器并了第二根丝：印「10∥20」而不是等效值 6.7 —— 学生要能一眼
+        // 看出「里面是两根丝」，等效值只用于电学计算。
+        if (b.par && b.R2b > 0) {
+          var m = +jp.R2;
+          if (!(isFinite(m) && m > 0)) m = 10;
+          return fmtJ(m) + '并' + fmtJ(b.R2b);
+        }
+        return fmtJ(b.R);
       }).join(' / ');
     }
     return r.R == null ? '—' : num1(r.R);

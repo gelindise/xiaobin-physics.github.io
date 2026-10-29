@@ -616,7 +616,11 @@
     // 静止液面 / 单侧最大位移。液面【必须在汇合口以下】（−36）：升到汇合口
     // 上面去的话，液体就跑到「容器接管那段封闭的空气里」了，画面上看着像
     // 液柱从管子的侧面漏出来。−10 比 −36 低 26，留得下 ±22 的行程。
-    LVL_REST: -10, LVL_MAX: 22,
+    // 行程 24（原来是 22）：内侧腿升到 −34，离汇合口（ARCH_Y = −36）还留 2px。
+    // 加大行程是因为用户要「两侧对比更明显」—— 同样 0.18 的 level 差，
+    // 22 只有 4.0px、24 有 4.3px，配上新的两段刻度正好把串联实验从 4.3px
+    // 拉到 8.0px。
+    LVL_REST: -10, LVL_MAX: 24,
     HEAT_Y: 42, HEAT_R: 25,                  // 电热丝圈心 / 半径
     LABEL_Y: 82,                             // 箱体上印阻值的位置
     HW: 157, HH: 114,                        // 包围盒（含盖子最外沿与敞口腿顶端）
@@ -3806,6 +3810,12 @@
     var v = +(i ? P.R2 : P.R1);
     return (isFinite(v) && v > 0) ? v : (i ? 10 : 5);
   }
+  // 乙容器里那根并联丝的阻值（0 = 没装）。绘制层要它来画内圈、印标签。
+  function jouleR2bOf(comp) {
+    var P = (comp && comp.params) || {};
+    var v = +P.R2b;
+    return (isFinite(v) && v > 0) ? v : 0;
+  }
   function jouleRTxt(R) {
     return (Math.abs(R - Math.round(R)) < 1e-9 ? String(Math.round(R)) : String(R)) + 'Ω';
   }
@@ -3814,30 +3824,47 @@
   // 缺口两端各引一根短脚上去，接到盖子上的两根接线柱 ——
   // 这两根脚就是「电阻丝的两端接在柱子上」的唯一视觉证据，省掉的话丝就是
   // 悬空在盒子里的（参考图上那两根短脚清清楚楚）。
-  function drawJouleHeater(ctx, cx) {
-    var J = JOULE, cy = J.HEAT_Y, r = J.HEAT_R;
-    var n = 46, gap = 1.0;                  // 顶部缺口（弧度，约 57°）
-    var a0 = -Math.PI / 2 + gap / 2;        // 从缺口右侧起笔，绕一整圈
-    var a1 = -Math.PI / 2 - gap / 2 + Math.PI * 2;
+  // 一圈电热丝：径向短线 = 螺旋丝正对着我们时看到的一圈圈，两根脚从缺口
+  // 两端直上、顶到柱脚（柱心在 ±POST_DX、柱脚在 POST_Y）。
+  // 丝是【黄铜色】的，和箱子里的金属件区分开，一眼看得出这是一根导线。
+  // 抽出成函数是为了「乙容器里再并一根丝」—— 那一根画成同心内圈，两根的脚
+  // 在柱脚处汇合，画面上就是【并联】。
+  // flip = 缺口朝【下】（脚向下接柱），给盒外那根并联丝用；
+  //        不传 = 缺口朝上（脚向上接柱），盒内的主丝。
+  // 两根丝除了缺口朝向，尺寸 / 线宽 / 径向短线根数 / 配色全都一样 ——
+  // 用户 2026-10-27：「形状外形上要保持一样，做成一个对称的情况」。
+  function drawJouleCoil(ctx, cx, cy, r, n, tone, flip) {
+    var J = JOULE, gap = 1.0;               // 缺口（弧度，约 57°）
+    var base = flip ? Math.PI / 2 : -Math.PI / 2;
+    var a0 = base + gap / 2;                // 从缺口一侧起笔，绕一整圈
+    var a1 = base - gap / 2 + Math.PI * 2;
+    var shadowW = r > 20 ? 10 : 7;
     // 丝的底衬：一圈很淡的暗影。丝压在上面才有「嵌在箱子里」的感觉，
     // 光秃秃一圈短线看着像贴纸。⚠️ 只能很淡 —— 给到 0.10 时缩小以后
     // 整圈糊成一个深色圆盘，看着像个小风扇。
     ctx.beginPath(); ctx.arc(cx, cy, r - 3, a0, a1);
-    ctx.lineWidth = 10; ctx.strokeStyle = 'rgba(96,116,136,0.06)'; ctx.stroke();
-    // 径向短线 = 螺旋丝正对着我们时看到的一圈圈
-    ctx.lineWidth = 1.5; ctx.strokeStyle = '#6a7a8a'; ctx.lineCap = 'round';
+    ctx.lineWidth = shadowW; ctx.strokeStyle = 'rgba(96,116,136,0.06)'; ctx.stroke();
+    // 径向短线
+    ctx.lineWidth = r > 20 ? 1.5 : 1.2;
+    ctx.strokeStyle = tone || '#6a7a8a';
+    ctx.lineCap = 'round';
+    var inner = r > 20 ? r - 9 : r - 6.5;
     for (var k = 0; k < n; k++) {
       var a = a0 + (a1 - a0) * k / (n - 1);
       var c = Math.cos(a), s = Math.sin(a);
       ctx.beginPath();
-      ctx.moveTo(cx + c * (r - 9), cy + s * (r - 9));
+      ctx.moveTo(cx + c * inner, cy + s * inner);
       ctx.lineTo(cx + c * r, cy + s * r);
       ctx.stroke();
     }
-    // 两根引出脚：从缺口两端直上，顶到柱脚（柱心在 ±POST_DX、柱脚在 POST_Y）。
-    // 丝是【黄铜色】的，和箱子里的金属件区分开，一眼看得出这是一根导线。
+    // 两根引出脚
     [-1, 1].forEach(function (sgn) {
-      var a = sgn < 0 ? a1 : a0;
+      // 起笔角度必须让【左缺口连左柱、右缺口连右柱】。
+      // 缺口朝上（base = −π/2）：左 = base − gap/2（−118.6°，cos<0）；
+      // 缺口朝下（base = +π/2）：左 = base + gap/2（+118.6°，cos<0）。
+      // 🔴 一开始两档都写成 base + sgn·gap/2 —— 缺口翻到朝下时左右就反了，
+      //    左脚连到右柱、右脚连到左柱，两根引线在柱脚处交叉成 X（用户抓到）。
+      var a = base + (flip ? -1 : 1) * sgn * gap / 2;
       var x0 = cx + Math.cos(a) * (r - 4.5);
       var y0 = cy + Math.sin(a) * (r - 4.5);
       var x1 = cx + sgn * J.POST_DX, y1 = J.POST_Y + 3;
@@ -3853,6 +3880,22 @@
       ctx.arc(x0, y0, 2.2, 0, 6.284);
       ctx.fillStyle = '#c9a95f'; ctx.fill();
     });
+  }
+  function drawJouleHeater(ctx, cx) {
+    drawJouleCoil(ctx, cx, JOULE.HEAT_Y, JOULE.HEAT_R, 46);
+  }
+  // 乙容器【盒外】那根并联电阻丝。用户 2026-10-27 明确：「不是在空气盒的里边，
+  // 而是在空气盒的外边，和这两个接线柱相连」。
+  // 画在盖子上方一条水平螺旋（侧视 = 波浪），两端引线直接落到那两根柱脚上 ——
+  // 两根丝接同一对柱子就是并联，画面上看得出来，不用靠标签解释。
+  // 位置：x ∈ cx±16、y = −28。这个矩形在 U 型管接管（x = ±68、y ≥ −36）的
+  // 右边、盖子上沿（−9）的上边，是包围盒里唯一一块空着的方寸。
+  function drawJouleParWire(ctx, cx) {
+    // 和盒内主丝【同一个函数、同一个半径、同样 46 根短线】，只是：
+    //   · 圆心画在盖子上方 y = −HEAT_Y（对盒子中线上下对称）；
+    //   · 缺口朝下（flip），两根脚从缺口往【下】接到柱脚 —— 正好「紧接接线柱」。
+    // 这样两只盒子（有并联丝的那只）在画面上是上下对称的一对圆环。
+    drawJouleCoil(ctx, cx, -JOULE.HEAT_Y, JOULE.HEAT_R, 46, null, true);
   }
 
   // 一只 U 形管（每台仪器有【两只】，各接一个容器）：
@@ -3961,6 +4004,8 @@
     //    露在盖子外面就成了两根戳在盖子上面的铜棍 —— 参考图上脚是从盖子里
     //    伸出来的）
     drawJouleHeater(ctx, cx);
+    // 乙容器并了一根丝：那根丝画在【盒外】、接同一对柱脚
+    if (idx === 1 && jouleR2bOf(comp) > 0) drawJouleParWire(ctx, cx);
     // ④ 盖子：比箱体宽一圈，顶面一条亮带（这一条就是「盖子」的读法）
     roundRect(ctx, cx - J.LID_W / 2, J.LID_TOP, J.LID_W, J.LID_BOT - J.LID_TOP, 3);
     ctx.fillStyle = linGrad(ctx, 0, J.LID_TOP, 0, J.LID_BOT,
@@ -3972,11 +4017,22 @@
     ctx.moveTo(cx - J.LID_W / 2 + 5, J.LID_TOP + 1.3);
     ctx.lineTo(cx + J.LID_W / 2 - 5, J.LID_TOP + 1.3);
     ctx.stroke();
-    // ⑤ 阻值
-    var txt = jouleRTxt(jouleRof(comp, idx, rec));
+    // ⑤ 阻值。并了两根丝时印「10Ω∥20Ω」—— 只印等效值（6.7Ω）的话，
+    //    学生看不出「里面是两根丝」，而这一版的重点正是那两根。
+    var r2b = idx === 1 ? jouleR2bOf(comp) : 0;
+    var txt, fs = 20;
+    if (r2b > 0) {
+      // 用中文「并」而不是 ∥：这套字体栈里 U+2225 会被回退成「/」，
+      // 画面上读起来像「10Ω 或 20Ω」（量程），不像并联。
+      txt = jouleRTxt(jouleRof(comp, idx, null)) + '并' + jouleRTxt(r2b);
+      fs = 13;                       // 「10Ω并20Ω」7 个字，96px 宽的箱体刚好放得下
+    } else {
+      txt = jouleRTxt(jouleRof(comp, idx, rec));
+    }
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.font = 'bold 20px -apple-system,"PingFang SC",sans-serif';
-    ctx.lineWidth = 3.6; ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+    ctx.font = 'bold ' + fs + 'px -apple-system,"PingFang SC",sans-serif';
+    ctx.lineWidth = fs > 16 ? 3.6 : 3;
+    ctx.strokeStyle = 'rgba(255,255,255,0.9)';
     ctx.strokeText(txt, cx, J.LABEL_Y);
     ctx.fillStyle = '#3f4c5a';
     ctx.fillText(txt, cx, J.LABEL_Y);
@@ -5136,6 +5192,55 @@
     ctx.restore();
   }
 
+  // ── 灯丝温度牌（挂在灯泡正上方）────────────────────────────
+  // 用户 2026-10-29：「灯泡参数里加入温度显示功能，打开温度显示，可以把当前
+  // 灯泡的温度显示在灯泡的上方」。
+  //
+  // 为什么值得单开一块牌：讲「伏安法测小灯泡电阻」时，学生量出几组 U、I，
+  // 发现 R 一直在变，最容易得出的错误结论是「欧姆定律不灵了」。温度是那个
+  // 正确答案 —— 但温度看不见，所以这个数必须【长在灯泡头上】，而不是藏在
+  // 侧栏里。颜色也跟着温度走（冷灰蓝 → 热橙红），不看数字也知道它在变热。
+  //
+  // 牌子画在【世界坐标】里：跟着元件转，字不跟着转 —— 灯泡倒过来装时牌子
+  // 挂在它头顶那一侧，但字始终是正的（转了就没法读了）。
+  var BULB_TEMP_CHIP = {
+    H: 26, PADX: 18, GAP: 9, TOP_MIN: 3,
+    FONT: 'bold 18px ui-monospace,Menlo,Consolas,monospace',
+  };
+  function drawBulbTemp(ctx, comp, rec) {
+    if (!rec || typeof rec.tempC !== 'number') return;
+    var t = rec.tempC;
+    var txt = Math.round(t) + ' ℃';
+    // 色标：按【对数】插值。20℃ 到 1400℃ 差 70 倍，线性插值的话 20→200℃
+    // 这一段几乎不动色，而学生真正在看的就是「刚开始变热」这一段。
+    var k = Math.log(Math.max(t, 20) / 20) / Math.log(70);
+    k = k < 0 ? 0 : (k > 1 ? 1 : k);
+    var mix = function (a, b) { return Math.round(a + (b - a) * k); };
+    var bg = 'rgba(' + mix(100, 220) + ',' + mix(116, 38) + ',' + mix(139, 38) + ',0.95)';
+    var C = BULB_TEMP_CHIP;
+    var sc = scaleOf(comp);
+    var ang = (comp.rot || 0) * Math.PI / 180;
+    // 牌心落在「包围盒上沿再往外一个 GAP + 半高」处（COMP_BOX.bulb.y0 = −80）
+    var lx = 0, ly = -80 - C.GAP - C.H / 2;
+    var wx = comp.x + (lx * Math.cos(ang) - ly * Math.sin(ang)) * sc;
+    var wy = comp.y + (lx * Math.sin(ang) + ly * Math.cos(ang)) * sc;
+    ctx.save();
+    ctx.font = C.FONT;
+    var w = Math.max(60, ctx.measureText(txt).width + C.PADX * 2);
+    var bx = wx - w / 2, by = wy - C.H / 2;
+    if (by < C.TOP_MIN) by = C.TOP_MIN;        // 灯泡贴到画布顶边时别整块飘出去
+    ctx.shadowColor = 'rgba(15,23,42,0.26)'; ctx.shadowBlur = 8; ctx.shadowOffsetY = 2.5;
+    ctx.fillStyle = bg;
+    roundRect(ctx, bx, by, w, C.H, C.H / 2); ctx.fill();
+    ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
+    ctx.strokeStyle = 'rgba(255,255,255,0.8)'; ctx.lineWidth = 1.4;
+    roundRect(ctx, bx, by, w, C.H, C.H / 2); ctx.stroke();
+    ctx.fillStyle = '#fff';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(txt, bx + w / 2, by + C.H / 2 + 1);
+    ctx.restore();
+  }
+
   function drawBulb(ctx, comp, rec) {
     // 损坏状态（内核回传）。'removed' = 灯泡被拧下来了，'burned' = 灯丝烧断。
     // 两者在电路上都是断路，但【画面上必须看得出区别】：一个是「这里本来就没
@@ -5427,6 +5532,12 @@
     // 两端柱子照参考图给红的：实物上这两件器材的接线柱都是红的。
     // 它没有极性——红在这里只是「实物就是这个颜色」，正负仍然由电路决定。
     posts(ctx, comp, ['pos', 'pos'], 1.4, 8);
+
+    // 灯丝温度牌（参数里勾了「显示灯丝温度」才画）。必须在 restore 之后：
+    // 牌子的落点要在世界坐标里算 —— 它跟着元件转，但字不能跟着转。
+    // 被拧下来的灯泡走的是上面那个提前 return 的分支，这里轮不到，正好：
+    // 灯泡都不在了，还挂一个「20℃」是错的信息。
+    if (comp.params && comp.params.showTemp) drawBulbTemp(ctx, comp, rec);
   }
 
   // ============================================================
@@ -7689,6 +7800,9 @@
     clipLocalX: clipLocalX, clipLenFromLocalX: clipLenFromLocalX,
     pencilLenOf: pencilLenOf,
     drawComponent: drawComponent, drawWire: drawWire, electronShift: electronShift,
+    // 灯丝温度牌单独导出：自检要能在【不画整个元件】的前提下问「牌子落在
+    // 灯泡上方哪一带、字是多少」，宿主也可以在别的层上重画它。
+    drawBulbTemp: drawBulbTemp, BULB_TEMP_CHIP: BULB_TEMP_CHIP,
     // 元件图示（元件盒图标 / 拖拽鬼影）。取景框 ICON_VIEW 一并导出：
     // 自检要能问「这颗按钮的框包没包住整件器材」。
     drawIcon: drawIcon, ICON_VIEW: ICON_VIEW,
