@@ -49,6 +49,8 @@ export const MAT = {
   plastic: new THREE.MeshStandardMaterial({ color: 0x26354a, roughness: 0.58, metalness: 0.18 }),
   plasticSoft: new THREE.MeshStandardMaterial({ color: 0x9db3ca, roughness: 0.38, metalness: 0.28 }),
   base: new THREE.MeshStandardMaterial({ color: 0x7189a3, roughness: 0.48, metalness: 0.48 }),
+  // 闸刀开关的浅蓝灰塑料底座（人教版插图那种颜色）
+  basePlate: new THREE.MeshStandardMaterial({ color: 0x8499b2, roughness: 0.5, metalness: 0.14 }),
   red: new THREE.MeshStandardMaterial({ color: 0xc83b32, roughness: 0.42, metalness: 0.08 }),
   black: new THREE.MeshStandardMaterial({ color: 0x151b24, roughness: 0.55, metalness: 0.25 }),
   copper: new THREE.MeshStandardMaterial({ color: 0xb66a2e, roughness: 0.32, metalness: 0.78 }),
@@ -385,11 +387,13 @@ export function buildRheostat(opts) {
   const bounds = { hw: DIM.HOLD_X * S + 6, hd: 30 * S };
 
   // 四个接线柱的局部坐标（已含缩放与 y 偏移），后面接导线时直接用
+  // 取【滚花柱中心】而不是端面：端面在柱子外面，射线打上去是空的
+  // （症状 = 第二次点接线柱点不上，导线永远建不出来）。
   const termLocal = {
-    A: new THREE.Vector3(-DIM.TERM_X * S, (-3 - DIM.BASE_Y) * S, 30.4 * S),
-    B: new THREE.Vector3(DIM.TERM_X * S, (-3 - DIM.BASE_Y) * S, 30.4 * S),
-    C: new THREE.Vector3(-(DIM.ROD_L / 2 + 8.8) * S, (DIM.ROD_Y - DIM.BASE_Y) * S, 0),
-    D: new THREE.Vector3((DIM.ROD_L / 2 + 8.8) * S, (DIM.ROD_Y - DIM.BASE_Y) * S, 0),
+    A: new THREE.Vector3(-DIM.TERM_X * S, (-3 - DIM.BASE_Y) * S, 26.6 * S),
+    B: new THREE.Vector3(DIM.TERM_X * S, (-3 - DIM.BASE_Y) * S, 26.6 * S),
+    C: new THREE.Vector3(-(DIM.ROD_L / 2 + 5.2) * S, (DIM.ROD_Y - DIM.BASE_Y) * S, 0),
+    D: new THREE.Vector3((DIM.ROD_L / 2 + 5.2) * S, (DIM.ROD_Y - DIM.BASE_Y) * S, 0),
   };
 
   const api = {
@@ -416,6 +420,187 @@ export function buildRheostat(opts) {
 }
 
 // ============================================================
+//  单刀闸刀开关（人教版 15.2-1 那副外观）
+// ------------------------------------------------------------
+// 参考图（2D 教材插图）→ 3D 的对应关系：
+//   浅蓝灰圆角底座（≈100×56×10 mm）       → 圆角 Shape 挤出 + 倒角
+//   左右两只红色滚花接线柱                  → 复用 knurledGeometry（和变阻器同一套滚花）
+//   左侧带黄铆钉的竖直刀座                  → 薄金属板 + 铆钉 + 轴
+//   刀片 + 末端浅蓝绝缘手柄                 → 一个可绕轴旋转的 Group
+//   右侧刀夹（两片，中间留缝）              → 两片金属板夹住刀片
+// 闭合 = 刀片水平落进刀夹；断开 = 刀片抬起约 20°（就是参考图那个姿态）。
+// ============================================================
+export const SW_DIM = {
+  BASE_W: 100, BASE_D: 56, BASE_H: 14,
+  POST_X: 40, POST_Z: 18, POST_R: 5.5, POST_H: 16,
+  PIVOT_X: -34, BLADE_Y: 36, BLADE_LEN: 62,
+  CLIP_X: 28, CLIP_H: 42,
+  SCALE: 2.8,
+};
+
+function roundRectShape(w, d, r) {
+  const s = new THREE.Shape();
+  const x = -w / 2, y = -d / 2;
+  s.moveTo(x + r, y);
+  s.lineTo(x + w - r, y);
+  s.quadraticCurveTo(x + w, y, x + w, y + r);
+  s.lineTo(x + w, y + d - r);
+  s.quadraticCurveTo(x + w, y + d, x + w - r, y + d);
+  s.lineTo(x + r, y + d);
+  s.quadraticCurveTo(x, y + d, x, y + d - r);
+  s.lineTo(x, y + r);
+  s.quadraticCurveTo(x, y, x + r, y);
+  return s;
+}
+
+export function buildSwitch(opts) {
+  opts = opts || {};
+  const D = SW_DIM;
+  const S = D.SCALE;
+  const outer = new THREE.Group();
+  const inner = new THREE.Group();
+  inner.scale.setScalar(S);
+  inner.position.y = D.BASE_H * S;      // 底座下表面落在 y=0（桌面）
+  outer.add(inner);
+
+  // ── 底座：圆角矩形挤出，上表面 y=0 ─────────────────────────
+  const baseGeo = new THREE.ExtrudeGeometry(roundRectShape(D.BASE_W, D.BASE_D, 9), {
+    depth: D.BASE_H, bevelEnabled: true, bevelThickness: 1.2, bevelSize: 1.2,
+    bevelSegments: 2, curveSegments: 12,
+  });
+  baseGeo.rotateX(-Math.PI / 2);
+  baseGeo.translate(0, -D.BASE_H, 0);
+  const base = new THREE.Mesh(baseGeo, MAT.basePlate);
+  inner.add(base);
+
+  // ── 两只红色滚花接线柱（+ 金属垫圈）────────────────────────
+  [-1, 1].forEach((sx) => {
+    const x = sx * D.POST_X;
+    const pad = new THREE.Mesh(new THREE.CylinderGeometry(D.POST_R + 3.4, D.POST_R + 4, 2.4, 28), MAT.steel);
+    pad.position.set(x, 1.2, D.POST_Z);
+    inner.add(pad);
+    const stem = new THREE.Mesh(new THREE.CylinderGeometry(D.POST_R * 0.72, D.POST_R * 0.72, 4, 20), MAT.brass);
+    stem.position.set(x, 3.4, D.POST_Z);
+    inner.add(stem);
+    const cap = new THREE.Mesh(knurledGeometry(D.POST_R, D.POST_H), MAT.red);
+    cap.position.set(x, 3.4 + D.POST_H / 2, D.POST_Z);
+    cap.userData.termId = sx < 0 ? 'A' : 'B';
+    inner.add(cap);
+    // 柱顶的凹槽（真实接线柱上用来卡导线）
+    const slot = new THREE.Mesh(new THREE.BoxGeometry(D.POST_R * 1.1, 0.7, 0.3), MAT.black);
+    slot.position.set(x, 3.4 + D.POST_H - 0.3, D.POST_Z + D.POST_R * 0.55);
+    inner.add(slot);
+  });
+
+  // ── 左刀座（薄金属板 + 黄铆钉 + 轴）────────────────────────
+  // 🔴 刀座是【薄板】：正面看到的是 12 宽 × 38 高的板，厚度 4 在 z 方向。
+  //    写成 Box(4, 42, 17)（厚 4、宽 17 在 z）从正面看就是一根细线，不像教材图。
+  const post = new THREE.Mesh(new THREE.BoxGeometry(12, D.BLADE_Y + 4, 4), MAT.steel);
+  post.position.set(D.PIVOT_X, (D.BLADE_Y + 4) / 2, 0);
+  inner.add(post);
+  const postFoot = new THREE.Mesh(new THREE.BoxGeometry(15, 4, 14), MAT.steel);
+  postFoot.position.set(D.PIVOT_X, 2, 0);
+  inner.add(postFoot);
+  const rivet = new THREE.Mesh(new THREE.CylinderGeometry(2.1, 2.1, 1.4, 18), MAT.brass);
+  rivet.rotation.x = Math.PI / 2;
+  rivet.position.set(D.PIVOT_X, D.BLADE_Y - 7, 2.6);
+  inner.add(rivet);
+  const axle = new THREE.Mesh(new THREE.CylinderGeometry(2.2, 2.2, 21, 20), MAT.steel);
+  axle.rotation.x = Math.PI / 2;
+  axle.position.set(D.PIVOT_X, D.BLADE_Y, 0);
+  inner.add(axle);
+
+  // ── 右刀夹：两片金属板，中间留缝（刀片落进来）──────────────
+  [-1, 1].forEach((sz) => {
+    const jaw = new THREE.Mesh(new THREE.BoxGeometry(12, D.CLIP_H, 2.2), MAT.steel);
+    jaw.position.set(D.CLIP_X, D.CLIP_H / 2, sz * 3.4);
+    inner.add(jaw);
+  });
+  const jawFoot = new THREE.Mesh(new THREE.BoxGeometry(11, 3.5, 12), MAT.steel);
+  jawFoot.position.set(D.CLIP_X, 1.75, 0);
+  inner.add(jawFoot);
+
+  // ── 刀片（可绕轴旋转）：Group 原点就在轴上，几何向 +x 伸 ────
+  const pivot = new THREE.Group();
+  pivot.position.set(D.PIVOT_X, D.BLADE_Y, 0);
+  inner.add(pivot);
+
+  const blade = new THREE.Mesh(new THREE.BoxGeometry(D.BLADE_LEN, 13, 2.8), MAT.steel);
+  blade.position.set(D.BLADE_LEN / 2, 0, 0);
+  blade.userData.role = 'blade';
+  pivot.add(blade);
+  // 刀尖收窄（教材图里前端是一小段梯形，这里用两块薄片叠出那个意思）
+  const tip = new THREE.Mesh(new THREE.BoxGeometry(8, 10, 2.4), MAT.steel);
+  tip.position.set(D.BLADE_LEN - 2, 0, 0);
+  pivot.add(tip);
+
+  // 末端绝缘手柄：浅蓝圆柱 + 方形挡圈（参考图那只）
+  const handle = new THREE.Group();
+  handle.position.set(D.BLADE_LEN + 1, 0, 0);
+  pivot.add(handle);
+  const collar = new THREE.Mesh(new THREE.BoxGeometry(7, 14, 14), MAT.plasticSoft);
+  collar.position.set(3.5, 0, 0);
+  handle.add(collar);
+  const grip = new THREE.Mesh(new THREE.CylinderGeometry(5.2, 5.2, 24, 22), MAT.plasticSoft);
+  grip.rotation.z = Math.PI / 2;
+  grip.position.set(19, 0, 0);
+  handle.add(grip);
+  const knob = new THREE.Mesh(new THREE.SphereGeometry(5.2, 18, 12), MAT.plasticSoft);
+  knob.position.set(31, 0, 0);
+  handle.add(knob);
+
+  // ── 桌面接触阴影 ─────────────────────────────────────────
+  const shadow = new THREE.Mesh(
+    new THREE.PlaneGeometry(270, 180),
+    new THREE.MeshBasicMaterial({ map: shadowTexture(), transparent: true, depthWrite: false })
+  );
+  shadow.rotation.x = -Math.PI / 2;
+  shadow.position.y = 0.35;
+  shadow.renderOrder = -1;
+  outer.add(shadow);
+
+  // ── 开合 ────────────────────────────────────────────────
+  // 闭合 0 rad（水平落进刀夹）；断开 +0.34 rad（末端抬起，约 19.5°）
+  const OPEN = 0.34;
+  let closed = opts.closed == null ? false : !!opts.closed;
+  let target = closed ? 0 : OPEN;
+  let angle = target;
+
+  // 同样取柱身中部（柱顶再往上就是空气了）
+  const termLocal = {
+    A: new THREE.Vector3(-D.POST_X * S, (3.4 + D.POST_H * 0.55 + D.BASE_H) * S, D.POST_Z * S),
+    B: new THREE.Vector3(D.POST_X * S, (3.4 + D.POST_H * 0.55 + D.BASE_H) * S, D.POST_Z * S),
+  };
+
+  const api = {
+    group: outer,
+    shadow,
+    localToWorld: (v) => inner.localToWorld(v.clone()),
+    worldToLocal: (v) => inner.worldToLocal(v.clone()),
+    type: 'switch',
+    label: '开关',
+    spec: '单刀单掷',
+    bounds: { hw: D.BASE_W / 2 * S + 6, hd: D.BASE_D / 2 * S },
+    pivot,
+    termLocal,
+    setClosed(on) { closed = !!on; target = closed ? 0 : OPEN; },
+    toggle() { api.setClosed(!closed); return closed; },
+    isClosed: () => closed,
+    getAngle: () => angle,
+    // 参数面板 / 读数用
+    stateText: () => (closed ? '闭合（通路）' : '断开（断路）'),
+    // 每帧缓动：刀片落下 / 抬起都带一点惯性，不是瞬移
+    step(dt) {
+      const k = 1 - Math.pow(0.001, dt);      // 与帧率无关的指数缓动
+      angle += (target - angle) * Math.min(1, k * 1.6);
+      pivot.rotation.z = angle;
+    },
+  };
+  api.step(0.016);
+  return api;
+}
+
+// ============================================================
 //  器材目录（器材库面板按这张表生成卡片）
 // ============================================================
 export const CATALOG = [
@@ -428,7 +613,11 @@ export const CATALOG = [
     ready: true,
   },
   { type: 'battery', label: '电池组', spec: '3 V / 6 V', desc: '两只干电池串成的电源盒，正负极在两端。', ready: false },
-  { type: 'switch', label: '开关', spec: '单刀单掷', desc: '闸刀式开关，合上就通、断开就断。', ready: false },
+  {
+    type: 'switch', label: '开关', spec: '单刀单掷',
+    desc: '闸刀式开关：点刀片合上／抬起。',
+    build: buildSwitch, ready: true,
+  },
   { type: 'bulb', label: '小灯泡', spec: '2.5 V　0.3 A', desc: '带灯座的螺口小灯泡，亮度随电流变。', ready: false },
   { type: 'meter', label: '电流表 / 电压表', spec: '三柱双量程', desc: '两个量程柱 + 一个公共柱，接错会反偏。', ready: false },
 ];
