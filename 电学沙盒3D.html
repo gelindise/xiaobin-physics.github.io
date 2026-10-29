@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>电学沙盒 3D · 实验室实验桌 — 物理虚拟实验</title>
+<link rel="icon" href="favicon.svg">
+<!-- 门禁：VIP 专享。本页【不】登记 auth-check.js 的 FREE_EXPERIMENTS 白名单，
+     拦截全靠这行脚本；卡片用 card lock。三处（卡片 / 白名单 / 本行）缺一不可。 -->
+<script src="auth-check.js"></script>
+<style>
+  :root{
+    --bg:#020617; --panel:rgba(15,23,42,.72); --line:rgba(148,163,184,.16);
+    --ink:#e2e8f0; --dim:#94a3b8; --dim2:#64748b;
+    --blue:#38bdf8; --cyan:#22d3ee; --purple:#a78bfa; --green:#34d399;
+    --amber:#fbbf24; --red:#f87171; --rose:#f43f5e;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{
+    background:
+      radial-gradient(1100px 620px at 12% -8%, rgba(56,189,248,.14), transparent 62%),
+      radial-gradient(900px 560px at 88% 4%, rgba(167,139,250,.13), transparent 60%),
+      radial-gradient(760px 520px at 50% 108%, rgba(244,63,94,.09), transparent 60%),
+      var(--bg);
+    color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Segoe UI",Roboto,sans-serif;
+    -webkit-font-smoothing:antialiased; line-height:1.62; min-height:100vh;
+  }
+  a{color:#7dd3fc}
+
+  /* ===== 应用外壳：顶栏 + 三栏（器材库 / 画面 / 参数）=====
+     和「电路实验沙盒 3D」同一套骨架：除顶栏外画面铺满一屏，
+     元件盒在左侧可折叠，参数在舞台里可折叠。 */
+  .app{display:flex;flex-direction:column;height:100vh;height:100dvh;min-height:560px}
+
+  .topbar{flex:0 0 auto;display:flex;align-items:center;gap:10px;padding:8px 12px;
+    border-bottom:1px solid var(--line);background:rgba(2,6,23,.92);backdrop-filter:blur(10px);flex-wrap:wrap}
+  .tb-title{margin:0;font-size:16px;font-weight:800;letter-spacing:.4px;white-space:nowrap;
+    display:flex;align-items:center;gap:8px;
+    background:linear-gradient(120deg,#e2e8f0 10%,#7dd3fc 52%,#c4b5fd 92%);
+    -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+  .tb-badge{font-size:10px;font-weight:700;letter-spacing:.5px;padding:2px 7px;border-radius:6px;
+    background:rgba(56,189,248,.16);border:1px solid rgba(56,189,248,.4);
+    -webkit-text-fill-color:#7dd3fc;color:#7dd3fc}
+  .tb-funcs{display:flex;align-items:center;gap:5px;flex-wrap:wrap;min-width:0}
+  .app.folded .tb-funcs{display:none}
+  .tb-funcs button,.tb-ops button{padding:6px 10px;border-radius:9px;border:1px solid var(--line);
+    background:rgba(255,255,255,.05);color:#cbd5e1;font-size:12px;font-weight:600;cursor:pointer;
+    font-family:inherit;transition:all .16s;white-space:nowrap}
+  .tb-funcs button:hover,.tb-ops button:hover{background:rgba(56,189,248,.14);border-color:rgba(56,189,248,.4);color:#e0f2fe}
+  .tb-funcs button.on,.tb-ops button.on{background:linear-gradient(135deg,rgba(56,189,248,.28),rgba(34,211,238,.2));
+    border-color:rgba(56,189,248,.5);color:#e0f2fe}
+  .tb-funcs button.danger:hover{background:rgba(244,63,94,.2);border-color:rgba(244,63,94,.5);color:#fecdd3}
+  .tb-funcs button:disabled{opacity:.38;cursor:not-allowed}
+  .tb-sep{width:1px;height:18px;background:var(--line);flex:0 0 auto}
+  .tb-ops{margin-left:auto;display:flex;align-items:center;gap:5px;flex:0 0 auto}
+
+  .main{flex:1 1 auto;display:flex;gap:10px;padding:10px;min-height:0}
+  .main > *{min-height:0}
+
+  /* 器材库 */
+  .kitbox{flex:0 0 auto;width:200px;display:flex;flex-direction:column;gap:8px;
+    background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:10px}
+  .app.nokit .kitbox{display:none}
+  .kb-head{display:flex;align-items:center;gap:8px;font-size:12.5px;font-weight:700;color:#cbd5e1;flex:0 0 auto}
+  .kb-head .pill{margin-left:auto}
+  .kb-tip{margin:0;font-size:11px;color:#7b93a6;line-height:1.55;flex:0 0 auto}
+  .kb-tip b{color:#a5f3fc}
+  .palette{display:flex;flex-direction:column;gap:7px;overflow-y:auto;min-height:0;flex:1 1 auto;padding-right:2px}
+  .kit-card{display:flex;align-items:center;gap:9px;padding:8px;border-radius:11px;
+    border:1px solid var(--line);background:rgba(255,255,255,.04);color:#cbd5e1;cursor:grab;
+    font-family:inherit;transition:all .16s;text-align:left;touch-action:none;width:100%}
+  .kit-card:hover{background:rgba(56,189,248,.14);border-color:rgba(56,189,248,.4);color:#e0f2fe}
+  .kit-card .ic{flex:0 0 auto;width:46px;height:34px;border-radius:8px;overflow:hidden;
+    background:rgba(226,232,240,.9);display:flex;align-items:center;justify-content:center}
+  .kit-card .ic svg{display:block;width:42px;height:30px}
+  .kit-card .tx{min-width:0;display:flex;flex-direction:column;gap:1px}
+  .kit-card .nm{font-size:12px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .kit-card .sp{font-size:10px;color:#7b93a6;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .kit-card.soon{opacity:.5;cursor:not-allowed}
+  .kit-card.soon:hover{background:rgba(255,255,255,.04);border-color:var(--line);color:#cbd5e1}
+  .kit-card.soon .sp{color:#a16207}
+  .pal-ghost{position:fixed;z-index:90;pointer-events:none;display:flex;align-items:center;gap:8px;
+    padding:6px 10px 6px 6px;border-radius:11px;border:1px solid rgba(56,189,248,.6);
+    background:rgba(15,23,42,.95);box-shadow:0 10px 30px rgba(2,6,23,.6);opacity:.94}
+  .pal-ghost .nm{font-size:12px;font-weight:700;color:#e0f2fe}
+
+  .lab3d-stage{flex:1 1 auto;min-width:0;position:relative;border:1px solid var(--line);
+    border-radius:14px;overflow:hidden;background:#0a1018}
+  /* 🔴 canvas 是 replaced element：绝对定位 + width:auto 会退回内在尺寸 300×150，
+     left/right 拉不开 ⇒ 必须显式给 width/height（高度让出底部控制带 54px）。 */
+  .lab3d-stage canvas{position:absolute;left:0;top:0;width:100%;height:calc(100% - 54px);
+    display:block;touch-action:none;cursor:grab;outline:none}
+  .lab3d-stage canvas.grabbing{cursor:grabbing}
+  .lab3d-stage canvas.hot{cursor:pointer}
+  .lab3d-stage canvas.slide{cursor:ew-resize}
+  .lab3d-stage.dropping{outline:2px dashed rgba(56,189,248,.75);outline-offset:-3px}
+  .lab3d-stage:fullscreen,.lab3d-stage:-webkit-full-screen{width:100%;height:100%;border:0;border-radius:0;background:#0a1018}
+
+  .stage-hint{position:absolute;left:12px;top:12px;max-width:58%;padding:7px 11px;border-radius:9px;
+    background:rgba(2,6,23,.74);border:1px solid rgba(148,163,184,.22);color:#cbd5e1;font-size:11.5px;
+    line-height:1.6;backdrop-filter:blur(6px);pointer-events:none;z-index:3}
+  .stage-hint b{color:#7dd3fc}
+  .stage-toast{position:absolute;left:50%;top:12%;transform:translateX(-50%);padding:9px 16px;border-radius:12px;
+    background:rgba(2,6,23,.92);border:1px solid rgba(56,189,248,.45);color:#e0f2fe;font-size:12.5px;font-weight:600;
+    opacity:0;transition:opacity .22s;pointer-events:none;max-width:80%;text-align:center;z-index:7}
+  .stage-toast.show{opacity:1}
+
+  .stage-readout{position:absolute;left:12px;bottom:66px;z-index:3;padding:9px 12px;border-radius:11px;
+    background:rgba(2,6,23,.82);border:1px solid rgba(56,189,248,.28);backdrop-filter:blur(8px);
+    pointer-events:none;min-width:178px}
+  .stage-readout .rlab{font-size:10px;letter-spacing:.1em;color:#7b93a6;font-weight:700}
+  .stage-readout .rval{font-size:21px;font-weight:800;color:#7dd3fc;line-height:1.25;
+    font-variant-numeric:tabular-nums}
+  .stage-readout .rval small{font-size:12px;color:#94a3b8;font-weight:600;margin-left:2px}
+  .stage-readout .rsub{font-size:10.5px;color:#94a3b8;margin-top:2px;line-height:1.5}
+  .stage-readout .rsub b{color:#fcd34d}
+
+  .lab3d-stage .stage-fs-btn{position:absolute;top:11px;right:11px;z-index:9;
+    display:inline-flex;align-items:center;gap:5px;line-height:1;padding:7px 11px;border-radius:9px;
+    border:1px solid rgba(148,163,184,.3);background:rgba(2,6,23,.86);color:#cbd5e1;
+    font-family:inherit;font-size:11.5px;font-weight:800;cursor:pointer;transition:background .2s,border-color .2s,color .2s}
+  .lab3d-stage .stage-fs-btn:hover{border-color:rgba(125,211,252,.7);background:rgba(15,23,42,.92);color:#e0f2fe}
+  .lab3d-stage .stage-fs-btn:focus-visible{outline:2px solid rgba(125,211,252,.8);outline-offset:2px}
+
+  /* 参数面板：默认收起的小药丸，点开 300px、自己滚；是舞台的后代 ⇒ 全屏里也在 */
+  .lab3d-stage .stage-params{position:absolute;top:52px;right:11px;z-index:8;
+    display:flex;flex-direction:column;width:300px;max-width:calc(100% - 22px);
+    max-height:calc(100% - 122px);border:1px solid rgba(56,189,248,.3);border-radius:12px;
+    background:rgba(2,6,23,.9);-webkit-backdrop-filter:blur(9px);backdrop-filter:blur(9px);
+    box-shadow:0 18px 44px rgba(2,6,23,.62);color:#cbd5e1;text-align:left}
+  .lab3d-stage .stage-params.collapsed{width:auto}
+  .lab3d-stage .stage-params.collapsed .params-body{display:none}
+  .lab3d-stage .stage-params .params-head{display:flex;align-items:center;justify-content:space-between;gap:12px;
+    padding:9px 12px;border-bottom:1px solid rgba(148,163,184,.18);cursor:pointer}
+  .lab3d-stage .stage-params.collapsed .params-head{border-bottom:0;padding:8px 12px}
+  .lab3d-stage .stage-params .params-title{color:#7dd3fc;font-size:12px;font-weight:800;letter-spacing:.04em;white-space:nowrap}
+  .lab3d-stage .stage-params .params-toggle{flex:none;padding:4px 9px;border-radius:7px;line-height:1.25;
+    border:1px solid rgba(56,189,248,.45);background:rgba(56,189,248,.16);color:#e0f2fe;
+    font-family:inherit;font-size:11px;font-weight:800;cursor:pointer}
+  .lab3d-stage .stage-params .params-body{overflow-y:auto;overscroll-behavior:contain;touch-action:pan-y;
+    padding:0 13px 15px;scrollbar-width:thin}
+  .lab3d-stage .stage-params .params-body::-webkit-scrollbar{width:8px}
+  .lab3d-stage .stage-params .params-body::-webkit-scrollbar-thumb{background:rgba(148,163,184,.35);border-radius:99px}
+  .lab3d-stage .stage-params h4{margin:14px 0 9px;padding-top:11px;border-top:1px solid rgba(148,163,184,.14);
+    color:#7dd3fc;font-size:12px;font-weight:800;letter-spacing:.05em}
+  .lab3d-stage .stage-params h4:first-child{margin-top:12px;padding-top:0;border-top:0}
+  .lab3d-field{margin:9px 0}
+  .lab3d-field label{display:flex;align-items:center;justify-content:space-between;gap:8px;
+    font-size:11.5px;color:#cbd5e1;font-weight:600;margin-bottom:4px}
+  .lab3d-field output{color:#a5f3fc;font-variant-numeric:tabular-nums;font-weight:800}
+  .lab3d-field input[type=range]{width:100%;accent-color:#38bdf8;margin:0}
+  .lab3d-field small{display:block;margin-top:4px;color:#64748b;font-size:10px;line-height:1.55}
+  .lab3d-field small b{color:#7dd3fc}
+  .lab3d-btnrow{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:6px}
+  .lab3d-btnrow button{width:100%;padding:7px 8px;border-radius:9px;border:1px solid var(--line);
+    background:rgba(255,255,255,.05);color:#cbd5e1;font-family:inherit;font-size:11.5px;font-weight:700;cursor:pointer}
+  .lab3d-btnrow button:hover{background:rgba(56,189,248,.14);border-color:rgba(56,189,248,.4);color:#e0f2fe}
+  .lab3d-btnrow button.primary{border-color:rgba(56,189,248,.55);background:rgba(56,189,248,.16);color:#e0f2fe}
+  .params-checks{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 10px}
+  .params-checks label{display:inline-flex;align-items:center;gap:6px;color:#cbd5e1;font-size:11.5px;cursor:pointer}
+  .params-checks input{accent-color:#22d3ee;margin:0;flex:none}
+  .params-empty{font-size:11.5px;color:#64748b;padding:8px 0;line-height:1.6}
+
+  /* 底部控制带（全屏里也能完成关键操作） */
+  .stage-ctl{position:absolute;left:0;right:0;bottom:0;height:54px;z-index:6;
+    display:flex;align-items:center;gap:10px;padding:0 12px;flex-wrap:nowrap;
+    background:linear-gradient(180deg,rgba(2,6,23,.55),rgba(2,6,23,.94));
+    border-top:1px solid rgba(148,163,184,.18);backdrop-filter:blur(8px)}
+  .stage-ctl .ct{display:flex;align-items:center;gap:7px;min-width:0;flex:1 1 0}
+  .stage-ctl .ct span{font-size:11px;color:#94a3b8;white-space:nowrap;font-weight:600}
+  .stage-ctl .ct input[type=range]{flex:1 1 auto;min-width:52px;accent-color:#38bdf8;margin:0}
+  .stage-ctl .ct output{font-size:11px;color:#a5f3fc;font-weight:800;min-width:36px;text-align:right;
+    font-variant-numeric:tabular-nums}
+  .stage-ctl button{flex:0 0 auto;padding:6px 10px;border-radius:9px;border:1px solid var(--line);
+    background:rgba(255,255,255,.05);color:#cbd5e1;font-family:inherit;font-size:11.5px;font-weight:700;cursor:pointer;
+    white-space:nowrap;transition:all .16s}
+  .stage-ctl button:hover{background:rgba(56,189,248,.14);border-color:rgba(56,189,248,.4);color:#e0f2fe}
+  .stage-ctl button.on{background:linear-gradient(135deg,rgba(56,189,248,.3),rgba(34,211,238,.2));
+    border-color:rgba(56,189,248,.5);color:#e0f2fe}
+  .stage-ctl .sep{width:1px;height:20px;background:rgba(148,163,184,.2);flex:0 0 auto}
+
+  /* 器材名标签（DOM 投影） */
+  .stage-labels{position:absolute;left:0;top:0;right:0;bottom:54px;pointer-events:none;z-index:4;overflow:hidden}
+  .plabel{position:absolute;transform:translate(-50%,-50%);display:flex;align-items:center;gap:5px;
+    padding:2px 8px;border-radius:7px;background:rgba(2,6,23,.78);border:1px solid rgba(148,163,184,.3);
+    color:#cbd5e1;font-size:10.5px;font-weight:700;white-space:nowrap;line-height:1.5;transition:opacity .18s}
+  .plabel::before{content:"";width:5px;height:5px;border-radius:50%;background:#7dd3fc;flex:none}
+  .plabel.sel{border-color:rgba(56,189,248,.85);color:#e0f2fe;background:rgba(8,47,73,.9)}
+  .plabel.off{opacity:0}
+
+  /* 侧栏 */
+  .lab3d-sidebar{flex:0 0 auto;width:286px;display:flex;flex-direction:column;gap:10px;overflow-y:auto;scrollbar-width:thin}
+  .app.noside .lab3d-sidebar{display:none}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px 14px;
+    backdrop-filter:blur(8px);min-width:0;flex:0 0 auto}
+  .panel h3{margin:0 0 9px;font-size:12.5px;color:#cbd5e1;font-weight:800;display:flex;align-items:center;gap:8px}
+  .panel h3 .pill{margin-left:auto}
+  .pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:10.5px;font-weight:700;
+    background:rgba(148,163,184,.14);border:1px solid rgba(148,163,184,.28);color:#cbd5e1;white-space:nowrap}
+  .pill.ok{background:rgba(52,211,153,.15);border-color:rgba(52,211,153,.4);color:#6ee7b7}
+  .pill.warn{background:rgba(251,191,36,.14);border-color:rgba(251,191,36,.36);color:#fcd34d}
+  .panel p{margin:0 0 8px;font-size:11.5px;color:var(--dim);line-height:1.7}
+  .panel p:last-child{margin-bottom:0}
+  .panel p b{color:#cbd5e1}
+  .chk{list-style:none;margin:0;padding:0;font-size:11.5px}
+  .chk li{display:flex;gap:8px;align-items:flex-start;padding:3px 0;color:#cbd5e1;line-height:1.6}
+  .chk li .mk{flex:0 0 auto;font-weight:800;color:#7dd3fc}
+  .road{list-style:none;margin:0;padding:0;font-size:11.5px}
+  .road li{display:flex;align-items:center;gap:8px;padding:4px 0;color:#94a3b8;border-bottom:1px dashed rgba(148,163,184,.12)}
+  .road li:last-child{border-bottom:0}
+  .road li .dot{width:7px;height:7px;border-radius:50%;background:#475569;flex:none}
+  .road li.done{color:#cbd5e1}
+  .road li.done .dot{background:#34d399;box-shadow:0 0 8px rgba(52,211,153,.7)}
+  .road li .tag{margin-left:auto;font-size:10px;color:#64748b}
+  .road li.done .tag{color:#6ee7b7}
+  .note{margin:8px 0 0;font-size:11px;color:#64748b;line-height:1.6}
+  .note b{color:#94a3b8}
+
+  /* 说明区 + 视频区 */
+  .lab3d-doc{max-width:1520px;margin:22px auto 0;padding:0 16px;
+    display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px}
+  .lab3d-doc .panel p{font-size:12px;color:var(--dim);line-height:1.75;margin:0 0 8px}
+  .lab3d-doc .panel p:last-child{margin-bottom:0}
+  .lab3d-doc .panel p b{color:#cbd5e1}
+  .video-section{max-width:1520px;margin:24px auto 40px;padding:0 16px}
+  .video-section .section-title{font-size:20px;font-weight:bold;color:#f8fafc;margin-bottom:16px}
+  .video-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:18px}
+  .video-card{background:#1e293b;border:1px solid rgba(255,255,255,.12);border-radius:12px;padding:18px 20px}
+  .video-card h3{margin:0 0 12px;font-size:15px;line-height:1.5;color:#f8fafc;border-bottom:1px solid rgba(255,255,255,.1);
+    padding-bottom:10px;display:flex;align-items:flex-start;gap:8px}
+  .video-card h3 .live-badge{font-size:11px;background:rgba(239,68,68,.15);color:#ef4444;padding:2px 8px;
+    border-radius:6px;font-weight:600;white-space:nowrap;flex-shrink:0}
+  .video-container{position:relative;width:100%;padding-bottom:56.25%;height:0;border-radius:12px;overflow:hidden;background:#000}
+  .video-container iframe{position:absolute;top:0;left:0;width:100%;height:100%;border:0}
+  .video-desc{font-size:13px;color:#94a3b8;line-height:1.7;margin-top:10px}
+  .video-desc b{color:#cbd5e1}
+  .video-fullscreen-btn{position:absolute;top:10px;right:10px;z-index:10;width:36px;height:36px;
+    display:flex;align-items:center;justify-content:center;border:none;border-radius:8px;
+    background:rgba(0,0,0,.55);color:#fff;cursor:pointer;transition:background .2s ease}
+  .video-fullscreen-btn:hover{background:rgba(59,130,246,.85)}
+  .video-container:fullscreen,.video-container:-webkit-full-screen{width:100%;height:100%;padding-bottom:0;border-radius:0}
+
+  @media (max-width:1180px){
+    .kitbox{width:172px}
+    .lab3d-sidebar{width:250px}
+  }
+  @media (max-width:980px){
+    .app{height:auto;min-height:0}
+    .main{flex-direction:column}
+    .lab3d-stage{flex:0 0 auto;height:clamp(420px,62vh,660px)}
+    .kitbox{width:auto}
+    .palette{flex-direction:row;flex-wrap:wrap}
+    .kit-card{flex:1 1 150px}
+    .lab3d-sidebar{width:auto;display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr))}
+  }
+  @media (max-width:640px){
+    .lab3d-stage .stage-fs-btn{padding:6px 9px;font-size:11px}
+    .lab3d-stage .stage-fs-btn .lbl{display:none}
+    .lab3d-stage .stage-params{top:46px;right:8px;width:min(280px,88%);max-height:calc(100% - 112px)}
+    /* 窄屏空间宝贵：收起态只留一个 ⚙（点标题照样能展开），否则药丸会占到舞台 2% 以上 */
+    .lab3d-stage .stage-params.collapsed .params-title{font-size:0}
+    .lab3d-stage .stage-params.collapsed .params-title::after{content:"⚙";font-size:14px}
+    .lab3d-stage .stage-params.collapsed .params-toggle{display:none}
+    .stage-hint{max-width:64%;font-size:10.5px}
+    .stage-readout{left:8px;bottom:62px;min-width:0;padding:7px 10px}
+    .stage-readout .rval{font-size:17px}
+    .stage-ctl{gap:6px;padding:0 8px}
+    .stage-ctl .ct span{display:none}
+    .stage-ctl button{padding:5px 8px;font-size:10.5px}
+    .plabel{font-size:9.5px;padding:1px 5px}
+  }
+</style>
+</head>
+<body>
+
+<div class="app" id="app">
+  <header class="topbar">
+    <h1 class="tb-title">电学沙盒<span class="tb-badge">3D</span></h1>
+    <div class="tb-funcs" id="tbFuncs">
+      <button type="button" data-view="persp" class="on">斜视</button>
+      <button type="button" data-view="front">正视</button>
+      <button type="button" data-view="top">俯视</button>
+      <button type="button" data-view="closeup">看桌面</button>
+      <i class="tb-sep"></i>
+      <button type="button" id="btnRotate" title="把选中的器材转 90° (R)">⟳ 旋转</button>
+      <button type="button" id="btnDelete" class="danger" title="移除选中的器材 (Delete)">🗑 移除</button>
+      <button type="button" id="btnClear" class="danger" title="清空桌面">✕ 清空</button>
+    </div>
+    <span class="tb-ops">
+      <button type="button" id="btnKit" class="on" title="折叠 / 展开器材库">◧ 器材库</button>
+      <button type="button" id="btnSide" class="on" title="折叠 / 展开说明">◨ 说明</button>
+      <button type="button" id="btnFold" title="收起功能栏，画面最大化">▴ 收起</button>
+    </span>
+  </header>
+
+  <div class="main">
+    <!-- 左：器材库。卡片按 lab3d-kit.js 的 CATALOG 自动生成；
+         拖到桌面上松手即落台，点一下也可以（落在桌面中央）。 -->
+    <aside class="kitbox" id="kitbox">
+      <div class="kb-head">
+        <span>器材库</span>
+        <span class="pill" id="kitCount">1 件</span>
+      </div>
+      <div class="palette" id="palette"></div>
+      <p class="kb-tip">按住<b>拖到桌面上</b>松手就放下；<br><b>点一下</b>也可以，落在桌面中央。</p>
+    </aside>
+
+    <!-- 中：3D 舞台（实验室 + 实验桌） -->
+    <div class="lab3d-stage" id="stage">
+      <canvas id="gl" aria-label="一间实验室里的实验桌，可以把器材库里的滑动变阻器放到桌上、拖动、调节滑片"></canvas>
+      <div class="stage-labels" id="labels"></div>
+      <div class="stage-hint" id="hint">
+        <b>拖空白</b>转视角 · <b>滚轮</b>缩放 · <b>拖器材</b>挪位置<br>
+        直接<b>拖滑片</b>能改接入电阻 · 点器材看参数
+      </div>
+      <div class="stage-toast" id="toast"></div>
+
+      <div class="stage-readout" id="readout">
+        <div class="rlab">接入电阻（预演）</div>
+        <div class="rval" id="roR">—<small>Ω</small></div>
+        <div class="rsub" id="roSub">桌上还没有器材</div>
+      </div>
+
+      <button type="button" class="stage-fs-btn" id="fsBtn" title="全屏显示实验画面" aria-label="全屏显示实验画面">
+        <svg class="fs-expand" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"/></svg>
+        <svg class="fs-compress" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:none"><path stroke-linecap="round" stroke-linejoin="round" d="M8 3v3a2 2 0 01-2 2H3m18 0h-3a2 2 0 01-2-2V3m0 18v-3a2 2 0 012-2h3M3 16h3a2 2 0 012 2v3"/></svg>
+        <span class="lbl">全屏</span>
+      </button>
+
+      <aside class="stage-params collapsed" id="params" aria-label="实验参数调节面板">
+        <div class="params-head" id="paramsHead">
+          <span class="params-title">⚙ 实验参数</span>
+          <button type="button" class="params-toggle" id="paramsToggle"
+                  aria-expanded="false" aria-controls="paramsBody">▸ 展开</button>
+        </div>
+        <div class="params-body" id="paramsBody">
+          <h4>选中的器材</h4>
+          <div id="pSel">
+            <div class="params-empty">点桌面上的器材，这里出现它的参数。</div>
+          </div>
+
+          <h4>场景</h4>
+          <div class="params-checks">
+            <label><input type="checkbox" id="cLabels" checked>器材名标签</label>
+            <label><input type="checkbox" id="cShadow" checked>接触阴影</label>
+          </div>
+          <div class="lab3d-btnrow" style="margin-top:12px">
+            <button type="button" class="primary" id="pAddRheo">＋ 加一台变阻器</button>
+            <button type="button" id="pResetView">↺ 重置视角</button>
+          </div>
+        </div>
+      </aside>
+
+      <div class="stage-ctl" id="ctl">
+        <label class="ct" for="cSlide"><span>滑片</span>
+          <input id="cSlide" type="range" min="0" max="100" step="1" value="50" disabled>
+          <output id="cSlideV">—</output>
+        </label>
+        <i class="sep"></i>
+        <button type="button" id="cView" title="在斜视 / 正视 / 俯视之间切换">视角</button>
+        <button type="button" id="cRotate">⟳ 旋转</button>
+        <button type="button" id="cDelete">🗑 移除</button>
+      </div>
+    </div>
+
+    <!-- 右：说明 + 器材路线 -->
+    <aside class="lab3d-sidebar" id="sidebar">
+      <div class="panel">
+        <h3>这一页在做什么 <span class="pill ok">第一阶段</span></h3>
+        <p>一间实验室、一张实验桌，加上一个<b>器材库</b>。先从器材库里把器材取出来放到桌上，
+           一件一件把真实器材搬进来 —— 这一版先搬进了<b>滑动变阻器</b>。</p>
+        <p class="note">和「电路实验沙盒 3D」不是同一件事：那一页是<b>俯视示教板</b>，元件是简化符号、能立刻连线求解；
+           这一页是<b>实验室场景</b>，器材按实物建模，先把「看得见、摸得着」这一层做扎实，导线和电源随后加。</p>
+      </div>
+
+      <div class="panel">
+        <h3>器材进度 <span class="pill" id="roadPill">1 / 5</span></h3>
+        <ul class="road" id="road"></ul>
+      </div>
+
+      <div class="panel">
+        <h3>怎么用</h3>
+        <ul class="chk">
+          <li><span class="mk">1</span><span>左边器材库里按住<b>拖到桌面</b>，或者点一下，器材就落在桌上。</span></li>
+          <li><span class="mk">2</span><span>按住器材可以<b>在桌面上挪位置</b>；按 <b>R</b> 或「旋转」把它转 90°。</span></li>
+          <li><span class="mk">3</span><span>直接<b>拖滑片</b>（或者拖底部的滑片滑块）—— 接入的那段丝会变成橙色。</span></li>
+          <li><span class="mk">4</span><span>选中后按 <b>Delete</b> 或点「移除」把它从桌上拿下来。</span></li>
+        </ul>
+      </div>
+    </aside>
+  </div>
+</div>
+
+<div class="lab3d-doc">
+  <div class="panel">
+    <h3>为什么先做「场景 + 器材库」</h3>
+    <p>真实电学实验的第一步不是接线，是<b>认器材</b>：从器材盒里取出滑动变阻器，看清它四个接线柱、滑片、绕线，
+       再决定怎么接。把这一层先做对，后面加电池、开关、灯泡、电表时，学生看到的才是<b>同一张实验桌上的东西</b>，
+       而不是一堆符号。</p>
+    <p>所以这一版的验收标准只有两条：<b>器材像真的</b>、<b>能像真的那样摆弄</b>。</p>
+  </div>
+  <div class="panel">
+    <h3>滑动变阻器现在能做什么</h3>
+    <p>拖滑片 → 接入的那段电阻丝变成橙色、其余变灰，读数按 <b>A—C 接法</b>预演：<code>R = R<sub>max</sub>·滑片位置</code>。
+       这是「一上一下」接法里接 A 柱的那一种。</p>
+    <p>接法判断、导线、电流方向都<b>还没做</b> —— 它们要等导线和电源进场。想看完整的四柱接法与电流路径，
+       可以去「滑动变阻器 · 3D 拆解」那一页。</p>
+  </div>
+  <div class="panel">
+    <h3>接下来会加什么</h3>
+    <p>按上课的顺序：<b>电池组 → 开关 → 小灯泡 → 电流表 / 电压表 → 导线</b>。
+       每加一件，器材库里就多一张卡片；导线进场之后，这一页才真正开始「求解电路」，
+       物理内核直接复用<b>电学沙盒</b>那一套（同一份 <code>circuit-core.js</code>），读数才不会和 2D 版打架。</p>
+  </div>
+</div>
+
+<div class="video-section">
+  <div class="section-title">🎬 实拍视频 · 从虚拟实验到真实世界</div>
+  <div class="video-grid">
+    <div class="video-card">
+      <h3>滑动变阻器的工作原理<span class="live-badge">实拍</span></h3>
+      <div class="video-container">
+        <iframe src="//player.bilibili.com/player.html?bvid=BV1BTn262E2G&page=1&autoplay=0&loop=1&danmaku=0&high_quality=1" scrolling="no" frameborder="no" framespacing="0" allowfullscreen="true"></iframe>
+        <button class="video-fullscreen-btn" title="全屏播放" aria-label="全屏播放">
+          <svg class="fs-expand" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"/></svg>
+          <svg class="fs-compress" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:none"><path stroke-linecap="round" stroke-linejoin="round" d="M8 3v3a2 2 0 01-2 2H3m18 0h-3a2 2 0 01-2-2V3m0 18v-3a2 2 0 012-2h3M3 16h3a2 2 0 012 2v3"/></svg>
+        </button>
+      </div>
+      <div class="video-desc">真人把变阻器拆开讲原理。对照桌上的这台：绕线、滑片、四个接线柱的位置和视频里是同一套。</div>
+    </div>
+    <div class="video-card">
+      <h3>连接串联电路和并联电路<span class="live-badge">实拍</span></h3>
+      <div class="video-container">
+        <iframe src="//player.bilibili.com/player.html?bvid=BV1iBd9BHEWP&page=1&autoplay=0&loop=1&danmaku=0&high_quality=1" scrolling="no" frameborder="no" framespacing="0" allowfullscreen="true"></iframe>
+        <button class="video-fullscreen-btn" title="全屏播放" aria-label="全屏播放">
+          <svg class="fs-expand" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"/></svg>
+          <svg class="fs-compress" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:none"><path stroke-linecap="round" stroke-linejoin="round" d="M8 3v3a2 2 0 01-2 2H3m18 0h-3a2 2 0 01-2-2V3m0 18v-3a2 2 0 012-2h3M3 16h3a2 2 0 012 2v3"/></svg>
+        </button>
+      </div>
+      <div class="video-desc">真实实验桌上怎么把电源、开关、灯泡连成回路。导线进场之后，这一页就能照着连一遍。</div>
+    </div>
+  </div>
+</div>
+
+<script type="module" src="lab3d-sandbox.js?build=1"></script>
+
+<script>
+  (function() {
+    var btns = document.querySelectorAll('.video-fullscreen-btn');
+    if (!btns.length) return;
+    btns.forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        var container = btn.closest('.video-container');
+        if (!container) return;
+        if (document.fullscreenElement === container) { document.exitFullscreen(); }
+        else { if (container.requestFullscreen) container.requestFullscreen(); else if (container.webkitRequestFullscreen) container.webkitRequestFullscreen(); }
+      });
+    });
+    document.addEventListener('fullscreenchange', function() {
+      var fsEl = document.fullscreenElement;
+      btns.forEach(function(btn) {
+        var container = btn.closest('.video-container');
+        var on = fsEl === container;
+        var ex = btn.querySelector('.fs-expand'), cp = btn.querySelector('.fs-compress');
+        if (ex) ex.style.display = on ? 'none' : '';
+        if (cp) cp.style.display = on ? '' : 'none';
+        btn.title = on ? '退出全屏' : '全屏播放';
+        btn.setAttribute('aria-label', btn.title);
+      });
+    });
+  })();
+</script>
+</body>
+</html>
