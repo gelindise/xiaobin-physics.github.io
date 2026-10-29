@@ -385,7 +385,8 @@ var BAT_POS = { x: 700,  y: 540 };
 var SW_POS  = { x: 892,  y: 540 };
 var TOP_Y = 90, BOT_Y = 540, RIGHT_X = 1205, BYPASS_Y = 470;
 var AMM_S = 1.26;                           // 电流表放大倍数（机身和端子一起放大）
-var AMM_POST_Y = 250 + 72 * 1.26;           // 三个接线柱所在的高度
+var AMM_POST_Y = 250 + 72 * 1.26;           // 三个接线柱（柱尖）所在的高度
+var AMM_WIRE_Y = AMM_POST_Y + 24;           // 走线行：在柱尖下方 24px，横线不会擦到「3」柱
 
 // ── 电学 ────────────────────────────────────────────────────
 var EMF = 6, R_INT = 0.5, R_SER = 10, R_MAX = 20, R_MIN = 0.5, I_FS = 0.6;
@@ -393,6 +394,19 @@ var EMF = 6, R_INT = 0.5, R_SER = 10, R_MAX = 20, R_MIN = 0.5, I_FS = 0.6;
 // ── 状态 ────────────────────────────────────────────────────
 var state = { level: 0.72, drain: false, fill: false, closed: true, labels: true, flow: true };
 var tAnim = 0, renderCount = 0, dpr = 1, isFull = false;
+
+// 🔴🔴 电流箭头走过的【距离】(px)，逐帧累加 —— 绝不能把绝对时间直接当相位传给 drawWire。
+// 库里的位移 = phase × 速度，速度 = min(1, √(|I|/0.8)) × 320。放油/加油时 I 一直在变：
+// 速度一变小，同一个 t 乘出来的位移就【变小】⇒ 箭头整体往回跳。屏幕上就是
+// 「忽快忽慢、还倒着走」。改成累计距离后，位移只增不减，速度仍随电流变（这才是物理）。
+var FLOW_PX = 320;                          // 必须与 circuit-draw 的 FLOW_PX_PER_PHASE 一致
+var flowDist = 0;                           // 累计位移（px）
+function flowSpeed(I){ return Math.min(1, Math.sqrt(Math.abs(I || 0) / 0.8)) * FLOW_PX; }
+// 库内还会再乘一次 speed ⇒ 这里先除掉，最终位移恰好 = flowDist
+function arrowPhase(flow){
+  var spd = flowSpeed(flow);
+  return spd > 1e-3 ? flowDist / spd : 0;
+}
 
 var stageEl = document.getElementById('stage');
 var canvas  = document.getElementById('simCanvas');
@@ -453,9 +467,12 @@ function route(){
     // ② 变阻器上端子 → R₀ 左柱
     { a:{ compId:'RA', termIdx:0 }, b:{ compId:'R0', termIdx:0 },
       via:[[AXLE.x, TOP_Y]] },
-    // ③ R₀ 右柱 → 电流表「0.6」柱：从表座下面兜过去，不压表身
+    // ③ R₀ 右柱 → 电流表「0.6」柱
+    // 🔴🔴 必须从【柱尖下方】兜过去再从下往上插进「0.6」柱：
+    //   原来直接横穿到 y = AMM_POST_Y，那条横线正好擦过「3」柱的柱尖，
+    //   画面上看着像「0.6 和 3 两个柱被一根线短接了」（学生一眼就当成错接）。
     { a:{ compId:'R0', termIdx:1 }, b:{ compId:'A', termIdx:1 },
-      via:[[RIGHT_X, TOP_Y], [RIGHT_X, AMM_POST_Y]] },
+      via:[[RIGHT_X, TOP_Y], [RIGHT_X, AMM_WIRE_Y], [AMM_POS.x, AMM_WIRE_Y]] },
     // ④ 电流表「−」柱 → 闸刀开关右柱
     // 「−」柱与开关右柱几乎同一条竖线（差 0.2 px），不加折点，免得出现零长度段
     { a:{ compId:'A', termIdx:0 }, b:{ compId:'SW', termIdx:1 }, via:[] },
@@ -988,7 +1005,7 @@ function render(){
     scene.wires.forEach(function (wr, i){
       var fl = flows[i] || 0;
       D.drawWire(ctx, pathOf(wr), {
-        flow: fl, phase: tAnim,
+        flow: fl, phase: arrowPhase(fl),
         current: state.flow, electrons: false,
         weak: Math.abs(fl) < 0.02
       });
@@ -1095,6 +1112,7 @@ function step(dt){
   state.level = clamp(state.level, 0, 1);
   tAnim += dt;
   solveCircuit();          // 液面变了就立刻重解，读数不能落后一帧
+  flowDist += dt * flowSpeed(currentA());   // 箭头按「当前电流」的速度往前走，只增不减
 }
 
 // ============================================================
@@ -1284,7 +1302,7 @@ function onFsChange(){
 // 自检钩子
 // ============================================================
 window.__OIL = {
-  version: '2.1.0',
+  version: '2.2.0',
   state: state,
   step: step,
   renderNow: render,
@@ -1312,7 +1330,10 @@ window.__OIL = {
   },
   comps: function (){ return scene.comps.map(function (c){
     return { id: c.id, type: c.type, x: c.x, y: c.y, R: c.params.R, closed: c.params.closed,
-             term0: termWorld(c, 0), term1: termWorld(c, 1) }; }); },
+             scale: c.scale, nTerm: ((D.TERMINALS && D.TERMINALS[c.type]) || []).length,
+             term0: termWorld(c, 0), term1: termWorld(c, 1), term2: termWorld(c, 2) }; }); },
+  // 电流箭头：累计位移 / 相位 / 速度（判「箭头不会倒着走」要靠这三个数）
+  flow: function (){ return { dist: flowDist, phase: arrowPhase(flows[1]), spd: flowSpeed(currentA()), I: currentA() }; },
   wirePaths: function (){ return scene.wires.map(function (w){ return pathOf(w); }); },
   flows: function (){ return flows.slice(); },
   rec: function (id){ return recOf(id); },
