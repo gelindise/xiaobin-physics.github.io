@@ -44,13 +44,38 @@ var PATH = [
 ];
 
 /* ============================================================
- * 材料
+ * 导体 / 载流子
+ * ------------------------------------------------------------
+ * carrier 决定三件事：能自由移动的是什么电荷、微观画面怎么画、R(T) 怎么变。
+ *   metal       —— 自由电子（带负电，逆电场方向漂移）
+ *   insulator   —— 没有自由电荷，电子被原子束缚在原地绕转
+ *   electrolyte —— 正、负离子同时存在，向相反方向漂移
  * ============================================================ */
 var MATS = {
-  cu:   { name: '铜丝', R20: 1.2,  alpha: 0.0039,
-          note: '铜的电阻小、温度影响明显。' },
-  nicr: { name: '镍铬合金丝', R20: 12.0, alpha: 0.0004,
-          note: '镍铬合金电阻大，但几乎不随温度变化。' }
+  cu: {
+    key: 'cu', name: '铜丝', carrier: 'metal',
+    R20: 1.2, alpha: 0.0039,
+    spec: '铜丝：长 1 m，横截面积 0.1 mm²',
+    note: '金属 · 铜的电阻小，温度影响很明显。'
+  },
+  nicr: {
+    key: 'nicr', name: '镍铬合金丝', carrier: 'metal',
+    R20: 12.0, alpha: 0.0004,
+    spec: '镍铬合金丝：长 1 m，横截面积 0.1 mm²',
+    note: '金属 · 镍铬合金电阻大，但几乎不随温度变化。'
+  },
+  glass: {
+    key: 'glass', name: '玻璃棒', carrier: 'insulator',
+    R20: 1e14, alpha: 0,
+    spec: '玻璃棒：长 10 cm，横截面积 1 cm²',
+    note: '绝缘体 · 电子被原子牢牢束缚，几乎没有能自由移动的电荷。'
+  },
+  salt: {
+    key: 'salt', name: '食盐水', carrier: 'electrolyte',
+    R20: 5, beta: 0.02,
+    spec: '食盐水：两片电极相距 1 cm，浸没面积 4 cm²',
+    note: '电解质溶液 · 正负离子都能移动，温度升高反而更容易导电。'
+  }
 };
 
 /* ============================================================
@@ -62,8 +87,14 @@ var state = {
   t: 0
 };
 
-var ions = [], electrons = [], sparks = [];
+var lattice = [];   // 晶格原子（金属：正离子 / 玻璃：原子实），两种共用同一套格点
+var movers = [];    // 能自由移动的载流子（金属：电子 / 溶液：正负离子）
+var bound = [];     // 玻璃：被束缚在原子上的电子
+var sparks = [];
 var hitAcc = 0, hitRate = 0, hitTimer = 0;
+/* 各类载流子的 x 方向平均速度（EMA）：热运动相互抵消后只剩定向漂移，
+   单次采样噪声太大，必须平滑才看得出「正离子向右、负离子向左」。 */
+var vxAvg = { na: 0, cl: 0, e: 0 };
 var sliceFlash = 0, flowPhase = 0;
 var dpr = 1, renderCount = 0, isFull = false;
 
@@ -76,111 +107,200 @@ var paramsEl = document.getElementById('params');
  * 物理
  * ============================================================ */
 function clamp(v, a, b) { return v < a ? a : (v > b ? b : v); }
-function normT() { return clamp((state.T + 20) / 320, 0, 1); }
 function curMat() { return MATS[state.mat]; }
+function carrier() { return curMat().carrier; }
+
+/* 盐水只能到 95 ℃（再高就沸腾了），金属 / 玻璃给到 300 ℃ */
+function tempRange() {
+  return carrier() === 'electrolyte' ? { lo: 0, hi: 95 } : { lo: -20, hi: 300 };
+}
+function normT() {
+  var r = tempRange();
+  return clamp((state.T - r.lo) / (r.hi - r.lo), 0, 1);
+}
 
 function resistance() {
   var m = curMat();
+  /* 绝缘体：电阻大到电流根本测不出来，且与温度几乎无关（教学简化） */
+  if (m.carrier === 'insulator') return m.R20;
+  /* 电解质溶液：温度升高黏度下降、离子跑得更快 ⇒ 电阻变小（与金属相反） */
+  if (m.carrier === 'electrolyte') return m.R20 / (1 + m.beta * (state.T - 20));
   return m.R20 * (1 + m.alpha * (state.T - 20));
 }
 function current() { return state.U / resistance(); }
 function power() { var i = current(); return i * i * resistance(); }
 
-/* 热运动速率（px/s）：温度越高电子也跑得越快，但幅度远小于离子振幅的变化 */
-function vThermal() { return 150 + 78 * normT(); }
-/* 定向漂移速率（px/s）：只由电流决定 ⇒ 电压↑ 或 电阻↓ 时变快 */
-function vDrift() { return 152 * (current() / 2.2); }
-/* 离子振动振幅 / 角频率 */
-function ionAmp() { return 1.6 + 8.4 * normT(); }
+/* 热运动速率（px/s）：温度越高电荷也跑得越快，但幅度远小于原子振幅的变化。
+   溶液里的离子质量比电子大得多，同样温度下热运动明显更慢 ——
+   画面上不压一压，离子的定向移动就会被乱窜完全盖住。 */
+function vThermal() {
+  var base = 150 + 78 * normT();
+  return carrier() === 'electrolyte' ? base * 0.55 : base;
+}
+/* 定向漂移速率（px/s）：只由电流决定 ⇒ 电压↑ 或 电阻↓ 时变快。
+   溶液里离子的真实漂移比金属电子慢几个数量级，画面上放大 1.5 倍才看得出方向。 */
+function vDrift() {
+  var s = carrier() === 'electrolyte' ? 1.5 : 1;
+  return 152 * s * (current() / 2.2);
+}
+/* 原子振动振幅 / 角频率 */
+function ionAmp() { return 1.0 + 11.0 * normT(); }
 function ionOmega() { return 4.2 + 7.5 * normT(); }
-/* 碰撞判定半径：离子晃得越远，越容易被电子撞上 */
+/* 碰撞判定半径：原子晃得越远，越容易被电子撞上 */
 function collideR() { return ION_R + E_R + ionAmp() * 0.85; }
-/* 每秒通过截面的电子数 = 电子线密度 × 定向移动速率（与电流严格成正比）。
+/* 每秒通过截面的载流子数 = 线密度 × 定向移动速率（与电流严格成正比）。
    🔴 不能靠「数穿越次数」：热运动是双向的，往返次数远大于净流量，
       按次数统计会得出「温度越高通过越多」的反向结论。 */
-function fluxNow() { return (electrons.length / COND.w) * vDrift(); }
+function fluxNow() { return (movers.length / COND.w) * vDrift(); }
 
 /* ============================================================
  * 粒子
  * ============================================================ */
-function initIons() {
-  ions.length = 0;
+var ION_POS = (function () {
+  var out = [];
   for (var j = 0; j < ROWS; j++) {
     for (var i = 0; i < COLS; i++) {
-      ions.push({
+      out.push({
         bx: COND.x + (i + 0.5) * CELL_W,
-        by: COND.y + GRID_TOP + (j + 0.5) * CELL_H,
-        x: COND.x + (i + 0.5) * CELL_W,
-        y: COND.y + GRID_TOP + (j + 0.5) * CELL_H,
-        ph: Math.random() * TAU,
-        ph2: Math.random() * TAU,
-        flash: 0
+        by: COND.y + GRID_TOP + (j + 0.5) * CELL_H
+      });
+    }
+  }
+  return out;
+})();
+
+function initLattice() {
+  lattice.length = 0;
+  for (var i = 0; i < ION_POS.length; i++) {
+    var p = ION_POS[i];
+    lattice.push({
+      bx: p.bx, by: p.by, x: p.bx, y: p.by,
+      ph: Math.random() * TAU, ph2: Math.random() * TAU,
+      flash: 0
+    });
+  }
+}
+
+/* 玻璃：每个原子外面挂一个被束缚的电子，只在原地绕转、不参与导电 */
+function initBound() {
+  bound.length = 0;
+  if (carrier() !== 'insulator') return;
+  for (var i = 0; i < lattice.length; i++) {
+    bound.push({
+      atom: lattice[i],
+      ang: Math.random() * TAU,
+      spin: 1.3 + Math.random() * 0.9,
+      r: 22 + Math.random() * 5
+    });
+  }
+}
+
+function initMovers() {
+  movers.length = 0;
+  var c = carrier(), k, th, v;
+
+  if (c === 'metal') {
+    for (k = 0; k < 64; k++) {
+      th = Math.random() * TAU; v = vThermal() * (0.7 + Math.random() * 0.6);
+      movers.push({
+        kind: 'e', dir: -1, r: E_R,
+        x: COND.x + 24 + Math.random() * (COND.w - 48),
+        y: COND.y + 34 + Math.random() * (COND.h - 48),
+        px: 0,
+        vx: Math.cos(th) * v, vy: Math.sin(th) * v,
+        cool: 0, trail: []
+      });
+    }
+  } else if (c === 'electrolyte') {
+    /* 一半正离子（Na⁺，向负极 = 向右漂），一半负离子（Cl⁻，向正极 = 向左漂） */
+    for (k = 0; k < 56; k++) {
+      var pos = k % 2 === 0;
+      th = Math.random() * TAU; v = vThermal() * (0.7 + Math.random() * 0.6);
+      movers.push({
+        kind: pos ? 'na' : 'cl',
+        dir: pos ? 1 : -1,
+        r: pos ? 12 : 11,
+        x: COND.x + 26 + Math.random() * (COND.w - 52),
+        y: COND.y + 34 + Math.random() * (COND.h - 48),
+        px: 0,
+        vx: Math.cos(th) * v, vy: Math.sin(th) * v,
+        cool: 0, trail: []
       });
     }
   }
 }
 
-function initElectrons() {
-  electrons.length = 0;
-  for (var k = 0; k < 64; k++) {
-    var th = Math.random() * TAU, v = vThermal() * (0.7 + Math.random() * 0.6);
-    electrons.push({
-      x: COND.x + 14 + Math.random() * (COND.w - 28),
-      y: COND.y + 30 + Math.random() * (COND.h - 46),
-      px: 0,
-      vx: Math.cos(th) * v,
-      vy: Math.sin(th) * v,
-      cool: 0,
-      trail: []
-    });
-  }
+/* 换导体：整套粒子重建 */
+function rebuild() {
+  sparks.length = 0;
+  lattice.length = 0; movers.length = 0; bound.length = 0;
+  if (carrier() !== 'electrolyte') initLattice();
+  initBound();
+  initMovers();
+  hitRate = 0; hitAcc = 0; hitTimer = 0;
+  vxAvg.na = 0; vxAvg.cl = 0; vxAvg.e = 0;
 }
 
 /* ============================================================
  * 步进
  * ============================================================ */
+function scatter(e, amt) {
+  var sp = Math.sqrt(e.vx * e.vx + e.vy * e.vy) || vThermal();
+  var a = Math.atan2(e.vy, e.vx) + (Math.random() - 0.5) * amt * 2;
+  e.vx = Math.cos(a) * sp;
+  e.vy = Math.sin(a) * sp;
+}
+
 function step(dt) {
   dt = Math.min(dt, 0.05);
   if (!state.running) return;
 
   state.t += dt;
 
+  var c = carrier();
   var amp = ionAmp(), om = ionOmega();
   var vth = vThermal(), vd = vDrift(), rCol = collideR();
   var r2 = rCol * rCol;
 
-  /* ---- 离子振动 ---- */
-  for (var i = 0; i < ions.length; i++) {
-    var ion = ions[i];
-    ion.x = ion.bx + Math.sin(state.t * om + ion.ph) * amp;
-    ion.y = ion.by + Math.cos(state.t * om * 0.82 + ion.ph2) * amp * 0.82;
-    if (ion.flash > 0) ion.flash = Math.max(0, ion.flash - dt / 0.30);
+  /* ---- 晶格振动（金属 / 玻璃） ---- */
+  for (var i = 0; i < lattice.length; i++) {
+    var at = lattice[i];
+    at.x = at.bx + Math.sin(state.t * om + at.ph) * amp;
+    at.y = at.by + Math.cos(state.t * om * 0.82 + at.ph2) * amp * 0.82;
+    if (at.flash > 0) at.flash = Math.max(0, at.flash - dt / 0.30);
   }
 
-  /* ---- 电子 ---- */
-  for (var k = 0; k < electrons.length; k++) {
-    var e = electrons[k];
+  /* ---- 玻璃：束缚电子只在原地绕原子转，不整体移动 ---- */
+  for (var b = 0; b < bound.length; b++) bound[b].ang += bound[b].spin * dt;
+
+  /* ---- 可移动载流子 ---- */
+  for (var k = 0; k < movers.length; k++) {
+    var e = movers[k];
     e.px = e.x;
-    e.x += (e.vx - vd) * dt;
+    e.x += (e.vx + e.dir * vd) * dt;
     e.y += e.vy * dt;
 
-    if (e.y < COND.y + E_R) { e.y = COND.y + E_R; e.vy = Math.abs(e.vy); }
-    if (e.y > COND.y + COND.h - E_R) { e.y = COND.y + COND.h - E_R; e.vy = -Math.abs(e.vy); }
+    var top = COND.y + e.r + 4, bot = COND.y + COND.h - e.r - 4;
+    if (e.y < top) { e.y = top; e.vy = Math.abs(e.vy); }
+    if (e.y > bot) { e.y = bot; e.vy = -Math.abs(e.vy); }
 
-    /* 左右环绕（导体是长的）：px 一起平移，避免被误判成「穿过截面」 */
-    if (e.x < COND.x - E_R) { e.x += COND.w; e.px += COND.w; }
-    if (e.x > COND.x + COND.w + E_R) { e.x -= COND.w; e.px -= COND.w; }
+    /* 溶液两端有电极板（各 16 px），离子要躲开它 */
+    var pad = c === 'electrolyte' ? 24 : 6;
+    var lx = COND.x + e.r + pad, rx = COND.x + COND.w - e.r - pad;
+    if (e.x < lx) { e.x = rx; e.px = rx; }
+    if (e.x > rx) { e.x = lx; e.px = lx; }
 
-    /* 穿过截面：只让「向左穿过」闪一下（电子定向移动方向）；
-       🔴 流量读数不靠数穿越次数 —— 热运动是双向的，往返次数远大于净流量，
-          按次数统计会得出「温度越高通过越多」的反向结论。改成按 n·v_d 直接算。 */
-    if (e.px > SLICE_X && e.x <= SLICE_X) sliceFlash = 1;
+    /* 穿过截面：只让「沿定向移动方向」的那次闪一下
+       （🔴 流量读数不靠数穿越次数，见 fluxNow 的注释） */
+    if (e.dir > 0 ? (e.px < SLICE_X && e.x >= SLICE_X)
+                  : (e.px > SLICE_X && e.x <= SLICE_X)) sliceFlash = 1;
 
-    /* 碰撞 */
     if (e.cool > 0) e.cool -= dt;
-    if (e.cool <= 0) {
-      for (var m = 0; m < ions.length; m++) {
-        var io = ions[m];
+
+    /* 金属：电子撞晶格上的正离子 ⇒ 散射 + 闪光 */
+    if (c === 'metal' && e.cool <= 0) {
+      for (var m = 0; m < lattice.length; m++) {
+        var io = lattice[m];
         var dx = e.x - io.x, dy = e.y - io.y;
         var d2 = dx * dx + dy * dy;
         if (d2 < r2 && d2 > 1e-4) {
@@ -202,9 +322,38 @@ function step(dt) {
       }
     }
 
-    /* 拖尾 */
-    e.trail.push(e.x, e.y);
-    if (e.trail.length > 18) e.trail.splice(0, 2);
+    /* 拖尾只给金属的自由电子（溶液里 56 个离子都拖尾会糊成一片） */
+    if (e.kind === 'e') {
+      e.trail.push(e.x, e.y);
+      if (e.trail.length > 18) e.trail.splice(0, 2);
+    }
+  }
+
+  /* ---- 溶液：离子之间互相碰撞（只轻微偏转，不打断定向移动） ---- */
+  if (c === 'electrolyte') {
+    for (var p = 0; p < movers.length; p++) {
+      var a1 = movers[p];
+      if (a1.cool > 0) continue;
+      for (var q = p + 1; q < movers.length; q++) {
+        var a2 = movers[q];
+        if (a2.cool > 0) continue;
+        var ddx = a1.x - a2.x, ddy = a1.y - a2.y;
+        var rr = a1.r + a2.r;
+        if (ddx * ddx + ddy * ddy < rr * rr) {
+          var dd = Math.sqrt(ddx * ddx + ddy * ddy) || 1;
+          var push = (rr - dd) / 2 + 0.5;
+          a1.x += ddx / dd * push; a1.y += ddy / dd * push;
+          a2.x -= ddx / dd * push; a2.y -= ddy / dd * push;
+          scatter(a1, 0.45); scatter(a2, 0.45);
+          a1.cool = a2.cool = 0.12;
+          hitAcc++;
+          if (sparks.length < 80) {
+            sparks.push({ x: (a1.x + a2.x) / 2, y: (a1.y + a2.y) / 2, t: 0, life: 0.26 });
+          }
+          break;
+        }
+      }
+    }
   }
 
   /* ---- 闪光衰减 ---- */
@@ -217,6 +366,18 @@ function step(dt) {
   /* ---- 碰撞率统计（1 s 窗口） ---- */
   hitTimer += dt;
   if (hitTimer >= 1.0) { hitRate = hitAcc / hitTimer; hitAcc = 0; hitTimer = 0; }
+
+  /* ---- 各类载流子的平均 x 速度（EMA） ---- */
+  var vs = { na: 0, cl: 0, e: 0 }, vn = { na: 0, cl: 0, e: 0 };
+  for (var vi = 0; vi < movers.length; vi++) {
+    var mv = movers[vi];
+    vs[mv.kind] += mv.vx + mv.dir * vd;
+    vn[mv.kind]++;
+  }
+  var vk = Math.min(0.5, dt * 2.0);
+  vxAvg.na = vn.na ? vxAvg.na * (1 - vk) + (vs.na / vn.na) * vk : 0;
+  vxAvg.cl = vn.cl ? vxAvg.cl * (1 - vk) + (vs.cl / vn.cl) * vk : 0;
+  vxAvg.e = vn.e ? vxAvg.e * (1 - vk) + (vs.e / vn.e) * vk : 0;
 
   /* ---- 导线上的电流粒子 ---- */
   flowPhase += (96 * (current() / 2.0)) * dt;
@@ -407,41 +568,63 @@ function drawAmmeter() {
 }
 
 function drawBar() {
+  var c = carrier();
   var heat = clamp(power() / 8, 0, 1);
   var x = BAR.x, y = BAR.y, w = BAR.w, h = BAR.h;
 
-  /* 外发光（电流越大越热） */
-  if (heat > 0.02) {
-    ctx.save();
-    ctx.shadowColor = 'rgba(251,146,60,' + (0.55 * heat) + ')';
-    ctx.shadowBlur = 26 * heat;
+  if (c === 'insulator') {
+    /* 玻璃棒：半透明，几乎不发热 */
     roundRect(x, y - h / 2, w, h, 6);
-    ctx.fillStyle = 'rgba(180,83,9,.9)'; ctx.fill();
-    ctx.restore();
+    ctx.fillStyle = 'rgba(186,230,253,.14)'; ctx.fill();
+    ctx.strokeStyle = 'rgba(186,230,253,.55)'; ctx.lineWidth = 1.6; ctx.stroke();
+    ctx.fillStyle = 'rgba(255,255,255,.13)';
+    ctx.fillRect(x + 8, y - h / 2 + 3, w - 16, 3.5);
+  } else if (c === 'electrolyte') {
+    /* 盐水柱：淡青的液体 */
+    var gl = ctx.createLinearGradient(0, y - h / 2, 0, y + h / 2);
+    gl.addColorStop(0, 'rgba(34,211,238,.42)');
+    gl.addColorStop(1, 'rgba(14,116,144,.62)');
+    roundRect(x, y - h / 2, w, h, 6);
+    ctx.fillStyle = gl; ctx.fill();
+    ctx.strokeStyle = 'rgba(103,232,249,.5)'; ctx.lineWidth = 1.4; ctx.stroke();
+  } else {
+    /* 金属：铜色，电流越大越热 */
+    if (heat > 0.02) {
+      ctx.save();
+      ctx.shadowColor = 'rgba(251,146,60,' + (0.55 * heat) + ')';
+      ctx.shadowBlur = 26 * heat;
+      roundRect(x, y - h / 2, w, h, 6);
+      ctx.fillStyle = 'rgba(180,83,9,.9)'; ctx.fill();
+      ctx.restore();
+    }
+    var g = ctx.createLinearGradient(0, y - h / 2, 0, y + h / 2);
+    g.addColorStop(0, mix([120, 53, 15], [253, 186, 116], heat));
+    g.addColorStop(0.45, mix([180, 83, 9], [251, 146, 60], heat));
+    g.addColorStop(1, mix([120, 53, 15], [194, 65, 12], heat));
+    roundRect(x, y - h / 2, w, h, 6);
+    ctx.fillStyle = g; ctx.fill();
+    ctx.strokeStyle = 'rgba(253,230,138,.45)'; ctx.lineWidth = 1.4; ctx.stroke();
   }
 
-  var g = ctx.createLinearGradient(0, y - h / 2, 0, y + h / 2);
-  g.addColorStop(0, mix([120, 53, 15], [253, 186, 116], heat));
-  g.addColorStop(0.45, mix([180, 83, 9], [251, 146, 60], heat));
-  g.addColorStop(1, mix([120, 53, 15], [194, 65, 12], heat));
-  roundRect(x, y - h / 2, w, h, 6);
-  ctx.fillStyle = g; ctx.fill();
-  ctx.strokeStyle = 'rgba(253,230,138,.45)'; ctx.lineWidth = 1.4; ctx.stroke();
-
-  /* 棒里的「电流 I →」 */
+  /* 棒里的「电流 I →」：玻璃 / 盐水的棒身是浅色的，白字会糊掉 ⇒ 换深色字 + 浅描边 */
   ctx.save();
-  ctx.fillStyle = 'rgba(255,255,255,.92)';
+  var lightBar = (c === 'insulator');
   ctx.font = 'bold 13px Inter, "Microsoft YaHei", sans-serif';
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  ctx.fillText('电流 I  →', x + w / 2, y + 1);
+  var barTxt = c === 'insulator' ? '几乎没有电流' : '电流 I  →';
+  ctx.lineWidth = 3.2; ctx.lineJoin = 'round';
+  ctx.strokeStyle = lightBar ? 'rgba(248,250,252,.55)' : 'rgba(2,6,23,.55)';
+  ctx.strokeText(barTxt, x + w / 2, y + 1);
+  ctx.fillStyle = lightBar ? 'rgba(8,47,73,.95)' : 'rgba(255,255,255,.94)';
+  ctx.fillText(barTxt, x + w / 2, y + 1);
   ctx.restore();
 
-  /* 导体标注 */
+  /* 导体标注（规格随材料变） */
   if (state.label) {
-    ctx.fillStyle = '#94a3b8';
-    ctx.font = '12px Inter, "Microsoft YaHei", sans-serif';
+    ctx.fillStyle = '#cbd5e1';
+    ctx.font = '12.5px Inter, "Microsoft YaHei", sans-serif';
     ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
-    ctx.fillText('导体：' + curMat().name + '（长 1 m，横截面积 0.1 mm²）', x + w / 2, y - h / 2 - 12);
+    ctx.fillText(curMat().spec, x + w / 2, y - h / 2 - 12);
   }
 }
 
@@ -460,22 +643,30 @@ function drawZoom() {
   ctx.restore();
 
   ctx.fillStyle = 'rgba(125,211,252,.8)';
-  ctx.font = 'bold 12.5px Inter, "Microsoft YaHei", sans-serif';
+  ctx.font = 'bold 12px Inter, "Microsoft YaHei", sans-serif';
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  ctx.fillText('↓  导体内部的微观视图  ↓', (COND.x + COND.w) / 2, (BAR.y + BAR.h / 2 + COND.y) / 2);
+  ctx.fillText('微观放大', (COND.x + COND.w) / 2, (BAR.y + BAR.h / 2 + COND.y) / 2);
 }
 
 /* ============================================================
  * 微观视图
  * ============================================================ */
 function drawMicro() {
+  var c = carrier();
+
   /* 背景 */
   roundRect(COND.x, COND.y, COND.w, COND.h, 14);
   var bg = ctx.createLinearGradient(0, COND.y, 0, COND.y + COND.h);
-  bg.addColorStop(0, 'rgba(13,28,46,.97)');
-  bg.addColorStop(1, 'rgba(5,12,22,.97)');
+  if (c === 'electrolyte') {
+    bg.addColorStop(0, 'rgba(10,44,62,.97)');
+    bg.addColorStop(1, 'rgba(6,26,40,.97)');
+  } else {
+    bg.addColorStop(0, 'rgba(13,28,46,.97)');
+    bg.addColorStop(1, 'rgba(5,12,22,.97)');
+  }
   ctx.fillStyle = bg; ctx.fill();
-  ctx.strokeStyle = 'rgba(56,189,248,.38)'; ctx.lineWidth = 2; ctx.stroke();
+  ctx.strokeStyle = c === 'insulator' ? 'rgba(148,163,184,.42)' : 'rgba(56,189,248,.38)';
+  ctx.lineWidth = 2; ctx.stroke();
 
   ctx.save();
   roundRect(COND.x, COND.y, COND.w, COND.h, 14);
@@ -493,32 +684,68 @@ function drawMicro() {
   ctx.fillStyle = wall2;
   ctx.fillRect(COND.x, COND.y + COND.h - 46, COND.w, 46);
 
+  if (c === 'electrolyte') drawElectrodes();
   if (state.field) drawField();
-  drawIons();
-  drawElectrons();
+  if (lattice.length) drawLattice();
+  if (bound.length) drawBound();
+  drawMovers();
   if (state.spark) drawSparks();
   drawSlice();
 
   ctx.restore();
 }
 
+/* 溶液两端的两块电极：左正右负 ⇒ 电场向右、正离子向右跑 */
+function drawElectrodes() {
+  var top = COND.y + 30, bot = COND.y + COND.h - 30;
+  var plates = [
+    { x: COND.x + 4, c: '#f87171', sign: '+' },
+    { x: COND.x + COND.w - 16, c: '#60a5fa', sign: '−' }
+  ];
+  for (var i = 0; i < plates.length; i++) {
+    var p = plates[i];
+    var g = ctx.createLinearGradient(p.x, 0, p.x + 12, 0);
+    g.addColorStop(0, 'rgba(148,163,184,.15)');
+    g.addColorStop(0.5, p.c);
+    g.addColorStop(1, 'rgba(148,163,184,.15)');
+    ctx.fillStyle = g;
+    ctx.fillRect(p.x, top, 12, bot - top);
+    ctx.fillStyle = p.c;
+    ctx.font = 'bold 14px Inter, sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(p.sign, p.x + 6, top - 16);
+  }
+}
+
 function drawField() {
+  var c = carrier();
   var y = COND.y + 28;
 
-  /* 左半：电场方向（向右） */
   ctx.save();
+
+  /* 绝缘体：没有能跑的电荷，只标一句话 */
+  if (c === 'insulator') {
+    ctx.fillStyle = 'rgba(203,213,225,.55)';
+    ctx.font = '12.5px Inter, "Microsoft YaHei", sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('电子被原子牢牢束缚 —— 没有能自由移动的电荷', (COND.x + COND.w) / 2, y);
+    ctx.restore();
+    return;
+  }
+
+  /* 左半：电场方向（向右） */
   ctx.setLineDash([9, 8]);
   ctx.strokeStyle = 'rgba(125,211,252,.22)';
   ctx.lineWidth = 1.4;
   ctx.beginPath();
   ctx.moveTo(COND.x + 24, y);
-  ctx.lineTo(COND.x + COND.w * 0.46, y);
+  ctx.lineTo(COND.x + COND.w * 0.44, y);
   ctx.stroke();
   ctx.setLineDash([]);
   ctx.beginPath();
-  ctx.moveTo(COND.x + COND.w * 0.46 - 13, y - 5);
-  ctx.lineTo(COND.x + COND.w * 0.46, y);
-  ctx.lineTo(COND.x + COND.w * 0.46 - 13, y + 5);
+  ctx.moveTo(COND.x + COND.w * 0.44 - 13, y - 5);
+  ctx.lineTo(COND.x + COND.w * 0.44, y);
+  ctx.lineTo(COND.x + COND.w * 0.44 - 13, y + 5);
   ctx.strokeStyle = 'rgba(125,211,252,.5)';
   ctx.lineWidth = 1.8; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
   ctx.stroke();
@@ -527,71 +754,138 @@ function drawField() {
   ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
   if (state.label) ctx.fillText('电场 E', COND.x + 26, y - 13);
 
-  /* 右半：电子定向移动方向（向左） */
-  var x1 = COND.x + COND.w * 0.54, x2 = COND.x + COND.w - 26;
-  ctx.beginPath();
-  ctx.moveTo(x2, y); ctx.lineTo(x1, y);
-  ctx.strokeStyle = 'rgba(147,197,253,.42)';
-  ctx.lineWidth = 1.6; ctx.stroke();
-  ctx.beginPath();
-  ctx.moveTo(x1 + 13, y - 5); ctx.lineTo(x1, y); ctx.lineTo(x1 + 13, y + 5);
-  ctx.strokeStyle = 'rgba(147,197,253,.72)'; ctx.lineWidth = 1.8; ctx.stroke();
-  ctx.fillStyle = 'rgba(147,197,253,.72)';
-  ctx.textAlign = 'right';
-  if (state.label) ctx.fillText('电子定向移动', x2, y - 13);
+  if (c === 'metal') {
+    /* 右半：电子逆电场方向移动（向左） */
+    var x1 = COND.x + COND.w * 0.56, x2 = COND.x + COND.w - 26;
+    ctx.beginPath();
+    ctx.moveTo(x2, y); ctx.lineTo(x1, y);
+    ctx.strokeStyle = 'rgba(147,197,253,.42)';
+    ctx.lineWidth = 1.6; ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(x1 + 13, y - 5); ctx.lineTo(x1, y); ctx.lineTo(x1 + 13, y + 5);
+    ctx.strokeStyle = 'rgba(147,197,253,.72)'; ctx.lineWidth = 1.8; ctx.stroke();
+    ctx.fillStyle = 'rgba(147,197,253,.72)';
+    ctx.textAlign = 'right';
+    if (state.label) ctx.fillText('电子定向移动', x2, y - 13);
+  } else {
+    /* 溶液：正离子顺电场向右、负离子逆电场向左 —— 两条箭头反向 */
+    var lx = COND.x + COND.w * 0.55, rx = COND.x + COND.w - 26;
+    arrow(lx, rx, y, 'rgba(251,146,60,.85)', 1);      // 向右
+    arrow(lx, rx, y + 22, 'rgba(34,211,238,.85)', -1); // 向左
+    ctx.font = '11px Inter, "Microsoft YaHei", sans-serif';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = 'rgba(251,146,60,.9)';
+    ctx.textAlign = 'left';
+    if (state.label) ctx.fillText('Na⁺ 向负极', lx, y - 13);
+    ctx.fillStyle = 'rgba(34,211,238,.9)';
+    ctx.textAlign = 'right';
+    if (state.label) ctx.fillText('Cl⁻ 向正极', rx, y + 35);
+  }
+
   ctx.restore();
+
+  function arrow(ax, bx, ay, color, dir) {
+    ctx.beginPath();
+    ctx.moveTo(dir > 0 ? ax : bx, ay);
+    ctx.lineTo(dir > 0 ? bx : ax, ay);
+    ctx.strokeStyle = color; ctx.lineWidth = 1.6;
+    ctx.setLineDash([8, 7]); ctx.stroke(); ctx.setLineDash([]);
+    var tip = dir > 0 ? bx : ax;
+    ctx.beginPath();
+    ctx.moveTo(tip - dir * 12, ay - 5);
+    ctx.lineTo(tip, ay);
+    ctx.lineTo(tip - dir * 12, ay + 5);
+    ctx.lineWidth = 1.8; ctx.stroke();
+  }
 }
 
-function drawIons() {
+function drawLattice() {
   var nt = normT();
-  var fill = mix([146, 64, 14], [251, 191, 36], nt);
+  var isIns = carrier() === 'insulator';
+  var fill = isIns ? mix([51, 65, 85], [148, 163, 184], nt)
+                   : mix([146, 64, 14], [251, 191, 36], nt);
+  var plusColor = isIns ? 'rgba(226,232,240,.92)' : 'rgba(48,24,4,.82)';
+  var ringColor = isIns ? 'rgba(203,213,225,.45)' : 'rgba(253,230,138,.55)';
   var amp = ionAmp();
 
-  for (var i = 0; i < ions.length; i++) {
-    var ion = ions[i];
+  for (var i = 0; i < lattice.length; i++) {
+    var at = lattice[i];
 
     /* 振动残影：振幅越大越明显 */
     if (amp > 3.2) {
       var k = (amp - 3.2) / 7;
       ctx.beginPath();
-      ctx.arc(ion.bx, ion.by, ION_R + amp * 0.55, 0, TAU);
-      ctx.fillStyle = 'rgba(251,146,60,' + (0.16 * k) + ')';
+      ctx.arc(at.bx, at.by, ION_R + amp * 0.55, 0, TAU);
+      ctx.fillStyle = isIns ? 'rgba(148,163,184,' + (0.14 * k) + ')'
+                            : 'rgba(251,146,60,' + (0.16 * k) + ')';
       ctx.fill();
     }
 
     ctx.beginPath();
-    ctx.arc(ion.x, ion.y, ION_R, 0, TAU);
+    ctx.arc(at.x, at.y, ION_R, 0, TAU);
     ctx.fillStyle = fill; ctx.fill();
-    ctx.strokeStyle = 'rgba(253,230,138,.55)'; ctx.lineWidth = 1.2; ctx.stroke();
+    ctx.strokeStyle = ringColor; ctx.lineWidth = 1.2; ctx.stroke();
 
     /* 「+」：用两条线段画，不依赖字体渲染，任何缩放下都清晰 */
-    ctx.strokeStyle = 'rgba(48,24,4,.82)';
+    ctx.strokeStyle = plusColor;
     ctx.lineWidth = 2.2; ctx.lineCap = 'round';
     ctx.beginPath();
-    ctx.moveTo(ion.x - 4.6, ion.y); ctx.lineTo(ion.x + 4.6, ion.y);
-    ctx.moveTo(ion.x, ion.y - 4.6); ctx.lineTo(ion.x, ion.y + 4.6);
+    ctx.moveTo(at.x - 4.6, at.y); ctx.lineTo(at.x + 4.6, at.y);
+    ctx.moveTo(at.x, at.y - 4.6); ctx.lineTo(at.x, at.y + 4.6);
     ctx.stroke();
 
-    /* 被撞闪一下 */
-    if (ion.flash > 0) {
-      var f = ion.flash;
+    /* 被撞闪一下（只有金属会发生） */
+    if (at.flash > 0) {
+      var f = at.flash;
       ctx.beginPath();
-      ctx.arc(ion.x, ion.y, ION_R + 8 * f, 0, TAU);
+      ctx.arc(at.x, at.y, ION_R + 8 * f, 0, TAU);
       ctx.strokeStyle = 'rgba(255,247,214,' + (0.9 * f) + ')';
       ctx.lineWidth = 2.6 * f + 0.6;
       ctx.stroke();
       ctx.beginPath();
-      ctx.arc(ion.x, ion.y, ION_R, 0, TAU);
+      ctx.arc(at.x, at.y, ION_R, 0, TAU);
       ctx.fillStyle = 'rgba(255,251,235,' + (0.55 * f) + ')';
       ctx.fill();
     }
   }
 }
 
-function drawElectrons() {
+/* 玻璃：被束缚的电子只在原子外圈的轨道上绕，不参与导电 */
+function drawBound() {
+  var nt = normT();
+  var r0 = 22 + 3 * nt;
+  var i, b, a, rr, ex, ey;
+
+  ctx.save();
+  ctx.setLineDash([3, 4]);
+  ctx.strokeStyle = 'rgba(96,165,250,.20)';
+  ctx.lineWidth = 1;
+  for (i = 0; i < bound.length; i++) {
+    b = bound[i]; a = b.atom; rr = r0 + (b.r - 22);
+    ctx.beginPath();
+    ctx.arc(a.x, a.y, rr, 0, TAU);
+    ctx.stroke();
+  }
+  ctx.setLineDash([]);
+
+  for (i = 0; i < bound.length; i++) {
+    b = bound[i]; a = b.atom; rr = r0 + (b.r - 22);
+    ex = a.x + Math.cos(b.ang) * rr;
+    ey = a.y + Math.sin(b.ang) * rr;
+    ctx.beginPath();
+    ctx.arc(ex, ey, 3.6, 0, TAU);
+    ctx.fillStyle = '#7dd3fc'; ctx.fill();
+    ctx.strokeStyle = 'rgba(224,242,254,.65)'; ctx.lineWidth = 1; ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawMovers() {
+  if (carrier() === 'electrolyte') { drawIons(); return; }
+
   var s = 26;
-  for (var k = 0; k < electrons.length; k++) {
-    var e = electrons[k];
+  for (var k = 0; k < movers.length; k++) {
+    var e = movers[k];
 
     if (state.trail && e.trail.length >= 6) {
       ctx.beginPath();
@@ -603,6 +897,37 @@ function drawElectrons() {
     }
 
     if (eSprite) ctx.drawImage(eSprite, e.x - s / 2, e.y - s / 2, s, s);
+  }
+}
+
+/* 溶液里的正负离子：Na⁺ 暖橙、Cl⁻ 青绿，球里带 + / − */
+function drawIons() {
+  for (var k = 0; k < movers.length; k++) {
+    var m = movers[k];
+    var pos = m.kind === 'na';
+    var r = m.r;
+    var g = ctx.createRadialGradient(m.x - r * 0.35, m.y - r * 0.38, r * 0.12, m.x, m.y, r);
+    if (pos) {
+      g.addColorStop(0, '#fed7aa');
+      g.addColorStop(0.55, '#fb923c');
+      g.addColorStop(1, '#c2410c');
+    } else {
+      g.addColorStop(0, '#cffafe');
+      g.addColorStop(0.55, '#22d3ee');
+      g.addColorStop(1, '#0e7490');
+    }
+    ctx.beginPath();
+    ctx.arc(m.x, m.y, r, 0, TAU);
+    ctx.fillStyle = g; ctx.fill();
+    ctx.strokeStyle = pos ? 'rgba(255,237,213,.55)' : 'rgba(207,250,254,.5)';
+    ctx.lineWidth = 1.2; ctx.stroke();
+
+    ctx.strokeStyle = 'rgba(255,255,255,.92)';
+    ctx.lineWidth = 2.2; ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(m.x - r * 0.42, m.y); ctx.lineTo(m.x + r * 0.42, m.y);
+    if (pos) { ctx.moveTo(m.x, m.y - r * 0.42); ctx.lineTo(m.x, m.y + r * 0.42); }
+    ctx.stroke();
   }
 }
 
@@ -682,42 +1007,107 @@ function markStep(id) {
   if (el) { el.classList.remove('cur'); el.classList.add('on'); }
 }
 
+var SUP = ['⁰', '¹', '²', '³', '⁴', '⁵', '⁶', '⁷', '⁸', '⁹'];
+function sup(n) {
+  return String(n).split('').map(function (d) { return SUP[+d] || d; }).join('');
+}
+function fmtR(r) {
+  if (r >= 1e6) return '10' + sup(Math.round(Math.log10(r))) + ' Ω';
+  if (r >= 100) return r.toFixed(1) + ' Ω';
+  return r.toFixed(2) + ' Ω';
+}
+function fmtI(i) {
+  if (i < 1e-6) return '≈ 0 A';
+  if (i < 0.01) return (i * 1000).toFixed(2) + ' mA';
+  if (i < 1) return i.toFixed(3) + ' A';
+  return i.toFixed(2) + ' A';
+}
+
 function syncUI() {
   var R = resistance(), I = current();
-  var m = curMat();
+  var m = curMat(), c = m.carrier;
 
-  setText('mR', R.toFixed(2) + ' Ω');
-  setText('mI', I.toFixed(2) + ' A');
-  setText('mHit', hitRate > 0 ? Math.round(hitRate) + ' 次/s' : '— 次/s');
+  setText('mR', fmtR(R));
+  setText('mI', fmtI(I));
+  setText('mHit', c === 'insulator' ? '0 个' :
+          (hitRate > 0 ? Math.round(hitRate) + ' 次/s' : '— 次/s'));
   var f = fluxNow();
-  setText('mFlux', f > 0.02 ? Math.round(f) + ' 个/s' : '— 个/s');
+  setText('mFlux', c === 'insulator' ? '0 个/s' :
+          (f > 0.02 ? Math.round(f) + ' 个/s' : '— 个/s'));
+
+  setText('mHitLabel', c === 'metal' ? '电子每秒被撞次数'
+                     : c === 'insulator' ? '能自由移动的电荷'
+                     : '离子每秒相撞次数');
+  setText('mFluxLabel', c === 'metal' ? '每秒通过截面的电子'
+                     : c === 'insulator' ? '每秒通过截面'
+                     : '每秒通过截面的离子');
 
   setText('tVal', state.T.toFixed(0) + ' ℃');
   setText('uVal', state.U.toFixed(1) + ' V');
 
   var note;
-  if (state.T < 20) note = '低于常温，离子几乎不怎么动。';
+  if (c === 'insulator') {
+    note = '温度再高，也只是原子晃得更厉害 —— 电子仍然被绑着，跑不掉。';
+  } else if (c === 'electrolyte') {
+    note = '温度升高，离子热运动更剧烈，导电能力反而变强（和金属相反）。';
+  } else if (state.T < 20) note = '低于常温，离子几乎不怎么动。';
   else if (state.T < 100) note = '常温附近，离子只是轻轻抖。';
   else if (state.T < 200) note = '已经很热了，离子晃得明显。';
   else note = '接近灯丝的工作温度，离子振动非常剧烈。';
   setText('tNote', note);
   setText('matNote', m.note);
+  setText('specNote', m.spec + '。');
+
+  /* 「想一想」三选一 */
+  toggleHidden('noteMetal', c !== 'metal');
+  toggleHidden('noteGlass', c !== 'insulator');
+  toggleHidden('noteSalt', c !== 'electrolyte');
 
   var v = document.getElementById('verdict');
   if (v) {
-    var cls = state.T > 150 ? 'verdict hot' : 'verdict';
-    var txt = '温度 ' + state.T.toFixed(0) + ' ℃：' + m.name + '电阻 ' + R.toFixed(2) +
-              ' Ω，电流 ' + I.toFixed(2) + ' A';
-    if (state.T > 150) txt += '（温度高，碰撞频繁，电阻比常温大了）';
+    var cls = 'verdict', txt;
+    if (c === 'insulator') {
+      cls = 'verdict';
+      txt = m.name + '：电阻约 ' + fmtR(R) + '，电流 ' + fmtI(I) +
+            ' —— 没有能自由移动的电荷，加多大电压也形不成电流';
+    } else if (c === 'electrolyte') {
+      cls = state.T > 60 ? 'verdict ok' : 'verdict';
+      txt = '温度 ' + state.T.toFixed(0) + ' ℃：' + m.name + '电阻 ' + fmtR(R) +
+            '，电流 ' + fmtI(I) + ' —— Na⁺ 向右、Cl⁻ 向左，两者反向';
+    } else {
+      cls = state.T > 150 ? 'verdict hot' : 'verdict';
+      txt = '温度 ' + state.T.toFixed(0) + ' ℃：' + m.name + '电阻 ' + fmtR(R) +
+            '，电流 ' + fmtI(I);
+      if (state.T > 150) txt += '（温度高，碰撞频繁，电阻比常温大了）';
+    }
     if (v.className !== cls) v.className = cls;
     setText('verdict', txt);
   }
 
-  /* 规律条：随工况点亮 */
+  /* 图例 */
+  var lg = document.getElementById('legend');
+  if (lg) {
+    var html = c === 'insulator'
+      ? '<span class="dot" style="background:#94a3b8"></span>橙圈 = 原子，绕圈的小球 = 被束缚的电子（跑不掉）'
+      : c === 'electrolyte'
+      ? '<span class="dot" style="background:#fb923c"></span>橙球 = Na⁺（向负极），青球 = Cl⁻（向正极）'
+      : '<span class="dot"></span>红点 = 电流方向，蓝球 = 自由电子，橙圈 = 正离子';
+    if (lg.innerHTML !== html) lg.innerHTML = html;
+  }
+
+  /* 规律条：文案按载流子换，点亮条件也跟着换 */
+  syncLaws(c);
   setOn('l1', true);
   setOn('l2', I > 0.02);
-  setOn('l3', hitRate > 0);
-  setOn('l4', state.T > 100);
+  setOn('l3', c === 'insulator' ? true : hitRate > 0);
+  setOn('l4', c === 'electrolyte' ? state.T > 60 : state.T > 100);
+}
+
+function toggleHidden(id, hide) {
+  var el = document.getElementById(id);
+  if (!el) return;
+  if (hide && !el.hidden) el.hidden = true;
+  if (!hide && el.hidden) el.hidden = false;
 }
 
 function setOn(id, on) {
@@ -725,6 +1115,42 @@ function setOn(id, on) {
   if (!el) return;
   if (on && !el.classList.contains('on')) el.classList.add('on');
   if (!on && el.classList.contains('on')) el.classList.remove('on');
+}
+
+/* 底部四条规律按载流子换 —— 说「自由电子」的句子套到盐水 / 玻璃上就是错的 */
+var LAW_MARK = ['①', '②', '③', '④'];
+var LAWS = {
+  metal: [
+    '导体里有大量<b>自由电子</b>，平时只是杂乱无章地乱撞，并不形成电流',
+    '加上电压，电子在乱撞之上多了一个<b>整体向左的缓慢移动</b>，这才形成电流',
+    '电子往前走一路被正离子挡住、撞偏 —— 这种<b>阻碍</b>就是电阻',
+    '<b>温度越高</b>，正离子振动越剧烈，电子被撞得越频繁，<b>电阻越大</b>'
+  ],
+  insulator: [
+    '玻璃里的电子被原子<b>牢牢抓住</b>，只能绕着原子转，跑不掉',
+    '整段导体里<b>没有能自由移动的电荷</b> —— 这就是绝缘体',
+    '加多大电压，电流表都几乎不动：不是电压不够，是<b>没有电荷可推</b>',
+    '温度升高只让原子晃得更厉害，<b>电子依然被绑着</b>'
+  ],
+  electrolyte: [
+    '食盐水里能自由移动的是<b>钠离子 Na⁺ 和氯离子 Cl⁻</b>，不是电子',
+    '正离子奔向<b>负极</b>、负离子奔向<b>正极</b> —— 两者方向正好相反',
+    '两边都在把电荷搬过截面，所以<b>都算电流的一部分</b>',
+    '温度升高，离子跑得更快，盐水<b>反而更容易导电</b>（和金属相反）'
+  ]
+};
+var htmlCache = {};
+function setHTML(id, html) {
+  if (htmlCache[id] === html) return;
+  htmlCache[id] = html;
+  var el = document.getElementById(id);
+  if (el) el.innerHTML = html;
+}
+function syncLaws(c) {
+  var arr = LAWS[c] || LAWS.metal;
+  for (var i = 0; i < 4; i++) {
+    setHTML('l' + (i + 1), '<i>' + LAW_MARK[i] + '</i><span>' + arr[i] + '</span>');
+  }
 }
 
 /* ---- 参数控件 ---- */
@@ -742,6 +1168,15 @@ uRange.addEventListener('input', function () {
   syncUI(); render();
 });
 
+/* 盐水只能到 95 ℃（再高就沸腾了），金属 / 玻璃给到 300 ℃ —— 换导体时同步改滑块范围 */
+function applyTempRange() {
+  var r = tempRange();
+  tRange.min = r.lo;
+  tRange.max = r.hi;
+  state.T = clamp(state.T, r.lo, r.hi);
+  tRange.value = state.T;
+}
+
 document.getElementById('matSeg').addEventListener('click', function (ev) {
   var b = ev.target.closest ? ev.target.closest('button[data-mat]') : null;
   if (!b) return;
@@ -749,6 +1184,8 @@ document.getElementById('matSeg').addEventListener('click', function (ev) {
   Array.prototype.forEach.call(this.querySelectorAll('button[data-mat]'), function (x) {
     x.classList.toggle('on', x === b);
   });
+  applyTempRange();
+  rebuild();
   markStep('st6');
   syncUI(); render();
 });
@@ -775,12 +1212,12 @@ document.getElementById('btnReset').addEventListener('click', function () {
   state.running = true;
   btnPause.textContent = '⏸ 暂停';
   btnPause.classList.remove('active');
-  tRange.value = 20; uRange.value = 2;
+  applyTempRange();
+  uRange.value = 2;
   Array.prototype.forEach.call(document.querySelectorAll('#matSeg button[data-mat]'), function (x) {
     x.classList.toggle('on', x.getAttribute('data-mat') === 'cu');
   });
-  initElectrons();
-  sparks.length = 0;
+  rebuild();
   syncUI(); render();
 });
 
@@ -851,7 +1288,7 @@ function onFsChange() {
  * 自检钩子
  * ============================================================ */
 window.__MICRO = {
-  version: '3.0.0',
+  version: '3.1.0',
   state: state,
   step: step,
   renderNow: render,
@@ -865,14 +1302,23 @@ window.__MICRO = {
   collideR: collideR,
   vDrift: vDrift,
   vThermal: vThermal,
+  carrier: carrier,
+  tempRange: tempRange,
   sliceX: function () { return SLICE_X; },
-  setT: function (v) { state.T = v; tRange.value = v; syncUI(); render(); },
+  setT: function (v) {
+    var r = tempRange();
+    state.T = clamp(v, r.lo, r.hi);
+    tRange.value = state.T;
+    syncUI(); render();
+  },
   setU: function (v) { state.U = v; uRange.value = v; syncUI(); render(); },
   setMat: function (m) {
     state.mat = m;
     Array.prototype.forEach.call(document.querySelectorAll('#matSeg button[data-mat]'), function (x) {
       x.classList.toggle('on', x.getAttribute('data-mat') === m);
     });
+    applyTempRange();
+    rebuild();
     syncUI(); render();
   },
   setPaused: function (b) {
@@ -884,30 +1330,51 @@ window.__MICRO = {
     return {
       cond: { x: COND.x, y: COND.y, w: COND.w, h: COND.h },
       bar: { x: BAR.x, y: BAR.y, w: BAR.w, h: BAR.h },
-      ionCount: ions.length,
+      carrier: carrier(),
+      ionCount: lattice.length,
       ionR: ION_R,
-      eCount: electrons.length,
+      eCount: movers.length,
       eR: E_R,
+      boundCount: bound.length,
       cols: COLS, rows: ROWS,
       sliceX: SLICE_X,
       amp: ionAmp(),
       maxIonOffset: (function () {
         var mx = 0;
-        for (var i = 0; i < ions.length; i++) {
-          var d = Math.abs(ions[i].x - ions[i].bx) + Math.abs(ions[i].y - ions[i].by);
+        for (var i = 0; i < lattice.length; i++) {
+          var d = Math.abs(lattice[i].x - lattice[i].bx) + Math.abs(lattice[i].y - lattice[i].by);
           if (d > mx) mx = d;
         }
         return mx;
       })(),
-      ionsInCond: ions.every(function (io) {
+      ionsInCond: lattice.every(function (io) {
         return io.x > COND.x && io.x < COND.x + COND.w && io.y > COND.y && io.y < COND.y + COND.h;
       }),
-      electronsInCond: electrons.every(function (e) {
+      moversInCond: movers.every(function (e) {
         return e.x >= COND.x - 6 && e.x <= COND.x + COND.w + 6 &&
                e.y >= COND.y && e.y <= COND.y + COND.h;
       })
     };
   },
+  /* 玻璃的束缚电子角度和（两次采样不同 ⇒ 真的在绕转） */
+  boundSpin: function () {
+    var t = 0;
+    for (var i = 0; i < bound.length; i++) t += bound[i].ang;
+    return t;
+  },
+  /* 载流子盘点：正离子 / 负离子 / 电子 / 被束缚的电子 */
+  counts: function () {
+    var na = 0, cl = 0, e = 0;
+    for (var i = 0; i < movers.length; i++) {
+      if (movers[i].kind === 'na') na++;
+      else if (movers[i].kind === 'cl') cl++;
+      else e++;
+    }
+    return { na: na, cl: cl, electron: e, bound: bound.length, lattice: lattice.length,
+             freeCharge: na + cl + e };
+  },
+  /* 某类载流子的平均 x 方向速度（EMA 平滑；正值 = 向右） */
+  meanVx: function (kind) { return vxAvg[kind || 'e'] || 0; },
   view: function () {
     return { dpr: dpr, w: canvas.width, h: canvas.height,
              cssW: canvas.clientWidth, cssH: canvas.clientHeight, W: W, H: H };
@@ -942,8 +1409,8 @@ window.__MICRO = {
  * 启动
  * ============================================================ */
 buildElectronSprite();
-initIons();
-initElectrons();
+applyTempRange();
+rebuild();
 syncUI();
 layout();
 render();
