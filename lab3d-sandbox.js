@@ -10,7 +10,7 @@
  */
 import * as THREE from './assets/optics-three.min.js';
 // 🔴 import 必须带版本号：不带的话这个子模块【没有缓存键】，改了 kit 页面看上去没变。
-import { CATALOG, buildRheostat, buildSwitch, buildBattery, DIM } from './lab3d-kit.js?build=13';
+import { CATALOG, buildRheostat, buildSwitch, buildBattery, buildBulb, DIM } from './lab3d-kit.js?build=21';
 
 const $ = (id) => document.getElementById(id);
 
@@ -340,7 +340,7 @@ const state = {
 const items = [];          // { id, api, type, group, el, Rmax }
 let itemSeq = 0;
 
-const BUILDERS = { rheostat: buildRheostat, switch: buildSwitch, battery: buildBattery };
+const BUILDERS = { rheostat: buildRheostat, switch: buildSwitch, battery: buildBattery, bulb: buildBulb };
 const META = {};
 CATALOG.forEach((c) => { META[c.type] = c; });
 
@@ -459,6 +459,7 @@ function removeItem(item) {
     if (o.isMesh && o.geometry && !o.geometry.userData.shared) o.geometry.dispose();
   });
   if (item.el && item.el.parentNode) item.el.parentNode.removeChild(item.el);
+  if (item.tempEl && item.tempEl.parentNode) item.tempEl.parentNode.removeChild(item.tempEl);
   if (state.selected === item) state.selected = null;
   syncUI();
   recompute();
@@ -613,6 +614,7 @@ function paramsOf(it) {
   if (it.type === 'rheostat') return { Rmax: it.Rmax, slide: it.api.getSlide() };
   if (it.type === 'switch') return { closed: it.api.isClosed() };
   if (it.type === 'battery') return it.api.getParams();
+  if (it.type === 'bulb') return it.api.getParams();
   return {};
 }
 function termIdxOf(it, term) {
@@ -634,6 +636,14 @@ function recompute() {
     results = null;
     console.error('[lab3d] solve failed', e);
   }
+  // 把求解结果推给会「发光」的器材。灯泡的亮度、灯丝温度、过载全部来自
+  // circuit-core 的 fillLamp（rec.brightness / rec.tempC / rec.overload），
+  // 3D 这一层只负责把它画成光，不自己算任何电学量。
+  items.forEach((it) => {
+    if (it.type !== 'bulb' || !it.api.setLit) return;
+    const rec = results && results.components ? results.components[it.id] : null;
+    it.api.setLit(rec);
+  });
   syncResultsUI();
 }
 
@@ -710,6 +720,15 @@ function buildLabel(item) {
   el.textContent = META[item.type].label;
   labelLayer.appendChild(el);
   item.el = el;
+  // 灯泡多一块「灯丝温度」浮标：默认不显示，参数面板里勾上才出现。
+  // 位置在名称标签【上方】—— 和 2D 沙盒「灯泡上方温度牌」是同一个约定。
+  if (item.type === 'bulb') {
+    const t = document.createElement('div');
+    t.className = 'plabel temp off';
+    t.textContent = '20 ℃';
+    labelLayer.appendChild(t);
+    item.tempEl = t;
+  }
 }
 function updateLabels() {
   const rect = canvas.getBoundingClientRect();
@@ -725,6 +744,22 @@ function updateLabels() {
     item.el.classList.remove('off');
     item.el.style.transform = 'translate(-50%,-50%) translate(' + x.toFixed(1) + 'px,' + y.toFixed(1) + 'px)';
     item.el.classList.toggle('sel', state.selected === item);
+
+    if (item.tempEl) {
+      const show = !!(item.api && item.api.showTemp);
+      if (!show) { item.tempEl.classList.add('off'); }
+      else {
+        item.tempEl.classList.remove('off');
+        const tc = item.api.getTempC ? item.api.getTempC() : 20;
+        item.tempEl.textContent = Math.round(tc) + ' ℃';
+        // 灯丝越热越白，浮标底色跟着走一点，学生能看出「温度」和「亮」是一回事
+        const hot = Math.min(1, Math.max(0, (tc - 20) / 2000));
+        item.tempEl.style.color = 'rgb(' + Math.round(165 + 90 * hot) + ',' +
+          Math.round(243 - 60 * hot) + ',' + Math.round(252 - 40 * hot) + ')';
+        item.tempEl.style.transform = 'translate(-50%,-50%) translate(' + x.toFixed(1) + 'px,' +
+          (y - 21).toFixed(1) + 'px)';
+      }
+    }
   });
 }
 
@@ -1145,6 +1180,76 @@ function buildParams() {
     return;
   }
 
+  // ── 灯泡：额定电压 / 额定功率 / 灯丝温度两项开关 ────────────
+  // 规格与 2D「电路实验沙盒」的 PARAM_UI.bulb 一一对应（含三个常用规格按钮）。
+  if (it.type === 'bulb') {
+    pSlideEl = pSlideOut = pRmaxEl = pRmaxOut = null;
+    const PRESETS = [
+      { v: 2.5, w: 0.75, t: '2.5V / 0.75W（0.3A）—— 实验室最常见的那只' },
+      { v: 3.8, w: 1.1, t: '3.8V / 1.1W（0.3A）—— 手电筒灯泡' },
+      { v: 1.5, w: 0.3, t: '1.5V / 0.3W（0.2A）—— 一节干电池就能点亮的小电珠' },
+    ];
+    const presetHtml = PRESETS.map((p) =>
+      '<button type="button" data-bv="' + p.v + '" data-bw="' + p.w + '" title="' + p.t + '">' +
+        p.v.toFixed(1) + 'V<small>' + p.w.toFixed(2) + 'W</small></button>').join('');
+    pSel.innerHTML =
+      '<div class="lab3d-field">' +
+        '<label>常用规格</label>' +
+        '<div class="lab3d-presets">' + presetHtml + '</div>' +
+      '</div>' +
+      '<div class="lab3d-field">' +
+        '<label for="pBulbV">额定电压 <output id="pBulbVOut">' + it.api.ratedV.toFixed(1) + ' V</output></label>' +
+        '<input id="pBulbV" type="range" min="1.5" max="6" step="0.1" value="' + it.api.ratedV + '">' +
+      '</div>' +
+      '<div class="lab3d-field">' +
+        '<label for="pBulbW">额定功率 <output id="pBulbWOut">' + it.api.ratedW.toFixed(2) + ' W</output></label>' +
+        '<input id="pBulbW" type="range" min="0.2" max="3" step="0.1" value="' + it.api.ratedW + '">' +
+      '</div>' +
+      '<div class="lab3d-field">' +
+        '<label class="chk"><input id="pBulbTemp" type="checkbox"' + (it.api.tempDependent ? ' checked' : '') + '>' +
+          '<span>灯丝电阻随温度升高而增大</span></label>' +
+        '<label class="chk"><input id="pBulbShowT" type="checkbox"' + (it.api.showTemp ? ' checked' : '') + '>' +
+          '<span>在灯泡上方显示灯丝温度</span></label>' +
+        '<small>额定电阻 = U<sub>额</sub>²/P<sub>额</sub>；勾上第一项后，灯丝越热电阻越大，' +
+        '实际功率就达不到「U²/R」算出来的那个值 —— 这正是真灯泡和定值电阻的区别。</small>' +
+      '</div>' +
+      '<div class="lab3d-btnrow">' +
+        '<button type="button" id="pRotate">⟳ 转 90°</button>' +
+        '<button type="button" id="pRemove">🗑 从桌上拿走</button>' +
+      '</div>';
+
+    const applyPreset = (v, w) => {
+      it.api.setRated(v, w);
+      buildParams();          // 重画面板（滑条位置要跟着跳）
+      recompute();
+      syncReadout();
+    };
+    pSel.querySelectorAll('[data-bv]').forEach((b) => {
+      b.addEventListener('click', () => applyPreset(+b.dataset.bv, +b.dataset.bw));
+    });
+    $('pBulbV').addEventListener('input', (e) => {
+      it.api.setRated(+e.target.value, null);
+      $('pBulbVOut').textContent = it.api.ratedV.toFixed(1) + ' V';
+      recompute(); syncReadout();
+    });
+    $('pBulbW').addEventListener('input', (e) => {
+      it.api.setRated(null, +e.target.value);
+      $('pBulbWOut').textContent = it.api.ratedW.toFixed(2) + ' W';
+      recompute(); syncReadout();
+    });
+    $('pBulbTemp').addEventListener('change', (e) => {
+      it.api.tempDependent = e.target.checked;
+      recompute(); syncReadout();
+    });
+    $('pBulbShowT').addEventListener('change', (e) => {
+      it.api.showTemp = e.target.checked;
+      updateLabels(); syncReadout();
+    });
+    $('pRotate').addEventListener('click', rotateSelected);
+    $('pRemove').addEventListener('click', () => removeItem(it));
+    return;
+  }
+
   // ── 开关：只有一个「合上 / 抬起」──────────────────────────
   if (it.type === 'switch') {
     pSlideEl = pSlideOut = pRmaxEl = pRmaxOut = null;
@@ -1255,6 +1360,17 @@ function syncReadout() {
   if (it.type === 'battery') {
     $('roR').innerHTML = it.api.emf().toFixed(1) + '<small>V</small>';
     $('roSub').innerHTML = it.api.getCells() + ' 节 × 1.5 V' + cur;
+    return;
+  }
+  if (it.type === 'bulb') {
+    const br = it.api.getBrightness();
+    const tc = it.api.getTempC();
+    // 主读数给「实际功率占额定的比例」，因为那才是学生看到的「多亮」；
+    // 电流放在副行，和读数表里那一行对得上。
+    $('roR').innerHTML = (br * 100).toFixed(0) + '<small>% 亮度</small>';
+    $('roSub').innerHTML = '灯丝 <b>' + Math.round(tc) + ' ℃</b>' +
+      (r ? ' · I = ' + fmtV(Math.abs(r.i || 0)) + ' A' : '') +
+      (it.api.isOverload() ? ' · <b style="color:#fca5a5">超过额定功率</b>' : '');
     return;
   }
   if (it.type === 'rheostat') {
@@ -1678,8 +1794,17 @@ window.__lab = {
   },
   // 🔴 必须查【真实的 DOM 标签】，不能从 items 派生：
   //    派生出来的列表在「删了器材却忘了删标签」时仍然是正确的 —— 断言会空转。
+  // 🔴 只算名称标签：灯泡还多一块「灯丝温度」浮标（.plabel.temp），
+  //    混在一起会让「删了器材标签数应回到 0」这类断言莫名其妙多 1。
+  tempLabels() {
+    return [...labelLayer.querySelectorAll('.plabel.temp')].map((el) => {
+      const r = el.getBoundingClientRect();
+      return { text: el.textContent, off: el.classList.contains('off'), x: r.x, y: r.y };
+    });
+  },
+  updateLabelsNow() { updateLabels(); return true; },
   labels() {
-    return [...labelLayer.querySelectorAll('.plabel')].map((el) => {
+    return [...labelLayer.querySelectorAll('.plabel:not(.temp)')].map((el) => {
       const r = el.getBoundingClientRect();
       return { text: el.textContent, off: el.classList.contains('off'), x: r.x, y: r.y };
     });

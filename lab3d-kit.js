@@ -461,7 +461,7 @@ export function buildSwitch(opts) {
   const outer = new THREE.Group();
   const inner = new THREE.Group();
   inner.scale.setScalar(S);
-  inner.position.y = D.BASE_H * S;      // 底座下表面落在 y=0（桌面）
+  inner.position.y = (D.BASE_H + 1.2) * S;   // 补上倒角厚度，底面才真的落在桌面
   outer.add(inner);
 
   // ── 底座：圆角矩形挤出，上表面 y=0 ─────────────────────────
@@ -647,7 +647,7 @@ export function buildBattery(opts) {
   const outer = new THREE.Group();
   const inner = new THREE.Group();
   inner.scale.setScalar(S);
-  inner.position.y = D.BOX_H * S;      // 托架底面落在 y=0
+  inner.position.y = (D.BOX_H + 1) * S;   // 补上倒角厚度，托架底面才真的落在桌面
   outer.add(inner);
 
   let cells = Math.max(1, Math.min(D.MAX_CELLS, opts.cells || 2));
@@ -868,6 +868,359 @@ export function buildBattery(opts) {
 }
 
 // ============================================================
+//  小灯泡 + 灯座（人教版 15.2 插图那种「螺口小灯泡 + 塑料灯座」）
+// ------------------------------------------------------------
+// 参考图 → 3D：
+//   浅蓝灰圆角底板 + 左右两只红色滚花接线柱  → 同闸刀开关那套
+//   中间圆柱凸台（上缘微收）                → CylinderGeometry 锥度
+//   凸台上的黑色绝缘圈                      → 薄圆柱
+//   深灰金属螺纹灯口                        → 圆柱 + 数圈 torus 当螺纹
+//   透明玻璃泡（近球形 + 短颈）              → LatheGeometry 一条轮廓
+//   泡内两根竖直支架 + 顶端折线灯丝          → 圆柱 + TubeGeometry
+// 亮度与灯丝颜色由 circuit-core 的 rec.brightness / rec.tempC 驱动，
+// 这里【不算电学】，只负责把求解结果画成光。
+// ============================================================
+export const BULB_DIM = {
+  BASE_W: 92, BASE_D: 56, BASE_H: 12,
+  POST_X: 36, POST_Z: 16, POST_R: 5.5, POST_H: 15,
+  PED_R: 15, PED_H: 18,          // 凸台
+  RING_R: 12.5, RING_H: 3,       // 黑色绝缘圈
+  SOCK_R: 11, SOCK_H: 7,         // 螺纹灯口
+  GLASS_R: 14, GLASS_H: 28,      // 玻璃泡（近球形，直径 28）
+  GLASS_Y: 24,                   // 玻璃泡颈口底面（局部，y=0 是底座上表面）
+  SCALE: 2.8,
+};
+
+// ── 黑体辐射配色（1000–40000 K，CIE 1931 → sRGB）──────────────
+// 灯丝颜色是「温度」的直接读数：20℃ 时暗红发黑，1000℃ 橙红，2800℃ 暖白。
+// 用色度图近似而不是「暗红→黄→白」的硬编码渐变，这样任何温度都自洽。
+export function blackbodyRGB(T) {
+  const t = Math.min(40000, Math.max(1000, T));
+  let x, y;
+  if (t <= 4000) x = -0.2661239e9 / t ** 3 - 0.2343589e6 / t ** 2 + 0.8776956e3 / t + 0.179910;
+  else x = -3.0258469e9 / t ** 3 + 2.1070379e6 / t ** 2 + 0.2226347e3 / t + 0.240390;
+  if (t <= 2222) y = -1.1063814 * x ** 3 - 1.34811020 * x ** 2 + 2.18555832 * x - 0.20219683;
+  else if (t <= 4000) y = -0.9549476 * x ** 3 - 1.37418593 * x ** 2 + 2.09137015 * x - 0.16748867;
+  else y = 3.0817580 * x ** 3 - 5.8733867 * x ** 2 + 3.75112997 * x - 0.37001483;
+  const z = 1 - x - y;
+  const r = 3.2406 * x - 1.5372 * y - 0.4986 * z;
+  const g = -0.9689 * x + 1.8758 * y + 0.0415 * z;
+  const b = 0.0557 * x - 0.2040 * y + 1.0570 * z;
+  const gam = (c) => (c <= 0.0031308 ? 12.92 * c : 1.055 * Math.pow(c, 1 / 2.4) - 0.055);
+  return new THREE.Color(
+    Math.min(1, Math.max(0, gam(r))),
+    Math.min(1, Math.max(0, gam(g))),
+    Math.min(1, Math.max(0, gam(b)))
+  );
+}
+
+// 光晕贴图（径向渐变，只建一次）
+let HALO_TEX = null;
+function haloTexture() {
+  if (HALO_TEX) return HALO_TEX;
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = 128;
+  const g = cv.getContext('2d');
+  const rg = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+  rg.addColorStop(0, 'rgba(255,255,255,0.95)');
+  rg.addColorStop(0.22, 'rgba(255,240,205,0.55)');
+  rg.addColorStop(0.55, 'rgba(255,210,140,0.16)');
+  rg.addColorStop(1, 'rgba(255,190,110,0)');
+  g.fillStyle = rg;
+  g.fillRect(0, 0, 128, 128);
+  HALO_TEX = new THREE.CanvasTexture(cv);
+  HALO_TEX.colorSpace = THREE.SRGBColorSpace;
+  return HALO_TEX;
+}
+
+// 玻璃高光（参考图左上那道白色月牙）—— 贴图只建一次
+let GLINT_TEX = null;
+function glintTexture() {
+  if (GLINT_TEX) return GLINT_TEX;
+  const cv = document.createElement('canvas');
+  cv.width = 64; cv.height = 96;
+  const g = cv.getContext('2d');
+  const rg = g.createRadialGradient(32, 48, 2, 32, 48, 44);
+  rg.addColorStop(0, 'rgba(255,255,255,0.95)');
+  rg.addColorStop(0.42, 'rgba(255,255,255,0.42)');
+  rg.addColorStop(1, 'rgba(255,255,255,0)');
+  g.save();
+  g.translate(32, 48); g.scale(0.52, 1); g.translate(-32, -48);
+  g.fillStyle = rg;
+  g.fillRect(0, 0, 64, 96);
+  g.restore();
+  GLINT_TEX = new THREE.CanvasTexture(cv);
+  GLINT_TEX.colorSpace = THREE.SRGBColorSpace;
+  return GLINT_TEX;
+}
+
+export function buildBulb(opts) {
+  opts = opts || {};
+  const D = BULB_DIM;
+  const S = D.SCALE;
+  const outer = new THREE.Group();
+  const inner = new THREE.Group();
+  inner.scale.setScalar(S);
+  // 底座是挤出件 + 1.2 的倒角 ⇒ 底面比「几何底面」还要低 1.2；
+  // 只补 BASE_H 会让整台器材陷进桌面 3.4 mm。
+  inner.position.y = (D.BASE_H + 1.2) * S;     // 底座下表面正好落在 y=0（桌面）
+  outer.add(inner);
+
+  const tag = (o, role) => { o.userData.role = role; return o; };
+
+  // 灯座本体材质（每实例独立：玻璃与灯丝的透明度要各自变）
+  const matPed = new THREE.MeshStandardMaterial({ color: 0x93a8c0, roughness: 0.46, metalness: 0.12 });
+  const matSock = new THREE.MeshStandardMaterial({ color: 0x8d959f, roughness: 0.34, metalness: 0.86 });
+  const matThread = new THREE.MeshStandardMaterial({ color: 0x767d87, roughness: 0.4, metalness: 0.8 });
+  const matGlass = new THREE.MeshStandardMaterial({
+    color: 0xdff2ff, roughness: 0.04, metalness: 0.0,
+    transparent: true, opacity: 0.20, depthWrite: false,
+    side: THREE.DoubleSide,
+  });
+  const matFilament = new THREE.MeshBasicMaterial({ color: 0x2a1a10 });
+
+  // ── 1. 底板（圆角矩形挤出，上表面 y=0）────────────────────
+  const baseGeo = new THREE.ExtrudeGeometry(roundRectShape(D.BASE_W, D.BASE_D, 9), {
+    depth: D.BASE_H, bevelEnabled: true, bevelThickness: 1.2, bevelSize: 1.2,
+    bevelSegments: 2, curveSegments: 12,
+  });
+  baseGeo.rotateX(-Math.PI / 2);
+  baseGeo.translate(0, -D.BASE_H, 0);
+  inner.add(tag(new THREE.Mesh(baseGeo, MAT.basePlate), 'base'));
+
+  // ── 2. 两只红色滚花接线柱（与闸刀开关同款）────────────────
+  [-1, 1].forEach((sx) => {
+    const x = sx * D.POST_X;
+    const pad = new THREE.Mesh(new THREE.CylinderGeometry(D.POST_R + 3.4, D.POST_R + 4, 2.4, 28), MAT.steel);
+    pad.position.set(x, 1.2, D.POST_Z);
+    inner.add(tag(pad, 'postPad'));
+    const stem = new THREE.Mesh(new THREE.CylinderGeometry(D.POST_R * 0.72, D.POST_R * 0.72, 4, 20), MAT.brass);
+    stem.position.set(x, 3.4, D.POST_Z);
+    inner.add(tag(stem, 'postStem'));
+    const cap = new THREE.Mesh(knurledGeometry(D.POST_R, D.POST_H), MAT.red);
+    cap.position.set(x, 3.4 + D.POST_H / 2, D.POST_Z);
+    cap.userData.termId = sx < 0 ? 'a' : 'b';
+    inner.add(tag(cap, 'postCap'));
+    const slot = new THREE.Mesh(new THREE.BoxGeometry(D.POST_R * 1.1, 0.7, 0.3), MAT.black);
+    slot.position.set(x, 3.4 + D.POST_H - 0.3, D.POST_Z + D.POST_R * 0.55);
+    inner.add(tag(slot, 'postSlot'));
+  });
+
+  // ── 3. 中间凸台（上缘略收，参考图那副锥度）────────────────
+  const ped = new THREE.Mesh(new THREE.CylinderGeometry(D.PED_R, D.PED_R * 1.04, D.PED_H, 40), matPed);
+  ped.position.set(0, D.PED_H / 2, 0);
+  inner.add(tag(ped, 'pedestal'));
+  // 凸台顶部倒角圈
+  const pedTop = new THREE.Mesh(new THREE.TorusGeometry(D.PED_R * 0.97, 1.1, 8, 40), matPed);
+  pedTop.rotation.x = Math.PI / 2;
+  pedTop.position.set(0, D.PED_H, 0);
+  inner.add(tag(pedTop, 'pedestalTop'));
+
+  // ── 4. 黑色绝缘圈 ─────────────────────────────────────────
+  const ringY = D.PED_H + D.RING_H / 2;
+  const blackRing = new THREE.Mesh(new THREE.CylinderGeometry(D.RING_R, D.RING_R, D.RING_H, 32), MAT.black);
+  blackRing.position.set(0, ringY, 0);
+  inner.add(tag(blackRing, 'blackRing'));
+
+  // ── 5. 螺纹灯口（圆柱 + 数圈 torus 当螺纹）────────────────
+  const sockY0 = D.PED_H + D.RING_H;
+  const socket = new THREE.Mesh(new THREE.CylinderGeometry(D.SOCK_R, D.SOCK_R, D.SOCK_H, 36), matSock);
+  socket.position.set(0, sockY0 + D.SOCK_H / 2, 0);
+  inner.add(tag(socket, 'socket'));
+  for (let i = 0; i < 4; i++) {
+    const th = new THREE.Mesh(new THREE.TorusGeometry(D.SOCK_R * 1.02, 0.62, 6, 36), matThread);
+    th.rotation.x = Math.PI / 2;
+    th.position.set(0, sockY0 + 1.2 + i * 1.5, 0);
+    inner.add(tag(th, 'thread'));
+  }
+  // 灯口上沿的收口圈（玻璃颈从这里出来）
+  const sockLip = new THREE.Mesh(new THREE.TorusGeometry(D.SOCK_R * 0.96, 0.8, 8, 36), matSock);
+  sockLip.rotation.x = Math.PI / 2;
+  sockLip.position.set(0, sockY0 + D.SOCK_H, 0);
+  inner.add(tag(sockLip, 'socketLip'));
+
+  // ── 6. 玻璃泡（LatheGeometry：短颈 + 近球形）──────────────
+  // 🔴 用一条轮廓旋成一体，不要「球 + 圆柱颈」拼：两段接缝在透明材质下会
+  //    露出一道明显的亮线，看着像灯泡裂了。
+  const prof = [
+    [9.5, 0], [9.5, 3.5], [10.6, 6], [12.4, 9], [13.8, 12.5],
+    [14, 16], [13.5, 19.5], [11.8, 22.6], [8.8, 25.2], [4.6, 27.2], [0, 28],
+  ].map(([r, y]) => new THREE.Vector2(r, y));
+  const glassGeo = new THREE.LatheGeometry(prof, 44);
+  const glass = new THREE.Mesh(glassGeo, matGlass);
+  glass.position.set(0, D.GLASS_Y, 0);
+  glass.renderOrder = 2;          // 玻璃最后画，里面的灯丝才透得出来
+  inner.add(tag(glass, 'glass'));
+
+  // ── 7. 泡内两根支架 + 顶端折线灯丝 ────────────────────────
+  // 🔴 支架与灯丝都要「细」：0.55/0.42 的半径放大 2.8 倍后是 1.5/1.2 mm，
+  //    渲染出来是两根粗柱子加一个大写的 M，不像灯丝。
+  const leadTop = D.GLASS_Y + 18;          // 支架顶端（玻璃上半部）
+  [-1, 1].forEach((sx) => {
+    const lead = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.28, leadTop - (sockY0 - 1), 8), MAT.steel);
+    lead.position.set(sx * 2.4, (leadTop + sockY0 - 1) / 2, 0);
+    inner.add(tag(lead, 'lead'));
+  });
+  // 灯丝：一段折线（参考图里画的就是「两个支架顶端之间的一段细丝」）
+  const filPts = [
+    new THREE.Vector3(-2.4, leadTop, 0),
+    new THREE.Vector3(-1.25, leadTop + 3.6, 0),
+    new THREE.Vector3(0, leadTop + 1.7, 0),
+    new THREE.Vector3(1.25, leadTop + 3.6, 0),
+    new THREE.Vector3(2.4, leadTop, 0),
+  ];
+  const filGeo = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(filPts), 48, 0.26, 8, false);
+  const filament = new THREE.Mesh(filGeo, matFilament);
+  inner.add(tag(filament, 'filament'));
+
+  // ── 8. 光晕 + 点光源（亮度驱动）──────────────────────────
+  const halo = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: haloTexture(), color: 0xffd9a0, transparent: true,
+    blending: THREE.AdditiveBlending, depthWrite: false, opacity: 0,
+  }));
+  halo.position.set(0, D.GLASS_Y + 16, 0);
+  halo.scale.setScalar(30);
+  inner.add(tag(halo, 'halo'));
+
+  // 泡内的「整体发光」：一层背面 + 叠加混合的球壳。只靠灯丝和精灵的话，
+  // 玻璃泡看着像一只灰气泡 —— 真灯泡是【整个泡都在发光】。
+  const glowMat = new THREE.MeshBasicMaterial({
+    color: 0xffd9a0, transparent: true, opacity: 0,
+    blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.BackSide,
+  });
+  // 🔴 半径要 ≥ 玻璃：小于玻璃时，泡内会出现一圈明显的「内边界」，
+  //    看着像一个黄球塞在玻璃里。
+  const glow = new THREE.Mesh(new THREE.SphereGeometry(D.GLASS_R + 0.4, 26, 18), glowMat);
+  glow.position.set(0, D.GLASS_Y + 14, 0);
+  glow.renderOrder = 3;
+  inner.add(tag(glow, 'glow'));
+
+  // 玻璃高光：参考图左上那道白月牙。用 Sprite（永远朝向相机），
+  // 所以绕器材转视角时高光不会「转到背面去」。
+  const glint = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: glintTexture(), color: 0xffffff, transparent: true,
+    blending: THREE.AdditiveBlending, depthWrite: false, opacity: 0.5,
+  }));
+  glint.position.set(-5.5, D.GLASS_Y + 21, 3);
+  glint.scale.set(9, 13, 1);
+  glint.renderOrder = 4;
+  inner.add(tag(glint, 'glint'));
+
+  const lamp = new THREE.PointLight(0xffd9a0, 0, 1200, 2);
+  lamp.position.set(0, D.GLASS_Y + 15, 0);
+  inner.add(tag(lamp, 'lampLight'));
+
+  // ── 9. 桌面接触阴影 ───────────────────────────────────────
+  const shadow = new THREE.Mesh(
+    new THREE.PlaneGeometry(260, 170),
+    new THREE.MeshBasicMaterial({ map: shadowTexture(), transparent: true, depthWrite: false })
+  );
+  shadow.rotation.x = -Math.PI / 2;
+  shadow.position.y = 0.35;
+  shadow.renderOrder = -1;
+  outer.add(shadow);
+
+  // ── 10. 端子 ──────────────────────────────────────────────
+  const termLocal = {
+    a: new THREE.Vector3(-D.POST_X * S, (3.4 + D.POST_H * 0.55 + D.BASE_H) * S, D.POST_Z * S),
+    b: new THREE.Vector3(D.POST_X * S, (3.4 + D.POST_H * 0.55 + D.BASE_H) * S, D.POST_Z * S),
+  };
+
+  // ── 11. 亮度驱动（数值全部来自 circuit-core，这里只做缓动与配色）──
+  let lit = 0;          // 目标亮度 0~1.3
+  let shown = 0;        // 当前亮度（缓动，避免读数跳变时灯闪）
+  let tempC = 20;
+  let over = false;
+
+  // 冷态灯丝的底色：一根暗钨丝，几乎看不见（不是暗红 —— 那是「刚断电还热着」）
+  const COL_COLD = new THREE.Color(0x3b3a36);
+
+  function apply() {
+    const b = Math.max(0, Math.min(1.3, shown));
+    const T = Math.max(1200, tempC + 273.15);          // 灯丝温度（K）
+    const col = blackbodyRGB(T);
+    const k = Math.min(1, b * 1.35);                   // 0 = 冷态，1 = 满亮
+    // 灯丝：从冷态的暗钨丝【混】到黑体色，再乘一个亮度增益 —— 越亮越"超白"
+    matFilament.color.copy(COL_COLD).lerp(col, k).multiplyScalar(0.55 + 4.6 * k);
+    // 玻璃：亮起来才带一点自身发光（真实灯泡的玻璃壁被灯丝照亮）
+    matGlass.opacity = 0.15 + 0.09 * k;
+    matGlass.emissive.copy(col).multiplyScalar(0.05 * k);
+    // 泡内辉光：整个玻璃泡都在发光（真灯泡就是这样）
+    glowMat.color.copy(col);
+    glowMat.opacity = 0.34 * k;
+    // 外面再罩一层淡光晕（只到「泡周围一圈」的量级，别糊满整张桌子）
+    halo.material.color.copy(col);
+    halo.material.opacity = Math.min(0.30, b * 0.26);
+    halo.scale.setScalar(30 + 34 * k);
+    // 越亮，玻璃高光越被灯丝盖住
+    glint.material.opacity = 0.5 * (1 - 0.55 * k);
+    // 点光源（照亮桌面与邻近器材）—— 场景单位是 mm，强度按经验标定
+    lamp.color.copy(col);
+    lamp.intensity = 0.9 * k;
+    lamp.distance = 700;
+  }
+  apply();
+
+  const api = {
+    group: outer,
+    shadow,
+    localToWorld: (v) => inner.localToWorld(v.clone()),
+    worldToLocal: (v) => inner.worldToLocal(v.clone()),
+    type: 'bulb',
+    label: '小灯泡',
+    spec: '2.5 V　0.75 W',
+    bounds: { hw: D.BASE_W / 2 * S + 6, hd: D.BASE_D / 2 * S },
+    termLocal,
+    termIdx: { a: 0, b: 1 },        // 与 circuit-core 的 TYPES.bulb 一致
+    // 🔴 参数键名照 circuit-params.js 的 PARAM_UI.bulb，一个都不能改名：
+    //    ratedV / ratedW / tempDependent / showTemp
+    getParams() {
+      return {
+        ratedV: api.ratedV, ratedW: api.ratedW,
+        tempDependent: api.tempDependent, showTemp: api.showTemp,
+      };
+    },
+    ratedV: 2.5, ratedW: 0.75, tempDependent: true, showTemp: false,
+    // 求解结果回灌（sandbox 在 recompute() 里调）
+    setLit(rec) {
+      if (!rec) { lit = 0; return; }
+      lit = rec.brightness == null ? 0 : rec.brightness;
+      tempC = rec.tempC == null ? 20 : rec.tempC;
+      over = !!rec.overload;
+      api.spec = (api.ratedV).toFixed(1) + ' V　' + api.ratedW.toFixed(2) + ' W';
+    },
+    // 缓动：求解是一帧一次的，读数突变时不能让灯硬跳
+    step(dt) {
+      const d = lit - shown;
+      if (Math.abs(d) < 0.002) { if (shown !== lit) { shown = lit; apply(); } return; }
+      shown += d * Math.min(1, dt * 7);
+      apply();
+    },
+    getBrightness: () => shown,
+    // 🔴 自检要判【真的画出来的东西】，不能只看 getBrightness() 这个内部数：
+    //    「状态改了但材质没跟着变」的变异在 getBrightness 上照样合格。
+    debugLit() {
+      return {
+        filament: [matFilament.color.r, matFilament.color.g, matFilament.color.b]
+          .map((v) => +v.toFixed(3)),
+        glassOpacity: +matGlass.opacity.toFixed(3),
+        glowOpacity: +glowMat.opacity.toFixed(3),
+        haloOpacity: +halo.material.opacity.toFixed(3),
+        lightIntensity: +lamp.intensity.toFixed(3),
+      };
+    },
+    getTempC: () => tempC,
+    isOverload: () => over,
+    setRated(v, w) {
+      if (v != null) api.ratedV = v;
+      if (w != null) api.ratedW = w;
+      api.spec = api.ratedV.toFixed(1) + ' V　' + api.ratedW.toFixed(2) + ' W';
+    },
+  };
+  return api;
+}
+
+// ============================================================
 //  器材目录（器材库面板按这张表生成卡片）
 // ============================================================
 export const CATALOG = [
@@ -889,6 +1242,10 @@ export const CATALOG = [
     desc: '闸刀式开关：点刀片合上／抬起。',
     build: buildSwitch, ready: true,
   },
-  { type: 'bulb', label: '小灯泡', spec: '2.5 V　0.3 A', desc: '带灯座的螺口小灯泡，亮度随电流变。', ready: false },
+  {
+    type: 'bulb', label: '小灯泡', spec: '2.5 V　0.75 W',
+    desc: '带灯座的螺口小灯泡：亮度随电流变，灯丝温度越高越白。',
+    build: buildBulb, ready: true,
+  },
   { type: 'meter', label: '电流表 / 电压表', spec: '三柱双量程', desc: '两个量程柱 + 一个公共柱，接错会反偏。', ready: false },
 ];
