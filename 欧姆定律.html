@@ -343,7 +343,17 @@
     .stage:fullscreen .stage-canvas-wrap { flex: 1 1 auto; overflow: hidden; }
 
     /* 参数面板：浮在画布右上角（舞台的后代，所以全屏里照样在） */
-    .stage-params { position: absolute; top: 10px; right: 10px; z-index: 8;
+    /* 全屏按钮：浮在画布右上角（z-index 9 压在面板 8 上面，永远点得到） */
+    .stage-fs-btn { position: absolute; top: 10px; right: 10px; z-index: 9;
+      display: inline-flex; align-items: center; gap: 5px; line-height: 1;
+      padding: 7px 11px; border-radius: 9px; border: 1px solid #cbd5e1;
+      background: rgba(255,255,255,0.96); color: #475569; font-family: inherit;
+      font-size: 12px; font-weight: 700; cursor: pointer;
+      box-shadow: 0 2px 10px rgba(15,23,42,0.10); transition: all .15s; }
+    .stage-fs-btn:hover { border-color: #3b82f6; color: #2563eb; background: #fff; }
+    .stage-fs-btn:focus-visible { outline: 2px solid #93c5fd; outline-offset: 2px; }
+
+    .stage-params { position: absolute; top: 52px; right: 10px; z-index: 8;
       display: flex; flex-direction: column; width: 304px; max-width: calc(100% - 20px);
       max-height: calc(100% - 20px); border: 1px solid #dbe3ee; border-radius: 12px;
       background: rgba(255,255,255,0.97); box-shadow: 0 16px 40px rgba(15,23,42,0.16);
@@ -422,7 +432,8 @@
     /* 全屏里抽屉自己滚（尺寸由上面那条 grid 规则给），这里不再限高 */
 
     @media (max-width: 700px) {
-      .stage-params { width: min(292px, calc(100% - 16px)); top: 8px; right: 8px; }
+      .stage-fs-btn { top: 8px; right: 8px; padding: 6px 9px; font-size: 11px; }
+      .stage-params { width: min(292px, calc(100% - 16px)); top: 46px; right: 8px; }
       .stage-hud .data-card { min-width: 68px; padding: 4px 8px; }
       .stage-hud .data-card .d-value { font-size: 15px; }
       .stage-bar button { padding: 5px 9px; font-size: 11.5px; }
@@ -460,6 +471,11 @@
 
       <div class="stage-canvas-wrap" id="stageWrap">
         <canvas id="simCanvas"></canvas>
+
+        <!-- 全屏按钮：钉在画布右上角，不进工具条 —— 工具条在笔记本屏上要往下滚才露出来，
+             而「全屏」恰恰是还没滚动时就要点的那颗。参数面板让到它下面一格。 -->
+        <button type="button" class="stage-fs-btn" id="stageFs" onclick="toggleFullscreen()"
+                title="全屏显示实验画面" aria-label="全屏显示实验画面">⛶ 全屏</button>
 
         <!-- 参数面板：可折叠，浮在画布右上角。
              里面装的是「数据记录」+「电路参数」；滑片单独留在下面的快捷带里。 -->
@@ -541,7 +557,6 @@
         <button id="btnFlow" onclick="__setFlow(!__showFlow())">⚡ 电子流动：关</button>
         <button id="btnCurrent" onclick="__setCurrent(!__showCurrent())">➡ 电流方向：开</button>
         <button onclick="__openSchematic()">📐 电路图</button>
-        <button class="sb-fs" id="stageFs" onclick="toggleFullscreen()" title="全屏显示实验画面">⛶ 全屏</button>
         <button onclick="resetExperiment()">↺ 重置</button>
       </div>
 
@@ -852,14 +867,17 @@ function seed(){
   ];
   scene.wires = [
     w('E',1,'A',0,[[110,640],[110,180]]),     // 电源 − → 左立线 → 电流表「−」柱
-    w('A',1,'R1',0,[]),                       // 量程柱（0.6A）→ 定值电阻左端
+    // 量程柱（0.6A，中间那根）→ 定值电阻左端。⚠️ 先往下兜 16px 再横着走：
+    // 直接横着去会压过右边那根 3A 柱的柱尖，看着像「两个正接线柱都接了线」。
+    w('A',1,'R1',0,[[230,202],[486,202]]),
     w('R1',1,'RH',2,[[700,180],[700,154]]),   // 定值电阻右端 → 经 C 柱（金属杆）进变阻器
     w('RH',1,'SW',1,[[960,206],[960,640]]),   // 经 B 柱（电阻丝）出 → 右立线下来 → 开关右柱
     w('SW',0,'E',0,[]),                       // 开关左柱 → 电源 +
     // 电压表那两根线必须【先横着让到表壳外面再竖着上去】：表壳占 x∈[440,640]，
     // 两个量程柱（540 / 610）都在壳子里，从柱子上直着往上会从自己的表壳里穿出来。
     // 430 / 660 这两个数是这么来的，别当成多余的拐点"优化"掉。
-    w('V',1,'R1',1,[[660,440],[660,180]]),    // 量程柱 → 右侧绕行 → 定值电阻高电位端
+    // 量程柱（3V，中间那根）同样先兜到柱尖下面，再从表壳右侧绕上去。
+    w('V',1,'R1',1,[[540,462],[660,462],[660,180]]),    // 量程柱 → 右侧绕行 → R1 高电位端
     // 「−」柱这根走到 y=200 就斜着切进去，是为了不让最后那 40px 压在
     // 「电流表量程柱 → R1 左端」那根横线上（两根线重叠看着像一根粗线）。
     // ⚠️ 拐点 x 从 430 挪到 420：430 已经落进电压表【底座】的横向范围（540±116 = 424~656），
@@ -893,7 +911,9 @@ function pathOf(wire){                                  // 照抄沙盒
 function bh0(n){ return n*18 + 8; }                     // 照抄沙盒
 // 读数框落在元件下方多远。两只表的接线柱从底座底下探出来（局部 y=72，柱子自身
 // 还往下伸到 ~75），所以表要让得更低，否则读数框会压在自己的接线柱上。
-var DROP = {battery:40, ammeter:80, voltmeter:80, resistor:22, bulb:38, rheostat:46, switch:38};
+var DROP = {battery:40, ammeter:106, voltmeter:106, resistor:22, bulb:38, rheostat:46, switch:38};
+// 两只表从 80 加到 106：量程引线现在要从柱尖【下面 22px】兜过去（见 fixLeads），
+// 读数框不往下让就会跟那条横线贴在一起。
 
 // 元件旁边那个读数框里写哪几行，返回 null 表示这个元件不飘框（开关写在底座上了）。
 // 抽成函数是为了让测试能直接断言文字，不用靠截图像素去猜。          —— 照抄沙盒
@@ -2058,7 +2078,7 @@ document.getElementById('probeSelect').addEventListener('change', function(){
 // ⚠️ 只能从滑块的 input 里调，不能在 onChange（renderSoft）里调 —— plugRange 自己会
 //    触发 changed()，在渲染回调里调就是递归。
 //
-// ⚠️ 拨完必须把【电压表那两根引线的拐点】补回去，见 fixVLeads()。
+// ⚠️ 拨完必须把【两只表量程引线的拐点】补回去，见 fixLeads()。
 // ⚠️ 比量程时要带一个 epsilon。本页的目标电压 3.0V 正好【压在 3V 挡的满刻度上】，
 //    而求解器算出来是 3.0000000000000013 这种数（MNA 求逆的舍入，误差 1e-15 量级）——
 //    不放过这点误差，R=15Ω 和 R=20Ω 这两个工作点就会莫名其妙地跳到 15V 挡，
@@ -2073,7 +2093,10 @@ function autoRange(){
   if (!r1) return;
   var EPS = 1e-9;
   if (results.components.A) editor.plugRange('A', Math.abs(r1.i) <= 0.6 + EPS ? 1 : 2);
-  if (results.components.V) { editor.plugRange('V', Math.abs(r1.v) <= 3 + EPS ? 1 : 2); fixVLeads(); }
+  if (results.components.V) editor.plugRange('V', Math.abs(r1.v) <= 3 + EPS ? 1 : 2);
+  // 换挡 = 把线从一根柱子挪到另一根柱子，routeTo 重铺会把拐点冲掉（它不认识表壳、
+  // 也不认识「柱尖不能擦」）⇒ 两只表都要在拨完之后把拐点补回来。见 fixLeads()。
+  fixLeads();
 }
 // 开局 / 重置时开关是【断开】的（学生接电路前的状态，指针指零），这时解出来
 // U=0、I=0 —— 按这个工作点拨量程，两只表会停在小量程挡，学生一合闸就超量程
@@ -2089,30 +2112,52 @@ function autoRangeForClosed(){
   autoRange();                 // 内部 plugRange → changed() → renderSoft（此刻开关合着）
   if (!was) { sw.params.closed = false; solveNow(); }
 }
-// 电压表的【量程引线】只能手绘：三个接线柱（局部 x = −70 / 0 / +70）全长在底座
-// （半宽 100）底下，两个量程柱（540 / 610）都在壳子里，从柱子上竖直往上都会从自己的
-// 表壳里穿出来 —— 必须先横着让到表壳外面（x ≥ 660）再竖上去。
+// 两只表的【量程柱引线】都得手绘，而且必须绕开自己另一个量程柱：
 //
-// 可 plugRange 换量程时会用 routeTo 把导线重铺成自动正交走线，routeTo 不认识
-// 「元件自己的壳」这回事，于是重铺出一根 x=610 的竖线，正好从电压表底座中间穿过去
-// （这正是本页第一版的样子：一拨量程，电压表的引线就穿壳）。两个量程柱都在壳子里，
-// 所以 660 这个拐点对两挡都成立，拨完照原样补回去就行。
+//   · 电压表：三个接线柱（局部 x = −70 / 0 / +70）全长在底座底下，两个量程柱
+//     （540 / 610）都在壳子里，从柱子上竖直往上会从自己的表壳里穿出来 ——
+//     必须先横着让到表壳外面（x ≥ 660）再竖上去。
+//   · 两只表都是【三根柱子一排】：0.6A 在中间、3A 在右边（3V 在中间、15V 在右边）。
+//     从中间那根柱子直接横着去 R1，这条横线会正好压过右边那根柱子的【柱尖】——
+//     画面上看就像「两个正接线柱都接了线」（用户 2026-10-30 反馈的原话）。
+//     所以引线一律【先往下兜 16px 再横着走】，从右边那根柱子的柱尖下面绕过去，
+//     最后从下面插进目标柱。16px 是柱尖到读数框之间的余量（读数框已跟着下移 20）。
 //
-// 只修量程柱那一根就够了：「−」柱那根永远插在端子 0 上，plugRange 只动量程柱的线
-// （栏位换挡不换负接线柱），所以它不会被动过。
+// 可 plugRange 换量程时会用 routeTo 把导线重铺成自动正交走线，routeTo 不认识这两件事
+// （它不知道元件的壳、也不知道柱尖不能擦），于是重铺出一根穿壳的竖线、或者一条擦着
+// 柱尖的横线 —— 所以每次拨完都要把拐点补回来。
+//
+// 只修量程柱那两根就够：「−」柱那根永远插在端子 0 上，plugRange 只动量程柱的线。
 // 返回是否真的改动了拐点 —— plugRange 没动这根线时（量程本来就对）就不必再重绘一遍，
 // 滑块每次 input 都要走这条路，白重绘一次是白扔一帧。
-function fixVLeads(){
+var LEAD_DIP = 22;                    // 引线在柱尖下面兜多远（要够远才「一眼看出没接上」，
+                                      // 16px 时柱子的螺纹还几乎贴着线；读数框跟着再让 6px）
+var METER_FAR = {                     // 每只表「绕出去」的那几个固定拐点
+  A: function(y){ return [[486, y]]; },                        // → R1 左端（486,180）
+  V: function(y){ return [[660, y], [660, 180]]; },            // → 绕到表壳右外侧 → R1 右端
+};
+function fixLeads(){
+  if (mode !== 'preset') return false;
   var touched = false;
   scene.wires.forEach(function(wr){
-    var e = (wr.a.compId === 'V') ? wr.a : (wr.b.compId === 'V' ? wr.b : null);
-    if (!e || e.termIdx === 0) return;                      // 「−」柱那根不归这儿管
-    var want = [[660,440],[660,180]];                       // 量程柱 → 右侧绕行 → R1 高电位端
-    // plugRange 会把这条线标成 auto:true（它以为重铺一遍就行），必须一起改回手绘 ——
-    // 否则下一次 setParam 又会把它铺成穿壳的竖线。
-    if (JSON.stringify(wr.via) !== JSON.stringify(want) || wr.auto !== false) {
-      wr.via = want; touched = true;
-    }
+    ['A', 'V'].forEach(function(id){
+      var e = (wr.a.compId === id) ? wr.a : (wr.b.compId === id ? wr.b : null);
+      if (!e) return;
+      var c = byId(id);
+      if (!c) return;
+      // ⚠️ 取类型表要用【元件类型】（ammeter/voltmeter），不是元件 id（A/V）——
+      //    C.TYPES['A'] 是 undefined，写错了这里会静默 return，引线就悄悄铺歪。
+      var T = C.TYPES[c.type];
+      if (!T || !T.rangeTaps || T.rangeTaps.indexOf(e.termIdx) < 0) return;
+      var p = D.terminalWorld(c, e.termIdx);
+      var y = p.y + LEAD_DIP;
+      var want = [[p.x, y]].concat(METER_FAR[id](y));
+      // plugRange 会把这条线标成 auto:true（它以为重铺一遍就行），必须一起改回手绘 ——
+      // 否则下一次 setParam 又会把它铺成擦柱尖 / 穿壳的直线。
+      if (JSON.stringify(wr.via) !== JSON.stringify(want) || wr.auto !== false) {
+        wr.via = want; touched = true;
+      }
+    });
   });
   if (!touched) return false;
   pinWires();          // 端点已经挪到新柱子上了，重新记一份贴合基准
@@ -2551,6 +2596,7 @@ function fsLabel(on){
   fsBtn.textContent = on ? '⛶ 退出全屏' : '⛶ 全屏';
   fsBtn.title = on ? '退出全屏' : '全屏显示实验画面';
   fsBtn.setAttribute('aria-label', fsBtn.title);
+  // 全屏按钮是浮在画布上的：进全屏后画布区变大，按钮位置由 CSS 负责，这里只管文案。
 }
 window.toggleFullscreen = function(){
   var f = stageFsEl();
