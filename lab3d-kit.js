@@ -615,7 +615,7 @@ export function buildSwitch(opts) {
 // ============================================================
 export const BAT_DIM = {
   R: 17, L: 61,               // 1 号干电池：φ34 × 61
-  BOX_H: 9, WALL_T: 6, WALL_H: 48, BOX_D: 52,
+  BOX_H: 9, WALL_T: 6, WALL_H: 48, BOX_D: 44,
   POST_R: 5.5, POST_LEN: 17,
   SCALE: 2.2,
   MAX_CELLS: 3,

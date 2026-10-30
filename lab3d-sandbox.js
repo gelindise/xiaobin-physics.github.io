@@ -10,7 +10,7 @@
  */
 import * as THREE from './assets/optics-three.min.js';
 // 🔴 import 必须带版本号：不带的话这个子模块【没有缓存键】，改了 kit 页面看上去没变。
-import { CATALOG, buildRheostat, buildSwitch, buildBattery, DIM } from './lab3d-kit.js?build=4';
+import { CATALOG, buildRheostat, buildSwitch, buildBattery, DIM } from './lab3d-kit.js?build=5';
 
 const $ = (id) => document.getElementById(id);
 
@@ -873,7 +873,9 @@ function render() {
   updateLabels();
 }
 function loop(t) {
-  const dt = Math.min(0.05, (t - lastT) / 1000 || 0.016);
+  // 🔴 dt 上限放到 0.1：软件渲染/低端机上一帧可能 300 ms，clamp 到 0.05 会让
+  //    所有缓动（开关刀片）比真实时间慢好几倍 —— 看着像「点了没反应」。
+  const dt = Math.min(0.1, (t - lastT) / 1000 || 0.016);
   lastT = t;
   updateCamera();
   items.forEach((it) => { if (it.api.step) it.api.step(dt); });
