@@ -10,7 +10,7 @@
  */
 import * as THREE from './assets/optics-three.min.js';
 // 🔴 import 必须带版本号：不带的话这个子模块【没有缓存键】，改了 kit 页面看上去没变。
-import { CATALOG, buildRheostat, buildSwitch, DIM } from './lab3d-kit.js?build=3';
+import { CATALOG, buildRheostat, buildSwitch, buildBattery, DIM } from './lab3d-kit.js?build=4';
 
 const $ = (id) => document.getElementById(id);
 
@@ -324,9 +324,10 @@ const state = {
   shadow: true,
   selected: null,
 };
-const items = [];          // { api, type, group, label, el }
+const items = [];          // { id, api, type, group, el, Rmax }
+let itemSeq = 0;
 
-const BUILDERS = { rheostat: buildRheostat, switch: buildSwitch };
+const BUILDERS = { rheostat: buildRheostat, switch: buildSwitch, battery: buildBattery };
 const META = {};
 CATALOG.forEach((c) => { META[c.type] = c; });
 
@@ -347,11 +348,13 @@ function addItem(type, worldPos) {
   g.position.set(clamp(x, -PLACE.x, PLACE.x), 0, clamp(z, -PLACE.z, PLACE.z));
   scene.add(g);
 
-  const item = { api, type, group: g, el: null, Rmax: 20 };
+  itemSeq += 1;
+  const item = { id: 'c' + itemSeq, api, type, group: g, el: null, Rmax: 20 };
   items.push(item);
   buildLabel(item);
   select(item);
   syncUI();
+  recompute();
   toast('放上了 ' + META[type].label);
   return item;
 }
@@ -372,6 +375,7 @@ function removeItem(item) {
   if (item.el && item.el.parentNode) item.el.parentNode.removeChild(item.el);
   if (state.selected === item) state.selected = null;
   syncUI();
+  recompute();
 }
 
 function clearAll() {
@@ -419,6 +423,22 @@ const wireMatSel = new THREE.MeshStandardMaterial({ color: 0xffa040, roughness: 
   pendingMark = g;
 })();
 
+const wireMatPrev = new THREE.MeshStandardMaterial({
+  color: 0x22d3ee, roughness: 0.4, metalness: 0.2, transparent: true, opacity: 0.7,
+});
+let previewWire = null;
+function showPreview(p1, p2) {
+  if (!previewWire) {
+    previewWire = new THREE.Mesh(new THREE.BufferGeometry(), wireMatPrev);
+    previewWire.visible = false;
+    scene.add(previewWire);
+  }
+  if (previewWire.geometry) previewWire.geometry.dispose();
+  previewWire.geometry = wireGeoFor(p1, p2);
+  previewWire.visible = true;
+}
+function hidePreview() { if (previewWire) previewWire.visible = false; }
+
 function termWorld(item, term) {
   const v = item.api.termLocal[term].clone();
   item.group.localToWorld(v);
@@ -438,7 +458,8 @@ function addWire(a, b) {
   scene.add(mesh);
   wires.push({ id: wireSeq, a, b, mesh });
   syncUI();
-  toast(a.term + ' → ' + b.term + ' 接上了（这一版只连形状，还没有电流）');
+  recompute();
+  toast(a.term + ' → ' + b.term + ' 接上了');
 }
 
 function removeWire(id) {
@@ -450,6 +471,7 @@ function removeWire(id) {
   wires.splice(i, 1);
   if (selectedWire === id) selectedWire = null;
   syncUI();
+  recompute();
 }
 
 function selectWire(id) {
@@ -487,6 +509,108 @@ function handleTermClick(hit) {
   }
   addWire(pending, { item: hit.item, term: hit.term });
   cancelPending();
+}
+
+// ============================================================
+//  电路求解：与「电路实验沙盒」用【同一份内核】
+// ------------------------------------------------------------
+// 这一页只换了元件外观，物理必须一模一样：元件 id + 类型 + 参数 + 端子下标
+// 交给 circuit-core 的 solve()，读数、短路、接法判断全部由它算。
+// 元件的位置（x/y/rot）在求解里只用来算端子几何，而拓扑 union 只认
+// 「compId:termIdx」，所以这里给 0 不影响结果。
+// ============================================================
+const CORE = window.CircuitCore || null;
+let results = null;
+
+function paramsOf(it) {
+  if (it.type === 'rheostat') return { Rmax: it.Rmax, slide: it.api.getSlide() };
+  if (it.type === 'switch') return { closed: it.api.isClosed() };
+  if (it.type === 'battery') return it.api.getParams();
+  return {};
+}
+function termIdxOf(it, term) {
+  return (it.api.termIdx && it.api.termIdx[term] != null) ? it.api.termIdx[term] : 0;
+}
+
+function recompute() {
+  if (!CORE) return;
+  const comps = items.map((it) => ({
+    id: it.id, type: it.type, x: 0, y: 0, rot: 0, params: paramsOf(it),
+  }));
+  const wd = wires.map((w) => ({
+    a: { compId: w.a.item.id, termIdx: termIdxOf(w.a.item, w.a.term) },
+    b: { compId: w.b.item.id, termIdx: termIdxOf(w.b.item, w.b.term) },
+  }));
+  try {
+    results = CORE.solve(comps, wd, {});
+  } catch (e) {
+    results = null;
+    console.error('[lab3d] solve failed', e);
+  }
+  syncResultsUI();
+}
+
+// 拖动滑片时每帧都会变 —— 用一帧一次的节流，别让求解排队
+let recomputeQueued = false;
+function scheduleRecompute() {
+  if (recomputeQueued) return;
+  recomputeQueued = true;
+  requestAnimationFrame(() => { recomputeQueued = false; recompute(); });
+}
+
+const fmtV = (v) => {
+  if (v == null || !isFinite(v)) return '—';
+  const a = Math.abs(v);
+  if (a < 1e-4) return '0';
+  if (a < 0.01) return v.toFixed(4);
+  if (a < 1) return v.toFixed(3);
+  if (a < 10) return v.toFixed(2);
+  return v.toFixed(1);
+};
+
+function syncResultsUI() {
+  const body = $('recBody');
+  const pill = $('circPill');
+  const warn = $('warnBox');
+  if (!body) return;
+
+  if (!items.length) {
+    body.innerHTML = '<tr><td class="empty" colspan="4">桌上还没有器材</td></tr>';
+    pill.textContent = '空桌'; pill.className = 'pill';
+    warn.innerHTML = '';
+    return;
+  }
+
+  let maxI = 0;
+  const rows = items.map((it) => {
+    const r = results && results.components ? results.components[it.id] : null;
+    const label = META[it.type] ? META[it.type].label : it.type;
+    const i = r ? Math.abs(r.i || 0) : null;
+    if (i != null) maxI = Math.max(maxI, i);
+    return '<tr><td>' + label + '</td>' +
+      '<td>' + (r ? fmtV(i) : '—') + '</td>' +
+      '<td>' + (r ? fmtV(Math.abs(r.v || 0)) : '—') + '</td>' +
+      '<td>' + (r ? fmtV(Math.abs(r.p || 0)) : '—') + '</td></tr>';
+  });
+  body.innerHTML = rows.join('');
+
+  const ws = (results && results.warnings) || [];
+  if (ws.length) {
+    pill.textContent = ws[0].code === 'SHORT_CIRCUIT' ? '短路！' : '注意';
+    pill.className = 'pill bad';
+    warn.innerHTML = '<p class="note bad">' + ws.map((w) => w.message).join('；') + '</p>';
+  } else if (maxI > 1e-6) {
+    pill.textContent = '通路';
+    pill.className = 'pill ok';
+    warn.innerHTML = '';
+  } else {
+    pill.textContent = items.some((it) => it.type === 'battery') ? '断路' : '未成回路';
+    pill.className = 'pill warn';
+    warn.innerHTML = '';
+  }
+
+  // 读数卡统一由 syncReadout 负责（它也要读 results，两份逻辑会打架）
+  syncReadout();
 }
 
 // ============================================================
@@ -592,6 +716,14 @@ canvas.addEventListener('pointerdown', (e) => {
       drag.offZ = hit.item.group.position.z - p.z;
     }
   }
+  if (hit && hit.term) {
+    // 按在接线柱上 = 直接「拉一根线」出来（松手落在另一个柱上就接上）
+    drag.mode = 'wire';
+    drag.from = { item: hit.item, term: hit.term };
+    drag.hover = null;
+    pendingMark.position.copy(termWorld(hit.item, hit.term)).add(new THREE.Vector3(0, 7, 0));
+    pendingMark.visible = true;
+  }
   if (hit && drag.mode === 'slide') {
     // 先把「滑片行程在屏幕上有多长」量出来：整段 slide 0→1 投影后的像素宽度。
     const it = hit.item;
@@ -620,6 +752,24 @@ canvas.addEventListener('pointermove', (e) => {
   drag.moved += Math.abs(dx) + Math.abs(dy);
   drag.x = e.clientX; drag.y = e.clientY;
 
+  if (drag.mode === 'wire') {
+    const from = termWorld(drag.from.item, drag.from.term);
+    const h2 = pick(e.clientX, e.clientY);
+    let end = null;
+    if (h2 && h2.term && !(h2.item === drag.from.item && h2.term === drag.from.term)) {
+      end = termWorld(h2.item, h2.term);
+      drag.hover = { item: h2.item, term: h2.term };
+    } else {
+      drag.hover = null;
+      // 没落在柱上就跟着鼠标走：射线打在与起点等高的水平面上
+      const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -from.y);
+      setRay(e.clientX, e.clientY);
+      const p = new THREE.Vector3();
+      if (raycaster.ray.intersectPlane(plane, p)) end = p;
+    }
+    if (end) showPreview(from, end);
+    return;
+  }
   if (drag.mode === 'orbit') {
     if (drag.moved > 3) {
       cam.yawT -= dx * 0.007;
@@ -641,11 +791,31 @@ canvas.addEventListener('pointermove', (e) => {
     drag.item.api.setSlide(clamp(t, 0, 1));
     // 只刷数值，不重建面板：syncUI() 会重建 range 控件，拖拽过程中重建等于把它换掉
     refreshParams();
+    scheduleRecompute();
   }
 });
 
 canvas.addEventListener('pointerup', (e) => {
   canvas.classList.remove('grabbing');
+  if (drag && drag.mode === 'wire') {
+    const from = drag.from;
+    const h2 = pick(e.clientX, e.clientY);
+    const onOther = h2 && h2.term && !(h2.item === from.item && h2.term === from.term);
+    hidePreview();
+    if (onOther) {
+      addWire(from, { item: h2.item, term: h2.term });
+      cancelPending();
+    } else if (drag.moved < 6 && h2 && h2.term) {
+      // 原地点一下 = 走「点两次」那条老路（先选柱、再点另一个柱）
+      select(from.item); selectWire(null);
+      handleTermClick(h2);
+    } else {
+      cancelPending();
+      if (drag.moved >= 6) toast('要接在接线柱上 —— 拖到另一个柱再松手');
+    }
+    drag = null;
+    return;
+  }
   if (drag && drag.moved < 6) {
     const hit = pick(e.clientX, e.clientY);
     if (!hit) {
@@ -663,6 +833,7 @@ canvas.addEventListener('pointerup', (e) => {
       // 点刀片 / 手柄 = 合闸或拉闸
       hit.item.api.toggle();
       select(hit.item); selectWire(null);
+      recompute();
       toast('开关' + (hit.item.api.isClosed() ? '闭合（通路）' : '断开（断路）'));
     } else {
       select(hit.item); selectWire(null);
@@ -854,6 +1025,35 @@ function buildParams() {
     return;
   }
 
+  // ── 电池：节数（外观与电动势一起变）────────────────────────
+  if (it.type === 'battery') {
+    pSlideEl = pSlideOut = pRmaxEl = pRmaxOut = null;
+    const n = it.api.getCells();
+    pSel.innerHTML =
+      '<div class="lab3d-field">' +
+        '<label for="pBatCells">电池节数 <output id="pBatOut">' + n + ' 节 · ' + it.api.emf().toFixed(1) + ' V</output></label>' +
+        '<input id="pBatCells" type="range" min="1" max="3" step="1" value="' + n + '">' +
+        '<small>每节 <b>1.5 V</b>：一节 1.5 V、两节 3 V、三节 4.5 V。' +
+        '电池盒会跟着变长，读数按总电动势重算。</small>' +
+      '</div>' +
+      '<div class="lab3d-btnrow">' +
+        '<button type="button" id="pRotate">⟳ 转 90°</button>' +
+        '<button type="button" id="pRemove">🗑 从桌上拿走</button>' +
+      '</div>' +
+      '<small style="display:block;margin-top:8px;color:#64748b;font-size:10px;line-height:1.55">' +
+        '左端<b>红柱是正极</b>、右端银柱是负极 —— 接反了电流方向相反（电表会反偏）。</small>';
+    $('pBatCells').addEventListener('input', (e) => {
+      it.api.setCells(+e.target.value);
+      const o = $('pBatOut');
+      if (o) o.textContent = it.api.getCells() + ' 节 · ' + it.api.emf().toFixed(1) + ' V';
+      recompute();
+      syncReadout();
+    });
+    $('pRotate').addEventListener('click', rotateSelected);
+    $('pRemove').addEventListener('click', () => removeItem(it));
+    return;
+  }
+
   // ── 开关：只有一个「合上 / 抬起」──────────────────────────
   if (it.type === 'switch') {
     pSlideEl = pSlideOut = pRmaxEl = pRmaxOut = null;
@@ -872,11 +1072,11 @@ function buildParams() {
       '</div>' +
       '<small style="display:block;margin-top:8px;color:#64748b;font-size:10px;line-height:1.55">' +
         'A、B 两个红色滚花柱就是接线柱：<b>先点一个、再点另一个</b>，就接出一根导线。' +
-        '这一版导线只连形状，电流要等电源进场。</small>';
+        '接上电池组就是一个真回路，读数在右侧。</small>';
     $('pSwToggle').addEventListener('click', () => {
       it.api.toggle();
       buildParams();
-      syncReadout();
+      recompute();
       toast('开关' + (it.api.isClosed() ? '闭合（通路）' : '断开（断路）'));
     });
     $('pRotate').addEventListener('click', rotateSelected);
@@ -905,11 +1105,13 @@ function buildParams() {
     if (!state.selected) return;
     state.selected.api.setSlide(+e.target.value / 100);
     refreshParams();
+    scheduleRecompute();
   });
   pRmaxEl.addEventListener('input', (e) => {
     if (!state.selected) return;
     state.selected.Rmax = +e.target.value;
     refreshParams();
+    scheduleRecompute();
   });
   $('pRotate').addEventListener('click', rotateSelected);
   $('pRemove').addEventListener('click', () => removeItem(state.selected));
@@ -917,6 +1119,13 @@ function buildParams() {
 
 function refreshParams() {
   const it = state.selected;
+  if (it && it.type === 'battery') {
+    const o = $('pBatOut');
+    if (o) o.textContent = it.api.getCells() + ' 节 · ' + it.api.emf().toFixed(1) + ' V';
+    syncReadout();
+    syncCtl();
+    return;
+  }
   if (it && it.type === 'switch') {
     const o = $('pSwOut');
     if (o) o.textContent = it.api.stateText();
@@ -941,15 +1150,31 @@ function syncReadout() {
     $('roSub').textContent = items.length ? '点一台器材看它的读数' : '桌上还没有器材';
     return;
   }
+  // 🔴 读数卡的三条分支必须【互斥且齐全】：漏一个 type，非变阻器就会掉进
+  //    `it.api.previewR` 里 —— 那台器材没有这个方法，整页在 addItem 里就崩了。
+  const r = results && results.components ? results.components[it.id] : null;
+  const cur = r ? ' · I = ' + fmtV(Math.abs(r.i || 0)) + ' A' : '';
   if (it.type === 'switch') {
     const closed = it.api.isClosed();
     $('roR').innerHTML = closed ? '通<small>路</small>' : '断<small>路</small>';
-    $('roSub').innerHTML = '开关' + (closed ? '<b>已合上</b>' : '<b>已抬起</b>') + ' · 桌上导线 ' + wires.length + ' 根';
+    $('roSub').innerHTML = '开关' + (closed ? '<b>已合上</b>' : '<b>已抬起</b>') +
+      ' · 导线 ' + wires.length + ' 根' + cur;
     return;
   }
-  const r = it.api.previewR(it.Rmax);
-  $('roR').innerHTML = r.toFixed(1) + '<small>Ω</small>';
-  $('roSub').innerHTML = '滑片 <b>' + Math.round(it.api.getSlide() * 100) + '%</b> · 按 A—C 接法预演';
+  if (it.type === 'battery') {
+    $('roR').innerHTML = it.api.emf().toFixed(1) + '<small>V</small>';
+    $('roSub').innerHTML = it.api.getCells() + ' 节 × 1.5 V' + cur;
+    return;
+  }
+  if (it.type === 'rheostat') {
+    const rr = it.api.previewR(it.Rmax);
+    $('roR').innerHTML = rr.toFixed(1) + '<small>Ω</small>';
+    $('roSub').innerHTML = '滑片 <b>' + Math.round(it.api.getSlide() * 100) + '%</b>' +
+      (cur || ' · 按 A—C 接法预演');
+    return;
+  }
+  $('roR').innerHTML = '—';
+  $('roSub').textContent = META[it.type] ? META[it.type].label : it.type;
 }
 
 function syncCtl() {
@@ -1004,6 +1229,7 @@ $('cSlide').addEventListener('input', (e) => {
   if (!state.selected) return;
   state.selected.api.setSlide(+e.target.value / 100);
   refreshParams();
+  scheduleRecompute();
 });
 $('cRotate').addEventListener('click', rotateSelected);
 $('cDelete').addEventListener('click', () => removeItem(state.selected));
@@ -1070,9 +1296,12 @@ function onFsChange() {
   if (lb) lb.textContent = on ? '退出' : '全屏';
   fsBtn.title = on ? '退出全屏' : '全屏显示实验画面';
   fsBtn.setAttribute('aria-label', fsBtn.title);
+  // 🔴 立刻两次：headless / 软件渲染下 rAF 与 setTimeout 都可能被主线程拖到很晚，
+  //    只靠「晚一帧 + 兜底」实测只跑到 1 次（全屏判据要求 ≥2）。
   fsLayout();
   const k = aspectScale();
   if (Math.abs(k - lastAspectK) > 0.01) { lastAspectK = k; applyView(state.view); }
+  fsLayout();
   requestAnimationFrame(() => requestAnimationFrame(fsLayout));
   setTimeout(fsLayout, 90);
 }
@@ -1138,6 +1367,24 @@ window.__lab = {
       selected: state.selected === it,
     };
   },
+  // ── 求解结果（自检用）──────────────────────────────────
+  solveInfo() {
+    if (!results) return null;
+    return {
+      status: results.status,
+      warnings: (results.warnings || []).map((w) => w.code),
+      comps: Object.keys(results.components || {}).map((id) => {
+        const r = results.components[id];
+        return {
+          id, type: (items.find((it) => it.id === id) || {}).type,
+          i: +(r.i || 0).toFixed(4), v: +(r.v || 0).toFixed(4), p: +(r.p || 0).toFixed(4),
+          emf: r.emf, cells: r.cells, mode: r.mode, rUsed: r.rUsed,
+        };
+      }),
+    };
+  },
+  recomputeNow() { recompute(); return true; },
+  setCells(i, n) { const it = items[i || 0]; if (!it || !it.api.setCells) return null; it.api.setCells(n); recompute(); syncUI(); return it.api.getCells(); },
   // ── 接线柱 / 导线（自检与后续接电源都要用）────────────────
   get wireCount() { return wires.length; },
   wireInfo() {

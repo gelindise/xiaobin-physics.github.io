@@ -410,6 +410,7 @@ export function buildRheostat(opts) {
     slider,
     slideX,
     termLocal,
+    termIdx: { A: 0, B: 1, C: 2, D: 3 },   // 与 circuit-core 的 TYPES.rheostat 一致
     setSlide,
     getSlide: () => curSlide,
     // 沙盒这一阶段还没有导线：R 只按「一上一下（A—C）」预演，页面要如实标注
@@ -583,6 +584,7 @@ export function buildSwitch(opts) {
     bounds: { hw: D.BASE_W / 2 * S + 6, hd: D.BASE_D / 2 * S },
     pivot,
     termLocal,
+    termIdx: { A: 0, B: 1 },
     setClosed(on) { closed = !!on; target = closed ? 0 : OPEN; },
     toggle() { api.setClosed(!closed); return closed; },
     isClosed: () => closed,
@@ -601,6 +603,206 @@ export function buildSwitch(opts) {
 }
 
 // ============================================================
+//  干电池组（人教版 15.2 插图那种「塑料托架 + 两节 1 号电池」）
+// ------------------------------------------------------------
+// 参考图 → 3D：
+//   浅蓝灰塑料托架（底板 + 两端高挡板，中间弧形托）  → 圆角挤出 + 弧形托
+//   金色圆柱电池（侧面印红色 ⊕）                    → 圆柱 + CanvasTexture 贴片
+//   左端红色滚花接线柱 / 右端银色滚花接线柱          → 复用 knurledGeometry
+// 节数可调（1~3 节，1.5 V/节）——【外观】跟着节数变长，【电路】只认总电动势。
+// 🔴 电动势与内阻走 cells / emfPerCell / rPerCell 三个老键：core 的 battery 分支
+//    只要 P.emf 不为空就【忽略 cells】。写 emf 会让「节数」变成纯装饰。
+// ============================================================
+export const BAT_DIM = {
+  R: 17, L: 61,               // 1 号干电池：φ34 × 61
+  BOX_H: 9, WALL_T: 6, WALL_H: 48, BOX_D: 52,
+  POST_R: 5.5, POST_LEN: 17,
+  SCALE: 2.2,
+  MAX_CELLS: 3,
+};
+
+let PLUS_TEX = null;
+function plusTexture() {
+  if (PLUS_TEX) return PLUS_TEX;
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = 128;
+  const g = cv.getContext('2d');
+  g.clearRect(0, 0, 128, 128);
+  g.strokeStyle = '#c0392b';
+  g.lineWidth = 11;
+  g.beginPath(); g.arc(64, 64, 44, 0, Math.PI * 2); g.stroke();
+  g.lineWidth = 12;
+  g.beginPath(); g.moveTo(64, 30); g.lineTo(64, 98); g.stroke();
+  g.beginPath(); g.moveTo(30, 64); g.lineTo(98, 64); g.stroke();
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  PLUS_TEX = tex;
+  return tex;
+}
+
+export function buildBattery(opts) {
+  opts = opts || {};
+  const D = BAT_DIM;
+  const S = D.SCALE;
+  const outer = new THREE.Group();
+  const inner = new THREE.Group();
+  inner.scale.setScalar(S);
+  inner.position.y = D.BOX_H * S;      // 托架底面落在 y=0
+  outer.add(inner);
+
+  let cells = Math.max(1, Math.min(D.MAX_CELLS, opts.cells || 2));
+  const cellParts = [];                // 每次重建要释放的几何
+
+  const matCell = new THREE.MeshStandardMaterial({
+    color: 0xd8a93a, roughness: 0.34, metalness: 0.72,
+  });
+  const matCellCap = new THREE.MeshStandardMaterial({ color: 0xd9d3c4, roughness: 0.42, metalness: 0.55 });
+  const matTray = new THREE.MeshStandardMaterial({ color: 0x8499b2, roughness: 0.5, metalness: 0.14 });
+
+  function disposeCells() {
+    cellParts.forEach((o) => {
+      inner.remove(o);
+      if (o.geometry) o.geometry.dispose();
+    });
+    cellParts.length = 0;
+  }
+
+  function add(o) { inner.add(o); cellParts.push(o); return o; }
+
+  // ── 整组重建（节数变化时调用）────────────────────────────
+  function rebuild(n) {
+    cells = Math.max(1, Math.min(D.MAX_CELLS, n));
+    disposeCells();
+    const bodyLen = cells * D.L + (cells - 1) * 2;     // 电池串起来的总长
+    const totalLen = bodyLen + 2 * D.WALL_T + 8;       // 加两端挡板
+
+    // 底板（圆角）
+    const baseGeo = new THREE.ExtrudeGeometry(roundRectShape(totalLen, D.BOX_D, 7), {
+      depth: D.BOX_H, bevelEnabled: true, bevelThickness: 1, bevelSize: 1,
+      bevelSegments: 2, curveSegments: 10,
+    });
+    baseGeo.rotateX(-Math.PI / 2);
+    baseGeo.translate(0, -D.BOX_H, 0);
+    add(new THREE.Mesh(baseGeo, matTray));
+
+    // 两端高挡板（外缘略圆）
+    [-1, 1].forEach((sx) => {
+      const wGeo = new THREE.ExtrudeGeometry(roundRectShape(D.WALL_T, D.BOX_D, 4), {
+        depth: D.WALL_H, bevelEnabled: true, bevelThickness: 1.2, bevelSize: 1.2,
+        bevelSegments: 2, curveSegments: 8,
+      });
+      wGeo.rotateX(-Math.PI / 2);
+      // 挤出后 y 方向是厚度 ⇒ 抬 WALL_H 让挡板从桌面长上来；x 直接写进几何
+      wGeo.translate(sx * (totalLen / 2 - D.WALL_T / 2), D.WALL_H, 0);
+      add(new THREE.Mesh(wGeo, matTray));
+    });
+
+    // 中间弧形托：两片低矮的侧挡（前低后高，像参考图那样把电池兜住）
+    const railLen = bodyLen + 4;
+    [-1, 1].forEach((sz) => {
+      const h = sz > 0 ? 15 : 24;       // +z 是朝学生这一侧 ⇒ 前挡矮一些，才看得见电池
+      const rail = new THREE.Mesh(new THREE.BoxGeometry(railLen, h, 4), matTray);
+      rail.position.set(0, h / 2, sz * (D.BOX_D / 2 - 4));
+      add(rail);
+    });
+
+    // 电池：一节挨一节，+x 端是正极帽
+    for (let i = 0; i < cells; i++) {
+      const cx = -bodyLen / 2 + D.L / 2 + i * (D.L + 2);
+      const cell = new THREE.Mesh(new THREE.CylinderGeometry(D.R, D.R, D.L, 40, 1, false), matCell);
+      cell.rotation.z = Math.PI / 2;
+      cell.position.set(cx, D.R, 0);
+      add(cell);
+      // 正极帽（+x 端）
+      const cap = new THREE.Mesh(new THREE.CylinderGeometry(D.R * 0.42, D.R * 0.42, 3.2, 24), matCellCap);
+      cap.rotation.z = Math.PI / 2;
+      cap.position.set(cx + D.L / 2 + 1.6, D.R, 0);
+      add(cap);
+      // 负极端的浅色封边
+      const ring = new THREE.Mesh(new THREE.CylinderGeometry(D.R * 0.99, D.R * 0.99, 2.4, 36), matCellCap);
+      ring.rotation.z = Math.PI / 2;
+      ring.position.set(cx - D.L / 2 + 1.2, D.R, 0);
+      add(ring);
+      // 侧面的红色 ⊕（贴片，朝学生这一侧）
+      const plus = new THREE.Mesh(new THREE.PlaneGeometry(D.R * 1.25, D.R * 1.25),
+        new THREE.MeshBasicMaterial({ map: plusTexture(), transparent: true, depthWrite: false }));
+      plus.position.set(cx, D.R, D.R + 0.25);
+      add(plus);
+    }
+
+    // 两端的滚花接线柱：左红、右银（沿 x 轴伸出）
+    [-1, 1].forEach((sx) => {
+      const px = sx * (totalLen / 2 + D.POST_LEN / 2);
+      const stem = new THREE.Mesh(new THREE.CylinderGeometry(3, 3, D.POST_LEN * 0.5, 16), MAT.brass);
+      stem.rotation.z = Math.PI / 2;
+      stem.position.set(sx * (totalLen / 2 + 2), 26, 0);
+      add(stem);
+      const cap = new THREE.Mesh(knurledGeometry(D.POST_R, D.POST_LEN), sx < 0 ? MAT.red : MAT.steel);
+      cap.rotation.z = Math.PI / 2;
+      cap.position.set(px, 26, 0);
+      cap.userData.termId = sx < 0 ? '+' : '-';
+      add(cap);
+      // 柱顶开槽
+      const slot = new THREE.Mesh(new THREE.BoxGeometry(0.4, D.POST_R * 1.1, 0.4), MAT.black);
+      slot.position.set(sx * (totalLen / 2 + D.POST_LEN + 1), 26, 0);
+      add(slot);
+    });
+
+    termLocal['+'].set(-(totalLen / 2 + D.POST_LEN * 0.6) * S, (26 + D.BOX_H) * S, 0);
+    termLocal['-'].set((totalLen / 2 + D.POST_LEN * 0.6) * S, (26 + D.BOX_H) * S, 0);
+    bounds.hw = (totalLen / 2 + D.POST_LEN) * S + 4;
+    bounds.hd = (D.BOX_D / 2) * S;
+  }
+
+  const termLocal = {
+    '+': new THREE.Vector3(),
+    '-': new THREE.Vector3(),
+  };
+  const bounds = { hw: 0, hd: 0 };
+
+  const shadow = new THREE.Mesh(
+    new THREE.PlaneGeometry(260, 160),
+    new THREE.MeshBasicMaterial({ map: shadowTexture(), transparent: true, depthWrite: false })
+  );
+  shadow.rotation.x = -Math.PI / 2;
+  shadow.position.y = 0.35;
+  shadow.renderOrder = -1;
+  outer.add(shadow);
+
+  const api = {
+    group: outer,
+    shadow,
+    localToWorld: (v) => inner.localToWorld(v.clone()),
+    worldToLocal: (v) => inner.worldToLocal(v.clone()),
+    type: 'battery',
+    label: '干电池组',
+    spec: '1.5 V / 节',
+    termLocal,
+    termIdx: { '+': 0, '-': 1 },
+    get bounds() { return bounds; },
+    getCells: () => cells,
+    setCells(n) {
+      rebuild(n);
+      // 电池盒变长以后，阴影也跟着放宽
+      shadow.geometry.dispose();
+      shadow.geometry = new THREE.PlaneGeometry(bounds.hw * 2.3, bounds.hd * 2.6);
+      api.spec = cells + ' 节　' + (cells * 1.5).toFixed(1) + ' V';
+    },
+    // 🔴🔴 必须【显式给 emf】。core 的 paramsOf = defaultParams(type) ∪ comp.params，
+    //    而 TYPES.battery.defaults 里就写着 emf:3 —— 只传 cells 的话，emf 会被那个
+    //    默认值盖住，节数就成了纯装饰（实测：拨到 3 节，电流仍是按 3 V 算的）。
+    //    cells 一并带上，只是为了让读数知道「这是几节」。
+    getParams() {
+      return { emf: cells * 1.5, rInt: 0, cells: cells, emfPerCell: 1.5, rPerCell: 0 };
+    },
+    // 面板与读数要用（不用求解也能显示）
+    emf: () => cells * 1.5,
+  };
+  rebuild(cells);
+  return api;
+}
+
+// ============================================================
 //  器材目录（器材库面板按这张表生成卡片）
 // ============================================================
 export const CATALOG = [
@@ -612,7 +814,11 @@ export const CATALOG = [
     build: buildRheostat,
     ready: true,
   },
-  { type: 'battery', label: '电池组', spec: '3 V / 6 V', desc: '两只干电池串成的电源盒，正负极在两端。', ready: false },
+  {
+    type: 'battery', label: '干电池组', spec: '1.5 V / 节',
+    desc: '1~3 节干电池装在同一只托架上，两端红黑柱是电源两极。',
+    build: buildBattery, ready: true,
+  },
   {
     type: 'switch', label: '开关', spec: '单刀单掷',
     desc: '闸刀式开关：点刀片合上／抬起。',
