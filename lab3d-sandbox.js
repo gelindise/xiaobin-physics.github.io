@@ -10,7 +10,7 @@
  */
 import * as THREE from './assets/optics-three.min.js';
 // 🔴 import 必须带版本号：不带的话这个子模块【没有缓存键】，改了 kit 页面看上去没变。
-import { CATALOG, buildRheostat, buildSwitch, buildBattery, DIM } from './lab3d-kit.js?build=5';
+import { CATALOG, buildRheostat, buildSwitch, buildBattery, DIM } from './lab3d-kit.js?build=9';
 
 const $ = (id) => document.getElementById(id);
 
