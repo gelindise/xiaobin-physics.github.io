@@ -10,7 +10,7 @@
  */
 import * as THREE from './assets/optics-three.min.js';
 // 🔴 import 必须带版本号：不带的话这个子模块【没有缓存键】，改了 kit 页面看上去没变。
-import { CATALOG, buildRheostat, buildSwitch, buildBattery, DIM } from './lab3d-kit.js?build=9';
+import { CATALOG, buildRheostat, buildSwitch, buildBattery, DIM } from './lab3d-kit.js?build=13';
 
 const $ = (id) => document.getElementById(id);
 
@@ -20,7 +20,20 @@ const $ = (id) => document.getElementById(id);
 const TABLE_W = 1000, TABLE_D = 560, TABLE_T = 34;   // 桌面（mm）
 const TABLE_H = 740;                                  // 桌面离地高度
 const FLOOR_Y = -TABLE_H;
-const PLACE = { x: TABLE_W / 2 - 110, z: TABLE_D / 2 - 80 };   // 器材中心可移动范围
+const PLACE = { x: TABLE_W / 2 - 110, z: TABLE_D / 2 - 80 };   // 兜底的活动范围（没给 bounds 时用）
+// 🔴 器材宽度差得很远：变阻器 hw≈195、1 节电池 130、3 节电池 269（都已含缩放）。
+//    用一个固定的 ±390 夹中心，3 节电池会伸出桌沿 160 mm —— 必须按各自的 bounds 算。
+const EDGE = 10;                                             // 器材外缘离桌沿留的余量
+function boundsOf(it) {
+  return (it && it.api && it.api.bounds) || { hw: 120, hd: 60 };
+}
+function limitOf(it) {
+  const b = boundsOf(it);
+  return {
+    x: Math.max(30, TABLE_W / 2 - b.hw - EDGE),
+    z: Math.max(30, TABLE_D / 2 - b.hd - EDGE),
+  };
+}
 
 // ============================================================
 //  渲染器 / 场景 / 相机
@@ -331,21 +344,94 @@ const BUILDERS = { rheostat: buildRheostat, switch: buildSwitch, battery: buildB
 const META = {};
 CATALOG.forEach((c) => { META[c.type] = c; });
 
+// 货架式排布游标：从桌面前沿左侧开始，一台一台往右摆，放不下就换行。
+const pack = { x: 0, z: 80, depth: 0 };
+function resetPack() { pack.x = -PLACE.x; pack.z = 80; pack.depth = 0; }
+resetPack();
+function nextSlot(b) {
+  const bb = b || { hw: 120, hd: 60 };
+  const gap = 16;
+  const usable = PLACE.x * 2;
+  const closeRow = () => {
+    if (pack.depth > 0) {
+      pack.z -= (pack.depth + 30);
+      pack.depth = 0;
+      pack.x = -PLACE.x;
+    }
+  };
+  // 这一行连两台都放不下（电池 / 变阻器都这么大）⇒ 直接居中、独占一行。
+  // 否则会一路贴着桌面左边排，看着像「东西都堆在角落」。
+  if ((bb.hw * 2 + gap) * 2 > usable) {
+    closeRow();
+    const slot = { x: 0, z: pack.z };
+    pack.z -= (bb.hd * 2 + 30);
+    pack.x = -PLACE.x;
+    pack.depth = 0;
+    return slot;
+  }
+  if (pack.x + bb.hw * 2 > PLACE.x) closeRow();
+  const slot = { x: pack.x + bb.hw, z: pack.z };
+  pack.x += bb.hw * 2 + gap;
+  pack.depth = Math.max(pack.depth, bb.hd * 2);
+  return slot;
+}
+
+// 器材「变宽」以后可能压到邻居身上（电池 2 节→3 节宽 390→540）：
+// 沿 x 找最近的空位挪过去，x 满了再往后一行。只挪自己，不动别人。
+function nudgeIfOverlap(item) {
+  if (!item) return false;
+  const b = boundsOf(item);
+  const hit = (x, z) => items.some((it) => {
+    if (it === item) return false;
+    const o = boundsOf(it);
+    return Math.abs(x - it.group.position.x) < b.hw + o.hw + 10 &&
+           Math.abs(z - it.group.position.z) < b.hd + o.hd + 10;
+  });
+  const x0 = item.group.position.x, z0 = item.group.position.z;
+  if (!hit(x0, z0)) return false;
+  const lim = limitOf(item);
+  for (let d = 20; d <= lim.x * 2; d += 20) {
+    for (const sx of [1, -1]) {
+      const x = x0 + sx * d;
+      if (Math.abs(x) > lim.x) continue;
+      if (!hit(x, z0)) {
+        item.group.position.x = x;
+        refreshWiresFor(item);
+        toast('器材变宽了，给它挪了个位置');
+        return true;
+      }
+    }
+  }
+  for (let d = 20; d <= TABLE_D; d += 20) {
+    const z = z0 - d;
+    if (z < -lim.z) break;
+    if (!hit(x0, z)) {
+      item.group.position.z = z;
+      refreshWiresFor(item);
+      toast('器材变宽了，给它挪了个位置');
+      return true;
+    }
+  }
+  return false;
+}
+
 function addItem(type, worldPos) {
   const build = BUILDERS[type];
   if (!build) { toast('这件器材还在开发中'); return null; }
   const api = build();
   const g = api.group;
-  // 默认落点：桌面中央；已有器材就往后排
+  // 默认落点：按【实际半宽】做货架式排布，本行放不下就换到后面一行。
+  // 🔴 写死间距一定会叠：器材放大 2.2~2.8 倍后，2 节电池宽约 390 mm、3 节 540 mm，
+  //    以前那套「-190 + (n%2)*380」在 3 台电池时直接互相穿模（实测）。
   let x = 0, z = 0;
-  if (worldPos) { x = worldPos.x; z = worldPos.z; }
-  else if (items.length) {
-    // 2 列网格：一台宽约 240 mm，桌面 1000 mm，并排三台就首尾相贴了
-    const n = items.length;
-    x = -190 + (n % 2) * 380;
-    z = 70 - Math.floor(n / 2) * 150;
+  if (worldPos) {
+    x = worldPos.x; z = worldPos.z;
+  } else {
+    const slot = nextSlot(api.bounds);
+    x = slot.x; z = slot.z;
   }
-  g.position.set(clamp(x, -PLACE.x, PLACE.x), 0, clamp(z, -PLACE.z, PLACE.z));
+  const lim = limitOf({ api });
+  g.position.set(clamp(x, -lim.x, lim.x), 0, clamp(z, -lim.z, lim.z));
   scene.add(g);
 
   itemSeq += 1;
@@ -380,6 +466,7 @@ function removeItem(item) {
 
 function clearAll() {
   items.slice().forEach(removeItem);
+  resetPack();
   wires.slice().forEach((w) => removeWire(w.id));
   cancelPending();
   selectWire(null);
@@ -780,8 +867,9 @@ canvas.addEventListener('pointermove', (e) => {
   if (drag.mode === 'move' && drag.item) {
     const p = tablePoint(e.clientX, e.clientY);
     if (p) {
-      drag.item.group.position.x = clamp(p.x + drag.offX, -PLACE.x, PLACE.x);
-      drag.item.group.position.z = clamp(p.z + drag.offZ, -PLACE.z, PLACE.z);
+      const lim = limitOf(drag.item);
+      drag.item.group.position.x = clamp(p.x + drag.offX, -lim.x, lim.x);
+      drag.item.group.position.z = clamp(p.z + drag.offZ, -lim.z, lim.z);
       refreshWiresFor(drag.item);
     }
     return;
@@ -1046,6 +1134,7 @@ function buildParams() {
         '左端<b>红柱是正极</b>、右端银柱是负极 —— 接反了电流方向相反（电表会反偏）。</small>';
     $('pBatCells').addEventListener('input', (e) => {
       it.api.setCells(+e.target.value);
+      nudgeIfOverlap(it);
       const o = $('pBatOut');
       if (o) o.textContent = it.api.getCells() + ' 节 · ' + it.api.emf().toFixed(1) + ' V';
       recompute();
@@ -1386,7 +1475,42 @@ window.__lab = {
     };
   },
   recomputeNow() { recompute(); return true; },
-  setCells(i, n) { const it = items[i || 0]; if (!it || !it.api.setCells) return null; it.api.setCells(n); recompute(); syncUI(); return it.api.getCells(); },
+  setCells(i, n) {
+    const it = items[i || 0];
+    if (!it || !it.api.setCells) return null;
+    it.api.setCells(n);
+    nudgeIfOverlap(it);
+    recompute(); syncUI();
+    return it.api.getCells();
+  },
+  // 器材之间的 AABB 重叠对数（自检判「摆放不穿模」）
+  overlaps() {
+    const out = [];
+    for (let i = 0; i < items.length; i++) {
+      for (let j = i + 1; j < items.length; j++) {
+        const a = items[i], c = items[j];
+        const ba = boundsOf(a), bc = boundsOf(c);
+        const dx = Math.abs(a.group.position.x - c.group.position.x);
+        const dz = Math.abs(a.group.position.z - c.group.position.z);
+        if (dx < ba.hw + bc.hw && dz < ba.hd + bc.hd) {
+          out.push({ a: i, b: j, dx: +dx.toFixed(1), dz: +dz.toFixed(1),
+                     needX: +(ba.hw + bc.hw).toFixed(1), needZ: +(ba.hd + bc.hd).toFixed(1) });
+        }
+      }
+    }
+    return out;
+  },
+  // 器材外缘是否都在桌面内
+  onTable() {
+    return items.map((it) => {
+      const b = boundsOf(it);
+      return {
+        type: it.type,
+        overX: +(Math.abs(it.group.position.x) + b.hw - TABLE_W / 2).toFixed(1),
+        overZ: +(Math.abs(it.group.position.z) + b.hd - TABLE_D / 2).toFixed(1),
+      };
+    });
+  },
   // ── 接线柱 / 导线（自检与后续接电源都要用）────────────────
   get wireCount() { return wires.length; },
   wireInfo() {
@@ -1413,6 +1537,31 @@ window.__lab = {
   },
   removeWireById(id) { removeWire(id); return wires.length; },
   // 接线柱在屏幕上的位置（自检用真实鼠标去点它）
+  // ── 零件几何（按 kit 里打的 role 取世界包围盒）────────────────
+  // 🔴 判「位置对不对」必须量【世界包围盒】，不能看代码里的 translate 参数：
+  //    挤出几何的 y 起点是 0 还是 depth 全靠 rotateX 之后才知道，肉眼看代码最容易错一遍。
+  partsGeom(i) {
+    const it = items[i || 0];
+    if (!it) return null;
+    it.group.updateWorldMatrix(true, true);
+    const out = {};
+    it.group.traverse((o) => {
+      if (!o.isMesh || !o.userData.role) return;
+      const b = new THREE.Box3().setFromObject(o);
+      const sz = b.getSize(new THREE.Vector3());
+      const rec = {
+        min: [+b.min.x.toFixed(1), +b.min.y.toFixed(1), +b.min.z.toFixed(1)],
+        max: [+b.max.x.toFixed(1), +b.max.y.toFixed(1), +b.max.z.toFixed(1)],
+        size: [+sz.x.toFixed(1), +sz.y.toFixed(1), +sz.z.toFixed(1)],
+      };
+      const r = o.userData.role;
+      // 同名多件（电池、夹环）收成数组
+      if (!out[r]) out[r] = rec;
+      else if (Array.isArray(out[r])) out[r].push(rec);
+      else out[r] = [out[r], rec];
+    });
+    return out;
+  },
   termWorldOf(i, term) {
     const it = items[i || 0];
     if (!it || !it.api.termLocal || !it.api.termLocal[term]) return null;
@@ -1460,8 +1609,9 @@ window.__lab = {
   moveItem(i, x, z) {
     const it = items[i || 0];
     if (!it) return null;
-    it.group.position.x = clamp(x, -PLACE.x, PLACE.x);
-    it.group.position.z = clamp(z, -PLACE.z, PLACE.z);
+    const lim = limitOf(it);
+    it.group.position.x = clamp(x, -lim.x, lim.x);
+    it.group.position.z = clamp(z, -lim.z, lim.z);
     refreshWiresFor(it);          // 和真实拖动走同一条路：挪了器材就得重算导线
     return { x: it.group.position.x, z: it.group.position.z };
   },

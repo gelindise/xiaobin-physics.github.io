@@ -668,22 +668,59 @@ export function buildBattery(opts) {
   }
 
   function add(o) { inner.add(o); cellParts.push(o); return o; }
+  // 给每个零件打角色标记：自检与排障都按角色取包围盒（不看顺序、不看几何类型）
+  function tag(o, role) { o.userData.role = role; return o; }
 
   // ── 整组重建（节数变化时调用）────────────────────────────
+  // ── 布局表：所有零件的位置都从这一张表算出来，不再各写各的 magic number ──
+  // 竖向（局部 mm，y=0 是【托架顶面】，托架本体在 y ∈ [-BOX_H, 0]）：
+  //   y = 0            托架顶面  = 电池底面 = 挡板底面
+  //   y = R            电池轴线（φ34 ⇒ R=17）
+  //   y ∈ [0, WALL_H]  两端挡板
+  //   y = postY        接线柱轴线（挡板 2/3 高处）
+  // 横向（x 从中心算，±）：
+  //   cellEnd  电池串端面
+  //   wallIn   挡板内侧面 / wallOut 挡板外侧面 = 托架外缘
+  //   ringX    夹环（压在 cellEnd 上，跨过端面）
+  //   seatX    弹簧座（从夹环插进挡板）
+  //   stemX    柱身（内端插进挡板、外端接柱帽）
+  //   capX     柱帽中心
+  // 🔴 凡是「挤出的件」都只允许改 x：ExtrudeGeometry 沿 +z 挤出后 rotateX(-90°)，
+  //    y 已经就是 [0, depth]，再 translate 一次 depth 就会整块悬空（电池挡板踩过）。
+  function layout(n) {
+    const GAP = 2;                                    // 相邻两节之间的缝
+    const bodyLen = n * D.L + (n - 1) * GAP;           // 电池串总长
+    const trayHalf = bodyLen / 2 + D.WALL_T + 4;       // 托架半长（含两端挡板 + 4 余量）
+    return {
+      GAP, bodyLen, trayHalf,
+      trayLen: trayHalf * 2,
+      cellEnd: bodyLen / 2,
+      wallOut: trayHalf,
+      wallIn: trayHalf - D.WALL_T,
+      wallX: trayHalf - D.WALL_T / 2,
+      ringX: bodyLen / 2 + 1.4,
+      seatX: bodyLen / 2 + 5.2,
+      stemX: trayHalf + 2,
+      capX: trayHalf + D.POST_LEN / 2,
+      slotX: trayHalf + D.POST_LEN + 1,
+      termX: trayHalf + D.POST_LEN * 0.6,
+      postY: 32,
+    };
+  }
+
   function rebuild(n) {
     cells = Math.max(1, Math.min(D.MAX_CELLS, n));
     disposeCells();
-    const bodyLen = cells * D.L + (cells - 1) * 2;     // 电池串起来的总长
-    const totalLen = bodyLen + 2 * D.WALL_T + 8;       // 加两端挡板
+    const LY = layout(cells);
 
     // 底板（圆角）
-    const baseGeo = new THREE.ExtrudeGeometry(roundRectShape(totalLen, D.BOX_D, 7), {
+    const baseGeo = new THREE.ExtrudeGeometry(roundRectShape(LY.trayLen, D.BOX_D, 7), {
       depth: D.BOX_H, bevelEnabled: true, bevelThickness: 1, bevelSize: 1,
       bevelSegments: 2, curveSegments: 10,
     });
     baseGeo.rotateX(-Math.PI / 2);
     baseGeo.translate(0, -D.BOX_H, 0);
-    add(new THREE.Mesh(baseGeo, matTray));
+    add(tag(new THREE.Mesh(baseGeo, matTray), 'tray'));
 
     // 两端高挡板（外缘略圆）
     [-1, 1].forEach((sx) => {
@@ -694,17 +731,17 @@ export function buildBattery(opts) {
       wGeo.rotateX(-Math.PI / 2);
       // 🔴 挤出后 y 已经就是 [0, WALL_H]（rotateX(-90°) 把 +z 的挤出方向变成了 +y），
       //    这里【只挪 x】，再抬一次 WALL_H 会把整块挡板抬到托架上方、连带接线柱一起悬空。
-      wGeo.translate(sx * (totalLen / 2 - D.WALL_T / 2), 0, 0);
-      add(new THREE.Mesh(wGeo, matTray));
+      wGeo.translate(sx * LY.wallX, 0, 0);
+      add(tag(new THREE.Mesh(wGeo, matTray), sx < 0 ? 'wallL' : 'wallR'));
     });
 
     // 中间弧形托：两片低矮的侧挡（前低后高，像参考图那样把电池兜住）
-    const railLen = bodyLen + 4;
+    const railLen = LY.bodyLen + 4;
     [-1, 1].forEach((sz) => {
       const h = sz > 0 ? 15 : 24;       // +z 是朝学生这一侧 ⇒ 前挡矮一些，才看得见电池
       const rail = new THREE.Mesh(new THREE.BoxGeometry(railLen, h, 4), matTray);
       rail.position.set(0, h / 2, sz * (D.BOX_D / 2 - 4));
-      add(rail);
+      add(tag(rail, sz > 0 ? 'railFront' : 'railBack'));
     });
 
     // 电池夹：两端挡板内侧各一只金属夹盘，把电池端面顶住 ——
@@ -715,46 +752,42 @@ export function buildBattery(opts) {
       // 压在电池端面上的亮银夹环（比电池大 12%，从任何斜角都看得见）
       const ring = new THREE.Mesh(new THREE.TorusGeometry(D.R * 1.06, 2.6, 10, 32), MAT.steel);
       ring.rotation.y = Math.PI / 2;
-      ring.position.set(sx * (bodyLen / 2 + 1.4), D.R, 0);
-      add(ring);
-      // 挡板内侧的弹簧座（一小段圆柱，接在夹环后面）
+      ring.position.set(sx * LY.ringX, D.R, 0);
+      add(tag(ring, 'clampRing'));
+      // 挡板内侧的弹簧座：从夹环一路插进挡板，把「夹住」这件事在几何上接实
       const holder = new THREE.Mesh(
         new THREE.CylinderGeometry(D.R * 0.9, D.R * 1.02, 7, 28), MAT.brass);
       holder.rotation.z = Math.PI / 2;
-      holder.position.set(sx * (bodyLen / 2 + 5.2), D.R, 0);
-      add(holder);
-      // 挡板内侧的引出铜片：把夹盘接到挡板里
-      const strap = new THREE.Mesh(new THREE.BoxGeometry(6, 5, 9), MAT.copper);
-      strap.position.set(sx * (bodyLen / 2 + 5.6), D.R, 0);
-      add(strap);
+      holder.position.set(sx * LY.seatX, D.R, 0);
+      add(tag(holder, 'clampSeat'));
     });
 
     // 相邻两节之间的串联连接片（贴着电池端面）
     for (let i = 0; i < cells - 1; i++) {
-      const jx = -bodyLen / 2 + D.L + i * (D.L + 2) + 1;
+      const jx = -LY.cellEnd + D.L + i * (D.L + LY.GAP) + 1;
       const link = new THREE.Mesh(new THREE.CylinderGeometry(D.R * 0.96, D.R * 0.96, 3.2, 28), MAT.copper);
       link.rotation.z = Math.PI / 2;
       link.position.set(jx, D.R, 0);
-      add(link);
+      add(tag(link, 'link'));
     }
 
     // 电池：一节挨一节，+x 端是正极帽
     for (let i = 0; i < cells; i++) {
-      const cx = -bodyLen / 2 + D.L / 2 + i * (D.L + 2);
+      const cx = -LY.cellEnd + D.L / 2 + i * (D.L + LY.GAP);
       const cell = new THREE.Mesh(new THREE.CylinderGeometry(D.R, D.R, D.L, 40, 1, false), matCell);
       cell.rotation.z = Math.PI / 2;
       cell.position.set(cx, D.R, 0);
-      add(cell);
+      add(tag(cell, 'cell'));
       // 正极帽（+x 端）
       const cap = new THREE.Mesh(new THREE.CylinderGeometry(D.R * 0.42, D.R * 0.42, 3.2, 24), matCellCap);
       cap.rotation.z = Math.PI / 2;
       cap.position.set(cx + D.L / 2 + 1.6, D.R, 0);
-      add(cap);
+      add(tag(cap, 'capPlus'));
       // 负极端的浅色封边
       const ring = new THREE.Mesh(new THREE.CylinderGeometry(D.R * 0.99, D.R * 0.99, 2.4, 36), matCellCap);
       ring.rotation.z = Math.PI / 2;
       ring.position.set(cx - D.L / 2 + 1.2, D.R, 0);
-      add(ring);
+      add(tag(ring, 'capMinus'));
       // 侧面的红色 ⊕（贴片，朝学生这一侧）
       const plus = new THREE.Mesh(new THREE.PlaneGeometry(D.R * 1.25, D.R * 1.25),
         new THREE.MeshBasicMaterial({ map: plusTexture(), transparent: true, depthWrite: false }));
@@ -764,25 +797,25 @@ export function buildBattery(opts) {
 
     // 两端的滚花接线柱：左红、右银（沿 x 轴伸出）
     [-1, 1].forEach((sx) => {
-      const px = sx * (totalLen / 2 + D.POST_LEN / 2);
+      const px = sx * LY.capX;
       const stem = new THREE.Mesh(new THREE.CylinderGeometry(3, 3, D.POST_LEN * 0.5, 16), MAT.brass);
       stem.rotation.z = Math.PI / 2;
-      stem.position.set(sx * (totalLen / 2 + 2), 32, 0);
-      add(stem);
+      stem.position.set(sx * LY.stemX, LY.postY, 0);
+      add(tag(stem, 'postStem'));
       const cap = new THREE.Mesh(knurledGeometry(D.POST_R, D.POST_LEN), sx < 0 ? MAT.red : MAT.steel);
       cap.rotation.z = Math.PI / 2;
-      cap.position.set(px, 32, 0);
+      cap.position.set(px, LY.postY, 0);
       cap.userData.termId = sx < 0 ? '+' : '-';
-      add(cap);
+      add(tag(cap, 'postCap'));
       // 柱顶开槽
       const slot = new THREE.Mesh(new THREE.BoxGeometry(0.4, D.POST_R * 1.1, 0.4), MAT.black);
-      slot.position.set(sx * (totalLen / 2 + D.POST_LEN + 1), 32, 0);
+      slot.position.set(sx * LY.slotX, LY.postY, 0);
       add(slot);
     });
 
-    termLocal['+'].set(-(totalLen / 2 + D.POST_LEN * 0.6) * S, (32 + D.BOX_H) * S, 0);
-    termLocal['-'].set((totalLen / 2 + D.POST_LEN * 0.6) * S, (32 + D.BOX_H) * S, 0);
-    bounds.hw = (totalLen / 2 + D.POST_LEN) * S + 4;
+    termLocal['+'].set(-LY.termX * S, (LY.postY + D.BOX_H) * S, 0);
+    termLocal['-'].set(LY.termX * S, (LY.postY + D.BOX_H) * S, 0);
+    bounds.hw = (LY.trayHalf + D.POST_LEN) * S + 4;
     bounds.hd = (D.BOX_D / 2) * S;
   }
 
