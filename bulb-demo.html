@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>灯泡仿真 Demo</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{background:#0a0a0f;font-family:system-ui,sans-serif;overflow:hidden;height:100vh;display:flex}
+  #canvas{flex:1;display:block}
+  .panel{
+    position:fixed;right:16px;top:16px;z-index:10;
+    background:rgba(10,10,15,0.92);border:1px solid #2a2a3a;
+    border-radius:12px;padding:16px 20px;min-width:220px;
+    color:#e8e8ec;font-size:13px;backdrop-filter:blur(8px);
+    box-shadow:0 8px 32px rgba(0,0,0,0.5);
+  }
+  .panel h3{margin:0 0 12px;font-size:14px;font-weight:600;color:#ffd66b;letter-spacing:0.5px}
+  .row{margin:10px 0;display:flex;align-items:center;gap:10px}
+  .row label{min-width:58px;color:#9aa0a6;font-size:12px}
+  input[type=range]{flex:1;accent-color:#ffd66b;height:4px}
+  .val{font-variant-numeric:tabular-nums;color:#ffd66b;min-width:44px;text-align:right;font-size:12px}
+  .btn{
+    width:100%;margin-top:8px;padding:8px 0;border:none;border-radius:6px;
+    background:linear-gradient(135deg,#ffd66b,#f0b000);color:#1a1a1a;
+    font-weight:600;cursor:pointer;transition:transform .05s,filter .2s
+  }
+  .btn:active{transform:scale(0.98)} .btn.off{background:#3a3a4a;color:#888}
+  .info{margin-top:12px;padding-top:12px;border-top:1px solid #2a2a3a;font-size:11px;color:#777;line-height:1.6}
+  .badge{display:inline-block;padding:2px 6px;border-radius:4px;background:#ffd66b22;color:#ffd66b;font-size:10px;margin-right:4px}
+</style>
+</head>
+<body>
+<canvas id="canvas"></canvas>
+<div class="panel">
+  <h3>⚡ 白炽灯泡仿真</h3>
+  <div class="row"><label>电压</label><input type="range" id="v" min="0" max="240" value="220" step="1"><span class="val" id="vVal">220</span>V</div>
+  <div class="row"><label>功率</label><span class="val" id="pVal">0</span>W</div>
+  <div class="row"><label>色温</label><span class="val" id="tVal">0</span>K</div>
+  <div class="row"><label>光通量</label><span class="val" id="lVal">0</span>lm</div>
+  <div class="row"><label>灯丝温度</label><span class="val" id="tfVal">0</span>K</div>
+  <button class="btn" id="toggle">断开电源</button>
+  <div class="info">
+    <span class="badge">物理模型</span> 0D 热平衡: P=V²/R(T), R∝T^1.2<br>
+    <span class="badge">辐射</span> 普朗克黑体近似 + 灰体系数<br>
+    <span class="badge">灯丝</span> 双螺旋钨丝 + 热膨胀微抖动
+  </div>
+</div>
+
+<script type="importmap">
+{"imports":{"three":"https://unpkg.com/three@0.165/build/three.module.js","three/addons/":"https://unpkg.com/three@0.165/examples/jsm/"}}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
+import {GUI} from 'three/addons/libs/lil-gui.module.min.js';
+
+// ── 物理常数 ──────────────────────────────────────────────
+const SIGMA = 5.670374419e-8;     // Stefan-Boltzmann
+const K_B   = 1.380649e-23;       // Boltzmann
+const H     = 6.62607015e-34;     // Planck
+const C     = 299792458;          // 光速
+const TUNGSTEN_R0 = 5.6e-8;       // 20°C 电阻率 Ω·m
+const TUNGSTEN_ALPHA = 4.5e-3;    // 电阻温度系数 /K
+const FIL_LEN = 0.52;             // 灯丝总长度 m (典型 60W)
+const FIL_DIA = 46e-6;            // 灯丝直径 m
+const FIL_AREA = Math.PI * FIL_DIA * FIL_LEN; // 表面积
+const EMISSIVITY = 0.35;          // 钨灰体发射率
+const BULB_AREA = 0.008;          // 玻壳散热面积 m²
+const H_CONV = 10;                // 自然对流系数 W/m²K
+const T_AMB = 293;                // 环境温度 K
+const RATED_V = 220;              // 额定电压
+const RATED_P = 60;               // 额定功率
+
+// ── 黑体辐射 RGB (近似, 1000-40000K) ─────────────────────
+function blackbodyRGB(T) {
+  // 使用色度图近似 (CIE 1931 -> sRGB)
+  // 简化: 用 McCamy 公式求 xy 再转 sRGB
+  let x, y;
+  if (T <= 4000) {
+    x = -0.2661239e9/T**3 - 0.2343589e6/T**2 + 0.8776956e3/T + 0.179910;
+  } else {
+    x = -3.0258469e9/T**3 + 2.1070379e6/T**2 + 0.2226347e3/T + 0.240390;
+  }
+  if (T <= 2222) {
+    y = -1.1063814*x**3 - 1.34811020*x**2 + 2.18555832*x - 0.20219683;
+  } else if (T <= 4000) {
+    y = -0.9549476*x**3 - 1.37418593*x**2 + 2.09137015*x - 0.16748867;
+  } else {
+    y = 3.0817580*x**3 - 5.8733867*x**2 + 3.75112997*x - 0.37001483;
+  }
+  const z = 1 - x - y;
+  // XYZ -> sRGB (D65)
+  let r =  3.2406*x - 1.5372*y - 0.4986*z;
+  let g = -0.9689*x + 1.8758*y + 0.0415*z;
+  let b =  0.0557*x - 0.2040*y + 1.0570*z;
+  // gamma
+  const gam = c => c<=0.0031308?12.92*c:1.055*c**(1/2.4)-0.055;
+  return new THREE.Color(gam(r), gam(g), gam(b)).clamp(new THREE.Color(0,0,0), new THREE.Color(1,1,1));
+}
+
+// ── 场景初始化 ────────────────────────────────────────────
+const canvas = document.getElementById('canvas');
+const renderer = new THREE.WebGLRenderer({canvas, antialias:true, alpha:true});
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.2;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x050508);
+
+// 相机
+const camera = new THREE.PerspectiveCamera(45, innerWidth/innerHeight, 0.01, 100);
+camera.position.set(0, 0.15, 0.6);
+const controls = new OrbitControls(camera, canvas);
+controls.enableDamping = true;
+controls.target.set(0, 0.02, 0);
+controls.minDistance = 0.15;
+controls.maxDistance = 1.5;
+
+// 灯光
+const hemi = new THREE.HemisphereLight(0xffffee, 0x111122, 0.6);
+scene.add(hemi);
+const keyLight = new THREE.DirectionalLight(0xfffff0, 2);
+keyLight.position.set(0.5, 1, 0.8);
+keyLight.castShadow = true;
+keyLight.shadow.mapSize.set(1024, 1024);
+scene.add(keyLight);
+const fillLight = new THREE.DirectionalLight(0x4466ff, 0.3);
+fillLight.position.set(-0.8, 0.5, -0.6);
+scene.add(fillLight);
+
+// ── 材质 ──────────────────────────────────────────────────
+const glassMat = new THREE.MeshPhysicalMaterial({
+  color: 0xffffff, metalness: 0, roughness: 0,
+  transmission: 0.98, thickness: 1.5, ior: 1.47,
+  clearcoat: 1, clearcoatRoughness: 0.05,
+  envMapIntensity: 1.2, side: THREE.DoubleSide
+});
+const metalMat = new THREE.MeshStandardMaterial({
+  color: 0xc8c0b0, metalness: 0.95, roughness: 0.15, envMapIntensity: 1
+});
+const insulatorMat = new THREE.MeshStandardMaterial({
+  color: 0x1a1510, metalness: 0, roughness: 0.85
+});
+const contactMat = new THREE.MeshStandardMaterial({
+  color: 0xb8a060, metalness: 1, roughness: 0.1
+});
+
+// 灯丝 ShaderMaterial (黑体发光 + 几何抖动)
+const filamentVS = `
+  uniform float uTime;
+  uniform float uTemp;      // 灯丝温度 K
+  uniform float uVibAmp;    // 热振动幅度
+  attribute float aSeed;    // 每顶点随机种子
+  varying float vTemp;
+  varying vec3 vWorldPos;
+  void main(){
+    vTemp = uTemp;
+    vec3 pos = position;
+    // 微小热膨胀抖动 (沿切线方向)
+    float vib = sin(uTime * 40.0 + aSeed * 6.283) * uVibAmp * (uTemp/3000.0);
+    pos += normal * vib * 0.0003;
+    vWorldPos = (modelMatrix * vec4(pos, 1.0)).xyz;
+    gl_Position = projectionMatrix * viewMatrix * vec4(vWorldPos, 1.0);
+  }
+`;
+const filamentFS = `
+  varying float vTemp;
+  varying vec3 vWorldPos;
+  // 黑体 RGB -> 发射颜色
+  vec3 blackbody(vec3 rgb, float temp, float emissivity) {
+    float intensity = emissivity * pow(temp/3000.0, 4.0); // ~T^4
+    return rgb * intensity * 0.8;
+  }
+  void main(){
+    vec3 bb = vec3(1.0, 0.85, 0.55); // 占位, 由 JS 注入真实值
+    vec3 emission = blackbody(bb, vTemp, ${EMISSIVITY.toFixed(2)});
+    // 菲涅尔边缘增亮
+    vec3 viewDir = normalize(cameraPosition - vWorldPos);
+    float fresnel = pow(1.0 - abs(dot(viewDir, normalize(normal))), 2.0);
+    gl_FragColor = vec4(emission + bb * fresnel * 0.3, 1.0);
+  }
+`;
+// 我们在 JS 里动态把 blackbodyRGB 算出的颜色传给 uniform
+
+// ── 几何构建 ──────────────────────────────────────────────
+const bulb = new THREE.Group();
+
+// 1. 玻壳: 球冠 + 颈部圆柱
+const bulbRadius = 0.032;   // 32mm
+const neckRadius = 0.012;
+const neckHeight = 0.025;
+const totalHeight = 0.062;
+
+const glassGeom = new THREE.Group();
+// 球冠 (下半球 + 一点)
+const sphereGeom = new THREE.SphereGeometry(bulbRadius, 48, 24, 0, Math.PI*2, 0, Math.PI*0.55);
+const sphere = new THREE.Mesh(sphereGeom, glassMat);
+sphere.castShadow = true;
+sphere.receiveShadow = true;
+glassGeom.add(sphere);
+// 颈部
+const neckGeom = new THREE.CylinderGeometry(neckRadius, neckRadius, neckHeight, 32, 1, true);
+const neck = new THREE.Mesh(neckGeom, glassMat);
+neck.position.y = -bulbRadius * 0.55 + neckHeight * 0.5;
+neck.castShadow = true;
+glassGeom.add(neck);
+// 底部封口盘
+const bottomGeom = new THREE.CircleGeometry(neckRadius, 32);
+const bottom = new THREE.Mesh(bottomGeom, glassMat);
+bottom.position.y = -bulbRadius * 0.55 - 0.0005;
+bottom.rotation.x = -Math.PI/2;
+glassGeom.add(bottom);
+
+glassGeom.position.y = totalHeight * 0.5;
+bulb.add(glassGeom);
+
+// 2. 灯丝 (双螺旋)
+function makeFilament() {
+  const turns = 28;           // 总圈数
+  const coilRadius = 0.0018;  // 线圈半径
+  const coilHeight = 0.018;   // 线圈高度
+  const points = [];
+  const seeds = [];
+  const segmentsPerTurn = 36;
+  for (let t = 0; t <= turns; t += 1/segmentsPerTurn) {
+    const phi = t * Math.PI * 2;
+    const h = (t / turns - 0.5) * coilHeight;
+    // 双螺旋: 大螺旋半径
+    const majorR = 0.0012;
+    const majorPhi = t * Math.PI * 2 * 2; // 2圈大螺旋
+    const x = (majorR + coilRadius * Math.cos(phi)) * Math.cos(majorPhi);
+    const z = (majorR + coilRadius * Math.cos(phi)) * Math.sin(majorPhi);
+    const y = h + coilRadius * Math.sin(phi);
+    points.push(new THREE.Vector3(x, y, z));
+    seeds.push(Math.random());
+  }
+  const curve = new THREE.CatmullRomCurve3(points);
+  const tubeGeom = new THREE.TubeGeometry(curve, points.length * 2, FIL_DIA/bulbRadius*0.5, 8, true);
+  // 属性注入种子
+  const seedAttr = new Float32Array(tubeGeom.attributes.position.count);
+  const pos = tubeGeom.attributes.position;
+  for (let i=0;i<pos.count;i++) {
+    const t = i / pos.count;
+    const idx = Math.floor(t * (seeds.length-1));
+    seedAttr[i] = seeds[idx];
+  }
+  tubeGeom.setAttribute('aSeed', new THREE.BufferAttribute(seedAttr, 1));
+  return tubeGeom;
+}
+
+const filGeom = makeFilament();
+const filMat = new THREE.ShaderMaterial({
+  vertexShader: filamentVS,
+  fragmentShader: filamentFS,
+  uniforms: {
+    uTime: {value: 0},
+    uTemp: {value: 300},
+    uVibAmp: {value: 1.0},
+    uBBColor: {value: new THREE.Color(1, 0.6, 0.2)},
+    cameraPosition: {value: new THREE.Vector3()}
+  },
+  transparent: true,
+  depthWrite: false
+});
+const filament = new THREE.Mesh(filGeom, filMat);
+filament.position.y = totalHeight * 0.5 - bulbRadius * 0.55 + 0.008;
+filament.scale.setScalar(1/bulbRadius*0.5); // 修正 tubeGeometry 缩放
+filament.scale.multiplyScalar(0.018/0.036); // 调整大小
+bulb.add(filament);
+
+// 3. 螺口 (E27 标准: 大直径 27mm, 螺距 3.6mm)
+function makeThread() {
+  const group = new THREE.Group();
+  const majorR = 0.0135; // 13.5mm
+  const minorR = 0.0018; // 螺纹半截面
+  const turns = 2.5;
+  const pitch = 0.0036;
+  for (let i=0; i<turns*20; i++) {
+    const t = i / 20;
+    const y = -bulbRadius * 0.55 - neckHeight - t * pitch;
+    const torusGeom = new THREE.TorusGeometry(majorR, minorR, 8, 32, Math.PI*2);
+    const torus = new THREE.Mesh(torusGeom, metalMat);
+    torus.position.y = y;
+    torus.rotation.x = Math.PI/2;
+    group.add(torus);
+  }
+  return group;
+}
+bulb.add(makeThread());
+
+// 4. 绝缘盘 + 底触点
+const baseY = -bulbRadius * 0.55 - neckHeight - 2.5*0.0036 - 0.002;
+const insulator = new THREE.Mesh(
+  new THREE.CylinderGeometry(0.0135, 0.0135, 0.004, 32),
+  insulatorMat
+);
+insulator.position.y = baseY - 0.002;
+bulb.add(insulator);
+
+const contact = new THREE.Mesh(
+  new THREE.CylinderGeometry(0.004, 0.0045, 0.003, 16),
+  contactMat
+);
+contact.position.y = baseY - 0.006;
+bulb.add(contact);
+
+const contactBottom = new THREE.Mesh(
+  new THREE.CircleGeometry(0.0045, 16),
+  contactMat
+);
+contactBottom.position.y = baseY - 0.0075;
+contactBottom.rotation.x = -Math.PI/2;
+bulb.add(contactBottom);
+
+// 5. 引入线 (灯丝到螺口/触点)
+function makeLead(yStart, yEnd, xOff) {
+  const pts = [
+    new THREE.Vector3(xOff, yStart, 0),
+    new THREE.Vector3(xOff, yEnd, 0)
+  ];
+  const geo = new THREE.BufferGeometry().setFromPoints(pts);
+  return new THREE.Line(geo, new THREE.LineBasicMaterial({color:0x887755, linewidth:2}));
+}
+bulb.add(makeLead(filament.position.y, baseY - 0.004, -0.002));
+bulb.add(makeLead(filament.position.y, baseY - 0.004, 0.002));
+
+scene.add(bulb);
+
+// ── 环境贴图 (程序化渐变) ─────────────────────────────────
+const pmrem = new THREE.PMREMGenerator(renderer);
+const envScene = new THREE.Scene();
+const gradTex = new THREE.DataTexture(
+  new Uint8Array([20,18,25,  40,35,50,  10,10,15,  5,5,8]), 2, 2, THREE.RGBFormat
+);
+gradTex.needsUpdate = true;
+envScene.background = gradTex;
+const envMap = pmrem.fromScene(envScene).texture;
+glassMat.envMap = envMap;
+metalMat.envMap = envMap;
+contactMat.envMap = envMap;
+insulatorMat.envMap = envMap;
+
+// ── 物理模型状态 ──────────────────────────────────────────
+let voltage = 220;
+let powered = true;
+let filTemp = T_AMB; // 当前灯丝温度
+let targetTemp = T_AMB;
+const C_th = 0.0012; // 热容 J/K (估算)
+const dt = 1/60;
+
+// 根据温度求电阻
+function resistanceAt(T) {
+  return TUNGSTEN_R0 * FIL_LEN / (Math.PI * (FIL_DIA/2)**2) * (1 + TUNGSTEN_ALPHA * (T - 293));
+}
+// 根据温度求辐射+对流散热功率
+function coolingPower(T) {
+  const rad = EMISSIVITY * SIGMA * FIL_AREA * (T**4 - T_AMB**4);
+  const conv = H_CONV * BULB_AREA * (T - T_AMB);
+  return rad + conv;
+}
+// 稳态温度 (二分)
+function steadyStateTemp(V) {
+  if (V < 1) return T_AMB;
+  let lo = T_AMB, hi = 4000;
+  for (let i=0;i<40;i++) {
+    const mid = (lo+hi)/2;
+    const R = resistanceAt(mid);
+    const P_in = V*V/R;
+    const P_out = coolingPower(mid);
+    if (P_in > P_out) lo = mid; else hi = mid;
+  }
+  return (lo+hi)/2;
+}
+
+// ── UI 绑定 ───────────────────────────────────────────────
+const vSlider = document.getElementById('v');
+const vVal = document.getElementById('vVal');
+const pVal = document.getElementById('pVal');
+const tVal = document.getElementById('tVal');
+const lVal = document.getElementById('lVal');
+const tfVal = document.getElementById('tfVal');
+const toggleBtn = document.getElementById('toggle');
+
+vSlider.oninput = () => {
+  voltage = +vSlider.value;
+  vVal.textContent = voltage;
+  if (powered) targetTemp = steadyStateTemp(voltage);
+};
+toggleBtn.onclick = () => {
+  powered = !powered;
+  toggleBtn.textContent = powered ? '断开电源' : '接通电源';
+  toggleBtn.classList.toggle('off', !powered);
+  targetTemp = powered ? steadyStateTemp(voltage) : T_AMB;
+};
+
+// ── 动画循环 ──────────────────────────────────────────────
+let time = 0;
+function animate() {
+  requestAnimationFrame(animate);
+  time += dt;
+  
+  // 热惯性: 一阶滞后
+  const tau = C_th / Math.max(0.01, (resistanceAt(filTemp) * 0.001)); // 简化时间常数
+  filTemp += (targetTemp - filTemp) * Math.min(1, dt / Math.max(0.05, tau * 0.1));
+  
+  // 电气量
+  const R = resistanceAt(filTemp);
+  const P = powered ? voltage*voltage/R : 0;
+  const I = powered ? voltage/R : 0;
+  
+  // 光通量估算 (流明 = 功率 * 发光效率, 白炽灯 ~12-17 lm/W)
+  const efficacy = Math.min(18, 0.004 * (filTemp - 273)); // 经验公式
+  const lumen = P * efficacy;
+  
+  // 色温 ≈ 灯丝温度 (灰体)
+  const colorTemp = filTemp;
+  
+  // 更新 UI
+  pVal.textContent = P.toFixed(1);
+  tVal.textContent = Math.round(colorTemp);
+  lVal.textContent = Math.round(lumen);
+  tfVal.textContent = Math.round(filTemp);
+  
+  // 更新灯丝材质
+  const bb = blackbodyRGB(Math.min(4000, Math.max(1000, filTemp)));
+  filMat.uniforms.uBBColor.value.copy(bb);
+  filMat.uniforms.uTemp.value = filTemp;
+  filMat.uniforms.uTime.value = time;
+  filMat.uniforms.uVibAmp.value = powered ? 1.0 : 0;
+  filMat.uniforms.cameraPosition.value.copy(camera.position);
+  
+  // 玻璃微发光 (被加热)
+  const glassGlow = Math.max(0, (filTemp - 400) / 2600) * 0.15;
+  glassMat.emissive = new THREE.Color(bb).multiplyScalar(glassGlow);
+  glassMat.emissiveIntensity = glassGlow;
+  glassMat.needsUpdate = true;
+  
+  // 灯光联动
+  keyLight.intensity = 0.5 + Math.min(3, lumen / 800);
+  keyLight.color.copy(bb);
+  
+  controls.update();
+  renderer.render(scene, camera);
+}
+animate();
+
+// ── Resize ────────────────────────────────────────────────
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+</script>
+</body>
+</html>
