@@ -250,6 +250,17 @@ async function copyText(text) {
   } catch (e) { return false; }
 }
 
+// 复制特惠卡上的管理员微信号，按钮文字临时变成成功提示
+async function copyPromoWx(btn, wxId) {
+  var el = document.getElementById(wxId);
+  if (!el) return;
+  var ok = await copyText(el.textContent.trim());
+  var idle = btn.dataset.idle || btn.textContent;
+  btn.dataset.idle = idle;
+  btn.textContent = ok ? '已复制 ✓ 去微信添加' : '请手动复制';
+  setTimeout(function () { btn.textContent = idle; }, 2000);
+}
+
 // ========== 头像生成 ==========
 function generateAvatar(name, size = 40) {
   const c = document.createElement('canvas');
