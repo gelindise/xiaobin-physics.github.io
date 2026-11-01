@@ -382,7 +382,7 @@ function fitFrame(pitch, k) {
   const dH = (spanH / 2) / Math.tan(fovV / 2);
   return {
     dist: Math.max(dW, dH) * 1.02 * (k || 1),
-    tx: -DESK.w * f * 0.5,
+    tx: -DESK.w * f * 0.72,
   };
 }
 function applyView(name) {
