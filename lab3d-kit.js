@@ -1221,6 +1221,1551 @@ export function buildBulb(opts) {
 }
 
 // ============================================================
+//  电流表 / 电压表（人教版 J0407 / J0408 那种三柱双量程指针表）
+// ------------------------------------------------------------
+// 参考图 → 3D：
+//   浅蓝灰梯形表壳（上厚下薄）        → 圆角挤出 + 后倾 12°
+//   白色表盘（双排刻度 + 中心 A/V）  → CanvasTexture 画在表盘平面上
+//   红色指针（轴在表盘下沿正中）      → 细长盒子绕 z 转
+//   表盘下方的镜面梯形 + 调零螺丝    → 贴图 + 小圆柱
+//   底座上的绿色接线板 + 三个接线柱   → 贴图 + 滚花柱（黑 / 红 / 红）
+// 读数全部来自 circuit-core 的 rec.reading / rec.range / rec.reversed /
+// rec.overRange —— 这里只把「读数」画成「指针偏到哪儿」。
+// ============================================================
+export const METER_DIM = {
+  BASE_W: 124, BASE_D: 88, BASE_H: 26,
+  PANEL_W: 124, PANEL_H: 88, PANEL_T: 13,
+  TILT: 0.20,                 // 表盘后倾（rad）
+  PAD_D: 46,                  // 绿色接线板深度
+  POST_X: 34, POST_Z: 14, POST_R: 5.5, POST_H: 15,
+  SPAN: 1.5708,               // 指针扫过的角度（90°）
+  SCALE: 1.9,
+};
+
+// ── 表盘贴图 ────────────────────────────────────────────────
+// 双排刻度：外圈是大挡位（15 V / 3 A），内圈是小挡位（3 V / 0.6 A），
+// 两排共用同一条弧、同一个零点 —— 和真表一样：换挡位不换表盘。
+const METER_FACE_CACHE = {};
+function meterFaceTexture(kind) {
+  const key = 'face_' + kind;
+  if (METER_FACE_CACHE[key]) return METER_FACE_CACHE[key];
+  const W = 560, H = 420;
+  const cv = document.createElement('canvas');
+  cv.width = W; cv.height = H;
+  const g = cv.getContext('2d');
+  g.fillStyle = '#f7f9fb'; g.fillRect(0, 0, W, H);
+  // 四角固定螺丝
+  [[26, 26], [W - 26, 26], [26, H - 26], [W - 26, H - 26]].forEach(([x, y]) => {
+    g.beginPath(); g.arc(x, y, 9, 0, Math.PI * 2);
+    g.fillStyle = '#c8d2dc'; g.fill();
+    g.strokeStyle = '#8fa0b2'; g.lineWidth = 2; g.stroke();
+    g.beginPath(); g.moveTo(x - 5, y); g.lineTo(x + 5, y);
+    g.strokeStyle = '#6b7c8e'; g.lineWidth = 2.4; g.stroke();
+  });
+
+  const cx = 280, cy = 440, R = 350;          // 弧心在表盘下方
+  const A0 = -Math.PI / 4, A1 = Math.PI / 4;  // ±45°
+  const isA = kind === 'ammeter';
+  const big = isA ? 3 : 15;
+  const small = isA ? 0.6 : 3;
+  const fmt = (v) => (isA ? String(Math.round(v * 10) / 10) : String(Math.round(v)));
+
+  // 弧线
+  g.beginPath();
+  g.arc(cx, cy, R, -Math.PI / 2 + A0, -Math.PI / 2 + A1);
+  g.strokeStyle = '#243447'; g.lineWidth = 3; g.stroke();
+
+  const N = 30;
+  for (let i = 0; i <= N; i++) {
+    const a = -Math.PI / 2 + A0 + (A1 - A0) * (i / N);
+    const major = i % 5 === 0;
+    const len = major ? 26 : 13;
+    const c = Math.cos(a), sn = Math.sin(a);
+    g.beginPath();
+    g.moveTo(cx + c * R, cy + sn * R);
+    g.lineTo(cx + c * (R - len), cy + sn * (R - len));
+    g.strokeStyle = '#243447';
+    g.lineWidth = major ? 3.2 : 1.8;
+    g.stroke();
+  }
+
+  // 两排数字：i = 10 / 20 / 30 三处
+  g.textAlign = 'center'; g.textBaseline = 'middle';
+  [10, 20, 30].forEach((i) => {
+    const a = -Math.PI / 2 + A0 + (A1 - A0) * (i / N);
+    const c = Math.cos(a), sn = Math.sin(a);
+    // 外圈（大挡位）
+    g.fillStyle = '#1e293b';
+    g.font = 'bold 40px "Helvetica Neue", Arial, sans-serif';
+    // 🔴 外圈数字不能贴太外：R+34 时两端 x 会超出画布（被切掉半个数字）
+    g.fillText(fmt(big * i / N), cx + c * (R + 22), cy + sn * (R + 22));
+    // 内圈（小挡位）
+    g.font = 'bold 30px "Helvetica Neue", Arial, sans-serif';
+    g.fillStyle = '#334155';
+    g.fillText(fmt(small * i / N), cx + c * (R - 52), cy + sn * (R - 52));
+  });
+
+  // 中央的 A / V
+  g.fillStyle = '#0f172a';
+  g.font = 'bold 74px "Helvetica Neue", Arial, sans-serif';
+  g.fillText(isA ? 'A' : 'V', cx, 250);
+  // A / V 下面那道横线（参考图里是一个带下划线的字母）
+  g.beginPath();
+  g.moveTo(cx - 30, 292); g.lineTo(cx + 30, 292);
+  g.strokeStyle = '#0f172a'; g.lineWidth = 4; g.stroke();
+
+  // 下方镜面梯形（读数时要让指针和倒影重合的那块）
+  g.beginPath();
+  g.moveTo(cx - 96, 330); g.lineTo(cx + 96, 330);
+  g.lineTo(cx + 62, 392); g.lineTo(cx - 62, 392);
+  g.closePath();
+  g.fillStyle = '#dde6ef'; g.fill();
+  g.strokeStyle = '#9fb0c2'; g.lineWidth = 2; g.stroke();
+  g.save();
+  g.beginPath();
+  g.moveTo(cx - 96, 330); g.lineTo(cx + 96, 330);
+  g.lineTo(cx + 62, 392); g.lineTo(cx - 62, 392);
+  g.closePath(); g.clip();
+  g.strokeStyle = 'rgba(120,140,160,.5)'; g.lineWidth = 1;
+  for (let d = -220; d < 220; d += 9) {
+    g.beginPath(); g.moveTo(cx + d, 320); g.lineTo(cx + d + 90, 400); g.stroke();
+    g.beginPath(); g.moveTo(cx + d, 320); g.lineTo(cx + d - 90, 400); g.stroke();
+  }
+  g.restore();
+
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 4;
+  METER_FACE_CACHE[key] = tex;
+  return tex;
+}
+
+// ── 接线板贴图（绿底 + 白框 + 三个柱子的标注）──────────────────
+const METER_PAD_CACHE = {};
+function meterPadTexture(kind) {
+  const key = 'pad_' + kind;
+  if (METER_PAD_CACHE[key]) return METER_PAD_CACHE[key];
+  const W = 512, H = 236;
+  const cv = document.createElement('canvas');
+  cv.width = W; cv.height = H;
+  const g = cv.getContext('2d');
+  g.fillStyle = '#2f8f5b'; g.fillRect(0, 0, W, H);
+  g.strokeStyle = '#eef6f1'; g.lineWidth = 7;
+  g.strokeRect(11, 11, W - 22, H - 22);
+  const labels = kind === 'ammeter' ? ['−', '0.6', '3'] : ['−', '3', '15'];
+  const xs = [0.5 - 34 / 62, 0.5, 0.5 + 34 / 62];   // 与 POST_X 对应（板宽 124）
+  g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.fillStyle = '#ffffff';
+  g.font = 'bold 42px "Helvetica Neue", Arial, sans-serif';
+  labels.forEach((t, i) => g.fillText(t, xs[i] * W, H * 0.88));
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  METER_PAD_CACHE[key] = tex;
+  return tex;
+}
+
+export function buildMeter(opts) {
+  opts = opts || {};
+  const kind = opts.kind === 'voltmeter' ? 'voltmeter' : 'ammeter';
+  const isA = kind === 'ammeter';
+  const D = METER_DIM;
+  const S = D.SCALE;
+  const outer = new THREE.Group();
+  const inner = new THREE.Group();
+  inner.scale.setScalar(S);
+  inner.position.y = (D.BASE_H + 1.2) * S;
+  outer.add(inner);
+  const tag = (o, role) => { o.userData.role = role; return o; };
+
+  const matCase = new THREE.MeshStandardMaterial({ color: 0x93a8c0, roughness: 0.46, metalness: 0.12 });
+  const matCaseDark = new THREE.MeshStandardMaterial({ color: 0x74899f, roughness: 0.5, metalness: 0.14 });
+  const matPad = new THREE.MeshStandardMaterial({ map: meterPadTexture(kind), roughness: 0.62, metalness: 0.04 });
+  const matFace = new THREE.MeshStandardMaterial({ map: meterFaceTexture(kind), roughness: 0.5, metalness: 0.02 });
+
+  // ── 1. 底座（圆角挤出，上表面 y=0）──────────────────────────
+  const baseGeo = new THREE.ExtrudeGeometry(roundRectShape(D.BASE_W, D.BASE_D, 10), {
+    depth: D.BASE_H, bevelEnabled: true, bevelThickness: 1.2, bevelSize: 1.2,
+    bevelSegments: 2, curveSegments: 12,
+  });
+  baseGeo.rotateX(-Math.PI / 2);
+  baseGeo.translate(0, -D.BASE_H, 0);
+  inner.add(tag(new THREE.Mesh(baseGeo, matCase), 'base'));
+
+  // ── 2. 绿色接线板（贴在底座前部上表面）────────────────────
+  const padGeo = new THREE.PlaneGeometry(D.BASE_W - 16, D.PAD_D);
+  padGeo.rotateX(-Math.PI / 2);
+  const pad = new THREE.Mesh(padGeo, matPad);
+  // 🔴 底座是挤出 + 倒角件，顶面在 y = +1.2（不是 0）⇒ 贴片必须抬到 1.3 以上，
+  //    否则整块绿板被埋进壳里（实测：接线柱下面一片浅蓝，看不见标注）。
+  pad.position.set(0, 1.35, 12);
+  inner.add(tag(pad, 'pad'));
+
+  // ── 3. 三个接线柱（黑 / 红 / 红）───────────────────────────
+  const termNames = isA ? ['-', '0.6', '3'] : ['-', '3', '15'];
+  const termLocal = {};
+  [-1, 0, 1].forEach((k, i) => {
+    const x = k * D.POST_X;
+    const matCap = i === 0 ? MAT.black : MAT.red;
+    const pad2 = new THREE.Mesh(new THREE.CylinderGeometry(D.POST_R + 3.4, D.POST_R + 4, 2.2, 24), MAT.steel);
+    pad2.position.set(x, 1.8, D.POST_Z);
+    inner.add(tag(pad2, 'postPad'));
+    const stem = new THREE.Mesh(new THREE.CylinderGeometry(D.POST_R * 0.72, D.POST_R * 0.72, 4, 18), MAT.brass);
+    stem.position.set(x, 3.8, D.POST_Z);
+    inner.add(tag(stem, 'postStem'));
+    const cap = new THREE.Mesh(knurledGeometry(D.POST_R, D.POST_H), matCap);
+    cap.position.set(x, 3.8 + D.POST_H / 2, D.POST_Z);
+    cap.userData.termId = termNames[i];
+    inner.add(tag(cap, 'postCap'));
+    termLocal[termNames[i]] = new THREE.Vector3(
+      x * S, (3.8 + D.POST_H * 0.55 + D.BASE_H) * S, D.POST_Z * S);
+  });
+
+  // ── 4. 表盘（后倾 12°，轴在底边）──────────────────────────
+  const panelPivot = new THREE.Group();
+  panelPivot.position.set(0, 0, -D.BASE_D / 2 + 16);
+  panelPivot.rotation.x = -D.TILT;          // 顶部往后倒
+  inner.add(panelPivot);
+
+  const panelGeo = new THREE.ExtrudeGeometry(roundRectShape(D.PANEL_W, D.PANEL_T, 5), {
+    depth: D.PANEL_H, bevelEnabled: true, bevelThickness: 1, bevelSize: 1,
+    bevelSegments: 2, curveSegments: 10,
+  });
+  // 挤出后是「宽 × 厚」的截面沿 +z 拉高 ⇒ 转成「宽 × 高」的立板
+  panelGeo.rotateX(-Math.PI / 2);
+  panelGeo.translate(0, 0, D.PANEL_T / 2);
+  const panel = new THREE.Mesh(panelGeo, matCase);
+  panelPivot.add(tag(panel, 'panel'));
+
+  // 白色表盘面（贴在立板前面）
+  // 🔴 面板是挤出 + 倒角件，倒角把正面推到 z = PANEL_T + bevelThickness，
+  //    贴在 PANEL_T 就会被埋进壳里（表盘一片空白）。所有贴面统一用 FACE_Z。
+  const FACE_Z = D.PANEL_T + 1.6;
+  const faceW = D.PANEL_W - 12, faceH = D.PANEL_H - 12;
+  const face = new THREE.Mesh(new THREE.PlaneGeometry(faceW, faceH), matFace);
+  face.position.set(0, faceH / 2 + 6, FACE_Z);
+  panelPivot.add(tag(face, 'face'));
+
+  // ── 5. 指针（轴在表盘下沿正中）─────────────────────────────
+  const pivot = new THREE.Group();
+  pivot.position.set(0, 8, FACE_Z + 0.8);
+  panelPivot.add(tag(pivot, 'needlePivot'));
+  const needleLen = faceH * 0.74;
+  const needle = new THREE.Mesh(new THREE.BoxGeometry(1.15, needleLen, 0.5),
+    new THREE.MeshBasicMaterial({ color: 0xb91c1c }));
+  needle.position.set(0, needleLen / 2, 0);
+  pivot.add(tag(needle, 'needle'));
+  // 轴帽
+  const hub = new THREE.Mesh(new THREE.CylinderGeometry(2.6, 2.6, 1.6, 20), MAT.black);
+  hub.rotation.x = Math.PI / 2;
+  hub.position.set(0, 0, 0.7);
+  pivot.add(tag(hub, 'hub'));
+  // 表盘上的数字示数（参数面板勾「在表盘上显示读数」才出现）
+  const valCv = document.createElement('canvas');
+  valCv.width = 320; valCv.height = 80;
+  const valTex = new THREE.CanvasTexture(valCv);
+  valTex.colorSpace = THREE.SRGBColorSpace;
+  const valMesh = new THREE.Mesh(new THREE.PlaneGeometry(38, 9.5),
+    new THREE.MeshBasicMaterial({ map: valTex, transparent: true, depthWrite: false }));
+  valMesh.position.set(0, faceH * 0.26, FACE_Z + 0.5);
+  valMesh.visible = false;
+  panelPivot.add(tag(valMesh, 'valueTag'));
+  function drawValue(text) {
+    const g2 = valCv.getContext('2d');
+    g2.clearRect(0, 0, 320, 80);
+    if (!text) { valTex.needsUpdate = true; return; }
+    g2.fillStyle = 'rgba(15,23,42,.92)';
+    g2.font = 'bold 46px "Helvetica Neue", Arial, sans-serif';
+    g2.textAlign = 'center'; g2.textBaseline = 'middle';
+    g2.fillText(text, 160, 42);
+    valTex.needsUpdate = true;
+  }
+
+  // 调零螺丝（表盘下方那颗）
+  const screw = new THREE.Mesh(new THREE.CylinderGeometry(4.2, 4.2, 2.4, 20), MAT.steel);
+  screw.rotation.x = Math.PI / 2;
+  screw.position.set(0, -6, FACE_Z - 0.6);
+  panelPivot.add(tag(screw, 'zeroScrew'));
+
+  // ── 6. 桌面接触阴影 ───────────────────────────────────────
+  const shadow = new THREE.Mesh(
+    new THREE.PlaneGeometry(D.BASE_W * S * 1.9, D.BASE_D * S * 1.7),
+    new THREE.MeshBasicMaterial({ map: shadowTexture(), transparent: true, depthWrite: false })
+  );
+  shadow.rotation.x = -Math.PI / 2;
+  shadow.position.y = 0.35;
+  shadow.renderOrder = -1;
+  outer.add(shadow);
+
+  // ── 7. 指针驱动（全部来自 circuit-core 的读数）──────────────
+  const HALF = D.SPAN / 2;
+  let shown = 0;            // 当前指针位置（0 = 零点，1 = 满偏）
+  let target = 0;
+  let zeroed = opts.zeroed == null ? true : !!opts.zeroed;
+
+  function apply() {
+    // 未调零 ⇒ 指针整体偏一点（真表就是这样：零点不在刻度线上）
+    const off = zeroed ? 0 : -0.055;
+    const f = shown + off;
+    pivot.rotation.z = HALF * (1 - 2 * f);
+  }
+  apply();
+
+  const api = {
+    group: outer,
+    shadow,
+    localToWorld: (v) => inner.localToWorld(v.clone()),
+    worldToLocal: (v) => inner.worldToLocal(v.clone()),
+    type: kind,
+    label: isA ? '电流表' : '电压表',
+    spec: isA ? '0.6 A / 3 A' : '3 V / 15 V',
+    bounds: { hw: D.BASE_W / 2 * S + 6, hd: D.BASE_D / 2 * S },
+    // 名称标签挂在这个高度（世界 mm）：表比其它器材高，写死 190 会压在表盘上
+    topY: (D.BASE_H + 1.2 + D.PANEL_H + 4) * S,
+    termLocal,
+    termIdx: isA ? { '-': 0, '0.6': 1, '3': 2 } : { '-': 0, '3': 1, '15': 2 },
+    range: isA ? 0.6 : 3,
+    showValue: false,
+    zeroed,
+    weakI: false,
+    getParams() {
+      return {
+        range: api.range,
+        zeroed: api.zeroed,
+        zeroMode: api.zeroed ? 'on' : 'off',
+        showValue: api.showValue,
+        weakI: api.weakI,
+      };
+    },
+    // 求解结果回灌：只算「指针偏到哪」，不算电学
+    setReading(rec) {
+      if (!rec) { target = 0; return; }
+      const rng = rec.rangeWired ? rec.range : api.range;
+      if (rec.rangeWired && rec.range) api.range = rec.range;
+      let f = 0;
+      if (rec.wired && !rec.reversed) {
+        f = Math.abs(rec.reading || 0) / (rng || 1);
+      } else if (rec.reversed) {
+        f = -0.045;                    // 接反 ⇒ 指针顶在左限位
+      }
+      if (rec.overRange) f = 1.05;     // 超量程 ⇒ 顶到右限位
+      target = Math.max(-0.08, Math.min(1.08, f));
+      if (rec.zeroed != null) zeroed = !!rec.zeroed;
+      if (valMesh.visible) {
+        const v = rec.wired ? (rec.reading || 0) : 0;
+        drawValue(Math.abs(v) < 5e-4 ? '0' : v.toFixed(rec.range <= 1 ? 2 : 2) +
+          (isA ? ' A' : ' V'));
+      }
+    },
+    step(dt) {
+      const d = target - shown;
+      if (Math.abs(d) < 0.0015) { if (shown !== target) { shown = target; apply(); } return; }
+      shown += d * Math.min(1, dt * 9);
+      apply();
+    },
+    // 自检用：真实落笔的那一份
+    debugMeter() {
+      return {
+        needleRot: +pivot.rotation.z.toFixed(4),
+        target: +target.toFixed(4),
+        shown: +shown.toFixed(4),
+        range: api.range,
+        zeroed,
+      };
+    },
+    // 表盘上那一行数字（showValue 打开才画）
+    setShowValue(on) {
+      api.showValue = !!on;
+      valMesh.visible = !!on;
+      if (on) drawValue('0');
+    },
+  };
+  return api;
+}
+
+// ============================================================
+//  蓄电池（3 只铅酸电池串成一组，2 V/节 ⇒ 6 V）
+// ============================================================
+export const STOR_DIM = {
+  W: 54, D: 76, H: 118, GAP: 2,
+  RIB_W: 7, RIB_D: 2.2,
+  POST_R: 5.2, POST_H: 14,
+  SCALE: 1.55,
+};
+
+export function buildStorageBattery() {
+  const D = STOR_DIM;
+  const S = D.SCALE;
+  const outer = new THREE.Group();
+  const inner = new THREE.Group();
+  inner.scale.setScalar(S);
+  inner.position.y = 0;
+  outer.add(inner);
+  const tag = (o, role) => { o.userData.role = role; return o; };
+
+  const matBody = new THREE.MeshStandardMaterial({ color: 0xa8b8c8, roughness: 0.52, metalness: 0.16 });
+  const matTop = new THREE.MeshStandardMaterial({ color: 0x93a5b6, roughness: 0.5, metalness: 0.2 });
+  const matVent = new THREE.MeshStandardMaterial({ color: 0x2b3542, roughness: 0.62, metalness: 0.2 });
+
+  const N = 3;
+  const totalW = N * D.W + (N - 1) * D.GAP;
+  const bodyLen = N * D.W + (N - 1) * D.GAP;
+
+  for (let i = 0; i < N; i++) {
+    const cx = -bodyLen / 2 + D.W / 2 + i * (D.W + D.GAP);
+    // 电池壳
+    const box = new THREE.Mesh(new THREE.BoxGeometry(D.W, D.H, D.D), matBody);
+    box.position.set(cx, D.H / 2, 0);
+    inner.add(tag(box, 'cell'));
+    // 顶盖
+    const top = new THREE.Mesh(new THREE.BoxGeometry(D.W + 1.5, 6, D.D + 1.5), matTop);
+    top.position.set(cx, D.H + 3, 0);
+    inner.add(tag(top, 'cellTop'));
+    // 前脸的竖向筋条（参考图那种）
+    for (let k = -2; k <= 2; k++) {
+      const rib = new THREE.Mesh(new THREE.BoxGeometry(D.RIB_W, D.H * 0.66, D.RIB_D), matTop);
+      rib.position.set(cx + k * (D.W / 6.2), D.H * 0.42, D.D / 2 + D.RIB_D / 2);
+      inner.add(tag(rib, 'rib'));
+    }
+    // 顶上的两个小通气塞
+    [-1, 1].forEach((sz) => {
+      const vent = new THREE.Mesh(new THREE.CylinderGeometry(3.4, 3.4, 2.4, 16), matVent);
+      vent.position.set(cx, D.H + 7, sz * D.D * 0.24);
+      inner.add(tag(vent, 'vent'));
+    });
+    // 每只电池顶上的两个极柱（左 − 右 +）
+    [-1, 1].forEach((sx) => {
+      const x = cx + sx * D.W * 0.28;
+      const stem = new THREE.Mesh(new THREE.CylinderGeometry(3.2, 3.6, 6, 16), MAT.brass);
+      stem.position.set(x, D.H + 8, 0);
+      inner.add(tag(stem, 'postStem'));
+      const cap = new THREE.Mesh(knurledGeometry(D.POST_R, D.POST_H), sx < 0 ? MAT.black : MAT.red);
+      cap.position.set(x, D.H + 11 + D.POST_H / 2, 0);
+      inner.add(tag(cap, 'postCap'));
+    });
+  }
+
+  // 相邻两节之间的连接片（参考图里那两段铜条）
+  for (let i = 0; i < N - 1; i++) {
+    const x1 = -bodyLen / 2 + D.W / 2 + i * (D.W + D.GAP) + D.W * 0.28;
+    const x2 = -bodyLen / 2 + D.W / 2 + (i + 1) * (D.W + D.GAP) - D.W * 0.28;
+    const len = Math.abs(x2 - x1);
+    const strap = new THREE.Mesh(new THREE.BoxGeometry(len, 2.6, 7), MAT.copper);
+    strap.position.set((x1 + x2) / 2, D.H + 15, 0);
+    inner.add(tag(strap, 'strap'));
+  }
+
+  // 两个对外的接线柱：最左的 −、最右的 +
+  const xMinus = -bodyLen / 2 + D.W / 2 - D.W * 0.28;
+  const xPlus = bodyLen / 2 - D.W / 2 + D.W * 0.28;
+  const termLocal = {
+    '-': new THREE.Vector3(xMinus * S, (D.H + 11 + D.POST_H * 0.55) * S, 0),
+    '+': new THREE.Vector3(xPlus * S, (D.H + 11 + D.POST_H * 0.55) * S, 0),
+  };
+
+  const shadow = new THREE.Mesh(
+    new THREE.PlaneGeometry(totalW * S * 1.5, D.D * S * 1.9),
+    new THREE.MeshBasicMaterial({ map: shadowTexture(), transparent: true, depthWrite: false })
+  );
+  shadow.rotation.x = -Math.PI / 2;
+  shadow.position.y = 0.35;
+  shadow.renderOrder = -1;
+  outer.add(shadow);
+
+  const api = {
+    group: outer,
+    shadow,
+    localToWorld: (v) => inner.localToWorld(v.clone()),
+    worldToLocal: (v) => inner.worldToLocal(v.clone()),
+    type: 'battery',
+    label: '蓄电池',
+    spec: '6 V（3 × 2 V）',
+    bounds: { hw: totalW / 2 * S + 6, hd: D.D / 2 * S },
+    topY: (D.H + 11 + D.POST_H + 8) * S,
+    termLocal,
+    termIdx: { '-': 0, '+': 1 },
+    getCells: () => 3,
+    emf: () => 6,
+    // 🔴 必须显式给 emf（core 的 defaults 里有 emf:3，只给 cells 会被它盖住）
+    getParams() {
+      return { emf: 6, rInt: 0, cells: 3, emfPerCell: 2, rPerCell: 0 };
+    },
+  };
+  return api;
+}
+
+// ============================================================
+//  定值电阻（线绕电阻：瓷管 + 镍铬丝 + 两端金属帽 + 两个接线柱）
+// ============================================================
+export const RES_DIM = {
+  R: 11, L: 120,          // 瓷管
+  WIND_R: 12.4, WIRE_R: 0.55, TURNS: 64,
+  CAP_R: 13.5, CAP_L: 11,
+  POST_X: 46, POST_R: 4.6, POST_H: 13,
+  FOOT_X: 44, SCALE: 2.0,
+};
+
+export function buildResistor(opts) {
+  opts = opts || {};
+  const D = RES_DIM;
+  const S = D.SCALE;
+  const outer = new THREE.Group();
+  const inner = new THREE.Group();
+  inner.scale.setScalar(S);
+  inner.position.y = 0;
+  outer.add(inner);
+  const tag = (o, role) => { o.userData.role = role; return o; };
+
+  const Y0 = D.CAP_R + 6;              // 轴心高度（下面还有安装脚）
+
+  // 瓷管
+  const tube = new THREE.Mesh(new THREE.CylinderGeometry(D.R, D.R, D.L, 36, 1, true), MAT.ceramic);
+  tube.rotation.z = Math.PI / 2;
+  tube.position.set(0, Y0, 0);
+  inner.add(tag(tube, 'tube'));
+
+  // 绕线（螺旋管，用一条 TubeGeometry）
+  const pts = [];
+  const half = D.L / 2 - 6;
+  for (let i = 0; i <= D.TURNS * 8; i++) {
+    const t = i / (D.TURNS * 8);
+    const a = t * D.TURNS * Math.PI * 2;
+    pts.push(new THREE.Vector3(-half + t * half * 2, Y0 + Math.sin(a) * D.WIND_R, Math.cos(a) * D.WIND_R));
+  }
+  const windGeo = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), D.TURNS * 8, D.WIRE_R, 6, false);
+  inner.add(tag(new THREE.Mesh(windGeo, MAT.copper), 'winding'));
+
+  // 两端金属帽
+  [-1, 1].forEach((sx) => {
+    const cap = new THREE.Mesh(new THREE.CylinderGeometry(D.CAP_R, D.CAP_R, D.CAP_L, 30), MAT.steel);
+    cap.rotation.z = Math.PI / 2;
+    cap.position.set(sx * (D.L / 2 + D.CAP_L / 2 - 2), Y0, 0);
+    inner.add(tag(cap, 'endCap'));
+    // 安装脚（L 形支架）
+    const leg = new THREE.Mesh(new THREE.BoxGeometry(6, Y0, 22), MAT.steel);
+    leg.position.set(sx * D.FOOT_X, Y0 / 2, 0);
+    inner.add(tag(leg, 'foot'));
+    const foot = new THREE.Mesh(new THREE.BoxGeometry(14, 3, 26), MAT.steel);
+    foot.position.set(sx * D.FOOT_X, 1.5, 0);
+    inner.add(tag(foot, 'footPad'));
+    // 接线柱
+    const stem = new THREE.Mesh(new THREE.CylinderGeometry(2.6, 2.6, 8, 14), MAT.brass);
+    stem.position.set(sx * D.POST_X, Y0 + D.CAP_R + 2, 0);
+    inner.add(tag(stem, 'postStem'));
+    const cap2 = new THREE.Mesh(knurledGeometry(D.POST_R, D.POST_H), MAT.brass);
+    cap2.position.set(sx * D.POST_X, Y0 + D.CAP_R + 6 + D.POST_H / 2, 0);
+    inner.add(tag(cap2, 'postCap'));
+  });
+
+  const termLocal = {
+    a: new THREE.Vector3(-D.POST_X * S, (Y0 + D.CAP_R + 6 + D.POST_H * 0.55) * S, 0),
+    b: new THREE.Vector3(D.POST_X * S, (Y0 + D.CAP_R + 6 + D.POST_H * 0.55) * S, 0),
+  };
+
+  const shadow = new THREE.Mesh(
+    new THREE.PlaneGeometry(D.L * S * 1.5, 90),
+    new THREE.MeshBasicMaterial({ map: shadowTexture(), transparent: true, depthWrite: false })
+  );
+  shadow.rotation.x = -Math.PI / 2;
+  shadow.position.y = 0.35;
+  shadow.renderOrder = -1;
+  outer.add(shadow);
+
+  const api = {
+    group: outer, shadow,
+    localToWorld: (v) => inner.localToWorld(v.clone()),
+    worldToLocal: (v) => inner.worldToLocal(v.clone()),
+    type: 'resistor',
+    label: '定值电阻',
+    spec: '10 Ω',
+    bounds: { hw: (D.L / 2 + D.CAP_L) * S + 6, hd: 34 * S },
+    topY: (Y0 + D.CAP_R + 6 + D.POST_H + 10) * S,
+    termLocal,
+    termIdx: { a: 0, b: 1 },
+    R: opts.R || 10,
+    getParams() { return { R: api.R }; },
+    setR(v) { api.R = v; api.spec = v + ' Ω'; },
+  };
+  return api;
+}
+
+// ============================================================
+//  学生电源（0~9 V 连续可调，面板上有电压旋钮 + 电源开关 + 两个输出柱）
+// ============================================================
+export const PWR_DIM = {
+  W: 190, D: 122, H: 96,
+  KNOB_R: 22, KNOB_H: 14, KNOB_X: -52, KNOB_Y: 40,
+  POST_X: 46, POST_Z: 40, POST_R: 5, POST_H: 12,
+  SCALE: 1.5,
+};
+
+let PWR_FACE_TEX = null;
+function powerFaceTexture() {
+  if (PWR_FACE_TEX) return PWR_FACE_TEX;
+  const W = 760, H = 384;
+  const cv = document.createElement('canvas');
+  cv.width = W; cv.height = H;
+  const g = cv.getContext('2d');
+  g.fillStyle = '#dfe4ea'; g.fillRect(0, 0, W, H);
+  // 「学生电源」字样
+  g.fillStyle = '#5b6673';
+  g.font = 'bold 46px "PingFang SC", "Microsoft YaHei", sans-serif';
+  g.textAlign = 'right'; g.textBaseline = 'middle';
+  g.fillText('学生电源', W - 60, 96);
+  // 电压刻度弧（0~9 V）
+  const cx = 200, cy = 250, R = 118;
+  g.strokeStyle = '#4a5563'; g.lineWidth = 3;
+  g.beginPath(); g.arc(cx, cy, R, -Math.PI * 0.86, -Math.PI * 0.14); g.stroke();
+  const marks = [0, 1.5, 3, 4.5, 6, 7.5, 9];
+  g.textAlign = 'center'; g.textBaseline = 'middle';
+  marks.forEach((v, i) => {
+    const a = -Math.PI * 0.86 + (Math.PI * 0.72) * (i / (marks.length - 1));
+    const c = Math.cos(a), sn = Math.sin(a);
+    g.beginPath();
+    g.moveTo(cx + c * R, cy + sn * R);
+    g.lineTo(cx + c * (R - 14), cy + sn * (R - 14));
+    g.strokeStyle = '#4a5563'; g.lineWidth = 3; g.stroke();
+    g.fillStyle = '#3d4753';
+    g.font = 'bold 24px "Helvetica Neue", Arial, sans-serif';
+    g.fillText(String(v), cx + c * (R + 22), cy + sn * (R + 22));
+  });
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  PWR_FACE_TEX = tex;
+  return tex;
+}
+
+export function buildPower() {
+  const D = PWR_DIM;
+  const S = D.SCALE;
+  const outer = new THREE.Group();
+  const inner = new THREE.Group();
+  inner.scale.setScalar(S);
+  inner.position.y = 0;
+  outer.add(inner);
+  const tag = (o, role) => { o.userData.role = role; return o; };
+
+  const matCase = new THREE.MeshStandardMaterial({ color: 0xc3ccd6, roughness: 0.5, metalness: 0.22 });
+  const matFace = new THREE.MeshStandardMaterial({ color: 0xdfe4ea, roughness: 0.58, metalness: 0.06 });
+  const matFaceTex = new THREE.MeshStandardMaterial({ map: powerFaceTexture(), roughness: 0.58, metalness: 0.06 });
+
+  // 机箱
+  const box = new THREE.Mesh(new THREE.BoxGeometry(D.W, D.H, D.D), matCase);
+  box.position.set(0, D.H / 2, 0);
+  inner.add(tag(box, 'case'));
+  // 前面板
+  const face = new THREE.Mesh(new THREE.PlaneGeometry(D.W - 8, D.H - 8), matFaceTex);
+  face.position.set(0, D.H / 2, D.D / 2 + 0.6);
+  inner.add(tag(face, 'face'));
+
+  // 电压旋钮（带指针）
+  const knob = new THREE.Group();
+  knob.position.set(D.KNOB_X, D.KNOB_Y, D.D / 2 + 1);
+  inner.add(tag(knob, 'knob'));
+  const kBody = new THREE.Mesh(new THREE.CylinderGeometry(D.KNOB_R, D.KNOB_R * 1.05, D.KNOB_H, 32), MAT.plastic);
+  kBody.rotation.x = Math.PI / 2;
+  kBody.position.z = D.KNOB_H / 2;
+  knob.add(kBody);
+  const kCap = new THREE.Mesh(new THREE.CylinderGeometry(D.KNOB_R * 0.62, D.KNOB_R * 0.62, 3, 28), MAT.steel);
+  kCap.rotation.x = Math.PI / 2;
+  kCap.position.z = D.KNOB_H + 1;
+  knob.add(kCap);
+  const kMark = new THREE.Mesh(new THREE.BoxGeometry(2.4, D.KNOB_R * 0.9, 1.6),
+    new THREE.MeshBasicMaterial({ color: 0xe2e8f0 }));
+  kMark.position.set(0, D.KNOB_R * 0.45, D.KNOB_H + 1.2);
+  knob.add(kMark);
+
+  // 电源开关（面板左下的小翘板）
+  const swBox = new THREE.Mesh(new THREE.BoxGeometry(20, 26, 4), MAT.plastic);
+  swBox.position.set(-76, 22, D.D / 2 + 2);
+  inner.add(tag(swBox, 'powerSwitch'));
+  const swRocker = new THREE.Mesh(new THREE.BoxGeometry(14, 18, 3), MAT.plasticSoft);
+  swRocker.position.set(-76, 22, D.D / 2 + 4);
+  inner.add(tag(swRocker, 'rocker'));
+
+  // 两个输出柱（+ / −）
+  const termLocal = {};
+  [[-1, '+'], [1, '-']].forEach(([sx, name]) => {
+    const x = sx * D.POST_X;
+    const base = new THREE.Mesh(new THREE.CylinderGeometry(D.POST_R + 3, D.POST_R + 3.4, 2.6, 22), MAT.black);
+    base.rotation.x = Math.PI / 2;
+    base.position.set(x, 26, D.D / 2 + 1.4);
+    inner.add(tag(base, 'postPad'));
+    const cap = new THREE.Mesh(knurledGeometry(D.POST_R, D.POST_H), name === '+' ? MAT.red : MAT.black);
+    cap.rotation.x = Math.PI / 2;
+    cap.position.set(x, 26, D.D / 2 + 2.6 + D.POST_H / 2);
+    inner.add(tag(cap, 'postCap'));
+    termLocal[name] = new THREE.Vector3(x * S, 26 * S, (D.D / 2 + 4 + D.POST_H * 0.5) * S);
+  });
+
+  const shadow = new THREE.Mesh(
+    new THREE.PlaneGeometry(D.W * S * 1.35, D.D * S * 1.5),
+    new THREE.MeshBasicMaterial({ map: shadowTexture(), transparent: true, depthWrite: false })
+  );
+  shadow.rotation.x = -Math.PI / 2;
+  shadow.position.y = 0.35;
+  shadow.renderOrder = -1;
+  outer.add(shadow);
+
+  const api = {
+    group: outer, shadow,
+    localToWorld: (v) => inner.localToWorld(v.clone()),
+    worldToLocal: (v) => inner.worldToLocal(v.clone()),
+    type: 'power',
+    label: '学生电源',
+    spec: '0~9 V 可调',
+    bounds: { hw: D.W / 2 * S + 6, hd: D.D / 2 * S + 8 },
+    topY: (D.H + 16) * S,
+    termLocal,
+    termIdx: { '+': 0, '-': 1 },
+    emf: 6,
+    on: true,
+    getParams() { return { emf: api.emf, rInt: 0, on: api.on }; },
+    setEmf(v) {
+      api.emf = Math.max(0, Math.min(9, v));
+      api.spec = api.emf.toFixed(1) + ' V';
+      // 旋钮转到对应刻度：0 V 在左（-0.86π），9 V 在右（-0.14π）
+      const t = api.emf / 9;
+      knob.rotation.z = -(Math.PI * 0.72) * (1 - t) + Math.PI * 0.36;
+    },
+    setOn(v) { api.on = !!v; },
+    knob,
+  };
+  api.setEmf(6);
+  return api;
+}
+
+// ============================================================
+//  电阻箱（四个转盘 ×1 / ×10 / ×100 / ×1k，0~9999 Ω，步进 1 Ω）
+// ============================================================
+export const RBOX_DIM = { W: 128, D: 168, H: 52, DIAL_R: 24, DIAL_H: 11, SCALE: 1.75 };
+
+const RBOX_LAYOUT = [
+  { k: 'd100', x: -34, z: -44, label: '×100' },
+  { k: 'd1000', x: 34, z: -44, label: '×1 k' },
+  { k: 'd1', x: -34, z: 44, label: '×1' },
+  { k: 'd10', x: 34, z: 44, label: '×10' },
+];
+
+let RBOX_TEX = null;
+function resistanceBoxTexture() {
+  if (RBOX_TEX) return RBOX_TEX;
+  const W = 512, H = 672;                       // 128 × 168 mm
+  const cv = document.createElement('canvas');
+  cv.width = W; cv.height = H;
+  const g = cv.getContext('2d');
+  g.fillStyle = '#9fc9dc'; g.fillRect(0, 0, W, H);
+  const px = (x) => (x / 128 + 0.5) * W;
+  const py = (z) => (z / 168 + 0.5) * H;
+  const sx = W / 128;
+  // 四个角螺丝
+  [[14, 16], [W - 14, 16], [14, H - 16], [W - 14, H - 16]].forEach(([x, y]) => {
+    g.beginPath(); g.arc(x, y, 9, 0, Math.PI * 2);
+    g.fillStyle = '#c8d6de'; g.fill();
+    g.strokeStyle = '#7f929d'; g.lineWidth = 2; g.stroke();
+  });
+  RBOX_LAYOUT.forEach((d) => {
+    // 🔴 环半径 36 时，相邻两盘（中心相距 68 mm）的数字会撞在一起 ⇒ 收到 32
+    const cx = px(d.x), cy = py(d.z), R = 32 * sx;
+    // 数字环（0~9 均布）
+    g.textAlign = 'center'; g.textBaseline = 'middle';
+    for (let i = 0; i < 10; i++) {
+      const a = -Math.PI / 2 + (i / 10) * Math.PI * 2;
+      g.fillStyle = '#2c3a45';
+      g.font = 'bold 22px "Helvetica Neue", Arial, sans-serif';
+      g.fillText(String(i), cx + Math.cos(a) * R, cy + Math.sin(a) * R);
+    }
+    // 红色三角指示
+    g.beginPath();
+    g.moveTo(cx, cy + R + 26); g.lineTo(cx - 11, cy + R + 46); g.lineTo(cx + 11, cy + R + 46);
+    g.closePath(); g.fillStyle = '#c0392b'; g.fill();
+    // 倍数标注
+    g.fillStyle = '#1f2b34';
+    g.font = 'bold 26px "Helvetica Neue", Arial, sans-serif';
+    g.fillText(d.label, cx, cy + R + 66);
+  });
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  RBOX_TEX = tex;
+  return tex;
+}
+
+export function buildResistanceBox() {
+  const D = RBOX_DIM;
+  const S = D.SCALE;
+  const outer = new THREE.Group();
+  const inner = new THREE.Group();
+  inner.scale.setScalar(S);
+  inner.position.y = 0;
+  outer.add(inner);
+  const tag = (o, role) => { o.userData.role = role; return o; };
+
+  const matBox = new THREE.MeshStandardMaterial({ color: 0x8fb8cc, roughness: 0.5, metalness: 0.12 });
+  const matTop = new THREE.MeshStandardMaterial({ map: resistanceBoxTexture(), roughness: 0.56, metalness: 0.05 });
+  const matDial = new THREE.MeshStandardMaterial({ color: 0x8b949e, roughness: 0.36, metalness: 0.72 });
+
+  const box = new THREE.Mesh(new THREE.BoxGeometry(D.W, D.H, D.D), matBox);
+  box.position.set(0, D.H / 2, 0);
+  inner.add(tag(box, 'case'));
+  const topFace = new THREE.Mesh(new THREE.PlaneGeometry(D.W, D.D), matTop);
+  topFace.rotation.x = -Math.PI / 2;
+  topFace.position.set(0, D.H + 0.5, 0);
+  inner.add(tag(topFace, 'topFace'));
+
+  const dials = {};
+  RBOX_LAYOUT.forEach((d) => {
+    const grp = new THREE.Group();
+    grp.position.set(d.x, D.H + 1, d.z);
+    inner.add(tag(grp, 'dial'));
+    // 八棱柱旋钮
+    const knob = new THREE.Mesh(new THREE.CylinderGeometry(D.DIAL_R, D.DIAL_R * 1.04, D.DIAL_H, 8), matDial);
+    knob.position.y = D.DIAL_H / 2;
+    grp.add(knob);
+    // 中心的凹坑
+    const pit = new THREE.Mesh(new THREE.CylinderGeometry(4, 4, 2, 12), MAT.black);
+    pit.position.y = D.DIAL_H + 0.4;
+    grp.add(pit);
+    // 旋钮上的白色指针（指到当前档位）
+    const ptr = new THREE.Mesh(new THREE.BoxGeometry(2.6, 1.6, D.DIAL_R * 0.8),
+      new THREE.MeshBasicMaterial({ color: 0xf1f5f9 }));
+    ptr.position.set(0, D.DIAL_H + 0.8, -D.DIAL_R * 0.5);
+    grp.add(ptr);
+    dials[d.k] = { grp, ptr };
+  });
+
+  // 两个接线柱（前缘中间）
+  const termLocal = {};
+  [[-1, 'a'], [1, 'b']].forEach(([sx, name]) => {
+    const x = sx * 16;
+    const base = new THREE.Mesh(new THREE.CylinderGeometry(6.5, 7, 2.6, 22), MAT.black);
+    base.position.set(x, D.H + 1.3, D.D / 2 - 14);
+    inner.add(tag(base, 'postPad'));
+    const cap = new THREE.Mesh(knurledGeometry(5, 12), MAT.steel);
+    cap.position.set(x, D.H + 2.6 + 6, D.D / 2 - 14);
+    inner.add(tag(cap, 'postCap'));
+    termLocal[name] = new THREE.Vector3(x * S, (D.H + 2.6 + 6.6) * S, (D.D / 2 - 14) * S);
+  });
+
+  const shadow = new THREE.Mesh(
+    new THREE.PlaneGeometry(D.W * S * 1.5, D.D * S * 1.35),
+    new THREE.MeshBasicMaterial({ map: shadowTexture(), transparent: true, depthWrite: false })
+  );
+  shadow.rotation.x = -Math.PI / 2;
+  shadow.position.y = 0.35;
+  shadow.renderOrder = -1;
+  outer.add(shadow);
+
+  const api = {
+    group: outer, shadow,
+    localToWorld: (v) => inner.localToWorld(v.clone()),
+    worldToLocal: (v) => inner.worldToLocal(v.clone()),
+    type: 'resistancebox',
+    label: '电阻箱',
+    spec: '0~9999 Ω',
+    bounds: { hw: D.W / 2 * S + 6, hd: D.D / 2 * S + 6 },
+    topY: (D.H + 30) * S,
+    termLocal,
+    termIdx: { a: 0, b: 1 },
+    d1: 0, d10: 0, d100: 0, d1000: 0,
+    getParams() {
+      return { d1: api.d1, d10: api.d10, d100: api.d100, d1000: api.d1000 };
+    },
+    getR() { return api.d1 + api.d10 * 10 + api.d100 * 100 + api.d1000 * 1000; },
+    setDigit(k, v) {
+      api[k] = Math.max(0, Math.min(9, Math.round(v)));
+      // 指针指向对应档位（0 在正上方，顺时针每档 36°）
+      const d = dials[k];
+      if (d) d.grp.rotation.y = -(api[k] / 10) * Math.PI * 2;
+      api.spec = api.getR() + ' Ω';
+    },
+    dials,
+  };
+  RBOX_LAYOUT.forEach((d) => api.setDigit(d.k, 0));
+  return api;
+}
+
+// ============================================================
+//  导线电阻演示板（木板上四根现成的电阻丝 a/b/c/d，两两对照）
+// ============================================================
+export const RBOARD_DIM = { W: 214, D: 118, H: 14, WIRE_Y: 20, POST_R: 4.2, POST_H: 11, SCALE: 1.5 };
+
+// 四根丝的规格与长度（两两对照：只变一个因素）
+export const RBOARD_WIRES = [
+  { id: 'a', y: -36, len: 168, color: 0x8c4a2f, spec: '镍铬 φ0.30 1.0 m' },
+  { id: 'b', y: -12, len: 168, color: 0x8c4a2f, spec: '镍铬 φ0.30 0.5 m' },
+  { id: 'c', y: 12, len: 96, color: 0x8c4a2f, spec: '镍铬 φ0.60 1.0 m' },
+  { id: 'd', y: 36, len: 96, color: 0x6b7f96, spec: '康铜 φ0.30 1.0 m' },
+];
+
+let RBOARD_TEX = null;
+function rheoboardTexture() {
+  if (RBOARD_TEX) return RBOARD_TEX;
+  const W = 856, H = 472;
+  const cv = document.createElement('canvas');
+  cv.width = W; cv.height = H;
+  const g = cv.getContext('2d');
+  // 木纹底
+  g.fillStyle = '#d9c9a3'; g.fillRect(0, 0, W, H);
+  for (let i = 0; i < 90; i++) {
+    g.strokeStyle = 'rgba(150,120,70,' + (0.03 + Math.random() * 0.05) + ')';
+    g.lineWidth = 1 + Math.random() * 2;
+    g.beginPath();
+    const y = Math.random() * H;
+    g.moveTo(0, y);
+    g.bezierCurveTo(W * 0.3, y + (Math.random() - 0.5) * 26, W * 0.7, y + (Math.random() - 0.5) * 26, W, y);
+    g.stroke();
+  }
+  g.fillStyle = '#3b3020';
+  g.textAlign = 'left'; g.textBaseline = 'middle';
+  g.font = 'bold 40px "Helvetica Neue", Arial, sans-serif';
+  RBOARD_WIRES.forEach((w) => {
+    const y = (w.y / RBOARD_DIM.D + 0.5) * H;
+    g.fillText(w.id, 26, y);
+  });
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  RBOARD_TEX = tex;
+  return tex;
+}
+
+export function buildRheoboard() {
+  const D = RBOARD_DIM;
+  const S = D.SCALE;
+  const outer = new THREE.Group();
+  const inner = new THREE.Group();
+  inner.scale.setScalar(S);
+  inner.position.y = 0;
+  outer.add(inner);
+  const tag = (o, role) => { o.userData.role = role; return o; };
+
+  const matWood = new THREE.MeshStandardMaterial({ color: 0xcdb98d, roughness: 0.78, metalness: 0.02 });
+  const matTop = new THREE.MeshStandardMaterial({ map: rheoboardTexture(), roughness: 0.76, metalness: 0.02 });
+
+  const board = new THREE.Mesh(new THREE.BoxGeometry(D.W, D.H, D.D), matWood);
+  board.position.set(0, D.H / 2 + 4, 0);
+  inner.add(tag(board, 'board'));
+  const topFace = new THREE.Mesh(new THREE.PlaneGeometry(D.W, D.D), matTop);
+  topFace.rotation.x = -Math.PI / 2;
+  topFace.position.set(0, D.H + 4.4, 0);
+  inner.add(tag(topFace, 'boardTop'));
+
+  // 两条小木脚
+  [-1, 1].forEach((sx) => {
+    const leg = new THREE.Mesh(new THREE.BoxGeometry(16, 10, 20), matWood);
+    leg.position.set(sx * (D.W / 2 - 26), 5, 0);
+    inner.add(tag(leg, 'leg'));
+  });
+
+  // 四根电阻丝 + 八个接线柱
+  const termLocal = {};
+  // 🔴 端子名必须是 1a/1b … 4a/4b：原来拼成 w.id + 'a' 得到 aa/ab，
+  //    和 termIdx（1a…4b）对不上 ⇒ 接线时 termLocal['1a'] 是 undefined。
+  RBOARD_WIRES.forEach((w, wi) => {
+    const x0 = -w.len / 2, x1 = w.len / 2;
+    const wire = new THREE.Mesh(
+      new THREE.CylinderGeometry(1.05, 1.05, w.len, 10),
+      new THREE.MeshStandardMaterial({ color: w.color, roughness: 0.36, metalness: 0.7 })
+    );
+    wire.rotation.z = Math.PI / 2;
+    wire.position.set(0, D.H + 4.4 + D.WIRE_Y, w.y);
+    inner.add(tag(wire, 'wire'));
+    [x0, x1].forEach((x, i) => {
+      const name = (wi + 1) + (i === 0 ? 'a' : 'b');
+      const stem = new THREE.Mesh(new THREE.CylinderGeometry(2.2, 2.4, 7, 14), MAT.brass);
+      stem.position.set(x, D.H + 4.4 + D.WIRE_Y + 1, w.y);
+      inner.add(tag(stem, 'postStem'));
+      const cap = new THREE.Mesh(knurledGeometry(D.POST_R, D.POST_H), MAT.brass);
+      cap.position.set(x, D.H + 4.4 + D.WIRE_Y + 5 + D.POST_H / 2, w.y);
+      inner.add(tag(cap, 'postCap'));
+      termLocal[name] = new THREE.Vector3(x * S, (D.H + 4.4 + D.WIRE_Y + 5 + D.POST_H * 0.55) * S, w.y * S);
+    });
+  });
+
+  const shadow = new THREE.Mesh(
+    new THREE.PlaneGeometry(D.W * S * 1.3, D.D * S * 1.6),
+    new THREE.MeshBasicMaterial({ map: shadowTexture(), transparent: true, depthWrite: false })
+  );
+  shadow.rotation.x = -Math.PI / 2;
+  shadow.position.y = 0.35;
+  shadow.renderOrder = -1;
+  outer.add(shadow);
+
+  const api = {
+    group: outer, shadow,
+    localToWorld: (v) => inner.localToWorld(v.clone()),
+    worldToLocal: (v) => inner.worldToLocal(v.clone()),
+    type: 'rheoboard',
+    label: '电阻示教板',
+    spec: '四根丝 a/b/c/d',
+    bounds: { hw: D.W / 2 * S + 6, hd: D.D / 2 * S + 6 },
+    topY: (D.H + 4.4 + D.WIRE_Y + 30) * S,
+    termLocal,
+    termIdx: { '1a': 0, '1b': 1, '2a': 2, '2b': 3, '3a': 4, '3b': 5, '4a': 6, '4b': 7 },
+    showSpec: true,
+    getParams() { return { showSpec: api.showSpec }; },
+  };
+  return api;
+}
+
+// ============================================================
+//  发光二极管（φ5 直插 LED：粉色环氧封装 + 两条引脚）
+// ============================================================
+export const LED_DIM = {
+  DOME_R: 4.6, BODY_R: 4.2, BODY_H: 6.4, FLANGE_R: 5.4, FLANGE_H: 1.2,
+  LEAD_R: 0.5, LEAD_LEN: 24, SCALE: 3.4,
+};
+
+export function buildLed(opts) {
+  opts = opts || {};
+  const D = LED_DIM;
+  const S = D.SCALE;
+  const outer = new THREE.Group();
+  const inner = new THREE.Group();
+  inner.scale.setScalar(S);
+  inner.position.y = 0;
+  outer.add(inner);
+  const tag = (o, role) => { o.userData.role = role; return o; };
+
+  const COLORS = {
+    red: { body: 0xd6337a, Vf: 1.8, rgb: 0xff3b6b },
+    green: { body: 0x8fd14f, Vf: 2.1, rgb: 0x3ae27a },
+    blue: { body: 0x4f7fd1, Vf: 3.1, rgb: 0x4f8cff },
+  };
+  let color = COLORS[opts.color] ? opts.color : 'red';
+
+  const matBody = new THREE.MeshStandardMaterial({
+    color: COLORS[color].body, roughness: 0.12, metalness: 0.05,
+    transparent: true, opacity: 0.78,
+  });
+  const matLead = new THREE.MeshStandardMaterial({ color: 0xcfd6dd, roughness: 0.3, metalness: 0.86 });
+  const matDie = new THREE.MeshBasicMaterial({ color: 0x2a1220 });
+
+  // 底座（让 LED 能立在桌面上；真实实验里是插在面包板/灯座上的）
+  const base = new THREE.Mesh(new THREE.CylinderGeometry(11, 11.5, 4, 26), MAT.plastic);
+  base.position.set(0, 2, 0);
+  inner.add(tag(base, 'base'));
+
+  const Y0 = 4;                       // 底座上表面
+  // 引脚：两根竖直到封装底部
+  [-1, 1].forEach((sx) => {
+    const lead = new THREE.Mesh(new THREE.CylinderGeometry(D.LEAD_R, D.LEAD_R, 9, 10), matLead);
+    lead.position.set(sx * 1.5, Y0 + 4.5, 0);
+    inner.add(tag(lead, 'lead'));
+  });
+  // 封装主体（下粗上略细）
+  const body = new THREE.Mesh(new THREE.CylinderGeometry(D.BODY_R, D.BODY_R * 1.08, D.BODY_H, 26), matBody);
+  body.position.set(0, Y0 + 9 + D.BODY_H / 2, 0);
+  inner.add(tag(body, 'body'));
+  // 法兰盘（底部那圈凸缘）
+  const flange = new THREE.Mesh(new THREE.CylinderGeometry(D.FLANGE_R, D.FLANGE_R, D.FLANGE_H, 26), matBody);
+  flange.position.set(0, Y0 + 9 + D.FLANGE_H / 2, 0);
+  inner.add(tag(flange, 'flange'));
+  // 半球顶
+  const domeY = Y0 + 9 + D.BODY_H;
+  const dome = new THREE.Mesh(new THREE.SphereGeometry(D.DOME_R, 26, 16, 0, Math.PI * 2, 0, Math.PI / 2), matBody);
+  dome.position.set(0, domeY, 0);
+  inner.add(tag(dome, 'dome'));
+  // 里面的芯片（一小块暗色，亮起来时会被照出来）
+  const die = new THREE.Mesh(new THREE.BoxGeometry(1.6, 1.2, 1.6), matDie);
+  die.position.set(0, domeY - 2.4, 0);
+  inner.add(tag(die, 'die'));
+
+  // 发光（只在导通时）
+  const glowMat = new THREE.MeshBasicMaterial({
+    color: COLORS[color].rgb, transparent: true, opacity: 0,
+    blending: THREE.AdditiveBlending, depthWrite: false,
+  });
+  const glow = new THREE.Mesh(new THREE.SphereGeometry(D.DOME_R + 1.6, 20, 14), glowMat);
+  glow.position.set(0, domeY - 1.6, 0);
+  inner.add(tag(glow, 'glow'));
+  const lamp = new THREE.PointLight(COLORS[color].rgb, 0, 260, 2);
+  lamp.position.set(0, domeY - 1.6, 0);
+  inner.add(tag(lamp, 'ledLight'));
+
+  const termLocal = {
+    '+': new THREE.Vector3(-1.5 * S, (Y0 + 4) * S, 0),
+    '-': new THREE.Vector3(1.5 * S, (Y0 + 4) * S, 0),
+  };
+
+  const shadow = new THREE.Mesh(
+    new THREE.PlaneGeometry(70, 60),
+    new THREE.MeshBasicMaterial({ map: shadowTexture(), transparent: true, depthWrite: false })
+  );
+  shadow.rotation.x = -Math.PI / 2;
+  shadow.position.y = 0.3;
+  shadow.renderOrder = -1;
+  outer.add(shadow);
+
+  let lit = 0, shown = 0, over = false;
+  function apply() {
+    const b = Math.max(0, Math.min(1, shown));
+    glowMat.opacity = 0.75 * b;
+    glow.scale.setScalar(1 + 0.5 * b);
+    lamp.intensity = 0.5 * b;
+    matBody.emissive.set(COLORS[color].rgb);
+    matBody.emissiveIntensity = 1.4 * b;
+  }
+  apply();
+
+  const api = {
+    group: outer, shadow,
+    localToWorld: (v) => inner.localToWorld(v.clone()),
+    worldToLocal: (v) => inner.worldToLocal(v.clone()),
+    type: 'led',
+    label: '发光二极管',
+    spec: '红色 1.8 V',
+    bounds: { hw: 22 * S, hd: 22 * S },
+    topY: (domeY + 8) * S,
+    termLocal,
+    termIdx: { '+': 0, '-': 1 },
+    color, flip: false,
+    getParams() { return { color: api.color, flip: api.flip }; },
+    setColor(c) {
+      if (!COLORS[c]) return;
+      color = c;
+      matBody.color.setHex(COLORS[c].body);
+      glowMat.color.setHex(COLORS[c].rgb);
+      lamp.color.setHex(COLORS[c].rgb);
+      api.spec = ({ red: '红色 1.8 V', green: '绿色 2.1 V', blue: '蓝色 3.1 V' })[c];
+      apply();
+    },
+    // 求解结果：导通且电流够 → 亮
+    setLit(rec) {
+      if (!rec) { lit = 0; return; }
+      lit = rec.i && Math.abs(rec.i) > 1e-4 ? Math.min(1, Math.abs(rec.i) / 0.02) : 0;
+      over = !!rec.overload;
+    },
+    step(dt) {
+      const d = lit - shown;
+      if (Math.abs(d) < 0.004) { if (shown !== lit) { shown = lit; apply(); } return; }
+      shown += d * Math.min(1, dt * 10);
+      apply();
+    },
+    debugLed() {
+      return { glowOpacity: +glowMat.opacity.toFixed(3), light: +lamp.intensity.toFixed(3), shown: +shown.toFixed(3) };
+    },
+    getBrightness: () => shown,
+  };
+  return api;
+}
+
+// ============================================================
+//  焦耳定律演示器（两只瓶 + 两根 U 形管 + 中间的刻度尺）
+// ------------------------------------------------------------
+// 端子：0/1 = 甲（左）瓶的两根柱，2/3 = 乙（右）瓶。
+// 通电后瓶里的电阻丝放热，U 形管里的液柱被顶高 —— 液柱高度按
+// circuit-core 给的产热功率 rec.boxes[i].p 累积（真实验也是这样：
+// 看的是「谁升得快」，不是瞬时功率）。
+// ============================================================
+export const JOULE_DIM = {
+  BOTTLE_R: 32, BOTTLE_H: 58, X: 74,
+  CORK_R: 27, CORK_H: 12,
+  TUBE_R: 4.4, TUBE_H: 78, TUBE_DX: 9,
+  SCALE: 1.35,
+};
+
+export function buildJoule() {
+  const D = JOULE_DIM;
+  const S = D.SCALE;
+  const outer = new THREE.Group();
+  const inner = new THREE.Group();
+  inner.scale.setScalar(S);
+  inner.position.y = 0;
+  outer.add(inner);
+  const tag = (o, role) => { o.userData.role = role; return o; };
+
+  const matGlass = new THREE.MeshStandardMaterial({
+    color: 0xe6f4fb, roughness: 0.05, metalness: 0,
+    transparent: true, opacity: 0.30, depthWrite: false, side: THREE.DoubleSide,
+  });
+  // 🔴 细玻璃管用 0.30 的透明度几乎看不见 ⇒ 液柱看着像「悬在空中的蓝点」。
+  //    管子单独给一档更实的玻璃 + 加粗。
+  const matTube = new THREE.MeshStandardMaterial({
+    color: 0xdceef8, roughness: 0.08, metalness: 0,
+    transparent: true, opacity: 0.46, depthWrite: false, side: THREE.DoubleSide,
+  });
+  const matCork = new THREE.MeshStandardMaterial({ color: 0xb98a52, roughness: 0.86, metalness: 0.02 });
+  const matLiquid = new THREE.MeshStandardMaterial({ color: 0x3ea6dd, roughness: 0.26, metalness: 0.05,
+    transparent: true, opacity: 0.95 });
+  const matCoil = new THREE.MeshStandardMaterial({ color: 0x8c4a2f, roughness: 0.4, metalness: 0.6 });
+
+  const Y_BOT = 6;
+  const liquids = [];
+  const termLocal = {};
+
+  [0, 1].forEach((si) => {
+    const cx = si === 0 ? -D.X : D.X;
+    // 瓶身
+    const bot = new THREE.Mesh(new THREE.CylinderGeometry(D.BOTTLE_R, D.BOTTLE_R, D.BOTTLE_H, 34, 1, true), matGlass);
+    bot.position.set(cx, Y_BOT + D.BOTTLE_H / 2, 0);
+    bot.renderOrder = 2;
+    inner.add(tag(bot, 'bottle'));
+    const bottom = new THREE.Mesh(new THREE.CircleGeometry(D.BOTTLE_R, 30), matGlass);
+    bottom.rotation.x = -Math.PI / 2;
+    bottom.position.set(cx, Y_BOT, 0);
+    inner.add(tag(bottom, 'bottleBottom'));
+    // 瓶塞
+    const cork = new THREE.Mesh(new THREE.CylinderGeometry(D.CORK_R, D.CORK_R * 1.04, D.CORK_H, 26), matCork);
+    cork.position.set(cx, Y_BOT + D.BOTTLE_H + D.CORK_H / 2 - 3, 0);
+    inner.add(tag(cork, 'cork'));
+    // 瓶里的电阻丝（螺旋）
+    const pts = [];
+    for (let i = 0; i <= 220; i++) {
+      const t = i / 220, a = t * Math.PI * 2 * 7;
+      pts.push(new THREE.Vector3(cx + Math.cos(a) * 17, Y_BOT + 10 + t * 30, Math.sin(a) * 17));
+    }
+    inner.add(tag(new THREE.Mesh(
+      new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 220, 1.5, 6, false), matCoil), 'coil'));
+
+    // U 形管（两根竖管 + 顶部半环）：必须长在【自己那只瓶】的瓶塞上。
+    // 🔴 原来放在两只瓶中间（x=±26），离瓶 48 mm ⇒ 看着像两根飘在空中的玻璃管。
+    const tx = cx;
+    const topY = Y_BOT + D.BOTTLE_H + D.TUBE_H;
+    [-1, 1].forEach((sx) => {
+      const leg = new THREE.Mesh(new THREE.CylinderGeometry(D.TUBE_R, D.TUBE_R, D.TUBE_H, 18, 1, true), matTube);
+      leg.position.set(tx + sx * D.TUBE_DX, Y_BOT + D.BOTTLE_H + D.TUBE_H / 2, 0);
+      leg.renderOrder = 2;
+      inner.add(tag(leg, 'tube'));
+    });
+    const arc = new THREE.Mesh(new THREE.TorusGeometry(D.TUBE_DX, D.TUBE_R, 10, 22, Math.PI), matTube);
+    arc.position.set(tx, topY, 0);
+    arc.renderOrder = 2;
+    inner.add(tag(arc, 'tubeArc'));
+    // 液柱（两根竖管里各一根，高度由热量驱动）
+    const cols = [];
+    [-1, 1].forEach((sx) => {
+      const col = new THREE.Mesh(new THREE.CylinderGeometry(D.TUBE_R * 0.86, D.TUBE_R * 0.86, 1, 14), matLiquid);
+      col.position.set(tx + sx * D.TUBE_DX, Y_BOT + D.BOTTLE_H + 6, 0);
+      inner.add(tag(col, 'liquid'));
+      cols.push(col);
+    });
+    liquids.push(cols);
+
+    // 两根接线柱（瓶塞上）
+    [-1, 1].forEach((sx) => {
+      const x = cx + sx * 13;
+      const stem = new THREE.Mesh(new THREE.CylinderGeometry(2, 2, 12, 12), MAT.brass);
+      stem.position.set(x, Y_BOT + D.BOTTLE_H + 6, 0);
+      inner.add(tag(stem, 'postStem'));
+      const cap = new THREE.Mesh(knurledGeometry(4, 9), MAT.red);
+      cap.position.set(x, Y_BOT + D.BOTTLE_H + 16, 0);
+      inner.add(tag(cap, 'postCap'));
+      const name = (si === 0 ? '甲' : '乙') + (sx < 0 ? '+' : '−');
+      termLocal[name] = new THREE.Vector3(x * S, (Y_BOT + D.BOTTLE_H + 17) * S, 0);
+    });
+  });
+
+  // 中间的刻度尺
+  const rulerY = Y_BOT + D.BOTTLE_H + 30;
+  const ruler = new THREE.Mesh(new THREE.BoxGeometry(12, D.TUBE_H - 12, 2),
+    new THREE.MeshStandardMaterial({ color: 0xf2f5f8, roughness: 0.7 }));
+  ruler.position.set(0, rulerY, 0);
+  inner.add(tag(ruler, 'ruler'));
+  for (let i = 0; i < 10; i++) {
+    const tick = new THREE.Mesh(new THREE.BoxGeometry(i % 5 === 0 ? 8 : 5, 1.2, 1.4), MAT.black);
+    tick.position.set(0, rulerY - (D.TUBE_H - 20) / 2 + i * ((D.TUBE_H - 20) / 9), 1.2);
+    inner.add(tag(tick, 'rulerTick'));
+  }
+
+  const shadow = new THREE.Mesh(
+    new THREE.PlaneGeometry(D.X * 2 * S + 120, D.BOTTLE_R * 2 * S * 1.6),
+    new THREE.MeshBasicMaterial({ map: shadowTexture(), transparent: true, depthWrite: false })
+  );
+  shadow.rotation.x = -Math.PI / 2;
+  shadow.position.y = 0.35;
+  shadow.renderOrder = -1;
+  outer.add(shadow);
+
+  // 液柱高度：按产热功率累积（真实验看的是「谁升得快」）
+  const heat = [0, 0];
+  let shownLevel = [0, 0];
+  function applyLevels() {
+    for (let i = 0; i < 2; i++) {
+      const h = 10 + shownLevel[i] * (D.TUBE_H - 26);
+      liquids[i].forEach((col) => {
+        col.scale.y = h;
+        col.position.y = Y_BOT + D.BOTTLE_H + 6 + h / 2;
+      });
+    }
+  }
+  applyLevels();
+
+  const api = {
+    group: outer, shadow,
+    localToWorld: (v) => inner.localToWorld(v.clone()),
+    worldToLocal: (v) => inner.worldToLocal(v.clone()),
+    type: 'joule',
+    label: '焦耳定律演示器',
+    spec: 'U 形管 甲/乙',
+    bounds: { hw: D.X * S + D.BOTTLE_R * S + 6, hd: D.BOTTLE_R * S + 6 },
+    topY: (Y_BOT + D.BOTTLE_H + D.TUBE_H + 12) * S,
+    termLocal,
+    termIdx: { '甲+': 0, '甲−': 1, '乙+': 2, '乙−': 3 },
+    R1: 5, R2: 10, R2b: 0,
+    getParams() { return { R1: api.R1, R2: api.R2, R2b: api.R2b }; },
+    setBox(si, rec) {
+      if (!rec) return;
+      api['R' + (si + 1)] = rec.R;
+      // 产热功率直接决定「升得多快」
+      const target = rec.wired ? Math.min(1, rec.p / 1.2) : 0;
+      heat[si] += target * 0.16;              // 每帧一点，慢慢爬
+      if (heat[si] > 1) heat[si] = 1;
+    },
+    resetHeat() { heat[0] = 0; heat[1] = 0; },
+    step(dt) {
+      for (let i = 0; i < 2; i++) {
+        const d = heat[i] - shownLevel[i];
+        if (Math.abs(d) < 0.0008) { if (shownLevel[i] !== heat[i]) { shownLevel[i] = heat[i]; applyLevels(); } continue; }
+        shownLevel[i] += d * Math.min(1, dt * 3);
+        applyLevels();
+      }
+    },
+    debugJoule() {
+      return { levels: shownLevel.map((v) => +v.toFixed(3)), heat: heat.map((v) => +v.toFixed(3)) };
+    },
+  };
+  return api;
+}
+
+// ============================================================
+//  电热瓶（量热瓶：广口瓶 + 瓶塞 + 温度计 + 瓶内电阻丝）
+// ============================================================
+export const CAL_DIM = {
+  R: 40, H: 86, NECK_R: 24, NECK_H: 10,
+  CORK_R: 23, CORK_H: 14,
+  THERMO_R: 2.2, THERMO_H: 74,
+  SCALE: 1.55,
+};
+
+export function buildCalorimeter() {
+  const D = CAL_DIM;
+  const S = D.SCALE;
+  const outer = new THREE.Group();
+  const inner = new THREE.Group();
+  inner.scale.setScalar(S);
+  inner.position.y = 0;
+  outer.add(inner);
+  const tag = (o, role) => { o.userData.role = role; return o; };
+
+  const matGlass = new THREE.MeshStandardMaterial({
+    color: 0xe8f5fb, roughness: 0.05, metalness: 0,
+    transparent: true, opacity: 0.24, depthWrite: false, side: THREE.DoubleSide,
+  });
+  const matCork = new THREE.MeshStandardMaterial({ color: 0xb98a52, roughness: 0.86, metalness: 0.02 });
+  const matCoil = new THREE.MeshStandardMaterial({ color: 0x8c4a2f, roughness: 0.4, metalness: 0.6 });
+  const matRed = new THREE.MeshStandardMaterial({ color: 0xc0392b, roughness: 0.5, metalness: 0.05 });
+
+  // 瓶身（一条轮廓旋成：直筒 + 肩 + 短颈）
+  const prof = [
+    [D.R, 0], [D.R, D.H - 18], [D.R * 0.86, D.H - 6], [D.NECK_R, D.H + 2],
+    [D.NECK_R, D.H + D.NECK_H],
+  ].map(([r, y]) => new THREE.Vector2(r, y));
+  const bodyGeo = new THREE.LatheGeometry(prof, 40);
+  const body = new THREE.Mesh(bodyGeo, matGlass);
+  body.renderOrder = 2;
+  inner.add(tag(body, 'bottle'));
+  const bottom = new THREE.Mesh(new THREE.CircleGeometry(D.R, 32), matGlass);
+  bottom.rotation.x = -Math.PI / 2;
+  bottom.position.y = 0.4;
+  inner.add(tag(bottom, 'bottleBottom'));
+
+  // 瓶塞
+  const corkY = D.H + D.NECK_H;
+  const cork = new THREE.Mesh(new THREE.CylinderGeometry(D.CORK_R, D.CORK_R * 0.96, D.CORK_H, 26), matCork);
+  cork.position.set(0, corkY + D.CORK_H / 2 - 3, 0);
+  inner.add(tag(cork, 'cork'));
+
+  // 瓶里的电阻丝
+  const pts = [];
+  for (let i = 0; i <= 260; i++) {
+    const t = i / 260, a = t * Math.PI * 2 * 8;
+    pts.push(new THREE.Vector3(Math.cos(a) * 22, 12 + t * 42, Math.sin(a) * 22));
+  }
+  inner.add(tag(new THREE.Mesh(
+    new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 260, 1.7, 6, false), matCoil), 'coil'));
+
+  // 温度计（玻璃管 + 红色液柱）
+  const tY = corkY + D.CORK_H - 4;
+  const thermo = new THREE.Mesh(new THREE.CylinderGeometry(D.THERMO_R, D.THERMO_R, D.THERMO_H, 14, 1, true), matGlass);
+  thermo.position.set(0, tY + D.THERMO_H / 2, 0);
+  thermo.renderOrder = 2;
+  inner.add(tag(thermo, 'thermometer'));
+  const bulb = new THREE.Mesh(new THREE.SphereGeometry(D.THERMO_R * 1.5, 14, 10), matRed);
+  bulb.position.set(0, tY + D.THERMO_R * 1.5, 0);
+  inner.add(tag(bulb, 'thermoBulb'));
+  const col = new THREE.Mesh(new THREE.CylinderGeometry(D.THERMO_R * 0.5, D.THERMO_R * 0.5, 1, 10), matRed);
+  inner.add(tag(col, 'thermoColumn'));
+
+  // 两根接线柱（瓶塞上）
+  const termLocal = {};
+  [-1, 1].forEach((sx) => {
+    const x = sx * 12;
+    const stem = new THREE.Mesh(new THREE.CylinderGeometry(2, 2, 14, 12), MAT.brass);
+    stem.position.set(x, corkY + 12, 0);
+    inner.add(tag(stem, 'postStem'));
+    const cap = new THREE.Mesh(knurledGeometry(4, 10), MAT.red);
+    cap.position.set(x, corkY + 22, 0);
+    inner.add(tag(cap, 'postCap'));
+    termLocal[sx < 0 ? 'a' : 'b'] = new THREE.Vector3(x * S, (corkY + 23) * S, 0);
+  });
+
+  const shadow = new THREE.Mesh(
+    new THREE.PlaneGeometry(D.R * S * 2.6, D.R * S * 2.6),
+    new THREE.MeshBasicMaterial({ map: shadowTexture(), transparent: true, depthWrite: false })
+  );
+  shadow.rotation.x = -Math.PI / 2;
+  shadow.position.y = 0.35;
+  shadow.renderOrder = -1;
+  outer.add(shadow);
+
+  let shownT = 20;
+  let targetT = 20;
+  function applyTemp() {
+    // 20~100 ℃ 映射到液柱 8%~92%
+    const f = Math.max(0, Math.min(1, (shownT - 20) / 80));
+    const h = 4 + f * (D.THERMO_H - 10);
+    col.scale.y = h;
+    col.position.set(0, tY + 3 + h / 2, 0);
+  }
+  applyTemp();
+
+  const api = {
+    group: outer, shadow,
+    localToWorld: (v) => inner.localToWorld(v.clone()),
+    worldToLocal: (v) => inner.worldToLocal(v.clone()),
+    type: 'calorimeter',
+    label: '电热瓶',
+    spec: '10 Ω',
+    bounds: { hw: D.R * S + 6, hd: D.R * S + 6 },
+    topY: (tY + D.THERMO_H + 10) * S,
+    termLocal,
+    termIdx: { a: 0, b: 1 },
+    R: 10,
+    getParams() { return { R: api.R }; },
+    setR(v) { api.R = v; api.spec = v + ' Ω'; },
+    setTemp(rec) {
+      if (!rec) { targetT = 20; return; }
+      api.R = rec.R || api.R;
+      targetT = rec.temp == null ? 20 : rec.temp;
+    },
+    getTemp: () => shownT,
+    step(dt) {
+      const d = targetT - shownT;
+      if (Math.abs(d) < 0.05) { if (shownT !== targetT) { shownT = targetT; applyTemp(); } return; }
+      shownT += d * Math.min(1, dt * 1.6);
+      applyTemp();
+    },
+    debugCal() {
+      return { temp: +shownT.toFixed(2), target: +targetT.toFixed(2),
+        colH: +col.scale.y.toFixed(2) };
+    },
+  };
+  return api;
+}
+
+// ============================================================
+//  电位器（三柱 a/b/c + 环形电阻丝 + 转柄滑片）
+// ------------------------------------------------------------
+// 语义照 circuit-core：a—b 之间的阻值 = Rmax·pos，b—c 之间 = Rmax·(1−pos)。
+// 滑片转动时这两段一起变，正是「分压器」那节课要看的。
+// ============================================================
+export const POT_DIM = {
+  W: 96, D: 78, H: 16,
+  RING_R: 26, RING_T: 5,
+  POST_R: 4.4, POST_H: 11,
+  SCALE: 1.8,
+};
+
+export function buildPotentiometer() {
+  const D = POT_DIM;
+  const S = D.SCALE;
+  const outer = new THREE.Group();
+  const inner = new THREE.Group();
+  inner.scale.setScalar(S);
+  inner.position.y = 0;
+  outer.add(inner);
+  const tag = (o, role) => { o.userData.role = role; return o; };
+
+  const matBase = new THREE.MeshStandardMaterial({ color: 0x93a8c0, roughness: 0.5, metalness: 0.14 });
+  const matRing = new THREE.MeshStandardMaterial({ color: 0xb9c2cc, roughness: 0.34, metalness: 0.7 });
+  const matArm = new THREE.MeshStandardMaterial({ color: 0xd7ab52, roughness: 0.3, metalness: 0.8 });
+
+  const base = new THREE.Mesh(new THREE.BoxGeometry(D.W, D.H, D.D), matBase);
+  base.position.set(0, D.H / 2, 0);
+  inner.add(tag(base, 'base'));
+
+  // 环形电阻丝
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(D.RING_R, D.RING_T, 12, 44), matRing);
+  ring.rotation.x = Math.PI / 2;
+  ring.position.set(0, D.H + D.RING_T, -4);
+  inner.add(tag(ring, 'ring'));
+
+  // 中心轴
+  const axle = new THREE.Mesh(new THREE.CylinderGeometry(4, 4, 12, 18), MAT.steel);
+  axle.position.set(0, D.H + 6, -4);
+  inner.add(tag(axle, 'axle'));
+
+  // 滑片（从中心伸到环上的黄铜臂）
+  const arm = new THREE.Group();
+  arm.position.set(0, D.H + 7, -4);
+  inner.add(tag(arm, 'arm'));
+  const bar = new THREE.Mesh(new THREE.BoxGeometry(3.6, 2.6, D.RING_R + 2), matArm);
+  bar.position.set(0, 0, -(D.RING_R + 2) / 2);
+  arm.add(bar);
+  const brush = new THREE.Mesh(new THREE.BoxGeometry(7, 4.4, 6), matArm);
+  brush.position.set(0, 0, -(D.RING_R + 2));
+  arm.add(brush);
+
+  // 三个接线柱：a（左）、b（中）、c（右），都在底座前缘
+  const termLocal = {};
+  [['a', -32], ['b', 0], ['c', 32]].forEach(([name, x]) => {
+    const base2 = new THREE.Mesh(new THREE.CylinderGeometry(5.4, 5.8, 2.2, 20), MAT.black);
+    base2.position.set(x, D.H + 1.1, D.D / 2 - 14);
+    inner.add(tag(base2, 'postPad'));
+    const cap = new THREE.Mesh(knurledGeometry(D.POST_R, D.POST_H), MAT.brass);
+    cap.position.set(x, D.H + 2.2 + D.POST_H / 2, D.D / 2 - 14);
+    inner.add(tag(cap, 'postCap'));
+    termLocal[name] = new THREE.Vector3(x * S, (D.H + 2.2 + D.POST_H * 0.55) * S, (D.D / 2 - 14) * S);
+  });
+
+  const shadow = new THREE.Mesh(
+    new THREE.PlaneGeometry(D.W * S * 1.6, D.D * S * 1.6),
+    new THREE.MeshBasicMaterial({ map: shadowTexture(), transparent: true, depthWrite: false })
+  );
+  shadow.rotation.x = -Math.PI / 2;
+  shadow.position.y = 0.35;
+  shadow.renderOrder = -1;
+  outer.add(shadow);
+
+  const api = {
+    group: outer, shadow,
+    localToWorld: (v) => inner.localToWorld(v.clone()),
+    worldToLocal: (v) => inner.worldToLocal(v.clone()),
+    type: 'potentiometer',
+    label: '电位器',
+    spec: '20 Ω',
+    bounds: { hw: D.W / 2 * S + 6, hd: D.D / 2 * S + 6 },
+    topY: (D.H + 26) * S,
+    termLocal,
+    termIdx: { a: 0, b: 1, c: 2 },
+    Rmax: 20,
+    pos: 0.5,
+    getParams() { return { Rmax: api.Rmax, pos: api.pos }; },
+    setPos(p) {
+      api.pos = Math.max(0, Math.min(1, p));
+      // pos = 0 贴 a（左），pos = 1 贴 c（右）
+      arm.rotation.y = -(api.pos - 0.5) * Math.PI * 1.35;
+    },
+    setRmax(v) { api.Rmax = v; api.spec = v + ' Ω'; },
+    debugPot() {
+      return { pos: +api.pos.toFixed(3), armY: +arm.rotation.y.toFixed(3) };
+    },
+    arm,
+  };
+  api.setPos(0.5);
+  return api;
+}
+
+// ============================================================
 //  器材目录（器材库面板按这张表生成卡片）
 // ============================================================
 export const CATALOG = [
@@ -1247,5 +2792,59 @@ export const CATALOG = [
     desc: '带灯座的螺口小灯泡：亮度随电流变，灯丝温度越高越白。',
     build: buildBulb, ready: true,
   },
-  { type: 'meter', label: '电流表 / 电压表', spec: '三柱双量程', desc: '两个量程柱 + 一个公共柱，接错会反偏。', ready: false },
+  {
+    key: 'storage', type: 'battery', label: '蓄电池', spec: '6 V（3 × 2 V）',
+    desc: '三只铅酸电池串成一组：左端黑柱是负极、右端红柱是正极。',
+    build: buildStorageBattery, ready: true,
+  },
+  {
+    type: 'resistor', label: '定值电阻', spec: '10 Ω',
+    desc: '线绕定值电阻：阻值在参数面板里改，接 a、b 两柱。',
+    build: () => buildResistor({ R: 10 }), ready: true,
+  },
+  {
+    type: 'power', label: '学生电源', spec: '0~9 V 可调',
+    desc: '旋钮连续调压，面板上还有电源开关和 + / − 输出柱。',
+    build: buildPower, ready: true,
+  },
+  {
+    type: 'resistancebox', label: '电阻箱', spec: '0~9999 Ω',
+    desc: '四个转盘 ×1/×10/×100/×1k，跳档、刻度直接读得出接入的阻值。',
+    build: buildResistanceBox, ready: true,
+  },
+  {
+    type: 'rheoboard', label: '导线电阻演示板', spec: '四根丝 a/b/c/d',
+    desc: '木板上四根现成的电阻丝，两两对照材料/长度/粗细，换一根只要挪两根导线。',
+    build: buildRheoboard, ready: true,
+  },
+  {
+    type: 'led', label: '发光二极管', spec: '红色 1.8 V',
+    desc: '单向导电：电流从长脚（+）进才亮，反接不导通。',
+    build: () => buildLed({ color: 'red' }), ready: true,
+  },
+  {
+    type: 'joule', label: '焦耳定律演示器', spec: 'U 形管 甲/乙',
+    desc: '两只瓶各一段电阻丝，通电放热把 U 形管的液柱顶高，看谁升得快。',
+    build: buildJoule, ready: true,
+  },
+  {
+    type: 'calorimeter', label: '电热瓶', spec: '10 Ω',
+    desc: '瓶塞上插着温度计，瓶里泡着电阻丝：通电升温，看温度计升到多少度。',
+    build: buildCalorimeter, ready: true,
+  },
+  {
+    type: 'potentiometer', label: '电位器', spec: '20 Ω',
+    desc: '三柱 a/b/c：转柄改滑片位置，a—b 与 b—c 两段阻值此消彼长。',
+    build: buildPotentiometer, ready: true,
+  },
+  {
+    type: 'ammeter', label: '电流表', spec: '0.6 A / 3 A',
+    desc: '三柱双量程：黑柱公共，红柱 0.6 / 3。接反指针顶在左边。',
+    build: () => buildMeter({ kind: 'ammeter' }), ready: true,
+  },
+  {
+    type: 'voltmeter', label: '电压表', spec: '3 V / 15 V',
+    desc: '三柱双量程：黑柱公共，红柱 3 / 15。并联在被测元件两端。',
+    build: () => buildMeter({ kind: 'voltmeter' }), ready: true,
+  },
 ];

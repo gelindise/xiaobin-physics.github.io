@@ -10,7 +10,10 @@
  */
 import * as THREE from './assets/optics-three.min.js';
 // 🔴 import 必须带版本号：不带的话这个子模块【没有缓存键】，改了 kit 页面看上去没变。
-import { CATALOG, buildRheostat, buildSwitch, buildBattery, buildBulb, DIM } from './lab3d-kit.js?build=21';
+import { CATALOG, buildRheostat, buildSwitch, buildBattery, buildBulb, buildMeter,
+  buildStorageBattery, buildResistor, buildPower,
+  buildResistanceBox, buildRheoboard, buildLed, buildJoule, buildCalorimeter,
+  buildPotentiometer, RBOARD_WIRES, DIM } from './lab3d-kit.js?build=24';
 
 const $ = (id) => document.getElementById(id);
 
@@ -340,9 +343,25 @@ const state = {
 const items = [];          // { id, api, type, group, el, Rmax }
 let itemSeq = 0;
 
-const BUILDERS = { rheostat: buildRheostat, switch: buildSwitch, battery: buildBattery, bulb: buildBulb };
+const BUILDERS = {
+  rheostat: buildRheostat, switch: buildSwitch, battery: buildBattery, bulb: buildBulb,
+  ammeter: () => buildMeter({ kind: 'ammeter' }),
+  voltmeter: () => buildMeter({ kind: 'voltmeter' }),
+  storage: buildStorageBattery,
+  resistor: () => buildResistor({ R: 10 }),
+  power: buildPower,
+  resistancebox: buildResistanceBox,
+  rheoboard: buildRheoboard,
+  led: () => buildLed({ color: 'red' }),
+  joule: buildJoule,
+  calorimeter: buildCalorimeter,
+  potentiometer: buildPotentiometer,
+};
+// 🔴 卡片键（key）≠ 物理类型（type）：蓄电池、干电池组在 circuit-core 里都是
+//    `battery`，但外观完全不同 ⇒ 器材库按 key 建卡片、求解按 type 认元件。
 const META = {};
-CATALOG.forEach((c) => { META[c.type] = c; });
+CATALOG.forEach((c) => { META[c.key || c.type] = c; });
+const metaOf = (it) => META[it.key || it.type] || META[it.type] || { label: it.type };
 
 // 货架式排布游标：从桌面前沿左侧开始，一台一台往右摆，放不下就换行。
 const pack = { x: 0, z: 80, depth: 0 };
@@ -415,10 +434,12 @@ function nudgeIfOverlap(item) {
   return false;
 }
 
-function addItem(type, worldPos) {
-  const build = BUILDERS[type];
+function addItem(key, worldPos) {
+  const meta = META[key] || META[BUILDERS[key] ? key : ''];
+  const build = (meta && meta.build) || BUILDERS[key] || (meta && BUILDERS[meta.type]);
   if (!build) { toast('这件器材还在开发中'); return null; }
   const api = build();
+  const physType = (meta && meta.type) || key;
   const g = api.group;
   // 默认落点：按【实际半宽】做货架式排布，本行放不下就换到后面一行。
   // 🔴 写死间距一定会叠：器材放大 2.2~2.8 倍后，2 节电池宽约 390 mm、3 节 540 mm，
@@ -435,13 +456,13 @@ function addItem(type, worldPos) {
   scene.add(g);
 
   itemSeq += 1;
-  const item = { id: 'c' + itemSeq, api, type, group: g, el: null, Rmax: 20 };
+  const item = { id: 'c' + itemSeq, api, type: physType, key, group: g, el: null, Rmax: 20 };
   items.push(item);
   buildLabel(item);
   select(item);
   syncUI();
   recompute();
-  toast('放上了 ' + META[type].label);
+  toast('放上了 ' + (meta ? meta.label : physType));
   return item;
 }
 
@@ -615,6 +636,13 @@ function paramsOf(it) {
   if (it.type === 'switch') return { closed: it.api.isClosed() };
   if (it.type === 'battery') return it.api.getParams();
   if (it.type === 'bulb') return it.api.getParams();
+  if (it.type === 'ammeter' || it.type === 'voltmeter') return it.api.getParams();
+  if (it.type === 'resistor') return it.api.getParams();
+  if (it.type === 'power') return it.api.getParams();
+  if (it.type === 'resistancebox' || it.type === 'rheoboard' || it.type === 'led' ||
+      it.type === 'joule' || it.type === 'calorimeter' || it.type === 'potentiometer') {
+    return it.api.getParams();
+  }
   return {};
 }
 function termIdxOf(it, term) {
@@ -640,9 +668,17 @@ function recompute() {
   // circuit-core 的 fillLamp（rec.brightness / rec.tempC / rec.overload），
   // 3D 这一层只负责把它画成光，不自己算任何电学量。
   items.forEach((it) => {
-    if (it.type !== 'bulb' || !it.api.setLit) return;
     const rec = results && results.components ? results.components[it.id] : null;
-    it.api.setLit(rec);
+    if (it.type === 'bulb' && it.api.setLit) it.api.setLit(rec);
+    if ((it.type === 'ammeter' || it.type === 'voltmeter') && it.api.setReading) {
+      it.api.setReading(rec);
+    }
+    if (it.type === 'led' && it.api.setLit) it.api.setLit(rec);
+    if (it.type === 'calorimeter' && it.api.setTemp) it.api.setTemp(rec);
+    if (it.type === 'joule' && it.api.setBox && rec && rec.boxes) {
+      it.api.setBox(0, rec.boxes[0]);
+      it.api.setBox(1, rec.boxes[1]);
+    }
   });
   syncResultsUI();
 }
@@ -681,7 +717,7 @@ function syncResultsUI() {
   let maxI = 0;
   const rows = items.map((it) => {
     const r = results && results.components ? results.components[it.id] : null;
-    const label = META[it.type] ? META[it.type].label : it.type;
+    const label = metaOf(it).label;
     const i = r ? Math.abs(r.i || 0) : null;
     if (i != null) maxI = Math.max(maxI, i);
     return '<tr><td>' + label + '</td>' +
@@ -717,7 +753,7 @@ const labelLayer = $('labels');
 function buildLabel(item) {
   const el = document.createElement('div');
   el.className = 'plabel';
-  el.textContent = META[item.type].label;
+  el.textContent = metaOf(item).label;
   labelLayer.appendChild(el);
   item.el = el;
   // 灯泡多一块「灯丝温度」浮标：默认不显示，参数面板里勾上才出现。
@@ -736,7 +772,9 @@ function updateLabels() {
   items.forEach((item) => {
     if (!item.el) return;
     if (!state.labels) { item.el.classList.add('off'); return; }
-    const p = new THREE.Vector3(item.group.position.x, 190, item.group.position.z).project(camera);
+    // 标签高度按器材自己的 topY（表、焦耳演示器比小器材高得多）
+    const ly = (item.api && item.api.topY) || 190;
+    const p = new THREE.Vector3(item.group.position.x, ly, item.group.position.z).project(camera);
     if (p.z > 1 || p.z < -1) { item.el.classList.add('off'); return; }
     const x = (p.x * 0.5 + 0.5) * W;
     const y = (-p.y * 0.5 + 0.5) * H;
@@ -1042,6 +1080,18 @@ const ICONS = {
     '<circle cx="22" cy="14" r="8.5" fill="#fef9c3"/>' +
     '<path d="M18 22h8M19 25h6" stroke="#94a3b8"/>' +
     '<path d="M19 15l3-4 3 4-3 3z" stroke="#b45309" fill="none"/></g></svg>',
+  ammeter: '<svg viewBox="0 0 44 32"><g stroke="#334155" stroke-width="1.5" fill="none">' +
+    '<rect x="7" y="4" width="30" height="24" rx="3" fill="#f1f5f9"/>' +
+    '<path d="M22 23l8-11" stroke="#b91c1c" stroke-width="2" stroke-linecap="round"/>' +
+    '<circle cx="22" cy="23" r="1.8" fill="#334155" stroke="none"/>' +
+    '<path d="M13 9q9-5 18 0" stroke="#94a3b8"/>' +
+    '<text x="22" y="20" font-size="7" font-weight="700" fill="#334155" stroke="none" text-anchor="middle">A</text></g></svg>',
+  voltmeter: '<svg viewBox="0 0 44 32"><g stroke="#334155" stroke-width="1.5" fill="none">' +
+    '<rect x="7" y="4" width="30" height="24" rx="3" fill="#f1f5f9"/>' +
+    '<path d="M22 23l8-11" stroke="#b91c1c" stroke-width="2" stroke-linecap="round"/>' +
+    '<circle cx="22" cy="23" r="1.8" fill="#334155" stroke="none"/>' +
+    '<path d="M13 9q9-5 18 0" stroke="#94a3b8"/>' +
+    '<text x="22" y="20" font-size="7" font-weight="700" fill="#334155" stroke="none" text-anchor="middle">V</text></g></svg>',
   meter: '<svg viewBox="0 0 44 32"><g stroke="#334155" stroke-width="1.5" fill="none">' +
     '<rect x="7" y="5" width="30" height="22" rx="3" fill="#f1f5f9"/>' +
     '<path d="M22 22l7-9" stroke="#b91c1c" stroke-width="2" stroke-linecap="round"/>' +
@@ -1055,9 +1105,9 @@ function buildPalette() {
     const b = document.createElement('button');
     b.type = 'button';
     b.className = 'kit-card' + (c.ready ? '' : ' soon');
-    b.dataset.type = c.type;
+    b.dataset.key = c.key || c.type;
     b.innerHTML =
-      '<span class="ic">' + (ICONS[c.type] || '') + '</span>' +
+      '<span class="ic">' + (ICONS[c.key || c.type] || ICONS[c.type] || '') + '</span>' +
       '<span class="tx"><span class="nm">' + c.label + '</span>' +
       '<span class="sp">' + (c.ready ? c.spec : '待加入') + '</span></span>';
     paletteEl.appendChild(b);
@@ -1070,12 +1120,12 @@ let cardDrag = null;
 paletteEl.addEventListener('pointerdown', (e) => {
   const card = e.target.closest('.kit-card');
   if (!card) return;
-  const meta = META[card.dataset.type];
+  const meta = META[card.dataset.key];
   if (!meta || !meta.ready) {
     toast(meta ? meta.label + ' 还在开发中' : '这件器材还没做');
     return;
   }
-  cardDrag = { type: card.dataset.type, x: e.clientX, y: e.clientY, moved: 0, ghost: null };
+  cardDrag = { key: card.dataset.key, x: e.clientX, y: e.clientY, moved: 0, ghost: null };
   try { card.setPointerCapture(e.pointerId); } catch (_) {}
 });
 paletteEl.addEventListener('pointermove', (e) => {
@@ -1086,7 +1136,7 @@ paletteEl.addEventListener('pointermove', (e) => {
   if (cardDrag.moved > 6 && !cardDrag.ghost) {
     const g = document.createElement('div');
     g.className = 'pal-ghost';
-    g.innerHTML = '<span class="nm">' + META[cardDrag.type].label + '</span>';
+    g.innerHTML = '<span class="nm">' + META[cardDrag.key].label + '</span>';
     document.body.appendChild(g);
     cardDrag.ghost = g;
     stageEl.classList.add('dropping');
@@ -1108,9 +1158,9 @@ paletteEl.addEventListener('pointerup', (e) => {
   if (d.moved > 6) {
     if (!inside) return;
     const p = tablePoint(e.clientX, e.clientY);
-    addItem(d.type, p ? { x: p.x, z: p.z } : null);
+    addItem(d.key, p ? { x: p.x, z: p.z } : null);
   } else {
-    addItem(d.type, null);
+    addItem(d.key, null);
   }
 });
 paletteEl.addEventListener('pointercancel', () => {
@@ -1167,13 +1217,321 @@ function buildParams() {
       '</div>' +
       '<small style="display:block;margin-top:8px;color:#64748b;font-size:10px;line-height:1.55">' +
         '左端<b>红柱是正极</b>、右端银柱是负极 —— 接反了电流方向相反（电表会反偏）。</small>';
+    if (!it.api.setCells) {
+      // 蓄电池：节数定死 3 节（2 V/节），面板只显示、不给滑条
+      $('pBatCells').disabled = true;
+      $('pBatCells').style.opacity = 0.45;
+    }
     $('pBatCells').addEventListener('input', (e) => {
+      if (!it.api.setCells) return;
       it.api.setCells(+e.target.value);
       nudgeIfOverlap(it);
       const o = $('pBatOut');
       if (o) o.textContent = it.api.getCells() + ' 节 · ' + it.api.emf().toFixed(1) + ' V';
       recompute();
       syncReadout();
+    });
+    $('pRotate').addEventListener('click', rotateSelected);
+    $('pRemove').addEventListener('click', () => removeItem(it));
+    return;
+  }
+
+  // ── 电阻箱：四个转盘 + 总阻值 ──────────────────────────────
+  if (it.type === 'resistancebox') {
+    pSlideEl = pSlideOut = pRmaxEl = pRmaxOut = null;
+    const DIG = [['d1000', '×1 k'], ['d100', '×100'], ['d10', '×10'], ['d1', '×1']];
+    pSel.innerHTML =
+      '<div class="lab3d-field">' +
+        '<label>转盘 <output id="pRBoxOut">' + it.api.getR() + ' Ω</output></label>' +
+        DIG.map(([k, lab]) =>
+          '<label for="pRBox_' + k + '" style="margin-top:6px">' + lab +
+            ' <output id="pRBoxV_' + k + '">' + it.api[k] + '</output></label>' +
+          '<input id="pRBox_' + k + '" type="range" min="0" max="9" step="1" value="' + it.api[k] + '">'
+        ).join('') +
+        '<small>R = 千位×1000 + 百位×100 + 十位×10 + 个位 —— 和真电阻箱一样<b>跳档</b>，' +
+        '刻度上直接读得出接入的阻值。</small>' +
+      '</div>' +
+      '<div class="lab3d-btnrow">' +
+        '<button type="button" id="pRotate">⟳ 转 90°</button>' +
+        '<button type="button" id="pRemove">🗑 从桌上拿走</button>' +
+      '</div>';
+    DIG.forEach(([k]) => {
+      $('pRBox_' + k).addEventListener('input', (e) => {
+        it.api.setDigit(k, +e.target.value);
+        $('pRBoxV_' + k).textContent = it.api[k];
+        $('pRBoxOut').textContent = it.api.getR() + ' Ω';
+        recompute(); syncReadout();
+      });
+    });
+    $('pRotate').addEventListener('click', rotateSelected);
+    $('pRemove').addEventListener('click', () => removeItem(it));
+    return;
+  }
+
+  // ── 导线电阻演示板：四根丝的规格 ────────────────────────────
+  if (it.type === 'rheoboard') {
+    pSlideEl = pSlideOut = pRmaxEl = pRmaxOut = null;
+    pSel.innerHTML =
+      '<div class="lab3d-field">' +
+        '<label>板上四根电阻丝</label>' +
+        '<div style="font-size:11px;line-height:1.9;color:#cbd5e1">' +
+          RBOARD_WIRES.map((w, i) =>
+            '<div><b>' + w.id + '</b>　' + w.spec +
+            '　<button type="button" class="mini" data-wire="' + (i + 1) + 'a">接这根</button></div>'
+          ).join('') +
+        '</div>' +
+        '<small>每根丝两头各一个接线柱（' + '<b>1a/1b</b> … <b>4a/4b</b>）。' +
+        '换一根只要把两根导线挪到另一对柱子上 —— 「只变一个因素」就是一次接线动作。</small>' +
+      '</div>' +
+      '<div class="lab3d-btnrow">' +
+        '<button type="button" id="pRotate">⟳ 转 90°</button>' +
+        '<button type="button" id="pRemove">🗑 从桌上拿走</button>' +
+      '</div>';
+    pSel.querySelectorAll('[data-wire]').forEach((b) => {
+      b.addEventListener('click', () => {
+        toast('把导线接到 ' + b.dataset.wire + ' 柱上就能换成这根丝');
+      });
+    });
+    $('pRotate').addEventListener('click', rotateSelected);
+    $('pRemove').addEventListener('click', () => removeItem(it));
+    return;
+  }
+
+  // ── 发光二极管：颜色 + 极性 ────────────────────────────────
+  if (it.type === 'led') {
+    pSlideEl = pSlideOut = pRmaxEl = pRmaxOut = null;
+    const COLS = [['red', '红色 1.8V'], ['green', '绿色 2.1V'], ['blue', '蓝色 3.1V']];
+    pSel.innerHTML =
+      '<div class="lab3d-field">' +
+        '<label>颜色</label>' +
+        '<div class="lab3d-presets" style="grid-template-columns:repeat(3,1fr)">' +
+          COLS.map(([c, lab]) =>
+            '<button type="button" data-led="' + c + '"' +
+            (it.api.color === c ? ' class="on"' : '') + '>' + lab + '</button>').join('') +
+        '</div>' +
+        '<label class="chk" style="margin-top:8px"><input id="pLedFlip" type="checkbox"' +
+          (it.api.flip ? ' checked' : '') + '><span>引脚接反（长脚接 −）</span></label>' +
+        '<small>二极管<b>只让电流单向通过</b>：从长脚（+）进才导通、才发光；' +
+        '接反了几乎不导电，灯不亮 —— 这正是它和灯泡最要紧的区别。</small>' +
+      '</div>' +
+      '<div class="lab3d-btnrow">' +
+        '<button type="button" id="pRotate">⟳ 转 90°</button>' +
+        '<button type="button" id="pRemove">🗑 从桌上拿走</button>' +
+      '</div>';
+    pSel.querySelectorAll('[data-led]').forEach((b) => {
+      b.addEventListener('click', () => {
+        it.api.setColor(b.dataset.led);
+        buildParams(); recompute(); syncReadout();
+      });
+    });
+    $('pLedFlip').addEventListener('change', (e) => {
+      it.api.flip = e.target.checked;
+      recompute(); syncReadout();
+    });
+    $('pRotate').addEventListener('click', rotateSelected);
+    $('pRemove').addEventListener('click', () => removeItem(it));
+    return;
+  }
+
+  // ── 焦耳定律演示器：两只瓶的电阻 + 乙的并联丝 ────────────────
+  if (it.type === 'joule') {
+    pSlideEl = pSlideOut = pRmaxEl = pRmaxOut = null;
+    const SEL = (k, lab, opts, cur) =>
+      '<div class="lab3d-field"><label>' + lab + '</label>' +
+      '<div class="lab3d-presets" style="grid-template-columns:repeat(' + opts.length + ',1fr)">' +
+      opts.map((o) => '<button type="button" data-j="' + k + '" data-v="' + o[0] + '"' +
+        (cur === o[0] ? ' class="on"' : '') + '>' + o[1] + '</button>').join('') +
+      '</div></div>';
+    pSel.innerHTML =
+      SEL('R1', '甲 电阻', [[5, '5Ω'], [10, '10Ω'], [20, '20Ω']], it.api.R1) +
+      SEL('R2', '乙 电阻', [[5, '5Ω'], [10, '10Ω'], [20, '20Ω']], it.api.R2) +
+      SEL('R2b', '乙 并联丝', [[0, '不装'], [5, '5Ω'], [10, '10Ω'], [20, '20Ω']], it.api.R2b) +
+      '<div class="lab3d-field"><small>接 <b>甲+/甲−</b>、<b>乙+/乙−</b> 两组柱。' +
+      '通电后电阻丝放热，U 形管里的液柱被顶高 —— <b>谁升得快，谁产热多</b>。' +
+      '把两只瓶的电阻调成一样、再看液柱，就能反过来验「Q 与 R 无关、只与 I²Rt 有关」。</small></div>' +
+      '<div class="lab3d-btnrow">' +
+        '<button type="button" id="pJouleReset">↺ 液柱归零</button>' +
+        '<button type="button" id="pRemove">🗑 从桌上拿走</button>' +
+      '</div>';
+    pSel.querySelectorAll('[data-j]').forEach((b) => {
+      b.addEventListener('click', () => {
+        it.api[b.dataset.j] = +b.dataset.v;
+        buildParams(); recompute(); syncReadout();
+      });
+    });
+    $('pJouleReset').addEventListener('click', () => { it.api.resetHeat(); });
+    $('pRemove').addEventListener('click', () => removeItem(it));
+    return;
+  }
+
+  // ── 电热瓶：瓶里那段丝的阻值 ────────────────────────────────
+  if (it.type === 'calorimeter') {
+    pSlideEl = pSlideOut = pRmaxEl = pRmaxOut = null;
+    pSel.innerHTML =
+      '<div class="lab3d-field">' +
+        '<label for="pCalR">电阻丝 <output id="pCalOut">' + it.api.R + ' Ω</output></label>' +
+        '<input id="pCalR" type="range" min="1" max="50" step="1" value="' + it.api.R + '">' +
+        '<small>瓶里的液体种类和质量是器材定死的，学生要变的是「换一段不同阻值的丝」。' +
+        '通电后温度计升到多少度，就是这段丝放出的热。</small>' +
+      '</div>' +
+      '<div class="lab3d-btnrow">' +
+        '<button type="button" id="pRotate">⟳ 转 90°</button>' +
+        '<button type="button" id="pRemove">🗑 从桌上拿走</button>' +
+      '</div>';
+    $('pCalR').addEventListener('input', (e) => {
+      it.api.setR(+e.target.value);
+      $('pCalOut').textContent = it.api.R + ' Ω';
+      recompute(); syncReadout();
+    });
+    $('pRotate').addEventListener('click', rotateSelected);
+    $('pRemove').addEventListener('click', () => removeItem(it));
+    return;
+  }
+
+  // ── 电位器：最大阻值 + 滑片位置 ────────────────────────────
+  if (it.type === 'potentiometer') {
+    pSlideEl = pSlideOut = pRmaxEl = pRmaxOut = null;
+    const rab = (it.api.Rmax * it.api.pos).toFixed(1);
+    const rbc = (it.api.Rmax * (1 - it.api.pos)).toFixed(1);
+    pSel.innerHTML =
+      '<div class="lab3d-field">' +
+        '<label for="pPotR">最大阻值 <output id="pPotROut">' + it.api.Rmax + ' Ω</output></label>' +
+        '<input id="pPotR" type="range" min="5" max="50" step="5" value="' + it.api.Rmax + '">' +
+      '</div>' +
+      '<div class="lab3d-field">' +
+        '<label for="pPotP">滑片位置 <output id="pPotPOut">' + Math.round(it.api.pos * 100) + '%</output></label>' +
+        '<input id="pPotP" type="range" min="0" max="1" step="0.01" value="' + it.api.pos + '">' +
+        '<small>此刻 <b>a—b = ' + rab + ' Ω</b>、<b>b—c = ' + rbc + ' Ω</b>（两段之和恒等于 R<sub>max</sub>）。' +
+        '接 a、b 两柱就是一个可调电阻；三柱全接就是分压器。</small>' +
+      '</div>' +
+      '<div class="lab3d-btnrow">' +
+        '<button type="button" id="pRotate">⟳ 转 90°</button>' +
+        '<button type="button" id="pRemove">🗑 从桌上拿走</button>' +
+      '</div>';
+    $('pPotR').addEventListener('input', (e) => {
+      it.api.setRmax(+e.target.value);
+      buildParams(); recompute(); syncReadout();
+    });
+    $('pPotP').addEventListener('input', (e) => {
+      it.api.setPos(+e.target.value);
+      const p = it.api.pos;
+      $('pPotPOut').textContent = Math.round(p * 100) + '%';
+      const small = pSel.querySelector('small');
+      if (small) small.innerHTML = '此刻 <b>a—b = ' + (it.api.Rmax * p).toFixed(1) +
+        ' Ω</b>、<b>b—c = ' + (it.api.Rmax * (1 - p)).toFixed(1) + ' Ω</b>（两段之和恒等于 R<sub>max</sub>）。' +
+        '接 a、b 两柱就是一个可调电阻；三柱全接就是分压器。';
+      recompute(); syncReadout();
+    });
+    $('pRotate').addEventListener('click', rotateSelected);
+    $('pRemove').addEventListener('click', () => removeItem(it));
+    return;
+  }
+
+  // ── 定值电阻：常用阻值 + 滑条 ──────────────────────────────
+  if (it.type === 'resistor') {
+    pSlideEl = pSlideOut = pRmaxEl = pRmaxOut = null;
+    const PRES = [5, 10, 15, 20, 25];
+    pSel.innerHTML =
+      '<div class="lab3d-field">' +
+        '<label>常用阻值</label>' +
+        '<div class="lab3d-presets" style="grid-template-columns:repeat(5,1fr)">' +
+          PRES.map((v) => '<button type="button" data-r="' + v + '">' + v + 'Ω</button>').join('') +
+        '</div>' +
+      '</div>' +
+      '<div class="lab3d-field">' +
+        '<label for="pResR">阻值 <output id="pResOut">' + it.api.R.toFixed(1) + ' Ω</output></label>' +
+        '<input id="pResR" type="range" min="0.1" max="100" step="0.1" value="' + it.api.R + '">' +
+        '<small>接 <b>a、b</b> 两柱。定值电阻的阻值不随温度、电压变 —— 正是「欧姆定律」里那个 R。</small>' +
+      '</div>' +
+      '<div class="lab3d-btnrow">' +
+        '<button type="button" id="pRotate">⟳ 转 90°</button>' +
+        '<button type="button" id="pRemove">🗑 从桌上拿走</button>' +
+      '</div>';
+    pSel.querySelectorAll('[data-r]').forEach((b) => {
+      b.addEventListener('click', () => {
+        it.api.setR(+b.dataset.r);
+        buildParams(); recompute(); syncReadout();
+      });
+    });
+    $('pResR').addEventListener('input', (e) => {
+      it.api.setR(+e.target.value);
+      $('pResOut').textContent = it.api.R.toFixed(1) + ' Ω';
+      recompute(); syncReadout();
+    });
+    $('pRotate').addEventListener('click', rotateSelected);
+    $('pRemove').addEventListener('click', () => removeItem(it));
+    return;
+  }
+
+  // ── 学生电源：输出电压 0~9 V + 电源开关 ────────────────────
+  if (it.type === 'power') {
+    pSlideEl = pSlideOut = pRmaxEl = pRmaxOut = null;
+    pSel.innerHTML =
+      '<div class="lab3d-field">' +
+        '<label for="pPwrV">输出电压 <output id="pPwrOut">' + it.api.emf.toFixed(1) + ' V</output></label>' +
+        '<input id="pPwrV" type="range" min="0" max="9" step="0.5" value="' + it.api.emf + '">' +
+        '<small>旋钮转到哪儿，输出就是多少伏（<b>0~9 V</b>，每格 0.5 V）。' +
+        '真实的学生电源还有限流旋钮，这里只留调压。</small>' +
+      '</div>' +
+      '<div class="lab3d-field">' +
+        '<label class="chk"><input id="pPwrOn" type="checkbox"' + (it.api.on ? ' checked' : '') + '>' +
+          '<span>电源开关合上（有输出）</span></label>' +
+      '</div>' +
+      '<div class="lab3d-btnrow">' +
+        '<button type="button" id="pRotate">⟳ 转 90°</button>' +
+        '<button type="button" id="pRemove">🗑 从桌上拿走</button>' +
+      '</div>';
+    $('pPwrV').addEventListener('input', (e) => {
+      it.api.setEmf(+e.target.value);
+      $('pPwrOut').textContent = it.api.emf.toFixed(1) + ' V';
+      recompute(); syncReadout();
+    });
+    $('pPwrOn').addEventListener('change', (e) => {
+      it.api.setOn(e.target.checked);
+      recompute(); syncReadout();
+    });
+    $('pRotate').addEventListener('click', rotateSelected);
+    $('pRemove').addEventListener('click', () => removeItem(it));
+    return;
+  }
+
+  // ── 电流表 / 电压表：量程由「接在哪个红柱」决定，这里只显示 + 调零 + 示数
+  if (it.type === 'ammeter' || it.type === 'voltmeter') {
+    pSlideEl = pSlideOut = pRmaxEl = pRmaxOut = null;
+    const isA = it.type === 'ammeter';
+    const rec = results && results.components ? results.components[it.id] : null;
+    const rng = rec && rec.rangeWired ? rec.range : it.api.range;
+    const unit = isA ? 'A' : 'V';
+    const reading = rec && rec.wired ? (rec.reading || 0) : 0;
+    const taps = isA ? ['0.6', '3'] : ['3', '15'];
+    pSel.innerHTML =
+      '<div class="lab3d-field">' +
+        '<label>当前量程 <output>' + (rec && rec.rangeWired ? rng + ' ' + unit : '未接量程柱') + '</output></label>' +
+        '<small>量程由<b>导线接在哪个红柱</b>决定：接 <b>' + taps[0] + '</b> 柱是 0～' + taps[0] +
+        ' ' + unit + '，接 <b>' + taps[1] + '</b> 柱是 0～' + taps[1] + ' ' + unit +
+        '。黑柱是公共端（' + (isA ? '电流从红柱进、黑柱出' : '并联在被测元件两端') + '）。</small>' +
+      '</div>' +
+      '<div class="lab3d-field">' +
+        '<label class="chk"><input id="pMeterZero" type="checkbox"' + (it.api.zeroed ? ' checked' : '') + '>' +
+          '<span>已调零（指针在零刻度线上）</span></label>' +
+        '<label class="chk"><input id="pMeterValue" type="checkbox"' + (it.api.showValue ? ' checked' : '') + '>' +
+          '<span>在表盘上显示读数</span></label>' +
+        '<small>读数 = <b>' + (rec && rec.wired ? (Math.abs(reading) < 5e-4 ? '0' : reading.toFixed(3)) : '—') +
+        ' ' + unit + '</b>' +
+        (rec && rec.reversed ? ' · <b style="color:#fca5a5">正负接线柱接反，指针顶在左边</b>' : '') +
+        (rec && rec.overRange ? ' · <b style="color:#fca5a5">超过量程</b>' : '') +
+        '</small>' +
+      '</div>' +
+      '<div class="lab3d-btnrow">' +
+        '<button type="button" id="pRotate">⟳ 转 90°</button>' +
+        '<button type="button" id="pRemove">🗑 从桌上拿走</button>' +
+      '</div>';
+    $('pMeterZero').addEventListener('change', (e) => {
+      it.api.zeroed = e.target.checked;
+      recompute(); syncReadout();
+    });
+    $('pMeterValue').addEventListener('change', (e) => {
+      it.api.setShowValue(e.target.checked);
     });
     $('pRotate').addEventListener('click', rotateSelected);
     $('pRemove').addEventListener('click', () => removeItem(it));
@@ -1362,6 +1720,77 @@ function syncReadout() {
     $('roSub').innerHTML = it.api.getCells() + ' 节 × 1.5 V' + cur;
     return;
   }
+  if (it.type === 'resistancebox') {
+    const r = results && results.components ? results.components[it.id] : null;
+    $('roR').innerHTML = it.api.getR() + '<small>Ω</small>';
+    $('roSub').innerHTML = '电阻箱' + (r ? ' · I = ' + fmtV(Math.abs(r.i || 0)) + ' A' : '');
+    return;
+  }
+  if (it.type === 'rheoboard') {
+    const r = results && results.components ? results.components[it.id] : null;
+    $('roR').innerHTML = '4<small>根丝</small>';
+    $('roSub').innerHTML = '电阻示教板' + (r ? ' · I = ' + fmtV(Math.abs(r.i || 0)) + ' A' : ' · 选一对柱子接入');
+    return;
+  }
+  if (it.type === 'led') {
+    const r = results && results.components ? results.components[it.id] : null;
+    const on = it.api.getBrightness() > 0.05;
+    $('roR').innerHTML = on ? '导<small>通</small>' : '截<small>止</small>';
+    $('roSub').innerHTML = '发光二极管 · ' +
+      ({ red: '红 1.8V', green: '绿 2.1V', blue: '蓝 3.1V' })[it.api.color] +
+      (r ? ' · I = ' + fmtV(Math.abs(r.i || 0)) + ' A' : '') +
+      (r && r.overload ? ' · <b style="color:#fca5a5">电流过大</b>' : '');
+    return;
+  }
+  if (it.type === 'joule') {
+    const r = results && results.components ? results.components[it.id] : null;
+    const p0 = r && r.boxes ? r.boxes[0].p : 0;
+    const p1 = r && r.boxes ? r.boxes[1].p : 0;
+    $('roR').innerHTML = fmtV(p0 + p1) + '<small>W</small>';
+    $('roSub').innerHTML = '甲 ' + fmtV(p0) + ' W · 乙 ' + fmtV(p1) + ' W';
+    return;
+  }
+  if (it.type === 'calorimeter') {
+    const r = results && results.components ? results.components[it.id] : null;
+    $('roR').innerHTML = Math.round(it.api.getTemp()) + '<small>℃</small>';
+    $('roSub').innerHTML = '电热瓶 · ' + it.api.R + ' Ω' +
+      (r ? ' · P = ' + fmtV(Math.abs(r.p || 0)) + ' W' : '');
+    return;
+  }
+  if (it.type === 'potentiometer') {
+    const r = results && results.components ? results.components[it.id] : null;
+    $('roR').innerHTML = (it.api.Rmax * it.api.pos).toFixed(1) + '<small>Ω</small>';
+    $('roSub').innerHTML = 'a—b 段 · b—c = ' + (it.api.Rmax * (1 - it.api.pos)).toFixed(1) + ' Ω' +
+      (r ? ' · I = ' + fmtV(Math.abs(r.i || 0)) + ' A' : '');
+    return;
+  }
+  if (it.type === 'resistor') {
+    const r = results && results.components ? results.components[it.id] : null;
+    $('roR').innerHTML = it.api.R.toFixed(1) + '<small>Ω</small>';
+    $('roSub').innerHTML = '定值电阻' + (r ? ' · I = ' + fmtV(Math.abs(r.i || 0)) + ' A' : '');
+    return;
+  }
+  if (it.type === 'power') {
+    const r = results && results.components ? results.components[it.id] : null;
+    $('roR').innerHTML = it.api.emf.toFixed(1) + '<small>V</small>';
+    $('roSub').innerHTML = '学生电源' + (it.api.on ? '' : ' · <b>开关断开</b>') +
+      (r ? ' · I = ' + fmtV(Math.abs(r.i || 0)) + ' A' : '');
+    return;
+  }
+  if (it.type === 'ammeter' || it.type === 'voltmeter') {
+    const isA = it.type === 'ammeter';
+    const unit = isA ? 'A' : 'V';
+    const rec = results && results.components ? results.components[it.id] : null;
+    const v = rec && rec.wired ? (rec.reading || 0) : 0;
+    $('roR').innerHTML = (Math.abs(v) < 5e-4 ? '0' : v.toFixed(2)) + '<small>' + unit + '</small>';
+    const bits = [];
+    if (rec && rec.rangeWired) bits.push('量程 0～' + rec.range + ' ' + unit);
+    else bits.push('未接量程柱');
+    if (rec && rec.reversed) bits.push('<b style="color:#fca5a5">接反</b>');
+    if (rec && rec.overRange) bits.push('<b style="color:#fca5a5">超量程</b>');
+    $('roSub').innerHTML = bits.join(' · ');
+    return;
+  }
   if (it.type === 'bulb') {
     const br = it.api.getBrightness();
     const tc = it.api.getTempC();
@@ -1381,7 +1810,7 @@ function syncReadout() {
     return;
   }
   $('roR').innerHTML = '—';
-  $('roSub').textContent = META[it.type] ? META[it.type].label : it.type;
+  $('roSub').textContent = metaOf(it).label;
 }
 
 function syncCtl() {
@@ -1586,6 +2015,16 @@ window.__lab = {
           id, type: (items.find((it) => it.id === id) || {}).type,
           i: +(r.i || 0).toFixed(4), v: +(r.v || 0).toFixed(4), p: +(r.p || 0).toFixed(4),
           emf: r.emf, cells: r.cells, mode: r.mode, rUsed: r.rUsed,
+          // 下面这些是「只读给自检」的字段：不补的话，焦耳演示器的两瓶功率、
+          // 量热瓶的温度、表头的读数在探针里全是 undefined（断言会静默空转）。
+          reading: r.reading, range: r.range, rangeWired: r.rangeWired,
+          reversed: r.reversed, overRange: r.overRange, wired: r.wired,
+          temp: r.temp, brightness: r.brightness, tempC: r.tempC, overload: r.overload,
+          boxes: r.boxes ? r.boxes.map((b2) => ({
+            idx: b2.idx, R: b2.R, i: +(b2.i || 0).toFixed(4),
+            p: +(b2.p || 0).toFixed(4), wired: b2.wired,
+          })) : undefined,
+          levels: r.levels,
         };
       }),
     };
