@@ -363,12 +363,22 @@ export function buildRheostat(opts) {
   const slideX = (s) => DIM.SLIDE_MIN + (DIM.SLIDE_MAX - DIM.SLIDE_MIN) * s;
   let curSlide = 0.5;
 
+  // 哪一段真的接进了电路 —— 由【接线柱上实际接了哪两根线】决定，不是写死的左半：
+  //   A—C / A—D：电流从 A 进、经滑片出去 ⇒ 有效段 = A 到滑片（左段，[0, s]）
+  //   B—C / B—D：电流从 B 进、经滑片出去 ⇒ 有效段 = 滑片到 B（右段，[s, 1]）
+  //   A—B      ：整根丝都在回路里（滑片只是抽头，不改变阻值）⇒ 全亮
+  // 三种接法的 R 由 circuit-core 按拓扑算，这里只负责「让橙色段和真实电流路径一致」。
+  let activeSide = 'A';
   function paintWire(s) {
     const col = wireGeo.attributes.color;
     const arr = col.array;
     for (let i = 0; i <= WIRE_SEG; i++) {
       const t = i / WIRE_SEG;
-      const c = (t <= s + 1e-6) ? COL_ON : COL_OFF;
+      let on;
+      if (activeSide === 'AB') on = true;
+      else if (activeSide === 'B') on = (t >= s - 1e-6);
+      else on = (t <= s + 1e-6);
+      const c = on ? COL_ON : COL_OFF;
       for (let j = 0; j <= WIRE_RADIAL; j++) {
         const k = (i * (WIRE_RADIAL + 1) + j) * 3;
         arr[k] = c.r; arr[k + 1] = c.g; arr[k + 2] = c.b;
@@ -380,6 +390,14 @@ export function buildRheostat(opts) {
   function setSlide(s) {
     curSlide = Math.max(0, Math.min(1, s));
     slider.position.x = slideX(curSlide);
+    paintWire(curSlide);
+  }
+
+  // 由页面按实际接线调用（见 lab3d-sandbox 的 recompute）
+  function setActiveSide(side) {
+    const v = (side === 'A' || side === 'B' || side === 'AB') ? side : 'A';
+    if (v === activeSide) return;
+    activeSide = v;
     paintWire(curSlide);
   }
 
@@ -412,9 +430,11 @@ export function buildRheostat(opts) {
     termLocal,
     termIdx: { A: 0, B: 1, C: 2, D: 3 },   // 与 circuit-core 的 TYPES.rheostat 一致
     setSlide,
+    setActiveSide,
+    getActiveSide: () => activeSide,
     getSlide: () => curSlide,
-    // 沙盒这一阶段还没有导线：R 只按「一上一下（A—C）」预演，页面要如实标注
-    previewR: (Rmax) => Rmax * curSlide,
+    // 预演阻值（没接线时用）：按「一上一下 A—C」算
+    previewR: (Rmax) => Rmax * (activeSide === 'B' ? 1 - curSlide : curSlide),
   };
   setSlide(opts.slide == null ? 0.5 : opts.slide);
   return api;
@@ -651,6 +671,9 @@ export function buildBattery(opts) {
   outer.add(inner);
 
   let cells = Math.max(1, Math.min(D.MAX_CELLS, opts.cells || 2));
+  // 正负极是否对调（电池「反装」）：视觉上红柱和 ⊕ 一起换边，电气上交换端子下标
+  // （见 api.termIdx 的注释 —— 不改 emf 的正负号，避免读数面板出现 −3.0 V）。
+  let reversed = !!opts.reversed;
   const cellParts = [];                // 每次重建要释放的几何
 
   const matCell = new THREE.MeshStandardMaterial({
@@ -778,21 +801,23 @@ export function buildBattery(opts) {
       cell.rotation.z = Math.PI / 2;
       cell.position.set(cx, D.R, 0);
       add(tag(cell, 'cell'));
-      // 正极帽（+x 端）
+      // 正极帽（默认 +x 端；正负极对调时换到 −x 端）
+      const dir = reversed ? -1 : 1;
       const cap = new THREE.Mesh(new THREE.CylinderGeometry(D.R * 0.42, D.R * 0.42, 3.2, 24), matCellCap);
       cap.rotation.z = Math.PI / 2;
-      cap.position.set(cx + D.L / 2 + 1.6, D.R, 0);
+      cap.position.set(cx + dir * (D.L / 2 + 1.6), D.R, 0);
       add(tag(cap, 'capPlus'));
       // 负极端的浅色封边
       const ring = new THREE.Mesh(new THREE.CylinderGeometry(D.R * 0.99, D.R * 0.99, 2.4, 36), matCellCap);
       ring.rotation.z = Math.PI / 2;
-      ring.position.set(cx - D.L / 2 + 1.2, D.R, 0);
+      ring.position.set(cx - dir * (D.L / 2 - 1.2), D.R, 0);
       add(tag(ring, 'capMinus'));
-      // 侧面的红色 ⊕（贴片，朝学生这一侧）
-      const plus = new THREE.Mesh(new THREE.PlaneGeometry(D.R * 1.25, D.R * 1.25),
+      // 🔴 侧面的红色 ⊕ 要贴在【正极端】那一头，不能印在电池正中央 ——
+      //    真实干电池的极性标记就在凸起那端的肩上，标中间等于告诉学生「整节都是正极」。
+      const plus = new THREE.Mesh(new THREE.PlaneGeometry(D.R * 1.15, D.R * 1.15),
         new THREE.MeshBasicMaterial({ map: plusTexture(), transparent: true, depthWrite: false }));
-      plus.position.set(cx, D.R, D.R + 0.25);
-      add(plus);
+      plus.position.set(cx + dir * (D.L / 2 - D.R * 1.02), D.R, D.R + 0.25);
+      add(tag(plus, 'plusMark'));
     }
 
     // 两端的滚花接线柱：左红、右银（沿 x 轴伸出）
@@ -802,10 +827,12 @@ export function buildBattery(opts) {
       stem.rotation.z = Math.PI / 2;
       stem.position.set(sx * LY.stemX, LY.postY, 0);
       add(tag(stem, 'postStem'));
-      const cap = new THREE.Mesh(knurledGeometry(D.POST_R, D.POST_LEN), sx < 0 ? MAT.red : MAT.steel);
+      // 红柱 = 正极。对调后红柱换到另一头（学生一眼看得出「电池反装了」）。
+      const isPlus = (sx < 0) !== reversed;
+      const cap = new THREE.Mesh(knurledGeometry(D.POST_R, D.POST_LEN), isPlus ? MAT.red : MAT.steel);
       cap.rotation.z = Math.PI / 2;
       cap.position.set(px, LY.postY, 0);
-      cap.userData.termId = sx < 0 ? '+' : '-';
+      cap.userData.termId = isPlus ? '+' : '-';
       add(tag(cap, 'postCap'));
       // 柱顶开槽
       const slot = new THREE.Mesh(new THREE.BoxGeometry(0.4, D.POST_R * 1.1, 0.4), MAT.black);
@@ -813,8 +840,9 @@ export function buildBattery(opts) {
       add(slot);
     });
 
-    termLocal['+'].set(-LY.termX * S, (LY.postY + D.BOX_H) * S, 0);
-    termLocal['-'].set(LY.termX * S, (LY.postY + D.BOX_H) * S, 0);
+    const sgn = reversed ? 1 : -1;
+    termLocal['+'].set(sgn * LY.termX * S, (LY.postY + D.BOX_H) * S, 0);
+    termLocal['-'].set(-sgn * LY.termX * S, (LY.postY + D.BOX_H) * S, 0);
     bounds.hw = (LY.trayHalf + D.POST_LEN) * S + 4;
     bounds.hd = (D.BOX_D / 2) * S;
   }
@@ -852,6 +880,21 @@ export function buildBattery(opts) {
       shadow.geometry.dispose();
       shadow.geometry = new THREE.PlaneGeometry(bounds.hw * 2.3, bounds.hd * 2.6);
       api.spec = cells + ' 节　' + (cells * 1.5).toFixed(1) + ' V';
+    },
+    // 正负极对调 = 把电池「反装」：红柱、⊕、正极帽一起换到另一头。
+    // 🔴 电气上【不动 emf 的正负号】，只交换两个端子的下标 —— core 的 battery 支路
+    //    固定从 term0 指向 term1，交换下标就等于把电源反接；改成传负 emf 会让
+    //    读数面板印出「−3.0 V」，学生以为电池坏了。
+    isReversed: () => reversed,
+    setReversed(v) {
+      const nv = !!v;
+      if (nv === reversed) return;
+      reversed = nv;
+      api.termIdx['+'] = reversed ? 1 : 0;
+      api.termIdx['-'] = reversed ? 0 : 1;
+      rebuild(cells);
+      shadow.geometry.dispose();
+      shadow.geometry = new THREE.PlaneGeometry(bounds.hw * 2.3, bounds.hd * 2.6);
     },
     // 🔴🔴 必须【显式给 emf】。core 的 paramsOf = defaultParams(type) ∪ comp.params，
     //    而 TYPES.battery.defaults 里就写着 emf:3 —— 只传 cells 的话，emf 会被那个
@@ -1291,14 +1334,17 @@ function meterFaceTexture(kind) {
 
   // 两排数字：i = 10 / 20 / 30 三处
   g.textAlign = 'center'; g.textBaseline = 'middle';
-  [10, 20, 30].forEach((i) => {
+  // 两端（0 和满量程）也要有数字：没有「0」，学生连零点在哪都不知道，
+  // 自然就看不出指针「指没指零」。
+  [0, 10, 20, 30].forEach((i) => {
     const a = -Math.PI / 2 + A0 + (A1 - A0) * (i / N);
     const c = Math.cos(a), sn = Math.sin(a);
-    // 外圈（大挡位）
+    const edge = (i === 0 || i === N);
+    // 外圈（大挡位）：两端往里收，否则数字被画布边缘切掉半个
     g.fillStyle = '#1e293b';
     g.font = 'bold 40px "Helvetica Neue", Arial, sans-serif';
-    // 🔴 外圈数字不能贴太外：R+34 时两端 x 会超出画布（被切掉半个数字）
-    g.fillText(fmt(big * i / N), cx + c * (R + 22), cy + sn * (R + 22));
+    const ro = edge ? R - 2 : R + 22;
+    g.fillText(fmt(big * i / N), cx + c * ro, cy + sn * ro);
     // 内圈（小挡位）
     g.font = 'bold 30px "Helvetica Neue", Arial, sans-serif';
     g.fillStyle = '#334155';
@@ -1353,11 +1399,15 @@ function meterPadTexture(kind) {
   g.strokeStyle = '#eef6f1'; g.lineWidth = 7;
   g.strokeRect(11, 11, W - 22, H - 22);
   const labels = kind === 'ammeter' ? ['−', '0.6', '3'] : ['−', '3', '15'];
-  const xs = [0.5 - 34 / 62, 0.5, 0.5 + 34 / 62];   // 与 POST_X 对应（板宽 124）
+  // 🔴 板宽是 BASE_W−16 = 108 mm（不是 124），柱子 x = ±POST_X = ±34 ⇒ 相对偏移 34/108。
+  //    原来写成 34/62（= 0.548），两端的标牌直接画到画布外面去了 ——
+  //    学生看到的接线板上只有中间那个「0.6」，负号和大量程都没字。
+  const xs = [0.5 - 34 / 108, 0.5, 0.5 + 34 / 108];
   g.textAlign = 'center'; g.textBaseline = 'middle';
   g.fillStyle = '#ffffff';
-  g.font = 'bold 42px "Helvetica Neue", Arial, sans-serif';
-  labels.forEach((t, i) => g.fillText(t, xs[i] * W, H * 0.88));
+  g.font = 'bold 36px "Helvetica Neue", Arial, sans-serif';
+  // 标牌压到板的【最前沿】：柱子立在板中部，标牌留在 0.88 处会被柱身挡住半个字
+  labels.forEach((t, i) => g.fillText(t, xs[i] * W, H * 0.9));
   const tex = new THREE.CanvasTexture(cv);
   tex.colorSpace = THREE.SRGBColorSpace;
   METER_PAD_CACHE[key] = tex;

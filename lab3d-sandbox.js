@@ -13,7 +13,7 @@ import * as THREE from './assets/optics-three.min.js';
 import { CATALOG, buildRheostat, buildSwitch, buildBattery, buildBulb, buildMeter,
   buildStorageBattery, buildResistor, buildPower,
   buildResistanceBox, buildRheoboard, buildLed, buildJoule, buildCalorimeter,
-  buildPotentiometer, RBOARD_WIRES, DIM } from './lab3d-kit.js?build=26';
+  buildPotentiometer, RBOARD_WIRES, DIM } from './lab3d-kit.js?build=27';
 
 const $ = (id) => document.getElementById(id);
 
@@ -423,7 +423,9 @@ function updateCamera() {
 // ============================================================
 const state = {
   view: 'persp',
-  labels: true,
+  // 🔴 器材名标签默认【关】：桌上摆一排器材、每个头顶挂个名字，把器材本身挡住了。
+  //    要看名字点一下器材就行（参数面板里有名字），或在面板里勾上「器材名标签」。
+  labels: false,
   shadow: true,
   selected: null,
 };
@@ -676,17 +678,28 @@ const wireMatPrev = new THREE.MeshStandardMaterial({
   color: 0x22d3ee, roughness: 0.4, metalness: 0.2, transparent: true, opacity: 0.7,
 });
 let previewWire = null;
-function showPreview(p1, p2) {
+function showPreview(p1, p2, dir1, dir2) {
   if (!previewWire) {
     previewWire = new THREE.Mesh(new THREE.BufferGeometry(), wireMatPrev);
     previewWire.visible = false;
     scene.add(previewWire);
   }
   if (previewWire.geometry) previewWire.geometry.dispose();
-  previewWire.geometry = wireGeoFor(p1, p2, 1);
+  previewWire.geometry = wireGeoFor(p1, p2, 1, null, null, dir1, dir2);
   previewWire.visible = true;
 }
 function hidePreview() { if (previewWire) previewWire.visible = false; }
+
+// 接线柱的「外法线」：从器材中心指向柱子的水平方向。
+// 🔴 导线必须沿这个方向离开柱子，不能一律向上 —— 电池的接线柱是【沿 ±x 水平伸出】的，
+//    从正上方引出等于让导线从柱子中间钻出来，看着像「从底部/背面冒出来」。
+function exitDir(item, p) {
+  const dx = p.x - item.group.position.x;
+  const dz = p.z - item.group.position.z;
+  const l = Math.hypot(dx, dz);
+  if (l < 1e-3) return new THREE.Vector3(0, 0, 1);     // 柱子在器材正上方时退回朝前
+  return new THREE.Vector3(dx / l, 0, dz / l);
+}
 
 function termWorld(item, term) {
   const v = item.api.termLocal[term].clone();
@@ -721,11 +734,15 @@ function clearanceAt(x, z, skipA, skipB) {
   return y;
 }
 
-function wireGeoFor(p1, p2, side, skipA, skipB) {
+function wireGeoFor(p1, p2, side, skipA, skipB, dir1, dir2) {
   const d = p1.distanceTo(p2);
-  const lift = Math.min(13, 5 + d * 0.035);
-  const q1 = p1.clone(); q1.y += lift;
-  const q2 = p2.clone(); q2.y += lift;
+  // 从柱子里先【沿外法线】退出来一小段，再往上抬一点点，然后才落桌面。
+  // 退出的距离 ~10 mm 刚好是滚花柱的半长，导线端点就贴在柱子外端面，一眼看得出「接在这根柱上」。
+  const out1 = (dir1 || new THREE.Vector3(0, 0, 1)).clone();
+  const out2 = (dir2 || new THREE.Vector3(0, 0, 1)).clone();
+  const lift = Math.min(11, 4 + d * 0.03);
+  const q1 = p1.clone().addScaledVector(out1, 9); q1.y += lift;
+  const q2 = p2.clone().addScaledVector(out2, 9); q2.y += lift;
   const a1 = new THREE.Vector3(p1.x, WIRE_G, p1.z);
   const a2 = new THREE.Vector3(p2.x, WIRE_G, p2.z);
   // 桌面段向【连线的一侧】弯出去：同一件器材的两个柱在前缘，导线就绕过它前面走，
@@ -758,8 +775,10 @@ function wireGeoFor(p1, p2, side, skipA, skipB) {
 function addWire(a, b) {
   wireSeq += 1;
   const side = wireSeq % 2 ? 1 : -1;      // 相邻导线往两侧弯，不会叠成一条
+  const pa = termWorld(a.item, a.term), pb = termWorld(b.item, b.term);
   const mesh = new THREE.Mesh(
-    wireGeoFor(termWorld(a.item, a.term), termWorld(b.item, b.term), side, a.item, b.item),
+    wireGeoFor(pa, pb, side, a.item, b.item,
+      exitDir(a.item, pa), exitDir(b.item, pb)),
     wireMats[(wireSeq % 2) ? 'red' : 'black']);
   mesh.userData.wireId = wireSeq;
   scene.add(mesh);
@@ -812,8 +831,9 @@ function refreshWiresFor(item) {
   wires.forEach((w) => {
     if (w.a.item === item || w.b.item === item) {
       w.mesh.geometry.dispose();
-      w.mesh.geometry = wireGeoFor(termWorld(w.a.item, w.a.term), termWorld(w.b.item, w.b.term), w.side,
-        w.a.item, w.b.item);
+      const wa = termWorld(w.a.item, w.a.term), wb = termWorld(w.b.item, w.b.term);
+      w.mesh.geometry = wireGeoFor(wa, wb, w.side, w.a.item, w.b.item,
+        exitDir(w.a.item, wa), exitDir(w.b.item, wb));
     }
   });
 }
@@ -889,6 +909,17 @@ function recompute() {
   // 3D 这一层只负责把它画成光，不自己算任何电学量。
   items.forEach((it) => {
     const rec = results && results.components ? results.components[it.id] : null;
+    // 🔴 变阻器：橙色「接入段」必须跟着【实际接线柱】走，不能写死左半。
+    //    下端接 B（右下）时，电流走的是滑片到 B 那一段 —— 只涂左半会指错半根丝。
+    //    判断只看「这根柱子有没有接线」，不看 core 的 mode（mode 是给文案用的）。
+    if (it.type === 'rheostat' && it.api.setActiveSide) {
+      let hasA = false, hasB = false;
+      wires.forEach((w) => {
+        if (w.a.item === it) { if (w.a.term === 'A') hasA = true; if (w.a.term === 'B') hasB = true; }
+        if (w.b.item === it) { if (w.b.term === 'A') hasA = true; if (w.b.term === 'B') hasB = true; }
+      });
+      it.api.setActiveSide(hasA && hasB ? 'AB' : (hasB ? 'B' : 'A'));
+    }
     if (it.type === 'bulb' && it.api.setLit) it.api.setLit(rec);
     if ((it.type === 'ammeter' || it.type === 'voltmeter') && it.api.setReading) {
       it.api.setReading(rec);
@@ -1065,6 +1096,12 @@ function pick(clientX, clientY) {
       if (q === item.api.slider) { onSlider = true; break; }
       q = q.parent;
     }
+    // 点中的是不是表盘面？（点表盘 = 放大读数）
+    let qf = h.object, onFace = false;
+    while (qf) {
+      if (qf.userData && qf.userData.role === 'face') { onFace = true; break; }
+      qf = qf.parent;
+    }
     // 点中的是不是接线柱？kit 里给柱子的 mesh 打了 termId
     let r = h.object, term = null;
     while (r) {
@@ -1098,7 +1135,7 @@ function pick(clientX, clientY) {
       });
       term = best;
     }
-    return { item, onSlider, term, point: h.point };
+    return { item, onSlider, onFace, term, point: h.point };
   }
   // 🔴 导线只有 6 mm 粗，鼠标点偏两三毫米就「点空」了（用户的原话是「点击导线就可以」）。
   //    这里补一层：射线到导线中心线的距离 < WIRE_HIT_R 也算点中。
@@ -1131,6 +1168,26 @@ function screenOf(v) {
   const rect = canvas.getBoundingClientRect();
   const q = v.clone().project(camera);
   return { x: (q.x * 0.5 + 0.5) * rect.width, y: (-q.y * 0.5 + 0.5) * rect.height };
+}
+
+// 点表盘 = 把镜头怼到表盘上读数（再点一次还原）。
+// 表盘只有 ~95 mm 宽，正常视角下刻度只有十几个像素，学生根本读不出。
+function focusMeter(it) {
+  state.focusMeter = it;
+  const g = it.group.position;
+  const h = ((it.api.topY || 120) * (it.scale || 1)) * 0.55;
+  cam.targetT.set(g.x, h, g.z);
+  cam.yawT = 0;
+  cam.pitchT = 0.12;
+  cam.distT = 330;
+  toast('表盘已放大 —— 再点一次表盘还原');
+}
+function unfocusMeter() {
+  if (!state.focusMeter) return false;
+  state.focusMeter = null;
+  applyView(state.view);
+  toast('已还原视角');
+  return true;
 }
 
 function tablePoint(clientX, clientY) {
@@ -1220,10 +1277,10 @@ canvas.addEventListener('pointermove', (e) => {
     const h2 = pick(e.clientX, e.clientY);
     drag.hover = h2 && h2.term ? { item: h2.item, term: h2.term } : null;
     if (drag.hover) {
-      showPreview(from, termWorld(h2.item, h2.term));
+      showPreview(from, termWorld(h2.item, h2.term), exitDir(fixed.item, from));
     } else {
       const p = tablePoint(e.clientX, e.clientY);
-      if (p) showPreview(from, new THREE.Vector3(p.x, WIRE_G, p.z));
+      if (p) showPreview(from, new THREE.Vector3(p.x, WIRE_G, p.z), exitDir(fixed.item, from));
     }
     return;
   }
@@ -1249,7 +1306,7 @@ canvas.addEventListener('pointermove', (e) => {
         if (raycaster.ray.intersectPlane(plane, p)) end = p;
       }
     }
-    if (end) showPreview(from, end);
+    if (end) showPreview(from, end, exitDir(drag.from.item, from));
     return;
   }
   if (drag.mode === 'orbit') {
@@ -1336,6 +1393,12 @@ canvas.addEventListener('pointerup', (e) => {
       toast('选中一根导线（按 Delete 剪掉）');
     } else if (hit.term) {
       select(hit.item); selectWire(null); handleTermClick(hit);
+    } else if (hit.onFace && (hit.item.type === 'ammeter' || hit.item.type === 'voltmeter')) {
+      // 点表盘：放大 / 还原
+      select(hit.item);
+      selectWire(null);
+      if (state.focusMeter === hit.item) unfocusMeter();
+      else focusMeter(hit.item);
     } else if (pending) {
       // 正在等第二个接线柱：点到器材别处只是「点偏了」，别把已经选好的那个柱丢掉
       select(hit.item);
@@ -1735,6 +1798,12 @@ function buildParams() {
         '<small>每节 <b>1.5 V</b>：一节 1.5 V、两节 3 V、三节 4.5 V。' +
         '电池盒会跟着变长，读数按总电动势重算。</small>' +
       '</div>' +
+      (it.api.setReversed
+        ? '<div class="lab3d-field"><label class="chk"><input type="checkbox" id="pBatRev"' +
+          (it.api.isReversed() ? ' checked' : '') + '> 正负极对调（电池反装）</label>' +
+          '<small>勾上以后红柱和 ⊕ 一起换到另一头，电流方向随之反向 —— ' +
+          '电表指针会朝反方向偏，正好用来演示「电池接反了」。</small></div>'
+        : '') +
       '<div class="lab3d-btnrow">' +
         '<button type="button" id="pRotate">⟳ 转 90°</button>' +
         '<button type="button" id="pRemove">🗑 从桌上拿走</button>' +
@@ -1755,6 +1824,16 @@ function buildParams() {
       recompute();
       syncReadout();
     });
+    if ($('pBatRev')) {
+      $('pBatRev').addEventListener('change', (e) => {
+        it.api.setReversed(e.target.checked);
+        measureSolid(it);
+        refreshWiresFor(it);
+        recompute();
+        syncReadout();
+        toast(e.target.checked ? '电池反装了（正负极对调）' : '电池恢复正装');
+      });
+    }
     $('pRotate').addEventListener('click', rotateSelected);
     $('pRemove').addEventListener('click', () => removeItem(it));
     return;
