@@ -602,6 +602,7 @@ function removeItem(item) {
   if (item.el && item.el.parentNode) item.el.parentNode.removeChild(item.el);
   if (item.tempEl && item.tempEl.parentNode) item.tempEl.parentNode.removeChild(item.tempEl);
   if (state.selected === item) state.selected = null;
+  if (state.focusMeter === item) state.focusMeter = null;   // 放大表盘的那件被拿走了就退出放大
   syncUI();
   recompute();
 }
@@ -735,40 +736,40 @@ function clearanceAt(x, z, skipA, skipB) {
 }
 
 function wireGeoFor(p1, p2, side, skipA, skipB, dir1, dir2) {
+  // 🔴🔴 真实导线 = 【悬链线】：两端挂在接线柱上，中间靠自重垂下来。
+  //    上一版把两端直接压到桌面高度（WIRE_G），从柱顶一落到底 ——
+  //    视觉上就是「导线钻进元件底部」，用户报的正是这个。
+  //    现在：端点留在柱子外端面上，整根线在柱子的高度上悬着，只有中段下垂。
   const d = p1.distanceTo(p2);
-  // 从柱子里先【沿外法线】退出来一小段，再往上抬一点点，然后才落桌面。
-  // 退出的距离 ~10 mm 刚好是滚花柱的半长，导线端点就贴在柱子外端面，一眼看得出「接在这根柱上」。
   const out1 = (dir1 || new THREE.Vector3(0, 0, 1)).clone();
   const out2 = (dir2 || new THREE.Vector3(0, 0, 1)).clone();
-  const lift = Math.min(11, 4 + d * 0.03);
-  const q1 = p1.clone().addScaledVector(out1, 9); q1.y += lift;
-  const q2 = p2.clone().addScaledVector(out2, 9); q2.y += lift;
-  const a1 = new THREE.Vector3(p1.x, WIRE_G, p1.z);
-  const a2 = new THREE.Vector3(p2.x, WIRE_G, p2.z);
-  // 桌面段向【连线的一侧】弯出去：同一件器材的两个柱在前缘，导线就绕过它前面走，
-  // 不会从器材身上穿过去。
+  // 两端各沿外法线退 6 mm：端点贴在滚花柱外端面上，接头看得见。
+  const a1 = p1.clone().addScaledVector(out1, 6);
+  const a2 = p2.clone().addScaledVector(out2, 6);
+  // 垂度：跨度越大垂越多，但 30 cm 的线也就垂 2 cm 多，封顶 26 mm
+  const sag = Math.min(26, 7 + d * 0.075);
+  // 同一件器材的两根柱短接 ⇒ 导线必须从它【自己】顶上跨过去，不能跳过避让
+  const sa = (skipA === skipB) ? null : skipA;
+  const sb = (skipA === skipB) ? null : skipB;
+  // 水平方向轻轻侧弯一点（同器材两柱都在前缘时，导线绕过它前面）
   const dx = a2.x - a1.x, dz = a2.z - a1.z;
   const len = Math.hypot(dx, dz) || 1;
-  const bend = Math.min(84, 12 + len * 0.2) * (side < 0 ? -1 : 1);
-  const mid = new THREE.Vector3(
-    (a1.x + a2.x) / 2 - (dz / len) * bend,
-    WIRE_G + Math.min(9, 2 + len * 0.02),          // 中段微微离桌一点，像有自重
-    (a1.z + a2.z) / 2 + (dx / len) * bend
-  );
-  // 桌面段采样：凡是压在别的器材上，就把这一点抬到那台器材顶上 —— 导线「搭过去」。
+  const bend = Math.min(20, 3 + len * 0.05) * (side < 0 ? -1 : 1);
+
   const span = [];
-  const N = 18;
-  for (let i = 1; i < N; i++) {
-    const t = i / N, u = 1 - t;
-    const x = u * u * a1.x + 2 * u * t * mid.x + t * t * a2.x;
-    const z = u * u * a1.z + 2 * u * t * mid.z + t * t * a2.z;
-    const y0 = u * u * a1.y + 2 * u * t * mid.y + t * t * a2.y;
-    span.push(new THREE.Vector3(x, Math.max(y0, clearanceAt(x, z, skipA, skipB)), z));
+  const N = 24;
+  for (let i = 0; i <= N; i++) {
+    const t = i / N;
+    const x = a1.x + dx * t - (dz / len) * bend * Math.sin(Math.PI * t);
+    const z = a1.z + dz * t + (dx / len) * bend * Math.sin(Math.PI * t);
+    // 悬链线：两端高、中间低（4t(1−t) 在 t=0.5 取最大值 1）
+    let y = a1.y + (a2.y - a1.y) * t - 4 * sag * t * (1 - t);
+    // 沿途遇到别的器材就抬到它顶上（从上面跨过去，不从背后钻）；
+    // 再兜一道底：任何情况下都不许钻到桌面以下。
+    y = Math.max(y, clearanceAt(x, z, sa, sb), WIRE_G);
+    span.push(new THREE.Vector3(x, y, z));
   }
-  const curve = new THREE.CatmullRomCurve3(
-    // centripetal 比 catmullrom 少 overshoot：柱顶 → 桌面那段落得太急时，
-    // 老参数会把曲线甩到台面以下（实测 minY = −4.6）。
-    [p1, q1, a1].concat(span, [a2, q2, p2]), false, 'centripetal');
+  const curve = new THREE.CatmullRomCurve3([p1].concat(span, [p2]), false, 'centripetal');
   return new THREE.TubeGeometry(curve, 96, WIRE_R, 10, false);
 }
 
@@ -1264,6 +1265,14 @@ canvas.addEventListener('pointermove', (e) => {
     const hit = pick(e.clientX, e.clientY);
     canvas.classList.toggle('hot', !!hit && !hit.onSlider);
     canvas.classList.toggle('slide', !!hit && hit.onSlider);
+    // 鼠标经过接线柱就给它一个光环：学生一眼知道「这里能接」。
+    // 已经选了一个柱在等另一端时，标记留在原来那根柱上，不跟着鼠标跑。
+    if (hit && hit.term) {
+      pendingMark.position.copy(termWorld(hit.item, hit.term)).add(new THREE.Vector3(0, 7, 0));
+      pendingMark.visible = true;
+    } else if (!pending) {
+      pendingMark.visible = false;
+    }
     return;
   }
   const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
