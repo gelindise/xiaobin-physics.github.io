@@ -13,29 +13,47 @@ import * as THREE from './assets/optics-three.min.js';
 import { CATALOG, buildRheostat, buildSwitch, buildBattery, buildBulb, buildMeter,
   buildStorageBattery, buildResistor, buildPower,
   buildResistanceBox, buildRheoboard, buildLed, buildJoule, buildCalorimeter,
-  buildPotentiometer, RBOARD_WIRES, DIM } from './lab3d-kit.js?build=24';
+  buildPotentiometer, RBOARD_WIRES, DIM } from './lab3d-kit.js?build=25';
 
 const $ = (id) => document.getElementById(id);
 
 // ============================================================
 //  场景常量
 // ============================================================
-const TABLE_W = 1000, TABLE_D = 560, TABLE_T = 34;   // 桌面（mm）
+// 🔴🔴 「无限拓展的实验桌」：桌面不是固定尺寸，而是【随器材增长】的一张长桌。
+//    旧版写死 1000×560，摆到第 5、6 件器材就得往桌沿外挤；器材又按 1:1 放大
+//    2.2~2.8 倍，于是画面里「桌子小、元件大」，一点实验台的样子都没有。
+//    现在的规则：
+//      · 桌面最小 1680×1000（真实实验台），装不下就按 DESK_STEP 加宽 / 加深；
+//      · 器材统一乘 KIT_SCALE（0.68）—— 变阻器宽 170 mm 占桌面 10%，
+//        和真实「20 cm 变阻器摆 1.8 m 实验台」的比例对得上；
+//      · 相机按桌面尺寸【自动取景】(fitDistance)，桌面永远铺满画面。
+const DESK_MIN = { w: 1400, d: 1000 };
+const DESK_STEP = 240;                                // 每次扩展的步长（拼板整齐）
+const DESK = { w: DESK_MIN.w, d: DESK_MIN.d };        // 当前桌面（mm，中心在原点）
+const DESK_MAX = { w: 3600, d: 2200 };                // 再大就出房间了（地面 5200×4200）
+const TABLE_T = 34;                                   // 台面厚度
 const TABLE_H = 740;                                  // 桌面离地高度
 const FLOOR_Y = -TABLE_H;
-const PLACE = { x: TABLE_W / 2 - 110, z: TABLE_D / 2 - 80 };   // 兜底的活动范围（没给 bounds 时用）
-// 🔴 器材宽度差得很远：变阻器 hw≈195、1 节电池 130、3 节电池 269（都已含缩放）。
-//    用一个固定的 ±390 夹中心，3 节电池会伸出桌沿 160 mm —— 必须按各自的 bounds 算。
-const EDGE = 10;                                             // 器材外缘离桌沿留的余量
+const KIT_SCALE = 0.68;                               // 器材整体缩放（相对 1:1 建模）
+const EDGE = 14;                                      // 器材外缘离桌沿留的余量
+
+// 器材半宽 / 半深（已乘 KIT_SCALE）。api.bounds 是 1:1 建模值，别直接拿来夹位置。
 function boundsOf(it) {
-  return (it && it.api && it.api.bounds) || { hw: 120, hd: 60 };
+  const b = (it && it.api && it.api.bounds) || { hw: 120, hd: 60 };
+  const k = (it && it.scale) || KIT_SCALE;
+  return { hw: b.hw * k, hd: b.hd * k };
 }
 function limitOf(it) {
   const b = boundsOf(it);
   return {
-    x: Math.max(30, TABLE_W / 2 - b.hw - EDGE),
-    z: Math.max(30, TABLE_D / 2 - b.hd - EDGE),
+    x: Math.max(30, DESK.w / 2 - b.hw - EDGE),
+    z: Math.max(30, DESK.d / 2 - b.hd - EDGE),
   };
+}
+// 台面上真正能摆东西的矩形（前沿 +z、后沿 −z）
+function placeArea() {
+  return { x: DESK.w / 2 - EDGE - 40, zFront: DESK.d / 2 - EDGE - 46, zBack: -(DESK.d / 2 - EDGE - 46) };
 }
 
 // ============================================================
@@ -238,43 +256,82 @@ const matLamp = new THREE.MeshBasicMaterial({ color: 0xfff6e2 });
 })();
 
 // ============================================================
-//  实验桌
+//  实验桌（可扩展：DESK 一变就重建，见 resizeDesk）
+// ------------------------------------------------------------
+// 结构 = 台面 + 木色包边 + 拼接缝 + 桌腿（按宽度分段）+ 横梁 + 下层隔板。
+// 🔴 拼接缝是「无限拓展」的视觉线索：桌子变长时缝数跟着变多，
+//    学生看到的是一条可以一直加长的实验台，而不是一张被拉变形的桌子。
 // ============================================================
 const tableGroup = new THREE.Group();
 scene.add(tableGroup);
-(function buildTable() {
-  const top = new THREE.Mesh(new THREE.BoxGeometry(TABLE_W, TABLE_T, TABLE_D), matTop);
+function clearGroup(g) {
+  g.children.slice().forEach((o) => {
+    g.remove(o);
+    o.traverse((m) => {
+      if (m.isMesh) {
+        if (m.geometry && !m.geometry.userData.shared) m.geometry.dispose();
+        if (m.material && m.material.map && !m.material.userData.shared) m.material.dispose();
+      }
+    });
+  });
+}
+function buildTable() {
+  clearGroup(tableGroup);
+  const W = DESK.w, D = DESK.d;
+  const top = new THREE.Mesh(new THREE.BoxGeometry(W, TABLE_T, D), matTop);
   top.position.y = -TABLE_T / 2;
+  top.userData.role = 'deskTop';
   tableGroup.add(top);
   // 木色包边（一圈，比台面高一点点）
   const rimY = 2;
-  [[0, rimY, -TABLE_D / 2 - 4, TABLE_W + 16, 10, 8], [0, rimY, TABLE_D / 2 + 4, TABLE_W + 16, 10, 8],
-   [-TABLE_W / 2 - 4, rimY, 0, 8, 10, TABLE_D + 16], [TABLE_W / 2 + 4, rimY, 0, 8, 10, TABLE_D + 16]]
+  [[0, rimY, -D / 2 - 4, W + 16, 10, 8], [0, rimY, D / 2 + 4, W + 16, 10, 8],
+   [-W / 2 - 4, rimY, 0, 8, 10, D + 16], [W / 2 + 4, rimY, 0, 8, 10, D + 16]]
     .forEach(([x, y, z, w, h, d]) => {
       const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), matWood);
       m.position.set(x, y, z);
       tableGroup.add(m);
     });
-
-  // 四条方管桌腿 + 横梁
+  // 拼接缝：每 800 mm 一条
+  const seamMat = new THREE.MeshStandardMaterial({ color: 0x2b343d, roughness: 0.85, metalness: 0.04 });
+  for (let x = -W / 2 + 800; x < W / 2 - 40; x += 800) {
+    const seam = new THREE.Mesh(new THREE.BoxGeometry(3, 0.6, D - 16), seamMat);
+    seam.position.set(x, 0.2, 0);
+    tableGroup.add(seam);
+  }
+  // 桌腿：按宽度分段（每 ~840 mm 一档），保证长桌不「中间塌」
   const legH = TABLE_H - TABLE_T;
-  [-1, 1].forEach((sx) => [-1, 1].forEach((sz) => {
-    const leg = new THREE.Mesh(new THREE.BoxGeometry(52, legH, 52), matLeg);
-    leg.position.set(sx * (TABLE_W / 2 - 70), -TABLE_T - legH / 2, sz * (TABLE_D / 2 - 60));
-    tableGroup.add(leg);
-    const foot = new THREE.Mesh(new THREE.BoxGeometry(64, 12, 64), matCabinetDark);
-    foot.position.set(sx * (TABLE_W / 2 - 70), FLOOR_Y + 6, sz * (TABLE_D / 2 - 60));
-    tableGroup.add(foot);
-  }));
+  const bays = Math.max(2, Math.round(W / 840) + 1);
+  for (let i = 0; i < bays; i++) {
+    const lx = bays === 1 ? 0 : (-W / 2 + 70) + (W - 140) * (i / (bays - 1));
+    [-1, 1].forEach((sz) => {
+      const leg = new THREE.Mesh(new THREE.BoxGeometry(52, legH, 52), matLeg);
+      leg.position.set(lx, -TABLE_T - legH / 2, sz * (D / 2 - 60));
+      tableGroup.add(leg);
+      const foot = new THREE.Mesh(new THREE.BoxGeometry(64, 12, 64), matCabinetDark);
+      foot.position.set(lx, FLOOR_Y + 6, sz * (D / 2 - 60));
+      tableGroup.add(foot);
+    });
+  }
   [-1, 1].forEach((sz) => {
-    const beam = new THREE.Mesh(new THREE.BoxGeometry(TABLE_W - 180, 34, 34), matLeg);
-    beam.position.set(0, -TABLE_T - legH + 90, sz * (TABLE_D / 2 - 60));
+    const beam = new THREE.Mesh(new THREE.BoxGeometry(W - 180, 34, 34), matLeg);
+    beam.position.set(0, -TABLE_T - legH + 90, sz * (D / 2 - 60));
     tableGroup.add(beam);
   });
-  const shelf = new THREE.Mesh(new THREE.BoxGeometry(TABLE_W - 220, 16, TABLE_D - 160), matCabinetDark);
+  const shelf = new THREE.Mesh(new THREE.BoxGeometry(W - 220, 16, D - 160), matCabinetDark);
   shelf.position.set(0, -TABLE_T - legH + 110, 0);
   tableGroup.add(shelf);
-})();
+}
+buildTable();
+// 桌面尺寸变化 ⇒ 重建 + 重新取景（器材的世界坐标不动，桌子绕中心长大）
+function resizeDesk(w, d) {
+  const nw = Math.min(DESK_MAX.w, Math.max(DESK_MIN.w, Math.round(w / DESK_STEP) * DESK_STEP));
+  const nd = Math.min(DESK_MAX.d, Math.max(DESK_MIN.d, Math.round(d / DESK_STEP) * DESK_STEP));
+  if (nw === DESK.w && nd === DESK.d) return false;
+  DESK.w = nw; DESK.d = nd;
+  buildTable();
+  fitToDesk();
+  return true;
+}
 
 // 灯光
 scene.add(new THREE.HemisphereLight(0xeaf3ff, 0x2b3644, 0.72));
@@ -292,29 +349,59 @@ scene.add(rim);
 //  相机（轨道）
 // ============================================================
 const cam = {
-  yaw: -0.34, pitch: 0.28, dist: 1360,
-  target: new THREE.Vector3(0, 215, 0),
-  yawT: -0.34, pitchT: 0.28, distT: 1360,
-  targetT: new THREE.Vector3(0, 215, 0),
+  yaw: -0.34, pitch: 0.30, dist: 2200,
+  target: new THREE.Vector3(0, 150, 0),
+  yawT: -0.34, pitchT: 0.30, distT: 2200,
+  targetT: new THREE.Vector3(0, 150, 0),
 };
+// 视角只描述「从哪看」，距离一律由 fitDistance() 按桌面尺寸现算 ——
+// 桌面会随器材增长，写死 dist 的话加几件器材桌子就出画了。
 const VIEWS = {
-  persp:   { yaw: -0.34, pitch: 0.28, dist: 1360, target: [0, 215, 0] },
-  front:   { yaw: 0, pitch: 0.14, dist: 1240, target: [0, 230, 0] },
-  top:     { yaw: 0, pitch: 1.02, dist: 1240, target: [0, 60, 0] },
-  closeup: { yaw: -0.26, pitch: 0.24, dist: 940, target: [0, 130, 0] },
+  persp:   { yaw: -0.34, pitch: 0.40, k: 1.00, target: [0, 80, 0] },
+  front:   { yaw: 0,     pitch: 0.20, k: 0.98, target: [0, 130, 0] },
+  top:     { yaw: 0,     pitch: 1.06, k: 0.98, target: [0, 40, 0] },
+  closeup: { yaw: -0.26, pitch: 0.34, k: 0.66, target: [0, 40, 0] },
 };
-function aspectScale() {
-  // 竖屏（手机）水平视野 = 竖直视野 × aspect，aspect≈0.8 时同样的距离只剩 80% 的横向范围
-  return camera.aspect < 1.05 ? 0.66 : 1;
+// 取景：把 DESK 完整框进【没被器材箱挡住的那块画幅】里。
+// 🔴 器材箱是舞台内的浮层（全屏里也在），它压着画面左侧约 210 px。
+//    只按整幅画面取景的话，最左边那件器材永远躲在箱子后面 ——
+//    所以可用宽度要扣掉这一段，再把桌子在画面上整体往右推半个被挡宽度。
+const KIT_PX = 210;
+function kitFrac() {
+  const cw = Math.max(620, canvas.clientWidth || 1200);
+  return Math.min(0.26, KIT_PX / cw);
+}
+function fitFrame(pitch, k) {
+  const fovV = (camera.fov * Math.PI) / 180;
+  const f = kitFrac();
+  // 🔴 spanW 必须 ≥ 整张桌面宽度：器材是铺满桌面排的，只框 74% 的话最右那件
+  //    一定出画（实测「电流表被裁掉一半」）。这里取 1.04 留一点点呼吸边。
+  const spanW = (DESK.w * 1.04) / Math.max(0.5, 1 - f);
+  const spanH = Math.max(420, DESK.d * Math.sin(Math.max(0.12, pitch)) + 340);
+  const dW = (spanW / 2) / (Math.tan(fovV / 2) * Math.max(0.45, camera.aspect));
+  const dH = (spanH / 2) / Math.tan(fovV / 2);
+  return {
+    dist: Math.max(dW, dH) * 1.02 * (k || 1),
+    tx: -DESK.w * f * 0.5,
+  };
 }
 function applyView(name) {
   const v = VIEWS[name] || VIEWS.persp;
   state.view = name;
-  cam.yawT = v.yaw; cam.pitchT = v.pitch; cam.distT = v.dist * aspectScale();
-  cam.targetT.set(v.target[0], v.target[1], v.target[2]);
+  const fr = fitFrame(v.pitch, v.k);
+  cam.yawT = v.yaw; cam.pitchT = v.pitch;
+  cam.distT = fr.dist;
+  cam.targetT.set(fr.tx + (v.target[0] || 0), v.target[1], v.target[2]);
   document.querySelectorAll('.tb-funcs [data-view]').forEach((b) => {
     b.classList.toggle('on', b.dataset.view === name);
   });
+}
+// 桌面长大 / 画幅变化 ⇒ 当前视角重新取一次景（不跳视角，只拉远）
+function fitToDesk() {
+  const v = VIEWS[state.view] || VIEWS.persp;
+  const fr = fitFrame(v.pitch, v.k);
+  cam.distT = fr.dist;
+  cam.targetT.x = fr.tx + (v.target[0] || 0);
 }
 function updateCamera() {
   cam.yaw += (cam.yawT - cam.yaw) * 0.18;
@@ -363,40 +450,62 @@ const META = {};
 CATALOG.forEach((c) => { META[c.key || c.type] = c; });
 const metaOf = (it) => META[it.key || it.type] || META[it.type] || { label: it.type };
 
-// 货架式排布游标：从桌面前沿左侧开始，一台一台往右摆，放不下就换行。
-const pack = { x: 0, z: 80, depth: 0 };
-function resetPack() { pack.x = -PLACE.x; pack.z = 80; pack.depth = 0; }
-resetPack();
-function nextSlot(b) {
-  const bb = b || { hw: 120, hd: 60 };
-  const gap = 16;
-  const usable = PLACE.x * 2;
-  const closeRow = () => {
-    if (pack.depth > 0) {
-      pack.z -= (pack.depth + 30);
-      pack.depth = 0;
-      pack.x = -PLACE.x;
+// ── 有序排布 ──────────────────────────────────────────────────
+// 规则：先按器材总宽定桌面宽度，再分行、每行【居中】摆；桌深不够就加长桌子。
+// 🔴 旧版是一个从左往右的游标，器材永远贴着桌子左前沿堆 ⇒ 桌面明明很大，
+//    东西却挤在角上。这里每次新增都【整桌重排一遍】，每行按实际总宽居中。
+// 🔴 桌面尺寸【跟着内容走】：器材少时是一张普通实验台，器材多了自动变长 ——
+//    这才是「无限拓展的实验桌」，而不是一张固定大桌子让器材缩在中间。
+// 🔴 用户手动拖过的器材（auto=false）不参与重排，位置归他自己。
+const ROW_MAX_W = 2200;      // 一行最多摆这么宽，超了才换行（能一行排开就一行，前后不遮挡）
+const ROW_GAP = 58;
+function relayoutAuto() {
+  const autos = items.filter((it) => it.auto !== false);
+  if (!autos.length) return;
+  const bs = autos.map((o) => boundsOf(o));
+  const totalW = bs.reduce((s, b) => s + b.hw * 2, 0) + ROW_GAP * (autos.length - 1);
+  // ① 桌面宽度：装得下就一行摆完，最多 ROW_MAX_W
+  const padX = EDGE * 2 + 60;
+  resizeDesk(Math.min(ROW_MAX_W, totalW) + padX, DESK.d);
+  // ② 分组
+  const rows = [];
+  let row = [], rowW = 0;
+  const usable = placeArea().x * 2;
+  autos.forEach((o, i) => {
+    const w = bs[i].hw * 2;
+    if (row.length && rowW + ROW_GAP + w > usable) {
+      rows.push({ items: row, w: rowW, i0: i - row.length, bs: bs.slice(i - row.length, i) });
+      row = []; rowW = 0;
     }
-  };
-  // 这一行连两台都放不下（电池 / 变阻器都这么大）⇒ 直接居中、独占一行。
-  // 否则会一路贴着桌面左边排，看着像「东西都堆在角落」。
-  if ((bb.hw * 2 + gap) * 2 > usable) {
-    closeRow();
-    const slot = { x: 0, z: pack.z };
-    pack.z -= (bb.hd * 2 + 30);
-    pack.x = -PLACE.x;
-    pack.depth = 0;
-    return slot;
-  }
-  if (pack.x + bb.hw * 2 > PLACE.x) closeRow();
-  const slot = { x: pack.x + bb.hw, z: pack.z };
-  pack.x += bb.hw * 2 + gap;
-  pack.depth = Math.max(pack.depth, bb.hd * 2);
-  return slot;
+    if (row.length) rowW += ROW_GAP;
+    row.push(o); rowW += w;
+  });
+  if (row.length) rows.push({ items: row, w: rowW, i0: autos.length - row.length, bs: bs.slice(autos.length - row.length) });
+  // ③ 桌深：行高之和 + 边距
+  const need = rows.reduce((s, r) => s + Math.max(...r.bs.map((b) => b.hd)) * 2 + ROW_GAP, 0) + EDGE * 2 + 100;
+  resizeDesk(DESK.w, need);
+  // ④ 逐行居中摆（居中就好 —— 「避开器材箱」由相机 target 负责，见 fitFrame 的 tx：
+  //    器材和桌面同中心，取景按桌面算就一定装得下，不会出现「偏右那件被裁掉」）
+  const a = placeArea();
+  let z = a.zFront;
+  rows.forEach((r) => {
+    const maxHd = Math.max(...r.bs.map((b) => b.hd));
+    let cx = -r.w / 2;
+    r.items.forEach((o, i) => {
+      const b = r.bs[i];
+      // 夹进桌面：右移让位后，最右那件可能压到桌沿外（自检 onTable 会红）
+      const lim = limitOf(o);
+      o.group.position.x = Math.max(-lim.x, Math.min(lim.x, cx + b.hw));
+      o.group.position.z = z - maxHd;
+      cx += b.hw * 2 + ROW_GAP;
+      refreshWiresFor(o);
+    });
+    z -= maxHd * 2 + ROW_GAP;
+  });
 }
 
-// 器材「变宽」以后可能压到邻居身上（电池 2 节→3 节宽 390→540）：
-// 沿 x 找最近的空位挪过去，x 满了再往后一行。只挪自己，不动别人。
+// 器材「变宽」以后可能压到邻居身上（电池 2 节→3 节）：
+// 先沿 x 找最近的空位，x 满了再往后一行，都不行就把桌子加大。只挪自己，不动别人。
 function nudgeIfOverlap(item) {
   if (!item) return false;
   const b = boundsOf(item);
@@ -408,7 +517,7 @@ function nudgeIfOverlap(item) {
   });
   const x0 = item.group.position.x, z0 = item.group.position.z;
   if (!hit(x0, z0)) return false;
-  const lim = limitOf(item);
+  let lim = limitOf(item);
   for (let d = 20; d <= lim.x * 2; d += 20) {
     for (const sx of [1, -1]) {
       const x = x0 + sx * d;
@@ -421,7 +530,7 @@ function nudgeIfOverlap(item) {
       }
     }
   }
-  for (let d = 20; d <= TABLE_D; d += 20) {
+  for (let d = 20; d <= DESK.d; d += 20) {
     const z = z0 - d;
     if (z < -lim.z) break;
     if (!hit(x0, z)) {
@@ -430,6 +539,13 @@ function nudgeIfOverlap(item) {
       toast('器材变宽了，给它挪了个位置');
       return true;
     }
+  }
+  // 桌面实在挤不下 ⇒ 加长桌面，再整桌重排一遍
+  if (resizeDesk(DESK.w + DESK_STEP * 2, DESK.d + DESK_STEP)) {
+    relayoutAuto();
+    refreshWiresFor(item);
+    toast('桌面加长了，给器材腾出位置');
+    return true;
   }
   return false;
 }
@@ -441,23 +557,23 @@ function addItem(key, worldPos) {
   const api = build();
   const physType = (meta && meta.type) || key;
   const g = api.group;
-  // 默认落点：按【实际半宽】做货架式排布，本行放不下就换到后面一行。
-  // 🔴 写死间距一定会叠：器材放大 2.2~2.8 倍后，2 节电池宽约 390 mm、3 节 540 mm，
-  //    以前那套「-190 + (n%2)*380」在 3 台电池时直接互相穿模（实测）。
-  let x = 0, z = 0;
-  if (worldPos) {
-    x = worldPos.x; z = worldPos.z;
-  } else {
-    const slot = nextSlot(api.bounds);
-    x = slot.x; z = slot.z;
-  }
-  const lim = limitOf({ api });
-  g.position.set(clamp(x, -lim.x, lim.x), 0, clamp(z, -lim.z, lim.z));
+  // 器材统一缩放：1:1 建模时变阻器只有 130 mm，放在 1680 mm 的桌上只剩一小截；
+  // 放大 2.2 倍又显得「桌子小、元件大」。KIT_SCALE 取中间值，比例才对得上真实实验台。
+  g.scale.setScalar(KIT_SCALE);
   scene.add(g);
 
   itemSeq += 1;
-  const item = { id: 'c' + itemSeq, api, type: physType, key, group: g, el: null, Rmax: 20 };
+  // 拖放过来的器材位置由用户定（auto=false，不参与自动重排）；点卡片放的由 relayoutAuto 摆。
+  const item = { id: 'c' + itemSeq, api, type: physType, key, group: g, el: null, Rmax: 20,
+    scale: KIT_SCALE, auto: !worldPos };
   items.push(item);
+  if (worldPos) {
+    const lim = limitOf(item);
+    g.position.set(clamp(worldPos.x, -lim.x, lim.x), 0, clamp(worldPos.z, -lim.z, lim.z));
+  } else {
+    g.position.set(0, 0, 0);
+    relayoutAuto();
+  }
   buildLabel(item);
   select(item);
   syncUI();
@@ -488,7 +604,6 @@ function removeItem(item) {
 
 function clearAll() {
   items.slice().forEach(removeItem);
-  resetPack();
   wires.slice().forEach((w) => removeWire(w.id));
   cancelPending();
   selectWire(null);
@@ -543,7 +658,7 @@ function showPreview(p1, p2) {
     scene.add(previewWire);
   }
   if (previewWire.geometry) previewWire.geometry.dispose();
-  previewWire.geometry = wireGeoFor(p1, p2);
+  previewWire.geometry = wireGeoFor(p1, p2, 1);
   previewWire.visible = true;
 }
 function hidePreview() { if (previewWire) previewWire.visible = false; }
@@ -554,18 +669,43 @@ function termWorld(item, term) {
   return v;
 }
 
-function wireGeoFor(p1, p2) {
-  const mid = p1.clone().add(p2).multiplyScalar(0.5);
-  mid.y += 34 + p1.distanceTo(p2) * 0.16;      // 往上拱一点，像真导线那样垂着
-  return new THREE.TubeGeometry(new THREE.CatmullRomCurve3([p1, mid, p2]), 48, 3.1, 10, false);
+// ── 导线几何 ──────────────────────────────────────────────────
+// 🔴🔴 真导线是【软的】：从接线柱顶端出来，往下一沉就贴在桌面上，
+//    在桌面上自然绕一道弯，再爬上另一个柱子。旧版把中点往上抬
+//    「34 + 距离×0.16」，两根柱之间架起一道拱桥 —— 那是硬铁丝，不是导线。
+//    现在的走法（全程不高于柱顶，绝大部分贴着桌面）：
+//        柱顶 → 垂直引出 6~14 mm → 落到桌面 3.4 mm → 桌面弧线 → 爬上另一柱
+const WIRE_R = 3.0;
+const WIRE_G = 5.6;           // 桌面段离台面的高度（≈ 导线半径 ×1.9：
+                              // CatmullRom 在两端会下冲一点，抬到 5.6 才不会陷进台面）
+function wireGeoFor(p1, p2, side) {
+  const d = p1.distanceTo(p2);
+  const lift = Math.min(13, 5 + d * 0.035);
+  const q1 = p1.clone(); q1.y += lift;
+  const q2 = p2.clone(); q2.y += lift;
+  const a1 = new THREE.Vector3(p1.x, WIRE_G, p1.z);
+  const a2 = new THREE.Vector3(p2.x, WIRE_G, p2.z);
+  // 桌面段向【连线的一侧】弯出去：同一件器材的两个柱在前缘，导线就绕过它前面走，
+  // 不会从器材身上穿过去。
+  const dx = a2.x - a1.x, dz = a2.z - a1.z;
+  const len = Math.hypot(dx, dz) || 1;
+  const bend = Math.min(84, 12 + len * 0.2) * (side < 0 ? -1 : 1);
+  const mid = new THREE.Vector3(
+    (a1.x + a2.x) / 2 - (dz / len) * bend,
+    WIRE_G + Math.min(9, 2 + len * 0.02),          // 中段微微离桌一点，像有自重
+    (a1.z + a2.z) / 2 + (dx / len) * bend
+  );
+  const curve = new THREE.CatmullRomCurve3([p1, q1, a1, mid, a2, q2, p2], false, 'catmullrom', 0.4);
+  return new THREE.TubeGeometry(curve, 72, WIRE_R, 10, false);
 }
 
 function addWire(a, b) {
-  const mesh = new THREE.Mesh(wireGeoFor(termWorld(a.item, a.term), termWorld(b.item, b.term)), wireMat);
   wireSeq += 1;
+  const side = wireSeq % 2 ? 1 : -1;      // 相邻导线往两侧弯，不会叠成一条
+  const mesh = new THREE.Mesh(wireGeoFor(termWorld(a.item, a.term), termWorld(b.item, b.term), side), wireMat);
   mesh.userData.wireId = wireSeq;
   scene.add(mesh);
-  wires.push({ id: wireSeq, a, b, mesh });
+  wires.push({ id: wireSeq, a, b, mesh, side });
   syncUI();
   recompute();
   toast(a.term + ' → ' + b.term + ' 接上了');
@@ -593,7 +733,7 @@ function refreshWiresFor(item) {
   wires.forEach((w) => {
     if (w.a.item === item || w.b.item === item) {
       w.mesh.geometry.dispose();
-      w.mesh.geometry = wireGeoFor(termWorld(w.a.item, w.a.term), termWorld(w.b.item, w.b.term));
+      w.mesh.geometry = wireGeoFor(termWorld(w.a.item, w.a.term), termWorld(w.b.item, w.b.term), w.side);
     }
   });
 }
@@ -772,8 +912,8 @@ function updateLabels() {
   items.forEach((item) => {
     if (!item.el) return;
     if (!state.labels) { item.el.classList.add('off'); return; }
-    // 标签高度按器材自己的 topY（表、焦耳演示器比小器材高得多）
-    const ly = (item.api && item.api.topY) || 190;
+    // 标签高度按器材自己的 topY（表、焦耳演示器比小器材高得多），再乘器材缩放
+    const ly = ((item.api && item.api.topY) || 190) * (item.scale || 1);
     const p = new THREE.Vector3(item.group.position.x, ly, item.group.position.z).project(camera);
     if (p.z > 1 || p.z < -1) { item.el.classList.add('off'); return; }
     const x = (p.x * 0.5 + 0.5) * W;
@@ -958,6 +1098,8 @@ canvas.addEventListener('pointermove', (e) => {
 
 canvas.addEventListener('pointerup', (e) => {
   canvas.classList.remove('grabbing');
+  // 用户亲手拖过的器材就归他摆：之后新增器材不再把它重排走
+  if (drag && drag.item && drag.moved >= 6) drag.item.auto = false;
   if (drag && drag.mode === 'wire') {
     const from = drag.from;
     const h2 = pick(e.clientX, e.clientY);
@@ -1888,12 +2030,18 @@ $('cShadow').addEventListener('change', (e) => {
   items.forEach((it) => { if (it.api.shadow) it.api.shadow.visible = state.shadow; });
 });
 
-$('btnKit').addEventListener('click', () => {
-  const app = $('app');
-  app.classList.toggle('nokit');
-  $('btnKit').classList.toggle('on', !app.classList.contains('nokit'));
+// 器材箱开合（器材箱在舞台内部 ⇒ 全屏里也能开合）
+function setKitOpen(on) {
+  const box = $('kitbox'), op = $('kitOpen'), btn = $('btnKit');
+  if (!box) return;
+  box.classList.toggle('hide', !on);
+  if (op) op.classList.toggle('show', !on);
+  if (btn) btn.classList.toggle('on', on);
   layout();
-});
+}
+$('btnKit').addEventListener('click', () => setKitOpen($('kitbox').classList.contains('hide')));
+$('kitFold').addEventListener('click', () => setKitOpen(false));
+$('kitOpen').addEventListener('click', () => setKitOpen(true));
 $('btnSide').addEventListener('click', () => {
   const app = $('app');
   app.classList.toggle('noside');
@@ -1934,9 +2082,9 @@ function onFsChange() {
   fsBtn.setAttribute('aria-label', fsBtn.title);
   // 🔴 立刻两次：headless / 软件渲染下 rAF 与 setTimeout 都可能被主线程拖到很晚，
   //    只靠「晚一帧 + 兜底」实测只跑到 1 次（全屏判据要求 ≥2）。
+  // 全屏 / 退出全屏 ⇒ aspect 变了，按新画幅重新取一次景（否则桌面会出画或缩成一小块）
   fsLayout();
-  const k = aspectScale();
-  if (Math.abs(k - lastAspectK) > 0.01) { lastAspectK = k; applyView(state.view); }
+  applyView(state.view);
   fsLayout();
   requestAnimationFrame(() => requestAnimationFrame(fsLayout));
   setTimeout(fsLayout, 90);
@@ -1961,12 +2109,10 @@ function toast(msg) {
 // ============================================================
 layout();
 applyView('persp');
-let lastAspectK = aspectScale();
 window.addEventListener('resize', () => {
   layout();
-  // 跨过断点（手机竖屏 ↔ 桌面横屏）时重新取景，否则器材会一直太大/太小
-  const k = aspectScale();
-  if (Math.abs(k - lastAspectK) > 0.01) { lastAspectK = k; applyView(state.view); }
+  // 画幅一变（手机竖屏 ↔ 桌面横屏、拉窗口）就重新取景：桌面必须始终铺满画面
+  fitToDesk();
 });
 syncRoad();
 addItem('rheostat', null);        // 一进来桌上就有一台，不用先找器材库
@@ -1978,7 +2124,7 @@ setTimeout(() => { if (renderCount === 0) { layout(); render(); } }, 1200);
 // ============================================================
 window.__lab = {
   THREE, scene, camera, renderer, items, state, cam, DIM, CATALOG,
-  addItem, removeItem, clearAll, select, rotateSelected,
+  addItem, removeItem, clearAll, select, rotateSelected, recompute, relayoutAuto,
   get itemCount() { return items.length; },
   get layoutCalls() { return layoutCalls; },
   get fsLayouts() { return fsLayouts; },
@@ -2055,17 +2201,18 @@ window.__lab = {
     }
     return out;
   },
-  // 器材外缘是否都在桌面内
+  // 器材外缘是否都在桌面内（桌面会随器材长大，判据用当前 DESK）
   onTable() {
     return items.map((it) => {
       const b = boundsOf(it);
       return {
         type: it.type,
-        overX: +(Math.abs(it.group.position.x) + b.hw - TABLE_W / 2).toFixed(1),
-        overZ: +(Math.abs(it.group.position.z) + b.hd - TABLE_D / 2).toFixed(1),
+        overX: +(Math.abs(it.group.position.x) + b.hw - DESK.w / 2).toFixed(1),
+        overZ: +(Math.abs(it.group.position.z) + b.hd - DESK.d / 2).toFixed(1),
       };
     });
   },
+  get desk() { return { w: DESK.w, d: DESK.d, minW: DESK_MIN.w, minD: DESK_MIN.d }; },
   // ── 接线柱 / 导线（自检与后续接电源都要用）────────────────
   get wireCount() { return wires.length; },
   wireInfo() {
