@@ -13,7 +13,7 @@ import * as THREE from './assets/optics-three.min.js';
 import { CATALOG, buildRheostat, buildSwitch, buildBattery, buildBulb, buildMeter,
   buildStorageBattery, buildResistor, buildPower,
   buildResistanceBox, buildRheoboard, buildLed, buildJoule, buildCalorimeter,
-  buildPotentiometer, RBOARD_WIRES, DIM } from './lab3d-kit.js?build=25';
+  buildPotentiometer, RBOARD_WIRES, DIM } from './lab3d-kit.js?build=26';
 
 const $ = (id) => document.getElementById(id);
 
@@ -524,6 +524,7 @@ function nudgeIfOverlap(item) {
       if (Math.abs(x) > lim.x) continue;
       if (!hit(x, z0)) {
         item.group.position.x = x;
+        measureSolid(item);
         refreshWiresFor(item);
         toast('器材变宽了，给它挪了个位置');
         return true;
@@ -574,6 +575,7 @@ function addItem(key, worldPos) {
     g.position.set(0, 0, 0);
     relayoutAuto();
   }
+  measureSolid(item);
   buildLabel(item);
   select(item);
   syncUI();
@@ -612,6 +614,9 @@ function clearAll() {
 
 function select(item) {
   state.selected = item || null;
+  // 🔴 点了器材就把参数面板摊开：用户要的是「点一下就能看到它的参数」，
+  //    面板默认收起时，点器材只是高亮，参数藏在右上角一个小药丸后面，等于没有。
+  if (item) setParamsOpen(true);
   syncUI();
 }
 
@@ -630,8 +635,28 @@ let pending = null;         // { item, term } —— 已选中一个柱、等第
 let selectedWire = null;
 let pendingMark = null;
 
-const wireMat = new THREE.MeshStandardMaterial({ color: 0xb03a2e, roughness: 0.48, metalness: 0.22 });
-const wireMatSel = new THREE.MeshStandardMaterial({ color: 0xffa040, roughness: 0.4, metalness: 0.2 });
+// 导线颜色：真实实验台上一把导线就这几种颜色，学生靠颜色区分「哪根接哪」。
+// 每种颜色一份共享材质（不是每根一份），改色只换 material 引用。
+const WIRE_COLORS = [
+  { id: 'red', name: '红', hex: 0xb03a2e },
+  { id: 'black', name: '黑', hex: 0x22272f },
+  { id: 'blue', name: '蓝', hex: 0x2563eb },
+  { id: 'yellow', name: '黄', hex: 0xc99a12 },
+  { id: 'green', name: '绿', hex: 0x1f8a4c },
+];
+const wireMats = {}, wireMatsSel = {};
+WIRE_COLORS.forEach((c) => {
+  wireMats[c.id] = new THREE.MeshStandardMaterial({ color: c.hex, roughness: 0.48, metalness: 0.22 });
+  // 选中态用【同一颜色的亮版】而不是统一橙色：否则选中时改颜色根本看不出变化
+  // （实测：换成蓝色后材质仍是高亮色，学生以为没生效）。
+  const bright = new THREE.Color(c.hex).lerp(new THREE.Color(0xffffff), 0.42);
+  wireMatsSel[c.id] = new THREE.MeshStandardMaterial({
+    color: bright, roughness: 0.36, metalness: 0.2,
+    emissive: new THREE.Color(c.hex).multiplyScalar(0.35),
+  });
+});
+const wireMatOf = (w) => wireMats[(w && w.color) || 'red'] || wireMats.red;
+const wireMatSelOf = (w) => wireMatsSel[(w && w.color) || 'red'] || wireMatsSel.red;
 
 (function buildPendingMark() {
   const g = new THREE.Group();
@@ -678,7 +703,25 @@ function termWorld(item, term) {
 const WIRE_R = 3.0;
 const WIRE_G = 5.6;           // 桌面段离台面的高度（≈ 导线半径 ×1.9：
                               // CatmullRom 在两端会下冲一点，抬到 5.6 才不会陷进台面）
-function wireGeoFor(p1, p2, side) {
+// 某个桌面位置上「至少要抬到多高」才能从器材上面跨过去。
+// 🔴 不做这一步的话，导线从用电器身上穿过去，depthTest 会把它判成「跑到器材背后」——
+//    用户的原话是「从上面通过就该在上面」。这里读 item.solid（addItem 时量一次的实体包围盒，
+//    已经排除接触阴影那个大平面），导线经过谁就抬到谁顶上。
+function clearanceAt(x, z, skipA, skipB) {
+  let y = 0;
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i];
+    if (it === skipA || it === skipB || !it.solid) continue;
+    const s = it.solid;
+    if (Math.abs(x - (it.group.position.x + s.cx)) < s.hw - 2 &&
+        Math.abs(z - (it.group.position.z + s.cz)) < s.hd - 2) {
+      if (s.top + 5 > y) y = s.top + 5;
+    }
+  }
+  return y;
+}
+
+function wireGeoFor(p1, p2, side, skipA, skipB) {
   const d = p1.distanceTo(p2);
   const lift = Math.min(13, 5 + d * 0.035);
   const q1 = p1.clone(); q1.y += lift;
@@ -695,17 +738,32 @@ function wireGeoFor(p1, p2, side) {
     WIRE_G + Math.min(9, 2 + len * 0.02),          // 中段微微离桌一点，像有自重
     (a1.z + a2.z) / 2 + (dx / len) * bend
   );
-  const curve = new THREE.CatmullRomCurve3([p1, q1, a1, mid, a2, q2, p2], false, 'catmullrom', 0.4);
-  return new THREE.TubeGeometry(curve, 72, WIRE_R, 10, false);
+  // 桌面段采样：凡是压在别的器材上，就把这一点抬到那台器材顶上 —— 导线「搭过去」。
+  const span = [];
+  const N = 18;
+  for (let i = 1; i < N; i++) {
+    const t = i / N, u = 1 - t;
+    const x = u * u * a1.x + 2 * u * t * mid.x + t * t * a2.x;
+    const z = u * u * a1.z + 2 * u * t * mid.z + t * t * a2.z;
+    const y0 = u * u * a1.y + 2 * u * t * mid.y + t * t * a2.y;
+    span.push(new THREE.Vector3(x, Math.max(y0, clearanceAt(x, z, skipA, skipB)), z));
+  }
+  const curve = new THREE.CatmullRomCurve3(
+    // centripetal 比 catmullrom 少 overshoot：柱顶 → 桌面那段落得太急时，
+    // 老参数会把曲线甩到台面以下（实测 minY = −4.6）。
+    [p1, q1, a1].concat(span, [a2, q2, p2]), false, 'centripetal');
+  return new THREE.TubeGeometry(curve, 96, WIRE_R, 10, false);
 }
 
 function addWire(a, b) {
   wireSeq += 1;
   const side = wireSeq % 2 ? 1 : -1;      // 相邻导线往两侧弯，不会叠成一条
-  const mesh = new THREE.Mesh(wireGeoFor(termWorld(a.item, a.term), termWorld(b.item, b.term), side), wireMat);
+  const mesh = new THREE.Mesh(
+    wireGeoFor(termWorld(a.item, a.term), termWorld(b.item, b.term), side, a.item, b.item),
+    wireMats[(wireSeq % 2) ? 'red' : 'black']);
   mesh.userData.wireId = wireSeq;
   scene.add(mesh);
-  wires.push({ id: wireSeq, a, b, mesh, side });
+  wires.push({ id: wireSeq, a, b, mesh, side, color: (wireSeq % 2) ? 'red' : 'black' });
   syncUI();
   recompute();
   toast(a.term + ' → ' + b.term + ' 接上了');
@@ -725,7 +783,28 @@ function removeWire(id) {
 
 function selectWire(id) {
   selectedWire = id;
-  wires.forEach((w) => { w.mesh.material = (w.id === id) ? wireMatSel : wireMat; });
+  // 选中导线就取消器材的选中：参数面板只有一个，两边同时「选中」会打架
+  // （实测：先点过电池再点导线，面板一直显示电池参数，颜色块根本不出现）。
+  if (id != null && state.selected) { state.selected = null; }
+  wires.forEach((w) => { w.mesh.material = (w.id === id) ? wireMatSelOf(w) : wireMatOf(w); });
+  updateWireX();
+  buildParams();
+}
+
+// 选中导线时，在它中点放一个小叉（点一下剪断）。位置每帧跟着相机走。
+const wireXEl = $('wireX');
+function updateWireX() {
+  if (!wireXEl) return;
+  const w = selectedWire != null ? wires.find((x) => x.id === selectedWire) : null;
+  if (!w) { wireXEl.classList.remove('show'); return; }
+  if (!w.mesh.geometry.boundingBox) w.mesh.geometry.computeBoundingBox();
+  const c = w.mesh.geometry.boundingBox.getCenter(new THREE.Vector3());
+  const rect = canvas.getBoundingClientRect();
+  const q = c.clone().project(camera);
+  if (q.z > 1 || q.z < -1) { wireXEl.classList.remove('show'); return; }
+  wireXEl.classList.add('show');
+  wireXEl.style.left = ((q.x * 0.5 + 0.5) * rect.width).toFixed(1) + 'px';
+  wireXEl.style.top = ((-q.y * 0.5 + 0.5) * rect.height).toFixed(1) + 'px';
 }
 
 // 器材一动，挂在它身上的导线跟着重算
@@ -733,7 +812,8 @@ function refreshWiresFor(item) {
   wires.forEach((w) => {
     if (w.a.item === item || w.b.item === item) {
       w.mesh.geometry.dispose();
-      w.mesh.geometry = wireGeoFor(termWorld(w.a.item, w.a.term), termWorld(w.b.item, w.b.term), w.side);
+      w.mesh.geometry = wireGeoFor(termWorld(w.a.item, w.a.term), termWorld(w.b.item, w.b.term), w.side,
+        w.a.item, w.b.item);
     }
   });
 }
@@ -945,6 +1025,10 @@ function updateLabels() {
 //  拾取
 // ============================================================
 const raycaster = new THREE.Raycaster();
+// 接线柱的「射线-球」拾取半径（mm）：柱子本身直径约 9~12，留一点手指容错
+const TERM_PICK_R = 11;
+// 导线中心线的「点偏也算」半径（mm）
+const WIRE_HIT_R = 9;
 const ndc = new THREE.Vector2();
 const TABLE_PLANE = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
 
@@ -958,7 +1042,10 @@ function setRay(clientX, clientY) {
 // 返回 { item, onSlider, term, wireId, point }
 function pick(clientX, clientY) {
   setRay(clientX, clientY);
-  const targets = items.map((i) => i.group).concat(wires.map((w) => w.mesh));
+  // 🔴 拖动导线时原 mesh 被设成 visible=false，但 Raycaster【不看 visible】——
+  //    不过滤的话，拖动中的那根线照样会被命中，hover 判断全乱。
+  const targets = items.map((i) => i.group)
+    .concat(wires.filter((w) => w.mesh.visible).map((w) => w.mesh));
   const hits = raycaster.intersectObjects(targets, true);
   for (const h of hits) {
     // 导线：直接按 mesh 认
@@ -984,9 +1071,66 @@ function pick(clientX, clientY) {
       if (r.userData && r.userData.termId) { term = r.userData.termId; break; }
       r = r.parent;
     }
+    // 🔴 兜底：柱子 mesh 没打 termId 的器材（新增器材极容易漏，实测定值电阻、
+    //    蓄电池、学生电源、电阻箱、导线板、LED、焦耳、电热瓶、电位器九件全漏 ⇒
+    //    「两个接线柱接不上线」）。这里按「命中点离端子锚点多近」再判一次，
+    //    锚点就是 termLocal 转成世界坐标的那个点。
+    if (!term && item.api.termLocal) {
+      let best = null, bestD = 14;
+      Object.keys(item.api.termLocal).forEach((k) => {
+        const d = termWorld(item, k).distanceTo(h.point);
+        if (d < bestD) { bestD = d; best = k; }
+      });
+      term = best;
+    }
+    // 🔴 再兜底一层：柱子在器材壳【后面】时（干电池组的负极端就是这样），
+    //    射线先打到壳，命中点离柱子锚点很远 ⇒ 上面那层也救不回来。
+    //    这时改判「射线有没有从柱子的球里穿过」，有就算点中这个柱。
+    if (!term && item.api.termLocal) {
+      let best = null, bestD = Infinity;
+      const hitPt = new THREE.Vector3();
+      Object.keys(item.api.termLocal).forEach((k) => {
+        const sph = new THREE.Sphere(termWorld(item, k), TERM_PICK_R);
+        if (raycaster.ray.intersectSphere(sph, hitPt)) {
+          const dd = raycaster.ray.origin.distanceTo(hitPt);
+          if (dd < bestD) { bestD = dd; best = k; }
+        }
+      });
+      term = best;
+    }
     return { item, onSlider, term, point: h.point };
   }
+  // 🔴 导线只有 6 mm 粗，鼠标点偏两三毫米就「点空」了（用户的原话是「点击导线就可以」）。
+  //    这里补一层：射线到导线中心线的距离 < WIRE_HIT_R 也算点中。
+  const near = nearestWire(clientX, clientY);
+  if (near) return { item: null, wireId: near.id, point: near.point };
   return null;
+}
+
+// 射线到各导线中心线的最近距离（只在「什么都没点中」时兜底，避免抢走器材的点击）
+const _v3 = new THREE.Vector3();
+function nearestWire(clientX, clientY) {
+  if (!wires.length) return null;
+  setRay(clientX, clientY);
+  let best = null, bestD = WIRE_HIT_R, bestPt = null;
+  wires.forEach((w) => {
+    const pos = w.mesh.geometry.attributes.position;
+    if (!pos) return;
+    const stride = Math.max(1, Math.floor(pos.count / 80));
+    for (let i = 0; i < pos.count; i += stride) {
+      _v3.fromBufferAttribute(pos, i);
+      const d = raycaster.ray.distanceToPoint(_v3);
+      if (d < bestD) { bestD = d; best = w; bestPt = _v3.clone(); }
+    }
+  });
+  return best ? { id: best.id, point: bestPt } : null;
+}
+
+// 世界坐标 → 画布内像素（判断「拖的是导线哪一端」用）
+function screenOf(v) {
+  const rect = canvas.getBoundingClientRect();
+  const q = v.clone().project(camera);
+  return { x: (q.x * 0.5 + 0.5) * rect.width, y: (-q.y * 0.5 + 0.5) * rect.height };
 }
 
 function tablePoint(clientX, clientY) {
@@ -1005,15 +1149,32 @@ canvas.addEventListener('pointerdown', (e) => {
   const hit = pick(e.clientX, e.clientY);
   drag = {
     x: e.clientX, y: e.clientY, moved: 0,
-    mode: hit ? (hit.onSlider ? 'slide' : 'move') : 'orbit',
-    item: hit ? hit.item : null,
+    // 🔴 点中导线时 hit.item 是 null：这里必须先认 wireId，否则会掉进 move 分支
+    //    去读 hit.item.group（实测直接抛 TypeError，拖动整根线就废了）。
+    mode: hit ? (hit.onSlider ? 'slide' : (hit.wireId ? 'wireDrag' : 'move')) : 'orbit',
+    item: (hit && !hit.wireId) ? hit.item : null,
     offX: 0, offZ: 0,
   };
-  if (hit && drag.mode === 'move') {
+  if (hit && drag.mode === 'move' && drag.item) {
     const p = tablePoint(e.clientX, e.clientY);
     if (p) {
       drag.offX = hit.item.group.position.x - p.x;
       drag.offZ = hit.item.group.position.z - p.z;
+    }
+  }
+  if (hit && hit.wireId) {
+    // 按在导线上 = 准备把它从接线柱上【拔下来】：哪一端离手近就拔哪一端
+    const w = wires.find((x) => x.id === hit.wireId);
+    if (w) {
+      drag.mode = 'wireDrag';
+      drag.wire = w;
+      const pa = screenOf(termWorld(w.a.item, w.a.term));
+      const pb = screenOf(termWorld(w.b.item, w.b.term));
+      const da = Math.hypot(pa.x - e.clientX, pa.y - e.clientY);
+      const db = Math.hypot(pb.x - e.clientX, pb.y - e.clientY);
+      drag.end = da <= db ? 'a' : 'b';
+      w.mesh.visible = false;         // 拖动期间先藏起来，不然会和预览线叠成两根
+      selectWire(w.id);
     }
   }
   if (hit && hit.term) {
@@ -1052,6 +1213,20 @@ canvas.addEventListener('pointermove', (e) => {
   drag.moved += Math.abs(dx) + Math.abs(dy);
   drag.x = e.clientX; drag.y = e.clientY;
 
+  if (drag.mode === 'wireDrag') {
+    const w = drag.wire;
+    const fixed = drag.end === 'a' ? w.b : w.a;
+    const from = termWorld(fixed.item, fixed.term);
+    const h2 = pick(e.clientX, e.clientY);
+    drag.hover = h2 && h2.term ? { item: h2.item, term: h2.term } : null;
+    if (drag.hover) {
+      showPreview(from, termWorld(h2.item, h2.term));
+    } else {
+      const p = tablePoint(e.clientX, e.clientY);
+      if (p) showPreview(from, new THREE.Vector3(p.x, WIRE_G, p.z));
+    }
+    return;
+  }
   if (drag.mode === 'wire') {
     const from = termWorld(drag.from.item, drag.from.term);
     const h2 = pick(e.clientX, e.clientY);
@@ -1061,11 +1236,18 @@ canvas.addEventListener('pointermove', (e) => {
       drag.hover = { item: h2.item, term: h2.term };
     } else {
       drag.hover = null;
-      // 没落在柱上就跟着鼠标走：射线打在与起点等高的水平面上
-      const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -from.y);
-      setRay(e.clientX, e.clientY);
-      const p = new THREE.Vector3();
-      if (raycaster.ray.intersectPlane(plane, p)) end = p;
+      // 🔴 没落在柱上就跟着鼠标走。原来用的是「与起点等高的水平面」（柱顶 ~66 mm），
+      //    鼠标斜着看过去，射线在那块高平面上打出的点会飞出去很远 —— 看着就是
+      //    「导线不跟手」。现在打【桌面】平面：终点就压在鼠标底下，和松手后长出来的
+      //    导线是同一个落点。
+      const p = tablePoint(e.clientX, e.clientY);
+      if (p) {
+        end = new THREE.Vector3(p.x, WIRE_G, p.z);
+      } else {
+        const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -from.y);
+        setRay(e.clientX, e.clientY);
+        if (raycaster.ray.intersectPlane(plane, p)) end = p;
+      }
     }
     if (end) showPreview(from, end);
     return;
@@ -1100,6 +1282,32 @@ canvas.addEventListener('pointerup', (e) => {
   canvas.classList.remove('grabbing');
   // 用户亲手拖过的器材就归他摆：之后新增器材不再把它重排走
   if (drag && drag.item && drag.moved >= 6) drag.item.auto = false;
+  if (drag && drag.mode === 'wireDrag') {
+    hidePreview();
+    const w = drag.wire;
+    // 🔴 只是「点了一下」导线（没拖动）：只选中它，不能当成拔掉 ——
+    //    否则点导线看颜色，线当场就没了。
+    if (drag.moved < 6) {
+      w.mesh.visible = true;
+      selectWire(w.id);
+      drag = null;
+      return;
+    }
+    const fixed = drag.end === 'a' ? w.b : w.a;
+    const movingTerm = (drag.end === 'a' ? w.a : w.b).term;
+    const h2 = pick(e.clientX, e.clientY);
+    const canAttach = h2 && h2.term && !(h2.item === fixed.item && h2.term === fixed.term);
+    removeWire(w.id);                       // 旧的先剪掉（拖动期间已经藏起来了）
+    if (canAttach) {
+      addWire({ item: fixed.item, term: fixed.term }, { item: h2.item, term: h2.term });
+      toast('导线改接到 ' + h2.term + ' 柱上了');
+    } else {
+      toast('导线已从 ' + movingTerm + ' 柱上拔掉');
+    }
+    selectWire(null);
+    drag = null;
+    return;
+  }
   if (drag && drag.mode === 'wire') {
     const from = drag.from;
     const h2 = pick(e.clientX, e.clientY);
@@ -1144,7 +1352,14 @@ canvas.addEventListener('pointerup', (e) => {
   }
   drag = null;
 });
-canvas.addEventListener('pointercancel', () => { drag = null; canvas.classList.remove('grabbing'); });
+canvas.addEventListener('pointercancel', () => {
+  if (drag && drag.mode === 'wireDrag' && drag.wire) {
+    hidePreview();
+    removeWire(drag.wire.id);
+  }
+  drag = null;
+  canvas.classList.remove('grabbing');
+});
 
 canvas.addEventListener('wheel', (e) => {
   e.preventDefault();
@@ -1161,9 +1376,35 @@ window.addEventListener('keydown', (e) => {
   }
 });
 
+// 量一件器材的「实体包围盒」（相对 group 原点的偏移 + 半宽半深 + 顶面绝对高度）。
+// 🔴 必须排除接触阴影：那是块比器材宽 1.6 倍的大平面，混进来会让导线在离器材
+//    还有十几毫米的地方就开始爬坡，看着像「无缘无故拱起来」。
+function measureSolid(item) {
+  const g = item.group;
+  g.updateWorldMatrix(true, true);
+  const box = new THREE.Box3(), tmp = new THREE.Box3();
+  g.traverse((o) => {
+    if (!o.isMesh || !o.geometry) return;
+    if (item.api.shadow && o === item.api.shadow) return;
+    if (o.userData.role === 'shadow') return;
+    tmp.setFromObject(o);
+    if (!tmp.isEmpty()) box.union(tmp);
+  });
+  if (box.isEmpty()) { item.solid = null; return; }
+  item.solid = {
+    cx: (box.min.x + box.max.x) / 2 - g.position.x,
+    cz: (box.min.z + box.max.z) / 2 - g.position.z,
+    hw: (box.max.x - box.min.x) / 2,
+    hd: (box.max.z - box.min.z) / 2,
+    top: box.max.y,
+  };
+}
+
 function rotateSelected() {
   if (!state.selected) { toast('先点一台器材'); return; }
   state.selected.group.rotation.y += Math.PI / 2;
+  measureSolid(state.selected);
+  refreshWiresFor(state.selected);
 }
 
 // ============================================================
@@ -1174,6 +1415,7 @@ function render() {
   renderer.render(scene, camera);
   renderCount++;
   updateLabels();
+  updateWireX();
 }
 function loop(t) {
   // 🔴 dt 上限放到 0.1：软件渲染/低端机上一帧可能 300 ms，clamp 到 0.05 会让
@@ -1241,6 +1483,112 @@ const ICONS = {
     '<path d="M13 10q9-5 18 0" stroke="#94a3b8"/></g></svg>',
 };
 
+// ============================================================
+//  器材库缩略图：用一台【离屏 WebGL】把真器材拍成小图
+// ------------------------------------------------------------
+// 🔴 以前卡片上是一套手绘 SVG（`ICONS`），只覆盖 6 件，其余全靠兜底 ——
+//    用户的原话是「缩略图没做好，要和它是一样的」。手绘再怎么画也不可能和
+//    建模一致，所以干脆【拍真身】：同一个 buildXxx()、同一套光照，渲染成 PNG。
+//    以后新增器材自动有图，不用再画一遍。
+// ============================================================
+let thumbR = null, thumbScene = null, thumbCam = null;
+const THUMB_W = 176, THUMB_H = 132;
+function ensureThumb() {
+  if (thumbR) return true;
+  try {
+    const cv = document.createElement('canvas');
+    cv.width = THUMB_W; cv.height = THUMB_H;
+    thumbR = new THREE.WebGLRenderer({ canvas: cv, antialias: true, alpha: false, preserveDrawingBuffer: true });
+    thumbR.setPixelRatio(1);
+    if ('outputColorSpace' in thumbR) thumbR.outputColorSpace = THREE.SRGBColorSpace;
+    thumbR.toneMapping = THREE.ACESFilmicToneMapping;
+    thumbR.toneMappingExposure = 1.18;
+    thumbR.setClearColor(0xe9eff7, 1);
+    thumbScene = new THREE.Scene();
+    thumbScene.environment = scene.environment;
+    thumbScene.add(new THREE.HemisphereLight(0xffffff, 0x9aa9bb, 2.0));
+    const d1 = new THREE.DirectionalLight(0xffffff, 2.3);
+    d1.position.set(260, 380, 460);
+    thumbScene.add(d1);
+    const d2 = new THREE.DirectionalLight(0xbcd8ff, 0.6);
+    d2.position.set(-340, 200, -260);
+    thumbScene.add(d2);
+    thumbCam = new THREE.PerspectiveCamera(32, THUMB_W / THUMB_H, 1, 60000);
+    return true;
+  } catch (e) {
+    thumbR = null;
+    return false;
+  }
+}
+
+// 拍一件器材（1:1 尺寸，斜上前方看，和它在桌面上的角度一致）
+function thumbDataUrl(buildFn) {
+  if (!ensureThumb()) return null;
+  let api = null;
+  try {
+    api = buildFn();
+    const g = api.group;
+    g.scale.setScalar(1);
+    g.position.set(0, 0, 0);
+    thumbScene.add(g);
+    g.updateWorldMatrix(true, true);
+    const box = new THREE.Box3(), tmp = new THREE.Box3();
+    g.traverse((o) => {
+      if (!o.isMesh || !o.geometry) return;
+      if (api.shadow && o === api.shadow) return;      // 接触阴影会把包围盒撑大
+      tmp.setFromObject(o);
+      if (!tmp.isEmpty()) box.union(tmp);
+    });
+    if (box.isEmpty()) { thumbScene.remove(g); return null; }
+    const c = box.getCenter(new THREE.Vector3());
+    const size = box.getSize(new THREE.Vector3());
+    const rad = Math.max(size.x, size.y, size.z) * 0.5;
+    const fov = (thumbCam.fov * Math.PI) / 180;
+    const dist = (rad / Math.sin(fov / 2)) * 1.06;
+    const dir = new THREE.Vector3(0.6, 0.62, 0.9).normalize();
+    thumbCam.position.copy(c).addScaledVector(dir, dist);
+    thumbCam.lookAt(c);
+    thumbCam.near = Math.max(0.4, dist - rad * 4);
+    thumbCam.far = dist + rad * 8;
+    thumbCam.updateProjectionMatrix();
+    thumbR.render(thumbScene, thumbCam);
+    const url = thumbR.domElement.toDataURL('image/png');
+    thumbScene.remove(g);
+    g.traverse((o) => {
+      if (o.isMesh && o.geometry && !o.geometry.userData.shared) o.geometry.dispose();
+    });
+    return url;
+  } catch (e) {
+    return null;
+  }
+}
+
+// 逐件补图（一件一帧，别把首屏卡住）
+function paintThumbs() {
+  const cards = Array.prototype.slice.call(paletteEl.querySelectorAll('.kit-card'));
+  let i = 0;
+  const step = () => {
+    if (i >= cards.length) {
+      if (thumbR) { try { thumbR.forceContextLoss(); thumbR.dispose(); } catch (_) {} thumbR = null; }
+      return;
+    }
+    const card = cards[i++];
+    const meta = META[card.dataset.key];
+    const build = meta && meta.build;
+    if (build) {
+      const url = thumbDataUrl(build);
+      if (url) {
+        const ic = card.querySelector('.ic');
+        if (ic) ic.innerHTML = '<img src="' + url + '" alt="">';
+      }
+    }
+    // 0 ms 间隔：headless / 后台标签页会把 setTimeout 节流到 ~1 s，
+    // 用 12 ms 实测 6 秒只补出 7 张图。
+    setTimeout(step, 0);
+  };
+  setTimeout(step, 240);
+}
+
 const paletteEl = $('palette');
 function buildPalette() {
   CATALOG.forEach((c) => {
@@ -1256,6 +1604,7 @@ function buildPalette() {
   });
 }
 buildPalette();
+paintThumbs();
 
 // 点击放一台 / 按住拖到桌面松手放
 let cardDrag = null;
@@ -1335,9 +1684,42 @@ paramsBox.addEventListener('wheel', (e) => e.stopPropagation(), { passive: true 
 let pSlideEl = null, pSlideOut = null, pRmaxEl = null, pRmaxOut = null;
 
 function buildParams() {
+  const delBtn = $('paramsDel');
+  if (delBtn) delBtn.classList.toggle('show', !!state.selected);
   const it = state.selected;
+  // ── 选中的是导线：换颜色 / 剪断 ────────────────────────────
+  const selW = selectedWire != null ? wires.find((w) => w.id === selectedWire) : null;
+  if (!it && selW) {
+    pSlideEl = pSlideOut = pRmaxEl = pRmaxOut = null;
+    pSel.innerHTML =
+      '<div class="lab3d-field">' +
+        '<label>导线颜色</label>' +
+        '<div class="wire-colors">' +
+          WIRE_COLORS.map((c) => '<button type="button" data-wc="' + c.id + '"' +
+            (selW.color === c.id ? ' class="on"' : '') +
+            ' style="background:#' + c.hex.toString(16).padStart(6, '0') + '"' +
+            ' title="' + c.name + '色">' + c.name + '</button>').join('') +
+        '</div>' +
+        '<small>这根线接在 <b>' + selW.a.term + '</b> 与 <b>' + selW.b.term + '</b> 之间。' +
+        '按住导线的任意一端往外拖，就能把它从接线柱上<b>拔下来</b>。</small>' +
+      '</div>' +
+      '<div class="lab3d-btnrow">' +
+        '<button type="button" id="pWireDel">✂ 剪断</button>' +
+        '<button type="button" id="pWireCancel">取消选择</button>' +
+      '</div>';
+    pSel.querySelectorAll('[data-wc]').forEach((b) => {
+      b.addEventListener('click', () => {
+        selW.color = b.dataset.wc;
+        selW.mesh.material = (selectedWire === selW.id) ? wireMatSelOf(selW) : wireMatOf(selW);
+        buildParams();
+      });
+    });
+    $('pWireDel').addEventListener('click', () => { removeWire(selW.id); selectWire(null); });
+    $('pWireCancel').addEventListener('click', () => selectWire(null));
+    return;
+  }
   if (!it) {
-    pSel.innerHTML = '<div class="params-empty">点桌面上的器材，这里出现它的参数。</div>';
+    pSel.innerHTML = '<div class="params-empty">点桌面上的器材，这里出现它的参数；点一根导线可以改颜色或剪断。</div>';
     pSlideEl = pSlideOut = pRmaxEl = pRmaxOut = null;
     return;
   }
@@ -2014,6 +2396,26 @@ $('cDelete').addEventListener('click', () => removeItem(state.selected));
 $('btnRotate').addEventListener('click', rotateSelected);
 $('btnDelete').addEventListener('click', () => removeItem(state.selected));
 $('btnClear').addEventListener('click', clearAll);
+
+// 导线中点的小叉：点一下就剪断
+if (wireXEl) {
+  wireXEl.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (selectedWire == null) return;
+    const id = selectedWire;
+    selectWire(null);
+    removeWire(id);
+    toast('导线剪断了');
+  });
+}
+// 参数面板左上角的叉：把选中的器材从桌上拿走
+$('paramsDel').addEventListener('click', (e) => {
+  e.stopPropagation();                 // 别冒泡到 paramsHead（那会把面板折叠起来）
+  if (!state.selected) return;
+  const nm = metaOf(state.selected).label;
+  removeItem(state.selected);
+  toast('已把 ' + nm + ' 从桌上拿走');
+});
 $('cView').addEventListener('click', () => {
   const order = ['persp', 'front', 'top', 'closeup'];
   const i = order.indexOf(state.view);
@@ -2125,6 +2527,10 @@ setTimeout(() => { if (renderCount === 0) { layout(); render(); } }, 1200);
 window.__lab = {
   THREE, scene, camera, renderer, items, state, cam, DIM, CATALOG,
   addItem, removeItem, clearAll, select, rotateSelected, recompute, relayoutAuto,
+  cancelPending, measureSolid, selectWire, updateWireX, thumbDataUrl,
+  paintThumbsNow() { paintThumbs(); },
+  pickAt: (x, y) => { const h = pick(x, y); return h ? { item: h.item ? h.item.type : null, term: h.term || null, wireId: h.wireId || null } : null; },
+  get wires() { return wires; }, get selectedWire() { return selectedWire; },
   get itemCount() { return items.length; },
   get layoutCalls() { return layoutCalls; },
   get fsLayouts() { return fsLayouts; },
@@ -2415,11 +2821,6 @@ window.__lab = {
       startX: drag.startX,
       moved: drag.moved,
     } : null;
-  },
-  // 直接问「这个屏幕点上有什么」（排障用，和真实交互走同一个 pick）
-  pickAt(x, y) {
-    const r = pick(x, y);
-    return r ? { type: r.item.type, onSlider: r.onSlider, idx: items.indexOf(r.item) } : null;
   },
   ctlInfo() {
     const r = $('ctl').getBoundingClientRect();

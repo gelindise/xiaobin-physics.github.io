@@ -1640,6 +1640,7 @@ export function buildStorageBattery() {
       inner.add(tag(stem, 'postStem'));
       const cap = new THREE.Mesh(knurledGeometry(D.POST_R, D.POST_H), sx < 0 ? MAT.black : MAT.red);
       cap.position.set(x, D.H + 11 + D.POST_H / 2, 0);
+      cap.userData.termId = sx < 0 ? '-' : '+';
       inner.add(tag(cap, 'postCap'));
     });
   }
@@ -1753,6 +1754,7 @@ export function buildResistor(opts) {
     inner.add(tag(stem, 'postStem'));
     const cap2 = new THREE.Mesh(knurledGeometry(D.POST_R, D.POST_H), MAT.brass);
     cap2.position.set(sx * D.POST_X, Y0 + D.CAP_R + 6 + D.POST_H / 2, 0);
+    cap2.userData.termId = sx < 0 ? 'a' : 'b';
     inner.add(tag(cap2, 'postCap'));
   });
 
@@ -1893,6 +1895,7 @@ export function buildPower() {
     const cap = new THREE.Mesh(knurledGeometry(D.POST_R, D.POST_H), name === '+' ? MAT.red : MAT.black);
     cap.rotation.x = Math.PI / 2;
     cap.position.set(x, 26, D.D / 2 + 2.6 + D.POST_H / 2);
+    cap.userData.termId = name;
     inner.add(tag(cap, 'postCap'));
     termLocal[name] = new THREE.Vector3(x * S, 26 * S, (D.D / 2 + 4 + D.POST_H * 0.5) * S);
   });
@@ -2041,6 +2044,7 @@ export function buildResistanceBox() {
     inner.add(tag(base, 'postPad'));
     const cap = new THREE.Mesh(knurledGeometry(5, 12), MAT.steel);
     cap.position.set(x, D.H + 2.6 + 6, D.D / 2 - 14);
+    cap.userData.termId = name;
     inner.add(tag(cap, 'postCap'));
     termLocal[name] = new THREE.Vector3(x * S, (D.H + 2.6 + 6.6) * S, (D.D / 2 - 14) * S);
   });
@@ -2175,6 +2179,7 @@ export function buildRheoboard() {
       inner.add(tag(stem, 'postStem'));
       const cap = new THREE.Mesh(knurledGeometry(D.POST_R, D.POST_H), MAT.brass);
       cap.position.set(x, D.H + 4.4 + D.WIRE_Y + 5 + D.POST_H / 2, w.y);
+      cap.userData.termId = name;
       inner.add(tag(cap, 'postCap'));
       termLocal[name] = new THREE.Vector3(x * S, (D.H + 4.4 + D.WIRE_Y + 5 + D.POST_H * 0.55) * S, w.y * S);
     });
@@ -2246,10 +2251,18 @@ export function buildLed(opts) {
 
   const Y0 = 4;                       // 底座上表面
   // 引脚：两根竖直到封装底部
+  // 🔴 引脚原来只隔 3 mm（±1.5），比鼠标射线还细 ⇒ 点不中、接不上线。
+  //    真实 LED 的两根脚是分开的（长脚 +、短脚 −），这里拉到 ±8 mm，
+  //    脚顶再各加一个铜帽当「接线柱」，鼠标才有东西可点。
   [-1, 1].forEach((sx) => {
-    const lead = new THREE.Mesh(new THREE.CylinderGeometry(D.LEAD_R, D.LEAD_R, 9, 10), matLead);
-    lead.position.set(sx * 1.5, Y0 + 4.5, 0);
+    const lead = new THREE.Mesh(new THREE.CylinderGeometry(D.LEAD_R, D.LEAD_R, 11, 10), matLead);
+    lead.position.set(sx * 8, Y0 + 5.5, 0);
+    lead.userData.termId = sx < 0 ? '+' : '-';
     inner.add(tag(lead, 'lead'));
+    const tip = new THREE.Mesh(new THREE.SphereGeometry(1.9, 14, 10), MAT.brass);
+    tip.position.set(sx * 8, Y0 + 11, 0);
+    tip.userData.termId = sx < 0 ? '+' : '-';
+    inner.add(tag(tip, 'leadTip'));
   });
   // 封装主体（下粗上略细）
   const body = new THREE.Mesh(new THREE.CylinderGeometry(D.BODY_R, D.BODY_R * 1.08, D.BODY_H, 26), matBody);
@@ -2282,8 +2295,8 @@ export function buildLed(opts) {
   inner.add(tag(lamp, 'ledLight'));
 
   const termLocal = {
-    '+': new THREE.Vector3(-1.5 * S, (Y0 + 4) * S, 0),
-    '-': new THREE.Vector3(1.5 * S, (Y0 + 4) * S, 0),
+    '+': new THREE.Vector3(-8 * S, (Y0 + 11) * S, 0),
+    '-': new THREE.Vector3(8 * S, (Y0 + 11) * S, 0),
   };
 
   const shadow = new THREE.Mesh(
@@ -2482,6 +2495,7 @@ export function buildJoule() {
       inner.add(tag(pad, 'postPad'));
       const cap = new THREE.Mesh(knurledGeometry(4.2, 11), sx < 0 ? MAT.red : MAT.black);
       cap.position.set(x, lidTop + 2.4 + 5.5, z);
+      cap.userData.termId = (si === 0 ? '甲' : '乙') + (sx < 0 ? '+' : '−');
       inner.add(tag(cap, 'postCap'));
       const name = (si === 0 ? '甲' : '乙') + (sx < 0 ? '+' : '−');
       termLocal[name] = new THREE.Vector3(x * S, (lidTop + 8.2) * S, z * S);
@@ -2714,6 +2728,7 @@ export function buildCalorimeter() {
     inner.add(tag(pad, 'postPad'));
     const cap = new THREE.Mesh(knurledGeometry(4.2, 11), sx < 0 ? MAT.red : MAT.black);
     cap.position.set(x, corkY + 3.2 + 5.5, z);
+    cap.userData.termId = sx < 0 ? 'a' : 'b';
     inner.add(tag(cap, 'postCap'));
     termLocal[sx < 0 ? 'a' : 'b'] = new THREE.Vector3(x * S, (corkY + 9) * S, z * S);
   });
@@ -2927,6 +2942,7 @@ export function buildPotentiometer() {
     inner.add(tag(pad, 'postPad'));
     const cap = new THREE.Mesh(knurledGeometry(D.POST_R, D.POST_H), MAT.brass);
     cap.position.set(x, D.H + 4.6 + D.POST_H / 2, z);
+    cap.userData.termId = name;
     inner.add(tag(cap, 'postCap'));
     // 字母牌贴在柱前面的外壳侧面上
     const lt = new THREE.Mesh(new THREE.PlaneGeometry(11, 11),
