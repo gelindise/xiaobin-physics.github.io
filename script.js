@@ -217,8 +217,9 @@ async function simulatePaySuccess(user, type, code) {
     return null;
   });
 
-  if (!redeem) { alert('❌ 网络错误，请稍后重试'); return false; }
-  if (!redeem.success) { alert('❌ ' + (redeem.error || '激活失败')); return false; }
+  if (!redeem) { simulatePaySuccess.lastError = '网络错误，请稍后重试'; return false; }
+  if (!redeem.success) { simulatePaySuccess.lastError = redeem.error || '激活失败'; return false; }
+  simulatePaySuccess.lastError = '';
 
   // 同步本地缓存
   const cached = JSON.parse(localStorage.getItem('users') || '{}');
@@ -226,7 +227,27 @@ async function simulatePaySuccess(user, type, code) {
   localStorage.setItem('currentUser', user);
 
   console.log('[激活] SUCCESS:', user, '->', redeem.vip, redeem.expire, '码:', code);
-  return true;
+  return redeem; // { vip, expire }：会员类型由激活码决定，前端据此提示
+}
+
+// 复制文本（https 下用剪贴板 API，其余环境回退到 execCommand）
+async function copyText(text) {
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch (e) { /* 落到下面的兜底 */ }
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.cssText = 'position:fixed;left:-9999px;top:0;opacity:0';
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand('copy');
+    ta.remove();
+    return ok;
+  } catch (e) { return false; }
 }
 
 // ========== 头像生成 ==========
