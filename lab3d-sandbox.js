@@ -13,7 +13,7 @@ import * as THREE from './assets/optics-three.min.js';
 import { CATALOG, buildRheostat, buildSwitch, buildBattery, buildBulb, buildMeter,
   buildStorageBattery, buildResistor, buildPower,
   buildResistanceBox, buildRheoboard, buildLed, buildJoule, buildCalorimeter,
-  buildPotentiometer, RBOARD_WIRES, DIM } from './lab3d-kit.js?build=27';
+  buildPotentiometer, RBOARD_WIRES, DIM } from './lab3d-kit.js?build=28';
 
 const $ = (id) => document.getElementById(id);
 
@@ -1804,8 +1804,9 @@ function buildParams() {
       '<div class="lab3d-field">' +
         '<label for="pBatCells">电池节数 <output id="pBatOut">' + n + ' 节 · ' + it.api.emf().toFixed(1) + ' V</output></label>' +
         '<input id="pBatCells" type="range" min="1" max="3" step="1" value="' + n + '">' +
-        '<small>每节 <b>1.5 V</b>：一节 1.5 V、两节 3 V、三节 4.5 V。' +
-        '电池盒会跟着变长，读数按总电动势重算。</small>' +
+        (it.key === 'storage'
+          ? '<small>每节 <b>2 V</b>，三节固定串联，总电动势 6 V。</small>'
+          : '<small>每节 <b>1.5 V</b>：一节 1.5 V、两节 3 V、三节 4.5 V。电池盒会跟着变长，读数按总电动势重算。</small>') +
       '</div>' +
       (it.api.setReversed
         ? '<div class="lab3d-field"><label class="chk"><input type="checkbox" id="pBatRev"' +
@@ -1818,7 +1819,9 @@ function buildParams() {
         '<button type="button" id="pRemove">🗑 从桌上拿走</button>' +
       '</div>' +
       '<small style="display:block;margin-top:8px;color:#64748b;font-size:10px;line-height:1.55">' +
-        '左端<b>红柱是正极</b>、右端银柱是负极 —— 接反了电流方向相反（电表会反偏）。</small>';
+        (it.key === 'storage'
+          ? '最左前侧银柱是<b>负极</b>、最右后侧<b>红柱是正极</b>；黄色联条已在内部把三节电池串联。</small>'
+          : '左端<b>红柱是正极</b>、右端银柱是负极 —— 接反了电流方向相反（电表会反偏）。</small>');
     if (!it.api.setCells) {
       // 蓄电池：节数定死 3 节（2 V/节），面板只显示、不给滑条
       $('pBatCells').disabled = true;
@@ -2329,7 +2332,7 @@ function syncReadout() {
   }
   if (it.type === 'battery') {
     $('roR').innerHTML = it.api.emf().toFixed(1) + '<small>V</small>';
-    $('roSub').innerHTML = it.api.getCells() + ' 节 × 1.5 V' + cur;
+    $('roSub').innerHTML = it.api.getCells() + ' 节 × ' + (it.key === 'storage' ? '2' : '1.5') + ' V' + cur;
     return;
   }
   if (it.type === 'resistancebox') {

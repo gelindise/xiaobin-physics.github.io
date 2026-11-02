@@ -1652,65 +1652,150 @@ export function buildStorageBattery() {
   outer.add(inner);
   const tag = (o, role) => { o.userData.role = role; return o; };
 
-  const matBody = new THREE.MeshStandardMaterial({ color: 0xa8b8c8, roughness: 0.52, metalness: 0.16 });
-  const matTop = new THREE.MeshStandardMaterial({ color: 0x93a5b6, roughness: 0.5, metalness: 0.2 });
-  const matVent = new THREE.MeshStandardMaterial({ color: 0x2b3542, roughness: 0.62, metalness: 0.2 });
+  // 教材插图中的铅酸蓄电池：浅蓝灰半透明感外壳、独立顶盖、前壁竖筋。
+  // 不启用真正的透明材质，避免三节壳体重叠时出现排序错误；用明暗面板做出塑料的层次。
+  const matBody = new THREE.MeshStandardMaterial({ color: 0xb8c8d8, roughness: 0.48, metalness: 0.08 });
+  const matFront = new THREE.MeshStandardMaterial({ color: 0xaebfd1, roughness: 0.55, metalness: 0.06 });
+  const matSide = new THREE.MeshStandardMaterial({ color: 0x8296ae, roughness: 0.58, metalness: 0.08 });
+  const matTop = new THREE.MeshStandardMaterial({ color: 0xd2dce7, roughness: 0.42, metalness: 0.1 });
+  const matRib = new THREE.MeshStandardMaterial({ color: 0xd5e0eb, roughness: 0.4, metalness: 0.08 });
+  const matSeam = new THREE.MeshStandardMaterial({ color: 0x64798f, roughness: 0.6, metalness: 0.08 });
+  const matVent = new THREE.MeshStandardMaterial({ color: 0x17202a, roughness: 0.72, metalness: 0.08 });
+  const matSilver = new THREE.MeshStandardMaterial({ color: 0xd1d8df, roughness: 0.3, metalness: 0.55 });
+  const matLink = new THREE.MeshStandardMaterial({ color: 0xe5bd45, roughness: 0.3, metalness: 0.68 });
 
   const N = 3;
   const totalW = N * D.W + (N - 1) * D.GAP;
-  const bodyLen = N * D.W + (N - 1) * D.GAP;
+  const lidY = D.H - 0.8;
+  const lidH = 5.8;
+  const deckY = lidY + lidH;
+  const postZ = D.D * 0.27;
+  const postY = deckY + 8.2;
 
+  function roundedBox(w, h, d, r, bevel) {
+    const geo = new THREE.ExtrudeGeometry(roundRectShape(w, d, r), {
+      depth: h, bevelEnabled: true, bevelThickness: bevel,
+      bevelSize: bevel, bevelSegments: 2, curveSegments: 8,
+    });
+    geo.rotateX(-Math.PI / 2);
+    return geo;
+  }
+
+  function addCylinder(radius, height, material, x, y, z, role, segments = 28) {
+    const mesh = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius, height, segments), material);
+    mesh.position.set(x, y, z);
+    inner.add(tag(mesh, role));
+    return mesh;
+  }
+
+  function polarityMark(sign, x, z) {
+    const cv = document.createElement('canvas');
+    cv.width = cv.height = 128;
+    const g = cv.getContext('2d');
+    g.clearRect(0, 0, 128, 128);
+    g.fillStyle = '#18232e';
+    g.font = 'bold 112px Arial, sans-serif';
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    g.fillText(sign, 64, sign === '+' ? 61 : 53);
+    const tex = new THREE.CanvasTexture(cv);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    const mark = new THREE.Mesh(new THREE.PlaneGeometry(13, 13),
+      new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false }));
+    mark.rotation.x = -Math.PI / 2;
+    mark.position.set(x, deckY + 1.1, z);
+    inner.add(tag(mark, 'polarityMark'));
+  }
+
+  // 每节都是「前银灰 −、后红 +」。相邻两节用黄色联条斜跨串联，
+  // 因而整组对外端子是最左前侧的 − 与最右后侧的 +，和参考图一致。
   for (let i = 0; i < N; i++) {
-    const cx = -bodyLen / 2 + D.W / 2 + i * (D.W + D.GAP);
-    // 电池壳
-    const box = new THREE.Mesh(new THREE.BoxGeometry(D.W, D.H, D.D), matBody);
-    box.position.set(cx, D.H / 2, 0);
-    inner.add(tag(box, 'cell'));
-    // 顶盖
-    const top = new THREE.Mesh(new THREE.BoxGeometry(D.W + 1.5, 6, D.D + 1.5), matTop);
-    top.position.set(cx, D.H + 3, 0);
-    inner.add(tag(top, 'cellTop'));
-    // 前脸的竖向筋条（参考图那种）
+    const cx = -totalW / 2 + D.W / 2 + i * (D.W + D.GAP);
+
+    const body = new THREE.Mesh(roundedBox(D.W, D.H, D.D, 2.2, 0.8), matBody);
+    body.position.x = cx;
+    inner.add(tag(body, 'cell'));
+
+    // 底沿、前壁和侧壁分层面板，让壳体不再像一只无细节的方块。
+    const foot = new THREE.Mesh(new THREE.BoxGeometry(D.W + 0.8, 3, D.D + 0.8), matSeam);
+    foot.position.set(cx, 1.6, 0);
+    inner.add(tag(foot, 'cellBase'));
+
+    const front = new THREE.Mesh(new THREE.BoxGeometry(D.W - 5, D.H - 13, 1.2), matFront);
+    front.position.set(cx, D.H / 2 + 1, D.D / 2 + 0.25);
+    inner.add(tag(front, 'cellFront'));
+
+    [-1, 1].forEach((sx) => {
+      const side = new THREE.Mesh(new THREE.BoxGeometry(1.1, D.H - 15, D.D - 7), matSide);
+      side.position.set(cx + sx * (D.W / 2 + 0.2), D.H / 2 + 1, 0);
+      inner.add(tag(side, 'cellSide'));
+    });
+
     for (let k = -2; k <= 2; k++) {
-      const rib = new THREE.Mesh(new THREE.BoxGeometry(D.RIB_W, D.H * 0.66, D.RIB_D), matTop);
-      rib.position.set(cx + k * (D.W / 6.2), D.H * 0.42, D.D / 2 + D.RIB_D / 2);
+      const rib = new THREE.Mesh(new THREE.BoxGeometry(5.2, D.H * 0.72, D.RIB_D), matRib);
+      rib.position.set(cx + k * 9.2, D.H * 0.43, D.D / 2 + D.RIB_D / 2 + 0.9);
       inner.add(tag(rib, 'rib'));
     }
-    // 顶上的两个小通气塞
-    [-1, 1].forEach((sz) => {
-      const vent = new THREE.Mesh(new THREE.CylinderGeometry(3.4, 3.4, 2.4, 16), matVent);
-      vent.position.set(cx, D.H + 7, sz * D.D * 0.24);
-      inner.add(tag(vent, 'vent'));
-    });
-    // 每只电池顶上的两个极柱（左 − 右 +）
-    [-1, 1].forEach((sx) => {
-      const x = cx + sx * D.W * 0.28;
-      const stem = new THREE.Mesh(new THREE.CylinderGeometry(3.2, 3.6, 6, 16), MAT.brass);
-      stem.position.set(x, D.H + 8, 0);
-      inner.add(tag(stem, 'postStem'));
-      const cap = new THREE.Mesh(knurledGeometry(D.POST_R, D.POST_H), sx < 0 ? MAT.black : MAT.red);
-      cap.position.set(x, D.H + 11 + D.POST_H / 2, 0);
-      cap.userData.termId = sx < 0 ? '-' : '+';
-      inner.add(tag(cap, 'postCap'));
+    const frontSlot = new THREE.Mesh(new THREE.BoxGeometry(D.W - 13, 3.6, 1.5), matSeam);
+    frontSlot.position.set(cx, D.H - 14, D.D / 2 + 1.25);
+    inner.add(tag(frontSlot, 'frontSlot'));
+
+    const lid = new THREE.Mesh(roundedBox(D.W + 1.1, lidH, D.D + 1.1, 2.4, 0.65), matTop);
+    lid.position.set(cx, lidY, 0);
+    inner.add(tag(lid, 'cellTop'));
+
+    // 顶盖中缝的一只黑色注液孔；略低于孔沿，形成真正的凹孔观感。
+    addCylinder(4.2, 1.2, matSeam, cx, deckY + 0.25, 0, 'ventRim');
+    addCylinder(3.1, 1.35, matVent, cx, deckY + 0.45, 0, 'vent');
+
+    [
+      { sign: '-', z: postZ, capMat: matSilver, capH: 11.5 },
+      { sign: '+', z: -postZ, capMat: MAT.red, capH: D.POST_H },
+    ].forEach((p) => {
+      // 黑色密封圈 → 金属垫圈 → 接线螺杆 → 滚花柱帽，层次与参考图一致。
+      addCylinder(6.3, 1.8, matVent, cx, deckY + 0.9, p.z, 'postSeal');
+      addCylinder(5.8, 1.8, matSilver, cx, deckY + 2.2, p.z, 'postWasher');
+      addCylinder(3.4, 6.2, p.sign === '+' ? MAT.brass : matSilver,
+        cx, deckY + 5.2, p.z, 'postStem');
+      const cap = new THREE.Mesh(knurledGeometry(D.POST_R, p.capH), p.capMat);
+      cap.position.set(cx, postY + p.capH / 2, p.z);
+      // 只有整组最外两端可以接线，内部四个串联柱不应被误点成外部端子。
+      if ((i === 0 && p.sign === '-') || (i === N - 1 && p.sign === '+')) {
+        cap.userData.termId = p.sign;
+      }
+      inner.add(tag(cap, p.sign === '+' ? 'postPlus' : 'postMinus'));
+
+      const topCap = addCylinder(D.POST_R * 0.78, 1.2, p.capMat,
+        cx, postY + p.capH + 0.25, p.z, 'postTop');
+      if (p.sign === '-') {
+        const screw = new THREE.Mesh(new THREE.BoxGeometry(4.8, 0.65, 1.05), matVent);
+        screw.position.set(cx, postY + p.capH + 1.05, p.z);
+        inner.add(tag(screw, 'postSlot'));
+      }
+      topCap.rotation.y = i * 0.35;
     });
   }
 
-  // 相邻两节之间的连接片（参考图里那两段铜条）
+  // 前一节的前侧负极 → 下一节的后侧正极：两段扁平黄色斜联条。
   for (let i = 0; i < N - 1; i++) {
-    const x1 = -bodyLen / 2 + D.W / 2 + i * (D.W + D.GAP) + D.W * 0.28;
-    const x2 = -bodyLen / 2 + D.W / 2 + (i + 1) * (D.W + D.GAP) - D.W * 0.28;
-    const len = Math.abs(x2 - x1);
-    const strap = new THREE.Mesh(new THREE.BoxGeometry(len, 2.6, 7), MAT.copper);
-    strap.position.set((x1 + x2) / 2, D.H + 15, 0);
+    const x1 = -totalW / 2 + D.W / 2 + i * (D.W + D.GAP);
+    const x2 = x1 + D.W + D.GAP;
+    const z1 = postZ, z2 = -postZ;
+    const dx = x2 - x1, dz = z2 - z1;
+    const len = Math.hypot(dx, dz);
+    const strap = new THREE.Mesh(new THREE.BoxGeometry(len + 3, 2.2, 6.4), matLink);
+    strap.position.set((x1 + x2) / 2, deckY + 6.2, (z1 + z2) / 2);
+    strap.rotation.y = -Math.atan2(dz, dx);
     inner.add(tag(strap, 'strap'));
   }
 
-  // 两个对外的接线柱：最左的 −、最右的 +
-  const xMinus = -bodyLen / 2 + D.W / 2 - D.W * 0.28;
-  const xPlus = bodyLen / 2 - D.W / 2 + D.W * 0.28;
+  const xMinus = -totalW / 2 + D.W / 2;
+  const xPlus = totalW / 2 - D.W / 2;
+  polarityMark('−', xMinus - 15, postZ);
+  polarityMark('+', xPlus + 15, -postZ);
   const termLocal = {
-    '-': new THREE.Vector3(xMinus * S, (D.H + 11 + D.POST_H * 0.55) * S, 0),
-    '+': new THREE.Vector3(xPlus * S, (D.H + 11 + D.POST_H * 0.55) * S, 0),
+    '-': new THREE.Vector3(xMinus * S, (postY + 6) * S, postZ * S),
+    '+': new THREE.Vector3(xPlus * S, (postY + 7) * S, -postZ * S),
   };
 
   const shadow = new THREE.Mesh(
@@ -1731,7 +1816,7 @@ export function buildStorageBattery() {
     label: '蓄电池',
     spec: '6 V（3 × 2 V）',
     bounds: { hw: totalW / 2 * S + 6, hd: D.D / 2 * S },
-    topY: (D.H + 11 + D.POST_H + 8) * S,
+    topY: (postY + D.POST_H + 7) * S,
     termLocal,
     termIdx: { '-': 0, '+': 1 },
     getCells: () => 3,
