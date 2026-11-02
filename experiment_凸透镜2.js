@@ -39,7 +39,7 @@ import * as THREE from './assets/optics-three.min.js';
   ];
   const descriptions = [
     '<strong>认识器材：</strong>铝合金双槽导轨、带锁紧旋钮的滑座、圆环镜架与半透明膜光屏均是独立的立体部件。关闭光路开关，绕着装置看它们的形状与连接方式 —— 光屏是一片装在金属框里的半透明膜，绕着它转一圈，会发现从背面也能看穿。',
-    '<strong>调整三心：</strong>焰心、透镜光心、光屏中心初始同在 12 cm 高度。画面右下角的读数面板会实时给出三个滑座在光具座上的刻度读数，以及物距 u 与像距 v。',
+    '<strong>调整三心：</strong>焰心、透镜光心、光屏中心初始同在 12 cm 高度。光具座前沿每小格 0.5 cm，三色指针对应三件器材；左下读数面板同步显示位置，以及物距 u 与像距 v。',
     '<strong>改变物距：</strong>蜡烛、凸透镜、光屏三个滑座都能移动。改变物距后，比较折射光线是汇聚、平行还是发散。',
     '<strong>移动光屏：</strong>u > f 时缓慢移动光屏，从散焦找到清晰实像；只有实像才能被光屏接住。屏是半透明膜，用「背面看光屏」绕到它后面，透过膜照样能看到这个像（画面相对正面左右翻转）。切到 F 光源还能看清像的倒立与左右颠倒。',
     '<strong>记录归纳：</strong>记录各物距区域的数据。比较光屏中的像、两个发光点的相对位置，以及焦距与二倍焦距两处分界。'
@@ -178,7 +178,7 @@ import * as THREE from './assets/optics-three.min.js';
 
   const bench = new THREE.Group(); scene.add(bench);
   const LENGTH = 148, CENTER = 9;
-  // Satin extruded rail with two grooves, a ruled inlaid strip, die-cast end caps and real feet.
+  // Satin extruded rail with two grooves, a front-facing graduated ruler, die-cast end caps and real feet.
   box(bench,[LENGTH,2.1,9.2],[CENTER,.2,0],chamfer);
   box(bench,[LENGTH-.8,.35,9.0],[CENTER,1.42,0],brightAlu);
   box(bench,[LENGTH-.8,.27,8.8],[CENTER,-.94,0],metalDark);
@@ -187,7 +187,6 @@ import * as THREE from './assets/optics-three.min.js';
     box(bench,[LENGTH-.9,.06,.12],[CENTER,1.74,z-.70],brightAlu,false);
     box(bench,[LENGTH-.9,.06,.12],[CENTER,1.74,z+.70],brightAlu,false);
   }
-  box(bench,[LENGTH-1,.15,.85],[CENTER,1.72,4.0],cream,false);
   for (const x of [-65,83]) {
     box(bench,[2.7,3.1,10.5],[x,.15,0],blackRubber);
     box(bench,[.25,2.6,8.4],[x+(x<0?1.5:-1.5),.15,0],brass);
@@ -200,28 +199,44 @@ import * as THREE from './assets/optics-three.min.js';
       cylinder(foot,1.5,.45,[0,-4.55,z],blackRubber);
     }
   }
-  // Dense millimetre-style engraved marks; every unit is one model centimetre.
-  const ticks = new THREE.Group(); bench.add(ticks);
-  const tickMaterial = new THREE.LineBasicMaterial({ color: '#566067', transparent: true, opacity: .78 });
-  const vertices=[];
-  for (let x=-62;x<=80;x+=1) {
-    const mark = x%10===0 ? .66 : x%5===0 ? .48 : .29;
-    vertices.push(x,1.81,4.08-mark/2, x,1.81,4.08+mark/2);
+  // A ruler plate is built into the front face of the rail, where the carriages cannot cover it.
+  // This follows the real optical-bench convention: a fixed graduated scale on the guide rail,
+  // read against an index carried by each sliding carriage.
+  const RULER_END = 147, RULER1 = RULER0 + RULER_END, RULER_FACE_Z = 5.45;
+  const rulerCenter = (RULER0 + RULER1) / 2;
+  box(bench,[RULER_END+2.8,2.05,.72],[rulerCenter,.20,4.97],metalDark,false);
+  box(bench,[RULER_END+1.0,1.82,.12],[rulerCenter,.20,5.39],cream,false);
+  // Every centimetre has a graduation; half-centimetre marks match the carriage's 0.5 cm snap.
+  // Five- and ten-centimetre divisions are longer, and the numbered labels sit on the same face.
+  const rulerMarks = new THREE.Group(); rulerMarks.name='optical-bench-ruler-marks'; bench.add(rulerMarks);
+  const rulerTickMaterial = new THREE.LineBasicMaterial({ color:'#344149', transparent:true, opacity:.98 });
+  const rulerVertices=[];
+  for(let halfCm=0;halfCm<=RULER_END*2;halfCm++){
+    const cm=halfCm/2, whole=Number.isInteger(cm), n=whole?cm:0;
+    const mark=whole?(n%10===0 ? .72 : n%5===0 ? .55 : .38) : .20;
+    const x=RULER0+cm, top=.94;
+    rulerVertices.push(x,top,RULER_FACE_Z,x,top-mark,RULER_FACE_Z);
   }
-  const tg = new THREE.BufferGeometry();tg.setAttribute('position',new THREE.Float32BufferAttribute(vertices,3));
-  ticks.add(new THREE.LineSegments(tg,tickMaterial));
-  const tickLabels = new THREE.Group();bench.add(tickLabels);
-  function rulerLabel(text,x) {
-    const c=document.createElement('canvas');c.width=100;c.height=64;
-    const g=c.getContext('2d');g.fillStyle='#38454c';g.textAlign='center';g.font='bold 33px sans-serif';g.fillText(text,50,44);
+  const rulerGeometry=new THREE.BufferGeometry();
+  rulerGeometry.setAttribute('position',new THREE.Float32BufferAttribute(rulerVertices,3));
+  rulerMarks.add(new THREE.LineSegments(rulerGeometry,rulerTickMaterial));
+  const rulerLabels = new THREE.Group(); rulerLabels.name='optical-bench-ruler-labels'; bench.add(rulerLabels);
+  function rulerLabel(text,x,width=3.0){
+    const c=document.createElement('canvas');c.width=180;c.height=80;
+    const g=c.getContext('2d');g.fillStyle='#26343b';g.textAlign='center';g.textBaseline='middle';
+    g.font='bold 52px sans-serif';g.fillText(text,90,41);
     const t=new THREE.CanvasTexture(c);t.colorSpace=THREE.SRGBColorSpace;
-    const plane = mesh(new THREE.PlaneGeometry(2.15,1.36),new THREE.MeshBasicMaterial({map:t,transparent:true,depthWrite:false,side:THREE.DoubleSide}),tickLabels,x,1.82,3.25,false);
-    plane.rotation.x=-Math.PI/2;
+    const mat=new THREE.MeshBasicMaterial({map:t,transparent:true,depthWrite:false,side:THREE.DoubleSide,toneMapped:false});
+    const plane=mesh(new THREE.PlaneGeometry(width,.84),mat,rulerLabels,x,-.27,RULER_FACE_Z+.012,false);
+    plane.renderOrder=9;
   }
-  for(let x=-65;x<=75;x+=10)rulerLabel(String(x-RULER0),x);
+  rulerLabel('0',RULER0+.5,1.6);
+  for(let cm=10;cm<=140;cm+=10)rulerLabel(String(cm),RULER0+cm);
+  rulerLabel(String(RULER_END),RULER1,2.0);
   // Factory scale marker / inlaid metal plaque, independent of ruler labels.
   const makerTex=labelTexture('OPTICAL BENCH  ·  01','#4a555a');
-  const maker=mesh(new THREE.PlaneGeometry(15.7,1.60),new THREE.MeshBasicMaterial({map:makerTex,transparent:true,side:THREE.DoubleSide}),bench,-32,.12,4.67,false);
+  const maker=mesh(new THREE.PlaneGeometry(15.7,1.60),new THREE.MeshBasicMaterial({map:makerTex,transparent:true,side:THREE.DoubleSide}),bench,-32,.12,-4.67,false);
+  maker.rotation.y=Math.PI;
   maker.receiveShadow=false;
 
   const sliders = {};
@@ -243,8 +258,18 @@ import * as THREE from './assets/optics-three.min.js';
     const dial = cylinder(group,.50,.53,[1.55,2.43,5.3],brass,24);
     dial.rotation.x=Math.PI/2;
     cylinder(group,.20,.40,[1.55,2.43,5.53],metalDark,16).rotation.x=Math.PI/2;
-    // Midpoint engraved index on the sliding base.
-    box(group,[.15,.05,.8],[0,3.12,4.0],material(kind==='candle'?'#cf8351':kind==='lens'?'#4a7b82':'#708395',.2,.4),false);
+    // A colored index blade extends from the carriage down to the face ruler. Its point marks
+    // the carriage center exactly, so the same position can be read in the 3D scene and readout.
+    const cursorColor=kind==='candle'?'#c46f3d':kind==='lens'?'#0f7e85':'#376f9f';
+    const cursorMat=material(cursorColor,.24,.36,{emissive:cursorColor,emissiveIntensity:.18});
+    box(group,[.14,.62,.90],[0,1.53,5.00],cursorMat,false);
+    const pointerShape=new THREE.Shape();
+    pointerShape.moveTo(-.32,1.24);pointerShape.lineTo(.32,1.24);pointerShape.lineTo(0,.82);pointerShape.closePath();
+    const pointerTip=mesh(new THREE.ShapeGeometry(pointerShape),
+      new THREE.MeshBasicMaterial({color:cursorColor,side:THREE.DoubleSide,toneMapped:false}),
+      group,0,0,RULER_FACE_Z+.08,false);
+    pointerTip.name=`ruler-index-${kind}`;
+    pointerTip.renderOrder=11;
     sliders[kind]=group;return group;
   }
   const candle = makeSlider('candle');
@@ -890,16 +915,16 @@ import * as THREE from './assets/optics-three.min.js';
     for(const id of ['sourceHeight','secondSource','secondHeight'])$(id).disabled=!candleMode;
     $('sourcePanel').classList.toggle('muted',!candleMode);
     $('fSourceHint').hidden=candleMode;
-    // Bench readout pinned beside the scene: the engraved scale is hard to read at an angle.
+    // Read absolute scale positions plus the experimentally measured object/screen separations.
     $('roObj').textContent=format(state.objP);
     $('roLens').textContent=format(state.lensP);
     $('roScr').textContent=state.screenRemoved?'已撤去':format(state.scrP);
     $('roU').textContent=format(state.u);
-    $('roV').textContent=info.kind==='focus'?'∞（不成像）':(info.v<0?'−':'')+Math.abs(info.v).toFixed(1)+' cm';
+    $('roV').textContent=state.screenRemoved?'已撤去':format(state.sd);
     $('roV').className=info.crisp?'hi ok':'hi';
     const f=state.f;
-    $('roNote').textContent=`刻度 0 在导轨左端 · 透镜在 ${format(state.lensP)}，`
-      +`F 在 ${format(state.lensP-f)} / ${format(state.lensP+f)}，`
+    $('roNote').textContent='u = 透镜刻度 − 光源刻度；v实 = 光屏刻度 − 透镜刻度。'
+      +`刻度 0 在左端 · F 在 ${format(state.lensP-f)} / ${format(state.lensP+f)}，`
       +`2F 在 ${format(state.lensP-2*f)} / ${format(state.lensP+2*f)}`;
     $('metricU').textContent=format(state.u);
     $('metricScreen').textContent=state.screenRemoved?'光屏已撤去':format(state.sd);
