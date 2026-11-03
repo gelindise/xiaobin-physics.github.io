@@ -153,6 +153,13 @@
     .dtbl button.del{width:22px;height:22px;padding:0;border-radius:7px;border:1px solid transparent;
       background:transparent;color:#64748b;cursor:pointer;font-size:14px;line-height:1;font-family:inherit}
     .dtbl button.del:hover{color:#fb7185;border-color:rgba(251,113,133,.4);background:rgba(251,113,133,.08)}
+    /* 钉住的原点行：只读、灰底、右边一个锁 */
+    .dtbl input.lk{color:#9fb2c6;background:rgba(148,163,184,.08);cursor:not-allowed}
+    .dtbl tr.lkrow td{background:rgba(251,191,36,.05)}
+    .dtbl .pin{font-size:11px;line-height:1;opacity:.7;cursor:help}
+    .locknote{margin:-2px 0 10px;padding:6px 9px;border-radius:8px;font-size:10.5px;line-height:1.55;
+      color:#a9bdd0;background:rgba(251,191,36,.06);border:1px solid rgba(251,191,36,.2)}
+    .locknote b{color:#fcd34d}
     .tbl-empty{padding:14px 10px;text-align:center;color:var(--dim2);font-size:11.5px}
 
     .btns{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 8px}
@@ -224,9 +231,10 @@
     .header{position:fixed !important;top:0;left:0;right:0;z-index:50;
       transition:transform .35s cubic-bezier(.4,0,.2,1);will-change:transform}
     .header.hidden{transform:translateY(-100%)}
-    body{padding-top:56px;transition:padding-top .35s cubic-bezier(.4,0,.2,1)}
+    body{padding-top:88px;transition:padding-top .35s cubic-bezier(.4,0,.2,1)}
     body.header-hidden{padding-top:0}
-    @media (max-width:768px){ body{padding-top:48px} }
+    /* 导航栏实测 80px（≤768px 时 64px），原来的 56/48 会让大标题钻到栏底下半截 */
+    @media (max-width:768px){ body{padding-top:72px} }
       /* ===== 参数面板（站内基线②：参数与画面融合） =====
        默认收起成小药丸（占画面不到 2%），点开 300px 宽、自己滚 —— 往下滑找参数。
        它是 .cv（画面容器）的子元素：全屏渲染的是 #stage 及其子树，挂在外面的浮层进全屏就没了。 */
@@ -364,6 +372,9 @@
                 <tbody id="tbody"></tbody>
                 </table>
                 </div>
+                <p class="locknote" id="locknote" hidden>🔒 第 1 行 <b>(0, 0)</b> 是这个实验的<b>必然起点</b>
+                  —— 自变量为 0 时因变量必为 0，不是测出来的点，所以已固定、不能改也不能删。
+                  少了它，曲线靠近纵轴那一段会飘。</p>
                 <div class="btns">
                 <button id="btnAdd" type="button">＋ 加一行</button>
                 <button id="btnClear" type="button">🗑 清空数据</button>
@@ -442,7 +453,10 @@
               列表里<b class="w">没有你的实验</b>？选最上面的「<b class="w">✎ 自定义坐标轴</b>」，
               自己填 X、Y 代表什么量、单位是什么（可以只写符号，也可以写「质量 m」），单位留空就不写。</li>
           <li><b>清空</b>：点「🗑 清空数据」，表格里就只剩空行。</li>
-          <li><b>输数据</b>：把每次测得的两个量分别填进 X、Y 两列（用 <b>＋ 加一行</b> 增加行数），按回车自动跳到下一格。</li>
+          <li><b>输数据</b>：把每次测得的两个量分别填进 X、Y 两列（用 <b>＋ 加一行</b> 增加行数），按回车自动跳到下一格。
+              注意第一行带 <b>🔒</b> 的 <b class="w">(0, 0)</b>：这个实验里「自变量为 0 时因变量必为 0」，
+              它是<b>物理上必然成立的起点</b>（不是测出来的点），所以已经替你填好并锁住了 ——
+              少了它，曲线靠近纵轴那一段就会飘，灯泡的 U-I 曲线尤其明显。</li>
           <li><b>看图</b>：左边的坐标系会自动定刻度、描点，再<b>按点的分布趋势</b>画出直线或曲线。</li>
           <li><b>读结论</b>：右边「处理结果」里会给出图线形状、斜率 k（或乘积 k）、R² 和结论。</li>
           <li><b>换模型</b>：觉得自动判断不对，就在「拟合模型」里自己指定（直线 / 反比 / 幂函数 / 光滑曲线…）。</li>
@@ -532,6 +546,7 @@ var axeditBox = document.getElementById('axedit');
 var axXn = document.getElementById('axXn'), axXu = document.getElementById('axXu');
 var axYn = document.getElementById('axYn'), axYu = document.getElementById('axYu');
 var btnSample = document.getElementById('btnSample');
+var lockNote = document.getElementById('locknote');
 var fitLbl = document.getElementById('fitLbl');
 var originLbl = document.getElementById('originLbl');
 var dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
@@ -693,7 +708,21 @@ curId = 'st';// 这些实验的物理关系就是「过原点」（成正比）�
 // 其余实验（有截距 / 曲线）默认不勾，否则强制过原点会把线拉歪。
 var PROP_PRESETS = { st:1, gm:1, mv:1, hook:1, refl:1, mirror:1, fric:1,
                      phyd:1, fbv:1, fbr:1, arch:1, iu:1, ohm:1, rlen:1, emag:1 };
+// ── 必须钉在 (0, 0) 的实验 ──────────────────────────────────────────────
+// 判据只有一条：自变量为 0 时，因变量在物理上【必然】为 0。这个点不是测出来的，
+// 是边界条件 —— 少了它，拟合出的线在靠近纵轴那一段就没了约束，会飘：
+//   小灯泡 U-I 曲线最典型：不填 (0,0)，曲线在低压段明显偏高/偏低、整体形状歪；
+//   填进去之后，曲线从原点平滑出发，才和真实灯丝特性对得上。
+//   Q ∝ I²、Eₖ ∝ v² 这类也是同一个道理：没有原点，幂指数会被算偏。
+// 反例（这类绝不能加 0,0，加了反而错）：
+//   反比 I-R / F₁-L₁ —— 分母趋 0 时因变量无穷大；凸透镜 1/u+1/v=1/f —— u=0 无意义；
+//   熔化 / 沸腾 / 比热容 —— t=0 时温度不是 0；滑轮组效率 —— 物重为 0 时效率无意义。
+var ZERO_PRESETS = { st:1, gm:1, mv:1, hook:1, refl:1, mirror:1, fric:1,
+                     phyd:1, fbv:1, arch:1, ek:1, iu:1, ohm:1, lamp:1,
+                     joule:1, rlen:1, emag:1 };
 function cur(){ for (var i=0;i<PRESETS.length;i++){ if (PRESETS[i].id === curId) return PRESETS[i]; } return PRESETS[0]; }
+// 当前这个实验要不要那种「钉住的 (0,0)」行
+function needsZero(){ return !!ZERO_PRESETS[curId]; }
 
 // ── 轴的符号 / 单位（自定义模式下 P.x.n、P.y.n 是空的，得有兜底） ──────
 function symX(P){ return String(P.x.n || '').trim() || 'X'; }
@@ -714,8 +743,10 @@ function unitProd(ux, uy){ return (ux && uy) ? ux + '·' + uy : ''; }
 // 二、数据（唯一真值源）
 // ============================================================
 var ROW_MIN = 1, ROW_MAX = 40;
-var rows = [];                       // [{xs:'', ys:''}]
+var rows = [];                       // [{xs:'', ys:'', lock:true?}]
 var MIN_ROWS = 8;
+// 钉住的原点行：值固定为 (0,0)，输入框只读、删不掉、清空数据也留着
+function zeroRow(){ return { xs:'0', ys:'0', lock:true }; }
 
 function parseNum(s){
   if (s === null || s === undefined) return NaN;
@@ -845,67 +876,83 @@ function fitInverse(p){
            pred:function(x){ return Math.abs(x) < 1e-12 ? NaN : ki/x; } };
 }
 
-// 幂函数 y = a·x^b（对数坐标下线性最小二乘；要求所有点 x>0、y>0）
+// 幂函数 y = a·x^b（对数坐标下线性最小二乘；除原点外要求 x>0、y>0）
+// 原点 (0,0) 要特殊对待：幂函数本来就经过它（a·0^b = 0），但 log(0) 算不了。
+// 所以原点【跳过不参与对数拟合】，只在打分时自然对上 —— 否则一填 (0,0)，
+// 幂函数模型就直接报「解不出来」，Eₖ∝v²、Q∝I² 这类反而会退化成抛物线。
 function fitPower(p){
-  var n = p.length, i;
-  if (n < 3) return null;
+  var n = 0, i;
   var slx=0, sly=0, slx2=0, slxl=0;
-  for (i=0;i<n;i++){
-    if (!(p[i][0] > 0) || !(p[i][1] > 0)) return null;
-    var lx = Math.log(p[i][0]), ly = Math.log(p[i][1]);
+  for (i=0;i<p.length;i++){
+    var xi = p[i][0], yi = p[i][1];
+    if (Math.abs(xi) < 1e-12 && Math.abs(yi) < 1e-12) continue;   // 原点：跳过，不算样本
+    if (!(xi > 0) || !(yi > 0)) return null;
+    var lx = Math.log(xi), ly = Math.log(yi);
     slx += lx; sly += ly; slx2 += lx*lx; slxl += lx*ly;
+    n++;
   }
+  if (n < 3) return null;
   var den = n*slx2 - slx*slx;
   if (!(Math.abs(den) > 1e-14)) return null;
   var b = (n*slxl - slx*sly)/den;
   var a = Math.exp((sly - b*slx)/n);
   if (!isFinite(a) || !isFinite(b)) return null;
   return { kind:'power', p:2, a:a, b:b,
-           pred:function(x){ return x > 0 ? a*Math.pow(x, b) : NaN; } };
+           pred:function(x){
+             if (x > 0) return a*Math.pow(x, b);
+             return Math.abs(x) < 1e-12 ? 0 : NaN;    // 原点给 0，负 x 无定义
+           } };
 }
 
 // 抛物线 y = ax² + bx + c（先平移到 x 重心再解正规方程，避免病态）
-function fitQuad(p){
+// through=true：这个实验的图线【必然过原点】⇒ 去掉常数项，只拟合 y = ax² + bx。
+// 不这么做的后果：表格里钉着一个 (0,0)，画出来的曲线却从 y=0.02 起步，自相矛盾。
+function fitQuad(p, through){
   var n = p.length, i, r, c;
-  if (n < 4) return null;
+  if (n < (through ? 3 : 4)) return null;
+  var m = through ? 2 : 3;
   var xm = 0;
-  for (i=0;i<n;i++) xm += p[i][0];
-  xm /= n;
-  var S = [[0,0,0],[0,0,0],[0,0,0]], T = [0,0,0];
+  if (!through){
+    for (i=0;i<n;i++) xm += p[i][0];
+    xm /= n;
+  }
+  var S = [], T = [];
+  for (r=0;r<m;r++){ S.push([]); T.push(0); for (c=0;c<m;c++) S[r].push(0); }
   for (i=0;i<n;i++){
     var t = p[i][0]-xm, y = p[i][1];
-    var bs = [t*t, t, 1];
-    for (r=0;r<3;r++){ T[r] += bs[r]*y; for (c=0;c<3;c++) S[r][c] += bs[r]*bs[c]; }
+    var bs = through ? [t*t, t] : [t*t, t, 1];
+    for (r=0;r<m;r++){ T[r] += bs[r]*y; for (c=0;c<m;c++) S[r][c] += bs[r]*bs[c]; }
   }
-  var M = [[S[0][0],S[0][1],S[0][2],T[0]],
-           [S[1][0],S[1][1],S[1][2],T[1]],
-           [S[2][0],S[2][1],S[2][2],T[2]]];
-  for (c=0;c<3;c++){
+  var M = [];
+  for (r=0;r<m;r++){ M.push(S[r].slice()); M[r].push(T[r]); }
+  for (c=0;c<m;c++){
     var piv = c;
-    for (r=c+1;r<3;r++) if (Math.abs(M[r][c]) > Math.abs(M[piv][c])) piv = r;
+    for (r=c+1;r<m;r++) if (Math.abs(M[r][c]) > Math.abs(M[piv][c])) piv = r;
     if (!(Math.abs(M[piv][c]) > 1e-18)) return null;
     var tmp = M[c]; M[c] = M[piv]; M[piv] = tmp;
-    for (r=0;r<3;r++){
+    for (r=0;r<m;r++){
       if (r === c) continue;
       var f = M[r][c]/M[c][c];
-      for (var k=c;k<4;k++) M[r][k] -= f*M[c][k];
+      for (var k=c;k<=m;k++) M[r][k] -= f*M[c][k];
     }
   }
-  var A = M[0][3]/M[0][0], B = M[1][3]/M[1][1], C = M[2][3]/M[2][2];
+  var A = M[0][m]/M[0][0], B = M[1][m]/M[1][1];
+  var C = through ? 0 : M[2][m]/M[2][2];
   // 还原成普通形式 y = a·x² + b·x + c（显示公式要用这个，不能用平移后的系数）
   var a2 = A, b2 = B - 2*A*xm, c2 = A*xm*xm - B*xm + C;
-  return { kind:'quad', p:3, a:a2, b:b2, c:c2, xm:xm,
+  return { kind:'quad', p:m, a:a2, b:b2, c:c2, xm:xm,
            pred:function(x){ var t=x-xm; return A*t*t + B*t + C; } };
 }
 
 // 饱和曲线 y = y0 + A(1 − e^(−k t))，t = x − xmin（平移到非负，避免 e 爆）。
 // 带常数项 y0：机械效率这类数据从 66.7% 起，不能硬按 y(起点)=0 去拟合。
+// through=true 时（实验必然过原点）去掉 y0，只拟合 y = A(1 − e^(−k t))。
 // 只对「上升且涨幅越来越小」的数据有意义，否则直线数据也会被它拟合得很好。
-function fitSat(p){
+function fitSat(p, through){
   var n = p.length, i;
   if (n < 4) return null;
   var a = p.slice().sort(function(u,v){ return u[0]-v[0]; });
-  var xmin = a[0][0], xmax = a[n-1][0], span = xmax - xmin;
+  var xmin = through ? 0 : a[0][0], xmax = a[n-1][0], span = xmax - xmin;
   if (!(span > 0)) return null;
   for (i=1;i<n;i++) if (a[i][1] < a[i-1][1] - 1e-12) return null;   // 必须单调不减
   var yFirst = a[0][1], yMid = a[Math.floor((n-1)/2)][1], yLast = a[n-1][1];
@@ -915,20 +962,37 @@ function fitSat(p){
   var best = null;
   for (var e = -2; e <= 2.0001; e += 0.05){
     var kk = Math.pow(10, e)/span;
-    // 给定 k，模型对 (y0, A) 是线性的 ⇒ 解 2×2 正规方程
-    var sg = 0, sgg = 0, sy = 0, sgy = 0, sse = 0;
-    for (i=0;i<n;i++){
-      var g = 1 - Math.exp(-kk*(a[i][0]-xmin));
-      sg += g; sgg += g*g; sy += a[i][1]; sgy += g*a[i][1];
-    }
-    var det = n*sgg - sg*sg;
-    if (!(Math.abs(det) > 1e-18)) continue;
-    var A = (n*sgy - sg*sy)/det;
-    var y0 = (sy - A*sg)/n;
-    if (!(A > 0)) continue;
-    for (i=0;i<n;i++){
-      var gv = 1 - Math.exp(-kk*(a[i][0]-xmin)), dd = a[i][1] - (y0 + A*gv);
-      sse += dd*dd;
+    var sse = 0, A = 0, y0 = 0;
+    if (through){
+      // y0 = 0：只剩 A 一个未知量，直接最小二乘
+      var sgg = 0, sgy = 0;
+      for (i=0;i<n;i++){
+        var gg = 1 - Math.exp(-kk*(a[i][0]-xmin));
+        sgg += gg*gg; sgy += gg*a[i][1];
+      }
+      if (!(sgg > 1e-18)) continue;
+      A = sgy/sgg;
+      if (!(A > 0)) continue;
+      for (i=0;i<n;i++){
+        var gv0 = 1 - Math.exp(-kk*(a[i][0]-xmin)), dd0 = a[i][1] - A*gv0;
+        sse += dd0*dd0;
+      }
+    } else {
+      // 给定 k，模型对 (y0, A) 是线性的 ⇒ 解 2×2 正规方程
+      var sg = 0, sgg2 = 0, sy = 0, sgy2 = 0;
+      for (i=0;i<n;i++){
+        var g = 1 - Math.exp(-kk*(a[i][0]-xmin));
+        sg += g; sgg2 += g*g; sy += a[i][1]; sgy2 += g*a[i][1];
+      }
+      var det = n*sgg2 - sg*sg;
+      if (!(Math.abs(det) > 1e-18)) continue;
+      A = (n*sgy2 - sg*sy)/det;
+      y0 = (sy - A*sg)/n;
+      if (!(A > 0)) continue;
+      for (i=0;i<n;i++){
+        var gv = 1 - Math.exp(-kk*(a[i][0]-xmin)), dd = a[i][1] - (y0 + A*gv);
+        sse += dd*dd;
+      }
     }
     if (!best || sse < best.sse) best = { A:A, y0:y0, k:kk, sse:sse };
   }
@@ -1040,9 +1104,12 @@ function computeFit(){
     return fs;
   }
 
-  var through = !!optOrigin.checked;
-  // 直线有两种画法：过原点 y=kx 和一般式 y=kx+b。勾了「直线过原点」就只认前者；
-  // 没勾也不等于「一定要有截距」—— 让数据自己说话（见下）。
+  // 这个实验的图线【物理上必然过原点】（表格第一行钉着 (0,0)）⇒ 拟合也必须过原点：
+  // 否则会出现「表格里锁着一个 (0,0)，画出来的曲线却从 y=0.02 起步」的自相矛盾。
+  var pinO = needsZero();
+  var through = !!optOrigin.checked || pinO;
+  // 直线有两种画法：过原点 y=kx 和一般式 y=kx+b。勾了「直线过原点」或本实验必然过原点
+  // 就只认前者；否则让数据自己说话（截距可忽略时按正比报，见下）。
   var fsThrough = scoreFit(fitStraight(p, true), p);
   var fsFree    = scoreFit(fitStraight(p, false), p);
   var straight;
@@ -1062,8 +1129,8 @@ function computeFit(){
   var alt = {
     inverse: scoreFit(fitInverse(p), p),
     power:   scoreFit(fitPower(p), p),
-    quad:    scoreFit(fitQuad(p), p),
-    sat:     scoreFit(fitSat(p), p),
+    quad:    scoreFit(fitQuad(p, pinO), p),
+    sat:     scoreFit(fitSat(p, pinO), p),
     smooth:  scoreFit(fitSmooth(p), p)
   };
   // 参数模型里「最好的一条曲线」（光滑曲线不进 AIC 赛跑：它参数最多，必然赢）
@@ -1089,7 +1156,8 @@ function computeFit(){
     if (best && best.r2 < 0.985 && (hasPlateau(p) || !isMonotone(p)) && alt.smooth) best = alt.smooth;
     out = best;
   } else if (fitMode === 'prop' || fitMode === 'linear'){
-    out = scoreFit(fitStraight(p, fitMode === 'prop'), p) || straight;
+    // 本实验必然过原点时，用户选「直线」也只能是过原点的那种 —— 否则线会躲开锁住的 (0,0)
+    out = scoreFit(fitStraight(p, fitMode === 'prop' || pinO), p) || straight;
   } else if (fitMode === 'smooth'){
     out = alt.smooth || straight;
   } else {
@@ -1139,8 +1207,13 @@ function fitExpr(f, P){
   if (f.kind === 'inverse') return Y + ' = ' + fmt(f.k) + ' / ' + X;
   if (f.kind === 'power')   return Y + ' = ' + fmt(f.a) + ' · ' + X + '^' + fmt(f.b);
   if (f.kind === 'quad')    return Y + ' = ' + fmt(f.a) + ' · ' + X + '²' + plusTerm(f.b) + ' · ' + X + plusTerm(f.c);
-  if (f.kind === 'sat')     return Y + ' = ' + fmt(f.y0) + ' + ' + fmt(f.A) +
-                                   ' · (1 − e^(−' + fmt(f.k) + ' · (' + X + ' − ' + fmt(f.x0) + ')))';
+  if (f.kind === 'sat'){
+    // 必然过原点时公式里别留「+ 0」和「− 0」，写干净点
+    if (Math.abs(f.y0) < 1e-9 && Math.abs(f.x0) < 1e-9)
+      return Y + ' = ' + fmt(f.A) + ' · (1 − e^(−' + fmt(f.k) + ' · ' + X + '))';
+    return Y + ' = ' + fmt(f.y0) + ' + ' + fmt(f.A) +
+           ' · (1 − e^(−' + fmt(f.k) + ' · (' + X + ' − ' + fmt(f.x0) + ')))';
+  }
   if (f.kind === 'smooth')  return '逐点平滑连接，这类图线没有简单函数式';
   return '';
 }
@@ -1411,13 +1484,17 @@ function drawEmptyHint(){
 function renderTable(){
   var html = '';
   for (var i=0;i<rows.length;i++){
-    html += '<tr data-i="' + i + '">' +
+    var lk = !!rows[i].lock;
+    var tag = lk ? ' class="lk" readonly title="这是必然的起点，固定为 (0,0)，不能修改"' : '';
+    html += '<tr data-i="' + i + '"' + (lk ? ' class="lkrow"' : '') + '>' +
       '<td class="idx">' + (i+1) + '</td>' +
-      '<td><input type="text" inputmode="decimal" autocomplete="off" data-k="xs" value="' +
+      '<td><input type="text" inputmode="decimal" autocomplete="off" data-k="xs"' + tag + ' value="' +
         esc(rows[i].xs) + '" aria-label="X 第' + (i+1) + '行"></td>' +
-      '<td><input type="text" inputmode="decimal" autocomplete="off" data-k="ys" value="' +
+      '<td><input type="text" inputmode="decimal" autocomplete="off" data-k="ys"' + tag + ' value="' +
         esc(rows[i].ys) + '" aria-label="Y 第' + (i+1) + '行"></td>' +
-      '<td class="op"><button class="del" type="button" title="删除这一行">×</button></td>' +
+      '<td class="op">' + (lk
+        ? '<span class="pin" title="(0,0) 是必然的起点：自变量为 0 时因变量必为 0 —— 不能改、不能删">🔒</span>'
+        : '<button class="del" type="button" title="删除这一行">×</button>') + '</td>' +
       '</tr>';
   }
   tbody.innerHTML = html;
@@ -1453,6 +1530,7 @@ function addRow(){
 }
 function clearAll(){
   rows = [];
+  if (needsZero()) rows.push(zeroRow());    // 清空 ≠ 把必然的起点也清掉
   setRowCount(MIN_ROWS);
   renderTable();
   refresh();
@@ -1461,8 +1539,14 @@ function loadSample(){
   var P = cur();
   if (P.custom){ clearAll(); return; }     // 自定义模式没有「示例」，就是一张空表
   var s = P.sample || [];
+  var pin = needsZero();
   rows = [];
-  for (var i=0;i<s.length;i++) rows.push({ xs: String(s[i][0]), ys: String(s[i][1]) });
+  if (pin) rows.push(zeroRow());
+  for (var i=0;i<s.length;i++){
+    // 样例里本来就有 (0,0) 的实验，别和钉住的那行重复
+    if (pin && Math.abs(s[i][0]) < 1e-12 && Math.abs(s[i][1]) < 1e-12) continue;
+    rows.push({ xs: String(s[i][0]), ys: String(s[i][1]) });
+  }
   setRowCount(Math.max(MIN_ROWS, rows.length));
   renderTable();
   refresh();
@@ -1496,6 +1580,7 @@ function paintMeta(){
   var P = cur();
   thX.textContent = axName(P.x, 'X');
   thY.textContent = axName(P.y, 'Y');
+  lockNote.hidden = !needsZero();
   pinfo.innerHTML = P.custom
     ? '横轴：<em>' + esc(axName(P.x, 'X')) + '</em>　纵轴：<em>' + esc(axName(P.y, 'Y')) + '</em><br>' +
       '自定义坐标轴：<b>只描点、只看趋势</b> —— 该是直线就画直线，该是曲线就画曲线，不预设结论。'
@@ -1849,6 +1934,7 @@ tbody.addEventListener('input', function (e){
   var tr = t.parentNode.parentNode;
   var i = parseInt(tr.getAttribute('data-i'), 10);
   if (!(i >= 0 && i < rows.length)) return;
+  if (rows[i].lock){ t.value = rows[i][t.getAttribute('data-k')] || '0'; return; }  // 钉住的点改不了
   var key = t.getAttribute('data-k');
   rows[i][key] = t.value;
   markBad();
@@ -1871,6 +1957,7 @@ tbody.addEventListener('click', function (e){
   var tr = t.parentNode.parentNode;
   var i = parseInt(tr.getAttribute('data-i'), 10);
   if (!(i >= 0 && i < rows.length)) return;
+  if (rows[i].lock) return;                       // 钉住的 (0,0) 删不掉
   if (rows.length <= ROW_MIN){ rows[i] = { xs:'', ys:'' }; }
   else rows.splice(i, 1);
   renderTable();
@@ -2044,12 +2131,24 @@ window.__cb = {
   },
   setPreset: applyPreset,
   setData: function (arr){
+    var pin = needsZero();
     rows = [];
-    for (var i=0;i<arr.length;i++) rows.push({ xs:String(arr[i][0]), ys:String(arr[i][1]) });
+    if (pin) rows.push(zeroRow());
+    for (var i=0;i<arr.length;i++){
+      if (pin && Math.abs(arr[i][0]) < 1e-12 && Math.abs(arr[i][1]) < 1e-12) continue;
+      rows.push({ xs:String(arr[i][0]), ys:String(arr[i][1]) });
+    }
     setRowCount(Math.max(MIN_ROWS, rows.length));
     renderTable();
     refresh();
   },
+  // 自检：当前表格里被钉住的行（{i, x, y}）
+  lockedRows: function (){
+    var out = [];
+    for (var i=0;i<rows.length;i++) if (rows[i].lock) out.push({ i:i, x:rows[i].xs, y:rows[i].ys });
+    return out;
+  },
+  needsZero: function (){ return needsZero(); },
   addRow: addRow, clearAll: clearAll, loadSample: loadSample,
   csvText: csvText,
   pngDataUrl: function (){ return canvas.toDataURL('image/png'); },
