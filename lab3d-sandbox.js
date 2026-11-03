@@ -13,7 +13,7 @@ import * as THREE from './assets/optics-three.min.js';
 import { CATALOG, buildRheostat, buildSwitch, buildBattery, buildBulb, buildMeter,
   buildStorageBattery, buildResistor, buildPower,
   buildResistanceBox, buildRheoboard, buildLed, buildJoule, buildCalorimeter,
-  buildPotentiometer, RBOARD_WIRES, DIM } from './lab3d-kit.js?build=28';
+  buildPotentiometer, RBOARD_WIRES, DIM } from './lab3d-kit.js?build=31';
 
 const $ = (id) => document.getElementById(id);
 
@@ -708,6 +708,143 @@ function termWorld(item, term) {
   return v;
 }
 
+// 接线柱的真实压接位置：柱帽【底面】外侧的金属片上。
+// 导线从柱帽里穿出来是用户明确指出的错误；现在量出柱帽网格的世界包围盒，
+// 把金属片放在帽底，导线只接到片端 —— 塑料帽在上、金属片在下，像真器材一样压紧。
+//
+// 🔴 柱子有两种方向，不能一律按「竖直柱」算：
+//    电流表/电压表是竖直的滚花帽（帽轴 +y），干电池是【水平伸出】的柱子（帽轴 ±x）。
+//    只取包围盒 min.y 当「帽底」的话，水平柱的帽底其实是柱子的【侧面】，
+//    垫圈会横着飘在柱子下面。这里改成：从柱帽的局部长轴算出它的真实轴线，
+//    垫圈就套在【贴器材那一端】的轴上，铜片沿垂直于轴线的方向伸出去。
+const WIRE_LUG_MAT = new THREE.MeshStandardMaterial({
+  color: 0xc8d0d8, roughness: 0.28, metalness: 0.78,
+});
+const _hwSize = new THREE.Vector3();
+const _hwBox = new THREE.Box3();
+const _hwCenter = new THREE.Vector3();
+function terminalHardware(item, term) {
+  const anchor = termWorld(item, term);
+  let cap = null;
+  item.group.traverse((o) => {
+    if (!cap && o.isMesh && o.userData && o.userData.termId === term) cap = o;
+  });
+  let radius = 6;
+  let halfLen = 6;
+  let axis = new THREE.Vector3(0, 1, 0);
+  const ringC = anchor.clone();
+  const capC = anchor.clone();
+  // 铜片伸出的方向：一律沿柱子朝外。
+  // 🔴 别把水平柱的铜片掰成「垂直于柱轴」：干电池的两根柱子在机身两侧，
+  //    垂直方向正好是机身内部，导线一出门就落在机身包围盒里，
+  //    避障会把这一整段抬到电池顶上 —— 屏幕上就是柱子上方拱一个圈再垂下来。
+  const out = exitDir(item, anchor);
+  if (cap) {
+    cap.updateWorldMatrix(true, false);
+    _hwBox.setFromObject(cap);
+    if (!_hwBox.isEmpty()) {
+      _hwBox.getCenter(_hwCenter);
+      capC.copy(_hwCenter);
+      _hwBox.getSize(_hwSize);
+      // 柱帽是一段圆柱：世界尺寸里最长的那条边就是它的轴线方向。
+      if (!cap.geometry.boundingBox) cap.geometry.computeBoundingBox();
+      const lb = cap.geometry.boundingBox;
+      const m = cap.matrixWorld.elements;
+      const cand = [
+        { v: new THREE.Vector3(m[0], m[1], m[2]), len: lb.max.x - lb.min.x },
+        { v: new THREE.Vector3(m[4], m[5], m[6]), len: lb.max.y - lb.min.y },
+        { v: new THREE.Vector3(m[8], m[9], m[10]), len: lb.max.z - lb.min.z },
+      ].sort((a2, b2) => b2.len - a2.len);
+      if (cand[0].v.lengthSq() > 1e-6) axis = cand[0].v.normalize(); else axis.set(0, 1, 0);
+      // 🔴 局部轴的方向和世界 ±方向没有固定关系（圆柱转 90° 后 +y 可能指向 −x），
+      //    必须统一掰成【朝外】：竖直柱朝上、水平柱朝背离器材的一侧。
+      //    不掰的话垫圈会跑到柱帽的外端，看上去像套在帽尖上。
+      if (Math.abs(axis.y) > 0.7) {
+        if (axis.y < 0) axis.negate();
+      } else if (axis.dot(out) < 0) {
+        axis.negate();
+      }
+      const ss = [_hwSize.x, _hwSize.y, _hwSize.z].sort((a2, b2) => a2 - b2);
+      radius = (ss[0] + ss[1]) / 4;                 // 两个短边的平均半径
+      halfLen = ss[2] / 2;
+      // 垫圈套在「贴器材那一端」：帽轴朝外，所以往 −axis 退半个帽长再抬 1.2
+      ringC.copy(_hwCenter).addScaledVector(axis, -(halfLen - 1.2));
+    }
+  }
+  radius = Math.max(4.2, Math.min(9.5, radius));
+  const y = ringC.y;
+  const center = new THREE.Vector3(ringC.x, y, ringC.z);
+  const tabLen = 7.5 + radius * 1.15;
+  // 铜片的起点：竖直柱从垫圈外缘起步（压在帽檐下面）；
+  // 水平柱从【柱帽外端面】起步 —— 从垫圈起步的话整片铜片都埋在柱帽里，屏幕上看不见。
+  const horiz = Math.abs(axis.y) <= 0.7;
+  const tabBase = horiz ? capC.clone() : center.clone();
+  const tabStart = horiz ? halfLen : radius - 0.7;
+  const point = tabBase.clone().addScaledVector(out, tabStart + tabLen);
+  return {
+    anchor, point, out, y,
+    center, axis, radius, tabLen, tabBase, tabStart,
+  };
+}
+
+// 每根导线两端各一块压接片：环形垫片 + 伸向帽外的扁铜片
+// 🔴 垫圈要【比柱帽大一圈】才看得见：和帽子一样大就被整个压住了，
+//    屏幕上只剩一根线头贴在柱子旁边，看不出「压在帽子下面」。
+const _qTmp = new THREE.Quaternion();
+const _zAxis = new THREE.Vector3(0, 0, 1);
+function makeWireLug(item, term, h, wireId) {
+  const g = new THREE.Group();
+  const ring = new THREE.Mesh(
+    new THREE.TorusGeometry(h.radius * 1.18, Math.max(1.05, h.radius * 0.2), 8, 26),
+    WIRE_LUG_MAT);
+  // 圆环默认绕 z 轴，转到柱帽的轴线上（竖直柱就平躺、水平柱就立起来套在柱子上）
+  ring.quaternion.copy(_qTmp.setFromUnitVectors(_zAxis, h.axis));
+  ring.position.copy(h.center);
+  g.add(ring);
+  const tab = new THREE.Mesh(
+    new THREE.BoxGeometry(h.tabLen, 1.35, Math.max(4.8, h.radius * 1.05)),
+    WIRE_LUG_MAT);
+  tab.position.copy(h.tabBase).addScaledVector(h.out, h.tabStart + h.tabLen / 2);
+  tab.rotation.y = -Math.atan2(h.out.z, h.out.x);
+  g.add(tab);
+  // 压接片本身也能被点中：点它等于点这根导线
+  g.traverse((o) => { o.userData.wireId = wireId; });
+  return g;
+}
+
+// 鼠标没落在接线柱上时的临时终点：优先搭在鼠标下面的器材表面，
+// 再不行才落到桌面；两者都不会让预览线钻进器材内部。
+function freeWireEnd(clientX, clientY, hit, fromY) {
+  const p = tablePoint(clientX, clientY);
+  let x, z, y;
+  if (p) { x = p.x; z = p.z; y = WIRE_G; }
+  else {
+    const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -(fromY || WIRE_G));
+    setRay(clientX, clientY);
+    if (!raycaster.ray.intersectPlane(plane, p)) return null;
+    x = p.x; z = p.z; y = fromY || WIRE_G;
+  }
+  // 鼠标射线其实先命中了器材：终点压在那个命中点上，并留出导线半径。
+  if (hit && hit.item && hit.point) {
+    x = hit.point.x; z = hit.point.z;
+    y = Math.max(y, hit.point.y + WIRE_R * 0.55);
+  }
+  y = Math.max(y, clearanceAt(x, z, null, null));
+  return new THREE.Vector3(x, y, z);
+}
+
+function previewToPointer(from, clientX, clientY, hit) {
+  const hA = terminalHardware(from.item, from.term);
+  let end = null, outB = new THREE.Vector3();
+  if (hit && hit.term && !(hit.item === from.item && hit.term === from.term)) {
+    const hB = terminalHardware(hit.item, hit.term);
+    end = hB.point; outB = hB.out;
+  } else {
+    end = freeWireEnd(clientX, clientY, hit, hA.point.y);
+  }
+  if (end) showPreview(hA.point, end, hA.out, outB);
+}
+
 // ── 导线几何 ──────────────────────────────────────────────────
 // 🔴🔴 真导线是【软的】：从接线柱顶端出来，往下一沉就贴在桌面上，
 //    在桌面上自然绕一道弯，再爬上另一个柱子。旧版把中点往上抬
@@ -721,18 +858,75 @@ const WIRE_G = 5.6;           // 桌面段离台面的高度（≈ 导线半径 
 // 🔴 不做这一步的话，导线从用电器身上穿过去，depthTest 会把它判成「跑到器材背后」——
 //    用户的原话是「从上面通过就该在上面」。这里读 item.solid（addItem 时量一次的实体包围盒，
 //    已经排除接触阴影那个大平面），导线经过谁就抬到谁顶上。
-function clearanceAt(x, z, skipA, skipB) {
+function clearanceAt(x, z, skipA, skipB, skipPts) {
   let y = 0;
   for (let i = 0; i < items.length; i++) {
     const it = items[i];
-    if (it === skipA || it === skipB || !it.solid) continue;
+    if (!it.solid) continue;
     const s = it.solid;
-    if (Math.abs(x - (it.group.position.x + s.cx)) < s.hw - 2 &&
-        Math.abs(z - (it.group.position.z + s.cz)) < s.hd - 2) {
-      if (s.top + 5 > y) y = s.top + 5;
+    // 起点 / 终点所在的器材不能整只跳过 —— 导线从左侧柱横跨到右侧器材时，
+    // 会从自己托盘或表壳里穿过去。只允许端点外 24 mm 的「出线区」贴着柱走，
+    // 离开出线区后同样按实体避障（从器材上方搭过去）。
+    if (it === skipA || it === skipB) {
+      const p = it === skipA ? (skipPts && skipPts[0]) : (skipPts && skipPts[1]);
+      if (!p || Math.hypot(x - p.x, z - p.z) < 24) continue;
+    }
+    // 包围盒外再留 3 mm：导线从表壳边缘擦过时也不能半根埋进壳里
+    if (Math.abs(x - (it.group.position.x + s.cx)) < s.hw + 3 &&
+        Math.abs(z - (it.group.position.z + s.cz)) < s.hd + 3) {
+      if (s.top + WIRE_R + 1.5 > y) y = s.top + WIRE_R + 1.5;
     }
   }
   return y;
+}
+
+// 二维线段与器材占地矩形是否真正相交（端点刚出柱帽的那一小段不算）。
+// 只判中段，避免“导线一离开柱帽就判定穿模”，同时拦住真正横穿器材的走线。
+function segmentHitsSolid(x1, z1, x2, z2) {
+  const EPS = 6;
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i], s = it.solid;
+    if (!s) continue;
+    const minX = it.group.position.x + s.cx - s.hw - EPS;
+    const maxX = it.group.position.x + s.cx + s.hw + EPS;
+    const minZ = it.group.position.z + s.cz - s.hd - EPS;
+    const maxZ = it.group.position.z + s.cz + s.hd + EPS;
+    let t0 = 0, t1 = 1;
+    const dx = x2 - x1, dz = z2 - z1;
+    let hit = true;
+    for (const [p, q] of [[-dx, x1 - minX], [dx, maxX - x1], [-dz, z1 - minZ], [dz, maxZ - z1]]) {
+      if (Math.abs(p) < 1e-9) { if (q < 0) { hit = false; break; } continue; }
+      const r = q / p;
+      if (p < 0) { if (r > t1) { hit = false; break; } if (r > t0) t0 = r; }
+      else { if (r < t0) { hit = false; break; } if (r < t1) t1 = r; }
+    }
+    // 线段在器材内部只擦过端点附近 <10% 的，不逼它绕大圈
+    if (hit && Math.min(t1, 0.94) - Math.max(t0, 0.06) > 0.10) return true;
+  }
+  return false;
+}
+
+// 被挡住时走桌子前沿或后沿，选更短的一侧。比“从器材顶上拱过去”自然得多。
+function detourRoute(p1, p2) {
+  let zMin = Infinity, zMax = -Infinity;
+  items.forEach((it) => {
+    const s = it.solid;
+    if (!s) return;
+    zMin = Math.min(zMin, it.group.position.z + s.cz - s.hd);
+    zMax = Math.max(zMax, it.group.position.z + s.cz + s.hd);
+  });
+  if (!isFinite(zMin)) return null;
+  const sides = [zMax + WIRE_R + 14, zMin - WIRE_R - 14];
+  let best = null;
+  sides.forEach((zs) => {
+    const pts = [
+      new THREE.Vector3(p1.x, WIRE_G, zs),
+      new THREE.Vector3(p2.x, WIRE_G, zs),
+    ];
+    const len = Math.abs(p1.z - zs) + Math.abs(p2.x - p1.x) + Math.abs(p2.z - zs);
+    if (!best || len < best.len) best = { zs, pts, len };
+  });
+  return best;
 }
 
 function wireGeoFor(p1, p2, side, skipA, skipB, dir1, dir2) {
@@ -743,9 +937,34 @@ function wireGeoFor(p1, p2, side, skipA, skipB, dir1, dir2) {
   const d = p1.distanceTo(p2);
   const out1 = (dir1 || new THREE.Vector3(0, 0, 1)).clone();
   const out2 = (dir2 || new THREE.Vector3(0, 0, 1)).clone();
-  // 两端各沿外法线退 6 mm：端点贴在滚花柱外端面上，接头看得见。
-  const a1 = p1.clone().addScaledVector(out1, 6);
-  const a2 = p2.clone().addScaledVector(out2, 6);
+  // 端点本身已经落在柱帽下的压接片外端，这里只再顺外法线让出 1.2 mm，
+  // 避免 CatmullRom 起始段把线头拐回柱帽里面。
+  const a1 = p1.clone().addScaledVector(out1, 1.2);
+  const a2 = p2.clone().addScaledVector(out2, 1.2);
+
+  // 直线会穿器材 ⇒ 从桌子前沿 / 后沿绕过去（导线沿桌面走，不学铁丝跨栏）
+  if (segmentHitsSolid(p1.x, p1.z, p2.x, p2.z)) {
+    const det = detourRoute(a1, a2);
+    if (det) {
+      const controls = [
+        p1.clone(),
+        p1.clone().addScaledVector(out1, 5),
+        det.pts[0],
+        det.pts[1],
+        p2.clone().addScaledVector(out2, 5),
+        p2.clone(),
+      ];
+      const curve = new THREE.CatmullRomCurve3(controls, false, 'centripetal', 0.22);
+      // CatmullRom 在急弯处会向下冲过控制点；不夹住就会沉到桌面以下“消失”。
+      const pts = curve.getPoints(96).map((q) => {
+        q.y = Math.max(q.y, WIRE_G);
+        return q;
+      });
+      const safe = new THREE.CatmullRomCurve3(pts, false, 'centripetal', 0.5);
+      return new THREE.TubeGeometry(safe, 160, WIRE_R, 10, false);
+    }
+  }
+
   // 垂度：跨度越大垂越多，但 30 cm 的线也就垂 2 cm 多，封顶 26 mm
   const sag = Math.min(26, 7 + d * 0.075);
   // 同一件器材的两根柱短接 ⇒ 导线必须从它【自己】顶上跨过去，不能跳过避让
@@ -757,7 +976,7 @@ function wireGeoFor(p1, p2, side, skipA, skipB, dir1, dir2) {
   const bend = Math.min(20, 3 + len * 0.05) * (side < 0 ? -1 : 1);
 
   const span = [];
-  const N = 24;
+  const N = 40;
   for (let i = 0; i <= N; i++) {
     const t = i / N;
     const x = a1.x + dx * t - (dz / len) * bend * Math.sin(Math.PI * t);
@@ -766,24 +985,45 @@ function wireGeoFor(p1, p2, side, skipA, skipB, dir1, dir2) {
     let y = a1.y + (a2.y - a1.y) * t - 4 * sag * t * (1 - t);
     // 沿途遇到别的器材就抬到它顶上（从上面跨过去，不从背后钻）；
     // 再兜一道底：任何情况下都不许钻到桌面以下。
-    y = Math.max(y, clearanceAt(x, z, sa, sb), WIRE_G);
+    y = Math.max(y, clearanceAt(x, z, sa, sb, [a1, a2]), WIRE_G);
     span.push(new THREE.Vector3(x, y, z));
   }
   const curve = new THREE.CatmullRomCurve3([p1].concat(span, [p2]), false, 'centripetal');
-  return new THREE.TubeGeometry(curve, 96, WIRE_R, 10, false);
+  return new THREE.TubeGeometry(curve, 128, WIRE_R, 10, false);
+}
+
+function disposeWireLugs(w) {
+  if (!w.lugs) return;
+  scene.remove(w.lugs);
+  w.lugs.traverse((o) => {
+    if (o.isMesh && o.geometry) o.geometry.dispose();
+  });
+  w.lugs = null;
+}
+
+// 一根导线 = 中间软线 + 两端压在柱帽下的金属片。器材移动、旋转后整根重算。
+function rebuildWire(w) {
+  const hA = terminalHardware(w.a.item, w.a.term);
+  const hB = terminalHardware(w.b.item, w.b.term);
+  if (w.mesh.geometry) w.mesh.geometry.dispose();
+  w.mesh.geometry = wireGeoFor(hA.point, hB.point, w.side, w.a.item, w.b.item, hA.out, hB.out);
+  disposeWireLugs(w);
+  w.lugs = new THREE.Group();
+  w.lugs.add(makeWireLug(w.a.item, w.a.term, hA, w.id));
+  w.lugs.add(makeWireLug(w.b.item, w.b.term, hB, w.id));
+  scene.add(w.lugs);
 }
 
 function addWire(a, b) {
   wireSeq += 1;
   const side = wireSeq % 2 ? 1 : -1;      // 相邻导线往两侧弯，不会叠成一条
-  const pa = termWorld(a.item, a.term), pb = termWorld(b.item, b.term);
-  const mesh = new THREE.Mesh(
-    wireGeoFor(pa, pb, side, a.item, b.item,
-      exitDir(a.item, pa), exitDir(b.item, pb)),
-    wireMats[(wireSeq % 2) ? 'red' : 'black']);
+  const color = (wireSeq % 2) ? 'red' : 'black';
+  const mesh = new THREE.Mesh(new THREE.BufferGeometry(), wireMats[color]);
   mesh.userData.wireId = wireSeq;
   scene.add(mesh);
-  wires.push({ id: wireSeq, a, b, mesh, side, color: (wireSeq % 2) ? 'red' : 'black' });
+  const w = { id: wireSeq, a, b, mesh, lugs: null, side, color };
+  wires.push(w);
+  rebuildWire(w);
   syncUI();
   recompute();
   toast(a.term + ' → ' + b.term + ' 接上了');
@@ -793,6 +1033,7 @@ function removeWire(id) {
   const i = wires.findIndex((w) => w.id === id);
   if (i === -1) return;
   const w = wires[i];
+  disposeWireLugs(w);
   scene.remove(w.mesh);
   if (w.mesh.geometry) w.mesh.geometry.dispose();
   wires.splice(i, 1);
@@ -830,17 +1071,13 @@ function updateWireX() {
 // 器材一动，挂在它身上的导线跟着重算
 function refreshWiresFor(item) {
   wires.forEach((w) => {
-    if (w.a.item === item || w.b.item === item) {
-      w.mesh.geometry.dispose();
-      const wa = termWorld(w.a.item, w.a.term), wb = termWorld(w.b.item, w.b.term);
-      w.mesh.geometry = wireGeoFor(wa, wb, w.side, w.a.item, w.b.item,
-        exitDir(w.a.item, wa), exitDir(w.b.item, wb));
-    }
+    if (w.a.item === item || w.b.item === item) rebuildWire(w);
   });
 }
 
 function cancelPending() {
   pending = null;
+  hidePreview();
   if (pendingMark) pendingMark.visible = false;
 }
 
@@ -1103,6 +1340,12 @@ function pick(clientX, clientY) {
       if (qf.userData && qf.userData.role === 'face') { onFace = true; break; }
       qf = qf.parent;
     }
+    // 点中的是不是电表的调零旋钮？（点一下把指针归零）
+    let qz = h.object, onZeroKnob = false;
+    while (qz) {
+      if (qz.userData && qz.userData.role === 'zeroKnob') { onZeroKnob = true; break; }
+      qz = qz.parent;
+    }
     // 点中的是不是接线柱？kit 里给柱子的 mesh 打了 termId
     let r = h.object, term = null;
     while (r) {
@@ -1136,7 +1379,7 @@ function pick(clientX, clientY) {
       });
       term = best;
     }
-    return { item, onSlider, onFace, term, point: h.point };
+    return { item, onSlider, onFace, onZeroKnob, term, point: h.point };
   }
   // 🔴 导线只有 6 mm 粗，鼠标点偏两三毫米就「点空」了（用户的原话是「点击导线就可以」）。
   //    这里补一层：射线到导线中心线的距离 < WIRE_HIT_R 也算点中。
@@ -1191,6 +1434,17 @@ function unfocusMeter() {
   return true;
 }
 
+// 点电表上的调零旋钮：机械调零只改指针零位，不改电路本身
+function operateZeroKnob(it) {
+  if (!it || !it.api || !it.api.zero) return;
+  const wasZeroed = !!it.api.zeroed;
+  it.api.zero();
+  recompute();
+  buildParams();
+  syncReadout();
+  toast(wasZeroed ? '指针已经在零刻度上' : '已调零：指针回到零刻度');
+}
+
 function tablePoint(clientX, clientY) {
   setRay(clientX, clientY);
   const p = new THREE.Vector3();
@@ -1232,10 +1486,11 @@ canvas.addEventListener('pointerdown', (e) => {
       const db = Math.hypot(pb.x - e.clientX, pb.y - e.clientY);
       drag.end = da <= db ? 'a' : 'b';
       w.mesh.visible = false;         // 拖动期间先藏起来，不然会和预览线叠成两根
+      if (w.lugs) w.lugs.visible = false;
       selectWire(w.id);
     }
   }
-  if (hit && hit.term) {
+  if (hit && hit.term && !pending) {
     // 按在接线柱上 = 直接「拉一根线」出来（松手落在另一个柱上就接上）
     drag.mode = 'wire';
     drag.from = { item: hit.item, term: hit.term };
@@ -1267,12 +1522,15 @@ canvas.addEventListener('pointermove', (e) => {
     canvas.classList.toggle('slide', !!hit && hit.onSlider);
     // 鼠标经过接线柱就给它一个光环：学生一眼知道「这里能接」。
     // 已经选了一个柱在等另一端时，标记留在原来那根柱上，不跟着鼠标跑。
-    if (hit && hit.term) {
+    if (hit && hit.term && !pending) {
       pendingMark.position.copy(termWorld(hit.item, hit.term)).add(new THREE.Vector3(0, 7, 0));
       pendingMark.visible = true;
-    } else if (!pending) {
-      pendingMark.visible = false;
+    } else if (!hit || !hit.term) {
+      if (!pending) pendingMark.visible = false;
     }
+    // 点过第一根柱之后，导线预览就像真线一样跟着鼠标伸展
+    if (pending) previewToPointer(pending, e.clientX, e.clientY, hit);
+    else hidePreview();
     return;
   }
   const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
@@ -1282,43 +1540,21 @@ canvas.addEventListener('pointermove', (e) => {
   if (drag.mode === 'wireDrag') {
     const w = drag.wire;
     const fixed = drag.end === 'a' ? w.b : w.a;
-    const from = termWorld(fixed.item, fixed.term);
     const h2 = pick(e.clientX, e.clientY);
     drag.hover = h2 && h2.term ? { item: h2.item, term: h2.term } : null;
-    if (drag.hover) {
-      showPreview(from, termWorld(h2.item, h2.term), exitDir(fixed.item, from));
-    } else {
-      const p = tablePoint(e.clientX, e.clientY);
-      if (p) showPreview(from, new THREE.Vector3(p.x, WIRE_G, p.z), exitDir(fixed.item, from));
-    }
+    previewToPointer(fixed, e.clientX, e.clientY, h2);
     return;
   }
   if (drag.mode === 'wire') {
-    const from = termWorld(drag.from.item, drag.from.term);
     const h2 = pick(e.clientX, e.clientY);
-    let end = null;
-    if (h2 && h2.term && !(h2.item === drag.from.item && h2.term === drag.from.term)) {
-      end = termWorld(h2.item, h2.term);
-      drag.hover = { item: h2.item, term: h2.term };
-    } else {
-      drag.hover = null;
-      // 🔴 没落在柱上就跟着鼠标走。原来用的是「与起点等高的水平面」（柱顶 ~66 mm），
-      //    鼠标斜着看过去，射线在那块高平面上打出的点会飞出去很远 —— 看着就是
-      //    「导线不跟手」。现在打【桌面】平面：终点就压在鼠标底下，和松手后长出来的
-      //    导线是同一个落点。
-      const p = tablePoint(e.clientX, e.clientY);
-      if (p) {
-        end = new THREE.Vector3(p.x, WIRE_G, p.z);
-      } else {
-        const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -from.y);
-        setRay(e.clientX, e.clientY);
-        if (raycaster.ray.intersectPlane(plane, p)) end = p;
-      }
-    }
-    if (end) showPreview(from, end, exitDir(drag.from.item, from));
+    drag.hover = (h2 && h2.term && !(h2.item === drag.from.item && h2.term === drag.from.term))
+      ? { item: h2.item, term: h2.term } : null;
+    // 没落在柱上时终点贴鼠标；落在器材上就压在器材表面，不穿过外壳
+    previewToPointer(drag.from, e.clientX, e.clientY, h2);
     return;
   }
   if (drag.mode === 'orbit') {
+    hidePreview();
     if (drag.moved > 3) {
       cam.yawT -= dx * 0.007;
       cam.pitchT = clamp(cam.pitchT + dy * 0.005, -0.05, 1.25);
@@ -1355,6 +1591,7 @@ canvas.addEventListener('pointerup', (e) => {
     //    否则点导线看颜色，线当场就没了。
     if (drag.moved < 6) {
       w.mesh.visible = true;
+      if (w.lugs) w.lugs.visible = true;
       selectWire(w.id);
       drag = null;
       return;
@@ -1402,6 +1639,10 @@ canvas.addEventListener('pointerup', (e) => {
       toast('选中一根导线（按 Delete 剪掉）');
     } else if (hit.term) {
       select(hit.item); selectWire(null); handleTermClick(hit);
+    } else if (hit.onZeroKnob && (hit.item.type === 'ammeter' || hit.item.type === 'voltmeter')) {
+      select(hit.item);
+      selectWire(null);
+      operateZeroKnob(hit.item);
     } else if (hit.onFace && (hit.item.type === 'ammeter' || hit.item.type === 'voltmeter')) {
       // 点表盘：放大 / 还原
       select(hit.item);
@@ -1435,6 +1676,7 @@ canvas.addEventListener('pointercancel', () => {
 
 canvas.addEventListener('wheel', (e) => {
   e.preventDefault();
+  hidePreview();
   cam.distT = clamp(cam.distT * (1 + e.deltaY * 0.0011), 420, 3600);
 }, { passive: false });
 
@@ -1821,7 +2063,7 @@ function buildParams() {
       '<small style="display:block;margin-top:8px;color:#64748b;font-size:10px;line-height:1.55">' +
         (it.key === 'storage'
           ? '最左前侧银柱是<b>负极</b>、最右后侧<b>红柱是正极</b>；黄色联条已在内部把三节电池串联。</small>'
-          : '左端<b>红柱是正极</b>、右端银柱是负极 —— 接反了电流方向相反（电表会反偏）。</small>');
+          : '默认<b>右端红柱是正极</b>、左端银柱是负极 —— 接反了电流方向相反（电表会反偏）。</small>');
     if (!it.api.setCells) {
       // 蓄电池：节数定死 3 节（2 V/节），面板只显示、不给滑条
       $('pBatCells').disabled = true;
@@ -2128,10 +2370,11 @@ function buildParams() {
       '</div>' +
       '<div class="lab3d-field">' +
         '<label class="chk"><input id="pMeterZero" type="checkbox"' + (it.api.zeroed ? ' checked' : '') + '>' +
-          '<span>已调零（指针在零刻度线上）</span></label>' +
+          '<span>指针已调零（在零刻度线上）</span></label>' +
         '<label class="chk"><input id="pMeterValue" type="checkbox"' + (it.api.showValue ? ' checked' : '') + '>' +
           '<span>在表盘上显示读数</span></label>' +
-        '<small>读数 = <b>' + (rec && rec.wired ? (Math.abs(reading) < 5e-4 ? '0' : reading.toFixed(3)) : '—') +
+        '<small>取消调零后指针会偏离零刻度；点表盘右下角的<b>调零旋钮</b>即可归零。' +
+        '指针示数 = <b>' + (it.api.indicated ? it.api.indicated(reading).toFixed(3) : reading.toFixed(3)) +
         ' ' + unit + '</b>' +
         (rec && rec.reversed ? ' · <b style="color:#fca5a5">正负接线柱接反，指针顶在左边</b>' : '') +
         (rec && rec.overRange ? ' · <b style="color:#fca5a5">超过量程</b>' : '') +
@@ -2142,8 +2385,10 @@ function buildParams() {
         '<button type="button" id="pRemove">🗑 从桌上拿走</button>' +
       '</div>';
     $('pMeterZero').addEventListener('change', (e) => {
-      it.api.zeroed = e.target.checked;
-      recompute(); syncReadout();
+      it.api.setZeroed(e.target.checked);
+      recompute();
+      syncReadout();
+      toast(e.target.checked ? '电表已调零' : '指针已偏离零刻度 —— 点表盘右下角的调零旋钮可归零');
     });
     $('pMeterValue').addEventListener('change', (e) => {
       it.api.setShowValue(e.target.checked);
@@ -2730,6 +2975,28 @@ window.__lab = {
   pendingInfo() {
     return pending ? { term: pending.term, idx: items.indexOf(pending.item) } : null;
   },
+  // 预览导线的当前状态（自检用：点完柱子移动鼠标，看预览线有没有跟着长出来）
+  previewInfo() {
+    if (!previewWire) return { exists: false };
+    const g = previewWire.geometry;
+    let box = null, verts = 0;
+    if (g && g.attributes && g.attributes.position) {
+      verts = g.attributes.position.count;
+      if (!g.boundingBox) g.computeBoundingBox();
+      const b = g.boundingBox;
+      box = {
+        min: [+b.min.x.toFixed(1), +b.min.y.toFixed(1), +b.min.z.toFixed(1)],
+        max: [+b.max.x.toFixed(1), +b.max.y.toFixed(1), +b.max.z.toFixed(1)],
+      };
+    }
+    return { exists: true, visible: previewWire.visible, verts, box };
+  },
+  // 让预览线走到某个屏幕坐标（不依赖真实 pointermove 的时序，自检用）
+  previewAt(x, y) {
+    if (!pending) return null;
+    previewToPointer(pending, x, y, pick(x, y));
+    return this.previewInfo();
+  },
   addWireByTerm(iA, tA, iB, tB) {
     addWire({ item: items[iA], term: tA }, { item: items[iB], term: tB });
     return wires.length;
@@ -2776,6 +3043,49 @@ window.__lab = {
       y: rect.top + (-p.y * 0.5 + 0.5) * rect.height,
       inFront: p.z > -1 && p.z < 1,
     };
+  },
+  // 柱帽 mesh 自己的世界位置 / 尺寸：和 termLocal 换算出来的锚点对比，
+  // 就能看出「锚点是不是飘在帽子上面」（飘了 raycast 的兜底就永远接不上）。
+  termMeshWorld(i, term) {
+    const it = items[i || 0];
+    if (!it) return null;
+    let cap = null;
+    it.group.traverse((o) => {
+      if (!cap && o.isMesh && o.userData && o.userData.termId === term) cap = o;
+    });
+    if (!cap) return { found: false };
+    cap.updateWorldMatrix(true, false);
+    const b = new THREE.Box3().setFromObject(cap);
+    const c = b.getCenter(new THREE.Vector3());
+    const sz = b.getSize(new THREE.Vector3());
+    const a = termWorld(it, term);
+    return {
+      found: true,
+      capCenter: c.toArray().map((n) => Math.round(n * 10) / 10),
+      capSize: sz.toArray().map((n) => Math.round(n * 10) / 10),
+      anchor: a.toArray().map((n) => Math.round(n * 10) / 10),
+      dist: +a.distanceTo(c).toFixed(1),
+      role: cap.userData.role || null,
+    };
+  },
+  // 某个屏幕坐标下，射线依次打到谁（排查「点柱子点不中」）
+  rayHits(x, y, n) {
+    setRay(x, y);
+    const targets = items.map((i) => i.group).concat(wires.map((w) => w.mesh));
+    const hits = raycaster.intersectObjects(targets, true);
+    return hits.slice(0, n || 6).map((h) => {
+      let o = h.object, term = null, role = null;
+      while (o) {
+        if (!term && o.userData && o.userData.termId) term = o.userData.termId;
+        if (!role && o.userData && o.userData.role) role = o.userData.role;
+        o = o.parent;
+      }
+      return {
+        term, role, name: h.object.name || null,
+        d: +h.distance.toFixed(1),
+        p: h.point.toArray().map((v) => Math.round(v * 10) / 10),
+      };
+    });
   },
   // 刀片（开关的可点区域）在屏幕上的位置
   bladeScreen(i) {

@@ -628,7 +628,7 @@ export function buildSwitch(opts) {
 // 参考图 → 3D：
 //   浅蓝灰塑料托架（底板 + 两端高挡板，中间弧形托）  → 圆角挤出 + 弧形托
 //   金色圆柱电池（侧面印红色 ⊕）                    → 圆柱 + CanvasTexture 贴片
-//   左端红色滚花接线柱 / 右端银色滚花接线柱          → 复用 knurledGeometry
+//   左端银色负极柱 / 右端红色正极柱                  → 复用 knurledGeometry
 // 节数可调（1~3 节，1.5 V/节）——【外观】跟着节数变长，【电路】只认总电动势。
 // 🔴 电动势与内阻走 cells / emfPerCell / rPerCell 三个老键：core 的 battery 分支
 //    只要 P.emf 不为空就【忽略 cells】。写 emf 会让「节数」变成纯装饰。
@@ -820,15 +820,15 @@ export function buildBattery(opts) {
       add(tag(plus, 'plusMark'));
     }
 
-    // 两端的滚花接线柱：左红、右银（沿 x 轴伸出）
+    // 两端的滚花接线柱：默认左银负、右红正（沿 x 轴伸出）
     [-1, 1].forEach((sx) => {
       const px = sx * LY.capX;
       const stem = new THREE.Mesh(new THREE.CylinderGeometry(3, 3, D.POST_LEN * 0.5, 16), MAT.brass);
       stem.rotation.z = Math.PI / 2;
       stem.position.set(sx * LY.stemX, LY.postY, 0);
       add(tag(stem, 'postStem'));
-      // 红柱 = 正极。对调后红柱换到另一头（学生一眼看得出「电池反装了」）。
-      const isPlus = (sx < 0) !== reversed;
+      // 红柱 = 正极。默认在右侧；对调后换到左侧（学生一眼看得出「电池反装了」）。
+      const isPlus = (sx > 0) !== reversed;
       const cap = new THREE.Mesh(knurledGeometry(D.POST_R, D.POST_LEN), isPlus ? MAT.red : MAT.steel);
       cap.rotation.z = Math.PI / 2;
       cap.position.set(px, LY.postY, 0);
@@ -840,7 +840,7 @@ export function buildBattery(opts) {
       add(slot);
     });
 
-    const sgn = reversed ? 1 : -1;
+    const sgn = reversed ? -1 : 1;
     termLocal['+'].set(sgn * LY.termX * S, (LY.postY + D.BOX_H) * S, 0);
     termLocal['-'].set(-sgn * LY.termX * S, (LY.postY + D.BOX_H) * S, 0);
     bounds.hw = (LY.trayHalf + D.POST_LEN) * S + 4;
@@ -1289,10 +1289,13 @@ export const METER_DIM = {
 // 双排刻度：外圈是大挡位（15 V / 3 A），内圈是小挡位（3 V / 0.6 A），
 // 两排共用同一条弧、同一个零点 —— 和真表一样：换挡位不换表盘。
 const METER_FACE_CACHE = {};
+// 表盘贴图的几何参数单独抽出来：指针角度要按【贴图上的那圈刻度】反算，
+// 两边各写一份数字，一改就错（原来就是靠一个 ZERO_TRIM 硬凑，两端都差 4°）。
+const FACE_TEX = { W: 560, H: 420, CX: 280, CY: 440, R: 350 };
 function meterFaceTexture(kind) {
   const key = 'face_' + kind;
   if (METER_FACE_CACHE[key]) return METER_FACE_CACHE[key];
-  const W = 560, H = 420;
+  const W = FACE_TEX.W, H = FACE_TEX.H;
   const cv = document.createElement('canvas');
   cv.width = W; cv.height = H;
   const g = cv.getContext('2d');
@@ -1306,7 +1309,7 @@ function meterFaceTexture(kind) {
     g.strokeStyle = '#6b7c8e'; g.lineWidth = 2.4; g.stroke();
   });
 
-  const cx = 280, cy = 440, R = 350;          // 弧心在表盘下方
+  const cx = FACE_TEX.CX, cy = FACE_TEX.CY, R = FACE_TEX.R;   // 弧心在表盘下方
   const A0 = -Math.PI / 4, A1 = Math.PI / 4;  // ±45°
   const isA = kind === 'ammeter';
   const big = isA ? 3 : 15;
@@ -1346,9 +1349,12 @@ function meterFaceTexture(kind) {
     const ro = edge ? R - 2 : R + 22;
     g.fillText(fmt(big * i / N), cx + c * ro, cy + sn * ro);
     // 内圈（小挡位）
+    // 🔴 两端的「0」「0.6」不能和指针画在同一条半径上：指针停零/满偏时正好从
+    //    这个数字中间穿过去，看起来像「指针戳在数字上」。沿弧往里让开 5°。
     g.font = 'bold 30px "Helvetica Neue", Arial, sans-serif';
     g.fillStyle = '#334155';
-    g.fillText(fmt(small * i / N), cx + c * (R - 52), cy + sn * (R - 52));
+    const ai = edge ? a + (i === 0 ? 0.085 : -0.085) : a;
+    g.fillText(fmt(small * i / N), cx + Math.cos(ai) * (R - 52), cy + Math.sin(ai) * (R - 52));
   });
 
   // 中央的 A / V
@@ -1378,6 +1384,12 @@ function meterFaceTexture(kind) {
     g.beginPath(); g.moveTo(cx + d, 320); g.lineTo(cx + d - 90, 400); g.stroke();
   }
   g.restore();
+
+  // 右下角的调零标记：3D 旋钮就装在两个字的右侧，学生能找到该拧哪里
+  g.fillStyle = '#475569';
+  g.font = 'bold 25px "PingFang SC", "Microsoft YaHei", sans-serif';
+  g.textAlign = 'right'; g.textBaseline = 'middle';
+  g.fillText('调零', 476, 392);
 
   const tex = new THREE.CanvasTexture(cv);
   tex.colorSpace = THREE.SRGBColorSpace;
@@ -1530,11 +1542,25 @@ export function buildMeter(opts) {
     valTex.needsUpdate = true;
   }
 
-  // 调零螺丝（表盘下方那颗）
-  const screw = new THREE.Mesh(new THREE.CylinderGeometry(4.2, 4.2, 2.4, 20), MAT.steel);
-  screw.rotation.x = Math.PI / 2;
-  screw.position.set(0, -6, FACE_Z - 0.6);
-  panelPivot.add(tag(screw, 'zeroScrew'));
+  // 可点击的调零旋钮：表盘右下角、刻度「调零」二字的右侧。
+  // 黑色绝缘座 → 金属滚花旋钮 → 一字槽；只有“已调零”状态能回到真零。
+  const zeroKnob = new THREE.Group();
+  zeroKnob.position.set(48, 14, FACE_Z + 1.2);
+  panelPivot.add(tag(zeroKnob, 'zeroKnob'));
+  const zeroBase = new THREE.Mesh(new THREE.CylinderGeometry(5.2, 5.2, 1.4, 24), MAT.black);
+  zeroBase.rotation.x = Math.PI / 2;
+  zeroBase.position.z = -0.35;
+  zeroKnob.add(tag(zeroBase, 'zeroKnobBase'));
+  const zeroSpin = new THREE.Group();
+  zeroKnob.add(tag(zeroSpin, 'zeroKnobSpin'));
+  const zeroCap = new THREE.Mesh(knurledGeometry(4.15, 1.8), MAT.steel);
+  zeroCap.rotation.x = Math.PI / 2;
+  zeroCap.position.z = 0.8;
+  zeroSpin.add(tag(zeroCap, 'zeroKnobCap'));
+  const zeroSlot = new THREE.Mesh(new THREE.BoxGeometry(6.2, 0.92, 0.52),
+    new THREE.MeshBasicMaterial({ color: 0x28323d }));
+  zeroSlot.position.z = 1.75;
+  zeroSpin.add(tag(zeroSlot, 'zeroKnobSlot'));
 
   // ── 6. 桌面接触阴影 ───────────────────────────────────────
   const shadow = new THREE.Mesh(
@@ -1546,17 +1572,36 @@ export function buildMeter(opts) {
   shadow.renderOrder = -1;
   outer.add(shadow);
 
-  // ── 7. 指针驱动（全部来自 circuit-core 的读数）──────────────
+  // ── 7. 指针驱动（读数来自 circuit-core，零位来自电表自身）────
   const HALF = D.SPAN / 2;
+  // 🔴 刻度弧在【贴图】里是正圆，但贴图 560×420 被拉伸到 faceW×faceH 上，
+  //    上了面板就成了椭圆；指针轴心也不在弧心上（在表盘下沿，比弧心高 5.6）。
+  //    所以「指针转 45° 就等于 45° 刻度」这个线性映射根本不成立 ——
+  //    实测两端各差 4°，指针指零时明显偏在 0 刻度右侧。
+  //    这里改成：按贴图的椭圆参数算出刻度点，再反算「从轴心看过去」的角度。
+  const ARC = {
+    x: 0,                                                   // 贴图弧心在画布水平正中
+    y: face.position.y + faceH / 2 - FACE_TEX.CY * (faceH / FACE_TEX.H),
+    rx: FACE_TEX.R * (faceW / FACE_TEX.W),
+    ry: FACE_TEX.R * (faceH / FACE_TEX.H),
+  };
+  // f = 0 在零刻度、f = 1 在满刻度；返回绕 z 的旋转角（逆时针为正）
+  function needleAngle(f) {
+    const th = -HALF + 2 * HALF * f;                        // −45° ~ +45°（0 在正上方）
+    const px = ARC.x + ARC.rx * Math.sin(th);
+    const py = ARC.y + ARC.ry * Math.cos(th);
+    return Math.atan2(-(px - pivot.position.x), py - pivot.position.y);
+  }
+  const ZERO_OFF = 0.045;   // 未调零时指针离零刻度的位置（× 当前量程）
   let shown = 0;            // 当前指针位置（0 = 零点，1 = 满偏）
   let target = 0;
   let zeroed = opts.zeroed == null ? true : !!opts.zeroed;
+  let zeroSpinTarget = zeroSpin.rotation.z;
 
   function apply() {
-    // 未调零 ⇒ 指针整体偏一点（真表就是这样：零点不在刻度线上）
-    const off = zeroed ? 0 : -0.055;
-    const f = shown + off;
-    pivot.rotation.z = HALF * (1 - 2 * f);
+    // 未调零 ⇒ 指针从零刻度偏出；调零后回到真值
+    const off = zeroed ? 0 : ZERO_OFF;
+    pivot.rotation.z = needleAngle(shown + off);
   }
   apply();
 
@@ -1576,6 +1621,9 @@ export function buildMeter(opts) {
     range: isA ? 0.6 : 3,
     showValue: false,
     zeroed,
+    zeroMode: zeroed ? 'on' : 'off',
+    zeroKnob,
+    zeroOffset: ZERO_OFF,
     weakI: false,
     getParams() {
       return {
@@ -1585,6 +1633,28 @@ export function buildMeter(opts) {
         showValue: api.showValue,
         weakI: api.weakI,
       };
+    },
+    // 未调零时表盘实际指示值；接反（负读数）仍按原值交给指针限位处理
+    indicated(v) {
+      const x = +v || 0;
+      if (!zeroed && x >= 0) return x + ZERO_OFF * api.range;
+      return x;
+    },
+    setZeroed(v) {
+      const nv = !!v;
+      if (nv && !zeroed) zeroSpinTarget += Math.PI;
+      zeroed = nv;
+      api.zeroed = nv;
+      api.zeroMode = nv ? 'on' : 'off';
+      apply();
+      return nv;
+    },
+    // 点表上的调零旋钮：转一格，指针归零
+    zero() {
+      const wasZeroed = zeroed;
+      api.setZeroed(true);
+      zeroSpinTarget += Math.PI * 0.75;
+      return wasZeroed;
     },
     // 求解结果回灌：只算「指针偏到哪」，不算电学
     setReading(rec) {
@@ -1599,18 +1669,23 @@ export function buildMeter(opts) {
       }
       if (rec.overRange) f = 1.05;     // 超量程 ⇒ 顶到右限位
       target = Math.max(-0.08, Math.min(1.08, f));
-      if (rec.zeroed != null) zeroed = !!rec.zeroed;
       if (valMesh.visible) {
-        const v = rec.wired ? (rec.reading || 0) : 0;
-        drawValue(Math.abs(v) < 5e-4 ? '0' : v.toFixed(rec.range <= 1 ? 2 : 2) +
-          (isA ? ' A' : ' V'));
+        const v = api.indicated(rec.wired ? (rec.reading || 0) : 0);
+        drawValue(Math.abs(v) < 5e-4 ? '0' : v.toFixed(2) + (isA ? ' A' : ' V'));
       }
     },
     step(dt) {
       const d = target - shown;
-      if (Math.abs(d) < 0.0015) { if (shown !== target) { shown = target; apply(); } return; }
-      shown += d * Math.min(1, dt * 9);
-      apply();
+      if (Math.abs(d) >= 0.0015) {
+        shown += d * Math.min(1, dt * 9);
+        apply();
+      } else if (shown !== target) {
+        shown = target;
+        apply();
+      }
+      const dz = zeroSpinTarget - zeroSpin.rotation.z;
+      if (Math.abs(dz) >= 0.002) zeroSpin.rotation.z += dz * Math.min(1, dt * 12);
+      else zeroSpin.rotation.z = zeroSpinTarget;
     },
     // 自检用：真实落笔的那一份
     debugMeter() {
@@ -1620,6 +1695,8 @@ export function buildMeter(opts) {
         shown: +shown.toFixed(4),
         range: api.range,
         zeroed,
+        zeroOffset: ZERO_OFF,
+        knobRot: +zeroSpin.rotation.z.toFixed(3),
       };
     },
     // 表盘上那一行数字（showValue 打开才画）
@@ -3146,7 +3223,7 @@ export const CATALOG = [
   },
   {
     type: 'battery', label: '干电池组', spec: '1.5 V / 节',
-    desc: '1~3 节干电池装在同一只托架上，两端红黑柱是电源两极。',
+    desc: '1~3 节干电池装在同一只托架上，默认右端红柱是正极、左端银柱是负极。',
     build: buildBattery, ready: true,
   },
   {
