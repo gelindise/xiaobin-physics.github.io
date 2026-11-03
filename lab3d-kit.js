@@ -1385,11 +1385,12 @@ function meterFaceTexture(kind) {
   }
   g.restore();
 
-  // 右下角的调零标记：3D 旋钮就装在两个字的右侧，学生能找到该拧哪里
+  // 调零标记：3D 旋钮装在表盘正中间（A 的正下方），两个字写在旋钮右侧，
+  // 🔴 不能写在正下方：正下方是【指针轴】，写在那儿会被轴帽整个压住。
   g.fillStyle = '#475569';
-  g.font = 'bold 25px "PingFang SC", "Microsoft YaHei", sans-serif';
-  g.textAlign = 'right'; g.textBaseline = 'middle';
-  g.fillText('调零', 476, 392);
+  g.font = 'bold 24px "PingFang SC", "Microsoft YaHei", sans-serif';
+  g.textAlign = 'left'; g.textBaseline = 'middle';
+  g.fillText('调零', 348, 368);
 
   const tex = new THREE.CanvasTexture(cv);
   tex.colorSpace = THREE.SRGBColorSpace;
@@ -1509,7 +1510,9 @@ export function buildMeter(opts) {
 
   // ── 5. 指针（轴在表盘下沿正中）─────────────────────────────
   const pivot = new THREE.Group();
-  pivot.position.set(0, 8, FACE_Z + 0.8);
+  // 🔴 指针要压在【调零旋钮的前面】：旋钮挪到表盘正中后，指针扫到中间正好
+  //    从它身上过。指针在 z 上多让出 1.8，看起来才是「针在盘上、旋钮嵌在盘里」。
+  pivot.position.set(0, 8, FACE_Z + 2.6);
   panelPivot.add(tag(pivot, 'needlePivot'));
   const needleLen = faceH * 0.74;
   const needle = new THREE.Mesh(new THREE.BoxGeometry(1.15, needleLen, 0.5),
@@ -1528,7 +1531,9 @@ export function buildMeter(opts) {
   valTex.colorSpace = THREE.SRGBColorSpace;
   const valMesh = new THREE.Mesh(new THREE.PlaneGeometry(38, 9.5),
     new THREE.MeshBasicMaterial({ map: valTex, transparent: true, depthWrite: false }));
-  valMesh.position.set(0, faceH * 0.26, FACE_Z + 0.5);
+  // 🔴 读数不能还放在原处（y = faceH×0.26）：旋钮挪到表盘正中后正好盖住它。
+  //    挪到表盘上沿内侧 —— 指针长度够不到那里，旋钮也离得远。
+  valMesh.position.set(0, 73, FACE_Z + 0.5);
   valMesh.visible = false;
   panelPivot.add(tag(valMesh, 'valueTag'));
   function drawValue(text) {
@@ -1542,10 +1547,10 @@ export function buildMeter(opts) {
     valTex.needsUpdate = true;
   }
 
-  // 可点击的调零旋钮：表盘右下角、刻度「调零」二字的右侧。
+  // 可点击的调零旋钮：表盘正中间、A 字母的正下方（和真表一样居中对齐）。
   // 黑色绝缘座 → 金属滚花旋钮 → 一字槽；只有“已调零”状态能回到真零。
   const zeroKnob = new THREE.Group();
-  zeroKnob.position.set(48, 14, FACE_Z + 1.2);
+  zeroKnob.position.set(0, 17, FACE_Z + 1.2);
   panelPivot.add(tag(zeroKnob, 'zeroKnob'));
   const zeroBase = new THREE.Mesh(new THREE.CylinderGeometry(5.2, 5.2, 1.4, 24), MAT.black);
   zeroBase.rotation.x = Math.PI / 2;

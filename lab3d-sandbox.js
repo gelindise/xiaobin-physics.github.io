@@ -13,7 +13,7 @@ import * as THREE from './assets/optics-three.min.js';
 import { CATALOG, buildRheostat, buildSwitch, buildBattery, buildBulb, buildMeter,
   buildStorageBattery, buildResistor, buildPower,
   buildResistanceBox, buildRheoboard, buildLed, buildJoule, buildCalorimeter,
-  buildPotentiometer, RBOARD_WIRES, DIM } from './lab3d-kit.js?build=31';
+  buildPotentiometer, RBOARD_WIRES, DIM } from './lab3d-kit.js?build=32';
 
 const $ = (id) => document.getElementById(id);
 
@@ -679,27 +679,65 @@ const wireMatPrev = new THREE.MeshStandardMaterial({
   color: 0x22d3ee, roughness: 0.4, metalness: 0.2, transparent: true, opacity: 0.7,
 });
 let previewWire = null;
-function showPreview(p1, p2, dir1, dir2) {
+function showPreview(p1, p2, dir1, dir2, skipA, skipB) {
   if (!previewWire) {
     previewWire = new THREE.Mesh(new THREE.BufferGeometry(), wireMatPrev);
     previewWire.visible = false;
     scene.add(previewWire);
   }
   if (previewWire.geometry) previewWire.geometry.dispose();
-  previewWire.geometry = wireGeoFor(p1, p2, 1, null, null, dir1, dir2);
+  previewWire.geometry = wireGeoFor(p1, p2, 1, skipA || null, skipB || null, dir1, dir2);
   previewWire.visible = true;
 }
 function hidePreview() { if (previewWire) previewWire.visible = false; }
 
-// 接线柱的「外法线」：从器材中心指向柱子的水平方向。
-// 🔴 导线必须沿这个方向离开柱子，不能一律向上 —— 电池的接线柱是【沿 ±x 水平伸出】的，
-//    从正上方引出等于让导线从柱子中间钻出来，看着像「从底部/背面冒出来」。
+// 接线柱的「外法线」：导线离开这根柱子时必须朝这个方向走。
+// 🔴 这一条不能想当然地用「器材中心 → 柱子」：
+//    电流表的三根柱子在【前面排成一排】，从中心连出去的话，左右两根得到的是
+//    两个斜向（±x 偏多），导线就从表的左/右侧面钻出去，再绕到表后面——
+//    这正是用户说的「线总是跑到电表后面」。真实的情况是：三根柱子的线
+//    一律朝【正前方】出来，落在接线板上，再从表前沿翻到桌面。
+//    判据：柱子在包围盒【边上】（干电池那种横着支出来的柱）⇒ 沿那一侧；
+//          柱子排成一条横排（仪表、开关）⇒ 垂直于那一排、朝外。
 function exitDir(item, p) {
-  const dx = p.x - item.group.position.x;
-  const dz = p.z - item.group.position.z;
-  const l = Math.hypot(dx, dz);
-  if (l < 1e-3) return new THREE.Vector3(0, 0, 1);     // 柱子在器材正上方时退回朝前
-  return new THREE.Vector3(dx / l, 0, dz / l);
+  const s = item.solid;
+  const cx = item.group.position.x + (s ? s.cx : 0);
+  const cz = item.group.position.z + (s ? s.cz : 0);
+  if (s) {
+    const rx = Math.abs(p.x - cx) / Math.max(1, s.hw);
+    const rz = Math.abs(p.z - cz) / Math.max(1, s.hd);
+    // 柱子本身就顶在包围盒边缘上 ⇒ 它是「横着支出来」的柱（干电池）
+    if (rx > 0.86 && rx >= rz && Math.abs(p.x - cx) > 4) {
+      return new THREE.Vector3(Math.sign(p.x - cx), 0, 0);
+    }
+    if (rz > 0.86 && rz > rx && Math.abs(p.z - cz) > 4) {
+      return new THREE.Vector3(0, 0, Math.sign(p.z - cz));
+    }
+  }
+  const terms = (item.api && item.api.termLocal) ? Object.keys(item.api.termLocal) : [];
+  if (terms.length >= 2) {
+    let xMin = Infinity, xMax = -Infinity, zMin = Infinity, zMax = -Infinity;
+    terms.forEach((t) => {
+      const v = termWorld(item, t);
+      if (v.x < xMin) xMin = v.x;
+      if (v.x > xMax) xMax = v.x;
+      if (v.z < zMin) zMin = v.z;
+      if (v.z > zMax) zMax = v.z;
+    });
+    // 一整排柱子的 z 都一样 ⇒ 它们都在器材的「正面」，出线方向就是正前方
+    if (zMax - zMin < 8 && Math.abs(p.z - cz) > 8) {
+      return new THREE.Vector3(0, 0, Math.sign(p.z - cz));
+    }
+    if (xMax - xMin < 8 && Math.abs(p.x - cx) > 8) {
+      return new THREE.Vector3(Math.sign(p.x - cx), 0, 0);
+    }
+  }
+  // 兜底（滑动变阻器这种四面都有柱的）：中心→柱子，吸附到主轴而不是取斜向，
+  // 斜向出门会让导线绕出一圈弧，看着像在桌上画圈。
+  const dx = p.x - cx, dz = p.z - cz;
+  if (Math.abs(dx) < 1e-3 && Math.abs(dz) < 1e-3) return new THREE.Vector3(0, 0, 1);
+  if (Math.abs(dx) >= Math.abs(dz)) return new THREE.Vector3(Math.sign(dx), 0, 0);
+  return new THREE.Vector3(0, 0, Math.sign(dz));
 }
 
 function termWorld(item, term) {
@@ -835,43 +873,52 @@ function freeWireEnd(clientX, clientY, hit, fromY) {
 
 function previewToPointer(from, clientX, clientY, hit) {
   const hA = terminalHardware(from.item, from.term);
-  let end = null, outB = new THREE.Vector3();
+  let end = null, outB = new THREE.Vector3(), endItem = null;
   if (hit && hit.term && !(hit.item === from.item && hit.term === from.term)) {
     const hB = terminalHardware(hit.item, hit.term);
-    end = hB.point; outB = hB.out;
+    end = hB.point; outB = hB.out; endItem = hit.item;
   } else {
     end = freeWireEnd(clientX, clientY, hit, hA.point.y);
   }
-  if (end) showPreview(hA.point, end, hA.out, outB);
+  if (end) showPreview(hA.point, end, hA.out, outB, from.item, endItem);
 }
 
 // ── 导线几何 ──────────────────────────────────────────────────
-// 🔴🔴 真导线是【软的】：从接线柱顶端出来，往下一沉就贴在桌面上，
-//    在桌面上自然绕一道弯，再爬上另一个柱子。旧版把中点往上抬
-//    「34 + 距离×0.16」，两根柱之间架起一道拱桥 —— 那是硬铁丝，不是导线。
-//    现在的走法（全程不高于柱顶，绝大部分贴着桌面）：
-//        柱顶 → 垂直引出 6~14 mm → 落到桌面 3.4 mm → 桌面弧线 → 爬上另一柱
+// 🔴🔴 导线到底该怎么走 —— 按「一根真实的软线」来建模，不是「两点之间连条线」。
+//
+//    真实的接法（用户的原话）：线从接线柱的铜片下出来 → 落在仪表那块接线板上 →
+//    顺着板子走到表的前沿 → 从边缘翻下去垂到桌面 → 在桌面上绕过挡路的器材 →
+//    再从另一台表的前沿翻上去、落在它的接线板上 → 接到柱子。
+//    它【不会】穿进任何壳体，也【不会】跑到器材背后。
+//
+//    之前两版都错在同一处：把器材当成一个「实心大矩形」，于是柱到柱的直线
+//    一进矩形就得绕行/抬高，导线被逼着从侧面出去再绕到表背后，或者被抬到
+//    表顶上方 200 mm 再从壳里穿出来。
+//
+//    这一版把「器材」拆成两个概念，问题就没了：
+//      · 障碍（挡住去路的）：只有【别的】器材，以及端点器材「柱子背后」的那半边；
+//      · 承托面（线搭在上面）：柱子脚下的那块板 / 桌面 —— 由 raycast 量出来，
+//        不是猜的。端点器材的【柱子这一侧】是敞开的，导线可以贴着自己的底座走。
+//
+//    于是同一台表两根柱之间的短线，就是「贴着接线板走的一小段弧」，
+//    长线则是「下桌 → 绕过别的器材 → 上来」，从任何角度看都是对的。
 const WIRE_R = 3.0;
 const WIRE_G = 5.6;           // 桌面段离台面的高度（≈ 导线半径 ×1.9：
                               // CatmullRom 在两端会下冲一点，抬到 5.6 才不会陷进台面）
-// 某个桌面位置上「至少要抬到多高」才能从器材上面跨过去。
-// 🔴 不做这一步的话，导线从用电器身上穿过去，depthTest 会把它判成「跑到器材背后」——
-//    用户的原话是「从上面通过就该在上面」。这里读 item.solid（addItem 时量一次的实体包围盒，
-//    已经排除接触阴影那个大平面），导线经过谁就抬到谁顶上。
+const WIRE_PAD = WIRE_R + 12; // 绕行时离别的器材轮廓至少留 12 mm（软线不会贴着壳走）
+const WIRE_STEP = 6;          // 折线重采样步长（mm）：y 的过渡要靠它来铺开
+const WIRE_SLOPE = 1.0;       // 导线允许的最大爬升斜率（1 = 45°，软线不会更陡）
+// 某个桌面位置上「至少要抬到多高」才能从器材上面跨过去（给自由端预览用）。
 function clearanceAt(x, z, skipA, skipB, skipPts) {
   let y = 0;
   for (let i = 0; i < items.length; i++) {
     const it = items[i];
     if (!it.solid) continue;
     const s = it.solid;
-    // 起点 / 终点所在的器材不能整只跳过 —— 导线从左侧柱横跨到右侧器材时，
-    // 会从自己托盘或表壳里穿过去。只允许端点外 24 mm 的「出线区」贴着柱走，
-    // 离开出线区后同样按实体避障（从器材上方搭过去）。
     if (it === skipA || it === skipB) {
       const p = it === skipA ? (skipPts && skipPts[0]) : (skipPts && skipPts[1]);
       if (!p || Math.hypot(x - p.x, z - p.z) < 24) continue;
     }
-    // 包围盒外再留 3 mm：导线从表壳边缘擦过时也不能半根埋进壳里
     if (Math.abs(x - (it.group.position.x + s.cx)) < s.hw + 3 &&
         Math.abs(z - (it.group.position.z + s.cz)) < s.hd + 3) {
       if (s.top + WIRE_R + 1.5 > y) y = s.top + WIRE_R + 1.5;
@@ -880,116 +927,289 @@ function clearanceAt(x, z, skipA, skipB, skipPts) {
   return y;
 }
 
-// 二维线段与器材占地矩形是否真正相交（端点刚出柱帽的那一小段不算）。
-// 只判中段，避免“导线一离开柱帽就判定穿模”，同时拦住真正横穿器材的走线。
-function segmentHitsSolid(x1, z1, x2, z2) {
-  const EPS = 6;
-  for (let i = 0; i < items.length; i++) {
-    const it = items[i], s = it.solid;
-    if (!s) continue;
-    const minX = it.group.position.x + s.cx - s.hw - EPS;
-    const maxX = it.group.position.x + s.cx + s.hw + EPS;
-    const minZ = it.group.position.z + s.cz - s.hd - EPS;
-    const maxZ = it.group.position.z + s.cz + s.hd + EPS;
-    let t0 = 0, t1 = 1;
-    const dx = x2 - x1, dz = z2 - z1;
-    let hit = true;
-    for (const [p, q] of [[-dx, x1 - minX], [dx, maxX - x1], [-dz, z1 - minZ], [dz, maxZ - z1]]) {
-      if (Math.abs(p) < 1e-9) { if (q < 0) { hit = false; break; } continue; }
-      const r = q / p;
-      if (p < 0) { if (r > t1) { hit = false; break; } if (r > t0) t0 = r; }
-      else { if (r < t0) { hit = false; break; } if (r < t1) t1 = r; }
-    }
-    // 线段在器材内部只擦过端点附近 <10% 的，不逼它绕大圈
-    if (hit && Math.min(t1, 0.94) - Math.max(t0, 0.06) > 0.10) return true;
-  }
-  return false;
+// 器材的桌面投影（膨胀 pad）—— 导线绕行时的障碍
+function wireRect(it, pad) {
+  const s = it && it.solid;
+  if (!s) return null;
+  const cx = it.group.position.x + s.cx;
+  const cz = it.group.position.z + s.cz;
+  return {
+    minX: cx - s.hw - pad, maxX: cx + s.hw + pad,
+    minZ: cz - s.hd - pad, maxZ: cz + s.hd + pad,
+  };
 }
 
-// 被挡住时走桌子前沿或后沿，选更短的一侧。比“从器材顶上拱过去”自然得多。
-function detourRoute(p1, p2) {
-  let zMin = Infinity, zMax = -Infinity;
-  items.forEach((it) => {
+// 线段是否真的穿过矩形内部（只擦过角、或端点落在边上不算）
+function segCrossRect(x1, z1, x2, z2, r, minSpan) {
+  const dx = x2 - x1, dz = z2 - z1;
+  let t0 = 0, t1 = 1;
+  const ps = [[-dx, x1 - r.minX], [dx, r.maxX - x1], [-dz, z1 - r.minZ], [dz, r.maxZ - z1]];
+  for (let i = 0; i < 4; i++) {
+    const p = ps[i][0], q = ps[i][1];
+    if (Math.abs(p) < 1e-9) { if (q < 0) return false; continue; }
+    const t = q / p;
+    if (p < 0) { if (t > t1) return false; if (t > t0) t0 = t; }
+    else { if (t < t0) return false; if (t < t1) t1 = t; }
+  }
+  return (t1 - t0) * Math.hypot(dx, dz) > (minSpan == null ? 0.8 : minSpan);
+}
+
+// 线离开器材的落脚点：柱子跟前 13 mm，落在【柱子脚下那个面】上。
+// 🔴 不能落到桌面（WIRE_G）！仪表的柱子长在一块接线板上，柱端正下方就是那块板，
+//    落到桌面等于穿过板子 / 从底座里钻出来 —— 这正是之前「线像从壳里冒出来」的根。
+//    那个面的高度用 raycast 量（见 deckUnder），不猜。
+const WIRE_LEAVE = 2;
+
+function inRect(q, r, m) {
+  if (!r) return false;
+  const p = m || 0;
+  return q.x >= r.minX - p && q.x <= r.maxX + p && q.z >= r.minZ - p && q.z <= r.maxZ + p;
+}
+
+// 柱子脚下那个「承托面」的高度：从柱子跟前垂直往下打一条射线，命中谁就是谁。
+// 仪表 → 绿接线板；干电池 → 桌面（柱子在托架外侧悬空）；打空 → 桌面。
+// 🔴 结果按「柱子跟前的本地坐标」缓存：拖动器材时导线每帧重建，
+//    不缓存的话每帧要打十几条射线（一个场景 5 根线 = 10 条/帧）。
+//    承托面高度和器材在桌面上的位置无关，所以本地坐标就能当键。
+const _deckRay = new THREE.Raycaster();
+const _deckDown = new THREE.Vector3(0, -1, 0);
+const _deckFrom = new THREE.Vector3();
+const _deckLocal = new THREE.Vector3();
+function deckUnder(item, x, y, z) {
+  if (!item || !item.group) return null;
+  _deckLocal.set(x, 0, z);
+  item.group.worldToLocal(_deckLocal);
+  const key = Math.round(_deckLocal.x / 2) + '_' + Math.round(_deckLocal.z / 2);
+  if (!item._deck) item._deck = {};
+  if (item._deck[key] !== undefined) return item._deck[key];
+  _deckFrom.set(x, y + 1, z);
+  _deckRay.set(_deckFrom, _deckDown);
+  _deckRay.near = 0;
+  _deckRay.far = 800;
+  const hits = _deckRay.intersectObject(item.group, true);
+  let res = null;
+  for (let i = 0; i < hits.length; i++) {
+    const o = hits[i].object;
+    if (!o.isMesh) continue;
+    if (o.userData && o.userData.termId) continue;      // 柱帽自己不算承托面
+    res = hits[i].point.y;
+    break;
+  }
+  item._deck[key] = res;
+  return res;
+}
+
+// 端点器材的障碍：把【柱子所在的那一侧】从矩形里切掉，留一条能走的空档。
+// 这样导线才能「贴着自己的底座/接线板」从柱子走到板子边缘，而不是被迫绕到侧面、
+// 绕到背后（之前就是这么绕出去的）。
+function postSideRect(item, p, out, pad) {
+  const r = wireRect(item, pad);
+  if (!r) return null;
+  if (Math.abs(out.x) >= Math.abs(out.z)) {
+    if (out.x > 0) r.maxX = Math.min(r.maxX, p.x - 5);
+    else r.minX = Math.max(r.minX, p.x + 5);
+  } else {
+    if (out.z > 0) r.maxZ = Math.min(r.maxZ, p.z - 5);
+    else r.minZ = Math.max(r.minZ, p.z + 5);
+  }
+  if (r.maxX - r.minX < 6 || r.maxZ - r.minZ < 6) return null;
+  return r;
+}
+
+// 一根导线两端的「地盘」信息：真实轮廓（判断搭在哪个面上）、敞开的条带（障碍）、
+// 以及承托面高度。
+function endpointInfo(item, p, out) {
+  if (!item) return null;
+  const rect = wireRect(item, 0);
+  const clip = postSideRect(item, p, out, 4);
+  const tab = p.clone().addScaledVector(out, WIRE_LEAVE);
+  let deck = WIRE_G;
+  const hy = deckUnder(item, tab.x, p.y, tab.z);
+  if (hy != null) deck = Math.max(WIRE_G, hy + WIRE_R * 0.85);
+  return { rect, clip, deck };
+}
+
+// 这个桌面位置上，线该躺在多高：桌面 / 端点器材的承托面 / 别的器材顶上（兜底）
+function wireYAt(q, eA, eB, skipA, skipB) {
+  let y = WIRE_G;
+  if (eA && inRect(q, eA.rect)) y = Math.max(y, eA.deck);
+  if (eB && inRect(q, eB.rect)) y = Math.max(y, eB.deck);
+  const c = clearanceOverOthers(q.x, q.z, skipA, skipB);
+  if (c > y) y = c;
+  return y;
+}
+
+// 折线按固定步长重采样（只算 XZ，y 稍后按位置填）
+function resampleXZ(pts, step) {
+  const out = [];
+  for (let i = 0; i < pts.length - 1; i++) {
+    const a = pts[i], b = pts[i + 1];
+    const L = Math.hypot(b.x - a.x, b.z - a.z);
+    const n = Math.max(1, Math.ceil(L / step));
+    for (let k = 0; k < n; k++) {
+      const t = k / n;
+      out.push({ x: a.x + (b.x - a.x) * t, z: a.z + (b.z - a.z) * t });
+    }
+  }
+  const last = pts[pts.length - 1];
+  out.push({ x: last.x, z: last.z });
+  return out;
+}
+
+// 沿弧长做「只抬不压」的锥形平滑：导线是软的，从柱子下来、从底座边缘翻下去，
+// 都要有一个 45° 以内的过渡段。原来是硬拐，屏幕上像线头折了一下。
+function smoothWireY(pts, step, slope) {
+  const lift = step * slope;
+  for (let i = 1; i < pts.length; i++) pts[i].y = Math.max(pts[i].y, pts[i - 1].y - lift);
+  for (let i = pts.length - 2; i >= 0; i--) pts[i].y = Math.max(pts[i].y, pts[i + 1].y - lift);
+  for (let i = 0; i < pts.length; i++) if (pts[i].y < WIRE_G) pts[i].y = WIRE_G;
+}
+
+// 桌面上的可见性图最短路：节点 = 起终点 + 各障碍矩形的 4 个角，边不许穿矩形
+function wireRouteOnTable(s, g, rects) {
+  const nodes = [{ x: s.x, z: s.z }, { x: g.x, z: g.z }];
+  rects.forEach((r) => {
+    nodes.push({ x: r.minX, z: r.minZ }, { x: r.maxX, z: r.minZ },
+               { x: r.maxX, z: r.maxZ }, { x: r.minX, z: r.maxZ });
+  });
+  const N = nodes.length;
+  const dist = new Array(N).fill(Infinity);
+  const prev = new Array(N).fill(-1);
+  const used = new Array(N).fill(false);
+  dist[0] = 0;
+  const clear = (a, b) => {
+    const na = nodes[a], nb = nodes[b];
+    for (let i = 0; i < rects.length; i++) {
+      if (segCrossRect(na.x, na.z, nb.x, nb.z, rects[i])) return false;
+    }
+    return true;
+  };
+  for (let step = 0; step < N; step++) {
+    let u = -1, bd = Infinity;
+    for (let i = 0; i < N; i++) if (!used[i] && dist[i] < bd) { bd = dist[i]; u = i; }
+    if (u < 0 || u === 1) break;
+    used[u] = true;
+    for (let v = 0; v < N; v++) {
+      if (used[v] || v === u) continue;
+      if (!clear(u, v)) continue;
+      const w = Math.hypot(nodes[u].x - nodes[v].x, nodes[u].z - nodes[v].z);
+      if (dist[u] + w < dist[v] - 1e-6) { dist[v] = dist[u] + w; prev[v] = u; }
+    }
+  }
+  if (!isFinite(dist[1])) return null;
+  const chain = [];
+  let k = 1;
+  while (k !== -1) { chain.push(nodes[k]); k = prev[k]; }
+  return chain.reverse();
+}
+
+// 折线拐角倒圆（二次贝塞尔，控制点就是拐点）：导线不会走直角
+function wireRoundCorners(pts, radius) {
+  if (pts.length < 3) return pts;
+  const out = [pts[0]];
+  for (let i = 1; i < pts.length - 1; i++) {
+    const a = pts[i - 1], b = pts[i], c = pts[i + 1];
+    const v1x = a.x - b.x, v1z = a.z - b.z;
+    const v2x = c.x - b.x, v2z = c.z - b.z;
+    const l1 = Math.hypot(v1x, v1z), l2 = Math.hypot(v2x, v2z);
+    if (l1 < 0.5 || l2 < 0.5) { out.push({ x: b.x, z: b.z }); continue; }
+    const r1 = Math.min(radius, l1 * 0.45), r2 = Math.min(radius, l2 * 0.45);
+    const p1x = b.x + (v1x / l1) * r1, p1z = b.z + (v1z / l1) * r1;
+    const p2x = b.x + (v2x / l2) * r2, p2z = b.z + (v2z / l2) * r2;
+    const SEG = 7;
+    for (let s2 = 0; s2 <= SEG; s2++) {
+      const t = s2 / SEG, u = 1 - t;
+      out.push({
+        x: u * u * p1x + 2 * u * t * b.x + t * t * p2x,
+        z: u * u * p1z + 2 * u * t * b.z + t * t * p2z,
+      });
+    }
+  }
+  out.push(pts[pts.length - 1]);
+  return out;
+}
+
+// 兜底：这个位置如果要抬到某件器材顶上，要抬到多高（跳过起终点器材 ——
+// 它们的外壁就是要贴着走的，见注释①）
+function clearanceOverOthers(x, z, skipA, skipB) {
+  let y = 0;
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i];
+    if (!it.solid || it === skipA || it === skipB) continue;
     const s = it.solid;
-    if (!s) return;
-    zMin = Math.min(zMin, it.group.position.z + s.cz - s.hd);
-    zMax = Math.max(zMax, it.group.position.z + s.cz + s.hd);
-  });
-  if (!isFinite(zMin)) return null;
-  const sides = [zMax + WIRE_R + 14, zMin - WIRE_R - 14];
-  let best = null;
-  sides.forEach((zs) => {
-    const pts = [
-      new THREE.Vector3(p1.x, WIRE_G, zs),
-      new THREE.Vector3(p2.x, WIRE_G, zs),
-    ];
-    const len = Math.abs(p1.z - zs) + Math.abs(p2.x - p1.x) + Math.abs(p2.z - zs);
-    if (!best || len < best.len) best = { zs, pts, len };
-  });
-  return best;
+    if (Math.abs(x - (it.group.position.x + s.cx)) < s.hw + 3 &&
+        Math.abs(z - (it.group.position.z + s.cz)) < s.hd + 3) {
+      const h = s.top + WIRE_R + 1.5;
+      if (h > y) y = h;
+    }
+  }
+  return y;
 }
 
 function wireGeoFor(p1, p2, side, skipA, skipB, dir1, dir2) {
-  // 🔴🔴 真实导线 = 【悬链线】：两端挂在接线柱上，中间靠自重垂下来。
-  //    上一版把两端直接压到桌面高度（WIRE_G），从柱顶一落到底 ——
-  //    视觉上就是「导线钻进元件底部」，用户报的正是这个。
-  //    现在：端点留在柱子外端面上，整根线在柱子的高度上悬着，只有中段下垂。
-  const d = p1.distanceTo(p2);
-  const out1 = (dir1 || new THREE.Vector3(0, 0, 1)).clone();
-  const out2 = (dir2 || new THREE.Vector3(0, 0, 1)).clone();
-  // 端点本身已经落在柱帽下的压接片外端，这里只再顺外法线让出 1.2 mm，
-  // 避免 CatmullRom 起始段把线头拐回柱帽里面。
-  const a1 = p1.clone().addScaledVector(out1, 1.2);
-  const a2 = p2.clone().addScaledVector(out2, 1.2);
+  const out1 = (dir1 && dir1.lengthSq && dir1.lengthSq() > 1e-6)
+    ? dir1.clone().normalize() : new THREE.Vector3(0, 0, 1);
+  const out2 = (dir2 && dir2.lengthSq && dir2.lengthSq() > 1e-6)
+    ? dir2.clone().normalize() : new THREE.Vector3(0, 0, 1);
+  const freeEnd = !skipB;                 // 预览时另一头还在鼠标上，不在柱子上
 
-  // 直线会穿器材 ⇒ 从桌子前沿 / 后沿绕过去（导线沿桌面走，不学铁丝跨栏）
-  if (segmentHitsSolid(p1.x, p1.z, p2.x, p2.z)) {
-    const det = detourRoute(a1, a2);
-    if (det) {
-      const controls = [
-        p1.clone(),
-        p1.clone().addScaledVector(out1, 5),
-        det.pts[0],
-        det.pts[1],
-        p2.clone().addScaledVector(out2, 5),
-        p2.clone(),
-      ];
-      const curve = new THREE.CatmullRomCurve3(controls, false, 'centripetal', 0.22);
-      // CatmullRom 在急弯处会向下冲过控制点；不夹住就会沉到桌面以下“消失”。
-      const pts = curve.getPoints(96).map((q) => {
-        q.y = Math.max(q.y, WIRE_G);
-        return q;
-      });
-      const safe = new THREE.CatmullRomCurve3(pts, false, 'centripetal', 0.5);
-      return new THREE.TubeGeometry(safe, 160, WIRE_R, 10, false);
-    }
+  // 两端的「地盘」：真实轮廓、敞开的条带、柱子脚下的承托面高度
+  const eA = endpointInfo(skipA, p1, out1);
+  const eB = freeEnd ? null : endpointInfo(skipB, p2, out2);
+
+  // 障碍只有两种：别的器材（留 WIRE_PAD）、端点器材【柱子背后】的那半边。
+  // 柱子这一侧留空，导线才能贴着自己的底座/接线板走 —— 这就是「搭在上面」。
+  const rects = [];
+  items.forEach((it) => {
+    if (it === skipA || it === skipB) return;
+    const r = wireRect(it, WIRE_PAD);
+    if (r) rects.push(r);
+  });
+  if (eA && eA.clip) rects.push(eA.clip);
+  // 同一台表的两端：切开后的矩形多半完全一样，重复推只会让最短路白算一遍
+  const sameRect = (r1, r2) => r1 && r2 &&
+    Math.abs(r1.minX - r2.minX) < 1e-3 && Math.abs(r1.maxX - r2.maxX) < 1e-3 &&
+    Math.abs(r1.minZ - r2.minZ) < 1e-3 && Math.abs(r1.maxZ - r2.maxZ) < 1e-3;
+  if (eB && eB.clip && !sameRect(eA && eA.clip, eB.clip)) rects.push(eB.clip);
+
+  // 柱子跟前 13 mm 的落脚点，落在柱子脚下那个面上（仪表接线板 / 桌面）
+  const a1 = p1.clone().addScaledVector(out1, WIRE_LEAVE);
+  a1.y = eA ? eA.deck : WIRE_G;
+  const a2 = p2.clone();
+  if (!freeEnd) {
+    a2.addScaledVector(out2, WIRE_LEAVE);
+    a2.y = eB ? eB.deck : WIRE_G;
   }
 
-  // 垂度：跨度越大垂越多，但 30 cm 的线也就垂 2 cm 多，封顶 26 mm
-  const sag = Math.min(26, 7 + d * 0.075);
-  // 同一件器材的两根柱短接 ⇒ 导线必须从它【自己】顶上跨过去，不能跳过避让
-  const sa = (skipA === skipB) ? null : skipA;
-  const sb = (skipA === skipB) ? null : skipB;
-  // 水平方向轻轻侧弯一点（同器材两柱都在前缘时，导线绕过它前面）
-  const dx = a2.x - a1.x, dz = a2.z - a1.z;
-  const len = Math.hypot(dx, dz) || 1;
-  const bend = Math.min(20, 3 + len * 0.05) * (side < 0 ? -1 : 1);
-
-  const span = [];
-  const N = 40;
-  for (let i = 0; i <= N; i++) {
-    const t = i / N;
-    const x = a1.x + dx * t - (dz / len) * bend * Math.sin(Math.PI * t);
-    const z = a1.z + dz * t + (dx / len) * bend * Math.sin(Math.PI * t);
-    // 悬链线：两端高、中间低（4t(1−t) 在 t=0.5 取最大值 1）
-    let y = a1.y + (a2.y - a1.y) * t - 4 * sag * t * (1 - t);
-    // 沿途遇到别的器材就抬到它顶上（从上面跨过去，不从背后钻）；
-    // 再兜一道底：任何情况下都不许钻到桌面以下。
-    y = Math.max(y, clearanceAt(x, z, sa, sb, [a1, a2]), WIRE_G);
-    span.push(new THREE.Vector3(x, y, z));
+  // 桌面上绕开障碍（可见性图最短路），拐角倒圆 —— 线是软的，不会走直角
+  let flat = wireRouteOnTable(a1, a2, rects);
+  if (!flat || flat.length < 2) {
+    // 两端被器材围死、绕不出去 ⇒ 退回直连，靠 y 的兜底抬高（很少见）
+    flat = [{ x: a1.x, z: a1.z }, { x: a2.x, z: a2.z }];
   }
-  const curve = new THREE.CatmullRomCurve3([p1].concat(span, [p2]), false, 'centripetal');
-  return new THREE.TubeGeometry(curve, 128, WIRE_R, 10, false);
+  flat = wireRoundCorners(flat, 24);
+  const dense = resampleXZ(flat, WIRE_STEP);
+
+  // 每个点该躺在多高：桌面 / 端点器材的承托面 / 别的器材顶上（兜底）
+  dense.forEach((q) => { q.y = wireYAt(q, eA, eB, skipA, skipB); });
+
+  // 整条折线：柱 → 柱（两端必须精确落在铜片端点上）
+  const pts = [{ x: p1.x, z: p1.z, y: p1.y }];
+  dense.forEach((q) => pts.push({ x: q.x, z: q.z, y: q.y }));
+  if (!freeEnd) {
+    pts.push({ x: p2.x, z: p2.z, y: p2.y });
+  } else if (pts.length > 1) {
+    // 鼠标停在器材表面上时，线头就该落在那个表面上，不能硬拉回桌面
+    pts[pts.length - 1].y = Math.max(WIRE_G, p2.y);
+  }
+
+  // 落差用 45° 以内的斜坡铺开：从柱子下来、从底座前沿翻下去都不会是直角
+  smoothWireY(pts, WIRE_STEP, WIRE_SLOPE);
+
+  const v3 = pts.map((q) => new THREE.Vector3(q.x, q.y, q.z));
+  const curve = new THREE.CatmullRomCurve3(v3, false, 'centripetal', 0.5);
+  const seg = Math.max(120, Math.min(360, v3.length * 2));
+  return new THREE.TubeGeometry(curve, seg, WIRE_R, 10, false);
 }
 
 function disposeWireLugs(w) {
