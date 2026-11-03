@@ -1389,6 +1389,58 @@
            Math.abs(b.V) <= EPS && b.p === b.q;
   }
 
+  // ============================================================
+  // 并联的【冗余理想支路】：只让一条进矩阵，电流在这几条之间平分
+  // ------------------------------------------------------------
+  // 两条并列的闭合开关（两端落在同一对节点上）各自被建成一条
+  // `kind:'V', V:0, Rs:0` 的理想支路 —— 这是 MNA 的经典奇异源：两条支路
+  // 各占一行，而写的方程【一字不差】（v_p − v_q = 0），矩阵里出现两行线性
+  // 相关 ⇒ 高斯消元判奇异 ⇒ 整条电路「无法求解」⇒ 灯全灭。
+  //
+  // 学生一眼就能看出的错：只合上一个开关灯亮，两个一起合上灯反而灭了。
+  // 🔴 这不是数值病，是【拓扑冗余】：两个理想短路并在一起，等效于一个理想
+  //    短路，节点电压完全一样，电流在两条之间怎么分都满足方程（不定）。
+  //    所以留一条进矩阵，另一条只做「影子支路」（follow）：不 stamp、不占行，
+  //    解完之后把主支路的电流【平分】给整组（见 solveIsland 末尾）。
+  //    平分是这批支路对称时唯一自洽的选择，学生看到两只开关各走一半电流，
+  //    跟「并联分流」的直觉一致。
+  //
+  // ⚠️ 只合并【电压完全相同】的。Rs≈0 而 V 不同的并在一起（理想电源两端
+  //    并一个闭合开关、两只电动势不同的理想电源并联）是真实矛盾 —— 那必须
+  //    留给矩阵去判奇异，再由 isShortedByIdealLoop 报成「电源被短接」。
+  //    ⚠️ 判据里 `Math.abs(b.V) <= EPS` 不行：两条 3V 理想电源并联也是冗余，
+  //    真正的判据是【彼此电压相等】，不是电压为零。
+  function mergeParallelIdealBranches(branches) {
+    var heads = [];        // 每条进矩阵的理想支路（带 parGroup）
+    for (var i = 0; i < branches.length; i++) {
+      var b = branches[i];
+      if (b.kind !== 'V' || !(Math.abs(b.Rs) <= 1e-9)) continue;
+      if (b.p === b.q) continue;                    // 自环由 degenerateIdealBranch 处理
+      // 统一到 p<q 的朝向，否则同一对节点上的两条反向支路认不出是一组
+      //（V 也要跟着翻号：v_p − v_q = V ⇔ v_q − v_p = −V）。
+      var lo = b.p <= b.q ? b.p : b.q;
+      var hi = b.p <= b.q ? b.q : b.p;
+      var Vc = b.p <= b.q ? b.V : -b.V;
+      var head = null;
+      for (var k = 0; k < heads.length; k++) {
+        var h = heads[k];
+        if (h.lo !== lo || h.hi !== hi) continue;
+        if (Math.abs(h.Vc - Vc) > EPS) continue;     // 电压不同 ⇒ 真矛盾，不合并
+        head = h;
+        break;
+      }
+      if (!head) {
+        heads.push({ lo: lo, hi: hi, Vc: Vc, br: b, group: [b] });
+        b.parGroup = [b];                            // 先占位，组员陆续补进来
+      } else {
+        b.follow = head.br;                          // 影子支路：不 stamp、不占行
+        head.group.push(b);
+        head.br.parGroup = head.group;
+      }
+    }
+    return branches;
+  }
+
   // 元件的【显示名】。页面允许学生点画布上的标签给元件改名（见 circuit-draw
   // 的 nameOf），内核只在【文案】上跟着走 —— 节点名（`id + ':' + termIdx`）、
   // `componentIds`、`results.components[c.id]` 这些【索引】一律仍用 c.id，
@@ -1490,7 +1542,9 @@
   // 单个岛的 MNA 装配与求解
   // ============================================================
   function solveIsland(island) {
-    var Vb = island.branches.filter(function (b) { return b.kind === 'V'; });
+    // follow 支路（并联冗余的理想短路，见 mergeParallelIdealBranches）不进矩阵：
+    // 它们和主支路写的是同一个方程，多一条就多一行线性相关的方程 ⇒ 矩阵奇异。
+    var Vb = island.branches.filter(function (b) { return b.kind === 'V' && !b.follow; });
 
     // 接地：优先取幅值最大【真电源】的负极，使多数节点电压为正、读数符合直觉。
     // 只在真电源里挑（passive 的等效源不算），否则一个 2.5V 反电动势的电动机
@@ -1530,6 +1584,7 @@
 
     for (i = 0; i < island.branches.length; i++) {
       var b = island.branches[i];
+      if (b.follow) continue;                              // 影子支路：不 stamp、不占行
       var ip = at(b.p), iq = at(b.q);
 
       if (b.kind === 'R' || b.kind === 'LAMP') {
@@ -1558,6 +1613,17 @@
     island.branches.forEach(function (b) {
       var r = rowOf.get(b);
       bI.set(b, r == null ? 0 : x[r]);
+    });
+    // 并联冗余支路的电流【平分】：矩阵里只有主支路那一条，解出来的是整组的
+    // 总电流（两条并列短路里的总电流）。把组员都填上总电流/条数，
+    // 两只开关各显示一半 —— 正是并联分流的样子，也不会有一条写成 0 让
+    // 「闭合开关却有 0 电流」看起来像 bug。
+    island.branches.forEach(function (b) {
+      if (b.follow) return;
+      var g = b.parGroup;
+      if (!g || g.length < 2) return;
+      var share = (bI.get(b) || 0) / g.length;
+      for (var gi = 0; gi < g.length; gi++) bI.set(g[gi], share);
     });
     return { ok: true, nodeV: nodeV, bI: bI, N: N, M: M };
   }
@@ -1736,7 +1802,10 @@
             branches.push(b);
           });
       });
-      return branches;
+      // 并联的冗余理想支路（两只闭合开关并列、两只理想电流表并列…）只留一条
+      // 进矩阵，其余标成 follow —— 否则两行相同的方程会让矩阵奇异，
+      // 表现为「合一个开关灯亮，两个都合上灯反而灭了」。
+      return mergeParallelIdealBranches(branches);
     }
 
     var branches = assemble();

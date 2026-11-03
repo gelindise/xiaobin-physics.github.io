@@ -1029,6 +1029,53 @@ test('T21d 真正的接线矛盾仍报 singular，不能被短路诊断吞掉', 
   truthy(r.ok === false, 'T21d 求解不应标记为成功');
 });
 
+test('T21e 两只闭合开关并联控制同一盏灯：两个都合上灯还亮，电流各走一半', function () {
+  // 学生最常见的接法（也是曾经报过的 bug）：两只开关并在一起当「双控」用。
+  // 只合一只时一切正常；两只都合上，矩阵里出现两行一模一样的方程
+  //（两条 V:0,Rs:0 的理想短路，同一对节点）⇒ 判奇异 ⇒ 整条电路解不出来，
+  // 灯反而灭了。正确结果：与只合一只完全相同，电流在两只开关之间平分。
+  function mk(sw1, sw2) {
+    return [
+      comp('E', 'battery', { emf: 3, rInt: 0 }),
+      comp('S1', 'switch', { closed: sw1 }),
+      comp('S2', 'switch', { closed: sw2 }),
+      comp('L', 'bulb', { ratedU: 3, ratedP: 0.75, tempDependent: false }),
+    ];
+  }
+  var wiresP = [
+    W('E', 0, 'S1', 0), W('E', 0, 'S2', 0),
+    W('S1', 1, 'L', 0), W('S2', 1, 'L', 0),
+    W('L', 1, 'E', 1),
+  ];
+
+  var one = run(mk(true, false), wiresP, 'T21e-一只');
+  var both = run(mk(true, true), wiresP, 'T21e-两只');
+
+  truthy(both.status === 'ok', 'T21e 两只都合上必须能解，实际 ' + both.status);
+  // 灯泡工作点与「只合一只」逐位一致（灯丝电阻、电流、功率）
+  close(both.components.L.i, one.components.L.i, 'T21e 灯的电流不变', 1e-9);
+  close(both.components.L.p, one.components.L.p, 'T21e 灯的功率不变', 1e-9);
+  close(both.components.L.R, one.components.L.R, 'T21e 灯丝电阻不变', 1e-9);
+  // 电流在两只开关之间平分（而不是一整份算到其中一只头上、另一只写 0）
+  close(both.components.S1.i, both.components.S2.i, 'T21e 两只开关电流相等', 1e-9);
+  close(both.components.S1.i + both.components.S2.i,
+        both.components.E.i, 'T21e 两开关电流之和 = 干路电流', 1e-9);
+  truthy(!(both.warnings || []).some(function (w) { return w.code === 'SWITCH_BYPASSED'; }),
+    'T21e 不该把并联的另一只开关报成「被导线短接」');
+});
+
+test('T21f 理想电源与闭合开关并联（电压不同）仍然报短路，不能被合并吞掉', function () {
+  // T21e 的合并只对【电压相同】的冗余支路生效。理想电源两端并一个闭合开关
+  // 是一条 0V 与一条 3V 压在同一对节点上 —— 那是最经典的短路，必须照报。
+  var r = C.solve([
+    comp('E', 'battery', { emf: 3, rInt: 0 }),
+    comp('SW', 'switch', { closed: true }),
+    comp('R', 'resistor', { R: 10 }),
+  ], [W('E', 0, 'SW', 0), W('E', 1, 'SW', 1), W('E', 0, 'R', 0), W('R', 1, 'E', 1)], {});
+
+  truthy(r.status === 'shorted', 'T21f 应报短路，实际 ' + r.status);
+});
+
 // ============================================================
 // T20 导线电流分布（画面上电流粒子朝哪边跑，靠的就是它）
 // ============================================================
