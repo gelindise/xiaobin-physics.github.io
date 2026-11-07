@@ -674,6 +674,35 @@
   }
 
   // ============================================================
+  // 恒温箱（灯丝温度被箱体钳住的小灯泡）的几何
+  // ------------------------------------------------------------
+  // 和 CAL 摆在一起、理由相同：TERMINALS 要按它算接线柱，而 TERMINALS 是
+  // 文件顶层求值的对象字面量 —— 常量必须写在它【前面】（var 提升只提升声明，
+  // 不提升赋值，写在后面拿到的是 undefined）。
+  //
+  // 布局（局部坐标，原点在箱体正中）：
+  //     ┌──────────────────────────┐  −78  箱盖，两根柱子钉在 ±78
+  //     │  ┌────────────────────┐  │  −64  玻璃观察窗上沿
+  //     │  │  ○  ← 箱里那盏灯    │  │
+  //     │  └────────────────────┘  │  +50  窗下沿
+  //     │  恒温 1385 ℃（数码屏）   │  +56…76  面板
+  //     └──────────────────────────┘  +82  箱底（落在台面上）
+  // 箱子做成【左右对称、上下不等高】的：箱底要压在台面上，箱盖要留出柱子的
+  // 空间。bodyBox 是上下对称的，所以那边取「够用的那一档」（见那里的注释）。
+  // ============================================================
+  var THERMO = {
+    HW: 108, TOP: -78, BOT: 82,          // 箱体：半宽 / 上沿 / 下沿
+    WIN_HW: 90, WIN_TOP: -64, WIN_BOT: 50,   // 玻璃观察窗
+    POST_X: 78, POST_Y: -78,             // 两根接线柱（钉在箱盖上）
+    BULB_CY: -6, BULB_R: 22,             // 箱里那盏灯：玻璃泡圆心 / 半径
+    CAP_TOP: 8, CAP_HW: 11.5,            // 银色螺口箍
+    SOCK_TOP: 22, SOCK_BOT: 46, SOCK_HW: 15, // 瓷灯座
+    LCD: { x: -63, w: 126, y: 56, h: 20 },   // 温度数码屏
+    LAMP_X: -86, LAMP_Y: 66, LAMP_R: 5.5,    // 「恒温」指示灯
+    BOX_HW: 108, BOX_HH: 82,             // bodyBox 用（对称）
+  };
+
+  // ============================================================
   // 端子坐标
   // ============================================================
   var TERMINALS = {
@@ -719,6 +748,12 @@
     //    偏心一根，刀片就得做成两段不一样长，画出来像把跷跷板。
     spdt: [{ x: -HALF, y: 0 }, { x: 0, y: 0 }, { x: HALF, y: 0 }],
     bulb: [{ x: -HALF, y: 0 }, { x: HALF, y: 0 }],
+    // 恒温箱：两根柱子都钉在【箱盖】上（和量热瓶的柱子插在塞子上同一个路子
+    // —— 柱子长在本体上，走线避让不会把「导线夹在柱子上」判成「穿过箱体」）。
+    // 柱子在 ±78、箱体 ±108：柱子离箱沿留 30px，图例和元件盒里才看得出
+    // 「这是箱盖上拧着的两根柱子」，不会读成箱角上的两颗钉子。
+    thermobox: [{ x: -THERMO.POST_X, y: THERMO.POST_Y },
+                { x: THERMO.POST_X, y: THERMO.POST_Y }],
     // 二极管和电动机是【有极性】的，0 号端子一律是「+」（左边那个红柱）。
     // 和电池的「+在右」不一样是有意的：电池的 + 在右是干电池实物上碳棒那
     // 一头的位置，二极管/电动机的 + 在左只是本页的摆法 —— 学生认哪边是正，
@@ -1520,6 +1555,10 @@
     // 只有一根【单边】刀片绕转轴倒 14°（远端是黑柄）。顶到 −62 就够。
     spdt:      { x0: -104, y0: -62, x1: 104, y1: 38 },
     bulb:      { x0: -74, y0: -80, x1: 74, y1: 40 },
+    // 恒温箱：箱体 ±108 × (−78…82)，箱盖上的柱子再探到 −107（柱帽顶）。
+    // 取景框要包住柱子，否则元件盒图标里那两根柱子会被切平 —— 而「柱子在哪」
+    // 正是学生接线前唯一要看的那件事。
+    thermobox: { x0: -112, y0: -110, x1: 112, y1: 90 },
     ammeter:   { x0: -122, y0: -110, x1: 122, y1: 84 },
     voltmeter: { x0: -122, y0: -110, x1: 122, y1: 84 },
     // 灵敏电流计：和两只表同一只壳、同一块底座，取景框当然也一样。
@@ -1773,6 +1812,11 @@
       // 「导线夹在柱子上」会被误判成「导线穿过元件」。
       case 'spdt': return { hw: 70, hh: 62 };
       case 'bulb': return { hw: 70, hh: 74 };            // 底板 ±70，玻璃泡顶 y = −71.5
+      // 恒温箱：盒子就是箱体（±108 × ±82）。两根柱子在箱盖上（y = −78），
+      // 落在盒子里是有意的 —— 这件器材的柱子本来就长在箱盖上（和量热瓶、
+      // 学生电源同一类）。走线避让只判竖车道，柱子那截横引线不参与，
+      // 不会把「导线夹在柱子上」误判成「导线穿过箱体」。
+      case 'thermobox': return { hw: THERMO.BOX_HW, hh: THERMO.BOX_HH };
       // 三个新元件都是「示教板」：和开关 / 灯泡同一块底板（±70），本体长在板面上方。
       // 所以 hw 给 70（板宽），hh 只要盖住本体到板面这一截 —— 一超过 70，
       // 钉在 ±70 的接线柱就被圈回盒子里，「导线夹在柱子上」会被误判成
@@ -7700,6 +7744,263 @@
     ctx.restore();
   }
 
+  // ============================================================
+  // 恒温箱（灯丝温度被箱体钳住的小灯泡）
+  // ------------------------------------------------------------
+  // 画面上必须同时读出三件事，少一件这件器材就退化成「一个带灯泡的盒子」：
+  //   ① 灯是【装在箱子里】的 —— 玻璃观察窗、窗里那盏灯、两根引线沿箱壁下来；
+  //   ② 箱温是【恒定】的 —— 面板上那块数码屏，通电断电、调高调低电压，
+  //      这个数一个都不动。它就是这个器材存在的全部理由；
+  //   ③ 灯【照样会亮】—— 亮度随电压变（变的是功率），可屏上的温度不动。
+  //      「温度不变、电阻不变，灯还是那只灯」三句话在同一个画面里成立。
+  // 🔴 温度只从 rec.tempC 取，这里【不】按功率再算一遍。内核 fillThermoBox
+  //    已经把它钳成箱温了（见那里的注释）；两处各算一遍，迟早一处钳了、
+  //    一处没钳，屏上的温度和读数表里的 R 就会自相矛盾 —— 老实验页踩过这个坑。
+  //    rec 为 null（元件盒 / 图例的离屏图标）时没有解，屏上只印「恒温」两个字，
+  //    不编一个温度出来。
+  // ============================================================
+  function drawThermoBox(ctx, comp, rec) {
+    var T = THERMO;
+    var temp = (rec && typeof rec.tempC === 'number') ? rec.tempC : null;
+    var bright = rec ? Math.max(0, Math.min(rec.brightness || 0, 1.3)) : 0;
+    var lit = bright > 0.02;
+    var bg = lit ? Math.pow(Math.min(bright, 1.3) / 1.3, 1.15) : 0;
+    var heat = heatRgb(bright);
+    var sc = ctxScale(ctx);
+
+    ctx.save();
+    ctx.translate(comp.x, comp.y);
+    ctx.rotate((comp.rot || 0) * Math.PI / 180);
+    ctx.scale(scaleOf(comp), scaleOf(comp));
+
+    // ① 箱底压在台面上的接触阴影：箱子是【坐着】的，不是浮着
+    contactShadow(ctx, 0, T.BOT + 1.5, T.HW * 0.94, 5.5, 0.32);
+
+    // ② 外壳：浅灰注塑件（和底板 / 表壳同一套打光：上亮下暗、顶棱一道高光）
+    softShadow(ctx, -T.HW, T.TOP, T.HW * 2, T.BOT - T.TOP, 14, 10);
+    ctx.save();
+    roundRect(ctx, -T.HW, T.TOP, T.HW * 2, T.BOT - T.TOP, 10); ctx.clip();
+    ctx.fillStyle = linGrad(ctx, 0, T.TOP, 0, T.BOT,
+      [[0, '#f4f7fb'], [0.14, '#e3eaf2'], [0.46, '#cbd5e1'],
+       [0.78, '#b0bcca'], [1, '#95a3b3']]);
+    ctx.fillRect(-T.HW, T.TOP, T.HW * 2, T.BOT - T.TOP);
+    // 箱盖那道受光面：盖板朝上，比正面亮一档
+    ctx.fillStyle = linGrad(ctx, 0, T.TOP, 0, T.TOP + 13,
+      [[0, 'rgba(255,255,255,0.92)'], [1, 'rgba(255,255,255,0)']]);
+    ctx.fillRect(-T.HW, T.TOP, T.HW * 2, 13);
+    ctx.restore();
+    roundRect(ctx, -T.HW, T.TOP, T.HW * 2, T.BOT - T.TOP, 10);
+    ctx.strokeStyle = 'rgba(64,78,96,0.45)'; ctx.lineWidth = 1.2; ctx.stroke();
+    ctx.strokeStyle = 'rgba(255,255,255,0.82)'; ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.moveTo(-T.HW + 13, T.TOP + 1.8); ctx.lineTo(T.HW - 13, T.TOP + 1.8);
+    ctx.stroke();
+    ctx.fillStyle = 'rgba(36,48,64,0.24)';          // 箱底贴台面那条暗边
+    roundRect(ctx, -T.HW + 4, T.BOT - 4.4, T.HW * 2 - 8, 3, 1.5); ctx.fill();
+
+    // ③ 保温层断面：窗框那一圈暖灰色的厚壁。
+    //    这是「恒温」唯一的物理解释 —— 箱子凭什么不跟着灯丝一起变热变冷。
+    var wx = T.WIN_HW, wt = T.WIN_TOP, wb = T.WIN_BOT;
+    ctx.save();
+    roundRect(ctx, -wx - 5, wt - 5, (wx + 5) * 2, (wb - wt) + 10, 9);
+    ctx.strokeStyle = 'rgba(232,226,208,0.72)'; ctx.lineWidth = 8; ctx.stroke();
+    ctx.strokeStyle = 'rgba(150,158,168,0.5)'; ctx.lineWidth = 1.1;
+    roundRect(ctx, -wx - 1.5, wt - 1.5, (wx + 1.5) * 2, (wb - wt) + 3, 7); ctx.stroke();
+    ctx.restore();
+
+    // ④ 观察窗里的内容（全部裁在窗里：灯泡的光不能照到箱子外面去）
+    ctx.save();
+    roundRect(ctx, -wx, wt, wx * 2, wb - wt, 6); ctx.clip();
+    // 箱里是暗的 —— 灯丝那点光才显得出来
+    ctx.fillStyle = linGrad(ctx, 0, wt, 0, wb,
+      [[0, '#3d4a5d'], [0.42, '#2c3745'], [1, '#1a222d']]);
+    ctx.fillRect(-wx, wt, wx * 2, wb - wt);
+
+    // 灯丝的光晕（压在灯座与玻璃泡底下那一层）
+    if (lit) {
+      var cy = T.BULB_CY, R0 = T.BULB_R;
+      var halo = ctx.createRadialGradient(0, cy, 2, 0, cy, R0 * (1.7 + 2.3 * bg));
+      halo.addColorStop(0, rgbaStr(heat, 0.9 * bg));
+      halo.addColorStop(0.38, 'rgba(255,214,90,' + (0.38 * bg) + ')');
+      halo.addColorStop(1, 'rgba(255,200,60,0)');
+      ctx.fillStyle = halo;
+      ctx.beginPath(); ctx.arc(0, cy, R0 * (1.7 + 2.3 * bg), 0, 6.284); ctx.fill();
+    }
+
+    // 两根引线：从箱盖上的柱子钻进箱里、贴着两侧壁下来，接到灯座。
+    // 有了这两根线，「柱子是通到灯上的」这句话才不用再解释一遍 —— 没有它们，
+    // 箱盖上那两根柱子和箱里那盏灯就是两件互不相干的东西。
+    // 铜色要亮一档（#bc7833 → #e8b183 的高光条）：压在暗腔里，太暗就糊成背景。
+    ctx.save();
+    ctx.strokeStyle = 'rgba(160,98,42,0.95)'; ctx.lineWidth = 3.2;
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    [-1, 1].forEach(function (sx) {
+      ctx.beginPath();
+      ctx.moveTo(sx * T.POST_X, wt - 2);
+      ctx.lineTo(sx * T.POST_X, 16);
+      // 拐角用二次曲线抹圆：直角拐出来的是一圈「铜框」，抹圆才读得出
+      // 「这是一根被弯过的软线」（和 3D 沙盒里「导线要像真软线」同一条要求）。
+      ctx.quadraticCurveTo(sx * T.POST_X, 34, sx * (T.POST_X - 18), 34);
+      ctx.lineTo(sx * T.SOCK_HW, 34);
+      ctx.stroke();
+    });
+    ctx.strokeStyle = 'rgba(240,190,140,0.75)'; ctx.lineWidth = 1.1;
+    [-1, 1].forEach(function (sx) {
+      ctx.beginPath();
+      ctx.moveTo(sx * T.POST_X - 0.9, wt);
+      ctx.lineTo(sx * T.POST_X - 0.9, 16);
+      ctx.stroke();
+    });
+    // 引线焊在灯座上的两个焊点：线头不能凭空插进瓷座里
+    ctx.fillStyle = 'rgba(214,160,96,0.95)';
+    [-1, 1].forEach(function (sx) {
+      ctx.beginPath(); ctx.arc(sx * (T.SOCK_HW - 1), 34, 2.4, 0, 6.284); ctx.fill();
+    });
+    ctx.restore();
+
+    // 灯座：瓷白圆台 + 法兰（和别处的瓷灯座同一套）
+    ctx.beginPath();
+    ctx.moveTo(-T.SOCK_HW, T.SOCK_BOT);
+    ctx.lineTo(-T.SOCK_HW + 2.5, T.SOCK_TOP);
+    ctx.lineTo(T.SOCK_HW - 2.5, T.SOCK_TOP);
+    ctx.lineTo(T.SOCK_HW, T.SOCK_BOT);
+    ctx.closePath();
+    ctx.fillStyle = linGrad(ctx, -T.SOCK_HW, 0, T.SOCK_HW, 0, MAT.porcelain);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(120,118,106,0.42)'; ctx.lineWidth = 1; ctx.stroke();
+    ctx.fillStyle = linGrad(ctx, 0, T.SOCK_BOT - 6, 0, T.SOCK_BOT + 1,
+      [[0, '#f4f2ea'], [0.5, '#ddd9cd'], [1, '#b6b2a6']]);
+    roundRect(ctx, -T.SOCK_HW - 2, T.SOCK_BOT - 5.5, (T.SOCK_HW + 2) * 2, 6.5, 2.5);
+    ctx.fill();
+
+    // 玻璃泡
+    var cy2 = T.BULB_CY, R1 = T.BULB_R;
+    var gg = ctx.createRadialGradient(-R1 * 0.35, cy2 - R1 * 0.3, 3, 0, cy2, R1);
+    if (lit) {
+      gg.addColorStop(0, 'rgba(255,255,238,' + (0.10 + 0.88 * bg) + ')');
+      gg.addColorStop(0.55, rgbaStr([heat[0], Math.min(255, heat[1] + 24),
+                                     Math.round(heat[2] * 0.7)], (0.10 + 0.80 * bg)));
+      gg.addColorStop(1, 'rgba(255,206,96,' + (0.08 + 0.64 * bg) + ')');
+    } else {
+      gg.addColorStop(0, 'rgba(244,249,253,0.95)');
+      gg.addColorStop(0.6, 'rgba(216,230,242,0.85)');
+      gg.addColorStop(1, 'rgba(184,204,222,0.9)');
+    }
+    ctx.fillStyle = gg;
+    ctx.beginPath(); ctx.arc(0, cy2, R1, 0, 6.284); ctx.fill();
+    glassShell(ctx, 0, cy2, R1, { rim: 1 - 0.85 * bg, hi: 0.6 * (1 - 0.7 * bg) });
+    ctx.strokeStyle = 'rgba(148,163,184,' + (0.9 - 0.62 * bg) + ')';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.arc(0, cy2, R1, 0, 6.284); ctx.stroke();
+
+    // 灯丝：两根引线从螺口升上来，中间挂一段螺旋
+    var fy = cy2 - 1.5;
+    ctx.strokeStyle = lit ? rgbaStr(heat, 1) : '#8a6a3a';
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    if (lit) { ctx.shadowColor = rgbaStr(heat, 0.9); ctx.shadowBlur = 3 + 11 * bg; }
+    ctx.lineWidth = 1.7;
+    ctx.beginPath();
+    ctx.moveTo(-6, T.CAP_TOP - 1); ctx.lineTo(-6, fy + 4);
+    ctx.moveTo(6, T.CAP_TOP - 1); ctx.lineTo(6, fy + 4);
+    ctx.stroke();
+    ctx.lineWidth = 1.35;
+    ctx.beginPath();
+    ctx.moveTo(-6, fy + 4);
+    for (var k = 0; k <= 8; k++) {
+      ctx.lineTo(-5 + 10 * (k / 8), fy + (k % 2 ? 1.5 : -1.5));
+    }
+    ctx.lineTo(6, fy + 4);
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+
+    // 螺口箍（银色螺纹）—— 画在玻璃泡之后，把泡的下半圈压住
+    var capH = T.SOCK_TOP - T.CAP_TOP;
+    ctx.fillStyle = linGrad(ctx, -T.CAP_HW, 0, T.CAP_HW, 0, MAT.chrome);
+    roundRect(ctx, -T.CAP_HW, T.CAP_TOP, T.CAP_HW * 2, capH, 3); ctx.fill();
+    ctx.save();
+    roundRect(ctx, -T.CAP_HW, T.CAP_TOP, T.CAP_HW * 2, capH, 3); ctx.clip();
+    for (var ti = 0; ti < 3; ti++) {
+      var ty = T.CAP_TOP + capH * (ti + 0.5) / 3;
+      ctx.strokeStyle = 'rgba(51,65,85,0.42)'; ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      ctx.ellipse(0, ty, T.CAP_HW - 0.6, capH / 7.8, 0, 0, Math.PI); ctx.stroke();
+      ctx.strokeStyle = 'rgba(255,255,255,0.6)'; ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.ellipse(0, ty + 1.3, T.CAP_HW - 0.9, capH / 7.8, 0, 0, Math.PI); ctx.stroke();
+    }
+    ctx.restore();
+    ctx.strokeStyle = 'rgba(70,84,100,0.5)'; ctx.lineWidth = 1;
+    roundRect(ctx, -T.CAP_HW, T.CAP_TOP, T.CAP_HW * 2, capH, 3); ctx.stroke();
+
+    // 玻璃罩的反光（最上面一层，压住灯泡也压住箱内壁）
+    ctx.save();
+    ctx.globalAlpha = 0.20;
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.moveTo(-wx + 8, wb - 4); ctx.lineTo(-wx + 40, wt + 4);
+    ctx.lineTo(-wx + 58, wt + 4); ctx.lineTo(-wx + 26, wb - 4);
+    ctx.closePath(); ctx.fill();
+    ctx.restore();
+    // 窗框内侧的暗边：玻璃压在凹槽里，四周必然有一圈暗
+    ctx.strokeStyle = 'rgba(9,15,24,0.55)'; ctx.lineWidth = 3;
+    roundRect(ctx, -wx + 1.5, wt + 1.5, (wx - 1.5) * 2, (wb - wt) - 3, 5); ctx.stroke();
+    ctx.restore();   // ← 退出观察窗的裁剪
+
+    // ⑤ 面板：温度数码屏 + 「恒温」指示灯
+    // 屏上那个数是【恒定】的：它不跟功率走，正是「温度不变」的证据。
+    var L = T.LCD;
+    ctx.fillStyle = 'rgba(24,34,48,0.3)';
+    roundRect(ctx, L.x - 2.6, L.y - 2.6, L.w + 5.2, L.h + 5.2, 5); ctx.fill();
+    ctx.fillStyle = linGrad(ctx, 0, L.y, 0, L.y + L.h,
+      [[0, '#0d2a1c'], [0.48, '#123a22'], [1, '#0a2115']]);
+    roundRect(ctx, L.x, L.y, L.w, L.h, 3.2); ctx.fill();
+    ctx.strokeStyle = 'rgba(74,222,128,0.42)'; ctx.lineWidth = 1;
+    roundRect(ctx, L.x, L.y, L.w, L.h, 3.2); ctx.stroke();
+    ctx.save();
+    ctx.font = 'bold 12px ui-monospace,Menlo,Consolas,monospace';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = 'rgba(96,235,150,0.96)';
+    ctx.shadowColor = 'rgba(74,222,128,0.6)'; ctx.shadowBlur = 5;
+    ctx.fillText(temp == null ? '恒温' : ('灯丝恒温 ' + Math.round(temp) + ' ℃'),
+                 0, L.y + L.h / 2 + 1);
+    ctx.restore();
+    // 指示灯：箱子一直在维持温度，这颗灯就一直是亮的（它表示「在工作」，
+    // 不表示「通电」—— 断电时箱温照样保持，这正是恒温箱的脾气）
+    var lg = ctx.createRadialGradient(T.LAMP_X, T.LAMP_Y, 0.5,
+                                      T.LAMP_X, T.LAMP_Y, T.LAMP_R * 2.1);
+    lg.addColorStop(0, 'rgba(251,191,36,0.9)');
+    lg.addColorStop(1, 'rgba(251,191,36,0)');
+    ctx.fillStyle = lg;
+    ctx.beginPath(); ctx.arc(T.LAMP_X, T.LAMP_Y, T.LAMP_R * 2.1, 0, 6.284); ctx.fill();
+    ctx.fillStyle = linGrad(ctx, T.LAMP_X - T.LAMP_R, T.LAMP_Y - T.LAMP_R,
+      T.LAMP_X + T.LAMP_R, T.LAMP_Y + T.LAMP_R,
+      [[0, '#fff7d6'], [0.5, '#fbbf24'], [1, '#b45309']]);
+    ctx.beginPath(); ctx.arc(T.LAMP_X, T.LAMP_Y, T.LAMP_R, 0, 6.284); ctx.fill();
+    ctx.strokeStyle = 'rgba(120,53,15,0.5)'; ctx.lineWidth = 0.9; ctx.stroke();
+
+    // ⑥ 门缝与拉手：有了这两笔，这只箱子才读成「能开门、灯泡是放进去的」
+    ctx.strokeStyle = 'rgba(64,78,96,0.3)'; ctx.lineWidth = 1.1;
+    ctx.beginPath();
+    ctx.moveTo(T.HW - 17, T.TOP + 8); ctx.lineTo(T.HW - 17, T.BOT - 8);
+    ctx.stroke();
+    ctx.fillStyle = linGrad(ctx, T.HW - 16, 0, T.HW - 9, 0,
+      [[0, '#8fa0b3'], [0.42, '#eef3f9'], [1, '#7d8ea1']]);
+    roundRect(ctx, T.HW - 16, -9, 7, 34, 3.5); ctx.fill();
+    ctx.strokeStyle = 'rgba(51,65,85,0.4)'; ctx.lineWidth = 0.9; ctx.stroke();
+
+    // ⑦ 四角一字螺钉
+    [[-T.HW + 11, T.TOP + 11], [T.HW - 11, T.TOP + 11],
+     [-T.HW + 11, T.BOT - 12], [T.HW - 11, T.BOT - 12]].forEach(function (s) {
+      screwHead(ctx, s[0], s[1], 4.3, 'slot', sc);
+    });
+
+    ctx.restore();
+
+    // 两根柱子【不红不黑】：这件器材没有极性，红黑一对会被读成「要分正负」。
+    // 金属色 + 箱盖上的两个柱座，学生照着接就行（和电铃、开关同一个路子）。
+    posts(ctx, comp, ['neutral', 'neutral'], 1.15, 6);
+  }
+
   function drawComponent(ctx, comp, rec, opts) {
     switch (comp.type) {
       case 'resistor': drawResistor(ctx, comp, rec); break;
@@ -7714,6 +8015,7 @@
       case 'switch': drawSwitch(ctx, comp, rec); break;
       case 'spdt': drawSpdt(ctx, comp, rec); break;
       case 'bulb': drawBulb(ctx, comp, rec); break;
+      case 'thermobox': drawThermoBox(ctx, comp, rec); break;
       case 'led': drawLed(ctx, comp, rec, opts); break;
       case 'motor': drawMotor(ctx, comp, rec, opts); break;
       case 'bell': drawBell(ctx, comp, rec, opts); break;

@@ -219,6 +219,30 @@
       // （20℃ → 一千多度），否则「灯丝电阻变了」永远只是书上的一句话。
       defaults: { ratedV: 2.5, ratedW: 0.75, tempDependent: true, showTemp: false },
     },
+    // ── 恒温箱（灯丝温度被箱体钳住的灯泡）──────────────────────
+    // 一只小灯泡连灯座装在恒温箱里：箱体把灯丝产生的热立刻带走（或者补进来），
+    // 灯丝温度被【钳】在一个定值上，于是灯丝电阻【不随功率变】。
+    //
+    // 🔴 它和「灯泡 + tempDependent:false」在电路上完全等价（一条定值 R 支路），
+    //    之所以另立一个类型而不是让学生自己去勾那个勾选框：
+    //      · 勾选框是一个【开关】，学生随时能勾回来，看到的是「同一只灯泡换个
+    //        设置」；恒温箱是一件【器材】，摆在台上就看得见「它凭什么不变」；
+    //      · 「灯丝电阻随温度升高而增大」这个勾选框在灯泡上默认是【勾上】的，
+    //        教学顺序是先看变化、再看不变；恒温箱要能【和灯泡并排摆着】对照，
+    //        两只元件各是各的参数，勾选框却是同一个类型的两态，摆两只就得
+    //        记住哪只勾了、哪只没勾。
+    //
+    // 温度取【额定温度】：模型里 R(额定功率) = R额 是自洽的标定点，所以箱温
+    // 钉在额定温度上 ⇒ R 恒为 U额²/P额，学生拿铭牌就能把这个数算出来验证。
+    // 🔴 温度【不随功率变】。别在这里加一个 boxT 滑条：箱温一变，同一个电压下
+    //    亮度该跟着变（灯的亮度由灯丝温度定），可功率又按 U²/R 另算一份 ——
+    //    两个数立刻互相打架。恒温箱的全部教学内容就是「温度不变 ⇒ 电阻不变」，
+    //    多一个滑条反而把这条规律搅浑。
+    thermobox: {
+      label: '恒温箱（内置小灯泡）', terminals: 2, termNames: ['a', 'b'],
+      // tempDependent 写死 false，是这件器材的【定义】，不是可选项。
+      defaults: { ratedV: 2.5, ratedW: 0.75, tempDependent: false },
+    },
     // ── 发光二极管：单向导电性 ────────────────────────────────
     // 全站唯一一个「电流方向不对就不导通」的元件，也是初中讲单向导电性时
     // 唯一的实物载体。模型只取两态，不去解肖克利方程的指数段：
@@ -943,6 +967,30 @@
     return (BULB_T_COLD + 273.15) * Math.pow(ratio, 1 / BULB_T_EXP) - 273.15;
   }
 
+  // ── 恒温箱（2026-11-07）──────────────────────────────────────
+  // 箱体把灯丝温度钳住 ⇒ 灯丝电阻不随功率变。所以这里只要拿到「灯泡那套参数
+  // 但温度无关」的那一份，阻值就是它的额定电阻 Rhot。
+  //
+  // 🔴 强写 tempDependent = false 而不依赖 comp.params：这个字段是器材的
+  //    【定义】。存档、撤销快照、手改过的旧文件里它完全可能是 true / 缺失，
+  //    一旦读成 true，恒温箱就会开始按功率漂电阻 —— 正是它要否掉的那件事，
+  //    而且画面上看不出任何异常（读数照常，只是不恒定）。
+  function thermoBoxParams(comp) {
+    var pp = lampParams(comp);
+    pp.tempDependent = false;
+    return pp;
+  }
+  function thermoBoxR(comp) {
+    return thermoBoxParams(comp).Rhot;
+  }
+  // 箱温 = 额定温度。lampRAt / bulbTempOf 这一对是同一个温度关系的两面，
+  // 把 P = P额 代进去得到的 T 就是「R 正好等于 R额」的那个温度 —— 拿它当箱温，
+  // 「箱温」和「铭牌」两条路算出来的电阻才会是同一个数。
+  function thermoBoxTempC(comp) {
+    var pp = thermoBoxParams(comp);
+    return bulbTempOf(pp, pp.Prated);
+  }
+
   // ============================================================
   // 表头量程识别：量程由「导线接在哪个量程柱上」决定
   // ------------------------------------------------------------
@@ -1108,6 +1156,15 @@
         } else if (N(0) !== N(1)) {
           out.push({ kind: 'V', comp: comp, p: N(0), q: N(1), V: 0, Rs: 0 });
         }
+        break;
+
+      // 恒温箱：箱里那盏灯的灯丝温度被箱体钳住 ⇒ 一条【阻值恒定】的 R 支路。
+      // 🔴 绝不建成 LAMP 支路。LAMP 是给「电阻随功率迭代」用的，进了那条路，
+      //    solve() 的灯泡迭代会按功率把 R 一路推上去 —— 恒温箱的 R 就这么开始
+      //    漂了，而画面上一切正常，只有伏安特性悄悄弯掉。
+      //    定值就老老实实走 addR：电压变、电流成正比变，R 一动不动。
+      case 'thermobox':
+        addR(N(0), N(1), thermoBoxR(comp));
         break;
 
       // 表头的支路端点由【实际接了线的量程柱】和「−」柱决定。
@@ -2177,7 +2234,8 @@
         // 导体板和定值电阻在回填上完全同构：一条 R 支路，R = ρ·L/S
         // （见 describeComponent 的 plate 分支）。加进来而不是另写一个 case：
         // 两份回填逻辑迟早对不上，而读数表里那一列 R 直接读 rec.R。
-        case 'resistor': case 'plate': case 'pencil': case 'bulb': case 'voltmeter': {
+        case 'resistor': case 'plate': case 'pencil': case 'bulb':
+        case 'thermobox': case 'voltmeter': {
           if (bs.length === 0) {
             // 理想电压表（无支路）：读数是两端节点电压差，电流为 0。
             // 注意不能在这里 break 成 v=0 —— 否则理想电压表永远读 0。
@@ -2215,6 +2273,9 @@
             if (br.shorted) { rec.brightness = 0; rec.overload = false; }
             else fillLamp(rec, c, P);
           }
+          // 恒温箱：rec.R / rec.v / rec.i / rec.p 上面已经按那条 R 支路填好，
+          // 这里再补「箱温、恒定电阻、亮度」这三样 —— 都是绘制与读数要用的。
+          if (c.type === 'thermobox') fillThermoBox(rec, c, P);
           if (c.type === 'voltmeter') {
             // 有内阻的电压表走的是这条支路：支路另一端（「−」柱）没接线时
             // 支路里没有电流，但两端电位差照样算得出来——同样得按 rec.wired 抹掉。
@@ -2693,6 +2754,28 @@
     // 灯丝温度（℃）。画面上那个「上方温度牌」读的就是它。
     // 没通电 ⇒ rec.p = 0 ⇒ 正好是室温 20℃，不是 0℃。
     rec.tempC = bulbTempOf(pp, rec.p);
+    rec.tempK = rec.tempC + 273.15;
+  }
+
+  // 恒温箱的读数。
+  //   · 电阻：恒定，就是额定电阻（箱温钳住了灯丝）。
+  //   · 温度：恒定，就是箱温 —— 不按 rec.p 现算。
+  //     🔴 这一条是当年踩过的坑：tempDependent=false 的灯泡，fillLamp 里的
+  //        rec.tempC 仍然按功率算（那对「不计温度影响」的模型是对的），于是
+  //        电压一升「温度」就跟着涨、电阻却一动不动，两个数在同一块牌子上
+  //        自相矛盾。恒温箱这里必须报箱温，不能复用 fillLamp 的 tempC。
+  //   · 亮度：仍按实际功率算。电压升高 → U²/R 变大 → 灯更亮，变的是功率，
+  //     不是电阻。这一条正是它和「灯泡」并排时最该看清的分工。
+  function fillThermoBox(rec, c, P) {
+    var pp = thermoBoxParams(c);
+    rec.fixedR = pp.Rhot;
+    rec.Rcold = pp.Rcold; rec.Rhot = pp.Rhot;
+    rec.ratedV = pp.ratedV; rec.ratedW = pp.Prated;
+    rec.tempDependent = false;
+    rec.tempLocked = true;                   // 绘制层靠它把温度牌写成「恒温」
+    rec.brightness = Math.max(0, Math.min(Math.abs(rec.p) / pp.Prated, 1.3));
+    rec.overload = Math.abs(rec.p) > 1.3 * pp.Prated;
+    rec.tempC = bulbTempOf(pp, pp.Prated);   // = 额定温度 = 箱温
     rec.tempK = rec.tempC + 273.15;
   }
 
@@ -3407,6 +3490,11 @@
     lampParams: lampParams,
     lampRAt: lampRAt,
     bulbTempOf: bulbTempOf,
+    // 恒温箱：阻值与箱温都从这两个函数取（绘制、参数面板的旁注、测试共用
+    // 同一份 —— 各自再算一遍「U额²/P额」迟早有一处写反）。
+    thermoBoxParams: thermoBoxParams,
+    thermoBoxR: thermoBoxR,
+    thermoBoxTempC: thermoBoxTempC,
     BULB_T_COLD: BULB_T_COLD,
     solve: solve,
     wireCurrents: wireCurrents,

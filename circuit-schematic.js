@@ -293,6 +293,12 @@
       var hk = (D && D.HALF != null) ? D.HALF : 70;
       return [{ x: -hk, y: 0 }, { x: hk, y: 0 }];
     }
+    // 恒温箱：两个引脚拉回轴线（实物柱在箱盖上 y = −78，照抄会让整只符号
+    // 往上飘 78px，主回路那一横在它这里断开 —— 和电阻箱、量热瓶同一条坑）。
+    if (type === 'thermobox') {
+      var ht = (D && D.HALF != null) ? D.HALF : 70;
+      return [{ x: -ht, y: 0 }, { x: ht, y: 0 }];
+    }
     return (D && D.TERMINALS[type]) || [];
   }
   // 电位器符号：滑片箭头的杆顶（局部 y）= b 的接点。取 −34 和变阻器的
@@ -409,6 +415,10 @@
       case 'spdt':
         return { x0: -26, y0: -26, x1: 26, y1: 30 };
       case 'bulb': return { x0: -24, y0: -24, x1: 24, y1: 24 };
+      // 恒温箱：方框 76×52（±38 × ±26）里面一个 15 的圆，外面留一点线宽。
+      // 这个框管的是走线避让和标注定位，必须和 drawSymbol 里画的那两笔
+      // 逐个数一致 —— 不一致就会出现「标注压在方框上」或「导线从方框角穿过」。
+      case 'thermobox': return { x0: -42, y0: -30, x1: 42, y1: 30 };
       // 二极管的框要高一点：符号右上方还有两个表示发光的箭头，
       // 框住它们导线才不会从箭头上穿过去。
       case 'led': return { x0: -22, y0: -30, x1: 26, y1: 18 };
@@ -1419,6 +1429,14 @@
         var w = (P.ratedW != null ? +P.ratedW : (core ? core.lampParams(c).Prated : 0.75));
         return num(v) + ' V ' + num(w) + ' W';
       }
+      // 恒温箱：铭牌和灯泡同一套（额定电压 / 额定功率），后面补「· 恒温」。
+      // 两个符号并排时，方框是第一道提示（「它是台装置」），这一行字是第二道
+      // （「里面恒温」）—— 少了它，学生只能从图例里那两行小字认出谁是谁。
+      case 'thermobox': {
+        var thv = (P.ratedV != null ? +P.ratedV : 2.5);
+        var thw = (P.ratedW != null ? +P.ratedW : 0.75);
+        return num(thv) + ' V ' + num(thw) + ' W · 恒温';
+      }
       case 'switch':
         return (rec ? rec.closed : !!P.closed) ? '闭合' : '断开';
       // 单刀双掷：铭牌印【刀片搭在哪一侧】。它没有「断开」这一档，所以这里
@@ -2121,6 +2139,26 @@
         ctx.stroke();
         break;
       }
+      // 恒温箱：方框（国标里方框 = 一台装置 / 仪器）里面一只小灯泡。
+      // 为什么一定要有那个方框：灯泡的符号是「一个圆打叉」，恒温箱里的也是
+      // 同一只灯泡 —— 少了方框，这两件器材在电路图上就长得一模一样，而它们
+      // 的伏安特性恰恰是这个实验唯一要对比的东西。方框本身就在说
+      // 「这盏灯是装在一个控制温度的装置里的」。
+      // ⚠️ 方框尺寸改了必须同步改 symRect 的 case 'thermobox'。
+      case 'thermobox': {
+        lead(ctx, T[0], -38); lead(ctx, T[1], 38);
+        ctx.beginPath();
+        D.roundRect(ctx, -38, -26, 76, 52, 3);
+        ctx.stroke();
+        ctx.beginPath(); ctx.arc(0, 0, 15, 0, Math.PI * 2);
+        ctx.fillStyle = COLOR.paper; ctx.fill();
+        ctx.strokeStyle = COLOR.wire; ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(-10.4, -10.4); ctx.lineTo(10.4, 10.4);
+        ctx.moveTo(10.4, -10.4); ctx.lineTo(-10.4, 10.4);
+        ctx.stroke();
+        break;
+      }
       // 单刀双掷开关（人教版初中电路图的画法）：两个掷位是左右两个【实心
       // 触点】，刀片从正中的转轴伸向被选中的那一个 —— 搭在左边就是「掷 1」。
       // 没被选中的那一侧照旧画着触点（它还是触点，只是刀片没搭上去），
@@ -2395,6 +2433,9 @@
       to: '矩形加一条【斜穿】的箭头（可变电阻的符号）。箭头和变阻器那根竖杆不一样：这里改的是导体本身的长度，不是滑片的分压比' },
     { type: 'bulb',     name: '小灯泡',           from: '带灯座的玻璃泡',
       to: '一个圆，里面打一个叉' },
+    { type: 'thermobox', name: '恒温箱（内置小灯泡）',
+      from: '一只箱子里装着灯座和小灯泡，箱盖上两根接线柱；面板上一直显示箱温',
+      to: '小灯泡的符号（圆里打叉）外面再套一个方框 —— 方框表示「这盏灯装在一台控制温度的装置里」。有了这个框，同一张图上「灯泡」和「恒温箱里的灯泡」才分得开，而它们的伏安特性正是这个实验唯一要对比的东西' },
     { type: 'ammeter',  name: '电流表',           from: '三个接线柱的指针表',
       to: '一个圆里写 A，串在电路里；符号两端各引一根线（不再照实物三根柱画）。接的是哪一挡，写在符号下面' },
     { type: 'voltmeter', name: '电压表',          from: '三个接线柱的指针表',
