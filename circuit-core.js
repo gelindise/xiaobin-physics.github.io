@@ -232,16 +232,18 @@
     //        两只元件各是各的参数，勾选框却是同一个类型的两态，摆两只就得
     //        记住哪只勾了、哪只没勾。
     //
-    // 温度取【额定温度】：模型里 R(额定功率) = R额 是自洽的标定点，所以箱温
-    // 钉在额定温度上 ⇒ R 恒为 U额²/P额，学生拿铭牌就能把这个数算出来验证。
-    // 🔴 温度【不随功率变】。别在这里加一个 boxT 滑条：箱温一变，同一个电压下
-    //    亮度该跟着变（灯的亮度由灯丝温度定），可功率又按 U²/R 另算一份 ——
-    //    两个数立刻互相打架。恒温箱的全部教学内容就是「温度不变 ⇒ 电阻不变」，
-    //    多一个滑条反而把这条规律搅浑。
+    // 箱温由 params.boxT 设定（4 档，见 circuit-params.js 的 BOX_T_STEPS），
+    // 默认 1385 ℃ = 额定温度。 R 由【温度】算出来，不由功率算：
+    //    R(T) = R冷 · ((T+273.15)/(20+273.15))^1.2   ← bulbTempOf 的逆运算
+    // 这一对正逆函数在额定温度严格闭合 ⇒ 默认档 R ≡ U额²/P额，
+    // 学生拿铭牌就能把 8.3Ω 算出来验证；换一档温度，R 换一个数，但在
+    // 这一档里电压怎么调 R 都不动 —— 两层结论要分得开。
+    // 🔴 温度【不随功率变】：变的只有「学生把箱子调到哪一档」。
     thermobox: {
       label: '恒温箱（内置小灯泡）', terminals: 2, termNames: ['a', 'b'],
       // tempDependent 写死 false，是这件器材的【定义】，不是可选项。
-      defaults: { ratedV: 2.5, ratedW: 0.75, tempDependent: false },
+      // boxT 缺省/无效时一律按额定温度处理（老存档里没这个键）。
+      defaults: { ratedV: 2.5, ratedW: 0.75, tempDependent: false, boxT: 1385 },
     },
     // ── 发光二极管：单向导电性 ────────────────────────────────
     // 全站唯一一个「电流方向不对就不导通」的元件，也是初中讲单向导电性时
@@ -967,9 +969,8 @@
     return (BULB_T_COLD + 273.15) * Math.pow(ratio, 1 / BULB_T_EXP) - 273.15;
   }
 
-  // ── 恒温箱（2026-11-07）──────────────────────────────────────
-  // 箱体把灯丝温度钳住 ⇒ 灯丝电阻不随功率变。所以这里只要拿到「灯泡那套参数
-  // 但温度无关」的那一份，阻值就是它的额定电阻 Rhot。
+  // ── 恒温箱（2026-11-07，11-07 晚加 4 档可调箱温）─────────────
+  // 箱体把灯丝温度钳在【设定值】⇒ 灯丝电阻不随功率变，只随设定温度变。
   //
   // 🔴 强写 tempDependent = false 而不依赖 comp.params：这个字段是器材的
   //    【定义】。存档、撤销快照、手改过的旧文件里它完全可能是 true / 缺失，
@@ -980,15 +981,40 @@
     pp.tempDependent = false;
     return pp;
   }
-  function thermoBoxR(comp) {
-    return thermoBoxParams(comp).Rhot;
-  }
-  // 箱温 = 额定温度。lampRAt / bulbTempOf 这一对是同一个温度关系的两面，
-  // 把 P = P额 代进去得到的 T 就是「R 正好等于 R额」的那个温度 —— 拿它当箱温，
-  // 「箱温」和「铭牌」两条路算出来的电阻才会是同一个数。
-  function thermoBoxTempC(comp) {
-    var pp = thermoBoxParams(comp);
+  // 额定温度：把 P = P额 代进 bulbTempOf 得到的 T，正是「R 恰好等于 R额」
+  // 的那个温度。lampRAt / bulbTempOf 是同一条温度关系的两面，所以
+  // R(额定温度) === Rhot 会严格闭合（不是近似）。
+  // coldHotRatio = 8 时它约 1385.2 ℃，与铭牌电压/功率无关。
+  function thermoBoxRatedTemp() {
+    var pp = lampParams({ type: 'thermobox', params: {} });
     return bulbTempOf(pp, pp.Prated);
+  }
+  // 当前箱温（℃）。
+  //   · 老存档 / 手搓 comp 没有 boxT，或不是有限数 ⇒ 额定档；
+  //   · 面板上那一档印的是取整后的 1385，内核用 ±0.5℃ 容差把它吸附到
+  //     精确的额定温度 —— 不然 R 会从 8.3333 变成 8.3324，铭牌算出来的数
+  //     和读数表对不上最后一位（这是「额定」档必须守住的自洽点）。
+  function thermoBoxTempC(comp) {
+    var rated = thermoBoxRatedTemp();
+    var t = paramsOf(comp).boxT;
+    var n = Number(t);
+    if (t == null || t === '' || !isFinite(n)) return rated;
+    if (Math.abs(n - rated) < 0.5) return rated;
+    return n;
+  }
+  // 灯丝电阻随温度变化：bulbTempOf 的逆运算（钨丝 ρ ∝ T^1.2）。
+  // 它和普通灯泡用的是【同一条】温度关系，只是那边由功率推温度，
+  // 这边由箱温反过来定电阻 —— 两件器材并排摆着，曲线才对得上。
+  function thermoBoxR(comp) {
+    var pp = thermoBoxParams(comp);
+    var tRatio = (thermoBoxTempC(comp) + 273.15) / (BULB_T_COLD + 273.15);
+    return pp.Rcold * Math.pow(Math.max(tRatio, 0), BULB_T_EXP);
+  }
+  // 相对额定温度的辐射能力 σT⁴，给绘制层的光晕/灯丝亮度用。
+  // 箱温低 ⇒ 灯丝本来就暗；箱温高 ⇒ 更亮。断电时仍由功率那一侧归零。
+  function thermoBoxThermalFactor(comp) {
+    var rated = thermoBoxRatedTemp() + 273.15;
+    return Math.pow(Math.max((thermoBoxTempC(comp) + 273.15) / rated, 0), 4);
   }
 
   // ============================================================
@@ -2758,25 +2784,32 @@
   }
 
   // 恒温箱的读数。
-  //   · 电阻：恒定，就是额定电阻（箱温钳住了灯丝）。
-  //   · 温度：恒定，就是箱温 —— 不按 rec.p 现算。
+  //   · 电阻：恒定，等于【当前箱温那一档】的 R(T)，不是铭牌上的额定电阻。
+  //     rec.R 是上面按那条定值 R 支路填好的，直接拿它，别再算一遍。
+  //   · 温度：恒定，就是设定箱温 —— 不按 rec.p 现算。
   //     🔴 这一条是当年踩过的坑：tempDependent=false 的灯泡，fillLamp 里的
   //        rec.tempC 仍然按功率算（那对「不计温度影响」的模型是对的），于是
   //        电压一升「温度」就跟着涨、电阻却一动不动，两个数在同一块牌子上
   //        自相矛盾。恒温箱这里必须报箱温，不能复用 fillLamp 的 tempC。
-  //   · 亮度：仍按实际功率算。电压升高 → U²/R 变大 → 灯更亮，变的是功率，
-  //     不是电阻。这一条正是它和「灯泡」并排时最该看清的分工。
+  //   · 亮度：功率那一侧仍按 |P|/P额 算（断电就是 0，不会「没通电还亮着」），
+  //     再乘一盏由箱温决定的发光系数 √[(T/T额)⁴] = (T/T额)² —— 灯丝越热越亮。
+  //     额定档这个系数恰好是 1，所以默认档的观感和以前一模一样。
   function fillThermoBox(rec, c, P) {
     var pp = thermoBoxParams(c);
-    rec.fixedR = pp.Rhot;
-    rec.Rcold = pp.Rcold; rec.Rhot = pp.Rhot;
+    var boxT = thermoBoxTempC(c);
+    var tf = thermoBoxThermalFactor(c);
+    rec.fixedR = (rec.R != null ? rec.R : thermoBoxR(c));
+    rec.Rcold = pp.Rcold; rec.Rhot = pp.Rhot;   // 铭牌标定点，亮度归一化用
     rec.ratedV = pp.ratedV; rec.ratedW = pp.Prated;
     rec.tempDependent = false;
     rec.tempLocked = true;                   // 绘制层靠它把温度牌写成「恒温」
-    rec.brightness = Math.max(0, Math.min(Math.abs(rec.p) / pp.Prated, 1.3));
+    rec.boxT = boxT;                         // 当前设定档位（画布/电路图直接读）
+    rec.thermalFactor = tf;
+    rec.brightness = Math.max(0, Math.min(Math.abs(rec.p) / pp.Prated, 1.3))
+                     * Math.sqrt(tf);
     rec.overload = Math.abs(rec.p) > 1.3 * pp.Prated;
-    rec.tempC = bulbTempOf(pp, pp.Prated);   // = 额定温度 = 箱温
-    rec.tempK = rec.tempC + 273.15;
+    rec.tempC = boxT;
+    rec.tempK = boxT + 273.15;
   }
 
   // 表头量程字段：量程由【导线接在哪个量程柱上】决定，参数里的 range
@@ -3490,11 +3523,13 @@
     lampParams: lampParams,
     lampRAt: lampRAt,
     bulbTempOf: bulbTempOf,
-    // 恒温箱：阻值与箱温都从这两个函数取（绘制、参数面板的旁注、测试共用
+    // 恒温箱：阻值与箱温都从这几个函数取（绘制、参数面板的旁注、测试共用
     // 同一份 —— 各自再算一遍「U额²/P额」迟早有一处写反）。
     thermoBoxParams: thermoBoxParams,
     thermoBoxR: thermoBoxR,
     thermoBoxTempC: thermoBoxTempC,
+    thermoBoxRatedTemp: thermoBoxRatedTemp,
+    thermoBoxThermalFactor: thermoBoxThermalFactor,
     BULB_T_COLD: BULB_T_COLD,
     solve: solve,
     wireCurrents: wireCurrents,

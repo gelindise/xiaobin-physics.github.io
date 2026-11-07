@@ -1429,13 +1429,16 @@
         var w = (P.ratedW != null ? +P.ratedW : (core ? core.lampParams(c).Prated : 0.75));
         return num(v) + ' V ' + num(w) + ' W';
       }
-      // 恒温箱：铭牌和灯泡同一套（额定电压 / 额定功率），后面补「· 恒温」。
+      // 恒温箱：铭牌和灯泡同一套（额定电压 / 额定功率），后面补「恒温 + 当前箱温」。
       // 两个符号并排时，方框是第一道提示（「它是台装置」），这一行字是第二道
-      // （「里面恒温」）—— 少了它，学生只能从图例里那两行小字认出谁是谁。
+      // （「里面恒温」）。箱温要印出来：4 档温度对应 4 个不同的 R，只印铭牌
+      // 的话，学生把两张不同档位的电路图摆在一起看不出哪张是哪张。
       case 'thermobox': {
         var thv = (P.ratedV != null ? +P.ratedV : 2.5);
         var thw = (P.ratedW != null ? +P.ratedW : 0.75);
-        return num(thv) + ' V ' + num(thw) + ' W · 恒温';
+        var thT = (rec && typeof rec.tempC === 'number') ? rec.tempC
+                : (core && core.thermoBoxTempC ? core.thermoBoxTempC(c) : 1385);
+        return num(thv) + ' V ' + num(thw) + ' W · 恒温 ' + Math.round(thT) + '℃';
       }
       case 'switch':
         return (rec ? rec.closed : !!P.closed) ? '闭合' : '断开';
@@ -2434,8 +2437,8 @@
     { type: 'bulb',     name: '小灯泡',           from: '带灯座的玻璃泡',
       to: '一个圆，里面打一个叉' },
     { type: 'thermobox', name: '恒温箱（内置小灯泡）',
-      from: '一只箱子里装着灯座和小灯泡，箱盖上两根接线柱；面板上一直显示箱温',
-      to: '小灯泡的符号（圆里打叉）外面再套一个方框 —— 方框表示「这盏灯装在一台控制温度的装置里」。有了这个框，同一张图上「灯泡」和「恒温箱里的灯泡」才分得开，而它们的伏安特性正是这个实验唯一要对比的东西' },
+      from: '一只箱子里装着灯座和小灯泡，箱盖上两根接线柱；面板上的数码屏显示灯丝被钳住的温度，可在 4 档之间切换（点屏幕或参数面板）',
+      to: '小灯泡的符号（圆里打叉）外面再套一个方框 —— 方框表示「这盏灯装在一台控制温度的装置里」。标注里写着当前箱温：同一档里电压怎么调 R 都不变，换一档 R 才变。有了这个框，同一张图上「灯泡」和「恒温箱里的灯泡」才分得开' },
     { type: 'ammeter',  name: '电流表',           from: '三个接线柱的指针表',
       to: '一个圆里写 A，串在电路里；符号两端各引一根线（不再照实物三根柱画）。接的是哪一挡，写在符号下面' },
     { type: 'voltmeter', name: '电压表',          from: '三个接线柱的指针表',

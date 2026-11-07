@@ -698,9 +698,22 @@
     CAP_TOP: 8, CAP_HW: 11.5,            // 银色螺口箍
     SOCK_TOP: 22, SOCK_BOT: 46, SOCK_HW: 15, // 瓷灯座
     LCD: { x: -63, w: 126, y: 56, h: 20 },   // 温度数码屏
+    // 数码屏右边那颗【换档键】：点屏或点它都在 4 档温度之间循环。
+    // 画在屏外（屏右端 63，门缝 91），不占屏上那行字的地方。
+    STEP_BTN: { x: 70, y: 57, w: 18, h: 18 },
     LAMP_X: -86, LAMP_Y: 66, LAMP_R: 5.5,    // 「恒温」指示灯
     BOX_HW: 108, BOX_HH: 82,             // bodyBox 用（对称）
   };
+  // 点的是不是温度数码屏 / 换档键 —— 宿主页靠它把「点一下」变成换一档温度。
+  // 命中框比图形各留 4px，手机上才点得着；坐标是【元件局部坐标】
+  //（和 calZoomHit 一样，宿主页先 D.toLocal 再传进来）。
+  function thermoLcdHit(comp, lx, ly) {
+    var L = THERMO.LCD, B = THERMO.STEP_BTN;
+    return (lx >= L.x - 4 && lx <= L.x + L.w + 4 &&
+            ly >= L.y - 4 && ly <= L.y + L.h + 4) ||
+           (lx >= B.x - 4 && lx <= B.x + B.w + 4 &&
+            ly >= B.y - 4 && ly <= B.y + B.h + 4);
+  }
 
   // ============================================================
   // 端子坐标
@@ -7946,8 +7959,9 @@
     roundRect(ctx, -wx + 1.5, wt + 1.5, (wx - 1.5) * 2, (wb - wt) - 3, 5); ctx.stroke();
     ctx.restore();   // ← 退出观察窗的裁剪
 
-    // ⑤ 面板：温度数码屏 + 「恒温」指示灯
-    // 屏上那个数是【恒定】的：它不跟功率走，正是「温度不变」的证据。
+    // ⑤ 面板：温度数码屏 + 换档键 + 「恒温」指示灯
+    // 屏上那个数是【设定值】：调电压时它一动不动（那是「温度不变」的证据），
+    // 只有学生把箱子换到另一档它才变 —— 两种「变」要分得开。
     var L = T.LCD;
     ctx.fillStyle = 'rgba(24,34,48,0.3)';
     roundRect(ctx, L.x - 2.6, L.y - 2.6, L.w + 5.2, L.h + 5.2, 5); ctx.fill();
@@ -7964,6 +7978,23 @@
     ctx.fillText(temp == null ? '恒温' : ('灯丝恒温 ' + Math.round(temp) + ' ℃'),
                  0, L.y + L.h / 2 + 1);
     ctx.restore();
+    // 换档键：面板上一颗可以按的小按钮，两个三角就是「上/下一档」。
+    // 和屏同色系但描一圈亮边，学生能看出屏是读数、它是操作 —— 点屏或点它
+    // 都换档（命中框见 thermoLcdHit）。
+    var B = T.STEP_BTN;
+    ctx.fillStyle = linGrad(ctx, 0, B.y, 0, B.y + B.h,
+      [[0, '#dbe6f2'], [0.5, '#b9c8d9'], [1, '#8fa2b8']]);
+    roundRect(ctx, B.x, B.y, B.w, B.h, 3); ctx.fill();
+    ctx.strokeStyle = 'rgba(48,64,84,0.65)'; ctx.lineWidth = 0.9; ctx.stroke();
+    ctx.fillStyle = 'rgba(30,48,68,0.85)';
+    var bx = B.x + B.w / 2;
+    ctx.beginPath();                     // 上三角
+    ctx.moveTo(bx, B.y + 4); ctx.lineTo(bx - 3.4, B.y + 8); ctx.lineTo(bx + 3.4, B.y + 8);
+    ctx.closePath(); ctx.fill();
+    ctx.beginPath();                     // 下三角
+    ctx.moveTo(bx, B.y + B.h - 4); ctx.lineTo(bx - 3.4, B.y + B.h - 8);
+    ctx.lineTo(bx + 3.4, B.y + B.h - 8);
+    ctx.closePath(); ctx.fill();
     // 指示灯：箱子一直在维持温度，这颗灯就一直是亮的（它表示「在工作」，
     // 不表示「通电」—— 断电时箱温照样保持，这正是恒温箱的脾气）
     var lg = ctx.createRadialGradient(T.LAMP_X, T.LAMP_Y, 0.5,
@@ -8093,6 +8124,9 @@
     // 量热瓶：几何 + 放大镜命中框 + 温度→刻度。宿主页要靠 calZoomHit 判断
     // 「这一下点的是不是放大镜」，自检要按 T0_Y/T100_Y 量汞柱画到哪。
     CAL: CAL, calZoomHit: calZoomHit, calTempY: calTempY,
+    // 恒温箱：几何 + 温度数码屏/换档键的命中框。宿主页点一下元件时靠
+    // thermoLcdHit 判断「这一下是换档」还是「打开参数面板」。
+    THERMO: THERMO, thermoLcdHit: thermoLcdHit,
     // 放大镜里的温度计特写（宿主页的 drawZoomCal 用）
     drawThermoCloseup: drawThermoCloseup, THERMO_BIG: THERMO_BIG,
     // 铅笔芯：夹子在芯上的局部 x ↔ 接入长度（mm）。拖动改长度时编辑器

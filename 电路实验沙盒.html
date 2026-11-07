@@ -1049,8 +1049,8 @@
        2026-10-16 这批：core 24 / draw 38 / editor 29 / params 6 / schematic 18。
        （上一批是 core 23 / draw 37 / editor 28 / params 5 / schematic 17，
          这一轮五个文件都动了：世界加宽 + 电表放大 + 读数牌搬家 + 单刀双掷开关。） -->
-<script src="circuit-core.js?build=51"></script>
-<script src="circuit-draw.js?build=71"></script>
+<script src="circuit-core.js?build=52"></script>
+<script src="circuit-draw.js?build=72"></script>
 <!-- ════════════════════════════════════════════════════════════════════
      【教材版本皮肤 · 已从线上撤下】2026-10-12
      人教版元件外观（circuit-skin*.js 共 5 个文件）暂不在线上启用，学生看到的
@@ -1069,10 +1069,10 @@
 <script src="circuit-editor.js?build=53"></script>
 <!-- 参数面板规格 + 读数显示格式。从本页内联抽出，与 3D 版沙盒（电路实验沙盒3D）
      共用同一份真值：面板规格、小数位、极性显示规则改一处两边都变。 -->
-<script src="circuit-params.js?build=27"></script>
+<script src="circuit-params.js?build=28"></script>
 <!-- 电路图（实物图 → 标准符号）。独立成第四块内核：沙盒和欧姆定律页共用同一份，
      免得各写一套符号，两边的图画法迟早不一样。三个老内核一行没动，build 号不升。 -->
-<script src="circuit-schematic.js?build=41"></script>
+<script src="circuit-schematic.js?build=42"></script>
 <!-- 电路图画布（拖符号画标准电路图 + 当场仿真）。它复用 circuit-schematic 的
      itemOf / drawSymbol，所以画出来的符号和「由实物图转换」那张【一模一样】。 -->
 <script src="circuit-schlab.js?build=5"></script>
@@ -2172,11 +2172,12 @@ function readoutLines(c, r){
     lines.push('灯座短路 · 不亮');
     lines.push('I = ' + num1(Math.abs(r.i)) + 'A');
   } else if (c.type === 'thermobox') {
-    // 恒温箱：画布上那块标签只留一句【箱温恒定】。
+    // 恒温箱：画布上那块标签只留一句【当前档位的灯丝温度】。
     // 「R = 8.3Ω」这类参数行会被 stateLinesOf 里那条 `字母 = 数值` 的正则滤掉
-    //（规矩就是「画布上不摆参数，点开才有」），可箱温不是参数，是这件器材的
-    // 【输出】—— 它必须留在画布上：学生调电压时眼睛盯着这个数一动不动，
-    // 才明白读数表里那个 R 凭什么也不动。
+    //（规矩就是「画布上不摆参数，点开才有」），可箱温是这件器材的【设定值/
+    // 输出】，不是能被公式反算的参数 —— 它必须留在画布上：学生调电压时眼睛
+    // 盯着这个数一动不动，才明白读数表里那个 R 凭什么也不动；换一档温度，
+    // 这个数换了、R 也跟着换，两层结论才分得清。
     // 用中文起头，正是为了不被那条正则滤掉（和量热瓶的温度同一招）。
     lines.push('灯丝恒温 ' + Math.round(r.tempC) + '℃');
     lines.push('R = ' + num1(r.R || 0) + 'Ω');
@@ -3410,8 +3411,11 @@ function paramRowsHTML(c, specs, pfx){
       var pv = (v == null && sp.dflt != null) ? sp.dflt : v;
       html += '<div class="prow"><label>' + sp.label + '</label>' +
         sp.options.map(function(o){
+          // title 是可选的：恒温箱那四个温度按钮把「这一档电阻大约多少」
+          // 写在悬停提示里，按钮本身只印温度，一行四个才放得下。
           return '<button type="button" class="pick' + (String(pv) === String(o.v) ? ' on' : '') +
-            '" data-k="' + sp.k + '" data-pick="' + o.v + '">' + o.label + '</button>';
+            '" data-k="' + sp.k + '" data-pick="' + o.v + '"' +
+            (o.title ? ' title="' + o.title + '"' : '') + '>' + o.label + '</button>';
         }).join('') + '</div>';
     } else if (sp.t === 'preset') {
       // 常用规格的【一键预设】（小灯泡那三个）：点一下同时写好几个键。
@@ -4133,6 +4137,23 @@ function onTapComp(c, p){
   if (c.type === 'calorimeter') {
     var lk = D.toLocal(c, p.x, p.y);
     if (D.calZoomHit(c, lk.x, lk.y)) { openZoom(c); return; }
+  }
+  // 恒温箱：点【温度数码屏 / 换档键】= 在 4 档设定温度之间循环。
+  // 和开关同一条规矩：点本体就是操作本身，不再弹一块只有四个按钮的浮层；
+  // 点箱子别处照旧弹参数面板（那里能一次挑到任意一档）。
+  // 档位表只从 CP.BOX_T_STEPS 取 —— 面板按钮和这里必须永远是同样四档。
+  // 🔴 练习模式「揭晓」那一下不换档（srcBox 在函数开头先取好）：点开看答案
+  //    不该顺手把温度改掉，和学生电源那颗开关是同一个坑。
+  if (c.type === 'thermobox' && !srcBox) {
+    var tl = D.toLocal(c, p.x, p.y);
+    if (D.thermoLcdHit(c, tl.x, tl.y)) {
+      var steps = CP.BOX_T_STEPS, curT = C.thermoBoxTempC(c), at = -1;
+      for (var si = 0; si < steps.length; si++)
+        if (Math.abs(curT - steps[si].v) < 0.5) at = si;
+      editor.setParam(c.id, 'boxT', steps[(at + 1) % steps.length].v);
+      rebuildParamPanels();       // 浮层若开着，四个按钮的亮态得跟着换
+      return;
+    }
   }
   // 开关不弹浮层：点一下它【已经通断】了（编辑器在 pointerup 里翻的 params，
   // 见 circuit-editor 那段「点一下就通断」）。再弹一块只写着一个「闭合」勾选框
