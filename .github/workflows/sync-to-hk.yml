@@ -1,33 +1,44 @@
 name: 同步网站到香港服务器
 
-# push 网站文件后自动同步；也可以到 Actions 页面手动点 Run workflow
+# push 到 main 自动同步；也可以到 Actions 页面手动点 Run workflow
 on:
   push:
     branches: [main]
-    paths-ignore:
-      - "api/**"
-      - ".github/**"
   workflow_dispatch:
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
       - name: 检出仓库代码
         uses: actions/checkout@v4
 
-      - name: 安装 rsync
+      - name: 安装本地 rsync / sshpass
         run: sudo apt-get update -qq && sudo apt-get install -y -qq rsync sshpass
 
-      # rsync 只传有变化的文件，首次 1.7GB 约 10-30 分钟，之后几秒完成
-      - name: 同步到香港服务器
+      # rsync 需要两端都安装；顺便验证 SSH 密码和 22 端口是否通
+      - name: 检查服务器连接并准备 rsync
+        env:
+          SSHPASS: ${{ secrets.HK_PASSWORD }}
+          HK_HOST: ${{ secrets.HK_HOST }}
+        run: |
+          sshpass -e ssh \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            -o LogLevel=ERROR \
+            -o ConnectTimeout=20 \
+            root@$HK_HOST \
+            'command -v rsync >/dev/null 2>&1 || (apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq rsync); mkdir -p /var/www/xiaobin; echo SERVER_READY'
+
+      # sync 只传有变化的文件，首次 1.7GB 约 10-30 分钟，之后几秒完成
+      - name: 同步网站文件到服务器
         env:
           SSHPASS: ${{ secrets.HK_PASSWORD }}
           HK_HOST: ${{ secrets.HK_HOST }}
         run: |
           rsync -avz --delete \
-            -e "sshpass -e ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR" \
+            -e "sshpass -e ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=20" \
             --exclude '.git/' \
             --exclude '.github/' \
             --exclude 'api/' \
