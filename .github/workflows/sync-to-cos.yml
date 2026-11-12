@@ -1,0 +1,57 @@
+name: 同步静态文件到腾讯云COS
+
+# 触发时机：push 到 main 分支时自动同步（api/ 是 Vercel 接口，不参与）
+# 也可以到 GitHub 仓库 Actions 页面手动点 "Run workflow" 触发
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "api/**"
+      - ".github/**"
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - name: 检出仓库代码
+        uses: actions/checkout@v4
+
+      - name: 下载腾讯云 COSCLI
+        run: |
+          curl -fsSL "https://cosbrowser.cloud.tencent.com/software/coscli/coscli-linux-amd64" -o coscli
+          chmod +x coscli
+
+      - name: 生成 COS 连接配置
+        env:
+          COS_ID: ${{ secrets.COS_SECRET_ID }}
+          COS_KEY: ${{ secrets.COS_SECRET_KEY }}
+          COS_BUCKET: ${{ secrets.COS_BUCKET }}
+        run: |
+          cat > "$RUNNER_TEMP/cos.yaml" <<EOF
+          cos:
+            base:
+              secretid: "$COS_ID"
+              secretkey: "$COS_KEY"
+              sessiontoken: ""
+              protocol: https
+              disableencryption: true
+            buckets:
+            - name: "$COS_BUCKET"
+              alias: site
+              region: ap-singapore
+              endpoint: cos.ap-singapore.myqcloud.com
+              ofs: false
+          EOF
+
+      # sync 自带 crc64 比对，内容没变的文件会自动跳过，天然增量
+      # --acl public-read 保证上传的文件能被匿名访问（网站必需）
+      - name: 同步网站文件到 COS
+        run: |
+          ./coscli -c "$RUNNER_TEMP/cos.yaml" sync ./ cos://site/ -r \
+            --acl public-read \
+            --routines 16 \
+            --thread-num 8 \
+            --force \
+            --exclude '(^|/)(\.git|\.github|node_modules|shots|\.vercel|api)/|(^|/)(vercel\.json|CNAME|AGENTS\.md|CLAUDE\.md|README\.md|\.gitignore|\.DS_Store)$|\.env|\.bak$'
