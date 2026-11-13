@@ -1,0 +1,170 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+提交前防呆检查 —— 阻止敏感凭据、开发素材、超大媒体进仓库。
+
+启用（本仓库已配置好，新克隆的机器需执行一次）：
+    git config core.hooksPath .githooks
+
+为什么需要它：.gitignore 只对「尚未被跟踪」的文件生效，而且一旦
+git add -f 或规则写漏，凭据还是会进历史。公开仓库的历史是删不干净的，
+所以必须在「提交」这一刻再拦一道。
+
+临时跳过（不建议）：SKIP_SECRET_CHECK=1 git commit -m "..."
+"""
+import base64
+import json
+import os
+import re
+import subprocess
+import sys
+
+MAX_BLOB_TEXT = 2 * 1024 * 1024          # 超过 2MB 不做全文扫描
+MAX_NEW_FILE = 10 * 1024 * 1024          # 单个新增文件上限
+
+# 实验页真正会引用的资源目录；这里的视频/音频允许提交
+MEDIA_WHITELIST = ('assets/', 'images/', 'lee/image/', 'fonts/', 'sounds/')
+MEDIA_EXT = ('.mp4', '.mov', '.avi', '.mkv', '.webm', '.wav', '.m4a',
+             '.mp3', '.psd', '.ai', '.sketch', '.fig', '.zip', '.7z', '.dmg')
+# 纯开发用途的目录，任何情况下都不该推送
+DEV_DIRS = ('dev-assets/', 'shots/', 'video-studio/', '小红书配图/',
+            '所有PNG/', 'sprites/', '素材/', 'outputs/', 'backups/', 'exports/')
+
+BAD_NAME = [
+    (re.compile(r'(^|/)\.env(\..*)?$'), '环境/凭据文件'),
+    (re.compile(r'\.(pem|key|p12|pfx|p8)$', re.I), '私钥/密钥文件'),
+    (re.compile(r'(^|/)id_(rsa|ed25519)', re.I), 'SSH 私钥'),
+    (re.compile(r'(credentials?|secrets?)[^/]*\.json$', re.I), '凭据 JSON'),
+    (re.compile(r'(^|/)\.(npmrc|netrc)$'), '包管理器/网络凭据'),
+]
+
+# 敏感变量被直接赋成字面量（引用 process.env / env(...) 不算）
+ASSIGN = re.compile(
+    r'''\b(?:ADMIN_PASSWORD|ADMIN_TOKEN|SUPABASE_SERVICE_KEY|MBD_APP_KEY|'''
+    r'''MBD_DEVELOPER_KEY|VIDEO_PARSE_KEY|PAYJS_KEY|SECRET_KEY|ACCESS_TOKEN)'''
+    r'''\s*[:=]\s*(['"])([^'"\n]{4,})\1''', re.I)
+PLACEHOLDER = re.compile(
+    r'(process\.env|env\(|^\s*$|xxx|your|change.?me|粘贴|填写|示例|'
+    r'placeholder|<.*>|TODO|替换为|把)', re.I)
+
+# 已经泄露过、永远不该再出现在代码里的两个旧后台口令（拆开写，避免本文件自匹配）
+LEAKED_LITERALS = [''.join(('admin', '123')), ''.join(('zxb', '0523'))]
+
+JWT_RE = re.compile(r'eyJhbGciOi[A-Za-z0-9._-]{20,}')
+SK_RE = re.compile(r'sk-[A-Za-z0-9]{24,}')
+
+
+def git_bytes(*args):
+    return subprocess.run(['git'] + list(args), capture_output=True).stdout
+
+
+def staged_paths(*extra):
+    out = git_bytes('diff', '--cached', '--name-only', '-z', *extra)
+    return [p.decode('utf-8', 'ignore') for p in out.split(b'\0') if p]
+
+
+def blob(path):
+    return subprocess.run(['git', 'show', ':' + path], capture_output=True).stdout
+
+
+def blob_size(path):
+    r = subprocess.run(['git', 'cat-file', '-s', ':' + path],
+                       capture_output=True, text=True)
+    try:
+        return int(r.stdout.strip())
+    except ValueError:
+        return 0
+
+
+def has_service_role_jwt(text):
+    for m in JWT_RE.finditer(text):
+        try:
+            payload = m.group(0).split('.')[1]
+            payload += '=' * (-len(payload) % 4)
+            data = json.loads(base64.urlsafe_b64decode(payload))
+            if data.get('role') == 'service_role':
+                return True
+        except Exception:
+            pass
+    return False
+
+
+def main():
+    if os.environ.get('SKIP_SECRET_CHECK') == '1':
+        print('⚠️  已跳过提交前安全检查（SKIP_SECRET_CHECK=1）')
+        return 0
+
+    paths = staged_paths('--diff-filter=ACMR')
+    if not paths:
+        return 0
+    added = set(staged_paths('--diff-filter=A'))
+    issues = []
+
+    for path in paths:
+        norm = path.replace('\\', '/')
+        low = norm.lower()
+
+        # ---- 1. 文件名层面的硬拦截 ----
+        if not low.endswith('.env.example'):
+            for rx, why in BAD_NAME:
+                if rx.search(norm):
+                    issues.append('[%s] %s' % (why, path))
+                    break
+
+        # ---- 2. 开发素材目录（即使被 -f 强制 add 也拦住） ----
+        for d in DEV_DIRS:
+            if norm.startswith(d) or ('/' + d) in norm:
+                issues.append('[开发素材目录，不应推送] %s' % path)
+                break
+
+        size = blob_size(path)
+
+        # ---- 3. 大文件 / 非资源目录的媒体 ----
+        if path in added and size > MAX_NEW_FILE:
+            issues.append('[新增文件超过 10MB] %s（%.1f MB）' %
+                          (path, size / 1024 / 1024))
+        if path in added and low.endswith(MEDIA_EXT) and \
+                not norm.startswith(MEDIA_WHITELIST) and \
+                not any(norm.startswith(d) or ('/' + d) in norm for d in DEV_DIRS):
+            issues.append('[媒体文件不在资源目录] %s —— 实验要用的请放 '
+                          'assets/ 或 images/；开发素材请放 dev-assets/' % path)
+
+        # ---- 4. 内容层面的密钥扫描 ----
+        if size > MAX_BLOB_TEXT:
+            continue
+        text = blob(path).decode('utf-8', 'ignore')
+        if not text:
+            continue
+
+        for m in ASSIGN.finditer(text):
+            value = m.group(2)
+            if not PLACEHOLDER.search(value):
+                issues.append('[疑似明文凭据赋值] %s（变量 %s）' %
+                              (path, m.group(0).split('=')[0].split(':')[0].strip()[:40]))
+                break
+        if has_service_role_jwt(text):
+            issues.append('[Supabase service_role 密钥] %s —— service_role 只能放 Vercel 环境变量' % path)
+        if SK_RE.search(text):
+            issues.append('[疑似 API Key 字面量] %s' % path)
+        if ('-----' + 'BEGIN') in text and ('PRIVATE ' + 'KEY-----') in text:
+            issues.append('[私钥内容] %s' % path)
+        for lit in LEAKED_LITERALS:
+            if lit in text:
+                issues.append('[已泄露的旧后台口令] %s' % path)
+                break
+
+    if issues:
+        print('\n❌ 提交被拦截，发现 %d 个问题：\n' % len(issues))
+        for line in issues[:40]:
+            print('   ' + line)
+        if len(issues) > 40:
+            print('   …… 还有 %d 条' % (len(issues) - 40))
+        print('\n处理办法：把凭据移到 .env.local / Vercel 环境变量，'
+              '开发素材移到 dev-assets/，然后重新 git add。')
+        print('确需临时跳过：SKIP_SECRET_CHECK=1 git commit ...（不推荐）\n')
+        return 1
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

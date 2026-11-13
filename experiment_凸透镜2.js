@@ -203,36 +203,62 @@ import * as THREE from './assets/optics-three.min.js';
   // This follows the real optical-bench convention: a fixed graduated scale on the guide rail,
   // read against an index carried by each sliding carriage.
   const RULER_END = 147, RULER1 = RULER0 + RULER_END, RULER_FACE_Z = 5.45;
+  const RULER_PAD = 1.0;                       // 两端留白：0 与 147 才能完整落在板上
+  const RULER_W = RULER_END + RULER_PAD * 2;   // 板长
+  const RULER_H = 2.05;                        // 板高
+  const RULER_CY = .20, RULER_TOP = RULER_CY + RULER_H / 2;
   const rulerCenter = (RULER0 + RULER1) / 2;
-  box(bench,[RULER_END+2.8,2.05,.72],[rulerCenter,.20,4.97],metalDark,false);
-  box(bench,[RULER_END+1.0,1.82,.12],[rulerCenter,.20,5.39],cream,false);
-  // Every centimetre has a graduation; half-centimetre marks match the carriage's 0.5 cm snap.
-  // Five- and ten-centimetre divisions are longer, and the numbered labels sit on the same face.
-  const rulerMarks = new THREE.Group(); rulerMarks.name='optical-bench-ruler-marks'; bench.add(rulerMarks);
-  const rulerTickMaterial = new THREE.LineBasicMaterial({ color:'#344149', transparent:true, opacity:.98 });
-  const rulerVertices=[];
-  for(let halfCm=0;halfCm<=RULER_END*2;halfCm++){
-    const cm=halfCm/2, whole=Number.isInteger(cm), n=whole?cm:0;
-    const mark=whole?(n%10===0 ? .72 : n%5===0 ? .55 : .38) : .20;
-    const x=RULER0+cm, top=.94;
-    rulerVertices.push(x,top,RULER_FACE_Z,x,top-mark,RULER_FACE_Z);
+  box(bench,[RULER_W+.16,RULER_H+.10,.72],[rulerCenter,RULER_CY,4.97],metalDark,false);
+  box(bench,[RULER_W,RULER_H,.12],[rulerCenter,RULER_CY,5.39],cream,false);
+  // 整条刻度（底板 + 刻线 + 数字）一次画进一张高分辨率贴图，而不是「1 设备像素的 LineSegments
+  // + 十几个 180×80 的数字贴片」：WebGL 的线宽恒为 1 px，斜视时会发灰、闪烁；小贴片一放大就糊。
+  // 单张贴图 + mipmap + 各向异性过滤，才能在这种极扁的斜视面上保持锐利，也不会与底板 z-fighting。
+  const rulerMaxTex = (renderer.capabilities && renderer.capabilities.maxTextureSize) || 4096;
+  const RULER_PPC = Math.max(24, Math.min(64, Math.floor(rulerMaxTex / RULER_W)));
+  const rulerTexW = Math.round(RULER_W * RULER_PPC), rulerTexH = Math.round(RULER_H * RULER_PPC);
+  const rulerCanvas = document.createElement('canvas');
+  rulerCanvas.width = rulerTexW; rulerCanvas.height = rulerTexH;
+  const rulerCtx = rulerCanvas.getContext('2d');
+  const rulerPX = cm => (cm + RULER_PAD) * RULER_PPC;   // 刻度读数 → 画布 x
+  const rulerPY = y => (RULER_TOP - y) * RULER_PPC;     // world y → 画布 y
+  // 搪瓷底板：轻微纵向渐变 + 上下压边，读起来是嵌进导轨里的一块刻度板。
+  const plateGrad = rulerCtx.createLinearGradient(0, 0, 0, rulerTexH);
+  plateGrad.addColorStop(0, '#f7f2e3'); plateGrad.addColorStop(.5, '#eae3ce'); plateGrad.addColorStop(1, '#dcd4bd');
+  rulerCtx.fillStyle = plateGrad; rulerCtx.fillRect(0, 0, rulerTexW, rulerTexH);
+  const edgePx = Math.max(1, Math.round(RULER_PPC * .06));
+  rulerCtx.fillStyle = 'rgba(116,106,82,.22)';
+  rulerCtx.fillRect(0, 0, rulerTexW, edgePx);
+  rulerCtx.fillRect(0, rulerTexH - edgePx, rulerTexW, edgePx);
+  // 每 1 cm 一条刻线，半厘米短刻线对应滑座的 0.5 cm 吸附；5 cm、10 cm 加长加粗。
+  const RULER_INK = '#1b2830', TICK_TOP = 1.02;
+  for (let half = 0; half <= RULER_END * 2; half++) {
+    const cm = half / 2, whole = Number.isInteger(cm);
+    const len = whole ? (cm % 10 === 0 ? .70 : cm % 5 === 0 ? .54 : .38) : .22;
+    const w = whole ? (cm % 10 === 0 ? .105 : cm % 5 === 0 ? .085 : .065) : .05;
+    rulerCtx.fillStyle = whole ? RULER_INK : 'rgba(27,40,48,.74)';
+    const wpx = Math.max(1, Math.round(w * RULER_PPC));
+    rulerCtx.fillRect(Math.round(rulerPX(cm) - wpx / 2), Math.round(rulerPY(TICK_TOP)), wpx, Math.round(len * RULER_PPC));
   }
-  const rulerGeometry=new THREE.BufferGeometry();
-  rulerGeometry.setAttribute('position',new THREE.Float32BufferAttribute(rulerVertices,3));
-  rulerMarks.add(new THREE.LineSegments(rulerGeometry,rulerTickMaterial));
-  const rulerLabels = new THREE.Group(); rulerLabels.name='optical-bench-ruler-labels'; bench.add(rulerLabels);
-  function rulerLabel(text,x,width=3.0){
-    const c=document.createElement('canvas');c.width=180;c.height=80;
-    const g=c.getContext('2d');g.fillStyle='#26343b';g.textAlign='center';g.textBaseline='middle';
-    g.font='bold 52px sans-serif';g.fillText(text,90,41);
-    const t=new THREE.CanvasTexture(c);t.colorSpace=THREE.SRGBColorSpace;
-    const mat=new THREE.MeshBasicMaterial({map:t,transparent:true,depthWrite:false,side:THREE.DoubleSide,toneMapped:false});
-    const plane=mesh(new THREE.PlaneGeometry(width,.84),mat,rulerLabels,x,-.27,RULER_FACE_Z+.012,false);
-    plane.renderOrder=9;
-  }
-  rulerLabel('0',RULER0+.5,1.6);
-  for(let cm=10;cm<=140;cm+=10)rulerLabel(String(cm),RULER0+cm);
-  rulerLabel(String(RULER_END),RULER1,2.0);
+  // 数字画在同一张图上：字号按 1.05 cm 的实际高度换算，任何缩放下都由 mipmap 平滑降采样。
+  rulerCtx.fillStyle = RULER_INK; rulerCtx.textAlign = 'center'; rulerCtx.textBaseline = 'middle';
+  rulerCtx.font = `700 ${Math.round(1.05 * RULER_PPC)}px "Helvetica Neue", Helvetica, Arial, sans-serif`;
+  const numberY = rulerPY(-.235);
+  rulerCtx.fillText('0', rulerPX(0), numberY);
+  for (let cm = 10; cm <= 140; cm += 10) rulerCtx.fillText(String(cm), rulerPX(cm), numberY);
+  rulerCtx.fillText(String(RULER_END), rulerPX(RULER_END), numberY);
+  const rulerTex = new THREE.CanvasTexture(rulerCanvas);
+  rulerTex.colorSpace = THREE.SRGBColorSpace;
+  rulerTex.minFilter = THREE.LinearMipmapLinearFilter;
+  rulerTex.magFilter = THREE.LinearFilter;
+  rulerTex.generateMipmaps = true;
+  // 斜视面上没有各向异性过滤，远处会被强行降到最低 mip —— 这正是原来「糊一层」的根源。
+  rulerTex.anisotropy = Math.max(1, Math.min(16, renderer.capabilities.getMaxAnisotropy()));
+  const rulerFace = mesh(new THREE.PlaneGeometry(RULER_W, RULER_H),
+    new THREE.MeshBasicMaterial({ map: rulerTex, toneMapped: false }),
+    bench, rulerCenter, RULER_CY, RULER_FACE_Z + .02, false);
+  rulerFace.name = 'optical-bench-ruler-face';
+  rulerFace.receiveShadow = false;
+  rulerFace.renderOrder = 9;
   // Factory scale marker / inlaid metal plaque, independent of ruler labels.
   const makerTex=labelTexture('OPTICAL BENCH  ·  01','#4a555a');
   const maker=mesh(new THREE.PlaneGeometry(15.7,1.60),new THREE.MeshBasicMaterial({map:makerTex,transparent:true,side:THREE.DoubleSide}),bench,-32,.12,-4.67,false);

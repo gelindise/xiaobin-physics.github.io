@@ -338,6 +338,11 @@ module.exports = async (req, res) => {
 
     // ========== 校验管理员口令（后台登录用） ==========
     if (action === 'verifyAdmin') {
+      // 后台登录是口令爆破的唯一入口，必须限速（与 login / redeemCode 同一套计数器）。
+      // 注意：这是单实例内存计数，Vercel 多实例下只是抬高爆破成本，不能替代强口令。
+      if (rateLimited('verifyAdmin:' + clientIp(req), 8, 10 * 60 * 1000)) {
+        return res.status(429).json({ error: '尝试次数过多，请 10 分钟后再试' });
+      }
       var s = await getAdminHash();
       if (!s) {
         return res.status(503).json({
