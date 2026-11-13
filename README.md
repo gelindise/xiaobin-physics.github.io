@@ -4,7 +4,7 @@
 
 ## 改动怎么上线
 
-> 本段为 2026-11-13 实测核实的**当前有效链路**。旧的「GitHub Actions 自动同步到香港服务器」说明已失效（workflow 已移除）。
+> 本段为 2026-11-13 实测核实的**当前有效链路**。旧的「GitHub Actions 自动同步到香港服务器」说明已失效（workflow 已移除），现改为香港服务器定时从 GitHub 拉取，见文末「香港服务器自动同步」。
 
 ```bash
 git add -A
@@ -34,7 +34,7 @@ git push origin main
 | --- | --- | --- |
 | Vercel | ✅ 主源站 | 连 GitHub 自动部署，是当前唯一有效的发布目标 |
 | EdgeOne | ✅ CDN 边缘 | 只做缓存与加速，不接收代码推送 |
-| 香港服务器 `www` | ⚠️ 手动同步，内容可能落后 | GitHub Actions 同步 workflow 已移除，改由本地脚本部署；该脚本不在本仓库。2026-11-13 实测其 `vip.html` 仍是旧版 |
+| 香港服务器 `www` | ✅ 自动跟随 GitHub | 2026-11-13 起目录为 git 克隆，服务器每分钟 `git fetch` 一次，有更新自动 `reset --hard`，延迟 ≤1 分钟。见文末 |
 | 腾讯云 COS | ❌ 已不作为源站 | EdgeOne 首页缓存对象里残留的 `Server: tencent-cos` 响应头是旧缓存，绕过缓存后源站是 Vercel |
 | GitHub Pages | ❌ 未启用 | `xiaobin-physics.github.io` 返回 404，不是发布渠道 |
 
@@ -52,4 +52,35 @@ printf '香港   '; curl -sS --resolve xiaobinlaoshi.cn:443:119.28.92.176 \
 curl -sSI "https://xiaobinlaoshi.cn/?b=$RANDOM" | grep -iE 'server|x-vercel|eo-cache'
 ```
 
-三个 hash 应完全一致；源站应显示 `server: Vercel`。若香港那一行不一致，说明香港服务器需要手动同步。
+三个 hash 应完全一致；源站应显示 `server: Vercel`。
+
+## 香港服务器自动同步（2026-11-13 起）
+
+香港服务器 `119.28.92.176:/var/www/xiaobin` 现在是 GitHub 仓库的镜像：
+
+```
+git push origin main
+   ├─→ Vercel 自动构建（秒级）
+   └─→ 香港服务器每分钟 git fetch（≤1 分钟）
+```
+
+服务器上的组件：
+
+- `/usr/local/bin/xiaobin-sync.sh`：fetch → 比较 HEAD → 有变化才 `reset --hard`
+- root 的 crontab：`* * * * * /usr/local/bin/xiaobin-sync.sh >> /var/log/xiaobin-sync.log 2>&1`
+
+想立即同步（不等那一分钟）：
+
+```bash
+ssh root@119.28.92.176 /usr/local/bin/xiaobin-sync.sh
+
+# 或在本地 ~/.zshrc 加别名，push 后立刻触发
+alias xbdeploy='cd ~/xiaobin-physics.github.io && git push origin main && ssh root@119.28.92.176 /usr/local/bin/xiaobin-sync.sh'
+```
+
+注意：
+
+1. **不要在服务器上直接改文件**，下次同步会被 `reset --hard` 覆盖。
+2. 被 `.gitignore` 忽略的文件既不上 Vercel 也不到香港；新增 `assets/` 资源后先 `git status` 确认已跟踪。
+3. 查看同步日志：`tail -f /var/log/xiaobin-sync.log`。
+4. 迁移前的旧目录备份在 `/var/www/xiaobin.pre-git.20261113`，确认稳定后可删除。
