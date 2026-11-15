@@ -130,12 +130,28 @@ function resistance() {
 function current() { return state.U / resistance(); }
 function power() { var i = current(); return i * i * resistance(); }
 
+/* 电流表量程：按材料固定，不随电流瞬时换挡。
+   🔴 原来用 I <= 0.6 ? 0.6 : 3 动态换挡 —— 盐水升温 → 电流从 0.4 A 涨到 1.0 A，
+      量程却从 0.6 跳到 3，指针反而往左退，和「电阻变小、电流变大」正好相反。 */
+function ammeterRange() {
+  var m = curMat();
+  if (m.carrier === 'insulator') return 0.6;
+  var tr = tempRange();
+  /* 该材料在 3 V 下可能出现的最大电流（金属在低温端电阻最小，盐水在高温端最小） */
+  var rMin = m.carrier === 'electrolyte'
+    ? m.R20 / (1 + m.beta * (tr.hi - 20))
+    : m.R20 * (1 + m.alpha * (tr.lo - 20));
+  return 3 / rMin <= 0.6 ? 0.6 : 3;
+}
+
 /* 热运动速率（px/s）：温度越高电荷也跑得越快，但幅度远小于原子振幅的变化。
    溶液里的离子质量比电子大得多，同样温度下热运动明显更慢 ——
    画面上不压一压，离子的定向移动就会被乱窜完全盖住。 */
 function vThermal() {
-  var base = 150 + 78 * normT();
-  return carrier() === 'electrolyte' ? base * 0.55 : base;
+  /* 溶液：温度对离子热运动的影响要比金属更明显 —— 否则拖动温度滑块只看到
+     数字变了、画面几乎不动。20℃ ≈ 92 px/s，95℃ ≈ 175 px/s（约 1.9 倍）。 */
+  if (carrier() === 'electrolyte') return (127 + 191 * normT()) * 0.55;
+  return 150 + 78 * normT();
 }
 /* 定向漂移速率（px/s）：只由电流决定 ⇒ 电压↑ 或 电阻↓ 时变快。
    溶液里离子的真实漂移比金属电子慢几个数量级，画面上放大 1.5 倍才看得出方向。 */
@@ -197,25 +213,25 @@ function initBound() {
 
 function initMovers() {
   movers.length = 0;
-  var c = carrier(), k, th, v;
+  var c = carrier(), k, th, v, sp;
 
   if (c === 'metal') {
     for (k = 0; k < 64; k++) {
-      th = Math.random() * TAU; v = vThermal() * (0.7 + Math.random() * 0.6);
+      th = Math.random() * TAU; sp = 0.7 + Math.random() * 0.6; v = vThermal() * sp;
       movers.push({
         kind: 'e', dir: -1, r: E_R,
         x: COND.x + 24 + Math.random() * (COND.w - 48),
         y: COND.y + 34 + Math.random() * (COND.h - 48),
         px: 0,
         vx: Math.cos(th) * v, vy: Math.sin(th) * v,
-        cool: 0, trail: []
+        spd: sp, cool: 0, trail: []
       });
     }
   } else if (c === 'electrolyte') {
     /* 一半正离子（Na⁺，向负极 = 向右漂），一半负离子（Cl⁻，向正极 = 向左漂） */
     for (k = 0; k < 56; k++) {
       var pos = k % 2 === 0;
-      th = Math.random() * TAU; v = vThermal() * (0.7 + Math.random() * 0.6);
+      th = Math.random() * TAU; sp = 0.7 + Math.random() * 0.6; v = vThermal() * sp;
       movers.push({
         kind: pos ? 'na' : 'cl',
         dir: pos ? 1 : -1,
@@ -224,7 +240,7 @@ function initMovers() {
         y: COND.y + 34 + Math.random() * (COND.h - 48),
         px: 0,
         vx: Math.cos(th) * v, vy: Math.sin(th) * v,
-        cool: 0, trail: []
+        spd: sp, cool: 0, trail: []
       });
     }
   }
@@ -262,6 +278,18 @@ function step(dt) {
   var vth = vThermal(), vd = vDrift(), rCol = collideR();
   var r2 = rCol * rCol;
 
+  /* 🔴 载流子的热运动速度只在建造时随机给过一次；温度变了必须重新标定，
+     否则拖动温度滑块时离子的乱窜速度几乎不变 ——「温度升高、运动更剧烈」
+     在画面上就看不出来。用一阶平滑，避免滑块一动速度瞬间跳变。 */
+  var kT = Math.min(1, dt * 5);
+  for (var s0 = 0; s0 < movers.length; s0++) {
+    var mv0 = movers[s0];
+    var tgt = vth * (mv0.spd || 1);
+    var curSp = Math.sqrt(mv0.vx * mv0.vx + mv0.vy * mv0.vy) || 1;
+    var fSp = 1 + (tgt / curSp - 1) * kT;
+    mv0.vx *= fSp; mv0.vy *= fSp;
+  }
+
   /* ---- 晶格振动（金属 / 玻璃） ---- */
   for (var i = 0; i < lattice.length; i++) {
     var at = lattice[i];
@@ -287,8 +315,10 @@ function step(dt) {
     /* 溶液两端有电极板（各 16 px），离子要躲开它 */
     var pad = c === 'electrolyte' ? 24 : 6;
     var lx = COND.x + e.r + pad, rx = COND.x + COND.w - e.r - pad;
-    if (e.x < lx) { e.x = rx; e.px = rx; }
-    if (e.x > rx) { e.x = lx; e.px = lx; }
+    /* 左右穿越边界时粒子是「瞬移」到另一端的：不清空拖尾的话，
+       旧位置和新位置会被连成一条横贯整个导体的直线（看起来像多了一根导线）。 */
+    if (e.x < lx) { e.x = rx; e.px = rx; e.trail.length = 0; }
+    if (e.x > rx) { e.x = lx; e.px = lx; e.trail.length = 0; }
 
     /* 穿过截面：只让「沿定向移动方向」的那次闪一下
        （🔴 流量读数不靠数穿越次数，见 fluxNow 的注释） */
@@ -322,11 +352,11 @@ function step(dt) {
       }
     }
 
-    /* 拖尾只给金属的自由电子（溶液里 56 个离子都拖尾会糊成一片） */
-    if (e.kind === 'e') {
-      e.trail.push(e.x, e.y);
-      if (e.trail.length > 18) e.trail.splice(0, 2);
-    }
+    /* 拖尾：电子给长一点；溶液离子给短一点 —— 56 个都拖长尾会糊成一片，
+       但短尾正好能把「温度越高跑得越快」直接画出来 */
+    var tmax = e.kind === 'e' ? 18 : 12;
+    e.trail.push(e.x, e.y);
+    if (e.trail.length > tmax) e.trail.splice(0, 2);
   }
 
   /* ---- 溶液：离子之间互相碰撞（只轻微偏转，不打断定向移动） ---- */
@@ -526,7 +556,7 @@ function drawSwitch() {
 function drawAmmeter() {
   var cx = AMM.x, cy = AMM.y, r = AMM.r;
   var I = current();
-  var range = I <= 0.6 ? 0.6 : 3;
+  var range = ammeterRange();
 
   ctx.save();
   ctx.beginPath(); ctx.arc(cx, cy, r, 0, TAU);
@@ -560,10 +590,14 @@ function drawAmmeter() {
   ctx.beginPath(); ctx.arc(cx, cy, 3.4, 0, TAU);
   ctx.fillStyle = '#f87171'; ctx.fill();
 
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.fillStyle = '#94a3b8';
   ctx.font = 'bold 13px Inter, sans-serif';
-  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  ctx.fillText('A', cx, cy + 20);
+  ctx.fillText('A', cx, cy + 16);
+  /* 把量程写在表盘上：同一材料内量程固定，指针变化才是真的电流变化 */
+  ctx.font = '9px Inter, sans-serif';
+  ctx.fillStyle = 'rgba(148,163,184,.8)';
+  ctx.fillText(range === 0.6 ? '0–0.6' : '0–3', cx, cy + 29);
   ctx.restore();
 }
 
@@ -580,12 +614,19 @@ function drawBar() {
     ctx.fillStyle = 'rgba(255,255,255,.13)';
     ctx.fillRect(x + 8, y - h / 2 + 3, w - 16, 3.5);
   } else if (c === 'electrolyte') {
-    /* 盐水柱：淡青的液体 */
+    /* 盐水柱：淡青的液体；加热后透出暖色光晕 */
+    var hotE = normT();
     var gl = ctx.createLinearGradient(0, y - h / 2, 0, y + h / 2);
     gl.addColorStop(0, 'rgba(34,211,238,.42)');
     gl.addColorStop(1, 'rgba(14,116,144,.62)');
+    ctx.save();
+    if (hotE > 0.15) {
+      ctx.shadowColor = 'rgba(251,146,60,' + (0.5 * hotE).toFixed(2) + ')';
+      ctx.shadowBlur = 22 * hotE;
+    }
     roundRect(x, y - h / 2, w, h, 6);
     ctx.fillStyle = gl; ctx.fill();
+    ctx.restore();
     ctx.strokeStyle = 'rgba(103,232,249,.5)'; ctx.lineWidth = 1.4; ctx.stroke();
   } else {
     /* 金属：铜色，电流越大越热 */
@@ -658,8 +699,10 @@ function drawMicro() {
   roundRect(COND.x, COND.y, COND.w, COND.h, 14);
   var bg = ctx.createLinearGradient(0, COND.y, 0, COND.y + COND.h);
   if (c === 'electrolyte') {
-    bg.addColorStop(0, 'rgba(10,44,62,.97)');
-    bg.addColorStop(1, 'rgba(6,26,40,.97)');
+    /* 加热后液体底色从青蓝慢慢偏暖 —— 和离子跑得更快一起构成「温度升高」的直观证据 */
+    var hot = normT();
+    bg.addColorStop(0, mix([10, 44, 62], [66, 38, 24], hot * 0.55));
+    bg.addColorStop(1, mix([6, 26, 40], [36, 20, 14], hot * 0.55));
   } else {
     bg.addColorStop(0, 'rgba(13,28,46,.97)');
     bg.addColorStop(1, 'rgba(5,12,22,.97)');
@@ -906,6 +949,17 @@ function drawIons() {
     var m = movers[k];
     var pos = m.kind === 'na';
     var r = m.r;
+
+    /* 短拖尾：温度越高、电流越大，离子跑得越快，尾巴拉得越长 */
+    if (state.trail && m.trail.length >= 6) {
+      ctx.beginPath();
+      ctx.moveTo(m.trail[0], m.trail[1]);
+      for (var ti = 2; ti < m.trail.length; ti += 2) ctx.lineTo(m.trail[ti], m.trail[ti + 1]);
+      ctx.strokeStyle = pos ? 'rgba(251,146,60,.30)' : 'rgba(34,211,238,.30)';
+      ctx.lineWidth = 3; ctx.lineCap = 'round';
+      ctx.stroke();
+    }
+
     var g = ctx.createRadialGradient(m.x - r * 0.35, m.y - r * 0.38, r * 0.12, m.x, m.y, r);
     if (pos) {
       g.addColorStop(0, '#fed7aa');
@@ -1058,6 +1112,7 @@ function syncUI() {
   else if (state.T < 200) note = '已经很热了，离子晃得明显。';
   else note = '接近灯丝的工作温度，离子振动非常剧烈。';
   setText('tNote', note);
+  setText('cTrailLbl', c === 'electrolyte' ? '离子轨迹' : '电子轨迹');
   setText('matNote', m.note);
   setText('specNote', m.spec + '。');
 
@@ -1076,7 +1131,7 @@ function syncUI() {
     } else if (c === 'electrolyte') {
       cls = state.T > 60 ? 'verdict ok' : 'verdict';
       txt = '温度 ' + state.T.toFixed(0) + ' ℃：' + m.name + '电阻 ' + fmtR(R) +
-            '，电流 ' + fmtI(I) + ' —— Na⁺ 向右、Cl⁻ 向左，两者反向';
+            '，电流 ' + fmtI(I) + ' —— Na⁺ 向右、Cl⁻ 向左；温度升高，离子跑得更快，电阻变小、电流变大';
     } else {
       cls = state.T > 150 ? 'verdict hot' : 'verdict';
       txt = '温度 ' + state.T.toFixed(0) + ' ℃：' + m.name + '电阻 ' + fmtR(R) +
@@ -1305,6 +1360,23 @@ window.__MICRO = {
   collideR: collideR,
   vDrift: vDrift,
   vThermal: vThermal,
+  ammeterRange: ammeterRange,
+  ammeterFrac: function () { return clamp(current() / ammeterRange(), 0, 1); },
+  /* 载流子热运动瞬时速率均值（不含定向漂移），用于验证温度真的改变了画面运动 */
+  meanThermalSpeed: function () {
+    if (!movers.length) return 0;
+    var s = 0;
+    for (var i = 0; i < movers.length; i++) {
+      s += Math.sqrt(movers[i].vx * movers[i].vx + movers[i].vy * movers[i].vy);
+    }
+    return s / movers.length;
+  },
+  meanTrailLen: function () {
+    if (!movers.length) return 0;
+    var s = 0;
+    for (var i = 0; i < movers.length; i++) s += movers[i].trail.length / 2;
+    return s / movers.length;
+  },
   carrier: carrier,
   tempRange: tempRange,
   sliceX: function () { return SLICE_X; },
