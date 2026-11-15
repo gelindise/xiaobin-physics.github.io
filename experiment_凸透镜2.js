@@ -22,6 +22,9 @@ import * as THREE from './assets/optics-three.min.js';
     extra: 'none', extraF: 12,
     sourceY: 12, secondY: 8, second: false, source: 'candle',
     screenRemoved: false, autoScreen: false, observing: false, lastNeedsOff: false,
+    // 虚像对照是独立于「透过透镜观察」的教学图层：打开时相机退到侧面，虚像正对镜头，
+    // 和实物、量高量距辅助线同屏；关闭时虚像只按物理规律从光屏一侧透过镜片看到。
+    compare: false, obsYaw: 0, obsPitch: 0,
     rays: false, virtual: true, labels: false, rayMode: 'all', yaw: -.42, pitch: .21, zoom: 1.06,
     step: 0, records: {},
     // Written by updateGhost() each frame: whether the image is currently in the eye's view.
@@ -175,11 +178,11 @@ import * as THREE from './assets/optics-three.min.js';
   function cylinder(parent, radius, height, position, mat, segments = 28) {
     return mesh(new THREE.CylinderGeometry(radius, radius, height, segments), mat, parent, ...position);
   }
-  function lineSegment(parent, p1, p2, color, opacity = 1, dashed = false) {
+  function lineSegment(parent, p1, p2, color, opacity = 1, dashed = false, depthTest = false) {
     const geometry = new THREE.BufferGeometry().setFromPoints([p1, p2]);
     const mat = dashed
-      ? new THREE.LineDashedMaterial({ color, transparent: true, opacity, dashSize: 1, gapSize: .75, depthTest: false })
-      : new THREE.LineBasicMaterial({ color, transparent: true, opacity, depthTest: false });
+      ? new THREE.LineDashedMaterial({ color, transparent: true, opacity, dashSize: 1, gapSize: .75, depthTest })
+      : new THREE.LineBasicMaterial({ color, transparent: true, opacity, depthTest });
     const line = new THREE.Line(geometry, mat);
     if (dashed) line.computeLineDistances();
     line.renderOrder = 8; parent.add(line); return line;
@@ -542,9 +545,12 @@ import * as THREE from './assets/optics-three.min.js';
       group.remove(child);
       if(child.isSprite){if(child.material.map)child.material.map.dispose();child.material.dispose();}
       else if(child.isLine){child.geometry.dispose();child.material.dispose();}
-      // Geometry is always unique to its mesh; materials are shared except for the
-      // deliberately cloned ghost markers, which own theirs.
-      else if(child.isMesh){child.geometry.dispose();if(group===ghostLabels)child.material.dispose();}
+      // Geometry is always unique to its mesh. Materials are shared except for the ray beams
+      // (each owns a fog/glow pair) and the deliberately cloned ghost markers.
+      else if(child.isMesh){
+        child.geometry.dispose();
+        if(group===ghostLabels||group===rays)child.material.dispose();
+      }
     }
   }
   function refreshMarks(){
@@ -608,47 +614,164 @@ import * as THREE from './assets/optics-three.min.js';
   // 玻璃镜片的半口径（glassCap 里 R = 5.65）。特殊光线若落在它外面就不画，
   // 否则会画出一条从镜片旁边飘过去的「光线」，看着像穿模。
   const LENS_AP=LENS_R;
-  // A ray leaves an object point, bends once in the lens plane and then travels straight.
-  // Both transverse axes obey the same rule, so the fan stays correct for the planar F.
+  const GLASS_HALF=.07;
+  // 镜片表面与 lensCapGeometry 用同一个公式：凸面 depth = sag(1−q)，凹面 depth = sag·q，
+  // q=(r/口径)²。光线现在真的从这一层曲面进入、在玻璃里走一段、再从另一面出去，
+  // 而不是所有偏折都挤在 x=LX 一张平面上。
+  function lensSurfaceConfig(LX,f,aperture,curvatureScale,profile){
+    return {LX,f,aperture,profile,sag:lensSagFor(f,aperture,curvatureScale)};
+  }
+  function surfaceX(cfg,sign,y,z){
+    const r=Math.hypot(y-12,z),q=Math.min(1,(r/cfg.aperture)**2);
+    const depth=cfg.profile==='concave'?cfg.sag*q:cfg.sag*(1-q);
+    return cfg.LX+sign*(GLASS_HALF+depth);
+  }
+  // 在 [p0,p1] 上找与某一面（sign=−1 前表面 / +1 后表面）的交点。p0 在面前、p1 在面后，
+  // 用二分而不是解析解，凸面凹面同一套代码。
+  function surfaceHit(cfg,p0,p1,sign){
+    const at=t=>{
+      const x=p0.x+(p1.x-p0.x)*t,y=p0.y+(p1.y-p0.y)*t,z=p0.z+(p1.z-p0.z)*t;
+      return {x,y,z,f:x-surfaceX(cfg,sign,y,z)};
+    };
+    const a=at(0),b=at(1);
+    if(!(a.f<=0&&b.f>=0))return null;
+    let lo=0,hi=1;
+    for(let i=0;i<28;i++){
+      const m=(lo+hi)/2,q=at(m);
+      if(q.f<=0)lo=m;else hi=m;
+    }
+    const p=at((lo+hi)/2);
+    if(Math.hypot(p.y-12,p.z)>cfg.aperture+.03)return null;
+    return V(p.x,p.y,p.z);
+  }
+  const glassTints=new Map();
+  function glassTint(color){
+    if(!glassTints.has(color)){
+      const c=new THREE.Color(color);c.lerp(new THREE.Color('#ffffff'),.5);
+      glassTints.set(color,'#'+c.getHexString());
+    }
+    return glassTints.get(color);
+  }
+  // 入射/出射段是细线，玻璃内的那一段换成有粗细的发光柱：光线有了“实体”，从侧面看能看出
+  // 它先撞上前表面、在玻璃里走一小段、再从后表面钻出去。光线的分段还参与深度测试，所以当
+  // 视线穿过镜架或其它实体时会被正常遮住，不再一律浮在画面最上层。
+  const rayLine=(p1,p2,color,opacity,dashed=false)=>
+    lineSegment(rays,p1,p2,color,opacity,dashed,!dashed);
+  function glassBeam(p1,p2,color,opacity){
+    const dir=p2.clone().sub(p1),len=dir.length();
+    if(len<1e-4)return;
+    const quat=new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0,1,0),dir.clone().normalize());
+    const mid=p1.clone().add(p2).multiplyScalar(.5);
+    const core=new THREE.Mesh(new THREE.CylinderGeometry(.06,.06,len,6,1,true),
+      new THREE.MeshBasicMaterial({color,transparent:true,opacity:Math.min(1,opacity),
+        depthWrite:false,side:THREE.DoubleSide}));
+    core.position.copy(mid);core.quaternion.copy(quat);core.renderOrder=7;rays.add(core);
+    const glow=new THREE.Mesh(new THREE.CylinderGeometry(.15,.15,len,8,1,true),
+      new THREE.MeshBasicMaterial({color,transparent:true,opacity:Math.min(.22,opacity*.24),
+        depthWrite:false,side:THREE.DoubleSide,blending:THREE.AdditiveBlending}));
+    glow.position.copy(mid);glow.quaternion.copy(quat);glow.renderOrder=6;rays.add(glow);
+  }
+  // 一条经薄透镜追迹的光线：入射 → 前表面 → 玻璃内 → 后表面 → 出射。
+  // 折射方向仍严格由薄透镜公式给出（出射直线穿过中心面上的理想交点，像点因此一点没变），
+  // 只是把交点挪到真实曲面上，让光线看得见地钻进玻璃再从另一面出来。
+  function drawLensPath(start,center,end,cfg,color,opacity){
+    const entry=surfaceHit(cfg,start,center,-1);
+    const exit=surfaceHit(cfg,center,end,1);
+    if(entry&&exit){
+      rayLine(start,entry,color,opacity);
+      glassBeam(entry,exit,glassTint(color),Math.min(1,opacity+.12));
+      rayLine(exit,end,color,opacity+.05);
+      return {entry,exit,outStart:exit};
+    }
+    rayLine(start,center,color,opacity);
+    rayLine(center,end,color,opacity+.05);
+    return {entry:null,exit:null,outStart:center};
+  }
   function traceRay(src,LX,stopX,shiftY,shiftZ,color,opacity){
     const u=state.u,f=state.f;
     const y0=src[0],z0=src[1];
     if(!hasExtra()){
       const YL=12+shiftY,ZL=shiftZ;
+      if(Math.hypot(YL-12,ZL)>LENS_AP)return null;
       const sy=(YL-y0)/u-(YL-12)/f, sz=(ZL-z0)/u-ZL/f;
-      const hit=V(LX,YL,ZL),start=V(LX-u,y0,z0),dx=stopX-LX;
-      lineSegment(rays,start,hit,color,opacity);
-      lineSegment(rays,hit,V(stopX,YL+sy*dx,ZL+sz*dx),color,opacity+.05);
-      return {hit,YL,ZL,sy,sz};
+      const start=V(LX-u,y0,z0),center=V(LX,YL,ZL);
+      const end=V(stopX,YL+sy*(stopX-LX),ZL+sz*(stopX-LX));
+      const cfg=lensSurfaceConfig(LX,f,LENS_R,1.28,'convex');
+      const path=drawLensPath(start,center,end,cfg,color,opacity);
+      return {hit:path.outStart,YL,ZL,sy,sz,entry:path.entry,exit:path.exit,
+        inGlass:!!(path.entry&&path.exit)};
     }
     const d=AUX_GAP,f1=extraFocal(),u1=u-d,AX=LX-d;
     const Y1=12+shiftY,Z1=shiftZ;
+    // 追迹到附加镜口径外的光不参与第一片折射，避免画出从镜架旁边穿过的假光线。
+    if(Math.hypot(Y1-12,Z1)>4.82)return null;
     const sy1=(Y1-y0)/u1-(Y1-12)/f1,sz1=(Z1-z0)/u1-Z1/f1;
     const Y2=Y1+sy1*d,Z2=Z1+sz1*d;
-    // 追迹到主镜口径外的光不参与主镜折射，避免画出从镜架旁边穿过的假光线。
     if(Math.hypot(Y2-12,Z2)>LENS_AP)return null;
-    const sy=sy1-(Y2-12)/f,sz=sz1-Z2/f,dx=stopX-LX;
-    const start=V(AX-u1,y0,z0),hit1=V(AX,Y1,Z1),hit=V(LX,Y2,Z2);
-    lineSegment(rays,start,hit1,color,opacity);
-    lineSegment(rays,hit1,hit,color,opacity+.02);
-    lineSegment(rays,hit,V(stopX,Y2+sy*dx,Z2+sz*dx),color,opacity+.05);
-    return {hit,hit1,YL:Y2,ZL:Z2,sy,sz,sy1,sz1,Y1,Z1};
+    const start=V(AX-u1,y0,z0),center1=V(AX,Y1,Z1),ideal=V(LX,Y2,Z2);
+    const cfgX=lensSurfaceConfig(AX,state.extraF,4.82,1.34,state.extra);
+    const entry1=surfaceHit(cfgX,start,center1,-1);
+    const exit1=surfaceHit(cfgX,center1,ideal,1);
+    if(entry1&&exit1){
+      rayLine(start,entry1,color,opacity);
+      glassBeam(entry1,exit1,glassTint(color),Math.min(1,opacity+.12));
+    }else{
+      rayLine(start,center1,color,opacity);
+    }
+    // 从附加镜后表面沿同一条出射线继续。主镜的入射高度就是这条线在主镜平面上的高度；
+    // 薄透镜的作用量只与「在镜平面上的高度」和入射斜率有关，所以像点仍严格不变。
+    const out1=(entry1&&exit1)?exit1:center1;
+    const span=LX-out1.x;
+    const Y2a=out1.y+sy1*span,Z2a=out1.z+sz1*span;
+    if(Math.hypot(Y2a-12,Z2a)>LENS_AP)return null;
+    const center2=V(LX,Y2a,Z2a);
+    const sy=sy1-(Y2a-12)/f, sz=sz1-Z2a/f;
+    const end=V(stopX,Y2a+sy*(stopX-LX),Z2a+sz*(stopX-LX));
+    const cfgM=lensSurfaceConfig(LX,f,LENS_R,1.28,'convex');
+    const entry2=surfaceHit(cfgM,out1,center2,-1);
+    const exit2=surfaceHit(cfgM,center2,end,1);
+    if(entry2&&exit2){
+      rayLine(out1,entry2,color,opacity+.02);
+      glassBeam(entry2,exit2,glassTint(color),Math.min(1,opacity+.14));
+      rayLine(exit2,end,color,opacity+.05);
+    }else if(entry2){
+      rayLine(out1,entry2,color,opacity+.02);
+      rayLine(entry2,center2,color,opacity+.02);
+      rayLine(center2,end,color,opacity+.05);
+    }else{
+      rayLine(out1,center2,color,opacity+.02);
+      rayLine(center2,end,color,opacity+.05);
+    }
+    return {hit:exit2||center2,hit1:exit1||center1,YL:Y2a,ZL:Z2a,sy,sz,sy1,sz1,Y1,Z1,
+      entry:entry2,exit:exit2,inGlass:!!(entry2&&exit2)};
   }
   // 光线的两种取法：
-  //  · 'all'     —— 物点发出的一束光里取三条等间距采样（看得出会聚/发散，就是「光路」本身）
-  //  · 'special' —— 教材的三条特殊光线作图。每条都能用薄透镜公式独立验证：
-  //      ① 平行主轴入射 ⇒ 打在透镜高度 YL = y0 ⇒ 出射斜率 sy = −(y0−12)/f（过像方焦点 F′）
-  //      ② 过光心入射   ⇒ YL = 12        ⇒ sy = (12−y0)/u（不偏折）
-  //      ③ 过物方焦点 F ⇒ YL = (f·y0 − 12u)/(f − u) ⇒ sy = 0（出射平行主轴）
+  //  · 'all'     —— 一个物点向镜面不同位置发出 13 条光（中心 + 两圈），它们全部汇聚到同一像点；
+  //                 立体锥形比原来三条平行采样更能看出「无数条光」的会聚。
+  //  · 'special' —— 教材的三条特殊光线作图，每条都用薄透镜定义独立验证（含 z 方向，不再
+  //                 把物点投影到 z=0）：
+  //      ① 平行主轴入射 ⇒ 打在透镜高度 YL = y0、ZL = z0 ⇒ 出射过像方焦点 F′
+  //      ② 过光心入射   ⇒ YL = 12、ZL = 0 ⇒ 不偏折
+  //      ③ 过物方焦点 F ⇒ YL = (f·y0 − 12u)/(f − u)、ZL = f·z0/(f − u) ⇒ 出射平行主轴
   //    u = f 时第 ③ 条的落点发散（分母 → 0），此时不画它。
-  function rayShiftsFor(y0){
-    if(state.rayMode!=='special')return [[-3.7,0],[0,0],[3.7,0]];
+  function rayShiftsFor(y0,z0=0){
+    if(state.rayMode!=='special'){
+      // 附加镜的通光半径只有 4.82 cm，外圈采样必须相应收小，否则整圈光都被第一片挡掉。
+      const outer=hasExtra()?4.3:5.0;
+      const list=[[0,0]];
+      for(const [r,n] of [[2.55,6],[outer,6]])
+        for(let i=0;i<n;i++){
+          const a=i*2*Math.PI/n+(r>3.4?.26:0);
+          list.push([r*Math.cos(a),r*Math.sin(a)]);
+        }
+      return list;
+    }
     const u=hasExtra()?state.u-AUX_GAP:state.u,f=hasExtra()?extraFocal():state.f;
-    const list=[[y0-12,0],[0,0]];
+    const list=[[y0-12,z0],[0,0]];
     const den=f-u;
     if(Math.abs(den)>1e-6){
-      const YL=(f*y0-12*u)/den;
-      if(Math.abs(YL-12)<=LENS_AP)list.push([YL-12,0]);
+      const YL=(f*y0-12*u)/den,ZL=f*z0/den;
+      if(Math.hypot(YL-12,ZL)<=LENS_AP)list.push([YL-12,ZL]);
     }
     return list;
   }
@@ -666,21 +789,21 @@ import * as THREE from './assets/optics-three.min.js';
     const seen=updateGhost();
     if(!state.rays)return;
     const stopX=state.screenRemoved?LX+88:wx(state.scrP);
-    // 三条特殊光线是【子午面作图】，所以起点一律投影到 z = 0 的平面上。
-    const special=state.rayMode==='special';
-    const active=(state.source==='f'
+    // 特殊光线也在真实三维位置上作图（F 的三个角点 z 各不相同），不投影到 z=0。
+    const active=state.source==='f'
       ? F_POINTS.map(p=>({y:p.y,z:p.z,c:'#c98c46'}))
-      : (state.second?[{y:state.sourceY,z:0,c:'#d99a48'},{y:state.secondY,z:0,c:'#4b8fc4'}]:[{y:state.sourceY,z:0,c:'#d99a48'}]))
-      .map(s=>special?{y:s.y,z:0,c:s.c}:s);
+      : (state.second?[{y:state.sourceY,z:0,c:'#d99a48'},{y:state.secondY,z:0,c:'#4b8fc4'}]:[{y:state.sourceY,z:0,c:'#d99a48'}]);
     for(const src of active){
-      for(const [shiftY,shiftZ] of rayShiftsFor(src.y)){
+      for(const [shiftY,shiftZ] of rayShiftsFor(src.y,src.z)){
         const r=traceRay([src.y,src.z],LX,stopX,shiftY,shiftZ,src.c,.85);
         if(!r)continue;
-        lastRayTraces.push({src:{y:src.y,z:src.z},shiftY,shiftZ,YL:r.YL,ZL:r.ZL,sy:r.sy,sz:r.sz});
+        lastRayTraces.push({src:{y:src.y,z:src.z},shiftY,shiftZ,YL:r.YL,ZL:r.ZL,sy:r.sy,sz:r.sz,
+          entry:r.entry?{x:r.entry.x,y:r.entry.y,z:r.entry.z}:null,
+          exit:r.exit?{x:r.exit.x,y:r.exit.y,z:r.exit.z}:null,inGlass:r.inGlass});
         // Behind the lens the extensions meet again where the upright virtual image is. They are
         // a construction aid rather than the observation itself, so they answer to their own
         // switch, and they are only drawn while that image is genuinely in view.
-        if(c&&!c.inverted&&seen&&state.virtual)lineSegment(rays,r.hit,V(LX+v,r.YL+r.sy*v,r.ZL+r.sz*v),src.c,.6,true);
+        if(c&&!c.inverted&&seen&&state.virtual)rayLine(r.hit,V(LX+v,r.YL+r.sy*v,r.ZL+r.sz*v),src.c,.6,true);
       }
       const mark=(op)=>{
         const g=mesh(new THREE.SphereGeometry(.34,16,12),src.c==='#4b8fc4'?blue:gold,ghostLabels,LX+v,12+(src.y-12)*info.m,src.z*info.m,false);
@@ -724,26 +847,41 @@ import * as THREE from './assets/optics-three.min.js';
   // round to the object side has to make the image disappear immediately.
   function updateGhost(){
     const c=imageCase();
-    // 虚像只要进入“观察虚像”就按真实 v、m 画回装置里，旁边的实物不隐藏：
-    // 没有实物作参照，学生无法判断“像到底有没有放大、离镜是否更远”。
-    // 不在观察虚像时，虚像不出现；实像失去光屏后的观察方式保持原样。
-    const compare=!!c&&c.v<0&&state.observing;
-    const show=!!c&&(c.v<0?compare:imageSeenFromCamera(c.v));
+    const virtual=!!c&&c.v<0;
+    // 「观察虚像大小与位置」是独立的教学对照图层：虚像正面朝向镜头、和实物同屏。
+    // 关掉它以后，虚像只按物理规律出现 —— 眼睛必须在光屏一侧，且视线真的穿过镜片光圈；
+    // 片元着色器再把光圈以外的部分裁掉（见 ghostMat）。
+    const compare=virtual&&!!state.compare;
+    const seen=!!c&&(compare||imageSeenFromCamera(c.v));
     state.virtualCompare=compare;
-    ghostObject.visible=show;
-    if(show){
+    ghostObject.visible=seen;
+    if(seen){
       const size=clamp(Math.abs(c.m),.2,8.2);
       ghostObject.position.set(wx(state.lensP)+c.v,12,0);
       ghostObject.scale.set(c.inverted?-size:size,c.inverted?-size:size,1);
-      ghostObject.material.opacity=c.inverted?.32:.62;
-      ghostObject.material.color.set(c.v<0?'#dcf8fc':'#ffffff');
+      ghostObject.material.opacity=c.inverted?.34:.78;
+      ghostObject.material.color.set(c.v<0?'#e8fdff':'#ffffff');
     }
-    ghostLabels.visible=show;
+    // 透过透镜观察虚像时，实际物体在镜后同侧，无法和虚像分开看见；用一个虚线轮廓
+    // 标出它真正所在的位置（也就是 u 的量起点），像本身仍是唯一的亮物体。
+    const hideObject=virtual&&state.observing&&!compare;
+    candleBody.visible=state.source==='candle'&&!hideObject;
+    fSource.visible=state.source==='f'&&!hideObject;
+    sources.visible=!hideObject;
+    candleLabel.visible=state.labels&&!hideObject;
+    if(objectOutline){
+      objectOutline.visible=hideObject;
+      objectOutline.position.set(wx(state.lensP)-state.u,12,0);
+      objectOutline.rotation.y=Math.PI/2;
+    }
+    // 裸眼观察（透过透镜）时连像点的采样标记也不画：学生该看到的是唯一的像，
+    // 而不是几个悬在空中的光点。对照模式 observing=false，标记仍然保留。
+    ghostLabels.visible=seen&&!state.observing;
     refreshVirtualCompareGuides(c);
     // Stored on the state so the self-check reads the very decision the renderer used.
-    state.imageVisible=show;
-    state.imageOnObjectSide=!!c&&c.v<0;
-    return show;
+    state.imageVisible=seen;
+    state.imageOnObjectSide=virtual;
+    return seen;
   }
   const format = y => `${y.toFixed(1)} cm`;
   // The object is authored once on a square-centimetre grid and then re-projected by a
@@ -772,13 +910,76 @@ import * as THREE from './assets/optics-three.min.js';
   const ghostCtx = ghostCanvas.getContext('2d');
   const ghostTex = new THREE.CanvasTexture(ghostCanvas);
   ghostTex.colorSpace = THREE.SRGBColorSpace;
-  const ghostObject = mesh(new THREE.PlaneGeometry(10,12),
-    new THREE.MeshBasicMaterial({map:ghostTex,transparent:true,opacity:.62,depthWrite:false,
-      toneMapped:false,side:THREE.DoubleSide}),
-    scene,0,12,0,false);
+  // 虚像面片是「只能透过镜片看见」的：片元着色器从相机向该像素连一条视线，若它
+  // 在镜片平面上的落点落在通光口径之外，就丢弃这个片元。于是从侧面看过去，像的
+  // 溢出部分不会悬在空气里 —— 和真实透镜一样，只有透过玻璃的那一块才看得见。
+  // 教学对照模式把 uMask 关掉，虚像才整幅正对镜头显示。
+  const ghostMat = new THREE.MeshBasicMaterial({map:ghostTex,transparent:true,opacity:.62,
+    depthWrite:false,toneMapped:false,side:THREE.DoubleSide});
+  ghostMat.onBeforeCompile=shader=>{
+    // 首次编译发生在 renderer.render() 内部，晚于 syncGhostToCamera()。若这里只给 0，
+    // 虚像第一次出现的那一帧会完全不裁剪（对照模式则相反，会被裁掉）。所以编译时
+    // 就直接按当前状态和相机写入，保证「第一帧」也正确。
+    shader.uniforms.uMask={value:state.virtualCompare?0:1};
+    shader.uniforms.uLensX={value:wx(state.lensP)};
+    shader.uniforms.uLensR={value:LENS_R};
+    shader.uniforms.uCam={value:camera.position.clone()};
+    shader.vertexShader=shader.vertexShader
+      .replace('#include <common>','#include <common>\nvarying vec3 vGhostWorld;')
+      .replace('#include <project_vertex>',
+        '#include <project_vertex>\nvGhostWorld=(modelMatrix*vec4(transformed,1.0)).xyz;');
+    shader.fragmentShader=shader.fragmentShader
+      .replace('#include <common>',`#include <common>
+        varying vec3 vGhostWorld;
+        uniform float uMask; uniform float uLensX; uniform float uLensR; uniform vec3 uCam;`)
+      .replace('#include <dithering_fragment>',`
+        if(uMask>.5){
+          vec3 gd=vGhostWorld-uCam;
+          float gt=(uLensX-uCam.x)/gd.x;
+          vec3 gh=uCam+gd*gt;
+          if(gt<0.0||length(vec2(gh.y-12.0,gh.z))>uLensR)discard;
+        }
+        #include <dithering_fragment>`);
+    ghostMat.userData.shader=shader;
+  };
+  const ghostObject = mesh(new THREE.PlaneGeometry(10,12),ghostMat,scene,0,12,0,false);
   ghostObject.rotation.y = Math.PI/2;
   ghostObject.renderOrder = 6;
   ghostObject.visible = false;
+  // 透过透镜观察时，用虚线轮廓标出实物位置。画布坐标和 ghost 贴图完全一致，
+  // 所以轮廓和像在同一个方向上，学生能直接看出「像比物大、离镜远」。
+  const outlineCanvas=document.createElement('canvas');
+  outlineCanvas.width=objCanvas.width;outlineCanvas.height=objCanvas.height;
+  const outlineCtx=outlineCanvas.getContext('2d');
+  const outlineTex=new THREE.CanvasTexture(outlineCanvas);
+  outlineTex.colorSpace=THREE.SRGBColorSpace;
+  let objectOutline=mesh(new THREE.PlaneGeometry(10,12),
+    new THREE.MeshBasicMaterial({map:outlineTex,transparent:true,opacity:.8,depthWrite:false,
+      depthTest:false,toneMapped:false,side:THREE.DoubleSide}),
+    scene,0,12,0,false);
+  objectOutline.rotation.y=Math.PI/2;
+  objectOutline.renderOrder=9;
+  objectOutline.visible=false;
+  function drawObjectOutline(){
+    const g=outlineCtx;
+    g.clearRect(0,0,outlineCanvas.width,outlineCanvas.height);
+    g.strokeStyle='#d9f4ff';g.lineWidth=3.2;g.setLineDash([10,8]);
+    g.shadowColor='#062130';g.shadowBlur=7;
+    if(state.source==='f'){
+      for(const s of F_STROKES){
+        g.strokeRect(Math.min(artXz(s.z0),artXz(s.z1)),artY(s.y1),
+          Math.abs(s.z1-s.z0)*ART_PX_CM,(s.y1-s.y0)*ART_PX_CM);
+      }
+    }else{
+      g.beginPath();
+      g.roundRect(artX(-.98),artY(11.86),1.96*ART_PX_CM,5.58*ART_PX_CM,5);
+      g.stroke();
+      g.beginPath();
+      g.ellipse(artX(0),artY(13.05),.58*ART_PX_CM,1.26*ART_PX_CM,0,0,Math.PI*2);
+      g.stroke();
+    }
+    outlineTex.needsUpdate=true;
+  }
   // 对比视图的量高与量距辅助线：虚线竖线给出物高、像高，横向双线分别给出 u 与 |v|。
   // 它们只属于“观察虚像”的教学对照，不改变任何光学计算。
   const compareGuides = new THREE.Group(); scene.add(compareGuides);
@@ -888,6 +1089,7 @@ import * as THREE from './assets/optics-three.min.js';
     ghostCtx.clearRect(0,0,ghostCanvas.width,ghostCanvas.height);
     ghostCtx.drawImage(objCanvas,0,0);
     ghostTex.needsUpdate=true;
+    drawObjectOutline();
     c.setTransform(1,0,0,1,0,0);
     c.filter='none';c.globalAlpha=1;
     c.clearRect(0,0,w,h);
@@ -988,14 +1190,24 @@ import * as THREE from './assets/optics-three.min.js';
   // 把“像比物大多少、离镜比物远多少”直接写出来，能同时看见、也能比较。
   function syncVirtualCompare(){
     const active=!!state.virtualCompare;
+    // updateGhost() runs inside render(), after update() has already written the rest of the UI.
+    // Toggling this badge there would leave it one frame behind (the test drove exactly that:
+    // the ghost was visible in 3D while the badge still said otherwise).
+    $('stage').classList.toggle('show-ghost',state.imageVisible);
     $('stage').classList.toggle('virtual-compare',active);
+    const through=state.observing&&!active&&state.imageOnObjectSide;
+    $('stage').classList.toggle('through-view',through);
     const banner=$('observeBanner');
     if(!active){
       compareUiKey='';
-      if(state.imageOnObjectSide&&state.screenRemoved)
-        banner.textContent='u < f · 点「观察虚像大小与位置」，在实物旁对照虚像';
+      if(through)
+        banner.textContent='透过透镜观察 · 只能看到正立、放大的虚像 · 虚线为实物位置';
+      else if(state.imageOnObjectSide&&state.screenRemoved)
+        banner.textContent='u < f · 点「透过透镜观察」从光屏侧透过镜片看虚像，或点「观察虚像大小与位置」对照';
       else if(state.observing)
         banner.textContent='撤去光屏 · 从光屏这一侧透过透镜观察悬在空中的像';
+      else
+        banner.textContent='移动蜡烛或透镜改变物距；勾选「显示光路」可看到光线经透镜折射';
       return;
     }
     const c=imageCase(),info=status();
@@ -1039,6 +1251,7 @@ import * as THREE from './assets/optics-three.min.js';
   }
   function fitCamera(){
     if(!framed)return;      // a rail drag freezes the shot until the gesture ends
+    camera.fov=37;
     const el=canvas.getBoundingClientRect();
     const w=Math.max(1,el.width),h=Math.max(1,el.height);
     // Frame the three slides themselves, never closer than a comfortable working span of the
@@ -1047,8 +1260,10 @@ import * as THREE from './assets/optics-three.min.js';
     const edgeHi=[wx(state.objP)+7,wx(state.lensP)+7,wx(state.scrP)+9];
     // A virtual image forms on the object side and can sit far outside the slides, so its
     // whole scaled plane is framed too - otherwise the very size comparison would be cropped.
+    // Through-lens mode is the exception: there the image is seen only inside the glass, and
+    // framing the whole (possibly enormous) ghost plane would just push the lens off screen.
     let frameLoY=-5,frameHiY=25;
-    if(ghostObject.visible){
+    if(ghostObject.visible&&(state.virtualCompare||!state.imageOnObjectSide)){
       const gx=ghostObject.position.x,sx=Math.abs(ghostObject.scale.x),sy=ghostObject.scale.y;
       edgeLo.push(gx-5*sx-2.5);edgeHi.push(gx+5*sx+2.5);
       const span=drawnObjectSpan();
@@ -1082,6 +1297,50 @@ import * as THREE from './assets/optics-three.min.js';
     camera.position.sub(target).multiplyScalar(base/hi).add(target);
     camera.updateMatrixWorld();
   }
+  // 透过透镜看虚像的机位：眼睛放在光屏一侧、离镜片约 8 cm 的光轴上，视角放宽到 85°，
+  // 这样镜片通光口径（半角约 35°）能整圈落进画面，放大后的虚像（半角约 25°）完整地
+  // 落在镜片里面。滚轮/双指缩放改变眼睛离镜片的距离；拖动可以把眼睛沿镜面平移几度，
+  // 从而看到「视线一偏出光圈，像就被镜框挡住」的真实效果。
+  const THROUGH_FOV=85;
+  function throughView(){
+    const c=imageCase();
+    return state.observing&&!!c&&c.v<0&&!state.virtualCompare;
+  }
+  function throughCamera(){
+    const LX=wx(state.lensP);
+    const eye=clamp(8/state.zoom,3.4,14);
+    const a=clamp(state.obsYaw,-.16,.16),b=clamp(state.obsPitch,-.13,.13);
+    camera.position.set(LX+eye*Math.cos(a)*Math.cos(b),12+eye*Math.sin(b),eye*Math.sin(a));
+    camera.lookAt(LX,12,0);
+    const rect=canvas.getBoundingClientRect();
+    camera.aspect=Math.max(1,rect.width)/Math.max(1,rect.height);
+    camera.fov=THROUGH_FOV;
+    camera.updateProjectionMatrix();
+    camera.updateMatrixWorld();
+  }
+  function syncGhostToCamera(){
+    if(ghostObject.visible){
+      if(state.virtualCompare){
+        // 对照模式：虚像面片正对镜头（billboard），像的整幅内容都看得清；
+        // 像距仍是真实的 |v|，缩放仍是真实的 |m|，只是把观察方向转到了正面。
+        const dx=camera.position.x-ghostObject.position.x;
+        const dz=camera.position.z-ghostObject.position.z;
+        ghostObject.rotation.y=Math.atan2(dx,dz);
+      }else{
+        ghostObject.rotation.y=Math.PI/2;
+      }
+    }
+    // 对照层是教学图层，不能被轨道或支架挡掉半截；真实观察时则保留景深遮挡。
+    ghostMat.depthTest=!state.virtualCompare;
+    // 透过镜片才看得见：把「相机 → 片元」的视线投到镜片平面上，光圈外一律丢弃。
+    const sh=ghostMat.userData.shader;
+    if(sh){
+      sh.uniforms.uMask.value=state.virtualCompare?0:1;
+      sh.uniforms.uLensX.value=wx(state.lensP);
+      sh.uniforms.uLensR.value=LENS_R*.995;
+      sh.uniforms.uCam.value.copy(camera.position);
+    }
+  }
   // 预览窗只在相机或器材真的变了时重绘。除了省掉无谓的重画，更要紧的是画面稳定性：
   // 「撤去光屏后舞台必须一个残余像素都没有」这条判据靠的是同一状态两次截图逐字节相同，
   // 而同一状态反复重绘会让 swiftshader 出现幅度几个灰阶的抖动。
@@ -1091,9 +1350,18 @@ import * as THREE from './assets/optics-three.min.js';
     // widens the shot, so the framing is settled first and the decision is then taken with that
     // very camera. The second pass only moves the camera by the amount the ghost adds to the
     // envelope, which the sticky thresholds in imageSeenFromCamera absorb without flicker.
-    fitCamera();
-    updateGhost();
-    fitCamera();
+    if(throughView()){
+      throughCamera();
+      updateGhost();
+    }else{
+      fitCamera();
+      updateGhost();
+      fitCamera();
+    }
+    syncGhostToCamera();
+    // 「透过透镜观察」是裸眼观察：画面上只保留镜片和像，光路图留给普通视角和虚像对照。
+    // （复选框本身不改，退出观察后原来的光路立刻回来。）
+    rays.visible=state.rays&&!throughView();
     renderer.render(scene,camera);
     syncVirtualCompare();
     // 预览窗跟着眼睛走：绕到光屏背面时，窗里显示的也整体翻过来 —— 屏幕上看到的和窗里
@@ -1133,6 +1401,8 @@ import * as THREE from './assets/optics-three.min.js';
     if(need&&!state.lastNeedsOff&&!state.screenRemoved){state.screenRemoved=true;state.autoScreen=true;}
     else if(!need&&state.lastNeedsOff&&state.screenRemoved&&state.autoScreen){state.screenRemoved=false;state.autoScreen=false;}
     state.lastNeedsOff=need;
+    // 对照模式只对虚像有意义；换到 u ≥ f（或 u = f）时自动退出，免得留下一个空图层。
+    if(state.compare&&(info.real||!Number.isFinite(info.v)))state.compare=false;
     sliders.candle.position.x=wx(state.objP);
     sliders.lens.position.x=wx(state.lensP);
     sliders.screen.position.x=wx(state.scrP);
@@ -1187,7 +1457,7 @@ import * as THREE from './assets/optics-three.min.js';
       ?'光线先经附加镜偏折，再经主凸透镜折射；最终交点决定清晰像面'
       :special
         ?'三条特殊光线：平行主轴 → 过 F′ ｜ 过光心 → 不偏折 ｜ 过物方焦点 → 出射平行主轴'
-        :'金色 / 蓝色：一号 / 二号发光点的光路';
+        :'每个发光点发出 13 条光线，经镜片后全部会聚（或反向会聚）到同一个像点；玻璃内部那一段画成有粗细的发光柱，能看出光线真的穿过了镜片';
     $('autoFocus').disabled=!canFocus(info)||state.screenRemoved;
     $('autoFocus').textContent=hasExtra()?'重新调到清晰像':'移到清晰位置';
     const blocked=info.real&&!state.screenRemoved&&!info.crisp;
@@ -1201,30 +1471,29 @@ import * as THREE from './assets/optics-three.min.js';
     $('screenToggle2').textContent=toggle;
     $('observerBtn').classList.toggle('active',state.observing);
     $('observerBtn2').classList.toggle('active',state.observing);
-    const observerLabel=state.observing?'退出观察':info.real?'透过透镜观察':'观察虚像大小与位置';
+    const observerLabel=state.observing?'退出观察':'透过透镜观察';
     $('observerBtn').textContent=observerLabel;
     $('observerBtn2').textContent=observerLabel;
+    // 「观察虚像大小与位置」是另一个按钮：只在 u < f 的虚像区可用。
+    for(const id of ['compareBtn','compareBtn2']){
+      const b=$(id);if(!b)continue;
+      b.disabled=info.real||!Number.isFinite(info.v);
+      b.classList.toggle('active',!!state.virtualCompare);
+      b.textContent=state.virtualCompare?'退出虚像对照':'观察虚像大小与位置';
+    }
     $('stage').classList.toggle('observer-mode',state.screenRemoved);
-    $('observeBanner').textContent=state.observing&&!info.real
-      ?'虚像对比 · 透明虚像按真实像距与放大率放在实物旁'
-      :state.imageOnObjectSide&&!state.imageVisible
-        ?'虚像在透镜左侧 · 点「观察虚像大小与位置」在明亮场景中对照'
-        : info.real
-          ?'撤去光屏 · 从光屏这一侧透过透镜，看到悬在空中的倒立实像'
-          :'撤去光屏 · 从光屏这一侧透过透镜，看到正立、放大的虚像';
-    $('stage').classList.toggle('show-ghost',state.imageVisible);
     $('ghostBadge').textContent=info.real?`实像（${info.inverted?'倒立':'正立'}，悬在空中）`:`虚像（${info.inverted?'倒立':'正立'}、放大 ${Math.abs(info.m).toFixed(2)}×）`;
     $('observeHint').textContent=hasExtra()
       ? (!info.real
-        ?'组合镜组成虚像：点「观察虚像大小与位置」，透明虚像会和实物同屏出现，可直接比较像高和像距；周围装置保持明亮可见。'
+        ?'组合镜组成虚像：点「透过透镜观察」把眼睛放到光屏一侧、透过镜片看虚像；点「观察虚像大小与位置」则把虚像正面转过来，和实物同屏对照像高与像距。'
         :'附加镜已接入真实组合光路。保持光屏不动可先看到离焦模糊；再根据提示移动光屏，或点「重新调到清晰像」验证理论像距。')
       :info.needsScreenOff
-      ?'u ≤ f：光屏接不到像，点「观察虚像大小与位置」。透明虚像会按真实像距与放大率出现在实物旁，背景保持明亮，可直接看出它更大、更远。'
+      ?'u ≤ f：光屏接不到像。点「透过透镜观察」，视线必须从光屏一侧穿过镜片光圈才能看到虚像（镜片外什么也没有）；点「观察虚像大小与位置」可把虚像正面转过来，和实物同屏比较大小与像距。'
       :'u > f：移动光屏接收实像，直到屏上的像最清晰。光屏是半透明膜：点「背面看光屏」绕到它后面，透过膜同样能看到这个像（左右翻转）；也可以点击 3D 画面里的光屏把它撤去，再看像是否仍悬在空中。';
     const lensName=state.extra==='convex'?'凸透镜':'凹透镜';
     if(hasExtra()){
       if(!Number.isFinite(info.v))$('extraHint').innerHTML='<b>当前无有限像：</b>组合出射光平行，请改变物距或附加镜焦距。';
-      else if(!info.real)$('extraHint').innerHTML=`<b>附加${lensName}：</b>最终形成虚像，光屏无法承接；点「观察虚像大小与位置」，透明虚像会与实物同屏，可直接比较大小与像距。`;
+      else if(!info.real)$('extraHint').innerHTML=`<b>附加${lensName}：</b>最终形成虚像，光屏无法承接；点「透过透镜观察」从光屏一侧看虚像，或点「观察虚像大小与位置」和实物同屏对照。`;
       else if(state.screenRemoved)$('extraHint').innerHTML=`理论清晰像面在主镜后 ${info.v.toFixed(1)} cm。请先放回光屏，再重新调节。`;
       else if(info.crisp)$('extraHint').innerHTML=`<b>已再次清晰：</b>光屏位于 ${state.scrP.toFixed(1)} cm 刻度，最终像距 ${info.v.toFixed(1)} cm。`;
       else{
@@ -1235,13 +1504,13 @@ import * as THREE from './assets/optics-three.min.js';
     let text;
     if(hasExtra()){
       if(!Number.isFinite(info.v))text='当前组合使出射光平行，有限距离内不能得到清晰像；请改变物距或附加镜焦距。';
-      else if(!info.real)text=`附加${lensName}后，最终得到${info.inverted?'倒立':'正立'}虚像，光屏接不到；点「观察虚像大小与位置」可在明亮装置中对照。`;
+      else if(!info.real)text=`附加${lensName}后，最终得到${info.inverted?'倒立':'正立'}虚像，光屏接不到；点「透过透镜观察」从光屏侧看虚像，或点「观察虚像大小与位置」对照。`;
       else if(!canFocus(info))text=`清晰实像在主镜后 ${info.v.toFixed(1)} cm，超出当前光屏范围；请移动主镜或改变物距。`;
       else if(state.screenRemoved)text=`光屏已撤去，最终实像仍在主镜后 ${info.v.toFixed(1)} cm；放回光屏后可重新调焦。`;
       else if(info.crisp)text=`重新调焦成功：光屏在主镜后 ${state.sd.toFixed(1)} cm，屏上得到清晰的${info.inverted?'倒立':'正立'}实像，组合放大率 ${Math.abs(info.m).toFixed(2)} 倍。`;
       else text=`附加${lensName}使像面改变。光屏应${info.v<state.sd?'向主镜靠近':'远离主镜'}，目标刻度为 ${(state.lensP+info.v).toFixed(1)} cm。`;
     }else if(!Number.isFinite(info.v))text='u = f：折射后的光线同向平行射出，在有限位置不能获得清晰像；屏上和眼中都只有一片模糊。';
-    else if(!info.real)text=`u = ${state.u.toFixed(1)} cm < f：实际光线在屏侧发散，反向延长后在光源同侧得到正立、放大的虚像（放大 ${Math.abs(info.m).toFixed(2)} 倍）。光屏接不到虚像。`;
+    else if(!info.real)text=`u = ${state.u.toFixed(1)} cm < f：实际光线在屏侧发散，反向延长后在光源同侧得到正立、放大的虚像（放大 ${Math.abs(info.m).toFixed(2)} 倍）。光屏接不到；要把眼睛放到光屏一侧、透过透镜才看得见它。`;
     else if(!canFocus(info))text=`实像位于透镜右侧 ${info.v.toFixed(1)} cm 处，已超出光屏滑动范围；把光源移远一点再试。`;
     else if(state.screenRemoved)text=`撤去光屏后，${preset.result}仍然悬在透镜右侧 ${info.v.toFixed(1)} cm 处；从光屏一侧透过透镜就能看到它。`;
     else if(info.crisp)text=`${preset.result}；光屏在 ${state.scrP.toFixed(1)} cm 刻度上得到最清晰的像。屏是半透明膜，绕到背面透过膜看到的是同一个像。`;
@@ -1291,28 +1560,40 @@ import * as THREE from './assets/optics-three.min.js';
   // happens when the optical situation itself changes, never to overrule the user.
   function setScreen(on){
     state.screenRemoved=!on;state.autoScreen=false;
-    if(on)state.observing=false;
+    if(on){state.observing=false;state.compare=false;}
     update();
   }
   $('screenToggle').addEventListener('click',()=>setScreen(state.screenRemoved));
   $('screenToggle2').addEventListener('click',()=>setScreen(state.screenRemoved));
-  // Standing behind where the screen was and looking back through the lens: the only way to
-  // see a virtual image, and the clearest way to see a real image that no longer has a screen.
-  //
-  // 观察虚像时不再把镜头贴到光轴圆窗里：改用教材式的侧视对照构图。
-  // 从侧前方能同时看到实物、透镜和按真实 |v|、m 放在物后方的透明虚像；
-  // 只有实像的“透过透镜观察”才保持原来的光轴视场。
+  // 站在原来光屏的位置，回身透过透镜看：这是看到虚像的唯一方式，也是看到撤屏后
+  // 悬空实像最直观的方式。虚像用贴近镜片的光轴机位（见 throughCamera），
+  // 实像仍沿用能看见空中像的侧前方机位。
   function toggleObserver(){
     if(state.observing){setScreen(true);return;}
     const info=status();
-    state.observing=true;state.screenRemoved=true;state.autoScreen=false;
+    state.observing=true;state.compare=false;state.screenRemoved=true;state.autoScreen=false;
+    state.obsYaw=0;state.obsPitch=0;
     if(info.real){state.yaw=1.50;state.pitch=.12;state.zoom=1.4;}
-    else {state.yaw=.06;state.pitch=.09;state.zoom=.98;}
+    else {state.yaw=.06;state.pitch=.09;state.zoom=1.06;}
+    update();
+  }
+  // 「观察虚像大小与位置」：把虚像正面转向镜头，和实物、量高量距辅助线放在同一画面里。
+  // 它不改变任何光学量，只是换了一个更利于比较的观察方向；关掉它，虚像就回到
+  // 「只能从光屏一侧透过镜片看见」的物理规则。
+  function toggleCompare(){
+    if(state.virtualCompare){state.compare=false;update();return;}
+    const info=status();
+    if(info.real||!Number.isFinite(info.v))return;
+    state.compare=true;state.observing=false;state.screenRemoved=true;state.autoScreen=false;
+    state.yaw=.08;state.pitch=.09;state.zoom=.98;
     update();
   }
   // 工具条上那颗，和参数面板里那颗，是同一件事（全屏时工具条不在舞台里，只能靠面板这颗）
   $('observerBtn').addEventListener('click',toggleObserver);
   $('observerBtn2').addEventListener('click',toggleObserver);
+  for(const id of ['compareBtn','compareBtn2']){
+    const b=$(id);if(b)b.addEventListener('click',toggleCompare);
+  }
   // 记录表导出：拼成可以直接粘进表格软件 / 文档的制表符文本（首行是表头）。
   // 没记录的行照样导出、单元格留空 —— 粘出来仍是一张 5 行的完整表，缺哪几行一眼可见。
   function recordsTable(){
@@ -1385,8 +1666,8 @@ import * as THREE from './assets/optics-three.min.js';
   });
   $('resetAll').addEventListener('click',()=>{
     Object.assign(state,{f:10,objP:35,lensP:65,scrP:80,extra:'none',extraF:12,sourceY:12,secondY:8,second:false,
-      source:'candle',screenRemoved:false,autoScreen:false,observing:false,lastNeedsOff:false,
-      rays:false,virtual:true,labels:false,rayMode:'all',yaw:-.42,pitch:.21,zoom:1.06,step:0,records:{}});
+      source:'candle',screenRemoved:false,autoScreen:false,observing:false,lastNeedsOff:false,compare:false,
+      obsYaw:0,obsPitch:0,rays:false,virtual:true,labels:false,rayMode:'all',yaw:-.42,pitch:.21,zoom:1.06,step:0,records:{}});
     for(const [id,checked] of [['showRays',false],['showVirtual',true],['showLabels',false]])$(id).checked=checked;
     renderRecords();
     update();
@@ -1396,7 +1677,7 @@ import * as THREE from './assets/optics-three.min.js';
   document.querySelectorAll('[data-view]').forEach(b=>b.addEventListener('click',()=>{
     [state.yaw,state.pitch]=VIEWS[b.dataset.view];
     state.zoom=b.dataset.view==='reset'?1.06:1;
-    if(b.dataset.view==='reset')state.observing=false;
+    if(b.dataset.view==='reset'){state.observing=false;state.compare=false;}
     update();
   }));
   const pointers=new Map();let pinch=0,dragPoint=null,dragRail=null,railGrab=0,press=null;
@@ -1482,6 +1763,12 @@ import * as THREE from './assets/optics-three.min.js';
           const key=RAIL_KEY[dragRail],next=roundHalf(x-railGrab-RULER0);
           if(next!==state[key]){state[key]=next;update();}
         }
+      }else if(throughView()){
+        // 观察模式下拖动 = 眼睛沿镜面轻微平移：画面不动但视线角度改变，
+        // 偏出光圈时虚像立刻被镜框裁掉，和真实透镜一致。
+        state.obsYaw=clamp(state.obsYaw-(e.clientX-prev.x)*.0022,-.16,.16);
+        state.obsPitch=clamp(state.obsPitch+(prev.y-e.clientY)*.0022,-.13,.13);
+        render();
       }else{
         state.yaw+=(e.clientX-prev.x)*.006;
         state.pitch=clamp(state.pitch+(prev.y-e.clientY)*.005,-1.0,1.28);
@@ -1605,13 +1892,17 @@ import * as THREE from './assets/optics-three.min.js';
     get lastRayTraces(){return lastRayTraces;},
     debug:()=>{const i=status();return {objP:state.objP,lensP:state.lensP,scrP:state.scrP,u:state.u,sd:state.sd,
       extra:state.extra,extraF:state.extraF,u1:i.u1,v1:i.v1,u2:i.u2,m:i.m,auxLensX:wx(state.lensP)-AUX_GAP,
-      cameraX:camera.position.x,screenX:wx(state.scrP),
+      cameraX:camera.position.x,cameraZ:camera.position.z,screenX:wx(state.scrP),
       kind:i.kind,v:Number.isFinite(i.v)?i.v:null,crisp:i.crisp,real:i.real,screenRemoved:state.screenRemoved,
       source:state.source,candle:candle.position.x,lens:lens.position.x,screen:screen.position.x,
       sources:lightSources.map(g=>g.position.y),rayCount:rays.children.length,
       rayMode:state.rayMode,diopter:diopterOf(state.f),
       ghost:ghostObject.visible,ghostX:ghostObject.position.x,ghostScale:ghostObject.scale.x,
       imageVisible:state.imageVisible,imageOnObjectSide:state.imageOnObjectSide,
+      observing:state.observing,compare:!!state.virtualCompare,through:throughView(),
+      cameraFov:camera.fov,outline:objectOutline.visible,candleVisible:candleBody.visible,
+      raysVisible:rays.visible,ghostRotY:ghostObject.rotation.y,
+      ghostMask:ghostMat.userData.shader?ghostMat.userData.shader.uniforms.uMask.value:null,
       frameFrozen:!framed,records:Object.keys(state.records),
       textureSize:[texCanvas.width,texCanvas.height],insetSize:[inset.width,inset.height]};}};
   // Pointer plumbing and the two authoring canvases are exposed so the self-check can drive the
@@ -1654,6 +1945,8 @@ import * as THREE from './assets/optics-three.min.js';
   window.__lensLab.scene=scene;
   window.__lensLab.screenGhost=screenGhost;
   window.__lensLab.rays=rays;
+  window.__lensLab.ghostObject=ghostObject;
+  window.__lensLab.objectOutline=objectOutline;
   $('showRays').checked=state.rays;
   renderRecords();
   update();resize();
