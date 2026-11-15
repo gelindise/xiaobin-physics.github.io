@@ -67,8 +67,11 @@ var MATS = {
   glass: {
     key: 'glass', name: '玻璃棒', carrier: 'insulator',
     R20: 1e14, alpha: 0,
+    /* 玻璃没有固定的熔点：≈700 ℃ 开始软化，≈1000 ℃ 熔融。
+       熔融后靠离子导电，电阻从绝缘级的 10¹⁴ Ω 掉到几欧。 */
+    meltOn: 700, meltFull: 1000, Rhot: 6,
     spec: '玻璃棒：长 10 cm，横截面积 1 cm²',
-    note: '绝缘体 · 电子被原子牢牢束缚，几乎没有能自由移动的电荷。'
+    note: '绝缘体 · 常温下离子被锁在格点上，几乎没有能自由移动的电荷。'
   },
   salt: {
     key: 'salt', name: '食盐水', carrier: 'electrolyte',
@@ -110,19 +113,34 @@ function clamp(v, a, b) { return v < a ? a : (v > b ? b : v); }
 function curMat() { return MATS[state.mat]; }
 function carrier() { return curMat().carrier; }
 
-/* 盐水只能到 95 ℃（再高就沸腾了），金属 / 玻璃给到 300 ℃ */
+/* 盐水只能到 95 ℃（再高就沸腾了）；玻璃要烧到熔融才能导电，给到 1200 ℃；
+   金属 -20 ~ 300 ℃ */
 function tempRange() {
-  return carrier() === 'electrolyte' ? { lo: 0, hi: 95 } : { lo: -20, hi: 300 };
+  if (carrier() === 'electrolyte') return { lo: 0, hi: 95 };
+  if (carrier() === 'insulator') return { lo: 0, hi: 1200 };
+  return { lo: -20, hi: 300 };
 }
 function normT() {
   var r = tempRange();
   return clamp((state.T - r.lo) / (r.hi - r.lo), 0, 1);
 }
 
+/* 玻璃的「熔融进度」：0 = 还是绝缘体，1 = 完全熔融。
+   700 ℃ 开始软化，1000 ℃ 熔融，滑块最高给到 1200 ℃。 */
+function meltK() {
+  var m = curMat();
+  if (m.carrier !== 'insulator') return 0;
+  return clamp((state.T - m.meltOn) / (m.meltFull - m.meltOn), 0, 1);
+}
+
 function resistance() {
   var m = curMat();
-  /* 绝缘体：电阻大到电流根本测不出来，且与温度几乎无关（教学简化） */
-  if (m.carrier === 'insulator') return m.R20;
+  /* 绝缘体：常温电阻大到电流根本测不出来；加热到软化点后，
+     离子逐步挣脱格点，电阻按对数式从 10¹⁴ Ω 掉到熔融态的几 Ω */
+  if (m.carrier === 'insulator') {
+    if (state.T <= m.meltOn) return m.R20;
+    return m.R20 * Math.pow(m.Rhot / m.R20, meltK());
+  }
   /* 电解质溶液：温度升高黏度下降、离子跑得更快 ⇒ 电阻变小（与金属相反） */
   if (m.carrier === 'electrolyte') return m.R20 / (1 + m.beta * (state.T - 20));
   return m.R20 * (1 + m.alpha * (state.T - 20));
@@ -148,15 +166,20 @@ function ammeterRange() {
    溶液里的离子质量比电子大得多，同样温度下热运动明显更慢 ——
    画面上不压一压，离子的定向移动就会被乱窜完全盖住。 */
 function vThermal() {
-  /* 溶液：温度对离子热运动的影响要比金属更明显 —— 否则拖动温度滑块只看到
-     数字变了、画面几乎不动。20℃ ≈ 92 px/s，95℃ ≈ 175 px/s（约 1.9 倍）。 */
-  if (carrier() === 'electrolyte') return (127 + 191 * normT()) * 0.55;
+  /* 溶液 / 熔融玻璃的载流子是离子：温度对它们热运动的影响要比金属更明显 ——
+     否则拖动温度滑块只看到数字变了、画面几乎不动。
+     盐水 20℃ ≈ 92 px/s，95℃ ≈ 175 px/s（约 1.9 倍）。 */
+  if (carrier() === 'electrolyte' || carrier() === 'insulator') {
+    return (127 + 191 * normT()) * 0.55;
+  }
   return 150 + 78 * normT();
 }
 /* 定向漂移速率（px/s）：只由电流决定 ⇒ 电压↑ 或 电阻↓ 时变快。
-   溶液里离子的真实漂移比金属电子慢几个数量级，画面上放大 1.5 倍才看得出方向。 */
+   溶液里离子的真实漂移比金属电子慢几个数量级，画面上放大才看得出方向；
+   熔融玻璃的电流只有零点几安，放大倍数要更大，否则看不出离子在定向移动。 */
 function vDrift() {
-  var s = carrier() === 'electrolyte' ? 1.5 : 1;
+  var c = carrier();
+  var s = c === 'electrolyte' ? 1.5 : (c === 'insulator' ? 4 : 1);
   return 152 * s * (current() / 2.2);
 }
 /* 原子振动振幅 / 角频率 */
@@ -211,6 +234,24 @@ function initBound() {
   }
 }
 
+/* 一个可移动离子（溶液 / 熔融玻璃共用）。正离子向负极（向右）漂，负离子反向。 */
+function newIon(kind) {
+  var pos = kind === 'na';
+  var th = Math.random() * TAU;
+  var sp = 0.7 + Math.random() * 0.6;
+  var v = vThermal() * sp;
+  return {
+    kind: kind,
+    dir: pos ? 1 : -1,
+    r: pos ? 12 : 11,
+    x: COND.x + 26 + Math.random() * (COND.w - 52),
+    y: COND.y + 34 + Math.random() * (COND.h - 48),
+    px: 0,
+    vx: Math.cos(th) * v, vy: Math.sin(th) * v,
+    spd: sp, cool: 0, trail: []
+  };
+}
+
 function initMovers() {
   movers.length = 0;
   var c = carrier(), k, th, v, sp;
@@ -229,21 +270,23 @@ function initMovers() {
     }
   } else if (c === 'electrolyte') {
     /* 一半正离子（Na⁺，向负极 = 向右漂），一半负离子（Cl⁻，向正极 = 向左漂） */
-    for (k = 0; k < 56; k++) {
-      var pos = k % 2 === 0;
-      th = Math.random() * TAU; sp = 0.7 + Math.random() * 0.6; v = vThermal() * sp;
-      movers.push({
-        kind: pos ? 'na' : 'cl',
-        dir: pos ? 1 : -1,
-        r: pos ? 12 : 11,
-        x: COND.x + 26 + Math.random() * (COND.w - 52),
-        y: COND.y + 34 + Math.random() * (COND.h - 48),
-        px: 0,
-        vx: Math.cos(th) * v, vy: Math.sin(th) * v,
-        spd: sp, cool: 0, trail: []
-      });
-    }
+    for (k = 0; k < 56; k++) movers.push(newIon(k % 2 === 0 ? 'na' : 'cl'));
   }
+  /* 玻璃：常温没有可移动离子；加热后由 syncGlassIons() 按熔融进度逐个「挣脱」出来 */
+}
+
+/* 玻璃棒：熔融进度决定有多少离子挣脱了格点。常温 0 个，完全熔融 28 个。
+   逐步增减（不是一步全变），既贴合「逐渐软化」，也不会让画面突然跳一下。 */
+function syncGlassIons() {
+  if (carrier() !== 'insulator') return;
+  var want = Math.round(meltK() * 28);
+  while (movers.length < want) {
+    var ion = newIon(movers.length % 2 === 0 ? 'na' : 'cl');
+    var site = lattice[(Math.random() * lattice.length) | 0];
+    if (site) { ion.x = site.x; ion.y = site.y; ion.px = site.x; }
+    movers.push(ion);
+  }
+  while (movers.length > want) movers.pop();
 }
 
 /* 换导体：整套粒子重建 */
@@ -300,6 +343,9 @@ function step(dt) {
 
   /* ---- 玻璃：束缚电子只在原地绕原子转，不整体移动 ---- */
   for (var b = 0; b < bound.length; b++) bound[b].ang += bound[b].spin * dt;
+
+  /* ---- 玻璃：超过软化点后，离子逐个挣脱格点，变成可移动载流子 ---- */
+  syncGlassIons();
 
   /* ---- 可移动载流子 ---- */
   for (var k = 0; k < movers.length; k++) {
@@ -359,8 +405,8 @@ function step(dt) {
     if (e.trail.length > tmax) e.trail.splice(0, 2);
   }
 
-  /* ---- 溶液：离子之间互相碰撞（只轻微偏转，不打断定向移动） ---- */
-  if (c === 'electrolyte') {
+  /* ---- 溶液 / 熔融玻璃：离子之间互相碰撞（只轻微偏转，不打断定向移动） ---- */
+  if (c === 'electrolyte' || (c === 'insulator' && movers.length > 0)) {
     for (var p = 0; p < movers.length; p++) {
       var a1 = movers[p];
       if (a1.cool > 0) continue;
@@ -429,6 +475,15 @@ function mix(a, b, t) {
   return 'rgb(' + Math.round(a[0] + (b[0] - a[0]) * t) + ',' +
                   Math.round(a[1] + (b[1] - a[1]) * t) + ',' +
                   Math.round(a[2] + (b[2] - a[2]) * t) + ')';
+}
+/* 三段混色：a 按 t1 混向 b，再按 t2 混向 c（玻璃加热：青灰 → 橙 → 白炽） */
+function mix3(a, b, c, t1, t2) {
+  var o = [0, 0, 0];
+  for (var i = 0; i < 3; i++) {
+    var v = a[i] + (b[i] - a[i]) * t1;
+    o[i] = v + (c[i] - v) * t2;
+  }
+  return 'rgb(' + Math.round(o[0]) + ',' + Math.round(o[1]) + ',' + Math.round(o[2]) + ')';
 }
 
 /* 电流路径分段（预计算） */
@@ -607,10 +662,24 @@ function drawBar() {
   var x = BAR.x, y = BAR.y, w = BAR.w, h = BAR.h;
 
   if (c === 'insulator') {
-    /* 玻璃棒：半透明，几乎不发热 */
+    /* 玻璃棒：常温半透明几乎不发热；温度越高越发亮，接近熔融时白炽发光 */
+    var gk = clamp(normT() * 1.15, 0, 1);
+    var glowG = Math.pow(gk, 1.6);
+    ctx.save();
+    if (glowG > 0.04) {
+      ctx.shadowColor = 'rgba(255,' + Math.round(196 - 76 * glowG) + ',' +
+                        Math.round(120 - 50 * glowG) + ',' + (0.8 * glowG).toFixed(2) + ')';
+      ctx.shadowBlur = 36 * glowG;
+    }
     roundRect(x, y - h / 2, w, h, 6);
-    ctx.fillStyle = 'rgba(186,230,253,.14)'; ctx.fill();
-    ctx.strokeStyle = 'rgba(186,230,253,.55)'; ctx.lineWidth = 1.6; ctx.stroke();
+    ctx.globalAlpha = 0.16 + 0.72 * glowG;
+    ctx.fillStyle = mix3([186, 230, 253], [255, 176, 90], [255, 250, 230],
+                         clamp(gk * 1.4, 0, 1), clamp((gk - 0.72) / 0.28, 0, 1));
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.restore();
+    ctx.strokeStyle = glowG > 0.3 ? 'rgba(253,186,116,.9)' : 'rgba(186,230,253,.55)';
+    ctx.lineWidth = 1.6; ctx.stroke();
     ctx.fillStyle = 'rgba(255,255,255,.13)';
     ctx.fillRect(x + 8, y - h / 2 + 3, w - 16, 3.5);
   } else if (c === 'electrolyte') {
@@ -652,7 +721,16 @@ function drawBar() {
   var lightBar = (c === 'insulator');
   ctx.font = 'bold 13px Inter, "Microsoft YaHei", sans-serif';
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  var barTxt = c === 'insulator' ? '几乎没有电流' : '电流 I  →';
+  var barTxt;
+  if (c === 'insulator') {
+    var mkB = meltK();
+    barTxt = mkB >= 1 ? '熔融 · 开始导电'
+           : mkB > 0 ? '软化 · 离子正在挣脱'
+           : normT() > 0.55 ? '白炽 · 仍不导电'
+           : '几乎没有电流';
+  } else {
+    barTxt = '电流 I  →';
+  }
   ctx.lineWidth = 3.2; ctx.lineJoin = 'round';
   ctx.strokeStyle = lightBar ? 'rgba(248,250,252,.55)' : 'rgba(2,6,23,.55)';
   ctx.strokeText(barTxt, x + w / 2, y + 1);
@@ -703,6 +781,12 @@ function drawMicro() {
     var hot = normT();
     bg.addColorStop(0, mix([10, 44, 62], [66, 38, 24], hot * 0.55));
     bg.addColorStop(1, mix([6, 26, 40], [36, 20, 14], hot * 0.55));
+  } else if (c === 'insulator') {
+    /* 玻璃从常温烧到熔融：底色从冷蓝一路烧成暗橘红，白炽原子的亮度才「立得住」 */
+    var hotI = normT();
+    var warmI = hotI * hotI * 0.85;
+    bg.addColorStop(0, mix([13, 28, 46], [74, 32, 16], warmI));
+    bg.addColorStop(1, mix([5, 12, 22], [44, 17, 8], warmI));
   } else {
     bg.addColorStop(0, 'rgba(13,28,46,.97)');
     bg.addColorStop(1, 'rgba(5,12,22,.97)');
@@ -728,10 +812,12 @@ function drawMicro() {
   ctx.fillRect(COND.x, COND.y + COND.h - 46, COND.w, 46);
 
   if (c === 'electrolyte') drawElectrodes();
-  if (state.field) drawField();
+  /* 玻璃熔融后离子会游到顶部说明文字上 —— 这行字改为最后画，垫底压在上面 */
+  if (state.field && c !== 'insulator') drawField();
   if (lattice.length) drawLattice();
   if (bound.length) drawBound();
   drawMovers();
+  if (c === 'insulator' && state.field) drawField();
   if (state.spark) drawSparks();
   drawSlice();
 
@@ -766,12 +852,23 @@ function drawField() {
 
   ctx.save();
 
-  /* 绝缘体：没有能跑的电荷，只标一句话 */
+  /* 绝缘体：没有能跑的电荷，只标一句话；熔融后改口——离子挣脱了 */
   if (c === 'insulator') {
-    ctx.fillStyle = 'rgba(203,213,225,.55)';
+    var mkW = meltK();
+    var insTxt = mkW >= 1 ? '熔融了！离子挣脱格点 —— 现在它靠离子导电'
+               : mkW > 0 ? '正在软化：离子陆续挣脱格点，电流开始出现'
+               : '电子被原子牢牢束缚 —— 没有能自由移动的电荷';
     ctx.font = '12.5px Inter, "Microsoft YaHei", sans-serif';
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText('电子被原子牢牢束缚 —— 没有能自由移动的电荷', (COND.x + COND.w) / 2, y);
+    /* 熔融后离子会游到这一行，垫一块半透明底，字不糊 */
+    if (mkW > 0) {
+      var twI = ctx.measureText(insTxt).width;
+      ctx.fillStyle = 'rgba(12,10,10,.62)';
+      roundRect((COND.x + COND.w) / 2 - twI / 2 - 10, y - 10, twI + 20, 20, 10);
+      ctx.fill();
+    }
+    ctx.fillStyle = mkW > 0 ? 'rgba(254,215,170,.92)' : 'rgba(203,213,225,.55)';
+    ctx.fillText(insTxt, (COND.x + COND.w) / 2, y);
     ctx.restore();
     return;
   }
@@ -845,14 +942,35 @@ function drawField() {
 function drawLattice() {
   var nt = normT();
   var isIns = carrier() === 'insulator';
-  var fill = isIns ? mix([51, 65, 85], [148, 163, 184], nt)
+  /* 玻璃烧到 1000 ℃ 以上会白炽：青灰 → 橙 → 近白，和「熔融」的滑块颜色呼应 */
+  var fill = isIns ? mix3([71, 85, 105], [255, 138, 60], [255, 250, 235],
+                          clamp(nt * 1.5, 0, 1), clamp((nt - 0.7) / 0.3, 0, 1))
                    : mix([146, 64, 14], [251, 191, 36], nt);
-  var plusColor = isIns ? 'rgba(226,232,240,.92)' : 'rgba(48,24,4,.82)';
-  var ringColor = isIns ? 'rgba(203,213,225,.45)' : 'rgba(253,230,138,.55)';
+  var plusColor, ringColor;
+  if (isIns) {
+    /* 原子亮到接近白色时，「+」和描边必须换成深色才看得见 */
+    var bright = nt > 0.55;
+    plusColor = bright ? 'rgba(80,33,10,.88)' : 'rgba(226,232,240,.92)';
+    ringColor = bright ? 'rgba(154,52,18,.75)' : 'rgba(203,213,225,.45)';
+  } else {
+    plusColor = 'rgba(48,24,4,.82)';
+    ringColor = 'rgba(253,230,138,.55)';
+  }
   var amp = ionAmp();
 
   for (var i = 0; i < lattice.length; i++) {
     var at = lattice[i];
+
+    /* 高温白炽辉光：越接近熔融越亮，让「烧红了」一眼可见 */
+    if (isIns && nt > 0.3) {
+      var gk = clamp((nt - 0.3) / 0.7, 0, 1);
+      var rg = ctx.createRadialGradient(at.x, at.y, ION_R * 0.4, at.x, at.y, ION_R * 3.2);
+      rg.addColorStop(0, 'rgba(255,214,150,' + (0.55 * gk).toFixed(3) + ')');
+      rg.addColorStop(1, 'rgba(255,120,40,0)');
+      ctx.beginPath();
+      ctx.arc(at.x, at.y, ION_R * 3.2, 0, TAU);
+      ctx.fillStyle = rg; ctx.fill();
+    }
 
     /* 振动残影：振幅越大越明显 */
     if (amp > 3.2) {
@@ -924,7 +1042,10 @@ function drawBound() {
 }
 
 function drawMovers() {
-  if (carrier() === 'electrolyte') { drawIons(); return; }
+  if (!movers.length) return;
+  /* 按载流子种类分派：熔融玻璃里跑的是离子，不是「电子」
+     （不能只看 carrier —— 玻璃升温后 movers 里装的是离子） */
+  if (movers[0].kind !== 'e') { drawIons(); return; }
 
   var s = 26;
   for (var k = 0; k < movers.length; k++) {
@@ -1069,7 +1190,14 @@ function sup(n) {
   return String(n).split('').map(function (d) { return SUP[+d] || d; }).join('');
 }
 function fmtR(r) {
-  if (r >= 1e6) return '10' + sup(Math.round(Math.log10(r))) + ' Ω';
+  if (r >= 1e6) {
+    /* 熔融过程中电阻会跨好几个数量级，只写「10ⁿ Ω」会把 2.4×10⁷ 也写成 10⁷ —— 带上尾数 */
+    var e = Math.floor(Math.log10(r));
+    var mant = r / Math.pow(10, e);
+    if (mant >= 9.95) { mant = 1; e += 1; }
+    return (mant < 1.05 ? '' : mant.toFixed(1) + '×') + '10' + sup(e) + ' Ω';
+  }
+  if (r >= 1e4) return (r / 1e3).toFixed(0) + ' kΩ';
   if (r >= 100) return r.toFixed(1) + ' Ω';
   return r.toFixed(2) + ' Ω';
 }
@@ -1084,16 +1212,19 @@ function syncUI() {
   var R = resistance(), I = current();
   var m = curMat(), c = m.carrier;
 
+  var mkW = c === 'insulator' ? meltK() : 0;
   setText('mR', fmtR(R));
   setText('mI', fmtI(I));
-  setText('mHit', c === 'insulator' ? '0 个' :
-          (hitRate > 0 ? Math.round(hitRate) + ' 次/s' : '— 次/s'));
+  setText('mHit', c === 'insulator'
+          ? (mkW > 0 ? movers.length + ' 个' : '0 个')
+          : (hitRate > 0 ? Math.round(hitRate) + ' 次/s' : '— 次/s'));
   var f = fluxNow();
-  setText('mFlux', c === 'insulator' ? '0 个/s' :
-          (f > 0.02 ? Math.round(f) + ' 个/s' : '— 个/s'));
+  setText('mFlux', c === 'insulator'
+          ? (mkW > 0 && f > 0.02 ? Math.round(f) + ' 个/s' : '0 个/s')
+          : (f > 0.02 ? Math.round(f) + ' 个/s' : '— 个/s'));
 
   setText('mHitLabel', c === 'metal' ? '电子每秒被撞次数'
-                     : c === 'insulator' ? '能自由移动的电荷'
+                     : c === 'insulator' ? (mkW > 0 ? '挣脱格点的离子数' : '能自由移动的电荷')
                      : '离子每秒相撞次数');
   setText('mFluxLabel', c === 'metal' ? '每秒通过截面的电子'
                      : c === 'insulator' ? '每秒通过截面'
@@ -1104,7 +1235,11 @@ function syncUI() {
 
   var note;
   if (c === 'insulator') {
-    note = '温度再高，也只是原子晃得更厉害 —— 电子仍然被绑着，跑不掉。';
+    note = state.T < 700
+      ? '还没到软化点：原子晃得再厉害，电荷也都被锁在格点上 —— 仍是绝缘体。'
+      : state.T < 1000
+      ? '超过 700 ℃：玻璃开始软化，少数离子挣脱格点 —— 微弱的电流出现了。'
+      : '超过 1000 ℃：玻璃熔成液体，离子大量挣脱 —— 它现在和食盐水一样靠离子导电！';
   } else if (c === 'electrolyte') {
     note = '温度升高，离子热运动更剧烈，导电能力反而变强（和金属相反）。';
   } else if (state.T < 20) note = '低于常温，离子几乎不怎么动。';
@@ -1112,22 +1247,35 @@ function syncUI() {
   else if (state.T < 200) note = '已经很热了，离子晃得明显。';
   else note = '接近灯丝的工作温度，离子振动非常剧烈。';
   setText('tNote', note);
-  setText('cTrailLbl', c === 'electrolyte' ? '离子轨迹' : '电子轨迹');
-  setText('matNote', m.note);
+  setText('cTrailLbl', c === 'metal' ? '电子轨迹' : '离子轨迹');
+  setText('matNote', c === 'insulator' && mkW > 0
+    ? '熔融玻璃 · 温度越高，挣脱格点的离子越多，导电能力越强。'
+    : m.note);
   setText('specNote', m.spec + '。');
 
-  /* 「想一想」三选一 */
+  /* 「想一想」三选一（玻璃分「常温绝缘」和「熔融导电」两段提示） */
   toggleHidden('noteMetal', c !== 'metal');
-  toggleHidden('noteGlass', c !== 'insulator');
+  toggleHidden('noteGlass', c !== 'insulator' || mkW > 0);
+  toggleHidden('noteMolten', c !== 'insulator' || mkW <= 0);
   toggleHidden('noteSalt', c !== 'electrolyte');
 
   var v = document.getElementById('verdict');
   if (v) {
     var cls = 'verdict', txt;
     if (c === 'insulator') {
-      cls = 'verdict';
-      txt = m.name + '：电阻约 ' + fmtR(R) + '，电流 ' + fmtI(I) +
-            ' —— 没有能自由移动的电荷，加多大电压也形不成电流';
+      if (mkW >= 1) {
+        cls = 'verdict ok';
+        txt = '温度 ' + state.T.toFixed(0) + ' ℃：玻璃已熔融，电阻只剩 ' + fmtR(R) +
+              '，电流 ' + fmtI(I) + ' —— 离子挣脱格点后，熔融玻璃能导电了！';
+      } else if (mkW > 0) {
+        cls = 'verdict hot';
+        txt = '温度 ' + state.T.toFixed(0) + ' ℃：玻璃正在软化，离子陆续挣脱格点，' +
+              '电阻从 10¹⁴ Ω 一路降下来（现为 ' + fmtR(R) + '）';
+      } else {
+        cls = 'verdict';
+        txt = m.name + '：电阻约 ' + fmtR(R) + '，电流 ' + fmtI(I) +
+              ' —— 没有能自由移动的电荷，加多大电压也形不成电流';
+      }
     } else if (c === 'electrolyte') {
       cls = state.T > 60 ? 'verdict ok' : 'verdict';
       txt = '温度 ' + state.T.toFixed(0) + ' ℃：' + m.name + '电阻 ' + fmtR(R) +
@@ -1146,19 +1294,22 @@ function syncUI() {
   var lg = document.getElementById('legend');
   if (lg) {
     var html = c === 'insulator'
-      ? '<span class="dot" style="background:#94a3b8"></span>橙圈 = 原子，绕圈的小球 = 被束缚的电子（跑不掉）'
+      ? (mkW > 0
+        ? '<span class="dot" style="background:#fb923c"></span>橙球 = 挣脱的离子（向负极），青球 = 反向离子，白亮圆点 = 高温原子'
+        : '<span class="dot" style="background:#94a3b8"></span>橙圈 = 原子，绕圈的小球 = 被束缚的电子（跑不掉）')
       : c === 'electrolyte'
       ? '<span class="dot" style="background:#fb923c"></span>橙球 = Na⁺（向负极），青球 = Cl⁻（向正极）'
       : '<span class="dot"></span>红点 = 电流方向，蓝球 = 自由电子，橙圈 = 正离子';
     if (lg.innerHTML !== html) lg.innerHTML = html;
   }
 
-  /* 规律条：文案按载流子换，点亮条件也跟着换 */
+  /* 规律条：文案按载流子换，点亮条件也跟着换（玻璃熔融后换成「离子导电」那一套） */
   syncLaws(c);
   setOn('l1', true);
   setOn('l2', I > 0.02);
   setOn('l3', c === 'insulator' ? true : hitRate > 0);
-  setOn('l4', c === 'electrolyte' ? state.T > 60 : state.T > 100);
+  setOn('l4', c === 'insulator' ? mkW > 0
+          : c === 'electrolyte' ? state.T > 60 : state.T > 100);
 }
 
 function toggleHidden(id, hide) {
@@ -1195,6 +1346,12 @@ var LAWS = {
     '正离子奔向<b>负极</b>、负离子奔向<b>正极</b> —— 两者方向正好相反',
     '两边都在把电荷搬过截面，所以<b>都算电流的一部分</b>',
     '温度升高，离子跑得更快，盐水<b>反而更容易导电</b>（和金属相反）'
+  ],
+  molten: [
+    '常温玻璃里的离子被<b>锁在格点上</b> —— 没有自由电荷，所以它是绝缘体',
+    '烧到 700 ℃ 以上玻璃开始<b>软化</b>，1000 ℃ 以上熔成<b>液体</b>',
+    '熔融后离子挣脱格点、可以自由移动 —— 玻璃<b>开始导电</b>，电阻从 10¹⁴ Ω 骤降',
+    '和食盐水一样<b>靠离子导电</b>：温度越高，挣脱的离子越多，导电能力越强'
   ]
 };
 var htmlCache = {};
@@ -1205,7 +1362,9 @@ function setHTML(id, html) {
   if (el) el.innerHTML = html;
 }
 function syncLaws(c) {
-  var arr = LAWS[c] || LAWS.metal;
+  /* 玻璃熔融后，说到底「绝缘体」那套规律就不成立了，换成离子导电的版本 */
+  var key = (c === 'insulator' && meltK() > 0) ? 'molten' : c;
+  var arr = LAWS[key] || LAWS.metal;
   for (var i = 0; i < 4; i++) {
     setHTML('l' + (i + 1), '<i>' + LAW_MARK[i] + '</i><span>' + arr[i] + '</span>');
   }
@@ -1217,6 +1376,7 @@ var uRange = document.getElementById('uRange');
 
 tRange.addEventListener('input', function () {
   state.T = parseFloat(tRange.value);
+  syncGlassIons();
   markStep('st1'); markStep('st4'); markStep('st5');
   syncUI(); render();
 });
@@ -1226,7 +1386,8 @@ uRange.addEventListener('input', function () {
   syncUI(); render();
 });
 
-/* 盐水只能到 95 ℃（再高就沸腾了），金属 / 玻璃给到 300 ℃ —— 换导体时同步改滑块范围 */
+/* 盐水只能到 95 ℃（再高就沸腾了），金属给到 300 ℃；
+   玻璃给到 1200 ℃ —— 要让学生亲手把它烧到熔融、看到它导电。换导体时同步改滑块范围 */
 function applyTempRange() {
   var r = tempRange();
   tRange.min = r.lo;
@@ -1354,6 +1515,13 @@ window.__MICRO = {
   resistance: resistance,
   current: current,
   power: power,
+  meltK: meltK,
+  moverCount: function () { return movers.length; },
+  moverKinds: function () {
+    var o = {};
+    for (var i = 0; i < movers.length; i++) o[movers[i].kind] = (o[movers[i].kind] || 0) + 1;
+    return o;
+  },
   hitRate: function () { return hitRate; },
   fluxRate: fluxNow,
   ionAmp: ionAmp,
@@ -1384,6 +1552,7 @@ window.__MICRO = {
     var r = tempRange();
     state.T = clamp(v, r.lo, r.hi);
     tRange.value = state.T;
+    syncGlassIons();   /* 暂停状态下拖滑块也要能看到离子挣脱/收回 */
     syncUI(); render();
   },
   setU: function (v) { state.U = v; uRange.value = v; syncUI(); render(); },
