@@ -20,6 +20,9 @@ import * as THREE from './assets/optics-three.min.js';
   const state = {
     f: 10, objP: 35, lensP: 65, scrP: 80,
     extra: 'none', extraF: 12,
+    // 镜前遮挡板挡住的是【镜片的一部分面积】（0–90%），不是像的一部分：
+    // 每个像点都靠整个镜片收集光线，所以像始终完整，只是整体按通过光量变暗。
+    occlude: 0,
     sourceY: 12, secondY: 8, second: false, source: 'candle',
     screenRemoved: false, autoScreen: false, observing: false, lastNeedsOff: false,
     // 虚像对照是独立于「透过透镜观察」的教学图层：打开时相机退到侧面，虚像正对镜头，
@@ -52,6 +55,26 @@ import * as THREE from './assets/optics-three.min.js';
   ];
   const clamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
   const roundHalf = x => Math.round(x * 2) / 2;
+  // 遮挡板从镜片上方压下来，挡住高度 y ≥ 下沿的那一段圆。滑块给的是【被挡住的面积百分比】，
+  // 亮度衰减就必须按这块弓形的真实面积算 —— 按高度比例算会在半圆附近差出一大截。
+  // 圆半径 R、下沿到圆心距离 h（向下为负）时，上方弓形面积 = R²·arccos(h/R) − h·√(R²−h²)。
+  function lensSegmentFraction(h){
+    const R=LENS_R,x=clamp(h,-R,R);
+    return (R*R*Math.acos(x/R)-x*Math.sqrt(Math.max(0,R*R-x*x)))/(Math.PI*R*R);
+  }
+  // 反解：给定被挡面积比例，求下沿离圆心的高度差。面积随 h 单调递减，二分即可。
+  function occluderCutOffset(){
+    const target=clamp(state.occlude,0,90)/100;
+    let lo=-LENS_R,hi=LENS_R;
+    for(let i=0;i<40;i++){
+      const m=(lo+hi)/2;
+      if(lensSegmentFraction(m)>target)lo=m;else hi=m;
+    }
+    return (lo+hi)/2;
+  }
+  const occluderCutY = () => 12 + occluderCutOffset();
+  // 通过光量 = 未被挡住的镜片面积比例。像的亮度严格按它缩放。
+  const lightThrough = () => 1 - clamp(state.occlude, 0, 90) / 100;
   const V = (x, y, z = 0) => new THREE.Vector3(x, y, z);
   const near = (a, b) => Math.abs(a - b) < 1e-6;
   const hasExtra = () => state.extra !== 'none';
@@ -439,6 +462,16 @@ import * as THREE from './assets/optics-three.min.js';
     for(const sign of [-1,1])mainLensCaps.push(mesh(lensCapGeometry(sign,sag),glassMat,lens,0,0,0,false));
   }
   refreshMainLensShape();
+  // 镜前遮挡板：一块从上方压下来的不透明板，挡住镜片的一部分通光面积。它挂在透镜滑座上，
+  // 所以移动透镜时一起走；板的下沿由「被挡面积」反解出来（见 occluderCutOffset）。
+  // 板面离开主镜前表面一小段距离，短焦距时镜片中央凸出 1.7 cm 也不会穿模。
+  const CARD_GAP=2.05, CARD_TOP=12+LENS_R+4.8, CARD_HALF_W=LENS_R+1.25;
+  const occluder=new THREE.Group();lens.add(occluder);occluder.visible=false;
+  const cardGeo=new THREE.BoxGeometry(.16,1,1);
+  cardGeo.translate(0,-.5,0);                 // 几何体顶点在 0，向下缩放即从顶边往下长
+  const occluderCard=mesh(cardGeo,material('#2d3439',.10,.80),occluder,-CARD_GAP,CARD_TOP,0);
+  occluderCard.scale.z=CARD_HALF_W*2;
+  box(occluder,[.55,.42,1.5],[-CARD_GAP,CARD_TOP+.21,0],brass);
   // Faint polished-ring glints rotate with the object rather than being pinned to the screen.
   const highlight = mesh(new THREE.TorusGeometry(6.05,.055,8,24,Math.PI*.58),material('#f4f7ee',.1,.12,{transparent:true,opacity:.85}),lens,-.12,12,0,false);
   highlight.rotation.y=Math.PI/2;
@@ -687,6 +720,18 @@ import * as THREE from './assets/optics-three.min.js';
     rayLine(center,end,color,opacity+.05);
     return {entry:null,exit:null,outStart:center};
   }
+  // 遮挡板在镜片前 CARD_GAP 处。一条光线是否被挡住，看它落在挡板平面上的高度：
+  // 在下沿以上就停在板上，以下则从板边掠过、继续射向镜片。
+  function cardStop(start,center){
+    if(state.occlude<=0)return null;
+    const den=center.x-start.x;
+    if(Math.abs(den)<1e-9)return null;
+    const t=(center.x-CARD_GAP-start.x)/den;
+    if(!(t>0&&t<1))return null;
+    const y=start.y+(center.y-start.y)*t,z=start.z+(center.z-start.z)*t;
+    if(y<occluderCutY()-1e-6||Math.abs(z)>CARD_HALF_W)return null;
+    return V(start.x+den*t,y,z);
+  }
   function traceRay(src,LX,stopX,shiftY,shiftZ,color,opacity){
     const u=state.u,f=state.f;
     const y0=src[0],z0=src[1];
@@ -695,6 +740,9 @@ import * as THREE from './assets/optics-three.min.js';
       if(Math.hypot(YL-12,ZL)>LENS_AP)return null;
       const sy=(YL-y0)/u-(YL-12)/f, sz=(ZL-z0)/u-ZL/f;
       const start=V(LX-u,y0,z0),center=V(LX,YL,ZL);
+      // 被挡住的不是像，而是射向镜片的那束光：光线在板上断掉，不参与成像。
+      const stopped=cardStop(start,center);
+      if(stopped){rayLine(start,stopped,color,Math.max(.18,opacity*.5));return null;}
       const end=V(stopX,YL+sy*(stopX-LX),ZL+sz*(stopX-LX));
       const cfg=lensSurfaceConfig(LX,f,LENS_R,1.28,'convex');
       const path=drawLensPath(start,center,end,cfg,color,opacity);
@@ -725,6 +773,9 @@ import * as THREE from './assets/optics-three.min.js';
     const Y2a=out1.y+sy1*span,Z2a=out1.z+sz1*span;
     if(Math.hypot(Y2a-12,Z2a)>LENS_AP)return null;
     const center2=V(LX,Y2a,Z2a);
+    // 遮挡板夹在附加镜与主镜之间：已经过附加镜的光线，在进主镜前同样可能被板挡住。
+    const stopped=cardStop(out1,center2);
+    if(stopped){rayLine(out1,stopped,color,Math.max(.18,opacity*.5));return null;}
     const sy=sy1-(Y2a-12)/f, sz=sz1-Z2a/f;
     const end=V(stopX,Y2a+sy*(stopX-LX),Z2a+sz*(stopX-LX));
     const cfgM=lensSurfaceConfig(LX,f,LENS_R,1.28,'convex');
@@ -859,7 +910,8 @@ import * as THREE from './assets/optics-three.min.js';
       const size=clamp(Math.abs(c.m),.2,8.2);
       ghostObject.position.set(wx(state.lensP)+c.v,12,0);
       ghostObject.scale.set(c.inverted?-size:size,c.inverted?-size:size,1);
-      ghostObject.material.opacity=c.inverted?.34:.78;
+      // 悬在空中的像同样由镜片收集到的光形成：挡住一部分镜片，它只会变暗，不会缺一块。
+      ghostObject.material.opacity=(c.inverted?.34:.78)*lightThrough();
       ghostObject.material.color.set(c.v<0?'#e8fdff':'#ffffff');
     }
     // 透过透镜观察虚像时，实际物体在镜后同侧，无法和虚像分开看见；用一个虚线轮廓
@@ -1099,7 +1151,8 @@ import * as THREE from './assets/optics-three.min.js';
     if(info.real&&Number.isFinite(info.v)&&info.v<=300&&!state.screenRemoved){
       const offset=Math.abs(state.sd-info.v), sigma=blurSigma(offset,info.v);
       c.save();c.beginPath();c.rect(6,6,w-12,h-12);c.clip();
-      c.globalAlpha=clamp(1-offset/80,.45,1);
+      // 遮挡板只减少进入镜片的光：整幅像一起按通过光量变暗，轮廓一点不少。
+      c.globalAlpha=clamp(1-offset/80,.45,1)*lightThrough();
       c.filter=sigma<.5?'none':`blur(${sigma.toFixed(1)}px)`;
       stampObject(c,w/2,h/2,m,info.inverted?'front':'upright',PX_CM);
       c.restore();
@@ -1155,6 +1208,7 @@ import * as THREE from './assets/optics-three.min.js';
       g.filter=sigma<.5?'none':`blur(${sigma.toFixed(1)}px)`;
       g.save();
       if(fromBack){g.translate(W,0);g.scale(-1,1);}
+      g.globalAlpha=lightThrough();   // 屏上的像同样按通过光量变暗
       stampObject(g,W/2,cy,mag,info.inverted?'front':'upright',pxCm);
       g.restore();
     }else{
@@ -1166,6 +1220,7 @@ import * as THREE from './assets/optics-three.min.js';
       g.beginPath();g.moveTo(10,cy);g.lineTo(W-10,cy);g.stroke();g.setLineDash([]);
       g.save();g.beginPath();g.rect(4,4,W-8,H-8);g.clip();
       // A real image is inverted in both directions; only the virtual image stays upright.
+      g.globalAlpha=lightThrough();   // 透过镜片看到的像同样随通过光量变暗
       stampObject(g,W/2,cy,mag,mode==='air'?(info.inverted?'through':'throughUpright'):(info.inverted?'front':'upright'),pxCm);
       g.restore();
     }
@@ -1181,7 +1236,8 @@ import * as THREE from './assets/optics-three.min.js';
         :`离焦 ${Math.abs(info.v-state.sd).toFixed(1)} cm · 移动光屏寻找像`)
       : (mode==='air'?`撤去光屏后，实像仍悬在空中（${info.inverted?'倒立':'正立'}） · `+sizeText
         :`透过透镜看到${info.inverted?'倒立':'正立'}虚像（与物同侧） · `+sizeText)
-        +(clipped?' · 像很大，画面只显示局部':'');
+        +(clipped?' · 像很大，画面只显示局部':'')
+        +(state.occlude>0?` · 遮挡板挡住 ${state.occlude}% 的光，像完整但变暗` : '');
   }
 
   let compareUiKey='';
@@ -1368,7 +1424,7 @@ import * as THREE from './assets/optics-three.min.js';
     // 看到的才是同一件事。放在这里（而不是只放在 update() 里），是因为相机可以在器材
     // 一个都不动的情况下被拖走，那时预览窗也必须跟着变。
     const key=[camera.position.x,camera.position.y,camera.position.z,state.f,state.extra,state.extraF,state.u,state.sd,
-      state.scrP,state.source,state.sourceY,state.secondY,state.second,state.screenRemoved].join('|');
+      state.scrP,state.source,state.sourceY,state.secondY,state.second,state.screenRemoved,state.occlude].join('|');
     if(key!==insetKey){insetKey=key;paintInset(status());}
   }
   function resize(){
@@ -1406,6 +1462,9 @@ import * as THREE from './assets/optics-three.min.js';
     sliders.candle.position.x=wx(state.objP);
     sliders.lens.position.x=wx(state.lensP);
     sliders.screen.position.x=wx(state.scrP);
+    // 遮挡板：顶边固定，下沿按被挡面积下移；0 时整块板收回画面之外。
+    occluder.visible=state.occlude>0;
+    if(occluder.visible)occluderCard.scale.y=Math.max(.4,CARD_TOP-occluderCutY());
     screen.visible=!state.screenRemoved;
     screenGhost.visible=state.screenRemoved;
     screenGhost.position.x=wx(state.scrP);
@@ -1418,6 +1477,12 @@ import * as THREE from './assets/optics-three.min.js';
     $('focalValue').textContent=format(state.f);
     $('extraFocalValue').textContent=state.extra==='concave'?`−${state.extraF} cm`:`${state.extraF} cm`;
     $('extraFocal').disabled=!hasExtra();
+    $('occlude').value=state.occlude;
+    $('occludeValue').textContent=state.occlude>0
+      ?`遮住 ${state.occlude}% · 通过 ${100-state.occlude}%`:'未遮挡';
+    $('occludeHint').textContent=state.occlude>0
+      ?`遮挡板挡住镜片约 ${state.occlude}% 的面积：每个像点都少了这部分光线，所以像仍然完整，只是整体亮度降到约 ${100-state.occlude}%。`
+      :'把遮挡板降下来挡住一部分镜片。打开「显示光路」可以看到被挡住的光线停在挡板上；其余光线依然会聚成完整的像，只是变暗。';
     $('sourceValue').textContent=format(state.sourceY);
     $('secondValue').textContent=format(state.secondY);
     $('secondSource').checked=state.second;
@@ -1453,11 +1518,13 @@ import * as THREE from './assets/optics-three.min.js';
       b.classList.toggle('active',b.dataset.mode===state.rayMode);
       b.disabled=!state.rays;
     }
-    $('rayLegend').textContent=hasExtra()
+    const legend=hasExtra()
       ?'光线先经附加镜偏折，再经主凸透镜折射；最终交点决定清晰像面'
       :special
         ?'三条特殊光线：平行主轴 → 过 F′ ｜ 过光心 → 不偏折 ｜ 过物方焦点 → 出射平行主轴'
         :'每个发光点发出 13 条光线，经镜片后全部会聚（或反向会聚）到同一个像点；玻璃内部那一段画成有粗细的发光柱，能看出光线真的穿过了镜片';
+    $('rayLegend').textContent=legend
+      +(state.occlude>0?'；挡住的光线停在遮挡板上，其余光线仍会聚成完整的像，只是变暗':'');
     $('autoFocus').disabled=!canFocus(info)||state.screenRemoved;
     $('autoFocus').textContent=hasExtra()?'重新调到清晰像':'移到清晰位置';
     const blocked=info.real&&!state.screenRemoved&&!info.crisp;
@@ -1515,6 +1582,8 @@ import * as THREE from './assets/optics-three.min.js';
     else if(state.screenRemoved)text=`撤去光屏后，${preset.result}仍然悬在透镜右侧 ${info.v.toFixed(1)} cm 处；从光屏一侧透过透镜就能看到它。`;
     else if(info.crisp)text=`${preset.result}；光屏在 ${state.scrP.toFixed(1)} cm 刻度上得到最清晰的像。屏是半透明膜，绕到背面透过膜看到的是同一个像。`;
     else text=`光屏距离清晰像面 ${Math.abs(info.v-state.sd).toFixed(1)} cm。观察屏上模糊的轮廓，缓慢滑动光屏。`;
+    if(state.occlude>0)
+      text+=` 镜前遮挡板挡住镜片约 ${state.occlude}% 的面积，通过光量只剩约 ${100-state.occlude}%：像的轮廓一点没少，只是整体变暗。`;
     $('finding').innerHTML='<b>当前观察</b><br>'+text;
     document.querySelectorAll('#presets button').forEach(b=>b.classList.toggle('active',b.dataset.case===info.kind));
     document.querySelectorAll('#sourceKind button').forEach(b=>b.classList.toggle('active',b.dataset.kind===state.source));
@@ -1523,7 +1592,7 @@ import * as THREE from './assets/optics-three.min.js';
     $('stepDetail').innerHTML=descriptions[state.step];
     render();
   }
-  for(const [id,key] of [['focalLength','f'],['extraFocal','extraF'],['sourceHeight','sourceY'],['secondHeight','secondY']])
+  for(const [id,key] of [['focalLength','f'],['extraFocal','extraF'],['sourceHeight','sourceY'],['secondHeight','secondY'],['occlude','occlude']])
     $(id).addEventListener('input',e=>{state[key]=+e.target.value;update();});
   $('sourceKind').addEventListener('click',e=>{
     const b=e.target.closest('button[data-kind]');if(!b)return;
@@ -1667,7 +1736,7 @@ import * as THREE from './assets/optics-three.min.js';
   $('resetAll').addEventListener('click',()=>{
     Object.assign(state,{f:10,objP:35,lensP:65,scrP:80,extra:'none',extraF:12,sourceY:12,secondY:8,second:false,
       source:'candle',screenRemoved:false,autoScreen:false,observing:false,lastNeedsOff:false,compare:false,
-      obsYaw:0,obsPitch:0,rays:false,virtual:true,labels:false,rayMode:'all',yaw:-.42,pitch:.21,zoom:1.06,step:0,records:{}});
+      obsYaw:0,obsPitch:0,occlude:0,rays:false,virtual:true,labels:false,rayMode:'all',yaw:-.42,pitch:.21,zoom:1.06,step:0,records:{}});
     for(const [id,checked] of [['showRays',false],['showVirtual',true],['showLabels',false]])$(id).checked=checked;
     renderRecords();
     update();
@@ -1887,7 +1956,7 @@ import * as THREE from './assets/optics-three.min.js';
   window.addEventListener('resize',resize);
   if(window.ResizeObserver)new ResizeObserver(resize).observe(canvas);
   window.__lensLab={state,status,optics,canFocus,project,imageY,wx,setScreen,update,render,resize,
-    rayShiftsFor,diopterOf,recordsTable,renderRecords,LENS_AP,
+    rayShiftsFor,diopterOf,recordsTable,renderRecords,LENS_AP,lightThrough,occluderCutY,lensSegmentFraction,
     stageBox,setParamsOpen,paramsIsOpen,paramsPanelInfo,fsInfo,
     get lastRayTraces(){return lastRayTraces;},
     debug:()=>{const i=status();return {objP:state.objP,lensP:state.lensP,scrP:state.scrP,u:state.u,sd:state.sd,
@@ -1903,6 +1972,9 @@ import * as THREE from './assets/optics-three.min.js';
       cameraFov:camera.fov,outline:objectOutline.visible,candleVisible:candleBody.visible,
       raysVisible:rays.visible,ghostRotY:ghostObject.rotation.y,
       ghostMask:ghostMat.userData.shader?ghostMat.userData.shader.uniforms.uMask.value:null,
+      occlude:state.occlude,light:lightThrough(),cardVisible:occluder.visible,
+      cardBottom:occluderCutY(),cardTop:CARD_TOP,cardHeight:occluderCard.scale.y,
+      cardX:wx(state.lensP)-CARD_GAP,ghostOpacity:ghostObject.material.opacity,
       frameFrozen:!framed,records:Object.keys(state.records),
       textureSize:[texCanvas.width,texCanvas.height],insetSize:[inset.width,inset.height]};}};
   // Pointer plumbing and the two authoring canvases are exposed so the self-check can drive the
