@@ -630,7 +630,6 @@
             <button type="button" id="wHint">提示</button>
             <button type="button" id="wReset">↺ 重来</button>
           </div>
-          <div class="stage-help" id="wireHint">第 1 步：把元件箱里的器材拖到虚线框里</div>
         </div>
       </div>
       <div class="lab3d-foot">
@@ -642,8 +641,8 @@
         </span>
       </div>
       <div class="lab3d-metrics" aria-live="polite">
-        <div class="lab3d-metric"><span>元件就位</span><strong id="wMParts">0 / 7</strong></div>
-        <div class="lab3d-metric"><span>导线接通</span><strong id="wMWires">0 / 8</strong></div>
+        <div class="lab3d-metric"><span>元件就位</span><strong id="wMParts">4 / 7</strong></div>
+        <div class="lab3d-metric"><span>导线接通</span><strong id="wMWires">4 / 8</strong></div>
         <div class="lab3d-metric bad"><span>接线错误</span><strong id="wMErr">0</strong></div>
         <div class="lab3d-metric ok"><span>通电状态</span><strong id="wMPower">未通电</strong></div>
       </div>
@@ -664,7 +663,7 @@
       <h3>元件箱清单</h3>
       <ul class="parts-list" id="wireParts"></ul>
       <h3>判定</h3>
-      <div class="verdict" id="wireVerdict">先把元件拖到虚线槽位，再逐条连线。</div>
+      <div class="verdict" id="wireVerdict">干路与两个分路开关已预设，请完成其余元件与接线。</div>
       <p class="lab3d-note" style="color:#7f93a3">
         家庭电路是<b>恒压并联</b>：各用电器都接在火线与零线之间，
         电能表和总开关串在干路上，各分路开关串在对应支路的火线上。
@@ -2756,7 +2755,7 @@ window.__hc = {
 const MODES = ['demo', 'wire', 'fault'];
 const INTRO = {
   demo: '<b>布线演示：</b>进户线 → 电能表 → <b>总开关（空气开关）</b> → 分路开关 → 用电器。左下角的剖面放大图会告诉你：电流过大时，<em>双金属片</em>或<em>电磁铁</em>怎样顶开锁扣、自动跳闸。',
-  wire: '<b>手动接线：</b>把左侧元件箱里的器材<b>拖到对应虚线槽位</b>，再从<b>圆形接线柱</b>按下、拖到另一个接线柱连线。8 根导线全部接对、没有错线，才能通电检验。',
+  wire: '<b>手动接线：</b>干路火线、零线、电能表、总开关和两个分路开关已预装。把剩余器材<b>拖到空白虚线框</b>，再从<b>圆形接线柱</b>按下、拖到另一个接线柱连线；全部接对后通电检验。',
   fault: '<b>故障排查：</b>题目随机给一处故障。点图上 <b>A~J</b> 测量点，看测电笔氖管<b>亮 / 不亮</b>，把结果记进表格，再判断故障在哪。注意零线断路时零线侧也会亮。'
 };
 let curMode = 'demo';
@@ -2965,9 +2964,19 @@ function reqIndex(a, b) {
   return -1;
 }
 
+// 干路器材、干路火零线与两个分路开关均为预装，学生只完成其余器材和支路接线
+const PRESET_SLOTS = { meter: true, main: true, br1: true, br2: true };
+const PRESET_WIRES = [0, 1, 2, 3];
+function presetWireState() {
+  return {
+    placed: { meter: 'meter', main: 'main', br1: 'branch1', br2: 'branch2' },
+    wires: PRESET_WIRES.slice()
+  };
+}
+
 const ws = {
   order: PARTS.map(function (p) { return p.id; }),
-  placed: {}, wires: [], badWires: [],
+  placed: presetWireState().placed, wires: presetWireState().wires, badWires: [],
   drag: null, wireFrom: null, mouse: { x: 0, y: 0 },
   powered: false, energy: 6539.8, phase: 0,
   errCount: 0, demo: false,
@@ -3007,6 +3016,7 @@ function portAt(x, y) {
 }
 function wiredLineAt(x, y) {
   for (let k = 0; k < ws.wires.length; k++) {
+    if (PRESET_WIRES.indexOf(ws.wires[k]) >= 0) continue;
     if (pathDist(x, y, REQ[ws.wires[k]].pts) < 9) return { t: 'ok', i: ws.wires[k] };
   }
   for (let k = 0; k < ws.badWires.length; k++) {
@@ -3126,16 +3136,7 @@ function renderWire() {
   });
   tt(g, '接地', 1010, 640, { size: 9, weight: 700, color: '#15803d' });
 
-  // 待接导线（灰色虚线 + 序号）
-  REQ.forEach(function (r, i) {
-    if (ws.wires.indexOf(i) >= 0) return;
-    lp(g, r.pts, '#94a3b8', 2.2, .62, [7, 7]);
-    const mid = r.pts[Math.floor(r.pts.length / 2)];
-    g.beginPath(); g.arc(mid[0], mid[1], 10, 0, Math.PI * 2);
-    g.fillStyle = 'rgba(255,255,255,.95)'; g.fill();
-    g.strokeStyle = '#94a3b8'; g.lineWidth = 1.2; g.stroke();
-    tt(g, String(i + 1), mid[0], mid[1], { size: 10, weight: 900, color: '#475569' });
-  });
+  // 未接导线不画路径、不标序号，避免提前透露接线答案
   // 已接好的导线
   ws.wires.forEach(function (i) {
     const r = REQ[i];
@@ -3168,14 +3169,14 @@ function renderWire() {
     if (id) {
       drawPart(g, id, s.x, s.y, s.w, s.h, ws.powered);
     } else {
+      // 空槽只画虚线框：不显示器材名称、“拖到这里”等任何答案提示
       rr2(g, s.x, s.y, s.w, s.h, 9);
       g.fillStyle = 'rgba(148,163,184,.09)'; g.fill();
       g.setLineDash([7, 6]); g.strokeStyle = 'rgba(100,116,139,.7)'; g.lineWidth = 1.6;
       g.stroke(); g.setLineDash([]);
-      tt(g, '拖到这里', s.x + s.w / 2, s.y + s.h / 2 - 8, { size: 11, weight: 800, color: '#94a3b8' });
     }
-    if (ws.showTargets) {
-      tt(g, s.name, s.x + s.w / 2, s.y - 12, { size: 10.5, weight: 800, color: id ? '#0f766e' : '#475569' });
+    if (id && ws.showTargets) {
+      tt(g, s.name, s.x + s.w / 2, s.y - 12, { size: 10.5, weight: 800, color: '#0f766e' });
     }
   });
 
@@ -3262,7 +3263,7 @@ function wireUI() {
     const done = Object.keys(ws.placed).some(function (k) { return ws.placed[k] === p.id; });
     return '<li class="' + (done ? 'on' : '') + '"><span>' + p.name + '</span><b>' + (done ? '已就位' : '待放置') + '</b></li>';
   }).join('');
-  document.getElementById('wHint').textContent = wireHintText();
+  document.getElementById('wHint').textContent = '提示';
 }
 
 function wireHintText() {
@@ -3298,13 +3299,14 @@ function checkWire() {
 }
 
 function wireReset() {
-  ws.placed = {}; ws.wires = []; ws.badWires = [];
+  const preset = presetWireState();
+  ws.placed = preset.placed; ws.wires = preset.wires; ws.badWires = [];
   ws.drag = null; ws.wireFrom = null; ws.powered = false;
   ws.errCount = 0; ws.demo = false; ws.energy = 6539.8;
   shuffleOrder();
   const v = document.getElementById('wireVerdict');
-  v.className = 'verdict'; v.textContent = '已清空：元件重新打乱，从第一步开始。';
-  wFlash('装配台已复位，元件顺序重新打乱', false);
+  v.className = 'verdict'; v.textContent = '已恢复预设：干路与两个分路开关已接好，请完成其余元件与接线。';
+  wFlash('已恢复预装器材和干路火线、零线', false);
   wireUI();
 }
 
@@ -3328,7 +3330,7 @@ function bindWireEvents() {
     if (port) { ws.wireFrom = port.id; return; }
     // 已放置元件 → 可以再拖走（内缩 16px，避开边缘的接线柱）
     const s0 = slotAt(p.x, p.y, -16);
-    if (s0 && ws.placed[s0.id]) {
+    if (s0 && ws.placed[s0.id] && !PRESET_SLOTS[s0.id]) {
       ws.drag = { partId: ws.placed[s0.id], fromSlot: s0.id };
       delete ws.placed[s0.id];
       wireUI();
