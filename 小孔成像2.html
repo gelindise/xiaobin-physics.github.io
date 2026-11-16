@@ -568,9 +568,8 @@
             <div class="lab3d-metric"><span>放大倍数  v / u</span><strong id="lab3d-mag">1.67 倍</strong></div>
             <div class="lab3d-metric"><span>理论像高  h′</span><strong id="lab3d-image-height">10.0 cm</strong></div>
             <div class="lab3d-metric"><span>成像性质</span><strong>倒立 · 实像</strong></div>
-            <div class="lab3d-metric"><span>光屏亮度 / 清晰度</span><strong id="lab3d-quality">较亮 · 清晰</strong></div>
-          </div>
-          <p class="lab3d-note"><b>观察提示：</b>物体上端的光线穿过小孔后到达光屏下方，下端则到达上方；<b>拖动紫色发光点 P</b>，可以看到像点 P′ 在光屏上同步反向移动——物点越靠上，像点越靠下，说明像是逐点一一对应过去的。改变孔径会影响亮度与清晰度，<b>不会改变像的倒立方向</b>。孔径在模型中作示意放大。</p>
+            <div class="lab3d-metric"><span>光屏亮度 / 清晰度</span><strong id="lab3d-quality">较亮 · 清晰</strong></div>          </div>
+          <p class="lab3d-note"><b>观察提示：</b>物体上端的光线穿过小孔后到达光屏下方，下端则到达上方；<b>拖动紫色发光点 P</b>，可以看到像点 P′ 在光屏上同步反向移动——物点越靠上，像点越靠下，说明像是逐点一一对应过去的。改变孔径会影响亮度与清晰度，<b>不会改变像的倒立方向</b>。孔径在模型中作示意放大。<br><b>把光屏往后挪（像距 v 变大）</b>：像会跟着变大，但<b>同时变暗、变糊</b>，这不是错觉。像的面积涨 (v₂/v₁)² 倍，同一份光被摊开到这么大面积上，屏上照度就只剩 (v₁/v₂)²（<b>E ∝ 1/v²</b>）；而一个物点在屏上不是点、是一个直径 <b>δ = d(1 + v/u)</b> 的光斑，v 一变它也跟着变宽，边缘的过渡带自然更宽。所以「像距越大 → 像越大」是有代价的：<b>更大、更暗、也更不清楚</b>。这也正是真实小孔成像要在暗室里做、光屏离得越远越难看清的原因。想把像看回来：把<b>孔径调小</b>会让它更清晰、但更暗；把物距调小相当于「用近处更亮的光」补回来。</p>
         </div>
         <aside class="lab3d-sidebar">
           <h3>说明</h3>
@@ -744,6 +743,11 @@
       pf: .62, time: 0, dirty: true, previewDirty: true, visible: true, lastStat: null
     };
     const U = .42, V = .42, FOCAL = 68, PI2 = Math.PI * 2;
+    /* 半影宽度的换算标尺（场景单位）：贴图上「1 个场景单位 = texSize / PEN_SCALE 像素」。
+     * 为什么不直接用光屏自己的半径 2R 当标尺？因为 R = 像高一半 + 余量，是跟着像一起涨的，
+     * 用它归一的话「像距拉远 → 半影变宽」会被「屏也变大」精确抵消，v 拖到底也看不出变糊。
+     * 真实实验里盯着看的是一块固定大小的屏，半影宽了就是糊了 —— 所以取固定参考尺度。*/
+    const PEN_SCALE = 5.5;
     const WARM = '#ffc06a', COOL = '#7fd8f5', MARK = '#c084fc';
     const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
     const frac = n => n - Math.floor(n);
@@ -1199,25 +1203,47 @@
       tx.setTransform(1, 0, 0, 1, 0, 0);
       tx.clearRect(0, 0, texSize, texSize);
       const dCm = q.d / 10;                                        // 孔径 mm → cm
-      const blurFrac = clamp(dCm * (q.u + q.v) / (q.h * q.v), 0, .95);
-      const bright = Math.pow(dCm, 2) / Math.pow(q.h * q.v / q.u, 2) / .000225;
-      // 小孔下像会变暗（物理上确实如此），但下限别压太低，否则对比度不够、看着就"不清晰"。
-      const alpha = clamp(.62 + .38 * Math.pow(bright / (1 + bright), .5), .62, 1);
-      const hPx = q.ih / q.R * texSize;
-      // blurFrac 是半影直径与像高之比，而 canvas 的 blur(N) 里 N 是高斯 σ。
-      // 直接用 blurFrac·hPx 会把模糊放大到约 3 倍，小孔下也糊；除以 3 才是半影的实际宽度。
-      // 半影小于 1.2 个贴图像素时说明已经低于可分辨极限，直接按硬边处理。
-      const blurPx = blurFrac * hPx / 3;
-      const softPx = blurPx > 1.2 ? blurPx : 0;
+      const m = q.v / q.u;                                         // 放大率 v/u
+      const hPx = q.ih / q.R * texSize;                            // 像高（贴图像素）
+      /* ── 亮度 ───────────────────────────────────────────────────────────
+       * 屏上的照度 E ∝ 孔面积 / v² ∝ (d/v)²。
+       * 光屏往后挪一倍，像的面积涨 4 倍，同一份光被摊开到 4 倍面积上 —— 照度只剩 1/4。
+       * 这就是「增大像距，像明显变暗」的物理来源，跟孔多大无关，是几何决定的。
+       * 渲染时用 (v_min/v)^0.8 而不是 1/v²：量程内真实照度差 10.6 倍（v: 8→26），
+       * 暗室里眼睛会自动适应，实际感受到的差别没有十倍那么夸张，压成 3 倍更接近人眼。*/
+      const lum = clamp(Math.pow(+inputs.v.min / q.v, .8), .2, 1);
+      /* ── 清晰度 ─────────────────────────────────────────────────────────
+       * 屏上一个物点不是一个点，而是一个光斑（半影），直径 δ = d·(1 + v/u)。
+       * 孔越大、光屏越远，δ 越大 —— 边缘的过渡带就越宽，看着越不干脆。
+       * 注意 δ 是【绝对】尺寸，所以「像距越大 → 越不清晰」成立。*/
+      const pen = dCm * (1 + m);                                   // 半影直径 cm
+      // 半影（cm）→ 贴图像素。这里【故意】不按当前光屏半径归一：
+      // 屏半径是跟着像一起涨的（R = 像高一半 + 余量），按它归一的话，
+      // 「像距拉远 → 半影变宽」正好被「屏也变大」抵消掉，滑块拖到底也看不出糊。
+      // 真实实验里眼睛盯着的是一块固定大小的屏，半影宽了就是糊了，所以标尺取固定参考
+      // （PEN_SCALE 相当于一块比最远那档光屏还略大的参考屏）。越界的被下面 clamp 收住。
+      const penTex = (pen * q.hw / q.h) * texSize / PEN_SCALE;
+      // 暗下去以后边缘还要更晕：磨砂光屏内部的散射光会吃掉低对比度的轮廓，
+      // 人眼在暗处分辨细节的能力也差得多 —— 这是「一拉远就发灰、像蒙了层雾」的另一半原因。
+      const alpha = clamp(lum, .22, 1);
+      // canvas 的 blur(N) 里 N 是高斯 σ，半影宽度 ≈ 3σ，所以除以 3 才是真正的过渡带宽度。
+      // 半影小于 1.2 个贴图像素时已经低于可分辨极限，直接按硬边处理，省一次滤波。
+      const blurPx = penTex / 3 * (1 + .30 * (1 - lum));
+      const softPx = blurPx > 1.2 ? Math.min(blurPx, texSize / 6) : 0;
+      /* 暗下来的像不只是「透明度变低」——那只会看着像蒙了层灰。真实的烛光像一弱，
+       * 颜色就往暗金里走（所以这里加一点 sepia）。配合 alpha 的衰减，看着才像
+       * 「光弱了」，而不是「图上盖了块半透明灰布」。*/
+      const warm = (0.30 * (1 - lum)).toFixed(2);
+      const filt = (softPx > 0 ? 'blur(' + softPx.toFixed(2) + 'px) ' : '') + 'sepia(' + warm + ')';
       tx.save();
       tx.translate(texSize / 2, texSize / 2);
       tx.rotate(Math.PI);
       tx.globalAlpha = alpha;
-      tx.filter = softPx > 0 ? 'blur(' + softPx.toFixed(2) + 'px)' : 'none';
+      tx.filter = filt;
       motif(tx, q.object, hPx);
       tx.restore();
       state.previewDirty = true;
-      return { blurFrac: blurFrac, alpha: alpha, bright: bright };
+      return { lum: lum, pen: pen, alpha: alpha, blurPx: blurPx };
     }
     // 预览面板的合成：底色 + 倒像 + 边框 + 像点 P′ 标记。
     // 必须整块重画。之前只在重做贴图时才清屏，而拖动光点走的是"不重做贴图"的
@@ -1294,9 +1320,14 @@
       out.mag.textContent = (q.v / q.u).toFixed(2) + ' 倍';
       out.ih.textContent = (q.h * q.v / q.u).toFixed(1) + ' cm';
       if (stat) {
-        const light = stat.bright < .4 ? '偏暗' : stat.bright < 1.2 ? '较亮' : '明亮';
-        const sharp = stat.blurFrac < .035 ? '清晰' : stat.blurFrac < .085 ? '较清晰' : stat.blurFrac < .15 ? '略模糊' : '模糊';
-        out.quality.textContent = light + ' · ' + sharp;
+        // 亮度：直接读渲染真正用的那个 lum（贴图 alpha 由它算出来），读数与画面永远一致。
+        const light = stat.lum >= .75 ? '明亮' : stat.lum >= .50 ? '较亮' : stat.lum >= .32 ? '偏暗' : '很暗';
+        // 清晰度：按屏上半影的【绝对】宽度分档（mm）。像距一拉远，δ = d(1+v/u) 就变宽，
+        // 所以这个档位会随 v 自然地往下走 —— 这正是「像距越大越不清晰」的量化。
+        const penMm = stat.pen * 10;
+        const sharp = penMm < 2 ? '清晰' : penMm < 3.5 ? '较清晰' : penMm < 5.5 ? '略模糊' : '模糊';
+        out.quality.textContent = Math.round(stat.lum * 100) + '% · ' + sharp;
+        out.quality.title = light + ' · ' + sharp + '　半影 δ ≈ ' + penMm.toFixed(1) + ' mm（孔越大、像距越大越宽）';
         state.lastStat = stat;
       }
       out.caption.textContent = NAMES[q.object] + ' · 上下左右均颠倒';
