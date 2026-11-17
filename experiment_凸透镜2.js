@@ -1,7 +1,11 @@
 import * as THREE from './assets/optics-three.min.js';
 
 // The apparatus is assembled from dimensioned 3D parts, rather than drawn as a 2D diagram.
-// World coordinates are centimetres. The optical axis is (x, 12, 0).
+// World coordinates are centimetres. The optical axis is (x, AXIS, 0) when the three centres
+// are level; each carriage can also slide up and down its own post, so the three centres are
+// allowed to part company. Everything optical is therefore written against the *lens centre*
+// (lensCy) rather than the constant 12: a thin lens bends light about its own centre, so a
+// raised lens simply carries the whole image up with it.
 (() => {
   'use strict';
   const $ = id => document.getElementById(id);
@@ -17,9 +21,14 @@ import * as THREE from './assets/optics-three.min.js';
   const MIN_GAP = 6;                  // slides are 6.7 cm long and cannot pass through
   const AUX_GAP = 6;                  // 附加镜固定在主凸透镜前 6 cm，随主镜一起移动
   const LENS_R = 5.65;                // 主镜通光半径，同时用于光路口径和曲面尺寸
+  const AXIS = 12;                    // 三心同高时焰心 / 光心 / 屏心的基准高度
+  const LIFT_MAX = 4;                 // 每件器材相对基准最多升高 4 cm（立柱的行程）
   const state = {
     f: 10, objP: 35, lensP: 65, scrP: 80,
     extra: 'none', extraF: 12,
+    // 三件器材各自沿立柱升降的高度（cm，0 = 三心同高）。分开存而不是存一个绝对值，
+    // 是因为「三心差多少」才是要观察的量：像的偏移完全由这三个数决定。
+    liftCandle: 0, liftLens: 0, liftScreen: 0,
     // 镜前遮挡板挡住的是【镜片的一部分面积】（0–90%），不是像的一部分：
     // 每个像点都靠整个镜片收集光线，所以像始终完整，只是整体按通过光量变暗。
     occlude: 0,
@@ -29,12 +38,20 @@ import * as THREE from './assets/optics-three.min.js';
     // 和实物、量高量距辅助线同屏；关闭时虚像只按物理规律从光屏一侧透过镜片看到。
     compare: false, obsYaw: 0, obsPitch: 0,
     rays: false, virtual: true, labels: false, rayMode: 'all', yaw: -.42, pitch: .21, zoom: 1.06,
+    flicker: true,
     step: 0, records: {},
     // Written by updateGhost() each frame: whether the image is currently in the eye's view.
     imageVisible: false, imageOnObjectSide: false, virtualCompare: false,
     get u() { return this.lensP - this.objP; },
     get sd() { return this.scrP - this.lensP; }
   };
+  // 三心高度。透镜光心是光学计算的基准：光线绕光心偏折，所以物点、像点、光路口径
+  // 全部相对它来量。基准高度 AXIS 只用于"器材默认坐在哪儿"和读数显示。
+  const lensCy = () => AXIS + state.liftLens;
+  const objCy  = () => AXIS + state.liftCandle;   // 光源组（含发光点标记）的实际高度基准
+  const scrCy  = () => AXIS + state.liftScreen;   // 光屏中心的实际高度
+  const liftOf = kind => kind === 'candle' ? state.liftCandle : kind === 'lens' ? state.liftLens : state.liftScreen;
+
   // While a slide is being dragged the framing is frozen: re-framing mid-gesture would move the
   // camera under the pointer, which changes what world x the pointer maps to and makes the slide
   // chase itself. The shot is recomputed once the finger comes up instead.
@@ -72,7 +89,10 @@ import * as THREE from './assets/optics-three.min.js';
     }
     return (lo+hi)/2;
   }
-  const occluderCutY = () => 12 + occluderCutOffset();
+  // 下沿的【局部】高度：以透镜组自身坐标为准（透镜组局部 12 就是光心），卡片挂在组里，
+  // 所以缩放要用这个值；而判断光线是否被挡住要用世界高度 occluderCutY()。
+  const occluderCutLocal = () => AXIS + occluderCutOffset();
+  const occluderCutY = () => lensCy() + occluderCutOffset();
   // 通过光量 = 未被挡住的镜片面积比例。像的亮度严格按它缩放。
   const lightThrough = () => 1 - clamp(state.occlude, 0, 90) / 100;
   const V = (x, y, z = 0) => new THREE.Vector3(x, y, z);
@@ -105,8 +125,16 @@ import * as THREE from './assets/optics-three.min.js';
     const real=Number.isFinite(v)&&v>0;
     const reachable=real&&v>=MIN_GAP-.45&&state.lensP+v<=RAIL.screen[1]+.45;
     const crisp = reachable && !state.screenRemoved && Math.abs(v-state.sd) <= .45;
+    // 像的落点：拿【发光点】的像来量 —— 这是学生眼睛真正盯着的那个点。三心同高、发光点又在
+    // 光轴上时正好落在屏心（读数 0）；任一件器材一升降，这个数就变，屏上的像跟着偏。
+    // （膜纹理的贴合另有一套算式 artOffY/scrOffY，按 art 画布中心算，两者不混用。）
+    const Yc=lensCy();
+    const refY=(state.source==='f'?AXIS:state.sourceY)+state.liftCandle;
+    const imgY=Number.isFinite(o.m)?Yc+(refY-Yc)*o.m:NaN;
     // A real image can only be received while the screen is on the bench.
     return { ...o, kind, baseKind:kind, real, crisp, inverted:Number.isFinite(o.m)&&o.m<0,
+      imgY, offY:Number.isFinite(imgY)?imgY-scrCy():NaN,
+      offScreen:Number.isFinite(imgY)&&Math.abs(imgY-scrCy())>9.4,
       needsScreenOff: !real };
   }
   // 接第 4 节「眼睛和眼镜」：镜片的度数 = 100 / f(m)。本页焦距用 cm，所以 度 = 10000 / f。
@@ -143,6 +171,9 @@ import * as THREE from './assets/optics-three.min.js';
   renderer.toneMappingExposure = 1.06;
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  // 火焰跳动让画面每帧重画，但火焰不投影 —— 阴影图改成"需要时才重算"（见 render()），
+  // 否则每帧都要重画一张 2048² 的阴影图。
+  renderer.shadowMap.autoUpdate = false;
   const scene = new THREE.Scene();
   scene.background = new THREE.Color('#454d53');
   scene.fog = new THREE.Fog('#454d53', 110, 300);
@@ -319,6 +350,15 @@ import * as THREE from './assets/optics-three.min.js';
   maker.receiveShadow=false;
 
   const sliders = {};
+  // 每件器材都拆成两层：滑座（卡在导轨上，只沿导轨走）+ 器材本体 rig（能沿立柱升降）。
+  // 立柱不是死的：它从滑座里一直伸到器材底部，器材升多高，立柱就跟着长多高 —— 真器材就是
+  // 把器材架在立柱上、立柱在滑座的夹紧孔里抽动，所以升降时看到的必须是这种伸缩，而不是
+  // 器材悬空或立柱穿出器材。
+  const POST = {
+    candle:{ bottom:3.18, seat:6.05, sx:0 },
+    lens:  { bottom:3.20, seat:6.00, sx:0 },
+    screen:{ bottom:2.03, seat:2.30, sx:.70 }
+  };
   function makeSlider(kind) {
     const group = new THREE.Group();scene.add(group);
     const runner = new THREE.Group(); group.add(runner);
@@ -329,8 +369,9 @@ import * as THREE from './assets/optics-three.min.js';
     // panel; otherwise the stem would poke through the diffusing face.
     // 光屏是一片半透明膜，背面也要能看穿：它的立柱与托盘必须整个收进滑座里，否则会有一根
     // 竖杆正好立在膜的背面中央，从背面看像时被它挡掉一条。
-    const sx=kind==='screen'?.70:0, screenKind=kind==='screen';
-    const stem = cylinder(group,.38,screenKind?.85:kind==='candle'?3.65:4.1,[sx,screenKind?2.45:kind==='candle'?5:5.25,0],brightAlu);
+    const p=POST[kind], sx=p.sx, screenKind=kind==='screen';
+    // 立柱：几何高度固定为 1，长度靠 scale.y 拉，顶端始终顶在器材底部（见 update）
+    const stem = mesh(new THREE.CylinderGeometry(.38,.38,1,20),brightAlu,group,sx,p.seat,0);
     const col = cylinder(group,.62,.40,[sx,screenKind?2.45:3.31,0],metalDark);
     const lock = cylinder(group,.77,.48,[1.55,2.43,5.0],bronze,24);
     lock.rotation.x=Math.PI/2;
@@ -349,11 +390,16 @@ import * as THREE from './assets/optics-three.min.js';
       group,0,0,RULER_FACE_Z+.08,false);
     pointerTip.name=`ruler-index-${kind}`;
     pointerTip.renderOrder=11;
+    // 升降的器材本体都挂在这一个组里：整体改 rig.position.y 就等于把器材沿立柱抬高。
+    const rig = new THREE.Group(); group.add(rig);
+    group.userData.rig=rig;
+    group.userData.post={ stem, bottom:p.bottom, seat:p.seat, sx };
     sliders[kind]=group;return group;
   }
   const candle = makeSlider('candle');
   const lens = makeSlider('lens');
   const screen = makeSlider('screen');
+  const candleRig = candle.userData.rig, lensRig = lens.userData.rig, screenRig = screen.userData.rig;
 
   // Cream wax cylinder with irregular rim, melted-wax drips, dark wick and a layered warm flame.
   const waxTexCanvas = document.createElement('canvas'); waxTexCanvas.width=256;waxTexCanvas.height=256;
@@ -367,7 +413,7 @@ import * as THREE from './assets/optics-three.min.js';
   }
   const waxMap=new THREE.CanvasTexture(waxTexCanvas);waxMap.colorSpace=THREE.SRGBColorSpace;
   const wax=material('#f6f0df',.01,.72,{map:waxMap});
-  const candleBody = new THREE.Group(); candle.add(candleBody);
+  const candleBody = new THREE.Group(); candleRig.add(candleBody);
   cylinder(candleBody,1.35,.42,[0,6.2,0],brass,40);
   cylinder(candleBody,.93,5.35,[0,9.09,0],wax,40);
   cylinder(candleBody,.9,.16,[0,11.84,0],cream,40);
@@ -386,11 +432,18 @@ import * as THREE from './assets/optics-three.min.js';
   flameMid.scale.set(.28,.66,.27);
   const flameCore=mesh(new THREE.SphereGeometry(1,16,12),new THREE.MeshBasicMaterial({color:'#fffdf2',depthWrite:false}),candleBody,0,12.78,0,false);
   flameCore.scale.set(.15,.36,.15);
+  // 火焰的原始尺寸与位置。跳动时只在这个基准上做伸缩/摆动，所以关掉跳动就精确回到原样。
+  const flameParts=[flameHalo,flameOuter,flameMid,flameCore].map((m,i)=>({
+    m, bx:m.scale.x, by:m.scale.y, bz:m.scale.z, py:m.position.y, op:m.material.opacity
+  }));
   const dish=cylinder(candleBody,1.52,.16,[0,6.54,0],material('#a79571',.2,.48),40);
+  // 火焰里每一个花瓣（焰形）都要跟着烛芯走：烛芯固定，焰体上下、左右、伸缩都在这里。
+  const FLAME_TIP = 13.06;            // 焰心基准高度（局部坐标），画 2D 像时也用这个基准
+  let flame={ s:1, sx:1, sz:1, dy:0, dz:0, tilt:0, bright:1 };
 
   // F-shaped light source: an opaque housing with a bright F aperture, carried by the same
   // slide as the candle so both objects share one optical axis and one object plane.
-  const fSource=new THREE.Group();candle.add(fSource);fSource.visible=false;
+  const fSource=new THREE.Group();candleRig.add(fSource);fSource.visible=false;
   // The lit face has to point at the lens, so the matte housing sits BEHIND the aperture
   // (x < 0, away from the lens) and the glowing strokes sit in front of it on the lens side,
   // centred on the object plane x = 0. A shiny housing would throw a specular blob straight
@@ -403,21 +456,21 @@ import * as THREE from './assets/optics-three.min.js';
   for(const y of [5.6,18.4])box(fSource,[1.1,.7,1.1],[-.78,y,0],brass);
   const fGlow=new THREE.PointLight('#ffe2a0',15,28,1.6);fGlow.position.set(1.3,12,0);fSource.add(fGlow);
 
-  const sources = new THREE.Group();candle.add(sources);
+  const sources = new THREE.Group();candleRig.add(sources);
   const ghostLabels = new THREE.Group();scene.add(ghostLabels);
 
   // Ring, barrel, edge fasteners and two slightly convex glass faces.
   const ringMat=material('#535d5b',.46,.30);
   const silver=material('#cbd1d0',.65,.20);
-  const ring=mesh(new THREE.TorusGeometry(6.02,.46,14,84),ringMat,lens,0,12,0);
+  const ring=mesh(new THREE.TorusGeometry(6.02,.46,14,84),ringMat,lensRig,0,12,0);
   ring.rotation.y=Math.PI/2;
   for(const x of [-.52,.52]) {
-    const trim=mesh(new THREE.TorusGeometry(5.96,.085,8,84),silver,lens,x,12,0);
+    const trim=mesh(new THREE.TorusGeometry(5.96,.085,8,84),silver,lensRig,x,12,0);
     trim.rotation.y=Math.PI/2;
   }
   for(let a=0;a<Math.PI*2;a+=Math.PI/2){
     const y=12+6.03*Math.cos(a),z=6.03*Math.sin(a);
-    const screw=mesh(new THREE.CylinderGeometry(.18,.18,.21,12),brass,lens,-.56,y,z);
+    const screw=mesh(new THREE.CylinderGeometry(.18,.18,.21,12),brass,lensRig,-.56,y,z);
     screw.rotation.z=Math.PI/2;
   }
   const glassMat=new THREE.MeshPhysicalMaterial({
@@ -455,28 +508,28 @@ import * as THREE from './assets/optics-three.min.js';
     if(mainLensShapeF===state.f)return;
     mainLensShapeF=state.f;
     for(const cap of mainLensCaps){
-      lens.remove(cap);cap.geometry.dispose();
+      lensRig.remove(cap);cap.geometry.dispose();
     }
     mainLensCaps.length=0;
     const sag=lensSagFor(state.f,LENS_R);
-    for(const sign of [-1,1])mainLensCaps.push(mesh(lensCapGeometry(sign,sag),glassMat,lens,0,0,0,false));
+    for(const sign of [-1,1])mainLensCaps.push(mesh(lensCapGeometry(sign,sag),glassMat,lensRig,0,0,0,false));
   }
   refreshMainLensShape();
   // 镜前遮挡板：一块从上方压下来的不透明板，挡住镜片的一部分通光面积。它挂在透镜滑座上，
   // 所以移动透镜时一起走；板的下沿由「被挡面积」反解出来（见 occluderCutOffset）。
   // 板面离开主镜前表面一小段距离，短焦距时镜片中央凸出 1.7 cm 也不会穿模。
   const CARD_GAP=2.05, CARD_TOP=12+LENS_R+4.8, CARD_HALF_W=LENS_R+1.25;
-  const occluder=new THREE.Group();lens.add(occluder);occluder.visible=false;
+  const occluder=new THREE.Group();lensRig.add(occluder);occluder.visible=false;
   const cardGeo=new THREE.BoxGeometry(.16,1,1);
   cardGeo.translate(0,-.5,0);                 // 几何体顶点在 0，向下缩放即从顶边往下长
   const occluderCard=mesh(cardGeo,material('#2d3439',.10,.80),occluder,-CARD_GAP,CARD_TOP,0);
   occluderCard.scale.z=CARD_HALF_W*2;
   box(occluder,[.55,.42,1.5],[-CARD_GAP,CARD_TOP+.21,0],brass);
   // Faint polished-ring glints rotate with the object rather than being pinned to the screen.
-  const highlight = mesh(new THREE.TorusGeometry(6.05,.055,8,24,Math.PI*.58),material('#f4f7ee',.1,.12,{transparent:true,opacity:.85}),lens,-.12,12,0,false);
+  const highlight = mesh(new THREE.TorusGeometry(6.05,.055,8,24,Math.PI*.58),material('#f4f7ee',.1,.12,{transparent:true,opacity:.85}),lensRig,-.12,12,0,false);
   highlight.rotation.y=Math.PI/2;
   highlight.rotation.x=.48;
-  const lensLabel=badge(lens,'凸透镜 · f 可调',[0,20,0],'#485c63',17);
+  const lensLabel=badge(lensRig,'凸透镜 · f 可调',[0,20,0],'#485c63',17);
   let lensLabelKey='';
   function refreshLensLabel(){
     if(lensLabelKey===state.f)return;
@@ -489,7 +542,7 @@ import * as THREE from './assets/optics-three.min.js';
 
   // 附加镜片与主镜共用滑座，固定在主镜物方 6 cm。凸镜中间厚、凹镜中间薄，
   // 两种轮廓都由旋转抛物面生成，不用同一个透明圆片冒充两种镜片。
-  const extraLens=new THREE.Group();lens.add(extraLens);extraLens.position.set(-AUX_GAP,0,0);
+  const extraLens=new THREE.Group();lensRig.add(extraLens);extraLens.position.set(-AUX_GAP,0,0);
   box(extraLens,[AUX_GAP,.32,.48],[AUX_GAP/2,3.25,0],brightAlu);
   cylinder(extraLens,.28,4.2,[0,5.0,0],brightAlu);
   box(extraLens,[2.4,.38,2.2],[0,2.95,0],chamfer);
@@ -545,18 +598,18 @@ import * as THREE from './assets/optics-three.min.js';
   screenTexture.colorSpace=THREE.SRGBColorSpace;
   screenTexture.anisotropy=Math.min(16,renderer.capabilities.getMaxAnisotropy());
   const screenMat=new THREE.MeshBasicMaterial({map:screenTexture,side:THREE.DoubleSide,transparent:true,toneMapped:false,depthWrite:false});
-  const screenFace=mesh(new THREE.PlaneGeometry(16.8,18.8),screenMat,screen,0,12,0,false);
+  const screenFace=mesh(new THREE.PlaneGeometry(16.8,18.8),screenMat,screenRig,0,12,0,false);
   screenFace.rotation.y=-Math.PI/2;
   screenFace.receiveShadow=false;
   screenFace.renderOrder=4;
   // 膜框：四条边把膜严丝合缝地框住（内空正好 16.8 x 18.8），中间完全镂空 —— 背面才没有东西挡着。
-  for(const z of [-8.61,8.61])box(screen,[.82,20.5,.42],[.2,12,z],metalDark);
-  for(const y of [2.39,21.61])box(screen,[.82,.42,17.64],[.2,y,0],metalDark);
+  for(const z of [-8.61,8.61])box(screenRig,[.82,20.5,.42],[.2,12,z],metalDark);
+  for(const y of [2.39,21.61])box(screenRig,[.82,.42,17.64],[.2,y,0],metalDark);
   for(const z of [-8.61,8.61])for(const y of [2.39,21.61]){
-    const bolt=mesh(new THREE.CylinderGeometry(.12,.12,.18,12),brass,screen,-.45,y,z);
+    const bolt=mesh(new THREE.CylinderGeometry(.12,.12,.18,12),brass,screenRig,-.45,y,z);
     bolt.rotation.z=Math.PI/2;
   }
-  const screenLabel=badge(screen,'半透明膜光屏',[-.2,25,0],'#4c6070',15);
+  const screenLabel=badge(screenRig,'半透明膜光屏',[-.2,25,0],'#4c6070',15);
   // Taking the screen off the bench has to leave the stage completely clear: no leftover
   // wireframe, no translucent panel, nothing between the eye and the image. The only thing kept
   // is a fully invisible pick plane in the screen's own place, so clicking that empty spot still
@@ -638,11 +691,13 @@ import * as THREE from './assets/optics-three.min.js';
       sourceMarker(state.sourceY,'#ffd79a',0);
       if(state.second)sourceMarker(state.secondY,'#b4ddf8',1);
     }
-    warm.position.set(wx(state.objP),isCandle?state.sourceY:12,2.4);
-    warm.intensity=isCandle?6:5;
+    warm.position.set(wx(state.objP),isCandle?state.sourceY+state.liftCandle:AXIS+state.liftCandle,2.4);
+    warm.userData.base=isCandle?6:5;
+    warm.intensity=warm.userData.base;
   }
 
-  function imageY(sourceY,v){const m=optics().m;return 12+(sourceY-12)*m;}
+  // 像点高度：薄透镜把物点映射到 Yc+(y0−Yc)·m，Yc 是此刻的透镜光心高度。
+  function imageY(sourceY,v){const m=optics().m,Yc=lensCy();return Yc+(sourceY-Yc)*m;}
   const rays=new THREE.Group();scene.add(rays);
   // 玻璃镜片的半口径（glassCap 里 R = 5.65）。特殊光线若落在它外面就不画，
   // 否则会画出一条从镜片旁边飘过去的「光线」，看着像穿模。
@@ -651,11 +706,11 @@ import * as THREE from './assets/optics-three.min.js';
   // 镜片表面与 lensCapGeometry 用同一个公式：凸面 depth = sag(1−q)，凹面 depth = sag·q，
   // q=(r/口径)²。光线现在真的从这一层曲面进入、在玻璃里走一段、再从另一面出去，
   // 而不是所有偏折都挤在 x=LX 一张平面上。
-  function lensSurfaceConfig(LX,f,aperture,curvatureScale,profile){
-    return {LX,f,aperture,profile,sag:lensSagFor(f,aperture,curvatureScale)};
+  function lensSurfaceConfig(LX,f,aperture,curvatureScale,profile,cy=lensCy()){
+    return {LX,f,aperture,profile,cy,sag:lensSagFor(f,aperture,curvatureScale)};
   }
   function surfaceX(cfg,sign,y,z){
-    const r=Math.hypot(y-12,z),q=Math.min(1,(r/cfg.aperture)**2);
+    const r=Math.hypot(y-cfg.cy,z),q=Math.min(1,(r/cfg.aperture)**2);
     const depth=cfg.profile==='concave'?cfg.sag*q:cfg.sag*(1-q);
     return cfg.LX+sign*(GLASS_HALF+depth);
   }
@@ -674,7 +729,7 @@ import * as THREE from './assets/optics-three.min.js';
       if(q.f<=0)lo=m;else hi=m;
     }
     const p=at((lo+hi)/2);
-    if(Math.hypot(p.y-12,p.z)>cfg.aperture+.03)return null;
+    if(Math.hypot(p.y-cfg.cy,p.z)>cfg.aperture+.03)return null;
     return V(p.x,p.y,p.z);
   }
   const glassTints=new Map();
@@ -733,12 +788,14 @@ import * as THREE from './assets/optics-three.min.js';
     return V(start.x+den*t,y,z);
   }
   function traceRay(src,LX,stopX,shiftY,shiftZ,color,opacity){
-    const u=state.u,f=state.f;
+    const u=state.u,f=state.f,Yc=lensCy();
     const y0=src[0],z0=src[1];
     if(!hasExtra()){
-      const YL=12+shiftY,ZL=shiftZ;
-      if(Math.hypot(YL-12,ZL)>LENS_AP)return null;
-      const sy=(YL-y0)/u-(YL-12)/f, sz=(ZL-z0)/u-ZL/f;
+      const YL=Yc+shiftY,ZL=shiftZ;
+      if(Math.hypot(YL-Yc,ZL)>LENS_AP)return null;
+      // 薄透镜的作用量只与"离光心多高"和入射斜率有关：出射斜率 = 入射斜率 − h/f。
+      // 所以把 12 换成 Yc 之后，升降透镜 = 把整幅像搬高，像距一点不变。
+      const sy=(YL-y0)/u-(YL-Yc)/f, sz=(ZL-z0)/u-ZL/f;
       const start=V(LX-u,y0,z0),center=V(LX,YL,ZL);
       // 被挡住的不是像，而是射向镜片的那束光：光线在板上断掉，不参与成像。
       const stopped=cardStop(start,center);
@@ -750,12 +807,12 @@ import * as THREE from './assets/optics-three.min.js';
         inGlass:!!(path.entry&&path.exit)};
     }
     const d=AUX_GAP,f1=extraFocal(),u1=u-d,AX=LX-d;
-    const Y1=12+shiftY,Z1=shiftZ;
+    const Y1=Yc+shiftY,Z1=shiftZ;
     // 追迹到附加镜口径外的光不参与第一片折射，避免画出从镜架旁边穿过的假光线。
-    if(Math.hypot(Y1-12,Z1)>4.82)return null;
-    const sy1=(Y1-y0)/u1-(Y1-12)/f1,sz1=(Z1-z0)/u1-Z1/f1;
+    if(Math.hypot(Y1-Yc,Z1)>4.82)return null;
+    const sy1=(Y1-y0)/u1-(Y1-Yc)/f1,sz1=(Z1-z0)/u1-Z1/f1;
     const Y2=Y1+sy1*d,Z2=Z1+sz1*d;
-    if(Math.hypot(Y2-12,Z2)>LENS_AP)return null;
+    if(Math.hypot(Y2-Yc,Z2)>LENS_AP)return null;
     const start=V(AX-u1,y0,z0),center1=V(AX,Y1,Z1),ideal=V(LX,Y2,Z2);
     const cfgX=lensSurfaceConfig(AX,state.extraF,4.82,1.34,state.extra);
     const entry1=surfaceHit(cfgX,start,center1,-1);
@@ -771,12 +828,12 @@ import * as THREE from './assets/optics-three.min.js';
     const out1=(entry1&&exit1)?exit1:center1;
     const span=LX-out1.x;
     const Y2a=out1.y+sy1*span,Z2a=out1.z+sz1*span;
-    if(Math.hypot(Y2a-12,Z2a)>LENS_AP)return null;
+    if(Math.hypot(Y2a-Yc,Z2a)>LENS_AP)return null;
     const center2=V(LX,Y2a,Z2a);
     // 遮挡板夹在附加镜与主镜之间：已经过附加镜的光线，在进主镜前同样可能被板挡住。
     const stopped=cardStop(out1,center2);
     if(stopped){rayLine(out1,stopped,color,Math.max(.18,opacity*.5));return null;}
-    const sy=sy1-(Y2a-12)/f, sz=sz1-Z2a/f;
+    const sy=sy1-(Y2a-Yc)/f, sz=sz1-Z2a/f;
     const end=V(stopX,Y2a+sy*(stopX-LX),Z2a+sz*(stopX-LX));
     const cfgM=lensSurfaceConfig(LX,f,LENS_R,1.28,'convex');
     const entry2=surfaceHit(cfgM,out1,center2,-1);
@@ -802,8 +859,8 @@ import * as THREE from './assets/optics-three.min.js';
   //  · 'special' —— 教材的三条特殊光线作图，每条都用薄透镜定义独立验证（含 z 方向，不再
   //                 把物点投影到 z=0）：
   //      ① 平行主轴入射 ⇒ 打在透镜高度 YL = y0、ZL = z0 ⇒ 出射过像方焦点 F′
-  //      ② 过光心入射   ⇒ YL = 12、ZL = 0 ⇒ 不偏折
-  //      ③ 过物方焦点 F ⇒ YL = (f·y0 − 12u)/(f − u)、ZL = f·z0/(f − u) ⇒ 出射平行主轴
+  //      ② 过光心入射   ⇒ YL = Yc、ZL = 0 ⇒ 不偏折（Yc 是此刻的透镜光心高度）
+  //      ③ 过物方焦点 F ⇒ YL = (Yc·u − f·y0)/(u − f)、ZL = f·z0/(u − f) ⇒ 出射平行主轴
   //    u = f 时第 ③ 条的落点发散（分母 → 0），此时不画它。
   function rayShiftsFor(y0,z0=0){
     if(state.rayMode!=='special'){
@@ -817,12 +874,12 @@ import * as THREE from './assets/optics-three.min.js';
         }
       return list;
     }
-    const u=hasExtra()?state.u-AUX_GAP:state.u,f=hasExtra()?extraFocal():state.f;
-    const list=[[y0-12,z0],[0,0]];
+    const u=hasExtra()?state.u-AUX_GAP:state.u,f=hasExtra()?extraFocal():state.f,Yc=lensCy();
+    const list=[[y0-Yc,z0],[0,0]];
     const den=f-u;
     if(Math.abs(den)>1e-6){
-      const YL=(f*y0-12*u)/den,ZL=f*z0/den;
-      if(Math.hypot(YL-12,ZL)<=LENS_AP)list.push([YL-12,ZL]);
+      const YL=(Yc*u-f*y0)/(u-f),ZL=f*z0/den;
+      if(Math.hypot(YL-Yc,ZL)<=LENS_AP)list.push([YL-Yc,ZL]);
     }
     return list;
   }
@@ -841,9 +898,11 @@ import * as THREE from './assets/optics-three.min.js';
     if(!state.rays)return;
     const stopX=state.screenRemoved?LX+88:wx(state.scrP);
     // 特殊光线也在真实三维位置上作图（F 的三个角点 z 各不相同），不投影到 z=0。
+    // 物点高度一律取【实际世界高度】：蜡烛升起 3 cm，火焰就真的在 12+3 处发光。
+    const lift=state.liftCandle;
     const active=state.source==='f'
-      ? F_POINTS.map(p=>({y:p.y,z:p.z,c:'#c98c46'}))
-      : (state.second?[{y:state.sourceY,z:0,c:'#d99a48'},{y:state.secondY,z:0,c:'#4b8fc4'}]:[{y:state.sourceY,z:0,c:'#d99a48'}]);
+      ? F_POINTS.map(p=>({y:p.y+lift,z:p.z,c:'#c98c46'}))
+      : (state.second?[{y:state.sourceY+lift,z:0,c:'#d99a48'},{y:state.secondY+lift,z:0,c:'#4b8fc4'}]:[{y:state.sourceY+lift,z:0,c:'#d99a48'}]);
     for(const src of active){
       for(const [shiftY,shiftZ] of rayShiftsFor(src.y,src.z)){
         const r=traceRay([src.y,src.z],LX,stopX,shiftY,shiftZ,src.c,.85);
@@ -857,7 +916,8 @@ import * as THREE from './assets/optics-three.min.js';
         if(c&&!c.inverted&&seen&&state.virtual)rayLine(r.hit,V(LX+v,r.YL+r.sy*v,r.ZL+r.sz*v),src.c,.6,true);
       }
       const mark=(op)=>{
-        const g=mesh(new THREE.SphereGeometry(.34,16,12),src.c==='#4b8fc4'?blue:gold,ghostLabels,LX+v,12+(src.y-12)*info.m,src.z*info.m,false);
+        const Yc=lensCy();
+        const g=mesh(new THREE.SphereGeometry(.34,16,12),src.c==='#4b8fc4'?blue:gold,ghostLabels,LX+v,Yc+(src.y-Yc)*info.m,src.z*info.m,false);
         g.material=g.material.clone();g.material.transparent=true;g.material.opacity=op;g.material.emissiveIntensity=.9;
       };
       // The virtual image is drawn where the dashed extensions meet; a real image without a
@@ -889,10 +949,11 @@ import * as THREE from './assets/optics-three.min.js';
     if(C.x<=LX+(was?1.2:2.6))return false;
     if(v>0)return true;                      // a real image hangs beyond the lens
     // The sight line has to pass through the lens aperture to reach the virtual image.
+    const Yc=lensCy();
     const t=(LX-C.x)/((LX+v)-C.x);
     if(!(t>0&&t<1))return false;
-    const gy=C.y+t*(12-C.y),gz=C.z+t*(0-C.z);
-    return Math.hypot(gy-12,gz)<=(was?7.6:6.3);
+    const gy=C.y+t*(Yc-C.y),gz=C.z+t*(0-C.z);
+    return Math.hypot(gy-Yc,gz)<=(was?7.6:6.3);
   }
   // Recomputed before the camera is framed, because it depends on where the eye is: orbiting
   // round to the object side has to make the image disappear immediately.
@@ -908,7 +969,9 @@ import * as THREE from './assets/optics-three.min.js';
     ghostObject.visible=seen;
     if(seen){
       const size=clamp(Math.abs(c.m),.2,8.2);
-      ghostObject.position.set(wx(state.lensP)+c.v,12,0);
+      // 像面的中心 = art 画布中心（世界 AXIS 那条线）的像。透镜一升降，整幅像跟着搬。
+      const Yc=lensCy();
+      ghostObject.position.set(wx(state.lensP)+c.v,Yc+(AXIS-Yc)*c.m,0);
       ghostObject.scale.set(c.inverted?-size:size,c.inverted?-size:size,1);
       // 悬在空中的像同样由镜片收集到的光形成：挡住一部分镜片，它只会变暗，不会缺一块。
       ghostObject.material.opacity=(c.inverted?.34:.78)*lightThrough();
@@ -923,7 +986,8 @@ import * as THREE from './assets/optics-three.min.js';
     candleLabel.visible=state.labels&&!hideObject;
     if(objectOutline){
       objectOutline.visible=hideObject;
-      objectOutline.position.set(wx(state.lensP)-state.u,12,0);
+      // 虚线轮廓要罩在实物上：实物整体被抬高了多少，轮廓就跟着高多少。
+      objectOutline.position.set(wx(state.lensP)-state.u,objCy(),0);
       objectOutline.rotation.y=Math.PI/2;
     }
     // 裸眼观察（透过透镜）时连像点的采样标记也不画：学生该看到的是唯一的像，
@@ -941,11 +1005,18 @@ import * as THREE from './assets/optics-three.min.js';
   // 50 texture pixels per model centimetre keeps the screen face and the close-up preview
   // at the same sampling density, so nothing is drawn by upscaling a small bitmap.
   const PX_CM = 50, ART_PX_CM = 24;
+  // 画布高度从 12 cm 加到 22 cm：器材能在立柱上升高 4 cm，蜡烛顶会跑到 20 cm 以上，
+  // 12 cm 的窗口装不下，像就会被切掉一截。宽度仍是 10 cm，光轴（12 cm）仍落在正中，
+  // 所以整幅画布的"中线"就是基准光轴 —— 像的落点全靠这条中线对齐。
+  const ART_HALF_CM = 11;
   const objCanvas = document.createElement('canvas');
-  objCanvas.width = 10 * ART_PX_CM; objCanvas.height = 12 * ART_PX_CM;
+  objCanvas.width = 10 * ART_PX_CM; objCanvas.height = 2 * ART_HALF_CM * ART_PX_CM;
   const objCtx = objCanvas.getContext('2d');
   const artX = z => objCanvas.width / 2 + z * ART_PX_CM;
-  const artY = y => objCanvas.height / 2 + (12 - y) * ART_PX_CM;
+  const artY = y => objCanvas.height / 2 + (AXIS - y) * ART_PX_CM;
+  // 画蜡烛时统一用 oy()：把"器材自己坐标里的高度"换成"抬高之后的实际高度"再做图，
+  // 于是升降蜡烛 = 整支蜡烛在画布上一起往上挪，像自然跟着往上（并被 m 放大反向）。
+  const oy = y => artY(y + state.liftCandle);
   // The art canvas is authored as the object looks from the lens side, where screen-right runs
   // along -z. The candle is symmetric about z = 0 so artX serves it, but the letter F is not:
   // its strokes are mirrored in z here, which is exactly the orientation the ghost plane wants
@@ -953,9 +1024,9 @@ import * as THREE from './assets/optics-three.min.js';
   // canvas x along +z, so they have to undo this mirror — that is what FLIP.front does.
   const artXz = z => objCanvas.width / 2 - z * ART_PX_CM;
   const artStroke = (g, s) => g.fillRect(
-    Math.min(artXz(s.z0), artXz(s.z1)), artY(s.y1),
+    Math.min(artXz(s.z0), artXz(s.z1)), oy(s.y1),
     (s.z1 - s.z0) * ART_PX_CM, (s.y1 - s.y0) * ART_PX_CM);
-  // The ghost plane is a 10 x 12 cm window that carries a copy of the object art, so the
+  // The ghost plane is a 10 x 22 cm window that carries a copy of the object art, so the
   // virtual image (or a real image with no screen to land on) is visible in the 3D scene.
   const ghostCanvas = document.createElement('canvas');
   ghostCanvas.width = objCanvas.width; ghostCanvas.height = objCanvas.height;
@@ -975,6 +1046,7 @@ import * as THREE from './assets/optics-three.min.js';
     shader.uniforms.uMask={value:state.virtualCompare?0:1};
     shader.uniforms.uLensX={value:wx(state.lensP)};
     shader.uniforms.uLensR={value:LENS_R};
+    shader.uniforms.uLensY={value:lensCy()};       // 光心高度可调：光圈裁切随之上下搬
     shader.uniforms.uCam={value:camera.position.clone()};
     shader.vertexShader=shader.vertexShader
       .replace('#include <common>','#include <common>\nvarying vec3 vGhostWorld;')
@@ -983,18 +1055,18 @@ import * as THREE from './assets/optics-three.min.js';
     shader.fragmentShader=shader.fragmentShader
       .replace('#include <common>',`#include <common>
         varying vec3 vGhostWorld;
-        uniform float uMask; uniform float uLensX; uniform float uLensR; uniform vec3 uCam;`)
+        uniform float uMask; uniform float uLensX; uniform float uLensR; uniform float uLensY; uniform vec3 uCam;`)
       .replace('#include <dithering_fragment>',`
         if(uMask>.5){
           vec3 gd=vGhostWorld-uCam;
           float gt=(uLensX-uCam.x)/gd.x;
           vec3 gh=uCam+gd*gt;
-          if(gt<0.0||length(vec2(gh.y-12.0,gh.z))>uLensR)discard;
+          if(gt<0.0||length(vec2(gh.y-uLensY,gh.z))>uLensR)discard;
         }
         #include <dithering_fragment>`);
     ghostMat.userData.shader=shader;
   };
-  const ghostObject = mesh(new THREE.PlaneGeometry(10,12),ghostMat,scene,0,12,0,false);
+  const ghostObject = mesh(new THREE.PlaneGeometry(10,2*ART_HALF_CM),ghostMat,scene,0,AXIS,0,false);
   ghostObject.rotation.y = Math.PI/2;
   ghostObject.renderOrder = 6;
   ghostObject.visible = false;
@@ -1005,10 +1077,10 @@ import * as THREE from './assets/optics-three.min.js';
   const outlineCtx=outlineCanvas.getContext('2d');
   const outlineTex=new THREE.CanvasTexture(outlineCanvas);
   outlineTex.colorSpace=THREE.SRGBColorSpace;
-  let objectOutline=mesh(new THREE.PlaneGeometry(10,12),
+  let objectOutline=mesh(new THREE.PlaneGeometry(10,2*ART_HALF_CM),
     new THREE.MeshBasicMaterial({map:outlineTex,transparent:true,opacity:.8,depthWrite:false,
       depthTest:false,toneMapped:false,side:THREE.DoubleSide}),
-    scene,0,12,0,false);
+    scene,0,AXIS,0,false);
   objectOutline.rotation.y=Math.PI/2;
   objectOutline.renderOrder=9;
   objectOutline.visible=false;
@@ -1019,15 +1091,15 @@ import * as THREE from './assets/optics-three.min.js';
     g.shadowColor='#062130';g.shadowBlur=7;
     if(state.source==='f'){
       for(const s of F_STROKES){
-        g.strokeRect(Math.min(artXz(s.z0),artXz(s.z1)),artY(s.y1),
+        g.strokeRect(Math.min(artXz(s.z0),artXz(s.z1)),oy(s.y1),
           Math.abs(s.z1-s.z0)*ART_PX_CM,(s.y1-s.y0)*ART_PX_CM);
       }
     }else{
       g.beginPath();
-      g.roundRect(artX(-.98),artY(11.86),1.96*ART_PX_CM,5.58*ART_PX_CM,5);
+      g.roundRect(artX(-.98),oy(11.86),1.96*ART_PX_CM,5.58*ART_PX_CM,5);
       g.stroke();
       g.beginPath();
-      g.ellipse(artX(0),artY(13.05),.58*ART_PX_CM,1.26*ART_PX_CM,0,0,Math.PI*2);
+      g.ellipse(artX(0),oy(FLAME_TIP),.58*ART_PX_CM,1.26*ART_PX_CM,0,0,Math.PI*2);
       g.stroke();
     }
     outlineTex.needsUpdate=true;
@@ -1040,15 +1112,17 @@ import * as THREE from './assets/optics-three.min.js';
     ? { top: 16.5, bottom: 7.5 }
     : { top: 14.2, bottom: 6.3 };
   function refreshVirtualCompareGuides(c){
-    const key=state.virtualCompare?[state.objP,state.lensP,state.f,state.extra,state.extraF,state.source].join('|'):'off';
+    const key=state.virtualCompare?[state.objP,state.lensP,state.f,state.extra,state.extraF,state.source,
+      state.liftCandle,state.liftLens].join('|'):'off';
     if(key===compareGuideKey)return;
     compareGuideKey=key;
     clear(compareGuides);
     if(!state.virtualCompare||!c)return;
-    const span=drawnObjectSpan(),m=Math.abs(c.m);
+    const span=drawnObjectSpan(),m=Math.abs(c.m),Yc=lensCy(),lift=state.liftCandle;
     const LX=wx(state.lensP),objX=LX-state.u,imgX=LX+c.v;
-    const objTop=span.top,objBottom=span.bottom;
-    const imgTop=12+(objTop-12)*m,imgBottom=12+(objBottom-12)*m;
+    // 量的是实物的实际高度（跟着它升降），以及这些高度在像方的位置。
+    const objTop=span.top+lift,objBottom=span.bottom+lift;
+    const imgTop=Yc+(objTop-Yc)*c.m,imgBottom=Yc+(objBottom-Yc)*c.m;
     // 高度：琥珀色是实物，青色是虚像；虚像明显更高。
     for(const [x,lo,hi,color] of [[objX,objBottom,objTop,'#b07a32'],[imgX,imgBottom,imgTop,'#2b8b9d']]){
       lineSegment(compareGuides,V(x,lo,2.2),V(x,hi,2.2),color,.8,true);
@@ -1070,20 +1144,28 @@ import * as THREE from './assets/optics-three.min.js';
       g.shadowBlur = 0;
     } else {
       g.fillStyle = '#f0e6cc'; g.shadowColor = '#b99a68'; g.shadowBlur = 6;
-      g.beginPath(); g.roundRect(artX(-.95), artY(11.8), 1.9 * ART_PX_CM, 5.5 * ART_PX_CM, 3); g.fill();
-      g.fillStyle = '#fdf6e2'; g.fillRect(artX(-.62), artY(11.6), 1.24 * ART_PX_CM, 5.2 * ART_PX_CM);
-      g.fillStyle = '#3a3129'; g.fillRect(artX(-.07), artY(12.6), .14 * ART_PX_CM, .9 * ART_PX_CM);
-      g.shadowColor = '#ffab3d'; g.shadowBlur = 26;
-      const fy = artY(13.05);
-      g.fillStyle = '#ffb64f'; g.beginPath(); g.ellipse(artX(0), fy, .5 * ART_PX_CM, 1.15 * ART_PX_CM, 0, 0, Math.PI * 2); g.fill();
-      g.fillStyle = '#fff2c6'; g.beginPath(); g.ellipse(artX(0), fy + 3, .24 * ART_PX_CM, .62 * ART_PX_CM, 0, 0, Math.PI * 2); g.fill();
+      g.beginPath(); g.roundRect(artX(-.95), oy(11.8), 1.9 * ART_PX_CM, 5.5 * ART_PX_CM, 3); g.fill();
+      g.fillStyle = '#fdf6e2'; g.fillRect(artX(-.62), oy(11.6), 1.24 * ART_PX_CM, 5.2 * ART_PX_CM);
+      g.fillStyle = '#3a3129'; g.fillRect(artX(-.07), oy(12.6), .14 * ART_PX_CM, .9 * ART_PX_CM);
+      // 火焰用和 3D 火焰同一组跳动参数（flame）画：屏上的像、预览窗、虚像因此一起跟着抖，
+      // 而且抖的方向由 stampObject 的翻转换算，倒立的像自己会朝相反方向抖。
+      const fx = artX(flame.dz), fy = oy(FLAME_TIP + flame.dy);
+      g.shadowColor = '#ffab3d'; g.shadowBlur = 26 * flame.bright;
+      g.fillStyle = '#ffb64f';
+      g.beginPath();
+      g.ellipse(fx, fy, .5 * ART_PX_CM * flame.sx, 1.15 * ART_PX_CM * flame.s, flame.tilt, 0, Math.PI * 2);
+      g.fill();
+      g.fillStyle = '#fff2c6';
+      g.beginPath();
+      g.ellipse(fx, fy + 3 * flame.s, .24 * ART_PX_CM * flame.sx, .62 * ART_PX_CM * flame.s, flame.tilt, 0, Math.PI * 2);
+      g.fill();
     }
     // The sampling points belong to the candle; the F already carries its own shape.
     if (state.source === 'f') return;
     for (const [y, color] of [[state.sourceY, '#e79a3c'], ...(state.second ? [[state.secondY, '#4b8fc4']] : [])]) {
       g.shadowColor = color; g.shadowBlur = 20; g.fillStyle = color;
-      g.beginPath(); g.arc(artX(0), artY(y), .42 * ART_PX_CM, 0, Math.PI * 2); g.fill();
-      g.fillStyle = '#ffffff'; g.beginPath(); g.arc(artX(0), artY(y), .16 * ART_PX_CM, 0, Math.PI * 2); g.fill();
+      g.beginPath(); g.arc(artX(0), oy(y), .42 * ART_PX_CM, 0, Math.PI * 2); g.fill();
+      g.fillStyle = '#ffffff'; g.beginPath(); g.arc(artX(0), oy(y), .16 * ART_PX_CM, 0, Math.PI * 2); g.fill();
     }
   }
   // Vertical extent of the object that actually matters, in world centimetres. The candle
@@ -1111,6 +1193,13 @@ import * as THREE from './assets/optics-three.min.js';
     g.drawImage(objCanvas, -objCanvas.width / 2, -objCanvas.height / 2);
     g.restore();
   }
+  // 像（的参照中心）落在目标画布上的 y。三心同高时它恰好是画布中线；一旦透镜或光屏被
+  // 升降，像就相对光屏中心偏移，偏移量由这三个高度直接决定 —— 光屏上的像、预览窗、
+  // 虚像面用的都是这一套，所以屏幕上看到的和窗里看到的永远不会打架。
+  //   imgRefY: art 画布中心（基准光轴那条线）的像，Yc+(AXIS−Yc)·m —— 透镜升降把整幅像搬高
+  //   光屏模式：以光屏中心为参照（真实偏移）；透过透镜的模式：把像本身摆在画面正中
+  const imgRefY = m => { const Yc = lensCy(); return Yc + (AXIS - Yc) * m; };
+  const scrOffY = info => imgRefY(info.m) - scrCy();          // 像比屏心高多少（cm）
   // Defocus follows the circle of confusion of a real lens of this aperture, which is why
   // the image snaps sharp exactly when the screen reaches the conjugate distance.
   function blurSigma(offsetCm, vCm, pxPerCm = PX_CM){
@@ -1154,7 +1243,8 @@ import * as THREE from './assets/optics-three.min.js';
       // 遮挡板只减少进入镜片的光：整幅像一起按通过光量变暗，轮廓一点不少。
       c.globalAlpha=clamp(1-offset/80,.45,1)*lightThrough();
       c.filter=sigma<.5?'none':`blur(${sigma.toFixed(1)}px)`;
-      stampObject(c,w/2,h/2,m,info.inverted?'front':'upright',PX_CM);
+      // 膜的中心就是光屏中心：像点比屏心高多少，画布上就往上挪多少（三心同高时为 0）
+      stampObject(c,w/2,h/2-PX_CM*scrOffY(info),m,info.inverted?'front':'upright',PX_CM);
       c.restore();
       // A faint axis line lets the image be judged against the optical axis.
       c.save();c.globalAlpha=.15;c.strokeStyle='#6b7b83';c.lineWidth=1.5;
@@ -1190,12 +1280,18 @@ import * as THREE from './assets/optics-three.min.js';
     const span=objectSpan(),mid=(span.top+span.bottom)/2;
     const capCm=mode==='screen'?18.8:30;
     const needCm=(span.top-span.bottom)*mag;
-    const viewCm=clamp(needCm*1.7,4.6,capCm);
+    // 光屏模式还要装下「像偏离屏心」的那一段：三心不同高时视野跟着放宽，最多放宽到
+    // 整块膜（18.8 cm）—— 像真的偏出膜面时，预览窗里就该看到空膜，而不是硬把像挪回中间。
+    const off=mode==='screen'?scrOffY(info):0;
+    const needView=mode==='screen'?Math.max(needCm*1.7,(Math.abs(off)+needCm*.5)*2.2):needCm*1.7;
+    const viewCm=clamp(needView,4.6,capCm);
     const pxCm=H/viewCm;
     const clipped=needCm>viewCm*.94;
-    // The frame centres the image itself. stampObject places the art's own centre, which is
-    // the optical axis, at (W/2, cy), so cy shifts by however far the image centre moved.
-    const cy=H/2+(info.inverted?-1:1)*pxCm*mag*(mid-12);
+    // 落点。光屏模式按【屏心】量，所以光屏一升降，像在窗里就真的跟着偏；透过透镜的模式
+    // 没有屏可参照，把像本身摆在画面正中（这样大幅放大的像也总能看到）。
+    const cy=mode==='screen'
+      ? H/2-pxCm*clamp(off,-viewCm*.42,viewCm*.42)
+      : H/2+pxCm*info.m*((mid+state.liftCandle)-AXIS);
     // 膜是双面的：绕到光屏背面时，眼睛看到的是同一幅画面的左右镜像（像在膜上是客观存在的
     // 图案，换一侧看自然就翻过来）。预览窗跟着翻，学生才不会觉得「屏幕上明明有像，窗里却是反的」。
     const fromBack=mode==='screen'&&camera.position.x>wx(state.scrP);
@@ -1237,6 +1333,7 @@ import * as THREE from './assets/optics-three.min.js';
       : (mode==='air'?`撤去光屏后，实像仍悬在空中（${info.inverted?'倒立':'正立'}） · `+sizeText
         :`透过透镜看到${info.inverted?'倒立':'正立'}虚像（与物同侧） · `+sizeText)
         +(clipped?' · 像很大，画面只显示局部':'')
+        +(mode==='screen'&&Math.abs(off)>.2?` · 像在屏心${off>0?'上':'下'}方 ${Math.abs(off).toFixed(1)} cm`:'' )
         +(state.occlude>0?` · 遮挡板挡住 ${state.occlude}% 的光，像完整但变暗` : '');
   }
 
@@ -1288,9 +1385,9 @@ import * as THREE from './assets/optics-three.min.js';
       const q=V(x,y,z).project(camera);
       return {x:(q.x+1)*rect.width/2,y:(1-q.y)*rect.height/2};
     };
-    const LX=wx(state.lensP),sy=Math.abs(ghostObject.scale.y);
-    const objTag=toScreen(LX-state.u,span.top+1.3);
-    const imgTag=toScreen(LX+c.v,12+(span.top-12)*sy+1.3);
+    const LX=wx(state.lensP),sy=Math.abs(ghostObject.scale.y),Yc=lensCy();
+    const objTag=toScreen(LX-state.u,span.top+state.liftCandle+1.3);
+    const imgTag=toScreen(LX+c.v,Yc+(span.top+state.liftCandle-Yc)*sy+1.3);
     const place=(el,p)=>{
       el.style.left=`${clamp(p.x,58,rect.width-58).toFixed(1)}px`;
       el.style.top=`${clamp(p.y,34,rect.height-72).toFixed(1)}px`;
@@ -1318,12 +1415,14 @@ import * as THREE from './assets/optics-three.min.js';
     // whole scaled plane is framed too - otherwise the very size comparison would be cropped.
     // Through-lens mode is the exception: there the image is seen only inside the glass, and
     // framing the whole (possibly enormous) ghost plane would just push the lens off screen.
-    let frameLoY=-5,frameHiY=25;
+    // 器材能在立柱上升降，取景的上下沿必须跟着抬起来，否则升高后的镜架会被切掉。
+    const liftTop=AXIS+Math.max(state.liftCandle,state.liftLens,state.liftScreen)+9.5;
+    let frameLoY=-5,frameHiY=Math.max(25,liftTop);
     if(ghostObject.visible&&(state.virtualCompare||!state.imageOnObjectSide)){
       const gx=ghostObject.position.x,sx=Math.abs(ghostObject.scale.x),sy=ghostObject.scale.y;
       edgeLo.push(gx-5*sx-2.5);edgeHi.push(gx+5*sx+2.5);
-      const span=drawnObjectSpan();
-      const yA=12+(span.top-12)*sy,yB=12+(span.bottom-12)*sy;
+      const span=drawnObjectSpan(),Yc=lensCy();
+      const yA=Yc+(span.top+state.liftCandle-Yc)*sy,yB=Yc+(span.bottom+state.liftCandle-Yc)*sy;
       frameLoY=Math.min(frameLoY,Math.min(yA,yB)-1.5);
       frameHiY=Math.max(frameHiY,Math.max(yA,yB)+1.5);
     }
@@ -1394,6 +1493,7 @@ import * as THREE from './assets/optics-three.min.js';
       sh.uniforms.uMask.value=state.virtualCompare?0:1;
       sh.uniforms.uLensX.value=wx(state.lensP);
       sh.uniforms.uLensR.value=LENS_R*.995;
+      sh.uniforms.uLensY.value=lensCy();
       sh.uniforms.uCam.value.copy(camera.position);
     }
   }
@@ -1418,6 +1518,9 @@ import * as THREE from './assets/optics-three.min.js';
     // 「透过透镜观察」是裸眼观察：画面上只保留镜片和像，光路图留给普通视角和虚像对照。
     // （复选框本身不改，退出观察后原来的光路立刻回来。）
     rays.visible=state.rays&&!throughView();
+    // 火焰一直在跳，但火焰本身不投影：阴影图只在器材真的动了（update/取景变化）时重算，
+    // 否则每帧重画一张 2048² 的阴影图，手机立刻发烫。
+    renderer.shadowMap.needsUpdate=true;
     renderer.render(scene,camera);
     syncVirtualCompare();
     // 预览窗跟着眼睛走：绕到光屏背面时，窗里显示的也整体翻过来 —— 屏幕上看到的和窗里
@@ -1462,18 +1565,32 @@ import * as THREE from './assets/optics-three.min.js';
     sliders.candle.position.x=wx(state.objP);
     sliders.lens.position.x=wx(state.lensP);
     sliders.screen.position.x=wx(state.scrP);
+    // 升降：器材本体挂在各自的 rig 上，立柱从滑座里一直伸到器材底部，所以只改两个数 ——
+    // rig 的高度和立柱的长度，剩下的（光轴、像、光路、读数）都由 lensCy 等派生。
+    for(const [group,kind] of [[candle,'candle'],[lens,'lens'],[screen,'screen']]){
+      const lift=liftOf(kind),rig=group.userData.rig,post=group.userData.post;
+      rig.position.y=lift;
+      const top=post.seat+lift,len=Math.max(.3,top-post.bottom);
+      post.stem.scale.y=len;
+      post.stem.position.set(post.sx,(top+post.bottom)/2,0);
+    }
     // 遮挡板：顶边固定，下沿按被挡面积下移；0 时整块板收回画面之外。
+    // 卡片是透镜组的子物体，所以缩放用【局部】下沿；判光线用世界高度（见 occluderCutY）。
     occluder.visible=state.occlude>0;
-    if(occluder.visible)occluderCard.scale.y=Math.max(.4,CARD_TOP-occluderCutY());
+    if(occluder.visible)occluderCard.scale.y=Math.max(.4,CARD_TOP-occluderCutLocal());
     screen.visible=!state.screenRemoved;
     screenGhost.visible=state.screenRemoved;
-    screenGhost.position.x=wx(state.scrP);
-    labels.position.x=wx(state.objP);
+    screenGhost.position.set(wx(state.scrP),state.liftScreen,0);
+    labels.position.set(wx(state.objP),state.liftCandle,0);
     lensLabel.visible=screenLabel.visible=state.labels;
     candleLabel.visible=state.labels;
     refreshMainLensShape();refreshLensLabel();refreshExtraLens();refreshMarks();refreshSources();refreshRays();redrawScreen();
     const candleMode=state.source==='candle';
-    for(const [id,value] of [['focalLength',state.f],['extraFocal',state.extraF],['sourceHeight',state.sourceY],['secondHeight',state.secondY]])$(id).value=value;
+    for(const [id,value] of [['focalLength',state.f],['extraFocal',state.extraF],['sourceHeight',state.sourceY],['secondHeight',state.secondY],
+      ['liftCandle',state.liftCandle],['liftLens',state.liftLens],['liftScreen',state.liftScreen]])$(id).value=value;
+    $('liftCandleValue').textContent=objCy().toFixed(1)+' cm';
+    $('liftLensValue').textContent=lensCy().toFixed(1)+' cm';
+    $('liftScreenValue').textContent=scrCy().toFixed(1)+' cm';
     $('focalValue').textContent=format(state.f);
     $('extraFocalValue').textContent=state.extra==='concave'?`−${state.extraF} cm`:`${state.extraF} cm`;
     $('extraFocal').disabled=!hasExtra();
@@ -1498,12 +1615,26 @@ import * as THREE from './assets/optics-three.min.js';
     $('roU').textContent=format(state.u);
     $('roV').textContent=state.screenRemoved?'已撤去':format(state.sd);
     $('roV').className=info.crisp?'hi ok':'hi';
+    // 像点相对屏心的位置：三心同高时就是「居中」；升降任一件器材，这里立刻读出一个偏移量，
+    // 而且偏移量跟屏上看到的位置完全同步 —— 这就是"上下移动器材会怎样"的定量答案。
+    if(!Number.isFinite(info.imgY)||state.screenRemoved){
+      $('roOff').textContent='—';$('roOff').className='';
+    }else{
+      const off=info.offY,size=Math.abs(off);
+      $('roOff').textContent=size<.25?'居中':(off>0?'↑ ':'↓ ')+size.toFixed(1)+' cm'+(info.offScreen?' · 出膜':'');
+      $('roOff').className=info.offScreen?'off':size<.25?'ok':'';
+    }
     const f=state.f;
-    $('roNote').textContent=hasExtra()
+    const lifted=state.liftCandle||state.liftLens||state.liftScreen;
+    const heightNote=lifted
+      ?` 三心高度 焰心 ${objCy().toFixed(1)} / 光心 ${lensCy().toFixed(1)} / 屏心 ${scrCy().toFixed(1)} cm：`+
+       `像落在屏心${info.offY>0?'上':'下'}方 ${Math.abs(info.offY).toFixed(1)} cm。`
+      :'';
+    $('roNote').textContent=(hasExtra()
       ?`附加镜在主镜前 ${AUX_GAP} cm：u₁=${info.u1.toFixed(1)} cm，v₁=${Number.isFinite(info.v1)?info.v1.toFixed(1)+' cm':'∞'}；最终像距 v=${Number.isFinite(info.v)?info.v.toFixed(1)+' cm':'∞'}。`
       :'u = 透镜刻度 − 光源刻度；v实 = 光屏刻度 − 透镜刻度。'
         +`刻度 0 在左端 · F 在 ${format(state.lensP-f)} / ${format(state.lensP+f)}，`
-        +`2F 在 ${format(state.lensP-2*f)} / ${format(state.lensP+2*f)}`;
+        +`2F 在 ${format(state.lensP-2*f)} / ${format(state.lensP+2*f)}`)+heightNote;
     $('metricU').textContent=format(state.u);
     $('metricScreen').textContent=state.screenRemoved?'光屏已撤去':format(state.sd);
     $('metricV').textContent=!Number.isFinite(info.v)?'∞（不成像）':(info.v<0?'−':'')+Math.abs(info.v).toFixed(1)+' cm';
@@ -1584,7 +1715,20 @@ import * as THREE from './assets/optics-three.min.js';
     else text=`光屏距离清晰像面 ${Math.abs(info.v-state.sd).toFixed(1)} cm。观察屏上模糊的轮廓，缓慢滑动光屏。`;
     if(state.occlude>0)
       text+=` 镜前遮挡板挡住镜片约 ${state.occlude}% 的面积，通过光量只剩约 ${100-state.occlude}%：像的轮廓一点没少，只是整体变暗。`;
-    $('finding').innerHTML='<b>当前观察</b><br>'+text;
+    // 三心不同高：这是「调三心」这一步的实验依据，所以单独写清楚"差多少 → 像偏多少"。
+    // 三心同高时整段不出现，不干扰原来的叙述。
+    let liftText='';
+    if(lifted){
+      const off=info.offY;
+      liftText=`<b>三心不同高</b>（焰心 ${objCy().toFixed(1)} cm、光心 ${lensCy().toFixed(1)} cm、屏心 ${scrCy().toFixed(1)} cm）：`
+        +(Number.isFinite(off)&&!state.screenRemoved
+          ?`像的中心落在屏心${off>0?'上':'下'}方 ${Math.abs(off).toFixed(1)} cm，`
+            +(info.offScreen?'已经整个偏出膜面，屏上只剩一块空膜':'屏上的像整体偏在一边')
+            +`。`
+          :`像的中心搬到了 ${Number.isFinite(info.imgY)?info.imgY.toFixed(1)+' cm':'—'} 处。`)
+        +`把三件器材调回同一高度，像才会回到屏心。`;
+    }
+    $('finding').innerHTML='<b>当前观察</b><br>'+(liftText?liftText+'<br>':'')+text;
     document.querySelectorAll('#presets button').forEach(b=>b.classList.toggle('active',b.dataset.case===info.kind));
     document.querySelectorAll('#sourceKind button').forEach(b=>b.classList.toggle('active',b.dataset.kind===state.source));
     document.querySelectorAll('#extraLensKind button').forEach(b=>b.classList.toggle('active',b.dataset.extra===state.extra));
@@ -1592,8 +1736,13 @@ import * as THREE from './assets/optics-three.min.js';
     $('stepDetail').innerHTML=descriptions[state.step];
     render();
   }
-  for(const [id,key] of [['focalLength','f'],['extraFocal','extraF'],['sourceHeight','sourceY'],['secondHeight','secondY'],['occlude','occlude']])
-    $(id).addEventListener('input',e=>{state[key]=+e.target.value;update();});
+  for(const [id,key] of [['focalLength','f'],['extraFocal','extraF'],['sourceHeight','sourceY'],['secondHeight','secondY'],['occlude','occlude'],
+    ['liftCandle','liftCandle'],['liftLens','liftLens'],['liftScreen','liftScreen']])
+    $(id).addEventListener('input',e=>{state[key]=+e.target.value;state.step=Math.max(state.step,1);update();});
+  // 「三心调回同高」：就是真实实验里"调节三件器材使焰心、光心、屏心在同一高度"那一步。
+  $('levelAll').addEventListener('click',()=>{
+    state.liftCandle=state.liftLens=state.liftScreen=0;update();
+  });
   $('sourceKind').addEventListener('click',e=>{
     const b=e.target.closest('button[data-kind]');if(!b)return;
     state.source=b.dataset.kind;state.step=Math.max(state.step,2);update();
@@ -1621,10 +1770,28 @@ import * as THREE from './assets/optics-three.min.js';
     state.objP=roundHalf(state.lensP-need);
     state.step=2;update();
   });
-  $('autoFocus').addEventListener('click',()=>{
-    const info=status();if(!canFocus(info))return;
-    state.scrP=roundHalf(state.lensP+info.v);state.step=3;update();
-  });
+  // ===== 自动对焦 =====
+  // 真实实验里是「慢慢推光屏，看到最清晰就停」；这里把这动作交给光屏自己走完。走过去的过程
+  // 必须看得见，否则学生不知道光屏刚才干了什么，所以做成一 段 0.45 s 的匀速+缓动滑动。
+  const prefersReduced=()=>!!(window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  let focusAnim=null;
+  function autoFocus(){
+    const info=status();
+    if(!canFocus(info))return;
+    const target=clamp(roundHalf(state.lensP+info.v),state.lensP+MIN_GAP,RAIL.screen[1]);
+    state.step=3;
+    // 光屏不在台上时先放回去：自动对焦的前提是屏在导轨上。
+    if(state.screenRemoved){state.screenRemoved=false;state.autoScreen=false;state.observing=false;state.compare=false;}
+    if(prefersReduced()||Math.abs(target-state.scrP)<.26){state.scrP=target;update();return;}
+    // t0 不在这里取：requestAnimationFrame 给的时间戳和 performance.now() 在重负载下会差出
+    // 好几百毫秒（软件渲染时实测差 400 ms 以上），混用会让动画前 0.4 s 一动不动。
+    // 统一在第一帧里用 rAF 自己的时钟记起点。
+    focusAnim={from:state.scrP,to:target,t0:null,frame:0};
+    framed=false;                       // 滑动期间锁住取景，镜头别跟着一张一缩
+    startLoop();
+  }
+  $('autoFocus').addEventListener('click',autoFocus);
+  $('autoFocusTop').addEventListener('click',autoFocus);
   // Putting the screen on or taking it off the bench by hand: the automatic move only
   // happens when the optical situation itself changes, never to overrule the user.
   function setScreen(on){
@@ -1735,8 +1902,10 @@ import * as THREE from './assets/optics-three.min.js';
   });
   $('resetAll').addEventListener('click',()=>{
     Object.assign(state,{f:10,objP:35,lensP:65,scrP:80,extra:'none',extraF:12,sourceY:12,secondY:8,second:false,
+      liftCandle:0,liftLens:0,liftScreen:0,
       source:'candle',screenRemoved:false,autoScreen:false,observing:false,lastNeedsOff:false,compare:false,
       obsYaw:0,obsPitch:0,occlude:0,rays:false,virtual:true,labels:false,rayMode:'all',yaw:-.42,pitch:.21,zoom:1.06,step:0,records:{}});
+    focusAnim=null;framed=true;
     for(const [id,checked] of [['showRays',false],['showVirtual',true],['showLabels',false]])$(id).checked=checked;
     renderRecords();
     update();
@@ -1750,10 +1919,13 @@ import * as THREE from './assets/optics-three.min.js';
     update();
   }));
   const pointers=new Map();let pinch=0,dragPoint=null,dragRail=null,railGrab=0,press=null;
+  // dragMode 在第一次明显移动后才定：横向 = 沿导轨走，纵向 = 沿立柱升降。
+  let dragMode=null,liftGrab=0;
   function hitSource(e){
     if(state.source!=='candle')return null;
     const rect=canvas.getBoundingClientRect();
-    const active=state.second?[{y:state.sourceY,index:0},{y:state.secondY,index:1}]:[{y:state.sourceY,index:0}];
+    const lift=state.liftCandle;
+    const active=state.second?[{y:state.sourceY+lift,index:0},{y:state.secondY+lift,index:1}]:[{y:state.sourceY+lift,index:0}];
     for(const s of active){
       const q=project({x:wx(state.objP),y:s.y,z:1.1});
       if(Math.hypot(q.x-(e.clientX-rect.left),q.y-(e.clientY-rect.top))<26)return s.index;
@@ -1786,6 +1958,18 @@ import * as THREE from './assets/optics-three.min.js';
     if(!raycaster.ray.intersectPlane(RAIL_PLANE,hit))return null;
     return Math.abs(hit.x)<400?hit.x:null;
   }
+  // 升降器械时的取点：过器材中心、正对镜头的一个竖平面。指针落在这个平面上的高度就是器材
+  // 该到的高度 —— 无论从哪个角度拖，"往上拖"都真的往上。
+  const V_PLANE=new THREE.Plane(), V_HIT=new THREE.Vector3();
+  function liftYAt(e,x){
+    if(!castAt(e))return null;
+    const n=new THREE.Vector3(camera.position.x-x,0,camera.position.z);
+    if(n.lengthSq()<1e-6)return null;
+    n.normalize();
+    V_PLANE.setFromNormalAndCoplanarPoint(n,new THREE.Vector3(x,0,0));
+    if(!raycaster.ray.intersectPlane(V_PLANE,V_HIT))return null;
+    return V_HIT.y;
+  }
   function hitCarriage(e){
     if(!castAt(e))return null;
     let best=null,bestD=Infinity;
@@ -1808,6 +1992,7 @@ import * as THREE from './assets/optics-three.min.js';
       framed=false;
     }
     press=single?{x:e.clientX,y:e.clientY,screen:hitScreen(e)}:null;
+    dragMode=null;liftGrab=0;
     pinch=0;
   });
   canvas.addEventListener('pointermove',e=>{
@@ -1827,10 +2012,31 @@ import * as THREE from './assets/optics-three.min.js';
         const px=p1.y-p2.y;
         if(Math.abs(px)>1){const next=clamp(roundHalf(y+(prev.y-e.clientY)/px),SRC_MIN,SRC_MAX);if(next!==y){state[key]=next;update();}}
       }else if(dragRail){
-        const x=railXAt(e);
-        if(x!==null){
-          const key=RAIL_KEY[dragRail],next=roundHalf(x-railGrab-RULER0);
-          if(next!==state[key]){state[key]=next;update();}
+        // 先看这一下是横着拖还是竖着拖：横向沿导轨走，纵向沿立柱升降。定下来就不再改，
+        // 免得拖到一半忽然变成升降（手指稍微歪一点就换动作会很难用）。
+        const key=RAIL_KEY[dragRail],cx=wx(state[key]);
+        if(!dragMode){
+          const dx=Math.abs(e.clientX-press.x),dy=Math.abs(e.clientY-press.y);
+          if(Math.max(dx,dy)<7)return;
+          dragMode=dy>dx*1.2?'lift':'rail';
+          if(dragMode==='lift'){
+            const y=liftYAt(e,cx);
+            liftGrab=y===null?0:y-liftOf(dragRail);
+          }
+        }
+        if(dragMode==='rail'){
+          const x=railXAt(e);
+          if(x!==null){
+            const next=roundHalf(x-railGrab-RULER0);
+            if(next!==state[key]){state[key]=next;update();}
+          }
+        }else{
+          const y=liftYAt(e,cx);
+          if(y!==null){
+            const lk=dragRail==='candle'?'liftCandle':dragRail==='lens'?'liftLens':'liftScreen';
+            const next=clamp(roundHalf(y-liftGrab),0,LIFT_MAX);
+            if(next!==state[lk]){state[lk]=next;update();}
+          }
         }
       }else if(throughView()){
         // 观察模式下拖动 = 眼睛沿镜面轻微平移：画面不动但视线角度改变，
@@ -1853,6 +2059,7 @@ import * as THREE from './assets/optics-three.min.js';
   const release=e=>{
     const was=press,wasRail=dragRail;
     pointers.delete(e.pointerId);dragPoint=null;dragRail=null;pinch=0;press=null;
+    dragMode=null;liftGrab=0;
     // A drag that merely starts on the screen must not be read as a click on it.
     if(was&&pointers.size===0&&was.screen&&Math.hypot(e.clientX-was.x,e.clientY-was.y)<5)setScreen(state.screenRemoved);
     if(wasRail&&!framed){framed=true;render();}
@@ -1955,11 +2162,145 @@ import * as THREE from './assets/optics-three.min.js';
   }
   window.addEventListener('resize',resize);
   if(window.ResizeObserver)new ResizeObserver(resize).observe(canvas);
+  // ===== 火焰跳动 =====
+  // 真蜡烛的焰体一直在动：伸缩、左右摆、整体升降、亮度起伏。这里用几组【互不整除】的正弦叠加
+  // 驱动，周期各不相同，所以看不出循环；再叠一个很慢的"阵风"，幅度一阵大一阵小。
+  // 同一组参数既喂 3D 焰体，也喂那张 2D 物体图 —— 光屏上的像、预览窗、虚像都是拿这张图贴出来的，
+  // 所以火焰一跳，像就跟着跳。而且像是倒立的：物体往上跳、像就往下跳，这正是真实看到的样子。
+  const FLAME_BASE = 12.35;            // 焰体根部（烛芯上端）：伸长时这里固定不动
+  function sampleFlame(t){
+    const gust = Math.sin(t*.47)*.55 + Math.sin(t*1.13+1.7)*.30 + Math.sin(t*2.71+2.9)*.15;
+    const sway = Math.sin(t*1.61+.4)*.55 + Math.sin(t*3.30+2.2)*.30 + Math.sin(t*5.70+1.3)*.15;
+    const s  = 1 + gust*.11 + Math.sin(t*9.1)*.015;    // 焰体高度
+    const sx = 1 - gust*.07;                            // 粗细（体积大致守恒）
+    return { s, sx,
+      dy : Math.abs(gust)*.10,       // 整体轻微上浮
+      dz : sway*.30,                 // 左右摇摆，方向垂直于光轴 —— 像里才看得见
+      tilt: sway*.13,
+      bright: clamp(.86+.14*(.5+gust*.5),.70,1) };
+  }
+  function applyFlame(f){
+    flame=f;
+    for(const p of flameParts){
+      p.m.scale.set(p.bx*f.sx,p.by*f.s,p.bz*f.sx);
+      // 以烛芯为支点伸缩：火苗变高是"往上窜"，不是整团放大
+      p.m.position.set(0,FLAME_BASE+(p.py-FLAME_BASE)*f.s+f.dy,f.dz);
+      p.m.rotation.x=f.tilt;
+    }
+    // 烛光也跟着起伏：光屏、导轨上能看到一点点亮度呼吸
+    if(warm.userData.base)warm.intensity=warm.userData.base*(.90+.10*f.bright);
+  }
+  applyFlame(flame);                   // 初始状态 = 基准形状（跳动关掉时就是这个样子）
+  // ===== 动画循环 =====
+  // 页面原来只在"有事件"时渲染；有了跳动就必须常驻渲染。但常驻渲染有个硬代价：只要画布每帧
+  // 都变，浏览器就必须每帧把整块画布【提交上屏】。GPU 机器上这一步是几毫秒；可在纯软件渲染
+  // （显卡驱动禁用了 WebGL、远程桌面、没有 GPU 的虚拟机）上，提交一帧要几百毫秒，而且开销
+  // 和画布像素数成正比 —— 实测 2880×1920 时约 1 s/帧，主线程被整块占住，滚轮、按钮、全屏
+  // 全都卡住。所以这里加一道【帧预算看门狗】：连续几帧的提交间隔都远超 30 fps 的预算，就
+  // 先降到 10 fps，还撑不住就退回静态火焰并停掉循环（重新勾一次「火焰跳动」会再试一次）。
+  // 省电另外几条：只在页面可见时跑；2D 的像约 15 帧/秒重贴（每次要重画 840×940 的膜纹理）。
+  const ANIM_GAP = 33;          // 30 fps
+  const ANIM_GAP_SLOW = 120;    // 降频档：10 fps
+  const ANIM_SLOW_MS = 220;     // 一帧超过这个数就已经不够 4 fps 了
+  const ANIM_DEAD_MS = 880;     // 一帧就要近 1 s：别硬撑，直接静态（软件渲染就是这一档）
+  let rafId = 0, lastFrame = 0, lastImage = 0, lastPresent = 0;
+  let slowRun = 0, animLevel = 2, animFrames = 0;
+  function startLoop(){
+    // 重新拉起时把时间基准清掉：lastPresent 停在几分钟前会被误判成"一帧花了 3 分钟"
+    lastPresent = 0; lastFrame = 0; slowRun = 0;
+    if(!rafId) rafId = requestAnimationFrame(tick);
+  }
+  function stopLoop(){ if(rafId){ cancelAnimationFrame(rafId); rafId = 0; } }
+  // 时间 → 焰体 → 屏上的像（+ 预览窗）。抽成函数为的是两件事：循环每帧调它；自检可以按
+  // 指定的时间点调它 —— 软件渲染下真实帧率只有 1~2 fps，"等 260 ms 看它变没变"会假红。
+  function stepAnim(nowMs, withImage = true){
+    applyFlame(sampleFlame(nowMs / 1000));
+    renderer.shadowMap.needsUpdate = false;
+    renderer.render(scene, camera);
+    animFrames++;
+    if(withImage){ redrawScreen(); paintInset(status()); }
+    return flame;
+  }
+  function stopFlicker(){
+    animLevel = 0;
+    applyFlame({s:1,sx:1,dz:0,dy:0,tilt:0,bright:1});   // 停在标准形状，不是"半跳"
+    // 自动停掉时勾选框还是勾着的，得让用户知道为什么不动了（不另占一行，挂成 tooltip）
+    const box = $('flickerOn'), lab = box && box.closest('label');
+    if(lab && state.flicker) lab.title = '这台设备渲染较慢，已自动暂停火焰动画；勾掉再勾上可以再试一次。';
+    update();
+  }
+  // 一帧的真实开销（两次提交之间的间隔）超预算就降档，看门狗只在循环里调
+  function animBudget(spent){
+    if(!spent) return;                                  // 第一个基线帧，不判
+    if(spent > ANIM_DEAD_MS){ stopFlicker(); return; }
+    if(spent > ANIM_SLOW_MS){
+      if(++slowRun < 3) return;
+      slowRun = 0;
+      if(animLevel === 2) animLevel = 1; else stopFlicker();
+      return;
+    }
+    slowRun = 0;
+  }
+  function tick(now){
+    rafId = requestAnimationFrame(tick);
+    if(document.hidden) return;
+    if(focusAnim){
+      if(focusAnim.t0===null)focusAnim.t0=now;
+      // 进度 = 时间为主 + 帧数为辅。只按时间算，遇到掉到 2 帧/秒的机器（软件渲染就是这样）
+      // 光屏会"一站到位"，看不出滑动；掺进帧数就能保证至少走 8 格，帧率高时仍然是 0.5 s 到站。
+      const timeK=clamp((now-focusAnim.t0)/520,0,1);
+      const frameK=Math.min(1,++focusAnim.frame/8);
+      const k=Math.min(1,.55*timeK+.45*frameK);
+      const e=k<.5?2*k*k:1-Math.pow(-2*k+2,2)/2;
+      state.scrP=roundHalf(focusAnim.from+(focusAnim.to-focusAnim.from)*e);
+      if(k>=1){state.scrP=focusAnim.to;focusAnim=null;framed=true;update();}
+      else update();
+      lastFrame=now;lastImage=now;lastPresent=now;slowRun=0;
+      return;
+    }
+    if(!state.flicker || animLevel===0){ stopLoop(); return; }   // 不跳了就别每秒白醒 60 次
+    if(now-lastFrame < (animLevel===1 ? ANIM_GAP_SLOW : ANIM_GAP)) return;
+    const spent = lastPresent ? now - lastPresent : 0;
+    lastFrame = now; lastPresent = now;
+    animBudget(spent);
+    if(animLevel === 0) return;                                 // 刚被判停，这一帧不画
+    const withImage = now - lastImage > 66;   // 膜上那张 840×940 的重贴不必每帧都做
+    stepAnim(now, withImage);
+    if(withImage) lastImage = now;
+  }
+  $('flickerOn').addEventListener('change',e=>{
+    state.flicker=e.target.checked;
+    // 关掉时把焰体精确还原成标准形状，再把膜上的像重贴一次 —— 否则会停在一个"半跳"的样子。
+    if(!e.target.checked){stopFlicker();}
+    // 重新勾上等于"再给它一次机会"：把看门狗清零、回到全速档
+    else {
+      const lab = e.target.closest && e.target.closest('label');
+      if(lab) lab.removeAttribute('title');
+      animLevel=2; slowRun=0; lastPresent=0; lastImage=0; startLoop();
+    }
+  });
+  if(document.visibilityState==='visible')startLoop();
+  document.addEventListener('visibilitychange',()=>{if(!document.hidden)startLoop();});
+
   window.__lensLab={state,status,optics,canFocus,project,imageY,wx,setScreen,update,render,resize,
+    AXIS,LIFT_MAX,lensCy,objCy,scrCy,autoFocus,sampleFlame,applyFlame,stepAnim,startLoop,stopLoop,
+    get animLevel(){return animLevel;},
+    get animFrames(){return animFrames;},
+    // 自检要把档位强制拉回全速（软件渲染下看门狗几帧内就会把它降下来）
+    setAnimLevel(n){animLevel=n;slowRun=0;lastPresent=0;lastImage=0;if(n>0)startLoop();},
+    get flame(){return flame;},
+    get focusAnim(){return focusAnim;},
+    get rigs(){return {candle:candleRig,lens:lensRig,screen:screenRig};},
+    get posts(){return {candle:candle.userData.post,lens:lens.userData.post,screen:screen.userData.post};},
     rayShiftsFor,diopterOf,recordsTable,renderRecords,LENS_AP,lightThrough,occluderCutY,lensSegmentFraction,
     stageBox,setParamsOpen,paramsIsOpen,paramsPanelInfo,fsInfo,
     get lastRayTraces(){return lastRayTraces;},
     debug:()=>{const i=status();return {objP:state.objP,lensP:state.lensP,scrP:state.scrP,u:state.u,sd:state.sd,
+      liftCandle:state.liftCandle,liftLens:state.liftLens,liftScreen:state.liftScreen,
+      lensCy:lensCy(),objCy:objCy(),scrCy:scrCy(),imgY:i.imgY,offY:i.offY,offScreen:i.offScreen,
+      flameScale:flame.s,flameDz:flame.dz,flicker:state.flicker,
+      animLevel,animFrames,rafOn:!!rafId,
+      rigY:{candle:candleRig.position.y,lens:lensRig.position.y,screen:screenRig.position.y},
       extra:state.extra,extraF:state.extraF,u1:i.u1,v1:i.v1,u2:i.u2,m:i.m,auxLensX:wx(state.lensP)-AUX_GAP,
       cameraX:camera.position.x,cameraZ:camera.position.z,screenX:wx(state.scrP),
       kind:i.kind,v:Number.isFinite(i.v)?i.v:null,crisp:i.crisp,real:i.real,screenRemoved:state.screenRemoved,
@@ -2015,6 +2356,12 @@ import * as THREE from './assets/optics-three.min.js';
   // clear" and "no floating label for the eye" are properties of what is actually in the scene,
   // so the self-check reads the graph rather than re-deriving the geometry.
   window.__lensLab.scene=scene;
+  // 渲染器 / 相机 / 两张 2D 画布的重绘函数也暴露出来：自检要量「一帧到底花在哪」——
+  // 火焰跳动是常驻动画，必须能分别测出 3D 渲染和 2D 贴图重绘各自的代价。
+  window.__lensLab.renderer=renderer;
+  window.__lensLab.camera=camera;
+  window.__lensLab.redrawScreen=redrawScreen;
+  window.__lensLab.paintInset=paintInset;
   window.__lensLab.screenGhost=screenGhost;
   window.__lensLab.rays=rays;
   window.__lensLab.ghostObject=ghostObject;
