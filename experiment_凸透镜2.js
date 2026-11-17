@@ -456,6 +456,38 @@ import * as THREE from './assets/optics-three.min.js';
   for(const y of [5.6,18.4])box(fSource,[1.1,.7,1.1],[-.78,y,0],brass);
   const fGlow=new THREE.PointLight('#ffe2a0',15,28,1.6);fGlow.position.set(1.3,12,0);fSource.add(fGlow);
 
+  // 「观察虚像大小与位置」使用真正的三维像，而不是一张追着镜头转的平面贴图。
+  // 直接复用器材本体的几何：蜡烛有柱体、底座和球形火焰，F 有外壳厚度及前后错位的发光条。
+  // 复制体保持与实物完全相同的空间朝向；相机绕动时，角度、透视和自身遮挡由 Three.js 自然计算。
+  // 内层把局部坐标的基准光轴 AXIS 平移到原点，外层再按横向放大率缩放，位置公式见 updateGhost()。
+  const ghostSolid=new THREE.Group();scene.add(ghostSolid);ghostSolid.visible=false;
+  const ghostSolidMaterials=[];
+  function makeVirtualSolid(source){
+    const holder=new THREE.Group();
+    const copy=source.clone(true);
+    copy.visible=true;copy.position.y-=AXIS;
+    copy.traverse(o=>{
+      if(o.isLight){o.visible=false;return;}   // 虚像不能反过来照亮真实装置
+      if(!o.isMesh)return;
+      o.castShadow=false;o.receiveShadow=false;o.renderOrder=6;
+      const original=o.material,mat=original.clone();
+      mat.transparent=true;mat.depthWrite=false;mat.depthTest=true;
+      const base=(original.opacity===undefined?1:original.opacity)*.76;
+      mat.opacity=base;mat.userData.virtualBaseOpacity=base;
+      // 保留原有材质和明暗，只加很轻的青色调，让学生认出这是像而不是第二件实物。
+      if(mat.color)mat.color.lerp(new THREE.Color('#b9edf4'),.16);
+      if(mat.emissive){
+        mat.emissive.lerp(new THREE.Color('#7cc7d8'),.12);
+        mat.emissiveIntensity=Math.max(mat.emissiveIntensity||0,.35);
+      }
+      o.material=mat;ghostSolidMaterials.push(mat);
+    });
+    holder.add(copy);return holder;
+  }
+  const ghostCandle=makeVirtualSolid(candleBody),ghostF=makeVirtualSolid(fSource);
+  ghostSolid.add(ghostCandle,ghostF);
+  ghostCandle.visible=false;ghostF.visible=false;
+
   const sources = new THREE.Group();candleRig.add(sources);
   const ghostLabels = new THREE.Group();scene.add(ghostLabels);
 
@@ -960,22 +992,35 @@ import * as THREE from './assets/optics-three.min.js';
   function updateGhost(){
     const c=imageCase();
     const virtual=!!c&&c.v<0;
-    // 「观察虚像大小与位置」是独立的教学对照图层：虚像正面朝向镜头、和实物同屏。
+    // 「观察虚像大小与位置」是独立的教学对照图层：固定朝向的三维虚像和实物同屏。
     // 关掉它以后，虚像只按物理规律出现 —— 眼睛必须在光屏一侧，且视线真的穿过镜片光圈；
     // 片元着色器再把光圈以外的部分裁掉（见 ghostMat）。
     const compare=virtual&&!!state.compare;
     const seen=!!c&&(compare||imageSeenFromCamera(c.v));
     state.virtualCompare=compare;
-    ghostObject.visible=seen;
-    if(seen){
+    // 镜后裸眼观察仍用带光圈裁剪的像面；教学对照则换成固定朝向的三维实体像。
+    // 两种表示共用同一个像距、放大率和亮度计算，不会出现两个像同时叠加。
+    ghostObject.visible=seen&&!compare;
+    ghostSolid.visible=seen&&compare;
+    if(c){
       const size=clamp(Math.abs(c.m),.2,8.2);
       // 像面的中心 = art 画布中心（世界 AXIS 那条线）的像。透镜一升降，整幅像跟着搬。
-      const Yc=lensCy();
-      ghostObject.position.set(wx(state.lensP)+c.v,Yc+(AXIS-Yc)*c.m,0);
+      const Yc=lensCy(),imageX=wx(state.lensP)+c.v;
+      ghostObject.position.set(imageX,Yc+(AXIS-Yc)*c.m,0);
       ghostObject.scale.set(c.inverted?-size:size,c.inverted?-size:size,1);
       // 悬在空中的像同样由镜片收集到的光形成：挡住一部分镜片，它只会变暗，不会缺一块。
       ghostObject.material.opacity=(c.inverted?.34:.78)*lightThrough();
       ghostObject.material.color.set(c.v<0?'#e8fdff':'#ffffff');
+      if(compare){
+        // 三维组的内层已把 AXIS 平移到原点；这里补上实物升降量，使每一个顶点都满足
+        // y像 = 光心高 + (y物 − 光心高) × m。x、y、z 同比例缩放，保留器材真实形状。
+        ghostSolid.position.set(imageX,Yc+(AXIS+state.liftCandle-Yc)*c.m,0);
+        ghostSolid.scale.set(size,size,size);
+        ghostCandle.visible=state.source==='candle';
+        ghostF.visible=state.source==='f';
+        for(const mat of ghostSolidMaterials)
+          mat.opacity=mat.userData.virtualBaseOpacity*lightThrough();
+      }
     }
     // 透过透镜观察虚像时，实际物体在镜后同侧，无法和虚像分开看见；用一个虚线轮廓
     // 标出它真正所在的位置（也就是 u 的量起点），像本身仍是唯一的亮物体。
@@ -1385,7 +1430,7 @@ import * as THREE from './assets/optics-three.min.js';
       const q=V(x,y,z).project(camera);
       return {x:(q.x+1)*rect.width/2,y:(1-q.y)*rect.height/2};
     };
-    const LX=wx(state.lensP),sy=Math.abs(ghostObject.scale.y),Yc=lensCy();
+    const LX=wx(state.lensP),sy=Math.abs(ghostSolid.scale.y),Yc=lensCy();
     const objTag=toScreen(LX-state.u,span.top+state.liftCandle+1.3);
     const imgTag=toScreen(LX+c.v,Yc+(span.top+state.liftCandle-Yc)*sy+1.3);
     const place=(el,p)=>{
@@ -1418,8 +1463,9 @@ import * as THREE from './assets/optics-three.min.js';
     // 器材能在立柱上升降，取景的上下沿必须跟着抬起来，否则升高后的镜架会被切掉。
     const liftTop=AXIS+Math.max(state.liftCandle,state.liftLens,state.liftScreen)+9.5;
     let frameLoY=-5,frameHiY=Math.max(25,liftTop);
-    if(ghostObject.visible&&(state.virtualCompare||!state.imageOnObjectSide)){
-      const gx=ghostObject.position.x,sx=Math.abs(ghostObject.scale.x),sy=ghostObject.scale.y;
+    const framingGhost=state.virtualCompare?ghostSolid:ghostObject;
+    if(framingGhost.visible&&(state.virtualCompare||!state.imageOnObjectSide)){
+      const gx=framingGhost.position.x,sx=Math.abs(framingGhost.scale.x),sy=framingGhost.scale.y;
       edgeLo.push(gx-5*sx-2.5);edgeHi.push(gx+5*sx+2.5);
       const span=drawnObjectSpan(),Yc=lensCy();
       const yA=Yc+(span.top+state.liftCandle-Yc)*sy,yB=Yc+(span.bottom+state.liftCandle-Yc)*sy;
@@ -1474,19 +1520,11 @@ import * as THREE from './assets/optics-three.min.js';
     camera.updateMatrixWorld();
   }
   function syncGhostToCamera(){
-    if(ghostObject.visible){
-      if(state.virtualCompare){
-        // 对照模式：虚像面片正对镜头（billboard），像的整幅内容都看得清；
-        // 像距仍是真实的 |v|，缩放仍是真实的 |m|，只是把观察方向转到了正面。
-        const dx=camera.position.x-ghostObject.position.x;
-        const dz=camera.position.z-ghostObject.position.z;
-        ghostObject.rotation.y=Math.atan2(dx,dz);
-      }else{
-        ghostObject.rotation.y=Math.PI/2;
-      }
-    }
-    // 对照层是教学图层，不能被轨道或支架挡掉半截；真实观察时则保留景深遮挡。
-    ghostMat.depthTest=!state.virtualCompare;
+    // 镜后观察的像面始终位于物平面 / 像平面，不做 billboard。
+    // 对照模式的三维虚像同样保持固定空间朝向，拖动视角只改变相机，不改变像本身。
+    ghostObject.rotation.y=Math.PI/2;
+    // 两种表示都使用正常深度测试：三维像尤其需要正确的自身前后遮挡关系。
+    ghostMat.depthTest=true;
     // 透过镜片才看得见：把「相机 → 片元」的视线投到镜片平面上，光圈外一律丢弃。
     const sh=ghostMat.userData.shader;
     if(sh){
@@ -1683,10 +1721,10 @@ import * as THREE from './assets/optics-three.min.js';
     $('ghostBadge').textContent=info.real?`实像（${info.inverted?'倒立':'正立'}，悬在空中）`:`虚像（${info.inverted?'倒立':'正立'}、放大 ${Math.abs(info.m).toFixed(2)}×）`;
     $('observeHint').textContent=hasExtra()
       ? (!info.real
-        ?'组合镜组成虚像：点「透过透镜观察」把眼睛放到光屏一侧、透过镜片看虚像；点「观察虚像大小与位置」则把虚像正面转过来，和实物同屏对照像高与像距。'
+        ?'组合镜组成虚像：点「透过透镜观察」把眼睛放到光屏一侧、透过镜片看虚像；点「观察虚像大小与位置」则用三维虚像和实物同屏对照像高与像距，拖动视角可检查它的空间位置。'
         :'附加镜已接入真实组合光路。保持光屏不动可先看到离焦模糊；再根据提示移动光屏，或点「重新调到清晰像」验证理论像距。')
       :info.needsScreenOff
-      ?'u ≤ f：光屏接不到像。点「透过透镜观察」，视线必须从光屏一侧穿过镜片光圈才能看到虚像（镜片外什么也没有）；点「观察虚像大小与位置」可把虚像正面转过来，和实物同屏比较大小与像距。'
+      ?'u ≤ f：光屏接不到像。点「透过透镜观察」，视线必须从光屏一侧穿过镜片光圈才能看到虚像（镜片外什么也没有）；点「观察虚像大小与位置」可把三维虚像和实物同屏比较大小与像距，拖动视角可检查它的空间位置。'
       :'u > f：移动光屏接收实像，直到屏上的像最清晰。光屏是半透明膜：点「背面看光屏」绕到它后面，透过膜同样能看到这个像（左右翻转）；也可以点击 3D 画面里的光屏把它撤去，再看像是否仍悬在空中。';
     const lensName=state.extra==='convex'?'凸透镜':'凹透镜';
     if(hasExtra()){
@@ -1745,7 +1783,11 @@ import * as THREE from './assets/optics-three.min.js';
   });
   $('sourceKind').addEventListener('click',e=>{
     const b=e.target.closest('button[data-kind]');if(!b)return;
-    state.source=b.dataset.kind;state.step=Math.max(state.step,2);update();
+    const changed=state.source!==b.dataset.kind;
+    state.source=b.dataset.kind;state.step=Math.max(state.step,2);
+    // 对照中换成 F 时，纯侧面会把字形看成一条线；给它能同时读到字形与厚度的斜前方。
+    if(changed&&state.virtualCompare)state.yaw=state.source==='f'?.68:.18;
+    update();
   });
   $('extraLensKind').addEventListener('click',e=>{
     const b=e.target.closest('button[data-extra]');if(!b)return;
@@ -1813,15 +1855,15 @@ import * as THREE from './assets/optics-three.min.js';
     else {state.yaw=.06;state.pitch=.09;state.zoom=1.06;}
     update();
   }
-  // 「观察虚像大小与位置」：把虚像正面转向镜头，和实物、量高量距辅助线放在同一画面里。
-  // 它不改变任何光学量，只是换了一个更利于比较的观察方向；关掉它，虚像就回到
-  // 「只能从光屏一侧透过镜片看见」的物理规则。
+  // 「观察虚像大小与位置」：把固定空间朝向的三维虚像和实物、量高量距辅助线放在同一画面里。
+  // 它不改变任何光学量；拖动视角时由相机投影呈现真实的角度、透视和遮挡变化。
+  // 关掉它，虚像就回到「只能从光屏一侧透过镜片看见」的物理规则。
   function toggleCompare(){
     if(state.virtualCompare){state.compare=false;update();return;}
     const info=status();
     if(info.real||!Number.isFinite(info.v))return;
     state.compare=true;state.observing=false;state.screenRemoved=true;state.autoScreen=false;
-    state.yaw=.08;state.pitch=.09;state.zoom=.98;
+    state.yaw=state.source==='f'?.68:.18;state.pitch=.09;state.zoom=.98;
     update();
   }
   // 工具条上那颗，和参数面板里那颗，是同一件事（全屏时工具条不在舞台里，只能靠面板这颗）
@@ -2295,7 +2337,7 @@ import * as THREE from './assets/optics-three.min.js';
     rayShiftsFor,diopterOf,recordsTable,renderRecords,LENS_AP,lightThrough,occluderCutY,lensSegmentFraction,
     stageBox,setParamsOpen,paramsIsOpen,paramsPanelInfo,fsInfo,
     get lastRayTraces(){return lastRayTraces;},
-    debug:()=>{const i=status();return {objP:state.objP,lensP:state.lensP,scrP:state.scrP,u:state.u,sd:state.sd,
+    debug:()=>{const i=status(),solidBox=new THREE.Box3().setFromObject(ghostSolid),solidSize=solidBox.getSize(new THREE.Vector3());return {objP:state.objP,lensP:state.lensP,scrP:state.scrP,u:state.u,sd:state.sd,
       liftCandle:state.liftCandle,liftLens:state.liftLens,liftScreen:state.liftScreen,
       lensCy:lensCy(),objCy:objCy(),scrCy:scrCy(),imgY:i.imgY,offY:i.offY,offScreen:i.offScreen,
       flameScale:flame.s,flameDz:flame.dz,flicker:state.flicker,
@@ -2308,6 +2350,9 @@ import * as THREE from './assets/optics-three.min.js';
       sources:lightSources.map(g=>g.position.y),rayCount:rays.children.length,
       rayMode:state.rayMode,diopter:diopterOf(state.f),
       ghost:ghostObject.visible,ghostX:ghostObject.position.x,ghostScale:ghostObject.scale.x,
+      ghostSolid:ghostSolid.visible,ghostSolidKind:ghostSolid.visible?state.source:null,
+      ghostSolidX:ghostSolid.position.x,ghostSolidScale:ghostSolid.scale.x,
+      ghostSolidRotY:ghostSolid.rotation.y,ghostSolidSize:[solidSize.x,solidSize.y,solidSize.z],
       imageVisible:state.imageVisible,imageOnObjectSide:state.imageOnObjectSide,
       observing:state.observing,compare:!!state.virtualCompare,through:throughView(),
       cameraFov:camera.fov,outline:objectOutline.visible,candleVisible:candleBody.visible,
