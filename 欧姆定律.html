@@ -586,7 +586,7 @@
     </div>
   </div>
 
-  <script src="circuit-core.js?build=52"></script>
+  <script src="circuit-core.js?build=53"></script>
   <script src="circuit-draw.js?build=72"></script>
   <script src="circuit-editor.js?build=53"></script>
   <script src="circuit-schematic.js?build=42"></script>
@@ -1018,21 +1018,22 @@ function updateStatus(){
 // 电流超过电流表最大量程时，读数不可信 —— 真实实验里这时该换量程或调大电阻，
 // 不该把一个超量程的数字抄进实验报告，所以记录按钮直接置灰。
 //
-// ⚠️ 但「刚刚好压在满刻度上」不算超量程。内核判 overRange 的阈值是 `range + 1e-12`，
-//    而电压表并不是理想表（内阻 1GΩ），它并在 R1 上会让解出来的电流天然带 1.5e-12
-//    的漂移 —— 教材那个工作点「控住 3V、换成 5Ω」正好是 0.6A 满偏，于是解成
-//    0.6000000015，页面就会喊「超量程」并把记录按钮置灰：学生按课本做实验，
-//    第四个点反而记不进去。（2026-10-30 实测，回归脚本里也是红的。）
-//    所以这里改成按【量程的相对比例】判：超过 1e-4 才算真超。0.6A 挡上是 6e-5 A，
-//    表盘上根本看不出来，而真超量程（比如 1.2A 压 0.6A 挡）照样拦得住。
-var OVER_REL = 1e-4;
+// ⚠️ 但「刚刚好压在满刻度上」不算超量程。电压表并不是理想表（内阻 1GΩ），
+//    它并在 R1 上会让解出来的电流天然带 1.5e-12 的漂移 —— 教材那个工作点
+//    「控住 3V、换成 5Ω」正好是 0.6A 满偏，于是解成 0.6000000015，
+//    旧内核的阈值（range + 1e-12）就会喊「超量程」并把记录按钮置灰：学生按
+//    课本做实验，第四个点反而记不进去。（2026-10-30 实测，回归脚本里也是红的。）
+//    🔴 2026-11-17 内核已经把这件事收口了：overRange 自带「读数牌分辨率」
+//       的容差（circuit-core 的 meterOverTol），0.6A 档上是 5mA。
+//       这里改成【直接读内核的 rec.overRange】，不再自己写一套更窄的闸：
+//       两套容差并存时会出现「画面没损坏、记录按钮却灰着」这种自相矛盾，
+//       而学生只会觉得这一页坏了。
 function realOverRange(){
   if (!results || !results.components) return false;
   var bad = false;
   ['A', 'V'].forEach(function(id){
     var r = results.components[id];
-    if (!r || !r.rangeWired || r.reading == null || !r.range) return;
-    if (Math.abs(r.reading) > Math.abs(r.range) * (1 + OVER_REL)) bad = true;
+    if (r && r.overRange) bad = true;
   });
   return bad;
 }

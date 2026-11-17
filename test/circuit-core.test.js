@@ -438,6 +438,68 @@ test('T11 电流表内阻：E=3V，R=4.9Ω 串电流表(r_A=0.1Ω)', function ()
 });
 
 // ============================================================
+// T11b 恰满偏 + 并联理想电压表：3nA 的残差不能判超量程
+// ------------------------------------------------------------
+// 2026-11-17 用户实测：3V 电源、R=5Ω、电流表 0.6A 档，读数牌印着 0.60 A
+// 却挂「已损坏」，而且只在【接了电压表】时出现。原因不是电路，是判据：
+//   · 不接电压表 I = 0.6000000000 A，比 0.6 大不了，判据（旧的是
+//     range + 1e-12）不触发；
+//   · 一接上理想电压表，内核为了让「两只电压表串联」的中间节点不悬空，
+//     给它留了一条 1GΩ 支路（IDEAL_VM_R）⇒ 干路变成 0.6000000030 A。
+//     多出来的 3nA 是建模残差，不是学生接出来的电流，却够把
+//     「0.6 + 1e-12」这条线踩过去 ⇒ 打表损坏。
+// 现在判据带【读数牌分辨率】的容差（见 meterOverTol），这一条把两头都钉住：
+// 残差不判坏，真超量程（0.8A 打 0.6A 档）照样判。
+test('T11b 恰满偏 + 并联理想电压表：残差不判超量程，真超量程照判', function () {
+  function scene(withV) {
+    var comps = [
+      comp('E', 'battery', { emf: 3, rInt: 0 }),
+      comp('S', 'switch', { closed: true }),
+      comp('A', 'ammeter', { range: 0.6 }),
+      comp('R', 'resistor', { R: 5 }),
+    ];
+    var wires = [W('E', 0, 'S', 0), W('S', 1, 'A', 1), W('A', 0, 'R', 1), W('R', 0, 'E', 1)];
+    if (withV) {
+      comps.push(comp('V', 'voltmeter', { range: 3 }));
+      wires.push(W('V', 1, 'R', 1), W('V', 0, 'R', 0));
+    }
+    return { comps: comps, wires: wires };
+  }
+  function faultsOf(s, r) {
+    return C.faultsOf(s.comps, s.wires, r, C.wireCurrents(s.comps, s.wires, r)).comps;
+  }
+
+  var bare = scene(false), bareR = run(bare.comps, bare.wires, 'T11b-无表');
+  close(bareR.components.A.i, 0.6, 'T11b 不接电压表：恰 0.6A', 1e-12);
+  truthy(bareR.components.A.overRange === false, 'T11b 不接电压表不该判超量程');
+  truthy(faultsOf(bare, bareR).length === 0, 'T11b 不接电压表不该有损坏');
+
+  var withV = scene(true);
+  // 这一路【不跑 invariants】：那条 1GΩ 理想表支路让 Tellegen 平衡差 9nW
+  // （相对 2.5e-9），是建模方式自带的，不是这次要查的错 —— T10 / T17e 也
+  // 一直带着同一处偏差。这里只关心超量程判据。
+  var withVR = C.solve(withV.comps, withV.wires, {});
+  truthy(withVR.ok !== false, 'T11b 带电压表的电路应能求解');
+  // 读数确实被那条 1GΩ 支路抬起了一点点 —— 这一条是【前提】，不是目标：
+  // 它要是变成 0，说明内核改了理想表的建模方式，本用例的初衷也要跟着复核。
+  truthy(withVR.components.A.i > 0.6, 'T11b 理想电压表确实让干路电流略增（残差前提）');
+  truthy(withVR.components.A.i - 0.6 < 1e-6, 'T11b 残差应在 nA 量级');
+  close(withVR.components.V.reading, 3, 'T11b 电压表读数仍是 3V', 1e-6);
+  truthy(withVR.components.A.overRange === false,
+    'T11b 残差 3nA 不能判超量程（读数牌上印的就是 0.60 A）');
+  truthy(faultsOf(withV, withVR).length === 0,
+    'T11b 带电压表也不该判「打表损坏」');
+
+  // 容差只挡住「牌上印不出来」的那一点，真超了照样判
+  close(C.meterOverTol('ammeter', 0.6), 0.005, 'T11b 0.6A 档容差 = 半个最小显示位', 0);
+  close(C.meterOverTol('voltmeter', 3), 0.03, 'T11b 3V 档容差不超过量程的 1%', 0);
+  truthy(C.overRangeOf(0.6006, 0.6, 'ammeter') === false, 'T11b 0.6006A 不判（牌上仍是 0.60）');
+  truthy(C.overRangeOf(0.62, 0.6, 'ammeter') === true, 'T11b 0.62A 必须判超量程');
+  truthy(C.overRangeOf(0.8, 0.6, 'ammeter') === true, 'T11b 0.8A 必须判超量程');
+  truthy(C.overRangeOf(3.06, 3, 'voltmeter') === true, 'T11b 3.06V 必须判超量程');
+});
+
+// ============================================================
 // T12 灯泡额定点
 // ============================================================
 test('T12 灯泡额定点：2.5V/0.75W 直接接 2.5V 理想源', function () {

@@ -550,6 +550,40 @@
   //    后者是「电流表内阻几乎为零，绝不能并接在电源上」。
   var METER_BURN_K = 2;
 
+  // ── 超量程的判定容差 ────────────────────────────────────────
+  // 🔴 2026-11-17 用户实测：3V 电源 + R=5Ω + 电流表 0.6A 档，读数牌印着
+  //    「0.60 A」，却挂上「已损坏」。差别只在【有没有接电压表】：
+  //      · 不接 → I = 0.6000000000 A，判 0.6 > 0.6 + 1e-12 为假，正常；
+  //      · 接上 → I = 0.6000000030 A，比量程多 3nA，判超量程 ⇒ 打表损坏。
+  //    那 3nA 是内核把「理想电压表不分流」实现成一条 1GΩ 支路（见
+  //    IDEAL_VM_R，为了两只电压表串联时节点不悬空）带出来的数值残差，
+  //    不是学生接出来的电流，拿它当损坏理由等于冤枉人。
+  // 所以容差不再取 1e-12 这种「只要有差别就算」，而取【读数牌的分辨率】：
+  //    牌上印不出来的那点差别，指针也压不出差别，不算超量程。
+  //    对应关系与绘制层同一套（circuit-params 的 num2 / num1）：
+  //      · 电流表印两位小数 ⇒ 半个最小位 0.005 A；
+  //      · 电压表印一位     ⇒ 半个最小位 0.05 V；
+  //      · 灵敏电流计按量程的万分之一兜底（它的读数按 mA / μA 印，位数随量级变）。
+  //    这样「牌上印 0.60 A 就绝不会判损坏」永远是恒等式，学生不会看到
+  //    「显示满偏 ⇒ 却说我超量程」这种自相矛盾的画面。
+  //    上限卡在量程的 1%：真超量程（0.8A 打 0.6A 档、2 倍烧表）离得远，
+  //    不会因为容差而漏判；小量程也不会被半个显示位放大成百分之几的宽容。
+  var METER_OVER_HALF_STEP = { ammeter: 0.005, voltmeter: 0.05 };
+  function meterOverTol(type, range) {
+    var rng = Math.abs(+range);
+    if (!isFinite(rng) || !(rng > 0)) return 1e-12;
+    var half = METER_OVER_HALF_STEP[type] || 0;
+    var tol = Math.max(rng * 1e-4, Math.min(half, rng * 0.01));
+    return Math.max(tol, 1e-12);
+  }
+  // 「这一帧的读数算不算超量程」。三处判据（电流表 / 电压表 / 灵敏电流计）
+  // 必须共用这一个函数 —— 各写一遍的话，迟早有一处忘了容差。
+  function overRangeOf(reading, range, type) {
+    var x = Math.abs(+reading || 0), rng = Math.abs(+range || 0);
+    if (!(rng > 0)) return false;
+    return x > rng + meterOverTol(type, range);
+  }
+
   // ── 直流电动机的铭牌常数 ────────────────────────────────────
   //   rpmPerV  空载转速常数（每伏特每分钟多少转）：3V 下 2400 r/min，
   //            正是 130 型小电机的量级；
@@ -1198,9 +1232,9 @@
       // 这样量程柱空着的表既不导通也不偷电流，和它没被接上是一致的。
       case 'voltmeter':
         // 理想电压表（rInternal = null）【也给一条支路】，内阻取 IDEAL_VM_R
-        // （10MΩ）—— 见那个常量的注释：不给的话，两只理想电压表串联时中间
+        // （1GΩ）—— 见那个常量的注释：不给的话，两只理想电压表串联时中间
         // 节点是悬空的，一只表读满电源电压、另一只读 0（用户 2026-10-19 报的）。
-        // 「不分流」这句话仍然成立：10MΩ 的漏电流只有 0.3μA，而且对外
+        // 「不分流」这句话仍然成立：1GΩ 的漏电流只有 3nA（3V 时），而且对外
         // rec.i 一律按 0 报（fillVoltmeter 末尾），学生看到的仍是理想表。
         if (tap != null) {
           var rv = (P.rInternal != null && isFinite(P.rInternal)) ? P.rInternal : IDEAL_VM_R;
@@ -2469,7 +2503,7 @@
           if (!rec.wired) { rec.i = 0; rec.v = 0; rec.p = 0; }
           rec.ideal = !P.rInternal;
           rec.reading = rec.i;
-          rec.overRange = rec.rangeWired && Math.abs(rec.reading) > rec.range + 1e-12;
+          rec.overRange = rec.rangeWired && overRangeOf(rec.reading, rec.range, 'ammeter');
           rec.reversed = rec.i < -1e-9;
           if (rec.overRange) warnings.push({ code: 'METER_OVER_RANGE', message: '电流表超量程', componentIds: [c.id] });
           if (rec.reversed) warnings.push({ code: 'METER_REVERSED', message: '电流表正负接线柱接反', componentIds: [c.id] });
@@ -2502,7 +2536,7 @@
           //    因此不会被这件器材触发（它本来也不该触发）。
           rec.reversed = false;
           rec.centerZero = true;
-          rec.overRange = Math.abs(rec.reading) > rec.range + 1e-12;
+          rec.overRange = overRangeOf(rec.reading, rec.range, 'galvanometer');
           if (rec.overRange) {
             warnings.push({ code: 'METER_OVER_RANGE', message: '灵敏电流计超量程', componentIds: [c.id] });
           }
@@ -2706,8 +2740,8 @@
     out.shortCircuit = shortCircuitInfo(components, usedBranches, topo.termNode);
 
     // ---- 状态判定 ----
-    // 🔴 「通不通」还要再挡一层：理想电压表在求解器里走的是一条 10MΩ 支路
-    //    （见 IDEAL_VM_R，为了把串联分压算对），它的漏电流只有 0.3μA，
+    // 🔴 「通不通」还要再挡一层：理想电压表在求解器里走的是一条 1GΩ 支路
+    //    （见 IDEAL_VM_R，为了把串联分压算对），它的漏电流只有 3nA（3V 时），
     //    但足以让 anyCurrent 变 true。而课本管「电源上只接了一只电压表」
     //    叫【断路】—— 灯一个都不亮、电流表读 0。所以再问一句「这个有源岛里
     //    有没有【真正的负载】」：只有电源和理想电压表的岛不算导通。
@@ -2872,7 +2906,7 @@
     if (!rec.wired) { rec.v = 0; rec.i = 0; rec.p = 0; }
     rec.reading = rec.v;
     rec.ideal = !(P.rInternal > 0);
-    // 🔴 理想电压表：求解时它走的是一条 10MΩ 支路（见 IDEAL_VM_R），但
+    // 🔴 理想电压表：求解时它走的是一条 1GΩ 支路（见 IDEAL_VM_R），但
     //    【对外】仍按「不分流」报 —— i = 0、R = null。这一条不能省：
     //      · 侧栏 I 列会印出一个 0.0000003 的电流，学生以为表在偷电；
     //      · R 列会印 10000000Ω，看着像一只坏表；
@@ -2881,7 +2915,7 @@
     //        而实际上只有一只电压表接着，课本管这个叫断路。
     //    内部那条支路只负责把【节点电位】算对（串联分压），不负责对外报数。
     if (rec.ideal) { rec.i = 0; rec.p = 0; rec.R = null; }
-    rec.overRange = rec.rangeWired && Math.abs(rec.reading) > rec.range + 1e-12;
+    rec.overRange = rec.rangeWired && overRangeOf(rec.reading, rec.range, 'voltmeter');
     rec.reversed = rec.v < -1e-9;
     if (rec.overRange) warnings.push({ code: 'METER_OVER_RANGE', message: '电压表超量程', componentIds: [c.id] });
     if (rec.reversed) warnings.push({ code: 'METER_REVERSED', message: '电压表正负接线柱接反', componentIds: [c.id] });
@@ -3562,6 +3596,10 @@
     // 去对账，而不是在测试里再抄一个 2 —— 抄一份就等于把「实现改了、测试还绿」
     // 这个洞留着。
     METER_BURN_K: METER_BURN_K,
+    // 超量程容差（见 meterOverTol）：导出是给测试对账用的 —— 断言要能拿
+    // 【同一份】容差去算「刚好满偏」和「真的超了」，而不是在测试里再抄一遍。
+    meterOverTol: meterOverTol,
+    overRangeOf: overRangeOf,
     BATT_MAX_I: BATT_MAX_I,
     // 短路环识别。导出是为了让自检能拿一个【手搓的场景】直接问「这条环上都有
     // 谁」—— 理想电源被短接时方程无解、读数一个都拿不到，只有拓扑判据能验。
