@@ -72,6 +72,19 @@ import * as THREE from './assets/optics-three.min.js';
   ];
   const clamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
   const roundHalf = x => Math.round(x * 2) / 2;
+  // 面向学生的措辞：不再把“放大率”用在缩小的像上。
+  // m = 像高 / 物高 是中性比值，m<1 表示缩小、m=1 表示等大、m>1 才叫放大。
+  function sizeRatio(m){
+    const ratio=Math.abs(m);
+    if(!Number.isFinite(ratio))return{ratio:NaN,scale:'—',relation:'不成像',phrase:'大小无法比较',record:'—'};
+    const equal=Math.abs(ratio-1)<.005;
+    const relation=equal?'等大':ratio>1?'放大':'缩小';
+    return{
+      ratio,scale:ratio.toFixed(2),relation,
+      phrase:equal?'与物等大（像高 = 物高）':`像高是物高的 ${ratio.toFixed(2)} 倍（${relation}）`,
+      record:`${ratio.toFixed(2)}（${relation}）`
+    };
+  }
   // 遮挡板从镜片上方压下来，挡住高度 y ≥ 下沿的那一段圆。滑块给的是【被挡住的面积百分比】，
   // 亮度衰减就必须按这块弓形的真实面积算 —— 按高度比例算会在半圆附近差出一大截。
   // 圆半径 R、下沿到圆心距离 h（向下为负）时，上方弓形面积 = R²·arccos(h/R) − h·√(R²−h²)。
@@ -1367,7 +1380,7 @@ import * as THREE from './assets/optics-three.min.js';
     }
     g.restore();
     g.strokeStyle='#a7a9a155';g.lineWidth=1.5;g.strokeRect(4,4,W-8,H-8);
-    const sizeText=`放大率 ${mag.toFixed(2)} 倍`;
+    const sizeText=sizeRatio(mag).phrase;
     $('previewTitle').textContent=mode==='screen'
       ?(fromBack?'光屏背面 · 透过半透明膜看':'光屏正面 · 放大观察')
       :mode==='air'?'透过透镜 · 空中的实像':`透过透镜 · ${info.inverted?'倒立':'正立'}的虚像`;
@@ -1420,7 +1433,7 @@ import * as THREE from './assets/optics-three.min.js';
       $('vfHead').textContent=`虚像比实物大 ${m.toFixed(2)} 倍，离透镜${gap>=0?'更远':'更近'}`;
       $('vfU').textContent=`${state.u.toFixed(1)} cm`;
       $('vfV').textContent=`${Math.abs(c.v).toFixed(1)} cm`;
-      $('vfM').textContent=`${m.toFixed(2)}×`;
+      $('vfM').textContent=`${m.toFixed(2)} 倍`;
       $('vfGap').textContent=`像距比物距${gap>=0?'远':'近'} ${Math.abs(gap).toFixed(1)} cm`;
       banner.textContent=`虚像对比 · 像距 ${Math.abs(c.v).toFixed(1)} cm ${gap>=0?'>':'<'} 物距 ${state.u.toFixed(1)} cm`;
     }
@@ -1743,7 +1756,7 @@ import * as THREE from './assets/optics-three.min.js';
       else if(!info.real)text=`附加${lensName}后，最终得到${info.inverted?'倒立':'正立'}虚像，光屏接不到；点「透过透镜观察」从光屏侧看虚像，或点「观察虚像大小与位置」对照。`;
       else if(!canFocus(info))text=`清晰实像在主镜后 ${info.v.toFixed(1)} cm，超出当前光屏范围；请移动主镜或改变物距。`;
       else if(state.screenRemoved)text=`光屏已撤去，最终实像仍在主镜后 ${info.v.toFixed(1)} cm；放回光屏后可重新调焦。`;
-      else if(info.crisp)text=`重新调焦成功：光屏在主镜后 ${state.sd.toFixed(1)} cm，屏上得到清晰的${info.inverted?'倒立':'正立'}实像，组合放大率 ${Math.abs(info.m).toFixed(2)} 倍。`;
+      else if(info.crisp)text=`重新调焦成功：光屏在主镜后 ${state.sd.toFixed(1)} cm，屏上得到清晰的${info.inverted?'倒立':'正立'}实像，${sizeRatio(info.m).phrase}。`;
       else text=`附加${lensName}使像面改变。光屏应${info.v<state.sd?'向主镜靠近':'远离主镜'}，目标刻度为 ${(state.lensP+info.v).toFixed(1)} cm。`;
     }else if(!Number.isFinite(info.v))text='u = f：折射后的光线同向平行射出，在有限位置不能获得清晰像；屏上和眼中都只有一片模糊。';
     else if(!info.real)text=`u = ${state.u.toFixed(1)} cm < f：实际光线在屏侧发散，反向延长后在光源同侧得到正立、放大的虚像（放大 ${Math.abs(info.m).toFixed(2)} 倍）。光屏接不到；要把眼睛放到光屏一侧、透过透镜才看得见它。`;
@@ -1875,7 +1888,7 @@ import * as THREE from './assets/optics-three.min.js';
   // 记录表导出：拼成可以直接粘进表格软件 / 文档的制表符文本（首行是表头）。
   // 没记录的行照样导出、单元格留空 —— 粘出来仍是一张 5 行的完整表，缺哪几行一眼可见。
   function recordsTable(){
-    const head=['物距区域','物距 u / cm','像距 v / cm','像的性质','放大率','光屏能否承接'];
+    const head=['物距区域','物距 u / cm','像距 v / cm','像的性质','像高 / 物高','光屏能否承接'];
     const rows=CASES.map(c=>{
       const r=state.records[c.id];
       return [c.name,r?r.u:'',r?r.v:'',r?r.nature:'',r?r.mag:'',r?r.onScreen:''];
@@ -1901,14 +1914,13 @@ import * as THREE from './assets/optics-three.min.js';
   function recordMark(){
     const info=status();if(info.real&&!state.screenRemoved&&!info.crisp)return;
     const item=CASES.find(c=>c.id===info.baseKind);
-    const real=info.real,mag=Number.isFinite(info.m)?Math.abs(info.m):NaN;
-    const size=mag>1.01?'放大':mag<.99?'缩小':'等大';
+    const real=info.real,size=sizeRatio(info.m);
     state.records[item.id]={
       name:item.name,u:state.u.toFixed(1),
       v:!Number.isFinite(info.v)?'∞':(info.v<0?'−':'')+Math.abs(info.v).toFixed(1),
       nature:!Number.isFinite(info.v)?'不成像'
-        :(info.inverted?'倒立、':'正立、')+size+(real?'的实像':'的虚像'),
-      mag:!Number.isFinite(info.v)?'—':mag.toFixed(2)+'×',
+        :(info.inverted?'倒立、':'正立、')+size.relation+(real?'的实像':'的虚像'),
+      mag:!Number.isFinite(info.v)?'—':size.record,
       onScreen:real?'能':'不能'
     };
     renderRecords();
