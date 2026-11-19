@@ -40,9 +40,30 @@
     .cv{position:relative;flex:1 1 660px;min-width:0;
         background:rgba(9,15,28,.86);border:1px solid var(--line);border-radius:16px;padding:10px;
         box-shadow:0 18px 46px rgba(2,6,23,.5)}
-    .cv canvas{display:block;width:100%;height:auto;border-radius:10px;background:#060a14;cursor:pointer}
+    .cv canvas{display:block;width:100%;height:auto;margin:0 auto;border-radius:10px;background:#060a14;cursor:pointer}
     .side{flex:0 0 344px;min-width:0;display:flex;flex-direction:column;gap:12px}
     @media (max-width:960px){ .cv{flex:1 1 100%} .side{flex:1 1 100%} }
+
+    /* ===== 显示模式切换：甲乙对比 / 只看水流 / 只看电路 =====
+       上课时学生同时看两幅图会「注意力来回跳」⇒ 允许单独看一幅，另一幅不渲染。 */
+    .viewBar{display:flex;gap:7px;justify-content:center;flex-wrap:wrap;
+      margin:9px 2px 0;padding:0}
+    .viewBar button{flex:0 1 auto;min-width:96px;padding:7px 13px;border-radius:9px;
+      border:1px solid rgba(148,163,184,.26);background:rgba(15,23,42,.62);color:#94a3b8;
+      font-family:inherit;font-size:12.5px;font-weight:700;cursor:pointer;
+      transition:.16s;white-space:nowrap}
+    .viewBar button:hover{border-color:rgba(56,189,248,.55);color:#e0f2fe}
+    .viewBar button.on{background:linear-gradient(180deg,#0369a1,#075985);border-color:#38bdf8;
+      color:#fff;box-shadow:0 4px 14px rgba(56,189,248,.3)}
+    .viewBar button .k{font-weight:600;font-size:11px;color:#64748b;margin-left:3px}
+    .viewBar button.on .k{color:#bae6fd}
+    .vwHint{margin:7px auto 0;max-width:560px;text-align:center;font-size:11.5px;
+      line-height:1.6;color:#64748b}
+    .vwHint b{color:#7dd3fc;font-weight:700}
+    @media (max-width:560px){
+      .viewBar button{min-width:0;flex:1 1 30%;padding:7px 8px;font-size:12px}
+      .vwHint{display:none}
+    }
 
     .fsBtn{position:absolute;top:18px;right:18px;z-index:7;
       display:flex;align-items:center;gap:5px;
@@ -75,6 +96,11 @@
       width:auto;height:auto;border-radius:6px}
     #stage:fullscreen .fsBtn, #stage:-webkit-full-screen .fsBtn{top:14px;right:14px}
     #stage:fullscreen .stageTag, #stage:-webkit-full-screen .stageTag{top:14px;left:14px}
+    /* 全屏里这条切换带浮在画面底部居中（画面高度已为它留出位置，不会压住实验图） */
+    #stage:fullscreen .viewBar, #stage:-webkit-full-screen .viewBar{
+      position:absolute;left:50%;bottom:10px;transform:translateX(-50%);
+      margin:0;z-index:9;padding:0;flex-wrap:nowrap}
+    #stage:fullscreen .vwHint, #stage:-webkit-full-screen .vwHint{display:none}
 
     #stage:fullscreen .side, #stage:-webkit-full-screen .side{
       flex:0 0 auto;flex-direction:row;align-items:flex-start;gap:16px;
@@ -267,6 +293,13 @@
     <div class="stage" id="stage">
       <div class="cv" id="cv">
         <canvas id="simCanvas"></canvas>
+        <div class="viewBar" id="viewBar" role="group" aria-label="显示模式切换">
+          <button type="button" data-view="both" class="on">对比甲乙<span class="k">同屏</span></button>
+          <button type="button" data-view="water">只看水流<span class="k">甲</span></button>
+          <button type="button" data-view="circuit">只看电路<span class="k">乙</span></button>
+        </div>
+        <p class="vwHint">上课节奏建议：先<b>只看水流</b>讲清水位差怎样使水流动 →
+          再<b>只看电路</b>讲清电压怎样使电子定向移动 → 最后<b>对比甲乙</b>，让学生自己说出类比。</p>
         <div class="stageTag" id="stageTag">③ 电压使自由电子定向移动 · 形成电流<span class="s">水位差使水流动 —— 电压使自由电子定向移动</span></div>
         <button class="fsBtn" id="fsBtn" type="button" title="全屏显示实验画面">⛶ 全屏</button>
       
@@ -428,8 +461,21 @@ var ctx       = canvas.getContext('2d');
 var cvWrap    = document.getElementById('cv');
 var stageEl   = document.getElementById('stage');
 var fsBtn     = document.getElementById('fsBtn');
+var viewBarEl = document.getElementById('viewBar');
 var dpr       = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
 var isFull    = false, fsLayoutCalls = 0;
+
+// ── 显示模式（上课防「注意力跳脱」）──────────────────────────
+// 画布逻辑尺寸仍是 1000×620，两幅图各占【左半 / 右半】；三种模式只是换【取景框】：
+//   both    0..1000 全画；water 只取左半（甲·水路）；circuit 只取右半（乙·电路）。
+// 取景框一变，画布宽高比跟着变 ⇒ 同一幅图在屏幕上被放大（约 1.4 倍），比缩小更清楚。
+var VIEWS = {
+  both:    { x: 0,   y: 0, w: 1000, h: 620 },
+  water:   { x: 0,   y: 0, w: 500,  h: 620 },
+  circuit: { x: 500, y: 0, w: 500,  h: 620 }
+};
+var view = 'both';
+function vb(){ return VIEWS[view] || VIEWS.both; }
 
 // 电学沙盒的器材绘制层。页面【只】从它这里取器材外形与电子小球，
 // 自己不再画电池 / 开关 / 灯泡 / 导线 —— 否则两个页面上的同一件器材会长得不一样。
@@ -703,9 +749,12 @@ function drawTankWater(tk, wl){
   ctx.strokeStyle = 'rgba(186,230,253,.95)'; ctx.lineWidth = 2.5;
   ctx.beginPath(); ctx.moveTo(tk.x, wl); ctx.lineTo(tk.x + tk.w, wl); ctx.stroke();
   // 水体里缓慢漂移的光纹（只画在水面线以下，不碰高光线 ⇒ 水面位置仍然判得准）
+  // 🔴 光纹必须整条留在池内：以前 xx 的取模范围是 tk.w+40，水纹能飘出池壁 40px
+  //    （单看「甲」时池右边是一大片空黑底，飘出去的半截水纹特别扎眼）。
   for (var i = 0; i < 3; i++){
     var yy = wl + (bot - wl) * (0.2 + 0.27 * i) + Math.sin(tSec * 1.3 + i * 2.1) * 2.2;
-    var xx = tk.x + ((tSec * (11 + i * 5) + i * 41) % (tk.w + 40)) - 20;
+    var span = Math.max(4, tk.w - 26);            // 可漂移区间：留出 2px 内边距 + 24px 纹长
+    var xx = tk.x + 2 + ((tSec * (11 + i * 5) + i * 41) % span);
     ctx.strokeStyle = 'rgba(186,240,255,' + (0.09 + 0.05 * Math.sin(tSec * 2 + i)).toFixed(3) + ')';
     ctx.lineWidth = 2;
     ctx.beginPath(); ctx.moveTo(xx, yy); ctx.lineTo(xx + 24, yy); ctx.stroke();
@@ -1194,6 +1243,18 @@ function tag2(num, text, x, y, align){
 var LEAD2 = 'rgba(51,65,85,.5)';
 
 function drawLabels(){
+  if (view !== 'circuit') drawLabelsWater();
+  if (view !== 'water')   drawLabelsCircuit();
+  if (view === 'both'){
+    // 中间分隔（只在同屏对比时才有意义）
+    ctx.setLineDash([6, 8]);
+    ctx.strokeStyle = 'rgba(148,163,184,.16)'; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(500, 40); ctx.lineTo(500, 590); ctx.stroke();
+    ctx.setLineDash([]);
+  }
+}
+
+function drawLabelsWater(){
   // ── 甲（深色底 → 深色 chip）──
   // 🔴 「① 水泵」不能放在水泵【上方】：画布左上角压着阶段牌（DOM 浮层，
   //    宽 46%、窄屏下折算成逻辑坐标还会更高）⇒ 放上面会被整个盖掉。
@@ -1206,7 +1267,9 @@ function drawLabels(){
   chip('⑤ 阀门', 202, 500, '#93a3b8', 12);
   chip('⑥ 水轮机', 320, 500, '#93a3b8', 12);
   label('甲 · 水流的形成', 250, 556, '#bae6fd', 17);
+}
 
+function drawLabelsCircuit(){
   // ── 乙（浅色实验台 → 深色字）──
   chip('① 电源（电池）', 750, 78, '#fcd34d');
   label('− 负极', 680, 200, '#1e293b', 13);
@@ -1228,12 +1291,6 @@ function drawLabels(){
   label('电子（带负电）：从【负极】出发 → 经小灯泡 → 回到【正极】',
         552, 528, '#334155', 12.5, 'left');
   label('乙 · 电流的形成', 750, 556, '#fde68a', 17);
-
-  // 中间分隔
-  ctx.setLineDash([6, 8]);
-  ctx.strokeStyle = 'rgba(148,163,184,.16)'; ctx.lineWidth = 1.5;
-  ctx.beginPath(); ctx.moveTo(500, 40); ctx.lineTo(500, 590); ctx.stroke();
-  ctx.setLineDash([]);
 }
 
 // ============================================================
@@ -1253,20 +1310,22 @@ function drawBg(){
 }
 function drawFrame(){
   drawBg();
-  // 甲
-  drawWater();
-  drawContainer();
-  drawPipes();
-  drawPipeWater();
-  drawFlowParticles();
-  drawFalls();
-  drawPump();
-  drawValve();
-  drawWheel();
-  drawWaterArrows();
-  // 乙（器材全部走电学沙盒的 CircuitDraw，红色大电子在本层另画）
-  drawCircuit();
-  // 标注
+  // 甲 · 水路（只看电路时【不画】—— 没画的东西学生就看不见，注意力自然只在一幅图上）
+  if (view !== 'circuit'){
+    drawWater();
+    drawContainer();
+    drawPipes();
+    drawPipeWater();
+    drawFlowParticles();
+    drawFalls();
+    drawPump();
+    drawValve();
+    drawWheel();
+    drawWaterArrows();
+  }
+  // 乙 · 电路（器材全部走电学沙盒的 CircuitDraw，红色大电子在本层另画）
+  if (view !== 'water') drawCircuit();
+  // 标注（按模式只画出现的那一幅）
   drawLabels();
 }
 
@@ -1365,19 +1424,42 @@ function syncReadout(){
 // 布局
 // ============================================================
 function layout(){
+  var v = vb();
   var availW = cvWrap.clientWidth - PAD * 2;
   if (!(availW > 0)) availW = 320;
-  var cssW = availW, cssH = cssW * H / W;
+  var cssW = availW, cssH = cssW * v.h / v.w;
+  var capH = 0;
   if (isFull){
-    var availH = cvWrap.clientHeight - 12;
-    if (availH > 0 && cssH > availH){ cssH = availH; cssW = cssH * W / H; }
+    // 全屏：给底部那条显示模式切换带留出位置（它是绝对定位的浮层）
+    var barH = viewBarEl ? (viewBarEl.offsetHeight + 18) : 0;
+    capH = cvWrap.clientHeight - 12 - barH;
+  } else {
+    // 单看一幅时画面是竖长的（500:620），若不限高会撑成近 1.8 倍宽那么高 ⇒ 一屏放不下。
+    // 按窗口高度收一下，保证整幅图连同标题都能在屏幕上完整看到。
+    capH = Math.max(280, window.innerHeight * 0.74);
   }
+  if (capH > 0 && cssH > capH){ cssH = capH; cssW = cssH * v.w / v.h; }
   canvas.style.width = cssW + 'px';
   canvas.style.height = cssH + 'px';
   canvas.width = Math.max(1, Math.round(cssW * dpr));
   canvas.height = Math.max(1, Math.round(cssH * dpr));
-  var s = canvas.width / W;
-  ctx.setTransform(s, 0, 0, s, 0, 0);
+  // 取景框 → 设备像素变换：先按 v.w 定比例，再把取景框左上角挪到画布原点
+  var s = canvas.width / v.w;
+  ctx.setTransform(s, 0, 0, s, -v.x * s, -v.y * s);
+  placeOverlays();
+}
+
+// 画面上的浮层（阶段牌 / 全屏按钮 / 参数面板）跟着画布走：
+// 单独看一幅时画布会缩窄居中，浮层若还贴 .cv 的角，就飘到画面外的黑边上了。
+function placeOverlays(){
+  var cl = canvas.offsetLeft, ct = canvas.offsetTop, cw = canvas.offsetWidth;
+  var rightGap = Math.max(0, cvWrap.clientWidth - cl - cw);
+  var pad = isFull ? 14 : 8;
+  var tagEl = document.getElementById('stageTag');
+  if (tagEl){ tagEl.style.left = (cl + pad) + 'px'; tagEl.style.top = (ct + pad) + 'px'; }
+  if (fsBtn){ fsBtn.style.right = (rightGap + pad) + 'px'; fsBtn.style.top = (ct + pad) + 'px'; }
+  var pBox = document.getElementById('volt-params');
+  if (pBox){ pBox.style.right = (rightGap + pad) + 'px'; pBox.style.top = (ct + 44) + 'px'; }
 }
 var lastSideH = -1;
 function maybeRelayout(){
@@ -1393,10 +1475,12 @@ function maybeRelayout(){
 // 交互
 // ============================================================
 function toLogical(e){
+  var v = vb();
   var rect = canvas.getBoundingClientRect();
-  var sx = canvas.width / rect.width, sy = canvas.height / rect.height;
-  return { x: (e.clientX - rect.left) * sx / (canvas.width / W),
-           y: (e.clientY - rect.top)  * sy / (canvas.height / H) };
+  var k = rect.width / v.w;           // CSS 像素 / 逻辑像素
+  if (!(k > 0)) k = 1;
+  return { x: (e.clientX - rect.left) / k + v.x,   // 加上取景框偏移 ⇒ 回到 1000×620 的绝对坐标
+           y: (e.clientY - rect.top)  / k + v.y };
 }
 function hitPump(x, y){
   var dx = x - PUMP.x, dy = y - PUMP.y;
@@ -1453,6 +1537,24 @@ function syncSeg(){
   }
 }
 
+// ── 显示模式：甲乙对比 / 只看水流 / 只看电路 ──────────────────
+function syncView(){
+  if (!viewBarEl) return;
+  var bs = viewBarEl.querySelectorAll('button');
+  for (var i = 0; i < bs.length; i++){
+    var on = bs[i].getAttribute('data-view') === view;
+    bs[i].classList.toggle('on', on);
+    bs[i].setAttribute('aria-pressed', on ? 'true' : 'false');
+  }
+}
+function setView(v){
+  if (!VIEWS[v]) v = 'both';
+  view = v;
+  syncView();
+  layout();            // 取景框变了 ⇒ 画布宽高比变了，必须重排
+  drawFrame();
+}
+
 document.getElementById('btnSwitch').addEventListener('click', toggleSwitch);
 document.getElementById('btnReset').addEventListener('click', resetAll);
 document.getElementById('uRange').addEventListener('input', function (){
@@ -1461,6 +1563,11 @@ document.getElementById('uRange').addEventListener('input', function (){
 document.querySelectorAll('#quickSeg button').forEach(function (b){
   b.addEventListener('click', function (){ setU(parseFloat(b.getAttribute('data-u'))); });
 });
+if (viewBarEl){
+  viewBarEl.querySelectorAll('button').forEach(function (b){
+    b.addEventListener('click', function (){ setView(b.getAttribute('data-view')); });
+  });
+}
 
 // ============================================================
 // 全屏（舞台）
@@ -1524,6 +1631,8 @@ window.__cb = {
   },
   params: function (){ return { U: U, swClosed: swClosed, lastU: lastU }; },
   setU: setU, togglePower: togglePower, toggleSwitch: toggleSwitch,
+  setView: setView, mode: function (){ return view; },
+  viewBox: function (){ var v = vb(); return { x: v.x, y: v.y, w: v.w, h: v.h }; },
   step: step, stepMs: stepMs, reset: resetAll,
   drawElectrons: drawElectrons, fallsCount: function (){ return falls.length; },
   syncReadout: syncReadout,
@@ -1531,9 +1640,11 @@ window.__cb = {
   layout: layout,
   rafRan: function (){ return rafRan; },
   // 画面元素在【画布设备像素】里的位置 —— 自检拿它打像素点
+  // 🔴 现在画布是「取景框」渲染：设备像素 = (逻辑坐标 − 取景框左上角) × k。
+  //    点在图外（例如只看电路时问水泵在哪）会落到画布外，测试自己判断跳过即可。
   probe: function (){
-    var k = canvas.width / W;
-    function pt(p){ return { x: p.x * k, y: p.y * k }; }
+    var v = vb(), k = canvas.width / v.w;
+    function pt(p){ return { x: (p.x - v.x) * k, y: (p.y - v.y) * k }; }
     var wl = waterLevels();
     var tp = D.terminalWorld(E1, 0);   // 电池 +（右端）
     var tn = D.terminalWorld(E1, 1);   // 电池 −（左端）
@@ -1557,7 +1668,8 @@ window.__cb = {
       mouthX: MOUTH.x,
       fallMid: pt({ x: RISER_LX, y: (MOUTH.y + PIPE_W / 2 + wl.L) / 2 }),
       // ── 乙（全部由 circuit-draw 给出，避免测试另抄一套坐标）──
-      bench: { x: BENCH2.x * k, y: BENCH2.y * k, w: BENCH2.w * k, h: BENCH2.h * k },
+      bench: { x: (BENCH2.x - v.x) * k, y: (BENCH2.y - v.y) * k,
+               w: BENCH2.w * k, h: BENCH2.h * k },
       battPos: pt(tp),        // 电池 + （右端，红柱）
       battNeg: pt(tn),        // 电池 − （左端，黑柱）
       battMid: pt({ x: E1.x, y: E1.y }),
@@ -1571,8 +1683,9 @@ window.__cb = {
       wireSegTopL: { x1: CIR2.x1, x2: tn.x, y: CIR2.y1 }
     };
   },
-  view: function (){ return { dpr: dpr, w: canvas.width, h: canvas.height,
-                              cssW: canvas.clientWidth, cssH: canvas.clientHeight }; },
+  view: function (){ var v = vb(); return { dpr: dpr, w: canvas.width, h: canvas.height,
+                              cssW: canvas.clientWidth, cssH: canvas.clientHeight,
+                              mode: view, vbW: v.w, vbH: v.h, vbX: v.x }; },
   stageEl: function (){ return stageEl; },
   cv: function (){ return cvWrap; },
   side: function (){ return document.getElementById('side'); },
@@ -1594,6 +1707,7 @@ window.__cb = {
 dh = targetDh();
 syncButtons();
 syncSeg();
+syncView();
 syncReadout();
 layout();
 drawFrame();                 // 首帧【同步】画，不等 rAF（headless 下 rAF 可能一帧都不回调）
