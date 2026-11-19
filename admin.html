@@ -24,9 +24,9 @@
     }
     .auth-header h2 { font-size:1.4rem; font-weight:700; }
 
-    .tabs { display:flex; gap:0.5rem; margin-bottom:1.5rem; }
+    .tabs { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:0.45rem; margin-bottom:1.5rem; }
     .tab-btn {
-      flex:1; padding:0.6rem; border:1px solid var(--glass-border); border-radius:10px;
+      padding:0.55rem 0.3rem; white-space:nowrap; border:1px solid var(--glass-border); border-radius:10px;
       background:transparent; color:var(--text-muted); cursor:pointer;
       font-size:0.85rem; font-weight:500; transition:all 0.3s;
     }
@@ -156,6 +156,7 @@
         <button class="tab-btn" onclick="switchTab(this,'tabBatch')">📦 批量生成</button>
         <button class="tab-btn" onclick="switchTab(this,'tabInfo')">📋 用户查询</button>
         <button class="tab-btn" onclick="switchTab(this,'tabReset')">🔐 重置密码</button>
+        <button class="tab-btn" onclick="switchTab(this,'tabFun'); loadFunCodes()">🎟 解锁码</button>
       </div>
 
       <!-- VIP 授权 -->
@@ -248,6 +249,65 @@
         </div>
         <button class="auth-btn green" onclick="queryUserByCode()">按激活码查询使用者</button>
         <div class="admin-tip" id="queryCodeTip" style="text-align:left;font-size:0.8rem;"></div>
+      </div>
+
+      <!-- 趣味实验解锁码 -->
+      <div class="tab-content" id="tabFun">
+        <div style="font-size:0.78rem;color:var(--text-muted);line-height:1.75;margin-bottom:0.9rem;">
+          用于「趣味实验」子栏目：未解锁只能看目录和实验名称，输入解锁码后才展开正文。默认 2 台设备＝手机＋电脑各一台。<br>
+          <span style="color:#f59e0b;">首次使用请先在 Supabase → SQL Editor 执行 api/funexp_codes.sql</span>
+        </div>
+        <div id="fxContent" style="font-size:0.74rem;color:var(--text-muted);line-height:1.7;margin-bottom:0.7rem;padding:0.5rem 0.6rem;border-radius:8px;background:rgba(0,0,0,0.22);">正文入库状态：检测中…</div>
+        <div class="inline-flex" style="gap:0.5rem;margin-bottom:0.7rem;">
+          <div class="input-group" style="flex:1;margin:0;">
+            <span class="input-icon">🔢</span>
+            <input type="number" id="fxQty" value="5" min="1" max="100" placeholder="数量">
+          </div>
+          <div class="input-group" style="flex:1;margin:0;">
+            <span class="input-icon">📱</span>
+            <select id="fxDevices">
+              <option value="2">可绑 2 台</option>
+              <option value="1">可绑 1 台</option>
+              <option value="3">可绑 3 台</option>
+              <option value="5">可绑 5 台</option>
+            </select>
+          </div>
+        </div>
+        <div class="input-group">
+          <span class="input-icon">⏳</span>
+          <select id="fxDays">
+            <option value="0">长期有效</option>
+            <option value="30">30 天</option>
+            <option value="90">90 天</option>
+            <option value="180">180 天</option>
+            <option value="365">365 天</option>
+          </select>
+        </div>
+        <div class="input-group">
+          <span class="input-icon">📝</span>
+          <input type="text" id="fxNote" placeholder="备注：发给谁 / 哪一批（可选）" maxlength="40">
+        </div>
+        <button class="auth-btn" onclick="generateFunCodes()">🎟 生成解锁码</button>
+        <div class="admin-tip" id="fxTip"></div>
+        <div id="fxResult" style="display:none;margin-top:0.8rem;">
+          <textarea id="fxOutput" readonly style="width:100%;height:120px;padding:0.6rem;border-radius:8px;background:rgba(0,0,0,0.3);border:1px solid var(--glass-border);color:var(--secondary);font-size:0.82rem;font-family:monospace;resize:vertical;"></textarea>
+          <button class="auth-btn green" onclick="copyFunCodes()" style="margin-top:0.3rem;padding:0.4rem;font-size:0.8rem;">📋 复制这一批</button>
+        </div>
+
+        <hr style="border-color:var(--glass-border);margin:1.2rem 0;">
+
+        <div style="display:flex;gap:0.5rem;margin-bottom:0.6rem;">
+          <input id="fxSearch" placeholder="搜索解锁码 / 备注" oninput="renderFunCodes()"
+            style="flex:1;padding:0.55rem;border-radius:10px;background:rgba(0,0,0,0.3);border:1px solid var(--glass-border);color:var(--text-main);font-size:0.82rem;">
+          <select id="fxFilter" onchange="loadFunCodes()"
+            style="padding:0.55rem;border-radius:10px;background:rgba(0,0,0,0.3);border:1px solid var(--glass-border);color:var(--text-main);font-size:0.82rem;">
+            <option value="all">全部</option>
+            <option value="active">可用</option>
+            <option value="disabled">已停用</option>
+          </select>
+        </div>
+        <div id="fxList" style="max-height:280px;overflow-y:auto;font-size:0.78rem;border:1px solid var(--glass-border);border-radius:10px;padding:0.5rem;">点「刷新」或切换本标签加载</div>
+        <div class="admin-tip" id="fxListTip"></div>
       </div>
 
       <!-- 重置密码 -->
@@ -630,6 +690,181 @@
       } catch(e) {
         tip.className = 'admin-tip error'; tip.textContent = '❌ ' + e.message;
       }
+    }
+
+    // ========== 趣味实验解锁码 ==========
+    var FUNEXP_CODES = [];
+
+    function fxFormat(code) {
+      var c = String(code || '').replace(/[\s-]/g, '').toUpperCase();
+      if (c.indexOf('FX') === 0 && c.length === 14) {
+        return 'FX-' + c.substr(2, 4) + '-' + c.substr(6, 4) + '-' + c.substr(10, 4);
+      }
+      return c;
+    }
+
+    function fxEsc(v) {
+      return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    function fxState(rec) {
+      if (rec.status === 'disabled') return { t: '已停用', color: '#94a3b8' };
+      if (rec.expires_at && new Date(rec.expires_at) < new Date()) return { t: '已过期', color: '#ef4444' };
+      if ((rec.used_count || 0) >= (rec.device_limit || 1)) return { t: '已绑满', color: '#f59e0b' };
+      if ((rec.used_count || 0) > 0) return { t: '使用中', color: '#4ade80' };
+      return { t: '未使用', color: '#4ade80' };
+    }
+
+    function fxExpText(rec) {
+      if (!rec.expires_at) return '长期有效';
+      var d = new Date(rec.expires_at);
+      return '到期 ' + d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+    }
+
+    async function generateFunCodes() {
+      var tip = document.getElementById('fxTip');
+      var qty = parseInt(document.getElementById('fxQty').value) || 5;
+      var note = document.getElementById('fxNote').value.trim();
+      var days = parseInt(document.getElementById('fxDays').value) || 0;
+      var deviceLimit = parseInt(document.getElementById('fxDevices').value) || 1;
+      tip.className = 'admin-tip';
+      tip.textContent = '⏳ 正在生成...';
+      try {
+        var r = await proxy('createFunExpCodes', { count: qty, note: note, days: days, deviceLimit: deviceLimit });
+        if (!r.success) {
+          tip.className = 'admin-tip error';
+          tip.textContent = '❌ ' + (r.error || '生成失败');
+          return;
+        }
+        var codes = r.codes || [];
+        document.getElementById('fxOutput').value = codes.map(function(c) { return fxFormat(c.code); }).join('\n');
+        document.getElementById('fxResult').style.display = 'block';
+        tip.className = 'admin-tip success';
+        tip.textContent = '✅ 已生成 ' + codes.length + ' 个解锁码' + (note ? '（' + note + '）' : '');
+        loadFunCodes();
+      } catch (e) {
+        tip.className = 'admin-tip error';
+        tip.textContent = '❌ ' + e.message;
+      }
+    }
+
+    function copyFunCodes() {
+      var out = document.getElementById('fxOutput');
+      out.select();
+      try { document.execCommand('copy'); } catch (e) {}
+      if (navigator.clipboard) navigator.clipboard.writeText(out.value).catch(function() {});
+      var tip = document.getElementById('fxTip');
+      tip.className = 'admin-tip success';
+      tip.textContent = '📋 已复制到剪贴板';
+    }
+
+    async function loadFunCodes() {
+      var list = document.getElementById('fxList');
+      var tip = document.getElementById('fxListTip');
+      list.textContent = '加载中...';
+      try {
+        var filter = (document.getElementById('fxFilter') || {}).value || 'all';
+        var r = await proxy('listFunExpCodes', { filter: filter });
+        if (!r.success) {
+          list.textContent = '';
+          tip.className = 'admin-tip error';
+          tip.textContent = '❌ ' + (r.error || '加载失败');
+          return;
+        }
+        FUNEXP_CODES = r.codes || [];
+        tip.textContent = '';
+        renderFunCodes();
+        loadFunContent();
+      } catch (e) {
+        list.textContent = '';
+        tip.className = 'admin-tip error';
+        tip.textContent = '❌ ' + e.message;
+      }
+    }
+
+    async function loadFunContent() {
+      var el = document.getElementById('fxContent');
+      if (!el) return;
+      try {
+        var r = await proxy('listFunExpChapters', {});
+        if (!r.success) throw new Error(r.error || '读取失败');
+        var list = r.chapters || [];
+        if (!list.length) {
+          el.innerHTML = '⚠️ <b style="color:#fbbf24;">正文还没有入库</b>，解锁后看不到内容。请在电脑上执行：<br>'
+            + '<code style="color:#7dd3fc;font-size:0.72rem;">python3 tools/upload_fun_exp_content.py --base 站点域名 --token 管理员密码</code>';
+          return;
+        }
+        var totalKb = list.reduce(function(a, c) { return a + (c.bytes || 0); }, 0) / 1024;
+        el.innerHTML = '✅ 正文已入库 <b style="color:#4ade80;">' + list.length + '</b> 章（共 '
+          + totalKb.toFixed(0) + ' KB）：' + list.map(function(c) { return '第' + c.chapter + '章'; }).join('、');
+      } catch (e) {
+        el.textContent = '正文入库状态读取失败：' + e.message;
+      }
+    }
+
+    function renderFunCodes() {
+      var list = document.getElementById('fxList');
+      var kw = ((document.getElementById('fxSearch') || {}).value || '').trim().toLowerCase();
+      var rows = FUNEXP_CODES.filter(function(c) {
+        if (!kw) return true;
+        return (c.code || '').toLowerCase().indexOf(kw) !== -1 || (c.note || '').toLowerCase().indexOf(kw) !== -1;
+      });
+      if (!rows.length) {
+        list.innerHTML = '<div style="padding:0.6rem;color:var(--text-muted);">没有匹配的解锁码。生成一批后会出现在这里。</div>';
+        return;
+      }
+      list.innerHTML = rows.map(function(c) {
+        var st = fxState(c);
+        var dis = c.status === 'disabled';
+        return '<div style="padding:0.45rem 0.15rem;border-bottom:1px solid rgba(255,255,255,0.06);">'
+          + '<div style="display:flex;align-items:center;gap:0.4rem;">'
+          +   '<span style="font-family:monospace;font-size:0.8rem;color:#e2e8f0;letter-spacing:0.02em;white-space:nowrap;">' + fxFormat(c.code) + '</span>'
+          +   '<span style="margin-left:auto;color:' + st.color + ';font-size:0.72rem;white-space:nowrap;">' + st.t + '</span>'
+          + '</div>'
+          + '<div style="display:flex;align-items:center;gap:0.35rem;margin-top:0.25rem;">'
+          +   '<span style="flex:1;min-width:0;color:#94a3b8;font-size:0.68rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'
+          +     (c.note ? fxEsc(c.note) + ' · ' : '')
+          +     (c.used_count || 0) + '/' + (c.device_limit || 1) + ' 台 · ' + fxExpText(c)
+          +   '</span>'
+          +   '<button class="tab-btn" style="flex:none;padding:0.1rem 0.4rem;font-size:0.7rem;" onclick="copyFunCode(' + attrJs(c.code) + ')">复制</button>'
+          +   '<button class="tab-btn" style="flex:none;padding:0.1rem 0.4rem;font-size:0.7rem;" onclick="toggleFunCode(' + attrJs(String(c.id)) + ',' + attrJs(c.status) + ')">' + (dis ? '启用' : '停用') + '</button>'
+          +   '<button class="tab-btn" style="flex:none;padding:0.1rem 0.4rem;font-size:0.7rem;color:#fca5a5;" onclick="deleteFunCode(' + attrJs(String(c.id)) + ',' + attrJs(fxFormat(c.code)) + ')">删除</button>'
+          + '</div>'
+          + '</div>';
+      }).join('');
+    }
+
+    function copyFunCode(code) {
+      var text = fxFormat(code);
+      if (navigator.clipboard) navigator.clipboard.writeText(text).catch(function() {});
+      var el = document.createElement('textarea');
+      el.value = text;
+      document.body.appendChild(el);
+      el.select();
+      try { document.execCommand('copy'); } catch (e) {}
+      document.body.removeChild(el);
+      var tip = document.getElementById('fxListTip');
+      tip.className = 'admin-tip success';
+      tip.textContent = '📋 已复制 ' + text;
+    }
+
+    async function toggleFunCode(id, cur) {
+      var next = cur === 'disabled' ? 'active' : 'disabled';
+      try {
+        var r = await proxy('updateFunExpCode', { id: id, data: { status: next } });
+        if (!r.success) { alert(r.error || '操作失败'); return; }
+        await loadFunCodes();
+      } catch (e) { alert(e.message); }
+    }
+
+    async function deleteFunCode(id, code) {
+      if (!confirm('确定删除解锁码 ' + code + ' ？删除后该码立即失效，已解锁的用户不受影响。')) return;
+      try {
+        var r = await proxy('deleteFunExpCode', { id: id });
+        if (!r.success) { alert(r.error || '删除失败'); return; }
+        await loadFunCodes();
+      } catch (e) { alert(e.message); }
     }
 
     // ========== 批量激活码管理 ==========

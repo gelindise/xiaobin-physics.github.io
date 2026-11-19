@@ -22,12 +22,15 @@ var PUBLIC_ACTIONS = [
   'login', 'createUser', 'getUserPublic', 'checkSession', 'logout',
   'dropOtherSessions',
   'findByEmail', 'redeemCode', 'resetPasswordByCode', 'verifyAdmin',
+  'redeemFunExpCode', 'checkFunExpCode', 'getFunExpChapter',
 ];
 var ADMIN_ACTIONS = [
   'getUser', 'getUsers', 'updateUser', 'updateVIP', 'deleteUser',
   'getSessions', 'kickSession',
   'getActivationCode', 'getAllActivationCodes', 'createActivationCodes',
   'deleteActivationCode', 'updateActivationCode', 'getAdminStats', 'setAdminPassword',
+  'createFunExpCodes', 'listFunExpCodes', 'updateFunExpCode', 'deleteFunExpCode',
+  'importFunExpChapter', 'listFunExpChapters',
 ];
 
 // ========== 密码处理 ==========
@@ -840,6 +843,159 @@ module.exports = async (req, res) => {
       return res.json({ success: true, vip: vipType, expire: exp });
     }
 
+    // ========== 趣味实验「玩」全攻略 · 解锁码兑换（公开，凭码免登录） ==========
+    //   码由后台生成，表里只放随机码，不含任何可推算规律。
+    //   一次兑换会把「设备号」写进 funexp_bindings，同设备重复兑换幂等。
+    if (action === 'redeemFunExpCode') {
+      var feIp = clientIp(req);
+      if (rateLimited('funexp:' + feIp, 15, 10 * 60 * 1000)) {
+        return res.status(429).json({ error: '尝试次数过多，请 10 分钟后再试' });
+      }
+      var feCode = String((req.body && req.body.code) || '').toUpperCase().replace(/[\s-]/g, '');
+      var feDevice = String((req.body && req.body.device) || '').trim().slice(0, 64);
+      if (!feCode || !feDevice) return res.status(400).json({ error: '缺少 code 或 device' });
+
+      var feRes = await sbFetch('funexp_codes?code=eq.' + encodeURIComponent(feCode) + '&select=*', {
+        headers: svcHeaders({ Prefer: undefined }),
+      });
+      if (!feRes.ok) return res.status(502).json({ error: '解锁服务暂时不可用：' + (await feRes.text()) });
+      var feRows = await feRes.json();
+      if (!feRows || !feRows.length) {
+        return res.status(404).json({ error: '解锁码不存在，请检查是否输错' });
+      }
+      var feRec = feRows[0];
+      if (feRec.status === 'disabled') {
+        return res.status(409).json({ error: '这个解锁码已被停用，请联系老师' });
+      }
+      if (feRec.expires_at && new Date(feRec.expires_at).getTime() < Date.now()) {
+        return res.status(409).json({ error: '这个解锁码已过期，请联系老师' });
+      }
+
+      // 这台设备是否已经绑过（幂等：换网络、清 localStorage 后重输同一个码不会多占名额）
+      var bindRes = await sbFetch(
+        'funexp_bindings?code=eq.' + encodeURIComponent(feCode) +
+        '&device=eq.' + encodeURIComponent(feDevice) + '&select=id',
+        { headers: svcHeaders({ Prefer: undefined }) }
+      );
+      var feBound = bindRes.ok ? await bindRes.json() : [];
+      // 已绑定设备总数
+      var allRes = await sbFetch(
+        'funexp_bindings?code=eq.' + encodeURIComponent(feCode) + '&select=id',
+        { headers: svcHeaders({ Prefer: undefined }) }
+      );
+      var feAll = allRes.ok ? await allRes.json() : [];
+      var feUsed = (feAll || []).length;
+      var feLimit = Math.max(1, Number(feRec.device_limit) || 1);
+
+      if (!(feBound && feBound.length)) {
+        if (feUsed >= feLimit) {
+          return res.status(409).json({
+            error: '这个解锁码已经绑定了 ' + feUsed + ' 台设备，无法再解锁（如需换设备请联系老师）',
+          });
+        }
+        var insRes = await sbFetch('funexp_bindings', {
+          method: 'POST',
+          headers: svcHeaders({ Prefer: 'return=minimal' }),
+          body: JSON.stringify([{ code: feCode, device: feDevice }]),
+        });
+        if (!insRes.ok) return res.status(502).json({ error: '绑定设备失败：' + (await insRes.text()) });
+        feUsed += 1;
+        await sbFetch('funexp_codes?id=eq.' + encodeURIComponent(feRec.id), {
+          method: 'PATCH',
+          headers: svcHeaders({ Prefer: 'return=minimal' }),
+          body: JSON.stringify({ used_count: feUsed, last_used_at: new Date().toISOString() }),
+        });
+      }
+
+      return res.json({
+        success: true,
+        code: feRec.code,
+        note: feRec.note || '',
+        expires_at: feRec.expires_at || null,
+        device_limit: feLimit,
+        used_count: feUsed,
+      });
+    }
+
+    // ========== 趣味实验解锁码：本机复核（公开） ==========
+    //   用途：码被停用 / 删除 / 过期后，已解锁的设备下次打开就失效。
+    //   只认「已绑定该设备」的码，避免把复核接口当成绕过设备上限的入口。
+    if (action === 'checkFunExpCode') {
+      var ckCode = String((req.body && req.body.code) || '').toUpperCase().replace(/[\s-]/g, '');
+      var ckDevice = String((req.body && req.body.device) || '').trim().slice(0, 64);
+      if (!ckCode || !ckDevice) return res.status(400).json({ valid: false, error: '缺少 code 或 device' });
+      var ckRes = await sbFetch('funexp_codes?code=eq.' + encodeURIComponent(ckCode) + '&select=status,expires_at,note', {
+        headers: svcHeaders({ Prefer: undefined }),
+      });
+      if (!ckRes.ok) return res.status(502).json({ valid: false, error: '复核服务不可用' });
+      var ckRows = await ckRes.json();
+      if (!ckRows || !ckRows.length) return res.json({ valid: false, reason: 'not_found' });
+      if (ckRows[0].status === 'disabled') return res.json({ valid: false, reason: 'disabled' });
+      if (ckRows[0].expires_at && new Date(ckRows[0].expires_at).getTime() < Date.now()) {
+        return res.json({ valid: false, reason: 'expired' });
+      }
+      var ckB = await sbFetch(
+        'funexp_bindings?code=eq.' + encodeURIComponent(ckCode) +
+        '&device=eq.' + encodeURIComponent(ckDevice) + '&select=id',
+        { headers: svcHeaders({ Prefer: undefined }) }
+      );
+      var ckBound = ckB.ok ? await ckB.json() : [];
+      if (!ckBound || !ckBound.length) return res.json({ valid: false, reason: 'unbound' });
+      return res.json({ valid: true, expires_at: ckRows[0].expires_at || null, note: ckRows[0].note || '' });
+    }
+
+    // ========== 趣味实验：按码下发章节正文（公开，但必须持有有效解锁码） ==========
+    //   正文不在静态文件里，没解锁的人即便猜到文件名也拿不到内容。
+    //   校验链：码存在 → 未停用 → 未过期 → 本设备已绑定。
+    if (action === 'getFunExpChapter') {
+      var gcIp = clientIp(req);
+      if (rateLimited('fxchapter:' + gcIp, 80, 10 * 60 * 1000)) {
+        return res.status(429).json({ error: '请求太频繁，请稍后再试' });
+      }
+      var gcCode = String((req.body && req.body.code) || '').toUpperCase().replace(/[\s-]/g, '');
+      var gcDevice = String((req.body && req.body.device) || '').trim().slice(0, 64);
+      var gcNo = parseInt((req.body && req.body.chapter), 10);
+      if (!gcCode || !gcDevice || !gcNo || gcNo < 1 || gcNo > 40) {
+        return res.status(400).json({ error: '参数不完整' });
+      }
+
+      var gcRes = await sbFetch('funexp_codes?code=eq.' + encodeURIComponent(gcCode) + '&select=status,expires_at', {
+        headers: svcHeaders({ Prefer: undefined }),
+      });
+      if (!gcRes.ok) return res.status(502).json({ error: '解锁服务暂时不可用' });
+      var gcRows = await gcRes.json();
+      if (!gcRows || !gcRows.length) return res.status(403).json({ error: '解锁码无效', reason: 'not_found' });
+      if (gcRows[0].status === 'disabled') return res.status(403).json({ error: '解锁码已被停用', reason: 'disabled' });
+      if (gcRows[0].expires_at && new Date(gcRows[0].expires_at).getTime() < Date.now()) {
+        return res.status(403).json({ error: '解锁码已过期', reason: 'expired' });
+      }
+
+      var gcBind = await sbFetch(
+        'funexp_bindings?code=eq.' + encodeURIComponent(gcCode) +
+        '&device=eq.' + encodeURIComponent(gcDevice) + '&select=id',
+        { headers: svcHeaders({ Prefer: undefined }) }
+      );
+      var gcBound = gcBind.ok ? await gcBind.json() : [];
+      if (!gcBound || !gcBound.length) {
+        return res.status(403).json({ error: '这台设备还没有解锁，请输入解锁码', reason: 'unbound' });
+      }
+
+      var gcCh = await sbFetch('funexp_chapters?chapter=eq.' + gcNo + '&select=payload,updated_at', {
+        headers: svcHeaders({ Prefer: undefined }),
+      });
+      if (!gcCh.ok) return res.status(502).json({ error: '正文服务暂时不可用' });
+      var gcChRows = await gcCh.json();
+      if (!gcChRows || !gcChRows.length) {
+        return res.status(404).json({ error: '这一章还没有同步到服务器，请联系老师' });
+      }
+      res.setHeader('Cache-Control', 'private, max-age=300');
+      return res.json({
+        chapter: gcNo,
+        payload: gcChRows[0].payload,
+        updated_at: gcChRows[0].updated_at || null,
+      });
+    }
+
     // ========== 凭激活码重置密码（公开；身份凭证 = 邮箱 + 该账号已兑换过的激活码） ==========
     //   链路：邮箱 → 账号名 → 激活码绑定账号 → 二者必须是同一账号 → 才允许改密。
     //   激活码的 used_by 就是当初兑换它的账号，天然与账号对应（见 redeemCode）。
@@ -1054,6 +1210,115 @@ module.exports = async (req, res) => {
         body: JSON.stringify(codes),
       });
       if (!r11.ok) return res.status(502).json({ error: '创建失败: ' + (await r11.text()) });
+      return res.json({ success: true });
+    }
+
+    // ========== 趣味实验正文：入库（管理员，一次性把章节内容推进数据库） ==========
+    if (action === 'importFunExpChapter') {
+      var icNo = parseInt((req.body && req.body.chapter), 10);
+      var icPayload = (req.body && req.body.payload) || null;
+      if (!icNo || icNo < 1 || icNo > 40) return res.status(400).json({ error: '章节号不合法' });
+      if (!icPayload || !Array.isArray(icPayload.items)) {
+        return res.status(400).json({ error: '正文数据格式不对（需要 items 数组）' });
+      }
+      var icBody = JSON.stringify(icPayload);
+      if (icBody.length > 3 * 1024 * 1024) return res.status(413).json({ error: '这一章太大，超过 3MB' });
+      var icRes = await sbFetch('funexp_chapters', {
+        method: 'POST',
+        headers: svcHeaders({
+          Prefer: 'resolution=merge-duplicates,return=minimal',
+          'Content-Type': 'application/json',
+        }),
+        body: JSON.stringify([{ chapter: icNo, payload: icPayload, bytes: icBody.length, updated_at: new Date().toISOString() }]),
+      });
+      if (!icRes.ok) return res.status(502).json({ error: '入库失败：' + (await icRes.text()) });
+      return res.json({ success: true, chapter: icNo, bytes: icBody.length, items: icPayload.items.length });
+    }
+
+    if (action === 'listFunExpChapters') {
+      var lcRes = await sbFetch('funexp_chapters?select=chapter,bytes,updated_at&order=chapter.asc', {
+        headers: svcHeaders({ Prefer: undefined }),
+      });
+      if (!lcRes.ok) return res.status(502).json({ error: '读取失败：' + (await lcRes.text()) });
+      var lcRows = await lcRes.json();
+      return res.json({ success: true, chapters: lcRows || [] });
+    }
+
+    // ========== 趣味实验解锁码：批量生成（仅管理员） ==========
+    if (action === 'createFunExpCodes') {
+      var feQty = Math.max(1, Math.min(100, parseInt((req.body && req.body.count) || 1, 10)));
+      var feNote = String((req.body && req.body.note) || '').slice(0, 60);
+      var feDays = Math.max(0, Math.min(3650, parseInt((req.body && req.body.days) || 0, 10)));
+      var feDeviceLimit = Math.max(1, Math.min(10, parseInt((req.body && req.body.deviceLimit) || 1, 10)));
+      var feExpires = feDays > 0 ? new Date(Date.now() + feDays * 86400000).toISOString() : null;
+      var feChars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+      var feBatch = [];
+      for (var fi = 0; fi < feQty; fi++) {
+        var body = 'FX';
+        for (var fj = 0; fj < 12; fj++) body += feChars[crypto.randomInt(0, feChars.length)];
+        feBatch.push({
+          code: body,
+          note: feNote,
+          status: 'active',
+          device_limit: feDeviceLimit,
+          used_count: 0,
+          expires_at: feExpires,
+        });
+      }
+      var feCreate = await sbFetch('funexp_codes', {
+        method: 'POST',
+        headers: svcHeaders({ Prefer: 'return=representation' }),
+        body: JSON.stringify(feBatch),
+      });
+      if (!feCreate.ok) {
+        var feErrText = await feCreate.text();
+        return res.status(502).json({ error: '生成失败（是否已执行 api/funexp_codes.sql？）：' + feErrText });
+      }
+      var feCreated = await feCreate.json();
+      return res.json({ success: true, codes: feCreated });
+    }
+
+    // ========== 趣味实验解锁码：列表（仅管理员） ==========
+    if (action === 'listFunExpCodes') {
+      var feFilter = String((req.body && req.body.filter) || 'all');
+      var feUrl = 'funexp_codes?select=*&order=created_at.desc&limit=300';
+      if (feFilter === 'active' || feFilter === 'disabled') feUrl += '&status=eq.' + feFilter;
+      var feListRes = await sbFetch(feUrl, { headers: svcHeaders({ Prefer: undefined }) });
+      if (!feListRes.ok) {
+        return res.status(502).json({ error: '查询失败（是否已执行 api/funexp_codes.sql？）：' + (await feListRes.text()) });
+      }
+      var feList = await feListRes.json();
+      return res.json({ success: true, codes: feList });
+    }
+
+    // ========== 趣味实验解锁码：停用 / 启用（仅管理员） ==========
+    if (action === 'updateFunExpCode') {
+      var feUid = req.body && req.body.id;
+      var feChange = (req.body && req.body.data) || {};
+      if (!feUid) return res.status(400).json({ error: '缺少 id' });
+      var fePatch = {};
+      if (feChange.status) fePatch.status = feChange.status === 'disabled' ? 'disabled' : 'active';
+      if (feChange.note != null) fePatch.note = String(feChange.note).slice(0, 60);
+      if (feChange.device_limit) fePatch.device_limit = Math.max(1, Math.min(10, Number(feChange.device_limit)));
+      if (!Object.keys(fePatch).length) return res.status(400).json({ error: '没有可更新的字段' });
+      var feUp = await sbFetch('funexp_codes?id=eq.' + encodeURIComponent(feUid), {
+        method: 'PATCH',
+        headers: svcHeaders({ Prefer: 'return=minimal' }),
+        body: JSON.stringify(fePatch),
+      });
+      if (!feUp.ok) return res.status(502).json({ error: '更新失败：' + (await feUp.text()) });
+      return res.json({ success: true });
+    }
+
+    // ========== 趣味实验解锁码：删除（仅管理员） ==========
+    if (action === 'deleteFunExpCode') {
+      var feDid = req.body && req.body.id;
+      if (!feDid) return res.status(400).json({ error: '缺少 id' });
+      var feDel = await sbFetch('funexp_codes?id=eq.' + encodeURIComponent(feDid), {
+        method: 'DELETE',
+        headers: svcHeaders({ Prefer: 'return=minimal' }),
+      });
+      if (!feDel.ok) return res.status(502).json({ error: '删除失败：' + (await feDel.text()) });
       return res.json({ success: true });
     }
 

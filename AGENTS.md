@@ -35,6 +35,17 @@ Each experiment HTML follows the same structure:
 - Experiments marked as `lock` class with `checkVip()` gate for VIP-only content
 - Free experiments use `openLab()` directly
 
+## 趣味实验子栏目（付费内容，硬门禁）
+
+`趣味实验.html` 是《趣味物理实验"玩"全攻略》的独立页：左栏目录 + 右栏正文。整站内容需解锁码才能看。
+
+- **可公开**：`assets/fun-exp/meta.js`（章节与 210 个实验的编号/标题/材料/60 字导语，目录与搜索都用它）、`assets/fun-exp/img/`（正文配图，哈希文件名）
+- **绝不入库**：`private/fun-exp/chN.js`（正文 HTML）。GitHub Pages 会把仓库里所有文件当静态资源公开，所以正文只存 Supabase `funexp_chapters`，由 `POST /api/proxy-user`（action `getFunExpChapter`）校验「码存在 + 未停用 + 未过期 + 本设备已绑定」后下发。`private/` 已在 `.gitignore` 与 `.githooks/pre-commit` 双拦截
+- **生成**：`python3 tools/build_fun_exp.py "<docx>"` → meta 进 assets、正文进 private
+- **上传**：`python3 tools/upload_fun_exp_content.py --base <站点> --token <管理员密码>`（逐章 upsert；`--dry` 只检查）
+- **解锁码**：后台 `admin.html` →「🎟 解锁码」生成/停用/删除；表 `funexp_codes` / `funexp_bindings`，SQL 见 `api/funexp_codes.sql`
+- 本地预览：`file://` 或 localhost 打开时解锁弹窗底部有「本地预览」按钮，走 `private/fun-exp/` 里的文件，仅在本地有效
+
 ## Payment Flow
 
 User clicks VIP → `/api/create-order` → PayJS QR code → user scans with WeChat → PayJS calls `/api/pay-callback` → Supabase VIP updated → page polls `/api/check-order` → redirects to experiments.
