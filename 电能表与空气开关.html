@@ -385,11 +385,11 @@
 
                 <h4>演示速度</h4>
                 <div class="lab3d-field">
-                  <label>时间倍率 <output id="wb-speed-v">×60</output></label>
+                  <label>时间倍率 <output id="wb-speed-v">×1</output></label>
                   <div class="seg" id="wb-speed-seg">
-                    <button type="button" data-speed="1">×1</button>
+                    <button type="button" data-speed="1" class="active">×1</button>
                     <button type="button" data-speed="10">×10</button>
-                    <button type="button" data-speed="60" class="active">×60</button>
+                    <button type="button" data-speed="60">×60</button>
                     <button type="button" data-speed="240">×240</button>
                   </div>
                   <small>真实电能表 1000 W 时铝盘约 10 r/min。切到 ×1 可细看红色标记沿盘边移动；
@@ -514,7 +514,7 @@
         tripped: false,               // 自动跳闸（手柄停在中间）
         burned: false,                // 电能表烧坏
         shorted: false,               // 火零短路
-        speed: 60,                    // 演示时间倍率
+        speed: 1,                     // 默认真实速度；高倍率用于观察长期累计
         meterType: 'induction',       // induction = 感应式铝盘；electronic = 电子式脉冲灯
         paused: false,
         t: 0,                         // 真实时间 s
@@ -522,7 +522,10 @@
         discAng: 0,                   // 转盘累积角 rad（与 W 严格同源，自检读它）
         discVis: 0,                   // 转盘视觉角，与 discAng 同步，保留给自检
         pulseCount: 0,                // 电子表已输出的完整脉冲数
-        pulseGlow: 0,                 // 脉冲灯余辉 0..1，由真实脉冲沿触发
+        pulseGlow: 0,                 // 脉冲灯当前亮度 0..1
+        pulseOn: 0,                   // 本次可见闪烁剩余的点亮时间
+        pulseWait: 0,                 // 高频显示时的熄灭间隔
+        pulsePending: false,          // 有真实脉冲等待做可见显示
         burnAcc: 0,                   // 表的热积累 0..1
         heatAcc: 0,                   // 空开热脱扣积累 0..1
         magT: 0,                      // 电磁脱扣已持续（真实秒）
@@ -1061,7 +1064,7 @@
 
       function drawDisc() {
         var d = G.disc, cx = d.x + d.w / 2, cy = d.y + d.h / 2 + 1;
-        var rx = d.w * .43, ry = 12.5;
+        var rx = d.w * .43, ry = 16;
 
         // 实物窗口：看到的是水平铝盘的侧面，而不是竖直圆盘的正面
         rr(ctx, d.x - 3, d.y - 3, d.w + 6, d.h + 6, 6);
@@ -1157,17 +1160,42 @@
           ctx.stroke();
         }
 
+        // 铝盘表面的径向定位刻线与盘边红标同步绕竖轴旋转。
+        // 它经过椭圆投影后不断改变方向和长度，整圈都能看出盘体确实在转。
+        function drawTopMark(a, alpha) {
+          var c = Math.cos(a), s = Math.sin(a), topY = cy - 3;
+          ctx.save();
+          ctx.beginPath();
+          ctx.ellipse(cx, topY, rx * .98, ry * .96, 0, 0, Math.PI * 2);
+          ctx.clip();
+          ctx.globalAlpha = alpha;
+          ctx.lineCap = 'round';
+          ctx.strokeStyle = '#3e474b';
+          ctx.lineWidth = 3.2;
+          ctx.beginPath();
+          ctx.moveTo(cx + rx * .56 * c, topY + ry * .56 * s);
+          ctx.lineTo(cx + rx * .91 * c, topY + ry * .91 * s);
+          ctx.stroke();
+          ctx.strokeStyle = '#c73328';
+          ctx.lineWidth = 2.6;
+          ctx.beginPath();
+          ctx.moveTo(cx + rx * .82 * c, topY + ry * .82 * s);
+          ctx.lineTo(cx + rx * .96 * c, topY + ry * .96 * s);
+          ctx.stroke();
+          ctx.restore();
+        }
+
         // 红色标记贴在盘边：正中时最宽，转到两侧时逐渐变窄并消失
         function drawMark(a, alpha) {
           var s = Math.sin(a);
           if (s <= .015) return;
           var x = cx + rx * Math.cos(a);
           var y = cy - 1 + ry * s;
-          var w = Math.max(1.2, 10.5 * s);
+          var w = Math.max(1.5, 14 * s);
           ctx.save();
           ctx.globalAlpha = alpha * Math.min(1, s * 5);
           ctx.fillStyle = '#d83327';
-          ctx.fillRect(x - w / 2, y - .2, w, 6.2);
+          ctx.fillRect(x - w / 2, y - .4, w, 7.4);
           ctx.fillStyle = 'rgba(255,156,132,.45)';
           ctx.fillRect(x - w / 2, y - .2, w, 1.1);
           ctx.restore();
@@ -1177,9 +1205,11 @@
         if (spinning && blur > .01) {
           var shutter = Math.min(Math.PI * 1.4, omega / 60 * .75);
           for (var k = 10; k >= 1; k--) {
+            drawTopMark(ang - shutter * k / 10, .30 * blur * (1 - k / 12));
             drawMark(ang - shutter * k / 10, .12 * blur * (1 - k / 12));
           }
         }
+        drawTopMark(ang, 1 - blur * .35);
         drawMark(ang, 1 - blur * .25);
 
         // 轴帽压在盘面上，强化水平盘绕竖轴旋转的空间关系
@@ -1502,7 +1532,9 @@
         if (!(dt > 0)) return;
         dt = Math.min(dt, 0.1);
         state.t += dt;
-        state.pulseGlow = Math.max(0, state.pulseGlow - dt / .12);
+        state.pulseOn = Math.max(0, state.pulseOn - dt);
+        state.pulseWait = Math.max(0, state.pulseWait - dt);
+        state.pulseGlow = state.pulseOn > 0 ? Math.min(1, state.pulseOn / .025) : 0;
 
         var I = effCurrent();
 
@@ -1555,6 +1587,15 @@
           var newPulses = Math.floor(state.W * METER.pulseRate + 1e-9);
           if (newPulses > state.pulseCount) {
             state.pulseCount = newPulses;
+            state.pulsePending = true;
+          }
+          // 真实脉冲一个不漏；高于 6 Hz 时只把【灯光显示】降到约 8 Hz，
+          // 形成清楚的亮—灭交替，避免余辉叠加后看起来像常亮。
+          var visualHz = pulseHz() * tScale;
+          if (state.pulsePending && state.pulseOn <= 0 && state.pulseWait <= 0) {
+            state.pulsePending = false;
+            state.pulseOn = visualHz > 6 ? .035 : .12;
+            state.pulseWait = visualHz > 6 ? .125 : 0;
             state.pulseGlow = 1;
           }
         }
@@ -1828,7 +1869,7 @@
         var meterHint = el('wb-meter-hint');
         if (meterHint) {
           meterHint.textContent = isElectronic()
-            ? '脉冲由耗电量逐次触发，1600 次闪烁对应 1 kW·h'
+            ? '1600 个真实脉冲对应 1 kW·h；高倍率时灯光降频显示，方便看清闪烁'
             : '看铝盘边缘的红色标记，不是看一个圆盘正面转动';
         }
 
@@ -1918,6 +1959,9 @@
         // 换一种表继续计量，不清零，也不把此前整段电能误当成一次新脉冲
         state.pulseCount = Math.floor(state.W * METER.pulseRate + 1e-9);
         state.pulseGlow = 0;
+        state.pulseOn = 0;
+        state.pulseWait = 0;
+        state.pulsePending = false;
         syncUI();
         renderNow();
         showToast(type === 'electronic'
@@ -2014,6 +2058,9 @@
         state.discVis = 0;
         state.pulseCount = 0;
         state.pulseGlow = 0;
+        state.pulseOn = 0;
+        state.pulseWait = 0;
+        state.pulsePending = false;
         state.burnAcc = 0;
         state.heatAcc = 0;
         state.magT = 0;
