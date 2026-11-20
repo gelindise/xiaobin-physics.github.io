@@ -37,7 +37,9 @@ Each experiment HTML follows the same structure:
 
 ## 趣味实验子栏目（付费内容，硬门禁）
 
-`趣味实验.html` 是《趣味物理实验"玩"全攻略》的独立页：左栏目录 + 右栏正文。整站内容需解锁码才能看。
+`fun.html` 是《趣味物理实验"玩"全攻略》的独立页：左栏目录 + 右栏正文。整站内容需解锁码才能看。
+
+访问入口：站内导航用 `fun.html`；对外分享用短链 `/fun`（`vercel.json` 里 rewrite 到 `fun.html`，不改地址栏）。旧的中文地址 `趣味实验.html` 保留为一个跳转壳（主站跳 `/fun`，其他环境跳 `fun.html`，保留 `#hash`）。
 
 - **可公开**：`assets/fun-exp/meta.js`（章节与 210 个实验的编号/标题/材料/60 字导语，目录与搜索都用它）、`assets/fun-exp/img/`（正文配图，哈希文件名）
 - **绝不入库**：`private/fun-exp/chN.js`（正文 HTML）。GitHub Pages 会把仓库里所有文件当静态资源公开，所以正文只存 Supabase `funexp_chapters`，由 `POST /api/proxy-user`（action `getFunExpChapter`）校验「码存在 + 未停用 + 未过期 + 本设备已绑定」后下发。`private/` 已在 `.gitignore` 与 `.githooks/pre-commit` 双拦截
