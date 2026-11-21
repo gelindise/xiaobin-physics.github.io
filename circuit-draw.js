@@ -6617,6 +6617,26 @@
       liveL = Math.abs(rec.segments[0].i) > 1e-12;   // seg0 = A → 滑片（左半段）
       liveR = Math.abs(rec.segments[1].i) > 1e-12;   // seg1 = 滑片 → B（右半段）
     }
+    // ── 铭牌规格 + 过热/烧断状态（用户 2026-11-21）────────────────
+    // 铭牌上那两项数（Rmax / Imax）既要【印出来】，又要拿来【判过热】：
+    // 电流越接近铭牌额定值，绕线越红（发热量 P = I²R，热量全在丝上）；
+    // 一超过额定值，内核把它判成 'burnt'（断路），这里就必须画出「断了」。
+    // 三处取数必须同源：rec 优先（内核回填）、再退到参数、最后才是出厂默认 ——
+    // 内核 faultsOf 判烧断用的也是 rec.Imax，画一套、判另一套就自相矛盾了。
+    var RmaxVal = (rec && rec.Rmax != null) ? +rec.Rmax
+                : (comp.params && comp.params.Rmax != null ? +comp.params.Rmax : 20);
+    var ImaxVal = (rec && rec.Imax != null) ? +rec.Imax
+                : (comp.params && comp.params.Imax != null ? +comp.params.Imax : 2);
+    // 烧断 = 内核里「烧坏 = 断路」的那一档（和电源、表头共用 'burnt'）。
+    var burned = !!(rec && rec.fault === 'burnt');
+    // 烧断以后两半都不再「通电」：绕线烧断了，A/B 那两根铜引线上也没有电流
+    //（引线的明暗读的正是 liveL/liveR，不收掉的话，断了丝的变阻器还亮着两根
+    //  铜片，画面上就成了「丝断了、线还在通电」）。
+    if (burned) { liveL = false; liveR = false; }
+    // 判过热的电流只认【电阻丝上的那股】：接成 C-D 或滑片停在 A 端时电流全走
+    // 金属杆，丝里一安都没有 —— 那种「电流大」是短路的账，不该让绕线发红。
+    var iWire = (rec && rec.rUsed > 1e-9) ? Math.abs(rec.i || 0) : 0;
+    var heat = (ImaxVal > 0 && !burned) ? Math.min(1, iWire / ImaxVal) : 0;
     var BRK_TOP = -26, LEG = 37;
 
     // 两条腿落在台面上的接触阴影。变阻器是个「架子」，阴影要分成两团，
@@ -6725,17 +6745,49 @@
                    [0.44, '#e8b273'], [0.62, '#b8772f'], [0.84, '#7a4d18'], [1, '#3d260a']];
     var CU_DEAD = [[0, '#57534a'], [0.14, '#7c776c'], [0.30, '#a8a294'],
                    [0.44, '#c2bcae'], [0.62, '#9c968a'], [0.84, '#736e64'], [1, '#4a463f']];
+    // 烧断以后的丝：焦黑带一点暗铜——不是「灰」（灰是没电流的绝缘色，看着像
+    // 好好的丝没通），必须一眼看出这截丝被烧过。
+    var CU_BURN = [[0, '#2b241e'], [0.14, '#463a2f'], [0.30, '#6d5b48'],
+                   [0.44, '#94806a'], [0.62, '#5a4a3b'],
+                   [0.84, '#3b3229'], [1, '#27211c']];
     var PITCH = RHEO.pitch;             // 圈距（局部单位）。真变阻器的绕线就密到这个程度：
                                         // 缩到 1 倍时圈缝糊成一片金属，放大才数得出圈数。
     ctx.save();
     roundRect(ctx, -TUBE_HW, cylY, TUBE_HW * 2, cylH, cylH / 2); ctx.clip();
+    // 烧断以后两半都用 CU_BURN：丝已经断了，没有「通电的那半根」这回事了
+    //（再保留铜色的亮段，画面上就是「断了还在通电」，比不画还糟）。
+    var coilL = burned ? CU_BURN : (liveL ? CU_LIVE : CU_DEAD);
+    var coilR = burned ? CU_BURN : (liveR ? CU_LIVE : CU_DEAD);
     coil(ctx, cylX, sxNow, cylY + 0.6, cylY + cylH - 0.6, (sxNow - cylX) / PITCH,
-      liveL ? CU_LIVE : CU_DEAD, sc);
+      coilL, sc);
     coil(ctx, sxNow, cylX + cylW, cylY + 0.6, cylY + cylH - 0.6,
-      (cylX + cylW - sxNow) / PITCH, liveR ? CU_LIVE : CU_DEAD, sc);
+      (cylX + cylW - sxNow) / PITCH, coilR, sc);
     // 绕线整体的一道高光（贴着渐变的高光停点，只补一点点「金属反光」的锐利感）
-    ctx.fillStyle = 'rgba(255,242,214,0.20)';
-    ctx.fillRect(cylX, cylY + 3.4, cylW, 3.4);
+    // 烧过的丝表面被氧化成一层哑黑的粉，不再反光 —— 这条高光必须一起去掉，
+    // 留一道亮带就会读成「还是干净的铜丝」。
+    if (!burned) {
+      ctx.fillStyle = 'rgba(255,242,214,0.20)';
+      ctx.fillRect(cylX, cylY + 3.4, cylW, 3.4);
+    }
+    // ── 过热发红：电流越接近铭牌额定值，绕线越往红里走 ─────────────
+    // 只烧【真的通着电的那半根】：没接入的那半根一点不变，两段的温差本身就是
+    // 「滑片把丝分成两段，只有接进回路的那段在发热」这句话的直观证据。
+    // 用 'lighter' 叠一层暖色，等于给铜色加光 —— 直接填半透明红色会把丝
+    // 的绕线纹理糊平，看着像一根红塑料管。
+    if (heat > 0.70) {
+      var hk = (heat - 0.70) / 0.30;                 // 0.70 → 1：从无到满
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      var hg = ctx.createLinearGradient(0, cylY, 0, cylY + cylH);
+      hg.addColorStop(0, 'rgba(140,24,0,' + (0.10 * hk).toFixed(3) + ')');
+      hg.addColorStop(0.42, 'rgba(255,88,16,' + (0.52 * hk).toFixed(3) + ')');
+      hg.addColorStop(0.72, 'rgba(255,150,44,' + (0.30 * hk).toFixed(3) + ')');
+      hg.addColorStop(1, 'rgba(140,24,0,' + (0.10 * hk).toFixed(3) + ')');
+      ctx.fillStyle = hg;
+      if (liveL) ctx.fillRect(cylX, cylY, Math.max(0, sxNow - cylX), cylH);
+      if (liveR) ctx.fillRect(sxNow, cylY, Math.max(0, cylX + cylW - sxNow), cylH);
+      ctx.restore();
+    }
     ctx.restore();
     // 绕线两端的收口：一圈金属卡箍 + 一颗压接螺钉。电阻丝的端头就是压在这
     // 上面的，A/B 两个柱子也拧在这儿 —— 少了这个箍，铜丝是「自己断掉的」。
@@ -6750,6 +6802,48 @@
       roundRect(ctx, x2 - 3.4, cylY + cylH - 2.6, 6.8, 2.4, 1.2); ctx.fill();
       ctx.restore();
     });
+
+    // ── 烧断的现场：焦痕 + 断口（用户 2026-11-21）──────────────────
+    // 只把丝画灰是不够的 —— 「灰」读出来是「没通电」，而这里要读的是「这根丝
+    // 已经没了」。所以要两样东西同时在场：
+    //   ① 焦痕：热量集中在滑片那一小块接触面上，真实烧断就发生在那里，
+    //      所以焦得最重的是中间，往两头淡下去；
+    //   ② 断口：绕线中间缺一小段、露出瓷管本色，两头的丝翘起来各带一颗熔珠。
+    //      缺口里是【压暗的瓷色】而不是纯白、也不是一团黑：一团黑只是「熏黑了」，
+    //      纯白一条又会读成「线圈上盖了一颗白药丸」—— 半亮的瓷色才看得出
+    //      「丝断了一截，底下的管还在」。
+    // 断口位置固定在 x=0（不跟着滑片走）：烧断是过去发生的事故，滑片之后再
+    // 推到哪儿，断口都不该跟着动 —— 跟着动就成了「滑片走到哪儿烧到哪儿」。
+    if (burned) {
+      ctx.save();
+      roundRect(ctx, -TUBE_HW, cylY - 1, TUBE_HW * 2, cylH + 2, cylH / 2); ctx.clip();
+      soot(ctx, 0, cylMid, TUBE_HW * 0.95, cylH * 0.80, 0.62);
+      soot(ctx, -TUBE_HW * 0.55, cylMid, TUBE_HW * 0.55, cylH * 0.55, 0.34);
+      soot(ctx, TUBE_HW * 0.55, cylMid, TUBE_HW * 0.55, cylH * 0.55, 0.34);
+      // 断口：只露出【一小截】瓷管，而且要压暗 —— 白瓷本身就是最亮的东西，
+      // 画成全高、纯白、圆角一条，读出来是「线圈上盖了一颗白药丸」而不是
+      // 「丝断了一截」。宽 5、上下各留 4，再往里侧压一圈焦边，才有缺口的样子。
+      var gw = 5;
+      ctx.fillStyle = linGrad(ctx, 0, cylY, 0, cylY + cylH,
+        [[0, '#8d8778'], [0.35, '#c3bdb0'], [0.62, '#d6d1c5'], [1, '#8a8476']]);
+      ctx.fillRect(-gw / 2, cylY + 4, gw, cylH - 8);
+      // 缺口内侧的两道焦边（丝烧掉时把瓷管也熏黑了一圈）
+      ctx.fillStyle = 'rgba(32,26,22,0.5)';
+      ctx.fillRect(-gw / 2 - 1.4, cylY + 4, 1.4, cylH - 8);
+      ctx.fillRect(gw / 2, cylY + 4, 1.4, cylH - 8);
+      [-1, 1].forEach(function (sgn) {
+        ctx.strokeStyle = 'rgba(74,56,38,0.95)'; ctx.lineWidth = 3.2;
+        ctx.beginPath();
+        ctx.moveTo(sgn * (gw / 2 - 0.5), cylMid + 1.4);
+        ctx.lineTo(sgn * (gw / 2 + 4.6), cylMid - 2.6);
+        ctx.stroke();
+        ctx.fillStyle = '#2a231d';                 // 熔珠
+        ctx.beginPath(); ctx.arc(sgn * (gw / 2 + 4.6), cylMid - 2.6, 2.1, 0, 6.284); ctx.fill();
+        ctx.fillStyle = 'rgba(255,198,124,0.6)';   // 熔珠上剩的一点余光
+        ctx.beginPath(); ctx.arc(sgn * (gw / 2 + 4.0), cylMid - 3.2, 0.75, 0, 6.284); ctx.fill();
+      });
+      ctx.restore();
+    }
 
     // ── ⑤ 滑片：鞍形金属块骑在金属杆上，触臂下探到绕线上 ────
     var sx = sxNow;
@@ -6818,10 +6912,27 @@
     // 字太小的时候（图例那种 0.6 倍）只画牌子不画字：5px 的字在缩略图上
     // 就是一道脏线，比空白更糟。放大镜里（≥1.05 倍）才把字抖出来。
     (function () {
-      var Rmax = (rec && rec.Rmax != null) ? +rec.Rmax
-               : (comp.params && comp.params.Rmax != null ? +comp.params.Rmax : 20);
-      var label = (Rmax % 1 === 0 ? Rmax : Rmax.toFixed(1)) + 'Ω 2A';
-      var pw = 25, ph = 9.5, px0 = sx - pw / 2, py0 = slidTop + 10.5;
+      // 铭牌上印的就是【这台变阻器的规格】：「20Ω 2A」。两项都从上面那同一份
+      // 取值走（rec → params → 出厂默认），额定电流改了牌子当场跟着变 ——
+      // 用户 2026-11-21 要求的「规格上的最大电流可以提前设定」，落点就是这里：
+      // 设成 1A 的变阻器，牌子上写着 1A，判烧断用的也是 1A。
+      var specNum = function (v) {
+        return (Math.abs(v % 1) < 1e-9) ? String(Math.round(v)) : v.toFixed(1);
+      };
+      var label = specNum(RmaxVal) + 'Ω ' + specNum(ImaxVal) + 'A';
+      var ph = 9.5, py0 = slidTop + 10.5;
+      // 牌子宽度不能写死 25：小字只有 1.05 倍以上才画，而「50Ω 1.5A」比
+      //「20Ω 2A」长出一截 —— 按字量出来，最后一个字才不会被牌子切掉。
+      // 缩略图（<1.05 倍）不画字，牌子回到 25 这个「一小块白牌」的观感。
+      var fontPx = (sc >= 1.05) ? Math.min(6.6, 5.6 + (sc - 1.05) * 1.6) : 0;
+      var pw = 25;
+      if (fontPx > 0) {
+        ctx.save();
+        ctx.font = 'bold ' + fontPx.toFixed(1) + 'px -apple-system,"PingFang SC",sans-serif';
+        pw = Math.max(25, ctx.measureText(label).width + 9);
+        ctx.restore();
+      }
+      var px0 = sx - pw / 2;
       ctx.save();
       ctx.fillStyle = 'rgba(15,23,42,0.22)';        // 牌子铆在弧顶上的投影
       roundRect(ctx, px0, py0 + 1.2, pw, ph, 2); ctx.fill();
@@ -6829,15 +6940,17 @@
         [[0, '#ffffff'], [0.6, '#f2f5f9'], [1, '#dbe3ec']]);
       roundRect(ctx, px0, py0, pw, ph, 2); ctx.fill();
       ctx.strokeStyle = 'rgba(51,65,85,0.55)'; ctx.lineWidth = 0.8; ctx.stroke();
-      if (sc >= 1.05) {
+      if (fontPx > 0) {
         ctx.fillStyle = '#1f2937';
-        ctx.font = 'bold ' + Math.min(6.6, 5.6 + (sc - 1.05) * 1.6).toFixed(1) +
-          'px -apple-system,"PingFang SC",sans-serif';
+        ctx.font = 'bold ' + fontPx.toFixed(1) + 'px -apple-system,"PingFang SC",sans-serif';
         ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
         ctx.fillText(label, sx, py0 + ph / 2 + 0.4);
       }
       ctx.restore();
     })();
+    // 「烧坏了」的红牌子挂在器材正上方。挂在【顶层】而不是压在绕线上：
+    // 用户要的是「一看就知道这台不能用了」，牌子被滑片挡掉一半就白挂。
+    if (burned) faultTag(ctx, 0, -60, '电阻丝烧断', 1);
     ctx.restore();
 
     // 端子字母：滑动变阻器没有极性，只标 A/B/C/D 四位接线柱

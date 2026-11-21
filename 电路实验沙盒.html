@@ -1049,8 +1049,8 @@
        2026-10-16 这批：core 24 / draw 38 / editor 29 / params 6 / schematic 18。
        （上一批是 core 23 / draw 37 / editor 28 / params 5 / schematic 17，
          这一轮五个文件都动了：世界加宽 + 电表放大 + 读数牌搬家 + 单刀双掷开关。） -->
-<script src="circuit-core.js?build=53"></script>
-<script src="circuit-draw.js?build=72"></script>
+<script src="circuit-core.js?build=54"></script>
+<script src="circuit-draw.js?build=73"></script>
 <!-- ════════════════════════════════════════════════════════════════════
      【教材版本皮肤 · 已从线上撤下】2026-10-12
      人教版元件外观（circuit-skin*.js 共 5 个文件）暂不在线上启用，学生看到的
@@ -1069,7 +1069,7 @@
 <script src="circuit-editor.js?build=53"></script>
 <!-- 参数面板规格 + 读数显示格式。从本页内联抽出，与 3D 版沙盒（电路实验沙盒3D）
      共用同一份真值：面板规格、小数位、极性显示规则改一处两边都变。 -->
-<script src="circuit-params.js?build=29"></script>
+<script src="circuit-params.js?build=30"></script>
 <!-- 电路图（实物图 → 标准符号）。独立成第四块内核：沙盒和欧姆定律页共用同一份，
      免得各写一套符号，两边的图画法迟早不一样。三个老内核一行没动，build 号不升。 -->
 <script src="circuit-schematic.js?build=42"></script>
@@ -1642,6 +1642,7 @@ function loadPreset(i){
   });
   faultLog.length = 0;
   shortSeen = null;
+  burnFx = {};          // 换一整套电路 = 台上全是新器材，不留上一场的火花
   resetPracticeState();
   return true;
 }
@@ -1741,6 +1742,12 @@ function maxWireI(){
 }
 
 // 把本帧新发生的损坏写进场景。返回「真的写了东西没有」。
+//
+// 烧断的那一下要【看得见】：记下这一件是什么时候坏的（burnFx），交给
+// drawBurnFxLayer 每帧画爆闪 + 火花。这份记录【只活在页面里】，不进 scene ——
+// 它纯粹是显示状态，塞进场景会跟着撤销栈和存档一起走：从存档读回来时放一场
+// 「烧断动画」是假的（那是几十秒前的事），而 base64 存档里也会凭空多一堆时间戳。
+var burnFx = {};            // 元件 id → 烧断那一刻的 animT（秒）
 function applyFaults(){
   var f = C.faultsOf(scene.comps, scene.wires, results, flows);
   var wrote = false, added = [];
@@ -1752,6 +1759,11 @@ function applyFaults(){
     // 不记下来的话，学生看到「灯丝烧断」却不知道是几倍额定功率烧的 ——
     // 而那正是这个实验要讲的那个数。修好时一起清掉。
     c.faultWhy = x.why || '';
+    // 只给【变阻器】放火花：灯泡烧断那块红牌要能被像素判据数出来，
+    // 而闪光是画在红牌之上的一团白光，一闪就把它冲淡了（实测红像素从 250+
+    // 掉到 230）。灯泡早就有自己的熏黑+青烟那一套，不缺这一下。
+    if (c.type === 'rheostat') burnFx[x.id] = animT;
+
     wrote = true;
     added.push({ kind:'comp', id:x.id, fault:x.fault, why:x.why,
                  label:(TYPE_LABEL[c.type]||c.type) + ' ' + D.nameOf(c) });
@@ -1810,6 +1822,7 @@ function repairComp(id){
   if (!c || !c.fault) return false;
   editor.pushUndo();
   c.fault = null; c.faultWhy = '';
+  delete burnFx[id];        // 修好了就不该再冒火花/青烟（青烟读的是 rec.fault，这条是给火花那条路收尾的）
   render();
   return true;
 }
@@ -1823,6 +1836,10 @@ function setCompFault(id, f){
   editor.pushUndo();
   c.fault = f || null; c.faultWhy = '';
   if (c.fault && sound) sound.trigger('spark', {});   // 弄坏也要出声，和自动烧断一致
+  // 手动「弄坏」也走同一条路：只给变阻器的烧断补那一下火花（理由见 applyFaults，
+  // 灯泡的红牌不能被白光冲淡）。拔掉灯泡 / 灯座短路不是烧，更不该闪。
+  if (f === 'burnt' && c.type === 'rheostat') burnFx[id] = animT;
+  else delete burnFx[id];
   render();
   return true;
 }
@@ -1843,6 +1860,7 @@ function repairAll(){
   var n = 0;
   scene.comps.forEach(function(c){ if (c.fault){ c.fault = null; c.faultWhy = ''; n++; } });
   scene.wires.forEach(function(x){ if (x.broken){ x.broken = false; x.brokenWhy = ''; n++; } });
+  burnFx = {};            // 一次修完全场，台上不该还剩谁在冒火花
   render();
   return n;
 }
@@ -2420,6 +2438,9 @@ function stepMotion(dt){
       moving = true;
     }
   });
+  // 烧断的火花还在飞 → 这一帧必须重绘。粒子那两个开关关着、电机也停着的时候，
+  // tick 本来是要空转的，不把这一条算进来，火花会冻在第一帧上不动。
+  if (burnFxActive()) moving = true;
   return moving;
 }
 
@@ -2508,6 +2529,7 @@ function drawFrame(){
     scene.comps.forEach(function(c){ D.drawTerminals(ctx, c); });
     drawMotion();                           // 会动的元件压在缓存层之上
     drawFlowLayer();                        // 变阻器绕线里的粒子（压在导线之上）
+    drawBurnFxLayer();                      // 烧断那一下的爆闪与火花（只活 1.4 秒）
     drawSmokeLayer();                       // 烧坏的东西在冒烟（唯一「坏了还在动」的事）
     drawTags(ctx);                          // 标签在最上层，不被导线划掉
     drawZeroWarn(ctx);                      // 未调零的电表：红叹号（压在所有东西之上）
@@ -2548,10 +2570,91 @@ function drawSmokeLayer(){
   scene.comps.forEach(function(c){
     var r = results.components[c.id];
     if (!r || r.fault !== 'burnt') return;
+    // 变阻器冒烟的位置不一样：坏的是【绕线】，烟得从瓷管上冒起来，不是从
+    // 器材中心往上飘（那里是滑片和金属杆，离热点有 30px 远，看着像别人的烟）。
+    // 而且绕线是一个「长条热源」，烟柱要宽一点、上升得慢一点。
+    if (c.type === 'rheostat'){
+      var pc = D.toWorld(c, 0, 14);          // 瓷管中心线（RHEO.cylY=4、cylH=26）
+      D.drawSmoke(ctx, pc.x, pc.y, animT, { count: 6, scale: 1, rise: 52, spread: 16 });
+      return;
+    }
     var off = (c.type === 'battery' || c.type === 'power') ? -34 : -30;
     var p = D.toWorld(c, 0, off);
     D.drawSmoke(ctx, p.x, p.y, animT, { count: 6, scale: 1, rise: 46, spread: 9 });
   });
+}
+
+// ── 烧断那一下：爆闪 + 火花（用户 2026-11-21）────────────────────
+// 「超过额定电流要看得见它烧坏」——只把丝画成焦黑，学生看到的是【结果】；
+// 中间那一下（电弧一闪、火星四散）才是「刚刚出事了」。所以这一层只活 1.4 秒，
+// 之后由 drawSmokeLayer 的常驻青烟接手，画面上一直有「它坏了」的证据。
+//
+// 三个约束：
+//   ① 相位不能用 Date.now：出图（自检取像素）要能复现同一帧，只能用 animT。
+//   ② 火花的角度写死（不掷随机数），同样是为了可复现 —— 每个火星的飞行
+//      距离只用 i 算，所以两帧之间只差时间，不差「这次运气」。
+//   ③ 画在元件之上、导线之上：出事的那个点必须压在最上层，否则被导线划掉。
+var BURN_FX_DUR = 1.4;      // 秒。爆闪 0.28s、火星 0.55s，剩下是余烬在暗下去
+// 还在放火花的那些件（顺便把过期的清掉）。stepMotion 靠它决定这一帧要不要重绘：
+// 粒子关着、电机也不转的时候，tick 是空转的，火花会被冻在第一帧上。
+function burnFxActive(){
+  var busy = false;
+  for (var id in burnFx){
+    if (animT - burnFx[id] < BURN_FX_DUR) busy = true;
+    else delete burnFx[id];
+  }
+  return busy;
+}
+function drawBurnFxLayer(){
+  if (!results || !results.components) return;
+  for (var id in burnFx){
+    var t0 = burnFx[id], age = animT - t0;
+    if (!(age >= 0) || age > BURN_FX_DUR) continue;
+    var c = editor && editor.byId(id);
+    if (!c) continue;
+    // 热点：变阻器在绕线中心；别的元件（灯泡/电表）就在本体中心往上一点。
+    var hot = (c.type === 'rheostat') ? [0, 14] : [0, -10];
+    var p = D.toWorld(c, hot[0], hot[1]);
+    // ① 爆闪：头 0.28 秒一团白黄的强光，半径迅速涨、亮度很快掉。
+    //    「白 → 黄 → 橙」这个色序就是电弧的温度序，反着来会像一颗灯泡。
+    if (age < 0.28){
+      var q = age / 0.28;
+      var R0 = 10 + 34 * q;
+      var g = ctx.createRadialGradient(p.x, p.y, 1, p.x, p.y, R0);
+      g.addColorStop(0, 'rgba(255,252,232,' + (0.95 * (1 - q)).toFixed(3) + ')');
+      g.addColorStop(0.35, 'rgba(255,198,92,' + (0.72 * (1 - q)).toFixed(3) + ')');
+      g.addColorStop(1, 'rgba(255,120,30,0)');
+      ctx.fillStyle = g;
+      ctx.beginPath(); ctx.arc(p.x, p.y, R0, 0, 6.284); ctx.fill();
+    }
+    // ② 火星：10 条短线从热点射出去，先快后慢，末端带着还没凉透的橙光。
+    var fly = Math.min(1, age / 0.55);
+    if (fly < 1){
+      for (var i = 0; i < 10; i++){
+        var ang = (i / 10) * 6.2832 + 0.35;
+        var d = (12 + 46 * fly) * (0.55 + 0.045 * i);
+        var x0 = p.x + Math.cos(ang) * d;
+        var y0 = p.y + Math.sin(ang) * d * 0.7;
+        var len = 5 * (1 - fly) + 1.5;
+        ctx.strokeStyle = 'rgba(255,' + Math.round(176 + 64 * (1 - fly)) + ',110,' +
+          (0.05 + 0.9 * (1 - fly)).toFixed(3) + ')';
+        ctx.lineWidth = 2.2 * (1 - fly) + 0.6;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(x0, y0);
+        ctx.lineTo(x0 + Math.cos(ang) * len, y0 + Math.sin(ang) * len * 0.7);
+        ctx.stroke();
+      }
+    }
+    // ③ 余烬：热点一直红着，1.4 秒里慢慢暗下去（这一段做「还在发热」的收尾，
+    //    和上面那团爆闪不是一件事：那是电弧，这是烧红的丝）。
+    var em = 1 - age / BURN_FX_DUR;
+    var ge = ctx.createRadialGradient(p.x, p.y, 1, p.x, p.y, 26);
+    ge.addColorStop(0, 'rgba(255,120,40,' + (0.55 * em * em).toFixed(3) + ')');
+    ge.addColorStop(1, 'rgba(255,80,20,0)');
+    ctx.fillStyle = ge;
+    ctx.beginPath(); ctx.arc(p.x, p.y, 26, 0, 6.284); ctx.fill();
+  }
 }
 
 // 未调零的电表上挂一个【警告标记】（红圆 + 白叹号 + 「未调零」）。

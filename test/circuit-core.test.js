@@ -710,6 +710,112 @@ test('T14f 变阻器 C-D 接法（两个上柱）→ 只有金属杆，0Ω 相�
 });
 
 // ============================================================
+// T14g～T14j 滑动变阻器的【额定电流】（用户 2026-11-21 报的）
+// ------------------------------------------------------------
+// 用户原话：「它的默认最大电流是 2A，我发现达到 2A 的时候并没有被烧坏，
+// 超过 2A 也没有被烧坏」，并且「最大电流是可以提前设定的」。
+// 这一组钉四件事：
+//   g) 铭牌那个数进了模型（rec.Imax），而且恰好等于额定值【不烧】、超了就烧；
+//   h) 烧断之后真的是【断路】—— 电流停、电路判 open-circuit，不是「红了照跑」；
+//   i) 判据读的是铭牌上的数：同一股电流，1A 的烧、2A 的不烧（不是写死 2）；
+//   j) 只烧【电阻丝上的电流】：接 C-D（只有金属杆）时电流全在杆上，丝里没有，
+//      再大也不该记在变阻器头上（那是短路的账，由熔断导线去报）。
+function rheoRatedScene(emf, slide, Imax) {
+  // 电源（理想，保证电流就是 E/R 好算）× 变阻器一上一下（A 进、C 出）。
+  // Rmax 20Ω、slide 0.1 ⇒ 接入 2Ω ⇒ I = emf / 2。
+  return {
+    comps: [comp('E', 'battery', { emf: emf, rInt: 0 }),
+            comp('RH', 'rheostat', { Rmax: 20, slide: slide, Imax: Imax })],
+    wires: [W('E', 0, 'RH', 0), W('RH', 2, 'E', 1)],
+  };
+}
+function rheoFaults(s, res) {
+  return C.faultsOf(s.comps, s.wires, res, C.wireCurrents(s, res)).comps;
+}
+
+test('T14g 额定电流是铭牌规格：恰好 2A 不烧，超过才烧（默认 2A）', function () {
+  // ① 规格进了模型：不写 Imax 的老场景也拿到 2A（默认值，向后兼容）
+  var s0 = rheoRatedScene(4.4, 0.1, undefined);
+  var r0 = run(s0.comps, s0.wires, 'T14g-默认规格');
+  close(r0.components.RH.Imax, 2, 'T14g 不写 Imax 时回填默认 2A', 1e-12);
+  close(Math.abs(r0.components.RH.i), 2.2, 'T14g 2.2A 的工况（4.4V / 2Ω）', 1e-9);
+  var f0 = rheoFaults(s0, r0);
+  truthy(f0.length === 1 && f0[0].fault === 'burnt',
+    'T14g 2.2A > 2A 必须判烧断，实际 ' + JSON.stringify(f0));
+  truthy(f0[0].why.indexOf('2.2') >= 0 && f0[0].why.indexOf('2A') >= 0,
+    'T14g 原因里要带【烧断前】的电流和铭牌值：' + (f0[0] && f0[0].why));
+
+  // ② 恰好 2.00A：额定 = 允许长期通过的最大电流，卡在线上不算烧
+  var s1 = rheoRatedScene(4, 0.1, 2);
+  var r1 = run(s1.comps, s1.wires, 'T14g-恰额定');
+  close(Math.abs(r1.components.RH.i), 2, 'T14g 恰好 2A 的工况（4V / 2Ω）', 1e-9);
+  truthy(rheoFaults(s1, r1).length === 0,
+    'T14g 恰好等于额定电流【不该】烧（只留浮点容差，不留物理余量）');
+
+  // ③ 刚好超一点就烧：判据是「> 额定」，不是「超过 1.5 倍」之类
+  var s2 = rheoRatedScene(4.5, 0.1, 2);
+  var r2 = run(s2.comps, s2.wires, 'T14g-略超');
+  close(Math.abs(r2.components.RH.i), 2.25, 'T14g 2.25A 的工况（4.5V / 2Ω）', 1e-9);
+  truthy(rheoFaults(s2, r2).length === 1, 'T14g 2.25A > 2A 必须烧（不是「过载提示」）');
+});
+
+test('T14h 烧断以后是【断路】：电流停、rUsed 变 null、电路判 open-circuit', function () {
+  var s = rheoRatedScene(4.4, 0.1, 2);
+  var before = run(s.comps, s.wires, 'T14h-烧断前');
+  close(Math.abs(before.components.RH.i), 2.2, 'T14h 烧断前 2.2A', 1e-9);
+  // 把内核判出来的故障【写进场景】（页面做的就是这一步），再解一遍
+  s.comps[1].fault = 'burnt';
+  var after = C.solve(s.comps, s.wires, {});
+  close(after.components.RH.i, 0, 'T14h 烧断的变阻器里没有电流（= 开路）', 1e-12);
+  truthy(after.components.RH.rUsed == null, 'T14h 烧断后没有「接入阻值」可言（null，不是 0）');
+  truthy(after.status === 'open-circuit',
+    'T14h 电路应判 open-circuit，实际 ' + after.status);
+  truthy(C.isOpenFault(s.comps[1]) === true, 'T14h burnt 必须算开路故障（isOpenFault）');
+});
+
+test('T14i 判据读的是铭牌上的数：同一股 1.6A，1A 的烧、2A 的不烧', function () {
+  // 3.2V / 2Ω = 1.6A。同一个电路、同一股电流，只有 Imax 不同 —— 这条专抓
+  //「把 2A 写死在代码里」的实现：那种实现下面两种情形会给出同样的结论。
+  var sLow = rheoRatedScene(3.2, 0.1, 1);
+  var sOk = rheoRatedScene(3.2, 0.1, 2);
+  var rLow = run(sLow.comps, sLow.wires, 'T14i-1A 规格');
+  var rOk = run(sOk.comps, sOk.wires, 'T14i-2A 规格');
+  close(Math.abs(rLow.components.RH.i), 1.6, 'T14i 工况 1.6A', 1e-9);
+  close(Math.abs(rOk.components.RH.i), 1.6, 'T14i 两场的电流必须一样', 1e-12);
+  truthy(rheoFaults(sLow, rLow).length === 1, 'T14i 1A 的变阻器在 1.6A 下烧断');
+  truthy(rheoFaults(sOk, rOk).length === 0, 'T14i 2A 的变阻器在 1.6A 下不烧');
+  close(rOk.components.RH.Imax, 2, 'T14i 铭牌值原样回填（2A）', 1e-12);
+  close(rLow.components.RH.Imax, 1, 'T14i 铭牌值原样回填（1A）', 1e-12);
+});
+
+test('T14j 接 C-D / 滑片停在 A 端：电流全在金属杆与滑片上，不判电阻丝烧断', function () {
+  // C-D 接法（两个上柱）：变阻器 0Ω，回路只剩 1Ω 电阻 ⇒ 3A。
+  // 这 3A 走的是【金属杆】，电阻丝里一安都没有（rUsed = 0）—— 再大的电流
+  // 也不该记在「电阻丝过热」头上，否则学生看到的是「变阻器烧了」，
+  // 而他明明只是把两个上柱接成了一条导线（经典错接法，考点完全不同）。
+  var s = {
+    comps: [comp('E', 'battery', { emf: 3, rInt: 0 }),
+            comp('RH', 'rheostat', { Rmax: 20, slide: 0.5, Imax: 0.5 }),
+            comp('R', 'resistor', { R: 1 })],
+    wires: [W('E', 0, 'RH', 2), W('RH', 3, 'R', 0), W('R', 1, 'E', 1)],
+  };
+  var res = run(s.comps, s.wires, 'T14j-C-D');
+  close(Math.abs(res.components.R.i), 3, 'T14j 回路电流 3A（0Ω + 1Ω）', 1e-9);
+  close(res.components.RH.rUsed, 0, 'T14j C-D 接法接入 0Ω', 1e-12);
+  truthy(rheoFaults(s, res).length === 0,
+    'T14j 丝里没有电流，不该判「电阻丝烧断」（这一档是短路，账记在导线上）');
+
+  // 反面：A-C 接法、滑片停在 A 端（左半段 0Ω）同样是 0Ω，同样不烧
+  var s2 = rheoRatedScene(3, 0, 0.5);
+  s2.comps.push(comp('R', 'resistor', { R: 1 }));
+  s2.wires = [W('E', 0, 'RH', 0), W('RH', 2, 'R', 0), W('R', 1, 'E', 1)];
+  var res2 = run(s2.comps, s2.wires, 'T14j-滑片在 A 端');
+  close(res2.components.RH.rUsed, 0, 'T14j 滑片在 A 端时接入 0Ω', 1e-12);
+  truthy(rheoFaults(s2, res2).length === 0,
+    'T14j 滑片在 A 端、丝里没电流，不该判烧断');
+});
+
+// ============================================================
 // T15 多电源
 // ============================================================
 test('T15a 两电源同向串联：6V + 3V 接 3Ω → I=3A', function () {
