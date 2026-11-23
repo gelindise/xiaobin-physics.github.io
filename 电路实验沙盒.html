@@ -1049,8 +1049,8 @@
        2026-10-16 这批：core 24 / draw 38 / editor 29 / params 6 / schematic 18。
        （上一批是 core 23 / draw 37 / editor 28 / params 5 / schematic 17，
          这一轮五个文件都动了：世界加宽 + 电表放大 + 读数牌搬家 + 单刀双掷开关。） -->
-<script src="circuit-core.js?build=54"></script>
-<script src="circuit-draw.js?build=73"></script>
+<script src="circuit-core.js?build=56"></script>
+<script src="circuit-draw.js?build=75"></script>
 <!-- ════════════════════════════════════════════════════════════════════
      【教材版本皮肤 · 已从线上撤下】2026-10-12
      人教版元件外观（circuit-skin*.js 共 5 个文件）暂不在线上启用，学生看到的
@@ -1069,10 +1069,10 @@
 <script src="circuit-editor.js?build=53"></script>
 <!-- 参数面板规格 + 读数显示格式。从本页内联抽出，与 3D 版沙盒（电路实验沙盒3D）
      共用同一份真值：面板规格、小数位、极性显示规则改一处两边都变。 -->
-<script src="circuit-params.js?build=30"></script>
+<script src="circuit-params.js?build=31"></script>
 <!-- 电路图（实物图 → 标准符号）。独立成第四块内核：沙盒和欧姆定律页共用同一份，
      免得各写一套符号，两边的图画法迟早不一样。三个老内核一行没动，build 号不升。 -->
-<script src="circuit-schematic.js?build=42"></script>
+<script src="circuit-schematic.js?build=43"></script>
 <!-- 电路图画布（拖符号画标准电路图 + 当场仿真）。它复用 circuit-schematic 的
      itemOf / drawSymbol，所以画出来的符号和「由实物图转换」那张【一模一样】。 -->
 <script src="circuit-schlab.js?build=5"></script>
@@ -1107,6 +1107,10 @@ var PARAM_UI = CP.PARAM_UI, TYPE_LABEL = CP.TYPE_LABEL, POLAR = CP.POLAR;
 // 器材盒卡片用的短名（只有卡片放不下的那几个才在表里，见 circuit-params）
 var PAL_NAME = CP.PAL_NAME || {};
 var num1 = CP.num1, num2 = CP.num2, dispI = CP.dispI, dispU = CP.dispU, fmtR = CP.fmtR, pval = CP.pval;
+// 敏感电阻的阻值显示（按量级换单位：348Ω / 1.4kΩ / 300kΩ / 10MΩ）。
+// 读数框、侧栏表、放大镜共用共享模块那一份 —— 三处各写一套的话，同一个
+// 300kΩ 会被印成三种样子。
+var sensorRText = CP.sensorRText;
 // galNum —— 灵敏电流计读数的小数位（按数量级自适应：18mA → 0.018）。
 // 和侧栏表、读数牌、读数框共用同一份，免得三处印出三个不同的数。
 var galNum = CP.galNum;
@@ -1947,7 +1951,9 @@ var DROP = {battery:40, power:46, ammeter:80, voltmeter:80, galvanometer:80,
             // 正好在箱子外面一点。给默认的 24 的话，标签会直接压在面板的
             // 温度数码屏上，而那正是这件器材唯一的读数。
             thermobox:92,
-            switch:38, spdt:38, led:38, motor:38, bell:38};
+            // 敏感电阻：和二极管 / 电铃同一块示教板（板底 +30）——
+            // 读数框同样落在 38，正好在板子下面一点，不压住板面丝印。
+            switch:38, spdt:38, led:38, motor:38, bell:38, sensor:38};
 
 // ── 读数的小数位 ────────────────────────────────────────────
 // num1 已抽到 circuit-params.js（见文件顶部别名），与 3D 版沙盒共用同一份。
@@ -1960,6 +1966,28 @@ function readoutLines(c, r){
   // 通断状态已经写在底座上，别再飘一个框。单刀双掷同理：板面上印着
   // 「刀片 → 掷 N」，而且两个掷位都是「通」，飘一个框反而要把人绕进去。
   if (c.type === 'switch' || c.type === 'spdt') return null;
+  // 敏感电阻：这块小牌上写两行 —— 条件 + 此刻的阻值。
+  // 为什么阻值也印在【画布】上（而别的元件的 R 只在侧栏表里）：这件器材的
+  // 全部内容就是「条件变 ⇒ 阻值变」，学生拖那根滑条时眼睛必须能一直盯着
+  // 这个数，隔着浮层看是看不出「它真的跟着变了」的。
+  // ⚠️ 两行都用【中文起头】，不能写成 `R = …`：画布标签会把「字母 = 数值」
+  //    那种参数行整行滤掉（见 stateLinesOf 的 PARAM_LINE），写 R = 的话
+  //    这块牌上最重要的那个数反而一个字都不显示。
+  if (c.type === 'sensor') {
+    var skId = (r && r.kind) || pval(c, 'kind');
+    var skMeta = (C.SENSOR_KINDS && C.SENSOR_KINDS[skId]) || { condLabel: '条件' };
+    if (skId === 'varistor') {
+      // 压敏的「条件」不是学生拧的，而是电路给它的电压 —— 所以这一行写的是
+      // 【状态】：截止（几乎不导电，当绝缘体）/ 导通（钳位，把过压引到自己身上）。
+      var vUc = (r && r.Uc) || pval(c, 'Uc');
+      lines.push('压敏 ' + vUc + 'V · ' + ((r && r.on) ? '导通（钳位）' : '截止'));
+    } else {
+      lines.push(skMeta.condLabel + ' ' + ((r && r.condText) || ''));
+    }
+    // 阻值：按量级换单位（348Ω / 1.4kΩ / 300kΩ），和侧栏表、浮层共用一份。
+    lines.push('阻值 ' + (r ? sensorRText(r.R) : '—'));
+    return lines;
+  }
   if (c.type === 'rheostat') {
     lines.push('R = ' + (r.rUsed == null ? '—' : num1(r.rUsed)) + 'Ω');
     lines.push('I = ' + num1(Math.abs(r.i)) + 'A');
@@ -3441,6 +3469,15 @@ function syncCheckPanel(){
 function paramRowsHTML(c, specs, pfx){
   var html = '';
   specs.forEach(function(sp){
+    // 【按种类显隐】的行（敏感电阻用）：when(comp) 返回 false 就整行不出现。
+    // 为什么要有这一条，而不是给六种探头各写一份面板：
+    // 敏感电阻是一件器材、六种探头，面板上第一行选「种类」，下面那几行
+    // 条件必须跟着换 —— 光敏只该看到「光照」，热敏只该看到「温度」。
+    // 六份面板的话，「换探头」要重建整个面板、换一个 type，撤销栈和存档
+    // 都会把「换了器材」记成另一件事，而它其实只是改了一个参数。
+    // ⚠️ 没有 when 的规格行一律照旧（绝大多数类型都是这样）——这条过滤
+    //    对它们是完全的 no-op，2D/3D 两边都安全。
+    if (sp.when && !sp.when(c)) return;
     var v = pval(c, sp.k);
     if (sp.t === 'range') {
       // num:1 = 这一行在滑条之外【再给一个数字输入框】（定值电阻的阻值）。
@@ -3613,6 +3650,15 @@ function wireParamInputs(box, c, specs, pfx){
       // 而 null 才是「理想电压表，一条支路都不产生」。
       if (k === 'weakI') editor.setParam(c.id, 'rInternal', val ? VOLT_RIN : null);
       else editor.setParam(c.id, k, val);
+      // 这个下拉一改，整块面板的【行会换掉】（敏感电阻：选光敏只见照度、
+      // 选压敏只见压敏电压）。量程柱 / 换极性 / 换档那些按钮都要重建面板，
+      // 下拉这里原先没人管 —— 症状是「切到压敏了，照度滑条还挂在那儿」：
+      // 不报错，但面板说的和元件不是一回事。判据只认【带 when 规则的控件】，
+      // 别的下拉（比如二极管颜色）不受影响。
+      if (el.tagName === 'SELECT' && specs.some(function(s){ return s.when; })) {
+        rebuildParamPanels();
+        return;                    // 面板已整块重建，下面别再碰旧的那些元素
+      }
       if (el.type === 'range' || el.type === 'number') {
         var lab = document.getElementById(pfx + k);
         if (lab) lab.textContent = val + ((spec0 && spec0.unit) || '');
@@ -4501,6 +4547,9 @@ function popReadInner(c){
   // 只印「0.029 A」学生得在脑子里换算一次才看得出偏了多少，而表盘上印的就是 mA。
   // 所以这一格不再补「 A」；其它元件照旧。
   var iTxt = hi ? '?' : dispI(c, r);
+  // 敏感电阻的阻值自带单位（348Ω / 1.4kΩ / 300kΩ），后面不能再补一个 Ω ——
+  // 补了就成了「300kΩ Ω」。其它元件照旧补。
+  var rU = (c.type === 'sensor') ? '' : ' Ω';
   var iU = (c.type === 'galvanometer') ? '' : ' A';
   // 灯泡勾了「显示灯丝温度」时补一行：画布上那块牌子是给学生「一眼看见它在
   // 变热」的，浮层这里给的是要抄进表格的那个数（伏安法测电阻的实验记录）。
@@ -4512,7 +4561,7 @@ function popReadInner(c){
   if (c.type === 'thermobox' && typeof r.tempC === 'number')
     tLine = '<br>灯丝温度 ' + Math.round(r.tempC) + ' ℃（恒定）';
   return 'I ' + iTxt + iU + '　U ' + (hu ? '?' : dispU(c, r)) + ' V<br>' +
-    'R ' + (hr ? '?' : fmtR(c, r)) + ' Ω　P ' + ((hi || hu) ? '?' : num1(Math.abs(r.p))) + ' W' + tail + tLine;
+    'R ' + (hr ? '?' : fmtR(c, r)) + rU + '　P ' + ((hi || hu) ? '?' : num1(Math.abs(r.p))) + ' W' + tail + tLine;
 }
 function popReadHTML(c){
   var s = popReadInner(c);
@@ -5319,6 +5368,11 @@ var LG_VIEW = {
   led:       { x0: -78, y0: -52, x1: 78, y1: 36 },
   motor:     { x0: -78, y0: -64, x1: 78, y1: 36 },
   bell:      { x0: -78, y0: -66, x1: 78, y1: 42 },
+  // 敏感电阻：底板 ±70、板底 +30，传感元件抬到 −46（光照提示线再高 4px）。
+  // 和共享层 CircuitDraw.ICON_VIEW.sensor 同一组数 —— 图例、器材盒、
+  // 画布上真画的那一件必须同一个取景框，否则「按钮里那颗」和「台上那颗」
+  // 看起来不像同一件器材。
+  sensor:    { x0: -78, y0: -54, x1: 78, y1: 36 },
 };
 // 图例要给电表/变阻器一个「已经接好线」的样子（不然圆圈的两根引线全是虚线，
 // 看着像坏了）。给一根挂在【不存在的元件】上的假导线：termHasWire 认它，
@@ -5454,7 +5508,12 @@ window.addEventListener('keydown', function(ev){
 }, true);
 
 // 元件栏
-var PAL = ['battery','power','switch','spdt','resistor','rheostat',
+var PAL = ['battery','power','switch','spdt','resistor',
+           // 敏感电阻紧挨着定值电阻：两件在电路上都是「一条两端 R 支路」，
+           // 摆在旁边，「一个阻值不变、一个阻值被光照/温度/电压定」这个对照
+           // 一眼就成立 —— 而它们正是这一节唯一要讲的那句区别。
+           'sensor',
+           'rheostat',
            // 电位器紧挨着滑动变阻器：两件都是「改变电阻」的器材，学生找它时
            // 眼睛本来就在那一排；而它们【不是】同一件东西（一个转、一个平移，
            // 一个三端能分压、一个两端只能限流），并排放着正好对照。

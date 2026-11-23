@@ -776,6 +776,10 @@
     // 电铃两个柱子都是金属色（neutral）—— 它没有极性，这不是省事，
     // 就是「通电就响、与电流方向无关」这件事在实物上的样子。
     bell: [{ x: -HALF, y: 0 }, { x: HALF, y: 0 }],
+    // 敏感电阻：同一块示教板、同一对 ±70 的柱子 —— 六种探头换的是【板上的
+    // 元件】，接线柱一根都不动。这是有意为之：学生换探头时不用重新接线，
+    // 「同一个位置、同一种接法，换一个感受对象」这才看得见。
+    sensor: [{ x: -HALF, y: 0 }, { x: HALF, y: 0 }],
     // 三柱表头：0 = 「−」柱（黑，最左），1/2 = 两个量程柱（红，往右排）。
     // 外侧两个柱仍钉在 ±HALF，保持全站网格约定，只有 y 落到底座下面。
     ammeter: [{ x: -HALF, y: MET.POST_Y }, { x: 0, y: MET.POST_Y }, { x: HALF, y: MET.POST_Y }],
@@ -1580,6 +1584,10 @@
     led:       { x0: -78, y0: -52, x1: 78, y1: 36 },
     motor:     { x0: -78, y0: -64, x1: 78, y1: 36 },
     bell:      { x0: -78, y0: -66, x1: 78, y1: 42 },
+    // 敏感电阻：底板 ±70、板底 +30，传感元件抬到 −46（带「光照 / 水汽」那几笔
+    // 提示线再往上 4px ⇒ −50）。取景框按这个给，元件盒那一格里才看得清
+    // 「板上到底装了个什么东西」—— 而那正是六种探头唯一的外形区别。
+    sensor:    { x0: -78, y0: -54, x1: 78, y1: 36 },
     // 电阻示教板：整块板 + 八个柱子（柱头到 ±82）。少给一点，图标里板角会被切。
     rheoboard: { x0: -84, y0: -70, x1: 84, y1: 72 },
     // 电位器：机身 ±50，三个焊片在 +72（半高 6.5 ⇒ 78.5），字母再往下到 91。
@@ -1837,6 +1845,10 @@
       case 'led': return { hw: 70, hh: 46 };             // 底板 ±70，管身顶 y = −45
       case 'motor': return { hw: 70, hh: 60 };           // 底板 ±70，机身/螺旋桨顶 y = −58
       case 'bell': return { hw: 70, hh: 60 };            // 底板 ±70，铃碗顶 y = −36
+      // 敏感电阻：同一块示教板（±70），板上的传感元件抬到 y = −46（圆片顶）。
+      // 和 led / motor 同一条规矩：hw 卡死 70 —— 柱子钉在 ±70 上，再宽柱子
+      // 就被圈进盒子里，「导线夹在柱子上」会被误判成「导线穿过元件」。
+      case 'sensor': return { hw: 70, hh: 52 };
       // 导体板：底板 ±70，金属条贴在板面正面（y = 6 ~ 27），本体不长到导线上面，
       // 所以 hh 只要盖住板面这一截。同样卡死 ≤ 70 —— 柱子钉在 ±70 上。
       case 'plate': return { hw: 70, hh: 30 };           // 板面下沿 y = 30
@@ -8145,6 +8157,325 @@
     posts(ctx, comp, ['neutral', 'neutral'], 1.15, 6);
   }
 
+  // ============================================================
+  // 敏感电阻（一件器材、六种探头）
+  // ------------------------------------------------------------
+  // 画法统一：和发光二极管 / 电动机 / 电铃共用同一块 PLATE 示教板，两根引脚
+  // 从板面走到 ±HALF 的接线柱上，传感元件抬在板面之上。
+  // 六种探头【只换板上那一颗元件】，板子、柱子、引脚一根都不动 —— 学生换
+  // kind 时看到的是「换了个探头」，而不是「换了一台仪器」，接线也不用重来。
+  //
+  // 每一种都照真实器件的外形画（这正是六种探头唯一的外形区别，认器材全靠它）：
+  //   光敏  圆陶瓷片 + 一条蜿蜒的 CdS 光敏层 + 两条梳状电极（GL5516 那颗）
+  //   热敏  深色圆片，NTC 印白字 / PTC 印红字（MF52 珠片 / BaTiO3 圆片）
+  //   压敏  橙黄色圆片（MOV 07D 系列那颗「小黄饼」），面上印压敏电压
+  //   气敏  蓝色胶木底座 + 带网罩的金属帽（MQ-3 那颗「小罐头」）
+  //   湿敏  米白陶瓷片 + 梳齿状电极（高分子湿敏元件）
+  //
+  // 🔴 这里【一个物理公式都不写】：阻值、电流、钳位状态全由内核经 rec 传进来。
+  //    画面上的「亮 / 热 / 湿 / 汽」只是把【条件】翻译成颜色和几笔提示，
+  //    绝不用它去反推任何电学量 —— 否则画到哪儿和算出来多少就会错开。
+  // ============================================================
+  var SENS = {
+    CY: -23,        // 传感元件中心
+    R: 21,          // 圆片半径（光敏 / 热敏 / 压敏）
+    PIN_X: 14,      // 两根引脚的水平位置
+    PIN_Y: -6,      // 引脚从元件底下伸出来处（贴着板顶面）
+    // 🔴 引脚必须走在【板顶面那条窄带】里（PLATE.TOP=-5 … PLATE.FACE=3 之间）。
+    //    原先写 -8，比板顶还高 3px：两根线悬在板子上方，远看是个「∪」形的
+    //    托架，圆片像被托着而不是插在板上。
+    LEAD_Y: -1,
+  };
+  // 六种探头的名字 / 外形键。真值在内核 SENSOR_KINDS（读不到时才退回本地表，
+  // 离屏出图、单文件测试会走这一支）。
+  function sensorKindMeta(comp) {
+    var G2 = (typeof self !== 'undefined') ? self
+           : (typeof global !== 'undefined') ? global : this;
+    var fallback = { ldr: '光敏', ntc: '热敏NTC', ptc: '热敏PTC',
+                     varistor: '压敏', gas: '气敏', humid: '湿敏' };
+    if (G2 && G2.CircuitCore && typeof G2.CircuitCore.sensorKindOf === 'function') {
+      try {
+        var k0 = G2.CircuitCore.sensorKindOf(comp);
+        var meta = G2.CircuitCore.SENSOR_KINDS[k0];
+        if (meta) return { id: k0, label: meta.label, full: meta.full };
+      } catch (e) { /* 走下面的兜底 */ }
+    }
+    var k = (comp && comp.params && comp.params.kind) || 'ldr';
+    if (!fallback[k]) k = 'ldr';
+    return { id: k, label: fallback[k], full: fallback[k] };
+  }
+
+  function drawSensor(ctx, comp, rec) {
+    var S = SENS, P = (comp && comp.params) || {};
+    var km = sensorKindMeta(comp), kind = km.id;
+    var rad = (comp.rot || 0) * Math.PI / 180;
+    var sc = ctxScale(ctx);
+    var cx = 0, cy = S.CY, r = S.R;
+
+    // 条件量：只用来决定「画面上那几笔提示要多强」，不参与任何电学计算。
+    var lux = Math.max(0, +((P.lux != null) ? P.lux : 300));
+    var temp = +((P.temp != null) ? P.temp : 25);
+    var rh = +((P.rh != null) ? P.rh : 50);
+    var ppm = Math.max(0, +((P.ppm != null) ? P.ppm : 0));
+    var fromRec = !!(rec && rec.kind);
+    if (fromRec) kind = rec.kind;                 // rec 才是【真值】（存档/撤销都对过）
+    // 光照强度 → 0~1（对数刻度：人眼和器件对光的响应都是对数的）
+    var lit = Math.min(1, Math.max(0, Math.log(1 + lux) / Math.log(10001)));
+    // 温度 → 0~1（-20℃ 起算、120℃ 到顶）
+    var hot = Math.min(1, Math.max(0, (temp - 20) / 100));
+    var wet = Math.min(1, Math.max(0, (rh - 30) / 65));
+    var vapor = Math.min(1, Math.max(0, ppm / 600));
+
+    ctx.save();
+    ctx.translate(comp.x, comp.y);
+    ctx.rotate(rad);
+    ctx.scale(scaleOf(comp), scaleOf(comp));
+
+    // ① 底板：和二极管 / 电动机 / 电铃同一块示教板
+    basePlate(ctx, PLATE.HW, PLATE.TOP, PLATE.FACE, PLATE.BOT);
+
+    // ② 两根引脚：从元件底下竖直下来，再沿板面走到接线柱底下（±HALF）
+    plateLead(ctx, [[-S.PIN_X, S.PIN_Y + 2], [-S.PIN_X, S.LEAD_Y], [-HALF, S.LEAD_Y]], 3.0);
+    plateLead(ctx, [[S.PIN_X, S.PIN_Y + 2], [S.PIN_X, S.LEAD_Y], [HALF, S.LEAD_Y]], 3.0);
+
+    // ③ 板面丝印：这一档探头叫什么。换 kind 时这里跟着变 —— 画面上最直接的
+    //    一句「现在板上装的是哪种敏感电阻」。
+    silk(ctx, km.label, 0, 17.5, 11, SILK_INK, 'rgba(255,255,255,0.72)');
+
+    // ④ 传感元件本体（六种外形）
+    // 圆片类：一块「上亮下暗」的镀膜圆片，边缘一圈暗色（陶瓷片的厚度全靠它）
+    function discGrad(stops) {
+      var g = ctx.createLinearGradient(-r * 0.6, cy - r, r * 0.6, cy + r);
+      stops.forEach(function (s) { g.addColorStop(s[0], s[1]); });
+      return g;
+    }
+    function discPath() {
+      ctx.beginPath(); ctx.arc(cx, cy, r, 0, 6.284);
+    }
+    // 圆片的边：教材插画要的是一道【实心黑边】，不是一圈半透明的暗影。
+    // 有这道边，圆片才立得起来；没有它，六种探头都是一团糊开的颜色。
+    function rimStroke(a) {
+      discPath();
+      ctx.strokeStyle = 'rgba(26,28,32,' + (a == null ? 0.88 : a) + ')';
+      ctx.lineWidth = 1.9; ctx.stroke();
+    }
+    // 高光带：贴着左上缘的一道白弧。平涂 + 黑边 + 高光带，教材插画的三件套。
+    function rimHighlight() {
+      ctx.save();
+      discPath(); ctx.clip();
+      ctx.strokeStyle = 'rgba(255,255,255,0.58)';
+      ctx.lineWidth = 4.2;
+      ctx.beginPath();
+      ctx.arc(cx, cy, r - 3.6, Math.PI * 1.04, Math.PI * 1.52);
+      ctx.stroke();
+      ctx.restore();
+    }
+    function discShadow() {
+      softShadow(ctx, cx - r, cy - r, r * 2, r * 2, 10, r);
+      contactShadow(ctx, cx, S.PIN_Y + 1.5, r * 0.8, 4.5, 0.22);
+    }
+
+    if (kind === 'ldr') {
+      // ── 光敏电阻：陶瓷片 + CdS 光敏层 + 两条梳状电极 ──────────────
+      // 受光时整片发亮（真实器件在亮处就是一片浅黄），暗处发灰。
+      discShadow();
+      discPath();
+      ctx.fillStyle = discGrad([
+        [0, mixRgb2([0x6d, 0x67, 0x59], [0xfb, 0xf3, 0xd8], 0.15 + 0.80 * lit)],
+        [0.34, mixRgb2([0x54, 0x4f, 0x45], [0xf0, 0xe4, 0xc2], 0.12 + 0.82 * lit)],
+        [0.75, mixRgb2([0x3e, 0x3a, 0x33], [0xdc, 0xcb, 0x9f], 0.10 + 0.78 * lit)],
+        [1, mixRgb2([0x30, 0x2d, 0x28], [0xbc, 0xab, 0x82], 0.08 + 0.70 * lit)],
+      ]);
+      ctx.fill();
+      rimHighlight();
+      rimStroke();
+      // 光敏层：一条【锯齿形】薄膜（CdS 蒸发膜的真实形状就是来回折的细带）。
+      // ⚠️ 原来是三圈蛇形曲线：在 5mm 元件的尺度上它糊成一个金色问号，
+      //    没人认得出那是「敏感层」。教科书上就是一段折线 —— 折线才读得懂。
+      ctx.strokeStyle = mixRgb2([0x7a, 0x51, 0x18], [0xc8, 0x8c, 0x33], 0.2 + 0.7 * lit);
+      ctx.lineWidth = 2.8; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+      ctx.beginPath();
+      var zzTop = cy - 10, zzBot = cy + 10, zzX = 8.6, zzTurns = 3;
+      ctx.moveTo(cx - zzX, zzTop);
+      for (var wi = 0; wi < zzTurns; wi++) {
+        ctx.lineTo(cx + zzX, zzTop + (zzBot - zzTop) * ((wi + 0.5) / zzTurns));
+        ctx.lineTo(cx - zzX, zzTop + (zzBot - zzTop) * ((wi + 1) / zzTurns));
+      }
+      ctx.stroke();
+      // ⚠️ 原来在圆片两侧各画一条金属条当电极：在 42px 的圆片上，那两条加上
+      //    折线会一起看成一个「绕线的圆筒」。电极改成折线两端的两个小接点，
+      //    一眼就是「一条带子两端焊住」。
+      ctx.fillStyle = 'rgba(26,28,32,0.72)';
+      [[cx - zzX, zzTop], [cx - zzX, zzBot]].forEach(function (pt) {
+        ctx.beginPath(); ctx.arc(pt[0], pt[1], 1.9, 0, 6.284); ctx.fill();
+      });
+      // 光照提示：三道光从右上斜射进来。不透明度跟着 lux 走 —— 光照变强时
+      // 学生看得见「光真的照在上面了」，而不只是读数变了个数。
+      var rayA = 0.22 + 0.62 * lit;
+      ctx.strokeStyle = 'rgba(230,175,10,' + rayA.toFixed(3) + ')';
+      ctx.lineCap = 'round';
+      // 三支箭从右上方扎向圆片：箭杆 + 两撇箭头。原来的写法把箭头画成两根
+      // 半像素细线，远看就是右上角一小撮黄毛。
+      for (var ri = 0; ri < 3; ri++) {
+        ctx.lineWidth = 2.0 - ri * 0.3;
+        var ax = cx + r + 14 + ri * 5.5, ay = cy - r + 3 + ri * 4;  // 箭尾
+        var bx = ax - 9, by = ay + 11;                               // 箭头落点
+        ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(bx, by); ctx.lineTo(bx + 5.4, by - 2.0);
+        ctx.moveTo(bx, by); ctx.lineTo(bx + 0.9, by - 5.8);
+        ctx.stroke();
+      }
+    } else if (kind === 'ntc' || kind === 'ptc') {
+      // ── 热敏电阻：深色圆片（NTC 蓝黑 / PTC 暗红），面上印型号 ─────
+      var isN = (kind === 'ntc');
+      discShadow();
+      // 环境温度高时圆片本身透出暖色（「它在一个热环境里」这件事要看得见）
+      discPath();
+      ctx.fillStyle = discGrad(isN
+        ? [[0, mixRgb2([0x3a, 0x47, 0x5c], [0x9c, 0x5a, 0x3c], hot * 0.8)],
+           [0.38, mixRgb2([0x4a, 0x59, 0x70], [0xb0, 0x69, 0x45], hot * 0.75)],
+           [0.78, mixRgb2([0x30, 0x3b, 0x4d], [0x86, 0x45, 0x2c], hot * 0.72)],
+           [1, mixRgb2([0x1d, 0x25, 0x33], [0x5e, 0x2e, 0x1e], hot * 0.70)]]
+        : [[0, mixRgb2([0x8a, 0x37, 0x3c], [0xc9, 0x6a, 0x35], hot * 0.55)],
+           [0.38, mixRgb2([0xa3, 0x42, 0x46], [0xd0, 0x7b, 0x42], hot * 0.55)],
+           [0.78, mixRgb2([0x7a, 0x2c, 0x31], [0xa5, 0x53, 0x2a], hot * 0.55)],
+           [1, mixRgb2([0x55, 0x1d, 0x22], [0x7a, 0x38, 0x1c], hot * 0.55)]]);
+      ctx.fill();
+      rimHighlight();
+      rimStroke();
+      silk(ctx, isN ? 'NTC' : 'PTC', cx, cy + 0.5, 9,
+        isN ? '#e8f0f8' : '#ffe4dc', 'rgba(0,0,0,0.35)');
+      // 温度提示：热了在头上冒三道热浪（不画火 —— 这不是烧坏，是「环境热」）
+      if (hot > 0.28) {
+        var ha = Math.min(1, (hot - 0.28) / 0.5) * 0.55;
+        ctx.strokeStyle = 'rgba(248,113,113,' + ha.toFixed(3) + ')';
+        ctx.lineWidth = 1.6; ctx.lineCap = 'round';
+        [-7, 0, 7].forEach(function (dx, i2) {
+          var yy = cy - r - 4 - i2 * 1.2;
+          ctx.beginPath();
+          ctx.moveTo(cx + dx, yy + 3);
+          ctx.quadraticCurveTo(cx + dx + 3, yy - 1, cx + dx, yy - 5);
+          ctx.stroke();
+        });
+      }
+      // 冷了在图下方结一层淡蓝（℃ 滑到 0 以下时）
+      if (temp < 10) {
+        var ca = Math.min(1, (10 - temp) / 30) * 0.4;
+        ctx.strokeStyle = 'rgba(96,165,250,' + ca.toFixed(3) + ')';
+        ctx.lineWidth = 1.3;
+        ctx.beginPath(); ctx.arc(cx, cy, r + 2.2, 0, 6.284); ctx.stroke();
+      }
+    } else if (kind === 'varistor') {
+      // ── 压敏电阻：橙黄圆片（MOV 07D 系列），面上印压敏电压 ────────
+      var on = !!(rec && rec.on);
+      var ucTxt = (rec && rec.Uc) || (P.Uc != null ? P.Uc : 6);
+      if (on) {
+        // 导通了：一圈橙红辉光（过压时它在「吃」电流，就这么看）
+        var gg = ctx.createRadialGradient(cx, cy, r * 0.2, cx, cy, r * 2.3);
+        gg.addColorStop(0, 'rgba(251,146,60,0.85)');
+        gg.addColorStop(0.45, 'rgba(239,68,68,0.42)');
+        gg.addColorStop(1, 'rgba(239,68,68,0)');
+        ctx.fillStyle = gg;
+        ctx.beginPath(); ctx.arc(cx, cy, r * 2.3, 0, 6.284); ctx.fill();
+      }
+      discShadow();
+      discPath();
+      ctx.fillStyle = discGrad([
+        [0, on ? '#ffe2a5' : '#fbe1a8'],
+        [0.32, on ? '#f8c862' : '#eec063'],
+        [0.74, on ? '#e19a2a' : '#d19a33'],
+        [1, on ? '#a9610f' : '#a4761f'],
+      ]);
+      ctx.fill();
+      rimHighlight();
+      rimStroke();
+      // 面上印的规格（真实 MOV 印的是「07D680K」这种型号，这里印学生要用的那个数）
+      silk(ctx, ucTxt + 'V', cx, cy + 0.5, 9, '#5b3a10', 'rgba(255,255,255,0.45)');
+      if (on) {
+        // 导通时再补一圈亮边：不是发光，是「电流正从它身上走」的记号
+        ctx.strokeStyle = 'rgba(255,214,140,0.95)';
+        ctx.lineWidth = 1.8;
+        ctx.beginPath(); ctx.arc(cx, cy, r - 1.2, 0, 6.284); ctx.stroke();
+      }
+    } else if (kind === 'gas') {
+      // ── 气敏：蓝色胶木底座 + 带网罩的金属帽（MQ-3）───────────────
+      var capB = S.PIN_Y;              // 帽底（坐在底座上）
+      var capT = cy - r;               // 帽顶
+      softShadow(ctx, -15, capT, 30, capB - capT + 4, 10, 6);
+      // 金属帽：竖向渐变的圆筒 + 顶部圆角
+      fillMat(ctx, -13, capT, 26, capB - capT, 5, [
+        [0, '#f2f6fa'], [0.16, '#dbe3ec'], [0.46, '#b3bfcd'],
+        [0.76, '#94a1b1'], [1, '#75828f'],
+      ]);
+      ctx.strokeStyle = 'rgba(26,28,32,0.82)'; ctx.lineWidth = 1.7; ctx.stroke();
+      // 网罩：一片小孔阵（真实 MQ-3 的帽子上就是一层不锈钢网）
+      var meshY0 = capT + 5, meshY1 = capB - 5;
+      ctx.fillStyle = 'rgba(52,64,78,0.5)';
+      for (var my = meshY0; my <= meshY1; my += 4.2) {
+        for (var mx = -9; mx <= 9; mx += 4.2) {
+          ctx.beginPath(); ctx.arc(mx, my, 0.85, 0, 6.284); ctx.fill();
+        }
+      }
+      // 蓝色胶木底座（引脚就从这里出来）
+      fillMat(ctx, -15, capB - 0.5, 30, 7.5, 2.4,
+        [[0, '#4a58a0'], [0.4, '#35408a'], [1, '#232a6b']]);
+      ctx.strokeStyle = 'rgba(26,28,32,0.82)'; ctx.lineWidth = 1.7; ctx.stroke();
+      // 浓度提示：帽口飘出几缕淡褐色的「酒气」，浓度越高越多
+      if (vapor > 0.02) {
+        var va = 0.15 + 0.55 * vapor;
+        ctx.fillStyle = 'rgba(180,83,9,' + va.toFixed(3) + ')';
+        for (var vi = 0; vi < 3; vi++) {
+          var vx = cx + 15 + vi * 4.5, vy = cy - 8 - vi * 5;
+          ctx.beginPath(); ctx.arc(vx, vy, 1.6 - vi * 0.25, 0, 6.284); ctx.fill();
+        }
+      }
+    } else {
+      // ── 湿敏：米白陶瓷片 + 梳齿状电极 ───────────────────────────
+      var plB = S.PIN_Y, plT = cy - r;
+      softShadow(ctx, -13, plT, 26, plB - plT + 4, 9, 4);
+      fillMat(ctx, -13, plT, 26, plB - plT, 3.5, [
+        [0, '#fdfbf5'], [0.3, '#f2ebda'], [0.72, '#ded2b8'], [1, '#bfb193'],
+      ]);
+      ctx.strokeStyle = 'rgba(26,28,32,0.82)'; ctx.lineWidth = 1.7; ctx.stroke();
+      // 梳齿电极：上下两排黑齿交错插进来（湿敏元件的敏感层就在两排齿之间）
+      ctx.fillStyle = 'rgba(45,55,70,0.72)';
+      for (var ti = 0; ti < 4; ti++) {
+        ctx.fillRect(-8 + ti * 5.4, plT + 4, 2.2, 8.5);          // 上排
+        ctx.fillRect(-11 + ti * 5.4, plB - 12.5, 2.2, 8.5);      // 下排（错开半格）
+      }
+      ctx.strokeStyle = 'rgba(255,255,255,0.6)'; ctx.lineWidth = 0.7;
+      ctx.strokeRect(-9, plT + 4, 18, plB - plT - 8);
+      // 湿度提示：片上挂几颗水珠，湿度越高越多
+      if (wet > 0.02) {
+        var wa = 0.20 + 0.55 * wet;
+        ctx.fillStyle = 'rgba(56,189,248,' + wa.toFixed(3) + ')';
+        for (var di = 0; di < 3; di++) {
+          if (wet < 0.5 && di === 2) continue;
+          ctx.beginPath();
+          ctx.arc(cx + (di === 0 ? -14 : (di === 1 ? 12 : -6)), cy + (di === 2 ? -12 : 10),
+            1.7, 0, 6.284);
+          ctx.fill();
+        }
+      }
+    }
+
+    ctx.restore();
+
+    // 两根柱子：金属色（这件器材没有极性，红黑一对会被读成「要分正负」）
+    posts(ctx, comp, ['neutral', 'neutral'], 1.15, 6);
+  }
+
+  // 两个颜色按 t 混合（0 = a，1 = b）。绘制层里只用来做「受光变亮 / 受热变暖」
+  // 这种同色系的过渡，所以不必进 PALETTE —— 它是【计算出来的】颜色，
+  // 不是调色板里的一档。
+  function mixRgb2(a, b, t) {
+    t = t < 0 ? 0 : (t > 1 ? 1 : t);
+    return 'rgb(' + Math.round(a[0] + (b[0] - a[0]) * t) + ',' +
+      Math.round(a[1] + (b[1] - a[1]) * t) + ',' +
+      Math.round(a[2] + (b[2] - a[2]) * t) + ')';
+  }
+
   function drawComponent(ctx, comp, rec, opts) {
     switch (comp.type) {
       case 'resistor': drawResistor(ctx, comp, rec); break;
@@ -8163,6 +8494,9 @@
       case 'led': drawLed(ctx, comp, rec, opts); break;
       case 'motor': drawMotor(ctx, comp, rec, opts); break;
       case 'bell': drawBell(ctx, comp, rec, opts); break;
+      // 敏感电阻：一件器材、六种探头，drawSensor 内部按 kind 派发外形。
+      // 和电铃同一块示教板，所以命中框、柱子、引脚全部沿用同一套几何。
+      case 'sensor': drawSensor(ctx, comp, rec); break;
       case 'ammeter': drawMeter(ctx, comp, rec, false); break;
       case 'voltmeter': drawMeter(ctx, comp, rec, true); break;
       case 'galvanometer': drawGalvanometer(ctx, comp, rec); break;

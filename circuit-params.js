@@ -55,6 +55,15 @@
     {v:1150, label:'1150℃', title:'灯丝恒温 1150 ℃ · 电阻约 6.9 Ω'},
     {v:1385, label:'1385℃', title:'额定工作温度 · 电阻恰好等于 U额²/P额 = 8.3 Ω'},
   ];
+  // 敏感电阻此刻是哪一档探头。真值在内核 SENSOR_KINDS / sensorKindOf ——
+  // 这里只转发，读到内核不可用时才退回参数原值（离屏出图、单文件测试）。
+  function sensorKind(c) {
+    var C = core();
+    if (C && typeof C.sensorKindOf === 'function') return C.sensorKindOf(c);
+    var k = c && c.params && c.params.kind;
+    return k || 'ldr';
+  }
+
   var PARAM_UI = {
     // 定值电阻：滑条之外再给一个【数字输入框】（num:1）。
     // 用户第 6 点：阻值要能手动输入、而且可以是小数。
@@ -68,6 +77,53 @@
     //   ⚠️ 预设按钮只写一个键 R，所以「亮着」的判据就是 R 正好等于那个值；
     //     学生自己拧过滑条之后五个都不亮 —— 这是对的（当前值不在预设里，
     //     硬点亮一个就是在说假话）。
+    // ── 敏感电阻（一件器材、六种探头）────────────────────────────
+    // 第一行就是【换探头】—— 这是这件器材唯一的「调用各种各样」的入口。
+    // 往下每一行对应一种【条件】，用 when 过滤：选光敏就只出现「光照」，
+    // 选热敏就只出现「温度」。不留一行「用不上的条件」是有意的 —— 学生看到
+    // 「光照」那一行在自己的热敏电阻上是灰的 / 根本不在，才不会以为
+    // 「我这个热敏电阻也要调光照」。
+    // 🔴 这六行【都没有「阻值」滑条】：阻值由条件算出来（见内核 sensorR）。
+    //    给一根滑条就等于告诉学生「电阻是你拧出来的」，而这一节要教的
+    //    恰恰是「电阻是被条件决定的」。
+    // 常用档按钮（预设）只给光敏和热敏：这两档的条件在课堂上有明确的
+    // 参照物（教室 300 lx、冰水 0℃、沸水 100℃），学生照着按就能复现
+    // 课本上的那张表；气敏 / 湿敏没有这种「课堂标准值」，给滑条自己拧。
+    sensor: [
+                {k:'kind', t:'select', label:'种类',
+                 options:['ldr','ntc','ptc','varistor','gas','humid'],
+                 labels:{ldr:'光敏（LDR）', ntc:'热敏 NTC', ptc:'热敏 PTC',
+                         varistor:'压敏（MOV）', gas:'气敏（酒精）', humid:'湿敏'}},
+                {k:'preset', t:'preset', label:'常用照度',
+                 when: function(c){ return sensorKind(c) === 'ldr'; },
+                 options:[
+                  {label:'10 lx', sub:'月夜', title:'10 lx —— 器件规格书上标称亮电阻的那一档（6kΩ）',
+                   set:{lux:10}},
+                  {label:'100 lx', sub:'走廊', title:'100 lx —— 走廊 / 楼梯间（1.4kΩ）', set:{lux:100}},
+                  {label:'300 lx', sub:'教室', title:'300 lx —— 标准教室照度（0.7kΩ）', set:{lux:300}},
+                  {label:'5000 lx', sub:'晴天', title:'5000 lx —— 晴天室外（0.13kΩ）', set:{lux:5000}}]},
+                {k:'lux', t:'range', label:'光照', unit:'lx', min:0, max:5000, step:5,
+                 num:1, nmin:0, nmax:5000, nstep:5,
+                 when: function(c){ return sensorKind(c) === 'ldr'; }},
+                {k:'preset', t:'preset', label:'常用温度',
+                 when: function(c){ var k = sensorKind(c); return k === 'ntc' || k === 'ptc'; },
+                 options:[
+                  {label:'0℃', sub:'冰水', title:'0℃ —— 冰水混合物（NTC 32kΩ）', set:{temp:0}},
+                  {label:'25℃', sub:'室温', title:'25℃ —— 标准室温，也是 NTC 的标称点（10kΩ）', set:{temp:25}},
+                  {label:'60℃', sub:'热水', title:'60℃ —— 热水（NTC 2.5kΩ）', set:{temp:60}},
+                  {label:'100℃', sub:'沸水', title:'100℃ —— 沸水（NTC 0.67kΩ）', set:{temp:100}}]},
+                {k:'temp', t:'range', label:'温度', unit:'℃', min:-20, max:120, step:1,
+                 num:1, nmin:-20, nmax:120, nstep:1,
+                 when: function(c){ var k = sensorKind(c); return k === 'ntc' || k === 'ptc'; }},
+                {k:'ppm', t:'range', label:'酒精浓度', unit:'ppm', min:0, max:1000, step:10,
+                 num:1, nmin:0, nmax:1000, nstep:10,
+                 when: function(c){ return sensorKind(c) === 'gas'; }},
+                {k:'rh', t:'range', label:'相对湿度', unit:'%RH', min:10, max:95, step:5,
+                 num:1, nmin:10, nmax:95, nstep:5,
+                 when: function(c){ return sensorKind(c) === 'humid'; }},
+                {k:'Uc', t:'select', label:'压敏电压', unit:'V',
+                 options:[3, 6, 12, 30],
+                 when: function(c){ return sensorKind(c) === 'varistor'; }}],
     resistor:  [{k:'preset', t:'preset', label:'常用阻值', options:[
                   {label:'5Ω', title:'5Ω —— 定值电阻的常用规格', set:{R:5}},
                   {label:'10Ω', title:'10Ω', set:{R:10}},
@@ -343,6 +399,10 @@
     thermobox: '恒温箱',
   };
   var TYPE_LABEL = {battery:'电源', resistor:'定值电阻', switch:'开关',
+    // 敏感电阻：教材上这一组叫「敏感电阻」（光敏 / 热敏 / 压敏 / 气敏 / 湿敏）。
+    // 器材盒里只有一格，六种探头靠参数面板的「种类」换 —— 名字用【总称】，
+    // 卡片上才写得下（6 个汉字的宽度上限）。
+    sensor:'敏感电阻',
     ammeter:'电流表', voltmeter:'电压表', rheostat:'滑动变阻器', bulb:'小灯泡',
     led:'发光二极管', motor:'电动机', bell:'电铃', power:'学生电源',
     // 灵敏电流计：刻度零点在正中、能双向偏转的那只表（J0409）。
@@ -468,6 +528,26 @@
   // 其余按求解出来的等效电阻写；解不出来（断路、被烧掉）写破折号。
   // 侧栏表格和点元件弹出的浮层共用一份 —— 两处各写一套的话，迟早有一处
   // 会把开关的 ∞ 写成 NaN。
+  // 敏感电阻阻值的显示：按量级换单位。
+  //   ≥100kΩ → 整数    (300kΩ)
+  //   ≥10kΩ  → 一位    (32.0kΩ → 32kΩ，去尾零)
+  //   ≥1kΩ   → 一位    (1.4kΩ)
+  //   <1kΩ   → Ω        (348Ω / 82.8Ω / 0.8Ω)
+  // 🔴 这里的单位是【显示层】的，不参与计算：求解器里 rec.R 永远是纯数（Ω）。
+  //    两处各写一套换算的话，读数框写 300kΩ、表格里写 300000.0，学生会当
+  //    成两个数。
+  function sensorRText(R) {
+    var v = +R;
+    if (!isFinite(v) || v <= 0) return '—';
+    function trim1(x) { var s = x.toFixed(1); return s.replace(/\.0$/, ''); }
+    if (v >= 1e6) return trim1(v / 1e6) + 'MΩ';
+    if (v >= 1e5) return Math.round(v / 1e3) + 'kΩ';
+    if (v >= 1e3) return trim1(v / 1e3) + 'kΩ';
+    if (v >= 100) return Math.round(v) + 'Ω';
+    if (v >= 10) return trim1(v) + 'Ω';
+    return v.toFixed(2).replace(/0$/, '') + 'Ω';
+  }
+
   function fmtR(c, r){
     if (c.type === 'switch') return r.closed ? '0' : '∞';
     // 单刀双掷开关：刀片永远搭在某一侧 ⇒ 恒为 0Ω（它没有「断开」这一档，
@@ -491,6 +571,10 @@
     if (c.type === 'calorimeter') {
       return r.R == null ? '—' : String(Math.round(r.R));
     }
+    // 敏感电阻：阻值横跨五个数量级（几十欧到几百千欧），一律按 num1 印的话
+    // 读数框里会出现「300000.0」这种挤不下、也读不出量感的数。按量级换单位
+    //（<1k 用 Ω、1k~1M 用 kΩ、≥1M 用 MΩ），和真实万用表读数一个路子。
+    if (c.type === 'sensor') return sensorRText(r.R);
     if (c.type === 'joule') {
       var jb = r.boxes || [];
       if (!jb.length) return '—';
@@ -538,6 +622,9 @@
     dispI: dispI,
     dispU: dispU,
     fmtR: fmtR,
+    // 敏感电阻的阻值显示（按量级换单位）。页面读数框、侧栏表格、放大镜共用
+    // 这一份 —— 各写一套的话，同一个 300kΩ 会印成三种样子。
+    sensorRText: sensorRText,
     pval: pval,
     version: '1.2.0',
   };

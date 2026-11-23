@@ -39,6 +39,29 @@
       label: '定值电阻', terminals: 2, termNames: ['a', 'b'],
       defaults: { R: 10 },
     },
+    // ── 敏感电阻（光敏 / 热敏 / 压敏 / 气敏 / 湿敏）──────────────
+    // 一件器材、六种探头：同一块示教板、同样两个接线柱，板上的传感元件换一种。
+    // 为什么做成【一个类型 + kind 六选一】而不是六个类型：
+    //   ① 电路上它们全是一条两端 R 支路（压敏见下），端子、绘制、命中框、
+    //      接线规则一字不差 —— 六个类型等于把同一份代码抄六遍；
+    //   ② 学生对它们的认知恰恰是「同一种东西换成不同的感受对象」：器材盒里
+    //      摆成一排六个格子反而不如一个格子加一个「种类」下拉——「换探头」
+    //      这个动作在面板上看得见，在画面上也看得见（板上的元件换了外形）。
+    //
+    // 🔴 阻值【不是拧出来的】，是从条件算出来的（见 sensorR）：
+    //      光敏 → 光照 lux      热敏 → 温度 temp
+    //      气敏 → 酒精浓度 ppm  湿敏 → 相对湿度 rh
+    //      压敏 → 它两端自己的电压（没有「条件旋钮」，条件就是电路本身）
+    //    所以参数面板上【没有「阻值」滑条】：给了滑条，学生就会以为电阻是他
+    //    拧出来的，而物理上它只由光照 / 温度决定 —— 那正是这套器材要教的
+    //    那句话（阻值随条件变），给他一根滑条就把这句话教反了。
+    //    每种条件一个独立键（lux / temp / rh / ppm，而不是共用一个「条件值」）：
+    //    共用的话，把光敏换成热敏时，300 lx 会被当成 300℃ 原样搬过去。
+    //    Uc = 压敏电压（规格，相当于「多少伏开始导通」），只在压敏那一档有意义。
+    sensor: {
+      label: '敏感电阻', terminals: 2, termNames: ['a', 'b'],
+      defaults: { kind: 'ldr', lux: 300, temp: 25, rh: 50, ppm: 0, Uc: 6 },
+    },
     rheostat: {
       label: '滑动变阻器', terminals: 4, termNames: ['A', 'B', 'C', 'D'],
       // 编号照人教版教材图16.4-2 的实物位置来（这也是初中「一上一下」接法的
@@ -838,6 +861,223 @@
     return t > CAL_TMAX ? CAL_TMAX : t;
   }
 
+  // ============================================================
+  // 敏感电阻（见 TYPES.sensor）
+  // ------------------------------------------------------------
+  // 一件器材、六种探头。下面每个函数就是【一种探头的器件模型】，数字全部
+  // 照真实器件的产品手册来，不是拍脑袋给的 —— 这一节要教的就是「阻值随
+  // 什么变、怎么变」，数字错一点，学生记住的就是一条错的规律。
+  //
+  // ⚠️ 六种探头都是【两端纯电阻】：没有极性、没有方向，和定值电阻在电路上
+  //    完全同构（压敏除外，见 VARISTOR 那一段）。所以它们只需要一个「此刻
+  //    阻值是多少」的函数，电流 / 电压 / 功率仍由求解器算。
+  // ⚠️ 阻值【不随电流变】（除了压敏）：真实器件有自热效应（电流大了自己
+  //    发热、阻值跟着漂），本页没有热学模型，也【不该】有 —— 那是另一个
+  //    实验（焦耳定律）。这里的「温度」是环境温度，学生自己设。
+  // ============================================================
+
+  // 六种探头的名字。绘制层（板上印什么字）、参数面板（下拉框选项）、
+  // 读数框（「光敏 · 300 lx」这一行）三处共用这一份 —— 各写一份的话，
+  // 换一处说法就会「面板写光敏、画布印 LDR」。
+  var SENSOR_KINDS = {
+    ldr:      { label: '光敏',  full: '光敏电阻',   condLabel: '光照' },
+    ntc:      { label: '热敏NTC', full: 'NTC 热敏电阻', condLabel: '温度' },
+    ptc:      { label: '热敏PTC', full: 'PTC 热敏电阻', condLabel: '温度' },
+    varistor: { label: '压敏',  full: '压敏电阻',   condLabel: '两端电压' },
+    gas:      { label: '气敏',  full: '气敏电阻',   condLabel: '酒精浓度' },
+    humid:    { label: '湿敏',  full: '湿敏电阻',   condLabel: '相对湿度' },
+  };
+  function sensorKindOf(comp) {
+    var k = paramsOf(comp).kind;
+    return SENSOR_KINDS[k] ? k : 'ldr';
+  }
+
+  // ── 光敏电阻（LDR，CdS 硫化镉光导管）────────────────────────
+  // 器件照 GL5516（立创商城 / 数据手册都在售的 5mm 圆片那一款）：
+  //   亮电阻 @10 lx：5 ~ 10 kΩ      暗电阻（10 s 后）：≥ 0.2 MΩ（典型 0.3~0.5 MΩ）
+  //   照度指数 γ（10→100 lx）：0.5 ~ 0.65     λ峰：540~560 nm
+  //   最大电压 150V、最大功耗 90mW、响应 20~30 ms
+  // 伏安关系就是那句 R ∝ E^(−γ)（对数坐标上一条直线）：
+  //   R(E) = R10 · (10/E)^γ
+  // 取 R10 = 6 kΩ（手册区间 5~10kΩ 的中间偏下）、γ = 0.62（区间中值），于是
+  //   10 lx → 6.0 kΩ（手册标称）  100 lx → 1.4 kΩ（手册 Fig.2 上 10→100 掉到 1/4）
+  //   1000 lx → 348 Ω            10000 lx → 85 Ω（强光下掉到几十欧）
+  // 10 lx 以下幂律不再成立（真实器件那一段是「暗电流」而不是光电导），
+  // 所以 1 lx 以下平滑接到暗电阻：滑条拖到 0 时读数停在 0.3 MΩ，不会掉进 60 kΩ。
+  var LDR = {
+    R10: 6000,
+    GAMMA: 0.62,
+    RDARK: 3e5,
+    E_KNEE: 1,
+    R_MIN: 20,
+  };
+
+  // ── 热敏电阻 NTC（负温度系数）───────────────────────────────
+  // 器件照 MF52 珠状 10kΩ B25/50 = 3950K（最常见的那一款，还是 3D 打印机/
+  // 电池包测温用的同款）。手册直接给了 R–T 表，这里【照表插值】而不是套
+  // 一个 B 常数：
+  //   −40℃ 280.66kΩ  −20℃ 87.261kΩ  0℃ 32.049kΩ  25℃ 10kΩ
+  //    50℃ 3.59kΩ    85℃ 1.052kΩ   100℃ 0.666kΩ  125℃ 0.329kΩ
+  // 为什么不用 R = R25·exp(B(1/T − 1/298.15))：拿 B=3950 硬套，25℃ 附近
+  // 对得很准（0℃ 33.6k vs 表上 32.0k、100℃ 0.70k vs 0.67k，差 5%），
+  // 但 −40℃ 算出来 401kΩ、表上只有 281kΩ —— 差 43%。原因是 B 本身随温度
+  // 变（低温段等效 B 只有 3567K），而手册那张表已经把这件事量出来了。
+  // 插值在 (1/T, ln R) 上做【分段直线】：这正好是「分段常数 B」，
+  // 每一段都和手册的实测点严格重合，中间也不出弯。
+  // ⚠️ 表外不外推：滑条两端（−20℃ / 120℃）都在表内，越界一律夹到端点。
+  var NTC_TS = [-40, -20, 0, 25, 50, 85, 100, 125];        // ℃
+  var NTC_RS = [280660, 87261, 32049, 10000, 3590, 1052, 666, 329];  // Ω
+
+  // ── 热敏电阻 PTC（正温度系数，BaTiO3 陶瓷）───────────────────
+  // 和 NTC 正好相反：升到【居里点】以上，阻值在二三十度之内暴涨几个数量级
+  //（这就是电饭锅「跳闸保温」、暖风机「过热保护」的元件）。
+  // 参数取实验室最常见的小功率圆片：25℃ 约 20Ω、居里点 80℃。
+  //   T ≤ Tc：R = R25·(1 + 0.004·(T − 25))     ← 金属式的小正温度系数
+  //   T > Tc：R = R(Tc)·exp(0.22·(T − Tc))      ← 每升 10℃ 涨约 9 倍
+  // 于是 25℃→20Ω、80℃→24Ω、100℃→1.9kΩ、120℃→160kΩ：在课堂温度范围内
+  // 就能看到「过居里点以后电阻几乎是一条竖线」，不必真的烧到几百度。
+  // ⚠️ 真实 PTC 的暴涨段还更陡（20℃ 内可涨 3~4 个数量级），这里取 2 个
+  //    数量级：再陡的话读数框里就只剩「1000000」这种数，学生对「变大」
+  //    这件事反而没有量感。
+  var PTC = { R25: 20, TC: 80, ALPHA_BELOW: 0.004, K_ABOVE: 0.22 };
+
+  // ── 压敏电阻（MOV，金属氧化物压敏电阻）───────────────────────
+  // 器件特性：两端电压低于「压敏电压 U1mA」（流过 1mA 时的电压）时，它几乎
+  // 是绝缘的（漏电 10µA 量级）；一旦超过，电流按 I = I1mA·(U/U1mA)^α 猛涨，
+  // α 真实值 20~40 —— 也就是说电压再高 10%，电流能大 30 倍，在 I–U 图上
+  // 就是一道悬崖。所以它的用途不是「调阻值」，是【钳位】：过压时把电压按在
+  // U1mA 附近，把电流引到自己身上，保护后面的电路。
+  //
+  // 🔴 这里【不能】照 α=30 的幂律建一条曲线支路。求解器是「统一阻尼不动点
+  //    迭代」，对 α=30 这种陡度根本不收敛：R 是由 U 反推的，U 又由 R 决定，
+  //    斜率 |dlnR/dlnR| 在拐点附近能到几十 —— 会来回震荡、报「未收敛」。
+  //    所以按【两态钳位】建：截止 = 一条 10MΩ 的漏电阻；导通 = 「电压源 U1mA
+  //    串 0.15Ω 动态电阻」的一条支路（和发光二极管 / 电动机同一套写法，
+  //    由 solve() 的迭代翻转）。0.15Ω 这个数不是随手给的：α≈30 的器件在
+  //    10A 上的端电压是 U1mA·(10A/1mA)^(1/30) = 1.39·U1mA，折成线性模型就是
+  //    (0.39·6V)/15A ≈ 0.15Ω —— 高电流段和真实曲线的斜率对得上。
+  //    导通时读数框里的 R = U/I（6V/60mA = 100Ω）就是「静态电阻」，正是
+  //    「电压一过阈值、电阻骤降」这句话在数字上的样子。
+  // 🔴 翻转判据只认【电压】，且带滞回（1.05Uc 进、0.80Uc 出）。不能用
+  //    「电流很小就断开」：串一个大电阻时电流本来就只有几十微安，那样会做出
+  //    「通→电流小→断→电压又上去→通」的极限环，而那个电路本来好好的。
+  var VARISTOR = {
+    U1MA_OPTIONS: [3, 6, 12, 30],
+    I1MA: 1e-3,
+    ALPHA: 30,
+    RS: 0.15,
+    OFF_R: 1e7,
+    ON_U_K: 1.05,
+    OFF_U_K: 0.80,
+  };
+
+  // ── 气敏电阻（MQ-3 酒精传感器）──────────────────────────────
+  // MQ-3 的敏感体是 SnO2 半导体，加热丝把敏感体烧到 300℃ 左右（本页没有
+  // 加热模型 —— 通电即视为已经预热好）。手册给的是 Rs/R0 曲线：
+  // 洁净空气里 Rs 是 1~8 MΩ（取 1MΩ），酒精浓度越高 Rs 越小，在 100→1000 ppm
+  // 上大约掉到 0.6→0.25 倍（对数坐标上一条斜率约 0.5 的直线）。
+  //   R = R0·(1 + ppm/P0)^(−β)，P0 = 100 ppm、β = 0.6
+  //   0 ppm → 1 MΩ   100 ppm → 660 kΩ   300 ppm → 400 kΩ   1000 ppm → 240 kΩ
+  // 「(1+x/x0)」而不是「x/x0」是为了 ppm = 0 时不给无穷大（对数坐标起点会炸）。
+  // ⚠️ 这是【量级模型】：MQ-3 的实际标定要按具体模组的负载电阻 RL 换算成
+  //    电压，教材不要求那个，这里给的是「浓度↑ ⇒ 阻值↓」这条单调关系。
+  var GAS = { R0: 1e6, P0: 100, BETA: 0.6 };
+
+  // ── 湿敏电阻（高分子湿度传感器）──────────────────────────────
+  // 高分子湿敏元件（HR202 那一类）的阻值随相对湿度【指数下降】：手册曲线
+  // 在 20→90 %RH 上从 10^5 量级掉到 10^3 量级（差两个数量级）。
+  // 取 50 %RH 时 20kΩ、每 50 %RH 变 1.2 个数量级：
+  //   R = R50·10^(1.2·(50 − rh)/50)
+  //   20 %RH → 105 kΩ   50 %RH → 20 kΩ   90 %RH → 2.2 kΩ
+  // ⚠️ 真实器件的绝对值因厂家而异（同一只 20℃/60%RH 下 20~40kΩ 都算合格），
+  //    但【斜率和单调性】是这一档要教的，所以按斜率建、不按某一家的绝对值建。
+  var HUMID = { R50: 2e4, DEC_PER_50: 1.2 };
+
+  // 光敏：R ∝ E^(−γ)，1 lx 以下平滑接到暗电阻
+  function ldrR(P) {
+    var E = Math.max(0, num(P.lux, 300));
+    var Rknee = LDR.R10 * Math.pow(10 / LDR.E_KNEE, LDR.GAMMA);
+    if (E >= LDR.E_KNEE) {
+      var R = LDR.R10 * Math.pow(10 / E, LDR.GAMMA);
+      return Math.max(LDR.R_MIN, Math.min(LDR.RDARK, R));
+    }
+    // 暗光段：t 从 0（正好 1 lx）到 1（全黑），按 t² 弯上去 —— 真实曲线在
+    // 这一段是「越暗掉得越快」，平方正好近似那个弯，又不会在 0 处出现台阶。
+    var t = 1 - E / LDR.E_KNEE;
+    return Rknee + (LDR.RDARK - Rknee) * t * t;
+  }
+
+  // NTC：照手册 R–T 表在 (1/T, ln R) 上分段插值（= 分段常数 B）
+  function ntcR(P) {
+    var tC = num(P.temp, 25);
+    var lo = NTC_TS[0], hi = NTC_TS[NTC_TS.length - 1];
+    if (tC <= lo) return NTC_RS[0];
+    if (tC >= hi) return NTC_RS[NTC_RS.length - 1];
+    var i = 0;
+    while (i < NTC_TS.length - 2 && tC > NTC_TS[i + 1]) i++;
+    var t0 = NTC_TS[i], t1 = NTC_TS[i + 1], r0 = NTC_RS[i], r1 = NTC_RS[i + 1];
+    var k0 = 1 / (t0 + 273.15), k1 = 1 / (t1 + 273.15), kk = 1 / (tC + 273.15);
+    var f = (kk - k0) / (k1 - k0);       // 0 在 t0 端，1 在 t1 端
+    return Math.exp(Math.log(r0) + f * (Math.log(r1) - Math.log(r0)));
+  }
+
+  // PTC：居里点以下小正温度系数，以上指数暴涨
+  function ptcR(P) {
+    var tC = num(P.temp, 25);
+    if (tC <= PTC.TC) return PTC.R25 * (1 + PTC.ALPHA_BELOW * (tC - 25));
+    var rTc = PTC.R25 * (1 + PTC.ALPHA_BELOW * (PTC.TC - 25));
+    return rTc * Math.exp(PTC.K_ABOVE * (tC - PTC.TC));
+  }
+
+  function gasR(P) {
+    var ppm = Math.max(0, num(P.ppm, 0));
+    return GAS.R0 * Math.pow(1 + ppm / GAS.P0, -GAS.BETA);
+  }
+
+  function humidR(P) {
+    var rh = num(P.rh, 50);
+    rh = rh < 10 ? 10 : (rh > 95 ? 95 : rh);
+    return HUMID.R50 * Math.pow(10, HUMID.DEC_PER_50 * (50 - rh) / 50);
+  }
+
+  // 压敏：此刻用了多少伏的钳位档（参数面板那四档）
+  function varistorUc(P) {
+    var u = num(P.Uc, 6);
+    var ok = false;
+    for (var i = 0; i < VARISTOR.U1MA_OPTIONS.length; i++) {
+      if (Math.abs(u - VARISTOR.U1MA_OPTIONS[i]) < 1e-9) { ok = true; break; }
+    }
+    return ok ? u : 6;
+  }
+
+  // 除压敏以外五档探头此刻的阻值（纯函数，与接线无关）。
+  // 压敏不走这里：它的阻值要等求解器把两端电压解出来才知道（两态钳位）。
+  function sensorR(comp) {
+    var P = paramsOf(comp);
+    switch (sensorKindOf(comp)) {
+      case 'ldr': return ldrR(P);
+      case 'ntc': return ntcR(P);
+      case 'ptc': return ptcR(P);
+      case 'gas': return gasR(P);
+      case 'humid': return humidR(P);
+      default: return VARISTOR.OFF_R;      // varistor：未解之前一律按漏电阻
+    }
+  }
+
+  // 读数框 / 面板旁注上那句「此刻的条件」。三种探头写各自的单位，
+  // 压敏写它的钳位电压 —— 它没有「条件旋钮」，条件就是电路给的电压。
+  // 数字一律取整：光照 300 lx、温度 25℃ 这种数写「300.0」只会占地方。
+  function sensorCondText(comp) {
+    var P = paramsOf(comp);
+    switch (sensorKindOf(comp)) {
+      case 'ldr': return Math.round(num(P.lux, 300)) + ' lx';
+      case 'ntc': case 'ptc': return Math.round(num(P.temp, 25)) + '℃';
+      case 'gas': return Math.round(num(P.ppm, 0)) + ' ppm';
+      case 'humid': return Math.round(num(P.rh, 50)) + ' %RH';
+      default: return '钳位 ' + varistorUc(P) + 'V';
+    }
+  }
+
   // ── 电位器的两个参数（见 TYPES.potentiometer）────────────────
   // 取值一律过一遍夹取：存档是手改得动的 JSON，pos 写成 "abc" / 2 / −1
   // 都会让下面那条分压链算出 NaN 或者负电阻，而画面照画、读数印 NaN。
@@ -1132,6 +1372,28 @@
       case 'resistor':
         addR(N(0), N(1), P.R);
         break;
+
+      // 敏感电阻：五档探头就是一条纯 R 支路，阻值由条件算出来（见 sensorR）。
+      // 压敏是两态钳位（见 VARISTOR 那一段）：截止时一条 10MΩ 漏电阻，
+      // 导通时换成「电压源 U1mA 串动态电阻」—— 和发光二极管同一条路。
+      // ⚠️ passive: true 必须带上：它是【负载】不是电源。漏了它，shortCircuitInfo
+      //    和「找真电源」那几处会把这条钳位支路当成一只电池，于是「压敏电阻
+      //    并到电源上」会被判成「两个电源对着干」。
+      case 'sensor': {
+        if (sensorKindOf(comp) !== 'varistor') {
+          addR(N(0), N(1), sensorR(comp));
+          break;
+        }
+        var vs = (st && st.varSt) ? st.varSt.get(comp.id) : null;
+        if (vs && vs.on) {
+          out.push({ kind: 'V', comp: comp, p: N(0), q: N(1),
+                     V: (vs.dir < 0 ? -1 : 1) * varistorUc(P),
+                     Rs: VARISTOR.RS, passive: true });
+        } else {
+          addR(N(0), N(1), VARISTOR.OFF_R);
+        }
+        break;
+      }
 
       // 量热瓶：瓶里那段电阻丝就是一条普通 R 支路（阻值可调）。
       case 'calorimeter':
@@ -1922,7 +2184,17 @@
     var motorEps = new Map();
     motors.forEach(function (c) { motorEps.set(c.id, 0); });
 
-    var st = { ledOn: ledOn, motorEps: motorEps };
+    // 压敏电阻：初值一律【截止】（10MΩ 漏电阻）。和二极管相反 —— 那个必须
+    // 先按导通起步，因为截止时它一条支路都不产生、两点是悬空的；压敏截止时
+    // 那条 10MΩ 已经给了两点一条实实在在的连接，先按截止起步不会出现幽灵电位，
+    // 而且「电压还没上来」本来就是它的初始状态。
+    var varistors = components.filter(function (c) {
+      return c.type === 'sensor' && sensorKindOf(c) === 'varistor';
+    });
+    var varSt = new Map();
+    varistors.forEach(function (c) { varSt.set(c.id, { on: false, dir: 1 }); });
+
+    var st = { ledOn: ledOn, motorEps: motorEps, varSt: varSt };
 
     function assemble() {
       var branches = [];
@@ -1950,18 +2222,20 @@
     var sol = solveAllIslands(islands);
     var usedBranches = branches;
 
-    // ---- 统一阻尼不动点迭代（灯泡 / 电动机 / 发光二极管）------------
-    // 三类元件的非线性程度完全不同，但都是「先用上一轮的解反推元件自己的
+    // ---- 统一阻尼不动点迭代（灯泡 / 电动机 / 发光二极管 / 压敏电阻）----
+    // 几类元件的非线性程度完全不同，但都是「先用上一轮的解反推元件自己的
     // 等效参数、再重解一遍」：
     //   灯泡    连续量（灯丝电阻随功率变），走阻尼迭代；
     //   电动机  连续量（反电动势随转速变），同一套阻尼；
-    //   二极管  开关量（导通 / 截止），一变就得把整条支路装上或拆掉重解。
-    // 合成一个循环而不是三段串起来，是因为它们在同一个回路里会互相牵制：
+    //   二极管  开关量（导通 / 截止），一变就得把整条支路装上或拆掉重解；
+    //   压敏    开关量（钳位 / 截止）+ 方向，同上。
+    // 合成一个循环而不是几段串起来，是因为它们在同一个回路里会互相牵制：
     // 二极管一截止，电动机的端电压就变了，反电动势得跟着重算。
-    // ⚠️ 只有灯泡时，下面这段的执行路径和旧版【逐字一致】（二极管、电动机
-    // 的数组都是空的，maxDelta 与 omega 的更新一模一样）—— 这是回归的底线。
+    // ⚠️ 只有灯泡时，下面这段的执行路径和旧版【逐字一致】（二极管、电动机、
+    // 压敏的数组都是空的，maxDelta 与 omega 的更新一模一样）—— 这是回归的底线。
     var ledFlips = 0, LED_FLIP_MAX = 4;
-    if (sol.ok && (lamps.length + leds.length + motors.length) > 0) {
+    var varFlips = 0, VAR_FLIP_MAX = 4;
+    if (sol.ok && (lamps.length + leds.length + motors.length + varistors.length) > 0) {
       var omega = opts.lampOmega;
       var prevMax = Infinity;
       var converged = false;
@@ -2007,9 +2281,34 @@
           if (want !== ledOn.get(dc.id)) { ledOn.set(dc.id, want); flipped = true; ledFlips++; }
         }
 
-        if (maxDelta < opts.lampTolR && !flipped) { converged = true; usedBranches = branches; break; }
+        // 压敏电阻：导通 / 截止 + 钳位方向，也是开关量，切了就整支路重装。
+        // 判据只看【它两端此刻的电压】（带滞回，见 VARISTOR 那一段）：
+        //   · 截止态量到 |U| ≥ 1.05U1mA → 导通（并记住是哪一头高，钳位源要照
+        //     这个方向接 —— 压敏电阻没有极性，但电压源有，方向反了就成了
+        //     「帮电源加压」）；
+        //   · 导通态量到 |U| ≤ 0.80U1mA → 截止（电压自己掉下来了，不再是过压）。
+        // 翻转同样封顶，理由和二极管一模一样。
+        var varFlip = false;
+        for (var vi = 0; vi < varistors.length; vi++) {
+          var vc = varistors[vi];
+          if (varFlips >= VAR_FLIP_MAX * varistors.length) break;
+          var vb = branches.filter(function (b) { return b.comp === vc; })[0];
+          var vu = vb ? (nV(sol, vb.p) - nV(sol, vb.q)) : 0;
+          var vcur = varSt.get(vc.id);
+          var von = vcur.on ? (Math.abs(vu) >= varistorUc(paramsOf(vc)) * VARISTOR.OFF_U_K)
+                            : (Math.abs(vu) >= varistorUc(paramsOf(vc)) * VARISTOR.ON_U_K);
+          var vdir = (vu < 0 ? -1 : 1);
+          // 导通态还要盯方向：电源换向 / 导线对调之后，钳位源必须跟着翻过来，
+          // 否则「钳位」会变成「串进去一只同向的电池」，读数会大得离谱。
+          if (von !== vcur.on || (von && vdir !== vcur.dir)) {
+            varSt.set(vc.id, { on: von, dir: vdir });
+            varFlip = true; varFlips++;
+          }
+        }
 
-        if (flipped) omega = Math.min(omega * 1.4, 1.0);   // 结构性变化，别拖泥带水
+        if (maxDelta < opts.lampTolR && !flipped && !varFlip) { converged = true; usedBranches = branches; break; }
+
+        if (flipped || varFlip) omega = Math.min(omega * 1.4, 1.0);   // 结构性变化，别拖泥带水
         else if (maxDelta > prevMax * 1.05) omega = Math.max(omega * 0.5, 0.05);
         else omega = Math.min(omega * 1.1, 1.0);
         prevMax = maxDelta;
@@ -2306,6 +2605,53 @@
           rec.R = clR; rec.v = clV; rec.i = clI;
           rec.p = Math.abs(clV * clI);
           rec.temp = calorimeterTemp(rec.p);
+          break;
+        }
+
+        // 敏感电阻。五档探头和定值电阻在回填上完全同构（一条 R 支路），
+        // 但【不能】直接并进下面那个 case：压敏的两态钳位走的是 V 支路，
+        // 那里 `br.kind === 'V'` 会给出 R = 0、v = 0 —— 读数框就会印
+        // 「0.0V / 0Ω」，把「钳位 6V」这件事整个抹掉。
+        case 'sensor': {
+          var skId = sensorKindOf(c);
+          rec.kind = skId;
+          rec.kindLabel = SENSOR_KINDS[skId].label;
+          rec.kindFull = SENSOR_KINDS[skId].full;
+          rec.condText = sensorCondText(c);
+          if (skId === 'varistor') {
+            rec.Uc = varistorUc(P);
+            var vstt = (st && st.varSt) ? st.varSt.get(c.id) : null;
+            rec.on = !!(vstt && vstt.on);
+            rec.clampDir = rec.on ? (vstt.dir < 0 ? -1 : 1) : 0;
+            rec.v = bs.length ? Math.abs(nV(sol, bs[0].p) - nV(sol, bs[0].q)) : 0;
+            // ⚠️ 截止态这条支路是【纯 R 支路】（10MΩ 漏电阻）。矩阵的电流行只给
+            //    V 支路，R 支路没有自己的解变量 ⇒ bI() 对它恒返回 0。直接读 bI
+            //    就会写出「U = 3.0V / I = 0 / R = 10MΩ」这三条自相矛盾的读数，
+            //    功率也写成 0（Tellegen 守恒当场差一个满量程）。
+            //    规则和下面五档一致：R 支路一律 i = U/R。
+            if (bs.length && bs[0].kind === 'R' && bs[0].R > 0) rec.i = rec.v / bs[0].R;
+            else rec.i = bs.length ? Math.abs(bI(sol, bs[0])) : 0;
+            // R = U/I（静态电阻）：导通时 6V/60mA = 100Ω、大电流时能掉到 1Ω 以下，
+            // 正是「电压一过阈值、电阻骤降」在数字上的样子。截止时给漏电阻，
+            // 不写 null —— 它【不是】断路，是 10MΩ 的绝缘体。
+            rec.R = rec.on
+              ? (rec.i > 1e-9 ? rec.v / rec.i : null)
+              : VARISTOR.OFF_R;
+            rec.p = rec.v * rec.i;
+            break;
+          }
+          // 其余五档：一条 R 支路，R 就是 sensorR() 那个值（由条件算出，
+          // 与接线无关 —— 没接通时也照样报得出「此刻探头是多少欧」，
+          // 那正是学生调滑条时要看的东西）。
+          rec.R = sensorR(c);
+          if (bs.length) {
+            var sb = bs[0];
+            rec.v = Math.abs(nV(sol, sb.p) - nV(sol, sb.q));
+            rec.i = (sb.kind === 'R' && sb.R > 0) ? rec.v / sb.R : Math.abs(bI(sol, sb));
+          } else {
+            rec.v = 0; rec.i = 0;
+          }
+          rec.p = rec.v * rec.i;
           break;
         }
 
@@ -3705,6 +4051,22 @@
     CAL_T0: CAL_T0, CAL_K: CAL_K, CAL_TMAX: CAL_TMAX,
     calorimeterR: calorimeterR,
     calorimeterTemp: calorimeterTemp,
+    // 敏感电阻：六种探头的名字 / 此刻的阻值 / 条件文案 / 器件模型常量。
+    // 导出是为了让绘制层（板上印什么字、按哪种外形画）和测试（断言
+    // 「10 lx 该是多少欧」）读【同一份】数字，而不是各自再抄一遍 ——
+    // 抄一份就等于把「改了模型、测试还绿」这个洞留着。
+    SENSOR_KINDS: SENSOR_KINDS,
+    sensorKindOf: sensorKindOf,
+    sensorR: sensorR,
+    sensorCondText: sensorCondText,
+    varistorUc: varistorUc,
+    LDR: LDR,
+    PTC: PTC,
+    GAS: GAS,
+    HUMID: HUMID,
+    VARISTOR: VARISTOR,
+    NTC_TS: NTC_TS,
+    NTC_RS: NTC_RS,
     version: '2.1.0',
   };
 });

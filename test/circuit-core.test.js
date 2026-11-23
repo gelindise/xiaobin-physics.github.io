@@ -1567,6 +1567,163 @@ test('T22b 三角冗余线：四条导线也全都一半一半，KCL 处处成�
 });
 
 // ============================================================
+// T23 敏感电阻（光敏 / 热敏 NTC / 热敏 PTC / 压敏 / 气敏 / 湿敏）
+// ------------------------------------------------------------
+// 判据不用「把实现里的公式再抄一遍」——那样换一处实现的小错，测试跟着一起错。
+// 这里卡的是【手册上的区间和表值】：GL5516 的亮电阻/暗电阻、MF52 的 R–T 表、
+// MOV 的钳位行为、MQ-3 和 HR202 的量程端点。手册说什么，就算到哪儿。
+// ============================================================
+test('T23a 光敏：亮电阻落在手册区间内，且光越强阻值越小', function () {
+  function R_of(lux) {
+    return C.sensorR(comp('S', 'sensor', { kind: 'ldr', lux: lux }));
+  }
+  // GL5516 手册：10 lx 亮电阻 5~10 kΩ；暗电阻 ≥0.2 MΩ
+  truthy(R_of(10) >= 5000 && R_of(10) <= 10000,
+    'T23a 10 lx 的阻值应落在手册的 5~10 kΩ（实际 ' + R_of(10).toFixed(0) + '）');
+  truthy(R_of(0) >= 200000, 'T23a 0 lx 必须不亮于暗电阻 0.2 MΩ（实际 ' + R_of(0).toFixed(0) + '）');
+  // 光越强阻值单调不增（这一段专治「写死一个数」或者把方向弄反）
+  var prev = Infinity;
+  [1, 10, 100, 300, 1000, 5000, 10000].forEach(function (lux) {
+    var r = R_of(lux);
+    truthy(r <= prev + 1e-9, 'T23a ' + lux + ' lx 的阻值不能比上一档更大（' + r.toFixed(0) + '）');
+    truthy(r > 20, 'T23a ' + lux + ' lx 的阻值必须大于零且有限（' + r.toFixed(0) + '）');
+    prev = r;
+  });
+  // 两个常用点位给出教学上说得通的量级（542 lx 教室照度这一档最常被问）
+  truthy(R_of(300) > 300 && R_of(300) < 1200, 'T23a 300 lx 应在几百欧量级（' + R_of(300).toFixed(0) + '）');
+});
+
+test('T23b 热敏 NTC：与 MF52 手册的 R–T 表逐点重合', function () {
+  var tab = [[-20, 87261], [0, 32049], [25, 10000], [50, 3590], [85, 1052], [100, 666]];
+  tab.forEach(function (row) {
+    var r = C.sensorR(comp('S', 'sensor', { kind: 'ntc', temp: row[0] }));
+    close(r / row[1], 1, 'T23b ' + row[0] + '℃ 应等于手册的 ' + row[1] + ' Ω（实际 ' + r.toFixed(0) + '）', 2e-3);
+  });
+  // 温度越高阻值越小（负温度系数，方向不许反）
+  var prev = Infinity;
+  [-20, 0, 25, 50, 85, 100, 120].forEach(function (t) {
+    var r = C.sensorR(comp('S', 'sensor', { kind: 'ntc', temp: t }));
+    truthy(r < prev, 'T23b ' + t + '℃ 的阻值必须比上一档小（' + r.toFixed(0) + '）');
+    prev = r;
+  });
+});
+
+test('T23c 热敏 PTC：居里点以下只有 20 Ω 上下，过后跳几个数量级', function () {
+  function R_of(t) { return C.sensorR(comp('S', 'sensor', { kind: 'ptc', temp: t })); }
+  close(R_of(25) / 20, 1, 'T23c 25℃ 就是标称的 20 Ω（实际 ' + R_of(25).toFixed(2) + '）', 1e-6);
+  truthy(R_of(80) < 40, 'T23c 居里点（80℃）以下仍是小电阻（' + R_of(80).toFixed(1) + '）');
+  truthy(R_of(100) > 1000, 'T23c 100℃ 应已跳到 kΩ 量级（' + R_of(100).toFixed(0) + '）');
+  truthy(R_of(120) > 1e5, 'T23c 120℃ 应跳到上百 kΩ（' + R_of(120).toFixed(0) + '）');
+  // 单调增（正温度系数）
+  var prev = 0;
+  [20, 25, 60, 80, 90, 100, 120].forEach(function (t) {
+    var r = R_of(t);
+    truthy(r >= prev - 1e-9, 'T23c ' + t + '℃ 的阻值不能比上一档更小（' + r.toFixed(0) + '）');
+    prev = r;
+  });
+});
+
+test('T23d 气敏 / 湿敏：量程端点对得上手册，且方向单调', function () {
+  var gas0 = C.sensorR(comp('S', 'sensor', { kind: 'gas', ppm: 0 }));
+  var gasMax = C.sensorR(comp('S', 'sensor', { kind: 'gas', ppm: 1000 }));
+  close(gas0 / 1e6, 1, 'T23d 酒精 0 ppm 就是洁净空气里的 1 MΩ（实际 ' + gas0.toFixed(0) + '）', 1e-6);
+  truthy(gasMax > 1e5 && gasMax < 3e5, 'T23d 1000 ppm 应降到 20 万欧量级（' + gasMax.toFixed(0) + '）');
+  var prev = Infinity;
+  [0, 100, 300, 600, 1000].forEach(function (p) {
+    var r = C.sensorR(comp('S', 'sensor', { kind: 'gas', ppm: p }));
+    truthy(r <= prev + 1e-9, 'T23d ' + p + ' ppm 的阻值不能比上一档更大（' + r.toFixed(0) + '）');
+    prev = r;
+  });
+  close(C.sensorR(comp('S', 'sensor', { kind: 'humid', rh: 50 })) / 20000, 1,
+    'T23d 50 %RH 就是标称的 20 kΩ', 1e-6);
+  var wetLow = C.sensorR(comp('S', 'sensor', { kind: 'humid', rh: 20 }));
+  var wetHigh = C.sensorR(comp('S', 'sensor', { kind: 'humid', rh: 90 }));
+  truthy(wetLow > 8e4 && wetLow < 1.3e5, 'T23d 20 %RH 应升到 10 万欧（' + wetLow.toFixed(0) + '）');
+  truthy(wetHigh > 1500 && wetHigh < 3000, 'T23d 90 %RH 应降到 2 kΩ 量级（' + wetHigh.toFixed(0) + '）');
+});
+
+test('T23e 条件互不串味：换一种探头，别的档位上的数不许跟过来', function () {
+  // 同一只元件，lux 停在 300、temp 停在 100。换成 NTC 时只能按 temp 算。
+  var s1 = comp('S', 'sensor', { kind: 'ntc', lux: 300, temp: 100 });
+  close(C.sensorR(s1) / 666, 1, 'T23e 换到 NTC 后看的是温度（100℃→666 Ω）', 2e-3);
+  s1.params.kind = 'ldr';
+  truthy(C.sensorR(s1) > 300 && C.sensorR(s1) < 1200,
+    'T23e 换回光敏后看的是照度（300 lx→几百欧），不是 100℃ 那个数（' + C.sensorR(s1).toFixed(0) + '）');
+});
+
+test('T23f 压敏：过压才钳位，平时是 10 MΩ 的漏电', function () {
+  function build(emf, Uc) {
+    var cs = [comp('E', 'battery', { emf: emf, rInt: 0.5 }),
+              comp('S', 'sensor', { kind: 'varistor', Uc: Uc })];
+    var ws = [W('E', 0, 'S', 0), W('S', 1, 'E', 1)];
+    return run(cs, ws, 'T23f');
+  }
+  // 6V 档并在 12V 上：必须导通，且两端电压被钳在 6V 上方不远处
+  var hi = build(12, 6);
+  var sHi = hi.components.S;
+  truthy(sHi.on === true, 'T23f 6V 档接 12V 时必须导通');
+  truthy(Math.abs(sHi.v) > 6- 1e-6 && Math.abs(sHi.v) < 9, 'T23f 钳位电压应在 6~9V（实际 ' + sHi.v.toFixed(3) + '）');
+  truthy(Math.abs(sHi.v) < 12, 'T23f 钳位后两端电压必须明显低于电源电压（实际 ' + sHi.v.toFixed(3) + '）');
+  // 3V 接在 6V 档上：不导通，只有 MΩ 级的漏电
+  var lo = build(3, 6);
+  truthy(lo.components.S.on === false, 'T23f 3V 接 6V 档时不许导通');
+  truthy(Math.abs(lo.components.S.i) < 2e-6, 'T23f 截止时的漏电应在 μA 以下（' + lo.components.S.i.toExponential(2) + '）');
+  // 电池反过来接：极性和模型无关，一样钳位
+  var rev = run([comp('E', 'battery', { emf: 12, rInt: 0.5 }),
+                 comp('S', 'sensor', { kind: 'varistor', Uc: 6 })],
+                [W('E', 1, 'S', 0), W('S', 1, 'E', 0)], 'T23f');
+  truthy(rev.components.S.on === true, 'T23f 电池反接也必须导通（压敏不分极性）');
+  truthy(Math.abs(rev.components.S.v) < 12, 'T23f 反接时同样被钳住（实际 ' + rev.components.S.v.toFixed(3) + '）');
+});
+
+test('T23g 串负载教学效果：光越强灯越亮，过居里点灯骤暗', function () {
+  // 光敏 + 发光二极管（3V）：照度从 0 拉到 10000 lx，二极管一路变亮
+  function ledWith(lux) {
+    var cs = [comp('E', 'battery', { emf: 3, rInt: 0.5 }),
+              comp('D', 'led', { color: 'red' }),
+              comp('S', 'sensor', { kind: 'ldr', lux: lux })];
+    var ws = [W('E', 0, 'D', 0), W('D', 1, 'S', 0), W('S', 1, 'E', 1)];
+    return run(cs, ws, 'T23g').components.D.brightness;
+  }
+  var b0 = ledWith(0), b1 = ledWith(100), b2 = ledWith(1000), b3 = ledWith(10000);
+  truthy(b0 < b1 && b1 < b2 && b2 < b3,
+    'T23g 照度变大，二极管必须一级比一级亮（' + [b0, b1, b2, b3].map(function (x) { return x.toFixed(3); }).join(' < ') + '）');
+  truthy(b0 < 0.005, 'T23g 全黑时二极管应基本不亮（' + b0.toFixed(4) + '）');
+  // 热敏 PTC + 小灯泡（6V）：过居里点灯骤暗
+  function lampWith(t) {
+    var cs = [comp('E', 'battery', { emf: 6, rInt: 0.5 }),
+              comp('L', 'bulb', { R: 10, Pmax: 0.8 }),
+              comp('S', 'sensor', { kind: 'ptc', temp: t })];
+    var ws = [W('E', 0, 'L', 0), W('L', 1, 'S', 0), W('S', 1, 'E', 1)];
+    return run(cs, ws, 'T23g').components.L.brightness;
+  }
+  var l25 = lampWith(25), l100 = lampWith(100);
+  truthy(l25 > 0.2, 'T23g 室温下 PTC 只有 20 Ω，灯泡应正常亮（' + l25.toFixed(3) + '）');
+  truthy(l100 < 0.05, 'T23g 过居里点 PTC 跳到 kΩ，灯泡应几乎熄灭（' + l100.toFixed(3) + '）');
+  truthy(l25 > l100 * 5, 'T23g 两个温度下亮度要差出一眼看得出的倍数（' + l25.toFixed(3) + ' vs ' + l100.toFixed(3) + '）');
+});
+
+test('T23h 读数与铭牌：六档探头都在册，条件文字带着单位', function () {
+  // 默认参数必须落在六档里（存档/新建都从它出发：defaultParams 若给了一个
+  // 不在册的 kind，整件器材会在第一次求值时就变成「光敏」）
+  var dp = C.defaultParams('sensor');
+  truthy(!!dp && Object.prototype.hasOwnProperty.call(C.SENSOR_KINDS, dp.kind),
+    'T23h defaultParams(sensor) 的 kind 必须是一档真探头（实际 ' + (dp && dp.kind) + '）');
+  var kinds = Object.keys(C.SENSOR_KINDS || {});
+  close(kinds.length, 6, 'T23h 六种探头都在 SENSOR_KINDS 里', 1e-9);
+  // 每种的"条件文字"都要带着单位，页面上那两行直接印它
+  var cc = [['ldr', { lux: 300 }, 'lx'], ['ntc', { temp: 25 }, '℃'],
+            ['gas', { ppm: 300 }, 'ppm'], ['humid', { rh: 60 }, '%RH']];
+  cc.forEach(function (row) {
+    var t = C.sensorCondText(comp('S', 'sensor', { kind: row[0], lux: 300, temp: 25, ppm: 300, rh: 60 }));
+    truthy(t.indexOf(row[2]) >= 0, 'T23h ' + row[0] + ' 的条件文字要带单位 ' + row[2] + '（实际「' + t + '」）');
+  });
+  // 压敏读的是"档位"而不是某个条件量
+  truthy(C.sensorCondText(comp('S', 'sensor', { kind: 'varistor', Uc: 12 })).indexOf('12') >= 0,
+    'T23h 压敏的条件文字要带压敏电压档位');
+});
+
+// ============================================================
 // 汇总
 // ============================================================
 console.log('');

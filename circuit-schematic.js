@@ -96,6 +96,18 @@
   function coreOf(opts) { return (opts && opts.core) || G.CircuitCore || null; }
   // 阻值之类的印刷：10 →「10」，5.114 →「5.1」。整数不带小数点，和铭牌一样。
   function num(v) { return (Math.round(v * 10) / 10).toString(); }
+  // 阻值按量级换单位：348 Ω / 1.4 kΩ / 300 kΩ。
+  // 优先用 circuit-params.js 那一份（面板和读数框都用它，口径必须同一份）；
+  // 拿不到时（图例单独导出、没有 params 的环境）退回一段最短的实现 ——
+  // 只会少一档精度，不会让整张图崩掉。
+  function sensorRText(R) {
+    var CP = G.CircuitParams;
+    if (CP && CP.sensorRText) return CP.sensorRText(R);
+    if (R == null || !isFinite(R)) return '—';
+    if (R >= 1e6) return num(R / 1e6) + 'MΩ';
+    if (R >= 1e3) return num(R / 1e3) + 'kΩ';
+    return num(R) + 'Ω';
+  }
 
   // ============================================================
   // 端子几何的小工具
@@ -446,6 +458,9 @@
       // 这个框管的是走线避让和标注定位，必须和 drawSymbol 里画的那个矩形
       // 逐个数一致 —— 不一致就会出现「标注压在矩形上」或「导线从矩形角穿过」。
       case 'rheoboard': return { x0: -60, y0: -16, x1: 60, y1: 16 };
+      // 敏感电阻：和定值电阻【同一个矩形】（±56 × ±13）再加一点线宽 ——
+      // 它在电路上就是一只电阻，教材上也这么画；六档的区别在矩形里那个小记号。
+      case 'sensor': return { x0: -60, y0: -16, x1: 60, y1: 16 };
       // 焦耳定律演示器：两个并排的矩形（±74 各 58 宽），外面留一点线宽。
       // 这个框管的是走线避让和标注定位，必须和 drawSymbol 里画的那两个矩形
       // 逐个数一致 —— 不一致就会出现「标注压在矩形上」或「导线从矩形角穿过」。
@@ -1497,6 +1512,25 @@
         var st = rec ? !!rec.stalled : !!P.stall;
         return '线圈 ' + num(rc) + ' Ω' + (st ? ' · 堵转' : '');
       }
+      // 敏感电阻：铭牌写【哪一种 + 此刻的条件 + 此刻的阻值】。
+      // 三样缺一不可：只写阻值的话，图上分不出这是「3kΩ 的光敏」还是
+      // 「3kΩ 的压敏」；只写种类的话，学生看不出它此刻被条件推到了多少欧。
+      case 'sensor': {
+        var skC = (core && core.sensorKindOf) ? core.sensorKindOf(c) : (P.kind || 'ldr');
+        var skKinds = (core && core.SENSOR_KINDS) ? core.SENSOR_KINDS : {};
+        var skMeta = skKinds[skC] || { label: '敏感' };
+        var skR = (rec && rec.R != null) ? +rec.R
+                : ((core && core.sensorR) ? core.sensorR(c) : null);
+        var skTxt = (core && core.sensorCondText) ? core.sensorCondText(c) : '';
+        // 压敏那一条得带上【此刻是通是断】：同一个 6V 档，接 3V 时是 10MΩ 的漏电，
+        // 接 12V 时钳在 7.4V 上 —— 两个状态在图上必须分得开。只写「钳位 6V」，
+        // 学生就以为它一直钳着；而它平时根本不导通。
+        if (skC === 'varistor') {
+          var ucV = (core && core.varistorUc) ? core.varistorUc(P) : (P.Uc || 6);
+          skTxt = ucV + 'V 档 · ' + ((rec && rec.on) ? '导通（钳位）' : '截止');
+        }
+        return skMeta.label + ' · ' + skTxt + (skR == null ? '' : ' · ' + sensorRText(skR));
+      }
       case 'bell': {
         var bc = (rec && rec.R != null) ? +rec.R : (P.Rcoil != null ? +P.Rcoil : 20);
         var tn = (rec && rec.turns != null) ? +rec.turns : (P.turns != null ? +P.turns : 800);
@@ -2252,6 +2286,60 @@
       // 这里刻意【不画圆圈】：圆圈里画一只铃是「发声器件」的通用画法
       // （蜂鸣器、喇叭那一类都这么画），初中电学里那个符号是半圆这一支。
       // 它不分正负极，电流任意方向流过都响，所以符号里也没有任何方向标记。
+      // 敏感电阻：定值电阻那只矩形 + 矩形里一个「感受对象」的小记号。
+      // 只画矩形的话，电路图上分不出光敏和压敏 —— 而「换一种敏感电阻」
+      // 正是这件器材的全部内容。
+      // ⚠️ 记号必须【正立】：支路从右往左时元件会被转 180°，不抵消的话
+      //    「−t」「U」会跟着倒过来，还跑到矩形下面去（和电动机那个 M 同理）。
+      case 'sensor': {
+        lead(ctx, T[0], -56); lead(ctx, T[1], 56);
+        ctx.beginPath();
+        D.roundRect(ctx, -56, -13, 112, 26, 2);
+        ctx.stroke();
+        // drawSymbol 里没有 core 这个形参（它不是 valueOf 那一支），走全局那一个。
+        var CK = G.CircuitCore || null;
+        var skS = (CK && CK.sensorKindOf) ? CK.sensorKindOf(c)
+                 : ((c.params && c.params.kind) || 'ldr');
+        ctx.save();
+        // 抵消外层两重变换（先 rotate 后 scale 的反序做一遍，合成恰好是单位阵）
+        if (c.mir) ctx.scale(-1, 1);
+        if (Math.abs(((c.rot || 0) % 360) - 180) < 1e-9) ctx.rotate(Math.PI);
+        if (skS === 'ldr') {
+          // 两支箭从矩形【外面】扎到顶边上：光敏电阻的通用记号（「受光照」）。
+          // 落点停在边线（y=-13.5）不往框里钻 —— 钻进去那两笔会和矩形下沿、
+          // 和中间的引脚线糊成一团，远看就是「图上有几道斜杠」。
+          ctx.lineWidth = 2;
+          // 两笔的横坐标让开中间：编号「X₁」正好印在矩形上方正中，
+          // 让到 -54…-43 和 -33…-22 这两段，箭头和编号就不打架。
+          [[-54, -26], [-33, -26]].forEach(function (a) {
+            var ex = a[0] + 11, ey = -13.5;
+            ctx.beginPath();
+            ctx.moveTo(a[0], a[1]); ctx.lineTo(ex, ey);
+            ctx.stroke();
+            ctx.beginPath();                       // 箭头：沿来向退 6、两侧各偏 3
+            ctx.moveTo(ex, ey);
+            ctx.lineTo(ex - 6.2, ey - 2.5);
+            ctx.lineTo(ex - 1.7, ey - 6.5);
+            ctx.closePath();
+            ctx.fillStyle = COLOR.wire; ctx.fill();
+          });
+          ctx.lineWidth = 2.4;
+        } else {
+          // 其余五档：矩形里写一个短记号。
+          //   −t / +t 是负 / 正温度系数（一眼分出方向和 NTC 相反）
+          //   U        感受的是它两端的电压
+          //   气 / 湿  中文教材上就是这么标的
+          var mark = (skS === 'ntc') ? '−t' : (skS === 'ptc') ? '+t'
+                   : (skS === 'varistor') ? 'U' : (skS === 'gas') ? '气' : '湿';
+          ctx.fillStyle = COLOR.wire;
+          ctx.font = 'bold 13px Georgia,"Times New Roman","PingFang SC",serif';
+          ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+          ctx.fillText(mark, 0, 0.5);
+          ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+        }
+        ctx.restore();
+        break;
+      }
       case 'bell': {
         var br = 18;
         lead(ctx, T[0], -br); lead(ctx, T[1], br);
