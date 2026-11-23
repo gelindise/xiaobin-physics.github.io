@@ -603,16 +603,16 @@
     OUT_X: 40, IN_X: 14,
     // 接管顶部 U 弯与敞口管顶。加高竖管后，液面行程比旧版约大三倍。
     ARCH_Y: -80,
-    COL_TOP: -240,
-    MAN_BOT: 190,                            // U 弯圆心
+    COL_TOP: -290,
+    MAN_BOT: 97,                             // U 弯圆心：底 = 97 + 13 = 110，与盒底齐平
     TUBE_R: 3.4,                             // 细玻璃管内半径（旧版 5.2）
     WALL: 1.5,                               // 玻璃壁厚
-    // 静止液面 / 单侧最大位移。满量程 200mm 对应总高差 400px，
-    // 即 2px/mm；外侧液面最低到 +170，仍在底部 U 弯的入口以上。
-    LVL_REST: -30, LVL_MAX: 200,
+    // 静止液面 / 单侧最大位移。180mm 满量程对应总高差 360px，
+    // 仍是 2px/mm；外侧最高 +84，正好停在底部 U 弯入口。
+    LVL_REST: -96, LVL_MAX: 180,
     HEAT_Y: 42, HEAT_R: 25,                  // 电热丝圈心 / 半径
     LABEL_Y: 80, CURRENT_Y: 99,              // 阻值与它正下方的电流读数
-    HW: 157, HH: 250,                        // 包围盒（含加高后的管顶）
+    HW: 157, HH: 300,                        // 包围盒（含加高后的管顶）
   };
   // 箱体中心 x（i = 0 甲 / 1 乙）
   function jouleBoxX(i) { return (i ? 1 : -1) * JOULE.BOX_X; }
@@ -1592,7 +1592,7 @@
     // 而那是这件器材唯一需要一眼看出的操作痕迹。
     plugbox:   { x0: -130, y0: -84, x1: 130, y1: 78 },
     // 焦耳定律演示器：取景框包住加高的细玻璃管、容器和箱内电流读数。
-    joule:     { x0: -162, y0: -255, x1: 162, y1: 116 },
+    joule:     { x0: -162, y0: -310, x1: 162, y1: 116 },
     // 量热瓶：瓶身 ±56（加高光取 62）、瓶底 +139，温度计管顶 −139 ——
     // 又高又瘦，取景框按「上下都留一点」给。
     calorimeter: { x0: -68, y0: -166, x1: 68, y1: 146 },
@@ -4021,7 +4021,7 @@
     });
   }
 
-  // 中央黄蓝刻度尺：每一格 50mm，200mm 对应单侧上升 200px。
+  // 中央黄蓝刻度尺：四段彩色刻度覆盖 0~180mm，180mm 对应单侧上升 180px。
   // 因两侧反向移动，液面总高差在画布上就是 2px/mm。
   function drawJouleRuler(ctx) {
     var J = JOULE, x = -4.5, w = 9;
@@ -4030,7 +4030,7 @@
     roundRect(ctx, x - 1.5, top, w + 3, bot - top, 2);
     ctx.fillStyle = '#d9e1eb'; ctx.fill();
     ctx.strokeStyle = 'rgba(82,97,116,0.65)'; ctx.lineWidth = 0.8; ctx.stroke();
-    var step = J.LVL_MAX / 4;       // 50mm 对应的单侧位移 50px
+    var step = J.LVL_MAX / 4;       // 45mm 对应的单侧位移 45px
     for (var k = 0; k < 4; k++) {
       var y = J.LVL_REST - (k + 1) * step;
       ctx.fillStyle = k % 2 ? '#397fb5' : '#f2c44f';
