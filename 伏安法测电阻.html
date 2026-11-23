@@ -528,7 +528,12 @@ function seed(){
     // 电压表那两根线必须【先横着让到表壳外面再竖着上去】：表壳占 x∈[440,640]，
     // 两个量程柱（540 / 610）都在壳子里，从柱子上直着往上会从自己的表壳里穿出来。
     // 430 / 660 这两个数是这么来的，别当成多余的拐点"优化"掉。
-    w('V',1,'RX',1,[[660,420],[660,160]]),    // 量程柱（3V）→ 右侧绕行 → 待测电阻高电位端
+    // ⚠️ 3V 柱（540）这根【不能】顺着柱子的高度直接横到 660：15V 柱就在 610，
+    //    同一行直着走过去正好从它的柱脚上穿出来，看着像「3V 和 15V 两个柱都插了线」
+    //    —— 和电流表 0.6A 柱那根是一模一样的毛病（用户 2026-11-23 第二次反馈）。
+    //    所以先向下让过 15V 柱（柱身最低到 y≈428，448 处留 20px 余量）——
+    //    从柱子下面绕过去，再抬到表壳外侧竖上去。
+    w('V',1,'RX',1,[[540,448],[660,448],[660,160]]),   // 3V 柱 → 从 15V 柱下方绕过 → 待测电阻高电位端
     // 「−」柱这根走到 y=200 就斜着切进去，是为了不让最后那 40px 压在
     // 「电流表量程柱 → RX 左端」那根横线上（两根线重叠看着像一根粗线）。
     w('V',0,'RX',0,[[430,420],[430,200]]),    // 「−」柱 → 左侧绕行 → 待测电阻低电位端
@@ -628,7 +633,9 @@ function bh0(n){ return n*18 + 8; }
 // 还往下伸到 ~75），所以表要让得更低，否则读数框会压在自己的接线柱上。
 // 电流表再低 16px（96 而不是 80）：它 0.6A 柱那根引线要从表下方绕出去（见 seed
 // 里那根导线），框留在 80 的位置正好被那截引线的拐角蹭到左上角。
-var DROP = {battery:40, ammeter:96, voltmeter:80, resistor:22, bulb:38, rheostat:46, switch:38};
+// 电压表同理要更低（112）：3V 柱那根引线也是从表下方绕开 15V 柱的（拐点在 y=448），
+// 框留在 80 的位置（上沿 436）会被那截横线正好压住。
+var DROP = {battery:40, ammeter:96, voltmeter:112, resistor:22, bulb:38, rheostat:46, switch:38};
 
 // 元件旁边那个读数框里写哪几行，返回 null 表示这个元件不飘框（开关写在底座上了）。
 function readoutLines(c, r){
@@ -1096,10 +1103,26 @@ document.getElementById('probeSelect').addEventListener('change', function(){
 
 // ── 量程自动选择（只对预设回路）─────────────────────────────
 // 量程不是参数，是【线接在哪个量程柱上】—— 换量程就是把导线挪到另一个柱子上。
+//
+// 两种依据，取"大"的那个：
+//   ① 电源电压给的【预估上限】—— 换电源＝重新估一次量程。这一条不看开关通断，
+//      所以点了 4.5V / 6V，开关还开着，两只表的线也已经插到大挡上去了。
+//      用户 2026-11-23 第二次反馈就是这条：「电源电压改变后，电压表和电流表
+//      预设接线柱的量程要跟着变化」。
+//      上限怎么估：这是"伏安法测电阻"，待测电阻是【未知】的，学生只能按最不利
+//      的情况猜 —— 取 R_POOL 里最小的那只（5Ω）配上当前电源电压，得到的电流
+//      就是这台装置可能出现的最大的电流：
+//        U 上限 = E（滑片把变阻器压到 0 时，电压表几乎量到整份电源电压）
+//        I 上限 = E / 5Ω（最不利那一档电阻）
+//      于是 1.5V/3V → 0.6A + 3V 挡；4.5V/6V → 3A + 15V 挡，和课本上"先估后接"
+//      的做法一致。别改成按待测电阻的真实值算：那样同一个 6V 电源，遇到 20Ω
+//      就停在 0.6A 挡、遇到 5Ω 才跳 3A 挡，学生每次点 6V 看到的结果都不一样。
+//   ② 当前读数超了量程 —— 万一手接的线/参数把电流顶上去，照样要跳到大量程。
+//
 // ⚠️ 比量程要带 epsilon：E=3V、滑片到底时 U 正好压在 3V 挡的满刻度上，而求解器
 //    给的是 3.0000000000000013 这种数（MNA 求逆的舍入，误差 1e-15 量级）——
 //    不放过这点误差，同一个实验会出现两副面孔（有的点跳 15V 挡、有的停在 3V 挡满偏）。
-// ⚠️ 自己连线模式【整个跳过】：这里硬编码着 A/V 两只表的 id 和电压表那对拐点，
+// ⚠️ 自己连线模式【整个跳过】：这里硬编码着 A/V 两只表的 id 和它们的引线形状，
 //    会去踩学生自己接的线。学生自己接的表由参数面板的「量程」按钮拨挡 ——
 //    那也是真实实验里的做法（把线插到另一个柱子上）。
 function autoRange(){
@@ -1108,11 +1131,26 @@ function autoRange(){
   var x = results.components.RX;
   if (!x) return;
   var EPS = 1e-9;
+  // 预估上限：只有一只电源、且它给了有限的电动势时才算得出来，否则退回"只看读数"。
+  var e = soleOfType('battery');
+  var emf = null;
+  if (e) {
+    var ev = pval(e, 'emf');
+    if (typeof ev === 'number' && isFinite(ev)) emf = Math.abs(ev);
+  }
+  var R_EST = Math.min.apply(null, R_POOL);      // 最不利（电流最大）的待测电阻
+  var iMax = (emf != null) ? emf / R_EST : 0;
+  var uMax = (emf != null) ? emf : 0;
   if (results.components.A) {
-    editor.plugRange('A', Math.abs(x.i) <= 0.6 + EPS ? 1 : 2);
+    var needA = Math.abs(x.i) > 0.6 + EPS || iMax > 0.6 + EPS;
+    editor.plugRange('A', needA ? 2 : 1);
     fixALeads();                     // 拨回 0.6A 挡时把那截「绕柱」的形状补回去
   }
-  if (results.components.V) { editor.plugRange('V', Math.abs(x.v) <= 3 + EPS ? 1 : 2); fixVLeads(); }
+  if (results.components.V) {
+    var needV = Math.abs(x.v) > 3 + EPS || uMax > 3 + EPS;
+    editor.plugRange('V', needV ? 2 : 1);
+    fixVLeads();
+  }
 }
 // 电流表 0.6A 量程柱那根引线的【固定形状】（为什么必须绕，见 seed 里那根导线的注释）。
 // plugRange 换挡的规矩是「端点换了柱子就重铺成自动正交走线」，于是从 3A 挡拨回
@@ -1142,16 +1180,22 @@ function fixALeads(){
 // （半宽 100）底下，两个量程柱（540 / 610）都在壳子里，从柱子上竖直往上都会从
 // 自己的表壳里穿出来 —— 必须先横着让到表壳外面（x ≥ 660）再竖上去。
 // 可 plugRange 换量程时会用 routeTo 把导线重铺成自动正交走线，于是重铺出一根
-// x=610 的竖线，正好从电压表底座中间穿过去。两个量程柱都在壳子里，所以 660
-// 这个拐点对两挡都成立，拨完照原样补回去就行。
+// x=610 的竖线，正好从电压表底座中间穿过去。所以两挡各自记住形状，拨完补回去：
+//   3V 挡（540 柱）：先向下让过 610 的 15V 柱（拐点 y=448），再横到 660 竖上去；
+//   15V 挡（610 柱）：同样先向下，横到 660 再竖上去 —— 610 右边虽然没有柱子了，
+//   但柱子高度那一条（y=420）压在自己的底座浮雕下面（元件画在导线之上，会被盖住），
+//   直接从柱子上横着走，画面上这根线等于没画。
+var V_LEAD_03 = [[540,448],[660,448],[660,160]];
+var V_LEAD_15 = [[610,448],[660,448],[660,160]];
 function fixVLeads(){
   var touched = false;
   scene.wires.forEach(function(wr){
     var e = (wr.a.compId === 'V') ? wr.a : (wr.b.compId === 'V' ? wr.b : null);
     if (!e || e.termIdx === 0) return;                     // 「−」柱那根不归这儿管
-    var want = [[660,420],[660,160]];
+    var want = (e.termIdx === 1) ? V_LEAD_03 : V_LEAD_15;
     if (JSON.stringify(wr.via) !== JSON.stringify(want) || wr.auto !== false) {
-      wr.via = want; touched = true;
+      wr.via = want.map(function(v){ return [v[0], v[1]]; });
+      touched = true;
     }
   });
   if (!touched) return false;
@@ -1286,6 +1330,10 @@ function renderParams(sel){
       if (el.type !== 'checkbox' && !isFinite(val)) return;   // 双保险：绝不把 NaN 写进参数
       normalizeBattery(c);
       editor.setParam(c.id, k, val);
+      // 面板上动电压/阻值/滑片，同样要重新估一次量程 —— 快调按钮那边是
+      // writeParam 负责喊 autoRange，这条路径得自己补一句，否则电源电压在面板里
+      // 被拖到 4.5V / 6V，两只表的线还插在 0.6A / 3V 那两根柱子上。
+      autoRange();
       if (el.type === 'range') {
         var sp = specs.filter(function(s){ return s.k === k; })[0];
         var lab = document.getElementById('pv_' + k);
