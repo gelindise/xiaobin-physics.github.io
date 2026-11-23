@@ -3954,12 +3954,28 @@
   // 两根丝接同一对柱子就是并联，画面上看得出来，不用靠标签解释。
   // 位置：x ∈ cx±16、y = −28。这个矩形在 U 型管接管（x = ±68、y ≥ −36）的
   // 右边、盖子上沿（−9）的上边，是包围盒里唯一一块空着的方寸。
-  function drawJouleParWire(ctx, cx) {
-    // 和盒内主丝【同一个函数、同一个半径、同样 46 根短线】，只是：
-    //   · 圆心画在盖子上方 y = −HEAT_Y（对盒子中线上下对称）；
-    //   · 缺口朝下（flip），两根脚从缺口往【下】接到柱脚 —— 正好「紧接接线柱」。
-    // 这样两只盒子（有并联丝的那只）在画面上是上下对称的一对圆环。
-    drawJouleCoil(ctx, cx, -JOULE.HEAT_Y, JOULE.HEAT_R, 46, null, true);
+  function drawJouleParWire(ctx, cx, power, amps) {
+    var hot = Math.min(1, Math.max(0, power || 0) / 0.8);
+    if (hot > 0.001) {
+      var glow = ctx.createRadialGradient(cx, -JOULE.HEAT_Y, 4, cx, -JOULE.HEAT_Y, 34);
+      glow.addColorStop(0, 'rgba(255,151,60,' + (0.22 * hot).toFixed(3) + ')');
+      glow.addColorStop(1, 'rgba(255,151,60,0)');
+      ctx.fillStyle = glow;
+      ctx.beginPath(); ctx.arc(cx, -JOULE.HEAT_Y, 34, 0, 6.284); ctx.fill();
+    }
+    drawJouleCoil(ctx, cx, -JOULE.HEAT_Y, JOULE.HEAT_R, 46,
+      hot > 0.02 ? '#a65432' : null, true);
+    // 盒外支路自己的电流，不与盒内主丝混写。
+    if (isFinite(+amps)) {
+      ctx.save();
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.font = 'bold 10.5px -apple-system,"PingFang SC",sans-serif';
+      ctx.lineWidth = 2.6; ctx.strokeStyle = 'rgba(255,255,255,0.94)';
+      var txt = 'I外 = ' + Math.abs(+amps).toFixed(2) + ' A';
+      ctx.strokeText(txt, cx, -JOULE.HEAT_Y - JOULE.HEAT_R - 10);
+      ctx.fillStyle = '#9a4b24'; ctx.fillText(txt, cx, -JOULE.HEAT_Y - JOULE.HEAT_R - 10);
+      ctx.restore();
+    }
   }
 
   // 一只 U 形管（每台仪器有【两只】，各接一个容器）：
@@ -4186,7 +4202,10 @@
     var boxPower = rec && rec.boxes && rec.boxes[idx] ? rec.boxes[idx].p : 0;
     drawJouleHeater(ctx, cx, boxPower);
     // 乙容器并了一根丝：那根丝画在【盒外】、接同一对柱脚
-    if (idx === 1 && jouleR2bOf(comp) > 0) drawJouleParWire(ctx, cx);
+    if (idx === 1 && jouleR2bOf(comp) > 0) {
+      var pb = rec && rec.boxes && rec.boxes[1];
+      drawJouleParWire(ctx, cx, pb ? pb.pPar : 0, pb ? pb.iPar : NaN);
+    }
     // ④ 盖子：比箱体宽一圈，顶面一条亮带（这一条就是「盖子」的读法）
     roundRect(ctx, cx - J.LID_W / 2, J.LID_TOP, J.LID_W, J.LID_BOT - J.LID_TOP, 3);
     ctx.fillStyle = linGrad(ctx, 0, J.LID_TOP, 0, J.LID_BOT,
@@ -4217,13 +4236,12 @@
     ctx.strokeText(txt, cx, J.LABEL_Y);
     ctx.fillStyle = '#3f4c5a';
     ctx.fillText(txt, cx, J.LABEL_Y);
-    // 电阻正下方标【通过这只容器的总电流】；乙并丝时是两条支路电流之和。
-    // 图标没有 rec，不印一个假的 0A。
+    // 电阻正下方只标【盒内电阻丝】的电流；盒外支路在其线圈上方另标 I外。
     if (rec && rec.boxes && rec.boxes[idx]) {
       var amps = Math.abs(rec.boxes[idx].i || 0);
       ctx.font = 'bold 10.5px -apple-system,"PingFang SC",sans-serif';
       ctx.lineWidth = 2.4; ctx.strokeStyle = 'rgba(255,255,255,0.88)';
-      var itxt = 'I = ' + amps.toFixed(2) + ' A';
+      var itxt = 'I丝 = ' + amps.toFixed(2) + ' A';
       ctx.strokeText(itxt, cx, J.CURRENT_Y);
       ctx.fillStyle = amps > 1e-6 ? '#9a4b24' : '#526174';
       ctx.fillText(itxt, cx, J.CURRENT_Y);

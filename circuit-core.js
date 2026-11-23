@@ -156,10 +156,9 @@
       label: '焦耳定律演示器（U 形管）', terminals: 4,
       // 端子号：0/1 = 甲（左）容器的两根柱，2/3 = 乙（右）容器。
       termNames: ['甲+', '甲−', '乙+', '乙−'],
-      // R2b = 乙容器里【再并联一根丝】的阻值，0 表示没装（默认）。
-      // 用户 2026-10-27：「右边空气盒里不是有个电阻吗，我想让它在上面再并联
-      // 一个电阻丝，两个的阻值都可以调节」。并上以后乙容器的等效电阻是
-      // R2 ∥ R2b，产热是两条丝之和 —— 用来做「并联电阻 / 改变电阻」那一步。
+      // R2b = 乙容器【盒外并联丝】的阻值，0 表示没装（默认）。
+      // 它接在乙容器同一对柱上：总电流在两丝间按阻值分配，盒内主丝电流因此
+      // 小于甲容器电流；盒外丝自己的热不进入密闭空气盒。
       defaults: { R1: 5, R2: 10, R2b: 0 },
     },
     // ── 焦耳定律演示器（量热瓶，人教版 图18.4-1）──────────────────
@@ -1478,9 +1477,9 @@
           if (jp === jq) continue;          // 两根柱被同一根导线短接：这段不起作用
           out.push({ kind: 'R', comp: comp, p: jp, q: jq,
                      R: jouleR(comp, ji), jouleIdx: ji });
-          // 乙容器里【再并一根丝】：同一对节点、另一条 R 支路（R2b > 0 才算）。
-          // 两条都带 jouleIdx = 1，回填时按 jouleIdx 把它们【都】捞出来累加 ——
-          // 只认第一条的话，并联丝发的热会被算丢（液面差偏小，还不报错）。
+          // 乙容器【盒外再并一根丝】：同一对节点、另一条 R 支路。
+          // joulePar 让回填把「盒内丝」和「盒外丝」分开：前者决定液面，
+          // 后者只参与分流和整机功率守恒。
           if (ji === 1) {
             var jrb = jouleR2b(comp);
             if (jrb > 0) {
@@ -2594,28 +2593,39 @@
           var jboxes = [0, 1].map(function (si) {
             // 按 jouleIdx 找支路，不能按 bs 下标（被短接的那条不在 bs 里，
             // 下标会整体错位 —— 那样「甲」会读到「乙」的电流）。
-            // 🔴 一个容器可能有【两条】支路（乙容器里并了一根丝），所以这里是
-            //    遍历累加，不是「找到第一条就 break」。
-            var jv = 0, jii = 0, jp = 0, jpar = false;
+            // 🔴 盒内主丝与盒外并联丝是【两条独立支路】：端电压相同，电流各自
+            //    按 U/R 分配。i 只表示盒内丝电流；iTotal 才是两根柱上的总电流。
+            //    盒外丝只分流，它发出的热在盒外，绝不能计入乙容器的液面模型。
+            var jv = 0, jItotal = 0, jImain = 0, jIpar = 0;
+            var jPmain = 0, jPpar = 0, jpar = false;
             for (var q = 0; q < bs.length; q++) {
               if (bs[q].jouleIdx !== si) continue;
-              var jbr = bs[q], v1 = 0, i1 = 0;
-              if (jbr.kind === 'V') { i1 = bI(sol, jbr); }
-              else { v1 = nV(sol, jbr.p) - nV(sol, jbr.q); i1 = v1 / jbr.R; }
-              jv = v1;                     // 并联的两条端电压相同，取哪条都一样
-              jii += i1;                   // 总电流 = 两条之和
-              // 产热功率：p = |U·I|。用两端压降乘电流而不是 I²R，是因为
-              // 两种写法在正常支路上等价，而 U·I 在「这条支路被短接」时
-              // 自然给 0（I²R 会给一个假的正数）。
-              jp += Math.abs(v1 * i1);
-              if (jbr.joulePar) jpar = true;
+              var jbr = bs[q], v1 = 0, iBranch = 0;
+              if (jbr.kind === 'V') { iBranch = bI(sol, jbr); }
+              else { v1 = nV(sol, jbr.p) - nV(sol, jbr.q); iBranch = v1 / jbr.R; }
+              jv = v1;                     // 并联的两条端电压相同
+              jItotal += iBranch;          // 接线柱总电流 = 两条支路之和
+              // 若这条电阻被短接，V 支路里的电流走的是短路线，不是电阻丝；
+              // 此时电阻丝自身电流为 0（U=0），不能拿短路电流冒充 I丝。
+              var iWire = jbr.kind === 'V' ? 0 : iBranch;
+              var pBranch = Math.abs(v1 * iBranch);
+              if (jbr.joulePar) {
+                jpar = true;
+                jIpar += iWire;
+                jPpar += pBranch;         // 盒外支路：只计入整机功率守恒
+              } else {
+                jImain += iWire;
+                jPmain += pBranch;        // 只有盒内主丝加热密闭空气
+              }
             }
-            // 等效电阻：并了第二根丝时是 R2 ∥ R2b（侧栏、箱体标签、读数框都读它）
+            // 等效电阻：并了盒外丝后是 R2 ∥ R2b。
             var jR = jouleR(c, si);
             var jr2b = si === 1 ? jouleR2b(c) : 0;
             if (jpar && jr2b > 0) jR = (jR * jr2b) / (jR + jr2b);
             return {
-              idx: si, R: jR, v: jv, i: jii, p: jp,
+              idx: si, R: jR, v: jv,
+              i: jImain, iPar: jIpar, iTotal: jItotal,
+              p: jPmain, pPar: jPpar, pTotal: jPmain + jPpar,
               par: jpar, R2b: jpar ? jr2b : 0, Rmain: jouleR(c, si),
               // 两根柱都接了才算这个容器在工作（只看电流不行：合闸前也是 0）
               wired: wired.has(c.id + ':' + (si * 2)) &&
@@ -2637,7 +2647,8 @@
           rec.R = jpick.R;
           rec.i = Math.abs(jpick.i);
           rec.v = Math.abs(jpick.v);
-          rec.p = jboxes[0].p + jboxes[1].p;   // 表里那一列是【整台仪器】的发热
+          rec.p = jboxes[0].pTotal + jboxes[1].pTotal; // 整机含盒外丝，保证功率守恒
+          rec.heatPower = jboxes[0].p + jboxes[1].p;   // 真正进入两个密闭盒的功率
           rec.wiredCount = (jboxes[0].wired ? 1 : 0) + (jboxes[1].wired ? 1 : 0);
           break;
         }

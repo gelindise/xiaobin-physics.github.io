@@ -80,10 +80,12 @@ function invariants(res, tag) {
       // 四端子、两个独立容器：rec.v/i 是侧栏选中的那一侧，rec.p 是两侧总和，
       // 不能拿「选中的一侧电压×电流」去逼它等于整台仪器的功率。
       (pc.boxes || []).forEach(function (b, bi) {
-        close(b.p, Math.abs(b.v * b.i), tag + ' [joule ' + bi + '] 容器功率自洽', 1e-9);
+        close(b.p, Math.abs(b.v * b.i), tag + ' [joule ' + bi + '] 盒内丝功率自洽', 1e-9);
+        close(b.pPar, Math.abs(b.v * b.iPar), tag + ' [joule ' + bi + '] 盒外丝功率自洽', 1e-9);
+        close(b.iTotal, b.i + b.iPar, tag + ' [joule ' + bi + '] 分流后总电流等于支路之和', 1e-9);
       });
-      close(pc.p, (pc.boxes || []).reduce(function (s, b) { return s + b.p; }, 0),
-        tag + ' [joule] 总功率等于两容器之和', 1e-9);
+      close(pc.p, (pc.boxes || []).reduce(function (s, b) { return s + b.pTotal; }, 0),
+        tag + ' [joule] 总功率等于盒内与盒外各支路之和', 1e-9);
     } else {
       close(pc.p, pc.v * pc.i, tag + ' [' + ids[i] + '] 功率自洽 p = v·i', 1e-9);
     }
@@ -1800,6 +1802,24 @@ test('T24e 串联 5Ω/10Ω：电流相同、热量 1:2，五档电阻齐全', fu
   C.jouleApplyThermal(r, st);
   truthy(r.heightMm[1] > r.heightMm[0] && r.heightMm[0] > 0,
     'T24e 10Ω 容器的液面差必须高于 5Ω');
+});
+
+test('T24f 盒外同阻值并联：乙盒内电流减半、产热变 1/4，盒外热不进盒', function () {
+  var cs = [comp('E', 'battery', { emf: 3, rInt: 0.5 }),
+            comp('J', 'joule', { R1: 5, R2: 5, R2b: 5 })];
+  // 甲盒 →（乙盒内丝 ∥ 乙盒外丝）串联。总电阻 0.5+5+2.5=8Ω。
+  var ws = [W('E', 0, 'J', 0), W('J', 1, 'J', 2), W('J', 3, 'E', 1)];
+  var r = run(cs, ws, 'T24f').components.J;
+  close(r.boxes[0].i, 0.375, 'T24f 甲盒（也是干路）电流', 1e-9);
+  close(r.boxes[1].i, 0.1875, 'T24f 乙盒内丝电流必须减半', 1e-9);
+  close(r.boxes[1].iPar, 0.1875, 'T24f 同阻值盒外支路分得另一半', 1e-9);
+  close(r.boxes[1].iTotal, 0.375, 'T24f 乙两柱总电流仍等于甲盒电流', 1e-9);
+  close(r.boxes[1].p / r.boxes[0].p, 0.25,
+    'T24f 同阻值、盒内电流减半 ⇒ 盒内产热为 1/4', 1e-9);
+  close(r.powers[1], r.boxes[1].p, 'T24f 液面只能读取盒内丝功率', 1e-12);
+  truthy(Math.abs(r.powers[1] - r.boxes[1].pTotal) > 1e-6,
+    'T24f 液面功率不得混入盒外丝的发热');
+  close(r.boxes[1].pPar, r.boxes[1].p, 'T24f 盒外丝自身功率单独守恒', 1e-9);
 });
 
 // ============================================================
