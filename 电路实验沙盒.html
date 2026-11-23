@@ -1049,8 +1049,8 @@
        2026-10-16 这批：core 24 / draw 38 / editor 29 / params 6 / schematic 18。
        （上一批是 core 23 / draw 37 / editor 28 / params 5 / schematic 17，
          这一轮五个文件都动了：世界加宽 + 电表放大 + 读数牌搬家 + 单刀双掷开关。） -->
-<script src="circuit-core.js?build=56"></script>
-<script src="circuit-draw.js?build=75"></script>
+<script src="circuit-core.js?build=57"></script>
+<script src="circuit-draw.js?build=76"></script>
 <!-- ════════════════════════════════════════════════════════════════════
      【教材版本皮肤 · 已从线上撤下】2026-10-12
      人教版元件外观（circuit-skin*.js 共 5 个文件）暂不在线上启用，学生看到的
@@ -1069,7 +1069,7 @@
 <script src="circuit-editor.js?build=54"></script>
 <!-- 参数面板规格 + 读数显示格式。从本页内联抽出，与 3D 版沙盒（电路实验沙盒3D）
      共用同一份真值：面板规格、小数位、极性显示规则改一处两边都变。 -->
-<script src="circuit-params.js?build=31"></script>
+<script src="circuit-params.js?build=32"></script>
 <!-- 电路图（实物图 → 标准符号）。独立成第四块内核：沙盒和欧姆定律页共用同一份，
      免得各写一套符号，两边的图画法迟早不一样。三个老内核一行没动，build 号不升。 -->
 <script src="circuit-schematic.js?build=43"></script>
@@ -1809,6 +1809,9 @@ function solveNow(){
     if (!applyFaults()) break;      // 没有新损坏 → 这一遍的解就是最终解
   }
   applyPracticeFlags();             // 练习模式：把「这件藏不藏」压到 rec 上
+  // 电路每次重解都会换一组 rec；把原来的热状态重新挂回去，液面才不会在
+  // 拖一根导线、改一个参数时瞬间归零。dt=0 只同步读数，不推进时间。
+  syncJouleThermal(0);
   // 干路 / 支路：必须在【损坏迭代收敛之后】算 —— 烧断一个灯泡、熔断一根导线
   // 都会改变各段电流，拿中间那一遍的解去配色，画面上会留一帧错的。
   // 🔴 必须把 scene.wires 一起交进去：判据要认【冗余线】（同一对电气节点之间的
@@ -1942,9 +1945,9 @@ var DROP = {battery:40, power:46, ammeter:80, voltmeter:80, galvanometer:80,
             // 插入式电阻箱：底座下沿 +70（丝下面的阻值印到 +66）——
             // 读数框落在 78，正好在底座外面一点，不压住那排 6Ω/4Ω/2Ω。
             plugbox:78,
-            // 焦耳定律演示器：两个容器底 +96，盖子上的柱子到 −14 ——
-            // 读数框落在 106（箱子下面一点，不压住那两个阻值）。
-            joule:106,
+            // 焦耳定律演示器：容器底 +110，箱内底部还有一行电流；
+            // 读数框落在 132，既不压电流，也不压住 U 形管底弯。
+            joule:132,
             // 量热瓶：瓶底 +139（温度计往上伸到 −139）—— 读数框落在 149。
             calorimeter:149,
             // 恒温箱：箱底 +82（箱盖上的柱子往上探到 −107）—— 读数框落在 92，
@@ -2445,6 +2448,31 @@ var animT = 0;          // 动画时钟（秒），电铃的振动相位直接�
 var spinAng = {};       // 元件 id → 转子角（弧度，已按慢放系数折算过）
 function spinOf(id){ return spinAng[id] || 0; }
 
+// U 形管的温度与累计热量是【随时间连续变化的状态】，不能塞进稳态求解器。
+// 用 WeakMap 按元件对象记：撤销 / 读档换来新对象时自然从室温开始，不会把
+// 上一个场景的 J1 余热错安到新场景的同名 J1 上；删掉元件也不留垃圾。
+var jouleThermal = new WeakMap();
+function syncJouleThermal(dt){
+  if (!results || !results.components || !C.jouleStepThermal) return false;
+  var moving = false;
+  scene.comps.forEach(function(c){
+    if (c.type !== 'joule') return;
+    var r = results.components[c.id];
+    if (!r) return;
+    var st = jouleThermal.get(c);
+    if (!st) { st = C.jouleNewThermal(); jouleThermal.set(c, st); }
+    var t0 = st.temp[0], t1 = st.temp[1];
+    C.jouleStepThermal(st, r.powers, dt);
+    C.jouleApplyThermal(r, st);
+    var heating = (r.powers && (r.powers[0] > 1e-7 || r.powers[1] > 1e-7));
+    var changing = Math.abs(st.temp[0] - t0) + Math.abs(st.temp[1] - t1) > 1e-8;
+    var stillWarm = st.temp[0] > C.JOULE_THERMAL.T0 + 1e-4 ||
+                    st.temp[1] > C.JOULE_THERMAL.T0 + 1e-4;
+    if (heating || changing || stillWarm) moving = true;
+  });
+  return moving;
+}
+
 // 推进一帧。返回「画面上有没有东西在动」—— 调用方靠它决定要不要重绘。
 // ⚠️ 这一步和「电子流动 / 电流方向」两个开关【无关】：那两个开关管的是
 //    导线上的粒子（一种示意图），而飞轮在转、铃在响是器材本身的状态。
@@ -2452,6 +2480,9 @@ function spinOf(id){ return spinAng[id] || 0; }
 function stepMotion(dt){
   if (!results || !results.components) return false;
   var moving = false;
+  // 焦耳定律演示器按真实 dt 升温 / 散热；只要还在发热、变温或有热气，
+  // 就持续请求下一帧，粒子开关关着也不会把液面冻住。
+  if (syncJouleThermal(dt)) moving = true;
   scene.comps.forEach(function(c){
     var r = results.components[c.id];
     if (!r) return;
@@ -2475,8 +2506,20 @@ function stepMotion(dt){
 function drawMotion(){
   if (!results || !results.components) return;
   scene.comps.forEach(function(c){
-    if (!D.isAnimated(c.type)) return;
+    // U 形管在 drawJouleLayer 里先画，导线仍按真实接法压在本体之上；
+    // 电动机和电铃保持原来的前景动画层。
+    if (!D.isAnimated(c.type) || c.type === 'joule') return;
     D.drawComponent(ctx, c, results.components[c.id], { spin: spinOf(c.id), t: animT });
+  });
+}
+
+// 焦耳定律演示器是动态本体，但层序不能跟飞轮一起挪到导线之上：
+// 每帧画在静态元件之后、导线之前，接线柱随后由 drawTerminals 补回最上层。
+function drawJouleLayer(){
+  if (!results || !results.components) return;
+  scene.comps.forEach(function(c){
+    if (c.type !== 'joule') return;
+    D.drawComponent(ctx, c, results.components[c.id], { t: animT });
   });
 }
 
@@ -2533,6 +2576,7 @@ function drawFrame(){
   ctx.drawImage(bgLayer, 0, 0, W, H);
   if (results) {
     ctx.drawImage(fgLayer, 0, 0, W, H);     // 元件本体（静态层）
+    drawJouleLayer();                        // U 形管液面 / 热气（动态，但在导线之下）
     // 导线画在【元件之上】：线从电流表 / 电压表上面经过时就该压在表上
     // （盖住一部分正是实际情况），而不是从表背后穿过去。
     var wirePts = [];                       // 本帧每根线的路径：画插头时复用，别算第二遍
@@ -5353,9 +5397,8 @@ var LG_VIEW = {
   // 插入式电阻箱：底座 ±112 × (−20…70)、铜排上沿 −14、拔出来的插头帽顶 −76，
   // 两个接线柱在 ±118。和共享层 CircuitDraw.ICON_VIEW.plugbox 同一组数。
   plugbox:   { x0: -130, y0: -84, x1: 130, y1: 78 },
-  // 焦耳定律演示器：两个容器 ±147（含盖子）、底 96，压力计竖管顶到 −104
-  //（封口圆头再探到 −113）。和共享层 CircuitDraw.ICON_VIEW.joule 同一组数。
-  joule:     { x0: -162, y0: -120, x1: 162, y1: 106 },
+  // 焦耳定律演示器：与共享层共用加高细管、容器和箱内电流的取景框。
+  joule:     { x0: -162, y0: -220, x1: 162, y1: 116 },
   // 量热瓶：瓶身 ±56、瓶底 +139，温度计管顶 −139。又高又瘦。
   // 和共享层 CircuitDraw.ICON_VIEW.calorimeter 同一组数。
   calorimeter: { x0: -68, y0: -166, x1: 68, y1: 146 },
@@ -8107,7 +8150,7 @@ window.__driveAnim = function(seconds, dt){
   drawFrame();
   return { frames: n, moving: moved, animT: animT };
 };
-window.__resetAnim = function(){ animT = 0; spinAng = {}; drawFrame(); };
+window.__resetAnim = function(){ animT = 0; spinAng = {}; jouleThermal = new WeakMap(); syncJouleThermal(0); drawFrame(); };
 // 真实循环的探针：本机 headless 常常一帧 rAF 都不回调，凡是「关掉粒子之后器材
 // 还动不动」这类断言就没法跑。但【不能】退回去调 driveAnim —— driveAnim 直接
 // 调 stepMotion，而「关掉粒子就不推进器材」这个错法恰恰长在 tick 里那句

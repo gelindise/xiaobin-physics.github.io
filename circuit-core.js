@@ -789,56 +789,102 @@
   }
 
   // ── 焦耳定律演示器：两个容器的电热丝（见 TYPES.joule）────────────
-  // 阻值只给 5 / 10 / 20 三档（参数面板是下拉，不是滑条）：课本上做的是
-  // 「5Ω 与 10Ω 比」（同电流、不同电阻）和「5Ω 与 5Ω 比」（同电阻、不同
-  // 电流），给连续滑条反而让学生以为「想让哪边热就把哪边调大」——
-  // 那就不是焦耳定律了。存档是手改得动的 JSON，所以这里照样要夹一遍。
-  var JOULE_R_CHOICES = [5, 10, 20];
+  // 阻值用离散档位：既能做课本的 5Ω/10Ω 对照，也能换 15/20/25Ω 继续比较。
+  // 存档是手改得动的 JSON，求解时仍兜底，不能只信下拉框。
+  var JOULE_R_CHOICES = [5, 10, 15, 20, 25];
   function jouleR(comp, i) {
     var P = paramsOf(comp);
     var v = num(i ? P.R2 : P.R1, i ? 10 : 5);
     return v > 0 ? v : (i ? 10 : 5);
   }
-  // 乙容器里那根【并联】丝的阻值。0 = 没装（默认），所以不能用 jouleR 那套
-  // 「小于等于 0 就兜底」的写法 —— 0 在这里是有意义的值。
+  // 乙容器里那根【并联】丝的阻值。0 = 没装（默认），不能用主丝的兜底规则。
   function jouleR2b(comp) {
     var v = num(paramsOf(comp).R2b, 0);
     return v > 0 ? v : 0;
   }
-  // 液面【满偏】对应的产热功率（W）。每一只 U 形管读的是【它自己那个容器】
-  // 的产热功率：Δh ∝ Δp ∝ ΔT ∝ P。取 0.5 W 是照初中实验室那套器材标的：
-  // 3V 电源 + 5Ω/10Ω 串联时两边是 0.2W / 0.4W，正好落在 40% / 80% 量程 ——
-  // 两边的液面高度差一眼能比出来，又都不会顶到头。
-  // 🔴 这个数只影响【画面上液面升多少】，不参与任何电学量的计算：
-  //    它是一把刻度尺，不是物理模型的一部分。
-  // 🔴 2026-10-27 改：原来是 0.5W 满偏 + 纯线性，那是按【串联】标的
-  //    （3V + 5Ω/10Ω 串联 → 0.2W / 0.4W）。学生一把两个容器【并联】
-  //    （3V → 1.8W / 0.9W），两个都超过 0.5W ⇒ 双双饱和到满偏 ⇒ 两只 U 形管
-  //    的液面一样高 —— 用户实测抓到的就是这个（「很显然是错误的」）。
-  //    纯线性 + 大满偏也不行：0.2/0.4 只差 4px，串联时又看不出差别。
-  //    🔴 2026-10-27 第二版：单一刻度覆盖不了 0.2W ~ 2.7W（13 倍）——tanh 无论
-  //    P_REF 取多大，总有一头"挤成一条线"（取 2.0 时串联 0.2/0.4 只差 4px；
-  //    取 1.0 时乙并 5Ω 的 1.8/2.7 只剩 2px）。用户第二次反馈：「功率不一样
-  //    的时候高度差不明显，两侧的对比要更明显一些」。
-  //    改成【两段线性】：0.6W 以下放大（每瓦 0.833 个满偏），以上压缩
-  //    （每瓦 0.238）。折点取 0.6W —— 课本串联实验（0.2/0.4W）整个落在低段，
-  //    并联（0.9/1.8W）和乙并 5Ω（1.8/2.7W）落在高段，两头都分得开。
-  //    实测（LVL_MAX = 24，两侧液面差）：串联 8.0px / 并联 10.3px /
-  //    乙并 20Ω 5.1px / 乙并 5Ω 10.3px —— 每一种接法都看得清。
-  //    「分段」不改变单调性和「功率大液面差就大」，只是把刻度做成两档，
-  //    和真实仪器换量程是一个意思。
-  var JOULE_P_KNEE = 0.6;       // 折点（W）
-  var JOULE_P_TOP = 2.7;        // 满偏对应的功率（3V + 乙并 5Ω 的极端组合）
-  // 一个容器的产热功率 → 它那只 U 形管的液面偏移（0 ~ 1）。
-  // 空气受热压强变大，把它自己那一侧的液面压下去、敞口那一侧顶上来，
-  // 两边各移动 d，所以液面【高度差】是 2d。
-  // 🔴 每只管子读自己的容器，不是两只管子读「差」：真实器材就是两个独立的
-  //    U 形管，比较的是两只管子的高度差，不是一根管子的两边。
+
+  // ============================================================
+  // U 形管热学模型（2026-11-23）
+  // ------------------------------------------------------------
+  // 旧版把瞬时功率 P 直接映射成液面，所以一合闸就满偏，也没有 mm 单位。
+  // 这里把中间缺少的物理过程补全：
+  //   ① 电阻丝产热：P = |UI|（纯电阻时等于 I²R），累计热量 Q = ∫Pdt；
+  //   ② 容器有效热容 C、对外散热系数 K：C·dT/dt = P − K·(T−T0)；
+  //   ③ 密闭空气遵循理想气体方程，液柱压强满足 Δp = ρgh；
+  //   ④ 液面两侧各移动 h/2，气体体积增加 A·h/2，因此
+  //        (p0 + ρgh)·(V0 + Ah/2) / T = p0·V0 / T0。
+  // 由温度反解 h 是二次方程；用有理化形式避免温差很小时的相减误差。
+  //
+  // V0=200mL、管内径 4mm 是常见演示器的代表尺寸。C/K 是「局部空气 + 电热丝
+  // 及其附近金属」的等效热参数，不冒充某一厂家实测值；它们只决定升温快慢与
+  // 稳态灵敏度，不参与电路求解。两只容器参数相同，所以相同通电时间、散热尚
+  // 可忽略时，温升（进而液面差）仍正确表达 Q=I²Rt 的比例关系。
+  // ============================================================
+  var JOULE_THERMAL = {
+    T0: 293.15,                 // 初始室温 20℃，热力学温度 K
+    P0: 101325,                 // 大气压 Pa
+    RHO: 1000,                  // 着色水密度 kg/m³
+    G: 9.80665,
+    V0: 200e-6,                 // 密闭空气盒初始体积 200mL
+    AREA: Math.PI * 0.002 * 0.002, // 内径 4mm 的玻璃管截面积
+    C: 4.0,                     // 等效热容 J/K
+    K: 0.45,                    // 等效散热系数 W/K，时间常数 C/K≈8.9s
+    H_MAX_MM: 250               // 画面量程；超过后仍给真实 mm 数并标超量程
+  };
+  // 温度（K）→ 同一根 U 形管左右液面的【总高度差】（mm）。
+  function jouleHeightMmOfTemp(temp) {
+    var J = JOULE_THERMAL;
+    var T = Math.max(1, num(temp, J.T0));
+    var a = J.RHO * J.G * J.AREA / 2;
+    var b = J.P0 * J.AREA / 2 + J.RHO * J.G * J.V0;
+    var c = J.P0 * J.V0 * (1 - T / J.T0);
+    if (Math.abs(c) < 1e-15) return 0;
+    var disc = Math.max(0, b * b - 4 * a * c);
+    var h = 2 * c / (-b - Math.sqrt(disc));
+    return h * 1000;
+  }
+  function jouleHeightMmOfPower(p) {
+    var J = JOULE_THERMAL;
+    return jouleHeightMmOfTemp(J.T0 + Math.max(0, num(p, 0)) / J.K);
+  }
+  // 稳态功率对应的归一化液面（保留给 3D 与纯求解读数；2D 页面会用动态值覆盖）。
   function jouleLevelOf(p) {
-    var P = p > 0 ? p : 0;
-    if (P <= JOULE_P_KNEE) return P / (JOULE_P_KNEE / 0.5);          // 0~0.6W → 0~0.5
-    var d = 0.5 + (P - JOULE_P_KNEE) / ((JOULE_P_TOP - JOULE_P_KNEE) / 0.5);
-    return d > 1 ? 1 : d;                                            // 0.6~2.7W → 0.5~1
+    var h = jouleHeightMmOfPower(p);
+    return Math.max(0, Math.min(1, h / JOULE_THERMAL.H_MAX_MM));
+  }
+  function jouleNewThermal() {
+    return { temp: [JOULE_THERMAL.T0, JOULE_THERMAL.T0], heat: [0, 0] };
+  }
+  // 推进一段真实时间。dt 用秒；恒定功率区间内采用一阶热模型的解析解，
+  // 不用「每帧加固定像素」，因此 60Hz / 30Hz / 自检大步长得到同一结果。
+  function jouleStepThermal(state, powers, dt) {
+    var st = state && Array.isArray(state.temp) && Array.isArray(state.heat)
+      ? state : jouleNewThermal();
+    var J = JOULE_THERMAL, step = Math.max(0, num(dt, 0));
+    for (var i = 0; i < 2; i++) {
+      var T = num(st.temp[i], J.T0), P = Math.max(0, num(powers && powers[i], 0));
+      st.heat[i] = Math.max(0, num(st.heat[i], 0)) + P * step;
+      if (step > 0) {
+        var Tinf = J.T0 + P / J.K;
+        T = Tinf + (T - Tinf) * Math.exp(-J.K * step / J.C);
+      }
+      st.temp[i] = T;
+    }
+    return st;
+  }
+  // 把热状态写到这台仪器的读数上：液面、mm、温度、累计热量同源。
+  function jouleApplyThermal(rec, state) {
+    if (!rec) return;
+    var st = state || jouleNewThermal(), J = JOULE_THERMAL;
+    rec.heightMm = [0, 1].map(function (i) {
+      return Math.max(0, jouleHeightMmOfTemp(st.temp[i]));
+    });
+    rec.levels = rec.heightMm.map(function (h) {
+      return Math.max(0, Math.min(1, h / J.H_MAX_MM));
+    });
+    rec.tempC = [st.temp[0] - 273.15, st.temp[1] - 273.15];
+    rec.heatJ = [Math.max(0, st.heat[0]), Math.max(0, st.heat[1])];
+    rec.overRange = rec.heightMm.map(function (h) { return h > J.H_MAX_MM + 1e-9; });
   }
 
   // ── 量热瓶：瓶里液体的温升（见 TYPES.calorimeter）────────────────
@@ -2577,10 +2623,13 @@
             };
           });
           rec.boxes = jboxes;
-          // 液面：每只 U 形管读【它自己那个容器】的产热功率（0 = 没热、
-          // 1 = 满偏）。两只管子各读各的，比较的是两只管子的高度差 ——
-          // 真实器材就是两个独立的 U 形管，不是一根管子的两边。
-          rec.levels = [jouleLevelOf(jboxes[0].p), jouleLevelOf(jboxes[1].p)];
+          // 电学量与热学量的唯一接口。2D 页面用这对功率推进热状态，再覆盖
+          // rec.levels / rec.heightMm；纯求解和 3D 先拿到稳态目标值。
+          rec.powers = [jboxes[0].p, jboxes[1].p];
+          rec.steadyHeightMm = rec.powers.map(jouleHeightMmOfPower);
+          rec.steadyLevels = rec.powers.map(jouleLevelOf);
+          rec.levels = rec.steadyLevels.slice();
+          rec.heightMm = rec.steadyHeightMm.slice();
           // 侧栏那张表一行只能放一个数：取【产热大的那个容器】，并标在
           // which 上（和电阻示教板「取电流最大的那根丝」同一条规矩）。
           var jpick = jboxes[0].p >= jboxes[1].p ? jboxes[0] : jboxes[1];
@@ -4038,14 +4087,18 @@
     plugPos: plugPos,
     plugOut: plugOut,
     plugBoxR: plugBoxR,
-    // 焦耳定律演示器：两档阻值、满偏功率、液面读数。
-    // 绘制层按 rec.levels 画两只 U 形管的液柱、参数面板按 JOULE_R_CHOICES
-    // 列下拉、自检按 JOULE_P_REF 反算「液面该到哪」—— 三处共用这一份。
+    // 焦耳定律演示器：阻值档位 + U 形管热学模型。2D 页面按真实 dt 推进，
+    // 3D / 自检也能直接核对「温度—压强—高度差」这条换算链。
     JOULE_R_CHOICES: JOULE_R_CHOICES,
-    JOULE_P_KNEE: JOULE_P_KNEE, JOULE_P_TOP: JOULE_P_TOP,
+    JOULE_THERMAL: JOULE_THERMAL,
     jouleR: jouleR,
     jouleR2b: jouleR2b,
     jouleLevelOf: jouleLevelOf,
+    jouleHeightMmOfTemp: jouleHeightMmOfTemp,
+    jouleHeightMmOfPower: jouleHeightMmOfPower,
+    jouleNewThermal: jouleNewThermal,
+    jouleStepThermal: jouleStepThermal,
+    jouleApplyThermal: jouleApplyThermal,
     // 量热瓶：阻值 + 稳态温升（t = T0 + K·P）。绘制层按 rec.temp 画温度计、
     // 参数面板按滑条写 R、自检按 CAL_T0/CAL_K 反算「该升到几度」。
     CAL_T0: CAL_T0, CAL_K: CAL_K, CAL_TMAX: CAL_TMAX,

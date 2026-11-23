@@ -76,7 +76,17 @@ function invariants(res, tag) {
   //     否则 UI 上 U·I 和 P 显示不一致 —— 这条正是抓出变阻器 bug 的断言）
   for (i = 0; i < ids.length; i++) {
     var pc = res.components[ids[i]];
-    close(pc.p, pc.v * pc.i, tag + ' [' + ids[i] + '] 功率自洽 p = v·i', 1e-9);
+    if (pc.type === 'joule') {
+      // 四端子、两个独立容器：rec.v/i 是侧栏选中的那一侧，rec.p 是两侧总和，
+      // 不能拿「选中的一侧电压×电流」去逼它等于整台仪器的功率。
+      (pc.boxes || []).forEach(function (b, bi) {
+        close(b.p, Math.abs(b.v * b.i), tag + ' [joule ' + bi + '] 容器功率自洽', 1e-9);
+      });
+      close(pc.p, (pc.boxes || []).reduce(function (s, b) { return s + b.p; }, 0),
+        tag + ' [joule] 总功率等于两容器之和', 1e-9);
+    } else {
+      close(pc.p, pc.v * pc.i, tag + ' [' + ids[i] + '] 功率自洽 p = v·i', 1e-9);
+    }
   }
 
   // (5) 孤立元件必须完全为零
@@ -1721,6 +1731,75 @@ test('T23h 读数与铭牌：六档探头都在册，条件文字带着单位', 
   // 压敏读的是"档位"而不是某个条件量
   truthy(C.sensorCondText(comp('S', 'sensor', { kind: 'varistor', Uc: 12 })).indexOf('12') >= 0,
     'T23h 压敏的条件文字要带压敏电压档位');
+});
+
+// ============================================================
+// T24 U 形管热学：热量积累 → 气压 → 液面高度差
+// ============================================================
+test('T24a 理想气体 + 液柱压强：零温差为零，小温差导数符合解析式', function () {
+  var J = C.JOULE_THERMAL;
+  close(C.jouleHeightMmOfTemp(J.T0), 0, 'T24a 初始两液面必须相平', 1e-12);
+  var dT = 0.01;
+  var expected = J.P0 * J.V0 * (dT / J.T0) /
+    (J.P0 * J.AREA / 2 + J.RHO * J.G * J.V0) * 1000;
+  close(C.jouleHeightMmOfTemp(J.T0 + dT), expected,
+    'T24a 小温差高度差不符合 (p0+ρgh)(V0+Ah/2) 的线性化解', 2e-4);
+  truthy(C.jouleHeightMmOfTemp(J.T0 + 2) > C.jouleHeightMmOfTemp(J.T0 + 1),
+    'T24a 温度升高，液面高度差必须增大');
+});
+
+test('T24b 液面有热惯性，且结果不依赖动画帧率', function () {
+  var a = C.jouleNewThermal(), b = C.jouleNewThermal();
+  C.jouleStepThermal(a, [0.4, 0.2], 1);
+  truthy(a.heat[0] > 0.399999 && a.heat[0] < 0.400001, 'T24b 1s 的累计热量应为 0.4J');
+  var h1 = C.jouleHeightMmOfTemp(a.temp[0]);
+  truthy(h1 > 0 && h1 < C.jouleHeightMmOfPower(0.4),
+    'T24b 通电 1s 只能缓慢上升，不能瞬间到稳态');
+  for (var i = 0; i < 9; i++) C.jouleStepThermal(a, [0.4, 0.2], 1);
+  C.jouleStepThermal(b, [0.4, 0.2], 10);
+  close(a.temp[0], b.temp[0], 'T24b 10×1s 与 1×10s 必须同温', 1e-11);
+  close(a.heat[1], b.heat[1], 'T24b 累计热量也不能依赖步长', 1e-11);
+});
+
+test('T24c 同时间功率加倍：累计热量加倍，液面差随之增大', function () {
+  var a = C.jouleNewThermal();
+  C.jouleStepThermal(a, [0.2, 0.4], 5);
+  close(a.heat[1] / a.heat[0], 2, 'T24c 同时间功率比等于热量比', 1e-12);
+  var h0 = C.jouleHeightMmOfTemp(a.temp[0]);
+  var h1 = C.jouleHeightMmOfTemp(a.temp[1]);
+  truthy(h1 > h0 && h0 > 0, 'T24c 功率大的一侧液面差必须更高');
+  truthy(h1 / h0 > 1.85 && h1 / h0 < 2.05,
+    'T24c 小温差范围内高度差应近似保持 2 倍（实际 ' + (h1 / h0).toFixed(4) + '）');
+});
+
+test('T24d 断电后停止产热、逐渐散热回落', function () {
+  var st = C.jouleNewThermal();
+  C.jouleStepThermal(st, [0.8, 0], 20);
+  var before = C.jouleHeightMmOfTemp(st.temp[0]), q = st.heat[0];
+  C.jouleStepThermal(st, [0, 0], 20);
+  var after = C.jouleHeightMmOfTemp(st.temp[0]);
+  truthy(after < before && after >= 0, 'T24d 断电后液面必须缓慢回落');
+  close(st.heat[0], q, 'T24d 断电后累计产热量不再增加', 1e-12);
+  var rec = {};
+  C.jouleApplyThermal(rec, st);
+  close(rec.heightMm[0], after, 'T24d 画布 mm 读数必须和热状态同源', 1e-12);
+  close(rec.levels[1], 0, 'T24d 未发热的一侧始终相平', 1e-12);
+});
+
+test('T24e 串联 5Ω/10Ω：电流相同、热量 1:2，五档电阻齐全', function () {
+  truthy(C.JOULE_R_CHOICES.join(',') === '5,10,15,20,25', 'T24e 电阻档位必须包含 5/10/15/20/25Ω');
+  var cs = [comp('E', 'battery', { emf: 3, rInt: 0.5 }),
+            comp('J', 'joule', { R1: 5, R2: 10, R2b: 0 })];
+  var ws = [W('E', 0, 'J', 0), W('J', 1, 'J', 2), W('J', 3, 'E', 1)];
+  var res = run(cs, ws, 'T24e'), r = res.components.J;
+  close(r.boxes[0].i, r.boxes[1].i, 'T24e 两容器串联电流相同', 1e-9);
+  close(r.boxes[1].p / r.boxes[0].p, 2, 'T24e 同电流下产热功率比等于电阻比', 1e-9);
+  var st = C.jouleNewThermal();
+  C.jouleStepThermal(st, r.powers, 10);
+  close(st.heat[1] / st.heat[0], 2, 'T24e 同时间累计热量仍为 1:2', 1e-9);
+  C.jouleApplyThermal(r, st);
+  truthy(r.heightMm[1] > r.heightMm[0] && r.heightMm[0] > 0,
+    'T24e 10Ω 容器的液面差必须高于 5Ω');
 });
 
 // ============================================================

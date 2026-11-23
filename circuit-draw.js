@@ -592,38 +592,27 @@
   //    写在后面的话 var 提升到的是 undefined（见 PENCIL.POST 那条注释）。
   // ============================================================
   var JOULE = {
-    BOX_W: 96, BOX_TOP: 0, BOX_BOT: 96,     // 两个容器（正面 ±48，顶 0、底 96）
+    BOX_W: 96, BOX_TOP: 0, BOX_BOT: 110,    // 浅蓝密闭容器（正面 ±48）
     BOX_X: 104,                              // 左右箱中心 ±104
     LID_W: 106, LID_TOP: -9, LID_BOT: 1,     // 盖子：比箱体宽 10、厚 10
-    // 盖子上两根柱（相对箱心 ±18）。y = −8：柱脚正好落在盖子顶面（−9）上，
-    // 落在 0 的话柱子会被盖子吃掉半截，看着像插在罐子里。
-    // 🔴 这两根柱就是【电热丝的两个接线端】：盒里的丝从顶上那道缺口引出两根
-    //    短脚，直接顶到柱脚上（见 drawJouleHeater）。
+    // 盖子上两根柱（相对箱心 ±18）。y = −8：柱脚正好落在盖子顶面（−9）上。
     POST_DX: 18, POST_Y: -8,
     // 容器接管的上升点：落在盖子【内侧】，避开两根柱。
     LEG_X: 68,
-    // 每台仪器有【两只独立的 U 形管】，各接一个容器（参考图上中间并排的
-    // 四根竖管就是两只 U 形管）。OUT_X = 接容器那条腿（外侧），
-    // IN_X = 敞口通大气那条腿（内侧）。
+    // 每台仪器有【两只独立的 U 形管】，OUT_X 接容器，IN_X 敞口。
     OUT_X: 40, IN_X: 14,
-    // 接管 U 弯的高度（= 汇入外侧腿的位置）；敞口腿的顶端比它高出一大截 ——
-    // 那是参考图上最扎眼的形状：两只压力计的管子从中间竖起来。
-    ARCH_Y: -36,
-    COL_TOP: -104,                           // 敞口腿的顶端
-    MAN_BOT: 46,                             // U 弯圆心
-    TUBE_R: 5.2,                             // 玻璃管内半径
-    WALL: 2.2,                               // 玻璃壁厚
-    // 静止液面 / 单侧最大位移。液面【必须在汇合口以下】（−36）：升到汇合口
-    // 上面去的话，液体就跑到「容器接管那段封闭的空气里」了，画面上看着像
-    // 液柱从管子的侧面漏出来。−10 比 −36 低 26，留得下 ±22 的行程。
-    // 行程 24（原来是 22）：内侧腿升到 −34，离汇合口（ARCH_Y = −36）还留 2px。
-    // 加大行程是因为用户要「两侧对比更明显」—— 同样 0.18 的 level 差，
-    // 22 只有 4.0px、24 有 4.3px，配上新的两段刻度正好把串联实验从 4.3px
-    // 拉到 8.0px。
-    LVL_REST: -10, LVL_MAX: 24,
+    // 接管顶部 U 弯与敞口管顶。加高竖管后，液面行程比旧版约大三倍。
+    ARCH_Y: -80,
+    COL_TOP: -205,
+    MAN_BOT: 115,                            // U 弯圆心
+    TUBE_R: 3.4,                             // 细玻璃管内半径（旧版 5.2）
+    WALL: 1.5,                               // 玻璃壁厚
+    // 静止液面 / 单侧最大位移。满量程 250mm 对应总高差 250px，
+    // 即 1px/mm；外侧液面最低到 +95，仍在底部 U 弯的入口以上。
+    LVL_REST: -30, LVL_MAX: 125,
     HEAT_Y: 42, HEAT_R: 25,                  // 电热丝圈心 / 半径
-    LABEL_Y: 82,                             // 箱体上印阻值的位置
-    HW: 157, HH: 114,                        // 包围盒（含盖子最外沿与敞口腿顶端）
+    LABEL_Y: 80, CURRENT_Y: 99,              // 阻值与它正下方的电流读数
+    HW: 157, HH: 215,                        // 包围盒（含加高后的管顶）
   };
   // 箱体中心 x（i = 0 甲 / 1 乙）
   function jouleBoxX(i) { return (i ? 1 : -1) * JOULE.BOX_X; }
@@ -1602,11 +1591,8 @@
     // 否则元件盒图标里「五个插头有几个是拔出来的」就看不出来了 ——
     // 而那是这件器材唯一需要一眼看出的操作痕迹。
     plugbox:   { x0: -130, y0: -84, x1: 130, y1: 78 },
-    // 焦耳定律演示器：两个容器 ±147（含盖子）、底 96；压力计的竖管顶到
-    // −104（封口的圆头再探到 −113）。取景框要包住整个封口，否则元件盒图标里
-    // 那两根竖管会被切平 —— 而「两根管子从中间竖起来」正是这台仪器唯一的
-    // 形状特征。
-    joule:     { x0: -162, y0: -120, x1: 162, y1: 106 },
+    // 焦耳定律演示器：取景框包住加高的细玻璃管、容器和箱内电流读数。
+    joule:     { x0: -162, y0: -220, x1: 162, y1: 116 },
     // 量热瓶：瓶身 ±56（加高光取 62）、瓶底 +139，温度计管顶 −139 ——
     // 又高又瘦，取景框按「上下都留一点」给。
     calorimeter: { x0: -68, y0: -166, x1: 68, y1: 146 },
@@ -3950,8 +3936,17 @@
       ctx.fillStyle = '#c9a95f'; ctx.fill();
     });
   }
-  function drawJouleHeater(ctx, cx) {
-    drawJouleCoil(ctx, cx, JOULE.HEAT_Y, JOULE.HEAT_R, 46);
+  function drawJouleHeater(ctx, cx, power) {
+    var hot = Math.min(1, Math.max(0, power || 0) / 0.8);
+    if (hot > 0.001) {
+      var glow = ctx.createRadialGradient(cx, JOULE.HEAT_Y, 4, cx, JOULE.HEAT_Y, 36);
+      glow.addColorStop(0, 'rgba(255,151,60,' + (0.30 * hot).toFixed(3) + ')');
+      glow.addColorStop(1, 'rgba(255,151,60,0)');
+      ctx.fillStyle = glow;
+      ctx.beginPath(); ctx.arc(cx, JOULE.HEAT_Y, 36, 0, 6.284); ctx.fill();
+    }
+    drawJouleCoil(ctx, cx, JOULE.HEAT_Y, JOULE.HEAT_R, 46,
+      hot > 0.02 ? '#a65432' : null);
   }
   // 乙容器【盒外】那根并联电阻丝。用户 2026-10-27 明确：「不是在空气盒的里边，
   // 而是在空气盒的外边，和这两个接线柱相连」。
@@ -4010,6 +4005,31 @@
     });
   }
 
+  // 中央黄蓝刻度尺：与参考图相同的视觉锚点。彩色部分的每一格是 50mm，
+  // 位置和液面共用同一换算（250mm 对应单侧上升 LVL_MAX=125px）。
+  function drawJouleRuler(ctx) {
+    var J = JOULE, x = -4.5, w = 9;
+    var top = J.COL_TOP + 8, bot = J.LVL_REST + 4;
+    ctx.save();
+    roundRect(ctx, x - 1.5, top, w + 3, bot - top, 2);
+    ctx.fillStyle = '#d9e1eb'; ctx.fill();
+    ctx.strokeStyle = 'rgba(82,97,116,0.65)'; ctx.lineWidth = 0.8; ctx.stroke();
+    var step = J.LVL_MAX / 5;       // 50mm 对应的单侧位移 25px
+    for (var k = 0; k < 5; k++) {
+      var y = J.LVL_REST - (k + 1) * step;
+      ctx.fillStyle = k % 2 ? '#397fb5' : '#f2c44f';
+      ctx.fillRect(x, y, w, step);
+      ctx.strokeStyle = 'rgba(255,255,255,0.55)'; ctx.lineWidth = 0.6;
+      ctx.beginPath(); ctx.moveTo(x, y + 0.3); ctx.lineTo(x + w, y + 0.3); ctx.stroke();
+    }
+    ctx.strokeStyle = '#526174'; ctx.lineWidth = 0.8;
+    ctx.strokeRect(x, J.LVL_REST - J.LVL_MAX, w, J.LVL_MAX);
+    ctx.font = 'bold 7px -apple-system,"PingFang SC",sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+    ctx.fillStyle = '#526174'; ctx.fillText('mm', 0, J.LVL_REST - J.LVL_MAX - 3);
+    ctx.restore();
+  }
+
   // 一只 U 形管里的液柱：外侧腿 → 底弯 → 内侧腿，线宽就是液柱的宽度。
   // yOut = 外侧腿（接容器）的液面，yIn = 内侧腿（敞口）的液面。
   // 🔴 容器受热 ⇒ 外侧腿的液面【下降】、内侧腿【上升】，两边各走 d，
@@ -4046,18 +4066,109 @@
     });
   }
 
-  // 一个容器：金属罐 + 盖子 + 里面的电热丝 + 阻值。
+  // 高度差标尺：竖直双箭头跨在【同一只 U 形管】的两个液面之间。
+  // 数字固定放在管顶，不跟着液面上下跳；括号里的 mm 是总高差，不是单侧位移。
+  function drawJouleLevelGauge(ctx, sgn, yOut, yIn, heightMm, overRange) {
+    var J = JOULE, x = sgn * (J.OUT_X + 9);
+    ctx.save();
+    ctx.strokeStyle = 'rgba(30,98,150,0.78)';
+    ctx.fillStyle = '#1e6296';
+    ctx.lineWidth = 1;
+    // 初始液面参考线：学生能看出一边下降、另一边上升，而不是整根液柱平移。
+    ctx.setLineDash([2, 3]);
+    ctx.beginPath();
+    ctx.moveTo(sgn * (J.OUT_X - 5), J.LVL_REST);
+    ctx.lineTo(sgn * (J.IN_X + 5), J.LVL_REST);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    if (heightMm > 0.15) {
+      ctx.beginPath(); ctx.moveTo(x, yIn); ctx.lineTo(x, yOut); ctx.stroke();
+      [yIn, yOut].forEach(function (y) {
+        ctx.beginPath(); ctx.moveTo(x - 3.5, y); ctx.lineTo(x + 3.5, y); ctx.stroke();
+      });
+      // 两端小箭头，方向分别指向两个液面。
+      ctx.beginPath(); ctx.moveTo(x, yIn); ctx.lineTo(x - 2.2, yIn + 4); ctx.lineTo(x + 2.2, yIn + 4); ctx.closePath(); ctx.fill();
+      ctx.beginPath(); ctx.moveTo(x, yOut); ctx.lineTo(x - 2.2, yOut - 4); ctx.lineTo(x + 2.2, yOut - 4); ctx.closePath(); ctx.fill();
+    }
+    var label = (sgn < 0 ? '甲 ' : '乙 ') + 'Δh=' +
+      (heightMm < 10 ? heightMm.toFixed(1) : heightMm.toFixed(0)) + 'mm';
+    var lx = sgn * 80, ly = J.COL_TOP + 19;
+    ctx.font = 'bold 10.5px -apple-system,"PingFang SC",sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    var w = Math.max(62, ctx.measureText(label).width + 10);
+    roundRect(ctx, lx - w / 2, ly - 9, w, 18, 6);
+    ctx.fillStyle = 'rgba(255,255,255,0.94)'; ctx.fill();
+    ctx.strokeStyle = overRange ? '#dc2626' : 'rgba(30,98,150,0.55)'; ctx.lineWidth = 1; ctx.stroke();
+    ctx.fillStyle = overRange ? '#b91c1c' : '#175c91';
+    ctx.fillText(label, lx, ly + 0.5);
+    ctx.restore();
+  }
+
+  // 暖色热空气：从电阻丝上方升起，再沿密封导管流向 U 形管液面。
+  // 用页面 animT 驱动，断电即不再产生新的暖色流；画的是热空气的运动，
+  // 不是把「热量」画成一种会发光的液体。
+  function drawJouleHeatFlow(ctx, sgn, power, yOut, t) {
+    if (!(power > 1e-5)) return;
+    var J = JOULE, hot = Math.min(1, 0.18 + power / 0.8);
+    var cx = sgn * J.BOX_X, phaseT = num(t, 0);
+    ctx.save();
+    ctx.lineCap = 'round';
+    // 电阻上方的三缕热气，位置确定、相位错开，方便录屏与自检复现。
+    for (var k = 0; k < 3; k++) {
+      var u = (phaseT * 0.42 + k / 3) % 1;
+      var x = cx + (k - 1) * 12 + Math.sin(phaseT * 2.1 + k * 1.7) * 2;
+      var y = J.HEAT_Y - J.HEAT_R + 4 - u * 25;
+      ctx.strokeStyle = 'rgba(239,132,52,' + (Math.sin(Math.PI * u) * 0.58 * hot).toFixed(3) + ')';
+      ctx.lineWidth = 1.7;
+      ctx.beginPath();
+      ctx.moveTo(x, y + 7);
+      ctx.bezierCurveTo(x - 4, y + 4, x + 4, y + 1, x, y - 3);
+      ctx.stroke();
+    }
+    // 导管里的暖色虚线只走到密闭侧液面，不越过液体、也不画到敞口侧。
+    var m1 = (J.LEG_X + J.OUT_X) / 2, r1 = (J.LEG_X - J.OUT_X) / 2;
+    ctx.beginPath();
+    ctx.moveTo(sgn * J.LEG_X, J.LID_TOP);
+    ctx.lineTo(sgn * J.LEG_X, J.ARCH_Y);
+    if (sgn < 0) ctx.arc(sgn * m1, J.ARCH_Y, r1, Math.PI, 0, false);
+    else         ctx.arc(sgn * m1, J.ARCH_Y, r1, 0, Math.PI, true);
+    ctx.lineTo(sgn * J.OUT_X, Math.min(yOut - 4, J.MAN_BOT - 2));
+    ctx.setLineDash([2.2, 8]);
+    ctx.lineDashOffset = -phaseT * 22;
+    ctx.lineWidth = 2.2;
+    ctx.strokeStyle = 'rgba(244,145,55,' + (0.72 * hot).toFixed(3) + ')';
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function num(v, fallback) {
+    var n = +v;
+    return isFinite(n) ? n : fallback;
+  }
+
+  // 一个容器：金属罐 + 盖子 + 里面的电热丝 + 阻值 + 电流。
   function drawJouleCan(ctx, cx, comp, idx, rec) {
     var J = JOULE, hw = J.BOX_W / 2;
-    // ① 箱体：正面是浅蓝灰的金属罐（上亮下暗）
+    // ① 箱体：教材插图里的浅蓝密闭罐，右侧面与内凹正面交代厚度。
     softShadow(ctx, cx - hw, J.BOX_TOP, hw * 2, J.BOX_BOT - J.BOX_TOP, 12, 6);
     contactShadow(ctx, cx, J.BOX_BOT + 1, hw * 0.92, 5, 0.28);
+    ctx.beginPath();
+    ctx.moveTo(cx + hw - 2, J.BOX_TOP + 3);
+    ctx.lineTo(cx + hw + 8, J.BOX_TOP - 3);
+    ctx.lineTo(cx + hw + 8, J.BOX_BOT - 7);
+    ctx.lineTo(cx + hw - 2, J.BOX_BOT);
+    ctx.closePath();
+    ctx.fillStyle = '#8fa7c2'; ctx.fill();
+    ctx.strokeStyle = '#526174'; ctx.lineWidth = 1.2; ctx.stroke();
     roundRect(ctx, cx - hw, J.BOX_TOP, hw * 2, J.BOX_BOT - J.BOX_TOP, 4);
     ctx.fillStyle = linGrad(ctx, 0, J.BOX_TOP, 0, J.BOX_BOT,
-      [[0, '#f6fafc'], [0.16, '#e6eef5'], [0.52, '#d3dfe9'],
-       [0.84, '#bfcdda'], [1, '#aebccb']]);
+      [[0, '#edf4fc'], [0.16, '#dce8f6'], [0.52, '#c8daee'],
+       [0.84, '#b5c9e1'], [1, '#a4bad4']]);
     ctx.fill();
-    ctx.strokeStyle = 'rgba(70,86,102,0.55)'; ctx.lineWidth = 1.2; ctx.stroke();
+    ctx.strokeStyle = '#526174'; ctx.lineWidth = 1.35; ctx.stroke();
+    roundRect(ctx, cx - hw + 6, J.BOX_TOP + 7, hw * 2 - 12, J.BOX_BOT - J.BOX_TOP - 14, 2);
+    ctx.fillStyle = 'rgba(224,236,249,0.34)'; ctx.fill();
+    ctx.strokeStyle = 'rgba(82,97,116,0.38)'; ctx.lineWidth = 0.8; ctx.stroke();
     // ② 两侧压暗 + 左上一条竖高光：金属罐的圆柱感全靠这两笔
     ctx.save();
     roundRect(ctx, cx - hw, J.BOX_TOP, hw * 2, J.BOX_BOT - J.BOX_TOP, 4); ctx.clip();
@@ -4072,7 +4183,8 @@
     // ③ 电热丝 + 两根引出脚（画在盖子【之前】：脚的顶端要钻进盖子下面，
     //    露在盖子外面就成了两根戳在盖子上面的铜棍 —— 参考图上脚是从盖子里
     //    伸出来的）
-    drawJouleHeater(ctx, cx);
+    var boxPower = rec && rec.boxes && rec.boxes[idx] ? rec.boxes[idx].p : 0;
+    drawJouleHeater(ctx, cx, boxPower);
     // 乙容器并了一根丝：那根丝画在【盒外】、接同一对柱脚
     if (idx === 1 && jouleR2bOf(comp) > 0) drawJouleParWire(ctx, cx);
     // ④ 盖子：比箱体宽一圈，顶面一条亮带（这一条就是「盖子」的读法）
@@ -4105,15 +4217,27 @@
     ctx.strokeText(txt, cx, J.LABEL_Y);
     ctx.fillStyle = '#3f4c5a';
     ctx.fillText(txt, cx, J.LABEL_Y);
+    // 电阻正下方标【通过这只容器的总电流】；乙并丝时是两条支路电流之和。
+    // 图标没有 rec，不印一个假的 0A。
+    if (rec && rec.boxes && rec.boxes[idx]) {
+      var amps = Math.abs(rec.boxes[idx].i || 0);
+      ctx.font = 'bold 10.5px -apple-system,"PingFang SC",sans-serif';
+      ctx.lineWidth = 2.4; ctx.strokeStyle = 'rgba(255,255,255,0.88)';
+      var itxt = 'I = ' + amps.toFixed(2) + ' A';
+      ctx.strokeText(itxt, cx, J.CURRENT_Y);
+      ctx.fillStyle = amps > 1e-6 ? '#9a4b24' : '#526174';
+      ctx.fillText(itxt, cx, J.CURRENT_Y);
+    }
   }
 
-  function drawJoule(ctx, comp, rec) {
+  function drawJoule(ctx, comp, rec, opts) {
     var J = JOULE;
-    // 液面：rec.levels = [甲, 乙] 各自的产热功率（0 = 没热、1 = 满偏）。
-    // 🔴 每只 U 形管读【自己那个容器】：外侧腿被压下去 d、内侧腿顶上来 d。
-    //    两只管子各读各的，比较的是两只管子的高度差 —— 这才是这台仪器的用法。
-    //    没有 rec（图标 / 刚放下还没接线）时两只管子都停在静止液面。
+    // levels 由页面的动态热状态给出；heightMm 是同一根管子的总液面差。
+    // 没有 rec（图标）时，两只管子都停在初始液面。
     var levels = (rec && rec.levels) ? rec.levels : [0, 0];
+    var heights = (rec && rec.heightMm) ? rec.heightMm : [0, 0];
+    var overs = (rec && rec.overRange) ? rec.overRange : [false, false];
+    var animTime = opts && isFinite(+opts.t) ? +opts.t : 0;
 
     ctx.save();
     ctx.translate(comp.x, comp.y);
@@ -4122,13 +4246,17 @@
 
     drawJouleCan(ctx, jouleBoxX(0), comp, 0, rec);
     drawJouleCan(ctx, jouleBoxX(1), comp, 1, rec);
+    drawJouleRuler(ctx);
     drawJouleTube(ctx);
-    // 两只 U 形管各画各的液柱（sgn = −1 左 / +1 右，和 levels 的下标对应）
+    // 两只 U 形管各画各的液柱；外侧下降、内侧上升，总高差 = 2d。
     [-1, 1].forEach(function (sgn, i) {
       var d = levels[i] || 0;
-      drawJouleLiquid(ctx, sgn,
-        J.LVL_REST + d * J.LVL_MAX,     // 外侧腿（接容器）：受热被压下去
-        J.LVL_REST - d * J.LVL_MAX);    // 内侧腿（敞口）：被顶上来
+      var yOut = J.LVL_REST + d * J.LVL_MAX;
+      var yIn = J.LVL_REST - d * J.LVL_MAX;
+      drawJouleLiquid(ctx, sgn, yOut, yIn);
+      drawJouleLevelGauge(ctx, sgn, yOut, yIn, Math.max(0, heights[i] || 0), !!overs[i]);
+      var power = rec && rec.boxes && rec.boxes[i] ? rec.boxes[i].p : 0;
+      drawJouleHeatFlow(ctx, sgn, power, yOut, animTime);
     });
 
     ctx.restore();
@@ -8506,7 +8634,7 @@
       case 'potentiometer': drawPotentiometer(ctx, comp, rec); break;
       case 'resistancebox': drawResistanceBox(ctx, comp, rec); break;
       case 'plugbox': drawPlugBox(ctx, comp, rec); break;
-      case 'joule': drawJoule(ctx, comp, rec); break;
+      case 'joule': drawJoule(ctx, comp, rec, opts); break;
       case 'calorimeter': drawCalorimeter(ctx, comp, rec); break;
       case 'pencil': drawPencil(ctx, comp, rec); break;
       case 'junction': drawJunction(ctx, comp); break;
@@ -8515,7 +8643,7 @@
   }
   // 「这个元件会不会自己动」——宿主靠它决定哪些元件必须每帧重画，
   // 不能扔进静态缓存层。开关的刀片、灯泡的亮度都只跟状态走，不算「会动」。
-  function isAnimated(type) { return type === 'motor' || type === 'bell'; }
+  function isAnimated(type) { return type === 'motor' || type === 'bell' || type === 'joule'; }
 
   function drawBackground(ctx, W, H) {
     ctx.fillStyle = PALETTE.bench;
