@@ -191,12 +191,16 @@
     .info-card ul { padding-left: 18px; }
     .info-card ul li strong { color: #2563eb; }
 
-    .header { position: fixed !important; top: 0; left: 0; right: 0; transition: transform 0.35s cubic-bezier(0.4, 0, 0.2, 1); will-change: transform; }
-    .header.hidden { transform: translateY(-100%); }
-    body { padding-top: 56px; transition: padding-top 0.35s cubic-bezier(0.4, 0, 0.2, 1); }
-    body.header-hidden { padding-top: 0; }
+    /* ===== 导航栏：不浮在页面上，也不自动藏/弹 =====
+       以前这一条是 fixed + 2 秒后自动藏起来 + 鼠标靠近顶部就弹出来（还顺手给 body
+       补 padding-top 顶着）。问题是：鼠标只是移到画布上方（电流表那一侧）就把它
+       弹出来，正好盖住画布顶上的表和接线柱，学生正要拖线就点不到；而且补的 56px
+       比导航栏本身还矮，收起来的瞬间整页内容会往上跳一格。
+       现在它就是普通的一行：占自己的位置、跟着页面滚走，谁也不压谁（用户
+       2026-11-23 反馈的第 3 个问题）。 */
+    .header { position: relative !important; }
+
     @media (max-width: 768px) {
-      body { padding-top: 48px; }
       .meter-readout { margin-left: 0; width: 100%; justify-content: space-around; }
       .record-table-wrap { flex: 1 1 auto; }
     }
@@ -490,18 +494,34 @@ function normalizeBattery(c){
 //      （下面两个柱）等于把整根电阻丝都接进去，滑片推不动阻值。
 //
 // 开关开局【断开】：教材第一条就是「连接电路时开关应断开」。
+// 两只表开局就是【已调零】的（params.zeroed:true）：教材上「实验前先调零」这一步
+// 已经做过了，所以断路器状态下指针端端正正停在零刻度上。⚠️ 这个键必须显式写，
+// 不能指望内核 defaults 兜底 —— 本页给表写的是整套 params，一旦没写 zeroed，
+// circuit-draw 的 meterIndicated 会按「没调零」算，指针就偏出零位一小格
+// （ZERO_OFF×量程），看着像表坏了（用户 2026-11-23 反馈的第 1 个问题）。
 function seed(){
   scene.comps = [
     {id:'E',  type:'battery',   x:250, y:620, params:{emf:3, rInt:0}},
     {id:'SW', type:'switch',    x:760, y:620, params:{closed:false}},
-    {id:'A',  type:'ammeter',   x:230, y:88,  params:{range:0.6, rInternal:0}},
+    {id:'A',  type:'ammeter',   x:230, y:88,  params:{range:0.6, rInternal:0, zeroed:true}},
     {id:'RX', type:'resistor',  x:540, y:160, params:{R:pickR()}, secret:true},
     {id:'RH', type:'rheostat',  x:830, y:160, params:{Rmax:20, slide:0.5}},
-    {id:'V',  type:'voltmeter', x:540, y:348, params:{range:3, rInternal:null}},
+    {id:'V',  type:'voltmeter', x:540, y:348, params:{range:3, rInternal:null, zeroed:true}},
   ];
   scene.wires = [
     w('E',1,'A',0,[[110,620],[110,160]]),     // 电源 − → 左立线 → 电流表「−」柱
-    w('A',1,'RX',0,[]),                       // 量程柱（0.6A）→ 待测电阻左端
+    // 0.6A 量程柱（端子 1）→ 待测电阻左端。
+    // ⚠️ 这一根【不能】顺着导线行直着走到待测电阻：电流表三个柱只隔 70px，
+    //    0.6 柱往右 70px 就是 3A 柱，直着走过去那根线正好从 3A 柱的柱脚穿出来，
+    //    画面上像是「0.6 和 3 两个柱都插了线」，量程到底接在哪一个就看不出来了
+    //    （用户 2026-11-23 反馈的第 2 个问题）。
+    //    所以让引线先向下让过 3A 柱（柱身最低到 y≈168，196 处留 28px 余量），
+    //    从柱子【下面】绕过去，再抬回待测电阻的左端 —— 看上去就是一截自然垂下来
+    //    的引线，而不是一根横穿接线柱的直线。
+    //    末尾那段【要在 x=415 就抬回导线行、平着进柱子】：电压表「−」柱那根是从
+    //    左下斜着切进同一个端子的（见下面那根），两条线要是并排斜着往里收，看着
+    //    就是一根粗线（正是本文件反复踩的那个坑）。一横一斜，才分得出是两根。
+    w('A',1,'RX',0,[[330,196],[415,196],[415,160]]),
     w('RX',1,'RH',2,[[700,160],[700,134]]),   // 待测电阻右端 → 经 C 柱（金属杆）进变阻器
     w('RH',1,'SW',1,[[960,186],[960,620]]),   // 经 B 柱（电阻丝）出 → 右立线下来 → 开关右柱
     w('SW',0,'E',0,[]),                       // 开关左柱 → 电源 +
@@ -606,7 +626,9 @@ function pathOf(wire){
 function bh0(n){ return n*18 + 8; }
 // 读数框落在元件下方多远。两只表的接线柱从底座底下探出来（局部 y=72，柱子自身
 // 还往下伸到 ~75），所以表要让得更低，否则读数框会压在自己的接线柱上。
-var DROP = {battery:40, ammeter:80, voltmeter:80, resistor:22, bulb:38, rheostat:46, switch:38};
+// 电流表再低 16px（96 而不是 80）：它 0.6A 柱那根引线要从表下方绕出去（见 seed
+// 里那根导线），框留在 80 的位置正好被那截引线的拐角蹭到左上角。
+var DROP = {battery:40, ammeter:96, voltmeter:80, resistor:22, bulb:38, rheostat:46, switch:38};
 
 // 元件旁边那个读数框里写哪几行，返回 null 表示这个元件不飘框（开关写在底座上了）。
 function readoutLines(c, r){
@@ -1086,8 +1108,35 @@ function autoRange(){
   var x = results.components.RX;
   if (!x) return;
   var EPS = 1e-9;
-  if (results.components.A) editor.plugRange('A', Math.abs(x.i) <= 0.6 + EPS ? 1 : 2);
+  if (results.components.A) {
+    editor.plugRange('A', Math.abs(x.i) <= 0.6 + EPS ? 1 : 2);
+    fixALeads();                     // 拨回 0.6A 挡时把那截「绕柱」的形状补回去
+  }
   if (results.components.V) { editor.plugRange('V', Math.abs(x.v) <= 3 + EPS ? 1 : 2); fixVLeads(); }
+}
+// 电流表 0.6A 量程柱那根引线的【固定形状】（为什么必须绕，见 seed 里那根导线的注释）。
+// plugRange 换挡的规矩是「端点换了柱子就重铺成自动正交走线」，于是从 3A 挡拨回
+// 0.6A 挡时，这根线又会被铺成一条从 0.6 柱直着走到待测电阻的直线 —— 于是它又
+// 从 3A 柱的柱脚上穿过去，那个「0.6 和 3 都插了线」的错觉又回来了。
+// 所以和电压表的 fixVLeads 一个道理：拨完看一眼，形状不对就按原样补回去。
+// ⚠️ 挂在 3A 柱上时【就该是直的】（3A 柱右边再没有别的柱子），不能硬塞这组拐点。
+var A_LEAD_06 = [[330,196],[415,196],[415,160]];
+function fixALeads(){
+  if (!byId('A')) return false;
+  var touched = false;
+  scene.wires.forEach(function(wr){
+    var e = (wr.a.compId === 'A') ? wr.a : (wr.b.compId === 'A' ? wr.b : null);
+    if (!e || e.termIdx === 0) return;                     // 「−」柱那根不归这儿管
+    var want = (e.termIdx === 1) ? A_LEAD_06 : [];
+    if (JSON.stringify(wr.via) !== JSON.stringify(want) || wr.auto !== false) {
+      wr.via = want.map(function(v){ return [v[0], v[1]]; });
+      touched = true;
+    }
+  });
+  if (!touched) return false;
+  pinWires();
+  renderSoft();
+  return true;
 }
 // 电压表的【量程引线】只能手绘：三个接线柱（局部 x = −70 / 0 / +70）全长在底座
 // （半宽 100）底下，两个量程柱（540 / 610）都在壳子里，从柱子上竖直往上都会从
@@ -1763,19 +1812,8 @@ window.__closeSwitch = function(on){
 </script>
 
 <script>
-(function() {
-  var header = document.querySelector('.header');
-  var hideTimer = null, HIDE_DELAY = 800;
-  function show() { clearTimeout(hideTimer); header.classList.remove('hidden'); document.body.classList.remove('header-hidden'); }
-  function hide() { hideTimer = setTimeout(function() { header.classList.add('hidden'); document.body.classList.add('header-hidden'); }, HIDE_DELAY); }
-  document.addEventListener('mousemove', function(e) {
-    if (e.clientY <= 60) show();
-    else if (e.clientY > header.offsetHeight + 20 && !header.classList.contains('hidden')) hide();
-  });
-  header.addEventListener('mouseenter', show);
-  header.addEventListener('mouseleave', hide);
-  hideTimer = setTimeout(function() { header.classList.add('hidden'); document.body.classList.add('header-hidden'); }, 2000);
-})();
+// 导航栏不再做「自动藏 / 鼠标靠近就弹出」——那套定时器会把导航栏弹到画布上，
+// 挡住接线柱和拖线操作。现在它就是页面正常的一行，跟着页面滚走。
 </script>
 
   <script>
