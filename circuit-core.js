@@ -828,7 +828,7 @@
     AREA: Math.PI * 0.002 * 0.002, // 内径 4mm 的玻璃管截面积
     C: 4.0,                     // 等效热容 J/K
     K: 0.45,                    // 等效散热系数 W/K，时间常数 C/K≈8.9s
-    H_MAX_MM: 250               // 画面量程；超过后仍给真实 mm 数并标超量程
+    H_MAX_MM: 200               // 画面量程；2px/mm 放大显示，超出仍给真实 mm 数
   };
   // 温度（K）→ 同一根 U 形管左右液面的【总高度差】（mm）。
   function jouleHeightMmOfTemp(temp) {
