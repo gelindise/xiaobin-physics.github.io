@@ -109,6 +109,21 @@
     body.full .full-tools { display: flex; }
     .full-tools button { display: flex; align-items: center; gap: 6px; padding: 9px 15px; border: 1px solid #cbd5e1; border-radius: 9px; background: rgba(255,255,255,.95); color: #33475b; font-size: 13px; font-weight: 500; cursor: pointer; box-shadow: 0 2px 10px rgba(15,40,60,.08); }
     .full-tools button.on { background: #0f766e; border-color: #0f766e; color: #fff; }
+    /* 数据表放大：把整张表铺到画布区域，字号更大、所有列一屏看完 */
+    .stage.show-big .canvas-card { display: none; }
+    .bigtable { flex: 1 1 auto; min-width: 0; background: #fff; border: 1px solid #e2e8f0; border-radius: 14px; padding: 16px 20px 18px; display: none; flex-direction: column; box-shadow: 0 1px 3px rgba(0,0,0,.05); min-height: min(660px, calc(100vh - 250px)); }
+    .bigtable.show { display: flex; }
+    body.full .bigtable { height: 100%; padding-top: 74px; }
+    .bigtable-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+    .bigtable-head h3 { font-size: 17px; color: #16283a; }
+    .bigtable-sub { font-size: 12px; color: #8b98a6; margin-top: 4px; }
+    .bigtable-btns { display: flex; gap: 8px; flex: 0 0 auto; }
+    .bigtable-body { flex: 1 1 auto; overflow: auto; min-height: 240px; border: 1px solid #eef3f8; border-radius: 10px; padding: 4px 10px 12px; background: #fcfdfe; }
+    .bigtable-body .rec-table { font-size: 14.5px; }
+    .bigtable-body .rec-table th, .bigtable-body .rec-table td { padding: 11px 9px; }
+    .bigtable-body .rec-table thead th { position: sticky; top: 0; background: #f4f8fb; z-index: 1; }
+    .bigtable-body .rec-table td.del { font-size: 16px; }
+    .bigtable-body .rec-empty { padding: 46px 0; font-size: 14px; }
 
     @media (max-width: 1120px) {
       .stage { flex-direction: column; }
@@ -157,8 +172,22 @@
           </div>
         </div>
         <div class="hint-strip">
-          点<b>开关</b>合闸开始通电计时；从<b>接线柱</b>拖出导线可自行接线，双击导线可拆除；点容器可换电阻丝阻值（先断开开关）。右侧「<b>实验参数</b>」里可调参数、记录每次数据；点「<b>全屏</b>」把画面铺满屏幕做实验。
+          点<b>开关</b>合闸开始通电计时，再点一下断开——液面差会自己慢慢回落到相平；从<b>接线柱</b>按住拖出导线可自行连线（手怎么拖线就怎么弯），连点两下导线可拆除；点容器可换电阻丝阻值（先断开开关）。右侧「<b>实验参数</b>」里调参数、记录每次数据，「<b>放大查看</b>」把数据表铺满屏幕；点「<b>全屏</b>」把画面铺满屏幕做实验。
         </div>
+      </div>
+
+      <div class="bigtable" id="bigTable">
+        <div class="bigtable-head">
+          <div>
+            <h3>实验数据记录</h3>
+            <div class="bigtable-sub" id="bigTableSub">一屏看全每一次记录的电阻、电流、通电时间和液面差</div>
+          </div>
+          <div class="bigtable-btns">
+            <button class="btn ghost" id="btnBigClear">清空表</button>
+            <button class="btn primary" id="btnBigBack">← 返回实验</button>
+          </div>
+        </div>
+        <div class="bigtable-body" id="bigTableBody"></div>
       </div>
 
       <div class="drawer" id="drawer">
@@ -231,12 +260,13 @@
             </div>
             <div class="seg-body">
               <div class="btns">
-                <button class="btn primary" id="btnRecord" disabled>记录当前数据</button>
+                <button class="btn primary" id="btnRecord" disabled>记录数据</button>
+                <button class="btn ghost" id="btnZoomRec">放大查看</button>
                 <button class="btn ghost" id="btnClearRec">清空表</button>
                 <button class="btn ghost" id="btnReset">重置本次</button>
               </div>
               <div class="tbl-wrap" id="recWrap"></div>
-              <div class="tbl-tip">记录会按当前参数与读数追加一行；改参数或重新接线会自动「重置本次」（液面归零，已记录的数据保留）。</div>
+              <div class="tbl-tip">记录会按当前参数与读数追加一行；改参数或重新接线会自动「重置本次」（液面归零，已记录的数据保留）。断开开关后液面差会慢慢回落到相平。</div>
             </div>
           </div>
         </div>
@@ -523,13 +553,9 @@
     COMPS.j.params[which] = v;
     resetRun(false);
   }
-  function renderRecTable() {
-    var wrap = $('recWrap');
-    if (!S.records.length) {
-      wrap.innerHTML = '<div class="rec-empty">还没有数据，通电后点「记录当前数据」</div>';
-      return;
-    }
-    var head = '<table class="rec-table"><thead><tr><th>#</th><th>任务</th><th>R甲/Ω</th><th>R乙/Ω</th><th>R外/Ω</th>' +
+  function recTableHtml(big) {
+    if (!S.records.length) return '<div class="rec-empty">还没有数据：通电后点「记录数据」</div>';
+    var head = '<table class="rec-table"><thead><tr><th>#</th><th>探究任务</th><th>R甲/Ω</th><th>R乙/Ω</th><th>R外/Ω</th>' +
       '<th>I甲/A</th><th>I乙/A</th><th>t/s</th><th>Δh甲/mm</th><th>Δh乙/mm</th><th></th></tr></thead><tbody>';
     var body = S.records.map(function (r, i) {
       return '<tr><td>' + (i + 1) + '</td><td>' + r.mode + '</td><td>' + r.R1 + '</td><td>' + r.R2 + '</td>' +
@@ -537,10 +563,32 @@
         '<td>' + r.t.toFixed(1) + '</td><td>' + r.h1.toFixed(1) + '</td><td>' + r.h2.toFixed(1) + '</td>' +
         '<td class="del" data-i="' + i + '">×</td></tr>';
     }).join('');
-    wrap.innerHTML = head + body + '</tbody></table>';
-    Array.prototype.forEach.call(wrap.querySelectorAll('.del'), function (el) {
-      el.onclick = function () { S.records.splice(+el.dataset.i, 1); syncUI(); };
+    return head + body + '</tbody></table>';
+  }
+  function bindRecDel(el) {
+    Array.prototype.forEach.call(el.querySelectorAll('.del'), function (d) {
+      d.onclick = function () { S.records.splice(+d.dataset.i, 1); syncUI(); };
     });
+  }
+  function renderRecTable() {
+    var wrap = $('recWrap');
+    wrap.innerHTML = recTableHtml(false);
+    bindRecDel(wrap);
+    if ($('bigTable').classList.contains('show')) renderBigTable();
+  }
+  function renderBigTable() {
+    var box = $('bigTableBody');
+    box.innerHTML = recTableHtml(true);
+    bindRecDel(box);
+    $('bigTableSub').textContent = S.records.length
+      ? '共 ' + S.records.length + ' 组数据 · 一屏看全电阻、电流、通电时间与液面差'
+      : '一屏看全每一次记录的电阻、电流、通电时间和液面差';
+  }
+  function openBigTable(on) {
+    document.querySelector('.stage').classList.toggle('show-big', on);
+    $('bigTable').classList.toggle('show', on);
+    if (on) renderBigTable();
+    setTimeout(fitCanvas, 60);
   }
 
   /* ================= 绘制 ================= */
@@ -548,6 +596,39 @@
   var dpr = Math.max(1, window.devicePixelRatio || 1);
   cv.width = W * dpr; cv.height = H * dpr;
 
+  // 等距重采样：命中判定和电流光点都按点走，直线段上没有中间点就会「看得见摸不着」
+  function densify(pts, step) {
+    var out = [pts[0]];
+    for (var d = 1; d < pts.length; d++) {
+      var a = pts[d - 1], b = pts[d];
+      var len = Math.hypot(b.x - a.x, b.y - a.y);
+      var n = Math.max(1, Math.ceil(len / step));
+      for (var k = 1; k <= n; k++) out.push({ x: a.x + (b.x - a.x) * k / n, y: a.y + (b.y - a.y) * k / n });
+    }
+    return out;
+  }
+  // 手绘轨迹 → 自然曲线（Catmull-Rom 样条）。手怎么拖，线就怎么弯。
+  function curveFrom(raw) {
+    var p = raw.filter(function (q, i) {
+      return i === 0 || Math.hypot(q.x - raw[i - 1].x, q.y - raw[i - 1].y) > 1.5;
+    });
+    if (p.length < 3) return densify(p, 8);
+    var stride = Math.max(1, Math.floor(p.length / 42));
+    var key = p.filter(function (q, i) { return i % stride === 0 || i === p.length - 1; });
+    var out = [], seg = 7;
+    for (var i = 0; i < key.length - 1; i++) {
+      var p0 = key[i - 1] || key[i], p1 = key[i], p2 = key[i + 1], p3 = key[i + 2] || key[i + 1];
+      for (var s = 0; s < seg; s++) {
+        var t = s / seg, t2 = t * t, t3 = t2 * t;
+        out.push({
+          x: 0.5 * (2 * p1.x + (-p0.x + p2.x) * t + (2 * p0.x - 5 * p1.x + 4 * p2.x - p3.x) * t2 + (-p0.x + 3 * p1.x - 3 * p2.x + p3.x) * t3),
+          y: 0.5 * (2 * p1.y + (-p0.y + p2.y) * t + (2 * p0.y - 5 * p1.y + 4 * p2.y - p3.y) * t2 + (-p0.y + 3 * p1.y - 3 * p2.y + p3.y) * t3)
+        });
+      }
+    }
+    out.push(key[key.length - 1]);
+    return densify(out, 8);
+  }
   // 直角折线 + 拐角抹圆：把折线的尖角换成 8 段二次贝塞尔采样点。
   function roundCorners(pts, r) {
     var out = [pts[0]];
@@ -569,15 +650,7 @@
     var clean = out.filter(function (q, i2, arr) {
       return i2 === 0 || Math.hypot(q.x - arr[i2 - 1].x, q.y - arr[i2 - 1].y) > 0.3;
     });
-    // 等距重采样：命中判定和电流光点都按点走，直线段上没有中间点就会「看得见摸不着」
-    var dense = [clean[0]];
-    for (var d = 1; d < clean.length; d++) {
-      var a = clean[d - 1], b = clean[d];
-      var len = Math.hypot(b.x - a.x, b.y - a.y);
-      var n2 = Math.max(1, Math.ceil(len / 8));
-      for (var k = 1; k <= n2; k++) dense.push({ x: a.x + (b.x - a.x) * k / n2, y: a.y + (b.y - a.y) * k / n2 });
-    }
-    return dense;
+    return densify(clean, 8);
   }
   function pathBy(p, q) {
     var midY = Math.max(96, Math.min(p.y, q.y) - 62);
@@ -601,9 +674,10 @@
       }
     });
     if (S.drag) {
-      var p = termPos(S.drag.c, S.drag.i), q = { x: S.drag.x, y: S.drag.y };
-      ctx.save(); ctx.setLineDash([7, 5]);
-      D.drawWire(ctx, pathBy(p, q), { width: 4.4, color: '#17a2b8' });
+      // 预览就画用户手上的轨迹，松手后同一条轨迹变成成品导线
+      var trail = S.drag.path && S.drag.path.length > 2 ? S.drag.path : pathBy(termPos(S.drag.c, S.drag.i), { x: S.drag.x, y: S.drag.y });
+      ctx.save(); ctx.globalAlpha = 0.9;
+      D.drawWire(ctx, trail, { width: 4.6, color: '#17a2b8' });
       ctx.restore();
     }
   }
@@ -725,7 +799,7 @@
     var t = pickTerminal(p);
     if (t) {
       lastWireHit = -1;
-      S.drag = { c: t.key, i: t.idx, x: p.x, y: p.y };
+      S.drag = { c: t.key, i: t.idx, x: p.x, y: p.y, path: [{ x: t.p.x, y: t.p.y }] };
       try { cv.setPointerCapture(ev.pointerId); } catch (e) {}
       return;
     }
@@ -749,7 +823,16 @@
   });
   cv.addEventListener('pointermove', function (ev) {
     var p = toWorld(ev);
-    if (S.drag) { S.drag.x = p.x; S.drag.y = p.y; S.hover = pickTerminal(p); return; }
+    if (S.drag) {
+      S.drag.x = p.x; S.drag.y = p.y;
+      var lastPt = S.drag.path[S.drag.path.length - 1];
+      if (!lastPt || Math.hypot(p.x - lastPt.x, p.y - lastPt.y) > 4) {
+        S.drag.path.push({ x: p.x, y: p.y });
+        if (S.drag.path.length > 380) S.drag.path.splice(1, 1);
+      }
+      S.hover = pickTerminal(p);
+      return;
+    }
     var t = pickTerminal(p);
     S.hover = t;
     cv.style.cursor = t ? 'crosshair' : (hitSwitch(p) || hitJouleBox(p) ? 'pointer' : (hitWire(p) >= 0 ? 'pointer' : 'default'));
@@ -764,10 +847,10 @@
           (w.b[0] === S.drag.c && w.b[1] === S.drag.i && w.a[0] === t.key && w.a[1] === t.idx);
       });
       if (!dup) {
-        S.wires.push({
-          a: [S.drag.c, S.drag.i], b: [t.key, t.idx],
-          pts: pathBy(termPos(S.drag.c, S.drag.i), t.p)
-        });
+        var trail = (S.drag.path || []).concat([{ x: t.p.x, y: t.p.y }]);
+        // 手绘轨迹够长就用它做曲线；只点了两下（几乎没有拖动）时退回自动走线
+        var pts = trail.length >= 5 ? curveFrom(trail) : pathBy(termPos(S.drag.c, S.drag.i), t.p);
+        S.wires.push({ a: [S.drag.c, S.drag.i], b: [t.key, t.idx], pts: pts });
         resetRun(false);
       }
     }
@@ -801,6 +884,11 @@
   $('zoomOut').onclick = function () { S.zoom = Math.max(0.6, S.zoom - 0.14); };
   $('zoomFit').onclick = function () { S.zoom = 1; };
 
+  // 数据表放大：把整张表铺到画布位置，一屏看完所有列
+  $('btnZoomRec').onclick = function () { openBigTable(true); };
+  $('btnBigBack').onclick = function () { openBigTable(false); };
+  $('btnBigClear').onclick = function () { S.records = []; syncUI(); };
+
   var drawer = $('drawer'), btnParam = $('btnParam'), btnParamFull = $('btnParamFull');
   function togglePanel(force) {
     var show = typeof force === 'boolean' ? force : drawer.classList.contains('hide');
@@ -830,26 +918,53 @@
   }
   $('btnFull').onclick = function () { setFull(true); };
   $('btnExit').onclick = function () { setFull(false); };
-  document.addEventListener('keydown', function (e) { if (e.key === 'Escape') setFull(false); });
+  document.addEventListener('keydown', function (e) {
+    if (e.key !== 'Escape') return;
+    if (document.querySelector('.stage').classList.contains('show-big')) { openBigTable(false); return; }
+    setFull(false);
+  });
   window.addEventListener('resize', fitCanvas);
 
   /* ================= 主循环 ================= */
   var last = performance.now(), uiClock = 0;
-  function tick(ts) {
-    var dt = Math.min(0.05, (ts - last) / 1000);
+  var COOL_TAU = 2.6;   // 断电后容器里空气放热时间常数（s），液面差按指数回落到相平
+  // 物理推进单独抽出来：动画帧负责画面，计时器兜底推进，
+  // 这样浏览器把窗口挂到后台、动画帧被暂停时，液面该回落也照样回落。
+  function stepSim(ts) {
+    var dt = Math.min(0.2, Math.max(0, (ts - last) / 1000));
     last = ts;
     S.anim += dt;
     if (S.toastT > 0) S.toastT = Math.max(0, S.toastT - dt);
+    var cooling = false;
     if (powered()) {
       S.t += dt;
       S.Q.L += S.P.L * dt;
       S.Q.R += S.P.R * dt;
+    } else if (S.Q.L > 0.0001 || S.Q.R > 0.0001) {
+      // 开关一断开，电阻丝不再放热，被加热的空气慢慢冷却，两管液面回落、最后相平
+      var curH = K_HEAT * Math.max(S.Q.L, S.Q.R);
+      if (curH < 0.6) {           // 只差不到 0.6mm 时直接收干净，读数停在 0.0（两管相平）
+        S.Q.L = 0; S.Q.R = 0;
+      } else {
+        var tau = curH < 2.2 ? 0.6 : COOL_TAU;    // 尾巴收得快一点，最后干脆停在相平
+        var k = Math.exp(-dt / tau);
+        S.Q.L *= k; S.Q.R *= k;
+        if (S.Q.L < 0.02) S.Q.L = 0;
+        if (S.Q.R < 0.02) S.Q.R = 0;
+        cooling = true;
+      }
+    }
+    if (powered() || cooling) {
       uiClock += dt;
       if (uiClock > 0.12) { uiClock = 0; syncUI(); }
     }
+  }
+  function tick(ts) {
+    stepSim(ts);
     draw();
     requestAnimationFrame(tick);
   }
+  setInterval(function () { stepSim(performance.now()); }, 60);
 
   setMode('res');
   requestAnimationFrame(tick);
