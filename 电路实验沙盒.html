@@ -1050,7 +1050,7 @@
        （上一批是 core 23 / draw 37 / editor 28 / params 5 / schematic 17，
          这一轮五个文件都动了：世界加宽 + 电表放大 + 读数牌搬家 + 单刀双掷开关。） -->
 <script src="circuit-core.js?build=61"></script>
-<script src="circuit-draw.js?build=81"></script>
+<script src="circuit-draw.js?build=82"></script>
 <!-- ════════════════════════════════════════════════════════════════════
      【教材版本皮肤 · 已从线上撤下】2026-10-12
      人教版元件外观（circuit-skin*.js 共 5 个文件）暂不在线上启用，学生看到的
@@ -1945,8 +1945,9 @@ var DROP = {battery:40, power:46, ammeter:80, voltmeter:80, galvanometer:80,
             // 插入式电阻箱：底座下沿 +70（丝下面的阻值印到 +66）——
             // 读数框落在 78，正好在底座外面一点，不压住那排 6Ω/4Ω/2Ω。
             plugbox:78,
-            // U 形管底与盒底齐平（+110），名称标签落在 132。
-            joule:132,
+            // U 形管底与盒底齐平（+110），秒表底座再往下到 +163；
+            // 名称标签落到 190，不压秒表按键。
+            joule:190,
             // 量热瓶：瓶底 +139（温度计往上伸到 −139）—— 读数框落在 149。
             calorimeter:149,
             // 恒温箱：箱底 +82（箱盖上的柱子往上探到 −107）—— 读数框落在 92，
@@ -2433,6 +2434,34 @@ function spinOf(id){ return spinAng[id] || 0; }
 // 用 WeakMap 按元件对象记：撤销 / 读档换来新对象时自然从室温开始，不会把
 // 上一个场景的 J1 余热错安到新场景的同名 J1 上；删掉元件也不留垃圾。
 var jouleThermal = new WeakMap();
+// 演示器秒表状态：按元件对象记，撤销 / 读档换成新对象后从 0 开始。
+// elapsed 只累加「真的在通电且没有暂停」的时间，所以它就是产热时间，
+// 不是挂钟时间；暂停期间无论停多久，秒表和液面都不会自己往前走。
+var jouleWatch = new WeakMap();
+function jouleWatchOf(c){
+  var w = jouleWatch.get(c);
+  if (!w) {
+    w = { elapsed: 0, paused: false, started: false, heating: false };
+    jouleWatch.set(c, w);
+  }
+  return w;
+}
+function toggleJouleWatch(c){
+  var w = jouleWatchOf(c);
+  w.paused = !w.paused;
+  // 暂停只冻结，不清零、不降温；再按一次从原来的时间与液面继续。
+  syncJouleThermal(0);
+  drawFrame();
+  return w.paused;
+}
+function jouleWatchAt(p){
+  if (!p || !results || !results.components) return null;
+  for (var i = 0; i < scene.comps.length; i++){
+    var c = scene.comps[i];
+    if (c.type === 'joule' && D.jouleWatchHit(c, p.x, p.y)) return c;
+  }
+  return null;
+}
 function syncJouleThermal(dt){
   if (!results || !results.components || !C.jouleStepThermal) return false;
   var moving = false;
@@ -2442,10 +2471,20 @@ function syncJouleThermal(dt){
     if (!r) return;
     var st = jouleThermal.get(c);
     if (!st) { st = C.jouleNewThermal(); jouleThermal.set(c, st); }
+    var w = jouleWatchOf(c);
+    var heating = !!(r.powers && (r.powers[0] > 1e-7 || r.powers[1] > 1e-7));
+    if (heating) w.started = true;
+    // 通电且未暂停才累计。暂停期间传进来的真实 dt 直接丢掉，这就是
+    // 「时间暂停、停止加热、不冷却」在状态上的唯一实现。
+    if (!w.paused && heating && dt > 0) w.elapsed += dt;
+    w.heating = heating && !w.paused;
+    C.jouleApplyThermal(r, st);              // 即使暂停，也要把这刻的液面写回新 rec
+    r.watch = { elapsed: w.elapsed, paused: w.paused,
+                started: w.started, heating: w.heating };
+    if (w.paused) return;                    // 液面、温度、热量全部原地冻结
     var t0 = st.temp[0], t1 = st.temp[1];
     C.jouleStepThermal(st, r.powers, dt);
     C.jouleApplyThermal(r, st);
-    var heating = (r.powers && (r.powers[0] > 1e-7 || r.powers[1] > 1e-7));
     var changing = Math.abs(st.temp[0] - t0) + Math.abs(st.temp[1] - t1) > 1e-8;
     var stillWarm = st.temp[0] > C.JOULE_THERMAL.T0 + 1e-4 ||
                     st.temp[1] > C.JOULE_THERMAL.T0 + 1e-4;
@@ -6664,6 +6703,17 @@ canvas.addEventListener('pointerdown', function(e){
   if (grab) return;
   var lp = logicalFromClient(e.clientX, e.clientY);
   if (!lp || !lp.inside) return;
+  // 焦耳演示器秒表的暂停键：它画在仪器本体里面，不先吃掉这一下就会被
+  // 编辑器当成「拖动整台仪器 / 选中元件」。捕获阶段直接 stopImmediate，
+  // 编辑器的 pointerdown 根本不会跑。
+  var jw = jouleWatchAt(lp);
+  if (jw){
+    toggleJouleWatch(jw);
+    e.preventDefault();
+    if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+    else e.stopPropagation();
+    return;
+  }
   // 删除叉号优先：点中叉号 → 放行给编辑器（它会命中 hitDeleteButton 删除）。
   if (delBtnHitAt(lp)) return;
   // 悬空线头排在最前：它往往就压在接线柱旁边（吸附半径 26px，线头离柱心
@@ -6717,6 +6767,7 @@ canvas.addEventListener('pointermove', function(e){
   hoverCurT = now;
   var lp = logicalFromClient(e.clientX, e.clientY);
   if (!lp || !lp.inside) return;
+  if (jouleWatchAt(lp)) { canvas.style.cursor = 'pointer'; return; }
   if (looseHit(lp) || pullHit(lp) || physHit(lp)) canvas.style.cursor = 'grab';
 }, false);
 // 拖拽期间用 window 监听：指针划出画布再松手也要收得到（画布上的 pointerup
@@ -8131,7 +8182,25 @@ window.__driveAnim = function(seconds, dt){
   drawFrame();
   return { frames: n, moving: moved, animT: animT };
 };
-window.__resetAnim = function(){ animT = 0; spinAng = {}; jouleThermal = new WeakMap(); syncJouleThermal(0); drawFrame(); };
+window.__resetAnim = function(){ animT = 0; spinAng = {}; jouleThermal = new WeakMap(); jouleWatch = new WeakMap(); syncJouleThermal(0); drawFrame(); };
+window.__jouleWatch = function(id){
+  var c = editor && editor.byId(id);
+  if (!c || c.type !== 'joule') return null;
+  var w = jouleWatchOf(c);
+  var r = results && results.components ? results.components[id] : null;
+  return { elapsed: w.elapsed, paused: w.paused, started: w.started,
+           heating: !!(r && r.watch && r.watch.heating),
+           levels: r && r.levels ? r.levels.slice() : null,
+           heightMm: r && r.heightMm ? r.heightMm.slice() : null };
+};
+window.__toggleJouleWatch = function(id){
+  var c = editor && editor.byId(id);
+  return c && c.type === 'joule' ? toggleJouleWatch(c) : null;
+};
+window.__jouleWatchPoint = function(id){
+  var c = editor && editor.byId(id);
+  return c && c.type === 'joule' ? D.jouleWatchCenter(c) : null;
+};
 // 真实循环的探针：本机 headless 常常一帧 rAF 都不回调，凡是「关掉粒子之后器材
 // 还动不动」这类断言就没法跑。但【不能】退回去调 driveAnim —— driveAnim 直接
 // 调 stepMotion，而「关掉粒子就不推进器材」这个错法恰恰长在 tick 里那句

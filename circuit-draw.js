@@ -612,6 +612,11 @@
     LVL_REST: -46, LVL_MAX: 130,
     HEAT_Y: 42, HEAT_R: 25,                  // 电热丝圈心 / 半径
     LABEL_Y: 80, CURRENT_Y: 99,              // 阻值与它正下方的电流读数
+    // 秒表底座：挂在 U 形管正下方，和演示器同一条中轴线。
+    // 左边数码窗、右边暂停键；尺寸同时供绘制和命中使用，不许各写一份。
+    WATCH_X: -100, WATCH_Y: 119, WATCH_W: 200, WATCH_H: 44,
+    WATCH_DX: -92, WATCH_DY: 125, WATCH_DW: 110, WATCH_DH: 32,
+    WATCH_BX: 24, WATCH_BY: 125, WATCH_BW: 68, WATCH_BH: 32,
     HW: 157, HH: 215,                        // 包围盒（管顶与上方读数标签）
   };
   // 箱体中心 x（i = 0 甲 / 1 乙）
@@ -4248,6 +4253,84 @@
     }
   }
 
+  // 与演示器一体的秒表：左边数码窗、右边暂停键。
+  // elapsed 只由页面按【真实通电时间】累加，暂停时不再增加；这里不碰物理量，
+  // 只负责把秒表状态原样画出来，避免画面上的时间与液面各走一套。
+  function drawJouleStopwatch(ctx, watch) {
+    var J = JOULE;
+    var w = watch || { elapsed: 0, paused: false, started: false, heating: false };
+    var elapsed = Math.max(0, num(w.elapsed, 0));
+    var mins = Math.floor(elapsed / 60);
+    var secs = Math.floor(elapsed % 60);
+    var tenths = Math.floor((elapsed - Math.floor(elapsed)) * 10 + 1e-7);
+    var clock = (mins < 10 ? '0' : '') + mins + ':' +
+                (secs < 10 ? '0' : '') + secs + '.' + tenths;
+
+    ctx.save();
+    // 底座：浅色金属面板，一道顶部高光压出厚度。
+    softShadow(ctx, J.WATCH_X, J.WATCH_Y, J.WATCH_W, J.WATCH_H, 10, 7);
+    roundRect(ctx, J.WATCH_X, J.WATCH_Y, J.WATCH_W, J.WATCH_H, 9);
+    ctx.fillStyle = linGrad(ctx, 0, J.WATCH_Y, 0, J.WATCH_Y + J.WATCH_H,
+      [[0, '#f8fbfe'], [0.45, '#dfe9f4'], [1, '#b8c9dc']]);
+    ctx.fill();
+    ctx.strokeStyle = '#526174'; ctx.lineWidth = 1.3; ctx.stroke();
+    ctx.strokeStyle = 'rgba(255,255,255,0.82)'; ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(J.WATCH_X + 8, J.WATCH_Y + 1.4);
+    ctx.lineTo(J.WATCH_X + J.WATCH_W - 8, J.WATCH_Y + 1.4);
+    ctx.stroke();
+
+    // 数码窗：深色底 + 等宽数字。暂停时整体转琥珀色，一眼能看出「冻结了」。
+    roundRect(ctx, J.WATCH_DX, J.WATCH_DY, J.WATCH_DW, J.WATCH_DH, 5);
+    ctx.fillStyle = linGrad(ctx, 0, J.WATCH_DY, 0, J.WATCH_DY + J.WATCH_DH,
+      [[0, '#14202e'], [1, '#26394d']]);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(8,15,26,0.75)'; ctx.lineWidth = 1; ctx.stroke();
+    var cx = J.WATCH_DX + J.WATCH_DW / 2;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.font = 'bold 17px ui-monospace,Menlo,Consolas,monospace';
+    ctx.fillStyle = w.paused ? '#fbbf24' : (w.heating ? '#7dd3fc' : '#cbd5e1');
+    ctx.fillText(clock, cx, J.WATCH_DY + 12);
+    ctx.font = '9px -apple-system,"PingFang SC",sans-serif';
+    ctx.fillStyle = w.paused ? '#fcd34d' : 'rgba(203,213,225,0.82)';
+    var status = w.paused ? '暂停中·停止加热'
+               : w.heating ? '计时中'
+               : w.started ? '已停止' : '待通电';
+    ctx.fillText(status, cx, J.WATCH_DY + 25);
+
+    // 暂停 / 继续键：暂停时变成琥珀色，文字也随之改成「继续」。
+    roundRect(ctx, J.WATCH_BX, J.WATCH_BY, J.WATCH_BW, J.WATCH_BH, 6);
+    ctx.fillStyle = w.paused
+      ? linGrad(ctx, 0, J.WATCH_BY, 0, J.WATCH_BY + J.WATCH_BH,
+          [[0, '#f59e0b'], [1, '#c2410c']])
+      : linGrad(ctx, 0, J.WATCH_BY, 0, J.WATCH_BY + J.WATCH_BH,
+          [[0, '#14b8a6'], [1, '#0e7490']]);
+    ctx.fill();
+    ctx.strokeStyle = w.paused ? '#9a3412' : '#155e75'; ctx.lineWidth = 1.1; ctx.stroke();
+    ctx.strokeStyle = 'rgba(255,255,255,0.55)'; ctx.lineWidth = 0.8;
+    ctx.beginPath();
+    ctx.moveTo(J.WATCH_BX + 6, J.WATCH_BY + 1.2);
+    ctx.lineTo(J.WATCH_BX + J.WATCH_BW - 6, J.WATCH_BY + 1.2);
+    ctx.stroke();
+
+    ctx.fillStyle = '#ffffff';
+    if (w.paused) {
+      var triX = J.WATCH_BX + 14, triY = J.WATCH_BY + J.WATCH_BH / 2;
+      ctx.beginPath();
+      ctx.moveTo(triX, triY - 6); ctx.lineTo(triX + 10, triY); ctx.lineTo(triX, triY + 6);
+      ctx.closePath(); ctx.fill();
+    } else {
+      var barX = J.WATCH_BX + 15, barY = J.WATCH_BY + J.WATCH_BH / 2;
+      ctx.fillRect(barX, barY - 6, 3.2, 12);
+      ctx.fillRect(barX + 6.2, barY - 6, 3.2, 12);
+    }
+    ctx.font = 'bold 13px -apple-system,"PingFang SC",sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(w.paused ? '继续' : '暂停', J.WATCH_BX + 47,
+                 J.WATCH_BY + J.WATCH_BH / 2 + 0.5);
+    ctx.restore();
+  }
+
   function drawJoule(ctx, comp, rec, opts) {
     var J = JOULE;
     // levels 由页面的动态热状态给出；heightMm 是同一根管子的总液面差。
@@ -4274,8 +4357,11 @@
       drawJouleLiquid(ctx, sgn, yOut, yIn);
       drawJouleLevelGauge(ctx, sgn, yOut, yIn, Math.max(0, heights[i] || 0), !!overs[i]);
       var power = rec && rec.boxes && rec.boxes[i] ? rec.boxes[i].p : 0;
+      // 暂停时停止加热：液面与温度由页面冻住，热气流也不该继续往上飘。
+      if (rec && rec.watch && rec.watch.paused) power = 0;
       drawJouleHeatFlow(ctx, sgn, power, yOut, animTime);
     });
+    drawJouleStopwatch(ctx, rec && rec.watch);
 
     ctx.restore();
     // 四根接线柱：甲 红/黑、乙 红/黑（无极性，颜色只是「两根柱」的区分）
@@ -8674,10 +8760,29 @@
     ctx.stroke();
   }
 
+  // 秒表暂停键的命中：把世界坐标反推回仪器自身坐标再和 WATCH_B* 比。
+  // 缩放 / 旋转都交给 toLocal 那唯一一份逆变换，绘制和命中不会各算一套。
+  function jouleWatchHit(comp, wx, wy) {
+    if (!comp || comp.type !== 'joule') return false;
+    var q = toLocal(comp, wx, wy), J = JOULE, pad = 5;
+    return q.x >= J.WATCH_BX - pad && q.x <= J.WATCH_BX + J.WATCH_BW + pad &&
+           q.y >= J.WATCH_BY - pad && q.y <= J.WATCH_BY + J.WATCH_BH + pad;
+  }
+  // 暂停键中心的【世界坐标】。自检要发一个真实 pointerdown 到按钮上，
+  // 不能另抄一套几何；缩放 / 旋转照旧由 toWorld 统一处理。
+  function jouleWatchCenter(comp) {
+    var J = JOULE;
+    return toWorld(comp, J.WATCH_BX + J.WATCH_BW / 2, J.WATCH_BY + J.WATCH_BH / 2);
+  }
+
   return {
     PALETTE: PALETTE, HALF: HALF, TERMINALS: TERMINALS,
     terminalWorld: terminalWorld, terminalWorldIn: terminalWorldIn,
     toWorld: toWorld, toLocal: toLocal,
+    // 焦耳演示器秒表的暂停键命中：页面在画布的捕获阶段先用它吃掉这一下，
+    // 否则点击会继续往下走成「拖动整台仪器」。
+    jouleWatchHit: jouleWatchHit,
+    jouleWatchCenter: jouleWatchCenter,
     // flipOf —— 「对调极性」的单一真值（读 comp.params.flip）。绘制、命中、
     //          测试都该问它，别各自去翻 params。
     // endWorld —— 解【导线端点】的唯一入口：元件还在就走端子坐标，元件被删了
