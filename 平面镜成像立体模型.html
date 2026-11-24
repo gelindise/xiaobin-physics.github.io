@@ -835,6 +835,16 @@
         sx: STAGE.scr.x, sz: STAGE.scr.z,
         aLit: false,                 // A 是否点燃
         snapped: false,              // B 是否被「吸」到像的位置
+        // 【吸附是「此刻」的状态，不是贴在像身上的一张标签】
+        // snapAt 记下吸附发生时【像】在哪。像一挪（A 动了，或玻璃板动了），
+        // 吸附立刻作废、B 留在原地——真实实验里 B 是摆在桌上的一支实物蜡烛，
+        // 它不会跟着像跑。学生正是靠这一幕看到「重合断开了」。
+        snapAt: { x: 0, y: 0, z: 0 },
+        // 这一帧 B 是不是被【用户亲手挪过】。只有亲手挪 B 才允许建立吸附：
+        // 否则 A 一走、像一挪，B 又恰好落在像附近 1.3 cm 内，就会一格一格跟着像爬回去。
+        bMoved: false,
+        // 吸附是被「像挪走了」打断的（不是学生自己把 B 拖开的）——提示文案要分开说
+        snapLost: false,
         coincideErr: 1e9,            // B 与像的距离（世界单位）
         screenChecked: false,        // 是否做过光屏验证
         screenHit: false,            // 此刻光屏是否正放在像的位置
@@ -1191,13 +1201,41 @@
        * 【为什么距离里带 y】镜面一倾，像就升到桌面上方（底面 y > 0），
        * 而 B 是站在桌上的实物——带上 y 这一维之后，倾斜时 B 自然「够不着」像，
        * 不需要为倾角另写一条特判。gt = 0 时 y = 0，与改动前逐字等价。
+       * ------------------------------------------------------------
+       * 【吸附的两个前提，少一个就出「重合成了一体」的假象】
+       *   ① 吸附只在【用户亲手挪 B】的那一帧建立（bMoved）。拖 A、挪玻璃板不算：
+       *      否则 A 走一小步、像挪到 B 旁边，B 又落回 1.3 cm 圈内，就会一格一格
+       *      跟着像爬——画面上就成了「B 和像一起动」，跟真实实验完全不是一回事。
+       *   ② 吸附只在【像没动】期间维持。像一挪（A 或玻璃板动了），吸附立刻作废，
+       *      B 一动不动地留在原地，重合当场断开——真实实验里就是这样：
+       *      你挪板前那支蜡烛，板后那支没点燃的不会自己跟着走，得重新把它对过去。
+       *      这一条也是学生该看见的一幕，所以还配一句动作回馈（见下面 showToast）。
        * ============================================================ */
       function updateCoincide() {
         const im = imagePos();
         let d = Math.hypot(state.bx - im.x, 0 - im.y, state.bz - im.z);
-        if (state.snapped) { if (d > 0.20) state.snapped = false; }
-        else { if (d < 0.13) state.snapped = true; }
+        if (state.snapped) {
+          const s = state.snapAt;
+          // 像被挪走了（A 或玻璃板动了）。1e-6 是浮点余量：输入没变时 imagePos() 逐位相同。
+          const imgMoved = !s || Math.abs(im.x - s.x) > 1e-6
+                                || Math.abs(im.y - s.y) > 1e-6
+                                || Math.abs(im.z - s.z) > 1e-6;
+          if (imgMoved) {
+            state.snapped = false;
+            state.snapLost = true;
+            showToast('像换了位置，' + (state.src === 'f' ? 'F 光源 B' : '蜡烛 B')
+                    + ' 留在原地 —— 重合断开了，重新把它拖过去对齐');
+          } else if (d > 0.20) {
+            state.snapped = false;          // 学生自己把 B 拖开了（回差 2.0 cm）
+          }
+        } else if (state.bMoved && d < 0.13) {
+          state.snapped = true;
+          state.snapAt = { x: im.x, y: im.y, z: im.z };
+          state.snapLost = false;
+        }
         if (state.snapped) { state.bx = im.x; state.bz = im.z; d = 0; }
+        // 学生亲手挪过 B ⇒「像把 B 丢在原地」这个说法不再适用，提示文案换回普通那句
+        if (state.bMoved) { state.snapLost = false; state.bMoved = false; }
         state.coincideErr = d;
         // 光屏是否正放在像的位置（±1.5 cm 内）。同样带 y：像升起来之后，
         // 屏（竖在桌上）也就够不到它了——这正是「屏上接不到虚像」的直观版本。
@@ -3232,6 +3270,9 @@
           state.drag = 'point';
           canvas.classList.add('pick', 'dragging');
         } else if (hit) {
+          // 【亲手抓 B 就算「在摆器材」】从这一下按下开始允许吸附（见 updateCoincide）：
+          // 拖 A、挪玻璃板永远不吸附，B 才不会跟着像一起走。
+          if (hit === 'b') state.bMoved = true;
           const q = {}; makeCam(q, state.w, state.h);
           const wpt = unproject(p.x, p.y, q);
           const cur = posOf(hit);
@@ -3295,6 +3336,8 @@
             syncInputs(); state.dirty = true;
           }
         } else if (state.drag) {
+          // 拖着 B 走 ⇒ 这一帧算「学生在挪 B」，允许吸附（拖 A 不算，见 updateCoincide）
+          if (state.drag === 'b') state.bMoved = true;
           const q = {}; makeCam(q, state.w, state.h);
           const wpt = unproject(p.x, p.y, q);
           if (wpt) setPos(state.drag, wpt[0] + state.dragOff[0], wpt[2] + state.dragOff[1]);
@@ -3571,7 +3614,15 @@
             + '而像在板后。把它往<b>板后</b>拖：从板外侧（右边那片空地）绕过去最顺手，'
             + '或者直接往板后拖过板面也行——它不会停在玻璃里，会被挡在板外 2 cm 处。';
         } else if (!co) {
-          html = '<b>观察提示：</b>' + bName + '距离像还有 <b>'
+          // 【这一段专治「B 怎么没跟着走」】上一帧还完全重合，这一帧却断开了，学生第一反应
+          // 是页面算错了。所以先把原因明说：像换了位置，B 留在原地——不跟才是对的，
+          // B 是桌上的一支实物蜡烛，像才是 A 在镜子里的影子。
+          html = '<b>观察提示：</b>'
+            + (state.snapLost
+              ? '<b>' + aName + '（或玻璃板）一动，像就挪到新位置，而 ' + bName
+                + ' 摆在桌上<b>不会跟着像走</b>，所以重合断开了。</b>'
+              : '')
+            + bName + ' 距离像还有 <b>'
             + (state.coincideErr * U).toFixed(1) + ' cm</b>。继续移动它，'
             + (isF ? '注意看 B 的竖笔和两根横笔——和像里的 F 完全对齐时，就是「完全重合」。'
                    : '注意看 B 的烛芯——当烛芯正好落在 A 的火焰上时，B 就像被点着了，那一刻就是「完全重合」。');
@@ -3866,6 +3917,8 @@
         // 高度也回到默认（和板的大小一样属于「装置参数」，重做实验就该复位）
         state.ch = CH; state.fh = F_H; state.sh = SCR_H;
         state.aLit = false; state.snapped = false; state.screenChecked = false;
+        // 吸附的三个随身状态也复位：不然重做一次实验，上一轮「像挪走」的提示会莫名继续挂着
+        state.bMoved = false; state.snapLost = false;
         state.ghostAlways = false; ui.always.checked = false;
         // 发光点也回到默认（烛焰中部、5 条光线、【光路关闭】）——它属于「装置参数」，
         // 重做实验就该复位；否则上一轮拖到蜡烛根部，这一轮一进来就找不到亮点。
@@ -4177,8 +4230,10 @@
           o = o || {};
           if (o.ax != null) state.ax = o.ax;
           if (o.az != null) state.az = o.az;
-          if (o.bx != null) { state.bx = o.bx; state.snapped = false; }
-          if (o.bz != null) { state.bz = o.bz; state.snapped = false; }
+          // 【直接设定 B 的位置 = 有人亲手摆了 B】记 bMoved，才允许新建立吸附
+          // （见 updateCoincide：拖 A / 挪板不能凭空把 B 吸走）。
+          if (o.bx != null) { state.bx = o.bx; state.snapped = false; state.bMoved = true; }
+          if (o.bz != null) { state.bz = o.bz; state.snapped = false; state.bMoved = true; }
           if (o.sx != null) state.sx = o.sx;
           if (o.sz != null) state.sz = o.sz;
           if (o.aLit != null) state.aLit = o.aLit;
@@ -4316,6 +4371,7 @@
         nudgeB(bx, bz) {
           if (bx != null) state.bx = bx;
           if (bz != null) state.bz = bz;
+          state.bMoved = true;           // 这条路径也是「亲手挪 B」，允许建立吸附
           updateCoincide();
           syncInputs(); updateReadout();
           state.dirty = true;
@@ -4325,6 +4381,8 @@
         // 已经变成新值了，回差和「板挡在中间」这两条根本验不到。
         // 拖动时 setPos 读到的 cur 是【上一帧】的位置，才是真行为。
         dragTo(k, x, z) {
+          // 拖的是 B ⇒ 这一下算「学生在摆器材」，允许建立吸附（拖 A 不算，见 updateCoincide）
+          if (k === 'b') state.bMoved = true;
           setPos(k, x, z);
           syncInputs(); updateCoincide(); updateReadout();
           state.dirty = true;
