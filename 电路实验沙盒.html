@@ -1050,7 +1050,7 @@
        （上一批是 core 23 / draw 37 / editor 28 / params 5 / schematic 17，
          这一轮五个文件都动了：世界加宽 + 电表放大 + 读数牌搬家 + 单刀双掷开关。） -->
 <script src="circuit-core.js?build=61"></script>
-<script src="circuit-draw.js?build=82"></script>
+<script src="circuit-draw.js?build=83"></script>
 <!-- ════════════════════════════════════════════════════════════════════
      【教材版本皮肤 · 已从线上撤下】2026-10-12
      人教版元件外观（circuit-skin*.js 共 5 个文件）暂不在线上启用，学生看到的
@@ -2454,11 +2454,26 @@ function toggleJouleWatch(c){
   drawFrame();
   return w.paused;
 }
+// 复位 = 把这一轮实验的读数回到起点：计时归零、两只容器的热量与液面回初始。
+// 暂停时按复位仍保持暂停（便于对新一轮先读数再开始），继续时按复位则立即
+// 从 0 开始重新计时。只归零时间、不回到初始液面的话，下一次记录的高度差
+// 不是从 0 时刻长起来的，就不再是同一轮实验的数据。
+function resetJouleWatch(c){
+  var w = jouleWatchOf(c);
+  w.elapsed = 0;
+  w.started = false;
+  jouleThermal.set(c, C.jouleNewThermal());
+  syncJouleThermal(0);
+  drawFrame();
+  return true;
+}
 function jouleWatchAt(p){
   if (!p || !results || !results.components) return null;
   for (var i = 0; i < scene.comps.length; i++){
     var c = scene.comps[i];
-    if (c.type === 'joule' && D.jouleWatchHit(c, p.x, p.y)) return c;
+    if (c.type !== 'joule') continue;
+    var action = D.jouleWatchAction(c, p.x, p.y);
+    if (action) return { comp: c, action: action };
   }
   return null;
 }
@@ -2473,7 +2488,7 @@ function syncJouleThermal(dt){
     if (!st) { st = C.jouleNewThermal(); jouleThermal.set(c, st); }
     var w = jouleWatchOf(c);
     var heating = !!(r.powers && (r.powers[0] > 1e-7 || r.powers[1] > 1e-7));
-    if (heating) w.started = true;
+    if (heating && !w.paused) w.started = true;
     // 通电且未暂停才累计。暂停期间传进来的真实 dt 直接丢掉，这就是
     // 「时间暂停、停止加热、不冷却」在状态上的唯一实现。
     if (!w.paused && heating && dt > 0) w.elapsed += dt;
@@ -6703,12 +6718,13 @@ canvas.addEventListener('pointerdown', function(e){
   if (grab) return;
   var lp = logicalFromClient(e.clientX, e.clientY);
   if (!lp || !lp.inside) return;
-  // 焦耳演示器秒表的暂停键：它画在仪器本体里面，不先吃掉这一下就会被
-  // 编辑器当成「拖动整台仪器 / 选中元件」。捕获阶段直接 stopImmediate，
+  // 焦耳演示器秒表的暂停 / 复位键：它们画在仪器本体里面，不先吃掉这一下
+  // 就会被编辑器当成「拖动整台仪器 / 选中元件」。捕获阶段直接 stopImmediate，
   // 编辑器的 pointerdown 根本不会跑。
   var jw = jouleWatchAt(lp);
   if (jw){
-    toggleJouleWatch(jw);
+    if (jw.action === 'reset') resetJouleWatch(jw.comp);
+    else toggleJouleWatch(jw.comp);
     e.preventDefault();
     if (e.stopImmediatePropagation) e.stopImmediatePropagation();
     else e.stopPropagation();
@@ -8197,9 +8213,13 @@ window.__toggleJouleWatch = function(id){
   var c = editor && editor.byId(id);
   return c && c.type === 'joule' ? toggleJouleWatch(c) : null;
 };
-window.__jouleWatchPoint = function(id){
+window.__resetJouleWatch = function(id){
   var c = editor && editor.byId(id);
-  return c && c.type === 'joule' ? D.jouleWatchCenter(c) : null;
+  return c && c.type === 'joule' ? resetJouleWatch(c) : null;
+};
+window.__jouleWatchPoint = function(id, which){
+  var c = editor && editor.byId(id);
+  return c && c.type === 'joule' ? D.jouleWatchCenter(c, which) : null;
 };
 // 真实循环的探针：本机 headless 常常一帧 rAF 都不回调，凡是「关掉粒子之后器材
 // 还动不动」这类断言就没法跑。但【不能】退回去调 driveAnim —— driveAnim 直接

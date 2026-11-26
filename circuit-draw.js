@@ -613,10 +613,12 @@
     HEAT_Y: 42, HEAT_R: 25,                  // 电热丝圈心 / 半径
     LABEL_Y: 80, CURRENT_Y: 99,              // 阻值与它正下方的电流读数
     // 秒表底座：挂在 U 形管正下方，和演示器同一条中轴线。
-    // 左边数码窗、右边暂停键；尺寸同时供绘制和命中使用，不许各写一份。
-    WATCH_X: -100, WATCH_Y: 119, WATCH_W: 200, WATCH_H: 44,
-    WATCH_DX: -92, WATCH_DY: 125, WATCH_DW: 110, WATCH_DH: 32,
-    WATCH_BX: 24, WATCH_BY: 125, WATCH_BW: 68, WATCH_BH: 32,
+    // 从左到右：数码窗 → 暂停/继续键 → 复位键；尺寸同时供绘制和命中使用，
+    // 不许各写一份。
+    WATCH_X: -122, WATCH_Y: 119, WATCH_W: 244, WATCH_H: 44,
+    WATCH_DX: -114, WATCH_DY: 125, WATCH_DW: 106, WATCH_DH: 32,
+    WATCH_BX: -2, WATCH_BY: 125, WATCH_BW: 58, WATCH_BH: 32,
+    WATCH_RX: 62, WATCH_RY: 125, WATCH_RW: 52, WATCH_RH: 32,
     HW: 157, HH: 215,                        // 包围盒（管顶与上方读数标签）
   };
   // 箱体中心 x（i = 0 甲 / 1 乙）
@@ -4315,19 +4317,36 @@
 
     ctx.fillStyle = '#ffffff';
     if (w.paused) {
-      var triX = J.WATCH_BX + 14, triY = J.WATCH_BY + J.WATCH_BH / 2;
+      var triX = J.WATCH_BX + 10, triY = J.WATCH_BY + J.WATCH_BH / 2;
       ctx.beginPath();
-      ctx.moveTo(triX, triY - 6); ctx.lineTo(triX + 10, triY); ctx.lineTo(triX, triY + 6);
+      ctx.moveTo(triX, triY - 6); ctx.lineTo(triX + 9, triY); ctx.lineTo(triX, triY + 6);
       ctx.closePath(); ctx.fill();
     } else {
-      var barX = J.WATCH_BX + 15, barY = J.WATCH_BY + J.WATCH_BH / 2;
+      var barX = J.WATCH_BX + 11, barY = J.WATCH_BY + J.WATCH_BH / 2;
       ctx.fillRect(barX, barY - 6, 3.2, 12);
-      ctx.fillRect(barX + 6.2, barY - 6, 3.2, 12);
+      ctx.fillRect(barX + 5.6, barY - 6, 3.2, 12);
     }
-    ctx.font = 'bold 13px -apple-system,"PingFang SC",sans-serif';
+    ctx.font = 'bold 12.5px -apple-system,"PingFang SC",sans-serif';
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText(w.paused ? '继续' : '暂停', J.WATCH_BX + 47,
+    ctx.fillText(w.paused ? '继续' : '暂停', J.WATCH_BX + 37,
                  J.WATCH_BY + J.WATCH_BH / 2 + 0.5);
+
+    // 复位键：中性灰蓝，和「暂停/继续」拉开层级 —— 它只管把读数回到起点，
+    // 不承担暂停加热的语义。暂停时按下保持暂停，继续时按下立即开始新一轮。
+    roundRect(ctx, J.WATCH_RX, J.WATCH_RY, J.WATCH_RW, J.WATCH_RH, 6);
+    ctx.fillStyle = linGrad(ctx, 0, J.WATCH_RY, 0, J.WATCH_RY + J.WATCH_RH,
+      [[0, '#f1f5f9'], [1, '#cbd5e1']]);
+    ctx.fill();
+    ctx.strokeStyle = '#64748b'; ctx.lineWidth = 1.1; ctx.stroke();
+    ctx.strokeStyle = 'rgba(255,255,255,0.9)'; ctx.lineWidth = 0.8;
+    ctx.beginPath();
+    ctx.moveTo(J.WATCH_RX + 6, J.WATCH_RY + 1.2);
+    ctx.lineTo(J.WATCH_RX + J.WATCH_RW - 6, J.WATCH_RY + 1.2);
+    ctx.stroke();
+    ctx.fillStyle = '#334155';
+    ctx.font = 'bold 12px -apple-system,"PingFang SC",sans-serif';
+    ctx.fillText('复位', J.WATCH_RX + J.WATCH_RW / 2,
+                 J.WATCH_RY + J.WATCH_RH / 2 + 0.5);
     ctx.restore();
   }
 
@@ -8760,27 +8779,39 @@
     ctx.stroke();
   }
 
-  // 秒表暂停键的命中：把世界坐标反推回仪器自身坐标再和 WATCH_B* 比。
+  // 秒表按键的命中：把世界坐标反推回仪器自身坐标再和按键矩形比。
   // 缩放 / 旋转都交给 toLocal 那唯一一份逆变换，绘制和命中不会各算一套。
-  function jouleWatchHit(comp, wx, wy) {
-    if (!comp || comp.type !== 'joule') return false;
+  function jouleWatchAction(comp, wx, wy) {
+    if (!comp || comp.type !== 'joule') return null;
     var q = toLocal(comp, wx, wy), J = JOULE, pad = 5;
-    return q.x >= J.WATCH_BX - pad && q.x <= J.WATCH_BX + J.WATCH_BW + pad &&
-           q.y >= J.WATCH_BY - pad && q.y <= J.WATCH_BY + J.WATCH_BH + pad;
+    if (q.x >= J.WATCH_BX - pad && q.x <= J.WATCH_BX + J.WATCH_BW + pad &&
+        q.y >= J.WATCH_BY - pad && q.y <= J.WATCH_BY + J.WATCH_BH + pad) return 'pause';
+    if (q.x >= J.WATCH_RX - pad && q.x <= J.WATCH_RX + J.WATCH_RW + pad &&
+        q.y >= J.WATCH_RY - pad && q.y <= J.WATCH_RY + J.WATCH_RH + pad) return 'reset';
+    return null;
   }
-  // 暂停键中心的【世界坐标】。自检要发一个真实 pointerdown 到按钮上，
+  // 兼容旧调用：只问「是不是点在暂停键上」。
+  function jouleWatchHit(comp, wx, wy) {
+    return jouleWatchAction(comp, wx, wy) === 'pause';
+  }
+  // 两个按键中心的【世界坐标】。自检要发真实 pointerdown 到按钮上，
   // 不能另抄一套几何；缩放 / 旋转照旧由 toWorld 统一处理。
-  function jouleWatchCenter(comp) {
+  function jouleWatchCenter(comp, which) {
     var J = JOULE;
-    return toWorld(comp, J.WATCH_BX + J.WATCH_BW / 2, J.WATCH_BY + J.WATCH_BH / 2);
+    var x = which === 'reset' ? J.WATCH_RX + J.WATCH_RW / 2
+                              : J.WATCH_BX + J.WATCH_BW / 2;
+    var y = which === 'reset' ? J.WATCH_RY + J.WATCH_RH / 2
+                              : J.WATCH_BY + J.WATCH_BH / 2;
+    return toWorld(comp, x, y);
   }
 
   return {
     PALETTE: PALETTE, HALF: HALF, TERMINALS: TERMINALS,
     terminalWorld: terminalWorld, terminalWorldIn: terminalWorldIn,
     toWorld: toWorld, toLocal: toLocal,
-    // 焦耳演示器秒表的暂停键命中：页面在画布的捕获阶段先用它吃掉这一下，
+    // 焦耳演示器秒表的按键命中：页面在画布的捕获阶段先用它吃掉这一下，
     // 否则点击会继续往下走成「拖动整台仪器」。
+    jouleWatchAction: jouleWatchAction,
     jouleWatchHit: jouleWatchHit,
     jouleWatchCenter: jouleWatchCenter,
     // flipOf —— 「对调极性」的单一真值（读 comp.params.flip）。绘制、命中、
