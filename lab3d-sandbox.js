@@ -2832,6 +2832,7 @@ function syncUI() {
   buildParams();
   refreshParams();
   syncRoad();
+  if (guidePanel && !guidePanel.hidden) refreshGuideGear();
 }
 
 // ============================================================
@@ -2903,7 +2904,33 @@ function toggleSettings(force) {
 }
 $('heSettings').addEventListener('click', () => toggleSettings());
 $('heSettingsClose').addEventListener('click', () => toggleSettings(false));
-$('heGuide').addEventListener('click', () => $('app').classList.toggle('noside'));
+// —— 指南抽屉 ——
+const guidePanel = $('heGuidePanel');
+function refreshGuideGear() {
+  const ul = $('guideGear');
+  if (!ul) return;
+  if (!items.length) { ul.innerHTML = '<li>桌面上还没有器材，从左侧器材箱取一件摆上来。</li>'; return; }
+  ul.innerHTML = items.map((it) => {
+    const m = metaOf(it);
+    return `<li>${m.label}${m.spec ? ' · ' + m.spec : ''}</li>`;
+  }).join('');
+}
+function toggleGuide(force) {
+  const open = force != null ? force : guidePanel.hidden;
+  guidePanel.hidden = !open;
+  $('heGuide').classList.toggle('on', open);
+  if (open) refreshGuideGear();
+}
+$('heGuide').addEventListener('click', () => toggleGuide());
+$('heGuideClose').addEventListener('click', () => toggleGuide(false));
+document.querySelectorAll('#guideTabs button').forEach((b) => {
+  b.addEventListener('click', () => {
+    document.querySelectorAll('#guideTabs button').forEach((x) => x.classList.toggle('on', x === b));
+    ['gear', 'step', 'data', 'conc', 'prin', 'wrong'].forEach((s) => {
+      const sec = $('sec-' + s); if (sec) sec.hidden = s !== b.dataset.sec;
+    });
+  });
+});
 $('heSchematic').addEventListener('click', () => toast('电路图叠加将在后续版本接入'));
 
 const lockBtn = $('heLock');

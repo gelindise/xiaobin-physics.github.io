@@ -52,6 +52,7 @@ export const MAT = {
   // 闸刀开关的浅蓝灰塑料底座（人教版插图那种颜色）
   basePlate: new THREE.MeshStandardMaterial({ color: 0x8499b2, roughness: 0.5, metalness: 0.14 }),
   red: new THREE.MeshStandardMaterial({ color: 0xc83b32, roughness: 0.42, metalness: 0.08 }),
+  orange: new THREE.MeshStandardMaterial({ color: 0xf59e0b, roughness: 0.42, metalness: 0.1 }),
   black: new THREE.MeshStandardMaterial({ color: 0x151b24, roughness: 0.55, metalness: 0.25 }),
   copper: new THREE.MeshStandardMaterial({ color: 0xb66a2e, roughness: 0.32, metalness: 0.78 }),
 };
@@ -1408,8 +1409,8 @@ function meterPadTexture(kind) {
   const cv = document.createElement('canvas');
   cv.width = W; cv.height = H;
   const g = cv.getContext('2d');
-  g.fillStyle = '#2f8f5b'; g.fillRect(0, 0, W, H);
-  g.strokeStyle = '#eef6f1'; g.lineWidth = 7;
+  g.fillStyle = '#2b6cb0'; g.fillRect(0, 0, W, H);
+  g.strokeStyle = '#eef3f9'; g.lineWidth = 7;
   g.strokeRect(11, 11, W - 22, H - 22);
   const labels = kind === 'ammeter' ? ['−', '0.6', '3'] : ['−', '3', '15'];
   // 🔴 板宽是 BASE_W−16 = 108 mm（不是 124），柱子 x = ±POST_X = ±34 ⇒ 相对偏移 34/108。
@@ -1468,7 +1469,7 @@ export function buildMeter(opts) {
   const termLocal = {};
   [-1, 0, 1].forEach((k, i) => {
     const x = k * D.POST_X;
-    const matCap = i === 0 ? MAT.black : MAT.red;
+    const matCap = i === 0 ? MAT.black : MAT.orange;
     const pad2 = new THREE.Mesh(new THREE.CylinderGeometry(D.POST_R + 3.4, D.POST_R + 4, 2.2, 24), MAT.steel);
     pad2.position.set(x, 1.8, D.POST_Z);
     inner.add(tag(pad2, 'postPad'));
@@ -2097,7 +2098,7 @@ export function buildPower() {
   const swBox = new THREE.Mesh(new THREE.BoxGeometry(20, 26, 4), MAT.plastic);
   swBox.position.set(-76, 22, D.D / 2 + 2);
   inner.add(tag(swBox, 'powerSwitch'));
-  const swRocker = new THREE.Mesh(new THREE.BoxGeometry(14, 18, 3), MAT.plasticSoft);
+  const swRocker = new THREE.Mesh(new THREE.BoxGeometry(14, 18, 3), MAT.red);
   swRocker.position.set(-76, 22, D.D / 2 + 4);
   inner.add(tag(swRocker, 'rocker'));
 
@@ -2109,7 +2110,7 @@ export function buildPower() {
     base.rotation.x = Math.PI / 2;
     base.position.set(x, 26, D.D / 2 + 1.4);
     inner.add(tag(base, 'postPad'));
-    const cap = new THREE.Mesh(knurledGeometry(D.POST_R, D.POST_H), name === '+' ? MAT.red : MAT.black);
+    const cap = new THREE.Mesh(knurledGeometry(D.POST_R, D.POST_H), MAT.orange);
     cap.rotation.x = Math.PI / 2;
     cap.position.set(x, 26, D.D / 2 + 2.6 + D.POST_H / 2);
     cap.userData.termId = name;
