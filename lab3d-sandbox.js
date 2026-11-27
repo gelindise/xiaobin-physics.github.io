@@ -2931,6 +2931,47 @@ document.querySelectorAll('#guideTabs button').forEach((b) => {
     });
   });
 });
+// —— 数据记录表：记录这一组 / 清空数据 ——
+let records = [];
+function loadRows() {
+  const out = [];
+  items.forEach((it) => {
+    const r = results && results.components ? results.components[it.id] : null;
+    if (!r) return;
+    const m = metaOf(it);
+    let bright = '—';
+    if (it.api && typeof it.api.getBrightness === 'function') {
+      bright = Math.round(it.api.getBrightness() * 100) + '%';
+    }
+    out.push({ name: m.label, v: r.v || 0, i: r.i || 0, p: r.p || 0, bright });
+  });
+  return out;
+}
+function renderRecords() {
+  const wrap = $('recWrap');
+  const cnt = $('recCnt');
+  if (cnt) cnt.textContent = records.length;
+  if (!records.length) {
+    wrap.innerHTML = '<p class="rec-empty">还没有记录。改一次条件，点「记录这一组」。</p>';
+    return;
+  }
+  let html = '<table class="hd-rec-table"><thead><tr><th>组</th><th>器材</th><th>U/V</th><th>I/A</th><th>P/W</th><th>亮度</th></tr></thead><tbody>';
+  records.forEach((rec) => {
+    rec.rows.forEach((row, k) => {
+      html += `<tr><td>${k === 0 ? rec.no : ''}</td><td class="nm">${row.name}</td><td>${row.v.toFixed(2)}</td><td>${row.i.toFixed(3)}</td><td>${row.p.toFixed(2)}</td><td>${row.bright}</td></tr>`;
+    });
+  });
+  html += '</tbody></table>';
+  wrap.innerHTML = html;
+}
+$('recAdd').addEventListener('click', () => {
+  const rows = loadRows();
+  if (!rows.length) { toast('先在桌上接好电路，再记录这一组'); return; }
+  records.push({ no: records.length + 1, rows });
+  renderRecords();
+});
+$('recClear').addEventListener('click', () => { records = []; renderRecords(); });
+
 $('heSchematic').addEventListener('click', () => toast('电路图叠加将在后续版本接入'));
 
 const lockBtn = $('heLock');
