@@ -70,8 +70,9 @@ renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.02;
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x0b1220);
-scene.fog = new THREE.Fog(0x0b1220, 3200, 6200);
+// 参考站风格：纯深灰背景（无房间墙面 / 柜子 / 窗户 / 地砖），器材直接摆在深色台面上。
+scene.background = new THREE.Color(0x262626);
+scene.fog = new THREE.Fog(0x262626, 3600, 6800);
 
 const camera = new THREE.PerspectiveCamera(40, 1.6, 1, 12000);
 
@@ -136,123 +137,21 @@ const matGlass = new THREE.MeshPhysicalMaterial({
   side: THREE.DoubleSide, depthWrite: false,
 });
 const matWood = new THREE.MeshStandardMaterial({ color: 0x9a7452, roughness: 0.62, metalness: 0.06 });
-const matTop = new THREE.MeshStandardMaterial({ color: 0x3f4b54, roughness: 0.78, metalness: 0.06 });
+const matTop = new THREE.MeshStandardMaterial({ color: 0x333333, roughness: 0.78, metalness: 0.06 });
+const matRim = new THREE.MeshStandardMaterial({ color: 0x262626, roughness: 0.7, metalness: 0.08 });
 const matLeg = new THREE.MeshStandardMaterial({ color: 0x7c8895, roughness: 0.42, metalness: 0.62 });
 const matLamp = new THREE.MeshBasicMaterial({ color: 0xfff6e2 });
 
 (function buildRoom() {
-  const floor = new THREE.Mesh(new THREE.PlaneGeometry(5200, 4200), matFloor);
-  floor.rotation.x = -Math.PI / 2;
-  floor.position.y = FLOOR_Y;
-  scene.add(floor);
-
-  // 后墙 / 左墙（L 形），踢脚线单独一条
-  const back = new THREE.Mesh(new THREE.BoxGeometry(5200, 2600, 60), matWall);
-  back.position.set(0, FLOOR_Y + 1300, -1600);
-  scene.add(back);
-  const left = new THREE.Mesh(new THREE.BoxGeometry(60, 2600, 3200), matWall);
-  left.position.set(-2600, FLOOR_Y + 1300, 0);
-  scene.add(left);
-  const skirtB = new THREE.Mesh(new THREE.BoxGeometry(5200, 90, 12), matWallDark);
-  skirtB.position.set(0, FLOOR_Y + 45, -1565);
-  scene.add(skirtB);
-  const skirtL = new THREE.Mesh(new THREE.BoxGeometry(12, 90, 3200), matWallDark);
-  skirtL.position.set(-2565, FLOOR_Y + 45, 0);
-  scene.add(skirtL);
-
-  // 实验柜（后墙右侧）：柜体 + 两层玻璃门 + 拉手
-  const cab = new THREE.Group();
-  cab.position.set(1360, FLOOR_Y, -1440);
-  const body = new THREE.Mesh(new THREE.BoxGeometry(720, 1500, 400), matCabinet);
-  body.position.y = 750;
-  cab.add(body);
-  const plinth = new THREE.Mesh(new THREE.BoxGeometry(780, 70, 440), matCabinetDark);
-  plinth.position.y = 35;
-  cab.add(plinth);
-  const top = new THREE.Mesh(new THREE.BoxGeometry(750, 38, 430), matCabinetDark);
-  top.position.y = 1518;
-  cab.add(top);
-  // 玻璃门（两扇）
-  [-1, 1].forEach((s) => {
-    const pane = new THREE.Mesh(new THREE.PlaneGeometry(320, 620), matGlass);
-    pane.position.set(s * 172, 1040, 204);
-    cab.add(pane);
-    const frame = new THREE.Mesh(new THREE.BoxGeometry(330, 640, 16), matCabinetDark);
-    frame.position.set(s * 172, 1040, 196);
-    cab.add(frame);
-    const handle = new THREE.Mesh(new THREE.CylinderGeometry(7, 7, 110, 12), matLeg);
-    handle.position.set(s * 24, 1040, 216);
-    cab.add(handle);
-  });
-  // 下层抽屉
-  const drawer = new THREE.Mesh(new THREE.BoxGeometry(700, 340, 28), matCabinetDark);
-  drawer.position.set(0, 560, 200);
-  cab.add(drawer);
-  const knob = new THREE.Mesh(new THREE.SphereGeometry(14, 16, 12), matLeg);
-  knob.position.set(0, 560, 220);
-  cab.add(knob);
-  scene.add(cab);
-
-  // 窗户（后墙左侧）：窗框 + 发光的「户外」
-  const win = new THREE.Group();
-  win.position.set(-780, FLOOR_Y, -1566);
-  // 户外天光：上蓝下白的一段渐变，比纯色更像「窗外的天」
-  const skyCv = document.createElement('canvas');
-  skyCv.width = 8; skyCv.height = 128;
-  const sg = skyCv.getContext('2d');
-  const lg2 = sg.createLinearGradient(0, 0, 0, 128);
-  lg2.addColorStop(0, '#8fc4ec');
-  lg2.addColorStop(0.55, '#cfe6f6');
-  lg2.addColorStop(1, '#eef6fb');
-  sg.fillStyle = lg2; sg.fillRect(0, 0, 8, 128);
-  const skyTex = new THREE.CanvasTexture(skyCv);
-  skyTex.colorSpace = THREE.SRGBColorSpace;
-  const glass = new THREE.Mesh(new THREE.PlaneGeometry(720, 820),
-    new THREE.MeshBasicMaterial({ map: skyTex }));
-  glass.position.y = 1180;
-  win.add(glass);
-  const wf = new THREE.MeshStandardMaterial({ color: 0x7d8b9a, roughness: 0.5, metalness: 0.3 });
-  [[0, 780, 740, 26], [0, 1580, 740, 26], [-370, 1180, 26, 820], [370, 1180, 26, 820], [0, 1180, 24, 820]]
-    .forEach(([x, y, w, h]) => {
-      const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, 22), wf);
-      m.position.set(x, y, 6);
-      win.add(m);
-    });
-  const sill = new THREE.Mesh(new THREE.BoxGeometry(800, 30, 90), matWallDark);
-  sill.position.set(0, 762, 40);
-  win.add(sill);
-  scene.add(win);
-
-  // 左墙的「实验守则」牌（一块深框 + 浅面板 + 几条文字线）
-  const board = new THREE.Group();
-  board.position.set(-2560, 700, 260);
-  const bFrame = new THREE.Mesh(new THREE.BoxGeometry(10, 660, 940), matCabinetDark);
-  board.add(bFrame);
-  const bFace = new THREE.Mesh(new THREE.BoxGeometry(6, 620, 900),
-    new THREE.MeshStandardMaterial({ color: 0xeef3f8, roughness: 0.86 }));
-  bFace.position.x = 4;
-  board.add(bFace);
-  const lineMat = new THREE.MeshStandardMaterial({ color: 0x93a3b4, roughness: 0.9 });
-  for (let i = 0; i < 5; i++) {
-    const ln = new THREE.Mesh(new THREE.BoxGeometry(3, 14, 620 - i * 40), lineMat);
-    ln.position.set(8, 200 - i * 90, i % 2 ? 60 : 20);
-    board.add(ln);
-  }
-  scene.add(board);
-
-  // 天花板两排灯管
-  const lampMat = matLamp;
-  [-300, 300].forEach((z) => {
-    const bar = new THREE.Mesh(new THREE.BoxGeometry(1500, 34, 90), lampMat);
-    bar.position.set(0, FLOOR_Y + 2520, z);
-    scene.add(bar);
-    const shell = new THREE.Mesh(new THREE.BoxGeometry(1560, 46, 130), matWallDark);
-    shell.position.set(0, FLOOR_Y + 2552, z);
-    scene.add(shell);
-    const pl = new THREE.PointLight(0xfff4e0, 0.32, 2600, 2);
-    pl.position.set(0, FLOOR_Y + 2450, z);
-    scene.add(pl);
-  });
+  // 参考站风格：去掉房间墙面 / 柜子 / 窗户 / 守则牌 / 天花板灯管，
+  // 只留一块超大深色接地平面，承接器材的接触阴影，背景与台面之间靠明暗区分。
+  const ground = new THREE.Mesh(
+    new THREE.PlaneGeometry(9000, 7000),
+    new THREE.MeshStandardMaterial({ color: 0x1f1f1f, roughness: 0.92, metalness: 0.02 })
+  );
+  ground.rotation.x = -Math.PI / 2;
+  ground.position.y = FLOOR_Y;
+  scene.add(ground);
 })();
 
 // ============================================================
@@ -282,44 +181,23 @@ function buildTable() {
   top.position.y = -TABLE_T / 2;
   top.userData.role = 'deskTop';
   tableGroup.add(top);
-  // 木色包边（一圈，比台面高一点点）
+  // 深色包边（一圈，比台面高一点点）
   const rimY = 2;
   [[0, rimY, -D / 2 - 4, W + 16, 10, 8], [0, rimY, D / 2 + 4, W + 16, 10, 8],
    [-W / 2 - 4, rimY, 0, 8, 10, D + 16], [W / 2 + 4, rimY, 0, 8, 10, D + 16]]
     .forEach(([x, y, z, w, h, d]) => {
-      const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), matWood);
+      const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), matRim);
       m.position.set(x, y, z);
       tableGroup.add(m);
     });
   // 拼接缝：每 800 mm 一条
-  const seamMat = new THREE.MeshStandardMaterial({ color: 0x2b343d, roughness: 0.85, metalness: 0.04 });
+  const seamMat = new THREE.MeshStandardMaterial({ color: 0x2a2a2a, roughness: 0.85, metalness: 0.04 });
   for (let x = -W / 2 + 800; x < W / 2 - 40; x += 800) {
     const seam = new THREE.Mesh(new THREE.BoxGeometry(3, 0.6, D - 16), seamMat);
     seam.position.set(x, 0.2, 0);
     tableGroup.add(seam);
   }
-  // 桌腿：按宽度分段（每 ~840 mm 一档），保证长桌不「中间塌」
-  const legH = TABLE_H - TABLE_T;
-  const bays = Math.max(2, Math.round(W / 840) + 1);
-  for (let i = 0; i < bays; i++) {
-    const lx = bays === 1 ? 0 : (-W / 2 + 70) + (W - 140) * (i / (bays - 1));
-    [-1, 1].forEach((sz) => {
-      const leg = new THREE.Mesh(new THREE.BoxGeometry(52, legH, 52), matLeg);
-      leg.position.set(lx, -TABLE_T - legH / 2, sz * (D / 2 - 60));
-      tableGroup.add(leg);
-      const foot = new THREE.Mesh(new THREE.BoxGeometry(64, 12, 64), matCabinetDark);
-      foot.position.set(lx, FLOOR_Y + 6, sz * (D / 2 - 60));
-      tableGroup.add(foot);
-    });
-  }
-  [-1, 1].forEach((sz) => {
-    const beam = new THREE.Mesh(new THREE.BoxGeometry(W - 180, 34, 34), matLeg);
-    beam.position.set(0, -TABLE_T - legH + 90, sz * (D / 2 - 60));
-    tableGroup.add(beam);
-  });
-  const shelf = new THREE.Mesh(new THREE.BoxGeometry(W - 220, 16, D - 160), matCabinetDark);
-  shelf.position.set(0, -TABLE_T - legH + 110, 0);
-  tableGroup.add(shelf);
+  // 参考站风格：不露桌腿 / 横梁 / 下层隔板，台面像一块悬浮的实验台板。
 }
 buildTable();
 // 桌面尺寸变化 ⇒ 重建 + 重新取景（器材的世界坐标不动，桌子绕中心长大）
@@ -333,15 +211,15 @@ function resizeDesk(w, d) {
   return true;
 }
 
-// 灯光
-scene.add(new THREE.HemisphereLight(0xeaf3ff, 0x2b3644, 0.72));
-const key = new THREE.DirectionalLight(0xffffff, 1.25);
+// 灯光：中性柔和主光 + 弱补光，避免偏蓝冷调，贴近参考站的棚拍观感。
+scene.add(new THREE.HemisphereLight(0xf2f2f2, 0x2a2a2a, 0.62));
+const key = new THREE.DirectionalLight(0xffffff, 1.15);
 key.position.set(900, 1700, 1100);
 scene.add(key);
-const fill = new THREE.DirectionalLight(0xbcd8ff, 0.42);
+const fill = new THREE.DirectionalLight(0xe8ecf2, 0.34);
 fill.position.set(-1100, 900, 800);
 scene.add(fill);
-const rim = new THREE.DirectionalLight(0xdce9ff, 0.5);
+const rim = new THREE.DirectionalLight(0xffffff, 0.28);
 rim.position.set(200, 700, -1200);
 scene.add(rim);
 
