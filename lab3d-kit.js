@@ -49,8 +49,8 @@ export const MAT = {
   plastic: new THREE.MeshStandardMaterial({ color: 0x26354a, roughness: 0.58, metalness: 0.18 }),
   plasticSoft: new THREE.MeshStandardMaterial({ color: 0x9db3ca, roughness: 0.38, metalness: 0.28 }),
   base: new THREE.MeshStandardMaterial({ color: 0x7189a3, roughness: 0.48, metalness: 0.48 }),
-  // 闸刀开关的浅蓝灰塑料底座（人教版插图那种颜色）
-  basePlate: new THREE.MeshStandardMaterial({ color: 0x8499b2, roughness: 0.5, metalness: 0.14 }),
+  // 闸刀开关 / 灯泡座的深色塑料底座（参考站实物为黑色底板）
+  basePlate: new THREE.MeshStandardMaterial({ color: 0x2a2f36, roughness: 0.5, metalness: 0.14 }),
   red: new THREE.MeshStandardMaterial({ color: 0xc83b32, roughness: 0.42, metalness: 0.08 }),
   orange: new THREE.MeshStandardMaterial({ color: 0xf59e0b, roughness: 0.42, metalness: 0.1 }),
   black: new THREE.MeshStandardMaterial({ color: 0x151b24, roughness: 0.55, metalness: 0.25 }),
@@ -304,7 +304,7 @@ export function buildRheostat(opts) {
     bevelSize: 0.7, bevelSegments: 3, curveSegments: 20,
   });
   handleGeo.translate(0, 0, -8);
-  const handle = new THREE.Mesh(handleGeo, MAT.plasticSoft);
+  const handle = new THREE.Mesh(handleGeo, MAT.orange);
   handle.position.y = DIM.ROD_Y + 3;
   slider.add(handle);
 
@@ -504,7 +504,7 @@ export function buildSwitch(opts) {
     const stem = new THREE.Mesh(new THREE.CylinderGeometry(D.POST_R * 0.72, D.POST_R * 0.72, 4, 20), MAT.brass);
     stem.position.set(x, 3.4, D.POST_Z);
     inner.add(stem);
-    const cap = new THREE.Mesh(knurledGeometry(D.POST_R, D.POST_H), MAT.red);
+    const cap = new THREE.Mesh(knurledGeometry(D.POST_R, D.POST_H), sx < 0 ? MAT.black : MAT.orange);
     cap.position.set(x, 3.4 + D.POST_H / 2, D.POST_Z);
     cap.userData.termId = sx < 0 ? 'A' : 'B';
     inner.add(cap);
@@ -1041,7 +1041,7 @@ export function buildBulb(opts) {
     const stem = new THREE.Mesh(new THREE.CylinderGeometry(D.POST_R * 0.72, D.POST_R * 0.72, 4, 20), MAT.brass);
     stem.position.set(x, 3.4, D.POST_Z);
     inner.add(tag(stem, 'postStem'));
-    const cap = new THREE.Mesh(knurledGeometry(D.POST_R, D.POST_H), MAT.red);
+    const cap = new THREE.Mesh(knurledGeometry(D.POST_R, D.POST_H), MAT.black);
     cap.position.set(x, 3.4 + D.POST_H / 2, D.POST_Z);
     cap.userData.termId = sx < 0 ? 'a' : 'b';
     inner.add(tag(cap, 'postCap'));
