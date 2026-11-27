@@ -803,6 +803,10 @@ const WIRE_G = 5.6;           // 桌面段离台面的高度（≈ 导线半径 
 const WIRE_PAD = WIRE_R + 12; // 绕行时离别的器材轮廓至少留 12 mm（软线不会贴着壳走）
 const WIRE_STEP = 6;          // 折线重采样步长（mm）：y 的过渡要靠它来铺开
 const WIRE_SLOPE = 1.0;       // 导线允许的最大爬升斜率（1 = 45°，软线不会更陡）
+// 电流流动粒子：沿线移动的琥珀色小珠
+const beadGeo = new THREE.SphereGeometry(WIRE_R * 0.95, 12, 8);
+const beadMat = new THREE.MeshBasicMaterial({ color: 0xffd166 });
+const BEADS_PER_WIRE = 3;
 // 某个桌面位置上「至少要抬到多高」才能从器材上面跨过去（给自由端预览用）。
 function clearanceAt(x, z, skipA, skipB, skipPts) {
   let y = 0;
@@ -1104,7 +1108,9 @@ function wireGeoFor(p1, p2, side, skipA, skipB, dir1, dir2) {
   const v3 = pts.map((q) => new THREE.Vector3(q.x, q.y, q.z));
   const curve = new THREE.CatmullRomCurve3(v3, false, 'centripetal', 0.5);
   const seg = Math.max(120, Math.min(360, v3.length * 2));
-  return new THREE.TubeGeometry(curve, seg, WIRE_R, 10, false);
+  const geo = new THREE.TubeGeometry(curve, seg, WIRE_R, 10, false);
+  geo.userData.curve = curve;   // 供电流粒子沿曲线取点
+  return geo;
 }
 
 function disposeWireLugs(w) {
@@ -1122,6 +1128,7 @@ function rebuildWire(w) {
   const hB = terminalHardware(w.b.item, w.b.term);
   if (w.mesh.geometry) w.mesh.geometry.dispose();
   w.mesh.geometry = wireGeoFor(hA.point, hB.point, w.side, w.a.item, w.b.item, hA.out, hB.out);
+  w.curve = w.mesh.geometry.userData.curve || null;
   disposeWireLugs(w);
   w.lugs = new THREE.Group();
   w.lugs.add(makeWireLug(w.a.item, w.a.term, hA, w.id));
@@ -1136,7 +1143,11 @@ function addWire(a, b) {
   const mesh = new THREE.Mesh(new THREE.BufferGeometry(), wireMats[color]);
   mesh.userData.wireId = wireSeq;
   scene.add(mesh);
-  const w = { id: wireSeq, a, b, mesh, lugs: null, side, color };
+  const beads = new THREE.Group();
+  beads.visible = false;
+  for (let k = 0; k < BEADS_PER_WIRE; k++) beads.add(new THREE.Mesh(beadGeo, beadMat));
+  scene.add(beads);
+  const w = { id: wireSeq, a, b, mesh, lugs: null, side, color, beads, curve: null, energized: false };
   wires.push(w);
   rebuildWire(w);
   syncUI();
@@ -1151,6 +1162,7 @@ function removeWire(id) {
   disposeWireLugs(w);
   scene.remove(w.mesh);
   if (w.mesh.geometry) w.mesh.geometry.dispose();
+  if (w.beads) { scene.remove(w.beads); w.beads = null; }
   wires.splice(i, 1);
   if (selectedWire === id) selectedWire = null;
   syncUI();
@@ -1283,6 +1295,12 @@ function recompute() {
       it.api.setBox(0, rec.boxes[0]);
       it.api.setBox(1, rec.boxes[1]);
     }
+  });
+  // 导线是否有电流：任一端口所在支路电流大于阈值即视为通电（粒子沿它流动）
+  wires.forEach((w) => {
+    const ra = results && results.components ? results.components[w.a.item.id] : null;
+    const rb = results && results.components ? results.components[w.b.item.id] : null;
+    w.energized = !!((ra && Math.abs(ra.i || 0) > 1e-3) || (rb && Math.abs(rb.i || 0) > 1e-3));
   });
   syncResultsUI();
 }
@@ -1841,6 +1859,20 @@ function rotateSelected() {
 //  渲染循环
 // ============================================================
 let lastT = 0, renderCount = 0;
+let beadPhase = 0;
+function stepWires(dt) {
+  const on = state.showCurrent;
+  beadPhase = (beadPhase + dt * 0.35) % 1;
+  wires.forEach((w) => {
+    const show = on && w.energized && w.curve && w.beads;
+    if (w.beads) w.beads.visible = !!show;
+    if (!show) return;
+    w.beads.children.forEach((b, k) => {
+      const t = (beadPhase + k / BEADS_PER_WIRE) % 1;
+      b.position.copy(w.curve.getPointAt(t));
+    });
+  });
+}
 function render() {
   renderer.render(scene, camera);
   renderCount++;
@@ -1854,6 +1886,7 @@ function loop(t) {
   lastT = t;
   updateCamera();
   items.forEach((it) => { if (it.api.step) it.api.step(dt); });
+  stepWires(dt);
   render();
   requestAnimationFrame(loop);
 }
