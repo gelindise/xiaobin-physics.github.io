@@ -32,6 +32,7 @@ const DESK_MIN = { w: 1400, d: 1000 };
 const DESK_STEP = 240;                                // 每次扩展的步长（拼板整齐）
 const DESK = { w: DESK_MIN.w, d: DESK_MIN.d };        // 当前桌面（mm，中心在原点）
 const DESK_MAX = { w: 3600, d: 2200 };                // 再大就出房间了（地面 5200×4200）
+let gridOn = false;                                  // 桌面网格开关（buildTable 早于 state 声明，故独立存放）
 const TABLE_T = 34;                                   // 台面厚度
 const TABLE_H = 740;                                  // 桌面离地高度
 const FLOOR_Y = -TABLE_H;
@@ -197,6 +198,17 @@ function buildTable() {
     seam.position.set(x, 0.2, 0);
     tableGroup.add(seam);
   }
+  // 桌面网格（参考站「网格」开关，100 mm 一格；淡青灰，压在台面上方）
+  if (gridOn) {
+    const div = Math.max(4, Math.round(W / 100));
+    const gh = new THREE.GridHelper(W, div, 0x46566a, 0x33404d);
+    gh.scale.z = D / W;
+    gh.position.y = 0.8;
+    gh.material.transparent = true;
+    gh.material.opacity = 0.5;
+    gh.material.depthWrite = false;
+    tableGroup.add(gh);
+  }
   // 参考站风格：不露桌腿 / 横梁 / 下层隔板，台面像一块悬浮的实验台板。
 }
 buildTable();
@@ -270,7 +282,7 @@ function applyView(name) {
   cam.yawT = v.yaw; cam.pitchT = v.pitch;
   cam.distT = fr.dist;
   cam.targetT.set(fr.tx + (v.target[0] || 0), v.target[1], v.target[2]);
-  document.querySelectorAll('.tb-funcs [data-view]').forEach((b) => {
+  document.querySelectorAll('[data-view]').forEach((b) => {
     b.classList.toggle('on', b.dataset.view === name);
   });
 }
@@ -306,6 +318,11 @@ const state = {
   labels: false,
   shadow: true,
   selected: null,
+  // —— 参考站式工具栏开关（阶段 2）——
+  lockCam: false,     // 锁定视角：拖空白不再转/缩镜头
+  showGrid: false,    // 桌面 25 mm 网格
+  showCurrent: true,  // 电流流动动画（粒子预留，阶段 3 接）
+  autoRead: true,     // 电表上方直接显示读数
 };
 const items = [];          // { id, api, type, group, el, Rmax }
 let itemSeq = 0;
@@ -1653,7 +1670,7 @@ canvas.addEventListener('pointermove', (e) => {
   }
   if (drag.mode === 'orbit') {
     hidePreview();
-    if (drag.moved > 3) {
+    if (!state.lockCam && drag.moved > 3) {
       cam.yawT -= dx * 0.007;
       cam.pitchT = clamp(cam.pitchT + dy * 0.005, -0.05, 1.25);
     }
@@ -1774,6 +1791,7 @@ canvas.addEventListener('pointercancel', () => {
 
 canvas.addEventListener('wheel', (e) => {
   e.preventDefault();
+  if (state.lockCam) return;
   hidePreview();
   cam.distT = clamp(cam.distT * (1 + e.deltaY * 0.0011), 420, 3600);
 }, { passive: false });
@@ -2858,6 +2876,46 @@ $('cView').addEventListener('click', () => {
 document.querySelectorAll('.tb-funcs [data-view]').forEach((b) => {
   b.addEventListener('click', () => applyView(b.dataset.view));
 });
+
+// —— 参考站式竖栏 / 底部工具条（阶段 2）——
+function clearAllWires() {
+  wires.slice().forEach((w) => removeWire(w.id));
+  selectWire(null);
+  cancelPending();
+  toast('导线已全部拆下');
+}
+$('heClearWires').addEventListener('click', clearAllWires);
+$('heClearAll').addEventListener('click', clearAll);
+$('heReset').addEventListener('click', clearAll);
+$('heFit').addEventListener('click', () => { applyView('persp'); fitToDesk(); });
+$('heCenter').addEventListener('click', () => { fitToDesk(); toast('已居中显示'); });
+$('heSettings').addEventListener('click', () => setParamsOpen(true));
+$('heGuide').addEventListener('click', () => $('app').classList.toggle('noside'));
+$('heSchematic').addEventListener('click', () => toast('电路图叠加将在后续版本接入'));
+
+const lockBtn = $('heLock');
+lockBtn.addEventListener('click', () => {
+  state.lockCam = !state.lockCam;
+  lockBtn.classList.toggle('on', state.lockCam);
+  toast(state.lockCam ? '视角已锁定，拖空白不再转镜头' : '视角已解锁');
+});
+const gridBtn = $('heGrid');
+gridBtn.addEventListener('click', () => {
+  gridOn = !gridOn;
+  state.showGrid = gridOn;
+  gridBtn.classList.toggle('on', gridOn);
+  buildTable();
+  fitToDesk();
+});
+const curBtn = $('heCurrent');
+curBtn.addEventListener('click', () => {
+  state.showCurrent = !state.showCurrent;
+  curBtn.classList.toggle('on', state.showCurrent);
+});
+document.querySelectorAll('#heToolbar [data-view]').forEach((b) => {
+  b.addEventListener('click', () => applyView(b.dataset.view));
+});
+
 $('pAddRheo').addEventListener('click', () => addItem('rheostat', null));
 $('pResetView').addEventListener('click', () => applyView('persp'));
 $('cLabels').addEventListener('change', (e) => { state.labels = e.target.checked; updateLabels(); });
