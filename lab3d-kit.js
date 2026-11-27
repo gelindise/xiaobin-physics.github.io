@@ -43,8 +43,8 @@ export const MAT = {
   wire: new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.34, metalness: 0.72 }),
   steel: new THREE.MeshStandardMaterial({ color: 0xd7dfe8, roughness: 0.2, metalness: 0.9 }),
   brass: new THREE.MeshStandardMaterial({ color: 0xd7ab52, roughness: 0.28, metalness: 0.82 }),
-  frame: new THREE.MeshStandardMaterial({ color: 0x8ea8c3, roughness: 0.36, metalness: 0.56 }),
-  frameEdge: new THREE.MeshStandardMaterial({ color: 0x627c99, roughness: 0.42, metalness: 0.62 }),
+  frame: new THREE.MeshStandardMaterial({ color: 0xcfd2d6, roughness: 0.36, metalness: 0.56 }),
+  frameEdge: new THREE.MeshStandardMaterial({ color: 0x9ea3aa, roughness: 0.42, metalness: 0.62 }),
   endMetal: new THREE.MeshStandardMaterial({ color: 0xdfe6ed, roughness: 0.28, metalness: 0.64 }),
   plastic: new THREE.MeshStandardMaterial({ color: 0x26354a, roughness: 0.58, metalness: 0.18 }),
   plasticSoft: new THREE.MeshStandardMaterial({ color: 0x9db3ca, roughness: 0.38, metalness: 0.28 }),
@@ -678,10 +678,14 @@ export function buildBattery(opts) {
   const cellParts = [];                // 每次重建要释放的几何
 
   const matCell = new THREE.MeshStandardMaterial({
+    color: 0x1c1f24, roughness: 0.55, metalness: 0.1,
+  });
+  const matCellGold = new THREE.MeshStandardMaterial({
     color: 0xd8a93a, roughness: 0.34, metalness: 0.72,
   });
+  const matLabel = new THREE.MeshStandardMaterial({ color: 0xece7da, roughness: 0.6, metalness: 0.05 });
   const matCellCap = new THREE.MeshStandardMaterial({ color: 0xd9d3c4, roughness: 0.42, metalness: 0.55 });
-  const matTray = new THREE.MeshStandardMaterial({ color: 0x8499b2, roughness: 0.5, metalness: 0.14 });
+  const matTray = new THREE.MeshStandardMaterial({ color: 0x2a2f36, roughness: 0.5, metalness: 0.14 });
 
   function disposeCells() {
     cellParts.forEach((o) => {
@@ -795,13 +799,24 @@ export function buildBattery(opts) {
       add(tag(link, 'link'));
     }
 
-    // 电池：一节挨一节，+x 端是正极帽
+    // 电池：一节挨一节，+x 端是正极帽；中间一节套金色正极套 + 白色标签带
+    const mid = Math.floor((cells - 1) / 2);
     for (let i = 0; i < cells; i++) {
       const cx = -LY.cellEnd + D.L / 2 + i * (D.L + LY.GAP);
       const cell = new THREE.Mesh(new THREE.CylinderGeometry(D.R, D.R, D.L, 40, 1, false), matCell);
       cell.rotation.z = Math.PI / 2;
       cell.position.set(cx, D.R, 0);
       add(tag(cell, 'cell'));
+      if (i === mid) {
+        const sleeve = new THREE.Mesh(new THREE.CylinderGeometry(D.R * 1.02, D.R * 1.02, D.L * 0.55, 40), matCellGold);
+        sleeve.rotation.z = Math.PI / 2;
+        sleeve.position.set(cx, D.R, 0);
+        add(tag(sleeve, 'sleeve'));
+        const band = new THREE.Mesh(new THREE.CylinderGeometry(D.R * 1.035, D.R * 1.035, D.L * 0.26, 40), matLabel);
+        band.rotation.z = Math.PI / 2;
+        band.position.set(cx, D.R, 0);
+        add(tag(band, 'labelBand'));
+      }
       // 正极帽（默认 +x 端；正负极对调时换到 −x 端）
       const dir = reversed ? -1 : 1;
       const cap = new THREE.Mesh(new THREE.CylinderGeometry(D.R * 0.42, D.R * 0.42, 3.2, 24), matCellCap);
@@ -2025,10 +2040,17 @@ function powerFaceTexture() {
   const cv = document.createElement('canvas');
   cv.width = W; cv.height = H;
   const g = cv.getContext('2d');
-  g.fillStyle = '#dfe4ea'; g.fillRect(0, 0, W, H);
+  g.fillStyle = '#f1f0ec'; g.fillRect(0, 0, W, H);
+  // 左上红色型号标签（参考站 J1202 学生电源面板）
+  g.fillStyle = '#c83b32';
+  g.beginPath(); g.roundRect(40, 56, 250, 58, 10); g.fill();
+  g.fillStyle = '#ffffff';
+  g.font = 'bold 34px "Helvetica Neue", Arial, sans-serif';
+  g.textAlign = 'left'; g.textBaseline = 'middle';
+  g.fillText('HE-J1202', 60, 86);
   // 「学生电源」字样
-  g.fillStyle = '#5b6673';
-  g.font = 'bold 46px "PingFang SC", "Microsoft YaHei", sans-serif';
+  g.fillStyle = '#3d4753';
+  g.font = 'bold 42px "PingFang SC", "Microsoft YaHei", sans-serif';
   g.textAlign = 'right'; g.textBaseline = 'middle';
   g.fillText('学生电源', W - 60, 96);
   // 电压刻度弧（0~9 V）
@@ -2064,8 +2086,8 @@ export function buildPower() {
   outer.add(inner);
   const tag = (o, role) => { o.userData.role = role; return o; };
 
-  const matCase = new THREE.MeshStandardMaterial({ color: 0xc3ccd6, roughness: 0.5, metalness: 0.22 });
-  const matFace = new THREE.MeshStandardMaterial({ color: 0xdfe4ea, roughness: 0.58, metalness: 0.06 });
+  const matCase = new THREE.MeshStandardMaterial({ color: 0xd8d7d2, roughness: 0.5, metalness: 0.22 });
+  const matFace = new THREE.MeshStandardMaterial({ color: 0xf1f0ec, roughness: 0.58, metalness: 0.06 });
   const matFaceTex = new THREE.MeshStandardMaterial({ map: powerFaceTexture(), roughness: 0.58, metalness: 0.06 });
 
   // 机箱
