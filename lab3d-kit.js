@@ -1315,7 +1315,7 @@ function meterFaceTexture(kind) {
   const cv = document.createElement('canvas');
   cv.width = W; cv.height = H;
   const g = cv.getContext('2d');
-  g.fillStyle = '#f7f9fb'; g.fillRect(0, 0, W, H);
+  g.fillStyle = '#f3eedd'; g.fillRect(0, 0, W, H);
   // 四角固定螺丝
   [[26, 26], [W - 26, 26], [26, H - 26], [W - 26, H - 26]].forEach(([x, y]) => {
     g.beginPath(); g.arc(x, y, 9, 0, Math.PI * 2);
@@ -1456,8 +1456,8 @@ export function buildMeter(opts) {
   outer.add(inner);
   const tag = (o, role) => { o.userData.role = role; return o; };
 
-  const matCase = new THREE.MeshStandardMaterial({ color: 0x93a8c0, roughness: 0.46, metalness: 0.12 });
-  const matCaseDark = new THREE.MeshStandardMaterial({ color: 0x74899f, roughness: 0.5, metalness: 0.14 });
+  const matCase = new THREE.MeshStandardMaterial({ color: 0xe6e1d6, roughness: 0.46, metalness: 0.12 });
+  const matCaseDark = new THREE.MeshStandardMaterial({ color: 0xc9c3b6, roughness: 0.5, metalness: 0.14 });
   const matPad = new THREE.MeshStandardMaterial({ map: meterPadTexture(kind), roughness: 0.62, metalness: 0.04 });
   const matFace = new THREE.MeshStandardMaterial({ map: meterFaceTexture(kind), roughness: 0.5, metalness: 0.02 });
 
