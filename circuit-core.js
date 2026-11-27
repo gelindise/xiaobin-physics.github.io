@@ -489,7 +489,8 @@
   var FAULT_LABEL = {
     burned:  '灯丝烧断',
     removed: '灯泡已取下',
-    shorted: '灯座短路',
+    shorted: '短路',
+    open:    '断路',
     burnt:   '烧坏',
     over:    '超量程损坏',
     rev:     '接反打表损坏',
@@ -497,11 +498,12 @@
   // 两只表【不是】：真实的表打表以后电路照样通，只是读数不能信了（指针顶在
   // 端点）。把它们也断掉的话，「反接指针左偏」这一幕就永远看不到了 ——
   // 而那正是用户点名要看的现象。
-  // ⚠️ shorted（灯座短路）也【不在】这张表里，而且和「两只表」是两回事：
-  //    表是「通着但读数不可信」，灯座短路是「灯被旁路掉了」——电流全从短接
-  //    线走，灯丝里一点电流都没有（所以灯不亮），可外电路照常工作。它改的是
-  //    这一件的等效电阻（见 describeComponent 的 bulb 分支），不是通断。
-  var OPEN_FAULTS = { burned: 1, removed: 1, burnt: 1 };
+  // ⚠️ shorted（灯座 / 电阻器短路）也【不在】这张表里，而且和「两只表」是两回事：
+  //    表是「通着但读数不可信」，短路是「这件器材被旁路掉了」——电流全从短接
+  //    线走，灯丝 / 电阻丝里一点电流都没有，可外电路照常工作。它改的是这一件
+  //    的等效电阻（见 describeComponent 的 bulb / resistor / rheostat 分支），
+  //    不是通断。
+  var OPEN_FAULTS = { burned: 1, removed: 1, burnt: 1, open: 1 };
   function isOpenFault(comp) {
     return !!(comp && comp.fault && OPEN_FAULTS[comp.fault]);
   }
@@ -512,6 +514,19 @@
   //    警告列表 / 浮层这三处也要跟着一致，否则同一件事在两处叫两个名字。
   function faultLabel(f, comp) {
     if (f === 'burned' && comp && comp.type === 'led') return '已烧毁';
+    // 同一个故障码在不同器材上有不同的「物理说法」。灯泡灯座被短接叫
+    //「灯座短路」；定值电阻 / 滑动变阻器是器材本身被短路，直接叫「短路」。
+    if (f === 'shorted' && comp) {
+      if (comp.type === 'bulb') return '灯座短路';
+      if (comp.type === 'rheostat') return '电阻丝短路';
+      if (comp.type === 'resistor') return '电阻短路';
+      return '短路';
+    }
+    if (f === 'open' && comp) {
+      if (comp.type === 'rheostat') return '电阻丝断路';
+      if (comp.type === 'resistor') return '电阻断路';
+      return '断路';
+    }
     return FAULT_LABEL[f] || '损坏';
   }
 
@@ -1414,9 +1429,20 @@
     }
 
     switch (comp.type) {
-      case 'resistor':
-        addR(N(0), N(1), P.R);
+      case 'resistor': {
+        // 手动「短路 / 断路」演示故障。短路仍用 SHORT_R（0.01Ω）而不是 0Ω：
+        // 0Ω 会被 addR 换成理想电压源支路，有源矩阵容易奇异；而且必须打上
+        // shorted 标记，拓扑短路判据才认它是一根跨在电阻两端的铜线。
+        // 断路直接走函数开头的 isOpenFault —— 一条支路都不产生。
+        if (comp.fault === 'shorted') {
+          var rn0 = out.length;
+          addR(N(0), N(1), SHORT_R);
+          for (var rk = rn0; rk < out.length; rk++) out[rk].shorted = true;
+        } else {
+          addR(N(0), N(1), P.R);
+        }
         break;
+      }
 
       // 敏感电阻：五档探头就是一条纯 R 支路，阻值由条件算出来（见 sensorR）。
       // 压敏是两态钳位（见 VARISTOR 那一段）：截止时一条 10MΩ 漏电阻，
@@ -1652,12 +1678,25 @@
         break;
       }
 
-      case 'rheostat':
+      case 'rheostat': {
         // C(2)/D(3) 已在 buildNodes 中合并 → 同一节点 = 滑片 S
         var S = N(2);
-        addR(N(0), S, P.Rmax * clamp01(P.slide));          // A → 滑片（左半段）
-        addR(S, N(1), P.Rmax * (1 - clamp01(P.slide)));    // 滑片 → B（右半段）
+        var sl = clamp01(P.slide);
+        var rLeft = P.Rmax * sl, rRight = P.Rmax * (1 - sl);
+        // 「电阻丝短路」：整根丝被旁路。两半段都换成 SHORT_R，而不是只把
+        // 滑片拨到 0Ω —— 后者只让左半段变短，右半段还在，接 A-B 时照样有
+        // 十几欧；这里要的是「整只器件被一根铜线跨过」。两段都打 shorted
+        // 标记，短路拓扑判据才能把 A、S、B 并成同一个节点。
+        var rheoShort = (comp.fault === 'shorted');
+        if (rheoShort) { rLeft = SHORT_R; rRight = SHORT_R; }
+        var rn = out.length;
+        addR(N(0), S, rLeft);                          // A → 滑片（左半段）
+        addR(S, N(1), rRight);                         // 滑片 → B（右半段）
+        if (rheoShort) {
+          for (var rk2 = rn; rk2 < out.length; rk2++) out[rk2].shorted = true;
+        }
         break;
+      }
 
       // 电位器：两段串联，滑片 b 是抽头（见 TYPES.potentiometer 的注释）。
       // 段号写进支路（potSeg 0 = a-b、1 = b-c）—— 回填时 bs 的顺序未必等于

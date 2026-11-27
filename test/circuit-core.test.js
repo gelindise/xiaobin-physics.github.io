@@ -1823,6 +1823,47 @@ test('T24f 盒外同阻值并联：乙盒内电流减半、产热变 1/4，盒�
 });
 
 // ============================================================
+// T25 电阻器的手动短路 / 断路故障
+// ============================================================
+test('T25a 定值电阻短路被旁路、断路整条支路消失', function () {
+  var cs = [comp('E', 'battery', { emf: 3, rInt: 0.5 }),
+            comp('R', 'resistor', { R: 10 })];
+  var ws = [W('E', 0, 'R', 0), W('R', 1, 'E', 1)];
+  var ok = run(cs, ws, 'T25a 正常');
+  close(ok.components.R.i, 3 / 10.5, 'T25a 正常电流 3/(0.5+10)', 1e-9);
+  cs[1].fault = 'shorted';
+  var sh = run(cs, ws, 'T25a 短路');
+  close(sh.components.R.R, 0.01, 'T25a 短路等效 0.01Ω', 1e-12);
+  close(sh.components.R.i, 3 / 0.51, 'T25a 短路后电流由 0.286A 跳到大电流', 1e-9);
+  truthy(C.faultLabel('shorted', cs[1]) === '电阻短路', 'T25a 面板文案必须是「电阻短路」');
+  cs[1].fault = 'open';
+  var op = run(cs, ws, 'T25a 断路');
+  truthy(op.status === 'open-circuit', 'T25a 断路必须让整条回路断开');
+  close(op.components.R.i, 0, 'T25a 断路后电流为零', 1e-12);
+  truthy(C.isOpenFault(cs[1]), 'T25a open 必须进开路故障表');
+});
+
+test('T25b 滑动变阻器短路/断路同样改变电路', function () {
+  var cs = [comp('E', 'battery', { emf: 3, rInt: 0.5 }),
+            comp('RH', 'rheostat', { Rmax: 20, slide: 0.5, Imax: 2 })];
+  // A 与滑片 C：接入左半段 10Ω。
+  var ws = [W('E', 0, 'RH', 0), W('RH', 2, 'E', 1)];
+  var ok = run(cs, ws, 'T25b 正常');
+  close(ok.components.RH.i, 3 / 10.5, 'T25b 正常电流 3/(0.5+10)', 1e-9);
+  cs[1].fault = 'shorted';
+  var sh = run(cs, ws, 'T25b 短路');
+  close(sh.components.RH.segments[0].R, 0.01, 'T25b 左半段被旁路', 1e-12);
+  close(sh.components.RH.segments[1].R, 0.01, 'T25b 右半段也一并旁路', 1e-12);
+  close(sh.components.RH.i, 3 / 0.51, 'T25b 短路后电流跳到大电流', 1e-9);
+  truthy(C.faultLabel('shorted', cs[1]) === '电阻丝短路', 'T25b 面板文案必须是「电阻丝短路」');
+  cs[1].fault = 'open';
+  var op = run(cs, ws, 'T25b 断路');
+  truthy(op.status === 'open-circuit', 'T25b 断路必须让整条回路断开');
+  close(op.components.RH.i, 0, 'T25b 断路后电流为零', 1e-12);
+  truthy(C.faultLabel('open', cs[1]) === '电阻丝断路', 'T25b 面板文案必须是「电阻丝断路」');
+});
+
+// ============================================================
 // 汇总
 // ============================================================
 console.log('');

@@ -1674,7 +1674,11 @@
     ctx.fillStyle = 'rgba(90,70,40,0.16)';
     roundRect(ctx, -BW / 2 + 12, BH / 2 - 8, BW - 24, 4.5, 2.2); ctx.fill();
 
-    var R = (rec && rec.R != null) ? rec.R : (comp.params && comp.params.R) || 10;
+    var fault = (rec && rec.fault) || null;
+    // 短路/断路时 rec.R 是旁路小电阻（0.01Ω）或空值；色环仍应按【这只电阻
+    // 铭牌上的阻值】画 —— 否则学生看到的是「10Ω 电阻的色环突然变成了 0.01Ω」。
+    var R = (fault ? (comp.params && comp.params.R) : (rec && rec.R != null ? rec.R : null))
+         || (comp.params && comp.params.R) || 10;
     var bands = resistorBands(R);
     // 前三环靠左聚拢（读数方向），末环是误差环，单独靠右
     var xs = [-34, -24, -14, 26], ws = [7, 7, 7, 7];
@@ -1726,6 +1730,10 @@
         ctx.moveTo(hlX, -BH / 2 + 1); ctx.lineTo(hlX, BH / 2 - 1); ctx.stroke();
       }
     });
+    // 两件电阻器的演示故障也要在画布上「一眼可辨」——参数面板里有红条，
+    // 但学生常常先看画布。牌子和面板的文案同源：短路/断路。
+    if (fault === 'open') faultTag(ctx, 0, -BH / 2 - 13, '电阻断路', 1);
+    else if (fault === 'shorted') faultTag(ctx, 0, -BH / 2 - 13, '电阻短路', 1);
     ctx.restore();
 
     posts(ctx, comp, ['neutral', 'neutral']);
@@ -6630,6 +6638,9 @@
     if (phase == null) return stats;                   // 开关关着 → 一个记号都不画
     stats.phase = phase;
     if (!rec || !rec.segments || rec.segments.length < 2) return stats;
+    // 短路时电流走旁路铜线，绕线里没有电流；画粒子就会把「被旁路」画成
+    // 「丝里还在通电」。断路/烧断的段电流本来就是 0，无需专门处理。
+    if (rec.fault === 'shorted') return stats;
     var iL = rec.segments[0].i, iR = rec.segments[1].i;
     stats.iL = iL; stats.iR = iR;
 
@@ -6892,14 +6903,20 @@
                 : (comp.params && comp.params.Imax != null ? +comp.params.Imax : 2);
     // 烧断 = 内核里「烧坏 = 断路」的那一档（和电源、表头共用 'burnt'）。
     var burned = !!(rec && rec.fault === 'burnt');
-    // 烧断以后两半都不再「通电」：绕线烧断了，A/B 那两根铜引线上也没有电流
-    //（引线的明暗读的正是 liveL/liveR，不收掉的话，断了丝的变阻器还亮着两根
-    //  铜片，画面上就成了「丝断了、线还在通电」）。
-    if (burned) { liveL = false; liveR = false; }
+    var shorted = !!(rec && rec.fault === 'shorted');
+    var opened = !!(rec && rec.fault === 'open');
+    // 烧断 / 断路以后两半都不再「通电」：绕线断了，A/B 那两根铜引线上也没有
+    // 电流；短路时电流走的是旁路铜线，绕线上同样一安都没有。
+    //（引线的明暗读的正是 liveL/liveR，不收掉的话，断了的变阻器还亮着两根
+    //  铜片，画面上就成了「丝断了、线还在通电」。）
+    if (burned || shorted || opened) { liveL = false; liveR = false; }
     // 判过热的电流只认【电阻丝上的那股】：接成 C-D 或滑片停在 A 端时电流全走
     // 金属杆，丝里一安都没有 —— 那种「电流大」是短路的账，不该让绕线发红。
     var iWire = (rec && rec.rUsed > 1e-9) ? Math.abs(rec.i || 0) : 0;
-    var heat = (ImaxVal > 0 && !burned) ? Math.min(1, iWire / ImaxVal) : 0;
+    // 短路时电流走旁路铜线，不是走电阻丝；断路时没有电流。两种都不该让
+    // 绕线发红（那会把「短路了，丝里没电流」画成「丝快烧红了」）。
+    var heat = (ImaxVal > 0 && !burned && !shorted && !opened)
+      ? Math.min(1, iWire / ImaxVal) : 0;
     var BRK_TOP = -26, LEG = 37;
 
     // 两条腿落在台面上的接触阴影。变阻器是个「架子」，阴影要分成两团，
@@ -7214,6 +7231,8 @@
     // 「烧坏了」的红牌子挂在器材正上方。挂在【顶层】而不是压在绕线上：
     // 用户要的是「一看就知道这台不能用了」，牌子被滑片挡掉一半就白挂。
     if (burned) faultTag(ctx, 0, -60, '电阻丝烧断', 1);
+    else if (shorted) faultTag(ctx, 0, -60, '电阻丝短路', 1);
+    else if (opened) faultTag(ctx, 0, -60, '电阻丝断路', 1);
     ctx.restore();
 
     // 端子字母：滑动变阻器没有极性，只标 A/B/C/D 四位接线柱
