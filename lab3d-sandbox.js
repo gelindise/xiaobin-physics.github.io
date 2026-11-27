@@ -541,6 +541,7 @@ const WIRE_COLORS = [
   { id: 'blue', name: '蓝', hex: 0x2563eb },
   { id: 'yellow', name: '黄', hex: 0xc99a12 },
   { id: 'green', name: '绿', hex: 0x1f8a4c },
+  { id: 'white', name: '白', hex: 0xe8e6df },
 ];
 const wireMats = {}, wireMatsSel = {};
 WIRE_COLORS.forEach((c) => {
@@ -555,6 +556,33 @@ WIRE_COLORS.forEach((c) => {
 });
 const wireMatOf = (w) => wireMats[(w && w.color) || 'red'] || wireMats.red;
 const wireMatSelOf = (w) => wireMatsSel[(w && w.color) || 'red'] || wireMatsSel.red;
+
+// 选中导线时弹出的颜色选择（六种导线，与参考站一致）
+const wireColorsEl = $('wireColors');
+const wcRow = $('wcRow');
+WIRE_COLORS.forEach((c) => {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = 'wc-swatch';
+  b.dataset.c = c.id;
+  b.title = c.name;
+  b.style.background = '#' + c.hex.toString(16).padStart(6, '0');
+  b.addEventListener('click', () => {
+    const w = wires.find((x) => x.id === selectedWire);
+    if (!w) return;
+    w.color = c.id;
+    w.mesh.material = (selectedWire === w.id) ? wireMatSelOf(w) : wireMatOf(w);
+    refreshWireColors();
+  });
+  wcRow.appendChild(b);
+});
+function refreshWireColors() {
+  if (!wireColorsEl) return;
+  const w = wires.find((x) => x.id === selectedWire);
+  wireColorsEl.hidden = !w;
+  if (!w) return;
+  wcRow.querySelectorAll('.wc-swatch').forEach((s) => s.classList.toggle('on', s.dataset.c === w.color));
+}
 
 (function buildPendingMark() {
   const g = new THREE.Group();
@@ -1165,6 +1193,7 @@ function removeWire(id) {
   if (w.beads) { scene.remove(w.beads); w.beads = null; }
   wires.splice(i, 1);
   if (selectedWire === id) selectedWire = null;
+  refreshWireColors();
   syncUI();
   recompute();
 }
@@ -1177,6 +1206,7 @@ function selectWire(id) {
   wires.forEach((w) => { w.mesh.material = (w.id === id) ? wireMatSelOf(w) : wireMatOf(w); });
   updateWireX();
   buildParams();
+  refreshWireColors();
 }
 
 // 选中导线时，在它中点放一个小叉（点一下剪断）。位置每帧跟着相机走。
