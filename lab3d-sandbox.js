@@ -2889,7 +2889,20 @@ $('heClearAll').addEventListener('click', clearAll);
 $('heReset').addEventListener('click', clearAll);
 $('heFit').addEventListener('click', () => { applyView('persp'); fitToDesk(); });
 $('heCenter').addEventListener('click', () => { fitToDesk(); toast('已居中显示'); });
-$('heSettings').addEventListener('click', () => setParamsOpen(true));
+const settingsPanel = $('heSettingsPanel');
+function toggleSettings(force) {
+  const open = force != null ? force : settingsPanel.hidden;
+  settingsPanel.hidden = !open;
+  $('heSettings').classList.toggle('on', open);
+  if (open) {
+    $('sShadow').checked = state.shadow;
+    $('sLabels').checked = state.labels;
+    $('sCurrent').checked = state.showCurrent;
+    $('sAutoRead').checked = state.autoRead;
+  }
+}
+$('heSettings').addEventListener('click', () => toggleSettings());
+$('heSettingsClose').addEventListener('click', () => toggleSettings(false));
 $('heGuide').addEventListener('click', () => $('app').classList.toggle('noside'));
 $('heSchematic').addEventListener('click', () => toast('电路图叠加将在后续版本接入'));
 
@@ -2915,6 +2928,39 @@ curBtn.addEventListener('click', () => {
 document.querySelectorAll('#heToolbar [data-view]').forEach((b) => {
   b.addEventListener('click', () => applyView(b.dataset.view));
 });
+
+// —— 设置抽屉：台面颜色 + 显示开关 ——
+const DESK_COLORS = {
+  '0x333333': [0x333333, 0x262626],
+  '0x1f3d2b': [0x1f3d2b, 0x16291d],
+  '0x16181d': [0x16181d, 0x0e1013],
+  '0x1e3a5f': [0x1e3a5f, 0x152a45],
+  '0xd8dde3': [0xd8dde3, 0xb9c2cc],
+};
+document.querySelectorAll('#deskColors button').forEach((b) => {
+  b.addEventListener('click', () => {
+    const [top, rim] = DESK_COLORS[b.dataset.c] || DESK_COLORS['0x333333'];
+    matTop.color.setHex(top);
+    matRim.color.setHex(rim);
+    document.querySelectorAll('#deskColors button').forEach((x) => x.classList.toggle('on', x === b));
+  });
+});
+function applyShadow() {
+  items.forEach((it) => { if (it.api.shadow) it.api.shadow.visible = state.shadow; });
+}
+$('sShadow').addEventListener('change', (e) => {
+  state.shadow = e.target.checked; applyShadow();
+  const cs = $('cShadow'); if (cs) cs.checked = state.shadow;
+});
+$('sLabels').addEventListener('change', (e) => {
+  state.labels = e.target.checked; updateLabels();
+  const cl = $('cLabels'); if (cl) cl.checked = state.labels;
+});
+$('sCurrent').addEventListener('change', (e) => {
+  state.showCurrent = e.target.checked;
+  curBtn.classList.toggle('on', state.showCurrent);
+});
+$('sAutoRead').addEventListener('change', (e) => { state.autoRead = e.target.checked; });
 
 $('pAddRheo').addEventListener('click', () => addItem('rheostat', null));
 $('pResetView').addEventListener('click', () => applyView('persp'));
