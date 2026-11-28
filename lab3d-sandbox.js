@@ -449,6 +449,13 @@ function nudgeIfOverlap(item) {
 }
 
 function addItem(key, worldPos) {
+  const before = historyPaused ? null : snapshotTable();
+  const item = addItemRaw(key, worldPos);
+  if (item && !historyPaused) pushMemento(before, snapshotTable(), '放上器材');
+  return item;
+}
+
+function addItemRaw(key, worldPos) {
   const meta = META[key] || META[BUILDERS[key] ? key : ''];
   const build = (meta && meta.build) || BUILDERS[key] || (meta && BUILDERS[meta.type]);
   if (!build) { toast('这件器材还在开发中'); return null; }
@@ -477,18 +484,25 @@ function addItem(key, worldPos) {
   select(item);
   syncUI();
   recompute();
-  toast('放上了 ' + (meta ? meta.label : physType));
+  if (!historyPaused) toast('放上了 ' + (meta ? meta.label : physType));
   return item;
 }
 
 function removeItem(item) {
+  if (!item) return;
+  const before = historyPaused ? null : snapshotTable();
+  removeItemRaw(item);
+  if (!historyPaused) pushMemento(before, snapshotTable(), '移除器材');
+}
+
+function removeItemRaw(item) {
   if (!item) return;
   const i = items.indexOf(item);
   if (i === -1) return;
   items.splice(i, 1);
   // 挂在这台器材上的导线一起剪掉（端点没了，导线留着就是断头线）
   wires.filter((w) => w.a.item === item || w.b.item === item)
-    .forEach((w) => removeWire(w.id));
+    .forEach((w) => removeWireRaw(w.id));
   scene.remove(item.group);
   item.group.traverse((o) => {
     // 几何是每实例独立建的（绕线要按 slide 改顶点色），这里一并释放
@@ -503,11 +517,16 @@ function removeItem(item) {
 }
 
 function clearAll() {
-  items.slice().forEach(removeItem);
-  wires.slice().forEach((w) => removeWire(w.id));
+  const before = snapshotTable();
+  clearAllRaw();
+  pushMemento(before, snapshotTable(), '清空桌面');
+}
+function clearAllRaw() {
+  items.slice().forEach(removeItemRaw);
+  wires.slice().forEach((w) => removeWireRaw(w.id));
   cancelPending();
   selectWire(null);
-  toast('桌面已清空');
+  if (!historyPaused) toast('桌面已清空');
 }
 
 function select(item) {
@@ -532,6 +551,84 @@ let wireSeq = 0;
 let pending = null;         // { item, term } —— 已选中一个柱、等第二个
 let selectedWire = null;
 let pendingMark = null;
+
+// ============================================================
+//  撤销 / 重做：整桌快照（器材位置/朝向 + 导线拓扑与颜色）
+//  只记录结构类操作：摆放、移除、接线、拆线、移动、旋转、清空；
+//  滑片阻值、开关开合、电表量程等参数微调不入栈。
+// ============================================================
+const undoStack = [];
+const redoStack = [];
+const HISTORY_LIMIT = 50;
+let historyPaused = false;
+
+function snapshotTable() {
+  return {
+    items: items.map((it) => ({
+      id: it.id, key: it.key, type: it.type,
+      x: it.group.position.x, z: it.group.position.z,
+      rot: it.group.rotation.y, auto: !!it.auto,
+    })),
+    wires: wires.map((w) => ({
+      ai: w.a.item.id, at: w.a.term, bi: w.b.item.id, bt: w.b.term, color: w.color,
+    })),
+  };
+}
+
+function pushMemento(before, after, label) {
+  if (historyPaused) return;
+  undoStack.push({ before, after, label });
+  if (undoStack.length > HISTORY_LIMIT) undoStack.shift();
+  redoStack.length = 0;
+  syncHistoryButtons();
+}
+
+function restoreTable(snap) {
+  historyPaused = true;
+  wires.slice().forEach((w) => removeWireRaw(w.id));
+  items.slice().forEach((it) => removeItemRaw(it));
+  const idMap = {};
+  snap.items.forEach((s) => {
+    const it = addItemRaw(s.key, s.auto ? null : { x: s.x, z: s.z });
+    if (!it) return;
+    idMap[s.id] = it;
+    it.group.rotation.y = s.rot;
+    it.auto = s.auto;
+    measureSolid(it);
+  });
+  snap.wires.forEach((wd) => {
+    const A = idMap[wd.ai], B = idMap[wd.bi];
+    if (A && B) addWireRaw({ item: A, term: wd.at }, { item: B, term: wd.bt }, wd.color);
+  });
+  historyPaused = false;
+  selectWire(null);
+  syncUI();
+  recompute();
+}
+
+function undoHistory() {
+  const m = undoStack.pop();
+  if (!m) { toast('没有可撤销的操作'); return; }
+  restoreTable(m.before);
+  redoStack.push(m);
+  syncHistoryButtons();
+  toast('已撤销：' + m.label);
+}
+
+function redoHistory() {
+  const m = redoStack.pop();
+  if (!m) { toast('没有可重做的操作'); return; }
+  restoreTable(m.after);
+  undoStack.push(m);
+  syncHistoryButtons();
+  toast('已重做：' + m.label);
+}
+
+function syncHistoryButtons() {
+  const u = $('heUndo'), r = $('heRedo');
+  if (u) u.disabled = !undoStack.length;
+  if (r) r.disabled = !redoStack.length;
+}
 
 // 导线颜色：真实实验台上一把导线就这几种颜色，学生靠颜色区分「哪根接哪」。
 // 每种颜色一份共享材质（不是每根一份），改色只换 material 引用。
@@ -1164,26 +1261,40 @@ function rebuildWire(w) {
   scene.add(w.lugs);
 }
 
-function addWire(a, b) {
+function addWire(a, b, color) {
+  const before = historyPaused ? null : snapshotTable();
+  const w = addWireRaw(a, b, color);
+  if (w && !historyPaused) pushMemento(before, snapshotTable(), '连接导线');
+  return w;
+}
+
+function addWireRaw(a, b, color) {
   wireSeq += 1;
   const side = wireSeq % 2 ? 1 : -1;      // 相邻导线往两侧弯，不会叠成一条
-  const color = (wireSeq % 2) ? 'red' : 'black';
-  const mesh = new THREE.Mesh(new THREE.BufferGeometry(), wireMats[color]);
+  const useColor = color || (wireSeq % 2 ? 'red' : 'black');
+  const mesh = new THREE.Mesh(new THREE.BufferGeometry(), wireMats[useColor]);
   mesh.userData.wireId = wireSeq;
   scene.add(mesh);
   const beads = new THREE.Group();
   beads.visible = false;
   for (let k = 0; k < BEADS_PER_WIRE; k++) beads.add(new THREE.Mesh(beadGeo, beadMat));
   scene.add(beads);
-  const w = { id: wireSeq, a, b, mesh, lugs: null, side, color, beads, curve: null, energized: false };
+  const w = { id: wireSeq, a, b, mesh, lugs: null, side, color: useColor, beads, curve: null, energized: false };
   wires.push(w);
   rebuildWire(w);
   syncUI();
   recompute();
-  toast(a.term + ' → ' + b.term + ' 接上了');
+  if (!historyPaused) toast(a.term + ' → ' + b.term + ' 接上了');
+  return w;
 }
 
 function removeWire(id) {
+  const before = historyPaused ? null : snapshotTable();
+  removeWireRaw(id);
+  if (!historyPaused) pushMemento(before, snapshotTable(), '剪断导线');
+}
+
+function removeWireRaw(id) {
   const i = wires.findIndex((w) => w.id === id);
   if (i === -1) return;
   const w = wires[i];
@@ -1636,6 +1747,7 @@ canvas.addEventListener('pointerdown', (e) => {
       drag.offX = hit.item.group.position.x - p.x;
       drag.offZ = hit.item.group.position.z - p.z;
     }
+    drag.beforeSnap = snapshotTable();
   }
   if (hit && hit.wireId) {
     // 按在导线上 = 准备把它从接线柱上【拔下来】：哪一端离手近就拔哪一端
@@ -1747,6 +1859,9 @@ canvas.addEventListener('pointerup', (e) => {
   canvas.classList.remove('grabbing');
   // 用户亲手拖过的器材就归他摆：之后新增器材不再把它重排走
   if (drag && drag.item && drag.moved >= 6) drag.item.auto = false;
+  if (drag && drag.mode === 'move' && drag.item && drag.moved >= 6 && drag.beforeSnap) {
+    pushMemento(drag.beforeSnap, snapshotTable(), '移动器材');
+  }
   if (drag && drag.mode === 'wireDrag') {
     hidePreview();
     const w = drag.wire;
@@ -1763,11 +1878,14 @@ canvas.addEventListener('pointerup', (e) => {
     const movingTerm = (drag.end === 'a' ? w.a : w.b).term;
     const h2 = pick(e.clientX, e.clientY);
     const canAttach = h2 && h2.term && !(h2.item === fixed.item && h2.term === fixed.term);
-    removeWire(w.id);                       // 旧的先剪掉（拖动期间已经藏起来了）
+    const beforeRe = snapshotTable();
+    removeWireRaw(w.id);                       // 旧的先剪掉（拖动期间已经藏起来了）
     if (canAttach) {
-      addWire({ item: fixed.item, term: fixed.term }, { item: h2.item, term: h2.term });
+      addWireRaw({ item: fixed.item, term: fixed.term }, { item: h2.item, term: h2.term });
+      pushMemento(beforeRe, snapshotTable(), '导线改接');
       toast('导线改接到 ' + h2.term + ' 柱上了');
     } else {
+      pushMemento(beforeRe, snapshotTable(), '拔掉导线');
       toast('导线已从 ' + movingTerm + ' 柱上拔掉');
     }
     selectWire(null);
@@ -1847,6 +1965,16 @@ canvas.addEventListener('wheel', (e) => {
 // 键盘：R 旋转 / Delete 移除
 window.addEventListener('keydown', (e) => {
   if (e.target && /INPUT|SELECT|TEXTAREA/.test(e.target.tagName)) return;
+  if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z')) {
+    e.preventDefault();
+    if (e.shiftKey) redoHistory(); else undoHistory();
+    return;
+  }
+  if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || e.key === 'Y')) {
+    e.preventDefault();
+    redoHistory();
+    return;
+  }
   if ((e.key === 'r' || e.key === 'R') && state.selected) rotateSelected();
   if (e.key === 'Delete' || e.key === 'Backspace') {
     if (selectedWire != null) { e.preventDefault(); removeWire(selectedWire); toast('导线已剪掉'); }
@@ -1880,9 +2008,11 @@ function measureSolid(item) {
 
 function rotateSelected() {
   if (!state.selected) { toast('先点一台器材'); return; }
+  const before = snapshotTable();
   state.selected.group.rotation.y += Math.PI / 2;
   measureSolid(state.selected);
   refreshWiresFor(state.selected);
+  pushMemento(before, snapshotTable(), '旋转器材');
 }
 
 // ============================================================
@@ -2897,6 +3027,7 @@ function syncUI() {
   syncRoad();
   if (guidePanel && !guidePanel.hidden) refreshGuideGear();
   if (schemOpen) renderSchematic();
+  syncHistoryButtons();
 }
 
 // ============================================================
@@ -2944,13 +3075,17 @@ document.querySelectorAll('.tb-funcs [data-view]').forEach((b) => {
 
 // —— 参考站式竖栏 / 底部工具条（阶段 2）——
 function clearAllWires() {
-  wires.slice().forEach((w) => removeWire(w.id));
+  const before = snapshotTable();
+  wires.slice().forEach((w) => removeWireRaw(w.id));
   selectWire(null);
   cancelPending();
+  pushMemento(before, snapshotTable(), '拆下全部导线');
   toast('导线已全部拆下');
 }
 $('heClearWires').addEventListener('click', clearAllWires);
 $('heClearAll').addEventListener('click', clearAll);
+$('heUndo').addEventListener('click', undoHistory);
+$('heRedo').addEventListener('click', redoHistory);
 $('heReset').addEventListener('click', clearAll);
 $('heFit').addEventListener('click', () => { applyView('persp'); fitToDesk(); });
 $('heCenter').addEventListener('click', () => { fitToDesk(); toast('已居中显示'); });
@@ -3304,7 +3439,7 @@ window.addEventListener('resize', () => {
   fitToDesk();
 });
 syncRoad();
-addItem('rheostat', null);        // 一进来桌上就有一台，不用先找器材库
+addItemRaw('rheostat', null);        // 一进来桌上就有一台，不用先找器材库（初始摆放不入撤销栈）
 requestAnimationFrame(loop);
 setTimeout(() => { if (renderCount === 0) { layout(); render(); } }, 1200);
 
@@ -3319,6 +3454,9 @@ window.__lab = {
   pickAt: (x, y) => { const h = pick(x, y); return h ? { item: h.item ? h.item.type : null, term: h.term || null, wireId: h.wireId || null } : null; },
   get wires() { return wires; }, get selectedWire() { return selectedWire; },
   get itemCount() { return items.length; },
+  get undoCount() { return undoStack.length; },
+  get redoCount() { return redoStack.length; },
+  undo: undoHistory, redo: redoHistory,
   get layoutCalls() { return layoutCalls; },
   get fsLayouts() { return fsLayouts; },
   get renderCount() { return renderCount; },
