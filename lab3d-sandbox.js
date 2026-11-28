@@ -2896,6 +2896,7 @@ function syncUI() {
   refreshParams();
   syncRoad();
   if (guidePanel && !guidePanel.hidden) refreshGuideGear();
+  if (schemOpen) renderSchematic();
 }
 
 // ============================================================
@@ -3035,7 +3036,124 @@ $('recAdd').addEventListener('click', () => {
 });
 $('recClear').addEventListener('click', () => { records = []; renderRecords(); });
 
-$('heSchematic').addEventListener('click', () => toast('电路图叠加将在后续版本接入'));
+// ============================================================
+//  电路图弹窗：按当前器材画一张教材风格示意图
+// ============================================================
+const schemPanel = $('heSchemPanel');
+let schemOpen = false;
+const SCHEM_LOADS = ['bulb', 'resistor', 'led', 'rheostat', 'resistancebox',
+  'potentiometer', 'calorimeter', 'joule', 'rheoboard'];
+
+function schemClassify() {
+  return {
+    sources: items.filter((it) => it.type === 'battery' || it.type === 'power'),
+    switches: items.filter((it) => it.type === 'switch'),
+    ammeters: items.filter((it) => it.type === 'ammeter'),
+    voltmeters: items.filter((it) => it.type === 'voltmeter'),
+    loads: items.filter((it) => SCHEM_LOADS.includes(it.type)),
+  };
+}
+
+function schemSymbol(it, cx, cy, c) {
+  const r = 18;
+  switch (it.type) {
+    case 'battery':
+      return `<line x1="${cx - 8}" y1="${cy - 18}" x2="${cx - 8}" y2="${cy + 18}" stroke="${c.ink}" stroke-width="3"/>` +
+        `<line x1="${cx + 8}" y1="${cy - 10}" x2="${cx + 8}" y2="${cy + 10}" stroke="${c.accent}" stroke-width="6"/>` +
+        `<text x="${cx - 8}" y="${cy - 26}" text-anchor="middle" font-size="11" fill="${c.ink}">−</text>` +
+        `<text x="${cx + 8}" y="${cy - 26}" text-anchor="middle" font-size="11" fill="${c.ink}">+</text>`;
+    case 'power':
+      return `<circle cx="${cx}" cy="${cy}" r="${r}" fill="${c.fill}" stroke="${c.ink}" stroke-width="2"/>` +
+        `<text x="${cx}" y="${cy + 5}" text-anchor="middle" font-size="15" font-weight="700" fill="${c.ink}">~</text>`;
+    case 'switch': {
+      const closed = it.api && it.api.isClosed && it.api.isClosed();
+      const lx = cx - 18, rx = cx + 18;
+      const lever = closed
+        ? `<line x1="${lx}" y1="${cy}" x2="${rx}" y2="${cy}" stroke="${c.ink}" stroke-width="2.4"/>`
+        : `<line x1="${lx}" y1="${cy}" x2="${rx}" y2="${cy - 16}" stroke="${c.ink}" stroke-width="2.4"/>`;
+      return `<circle cx="${lx}" cy="${cy}" r="3" fill="${c.ink}"/><circle cx="${rx}" cy="${cy}" r="3" fill="${c.ink}"/>` + lever;
+    }
+    case 'bulb':
+      return `<circle cx="${cx}" cy="${cy}" r="${r}" fill="${c.fill}" stroke="${c.ink}" stroke-width="2"/>` +
+        `<line x1="${cx - 11}" y1="${cy - 11}" x2="${cx + 11}" y2="${cy + 11}" stroke="${c.ink}" stroke-width="1.6"/>` +
+        `<line x1="${cx + 11}" y1="${cy - 11}" x2="${cx - 11}" y2="${cy + 11}" stroke="${c.ink}" stroke-width="1.6"/>`;
+    case 'led':
+      return `<path d="M ${cx - 14} ${cy - 10} L ${cx + 8} ${cy} L ${cx - 14} ${cy + 10} Z" fill="${c.fill}" stroke="${c.ink}" stroke-width="1.8"/>` +
+        `<line x1="${cx + 8}" y1="${cy - 10}" x2="${cx + 8}" y2="${cy + 10}" stroke="${c.ink}" stroke-width="2.4"/>` +
+        `<line x1="${cx - 14}" y1="${cy - 14}" x2="${cx - 14}" y2="${cy + 14}" stroke="${c.ink}" stroke-width="1.6"/>`;
+    case 'ammeter':
+      return `<circle cx="${cx}" cy="${cy}" r="${r}" fill="${c.fill}" stroke="${c.ink}" stroke-width="2"/>` +
+        `<text x="${cx}" y="${cy + 5}" text-anchor="middle" font-size="15" font-weight="700" fill="${c.ink}">A</text>`;
+    case 'voltmeter':
+      return `<circle cx="${cx}" cy="${cy}" r="${r}" fill="${c.fill}" stroke="${c.ink}" stroke-width="2"/>` +
+        `<text x="${cx}" y="${cy + 5}" text-anchor="middle" font-size="15" font-weight="700" fill="${c.ink}">V</text>`;
+    default: {
+      const box = `<rect x="${cx - 22}" y="${cy - 9}" width="44" height="18" fill="${c.fill}" stroke="${c.ink}" stroke-width="1.8"/>`;
+      const arrow = it.type === 'rheostat'
+        ? `<line x1="${cx - 12}" y1="${cy + 16}" x2="${cx + 12}" y2="${cy - 16}" stroke="${c.accent}" stroke-width="1.6"/>` +
+          `<path d="M ${cx + 12} ${cy - 16} l-7 -1 M ${cx + 12} ${cy - 16} l1 7" stroke="${c.accent}" stroke-width="1.6" fill="none"/>` : '';
+      return box + arrow;
+    }
+  }
+}
+
+function renderSchematic() {
+  const stage = $('schemStage');
+  if (!stage) return;
+  const cls = schemClassify();
+  const main = [...cls.sources, ...cls.switches, ...cls.ammeters, ...cls.loads];
+  const beauty = $('schemBeauty').checked;
+  const c = beauty
+    ? { wire: '#7dd3fc', ink: '#e2e8f0', fill: '#0b111a', accent: '#f59e0b' }
+    : { wire: '#94a3b8', ink: '#cbd5e1', fill: '#0b111a', accent: '#cbd5e1' };
+
+  if (!items.length) {
+    stage.innerHTML = '<p class="he-schem-empty">桌面上还没有器材。从器材库摆上电源、开关和用电器，这里会自动画出对应电路图。</p>';
+    return;
+  }
+  if (!cls.sources.length || !cls.loads.length) {
+    stage.innerHTML = '<p class="he-schem-empty">当前器材还不能组成完整电路：至少需要一个<b>电源</b>和一个<b>用电器</b>，开关、电流表串联、电压表并联。</p>';
+    return;
+  }
+
+  const W = 640, H = 360, railY = 170, botY = 290, pad = 46;
+  const n = main.length;
+  const slot = (W - pad * 2) / n;
+  const xs = main.map((_, i) => pad + slot * (i + 0.5));
+  let svg = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">`;
+  svg += `<path d="M ${pad} ${railY} H ${xs[0]}" stroke="${c.wire}" stroke-width="2" fill="none"/>`;
+  for (let i = 0; i < n - 1; i++) {
+    svg += `<path d="M ${xs[i]} ${railY} H ${xs[i + 1]}" stroke="${c.wire}" stroke-width="2" fill="none"/>`;
+  }
+  svg += `<path d="M ${xs[n - 1]} ${railY} H ${W - pad} V ${botY} H ${pad} V ${railY}" stroke="${c.wire}" stroke-width="2" fill="none"/>`;
+  main.forEach((it, i) => {
+    svg += schemSymbol(it, xs[i], railY, c);
+    svg += `<text x="${xs[i]}" y="${railY + 34}" text-anchor="middle" font-size="10.5" fill="#94a3b8">${metaOf(it).label}</text>`;
+  });
+  if (cls.voltmeters.length) {
+    const vy = 80;
+    svg += `<path d="M ${pad} ${railY} V ${vy} H ${W - pad} V ${railY}" stroke="${c.wire}" stroke-width="1.6" fill="none" stroke-dasharray="5 4"/>`;
+    const vn = cls.voltmeters.length;
+    const vslot = (W - pad * 2) / vn;
+    cls.voltmeters.forEach((v, i) => {
+      const vx = pad + vslot * (i + 0.5);
+      svg += schemSymbol(v, vx, vy, c);
+      svg += `<text x="${vx}" y="${vy - 28}" text-anchor="middle" font-size="10.5" fill="#94a3b8">电压表</text>`;
+    });
+  }
+  svg += '</svg>';
+  stage.innerHTML = svg;
+}
+
+function toggleSchem(force) {
+  schemOpen = force != null ? force : !schemOpen;
+  schemPanel.hidden = !schemOpen;
+  $('heSchematic').classList.toggle('on', schemOpen);
+  if (schemOpen) renderSchematic();
+}
+$('heSchematic').addEventListener('click', () => toggleSchem());
+$('heSchemClose').addEventListener('click', () => toggleSchem(false));
+$('schemBeauty').addEventListener('change', renderSchematic);
 
 const lockBtn = $('heLock');
 lockBtn.addEventListener('click', () => {
