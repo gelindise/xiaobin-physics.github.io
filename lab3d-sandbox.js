@@ -323,6 +323,8 @@ const state = {
   showGrid: false,    // 桌面 25 mm 网格
   showCurrent: true,  // 电流流动动画（粒子预留，阶段 3 接）
   autoRead: true,     // 电表上方直接显示读数
+  // —— 接线模式：connect=点柱接线（默认）；draw=按住拖出画线走向 ——
+  wireMode: 'connect',
 };
 const items = [];          // { id, api, type, group, el, Rmax }
 let itemSeq = 0;
@@ -571,6 +573,7 @@ function snapshotTable() {
     })),
     wires: wires.map((w) => ({
       ai: w.a.item.id, at: w.a.term, bi: w.b.item.id, bt: w.b.term, color: w.color,
+      slack: w.slack, waypoints: w.waypoints || null,
     })),
   };
 }
@@ -598,7 +601,8 @@ function restoreTable(snap) {
   });
   snap.wires.forEach((wd) => {
     const A = idMap[wd.ai], B = idMap[wd.bi];
-    if (A && B) addWireRaw({ item: A, term: wd.at }, { item: B, term: wd.bt }, wd.color);
+    if (A && B) addWireRaw({ item: A, term: wd.at }, { item: B, term: wd.bt }, wd.color,
+      { slack: wd.slack, waypoints: wd.waypoints });
   });
   historyPaused = false;
   selectWire(null);
@@ -640,6 +644,13 @@ const WIRE_COLORS = [
   { id: 'green', name: '绿', hex: 0x1f8a4c },
   { id: 'white', name: '白', hex: 0xe8e6df },
 ];
+// 导线长度三档（参考站：短 150 / 中 270 / 长 400 mm）。
+// 本地用松弛弧幅近似：档越长，桌面段中间的自然弧度越大。
+const WIRE_LENGTHS = [
+  { id: 'short', label: '短', mm: 150, bulge: 0.35 },
+  { id: 'mid', label: '中', mm: 270, bulge: 1.0 },
+  { id: 'long', label: '长', mm: 400, bulge: 1.7 },
+];
 const wireMats = {}, wireMatsSel = {};
 WIRE_COLORS.forEach((c) => {
   wireMats[c.id] = new THREE.MeshStandardMaterial({ color: c.hex, roughness: 0.48, metalness: 0.22 });
@@ -673,12 +684,31 @@ WIRE_COLORS.forEach((c) => {
   });
   wcRow.appendChild(b);
 });
+// 选中导线时弹出的长度三档（短 150 / 中 270 / 长 400 mm）
+const wcLenRow = $('wcLenRow');
+WIRE_LENGTHS.forEach((l) => {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = 'wc-pill';
+  b.dataset.l = l.id;
+  b.textContent = l.label;
+  b.title = l.mm + ' mm';
+  b.addEventListener('click', () => {
+    const w = wires.find((x) => x.id === selectedWire);
+    if (!w) return;
+    w.slack = l.id;
+    rebuildWire(w);
+    refreshWireColors();
+  });
+  wcLenRow.appendChild(b);
+});
 function refreshWireColors() {
   if (!wireColorsEl) return;
   const w = wires.find((x) => x.id === selectedWire);
   wireColorsEl.hidden = !w;
   if (!w) return;
   wcRow.querySelectorAll('.wc-swatch').forEach((s) => s.classList.toggle('on', s.dataset.c === w.color));
+  wcLenRow.querySelectorAll('.wc-pill').forEach((p) => p.classList.toggle('on', p.dataset.l === (w.slack || 'mid')));
 }
 
 (function buildPendingMark() {
@@ -1170,7 +1200,10 @@ function clearanceOverOthers(x, z, skipA, skipB) {
   return y;
 }
 
-function wireGeoFor(p1, p2, side, skipA, skipB, dir1, dir2) {
+function wireGeoFor(p1, p2, side, skipA, skipB, dir1, dir2, opts) {
+  opts = opts || {};
+  const waypoints = opts.waypoints || null;
+  const slack = opts.slack || WIRE_LENGTHS[1];
   const out1 = (dir1 && dir1.lengthSq && dir1.lengthSq() > 1e-6)
     ? dir1.clone().normalize() : new THREE.Vector3(0, 0, 1);
   const out2 = (dir2 && dir2.lengthSq && dir2.lengthSq() > 1e-6)
@@ -1205,14 +1238,32 @@ function wireGeoFor(p1, p2, side, skipA, skipB, dir1, dir2) {
     a2.y = eB ? eB.deck : WIRE_G;
   }
 
-  // 桌面上绕开障碍（可见性图最短路），拐角倒圆 —— 线是软的，不会走直角
-  let flat = wireRouteOnTable(a1, a2, rects);
+  // 桌面上绕开障碍（可见性图最短路），拐角倒圆 —— 线是软的，不会走直角。
+  // 画线模式下用用户拖出的路径作为走线，不再走自动最短路。
+  let flat = (waypoints && waypoints.length >= 2)
+    ? waypoints.map((pt) => ({ x: pt.x, z: pt.z }))
+    : wireRouteOnTable(a1, a2, rects);
   if (!flat || flat.length < 2) {
     // 两端被器材围死、绕不出去 ⇒ 退回直连，靠 y 的兜底抬高（很少见）
     flat = [{ x: a1.x, z: a1.z }, { x: a2.x, z: a2.z }];
   }
   flat = wireRoundCorners(flat, 24);
   const dense = resampleXZ(flat, WIRE_STEP);
+
+  // 长度档：档越长，桌面段中间的自然横向弧度越大（端点钉死在柱上不动）。
+  if (slack.bulge > 0 && dense.length > 2) {
+    const n = dense.length;
+    dense.forEach((q, i) => {
+      if (i === 0 || i === n - 1) return;
+      const prev = dense[i - 1], next = dense[i + 1];
+      let nx = -(next.z - prev.z), nz = next.x - prev.x;
+      const nl = Math.hypot(nx, nz) || 1;
+      nx /= nl; nz /= nl;
+      const amp = slack.bulge * WIRE_PAD * Math.sin(Math.PI * i / (n - 1)) * side;
+      q.x += nx * amp;
+      q.z += nz * amp;
+    });
+  }
 
   // 每个点该躺在多高：桌面 / 端点器材的承托面 / 别的器材顶上（兜底）
   dense.forEach((q) => { q.y = wireYAt(q, eA, eB, skipA, skipB); });
@@ -1252,7 +1303,9 @@ function rebuildWire(w) {
   const hA = terminalHardware(w.a.item, w.a.term);
   const hB = terminalHardware(w.b.item, w.b.term);
   if (w.mesh.geometry) w.mesh.geometry.dispose();
-  w.mesh.geometry = wireGeoFor(hA.point, hB.point, w.side, w.a.item, w.b.item, hA.out, hB.out);
+  const slack = WIRE_LENGTHS.find((l) => l.id === w.slack) || WIRE_LENGTHS[1];
+  w.mesh.geometry = wireGeoFor(hA.point, hB.point, w.side, w.a.item, w.b.item, hA.out, hB.out,
+    { waypoints: w.waypoints, slack });
   w.curve = w.mesh.geometry.userData.curve || null;
   disposeWireLugs(w);
   w.lugs = new THREE.Group();
@@ -1261,14 +1314,15 @@ function rebuildWire(w) {
   scene.add(w.lugs);
 }
 
-function addWire(a, b, color) {
+function addWire(a, b, color, meta) {
   const before = historyPaused ? null : snapshotTable();
-  const w = addWireRaw(a, b, color);
+  const w = addWireRaw(a, b, color, meta);
   if (w && !historyPaused) pushMemento(before, snapshotTable(), '连接导线');
   return w;
 }
 
-function addWireRaw(a, b, color) {
+function addWireRaw(a, b, color, meta) {
+  meta = meta || {};
   wireSeq += 1;
   const side = wireSeq % 2 ? 1 : -1;      // 相邻导线往两侧弯，不会叠成一条
   const useColor = color || (wireSeq % 2 ? 'red' : 'black');
@@ -1279,7 +1333,10 @@ function addWireRaw(a, b, color) {
   beads.visible = false;
   for (let k = 0; k < BEADS_PER_WIRE; k++) beads.add(new THREE.Mesh(beadGeo, beadMat));
   scene.add(beads);
-  const w = { id: wireSeq, a, b, mesh, lugs: null, side, color: useColor, beads, curve: null, energized: false };
+  const w = {
+    id: wireSeq, a, b, mesh, lugs: null, side, color: useColor, beads, curve: null, energized: false,
+    slack: meta.slack || 'mid', waypoints: meta.waypoints || null,
+  };
   wires.push(w);
   rebuildWire(w);
   syncUI();
@@ -1770,6 +1827,9 @@ canvas.addEventListener('pointerdown', (e) => {
     drag.mode = 'wire';
     drag.from = { item: hit.item, term: hit.term };
     drag.hover = null;
+    // 画线模式：记录拖出的桌面路径，松手落柱就按这条路径走线
+    const tp = tablePoint(e.clientX, e.clientY);
+    drag.points = state.wireMode === 'draw' && tp ? [{ x: tp.x, z: tp.z }] : null;
     pendingMark.position.copy(termWorld(hit.item, hit.term)).add(new THREE.Vector3(0, 7, 0));
     pendingMark.visible = true;
   }
@@ -1824,6 +1884,13 @@ canvas.addEventListener('pointermove', (e) => {
     const h2 = pick(e.clientX, e.clientY);
     drag.hover = (h2 && h2.term && !(h2.item === drag.from.item && h2.term === drag.from.term))
       ? { item: h2.item, term: h2.term } : null;
+    if (drag.points) {
+      const tp = tablePoint(e.clientX, e.clientY);
+      if (tp) {
+        const last = drag.points[drag.points.length - 1];
+        if (Math.hypot(tp.x - last.x, tp.z - last.z) > 10) drag.points.push({ x: tp.x, z: tp.z });
+      }
+    }
     // 没落在柱上时终点贴鼠标；落在器材上就压在器材表面，不穿过外壳
     previewToPointer(drag.from, e.clientX, e.clientY, h2);
     return;
@@ -1898,7 +1965,8 @@ canvas.addEventListener('pointerup', (e) => {
     const onOther = h2 && h2.term && !(h2.item === from.item && h2.term === from.term);
     hidePreview();
     if (onOther) {
-      addWire(from, { item: h2.item, term: h2.term });
+      const wp = drag.points && drag.points.length >= 2 ? drag.points : null;
+      addWire(from, { item: h2.item, term: h2.term }, null, { waypoints: wp });
       cancelPending();
     } else if (drag.moved < 6 && h2 && h2.term) {
       // 原地点一下 = 走「点两次」那条老路（先选柱、再点另一个柱）
@@ -3309,6 +3377,16 @@ curBtn.addEventListener('click', () => {
   state.showCurrent = !state.showCurrent;
   curBtn.classList.toggle('on', state.showCurrent);
 });
+// 画线 / 接线 双模式切换
+const modeDrawBtn = $('heModeDraw'), modeConnBtn = $('heModeConnect');
+function setWireMode(m) {
+  state.wireMode = m;
+  modeDrawBtn.classList.toggle('on', m === 'draw');
+  modeConnBtn.classList.toggle('on', m === 'connect');
+  cancelPending();
+}
+modeDrawBtn.addEventListener('click', () => setWireMode('draw'));
+modeConnBtn.addEventListener('click', () => setWireMode('connect'));
 document.querySelectorAll('#heToolbar [data-view]').forEach((b) => {
   b.addEventListener('click', () => applyView(b.dataset.view));
 });
