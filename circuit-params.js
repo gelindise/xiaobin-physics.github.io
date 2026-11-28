@@ -5,9 +5,10 @@
  *   PARAM_UI  每类元件能调什么，面板由它生成
  *   TYPE_LABEL 元件类型 → 中文名
  *   POLAR      哪些元件的电流/电压要带符号显示
- *   num1 / num2 读数的小数位（num1 一位；num2 两位，给电流表用。
- *               0.0 / 0.00 但非 0 的小量往下补位）
- *   dispI / dispU / fmtR  表格与浮层的 I / U / R 显示
+ *   num1        器材参数（R、温度、设定值）一位小数
+ *   numSig      I / U / P 三列共用的 3 位有效数字（能互相验算）
+ *   num2        电流表表盘的两位小数（画布刻度用）
+ *   dispI / dispU / dispP / fmtR  表格与浮层的 I / U / P / R 显示
  *   pval       取参数当前值（含电压表「模拟微弱电流」这种派生量的换算）
  *
  * 抽出来的唯一目的：让 3D 沙盒与 2D 沙盒读【同一份】真值 —— 2D 改了面板
@@ -448,12 +449,14 @@
     galvanometer:1};
 
   // ── 读数的小数位 ────────────────────────────────────────────
-  // 一律【一位小数】：读数框、侧栏那张 I/U/R/P 表、点元件弹出的浮层，全走它。
-  // 之前是 toFixed(4)，屏幕上印着「0.3000 A」「0.7500 W」—— 多出来的那三位
-  // 既读不出来也没有物理意义（真实的学生电表只能估读到分度值的下一位）。
-  // 唯一的例外：本该是 0.0 却【不是】0 的小量（0.04A、0.005A）。一位小数会把
-  // 它们印成「0.0」，看着就是「没有电流」—— 那不是精度问题，是说了假话。
-  // 这种值往下补一位、还不够再补一位；别的值一位不动。
+  // 额定 / 温度这类【器材参数】仍用 num1（一位小数）：学生看的是「5.0Ω」。
+  // 但 I / U / P 三列是同一组物理量的三个侧面，必须能互相核对：
+  //     R = U / I      P = U · I
+  // 以前全用一位小数，0.333A 印成 0.3A、1.667V 印成 1.7V，学生拿印出来的
+  // 两个数一乘就得到 0.5W，而功率列印的却是 0.6W —— 三个数各自都没错，
+  // 合在一起却「对不上」。这不是物理算错，是【显示精度把关系切断了】。
+  // 现在 I / U / P 统一走 numSig（3 位有效数字），同一行的乘除关系在
+  // 显示精度内成立；num1 留给「阻值、温度、设定值」这些不需要互相反算的量。
   function num1(v){
     var x = +v;
     if (!isFinite(x)) return '—';
@@ -465,9 +468,38 @@
     return s;
   }
 
-  // 电流表的读数：两位小数。0.6A 量程的分度值是 0.02A，一位小数会把 0.13
-  // 印成 0.1 —— 和指针指的位置对不上（用户报的就是这个）。
-  // 和 num1 同一条原则：本该是 0.00 却【不是】0 的小量往下补一位，不印假话。
+  // 3 位有效数字，给 I / U / P 三列共用。
+  // 为什么不是固定两位小数：0.0149A（1.5V 电源带 100Ω）固定两位会印成
+  // 0.01A，再拿 1.49V / 0.01A 去验算就得到 149Ω，而这一行明明写着 100Ω。
+  // 有效数字随数量级走，小电流也保得住同一个比例精度：
+  //   0.333 / 1.67 / 0.556、0.0149 / 1.49 / 0.0223。
+  // 末尾多余的 0 去掉；整数保留一位小数（3 → 3.0），和原来的读数习惯一致。
+  function numSig(v){
+    var x = +v;
+    if (!isFinite(x)) return '—';
+    if (x === 0) return '0.0';
+    var a = Math.abs(x);
+    var dec = Math.max(0, Math.min(8, 3 - Math.floor(Math.log10(a)) - 1));
+    var s = x.toFixed(dec);
+    // 3 位有效数字还不够把「本该不是 0」的数印出来（比如 1×10⁻⁹）时，
+    // 往下补位；补到 10 位仍为 0，就交给科学记数法，绝不印成 0.0 说假话。
+    if (parseFloat(s) === 0) {
+      dec = Math.min(10, dec + 1);
+      s = x.toFixed(dec);
+      if (parseFloat(s) === 0) return x.toExponential(2);
+    }
+    if (s.indexOf('.') >= 0) {
+      s = s.replace(/0+$/, '');
+      if (s.charAt(s.length - 1) === '.') s += '0';
+    } else {
+      s += '.0';
+    }
+    return s;
+  }
+
+  // 电流表的读数原先用两位小数（0.6A 量程分度值 0.02A）。现在也走 numSig，
+  // 不是为了更准，而是为了和同一行其它元件的电流【用同一种精度】——
+  // 一只表印 0.33A、旁边电阻印 0.3A，学生会以为两个数说的不是同一件事。
   function num2(v){
     var x = +v;
     if (!isFinite(x)) return '—';
@@ -513,15 +545,33 @@
     // 电动机的「反接」要写成「反转」：接反不是接错了线，是转子往反方向转。
     if (r.reversed) tag = '<span class="tag">' + (r.reverseLabel || '反接') + '</span>';
     else if (c.type === 'battery' && r.i < -1e-9) tag = '<span class="tag">充电</span>';
-    return (c.type === 'ammeter' ? num2(s) : num1(s)) + tag;
+    return numSig(s) + tag;
   }
   function dispU(c, r){
     var raw = r.v;
     if (c.type === 'voltmeter') { var m = meterShow(c, r); if (m != null) raw = m; }
     // 灵敏电流计：U 是它自己两端的分压，没有「方向」可言 —— 符号只对电流
     // （指针偏向哪边）有意义。照 POLAR 印一个负电压，学生会以为哪里接反了。
-    if (c.type === 'galvanometer') return num1(Math.abs(raw));
-    return num1(POLAR[c.type] ? raw : Math.abs(raw));
+    if (c.type === 'galvanometer') return numSig(Math.abs(raw));
+    return numSig(POLAR[c.type] ? raw : Math.abs(raw));
+  }
+
+  // 功率列。P 必须和同一行的 U、I 能对上：P = U·I。
+  // 焦耳演示器是唯一的例外 —— 一行里装着两个独立容器，R 列写「5 / 10」，
+  // P 列也必须写「甲 / 乙」两组数；只印一个总功率，学生会拿它去乘那一行的
+  // 单边 U、I，怎么算都对不上。
+  function dispP(c, r){
+    if (!r) return '—';
+    if (c.type === 'joule') {
+      var jb = r.boxes || [];
+      if (!jb.length) return numSig(Math.abs(r.p));
+      // 用各自主丝上的 p（= 该盒 U·I），不用 pTotal：pTotal 还把盒外并丝
+      // 那一路算进来了，拿它去乘表里单边 U、I 会多出一块，又成了「对不上」。
+      return jb.map(function (b) {
+        return numSig(Math.abs(b.p));
+      }).join(' / ');
+    }
+    return numSig(Math.abs(r.p));
   }
   // 表格里的 R 一列。开关按通断写 0/∞，变阻器写【实际接入】的那一段，
   // 其余按求解出来的等效电阻写；解不出来（断路、被烧掉）写破折号。
@@ -614,6 +664,8 @@
     POLAR: POLAR,
     num1: num1,
     num2: num2,
+    numSig: numSig,
+    dispP: dispP,
     // galNum —— 灵敏电流计读数的小数位（按数量级自适应，见上面那段）。
     // 页面的大读数牌也用它：表盘上的数字和侧栏表必须是同一套规则。
     galNum: galNum,
